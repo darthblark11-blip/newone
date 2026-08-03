@@ -1,0 +1,18390 @@
+
+
+const CHUNK_SIZE = 1024;
+let bloodChunks = {};
+let splatterIdx = 0;
+let player, bullets = [], particles = [], corpses = [], enemiesList = [], barrels = [], orbs = [], grenades = [], fires = [], sludges = [], healthPacks = [], weaponDrops = [], shockwaves = []; var allies = []; var mCount = 0;
+
+let leftStick, rightStick, buildings = [], camX = 0, camY = 0, zoom = 0.66, screenShake = 0, meleeInputHeld = false, cannonInputHeld = false;
+let lightnings = [];
+let started = false, isDead = false, isWin = false, currentLevel = 1, headAimToggle = false, lastToggleTime = 0, lastWeaponSwapTime = 0;
+const SPATIAL_CELL_SIZE = 150; 
+let spatialGrid = {};
+
+// Helper to calculate which bucket an entity belongs to
+function getSpatialKey(x, y) {
+    return Math.floor(x / SPATIAL_CELL_SIZE) + "," + Math.floor(y / SPATIAL_CELL_SIZE);
+}
+
+let totalKills = 0, killStreak = 0, flawlessHits = 0, streakMsgTimer = 0, streakMsgText = "";
+let smgUnlocked = false, dualSmgUnlocked = false, shotgunUnlocked = false, arUnlocked = false, jetpackUnlocked = true, meleeUnlocked = true;
+let killcamMode = false, killcamTarget = {x: 0, y: 0}, killcamTimer = 0, doTick = true, winTimer = 0;
+let jetpackFireExplosion = false; 
+let jetpackDoubleDash = false;
+let meleeComboUnlocked = false; 
+let taserUnlocked = false
+let rocketLauncherUnlocked = false; 
+let ninjaSuitUnlocked = false; // <--- NEW NINJA SUIT
+let explosiveArmorUnlocked = false, playerGrenades = [], pGrenadeAmmo = 4, pGrenadeTimer = 0, isCooking = false, cookTime = 0;
+let chemistSuitUnlocked = false, playerFlasks = [], pFlaskAmmo = 2, pFlaskTimer = 0, waterPuddles = [];
+let inUpgradeMenu = false;
+let score = 0; let consecutiveKills = 0; let comboTimer = 0; let floatingScores = []; let totalShotsFired = 0; let totalShotsHit = 0;
+let isPaused = false;
+let pauseMenuState = "MAIN";
+let objectiveTimer = 0;
+let inTownCutscene = false, townPhase = 0, townTimer = 0, townSpeaker1 = null, townSpeaker2 = null;
+let nm0AmbushActive = false, nm0AmbushKills = 0;
+let isHardMode = false, selectingDifficulty = false, pendingLevel = 1, pendingStoryMode = false;
+let levelSelectStory = false;   // debug: numbered level shortcuts launch story mode
+let pendingDebugStory = false;  // set when this run came from that shortcut
+
+
+// --- STORY MODE VARIABLES ---
+let isStoryMode = false;
+let inStoryIntro = false;
+let inStoryRoom = false;
+let introScrollY = 0;
+let storyPhase = 0; 
+let storyTimer = 0;
+let dadX = -100;
+let prologuePhase = 0; 
+let prologueTimer = 0; 
+let dadEntity = null;
+let tabletPickedUp = false; 
+let journalRead = false;
+
+let grenadeInputHeld = false;
+let grenadesUnlocked = false; 
+let grenadePickups = [];
+let inDarchonCall = false, callPhase = 0, darchonCallCompleted = false;
+let darchonFrames = [];
+let darchonTalkTimer = 0;
+let darchonMouthFrame = 0;
+
+// --- WORLD BUILDING & POST-AMBUSH VARIABLES ---
+let inPostAmbushCutscene = false;
+let inLvl4Cutscene = false, lvl4Phase = 0, lvl4Timer = 0, tanLeader = null;
+
+let postAmbushPhase = 0;
+let inWorldBuildingMenu = false;
+let inTravelMenu = false;
+let travelDirection = null;
+let militaryToBring = 0;
+window.northGateBreached = false;
+window.southGateBreached = false;
+window.militaryToBring = 0; // Carries over to level 2
+let globalPopulation = 0;
+let popTotal = 0;
+let popUnassigned = 0;
+let popFarming = 0; 
+let popMilitary = 0; 
+let popScience = 0; 
+let popArchitecture = 0;
+let squadCommandMode = false;
+let squadCommand = null; // "FOLLOW", "NORTH", "SOUTH", "EAST", "WEST", "SPREAD", "HOLD"
+
+// --- OVERWORLD & HERO TOWN VARIABLES ---
+let inOverworldView = false;
+let townCitizens = [];
+let statVit = 1, statMen = 1, statPhy = 1, statObe = 1, statInt = 1;
+let townsData = {}; 
+
+let inFarmCutscene = false, farmPhase = 0, farmSpeaker = null;
+let farmAmbushActive = false;
+let inFarmPostCutscene = false, farmPostPhase = 0;
+window.farmerBlueprintUnlocked = false;
+
+// --- NEW UPSTAIRS VARIABLES ---
+let inUpstairsRoom = false;
+let upstairsPhase = 0;
+let swordPickedUp = false;
+let tvWatched = false;
+let hasSword = false;
+let storyText = `The year is 2048. The nuclear family has been abolished.
+The female gender has been eradicated.
+Cloning is the only form of reproduction...
+
+The tyrannical "NM-0"; a globalist elite organization
+established 103 years prior slowly tricked the world
+population into its own demise through slow burning
+propaganda, and problem - solution mind control tactics.
+
+Our journey begins at the home of our protagonist.
+Son of a S.I.A (Stick Intelligence Agent).`;
+
+let viewLeft = 0, viewRight = 0, viewTop = 0, viewBottom = 0;
+let MAX_KILLS = 999; 
+const TARGET_ENEMY_COUNT = 80; 
+// --- ROBOT ---------------------------------------------------------------
+const ROBOT_HEAD_HP    = 150;   // sensor housing, separate from the 350 chassis
+const ROBOT_CHARGE     = 120;   // two seconds to wind the cannon up
+const ROBOT_BEAM_DMG   = 40;
+const ROBOT_BURST      = 2;     // shots per charge
+const ROBOT_BURST_GAP  = 9;     // frames between the two
+const ROBOT_COOLDOWN   = 46;    // before it may start winding up again
+const ROBOT_FUSE       = 198;   // 3.3 seconds from head loss to detonation
+const ROBOT_OIL_AT     = 100;   // chassis HP at which it starts leaking
+const OIL_COL          = [18, 16, 15];
+const SPARK_COL        = [255, 214, 140];
+let playerRespawnTimer = 0, prevGamepadButtons = [];
+let headshotCounter = 0, bodyOverkillCounter = 0, lightningCounter = 0; 
+
+const WEAPONS = {
+  PISTOL: { name: "PISTOL", fireCooldown: 15, enemyCooldown: 48, maxAmmo: 17, bodyDmg: 20, headDmg: 100, spread: 0, pellets: 1 },
+  SMG: { name: "MACHINE GUN", fireCooldown: 6, enemyCooldown: 48, maxAmmo: 30, bodyDmg: 20, headDmg: 50, spread: 0.1, pellets: 1 },
+  DUAL_SMG: { name: "DUAL SMGS", fireCooldown: 5, enemyCooldown: 48, maxAmmo: 60, bodyDmg: 20, headDmg: 50, spread: 0.15, pellets: 2 },
+  ASSAULT_RIFLE: { name: "ASSAULT RIFLE", fireCooldown: 7, enemyCooldown: 48, maxAmmo: 30, bodyDmg: 30, headDmg: 60, spread: 0, pellets: 1 },
+  SHOTGUN: { name: "SHOTGUN", fireCooldown: 20, enemyCooldown: 60, maxAmmo: 8, bodyDmg: 25, headDmg: 50, spread: 0.1275, pellets: 4 },
+  ROCKET_LAUNCHER: { name: "ROCKET LAUNCHER", fireCooldown: 45, enemyCooldown: 60, maxAmmo: 4, bodyDmg: 350, headDmg: 350, spread: 0, pellets: 1 },
+  TASER: { name: "TASER", fireCooldown: 90, enemyCooldown: 60, maxAmmo: 4, bodyDmg: 0, headDmg: 0, spread: 0, pellets: 1 },
+  // Silver magnum. Six shots, one every 0.88 s -- 53 frames at the 60 fps the
+  // rest of the cooldowns in this table are written against. Hits far harder
+  // than anything else per shot and reloads far more often, which is the whole
+  // character of it: the Dry Gulch cowboys will drop the player in two body
+  // shots, and a single head shot ends anyone in the game.
+  REVOLVER: { name: "REVOLVER", fireCooldown: 53, enemyCooldown: 53, maxAmmo: 6, bodyDmg: 75, headDmg: 250, spread: 0, pellets: 1 },
+  // Coach gun -- the lawman's short double-barrel. Two shells, wide pattern.
+  COACH_GUN: { name: "COACH GUN", fireCooldown: 34, enemyCooldown: 62, maxAmmo: 2, bodyDmg: 30, headDmg: 65, spread: 0.16, pellets: 5 } 
+};
+
+
+const sfx = {
+  ctx: null,
+  bgm: null, 
+  
+  init() { 
+    // Splitting this into two lines makes the OpenProcessing linter happy
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    this.ctx = new AudioCtx(); 
+    
+    if (this.ctx.state === 'suspended') this.ctx.resume(); 
+  },
+  
+          playBGM() {
+      if (this.bgm && this.bgm.paused) {
+          // This fires the exact moment you tap the screen
+          this.bgm.play().catch(e => console.log("BGM Error: ", e));
+      }
+  },
+
+
+
+
+  play(f, t, d, v, s) { if (!this.ctx) return; let o = this.ctx.createOscillator(), g = this.ctx.createGain(); o.type = t; o.connect(g); g.connect(this.ctx.destination); o.frequency.setValueAtTime(f, this.ctx.currentTime); if (s) o.frequency.exponentialRampToValueAtTime(s, this.ctx.currentTime + d); g.gain.setValueAtTime(v, this.ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + d); o.start(); o.stop(this.ctx.currentTime + d); },
+  
+  noise(d, v, f, t, e) { if (!this.ctx) return; let bs = this.ctx.sampleRate * d, b = this.ctx.createBuffer(1, bs, this.ctx.sampleRate), dat = b.getChannelData(0); for (let i = 0; i < bs; i++) dat[i] = Math.random() * 2 - 1; let s = this.ctx.createBufferSource(), fil = this.ctx.createBiquadFilter(), g = this.ctx.createGain(); s.buffer = b; fil.type = t || 'lowpass'; fil.frequency.setValueAtTime(f || 1000, this.ctx.currentTime); if (e) fil.frequency.exponentialRampToValueAtTime(e, this.ctx.currentTime + d); s.connect(fil); fil.connect(g); g.connect(this.ctx.destination); g.gain.setValueAtTime(v, this.ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + d); s.start(); },
+  
+  shoot() { this.noise(0.1, 0.4, 2000, 'highpass'); this.play(400, 'square', 0.1, 0.1, 100); }, 
+  shotgun() { this.noise(0.2, 0.7, 500, 'lowpass'); this.play(150, 'sawtooth', 0.2, 0.2, 50); }, 
+  hitBody() { this.noise(0.15, 0.8, 1000, 'bandpass', 400); }, 
+  hitHead() { this.noise(0.15, 0.9, 3000, 'highpass'); this.play(800, 'triangle', 0.1, 0.2, 200); }, 
+  hitArmor() { this.noise(0.1, 0.6, 800, 'bandpass', 2000); this.play(600, 'sine', 0.1, 0.3, 100); }, 
+  deathGrunt() { this.play(120, 'square', 0.3, 0.4, 60); this.noise(0.2, 0.3, 400, 'lowpass'); }, 
+  slash() { this.noise(0.15, 0.7, 3000, 'bandpass', 8000); this.play(800, 'sine', 0.1, 0.1, 1200); }, 
+  dash() { this.noise(0.3, 0.6, 600, 'lowpass'); this.play(100, 'sawtooth', 0.2, 0.3, 50); }, 
+  reload() { this.noise(0.3, 0.5, 800, 'bandpass', 1500); this.play(300, 'square', 0.15, 0.1, 100); }, 
+  explosion() { this.noise(0.8, 1.0, 150, 'lowpass'); this.play(60, 'sawtooth', 0.8, 0.8, 10); }, 
+  charge() { this.play(400, 'sine', 2.0, 0.1, 800); }, 
+  throwG() { this.noise(0.2, 0.5, 1000, 'highpass'); this.play(600, 'sine', 0.2, 0.1, 300); },
+  bite() { this.play(300, 'triangle', 0.1, 0.3, 100); this.noise(0.1, 0.5, 2000, 'highpass'); }
+};
+
+
+function setup() {
+  // Cap the backing store at 2x. p5 defaults to the display's full density,
+  // which on the phones this is played on is 3 -- a 1080x2340 canvas, 2.5M
+  // pixels, every one of them touched by the ground blit, the atmospheric
+  // washes and the vignette on every frame. Measured on a 3x viewport that
+  // alone was the difference between 20 fps and 39 fps, and a frame rate that
+  // low is itself read as flicker. Nothing here is a photograph: the art is
+  // flat fills, so 2x costs no visible sharpness.
+  pixelDensity(Math.min(displayDensity(), 2));
+  createCanvas(windowWidth, windowHeight);
+
+  // --- INVISIBLE BGM PLAYER ---
+  sfx.bgm = document.createElement('audio');
+  
+    // Define your playlist here
+  sfx.playlist = [
+      'Monalunaa.mp3', // 1st Track
+      'ignition.mp3',   // 2nd Track
+      'wavy.mp3',  // 3rd Track
+      'Jokesonyou.mp3', // 4th Track
+	  'vibe.mp3', // 5th track
+]
+  
+  sfx.currentTrackIndex = 0; // Keep track of which song is playing
+  
+  sfx.bgm.src = sfx.playlist[sfx.currentTrackIndex]; 
+  sfx.bgm.loop = false; 
+  sfx.bgm.volume = 0.4;
+  sfx.bgm.style.display = 'none'; 
+  document.body.appendChild(sfx.bgm);
+
+  // Listen for when a song finishes
+  sfx.bgm.addEventListener('ended', function() {
+      // Move to the next track in the playlist
+      sfx.currentTrackIndex++;
+      
+      // Check if we've reached the end of the playlist
+      if (sfx.currentTrackIndex < sfx.playlist.length) {
+          sfx.bgm.src = sfx.playlist[sfx.currentTrackIndex]; 
+          
+          // If it's the last track, loop it infinitely
+          if (sfx.currentTrackIndex === sfx.playlist.length - 5) {
+              sfx.bgm.loop = true; 
+          }
+          
+          sfx.bgm.play().catch(e => console.log("Next track failed:", e));
+      }
+  });
+  // ----------------------------
+
+
+  // --- THE NATIVE AUDIO UNLOCKER ---
+  // This bypasses the game engine and listens directly to your phone screen
+  let unlockAudio = function() {
+      if (sfx.bgm && sfx.bgm.paused) {
+          sfx.bgm.play().catch(e => console.log("BGM Error:", e));
+      }
+      // This also ensures your gunshots/explosions are unlocked
+      if (sfx.ctx && sfx.ctx.state === 'suspended') {
+          sfx.ctx.resume(); 
+      }
+      // Delete this listener after the first tap so it doesn't slow down the game
+      window.removeEventListener('touchstart', unlockAudio);
+      window.removeEventListener('mousedown', unlockAudio);
+  };
+
+  window.addEventListener('touchstart', unlockAudio, { once: true });
+  window.addEventListener('mousedown', unlockAudio, { once: true });
+  // ---------------------------------
+
+  leftStick = { active: false, dx: 0, dy: 0, base: { x: 80, y: height - 160 } }; 
+  rightStick = { active: false, dx: 0, dy: 0, dist: 0, base: { x: width - 80, y: height - 110 } };
+}
+
+    // --- NATIVE PC CONTROLS LISTENERS ---
+  window.isDesktop = false; // Tracks if we are using M&K
+  document.addEventListener('contextmenu', event => event.preventDefault()); 
+  window.addEventListener('mousemove', () => { window.isDesktop = true; window.showOnScreenControls = false; });
+  window.addEventListener('mousedown', e => {
+      window.isDesktop = true; window.showOnScreenControls = false;
+      if (e.button === 2 && started && !isDead && !isWin && player) {
+          if (millis() - lastToggleTime > 300) { headAimToggle = !headAimToggle; lastToggleTime = millis(); }
+      }
+  });
+    window.addEventListener('keydown', e => {
+      window.isDesktop = true; window.showOnScreenControls = false; 
+      if (!started || isDead || isWin || !player) return;
+      
+      if (e.key.toLowerCase() === 'r') {
+          if (player.reloadTimer <= 0 && player.ammo < player.currentWeapon.maxAmmo) player.triggerReload();
+      }
+      
+      // FIX: Moved the 'q' input out of the 'r' input bracket!
+      if (e.key.toLowerCase() === 'q') cannonInputHeld = true;
+
+      if (e.key.toLowerCase() === 'e' && meleeUnlocked) {
+          if (player.dashTimer <= 0 && !explosiveArmorUnlocked) player.activateMelee();
+      }
+
+      if (e.code === 'Space' && jetpackUnlocked) {
+          if (player.dashCooldown <= 0 && player.dashTimer <= 0 && player.meleeTimer <= 0) player.activateDash();
+      }
+  });
+
+
+function loadTownData(id) {
+    if (!id || typeof townsData === 'undefined' || !townsData[id]) return;
+    let t = townsData[id];
+
+    window.popFarmingM = t.popFarmingM || 0;
+    window.popFarmingF = t.popFarmingF || 0;
+    window.popMilitaryM = t.popMilitaryM || 0;
+    window.popMilitaryF = t.popMilitaryF || 0;
+    window.popScienceM = t.popScienceM || 0;
+    window.popScienceF = t.popScienceF || 0;
+    window.popArchitectureM = t.popArchitectureM || 0;
+    window.popArchitectureF = t.popArchitectureF || 0;
+    window.popUnassignedM = t.popUnassignedM || 0;
+    window.popUnassignedF = t.popUnassignedF || 0;
+    window.popTotal = t.popTotal || 0;
+}
+function saveTownData(id) {
+    if (!id) return;
+    if (typeof townsData === 'undefined') window.townsData = {};
+    if (!townsData[id]) townsData[id] = {};
+
+    let t = townsData[id];
+    t.popFarmingM = window.popFarmingM || 0;
+    t.popFarmingF = window.popFarmingF || 0;
+    t.popMilitaryM = window.popMilitaryM || 0;
+    t.popMilitaryF = window.popMilitaryF || 0;
+    t.popScienceM = window.popScienceM || 0;
+    t.popScienceF = window.popScienceF || 0;
+    t.popArchitectureM = window.popArchitectureM || 0;
+    t.popArchitectureF = window.popArchitectureF || 0;
+    t.popUnassignedM = window.popUnassignedM || 0;
+    t.popUnassignedF = window.popUnassignedF || 0;
+    
+    // 100% safe calculation directly from the verified town object
+    t.popTotal = t.popFarmingM + t.popFarmingF + 
+                 t.popMilitaryM + t.popMilitaryF + 
+                 t.popScienceM + t.popScienceF + 
+                 t.popArchitectureM + t.popArchitectureF + 
+                 t.popUnassignedM + t.popUnassignedF;
+                 
+    t.established = true;
+}
+
+
+function preload() {
+    // Make sure your 4 image files match these names exactly in your project folder
+    darchonFrames[0] = loadImage('darchon_idle.png');  
+    darchonFrames[1] = loadImage('darchon_talk_1.png'); 
+    darchonFrames[2] = loadImage('darchon_talk_2.png'); 
+    darchonFrames[3] = loadImage('darchon_talk_3.png');
+}
+
+
+function legacyStartAtLevel(lvl, isLoading = false) {
+    clearAllBlood();
+    bloodChunks = {}; 
+    
+    currentLevel = lvl;
+  
+    consecutiveKills = 0; 
+    totalShotsFired = 0; 
+    totalShotsHit = 0;   
+
+if (isStoryMode) {
+        totalKills = 0;
+        if (lvl === 0) MAX_KILLS = 3;
+        else if (lvl === 8) MAX_KILLS = 20; 
+        else MAX_KILLS = 100; 
+    } else {
+        if (lvl === 0 || lvl === 1) { totalKills = 0; MAX_KILLS = 50; }
+        else if (lvl === 2) { totalKills = 50; MAX_KILLS = 100; }
+        else if (lvl === 3) { totalKills = 100; MAX_KILLS = 150; }
+        else if (lvl === 4) { totalKills = 150; MAX_KILLS = 200; }
+        else if (lvl === 5) { totalKills = 200; MAX_KILLS = 250; }
+        else if (lvl === 6) { totalKills = 250; MAX_KILLS = 300; }
+        else if (lvl === 7) { totalKills = 300; MAX_KILLS = 350; }
+    }
+
+    if ((lvl === 0 || lvl === 1) && !isLoading) { 
+        smgUnlocked = false; dualSmgUnlocked = false; shotgunUnlocked = false; arUnlocked = false; rocketLauncherUnlocked = false; taserUnlocked = false; 
+        jetpackFireExplosion = false; jetpackDoubleDash = false; meleeComboUnlocked = false; 
+        window.meleeFinisherUnlocked = false;
+
+        if (isStoryMode) taserUnlocked = true;
+
+        ninjaSuitUnlocked = false; 
+        explosiveArmorUnlocked = false; 
+        chemistSuitUnlocked = false; 
+        window.ninjaOwned = false; 
+        window.armorOwned = false; 
+        window.chemistOwned = false;
+        
+        score = 0;
+        journalRead = false; 
+        
+        pGrenadeAmmo = 0;
+        pGrenadeTimer = 0;
+        grenadesUnlocked = false;
+        
+        pFlaskAmmo = 0;
+        pFlaskTimer = 0;
+    }
+  
+    window.towersDefeated = false;
+    nm0AmbushActive = false;
+    nm0AmbushKills = 0;
+    window.ambushKind = null;
+    inTownCutscene = false;
+    inFarmCutscene = false;
+    farmAmbushActive = false;
+    inFarmPostCutscene = false;
+    inPostAmbushCutscene = false; postAmbushPhase = 0;
+    inLvl4Cutscene = false; lvl4Phase = 0; tanLeader = null;
+    window.maxArmySize = 0;
+    jetpackUnlocked = true;
+    meleeUnlocked = true;
+    killcamMode = false;
+    zoom = 0.66;
+    doTick = true;
+    winTimer = 0;
+    inUpgradeMenu = false;
+    
+    objectiveTimer = 360; 
+    isPaused = false;
+    pauseMenuState = "MAIN";
+	
+    started = true; isDead = false; isWin = false; killStreak = 0; screenShake = 0;
+    bullets = []; particles = []; splatters = []; corpses = []; enemiesList = []; barrels = []; orbs = []; grenades = []; fires = []; sludges = []; healthPacks = []; weaponDrops = [];
+    grenadePickups = []; 
+  
+    generateMap(); 
+    let pS = getSafeSpawn(false); 
+    player = new Character(pS.x, pS.y, true);
+  
+    if (smgUnlocked) { player.mags["MACHINE GUN"] = 3; player.weaponAmmo["MACHINE GUN"] = WEAPONS.SMG.maxAmmo; }
+    if (dualSmgUnlocked) { player.mags["DUAL SMGS"] = 3; player.weaponAmmo["DUAL SMGS"] = WEAPONS.DUAL_SMG.maxAmmo; }
+    if (arUnlocked) { player.mags["ASSAULT RIFLE"] = 3; player.weaponAmmo["ASSAULT RIFLE"] = WEAPONS.ASSAULT_RIFLE.maxAmmo; }
+    if (shotgunUnlocked) { player.mags["SHOTGUN"] = 3; player.weaponAmmo["SHOTGUN"] = WEAPONS.SHOTGUN.maxAmmo; }
+    if (rocketLauncherUnlocked) { player.mags["ROCKET LAUNCHER"] = 6; player.weaponAmmo["ROCKET LAUNCHER"] = WEAPONS.ROCKET_LAUNCHER.maxAmmo; }
+
+    if (rocketLauncherUnlocked) player.currentWeapon = WEAPONS.ROCKET_LAUNCHER;
+    else if (shotgunUnlocked) player.currentWeapon = WEAPONS.SHOTGUN;
+    else if (arUnlocked) player.currentWeapon = WEAPONS.ASSAULT_RIFLE;
+    else if (dualSmgUnlocked) player.currentWeapon = WEAPONS.DUAL_SMG;
+    else if (smgUnlocked) player.currentWeapon = WEAPONS.SMG;
+    else player.currentWeapon = WEAPONS.PISTOL;
+  
+    if (lvl === 0) {
+        player.x = -40; player.y = 0; player.aimAngle = HALF_PI;
+        dadEntity = new Character(40, 0, false, "DAD");
+        dadEntity.aimAngle = HALF_PI;
+        enemiesList.push(dadEntity);
+        
+        let sia1 = new Character(0, 350, false, "SIA"); 
+        let sia2 = new Character(-60, 400, false, "SIA"); 
+        let sia3 = new Character(60, 400, false, "SIA"); 
+        enemiesList.push(sia1, sia2, sia3);
+        
+        grenadesUnlocked = false;
+        prologuePhase = 1;
+        prologueTimer = 120; 
+    } 
+      else if (lvl === 8) {
+        player.x = 0;
+        player.y = 1200; // Spawn near the exit door!
+        player.aimAngle = -HALF_PI;
+        window.nm0HqCleared = false;
+        
+        for (let i = 0; i < 20; i++) {
+            // Spawn enemies ONLY in the main hall so they don't get stuck inside the room
+            let e = new Character(random(-400, 400), random(-600, 1000), false, "ARMORED_STANDARD");
+            e.currentWeapon = WEAPONS.PISTOL;
+            enemiesList.push(e);
+        }
+    }
+    else {
+        // The scripted openings below only play while the sector is still its
+        // authored arena. Once the arc is done the sector is a streamed biome,
+        // so re-entering it by travel drops you into the open world instead of
+        // replaying the cutscene against geometry that no longer exists.
+        const scripted = isStoryMode && !storyArcCleared(lvl);
+
+        if (lvl === 1 && scripted) {
+            player.x = 600;
+            player.y = 710;
+
+            let dummyNorth = {x: 600, y: -3680, w: 300, h: 50, isWall: true, isGrassLot: false};
+            let dummySouth = {x: 600, y: 4880, w: 300, h: 50, isWall: true, isGrassLot: false};
+            buildings.push(dummyNorth, dummySouth);
+
+            let nG1 = new Character(400, -3680, false, "ARMORED_STANDARD"); nG1.targetBuilding = dummyNorth;
+            let nG2 = new Character(800, -3680, false, "ARMORED_STANDARD"); nG2.targetBuilding = dummyNorth;
+            let sG1 = new Character(400, 4880, false, "ARMORED_STANDARD"); sG1.targetBuilding = dummySouth;
+            let sG2 = new Character(800, 4880, false, "ARMORED_STANDARD"); sG2.targetBuilding = dummySouth;
+            enemiesList.push(nG1, nG2, sG1, sG2);
+        }
+        
+        if (lvl === 2 && !isBiomeLevel(lvl)) {
+            player.x = 600;
+            player.y = 2800;
+            player.aimAngle = -HALF_PI;
+        }
+
+        if (lvl === 3 && scripted) {
+            player.x = 500;
+            player.y = 0;
+            
+            farmSpeaker = new Character(300, 0, false, "FARMER_MALE");
+            enemiesList.push(farmSpeaker);
+
+            for (let i = 0; i < 19; i++) {
+                let fType = random() > 0.5 ? "FARMER_MALE" : "FARMER_FEMALE";
+                let f = new Character(random(400, 950), random(-600, 600), false, fType);
+                enemiesList.push(f);
+            }
+
+            for (let i = 0; i < 8; i++) {
+                let cowX = random(-750, -450); 
+                let cowY = random(-80, 80);
+                let cow = new Character(cowX, cowY, false, "COW");
+                enemiesList.push(cow);
+            }
+
+            // --- DRY GULCH POPULATION ------------------------------------
+            // Placed by trade rather than sprinkled: drovers around the
+            // corrals and the saloon end, the law on its own doorstep, and
+            // townsfolk on the two shopping streets. Everyone starts neutral;
+            // shoot one and the wake-up cascade in takeDamage() turns the lot.
+            const townFolk = (type, x, y) => {
+                const c = new Character(x, y, false, type);
+                c.state = "PATROL";
+                enemiesList.push(c);
+                return c;
+            };
+            // Cowboys and cowgirls: stock pens, livery, and the saloon kerb
+            for (let i = 0; i < 7; i++)
+                townFolk(random() > 0.4 ? "COWBOY" : "COWGIRL",
+                         2200 + random(-260, 260), -160 + random(-190, 190));
+            for (let i = 0; i < 5; i++)
+                townFolk(random() > 0.4 ? "COWBOY" : "COWGIRL",
+                         2200 + random(-230, 230), -1500 + random(-170, 170));
+            for (let i = 0; i < 4; i++)
+                townFolk(random() > 0.5 ? "COWBOY" : "COWGIRL",
+                         1300 + random(-170, 170), -1730 + random(-140, 140));
+            // Local law: the jail, the sheriff's office, and a foot patrol
+            townFolk("LOCAL_COP", 1560, -2430);
+            townFolk("LOCAL_COP", 1620, -2400);
+            townFolk("LOCAL_COP", 1570, -1870);
+            townFolk("LOCAL_COP", 1300, -1140);
+            townFolk("LOCAL_COP", 1300, -560);
+            // Villagers: Main Street and Front Street, where the shops are
+            for (let i = 0; i < 9; i++)
+                townFolk(random() > 0.5 ? "VILLAGER_MALE" : "VILLAGER_FEMALE",
+                         1300 + random(-210, 210), -2300 + random(-500, 1400));
+            for (let i = 0; i < 8; i++)
+                townFolk(random() > 0.5 ? "VILLAGER_MALE" : "VILLAGER_FEMALE",
+                         1300 + random(-1000, 1000), -1140 + random(-160, 160));
+            for (let i = 0; i < 5; i++)
+                townFolk(random() > 0.5 ? "VILLAGER_MALE" : "VILLAGER_FEMALE",
+                         1300 + random(-230, 230), -400 + random(-330, 330));
+            
+            inFarmCutscene = true;
+            farmPhase = 1;
+            
+            
+        } else if (lvl === 4 && scripted) {
+            player.x = 0;
+            player.y = 800; // Spawn near the bottom
+            player.aimAngle = -HALF_PI; // Facing up
+
+            // Generate Tan Army in a large formation (~40m ahead)
+            let cols = 15;
+            let rows = 4;
+            let tanGuys = [];
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    // Spread them out in a grid
+                    let tx = -560 + (c * 80);
+                    let ty = -200 + (r * 80);
+                    let e = new Character(tx, ty, false, "MILITARY_NEUTRAL");
+                    e.aimAngle = HALF_PI; // Facing the player
+                    e.state = "IDLE";     // Keep them planted
+                    enemiesList.push(e);
+                    tanGuys.push(e);
+                }
+            }
+            
+            // Grab the guy dead center in the front row to be the speaker
+            tanLeader = tanGuys[Math.floor(cols / 2) + ( (rows - 1) * cols )]; 
+            
+            inLvl4Cutscene = true;
+            lvl4Phase = 1;
+            lvl4Timer = 90; // Wait 1.5 seconds before walking
+
+        } else {
+            for (let i = 0; i < TARGET_ENEMY_COUNT; i++) spawnSingleEnemy();
+        }
+
+                if (window.militaryToBringM > 0 || window.militaryToBringF > 0) {
+            let spawnCountM = window.militaryToBringM || 0;
+            let spawnCountF = window.militaryToBringF || 0;
+
+            for (let i = 0; i < spawnCountM + spawnCountF; i++) {
+                let isFemale = i >= spawnCountM; // Spawns exact male count, then switches to female
+                let type = isFemale ? "FEMALE_PISTOL" : "NORMAL";
+                
+                let ax = player.x + random(-100, 100);
+                let ay = player.y + random(50, 150);
+                let a = new Character(ax, ay, false, type);
+                a.isFriendly = true;
+                a.isMilitary = true; 
+                a.hp = 300;
+                a.baseState = "FOLLOW";
+                
+                if (typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked) {
+                    a.currentWeapon = WEAPONS.ASSAULT_RIFLE; 
+                    a.shirtCol = color(60, 100, 40); 
+                    a.pantsCol = color(139, 115, 85);
+                } else {
+                    a.shirtCol = color(100, 100, 200); 
+                }
+                
+                enemiesList.push(a);
+            }
+        }
+
+            
+
+
+        for (let i = 0; i < 12; i++) { let bS = getSafeSpawn(false); barrels.push({ x: bS.x, y: bS.y, hp: 20 }); }
+        for (let i = 0; i < floor(random(2, 5)); i++) { let hS = getSafeSpawn(false); healthPacks.push({ x: hS.x, y: hS.y }); }
+        
+        if (isStoryMode) {
+            for (let i = 0; i < 8; i++) { let gS = getSafeSpawn(false); grenadePickups.push({ x: gS.x, y: gS.y }); }
+        }
+    }
+}
+
+
+
+
+
+
+function getBuildingCollisions() {
+  currentCollision = null;
+  currentGrassLotCollision = null;
+
+  // 1. Solve collision for standard 'buildings' (Dumpsters, Walls, Apartment complexes, etc.)
+  for (let b of buildings) {
+    if (typeof inView === 'function' && !inView(b.x, b.y, max(b.w, b.h) + 150)) continue;
+    let bRad = max(b.w, b.h);
+    if (dist(px, py, b.x, b.y) < bRad * 1.5) {
+      if (b.isStreetLight) { fillCurrentCollisionEllipse(b.x, b.y, b.w); } 
+      else if (b.isHouse) { fillCurrentCollision(b.x - b.w / 2 - 10, b.y - b.h / 2 - 10, b.w + 20, b.h + 20); } 
+      else if (b.isDumpster || b.isHouseWall) { fillCurrentCollision(b.x - b.w / 2, b.y - b.h / 2, b.w, b.h, b.angle || 0); } 
+      else if (b.isMall) { fillCurrentCollision(b.x - b.w / 2, b.y - b.h / 2, b.w, b.h); }
+      else if (b.isGrassLot || b.isBasementTable || b.isPond || b.isTower || b.isParkingLot || b.isIndustrial) { fillCurrentGrassLotCollision(b.x - b.w / 2, b.y - b.h / 2, b.w, b.h, b.isWater ? "WATER" : "GRASS"); } 
+      else { fillCurrentCollision(b.x - b.w / 2, b.y - b.h / 2, b.w, b.h); }
+    }
+  }
+
+  // 2. Solve collision for the special 'parkingCars' list!
+  for (let c of parkingCars) {
+    if (dist(px, py, c.x, c.y) < 100) { // Small optimization: only check if close
+        // We calculate the rotated bounding box for the car
+        fillCurrentCollision(c.x - c.w / 2, c.y - c.h / 2, c.w, c.h, c.angle || HALF_PI);
+    }
+  }
+}
+
+
+
+// ==========================================
+// WORLD GENERATION & RENDERING BLOCK
+// ==========================================
+let parkingCars = [];
+
+
+
+function getCityZone(bX, bY) {
+    if (bX === 0 && bY === 0) return "RESIDENTIAL"; 
+    let s = (abs(bX * 17) + abs(bY * 31)) % 10;
+    if (s < 2) return "PARK";
+    if (s < 4) return "COMMERCIAL";
+    if (s < 6) return "INDUSTRIAL";
+    return "RESIDENTIAL";
+}
+
+function legacyGenerateMap() {
+  buildings = [];
+  parkingCars = [];
+  sealedSector = null;              // only Stick City is walled in
+  
+  if (currentLevel === 0) {
+      buildings.push({ x: 0, y: -350, w: 1000, h: 100, isWall: true }); 
+      buildings.push({ x: 0, y: 350, w: 1000, h: 100, isWall: true });  
+      buildings.push({ x: -450, y: 0, w: 100, h: 800, isWall: true });  
+      buildings.push({ x: 450, y: 0, w: 100, h: 800, isWall: true });   
+      
+      if (!inUpstairsRoom) {
+          buildings.push({ x: -200, y: -100, w: 140, h: 70, isBasementTable: true }); 
+          buildings.push({ x: 200, y: -100, w: 140, h: 70, isBasementTable: true });  
+          buildings.push({ x: 160, y: -140, w: 120, h: 100, isTerminal: true });
+      } else {
+          buildings.push({ x: 0, y: -100, w: 160, h: 70, isCouch: true });
+          buildings.push({ x: 0, y: -280, w: 120, h: 30, isTV: true });
+          buildings.push({ x: 150, y: -20, w: 80, h: 40, isUpstairsTable: true });
+      }
+      return; 
+  }
+
+    // --- NEW LEVEL 8: NM-0 HQ INTERIOR ---
+  if (currentLevel === 8) {
+      // 1. Outer Boundary Walls
+      buildings.push({ x: 0, y: -2500, w: 2000, h: 100, isWall: true }); // North
+      buildings.push({ x: 0, y: 1500, w: 2000, h: 100, isWall: true });  // South (Front Door Entrance)
+      buildings.push({ x: -1000, y: -500, w: 100, h: 4000, isWall: true }); // West
+      buildings.push({ x: 1000, y: -500, w: 100, h: 4000, isWall: true });  // East
+
+      // 2. Inner Corridor Walls (Forms the main hallway)
+      buildings.push({ x: 500, y: -1000, w: 50, h: 3000, isWall: true });  // Right inner wall
+      buildings.push({ x: -500, y: -1000, w: 50, h: 3000, isWall: true }); // Left inner wall
+
+      // 3. The Sealed Doorway (Secret Room)
+      buildings.push({ x: 0, y: -800, w: 200, h: 40, isWall: true }); // The door
+      buildings.push({ x: -300, y: -800, w: 400, h: 40, isWall: true }); // Left seal
+      buildings.push({ x: 300, y: -800, w: 400, h: 40, isWall: true }); // Right seal
+
+      // 4. Pillars
+      for(let px = -600; px <= 600; px += 500) {
+          for(let py = -1500; py <= 1000; py += 500) {
+              // Prevent pillars from spawning in the secret room AND the dead-center of the hallway
+              if (py > -800 && px !== -100) { 
+                  buildings.push({ x: px, y: py, w: 80, h: 80, isWall: true });
+              }
+          }
+      }
+
+      // 5. Props
+      buildings.push({ x: -300, y: -1000, w: 200, h: 100, isTerminal: true });
+      buildings.push({ x: 300, y: -1000, w: 200, h: 100, isTerminal: true });
+      buildings.push({ x: 0, y: 0, w: 400, h: 200, isUpstairsTable: true });
+      
+      return;
+  }
+
+
+
+  if (currentLevel === 1 || currentLevel === 2 || currentLevel === 6) {
+    let blockSize = 960; let sidewalkW = 45; 
+    let usableSize = blockSize - (sidewalkW * 2); 
+    let alleys = 2; let alleyWidth = 120; 
+    let bldSize = (usableSize - (alleys * alleyWidth)) / 3; 
+    
+    let startBx = (currentLevel === 1) ? -3 : -1;
+    let endBx = (currentLevel === 1) ? 3 : 1;
+    let startBy = (currentLevel === 1) ? -3 : -1;
+    let endBy = (currentLevel === 1) ? 3 : 1;
+
+    if (currentLevel === 1) {
+        // The two Great Gates. NORTH leads to the NM-0 HQ; SOUTH is the one the
+        // opening objective sends you at. Both are shootable walls whose collapse
+        // fires triggerGateAmbush(), so each needs its own slab -- the southern
+        // one used to be a copy-paste of the northern slab's y, which left the
+        // south gate with guard walls but no gate, and no way to breach it.
+        buildings.push({ x: 600, y: -4200, w: 9600, h: 800, isGovFortress: true, details: [], hp: 3000, maxHp: 3000, hitFlash: 0 });
+        buildings.push({ x: 400, y: -3700, w: 150, h: 40, isWall: true });
+        buildings.push({ x: 800, y: -3700, w: 150, h: 40, isWall: true });
+
+        // Mirrors the north gate: inner face at y = 5000, guard walls 100 short of it.
+        buildings.push({ x: 600, y: 5400, w: 9600, h: 800, isGovFortress: true, details: [], hp: 3000, maxHp: 3000, hitFlash: 0 });
+        buildings.push({ x: 400, y: 4900, w: 150, h: 40, isWall: true });
+        buildings.push({ x: 800, y: 4900, w: 150, h: 40, isWall: true });
+
+        // The curtain wall between the two Great Gates.
+        //
+        // Both gates run 9600 wide centred on x = 600, so they cover
+        // x -4200..5400 and stop dead at those ends -- the city was open on
+        // its east and west flanks and you could simply walk around either
+        // gate. These two runs close it: they sit immediately outside the gate
+        // ends and span the full distance from the north gate's outer face
+        // (y -4600) to the south gate's outer face (y 5800), so the four
+        // corners meet with no seam and the sector is sealed. North and south
+        // gates are now the only ways through.
+        //
+        // isGiantBarrier is NM-0's own wall art -- panelled slab, segment
+        // joints, and hazard beacons that the renderer already aims at
+        // whichever face points back into the city. It carries no hp, so the
+        // wall stops bullets and sparks but can never be breached; the gates
+        // remain the only destructible way out.
+        const WALL_T = 500;                       // thickness, east-west
+        const WALL_Y = 600, WALL_H = 10400;       // y -4600 .. 5800
+        buildings.push({ x: -4200 - WALL_T / 2, y: WALL_Y, w: WALL_T, h: WALL_H,
+                         isGiantBarrier: true, details: [] });
+        buildings.push({ x:  5400 + WALL_T / 2, y: WALL_Y, w: WALL_T, h: WALL_H,
+                         isGiantBarrier: true, details: [] });
+
+        // The walkable interior, published for the spawners. Without it the
+        // biome spawn ring -- which only rejects points that land inside a
+        // solid -- would happily drop an enemy on the far side of the curtain
+        // wall whenever the player fought near it, stranding it outside a
+        // sector it cannot re-enter and leaving "area cleared" unreachable.
+        sealedSector = { x0: -4200, x1: 5400, y0: -3800, y1: 5000 };
+    }
+
+    if (currentLevel === 2) {
+        // The Undercity gets the same treatment Stick City has: two breachable
+        // gates on the north and south approaches and a curtain wall down each
+        // flank joining them, so the blocks are genuinely enclosed and the only
+        // way out of the sector is through a barrier you have to blow.
+        //
+        // Sized to this sector rather than copied: its blocks run -1..1, so they
+        // cover x and y -1080..2280 against Stick City's -3480..4080. The gates
+        // are 3600 wide centred on x 600 -- x -1200..2400 -- and the walls sit
+        // immediately outside those ends and span from the north gate's outer
+        // face to the south gate's outer face, so all four corners meet with no
+        // seam to walk through.
+        //
+        // Blowing either gate is what puts the player into the woodland, which
+        // is where the overworld generation actually starts.
+        buildings.push({ x: 600, y: -1800, w: 3600, h: 800, isGovFortress: true, details: [], hp: 3000, maxHp: 3000, hitFlash: 0 });
+        buildings.push({ x: 400, y: -1300, w: 150, h: 40, isWall: true });
+        buildings.push({ x: 800, y: -1300, w: 150, h: 40, isWall: true });
+
+        buildings.push({ x: 600, y: 3000, w: 3600, h: 800, isGovFortress: true, details: [], hp: 3000, maxHp: 3000, hitFlash: 0 });
+        buildings.push({ x: 400, y: 2500, w: 150, h: 40, isWall: true });
+        buildings.push({ x: 800, y: 2500, w: 150, h: 40, isWall: true });
+
+        const UWALL_T = 500;
+        const UWALL_Y = 600, UWALL_H = 5600;      // y -2200 .. 3400
+        buildings.push({ x: -1200 - UWALL_T / 2, y: UWALL_Y, w: UWALL_T, h: UWALL_H,
+                         isGiantBarrier: true, details: [] });
+        buildings.push({ x:  2400 + UWALL_T / 2, y: UWALL_Y, w: UWALL_T, h: UWALL_H,
+                         isGiantBarrier: true, details: [] });
+
+        sealedSector = { x0: -1200, x1: 2400, y0: -1400, y1: 2600 };
+    }
+
+    for (let bX = startBx; bX <= endBx; bX++) {
+      for (let bY = startBy; bY <= endBy; bY++) {
+        let blockStartX = bX * 1200 + 120, blockStartY = bY * 1200 + 120;
+        let bldStartX = blockStartX + sidewalkW, bldStartY = blockStartY + sidewalkW;
+        
+        if (currentLevel === 1) {
+            let isCasino = (bX === 0 && bY === -3);
+            let isTheater = (bX === -1 && bY === -3);
+            let isArena = (bX === -2 && bY === -3);
+            let isAmusementPark = (bX === -3 && bY === -1);
+            let isCircus = (bX === -3 && bY === 0);
+            
+            if (isCasino || isTheater || isArena || isAmusementPark || isCircus) {
+                buildings.push({
+                    x: blockStartX + blockSize/2, y: blockStartY + blockSize/2, w: blockSize - 90, h: blockSize - 90,
+                    isCasino: isCasino, isTheater: isTheater, isArena: isArena, isAmusementPark: isAmusementPark, isCircus: isCircus, details: []
+                });
+                continue; 
+            }
+        }
+
+        let isOuterRing = abs(bX) >= 2 || abs(bY) >= 2;
+        let isLargeBlock = isOuterRing && random() > 0.4 && !(bX === 0 && bY === 0);
+
+        if (isLargeBlock) {
+            let isPark = Math.random() > 0.4;
+            if (isPark) {
+                let lotW = blockSize - 90, lotH = blockSize - 90;
+                let lotX = blockStartX + blockSize/2, lotY = blockStartY + blockSize/2;
+                
+                buildings.push({ x: lotX, y: lotY, w: lotW, h: lotH, isParkingLot: true, isGrassLot: true });
+                
+                let spotW = 100, spotH = 65, aisleW = 80;
+                for (let px = lotX - lotW/2 + 40; px < lotX + lotW/2 - (spotW*2 + aisleW); px += (spotW*2 + aisleW)) {
+                    for (let py = lotY - lotH/2 + 30; py < lotY + lotH/2 - 30; py += spotH) {
+                        let carColors = [[200,30,30], [30,80,200], [200,200,200], [40,40,40], [200,200,30]];
+                        if (random() > 0.6) { parkingCars.push({ x: px + spotW * 0.5, y: py + spotH/2, w: 90, h: 50, isCar: true, isParkingCar: true, col: random(carColors), angle: HALF_PI, hp: 100 }); }
+                        if (random() > 0.6) { parkingCars.push({ x: px + spotW + aisleW + spotW * 0.5, y: py + spotH/2, w: 90, h: 50, isCar: true, isParkingCar: true, col: random(carColors), angle: -HALF_PI, hp: 100 }); }
+                    }
+                }
+            } else {
+                let mall = { x: blockStartX + blockSize/2, y: blockStartY + blockSize/2, w: blockSize - 90, h: blockSize - 90, isMall: true, details: [] };
+                for(let i = 0; i < 15; i++) {
+                    let dx, dy, valid = false, attempts = 0;
+                    while(!valid && attempts < 30) {
+                        dx = random(-mall.w/2 + 30, mall.w/2 - 30); dy = random(-mall.h/2 + 30, mall.h/2 - 30); valid = true;
+                        if (abs(dx) < mall.w/4 + 25 && abs(dy) < mall.h/4 + 25) valid = false; 
+                        if (valid) { for(let exist of mall.details) { if(dist(dx, dy, exist.x, exist.y) < 55) { valid = false; break; } } }
+                        attempts++;
+                    }
+                    if (valid) mall.details.push({type: 'hvac_large', x: dx, y: dy});
+                }
+                buildings.push(mall);
+            }
+        } else {
+            let cols = (bX === 0 && bY === 0) ? 3 : floor(random(2, 5));
+            let rows = (bX === 0 && bY === 0) ? 3 : floor(random(2, 5));
+            let cellW = usableSize / cols, cellH = usableSize / rows;
+            
+            for (let i = 0; i < cols; i++) {
+              for (let j = 0; j < rows; j++) {
+                if ((bX !== 0 || bY !== 0) && random() > 0.85) continue; 
+                
+                let bx = bldStartX + i * cellW + cellW / 2, by = bldStartY + j * cellH + cellH / 2;
+                let gapX = random(90, 130), gapY = random(90, 130); 
+                let bw = cellW - gapX, bh = cellH - gapY;
+                
+                let b = { x: bx, y: by, w: bw, h: bh, isPalm: false, isRock: false, isAlienPlant: false, isEnergyPole: false, isAlienBldg: false, isGrassLot: false, isCar: false, isPyramid: false, isChip: false, isPinkPlanet: false, isDumpster: false, isStreetLight: false, isHouse: false, details: [], style: floor(random(4)) };
+                
+                if (currentLevel === 6) { b.isAlienPlant = random() > 0.6; b.isEnergyPole = !b.isAlienPlant && random() > 0.7; b.isAlienBldg = !b.isAlienPlant && !b.isEnergyPole; }
+                if (currentLevel === 1 && bX === 0 && bY === 0 && j === 1 && i === 1) { b.isHouse = true; b.w = 160; b.h = 100; }
+                
+                if (currentLevel === 1 || currentLevel === 2) {
+                    let numDet = floor(random(1, 4));
+                    for(let d = 0; d < numDet; d++) {
+                        let t = random(['hvac', 'vent', 'access']);
+                        if (d === 0 && random() > 0.9 && Math.min(bw, bh) > 100) t = 'helipad';
+                        let detX, detY, valid = false, attempts = 0;
+                        let detR = (t === 'hvac' ? 22 : 16); 
+                        
+                        while(!valid && attempts < 25) {
+                            detX = random(-bw/2 + detR + 5, bw/2 - detR - 5); detY = random(-bh/2 + detR + 5, bh/2 - detR - 5); valid = true;
+                            for(let exist of b.details) { let eR = (exist.type === 'hvac' ? 22 : 16); if (dist(detX, detY, exist.x, exist.y) < detR + eR + 5) { valid = false; break; } }
+                            attempts++;
+                        }
+                        if(valid) b.details.push({ type: t, x: detX, y: detY });
+                    }
+                }
+                buildings.push(b);
+              }
+            }
+        }
+        
+        if (currentLevel === 2) {
+            for (let k = 0; k < 3; k++) { 
+                let isVert = random() > 0.5, aIdx = floor(random(alleys)), dx = 0, dy = 0, bldSizeL2 = usableSize / 3;
+                if (isVert) { dx = bldStartX + bldSizeL2 + aIdx * (bldSizeL2 + alleyWidth) + alleyWidth / 2; dy = bldStartY + random(usableSize); dx += (alleyWidth / 2 - 14) * random([-1, 1]); } 
+                else { dy = bldStartY + bldSizeL2 + aIdx * (bldSizeL2 + alleyWidth) + alleyWidth / 2; dx = bldStartX + random(usableSize); dy += (alleyWidth / 2 - 14) * random([-1, 1]); }
+                buildings.push({ x: dx, y: dy, w: 40, h: 25, isPalm: false, isRock: false, isAlienPlant: false, isEnergyPole: false, isAlienBldg: false, isGrassLot: false, isCar: false, isPyramid: false, isChip: false, isPinkPlanet: false, isDumpster: true, isStreetLight: false, angle: isVert ? HALF_PI : 0 });
+            }
+        }
+        
+        if (currentLevel === 1 || currentLevel === 2) {
+            let offset = -5;
+            buildings.push({ x: blockStartX + offset, y: blockStartY + offset, w: 16, h: 16, isStreetLight: true });
+            buildings.push({ x: blockStartX + blockSize - offset, y: blockStartY + offset, w: 16, h: 16, isStreetLight: true });
+            buildings.push({ x: blockStartX + offset, y: blockStartY + blockSize - offset, w: 16, h: 16, isStreetLight: true });
+            buildings.push({ x: blockStartX + blockSize - offset, y: blockStartY + blockSize - offset, w: 16, h: 16, isStreetLight: true });
+        }
+      }
+    }
+
+    if ((currentLevel === 1 || currentLevel === 2) && isStoryMode) {
+        let cDist = (currentLevel === 1) ? 3 : 1;
+        let corners = [ 
+            { x: -cDist * 1200 + 600, y: -cDist * 1200 + 600 }, 
+            { x:  cDist * 1200 + 600, y: -cDist * 1200 + 600 }, 
+            { x: -cDist * 1200 + 600, y:  cDist * 1200 + 600 }, 
+            { x:  cDist * 1200 + 600, y:  cDist * 1200 + 600 } 
+        ];
+        let chosenCorners = [];
+        while (chosenCorners.length < 2) { 
+            let randCorner = corners[Math.floor(Math.random() * corners.length)]; 
+            if (!chosenCorners.includes(randCorner)) chosenCorners.push(randCorner); 
+        }
+        for (let pt of chosenCorners) {
+            for (let i = buildings.length - 1; i >= 0; i--) { 
+                let b = buildings[i]; 
+                if (!b.isWall && !b.isHouse && dist(pt.x, pt.y, b.x, b.y) < 250) { buildings.splice(i, 1); } 
+            }
+            buildings.push({ x: pt.x, y: pt.y, w: 120, h: 120, isTower: true, hp: 2000, maxHp: 2000 });
+        }
+    }
+
+  } else if (currentLevel === 7) {
+    let blockSize = 960; let alleys = 2; let alleyWidth = 110; let bldSize = (blockSize - (alleys * alleyWidth)) / 3; 
+    for (let bX = -1; bX <= 1; bX++) {
+      for ( let bY = -1; bY <= 1; bY++) {
+        let startX = bX * 1200 + 120, startY = bY * 1200 + 120;
+        for (let i = 0; i < 3; i++) {
+          for (let j = 0; j < 3; j++) {
+            let bx = startX + i * (bldSize + alleyWidth) + bldSize / 2;
+            let by = startY + j * (bldSize + alleyWidth) + bldSize / 2;
+            let bw = bldSize + random(-15, 15), bh = bldSize + random(-15, 15);
+            buildings.push({ x: bx, y: by, w: bw, h: bh, isPalm: false, isRock: false, isAlienPlant: false, isEnergyPole: false, isAlienBldg: false, isGrassLot: false, isCar: false, isPyramid: random() > 0.6, isChip: random() > 0.5, isPinkPlanet: random() > 0.7, isDumpster: false, isStreetLight: false });
+          }
+        }
+      }
+    }
+  } else if (currentLevel === 3) {
+      buildings.push({ x: -600, y: -400, w: 300, h: 240, isBarn: true });
+      buildings.push({ x: -600, y: 300, w: 400, h: 400, isCropField: true });
+      
+      // Cow pen. Horizontal rails inset by the post width so the four corners
+      // carry one solid each instead of two stacked on the same spot -- the same
+      // doubling the town corrals had.
+      buildings.push({ x: -600, y: -100, w: 390, h: 10, isFence: true, hp: 2000, maxHp: 2000 });
+      buildings.push({ x: -600, y:  100, w: 390, h: 10, isFence: true, hp: 2000, maxHp: 2000 });
+      buildings.push({ x: -800, y: 0, w: 10, h: 190, isFence: true, hp: 2000, maxHp: 2000 });
+      buildings.push({ x: -400, y: 0, w: 10, h: 190, isFence: true, hp: 2000, maxHp: 2000 });
+
+      buildings.push({ x: 500, y: -600, w: 250, h: 160, isGasStation: true });
+      buildings.push({ x: 400, y: -200, w: 180, h: 120, isLiquorStore: true });
+      buildings.push({ x: 450, y: 250, w: 300, h: 200, isMarket: true });
+
+      let townCoords = [
+          // Nudged 35 and 65 west. At their original x these two shanties and
+          // the STAGE DEPOT shared 30 units of footprint -- a pre-existing
+          // overlap, drawn one over the other.
+          {x: 715, y: -400, w: 120, h: 100}, {x: 835, y: -350, w: 100, h: 120},
+          {x: 800, y: -100, w: 150, h: 140}, {x: 950, y: 50, w: 110, h: 90},
+          {x: 700, y: 150, w: 130, h: 130},  {x: 850, y: 400, w: 160, h: 110},
+          {x: 650, y: 550, w: 100, h: 100},  {x: 900, y: 600, w: 140, h: 140},
+          {x: 450, y: 700, w: 220, h: 160, isApartment: true}, 
+          {x: 800, y: -700, w: 180, h: 150, isApartment: true} 
+      ];
+      
+      for (let t of townCoords) {
+          buildings.push({ x: t.x, y: t.y, w: t.w, h: t.h, isShanty: !t.isApartment, isApartment: t.isApartment });
+      }
+
+      // Moved south, clear of Dry Gulch.
+      //
+      // These sat at y -600..400 on Main Street, which was fine while the
+      // western town stopped at y -850 -- the comment below still says "north
+      // of the trailer park". Now that the town runs down to the church and the
+      // livery at y -180, they were parked in the middle of it, modern caravans
+      // between a schoolhouse and a stage depot. Pushed past the town's south
+      // archway, where they read as the shanty overflow outside the town line.
+      let trailerParkCoords = [
+          {x: 1250, y:  700, w: 180, h: 80}, {x: 1250, y:  900, w: 180, h: 80},
+          {x: 1250, y: 1100, w: 180, h: 80}, {x: 1250, y: 1300, w: 180, h: 80},
+          {x: 1250, y: 1500, w: 180, h: 80}, {x: 1250, y: 1700, w: 180, h: 80},
+          {x: 1450, y:  800, w: 80, h: 180}, {x: 1450, y: 1200, w: 80, h: 180},
+          {x: 1450, y: 1600, w: 80, h: 180}
+      ];
+      
+      for (let t of trailerParkCoords) {
+          buildings.push({ x: t.x, y: t.y, w: t.w, h: t.h, isTrailer: true });
+      }
+/// --- WESTERN TOWN (North of Trailer Park) ---
+      // --- WESTERN TOWN (North of Trailer Park) ---
+      // ###################################################################
+      //  DRY GULCH
+      //  Ten storefronts in two short columns was a film set, not a town. Laid
+      //  out properly it is a crossroads settlement: Main Street running north
+      //  to south, Front Street cutting east to west, a plaza where they meet,
+      //  and the trades that cannot sit on a high street -- livery, corrals,
+      //  smithy yard, depot, mine head, boot hill -- pushed out to the edges
+      //  where they belong. Roughly 2500 by 3400 units against the old 800 by
+      //  1200, with twenty-nine named premises instead of ten.
+      //
+      //  LAYOUT. This is the plan the town was laid out to, unchanged: two
+      //  columns flanking Main Street at MAIN_X +/- 290, Front Street crossing
+      //  at FRONT_Y with a row on each side, the trades that cannot sit on a
+      //  high street pushed out to the edges. The only building that moved is
+      //  the mine head, and only sideways -- it straddled Main Street's centre
+      //  line, with the carriageway and its ruts running under it, and there is
+      //  no width of road that both reaches the north end of town and misses a
+      //  building parked on the centre line.
+      //
+      //  ORIENTATION. What changed is which way each premises looks. Every
+      //  storefront used to be drawn facing down the screen with only a
+      //  vertical mirror available, so both kerbs of a street that runs north to
+      //  south showed the camera their front instead of showing it to the
+      //  street. Buildings carry a `facing` now and the renderer rotates to it:
+      //  west kerb faces EAST, east kerb faces WEST, and the two sides of Front
+      //  Street face each other. The footprint is untouched -- a 210 x 140
+      //  premises turned east simply has a 140-long frontage and 210 of depth
+      //  behind it, which is the shape of a real storefront anyway.
+      //
+      //  ARCHETYPE. `arch` picks one of nine silhouettes -- see
+      //  drawWesternBuilding(). Chosen by what the premises does, the way a real
+      //  frontier street got its variety: a bank could afford dressed stone, a
+      //  livery was board and batten, an assay clerk worked out of mud brick, a
+      //  bath house was canvas until the boom held.
+      //
+      //  ACCENT. `accent` is the 10% of the 60/30/10 split -- oxide red or
+      //  verdigris on that building's doors, shutters, awning and sign border,
+      //  and nothing else. Left off entirely on about a third of the town so the
+      //  accents stay sparse.
+      // ###################################################################
+      const MAIN_X = 1300;          // Main Street centre line
+      const FRONT_Y = -1140;        // Front Street centre line (and the plaza)
+      const WEST_COL = MAIN_X - 290, EAST_COL = MAIN_X + 290;
+
+      let westernBuildings = [
+          // -- Main Street, north end: the respectable trades ---------------
+          { x: WEST_COL,      y: -2560, w: 210, h: 140, sign: "HOTEL",         f: "E", arch: "TWO_STOREY",  accent: "red" },
+          { x: EAST_COL - 10, y: -2560, w: 180, h: 140, sign: "JAIL",          f: "W", arch: "STONE" },
+          { x: WEST_COL + 10, y: -2280, w: 190, h: 130, sign: "TELEGRAPH",     f: "E", arch: "FALSE_FRONT" },
+          { x: EAST_COL,      y: -2280, w: 200, h: 130, sign: "ASSAY OFFICE",  f: "W", arch: "STONE", accent: "teal" },
+          { x: WEST_COL,      y: -2000, w: 200, h: 135, sign: "GENERAL STORE", f: "E", arch: "FALSE_FRONT", accent: "teal" },
+          { x: EAST_COL - 10, y: -2000, w: 180, h: 135, sign: "SHERIFF",       f: "W", arch: "STONE", accent: "red" },
+          { x: WEST_COL + 5,  y: -1730, w: 230, h: 145, sign: "SALOON",        f: "E", arch: "TWO_STOREY", accent: "teal" },
+          { x: EAST_COL,      y: -1730, w: 195, h: 130, sign: "BANK",          f: "W", arch: "STONE", accent: "red" },
+          { x: WEST_COL,      y: -1470, w: 175, h: 125, sign: "DOCTOR",        f: "E", arch: "FALSE_FRONT", accent: "red" },
+          { x: EAST_COL + 5,  y: -1470, w: 200, h: 125, sign: "BLACKSMITH",    f: "W", arch: "BARN" },
+
+          // -- Front Street, north side (facing down onto the crossing) -----
+          { x: MAIN_X - 830, y: FRONT_Y - 210, w: 200, h: 130, sign: "FEED & SEED", f: "S", arch: "BARN" },
+          { x: MAIN_X - 560, y: FRONT_Y - 210, w: 185, h: 130, sign: "BARBER",      f: "S", arch: "FALSE_FRONT", accent: "red" },
+          { x: MAIN_X + 560, y: FRONT_Y - 210, w: 210, h: 130, sign: "LAND OFFICE", f: "S", arch: "ADOBE" },
+          { x: MAIN_X + 840, y: FRONT_Y - 210, w: 190, h: 130, sign: "GUNSMITH",    f: "S", arch: "FALSE_FRONT", accent: "teal" },
+
+          // -- Front Street, south side (turned to face back up) ------------
+          { x: MAIN_X - 830, y: FRONT_Y + 230, w: 205, h: 130, sign: "DRY GOODS",    f: "N", arch: "FALSE_FRONT", accent: "red" },
+          { x: MAIN_X - 555, y: FRONT_Y + 230, w: 190, h: 130, sign: "BATH HOUSE",   f: "N", arch: "TENT", accent: "teal" },
+          { x: MAIN_X + 555, y: FRONT_Y + 230, w: 195, h: 130, sign: "TELEGRAPH CO", f: "N", arch: "ADOBE" },
+          { x: MAIN_X + 835, y: FRONT_Y + 230, w: 215, h: 130, sign: "UNDERTAKER",   f: "N", arch: "CABIN", accent: "red" },
+
+          // -- Main Street, south end --------------------------------------
+          { x: WEST_COL,      y: -720, w: 195, h: 130, sign: "SCHOOLHOUSE",   f: "E", arch: "CHAPEL", hasBell: true },
+          { x: EAST_COL,      y: -720, w: 205, h: 130, sign: "MERCANTILE",    f: "W", arch: "FALSE_FRONT", accent: "teal" },
+          { x: WEST_COL + 10, y: -450, w: 200, h: 135, sign: "STAGE DEPOT",   f: "E", arch: "BARN" },
+          { x: EAST_COL - 5,  y: -450, w: 190, h: 130, sign: "PRINT SHOP",    f: "W", arch: "FALSE_FRONT" },
+          { x: WEST_COL - 10, y: -180, w: 185, h: 175, sign: "CHURCH",        f: "E", arch: "CHAPEL" },
+          { x: EAST_COL + 15, y: -180, w: 240, h: 140, sign: "LIVERY STABLE", f: "W", arch: "BARN", accent: "red" },
+
+          // -- Outskirts ----------------------------------------------------
+          { x: MAIN_X - 1080, y: -1900, w: 230, h: 150, sign: "MILL",             f: "E", arch: "BARN" },
+          { x: MAIN_X + 1120, y: -1900, w: 215, h: 145, sign: "STOCKYARD OFFICE", f: "W", arch: "ADOBE", accent: "teal" },
+          { x: MAIN_X - 1120, y: -420,  w: 200, h: 140, sign: "TANNERY",          f: "E", arch: "CABIN" },
+          { x: MAIN_X + 1150, y: -430,  w: 245, h: 150, sign: "FREIGHT BARN",     f: "W", arch: "BARN", accent: "red" },
+          // Was x MAIN_X + 30: dead on Main Street's centre line, with the
+          // carriageway painted under it and the ruts running through the shaft
+          // collar. Moved west onto its own bench at the head of the street,
+          // which is where a mine head belongs -- above the town, not in it.
+          { x: MAIN_X - 520, y: -2900, w: 260, h: 160, sign: "MINE HEAD",         f: "S", arch: "HEADFRAME" }
+      ];
+      for (let t of westernBuildings) {
+          buildings.push({ x: t.x, y: t.y, w: t.w, h: t.h, isWesternBldg: true,
+                           signText: t.sign, arch: t.arch, accent: t.accent,
+                           hasBell: t.hasBell,
+                           isChurch: t.arch === "CHAPEL" && !t.hasBell,
+                           isLivery: t.arch === "BARN",
+                           facing: t.f });
+      }
+
+      // -- Street furniture -------------------------------------------------
+      // Hand-placed rather than scattered: a trough belongs beside a hitching
+      // rail, barrels stack against a wall, hay goes by the stable. Randomly
+      // strewn props are what makes a town look like a prop bin.
+      const townProps = [
+          // Water troughs and barrels along Main Street, alternating kerbs
+          { x: MAIN_X - 150, y: -2420, w: 74, h: 30, isCrateProp: true },
+          { x: MAIN_X + 150, y: -2150, w: 74, h: 30, isCrateProp: true },
+          { x: MAIN_X - 150, y: -1870, w: 74, h: 30, isCrateProp: true },
+          { x: MAIN_X + 150, y: -1600, w: 74, h: 30, isCrateProp: true },
+          { x: MAIN_X - 150, y: -1330, w: 74, h: 30, isCrateProp: true },
+          { x: MAIN_X + 150, y: -600,  w: 74, h: 30, isCrateProp: true },
+          { x: MAIN_X - 150, y: -330,  w: 74, h: 30, isCrateProp: true },
+          // Crates stacked outside the stores that would have them
+          { x: WEST_COL + 130, y: -1930, w: 44, h: 44, isCrateProp: true },
+          { x: WEST_COL + 130, y: -1880, w: 38, h: 38, isCrateProp: true },
+          { x: EAST_COL + 130, y: -655,  w: 44, h: 44, isCrateProp: true },
+          { x: MAIN_X - 700,  y: FRONT_Y - 120, w: 44, h: 44, isCrateProp: true },
+          { x: MAIN_X + 950,  y: FRONT_Y + 150, w: 44, h: 44, isCrateProp: true },
+          // Hay by the stable, the freight barn and the mill
+          { x: EAST_COL + 170, y: -100, w: 60, h: 46, isHayBale: true },
+          { x: EAST_COL + 170, y: -30,  w: 60, h: 46, isHayBale: true },
+          { x: MAIN_X + 1150,  y: -320, w: 60, h: 46, isHayBale: true },
+          { x: MAIN_X - 1080,  y: -1790, w: 60, h: 46, isHayBale: true },
+          // Wagons: one at the depot, one at the freight barn, one broken down
+          { x: WEST_COL + 150, y: -370, w: 96, h: 54, isWagonProp: true },
+          { x: MAIN_X + 1010,  y: -430, w: 96, h: 54, isWagonProp: true },
+          { x: MAIN_X - 980,   y: -1000, w: 96, h: 54, isWagonProp: true },
+          // The town well on the plaza's western apron, off both carriageways,
+          // and a second one out by the corrals
+          { x: MAIN_X - 430, y: FRONT_Y - 320, w: 58, h: 58, isWell: true },
+          { x: MAIN_X + 1010, y: -1750, w: 58, h: 58, isWell: true },
+          // Water towers: one for the town, one for the depot
+          { x: MAIN_X + 430, y: -2700, w: 72, h: 72, isWaterTower: true },
+          { x: MAIN_X - 430, y: -560,  w: 72, h: 72, isWaterTower: true },
+          // Cacti on the approaches, where nothing has been cleared
+          { x: MAIN_X - 1320, y: -2300, w: 40, h: 66, isCactusProp: true },
+          { x: MAIN_X + 1400, y: -2500, w: 40, h: 72, isCactusProp: true },
+          { x: MAIN_X - 1360, y: -800,  w: 40, h: 60, isCactusProp: true },
+          { x: MAIN_X + 1420, y: -60,   w: 40, h: 70, isCactusProp: true },
+          { x: MAIN_X - 800,  y: -3080, w: 40, h: 64, isCactusProp: true },
+          { x: MAIN_X + 340,  y: -3120, w: 40, h: 58, isCactusProp: true }
+      ];
+      for (let t of townProps) buildings.push(t);
+
+      // -- Corrals ----------------------------------------------------------
+      // Two stock pens east of the livery, built from fence segments so they
+      // block movement and take damage like every other fence in the game.
+      // A stock pen: four rails on the boundary with a gate in the town-facing
+      // side.
+      //
+      // The first version ran the top and bottom rails the full width AND the
+      // side rails the full height, so all four corners carried two solids on
+      // the same spot -- thirteen overlapping pairs across three pens, which is
+      // the doubled, thickened corners. The horizontal rails are inset by one
+      // post now so they butt against the uprights instead of through them, and
+      // the gate is a measured gap rather than "skip the first segment".
+      const pen = (cx, cy, pw, ph) => {
+          const T = 14, SEG = 100, GATE = 170;
+          const x0 = cx - pw / 2, x1 = cx + pw / 2;
+          const y0 = cy - ph / 2, y1 = cy + ph / 2;
+          const rail = (ax, ay, w, h) =>
+              buildings.push({ x: ax, y: ay, w: w, h: h, isFence: true, hp: 60, maxHp: 60 });
+
+          const innerW = pw - T * 2;
+          for (let px = 0; px < innerW - 0.5; px += SEG) {
+              const seg = Math.min(SEG, innerW - px);
+              rail(x0 + T + px + seg / 2, y0 + T / 2, seg, T);
+              rail(x0 + T + px + seg / 2, y1 - T / 2, seg, T);
+          }
+          const innerH = ph - T * 2;
+          for (let py = 0; py < innerH - 0.5; py += SEG) {
+              const seg = Math.min(SEG, innerH - py);
+              rail(x0 + T / 2, y0 + T + py + seg / 2, T, seg);       // far side, closed
+              // Near side carries the gate, at its southern end.
+              if (y0 + T + py + seg > y1 - T - GATE) continue;
+              rail(x1 - T / 2, y0 + T + py + seg / 2, T, seg);
+          }
+      };
+      pen(MAIN_X + 900, -160, 460, 380);
+      pen(MAIN_X + 900, -1500, 420, 340);
+      pen(MAIN_X - 950, -1500, 400, 320);
+
+      // The old town perimeter is gone.
+      //
+      // It was three fences ringing the original ten-building strip: a 900-wide
+      // run across x 850..1750 at y -2090, and two 1330-long verticals at
+      // x 860 and x 1740. Against a town that now runs from the mine head down
+      // to the church they no longer enclose anything -- the horizontal one
+      // sealed Main Street shut between the assay office and the general store,
+      // and the two verticals ran the length of both boardwalks and straight
+      // across Front Street. That is what was blocking entry.
+      //
+      // The plaza water tower and well went with them: they stood dead centre
+      // on the crossing, and there is a well on the plaza and a tower by the
+      // depot already.
+
+      // Scattered western dressing
+      buildings.push({ x: 1000, y: -1260, w: 75, h: 55, isWagonProp: true });
+      buildings.push({ x: 830,  y: -1900, w: 35, h: 55, isCactusProp: true });
+      buildings.push({ x: 1770, y: -1550, w: 30, h: 50, isCactusProp: true });
+      buildings.push({ x: 950,  y: -1580, w: 30, h: 30, isCrateProp: true });
+      buildings.push({ x: 985,  y: -1560, w: 30, h: 30, isCrateProp: true });
+      buildings.push({ x: 1600, y: -990,  w: 26, h: 26, isTumbleweedProp: true });
+      buildings.push({ x: 1000, y: -990,  w: 24, h: 24, isTumbleweedProp: true });
+
+      // Dusty ground speckles (generated once so they don't shimmer every frame)
+      window.westernDust = [];
+      for (let i = 0; i < 220; i++) {
+          window.westernDust.push({ x: random(830, 1770), y: random(-2160, -660), sz: random(4, 11) });
+      }
+      
+  } else {
+    for (let i = -3; i <= 3; i++) {
+      for (let j = -3; j <= 3; j++) {
+        if (Math.random() > 0.4 && (i != 0 || j != 0)) {
+          let isPalm = (currentLevel === 4) && Math.random() > 0.6; 
+          if (isPalm) { buildings.push({ x: i * 400 + 200, y: j * 400 + 200, w: 30, h: 30, isPalm: true }); } 
+          else {
+              let b = { x: i * 400 + 200, y: j * 400 + 200, w: random(180, 260), h: random(180, 260) };
+              if (currentLevel === 5) b.isRock = random() > 0.7; 
+              buildings.push(b);
+          }
+        }
+      }
+    }
+  }
+}
+
+          
+
+
+
+
+
+
+
+
+
+
+
+
+// ###########################################################################
+//  DRY GULCH PALETTE  —  60 / 30 / 10
+//  The old town was one hue. Every wall, every roof, every post was the same
+//  mid-brown against the same mid-tan ground, so nothing had a hierarchy and
+//  the only saturated colour in the whole settlement was sixty identical
+//  sky-blue window panes. Split three ways instead:
+//
+//  60 %  sun-bleached sand and adobe. Ground, stucco, boardwalk planking, sign
+//        fields. The dominant value, and deliberately low contrast — it is
+//        supposed to recede.
+//  30 %  weathered umber timber and grey stone. Wall boards, shingles, posts,
+//        rails, lintels. The structure that reads against the sand.
+//  10 %  two accents and no more: oxide red and verdigris. Doors, shutters,
+//        awning stripes, sign borders, and one roof each on the hero
+//        buildings. Small areas only — that is what keeps an accent an accent
+//        rather than a third dominant.
+//
+//  Window glass went from sky blue to a dark warm grey with a single pale
+//  reflection sliver. Sixty bright cool rectangles were fighting the accents
+//  for attention and winning.
+// ###########################################################################
+const DG = {
+  sand:    [216, 195, 154], sandLo:  [194, 171, 130], sandHi: [236, 220, 187],
+  adobe:   [212, 188, 150], adobeLo: [180, 154, 118], adobeHi:[233, 213, 179],
+  wood:    [150, 112,  72], woodLo:  [110,  80,  49], woodHi: [180, 140,  95],
+  shingle: [118,  92,  66], shingleHi:[146, 116,  84],
+  stone:   [170, 158, 140], stoneLo: [128, 116, 100], stoneHi:[199, 189, 173],
+  red:     [163,  70,  47], redLo:   [120,  46,  30],
+  teal:    [ 62, 118, 112], tealLo:  [ 38,  84,  80],
+  glass:   [ 78,  88,  86], glassHi: [176, 198, 192],
+  iron:    [ 74,  68,  60], sign:    [233, 217, 183], ink: [46, 34, 26]
+};
+function dgF(c, a) { if (a === undefined) fill(c[0], c[1], c[2]); else fill(c[0], c[1], c[2], a); }
+function dgS(c, w, a) { if (a === undefined) stroke(c[0], c[1], c[2]); else stroke(c[0], c[1], c[2], a); strokeWeight(w); }
+function dgAccent(name) { return name === "teal" ? DG.teal : name === "red" ? DG.red : DG.woodLo; }
+
+// The art for every archetype is authored facing DOWN (+y): boardwalk, door
+// and sign along the bottom edge. `facing` says which world direction that
+// facade should point, and the renderer rotates to suit. A building on the
+// west kerb of a north-south street faces EAST, which is the whole reason the
+// old town read wrong — every storefront on Main Street was showing the camera
+// its front instead of showing it to the street.
+function dgFaceAngle(f) {
+  return f === "W" ? Math.PI / 2 : f === "N" ? Math.PI : f === "E" ? -Math.PI / 2 : 0;
+}
+
+// ---------------------------------------------------------------------------
+// Shared frontier detailing. Each takes the art-space footprint so an
+// archetype only has to say where its pieces go.
+function dgBoards(aw, ah, col, step, y0, y1) {
+  dgS(col, 1, 150);
+  for (let px = -aw / 2 + step; px < aw / 2 - 2; px += step) line(px, y0, px, y1);
+  noStroke();
+}
+function dgBoardwalk(aw, ah, wide) {
+  const over = wide ? 26 : 20, depth = wide ? 30 : 26;
+  dgF(DG.sandLo); noStroke();
+  rect(-aw / 2 - over, ah / 2 - 2, aw + over * 2, depth);
+  dgF(DG.wood, 90);
+  rect(-aw / 2 - over, ah / 2 - 2, aw + over * 2, 5);
+  dgS(DG.woodLo, 1, 170);
+  for (let px = -aw / 2 - over + 2; px < aw / 2 + over; px += 15) line(px, ah / 2 - 2, px, ah / 2 - 2 + depth);
+  noStroke();
+  // Kerb shadow: the plank edge stands a hand above the dirt.
+  fill(0, 0, 0, 40); rect(-aw / 2 - over, ah / 2 - 2 + depth, aw + over * 2, 5);
+}
+function dgHitchRail(aw, ah, off) {
+  const y = ah / 2 + (off === undefined ? 30 : off);
+  dgF(DG.woodLo); noStroke(); rect(-aw / 2 - 12, y, aw + 24, 6);
+  dgS(DG.woodLo, 3);
+  for (let px = -aw / 2 + 4; px <= aw / 2; px += 38) line(px, y, px, y + 16);
+  noStroke();
+  fill(0, 0, 0, 30); rect(-aw / 2 - 12, y + 6, aw + 24, 4);
+}
+// The visible slice of the front wall. Openings belong in here, not scattered
+// over the roof: from directly above you see the roof plane and the top of the
+// facade, and putting windows out on the roof is exactly what made every
+// building read as a flat labelled box.
+function dgFacadeBand(aw, ah, depth, col, colHi) {
+  const y = ah / 2 - depth;
+  fill(0, 0, 0, 54); noStroke(); rect(-aw / 2, y - 5, aw, 7);       // eave shadow
+  dgF(col); rect(-aw / 2, y, aw, depth);
+  dgF(colHi); rect(-aw / 2, y, aw, 5);
+  return y;
+}
+function dgWindow(x, y, w, h, shutter) {
+  dgF(DG.woodLo); noStroke(); rect(x - 2, y - 2, w + 4, h + 4, 1);
+  dgF(DG.glass); rect(x, y, w, h);
+  dgF(DG.glassHi, 110); rect(x + 1.5, y + 1.5, w * 0.32, h - 3);
+  dgS(DG.woodHi, 1, 170); line(x + w / 2, y, x + w / 2, y + h); noStroke();
+  if (shutter) { dgF(shutter); rect(x - 8, y - 1, 6.5, h + 2, 1); rect(x + w + 1.5, y - 1, 6.5, h + 2, 1); }
+}
+function dgDoor(x, y, w, h, col) {
+  dgF(DG.woodLo); noStroke(); rect(x - 3, y - 3, w + 6, h + 3, 1);
+  dgF(col); rect(x, y, w, h);
+  dgF(DG.ink, 55); rect(x, y, w, 3);
+  dgF(DG.sandHi); ellipse(x + w - 5, y + h * 0.5, 3.5, 3.5);
+}
+// A sign hung over the boardwalk, on the street side where it can be read,
+// not tucked in behind the roof line the way the old one was.
+function dgSignPlate(aw, ah, accent) {
+  const y = ah / 2 + 4, w = Math.min(aw - 6, 200);
+  fill(0, 0, 0, 30); noStroke(); rect(-w / 2 + 3, y + 3, w, 17, 2);
+  dgF(DG.sign); dgS(accent, 1.8); rect(-w / 2, y, w, 17, 2);
+  noStroke();
+}
+// Canvas valance over the walk. Two accent bands rather than a full barber
+// pole -- at every 26 units the whole awning read as stripes and the accent
+// stopped being 10% of anything.
+function dgAwning(aw, ah, accent) {
+  dgF(DG.sandHi); noStroke(); rect(-aw / 2 - 12, ah / 2 - 26, aw + 24, 24, 2);
+  dgF(accent, 150);
+  rect(-aw / 2 - 12, ah / 2 - 26, 22, 24);
+  rect(aw / 2 - 10, ah / 2 - 26, 22, 24);
+  dgF(accent, 90); rect(-aw / 2 - 12, ah / 2 - 6, aw + 24, 4);
+  fill(0, 0, 0, 48); rect(-aw / 2 - 12, ah / 2 - 2, aw + 24, 6);
+}
+// Two roof planes meeting at a ridge. A single flat fill is what made every
+// building read as a box; a lit plane and a shaded plane give it a roof.
+function dgGable(aw, ah, col, colHi, inset) {
+  const i = inset === undefined ? 0 : inset;
+  const x0 = -aw / 2 + i, x1 = aw / 2 - i, y0 = -ah / 2 + i, y1 = ah / 2 - i;
+  const my = (y0 + y1) / 2;
+  dgF(colHi); noStroke();
+  quad(x0, y0, x1, y0, x1 - 6, my, x0 + 6, my);
+  dgF(col);
+  quad(x0 + 6, my, x1 - 6, my, x1, y1, x0, y1);
+  dgS(DG.ink, 1.6, 90);
+  line(x0 + 6, my, x1 - 6, my);
+  noStroke();
+}
+
+// ---------------------------------------------------------------------------
+// WESTERN BUILDING ARCHETYPES
+// Nine silhouettes instead of one. A frontier high street was built out of
+// whatever the trade could afford -- cut timber, mud brick, dressed stone,
+// canvas -- and that is where the variety in a real one comes from, so the
+// archetype is chosen by what the premises does, not at random.
+//
+// Every one is built the same way: roof mass first (with a ridge, a parapet or
+// a plane so it is not a flat slab), then the facade band along the street
+// edge, then the openings INSIDE that band, then the walk and the sign.
+// A horse, seen from above, centred on the origin and already rotated by the
+// caller so its head points along +x. Used twice: by a loose horse drawing
+// itself, and by a mounted rider drawing its mount underneath. One function so
+// the two can never drift apart.
+//
+// The gait is the whole animation. Four legs on diagonal pairs -- near fore with
+// off hind -- swinging against each other, the barrel rising and falling on the
+// same phase, the head nodding on half of it and the tail streaming on a slower
+// beat. At a walk the swing is small and the nod is slow; at a gallop the same
+// cycle runs three times as fast and four times as far, which is all it takes to
+// read as a different gait from directly above.
+function drawHorseArt(coat, mane, walk, moving, gallop, sock) {
+  const amp = gallop ? 9 : 3.6;
+  const sw = moving ? sin(walk) * amp : 0;
+  const sw2 = moving ? sin(walk + PI * 0.62) * amp : 0;
+  const heave = moving ? abs(sin(walk)) * (gallop ? 2.6 : 0.9) : 0;
+  const cr = red(coat), cg = green(coat), cb = blue(coat);
+  const dark = (f) => fill(cr * f, cg * f, cb * f);
+
+  push();
+  translate(heave * 0.4, 0);
+
+  // Legs on diagonal pairs, hind heavier than fore.
+  noStroke();
+  dark(0.62);
+  rect(-19 + sw, -13, 7, 9, 3);      // near hind
+  rect(15 + sw2, -12, 6, 8, 3);      // near fore
+  dark(0.5);
+  rect(-19 - sw, 5, 7, 9, 3);        // off hind
+  rect(15 - sw2, 5, 6, 8, 3);        // off fore
+  if (sock) { fill(226, 220, 208); rect(15 + sw2, -12, 6, 3, 2); rect(15 - sw2, 11, 6, 3, 2); }
+
+  // Tail, streaming on a slower beat than the legs.
+  push();
+  translate(-30, 0);
+  rotate(moving ? sin(walk * 0.55) * (gallop ? 0.5 : 0.2) : 0);
+  fill(red(mane), green(mane), blue(mane));
+  quad(0, -3, 0, 3, -15, 6, -13, -5);
+  pop();
+
+  // Barrel: quarters, ribcage, then the withers, so it is not one flat oval.
+  dark(0.86); ellipse(-13, 0, 34, 30);              // hindquarters
+  fill(cr, cg, cb); ellipse(4, 0, 46, 27);          // ribcage
+  dark(1.14); ellipse(9, -4, 30, 12);               // lit top line
+  dark(0.68); ellipse(2, 9, 34, 9);                 // shaded belly line
+
+  // Neck and head, nodding on half the leg beat.
+  push();
+  translate(22, 0);
+  rotate(moving ? sin(walk * 0.5) * (gallop ? 0.22 : 0.08) : 0);
+  fill(cr, cg, cb); quad(-4, -8, 12, -5, 12, 5, -4, 8);            // neck
+  fill(red(mane), green(mane), blue(mane));
+  quad(-4, -8, 12, -5, 12, -2, -4, -4);                            // mane along the crest
+  dark(1.06); ellipse(16, 0, 18, 12);                              // head
+  if (sock) { fill(226, 220, 208); ellipse(20, 0, 7, 5); }         // blaze
+  dark(0.4); ellipse(23, 0, 7, 7);                                 // muzzle
+  fill(18); ellipse(24, -1.6, 1.8, 1.8); ellipse(24, 1.6, 1.8, 1.8);
+  fill(20); ellipse(13, -3.6, 2.6, 2.6); ellipse(13, 3.6, 2.6, 2.6); // eyes
+  dark(0.5); triangle(9, -6, 12, -4, 8, -2); triangle(9, 6, 12, 4, 8, 2); // ears
+  pop();
+  pop();
+}
+
+// Saddle and tack, drawn over the barrel and under the rider.
+function drawHorseTack() {
+  noStroke();
+  fill(74, 52, 34); ellipse(-2, 0, 26, 24);
+  fill(96, 70, 46); ellipse(-2, 0, 20, 18);
+  fill(58, 40, 26); rect(-13, -13, 22, 4, 1); rect(-13, 9, 22, 4, 1);
+  fill(48, 36, 26); rect(14, -7, 16, 2); rect(14, 5, 16, 2);          // reins
+  fill(206, 178, 96); ellipse(-11, -11, 3.5, 3.5); ellipse(-11, 11, 3.5, 3.5);
+}
+
+function drawWesternBuilding(b) {
+  const facing = b.facing || (b.faceNorth ? "N" : "S");
+  const swap = facing === "E" || facing === "W";
+  const aw = swap ? (b.h || 120) : (b.w || 120);   // art-space frontage
+  const ah = swap ? (b.w || 120) : (b.h || 120);   // art-space depth
+  const arch = b.arch || (b.isChurch ? "CHAPEL" : b.isLivery ? "BARN" : "FALSE_FRONT");
+  const accent = dgAccent(b.accent);
+
+  push();
+  translate(b.x, b.y);
+  push();
+  rotate(dgFaceAngle(facing));
+
+  switch (arch) {
+
+    // -- Cut-timber storefront with a false front and an awning -------------
+    case "FALSE_FRONT": {
+      dgBoardwalk(aw, ah);
+      dgF(DG.woodLo); dgS(DG.woodLo, 2); rect(-aw / 2, -ah / 2, aw, ah, 2);
+      noStroke();
+      // Shingle roof, laid in courses running back from the street
+      dgF(DG.shingle); rect(-aw / 2 + 4, -ah / 2 + 4, aw - 8, ah - 8);
+      dgF(DG.shingleHi); rect(-aw / 2 + 4, -ah / 2 + 4, aw - 8, (ah - 8) * 0.45);
+      dgS(DG.woodLo, 1, 110);
+      for (let py = -ah / 2 + 12; py < ah / 2 - 8; py += 11) line(-aw / 2 + 4, py, aw / 2 - 4, py);
+      noStroke();
+      // False front: a parapet standing proud of the roof, throwing its own
+      // shadow back across the shingles
+      dgF(DG.sandLo); rect(-aw / 2 - 5, -ah / 2 - 16, aw + 10, 26, 2);
+      dgF(DG.sandHi); rect(-aw / 2 - 5, -ah / 2 - 16, aw + 10, 8, 2);
+      fill(0, 0, 0, 50); rect(-aw / 2 - 5, -ah / 2 + 10, aw + 10, 9);
+      const fy = dgFacadeBand(aw, ah, 30, DG.wood, DG.woodHi);
+      dgBoards(aw, ah, DG.woodLo, 15, fy + 5, ah / 2);
+      dgWindow(-aw / 2 + 12, fy + 8, 26, 18, accent);
+      dgWindow(aw / 2 - 38, fy + 8, 26, 18, accent);
+      dgDoor(-14, fy + 6, 28, 22, accent);
+      dgAwning(aw, ah, accent);
+      dgSignPlate(aw, ah, accent);
+      dgHitchRail(aw, ah, 30);
+      break;
+    }
+
+    // -- Two storey with a balcony: hotel, saloon ---------------------------
+    case "TWO_STOREY": {
+      dgBoardwalk(aw, ah, true);
+      // Lower mass reads as a ledge around a taller upper storey, which is the
+      // whole point of the archetype from directly above.
+      dgF(DG.woodLo); noStroke(); rect(-aw / 2 - 4, -ah / 2 - 4, aw + 8, ah + 8, 3);
+      dgF(DG.sandLo); rect(-aw / 2, -ah / 2, aw, ah, 2);
+      fill(0, 0, 0, 56); rect(-aw / 2 + 12, -ah / 2 + 16, aw - 24, ah - 44);
+      dgGable(aw - 22, ah - 34, DG.red, [194, 102, 76], 0);
+      // Ridge cap and a stack
+      dgF(DG.redLo); rect(-aw / 2 + 11, -3, aw - 22, 4);
+      dgF(DG.stoneLo); rect(aw / 2 - 34, -ah / 2 + 16, 18, 16, 2);
+      dgF(DG.ink, 120); rect(aw / 2 - 30, -ah / 2 + 20, 10, 8);
+      // Upper balcony across the full frontage, posts down to the walk
+      const by = dgFacadeBand(aw, ah, 44, DG.sandLo, DG.sandHi);
+      dgWindow(-aw / 2 + 14, by + 7, 22, 16, accent);
+      dgWindow(-11, by + 7, 22, 16, accent);
+      dgWindow(aw / 2 - 36, by + 7, 22, 16, accent);
+      dgS(accent, 3, 210); line(-aw / 2 - 12, ah / 2 - 8, aw / 2 + 12, ah / 2 - 8);
+      dgS(accent, 1.8, 150);
+      for (let px = -aw / 2 - 8; px < aw / 2 + 10; px += 14) line(px, ah / 2 - 17, px, ah / 2 - 8);
+      noStroke();
+      dgS(DG.woodLo, 4);
+      for (let px = -aw / 2 + 8; px <= aw / 2; px += 54) line(px, ah / 2 - 2, px, ah / 2 + 24);
+      noStroke();
+      dgDoor(-17, by + 26, 34, 16, accent);
+      dgSignPlate(aw, ah, accent);
+      break;
+    }
+
+    // -- Dressed stone: bank, jail, sheriff, assay office -------------------
+    case "STONE": {
+      fill(0, 0, 0, 30); noStroke(); rect(-aw / 2 - 2, -ah / 2 + 7, aw + 4, ah, 2);
+      // Parapet ring, then the roof deck set down inside it. The old version
+      // was one flat fill of coursed lines, which read as a timber deck.
+      dgF(DG.stoneHi); rect(-aw / 2 - 5, -ah / 2 - 5, aw + 10, ah + 10, 2);
+      dgF(DG.stone); rect(-aw / 2, -ah / 2, aw, ah, 1);
+      dgS(DG.stoneLo, 1.2, 170);
+      for (let py = -ah / 2 + 11; py < ah / 2 - 3; py += 11) {
+        line(-aw / 2, py, aw / 2, py);
+        const off = ((py / 11) | 0) % 2 ? 0 : 20;
+        for (let px = -aw / 2 + 20 + off; px < aw / 2 - 3; px += 40) line(px, py, px, py + 11);
+      }
+      noStroke();
+      fill(0, 0, 0, 46); rect(-aw / 2 + 13, -ah / 2 + 13, aw - 26, ah - 46);
+      dgF(DG.adobeLo); rect(-aw / 2 + 15, -ah / 2 + 15, aw - 30, ah - 50, 1);
+      dgS(DG.adobe, 1.2, 120);
+      for (let py = -ah / 2 + 24; py < ah / 2 - 36; py += 10) line(-aw / 2 + 15, py, aw / 2 - 15, py);
+      noStroke();
+      // Stepped pediment over the entrance, pilasters either side
+      dgF(DG.stoneHi); rect(-aw * 0.2, -ah / 2 - 12, aw * 0.4, 9, 1);
+      dgF(DG.stoneLo); rect(-aw * 0.14, -ah / 2 - 18, aw * 0.28, 7, 1);
+      const sy2 = dgFacadeBand(aw, ah, 32, DG.stoneHi, [212, 203, 189]);
+      dgF(DG.stoneLo); rect(-aw / 2 + 6, sy2, 9, 32); rect(aw / 2 - 15, sy2, 9, 32);
+      dgF(DG.stoneLo); rect(-26, sy2, 7, 32); rect(19, sy2, 7, 32);
+      dgDoor(-16, sy2 + 6, 32, 24, accent);
+      for (const wx of [-aw / 2 + 22, aw / 2 - 46]) {
+        dgWindow(wx, sy2 + 8, 24, 18, null);
+        dgS(DG.iron, 1.8);
+        for (let k = 0; k < 3; k++) line(wx + 5 + k * 7, sy2 + 8, wx + 5 + k * 7, sy2 + 26);
+        noStroke();
+      }
+      dgSignPlate(aw, ah, accent);
+      break;
+    }
+
+    // -- Mud brick with a flat parapet roof and projecting vigas ------------
+    case "ADOBE": {
+      fill(0, 0, 0, 30); noStroke(); rect(-aw / 2 - 3, -ah / 2 + 6, aw + 6, ah, 10);
+      dgF(DG.adobeLo); rect(-aw / 2 - 5, -ah / 2 - 5, aw + 10, ah + 10, 13);
+      dgF(DG.adobe); rect(-aw / 2, -ah / 2, aw, ah, 10);
+      // Flat mud roof inside the parapet, its own colour so the parapet reads
+      dgF(DG.adobeHi); rect(-aw / 2 + 9, -ah / 2 + 9, aw - 18, ah - 40, 7);
+      fill(0, 0, 0, 34); rect(-aw / 2 + 9, -ah / 2 + 9, aw - 18, 7);
+      dgS(DG.adobeLo, 1, 120);
+      for (let py = -ah / 2 + 20; py < ah / 2 - 34; py += 13) line(-aw / 2 + 12, py, aw / 2 - 12, py);
+      noStroke();
+      // Roof beams poking through the wall -- the giveaway of the type
+      dgF(DG.woodLo);
+      for (let px = -aw / 2 + 16; px < aw / 2 - 8; px += 26) rect(px, -ah / 2 - 13, 9, 13, 1);
+      const ay = dgFacadeBand(aw, ah, 30, DG.adobe, DG.adobeHi);
+      for (const wx of [-aw / 2 + 18, aw / 2 - 44]) {
+        fill(0, 0, 0, 50); rect(wx - 3, ay + 5, 28, 22, 2);
+        dgWindow(wx, ay + 7, 22, 17, accent);
+      }
+      fill(0, 0, 0, 54); rect(-19, ay + 4, 38, 28, 2);
+      dgDoor(-15, ay + 6, 30, 24, accent);
+      // Ramada: a brush shade on poles over the entrance
+      dgF(DG.woodLo, 200); rect(-aw / 2 + 8, ah / 2 - 2, aw - 16, 18, 2);
+      dgS(DG.wood, 2, 190);
+      for (let px = -aw / 2 + 12; px < aw / 2 - 10; px += 9) line(px, ah / 2 - 2, px, ah / 2 + 16);
+      noStroke();
+      fill(0, 0, 0, 44); rect(-aw / 2 + 8, ah / 2 + 16, aw - 16, 5);
+      dgS(DG.woodLo, 4);
+      line(-aw / 2 + 12, ah / 2 + 16, -aw / 2 + 12, ah / 2 + 28);
+      line(aw / 2 - 12, ah / 2 + 16, aw / 2 - 12, ah / 2 + 28); noStroke();
+      dgSignPlate(aw, ah, accent);
+      break;
+    }
+
+    // -- Board and batten barn: livery, freight, mill, smithy ---------------
+    case "BARN": {
+      fill(0, 0, 0, 34); noStroke(); rect(-aw / 2 - 2, -ah / 2 + 8, aw + 4, ah, 3);
+      dgF(DG.redLo); rect(-aw / 2 - 5, -ah / 2 - 5, aw + 10, ah + 10, 3);
+      dgGable(aw, ah - 30, DG.red, [190, 96, 70], 0);
+      // Battens over the roof planes, and a hay hatch at the ridge
+      dgS(DG.redLo, 1.6, 130);
+      for (let px = -aw / 2 + 14; px < aw / 2 - 6; px += 22) line(px, -ah / 2 + 3, px, ah / 2 - 33);
+      noStroke();
+      dgF(DG.woodLo); rect(-18, -ah / 2 + (ah - 30) / 2 - 10, 36, 20, 2);
+      dgF(DG.wood); rect(-15, -ah / 2 + (ah - 30) / 2 - 7, 30, 14, 1);
+      // Big sliding doors on the frontage, on their track
+      const dy = dgFacadeBand(aw, ah, 30, DG.woodLo, DG.wood);
+      dgS(DG.iron, 3); line(-aw / 2 + 6, dy + 2, aw / 2 - 6, dy + 2); noStroke();
+      dgF(DG.wood); rect(-aw / 2 + 10, dy + 5, (aw - 20) / 2 - 3, 24);
+      rect(3, dy + 5, (aw - 20) / 2 - 3, 24);
+      dgS(DG.woodLo, 1.6, 190);
+      for (let px = -aw / 2 + 16; px < aw / 2 - 12; px += 14) line(px, dy + 5, px, dy + 29);
+      noStroke();
+      dgF(DG.iron); rect(-4, dy + 5, 8, 24);
+      dgF(accent, 170); rect(-aw / 2 + 10, dy + 5, (aw - 20) / 2 - 3, 4); rect(3, dy + 5, (aw - 20) / 2 - 3, 4);
+      dgSignPlate(aw, ah, accent);
+      break;
+    }
+
+    // -- Gable and spire: church, schoolhouse -------------------------------
+    case "CHAPEL": {
+      fill(0, 0, 0, 34); noStroke(); rect(-aw / 2 - 2, -ah / 2 + 8, aw + 4, ah, 2);
+      dgF(DG.sandLo); rect(-aw / 2 - 6, -ah / 2 - 6, aw + 12, ah + 12, 2);
+      dgGable(aw, ah - 34, DG.teal, [88, 152, 144], 0);
+      dgS(DG.tealLo, 1.2, 120);
+      for (let px = -aw / 2 + 16; px < aw / 2 - 8; px += 20) line(px, -ah / 2 + 3, px, ah / 2 - 37);
+      noStroke();
+      // Bell tower: a square base with a pyramid cap, read as a diamond from
+      // above. The old spire was a flat triangle, which read as an arrow.
+      const tx = 0, ty = -ah / 2 + (ah - 34) * 0.5 - 6;
+      fill(0, 0, 0, 60); rect(tx - 20, ty - 16, 40, 40, 2);
+      dgF(DG.sandLo); rect(tx - 22, ty - 22, 44, 44, 2);
+      dgF(DG.tealLo); quad(tx - 22, ty, tx, ty - 22, tx + 22, ty, tx, ty + 22);
+      dgF([104, 168, 158]); triangle(tx - 22, ty, tx, ty - 22, tx, ty);
+      if (b.hasBell) {
+        dgF(DG.iron); arc(tx, ty + 3, 17, 17, Math.PI, 0); rect(tx - 8.5, ty + 3, 17, 4);
+      } else {
+        dgS(DG.sandHi, 3.2); line(tx, ty - 4, tx, ty + 6); line(tx - 6, ty, tx + 6, ty); noStroke();
+      }
+      const cy2 = dgFacadeBand(aw, ah, 34, DG.sandHi, [244, 234, 212]);
+      // Arched window either side of the doors
+      for (const wx of [-aw / 2 + 14, aw / 2 - 34]) {
+        dgF(DG.woodLo); arc(wx + 10, cy2 + 22, 22, 34, Math.PI, 0);
+        dgF(DG.glass); arc(wx + 10, cy2 + 22, 17, 27, Math.PI, 0);
+        dgF(DG.glassHi, 90); rect(wx + 4, cy2 + 12, 5, 10);
+      }
+      dgDoor(-19, cy2 + 8, 18, 24, accent);
+      dgDoor(1, cy2 + 8, 18, 24, accent);
+      dgF(DG.sandLo); rect(-aw / 2 + 10, ah / 2 - 2, aw - 20, 16, 1);
+      fill(0, 0, 0, 40); rect(-aw / 2 + 10, ah / 2 + 14, aw - 20, 5);
+      dgSignPlate(aw, ah, accent);
+      break;
+    }
+
+    // -- Squared logs, shingle roof, stone chimney -------------------------
+    case "CABIN": {
+      fill(0, 0, 0, 34); noStroke(); rect(-aw / 2 - 2, -ah / 2 + 7, aw + 4, ah, 3);
+      dgF(DG.woodLo); rect(-aw / 2 - 4, -ah / 2 - 4, aw + 8, ah + 8, 4);
+      dgGable(aw, ah - 26, DG.shingle, DG.shingleHi, 0);
+      dgS(DG.woodLo, 1, 110);
+      for (let py = -ah / 2 + 8; py < ah / 2 - 28; py += 8) line(-aw / 2 + 2, py, aw / 2 - 2, py);
+      noStroke();
+      // Log ends showing at the corners
+      dgF(DG.woodHi);
+      for (let py = -ah / 2 + 8; py < ah / 2 - 20; py += 13) {
+        rect(-aw / 2 - 7, py, 9, 9, 3); rect(aw / 2 - 2, py, 9, 9, 3);
+      }
+      // Chimney on the flank, with its own cast shadow
+      fill(0, 0, 0, 62); rect(-aw / 2 + 6, -ah / 2 + 14, 26, 12);
+      dgF(DG.stoneLo); rect(-aw / 2 + 3, -ah / 2 + 3, 24, 22, 2);
+      dgF(DG.stone); rect(-aw / 2 + 6, -ah / 2 + 6, 18, 16, 1);
+      dgF(DG.ink, 150); rect(-aw / 2 + 10, -ah / 2 + 10, 10, 8);
+      const ky = dgFacadeBand(aw, ah, 26, DG.wood, DG.woodHi);
+      dgWindow(aw / 2 - 38, ky + 5, 22, 16, accent);
+      dgWindow(-aw / 2 + 14, ky + 5, 22, 16, accent);
+      dgDoor(-13, ky + 4, 26, 20, accent);
+      // Porch: plank floor on two posts
+      dgF(DG.sandLo); rect(-aw / 2 + 8, ah / 2 - 2, aw - 16, 20, 1);
+      dgS(DG.woodLo, 1, 150);
+      for (let px = -aw / 2 + 12; px < aw / 2 - 10; px += 14) line(px, ah / 2 - 2, px, ah / 2 + 18);
+      dgS(DG.woodLo, 4);
+      line(-aw / 2 + 12, ah / 2 + 4, -aw / 2 + 12, ah / 2 + 22);
+      line(aw / 2 - 12, ah / 2 + 4, aw / 2 - 12, ah / 2 + 22); noStroke();
+      fill(0, 0, 0, 36); rect(-aw / 2 + 8, ah / 2 + 18, aw - 16, 5);
+      dgSignPlate(aw, ah, accent);
+      break;
+    }
+
+    // -- Canvas over a ridge pole, guyed off ------------------------------
+    case "TENT": {
+      fill(0, 0, 0, 34); noStroke(); ellipse(6, 10, aw * 1.05, ah * 0.95);
+      dgS(DG.woodLo, 2, 150);
+      line(-aw / 2 - 16, -ah / 2 - 10, -aw / 2 + 6, -ah / 2 + 8);
+      line(aw / 2 + 16, -ah / 2 - 10, aw / 2 - 6, -ah / 2 + 8);
+      line(-aw / 2 - 16, ah / 2 + 10, -aw / 2 + 6, ah / 2 - 8);
+      line(aw / 2 + 16, ah / 2 + 10, aw / 2 - 6, ah / 2 - 8);
+      noStroke();
+      const rdg = -ah / 2 + (ah - 20) * 0.45;
+      dgF(DG.sandHi); quad(-aw / 2, -ah / 2 + 6, aw / 2, -ah / 2 + 6, aw / 2 - 5, rdg, -aw / 2 + 5, rdg);
+      dgF(DG.sandLo); quad(-aw / 2 + 5, rdg, aw / 2 - 5, rdg, aw / 2, ah / 2 - 14, -aw / 2, ah / 2 - 14);
+      dgF(accent, 130);
+      for (let px = -aw / 2 + 12; px < aw / 2 - 8; px += 34) {
+        rect(px, -ah / 2 + 6, 11, rdg + ah / 2 - 6);
+        rect(px + 3, rdg, 11, ah / 2 - 14 - rdg);
+      }
+      dgS(DG.woodLo, 2.5, 200); line(-aw / 2, rdg, aw / 2, rdg); noStroke();
+      // Open front: a rolled flap and the trade's counter under the eave
+      dgF(DG.woodLo); rect(-aw / 2, ah / 2 - 14, aw, 12, 1);
+      dgF(DG.ink, 130); rect(-aw / 2 + 22, ah / 2 - 12, aw - 44, 8);
+      dgF(DG.sandHi); rect(-aw / 2 + 4, ah / 2 - 16, 18, 14, 3); rect(aw / 2 - 22, ah / 2 - 16, 18, 14, 3);
+      dgSignPlate(aw, ah, accent);
+      break;
+    }
+
+    // -- Mine head: timber headframe over the shaft, ore chute, spoil ------
+    case "HEADFRAME": {
+      fill(0, 0, 0, 40); noStroke(); ellipse(10, 14, aw * 1.15, ah * 1.05);
+      // Spoil heap first, so the timber stands on it
+      dgF(DG.sandLo); ellipse(-aw / 2 + 24, ah / 2 - 10, aw * 0.5, ah * 0.42);
+      dgF(DG.adobeLo); ellipse(-aw / 2 + 20, ah / 2 - 14, aw * 0.34, ah * 0.28);
+      // Hoist house
+      dgF(DG.woodLo); rect(-aw / 2 + 6, -ah / 2 + 8, aw * 0.3, ah * 0.34, 2);
+      dgF(DG.shingle); rect(-aw / 2 + 10, -ah / 2 + 12, aw * 0.3 - 8, ah * 0.34 - 8);
+      // Shaft collar
+      dgF(DG.woodLo); rect(-aw * 0.16, -ah * 0.08, aw * 0.32, ah * 0.32, 2);
+      dgF(DG.ink, 215); rect(-aw * 0.13, -ah * 0.05, aw * 0.26, ah * 0.26);
+      // Headframe legs, splayed and cross-braced -- the silhouette that says
+      // mine from a thousand units away
+      dgS(DG.wood, 6);
+      line(-aw * 0.3, ah * 0.32, -aw * 0.1, -ah * 0.3);
+      line(aw * 0.3, ah * 0.32, aw * 0.1, -ah * 0.3);
+      dgS(DG.woodLo, 4);
+      line(-aw * 0.24, ah * 0.14, aw * 0.24, ah * 0.14);
+      line(-aw * 0.27, ah * 0.24, aw * 0.16, -ah * 0.08);
+      line(aw * 0.27, ah * 0.24, -aw * 0.16, -ah * 0.08);
+      noStroke();
+      // Sheave wheel at the crown
+      dgF(DG.iron); ellipse(0, -ah * 0.32, 26, 26);
+      dgF(DG.stoneLo); ellipse(0, -ah * 0.32, 15, 15);
+      dgF(DG.iron); ellipse(0, -ah * 0.32, 6, 6);
+      // Ore chute running down to a waiting car on its rails
+      dgF(DG.woodLo); quad(aw * 0.12, 0, aw * 0.3, -ah * 0.04, aw * 0.44, ah * 0.3, aw * 0.22, ah * 0.34);
+      dgS(DG.iron, 2.5);
+      line(aw * 0.16, ah * 0.44, aw * 0.46, ah * 0.44);
+      line(aw * 0.16, ah * 0.36, aw * 0.46, ah * 0.36); noStroke();
+      dgF(DG.iron); rect(aw * 0.24, ah * 0.32, 34, 20, 2);
+      dgF(DG.ink, 190); rect(aw * 0.26, ah * 0.34, 30, 14);
+      dgSignPlate(aw, ah, accent);
+      break;
+    }
+  }
+  pop();
+
+  // Lettering is drawn after the rotation is popped so it never comes out
+  // upside down, and turned to run ALONG the sign board -- the plate spans the
+  // shopfront, which on a north-south street makes it a tall thin board.
+  const d = ah / 2 + 12;
+  const sx = facing === "W" ? -d : facing === "E" ? d : 0;
+  const sy = facing === "N" ? -d : facing === "S" ? d : 0;
+  push();
+  translate(sx, sy);
+  if (swap) rotate(-Math.PI / 2);
+  dgF(DG.ink); noStroke(); textAlign(CENTER, CENTER); textSize(10); textFont('sans-serif');
+  text(b.signText || "STORE", 0, 0);
+  pop();
+  pop();
+}
+
+// ###########################################################################
+//  GROUND ELEVATION
+//  A top-down camera has no horizon to sell height with, so relief has to be
+//  carried by the two cues that survive an orthographic overhead view: how big
+//  a figure reads, and where its shadow falls. Ground higher up is nearer the
+//  camera, so anything standing on it is drawn larger; ground lower down is
+//  further away and draws smaller. The terrain itself gets a lit top, a shaded
+//  scarp on the side the light does not reach, and stepped treads where a
+//  flight of stairs takes the height in one go.
+//
+//  The field is a handful of feathered plateaux, evaluated as a max rather than
+//  a sum so overlapping benches step instead of piling up. Everything reads
+//  from it: the render scale, the shadow throw, and how hard it is to walk up.
+// ###########################################################################
+// A figure on the top bench reads a quarter larger than one on the flat. At the
+// first pass this was 11% and you could not see it, which is the whole point of
+// the cue -- if the size difference is not obvious the relief is not there.
+const ELEV_SCALE   = 0.0026;
+const ELEV_SCALE_LO = 0.88, ELEV_SCALE_HI = 1.30;
+const ELEV_ZONES = {
+  3: [
+    // The mine bench: the shelf the headframe and its spoil stand on at the
+    // head of Main Street, and the stair the haul road takes down to the town.
+    { x: 780,  y: -2900, w: 900, h: 560, f: 190, z: 96, treads: 0 },
+    { x: 1170, y: -2900, w: 170, h: 250, f: 55,  z: 64, treads: 7 },
+    // Boot hill. Deliberately laid ACROSS the south end of Main Street rather
+    // than tucked off to one side: the walk out of town climbs it, so the size
+    // change happens on the route everybody takes instead of somewhere you have
+    // to go looking for it.
+    { x: 1240, y: -230, w: 880, h: 600, f: 200, z: 58, treads: 0 },
+    { x: 1300, y: 130,  w: 380, h: 220, f: 55,  z: 40, treads: 6 },
+    // The stock bench east of town -- the corrals stand above the flat, which is
+    // why the drovers' road runs below them.
+    { x: 2200, y: -160, w: 700, h: 620, f: 230, z: 74, treads: 0 },
+    { x: 1900, y: -160, w: 170, h: 280, f: 58,  z: 48, treads: 6 },
+    // Hotel and bank steps: small, but they put the two hero buildings up a
+    // course from the walk.
+    { x: 1010, y: -2560, w: 250, h: 250, f: 40, z: 18, treads: 3 },
+    { x: 1590, y: -1730, w: 240, h: 240, f: 40, z: 18, treads: 3 }
+  ]
+};
+// The relief belongs to the authored sector. Once a level's arc is cleared it
+// becomes a pure streamed biome with no hand-placed town, and a mine bench with
+// no mine on it would just be a bright patch in the sand.
+function elevZones() { return authoredCore ? (ELEV_ZONES[currentLevel] || null) : null; }
+function smooth01(t) { return t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t); }
+
+// Height of the ground under a point, in world units.
+function groundElev(x, y) {
+  const zs = elevZones();
+  if (!zs) return 0;
+  let h = 0;
+  for (let i = 0; i < zs.length; i++) {
+    const z = zs[i];
+    const fx = (z.w / 2 - Math.abs(x - z.x)) / z.f;
+    if (fx <= 0) continue;
+    const fy = (z.h / 2 - Math.abs(y - z.y)) / z.f;
+    if (fy <= 0) continue;
+    const t = z.z * smooth01(Math.min(1, Math.min(fx, fy)));
+    if (t > h) h = t;
+  }
+  return h;
+}
+
+// Render scale for a figure standing at (x, y). Height reads as proximity.
+function elevRenderScale(x, y) {
+  if (!elevZones()) return 1;
+  const s = 1 + groundElev(x, y) * ELEV_SCALE;
+  return s < ELEV_SCALE_LO ? ELEV_SCALE_LO : s > ELEV_SCALE_HI ? ELEV_SCALE_HI : s;
+}
+
+// Slope underfoot in the direction of travel, as a fraction of speed to keep.
+// Climbing costs, descending pays a little of it back, and the range is kept
+// narrow -- this is meant to be felt, not fought.
+function elevSpeedFactor(x, y, vx, vy) {
+  if (!elevZones()) return 1;
+  const m = Math.hypot(vx, vy);
+  if (m < 0.01) return 1;
+  const step = 26 / m;
+  const rise = groundElev(x + vx * step, y + vy * step) - groundElev(x, y);
+  const f = 1 - rise * 0.019;
+  return f < 0.62 ? 0.62 : f > 1.1 ? 1.1 : f;
+}
+
+// The relief itself. Three cues, in the order they are laid down:
+//
+//   1. A HARD-EDGED drop shadow, offset along the scene's own light vector by
+//      the bench's height. A feathered shadow reads as a stain on the sand; a
+//      shadow with a defined boundary reads as a step, which is the only way an
+//      overhead camera can show a change in level at all.
+//   2. The crown, feathered inward over the zone's own ramp so the ground rises
+//      into it rather than starting on a line.
+//   3. A lip catchlight along the two faces the sun is on, which is where the
+//      top of a scarp catches light in the real thing.
+//
+// Painted into the chunk terrain buffer, not per frame: at device pixel ratio 3
+// the live version cost 2.7 ms on the mine bench for geometry that never moves.
+function bakeElevation(g, ox, oy) {
+  const zs = elevZones();
+  if (!zs) return;
+  g.noStroke();
+  for (const z of zs) {
+    if (z.x + z.w / 2 < ox - 300 || z.x - z.w / 2 > ox + CHUNK_W + 300) continue;
+    if (z.y + z.h / 2 < oy - 300 || z.y - z.h / 2 > oy + CHUNK_W + 300) continue;
+    const r = Math.min(40, z.f * 0.4);
+    const thr = z.z * 1.05;
+    const x0 = z.x - z.w / 2, y0 = z.y - z.h / 2;
+
+    // 1. Scarp. Three copies of the footprint at decreasing offset build a
+    // penumbra that still has an outer edge you can point at.
+    for (let k = 3; k >= 1; k--) {
+      g.fill(52, 40, 28, 30);
+      g.rect(x0 + LIGHT_DX * thr * (k / 3), y0 + LIGHT_DY * thr * (k / 3), z.w, z.h, r);
+    }
+
+    // 2. Crown, feathered in over the ramp.
+    const lift = Math.min(34, z.z * 0.34);
+    for (let k = 0; k < 5; k++) {
+      const t = (k + 1) / 5;
+      const ins = z.f * (1 - t) * 0.85;
+      g.fill(236, 219, 184, (16 + lift) * t / 5 * 2.2);
+      g.rect(x0 + ins, y0 + ins, z.w - ins * 2, z.h - ins * 2, r);
+    }
+
+    // 3. Lip along the up-light faces -- north and west, since the light comes
+    // from up and to the left in every scene in the game.
+    const lipI = z.f * 0.38;
+    g.fill(250, 240, 212, 44 + lift * 1.4);
+    g.rect(x0 + lipI, y0 + lipI, z.w - lipI * 2, 14, r);
+    g.rect(x0 + lipI, y0 + lipI, 14, z.h - lipI * 2, r);
+
+    // 4. Treads. A flight takes the height in one go, and stepped risers are the
+    // single most readable relief cue there is from directly above.
+    if (z.treads) {
+      // A flight is subdivided across the direction you climb, which is its
+      // SHORTER axis: a 380-wide flight 220 deep is climbed north, so the steps
+      // stack along y. Keying off the longer axis put the gate steps side by
+      // side across the road, which read as a pedestrian crossing.
+      const alongY = z.h < z.w;
+      const n = z.treads;
+      for (let k = 0; k < n; k++) {
+        const t = k / n, tw = 1 - t * 0.2;      // narrows as it rises
+        const riser = alongY ? (z.h / n) * 0.4 : (z.w / n) * 0.4;
+        // Riser first: the shaded face of the step you are about to climb.
+        g.fill(66, 51, 36, 96);
+        if (alongY) g.rect(z.x - (z.w / 2) * tw, y0 + (z.h / n) * k, z.w * tw, riser, 2);
+        else        g.rect(x0 + (z.w / n) * k, z.y - (z.h / 2) * tw, riser, z.h * tw, 2);
+        // Then the tread it lands on.
+        g.fill(226, 209, 176, 104);
+        if (alongY) g.rect(z.x - (z.w / 2) * tw, y0 + (z.h / n) * k + riser, z.w * tw, (z.h / n) - riser - 2, 2);
+        else        g.rect(x0 + (z.w / n) * k + riser, z.y - (z.h / 2) * tw, (z.w / n) - riser - 2, z.h * tw, 2);
+      }
+      // Handrail down the up-light flank, so the flight has a silhouette.
+      g.fill(112, 84, 52, 170);
+      if (alongY) g.rect(x0 - 9, y0, 9, z.h, 2);
+      else        g.rect(x0, y0 - 9, z.w, 9, 2);
+    }
+  }
+}
+
+function drawBuildingShadows() {
+  // Streamed biomes use a single global light vector for every caster, so the
+  // whole scene reads as one lit space. See drawBiomeShadows().
+  if (BIOME_ACTIVE) { drawBiomeShadows(); return; }
+  for (let b of activeBuildings) {
+    if (b.isBiomeProp || b.isTreeTrunk) continue;
+    if ((currentLevel === 1 || currentLevel === 2) && b.isGrassLot) continue;
+    if (b.isCropField) continue; // Don't shadow the ground
+
+    let shadowAlpha = (currentLevel === 1 || currentLevel === 3) ? 45 : 150; 
+    let sL = (currentLevel === 1 || currentLevel === 3) ? 40 : 25; 
+    fill(0, shadowAlpha); noStroke();
+    if (b.isDumpster) { push(); translate(b.x + sL/2, b.y + sL/2); rotate(b.angle); rect(-b.w/2, -b.h/2, b.w, b.h, 2); pop(); } 
+    else if (b.isCar) { push(); translate(b.x + sL/2, b.y + sL/2); rotate(b.angle); rect(-25, -45, 50, 90, 6); pop(); } 
+    else if (b.isStreetLight) { ellipse(b.x + sL/2, b.y + sL/2, b.w, b.h); } 
+    else if (b.isPalm) { push(); translate(b.x + sL/2, b.y + sL/2); rect(-8, -40, 16, 80, 4); for (let i = 0; i < 5; i++) { push(); translate(0, -40); rotate((i * TWO_PI / 5) + sin(frameCount * 0.02 + b.x) * 0.2); ellipse(30, 0, 60, 20); pop(); } pop(); }
+    else if (b.isArena) { ellipse(b.x + sL*1.5, b.y + sL*1.5, b.w - 100, b.h - 150); }
+    else if (b.isCircus) { ellipse(b.x + sL*1.5, b.y + sL*1.5, 600, 600); }
+    else if (b.isGovFortress || b.isGiantBarrier) { rect(b.x - b.w/2 + (sL * 1.5), b.y - b.h/2 + (sL * 1.5), b.w, b.h); }
+    else if (b.isFence) {
+        // Realistic thin shadows for fences
+        if (b.w > b.h) { rect(b.x - b.w/2 + 4, b.y - b.h/2 + 4, b.w, 6); } 
+        else { rect(b.x - b.w/2 + 4, b.y - b.h/2 + 4, 6, b.h); }
+    }
+    else if (b.isTrailer) { push(); translate(b.x + sL/2, b.y + sL/2); let isVert = b.h > b.w; let tw = isVert ? b.h : b.w; let th = isVert ? b.w : b.h; if (isVert) rotate(HALF_PI); rect(-tw/2, -th/2, tw, th, 6); triangle(-tw/2, -10, -tw/2 - 25, 0, -tw/2, 10); rect(-10, th/2, 35, 18, 2); pop(); }
+    else if (currentLevel === 1 || currentLevel === 2 || currentLevel === 3 || currentLevel === 6 || currentLevel === 7) { 
+        if (!b.isAlienPlant && !b.isEnergyPole && !b.isPinkPlanet) { 
+            let extSL = (b.isCasino || b.isTheater || b.isAmusementPark || b.isMall) ? sL * 1.5 : sL; 
+            rect(b.x - b.w/2 + extSL, b.y - b.h/2 + extSL, b.w, b.h, b.isMall ? 15 : (b.isCasino || b.isTheater || b.isAmusementPark ? 30 : 0)); 
+        } 
+    }
+  }
+}
+
+
+
+function drawBuildings() {
+  for (let b of activeBuildings) { // Changed to activeBuildings
+    if (!inView(b.x, b.y, Math.max(b.w || 0, b.h || 0) + 150)) continue;
+    if (b.isBiomeProp) continue; // drawn by drawBiomeProps()
+    // A trunk is a collision volume so you cannot walk through a tree. The
+    // canopy in the decor list is what you actually see; without this the
+    // generic building branch drew a dark box under every tree in the wood.
+    if (b.isTreeTrunk) continue;
+    if (BIOME_ACTIVE && b.isGrassLot && !b.isPond && !b.isParkingLot) continue;
+    if ((currentLevel === 1 || currentLevel === 2) && b.isGrassLot && !b.isPond && !b.isParkingLot) continue;
+    if (b.isParkingCar) continue; 
+    if (b.isCropField || b.isPond || b.isParkingLot) continue; // MOVED TO GROUND RENDER STACK
+    if (b.isUBarrier) {
+        let isFlashing = b.hitFlash && b.hitFlash > 0;
+        if (isFlashing) b.hitFlash--;
+        push(); translate(b.x, b.y);
+        fill(isFlashing ? color(255, 150) : color(255, 150, 50, 100));
+        stroke(isFlashing ? 255 : color(255, 150, 50)); strokeWeight(8);
+        line(-b.w/2, -b.h/2, -b.w/2, b.h/2); line(b.w/2, -b.h/2, b.w/2, b.h/2); line(-b.w/2, -b.h/2, b.w/2, -b.h/2); 
+        if (b.hp > 0 && b.hp < b.maxHp) { fill(0, 150); noStroke(); rect(-40, b.h/2 + 10, 80, 6); fill(255, 150, 50); rect(-40, b.h/2 + 10, 80 * (b.hp / b.maxHp), 6); }
+        pop(); continue;
+    }
+
+    if (b.isWall) { fill(40); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h); continue; }
+    if (b.isTerminal) { fill(80); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h, 5); fill(0, 50, 0); rect(b.x - b.w/2 + 10, b.y - b.h/2 + 2, b.w - 20, b.h - 30); fill(0, 255, 0); textAlign(CENTER, CENTER); textSize(12); textLeading(14); text("etheric\nmagentic\nfield shield", b.x, b.y - 10); continue; }
+    if (b.isBasementTable) { fill(100); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h); fill(70); rect(b.x - b.w/2 + 10, b.y - b.h/2 + 10, 10, b.h - 20); rect(b.x + b.w/2 - 20, b.y - b.h/2 + 10, 10, b.h - 20); if (b.x < 0) { fill(150); ellipse(b.x + 50, b.y - 5, 15, 15); ellipse(b.x + 20, b.y + 2, 10, 10); } continue; }
+    if (b.isCouch) { push(); translate(b.x, b.y); fill(80, 50, 40); rect(-80, -35, 160, 40, 10); fill(60, 40, 30); rect(-80, 5, 160, 30, 10); fill(50, 30, 20); rect(-95, -35, 20, 60, 5); rect(75, -35, 20, 60, 5); pop(); continue; }
+    if (b.isTV) { fill(10); rect(b.x - b.w/2 - 10, b.y - b.h/2 - 10, b.w + 20, b.h + 20); fill(30); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h); if (!tvWatched) fill(50, 150, 255); else fill(20); rect(b.x - b.w/2 + 5, b.y - b.h/2 + 5, b.w - 10, b.h - 10); continue; }
+    if (b.isUpstairsTable) { fill(101, 67, 33); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h, 5); continue; }
+    
+    // Giant Side Barriers
+    if (b.isGiantBarrier) {
+        // The curtain wall runs 10400 units. Stepping the segment and beacon
+        // loops over its whole length would paint twenty-six of each every
+        // frame when at most three are ever on screen, so both loops are
+        // clamped to the visible span. The slab itself is one rect and the
+        // rasteriser clips it for free.
+        const top = b.y - b.h / 2, bot = b.y + b.h / 2;
+        fill(70, 75, 80); stroke(30); strokeWeight(8);
+        rect(b.x - b.w / 2, top, b.w, b.h);
+        noStroke();
+
+        const y0 = Math.max(top, viewTop - 420), y1 = Math.min(bot, viewBottom + 420);
+        if (y1 > y0) {
+            // Segment joints, snapped to the wall's own 400-unit pitch so they
+            // stay put as the camera moves.
+            const first = top + 200 + Math.floor((y0 - (top + 200)) / 400) * 400;
+            fill(50, 55, 60);
+            for (let py = first; py < y1; py += 400) {
+                if (py + 100 < y0) continue;
+                rect(b.x - b.w / 2, py, b.w, 100);
+            }
+            // Hazard beacons on the face that looks back into the city.
+            const lx = b.x < 0 ? b.x + b.w / 2 - 20 : b.x - b.w / 2 + 20;
+            const glow = 150 + sin(frameCount * 0.1) * 100;
+            const firstL = top + 250 + Math.floor((y0 - (top + 250)) / 400) * 400;
+            for (let py = firstL; py < y1; py += 400) {
+                if (py + 30 < y0) continue;
+                fill(255, 0, 0, glow); ellipse(lx, py, 30, 30);
+                fill(255, 100, 100);  ellipse(lx, py, 10, 10);
+            }
+        }
+        continue;
+    }
+
+    // NM-0 Fortresses
+    if (b.isGovFortress) {
+        let isFlashing = b.hitFlash && b.hitFlash > 0;
+        if (isFlashing) b.hitFlash--;
+        
+        fill(isFlashing ? 255 : 35, isFlashing ? 255 : 40, isFlashing ? 255 : 45); 
+        stroke(15); strokeWeight(8); 
+        rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h);
+        
+        fill(isFlashing ? 200 : 25, isFlashing ? 200 : 30, isFlashing ? 200 : 35); 
+        noStroke(); 
+        rect(b.x - b.w/2 + 100, b.y - b.h/2 + 100, b.w - 200, b.h - 200);
+        
+        let gateY = b.y < 0 ? b.y + b.h/2 - 80 : b.y - b.h/2;
+        
+        // Gate visually stays closed forever (collision remains solid)
+        fill(isFlashing ? 255 : 10); rect(b.x - 300, gateY, 600, 80); 
+        fill(isFlashing ? 200 : 50); for(let gx = b.x - 280; gx < b.x + 300; gx += 40) rect(gx, gateY, 10, 80);
+        
+        if (b.hp > 0 && b.hp < b.maxHp) {
+            // Health Bar
+            fill(0, 150); rect(b.x - 100, gateY - 30, 200, 10);
+            fill(255, 50, 50); rect(b.x - 100, gateY - 30, 200 * (b.hp / b.maxHp), 10);
+        } else if (b.hp <= 0) {
+            // Battle Damage
+            fill(255, 100, 0, 100); rect(b.x - 300, gateY, 600, 80); // Fire glow covering the door
+            if (frameCount % 5 === 0) emit(b.x + random(-150, 150), gateY + 40, 1, color(100), "SMOKE");
+        }
+        
+        push(); let stripeY = b.y < 0 ? b.y + b.h/2 - 100 : b.y - b.h/2 + 80; stroke(255, 200, 0); strokeWeight(20); strokeCap(SQUARE); for(let i = -300; i < 300; i += 40) line(b.x + i, stripeY, b.x + i + 20, stripeY); pop();
+        push(); translate(b.x, b.y); noFill(); stroke(255, 200, 0, 150); strokeWeight(8); ellipse(-800, 0, 300, 300); ellipse(800, 0, 300, 300); strokeWeight(4); ellipse(-800, 0, 200, 200); ellipse(800, 0, 200, 200);
+        for(let fx of [-1400, -1200, 1200, 1400]) { fill(15); noStroke(); rect(fx - 60, -60, 120, 120, 10); fill(30); ellipse(fx, 0, 100, 100); push(); translate(fx, 0); rotate(frameCount * 0.1); fill(10); rect(-45, -10, 90, 20); rect(-10, -45, 20, 90); pop(); }
+        for(let ax of [-500, 500]) { fill(20); stroke(10); strokeWeight(2); ellipse(ax, 150, 40, 40); fill(255, 0, 0, 150 + sin(frameCount * 0.2)*100); noStroke(); ellipse(ax, 150, 15, 15); }
+        fill(200, 0, 0, 200); ellipse(0, 0, 400, 400); fill(15); ellipse(0, 0, 360, 360); fill(200, 0, 0); textAlign(CENTER, CENTER); textSize(120); textFont('sans-serif'); text("NM-0", 0, 0); pop();
+        continue;
+    }
+
+    if (b.isMall) { fill(170, 175, 180); stroke(100); strokeWeight(3); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h, 15); fill(190, 195, 200); noStroke(); rect(b.x - b.w/2 + 25, b.y - b.h/2 + 25, b.w - 50, b.h - 50, 10); push(); translate(b.x, b.y); if (b.w > 200 && b.h > 200) { fill(100, 180, 255, 160); stroke(70, 120, 180); strokeWeight(4); rect(-b.w/4, -b.h/4, b.w/2, b.h/2, 5); stroke(255, 255, 255, 150); strokeWeight(2); for(let gx = -b.w/4 + 40; gx < b.w/4; gx += 40) line(gx, -b.h/4, gx, b.h/4); for(let gy = -b.h/4 + 40; gy < b.h/4; gy += 40) line(-b.w/4, gy, b.w/4, gy); } if (b.details) { for(let det of b.details) { if (det.type === 'hvac_large') { fill(0, 50); noStroke(); rect(det.x - 18, det.y - 18, 40, 40, 4); fill(140); stroke(90); strokeWeight(2); rect(det.x - 20, det.y - 20, 40, 40, 4); fill(40); ellipse(det.x - 8, det.y, 14, 14); ellipse(det.x + 8, det.y, 14, 14); push(); translate(det.x - 8, det.y); rotate(frameCount * 0.15); stroke(200); strokeWeight(2); line(-5,0,5,0); line(0,-5,0,5); pop(); push(); translate(det.x + 8, det.y); rotate(frameCount * 0.15); stroke(200); strokeWeight(2); line(-5,0,5,0); line(0,-5,0,5); pop(); } } } pop(); continue; }
+    if (b.isCasino) { fill(20, 20, 25); stroke(255, 215, 0); strokeWeight(4); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h, 20); let cTime = frameCount * 0.1; for(let i=0; i<10; i++) { fill(sin(cTime + i)*127+128, 50, 255-sin(cTime + i)*127); noStroke(); ellipse(b.x - b.w/2 + 40 + i*85, b.y - b.h/2 + 30, 18, 18); ellipse(b.x - b.w/2 + 40 + i*85, b.y + b.h/2 - 30, 18, 18); ellipse(b.x - b.w/2 + 30, b.y - b.h/2 + 40 + i*85, 18, 18); ellipse(b.x + b.w/2 - 30, b.y - b.h/2 + 40 + i*85, 18, 18); } fill(200, 30, 30); stroke(255); strokeWeight(3); ellipse(b.x - 150, b.y, 180, 180); fill(255); ellipse(b.x - 190, b.y - 40, 25, 25); ellipse(b.x - 110, b.y + 40, 25, 25); ellipse(b.x - 110, b.y - 40, 25, 25); ellipse(b.x - 190, b.y + 40, 25, 25); ellipse(b.x - 150, b.y, 25, 25); push(); translate(b.x + 150, b.y); rotate(frameCount * 0.05); fill(0); ellipse(0,0, 200, 200); for(let a=0; a<TWO_PI; a+=PI/4) { fill(a%(PI/2)===0?200:30, a%(PI/2)===0?30:200, 30); arc(0,0, 190, 190, a, a+PI/4); } fill(255,215,0); ellipse(0,0,40,40); pop(); continue; }
+    if (b.isTheater) { fill(30, 20, 30); stroke(100); strokeWeight(4); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h, 10); fill(40, 30, 40); stroke(80); strokeWeight(3); rect(b.x - 250, b.y - 150, 500, 450, 20); fill(180, 20, 20); noStroke(); rect(b.x - 60, b.y + b.h/2 - 150, 120, 150); fill(200, 20, 20); stroke(255, 200, 0); strokeWeight(6); rect(b.x - 200, b.y - b.h/2 + 20, 400, 100); fill(255, 255, 200, 150 + sin(frameCount * 0.2)*100); noStroke(); for(let i=0; i<13; i++) { ellipse(b.x - 180 + i*30, b.y - b.h/2 + 100, 10, 10); ellipse(b.x - 180 + i*30, b.y - b.h/2 + 35, 10, 10); } continue; }
+    if (b.isArena) { fill(60); noStroke(); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h, 40); fill(150, 155, 160); stroke(100); strokeWeight(10); ellipse(b.x, b.y, b.w - 100, b.h - 150); fill(40, 100, 40); stroke(200); strokeWeight(3); ellipse(b.x, b.y, b.w - 300, b.h - 350); fill(255); noStroke(); rect(b.x - 5, b.y - (b.h-350)/2, 10, b.h - 350); ellipse(b.x, b.y, 50, 50); fill(40, 100, 40); ellipse(b.x, b.y, 44, 44); continue; }
+    if (b.isAmusementPark) { fill(45, 70, 45); noStroke(); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h, 40); noFill(); stroke(150, 200, 255); strokeWeight(10); beginShape(); for(let t=0; t<TWO_PI; t+=0.2) { vertex(b.x + 150 + cos(t)*200 + sin(t*3)*40, b.y + 150 + sin(t)*200 + cos(t*2)*40); } endShape(CLOSE); push(); translate(b.x - 180, b.y - 180); rotate(frameCount * 0.015); stroke(200); strokeWeight(6); noFill(); ellipse(0,0, 300, 300); for(let a=0; a<TWO_PI; a+=PI/4) { line(0,0, cos(a)*150, sin(a)*150); fill(255, 100, 100); noStroke(); ellipse(cos(a)*150, sin(a)*150, 35, 35); } pop(); fill(255, 200, 0); noStroke(); ellipse(b.x + 250, b.y - 200, 120, 120); fill(200, 50, 255); ellipse(b.x - 200, b.y + 250, 100, 100); continue; }
+    if (b.isCircus) { fill(180, 160, 120); noStroke(); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h, 100); push(); translate(b.x, b.y); fill(220); stroke(180); strokeWeight(4); ellipse(0,0, 650, 650); fill(200, 30, 30); noStroke(); for(let a=0; a<TWO_PI; a+=PI/6) { arc(0,0, 650, 650, a, a+PI/12); } fill(50); stroke(255, 200, 0); strokeWeight(5); ellipse(0,0, 100, 100); fill(200, 30, 30); ellipse(-250, 250, 180, 180); fill(220); ellipse(-250, 250, 100, 100); fill(40, 100, 200); ellipse(250, 250, 180, 180); fill(220); ellipse(250, 250, 100, 100); pop(); continue; }
+
+    if (b.isTower) { if (b.hp > 0) { push(); translate(b.x, b.y); let isFlashing = b.hitFlash && b.hitFlash > 0; if (isFlashing) { b.hitFlash--; } fill(isFlashing ? 255 : 40); stroke(isFlashing ? 255 : 20); strokeWeight(2); rect(-b.w/2, -b.h/2, b.w, b.h, 5); stroke(isFlashing ? 255 : 100); strokeWeight(4); line(-b.w/2+10, -b.h/2+10, -10, -80); line(b.w/2-10, -b.h/2+10, 10, -80); line(-b.w/2+10, b.h/2-10, -10, -80); line(b.w/2-10, b.h/2-10, 10, -80); strokeWeight(2); stroke(isFlashing ? 255 : 80); line(-b.w/2+10, -b.h/2+10, b.w/2-10, b.h/2-10); line(-b.w/2+10, b.h/2-10, b.w/2-10, -b.h/2+10); line(-25, -30, 25, -30); line(-15, -60, 15, -60); stroke(isFlashing ? 255 : 150); strokeWeight(3); line(0, -80, 0, -120); noStroke(); if (frameCount % 60 < 30 || isFlashing) fill(255, 0, 0); else fill(100, 0, 0); ellipse(0, -120, 8, 8); if (b.hp < b.maxHp) { fill(0, 150); rect(-40, -140, 80, 6); fill(255, 50, 50); rect(-40, -140, 80 * max(0, b.hp / b.maxHp), 6); } pop(); } else { fill(20); noStroke(); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h); fill(10); ellipse(b.x, b.y, b.w*0.8, b.h*0.8); stroke(40); strokeWeight(4); line(b.x - 20, b.y - 20, b.x + 30, b.y + 10); line(b.x + 10, b.y - 30, b.x - 20, b.y + 20); if (frameCount % 5 === 0) emit(b.x + random(-20, 20), b.y + random(-20, 20), 1, color(100), "SMOKE"); } continue; }
+    if (b.isStreetLight) {
+        // A lamp seen from above: base plate, mast, and the head cantilevered
+        // out over the kerb — not a yellow dot on a black dot.
+        push(); translate(b.x, b.y);
+        const armA = Math.atan2(-LIGHT_DY, -LIGHT_DX);
+        noStroke(); fill(0, 0, 0, 60); ellipse(2, 3, b.w + 12, b.h + 10);
+        fill(46, 48, 52); stroke(20); strokeWeight(2); ellipse(0, 0, b.w + 6, b.h + 6);
+        noStroke(); fill(66, 70, 76); ellipse(0, 0, b.w - 1, b.h - 1);
+        push(); rotate(armA);
+        fill(58, 62, 68); rect(0, -3.5, 26, 7, 3);
+        fill(38, 40, 44); rect(22, -7, 15, 14, 4);
+        fill(252, 244, 198); ellipse(29, 0, 9, 9);
+        pop();
+        fill(96, 100, 106); ellipse(-1, -1, b.w * 0.42, b.h * 0.42);
+        pop(); continue;
+    }
+    if (b.isDumpster) {
+        push(); translate(b.x, b.y); rotate(b.angle);
+        const dv = Math.abs((b.x * 0.017 + b.y * 0.011) % 1);
+        // Skip, side rails, two hinged lids — one of them often left open with
+        // the bin's contents showing.
+        fill(22, 62, 28); stroke(10); strokeWeight(2); rect(-b.w/2, -b.h/2, b.w, b.h, 2);
+        noStroke(); fill(14, 40, 18); rect(-b.w/2 + 2, -b.h/2 + 2, b.w - 4, b.h - 4, 1);
+        const lid = (x0, w0) => {
+            fill(30, 84, 36); stroke(12, 34, 16); strokeWeight(1);
+            rect(x0, -b.h/2 + 2, w0, b.h - 4, 1);
+            noStroke(); fill(255, 255, 255, 26); rect(x0 + 1, -b.h/2 + 3, w0 - 2, 2.5);
+            stroke(16, 44, 20); strokeWeight(0.8);
+            line(x0 + w0 * 0.5, -b.h/2 + 3, x0 + w0 * 0.5, b.h/2 - 3);
+            noStroke();
+        };
+        if (dv > 0.35) lid(-b.w/2 + 2, b.w/2 - 2.5);
+        else { fill(48, 42, 34); rect(-b.w/2 + 3, -b.h/2 + 3, b.w/2 - 4, b.h - 6, 1);
+               fill(140, 132, 118); ellipse(-b.w/4, -2, 9, 7); ellipse(-b.w/4 + 6, 4, 6, 5);
+               fill(96, 70, 50); ellipse(-b.w/4 - 6, 3, 7, 6); }
+        lid(0.5, b.w/2 - 2.5);
+        // Hinge bar, side pockets for the truck forks, castors
+        fill(58, 60, 56); rect(-b.w/2 + 2, -1.5, b.w - 4, 3);
+        fill(50); rect(-b.w/2 - 3, -4, 5, 8, 1); rect(b.w/2 - 2, -4, 5, 8, 1);
+        fill(26); ellipse(-b.w/2 + 6, b.h/2 - 2, 4, 4); ellipse(b.w/2 - 6, b.h/2 - 2, 4, 4);
+        pop(); continue;
+    }
+    if (b.isCar && !b.isParkingCar) { push(); translate(b.x, b.y); rotate(b.angle || HALF_PI); fill(b.col[0], b.col[1], b.col[2]); stroke(15); strokeWeight(2); rect(-25, -45, 50, 90, 6); fill(25); noStroke(); rect(-20, -25, 40, 15, 2); rect(-20, 15, 40, 12, 2); fill(30, 20, 15, 180); ellipse(0, -5, 30, 25); fill(10, 150); ellipse(-10, 20, 15, 15); pop(); continue; }
+    if (b.isPalm) { drawPalmTree(b.x, b.y); continue; }
+    if (b.isHouse) { fill(120); noStroke(); rect(b.x - 25, b.y, 50, b.h/2 + 65); fill(190, 195, 200); stroke(60); strokeWeight(2); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h); fill(100, 50, 50); stroke(40, 20, 20); strokeWeight(2); rect(b.x - b.w/2 - 10, b.y - b.h/2 - 10, b.w + 20, b.h + 20); line(b.x - b.w/2 - 10, b.y, b.x + b.w/2 + 10, b.y); fill(40); noStroke(); rect(b.x - 12, b.y + b.h/2 - 15, 24, 20); fill(200, 200, 100); ellipse(b.x + 6, b.y + b.h/2 - 5, 4, 4); continue; }
+    if (b.isRock) { fill(180, 200, 210); stroke(140, 160, 180); strokeWeight(2); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h, 20); fill(200, 220, 230); noStroke(); rect(b.x - b.w/2 + 10, b.y - b.h/2 + 10, b.w - 30, b.h - 30, 10); continue; }
+
+    // Level 6 Alien Flora
+    if (currentLevel === 6) {
+        if (b.isAlienPlant) { 
+            fill(150, 50, 255); noStroke(); ellipse(b.x, b.y, 40, 40); 
+            push(); translate(b.x, b.y); fill(50, 255, 50); 
+            for(let a=0; a<5; a++) { ellipse(30, 0, 40, 15); rotate(TWO_PI/5); } 
+            pop(); continue; 
+        }
+        if (b.isEnergyPole) { 
+            fill(80); stroke(50, 255, 50); strokeWeight(2); rect(b.x - 10, b.y - 10, 20, 20); 
+            fill(50, 255, 50, 150 + sin(frameCount*0.1)*100); noStroke(); ellipse(b.x, b.y, 60, 60); 
+            continue; 
+        }
+        if (b.isAlienBldg) { 
+            fill(70, 50, 90); stroke(50, 255, 50); strokeWeight(2); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h); 
+            fill(100, 50, 150); noStroke(); ellipse(b.x, b.y, b.w*0.6, b.h*0.6); 
+            continue; 
+        }
+    }
+
+    // Level 7 Cyber Planets
+    if (currentLevel === 7) {
+        if (b.isPinkPlanet) { 
+            let pA = b.flashTimer > 0 ? 150 : 255; if(b.flashTimer > 0) b.flashTimer--; 
+            fill(255, 105, 180, pA); stroke(200, 50, 150); strokeWeight(4); ellipse(b.x, b.y, b.w, b.h); 
+            fill(200, 50, 150, pA); noStroke(); 
+            ellipse(b.x - b.w*0.2, b.y - b.h*0.2, b.w*0.2, b.h*0.2); 
+            ellipse(b.x + b.w*0.25, b.y + b.h*0.1, b.w*0.15, b.h*0.15); 
+            ellipse(b.x - b.w*0.1, b.y + b.h*0.3, b.w*0.25, b.h*0.25); 
+            continue; 
+        }
+        if (b.isPyramid) { 
+            fill(200, 150, 0); stroke(150, 100, 0); strokeWeight(2); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h); 
+            line(b.x - b.w/2, b.y - b.h/2, b.x, b.y); line(b.x + b.w/2, b.y - b.h/2, b.x, b.y); 
+            line(b.x - b.w/2, b.y + b.h/2, b.x, b.y); line(b.x + b.w/2, b.y + b.h/2, b.x, b.y); 
+            fill(255, 200, 0); ellipse(b.x, b.y, 20, 20); 
+            continue; 
+        }
+        if (b.isChip) { 
+            fill(20, 25, 20); stroke(50, 200, 50); strokeWeight(3); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h, 10); 
+            fill(40, 150, 40); noStroke(); rect(b.x - b.w/4, b.y - b.h/4, b.w/2, b.h/2, 5); 
+            stroke(50, 200, 50); strokeWeight(2); 
+            for(let i = -b.w/2 + 20; i < b.w/2; i += 20) { line(b.x + i, b.y - b.h/2, b.x + i, b.y - b.h/4); line(b.x + i, b.y + b.h/4, b.x + i, b.y + b.h/2); } 
+            for(let j = -b.h/2 + 20; j < b.h/2; j += 20) { line(b.x - b.w/2, b.y + j, b.x - b.w/4, b.y + j); line(b.x + b.w/4, b.y + j, b.x + b.w/2, b.y + j); } 
+            continue; 
+        }
+    }
+
+        if (b.isFence) {
+        fill(120, 80, 50); stroke(80, 50, 30); strokeWeight(2);
+        rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h);
+        fill(90, 60, 40); noStroke();
+        if (b.w > b.h) { for(let px = b.x - b.w/2; px <= b.x + b.w/2; px += 40) rect(px - 4, b.y - b.h/2 - 4, 8, b.h + 8); } 
+        else { for(let py = b.y - b.h/2; py <= b.y + b.h/2; py += 40) rect(b.x - b.w/2 - 4, py - 4, b.w + 8, 8); }
+        
+        // NEW: Draw Fence HP Bar
+        if (b.hp !== undefined && b.hp < b.maxHp) {
+            fill(0, 150); rect(b.x - 25, b.y - b.h/2 - 15, 50, 6);
+            fill(255, 50, 50); rect(b.x - 25, b.y - b.h/2 - 15, 50 * (b.hp / b.maxHp), 6);
+        }
+        continue;
+    }
+
+    // Upgraded Trailer Homes
+    if (b.isTrailer) {
+        push(); translate(b.x, b.y);
+
+        // Normalize dimensions so we only have to draw it horizontally,
+        // and just rotate the canvas if it's a vertically placed trailer.
+        let isVert = b.h > b.w;
+        let tw = isVert ? b.h : b.w;
+        let th = isVert ? b.w : b.h;
+
+        if (isVert) rotate(HALF_PI);
+
+        // 1. The Hitch (Tongue)
+        fill(60); stroke(30); strokeWeight(2);
+        triangle(-tw/2, -10, -tw/2 - 25, 0, -tw/2, 10);
+        fill(40); ellipse(-tw/2 - 20, 0, 6, 6); // Hitch ball mount
+
+        // 2. Main Trailer Body
+        fill(225, 225, 220); stroke(120, 110, 100); strokeWeight(3);
+        rect(-tw/2, -th/2, tw, th, 6);
+
+        // 3. Colored Siding Stripes (Uses grid position to randomize colors)
+        let stripeColors = [color(80, 140, 180), color(180, 80, 80), color(100, 160, 100), color(180, 140, 70)];
+        let colIdx = Math.floor(Math.abs(b.x + b.y)) % stripeColors.length;
+        fill(stripeColors[colIdx]); noStroke();
+        rect(-tw/2 + 2, -th/2 + 8, tw - 4, 8);
+        rect(-tw/2 + 2, th/2 - 16, tw - 4, 8);
+
+        // 4. Raised Roof Center
+        fill(240); stroke(150); strokeWeight(2);
+        rect(-tw/2 + 10, -th/2 + 18, tw - 20, th - 36, 4);
+
+        // 5. AC Unit on Roof
+        fill(180); stroke(100); strokeWeight(2);
+        rect(-tw/4, -14, 28, 28, 3); // AC Box
+        fill(40); noStroke(); ellipse(-tw/4 + 14, 0, 18, 18); // Fan hole
+        stroke(150); strokeWeight(2);
+        line(-tw/4 + 14, -7, -tw/4 + 14, 7); // Fan blades
+        line(-tw/4 + 7, 0, -tw/4 + 21, 0);
+
+        // Small Exhaust Vent
+        fill(160); stroke(90); strokeWeight(1);
+        rect(tw/4, -6, 12, 12, 2);
+
+        // 6. Wooden Porch/Deck at the entrance
+        fill(140, 90, 50); stroke(80, 50, 30); strokeWeight(2);
+        rect(-10, th/2, 35, 18, 2); // Deck frame
+        line(-2, th/2, -2, th/2 + 18); // Planks
+        line(6, th/2, 6, th/2 + 18);
+        line(14, th/2, 14, th/2 + 18);
+        line(22, th/2, 22, th/2 + 18);
+
+        // 7. Windows
+        fill(100, 180, 255, 180); stroke(80); strokeWeight(2);
+        rect(-tw/2 + 20, th/2 - 8, 20, 6, 1);
+        rect(tw/2 - 40, th/2 - 8, 20, 6, 1);
+        rect(tw/2 - 40, -th/2 + 2, 20, 6, 1);
+
+        pop(); 
+        continue;
+    }
+
+    if (b.isBarn) {
+        push(); translate(b.x, b.y);
+        // Gambrel roof read from above: two shingled slopes falling away from a
+        // ridge, rather than one flat red slab.
+        fill(112, 34, 32); stroke(74, 18, 16); strokeWeight(3);
+        rect(-b.w/2, -b.h/2, b.w, b.h, 3);
+        noStroke();
+        fill(146, 44, 40); rect(-b.w/2 + 5, -b.h/2 + 5, b.w - 10, b.h/2 - 5);
+        fill(168, 54, 48); rect(-b.w/2 + 5, 0,            b.w - 10, b.h/2 - 5);
+        // Shingle courses, tighter near the ridge so the slope reads
+        stroke(96, 26, 24, 130); strokeWeight(1.4);
+        for (let ry = -b.h/2 + 16; ry < b.h/2 - 6; ry += 24) line(-b.w/2 + 6, ry, b.w/2 - 6, ry);
+        // Ridge beam and its highlight
+        stroke(72, 18, 16); strokeWeight(5); line(-b.w/2 + 4, 0, b.w/2 - 4, 0);
+        stroke(228, 210, 190, 90); strokeWeight(1.6); line(-b.w/2 + 4, -3, b.w/2 - 4, -3);
+        // Cupola with a weathervane
+        noStroke(); fill(0, 0, 0, 55); ellipse(6, 4, 40, 30);
+        fill(132, 38, 34); stroke(74, 18, 16); strokeWeight(2); rect(-18, -16, 36, 32, 3);
+        noStroke(); fill(176, 60, 52); rect(-14, -12, 28, 12);
+        fill(58, 54, 50); ellipse(0, 0, 11, 11);
+        stroke(60, 56, 50); strokeWeight(2); line(0, 0, 14, -9); line(0, 0, -11, 7);
+        // Big sliding doors at the gable end, cross-braced
+        noStroke(); fill(214, 208, 196); rect(-46, b.h/2 - 26, 92, 26, 2);
+        stroke(120, 112, 100); strokeWeight(2);
+        line(-46, b.h/2 - 26, 46, b.h/2 - 1); line(-46, b.h/2 - 1, 46, b.h/2 - 26);
+        line(0, b.h/2 - 26, 0, b.h/2 - 1);
+        stroke(90, 84, 76); strokeWeight(3); line(-50, b.h/2 - 29, 50, b.h/2 - 29);
+        // Hayloft hatch at the far gable
+        noStroke(); fill(84, 60, 40); rect(-16, -b.h/2 + 4, 32, 20, 2);
+        fill(40, 30, 22); rect(-13, -b.h/2 + 7, 26, 14, 1);
+        pop(); continue;
+    }
+
+    // Upgraded Market Structure
+    if (b.isMarket) {
+        push(); translate(b.x, b.y);
+        fill(200, 170, 130); stroke(160, 130, 90); strokeWeight(3); rect(-b.w/2, -b.h/2, b.w, b.h, 10);
+        let colors = [color(200, 60, 60), color(60, 120, 200), color(220, 160, 40), color(60, 160, 60)];
+        for(let i=0; i<4; i++) {
+            let tx = -80 + (i%2)*160, ty = -50 + floor(i/2)*100;
+            fill(0, 30); noStroke(); rect(tx - 35, ty - 25, 70, 70, 5); // Canopy Shadow
+            fill(colors[i]); stroke(40); strokeWeight(2); rect(tx - 40, ty - 40, 80, 80, 4); // Canopy Tarp
+            fill(240); noStroke(); rect(tx - 20, ty - 38, 10, 76); rect(tx + 10, ty - 38, 10, 76); // Canopy Stripes
+            fill(139, 90, 43); stroke(80, 50, 20); strokeWeight(2); rect(tx - 25, ty - 15, 50, 30, 2); // Table
+            fill(255, 100, 100); ellipse(tx - 10, ty, 8, 8); ellipse(tx - 15, ty - 5, 8, 8); // Apples
+            fill(100, 255, 100); rect(tx + 5, ty - 8, 12, 12, 2); // Crates
+        }
+        pop(); continue;
+    }
+
+    if (b.isGasStation) {
+        fill(200); stroke(150); strokeWeight(3); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h); 
+        fill(220); noStroke(); rect(b.x - b.w/2 + 5, b.y - b.h/2 + 5, b.w - 10, b.h - 10);
+        fill(240); stroke(100); rect(b.x - b.w/2 + 20, b.y - b.h/2 + 20, 100, b.h - 40);
+        fill(40, 100, 200); stroke(20); rect(b.x + 20, b.y - 60, 90, 120);
+        fill(200, 40, 40); stroke(20); rect(b.x + 40, b.y - 40, 20, 30, 3); rect(b.x + 40, b.y + 10, 20, 30, 3);
+        continue;
+    }
+
+    if (b.isLiquorStore) {
+        fill(120, 60, 50); stroke(60, 30, 20); strokeWeight(3); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h);
+        fill(100, 50, 40); noStroke(); rect(b.x - b.w/2 + 10, b.y - b.h/2 + 10, b.w - 20, b.h - 20);
+        fill(80); stroke(40); rect(b.x - 20, b.y - 20, 40, 40, 2); fill(30); ellipse(b.x, b.y, 20, 20);
+        fill(255, 50, 50, 200); noStroke(); rect(b.x - 40, b.y + b.h/2 - 15, 80, 10);
+        fill(255, 200, 200); rect(b.x - 38, b.y + b.h/2 - 13, 76, 6);
+        continue;
+    }
+
+    // Upgraded Shanty (Survival Tents)
+    if (b.isShanty) {
+        push(); translate(b.x, b.y);
+        // Guy lines and pegs
+        stroke(80, 60, 40); strokeWeight(2);
+        line(-b.w/2, -b.h/2, -b.w/2 - 15, -b.h/2 - 15); line(b.w/2, -b.h/2, b.w/2 + 15, -b.h/2 - 15);
+        line(-b.w/2, b.h/2, -b.w/2 - 15, b.h/2 + 15); line(b.w/2, b.h/2, b.w/2 + 15, b.h/2 + 15);
+
+        fill(60); noStroke();
+        ellipse(-b.w/2 - 15, -b.h/2 - 15, 6, 6); ellipse(b.w/2 + 15, -b.h/2 - 15, 6, 6);
+        ellipse(-b.w/2 - 15, b.h/2 + 15, 6, 6); ellipse(b.w/2 + 15, b.h/2 + 15, 6, 6);
+
+        let cv = (Math.floor(Math.abs(b.x * b.y)) % 3);
+        let base = cv === 0 ? [170, 160, 130] : (cv === 1 ? [130, 150, 130] : [190, 140, 110]);
+
+        // A ridge tent, not a flat square: two canvas slopes meeting at a
+        // ridge line, the windward slope in shade and the leeward one lit.
+        noStroke();
+        fill(base[0] * 0.72, base[1] * 0.72, base[2] * 0.72);
+        rect(-b.w/2, -b.h/2, b.w, b.h/2, 8, 8, 0, 0);
+        fill(base[0], base[1], base[2]);
+        rect(-b.w/2, 0, b.w, b.h/2, 0, 0, 8, 8);
+        fill(base[0] * 1.12, base[1] * 1.12, base[2] * 1.12);
+        rect(-b.w/2 + 3, 2, b.w - 6, b.h/4);
+        stroke(72, 64, 54); strokeWeight(3); noFill();
+        rect(-b.w/2, -b.h/2, b.w, b.h, 8);
+        // Ridge pole and the sag between the hoops
+        stroke(96, 84, 68); strokeWeight(3); line(-b.w/2 + 2, 0, b.w/2 - 2, 0);
+        stroke(0, 0, 0, 45); strokeWeight(2);
+        for (let rx = -b.w/2 + 20; rx < b.w/2 - 6; rx += 30) line(rx, -b.h/2 + 4, rx, b.h/2 - 4);
+        // Patched repairs — the whole point of a shanty
+        noStroke();
+        const pv = Math.floor(Math.abs(b.x * 0.7 + b.y * 1.3)) % 4;
+        fill(base[0] * 0.85, base[1] * 0.9, base[2] * 0.8, 220);
+        rect(-b.w/2 + 10 + pv * 7, -b.h/2 + 12, 18, 14, 2);
+        rect(b.w/2 - 32, b.h/2 - 26 - pv * 4, 22, 16, 2);
+        // Stove pipe with a wisp, a water can, a lantern
+        fill(70, 66, 60); stroke(44); strokeWeight(1.5); ellipse(0, -b.h/4, 13, 13);
+        noStroke(); fill(120, 118, 112); ellipse(0, -b.h/4, 6, 6);
+        fill(200, 200, 200, 55); ellipse(3, -b.h/4 - 9, 12, 9); ellipse(7, -b.h/4 - 17, 15, 11);
+        fill(90, 100, 110); stroke(60); strokeWeight(1); rect(-b.w/2 - 20, -10, 12, 18, 2);
+        noStroke(); fill(150, 50, 50); ellipse(b.w/2 + 10, 10, 12, 12);
+        fill(250, 220, 140, 120); ellipse(b.w/2 + 10, 10, 20, 20);
+        pop(); continue;
+    }
+
+    // Upgraded Apartments (Desert Motels)
+    if (b.isApartment) {
+        push(); translate(b.x, b.y);
+        fill(205, 180, 150); stroke(130, 100, 80); strokeWeight(4); rect(-b.w/2, -b.h/2, b.w, b.h, 4);
+        fill(170, 160, 150); noStroke(); rect(-b.w/2 + 6, -b.h/2 + 6, b.w - 12, b.h - 12, 2);
+        fill(0, 12); ellipse(-b.w/4, -b.h/4, b.w*0.3, b.h*0.3); ellipse(b.w/3, b.h/3, b.w*0.4, b.h*0.4);
+
+        fill(180, 160, 130); stroke(120, 90, 70); strokeWeight(2); rect(-b.w/2 + 15, b.h/2 - 35, b.w - 30, 35); 
+        
+        stroke(140, 130, 120); strokeWeight(2);
+        for(let rx = -b.w/2 + 40; rx < b.w/2 - 10; rx += 40) { line(rx, -b.h/2 + 6, rx, b.h/2 - 35); }
+
+        for(let ax = -b.w/2 + 20; ax < b.w/2 - 10; ax += 40) {
+            fill(200); stroke(100); strokeWeight(1); rect(ax - 8, -b.h/2 + 12, 16, 16, 2);
+            fill(50); noStroke(); ellipse(ax, -b.h/2 + 20, 10, 10);
+            stroke(80); line(ax - 4, -b.h/2 + 25, ax + 4, -b.h/2 + 25);
+        }
+        
+        fill(140); stroke(100); strokeWeight(2); rect(-20, -20, 40, 40, 3);
+        fill(110); noStroke(); rect(-15, -15, 30, 30);
+        stroke(80); line(-10, -10, 10, 10); line(10, -10, -10, 10);
+        pop(); continue;
+    }
+// Western Town Buildings
+    if (b.isWesternBldg) { drawWesternBuilding(b); continue; }
+
+    // Water tower prop
+    if (b.isWaterTower) {
+        push(); translate(b.x, b.y);
+        // Splayed timber legs with cross-bracing, then the tank sitting on top
+        stroke(78, 56, 34); strokeWeight(5);
+        line(-25, 34, -19, -8); line(25, 34, 19, -8);
+        line(-12, 34, -9, -8);  line(12, 34, 9, -8);
+        stroke(96, 70, 44); strokeWeight(3);
+        line(-25, 34, 25, 34);
+        line(-24, 20, -10, 20); line(10, 20, 24, 20);
+        line(-24, 20, -10, 4);  line(-10, 20, -24, 4);
+        line(10, 20, 24, 4);    line(24, 20, 10, 4);
+        // Tank staves
+        noStroke(); fill(96, 70, 44, 110); ellipse(4, -14, 66, 52);
+        fill(146, 110, 72); stroke(84, 60, 34); strokeWeight(2);
+        rect(-30, -42, 60, 48, 5);
+        stroke(112, 84, 52, 190); strokeWeight(1.2);
+        for (let px = -22; px < 30; px += 12) line(px, -40, px, 4);
+        // Iron hoops and the roof cap
+        stroke(74, 66, 58); strokeWeight(3); noFill();
+        line(-30, -32, 30, -32); line(-30, -12, 30, -12); line(-30, 0, 30, 0);
+        noStroke(); fill(118, 88, 58); rect(-33, -49, 66, 10, 3);
+        fill(150, 116, 78); rect(-33, -49, 66, 4, 2);
+        fill(70, 50, 30); rect(-3, -47, 6, 14, 1);
+        // Standpipe and rust weep down the near face
+        stroke(80, 74, 66); strokeWeight(3); line(26, 2, 30, 30);
+        noStroke(); fill(128, 78, 44, 90); rect(-14, 0, 7, 22, 3); rect(6, 0, 5, 16, 3);
+        pop();
+        continue;
+    }
+
+    // Well prop
+    if (b.isWell) {
+        push(); translate(b.x, b.y);
+        // Fieldstone ring: individual stones round the rim, not one grey band
+        noStroke(); fill(0, 0, 0, 55); ellipse(3, 4, b.w + 6, b.h + 6);
+        fill(128, 120, 110); stroke(84, 76, 68); strokeWeight(2);
+        ellipse(0, 0, b.w, b.h);
+        noStroke();
+        for (let k = 0; k < 8; k++) {
+            const a = k * (TWO_PI / 8) + (b.x % 7) * 0.1;
+            const rr = b.w / 2 - 4;
+            fill(k % 2 ? 148 : 118, k % 2 ? 140 : 111, k % 2 ? 128 : 101);
+            ellipse(cos(a) * rr, sin(a) * rr * (b.h / b.w), 10, 8);
+        }
+        fill(24, 26, 30); ellipse(0, 0, b.w - 16, b.h - 16);
+        fill(46, 66, 78, 200); ellipse(0, 1, b.w - 22, b.h - 22);
+        fill(150, 180, 195, 90); ellipse(-3, -3, 7, 5);
+        // Frame, windlass drum with rope, and a bucket hanging off it
+        stroke(84, 60, 34); strokeWeight(4);
+        line(-b.w/2 + 4, -6, -b.w/2 + 3, -30); line(b.w/2 - 4, -6, b.w/2 - 3, -30);
+        stroke(72, 50, 28); strokeWeight(3);
+        line(-b.w/2 + 1, -32, b.w/2 - 1, -32);
+        noStroke(); fill(112, 82, 50); rect(-b.w/2 + 6, -28, b.w - 12, 8, 3);
+        stroke(200, 190, 160, 190); strokeWeight(1.4); line(0, -22, 0, -6);
+        noStroke(); fill(96, 88, 78); stroke(60, 54, 48); strokeWeight(1.5);
+        rect(-6, -8, 12, 10, 2);
+        pop();
+        continue;
+    }
+    if (b.isHayBale) {
+        push(); translate(b.x, b.y);
+        const hv = b.seed !== undefined ? b.seed : ((Math.abs(b.x * 0.013 + b.y * 0.007)) % 1);
+        rotate((hv - 0.5) * 0.5);
+        // Three coils, lit from the top-left, with straw catching the light
+        // along the top edge — a flat disc reads as a coin, not a bale.
+        for (const [cxp, cyp, d] of [[-10, -6, 30], [10, -6, 30], [0, 12, 34]]) {
+            fill(168, 134, 54); noStroke(); ellipse(cxp + 2, cyp + 3, d, d * 0.94);
+            fill(205, 170, 75); stroke(150, 118, 42); strokeWeight(2);
+            ellipse(cxp, cyp, d, d * 0.94);
+            noStroke(); fill(228, 200, 118, 150); ellipse(cxp - d * 0.16, cyp - d * 0.18, d * 0.5, d * 0.4);
+        }
+        // Twine bands and loose straw
+        noFill(); stroke(140, 108, 40, 190); strokeWeight(1.4);
+        arc(-10, -6, 26, 25, PI * 0.15, PI * 0.85);
+        arc(10, -6, 26, 25, PI * 0.15, PI * 0.85);
+        arc(0, 12, 30, 26, PI * 0.15, PI * 0.85);
+        stroke(216, 186, 106, 170); strokeWeight(1);
+        for (let i = 0; i < 4; i++) {
+            const a = (hv * 7.1 + i * 1.6) % TWO_PI;
+            const rr = 15 + (i % 3) * 4;
+            line(cos(a) * rr * 0.8, 3 + sin(a) * rr * 0.6,
+                 cos(a) * (rr + 7) * 0.8, 3 + sin(a) * (rr + 7) * 0.6);
+        }
+        pop(); continue;
+    }
+
+    if (b.isWagonProp) {
+        push(); translate(b.x, b.y);
+        const wv = b.seed !== undefined ? b.seed : ((Math.abs(b.x * 0.011 + b.y * 0.009)) % 1);
+        rotate((wv - 0.5) * 0.6);
+        // Spoked wheels rather than plain discs
+        for (const wx of [-b.w/2 + 10, b.w/2 - 10]) {
+            const wy = b.h/2 - 2;
+            fill(58, 42, 26); stroke(34, 24, 14); strokeWeight(2); ellipse(wx, wy, 24, 24);
+            noFill(); stroke(96, 70, 42, 210); strokeWeight(1.6);
+            for (let k = 0; k < 6; k++) {
+                const a = wv * 3 + k * (PI / 6) * 2;
+                line(wx, wy, wx + cos(a) * 10, wy + sin(a) * 10);
+            }
+            fill(30, 22, 12); noStroke(); ellipse(wx, wy, 7, 7);
+        }
+        // Bed: planks with visible joints, plus a sagging canvas bonnet
+        fill(120, 85, 50); stroke(74, 50, 26); strokeWeight(2);
+        rect(-b.w/2, -b.h/2 + 6, b.w, b.h * 0.6, 3);
+        stroke(92, 64, 34, 170); strokeWeight(1);
+        for (let px = -b.w/2 + 9; px < b.w/2 - 4; px += 11) line(px, -b.h/2 + 8, px, -b.h/2 + 6 + b.h * 0.6 - 2);
+        // Draw pole
+        stroke(88, 62, 34); strokeWeight(3); line(-b.w/2, 0, -b.w/2 - 20, -4);
+        // Not every cart is a covered wagon. A third are open flatbeds with a
+        // load on them, so a row of them stops reading as copy-paste.
+        if (wv > 0.62) {
+            noFill(); stroke(190, 178, 158, 200); strokeWeight(2);
+            arc(0, -b.h/2 + 8, b.w * 0.62, b.h * 1.05, PI, TWO_PI);
+            arc(0, -b.h/2 + 8, b.w * 0.86, b.h * 1.2, PI, TWO_PI);
+            stroke(228, 219, 200); strokeWeight(4);
+            arc(0, -b.h/2 + 6, b.w * 0.9, b.h * 1.3, PI, TWO_PI);
+            stroke(150, 140, 122, 120); strokeWeight(1.4);
+            arc(0, -b.h/2 + 3, b.w * 0.9, b.h * 1.3, PI * 1.08, PI * 1.42);
+        } else if (wv > 0.3) {
+            // Barrels and sacks roped to an open bed
+            noStroke();
+            fill(96, 68, 40); ellipse(-14, -6, 17, 17); ellipse(4, -8, 17, 17);
+            fill(124, 92, 56); ellipse(-14, -7, 12, 12); ellipse(4, -9, 12, 12);
+            fill(168, 156, 126); ellipse(19, -4, 20, 15);
+            stroke(72, 58, 40, 190); strokeWeight(1.5); noFill();
+            line(-b.w/2 + 4, -8, b.w/2 - 4, -6);
+        } else {
+            // Wrecked: one wheel off, bed splintered
+            noStroke(); fill(70, 50, 30, 120); ellipse(6, 2, b.w * 0.7, b.h * 0.5);
+            stroke(88, 62, 34); strokeWeight(3);
+            line(-b.w/2 + 6, -10, b.w/2 - 14, 2); line(-b.w/2 + 12, 2, b.w/2 - 6, -8);
+        }
+        pop(); continue;
+    }
+
+    if (b.isCactusProp) {
+        push(); translate(b.x, b.y);
+        const cvv = b.seed !== undefined ? b.seed : ((Math.abs(b.x * 0.017 + b.y * 0.011)) % 1);
+        const arms = cvv > 0.66 ? 2 : (cvv > 0.28 ? 1 : 0);
+        // Trunk: shaded core, ribbed face, sunlit western edge
+        noStroke(); fill(30, 66, 36, 90); ellipse(3, b.h/2 - 3, 22, 9);
+        fill(50, 106, 58); stroke(32, 74, 40); strokeWeight(2);
+        rect(-7, -b.h/2, 14, b.h, 7);
+        if (arms >= 1) { rect(-19, -b.h/2 + 12, 11, 24, 5); rect(-19, -b.h/2 + 12, 20, 11, 5); }
+        if (arms >= 2) { rect(8, -b.h/2 + 22, 11, 20, 5); rect(-1, -b.h/2 + 22, 20, 11, 5); }
+        noStroke();
+        fill(88, 148, 92, 150); rect(-6, -b.h/2 + 3, 3.5, b.h - 8, 2);
+        fill(26, 62, 32, 120); rect(3, -b.h/2 + 3, 3, b.h - 8, 2);
+        // Areole spines
+        stroke(226, 224, 196, 170); strokeWeight(1);
+        for (let sy = -b.h/2 + 9; sy < b.h/2 - 4; sy += 15) {
+            line(-8, sy, -12, sy - 2); line(8, sy + 3, 12, sy + 1);
+        }
+        // A bloom on the tall ones
+        if (cvv > 0.82) { noStroke(); fill(226, 96, 120); ellipse(0, -b.h/2 + 2, 8, 7); fill(250, 214, 130); ellipse(0, -b.h/2 + 2, 3.5, 3.5); }
+        pop(); continue;
+    }
+
+    if (b.isCrateProp) {
+        push(); translate(b.x, b.y);
+        const kv = b.seed !== undefined ? b.seed : ((Math.abs(b.x * 0.019 + b.y * 0.013)) % 1);
+        rotate((kv - 0.5) * 0.7);
+        // Planked lid with a raised frame, so it reads as a box seen from above
+        fill(138, 102, 60); stroke(88, 64, 36); strokeWeight(2);
+        rect(-b.w/2, -b.h/2, b.w, b.h, 2);
+        noStroke(); fill(162, 122, 74);
+        rect(-b.w/2 + 3, -b.h/2 + 3, b.w - 6, b.h - 6, 1);
+        stroke(104, 76, 44, 190); strokeWeight(1.2); noFill();
+        for (let px = -b.w/2 + 9; px < b.w/2 - 2; px += 12) line(px, -b.h/2 + 3, px, b.h/2 - 3);
+        stroke(96, 70, 40); strokeWeight(2);
+        line(-b.w/2 + 2, -b.h/2 + 6, b.w/2 - 2, -b.h/2 + 6);
+        line(-b.w/2 + 2, b.h/2 - 6, b.w/2 - 2, b.h/2 - 6);
+        // Corner nails and a stencil smudge
+        noStroke(); fill(70, 62, 54);
+        for (const nx of [-b.w/2 + 5, b.w/2 - 5]) for (const ny of [-b.h/2 + 6, b.h/2 - 6]) ellipse(nx, ny, 2.4, 2.4);
+        if (kv > 0.5) { fill(60, 48, 34, 110); rect(-b.w/4, -3, b.w/2, 5, 1); }
+        pop(); continue;
+    }
+
+    if (b.isTumbleweedProp) {
+        push(); translate(b.x, b.y);
+        noFill(); stroke(122, 96, 55); strokeWeight(1.5);
+        for (let a = 0; a < PI; a += PI / 5) {
+            ellipse(0, 0, b.w * (0.75 + 0.25 * sin(a * 3)), b.h * 0.85);
+        }
+        pop(); continue;
+    }
+    let bM, bI;
+    if (currentLevel === 1) { 
+        if (b.style === 0) { bM = [160, 165, 170]; bI = [140, 145, 150]; } 
+        else if (b.style === 1) { bM = [140, 60, 50]; bI = [120, 50, 40]; } 
+        else if (b.style === 2) { bM = [190, 180, 160]; bI = [170, 160, 140]; } 
+        else { bM = [70, 90, 110]; bI = [50, 70, 90]; } 
+    } else { bM = currentLevel === 2 ? [35, 35, 40] : (currentLevel === 4 ? [80, 70, 50] : [140, 150, 160]); bI = currentLevel === 2 ? 15 : (currentLevel === 4 ? 70 : 120); }
+    
+    // Roof read from above: parapet wall, then the deck inside it, then
+    // membrane seams running one way only. Three concentric rectangles and a
+    // dot is what made every building in the city look like the same tile.
+    const bIc = Array.isArray(bI) ? bI : [bI, bI, bI];
+
+    // --- Mass ------------------------------------------------------------
+    // A top-down camera sees roofs and nothing else, so a block drawn as flat
+    // rectangles gives the eye no way to tell where one building stops and the
+    // next starts -- neighbouring roofs of similar colour fuse into a single
+    // shape, and anything cast beside them reads as yet another building.
+    //
+    // Extruding the two walls that face away from the sun fixes that outright:
+    // every footprint gets an unambiguous silhouette and a base that sits ON
+    // the ground. The roof stays exactly on the collision rect, so this changes
+    // nothing about where the building actually blocks movement or bullets.
+    const rise = b.isBlockBuilding ? buildingRise(b) : 0;
+    const wx = LIGHT_DX * rise, wy = LIGHT_DY * rise;
+    const x0 = b.x - b.w / 2, y0 = b.y - b.h / 2;
+    const x1 = b.x + b.w / 2, y1 = b.y + b.h / 2;
+    const floors = Math.max(2, Math.round(rise / 6));
+
+    noStroke();
+    if (rise > 0) {
+      // South face is turned most directly away from the light, so it is the
+      // darkest. Neither face is a straight multiply: a small ambient term
+      // keeps the walls off pure black in the night biomes, where bM is
+      // already dark to begin with.
+      fill(bM[0] * 0.40 + 5, bM[1] * 0.40 + 6, bM[2] * 0.40 + 10);
+      quad(x0, y1, x1, y1, x1 + wx, y1 + wy, x0 + wx, y1 + wy);
+      fill(bM[0] * 0.56 + 7, bM[1] * 0.56 + 8, bM[2] * 0.56 + 13);
+      quad(x1, y0, x1 + wx, y0 + wy, x1 + wx, y1 + wy, x1, y1);
+      // Storey lines — the cheapest possible cue that the wall has height.
+      stroke(0, 0, 0, 50); strokeWeight(1);
+      for (let f = 1; f < floors; f++) {
+        const t = f / floors;
+        line(x0 + wx * t, y1 + wy * t, x1 + wx * t, y1 + wy * t);
+        line(x1 + wx * t, y0 + wy * t, x1 + wx * t, y1 + wy * t);
+      }
+      noStroke();
+    }
+
+    fill(bM[0], bM[1], bM[2]);
+    stroke(currentLevel === 1 || currentLevel === 3 ? 100 : 10); strokeWeight(2);
+    rect(b.x - b.w / 2, b.y - b.h / 2, b.w, b.h);
+    noStroke();
+    // Parapet: lit on the light side, in shade on the other, so the roof sits
+    // below its own wall instead of reading flat.
+    fill(bM[0] * 1.18 + 10, bM[1] * 1.18 + 10, bM[2] * 1.18 + 10);
+    rect(b.x - b.w / 2 + 2, b.y - b.h / 2 + 2, b.w - 4, 9);
+    rect(b.x - b.w / 2 + 2, b.y - b.h / 2 + 2, 9, b.h - 4);
+    fill(bM[0] * 0.62, bM[1] * 0.62, bM[2] * 0.62);
+    rect(b.x - b.w / 2 + 2, b.y + b.h / 2 - 11, b.w - 4, 9);
+    rect(b.x + b.w / 2 - 11, b.y - b.h / 2 + 2, 9, b.h - 4);
+    // Deck
+    fill(bIc[0], bIc[1], bIc[2]);
+    rect(b.x - b.w / 2 + 11, b.y - b.h / 2 + 11, b.w - 22, b.h - 22);
+    // Inner shadow cast by the parapet onto the deck
+    fill(0, 0, 0, 46);
+    rect(b.x - b.w / 2 + 11, b.y - b.h / 2 + 11, b.w - 22, 7);
+    rect(b.x - b.w / 2 + 11, b.y - b.h / 2 + 11, 7, b.h - 22);
+    // Membrane seams — one direction, spacing keyed off the footprint so
+    // neighbouring buildings do not line up into a city-wide grid
+    const seamV = ((b.w + b.h) | 0) % 2 === 0;
+    stroke(0, 0, 0, 34); strokeWeight(1.2);
+    if (seamV) for (let l = b.x - b.w / 2 + 34; l < b.x + b.w / 2 - 14; l += 30)
+                 line(l, b.y - b.h / 2 + 14, l, b.y + b.h / 2 - 14);
+    else        for (let l = b.y - b.h / 2 + 34; l < b.y + b.h / 2 - 14; l += 30)
+                 line(b.x - b.w / 2 + 14, l, b.x + b.w / 2 - 14, l);
+    noStroke();
+    // Roof drainage.
+    //
+    // This used to be two flat black ellipses per roof, sized off the footprint
+    // and placed by a hash of the building's coordinates -- 99 large ovals a
+    // frame across the visible city, sitting on the roofs like thumbprints with
+    // nothing to explain them. That is the "randomly placed ovals" in the
+    // screenshots.
+    //
+    // A flat roof drains to a low point, so give it one and let everything
+    // follow from that: a sump in the quadrant the roof falls toward, a shallow
+    // wet apron feathered around it, the drain body itself, and two crack lines
+    // running downhill into it. Same amount of ink, but now it reads as a roof
+    // instead of a smudge -- and the geometry says which way the roof slopes.
+    const wv   = Math.abs((b.x * 0.013 + b.y * 0.021) % 1);
+    const inR  = 16;                                     // inside the parapet
+    const dxq  = (wv < 0.5 ? -1 : 1), dyq = (((wv * 7) % 1) < 0.5 ? -1 : 1);
+    const dnx  = b.x + dxq * (b.w * 0.5 - inR - 14);
+    const dny  = b.y + dyq * (b.h * 0.5 - inR - 14);
+    const apr  = Math.min(b.w, b.h) * 0.30;
+    if (apr > 14) {
+      // Damp apron: three nested rings, darkest at the sump, so the edge fades
+      // instead of ending on a hard line the way a single ellipse does.
+      for (let r = 3; r >= 1; r--) {
+        fill(0, 0, 0, 9 + (3 - r) * 5);
+        ellipse(dnx, dny, apr * (0.45 + r * 0.22), apr * (0.40 + r * 0.20));
+      }
+      // Fall lines: shallow channels the water runs down. Kept short and very
+      // faint -- at full length they stopped reading as roof drainage and
+      // started reading as stray hairline scratches across the deck.
+      stroke(0, 0, 0, 22); strokeWeight(1.2);
+      line(dnx - dxq * apr * 0.85, dny - dyq * apr * 0.20, dnx, dny);
+      line(dnx - dxq * apr * 0.20, dny - dyq * apr * 0.85, dnx, dny);
+      noStroke();
+      // Drain: cast collar, grate, and a lit rim on the light side.
+      fill(46, 48, 52);        ellipse(dnx, dny, 15, 13);
+      fill(24, 26, 29);        ellipse(dnx, dny, 10, 8.5);
+      stroke(70, 74, 80, 190); strokeWeight(1);
+      line(dnx - 4, dny - 1.6, dnx + 4, dny - 1.6);
+      line(dnx - 4, dny + 1.6, dnx + 4, dny + 1.6);
+      noStroke();
+      fill(255, 255, 255, 26);
+      arc(dnx, dny, 15, 13, PI + QUARTER_PI, TWO_PI - QUARTER_PI);
+    }
+
+    // Roof cap. A lit rim on the two edges the sun reaches and a hard break
+    // where the roof rolls over onto the extruded walls. Two strokes, and the
+    // volume closes: without them the roof and the walls read as separate
+    // flat shapes that happen to touch.
+    stroke(255, 255, 255, 44); strokeWeight(1.6);
+    line(x0, y0, x1, y0);
+    line(x0, y0, x0, y1);
+    stroke(0, 0, 0, 96); strokeWeight(1.6);
+    line(x1, y0, x1, y1);
+    line(x0, y1, x1, y1);
+    noStroke();
+
+    if (currentLevel === 1 || currentLevel === 2) {
+        if (b.details) {
+            push(); translate(b.x, b.y);
+            for(let det of b.details) {
+                fill(0, 50); noStroke(); 
+                if (det.type === 'hvac') rect(det.x - 13, det.y - 13, 26, 26, 3);
+                else if (det.type === 'access') rect(det.x - 13, det.y - 18, 26, 36);
+                else if (det.type === 'vent') rect(det.x - 6, det.y - 6, 12, 12);
+                
+                if (det.type === 'hvac') { fill(120); stroke(80); strokeWeight(1); rect(det.x - 15, det.y - 15, 30, 30, 3); fill(40); ellipse(det.x, det.y, 18, 18); push(); translate(det.x, det.y); rotate(frameCount * 0.1); stroke(180); strokeWeight(3); line(-7, 0, 7, 0); line(0, -7, 0, 7); pop(); } 
+                else if (det.type === 'access') { fill(bM[0]*0.7, bM[1]*0.7, bM[2]*0.7); stroke(80); strokeWeight(1); rect(det.x - 15, det.y - 20, 30, 40); fill(40); noStroke(); rect(det.x - 6, det.y + 5, 12, 15); } 
+                else if (det.type === 'helipad') { noFill(); stroke(255, 200, 0); strokeWeight(4); ellipse(det.x, det.y, 50, 50); strokeWeight(2); ellipse(det.x, det.y, 30, 30); } 
+                else if (det.type === 'vent') { fill(140); stroke(90); strokeWeight(1); rect(det.x - 8, det.y - 8, 16, 16); fill(50); noStroke(); rect(det.x - 5, det.y - 5, 10, 2); rect(det.x - 5, det.y, 10, 2); rect(det.x - 5, det.y + 5, 10, 2); }
+            } pop();
+        }
+    }
+  }
+}
+
+
+
+
+
+
+
+function drawParkingCars() {
+  for (let c of activeParkingCars) {
+    push(); translate(c.x, c.y); rotate(c.angle || HALF_PI); fill(c.col[0], c.col[1], c.col[2]); stroke(15); strokeWeight(2); rect(-25, -45, 50, 90, 6); fill(25); noStroke(); rect(-20, -25, 40, 15, 2); rect(-20, 15, 40, 12, 2); fill(30, 20, 15, 180); ellipse(0, -5, 30, 25); fill(10, 150); ellipse(-10, 20, 15, 15); pop();
+  }
+}
+
+
+
+
+
+
+
+function windowResized() { resizeCanvas(windowWidth, windowHeight); leftStick.base = { x: 80, y: height - 160 }; rightStick.base = { x: width - 80, y: height - 110 }; }
+function nextLevel() { startAtLevel(currentLevel + 1); }
+function restartGame() { seedWorldClock(); startAtLevel(1); }
+function emit(x, y, c, col, typ, vx = 0, vy = 0) { for (let i = 0; i < c; i++) { particles.push(new Particle(x, y, col, typ, vx, vy)); } }
+let activeBuildings = [];
+let activeParkingCars = [];
+
+let lastActiveUpdate = 0;
+function updateActiveWorld() {
+    // THROTTLE: Only generate this array once every 10 frames to save massive CPU/Battery
+    if (frameCount - lastActiveUpdate < 10 && activeBuildings.length > 0) return;
+    lastActiveUpdate = frameCount;
+
+    activeBuildings = [];
+    for (let b of buildings) {
+        let bRad = Math.max(b.w || 0, b.h || 0) * 0.5;
+        // EXPANDED: 1500px buffer. Covers all off-screen enemies without loading the whole map!
+        if (inView(b.x, b.y, bRad + 1500)) {
+            activeBuildings.push(b);
+        }
+    }
+    
+    activeParkingCars = [];
+    for (let c of parkingCars) {
+        if (inView(c.x, c.y, 1500)) {
+            activeParkingCars.push(c);
+        }
+    }
+}
+
+
+
+
+function updateGrenadePickups() {
+    for (let i = grenadePickups.length - 1; i >= 0; i--) {
+        let g = grenadePickups[i];
+        if (inView(g.x, g.y, 50)) {
+            push(); translate(g.x, g.y);
+            let hover = sin(frameCount * 0.05 + g.x) * 5;
+            translate(0, hover);
+            
+            fill(40, 100, 40); stroke(20, 80, 20); strokeWeight(2);
+            rect(-10, -12, 20, 24, 4); 
+            fill(100); noStroke(); rect(-4, -16, 8, 4); 
+            fill(255, 50, 50); ellipse(0, -10, 4, 4); 
+            pop();
+        }
+        
+        if (player && player.hp > 0 && dist(player.x, player.y, g.x, g.y) < 30) {
+            if (pGrenadeAmmo < 12) {
+                pGrenadeAmmo = Math.min(12, (pGrenadeAmmo || 0) + 4);
+                grenadesUnlocked = true; // <--- THIS WAS THE BUG. Changed from hasGrenadeAbility
+                streakMsgText = "GRENADES ACQUIRED!";
+                streakMsgTimer = 90;
+                sfx.reload(); 
+                emit(g.x, g.y, 20, color(50, 255, 50), "SPARK");
+                grenadePickups.splice(i, 1);
+            }
+        }
+    }
+}
+
+
+function clearAllBlood() {
+    bloodChunkUse = {};
+    bloodBytes = 0;
+    for (const pg of bloodSurfacePool) pg.remove();
+    bloodSurfacePool.length = 0;
+    for (let key in bloodChunks) {
+        bloodChunks[key].pg.remove(); // Destroys the p5.Graphics object
+    }
+    bloodChunks = {}; // Resets the dictionary
+}
+
+
+
+function draw() {
+  if (!started) {
+    background(15); fill(255); textAlign(CENTER, CENTER); textSize(32); textFont('sans-serif'); text("STICK WORLD REVOLUTION", width / 2, height / 2 - 140);
+    
+    if (!selectingDifficulty) {
+        fill(180); textSize(18); text("SELECT STARTING LEVEL", width / 2 - 55, height / 2 - 80); let startX = width / 2 - 175;
+
+        // --- DEBUG: mode toggle for the numbered level shortcuts ----------
+        // Flips them between arcade and story. Picking a level in story mode
+        // seeds the savior route up to that point, so you land mid-campaign
+        // with every sector behind you already settled.
+        let mChipX = width / 2 + 95, mChipY = height / 2 - 94;
+        fill(levelSelectStory ? color(60, 45, 0) : color(30));
+        stroke(levelSelectStory ? color(255, 200, 0) : color(90)); strokeWeight(2);
+        rect(mChipX, mChipY, 140, 28, 6);
+        fill(levelSelectStory ? color(255, 200, 0) : color(140)); noStroke(); textSize(12);
+        text(levelSelectStory ? "STORY (DEBUG)" : "ARCADE", mChipX + 70, mChipY + 14);
+
+        for (let i = 1; i <= 7; i++) {
+            fill(levelSelectStory ? color(48, 40, 20) : color(40));
+            stroke(levelSelectStory ? color(255, 200, 0) : color(100)); strokeWeight(2);
+            rect(startX + (i - 1) * 60, height / 2 - 50, 50, 50, 8);
+            fill(255); noStroke(); textSize(20); text(i, startX + (i - 1) * 60 + 25, height / 2 - 25);
+        }
+        if (levelSelectStory) {
+            fill(150); noStroke(); textSize(11);
+            text("savior route pre-loaded · SOUTH is onward", width / 2, height / 2 + 8);
+        }
+
+        fill(30); stroke(50, 255, 50); strokeWeight(2); rect(width / 2 - 100, height / 2 + 20, 200, 50, 8); fill(255); noStroke(); textSize(20); text("ARCADE MODE", width / 2, height / 2 + 45);
+        fill(30); stroke(255, 200, 0); strokeWeight(2); rect(width / 2 - 100, height / 2 + 80, 200, 50, 8); fill(255); noStroke(); textSize(20); text("STORY MODE", width / 2, height / 2 + 105);
+        
+        if (localStorage.getItem('urbanTwinStickSave') !== null) {
+            fill(30); stroke(50, 200, 255); strokeWeight(2); rect(width / 2 - 100, height / 2 + 140, 200, 50, 8); 
+            fill(255); noStroke(); textSize(20); text("LOAD GAME", width / 2, height / 2 + 165);
+        }
+    } else {
+        fill(180); textSize(18); text("SELECT DIFFICULTY", width / 2, height / 2 - 80);
+        
+        fill(30); stroke(50, 255, 50); strokeWeight(2); rect(width / 2 - 150, height / 2 - 30, 300, 60, 8); 
+        fill(255); noStroke(); textSize(20); text("NORMAL", width / 2, height / 2 - 10); 
+        textSize(12); fill(150); text("Squad AI (No evasive strafing)", width / 2, height / 2 + 10);
+        
+        fill(30); stroke(255, 50, 50); strokeWeight(2); rect(width / 2 - 150, height / 2 + 45, 300, 60, 8); 
+        fill(255); noStroke(); textSize(20); text("HARD", width / 2, height / 2 + 65); 
+        textSize(12); fill(150); text("Tactical Squads + Evasive Dodging", width / 2, height / 2 + 85);
+        
+        fill(150); noStroke(); textSize(14); text("[ GO BACK ]", width / 2, height / 2 + 135);
+    }
+    return;
+  }
+
+  // TOWER DESTROYED WIN CONDITION TRIGGER
+  // One shot. The old guard was `!towersDefeated`, and that flag is not set until
+  // an ambush is cleared or the sector is won -- on a sector whose objective IS
+  // the towers there is no ambush, so between the last tower falling and the win
+  // screen this re-armed the cinematic every time the previous one ended.
+  if ((currentLevel === 1 || currentLevel === 2) && isStoryMode &&
+      !window.towersDefeated && !sectorTowersAreDown(currentLevel)) {
+      let totalTowers = buildings.filter(b => b.isTower).length;
+      let activeTowers = buildings.filter(b => b.isTower && b.hp > 0).length;
+      if (totalTowers > 0 && activeTowers === 0 && !isWin && !killcamMode) {
+          killcamMode = true; killcamTarget = { x: player.x, y: player.y }; killcamTimer = 150;
+          // Everyone left alive in the sector changes sides here, not at the
+          // win screen. markSectorTowersDown() also closes the sector to new
+          // hostile spawns, so the ground you just liberated stays liberated
+          // instead of refilling behind you.
+          markSectorTowersDown(currentLevel);
+          const got = recruitSectorSurvivors();
+          if (got.total > 0) {
+              streakMsgText = "TOWERS DOWN — " + got.total + " CITIZEN" +
+                              (got.total === 1 ? "" : "S") + " FREED";
+              streakMsgTimer = 220;
+          }
+      }
+  }
+
+  if (isStoryMode && inStoryIntro) {
+      background(0); fill(255, 200, 0); textAlign(CENTER, TOP); textSize(16); textLeading(22); textFont('sans-serif');
+      text(storyText, width / 2, introScrollY); introScrollY -= 1.0; 
+      fill(100); textSize(14); text("[ TAP ANYWHERE TO SKIP ]", width / 2, height - 40);
+      if (introScrollY < -450) { inStoryIntro = false; inStoryRoom = true; storyPhase = 1; dadX = -50; }
+      return; 
+  }
+
+  if (inStoryRoom) {
+      if (storyPhase === 1 || storyPhase === 2) {
+          background(20, 25, 30); fill(35, 40, 45); noStroke(); rect(0, height * 0.6, width, height * 0.4); 
+          push(); translate(width / 2, height * 0.65); fill(60, 40, 30); rect(-100, -40, 200, 70, 10); fill(80, 50, 40); rect(-100, 10, 200, 40, 10); fill(50, 30, 20); rect(-115, -10, 25, 50, 5); rect(90, -10, 25, 50, 5); pop();
+          push(); translate(width / 2, height * 0.65 - 5); fill(30, 80, 180); rect(-10, 0, 20, 15, 4); rect(-10, 5, 20, 35, 4); stroke(15); strokeWeight(2); line(0, 5, 0, 40); noStroke(); fill(200, 30, 30); rect(-12, -32, 24, 35, 4); fill(235, 180, 140); ellipse(0, -40, 18, 18); fill(200, 30, 30); rect(-4, -28, 8, 20, 4); fill(235, 180, 140); ellipse(0, -5, 6, 6); pop();
+          if (storyPhase === 1) { dadX += 2; if (dadX >= width / 2 - 80) storyPhase = 2; }
+          push(); translate(dadX, height * 0.65 + 10); fill(80, 60, 40); rect(-10, -20, 20, 40, 4); stroke(15); strokeWeight(2); line(0, -20, 0, 20); noStroke(); fill(60, 120, 60); rect(-12, -50, 24, 35, 4); fill(235, 180, 140); ellipse(0, -60, 20, 20); fill(60, 40, 20); arc(0, -62, 22, 20, PI, TWO_PI, CHORD); fill(60, 120, 60); rect(-4, -45, 8, 25, 4); fill(235, 180, 140); ellipse(0, -15, 6, 6); pop();
+          if (storyPhase === 2) { drawSpeechBubble(dadX + 10, height * 0.65 - 95, "Son. Its about time i\nshow you something."); }
+      }
+      else if (storyPhase >= 3) {
+          background(40, 45, 50); fill(50, 55, 60); rect(0, height * 0.6, width, height * 0.4); 
+          fill(100); rect(width/2 - 200, height*0.6 - 10, 150, 10); fill(70); rect(width/2 - 190, height*0.6, 10, 50); rect(width/2 - 70, height*0.6, 10, 50); fill(150); ellipse(width/2 - 150, height*0.6 - 15, 15, 15); ellipse(width/2 - 120, height*0.6 - 13, 10, 10); fill(60); rect(width/2 + 90, height*0.5 + 40, 140, 20); 
+          push(); translate(width/2 - 160, height*0.6 - 35); fill(180); noStroke(); rect(-25, -15, 12, 30, 4); rect(-10, -15, 12, 30, 4); fill(100); rect(-13, -5, 3, 10); stroke(0, 200, 255); fill(0, 100, 255, 60); strokeWeight(2); beginShape(); vertex(10, -10); vertex(30, -10); vertex(35, 0); vertex(30, 20); vertex(10, 20); vertex(5, 0); endShape(CLOSE); pop();
+          let dX = width / 2 - 30; let pX = width / 2 + 30;
+          if (storyPhase === 18) { fill(0, 230); rect(0, 0, width, height); push(); translate(width/2, height/2 + 20); scale(6); fill(180); noStroke(); rect(-10, -15, 8, 30, 4); rect(2, -15, 8, 30, 4); fill(100); rect(-2, -5, 4, 10); pop(); fill(50, 255, 50); textAlign(CENTER); textSize(24); textFont('sans-serif'); text("JETPACK ACQUIRED", width/2, height/2 - 120); } 
+          else if (storyPhase === 20) { fill(0, 230); rect(0, 0, width, height); push(); translate(width/2, height/2 + 20); scale(5); stroke(0, 200, 255); fill(0, 100, 255, 60); strokeWeight(2); beginShape(); vertex(-15, -15); vertex(15, -15); vertex(20, -5); vertex(15, 15); vertex(-15, 15); vertex(-20, -5); endShape(CLOSE); pop(); fill(50, 255, 50); textAlign(CENTER); textSize(24); textFont('sans-serif'); text("ETHERIC BODY FIELD ARMOR", width/2, height/2 - 120); } 
+          else { 
+              push(); translate(pX, height * 0.6 + 10); fill(30, 80, 180); rect(-10, -20, 20, 40, 4); stroke(15); strokeWeight(2); line(0, -20, 0, 20); noStroke(); fill(200, 30, 30); rect(-12, -50, 24, 35, 4); fill(235, 180, 140); ellipse(0, -60, 18, 18); fill(200, 30, 30); rect(-4, -45, 8, 25, 4); fill(235, 180, 140); ellipse(0, -15, 6, 6); pop(); 
+              push(); translate(dX, height * 0.6 + 10); fill(80, 60, 40); rect(-10, -20, 20, 40, 4); stroke(15); strokeWeight(2); line(0, -20, 0, 20); noStroke(); fill(60, 120, 60); rect(-12, -50, 24, 35, 4); fill(235, 180, 140); ellipse(0, -60, 20, 20); fill(60, 40, 20); arc(0, -62, 22, 20, PI, TWO_PI, CHORD); fill(60, 120, 60); rect(-4, -45, 8, 25, 4); fill(235, 180, 140); ellipse(0, -15, 6, 6); pop(); 
+              
+              if (storyPhase === 3) { drawSpeechBubble(dX, height * 0.65 - 95, "Something really bad is about to happen,\nand i want you to be safe.\nEverything you thought you knew\nabout this world is a lie."); }
+              else if (storyPhase === 4) { drawSpeechBubble(pX, height * 0.65 - 95, "Dont tell me the world is 3D..\nI cant stand 3D earthers..."); }
+              else if (storyPhase === 5) { drawSpeechBubble(dX, height * 0.65 - 95, "....."); }
+              else if (storyPhase === 6) { drawSpeechBubble(pX, height * 0.65 - 95, "For F***s sake...."); }
+              else if (storyPhase === 7) { drawSpeechBubble(dX, height * 0.65 - 95, "There's no time, son. Listen;\ndo you remember in school when I taught you\nhow to bypass taking your daily dose\nof aluminum supplement?"); }
+              else if (storyPhase === 8) { drawSpeechBubble(pX, height * 0.65 - 95, "Yeah; Stick the capsule under my tongue, then spit it\nin the toilet during my designated bathroom break.\nYou told me you didn't believe in the benefits....\neven though Stick Cities 'greatest' doctors recommend\nit to increase life span to atleast 60 years old!"); }
+              else if (storyPhase === 9) { drawSpeechBubble(dX, height * 0.65 - 95, "Yeah well.. The truth is.\nThe average lifespan is retrograding.\nBack in the 2020's it was normal to live to 80 years old.\nSome people even past 100. I'm not supposed to\nbe telling you this, but you're my son.\nI need you to have a fighting chance."); }
+              else if (storyPhase === 10) { drawSpeechBubble(pX, height * 0.65 - 95, "Fighting chance?"); }
+              else if (storyPhase === 11) { drawSpeechBubble(dX, height * 0.65 - 95, "Today is the day NM-0 is activating their\nlow frequency psycho inducer.\nIn fact; its already happening.\nSince you have little to no metals in your body;\nyoure not effected. As I'm not."); }
+              else if (storyPhase === 12) { drawSpeechBubble(pX, height * 0.65 - 95, "you didn't take the aluminum\nsupplement as a kid either?"); }
+              else if (storyPhase === 13) { drawSpeechBubble(dX, height * 0.65 - 95, "How do you think I taught you the method?\n ..."); }
+              else if (storyPhase === 14) { drawSpeechBubble(pX, height * 0.65 - 95, "Hmm.. Makes sense."); }
+              else if (storyPhase === 15) { drawSpeechBubble(dX, height * 0.65 - 95, "All this being said; we need to leave this town.\nIt's turned into a hive mind.\nThey will kill anybody who isn't apart of it...\nwe have to head SOUTH..."); }
+              else if (storyPhase === 16) { drawSpeechBubble(pX, height * 0.65 - 95, "but i thought there was nothing\noutside of Stick City?"); }
+              else if (storyPhase === 17) { drawSpeechBubble(dX, height * 0.65 - 95, "I can't explain everything right now. We need to hurry.\nTake this, and put it on your back.\nIt will give you a boost fast enough to dodge a bullet!"); }
+              else if (storyPhase === 19) { drawSpeechBubble(dX, height * 0.65 - 95, "and take this just in case you\nf***ed up dodging that bullet!"); }
+              else if (storyPhase === 21) { drawSpeechBubble(pX, height * 0.65 - 95, "is this why you been training me at\na gun range my whole life?\nThat's all we ever do...."); }
+              else if (storyPhase === 22) { drawSpeechBubble(dX, height * 0.65 - 95, "Just put on the gear; I'll explain more later.\nI haven't even told you about the alie-"); }
+          }
+           if (storyPhase >= 3 && storyPhase <= 22) { fill(255); textAlign(CENTER); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40); }
+      }
+      return; 
+  }
+  let targetZoom = 0.65; 
+
+  if (!isPaused) {
+      if (killcamMode) {
+        zoom = lerp(zoom, 1.8, 0.04); camX = lerp(camX, killcamTarget.x - (width / 2) / zoom, 0.08); camY = lerp(camY, killcamTarget.y - (height / 2) / zoom, 0.08); killcamTimer--;
+        
+        // KILLCAM TIMER FINISHED TRANSITION
+        if (killcamTimer <= 0) { 
+            killcamMode = false; 
+            if (currentLevel === 0) { prologuePhase = 3; } 
+            else if ((currentLevel === 1 || currentLevel === 2) && isStoryMode && !nm0AmbushActive) { 
+                
+                               let towersAlive = buildings.filter(b => b.isTower && b.hp > 0).length;
+
+                if (towersAlive > 0 || window.genocideRouteActive) {
+                    // GENOCIDE ROUTE (Towers not destroyed)
+                    window.genocideAmbushCleared = true; 
+                    
+                    if (currentLevel === 1 && window.northGateBreachedStatus && !window.nm0HqCleared) {
+                        streakMsgText = "NORTH GATE UNLOCKED";
+                    } else {
+                        streakMsgText = "AREA CLEARED. INVESTIGATE THE FORTRESS.";
+                    }
+                    streakMsgTimer = 180;
+                    camX = player.x - (width / 2) / zoom;
+                    camY = player.y - (height / 2) / zoom;
+                } else {
+                    // SAVIOR ROUTE (Towers destroyed, Ambush cleared)
+
+                    window.towersDefeated = true;
+                    markSectorTowersDown(currentLevel);
+                    inTownCutscene = true; townPhase = 1; townTimer = 120;
+                    let candidates = enemiesList.filter(e => e.eType === "NORMAL" || e.eType === "FEMALE_PISTOL" || e.eType === "BUG" || e.eType === "SNAIL" || e.eType === "MOLOTOV");
+                    for(let e of candidates) { e.isFriendly = true; e.state = "IDLE"; e.hp = 300; globalPopulation++; }
+                    townSpeaker1 = candidates.length > 0 ? candidates[0] : player; 
+                    townSpeaker2 = candidates.length > 1 ? candidates[1] : townSpeaker1; 
+                    killcamTarget = {x: townSpeaker1.x, y: townSpeaker1.y};
+                }
+            } else if (window.farmAmbushCleared) {
+    window.farmAmbushCleared = false;
+    inFarmPostCutscene = true;
+    farmPostPhase = 1;
+
+    // FIX 1: Explicitly check for Farmer types in case the 'isFriendly' flag dropped during the ambush
+    window.allies = enemiesList.filter(e => 
+        (e.isFriendly || e.eType === "FARMER_MALE" || e.eType === "FARMER_FEMALE") 
+        && e.hp > 0 
+        && !e.dead
+    );
+
+    // Fallback if none survived
+    if (window.allies.length === 0) {
+        let f = new Character(player.x + 80, player.y, false, "FARMER_MALE");
+        f.isFriendly = true; 
+        enemiesList.push(f);
+        window.allies.push(f);
+    }
+
+    // FIX 2: Force all captured allies to be friendly so they don't get purged or targeted
+    window.allies.forEach(a => a.isFriendly = true);
+
+    farmSpeaker = window.allies[0];
+
+    // FIX 3: Explicitly bind these to window so your global UI and level transitions can read them
+   popTotal = (window.militaryToBring || 0) + window.allies.length;
+popUnassigned = popTotal;
+popMilitary = 0;
+popFarming = 0;
+popScience = 0;
+popArchitecture = 0;
+
+    player.x = farmSpeaker.x + 50;
+    player.y = farmSpeaker.y + 50;
+    camX = player.x - (width / 2) / zoom;
+    camY = player.y - (height / 2) / zoom;
+    player.aimAngle = atan2(farmSpeaker.y - player.y, farmSpeaker.x - player.x);
+    emit(player.x, player.y, 20, color(0, 200, 255), "SPARK"); 
+    sfx.dash();
+
+
+            
+
+            } else if (window.nm0AmbushCleared) {
+        // CLEAR AMBUSH FLAGS
+        window.nm0AmbushCleared = false;
+        nm0AmbushActive = false;
+        window.nm0AmbushClearedStatus = true;
+
+        // Which ambush just ended decides which beat this is. Read it out and
+        // clear it here so the next one starts from a clean slate whichever
+        // branch below runs.
+        const clearedKind = window.ambushKind;
+        window.ambushKind = null;
+
+        let towersAlive = buildings.filter(b => b.isTower && b.hp > 0).length;
+
+        if (currentLevel === 1 && (window.southGateBreachedStatus || window.northGateBreachedStatus)) {
+            // GREAT GATE AMBUSH — a gate came down and its garrison is dead.
+            // Checked ahead of the route split so a savior run does not fall
+            // through and replay the town-liberation cutscene for every gate.
+            if (towersAlive > 0 || window.genocideRouteActive) window.genocideAmbushCleared = true;
+
+            if (window.southGateBreachedStatus && !window.southRoadAnnounced) {
+                // The way onward. South is the direction the campaign runs.
+                window.southRoadAnnounced = true;
+                streakMsgText = "SOUTH GATE BREACHED — ROAD SOUTH OPEN";
+            } else if (window.northGateBreachedStatus && !window.nm0HqCleared) {
+                streakMsgText = "NORTH GATE UNLOCKED — ENTER NM-0 HQ";
+            } else {
+                streakMsgText = "AREA CLEARED.";
+            }
+            streakMsgTimer = 180;
+            camX = player.x - (width / 2) / zoom;
+            camY = player.y - (height / 2) / zoom;
+
+            // If the town was never put under a Directive, open it now —
+            // otherwise the loop has nowhere to go from here.
+            if (!(townsData[1] && townsData[1].established)) {
+                seedSectorPopulationFromSurvivors();
+                openSectorDirective(1);
+            }
+        } else if (currentLevel === 2 && clearedKind === "GATE") {
+            // THE UNDERCITY'S CURTAIN WALL — the same shape of beat as a Great
+            // Gate, and the same rule: blowing it open and killing what comes
+            // through opens the road, it does not finish the sector. Sector 02
+            // ends on its transmission towers and the ambush they call down, so
+            // a wall breach must not run the Directive early (which is what put
+            // the player out in the woodland with the towers still standing) and
+            // must not replay the liberation cutscene once the arc is over.
+            streakMsgText = window.undercityNorthBreached && window.undercitySouthBreached
+                ? "WALL BREACHED — THE UNDERCITY IS OPEN"
+                : (window.undercityNorthBreached ? "NORTH WALL BREACHED" : "SOUTH WALL BREACHED");
+            streakMsgTimer = 180;
+            objectiveTimer = 300;
+            camX = player.x - (width / 2) / zoom;
+            camY = player.y - (height / 2) / zoom;
+        } else if (currentLevel >= 3 && currentLevel <= 7) {
+            // GREEN LINE / FRONTIER SECTORS — no towers and no town to liberate,
+            // so a cleared ambush is the whole objective and the Directive opens
+            // straight off it.
+            seedSectorPopulationFromSurvivors();
+            openSectorDirective(currentLevel);
+            camX = player.x - (width / 2) / zoom;
+            camY = player.y - (height / 2) / zoom;
+        } else if (towersAlive > 0 || window.genocideRouteActive) {
+            // GENOCIDE ROUTE (Towers not destroyed)
+            window.genocideAmbushCleared = true;
+            // Trigger Government Directive
+            popTotal = window.militaryToBring || 0;
+            popUnassigned = popTotal;
+            openSectorDirective(currentLevel);
+        } else {
+            // SAVIOR ROUTE (Towers destroyed, Ambush cleared)
+            inPostAmbushCutscene = true;
+            postAmbushPhase = 1;
+
+            // Using window.allies makes it globally permanent so it survives into the next frames
+            window.allies = enemiesList.filter(e => e.isFriendly && e.hp > 0 && !e.dead);
+            popTotal = window.allies.length;
+
+            // Ensure minimum population for the cutscene
+            if (popTotal < 2) {
+                let allyType = (currentLevel === 2 && isStoryMode) ? "FEMALE_PISTOL" : "NORMAL";
+                let a1 = new Character(player.x + 80, player.y, false, allyType); a1.isFriendly = true; enemiesList.push(a1);
+                let a2 = new Character(player.x - 80, player.y, false, allyType); a2.isFriendly = true; enemiesList.push(a2);
+                window.allies.push(a1, a2);
+                popTotal = window.allies.length;
+            }
+
+            popUnassigned = popTotal;
+            popMilitary = 0; popFarming = 0; popScience = 0; popArchitecture = 0; 
+
+            window.allies.sort((a,b) => dist(player.x, player.y, a.x, a.y) - dist(player.x, player.y, b.x, b.y));
+            townSpeaker1 = window.allies[0];
+            townSpeaker2 = window.allies[1];
+
+            player.x = townSpeaker1.x + 50;
+            player.y = townSpeaker1.y + 50;
+            camX = player.x - (width / 2) / zoom;
+            camY = player.y - (height / 2) / zoom;
+            player.aimAngle = atan2(townSpeaker1.y - player.y, townSpeaker1.x - player.x);
+            emit(player.x, player.y, 20, color(0, 200, 255), "SPARK"); sfx.dash();
+        }
+
+
+    // STANDARD LEVEL FINISH FALLBACK
+    } else if (isStoryMode && currentLevel >= 1 && currentLevel <= 4) {
+        seedSectorPopulationFromSurvivors();
+        openSectorDirective(currentLevel);
+    } else if (inTownCutscene || inFarmCutscene || inFarmPostCutscene || inPostAmbushCutscene || inWorldBuildingMenu) {
+    
+    // Only run the camera lerp for the specific cutscenes that need it
+    
+    
+
+    } else {
+        isWin = true;
+        winTimer = 1;
+    }
+        }
+} else {
+    // OVERRIDE FOR CUTSCENES
+    if (inTownCutscene || inFarmCutscene || inFarmPostCutscene) {
+        zoom = lerp(zoom, 1.4, 0.05); 
+        camX = lerp(camX, killcamTarget.x - (width / 2) / zoom, 0.08); 
+        camY = lerp(camY, killcamTarget.y - (height / 2) / zoom, 0.08);
+    } else {
+        // NORMAL WALKING CAMERA
+        zoom = lerp(zoom, inOverworldView ? 0.45 : targetZoom, 0.1); 
+        if (window.currentPan === undefined) window.currentPan = 0;
+
+        let targetPan = rightStick.active ? (150 * rightStick.dist) : 0; 
+        window.currentPan = lerp(window.currentPan, targetPan, 0.1);
+        
+        let targetCamX = player.x + cos(player.aimAngle) * window.currentPan;
+        let targetCamY = player.y + sin(player.aimAngle) * window.currentPan;
+        
+        camX = lerp(camX, targetCamX - (width / 2) / zoom, 0.08); 
+        camY = lerp(camY, targetCamY - (height / 2) / zoom, 0.08);
+    }
+}
+
+}
+doTick = (!killcamMode || (frameCount % 4 === 0)) && !isPaused && !inDarchonCall && !inTownCutscene && !inFarmCutscene && !inFarmPostCutscene && !inPostAmbushCutscene; 
+// Screen shake translates the whole world INSIDE the zoom, so during a shake
+// the camera really sees up to screenShake/zoom world units past these edges.
+// Culling to the un-shaken rect let terrain chunks and props at the border
+// blink out for exactly the frames a dash, a melee hit or an explosion was
+// shaking the screen.
+const shakePad = screenShake > 0 ? (screenShake / zoom) + 8 : 0;
+viewLeft = camX - shakePad;
+viewRight = camX + width / zoom + shakePad;
+viewTop = camY - shakePad;
+viewBottom = camY + height / zoom + shakePad;
+
+
+  // Level 8 Door Unlock Check
+  if (currentLevel === 8 && !window.nm0HqCleared && totalKills >= 20) {
+      window.nm0HqCleared = true;
+      streakMsgText = "DOOR UNLOCKED";
+      streakMsgTimer = 120;
+      sfx.charge();
+  }
+
+  // Residency first: chunk loads and evictions rewrite buildings[], so culling
+  // before them would cull against a list that is about to be replaced.
+  manageChunkMemory();
+  updateActiveWorld();
+  // The clock advances before anything reads it, so the sun and the directive
+  // meters both see the same delta on the same frame.
+  updateWorldClock();
+  updateProductionMeters();
+  if (BIOME_ACTIVE) biomeBackground();
+  else if (currentLevel === 1) background(45, 110, 45);
+  else if (currentLevel === 2) background(20, 25, 40);
+  else if (currentLevel === 3) background(210, 180, 140); 
+  else if (currentLevel === 4) background(60, 90, 40); 
+  else if (currentLevel === 5) background(190, 220, 235); 
+  else if (currentLevel === 6) background(30, 20, 40); 
+  else if (currentLevel === 7) background(245, 245, 220);
+  else if (currentLevel === 8) background(40, 42, 45); // NM-0 HQ Interior
+  // The chain above had no final else, so any level outside 1-8 -- Level 0's
+  // basement and upstairs room among them -- never cleared the canvas at all
+  // and composited each frame on top of the last one. Clearing is not optional:
+  // there is exactly one background() call per frame and it always runs.
+  else background(18, 20, 24);
+
+  push(); scale(zoom); translate(-camX, -camY);
+  if (screenShake > 0) {
+    translate(random(-screenShake, screenShake), random(-screenShake, screenShake));
+    // Geometric decay never reaches zero, so without this floor every frame
+    // for the rest of the session kept jittering the camera by a fraction of a
+    // unit and kept shakePad above zero, permanently inflating the cull rect.
+    screenShake = screenShake < 0.3 ? 0 : screenShake * 0.85;
+  }
+ 
+  // RENDER MASTER LAYER
+  drawGround();
+  drawBuildingPads();
+  drawGroundLots();
+  drawBloodChunks();
+
+  if (typeof updateSludges === 'function') updateSludges();
+  if (typeof updateWaterPuddles === 'function') updateWaterPuddles(); 
+  updateCorpses(); 
+
+  // PROLOGUE CUTSCENE (LEVEL 0)
+    if (currentLevel === 0 && prologuePhase === 1) {
+      leftStick.active = false; rightStick.active = false; leftStick.dx = 0; leftStick.dy = 0; rightStick.dx = 0; rightStick.dy = 0; meleeInputHeld = false; cannonInputHeld = false; prologueTimer--; 
+      
+      let agents = enemiesList.filter(e => e.eType === "SIA"); 
+      
+      // FAILSAFE: If map boundaries deleted them, force one in so the cutscene doesn't break
+      if (agents.length === 0 && prologueTimer > 0) {
+          let backup = new Character(dadEntity.x, dadEntity.y + 80, false, "SIA");
+          enemiesList.push(backup);
+          agents.push(backup);
+      }
+
+      let shooter = null;
+      if (agents.length > 0 && dadEntity) { 
+          let minDist = Infinity; 
+          for (let a of agents) { 
+              let d = dist(a.x, a.y, dadEntity.x, dadEntity.y); 
+              if (d < minDist) { minDist = d; shooter = a; } 
+          } 
+      }
+
+      if (prologueTimer > 60) { 
+          for (let a of agents) { 
+              a.isMoving = true; a.walkCycle += 0.2; 
+              // PATHFINDING: Walk directly to the dad instead of blindly into walls
+              let ang = atan2(dadEntity.y - a.y, dadEntity.x - a.x);
+              a.aimAngle = ang; a.moveAngle = ang;
+              if (dist(a.x, a.y, dadEntity.x, dadEntity.y) > 45) {
+                  a.x += cos(ang) * 4.5;
+                  a.y += sin(ang) * 4.5;
+              }
+          } 
+      } else if (prologueTimer > 0) { 
+          for (let a of agents) { 
+              a.isMoving = false; 
+              if (a === shooter && dadEntity) { 
+                  a.aimAngle = atan2(dadEntity.y - a.y, dadEntity.x - a.x); 
+              } else { 
+                  a.aimAngle = -HALF_PI; 
+              } 
+          } 
+      } else if (prologueTimer <= 0 && prologueTimer > -40) { // CATCH-ALL: Prevent frame skips from bypassing the 0 frame
+          if (shooter && dadEntity && !dadEntity.dead) {
+              let a = atan2(dadEntity.y - shooter.y, dadEntity.x - shooter.x); shooter.aimAngle = a; let bLX = 31, bLY = 8; let tX = shooter.x + cos(a) * bLX - sin(a) * bLY; let tY = shooter.y + sin(a) * bLX + cos(a) * bLY;
+              sfx.shoot(); shooter.muzzleFlash = 3; emit(tX, tY, 3, color(255, 200, 0), "MUZZLE", cos(a) * 5, sin(a) * 5); spawnBullet(tX, tY, a, false, "HEAD", WEAPONS.PISTOL); 
+              dadEntity.dead = true; dadEntity.hp = 0; sfx.hitHead(); sfx.deathGrunt(); 
+              let bCol = color(90, 0, 0); emit(dadEntity.x, dadEntity.y, 15, color(220, 200, 200), "BONE", cos(a)*10, sin(a)*10); emit(dadEntity.x, dadEntity.y, 40, bCol, "GORE"); 
+              
+              if (typeof headshotCounter === 'undefined') window.headshotCounter = 0; // Prevent crash if uninitialized
+              let choices = [1, 8, 9]; let dT = choices[headshotCounter % 3]; headshotCounter++; 
+              corpses.push(new Corpse(dadEntity.x, dadEntity.y, dadEntity.moveAngle, dadEntity.aimAngle, dadEntity.shirtCol, dadEntity.pantsCol, dT, a, dadEntity.decals, dadEntity.currentWeapon, a, "DAD", dadEntity.bodyW, dadEntity.bodyH)); 
+              spawnSplatter(dadEntity.x, dadEntity.y, "BLOOD", bCol); 
+              
+              let eI = enemiesList.indexOf(dadEntity); if (eI > -1) enemiesList.splice(eI, 1);
+          }
+      } else if (prologueTimer <= -40) { prologuePhase = 2; }
+  }
+ if (currentLevel === 0 && prologuePhase === 2) {
+    let remainingSIA = enemiesList.filter(e => e.eType === "SIA");
+    if (remainingSIA.length === 0 && !killcamMode) {
+        // Trigger your killcam on the final enemy or general room clear
+        killcamMode = true;
+        killcamTimer = 90; // Adjust duration as needed
+    }
+}
+
+
+  if (currentLevel === 0 && prologuePhase === 3) {
+      leftStick.active = false; rightStick.active = false; leftStick.dx = 0; leftStick.dy = 0; rightStick.dx = 0; rightStick.dy = 0; meleeInputHeld = false; cannonInputHeld = false;
+      let dToDad = dist(player.x, player.y, dadEntity.x, dadEntity.y);
+      if (dToDad > 40) { let ang = atan2(dadEntity.y - player.y, dadEntity.x - player.x); player.isMoving = true; player.walkCycle += 0.2; player.moveAngle = ang; player.aimAngle = ang; let dx = cos(ang) * 4; let dy = sin(ang) * 4; if (!player.checkCol(player.x + dx, player.y)) player.x += dx; if (!player.checkCol(player.x, player.y + dy)) player.y += dy; } else { player.isMoving = false; prologuePhase = 4;  }
+  }
+
+   if (player.hp > 0) { if (!isWin && doTick) player.updatePlayer(); player.show(); } else if (!isWin && !isDead) { playerRespawnTimer--; if (playerRespawnTimer <= 0) { isDead = true; } }
+  updateEntities(); 
+
+  // Draw civilians ALWAYS, so they populate the town while you run around
+  for (let c of townCitizens) {
+      if (doTick) c.update();
+      c.show();
+  }
+  
+  // The shadow pass used to run here as well as immediately before
+  // drawBuildings(). Two passes over the same casters composited their alpha
+  // (82 -> ~146 effective), which is what turned every cast shadow into a hard
+  // near-black slab reading as a second, overlapping building. One pass only.
+  if (inOverworldView) {
+      for (let c of townCitizens) {
+          if (doTick) c.update();
+          c.show();
+      }
+  }
+  
+  if (typeof drawBuildingShadows === 'function') drawBuildingShadows();
+  drawBuildings();
+  if (BIOME_ACTIVE) drawBiomeProps();
+
+    // NM-0 HQ Custom Level Props
+  if (currentLevel === 8) {
+      // Draw the locked door at 0, -800
+      fill(window.nm0HqCleared ? color(50, 255, 50) : color(255, 50, 50));
+      stroke(20); strokeWeight(4);
+      rect(-100, -820, 200, 40);
+      
+      // --- NEW: Draw Exit Door at 0, 1450 ---
+      fill(0, 200, 255);
+      stroke(20); strokeWeight(4);
+      rect(-100, 1450, 200, 50);
+      fill(255); noStroke(); textAlign(CENTER, CENTER); textSize(20); textFont('sans-serif'); text("EXIT", 0, 1475);
+      
+      // Draw Blueprint on table in secret room at 0, -2000
+      if (!window.armorBlueprintPickedUp && inView(0, -2000, 100)) {
+          push(); translate(0, -2000);
+          fill(80, 50, 30); stroke(50, 30, 10); strokeWeight(4); rect(-40, -30, 80, 60, 5); // Table
+          rotate(0.2);
+          fill(30, 80, 180); stroke(200); strokeWeight(1); rect(-12, -18, 24, 36, 2); 
+          stroke(255, 255, 255, 100); strokeWeight(0.5);
+          for(let i = -8; i <= 8; i += 4) { line(i, -16, i, 16); }
+          for(let i = -14; i <= 14; i += 4) { line(-10, i, 10, i); }
+          fill(255, 150, 0); noStroke(); ellipse(0, 0, 8, 8); rect(-4, 0, 8, 6); 
+          pop();
+      }
+  }
+
+
+  if (typeof drawParkingCars === 'function') drawParkingCars();
+
+  if (currentLevel === 0) {
+      if (!inUpstairsRoom) {
+          fill(80, 50, 30); rect(-400, -40, 20, 80); fill(200, 200, 100); ellipse(-385, 10, 6, 6); 
+          if (!tabletPickedUp) { push(); translate(200, -100); rotate(0.2); fill(30); rect(-6, -9, 12, 18, 2); fill(0, 150, 255); rect(-5, -7, 10, 14, 1); fill(255); ellipse(0, 5, 2, 2); pop(); }
+      } else {
+          if (!swordPickedUp) { push(); translate(150, -20); rotate(PI/4); fill(150); rect(-2, -15, 4, 25); fill(200, 150, 0); rect(-6, 5, 12, 4); fill(50); rect(-2, 9, 4, 8); pop(); }
+          fill(255); textAlign(CENTER, CENTER); textSize(14); text("EXIT", 0, 290);
+      }
+  }
+
+  if (typeof updateWeaponDrops === 'function') updateWeaponDrops(); 
+  if (typeof updateHealthPacks === 'function') updateHealthPacks(); 
+  if (typeof updateGrenadePickups === 'function') updateGrenadePickups();
+  for (let i = barrels.length - 1; i >= 0; i--) {
+    let b = barrels[i]; if (inView(b.x, b.y, 50)) { fill(200, 30, 30); stroke(100, 0, 0); strokeWeight(2); ellipse(b.x, b.y, 24, 24); fill(40); noStroke(); ellipse(b.x, b.y, 16, 16); fill(255, 70); noStroke(); ellipse(b.x - 4, b.y - 4, 8, 8); }
+    if (b.hp <= 0) { triggerExplosion(b.x, b.y, 160); barrels.splice(i, 1); }
+  }
+
+  if (typeof updateFires === 'function') updateFires();
+  updateBullets(); updateGrenades(); if (typeof updatePlayerGrenades === 'function') updatePlayerGrenades(); if (typeof updatePlayerFlasks === 'function') updatePlayerFlasks(); updateParticles(); if (typeof updateLightnings === 'function') updateLightnings(); updateOrbs(); if (typeof updateShockwaves === 'function') updateShockwaves();
+
+  // Weather particles live in world space so they parallax with the camera
+  if (BIOME_ACTIVE) { drawNightLights(); if (weather) weather.drawWorld(); }
+  pop();
+
+  // Lighting first: the rig multiplies the finished world, so a lamp's pool
+  // survives instead of being painted over by the darkness. Haze goes on top
+  // of the lit result, because scatter is something light does on its way to
+  // the camera.
+  if (BIOME_ACTIVE) { drawLightPass(); drawBiomeScreenLayer(); }
+ 
+
+  // SCREEN UI
+  let inCutscene = inTownCutscene || inDarchonCall;
+  if (currentLevel === 0) {
+      inCutscene = (prologuePhase === 1 || prologuePhase === 3 || (prologuePhase >= 4 && prologuePhase <= 6) || prologuePhase === 8 || prologuePhase === 9) || (inUpstairsRoom && (upstairsPhase >= 1 && upstairsPhase <= 5));
+      if (inCutscene) { fill(0); noStroke(); rect(0, 0, width, height * 0.12); rect(0, height - (height * 0.12), width, height * 0.12); leftStick.active = false; rightStick.active = false; meleeInputHeld = false; cannonInputHeld = false; }
+      if (prologuePhase >= 4 && prologuePhase <= 6) { let pxScreen = width/2; if (prologuePhase === 4) drawSpeechBubble(pxScreen, height/2 - 80, "Dad! Noooo!"); if (prologuePhase === 5) drawSpeechBubble(pxScreen, height/2 - 80, "....................."); if (prologuePhase === 6) drawSpeechBubble(pxScreen, height/2 - 80, "i need to see if theres anything\ni can gather here before i head out."); fill(255); textAlign(CENTER); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40); }
+      if (prologuePhase === 8) { fill(0, 200); rect(0, 0, width, height); push(); translate(width/2, height/2 + 20); scale(6); fill(30); rect(-15, -20, 30, 40, 3); fill(0, 150, 255, 100); stroke(0, 255, 255); strokeWeight(1); rect(-12, -17, 24, 34, 1); fill(0, 255, 100); noStroke(); ellipse(-4, -5, 8, 8); stroke(0, 255, 100); strokeWeight(1); noFill(); beginShape(); vertex(-4, -5); vertex(0, 5); vertex(6, 12); endShape(); pop(); fill(50, 255, 50); textAlign(CENTER); textSize(24); textFont('sans-serif'); text("ACQUIRED: DADS TOP SECRET TABLET", width/2, height/2 - 140); fill(255); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40); }
+      if (prologuePhase === 9) { drawSpeechBubble(width/2, height/2 - 100, "It looks like he left it on.... Theres a map\ndepicting a path south. Stick city looks so small,\nand when i scroll down theres tons of other land\nive never seen in my history books..\nMaybe this is where dad was gonna take us.\nSeems like i have no other option but to find out."); fill(255); textAlign(CENTER); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40); }
+      if (inUpstairsRoom) {
+          let pxScreen = width/2;
+          if (upstairsPhase === 1) { fill(0, 200); rect(0, 0, width, height); push(); translate(width/2, height/2); scale(6); fill(150); rect(-2, -20, 4, 30); fill(200, 150, 0); rect(-8, 5, 16, 4); fill(50); rect(-2, 9, 4, 10); pop(); fill(50, 255, 50); textAlign(CENTER); textSize(24); textFont('sans-serif'); text("SWORD ACQUIRED", width/2, height/2 - 140); fill(255); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40); }
+          if (upstairsPhase === 2) { drawSpeechBubble(pxScreen, height/2 - 80, "Guess id better bring this too.\nNever thought id have to actually use it"); fill(255); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40); }
+          if (upstairsPhase === 3 || upstairsPhase === 4) { fill(0); rect(0, 0, width, height); fill(30, 30, 80); rect(0, height/2 - 100, width, 200); fill(255, 255, 0, 50); textSize(100); textAlign(CENTER, CENTER); text("COX NEWS", width/2, height/2); push(); translate(width/2 - 150, height/2 + 50); fill(200, 0, 0); rect(-30, -50, 60, 100, 10); fill(235, 180, 140); ellipse(0, -70, 40, 40); pop(); push(); translate(width/2 + 150, height/2 + 50); fill(0, 0, 200); rect(-30, -50, 60, 100, 10); fill(235, 180, 140); ellipse(0, -70, 40, 40); pop(); fill(50); rect(width/2 - 300, height/2 + 50, 600, 100); if (upstairsPhase === 3) drawSpeechBubble(width/2 - 150, height/2 - 120, "This is Brian Lion with COX NEWS giving you a live update.\nIf you hear gunshots outside; Make a round\nof applause for another traitor killed!"); else drawSpeechBubble(width/2 + 150, height/2 - 120, "Absolutely. One mind, one city, ONE way to be!\nWhen traitor dead a day keeps the city safe."); fill(255); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40); }
+          if (upstairsPhase === 5) { drawSpeechBubble(pxScreen, height/2 - 100, "Well Dad definitely wasnt losing his mind..\nSeems like when i step out there its gonna be chaos.\nHopefully this magnetic field suit or whatever\nworks like dad said it would..."); fill(255); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40); }
+          if (upstairsPhase === 0) { if (!swordPickedUp && dist(player.x, player.y, 150, 0) < 80) drawPromptBtn("PICK UP"); else if (!tvWatched && dist(player.x, player.y, 0, -200) < 120) drawPromptBtn("WATCH"); else if (dist(player.x, player.y, 0, 250) < 80) drawPromptBtn("LEAVE HOUSE"); }
+      } else {
+          if (prologuePhase === 7 && !tabletPickedUp && dist(player.x, player.y, 200, -100) < 80) drawPromptBtn("PICK UP"); else if (prologuePhase >= 10 && dist(player.x, player.y, -400, 0) < 80) drawPromptBtn("OPEN DOOR");
+      }
+  }
+
+// --- LEVEL 3: FARM CUTSCENE ---
+  if (inFarmCutscene) {
+      // 1. UPDATE LOGIC (World Space)
+      leftStick.active = false; rightStick.active = false; meleeInputHeld = false; cannonInputHeld = false;
+
+      if (farmSpeaker) {
+          killcamTarget = {x: farmSpeaker.x, y: farmSpeaker.y};
+          farmSpeaker.isMoving = false;
+          farmSpeaker.walkCycle = 0;
+          player.isMoving = false;
+
+          // Lock orientation immediately
+          let ang = atan2(farmSpeaker.y - player.y, farmSpeaker.x - player.x);
+          farmSpeaker.aimAngle = atan2(player.y - farmSpeaker.y, player.x - farmSpeaker.x);
+          player.aimAngle = ang;
+
+          // Instantly jump to the first talking point
+          if (farmPhase <= 1) {
+              farmPhase = 2; 
+          }
+      }
+
+      // 2. RENDERING (Screen Space / UI Layer)
+      push(); // Isolate drawing settings
+      resetMatrix(); // Temporarily disable camera translations so UI draws on the actual screen
+
+      fill(0); noStroke(); 
+      rect(0, 0, width, height * 0.12); 
+      rect(0, height - (height * 0.12), width, height * 0.12);
+
+      if (farmSpeaker) {
+          if (farmPhase === 2) {
+              drawSpeechBubble(width/2, height/2 - 100, "Howdy traveler! We dont normally get strangers\nround here. What brings you to the Anveda farm?");
+              fill(255); textAlign(CENTER); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40);
+          } else if (farmPhase === 3) {
+              drawMenuBtn("A) Id like to learn about your farm.", width/2, height/2 - 40, 320, 50);
+              drawMenuBtn("B) You have ten seconds to run away, or get smoked.", width/2, height/2 + 40, 420, 50);
+          } else if (farmPhase === 4) {
+              drawSpeechBubble(width/2, height/2 - 100, "Sure thing. That is; if you will first help me\nget rid of this pest infestation.\nThey keep biting up my cows, and tearing my crops up.");
+              fill(255); textAlign(CENTER); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40);
+          } else if (farmPhase === 5) {
+              drawMenuBtn("YES", width/2 - 80, height/2 + 40, 100, 50);
+              drawMenuBtn("NO", width/2 + 80, height/2 + 40, 100, 50);
+          }
+      }
+      
+      pop(); // Restore the camera/matrix for the rest of the game loop
+  }
+
+
+  // --- LEVEL 3: POST-FARM CUTSCENE ---
+  if (inFarmPostCutscene) {
+      leftStick.active = false; rightStick.active = false; meleeInputHeld = false; cannonInputHeld = false;
+      fill(0); noStroke(); rect(0, 0, width, height * 0.12); rect(0, height - (height * 0.12), width, height * 0.12);
+      
+      if (farmSpeaker) {
+          killcamTarget = {x: farmSpeaker.x, y: farmSpeaker.y};
+      }
+
+      if (farmPostPhase === 1) {
+          drawSpeechBubble(width / 2, height / 2 - 80, "Wow youre great help! As promised;\nhere's for helpin' me out!");
+          fill(255); textAlign(CENTER); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40);
+      } else if (farmPostPhase === 2) {
+          fill(0, 230); rect(0, 0, width, height); // Dark overlay
+          
+          push(); translate(width/2, height/2 + 20); scale(6);
+          fill(30, 80, 180); stroke(200); strokeWeight(1); rect(-12, -18, 24, 36, 2); 
+          stroke(255, 255, 255, 100); strokeWeight(0.5);
+          for(let i = -8; i <= 8; i += 4) { line(i, -16, i, 16); }
+          for(let i = -14; i <= 14; i += 4) { line(-10, i, 10, i); }
+          fill(255); noStroke(); ellipse(0, 0, 8, 8); rect(-4, 0, 8, 6); 
+          pop();
+
+          fill(50, 255, 50); textAlign(CENTER); textSize(24); textFont('sans-serif');
+          text("FARMERS BLUEPRINT LVL 1", width/2, height/2 - 140);
+          fill(255); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40);
+      }
+  }
+  // --- LEVEL 4: ALLIANCE CUTSCENE ---
+  if (inLvl4Cutscene) {
+      leftStick.active = false; rightStick.active = false; meleeInputHeld = false; cannonInputHeld = false;
+      fill(0); noStroke(); rect(0, 0, width, height * 0.12); rect(0, height - (height * 0.12), width, height * 0.12);
+
+      // Pan camera to overworld height to see the armies
+      zoom = lerp(zoom, 0.45, 0.05); 
+      let midY = (player.y + tanLeader.y) / 2;
+      camX = lerp(camX, player.x - (width / 2) / zoom, 0.08); 
+      camY = lerp(camY, midY - (height / 2) / zoom, 0.08);
+
+      if (lvl4Phase === 1) {
+          lvl4Timer--;
+          if (lvl4Timer <= 0) {
+              if (tanLeader.y < player.y - 300) {
+                  tanLeader.isMoving = true; tanLeader.walkCycle += 0.2;
+                  tanLeader.y += 2;
+              } else {
+                  tanLeader.isMoving = false;
+                  lvl4Phase = 2;
+              }
+          }
+      } else if (lvl4Phase === 2) {
+          if (player.y > tanLeader.y + 150) {
+              player.isMoving = true; player.walkCycle += 0.2;
+              player.y -= 3;
+              player.aimAngle = -HALF_PI;
+              player.moveAngle = -HALF_PI;
+          } else {
+              player.isMoving = false;
+              lvl4Phase = 3;
+          }
+      } else if (lvl4Phase === 3) {
+          tanLeader.aimAngle = atan2(player.y - tanLeader.y, player.x - tanLeader.x); // Point rifle
+          drawSpeechBubble(width/2, height/2 - 120, "Name your cause, and branch.");
+          fill(255); textAlign(CENTER); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40);
+      } else if (lvl4Phase === 4) {
+          tanLeader.aimAngle = atan2(player.y - tanLeader.y, player.x - tanLeader.x);
+          drawMenuBtn("A) Me and my private military would like to form an alliance with you. We come in peace.", width/2, height/2 - 40, 640, 50);
+          drawMenuBtn("B) I dont know what any of that is, but i own this town now.", width/2, height/2 + 40, 480, 50);
+      } else if (lvl4Phase === 5) {
+          drawSpeechBubble(width/2, height/2 - 120, "Well i got good news, and bad news. The good news is; we're open to an alliance.\nThe bad news is; its not about to be peaceful too long.\nIntel says the enemy is planning an attack nearby any minute now. Come follow me!");
+          fill(255); textAlign(CENTER); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40);
+      }
+  }
+
+  // NM-0 SECRET BLUEPRINT OVERLAY
+  if (window.inNM0SecretOverlay) {
+      leftStick.active = false; rightStick.active = false; meleeInputHeld = false; cannonInputHeld = false;
+      fill(0, 230); rect(0, 0, width, height); 
+      push(); translate(width/2, height/2 + 20); scale(6);
+      fill(30, 80, 180); stroke(200); strokeWeight(1); rect(-12, -18, 24, 36, 2); 
+      stroke(255, 255, 255, 100); strokeWeight(0.5);
+      for(let i = -8; i <= 8; i += 4) { line(i, -16, i, 16); }
+      for(let i = -14; i <= 14; i += 4) { line(-10, i, 10, i); }
+      fill(255, 150, 0); noStroke(); ellipse(0, 0, 8, 8); rect(-4, 0, 8, 6); 
+      pop();
+      fill(50, 255, 50); textAlign(CENTER); textSize(24); textFont('sans-serif');
+      text("EXPLOSIVE ARMOR ACQUIRED", width/2, height/2 - 140);
+      fill(255); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40);
+  }
+
+  // TOWER DEFEAT / NM0 AMBUSH CUTSCENE LOGIC
+  if (inTownCutscene) {
+      leftStick.active = false; rightStick.active = false; meleeInputHeld = false; cannonInputHeld = false;
+      fill(0); noStroke(); rect(0, 0, width, height * 0.12); rect(0, height - (height * 0.12), width, height * 0.12);
+      if (townPhase === 1) { townTimer--; if (townTimer <= 0) townPhase = 2; } 
+      else if (townPhase === 2) {
+          let ang = atan2(player.y - townSpeaker1.y, player.x - townSpeaker1.x);
+          player.x = townSpeaker1.x + cos(ang) * 70;
+          player.y = townSpeaker1.y + sin(ang) * 70;
+          player.aimAngle = atan2(townSpeaker1.y - player.y, townSpeaker1.x - player.x);
+          emit(player.x, player.y, 20, color(0, 200, 255), "SPARK"); sfx.dash();
+          player.isMoving = false; townPhase = 3; 
+      } else if (townPhase === 3) { drawSpeechBubble(width/2, height/2 - 100, "it was the towers! As soon as they went down,\nyou guys got your wits back about you."); } 
+      else if (townPhase === 4) { killcamTarget = {x: townSpeaker1.x, y: townSpeaker1.y}; drawSpeechBubble(width/2, height/2 - 100, "well now that i think about it,\ni never really felt the same once they\nput those towers up 28 years ago.."); } 
+      else if (townPhase === 5) { killcamTarget = {x: townSpeaker2.x, y: townSpeaker2.y}; drawSpeechBubble(width/2, height/2 - 100, "you aint kidding.\nFeels like i aged 40 years in one day."); } 
+      else if (townPhase === 6) { 
+          let spawnY = (currentLevel === 1) ? 4600 : 1600;
+          killcamTarget = {x: 600, y: spawnY}; 
+          townTimer--; 
+          if (townTimer <= -60) townPhase = 7; 
+          
+      } 
+       else if (townPhase === 7) {
+          let spawnY = (currentLevel === 1) ? 4950 : 1800;
+          let aerY = (currentLevel === 1) ? 4900 : 1750;
+          let spawnX1 = 600;  
+          let spawnX2 = -200; 
+          
+          for(let i=0; i<42; i++) enemiesList.push(new Character(spawnX1 + random(-250, 250), spawnY + random(-50, 50), false, "ARMORED_STANDARD"));
+          for(let i=0; i<4; i++) enemiesList.push(new Character(spawnX1 + random(-100, 100), spawnY + random(-50, 50), false, "ARMORED"));
+          for(let i=0; i<4; i++) enemiesList.push(new Character(spawnX1 + random(-300, 300), aerY, false, "AERIAL"));
+
+                   for(let i=0; i<42; i++) enemiesList.push(new Character(spawnX2 + random(-250, 250), spawnY + random(-50, 50), false, "ARMORED_STANDARD"));
+          for(let i=0; i<4; i++) enemiesList.push(new Character(spawnX2 + random(-100, 100), spawnY + random(-50, 50), false, "ARMORED"));
+          for(let i=0; i<4; i++) enemiesList.push(new Character(spawnX2 + random(-300, 300), aerY, false, "AERIAL"));
+
+          // Tag the 100 enemies we just spawned!
+          for(let i = enemiesList.length - 100; i < enemiesList.length; i++) {
+              if (enemiesList[i]) enemiesList[i].isAmbush = true;
+          }
+
+         
+
+          
+          // MERGE ACTIVE AMBUSHES (Scenario 4)
+          if (nm0AmbushActive) {
+              nm0AmbushKills += 300;
+              window.ambushSpawnsRemaining += 200;
+              streakMsgText = "MULTIPLE AMBUSHES!";
+          } else {
+              nm0AmbushActive = true;
+              nm0AmbushKills = 300;
+              window.ambushSpawnsRemaining = 200;
+              streakMsgText = "NM-0 AMBUSH!";
+          }
+          // This is the sector's own beat, and it outranks any gate ambush that
+          // got folded into it -- clearing the merged field ends the level.
+          window.ambushKind = "TOWER";
+
+          inTownCutscene = false; 
+          objectiveTimer = 360; 
+          streakMsgTimer = 120;
+          
+          for (let e of enemiesList) { 
+              if (!e.isFriendly) { e.state = "CHASE"; e.loseSightTimer = 999; } 
+          }
+      }
+
+      if (townPhase >= 3 && townPhase <= 5) { fill(255); textAlign(CENTER); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40); }
+  }
+
+  if (inDarchonCall) {
+      leftStick.active = false; rightStick.active = false; meleeInputHeld = false; cannonInputHeld = false;
+      fill(0); noStroke(); rect(0, 0, width, height * 0.12); rect(0, height - (height * 0.12), width, height * 0.12);
+      
+      let pxScreen = width / 2; let hY = height / 2 - 80;
+      
+      if (callPhase === 1) drawSpeechBubble(pxScreen, hY, "[TABLET] DONT LEAVE YOUR HOUSE!");
+      else if (callPhase === 2) { push(); fill(200); textSize(12); textFont('sans-serif'); textAlign(CENTER, BOTTOM); text("*whispers* Hes already dead you idiot", pxScreen, hY - 45); pop(); }
+      else if (callPhase === 3) drawSpeechBubble(pxScreen, hY, "[TABLET] *Ahem*.. Hey, sonny! \nWas just calling to check in;\nthis is his work tablet dont you know?");
+      else if (callPhase === 4) drawSpeechBubble(pxScreen, hY, "Some blue suits \n kicked our door down, and murdered him.... \n Stick City has gone crazy..");
+      else if (callPhase === 5) drawSpeechBubble(pxScreen, hY, "[TABLET] Ive heard! I thought he wouldve lasted longer\nwith that fancy suit of his and all!\nIt was a one of a kind prototype; near perfect!\nGuess it wasnt good enough..");
+      else if (callPhase === 6) drawSpeechBubble(pxScreen, hY, "You almost sound happy.. \n You're his work friend?");
+      else if (callPhase === 7) drawSpeechBubble(pxScreen, hY, "[TABLET] I am. \n Your father was like a brother to me. My name is Darchon,\nand all that killing your doin;\nits getting tracked on that high tech tablet\nyou inherited from your father.");
+      else if (callPhase === 8) drawSpeechBubble(pxScreen, hY, "Well i mean they were shooting first..");
+      else if (callPhase === 9) drawSpeechBubble(pxScreen, hY, "[TABLET] Ha! You think i want to send you to jail?\nCome on im your dads friend.\nThe world has gone crazy. \n Im here to help.");
+      else if (callPhase === 10) drawSpeechBubble(pxScreen, hY, "Can you get on with what this is about..\nI kinda need to get moving here");
+      else if (callPhase === 11) drawSpeechBubble(pxScreen, hY, "[TABLET] Well you see that little number at the top right\nthat grows with the more killing you do?\nThats a quantatitive measurement \n of the moosh you're accruing!");
+      else if (callPhase === 12) drawSpeechBubble(pxScreen, hY, "Moosh?");
+      else if (callPhase === 13) drawSpeechBubble(pxScreen, hY, "[TABLET] Exactly. A form of transmutable dark energy. You can send it directly through that tablet to me, \nand ill show you what that suit can really do!\nNeed better weapons? Gear? Upgrades? Just send the moosh over");
+      else if (callPhase === 14) drawSpeechBubble(pxScreen, hY, "Hmm. Sounds enticing considering \n i just offed like 6 of my neighbors. \n I dont know though. Getting an incentive to kill seems a little deranged...");
+      else if (callPhase === 15) drawSpeechBubble(pxScreen, hY, "[TABLET] Do you have any other choice? \n you need to shoot your way out of Stick City,\nand head north. I'll guide you to SIA headquarters. Here you will have safety, and answers. ill keep in touch. Oh and dont forget about the Moosh!\n ");
+      
+      fill(255); textAlign(CENTER); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40);
+  }
+
+  // Objective banner for the authored story sectors. Keyed off the story arc,
+  // not the map: Stick City keeps its authored geometry forever, but once its
+  // arc is done there is no scripted objective left to announce there.
+  if (isStoryMode && currentLevel >= 1 && currentLevel <= 4 && !storyArcCleared(currentLevel) && objectiveTimer > 0) {
+      if (!isPaused) objectiveTimer--;
+      let alpha = min(255, objectiveTimer * 3); push(); fill(0, alpha * 0.7); noStroke(); rect(0, height / 2 - 40, width, 80);
+      fill(255, 255, 255, alpha); textAlign(CENTER, CENTER); textSize(24); textFont('sans-serif');
+
+      let txt;
+      if (farmAmbushActive) txt = "Wipe out the pest infestation!";
+      else if (nm0AmbushActive) txt = currentLevel === 4 ? "Defeat the Grey Fatigue Ambush!" : "Defeat the NM-0 Ambush!";
+      else if (currentLevel === 1) {
+          // South is the way onward; the NM-0 HQ behind the north gate is a side leg.
+          if (!window.southGateBreachedStatus) txt = "Find a way past\nthe south \"Great Gate\"!";
+          else if (window.northGateBreachedStatus && !window.armorBlueprintPickedUp) txt = "Enter the NM-0 HQ.";
+          else txt = "Head SOUTH out of Stick City.";
+      }
+      else if (currentLevel === 2) txt = "Destroy the transmission towers!";
+      else if (currentLevel === 3) txt = "Find out who runs\nthe Anveda farm.";
+      else txt = "Make contact with\nthe Tan Army cordon.";
+
+      text(txt, width / 2, height / 2); pop();
+  }
+
+  if (!isDead && !isWin && !inCutscene && !isPaused) { handleTouches(); handleGamepad(); handleDesktop(); }
+  if (window.showOnScreenControls && !isWin && !isDead && !inCutscene && !isPaused) drawJoysticks();
+  
+  if (!isDead && !isWin && !killcamMode && !inCutscene && prologuePhase !== 7 && upstairsPhase === 0 && !window.inNM0SecretOverlay) {
+      if (currentLevel !== 0 || (inUpstairsRoom && dist(player.x, player.y, 150, 0) >= 80 && dist(player.x, player.y, 0, -200) >= 120 && dist(player.x, player.y, 0, 250) >= 80)) drawUI();
+      else if (!inUpstairsRoom && dist(player.x, player.y, -400, 0) >= 80) drawUI();
+      
+      // --- MOUNT / DISMOUNT BUTTON ---
+      if (player.mounted) drawPromptBtn("DISMOUNT");
+      else if (mountableHorse()) drawPromptBtn("MOUNT");
+
+      // --- NM-0 HQ ENTER BUTTON ---
+      if (currentLevel === 1 && window.nm0AmbushClearedStatus) {
+        let GOV_DIRECTIVE
+        let established
+          let nGate = buildings.find(b => b.isGovFortress && b.y < 0);
+          if (nGate && nGate.hp <= 0 && dist(player.x, player.y, nGate.x, nGate.y + nGate.h/2) < 250) {
+              drawPromptBtn("ENTER NM-0 HQ");
+          }
+      }
+
+            // --- NM-0 HQ DOOR/BLUEPRINT BUTTONS ---
+  if (currentLevel === 8 && !isPaused && !killcamMode) {
+      if (window.nm0HqCleared && dist(player.x, player.y, 0, -800) < 250 && player.y > -1000) {
+          drawPromptBtn("ENTER ROOM");
+      } else if (dist(player.x, player.y, 0, -800) < 250 && player.y <= -1000) {
+          drawPromptBtn("EXIT ROOM");
+      } else if (dist(player.x, player.y, 0, -2000) < 200 && !window.armorBlueprintPickedUp) {
+          drawPromptBtn("PICK UP BLUEPRINT");
+      } else if (dist(player.x, player.y, 0, 1450) < 250) {
+          drawPromptBtn("EXIT BUILDING");
+      }
+  }
+
+
+
+  // --- POST-AMBUSH CUTSCENE ---
+  if (inPostAmbushCutscene) {
+      leftStick.active = false; rightStick.active = false; meleeInputHeld = false; cannonInputHeld = false;
+      fill(0); noStroke(); rect(0, 0, width, height * 0.12); rect(0, height - (height * 0.12), width, height * 0.12);
+      
+      let pxScreen = width / 2; let hY = height / 2 - 80;
+
+      if (postAmbushPhase === 1) { killcamTarget = {x: townSpeaker1.x, y: townSpeaker1.y}; drawSpeechBubble(pxScreen, hY, "Holy hell! We just took out the government!"); }
+      else if (postAmbushPhase === 2) { killcamTarget = {x: townSpeaker2.x, y: townSpeaker2.y}; drawSpeechBubble(pxScreen, hY, "Hooray! The revolution is complete! We rule the world!"); }
+      else if (postAmbushPhase === 3) { killcamTarget = {x: player.x, y: player.y}; drawSpeechBubble(pxScreen, hY, "I wouldve thought that too if my dad didnt just tell me\ntheres a whole lot more land outside of these gates..\nI guess theres other Stick Cities. Also the ALIE..\nWhatever that is. He got killed before he could finish his sentence."); }
+      else if (postAmbushPhase === 4) { killcamTarget = {x: townSpeaker1.x, y: townSpeaker1.y}; drawSpeechBubble(pxScreen, hY, "Theres no way. You sound like one of them 3D earthers.."); }
+      else if (postAmbushPhase === 5) { killcamTarget = {x: player.x, y: player.y}; drawSpeechBubble(pxScreen, hY, "Ehh. Pretty sure dad was gonna tell me thats true too even.\nDont shoot the messenger."); }
+      else if (postAmbushPhase === 6) { killcamTarget = {x: townSpeaker1.x, y: townSpeaker1.y}; drawSpeechBubble(pxScreen, hY, "Ahh for F***'s sake."); }
+      else if (postAmbushPhase === 7) { killcamTarget = {x: player.x, y: player.y}; drawSpeechBubble(pxScreen, hY, "I know; thats what i said. Anyhow, if we plan on staying alive,\nthen we have to structure teams and assign roles.\nAs soon as we run out of the reserve food supplied to us by NM-0 formerly,\nwe will starve. Were going to have to build our own government."); }
+
+      if (postAmbushPhase >= 1 && postAmbushPhase <= 7) { fill(255); textAlign(CENTER); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40); }
+      if (postAmbushPhase >= 1 && postAmbushPhase <= 7) { fill(255); textAlign(CENTER); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40); }
+
+  }
+  
+       if (inWorldBuildingMenu) {
+      leftStick.active = false; rightStick.active = false; meleeInputHeld = false; cannonInputHeld = false;
+      
+      // --- SAFETY INITIALIZER ---
+   // --- 1. SAFE DEFAULTS (Always run first to prevent NaN) ---
+window.popFarmingM = window.popFarmingM || 0;
+window.popFarmingF = window.popFarmingF || 0;
+window.popMilitaryM = window.popMilitaryM || 0;
+window.popMilitaryF = window.popMilitaryF || 0;
+window.popScienceM = window.popScienceM || 0;
+window.popScienceF = window.popScienceF || 0;
+window.popArchitectureM = window.popArchitectureM || 0;
+window.popArchitectureF = window.popArchitectureF || 0;
+// popUnassigned is derived from these two below; leaving them undefined makes it NaN.
+window.popUnassignedM = Number(window.popUnassignedM) || 0;
+window.popUnassignedF = Number(window.popUnassignedF) || 0;
+
+// --- 2. DETERMINE THE STRICT SOURCE OF TRUTH ---
+let liveMales = 0;
+let totalLive = 0;
+let readingFromPhysicalObjects = false;
+
+// BUG FIX: Safely check overworld status. If the variable hasn't been set to true yet, we assume we are in an active level!
+let inOverworld = (typeof inOverworldView !== 'undefined' && inOverworldView === true);
+
+// If we are in an active level, scan the physical allies
+if (!inOverworld && typeof allies !== 'undefined' && Array.isArray(allies) && allies.length > 0) {
+    readingFromPhysicalObjects = true;
+    totalLive = allies.length;
+    for (let i = 0; i < allies.length; i++) {
+        if (allies[i]) {
+            // BULLETPROOF: Checks eType, falls back to eT, forces string, forces uppercase.
+            let eTypeStr = String(allies[i].eType || allies[i].eT || "NORMAL").toUpperCase();
+            
+            if (!eTypeStr.includes("FEMALE")) {
+                liveMales++;
+            }
+        }
+    }
+} 
+// If we are looking directly at a populated town (physical entities)
+else if (typeof townCitizens !== 'undefined' && Array.isArray(townCitizens) && townCitizens.length > 0) {
+    readingFromPhysicalObjects = true;
+    totalLive = townCitizens.length;
+    for (let i = 0; i < townCitizens.length; i++) {
+        if (townCitizens[i]) {
+            let eTypeStr = String(townCitizens[i].eType || townCitizens[i].eT || "NORMAL").toUpperCase();
+            
+            if (!eTypeStr.includes("FEMALE")) {
+                liveMales++;
+            }
+        }
+    }
+}
+
+// --- 3. PROCESS THE DATA ---
+if (readingFromPhysicalObjects) {
+    let liveFemales = Math.max(0, totalLive - liveMales);
+
+    let assignedM = window.popFarmingM + window.popMilitaryM + window.popScienceM + window.popArchitectureM;
+    let assignedF = window.popFarmingF + window.popMilitaryF + window.popScienceF + window.popArchitectureF;
+
+    // Military Culling (Trims the military if soldiers died in combat)
+    if (assignedM > liveMales) {
+        window.popMilitaryM = Math.max(0, window.popMilitaryM - (assignedM - liveMales));
+        assignedM = window.popFarmingM + window.popMilitaryM + window.popScienceM + window.popArchitectureM;
+    }
+    if (assignedF > liveFemales) {
+        window.popMilitaryF = Math.max(0, window.popMilitaryF - (assignedF - liveFemales));
+        assignedF = window.popFarmingF + window.popMilitaryF + window.popScienceF + window.popArchitectureF;
+    }
+
+    window.popUnassignedM = Math.max(0, liveMales - assignedM);
+    window.popUnassignedF = Math.max(0, liveFemales - assignedF);
+    window.popTotal = totalLive;
+} 
+// If we are in the Overworld, DO NOT scan objects. Load the saved string data.
+else if (typeof viewingTownId !== 'undefined' && typeof townsData !== 'undefined' && townsData[viewingTownId]) {
+    let t = townsData[viewingTownId];
+    if (t.established) {
+        window.popFarmingM = t.popFarmingM || 0;
+        window.popFarmingF = t.popFarmingF || 0;
+        window.popMilitaryM = t.popMilitaryM || 0;
+        window.popMilitaryF = t.popMilitaryF || 0;
+        window.popScienceM = t.popScienceM || 0;
+        window.popScienceF = t.popScienceF || 0;
+        window.popArchitectureM = t.popArchitectureM || 0;
+        window.popArchitectureF = t.popArchitectureF || 0;
+        window.popUnassignedM = t.popUnassignedM || 0;
+        window.popUnassignedF = t.popUnassignedF || 0;
+        window.popTotal = t.popTotal || 0;
+    }
+}
+
+
+      fill(255); textAlign(CENTER, CENTER); textSize(32); textFont('sans-serif');
+      text("NEW GOVERNMENT DIRECTIVE", width/2, 50);
+      textSize(18); fill(200);
+      text(`SURVIVING CITIZENS: ${popTotal}   |   UNASSIGNED: ♂ ${window.popUnassignedM}   ♀ ${window.popUnassignedF}`, width/2, 90);
+
+      let statVit = 1 + Math.floor((window.popFarmingM + window.popFarmingF) * 1.5);
+      let statMen = 1 + Math.floor((window.popFarmingM + window.popFarmingF) * 1.2);
+      let statPhy = 1 + Math.floor((window.popMilitaryM + window.popMilitaryF) * 1.2 + (window.popArchitectureM + window.popArchitectureF) * 1.0);
+      let statObe = 1 + Math.floor((window.popMilitaryM + window.popMilitaryF) * 1.5);
+      let statInt = 1 + Math.floor((window.popScienceM + window.popScienceF) * 2.0);
+
+
+      fill(30, 150); stroke(100); strokeWeight(2); rect(width/2 - 250, 130, 500, 60, 8);
+      fill(255, 200, 0); noStroke(); textSize(12);
+      text(`VITALITY: Lv.${statVit}    MENTAL: Lv.${statMen}    PHYSICALITY: Lv.${statPhy}`, width/2, 145);
+      text(`OBEDIENCE: Lv.${statObe}    INTELLIGENCE: Lv.${statInt}`, width/2, 165);
+            let depts = [
+          {name: "FARMING", desc: "Increases Vitality & Mental State", cM: window.popFarmingM, cF: window.popFarmingF, y: 220, id: 0, xp: window.farmXP, lvl: window.farmLvl},
+          {name: "MILITARY", desc: "Increases Physicality & Obedience", cM: window.popMilitaryM, cF: window.popMilitaryF, y: 295, id: 1, xp: window.milXP, lvl: window.milLvl},
+          {name: "SCIENCE", desc: "Increases Intelligence", cM: window.popScienceM, cF: window.popScienceF, y: 370, id: 2, xp: window.sciXP, lvl: window.sciLvl},
+          {name: "ARCHITECTURE", desc: "Increases Physicality & Build Speed", cM: window.popArchitectureM, cF: window.popArchitectureF, y: 445, id: 3, xp: window.archXP, lvl: window.archLvl}
+      ];
+
+      // HOLD-TO-SPEED-UP LOGIC
+      let isPressing = mouseIsPressed || (typeof touches !== 'undefined' && touches.length > 0);
+      let mx = typeof touches !== 'undefined' && touches.length > 0 ? touches[0].x : mouseX;
+      let my = typeof touches !== 'undefined' && touches.length > 0 ? touches[0].y : mouseY;
+
+      if (!isPressing) window.govHoldTimer = 0;
+      else if (window.govHoldTimer === undefined) window.govHoldTimer = 1;
+      else window.govHoldTimer++;
+
+      let triggerAction = (window.govHoldTimer === 1) || (window.govHoldTimer > 20 && window.govHoldTimer % 4 === 0);
+
+      for (let d of depts) {
+          fill(40); stroke(200); strokeWeight(2); rect(width/2 - 200, d.y - 5, 400, 70, 8);
+          fill(255); noStroke(); textAlign(LEFT, CENTER); textSize(18); text(d.name, width/2 - 180, d.y + 15);
+          fill(150); textSize(10); text(d.desc, width/2 - 180, d.y + 35);
+
+          // PROGRESS BAR WITH EXACT POINTS READOUT
+          let req = d.lvl === 1 ? 50 : (d.lvl === 2 ? 100 : 150);
+          let xpRatio = min(1, (d.xp || 0) / req);
+          if (d.lvl >= 4) xpRatio = 1;
+          
+          fill(20); noStroke(); rect(width/2 - 180, d.y + 50, 200, 6, 3);
+          fill(50, 200, 255); rect(width/2 - 180, d.y + 50, 200 * xpRatio, 6, 3);
+          fill(200); textSize(10); textAlign(RIGHT, CENTER); 
+          text(`LVL ${d.lvl || 1}  [ ${Math.floor(d.xp || 0)} / ${req} ]`, width/2 + 180, d.y + 53);
+
+          // Male UI Layer
+          fill(100, 150, 255); textSize(18); textAlign(CENTER, CENTER); text("♂", width/2 - 60, d.y + 30);
+          fill(d.cM > 0 ? color(200, 50, 50) : color(80)); rect(width/2 - 45, d.y + 15, 25, 30, 4); fill(255); text("-", width/2 - 32, d.y + 30);
+          fill(255); textSize(16); text(d.cM, width/2 - 5, d.y + 30);
+          fill(window.popUnassignedM > 0 ? color(50, 200, 50) : color(80)); rect(width/2 + 10, d.y + 15, 25, 30, 4); fill(255); text("+", width/2 + 22, d.y + 30);
+
+          // Female UI Layer
+          fill(255, 105, 180); textSize(18); text("♀", width/2 + 60, d.y + 30);
+          fill(d.cF > 0 ? color(200, 50, 50) : color(80)); rect(width/2 + 75, d.y + 15, 25, 30, 4); fill(255); text("-", width/2 + 87, d.y + 30);
+          fill(255); textSize(16); text(d.cF, width/2 + 115, d.y + 30);
+          fill(window.popUnassignedF > 0 ? color(50, 200, 50) : color(80)); rect(width/2 + 130, d.y + 15, 25, 30, 4); fill(255); text("+", width/2 + 142, d.y + 30);
+
+          // Apply rapid-fire clicks
+          if (triggerAction) {
+              if (mx > width/2 - 45 && mx < width/2 - 20 && my > d.y + 15 && my < d.y + 45 && d.cM > 0) {
+                  if (d.id===0) window.popFarmingM--; if (d.id===1) window.popMilitaryM--; if (d.id===2) window.popScienceM--; if (d.id===3) window.popArchitectureM--;
+                  window.popUnassignedM++; sfx.hitArmor();
+              }
+              if (mx > width/2 + 10 && mx < width/2 + 35 && my > d.y + 15 && my < d.y + 45 && window.popUnassignedM > 0) {
+                  if (d.id===0) window.popFarmingM++; if (d.id===1) window.popMilitaryM++; if (d.id===2) window.popScienceM++; if (d.id===3) window.popArchitectureM++;
+                  window.popUnassignedM--; sfx.reload();
+              }
+              if (mx > width/2 + 75 && mx < width/2 + 100 && my > d.y + 15 && my < d.y + 45 && d.cF > 0) {
+                  if (d.id===0) window.popFarmingF--; if (d.id===1) window.popMilitaryF--; if (d.id===2) window.popScienceF--; if (d.id===3) window.popArchitectureF--;
+                  window.popUnassignedF++; sfx.hitArmor();
+              }
+              if (mx > width/2 + 130 && mx < width/2 + 155 && my > d.y + 15 && my < d.y + 45 && window.popUnassignedF > 0) {
+                  if (d.id===0) window.popFarmingF++; if (d.id===1) window.popMilitaryF++; if (d.id===2) window.popScienceF++; if (d.id===3) window.popArchitectureF++;
+                  window.popUnassignedF--; sfx.reload();
+              }
+          }
+      }
+
+
+      // Keep globals perfectly in sync
+      popFarming = window.popFarmingM + window.popFarmingF;
+      popMilitary = window.popMilitaryM + window.popMilitaryF;
+      popScience = window.popScienceM + window.popScienceF;
+      popArchitecture = window.popArchitectureM + window.popArchitectureF;
+      popUnassigned = window.popUnassignedM + window.popUnassignedF;
+
+      let isEst = typeof townsData !== 'undefined' && townsData[viewingTownId] && townsData[viewingTownId].established;
+      let btnText = (popUnassigned === 0) ? (isEst ? "UPDATE DIRECTIVE" : "ESTABLISH") : "ASSIGN CITIZENS";
+
+      fill((popUnassigned === 0) ? color(50, 200, 255) : color(80)); 
+      stroke(255); strokeWeight(2);
+      rect(width/2 - 120, height - 90, 240, 50, 8);
+      fill(0); noStroke(); textSize(18); 
+      text(btnText, width/2, height - 65);
+  }
+  // --- TRAVEL DEPARTURE MENU ---
+  if (inTravelMenu) {
+      leftStick.active = false; rightStick.active = false; meleeInputHeld = false; cannonInputHeld = false;
+      fill(0, 230); rect(0, 0, width, height);
+
+      fill(255); textAlign(CENTER, CENTER); textSize(32); textFont('sans-serif');
+      text("TRAVEL DEPARTURE", width/2, 80);
+
+      if (window.militaryToBringM === undefined) window.militaryToBringM = 0;
+      if (window.militaryToBringF === undefined) window.militaryToBringF = 0;
+
+      if (!travelDirection) {
+          textSize(20); fill(200); text("SELECT DESTINATION", width/2, 132);
+          textSize(13); fill(120);
+          text("CURRENT SECTOR — " + (BIOMES[currentBiome] ? BIOMES[currentBiome].name : "UNKNOWN"), width/2, 160);
+
+          // --- TRAVEL NORTH -> back up the sequence (Sector 09 from Stick City) ---
+          let nOk = canTravel("NORTH");
+          let nDest = travelDestination("NORTH");
+          if (nOk) { fill(40); stroke(50, 200, 255); } else { fill(20); stroke(50); }
+          strokeWeight(2); rect(width/2 - 180, 200, 360, 64, 8);
+          fill(nOk ? 255 : 100); noStroke(); textSize(20);
+          text("TRAVEL NORTH", width/2, 222);
+          textSize(13); fill(nOk ? color(70, 210, 255) : color(90));
+          text(nDest !== null ? BIOMES[nDest].name
+                              : (currentBiome === 1 ? "— " + SECTOR_9_NAME + " —" : "— NO ROUTE —"), width/2, 246);
+          if (!nOk) { textSize(11); fill(150); text(travelBlockedReason("NORTH"), width/2, 276); }
+
+          // --- TRAVEL SOUTH -> onward through the sequence ---
+          let sOk = canTravel("SOUTH");
+          let sDest = travelDestination("SOUTH");
+          if (sOk) { fill(40); stroke(50, 200, 255); } else { fill(20); stroke(50); }
+          strokeWeight(2); rect(width/2 - 180, 320, 360, 64, 8);
+          fill(sOk ? 255 : 100); noStroke(); textSize(20);
+          text("TRAVEL SOUTH", width/2, 342);
+          textSize(13); fill(sOk ? color(70, 210, 255) : color(90));
+          text(sDest !== null ? BIOMES[sDest].name : "— TERMINUS —", width/2, 366);
+          if (!sOk) { textSize(11); fill(150); text(travelBlockedReason("SOUTH"), width/2, 396); }
+
+      } else {
+          textSize(20); fill(200); text(`HEADING: ${travelDirection}`, width/2, 140);
+          text("SQUAD DEPLOYMENT", width/2, 200);
+          textSize(14); fill(150); 
+          text(`AVAILABLE MILITARY: ♂ ${window.popMilitaryM}   ♀ ${window.popMilitaryF}`, width/2, 230);
+
+          // MALE ROW
+          fill(40); stroke(200); strokeWeight(2); rect(width/2 - 150, 260, 300, 50, 8);
+          fill(100, 150, 255); noStroke(); textSize(18); text("♂ BRING MALES", width/2 - 40, 285);
+          fill(255); textSize(24); text(window.militaryToBringM, width/2 + 80, 285);
+          fill(window.militaryToBringM > 0 ? color(200, 50, 50) : color(80)); rect(width/2 - 120, 270, 25, 30, 4); fill(255); textSize(16); text("-", width/2 - 107, 285);
+          fill(window.militaryToBringM < window.popMilitaryM ? color(50, 200, 50) : color(80)); rect(width/2 + 110, 270, 25, 30, 4); fill(255); text("+", width/2 + 122, 285);
+
+          // FEMALE ROW
+          fill(40); stroke(200); strokeWeight(2); rect(width/2 - 150, 320, 300, 50, 8);
+          fill(255, 105, 180); noStroke(); textSize(18); text("♀ BRING FEMALES", width/2 - 30, 345);
+          fill(255); textSize(24); text(window.militaryToBringF, width/2 + 80, 345);
+          fill(window.militaryToBringF > 0 ? color(200, 50, 50) : color(80)); rect(width/2 - 120, 330, 25, 30, 4); fill(255); textSize(16); text("-", width/2 - 107, 345);
+          fill(window.militaryToBringF < window.popMilitaryF ? color(50, 200, 50) : color(80)); rect(width/2 + 110, 330, 25, 30, 4); fill(255); text("+", width/2 + 122, 345);
+
+          fill(50, 200, 50); stroke(255); rect(width/2 - 120, height - 90, 240, 50, 8);
+          fill(0); noStroke(); textSize(18); text("DEPART", width/2, height - 65);
+          
+          fill(150); noStroke(); textSize(14); text("[ BACK ]", width/2, height - 20);
+      }
+  }
+
+  // --- OVERWORLD VIEW UI ---
+  if (inOverworldView) {
+      // 1. Dynamically sum up ALL allies across ALL levels to get the true Global Population
+      let trueGlobalPop = 0;
+      for (let id in townsData) {
+          if (townsData[id].established) {
+              trueGlobalPop += townsData[id].popTotal;
+          }
+      }
+      // Sync the global variable to match the data exactly
+      globalPopulation = trueGlobalPop;
+
+      fill(0, 150); noStroke();
+      rect(20, 120, 280, 200, 10); // Made slightly taller to fit the extra line
+      
+      fill(255); textAlign(LEFT, TOP); textFont('sans-serif'); textSize(18);
+      text("TOWN OVERVIEW", 35, 135);
+      
+      fill(200); textSize(12);
+      text(`LOCAL POPULATION: ${popTotal}`, 35, 165);
+      
+      fill(50, 255, 50); // Colored green to stand out
+      text(`GLOBAL POPULATION: ${globalPopulation}`, 35, 185);
+      
+      fill(255, 200, 0);
+      text(`VITALITY: Lv.${statVit}`, 35, 210);
+      text(`MENTAL: Lv.${statMen}`, 35, 230);
+      text(`PHYSICAL: Lv.${statPhy}`, 35, 250);
+      text(`OBEDIENCE: Lv.${statObe}`, 35, 270);
+      text(`INTELLIGENCE: Lv.${statInt}`, 35, 290);
+
+      fill(50, 200, 50); stroke(255); strokeWeight(2);
+      rect(width - 220, height - 80, 200, 50, 8);
+      fill(0); noStroke(); textAlign(CENTER, CENTER); textSize(16); 
+      text("TRAVEL", width - 120, height - 55);
+      // --- PROCEED SOUTH or north BUTTON CLICK LOGIC ---
+      let ovPressing = mouseIsPressed || (typeof touches !== 'undefined' && touches.length > 0);
+      if (!ovPressing) window.overworldTimer = 0;
+      else if (window.overworldTimer === undefined) window.overworldTimer = 1;
+      else window.overworldTimer++;
+
+              // Only allow clicking the travel button after being in the overworld view for at least 30 frames (half a second)
+    if (typeof window.overworldTimer !== 'undefined' && window.overworldTimer > 500) { 
+        let omx = typeof touches !== 'undefined' && touches.length > 0 ? touches[0].x : mouseX;
+        let omy = typeof touches !== 'undefined' && touches.length > 0 ? touches[0].y : mouseY;
+        
+        if (omx > width - 220 && omx < width - 20 && omy > height - 80 && omy < height - 30) {
+            inOverworldView = false;
+            inTravelMenu = true;
+            travelDirection = null;
+            window.militaryToBringM = 0;
+            window.militaryToBringF = 0;
+            sfx.charge();
+        }
+    }
+
+
+}
+  }
+
+
+  if (isPaused) {
+      fill(0, 200); rect(0, 0, width, height); textAlign(CENTER, CENTER); textFont('sans-serif');
+      let drawBtn = (y, txt) => { fill(40); stroke(255, 200, 0); strokeWeight(2); rect(width/2 - 120, y, 240, 40, 8); fill(255); noStroke(); textSize(16); text(txt, width/2, y + 20); };
+      
+                                 if (pauseMenuState === "MAIN") {
+          fill(255); textSize(40); text("PAUSED", width/2, height/2 - 260); 
+          drawBtn(height/2 - 210, "CONTINUE"); 
+          drawBtn(height/2 - 160, "SAVE GAME"); 
+          
+      // --- DRAW MELEE SWITCHER BUTTON ---
+if (swordPickedUp) {
+    // If it's not explicitly false, assume it's true (equipped)
+    let isEquipped = (window.swordEquipped !== false); 
+    
+    // Set the text based on our new variable, NOT player.isArmed!
+    let meleeText = isEquipped ? "MELEE: SWORD" : "MELEE: UNARMED";
+    
+    drawBtn(height/2 - 110, meleeText);
+} else {
+
+              fill(30); stroke(100); strokeWeight(2); rect(width/2 - 120, height/2 - 110, 240, 40, 8); 
+              fill(150); noStroke(); textSize(16); text("this.isArmed = false; UNARMED", width/2, height/2 - 90);
+          }
+          
+          // 1. Gov Directive Button
+          if (currentLevel >= 3) {
+              drawBtn(height/2 - 60, "GOV. DIRECTIVE"); 
+          }
+          
+          // 2. Overworld Toggle
+          if (typeof townsData !== 'undefined' && townsData[currentLevel] && townsData[currentLevel].established) {
+              let label = inOverworldView ? "HIDE OVERWORLD" : "OPEN OVERWORLD";
+              drawBtn(height/2 - 10, label);
+          } else {
+              fill(30); stroke(100); strokeWeight(2); rect(width/2 - 120, height/2 - 10, 240, 40, 8); 
+              fill(150); noStroke(); textSize(16); text("OVERWORLD (LOCKED)", width/2, height/2 + 10);
+          }
+          
+          drawBtn(height/2 + 40, "UPGRADES (SHOP)"); 
+          drawBtn(height/2 + 90, "DAD'S TABLET"); 
+     
+          if (window.towersDefeated || (isStoryMode && currentLevel >= 2)) {
+              drawBtn(height/2 + 140, "SQUAD COMMAND"); 
+          }
+          
+          drawBtn(height/2 + 190, "RESET GAME"); 
+      }
+
+
+ 
+      
+      else if (pauseMenuState === "SQUAD") {
+          fill(255); textSize(40); text("SQUAD COMMAND", width/2, height/2 - 150);
+          drawBtn(height/2 - 90, "FOLLOW ME");
+          drawBtn(height/2 - 30, "SEARCH...");
+          drawBtn(height/2 + 30, "SPREAD OUT");
+          drawBtn(height/2 + 90, "HOLD PERIMETER");
+          drawBtn(height/2 + 150, "BACK");
+      } 
+      else if (pauseMenuState === "SQUAD_SEARCH") {
+          fill(255); textSize(40); text("SEARCH DIRECTION", width/2, height/2 - 150);
+          drawBtn(height/2 - 90, "NORTH");
+          drawBtn(height/2 - 30, "SOUTH");
+          drawBtn(height/2 + 30, "EAST");
+          drawBtn(height/2 + 90, "WEST");
+          drawBtn(height/2 + 150, "BACK");
+      } 
+            else if (pauseMenuState === "GOV_DIRECTIVE") {
+         
+window.popFarmingM = window.popFarmingM || 0;
+window.popFarmingF = window.popFarmingF || 0;
+window.popMilitaryM = window.popMilitaryM || 0;
+window.popMilitaryF = window.popMilitaryF || 0;
+window.popScienceM = window.popScienceM || 0;
+window.popScienceF = window.popScienceF || 0;
+window.popArchitectureM = window.popArchitectureM || 0;
+window.popArchitectureF = window.popArchitectureF || 0;
+// popUnassigned is derived from these two below; leaving them undefined makes it NaN.
+window.popUnassignedM = Number(window.popUnassignedM) || 0;
+window.popUnassignedF = Number(window.popUnassignedF) || 0;
+
+// --- 2. DETERMINE THE STRICT SOURCE OF TRUTH ---
+let liveMales = 0;
+let totalLive = 0;
+let readingFromPhysicalObjects = false;
+
+let inOverworld = (typeof inOverworldView !== 'undefined' && inOverworldView === true);
+
+// If we are in an active level, scan the physical allies
+if (!inOverworld && typeof allies !== 'undefined' && Array.isArray(allies) && allies.length > 0) {
+    readingFromPhysicalObjects = true;
+    totalLive = allies.length;
+    for (let i = 0; i < allies.length; i++) {
+        let c = allies[i];
+        if (c) {
+            // Check direct gender property first; fallback to eType string parsing if missing
+            let isMale = false;
+            if (c.gender) {
+                isMale = (c.gender === "MALE");
+            } else {
+                let eTypeStr = String(c.eType || c.eT || "NORMAL").toUpperCase();
+                isMale = !eTypeStr.includes("FEMALE");
+            }
+
+            if (isMale) {
+                liveMales++;
+            }
+        }
+    }
+} 
+// If we are looking directly at a populated town (physical entities)
+else if (typeof townCitizens !== 'undefined' && Array.isArray(townCitizens) && townCitizens.length > 0) {
+    readingFromPhysicalObjects = true;
+    totalLive = townCitizens.length;
+    for (let i = 0; i < townCitizens.length; i++) {
+        let c = townCitizens[i];
+        if (c) {
+            let isMale = false;
+            if (c.gender) {
+                isMale = (c.gender === "MALE");
+            } else {
+                let eTypeStr = String(c.eType || c.eT || "NORMAL").toUpperCase();
+                isMale = !eTypeStr.includes("FEMALE");
+            }
+
+            if (isMale) {
+                liveMales++;
+            }
+        }
+    }
+}
+
+
+
+// --- 3. PROCESS THE DATA ---
+if (readingFromPhysicalObjects) {
+    let liveFemales = Math.max(0, totalLive - liveMales);
+
+    let assignedM = window.popFarmingM + window.popMilitaryM + window.popScienceM + window.popArchitectureM;
+    let assignedF = window.popFarmingF + window.popMilitaryF + window.popScienceF + window.popArchitectureF;
+
+    // Military Culling (Trims the military if soldiers died in combat)
+    if (assignedM > liveMales) {
+        window.popMilitaryM = Math.max(0, window.popMilitaryM - (assignedM - liveMales));
+        assignedM = window.popFarmingM + window.popMilitaryM + window.popScienceM + window.popArchitectureM;
+    }
+    if (assignedF > liveFemales) {
+        window.popMilitaryF = Math.max(0, window.popMilitaryF - (assignedF - liveFemales));
+        assignedF = window.popFarmingF + window.popMilitaryF + window.popScienceF + window.popArchitectureF;
+    }
+
+    window.popUnassignedM = Math.max(0, liveMales - assignedM);
+    window.popUnassignedF = Math.max(0, liveFemales - assignedF);
+    window.popTotal = totalLive;
+} 
+// If we are in the Overworld, DO NOT scan objects. Load the saved string data.
+else if (typeof viewingTownId !== 'undefined' && typeof townsData !== 'undefined' && townsData[viewingTownId]) {
+    let t = townsData[viewingTownId];
+    if (t.established) {
+        window.popFarmingM = t.popFarmingM || 0;
+        window.popFarmingF = t.popFarmingF || 0;
+        window.popMilitaryM = t.popMilitaryM || 0;
+        window.popMilitaryF = t.popMilitaryF || 0;
+        window.popScienceM = t.popScienceM || 0;
+        window.popScienceF = t.popScienceF || 0;
+        window.popArchitectureM = t.popArchitectureM || 0;
+        window.popArchitectureF = t.popArchitectureF || 0;
+        window.popUnassignedM = t.popUnassignedM || 0;
+        window.popUnassignedF = t.popUnassignedF || 0;
+        window.popTotal = t.popTotal || 0;
+    }
+}
+
+  // --- 1. USE YOUR EXACT trueGlobalPop LOGIC FROM SCREENSHOT 1000206223.jpg ---
+  let trueGlobalPop = 0;
+  for (let id in townsData) {
+      if (townsData[id] && townsData[id].established) {
+          trueGlobalPop += townsData[id].popTotal;
+      }
+  }
+
+  // NOTE: If this screen runs BEFORE the current level officially saves to townsData, use:
+  globalPopulation = trueGlobalPop + popTotal; 
+  // (If your game already saved the current level right before this screen, just change it to: globalPopulation = trueGlobalPop;)
+
+  // --- 2. DRAW THE DIRECTIVE HEADER MATCHING SCREENSHOT 1783574826028.jpeg ---
+  fill(255); 
+  textAlign(CENTER, CENTER); 
+  textSize(32); 
+  textFont('sans-serif');
+  text("GOVERNMENT DIRECTIVE", width/2, 50);
+
+  textSize(18); 
+  fill(200);
+  // Kept your exact "SURVIVING CITIZENS" string layout, just swapping the variable to globalPopulation
+  text(`SURVIVING CITIZENS: ${globalPopulation}   |   UNASSIGNED: ♂ ${window.popUnassignedM}   ♀ ${window.popUnassignedF}`, width/2, 90);
+
+      statVit = 1 + Math.floor((window.popFarmingM + window.popFarmingF) * 1.5);
+      statMen = 1 + Math.floor((window.popFarmingM + window.popFarmingF) * 1.2);
+      statPhy = 1 + Math.floor((window.popMilitaryM + window.popMilitaryF) * 1.2 + (window.popArchitectureM + window.popArchitectureF) * 1.0);
+      statObe = 1 + Math.floor((window.popMilitaryM + window.popMilitaryF) * 1.5);
+      statInt = 1 + Math.floor((window.popScienceM + window.popScienceF) * 2.0);
+
+      fill(30, 150); stroke(100); strokeWeight(2); rect(width/2 - 250, 130, 500, 60, 8);
+      fill(255, 200, 0); noStroke(); textSize(12);
+      text(`VITALITY: Lv.${statVit}    MENTAL: Lv.${statMen}    PHYSICALITY: Lv.${statPhy}`, width/2, 145);
+      text(`OBEDIENCE: Lv.${statObe}    INTELLIGENCE: Lv.${statInt}`, width/2, 165);
+
+                 let depts = [
+          {name: "FARMING", desc: "Increases Vitality & Mental State", cM: window.popFarmingM, cF: window.popFarmingF, y: 220, id: 0, xp: window.farmXP, lvl: window.farmLvl},
+          {name: "MILITARY", desc: "Increases Physicality & Obedience", cM: window.popMilitaryM, cF: window.popMilitaryF, y: 295, id: 1, xp: window.milXP, lvl: window.milLvl},
+          {name: "SCIENCE", desc: "Increases Intelligence", cM: window.popScienceM, cF: window.popScienceF, y: 370, id: 2, xp: window.sciXP, lvl: window.sciLvl},
+          {name: "ARCHITECTURE", desc: "Increases Physicality & Build Speed", cM: window.popArchitectureM, cF: window.popArchitectureF, y: 445, id: 3, xp: window.archXP, lvl: window.archLvl}
+      ];
+
+      // HOLD-TO-SPEED-UP LOGIC
+      let isPressing = mouseIsPressed || (typeof touches !== 'undefined' && touches.length > 0);
+      let mx = typeof touches !== 'undefined' && touches.length > 0 ? touches[0].x : mouseX;
+      let my = typeof touches !== 'undefined' && touches.length > 0 ? touches[0].y : mouseY;
+
+      if (!isPressing) window.govHoldTimer = 0;
+      else if (window.govHoldTimer === undefined) window.govHoldTimer = 1;
+      else window.govHoldTimer++;
+
+      let triggerAction = (window.govHoldTimer === 1) || (window.govHoldTimer > 20 && window.govHoldTimer % 4 === 0);
+
+      for (let d of depts) {
+          fill(40); stroke(200); strokeWeight(2); rect(width/2 - 200, d.y - 5, 400, 70, 8);
+          fill(255); noStroke(); textAlign(LEFT, CENTER); textSize(18); text(d.name, width/2 - 180, d.y + 15);
+          fill(150); textSize(10); text(d.desc, width/2 - 180, d.y + 35);
+
+          // PROGRESS BAR WITH EXACT POINTS READOUT
+          let req = d.lvl === 1 ? 50 : (d.lvl === 2 ? 100 : 150);
+          let xpRatio = min(1, (d.xp || 0) / req);
+          if (d.lvl >= 4) xpRatio = 1;
+          
+          fill(20); noStroke(); rect(width/2 - 180, d.y + 50, 200, 6, 3);
+          fill(50, 200, 255); rect(width/2 - 180, d.y + 50, 200 * xpRatio, 6, 3);
+          fill(200); textSize(10); textAlign(RIGHT, CENTER); 
+          text(`LVL ${d.lvl || 1}  [ ${Math.floor(d.xp || 0)} / ${req} ]`, width/2 + 180, d.y + 53);
+
+          // Male UI Layer
+          fill(100, 150, 255); textSize(18); textAlign(CENTER, CENTER); text("♂", width/2 - 60, d.y + 30);
+          fill(d.cM > 0 ? color(200, 50, 50) : color(80)); rect(width/2 - 45, d.y + 15, 25, 30, 4); fill(255); text("-", width/2 - 32, d.y + 30);
+          fill(255); textSize(16); text(d.cM, width/2 - 5, d.y + 30);
+          fill(window.popUnassignedM > 0 ? color(50, 200, 50) : color(80)); rect(width/2 + 10, d.y + 15, 25, 30, 4); fill(255); text("+", width/2 + 22, d.y + 30);
+
+          // Female UI Layer
+          fill(255, 105, 180); textSize(18); text("♀", width/2 + 60, d.y + 30);
+          fill(d.cF > 0 ? color(200, 50, 50) : color(80)); rect(width/2 + 75, d.y + 15, 25, 30, 4); fill(255); text("-", width/2 + 87, d.y + 30);
+          fill(255); textSize(16); text(d.cF, width/2 + 115, d.y + 30);
+          fill(window.popUnassignedF > 0 ? color(50, 200, 50) : color(80)); rect(width/2 + 130, d.y + 15, 25, 30, 4); fill(255); text("+", width/2 + 142, d.y + 30);
+
+          // Apply rapid-fire clicks
+          if (triggerAction) {
+              if (mx > width/2 - 45 && mx < width/2 - 20 && my > d.y + 15 && my < d.y + 45 && d.cM > 0) {
+                  if (d.id===0) window.popFarmingM--; if (d.id===1) window.popMilitaryM--; if (d.id===2) window.popScienceM--; if (d.id===3) window.popArchitectureM--;
+                  window.popUnassignedM++; sfx.hitArmor();
+              }
+              if (mx > width/2 + 10 && mx < width/2 + 35 && my > d.y + 15 && my < d.y + 45 && window.popUnassignedM > 0) {
+                  if (d.id===0) window.popFarmingM++; if (d.id===1) window.popMilitaryM++; if (d.id===2) window.popScienceM++; if (d.id===3) window.popArchitectureM++;
+                  window.popUnassignedM--; sfx.reload();
+              }
+              if (mx > width/2 + 75 && mx < width/2 + 100 && my > d.y + 15 && my < d.y + 45 && d.cF > 0) {
+                  if (d.id===0) window.popFarmingF--; if (d.id===1) window.popMilitaryF--; if (d.id===2) window.popScienceF--; if (d.id===3) window.popArchitectureF--;
+                  window.popUnassignedF++; sfx.hitArmor();
+              }
+              if (mx > width/2 + 130 && mx < width/2 + 155 && my > d.y + 15 && my < d.y + 45 && window.popUnassignedF > 0) {
+                  if (d.id===0) window.popFarmingF++; if (d.id===1) window.popMilitaryF++; if (d.id===2) window.popScienceF++; if (d.id===3) window.popArchitectureF++;
+                  window.popUnassignedF--; sfx.reload();
+              }
+          }
+      }
+
+
+      // Force globals to match so the rest of your math doesn't break
+      popFarming = window.popFarmingM + window.popFarmingF;
+      popMilitary = window.popMilitaryM + window.popMilitaryF;
+      popScience = window.popScienceM + window.popScienceF;
+      popArchitecture = window.popArchitectureM + window.popArchitectureF;
+      popUnassigned = window.popUnassignedM + window.popUnassignedF;
+
+      let isEst = typeof townsData !== 'undefined' && townsData[viewingTownId] && townsData[viewingTownId].established;
+      let btnText = (popUnassigned === 0) ? (isEst ? "UPDATE DIRECTIVE" : "ESTABLISH") : "ASSIGN CITIZENS";
+
+      fill((popUnassigned === 0) ? color(50, 200, 255) : color(80)); 
+      stroke(255); strokeWeight(2);
+      rect(width/2 - 120, height - 90, 240, 50, 8);
+      fill(0); noStroke(); textSize(18); 
+      text(btnText, width/2, height - 65);
+
+                      // --- ESTABLISH BUTTON CLICK LOGIC ---
+      if (window.govHoldTimer === 1) { // Fires only on the initial tap
+          if (mx > width/2 - 120 && mx < width/2 + 120 && my > height - 90 && my < height - 40) {
+              if (popUnassigned === 0) {
+                  inWorldBuildingMenu = false;
+                  
+                  // Safely mark town as established
+                  if (typeof townsData !== 'undefined' && typeof viewingTownId !== 'undefined' && townsData[viewingTownId]) {
+                      townsData[viewingTownId].established = true;
+                  }
+                  
+                  inOverworldView = true;
+              }
+          }
+      }
+
+            }
+      else if (pauseMenuState === "SHOP") {
+          drawUpgradeMenu();
+      } 
+      else if (pauseMenuState === "TABLET") {
+          fill(0, 150, 255); textSize(40); text("DAD'S TABLET", width/2, height/2 - 150); drawBtn(height/2 - 90, "SUIT AUGMENTS"); drawBtn(height/2 - 30, "WEAPONS"); drawBtn(height/2 + 30, "JOURNAL"); drawBtn(height/2 + 90, "BACK");
+      } 
+      else if (pauseMenuState === "AUGMENTS") {
+          fill(0, 200, 100); textSize(30); text("SUIT AUGMENTS", width/2, height/2 - 150); fill(255); textSize(18); text("🛡️ SHIELD - Level 1", width/2, height/2 - 80); text("⚡ RECHARGEABLE - Level 1", width/2, height/2 - 40); drawBtn(height/2 + 120, "BACK");
+      } 
+      else if (pauseMenuState === "WEAPONS") {
+          fill(255, 100, 0); textSize(30); text("WEAPONS", width/2, height/2 - 150); fill(255); textSize(18); let wY = height/2 - 80, wList = ["PISTOL"];
+          if (smgUnlocked) wList.push("MACHINE GUN"); if (dualSmgUnlocked) wList.push("DUAL SMGS"); if (arUnlocked) wList.push("ASSAULT RIFLE"); if (shotgunUnlocked) wList.push("SHOTGUN"); if (rocketLauncherUnlocked) wList.push("ROCKET LAUNCHER");
+          for (let w of wList) { text(`🔫 ${w} - Level 1`, width/2, wY); wY += 30; } drawBtn(height/2 + 120, "BACK");
+      } 
+      else if (pauseMenuState === "JOURNAL") {
+          fill(200, 150, 255); textSize(30); text("JOURNAL", width/2, height/2 - 180); fill(255); textSize(16); textLeading(22);
+          text("Todays the day. Just me and the kid.\nWe have to take out those two radio towers\nin town if we are ever going to get past\nthe \"Great Gate\". Either that, or kill\neverybody in town. Even though i know\nthey all lost their identities, and are\nbasically brainless zombies; i still cant\nhelp but feel bad.", width/2, height/2 - 40); drawBtn(height/2 + 120, "BACK");
+      }
+  }
+   
+  if (isDead || isWin) {
+      let acc = totalShotsFired > 0 ? floor((totalShotsHit / totalShotsFired) * 100) : 0; let accMult = max(1, floor(acc / 10)); let finalScore = score * accMult; 
+      if (isDead) { 
+          fill(0, 180); rect(0, 0, width, height); fill(255, 50, 50); textAlign(CENTER, CENTER); textSize(50); textFont('sans-serif'); text("A valiant effort..", width / 2, height / 2 - 80); 
+          fill(200); textSize(20); text("KILLS: " + totalKills + "  |  BASE SCORE: " + score, width / 2, height / 2 - 25); fill(255, 200, 0); text("ACCURACY: " + acc + "%  (x" + accMult + " MULTIPLIER)", width / 2, height / 2 + 5); 
+          fill(50, 255, 50); textSize(32); text("FINAL SCORE: " + finalScore, width / 2, height / 2 + 45); textSize(18); fill(150); text("[ TAP TO RETRY ]", width / 2, height / 2 + 100); 
+      } else if (isWin) {
+          // Story sectors 0-4 never dead-end on the arcade score card; they run
+          // the story win loop, which hands straight over to the Directive.
+          if (isStoryMode && currentLevel <= 4) { handleStoryWinLoop(); }
+          else if (inUpgradeMenu) { drawUpgradeMenu(); } else {
+              fill(0, 180); rect(0, 0, width, height); fill(50, 255, 50); textAlign(CENTER, CENTER); textSize(50); textFont('sans-serif'); text(currentLevel < 7 ? "LEVEL COMPLETED" : "VICTORY", width / 2, height / 2 - 80); 
+              fill(200); textSize(20); text("KILLS: " + totalKills + "  |  BASE SCORE: " + score, width / 2, height / 2 - 25); fill(255, 200, 0); text("ACCURACY: " + acc + "%  (x" + accMult + " MULTIPLIER)", width / 2, height / 2 + 5); 
+              fill(50, 255, 50); textSize(32); text("FINAL SCORE: " + finalScore, width / 2, height / 2 + 45); 
+              if (winTimer > 0) { winTimer--; } else {
+                  if (currentLevel < 7) { fill(40); stroke(255, 200, 0); strokeWeight(2); rect(width/2 - 170, height/2 + 90, 160, 50, 8); fill(255); noStroke(); textSize(18); text("UPGRADES", width/2 - 90, height/2 + 115); fill(40); stroke(50, 255, 50); strokeWeight(2); rect(width/2 + 10, height/2 + 90, 160, 50, 8); fill(255); noStroke(); textSize(18); text("CONTINUE", width/2 + 90, height/2 + 115); } 
+                  else { textSize(18); fill(150); noStroke(); text("[ TAP TO RESTART ]", width / 2, height / 2 + 115); 
+                      if (window.archBarrierReady) {
+      let bbX = width / 2, bbY = height - 100;
+      fill(50, 200); stroke(255, 150, 50); strokeWeight(2);
+      rect(bbX - 70, bbY - 20, 140, 40, 5);
+      fill(255); noStroke(); textAlign(CENTER, CENTER); textSize(14);
+      text("BUILD BARRIER", bbX, bbY);
+  }
+                  }
+              }
+          }
+      }
+  }
+
+  // Chunk streaming telemetry (toggle with window.showChunkDebug = true)
+  drawBiomeHud();
+
+  // Travel extraction cinematic — drawn last so it covers all other layers
+  updateExtraction();
+}
+
+
+
+
+	  function updateWeaponDrops() {
+  for (let i = weaponDrops.length - 1; i >= 0; i--) {
+    let d = weaponDrops[i];
+    
+    if (inView(d.x, d.y, 50)) {
+        push(); translate(d.x, d.y);
+        let hover = sin(frameCount * 0.05 + d.x) * 5;
+        translate(0, hover);
+        
+        fill(255, 200, 0, 150); stroke(255, 150, 0); strokeWeight(2);
+        rect(-15, -15, 30, 30, 4);
+        
+        noStroke();
+        if (d.type === "SMG") {
+            fill(40); rect(-8, -4, 16, 8, 2); rect(-2, 4, 4, 8); 
+        } else if (d.type === "AR") {
+            fill(40); rect(-14, -2, 28, 4, 1);
+            fill(139, 69, 19); rect(-6, -3, 10, 6, 1); rect(-16, -3, 6, 6, 1);
+        } else if (d.type === "SHOTGUN") {
+            fill(30); rect(-14, -2, 28, 4, 1);
+            fill(15); rect(-2, -3.5, 12, 7, 1);
+            fill(50); rect(-14, -3.5, 8, 7, 2);
+        }
+        pop();
+    }
+
+    if (player && player.hp > 0 && dist(player.x, player.y, d.x, d.y) < 30) {
+        if (d.type === "SMG") {
+            if (dualSmgUnlocked) {
+                player.currentWeapon = WEAPONS.DUAL_SMG;
+                player.mags["DUAL SMGS"] = 3; 
+                player.weaponAmmo["DUAL SMGS"] = WEAPONS.DUAL_SMG.maxAmmo;
+                streakMsgText = "DUAL SMGS RELOADED!";
+            } else if (smgUnlocked) {
+                dualSmgUnlocked = true;
+                player.currentWeapon = WEAPONS.DUAL_SMG;
+                player.mags["DUAL SMGS"] = 3;
+                player.weaponAmmo["DUAL SMGS"] = WEAPONS.DUAL_SMG.maxAmmo;
+                streakMsgText = "DUAL SMGS ACQUIRED!";
+            } else {
+                smgUnlocked = true;
+                player.currentWeapon = WEAPONS.SMG;
+                player.mags["MACHINE GUN"] = 3;
+                player.weaponAmmo["MACHINE GUN"] = WEAPONS.SMG.maxAmmo;
+                streakMsgText = "SMG ACQUIRED!";
+            }
+        } else if (d.type === "SHOTGUN") {
+            shotgunUnlocked = true;
+            player.currentWeapon = WEAPONS.SHOTGUN;
+            player.mags["SHOTGUN"] = 3;
+            player.weaponAmmo["SHOTGUN"] = WEAPONS.SHOTGUN.maxAmmo;
+            streakMsgText = "SHOTGUN ACQUIRED!";
+        } else if (d.type === "AR") {
+            arUnlocked = true;
+            player.currentWeapon = WEAPONS.ASSAULT_RIFLE;
+            player.mags["ASSAULT RIFLE"] = 3;
+            player.weaponAmmo["ASSAULT RIFLE"] = WEAPONS.ASSAULT_RIFLE.maxAmmo;
+            streakMsgText = "ASSAULT RIFLE ACQUIRED!";
+        }
+        streakMsgTimer = 90;
+        player.reloadTimer = 0;
+        sfx.reload(); 
+        emit(d.x, d.y, 20, color(255, 200, 0), "SPARK");
+        weaponDrops.splice(i, 1);
+    }
+  }
+}
+
+function updateHealthPacks() {
+  for (let i = healthPacks.length - 1; i >= 0; i--) {
+    let hpk = healthPacks[i];
+    
+    if (inView(hpk.x, hpk.y, 50)) {
+        push(); translate(hpk.x, hpk.y);
+        let hover = sin(frameCount * 0.05) * 5;
+        translate(0, hover);
+        fill(40, 180, 40); stroke(20, 100, 20); strokeWeight(2);
+        rect(-12, -12, 24, 24, 6); 
+        fill(255); noStroke();
+        rect(-3, -8, 6, 16, 1); 
+        rect(-8, -3, 16, 6, 1); 
+        pop();
+    }
+    
+    if (player && player.hp > 0 && dist(player.x, player.y, hpk.x, hpk.y) < 30) {
+      if (player.hp < 100) {
+        player.hp = 100;
+        sfx.charge(); 
+        streakMsgText = "HEALTH RESTORED!";
+        streakMsgTimer = 90;
+        emit(hpk.x, hpk.y, 20, color(50, 255, 50), "SPARK");
+        healthPacks.splice(i, 1);
+      }
+    }
+  }
+}
+// ###########################################################################
+//  STORY LOOP ENTRY POINT
+//  Every beat that finishes a sector -- the town cutscene chain, the farm post
+//  cutscene, a cleared ambush, the story win screen -- funnels through here.
+//  From this one door the loop always runs the same way:
+//
+//      world building  ->  ESTABLISH  ->  overworld  ->  travel
+//
+//  and travel is what converts the sector to a generative biome, because by
+//  then storyArcCleared() is true for it.
+// ###########################################################################
+// ###########################################################################
+//  RUN START
+// ###########################################################################
+function beginSelectedRun() {
+    started = true;
+    isStoryMode = pendingStoryMode;
+
+    // Every run launched from the main menu starts from a known state. These
+    // flags live on window and are never cleared by startAtLevel (which is
+    // deliberate — travelling back into Stick City must not wipe them), so a
+    // second run in the same page session would otherwise inherit the first
+    // run's breached gates and settled towns.
+    resetStoryProgress();
+    // One roll of the clock for the whole run. startAtLevel() deliberately
+    // never touches worldTimeMs, so from here the time of day carries from
+    // sector to sector on its own.
+    seedWorldClock();
+
+    if (isStoryMode && pendingDebugStory) {
+        // Debug jump: skip the intro crawl and the basement, land directly in
+        // the chosen sector with the campaign behind it already played.
+        seedDebugStoryProgress(pendingLevel);
+    } else if (isStoryMode) {
+        inStoryIntro = true; introScrollY = height;
+    }
+
+    startAtLevel(pendingLevel);
+    pendingDebugStory = false;
+
+    if (sfx.bgm && sfx.bgm.paused) sfx.bgm.play().catch(e => console.log(e));
+    if (sfx.ctx && sfx.ctx.state === 'suspended') sfx.ctx.resume();
+}
+
+function resetStoryProgress() {
+    window.northGateBreached = false;
+    window.northGateBreachedStatus = false;
+    window.southGateBreachedStatus = false;
+    window.southRoadAnnounced = false;
+    window.undercityNorthBreached = false;
+    window.undercitySouthBreached = false;
+    window.ambushKind = null;
+    window.nm0AmbushClearedStatus = false;
+    window.nm0AmbushCleared = false;
+    window.nm0HqCleared = false;
+    window.armorBlueprintPickedUp = false;
+    window.genocideRouteActive = false;
+    window.genocideAmbushCleared = false;
+    window.postAmbushCutscenePlayed = false;
+    window.towersDefeated = false;
+    window.militaryToBring = 0; window.militaryToBringM = 0; window.militaryToBringF = 0;
+    townsData = {};
+    globalPopulation = 0;
+    viewingTownId = 1;
+    currentBiome = 1;
+}
+
+// --- DEBUG LEVEL SELECT -----------------------------------------------------
+// Drops you into a story sector mid-campaign on the SAVIOR route: towers
+// dropped, towns liberated, the NM-0 ambush cleared and the HQ leg done, with
+// every sector *behind* the one you picked already established. The sector you
+// actually picked is left untouched so its own story still plays.
+//
+// Everything here is state the campaign would have produced on its own -- it is
+// seeded rather than replayed, so the Directive, the overworld and the Travel
+// Menu all have real data to read, and SOUTH is open as the way onward.
+function seedDebugStoryProgress(level) {
+    const cleared = Math.max(0, level - 1);   // sectors finished before this one
+    const stickDone = cleared >= 1;           // Stick City's whole arc, HQ included
+
+    isStoryMode = true;
+    inStoryIntro = false; inStoryRoom = false;
+    prologuePhase = 0; storyPhase = 0;
+    inUpstairsRoom = false; upstairsPhase = 0;
+    inTownCutscene = false; inFarmCutscene = false; inFarmPostCutscene = false;
+    inPostAmbushCutscene = false; inLvl4Cutscene = false;
+    inWorldBuildingMenu = false; inOverworldView = false; inTravelMenu = false;
+
+    // Savior route, not genocide.
+    window.genocideRouteActive = false;
+    window.genocideAmbushCleared = false;
+
+    // Prologue pickups you would be carrying regardless.
+    tabletPickedUp = true; journalRead = true;
+    swordPickedUp = true; hasSword = true; window.swordEquipped = true;
+    darchonCallCompleted = stickDone;
+
+    // Stick City's gate arc. Both Great Gates are down once it is behind you:
+    // the north one from the NM-0 HQ leg, the south one because that is what
+    // opens the road south.
+    window.nm0AmbushClearedStatus = stickDone;
+    window.postAmbushCutscenePlayed = stickDone;
+    window.northGateBreachedStatus = stickDone;
+    window.southGateBreachedStatus = stickDone;
+    window.northGateBreached = stickDone;
+    window.nm0HqCleared = stickDone;
+    window.armorBlueprintPickedUp = stickDone;
+    window.towersDefeated = false;            // re-derived per sector on entry
+
+    // Settle every sector behind you with a real, fully-assigned population.
+    townsData = {};
+    globalPopulation = 0;
+    for (let l = 1; l <= cleared; l++) {
+        const t = {
+            established: true,
+            towersDown: (l === 1 || l === 2),   // savior route dropped them
+            popFarmingM: 6, popFarmingF: 6,
+            popMilitaryM: 6, popMilitaryF: 6,
+            popScienceM: 0, popScienceF: 0,
+            popArchitectureM: 0, popArchitectureF: 0,
+            popUnassignedM: 0, popUnassignedF: 0,
+            statVit: 1, statMen: 1, statPhy: 1, statObe: 1, statInt: 1
+        };
+        t.popTotal = t.popFarmingM + t.popFarmingF + t.popMilitaryM + t.popMilitaryF;
+        townsData[l] = t;
+        globalPopulation += t.popTotal;
+    }
+
+    // Point the live roster at the last town you settled.
+    window.militaryToBring = 0; window.militaryToBringM = 0; window.militaryToBringF = 0;
+    if (cleared >= 1) {
+        viewingTownId = cleared;
+        loadTownData(cleared);
+    } else {
+        viewingTownId = 1;
+        window.popFarmingM = 0; window.popFarmingF = 0;
+        window.popMilitaryM = 0; window.popMilitaryF = 0;
+        window.popScienceM = 0; window.popScienceF = 0;
+        window.popArchitectureM = 0; window.popArchitectureF = 0;
+        window.popUnassignedM = 0; window.popUnassignedF = 0;
+        window.popTotal = 0;
+    }
+    popFarming = window.popFarmingM + window.popFarmingF;
+    popMilitary = window.popMilitaryM + window.popMilitaryF;
+    popScience = window.popScienceM + window.popScienceF;
+    popArchitecture = window.popArchitectureM + window.popArchitectureF;
+    popUnassigned = window.popUnassignedM + window.popUnassignedF;
+    popTotal = window.popTotal;
+
+    // Kit you would have earned by this point. Levels 0 and 1 reset the
+    // loadout inside legacyStartAtLevel, which is correct -- the run starts
+    // clean there, and this only matters when jumping in further along.
+    if (stickDone) {
+        smgUnlocked = true; dualSmgUnlocked = true; arUnlocked = true; shotgunUnlocked = true;
+        taserUnlocked = true; grenadesUnlocked = true; pGrenadeAmmo = 6;
+        meleeComboUnlocked = true; window.meleeFinisherUnlocked = true;
+        score = 4000;
+    }
+    jetpackUnlocked = true; meleeUnlocked = true;
+
+    streakMsgText = "DEBUG START — SECTOR " + level + " (SAVIOR ROUTE)";
+    streakMsgTimer = 240;
+}
+
+// Stick City and the Undercity are authored maps that get rebuilt from scratch
+// on every entry, so "the towers are gone" has to be remembered per sector
+// rather than inferred. Kept on townsData so it rides along with the save.
+// Has this sector's transmission grid already come down?
+function sectorTowersAreDown(level) {
+  if (typeof townsData === 'undefined' || !townsData) return false;
+  const t = townsData[level === undefined ? currentLevel : level];
+  return !!(t && t.towersDown);
+}
+
+// The towers are the sector's leash. With them down, everyone still standing in
+// it who is a person rather than a machine stops being NM-0's and starts being
+// Stick City's -- which is the whole point of the savior route, and until now it
+// only happened for whoever was left alive at the moment an ambush was cleared.
+// A sector with no ambush in it -- the Undercity, whose objective is the towers
+// themselves -- never converted anybody.
+//
+// Armour does not defect. ARMORED and ARMORED_STANDARD are hardware; the pistol
+// regulars and the incendiary crews are conscripts.
+const RECRUITABLE = ["NORMAL", "FEMALE_PISTOL", "MOLOTOV"];
+function recruitSectorSurvivors() {
+  let n = 0, f = 0;
+  for (const e of enemiesList) {
+    if (!e || e.isFriendly || e.dead || e.hp <= 0) continue;
+    if (RECRUITABLE.indexOf(e.eType) === -1) continue;
+    e.isFriendly = true;
+    e.isNeutral  = false;
+    e.isRecruit  = true;
+    e.state      = "IDLE";
+    e.hp         = 300;
+    e.loseSightTimer = 0;
+    e.routeA = e.routeB = undefined;      // off the checkpoint beat, they work for you now
+    globalPopulation++;
+    n++;
+    if (String(e.eType).toUpperCase().indexOf("FEMALE") !== -1) f++;
+  }
+  // Detach them from whatever settlement roster owned them, or the population
+  // layer will hand them back to the world the next time that chunk goes out of
+  // range and the recruits will vanish.
+  for (const [k, list] of chunkPop) {
+    const keep = list.filter(e => !e.isRecruit);
+    if (keep.length !== list.length) chunkPop.set(k, keep);
+  }
+  return { total: n, female: f };
+}
+
+function markSectorTowersDown(level) {
+    if (typeof townsData === 'undefined') window.townsData = {};
+    if (!townsData[level]) townsData[level] = { established: false };
+    townsData[level].towersDown = true;
+}
+
+function openSectorDirective(level) {
+    const id = (level !== undefined) ? level : currentLevel;
+
+    viewingTownId = id;
+    if (typeof townsData === 'undefined') window.townsData = {};
+    if (!townsData[id]) {
+        townsData[id] = {
+            established: false, popTotal: 0, popUnassigned: 0, popFarming: 0,
+            popMilitary: 0, popScience: 0, popArchitecture: 0,
+            statVit: 1, statMen: 1, statPhy: 1, statObe: 1, statInt: 1
+        };
+    }
+
+    // An already-settled town skips straight to the map; a fresh one has to be
+    // assigned and established first.
+    if (townsData[id].established) {
+        if (typeof loadTownData === 'function') loadTownData(id);
+        inWorldBuildingMenu = false;
+        inOverworldView = true;
+    } else {
+        if (popTotal > 0 && popUnassigned <= 0) popUnassigned = popTotal;
+        ensureDirectiveRoster();
+        inWorldBuildingMenu = true;
+        inOverworldView = false;
+    }
+}
+
+// The Directive screen works off gendered counts (popUnassignedM / popUnassignedF)
+// and derives the scalar popUnassigned from them, which is what gates the
+// ESTABLISH button. It normally fills those in by scanning a physical roster --
+// window.allies or townCitizens. A sector that finishes on a plain ambush clear
+// has neither, which left the counts undefined, made popUnassigned NaN, and hung
+// the button on "ASSIGN CITIZENS" with nothing to assign: a dead end in the
+// middle of the loop. Guarantee a roster whenever the Directive opens.
+function ensureDirectiveRoster() {
+    const m = Number(window.popUnassignedM), f = Number(window.popUnassignedF);
+    const assigned = (Number(window.popFarmingM) || 0) + (Number(window.popFarmingF) || 0)
+                   + (Number(window.popMilitaryM) || 0) + (Number(window.popMilitaryF) || 0)
+                   + (Number(window.popScienceM) || 0) + (Number(window.popScienceF) || 0)
+                   + (Number(window.popArchitectureM) || 0) + (Number(window.popArchitectureF) || 0);
+
+    if (Number.isFinite(m) && Number.isFinite(f) && m + f + assigned > 0) return;
+
+    const free = Math.max(0, (Number(popTotal) || 0) - assigned);
+    window.popUnassignedM = Math.ceil(free / 2);
+    window.popUnassignedF = free - window.popUnassignedM;
+}
+
+// Population seeding for the sectors that end on a straight ambush clear
+// (the Green Line) rather than on a scripted survivor cutscene.
+function seedSectorPopulationFromSurvivors() {
+    const survivors = enemiesList.filter(e => e.isFriendly && e.hp > 0 && !e.dead);
+    const females = survivors.filter(e => String(e.eType || "").toUpperCase().includes("FEMALE")).length;
+
+    popTotal = (window.militaryToBring || 0) + survivors.length;
+    popUnassigned = popTotal;
+    popMilitary = 0; popFarming = 0; popScience = 0; popArchitecture = 0;
+
+    window.popFarmingM = 0; window.popFarmingF = 0;
+    window.popMilitaryM = 0; window.popMilitaryF = 0;
+    window.popScienceM = 0; window.popScienceF = 0;
+    window.popArchitectureM = 0; window.popArchitectureF = 0;
+    window.popUnassignedF = females + Math.floor((window.militaryToBring || 0) / 2);
+    window.popUnassignedM = Math.max(0, popTotal - window.popUnassignedF);
+}
+
+function handleStoryWinLoop() {
+    if (!isWin) return;
+
+    winTimer--;
+
+    // --- 1. DRAW THE WIN SCREEN TEXT ---
+    push();
+    textAlign(CENTER, CENTER);
+    textFont('sans-serif');
+    fill(100, 255, 100); // Success Green
+    textSize(60);
+
+    // Custom text based on the story phase
+    if (currentLevel === 0) {
+        text("PROLOGUE COMPLETE", width/2, height/2 - 40);
+    } else if (currentLevel === 1) {
+        text("TOWN LIBERATED", width/2, height/2 - 40);
+    } else {
+        text("SECTOR CLEARED", width/2, height/2 - 40);
+    }
+
+    textSize(30);
+    fill(255);
+    text("Preparing next phase...", width/2, height/2 + 30);
+    pop();
+
+    // --- 2. HANDLE STORY TRANSITIONS (Arcade Mode Removed) ---
+    if (winTimer <= 0) {
+        isWin = false;
+
+        if (currentLevel === 0) {
+            // Finish Prologue -> Start Level 1 directly
+            startAtLevel(1);
+        }
+        else {
+            // Finish a story sector -> Government Directive, then the overworld
+            // and the Travel Menu. Establishing here is what opens the sector
+            // up as a streamed biome on the next arrival.
+            if (currentLevel === 1 || currentLevel === 2) {
+                window.towersDefeated = true;
+                markSectorTowersDown(currentLevel);
+            }
+            seedSectorPopulationFromSurvivors();
+            openSectorDirective(currentLevel);
+            saveGame();
+        }
+    }
+}
+
+function legacyGetSafeSpawn(away) {
+  let safe = false, rx, ry, att = 0;
+  
+  // 1. Define the true bounds of the current level
+  let bndX = 1200, bndY = 1200; // Default
+  if (currentLevel === 1) { bndX = 3600; bndY = 3600; } // The massive 7x7 city grid
+  else if (currentLevel >= 3 && currentLevel <= 5) { bndX = 1600; bndY = 1600; }
+  
+  while (!safe && att < 1000) {
+    // 2. Uniformly pick a spot anywhere on the entire map
+    rx = random(-bndX, bndX);
+    ry = random(-bndY, bndY);
+
+    let hit = !insideSector(rx, ry);
+    
+    // 3. Keep enemies from spawning directly on the player's head
+    if (away && player && player.hp > 0 && dist(rx, ry, player.x, player.y) < 500) hit = true;
+    
+    // 4. Check collisions against ALL buildings, walls, barriers, and fortresses
+    if (!hit) {
+        for (let b of buildings) { 
+            if (currentLevel === 4 && b.isPalm) continue; 
+            if (currentLevel === 6 && (b.isAlienPlant || b.isEnergyPole)) continue; 
+            if ((currentLevel === 1 || currentLevel === 2) && b.isGrassLot) continue; 
+            
+            if (rx + 40 > b.x - b.w / 2 && rx - 40 < b.x + b.w / 2 && ry + 40 > b.y - b.h / 2 && ry - 40 < b.y + b.h / 2) { 
+                hit = true; break; 
+            } 
+        }
+    }
+
+    // 5. Check collisions against the newly separated parking lot cars
+    if (!hit) {
+        for (let c of parkingCars) {
+            let cw = 50, ch = 90; 
+            if (rx + 40 > c.x - cw / 2 && rx - 40 < c.x + cw / 2 && ry + 40 > c.y - ch / 2 && ry - 40 < c.y + ch / 2) { 
+                hit = true; break; 
+            }
+        }
+    }
+    
+    if (!hit) safe = true; 
+    att++;
+  }
+  
+  // Fallback: If 1000 random spots fail, drop them slightly off-screen from the player
+  return safe ? { x: rx, y: ry } : { x: player ? player.x + 600 : 0, y: player ? player.y + 600 : 0 };
+}
+
+function triggerGateAmbush(fortressY, isNorthGate = false) {
+    // The garrison musters just inside the gate that came down, wherever that
+    // gate happens to sit. Stick City's Great Gates are at -4200 / 5400 and the
+    // Undercity's curtain wall at -1800 / 3000, so this is derived from the
+    // wall rather than hard-coded to Stick City's pair.
+    let spawnY = fortressY < 0 ? fortressY + 500 : fortressY - 500;
+    let spawnX1 = 600;
+    let spawnX2 = -200;
+
+    // The breach flags are Stick City's -- they gate its arc, its NM-0 HQ prompt
+    // and travel out of the sector. The Undercity's wall is a different wall in a
+    // different sector and keeps its own record, or blowing it open would mark
+    // Stick City's Great Gate down without a shot being fired there.
+    if (currentLevel === 2) {
+        if (isNorthGate) window.undercityNorthBreached = true;
+        else window.undercitySouthBreached = true;
+    } else {
+        if (isNorthGate) window.northGateBreachedStatus = true;
+        else window.southGateBreachedStatus = true;
+    }
+
+    // MERGE ACTIVE AMBUSHES (Scenario 4)
+    if (nm0AmbushActive) {
+        nm0AmbushKills += 150;
+        window.ambushSpawnsRemaining += 100;
+        streakMsgText = "MULTIPLE BREACHES!";
+    } else {
+        nm0AmbushActive = true;
+        nm0AmbushKills = 150;
+        window.ambushSpawnsRemaining = 100;
+        objectiveTimer = 360;
+        // A wall coming down is a wall coming down -- it opens the road, it does
+        // not finish the sector. Tagging the ambush is what keeps its clear from
+        // being mistaken for the story beat that ends the level.
+        window.ambushKind = "GATE";
+        streakMsgText = isNorthGate ? "NORTH GATE BREACHED!" : "SOUTH GATE BREACHED!";
+    }
+    streakMsgTimer = 120;
+
+    let gateAerY = spawnY < 0 ? spawnY + 100 : spawnY - 100;
+
+    // --- BATCH 1: EAST ---
+    for(let i=0; i<21; i++) enemiesList.push(new Character(spawnX1 + random(-250, 250), spawnY + random(-50, 50), false, "ARMORED_STANDARD"));
+    for(let i=0; i<2; i++) enemiesList.push(new Character(spawnX1 + random(-100, 100), spawnY + random(-50, 50), false, "ARMORED"));
+    for(let i=0; i<2; i++) enemiesList.push(new Character(spawnX1 + random(-300, 300), gateAerY, false, "AERIAL"));
+
+    // --- BATCH 2: WEST ---
+    for(let i=0; i<21; i++) enemiesList.push(new Character(spawnX2 + random(-250, 250), spawnY + random(-50, 50), false, "ARMORED_STANDARD"));
+    for(let i=0; i<2; i++) enemiesList.push(new Character(spawnX2 + random(-100, 100), spawnY + random(-50, 50), false, "ARMORED"));
+    for(let i=0; i<2; i++) enemiesList.push(new Character(spawnX2 + random(-300, 300), gateAerY, false, "AERIAL"));
+
+        // --- BATCH 2: WEST ---
+    for(let i=0; i<21; i++) enemiesList.push(new Character(spawnX2 + random(-250, 250), spawnY + random(-50, 50), false, "ARMORED_STANDARD"));
+    for(let i=0; i<2; i++) enemiesList.push(new Character(spawnX2 + random(-100, 100), spawnY + random(-50, 50), false, "ARMORED"));
+    for(let i=0; i<2; i++) enemiesList.push(new Character(spawnX2 + random(-300, 300), gateAerY, false, "AERIAL"));
+    
+    for(let e of enemiesList) { if(!e.isFriendly && e.hp > 0 && !e.dead) { e.state = "CHASE"; e.loseSightTimer = 999; } }
+
+    // Tag the 50 enemies we just spawned!
+    for(let i = enemiesList.length - 50; i < enemiesList.length; i++) {
+        if (enemiesList[i]) enemiesList[i].isAmbush = true;
+    }
+
+
+    // If Savior Route, wake up the town allies
+    if (window.towersDefeated) {
+        let candidates = enemiesList.filter(e => e.eType === "NORMAL" || e.eType === "BUG" || e.eType === "SNAIL" || e.eType === "MOLOTOV");
+        for(let e of candidates) { 
+            if (!e.isFriendly) globalPopulation++;
+            e.isFriendly = true; e.state = "CHASE"; e.hp = 300; e.loseSightTimer = 999; 
+        }
+    }
+}
+
+
+
+
+	
+
+// ###########################################################################
+//  BIOME OVERWORLD STATES
+//  Who holds the open world, per biome. This is separate from the authored
+//  sectors and from scripted fights: it is what is out there when the player is
+//  simply crossing country between one settlement and the next.
+//
+//    1, 2  Stick City / the Undercity -- NM-0 regulars, ground only. No aerial
+//          units in the overworld: air support belongs to scripted set pieces,
+//          and a gunship drifting over an empty street is neither a patrol nor
+//          a landmark. They garrison checkpoints and walk the arterials between
+//          them.
+//    3     The frontier -- civilians hold the towns and farms (see the
+//          settlement population layer); the country between them is bandit
+//          ground, and bandits ride.
+//    4     The cordon -- NM-0 Grey Fatigue. The Tan Army mans the cordon posts
+//          as neutrals, so the two forces are in the same biome facing each
+//          other, which is what the sector is about.
+//
+//  5 to 8 keep their existing tables until they are worked on.
+// ###########################################################################
+const OVERWORLD = {
+  // NM-0 holds the open road in both city sectors with machines, not people.
+  // The pistol regulars are the sector's POPULATION -- they garrison it, and on
+  // the savior route they become the citizens you inherit -- so having them
+  // respawn forever on the overworld was working against the thing the sector
+  // is for. Robots do not defect and nobody mourns them.
+  1: [["ROBOT", 100]],
+  2: [["ROBOT", 100]],
+  3: [["BANDIT", 100]],
+  4: [["NM0_GREY_FATIGUE", 68], ["ARMORED_STANDARD", 22], ["ARMORED", 10]]
+};
+// What each sector's own army is, as distinct from what its open road spawns.
+// A garrison unit is left alone by the whitelist sweep wherever it is standing;
+// it simply never spawns as a wanderer.
+const SECTOR_GARRISON = {
+  1: ["NORMAL", "MOLOTOV", "ARMORED_STANDARD", "ARMORED", "NM0_ROOKIE"],
+  2: ["FEMALE_PISTOL", "ARMORED_STANDARD", "ARMORED", "NM0_ROOKIE_F"]
+};
+
+// The set that is allowed to exist in each biome's outer region, precomputed.
+// A table is a whitelist, not a preference: anything not in it is not native to
+// the sector and has no business wandering it.
+const OVERWORLD_SET = (() => {
+  const o = {};
+  for (const k of Object.keys(OVERWORLD)) o[k] = new Set(OVERWORLD[k].map(e => e[0]));
+  return o;
+})();
+function overworldPick(level, r) {
+  const t = OVERWORLD[level];
+  if (!t) return null;
+  let acc = 0, tot = 0;
+  for (const e of t) tot += e[1];
+  const roll = r * tot;
+  for (const e of t) { acc += e[1]; if (roll < acc) return e[0]; }
+  return t[t.length - 1][0];
+}
+
+// The outer region: everything that is not a town, an outpost or an NM-0
+// facility. That is the line the sector's own garrison lives on the far side
+// of, and the only place random wanderers belong at all -- settlements are
+// held by their residents and the authored sectors are held by the story.
+let _outerFrame = -99, _outerX = 0, _outerY = 0, _outerVal = false;
+function inOuterRegion(x, y) {
+  // Memoised for the point it is asked about most -- the player's own position,
+  // several times a frame, and the settlement half of the test walks every
+  // resident in the world.
+  const memo = frameCount === _outerFrame &&
+               Math.abs(x - _outerX) < 40 && Math.abs(y - _outerY) < 40;
+  if (memo) return _outerVal;
+  const v = outerRegionUncached(x, y);
+  _outerFrame = frameCount; _outerX = x; _outerY = y; _outerVal = v;
+  return v;
+}
+function outerRegionUncached(x, y) {
+  if (inAuthoredSector(x, y, 900)) return false;              // NM-0 facilities, story arenas
+  if (typeof nearSettlement === 'function' && nearSettlement(x, y)) return false;  // towns
+  const cx = Math.floor(x / CHUNK_W), cy = Math.floor(y / CHUNK_W);
+  const lay = BIOME_ACTIVE && BIOMES[currentBiome] ? BIOMES[currentBiome].layout : null;
+  if (lay === "CITY" || lay === "CITY_DENSE" || lay === "WOODLAND") {   // outposts
+    for (let j = cy - 1; j <= cy + 1; j++)
+      for (let i = cx - 1; i <= cx + 1; i++)
+        if (cityIsCheckpoint(currentBiome, i, j)) return false;
+  }
+  return true;
+}
+
+// True where the biome's own overworld table applies.
+function inBiomeOverworld() {
+  if (!BIOME_ACTIVE || !OVERWORLD[currentLevel] || !player) return false;
+  if (nm0AmbushActive) return false;              // scripted arena, own composition
+  return inOuterRegion(player.x, player.y);
+}
+
+// Is this type native to the sector's outer region? Story and garrison units are
+// exempt -- they were placed on purpose and are not wanderers.
+function nativeToOverworld(e) {
+  const set = OVERWORLD_SET[currentLevel];
+  if (!set) return true;
+  if (e.isFriendly) return true;                  // civilians, allies, neutral garrisons
+  // isAmbush marks a scripted spawn placed at fixed map coordinates. The
+  // distance cull already refuses to touch them and neither does this.
+  if (e.isAmbush || e.routeA || e.isMilitary || e.bandGroup) return true;
+  // The sector's own forces are never foreign to it. This is deliberately NOT
+  // the same list as the overworld table: the table says what may SPAWN on the
+  // open road, this says what is allowed to exist in the sector at all. Stick
+  // City's pistol men garrison Stick City and are never swept out of it -- but
+  // they are just as foreign to the frontier as they ever were, which is the
+  // whole complaint that started this, so the exemption is scoped by sector and
+  // not global.
+  const gar = SECTOR_GARRISON[currentLevel];
+  if (gar && gar.indexOf(e.eType) !== -1) return true;
+  return set.has(e.eType);
+}
+
+// Anything hostile wandering the outer region that is not native to it gets
+// picked up and taken away. This is the backstop, and the reason it exists is
+// that a whitelist applied only at the spawn site is worth nothing against the
+// enemies a sector is ALREADY holding -- carried across a level change, left
+// over from a scripted fight, spawned before a rule existed. Bounded hard: only
+// off screen, only in the open country, only when nothing scripted is running,
+// and only a couple at a time.
+function sweepForeignHostiles() {
+  if (!doTick || !player || isDead || isWin || killcamMode) return;
+  if (frameCount % 30 !== 0) return;
+  if (!BIOME_ACTIVE || !OVERWORLD_SET[currentLevel]) return;
+  if (nm0AmbushActive || farmAmbushActive) return;
+  let removed = 0;
+  for (let i = enemiesList.length - 1; i >= 0 && removed < 3; i--) {
+    const e = enemiesList[i];
+    if (!e || e.isFriendly || e.dead) continue;
+    if (nativeToOverworld(e)) continue;
+    if (!inOuterRegion(e.x, e.y)) continue;
+    const dx = e.x - player.x, dy = e.y - player.y;
+    if (dx * dx + dy * dy < 1600 * 1600) continue;            // never in view
+    enemiesList.splice(i, 1);
+    removed++;
+  }
+}
+
+function spawnSingleEnemy() {
+  // Do not spawn random hostiles if the town is liberated, ambush is active, or in specific story scenes!
+ 
+  if (currentLevel === 0 || nm0AmbushActive) return;
+  // With the grid down the sector's own people are yours and NM-0 never sends
+  // more of them -- but it does keep sending machines down the road, and the
+  // posts fill back up with intake. Both of those come from elsewhere: the
+  // overworld table and the settlement roster. This function only ever spawns
+  // wanderers, and after the towers there are no HUMAN wanderers left to send.
+  if (window.towersDefeated && !OVERWORLD_SET[currentLevel]) return;
+  if (isStoryMode && sectorTowersAreDown(currentLevel) && !OVERWORLD_SET[currentLevel]) return;
+  // Random wanderers belong in the outer region and nowhere else. A town is held
+  // by its residents, an outpost by its garrison, an NM-0 facility by the story;
+  // none of them want a stranger materialising in the middle of them. This used
+  // to be a level-3 story special case, which left every other sector spawning
+  // hostiles inside its own settlements.
+  if (player && OVERWORLD[currentLevel] && !nm0AmbushActive && !inOuterRegion(player.x, player.y)) return;
+
+  let baseEnemyCount = 0;
+  let armoredCount = 0, bugCount = 0, molotovCount = 0, saucerCount = 0;
+  let gatorCount = 0, redSaucerCount = 0, snailCount = 0, hybridCount = 0;
+  let armoredStandardCount = 0, aerialCount = 0; 
+  
+  for (let i = 0; i < enemiesList.length; i++) { 
+      let e = enemiesList[i];
+      
+      // --- THE FIX: Ignore friendly military members when counting map population! ---
+      if (e.isFriendly) continue; 
+      
+      let eType = e.eType;
+      if (eType !== "BUG") baseEnemyCount++;
+      
+      if (eType === "ARMORED") armoredCount++; 
+      if (eType === "ARMORED_STANDARD") { armoredCount++; armoredStandardCount++; } 
+      if (eType === "BUG") bugCount++; 
+      if (eType === "SNAIL") snailCount++; 
+      if (eType === "MOLOTOV") molotovCount++;
+      if (eType === "SAUCER") saucerCount++;
+      if (eType === "ALIEN_GATOR") gatorCount++;
+      if (eType === "SAUCER_RED") redSaucerCount++;
+      if (eType === "SNAIL_HYBRID") hybridCount++; 
+      if (eType === "AERIAL" || eType === "AERIAL_PISTOL") aerialCount++; 
+  }
+  
+  // Now this will only stop spawning if there are 80 actual HOSTILES on the map
+  if (baseEnemyCount >= TARGET_ENEMY_COUNT) return;
+
+  let eS = getSafeSpawn(true), type = "NORMAL", r = random();
+
+  // Biome overworld: the open country has its own garrison and it replaces the
+  // per-level ladder entirely, including its aerial units.
+  if (inBiomeOverworld()) {
+    const t = overworldPick(currentLevel, r);
+    if (t === "BANDIT") {
+      // Lone riders between the posses -- a scout, a straggler.
+      const b = new Character(eS.x, eS.y, false, "BANDIT");
+      if (random() > 0.35) b.mountUp();
+      enemiesList.push(b);
+      return;
+    }
+    enemiesList.push(new Character(eS.x, eS.y, false, t));
+    return;
+  }
+
+  if (currentLevel >= 4 && currentLevel <= 6) {
+// REPLACE THIS INSIDE LEVEL 4-6 / LEVEL 6 BUG BLOCKS:
+if (bugCount < 10) {
+    let bugsToSpawn = min(3, 10 - bugCount); 
+    for (let i = 0; i < bugsToSpawn; i++) {
+        // Use pre-calculated baseEnemyCount instead of a heavy .filter() scan
+        if (baseEnemyCount < TARGET_ENEMY_COUNT) {
+            enemiesList.push(new Character(eS.x + random(-40, 40), eS.y + random(-40, 40), false, "BUG"));
+        }
+    }
+    return;
+}
+
+      if (currentLevel >= 5 && snailCount < 5) {
+          enemiesList.push(new Character(eS.x, eS.y, false, "SNAIL"));
+          return;
+      }
+  }
+  
+  if (currentLevel === 1) {
+      if (r > 0.85) type = "ARMORED";
+      else type = "NORMAL";
+  }
+  else if (currentLevel === 2) {
+      if (r > 0.85) type = "ARMORED";
+      else if (r > 0.5) type = "AERIAL";
+      else type = isStoryMode ? "FEMALE_PISTOL" : "NORMAL";
+  }
+  else if (currentLevel === 3) {
+      if (r > 0.9) type = "ARMORED";
+      else if (r > 0.7) type = "AERIAL";
+      else if (r > 0.3) {
+          if (bugCount <= 10) {
+              for (let i = 0; i < 3; i++) enemiesList.push(new Character(eS.x + random(-40, 40), eS.y + random(-40, 40), false, "BUG"));
+              return;
+          } else type = "NORMAL";
+      } else type = "NORMAL";
+  }
+    else if (currentLevel === 4) {
+      type = "MILITARY_NEUTRAL";
+  }
+
+  else if (currentLevel === 5) {
+      if (r > 0.8) type = "ARMORED_STANDARD";
+      else if (r > 0.7) type = "ARMORED";
+      else if (r > 0.6 && snailCount < 3) type = "SNAIL";
+      else if (r > 0.5) type = (molotovCount < 3) ? "MOLOTOV" : "NORMAL";
+      else if (r > 0.2) type = "AERIAL_PISTOL";
+      else type = "NORMAL";
+  }
+  else if (currentLevel === 6) {
+      if (r > 0.9 && saucerCount < 2) type = "SAUCER";
+      else if (r > 0.7 && redSaucerCount < 3) type = "SAUCER_RED";
+      else if (r > 0.6 && snailCount < 3) type = "SNAIL";
+      else if (r > 0.3 && gatorCount < 5) type = "ALIEN_GATOR";
+      else {
+         if (bugCount < 15) {
+    for (let i = 0; i < 3; i++) {
+        if (baseEnemyCount < TARGET_ENEMY_COUNT) {
+            enemiesList.push(new Character(eS.x + random(-40, 40), eS.y + random(-40, 40), false, "BUG"));
+        }
+    }
+    return;
+}if (bugCount < 15) {
+    for (let i = 0; i < 3; i++) {
+        if (baseEnemyCount < TARGET_ENEMY_COUNT) {
+            enemiesList.push(new Character(eS.x + random(-40, 40), eS.y + random(-40, 40), false, "BUG"));
+        }
+    }
+    return;
+
+
+          } else {
+              type = random() > 0.5 ? "ALIEN_GATOR" : "SNAIL"; 
+          }
+      }
+  }
+  else if (currentLevel === 7) {
+      let pool = [];
+      for (let i = 0; i < 10 - hybridCount; i++) pool.push("SNAIL_HYBRID");
+      for (let i = 0; i < 5 - gatorCount; i++) pool.push("ALIEN_GATOR");
+      for (let i = 0; i < 12 - armoredStandardCount; i++) pool.push("ARMORED_STANDARD");
+      for (let i = 0; i < 3 - redSaucerCount; i++) pool.push("SAUCER_RED");
+      
+      if (pool.length > 0) {
+          type = pool[floor(random(pool.length))];
+      } else {
+          type = random() > 0.5 ? "ARMORED_STANDARD" : "SNAIL_HYBRID"; 
+      }
+  }
+  
+  if (currentLevel !== 6 && currentLevel !== 7 && (type === "ARMORED" || type === "ARMORED_STANDARD") && armoredCount >= 3) {
+      type = (currentLevel === 2 && isStoryMode) ? "FEMALE_PISTOL" : "NORMAL";
+  }
+  
+  if (currentLevel !== 6 && currentLevel !== 7 && (type === "AERIAL" || type === "AERIAL_PISTOL") && aerialCount >= 5) {
+      type = (currentLevel === 2 && isStoryMode) ? "FEMALE_PISTOL" : "NORMAL"; 
+  }
+  
+  // Last gate before anything is created. Every ladder above this line predates
+  // the biome tables, and one of them was still handing level 3 the yellow
+  // pistol regulars from Stick City and the jetpack troopers along with them.
+  // A whitelist checked at the point of creation cannot be routed around.
+  if (OVERWORLD_SET[currentLevel] && inOuterRegion(eS.x, eS.y) &&
+      !OVERWORLD_SET[currentLevel].has(type)) {
+      type = overworldPick(currentLevel, random());
+      if (type === "BANDIT") {
+          const b = new Character(eS.x, eS.y, false, "BANDIT");
+          if (random() > 0.35) b.mountUp();
+          enemiesList.push(b);
+          return;
+      }
+  }
+
+  enemiesList.push(new Character(eS.x, eS.y, false, type));
+}
+
+
+function spawnAmbushReinforcement() {
+    if (!nm0AmbushActive || window.ambushSpawnsRemaining <= 0 || !started || isDead || isWin) return;
+    
+    window.ambushSpawnsRemaining--;
+
+    // NEW: Handle Level 4 Grey Spawns
+    if (currentLevel === 4) {
+        let sX = random() > 0.5 ? player.x - 1200 : player.x + 1200;
+        let sY = player.y + random(-800, 800);
+        let e = new Character(sX, sY, false, "NM0_GREY_FATIGUE");
+        e.state = "CHASE"; e.loseSightTimer = 999; e.isAmbush = true;
+        enemiesList.push(e);
+        return;
+    }
+    
+    
+    let spawnY = (currentLevel === 1) ? 4950 : 1800;
+    let aerY = (currentLevel === 1) ? 4900 : 1750;
+    
+    // 50/50 chance to spawn on the East (600) or West (-200) flank
+    let sX = random() > 0.5 ? 600 : -200; 
+    let sY = spawnY + random(-50, 50);
+    
+    let r = random();
+    let type = "ARMORED_STANDARD";
+    
+    // Maintain unit ratios for reinforcements
+    if (r > 0.9) { type = "AERIAL"; sY = aerY; }
+    else if (r > 0.8) { type = "ARMORED"; }
+    
+        let e = new Character(sX + random(-150, 150), sY, false, type);
+    e.state = "CHASE";
+    e.loseSightTimer = 999;
+    e.isAmbush = true; 
+    enemiesList.push(e);
+
+}
+
+
+
+
+function triggerExplosion(ex, ey, rad, isMolotov = false, sourceIsPlayer = true) {
+  sfx.explosion(); 
+  screenShake = rad > 160 ? 40 : 30; 
+  spawnSplatter(ex, ey, "SCORCH");
+  emit(ex, ey, 40, color(255, random(100, 200), 0), "EXPLOSION"); 
+  emit(ex, ey, 20, color(50), "SMOKE");
+  if (isMolotov) fires.push(new FireZone(ex, ey, rad));
+  
+  let explodingCars = [];
+  
+  // --- 1. DESTRUCTIBLE BUILDINGS & CARS ---
+  for (let i = buildings.length - 1; i >= 0; i--) {
+      let b = buildings[i];
+      if (b.isCar && dist(ex, ey, b.x, b.y) < rad) {
+          explodingCars.push({x: b.x, y: b.y}); buildings.splice(i, 1);
+      }
+      if (b.isTower && b.hp > 0 && sourceIsPlayer && dist(ex, ey, b.x, b.y) < rad + b.w/2) {
+          b.hp -= 300; b.hitFlash = 4;
+          if (b.hp <= 0) { triggerExplosion(b.x, b.y, 250, false, true); screenShake = 60; }
+      }
+      
+            if (b.isGovFortress && b.hp > 0 && sourceIsPlayer && Math.abs(ex - b.x) < 300) {
+                    let gateY = b.y < 0 ? b.y + b.h/2 - 80 : b.y - b.h/2;
+          if (dist(ex, ey, b.x, gateY) < rad + 300) {
+              b.hp -= 300; b.hitFlash = 4;
+              if (b.hp <= 0) { 
+                  triggerExplosion(b.x, gateY, 250, false, true); screenShake = 60; 
+                  let fY = b.y; 
+                  let isNorth = b.y < 0; // <--- ADD THIS
+                  if (typeof triggerGateAmbush === 'function') setTimeout(() => { if (started) triggerGateAmbush(fY, isNorth); }, 2000);
+              }
+          }
+
+      }
+}
+
+  for (let i = parkingCars.length - 1; i >= 0; i--) {
+      let c = parkingCars[i];
+      if (dist(ex, ey, c.x, c.y) < rad) {
+          explodingCars.push({x: c.x, y: c.y}); parkingCars.splice(i, 1);
+      }
+  }
+
+  // --- 2. PLAYER DAMAGE ---
+  if (player && player.hp > 0 && dist(ex, ey, player.x, player.y) < rad) { 
+      if (!explosiveArmorUnlocked || isMolotov || !sourceIsPlayer) {
+          let dRes = player.takeDamage(60); 
+          if (dRes.blocked) { 
+              emit(player.x, player.y, dRes.broken ? 30 : 15, color(0, 200, 255), "SPARK"); sfx.hitArmor(); 
+          } else { 
+              emit(player.x, player.y, 15, color(90, 0, 0), "BLOOD"); 
+          }
+          if (player.hp <= 0 && !player.dead) { 
+              player.dead = true; sfx.deathGrunt(); 
+              let a = atan2(player.y - ey, player.x - ex); 
+              corpses.push(new Corpse(player.x, player.y, player.moveAngle, player.aimAngle, player.shirtCol, player.pantsCol, 5, a, player.decals, player.currentWeapon, a, "NORMAL", player.bodyW, player.bodyH)); 
+              playerRespawnTimer = 0; 
+          } 
+      }
+  }
+
+  // --- 3. ENEMY & ALLY DAMAGE ---
+  for (let i = enemiesList.length - 1; i >= 0; i--) {
+    let e = enemiesList[i];
+    
+    // STRICT TEAM FILTER: Player hits enemies ONLY. Enemies hit allies ONLY.
+    let shouldHit = (sourceIsPlayer !== e.isFriendly);
+    if (!shouldHit) continue;
+
+    if (e.hp > 0 && dist(ex, ey, e.x, e.y) < rad && e.eType !== "AERIAL" && e.eType !== "AERIAL_PISTOL" && e.eType !== "SAUCER" && e.eType !== "SAUCER_RED") {
+      
+      // Apply Damage: Insta-kill hostiles, deal 150 damage to allies
+      if (e.isFriendly) {
+          e.takeDamage(150);
+      } else {
+          e.hp = 0;
+          if (e.mounted) e.unhorse();
+      }
+      
+      if (e.hp <= 0 && !e.dead) {
+          e.dead = true; 
+          let a = atan2(e.y - ey, e.x - ex); 
+          let bCol = (e.eType === "BUG" || e.eType === "SNAIL" || e.eType === "SNAIL_HYBRID") ? color(200, 230, 40) : color(90, 0, 0);
+          
+          emit(e.x, e.y, 40, bCol, "GORE"); 
+          if (e.eType === "ALIEN_GATOR") { emit(e.x, e.y, 40, color(30, 180, 30), "GORE"); }
+          corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 5, a, e.decals, e.currentWeapon, a, e.eType, e.bodyW, e.bodyH));
+          spawnSplatter(e.x, e.y, "BLOOD", bCol);
+          
+          processKill(e.x, e.y, false, e.eType, e.isFriendly);
+          
+          enemiesList.splice(i, 1); 
+          if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100);
+      } else if (e.hp > 0) {
+          sfx.hitBody(); emit(e.x, e.y, 15, color(90, 0, 0), "BLOOD");
+      }
+    }
+  }
+
+  // --- 4. CAR CHAIN EXPLOSIONS ---
+  for (let c of explodingCars) {
+    setTimeout(() => { if (started) triggerExplosion(c.x, c.y, 180, false, sourceIsPlayer); }, random(100, 250));
+  }
+}
+function triggerRocketExplosion(ex, ey, sourceIsPlayer, directHitTarget = null) {
+  sfx.explosion(); 
+  screenShake = 30; 
+  spawnSplatter(ex, ey, "SCORCH");
+  emit(ex, ey, 40, color(255, 150, 0), "EXPLOSION"); 
+  emit(ex, ey, 20, color(50), "SMOKE");
+  
+  let rRad = 140; 
+
+  // --- 1. PLAYER DAMAGE ---
+  if (player.hp > 0 && dist(ex, ey, player.x, player.y) < rRad) {
+      if (!explosiveArmorUnlocked || !sourceIsPlayer) {
+          let dRes = player.takeDamage(60); 
+          if (dRes.blocked) { 
+              emit(player.x, player.y, dRes.broken ? 30 : 15, color(0, 200, 255), "SPARK"); 
+              sfx.hitArmor(); 
+          } else { 
+              emit(player.x, player.y, 15, color(90, 0, 0), "BLOOD"); 
+          }
+          if (player.hp <= 0 && !player.dead) {
+              player.dead = true; sfx.deathGrunt();
+              corpses.push(new Corpse(player.x, player.y, player.moveAngle, player.aimAngle, player.shirtCol, player.pantsCol, 5, 0, player.decals, player.currentWeapon, 0, "NORMAL", player.bodyW, player.bodyH));
+              playerRespawnTimer = 90;
+          }
+      }
+  }
+
+  let isAirburst = directHitTarget && (
+      directHitTarget.eType === "AERIAL" || 
+      directHitTarget.eType === "AERIAL_PISTOL" ||
+      directHitTarget.eType === "SAUCER" ||
+      directHitTarget.eType === "SAUCER_RED"
+  );
+
+  // --- 2. ENEMY / ALLY DAMAGE ---
+  for (let i = enemiesList.length - 1; i >= 0; i--) {
+      let e = enemiesList[i];
+      
+      // STRICT TEAM FILTER: Player hits enemies ONLY. Enemies hit allies ONLY.
+      let shouldHit = (sourceIsPlayer !== e.isFriendly);
+      if (!shouldHit) continue;
+      
+      let isAerial = (e.eType === "AERIAL" || e.eType === "AERIAL_PISTOL" || e.eType === "SAUCER" || e.eType === "SAUCER_RED");
+      let hitByExplosion = false;
+      
+      if (e === directHitTarget) { hitByExplosion = true; }
+      else if (!isAerial) { hitByExplosion = true; } 
+      else if (isAerial && isAirburst) { hitByExplosion = true; }
+
+      if (hitByExplosion && e.hp > 0 && dist(ex, ey, e.x, e.y) < rRad) {
+
+          let dmg = 100; 
+          if (e === directHitTarget) dmg += 250; 
+
+          e.takeDamage(dmg);
+          let bCol = (e.eType === "BUG" || e.eType === "SNAIL" || e.eType === "SNAIL_HYBRID") ? color(200, 230, 40) : color(90, 0, 0);
+
+          if (e.hp <= 0 && !e.dead) {
+              e.dead = true;
+              let a = atan2(e.y - ey, e.x - ex);
+
+              if (e.eType === "SAUCER" || e.eType === "SAUCER_RED") { 
+                  triggerExplosion(e.x, e.y, 160); 
+              } 
+              else if (e.eType === "AERIAL" || e.eType === "AERIAL_PISTOL") {
+                  let choices = [11, 5, 10]; 
+                  let dT = choices[floor(random(choices.length))];
+                  corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, dT, a, e.decals, e.currentWeapon, a, e.eType, e.bodyW, e.bodyH));
+                  
+                  emit(e.x, e.y, 40, color(255, 100, 0), "EXPLOSION");
+                  spawnSplatter(e.x, e.y, "BLOOD", color(90, 0, 0));
+                  if(dT === 10) emit(e.x, e.y, 120, color(90, 0, 0), "GORE");
+              }
+              else {
+                  emit(e.x, e.y, 60, bCol, "GORE");
+                  let choices = [2, 5, 7, 10, 11]; 
+                  let dT = choices[floor(random(choices.length))];
+                  corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, dT, a, e.decals, e.currentWeapon, a, e.eType, e.bodyW, e.bodyH));
+                  spawnSplatter(e.x, e.y, "BLOOD", bCol);
+              }
+
+              processKill(e.x, e.y, false, e.eType, e.isFriendly);
+              enemiesList.splice(i, 1); 
+              if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100);
+          } else if (e.hp > 0) {
+              if ((e.eType === "ARMORED" && e.hp > 300) || (e.eType === "ARMORED_STANDARD" && e.hp > 50) || e.eType === "SAUCER" || e.eType === "SAUCER_RED" || (e.eType === "SNAIL_HYBRID" && e.hp > 150)) {
+                  sfx.hitArmor(); 
+                  emit(e.x, e.y, 10, color(255, 200, 0), "SPARK");
+              } else { 
+                  sfx.hitBody(); 
+                  emit(e.x, e.y, 15, bCol, "BLOOD"); 
+              }
+          }
+      }
+  }
+}
+
+
+
+
+
+
+
+
+
+class FireZone {
+    constructor(x, y, r) { 
+        this.x = x; this.y = y; this.r = r; this.life = 300; 
+        this.blobs = [];
+        
+        // Generate a cluster of flames based on the radius
+        let count = floor(r * 0.6); 
+        for(let i = 0; i < count; i++) {
+            // Using random() * random() concentrates the fire in the center
+            let d = random() * random() * r * 0.9; 
+            let a = random(TWO_PI);
+            this.blobs.push({
+                ox: cos(a) * d, 
+                oy: sin(a) * d, 
+                sz: random(r * 0.4, r * 0.8), // Different sized flames
+                seed: random(100) // Unique seed so they flicker independently
+            });
+        }
+    }
+    
+    update() {
+        this.life--; let dmg = 5 / 60;
+        if (player.hp > 0 && dist(this.x, this.y, player.x, player.y) < this.r) { 
+            player.takeDamage(dmg); 
+            if (player.hp <= 0 && !player.dead) { 
+                player.dead = true; sfx.deathGrunt(); 
+                corpses.push(new Corpse(player.x, player.y, player.moveAngle, player.aimAngle, player.shirtCol, player.pantsCol, 0, 0, player.decals, player.currentWeapon, 0, "NORMAL", player.bodyW, player.bodyH)); 
+                playerRespawnTimer = 90; 
+            } 
+        }
+        
+        // Added some dark smoke to spawn directly out of the fire!
+        if (frameCount % 4 === 0) emit(this.x + random(-this.r, this.r), this.y + random(-this.r, this.r), 1, color(255, 100, 0), "SPARK");
+        if (frameCount % 8 === 0) emit(this.x + random(-this.r, this.r), this.y + random(-this.r, this.r), 1, color(50, 150), "SMOKE");
+    }
+    
+    show() { 
+        push(); translate(this.x, this.y); noStroke(); 
+        
+        // Fade out smoothly as the fire dies out
+        let alphaFade = map(this.life, 0, 60, 0, 1, true);
+        
+        for (let b of this.blobs) {
+            // Make each blob shrink and grow independently to simulate licking flames
+            let flicker = sin(frameCount * 0.15 + b.seed) * (b.sz * 0.2);
+            let currentSz = b.sz + flicker;
+            
+            // Deep red/orange outer heat
+            fill(200, 50, 0, 160 * alphaFade); 
+            ellipse(b.ox, b.oy, currentSz * 1.3, currentSz * 1.3);
+            
+            // Bright orange middle
+            fill(255, 120, 0, 200 * alphaFade); 
+            ellipse(b.ox, b.oy, currentSz, currentSz);
+            
+            // Yellow-hot core
+            fill(255, 220, 0, 230 * alphaFade); 
+            ellipse(b.ox, b.oy, currentSz * 0.6, currentSz * 0.6);
+        }
+        pop(); 
+    }
+}
+
+
+function updateFires() { 
+    for (let i = fires.length - 1; i >= 0; i--) { 
+        if (doTick) fires[i].update(); 
+        if (inView(fires[i].x, fires[i].y, fires[i].r + 50)) fires[i].show(); 
+        if (fires[i].life <= 0) fires.splice(i, 1); 
+    } 
+}
+
+class SludgeZone {
+    constructor(x, y, r, life) { this.x = x; this.y = y; this.r = r; this.life = life; this.maxLife = life; }
+    update() {
+        this.life--; let dmg = 5 / 60; 
+        if (player.hp > 0 && dist(this.x, this.y, player.x, player.y) < this.r) { 
+            player.takeDamage(dmg); 
+            if (player.hp <= 0 && !player.dead) { player.dead = true; sfx.deathGrunt(); corpses.push(new Corpse(player.x, player.y, player.moveAngle, player.aimAngle, player.shirtCol, player.pantsCol, 0, 0, player.decals, player.currentWeapon, 0, "NORMAL", player.bodyW, player.bodyH)); playerRespawnTimer = 90; } 
+        }
+        if (frameCount % 10 === 0) emit(this.x + random(-this.r, this.r), this.y + random(-this.r, this.r), 1, color(50, 200, 50), "BLOOD");
+    }
+    show() { 
+        push(); translate(this.x, this.y); noStroke(); 
+        let a = map(this.life, 0, 30, 0, 150, true); 
+        fill(20, 100, 20, a); ellipse(0, 0, this.r * 2, this.r * 2); 
+        fill(50, 150, 50, a * 0.8); ellipse(0, 0, this.r * 1.4, this.r * 1.4); 
+        pop(); 
+    }
+}
+
+function updateSludges() { 
+    for (let i = sludges.length - 1; i >= 0; i--) { 
+        if (doTick) sludges[i].update(); 
+        if (inView(sludges[i].x, sludges[i].y, sludges[i].r + 50)) sludges[i].show(); 
+        if (sludges[i].life <= 0) sludges.splice(i, 1); 
+    } 
+}
+
+function hasLOS(x1, y1, x2, y2) {
+  // OPTIMIZATION: Bounding box filter to drastically reduce checks on Level 6
+  let minX = Math.min(x1, x2) - 50, maxX = Math.max(x1, x2) + 50;
+  let minY = Math.min(y1, y2) - 50, maxY = Math.max(y1, y2) + 50;
+  
+  let relB = [];
+for (let b of buildings) { 
+	if (b.isCropField || b.isMarket || b.isFence) continue;
+	
+      if (currentLevel === 4 && b.isPalm) continue; 
+      if (currentLevel === 6 && (b.isAlienPlant || b.isEnergyPole)) continue; 
+      if ((currentLevel === 1 || currentLevel === 2) && (b.isGrassLot || b.isCar)) continue; 
+      if (b.x + b.w / 2 > minX && b.x - b.w / 2 < maxX && b.y + b.h / 2 > minY && b.y - b.h / 2 < maxY) {
+          relB.push(b);
+      }
+  }
+  if (relB.length === 0) return true;
+  
+  let steps = Math.max(5, Math.floor(dist(x1, y1, x2, y2) / 20));
+  for (let i = 0; i <= steps; i++) {
+    let tx = lerp(x1, x2, i / steps), ty = lerp(y1, y2, i / steps);
+    for (let b of relB) { 
+        if (tx > b.x - b.w / 2 && tx < b.x + b.w / 2 && ty > b.y - b.h / 2 && ty < b.y + b.h / 2) return false; 
+    }
+  } 
+  return true;
+}
+
+function inView(x, y, pad = 100) {
+  return x >= viewLeft - pad && x <= viewRight + pad && y >= viewTop - pad && y <= viewBottom + pad;
+}
+// Ground-level lots: water, hardstanding and crop rows. These are surfaces,
+// not masses, so they belong under the shadow pass rather than in
+// drawBuildings() -- which is why that function skips them. Lifted out of
+// draw() into its own pass so the ground stack reads as a sequence of named
+// layers instead of an inline loop in the middle of the frame.
+function drawGroundLots() {
+  for (let b of activeBuildings) {
+      if (!inView(b.x, b.y, Math.max(b.w || 0, b.h || 0) + 150)) continue;
+      if (b.isPond) {
+          // A pond is an oval. The old outline was swept with `a += 0.5`, which
+          // is thirteen vertices for the whole circumference -- a visible
+          // polygon with straight facets, not a curve. Worse, every vertex
+          // radius was re-derived from frameCount, so the silhouette itself
+          // changed shape every single frame and the edge crawled.
+          //
+          // The surface is a real ellipse now, on the pond's own w/h so the
+          // water you can see matches the water you can stand in. The motion
+          // is ripples ON the surface, which is what water actually does and
+          // costs the outline nothing.
+          push(); translate(b.x, b.y);
+          const rx0 = b.w / 2, ry0 = b.h / 2;
+          noStroke();
+          fill(24, 40, 34, 90);   ellipse(0, 0, b.w + 26, b.h + 26);  // damp bank
+          fill(36, 58, 48, 150);  ellipse(0, 0, b.w + 11, b.h + 11);  // wet margin
+          fill(46, 104, 168, 226); ellipse(0, 0, b.w, b.h);           // water
+          fill(62, 132, 202, 150); ellipse(0, 0, b.w * 0.84, b.h * 0.84);
+          // Ripple rings drifting outward. Slow, low alpha, and they never
+          // touch the silhouette.
+          noFill(); strokeWeight(2);
+          for (let i = 0; i < 3; i++) {
+              const t = ((frameCount * 0.0042) + i / 3) % 1;
+              stroke(186, 222, 244, 30 * (1 - t) * (t > 0.06 ? 1 : t / 0.06));
+              ellipse(0, 0, b.w * (0.16 + t * 0.76), b.h * (0.16 + t * 0.76));
+          }
+          noStroke();
+          // Sky bounce on the side the light comes from — the one cue that
+          // reads as a water surface rather than a blue hole.
+          fill(150, 200, 235, 42);
+          ellipse(-LIGHT_DX * rx0 * 0.34, -LIGHT_DY * ry0 * 0.34, rx0 * 0.9, ry0 * 0.62);
+          pop();
+      } else if (b.isParkingLot) {
+          fill(70, 75, 80); noStroke(); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h, 10); strokeWeight(3); 
+          let spotW = 100, spotH = 65, aisleW = 80;
+          for (let px = b.x - b.w/2 + 40; px < b.x + b.w/2 - (spotW*2 + aisleW); px += (spotW*2 + aisleW)) {
+              stroke(255, 200, 0, 180); 
+              for (let py = b.y - b.h/2 + 30; py < b.y + b.h/2 - 30; py += spotH) { line(px, py, px + spotW, py); line(px + spotW + aisleW, py, px + spotW * 2 + aisleW, py); }
+          }
+      } else if (b.isCropField) {
+          fill(140, 110, 70); noStroke(); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h, 10);
+          stroke(80, 120, 40); strokeWeight(8);
+          for(let py = b.y - b.h/2 + 20; py < b.y + b.h/2; py += 30) line(b.x - b.w/2 + 10, py, b.x + b.w/2 - 10, py);
+      }
+  }
+}
+
+function drawBuildingPads() {
+  for (let b of activeBuildings) { // Changed to activeBuildings
+        if (!inView(b.x, b.y, Math.max(b.w || 0, b.h || 0) + 150)) continue;
+
+    if (b.isBiomeProp) continue;
+    // Streamed chunks bake their own ground pads into the terrain. A hybrid
+    // sector's authored buildings are not in any chunk, so they still need
+    // theirs drawn live.
+    if (BIOME_ACTIVE && !b.isAuthored) continue;
+	  if ((currentLevel === 1 || currentLevel === 2) && b.isGrassLot) continue;
+    // Street furniture stands ON the ground; it does not have a graded lot laid
+    // out around it. A barrel, a well or a cactus with a 40-unit apron of paler
+    // earth around it reads as a tile someone dropped, which is what every
+    // small prop in Dry Gulch looked like once the town filled up.
+    if (b.isCrateProp || b.isHayBale || b.isWagonProp || b.isWell ||
+        b.isWaterTower || b.isCactusProp || b.isTumbleweedProp || b.isFence ||
+        b.isRock) continue;
+    if (currentLevel !== 1 && currentLevel !== 2 && currentLevel !== 6 && !b.isStreetLight && !b.isDumpster && !b.isCar && !b.isPalm && !b.isAlienPlant && !b.isEnergyPole && !b.isPinkPlanet && !b.isPyramid && !b.isChip) {
+        let bG = currentLevel === 3 ? 160 : (currentLevel === 4 ? 110 : 170);
+        if (currentLevel === 3) fill(205, 175, 130); else fill(bG);
+        noStroke(); rect(b.x - b.w / 2 - 20, b.y - b.h / 2 - 20, b.w + 40, b.h + 40, 8); 
+   if (b.isCropField || b.isMarket || b.isFence) continue;
+
+	}
+  }
+  }
+// skipBase: draw only the level's ground *features*, not its full-map base
+// fill. Used by drawAuthoredGroundOverlay() to lay authored ground detail over
+// streamed chunk terrain in a hybrid sector.
+function legacyDrawGround(skipBase) {
+    if (currentLevel === 0) {
+      if (!inUpstairsRoom) { fill(40, 45, 50); } else { fill(210, 180, 140); }
+      noStroke(); rect(-1000, -1000, 2000, 2000); return;
+  }
+
+	if (currentLevel === 1 || currentLevel === 2 || currentLevel === 6) {
+    if (currentLevel === 1) fill(50, 55, 60); else if (currentLevel === 2) fill(30, 32, 35); else fill(color(60, 60, 80)); 
+    noStroke(); rect(-5000, -5000, 10000, 10000); 
+
+    let blockSize = 960; let sidewalkW = 45;
+    let startBx = (currentLevel === 1) ? -3 : -1;
+    let endBx = (currentLevel === 1) ? 3 : 1;
+    let startBy = (currentLevel === 1) ? -3 : -1;
+    let endBy = (currentLevel === 1) ? 3 : 1;
+
+    for (let bX = startBx; bX <= endBx; bX++) {
+        for (let bY = startBy; bY <= endBy; bY++) {
+            let startX = bX * 1200 + 120, startY = bY * 1200 + 120;
+            
+            // Color the block based on its Zone!
+            let zone = (currentLevel === 1) ? getCityZone(bX, bY) : "RESIDENTIAL";
+            if (currentLevel === 1) {
+                if (zone === "PARK") fill(45, 80, 45); 
+                else if (zone === "INDUSTRIAL") fill(30, 35, 35); 
+                else fill(35, 40, 45); 
+            } else if (currentLevel === 2) { fill(25, 27, 30); } 
+            else { fill(45, 45, 65); }
+            
+            noStroke(); rect(startX, startY, blockSize, blockSize, 4);
+            
+            // Sidewalks
+            fill(140, 145, 150); stroke(100, 105, 110); strokeWeight(3);
+            rect(startX, startY, blockSize, sidewalkW); 
+            rect(startX, startY + blockSize - sidewalkW, blockSize, sidewalkW); 
+            rect(startX + blockSize - sidewalkW, startY + sidewalkW, sidewalkW, blockSize - 2*sidewalkW); 
+            rect(startX, startY + sidewalkW, sidewalkW, blockSize - 2*sidewalkW); 
+            stroke(120, 125, 130); strokeWeight(1); let crackSpacing = 40;
+            for (let l = startX + crackSpacing; l < startX + blockSize; l += crackSpacing) { line(l, startY, l, startY + sidewalkW); line(l, startY + blockSize - sidewalkW, l, startY + blockSize); }
+            for (let l = startY + crackSpacing; l < startY + blockSize; l += crackSpacing) { if (l > startY + sidewalkW && l < startY + blockSize - sidewalkW) { line(startX, l, startX + sidewalkW, l); line(startX + blockSize - sidewalkW, l, startX + blockSize, l); } }
+        }
+    }
+    
+    let loopBounds = (currentLevel === 1) ? [-3600, -2400, -1200, 0, 1200, 2400, 3600] : [-1200, 0, 1200];
+    
+    if (currentLevel === 1) {
+        fill(210); noStroke();
+        for (let rx of loopBounds) {
+            for (let ry of loopBounds) {
+                for (let w = -75; w <= 75; w += 25) { rect(rx + w - 6, ry - 110, 12, 30); rect(rx + w - 6, ry + 80, 12, 30); rect(rx - 110, ry + w - 6, 30, 12); rect(rx + 80, ry + w - 6, 30, 12); }
+            }
+        }
+    }
+
+        let strokeC = (currentLevel === 6) ? color(50, 255, 50, 100) : color(255, 204, 0, 150);
+    stroke(strokeC); strokeWeight(4);
+    let extBound = (currentLevel === 1) ? 4000 : 1400; 
+    
+    // --- CULLED VERTICAL LINES ---
+    for (let c of loopBounds) {
+        if (c < viewLeft - 100 || c > viewRight + 100) continue; // Skip columns far off screen
+        
+        let startJ = Math.max(-extBound, Math.floor((viewTop - 100) / 80) * 80);
+        let endJ = Math.min(extBound, viewBottom + 100);
+        
+        for (let j = startJ; j < endJ; j += 80) { 
+            let skip = false; 
+            for(let ry of loopBounds) if (j > ry - 130 && j < ry + 130) skip = true; 
+            if (!skip) line(c, j, c, j + 40); 
+        }
+    }
+
+    // --- CULLED HORIZONTAL LINES ---
+    for (let c of loopBounds) {
+        if (c < viewTop - 100 || c > viewBottom + 100) continue; // Skip rows far off screen
+        
+        let startI = Math.max(-extBound, Math.floor((viewLeft - 100) / 80) * 80);
+        let endI = Math.min(extBound, viewRight + 100);
+        
+        for (let i = startI; i < endI; i += 80) { 
+            let skip = false; 
+            for(let rx of loopBounds) if (i > rx - 130 && i < rx + 130) skip = true; 
+            if (!skip) line(i, c, i + 40, c); 
+        }
+    }
+
+    
+    
+    if (currentLevel === 2) {
+        fill(5, 10, 20, 140); noStroke(); rect(-2000, -2000, 4000, 4000); 
+        let ctx = drawingContext;
+        // The gradient is assigned straight onto the canvas context, which p5
+        // knows nothing about: it stays the active fill until the next fill()
+        // call and paints whatever is drawn in between. Fenced so it cannot
+        // leak out of this loop.
+        ctx.save();
+        for (let b of buildings) {
+            if (b.isStreetLight && typeof inView === 'function' && inView(b.x, b.y, 400)) {
+                let grad = ctx.createRadialGradient(b.x, b.y, 0, b.x, b.y, 250);
+                grad.addColorStop(0, 'rgba(255, 200, 100, 0.5)');
+                grad.addColorStop(0.3, 'rgba(255, 200, 100, 0.2)');
+                grad.addColorStop(1, 'rgba(255, 200, 100, 0)');
+                ctx.fillStyle = grad; noStroke(); ellipse(b.x, b.y, 500, 500);
+            }
+        }
+        ctx.restore();
+    }
+  } else if (currentLevel === 7) {
+    let ext = 1400; fill(75); noStroke();
+    for (let c = -1200; c <= 1200; c += 1200) { rect(c - 120, -ext, 240, ext * 2); rect(-ext, c - 120, ext * 2, 240); }
+    stroke(0, 200, 255, 150); strokeWeight(4);
+    for (let c = -1200; c <= 1200; c += 1200) {
+        for (let j = -ext; j < ext; j += 80) { line(c, j, c, j + 40); }
+        for (let i = -ext; i < ext; i += 80) { line(i, c, i + 40, c); }
+    }
+    } else if (currentLevel === 3) {
+      // In overlay mode (skipBase) the streamed chunk terrain is already the
+      // ground: it has its own dirt, ruts and dust, and these flat fills would
+      // just cut hard-edged rectangles across it. Only the western town's
+      // hand-drawn detail is worth laying back on top.
+      if (!skipBase) {
+        // --- NEVADA DIRT BASE ---
+        fill(215, 190, 150); noStroke();
+        rect(-1600, -1600, 3200, 3200);
+
+        // WEST SIDE: Farmland Soil Patch
+        fill(180, 150, 110);
+        rect(-1000, -800, 900, 1600, 20);
+
+        // EAST SIDE: Dusty Roads
+        fill(235, 210, 170);
+        rect(150, -1600, 120, 3200); // Main Vertical Road
+
+        // Horizontal Offshoots into the Shanty Town
+        rect(270, -600, 800, 80);
+        rect(270, -200, 800, 80);
+        rect(270, 250, 800, 80);
+        rect(270, 600, 800, 80);
+      }
+// --- WESTERN TOWN GROUND ---
+      // Bounded region, so cull it as a whole rather than per-primitive.
+      if (typeof inView !== 'function' || inView(1300, -1500, 2400)) {
+      noStroke();
+      // Feathered so the town's packed earth fades into the surrounding desert
+      // rather than ending on a straight line. These used to be flat slabs,
+      // which was fine over the old flat ground but cuts hard rectangles across
+      // the streamed terrain.
+      // Packed earth over the whole settlement, and the plaza where the two
+      // streets cross. Grown to match the town: the old footprint stopped 1500
+      // units short of the church and the depot.
+      //
+      // The streets themselves are NOT painted here any more. They used to be
+      // two softRects laid over a streamed terrain that was already baking its
+      // own wagon trail on a different centreline -- two road systems on top of
+      // each other, neither lining up with the buildings. Main Street and Front
+      // Street are baked into the chunk texture now, from DG_ROADS, which is the
+      // same table the kerbs are laid out against. All that is left up here is
+      // the dressing that has to sit above the ground: the walk, the dust and
+      // the arch.
+      // Peak 205 out of 255 was very nearly opaque, and it is drawn over the
+      // chunk texture -- so it buried the baked Main Street completely and the
+      // carriageway came out as flat sand between two rows of shops. It is a
+      // warm tint on the settlement now, not a lid over it.
+      softRect(60, -3260, 2400, 3560, 206, 179, 138, 64, 170, 6, 10);
+      softBlob(1300, -1140, 430, 410, 215, 189, 145, 54);                     // plaza
+
+      // Continuous boardwalk down both kerbs, joining up the planking each
+      // storefront draws for itself so the walk runs unbroken past the alleys.
+      // Laid on the kerb line the columns front onto -- 1130 and 1490 -- rather
+      // than as the 270-wide slab it used to be, which ran under the buildings.
+      const bwW = 1130, bwE = 1490;
+      fill(150, 115, 75); noStroke();
+      rect(bwW - 30, -2700, 34, 1420); rect(bwW - 30, -980, 34, 900);
+      rect(bwE - 4, -2700, 34, 1420);  rect(bwE - 4, -980, 34, 900);
+      stroke(112, 84, 52, 160); strokeWeight(1);
+      for (let py = -2695; py < -80; py += 15) {
+          if (py > -1280 && py < -980) continue;      // the plaza breaks the walk
+          line(bwW - 30, py, bwW + 4, py);
+          line(bwE - 4, py, bwE + 30, py);
+      }
+      noStroke();
+      fill(0, 0, 0, 34);
+      rect(bwW, -2700, 5, 1420); rect(bwW, -980, 5, 900);
+      rect(bwE - 8, -2700, 5, 1420); rect(bwE - 8, -980, 5, 900);
+
+      // Dusty speckle texture (pre-generated, stays still frame to frame)
+      if (window.westernDust) {
+          fill(182, 154, 113, 100);
+          for (let d of window.westernDust) {
+              if (inView(d.x, d.y, 20)) ellipse(d.x, d.y, d.sz, d.sz * 0.8);
+          }
+      }
+
+      // Town entrance archway
+      stroke(90, 62, 35); strokeWeight(10); noFill();
+      line(1160, 60, 1160, -40);
+      line(1440, 60, 1440, -40);
+      strokeWeight(14);
+      line(1150, -40, 1450, -40);
+      noStroke();
+      fill(210, 185, 145); stroke(90, 62, 35); strokeWeight(2);
+      rect(1230, -25, 140, 34, 3);
+      fill(30); noStroke(); textAlign(CENTER, CENTER); textSize(14); textFont('sans-serif');
+      text("DRY GULCH", 1300, -8);
+      }
+  } else {
+    // LEVEL 4 & 5 GENERIC FLOOR
+    let bgFloor = currentLevel === 4 ? color(80, 100, 40) : color(210, 230, 240); 
+    let roadCol = currentLevel === 4 ? color(120, 90, 50) : color(180, 210, 220); 
+    fill(bgFloor); noStroke(); rect(-1600, -1600, 3200, 3200);
+    fill(roadCol); noStroke();
+    let ext = 1600; 
+    for (let i = -ext; i <= ext; i += 400) { rect(i - 45, -ext, 90, ext * 2); rect(-ext, i - 45, ext * 2, 90); }
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+function drawPalmTree(x, y) { fill(90, 60, 30); noStroke(); rect(x - 8, y - 40, 16, 80, 4); fill(40, 140, 40); for (let i = 0; i < 5; i++) { push(); translate(x, y - 40); rotate((i * TWO_PI / 5) + sin(frameCount * 0.02 + x) * 0.2); ellipse(30, 0, 60, 20); pop(); } }
+
+class Splatter {
+  constructor(x, y, t = "HIDDEN", col = null) { 
+      this.blobs = []; 
+      // Pre-allocate max possible blobs to prevent array resizing
+      for (let i = 0; i < 20; i++) this.blobs.push({ ox: 0, oy: 0, sz: 0 });
+      this.init(x, y, t, col);
+  }
+  
+  init(x, y, t, col) {
+      this.x = x; this.y = y; this.t = t; 
+      this.active = (t !== "HIDDEN");
+      this.c = col || color(90, 0, 0, 220); 
+      
+      this.blobCount = t === "SCORCH" ? floor(random(12, 20)) : floor(random(8, 16)); 
+      let s = t === "SCORCH" ? 50 : 35; 
+      
+      // Re-assign values to existing objects instead of creating new ones
+      for (let i = 0; i < this.blobCount; i++) {
+          this.blobs[i].ox = random(-s, s);
+          this.blobs[i].oy = random(-s, s);
+          this.blobs[i].sz = random(10, t === "SCORCH" ? 45 : 35);
+      }
+      return this;
+  }
+  
+  show() { 
+      if (!this.active) return;
+      push(); translate(this.x, this.y); noStroke(); 
+      if (this.t === "SCORCH") fill(15, 15, 15, 220); else fill(this.c); 
+      for (let i = 0; i < this.blobCount; i++) {
+          ellipse(this.blobs[i].ox, this.blobs[i].oy, this.blobs[i].sz, this.blobs[i].sz);
+      }
+      pop(); 
+  }
+}
+
+
+// ###########################################################################
+//  BLOOD SURFACE MEMORY
+//  Blood is stamped into one p5.Graphics per 1024-unit ground chunk and left
+//  there permanently. Two things made that ruinous on a phone.
+//
+//  First, createGraphics inherits the sketch's pixel density, so every chunk
+//  was a 2048x2048 (or 3072x3072 on a 3x display) backing store -- 16 to 36 MB
+//  EACH. Measured: fourteen splatters across the map allocated 240 MB.
+//
+//  Second, the eviction pass was commented out ("keep blood permanent"), so
+//  nothing was ever released. Walking an endless world meant unbounded growth.
+//  Past the compositor's budget the browser starts evicting and re-uploading
+//  canvas layers every frame, which is the flicker -- and it gets worse the
+//  longer a fight runs, because the blood keeps accumulating. Measured on a 3x
+//  viewport: 32 fps with no blood, 22 fps and 103 ms worst-case frames at 20
+//  chunks.
+//
+//  Density 1 is exact here: the buffer is blitted at 1024 world units square,
+//  and at the game's 0.65 zoom one buffer texel already covers more than one
+//  device pixel, so the extra sample rate was never visible. Buffers are
+//  pooled rather than recreated, and the live set is bounded by recency, so
+//  blood stays permanent everywhere you are still fighting and is reclaimed
+//  behind you.
+// ###########################################################################
+// Blood is permanent. What is not permanent is paying 4 MB for a chunk that
+// holds one splatter.
+//
+// The original code allocated a full CHUNK_SIZE surface the moment anything
+// bled anywhere in a 1024-unit square, at the sketch's pixel density -- 16 MB
+// each on a 2x display, 36 MB on a 3x -- and never released any of it. Fourteen
+// splatters measured 240 MB, which is well past what a phone's compositor will
+// hold, and past it the browser starts evicting and re-uploading canvas layers
+// every frame.
+//
+// Surfaces now cover only the ground that has actually been painted, and grow
+// outward in 256-pixel steps as the fighting spreads. A skirmish in one corner
+// of a chunk costs a 256x256 buffer -- 262 KB, sixteen times less -- and a
+// chunk that genuinely gets soaked end to end pays the full price it always
+// did. Nothing is ever thrown away below the budget, so blood you spilled an
+// hour ago is still there when you walk back.
+const BLOOD_GROW = 256;                     // buffers grow on this lattice
+const BLOOD_BUDGET_BYTES = 96 * 1024 * 1024;  // backstop, not a routine limit
+let bloodChunkUse = {};                     // key -> frameCount when last painted
+let bloodSurfacePool = [];                  // retired buffers, cleared and reused
+let bloodBytes = 0;
+
+function bloodSurfaceBytes(pg) { return pg.width * pg.height * 4; }
+
+function newBloodSurface(w, h) {
+  for (let i = 0; i < bloodSurfacePool.length; i++) {
+    const q = bloodSurfacePool[i];
+    if (q.width === w && q.height === h) {
+      bloodSurfacePool.splice(i, 1);
+      q.clear(); q.noStroke();
+      return q;
+    }
+  }
+  const pg = createGraphics(w, h);
+  pg.pixelDensity(1);                       // 1 texel per world unit is already
+  pg.noStroke();                            // finer than the camera resolves
+  return pg;
+}
+
+function releaseBloodSurface(pg) {
+  if (bloodSurfacePool.length < 4) bloodSurfacePool.push(pg);
+  else pg.remove();
+}
+
+// Return a surface for `key` that is guaranteed to cover the box (x0,y0)-(x1,y1)
+// given in chunk-local pixels, growing or creating it as needed.
+function acquireBloodChunk(key, x0, y0, x1, y1) {
+  let e = bloodChunks[key];
+
+  // Requested region, clamped to the chunk and snapped out to the grow lattice.
+  let rx0 = Math.max(0, Math.floor(x0 / BLOOD_GROW) * BLOOD_GROW);
+  let ry0 = Math.max(0, Math.floor(y0 / BLOOD_GROW) * BLOOD_GROW);
+  let rx1 = Math.min(CHUNK_SIZE, Math.ceil(x1 / BLOOD_GROW) * BLOOD_GROW);
+  let ry1 = Math.min(CHUNK_SIZE, Math.ceil(y1 / BLOOD_GROW) * BLOOD_GROW);
+  if (rx1 <= rx0) rx1 = Math.min(CHUNK_SIZE, rx0 + BLOOD_GROW);
+  if (ry1 <= ry0) ry1 = Math.min(CHUNK_SIZE, ry0 + BLOOD_GROW);
+
+  if (e) {
+    // Already covered: nothing to do.
+    if (rx0 >= e.bx && ry0 >= e.by &&
+        rx1 <= e.bx + e.pg.width && ry1 <= e.by + e.pg.height) {
+      bloodChunkUse[key] = frameCount;
+      return e;
+    }
+    // Grow to the union and carry the existing paint across.
+    const ux0 = Math.min(rx0, e.bx), uy0 = Math.min(ry0, e.by);
+    const ux1 = Math.max(rx1, e.bx + e.pg.width);
+    const uy1 = Math.max(ry1, e.by + e.pg.height);
+    const pg = newBloodSurface(ux1 - ux0, uy1 - uy0);
+    pg.image(e.pg, e.bx - ux0, e.by - uy0);
+    bloodBytes -= bloodSurfaceBytes(e.pg);
+    releaseBloodSurface(e.pg);
+    e.pg = pg; e.bx = ux0; e.by = uy0;
+    bloodBytes += bloodSurfaceBytes(pg);
+    bloodChunkUse[key] = frameCount;
+    trimBloodBudget(key);
+    return e;
+  }
+
+  const pg = newBloodSurface(rx1 - rx0, ry1 - ry0);
+  e = { pg: pg, bx: rx0, by: ry0 };
+  bloodChunks[key] = e;
+  bloodBytes += bloodSurfaceBytes(pg);
+  bloodChunkUse[key] = frameCount;
+  trimBloodBudget(key);
+  return e;
+}
+
+// Only ever runs if a session paints an implausible amount of ground. Drops the
+// least recently bled surfaces first and never the one being painted right now.
+function trimBloodBudget(keepKey) {
+  if (bloodBytes <= BLOOD_BUDGET_BYTES) return;
+  const keys = Object.keys(bloodChunks)
+    .sort((a, b) => (bloodChunkUse[a] || 0) - (bloodChunkUse[b] || 0));
+  for (const k of keys) {
+    if (bloodBytes <= BLOOD_BUDGET_BYTES * 0.85) break;
+    if (k === keepKey) continue;
+    const ent = bloodChunks[k];
+    bloodBytes -= bloodSurfaceBytes(ent.pg);
+    ent.pg.remove();
+    delete bloodChunks[k];
+    delete bloodChunkUse[k];
+  }
+}
+
+function drawBloodChunks() {
+    for (let key in bloodChunks) {
+        const e = bloodChunks[key];
+        if (!e) continue;
+        const coords = key.split(",");
+        const wx = parseInt(coords[0]) * CHUNK_SIZE + e.bx;
+        const wy = parseInt(coords[1]) * CHUNK_SIZE + e.by;
+        // The surface already covers only painted ground, so its own extent is
+        // the cull rect.
+        if (wx > viewRight  || wx + e.pg.width  < viewLeft) continue;
+        if (wy > viewBottom || wy + e.pg.height < viewTop)  continue;
+        image(e.pg, wx, wy);
+    }
+}
+
+function spawnSplatter(x, y, t = "HIDDEN", col = null) {
+    if (t === "HIDDEN") return;
+
+    // 1. Define how far the blood/scorch reaches
+    let maxSpread = (t === "SCORCH") ? 100 : 70; 
+
+    // 2. Find every chunk this splatter touches (usually 1, sometimes 2 or 4 if on a corner)
+    let minCX = Math.floor((x - maxSpread) / CHUNK_SIZE);
+    let maxCX = Math.floor((x + maxSpread) / CHUNK_SIZE);
+    let minCY = Math.floor((y - maxSpread) / CHUNK_SIZE);
+    let maxCY = Math.floor((y + maxSpread) / CHUNK_SIZE);
+
+    // 3. Pre-calculate the blobs so they align perfectly across the seam of multiple chunks
+    let blobs = [];
+    let blobCount = (t === "SCORCH") ? floor(random(12, 20)) : floor(random(8, 16));
+    
+    for (let i = 0; i < blobCount; i++) {
+        if (t === "SCORCH") {
+            blobs.push({ ox: random(-50, 50), oy: random(-50, 50), sz: random(10, 45) });
+        } else {
+            blobs.push({ ox: random(-35, 35), oy: random(-35, 35), sz: random(10, 35) });
+        }
+    }
+
+    // 4. Stamp the exact same pattern onto every chunk it overlaps
+    for (let cx = minCX; cx <= maxCX; cx++) {
+        for (let cy = minCY; cy <= maxCY; cy++) {
+            let key = cx + "," + cy;
+
+            let relX = x - (cx * CHUNK_SIZE);
+            let relY = y - (cy * CHUNK_SIZE);
+            const e = acquireBloodChunk(key, relX - maxSpread, relY - maxSpread,
+                                             relX + maxSpread, relY + maxSpread);
+            const pg = e.pg;
+
+            if (t === "SCORCH") pg.fill(15, 15, 15, 220);
+            else pg.fill(col || color(90, 0, 0, 220));
+
+            for (let b of blobs) {
+                pg.ellipse(relX - e.bx + b.ox, relY - e.by + b.oy, b.sz);
+            }
+        }
+    }
+}
+
+
+
+function getPatrolBuilding() {
+    // If the map hasn't generated buildings yet, return null safely
+    if (!buildings || buildings.length === 0) return null;
+    
+    // Filter out flat ground elements so enemies patrol actual physical structures
+    let validBuildings = buildings.filter(b => !b.isGrassLot && !b.isParkingLot && !b.isPond);
+    
+    // Pick a random valid building
+    if (validBuildings.length > 0) {
+        return validBuildings[floor(random(validBuildings.length))];
+    }
+    
+    // Failsafe if the map is empty of standard structures
+    return buildings[floor(random(buildings.length))];
+}
+
+class AcidSpit {
+    constructor(x, y, tx, ty) { 
+        this.x = x; this.y = y; this.tx = tx; this.ty = ty; 
+        this.life = 90; 
+        this.vx = (tx - x) / 90; this.vy = (ty - y) / 90; 
+        this.gravity = 0.15; this.vz = 0.5 * this.gravity * 90; this.z = 0; 
+    }
+    update() { 
+        this.life--; this.x += this.vx; this.y += this.vy; this.z += this.vz; this.vz -= this.gravity; 
+        if (this.life <= 0) { 
+            sfx.hitBody(); 
+            sludges.push(new SludgeZone(this.tx, this.ty, 60, 300)); 
+        } 
+    }
+    show() { 
+        push(); translate(this.tx, this.ty); noFill(); stroke(50, 200, 50, 150 + sin(frameCount * 0.2) * 100); strokeWeight(3); ellipse(0, 0, 40, 40); pop(); 
+        push(); translate(this.x, this.y - this.z); fill(50, 200, 50); noStroke(); ellipse(0, 0, 16, 16); fill(100, 255, 100); ellipse(-2, -2, 6, 6); pop(); 
+        if (frameCount % 2 === 0) emit(this.x, this.y - this.z, 1, color(50, 200, 50), "BLOOD"); 
+    }
+}
+
+class Grenade {
+  constructor(x, y, tx, ty, isPurple = false) { this.x = x; this.y = y; this.tx = tx; this.ty = ty; this.life = 90; this.vx = (tx - x) / 90; this.vy = (ty - y) / 90; this.gravity = 0.15; this.vz = 0.5 * this.gravity * 90; this.z = 0; this.isPurple = isPurple; }
+  update() { this.life--; this.x += this.vx; this.y += this.vy; this.z += this.vz; this.vz -= this.gravity; if (this.life <= 0) { triggerExplosion(this.tx, this.ty, 160, false, false); } }
+  show() { push(); translate(this.tx, this.ty); noFill(); stroke(this.isPurple?color(200,0,255):255, 0, 0, 150 + sin(frameCount * 0.2) * 100); strokeWeight(2); ellipse(0, 0, 40, 40); line(-25, 0, 25, 0); line(0, -25, 0, 25); pop(); push(); translate(this.x, this.y - this.z); rotate(frameCount * 0.2 * Math.sign(this.vx || 1)); fill(this.isPurple?color(100,0,150):color(30, 120, 30)); stroke(10); strokeWeight(1); rect(-6, -10, 12, 20, 3); fill(100); rect(-4, -14, 8, 4); if (this.life % 10 < 5) { fill(255, 0, 0); noStroke(); ellipse(0, -12, 4, 4); } pop(); }
+}
+
+class Molotov {
+  constructor(x, y, tx, ty) { this.x = x; this.y = y; this.tx = tx; this.ty = ty; this.life = 114; this.vx = (tx - x) / 114; this.vy = (ty - y) / 114; this.gravity = 0.1; this.vz = 0.5 * this.gravity * 114; this.z = 0; }
+  update() { this.life--; this.x += this.vx; this.y += this.vy; this.z += this.vz; this.vz -= this.gravity; if (this.life <= 0) triggerExplosion(this.tx, this.ty, 140, true, false); }
+  show() { push(); translate(this.tx, this.ty); noFill(); stroke(255, 100, 0, 150 + sin(frameCount * 0.2) * 100); strokeWeight(3); ellipse(0, 0, 40, 40); line(-20, 0, 20, 0); line(0, -20, 0, 20); pop(); push(); translate(this.x, this.y - this.z); rotate(frameCount * 0.3); fill(30, 150, 30); stroke(10); strokeWeight(1); rect(-4, -10, 8, 20, 2); fill(255, 150, 0); noStroke(); rect(-2, -15, 4, 10); pop(); if (frameCount % 2 === 0) emit(this.x, this.y - this.z, 1, color(255, 100, 0), "SPARK"); }
+}
+
+function updateGrenades() { 
+    for (let i = grenades.length - 1; i >= 0; i--) { 
+        if (doTick) grenades[i].update(); 
+        if (inView(grenades[i].x, grenades[i].y, 100)) grenades[i].show(); 
+        if (grenades[i].life <= 0) grenades.splice(i, 1); 
+    } 
+}
+class PlayerGrenade {
+    constructor(x, y, a, fuse) { 
+        this.x = x; this.y = y; this.a = a; this.life = fuse; 
+        this.vx = cos(a) * 6; this.vy = sin(a) * 6; // Arcing physics
+        this.z = 15; this.vz = 2; this.gravity = 0.2; 
+    }
+    update() { 
+        this.life--; this.x += this.vx; this.y += this.vy; this.z += this.vz; this.vz -= this.gravity; 
+        if (this.z <= 0) { this.z = 0; this.vz *= -0.5; this.vx *= 0.6; this.vy *= 0.6; } // Bouncing
+        
+        if (this.life <= 0) { 
+            // AIRBURST MECHANIC: If grenade explodes off the ground, shred flying enemies!
+            if (this.z > 2) {
+                for (let i = enemiesList.length - 1; i >= 0; i--) {
+                    let e = enemiesList[i];
+                    let isAerial = (e.eType === "AERIAL" || e.eType === "AERIAL_PISTOL" || e.eType === "SAUCER" || e.eType === "SAUCER_RED");
+                    
+                    if (isAerial && e.hp > 0 && dist(this.x, this.y, e.x, e.y) < 130) {
+                        e.takeDamage(350); // Direct heavy flak damage
+                        
+                        if (e.hp <= 0 && !e.dead) {
+                            e.dead = true;
+                            let a = atan2(e.y - this.y, e.x - this.x);
+                            
+                            if (e.eType === "SAUCER" || e.eType === "SAUCER_RED") { 
+                                triggerExplosion(e.x, e.y, 160); 
+                            } else { 
+                                emit(e.x, e.y, 40, color(255, 100, 0), "EXPLOSION"); sfx.explosion();
+                                spawnSplatter(e.x, e.y, "BLOOD", color(90, 0, 0));
+                                corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 11, a, e.decals, e.currentWeapon, a, e.eType, e.bodyW, e.bodyH));
+                            }
+                            processKill(e.x, e.y, false, e.eType, e.isFriendly);
+                            enemiesList.splice(i, 1); 
+                            if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100);
+                        } else {
+                            // Hit marker for surviving Saucers
+                            sfx.hitArmor(); emit(e.x, e.y, 10, color(255, 200, 0), "SPARK");
+                        }
+                    }
+                }
+            }
+            // Standard explosion for the ground units below it
+            triggerExplosion(this.x, this.y, 130, false, true); 
+        }
+    }
+    show() { 
+        push(); translate(this.x, this.y - this.z); rotate(frameCount * 0.2 * Math.sign(this.vx || 1)); 
+        fill(40, 120, 40); stroke(10); strokeWeight(1); ellipse(0, 0, 12, 16); fill(20); rect(-3, -10, 6, 4); pop(); 
+    }
+}
+                    
+
+
+// THIS IS THE MISSING FUNCTION THAT WAS CAUSING THE CRASH!
+function updatePlayerGrenades() {
+    for (let i = playerGrenades.length - 1; i >= 0; i--) {
+        if (doTick) playerGrenades[i].update();
+        if (inView(playerGrenades[i].x, playerGrenades[i].y, 100)) playerGrenades[i].show();
+        if (playerGrenades[i].life <= 0) playerGrenades.splice(i, 1);
+    }
+}
+class WaterPuddle {
+    constructor(x, y, r, life) { 
+        this.x = x; this.y = y; this.r = r; this.life = life; this.maxLife = life;
+        this.blobs = []; 
+        // Match the exact splatter texture (many small dots) instead of giant uniform circles
+        let count = 60; // Enough to fill the large radius with texture
+        for(let i=0; i<count; i++) {
+            // Using random() * random() concentrates the liquid in the center, tapering off jaggedly at the edges
+            let d = random() * random() * r; 
+            let ang = random(TWO_PI);
+            // Size them exactly like the blood splatter decals (10 to 35 pixels)
+            this.blobs.push({ox: cos(ang) * d, oy: sin(ang) * d, sz: random(10, 35)});
+        }
+    }
+    update() {
+        this.life--;
+        for (let e of enemiesList) {
+            // Keep enemies permanently wet as long as they stand in the puddle!
+            if (dist(this.x, this.y, e.x, e.y) < this.r) { e.wetTimer = Math.max(e.wetTimer || 0, 5); }
+        }
+    }
+    show() {
+        push(); translate(this.x, this.y); noStroke();
+        let a = map(this.life, 0, 60, 0, 150, true);
+        fill(100, 180, 255, a); // Translucent watery blue (RESTORED!)
+        for(let b of this.blobs) ellipse(b.ox, b.oy, b.sz, b.sz);
+        pop();
+    }
+}
+
+
+function updateWaterPuddles() {
+    for (let i = waterPuddles.length - 1; i >= 0; i--) {
+        if (doTick) waterPuddles[i].update();
+        if (inView(waterPuddles[i].x, waterPuddles[i].y, 100)) waterPuddles[i].show();
+        if (waterPuddles[i].life <= 0) waterPuddles.splice(i, 1);
+    }
+}
+
+class PlayerFlask {
+    constructor(x, y, a, fuse) { 
+        this.x = x; this.y = y; this.a = a; this.life = fuse; 
+        this.vx = cos(a) * 6; this.vy = sin(a) * 6; 
+        this.z = 15; this.vz = 2; this.gravity = 0.2; 
+    }
+    update() { 
+        this.life--; this.x += this.vx; this.y += this.vy; this.z += this.vz; this.vz -= this.gravity; 
+        if (this.z <= 0) { this.z = 0; this.life = 0; } // Flasks shatter instantly on impact, no bouncing!
+        
+        if (this.life <= 0) {
+            sfx.hitArmor(); // Glass shatter sound placeholder
+            emit(this.x, this.y, 25, color(150, 200, 255), "SPARK"); // Splash particles
+            waterPuddles.push(new WaterPuddle(this.x, this.y, 150, 600)); // 15ft puddle, lasts 10 secs
+            
+            for (let e of enemiesList) {
+                if (dist(this.x, this.y, e.x, e.y) < 150) {
+                    e.wetTimer = 720; // Direct splash gives exactly 6 seconds of wetness!
+                }
+            }
+        }
+    }
+    show() { 
+        push(); translate(this.x, this.y - this.z); rotate(frameCount * 0.2 * Math.sign(this.vx || 1)); 
+        fill(150, 200, 255, 220); stroke(220); strokeWeight(1); // Glassy water color
+        beginShape(); vertex(-5, 8); vertex(5, 8); vertex(3, -4); vertex(-3, -4); endShape(CLOSE); // Erlenmeyer shape
+        fill(220, 255); rect(-2, -8, 4, 4); // White cap/neck
+        pop(); 
+    }
+}
+
+function updatePlayerFlasks() {
+    for (let i = playerFlasks.length - 1; i >= 0; i--) {
+        if (doTick) playerFlasks[i].update();
+        if (inView(playerFlasks[i].x, playerFlasks[i].y, 100)) playerFlasks[i].show();
+        if (playerFlasks[i].life <= 0) playerFlasks.splice(i, 1);
+    }
+}
+
+
+
+
+
+
+
+// --- POOLING HELPER FUNCTIONS ---
+function spawnOrb(x, y, isPurple = false, isPink = false) {
+    for (let i = 0; i < orbs.length; i++) {
+        if (!orbs[i].active) return orbs[i].init(x, y, isPurple, isPink);
+    }
+    let o = new Orb();
+    orbs.push(o);
+    return o.init(x, y, isPurple, isPink);
+}
+
+function spawnBullet(x, y, a, iP, tH, w, shooter = null) {
+    if (iP) totalShotsFired++; // Tracks player shots
+    
+    for (let i = 0; i < bullets.length; i++) {
+        if (!bullets[i].active) {
+            let b = bullets[i].init(x, y, a, iP, tH, w);
+            b.shooter = shooter;
+            return b;
+        }
+    }
+    let b = new Bullet();
+    bullets.push(b);
+    b.init(x, y, a, iP, tH, w);
+    b.shooter = shooter;
+    return b;
+}
+
+   class Lightning {
+    constructor(pts) { 
+        this.pts = pts; // <--- The missing link that caused the crash!
+        this.life = 15; 
+        this.maxLife = 15;
+        this.segments = [];
+    
+        // Subdivide points to make a realistic, jagged arc between targets!
+        for (let i = 0; i < pts.length - 1; i++) {
+            let p1 = pts[i], p2 = pts[i+1];
+            let d = dist(p1.x, p1.y, p2.x, p2.y);
+            let steps = max(2, floor(d / 15)); // A jagged point every 15 pixels
+            let arcPts = [];
+            for (let j = 0; j <= steps; j++) {
+                let f = j / steps;
+                let mx = lerp(p1.x, p2.x, f);
+                let my = lerp(p1.y, p2.y, f);
+                if (j > 0 && j < steps) { // Offset middle points to make it jagged
+                    mx += random(-15, 15);
+                    my += random(-15, 15);
+                }
+                arcPts.push({x: mx, y: my});
+            }
+            this.segments.push(arcPts);
+        }
+    }
+    update() { this.life--; }
+    show() {
+        if (this.life <= 0) return;
+        let alpha = (this.life / this.maxLife) * 255;
+        push(); noFill();
+        
+        // Draw each segment (between targets)
+        for (let arc of this.segments) {
+            // Outer thick glow
+            stroke(255, 150, 0, alpha * 0.4); strokeWeight(14);
+            beginShape(); for (let p of arc) vertex(p.x, p.y); endShape();
+            
+            // Main yellow bolt
+            stroke(255, 255, 0, alpha); strokeWeight(4);
+            beginShape(); for (let p of arc) vertex(p.x, p.y); endShape();
+            
+            // Blinding white core
+            stroke(255, 255, 255, alpha); strokeWeight(2);
+            beginShape(); for (let p of arc) vertex(p.x + random(-2,2), p.y + random(-2,2)); endShape();
+        }
+        pop();
+    }
+
+}
+
+
+class Orb {
+  constructor() { this.active = false; }
+  
+  init(x, y, isPurple = false, isPink = false) { 
+    this.active = true;
+    this.x = x; 
+    this.y = y; 
+    this.life = 120; 
+    this.isPurple = isPurple; 
+    this.isPink = isPink;
+    this.r = isPink ? 36 : 50; 
+    this.vx = 0; 
+    this.vy = 0; 
+    this.maxSpd = isPink ? 5.33 : 4; 
+    return this;
+  }
+  
+  update() {
+    if (!this.active) return;
+    this.life--; 
+    let ang = atan2(player.y - this.y, player.x - this.x); 
+    this.vx = lerp(this.vx, cos(ang) * this.maxSpd, 0.05); 
+    this.vy = lerp(this.vy, sin(ang) * this.maxSpd, 0.05); 
+    this.x += this.vx; 
+    this.y += this.vy; 
+    
+    let hit = false; 
+    if (dist(this.x, this.y, player.x, player.y) < 30) hit = true;
+    
+    for (let b of activeBuildings) { 
+        if (currentLevel === 4 && b.isPalm) continue; 
+        if (currentLevel === 6 && (b.isAlienPlant || b.isEnergyPole)) continue; 
+        if ((currentLevel === 1 || currentLevel === 2) && (b.isGrassLot || b.isCar)) continue; 
+        if (this.x > b.x - b.w / 2 && this.x < b.x + b.w / 2 && this.y > b.y - b.h / 2 && this.y < b.y + b.h / 2) { hit = true; break; } 
+    }
+    
+    if (this.life <= 0 || hit) { 
+        this.life = 0; 
+        this.active = false; 
+        triggerExplosion(this.x, this.y, 160, false, false); 
+    }
+  }
+  
+  show() { 
+    if (!this.active) return;
+    if (this.isPurple) { 
+        fill(150, 0, 255, 200 + sin(frameCount * 0.5) * 55); noStroke(); ellipse(this.x, this.y, this.r, this.r); fill(220, 150, 255); ellipse(this.x, this.y, this.r / 2, this.r / 2); 
+    } else if (this.isPink) {
+        fill(255, 20, 147, 200 + sin(frameCount * 0.5) * 55); noStroke(); ellipse(this.x, this.y, this.r, this.r); fill(255, 150, 200); ellipse(this.x, this.y, this.r / 2, this.r / 2);
+    } else { 
+        fill(255, 0, 0, 200 + sin(frameCount * 0.5) * 55); noStroke(); ellipse(this.x, this.y, this.r, this.r); fill(255, 200, 200); ellipse(this.x, this.y, this.r / 2, this.r / 2); 
+    } 
+  }
+}
+
+function updateOrbs() { 
+    for (let i = orbs.length - 1; i >= 0; i--) { 
+        let o = orbs[i];
+        if (!o.active) continue;
+        if (doTick) o.update(); 
+        if (o.active && inView(o.x, o.y, 100)) o.show(); 
+    } 
+}
+
+class Shockwave {
+    constructor(x, y, a) { 
+        this.x = x; this.y = y; this.a = a; 
+        this.life = 10; 
+        this.vx = cos(a) * 15; this.vy = sin(a) * 15; 
+        this.hitList = []; 
+        
+        emit(this.x, this.y, 20, color(255, 150, 0), "EXPLOSION");
+        emit(this.x, this.y, 10, color(255, 255, 0), "FLASH");
+    }
+    update() {
+        this.life--; this.x += this.vx; this.y += this.vy; 
+        
+        emit(this.x, this.y, 5, color(255, 100, 0), "SPARK");
+        emit(this.x, this.y, 2, color(200, 50, 0), "SMOKE");
+
+        for (let e of enemiesList) {
+            if (e.hp > 0 && dist(this.x, this.y, e.x, e.y) < 60 && !this.hitList.includes(e)) {
+                this.hitList.push(e); 
+                
+                let mDmg = (typeof ninjaSuitUnlocked !== 'undefined' && ninjaSuitUnlocked) ? 156 : 130; 
+                e.takeDamage(mDmg); 
+                
+                // NEW: Make ALL enemies flash white on Finisher hits!
+                if (e.hp > 0) e.hitFlash = 4;
+                
+                let bCol = (e.eType === "BUG" || e.eType === "SNAIL" || e.eType === "SNAIL_HYBRID") ? color(200, 230, 40) : color(90, 0, 0); 
+                sfx.hitBody(); emit(e.x, e.y, 20, bCol, "BLOOD");
+                
+                if (e.hp <= 0) { 
+                    e.dead = true; 
+                    if (e.eType === "SAUCER" || e.eType === "SAUCER_RED") { 
+                        triggerExplosion(e.x, e.y, 160); 
+                    } else if (e.eType === "AERIAL" || e.eType === "AERIAL_PISTOL") {
+                        emit(e.x, e.y, 40, color(255, 100, 0), "EXPLOSION"); sfx.explosion();
+                        spawnSplatter(e.x, e.y, "BLOOD", color(90, 0, 0));
+                        corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 11, this.a, e.decals, e.currentWeapon, this.a, e.eType, e.bodyW, e.bodyH));
+                    } else if (e.eType === "ARMORED" || e.eType === "ARMORED_STANDARD" || e.eType === "ALIEN_GATOR") {
+                        emit(e.x, e.y, 60, bCol, "GORE"); spawnSplatter(e.x, e.y, "BLOOD", bCol);
+                        corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 10, this.a, e.decals, e.currentWeapon, this.a, e.eType, e.bodyW, e.bodyH));
+                    } else { 
+                        emit(e.x, e.y, 60, bCol, "GORE"); spawnSplatter(e.x, e.y, "BLOOD", bCol); 
+                        corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 14, this.a, e.decals, e.currentWeapon, this.a, e.eType, e.bodyW, e.bodyH)); 
+                    } 
+                    processKill(e.x, e.y, false, e.eType, e.isFriendly); 
+                }
+            }
+        }
+        
+        for (let i = enemiesList.length - 1; i >= 0; i--) {
+            if (enemiesList[i].hp <= 0) { 
+                enemiesList.splice(i, 1); 
+                if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100); 
+            }
+        }
+    }
+    show() { 
+        push(); translate(this.x, this.y); rotate(this.a); 
+        stroke(255, 100, 0, 200); strokeWeight(10); line(0, -35, 0, 35); 
+        stroke(255, 200, 0); strokeWeight(4); line(0, -30, 0, 30); 
+        pop(); 
+    }
+}
+
+    
+
+function updateShockwaves() {
+    for (let i = shockwaves.length - 1; i >= 0; i--) {
+        if (doTick) shockwaves[i].update();
+        if (inView(shockwaves[i].x, shockwaves[i].y, 100)) shockwaves[i].show();
+        if (shockwaves[i].life <= 0) shockwaves.splice(i, 1);
+    }
+}
+
+
+function manageChunkMemory() {
+    // Disabled to keep blood permanent 
+    /*
+    const MAX_CHUNK_DIST = CHUNK_SIZE * 3; 
+    for (let key in bloodChunks) {
+        let coords = key.split(",");
+        let chunkWorldX = (parseInt(coords[0]) * CHUNK_SIZE) + (CHUNK_SIZE / 2);
+        let chunkWorldY = (parseInt(coords[1]) * CHUNK_SIZE) + (CHUNK_SIZE / 2);
+        
+        if (dist(player.x, player.y, chunkWorldX, chunkWorldY) > MAX_CHUNK_DIST) {
+            bloodChunks[key].remove(); 
+            delete bloodChunks[key];   
+        }
+    }
+    */
+}
+
+
+
+const CORPSE_GIB_DEATHS = [2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15];
+
+// How many intact bodies may lie within one 72-unit patch of ground before the
+// ones underneath are pressed into the permanent blood layer. A body is roughly
+// 50 units across, so a cell this size holds bodies that are genuinely on top
+// of one another rather than merely nearby.
+const CORPSE_STACK_LIMIT = 40;
+const CORPSE_STACK_CELL  = 72;
+
+class Corpse {
+  constructor(x, y, mA, aA, sC, pC, dT, hA, dec, cW, bA, eT, bW, bH) { 
+    this.eT = eT; this.x = x; this.y = y; 
+    if (eT === "ARMORED" || eT === "ARMORED_STANDARD" || eT === "ALIEN_GATOR") { this.mA = mA; this.aA = aA; } else { this.mA = mA + PI; this.aA = aA + PI; }
+    this.sC = sC; this.pC = pC; this.dT = dT; this.hA = hA; this.bA = bA; this.dec = dec; this.cW = cW; this.bW = bW; this.bH = bH; 
+    this.bT = 120; this.fP = 0; this.sep = 0; this.bits = []; this.stopMotionTimer = 156;
+    this.bornAt = frameCount;
+    // Is this a body lying on the ground, or is it wreckage?
+    //
+    // Everything in GIB_DEATHS comes apart: 2/3/4/6/8 separate along `sep`,
+    // 5 scatters skull, ribcage, pelvis and bone, 9 throws skull fragments,
+    // 10/11/15 break into torso and limbs, 12 is the kamikaze, 13 is a sword
+    // split and 14 halves the body. None of those may ever be culled -- they
+    // are the gore and the skeletal matter. What is left (0, 1, 7) is an
+    // intact body lying down, and only those are eligible when a pile gets
+    // deeper than anything can be seen through.
+    this.isIntactBody = CORPSE_GIB_DEATHS.indexOf(dT) === -1; 
+    this.bloodTimer = (dT === 5 || dT === 7 || dT === 8 || dT === 9 || dT === 10 || dT === 11 || dT === 13 || dT === 14) ? 180 : 0; 
+
+    if (dT === 14) { this.splitA = bA; this.lH = { x: 0, y: 0, vx: cos(this.splitA - HALF_PI) * 2, vy: sin(this.splitA - HALF_PI) * 2 }; this.rH = { x: 0, y: 0, vx: cos(this.splitA + HALF_PI) * 2, vy: sin(this.splitA + HALF_PI) * 2 }; }
+
+    if (dT === 5) {
+        let bitTypes = ['skull', 'ribcage', 'pelvis', 'bone', 'bone', 'bone', 'bone', 'heart', 'brain', 'intestine', 'meat', 'meat', 'meat'];
+        for (let type of bitTypes) { let ang = random(TWO_PI), spd = random(4, 9); this.bits.push({ type: type, x: 0, y: 0, vx: cos(ang)*spd, vy: sin(ang)*spd, rot: random(TWO_PI), vr: random(-0.4, 0.4), sz: random(8, 14), splat: false }); }
+    } else if (dT === 9) {
+        let ox = cos(this.aA) * 10, oy = sin(this.aA) * 10;
+        for (let i=0; i<3; i++) this.bits.push({ x:ox, y:oy, vx:random(-6,6), vy:random(-6,6), rot:random(TWO_PI), vr:random(-0.3,0.3), sz:random(4, 7), type: 'skull_frag', splat: false });
+        for (let i=0; i<6; i++) this.bits.push({ x:ox, y:oy, vx:random(-6,6), vy:random(-6,6), rot:random(TWO_PI), vr:random(-0.3,0.3), sz:random(4, 8), type: 'meat', splat: false });
+    } else if (dT === 10) {
+        this.overkillBits = [ { type: 'torso', x: 0, y: 0, vx: cos(this.bA)*6 + random(-2,2), vy: sin(this.bA)*6 + random(-2,2), rot: this.aA, vr: random(-0.2, 0.2) }, { type: 'lArm', x: 0, y: 0, vx: cos(this.bA - PI/3)*7 + random(-2,2), vy: sin(this.bA - PI/3)*7 + random(-2,2), rot: this.aA, vr: random(-0.4, 0.4) }, { type: 'rArm', x: 0, y: 0, vx: cos(this.bA + PI/3)*7 + random(-2,2), vy: sin(this.bA + PI/3)*7 + random(-2,2), rot: this.aA, vr: random(-0.4, 0.4) } ];
+    } else if (this.dT === 11) {
+        emit(this.x, this.y, 40, color(255, 100, 0), "EXPLOSION"); sfx.explosion(); let fA = this.aA - PI;
+        this.aerialBits = [ { type: 'torso', x: 0, y: 0, vx: cos(fA)*6, vy: sin(fA)*6, rot: fA, vr: 0 }, { type: 'lArm', x: 0, y: 0, vx: cos(fA - PI/2)*7, vy: sin(fA - PI/2)*7, rot: fA, vr: 0 }, { type: 'rArm', x: 0, y: 0, vx: cos(fA + PI/2)*7, vy: sin(fA + PI/2)*7, rot: fA, vr: 0 }, { type: 'legs', x: 0, y: 0, vx: cos(fA + PI)*5, vy: sin(fA + PI)*5, rot: fA, vr: 0 } ];
+    } else if (this.dT === 12) {
+        this.kamikazeTimer = 126; let fA = this.aA - PI; this.vx = cos(fA) * 3.66; this.vy = sin(fA) * 3.66; this.exploded = false;
+        } else if (dT === 15) {
+        this.sC = color(40); this.pC = color(20); 
+        this.overkillBits = [ { type: 'torso', x: 0, y: 0, vx: cos(this.bA)*6 + random(-2,2), vy: sin(this.bA)*6 + random(-2,2), rot: this.aA, vr: random(-0.2, 0.2) }, { type: 'lArm', x: 0, y: 0, vx: cos(this.bA - PI/3)*7 + random(-2,2), vy: sin(this.bA - PI/3)*7 + random(-2,2), rot: this.aA, vr: random(-0.4, 0.4) }, { type: 'rArm', x: 0, y: 0, vx: cos(this.bA + PI/3)*7 + random(-2,2), vy: sin(this.bA + PI/3)*7 + random(-2,2), rot: this.aA, vr: random(-0.4, 0.4) } ];
+	}
+  }
+
+  update() { 
+    if (this.fP < 1) this.fP += 0.15; 
+    let bCol = (this.eT === "BUG" || this.eT === "SNAIL" || this.eT === "SNAIL_HYBRID") ? color(200, 230, 40) : color(90, 0, 0);
+    
+    if (this.smokeTimer > 0) {
+        this.smokeTimer--;
+        if (this.smokeTimer % 6 === 0) emit(this.x + random(-15, 15), this.y + random(-15, 15), 1, color(100), "SMOKE");
+        
+        if (this.isCharred) {
+            if (this.overkillBits) {
+                for (let ob of this.overkillBits) if (this.smokeTimer % 8 === 0) emit(this.x + ob.x + random(-5, 5), this.y + ob.y + random(-5, 5), 1, color(80), "SMOKE");
+            }
+            if (this.bits) {
+                for (let b of this.bits) if (this.smokeTimer % 12 === 0) emit(this.x + b.x, this.y + b.y, 1, color(80), "SMOKE");
+            }
+            if (this.smokeTimer % 3 === 0) {
+                emit(this.x, this.y, 4, bCol, "BLOOD", random(-5, 5), random(-5, 5));
+                if (this.smokeTimer % 6 === 0) spawnSplatter(this.x + random(-25, 25), this.y + random(-25, 25), "BLOOD", bCol);
+            }
+        }
+    }
+
+    if (this.dT === 13 && this.sep < 50) {
+        this.sep += 3;
+        if (this.bloodTimer > 0) {
+            this.bloodTimer--;
+            if (this.bloodTimer % 2 === 0) emit(this.x, this.y, 2, color(90,0,0), "BLOOD", random(-5,5), random(-5,5));
+            if (this.bloodTimer === 175) { spawnSplatter(this.x, this.y, "BLOOD", color(90, 0, 0)); emit(this.x, this.y, 40, color(90, 0, 0), "GORE"); }
+        }
+    }
+
+    if (this.dT === 11) {
+        if (this.bloodTimer > 0) {
+            this.bloodTimer--;
+            for (let b of this.aerialBits) {
+                b.x += b.vx; b.y += b.vy; b.vx *= 0.94; b.vy *= 0.94; b.rot += b.vr;
+                if (this.bloodTimer % 3 === 0) emit(this.x + b.x, this.y + b.y, 1, color(90, 0, 0), "BLOOD");
+                if (this.bloodTimer % 20 === 0 && abs(b.vx) < 1) spawnSplatter(this.x + b.x, this.y + b.y, "BLOOD", color(90, 0, 0));
+            }
+        }
+    }
+    if (this.dT === 12 && !this.exploded) {
+        if (this.kamikazeTimer > 0) {
+            this.kamikazeTimer--; this.x += this.vx; this.y += this.vy;
+            let neckX = this.x + cos(this.aA - PI) * 12, neckY = this.y + sin(this.aA - PI) * 12;
+            let thrustX = this.x - cos(this.aA - PI) * 20, thrustY = this.y - sin(this.aA - PI) * 20;
+            let trailX = -cos(this.aA - PI) * 3, trailY = -sin(this.aA - PI) * 3;
+            if (this.kamikazeTimer % 4 === 0) { emit(thrustX, thrustY, 1, color(200), "SMOKE", trailX, trailY); emit(thrustX, thrustY, 1, color(255, 150, 0), "SPARK", trailX, trailY); }
+            if (this.kamikazeTimer % 3 === 0) emit(neckX, neckY, 2, color(90, 0, 0), "BLOOD", cos(this.aA - PI)*random(3,6), sin(this.aA - PI)*random(3,6));
+        }
+        if (this.kamikazeTimer <= 0) { triggerExplosion(this.x, this.y, 160, false, false); emit(this.x, this.y, 60, color(90, 0, 0), "GORE"); emit(this.x, this.y, 15, color(220, 200, 200), "BONE"); spawnSplatter(this.x, this.y, "BLOOD", color(90, 0, 0)); this.exploded = true; }
+    }
+    if (this.dT === 10 || this.dT === 15) {
+        if (this.stopMotionTimer > 0) this.stopMotionTimer--;
+        if (this.bloodTimer > 0) {
+            this.bloodTimer--;
+            for (let ob of this.overkillBits) {
+                if (this.stopMotionTimer > 0) { ob.x += ob.vx; ob.y += ob.vy; ob.vx *= 0.92; ob.vy *= 0.92; ob.rot += ob.vr; }
+                if (this.bloodTimer % 3 === 0) emit(this.x + ob.x, this.y + ob.y, 1, bCol, "BLOOD", random(-2, 2), random(-2, 2));
+                if (this.bloodTimer % 20 === 0) spawnSplatter(this.x + ob.x, this.y + ob.y, "BLOOD", bCol);
+            }
+            if (this.bloodTimer % 2 === 0) { let sA = this.bA + random(-0.5, 0.5); emit(this.x, this.y, 2, bCol, "BLOOD", cos(sA) * random(3, 7), sin(sA) * random(3, 7)); }
+                if (this.dT === 15 && this.bloodTimer > 0 && frameCount % 6 === 0) {
+            emit(this.x + random(-15, 15), this.y + random(-15, 15), 1, color(100), "SMOKE");
+        }
+
+		}
+    }
+    if (this.dT === 7 && this.bloodTimer > 0) {
+        this.bloodTimer--;
+        if (this.bloodTimer % 2 === 0) { let sA = this.bA + random(-0.6, 0.6); emit(this.x, this.y, 2, bCol, "BLOOD", cos(sA) * random(3, 8), sin(sA) * random(3, 8)); }
+        if (this.bloodTimer % 15 === 0) { spawnSplatter(this.x + random(-25, 25), this.y + random(-25, 25), "BLOOD", bCol); }
+    }
+    if ((this.dT === 8 || this.dT === 9) && this.bloodTimer > 0) {
+        this.bloodTimer--; let fVal = this.dT === 9 ? (10 + 5 * this.fP) : 20 * this.fP; 
+        let headX = this.x + cos(this.aA) * fVal, headY = this.y + sin(this.aA) * fVal;
+        if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { headX = this.x; headY = this.y; }
+        if (this.bloodTimer % 2 === 0) { let sA = this.bA + random(-0.6, 0.6); emit(headX, headY, 1, bCol, "BLOOD", cos(sA) * random(2, 6), sin(sA) * random(2, 6)); }
+        if (this.bloodTimer % 20 === 0) { spawnSplatter(headX + random(-15, 15), headY + random(-15, 15), "BLOOD", bCol); }
+    }
+    if (this.dT === 5 || this.dT === 9) { 
+        if (this.stopMotionTimer > 0) this.stopMotionTimer--; 
+        for(let b of this.bits) { 
+            if (this.stopMotionTimer > 0) { b.x += b.vx; b.y += b.vy; b.vx *= 0.93; b.vy *= 0.93; b.rot += b.vr; } else { b.vx = 0; b.vy = 0; b.vr = 0; } 
+            let isBrainMeat = (this.dT === 9 && b.type === 'meat') || (this.dT === 5 && (b.type === 'heart' || b.type === 'meat' || b.type === 'intestine' || b.type === 'brain'));
+            if (frameCount % 3 === 0 && abs(b.vx) > 1 && isBrainMeat && this.stopMotionTimer > 0) emit(this.x + b.x, this.y + b.y, 1, bCol, "BLOOD");
+            if (abs(b.vx) < 0.5 && !b.splat) { if (isBrainMeat) spawnSplatter(this.x + b.x, this.y + b.y, "BLOOD", bCol); b.splat = true; }
+        } 
+        if (this.dT === 5 && this.bloodTimer > 0) {
+            this.bloodTimer--; if (this.bloodTimer % 4 === 0 && this.bloodTimer > 100) emit(this.x, this.y, 3, bCol, "GORE");
+            if (this.bloodTimer % 15 === 0) spawnSplatter(this.x + random(-25, 25), this.y + random(-25, 25), "BLOOD", bCol);
+        }
+    }
+    if ((this.dT === 2 || this.dT === 3 || this.dT === 4 || this.dT === 6 || this.dT === 8) && this.sep < 35) this.sep += 2.5; 
+    if (this.bT > 0 && --this.bT % 2 === 0) { 
+        if (this.dT === 1) { let sA = this.aA + this.hA + random(-0.2, 0.2); emit(this.x + cos(this.aA) * (20 * this.fP), this.y + sin(this.aA) * (20 * this.fP), 1, bCol, "BLOOD", cos(sA) * 6, sin(sA) * 6); } 
+        else if (this.dT === 4) { let sA = this.aA + PI + random(-0.4, 0.4); emit(this.x + cos(this.aA) * (15 * this.fP), this.y + sin(this.aA) * (15 * this.fP), 1, bCol, "BLOOD", cos(sA) * 6, sin(sA) * 6); } 
+        else if (this.dT === 2 || this.dT === 3) { let lSA = this.mA - PI / 2 + random(-0.5, 0.5); emit(this.x, this.y, 1, bCol, "BLOOD", cos(lSA) * 4, sin(lSA) * 4); let tSA = this.bA + random(-0.3, 0.3); emit(this.x + cos(this.bA) * this.sep, this.y + sin(this.bA) * this.sep, 1, bCol, "BLOOD", cos(tSA) * 5, sin(tSA) * 5); } 
+        else if (this.dT === 6) { let sA = this.hA + PI + random(-0.4, 0.4); let headX = this.x + cos(this.aA) * (20 * this.fP), headY = this.y + sin(this.aA) * (20 * this.fP); emit(headX, headY, 1, bCol, "BLOOD", cos(sA) * 6, sin(sA) * 6); } 
+    } 
+    if (this.dT === 14) {
+        if (this.stopMotionTimer > 0) { this.stopMotionTimer--; this.lH.x += this.lH.vx; this.lH.y += this.lH.vy; this.rH.x += this.rH.vx; this.rH.y += this.rH.vy; this.lH.vx *= 0.9; this.lH.vy *= 0.9; this.rH.vx *= 0.9; this.rH.vy *= 0.9; }
+        if (this.bloodTimer > 0) { this.bloodTimer--; if (this.bloodTimer % 3 === 0) { emit(this.x + this.lH.x, this.y + this.lH.y, 2, bCol, "BLOOD"); emit(this.x + this.rH.x, this.y + this.rH.y, 2, bCol, "BLOOD"); } if (this.bloodTimer % 15 === 0) { spawnSplatter(this.x + this.lH.x, this.y + this.lH.y, "BLOOD", bCol); spawnSplatter(this.x + this.rH.x, this.y + this.rH.y, "BLOOD", bCol); } }
+    }
+  }
+    
+  show(r = window) {
+  r.noStroke();
+  if (this.dT === 14) {
+      r.push(); r.translate(this.x, this.y); 
+      r.push(); r.translate(this.lH.x, this.lH.y); r.rotate(this.splitA); r.fill(this.sC); r.arc(0, 0, this.bW, this.bH, HALF_PI, PI + HALF_PI, CHORD); r.fill(220, 200, 200); r.ellipse(-6, -this.bH*0.2, 5, 10); r.fill(200, 50, 100); r.ellipse(-8, this.bH*0.1, 7, 12); r.fill(90, 0, 0); r.rect(-3, -this.bH/2, 3, this.bH); r.pop();
+      r.push(); r.translate(this.rH.x, this.rH.y); r.rotate(this.splitA); r.fill(this.sC); r.arc(0, 0, this.bW, this.bH, -HALF_PI, HALF_PI, CHORD); r.fill(220, 200, 200); r.ellipse(6, -this.bH*0.2, 5, 10); r.fill(200, 50, 100); r.ellipse(8, this.bH*0.1, 7, 12); r.fill(90, 0, 0); r.rect(0, -this.bH/2, 3, this.bH); r.pop();
+      r.pop(); return;
+  }
+
+  if (this.dT === 13) { 
+      r.push(); r.translate(this.x, this.y); let a = 255; r.rotate(this.aA); let spread = min(this.sep, 50);
+      r.push(); r.translate(-spread, 0); r.fill(this.pC); r.rect(-10, -10, 18, 8, 4); r.rect(-10, 2, 18, 8, 4); r.fill(90, 0, 0); r.ellipse(0, -4, 18, 22); r.pop();
+      r.push(); r.translate(spread, 0); r.fill(this.sC); r.ellipse(0, 0, this.bW, this.bH * 0.7); r.fill(90, 0, 0); r.ellipse(0, 10, this.bW * 0.8, 12); r.fill(235, 180, 140); r.ellipse(0, -this.bH * 0.4, 11, 11); r.pop();
+      r.pop(); return;
+  }
+  if (this.dT === 11) {
+      r.push(); r.translate(this.x, this.y);
+      for (let b of this.aerialBits) {
+          r.push(); r.translate(b.x, b.y); r.rotate(b.rot);
+          if (b.type === 'torso') { r.fill(this.sC); r.ellipse(0, 0, this.bW, this.bH * 0.7); r.fill(80); r.rect(-6, -6, 12, 12, 2); r.fill(90, 0, 0); r.ellipse(0, this.bH * 0.35, 18, 10); } 
+          else if (b.type === 'lArm' || b.type === 'rArm') { r.fill(this.sC); r.ellipse(0, 0, 16, 8); r.fill(235, 180, 140); r.ellipse(8, 0, 8, 8); r.fill(90, 0, 0); r.ellipse(-6, 0, 8, 8); } 
+          else if (b.type === 'legs') { r.fill(this.pC); r.rect(-10, -10, 18, 8, 4); r.rect(-10, 2, 18, 8, 4); r.fill(90, 0, 0); r.ellipse(-10, -1, 10, 16); }
+          r.pop();
+      } r.pop(); return;
+  }
+  if (this.dT === 12) {
+      if (this.exploded) return;
+      r.push(); r.translate(this.x, this.y); r.rotate(this.aA - PI); r.fill(this.pC); r.rect(-25, -10, 18, 8, 4); r.rect(-25, 2, 18, 8, 4);
+      r.fill(this.sC); r.ellipse(-5, -14, 16, 8); r.ellipse(-5, 14, 16, 8); r.fill(235, 180, 140); r.ellipse(-10, -14, 8, 8); r.ellipse(-10, 14, 8, 8);
+      r.fill(this.sC); r.ellipse(0, 0, this.bW, this.bH); r.fill(80); r.rect(-18, -12, 12, 24, 3); r.fill(255, 100, 0); r.rect(-20, -8, 4, 16); r.fill(90, 0, 0); r.ellipse(12, 0, 12, 12); r.pop(); return;
+  }
+  if (this.eT === "BUG") { r.push(); r.translate(this.x, this.y); r.rotate(this.aA); r.fill(50, 80, 40); r.ellipse(0, 0, 20, 14); r.fill(30); r.ellipse(8, 0, 10, 10); r.stroke(30); r.strokeWeight(2); r.line(-5, 0, -12, 12); r.line(-5, 0, -12, -12); r.line(5, 0, 12, 12); r.line(5, 0, 12, -12); r.noStroke(); for (let d of this.dec) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(200, 230, 40, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } r.pop(); return; }
+  if (this.eT === "SNAIL") { r.push(); r.translate(this.x, this.y); r.rotate(this.aA); r.fill(20, 100, 20); r.ellipse(0, 0, this.bW, this.bH); r.fill(50, 80, 40); r.ellipse(-5, 0, 24, 20); r.noStroke(); for (let d of this.dec) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(50, 200, 50, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } r.pop(); return; }
+if (this.eT === "ROBOT") {
+      r.push(); r.translate(this.x, this.y); r.rotate(this.aA);
+      r.noStroke();
+      // Oil that has run out and settled, under everything else.
+      r.fill(14, 13, 12, 150); r.ellipse(-4, 5, 34, 24);
+      r.fill(10, 9, 9, 190);   r.ellipse(-2, 3, 21, 15);
+      // Struts thrown out from the fall.
+      r.fill(48, 52, 58);
+      r.rect(-14, -19, 14, 8, 2); r.rect(-16, 12, 15, 8, 2);
+      // The wedge, on its side and folded in on itself.
+      r.fill(78, 84, 92);
+      r.beginShape();
+      r.vertex(16, 3); r.vertex(2, -14); r.vertex(-13, -9); r.vertex(-12, 12); r.vertex(3, 15);
+      r.endShape(r.CLOSE);
+      r.fill(58, 63, 70);
+      r.beginShape();
+      r.vertex(11, 2); r.vertex(1, -9); r.vertex(-8, -6); r.vertex(-7, 8); r.vertex(2, 10);
+      r.endShape(r.CLOSE);
+      // Cannon arm, still attached, muzzle dark.
+      r.fill(70, 76, 84); r.rect(6, 11, 19, 7, 2);
+      r.fill(40, 44, 49); r.rect(22, 10.5, 7, 8, 2);
+      // Head: torn off entirely if it went out enraged, otherwise dark and
+      // cracked where it lies.
+      if (this.dT === 1) {
+          r.fill(30, 27, 25); r.ellipse(6, -2, 9, 8);
+          r.stroke(110, 116, 124); r.strokeWeight(1.1);
+          r.line(4, -5, 1, -9); r.line(9, 1, 12, 5); r.noStroke();
+      } else {
+          r.fill(62, 67, 74); r.ellipse(9, -3, 13, 12);
+          r.fill(22, 24, 27); r.ellipse(11, -3, 8, 7);
+          r.stroke(26, 28, 31); r.strokeWeight(1.2); r.line(5, -8, 13, 2); r.noStroke();
+      }
+      // Bullet holes travel with the wreck.
+      for (let d of this.dec) {
+          r.fill(d.col ? d.col[0] : 16, d.col ? d.col[1] : 15, d.col ? d.col[2] : 14, d.col ? d.col[3] : 220);
+          r.ellipse(d.x, d.y, d.sz, d.sz);
+      }
+      r.pop();
+      // It keeps venting where it lies -- a thin wisp and the odd spark, never
+      // enough to be a fire.
+      if (frameCount % 22 === 0) emit(this.x + random(-7, 7), this.y + random(-7, 7), 1, color(62, 62, 62), "SMOKE");
+      if (frameCount % 47 === 0) emit(this.x + random(-6, 6), this.y + random(-6, 6), 1, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK");
+      return;
+  }
+if (this.eT === "COW" || this.eT === "HORSE") {
+      r.push(); r.translate(this.x, this.y); r.rotate(this.aA);
+      
+      let headDist = 0;
+      // Headshots and Decapitations
+      if (this.dT === 8 || this.dT === 9 || this.dT === 6 || this.dT === 4) {
+           headDist = 15 + (10 * (this.fP || 0)); 
+      }
+
+      // If it hasn't exploded heavily
+      if (this.dT !== 5 && this.dT !== 10 && this.dT !== 11) {
+          r.fill(30); r.noStroke();
+          r.rect(-15, -16, 6, 6, 2); r.rect(12, -16, 6, 6, 2);
+          r.rect(-15, 10, 6, 6, 2); r.rect(12, 10, 6, 6, 2);
+          
+          r.stroke(30); r.strokeWeight(2);
+          r.line(-this.bW/2, 0, -this.bW/2 - 12, 4); r.noStroke();
+          
+          const hide = this.eT === "HORSE" && this.sC ? this.sC : color(245);
+          r.fill(hide); r.ellipse(0, 0, this.bW, this.bH);
+          
+          for (let d of this.dec) {
+              if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]);
+              r.ellipse(d.x, d.y, d.sz, d.sz);
+          }
+          
+          // Dead Head
+          r.push(); r.translate(this.bW/2 + 4 + headDist, 4); r.rotate(0.3); // Lolling sideways
+          r.fill(hide); r.ellipse(0, 0, 18, 16);
+          r.fill(255, 170, 170); r.ellipse(7, 0, 10, 12);
+          r.fill(15); r.ellipse(2, -5, 3, 3); r.ellipse(2, 5, 3, 3); // Eyes
+          r.fill(245); r.ellipse(-3, -8, 6, 4); r.ellipse(-3, 8, 6, 4);
+          r.fill(210, 190, 150); r.ellipse(-5, -6, 3, 6); r.ellipse(-5, 6, 3, 6);
+          r.pop();
+      } else {
+          // Exploded Cow! Draw standard internal bits scattered everywhere
+          if (this.bits && this.bits.length > 0) {
+              for (let b of this.bits) {
+                  r.push(); r.translate(b.x, b.y); r.rotate(b.rot);
+                  if (b.type === 'skull') { r.fill(220, 200, 200); r.ellipse(0, 0, 7, 9); r.fill(10); r.ellipse(-1.5, -1.5, 2, 2); r.ellipse(1.5, -1.5, 2, 2); }
+                  else if (b.type === 'ribcage') { r.fill(220, 200, 200); r.rect(-7, -8, 14, 16, 5); r.fill(120, 0, 0); r.ellipse(0, 0, 8, 12); }
+                  else if (b.type === 'pelvis') { r.fill(220, 200, 200); r.ellipse(0, 0, 16, 8); }
+                  else if (b.type === 'bone') { r.fill(220, 200, 200); r.rect(-6, -2, 12, 4, 2); }
+                  else if (b.type === 'heart') { r.fill(120, 0, 0); r.ellipse(0, 0, 10, 10); }
+                  else if (b.type === 'brain') { r.fill(200, 100, 150); r.ellipse(0, 0, 12, 10); }
+                  else if (b.type === 'intestine') { r.noFill(); r.stroke(120, 0, 0); r.strokeWeight(4); r.beginShape(); r.vertex(-6,-4); r.vertex(0,4); r.vertex(6,-4); r.endShape(); r.noStroke(); }
+                  else if (b.type === 'meat') { r.fill(120, 0, 0); r.ellipse(0, 0, b.sz, b.sz*0.8); }
+                  r.pop();
+              }
+          } else {
+              r.fill(120, 0, 0);
+              r.ellipse(0, 0, this.bW, this.bH);
+              r.ellipse(10, 5, 20, 20);
+              r.ellipse(-10, -5, 20, 20);
+          }
+      }
+      
+      r.pop();
+      return;
+  }
+  if (this.eT === "ALIEN_GATOR") {
+    if (this.dT === 7) {
+        r.push(); r.translate(this.x, this.y); let a = 255, f = this.fP; r.push(); r.rotate(this.mA); r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); r.noStroke();
+        r.push(); r.translate(-3 - 30 * f, -18 - 10 * f); r.rotate(-f * 0.5); r.rect(-37, -12, 74, 24, 12); r.pop(); r.push(); r.translate(-3 - 30 * f, 18 + 10 * f); r.rotate(f * 0.5); r.rect(-37, -12, 74, 24, 12); r.pop();  
+        r.fill(90, 0, 0, a); r.ellipse(-15, -12, 35, 45); r.pop(); r.pop(); return;
+    }
+    r.push(); r.translate(this.x, this.y); let a = 255, f = this.fP; r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.mA); if (this.dT === 2) r.rotate(PI); r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); r.noStroke();
+    r.push(); r.translate(-3 - 30 * f, -18 - 10 * f); r.rotate(-f * 0.5); r.rect(-37, -12, 74, 24, 12); r.pop(); r.push(); r.translate(-3 - 30 * f, 18 + 10 * f); r.rotate(f * 0.5); r.rect(-37, -12, 74, 24, 12); r.pop();  
+    if (this.dT === 2 || this.dT === 4) { r.fill(90, 0, 0, a); r.ellipse(-15, -12, 20, 30); } r.pop();
+    r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA + PI) * this.sep, sin(this.bA + PI) * this.sep); r.rotate(this.mA); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(0, 0, this.bW + 15 * f, this.bH); if (this.dT === 3) { r.fill(90, 0, 0); r.rect(-this.bW/2, -5, this.bW, 10); } r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } }
+    let slX = lerp(20, 10, f), armLY = lerp(-42, -45, f); r.fill(30, 180, 30, a); r.ellipse(slX, armLY, 48, 24); r.ellipse(slX+20, armLY, 24, 24); let rslX = lerp(45, 30, f), armRY = lerp(33, 36, f); r.fill(30, 180, 30, a); r.ellipse(rslX, armRY, 75, 24); r.ellipse(rslX+30, armRY, 30, 30); 
+    r.push(); r.translate(40 - 10*f, 8 + 15*f); r.rotate(f * PI/2); r.fill(40); r.rect(15, 5, 45, 12, 2); r.fill(20); r.rect(55, 3, 10, 16); r.pop(); if (this.dT === 2 || this.dT === 4) { r.fill(90, 0, 0, a); r.ellipse(0, 0, this.bW + 15*f, 25); } r.translate(20 * f, 0);
+    if (this.dT === 4 || this.dT === 9) { r.fill(90, 0, 0); r.ellipse(0, 0, 20, 20); } else if (this.dT === 1) { r.push(); r.fill(30, 180, 30); r.ellipse(0, 0, 33, 33); r.rect(0, -15, 60, 30, 10); r.fill(0); r.ellipse(20, -10, 5, 5); r.ellipse(20, 10, 5, 5); r.fill(90, 0, 0); r.arc(0, 0, 20, 20, PI-PI/4, PI+PI/4, PIE); r.pop(); } else if (this.dT === 8) { r.push(); r.fill(30, 180, 30); r.ellipse(0, 0, 33, 33); r.rect(0, -15, 60, 30, 10); r.fill(0); r.ellipse(20, -10, 5, 5); r.ellipse(20, 10, 5, 5); r.fill(90, 0, 0); r.arc(0, 0, 35, 35, PI, PI + HALF_PI, PIE); r.pop(); } else { r.fill(30, 180, 30); r.ellipse(0, 0, 33, 33); r.rect(0, -15, 60, 30, 10); r.fill(0); r.ellipse(20, -10, 5, 5); r.ellipse(20, 10, 5, 5); }
+    r.noStroke(); for (let d of this.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.pop(); r.pop(); return;
+  }
+  if (this.dT === 10 || this.dT === 15) {
+      r.push(); r.translate(this.x, this.y); let a = 255, f = this.fP;
+      for (let ob of this.overkillBits) {
+          r.push(); r.translate(ob.x, ob.y); r.rotate(ob.rot);
+          if (ob.type === 'torso') { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(0, 0, this.bW, this.bH * 0.7); r.fill(90, 0, 0); r.ellipse(0, this.bH * 0.35, this.bW * 0.8, 12); r.fill(235, 180, 140, a); r.ellipse(0, -this.bH * 0.4, 11, 11); } 
+          else if (ob.type === 'lArm' || ob.type === 'rArm') { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(0, 0, 16, 8); r.fill(235, 180, 140, a); r.ellipse(10, 0, 8, 8); r.fill(90, 0, 0); r.ellipse(-6, 0, 8, 8); } r.pop();
+      }
+      r.push(); r.rotate(this.mA); let fallOffset = lerp(0, -15, f), fallSquish = lerp(1, 0.6, f); r.translate(fallOffset, 0); r.scale(fallSquish, 1); r.noStroke(); r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a);
+      let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -10 : -10, lY2 = this.bW === 105 ? 15 : 2;
+      r.rect(lX, lY1, lW, 8, 4); r.rect(lX, lY2, lW, 8, 4); r.fill(90, 0, 0, a); r.ellipse(lX + 8, -4, 18, 22); r.pop(); r.pop(); return;
+  }
+  
+  if (this.dT === 5 || this.dT === 9) { 
+      r.push(); r.translate(this.x, this.y); r.noStroke(); 
+      let boneCol = this.isCharred ? color(40) : color(220, 200, 200);
+      for (let b of this.bits) { 
+          r.push(); r.translate(b.x, b.y); r.rotate(b.rot); 
+          if (this.dT === 9) { 
+              if (b.type === 'skull_frag') { r.fill(boneCol); r.beginShape(); r.vertex(-b.sz/2, -b.sz/2); r.vertex(b.sz/2, -b.sz/4); r.vertex(b.sz/4, b.sz/2); r.vertex(-b.sz/4, b.sz/4); r.endShape(CLOSE); }
+              else { r.fill(this.isCharred ? color(30) : color(255, 105, 180)); r.rect(-b.sz/2, -b.sz/4, b.sz, b.sz/2, 2); }
+          } 
+          else if (this.dT === 5) {
+              let meatCol = this.isCharred ? color(20) : color(120, 0, 0);
+              if (b.type === 'skull') { r.fill(boneCol); r.ellipse(0, 0, 7, 9); r.fill(10); r.ellipse(-1.5, -1.5, 2, 2); r.ellipse(1.5, -1.5, 2, 2); }
+              else if (b.type === 'ribcage') { r.fill(boneCol); r.rect(-7, -8, 14, 16, 5); r.fill(meatCol); r.ellipse(0, 0, 8, 12); }
+              else if (b.type === 'pelvis') { r.fill(boneCol); r.ellipse(0, 0, 16, 8); }
+              else if (b.type === 'bone') { r.fill(boneCol); r.rect(-6, -2, 12, 4, 2); }
+              else if (b.type === 'heart') { r.fill(meatCol); r.ellipse(0, 0, 10, 10); }
+              else if (b.type === 'brain') { r.fill(this.isCharred ? color(30) : color(200, 100, 150)); r.ellipse(0, 0, 12, 10); }
+              else if (b.type === 'intestine') { r.noFill(); r.stroke(meatCol); r.strokeWeight(4); r.beginShape(); r.vertex(-6,-4); r.vertex(0,4); r.vertex(6,-4); r.endShape(); r.noStroke(); }
+              else if (b.type === 'meat') { r.fill(meatCol); r.ellipse(0, 0, b.sz, b.sz*0.8); }
+          }
+          r.pop(); 
+      } 
+      r.pop();
+      if (this.dT === 5) return; 
+  }
+
+  if (this.dT === 7) {
+      r.push(); r.translate(this.x, this.y); let a = 255, f = this.fP; r.push(); r.rotate(this.mA); r.noStroke(); r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a);
+      let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -25 : -10, lY2 = this.bW === 105 ? 15 : 2;
+      r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4); r.fill(90, 0, 0, a); r.ellipse(lX, -4, 20, 28); r.pop(); r.pop(); return;
+  }
+
+  r.push(); r.translate(this.x, this.y); let a = 255, f = this.fP, sK = color(235, 180, 140, a); 
+  if (this.dT === 3) { 
+      let off = this.sep; r.push(); r.rotate(this.mA); r.noStroke(); r.fill(this.pC); r.rect(-10,-10+off,18,8,4); r.rect(-10,2+off,18,8,4); r.fill(this.sC); r.ellipse(0,off,this.bW,this.bH/2); r.fill(90, 0, 0); r.ellipse(0, -off, this.bW, 10); r.translate(0, -off*1.8); r.ellipse(0, 0, this.bW, this.bH/2); 
+      if (this.eT === "ARMORED_STANDARD") { r.fill(100); r.rect(-10, -6, 20, 12, 4); } 
+      if (this.eT === "FEMALE_PISTOL") { r.fill(this.sC); r.ellipse(4, -6, 12, 10); r.ellipse(4, 6, 12, 10); }
+      r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.fill(sK); r.ellipse(0, -5, 11, 11); r.noStroke(); for (let d of this.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.pop(); 
+  } 
+  else { 
+      r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.aA); r.noStroke(); r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -10 : -10, lY2 = this.bW === 105 ? 15 : 2; r.push(); r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4); if (this.dT === 2 || this.dT === 4) { r.fill(90, 0, 0, a); r.ellipse(lX, -4, 12, 16); } r.pop(); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(0, 0, this.bW + 15 * f, this.bH); 
+      if (this.eT === "ARMORED_STANDARD") { r.fill(100); r.rect(-10, -12, 20, 24, 4); } 
+      if (this.eT === "FEMALE_PISTOL") { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(4, -6, 12, 10); r.ellipse(4, 6, 12, 10); } 
+      r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } } 
+      let lAY = this.eT === "ARMORED" ? -30 : -14, rAY = this.eT === "ARMORED" ? 30 : 11, slX = lerp(-5, 0, f), hX = lerp(-12, 12, f), armLY = lerp(lAY, lAY + 3, f), rslX = lerp(15, 0, f), rhX = lerp(25, 12, f), armRY = lerp(rAY, rAY + 3, f); 
+      r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(slX, armLY, 16, 8); r.fill(sK); r.ellipse(hX, armLY, 8, 8); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(rslX, armRY, 25, 8); r.fill(sK); r.ellipse(rhX, armRY, 8, 8); 
+      if (this.eT === "AERIAL" || this.eT === "AERIAL_PISTOL") { r.fill(80, a); r.rect(-18, -12, 12, 24, 3); } 
+      if (this.eT !== "ARMORED" && this.eT !== "MOLOTOV" && this.eT !== "AERIAL") { r.push(); r.translate(20 - 10 * f, 8 + 15 * f); r.rotate(f * PI / 2); if (this.cW === WEAPONS.SMG || this.cW === WEAPONS.DUAL_SMG) { r.fill(40); r.rect(31, 12, 24, 8, 2); r.rect(35, 20, 6, 12); } else if (this.cW === WEAPONS.ASSAULT_RIFLE) { r.fill(40); r.rect(5, 4, 42, 4, 1); r.fill(139, 69, 19); r.rect(15, 3, 12, 6, 1); r.rect(0, 3, 8, 6, 1); } else if (this.cW === WEAPONS.SHOTGUN) { r.fill(30); r.rect(5, 4, 40, 5, 1); r.fill(15); r.rect(20, 3, 14, 7, 1); r.fill(50); r.rect(5, 3, 12, 7, 2); } else if (this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { r.fill(50, 70, 50); r.rect(5, 4, 45, 6, 2); r.fill(30); r.rect(20, 2, 10, 10, 1); } else { r.fill(40); r.rect(15, 5, 16, 6, 2); } r.pop(); if (this.cW === WEAPONS.DUAL_SMG) { r.push(); r.translate(20 - 10 * f, -14 - 15 * f); r.rotate(-f * PI / 2); r.fill(40); r.rect(15, -7, 24, 8, 2); r.rect(19, -19, 6, 12); r.pop(); } } else if (this.eType === "MOLOTOV") { r.push(); r.translate(20 - 10 * f, 8 + 15 * f); r.rotate(f * PI / 2); r.fill(30, 120, 30); r.rect(0, -8, 8, 16, 2); r.pop(); } else if (this.eType === "ARMORED") { r.push(); r.translate(30 - 10 * f, 25 + 15 * f); r.rotate(f * PI / 2); r.fill(30); r.rect(0, -10, 50, 20, 4); r.pop(); } 
+      if (this.dT === 2 || this.dT === 4) { r.fill(90, 0, 0, a); r.ellipse(0, 0, this.bW + 15 * f, 20); } r.translate(20 * f, 0); if (this.dT === 4) { r.fill(90, 0, 0); r.ellipse(0, 0, 14, 14); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 1) { r.fill(sK); r.arc(0, 0, 11, 11, this.hA + PI / 4, this.hA + TWO_PI - PI / 4, PIE); r.fill(90, 0, 0); r.arc(0, 0, 8, 8, this.hA - PI / 4, this.hA + PI / 4, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } if (this.eT === "FEMALE_PISTOL") { r.fill(15, a); r.arc(0, 0, 12, 12, HALF_PI, PI + HALF_PI); r.ellipse(-11, 0, 12, 6); } } else if (this.dT === 6) { r.push(); r.rotate(this.hA); r.fill(90, 0, 0); r.ellipse(0, 0, 10, 10); let spread = min(this.sep * 0.4, 8); r.fill(sK); r.arc(0, -spread, 11, 11, PI, TWO_PI, CHORD); r.arc(0, spread, 11, 11, 0, PI, CHORD); r.pop(); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 8) { r.push(); r.rotate(this.hA); r.fill(sK); r.arc(0, 0, 11, 11, 0, PI + HALF_PI, PIE); r.fill(90, 0, 0); r.arc(0, 0, 11, 11, PI + HALF_PI, TWO_PI, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } r.pop(); } else if (this.dT === 9) { let nX = 10 + 5 * this.fP; r.fill(90, 0, 0); r.ellipse(nX, 0, 12, 12); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else { r.fill(sK); r.ellipse(0, 0, 11, 11); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } if (this.eT === "FEMALE_PISTOL") { r.fill(15, a); r.arc(0, 0, 12, 12, HALF_PI, PI + HALF_PI); r.ellipse(-11, 0, 12, 6); } } r.noStroke(); for (let d of this.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.pop(); } r.pop();
+}
+}
+
+function stampCorpse(c) {
+    
+    let maxSpread = Math.max(c.bW, c.bH) + 60; 
+    
+    let minCX = Math.floor((c.x - maxSpread) / CHUNK_SIZE);
+    
+
+    
+    let maxCX = Math.floor((c.x + maxSpread) / CHUNK_SIZE);
+    let minCY = Math.floor((c.y - maxSpread) / CHUNK_SIZE);
+    let maxCY = Math.floor((c.y + maxSpread) / CHUNK_SIZE);
+
+    for (let cx = minCX; cx <= maxCX; cx++) {
+        for (let cy = minCY; cy <= maxCY; cy++) {
+            let key = cx + "," + cy;
+
+            const lx = c.x - (cx * CHUNK_SIZE);
+            const ly = c.y - (cy * CHUNK_SIZE);
+            // A stamped body reaches well past its origin: limbs, the pool
+            // under it, and whatever decals it carries.
+            const e = acquireBloodChunk(key, lx - maxSpread, ly - maxSpread,
+                                             lx + maxSpread, ly + maxSpread);
+
+            // Shift coordinates into the surface's own space
+            let oldX = c.x;
+            let oldY = c.y;
+            c.x = lx - e.bx;
+            c.y = ly - e.by;
+
+            // Draw directly to the buffer instead of the screen
+            c.show(e.pg);
+
+            // Restore actual world coordinates
+            c.x = oldX;
+            c.y = oldY;
+        }
+    }
+}
+
+
+
+function updateCorpses() {
+  // Pass 1: advance and retire. Backwards, because it splices.
+  for (let i = corpses.length - 1; i >= 0; i--) {
+      let c = corpses[i];
+
+      if (doTick) {
+          if (!c.isStatic && inView(c.x, c.y, 800)) {
+              c.update();
+
+              let isDone = (c.bloodTimer <= 0 && c.stopMotionTimer <= 0 && c.smokeTimer <= 0 && c.bT <= 0);
+              if (c.dT === 12 && !c.exploded) isDone = false; // Kamikaze exception
+
+              if (isDone && c.fP >= 1) {
+                  c.isStatic = true;
+                  stampCorpse(c);         // Stamp it permanently to the ground chunk
+                  corpses.splice(i, 1);   // Delete the object to save CPU & GPU
+                  continue;               // Skip the rest of the loop
+              }
+          }
+      }
+  }
+
+  // Pass 2: draw oldest first, so the newest body lands on top of the pile.
+  //
+  // This used to draw inside the backwards pass, which meant the array was
+  // walked from the newest corpse to the oldest and the OLDEST was therefore
+  // painted last -- the first man down stayed on top and everyone who fell
+  // after him was buried underneath. Forwards is the natural order: whoever
+  // dropped most recently is the one lying on the heap.
+  for (let i = 0; i < corpses.length; i++) {
+      const c = corpses[i];
+      if (inView(c.x, c.y, 150)) c.show();
+  }
+
+  if (doTick) cullCorpseStacks();
+}
+
+// Press the buried bodies into the ground.
+//
+// A body underneath forty others is not visible and never will be, so it is
+// costing update and draw time to be hidden. Rather than deleting it, it goes
+// through the same stampCorpse() path a body takes when it settles normally:
+// it becomes part of the permanent blood layer. Nothing vanishes -- the ground
+// keeps the mark, the pile keeps its mass, and only the object goes away.
+//
+// Gore and skeletal matter are exempt. Those are the pieces worth looking at.
+function cullCorpseStacks() {
+  if (corpses.length <= CORPSE_STACK_LIMIT) return;   // cheap out on small fights
+  if (frameCount % 20 !== 0) return;                  // and it is not urgent
+
+  const cells = new Map();
+  for (let i = 0; i < corpses.length; i++) {
+      const c = corpses[i];
+      if (!c.isIntactBody) continue;
+      const k = Math.floor(c.x / CORPSE_STACK_CELL) + ',' + Math.floor(c.y / CORPSE_STACK_CELL);
+      let list = cells.get(k);
+      if (!list) { list = []; cells.set(k, list); }
+      list.push(i);
+  }
+
+  const doomed = new Set();
+  for (const list of cells.values()) {
+      if (list.length <= CORPSE_STACK_LIMIT) continue;
+      // corpses[] is already in the order they fell, so the head of this list
+      // is the deepest body in the pile.
+      const excess = list.length - CORPSE_STACK_LIMIT;
+      for (let n = 0; n < excess; n++) doomed.add(list[n]);
+  }
+  if (!doomed.size) return;
+
+  for (let i = corpses.length - 1; i >= 0; i--) {
+      if (!doomed.has(i)) continue;
+      stampCorpse(corpses[i]);
+      corpses.splice(i, 1);
+  }
+}
+
+
+
+function updateLightnings() {
+    for (let i = lightnings.length - 1; i >= 0; i--) {
+        if(doTick) lightnings[i].update();
+        if (inView(lightnings[i].pts[0].x, lightnings[i].pts[0].y, 300)) lightnings[i].show();
+        if (lightnings[i].life <= 0) lightnings.splice(i, 1);
+    }
+}
+
+class Character {
+  constructor(x, y, isP, eT = "NORMAL") {
+    this.isFriendly = false;
+	 this.x = x; this.y = y; this.isPlayer = isP; this.eType = eT; 
+        this.hp = 100; this.maxHp = 100;
+    if (isP && window.farmLvl >= 2) { this.hp = 125; this.maxHp = 125; }
+; this.shield = isP ? 100 : 0; this.shieldRechargeTimer = 0;
+    this.bodyW = 21; this.bodyH = 27; this.shirtCol = isP ? color(200, 30, 30) : color(220, 200, 20); this.pantsCol = isP ? color(30, 80, 180) : color(30, 30, 30);
+        this.aiOffset = Math.floor(Math.random() * 10); // Spreads updates across 10 frames
+    this.leader = null;
+    this.cachedTargetDist = 9999; // <--- CHANGE THIS FROM 0 to 9999
+    this.cachedTargetAngle = 0;
+    this.cachedCanSee = false;
+this.isArmed = false; 
+this.punchHitCount = 0; 
+
+
+    if (eT === "FEMALE_PISTOL") { this.hp = 100; this.shirtCol = color(255, 105, 180); this.pantsCol = color(20); this.bodyW = 16; this.bodyH = 25; }
+    
+           // --- NEW FARMER CIVILIANS ---
+    if (eT === "FARMER_MALE") { this.hp = 100; this.shirtCol = color(220); this.pantsCol = color(40, 100, 200); this.isFriendly = true; this.isNeutral = true; this.currentWeapon = WEAPONS.PISTOL; }
+    if (eT === "FARMER_FEMALE") { this.hp = 100; this.bodyW = 16; this.bodyH = 25; this.shirtCol = color(245); this.pantsCol = color(245); this.isFriendly = true; this.isNeutral = true; this.currentWeapon = WEAPONS.PISTOL; }
+
+    // --- DRY GULCH TOWNSFOLK -------------------------------------------
+    // All of them start neutral, so they wander the town until somebody shoots
+    // one. The wake-up cascade in takeDamage() is written against isNeutral
+    // rather than any particular eType, so the whole town turns at once
+    // without any of these needing to be named there.
+    if (eT === "COWBOY") {
+        this.hp = 130;
+        this.shirtCol = color(158, 122, 84);      // canvas work shirt
+        this.pantsCol = color(72, 92, 126);       // denim
+        this.isFriendly = true; this.isNeutral = true;
+        this.currentWeapon = WEAPONS.REVOLVER;
+        this.hatCol = color(96, 72, 46);
+        this.vestCol = color(88, 62, 40);
+        this.kerchiefCol = random() > 0.5 ? color(168, 54, 46) : color(58, 84, 122);
+    }
+    if (eT === "COWGIRL") {
+        this.hp = 120; this.bodyW = 16; this.bodyH = 25;
+        this.shirtCol = color(196, 156, 118);     // blouse
+        this.pantsCol = color(112, 76, 54);       // riding skirt
+        this.isFriendly = true; this.isNeutral = true;
+        this.currentWeapon = WEAPONS.REVOLVER;
+        this.hatCol = color(126, 96, 62);
+        this.vestCol = color(146, 92, 62);
+        this.kerchiefCol = random() > 0.5 ? color(178, 96, 120) : color(140, 118, 58);
+        this.hairCol = random() > 0.5 ? color(122, 74, 38) : color(52, 38, 28);
+    }
+    // Local law. Period-correct sidearm for a frontier deputy would be a
+    // revolver too, so the coach gun is what distinguishes them in a fight --
+    // shorter reach, much nastier up close.
+    if (eT === "LOCAL_COP") {
+        this.hp = 190;
+        this.shirtCol = color(74, 78, 92);        // dark wool coat
+        this.pantsCol = color(52, 54, 64);
+        this.isFriendly = true; this.isNeutral = true;
+        this.currentWeapon = WEAPONS.COACH_GUN;
+        this.hatCol = color(46, 44, 52);
+    }
+    // Ordinary townsfolk: no gun, and no interest in a gunfight. See the FLEE
+    // handling in update() -- when the town turns, these run for cover instead
+    // of charging, which is the only sane thing for a shopkeeper to do and
+    // keeps a street brawl from turning into forty unarmed suicides.
+    if (eT === "VILLAGER_MALE") {
+        this.hp = 90;
+        this.shirtCol = color(206, 194, 168);     // homespun
+        this.pantsCol = color(96, 84, 66);
+        this.isFriendly = true; this.isNeutral = true; this.isCoward = true;
+        // No sidearm at all. It was a pistol they never fired, on the theory
+        // that the machinery wants a weapon object -- but once the town turned
+        // they stopped being neutral, took the armed draw path, and stood there
+        // brandishing it while running away. The ammo pools are keyed by weapon
+        // name so something has to be set; isUnarmed is what the renderer and
+        // the firing code actually read.
+        this.currentWeapon = WEAPONS.PISTOL;
+        this.isUnarmed = true;
+        this.hatCol = color(84, 74, 58);
+    }
+    if (eT === "VILLAGER_FEMALE") {
+        this.hp = 85; this.bodyW = 16; this.bodyH = 25;
+        this.shirtCol = color(184, 168, 196);     // prairie dress
+        this.pantsCol = color(184, 168, 196);
+        this.isFriendly = true; this.isNeutral = true; this.isCoward = true;
+        this.currentWeapon = WEAPONS.PISTOL;
+        this.isUnarmed = true;
+        this.bonnetCol = color(228, 220, 204);
+        this.hairCol = random() > 0.5 ? color(122, 74, 38) : color(60, 44, 30);
+    }
+
+    // --- LEVEL 4 MILITARY NEUTRAL ---
+    if (eT === "MILITARY_NEUTRAL") { 
+        this.hp = 150; 
+        this.shirtCol = color(190, 170, 130); // Tan shirt
+        this.pantsCol = color(139, 115, 85);  // Khaki pants
+        this.isFriendly = true; 
+        this.isNeutral = true; 
+        this.currentWeapon = WEAPONS.ASSAULT_RIFLE; 
+    }
+    
+    if (eT === "NM0_GREY_FATIGUE") { 
+        this.hp = 250; 
+        this.shirtCol = color(170, 175, 180); // Light grey uniform
+        this.pantsCol = color(100, 105, 110); // Darker grey pants
+        this.currentWeapon = WEAPONS.ASSAULT_RIFLE; 
+    }
+
+
+    if (eT === "ARMORED") { this.hp = 600; this.bodyW = 105; this.bodyH = 45; this.shirtCol = color(100); this.pantsCol = color(80); }
+        if (eT === "SIA") { this.hp = 100; this.shirtCol = color(40, 40, 150); this.pantsCol = color(20); }
+    if (eT === "DAD") { this.hp = 10; this.shirtCol = color(60, 120, 60); this.pantsCol = color(80, 60, 40); this.state = "IDLE"; }
+	  if (eT === "AERIAL" || eT === "AERIAL_PISTOL") { this.hp = 70; this.shirtCol = eT === "AERIAL_PISTOL" ? color(50, 180, 50) : color(40, 100, 200); this.pantsCol = color(20, 20, 20); }
+    if (eT === "BUG") { this.hp = 20; this.bodyW = 20; this.bodyH = 14; this.biteCooldown = 0; }
+    if (eT === "SNAIL") { this.hp = 60; this.bodyW = 30; this.bodyH = 21; this.biteCooldown = 0; }
+    if (eT === "MOLOTOV") { this.hp = 100; this.shirtCol = color(200, 100, 0); this.pantsCol = color(50); }
+    if (eT === "ARMORED_STANDARD") { this.hp = 300; this.shirtCol = color(40, 80, 200); this.pantsCol = color(30, 30, 30); }
+    if (eT === "ALIEN_GATOR") { this.hp = 250; this.bodyW = 63; this.bodyH = 81; this.shirtCol = color(120); this.pantsCol = color(20, 100, 20); }
+    if (eT === "SAUCER" || eT === "SAUCER_RED") { this.hp = 750; this.bodyW = 80; this.bodyH = 80; if (eT === "SAUCER_RED") { this.burstsFired = 0; this.burstCooldown = 0; this.strafeDir = random() > 0.5 ? 1 : -1; } }
+    if (eT === "SNAIL_HYBRID") { this.hp = 500; this.bodyW = 63; this.bodyH = 81; this.shirtCol = color(173, 216, 230); this.pantsCol = color(100, 150, 200); this.hybridHeadHP = 100; this.leftEye = 1; this.rightEye = 1; this.enraged = false; this.eyeBleedL = 0; this.eyeBleedR = 0; this.burstsFired = 0; this.burstCooldown = 0; this.strafeDir = random() > 0.5 ? 1 : -1; }
+    // --- NM-0 ROOKIES ---------------------------------------------------
+    // Who NM-0 has left to man a checkpoint once a sector's own regulars have
+    // gone over. Fresh intake: blue fatigues, a pistol, and neither a helmet
+    // nor a plate carrier, which is the whole read -- a bare head on a body
+    // that has not earned armour yet. Stick City's are men, the Undercity's are
+    // women in a lighter blue.
+    if (eT === "NM0_ROOKIE") {
+        this.hp = 90;
+        this.shirtCol = color(46, 84, 176);
+        this.pantsCol = color(38, 52, 82);
+        this.currentWeapon = WEAPONS.PISTOL;
+        this.isRookie = true;
+    }
+    if (eT === "NM0_ROOKIE_F") {
+        this.hp = 85; this.bodyW = 16; this.bodyH = 25;
+        this.shirtCol = color(124, 172, 226);
+        this.pantsCol = color(62, 82, 118);
+        this.currentWeapon = WEAPONS.PISTOL;
+        this.isRookie = true;
+    }
+
+    // --- ROBOT ---------------------------------------------------------
+    // The overworld unit for the two city sectors. The pistol regulars are the
+    // sector's PEOPLE -- they garrison it, and on the savior route they become
+    // the population you inherit -- so they have no business being the thing
+    // that respawns forever on the open road. NM-0 sends machines for that.
+    //
+    // Two health pools. The head is a 150 sensor housing, hit separately and
+    // never drawing on the chassis; the chassis is 350. Destroy the head and it
+    // cannot see, cannot aim and cannot be reasoned with, so it does the only
+    // thing left and runs at you -- the same shape as the hybrid's rage state,
+    // which is where the pattern comes from.
+    if (eT === "ROBOT") {
+        this.hp = 350; this.maxHp = 350;
+        this.bodyW = 30; this.bodyH = 34;
+        this.headHP = ROBOT_HEAD_HP;
+        this.enraged = false;
+        this.selfDestruct = 0;
+        this.chargeTimer = 0;        // counts up to ROBOT_CHARGE while winding up
+        this.burstLeft = 0;          // shots owed from the current charge
+        this.burstGap = 0;
+        this.fireCooldownR = 0;
+        this.shirtCol = color(132, 140, 149);   // chassis plate
+        this.pantsCol = color(78, 84, 92);      // actuators
+        this.trimCol  = color(255, 146, 40);    // the cannon's own orange
+        this.currentWeapon = WEAPONS.PISTOL;    // ammo bookkeeping only
+        this.isUnarmed = true;                  // it is not holding anything
+        this.strafeDir = random() > 0.5 ? 1 : -1;
+    }
+
+    // --- HORSE ---------------------------------------------------------
+    // Built on the same pattern as the cow: an animal is a Character with its
+    // own AI branch in updateEnemy() and its own art branch in show(), and it
+    // never touches the stickman path. Unlike a cow it bolts rather than
+    // wanders when something frightens it, which is what a loose horse does and
+    // what makes shooting a rider off one worth doing.
+    if (eT === "HORSE") {
+        this.hp = 260;
+        this.bodyW = 62; this.bodyH = 27;
+        this.isFriendly = true; this.isNeutral = true;
+        this.state = "IDLE";
+        this.timer = floor(random(60, 240));
+        this.boltTimer = 0;
+        const coats = [[92, 62, 40], [58, 44, 36], [142, 108, 72], [46, 42, 44], [176, 152, 118]];
+        const c = coats[floor(random(coats.length))];
+        this.coatCol = color(c[0], c[1], c[2]);
+        this.maneCol = color(c[0] * 0.55, c[1] * 0.55, c[2] * 0.55);
+        this.shirtCol = this.coatCol;
+        this.sock = random() > 0.55;                 // white blaze and stockings
+        this.decals = [];
+    }
+
+    // --- BANDIT --------------------------------------------------------
+    // The frontier's hostile. Same silhouette language as the drovers so the
+    // biome reads as one place, and told apart by the duster, the black hat and
+    // the bandana over the face rather than by being a different shape.
+    if (eT === "BANDIT") {
+        this.hp = 130;
+        this.shirtCol = color(74, 62, 58);
+        this.pantsCol = color(52, 46, 44);
+        this.currentWeapon = WEAPONS.REVOLVER;
+        this.hatCol = color(34, 30, 30);
+        this.vestCol = color(58, 48, 44);
+        this.kerchiefCol = random() > 0.5 ? color(124, 40, 36) : color(40, 44, 54);
+    }
+
+   if (eT === "COW") { 
+        this.hp = 150; 
+        this.bodyW = 45; 
+        this.bodyH = 26; 
+        this.isFriendly = true; 
+        this.isNeutral = true; 
+        this.state = "IDLE";
+        this.timer = floor(random(60, 200));
+        this.decals = [];
+        // Generate random black spots for the cow's back
+        for (let i = 0; i < floor(random(3, 6)); i++) {
+            this.decals.push({
+                x: random(-12, 12), 
+                y: random(-8, 8), 
+                sz: random(8, 18), 
+                col: [20, 20, 20, 255], 
+                isHead: false
+            });
+        }
+    }
+    // This line used to assign WEAPONS.PISTOL unconditionally, which runs after
+    // every eType block above and therefore silently disarmed anything that had
+    // chosen its own sidearm -- the cowboys came out holding pistols. The
+    // default only applies when the type did not pick one.
+    this.dead = false; this.aimAngle = 0; this.moveAngle = 0; this.lastMoveAngle = 0; if (!this.currentWeapon) this.currentWeapon = WEAPONS.PISTOL; this.fireTimer = 0; this.reloadTimer = 0; this.orbChargeTimer = 0; 
+    this.dashTimer = 0; this.dashCooldown = 0; this.dashCount = 0; this.dashWindow = 0; this.meleeTimer = 0; this.meleeCooldown = 0; this.meleePhase = 0; this.meleeComboTimer = 0; this.isBackhand = false; this.meleeQueued = false;
+    this.throwAnimTimer = 0; this.cannonAmmo = 4; this.cannonCooldown = 0; this.cannonFireDelay = 0; this.cannonCharge = 0;
+    this.muzzleFlash = 0; this.decals = []; this.isMoving = false; this.walkCycle = 0; this.armDrag = 0; this.lastHitFrame = 0; this.frameDamage = 0; this.shieldFlashTimer = 0; this.shieldBurstTimer = 0;
+       this.weaponAmmo = { 
+        "PISTOL": WEAPONS.PISTOL.maxAmmo, 
+        "MACHINE GUN": WEAPONS.SMG.maxAmmo, 
+        "DUAL SMGS": WEAPONS.DUAL_SMG.maxAmmo, 
+        "ASSAULT RIFLE": WEAPONS.ASSAULT_RIFLE.maxAmmo, 
+        "SHOTGUN": WEAPONS.SHOTGUN.maxAmmo, 
+        "ROCKET LAUNCHER": WEAPONS.ROCKET_LAUNCHER.maxAmmo,
+        "TASER": WEAPONS.TASER.maxAmmo, // <--- ADDED TASER
+        "REVOLVER": WEAPONS.REVOLVER.maxAmmo,
+        "COACH GUN": WEAPONS.COACH_GUN.maxAmmo
+    };
+    
+    this.mags = { 
+        "PISTOL": Infinity, 
+        "MACHINE GUN": 0, 
+        "DUAL SMGS": 0, 
+        "ASSAULT RIFLE": 0, 
+        "SHOTGUN": 0, 
+        "ROCKET LAUNCHER": 0,
+        "TASER": Infinity, // <--- ADDED TASER
+        // Townsfolk reload from their own belt loops forever; the player never
+        // picks these up, so a spare-mag count would never be read.
+        "REVOLVER": Infinity,
+        "COACH GUN": Infinity
+    };
+
+    this.stunTimer = 0;
+this.skeletonTimer = 0;
+	  if (!isP) { this.state = "PATROL"; this.targetBuilding = getPatrolBuilding(); this.patrolCorner = floor(random(4)); this.patrolTimer = 360; this.loseSightTimer = 0; }
+  
+      this.maxHp = this.hp;
+  }
+  get ammo() { return this.weaponAmmo[this.currentWeapon.name]; }
+  set ammo(val) { this.weaponAmmo[this.currentWeapon.name] = val; }
+  
+  // Put this character in the saddle. The horse is a property, not a second
+  // entity: one body to collide, one AI to run, one thing to shoot. The animal
+  // only becomes a Character of its own again at the moment it loses its rider,
+  // which is the only moment the difference is visible.
+  mountUp(seed) {
+      const coats = [[92, 62, 40], [58, 44, 36], [142, 108, 72], [46, 42, 44], [176, 152, 118]];
+      const c = coats[floor((seed === undefined ? random() : seed) * coats.length) % coats.length];
+      this.mounted   = true;
+      this.mountCoat = color(c[0], c[1], c[2]);
+      this.mountMane = color(c[0] * 0.55, c[1] * 0.55, c[2] * 0.55);
+      this.mountSock = random() > 0.55;
+      this.mountWalk = random(TWO_PI);
+      return this;
+  }
+
+  // Take the saddle of a specific animal, absorbing it. The horse's identity --
+  // coat, mane, markings -- travels with the rider, so the animal you get back
+  // when you step down is the animal you got on.
+  mountHorse(h) {
+      if (!h || this.mounted) return false;
+      this.mounted   = true;
+      this.mountCoat = h.coatCol;
+      this.mountMane = h.maneCol;
+      this.mountSock = h.sock;
+      this.mountWalk = h.walkCycle || 0;
+      this.mountFacing = this.moveAngle !== undefined ? this.moveAngle : this.aimAngle;
+      const i = enemiesList.indexOf(h);
+      if (i > -1) enemiesList.splice(i, 1);
+      return true;
+  }
+
+  // Step down. The animal is handed back beside you, standing rather than
+  // bolting -- you got off it, nobody shot it out from under you.
+  dismount() {
+      if (!this.mounted) return null;
+      this.mounted = false;
+      const a = (this.mountFacing !== undefined ? this.mountFacing : this.aimAngle) + HALF_PI;
+      const h = new Character(this.x + cos(a) * 46, this.y + sin(a) * 46, false, "HORSE");
+      h.coatCol = this.mountCoat;
+      h.maneCol = this.mountMane;
+      h.sock    = this.mountSock;
+      h.aimAngle = h.moveAngle = this.mountFacing !== undefined ? this.mountFacing : this.aimAngle;
+      h.state = "IDLE";
+      h.timer = 200;
+      enemiesList.push(h);
+      return h;
+  }
+
+  // Shot off the horse. The animal survives, and it bolts -- which is the point
+  // of modelling it at all, because a posse that leaves loose horses behind is a
+  // different thing from a posse that evaporates.
+  unhorse() {
+      if (!this.mounted) return null;
+      this.mounted = false;
+      const h = new Character(this.x - cos(this.aimAngle) * 18,
+                              this.y - sin(this.aimAngle) * 18, false, "HORSE");
+      h.coatCol = this.mountCoat;
+      h.maneCol = this.mountMane;
+      h.sock    = this.mountSock;
+      h.moveAngle = this.aimAngle + random(-1.2, 1.2);
+      h.aimAngle  = h.moveAngle;
+      h.spook(160);
+      enemiesList.push(h);
+      return h;
+  }
+
+  // Send a horse. Also called on every horse within earshot of a gunshot, which
+  // is what makes a firefight scatter the loose stock.
+  spook(t) {
+      if (this.eType !== "HORSE") return;
+      this.boltTimer = Math.max(this.boltTimer || 0, t === undefined ? 120 : t);
+      this.state = "WANDER";
+      this.timer = this.boltTimer + 60;
+      if (this.moveAngle === undefined) this.moveAngle = random(TWO_PI);
+  }
+
+      takeDamage(amount) {
+    let res = { blocked: false, broken: false };
+    if (this.isPlayer && (killcamMode || isWin || inFarmPostCutscene || inFarmCutscene || inTownCutscene || inPostAmbushCutscene || inDarchonCall)) return res; 
+
+    
+    
+       // --- NEW: WAKE UP THE TOWN IF A CIVILIAN IS HURT ---
+       // --- NEW: WAKE UP THE TOWN IF A CIVILIAN IS HURT ---
+    // Make sure Cows are excluded so they don't accidentally turn the town hostile!
+    // Livestock is not a citizen: shooting a cow or a horse does not turn the
+    // town on you, it just scatters the stock.
+    if (this.eType === "HORSE") { this.spook(200); }
+    // A travelling band answers for its own and for nobody else's quarrel. This
+    // has to come before the town-wide cascade, and the cascade has to skip
+    // anyone riding with a band, or a shot fired in a town three thousand units
+    // away would turn a group of strangers on the far side of the desert.
+    if (this.bandGroup && this.isNeutral) {
+        turnBandGroup(this.bandGroup);
+        for (let e of enemiesList) if (e.eType === "HORSE" && dist(e.x, e.y, this.x, this.y) < 700) e.spook(140);
+    }
+    else if (this.isNeutral && this.eType !== "COW" && this.eType !== "HORSE") {
+        for (let e of enemiesList) {
+            if (e.eType === "HORSE") { e.spook(140); continue; }
+            if (e.bandGroup) continue;
+            if (e.isNeutral && e.eType !== "COW") {
+                e.isNeutral = false;
+                e.isFriendly = false; // They are now hostile to the player
+
+                // Shopkeepers and their families do not draw on a gunman.
+                e.state = e.isCoward ? "FLEE" : "CHASE";
+                e.loseSightTimer = 1200; // <--- NEW: Force 20 seconds of hard aggro
+                
+                // <--- NEW: Give them the player's exact location to swarm!
+                if (typeof player !== 'undefined' && player) {
+                    e.lastKnownX = player.x; 
+                    e.lastKnownY = player.y;
+                }
+                
+                if (typeof emit !== 'undefined') emit(e.x, e.y, 5, color(255, 0, 0), "SPARK"); // Exclamation mark effect
+            }
+        }
+    }
+
+   
+    if (this.isPlayer) {
+      this.shieldRechargeTimer = 300; 
+      if (this.shield > 0) { 
+          res.blocked = true; 
+          this.shieldFlashTimer = 10; 
+          let rem = amount - this.shield; 
+          if (rem >= 0) { 
+              this.shield = 0; 
+              this.hp -= rem; 
+              res.broken = true; 
+              this.shieldBurstTimer = 15; 
+          } else { 
+              this.shield -= amount; 
+          } 
+      } else { 
+          this.hp -= amount; 
+      }
+    } else { 
+        this.hp -= amount; 
+    }
+
+    // Shot out of the saddle. Checked here rather than at each of the half
+    // dozen places that splice a dead body out of the list, so every way of
+    // killing a rider leaves the same loose horse behind.
+    if (this.mounted && this.hp <= 0) this.unhorse();
+
+    return res;
+  }
+
+    
+    
+      checkCol(nx, ny) {
+    if (this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL" || this.eType === "SAUCER" || this.eType === "SAUCER_RED") return false; 
+    if (this.ignoreBldgTimer > 0) return false; 
+    
+    let r = (this.eType === "ARMORED" || this.eType === "ALIEN_GATOR" || this.eType === "SNAIL_HYBRID") ? 28 : (this.eType === "BUG" ? 10 : (this.eType === "SNAIL" ? 15 : 15));
+    
+    for (let b of activeBuildings) { 
+        if (b.isCropField || b.isMarket) continue; 
+        if (currentLevel === 4 && b.isPalm) continue; 
+        if (currentLevel === 6 && (b.isAlienPlant || b.isEnergyPole)) continue; 
+        if ((currentLevel === 1 || currentLevel === 2) && b.isGrassLot) continue;         if (b.isUBarrier) {
+            let wT = 15;
+            if (nx + r > b.x - b.w/2 - wT && nx - r < b.x - b.w/2 + wT && ny + r > b.y - b.h/2 && ny - r < b.y + b.h/2) return true; 
+            if (nx + r > b.x + b.w/2 - wT && nx - r < b.x + b.w/2 + wT && ny + r > b.y - b.h/2 && ny - r < b.y + b.h/2) return true; 
+            if (nx + r > b.x - b.w/2 && nx - r < b.x + b.w/2 && ny + r > b.y - b.h/2 - wT && ny - r < b.y - b.h/2 + wT) return true; 
+       continue;
+        }
+
+        if (nx + r > b.x - b.w / 2 && nx - r < b.x + b.w / 2 && ny + r > b.y - b.h / 2 && ny - r < b.y + b.h / 2) return true; 
+   
+    } 
+    
+    
+    // FIX: Restored the missing loop body and closing bracket
+    for (let c of activeParkingCars) {
+        let cw = 50, ch = 90; 
+        if (nx + r > c.x - cw / 2 && nx - r < c.x + cw / 2 && ny + r > c.y - ch / 2 && ny - r < c.y + ch / 2) return true; 
+    }
+    
+    for (let b of barrels) {
+        if (dist(nx, ny, b.x, b.y) < r + 12) return true; 
+    }
+    
+    return false;
+  }
+  forceNudge() {
+    // Flying enemies don't collide with buildings, so they don't need to be nudged
+    if (this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL" || this.eType === "SAUCER" || this.eType === "SAUCER_RED") return;
+    
+    // If the character's current exact position registers as a collision
+    if (this.checkCol(this.x, this.y)) {
+        let step = 15; // The distance to check outward per loop
+        let maxRadius = 300; // Stop checking if we somehow look 300px away and find nothing
+        
+        // Scan outward in a growing spiral
+        for (let r = step; r <= maxRadius; r += step) {
+            // Check 8 different angles (45-degree increments) at the current radius
+            for (let a = 0; a < TWO_PI; a += PI / 4) {
+                let nx = this.x + cos(a) * r;
+                let ny = this.y + sin(a) * r;
+                
+                // If this new hypothetical spot is safe, snap them to it!
+                if (!this.checkCol(nx, ny)) {
+                    this.x = nx;
+                    this.y = ny;
+                    return; 
+                }
+            }
+        }
+    }
+  }
+
+ attemptMove(vx, vy) {
+    // 1. Initialize persistent evasion and slide memory
+    if (this.evadeTimer === undefined) {
+        this.evadeTimer = 0;
+        this.evadeDir = 1;
+        this.slideDir = random() > 0.5 ? 1 : -1; // Lock in a preference!
+        this.blockedAngle = 0;
+    }
+
+    // Ground that rises against you takes some of the step with it. Applied
+    // here rather than in each caller so it lands on everything that moves
+    // through the collision path, player and pedestrian alike.
+    const eF = elevSpeedFactor(this.x, this.y, vx, vy);
+    if (eF !== 1) { vx *= eF; vy *= eF; }
+
+    let speed = dist(0, 0, vx, vy);
+    let intendedAngle = atan2(vy, vx);
+
+    // 2. OVERRIDE: If actively evading a hard corner, hijack their trajectory 
+    if (!this.isPlayer && this.evadeTimer > 0) {
+        this.evadeTimer--;
+        let evadeAngle = this.blockedAngle + (HALF_PI * this.evadeDir);
+        vx = cos(evadeAngle) * speed;
+        vy = sin(evadeAngle) * speed;
+    }
+
+    let mX = false, mY = false;
+    let finalDx = 0, finalDy = 0;
+
+    // 3. Test primary movement
+    if (!this.checkCol(this.x + vx, this.y)) { this.x += vx; finalDx = vx; mX = true; }
+    if (!this.checkCol(this.x, this.y + vy)) { this.y += vy; finalDy = vy; mY = true; }
+
+    // 4. Resolve sliding with PERSISTENT direction to stop jitter
+    if (!mX && mY) {
+        // If moving at an angle, follow the angle. If moving perfectly flat, use memory!
+        let dir = (abs(vy) > 0.1) ? Math.sign(vy) : this.slideDir;
+        let slideDy = dir * abs(vx);
+        
+        if (!this.checkCol(this.x, this.y + slideDy)) { 
+            this.y += slideDy; finalDy = slideDy; 
+        } else {
+            this.slideDir *= -1; // Flip memory if they slide into a corner
+        }
+    } else if (!mY && mX) {
+        let dir = (abs(vx) > 0.1) ? Math.sign(vx) : this.slideDir;
+        let slideDx = dir * abs(vy);
+        
+        if (!this.checkCol(this.x + slideDx, this.y)) { 
+            this.x += slideDx; finalDx = slideDx; 
+        } else {
+            this.slideDir *= -1; // Flip memory if they slide into a corner
+        }
+    } 
+    // 5. HARD BLOCKED (Corners/Pockets): Trigger the 90-degree commitment!
+    else if (!mX && !mY && !this.isPlayer) {
+        if (this.evadeTimer <= 0) {
+            this.evadeTimer = 45; 
+            this.evadeDir = this.slideDir; // Sync 90-degree turn with their slide preference
+            this.blockedAngle = intendedAngle;
+        } else {
+            // Corner failsafe: If they get stuck WHILE evading
+            this.evadeDir *= -1;
+            this.slideDir *= -1; 
+            this.evadeTimer = 45; 
+        }
+    }
+
+    // Keep the sliding flag active so the visual body rotation stays engaged
+    this.isSliding = (abs(finalDx - vx) > 0.05 || abs(finalDy - vy) > 0.05) || this.evadeTimer > 0;
+    return { x: finalDx, y: finalDy };
+}
+
+
+
+
+    removeCurrentWeapon() {
+      let aW = [WEAPONS.PISTOL]; 
+      if (taserUnlocked) aW.push(WEAPONS.TASER);
+      if (dualSmgUnlocked && (this.mags["DUAL SMGS"] > 0 || this.weaponAmmo["DUAL SMGS"] > 0)) aW.push(WEAPONS.DUAL_SMG);
+      else if (smgUnlocked && (this.mags["MACHINE GUN"] > 0 || this.weaponAmmo["MACHINE GUN"] > 0)) aW.push(WEAPONS.SMG); 
+      if (arUnlocked && (this.mags["ASSAULT RIFLE"] > 0 || this.weaponAmmo["ASSAULT RIFLE"] > 0)) aW.push(WEAPONS.ASSAULT_RIFLE);
+      if (shotgunUnlocked && (this.mags["SHOTGUN"] > 0 || this.weaponAmmo["SHOTGUN"] > 0)) aW.push(WEAPONS.SHOTGUN); 
+      if (rocketLauncherUnlocked && (this.mags["ROCKET LAUNCHER"] > 0 || this.weaponAmmo["ROCKET LAUNCHER"] > 0)) aW.push(WEAPONS.ROCKET_LAUNCHER); 
+      this.currentWeapon = aW[aW.length - 1]; this.reloadTimer = 0; lastWeaponSwapTime = millis();
+  }
+
+
+    triggerReload() {
+      if (this.currentWeapon === WEAPONS.PISTOL || this.currentWeapon === WEAPONS.TASER) { 
+          this.ammo = 0; 
+          // Pistol = 90 frames (1.5s), Taser = 420 frames (7s)
+          this.reloadTimer = this.currentWeapon === WEAPONS.TASER ? 120 : 90; 
+          if (this.isPlayer) sfx.reload(); 
+      } else {
+          if (this.mags[this.currentWeapon.name] > 0) { this.mags[this.currentWeapon.name]--; this.ammo = 0; this.reloadTimer = 90; if (this.isPlayer) sfx.reload(); } else { if (this.isPlayer) this.removeCurrentWeapon(); else { this.ammo = 0; this.reloadTimer = 90; } }
+      }
+  }
+
+  
+  activateDash() {
+      if (jetpackDoubleDash) {
+          if (this.dashCount === 0) { this.dashTimer = 8; this.dashCooldown = 15; this.dashWindow = 180; this.dashCount = 1; if (this.isPlayer) sfx.dash(); } else if (this.dashCount === 1) { this.dashTimer = 8; this.dashCooldown = 60; this.dashWindow = 0; this.dashCount = 0; if (this.isPlayer) sfx.dash(); }
+      } else { this.dashTimer = 8; this.dashCooldown = 60; if (this.isPlayer) sfx.dash(); }
+  }
+
+      activateMelee(isCentral = false) {
+      if (this.isPlayer && !isCentral) return; 
+      if (this.meleeTimer > 0 || this.meleeCooldown > 0) return; 
+      
+      if (this.meleePhase > 0 && this.meleeComboTimer > 0) {
+          this.advanceMeleeCombo();
+          return;
+      }
+      
+      if (this.isPlayer) {
+          let bestTarget = null, minDist = Infinity;
+          for (let e of enemiesList) {
+              if (e.hp > 0 && !e.dead && e.eType !== "AERIAL" && e.eType !== "AERIAL_PISTOL" && !e.isFriendly) {
+                  let d = dist(this.x, this.y, e.x, e.y);
+                  let mR = (e.eType === "ARMORED" || e.eType === "ALIEN_GATOR" || e.eType === "SAUCER" || e.eType === "SAUCER_RED" || e.eType === "SNAIL_HYBRID") ? 120 : 80;
+                  if (d < mR) {
+                      let angTo = atan2(e.y - this.y, e.x - this.x);
+                      let angleDiff = abs((angTo - this.aimAngle + PI * 3) % TWO_PI - PI);
+                      if ((angleDiff < PI / 2 || d < 40) && d < minDist) { minDist = d; bestTarget = e; }
+                  }
+              }
+          }
+          if (bestTarget) this.aimAngle = atan2(bestTarget.y - this.y, bestTarget.x - this.x);
+      }
+    
+      this.meleeTimer = 20; 
+      this.isBackhand = false; 
+
+      // 1. CHECK IF WE WANT TO USE THE SWORD
+      // True ONLY IF the sword is picked up in the world AND the pause menu hasn't disabled it.
+      let usingSword = (typeof swordPickedUp !== 'undefined' && swordPickedUp) && (window.swordEquipped !== false);
+    
+      // --- DECOUPLED COMBO INITIALIZATION ---
+      if (!usingSword) {
+          // UNARMED ALWAYS GETS 4-HIT SEQUENCE
+          if (this.isPlayer) this.isArmed = false; // Auto-switch to neutral stance (hide guns)
+          
+          this.meleeCooldown = 0; 
+          this.meleeComboTimer = 60; 
+          this.meleePhase = 1; 
+          if (this.isPlayer) sfx.dash(); 
+      } else {
+          // SWORD LOGIC
+          if (this.isPlayer) this.isArmed = false; 
+          
+          if (typeof meleeComboUnlocked !== 'undefined' && meleeComboUnlocked) { 
+              this.meleeCooldown = 0; 
+              this.meleeComboTimer = 50; 
+              this.meleePhase = 1; 
+          } else { 
+              this.meleeCooldown = 45; 
+          } 
+          if (this.isPlayer) sfx.slash();
+      }
+  }
+
+  advanceMeleeCombo() { 
+      if (this.isPlayer) {
+          let bestTarget = null, minDist = Infinity;
+          for (let e of enemiesList) {
+              if (e.hp > 0 && !e.dead && e.eType !== "AERIAL" && e.eType !== "AERIAL_PISTOL" && !e.isFriendly) {
+                  let d = dist(this.x, this.y, e.x, e.y);
+                  let mR = (e.eType === "ARMORED" || e.eType === "ALIEN_GATOR" || e.eType === "SAUCER" || e.eType === "SAUCER_RED" || e.eType === "SNAIL_HYBRID") ? 120 : 80;
+                  if (d < mR) {
+                      let angTo = atan2(e.y - this.y, e.x - this.x);
+                      let angleDiff = abs((angTo - this.aimAngle + PI * 3) % TWO_PI - PI);
+                      if ((angleDiff < PI / 2 || d < 120) && d < minDist) { minDist = d; bestTarget = e; }
+                  }
+              }
+          }
+          if (bestTarget) this.aimAngle = atan2(bestTarget.y - this.y, bestTarget.x - this.x);
+      }
+
+      let usingSword = (typeof swordPickedUp !== 'undefined' && swordPickedUp) && (window.swordEquipped !== false);
+
+      if (!usingSword) {
+          // UNARMED 4-HIT COMBO
+          if (this.isPlayer) this.isArmed = false; // Maintain neutral stance throughout combo
+          
+          if (this.meleePhase === 1) { 
+              this.meleeTimer = 15; this.meleePhase = 2; this.meleeCooldown = 0; this.meleeComboTimer = 60; 
+          } else if (this.meleePhase === 2) { 
+              this.meleeTimer = 15; this.meleePhase = 3; this.meleeCooldown = 0; this.meleeComboTimer = 60; 
+          } else if (this.meleePhase === 3) { 
+              this.meleeTimer = 15; this.meleePhase = 2; this.meleeCooldown = 30; this.meleeComboTimer = 0; 
+          } else if (this.meleePhase === 3) { 
+              this.meleeTimer = 15; this.meleePhase = 0; this.meleeCooldown = 30; this.meleeComboTimer = 0; 
+          }
+          if (this.isPlayer) sfx.dash();
+          return; 
+      }
+
+      // ARMED SWORD COMBO
+      if (this.isPlayer) this.isArmed = false; 
+
+      if (this.meleePhase === 1) { 
+          this.meleeTimer = 20; this.meleePhase = 2; this.isBackhand = true; this.meleeCooldown = 0; this.meleeComboTimer = 60; 
+      } else if (this.meleePhase === 2) { 
+          this.meleeTimer = 20; this.meleePhase = 3; this.isBackhand = false; this.meleeCooldown = 0; this.meleeComboTimer = 60; 
+      } else if (this.meleePhase === 3 && window.meleeFinisherUnlocked) { 
+          this.executeFinisher(); 
+          return; 
+      } else { 
+          this.meleeCooldown = 30; this.meleeComboTimer = 0; this.meleePhase = 0; 
+          return; 
+      }
+      
+      if (this.isPlayer) sfx.slash(); 
+  }
+
+  executeFinisher() {
+      if (this.meleeTimer > 0) return;
+
+      if (this.isPlayer) {
+          this.isArmed = false; // Finisher is a sword move, keep it armed
+
+          let bestTarget = null, minDist = Infinity;
+          for (let e of enemiesList) {
+              if (e.hp > 0 && !e.dead && e.eType !== "AERIAL" && e.eType !== "AERIAL_PISTOL" && !e.isFriendly) {
+                  let d = dist(this.x, this.y, e.x, e.y);
+                  let mR = (e.eType === "ARMORED" || e.eType === "ALIEN_GATOR" || e.eType === "SAUCER" || e.eType === "SAUCER_RED" || e.eType === "SNAIL_HYBRID") ? 150 : 100;
+                  if (d < mR) {
+                      let angTo = atan2(e.y - this.y, e.x - this.x);
+                      let angleDiff = abs((angTo - this.aimAngle + PI * 3) % TWO_PI - PI);
+                      if ((angleDiff < PI / 2 || d < 120) && d < minDist) { minDist = d; bestTarget = e; }
+                  }
+              }
+          }
+          if (bestTarget) this.aimAngle = atan2(bestTarget.y - this.y, bestTarget.x - this.x);
+      }
+
+      this.meleePhase = 4; 
+      this.meleeTimer = 30; 
+      this.meleeCooldown = 0;  
+      this.meleeComboTimer = 0; 
+      this.isBackhand = true; 
+      if (this.isPlayer) { sfx.slash(); sfx.charge(); }
+  }
+
+  updatePlayer() {
+   this.forceNudge();
+	  if (this.shieldFlashTimer > 0) this.shieldFlashTimer--; if (this.shieldBurstTimer > 0) this.shieldBurstTimer--;
+    if (this.shieldRechargeTimer > 0) { this.shieldRechargeTimer--; } else if (this.shield < 100) { this.shield = min(100, this.shield + 25 / 60); }
+    if (this.dashWindow > 0) { this.dashWindow--; if (this.dashWindow <= 0) this.dashCount = 0; }
+    
+    if (this.meleeCharge === undefined) this.meleeCharge = 0;
+        if (this.throwAnimTimer > 0) this.throwAnimTimer--;
+    
+    let isChemist = typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked;
+
+    if (isChemist) {
+        // --- CHEMIST FLASKS ---
+        if (pFlaskTimer > 0) { pFlaskTimer--; if (pFlaskTimer <= 0) pFlaskAmmo = 2; }
+        if (meleeInputHeld && pFlaskAmmo > 0 && !isCooking && this.dashTimer <= 0) { isCooking = true; cookTime = 180; }
+        if (isCooking) {
+            cookTime--;
+            if (!meleeInputHeld || cookTime <= 0) {
+                isCooking = false; pFlaskAmmo--; 
+                if (pFlaskAmmo <= 0 && pFlaskTimer <= 0) pFlaskTimer = 600; 
+                playerFlasks.push(new PlayerFlask(this.x, this.y, this.aimAngle, cookTime));
+                sfx.throwG(); this.throwAnimTimer = 15;
+            }
+        }
+        
+        // --- CHEMIST CANNON ---
+        if (this.cannonCooldown > 0) this.cannonCooldown--;
+        if (this.cannonFireDelay > 0) this.cannonFireDelay--;
+        
+        if (typeof cannonInputHeld !== 'undefined' && cannonInputHeld && this.cannonCooldown <= 0 && this.cannonFireDelay <= 0 && this.cannonAmmo > 0) {
+            this.cannonCharge++; 
+        } else if ((typeof cannonInputHeld === 'undefined' || !cannonInputHeld) && this.cannonCharge > 0) {
+            let dmg = 50, dryMax = 1;
+            if (this.cannonCharge >= 120) { dmg = 350; dryMax = 3; } 
+            else if (this.cannonCharge >= 80) { dmg = 150; dryMax = 2; } 
+            
+            let range = 300, arc = 0.4, pA = this.aimAngle;
+            let candidates = enemiesList.filter(e => e.hp > 0 && !e.dead && dist(this.x, this.y, e.x, e.y) < range && abs((atan2(e.y - this.y, e.x - this.x) - pA + PI*3) % TWO_PI - PI) < arc);
+            
+            let startX = this.x + cos(pA)*32 - sin(pA)*-19;
+            let startY = this.y + sin(pA)*32 + cos(pA)*-19;
+            let shockPts = [{x: startX, y: startY}];
+            
+            if (candidates.length > 0) {
+                candidates.sort((a,b) => dist(this.x, this.y, a.x, a.y) - dist(this.x, this.y, b.x, b.y));
+                let hitSet = new Set(); hitSet.add(candidates[0]);
+                let dryCount = candidates[0].wetTimer > 0 ? 0 : 1;
+                let current = candidates[0];
+                shockPts.push({x: current.x, y: current.y});
+                
+                let chaining = true;
+                while(chaining) {
+                    chaining = false;
+                    let nextList = enemiesList.filter(e => !hitSet.has(e) && e.hp > 0 && dist(current.x, current.y, e.x, e.y) < 200);
+                    nextList.sort((a,b) => dist(current.x, current.y, a.x, a.y) - dist(current.x, current.y, b.x, b.y));
+                    
+                    for (let n of nextList) {
+                        let isWet = n.wetTimer > 0;
+                        if (!isWet && typeof waterPuddles !== 'undefined') { for(let wp of waterPuddles) if (dist(n.x, n.y, wp.x, wp.y) < wp.r) isWet = true; }
+                        
+                        if (isWet || dryCount < dryMax) {
+                            if (!isWet) dryCount++;
+                            hitSet.add(n); current = n; shockPts.push({x: current.x, y: current.y});
+                            chaining = true; break;
+                        }
+                    }
+                }
+                
+                let finalDmg = dmg * (1 + (hitSet.size - 1) * 0.5); 
+                for (let t of hitSet) {
+                    let isWet = t.wetTimer > 0;
+                    if (!isWet && typeof waterPuddles !== 'undefined') { for(let wp of waterPuddles) if (dist(t.x, t.y, wp.x, wp.y) < wp.r) isWet = true; }
+                    
+                    t.hp -= isWet ? (finalDmg * 2) : finalDmg; 
+                    sfx.hitArmor();
+                    
+                    if (t.hp <= 0 && !t.dead) {
+                        t.dead = true; 
+                        sfx.deathGrunt();
+                        t.decals.push({ x: random(-10, 10), y: random(-10, 10), sz: random(20, 35), col: [30, 30, 30, 220], isHead: false });
+                        
+                        let lChoices = [5, 2, 7, 10]; 
+                        let dT = lChoices[lightningCounter % 4]; 
+                        lightningCounter++;
+                        let bCol = (t.eType === "BUG" || t.eType === "SNAIL" || t.eType === "SNAIL_HYBRID") ? color(200, 230, 40) : color(90, 0, 0);
+                        
+                        if (dT === 5) {
+                            emit(t.x, t.y, 40, color(255, 150, 0), "EXPLOSION"); sfx.explosion();
+                            spawnSplatter(t.x, t.y, "SCORCH");
+                        }
+                        emit(t.x, t.y, 60, bCol, "GORE");
+                        spawnSplatter(t.x, t.y, "BLOOD", bCol);
+                        
+                        let c = new Corpse(t.x, t.y, t.moveAngle, t.aimAngle, color(40), color(20), dT, this.aimAngle, t.decals, t.currentWeapon, this.aimAngle, t.eType, t.bodyW, t.bodyH);
+                        c.smokeTimer = 198; c.isCharred = true; c.bloodTimer = 198; 
+                        corpses.push(c);
+                        
+                        processKill(t.x, t.y, false, t.eType, t.isFriendly);
+                        
+                        let idx = enemiesList.indexOf(t);
+                        if (idx > -1) enemiesList.splice(idx, 1);
+                        if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100);
+                    }
+                }
+            } else {
+                shockPts.push({x: this.x + cos(pA)*range, y: this.y + sin(pA)*range}); 
+            }
+            for (let i = 1; i < shockPts.length; i++) emit(shockPts[i].x, shockPts[i].y, 15, color(255, 255, 0), "SPARK");
+            lightnings.push(new Lightning(shockPts)); sfx.shoot(); screenShake = 10;
+
+            this.cannonAmmo--; this.cannonCharge = 0; this.cannonFireDelay = 48; 
+            if (this.cannonAmmo <= 0) { this.cannonCooldown = 180; this.cannonAmmo = 4; } 
+        }
+    } 
+    else if (grenadesUnlocked || (typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked)) {
+        // --- STANDARD GRENADES (ONLY IF NOT CHEMIST) ---
+        if (typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked && pGrenadeTimer > 0) {
+            pGrenadeTimer--; if (pGrenadeTimer <= 0) pGrenadeAmmo = 4;
+        }
+
+        if (grenadeInputHeld && pGrenadeAmmo > 0 && !isCooking && this.dashTimer <= 0) { isCooking = true; cookTime = 180; }
+        if (isCooking) {
+            cookTime--;
+            if (!grenadeInputHeld || cookTime <= 0) {
+                isCooking = false; pGrenadeAmmo--; 
+                if (typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked && pGrenadeAmmo <= 0 && pGrenadeTimer <= 0) pGrenadeTimer = 600;
+                playerGrenades.push(new PlayerGrenade(this.x, this.y, this.aimAngle, cookTime));
+                sfx.throwG(); this.throwAnimTimer = 15; 
+            }
+        }
+    }
+
+    let canMelee = meleeUnlocked && !isChemist && this.dashTimer <= 0;
+
+    if (canMelee) {
+        if (meleeInputHeld) {
+            if (window.meleeFinisherUnlocked) {
+                this.meleeCharge++; 
+                if (this.meleeCharge === 40) { sfx.charge(); emit(this.x, this.y, 20, color(255, 150, 0), "SPARK"); } 
+            } else {
+                if (!this.prevMeleeInputHeld) this.activateMelee(true); 
+            }
+        } else {
+            if (this.prevMeleeInputHeld && window.meleeFinisherUnlocked) {
+                if (this.meleeCharge >= 40) this.executeFinisher(); 
+                else if (this.meleeCharge > 0) this.activateMelee(true); 
+            }
+            this.meleeCharge = 0;
+        }
+    } else {
+        this.meleeCharge = 0;
+    }
+
+    this.prevMeleeInputHeld = meleeInputHeld;
+    // Mounted, on the flat, a horse is most of twice a man's pace.
+    let speed = (ninjaSuitUnlocked ? 6.6 : 6.0) * (this.mounted ? 1.78 : 1);
+
+    if (this.dashTimer > 0) { 
+        this.dashTimer--; speed = 22; 
+        if (this.dashTimer % 2 === 0) { emit(this.x, this.y, 1, color(0, 200, 255), "THRUST", -cos(this.lastMoveAngle) * 8, -sin(this.lastMoveAngle) * 8); emit(this.x, this.y, 1, color(255, 100, 0), "THRUST", -cos(this.lastMoveAngle) * 8, -sin(this.lastMoveAngle) * 8); } 
+        let dx = cos(this.lastMoveAngle) * speed, dy = sin(this.lastMoveAngle) * speed; 
+        if (!this.checkCol(this.x + dx, this.y)) this.x += dx; if (!this.checkCol(this.x, this.y + dy)) this.y += dy; this.isMoving = true; 
+        
+        if (this.dashTimer <= 0 && jetpackFireExplosion) {
+            screenShake = 15; sfx.charge(); sfx.shotgun(); 
+            for (let a = 0; a < TWO_PI; a += 0.15) { emit(this.x, this.y, 1, color(0, 200, 255), "THRUST", cos(a) * 16, sin(a) * 16); emit(this.x, this.y, 1, color(150, 240, 255), "SPARK", cos(a) * 8, sin(a) * 8); }
+            emit(this.x, this.y, 30, color(0, 100, 255), "EXPLOSION");
+            for (let e of enemiesList) {
+                if (e.hp > 0 && e.eType !== "AERIAL" && e.eType !== "AERIAL_PISTOL" && dist(this.x, this.y, e.x, e.y) < 140) {
+                    let ang = atan2(e.y - this.y, e.x - this.x);
+                    for(let k = 0; k < 15; k++) { if(!e.checkCol(e.x + cos(ang)*2, e.y)) e.x += cos(ang)*2; if(!e.checkCol(e.x, e.y + sin(ang)*2)) e.y += sin(ang)*2; }
+                    let bCol = (e.eType === "BUG" || e.eType === "SNAIL" || e.eType === "SNAIL_HYBRID") ? color(200, 230, 40) : color(90, 0, 0);
+                    let mDmg = ninjaSuitUnlocked ? 120 : 100; e.takeDamage(mDmg); 
+                    if ((e.eType === "ARMORED" && e.hp > 300) || (e.eType === "ARMORED_STANDARD" && e.hp > 50) || e.eType === "SAUCER" || e.eType === "SAUCER_RED" || (e.eType === "SNAIL_HYBRID" && e.hp > 150)) { sfx.hitArmor(); emit(e.x, e.y, 10, color(0, 200, 255), "SPARK"); } else { sfx.hitBody(); emit(e.x, e.y, 15, bCol, "BLOOD"); }
+
+                    if (e.hp <= 0) {
+                        e.dead = true;
+                        if (e.eType === "SAUCER" || e.eType === "SAUCER_RED") { triggerExplosion(e.x, e.y, 160); }
+                        else { emit(e.x, e.y, 40, bCol, "GORE"); spawnSplatter(e.x, e.y, "BLOOD", bCol); corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 3, 0, e.decals, e.currentWeapon, ang, e.eType, e.bodyW, e.bodyH)); }
+                        processKill(e.x, e.y, false, e.eType, e.isFriendly);
+                    }
+                }
+            }
+            for (let i = enemiesList.length - 1; i >= 0; i--) if (enemiesList[i].hp <= 0) { enemiesList.splice(i, 1); if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100); } 
+        }
+    } else { 
+        if (this.dashCooldown > 0) this.dashCooldown--; 
+        let dx = leftStick.dx * speed, dy = leftStick.dy * speed; 
+        
+        if (this.meleeTimer > 0) {
+            let forwardMag = (dx * cos(this.aimAngle)) + (dy * sin(this.aimAngle));
+            dx = forwardMag * cos(this.aimAngle);
+            dy = forwardMag * sin(this.aimAngle);
+        }
+        
+        let aDx = 0, aDy = 0; 
+        if (abs(dx) > 0.05 || abs(dy) > 0.05) { if (!this.checkCol(this.x + dx, this.y)) { this.x += dx; aDx = dx; } if (!this.checkCol(this.x, this.y + dy)) { this.y += dy; aDy = dy; } if (aDx !== 0 || aDy !== 0) { this.isMoving = true; this.walkCycle += 0.25; this.moveAngle = atan2(aDy, aDx); this.lastMoveAngle = this.moveAngle; } else this.isMoving = false; } else this.isMoving = false; 
+    }
+
+    // Drive the gait, and turn the animal toward where it is actually going. A
+    // horse does not pivot on the spot because the man on it looked over his
+    // shoulder, so the facing tracks the MOVE angle and holds when he stops --
+    // aiming is the rider's business, not the horse's. This is the difference
+    // between riding and sliding a sprite around.
+    if (this.mounted) {
+        this.mountWalk = (this.mountWalk || 0) + (this.isMoving ? 0.34 : 0.02);
+        if (this.mountFacing === undefined) this.mountFacing = this.aimAngle;
+        if (this.isMoving) {
+            const d = (this.moveAngle - this.mountFacing + PI * 3) % TWO_PI - PI;
+            this.mountFacing += d * 0.18;
+        }
+    }
+
+    if (this.meleeTimer > 0) {
+      this.meleeTimer--; let nx = cos(this.aimAngle) * 3, ny = sin(this.aimAngle) * 3; if (!this.checkCol(this.x + nx, this.y)) this.x += nx; if (!this.checkCol(this.x, this.y + ny)) this.y += ny;
+      
+      if (this.meleePhase === 4 && this.meleeTimer === 15) { 
+          screenShake = 20; 
+          shockwaves.push(new Shockwave(this.x, this.y, this.aimAngle)); 
+      }
+             else if (this.meleePhase !== 4 && this.meleeTimer === 10) { 
+          screenShake = 12; 
+          for (let e of enemiesList) { 
+                                let mR = e.eType === "ARMORED" || e.eType === "ALIEN_GATOR" || e.eType === "SAUCER" || e.eType === "SAUCER_RED" || e.eType === "SNAIL_HYBRID" ? 110 : 70; 
+                  
+                  // ---> THE FIX: Calculate damage based on equipped weapon, NOT graphic state
+                  let isFistAttack = false;
+                  if (this.isPlayer) {
+                      let usingSword = (typeof swordPickedUp !== 'undefined' && swordPickedUp && window.swordEquipped !== false);
+                      isFistAttack = !usingSword; // If not using sword, it's a fist
+                  } else {
+                      isFistAttack = !this.isArmed; // Keep enemy logic identical
+                  }
+
+                  if (isFistAttack) mR *= 0.85; // Slightly shorter range for punches
+
+                  if (e.hp > 0 && e.eType !== "AERIAL" && e.eType !== "AERIAL_PISTOL" && dist(this.x, this.y, e.x, e.y) < mR) { 
+                      let aD = (atan2(e.y - this.y, e.x - this.x) - this.aimAngle + PI * 3) % TWO_PI - PI; 
+                      if (abs(aD) < PI / 2 || dist(this.x, this.y, e.x, e.y) < 30) { 
+                          
+                          // Check our new variable instead of the graphic state!
+                          if (isFistAttack) {
+                               
+                              e.punchHitCount = (e.punchHitCount || 0) + 1;
+                              if (e.punchHitCount >= 4) {
+                                  e.stunTimer = 1500; // Stun for 3 seconds
+                                  e.state = "STUNNED";
+                                  e.punchHitCount = 0; // Reset meter
+                                  sfx.charge(); // Audio cue for stun
+                              }
+                          } else {
+                              e.takeDamage(200); // Sword deals 100 damage!
+                          }
+
+                      
+                      if (e.hp > 0) { e.hitFlash = 4; }
+                      
+                      let bCol = (e.eType === "BUG" || e.eType === "SNAIL" || e.eType === "SNAIL_HYBRID") ? color(200, 230, 40) : color(90, 0, 0);
+                      if (e.eType === "SAUCER" || e.eType === "SAUCER_RED" || (e.eType === "ARMORED" && e.hp > 300) || (e.eType === "ARMORED_STANDARD" && e.hp > 50) || (e.eType === "SNAIL_HYBRID" && e.hp > 150)) { sfx.hitArmor(); emit(e.x, e.y, 10, color(255, 200, 0), "SPARK"); } else { sfx.hitBody(); emit(e.x, e.y, 20, bCol, "BLOOD"); } 
+
+                      if (e.hp <= 0) { 
+                          e.dead = true; 
+                          if (e.eType === "SAUCER" || e.eType === "SAUCER_RED") triggerExplosion(e.x, e.y, 160); 
+                          else { emit(e.x, e.y, 60, bCol, "GORE"); spawnSplatter(e.x, e.y, "BLOOD", bCol); corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 3, 0, e.decals, e.currentWeapon, this.aimAngle, e.eType, e.bodyW, e.bodyH)); } 
+                          
+                          processKill(e.x, e.y, false, e.eType, e.isFriendly); 
+                      } 
+                  } 
+              } 
+          } 
+          for (let i = enemiesList.length - 1; i >= 0; i--) if (enemiesList[i].hp <= 0) { enemiesList.splice(i, 1); if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100); } 
+      }
+
+
+    } else { 
+        if (this.meleePhase === 4 && this.meleeCooldown <= 0) { this.meleePhase = 0; }
+        if (this.meleeCooldown > 0) { this.meleeCooldown--; }
+        if (this.meleeComboTimer > 0) { 
+            this.meleeComboTimer--; 
+            if (this.meleeComboTimer <= 0 && this.meleePhase > 0) { this.meleeCooldown = 0; this.meleePhase = 0; } 
+        }
+    }
+
+    this.armDrag = lerp(this.armDrag, this.isMoving ? 1 : 0, 0.15); 
+    
+    if (this.meleeTimer <= 0) {
+        if (rightStick.active) this.aimAngle = atan2(rightStick.dy, rightStick.dx); 
+        else if (leftStick.active && this.isMoving && this.dashTimer <= 0) this.aimAngle = this.moveAngle;
+    }
+
+    if (this.fireTimer > 0) this.fireTimer--; if (this.muzzleFlash > 0) this.muzzleFlash--; 
+        if (this.reloadTimer > 0 && --this.reloadTimer <= 0) { 
+        let mult = ((this.isPlayer || this.isFriendly) && window.milLvl >= 2) ? 2 : 1;
+        this.ammo = this.currentWeapon.maxAmmo * mult; 
+    }
+ 
+    
+    if (rightStick.active && this.reloadTimer <= 0 && this.meleeTimer <= 0 && this.dashTimer <= 0 && !isCooking && this.throwAnimTimer <= 0 && rightStick.dist > 0.75 && this.fireTimer <= 0 && this.ammo > 0) {
+        this.fire(this.aimAngle);
+    }
+  }
+
+    updateEnemy() {
+    if (this.eType === "DAD" || (currentLevel === 0 && prologuePhase === 1 && this.eType === "SIA")) return; 
+    // NEW: Freeze the farmer during the cutscene
+    if (typeof inFarmCutscene !== 'undefined' && inFarmCutscene && this === farmSpeaker) return;
+ 
+if (this.eType === "HORSE") {
+        this.forceNudge();
+        if (this.wetTimer === undefined) this.wetTimer = 0;
+        if (this.wetTimer > 0) this.wetTimer--;
+        if (this.boltTimer > 0) this.boltTimer--;
+        this.timer--;
+        let aDx = 0, aDy = 0;
+
+        // Gunfire nearby, or being shot at, sends it. A bolting horse runs flat
+        // out in a straight line for a few seconds, then settles.
+        if (this.hitFlash > 0 && this.boltTimer <= 0) this.spook();
+
+        if (this.timer <= 0 && this.boltTimer <= 0) {
+            if (this.state === "IDLE") {
+                this.state = "WANDER";
+                this.moveAngle = random(TWO_PI);
+                this.timer = floor(random(50, 130));
+            } else {
+                this.state = "IDLE";
+                this.timer = floor(random(150, 420));
+            }
+        }
+
+        const sp = this.boltTimer > 0 ? 4.4 : 0.55;
+        if (this.boltTimer > 0 || this.state === "WANDER") {
+            const m = this.attemptMove(cos(this.moveAngle) * sp, sin(this.moveAngle) * sp);
+            aDx = m.x; aDy = m.y;
+            // Blocked while bolting: pick a new line rather than grinding a wall
+            if (this.boltTimer > 0 && aDx === 0 && aDy === 0) this.moveAngle += random(-1.4, 1.4);
+        }
+
+        if (aDx !== 0 || aDy !== 0) {
+            this.isMoving = true;
+            this.walkCycle += this.boltTimer > 0 ? 0.34 : 0.1;
+            this.aimAngle = this.moveAngle;
+        } else {
+            this.isMoving = false;
+        }
+        return;
+    }
+
+if (this.eType === "COW") {
+        this.forceNudge();
+        
+        if (this.wetTimer === undefined) this.wetTimer = 0;
+        if (this.wetTimer > 0) this.wetTimer--;
+
+        this.timer--;
+        let aDx = 0, aDy = 0;
+
+        if (this.timer <= 0) {
+            if (this.state === "IDLE") {
+                this.state = "WANDER";
+                this.moveAngle = random(TWO_PI);
+                this.timer = floor(random(60, 120)); // Walk for 1 to 2 seconds
+            } else {
+                this.state = "IDLE";
+                this.timer = floor(random(120, 300)); // Stand still for 2 to 5 seconds
+            }
+        }
+
+        if (this.state === "WANDER") {
+            let vx = cos(this.moveAngle) * 0.4;
+            let vy = sin(this.moveAngle) * 0.4;
+            let m = this.attemptMove(vx, vy); 
+            aDx = m.x; aDy = m.y;
+            
+            // Confine cows to the Level 3 Cattle Pen (-800 to -400 X, -100 to 100 Y)
+            if (this.x < -770 || this.x > -430 || this.y < -80 || this.y > 80) {
+                this.moveAngle += PI + random(-0.5, 0.5); // Turn around smoothly
+            }
+        }
+
+        if (aDx !== 0 || aDy !== 0) {
+            this.isMoving = true;
+            this.walkCycle += 0.08; // Slower, heavier walk cycle
+            this.aimAngle = this.moveAngle; // Cows face where they walk
+        } else {
+            this.isMoving = false;
+        }
+        return; // Skip the rest of the standard enemy AI
+    }
+    if (this.stunTimer > 0) {
+        this.stunTimer--;
+        if (this.skeletonTimer > 0) this.skeletonTimer--;
+        
+        this.isMoving = false;
+        
+        if (this.stunTimer <= 0 && this.hp > 0) {
+            this.state = "CHASE"; 
+        }
+        return; 
+    }
+
+    this.forceNudge();
+
+    // --- FLEE ---------------------------------------------------------------
+    // Unarmed townsfolk once the town has turned. They run from the player,
+    // pick a new bearing when they hit something, and never shoot -- returning
+    // here before the aiming and firing code is what makes them harmless
+    // rather than simply bad shots.
+    if (this.state === "FLEE") {
+        const away = atan2(this.y - (player ? player.y : this.y),
+                           this.x - (player ? player.x : this.x));
+        if (this.fleeBias === undefined) this.fleeBias = random(-0.5, 0.5);
+        const a = away + this.fleeBias;
+        this.moveAngle = a;
+        this.aimAngle = a;                       // looking where they are going
+        const spd = 3.1;
+        const m = this.attemptMove(cos(a) * spd, sin(a) * spd);
+        if (m.x === 0 && m.y === 0) this.fleeBias = random(-PI, PI);   // cornered
+        this.isMoving = (m.x !== 0 || m.y !== 0);
+        if (this.isMoving) this.walkCycle += 0.35;
+        // Far enough away and out of the fight: settle back into wandering.
+        if (player && dist(this.x, this.y, player.x, player.y) > 1600) {
+            this.state = "WANDER";
+        }
+        return;
+    }
+
+    // A band riding through holds its line. It is neutral, so nothing in the
+    // sight-and-chase machinery applies to it, and it has no business patrolling
+    // a building it has never seen before.
+    if (this.isNeutral && this.state === "RIDE_BY") {
+        const a = this.rideAngle !== undefined ? this.rideAngle : this.aimAngle;
+        this.aimAngle = a;
+        const m = this.attemptMove(cos(a) * 3.4, sin(a) * 3.4);
+        // Blocked: ease around whatever it is rather than standing in the sand.
+        if (m.x === 0 && m.y === 0) this.rideAngle = a + random(-0.8, 0.8);
+        this.isMoving = (m.x !== 0 || m.y !== 0);
+        if (this.isMoving) { this.walkCycle += 0.12; this.moveAngle = atan2(m.y, m.x); }
+        this.armDrag = lerp(this.armDrag, this.isMoving ? 1 : 0, 0.15);
+        return;
+    }
+
+    if (this.isNeutral) {
+        if (this.state !== "PATROL") {
+            this.state = "PATROL";
+            this.patrolTimer = 360;
+            this.targetBuilding = getPatrolBuilding();
+        }
+        
+        let aDx = 0, aDy = 0;
+        this.patrolTimer--; 
+        if (this.patrolTimer <= 0 || !this.targetBuilding) { 
+            this.targetBuilding = getPatrolBuilding(); 
+            this.patrolTimer = 360; 
+            this.patrolCorner = floor(random(4)); 
+        }
+        if (this.targetBuilding) {
+            let b = this.targetBuilding, c = [{ x: b.x - b.w / 2 - 40, y: b.y - b.h / 2 - 40 }, { x: b.x + b.w / 2 + 40, y: b.y - b.h / 2 - 40 }, { x: b.x + b.w / 2 + 40, y: b.y + b.h / 2 + 40 }, { x: b.x - b.w / 2 - 40, y: b.y + b.h / 2 + 40 }];
+            let t = c[this.patrolCorner]; 
+            this.aimAngle = atan2(t.y - this.y, t.x - this.x); 
+            let vx = cos(this.aimAngle) * 1.0, vy = sin(this.aimAngle) * 1.0; 
+            let m = this.attemptMove(vx, vy); aDx = m.x; aDy = m.y;
+            if (dist(this.x, this.y, t.x, t.y) < 15) { this.patrolCorner = (this.patrolCorner + 1) % 4; }
+        } else { 
+            this.aimAngle += 0.05; 
+        }
+        
+        if (aDx !== 0 || aDy !== 0) { 
+            this.isMoving = true; 
+            this.walkCycle += 0.2; 
+            this.moveAngle = atan2(aDy, aDx); 
+        } else { 
+            this.isMoving = false; 
+        }
+        this.armDrag = lerp(this.armDrag, this.isMoving ? 1 : 0, 0.15);
+        return; 
+    }
+
+    if (this.wetTimer === undefined) this.wetTimer = 0;
+    if (this.wetTimer > 0) { this.wetTimer--; if (frameCount % 15 === 0) emit(this.x + random(-10, 10), this.y + random(-10, 10), 1, color(100, 150, 255), "BLOOD"); }
+
+    if (this.fireTimer > 0) this.fireTimer--; 
+    if (this.muzzleFlash > 0) this.muzzleFlash--; 
+        if (this.reloadTimer > 0 && --this.reloadTimer <= 0) { 
+        let mult = ((this.isPlayer || this.isFriendly) && window.milLvl >= 2) ? 2 : 1;
+        this.ammo = this.currentWeapon.maxAmmo * mult; 
+    }
+ this.ammo = this.currentWeapon.maxAmmo; 
+    if (this.biteCooldown > 0) this.biteCooldown--;
+    if (this.ignoreBldgTimer > 0) this.ignoreBldgTimer--; 
+    if (this.orbChargeTimer > 0) { this.orbChargeTimer--; if (this.orbChargeTimer === 1) { spawnOrb(this.x + cos(this.aimAngle) * 50, this.y + sin(this.aimAngle) * 50); this.fireTimer = 100; } }
+
+    // A man on a horse covers ground. This is the whole of what being mounted
+    // does to the AI -- the state machine, the sight checks and the shooting are
+    // unchanged, he just closes twice as fast, which is what makes a posse
+    // riding in off the flats read as a threat rather than as a slow walk.
+    const mountSpd = this.mounted ? 2.15 : 1;
+    let spd = mountSpd * (this.eType === "ARMORED" ? 0.65 : (this.eType === "AERIAL" ? 1.25 : ((this.eType === "AERIAL_PISTOL" || this.eType === "SAUCER" || this.eType === "SAUCER_RED") ? 1.47 : (this.eType === "SNAIL" ? 0.5 : (this.eType === "BUG" || this.eType === "MOLOTOV" || this.eType === "ARMORED_STANDARD" || this.eType === "ALIEN_GATOR" || this.eType === "SNAIL_HYBRID" ? 1.0 : 1.0)))));
+    if (this.mounted) {
+        this.mountWalk = (this.mountWalk || 0) + (this.isMoving ? 0.3 : 0.02);
+        if (this.mountFacing === undefined) this.mountFacing = this.aimAngle;
+        const want = this.isMoving ? this.moveAngle : this.aimAngle;
+        const d = (want - this.mountFacing + PI * 3) % TWO_PI - PI;
+        this.mountFacing += d * 0.16;
+    }
+    let aDx = 0, aDy = 0;
+    
+    if (this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL" || this.eType === "SAUCER" || this.eType === "SAUCER_RED") { emit(this.x, this.y, 1, color(0, 200, 255), "THRUST", -cos(this.aimAngle) * 5, -sin(this.aimAngle) * 5); emit(this.x, this.y, 1, color(255, 100, 0), "THRUST", -cos(this.aimAngle) * 5, -sin(this.aimAngle) * 5); }
+
+    if (this.isFriendly) {
+        if (this.baseState === undefined) this.baseState = "FOLLOW";
+
+        let closeE = null, cD = Infinity;
+        for (let e of enemiesList) {
+            if (!e.isFriendly && !e.dead && e.hp > 0) {
+                let d = dist(this.x, this.y, e.x, e.y);
+                if (d < cD) { cD = d; closeE = e; }
+            }
+        }
+
+        let isFighting = false;
+        let trg = player;
+        if (closeE && cD < 600) { trg = closeE; isFighting = true; }
+
+        let distToTarget = dist(this.x, this.y, trg.x, trg.y);
+        let angToTarget = atan2(trg.y - this.y, trg.x - this.x);
+        let shouldMove = false;
+        let moveTargetX = this.x, moveTargetY = this.y;
+
+        if (this.baseState === "HOLD_PERIMETER") {
+            if (isFighting && dist(this.holdPos.x, this.holdPos.y, trg.x, trg.y) < 300) {
+                this.aimAngle = angToTarget;
+                if (distToTarget > 150) { moveTargetX = trg.x; moveTargetY = trg.y; shouldMove = true; }
+            } else {
+                if (dist(this.x, this.y, this.holdPos.x, this.holdPos.y) > 50) {
+                    moveTargetX = this.holdPos.x; moveTargetY = this.holdPos.y; shouldMove = true;
+                    this.aimAngle = atan2(moveTargetY - this.y, moveTargetX - this.x);
+                } else if (isFighting) {
+                    this.aimAngle = angToTarget;
+                } else {
+                    this.aimAngle += 0.02;
+                }
+            }
+        }
+        else if (this.baseState === "SEARCH_DIRECTION") {
+            if (isFighting) {
+                this.aimAngle = angToTarget;
+                if (distToTarget > 200) { moveTargetX = trg.x; moveTargetY = trg.y; shouldMove = true; }
+            } else {
+                let moveSpeed = 2.0 * spd;
+                let vx = 0, vy = 0;
+                if (this.searchDir === "NORTH") vy = -moveSpeed;
+                if (this.searchDir === "SOUTH") vy = moveSpeed;
+                if (this.searchDir === "EAST") vx = moveSpeed;
+                if (this.searchDir === "WEST") vx = -moveSpeed;
+
+                let m = this.attemptMove(vx, vy); aDx = m.x; aDy = m.y;
+                this.aimAngle = atan2(vy || 0.01, vx || 0.01);
+            }
+        }
+        else { 
+            if (isFighting) {
+                this.aimAngle = angToTarget;
+                if (distToTarget > 200) { moveTargetX = trg.x; moveTargetY = trg.y; shouldMove = true; }
+            } else {
+                let myIndex = enemiesList.filter(e => e.isFriendly && !e.dead).indexOf(this);
+                let slot = myIndex > -1 ? myIndex : 0;
+
+                let rowWidth = 5; 
+                let row = Math.floor(slot / rowWidth) + 1.2; 
+                let col = (slot % rowWidth) - Math.floor(rowWidth / 2); 
+
+                let spacing = 65; 
+                let backAng = player.aimAngle + PI; 
+                let sideAng = player.aimAngle + HALF_PI; 
+
+                let fX = player.x + (cos(backAng) * (row * spacing)) + (cos(sideAng) * (col * spacing));
+                let fY = player.y + (sin(backAng) * (row * spacing)) + (sin(sideAng) * (col * spacing));
+                
+                if (dist(this.x, this.y, fX, fY) > 50) {
+                    moveTargetX = fX; moveTargetY = fY; shouldMove = true;
+                    this.aimAngle = atan2(moveTargetY - this.y, moveTargetX - this.x);
+                } else {
+                    let dAng = player.aimAngle - this.aimAngle;
+                    while (dAng < -PI) dAng += TWO_PI;
+                    while (dAng > PI) dAng -= TWO_PI;
+                    this.aimAngle += dAng * 0.1;
+                }
+            }
+        }
+
+        if (shouldMove) {
+            let mAng = atan2(moveTargetY - this.y, moveTargetX - this.x);
+            let vx = cos(mAng) * 2.45 * spd;
+            let vy = sin(mAng) * 2.45 * spd;
+            let m = this.attemptMove(vx, vy); aDx = m.x; aDy = m.y;
+        }
+
+        let canSee = hasLOS(this.x, this.y, trg.x, trg.y);
+        if (isFighting && canSee && distToTarget < 600 && this.fireTimer <= 0 && this.ammo > 0 && this.reloadTimer <= 0) {
+            let sA = angToTarget;
+            if (random() > 0.25 && distToTarget > 80) sA = angToTarget + atan2(random(30, 60) * (random() > 0.5 ? 1 : -1), distToTarget);
+            this.aimAngle = sA;
+            this.fire(sA);
+        }
+        
+        if (aDx !== 0 || aDy !== 0) { this.isMoving = true; this.walkCycle += 0.2 * spd; this.moveAngle = atan2(aDy, aDx); } 
+        else { this.isMoving = false; }
+        this.armDrag = lerp(this.armDrag, this.isMoving ? 1 : 0, 0.15);
+        return; 
+    }
+
+        let trg = player;
+    
+    // --- MOVED OUTSIDE THROTTLE: Determine target every frame so they don't snap back ---
+    if (!this.isFriendly) {
+        if (this.aggroTarget && this.aggroTarget.hp > 0 && !this.aggroTarget.dead) {
+            trg = this.aggroTarget;
+        } else if (this.leader && !this.leader.dead && this.leader.hp > 0) {
+            trg = this.leader;
+        } else {
+            this.leader = null;
+        }
+    }
+
+    // SKIP FRAME UPDATES: Only calculate expensive AI logic once every 10 frames
+    if (frameCount % 10 === this.aiOffset) {
+        
+        // Decrement the timer here so it accurately counts down
+        if (this.aggroTarget) {
+            this.aggroTimer -= 10;
+            if (this.aggroTimer <= 0) this.aggroTarget = null;
+        }
+
+        this.cachedTargetDist = dist(this.x, this.y, trg.x, trg.y);
+        this.cachedCanSee = (this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL" || this.eType === "SAUCER" || this.eType === "SAUCER_RED") ? true : hasLOS(this.x, this.y, trg.x, trg.y);
+        this.cachedTargetAngle = atan2(trg.y - this.y, trg.x - this.x);
+
+        if (this.leader) {
+            this.cachedTargetAngle += random(-0.4, 0.4); 
+        }
+
+        if (this.cachedCanSee) {
+            this.lastKnownX = trg.x;
+            this.lastKnownY = trg.y;
+        }
+
+        if (nm0AmbushActive && !this.isFriendly) {
+            this.lastKnownX = trg.x;
+            this.lastKnownY = trg.y;
+            this.loseSightTimer = 1200; // Permanently lock the timer
+            this.state = "CHASE";
+        }
+    }
+
+    
+    let dToP = this.cachedTargetDist;
+    let canSee = this.cachedCanSee;
+    let iA = this.cachedTargetAngle; 
+    let inFOV = true;
+
+    if (ninjaSuitUnlocked && this.state === "PATROL" && !this.isFriendly) {
+        if (abs((iA - this.aimAngle + PI * 3) % TWO_PI - PI) > PI / 2) inFOV = false; 
+	}
+
+    if (canSee && inFOV && dToP < 600) { 
+        this.state = "CHASE"; this.loseSightTimer = 3500; // 20 Seconds
+    } 
+    else if (this.state === "CHASE") { 
+        this.loseSightTimer--; 
+        if (this.loseSightTimer <= 0) { 
+            this.state = "PATROL"; this.targetBuilding = getPatrolBuilding(); this.patrolTimer = 360; this.patrolCorner = floor(random(4)); 
+            this.lastKnownX = undefined;
+            this.lastKnownY = undefined;
+        } 
+    }
+
+    // ---- ROBOT ---------------------------------------------------------
+    // Its own loop rather than a branch inside CHASE: the machine has exactly
+    // two modes and neither of them is the human patrol-and-strafe. Placed
+    // after the sight cache so `canSee` is the real answer -- read before it,
+    // the machine had to assume it could always see and would happily wind up
+    // and fire a beam through a building.
+    if (this.eType === "ROBOT") {
+        const dR = dToP;
+        const aR = iA;
+
+        if (this.enraged) {
+            // Head gone. Runs the target down and detonates on a fuse it cannot
+            // stop, so the counterplay is distance, not damage.
+            this.aimAngle = aR;
+            this.selfDestruct--;
+            const m = this.attemptMove(cos(aR) * 3.9, sin(aR) * 3.9);
+            this.isMoving = (m.x !== 0 || m.y !== 0);
+            if (this.isMoving) { this.walkCycle += 0.42; this.moveAngle = aR; }
+            // Faster and louder the closer it gets to going off.
+            const t01 = 1 - Math.max(0, this.selfDestruct) / ROBOT_FUSE;
+            if (frameCount % Math.max(3, Math.round(11 - t01 * 8)) === 0) {
+                emit(this.x, this.y, 2, color(255, 120, 30), "FLECK");
+                if (t01 > 0.45) emit(this.x, this.y, 1, color(60), "SMOKE");
+            }
+            if (this.selfDestruct <= 0 && !this.dead) {
+                this.dead = true; this.hp = 0;
+                emit(this.x, this.y, 26, color(OIL_COL[0], OIL_COL[1], OIL_COL[2]), "OIL");
+                spawnSplatter(this.x, this.y, "BLOOD", color(OIL_COL[0], OIL_COL[1], OIL_COL[2]));
+                triggerExplosion(this.x, this.y, 190, false, false);
+                const ri = enemiesList.indexOf(this);
+                if (ri > -1) enemiesList.splice(ri, 1);
+            }
+            return;
+        }
+
+        if (this.fireCooldownR > 0) this.fireCooldownR--;
+        if (this.burstGap > 0) this.burstGap--;
+
+        // Loosing the two shots the charge bought.
+        if (this.burstLeft > 0) {
+            this.aimAngle = aR;
+            this.isMoving = false;
+            if (this.burstGap <= 0) {
+                const mx = this.x + cos(aR) * 34 - sin(aR) * 13;
+                const my = this.y + sin(aR) * 34 + cos(aR) * 13;
+                spawnBullet(mx, my, aR, false, "BODY", "ORANGE_BEAM", this);
+                emit(mx, my, 5, color(255, 170, 60), "MUZZLE", cos(aR) * 6, sin(aR) * 6);
+                sfx.shoot();
+                this.muzzleFlash = 3;
+                this.burstLeft--;
+                this.burstGap = ROBOT_BURST_GAP;
+                if (this.burstLeft <= 0) this.fireCooldownR = ROBOT_COOLDOWN;
+            }
+            return;
+        }
+
+        // Winding up. It holds its ground while charging: a two second wind-up
+        // that also walks at you is not a wind-up, it is a charge attack. Lose
+        // sight of the target and the charge is dumped.
+        if (this.chargeTimer > 0) {
+            if (!canSee) { this.chargeTimer = 0; this.fireCooldownR = 20; return; }
+            this.aimAngle = aR;
+            this.isMoving = false;
+            this.chargeTimer--;
+            if (frameCount % 4 === 0) {
+                const t01 = 1 - this.chargeTimer / ROBOT_CHARGE;
+                const mx = this.x + cos(aR) * 34 - sin(aR) * 13;
+                const my = this.y + sin(aR) * 34 + cos(aR) * 13;
+                emit(mx, my, 1, color(255, 150 + t01 * 90, 60), "FLECK");
+            }
+            if (this.chargeTimer <= 0) { this.burstLeft = ROBOT_BURST; this.burstGap = 0; }
+            return;
+        }
+
+        this.aimAngle = aR;
+        if (canSee && dR < 620 && this.fireCooldownR <= 0) {
+            this.chargeTimer = ROBOT_CHARGE;
+            this.isMoving = false;
+            return;
+        }
+        // Otherwise close the distance, or sidestep if it is already close.
+        let vxR, vyR;
+        if (dR > 380 || !canSee) { vxR = cos(aR) * 1.55; vyR = sin(aR) * 1.55; }
+        else { vxR = cos(aR + HALF_PI * this.strafeDir) * 1.15; vyR = sin(aR + HALF_PI * this.strafeDir) * 1.15; }
+        const mR = this.attemptMove(vxR, vyR);
+        if (mR.x === 0 && mR.y === 0) this.strafeDir = -this.strafeDir;
+        this.isMoving = (mR.x !== 0 || mR.y !== 0);
+        if (this.isMoving) { this.walkCycle += 0.2; this.moveAngle = atan2(mR.y, mR.x); }
+        // A holed chassis leaks whether it is moving or not.
+        if (this.hp <= ROBOT_OIL_AT && frameCount % 14 === 0) {
+            emit(this.x + random(-6, 6), this.y + random(-6, 6), 1,
+                 color(OIL_COL[0], OIL_COL[1], OIL_COL[2]), "OIL");
+        }
+        return;
+    }
+
+    if (this.state === "PATROL") { 
+        // Leashed to a post. Walks a beat around it and never leaves it, which
+        // is what makes an outpost garrison read as a garrison instead of as a
+        // patrol that happens to have started there.
+        if (this.postX !== undefined) {
+            const R = this.postR || 300;
+            const dHome = dist(this.x, this.y, this.postX, this.postY);
+            if (this.beatTimer === undefined || this.beatTimer <= 0 || dHome > R) {
+                // Pick a new mark inside the leash. Outside it, the mark is the
+                // post itself, so he walks back in.
+                this.beatTimer = floor(random(90, 220));
+                if (dHome > R) { this.beatX = this.postX; this.beatY = this.postY; }
+                else {
+                    const a = random(TWO_PI), rr = random(60, R * 0.85);
+                    this.beatX = this.postX + cos(a) * rr;
+                    this.beatY = this.postY + sin(a) * rr;
+                }
+            }
+            this.beatTimer--;
+            this.aimAngle = atan2(this.beatY - this.y, this.beatX - this.x);
+            const bm = this.attemptMove(cos(this.aimAngle) * 1.1 * spd, sin(this.aimAngle) * 1.1 * spd);
+            aDx = bm.x; aDy = bm.y;
+            if (dist(this.x, this.y, this.beatX, this.beatY) < 30 || (aDx === 0 && aDy === 0)) this.beatTimer = 0;
+            if (aDx !== 0 || aDy !== 0) { this.isMoving = true; this.walkCycle += 0.2; this.moveAngle = atan2(aDy, aDx); }
+            else this.isMoving = false;
+            this.armDrag = lerp(this.armDrag, this.isMoving ? 1 : 0, 0.15);
+            return;
+        }
+        // A checkpoint garrison walks the arterial to the next post and back
+        // rather than circling the nearest wall. Two waypoints and a leg flag:
+        // the road between two outposts is the patrol, and that is the whole
+        // structure the sector needed.
+        if (this.routeA && this.routeB) {
+            // Along the arterials, not across the blocks. Both posts sit on a
+            // chunk corner and the city's carriageways run down the chunk
+            // boundaries, so a route made of one horizontal leg and one vertical
+            // leg is a route made entirely of streets. Sent straight at the next
+            // post they simply walked into the side of a block and stopped --
+            // three of four never moved at all.
+            const dst = this.routeLeg ? this.routeA : this.routeB;
+            const src = this.routeLeg ? this.routeB : this.routeA;
+            let t;
+            if (Math.abs(this.y - src.y) > 130)      t = { x: this.x, y: src.y };   // back onto the arterial
+            else if (Math.abs(this.x - dst.x) > 130) t = { x: dst.x, y: src.y };    // run it to the turn
+            else                                     t = dst;                       // in down the cross street
+            this.aimAngle = atan2(t.y - this.y, t.x - this.x);
+            const vx = cos(this.aimAngle) * 1.25 * spd, vy = sin(this.aimAngle) * 1.25 * spd;
+            const m = this.attemptMove(vx, vy); aDx = m.x; aDy = m.y;
+            if (dist(this.x, this.y, dst.x, dst.y) < 220) { this.routeLeg = this.routeLeg ? 0 : 1; this.routeStuck = 0; }
+            // Walked into something and stopped: step off the line so the squad
+            // filters round a corner instead of piling into it. Wedged for long
+            // enough and it turns around rather than standing there for good.
+            if (aDx === 0 && aDy === 0) {
+                const side = (this.slideDir || 1);
+                const m2 = this.attemptMove(cos(this.aimAngle + side * HALF_PI) * 1.25 * spd,
+                                            sin(this.aimAngle + side * HALF_PI) * 1.25 * spd);
+                aDx = m2.x; aDy = m2.y;
+                if (aDx === 0 && aDy === 0) this.slideDir = -side;
+                this.routeStuck = (this.routeStuck || 0) + 1;
+                if (this.routeStuck > 150) { this.routeLeg = this.routeLeg ? 0 : 1; this.routeStuck = 0; }
+            } else this.routeStuck = 0;
+            if (aDx !== 0 || aDy !== 0) { this.isMoving = true; this.walkCycle += 0.2; this.moveAngle = atan2(aDy, aDx); }
+            else this.isMoving = false;
+            this.armDrag = lerp(this.armDrag, this.isMoving ? 1 : 0, 0.15);
+            return;
+        }
+        this.patrolTimer--; if (this.patrolTimer <= 0 || !this.targetBuilding) { this.targetBuilding = getPatrolBuilding(); this.patrolTimer = 360; this.patrolCorner = floor(random(4)); }
+        if (this.targetBuilding) {
+            let b = this.targetBuilding, c = [{ x: b.x - b.w / 2 - 40, y: b.y - b.h / 2 - 40 }, { x: b.x + b.w / 2 + 40, y: b.y - b.h / 2 - 40 }, { x: b.x + b.w / 2 + 40, y: b.y + b.h / 2 + 40 }, { x: b.x - b.w / 2 - 40, y: b.y + b.h / 2 + 40 }];
+            let t = c[this.patrolCorner]; this.aimAngle = atan2(t.y - this.y, t.x - this.x); let vx = cos(this.aimAngle) * 1.4 * spd, vy = sin(this.aimAngle) * 1.4 * spd; 
+            let m = this.attemptMove(vx, vy); aDx = m.x; aDy = m.y;
+            if (dist(this.x, this.y, t.x, t.y) < 15) { this.patrolCorner = (this.patrolCorner + 1) % 4; }
+        } else { this.aimAngle += 0.05; }
+    }
+    else if (this.state === "CHASE") {
+        let targetX = (canSee || nm0AmbushActive) ? trg.x : (this.lastKnownX !== undefined ? this.lastKnownX : trg.x);
+        let targetY = (canSee || nm0AmbushActive) ? trg.y : (this.lastKnownY !== undefined ? this.lastKnownY : trg.y);
+        let distToTarget = dist(this.x, this.y, targetX, targetY);
+        
+        iA = atan2(targetY - this.y, targetX - this.x); 
+        this.aimAngle = iA;
+
+        if (this.eType === "SNAIL_HYBRID") {
+            if (this.eyeBleedL > 0) { this.eyeBleedL--; if (this.eyeBleedL % 5 === 0) emit(this.x + cos(this.aimAngle)*15 - sin(this.aimAngle)*-35, this.y + sin(this.aimAngle)*15 + cos(this.aimAngle)*-35, 1, color(0, 100, 0), "BLOOD"); }
+            if (this.eyeBleedR > 0) { this.eyeBleedR--; if (this.eyeBleedR % 5 === 0) emit(this.x + cos(this.aimAngle)*15 - sin(this.aimAngle)*35, this.y + sin(this.aimAngle)*15 + cos(this.aimAngle)*35, 1, color(0, 100, 0), "BLOOD"); }
+            if (this.leftEye <= 0 && this.rightEye <= 0 && !this.enraged) { this.enraged = true; sfx.deathGrunt(); }
+
+            if (this.enraged) {
+                if (distToTarget > 20 || canSee) {
+                    let vx = cos(iA) * 3.5 * spd, vy = sin(iA) * 3.5 * spd; let m = this.attemptMove(vx, vy); aDx = m.x; aDy = m.y;
+                }
+                if (frameCount % 15 === 0) { spawnSplatter(this.x, this.y, "BLOOD", color(0, 100, 0)); emit(this.x, this.y, 3, color(0, 100, 0), "BLOOD"); }
+                if (dToP < 70 && trg.hp > 0 && !trg.dead) { trg.takeDamage(999); trg.dead = true; sfx.deathGrunt(); corpses.push(new Corpse(trg.x, trg.y, trg.moveAngle, trg.aimAngle, trg.shirtCol, trg.pantsCol, 13, 0, trg.decals, trg.currentWeapon, 0, "NORMAL", trg.bodyW, trg.bodyH)); if(trg.isPlayer) playerRespawnTimer = 90; }
+            } else {
+                if (canSee && dToP < 600) {
+                    if (this.burstCooldown > 0) { this.burstCooldown--; } 
+                    else if (this.fireTimer <= 0) {
+                        let tX_R = this.x + cos(this.aimAngle) * 70 - sin(this.aimAngle) * 10, tY_R = this.y + sin(this.aimAngle) * 70 + cos(this.aimAngle) * 10;
+                        let tX_L = this.x + cos(this.aimAngle) * 70 - sin(this.aimAngle) * -10, tY_L = this.y + sin(this.aimAngle) * 70 + cos(this.aimAngle) * -10;
+                        spawnBullet(tX_R, tY_R, iA, false, "BODY", "PINK_LASER", this); 
+                        spawnBullet(tX_L, tY_L, iA, false, "BODY", "PINK_LASER", this);
+                        sfx.shoot(); this.burstsFired++; if (this.burstsFired >= 3) { this.burstCooldown = 156; this.burstsFired = 0; } else { this.fireTimer = 30; }
+                    }
+                }
+                if (canSee || distToTarget > 20) {
+                    if (!canSee) {
+                        let vx = cos(iA) * 2.5 * spd, vy = sin(iA) * 2.5 * spd; let m = this.attemptMove(vx, vy); aDx = m.x; aDy = m.y;
+                    } else {
+                        let distErr = dToP - 300, approachX = cos(iA) * distErr * 0.02, approachY = sin(iA) * distErr * 0.02, strafeX = cos(iA + (PI / 2) * this.strafeDir) * 2.5, strafeY = sin(iA + (PI / 2) * this.strafeDir) * 2.5;
+                        let vx = (approachX + strafeX) * spd, vy = (approachY + strafeY) * spd; let m = this.attemptMove(vx, vy); aDx = m.x; aDy = m.y;
+                        if (frameCount % 120 === 0 && random() < 0.3) this.strafeDir *= -1; 
+                    }
+                }
+            }
+        } else if (this.eType === "BUG" || this.eType === "SNAIL") { 
+            if (this.eType === "SNAIL") {
+                // Snail Logic remains unchanged
+                if (this.isMoving && frameCount % 30 === 0) sludges.push(new SludgeZone(this.x, this.y, 20, 90)); 
+                if (dToP < 250 && this.fireTimer <= 0 && canSee) { grenades.push(new AcidSpit(this.x, this.y, trg.x, trg.y)); sfx.throwG(); this.fireTimer = 180; }
+                if (distToTarget > 210 || (!canSee && distToTarget > 20)) { let vx = cos(iA) * 6.0 * spd, vy = sin(iA) * 6.0 * spd; let m = this.attemptMove(vx, vy); aDx = m.x; aDy = m.y; }
+            } else if (this.eType === "BUG") {
+                let hitFence = false;
+                
+                // NEW FENCE EATING LOGIC
+                if (this.biteCooldown <= 0) {
+                    for (let j = buildings.length - 1; j >= 0; j--) {
+                        let b = buildings[j];
+                        if (b.isFence && b.hp !== undefined && b.hp > 0) {
+                            let hw = b.w/2 + 20, hh = b.h/2 + 20;
+                            // Check if the bug is pushing against a fence
+                            if (this.x > b.x - hw && this.x < b.x + hw && this.y > b.y - hh && this.y < b.y + hh) {
+                                b.hp -= 20; // 20 damage per bite per bug
+                                sfx.slash(); // Audible crunch
+                                this.biteCooldown = 30;
+                                hitFence = true;
+                                if (b.hp <= 0) {
+                                    triggerExplosion(b.x, b.y, 60, false, false); // Small explosive breakdown
+                                    buildings.splice(j, 1);
+                                }
+                                break;
+                            }
+                        }
+                    }
+                }
+                                // STANDARD BITE LOGIC (Only fires if not actively eating a fence)
+                if (!hitFence && distToTarget < 35 && this.biteCooldown <= 0) {  // <--- CHANGED dToP to distToTarget
+                    let dRes = trg.takeDamage(5); 
+                    if (dRes.blocked) { 
+                        emit(trg.x, trg.y, dRes.broken ? 15 : 8, color(0, 200, 255), "SPARK"); sfx.hitArmor(); 
+                    } else { 
+                        emit(trg.x, trg.y, 8, color(90, 0, 0), "BLOOD"); 
+                    }
+                    sfx.bite(); this.biteCooldown = 84; 
+                    if (trg.hp <= 0 && !trg.dead) { 
+                        trg.dead = true; sfx.deathGrunt(); 
+                        corpses.push(new Corpse(trg.x, trg.y, trg.moveAngle, trg.aimAngle, trg.shirtCol, trg.pantsCol, 0, 0, trg.decals, trg.currentWeapon, 0, "NORMAL", trg.bodyW, trg.bodyH)); 
+                        if(trg.isPlayer) playerRespawnTimer = 90; 
+                    }
+                } 
+
+                if (canSee || distToTarget > 20) {
+                    let vx = cos(iA) * 6.0 * spd, vy = sin(iA) * 6.0 * spd; let m = this.attemptMove(vx, vy); aDx = m.x; aDy = m.y; 
+                }
+            }
+        }
+
+        else if (this.eType === "SAUCER" || this.eType === "SAUCER_RED" || this.eType === "AERIAL") {
+           if (this.eType === "SAUCER" || this.eType === "AERIAL") {
+               if (canSee && dToP < 500 && this.fireTimer <= 0) { grenades.push(new Grenade(this.x, this.y, trg.x, trg.y, this.eType==="SAUCER")); sfx.throwG(); this.fireTimer = 160; }
+               if (distToTarget > 250 || (!canSee && distToTarget > 20)) { let vx = cos(iA) * 2.45 * spd, vy = sin(iA) * 2.45 * spd; this.x += vx; this.y += vy; aDx = vx; aDy = vy; }
+           } else if (this.eType === "SAUCER_RED") {
+               if (canSee && dToP < 600) {
+                   if (this.burstCooldown > 0) { this.burstCooldown--; } else if (this.fireTimer <= 0) { this.fire(iA); this.burstsFired++; if (this.burstsFired >= 3) { this.burstCooldown = 156; this.burstsFired = 0; } else { this.fireTimer = 30; } }
+               }
+               if (canSee || distToTarget > 20) {
+                   if (!canSee) {
+                       let vx = cos(iA) * 3.5 * spd, vy = sin(iA) * 3.5 * spd; this.x += vx; this.y += vy; aDx = vx; aDy = vy;
+                   } else {
+                       let distErr = dToP - 350, approachX = cos(iA) * distErr * 0.02, approachY = sin(iA) * distErr * 0.02, strafeX = cos(iA + (PI / 2) * this.strafeDir) * 3.5, strafeY = sin(iA + (PI / 2) * this.strafeDir) * 3.5;
+                       let vx = (approachX + strafeX) * spd, vy = (approachY + strafeY) * spd, maxSpd = 3.5 * spd, mag = dist(0, 0, vx, vy); if (mag > maxSpd) { vx = (vx / mag) * maxSpd; vy = (vy / mag) * maxSpd; }
+                       this.x += vx; this.y += vy; aDx = vx; aDy = vy;
+                       if (frameCount % 120 === 0 && random() < 0.3) this.strafeDir *= -1; 
+                   }
+               }
+           }
+        }
+        else if (this.eType === "MOLOTOV") { 
+            if (canSee && dToP < 500 && this.fireTimer <= 0) { grenades.push(new Molotov(this.x, this.y, trg.x, trg.y)); sfx.throwG(); this.fireTimer = 180; } 
+            if (distToTarget > 300 || (!canSee && distToTarget > 20)) { let vx = cos(iA) * 2.45 * spd, vy = sin(iA) * 2.45 * spd; let m = this.attemptMove(vx, vy); aDx = m.x; aDy = m.y; } 
+        }
+        else { 
+            if (typeof isHardMode !== 'undefined' && isHardMode) {
+                if (this.standStillTimer === undefined) { this.standStillTimer = 0; this.strafeTimer = 0; this.strafeDir = 1; }
+                let mAng = iA;
+                
+                if (this.eType === "NORMAL" || this.eType === "ARMORED_STANDARD" || this.eType === "FEMALE_PISTOL") {
+                    if (this.squadSlot === undefined) this.squadSlot = (Math.floor(this.x + this.y) % 7) - 3; 
+                    let baseAng = iA;
+                    let fX = targetX + cos(baseAng + HALF_PI) * (this.squadSlot * 75);
+                    let fY = targetY + sin(baseAng + HALF_PI) * (this.squadSlot * 75);
+                    mAng = atan2(fY - this.y, fX - this.x);
+                }
+
+                if (this.strafeTimer > 0) {
+                    this.strafeTimer--; let sAng = iA + (HALF_PI * this.strafeDir);
+                    let vx = cos(sAng) * 3.5 * spd, vy = sin(sAng) * 3.5 * spd;
+                    let m = this.attemptMove(vx, vy); aDx = m.x; aDy = m.y;
+                } else if (distToTarget > 350 || !canSee) { 
+                    if (distToTarget > 20) {
+                        let vx = cos(mAng) * 2.45 * spd, vy = sin(mAng) * 2.45 * spd; 
+                        let m = this.attemptMove(vx, vy); aDx = m.x; aDy = m.y; 
+                        this.standStillTimer = 0; 
+                    }
+                } else {
+                    if (this.eType === "NORMAL" || this.eType === "ARMORED_STANDARD" || this.eType === "FEMALE_PISTOL") {
+                        this.standStillTimer++;
+                        if (this.standStillTimer > 78) { 
+                            this.standStillTimer = 0; 
+                            this.strafeTimer = 45; 
+                            this.strafeDir = random() > 0.5 ? 1 : -1;
+                            this.squadSlot = (this.squadSlot + this.strafeDir); 
+                            if (this.squadSlot > 3) this.squadSlot = -3;
+                            if (this.squadSlot < -3) this.squadSlot = 3;
+                        }
+                    }
+                }
+
+                if (canSee && dToP < 700 && this.fireTimer <= 0 && this.ammo > 0 && this.reloadTimer <= 0) { 
+                    this.fire(iA); 
+                    this.strafeTimer = 0;
+                }
+                
+            } else {
+                if (distToTarget > 200 || (!canSee && distToTarget > 20)) { 
+                    let vx = cos(iA) * 2.45 * spd, vy = sin(iA) * 2.45 * spd; 
+                    let m = this.attemptMove(vx, vy); aDx = m.x; aDy = m.y; 
+                } 
+                if (canSee && dToP < 400 && this.fireTimer <= 0 && this.ammo > 0 && this.reloadTimer <= 0) { 
+                    if(this.eType === "ARMORED" && this.orbChargeTimer <= 0) { this.orbChargeTimer = 120; sfx.charge(); } 
+                    else if (this.eType !== "ARMORED") { 
+                        let sA = iA; 
+                        if (random() > 0.25 && dToP > 80) sA = iA + atan2(random(30, 60) * (random() > 0.5 ? 1 : -1), dToP); 
+                        this.aimAngle = sA; 
+                        this.fire(sA); 
+                    } 
+                } 
+            }
+        }
+    }
+    
+            if (aDx !== 0 || aDy !== 0) { 
+        this.isMoving = true; 
+        this.walkCycle += 0.2 * spd; 
+        this.moveAngle = atan2(aDy, aDx); 
+
+        // OVERRIDE: If actively evading a wall, force the body to turn and face the path
+        if (this.evadeTimer > 0 && this.state !== "STUNNED") {
+            this.aimAngle = this.moveAngle; // Lock the body rotation to the walking direction
+            this.fireTimer = max(this.fireTimer, 5); // Prevent shooting sideways while turning
+        }
+    } else { 
+        this.isMoving = false; 
+    } 
+    
+    this.armDrag = lerp(this.armDrag, this.isMoving ? 1 : 0, 0.15);
+} 
+
+
+
+
+
+
+
+        fire(sA) {
+    if (this.isPlayer) this.isArmed = true;
+    let aH = ((this.isPlayer || this.isFriendly) && headAimToggle) ? "HEAD" : "BODY", cd = (this.isPlayer || this.isFriendly) ? this.currentWeapon.fireCooldown : (this.currentWeapon.enemyCooldown || 48), bob = this.isMoving ? abs(sin(this.walkCycle)) * 2 : 0;
+    let cost = this.currentWeapon === WEAPONS.DUAL_SMG ? 2 : 1;
+    let bLX = 31, bLY = 8, bLX_L = 59, bLY_L = -17;
+    if (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { bLX = 47; bLY = 6; } else if (this.currentWeapon === WEAPONS.SMG || this.currentWeapon === WEAPONS.DUAL_SMG) { bLX = 38; bLY = 11; bLX_L = 38; bLY_L = -11; }
+    if (this.eType === "ALIEN_GATOR" || this.eType === "SNAIL_HYBRID") { bLX = 100; bLY = 19; } if (this.eType === "AERIAL_PISTOL") { bLX = 51; bLY = 16; }
+    
+    let tX = this.x + cos(this.aimAngle) * (bLX + bob) - sin(this.aimAngle) * bLY, tY = this.y + sin(this.aimAngle) * (bLX + bob) + cos(this.aimAngle) * bLY;
+    
+    if (this.eType === "ALIEN_GATOR") { spawnOrb(tX, tY, false, true); sfx.shoot(); this.fireTimer = 90; } 
+    else if (this.eType === "SAUCER_RED") {
+        let tX_R = this.x + cos(this.aimAngle) * 45 - sin(this.aimAngle) * 25, tY_R = this.y + sin(this.aimAngle) * 45 + cos(this.aimAngle) * 25;
+        let tX_L = this.x + cos(this.aimAngle) * 45 - sin(this.aimAngle) * -25, tY_L = this.y + sin(this.aimAngle) * 45 + cos(this.aimAngle) * -25;
+        spawnBullet(tX_R, tY_R, sA + random(-0.1, 0.1), false, "BODY", "RED_LASER", this); 
+        spawnBullet(tX_L, tY_L, sA + random(-0.1, 0.1), false, "BODY", "RED_LASER", this); sfx.shoot();
+    } else if (this.currentWeapon === WEAPONS.DUAL_SMG) {
+        let tX_L = this.x + cos(this.aimAngle) * (bLX_L + bob) - sin(this.aimAngle) * bLY_L, tY_L = this.y + sin(this.aimAngle) * (bLX_L + bob) + cos(this.aimAngle) * bLY_L;
+        let iP = this.isPlayer || this.isFriendly;
+        spawnBullet(tX, tY, sA + random(-this.currentWeapon.spread, this.currentWeapon.spread), iP, aH, this.currentWeapon, this);
+        spawnBullet(tX_L, tY_L, sA + random(-this.currentWeapon.spread, this.currentWeapon.spread), iP, aH, this.currentWeapon, this);
+        sfx.shoot(); 
+        
+        // EXCLUSIVE PLAYER SHAKE
+        if (this.isPlayer) screenShake = 3; 
+        
+        emit(tX, tY, 3, color(255, 200, 0), "MUZZLE", cos(sA) * 5, sin(sA) * 5); emit(tX_L, tY_L, 3, color(255, 200, 0), "MUZZLE", cos(sA) * 5, sin(sA) * 5); 
+    } else if (this.currentWeapon === WEAPONS.SHOTGUN) { 
+        let s = [-0.1275, -0.0425, 0.0425, 0.1275]; for (let i = 0; i < 4; i++) spawnBullet(tX, tY, sA + s[i], this.isPlayer || this.isFriendly, aH, this.currentWeapon, this); 
+        sfx.shotgun(); 
+        
+        // EXCLUSIVE PLAYER SHAKE
+        if (this.isPlayer) screenShake = 8; 
+        
+        emit(tX, tY, 6, color(255, 200, 0), "MUZZLE", cos(sA) * 8, sin(sA) * 8); 
+    } else { 
+        spawnBullet(tX, tY, sA + random(-this.currentWeapon.spread, this.currentWeapon.spread), this.isPlayer || this.isFriendly, aH, this.currentWeapon, this); 
+        sfx.shoot(); 
+        
+        // EXCLUSIVE PLAYER SHAKE
+        if (this.isPlayer && (this.currentWeapon === WEAPONS.SMG || this.currentWeapon === WEAPONS.ASSAULT_RIFLE)) screenShake = 2; 
+        
+        emit(tX, tY, 3, color(255, 200, 0), "MUZZLE", cos(sA) * 5, sin(sA) * 5); 
+    }
+    this.ammo = Math.max(0, this.ammo - cost); if (this.eType !== "SAUCER_RED" && this.eType !== "ALIEN_GATOR") this.fireTimer = cd; this.muzzleFlash = 3; 
+    if (this.ammo <= 0) { if (this.isPlayer || this.isFriendly) { this.triggerReload(); } else { this.reloadTimer = 90; } }
+  }
+
+
+
+  show() {
+    push(); translate(this.x, this.y);
+    // Standing higher up puts you nearer an overhead camera, so you read
+    // bigger. This is the whole of the relief illusion as far as figures are
+    // concerned -- it scales the shadow with the body, which is what keeps a
+    // man on the mine bench from looking like a man floating over the flat.
+    const _ez = elevRenderScale(this.x, this.y);
+    if (_ez !== 1) scale(_ez);
+// 1. Skeleton Flashing Animation (1.1 seconds)
+if (this.skeletonTimer > 0 && frameCount % 6 < 3) {
+    rotate(this.aimAngle);
+    stroke(255); strokeWeight(4); 
+    line(0, -12, 0, 12); // Spine
+    line(-8, -6, 8, -6); // Shoulders
+    line(-6, 12, -8, 20); // Legs
+    line(6, 12, 8, 20);
+    fill(255); noStroke(); ellipse(0, 0, 14, 16); // Skull
+    fill(0); ellipse(-3, -2, 4, 4); ellipse(3, -2, 4, 4); // Eye sockets
+    pop();
+    return; // Skip drawing the regular body
+}
+
+// 2. 1-Minute Ground Stun State
+if (this.stunTimer > 0 && this.skeletonTimer <= 0) {
+    rotate(this.aimAngle); // Fall over randomly
+    
+    let sOff = (currentLevel === 1 || currentLevel === 3) ? 15 : 10;
+    let sAlp = (currentLevel === 1 || currentLevel === 3) ? 45 : 80;
+    charShadowFill(sAlp);
+    ellipse(charShadowX(sOff), charShadowY(sOff), this.bodyW + 20, this.bodyH + 5); 
+
+    let lW = 18, lX = -18, lY1 = -10, lY2 = 2;
+
+    fill(this.pantsCol); noStroke();
+    rect(lX, lY1, lW, 8, 4);
+    rect(lX, lY2, lW, 8, 4);
+
+    fill(this.shirtCol);
+    ellipse(0, lY1 - 2, 20, 8); 
+    ellipse(0, lY2 + 2, 20, 8); 
+
+    fill(this.shirtCol);
+    ellipse(0, 0, this.bodyW, this.bodyH);
+
+    if (this.eType === "FEMALE_PISTOL") {
+        fill(this.shirtCol);
+        ellipse(4, -6, 12, 10); ellipse(4, 6, 12, 10);
+    }
+
+    let sK = color(235, 180, 140);
+    fill(sK); ellipse(12, 0, 11, 11);
+    if (this.eType === "FEMALE_PISTOL") {
+        fill(15); arc(12, 0, 12, 12, HALF_PI, PI + HALF_PI);
+    }
+
+    // Draw rotating stars by the head
+    for (let i = 0; i < 3; i++) {
+        let a = frameCount * 0.1 + (i * TWO_PI / 3);
+        fill(255, 255, 0); noStroke();
+        ellipse(15 + cos(a) * 15, sin(a) * 15, 4, 4); 
+    }
+
+    pop();
+    return; // Skip normal standing draw!
+} else if (this.stunTimer > 0) {
+    // Keep stars spinning during the standing non-flashing frames too!
+    for (let i = 0; i < 3; i++) {
+        let a = frameCount * 0.1 + (i * TWO_PI / 3);
+        fill(255, 255, 0); noStroke();
+        ellipse(cos(a) * 15, -25 + sin(a) * 15, 4, 4); 
+    }
+}
+
+
+    let sOff = (currentLevel === 1 || currentLevel === 3) ? 15 : 10;
+    let sAlp = (currentLevel === 1 || currentLevel === 3) ? 45 : 80;
+    charShadowFill(sAlp);
+
+    // Offset along the scene's one light vector, not down-and-right at 45
+    // degrees. Every prop, tree and building in a streamed biome throws along
+    // LIGHT_DX/DY; characters throwing somewhere else is what made them look
+    // pasted on top of the world rather than standing in it.
+    if (this.eType === "SAUCER" || this.eType === "SAUCER_RED") { ellipse(charShadowX(sOff * 2), charShadowY(sOff * 2), 80, 80); }
+    else if (this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL") { ellipse(charShadowX(sOff * 2), charShadowY(sOff * 2), this.bodyW, this.bodyH); }
+    else if (this.eType === "ARMORED" || this.eType === "ALIEN_GATOR" || this.eType === "SNAIL_HYBRID") { ellipse(charShadowX(sOff), charShadowY(sOff), this.bodyW * 0.8, this.bodyH); }
+    else { ellipse(charShadowX(sOff), charShadowY(sOff), this.bodyW + 5, this.bodyH + 5); }
+
+    if (this.muzzleFlash > 0 && this.reloadTimer <= 0) {
+        push();
+        let isHeavy = (this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER || this.eType === "SAUCER_RED");
+        let radius = isHeavy ? 180 : 100;
+        let maxAlpha = (this.muzzleFlash / 3) * (isHeavy ? 0.45 : 0.25); 
+        
+        translate(cos(this.aimAngle) * 20, sin(this.aimAngle) * 20);
+        
+        let ctx = drawingContext;
+        let grad = ctx.createRadialGradient(0, 0, 0, 0, 0, radius);
+        
+        grad.addColorStop(0, `rgba(255, 220, 50, ${maxAlpha})`);
+        grad.addColorStop(0.3, `rgba(255, 120, 0, ${maxAlpha * 0.6})`);
+        grad.addColorStop(1, 'rgba(255, 100, 0, 0)');
+        
+        ctx.fillStyle = grad;
+        noStroke();
+        ellipse(0, 0, radius * 2, radius * 2); 
+        pop();
+    }
+
+    if (this.eType === "SAUCER" || this.eType === "SAUCER_RED") { push(); rotate(this.aimAngle); fill(100); stroke(this.eType === "SAUCER_RED" ? color(200, 50, 50) : 150); strokeWeight(4); ellipse(0, 0, 80, 80); fill(this.eType === "SAUCER_RED" ? color(255, 50, 50) : color(150, 50, 200)); noStroke(); ellipse(0, 0, 40, 40); fill(80); rect(10, -35, 40, 16, 4); rect(10, 19, 40, 16, 4); if(this.eType === "SAUCER_RED") { fill(200, 20, 20); rect(40, -28, 15, 6); rect(40, 22, 15, 6); } pop(); pop(); return; }
+    if (this.eType === "BUG") { rotate(this.aimAngle); fill(70, 90, 50); ellipse(0, 0, this.bodyW, this.bodyH); fill(30); ellipse(8, 0, 10, 10); stroke(30); strokeWeight(2); line(-5, 0, -12, 12 + sin(frameCount * 0.5) * 5); line(-5, 0, -12, -12 - sin(frameCount * 0.5) * 5); line(5, 0, 12, 12 + cos(frameCount * 0.5) * 5); line(5, 0, 12, -12 - cos(frameCount * 0.5) * 5); noStroke(); for (let d of this.decals) { if (d.col) fill(d.col[0], d.col[1], d.col[2], d.col[3]); else fill(200, 230, 40, 220); ellipse(d.x, d.y, d.sz, d.sz); } pop(); return; }
+    if (this.eType === "SNAIL") { rotate(this.aimAngle); fill(20, 100, 20); ellipse(0, 0, this.bodyW + 10 + sin(frameCount*0.1)*5, this.bodyH); fill(50, 80, 40); ellipse(-5, 0, 24, 20); fill(30, 60, 20); ellipse(-5, 0, 16, 12); fill(30); ellipse(this.bodyW/2, -6, 8, 8); ellipse(this.bodyW/2, 6, 8, 8); stroke(20, 100, 20); strokeWeight(2); line(10, -4, this.bodyW/2, -6); line(10, 4, this.bodyW/2, 6); noStroke(); for (let d of this.decals) { if (d.col) fill(d.col[0], d.col[1], d.col[2], d.col[3]); else fill(20, 100, 20, 220); ellipse(d.x, d.y, d.sz, d.sz); } pop(); return; }
+    // --- NEW: RENDER COW MODEL ---
+    if (this.eType === "HORSE") {
+        // A horse carrying somebody is drawn by its rider, so the rider always
+        // lands on top of it whatever order the two happen to sit in the list.
+        if (this.rider && this.rider.hp > 0 && !this.rider.dead) { pop(); return; }
+        push(); rotate(this.aimAngle);
+        if (this.hitFlash > 0) this.hitFlash--;
+        drawHorseArt(this.coatCol, this.maneCol, this.walkCycle, this.isMoving,
+                     this.boltTimer > 0, this.sock);
+        pop();
+        pop();
+        return;
+    }
+
+    if (this.eType === "COW") {
+        push(); rotate(this.aimAngle);
+        
+        let swing = this.isMoving ? sin(this.walkCycle) * 6 : 0;
+        let bob = this.isMoving ? abs(sin(this.walkCycle)) * 1.5 : 0;
+        translate(bob, 0);
+
+        // Legs/Hooves (Dark Grey)
+        fill(30); noStroke();
+        rect(-15 + swing, -14, 6, 6, 2); // Back left
+        rect(12 - swing, -14, 6, 6, 2);  // Front left
+        rect(-15 - swing, 8, 6, 6, 2);   // Back right
+        rect(12 + swing, 8, 6, 6, 2);    // Front right
+
+        // Tail
+        stroke(30); strokeWeight(2);
+        line(-this.bodyW/2, 0, -this.bodyW/2 - 12 + (swing * 0.5), 0);
+        noStroke();
+
+        // Main Body (White)
+        if (this.hitFlash > 0) { this.hitFlash--; fill(255); } else fill(245);
+        ellipse(0, 0, this.bodyW, this.bodyH);
+
+        // Random Spots
+        for (let d of this.decals) {
+            fill(d.col[0], d.col[1], d.col[2], d.col[3]);
+            ellipse(d.x, d.y, d.sz, d.sz);
+        }
+
+        // Head setup
+        push();
+        translate(this.bodyW/2 + 4, 0);
+        let headBob = this.isMoving ? sin(this.walkCycle * 0.5) * 0.15 : 0;
+        rotate(headBob); // Head sways slightly as it walks
+
+        // Head Base
+        fill(245); ellipse(0, 0, 18, 16);
+        
+        // Snout (Pinkish)
+        fill(255, 170, 170); ellipse(7, 0, 10, 12);
+        
+        // Eyes
+        fill(15); ellipse(2, -5, 3, 3); ellipse(2, 5, 3, 3);
+        
+        // Ears & Horns
+        fill(245); ellipse(-3, -8, 6, 4); ellipse(-3, 8, 6, 4);
+        fill(210, 190, 150); ellipse(-5, -6, 3, 6); ellipse(-5, 6, 3, 6);
+        
+        pop(); // 1. Close head translate
+        pop(); // 2. Close cow body rotation
+        pop(); // 3. <--- THE MISSING POP: Closes the master character translate!
+        return; // Don't draw the stickman body underneath!
+    }
+
+    if (this.eType === "ROBOT") {
+        push();
+        rotate(this.aimAngle);
+        const gait = this.isMoving ? sin(this.walkCycle) : 0;
+        const step = gait * (this.enraged ? 13 : 9);
+        const bob  = this.isMoving ? abs(sin(this.walkCycle)) * (this.enraged ? 2.4 : 1.4) : 0;
+        const heat = this.enraged ? 1 : (this.chargeTimer > 0 ? 1 - this.chargeTimer / ROBOT_CHARGE : 0);
+        if (this.hitFlash > 0) this.hitFlash--;
+        const flash = this.hitFlash > 0;
+
+        // Legs: two struts swinging out of phase, no torso overlap.
+        noStroke();
+        fill(58, 63, 70);
+        rect(-6 + step, -16, 13, 9, 2);
+        rect(-6 - step, 7, 13, 9, 2);
+        fill(44, 48, 54);
+        rect(2 + step * 1.2, -17, 9, 11, 2);
+        rect(2 - step * 1.2, 6, 9, 11, 2);
+
+        translate(bob, 0);
+
+        // Torso: a wedge, apex forward and down. The whole point of the
+        // silhouette is that it is NOT the human oval -- from above it reads as
+        // a chevron pointing where it is going.
+        fill(flash ? color(255) : this.shirtCol);
+        beginShape();
+        vertex(20, 0); vertex(4, -16); vertex(-13, -12); vertex(-13, 12); vertex(4, 16);
+        endShape(CLOSE);
+        fill(flash ? color(255) : color(96, 103, 111));
+        beginShape();
+        vertex(15, 0); vertex(3, -11); vertex(-8, -8); vertex(-8, 8); vertex(3, 11);
+        endShape(CLOSE);
+        // Chest vent and a core that glows with the charge
+        fill(38, 42, 47);
+        rect(-5, -6, 11, 12, 2);
+        fill(255, 120 + heat * 110, 40, 90 + heat * 165);
+        ellipse(0, 0, 6 + heat * 5, 6 + heat * 5);
+        fill(30, 33, 37);
+        for (let k = -1; k <= 1; k++) rect(-11, k * 5 - 1.4, 4, 2.8);
+
+        // Left arm: a plain manipulator.
+        fill(70, 76, 84);
+        rect(2, -21 - gait * 2, 9, 8, 2);
+        fill(52, 57, 63); rect(9, -21 - gait * 2, 6, 8, 2);
+
+        // Right arm: the cannon. Barrel, sleeve, and a muzzle ring that opens up
+        // as the charge builds.
+        fill(70, 76, 84);
+        rect(0, 12 + gait * 2, 12, 10, 2);
+        fill(88, 95, 104); rect(11, 13 + gait * 2, 20, 8, 2);
+        fill(52, 57, 63);  rect(27, 12.5 + gait * 2, 8, 9, 2);
+        fill(this.trimCol || color(255, 146, 40));
+        rect(20, 14.5 + gait * 2, 3.5, 5, 1);
+
+        // The charge itself: an orb growing out of almost nothing to about the
+        // size of a man's head, with a halo and a bright core.
+        if (this.chargeTimer > 0 || this.burstLeft > 0) {
+            const t01 = this.burstLeft > 0 ? 1 : 1 - this.chargeTimer / ROBOT_CHARGE;
+            const e = t01 * t01;                       // slow start, hard finish
+            const r = 1.5 + e * 11.5;                  // ~13 across at full, a head
+            const mx = 34, my = 13 + gait * 2;
+            drawingContext.globalCompositeOperation = 'lighter';
+            fill(255, 110, 20, 26 + e * 60); ellipse(mx, my, r * 3.4, r * 3.4);
+            fill(255, 150, 45, 60 + e * 120); ellipse(mx, my, r * 2.0, r * 2.0);
+            fill(255, 214, 150, 120 + e * 135); ellipse(mx, my, r, r);
+            fill(255, 252, 240, 90 + e * 165); ellipse(mx, my, r * 0.45, r * 0.45);
+            drawingContext.globalCompositeOperation = 'source-over';
+        }
+
+        // Head: a sensor housing while it has one, a torn socket when it does
+        // not. Losing it is the state change, so it has to be visible at a
+        // glance from across the street.
+        if (!this.enraged) {
+            const hurt = 1 - Math.max(0, this.headHP) / ROBOT_HEAD_HP;
+            fill(flash ? color(255) : color(84, 90, 98));
+            ellipse(6, 0, 15, 14);
+            fill(28, 31, 35); ellipse(9, 0, 10, 9);
+            fill(255, 60 + heat * 120, 30, 190);
+            rect(10, -3.4, 3.4, 6.8, 1);
+            if (hurt > 0.45) { fill(20, 18, 17, 190); ellipse(4 - hurt * 2, hurt * 3, 5, 4); }
+        } else {
+            fill(46, 40, 36); ellipse(6, 0, 13, 12);
+            fill(16, 15, 14); ellipse(6, 0, 8, 7);
+            // Live wiring, and the fuse light going faster the closer it gets.
+            stroke(120, 126, 134); strokeWeight(1.2);
+            line(3, -4, 0, -8); line(8, 4, 11, 8); line(9, -4, 12, -7);
+            noStroke();
+            const t01 = 1 - Math.max(0, this.selfDestruct) / ROBOT_FUSE;
+            const blink = frameCount % Math.max(4, Math.round(20 - t01 * 16));
+            if (blink < 3) { fill(255, 70, 30, 230); ellipse(-4, 0, 9 + t01 * 6, 9 + t01 * 6); }
+        }
+
+        // Damage decals ride the chassis like everyone else's.
+        for (let d of this.decals) {
+            fill(d.col ? d.col[0] : 16, d.col ? d.col[1] : 15, d.col ? d.col[2] : 14, d.col ? d.col[3] : 230);
+            ellipse(d.x, d.y, d.sz, d.sz);
+        }
+
+        pop();
+        pop();
+        return;
+    }
+
+    if (this.eType === "SNAIL_HYBRID") { 
+        push(); rotate(this.aimAngle); let bob = this.isMoving ? sin(this.walkCycle)*5 : 0; translate(bob, 0); 
+        fill(173, 216, 230); ellipse(0, 0, this.bodyW * 0.7, this.bodyH * 0.7); 
+        if (!this.enraged) { fill(20, 100, 20); ellipse(15, 0, 40, 20); fill(50); rect(20, 10, 40, 15); fill(255, 105, 180); rect(55, 12, 10, 10); } 
+        else { fill(20, 100, 20); ellipse(25, -14, 35, 12); ellipse(25, 14, 35, 12); }
+        fill(20, 100, 20); ellipse(0, 0, 30, 30); 
+        if (!this.enraged) { fill(0); noStroke(); ellipse(12, 0, 8, 4); } 
+        else { fill(255); stroke(0); strokeWeight(1); rect(9, -6, 6, 12, 1); line(9, 0, 15, 0); line(12, -6, 12, 6); }
+        if (this.leftEye > 0) { stroke(20, 100, 20); strokeWeight(4); line(0, -10, 15, -35); fill(255); noStroke(); ellipse(15, -35, 25, 25); fill(0); ellipse(18, -35, 8, 8); } 
+        if (this.rightEye > 0) { stroke(20, 100, 20); strokeWeight(4); line(0, 10, 15, 35); fill(255); noStroke(); ellipse(15, 35, 25, 25); fill(0); ellipse(18, 35, 8, 8); } 
+        pop(); pop(); return; 
+    }
+
+    // A rider draws his own mount, under himself and before anything else he
+    // wears. Doing it here rather than from the horse guarantees the order --
+    // the man is always on top of the animal, whatever order the two sit in
+    // enemiesList -- and it means one horse can never be drawn twice.
+    if (this.mounted) {
+        push();
+        rotate(this.mountFacing !== undefined ? this.mountFacing : this.aimAngle);
+        // Drawn up a quarter. A horse is bigger than the man on it and the rider
+        // art is fixed, so this is where the size relationship gets set -- at
+        // parity the rider covered the whole barrel and it read as a man wearing
+        // a horse.
+        scale(1.26);
+        drawHorseArt(this.mountCoat, this.mountMane, this.mountWalk || 0,
+                     this.isMoving, true, this.mountSock);
+        drawHorseTack();
+        pop();
+    }
+
+    let lS = this.isMoving ? sin(this.walkCycle) * 12 : 0, bob = this.isMoving ? abs(sin(this.walkCycle)) * 2 : 0;
+    if (this.mounted) { lS *= 0.35; bob *= 0.4; }
+    if (this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL") { bob += sin(frameCount * 0.1) * 15; lS = 0; }
+    if (this.reloadTimer > 0) { let rP = 1 - (this.reloadTimer / 90); push(); noFill(); stroke(0, 200, 255, 150); strokeWeight(4); arc(0, 0, 50, 50, -PI / 2, -PI / 2 + (rP * TWO_PI)); pop(); bob += sin(frameCount * 0.5) * 3; }
+    if (this.eType === "ALIEN_GATOR") { 
+        push(); rotate(this.moveAngle); fill(this.pantsCol); noStroke(); rect(-30 + lS*3, -30, 54, 24, 12); rect(-30 - lS*3, 6, 54, 24, 12); pop(); 
+        push(); rotate(this.aimAngle); translate(bob*3, 0); fill(this.shirtCol); ellipse(0, 0, this.bodyW, this.bodyH); 
+        fill(30, 180, 30); ellipse(20, -42, 48, 24); ellipse(40, -42, 24, 24); fill(30, 180, 30); ellipse(45, 33, 75, 24); ellipse(75, 33, 30, 30); 
+        fill(40); rect(50, 8, 45, 12, 2); fill(20); rect(90, 6, 10, 16); fill(30, 180, 30); ellipse(0, 0, 33, 33); rect(0, -15, 60, 30, 10); fill(0); ellipse(20, -10, 5, 5); ellipse(20, 10, 5, 5); noStroke(); 
+        for (let d of this.decals) { if (d.col) fill(d.col[0], d.col[1], d.col[2], d.col[3]); else fill(90, 0, 0, 220); ellipse(d.x, d.y, d.sz, d.sz); } pop(); pop(); return; 
+    }
+// 1. AUTO-STATE TRANSITION MANAGER
+// ==========================================
+if (this.isPlayer) {
+    // FORCE UNARMED: Hide the gun whenever a melee swing is active
+    if (this.meleeTimer > 0) {
+        this.isArmed = false;
+    }
+    // FORCE ARMED: Immediately show the gun when firing
+    else if (this.muzzleFlash > 0|| rightStick.active) {
+        this.isArmed = true;
+    }
+}
+
+
+    
+
+
+     let angleDiff = abs((this.moveAngle - this.aimAngle + PI * 3) % TWO_PI - PI);
+    let isMovingBackward = this.isMoving && angleDiff > HALF_PI;
+    let isChemist = this.isPlayer && typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked;
+
+
+            if (isChemist) {
+        let sway = this.isMoving ? sin(frameCount * 0.2) * 0.2 : sin(frameCount * 0.05) * 0.05;
+        let localTail = this.isMoving ? (this.moveAngle - this.aimAngle) : 0;
+        
+        // --- 1. ALWAYS DRAW LAB COAT TAIL ---
+        push(); 
+        rotate(this.aimAngle); 
+        translate(bob, 0); 
+        rotate(localTail + sway + HALF_PI); 
+        fill(240); stroke(200); strokeWeight(1);
+        beginShape(); 
+        vertex(5, 0); vertex(10, 2); vertex(16, 25); vertex(8, 28); 
+        vertex(-8, 28); vertex(-16, 25); vertex(-10, 2); vertex(-5, 0); 
+        endShape(CLOSE); 
+        pop();
+        
+        // --- 2. ALWAYS CALCULATE TORSO TWIST & DRAW MAIN BODY ---
+        let torsoTwist = 0;
+
+        if (this.meleeTimer > 0 && !this.isArmed) {
+            let p = 1 - (this.meleeTimer / 20); 
+            let pp = sin(p * PI);
+            
+            if (this.meleePhase === 1 || this.meleePhase === 3) {
+                torsoTwist = radians(70) * pp; 
+            } 
+            else if (this.meleePhase === 2 || this.meleePhase === 4) {
+                torsoTwist = radians(-70) * pp; 
+            }
+        }
+
+        push();
+        rotate(this.aimAngle + torsoTwist); 
+        
+        // ---> [YOUR EXISTING BODY ELLIPSE/RECT DRAWING CODE GOES HERE] <---
+        
+        pop();
+
+        // --- 3. ONLY DRAW LEGS IF MOVING BACKWARD ---
+        if (isMovingBackward) {
+            let isBoxerStance = !this.isArmed && this.meleeTimer > 0;
+            let isBigBody = (this.bodyW >= 100);
+            let lW = isBigBody ? 40 : 18, lX = isBigBody ? -30 : -10;
+            let lY1 = isBigBody ? -10 : -10, lY2 = isBigBody ? 15 : 2;
+            
+            if (isBoxerStance) { lY1 -= 8; lY2 += 8; lX += 4; }
+            let swing = typeof lS !== 'undefined' ? lS : 0;
+
+            push(); 
+            rotate(this.moveAngle);
+            noStroke(); 
+            fill(this.pantsCol);
+            rect(lX + swing, lY1, lW, 8, 4); 
+            rect(lX - swing, lY2, lW, 8, 4);
+            pop();
+        }
+    } else {
+        // ... (Keep your standard non-chemist fallback here)
+
+        push(); rotate(this.moveAngle); noStroke(); fill(this.pantsCol); let lW = this.bodyW === 105 ? 40 : 18, lX = this.bodyW === 105 ? -30 : -10, lY1 = this.bodyW === 105 ? -10 : -10, lY2 = this.bodyW === 105 ? 15 : 2; rect(lX + lS, lY1, lW, 8, 4); rect(lX - lS, lY2, lW, 8, 4); pop();
+    }
+    push(); rotate(this.aimAngle); translate(bob, 0); 
+    
+    let bLX = 31, bLY = 8, bLX_L = 59, bLY_L = -17;
+    if (this.isArmed && this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { bLX = 47; bLY = 6; } 
+    else if (this.currentWeapon === WEAPONS.SMG || this.currentWeapon === WEAPONS.DUAL_SMG) { bLX = 38; bLY = 11; bLX_L = 38; bLY_L = -11; }
+    else if (this.isArmed && this.currentWeapon === WEAPONS.TASER) {
+        fill(255, 255, 0); stroke(10); strokeWeight(1); 
+        rect(15, 5, 14, 8, 2); fill(20); rect(18, 13, 6, 8); 
+    } 
+
+    if (this.eType === "AERIAL_PISTOL") { bLX = 51; bLY = 16; }
+
+    if (this.isPlayer && rightStick.active && this.reloadTimer <= 0 && this.meleeTimer <= 0) { 
+        stroke(255, 0, 0, rightStick.dist > 0.75 ? 200 : 50); strokeWeight(2); line(bLX, bLY, 800, bLY); 
+        if (this.currentWeapon === WEAPONS.DUAL_SMG) line(bLX_L, bLY_L, 800, bLY_L);
+    }
+    
+    if (this.isPlayer) {
+        if (this.shieldBurstTimer > 0) { push(); noFill(); stroke(0, 200, 255, this.shieldBurstTimer * 17); strokeWeight(3); let bSz = map(this.shieldBurstTimer, 15, 0, this.bodyW, this.bodyW + 50); ellipse(0, 0, bSz, bSz); pop(); }
+        if (this.shieldFlashTimer > 0) { push(); noFill(); stroke(0, 200, 255, this.shieldFlashTimer * 25); strokeWeight(3); ellipse(0, 0, this.bodyW + 8, this.bodyH + 8); pop(); }
+    }
+
+    if ((this.isPlayer && jetpackUnlocked) || this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL") { fill(80); rect(-18, -12, 12, 24, 3); fill(255, 100, 0); rect(-20, -8, 4, 16); }
+    if ((this.isPlayer || this.isMilitary) && typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked) { this.shirtCol = color(60, 100, 40); this.pantsCol = color(139, 115, 85); }
+    else if (this.isPlayer && typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) { this.shirtCol = color(255); this.pantsCol = color(15); } 
+    else if (this.isPlayer && ninjaSuitUnlocked) { this.shirtCol = color(20); this.pantsCol = color(15); }
+
+    noStroke(); 
+    if (this.hitFlash > 0) { this.hitFlash--; fill(255); } else { fill(this.shirtCol); }
+    ellipse(0, 0, this.bodyW, this.bodyH); 
+
+    // Male Farmer Overalls
+    if (this.eType === "FARMER_MALE") {
+        fill(this.pantsCol);
+        rect(-this.bodyW/2 + 2, -this.bodyH/2 + 8, this.bodyW - 4, this.bodyH - 8, 4);
+        rect(-this.bodyW/2 + 4, -this.bodyH/2 + 2, 4, 8); // left strap
+        rect(this.bodyW/2 - 8, -this.bodyH/2 + 2, 4, 8); // right strap
+    }
+
+    // --- DRY GULCH ATTIRE ---------------------------------------------
+    if (this.eType === "BANDIT") {
+        // Long duster over the shoulders, gunbelt, and a second holster. Same
+        // cut as a drover's rig, darker and with more of it.
+        fill(this.vestCol || color(58, 48, 44));
+        arc(-4, 0, this.bodyW + 5, this.bodyH + 3, HALF_PI, PI + HALF_PI, CHORD);
+        fill(44, 38, 36);
+        rect(-this.bodyW / 2 + 2, -this.bodyH / 2 + 8, this.bodyW - 4, this.bodyH - 10, 3);
+        fill(58, 42, 30); rect(-this.bodyW / 2 + 2, -3, this.bodyW - 4, 5, 1);
+        fill(188, 160, 84); rect(-1, -3, 4, 5);
+        fill(46, 34, 24); rect(-this.bodyW / 2 + 1, 5, 6, 9, 2);
+        rect(-this.bodyW / 2 + 1, -14, 6, 9, 2);
+    }
+    if (this.eType === "COWBOY" || this.eType === "COWGIRL") {
+        // Open leather vest over the shirt, laced up the front.
+        fill(this.vestCol || color(88, 62, 40));
+        arc(-4, 0, this.bodyW + 2, this.bodyH, HALF_PI, PI + HALF_PI, CHORD);
+        fill(this.pantsCol);
+        rect(-this.bodyW / 2 + 3, -this.bodyH / 2 + 9, this.bodyW - 6, this.bodyH - 11, 3);
+        // Gunbelt with a bright buckle, and the holster on the hip.
+        fill(64, 44, 28);
+        rect(-this.bodyW / 2 + 2, -3, this.bodyW - 4, 5, 1);
+        fill(214, 186, 96); rect(-1, -3, 4, 5);
+        fill(58, 40, 26); rect(-this.bodyW / 2 + 1, 5, 6, 9, 2);
+        // Neckerchief knotted at the throat.
+        fill(this.kerchiefCol || color(168, 54, 46));
+        triangle(this.bodyW / 2 - 5, -5, this.bodyW / 2 - 5, 5, this.bodyW / 2 - 12, 0);
+    }
+    if (this.eType === "LOCAL_COP") {
+        // Long wool coat, buttoned, with the tin star on the left breast.
+        fill(this.pantsCol);
+        rect(-this.bodyW / 2 + 2, -this.bodyH / 2 + 7, this.bodyW - 4, this.bodyH - 7, 3);
+        fill(this.shirtCol);
+        arc(-2, 0, this.bodyW, this.bodyH, HALF_PI, PI + HALF_PI, CHORD);
+        stroke(28, 30, 36); strokeWeight(1);
+        line(2, -this.bodyH / 2 + 3, 2, this.bodyH / 2 - 3);
+        noStroke();
+        fill(38, 40, 48);
+        ellipse(1, -6, 2.5, 2.5); ellipse(1, 0, 2.5, 2.5); ellipse(1, 6, 2.5, 2.5);
+        // Five-pointed star
+        push(); translate(4, -7); fill(226, 206, 118);
+        beginShape();
+        for (let i = 0; i < 10; i++) {
+            const a2 = -HALF_PI + i * PI / 5, rr = (i % 2 === 0) ? 4.4 : 1.9;
+            vertex(cos(a2) * rr, sin(a2) * rr);
+        }
+        endShape(CLOSE);
+        fill(160, 140, 60); ellipse(0, 0, 1.6, 1.6);
+        pop();
+        // Gunbelt with shell loops
+        fill(56, 40, 28); rect(-this.bodyW / 2 + 2, -2, this.bodyW - 4, 5, 1);
+        fill(190, 160, 70);
+        for (let i = -4; i <= 4; i += 4) rect(i, -2, 1.6, 5);
+    }
+    if (this.eType === "VILLAGER_MALE") {
+        // Homespun shirt with braces and a patched apron front.
+        fill(this.pantsCol);
+        rect(-this.bodyW / 2 + 2, -this.bodyH / 2 + 10, this.bodyW - 4, this.bodyH - 10, 3);
+        fill(72, 62, 48);
+        rect(-this.bodyW / 2 + 4, -this.bodyH / 2 + 2, 3.4, 10);
+        rect(this.bodyW / 2 - 7, -this.bodyH / 2 + 2, 3.4, 10);
+        fill(160, 148, 126, 190);
+        rect(-2, -6, 9, 12, 2);
+    }
+    if (this.eType === "VILLAGER_FEMALE") {
+        // Pinafore over the dress, with a lace collar.
+        fill(232, 226, 214, 210);
+        rect(-this.bodyW / 2 + 3, -4, this.bodyW - 6, this.bodyH / 2 + 2, 2);
+        fill(246, 242, 232);
+        arc(this.bodyW / 2 - 6, 0, 8, 12, HALF_PI, PI + HALF_PI, CHORD);
+    }
+
+    // Female Farmer Cutout
+    if (this.eType === "FARMER_FEMALE") {
+        fill(235, 180, 140);
+        ellipse(0, -6, 10, 12); // Skin cutout for cleavage
+    }
+
+    // --- FEMALE PISTOL & FARMER FEMALE BREASTS ---
+    if (this.eType === "FEMALE_PISTOL" || this.eType === "FARMER_FEMALE" ||
+        this.eType === "COWGIRL" || this.eType === "VILLAGER_FEMALE") {
+        if (this.hitFlash > 0) fill(255); else fill(this.shirtCol);
+        stroke(this.eType === "FARMER_FEMALE" ? 200 : 0); // Light crease for white dress
+        strokeWeight(1.5); 
+        ellipse(4, -5, 11, 9); 
+        ellipse(4, 5, 11, 9);  
+        
+        stroke(200, 150, 120, 100); 
+        strokeWeight(1); 
+        line(6, -2, 6, 2); 
+        noStroke();
+    }
+
+    if ((this.isPlayer && typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) || this.eType === "ALIEN_GATOR") {
+        if (this.eType === "ALIEN_GATOR") fill(30, 130, 30); else fill(240); 
+        noStroke(); arc(-5, 0, 14, 26, HALF_PI, PI+HALF_PI, CHORD); arc(5, 0, 14, 26, -HALF_PI, HALF_PI, CHORD);
+    }
+
+    if (this.eType === "ARMORED_STANDARD") { 
+        if (this.hitFlash > 0) fill(255); else fill(100); 
+        rect(-10, -12, 20, 24, 4); 
+    }
+    if (this.isPlayer && ninjaSuitUnlocked) { fill(100, 0, 200); rect(-this.bodyW/2, -4, this.bodyW, 8, 2); } 
+ 
+    noStroke(); for (let d of this.decals) { if (!d.isHead) { if (d.col) fill(d.col[0], d.col[1], d.col[2], d.col[3]); else fill(90, 0, 0, 220); ellipse(d.x, d.y, d.sz, d.sz); } }
+    
+    let lAY = this.eType === "ARMORED" ? -30 : -14, rAY = this.eType === "ARMORED" ? 30 : 11;
+    let a = 255; let f = this.fP || 0; let sK = this.isCharred ? color(50, 40, 40, a) : color(235, 180, 140, a);
+
+    const TOWNSFOLK = ["FARMER_MALE", "FARMER_FEMALE", "COWBOY", "COWGIRL",
+                       "LOCAL_COP", "VILLAGER_MALE", "VILLAGER_FEMALE"];
+    let isNeutralFarmer = this.isNeutral && TOWNSFOLK.indexOf(this.eType) !== -1;
+
+    // --- NEUTRAL ARM SWING OVERRIDE ---
+        if (isNeutralFarmer) {
+        let swing = this.isMoving ? sin(this.walkCycle) : 0;
+        let lArmSwing = -swing; 
+        let rArmSwing = swing;  
+        let armLY = -14; 
+        let armRY = 11;  
+        
+        // Sleeves
+        fill(this.shirtCol); 
+        ellipse(lArmSwing * 4, armLY, 16, 9);
+        ellipse(rArmSwing * 4, armRY, 16, 9);
+
+        // Hands. Empty on purpose: a townsman at ease has his gun in the
+        // holster drawn on his hip, not in his fist.
+        fill(235, 180, 140);
+        ellipse(lArmSwing * 14, armLY, 8, 8);
+        ellipse(rArmSwing * 14, armRY, 8, 8);
+
+        // Falls through to the shared head-and-close section below, which is
+        // where the hat, the head decals and this method's two closing pop()s
+        // live. This arm used to be a dead end: it drew sleeves and hands and
+        // then stopped, so a neutral townsperson had no head at all and the two
+        // transforms show() had opened were never closed. That second part was
+        // the drifting-buildings bug; this is the missing heads.
+    } else {
+                // ---> DEFINE SWORD STATE HERE <---
+        let usingSword = (this.isPlayer && typeof swordPickedUp !== 'undefined' && swordPickedUp && window.swordEquipped !== false);
+
+        // --- STANDARD WEAPON & LEFT ARM LOGIC ---
+        // THE FIX 1: We ONLY draw unarmed/sword arms if we are strictly !this.isArmed
+               if (this.isPlayer && !this.isArmed) {
+            let lSy = -14; // Left shoulder base Y
+            let rSy = 11;  // Right shoulder base Y
+
+            if (this.meleeTimer <= 0) {
+                // --- IDLE / WALKING ARMS ---
+                let swing = (typeof lS !== 'undefined') ? (lS / 12) : 0;
+                let lArmSwing = -swing;
+                let rArmSwing = swing;
+
+                // 1. ALWAYS draw the sleeves so the arm swing is preserved
+                fill(this.shirtCol);
+                ellipse(lArmSwing * 4, lSy, 16, 9);
+                ellipse(rArmSwing * 4, rSy, 16, 9);
+
+                // 2. Depth Layering Thresholds
+                let frontThreshold = 0.01; 
+                let backThreshold = -0.45; // TUNE THIS: A lower negative (e.g., -0.5) makes the hand 
+                                           // stay hidden longer before peeking out the back.
+
+                // --- LEFT HAND ---
+                // Visible when swinging forward OR when swung far enough back to clear the torso
+                // --- LEFT HAND ---
+// --- LEFT HAND ---
+if (lArmSwing > frontThreshold || lArmSwing < backThreshold) {
+    
+    // 1. Check if it's the Player AND wearing the Chemist suit
+    if (this.isPlayer && isChemist) {
+        // DRAW CANNON (Grey)
+        fill(80); 
+        rect((lArmSwing * 14) - 4, lSy - 4, 16, 8, 2); 
+        fill(0, 255, 200); 
+        ellipse((lArmSwing * 14) + 12, lSy, 6, 8);
+    } 
+    // 2. IMPORTANT: Everyone else gets the skin color
+    else {
+        fill(235, 180, 140); // This resets the color for all enemies
+        ellipse(lArmSwing * 14, lSy, 8, 8);
+    }
+}
+
+
+
+
+                // --- RIGHT HAND & SWORD ---
+                // Visible when swinging forward OR when swung far enough back to clear the torso
+                if (rArmSwing > frontThreshold || rArmSwing < backThreshold) {
+                    fill(235, 180, 140);
+                    ellipse(rArmSwing * 14, rSy, 8, 8);
+
+                    if (usingSword) {
+    push();
+    translate(rArmSwing * 14, rSy);
+    rotate(PI / 6);          // adjust until it looks right
+    fill(120);                // blade
+    rect(0, -2, 45, 4, 2);
+
+    fill(90, 60, 30);         // handle
+    rect(-8, -2, 8, 4);
+
+    fill(180, 150, 40);       // guard
+    rect(-2, -5, 3, 10, 2);
+    pop();
+}
+                }
+
+            } else {
+                // --- SWORD VS PUNCH COMBO ---
+                // (Keep all your existing combo logic exactly the same below here)
+
+                // --- SWORD VS PUNCH COMBO ---
+                if (usingSword) {
+                    if (this.meleePhase === 4) {
+                        let p = 1 - (this.meleeTimer / 30); let sA = PI - (PI * p * 1.25);
+                        push(); rotate(sA); fill(this.shirtCol); ellipse(15, -10, 16, 8); fill(235, 180, 140); ellipse(25, -10, 8, 8); fill(200); rect(25, -12, 60, 6, 2); pop(); 
+                        
+                        push(); noFill(); stroke(255, 100, 0, 255 * (1 - p)); strokeWeight(8); line(15, 0, 15 + (p * 60), 0); pop();
+                    } else {
+                        let p = 1 - (this.meleeTimer / 20); let sA = PI / 2 - (PI * p); if (this.isBackhand) sA = -PI / 2 + (PI * p); 
+                        push(); rotate(sA); if (this.isBackhand) scale(1, -1); fill(this.shirtCol); ellipse(15, -10, 16, 8); fill(235, 180, 140); ellipse(25, -10, 8, 8); fill(200); rect(25, -12, 45, 4, 2); pop(); 
+                        
+                        push(); noFill(); stroke(255, 150, 0, 255 * (1 - p)); strokeWeight(6); 
+                        if (this.isBackhand) { arc(0, 0, 90, 90, -PI/2, -PI/2 + (PI * p)); } 
+                        else { arc(0, 0, 90, 90, PI/2 - (PI * p), PI/2); }
+                        pop(); 
+                    }
+                } else {
+                    // --- 4-PUNCH COMBO ARMS ---
+                    let p = 1 - (this.meleeTimer / 20); 
+                    let pp = sin(p * PI);
+
+                    let tTwist = 0;
+                    if (this.meleePhase === 1 || this.meleePhase === 3) tTwist = radians(70) * pp;
+                    else if (this.meleePhase === 2 || this.meleePhase === 4) tTwist = radians(-70) * pp;
+
+                    push();
+                    if (this.meleePhase === 3) {
+                        translate(0, lSy); rotate(-tTwist + radians(20) * pp); fill(this.shirtCol); ellipse(7 * pp, 0, 14 * pp + 2, 8); translate(14 * pp, 0); rotate(radians(90) * pp); ellipse(6 * pp, 0, 12 * pp + 2, 8); fill(235, 180, 140); ellipse(12 * pp, 0, 8, 8); 
+                    } else {
+                        let lFx = 0, lFy = lSy; if (this.meleePhase === 1) { lFx = 20 * pp; lFy = lSy; }
+                        let dx = lFx - 0, dy = lFy - lSy; let d = sqrt(dx*dx + dy*dy); let ang = atan2(dy, dx);
+                        translate(0, lSy); rotate(ang); fill(this.shirtCol); ellipse(d/2, 0, d + 4, 8); fill(235, 180, 140); ellipse(d, 0, 8, 8);       
+                    }
+                    pop();
+
+                    push();
+                    if (this.meleePhase === 4) {
+                        translate(0, rSy); rotate(-tTwist - radians(20) * pp); fill(this.shirtCol); ellipse(7 * pp, 0, 14 * pp + 2, 8); translate(14 * pp, 0); rotate(radians(-90) * pp); ellipse(6 * pp, 0, 12 * pp + 2, 8); fill(235, 180, 140); ellipse(12 * pp, 0, 8, 8);
+                    } else {
+                        let rFx = 0, rFy = rSy; if (this.meleePhase === 2) { rFx = 24 * pp; rFy = rSy - (4 * pp); }
+                        let dx = rFx - 0, dy = rFy - rSy; let d = sqrt(dx*dx + dy*dy); let ang = atan2(dy, dx);
+                        translate(0, rSy); rotate(ang); fill(this.shirtCol); ellipse(d/2, 0, d + 4, 8); fill(235, 180, 140); ellipse(d, 0, 8, 8);
+                    }
+                    pop();
+                }
+            }
+        }
+        else if (this.reloadTimer > 0) {
+            let rP = 1 - (this.reloadTimer / 90);
+            if (this.isPlayer && this.currentWeapon === WEAPONS.DUAL_SMG) { fill(this.shirtCol); ellipse(15, -11, 25, 8); fill(235, 180, 140); ellipse(25, -11, 8, 8); fill(40); rect(16, -15, 24, 8, 2); rect(20, -23, 6, 12); } 
+            else { let clipX = 2 + sin(rP * PI) * 10, clipY = 10; fill(this.shirtCol); ellipse(0, clipY - 3, 16, 8); fill(235, 180, 140); ellipse(clipX, clipY, 8, 8); }
+        } 
+        else if (this.isArmed || !this.isPlayer) { 
+            let shoulderX = lerp(0, -5, this.armDrag), shoulderY = lerp(lAY, lAY + 3, this.armDrag);
+            let isAimingCannon = this.isPlayer && typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked && ((typeof cannonInputHeld !== 'undefined' && cannonInputHeld) || this.cannonCharge > 0 || this.cannonFireDelay > 35);
+            let isThrowing = this.isPlayer && (typeof isCooking !== 'undefined' && (isCooking || this.throwAnimTimer > 0));
+
+            if (isThrowing) {
+                push(); translate(shoulderX, shoulderY); 
+                let armAngle = isCooking ? PI * 0.8 : -PI * 0.1;
+                let elbowAngle = isCooking ? HALF_PI : 0;
+                rotate(armAngle);
+                fill(this.shirtCol); ellipse(6, 0, 14, 8); 
+                translate(10, 0); rotate(elbowAngle); fill(this.shirtCol); ellipse(4, 0, 12, 8); 
+                if (this.isPlayer && typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) fill(180, 180, 190); else fill(235, 180, 140);
+                ellipse(10, 0, 8, 8); 
+                if (isCooking) { 
+                    if (typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) { 
+                        fill(150, 200, 255, 200); stroke(200); strokeWeight(1); beginShape(); vertex(9, 4); vertex(15, 4); vertex(13, -2); vertex(11, -2); endShape(CLOSE); fill(200); rect(11, -4, 2, 2); noStroke(); 
+                    } else { fill(40, 120, 40); ellipse(12, 0, 8, 10); }
+                } 
+                pop();
+            } else if (isAimingCannon) { 
+                push(); translate(shoulderX, shoulderY); rotate(-0.15); fill(240); ellipse(16, 0, 24, 10); fill(180, 180, 190); ellipse(26, 0, 9, 9); 
+                if (this.cannonCharge > 0 || (typeof cannonInputHeld !== 'undefined' && cannonInputHeld)) {
+                    let cSz = 8 + min(20, this.cannonCharge / 10); 
+                    fill(255, 255, 0, 150 + sin(frameCount)*100); ellipse(32, 0, cSz, cSz); fill(255); ellipse(32, 0, cSz/2, cSz/2); 
+                    if (frameCount % 3 === 0) {
+                        let sX = this.x + cos(this.aimAngle)*32 - sin(this.aimAngle)*-19;
+                        let sY = this.y + sin(this.aimAngle)*32 + cos(this.aimAngle)*-19;
+                        emit(sX, sY, 1, color(255, 255, 0), "SPARK");
+                    }
+                }
+                pop();
+            } else if (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { 
+                push(); translate(shoulderX, shoulderY); rotate(0.52); fill(this.shirtCol); ellipse(16, 0, 32, 8); 
+                if (this.isPlayer && typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) fill(180, 180, 190); else fill(235, 180, 140);
+                ellipse(32, 0, 8, 8); pop();
+            } else if (this.currentWeapon === WEAPONS.DUAL_SMG) {
+                fill(this.shirtCol); ellipse(15, shoulderY, 25, 8); 
+                if (this.isPlayer && typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) fill(180, 180, 190); else fill(235, 180, 140);
+                ellipse(25, shoulderY, 8, 8); 
+            } else { 
+                let handX = lerp(8, -12, this.armDrag); fill(this.shirtCol); ellipse(shoulderX, shoulderY, 16, 8); 
+                if (this.isPlayer && typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) fill(180, 180, 190); else fill(235, 180, 140);
+                ellipse(handX, shoulderY, 8, 8); 
+            }
+        }
+                
+                // --- WEAPON & RIGHT ARM RENDERING LOGIC ---
+        // THE FIX 3: ONLY run this if Armed or an Enemy. Removes the duplicate unarmed drawings.
+               // --- WEAPON & RIGHT ARM RENDERING LOGIC ---
+        // THE FIX 3: ONLY run this if Armed or an Enemy. Removes the duplicate unarmed drawings.
+        if (this.meleeTimer <= 0 && (this.isArmed || !this.isPlayer)) {
+            let skinC = (typeof chemistSuitUnlocked === 'undefined' && chemistSuitUnlocked) ? color(180, 180, 190) : color(235, 180, 140);
+            
+            // 1. DRAW RIGHT ARM & HAND FIRST
+            // This ensures the arm is painted under the gun
+            let rArmY = rAY, rHandX = 15, rSleeveX = 5;
+            if (this.currentWeapon === WEAPONS.SMG || this.currentWeapon === WEAPONS.DUAL_SMG) { rHandX = 25; rSleeveX = 15; } 
+            else if (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { rHandX = 8; rSleeveX = -1; }
+            
+            fill(this.shirtCol);
+            ellipse(rSleeveX, rArmY, 25, 8); // Paints the sleeve on the canvas first
+            fill(skinC);
+            ellipse(rHandX, rArmY, 8, 8);    // Paints the hand on the canvas next
+
+            // 2. DRAW WEAPONS SECOND
+            // This paints the guns on top of the newly drawn hand
+            if (this.eType === "MOLOTOV") { 
+                fill(30, 120, 30); rect(16, 7, 8, 16, 2); fill(255, 150, 0); rect(18, 3, 4, 4); 
+            } 
+            else if (this.eType !== "AERIAL" && this.eType !== "AERIAL_PISTOL" && !this.isUnarmed) { 
+                let isThrowing = this.isPlayer && (typeof isCooking !== 'undefined' && (isCooking || this.throwAnimTimer > 0));
+
+                if (this.currentWeapon === WEAPONS.SMG || this.currentWeapon === WEAPONS.DUAL_SMG) { fill(40); rect(16, 7, 24, 8, 2); rect(20, 15, 6, 12); } 
+                else if (this.currentWeapon === WEAPONS.ASSAULT_RIFLE) { fill(40); rect(5, 4, 42, 4, 1); fill(139, 69, 19); rect(15, 3, 12, 6, 1); rect(0, 3, 8, 6, 1); } 
+                else if (this.currentWeapon === WEAPONS.SHOTGUN) { fill(30); rect(5, 4, 40, 5, 1); fill(15); rect(20, 3, 14, 7, 1); fill(50); rect(5, 3, 12, 7, 2); } 
+                else if (this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { fill(50, 70, 50); rect(5, 4, 45, 6, 2); fill(30); rect(20, 2, 10, 10, 1); } 
+                // Silver magnum: walnut grip, fluted cylinder, long bright
+                // barrel with a bead sight. Without a case here it fell through
+                // to the generic stub below and every cowboy held an anonymous
+                // black brick instead of the revolver he is actually firing.
+                else if (this.currentWeapon === WEAPONS.REVOLVER) {
+                    fill(86, 56, 34); rect(9, 8, 8, 9, 2);            // grip
+                    fill(188, 192, 200); rect(13, 4, 12, 7, 1);       // frame
+                    fill(152, 158, 166); ellipse(19, 7.5, 8, 8);      // cylinder
+                    stroke(120, 126, 134); strokeWeight(0.8);
+                    line(16, 7.5, 22, 7.5); noStroke();
+                    fill(214, 218, 226); rect(24, 5.5, 15, 4, 1);     // barrel
+                    fill(240, 244, 250); rect(24, 5.5, 15, 1.4);      // top rib
+                    fill(110, 116, 124); rect(37.5, 5, 2, 5);         // muzzle
+                    fill(230, 235, 242); ellipse(36, 4.6, 2, 2);      // bead sight
+                }
+                // Coach gun: sawn double-barrel over a walnut stock.
+                else if (this.currentWeapon === WEAPONS.COACH_GUN) {
+                    fill(84, 56, 32); rect(4, 5, 14, 8, 2);           // stock
+                    fill(120, 82, 46); rect(16, 4, 8, 9, 1);          // receiver
+                    fill(58, 60, 66); rect(23, 3.5, 22, 3.4, 1);      // upper barrel
+                    fill(48, 50, 56); rect(23, 7.4, 22, 3.4, 1);      // lower barrel
+                    fill(150, 120, 70); rect(21, 3.5, 2.5, 7.3);      // breech face
+                    fill(28, 30, 34); rect(44, 3.5, 1.6, 7.3);        // muzzles
+                }
+                else { fill(40); rect(15, 5, 16, 6, 2); } 
+                
+                if (this.currentWeapon === WEAPONS.DUAL_SMG && !isThrowing) {
+                    fill(40); rect(16, -15, 24, 8, 2); rect(20, -23, 6, 12);
+                }
+            } 
+            else if (this.eType === "AERIAL_PISTOL") { 
+                fill(40); rect(35, 13, 16, 6, 2); 
+            }
+        }
+
+
+    
+
+ 
+ 
+    if (this.muzzleFlash > 0 && this.reloadTimer <= 0) { 
+        push(); translate(bLX, bLY); fill(255, 200, 0, 200); noStroke(); beginShape(); vertex(0, -3); vertex(15 + random(10), -8); vertex(20 + random(15), 0); vertex(15 + random(10), 8); vertex(0, 3); endShape(CLOSE); pop(); 
+        let isThrowing = this.isPlayer && (typeof isCooking !== 'undefined' && (isCooking || this.throwAnimTimer > 0));
+        if (this.currentWeapon === WEAPONS.DUAL_SMG && !isThrowing) { push(); translate(bLX_L, bLY_L); fill(255, 200, 0, 200); noStroke(); beginShape(); vertex(0, -3); vertex(15 + random(10), -8); vertex(20 + random(15), 0); vertex(15 + random(10), 8); vertex(0, 3); endShape(CLOSE); pop(); }
+    }
+    
+    }
+
+    // ---- SHARED: head, hat, head decals, and the closing transforms ----
+    // Everything from here down is common to both arms above. It used to sit
+    // inside the armed arm, which is why a neutral citizen came out headless
+    // and why only the ones you had already angered got their faces back.
+    let hX = 0, hY = 0;
+   if (this.isArmed && (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) && this.reloadTimer <= 0 && this.meleeTimer <= 0 && !this.dead) { hX = 3; hY = 4; }
+
+    
+        // --- FEMALE PISTOL HAIR / NORMAL HEAD ---
+    if (this.isPlayer && typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked) {
+        fill(235, 180, 140); ellipse(hX, hY, 11, 11);
+        push(); translate(hX, hY); rotate(-HALF_PI); fill(40, 80, 40); arc(0, -1, 14, 14, PI, TWO_PI); pop(); 
+        push(); translate(hX, hY); rotate(radians(33)); fill(80, 50, 20); rect(4, -1, 8, 3); fill(255, 100, 0); ellipse(12, 0.5, 2, 2); pop(); 
+    } else if (this.eType === "MILITARY_NEUTRAL" || this.eType === "NM0_GREY_FATIGUE" || (this.isMilitary && typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked)) {
+        fill(235, 180, 140); ellipse(hX, hY, 11, 11);
+        push(); translate(hX, hY); rotate(-HALF_PI); 
+        
+        if (this.isMilitary) fill(40, 80, 40); // Player's green helmet
+        else if (this.eType === "NM0_GREY_FATIGUE") fill(170, 175, 180); // Grey helmet
+        else fill(190, 170, 130); // Neutral tan helmet
+        
+        stroke(0); strokeWeight(1.5); 
+        arc(0, -1, 14, 14, PI, TWO_PI, CHORD); 
+        pop(); 
+    
+ 
+    } else if (this.isPlayer && ninjaSuitUnlocked) {
+
+
+        fill(235, 180, 140); ellipse(hX, hY, 11, 11); push(); translate(hX, hY); fill(15); ellipse(0, 0, 12, 12); fill(240); arc(0, 0, 12, 12, -HALF_PI, HALF_PI); fill(235, 180, 140); rect(1, -3, 3, 6, 1); fill(0); ellipse(2, -.5, 1.5, 1.5); ellipse(2, 1.5, 1.5, 1.5); pop();
+        } else if (this.eType === "FEMALE_PISTOL") {
+        fill(235, 180, 140); ellipse(hX, hY, 11, 11); 
+        fill(15); arc(hX, hY, 12, 12, HALF_PI, PI + HALF_PI);
+        push(); translate(hX - 5, hY); rotate(radians(this.isMoving ? sin(frameCount * 0.3) * 15 : 0)); ellipse(-6, 0, 12, 6); pop();
+    } else if (this.eType === "NM0_ROOKIE" || this.eType === "NM0_ROOKIE_F") {
+        // Bare head. No helmet is the point -- against a sector full of
+        // helmeted regulars and armoured machines, an uncovered head reads as
+        // "new" from across the street, and it is where you shoot him.
+        fill(235, 180, 140); ellipse(hX, hY, 11, 11);
+        if (this.eType === "NM0_ROOKIE_F") {
+            fill(64, 46, 32); arc(hX, hY, 12, 12, HALF_PI, PI + HALF_PI);
+            push(); translate(hX - 5, hY);
+            rotate(radians(this.isMoving ? sin(frameCount * 0.3) * 15 : 0));
+            ellipse(-6, 0, 12, 6); pop();
+        } else {
+            fill(58, 44, 32); arc(hX, hY, 11.5, 11.5, PI + 0.5, TWO_PI - 0.5);
+        }
+        // Recruit's collar flash, so the blue reads even at a glance.
+        fill(this.shirtCol); ellipse(hX - 6.5, hY, 5, 7);
+    } else if (this.eType === "BANDIT") {
+        fill(214, 168, 132); ellipse(hX, hY, 11, 11);
+        push(); translate(hX, hY);
+        // Bandana pulled up over the nose, drawn before the hat so the brim
+        // overlaps it the way it would.
+        fill(this.kerchiefCol || color(124, 40, 36));
+        arc(0, 0, 12, 12, -HALF_PI, HALF_PI);
+        const bh = this.hatCol || color(34, 30, 30);
+        fill(red(bh) * 0.7, green(bh) * 0.7, blue(bh) * 0.7); ellipse(0, 0, 27, 25);
+        fill(bh); ellipse(0, 0, 21, 19);
+        fill(red(bh) * 1.5 + 10, green(bh) * 1.5 + 10, blue(bh) * 1.5 + 10);
+        ellipse(-1, 0, 14, 12);
+        fill(96, 26, 24); rect(-7, -1.4, 14, 2.8);
+        pop();
+    } else if (this.eType === "COWBOY" || this.eType === "COWGIRL") {
+        fill(235, 180, 140); ellipse(hX, hY, 11, 11);
+        if (this.eType === "COWGIRL") {
+            // Braid down the back, swinging with the walk.
+            push(); translate(hX - 5, hY);
+            rotate(radians(this.isMoving ? sin(frameCount * 0.3) * 15 : 0));
+            fill(this.hairCol || color(122, 74, 38)); ellipse(-7, 0, 13, 6);
+            pop();
+        }
+        push(); translate(hX, hY);
+        const hc = this.hatCol || color(96, 72, 46);
+        // Stetson: wide oval brim, then the crown, then a crease down it and a
+        // hatband where the two meet. Read from above that silhouette is the
+        // whole character of the hat.
+        const bw = this.eType === "COWGIRL" ? 25 : 28;
+        fill(red(hc) * 0.82, green(hc) * 0.82, blue(hc) * 0.82);
+        ellipse(0, 0, bw, bw * 0.93);
+        fill(hc); ellipse(0, 0, bw - 5, bw * 0.93 - 5);
+        fill(red(hc) * 1.18 + 12, green(hc) * 1.18 + 12, blue(hc) * 1.18 + 12);
+        ellipse(-1, 0, bw - 13, bw * 0.93 - 12);
+        fill(42, 30, 20); rect(-((bw - 13) / 2), -1.4, bw - 13, 2.8);
+        stroke(red(hc) * 0.6, green(hc) * 0.6, blue(hc) * 0.6); strokeWeight(1.2);
+        line(-((bw - 15) / 2), 0, (bw - 15) / 2, 0);
+        noStroke();
+        pop();
+    } else if (this.eType === "LOCAL_COP") {
+        fill(235, 180, 140); ellipse(hX, hY, 11, 11);
+        push(); translate(hX, hY);
+        // Flat-brimmed lawman's hat, darker and squarer than a drover's.
+        fill(34, 32, 40); ellipse(0, 0, 26, 24);
+        fill(this.hatCol || color(46, 44, 52)); ellipse(0, 0, 17, 16);
+        fill(210, 188, 104); rect(-4, -1.4, 8, 2.8);   // band badge
+        pop();
+    } else if (this.eType === "VILLAGER_MALE") {
+        fill(235, 180, 140); ellipse(hX, hY, 11, 11);
+        push(); translate(hX, hY);
+        // Soft flat cap with a stubby peak toward the front.
+        fill(this.hatCol || color(84, 74, 58)); ellipse(0, 0, 15, 14);
+        fill(64, 56, 44); arc(0, 0, 19, 14, -0.9, 0.9, CHORD);
+        pop();
+    } else if (this.eType === "VILLAGER_FEMALE") {
+        fill(235, 180, 140); ellipse(hX, hY, 11, 11);
+        push(); translate(hX, hY);
+        fill(this.hairCol || color(122, 74, 38));
+        arc(0, 0, 12, 12, HALF_PI, PI + HALF_PI);
+        // Sun bonnet: deep scoop round the back of the head, brim to the front,
+        // ribbon tied under the chin.
+        fill(this.bonnetCol || color(228, 220, 204));
+        arc(-1, 0, 21, 19, HALF_PI, PI + HALF_PI, CHORD);
+        fill(214, 204, 184); arc(2, 0, 13, 17, -HALF_PI, HALF_PI, CHORD);
+        fill(178, 152, 168); rect(-2, 7.5, 7, 2, 1);
+        pop();
+    } else if (this.eType === "FARMER_MALE") {
+        fill(235, 180, 140); ellipse(hX, hY, 11, 11); 
+        push(); translate(hX, hY);
+        fill(210, 180, 70); ellipse(0, 0, 24, 24); // Straw hat brim
+        fill(190, 160, 50); ellipse(0, 0, 14, 14); // Straw hat crown
+        pop();
+    } else if (this.eType === "FARMER_FEMALE") {
+        fill(235, 180, 140); ellipse(hX, hY, 11, 11); 
+        fill(150, 80, 40); // Brown hair
+        arc(hX, hY, 12, 12, HALF_PI, PI + HALF_PI);
+        push(); translate(hX - 5, hY); rotate(radians(this.isMoving ? sin(frameCount * 0.3) * 15 : 0)); ellipse(-6, 0, 12, 6); pop();
+    } else {
+        fill(235, 180, 140); ellipse(hX, hY, 11, 11); 
+    }
+
+
+    if ((this.eType === "ARMORED" && this.hp > 300) || (this.eType === "ARMORED_STANDARD" && this.hp > 50)) { fill(20); push(); translate(hX, hY); rotate(HALF_PI); arc(0, 0, 15, 15, 0, PI, CHORD); pop(); } 
+    noStroke(); for (let d of this.decals) { if (d.isHead) { if (d.col) fill(d.col[0], d.col[1], d.col[2], d.col[3]); else fill(90, 0, 0, 220); ellipse(d.x + hX, d.y + hY, d.sz, d.sz); } }
+    
+    if (inTownCutscene && this.isFriendly && townPhase === 1) {
+        fill(255, 255, 0); textSize(32); textAlign(CENTER, BOTTOM); textFont('sans-serif');
+        text("?", 0, -this.bodyH - 10);
+    }
+
+    pop();
+    pop(); 
+}
+}
+
+
+
+function addScore(basePoints, x, y, textPrefix = "") {
+    consecutiveKills++; let currentMultiplier = min(99, consecutiveKills); let earned = basePoints * currentMultiplier; score += earned;
+    floatingScores.push({ y: 100, text: `${textPrefix}${earned}`, life: 90, maxLife: 90 }); comboTimer = 100; 
+}
+
+function updateAndDrawFloatingScores() {
+    let startX = width - 20, startY = 100; 
+    for (let i = floatingScores.length - 1; i >= 0; i--) {
+        let fs = floatingScores[i]; fs.life--; let stackIndex = floatingScores.length - 1 - i; let targetY = startY + (stackIndex * 15); fs.y = lerp(fs.y, targetY, 0.3); let alpha = map(fs.life, 0, fs.maxLife, 0, 255);
+        push(); fill(255, 200, 0, alpha); stroke(0, alpha); strokeWeight(2); textSize(12); textAlign(RIGHT, TOP); textFont('sans-serif'); text(fs.text, startX, fs.y); pop();
+        if (fs.life <= 0) floatingScores.splice(i, 1);
+    }
+}
+
+
+function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = false) {
+    
+    // NEW: Find the exact enemy that just died using the coordinates we already have!
+    let deadGuy = enemiesList.find(e => e.x === x && e.y === y && e.dead);
+    let isAmbushKill = deadGuy ? deadGuy.isAmbush : false;
+
+    // --- STRICT FARM BUG AMBUSH KILL COUNTER ---
+    if (typeof farmAmbushActive !== 'undefined' && farmAmbushActive && eType === "BUG") {
+        window.farmAmbushKills--;
+        if (window.farmAmbushKills > 0) setTimeout(spawnFarmBug, random(100, 400));
+        if (x !== undefined && y !== undefined) addScore(2, x, y, "SQUASH+");
+        if (window.farmAmbushKills <= 0 && !isWin && !killcamMode) { 
+            killcamMode = true; killcamTarget = { x: x !== undefined ? x : player.x, y: y !== undefined ? y : player.y }; 
+            killcamTimer = 150; farmAmbushActive = false; window.farmAmbushCleared = true; 
+        }
+        return; 
+    }
+
+  
+    if (eType === "BUG" || eType === "DAD") {
+        if (eType === "BUG" && x !== undefined && y !== undefined) {
+            score += 1; floatingScores.push({ y: 100, text: "BUG KILL +1", life: 90, maxLife: 90 });
+        }
+        return; 
+    }
+// --- NEW: Neutral Military death logic ---
+    if (eType === "MILITARY_NEUTRAL") {
+        // Do NOT trigger ally death penalty
+        // Do NOT add to globalPopulation
+        if (x !== undefined && y !== undefined) addScore(5, x, y, "OUTPOST+");
+        return;
+    }
+
+    // --- ALLY DEATH LOGIC ---
+ 
+    if (isFriendly) {
+        globalPopulation = Math.max(0, globalPopulation - 1); 
+        if (typeof popTotal !== 'undefined') popTotal = Math.max(0, popTotal - 1);
+        if (typeof popMilitary !== 'undefined' && popMilitary > 0) {
+            popMilitary--; 
+            if (window.militaryToBring && window.militaryToBring > 0) window.militaryToBring--;
+            if (townsData[1]) { townsData[1].popMilitary = Math.max(0, townsData[1].popMilitary - 1); townsData[1].popTotal = Math.max(0, townsData[1].popTotal - 1); }
+        }
+        if (x !== undefined && y !== undefined) floatingScores.push({ y: 100, text: "ALLY LOST!", life: 90, maxLife: 90 });
+        return; 
+    }
+
+    // --- STRICT NM-0 AMBUSH KILL COUNTER ---
+    if (nm0AmbushActive && isAmbushKill) { // <--- ONLY trigger if it's an actual ambush enemy
+        nm0AmbushKills--;
+        
+        if (window.ambushSpawnsRemaining > 0) setTimeout(spawnAmbushReinforcement, random(200, 800));
+        
+        if (x !== undefined && y !== undefined) {
+            if (isHeadshot) addScore(10, x, y, "HEADSHOT+"); else addScore(5, x, y, "KILL+");
+            if (random(100) > 65) {
+                let r = random(100), dropType = null;
+                if (r < 15) dropType = "SMG"; else if (r < 25) dropType = "SHOTGUN"; else if (r < 30) dropType = "AR"; 
+                if (dropType) { let sa = random(TWO_PI), dd = random(70, 90); weaponDrops.push({ x: x + cos(sa) * dd, y: y + sin(sa) * dd, type: dropType }); }
+            }
+        }
+        
+        if (nm0AmbushKills <= 0 && !isWin && !killcamMode) { 
+            killcamMode = true; killcamTarget = { x: x !== undefined ? x : player.x, y: y !== undefined ? y : player.y }; 
+            killcamTimer = 150; window.nm0AmbushCleared = true; 
+        }
+        return; // Exits so the ambush kill DOES NOT count toward the Stick City population
+    }
+    
+    // --- STANDARD ARCADE / STORY KILL COUNTER ---
+    totalKills++; // This now properly drains the Stick City bar!
+
+    
+    if (x !== undefined && y !== undefined) {
+        if (isHeadshot) addScore(10, x, y, "HEADSHOT+"); else addScore(5, x, y, "KILL+");
+        let r = random(100), dropType = null;
+        if (r < 15) dropType = "SMG"; else if (r < 25) dropType = "SHOTGUN"; else if (r < 30) dropType = "AR"; 
+        if (dropType) { let scatterAngle = random(TWO_PI), dropDist = random(70, 90); weaponDrops.push({ x: x + cos(scatterAngle) * dropDist, y: y + sin(scatterAngle) * dropDist, type: dropType }); }
+    }
+    
+    if (currentLevel === 1 && isStoryMode && totalKills === 6 && !darchonCallCompleted) {
+        inDarchonCall = true; callPhase = 1; darchonCallCompleted = true; sfx.charge();
+    }
+    
+    // EXEMPT LEVEL 8 SO THE LEVEL DOESN'T FREEZE WHEN YOU HIT 20 KILLS
+    if (!isStoryMode) {
+    if (totalKills >= MAX_KILLS && !isWin && !killcamMode && currentLevel !== 8) {
+        killcamMode = true;
+        killcamTarget = {
+            x: x !== undefined ? x : player.x,
+            y: y !== undefined ? y : player.y
+        };
+        killcamTimer = 150;
+    }
+}
+}
+    
+
+
+
+
+function updateEntities() {
+  if (comboTimer > 0) { comboTimer--; if (comboTimer <= 0) consecutiveKills = 0; }
+
+  if (doTick) {
+      // Body-to-body separation only matters where somebody can see it, and
+      // with settlements streaming in there are now up to a hundred residents
+      // alive at once. Anything past this radius is off screen and outside the
+      // AI cull as well, so it is not moving and cannot be overlapping anything
+      // it was not already overlapping.
+      const PUSH_R = 1800, PUSH_R2 = PUSH_R * PUSH_R;
+      let actors = [player];
+      for (let n = 0; n < enemiesList.length; n++) {
+          const e = enemiesList[n];
+          if (!e || e.hp <= 0 || e.dead) continue;
+          if (e.eType === "AERIAL" || e.eType === "AERIAL_PISTOL" ||
+              e.eType === "SAUCER" || e.eType === "SAUCER_RED") continue;
+          const dx0 = e.x - player.x, dy0 = e.y - player.y;
+          if (dx0 * dx0 + dy0 * dy0 > PUSH_R2) continue;
+          actors.push(e);
+      }
+      // Cache each actor's slot. The pair test used to be two linear
+      // actors.indexOf() calls inside a triple-nested loop -- O(n) work per
+      // candidate pair, which is fine at a dozen actors and quadratic misery at
+      // a hundred.
+      for (let n = 0; n < actors.length; n++) actors[n]._pushIdx = n;
+
+      spatialGrid = {};
+      for (let a of actors) {
+          let key = getSpatialKey(a.x, a.y);
+          if (!spatialGrid[key]) spatialGrid[key] = [];
+          spatialGrid[key].push(a);
+      }
+
+      for (let i = 0; i < actors.length; i++) {
+          let A = actors[i];
+          if (player && player.dashTimer > 0 && A.isPlayer) continue;
+          if (A.ignoreBldgTimer > 0) continue;
+
+          let cx = Math.floor(A.x / SPATIAL_CELL_SIZE);
+          let cy = Math.floor(A.y / SPATIAL_CELL_SIZE);
+
+          for (let ox = -1; ox <= 1; ox++) {
+              for (let oy = -1; oy <= 1; oy++) {
+                  let neighborKey = (cx + ox) + "," + (cy + oy);
+                  let neighbors = spatialGrid[neighborKey];
+
+                  if (neighbors) {
+                      for (let B of neighbors) {
+                          if (A === B || A._pushIdx >= B._pushIdx) continue;
+                          if (player && player.dashTimer > 0 && B.isPlayer) continue;
+                          if (B.ignoreBldgTimer > 0) continue;
+
+                          let radA = A.isPlayer ? 18 : (A.eType === "ARMORED" || A.eType === "ALIEN_GATOR" || A.eType === "SNAIL_HYBRID" ? 40 : (A.eType === "BUG" ? 12 : 20));
+                          let radB = B.isPlayer ? 18 : (B.eType === "ARMORED" || B.eType === "ALIEN_GATOR" || B.eType === "SNAIL_HYBRID" ? 40 : (B.eType === "BUG" ? 12 : 20));
+                          let minDist = radA + radB;
+                          
+                          let d = dist(A.x, A.y, B.x, B.y);
+                          if (d < minDist && d > 0) {
+                              let pA = atan2(A.y - B.y, A.x - B.x);
+                              let moveA = !(A.isPlayer && B.eType === "BUG");
+                              let moveB = !(B.isPlayer && A.eType === "BUG");
+                              
+                              let overlapA = (!moveA) ? 0 : (moveB ? (minDist - d) * 0.55 : (minDist - d));
+                              let overlapB = (!moveB) ? 0 : (moveA ? (minDist - d) * 0.55 : (minDist - d));
+                              
+                              if (moveA) {
+                                  let nxA = A.x + cos(pA) * overlapA, nyA = A.y + sin(pA) * overlapA;
+                                  if (!A.checkCol(nxA, A.y)) A.x = nxA;
+                                  if (!A.checkCol(A.x, nyA)) A.y = nyA;
+                              }
+                              if (moveB) {
+                                  let nxB = B.x - cos(pA) * overlapB, nyB = B.y - sin(pA) * overlapB;
+                                  if (!B.checkCol(nxB, B.y)) B.x = nxB;
+                                  if (!B.checkCol(B.x, nyB)) B.y = nyB;
+                              }
+                          }
+                      }
+                  }
+              }
+          }
+      }
+
+      let aerials = enemiesList.filter(e => e && e.hp > 0 && !e.dead && (e.eType === "AERIAL" || e.eType === "AERIAL_PISTOL" || e.eType === "SAUCER" || e.eType === "SAUCER_RED"));
+      for (let i = 0; i < aerials.length; i++) {
+          for (let j = i + 1; j < aerials.length; j++) {
+              let A = aerials[i], B = aerials[j];
+              let radA = (A.eType === "SAUCER" || A.eType === "SAUCER_RED") ? 55 : 30;
+              let radB = (B.eType === "SAUCER" || B.eType === "SAUCER_RED") ? 55 : 30;
+              let minDist = radA + radB;
+              
+              let d = dist(A.x, A.y, B.x, B.y);
+              if (d < minDist && d > 0) {
+                  let pA = atan2(A.y - B.y, A.x - B.x);
+                  let pushMag = (minDist - d) * 0.08; 
+                  
+                  A.x += cos(pA) * pushMag; A.y += sin(pA) * pushMag;
+                  B.x -= cos(pA) * pushMag; B.y -= sin(pA) * pushMag;
+              }
+          }
+      }
+  }
+
+    for (let i = enemiesList.length - 1; i >= 0; i--) { 
+      let e = enemiesList[i]; 
+      
+      if (!isDead && !isWin && doTick) {
+          let cullDist = ((nm0AmbushActive || currentLevel === 4) && !e.isFriendly) ? 6000 : 1450;
+          if (dist(player.x, player.y, e.x, e.y) < cullDist) {
+              e.updateEnemy(); 
+          }
+      }
+
+      
+      if (inView(e.x, e.y, 150)) e.show();
+      if (e.hp <= 0 && !e.dead) { e.dead = true; processKill(e.x, e.y, false, e.eType, e.isFriendly); enemiesList.splice(i, 1); if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100); }
+  }
+
+  checkAmbushCleared();
+  checkFarmSwarmAlive();
+  maintainHostiles();
+  cullDepartedBands();
+  sweepForeignHostiles();
+}
+
+// The wilderness half of the loop. spawnSingleEnemy() is otherwise only called
+// off a kill, so a sector the player entered with nothing hostile in it -- which
+// is exactly what leaving a peaceful settlement looks like -- had no way to fill
+// up again. Ticked slowly and one at a time, so crossing the line out of a town
+// reads as the country getting dangerous rather than as an ambush.
+function maintainHostiles() {
+  if (!doTick || isDead || isWin || killcamMode || isPaused) return;
+  if (frameCount % 45 !== 0) return;
+  if (typeof TARGET_ENEMY_COUNT === 'undefined') return;
+  let hostiles = 0;
+  for (let i = 0; i < enemiesList.length; i++) if (!enemiesList[i].isFriendly) hostiles++;
+  if (currentLevel === 3) maintainBanditPosse(hostiles);
+  if (hostiles >= TARGET_ENEMY_COUNT) return;
+  spawnSingleEnemy();
+}
+
+// ---------------------------------------------------------------------------
+// BANDIT ENCOUNTERS
+// The frontier's overworld beat, and the one part of it that is not simply a
+// spawn table: a band of riders comes over the rise together, and most of the
+// time they are just going somewhere.
+//
+// Rolled once every ROLL frames of open country -- not in a town, not in the
+// authored sector -- and the roll either produces a band or it does not. Roughly
+// one roll in seven at eight seconds a roll works out to a band about every
+// minute of riding: often enough to be the texture of the biome, rare enough to
+// still be an event.
+//
+// Half of them mean it. The other half ride past on their own heading, neutral,
+// with no interest in you unless you give them one. Shooting into a passing band
+// turns THAT band and nobody else -- they have no stake in a town's quarrel three
+// thousand units away, and the town has none in theirs.
+const BANDIT_ROLL_FRAMES    = 480;   // one roll every eight seconds
+const BANDIT_ROLL_CHANCE    = 0.15;  // chance a roll produces a band
+const BANDIT_HOSTILE_CHANCE = 0.50;  // chance that band is coming for you
+const BANDIT_BAND_MIN = 3, BANDIT_BAND_MAX = 6;
+let banditRollTimer = 0;
+let banditGroupSeq  = 0;
+
+// Are you standing in a settlement? Measured in people, at a distance, not in
+// chunks: a chunk test with a one-chunk margin covers 3600 units square, and in
+// the frontier there is a farm or a town within that of almost anywhere -- it
+// suppressed hostile spawning across the entire biome. Four townsfolk inside a
+// thousand units is a town you are standing in; two farmhands and a cow is not,
+// and open country between farms is still open country.
+//
+// Stock does not count. A paddock of horses is not a settlement.
+function nearSettlement(x, y, r) {
+  const R = r || 1000, R2 = R * R;
+  let n = 0;
+  for (const l of chunkPop.values()) {
+    for (let i = 0; i < l.length; i++) {
+      const e = l[i];
+      if (e.eType === "COW" || e.eType === "HORSE") continue;
+      if (e.hp <= 0 || e.dead) continue;
+      const dx = e.x - x, dy = e.y - y;
+      if (dx * dx + dy * dy < R2 && ++n >= 4) return true;
+    }
+  }
+  return false;
+}
+
+function maintainBanditPosse(hostiles) {
+  if (currentLevel !== 3 || !inBiomeOverworld()) { banditRollTimer = 0; return; }
+  banditRollTimer += 45;                       // this runs on the 45-frame tick
+  if (banditRollTimer < BANDIT_ROLL_FRAMES) return;
+  banditRollTimer = 0;
+  if (nearSettlement(player.x, player.y)) return;
+  if (hostiles > TARGET_ENEMY_COUNT * 0.6) return;
+  if (random() > BANDIT_ROLL_CHANCE) return;
+
+  const hostile = random() < BANDIT_HOSTILE_CHANCE;
+  const n = floor(random(BANDIT_BAND_MIN, BANDIT_BAND_MAX + 1));
+  const group = ++banditGroupSeq;
+  const a = random(TWO_PI), r = 1500 + random(400);
+  const ox = player.x + cos(a) * r, oy = player.y + sin(a) * r;
+  // A band rides abreast of its heading, in file, not as a cloud of dots.
+  const heading = hostile ? a + PI : a + PI + random(-0.9, 0.9);
+  for (let i = 0; i < n; i++) {
+    const sx = ox + cos(a + HALF_PI) * (i - (n - 1) / 2) * 95;
+    const sy = oy + sin(a + HALF_PI) * (i - (n - 1) / 2) * 95;
+    if (inAuthoredSector(sx, sy, 500)) continue;
+    const b = new Character(sx, sy, false, "BANDIT");
+    b.mountUp();
+    b.bandGroup = group;
+    if (hostile) {
+      b.state = "CHASE";
+      b.loseSightTimer = 3500;
+      b.lastKnownX = player.x; b.lastKnownY = player.y;
+    } else {
+      // Passing through. Neutral means the player's bullets are the only thing
+      // that can change their minds, and isFriendly keeps them out of the
+      // hostile census so a band of travellers does not suppress the sector's
+      // actual threat level.
+      b.isNeutral = true; b.isFriendly = true;
+      b.rideAngle = heading + random(-0.08, 0.08);
+      b.state = "RIDE_BY";
+    }
+    enemiesList.push(b);
+  }
+  // Anything with hooves in earshot leaves.
+  for (const e of enemiesList) if (e.eType === "HORSE" && !e.rider) {
+    if (dist(e.x, e.y, ox, oy) < 900) e.spook(150);
+  }
+}
+
+// Turn one band, and only that band.
+function turnBandGroup(g) {
+  if (!g) return;
+  for (const e of enemiesList) {
+    if (e.bandGroup !== g || !e.isNeutral) continue;
+    e.isNeutral = false;
+    e.isFriendly = false;
+    e.state = "CHASE";
+    e.loseSightTimer = 3500;
+    if (player) { e.lastKnownX = player.x; e.lastKnownY = player.y; }
+  }
+}
+
+// A band that rode past and kept going is gone. Without this every band the
+// player ever met would still be out there riding in a straight line forever.
+function cullDepartedBands() {
+  if (frameCount % 60 !== 0 || !player) return;
+  for (let i = enemiesList.length - 1; i >= 0; i--) {
+    const e = enemiesList[i];
+    if (e.state !== "RIDE_BY" || !e.isNeutral) continue;
+    if (dist(e.x, e.y, player.x, player.y) > 3200) enemiesList.splice(i, 1);
+  }
+}
+
+// --- BUG AMBUSH KEEPALIVE ---
+// The swarm sustains itself by scheduling the next spawnFarmBug() off each
+// squash, and spawnFarmBug() refuses to run while the player is dead or a win
+// screen is up. Die mid-infestation and the swarm can drain to nothing with
+// farmAmbushKills still above zero, leaving the farm with no way to finish.
+// Top it back up whenever the field is empty and there are bugs still owed.
+function checkFarmSwarmAlive() {
+  if (typeof farmAmbushActive === 'undefined' || !farmAmbushActive) return;
+  if (isDead || isWin || killcamMode) return;
+  if (!(window.farmAmbushKills > 0)) return;
+  if (frameCount % 30 !== 0) return;
+
+  for (const e of enemiesList) {
+    if (e.eType === "BUG" && e.hp > 0 && !e.dead) return;
+  }
+  const wave = Math.min(25, window.farmAmbushKills);
+  for (let i = 0; i < wave; i++) spawnFarmBug();
+}
+
+// --- NM-0 AMBUSH CLEAR SAFETY NET ---
+// The tower ambush, the Great Gate ambushes and the Green Line grey-fatigue
+// ambush all resolve by draining nm0AmbushKills in processKill(). If a kill goes
+// uncounted -- an ambusher blown up off-screen, one recycled by the streamer --
+// the counter can stall above zero with nothing left alive to shoot, and the
+// story loop stops dead. When the field is empty and the spawner is out of
+// reserves, force the clear so the killcam hands over to the Directive.
+//
+// (Two copies of this used to sit at file top level, outside any function, where
+// they ran once on load with no ambush active and did nothing.)
+function checkAmbushCleared() {
+  if (!nm0AmbushActive || isWin || killcamMode) return;
+  if (window.ambushSpawnsRemaining !== undefined && window.ambushSpawnsRemaining > 0) return;
+
+  for (const e of enemiesList) {
+    if (!e.isFriendly && e.hp > 0 && !e.dead) return;   // still hostiles on the field
+  }
+
+  nm0AmbushKills = 0;
+  objectiveTimer = 0;
+  window.nm0AmbushCleared = true;        // routes through the killcam into the story loop
+  streakMsgText = "AMBUSH CLEARED!";
+  streakMsgTimer = 180;
+
+  killcamMode = true;
+  killcamTarget = { x: player.x, y: player.y };
+  killcamTimer = 150;
+}
+
+
+function updateBullets() {
+  const CULL_PAD = 400; 
+
+  // OPTIMIZATION 1: Generate target lists ONCE per frame, not once per bullet!
+  // This completely eliminates the Garbage Collection panic.
+  const playerTgs = [];
+  const enemyTgs = [player];
+  for (let i = 0; i < enemiesList.length; i++) {
+      let e = enemiesList[i];
+      if (!e.isFriendly || e.isNeutral) playerTgs.push(e);
+      if (e.isFriendly && !e.isNeutral) enemyTgs.push(e);
+  }
+
+  for (let i = bullets.length - 1; i >= 0; i--) {
+    let b = bullets[i]; 
+    if (!b.active) continue;
+    
+    if (doTick) b.update(); 
+    
+    if (!inView(b.x, b.y, CULL_PAD)) {
+        b.active = false;
+        b.l = 0;
+        continue;
+    }
+
+    if (b.active && inView(b.x, b.y, 50)) b.show(); 
+    
+    if (doTick && b.active) {
+        let hB = false;
+        for (let j = 0; j < barrels.length; j++) {
+            // Cheap distance pre-check for barrels
+            if (Math.abs(b.x - barrels[j].x) > 30 || Math.abs(b.y - barrels[j].y) > 30) continue; 
+
+            if (b.isP && b.tH !== "HEAD" && dist(b.x, b.y, barrels[j].x, barrels[j].y) < 15) { 
+                hB = true; totalShotsHit++; 
+                if (b.w === WEAPONS.SHOTGUN) barrels[j].hp -= 25; 
+                else if (b.isRedLaser || b.isPinkLaser) barrels[j].hp -= 30; 
+                else if (b.isAlienLaser) barrels[j].hp -= 25; 
+                else barrels[j].hp -= b.w.bodyDmg; 
+                
+                b.l = 0; emit(b.x, b.y, 3, color(255, 100, 0), "FLASH"); break; 
+            }
+        }
+        if (hB) { if (b.w === WEAPONS.ROCKET_LAUNCHER) { triggerRocketExplosion(b.x, b.y, b.isP); } b.active = false; continue; }
+
+        // Use the pre-computed lists
+        let tgs = b.isP ? playerTgs : enemyTgs;
+
+        for (let t of tgs) {
+          if (t && t.hp > 0 && !t.dead) {
+            
+            if (t.eType === "COW" && b.shooter && !b.shooter.isPlayer) continue;
+            if (b.tH === "HEAD" && (t.eType === "BUG" || t.eType === "SNAIL")) continue;
+            
+            // OPTIMIZATION 2: Broad-phase AABB Culling. 
+            // If the bullet is more than 60 pixels away on X or Y, completely skip the heavy math!
+            if (Math.abs(b.x - t.x) > 60 || Math.abs(b.y - t.y) > 60) continue;
+
+            let isLg = (t.eType === "ARMORED" || t.eType === "ALIEN_GATOR" || t.eType === "SAUCER" || t.eType === "SAUCER_RED" || t.eType === "SNAIL_HYBRID");
+            let hR = b.tH === "HEAD" ? (isLg ? (t.eType === "SNAIL_HYBRID" ? 35 : 15) : 6) : (isLg ? 40 : ((t.eType === "BUG" || t.eType === "SNAIL") ? (t.eType === "SNAIL" ? 15 : 10) : 12));
+            
+            let hit = false; 
+            for (let j = 0; j <= 3; j++) { if (dist(b.x - b.vx * (j / 3), b.y - b.vy * (j / 3), t.x, t.y) < hR) { hit = true; break; } }
+            
+            if (hit) {
+                if (b.isP && b.active && !b.isTaser) totalShotsHit++; 
+                
+                if (b.isTaser) {
+                    if (!b.tetheredTarget && !b.retracting) {
+                        let isUnarmored = (t.eType === "NORMAL" || t.eType === "FEMALE_PISTOL" || t.eType === "SIA" || t.eType === "MOLOTOV");
+                        
+                        if (isUnarmored && t.hp > 0 && t.state !== "STUNNED") {
+                            t.stunTimer = 15000; t.skeletonTimer = 66; t.state = "STUNNED";
+                            sfx.charge(); emit(t.x, t.y, 15, color(255, 255, 0), "SPARK");
+                            t.isMoving = false; t.aimAngle = random(TWO_PI); 
+                            b.tetheredTarget = t; b.tetherTimer = 66;
+                        } else {
+                            sfx.hitArmor(); emit(b.x, b.y, 5, color(255, 255, 0), "SPARK"); b.retracting = true;
+                        }
+                    }
+                    continue; 
+                }
+
+                if (b.w === WEAPONS.ROCKET_LAUNCHER) { b.l = 0; triggerRocketExplosion(b.x, b.y, b.isP, t); continue; }
+                
+                let dmg = b.isOrangeBeam ? ROBOT_BEAM_DMG : (b.isRedLaser ? 30 : (b.isPinkLaser ? 30 : (b.isAlienLaser ? 25 : (b.w === WEAPONS.SHOTGUN ? (b.tH === "HEAD" ? 50 : 25) : (b.tH === "HEAD" ? b.w.headDmg : b.w.bodyDmg))))); 
+                
+                if (t.eType === "SNAIL_HYBRID" && b.tH === "HEAD") {
+                    t.hybridHeadHP -= dmg;
+                    if (t.hybridHeadHP <= 50 && t.leftEye > 0) { t.leftEye = 0; t.eyeBleedL = 600; emit(t.x, t.y, 50, color(0, 100, 0), "GORE"); sfx.deathGrunt(); }
+                    if (t.hybridHeadHP <= 0 && t.rightEye > 0) { t.rightEye = 0; t.eyeBleedR = 600; emit(t.x, t.y, 50, color(0, 100, 0), "GORE"); sfx.deathGrunt(); }
+                }
+
+                // The robot's head is its own 150-point pool and does not draw
+                // on the chassis at all. Once the housing is gone there is no
+                // head left to hit, so everything after that lands on the body.
+                let robotHeadKill = false, robotHeadAbsorbed = false;
+                if (t.eType === "ROBOT" && b.tH === "HEAD" && !t.enraged) {
+                    t.headHP -= dmg;
+                    robotHeadAbsorbed = true;
+                    emit(b.x, b.y, 7, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK", b.vx, b.vy);
+                    if (t.headHP <= 0) { robotHeadKill = true; }
+                }
+
+                if (t.eType === "ARMORED" && b.tH === "HEAD") dmg *= 2; 
+                let wA = (t.eType === "ARMORED" && t.hp > 300) || (t.eType === "ARMORED_STANDARD" && t.hp > 50) || t.eType === "SAUCER" || t.eType === "SAUCER_RED" || (t.eType === "SNAIL_HYBRID" && t.hp > 150 && b.tH !== "HEAD"); 
+
+                if (t.lastHitFrame !== frameCount) { t.lastHitFrame = frameCount; t.frameDamage = 0; } 
+                t.frameDamage += dmg; 
+                let dRes = robotHeadAbsorbed ? { blocked: false, broken: false } : t.takeDamage(dmg); 
+                b.l = 0; 
+
+                if (robotHeadKill) {
+                    // The housing comes apart. From here it is a walking charge
+                    // on a fuse it cannot stop.
+                    t.enraged = true;
+                    t.selfDestruct = ROBOT_FUSE;
+                    t.chargeTimer = 0; t.burstLeft = 0;
+                    emit(t.x, t.y, 30, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK");
+                    emit(t.x, t.y, 16, color(OIL_COL[0], OIL_COL[1], OIL_COL[2]), "OIL");
+                    emit(t.x, t.y, 10, color(90), "CHIP");
+                    emit(t.x, t.y, 6, color(60), "SMOKE");
+                    sfx.hitArmor();
+                    spawnSplatter(t.x, t.y, "BLOOD", color(OIL_COL[0], OIL_COL[1], OIL_COL[2]));
+                }
+                
+                if (b.shooter && b.shooter.isFriendly && !b.shooter.isPlayer && !t.isFriendly && nm0AmbushActive) {
+                    t.aggroTarget = b.shooter;
+                    t.aggroTimer = 300; 
+                }
+                
+                if (b.isP) {
+                    let kbForce = 0;
+                    if (b.w === WEAPONS.SHOTGUN) kbForce = 6; 
+                    else if (b.w === WEAPONS.ASSAULT_RIFLE) kbForce = 4.5;
+                    else if (b.w === WEAPONS.PISTOL) kbForce = 3;
+                    else kbForce = 1.5; 
+                    
+                    if (t.eType === "ARMORED" || t.eType === "ARMORED_STANDARD" || t.eType === "ALIEN_GATOR" || t.eType === "SNAIL_HYBRID") {
+                        kbForce *= 0.15; 
+                    } else if (t.eType === "SAUCER" || t.eType === "SAUCER_RED") {
+                        kbForce = 0; 
+                    }
+                    if (kbForce > 0) t.attemptMove(cos(b.a) * kbForce, sin(b.a) * kbForce);
+                }
+                
+                let bCol = (t.eType === "BUG" || t.eType === "SNAIL" || t.eType === "SNAIL_HYBRID") ? color(200, 230, 40) : color(90, 0, 0); 
+                if (t.eType === "SNAIL_HYBRID" && b.tH === "HEAD") bCol = color(0, 100, 0); 
+                
+                let dx = b.x - t.x, dy = b.y - t.y; let rotX = dx * cos(-t.aimAngle) - dy * sin(-t.aimAngle); let rotY = dx * sin(-t.aimAngle) + dy * cos(-t.aimAngle);
+                let bobOffset = t.isMoving ? abs(sin(t.walkCycle)) * 2 : 0; if (t.eType === "AERIAL" || t.eType === "AERIAL_PISTOL") bobOffset += sin(frameCount * 0.1) * 15;
+                let lX = rotX - bobOffset, lY = rotY; let rw = (b.tH === "HEAD" ? 5.5 : t.bodyW / 2) * 0.85; let rh = (b.tH === "HEAD" ? 5.5 : t.bodyH / 2) * 0.85;
+                let distSq = (lX * lX) / (rw * rw) + (lY * lY) / (rh * rh); if (distSq > 1) { let scale = 1 / Math.sqrt(distSq); lX *= scale; lY *= scale; }
+                let dCol = b.isRedLaser ? [255, 50, 50, 220] : (b.isPinkLaser ? [255, 105, 180, 220] : (b.isAlienLaser ? [200, 20, 100, 220] : ((t.eType === "BUG" || t.eType === "SNAIL") ? [200, 230, 40, 220] : [90, 0, 0, 220])));
+                if (wA) dCol = [20, 20, 20, 220]; 
+                // A machine does not bleed. Its bullet holes are burnt metal.
+                if (t.eType === "ROBOT") dCol = [16, 15, 14, 230]; 
+                t.decals.push({ x: lX, y: lY, sz: random(4, 7), col: dCol, isHead: b.tH === "HEAD" });
+                
+                if (t.eType === "ROBOT") {
+                    // Sparks the whole way down; oil once the chassis is opened
+                    // up past ROBOT_OIL_AT, and more of it the worse it gets.
+                    sfx.hitArmor();
+                    emit(b.x, b.y, robotHeadAbsorbed ? 4 : 9,
+                         color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK", b.vx, b.vy);
+                    if (!robotHeadAbsorbed && t.hp <= ROBOT_OIL_AT) {
+                        const bleed = 3 + Math.round((1 - Math.max(0, t.hp) / ROBOT_OIL_AT) * 7);
+                        emit(b.x, b.y, bleed, color(OIL_COL[0], OIL_COL[1], OIL_COL[2]), "OIL", b.vx * 0.4, b.vy * 0.4);
+                    }
+                } 
+                else if (wA) { sfx.hitArmor(); emit(b.x, b.y, 10, color(255, 150, 0), "SPARK"); emit(b.x, b.y, 5, color(100), "CHIP"); } 
+                else { 
+                    if (t.isPlayer && dRes.blocked) { sfx.hitArmor(); emit(b.x, b.y, dRes.broken ? 20 : 8, color(0, 200, 255), "SPARK", b.vx, b.vy); } 
+                    else { if (b.tH === "HEAD" && t.eType !== "BUG" && t.eType !== "SNAIL" && t.eType !== "SNAIL_HYBRID") sfx.hitHead(); else sfx.hitBody(); emit(b.x, b.y, 8, bCol, "BLOOD", b.vx, b.vy); }
+                } 
+                if (t.isPlayer) screenShake = 5; 
+                
+                if (t.hp <= 0) { 
+                    t.dead = true; sfx.deathGrunt(); let dT = 0, hA = (b.a - t.aimAngle + TWO_PI) % TWO_PI; 
+                    if (t.eType === "ROBOT") {
+                        // Comes apart where it stood: a hard shower of sparks, a
+                        // burst of oil driven out along the shot that finished it
+                        // -- protruding from the point of impact, not sprayed at
+                        // random -- and a chassis that lies there smoking.
+                        emit(b.x, b.y, 26, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK", b.vx, b.vy);
+                        emit(b.x, b.y, 22, color(OIL_COL[0], OIL_COL[1], OIL_COL[2]), "OIL", b.vx * 1.5, b.vy * 1.5);
+                        emit(t.x, t.y, 10, color(96, 100, 106), "CHIP");
+                        emit(t.x, t.y, 6, color(70), "SMOKE");
+                        spawnSplatter(t.x, t.y, "BLOOD", color(OIL_COL[0], OIL_COL[1], OIL_COL[2]));
+                        sfx.hitArmor();
+                        corpses.push(new Corpse(t.x, t.y, t.moveAngle, t.aimAngle, t.shirtCol, t.pantsCol,
+                                                t.enraged ? 1 : 0, hA, t.decals, t.currentWeapon, b.a,
+                                                "ROBOT", t.bodyW, t.bodyH));
+                        processKill(t.x, t.y, b.tH === "HEAD", t.eType, t.isFriendly);
+                        // `i` here is the BULLET index -- the target loop is a
+                        // for-of with no index of its own -- so the body has to
+                        // be found rather than assumed.
+                        const ri = enemiesList.indexOf(t);
+                        if (ri > -1) enemiesList.splice(ri, 1);
+                        if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100);
+                        b.active = false;
+                        break;
+                    }
+                    if (t.eType === "SAUCER" || t.eType === "SAUCER_RED") { triggerExplosion(t.x, t.y, 160); } 
+                    else if (t.eType === "AERIAL" || t.eType === "AERIAL_PISTOL") {
+                        if (b.tH === "HEAD") { dT = 12; } else { let choices = [11, 5, 10]; dT = choices[floor(random(3))]; }
+                        corpses.push(new Corpse(t.x, t.y, t.moveAngle, t.aimAngle, t.shirtCol, t.pantsCol, dT, hA, t.decals, t.currentWeapon, b.a, t.eType, t.bodyW, t.bodyH));
+                        if (dT === 11) { spawnSplatter(t.x, t.y, "BLOOD", color(90, 0, 0)); } 
+                        else if (dT === 5 || dT === 10) { emit(t.x, t.y, 40, color(255, 100, 0), "EXPLOSION"); sfx.explosion(); spawnSplatter(t.x, t.y, "BLOOD", color(90, 0, 0)); spawnSplatter(t.x, t.y, "SCORCH"); if (dT === 10) { emit(b.x, b.y, 30, color(220, 200, 200), "BONE", b.vx, b.vy); emit(t.x, t.y, 120, color(90, 0, 0), "GORE"); } }
+                    } else { 
+                        if (b.w === WEAPONS.ASSAULT_RIFLE && b.tH === "HEAD") { 
+                            let choices = [6, 8, 9]; dT = choices[headshotCounter % 3]; headshotCounter++;
+                            if (dT === 6) { emit(b.x, b.y, 10, color(220, 200, 200), "BONE", b.vx, b.vy); emit(b.x, b.y, 40, bCol, "GORE"); emit(b.x, b.y, 40, bCol, "BLOOD", b.vx, b.vy); } 
+                            else if (dT === 8) { emit(b.x, b.y, 15, color(220, 200, 200), "BONE", b.vx, b.vy); emit(b.x, b.y, 50, bCol, "GORE"); } 
+                            else { emit(b.x, b.y, 25, color(220, 200, 200), "BONE", b.vx, b.vy); emit(b.x, b.y, 60, bCol, "GORE"); emit(b.x, b.y, 50, bCol, "BLOOD", b.vx, b.vy); }
+                        } else if (b.w === WEAPONS.SHOTGUN && b.tH === "HEAD") { 
+                            let choices = [4, 8, 9]; dT = choices[headshotCounter % 3]; headshotCounter++;
+                            if (dT === 4) { emit(b.x, b.y, 25, color(220, 200, 200), "BONE", b.vx, b.vy); emit(b.x, b.y, 60, bCol, "GORE", b.vx*0.5, b.vy*0.5); emit(b.x, b.y, 60, bCol, "BLOOD", b.vx, b.vy); } 
+                            else if (dT === 8) { emit(b.x, b.y, 30, color(220, 200, 200), "BONE", b.vx, b.vy); emit(b.x, b.y, 80, bCol, "GORE"); } 
+                            else { emit(b.x, b.y, 30, color(220, 200, 200), "BONE", b.vx, b.vy); emit(b.x, b.y, 100, bCol, "GORE"); emit(b.x, b.y, 80, bCol, "BLOOD", b.vx, b.vy); }
+                        } else if (b.w === WEAPONS.SHOTGUN && dist(b.startX, b.startY, t.x, t.y) <= 160) { 
+                            let choices = [2, 7, 10]; dT = choices[bodyOverkillCounter % 3]; bodyOverkillCounter++;
+                            if (dT === 2) { emit(t.x, t.y, 60, bCol, "GORE"); emit(t.x, t.y, 15, color(220, 200, 200), "BONE", b.vx, b.vy); } 
+                            else if (dT === 7) { emit(t.x, t.y, 120, bCol, "GORE"); emit(t.x, t.y, 40, color(220, 200, 200), "BONE", b.vx, b.vy); emit(t.x, t.y, 80, bCol, "BLOOD", b.vx * 1.5, b.vy * 1.5); } 
+                            else if (dT === 10) { emit(b.x, b.y, 30, color(220, 200, 200), "BONE", b.vx, b.vy); emit(t.x, t.y, 120, bCol, "GORE"); }
+                        } else if (b.tH === "HEAD") { 
+                            let choices = [1, 8, 9]; dT = choices[headshotCounter % 3]; headshotCounter++;
+                            if (dT === 1) { emit(b.x, b.y, 15, color(220, 200, 200), "BONE", b.vx, b.vy); emit(b.x, b.y, 30, bCol, "GORE"); } 
+                            else if (dT === 8) { emit(b.x, b.y, 20, color(220, 200, 200), "BONE", b.vx, b.vy); emit(b.x, b.y, 45, bCol, "GORE"); } 
+                            else { emit(b.x, b.y, 25, color(220, 200, 200), "BONE", b.vx, b.vy); emit(b.x, b.y, 60, bCol, "GORE"); emit(b.x, b.y, 50, bCol, "BLOOD", b.vx, b.vy); }
+                        } else if (b.w === WEAPONS.DUAL_SMG && b.tH === "BODY" && dist(b.startX, b.startY, t.x, t.y) <= 80) {
+                            dT = 10; emit(b.x, b.y, 30, color(220, 200, 200), "BONE", b.vx, b.vy); emit(t.x, t.y, 120, bCol, "GORE");
+                        } else { dT = 0; emit(t.x, t.y, 40, bCol, "GORE"); } 
+                        
+                        corpses.push(new Corpse(t.x, t.y, t.moveAngle, t.aimAngle, t.shirtCol, t.pantsCol, dT, hA, t.decals, t.currentWeapon, b.a, t.eType, t.bodyW, t.bodyH)); 
+                        spawnSplatter(t.x, t.y, "BLOOD", bCol); 
+                    } 
+                    if (t.isPlayer) { playerRespawnTimer = 90; } else { 
+                        let isHeadshot = (b.tH === "HEAD" && t.eType !== "BUG" && t.eType !== "SNAIL" && t.eType !== "SNAIL_HYBRID");
+                        processKill(t.x, t.y, isHeadshot, t.eType, t.isFriendly); 
+                        let eI = enemiesList.indexOf(t); if (eI > -1) enemiesList.splice(eI, 1); 
+                        if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100); 
+                    } 
+                } 
+                break;
+            }
+          }
+        }
+        
+        if (b.l <= 0) b.active = false;
+
+        if (b.active && !b.tetheredTarget && !b.retracting) {
+            let hitSomething = false;
+            for (let bldg of activeBuildings) { 
+                if (currentLevel === 4 && bldg.isPalm) continue; 
+                if (currentLevel === 6 && (bldg.isAlienPlant || bldg.isEnergyPole)) continue; 
+                if ((currentLevel === 1 || currentLevel === 2) && bldg.isGrassLot) continue; 
+                
+                // Cheap pre-check for buildings before bounding box check
+                if (Math.abs(b.x - bldg.x) > bldg.w || Math.abs(b.y - bldg.y) > bldg.h) continue;
+
+                if (b.x > bldg.x - bldg.w / 2 && b.x < bldg.x + bldg.w / 2 && b.y > bldg.y - bldg.h / 2 && b.y < bldg.y + bldg.h / 2) { 
+                    b.l = 0; b.active = false; hitSomething = true;
+                    if (bldg.isPinkPlanet && b.isP) {
+                        bldg.flashTimer = 4; if (bldg.hp === undefined) bldg.hp = 750; 
+                        let dmg = b.w === WEAPONS.SHOTGUN ? 25 : (b.w === WEAPONS.ROCKET_LAUNCHER ? 350 : (b.isRedLaser || b.isPinkLaser ? 30 : (b.isAlienLaser ? 25 : (b.w.bodyDmg || 20))));
+                        bldg.hp -= dmg;
+                        if (bldg.hp <= 0) { sfx.explosion(); screenShake = 30; emit(bldg.x, bldg.y, 100, color(200, 230, 40), "GORE"); spawnSplatter(bldg.x, bldg.y, "BLOOD", color(200, 230, 40)); spawnSplatter(bldg.x, bldg.y, "SCORCH"); let bIdx = buildings.indexOf(bldg); if (bIdx > -1) buildings.splice(bIdx, 1); } 
+                        else { emit(b.x, b.y, 5, color(255, 20, 147), "BLOOD"); let swarmBug = new Character(bldg.x - 20, bldg.y - 20, false, "BUG"); swarmBug.ignoreBldgTimer = 180; enemiesList.push(swarmBug); sfx.hitBody(); }
+                        if (b.w === WEAPONS.ROCKET_LAUNCHER) triggerRocketExplosion(b.x, b.y, b.isP); 
+                    } else if (bldg.isTower && bldg.hp > 0 && b.isP) {
+                        let dmg = b.w === WEAPONS.SHOTGUN ? 25 : (b.w === WEAPONS.ROCKET_LAUNCHER ? 350 : (b.w.bodyDmg || 20));
+                        bldg.hp -= dmg; bldg.hitFlash = 4; emit(b.x, b.y, 5, color(255, 100, 0), "SPARK");
+                        if (bldg.hp <= 0) { triggerExplosion(bldg.x, bldg.y, 200, false, true); screenShake = 60; }
+                    } else if (b.w === WEAPONS.ROCKET_LAUNCHER) {
+                        triggerRocketExplosion(b.x, b.y, b.isP); 
+                        if (bldg.isCar) { triggerExplosion(bldg.x, bldg.y, 160, false, true); let bIdx = buildings.indexOf(bldg); if (bIdx > -1) buildings.splice(bIdx, 1); }
+                    } else { 
+                        emit(b.x, b.y, 3, bldg.isCar ? color(255, 200, 0) : color(100), bldg.isCar ? "SPARK" : "DUST"); 
+                    }
+                    break; 
+                } 
+            }
+            let hitBarrier = false;
+            for (let bldg of activeBuildings) {
+                if (bldg.isUBarrier && bldg.hp > 0) {
+                    if (Math.abs(b.x - bldg.x) > bldg.w + 20 || Math.abs(b.y - bldg.y) > bldg.h + 20) continue;
+
+                    let wT = 15; let hitWall = false;
+                    if (b.x > bldg.x - bldg.w/2 - wT && b.x < bldg.x - bldg.w/2 + wT && b.y > bldg.y - bldg.h/2 && b.y < bldg.y + bldg.h/2) hitWall = true;
+                    if (b.x > bldg.x + bldg.w/2 - wT && b.x < bldg.x + bldg.w/2 + wT && b.y > bldg.y - bldg.h/2 && b.y < bldg.y + bldg.h/2) hitWall = true;
+                    if (b.x > bldg.x - bldg.w/2 && b.x < bldg.x + bldg.w/2 && b.y > bldg.y - bldg.h/2 - wT && b.y < bldg.y - bldg.h/2 + wT) hitWall = true;
+                    if (hitWall) {
+                        if (!b.isP) { 
+                            b.l = 0; b.active = false; hitBarrier = true; bldg.hp -= (b.w.bodyDmg || 20); bldg.hitFlash = 4;
+                            emit(b.x, b.y, 5, color(255, 150, 50), "SPARK");
+                            if (bldg.hp <= 0) { triggerExplosion(bldg.x, bldg.y, 100, false, false); let bIdx = buildings.indexOf(bldg); if (bIdx > -1) buildings.splice(bIdx, 1); }
+                            break;
+                        }
+                    }
+                }
+            }
+            if (hitBarrier) continue;
+
+            if (!hitSomething) {
+                for (let c of activeParkingCars) {
+                    let cw = 50, ch = 90; 
+                    if (Math.abs(b.x - c.x) > cw || Math.abs(b.y - c.y) > ch) continue;
+
+                    if (b.x > c.x - cw / 2 && b.x < c.x + cw / 2 && b.y > c.y - ch / 2 && b.y < c.y + ch / 2) {
+                        b.l = 0; b.active = false; hitSomething = true;
+                        if (b.w === WEAPONS.ROCKET_LAUNCHER) {
+                            triggerRocketExplosion(b.x, b.y, b.isP);
+                            triggerExplosion(c.x, c.y, 160, false, true);
+                            let cIdx = parkingCars.indexOf(c); if(cIdx > -1) parkingCars.splice(cIdx, 1);
+                        } else {
+                            emit(b.x, b.y, 5, color(255, 200, 0), "SPARK");
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    }
+  }
+}
+
+
+
+class Citizen {
+    constructor(x, y, role, gender = "MALE") {
+        this.x = x; this.y = y; 
+        this.role = role;
+        this.gender = gender;
+        this.state = "IDLE";
+        this.timer = floor(random(60, 180));
+        this.tx = x; this.ty = y; 
+        this.speed = random(0.8, 1.4);
+        this.moveAngle = random(TWO_PI);
+        this.walkCycle = 0;
+        
+        // Adjust proportions based on gender
+        this.bodyW = (this.gender === "FEMALE") ? 16 : 21;
+        this.bodyH = (this.gender === "FEMALE") ? 25 : 27;
+        this.skinCol = color(235, 180, 140);
+        
+        this.shirtCol = color(200);
+        this.pantsCol = color(30);
+    }
+    
+    update() {
+        this.timer--;
+        
+        if (this.timer <= 0) {
+            if (random() > 0.5) {
+                this.state = "WANDER";
+                this.tx = this.x + random(-300, 300);
+                this.ty = this.y + random(-300, 300);
+                this.timer = dist(this.x, this.y, this.tx, this.ty) / this.speed + 60;
+            } else {
+                this.state = "IDLE";
+                this.timer = floor(random(90, 240));
+            }
+        }
+        
+        if (this.state === "WANDER") {
+            let d = dist(this.x, this.y, this.tx, this.ty);
+            if (d > 10) {
+                this.moveAngle = atan2(this.ty - this.y, this.tx - this.x);
+                this.x += cos(this.moveAngle) * 0.8; 
+                this.y += sin(this.moveAngle) * 0.8;
+                this.walkCycle += 0.1;
+            } else {
+                this.state = "IDLE";
+                this.timer = floor(random(60, 120));
+            }
+        }
+        
+        if (this.state === "IDLE" && frameCount % 120 === 0 && random() > 0.5) {
+            emit(this.x, this.y, 2, this.shirtCol, "SPARK");
+        }
+
+        this.resolveCollisions();
+    }
+
+    resolveCollisions() {
+        let myRadius = 14; 
+        let minDistSq = (myRadius * 2) * (myRadius * 2);
+
+        if (typeof player !== 'undefined' && player && player.hp > 0 && !player.dead) {
+            let dx = this.x - player.x;
+            let dy = this.y - player.y;
+            
+            if (abs(dx) < 30 && abs(dy) < 30) {
+                let dSq = dx * dx + dy * dy;
+                let pMinSq = (myRadius + 14) * (myRadius + 14);
+                
+                if (dSq < pMinSq && dSq > 0) {
+                    let d = Math.sqrt(dSq);
+                    let overlap = (myRadius + 14) - d;
+                    let angle = atan2(dy, dx);
+                    this.x += cos(angle) * overlap;
+                    this.y += sin(angle) * overlap;
+                }
+            }
+        }
+
+        if (typeof townCitizens !== 'undefined') {
+            for (let other of townCitizens) {
+                if (other === this) continue; 
+                
+                let dx = this.x - other.x;
+                let dy = this.y - other.y;
+                
+                if (abs(dx) > myRadius * 2 || abs(dy) > myRadius * 2) continue;
+
+                let dSq = dx * dx + dy * dy;
+                if (dSq < minDistSq && dSq > 0) {
+                    let d = Math.sqrt(dSq);
+                    let overlap = (myRadius * 2) - d;
+                    let angle = atan2(dy, dx);
+                    
+                    this.x += cos(angle) * (overlap * 0.5);
+                    this.y += sin(angle) * (overlap * 0.5);
+                }
+            }
+        }
+    }
+
+    show() {
+        let isFarmer = (this.role === "FARMING" && typeof window.farmerBlueprintUnlocked !== 'undefined' && window.farmerBlueprintUnlocked);
+        let hasArmor = (typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked);
+
+        // Dynamic Uniform Colors
+        if (this.role === "MILITARY") {
+            if (hasArmor) {
+                this.shirtCol = color(60, 100, 40);
+                this.pantsCol = color(139, 115, 85);
+            } else {
+                this.shirtCol = color(100, 100, 200);
+                this.pantsCol = color(30);
+            }
+        } else if (isFarmer) {
+            if (this.gender === "FEMALE") {
+                this.shirtCol = color(245);
+                this.pantsCol = color(245);
+            } else {
+                this.shirtCol = color(220);
+                this.pantsCol = color(40, 100, 200);
+            }
+        } else {
+            if (this.role === "SCIENCE") {
+                this.shirtCol = color(255); 
+                this.pantsCol = color(15);
+            }
+            else if (this.role === "ARCHITECTURE") this.shirtCol = color(255, 150, 50);
+            else if (this.role === "FARMING") this.shirtCol = color(100, 200, 100);
+            else this.shirtCol = color(200);
+            
+            if (this.role !== "SCIENCE") this.pantsCol = (this.gender === "FEMALE") ? color(20) : color(30);
+        }
+
+        
+        push(); translate(this.x, this.y); 
+        
+        let rot = (this.state === "WANDER") ? this.moveAngle : sin(frameCount * 0.05 + this.x) * 0.1;
+        rotate(rot); 
+        
+        let isMoving = (this.state === "WANDER");
+        let swing = isMoving ? sin(this.walkCycle) : 0;
+        let bob = isMoving ? abs(sin(this.walkCycle)) * 2 : 0;
+        
+        noStroke(); fill(this.pantsCol);
+        let lW = (this.gender === "FEMALE") ? 14 : 18;
+        let lX = (this.gender === "FEMALE") ? -7 : -10;
+        let lY1 = -10, lY2 = 2; 
+
+        // Legs / Dress Base
+        if (isFarmer && this.gender === "FEMALE") {
+            rect(lX - 2, -10, lW + 4, 18, 4); // Dress Base
+        } else {
+            rect(lX + swing * 12, lY1, lW, 8, 4); 
+            rect(lX - swing * 12, lY2, lW, 8, 4); 
+        }
+        
+        translate(bob, 0);
+
+        let lArmSwing = -swing; 
+        let rArmSwing = swing;  
+        let armLY = (this.gender === "FEMALE") ? -12 : -14; 
+        let armRY = (this.gender === "FEMALE") ? 9 : 11;  
+        let lHandX = lArmSwing * 14;
+        let lShoulderX = lArmSwing * 4;
+        let rHandX = rArmSwing * 14;
+        let rShoulderX = rArmSwing * 4;
+
+        // Back hands
+        fill(this.skinCol);
+        if (lArmSwing <= 0.2) ellipse(lHandX, armLY, 8, 8);
+        if (rArmSwing <= 0.2) ellipse(rHandX, armRY, 8, 8);
+        // Sleeves
+        fill(this.shirtCol); 
+        ellipse(lShoulderX, armLY, 16, 9);
+        ellipse(rShoulderX, armRY, 16, 9);
+
+        // --- NEW: Lab Coat Tails for Science ---
+        if (this.role === "SCIENCE") {
+            push(); 
+            let sway = isMoving ? sin(frameCount * 0.2) * 0.2 : sin(frameCount * 0.05) * 0.05;
+            rotate(sway + HALF_PI); 
+            fill(240); stroke(200); strokeWeight(1);
+            beginShape(); vertex(5, 0); vertex(10, 2); vertex(16, 25); vertex(8, 28); vertex(-8, 28); vertex(-16, 25); vertex(-10, 2); vertex(-5, 0); endShape(CLOSE); 
+            pop();
+        }
+
+        // Body
+        ellipse(0, 0, this.bodyW, this.bodyH); 
+
+        
+        // Farmer Male Overalls
+        if (isFarmer && this.gender === "MALE") {
+            fill(this.pantsCol);
+            rect(-this.bodyW/2 + 2, -this.bodyH/2 + 8, this.bodyW - 4, this.bodyH - 8, 4);
+            rect(-this.bodyW/2 + 4, -this.bodyH/2 + 2, 4, 8);
+            rect(this.bodyW/2 - 8, -this.bodyH/2 + 2, 4, 8);
+        }
+
+        // Female Features (Breasts & Cleavage Cutout)
+        if (this.gender === "FEMALE") {
+            fill(this.shirtCol);
+            stroke(isFarmer ? 200 : 0); 
+            strokeWeight(1.5); 
+            ellipse(4, -5, 11, 9); 
+            ellipse(4, 5, 11, 9);  
+            
+            stroke(200, 150, 120, 100); 
+            strokeWeight(1); 
+            line(6, -2, 6, 2); 
+            noStroke();
+
+            if (isFarmer) {
+                fill(this.skinCol);
+                ellipse(0, -6, 10, 12);
+            }
+        }
+
+        // Head
+        fill(this.skinCol); 
+        ellipse(0, 0, 11, 11); 
+
+        // Hair and Helmets
+        if (this.role === "MILITARY" && hasArmor) {
+            push(); rotate(-HALF_PI);
+            fill(40, 80, 40); stroke(0); strokeWeight(1.5);
+            arc(0, -1, 14, 14, PI, TWO_PI, CHORD);
+            pop();
+            noStroke();
+        } else if (isFarmer && this.gender === "MALE") {
+            fill(210, 180, 70); ellipse(0, 0, 24, 24); 
+            fill(190, 160, 50); ellipse(0, 0, 14, 14); 
+        } else if (this.gender === "FEMALE") {
+            fill(isFarmer ? color(150, 80, 40) : color(15));
+            arc(0, 0, 12, 12, HALF_PI, PI + HALF_PI);
+            push(); translate(-5, 0); rotate(radians(isMoving ? sin(frameCount * 0.3) * 15 : 0)); ellipse(-6, 0, 12, 6); pop();
+        }
+
+        // Front hands
+        fill(this.skinCol);
+        if (lArmSwing > 0.2) ellipse(lHandX, armLY, 8, 8);
+        if (rArmSwing > 0.2) ellipse(rHandX, armRY, 8, 8);
+        
+        pop();
+    }
+}
+
+
+
+
+
+
+
+
+
+class Bullet {
+  constructor() { this.active = false; }
+  
+  init(x, y, a, iP, tH, w) { 
+    this.active = true;
+    this.x = x; this.y = y; this.startX = x; this.startY = y; this.isP = iP; this.tH = tH; this.w = w; this.a = a; 
+    this.isAlienLaser = (w === "ALIEN_LASER"); this.isRedLaser = (w === "RED_LASER"); this.isPinkLaser = (w === "PINK_LASER"); this.isOrangeBeam = (w === "ORANGE_BEAM"); this.isRocket = (w === WEAPONS.ROCKET_LAUNCHER); this.isTaser = (w === WEAPONS.TASER);
+    
+    // NEW TASER VARIABLES
+    this.retracting = false;
+    this.tetheredTarget = null;
+    this.tetherTimer = 0;
+
+    let s = 25; 
+    if (this.isAlienLaser || this.isRedLaser || this.isPinkLaser || this.isOrangeBeam) { s = 9.8; } 
+    else if (this.isRocket) { s = 16; } 
+    else if (w === WEAPONS.PISTOL && !iP) { s = 12.5; } 
+    else if (iP && (w === WEAPONS.PISTOL || w === WEAPONS.SHOTGUN || w === WEAPONS.ASSAULT_RIFLE)) { s = 35; }
+    if (this.isTaser) s = 20;
+
+    this.vx = cos(a) * s; this.vy = sin(a) * s; 
+    this.l = w === WEAPONS.SHOTGUN ? 30 : 120; 
+    
+    this.sz = (this.isAlienLaser || this.isRedLaser || this.isPinkLaser || this.isOrangeBeam) ? 12 : (this.isRocket ? 16 : 6); 
+    this.col = this.isAlienLaser ? color(255, 20, 147) : (this.isRedLaser ? color(255, 50, 50) : (this.isPinkLaser ? color(255, 105, 180) : (this.isOrangeBeam ? color(255, 146, 40) : color(255, 200, 0)))); 
+    
+    this.history = []; 
+    return this;
+  }
+
+  update() { 
+      if (!this.active) return;
+      this.history.push({x: this.x, y: this.y});
+      let maxLen = this.isRocket ? 15 : (this.isAlienLaser || this.isRedLaser || this.isPinkLaser || this.isOrangeBeam ? 8 : 5);
+      if (this.history.length > maxLen) this.history.shift();
+
+      if (this.isTaser) {
+          if (this.tetheredTarget) {
+              if (this.tetherTimer > 0) {
+                  this.tetherTimer--;
+                  this.x = this.tetheredTarget.x;
+                  this.y = this.tetheredTarget.y;
+                  if (this.tetheredTarget.hp <= 0 || this.tetheredTarget.dead) this.tetherTimer = 0; // Abort if they die
+              } else {
+                  this.tetheredTarget = null;
+                  this.retracting = true;
+              }
+          } else if (this.retracting) {
+              let ang = atan2(player.y - this.y, player.x - this.x);
+              this.x += cos(ang) * 35;
+              this.y += sin(ang) * 35;
+              if (dist(this.x, this.y, player.x, player.y) < 40) this.active = false;
+          } else {
+              this.x += this.vx; this.y += this.vy;
+              // 15m max range (approx 300px), then retract
+              if (dist(this.startX, this.startY, this.x, this.y) > 300) this.retracting = true;
+          }
+      } else {
+          this.x += this.vx; this.y += this.vy; this.l--;
+      }
+  }
+
+  show() { 
+      if (!this.active) return;
+
+      // ==========================================
+      // TASER RENDERING
+      // ==========================================
+      if (this.isTaser) {
+          stroke(100); strokeWeight(2);
+          if (player) line(this.x, this.y, player.x, player.y); // Tether to player
+          
+          push(); 
+          translate(this.x, this.y); 
+          if (this.tetheredTarget) rotate(this.a + random(-0.3, 0.3)); // Shake the prongs while shocking
+          else rotate(this.a);
+
+          fill(255, 255, 0); stroke(20); strokeWeight(1);
+          rect(-4, -6, 8, 12, 2); 
+          stroke(200); line(4, -4, 10, -4); line(4, 4, 10, 4); 
+          pop();
+          return; 
+      }
+      
+      push(); // Master push to prevent styling leaks
+
+      // ==========================================
+      // RESTORED ORIGINAL LASER BEAMS
+      // ==========================================
+      if (this.isRedLaser || this.isPinkLaser || this.isOrangeBeam) {
+          translate(this.x, this.y); 
+          rotate(this.a); 
+          // Same construction as the hybrid's beam -- a wide soft envelope with
+          // a hot core down the middle -- in the cannon's own orange.
+          stroke(this.isOrangeBeam ? color(255, 96, 0, 150)
+                : (this.isPinkLaser ? color(255, 20, 147, 150) : color(255, 0, 0, 150)));
+          strokeWeight(this.isOrangeBeam ? 10 : 8);
+          line(0, 0, this.isOrangeBeam ? -52 : -40, 0);
+          stroke(this.isOrangeBeam ? color(255, 190, 90)
+                : (this.isPinkLaser ? color(255, 105, 180) : color(255, 100, 100)));
+          strokeWeight(3.4);
+          line(0, 0, this.isOrangeBeam ? -52 : -40, 0);
+          if (this.isOrangeBeam) { stroke(255, 246, 214); strokeWeight(1.4); line(0, 0, -40, 0); }
+          pop();
+          return; 
+      }
+      if (this.isAlienLaser) {
+          fill(this.col); noStroke(); ellipse(this.x, this.y, this.sz, this.sz);
+          pop();
+          return;
+      }
+
+      // ==========================================
+      // TRAIL RENDERING (Tracers & Smoke)
+      // ==========================================
+      if (this.history.length > 0) {
+          if (this.isRocket) {
+              // Rocket Smoke Ribbon
+              noStroke();
+              for (let i = 0; i < this.history.length; i++) {
+                  let pt = this.history[i];
+                  let alpha = map(i, 0, this.history.length - 1, 0, 150);
+                  let sSize = map(i, 0, this.history.length - 1, 16, 6);
+                  fill(150, alpha); 
+                  ellipse(pt.x + sin(frameCount * 0.5 + i) * 2, pt.y + cos(frameCount * 0.5 + i) * 2, sSize, sSize);
+              }
+          } else {
+              // Hot Ballistic Tracers
+              noFill();
+              let c = this.col;
+              let glowThick = this.sz * 0.6;
+              let coreThick = this.sz * 0.25;
+              
+              for (let i = 0; i < this.history.length - 1; i++) {
+                  let pt1 = this.history[i];
+                  let pt2 = this.history[i + 1];
+                  let alpha = map(i, 0, this.history.length - 1, 0, 200);
+                  
+                  // Outer glow
+                  stroke(c.levels[0], c.levels[1], c.levels[2], alpha);
+                  strokeWeight(glowThick);
+                  line(pt1.x, pt1.y, pt2.x, pt2.y);
+                  
+                  // Bright-white inner core
+                  stroke(255, 255, 255, alpha);
+                  strokeWeight(coreThick);
+                  line(pt1.x, pt1.y, pt2.x, pt2.y);
+              }
+              
+              // Seamlessly connect the end of the trail to the active bullet head
+              let lastPt = this.history[this.history.length - 1];
+              stroke(c.levels[0], c.levels[1], c.levels[2], 255);
+              strokeWeight(glowThick);
+              line(lastPt.x, lastPt.y, this.x, this.y);
+              
+              stroke(255, 255, 255, 255);
+              strokeWeight(coreThick);
+              line(lastPt.x, lastPt.y, this.x, this.y);
+          }
+      }
+
+      // ==========================================
+      // PROJECTILE HEADS
+      // ==========================================
+      if (this.isRocket) {
+          translate(this.x, this.y); rotate(this.a); 
+          fill(40); noStroke();
+          triangle(-8, -4, -12, -8, -4, -4); triangle(-8, 4, -12, 8, -4, 4); 
+          fill(120, 140, 120); rect(-8, -4, 16, 8, 2); 
+          fill(200, 30, 30); triangle(8, -4, 8, 4, 16, 0); 
+          fill(255, 150, 0); ellipse(-8, 0, 8, 8); 
+          fill(255, 255, 100); ellipse(-8, 0, 4, 4); 
+          
+          let backX = -cos(this.a) * 8, backY = -sin(this.a) * 8; 
+          if (frameCount % 3 === 0) emit(this.x + backX, this.y + backY, 1, color(255, 100, 0), "SPARK", -this.vx * 0.4, -this.vy * 0.4);
+      } else {
+          fill(this.col); 
+          if (this.isP) { stroke(0, 100); strokeWeight(1); } 
+          else if (this.w === WEAPONS.PISTOL) { stroke(255, 0, 0); strokeWeight(1); } 
+          else { noStroke(); } 
+          
+          let headSz = this.sz * 0.6;
+          ellipse(this.x, this.y, headSz, headSz); 
+      }
+      pop(); // End master push
+  }
+}
+
+function Particle(x, y, c, t, dX = 0, dY = 0) { 
+    this.x = x; this.y = y; this.c = c; this.t = t; this.a = 255; 
+    // Size is rolled ONCE here. It used to be re-rolled inside show() every
+    // frame, so every particle strobed between its extremes at 60Hz — smoke
+    // swinging 20px to 40px and back. Dash and melee spawn THRUST, SPARK, GORE
+    // and CHIP by the dozen, which is why those two actions flickered worst.
+    // A FLECK is a spark drawn as a streak rather than a dot: thin, quick, and
+    // it reads as struck metal instead of as a small fire.
+    if (t === "FLECK") this.sz = random(1.4, 3.2);
+    else if (t === "OIL") this.sz = random(3, 7);
+    else if (t === "FLASH" || t === "MUZZLE" || t === "THRUST" || t === "SPARK") this.sz = random(5, 12);
+    else if (t === "GORE" || t === "CHIP") this.sz = random(4, 10);
+    else if (t === "BONE") this.sz = random(2, 5);
+    else if (t === "EXPLOSION") this.sz = random(10, 25);
+    else if (t === "SMOKE") this.sz = random(20, 40);
+    else this.sz = 5;
+
+    if (t === "FLASH" || t === "MUZZLE") { this.vx = dX + random(-1, 1); this.vy = dY + random(-1, 1); this.l = t === "MUZZLE" ? 4 : random(10, 20); } 
+    else if (t === "SPARK") { this.vx = dX + random(-5, 5); this.vy = dY + random(-5, 5); this.l = random(10, 20); } 
+    else if (t === "FLECK") { this.vx = dX * 0.35 + random(-7, 7); this.vy = dY * 0.35 + random(-7, 7); this.l = random(6, 16); } 
+    else if (t === "OIL")   { this.vx = dX * 0.18 + random(-3.4, 3.4); this.vy = dY * 0.18 + random(-3.4, 3.4); this.l = random(14, 30); } 
+    else if (t === "CHIP") { this.vx = random(-3, 3); this.vy = random(-3, 3); this.l = random(20, 50); } 
+    else if (t === "THRUST") { this.vx = dX + random(-2, 2); this.vy = dY + random(-2, 2); this.l = random(10, 20); } 
+    else if (t === "BLOOD") { this.vx = dX * 0.15 + random(-3, 3); this.vy = dY * 0.15 + random(-3, 3); this.l = random(10, 20); } 
+    else if (t === "GORE" || t === "BONE") { this.vx = dX * 0.1 + random(-8, 8); this.vy = dY * 0.1 + random(-8, 8); this.l = random(20, 50); } 
+    else if (t === "EXPLOSION") { this.vx = random(-12, 12); this.vy = random(-12, 12); this.l = random(15, 30); } 
+    else if (t === "SMOKE") { this.vx = dX + random(-1.5, 1.5); this.vy = dY + random(-1.5, 1.5); this.l = random(30, 60); } 
+    else { this.vx = random(-4, 4); this.vy = random(-4, 4); this.l = random(10, 20); } 
+}
+
+Particle.prototype.update = function() { this.x += this.vx; this.y += this.vy; if (this.t !== "FLASH" && this.t !== "SMOKE") { this.vx *= (this.t === "FLECK" ? 0.9 : 0.85); this.vy *= (this.t === "FLECK" ? 0.9 : 0.85); } if (--this.l <= 0) { if (this.t === "FLASH" || this.t === "MUZZLE" || this.t === "THRUST" || this.t === "EXPLOSION" || this.t === "SPARK" || this.t === "FLECK") this.a -= 60; else this.a -= 15; } }
+Particle.prototype.show = function() {
+    const c = this.c.levels;
+    noStroke();
+    if (this.t === "FLECK") {
+        // Drawn along its own velocity, so a shower of them reads as directional
+        // spray rather than as a cloud of dots.
+        const m = Math.hypot(this.vx, this.vy) || 1;
+        stroke(c[0], c[1], c[2], this.a); strokeWeight(this.sz * 0.6);
+        line(this.x, this.y, this.x - (this.vx / m) * this.sz * 3.2, this.y - (this.vy / m) * this.sz * 3.2);
+        noStroke();
+    } else if (this.t === "BONE" || this.t === "CHIP") {
+        fill(c[0], c[1], c[2], this.a);
+        rect(this.x, this.y, this.sz, this.sz);
+    } else if (this.t === "SMOKE" || this.t === "EXPLOSION") {
+        // Big, slow puffs get a soft falloff instead of a hard-edged disc, so a
+        // cloud reads as one mass rather than a pile of circles.
+        softBlob(this.x, this.y, this.sz * 1.35, this.sz * 1.35, c[0], c[1], c[2], this.a);
+    } else {
+        fill(c[0], c[1], c[2], this.a);
+        ellipse(this.x, this.y, this.sz, this.sz);
+    }
+}
+
+function updateParticles() { 
+    for (let i = particles.length - 1; i >= 0; i--) { 
+        if (doTick) particles[i].update(); 
+        if (inView(particles[i].x, particles[i].y, 50)) particles[i].show(); 
+        if (particles[i].a <= 0) particles.splice(i, 1); 
+    } 
+}
+
+function drawUI() {
+  fill(50, 200); noStroke(); rect(20, 20, 200, 15, 4); 
+  fill(220, 30, 30); rect(20, 20, player ? max(0, player.hp) * 2 : 0, 15, 4);
+  
+  fill(50, 200); rect(20, 40, 200, 10, 4); 
+  fill(0, 200, 255); rect(20, 40, player ? max(0, player.shield) * 2 : 0, 10, 4);
+
+  // --- PERSISTENT ARMY BAR CALCULATION ---
+  // Now includes currentLevel === 8 to prevent reset
+    // --- PERSISTENT ARMY BAR CALCULATION ---
+  // Now includes currentLevel === 8 to prevent reset
+  let isArmyMode = isStoryMode && (window.towersDefeated || window.militaryToBring > 0 || window.militaryToBringM > 0 || window.militaryToBringF > 0 || currentLevel === 8);
+  let liveArmyCount = enemiesList.filter(e => e.isFriendly && e.hp > 0 && !e.dead && e.eType !== "COW" && e.eType !== "MILITARY_NEUTRAL").length;
+  
+  
+  // OVERRIDE: If the government directive is established, strictly display the popMilitary count
+  if (isArmyMode && typeof townsData !== 'undefined' && townsData[currentLevel] && townsData[currentLevel].established) {
+      liveArmyCount = typeof popMilitary !== 'undefined' ? popMilitary : 0;
+  }
+
+  // Track peak size but prevent it from shrinking to 0 if level 8 is entered
+  if (currentLevel !== 8 && (!window.maxArmySize || liveArmyCount > window.maxArmySize)) {
+      window.maxArmySize = Math.max(1, liveArmyCount);
+  }
+  let popRatio = isArmyMode ? (max(0, liveArmyCount) / Math.max(1, window.maxArmySize)) : (max(0, MAX_KILLS - totalKills) / MAX_KILLS);
+
+  fill(50, 200); rect(20, 55, 200, 5, 2); 
+  
+  if (isStoryMode) {
+      fill(255, 105, 180); 
+      rect(20, 55, 200 * popRatio, 5, 2); 
+      fill(255, 200, 255); textAlign(LEFT, TOP); textFont('sans-serif'); textStyle(BOLDITALIC); textSize(11);
+      text(isArmyMode ? "STICK CITY POPULATION ALLIES: " + liveArmyCount : "STICK CITY POPULATION", 22, 63);
+  } else {
+      fill(255, 200, 0); 
+      rect(20, 55, 200 * popRatio, 5, 2); 
+      fill(255, 255, 200); textAlign(LEFT, TOP); textFont('sans-serif'); textStyle(BOLDITALIC); textSize(11);
+      text("ENEMIES", 22, 63);
+  }
+  textStyle(NORMAL); 
+
+  // --- NEW LEVEL 8 ENEMY COUNT BAR ---
+  let uiOffset = 35; 
+  if (currentLevel === 8) {
+      // Calculate enemies remaining in HQ
+      let hqEnemies = enemiesList.filter(e => !e.isFriendly && e.hp > 0 && !e.dead).length;
+      let hqRatio = max(0, hqEnemies) / 20; 
+      
+      fill(50, 200); noStroke(); 
+      rect(20, 80, 200, 5, 2); 
+      
+      fill(255, 50, 50); 
+      rect(20, 80, 200 * hqRatio, 5, 2); 
+      
+      fill(255, 150, 150); textAlign(LEFT, TOP); textFont('sans-serif'); textStyle(BOLDITALIC); textSize(11);
+      text("NM-0 HQ ENEMIES: " + hqEnemies, 22, 88);
+      textStyle(NORMAL);
+      uiOffset = 60; 
+  }
+  if (nm0AmbushActive) {
+      let ambushRatio = max(0, nm0AmbushKills) / 300; 
+      
+      fill(50, 200); noStroke(); 
+      rect(20, 80, 200, 5, 2); 
+      
+      fill(255, 50, 50); 
+      rect(20, 80, 200 * ambushRatio, 5, 2); 
+      
+      fill(255, 150, 150); textAlign(LEFT, TOP); textFont('sans-serif'); textStyle(BOLDITALIC); textSize(11);
+      text("NM-0 AMBUSH FORCES", 22, 88);
+      textStyle(NORMAL);
+      
+      uiOffset = 60; 
+  }
+// --- NEW: STICK ARMY OUTPOST BAR (Tan Bar) ---
+  if (currentLevel === 4) {
+      let outpostUnits = enemiesList.filter(e => e.eType === "MILITARY_NEUTRAL" && e.hp > 0 && !e.dead).length;
+      let totalOutpost = 80; // Set this to the initial number of units you spawn
+      let outpostRatio = max(0, outpostUnits) / totalOutpost;
+      
+      fill(50, 200); noStroke(); 
+      rect(20, 95, 200, 5, 2); // Positioned below the main bar
+      
+      fill(190, 170, 130); // Tan bar to match military outfits
+      rect(20, 95, 200 * outpostRatio, 5, 2); 
+      
+      fill(235, 210, 170); textAlign(LEFT, TOP); textFont('sans-serif'); textStyle(BOLDITALIC); textSize(11);
+      text("STICK ARMY OUTPOST: " + outpostUnits, 22, 103);
+      textStyle(NORMAL);
+  }
+  // --- NEW SEPARATE FARM AMBUSH BAR ---
+  if (typeof farmAmbushActive !== 'undefined' && farmAmbushActive) {
+      let farmRatio = max(0, window.farmAmbushKills) / 500; 
+      
+      fill(50, 200); noStroke(); 
+      rect(20, 80, 200, 5, 2); 
+      
+      fill(200, 230, 40); // Bug Yellow/Green
+      rect(20, 80, 200 * farmRatio, 5, 2); 
+      
+      fill(220, 255, 100); textAlign(LEFT, TOP); textFont('sans-serif'); textStyle(BOLDITALIC); textSize(11);
+      text("PEST INFESTATION: " + window.farmAmbushKills, 22, 88);
+      textStyle(NORMAL);
+      
+      uiOffset = 60; 
+  }
+
+  // CRITICAL FIX: Only ONE push and ONE translate goes here!
+  push(); 
+  translate(0, uiOffset); 
+  
+  fill(30, 200); stroke(80); strokeWeight(2); rect(20, 55, 60, 40, 5); 
+  noStroke(); fill(150); 
+  
+  if (player && player.currentWeapon === WEAPONS.DUAL_SMG) {
+      rect(28, 60, 24, 8, 2); rect(32, 68, 6, 8); 
+      rect(28, 75, 24, 8, 2); rect(32, 83, 6, 8); 
+  } else if (player && player.currentWeapon === WEAPONS.SMG) { 
+      rect(28, 65, 24, 8, 2); 
+      rect(32, 73, 6, 12); 
+  } else if (player && player.currentWeapon === WEAPONS.ASSAULT_RIFLE) { 
+      fill(40); rect(25, 66, 32, 4, 1); 
+      fill(139, 69, 19); rect(32, 65, 10, 6, 1); rect(20, 65, 6, 6, 1); 
+  } else if (player && player.currentWeapon === WEAPONS.SHOTGUN) { 
+      fill(30); rect(25, 66, 32, 4, 1); 
+      fill(15); rect(36, 64.5, 12, 7, 1); 
+      fill(50); rect(25, 64.5, 10, 7, 2); 
+  } else if (player && player.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { 
+      fill(50, 70, 50); rect(25, 66, 36, 6, 2); 
+      fill(30); rect(35, 64, 8, 10, 1); 
+  } else if (player && player.currentWeapon === WEAPONS.TASER) { 
+      fill(255, 255, 0); stroke(10); strokeWeight(1); 
+      rect(28, 66, 18, 8, 2); 
+      fill(20); noStroke(); rect(32, 74, 6, 8); 
+  } else {  
+      rect(35, 65, 16, 6, 2); 
+      rect(35, 71, 6, 10); 
+  }
+ 
+  fill(255); noStroke(); textAlign(LEFT, CENTER); textFont('sans-serif'); textSize(24); 
+ 
+  let pA = player ? player.ammo : 0, pM = player ? player.currentWeapon.maxAmmo : 17, pR = player ? player.reloadTimer : 0; 
+  
+  if (player && player.currentWeapon === WEAPONS.TASER) {
+      text(pR > 0 ? "RECHARGING" : `${pA} / ∞`, 90, 75); 
+  } else {
+      let mags = player ? player.mags[player.currentWeapon.name] : Infinity;
+      let reserveAmmo = mags === Infinity ? "∞" : mags * pM;
+      text(pR > 0 ? "RELOADING" : `${pA} / ${reserveAmmo}`, 90, 75); 
+  }
+  
+  pop(); // CRITICAL FIX: Closes the translation perfectly
+
+
+  textAlign(RIGHT, TOP); textSize(10); fill(255); text("SCORE: " + score, width - 20, 20);
+
+  drawClimateReadout();
+
+  fill(50, 200); stroke(255); strokeWeight(2); rect(width - 60, 40, 40, 40, 5);
+  fill(255); noStroke(); rect(width - 48, 50, 6, 20, 2); rect(width - 34, 50, 6, 20, 2);
+  
+  if (consecutiveKills >= 2) { 
+      let displayMult = min(99, consecutiveKills);
+      fill(255, 150, 0); textSize(16); 
+      let shakeX = random(-1, 1) * displayMult * 0.5; let shakeY = random(-1, 1) * displayMult * 0.5;
+      textAlign(RIGHT, TOP); text("x" + displayMult + " COMBO", width - 20 + shakeX, 33 + shakeY);
+      fill(50, 200); rect(width - 120, 80, 100, 8, 4);
+      fill(255, 150, 0); rect(width - 120, 80, map(comboTimer, 0, 180, 0, 100), 8, 4);
+  }
+
+  updateAndDrawFloatingScores();
+
+  let bY = rightStick.base.y - 80, rbX = width - 35, rbY = bY - 170; 
+  let isTaser = player && player.currentWeapon === WEAPONS.TASER;
+  
+  fill(50, 200); stroke(100); strokeWeight(2); 
+  if (pR > 0) fill(100, 50, 50, 200); 
+  ellipse(rbX, rbY, 50, 50); 
+  fill(255); noStroke(); textAlign(CENTER, CENTER); textSize(11); 
+  
+  if (isTaser) text(pR > 0 ? "..." : "RECHARGE", rbX, rbY);
+  else text(pR > 0 ? "..." : "RELOAD", rbX, rbY);
+
+  if (typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) {
+      let cbX = rbX, cbY = rbY - 70; 
+      fill(50, 200); stroke(255, 255, 0); strokeWeight(2); 
+      if (player && player.cannonCooldown > 0) fill(150, 150, 0, 200); 
+      ellipse(cbX, cbY, 50, 50); 
+      push(); translate(cbX, cbY); rotate(-PI/2); noFill(); strokeWeight(4);
+      if (player && player.cannonCharge > 0) { stroke(255, 255, 0); arc(0, 0, 50, 50, 0, min(1, player.cannonCharge / 180) * TWO_PI); }
+      else if (player && player.cannonCooldown > 0) { stroke(150, 150, 0); arc(0, 0, 50, 50, 0, (1 - (player.cannonCooldown / 180)) * TWO_PI); } 
+      pop();
+      fill(255); noStroke(); textAlign(CENTER, CENTER); textSize(11); 
+      text((player && player.cannonCooldown > 0) ? "RECHARGING" : "CANNON\n(" + (player ? player.cannonAmmo : 4) + ")", cbX, cbY);
+  } 
+  else if (grenadesUnlocked || (typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked)) {
+      let gbX = rbX, gbY = rbY - 70; 
+      fill(50, 200); stroke(100); strokeWeight(2); 
+      if (pGrenadeAmmo <= 0) fill(150, 50, 0, 200); ellipse(gbX, gbY, 50, 50); 
+      push(); translate(gbX, gbY); rotate(-PI/2); noFill(); strokeWeight(4);
+      if (isCooking) { stroke(255, 150, 0); arc(0, 0, 50, 50, 0, (cookTime / 180) * TWO_PI); } 
+      else if (pGrenadeAmmo <= 0) { stroke(255, 50, 50); arc(0, 0, 50, 50, 0, (1 - (pGrenadeTimer / 600)) * TWO_PI); } 
+      else { stroke(40, 120, 40); ellipse(0, 0, 50, 50); } pop();
+      fill(255); noStroke(); textAlign(CENTER, CENTER); textSize(11); 
+      let timerTxt = (typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked && pGrenadeAmmo <= 0) ? Math.ceil(pGrenadeTimer / 60) : "EMPTY";
+      text(isCooking ? "COOKING" : (pGrenadeAmmo <= 0 ? timerTxt : `GRENADE\n(${pGrenadeAmmo})`), gbX, gbY);
+  }
+
+  if (typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) {
+      let fbX = rbX - 70, fbY = rbY; 
+      fill(50, 200); stroke(0, 150, 255); strokeWeight(2); 
+      if (pFlaskAmmo <= 0) fill(0, 50, 150, 200); 
+      ellipse(fbX, fbY, 50, 50); 
+      push(); translate(fbX, fbY); rotate(-PI/2); noFill(); strokeWeight(4);
+      if (isCooking) { stroke(255, 150, 0); arc(0, 0, 50, 50, 0, (cookTime / 180) * TWO_PI); } 
+      else if (pFlaskAmmo <= 0) { stroke(0, 200, 255); arc(0, 0, 50, 50, 0, (1 - (pFlaskTimer / 600)) * TWO_PI); } 
+      else { stroke(0, 150, 255); ellipse(0, 0, 50, 50); } pop();
+      fill(255); noStroke(); textAlign(CENTER, CENTER); textSize(11); 
+      let timerTxt = (pFlaskAmmo <= 0) ? Math.ceil(pFlaskTimer / 60) : "EMPTY";
+      text(isCooking ? "COOKING" : (pFlaskAmmo <= 0 ? timerTxt : `FLASK\n(${pFlaskAmmo})`), fbX, fbY);
+  } 
+  else if (meleeUnlocked) { 
+      let mbX = rbX - 70, mbY = rbY; fill(50, 200); stroke(255, 100, 0); strokeWeight(2); if (player && player.meleeCooldown > 0) fill(150, 50, 0, 200); ellipse(mbX, mbY, 50, 50); fill(255); noStroke(); text(player && player.meleeCooldown > 0 ? "..." : "MELEE", mbX, mbY); 
+  }
+
+  let tbX = width - 35, tbY = bY - 100; stroke(0, 255, 0); strokeWeight(2); noFill(); ellipse(tbX, tbY, 40, 40); line(tbX - 20, tbY, tbX + 20, tbY); line(tbX, tbY - 20, tbX, tbY + 20); if (headAimToggle) { fill(255, 0, 0); noStroke(); ellipse(tbX, tbY, 16, 16); fill(255, 0, 0); textAlign(RIGHT, CENTER); textSize(12); text("HEADSHOT", tbX - 30, tbY - 8); text("MODE", tbX - 30, tbY + 8); }
+  if (jetpackUnlocked) { let dbX = tbX - 70, dbY = tbY; fill(50, 200); stroke(0, 200, 255); strokeWeight(2); if (player && player.dashCooldown > 0) fill(50, 100, 150, 200); ellipse(dbX, dbY, 50, 50); fill(255); noStroke(); textAlign(CENTER, CENTER); text(player && player.dashCooldown > 0 ? "..." : "DASH", dbX, dbY); }
+  if (streakMsgTimer > 0) { push(); fill(255, 200, 0, map(streakMsgTimer, 0, 120, 0, 255)); textAlign(CENTER, CENTER); textSize(40); text(streakMsgText, width / 2, height / 4); pop(); streakMsgTimer--; }
+
+  if ((currentLevel === 1 || currentLevel === 2) && isStoryMode && player && player.hp > 0 && (currentLevel === 2 || journalRead)) {
+      let activeTowers = buildings.filter(b => b.isTower && b.hp > 0);
+      for (let b of activeTowers) {
+          let d = dist(player.x, player.y, b.x, b.y);
+          if (d > 450) { 
+              let ang = atan2(b.y - player.y, b.x - player.x);
+              let pad = 15; let dx = cos(ang); let dy = sin(ang);
+              let tX = (width/2 - pad) / abs(dx); let tY = (height/2 - pad) / abs(dy);
+              let multiplier = min(tX, tY);
+              let cx = width/2 + dx * multiplier; let cy = height/2 + dy * multiplier;
+              push(); translate(cx, cy); push(); translate(-cos(ang) * 25, -sin(ang) * 25); 
+              fill(255, 255, 0); stroke(0); strokeWeight(2); textSize(12); textAlign(CENTER, CENTER); textFont('sans-serif');
+              text(floor(d / 10) + "m", 0, 0); pop(); rotate(ang);
+              if (frameCount % 60 < 30) fill(255, 50, 50, 230); else fill(200, 0, 0, 230);
+              stroke(0); strokeWeight(2); triangle(12, 0, -8, -8, -8, 8); pop();
+          }
+      }
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+function handleGamepad() {
+  let pads = navigator.getGamepads(), pad = null; for (let i = 0; i < pads.length; i++) if (pads[i]) { pad = pads[i]; break; } if (!pad) return;
+  
+  let lx = pad.axes[0], ly = pad.axes[1], ld = dist(0, 0, lx, ly); 
+  if (ld > 0.2) { leftStick.active = true; leftStick.dx = lx; leftStick.dy = ly; window.showOnScreenControls = false; window.isDesktop = false; } else if (!touches.length && !window.isDesktop) leftStick.active = false;
+  
+  let rx = pad.axes[2], ry = pad.axes[3], rd = dist(0, 0, rx, ry); 
+  if (rd > 0.2) { rightStick.active = true; rightStick.dx = rx; rightStick.dy = ry; rightStick.dist = rd; window.showOnScreenControls = false; window.isDesktop = false; } else if (!touches.length && !window.isDesktop) rightStick.active = false;
+  
+  let btn = (i) => pad.buttons[i] && pad.buttons[i].pressed, jP = (i) => btn(i) && !prevGamepadButtons[i];
+  let anyBtn = false; for (let i = 0; i < pad.buttons.length; i++) { prevGamepadButtons[i] = btn(i); if (btn(i)) anyBtn = true; }
+  if (anyBtn) { window.showOnScreenControls = false; window.isDesktop = false; }
+  
+  if (jP(0) && (smgUnlocked || shotgunUnlocked || arUnlocked || rocketLauncherUnlocked) && millis() - lastWeaponSwapTime > 300 && player) { 
+      let aW = [WEAPONS.PISTOL]; 
+      if (dualSmgUnlocked) aW.push(WEAPONS.DUAL_SMG); else if (smgUnlocked) aW.push(WEAPONS.SMG); 
+      if (arUnlocked) aW.push(WEAPONS.ASSAULT_RIFLE); if (shotgunUnlocked) aW.push(WEAPONS.SHOTGUN); if (rocketLauncherUnlocked) aW.push(WEAPONS.ROCKET_LAUNCHER); 
+      let nI = (aW.indexOf(player.currentWeapon) + 1) % aW.length; player.currentWeapon = aW[nI]; player.reloadTimer = 0; lastWeaponSwapTime = millis(); 
+  }
+  if (jP(2) && player && player.reloadTimer <= 0 && player.ammo < player.currentWeapon.maxAmmo) { player.triggerReload(); }
+  if ((pad.buttons[3]?.pressed || pad.buttons[5]?.pressed) && meleeUnlocked) meleeInputHeld = true;   
+  
+  // --- NEW: Controller Support for Grenades ---
+  grenadeInputHeld = (pad.buttons[4]?.pressed || pad.buttons[6]?.pressed) ? true : false;
+
+  if ((jP(3) || jP(5)) && meleeUnlocked && player && player.dashTimer <= 0 && !chemistSuitUnlocked) { player.activateMelee(); }
+  if (jP(1) && millis() - lastToggleTime > 300) { headAimToggle = !headAimToggle; lastToggleTime = millis(); }
+  if ((jP(4) || jP(6)) && jetpackUnlocked && player && player.dashCooldown <= 0 && player.dashTimer <= 0 && player.meleeTimer <= 0) { player.activateDash(); }
+}
+
+
+
+
+
+
+function handleTouches() {
+  meleeInputHeld = false;
+  cannonInputHeld = false;
+  grenadeInputHeld = false; 
+
+  leftStick.active = false; rightStick.active = false; leftStick.dx = 0; leftStick.dy = 0; rightStick.dx = 0; rightStick.dy = 0; rightStick.dist = 0; 
+  let hw = width / 2, mR = 60, bY = rightStick.base.y - 80;
+  
+  let currentMeleeTouch = false; 
+  let currentCannonTouch = false; 
+  let currentGrenadeTouch = false;
+  
+  if (window.lastPauseTime === undefined) window.lastPauseTime = 0;
+
+  for (let i = 0; i < touches.length; i++) {
+    let tx = touches[i].x, ty = touches[i].y;
+    
+    if (tx > width - 100 && ty < 100) {
+        if (millis() - window.lastPauseTime > 300) {
+            isPaused = true; pauseMenuState = "MAIN"; sfx.charge(); window.lastPauseTime = millis();
+        }
+        continue; 
+    }
+
+    // --- UPDATED BUTTON HITBOXES ---
+    if (typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) {
+        if (dist(tx, ty, width - 35, bY - 240) < 45) currentCannonTouch = true; // Top Slot (Above Reload)
+        if (dist(tx, ty, width - 105, bY - 170) < 45) currentMeleeTouch = true; // Left Slot (Flasks use melee input)
+    } else {
+        if ((grenadesUnlocked || (typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked)) && dist(tx, ty, width - 35, bY - 240) < 45) currentGrenadeTouch = true; 
+        if (meleeUnlocked && dist(tx, ty, width - 105, bY - 170) < 45) currentMeleeTouch = true; 
+    }
+
+    if (dist(tx, ty, 50, 65) < 40 && (smgUnlocked || shotgunUnlocked || arUnlocked || rocketLauncherUnlocked)) { 
+        if (millis() - lastWeaponSwapTime > 300 && player) { 
+            let aW = [WEAPONS.PISTOL]; 
+			if (isStoryMode) aW.push(WEAPONS.TASER);
+            if (dualSmgUnlocked) aW.push(WEAPONS.DUAL_SMG); else if (smgUnlocked) aW.push(WEAPONS.SMG); 
+            if (arUnlocked) aW.push(WEAPONS.ASSAULT_RIFLE); if (shotgunUnlocked) aW.push(WEAPONS.SHOTGUN); if (rocketLauncherUnlocked) aW.push(WEAPONS.ROCKET_LAUNCHER); 
+            player.currentWeapon = aW[(aW.indexOf(player.currentWeapon) + 1) % aW.length]; player.reloadTimer = 0; lastWeaponSwapTime = millis(); 
+        } 
+        continue; 
+    }
+    
+    if (dist(tx, ty, width - 35, bY - 170) < 45) { if (player && player.reloadTimer <= 0 && player.ammo < player.currentWeapon.maxAmmo) { player.triggerReload(); } }
+    if (dist(tx, ty, width - 35, bY - 100) < 45) { if (millis() - lastToggleTime > 300) { headAimToggle = !headAimToggle; lastToggleTime = millis(); } }
+    if (jetpackUnlocked && dist(tx, ty, width - 105, bY - 100) < 45) { if (player && player.dashCooldown <= 0 && player.dashTimer <= 0 && player.meleeTimer <= 0) { player.activateDash(); } }
+    
+    if (tx < hw) { 
+        leftStick.active = true; let dx = tx - leftStick.base.x, dy = ty - leftStick.base.y, d = dist(0, 0, dx, dy); if (d > mR) { dx = (dx / d) * mR; dy = (dy / d) * mR; d = mR; } leftStick.dx = dx / mR; leftStick.dy = dy / mR; 
+    } else { 
+        let touchingBtn = false;
+        if (tx > width - 100 && ty < 100) touchingBtn = true; 
+        if (dist(tx, ty, width - 35, bY - 170) < 45) touchingBtn = true; // Reload
+        if (dist(tx, ty, width - 105, bY - 170) < 45) touchingBtn = true; // Melee/Flask
+        if (dist(tx, ty, width - 35, bY - 100) < 45) touchingBtn = true; // Headshot
+        if (dist(tx, ty, width - 105, bY - 100) < 45) touchingBtn = true; // Jetpack
+        
+        // Cannon OR Grenade exclusion
+        let hasTopBtn = (typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) || grenadesUnlocked || (typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked);
+        if (hasTopBtn && dist(tx, ty, width - 35, bY - 240) < 45) touchingBtn = true;
+        
+        if (!touchingBtn) {
+            rightStick.active = true; let dx = tx - rightStick.base.x, dy = ty - rightStick.base.y, d = dist(0, 0, dx, dy); if (d > mR) { dx = (dx / d) * mR; dy = (dy / d) * mR; d = mR; } rightStick.dx = dx / mR; rightStick.dy = dy / mR; rightStick.dist = d / mR; 
+        }
+    }
+  } 
+  
+  if (currentCannonTouch) cannonInputHeld = true;
+  if (currentMeleeTouch) meleeInputHeld = true;
+  if (currentGrenadeTouch) grenadeInputHeld = true;
+}
+
+
+
+
+
+
+
+
+
+  
+
+
+function drawJoysticks() {
+  noFill(); stroke(255, 50); ellipse(leftStick.base.x, leftStick.base.y, 120); ellipse(rightStick.base.x, rightStick.base.y, 120);
+}
+
+
+
+function handleShopClicks(mx, my) {
+    let cols = 2, boxW = 96, boxH = 39, spacingX = 110, spacingY = 48;
+    let startX = width/2 - (spacingX / 2), startY = height/2 - (spacingY * 2.5); 
+    let ninjaPrice = window.ninjaOwned ? 0 : 200, armorPrice = window.armorOwned ? 0 : 200, chemistPrice = window.chemistOwned ? 0 : 200;
+    let totalItems = meleeComboUnlocked ? 14 : 13; 
+    
+    for (let i = 0; i < totalItems; i++) {
+        let c = i % cols, r = floor(i / cols), bx = startX + c * spacingX, by = startY + r * spacingY;
+        if (mx > bx - boxW/2 && mx < bx + boxW/2 && my > by - boxH/2 && my < by + boxH/2) {
+            
+            // --- NEW REFILL & EQUIP LOGIC (Indices 0 to 3) ---
+            if (i === 0 && score >= 50) { score -= 50; smgUnlocked = true; player.currentWeapon = WEAPONS.SMG; player.mags["MACHINE GUN"] = 3; player.weaponAmmo["MACHINE GUN"] = WEAPONS.SMG.maxAmmo; sfx.reload(); }
+            if (i === 1 && score >= 50) { score -= 50; dualSmgUnlocked = true; player.currentWeapon = WEAPONS.DUAL_SMG; player.mags["DUAL SMGS"] = 3; player.weaponAmmo["DUAL SMGS"] = WEAPONS.DUAL_SMG.maxAmmo; sfx.reload(); }
+            if (i === 2 && score >= 50) { score -= 50; arUnlocked = true; player.currentWeapon = WEAPONS.ASSAULT_RIFLE; player.mags["ASSAULT RIFLE"] = 3; player.weaponAmmo["ASSAULT RIFLE"] = WEAPONS.ASSAULT_RIFLE.maxAmmo; sfx.reload(); }
+            if (i === 3 && score >= 50) { score -= 50; shotgunUnlocked = true; player.currentWeapon = WEAPONS.SHOTGUN; player.mags["SHOTGUN"] = 3; player.weaponAmmo["SHOTGUN"] = WEAPONS.SHOTGUN.maxAmmo; sfx.reload(); }
+            
+            // --- STANDARD UNLOCK LOGIC ---
+            if (i === 6 && !jetpackFireExplosion && score >= 1000) { score -= 1000; jetpackFireExplosion = true; sfx.charge(); }
+            if (i === 7 && !jetpackDoubleDash && score >= 1000) { score -= 1000; jetpackDoubleDash = true; sfx.charge(); }
+            if (i === 8 && !meleeComboUnlocked && score >= 200 && !explosiveArmorUnlocked && !chemistSuitUnlocked) { score -= 200; meleeComboUnlocked = true; sfx.charge(); }
+            if (i === 9 && score >= 1000) { 
+                score -= 1000; 
+                rocketLauncherUnlocked = true; 
+                player.currentWeapon = WEAPONS.ROCKET_LAUNCHER; 
+                player.mags["ROCKET LAUNCHER"] = 6; 
+                player.weaponAmmo["ROCKET LAUNCHER"] = WEAPONS.ROCKET_LAUNCHER.maxAmmo; 
+                sfx.reload(); 
+            }
+            let nextIdx = 10;
+            if (meleeComboUnlocked) { 
+                if (i === nextIdx && !window.meleeFinisherUnlocked && score >= 200 && !explosiveArmorUnlocked && !chemistSuitUnlocked) { score -= 200; window.meleeFinisherUnlocked = true; sfx.charge(); } 
+                nextIdx++; 
+            }
+            if (i === nextIdx && !ninjaSuitUnlocked && score >= ninjaPrice) { score -= ninjaPrice; ninjaSuitUnlocked = true; explosiveArmorUnlocked = false; chemistSuitUnlocked = false; isCooking = false; playerGrenades = []; playerFlasks = []; window.ninjaOwned = true; sfx.charge(); } nextIdx++;
+            if (i === nextIdx && !explosiveArmorUnlocked && score >= armorPrice) { score -= armorPrice; explosiveArmorUnlocked = true; ninjaSuitUnlocked = false; chemistSuitUnlocked = false; isCooking = false; pGrenadeAmmo = 4; pGrenadeTimer = 0; playerFlasks = []; window.armorOwned = true; sfx.charge(); } nextIdx++;
+            if (i === nextIdx && !chemistSuitUnlocked && score >= chemistPrice) { score -= chemistPrice; chemistSuitUnlocked = true; ninjaSuitUnlocked = false; explosiveArmorUnlocked = false; isCooking = false; pFlaskAmmo = 2; pFlaskTimer = 0; playerGrenades = []; window.chemistOwned = true; sfx.charge(); } 
+        }
+    }
+}
+
+
+// ==========================================
+// RESTORED: STANDARD EXPLOSION
+// ==========================================
+
+// ==========================================
+// RESTORED: MOBILE UPGRADE MENU
+// ==========================================
+// ==========================================
+// RESTORED: MOBILE UPGRADE MENU
+// ==========================================
+function drawUpgradeMenu() {
+    fill(0, 230); rect(0, 0, width, height); 
+    
+    fill(255); textAlign(CENTER, CENTER); textSize(32); textFont('sans-serif'); 
+    text("UPGRADES", width/2, 50);
+
+    fill(255, 200, 0); textSize(20); 
+    text("AVAILABLE SCORE: " + score, width/2, 85);
+
+    let ninjaPrice = window.ninjaOwned ? 0 : 200;
+    let armorPrice = window.armorOwned ? 0 : 200;
+    let chemistPrice = window.chemistOwned ? 0 : 200;
+	
+    let items = [
+        {name: "SMG", state: false, price: 50, isAmmoRefill: true},
+        {name: "DUAL SMGS", state: false, price: 50, isAmmoRefill: true},
+        {name: "ASSAULT RIFLE", state: false, price: 50, isAmmoRefill: true},
+        {name: "SHOTGUN", state: false, price: 50, isAmmoRefill: true},
+        {name: "JETPACK", state: jetpackUnlocked, price: 0},
+        {name: "MELEE", state: meleeUnlocked, price: 0},
+        {name: "FIRE DASH", state: jetpackFireExplosion, price: 1000},
+        {name: "DOUBLE DASH", state: jetpackDoubleDash, price: 1000},
+        {name: "COMBO MELEE", state: meleeComboUnlocked, price: 200, disabled: explosiveArmorUnlocked}, 
+        {name: "ROCKET LAUNCHER", state: false, price: 1000, isAmmoRefill: true} 
+    ];
+    
+    if (meleeComboUnlocked) {
+        window.meleeFinisherUnlocked = window.meleeFinisherUnlocked || false;
+        items.push({name: "MELEE FINISHER", state: window.meleeFinisherUnlocked, price: 200, disabled: explosiveArmorUnlocked});
+    }
+    
+    items.push({name: "NINJA SUIT", state: ninjaSuitUnlocked, price: ninjaPrice});
+    items.push({name: "EXPLOSIVE ARMOR", state: explosiveArmorUnlocked, price: armorPrice}); 
+    items.push({name: "CHEMIST SUIT", state: chemistSuitUnlocked, price: chemistPrice});
+	
+    // --- MOBILE SIZING: 40% SMALLER & RAISED ---
+    let cols = 2; 
+    let boxW = 96, boxH = 39; 
+    let spacingX = 110, spacingY = 48; 
+    let startX = width/2 - (spacingX / 2); 
+    let startY = height/2 - (spacingY * 2.5); 
+
+    for (let i = 0; i < items.length; i++) {
+        let c = i % cols; 
+        let r = floor(i / cols);
+        let bx = startX + c * spacingX;
+        let by = startY + r * spacingY;
+
+        let isAffordable = !items[i].state && items[i].price > 0 && score >= items[i].price && !items[i].disabled;
+        let isEquip = !items[i].state && items[i].price === 0 && (items[i].name === "NINJA SUIT" || items[i].name === "EXPLOSIVE ARMOR" || items[i].name === "CHEMIST SUIT");
+
+        // --- UPDATED OUTLINE COLOR LOGIC ---
+        if (items[i].isAmmoRefill) {
+            if (score >= items[i].price) { fill(40); stroke(255, 200, 0); } else { fill(40); stroke(100); }
+        } else if (items[i].state) { fill(40); stroke(50, 255, 50); } 
+        else if (items[i].disabled) { fill(40); stroke(150, 50, 50); } 
+        else if (isAffordable || isEquip) { fill(40); stroke(255, 200, 0); } 
+        else { fill(40); stroke(100); }
+        
+        strokeWeight(2);
+        rect(bx - boxW/2, by - boxH/2, boxW, boxH, 8);
+
+        fill(255); noStroke(); textSize(9); 
+        text(items[i].name, bx, by - 8);
+        
+        textSize(8);
+        
+        // --- UPDATED TEXT LABEL LOGIC ---
+        if (items[i].isAmmoRefill) {
+            if (score >= items[i].price) { fill(255, 200, 0); text("REFILL & EQUIP: 50", bx, by + 8); } 
+            else { fill(255, 100, 100); text("COST: 50", bx, by + 8); }
+        } else if (items[i].state) {
+            fill(50, 255, 50); 
+            if (items[i].name === "NINJA SUIT" || items[i].name === "EXPLOSIVE ARMOR" || items[i].name === "CHEMIST SUIT") text("EQUIPPED", bx, by + 8);
+            else text("UNLOCKED", bx, by + 8);
+        } else if (items[i].disabled) {
+            fill(255, 50, 50); text("NEEDS NINJA", bx, by + 8);
+        } else if (isEquip) {
+            fill(255, 200, 0); text("EQUIP (FREE)", bx, by + 8);
+        } else if (items[i].price > 0) {
+            if (score >= items[i].price) { fill(255, 200, 0); text("BUY: " + items[i].price, bx, by + 8); } 
+            else { fill(255, 100, 100); text("COST: " + items[i].price, bx, by + 8); }
+        } else {
+            fill(150); text("FIND IN WORLD", bx, by + 8);
+        }
+    }
+
+
+
+    // Now safely back inside the function!
+    fill(50, 200, 50); stroke(255); strokeWeight(2);
+    rect(width/2 - 125, height - 70, 250, 50, 8);
+    fill(0); noStroke(); textSize(18);
+        text(isPaused ? "RESUME GAME" : "START NEXT LEVEL", width/2, height - 45);
+}
+
+
+
+function touchStarted() {
+  window.showOnScreenControls = true;
+  window.isDesktop = false;
+  if (!sfx.ctx) sfx.init();
+
+  // Define mx and my FIRST
+  let mx = touches.length > 0 ? touches[touches.length - 1].x : mouseX;
+  let my = touches.length > 0 ? touches[touches.length - 1].y : mouseY;
+
+  // THEN check the barrier button
+  if (window.archBarrierReady) {
+      let bbX = width / 2, bbY = height - 100;
+      if (mx > bbX - 70 && mx < bbX + 70 && my > bbY - 20 && my < bbY + 20) {
+          buildBarrier(); return false;
+      }
+  }
+
+  // --- NEW: CLOSE NM-0 OVERLAY ---
+  if (window.inNM0SecretOverlay) {
+
+      window.inNM0SecretOverlay = false;
+      sfx.charge();
+      return false;
+  }
+
+  // --- MOUNT / DISMOUNT ---
+  if (handleMountTap(mx, my)) return false;
+
+  // --- NEW: LEVEL 1 ENTER NM-0 HQ ---
+  if (currentLevel === 1 && window.nm0AmbushClearedStatus && !killcamMode && !inTownCutscene && !inPostAmbushCutscene) {
+      let nGate = buildings.find(b => b.isGovFortress && b.y < 0);
+      if (nGate && nGate.hp <= 0 && dist(player.x, player.y, nGate.x, nGate.y + nGate.h/2) < 250 && isClickingBtn(mx, my)) {
+          startAtLevel(8);
+          sfx.charge();
+          return false;
+      }
+  }
+
+  // --- NEW: LEVEL 8 INTERACTIONS ---
+  if (currentLevel === 8 && !killcamMode && !isPaused) {
+      // 1. ENTER ROOM
+      if (window.nm0HqCleared && dist(player.x, player.y, 0, -800) < 250 && player.y > -1000 && isClickingBtn(mx, my)) {
+          player.y = -1100; // Teleport safely inside the room
+          camY = player.y - (height / 2) / zoom;
+          sfx.charge(); 
+          return false;
+      }
+      // 2. EXIT ROOM
+      if (dist(player.x, player.y, 0, -800) < 250 && player.y <= -1000 && isClickingBtn(mx, my)) {
+          player.y = -500; // Teleport safely outside the room
+          camY = player.y - (height / 2) / zoom;
+          sfx.charge(); 
+          return false;
+      }
+      // 3. PICK UP BLUEPRINT
+      if (dist(player.x, player.y, 0, -2000) < 200 && !window.armorBlueprintPickedUp && isClickingBtn(mx, my)) {
+          window.armorBlueprintPickedUp = true;
+          window.inNM0SecretOverlay = true;
+          sfx.charge(); 
+          return false;
+      }
+         // 4. EXIT BUILDING TO NORTH GATE
+      if (dist(player.x, player.y, 0, 1450) < 250 && isClickingBtn(mx, my)) {
+          // MUST grab blueprint first
+          if (!window.armorBlueprintPickedUp) {
+              streakMsgText = "GET THE BLUEPRINT FIRST!";
+              streakMsgTimer = 120;
+              sfx.hitArmor();
+              return false;
+          }
+
+          startAtLevel(1, true); 
+          
+          // Force player to spawn right outside the North Gate!
+          player.x = 600;
+          player.y = -3500;
+          player.aimAngle = HALF_PI; // Face downward
+          camX = player.x - (width / 2) / zoom;
+          camY = player.y - (height / 2) / zoom;
+
+          // The NM-0 HQ leg is done and the armour blueprint is in hand. This
+          // is the northern branch of Stick City — the road onward is the south
+          // Great Gate, and north of here is Sector 09, still unbuilt.
+          window.northGateBreached = true;
+          streakMsgText = "ARMOR BLUEPRINT RECOVERED";
+          streakMsgTimer = 200;
+
+          // Queue the Government Directive / Overworld sequence
+          if (!townsData[1] || !townsData[1].established) {
+              // Set population based on Route
+              if (window.genocideRouteActive || window.genocideAmbushCleared) {
+                  popTotal = window.militaryToBring || 0; // Stick population destroyed
+              } else {
+                  popTotal = Math.max(10, popTotal); // Savior route gets survivors
+              }
+
+              popUnassigned = popTotal;
+              popFarming = 0; popScience = 0; popArchitecture = 0; popMilitary = 0;
+          }
+          openSectorDirective(1);
+
+          sfx.charge();
+          return false;
+      }
+
+
+  }
+
+  if (isPaused) {
+
+      if (millis() - window.lastPauseTime < 300) return false; 
+      let btnX = width/2 - 120, btnW = 240;
+
+                                  if (pauseMenuState === "MAIN") {
+              if (mx > btnX && mx < btnX + btnW) {
+                  if (my > height/2 - 210 && my < height/2 - 170) { isPaused = false; window.lastPauseTime = millis(); return false; } 
+                  if (my > height/2 - 160 && my < height/2 - 120) { saveGame(); isPaused = false; window.lastPauseTime = millis(); return false; } 
+                  
+                  // --- NEW TOGGLE HITBOX ---
+                 // --- MELEE SWORD TOGGLE BUTTON ---
+else if (mx > width/2 - 120 && mx < width/2 + 120 && my > height/2 - 110 && my < height/2 - 70) {
+    if (typeof swordPickedUp !== 'undefined' && swordPickedUp) { 
+        // Only flip the switch if they actually own the sword!
+        window.swordEquipped = (window.swordEquipped === false) ? true : false;
+        
+        // If you have a click sound, uncomment the next line:
+        // sfx.click(); 
+    }
+}
+
+                  
+                  if (my > height/2 - 60 && my < height/2 - 20) { pauseMenuState = "GOV_DIRECTIVE"; return false; }
+                  
+                  if (my > height/2 - 10 && my < height/2 + 30) { 
+                      if (typeof townsData !== 'undefined' && townsData[currentLevel] && townsData[currentLevel].established) {
+                          inOverworldView = !inOverworldView;
+                          isPaused = false;
+                          window.lastPauseTime = millis();
+                      }
+                      return false; 
+                  } 
+                  
+                  if (my > height/2 + 40 && my < height/2 + 80) { pauseMenuState = "SHOP"; return false; } 
+                  if (my > height/2 + 90 && my < height/2 + 130) { pauseMenuState = "TABLET"; return false; } 
+                  
+                  if ((window.towersDefeated || (isStoryMode && currentLevel >= 2)) && my > height/2 + 140 && my < height/2 + 180) { 
+                      pauseMenuState = "SQUAD"; return false; 
+                  }
+                  
+                  if (my > height/2 + 190 && my < height/2 + 230) { 
+                      isPaused = false; started = false; isStoryMode = false;
+                      inStoryRoom = false; inStoryIntro = false; prologuePhase = 0;
+                      inUpstairsRoom = false; journalRead = false; sfx.charge(); return false; 
+                  }
+              }
+          
+
+            } else if (pauseMenuState === "SQUAD") {
+
+          if (mx > btnX && mx < btnX + btnW) {
+              if (my > height / 2 - 90 && my < height / 2 - 50) { issueSquadCommand("FOLLOW"); return false; }
+              if (my > height / 2 - 30 && my < height / 2 + 10) { pauseMenuState = "SQUAD_SEARCH"; return false; }
+              if (my > height / 2 + 30 && my < height / 2 + 70) { issueSquadCommand("SPREAD"); return false; }
+              if (my > height / 2 + 90 && my < height / 2 + 130) { issueSquadCommand("HOLD"); return false; }
+              if (my > height / 2 + 150 && my < height / 2 + 190) { pauseMenuState = "MAIN"; return false; }
+          }
+      } else if (pauseMenuState === "SQUAD_SEARCH") {
+          if (mx > btnX && mx < btnX + btnW) {
+              if (my > height / 2 - 90 && my < height / 2 - 50) { issueSquadCommand("SEARCH", "NORTH"); return false; }
+              if (my > height / 2 - 30 && my < height / 2 + 10) { issueSquadCommand("SEARCH", "SOUTH"); return false; }
+              if (my > height / 2 + 30 && my < height / 2 + 70) { issueSquadCommand("SEARCH", "EAST"); return false; }
+              if (my > height / 2 + 90 && my < height / 2 + 130) { issueSquadCommand("SEARCH", "WEST"); return false; }
+              if (my > height / 2 + 150 && my < height / 2 + 190) { pauseMenuState = "SQUAD"; return false; }
+          }
+      } else if (pauseMenuState === "GOV_DIRECTIVE") {
+                   // ONLY ESTABLISH BUTTON REMAINS HERE
+          if (mx > width/2 - 120 && mx < width/2 + 120 && my > height - 90 && my < height - 40) {
+              if (popUnassigned === 0) { 
+                  // RE-POPULATE: Clear old ones
+                  townCitizens = []; 
+                  
+                  // Spawn specific genders per department!
+                  for (let i = 0; i < window.popFarmingM; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "FARMING", "MALE"));
+                  for (let i = 0; i < window.popFarmingF; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "FARMING", "FEMALE"));
+                  
+                  for (let i = 0; i < window.popMilitaryM; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "MILITARY", "MALE"));
+                  for (let i = 0; i < window.popMilitaryF; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "MILITARY", "FEMALE"));
+                  
+                  for (let i = 0; i < window.popScienceM; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "SCIENCE", "MALE"));
+                  for (let i = 0; i < window.popScienceF; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "SCIENCE", "FEMALE"));
+                  
+                  for (let i = 0; i < window.popArchitectureM; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "ARCHITECTURE", "MALE"));
+                  for (let i = 0; i < window.popArchitectureF; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "ARCHITECTURE", "FEMALE"));
+
+                  saveTownData(viewingTownId);
+                  townsData[viewingTownId].established = true;
+                  
+                  if (inWorldBuildingMenu) {
+                      inWorldBuildingMenu = false;
+                      inOverworldView = true; 
+                  } else {
+                      pauseMenuState = "MAIN";
+                  }
+                  
+                  sfx.charge();
+                  return false; 
+              }
+          }
+          return false;
+}
+
+      
+      else if (pauseMenuState === "SHOP") {
+          // The Shop ONLY handles shop clicks and the back button
+          if (mx > width/2 - 125 && mx < width/2 + 125 && my > height - 70 && my < height - 20) { 
+              pauseMenuState = "MAIN"; 
+              return false; 
+          }
+          handleShopClicks(mx, my); 
+          return false;
+      } 
+      else if (pauseMenuState === "TABLET") {
+
+          if (mx > btnX && mx < btnX + btnW) {
+              if (my > height/2 - 90 && my < height/2 - 45) { pauseMenuState = "AUGMENTS"; return false; }
+              if (my > height/2 - 30 && my < height/2 + 15) { pauseMenuState = "WEAPONS"; return false; }
+              if (my > height/2 + 30 && my < height/2 + 75) { journalRead = true; pauseMenuState = "JOURNAL"; return false; }
+              if (my > height/2 + 90 && my < height/2 + 135) { pauseMenuState = "MAIN"; return false; } 
+          }
+      } else { 
+          // For AUGMENTS, WEAPONS, JOURNAL (Fallback "BACK" button logic)
+          if (mx > btnX && mx < btnX + btnW && my > height/2 + 120 && my < height/2 + 165) { pauseMenuState = "TABLET"; return false; }
+      }
+      return false; 
+  }
+
+
+    if (inTownCutscene) {
+      if (townPhase >= 3 && townPhase <= 5) { townPhase++; sfx.charge(); }
+      return false;
+  }
+  
+    // ADD THIS EXACTLY HERE:
+  if (typeof inFarmCutscene !== 'undefined' && inFarmCutscene) {
+      if (farmPhase === 2) {
+          farmPhase = 3; sfx.charge();
+      } else if (farmPhase === 3) {
+          // A Choice
+          if (mx > width/2 - 160 && mx < width/2 + 160 && my > height/2 - 65 && my < height/2 - 15) {
+              farmPhase = 4; sfx.charge();
+          } 
+          // B Choice
+          else if (mx > width/2 - 210 && mx < width/2 + 210 && my > height/2 + 15 && my < height/2 + 65) {
+              inFarmCutscene = false;
+              for (let e of enemiesList) {
+                  if (e.eType === "FARMER_MALE" || e.eType === "FARMER_FEMALE") {
+                      e.isNeutral = false; e.isFriendly = false; e.state = "CHASE";
+                  }
+              }
+              streakMsgText = "FARMERS AGGROED!"; streakMsgTimer = 90; sfx.charge();
+          }
+      } else if (farmPhase === 4) {
+          farmPhase = 5; sfx.charge();
+      } else if (farmPhase === 5) {
+          // YES Choice
+          if (mx > width/2 - 130 && mx < width/2 - 30 && my > height/2 + 15 && my < height/2 + 65) {
+              inFarmCutscene = false; triggerBugAmbush(); sfx.charge();
+          } 
+          // NO Choice
+          else if (mx > width/2 + 30 && mx < width/2 + 130 && my > height/2 + 15 && my < height/2 + 65) {
+              inFarmCutscene = false; sfx.charge();
+          }
+      }
+      return false; // <-- CRITICAL: This bracket now safely closes the block!
+  }
+
+    // --- LEVEL 3: POST-FARM TAP LOGIC ---
+ // ==========================================
+// 1. FARM POST CUTSCENE
+// ==========================================
+if (typeof inFarmPostCutscene !== 'undefined' && inFarmPostCutscene) {
+    if (farmPostPhase === 1) {
+        farmPostPhase = 2;
+        window.farmerBlueprintUnlocked = true;
+        if (typeof sfx !== 'undefined' && sfx.charge) sfx.charge();
+    } else if (farmPostPhase === 2) {
+        inFarmPostCutscene = false;
+        
+        // STRICT FILTER: Only count actual Farmers
+        let survivingFarmers = enemiesList.filter(e => 
+            (e.eType === "FARMER_MALE" || e.eType === "FARMER_FEMALE") && 
+            e.hp > 0 && 
+            !e.dead
+        );
+        
+        popTotal = survivingFarmers.length + (window.militaryToBring || 0);
+        if (popTotal <= 0) popTotal = 10;
+        popUnassigned = popTotal;
+        popMilitary = 0; popFarming = 0; popScience = 0; popArchitecture = 0;
+
+        // The farm hands off to the same loop every other sector uses.
+        openSectorDirective(currentLevel);
+        if (typeof sfx !== 'undefined' && sfx.charge) sfx.charge();
+    }
+    return false; 
+}
+
+// ==========================================
+// 2. POST AMBUSH CUTSCENE (Merged)
+// ==========================================
+else if (typeof inPostAmbushCutscene !== 'undefined' && inPostAmbushCutscene) {
+    if (postAmbushPhase >= 1 && postAmbushPhase < 7) { 
+        postAmbushPhase++; 
+    }   
+    else if (postAmbushPhase === 7) { 
+        postAmbushPhase = 0;
+        inPostAmbushCutscene = false; 
+        window.postAmbushCutscenePlayed = true; 
+        
+        // Removed the destructive popMilitary = 0 overrides here!
+        // The Gov Directive menu handles the math safely now.
+
+        openSectorDirective(currentLevel);
+        if (typeof sfx !== 'undefined' && sfx.charge) sfx.charge();
+    }
+    return false;
+}
+
+// ==========================================
+// 3. GOV DIRECTIVE MENU -> OVERWORLD (Merged)
+// ==========================================
+else if (typeof inWorldBuildingMenu !== 'undefined' && inWorldBuildingMenu) {
+    if (mx > width/2 - 120 && mx < width/2 + 120 && my > height - 90 && my < height - 40) {
+        if (popUnassigned === 0) { 
+            inWorldBuildingMenu = false;
+            
+            let targetId = (typeof viewingTownId !== 'undefined') ? viewingTownId : currentLevel;
+            
+            // A. Safely mark town as established and save
+            if (typeof townsData !== 'undefined') {
+                if (!townsData[targetId]) townsData[targetId] = {};
+                townsData[targetId].established = true;
+            }
+            if (typeof saveTownData === 'function') saveTownData(targetId);
+            
+            // B. Physically spawn the gender-accurate citizens
+            townCitizens = []; 
+            for (let i = 0; i < window.popFarmingM; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "FARMING", "MALE"));
+            for (let i = 0; i < window.popFarmingF; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "FARMING", "FEMALE"));
+            
+            for (let i = 0; i < window.popMilitaryM; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "MILITARY", "MALE"));
+            for (let i = 0; i < window.popMilitaryF; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "MILITARY", "FEMALE"));
+            
+            for (let i = 0; i < window.popScienceM; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "SCIENCE", "MALE"));
+            for (let i = 0; i < window.popScienceF; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "SCIENCE", "FEMALE"));
+            
+            for (let i = 0; i < window.popArchitectureM; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "ARCHITECTURE", "MALE"));
+            for (let i = 0; i < window.popArchitectureF; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "ARCHITECTURE", "FEMALE"));
+
+            inOverworldView = true; 
+            if (typeof sfx !== 'undefined' && sfx.charge) sfx.charge();
+            return false; 
+        }
+    }
+}
+
+// ==========================================
+// 4. OVERWORLD -> TRAVEL MENU
+// ==========================================
+else if (typeof inOverworldView !== 'undefined' && inOverworldView) {
+    for(let t = 1; t <= currentLevel; t++) {
+        let tx = width/2 - 150 + (t-1)*300;
+        let ty = height/2;
+        if (dist(mx, my, tx, ty) < 45) {
+            if (typeof saveTownData === 'function') saveTownData(viewingTownId);
+            if (typeof loadTownData === 'function') loadTownData(t);
+            inOverworldView = false;
+            inWorldBuildingMenu = true;
+            if (typeof sfx !== 'undefined' && sfx.charge) sfx.charge();
+            return false;
+        }
+    }
+
+    if (mx > width/2 - 120 && mx < width/2 + 120 && my > height - 90 && my < height - 40) {
+        if (typeof saveTownData === 'function') saveTownData(viewingTownId);
+        inOverworldView = false;
+        inTravelMenu = true;
+        travelDirection = null;
+        militaryToBring = 0;
+        if (typeof sfx !== 'undefined' && sfx.charge) sfx.charge();
+        return false; 
+    }
+}
+
+// --- NEW TRAVEL MENU HITBOXES ---
+else if (inTravelMenu) {
+    if (!travelDirection) {
+          if (canTravel("NORTH") && mx > width/2 - 180 && mx < width/2 + 180 && my > 200 && my < 264) {
+              travelDirection = "NORTH"; sfx.charge();
+          }
+          if (canTravel("SOUTH") && mx > width/2 - 180 && mx < width/2 + 180 && my > 320 && my < 384) {
+              travelDirection = "SOUTH"; sfx.charge();
+          }
+      } else {
+          // Male Military +/-
+          if (mx > width/2 - 120 && mx < width/2 - 95 && my > 270 && my < 300 && window.militaryToBringM > 0) { window.militaryToBringM--; sfx.hitArmor(); }
+          if (mx > width/2 + 110 && mx < width/2 + 135 && my > 270 && my < 300 && window.militaryToBringM < window.popMilitaryM) { window.militaryToBringM++; sfx.reload(); }
+          
+          // Female Military +/-
+          if (mx > width/2 - 120 && mx < width/2 - 95 && my > 330 && my < 360 && window.militaryToBringF > 0) { window.militaryToBringF--; sfx.hitArmor(); }
+          if (mx > width/2 + 110 && mx < width/2 + 135 && my > 330 && my < 360 && window.militaryToBringF < window.popMilitaryF) { window.militaryToBringF++; sfx.reload(); }
+
+          // DEPART BUTTON -> begin the Directive extraction into the target biome
+          if (mx > width/2 - 120 && mx < width/2 + 120 && my > height - 90 && my < height - 40) {
+              isWin = false;
+              winTimer = 0;
+              inUpgradeMenu = false;
+              startExtraction(travelDirection);
+              travelDirection = null;
+          }
+          // BACK BUTTON
+          if (mx > width/2 - 50 && mx < width/2 + 50 && my > height - 40 && my < height) {
+              travelDirection = null; sfx.charge();
+          }
+      }
+      return false;
+            }
+        
+    
+
+
+
+  // --- LEVEL 4 CUTSCENE TAPS ---
+  if (typeof inLvl4Cutscene !== 'undefined' && inLvl4Cutscene) {
+      if (lvl4Phase === 3) {
+          lvl4Phase = 4; sfx.charge();
+      } else if (lvl4Phase === 4) {
+          // A Choice
+          if (mx > width/2 - 320 && mx < width/2 + 320 && my > height/2 - 65 && my < height/2 - 15) {
+              lvl4Phase = 5; sfx.charge();
+          } 
+          // B Choice (Hostile Route)
+          else if (mx > width/2 - 240 && mx < width/2 + 240 && my > height/2 + 15 && my < height/2 + 65) {
+              inLvl4Cutscene = false;
+              for (let e of enemiesList) {
+                  if (e.eType === "MILITARY_NEUTRAL") {
+                      e.isNeutral = false; e.isFriendly = false; e.state = "CHASE"; e.loseSightTimer = 3500;
+                  }
+              }
+              streakMsgText = "MILITARY AGGROED!"; streakMsgTimer = 90; sfx.charge();
+          }
+      } else if (lvl4Phase === 5) {
+          inLvl4Cutscene = false;
+          // Assign them as your permanent allies
+          for (let e of enemiesList) {
+              if (e.eType === "MILITARY_NEUTRAL") {
+                  e.isNeutral = false;
+                  e.isFriendly = true;
+                  e.baseState = "HOLD_PERIMETER"; 
+                  e.holdPos = { x: e.x, y: e.y };
+              }
+          }
+          triggerLvl4Ambush();
+          sfx.charge();
+      }
+      return false;
+  }
+
+// V V V V V START HIGHLIGHTING HERE V V V V V 
+if (inOverworldView) {
+    // Check if clicking a Town Node to manage it
+    for(let t = 1; t <= currentLevel; t++) {
+        let tx = width/2 - 150 + (t-1)*300;
+        let ty = height/2;
+        if (dist(mx, my, tx, ty) < 45) {
+            saveTownData(viewingTownId);
+            loadTownData(t);
+            inOverworldView = false;
+            inWorldBuildingMenu = true;
+            sfx.charge();
+            return false;
+        }
+    }
+   // TRAVEL Button (Bottom Right) -> Opens Travel Menu
+    if (mx > width - 220 && mx < width - 20 && my > height - 80 && my < height - 30) {
+        saveTownData(viewingTownId);
+        inOverworldView = false;
+        inTravelMenu = true;
+        travelDirection = null;
+        militaryToBring = 0;
+        sfx.charge();
+        return false; 
+    }
+}
+// ^ ^ ^ ^ ^ STOP HIGHLIGHTING HERE ^ ^ ^ ^ ^
+
+// --- NEW TRAVEL MENU HITBOXES ---
+if (inTravelMenu) {
+    if (!travelDirection) {
+          if (canTravel("NORTH") && mx > width/2 - 180 && mx < width/2 + 180 && my > 200 && my < 264) {
+              travelDirection = "NORTH"; sfx.charge();
+          }
+          if (canTravel("SOUTH") && mx > width/2 - 180 && mx < width/2 + 180 && my > 320 && my < 384) {
+              travelDirection = "SOUTH"; sfx.charge();
+          }
+      } else {
+          // Male Military +/-
+          if (mx > width/2 - 120 && mx < width/2 - 95 && my > 270 && my < 300 && window.militaryToBringM > 0) { window.militaryToBringM--; sfx.hitArmor(); }
+          if (mx > width/2 + 110 && mx < width/2 + 135 && my > 270 && my < 300 && window.militaryToBringM < window.popMilitaryM) { window.militaryToBringM++; sfx.reload(); }
+          
+          // Female Military +/-
+          if (mx > width/2 - 120 && mx < width/2 - 95 && my > 330 && my < 360 && window.militaryToBringF > 0) { window.militaryToBringF--; sfx.hitArmor(); }
+          if (mx > width/2 + 110 && mx < width/2 + 135 && my > 330 && my < 360 && window.militaryToBringF < window.popMilitaryF) { window.militaryToBringF++; sfx.reload(); }
+
+          // DEPART BUTTON -> begin the Directive extraction into the target biome
+          if (mx > width/2 - 120 && mx < width/2 + 120 && my > height - 90 && my < height - 40) {
+              isWin = false;
+              winTimer = 0;
+              inUpgradeMenu = false;
+              startExtraction(travelDirection);
+              travelDirection = null;
+          }
+          // BACK BUTTON
+          if (mx > width/2 - 50 && mx < width/2 + 50 && my > height - 40 && my < height) {
+              travelDirection = null; sfx.charge();
+          }
+      }
+      return false;
+  }
+
+
+
+
+ 
+	if (inDarchonCall) {
+      callPhase++; sfx.charge();
+      
+      // NEW: Set the timer for 300 frames (5 seconds) every tap
+      darchonTalkTimer = 300; 
+      
+      if (callPhase > 15) { inDarchonCall = false; }
+      return false;
+  }
+
+  if (isStoryMode && !inStoryRoom && inStoryIntro) {
+      inStoryIntro = false; inStoryRoom = true; storyPhase = 1; dadX = -50; return false;
+  }
+
+  if (inStoryRoom) {
+      if (storyPhase >= 2 && storyPhase < 22) { storyPhase++; } 
+      else if (storyPhase >= 22) { inStoryRoom = false; startAtLevel(0); }
+      return false;
+  }
+  
+  if (currentLevel === 0 && !killcamMode) {
+      if (inUpstairsRoom) {
+          if (upstairsPhase === 1) { upstairsPhase = 2; return false; }
+          else if (upstairsPhase === 2) { upstairsPhase = 0; return false; } 
+          else if (upstairsPhase === 3) { upstairsPhase = 4; return false; }
+          else if (upstairsPhase === 4) { upstairsPhase = 5; return false; }
+          else if (upstairsPhase === 5) { upstairsPhase = 0; return false; } 
+
+                    if (upstairsPhase === 0) {
+              if (!swordPickedUp && dist(player.x, player.y, 150, 0) < 80 && isClickingBtn(mx, my)) {
+                  swordPickedUp = true; hasSword = true; meleeUnlocked = true; meleeComboUnlocked = true; upstairsPhase = 1; 
+                  if (player) player.isArmed = true; 
+                  sfx.charge(); return false;
+              }
+
+
+              if (!tvWatched && dist(player.x, player.y, 0, -200) < 120 && isClickingBtn(mx, my)) {
+                  tvWatched = true; upstairsPhase = 3; sfx.charge(); return false;
+              }
+              if (dist(player.x, player.y, 0, 250) < 80 && isClickingBtn(mx, my)) {
+                  startAtLevel(1); return false;
+              }
+          }
+      } else {
+          if (prologuePhase >= 4 && prologuePhase <= 5) { prologuePhase++; return false; } 
+          else if (prologuePhase === 6) { prologuePhase = 7; return false; }
+          if (prologuePhase === 8) { prologuePhase = 9; return false; }
+          else if (prologuePhase === 9) { prologuePhase = 10; return false; }
+            if (inFarmCutscene) {
+      if (farmPhase === 2) {
+          farmPhase = 3; sfx.charge();
+      } else if (farmPhase === 3) {
+          // A Choice
+          if (mx > width/2 - 160 && mx < width/2 + 160 && my > height/2 - 65 && my < height/2 - 15) {
+              farmPhase = 4; sfx.charge();
+          } 
+          // B Choice
+          else if (mx > width/2 - 210 && mx < width/2 + 210 && my > height/2 + 15 && my < height/2 + 65) {
+              inFarmCutscene = false;
+              for (let e of enemiesList) {
+                  if (e.eType === "FARMER_MALE" || e.eType === "FARMER_FEMALE") {
+                      e.isNeutral = false; e.isFriendly = false; e.state = "CHASE";
+                  }
+              }
+              streakMsgText = "FARMERS AGGROED!"; streakMsgTimer = 90; sfx.charge();
+          }
+      } else if (farmPhase === 4) {
+          farmPhase = 5; sfx.charge();
+      } else if (farmPhase === 5) {
+          // YES Choice
+          if (mx > width/2 - 130 && mx < width/2 - 30 && my > height/2 + 15 && my < height/2 + 65) {
+              inFarmCutscene = false; triggerBugAmbush(); sfx.charge();
+          } 
+          // NO Choice
+          else if (mx > width/2 + 30 && mx < width/2 + 130 && my > height/2 + 15 && my < height/2 + 65) {
+              inFarmCutscene = false; sfx.charge();
+          }
+      }
+      return false;
+  }
+
+          if (prologuePhase === 7 && !tabletPickedUp) {
+              if (dist(player.x, player.y, 200, -100) < 80 && isClickingBtn(mx, my)) {
+                  tabletPickedUp = true; prologuePhase = 8; sfx.charge(); return false;
+              }
+          }
+          if (prologuePhase >= 10) {
+              if (dist(player.x, player.y, -400, 0) < 80 && isClickingBtn(mx, my)) {
+                  inUpstairsRoom = true; player.x = 0; player.y = 150; player.aimAngle = -HALF_PI;
+                  corpses = []; splatters = []; bullets = []; particles = [];
+                  clearAllBlood();
+				  generateMap(); sfx.charge(); return false;
+              }
+          }
+      }
+  }
+
+
+
+       if (!started) {
+      if (!selectingDifficulty) {
+          // DEBUG: arcade / story toggle for the numbered level shortcuts
+          if (mx > width / 2 + 95 && mx < width / 2 + 235 && my > height / 2 - 94 && my < height / 2 - 66) {
+              levelSelectStory = !levelSelectStory; sfx.charge(); return false;
+          }
+
+          let startX = width / 2 - 175;
+          for (let i = 1; i <= 7; i++) {
+            let bx = startX + (i - 1) * 60; let by = height / 2 - 50;
+            if (mx >= bx && mx <= bx + 50 && my >= by && my <= by + 50) { pendingLevel = i; pendingStoryMode = levelSelectStory; pendingDebugStory = levelSelectStory; selectingDifficulty = true; sfx.charge(); return false; }
+          }
+
+          if (mx > width / 2 - 100 && mx < width / 2 + 100) {
+              if (my > height / 2 + 20 && my < height / 2 + 70) { pendingLevel = 1; pendingStoryMode = false; pendingDebugStory = false; selectingDifficulty = true; sfx.charge(); return false; }
+              if (my > height / 2 + 80 && my < height / 2 + 130) { pendingLevel = 1; pendingStoryMode = true; pendingDebugStory = false; selectingDifficulty = true; sfx.charge(); return false; }
+              
+              if (localStorage.getItem('urbanTwinStickSave') !== null && my > height / 2 + 140 && my < height / 2 + 190) {
+                  started = true;
+                  loadGame();
+                  if (sfx.bgm && sfx.bgm.paused) sfx.bgm.play().catch(e => console.log(e));
+                  if (sfx.ctx && sfx.ctx.state === 'suspended') sfx.ctx.resume();
+                  return false;
+              }
+          }
+      } else {
+          if (mx > width / 2 - 150 && mx < width / 2 + 150) {
+              if (my > height / 2 - 30 && my < height / 2 + 30) {
+                  isHardMode = false; beginSelectedRun(); return false;
+              }
+              if (my > height / 2 + 45 && my < height / 2 + 105) {
+                  isHardMode = true; beginSelectedRun(); return false;
+              }
+          }
+          if (mx > width / 2 - 100 && mx < width / 2 + 100 && my > height / 2 + 115 && my < height / 2 + 155) { selectingDifficulty = false; sfx.charge(); return false; }
+      }
+      return false;
+  }
+
+    if (isWin) {
+      // Story sectors 0-4 advance themselves through handleStoryWinLoop().
+      if (isStoryMode && currentLevel <= 4) return false;
+      if (winTimer > 0) return false;
+      if (currentLevel < 7 || currentLevel === 8) {
+          if (inUpgradeMenu) {
+              if (mx > width/2 - 125 && mx < width/2 + 125 && my > height - 70 && my < height - 20) { 
+                  if (travelDirection && travelDestination(travelDirection) !== null) {
+                      window.travelArrival = travelDirection;
+                      let d = travelDestination(travelDirection);
+                      travelDirection = null;
+                      startAtLevel(d);
+                  }
+                  else if (currentLevel === 8) startAtLevel(2);
+                  else nextLevel();
+                  return false;
+              }
+              handleShopClicks(mx, my);
+              return false;
+          } else {
+              let accMult = max(1, floor((totalShotsFired > 0 ? floor((totalShotsHit / totalShotsFired) * 100) : 0) / 10));
+              if (mx > width/2 - 170 && mx < width/2 - 10 && my > height/2 + 90 && my < height/2 + 140) { if (totalShotsFired > 0) score = score * accMult; totalShotsFired = 0; inUpgradeMenu = true; return false; }
+              if (mx > width/2 + 10 && mx < width/2 + 170 && my > height/2 + 90 && my < height/2 + 140) { 
+                  if (totalShotsFired > 0) score = score * accMult; 
+                  totalShotsFired = 0;
+                  if (travelDirection && travelDestination(travelDirection) !== null) {
+                      window.travelArrival = travelDirection;
+                      let d = travelDestination(travelDirection);
+                      travelDirection = null;
+                      startAtLevel(d);
+                  }
+                  else if (currentLevel === 8) startAtLevel(2);
+                  else nextLevel();
+                  return false;
+              }
+              return false;
+          }
+      } else { restartGame(); return false; }
+  }
+
+  return false;
+}
+
+
+
+
+// (removed a stray top-level debug draw call that threw before p5 was ready and
+//  aborted execution of the rest of the file)
+
+function handleDesktop() {
+  if (!player) return;
+  
+  let kDx = 0, kDy = 0;
+  if (keyIsDown(65)) kDx -= 1; 
+  if (keyIsDown(68)) kDx += 1; 
+  if (keyIsDown(87)) kDy -= 1; 
+  if (keyIsDown(83)) kDy += 1; 
+  
+  if (kDx !== 0 || kDy !== 0) {
+      let mag = dist(0, 0, kDx, kDy);
+      leftStick.active = true;
+      leftStick.dx = kDx / mag;
+      leftStick.dy = kDy / mag;
+      window.isDesktop = true; 
+  }
+  if (keyIsDown(69) && meleeUnlocked) meleeInputHeld = true;
+
+  // R to mount or step down. Edge-triggered: on a level trigger, holding the key
+  // toggles sixty times a second and leaves you on or off the horse at random.
+  const rDown = keyIsDown(82);
+  if (rDown && !window.__rideKeyWas) {
+      if (player.mounted) { player.dismount(); sfx.charge(); }
+      else { const h = mountableHorse(); if (h) { player.mountHorse(h); sfx.charge(); } }
+  }
+  window.__rideKeyWas = rDown;
+
+
+  if (window.isDesktop) {
+      let worldMouseX = (mouseX / zoom) + camX;
+      let worldMouseY = (mouseY / zoom) + camY;
+      
+      let aimDx = worldMouseX - player.x;
+      let aimDy = worldMouseY - player.y;
+      let aimMag = dist(0, 0, aimDx, aimDy);
+      
+      if (aimMag > 0) {
+          rightStick.active = true;
+          rightStick.dx = aimDx / aimMag;
+          rightStick.dy = aimDy / aimMag;
+          rightStick.dist = (mouseIsPressed && mouseButton === LEFT) ? 1.0 : 0.0;
+      }
+  }
+}
+
+function mousePressed() {
+    if (touches.length === 0) touchStarted();
+}
+
+function drawSpeechBubble(x, y, txt) {
+    push();
+    
+    // Check if Darchon is talking
+    let isDarchon = txt.startsWith("[TABLET]");
+    // Strip the "[TABLET]" tag out so it doesn't show in the actual bubble
+    let displayText = isDarchon ? txt.replace("[TABLET] ", "") : txt;
+
+    textFont('sans-serif'); textSize(14); textAlign(CENTER, CENTER); textLeading(18);
+    let lines = displayText.split('\n');
+    let maxW = 0;
+    for (let l of lines) { let w = textWidth(l); if (w > maxW) maxW = w; }
+    
+    let h = lines.length * 18 + 20;
+    let w = maxW + 30;
+    let portraitSize = 0;
+
+    // Expand the bubble width if Darchon is talking to fit the image
+    if (isDarchon) {
+        portraitSize = h; 
+        w += portraitSize + 10; 
+    }
+
+    fill(255); stroke(0); strokeWeight(2);
+    rect(x - w/2, y - h/2 - 10, w, h, 10);
+    triangle(x, y + h/2 - 10, x - 10, y + h/2 - 10, x - 20, y + h/2 + 10); 
+
+        // Draw and animate the portrait
+    if (isDarchon && darchonFrames.length > 0 && darchonFrames[0] !== undefined) {
+        let imgSize = portraitSize - 10;
+        let imgX = x - w/2 + 5;
+        let imgY = y - h/2 - 5;
+
+        let currentFrame = darchonFrames[0]; // Default to idle
+
+        if (typeof darchonTalkTimer !== 'undefined' && darchonTalkTimer > 0) {
+            darchonTalkTimer--;
+            
+            // Cycle through frames 1, 2, and 3 every 5 frames
+            let frameIndex = 1 + floor((frameCount % 15) / 5); 
+            if (darchonFrames[frameIndex]) {
+                currentFrame = darchonFrames[frameIndex];
+            }
+        }
+
+        image(currentFrame, imgX, imgY, imgSize, imgSize);
+    }
+
+
+    fill(0); noStroke();
+    // Shift text to the right so it doesn't overlap the image
+    let textX = isDarchon ? x + (portraitSize / 2) : x;
+    text(displayText, textX, y - 10);
+    
+    pop();
+}
+
+// --- NEW HELPER FUNCTIONS FOR CONTEXT PROMPTS ---
+// The nearest animal the player could get on: alive, standing near enough to
+// reach, and not currently running for its life.
+// Cached: this is asked once a frame from the UI path just to decide whether to
+// draw a button, and the answer cannot meaningfully change in a tenth of a
+// second. The scan itself walks every live entity, which is a hundred and sixty
+// of them in a populated sector.
+let _mountScanFrame = -99, _mountScanResult = null;
+function mountableHorse() {
+  if (!player || player.mounted || player.hp <= 0 || isDead || isWin || killcamMode) return null;
+  if (frameCount - _mountScanFrame < 6 && _mountScanResult !== null) {
+    const c = _mountScanResult;
+    // Re-validate the cached pick before handing it back -- it may have been
+    // shot, or bolted, since the scan.
+    if (c.hp > 0 && !c.dead && c.boltTimer <= 0 && dist(player.x, player.y, c.x, c.y) < 118) return c;
+  }
+  _mountScanFrame = frameCount;
+  let best = null, bd = 118;
+  for (const e of enemiesList) {
+    if (e.eType !== "HORSE" || e.hp <= 0 || e.dead) continue;
+    if (e.boltTimer > 0) continue;                    // catch it when it settles
+    const d = dist(player.x, player.y, e.x, e.y);
+    if (d < bd) { bd = d; best = e; }
+  }
+  _mountScanResult = best;
+  return best;
+}
+// One button for both halves of the transaction.
+function handleMountTap(mx, my) {
+  if (!player || !isClickingBtn(mx, my)) return false;
+  if (player.mounted) { player.dismount(); sfx.charge(); return true; }
+  const h = mountableHorse();
+  if (h) { player.mountHorse(h); sfx.charge(); return true; }
+  return false;
+}
+
+function drawPromptBtn(txt) {
+    fill(255, 200, 0); stroke(200, 100, 0); strokeWeight(2);
+    rect(width/2 - 70, height - 120, 140, 50, 8);
+    fill(0); noStroke(); textAlign(CENTER, CENTER); textSize(18); textFont('sans-serif');
+    text(txt, width/2, height - 95);
+}
+
+function isClickingBtn(mx, my) {
+    return (mx > width/2 - 70 && mx < width/2 + 70 && my > height - 120 && my < height - 70);
+}
+
+			// ==========================================
+// PREVENT MOBILE PULL-TO-REFRESH & SCROLLING
+// ==========================================
+document.addEventListener('touchmove', function(e) { 
+    e.preventDefault(); 
+}, { passive: false });
+
+function touchMoved() {
+    return false;
+}
+function saveGame() {
+    let state = {
+        currentLevel, isStoryMode, score, totalKills,
+        smgUnlocked, dualSmgUnlocked, shotgunUnlocked, arUnlocked, rocketLauncherUnlocked, taserUnlocked,
+        jetpackUnlocked, meleeUnlocked, jetpackFireExplosion, jetpackDoubleDash, meleeComboUnlocked, meleeFinisherUnlocked: window.meleeFinisherUnlocked,
+        ninjaSuitUnlocked, explosiveArmorUnlocked, chemistSuitUnlocked, ninjaOwned: window.ninjaOwned, armorOwned: window.armorOwned, chemistOwned: window.chemistOwned,
+        grenadesUnlocked, pGrenadeAmmo, pFlaskAmmo,
+        popTotal, popUnassigned, popFarming, popMilitary, popScience, popArchitecture,
+        journalRead, tabletPickedUp, swordPickedUp,
+        towersDefeated: window.towersDefeated,
+        nm0AmbushCleared: window.nm0AmbushCleared,
+
+        // --- STORY ARC PROGRESSION ---
+        // These decide whether a sector still builds its authored arena or has
+        // converted to a streamed biome, so they have to survive a reload.
+        nm0AmbushClearedStatus: window.nm0AmbushClearedStatus,
+        northGateBreached: window.northGateBreached,
+        northGateBreachedStatus: window.northGateBreachedStatus,
+        southGateBreachedStatus: window.southGateBreachedStatus,
+        southRoadAnnounced: window.southRoadAnnounced,
+        undercityNorthBreached: window.undercityNorthBreached,
+        undercitySouthBreached: window.undercitySouthBreached,
+        ambushKind: window.ambushKind,
+        nm0HqCleared: window.nm0HqCleared,
+        armorBlueprintPickedUp: window.armorBlueprintPickedUp,
+        farmerBlueprintUnlocked: window.farmerBlueprintUnlocked,
+        genocideRouteActive: window.genocideRouteActive,
+        genocideAmbushCleared: window.genocideAmbushCleared,
+        postAmbushCutscenePlayed: window.postAmbushCutscenePlayed,
+
+                farmXP: window.farmXP || 0, milXP: window.milXP || 0, sciXP: window.sciXP || 0, archXP: window.archXP || 0,
+        farmLvl: window.farmLvl || 1, milLvl: window.milLvl || 1, sciLvl: window.sciLvl || 1, archLvl: window.archLvl || 1,
+
+        inTownCutscene, townPhase, townTimer, 
+        nm0AmbushActive, nm0AmbushKills, objectiveTimer,
+        inPostAmbushCutscene, postAmbushPhase, 
+        inWorldBuildingMenu, inOverworldView,
+        statVit, statMen, statPhy, statObe, statInt, 
+        darchonCallCompleted,
+        militaryToBring: window.militaryToBring,
+        playerHp: player ? player.hp : 100,
+        playerShield: player ? player.shield : 100,
+        playerX: player ? player.x : null,
+        playerY: player ? player.y : null,
+        militaryToBringM: window.militaryToBringM,
+militaryToBringF: window.militaryToBringF,
+
+        // --- NEW FOR TOWN PERSISTENCE ---
+        townsData: typeof townsData !== 'undefined' ? townsData : null,
+        viewingTownId: typeof viewingTownId !== 'undefined' ? viewingTownId : 1,
+
+        // --- BIOME WORLD PERSISTENCE ---
+        // Chunk layout is fully procedural, so only the deltas need storing.
+        worldTimeMs: typeof worldTimeMs !== 'undefined' ? worldTimeMs : 0,
+        isRaining: typeof isRaining !== 'undefined' ? isRaining : false,
+        currentBiome: typeof currentBiome !== 'undefined' ? currentBiome : 1,
+        biomeState: typeof biomeState !== 'undefined' ? biomeState : {}
+    };
+    localStorage.setItem('urbanTwinStickSave', JSON.stringify(state));
+    streakMsgText = "GAME SAVED!";
+    streakMsgTimer = 90;
+}
+
+function loadGame() {
+    let saved = localStorage.getItem('urbanTwinStickSave');
+    if (saved) {
+        let state = JSON.parse(saved);
+        isStoryMode = state.isStoryMode;
+
+        // --- RESTORE STORY ARC PROGRESSION FIRST ---
+        // startAtLevel() builds the map, and whether a sector builds its
+        // authored arena or a streamed biome is decided by these flags plus
+        // townsData. They have to be in place before the map is generated,
+        // otherwise every save reloads into the wrong world.
+        if (state.townsData) townsData = state.townsData;
+        if (state.viewingTownId) viewingTownId = state.viewingTownId;
+        if (state.biomeState) biomeState = state.biomeState;
+        if (state.currentBiome) currentBiome = state.currentBiome;
+        if (typeof state.worldTimeMs === 'number') worldTimeMs = state.worldTimeMs;
+        window.nm0AmbushClearedStatus = state.nm0AmbushClearedStatus || false;
+        window.northGateBreached = state.northGateBreached || false;
+        window.northGateBreachedStatus = state.northGateBreachedStatus || false;
+        window.southGateBreachedStatus = state.southGateBreachedStatus || false;
+        window.southRoadAnnounced = state.southRoadAnnounced || false;
+        window.undercityNorthBreached = state.undercityNorthBreached || false;
+        window.undercitySouthBreached = state.undercitySouthBreached || false;
+        window.ambushKind = state.ambushKind || null;
+        window.nm0HqCleared = state.nm0HqCleared || false;
+        window.armorBlueprintPickedUp = state.armorBlueprintPickedUp || false;
+        window.farmerBlueprintUnlocked = state.farmerBlueprintUnlocked || false;
+        window.genocideRouteActive = state.genocideRouteActive || false;
+        window.genocideAmbushCleared = state.genocideAmbushCleared || false;
+        window.postAmbushCutscenePlayed = state.postAmbushCutscenePlayed || false;
+        window.towersDefeated = state.towersDefeated || false;
+
+        startAtLevel(state.currentLevel, true); // true = skip hard reset
+
+        // --- CRITICAL FIX: Restore flags AFTER startAtLevel so they don't get overwritten! ---
+        window.towersDefeated = state.towersDefeated; 
+        window.nm0AmbushCleared = state.nm0AmbushCleared;
+        nm0AmbushActive = state.nm0AmbushActive || false; 
+        nm0AmbushKills = state.nm0AmbushKills || 0; 
+        inTownCutscene = state.inTownCutscene || false;
+        window.militaryToBringM = state.militaryToBringM || 0;
+window.militaryToBringF = state.militaryToBringF || 0;
+        score = state.score || 0;
+        totalKills = state.totalKills || 0;
+        
+        smgUnlocked = state.smgUnlocked; dualSmgUnlocked = state.dualSmgUnlocked; shotgunUnlocked = state.shotgunUnlocked; 
+        arUnlocked = state.arUnlocked; rocketLauncherUnlocked = state.rocketLauncherUnlocked; taserUnlocked = state.taserUnlocked;
+        jetpackUnlocked = state.jetpackUnlocked; meleeUnlocked = state.meleeUnlocked; jetpackFireExplosion = state.jetpackFireExplosion; 
+        jetpackDoubleDash = state.jetpackDoubleDash; meleeComboUnlocked = state.meleeComboUnlocked; window.meleeFinisherUnlocked = state.meleeFinisherUnlocked;
+        ninjaSuitUnlocked = state.ninjaSuitUnlocked; explosiveArmorUnlocked = state.explosiveArmorUnlocked; chemistSuitUnlocked = state.chemistSuitUnlocked; 
+        window.ninjaOwned = state.ninjaOwned; window.armorOwned = state.armorOwned; window.chemistOwned = state.chemistOwned;
+        
+        grenadesUnlocked = state.grenadesUnlocked; pGrenadeAmmo = state.pGrenadeAmmo; pFlaskAmmo = state.pFlaskAmmo;
+        
+        popTotal = state.popTotal || 0; popUnassigned = state.popUnassigned || 0; popFarming = state.popFarming || 0; 
+        popMilitary = state.popMilitary || 0; popScience = state.popScience || 0; popArchitecture = state.popArchitecture || 0;
+        statVit = state.statVit || 1; statMen = state.statMen || 1; statPhy = state.statPhy || 1; statObe = state.statObe || 1; statInt = state.statInt || 1;
+        
+        if (state.biomeState) biomeState = state.biomeState;
+        if (state.currentBiome) currentBiome = state.currentBiome;
+        if (typeof state.worldTimeMs === 'number') worldTimeMs = state.worldTimeMs;
+        // Roll the sky fresh, exactly the way walking into a sector does.
+        //
+        // This used to restore state.isRaining from the save and then set
+        // lastWeatherRollHour to the current hour, which suppressed the next
+        // roll as well. Between them, a save made on a dry day came back dry
+        // every single time and stayed dry for a further in-game hour -- two
+        // real minutes -- so changing a biome's rain probability had no visible
+        // effect however many times you reloaded. Entry rolls; loading is an
+        // entry.
+        isRaining = false;
+        lastWeatherRollHour = Math.floor(worldHour());
+        initBiomeWeather();
+        if (state.townsData) townsData = state.townsData;
+        if (state.viewingTownId) viewingTownId = state.viewingTownId;
+        window.farmXP = Number(state.farmXP) || 0; window.milXP = Number(state.milXP) || 0; 
+        window.sciXP = Number(state.sciXP) || 0; window.archXP = Number(state.archXP) || 0;
+        window.farmLvl = Number(state.farmLvl) || 1; window.milLvl = Number(state.milLvl) || 1; 
+        window.sciLvl = Number(state.sciLvl) || 1; window.archLvl = Number(state.archLvl) || 1;
+        window.archBarrierReady = false;
+
+        journalRead = state.journalRead; tabletPickedUp = state.tabletPickedUp; swordPickedUp = state.swordPickedUp;
+        darchonCallCompleted = state.darchonCallCompleted;
+window.militaryToBring = state.militaryToBring || 0;
+        townPhase = state.townPhase || 0; townTimer = state.townTimer || 0;
+        objectiveTimer = state.objectiveTimer || 0;
+        inPostAmbushCutscene = state.inPostAmbushCutscene || false; postAmbushPhase = state.postAmbushPhase || 0;
+        inWorldBuildingMenu = state.inWorldBuildingMenu || false; inOverworldView = state.inOverworldView || false;
+
+        if (player) {
+            player.hp = state.playerHp || 100;
+            player.shield = state.playerShield || 100;
+            if (state.playerX !== null && state.playerY !== null) {
+                player.x = state.playerX;
+                player.y = state.playerY;
+            }
+        }
+    let mult = (window.milLvl >= 2) ? 2 : 1;
+    if (window.archLvl >= 2) window.archBarrierReady = true;
+
+        if (smgUnlocked) { player.mags["MACHINE GUN"] = 3; player.weaponAmmo["MACHINE GUN"] = WEAPONS.SMG.maxAmmo; }
+        if (dualSmgUnlocked) { player.mags["DUAL SMGS"] = 3; player.weaponAmmo["DUAL SMGS"] = WEAPONS.DUAL_SMG.maxAmmo; }
+        if (arUnlocked) { player.mags["ASSAULT RIFLE"] = 3; player.weaponAmmo["ASSAULT RIFLE"] = WEAPONS.ASSAULT_RIFLE.maxAmmo; }
+        if (shotgunUnlocked) { player.mags["SHOTGUN"] = 3; player.weaponAmmo["SHOTGUN"] = WEAPONS.SHOTGUN.maxAmmo; }
+        if (rocketLauncherUnlocked) { player.mags["ROCKET LAUNCHER"] = 6; player.weaponAmmo["ROCKET LAUNCHER"] = WEAPONS.ROCKET_LAUNCHER.maxAmmo; }
+
+        if (rocketLauncherUnlocked) player.currentWeapon = WEAPONS.ROCKET_LAUNCHER;
+        else if (shotgunUnlocked) player.currentWeapon = WEAPONS.SHOTGUN;
+        else if (arUnlocked) player.currentWeapon = WEAPONS.ASSAULT_RIFLE;
+        else if (dualSmgUnlocked) player.currentWeapon = WEAPONS.DUAL_SMG;
+        else if (smgUnlocked) player.currentWeapon = WEAPONS.SMG;
+        else player.currentWeapon = WEAPONS.PISTOL;
+        
+                       // 1. If towers are defeated, physically delete them from the spawned map
+        if (window.towersDefeated) {
+            for (let i = buildings.length - 1; i >= 0; i--) {
+                if (buildings[i].isTower) buildings.splice(i, 1);
+            }
+            
+            // WIPE RANDOM HOSTILES BUT PRESERVE DEPLOYED MILITARY
+            enemiesList = enemiesList.filter(e => e.isFriendly && e.isMilitary);
+            
+            // CALCULATE ACTUAL SURVIVING POPULATION
+            let isTownEst = townsData && townsData[currentLevel] && townsData[currentLevel].established;
+            let survivorCount = 0;
+            
+            // ONLY SPAWN SURVIVORS IF THE TOWN ISN'T ESTABLISHED YET
+            if (!isTownEst) {
+                survivorCount = Math.min(80, window.nm0AmbushCleared ? popTotal : Math.max(0, MAX_KILLS - totalKills));
+            }
+            
+            // RE-SPAWN THE EXACT NUMBER OF ALLIES
+            if (survivorCount > 0) {
+                let allyType = (currentLevel === 2 && isStoryMode) ? "FEMALE_PISTOL" : "NORMAL";
+                for (let i = 0; i < survivorCount; i++) {
+                    let ax = player.x + random(-400, 400);
+                    let ay = player.y + random(-400, 400);
+                    let a = new Character(ax, ay, false, allyType);
+                    
+                    a.isFriendly = true;
+                    a.hp = 300;
+                    a.state = nm0AmbushActive ? "CHASE" : "IDLE";
+                    
+                    if (i === 0) townSpeaker1 = a;
+                    if (i === 1) townSpeaker2 = a;
+                    
+                    enemiesList.push(a);
+                }
+                
+                if (survivorCount === 1) townSpeaker2 = townSpeaker1;
+                killcamTarget = {x: townSpeaker1.x, y: townSpeaker1.y};
+            }
+
+            // RE-SPAWN AMBUSH HOSTILES IF ACTIVE
+                        // RE-SPAWN AMBUSH HOSTILES IF ACTIVE
+            if (nm0AmbushActive) {
+                let spawnY = (currentLevel === 1) ? 4950 : 1800;
+                let aerY = (currentLevel === 1) ? 4900 : 1750;
+                if (!window.ambushKind) window.ambushKind = "TOWER";
+
+                // Keep the live counter and active spawns perfectly locked
+                let activeToSpawn = Math.min(100, nm0AmbushKills);
+                window.ambushSpawnsRemaining = Math.max(0, nm0AmbushKills - activeToSpawn);
+                
+                let remainingStandard = Math.ceil(activeToSpawn * 0.84);
+                let remainingArmored = Math.ceil(activeToSpawn * 0.08);
+                let remainingAerial = Math.ceil(activeToSpawn * 0.08);
+                
+                for(let i=0; i<remainingStandard; i++) {
+                    let sX = random() > 0.5 ? 600 : -200;
+                    let c = new Character(sX + random(-250, 250), spawnY + random(-50, 50), false, "ARMORED_STANDARD");
+                    c.isAmbush = true;
+                    enemiesList.push(c);
+                }
+                for(let i=0; i<remainingArmored; i++) {
+                    let sX = random() > 0.5 ? 600 : -200;
+                    let c = new Character(sX + random(-100, 100), spawnY + random(-50, 50), false, "ARMORED");
+                    c.isAmbush = true;
+                    enemiesList.push(c);
+                }
+                for(let i=0; i<remainingAerial; i++) {
+                    let sX = random() > 0.5 ? 600 : -200;
+                    let c = new Character(sX + random(-300, 300), aerY, false, "AERIAL");
+                    c.isAmbush = true;
+                    enemiesList.push(c);
+                }
+                
+                for (let e of enemiesList) { 
+                    if (!e.isFriendly) { e.state = "CHASE"; e.loseSightTimer = 3500; } 
+                }
+            }
+
+            // TRIGGER CUTSCENE IF SAVED RIGHT AS TOWERS FELL
+            if (!window.nm0AmbushCleared && !nm0AmbushActive && !inTownCutscene) {
+                inTownCutscene = true; townPhase = 1; townTimer = 120;
+            }
+            
+            // --- OVERWORLD LOAD STATE CATCH ---
+            if (window.towersDefeated && !nm0AmbushActive && !inTownCutscene && !inPostAmbushCutscene && currentLevel > 0) {
+                viewingTownId = currentLevel;
+                
+                if (townsData && townsData[currentLevel] && townsData[currentLevel].established) {
+                    inOverworldView = true;
+                    inWorldBuildingMenu = false;
+                } else if (popTotal > 0) {
+                    inWorldBuildingMenu = true;
+                    inOverworldView = false;
+                }
+
+                // Repopulate the visual civilian sprites
+                townCitizens = [];
+                for (let i = 0; i < popFarming; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "FARMING"));
+                for (let i = 0; i < popMilitary; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "MILITARY"));
+                for (let i = 0; i < popScience; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "SCIENCE"));
+                for (let i = 0; i < popArchitecture; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "ARCHITECTURE"));
+            }
+        }
+    }
+}
+
+    
+
+function issueSquadCommand(cmd, dir = "NORTH") {
+    let allies = enemiesList.filter(e => e.isFriendly && !e.dead);
+    
+    for (let i = 0; i < allies.length; i++) {
+        let ally = allies[i];
+        
+        // PRE-CALCULATE SLOT: Centers the squad (-2, -1, 0, 1, 2, etc.)
+        ally.squadSlot = i - Math.floor(allies.length / 2);
+        
+        if (cmd === "FOLLOW") {
+            ally.baseState = "FOLLOW"; 
+        } 
+        else if (cmd === "HOLD") {
+            ally.baseState = "HOLD_PERIMETER"; 
+            ally.holdPos = {x: ally.x, y: ally.y};
+        } 
+        else if (cmd === "SPREAD") {
+            ally.baseState = "SEARCH_DIRECTION";
+            ally.searchDir = ["NORTH", "SOUTH", "EAST", "WEST"][i % 4];
+        }
+        else if (cmd === "SEARCH") {
+            ally.baseState = "SEARCH_DIRECTION";
+            ally.searchDir = dir; 
+        }
+    }
+    isPaused = false; 
+    sfx.charge();
+}
+function drawMenuBtn(txt, x, y, w, h) {
+    fill(255, 200, 0); stroke(200, 100, 0); strokeWeight(2);
+    rect(x - w/2, y - h/2, w, h, 8);
+    fill(0); noStroke(); textAlign(CENTER, CENTER); textSize(16); textFont('sans-serif');
+    text(txt, x, y);
+}
+
+function triggerBugAmbush() {
+    farmAmbushActive = true;
+    window.farmAmbushKills = 500; // Set the total swarm size
+    objectiveTimer = 360;
+    streakMsgText = "PEST INFESTATION!";
+    streakMsgTimer = 120;
+
+    // Mobilize the farmers into a militia!
+    for (let e of enemiesList) {
+        if (e.eType === "FARMER_MALE" || e.eType === "FARMER_FEMALE") {
+            e.isNeutral = false; 
+            e.isFriendly = true; 
+            e.hp = 300; // Buff their health so they can survive the swarm
+            e.baseState = "HOLD_PERIMETER"; // Tell them to hold their ground
+            e.holdPos = { x: e.x, y: e.y };
+            
+            // Upgrade their weapons
+            e.currentWeapon = random() > 0.5 ? WEAPONS.SHOTGUN : WEAPONS.ASSAULT_RIFLE;
+            e.weaponAmmo[e.currentWeapon.name] = e.currentWeapon.maxAmmo;
+        }
+    }
+
+    // Spawn the first 50 bugs instantly
+    for(let i = 0; i < 50; i++) {
+        spawnFarmBug();
+    }
+}
+
+function spawnFarmBug() {
+    if (!farmAmbushActive || isDead || isWin) return;
+    
+    // 50/50 split between West and North-West spawns
+    let isWest = random() > 0.5;
+    let sX = isWest ? -1200 + random(-100, 100) : -1000 + random(-100, 100);
+    let sY = isWest ? random(-150, 150) : -800 + random(-100, 100);
+
+    let b = new Character(sX, sY, false, "BUG");
+    b.state = "CHASE"; 
+    b.loseSightTimer = 3000;
+    enemiesList.push(b);
+}
+// --- NEW METER & UPGRADE SYSTEM ---
+
+
+function checkLevelUps() {
+    let req2 = 50; 
+    if (window.farmLvl === 1 && window.farmXP >= req2) { 
+        window.farmLvl = 2; streakMsgText = "FARMING LEVEL 2!"; streakMsgTimer = 120; sfx.charge(); 
+        if (player) { player.maxHp = 125; player.hp += 25; }
+        for (let e of enemiesList) if (e.isFriendly) { e.maxHp = (e.maxHp || 300) + 25; e.hp += 25; }
+    }
+    if (window.milLvl === 1 && window.milXP >= req2) { 
+        window.milLvl = 2; streakMsgText = "MILITARY LEVEL 2!"; streakMsgTimer = 120; sfx.charge(); 
+        if (player) player.triggerReload(); 
+    }
+    if (window.sciLvl === 1 && window.sciXP >= req2) { 
+        window.sciLvl = 2; streakMsgText = "SCIENCE LEVEL 2!"; streakMsgTimer = 120; 
+        chemistSuitUnlocked = true; window.chemistOwned = true; sfx.charge(); 
+    }
+    if (window.archLvl === 1 && window.archXP >= req2) { 
+        window.archLvl = 2; streakMsgText = "ARCHITECTURE LEVEL 2!"; streakMsgTimer = 120; 
+        window.archBarrierReady = true; sfx.charge(); 
+    }
+}
+
+function buildBarrier() {
+    if (!window.archBarrierReady) return;
+    window.archBarrierReady = false;
+    buildings.push({ x: player.x, y: player.y - 20, w: 200, h: 200, isUBarrier: true, hp: 1000, maxHp: 1000, hitFlash: 0 });
+    sfx.charge();
+}
+function updateProductionMeters() {
+    if (window.farmLvl === undefined) {
+        window.farmXP = 0; window.milXP = 0; window.sciXP = 0; window.archXP = 0;
+        window.farmLvl = 1; window.milLvl = 1; window.sciLvl = 1; window.archLvl = 1;
+        window.archBarrierReady = false;
+    }
+    if (currentLevel < 1 || isDead || isWin || isPaused || inTownCutscene || inWorldBuildingMenu) return;
+
+    // Accrue against the world clock, not the frame counter.
+    //
+    // This used to tick on `frameCount % 60`, which is only "once a second" if
+    // the game is holding 60 fps -- at 30 it paid out half as fast, so how
+    // quickly a settlement developed depended on the player's phone. It now
+    // shares the same millisecond delta the sun runs on, so a second of
+    // production is a second of production everywhere, and the two systems can
+    // never disagree about how much time has passed.
+    window.__meterAcc = (window.__meterAcc || 0) + worldClockDtMs;
+    if (window.__meterAcc >= 1000) {
+        const secs = Math.min(5, Math.floor(window.__meterAcc / 1000));
+        window.__meterAcc -= secs * 1000;
+        // Force them to be numbers so the math never breaks
+        let pF = Number(popFarming) || 0;
+        let pM = Number(popMilitary) || 0;
+        let pS = Number(popScience) || 0;
+        let pA = Number(popArchitecture) || 0;
+
+        // Multiplied by 0.001 to dramatically slow down the leveling speed
+        let fRate = (pF * (1 + Math.min(5, Math.floor(pF / 10)) * 0.1)) * 0.001;
+        let milActive = Math.max(0, pM - ((Number(window.militaryToBringM) || 0) + (Number(window.militaryToBringF) || 0)));
+        let mRate = (milActive * (1 + Math.min(5, Math.floor(milActive / 10)) * 0.1)) * 0.001;
+        let sRate = (pS * (1 + Math.min(5, Math.floor(pS / 10)) * 0.1)) * 0.001;
+        let aRate = (pA * (1 + Math.min(5, Math.floor(pA / 10)) * 0.1)) * 0.001;
+
+        window.farmXP += fRate * secs; window.milXP += mRate * secs;
+        window.sciXP  += sRate * secs; window.archXP += aRate * secs;
+        checkLevelUps();
+    }
+}
+function triggerLvl4Ambush() {
+    nm0AmbushActive = true;
+    nm0AmbushKills = 150; 
+    window.ambushSpawnsRemaining = 100;
+    objectiveTimer = 360;
+    streakMsgText = "NM-0 GREY FATIGUE AMBUSH!";
+    streakMsgTimer = 120;
+
+    // First initial wave spawn
+    for(let i = 0; i < 50; i++) {
+        let sX = random() > 0.5 ? -1500 : 1500; 
+        let sY = player.y + random(-1000, 1000);
+        let e = new Character(sX, sY, false, "NM0_GREY_FATIGUE");
+        e.state = "CHASE"; 
+        e.loseSightTimer = 2500;
+        e.isAmbush = true;
+        enemiesList.push(e);
+    }
+}
+
+
+// ############################################################################
+// ##                                                                        ##
+// ##   OPEN-WORLD BIOME ENGINE  —  chunk streaming, travel, terrain art     ##
+// ##                                                                        ##
+// ##   Biomes 1-7 are standalone infinite worlds. Level 0 (prologue) and    ##
+// ##   Level 8 (NM-0 HQ interior) are untouched hand-authored maps.         ##
+// ##                                                                        ##
+// ############################################################################
+
+const CHUNK_W        = 1200;   // world units per chunk edge (= 1 city block + streets)
+// Baked terrain buffer. At 320 this was 3.75 world units per texel, and the
+// blit magnified it 3.75x with nearest-neighbour filtering: every texel edge
+// snapped to a different screen pixel as the camera panned, so the whole ground
+// crawled and strobed while you walked. 384 puts it at 3.125 units per texel,
+// and the blit now filters (see ChunkManager.drawTerrain). The cache below is
+// cut to match so the memory footprint is unchanged.
+const CHUNK_TEX      = 384;
+const CHUNK_BASE     = 200;    // resolution of the per-pixel noise pass only
+const CHUNK_LOAD_R   = 2;      // chunks loaded in each direction -> 5x5 = 25 live
+const CHUNK_KEEP_R   = 3;      // evict beyond this ring
+// Terrain bakes are amortised across frames so a residency change never costs
+// one long hitch. The old cap was a flat 1 per frame, which meant a full ring
+// took 25 frames to resolve and every one of those frames drew flat fill where
+// the detail had not landed yet -- the strobing. A short wall-clock budget
+// spends whatever slack the frame has instead, and the visible chunks are
+// exempt from it entirely (see ChunkManager.ensureVisibleBaked).
+const CHUNK_BAKE_CAP = 4;      // max terrain bakes per frame
+const CHUNK_BAKE_MS  = 7;      // ...or until this much of the frame is gone
+const CHUNK_TEX_CACHE = 14;    // retired terrain buffers kept for backtracking
+const NOISE_GRID     = 4;      // noise sampled every Nth pixel, then interpolated
+const BIOME_SEED     = 1337;
+
+let BIOME_ACTIVE = false;      // true while inside a streamed biome
+
+// ---------------------------------------------------------------------------
+// BIOME DEFINITIONS
+// Each biome keeps its original level's identity and lore, but is now an
+// endless world instead of a bounded arena.
+// ---------------------------------------------------------------------------
+const BIOMES = {
+  1: {
+    id: 1, name: "STICK CITY", region: "SECTOR 01 — NM-0 CAPITAL",
+    // Authored at midday, not at midnight. The whole day/night model subtracts
+    // light -- night is a wash laid over the top -- so a palette written at
+    // night values leaves nothing for daylight to be. These are real overhead
+    // daylight readings for asphalt, concrete sidewalk and municipal paint.
+    sky: [96, 112, 130],
+    pal: {
+      base: [104, 108, 114], alt: [86, 90, 96], dark: [62, 66, 71],
+      accent: [132, 138, 145], road: [78, 81, 86], mark: [226, 208, 126],
+      walk: [162, 166, 172], grass: [74, 112, 62]
+    },
+    weather: "ACID_RAIN",
+    layout: "CITY",
+    // clear: what the air does when it is dry. wet: the precipitation.
+    // rain: probability per in-game hour that a shower starts.
+    // dayF / nightF: temperature band in Fahrenheit, low to high.
+    climate: { clear: null, wet: "ACID_RAIN", rain: 0.0009, cloud: 0.35, dayF: [80, 90], nightF: [70, 70] },
+    fog: [30, 36, 48, 26],
+    clutterDensity: 0.55,
+    lore: "Grid-locked megablock. Directive checkpoints on every arterial."
+  },
+  2: {
+    id: 2, name: "THE UNDERCITY", region: "SECTOR 02 — BLACKOUT ZONE",
+    // Still the darkest sector by a wide margin -- the grid is severed here and
+    // it should read that way -- but lifted off pure black so the night wash
+    // has somewhere to go and the streets stay legible in a firefight.
+    sky: [40, 46, 60],
+    pal: {
+      base: [62, 65, 73], alt: [50, 53, 60], dark: [34, 36, 42],
+      accent: [84, 89, 99], road: [46, 48, 55], mark: [188, 158, 76],
+      walk: [104, 108, 117], grass: [46, 64, 52]
+    },
+    weather: "ACID_RAIN",
+    // Inside the curtain wall this sector is still the authored Undercity, and
+    // layoutFor() hands those chunks CITY_DENSE so the bake keeps painting
+    // streets on the grid the blocks were laid on. Everything past the wall is
+    // open country.
+    layout: "WOODLAND",
+    climate: { clear: "FOG", wet: "ACID_RAIN", rain: 0.05, cloud: 0.55, dayF: [75, 85], nightF: [60, 65] },
+    fog: [12, 16, 30, 60],
+    clutterDensity: 0.85,
+    lore: "Power grid severed. The Directive stopped counting bodies here."
+  },
+  3: {
+    id: 3, name: "DRY GULCH", region: "SECTOR 03 — AGRARIAN BELT",
+    sky: [206, 178, 138],
+    pal: {
+      base: [206, 180, 140], alt: [188, 160, 120], dark: [150, 124, 90],
+      accent: [226, 202, 162], road: [222, 198, 156], mark: [176, 149, 109],
+      walk: [150, 115, 75], grass: [138, 140, 82]
+    },
+    weather: "DUST",
+    layout: "FRONTIER",
+    climate: { clear: "DUST", wet: "ACID_RAIN", rain: 0.0001, cloud: 0.12, dayF: [95, 107], nightF: [85, 90] },
+    fog: [214, 188, 142, 30],
+    clutterDensity: 0.7,
+    lore: "Ration farms and a ghost town the Directive never bothered to raze."
+  },
+  4: {
+    id: 4, name: "THE GREEN LINE", region: "SECTOR 04 — MILITARY CORDON",
+    sky: [92, 122, 74],
+    pal: {
+      base: [104, 128, 62], alt: [84, 108, 50], dark: [58, 78, 38],
+      accent: [130, 154, 78], road: [142, 114, 66], mark: [196, 186, 122],
+      walk: [118, 98, 62], grass: [92, 136, 58]
+    },
+    weather: "FOG",
+    layout: "JUNGLE",
+    climate: { clear: "FOG", wet: "ACID_RAIN", rain: 0.15, cloud: 0.62, dayF: [70, 80], nightF: [65, 70] },
+    fog: [96, 126, 92, 26],
+    clutterDensity: 0.9,
+    lore: "Overgrown cordon. Tan Army patrols still hold the wall."
+  },
+  5: {
+    id: 5, name: "THE WHITE SILENCE", region: "SECTOR 05 — NORTHERN REACH",
+    sky: [196, 220, 236],
+    pal: {
+      base: [214, 230, 242], alt: [196, 214, 230], dark: [158, 178, 198],
+      accent: [236, 246, 252], road: [184, 208, 222], mark: [140, 165, 185],
+      walk: [176, 198, 214], grass: [180, 200, 205]
+    },
+    weather: "SNOW",
+    layout: "TUNDRA",
+    // Northern reach: it snows rather than rains, and often.
+    climate: { clear: null, wet: "SNOW", rain: 0.35, cloud: 0.7, dayF: [5, 20], nightF: [-15, 5] },
+    fog: [220, 234, 245, 55],
+    clutterDensity: 0.35,
+    lore: "Beyond the last checkpoint. Nothing here obeys anything."
+  },
+  6: {
+    id: 6, name: "THE VIOLET WASTE", region: "SECTOR 06 — CONTACT SITE",
+    sky: [66, 46, 88],
+    pal: {
+      base: [92, 76, 122], alt: [74, 60, 100], dark: [48, 38, 68],
+      accent: [122, 98, 160], road: [76, 68, 102], mark: [104, 248, 132],
+      walk: [104, 90, 134], grass: [94, 62, 140]
+    },
+    weather: "SPORES",
+    layout: "ALIEN",
+    // Humid, overgrown, and the spore fall never really stops.
+    climate: { clear: "SPORES", wet: "ACID_RAIN", rain: 0.25, cloud: 0.5, dayF: [85, 95], nightF: [72, 80] },
+    fog: [60, 28, 90, 44],
+    clutterDensity: 0.8,
+    lore: "The thing Dad never finished saying. It grows here."
+  },
+  7: {
+    id: 7, name: "THE CRYSTAL FLATS", region: "SECTOR 07 — TERMINUS",
+    sky: [238, 236, 214],
+    pal: {
+      base: [226, 222, 196], alt: [208, 204, 176], dark: [166, 162, 138],
+      accent: [242, 240, 220], road: [122, 122, 116], mark: [70, 210, 240],
+      walk: [186, 184, 162], grass: [200, 210, 190]
+    },
+    weather: "SHIMMER",
+    layout: "CRYSTAL",
+    // High desert at the edge of the map: enormous diurnal swing.
+    climate: { clear: "SHIMMER", wet: "ACID_RAIN", rain: 0.02, cloud: 0.08, dayF: [100, 115], nightF: [48, 60] },
+    fog: [240, 238, 220, 30],
+    clutterDensity: 0.45,
+    lore: "The edge of the map on Dad's tablet. Whatever made it is still here."
+  }
+};
+
+const BIOME_ORDER = [1, 2, 3, 4, 5, 6, 7];
+
+// ---------------------------------------------------------------------------
+// AUTHORED SECTORS
+// Stick City is never streamed, in any mode. It is the game's home sector and
+// its whole identity is hand-placed: the 7x7 block grid, the two transmission
+// towers, and the two NM-0 Great Gates -- one sealing the north wall, one the
+// south. Those gates are shootable structures; dropping one fires
+// triggerGateAmbush(), and breaching the north gate is what opens the NM-0 HQ
+// and eventually unseals travel north. None of that survives being replaced by
+// procedural chunks, so Level 1 always builds legacyGenerateMap()'s map.
+//
+// The streamed border-wall / checkpoint / outpost anchors stay in use for
+// every other sector.
+const AUTHORED_SECTORS = [1];
+function isAuthoredSector(l) { return AUTHORED_SECTORS.indexOf(l) !== -1; }
+
+// ---------------------------------------------------------------------------
+// STORY GATE
+// Sectors 2-4 also carry hand-authored story arenas -- the Undercity blocks,
+// the Anveda farm and its western town, the Green Line cordon. Every scripted
+// beat in them (the town cutscene, the farm cutscene, the bug and grey-fatigue
+// ambushes) spawns against fixed coordinates, so each keeps its authored layout
+// until its arc is over, then converts to a streamed open world.
+//
+// Arc completion is the Government Directive: once a sector has been
+// established it is a settled town, and re-entering it (by travelling back, or
+// by loading a save) drops you into the generative world instead of the
+// scripted arena.
+//
+// Stick City uses this too, but only to decide whether its scripted opening
+// still plays -- gate guards, the fixed spawn, the objective banner. Its map is
+// authored either way. Its arc runs past the Directive to the south Great Gate,
+// because that gate is the way onward and the level's opening objective points
+// straight at it. The north gate and the NM-0 HQ behind it are a side leg.
+function storyArcCleared(l) {
+  if (!isStoryMode) return true;                 // arcade mode has no story beats to play
+  if (l < 1 || l > 4) return true;               // 5-7 have no authored story beats yet
+  const t = (typeof townsData !== 'undefined') ? townsData[l] : null;
+  if (!t || !t.established) return false;
+  if (l === 1) return !!window.southGateBreachedStatus;
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// HYBRID SECTORS
+// A sector with an authored core is not a closed arena any more. The hand-made
+// map sits in the middle and the chunk streamer builds the same biome outward
+// from its edges forever, so you can walk out of Stick City and keep going.
+//
+// The two halves share a grid on purpose: legacyGenerateMap() lays city blocks
+// on a 1200 pitch with a 960 block inset 120 from each chunk corner, and the
+// CITY chunk layout uses exactly the same numbers. Blocks, sidewalks, streets
+// and lane markings therefore line up across the seam with nothing to fudge.
+function hasAuthoredCore(l) {
+  if (l < 1 || l > 4) return false;
+  if (isAuthoredSector(l)) return true;          // Stick City always
+  return !storyArcCleared(l);                    // 2-4 until their arc is done
+}
+
+// "Fully streamed" — no authored core, chunks all the way in.
+function isBiomeLevel(l) {
+  if (l < 1 || l > 7) return false;              // level 0 prologue / level 8 HQ stay authored
+  if (hasAuthoredCore(l)) return false;
+  return storyArcCleared(l);
+}
+
+// Streams chunks at all, either way.
+function isStreamedLevel(l) { return hasAuthoredCore(l) || isBiomeLevel(l); }
+
+// ---------------------------------------------------------------------------
+// AUTHORED CORE BOOKKEEPING
+// The authored map is lifted out of buildings[] once at level start and
+// re-published by the chunk manager every frame alongside the streamed chunks.
+let authoredSolids = [];
+let authoredCars   = [];
+let authoredCore   = null;   // chunk-snapped rect, used to centre the arrival
+let authoredChunks = null;   // the chunks the streamer actually leaves alone
+let authoredMask   = null;   // per-solid index, for pieces that overhang it
+
+// Bounding box of the authored map, snapped out to chunk edges so the handover
+// always happens down the middle of a street rather than through a block.
+// Slabs longer than SPAN_LIMIT on an axis (the 9600-wide Great Gates) do not
+// extend the core along that axis — otherwise Stick City's core would stretch
+// a kilometre past the city in both directions and blank out the streamed
+// world there. Their overhang is handled by the per-solid mask instead.
+function computeAuthoredCore(solids) {
+  const SPAN_LIMIT = 3000;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+
+  for (const b of solids) {
+    const w = b.w || 0, h = b.h || 0;
+    if (w < SPAN_LIMIT) { if (b.x - w / 2 < x0) x0 = b.x - w / 2; if (b.x + w / 2 > x1) x1 = b.x + w / 2; }
+    if (h < SPAN_LIMIT) { if (b.y - h / 2 < y0) y0 = b.y - h / 2; if (b.y + h / 2 > y1) y1 = b.y + h / 2; }
+  }
+  if (!isFinite(x0) || !isFinite(y0)) return null;
+
+  return {
+    x0: Math.floor(x0 / CHUNK_W) * CHUNK_W,
+    y0: Math.floor(y0 / CHUNK_W) * CHUNK_W,
+    x1: Math.ceil(x1 / CHUNK_W) * CHUNK_W,
+    y1: Math.ceil(y1 / CHUNK_W) * CHUNK_W,
+    // The real extents as well as the chunk-snapped ones. Snapping is right for
+    // deciding which chunks the streamer leaves alone; it is wrong for asking
+    // "am I standing in the story's ground", because it can push the answer a
+    // full chunk past the last building and leave a dead zone that wide around
+    // the sector where nothing at all spawns.
+    rx0: x0, ry0: y0, rx1: x1, ry1: y1
+  };
+}
+
+// Chunk-bucketed AABB index of the authored solids. Only consulted for chunks
+// outside the core, so it stays cheap.
+function buildAuthoredMask(solids) {
+  const cells = new Map();
+  for (const b of solids) {
+    const w = b.w || 0, h = b.h || 0;
+    const box = { x0: b.x - w / 2, y0: b.y - h / 2, x1: b.x + w / 2, y1: b.y + h / 2 };
+    const c0 = Math.floor(box.x0 / CHUNK_W), c1 = Math.floor(box.x1 / CHUNK_W);
+    const r0 = Math.floor(box.y0 / CHUNK_W), r1 = Math.floor(box.y1 / CHUNK_W);
+    for (let j = r0; j <= r1; j++) {
+      for (let i = c0; i <= c1; i++) {
+        const k = i + "," + j;
+        let arr = cells.get(k);
+        if (!arr) { arr = []; cells.set(k, arr); }
+        arr.push(box);
+      }
+    }
+  }
+  return cells;
+}
+
+// Chunks the authored map genuinely occupies.
+//
+// This used to be a containment test against the core's bounding box, and a
+// bounding box is the wrong shape for the job. Stick City's Great Gates are a
+// 9600x800 slab lying across the top and bottom of the map. SPAN_LIMIT stops
+// their 9600 width stretching the core sideways -- but nothing stopped their
+// 800 thickness stretching it lengthwise, because that axis is well under the
+// limit. The core therefore reached a full chunk row past the city at each
+// end, and those rows held nothing but the gate: 3 authored solids across 7
+// chunks, against 23-59 in every real city row.
+//
+// Procedural generation is suppressed for every chunk in the core, so those
+// rows came out as ~12 chunks of dead ground -- baked streets and empty lots
+// with no buildings, no props and nothing to do -- wrapped around the city.
+// That is the seam between the hand-authored map and the streamed world.
+//
+// Occupancy answers the question the core was actually asking: not "is this
+// inside the extents of the authored map" but "does the authored map put
+// anything here".
+function buildAuthoredChunkSet(solids) {
+  const SPAN_LIMIT = 3000;
+  const occ = new Set();
+  let i0 = Infinity, i1 = -Infinity, j0 = Infinity, j1 = -Infinity;
+
+  for (const b of solids) {
+    const w = b.w || 0, h = b.h || 0;
+    // An oversized slab describes a boundary, not a district. The gates are
+    // carved out of the streamed world by hitsAuthored() instead, exactly as
+    // they already are in the columns they overhang either side of the city.
+    if (w >= SPAN_LIMIT || h >= SPAN_LIMIT) continue;
+    const ca = Math.floor((b.x - w / 2) / CHUNK_W), cb = Math.floor((b.x + w / 2) / CHUNK_W);
+    const ra = Math.floor((b.y - h / 2) / CHUNK_W), rb = Math.floor((b.y + h / 2) / CHUNK_W);
+    for (let j = ra; j <= rb; j++) {
+      for (let i = ca; i <= cb; i++) {
+        occ.add(i + "," + j);
+        if (i < i0) i0 = i;
+        if (i > i1) i1 = i;
+        if (j < j0) j0 = j;
+        if (j > j1) j1 = j;
+      }
+    }
+  }
+  if (!occ.size) return null;
+
+  // Fill interior holes only. A plaza or a park in the middle of the authored
+  // map has to stay authored or the streamer will drop buildings into it, but
+  // a chunk past the outermost authored building on both its row AND its
+  // column is somewhere the streamed city should simply resume.
+  const rowMin = new Map(), rowMax = new Map(), colMin = new Map(), colMax = new Map();
+  for (const k of occ) {
+    const c = k.indexOf(",");
+    const i = +k.slice(0, c), j = +k.slice(c + 1);
+    if (!rowMin.has(j) || i < rowMin.get(j)) rowMin.set(j, i);
+    if (!rowMax.has(j) || i > rowMax.get(j)) rowMax.set(j, i);
+    if (!colMin.has(i) || j < colMin.get(i)) colMin.set(i, j);
+    if (!colMax.has(i) || j > colMax.get(i)) colMax.set(i, j);
+  }
+  const out = new Set(occ);
+  for (let j = j0; j <= j1; j++) {
+    if (!rowMin.has(j)) continue;
+    for (let i = rowMin.get(j); i <= rowMax.get(j); i++) {
+      if (!colMin.has(i)) continue;
+      if (j >= colMin.get(i) && j <= colMax.get(i)) out.add(i + "," + j);
+    }
+  }
+  return out;
+}
+
+function chunkInAuthoredCore(cx, cy) {
+  if (!authoredChunks) return false;
+  return authoredChunks.has(cx + "," + cy);
+}
+
+function adoptLateAuthoredSolids() {
+  if (!authoredCore) return;
+  const known = new Set(authoredSolids);
+  let added = false;
+  for (const b of buildings) {
+    if (b.isBiomeProp || b.isChunkSolid || known.has(b)) continue;
+    b.isAuthored = true;
+    authoredSolids.push(b);
+    added = true;
+  }
+  const knownCars = new Set(authoredCars);
+  for (const c of parkingCars) {
+    if (c.isChunkSolid || knownCars.has(c)) continue;
+    c.isAuthored = true;
+    authoredCars.push(c);
+  }
+  if (added) {
+    authoredMask   = buildAuthoredMask(authoredSolids);
+    authoredChunks = buildAuthoredChunkSet(authoredSolids);
+  }
+}
+
+// Is a point inside the hand-authored map's footprint? Used to keep random
+// hostiles out of a settlement whose story arc is still running -- the Anveda
+// farm and Dry Gulch are a neutral scene, the country past them is not.
+function inAuthoredSector(x, y, pad) {
+  if (!authoredCore) return false;
+  const p = pad || 0;
+  const c = authoredCore;
+  const x0 = c.rx0 !== undefined ? c.rx0 : c.x0, y0 = c.ry0 !== undefined ? c.ry0 : c.y0;
+  const x1 = c.rx1 !== undefined ? c.rx1 : c.x1, y1 = c.ry1 !== undefined ? c.ry1 : c.y1;
+  return x > x0 - p && x < x1 + p && y > y0 - p && y < y1 + p;
+}
+
+function hitsAuthored(x, y, w, h, pad) {
+  if (!authoredMask) return false;
+  const x0 = x - w / 2 - pad, x1 = x + w / 2 + pad;
+  const y0 = y - h / 2 - pad, y1 = y + h / 2 + pad;
+  const c0 = Math.floor(x0 / CHUNK_W), c1 = Math.floor(x1 / CHUNK_W);
+  const r0 = Math.floor(y0 / CHUNK_W), r1 = Math.floor(y1 / CHUNK_W);
+  for (let j = r0; j <= r1; j++) {
+    for (let i = c0; i <= c1; i++) {
+      const arr = authoredMask.get(i + "," + j);
+      if (!arr) continue;
+      for (const a of arr) {
+        if (x0 < a.x1 && x1 > a.x0 && y0 < a.y1 && y1 > a.y0) return true;
+      }
+    }
+  }
+  return false;
+}
+
+// ---------------------------------------------------------------------------
+// DETERMINISTIC HASHING
+// Every chunk derives its entire layout from (biome, cx, cy). Nothing is
+// stored, so returning to a biome after travelling regenerates it bit-for-bit
+// identically at zero memory cost.
+// ---------------------------------------------------------------------------
+function chunkHash(biome, cx, cy, salt) {
+  let h = 2166136261 >>> 0;
+  h = Math.imul(h ^ (biome  & 0xffff), 16777619) >>> 0;
+  h = Math.imul(h ^ ((cx + 32768) & 0xffff), 16777619) >>> 0;
+  h = Math.imul(h ^ ((cy + 32768) & 0xffff), 16777619) >>> 0;
+  h = Math.imul(h ^ ((salt || 0) & 0xffff), 16777619) >>> 0;
+  h ^= h >>> 15; h = Math.imul(h, 2246822507) >>> 0;
+  h ^= h >>> 13; h = Math.imul(h, 3266489909) >>> 0;
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
+// mulberry32 — small, fast, fully deterministic. Kept entirely separate from
+// p5's global random() so chunk generation never disturbs gameplay RNG.
+function makeRng(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function rngRange(r, lo, hi) { return lo + r() * (hi - lo); }
+function rngInt(r, lo, hi)   { return Math.floor(lo + r() * (hi - lo)); }
+function rngPick(r, arr)     { return arr[Math.floor(r() * arr.length) % arr.length]; }
+
+// Biome-offset perlin sampling. Each biome reads a different slice of the same
+// noise field, so terrain differs per world while staying seam-perfect between
+// neighbouring chunks (noise is always sampled in world space).
+function bnoise(biome, wx, wy, scale) {
+  return noise(wx * scale + biome * 811.7, wy * scale + biome * 517.3);
+}
+
+// ---------------------------------------------------------------------------
+// TRAIL CENTRELINES
+// The dirt roads are shared geometry: the terrain bake paints them and chunk
+// generation reads them, so a settlement fronts the road it was built on
+// instead of being scattered near it.
+//
+// Both are pure functions of the chunk COLUMN and world y — never of the
+// chunk's own oy — so every chunk in a column computes the identical curve and
+// the segments meet exactly at the horizontal seams.
+// ---------------------------------------------------------------------------
+// The meander is deliberately long-wavelength (~1800 units, one and a half
+// chunks). At the old 0.0016 the centreline moved almost as fast sideways as
+// it did forward, which is what read as a skew rather than a curve — and it
+// outran the keep-clear band, so props ended up standing in the road.
+function trailCentreX(biome, cx, wy, salt, spread, wander) {
+  return cx * CHUNK_W + CHUNK_W / 2
+       + (bnoise(biome, cx * 4096 + salt, 0, 0.0009) - 0.5) * spread
+       + (bnoise(biome, cx * 4096 + salt + 811, wy, 0.00055) - 0.5) * wander;
+}
+// ---------------------------------------------------------------------------
+// AUTHORED ROADS
+// The streamed trail and the hand-authored town used to be two unrelated road
+// systems painted on top of each other. The trail's centreline is a function of
+// the chunk COLUMN, so on level 3 the column at x 1200..2400 ran its wagon
+// track straight down the east side of Dry Gulch and through the storefronts,
+// the column west of it ran one through the crop field, and the town's own Main
+// Street was a separate stripe that met neither. That is the road driving
+// through the buildings.
+//
+// One system instead. The town's Main Street IS the wagon trail: the trail's
+// column converges onto the spine as it approaches town, runs dead straight
+// through it as the high street, and drifts back onto its noise curve out the
+// far side. Every other column fades its trail out before it reaches the
+// authored ground, so nothing is painted across the farm.
+const DG_ROADS = {
+  3: {
+    // The through road. edgeHalf/coreHalf are the verge and carriageway half
+    // widths, set so the outer verge lands on the boardwalks' outer plank.
+    // Widths are set by the gap the two building columns actually leave:
+    // 1130..1490 on Main Street and -1285..-975 on Front Street. The verge
+    // lands on the boardwalks and the shoulder feathers out from there.
+    spine: { x: 1300, y0: -3100, y1: 220, edgeHalf: 168, coreHalf: 84 },
+    cross: [
+      { y: -1140, x0: 120, x1: 2520, edgeHalf: 142, coreHalf: 72 }     // Front Street
+    ],
+    // The track keeps out of these entirely, spine column included. Just the
+    // trailer park: it sits astride the line the road would take south out of
+    // town, and a track that fades into the flats at the edge of a settlement is
+    // what actually happens -- a track through nine caravans is not.
+    noTrail: [
+      { x0: 1050, y0: 380, x1: 1620, y1: 2100 }
+    ]
+  }
+};
+function authoredRoadPlan() {
+  return authoredCore ? (DG_ROADS[currentLevel] || null) : null;
+}
+// 1 on the spine, easing to 0 over RAMP either side of its run.
+function dgSpineWeight(s, wy) {
+  const RAMP = 900;
+  if (wy >= s.y0 && wy <= s.y1) return 1;
+  const d = wy < s.y0 ? s.y0 - wy : wy - s.y1;
+  const t = Math.max(0, 1 - d / RAMP);
+  return t * t * (3 - 2 * t);
+}
+// How much trail to paint at this point: 1 out in open desert, 0 over authored
+// ground that has its own roads. Only the spine's own column is exempt, because
+// there the trail and the authored road are the same line.
+function frontierTrailFade(biome, cx, wy) {
+  const plan = authoredRoadPlan();
+  if (!plan || !authoredCore) return 1;
+  let f = 1;
+  // Declared keep-outs bind every column, the spine's included. A road that
+  // fades out over 700 units into the flats reads as a track petering out at the
+  // edge of the settlement, which is what actually happens; a road that runs
+  // through a mine head or a trailer park does not.
+  if (plan.noTrail) {
+    const RAMP = 700;
+    for (const k of plan.noTrail) {
+      const cxw = cx * CHUNK_W;
+      if (cxw + CHUNK_W < k.x0 || cxw > k.x1) continue;
+      const d = Math.min(wy - k.y0, k.y1 - wy);
+      if (d <= 0) continue;
+      const t = Math.min(1, d / RAMP);
+      f = Math.min(f, 1 - t * t * (3 - 2 * t));
+    }
+  }
+  if (Math.floor(plan.spine.x / CHUNK_W) === cx) return f;
+  if (cx * CHUNK_W + CHUNK_W < authoredCore.x0 || cx * CHUNK_W > authoredCore.x1) return f;
+  const RAMP = 700;
+  const d = Math.min(wy - authoredCore.y0, authoredCore.y1 - wy);
+  if (d <= 0) return f;
+  const t = Math.min(1, d / RAMP);
+  return Math.min(f, 1 - t * t * (3 - 2 * t));
+}
+function frontierTrailX(biome, cx, wy) {
+  const raw = trailCentreX(biome, cx, wy, 0, 600, 300);
+  const plan = authoredRoadPlan();
+  if (!plan) return raw;
+  const s = plan.spine;
+  if (Math.floor(s.x / CHUNK_W) !== cx) return raw;
+  return raw + (s.x - raw) * dgSpineWeight(s, wy);
+}
+function jungleTrailX(biome, cx, wy)   { return trailCentreX(biome, cx, wy, 3300, 520, 260); }
+
+// A city chunk carries a Directive checkpoint where the control field runs
+// high. Streets run along the chunk edges -- a block occupies ox+120..ox+1080 --
+// so the crossing at (ox, oy) is a road junction 240 wide, and a roadblock
+// across a junction is what a checkpoint IS. Nothing has to move out of the way
+// for it.
+function cityIsCheckpoint(biome, cx, cy) {
+  return bnoise(biome, cx * 4096 + 7717, cy * 4096 + 3131, 0.31) > 0.62;
+}
+// The next checkpoint over, for the patrol that walks between them. Searched
+// outward so a post always pairs with its nearest neighbour, and deterministic,
+// so both ends of a route agree on the route.
+function nextCheckpoint(biome, cx, cy) {
+  for (let ring = 1; ring <= 4; ring++) {
+    for (let j = cy - ring; j <= cy + ring; j++) {
+      for (let i = cx - ring; i <= cx + ring; i++) {
+        if (Math.max(Math.abs(i - cx), Math.abs(j - cy)) !== ring) continue;
+        if (cityIsCheckpoint(biome, i, j)) return { x: i * CHUNK_W, y: j * CHUNK_W };
+      }
+    }
+  }
+  return null;
+}
+
+// A frontier chunk grows a town where the settlement field runs high. Both the
+// generator and the terrain bake ask this, so the main street is painted under
+// the storefronts that line it.
+function frontierIsTown(biome, ox, oy) { return bnoise(biome, ox, oy, 0.0004) > 0.62; }
+// Row only, never column: horizontally adjacent town chunks have to agree on
+// where the street runs, or each paints its own stub at its own height and the
+// town reads as three disconnected pills in the sand.
+function frontierMainStreetY(biome, cy) {
+  return cy * CHUNK_W + 400 + bnoise(biome, 233, cy * 4096 + 97, 0.0007) * 400;
+}
+
+// ---------------------------------------------------------------------------
+// LATTICE SCATTER
+// Placement that cannot overlap. The chunk is cut into fixed cells; a prop
+// claims whole cells and is then jittered only as far as its own footprint
+// allows, so it never crosses into a cell it does not own. CHUNK_W divides
+// evenly by the cell size, so chunk edges are cell edges and the guarantee
+// holds across seams as well — the neighbour's props are in the neighbour's
+// cells. That is the part rejection sampling cannot do: it has no visibility
+// into a chunk that has not been generated yet, and it needs an unbounded
+// number of retries to converge even within one.
+// ---------------------------------------------------------------------------
+function makeLattice(rng, ox, oy, cell) {
+  const n     = Math.round(CHUNK_W / cell);
+  const used  = new Uint8Array(n * n);
+  const order = new Int32Array(n * n);
+  for (let i = 0; i < n * n; i++) order[i] = i;
+  for (let i = order.length - 1; i > 0; i--) {   // shuffle so fills scatter,
+    const j = Math.floor(rng() * (i + 1));       // rather than march row by row
+    const t = order[i]; order[i] = order[j]; order[j] = t;
+  }
+  let cursor = 0;
+  const GAP = 26;                                // clear ground between props
+
+  function free(gx, gy, needX, needY) {
+    if (gx < 0 || gy < 0 || gx + needX > n || gy + needY > n) return false;
+    for (let a = 0; a < needX; a++)
+      for (let b = 0; b < needY; b++)
+        if (used[(gy + b) * n + gx + a]) return false;
+    return true;
+  }
+
+  return {
+    // Reserve the ground under something placed at an exact position — a road,
+    // an anchor, a storefront on a street front — so the scatter avoids it.
+    block(x, y, w, h) {
+      const gx0 = Math.max(0,     Math.floor((x - w / 2 - GAP - ox) / cell));
+      const gx1 = Math.min(n - 1, Math.floor((x + w / 2 + GAP - ox) / cell));
+      const gy0 = Math.max(0,     Math.floor((y - h / 2 - GAP - oy) / cell));
+      const gy1 = Math.min(n - 1, Math.floor((y + h / 2 + GAP - oy) / cell));
+      for (let a = gx0; a <= gx1; a++)
+        for (let b = gy0; b <= gy1; b++) used[b * n + a] = 1;
+    },
+    // A free spot for a w x h prop, or null once the chunk is full.
+    take(w, h) {
+      const needX = Math.max(1, Math.ceil((w + GAP) / cell));
+      const needY = Math.max(1, Math.ceil((h + GAP) / cell));
+      for (let k = 0; k < order.length; k++) {
+        const idx = (cursor + k) % order.length;
+        const id = order[idx], gx = id % n, gy = (id / n) | 0;
+        if (!free(gx, gy, needX, needY)) continue;
+        for (let a = 0; a < needX; a++)
+          for (let b = 0; b < needY; b++) used[(gy + b) * n + gx + a] = 1;
+        cursor = idx + 1;
+        const spanW = needX * cell, spanH = needY * cell;
+        const slackX = Math.max(0, (spanW - GAP - w) / 2);
+        const slackY = Math.max(0, (spanH - GAP - h) / 2);
+        return { x: ox + gx * cell + spanW / 2 + (rng() * 2 - 1) * slackX,
+                 y: oy + gy * cell + spanH / 2 + (rng() * 2 - 1) * slackY };
+      }
+      return null;
+    }
+  };
+}
+
+// ---------------------------------------------------------------------------
+// PER-BIOME PERSISTENT STATE
+// Layout is procedural (free), but *player-caused* changes are not. This holds
+// the small delta: which props were destroyed, which anchors were discovered.
+// ---------------------------------------------------------------------------
+let biomeState = {};
+function getBiomeState(b) {
+  if (!biomeState[b]) {
+    biomeState[b] = {
+      destroyed: {},        // "cx,cy,idx" -> true
+      visited: false,
+      discoveredAnchors: {},
+      lastPlayerPos: null
+    };
+  }
+  return biomeState[b];
+}
+function markPropDestroyed(b, key) { getBiomeState(b).destroyed[key] = true; }
+
+// ---------------------------------------------------------------------------
+// TRAVEL ANCHORS
+// Every biome has three lore structures that double as spawn points. Which one
+// you arrive at depends on how you travelled, per the Directive's own routing:
+//   travelling NORTH  -> you cross the southern Border Wall outpost
+//   travelling SOUTH  -> you clear the northern Directive checkpoint
+//   first arrival     -> Directive helipad extraction pad
+// ---------------------------------------------------------------------------
+const ANCHOR_HELIPAD    = "HELIPAD";
+const ANCHOR_CHECKPOINT = "CHECKPOINT";
+const ANCHOR_OUTPOST    = "OUTPOST";
+
+function getAnchorPos(biome, type) {
+  // Anchors sit on chunk centres a fixed distance out, so they are always in
+  // open ground and always in the same place for a given biome.
+  if (type === ANCHOR_HELIPAD)    return { x: 0,    y: 0 };
+  if (type === ANCHOR_CHECKPOINT) return { x: 0,    y: -CHUNK_W * 2 };
+  return { x: 0, y: CHUNK_W * 2 };   // ANCHOR_OUTPOST (south border wall)
+}
+
+function buildAnchorStructures(biome) {
+  // These are permanent, non-chunked buildings — they exist regardless of which
+  // chunks are streamed in, so the player always has a landmark to return to.
+  let out = [];
+  let heli = getAnchorPos(biome, ANCHOR_HELIPAD);
+  let chk  = getAnchorPos(biome, ANCHOR_CHECKPOINT);
+  let post = getAnchorPos(biome, ANCHOR_OUTPOST);
+
+  // --- Directive helipad (landing pad + two blast walls) ---
+  out.push({ x: heli.x, y: heli.y, w: 320, h: 320, isBiomeProp: true, propType: "HELIPAD", isAnchor: true, noClip: true });
+  out.push({ x: heli.x - 230, y: heli.y - 120, w: 40, h: 200, isBiomeProp: true, propType: "BLASTWALL" });
+  out.push({ x: heli.x + 230, y: heli.y + 120, w: 40, h: 200, isBiomeProp: true, propType: "BLASTWALL" });
+
+  // --- Northern Government Directive checkpoint ---
+  out.push({ x: chk.x, y: chk.y, w: 420, h: 90, isBiomeProp: true, propType: "CHECKPOINT", isAnchor: true });
+  out.push({ x: chk.x - 340, y: chk.y, w: 180, h: 60, isBiomeProp: true, propType: "GUARDBOX" });
+  out.push({ x: chk.x + 340, y: chk.y, w: 180, h: 60, isBiomeProp: true, propType: "GUARDBOX" });
+  out.push({ x: chk.x - 700, y: chk.y, w: 500, h: 70, isBiomeProp: true, propType: "BORDERWALL" });
+  out.push({ x: chk.x + 700, y: chk.y, w: 500, h: 70, isBiomeProp: true, propType: "BORDERWALL" });
+
+  // --- Southern border wall outpost ---
+  out.push({ x: post.x, y: post.y, w: 260, h: 260, isBiomeProp: true, propType: "OUTPOST", isAnchor: true });
+  out.push({ x: post.x - 620, y: post.y, w: 700, h: 70, isBiomeProp: true, propType: "BORDERWALL" });
+  out.push({ x: post.x + 620, y: post.y, w: 700, h: 70, isBiomeProp: true, propType: "BORDERWALL" });
+  out.push({ x: post.x - 200, y: post.y + 190, w: 70, h: 70, isBiomeProp: true, propType: "SANDBAG" });
+  out.push({ x: post.x + 200, y: post.y + 190, w: 70, h: 70, isBiomeProp: true, propType: "SANDBAG" });
+
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// CHUNK CONTENT GENERATION
+// Produces solid structures (pushed into the global `buildings` array so all
+// existing collision / AI / bullet code works untouched) plus lightweight
+// decor (kept out of `buildings` so it never costs a collision test).
+// ---------------------------------------------------------------------------
+// Rejection test against everything already placed in a chunk.
+//
+// The open biomes route every solid through makeLattice(), which cannot hand
+// out the same cell twice. The city layouts have no lattice — their buildings
+// come out of a subdivided block, which genuinely cannot self-intersect — but
+// that guarantee only ever covered the buildings. Every solid dropped in
+// afterwards (dumpsters, the ruined vehicle) was placed by uniform random draw
+// with no test, so a steady fraction of them materialised inside a building:
+// two solids sharing floor space, which from above is a single fused blob.
+//
+// Lots are not blockers — a park is somewhere you stand. Ponds are, because a
+// dumpster in a pond is the same artefact wearing a different colour.
+function solidsClearAt(list, x, y, w, h, pad) {
+  const p = pad || 0;
+  for (let i = 0; i < list.length; i++) {
+    const o = list[i];
+    if (o.isGrassLot && !o.isPond) continue;
+    if (Math.abs(x - o.x) < (w + (o.w || 0)) / 2 + p &&
+        Math.abs(y - o.y) < (h + (o.h || 0)) / 2 + p) return false;
+  }
+  return true;
+}
+
+// A Directive post: barrier across the way through, guard boxes on the near
+// corners, sandbags on the approaches, blast walls funnelling the crossing.
+// Built from the same props the border anchors use, so it reads as the same
+// organisation without any new art, and identical in the city and in the woods.
+function placeCheckpoint(solid, biome, cx, cy, ox, oy, nearAnchor) {
+  if (!cityIsCheckpoint(biome, cx, cy)) return;
+  if (nearAnchor && nearAnchor(ox, oy, 900)) return;
+  const P = (x, y, w, h, t) => solid.push({ x, y, w, h, isBiomeProp: true, propType: t });
+  P(ox, oy - 150, 300, 70, "CHECKPOINT");
+  P(ox, oy + 150, 300, 70, "CHECKPOINT");
+  P(ox - 190, oy - 190, 150, 55, "GUARDBOX");
+  P(ox + 190, oy + 190, 150, 55, "GUARDBOX");
+  P(ox - 210, oy + 130, 60, 60, "SANDBAG");
+  P(ox + 210, oy - 130, 60, 60, "SANDBAG");
+  P(ox - 330, oy - 330, 36, 150, "BLASTWALL");
+  P(ox + 330, oy + 330, 36, 150, "BLASTWALL");
+}
+
+function generateChunkContent(biome, cx, cy) {
+  // Inside the authored core the hand-placed map IS the world. The chunk still
+  // bakes its terrain there — that is what makes the streets and textures run
+  // continuously under and past the authored buildings — but it contributes no
+  // structures, cars or clutter of its own.
+  if (chunkInAuthoredCore(cx, cy)) {
+    return { solid: [], decor: [], decorBake: [], cars: [] };
+  }
+
+  const def   = BIOMES[biome];
+  const rng   = makeRng(chunkHash(biome, cx, cy, 1));
+  const ox    = cx * CHUNK_W;
+  const oy    = cy * CHUNK_W;
+  const solid = [];
+  const decor = [];       // animated props only — redrawn every frame
+  const decorBake = [];   // static props — stamped into the chunk terrain buffer
+  const cars  = [];
+  const state = getBiomeState(biome);
+
+  // Keep the immediate area around every travel anchor clear of procedural
+  // clutter so arrivals never drop the player inside geometry. A hybrid sector
+  // has no Directive anchors — its landmarks are the authored ones.
+  const anchors = authoredCore ? [] : [
+    getAnchorPos(biome, ANCHOR_HELIPAD),
+    getAnchorPos(biome, ANCHOR_CHECKPOINT),
+    getAnchorPos(biome, ANCHOR_OUTPOST)
+  ];
+  const nearAnchor = (x, y, pad) => {
+    for (let a of anchors) if (Math.abs(x - a.x) < pad && Math.abs(y - a.y) < pad) return true;
+    return false;
+  };
+
+  // The open biomes place every solid through one lattice so nothing can land
+  // on anything else. The city layouts do not need it — their buildings are
+  // already carved out of a subdivided block, which cannot self-intersect.
+  let lat = null;
+
+  switch (layoutFor(biome, cx, cy)) {
+
+    // ===================== BIOME 1 & 2 : URBAN GRID =====================
+    case "CITY":
+    case "CITY_DENSE": {
+      const dense    = def.layout === "CITY_DENSE";
+      const blockSz  = 960;
+      const walkW    = 45;
+      const usable   = blockSz - walkW * 2;
+      const bsx      = ox + 120 + walkW;
+      const bsy      = oy + 120 + walkW;
+
+      const clearOf = solidsClearAt;
+
+      // Districts are noise-driven so the city has coherent neighbourhoods
+      // that read at a distance rather than random per-block noise.
+      const zoneN = bnoise(biome, ox, oy, 0.00035);
+      let zone = "RESIDENTIAL";
+      if (zoneN < 0.34) zone = "PARK";
+      else if (zoneN < 0.5) zone = "INDUSTRIAL";
+      else if (zoneN > 0.72) zone = "COMMERCIAL";
+
+      if (nearAnchor(ox + 600, oy + 600, 900)) { zone = "PARK"; }
+
+      if (zone === "PARK" && !nearAnchor(ox + 600, oy + 600, 700)) {
+        // Green lot with a pond and scattered trees
+        solid.push({ x: ox + 600, y: oy + 600, w: blockSz - 90, h: blockSz - 90, isGrassLot: true, isParkingLot: false });
+        if (rng() > 0.45) {
+          solid.push({ x: ox + 600 + rngRange(rng, -150, 150), y: oy + 600 + rngRange(rng, -150, 150),
+                       w: rngRange(rng, 220, 340), h: rngRange(rng, 180, 300), isPond: true, isGrassLot: true, isWater: true });
+        }
+        let trees = rngInt(rng, 4, 10);
+        for (let i = 0; i < trees; i++) {
+          // Trees are drawn live, not baked. The terrain buffer is 3.125 world
+          // units per texel, so a 30-unit canopy lobe stamped into it is nine
+          // texels across -- magnified back up, every round leaf blob turned
+          // into a handful of hard squares. Trees are the largest and roundest
+          // prop in the set and there are only a handful per park, so they go
+          // in the live list and draw as real vector ovals at screen
+          // resolution. See CLUTTER_ANIMATED.
+          //
+          // Spaced off each other and out of the pond -- overlapping canopies
+          // read as one shapeless dark mass, and a tree standing in water is
+          // the same placement bug the dumpsters had.
+          for (let att = 0; att < 12; att++) {
+            const tx = ox + rngRange(rng, 200, 1000);
+            const ty = oy + rngRange(rng, 200, 1000);
+            if (!clearOf(solid, tx, ty, 70, 70, 12)) continue;
+            let spaced = true;
+            for (let d2 = 0; d2 < decor.length; d2++) {
+              const o = decor[d2];
+              if (o.t !== "TREE") continue;
+              if (Math.abs(tx - o.x) < 88 && Math.abs(ty - o.y) < 88) { spaced = false; break; }
+            }
+            if (!spaced) continue;
+            decor.push({ t: "TREE", x: tx, y: ty,
+                         s: rngRange(rng, 0.8, 1.5), r: rng() * TWO_PI, c: rng() });
+            break;
+          }
+        }
+      } else if (zone === "COMMERCIAL" && rng() > 0.55) {
+        // Mall / big-box with rooftop HVAC
+        let mall = { x: ox + 600, y: oy + 600, w: blockSz - 90, h: blockSz - 90, isMall: true, details: [] };
+        for (let i = 0; i < 14; i++) {
+          mall.details.push({ type: "hvac_large", x: rngRange(rng, -mall.w / 2 + 40, mall.w / 2 - 40),
+                                                  y: rngRange(rng, -mall.h / 2 + 40, mall.h / 2 - 40) });
+        }
+        solid.push(mall);
+      } else if (zone === "INDUSTRIAL" && rng() > 0.6) {
+        // Parking lot with cars
+        let lotW = blockSz - 90, lotH = blockSz - 90;
+        let lx = ox + 600, ly = oy + 600;
+        solid.push({ x: lx, y: ly, w: lotW, h: lotH, isParkingLot: true, isGrassLot: true });
+        const carCols = [[200,30,30],[30,80,200],[200,200,200],[40,40,40],[200,200,30],[120,120,130]];
+        let spotW = 100, spotH = 65, aisleW = 80;
+        for (let px = lx - lotW/2 + 40; px < lx + lotW/2 - (spotW*2 + aisleW); px += (spotW*2 + aisleW)) {
+          for (let py = ly - lotH/2 + 30; py < ly + lotH/2 - 30; py += spotH) {
+            if (rng() > 0.55) cars.push({ x: px + spotW*0.5, y: py + spotH/2, w: 90, h: 50, isCar: true, isParkingCar: true, col: rngPick(rng, carCols), angle: HALF_PI, hp: 100 });
+            if (rng() > 0.55) cars.push({ x: px + spotW + aisleW + spotW*0.5, y: py + spotH/2, w: 90, h: 50, isCar: true, isParkingCar: true, col: rngPick(rng, carCols), angle: -HALF_PI, hp: 100 });
+          }
+        }
+      } else {
+        // Standard subdivided block
+        let cols = rngInt(rng, dense ? 3 : 2, dense ? 6 : 5);
+        let rows = rngInt(rng, dense ? 3 : 2, dense ? 6 : 5);
+        let cw = usable / cols, ch = usable / rows;
+        for (let i = 0; i < cols; i++) {
+          for (let j = 0; j < rows; j++) {
+            if (rng() > (dense ? 0.92 : 0.85)) continue;
+            let bx = bsx + i * cw + cw / 2;
+            let by = bsy + j * ch + ch / 2;
+            if (nearAnchor(bx, by, 620)) continue;
+            let bw = cw - rngRange(rng, 90, 130);
+            let bh = ch - rngRange(rng, 90, 130);
+            if (bw < 40 || bh < 40) continue;
+            // isBlockBuilding marks the solids that drawBuildings() paints with
+            // the generic extruded roof. The shadow pass reads the same flag,
+            // so the two always agree about which masses have walls — anything
+            // that paints its own art (a shanty, a saloon front, a water tower)
+            // keeps a footprint-sized shadow instead of a wall-sized one.
+            let b = { x: bx, y: by, w: bw, h: bh, details: [], style: rngInt(rng, 0, 4),
+                      isBlockBuilding: true };
+            let nDet = rngInt(rng, 1, 4);
+            for (let d = 0; d < nDet; d++) {
+              let t = rngPick(rng, ["hvac", "vent", "access"]);
+              if (d === 0 && rng() > 0.9 && Math.min(bw, bh) > 100) t = "helipad";
+              b.details.push({ type: t, x: rngRange(rng, -bw/2 + 26, bw/2 - 26), y: rngRange(rng, -bh/2 + 26, bh/2 - 26) });
+            }
+            solid.push(b);
+          }
+        }
+        // Alley dumpsters
+        let nDump = dense ? rngInt(rng, 3, 7) : rngInt(rng, 1, 4);
+        for (let k = 0; k < nDump; k++) {
+          let vert = rng() > 0.5;
+          // Rotated by angle, so the footprint it actually occupies is swapped.
+          const dw = vert ? 25 : 40, dh = vert ? 40 : 25;
+          for (let att = 0; att < 14; att++) {
+            const dx2 = ox + rngRange(rng, 180, 1020);
+            const dy2 = oy + rngRange(rng, 180, 1020);
+            if (!clearOf(solid, dx2, dy2, dw, dh, 24)) continue;
+            solid.push({ x: dx2, y: dy2, w: 40, h: 25, isDumpster: true, angle: vert ? HALF_PI : 0 });
+            break;
+          }
+          // No spot in 14 draws means the block is full. Dropping the dumpster
+          // is correct: forcing it in is what put one inside a wall.
+        }
+      }
+
+      // Street lights on every block corner
+      for (let sx of [ox + 115, ox + 1085]) {
+        for (let sy of [oy + 115, oy + 1085]) {
+          solid.push({ x: sx, y: sy, w: 16, h: 16, isStreetLight: true });
+        }
+      }
+
+      placeCheckpoint(solid, biome, cx, cy, ox, oy, nearAnchor);
+      break;
+    }
+
+    // ===================== BIOME 2 OUTER : WOODLAND =====================
+    // What is between the Undercity's curtain wall and the next Directive post.
+    // Not a city block in sight: standing timber, meadow, a track, and the
+    // occasional ruin left where the grid used to reach.
+    case "WOODLAND": {
+      lat = makeLattice(rng, ox, oy, 150);
+      for (const a of anchors) lat.block(a.x, a.y, 1100, 1100);
+      // The track stays clear, and so does the post.
+      for (let wy = oy - 60; wy <= oy + CHUNK_W + 60; wy += 60) {
+        lat.block(woodTrailX(biome, cx, wy), wy, 260, 90);
+      }
+      if (cityIsCheckpoint(biome, cx, cy)) lat.block(ox, oy, 900, 900);
+
+      // Copses, not an even sprinkle. Trees cluster where the canopy field runs
+      // high and thin out to meadow between, which is what makes woodland read
+      // as woodland rather than as an orchard.
+      const canopy = bnoise(biome, ox, oy, 0.00055);
+      const nTree = Math.round(4 + canopy * 26);
+      for (let i = 0; i < nTree; i++) {
+        const spot = lat.take(56, 56);
+        if (!spot) break;
+        if (nearAnchor(spot.x, spot.y, 420)) continue;
+        if (bnoise(biome, spot.x, spot.y, 0.0026) < 0.42) continue;   // meadow gaps
+        solid.push({ x: spot.x, y: spot.y, w: 34, h: 34, isTreeTrunk: true });
+        decor.push({ t: "TREE", x: spot.x, y: spot.y,
+                     s: rngRange(rng, 0.9, 1.7), r: rng() * TWO_PI, c: rng() });
+      }
+
+      // Boulders and deadfall.
+      const nRock = rngInt(rng, 1, 5);
+      for (let i = 0; i < nRock; i++) {
+        const w = rngRange(rng, 70, 150), h = rngRange(rng, 60, 130);
+        const spot = lat.take(w, h);
+        if (!spot) break;
+        solid.push({ x: spot.x, y: spot.y, w, h,
+                     isBiomeProp: true, propType: "BOULDER", tint: rng(), angle: rng() * TWO_PI });
+      }
+
+      // A ruin every so often -- the grid used to come out this far.
+      if (rng() > 0.72) {
+        const w = rngRange(rng, 170, 280), h = rngRange(rng, 150, 240);
+        const spot = lat.take(w + 60, h + 60);
+        if (spot && !nearAnchor(spot.x, spot.y, 620)) {
+          solid.push({ x: spot.x, y: spot.y, w, h, style: rngInt(rng, 0, 4), details: [],
+                       isBlockBuilding: true });
+        }
+      }
+
+      placeCheckpoint(solid, biome, cx, cy, ox, oy, nearAnchor);
+      break;
+    }
+
+    // ===================== BIOME 3 : FRONTIER =====================
+    case "FRONTIER": {
+      // Every solid in this chunk goes through one lattice, so nothing can
+      // land on anything else — including the trail and the street.
+      lat = makeLattice(rng, ox, oy, 150);
+      for (const a of anchors) lat.block(a.x, a.y, 1100, 1100);
+      // Keep the wagon trail itself walkable.
+      for (let wy = oy - 60; wy <= oy + CHUNK_W + 60; wy += 60) {
+        lat.block(frontierTrailX(biome, cx, wy), wy, 250, 90);
+      }
+
+      const townN = bnoise(biome, ox, oy, 0.0004);
+      // No anchor gate here: the terrain bake paints this street and cannot see
+      // anchors, so the two must agree on the condition exactly. Individual
+      // shopfronts still check, which leaves a gap rather than a phantom road.
+      if (frontierIsTown(biome, ox, oy)) {
+        // A main street, not a cluster of random boxes. Storefronts line both
+        // kerbs facing the road, their boardwalks meeting the dirt; homes and
+        // trailers sit on the back lots behind them. The bake paints the same
+        // street under all of it.
+        const my    = frontierMainStreetY(biome, cy);
+        const halfW = 105;                      // carriageway half-width
+        const signs = ["HOTEL","JAIL","GENERAL STORE","SHERIFF","SALOON","BANK","DOCTOR","BLACKSMITH"];
+        lat.block(ox + 600, my, CHUNK_W, halfW * 2 + 40);
+
+        for (const side of [-1, 1]) {
+          // Walk the frontage, dropping shopfronts shoulder to shoulder with a
+          // narrow alley here and there — the reason a frontier street reads as
+          // a street is that the gaps are small and the fronts are flush.
+          let fx = ox + rngRange(rng, 120, 230);
+          while (fx < ox + CHUNK_W - 190) {
+            const w = rngRange(rng, 150, 230);
+            const h = rngRange(rng, 110, 150);
+            const bx = fx + w / 2;
+            const by = my + side * (halfW + 34 + h / 2);
+            // Leave the crossroads open where the wagon trail runs through:
+            // the town grew at the crossing, so the trail is the side street.
+            const onTrail = Math.abs(bx - frontierTrailX(biome, cx, by)) < w / 2 + 130;
+            if (!onTrail && !nearAnchor(bx, by, 520)) {
+              // Same nine archetypes the authored town uses, weighted so a
+              // street is mostly cut-timber storefronts with the occasional
+              // stone premises, barn or canvas trade tent -- a run of identical
+              // boxes was the old streamed town's whole problem too.
+              const arch = rngPick(rng, ["FALSE_FRONT","FALSE_FRONT","FALSE_FRONT","FALSE_FRONT",
+                                         "TWO_STOREY","STONE","STONE","ADOBE","BARN","CABIN","TENT"]);
+              const acc  = rngPick(rng, [null, null, "red", "teal"]);
+              solid.push({ x: bx, y: by, w, h, isWesternBldg: true,
+                           facing: side < 0 ? "S" : "N",
+                           arch, accent: acc, isLivery: arch === "BARN",
+                           signText: rngPick(rng, signs) });
+              lat.block(bx, by, w + 30, h + 90);   // shadow the boardwalk too
+            }
+            fx += w + rngRange(rng, 12, 90);
+          }
+        }
+
+        // Back lots: dwellings set behind the shopfronts, off the street.
+        const nBack = rngInt(rng, 2, 6);
+        for (let i = 0; i < nBack; i++) {
+          const trailer = rng() > 0.5;
+          const w = trailer ? rngRange(rng, 160, 200) : rngRange(rng, 100, 170);
+          const h = trailer ? 80 : rngRange(rng, 90, 150);
+          const spot = lat.take(w, h);
+          if (!spot || nearAnchor(spot.x, spot.y, 520)) continue;
+          if (trailer) solid.push({ x: spot.x, y: spot.y, w, h, isTrailer: true });
+          else         solid.push({ x: spot.x, y: spot.y, w, h, isShanty: true });
+        }
+        if (rng() > 0.55) { const s = lat.take(70, 70); if (s) solid.push({ x: s.x, y: s.y, w: 70, h: 70, isWaterTower: true }); }
+        if (rng() > 0.6)  { const s = lat.take(40, 40); if (s) solid.push({ x: s.x, y: s.y, w: 40, h: 40, isWell: true }); }
+      } else if (townN < 0.36) {
+        // Ration farmland — crop rows and fencing
+        if (!nearAnchor(ox + 600, oy + 600, 700)) {
+          // Planted BESIDE the track, not on it.
+          //
+          // The field used to go in at ox + 600 -- dead centre of the chunk --
+          // and the track's centreline is the chunk centre plus a meander, so
+          // the two were the same place by construction. Every farm chunk in
+          // the biome came out with the road ploughed straight through the crop
+          // rows and through both of the 620-wide fences that bracket them.
+          // Nothing caught it because the field never asked the lattice for a
+          // spot the way the barn and the props do; it only blocked one
+          // afterwards.
+          //
+          // Take the track's closest approach over the field's own height, then
+          // plant on whichever side of it has the room.
+          const fy = oy + 600;
+          let fw = rngRange(rng, 400, 640);
+          const fh = rngRange(rng, 380, 600);
+          let tW = Infinity, tE = -Infinity;
+          for (let k = -1; k <= 1; k++) {
+            const t = frontierTrailX(biome, cx, fy + k * fh / 2);
+            if (t < tW) tW = t;
+            if (t > tE) tE = t;
+          }
+          const CLR = 175;                       // verge, plus a headland to turn a plough in
+          const roomW = (tW - CLR) - (ox + 30);
+          const roomE = (ox + CHUNK_W - 30) - (tE + CLR);
+          const west  = roomW >= roomE;
+          fw = Math.max(200, Math.min(fw, west ? roomW : roomE));
+          const fx = west ? tW - CLR - fw / 2 : tE + CLR + fw / 2;
+
+          solid.push({ x: fx, y: fy, w: fw, h: fh, isCropField: true });
+          lat.block(fx, fy, fw + 80, fh + 80);
+          if (rng() > 0.6) {
+            const s = lat.take(300, 240);
+            if (s) solid.push({ x: s.x, y: s.y, w: 300, h: 240, isBarn: true });
+          }
+          // Fences bracket the field, so they take its width and its offset.
+          solid.push({ x: fx, y: fy - 340, w: fw + 20, h: 10, isFence: true, hp: 2000, maxHp: 2000 });
+          solid.push({ x: fx, y: fy + 340, w: fw + 20, h: 10, isFence: true, hp: 2000, maxHp: 2000 });
+        }
+      }
+
+      // Scattered desert dressing. Cacti grow where the ground is driest, so
+      // they read as vegetation following the terrain rather than confetti;
+      // crates and bales are man-made and cluster near what people built.
+      // Cacti are the common thing in a desert; a full wagon is not. The old
+      // mix put one wagon in every three props, which is why the sand looked
+      // like a parking lot for identical covered carts.
+      const nProps = rngInt(rng, 4, 10);
+      for (let i = 0; i < nProps; i++) {
+        const roll = rng();
+        let w, h, key;
+        if (roll > 0.46)      { w = 35; h = 55; key = "isCactusProp"; }
+        else if (roll > 0.26) { w = 30; h = 30; key = "isCrateProp"; }
+        else if (roll > 0.10) { w = 45; h = 45; key = "isHayBale"; }
+        else                  { w = 75; h = 55; key = "isWagonProp"; }
+        const spot = lat.take(w, h);
+        if (!spot) break;
+        if (nearAnchor(spot.x, spot.y, 420)) continue;
+        if (key === "isCactusProp" && bnoise(biome, spot.x, spot.y, 0.0018) < 0.42) continue;
+        const b = { x: spot.x, y: spot.y, w, h, seed: rng() };
+        b[key] = true;
+        solid.push(b);
+      }
+      break;
+    }
+
+    // ===================== BIOME 4 : JUNGLE CORDON =====================
+    case "JUNGLE": {
+      lat = makeLattice(rng, ox, oy, 150);
+      for (const a of anchors) lat.block(a.x, a.y, 1100, 1100);
+      // The mud track has to stay drivable, so nothing is planted on it.
+      for (let wy = oy - 60; wy <= oy + CHUNK_W + 60; wy += 60) {
+        lat.block(jungleTrailX(biome, cx, wy), wy, 280, 90);
+      }
+
+      const clearing = bnoise(biome, ox, oy, 0.0005);
+      if (clearing > 0.6 && !nearAnchor(ox + 600, oy + 600, 700)) {
+        // A cordon post is a compound: bunkers set back off the track in a
+        // line, sharing one cleared apron, rather than dropped at random.
+        const n    = rngInt(rng, 2, 5);
+        const side = rng() > 0.5 ? 1 : -1;
+        let py     = oy + rngRange(rng, 220, 420);
+        for (let i = 0; i < n; i++) {
+          const w = rngRange(rng, 180, 280), h = rngRange(rng, 160, 240);
+          const bx = jungleTrailX(biome, cx, py) + side * (150 + w / 2 + rngRange(rng, 0, 90));
+          if (bx - w / 2 < ox + 40 || bx + w / 2 > ox + CHUNK_W - 40) { py += h + 90; continue; }
+          if (!nearAnchor(bx, py, 560)) {
+            solid.push({ x: bx, y: py, w, h, isBiomeProp: true, propType: "BUNKER",
+                         tint: rng(), angle: (rng() - 0.5) * 0.22 });
+            lat.block(bx, py, w + 60, h + 60);
+          }
+          py += h + rngRange(rng, 70, 190);
+          if (py > oy + CHUNK_W - 200) break;
+        }
+      }
+      // Palm canopy. Each palm is redrawn every frame (animated fronds plus a
+      // matching animated shadow), so density is kept moderate here and the
+      // sense of overgrowth comes from the baked fern/vine clutter instead.
+      const nPalm = rngInt(rng, 6, 12);
+      for (let i = 0; i < nPalm; i++) {
+        const spot = lat.take(52, 52);
+        if (!spot) break;
+        if (nearAnchor(spot.x, spot.y, 380)) continue;
+        if (bnoise(biome, spot.x, spot.y, 0.004) < 0.44) continue;
+        solid.push({ x: spot.x, y: spot.y, w: 30, h: 30, isPalm: true });
+      }
+      // Mossy granite, not the pale rock the tundra renderer draws
+      const nRock = rngInt(rng, 1, 4);
+      for (let i = 0; i < nRock; i++) {
+        const w = rngRange(rng, 70, 130), h = rngRange(rng, 60, 115);
+        const spot = lat.take(w, h);
+        if (!spot) break;
+        solid.push({ x: spot.x, y: spot.y, w, h,
+                     isBiomeProp: true, propType: "BOULDER", tint: rng(), angle: rng() * TWO_PI });
+      }
+      break;
+    }
+
+    // ===================== BIOME 5 : TUNDRA =====================
+    case "TUNDRA": {
+      lat = makeLattice(rng, ox, oy, 150);
+      for (const a of anchors) lat.block(a.x, a.y, 1100, 1100);
+      // A ridge line: erratics drop in a drift-aligned band, the way glacial
+      // debris actually lies, instead of one per random spot.
+      const nRock = rngInt(rng, 4, 11);
+      for (let i = 0; i < nRock; i++) {
+        const w = rngRange(rng, 70, 190), h = rngRange(rng, 70, 190);
+        const spot = lat.take(w, h);
+        if (!spot) break;
+        if (nearAnchor(spot.x, spot.y, 400)) continue;
+        solid.push({ x: spot.x, y: spot.y, w, h, isRock: true });
+      }
+      if (bnoise(biome, ox, oy, 0.0006) > 0.66 && !nearAnchor(ox + 600, oy + 600, 700)) {
+        const n = rngInt(rng, 1, 4);
+        for (let i = 0; i < n; i++) {
+          const w = rngRange(rng, 160, 260), h = rngRange(rng, 160, 240);
+          const spot = lat.take(w, h);
+          if (!spot) break;
+          solid.push({ x: spot.x, y: spot.y, w, h, style: rngInt(rng, 0, 4), details: [],
+                       isBlockBuilding: true });
+        }
+      }
+      break;
+    }
+
+    // ===================== BIOME 6 : ALIEN WASTE =====================
+    case "ALIEN": {
+      lat = makeLattice(rng, ox, oy, 150);
+      for (const a of anchors) lat.block(a.x, a.y, 1100, 1100);
+      const n = rngInt(rng, 7, 15);
+      for (let i = 0; i < n; i++) {
+        const w = rngRange(rng, 90, 220), h = rngRange(rng, 90, 220);
+        const spot = lat.take(w, h);
+        if (!spot) break;
+        if (nearAnchor(spot.x, spot.y, 420)) continue;
+        const roll = rng();
+        const b = { x: spot.x, y: spot.y, w, h };
+        if (roll > 0.6)      b.isAlienPlant = true;
+        else if (roll > 0.4) b.isEnergyPole = true;
+        else                 b.isAlienBldg  = true;
+        solid.push(b);
+      }
+      break;
+    }
+
+    // ===================== BIOME 7 : CRYSTAL FLATS =====================
+    case "CRYSTAL": {
+      lat = makeLattice(rng, ox, oy, 150);
+      for (const a of anchors) lat.block(a.x, a.y, 1100, 1100);
+      const n = rngInt(rng, 5, 11);
+      for (let i = 0; i < n; i++) {
+        const w = rngRange(rng, 140, 300), h = rngRange(rng, 140, 300);
+        const spot = lat.take(w, h);
+        if (!spot) break;
+        if (nearAnchor(spot.x, spot.y, 460)) continue;
+        const b = { x: spot.x, y: spot.y, w, h };
+        const roll = rng();
+        if (roll > 0.66)      b.isPyramid = true;
+        else if (roll > 0.33) b.isChip = true;
+        else                  b.isPinkPlanet = true;
+        solid.push(b);
+      }
+      break;
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // ENVIRONMENTAL CLUTTER
+  // Noise-thresholded micro-props. These live outside `buildings` entirely —
+  // no collision cost, no AI cost, purely visual density.
+  // -------------------------------------------------------------------------
+  // Static clutter is baked straight into the chunk's terrain buffer and costs
+  // nothing per frame. Only props that actually animate stay in the live list.
+  const clutterCount = Math.floor(70 * def.clutterDensity);
+  for (let i = 0; i < clutterCount; i++) {
+    let dx = ox + rng() * CHUNK_W;
+    let dy = oy + rng() * CHUNK_W;
+    // Noise gate: clutter pools in low-traffic areas instead of spreading evenly
+    if (bnoise(biome, dx, dy, 0.0022) < 0.38) continue;
+    const item = {
+      t: pickClutterType(def, rng, layoutFor(biome, cx, cy)),
+      x: dx, y: dy,
+      s: rngRange(rng, 0.6, 1.5),
+      r: rng() * TWO_PI,
+      c: rng()
+    };
+    (CLUTTER_ANIMATED[item.t] ? decor : decorBake).push(item);
+  }
+
+  // A rare ruined vehicle per chunk — solid, so it doubles as cover.
+  // The lattice biomes get a free cell. The city layouts have no lattice, and
+  // this used to take a raw random point and push it unconditionally: the last
+  // solid added to the chunk, landing on top of whatever was already there.
+  // It is the single biggest source of buildings that appear welded together.
+  if (rng() > 0.72) {
+    let spot = null;
+    if (lat) {
+      spot = lat.take(110, 110);
+    } else {
+      for (let att = 0; att < 16; att++) {
+        const wx2 = ox + rngRange(rng, 150, 1050);
+        const wy2 = oy + rngRange(rng, 150, 1050);
+        if (!solidsClearAt(solid, wx2, wy2, 96, 54, 30)) continue;
+        spot = { x: wx2, y: wy2 };
+        break;
+      }
+    }
+    if (spot && !nearAnchor(spot.x, spot.y, 400)) {
+      solid.push({ x: spot.x, y: spot.y, w: 96, h: 54, isBiomeProp: true, propType: "WRECK",
+                   angle: rng() * TWO_PI, tint: rng() });
+    }
+  }
+
+  // Strip anything the player already destroyed on a previous visit
+  for (let i = solid.length - 1; i >= 0; i--) {
+    if (state.destroyed[cx + "," + cy + "," + i]) solid.splice(i, 1);
+  }
+
+  // Authored structures that overhang the core — Stick City's Great Gates run
+  // 9600 wide and reach four chunks past the block grid — still get right of
+  // way. Anything the streamer put on top of one is dropped so the wall keeps
+  // a clear approach on both sides.
+  if (authoredMask) {
+    return {
+      solid:     solid.filter(s => !hitsAuthored(s.x, s.y, s.w || 0, s.h || 0, 24)),
+      decor:     decor.filter(d => !hitsAuthored(d.x, d.y, 90, 90, 0)),
+      decorBake: decorBake.filter(d => !hitsAuthored(d.x, d.y, 90, 90, 0)),
+      cars:      cars.filter(c => !hitsAuthored(c.x, c.y, c.w || 90, c.h || 50, 24))
+    };
+  }
+
+  return { solid, decor, decorBake, cars };
+}
+
+// Props drawn live rather than stamped into the chunk terrain buffer, either
+// because they animate or because they are too large and too round to survive
+// being rasterised at 3.125 world units per texel.
+const CLUTTER_ANIMATED = {
+  TUMBLEWEED: true,   // drifts on the wind
+  SPOREPOD:   true,   // bioluminescent pulse
+  GLOWMOSS:   true,   // bioluminescent pulse
+  SHARD:      true,   // refractive glint
+  TREE:       true    // canopy is the biggest curve in the set -- bake it and
+                      // it comes back as squares
+};
+
+// The Undercity is two terrains, and the curtain wall is the join. Inside it
+// the sector is the authored city and the bake has to keep painting streets on
+// the same grid the blocks were laid on; outside it there is no city at all,
+// just the country between one Directive post and the next.
+const WOOD_PAL = {
+  base: [88, 118, 63], alt: [107, 134, 76], dark: [52, 76, 43],
+  accent: [132, 156, 90], road: [124, 106, 76], mark: [188, 170, 122],
+  walk: [142, 162, 106], grass: [94, 126, 68]
+};
+function layoutFor(biome, cx, cy) {
+  const def = BIOMES[biome];
+  if (!def) return "CITY";
+  if (def.layout === "WOODLAND" && chunkInAuthoredCore(cx, cy)) return "CITY_DENSE";
+  return def.layout;
+}
+function palFor(biome, cx, cy) {
+  return layoutFor(biome, cx, cy) === "WOODLAND" ? WOOD_PAL : BIOMES[biome].pal;
+}
+// The track through the woods. Same construction as the frontier trail -- a
+// function of the chunk COLUMN and world y only -- so it meets at the seams.
+function woodTrailX(biome, cx, wy) { return trailCentreX(biome, cx, wy, 5100, 520, 280); }
+
+function pickClutterType(def, rng, layout) {
+  const r = rng();
+  switch (layout || def.layout) {
+    case "WOODLAND":
+      if (r > 0.8)  return "LOG";
+      if (r > 0.6)  return "FERN";
+      if (r > 0.42) return "WEED";
+      if (r > 0.24) return "PEBBLE";
+      return "GRASS";
+    case "CITY":
+    case "CITY_DENSE":
+      if (r > 0.82) return "TRASH";
+      if (r > 0.64) return "PEBBLE";
+      if (r > 0.5)  return "PUDDLE";
+      if (r > 0.36) return "PAPER";
+      if (r > 0.22) return "WEED";
+      return "CRACK";
+    case "FRONTIER":
+      if (r > 0.8)  return "TUMBLEWEED";
+      if (r > 0.62) return "PEBBLE";
+      if (r > 0.46) return "BONE";
+      if (r > 0.3)  return "SAGE";
+      return "CRACK";
+    case "JUNGLE":
+      if (r > 0.78) return "VINE";
+      if (r > 0.56) return "FERN";
+      if (r > 0.4)  return "PEBBLE";
+      if (r > 0.24) return "LOG";
+      return "WEED";
+    case "TUNDRA":
+      if (r > 0.75) return "ICE";
+      if (r > 0.55) return "PEBBLE";
+      if (r > 0.35) return "DRIFT";
+      return "BONE";
+    case "ALIEN":
+      if (r > 0.74) return "SPOREPOD";
+      if (r > 0.54) return "VINE";
+      if (r > 0.34) return "PEBBLE";
+      return "GLOWMOSS";
+    case "CRYSTAL":
+      if (r > 0.7)  return "SHARD";
+      if (r > 0.48) return "PEBBLE";
+      return "CRACK";
+  }
+  return "PEBBLE";
+}
+
+// ###########################################################################
+//  TERRAIN BAKING
+//  Each chunk's ground is rendered once into an off-screen p5.Graphics buffer
+//  and thereafter blitted as a single image() call. The expensive part — the
+//  layered noise, dithering and alpha blending — is paid once per chunk, not
+//  once per frame.
+//
+//  Noise is sampled on a coarse lattice and bilinearly interpolated across the
+//  pixel loop. That turns ~40,000 perlin lookups per chunk into ~2,500, which
+//  is the difference between a visible hitch and an imperceptible one.
+// ###########################################################################
+
+function bakeChunkTerrain(biome, cx, cy, staticDecor) {
+  const def = BIOMES[biome];
+  const lay = layoutFor(biome, cx, cy);
+  const p   = palFor(biome, cx, cy);
+  const ox  = cx * CHUNK_W;
+  const oy  = cy * CHUNK_W;
+  const rng = makeRng(chunkHash(biome, cx, cy, 7));
+
+  // Two resolutions on purpose.
+  //
+  // The per-pixel noise pass is the expensive part (O(n^2) with three noise
+  // lookups per texel) and it produces low-frequency mottling, which does not
+  // need resolution -- it is meant to be soft. It stays at CHUNK_BASE.
+  //
+  // The vector pass is roads, sidewalks, lane markings, crosswalks and tracks.
+  // That IS high frequency, and baking it at 200px for a 1200-unit chunk is
+  // what made it look either blocky (nearest) or smeared (bilinear). It gets
+  // drawn at CHUNK_TEX, over the upscaled base.
+  const base = createGraphics(CHUNK_BASE, CHUNK_BASE);
+  base.pixelDensity(1);
+  const wpp = CHUNK_W / CHUNK_BASE;         // world units per base texel
+  const g   = createGraphics(CHUNK_TEX, CHUNK_TEX);
+  g.pixelDensity(1);
+
+  // -- Coarse noise lattice -------------------------------------------------
+  const gn = Math.ceil(CHUNK_BASE / NOISE_GRID) + 2;
+  const latA = new Float32Array(gn * gn);   // large-scale material blend
+  const latB = new Float32Array(gn * gn);   // mid-scale variation
+  const latC = new Float32Array(gn * gn);   // fine grain / wear
+  for (let j = 0; j < gn; j++) {
+    for (let i = 0; i < gn; i++) {
+      const wx = ox + i * NOISE_GRID * wpp;
+      const wy = oy + j * NOISE_GRID * wpp;
+      const k  = j * gn + i;
+      latA[k] = bnoise(biome, wx, wy, 0.00085);
+      latB[k] = bnoise(biome, wx, wy, 0.0042);
+      latC[k] = bnoise(biome, wx, wy, 0.017);
+    }
+  }
+  const sample = (lat, fx, fy) => {
+    const gx = fx / NOISE_GRID, gy = fy / NOISE_GRID;
+    const i0 = gx | 0, j0 = gy | 0;
+    const tx = gx - i0, ty = gy - j0;
+    const i1 = i0 + 1, j1 = j0 + 1;
+    const a = lat[j0 * gn + i0], b = lat[j0 * gn + i1];
+    const c = lat[j1 * gn + i0], d = lat[j1 * gn + i1];
+    return (a + (b - a) * tx) * (1 - ty) + (c + (d - c) * tx) * ty;
+  };
+
+  // -- Bayer 4x4 ordered dither matrix --------------------------------------
+  // Ordered dithering breaks up flat colour bands into a stippled texture that
+  // reads as grain rather than as banding artefacts.
+  const bayer = [ 0, 8, 2,10, 12, 4,14, 6, 3,11, 1, 9, 15, 7,13, 5];
+
+  base.loadPixels();
+  const px = base.pixels;
+
+  // The three-way material blend is a pure function of the large-scale noise
+  // value, so resolve it once into a 256-step ramp and index that per pixel.
+  // The terrain bake is the only operation in the streamer that can stall a
+  // frame, and this branchy interpolation was most of its inner cost — which
+  // is exactly why the old code could only afford one bake per frame.
+  const RAMP = 256;
+  const rampR = new Float32Array(RAMP + 1);
+  const rampG = new Float32Array(RAMP + 1);
+  const rampB = new Float32Array(RAMP + 1);
+  for (let i = 0; i <= RAMP; i++) {
+    const t = i / RAMP;
+    if (t < 0.45) {
+      const k = t / 0.45;
+      rampR[i] = p.dark[0] + (p.alt[0] - p.dark[0]) * k;
+      rampG[i] = p.dark[1] + (p.alt[1] - p.dark[1]) * k;
+      rampB[i] = p.dark[2] + (p.alt[2] - p.dark[2]) * k;
+    } else if (t < 0.72) {
+      const k = (t - 0.45) / 0.27;
+      rampR[i] = p.alt[0] + (p.base[0] - p.alt[0]) * k;
+      rampG[i] = p.alt[1] + (p.base[1] - p.alt[1]) * k;
+      rampB[i] = p.alt[2] + (p.base[2] - p.alt[2]) * k;
+    } else {
+      const k = (t - 0.72) / 0.28;
+      rampR[i] = p.base[0] + (p.accent[0] - p.base[0]) * k;
+      rampG[i] = p.base[1] + (p.accent[1] - p.base[1]) * k;
+      rampB[i] = p.base[2] + (p.accent[2] - p.base[2]) * k;
+    }
+  }
+
+  for (let y = 0; y < CHUNK_BASE; y++) {
+    for (let x = 0; x < CHUNK_BASE; x++) {
+      const nA = sample(latA, x, y);
+      const nB = sample(latB, x, y);
+      const nC = sample(latC, x, y);
+
+      // Material ramp lookup. The blend depends on nothing but nA, so it does
+      // not belong inside a 40 000-iteration loop — see rampR/G/B above.
+      let ri = (nA * RAMP) | 0;
+      if (ri < 0) ri = 0; else if (ri > RAMP) ri = RAMP;
+      let r  = rampR[ri];
+      let gg = rampG[ri];
+      let b  = rampB[ri];
+
+      // Mid-frequency mottling — patches of wear, moisture, growth
+      const mid = (nB - 0.5) * 34;
+      r += mid; gg += mid; b += mid * 0.7;
+
+      // Fine grain
+      const fine = (nC - 0.5) * 22;
+      r += fine; gg += fine; b += fine;
+
+      // Ordered dither — ±3 levels, keyed to the pixel's lattice position
+      const d = (bayer[(y & 3) * 4 + (x & 3)] / 16 - 0.5) * 7;
+      r += d; gg += d; b += d;
+
+      const o = 4 * (y * CHUNK_BASE + x);
+      px[o]     = r  < 0 ? 0 : r  > 255 ? 255 : r;
+      px[o + 1] = gg < 0 ? 0 : gg > 255 ? 255 : gg;
+      px[o + 2] = b  < 0 ? 0 : b  > 255 ? 255 : b;
+      px[o + 3] = 255;
+    }
+  }
+  base.updatePixels();
+
+  // Upscale the mottling into the working buffer. Smoothed, because soft is
+  // exactly what a noise wash should be — it is the vector detail on top that
+  // has to stay sharp.
+  g.smooth();
+  g.image(base, 0, 0, CHUNK_TEX, CHUNK_TEX);
+  base.remove();
+  g.noSmooth();
+
+  // -- Vector detail pass ---------------------------------------------------
+  // Drawn on top of the pixel base, in texture space. All coordinates are
+  // derived from world position so details never repeat between chunks.
+  const S = CHUNK_TEX / CHUNK_W;   // world -> texture scale
+  g.push();
+  g.scale(S);
+  g.translate(-ox, -oy);
+  bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, p, lay);
+
+  // Static clutter is stamped into the buffer here, so pebbles, trash, vines,
+  // ferns, logs, bones and trees cost exactly zero draw calls at runtime.
+  if (staticDecor) {
+    for (let i = 0; i < staticDecor.length; i++) paintClutter(g, staticDecor[i], 0);
+  }
+  g.pop();
+
+  return g;
+}
+
+// ---------------------------------------------------------------------------
+// SOFT GROUND STAMP
+// Ground mottling -- the patchiness that stops a lawn or a dirt lot reading as
+// one flat colour -- used to be laid down as large flat-filled ellipses. That
+// is the whole problem: a flat fill has a hard edge, so at 90 to 310 world
+// units across you do not see mottling, you see the ellipses themselves, forty
+// or seventy of them per chunk overlapping into a mess of rings. It is the
+// "random overlapping oval shapes" visible in every biome, because every
+// biome's bake used the same technique.
+//
+// A stamp with no edge cannot do that. This fades to fully transparent at its
+// rim, so overlapping stamps sum into smooth variation and no individual one
+// can ever be picked out. Gradients are cached per target buffer and per
+// colour, so a chunk's worth of stamps builds a handful of objects, and it is
+// all bake-time work anyway -- zero cost per frame.
+// ---------------------------------------------------------------------------
+let _stampCache = null, _stampCtx = null;
+
+function softStamp(g, x, y, w, h, col, alpha) {
+  if (!(alpha > 0.4) || !(w > 0) || !(h > 0)) return;
+  const ctx = g.drawingContext;
+  if (ctx !== _stampCtx) { _stampCache = new Map(); _stampCtx = ctx; }
+  const r = col[0] | 0, gg = col[1] | 0, b = col[2] | 0;
+  const key = (r << 16) | (gg << 8) | b;
+  let grad = _stampCache.get(key);
+  if (!grad) {
+    grad = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+    const c = r + ',' + gg + ',' + b;
+    grad.addColorStop(0.00, 'rgba(' + c + ',1)');
+    grad.addColorStop(0.45, 'rgba(' + c + ',0.72)');
+    grad.addColorStop(0.75, 'rgba(' + c + ',0.30)');
+    grad.addColorStop(1.00, 'rgba(' + c + ',0)');
+    _stampCache.set(key, grad);
+  }
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(w * 0.5, h * 0.5);
+  ctx.globalAlpha = Math.min(1, alpha / 255);
+  ctx.fillStyle = grad;
+  ctx.beginPath();
+  ctx.arc(0, 0, 1, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+// ---------------------------------------------------------------------------
+// Per-biome baked detail: roads, cracks, blades, ripples, ice, veins.
+// ---------------------------------------------------------------------------
+// A road painted as three thick bands shows three contour lines where each
+// band ends. Painted as a dozen nested bands at low alpha, the coverage ramps
+// smoothly from verge to crown and the edge dissolves into the ground — which
+// is the whole difference between a road and a stripe laid over the terrain.
+//
+// The widths are spaced on a curve, not linearly: linear spacing puts only one
+// or two layers over everything outside the crown, so the road ends up a thin
+// dark line inside a wide pale halo. Clustering the layers toward the crown
+// gives a solid carriageway that then feathers out.
+// `widthAt(y)` scales the ribbon's half-width along its length: it is how the
+// trail widens into a town's high street and how it tapers to nothing before it
+// reaches authored ground that has roads of its own. Omitted, it is 1 and the
+// ribbon is a constant width.
+function bakeRibbon(g, centreAt, yAt, S0, S1, edgeHalf, coreHalf, edgeCol, coreCol, layers, alpha, widthAt) {
+  const wf = widthAt || (() => 1);
+  // Shoulder. Every layer inside the ribbon carried the same alpha, so the
+  // widest one -- the outermost -- landed on the sand at full strength and the
+  // road ended on a hard line down the desert. These are the same colour as the
+  // verge, laid outside edgeHalf at a fifth of the alpha and stepping down as
+  // they widen, which puts a scuffed 90-unit transition either side instead of
+  // an edge. Cheap: they are the same polygon at a different width.
+  const SH = 5;
+  for (let k = SH; k >= 1; k--) {
+    const grow = 1 + (k / SH) * 0.72;
+    g.fill(edgeCol[0], edgeCol[1], edgeCol[2], alpha * 0.34 * (1 - k / (SH + 1)));
+    g.beginShape();
+    for (let s = S0; s <= S1; s++) g.vertex(centreAt(yAt(s)) - edgeHalf * grow * wf(yAt(s)), yAt(s));
+    for (let s = S1; s >= S0; s--) g.vertex(centreAt(yAt(s)) + edgeHalf * grow * wf(yAt(s)), yAt(s));
+    g.endShape(CLOSE);
+  }
+  for (let k = 0; k < layers; k++) {
+    const t = layers > 1 ? k / (layers - 1) : 1;
+    const half = coreHalf + (edgeHalf - coreHalf) * Math.pow(1 - t, 0.6);
+    // Colour reaches the core value well before the widths do, so the crown
+    // ends up the colour of packed earth rather than a wash halfway to sand.
+    const ct = Math.pow(t, 0.45);
+    g.fill(edgeCol[0] + (coreCol[0] - edgeCol[0]) * ct,
+           edgeCol[1] + (coreCol[1] - edgeCol[1]) * ct,
+           edgeCol[2] + (coreCol[2] - edgeCol[2]) * ct, alpha);
+    g.beginShape();
+    for (let s = S0; s <= S1; s++) g.vertex(centreAt(yAt(s)) - half * wf(yAt(s)), yAt(s));
+    for (let s = S1; s >= S0; s--) g.vertex(centreAt(yAt(s)) + half * wf(yAt(s)), yAt(s));
+    g.endShape(CLOSE);
+  }
+}
+
+// The same ramp for a straight east-west street, with ends that taper to
+// nothing rather than stopping at a rounded cap in open ground. `openW` /
+// `openE` say which ends are the edge of the town.
+function bakeStreet(g, x0, x1, my, edgeHalf, coreHalf, edgeCol, coreCol, layers, alpha, openW, openE) {
+  const TAPER = 260, STEPS = 28;
+  const shoulder = (x) => {
+    let f = 1;
+    if (openW) f = Math.min(f, Math.max(0, (x - x0) / TAPER));
+    if (openE) f = Math.min(f, Math.max(0, (x1 - x) / TAPER));
+    return f * f * (3 - 2 * f);      // smoothstep, so the taper has no corner
+  };
+  // Same feathered shoulder as bakeRibbon, for the same reason.
+  const SH = 5;
+  for (let k = SH; k >= 1; k--) {
+    const grow = 1 + (k / SH) * 0.72;
+    g.fill(edgeCol[0], edgeCol[1], edgeCol[2], alpha * 0.34 * (1 - k / (SH + 1)));
+    g.beginShape();
+    for (let s = 0; s <= STEPS; s++) {
+      const xx = x0 + (s / STEPS) * (x1 - x0);
+      g.vertex(xx, my - edgeHalf * grow * shoulder(xx));
+    }
+    for (let s = STEPS; s >= 0; s--) {
+      const xx = x0 + (s / STEPS) * (x1 - x0);
+      g.vertex(xx, my + edgeHalf * grow * shoulder(xx));
+    }
+    g.endShape(CLOSE);
+  }
+  for (let k = 0; k < layers; k++) {
+    const t = layers > 1 ? k / (layers - 1) : 1;
+    const half = coreHalf + (edgeHalf - coreHalf) * Math.pow(1 - t, 0.6);
+    const ct = Math.pow(t, 0.45);
+    g.fill(edgeCol[0] + (coreCol[0] - edgeCol[0]) * ct,
+           edgeCol[1] + (coreCol[1] - edgeCol[1]) * ct,
+           edgeCol[2] + (coreCol[2] - edgeCol[2]) * ct, alpha);
+    g.beginShape();
+    for (let s = 0; s <= STEPS; s++) {
+      const xx = x0 + (s / STEPS) * (x1 - x0);
+      g.vertex(xx, my - half * shoulder(xx));
+    }
+    for (let s = STEPS; s >= 0; s--) {
+      const xx = x0 + (s / STEPS) * (x1 - x0);
+      g.vertex(xx, my + half * shoulder(xx));
+    }
+    g.endShape(CLOSE);
+  }
+}
+
+function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, layout) {
+  const p = pal || def.pal;
+  g.noStroke();
+
+  switch (layout || def.layout) {
+
+    case "CITY":
+    case "CITY_DENSE": {
+      // --- Asphalt arterials ---------------------------------------------
+      // A block occupies ox+120 .. ox+1080, so the carriageway between two
+      // blocks runs ox-120 .. ox+120: 240 wide and centred ON the chunk
+      // boundary, not starting at it. Each chunk paints its own half-street
+      // along all four edges, which tiles seamlessly with its neighbours and
+      // puts the centre line exactly on the boundary.
+      //
+      // This used to paint a 240-wide L from the chunk's top-left corner,
+      // which left the western and northern halves of every street unpaved and
+      // ran asphalt 120 units in under each block. That offset is what made
+      // the streets read as crooked and stopped them lining up with the
+      // hand-authored city grid, which uses this same 1200 pitch.
+      const ROAD_H = 120;
+      g.fill(p.road[0], p.road[1], p.road[2]);
+      g.rect(ox, oy, CHUNK_W, ROAD_H);                      // north half-street
+      g.rect(ox, oy + CHUNK_W - ROAD_H, CHUNK_W, ROAD_H);   // south half-street
+      g.rect(ox, oy, ROAD_H, CHUNK_W);                      // west half-street
+      g.rect(ox + CHUNK_W - ROAD_H, oy, ROAD_H, CHUNK_W);   // east half-street
+
+      // Asphalt aggregate speckle
+      for (let i = 0; i < 420; i++) {
+        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+        const lx = rx - ox, ly = ry - oy;
+        const onRoad = lx < ROAD_H || lx > CHUNK_W - ROAD_H ||
+                       ly < ROAD_H || ly > CHUNK_W - ROAD_H;
+        if (!onRoad) continue;
+        g.fill(255, 255, 255, rng() * 26 + 6);
+        g.ellipse(rx, ry, rng() * 9 + 2, rng() * 7 + 2);
+      }
+
+      // Cracks — branching polylines, the signature of worn asphalt
+      g.noFill();
+      for (let i = 0; i < 14; i++) {
+        let sx = ox + rng() * CHUNK_W, sy = oy + rng() * CHUNK_W;
+        let ang = rng() * TWO_PI;
+        g.stroke(0, 0, 0, 42 + rng() * 40);
+        g.strokeWeight(1.5 + rng() * 2.5);
+        g.beginShape();
+        for (let s = 0; s < 9; s++) {
+          g.vertex(sx, sy);
+          ang += (rng() - 0.5) * 1.3;
+          sx += Math.cos(ang) * (26 + rng() * 44);
+          sy += Math.sin(ang) * (26 + rng() * 44);
+        }
+        g.endShape();
+      }
+      g.noStroke();
+
+      // --- Block interior --------------------------------------------------
+      // The ground inside the sidewalk ring. Two failure modes to avoid: left
+      // bare it showed raw terrain noise as a dark hole under every building,
+      // and painted as one flat pale slab with expansion joints it read as a
+      // tiled concrete plaza laid over the entire city. What actually fills a
+      // block is irregular — a service alley cut through it, a couple of hard
+      // pads, and scrub everywhere else, none of it on a grid.
+      //
+      // The zone is recomputed from the same noise the generator used, so the
+      // ground under a park is grass and the ground behind shops is yard.
+      //
+      // Inside the authored core the block already has hand-placed buildings on
+      // it, so it is never a park however the noise falls — a lawn under nine
+      // tower blocks is worse than no surface at all. The authored map paints
+      // its own green where it wants green.
+      const zn = bnoise(biome, ox, oy, 0.00035);
+      let zone = zn < 0.34 ? "PARK" : (zn < 0.5 ? "INDUSTRIAL" : (zn > 0.72 ? "COMMERCIAL" : "RESIDENTIAL"));
+      if (chunkInAuthoredCore(cx, cy) && zone === "PARK") zone = "RESIDENTIAL";
+      const inX = ox + 165, inY = oy + 165, inW = 870;
+      const mixc = (a, c, t) => [a[0] + (c[0] - a[0]) * t,
+                                 a[1] + (c[1] - a[1]) * t,
+                                 a[2] + (c[2] - a[2]) * t];
+      if (zone === "PARK") {
+        // Lawn, mottled rather than a flat field of one green.
+        const lawn = mixc(p.grass, p.dark, 0.18);
+        g.fill(lawn[0], lawn[1], lawn[2], 232);
+        g.rect(inX, inY, inW, inW);
+        // Far fewer, far larger, far fainter.
+        //
+        // Softening the stamps stopped them showing their own edges, but 74 of
+        // them per chunk still piles up into visible clumping wherever several
+        // land together -- the "still way too many everywhere". Ground variation
+        // wants to be low frequency: a handful of broad, weak passes reads as
+        // sun and wear across a lawn, where dozens of small ones read as
+        // blotches however soft each one is.
+        const lit = mixc(p.grass, [255, 255, 255], 0.12);
+        for (let i = 0; i < 7; i++) {
+          const rx = inX + rng() * inW, ry = inY + rng() * inW;
+          softStamp(g, rx, ry, 420 + rng() * 460, 340 + rng() * 380,
+                    lit, 16 + rng() * 18);
+        }
+        for (let i = 0; i < 6; i++) {
+          const rx = inX + rng() * inW, ry = inY + rng() * inW;
+          softStamp(g, rx, ry, 260 + rng() * 380, 210 + rng() * 300,
+                    p.dark, 13 + rng() * 15);
+        }
+        // Desire path: several overlapping passes rather than one thick
+        // stroke, so it reads as ground worn bare by feet instead of a line
+        // someone drew across the lawn.
+        g.noFill();
+        for (const [wgt, alp] of [[24, 11], [15, 13], [8, 15], [4, 14]]) {
+          g.stroke(p.dark[0], p.dark[1], p.dark[2], alp);
+          g.strokeWeight(wgt);
+          g.beginShape();
+          for (let s = 0; s <= 16; s++) {
+            const t = s / 16;
+            const fade = Math.min(1, Math.min(t, 1 - t) * 5);   // thin out at both ends
+            const wob = (bnoise(biome, ox + t * 900, oy + 404, 0.0021) - 0.5) * 190;
+            g.vertex(inX + 40 + t * (inW - 80) + wob * fade,
+                     inY + 40 + t * (inW - 80) + Math.sin(t * PI) * 120 * fade);
+          }
+          g.endShape();
+        }
+        g.noStroke();
+      } else {
+        // Scrub and hardstanding, kept within a few shades of the surrounding
+        // terrain so the block never reads as a slab dropped on top of it.
+        const yard = mixc(p.base, p.dark, 0.34);
+        g.fill(yard[0], yard[1], yard[2], 190);
+        g.rect(inX, inY, inW, inW);
+        const patch = mixc(p.base, p.alt, 0.7);
+        for (let i = 0; i < 7; i++) {
+          const rx = inX + rng() * inW, ry = inY + rng() * inW;
+          softStamp(g, rx, ry, 300 + rng() * 420, 240 + rng() * 330,
+                    [patch[0], patch[1], patch[2]], 22 + rng() * 26);
+        }
+
+        // Service alley: one asphalt run through the block, joining the street
+        // at both ends, with a kink in it so it is not a ruler line.
+        const vert  = bnoise(biome, ox + 512, oy + 512, 0.0009) > 0.5;
+        const along = inX + 150 + bnoise(biome, ox + 91, oy + 37, 0.0013) * (inW - 300);
+        const kink  = (bnoise(biome, ox + 733, oy + 211, 0.0017) - 0.5) * 130;
+        g.fill(p.road[0], p.road[1], p.road[2], 225);
+        g.beginShape();
+        const lane = 54;
+        for (const sgn of [-1, 1]) {
+          const pts = [];
+          for (let s = 0; s <= 8; s++) {
+            const t = s / 8;
+            const off = along + Math.sin(t * PI) * kink + sgn * lane;
+            const run = inY - 46 + t * (inW + 92);
+            pts.push(vert ? [off, run] : [run, off]);
+          }
+          if (sgn > 0) pts.reverse();
+          for (const [vx, vy] of pts) g.vertex(vx, vy);
+        }
+        g.endShape(CLOSE);
+        // Wheel ruts down the alley.
+        //
+        // This was nine flat black 62x130 ellipses stamped along the spine at
+        // even intervals -- the "ugly oval bunch in a line" that showed up on
+        // every block with a service alley, which is most of them. Nine hard
+        // ellipses in a row is the one thing tyres cannot leave behind.
+        //
+        // Vehicles wear two continuous tracks, one under each wheel, darkest in
+        // the middle of the run and fading out where traffic joins the street.
+        // Drawn as continuous strokes along the same spine, so the alley now
+        // reads as used rather than dotted.
+        g.noFill();
+        for (const [wgt, alp] of [[26, 9], [16, 11], [9, 13]]) {
+          for (const wheel of [-19, 19]) {
+            g.stroke(0, 0, 0, alp); g.strokeWeight(wgt);
+            g.beginShape();
+            for (let q = 0; q <= 14; q++) {
+              const t = q / 14;
+              const fade = Math.min(1, Math.min(t, 1 - t) * 4.5);
+              const off = along + Math.sin(t * PI) * kink + wheel * fade;
+              const run = inY - 40 + t * (inW + 80);
+              if (vert) g.vertex(off, run); else g.vertex(run, off);
+            }
+            g.endShape();
+          }
+        }
+        g.noStroke();
+
+        // Two or three hard pads, irregular, with joints only on the pads.
+        const pads = 2 + (rng() > 0.5 ? 1 : 0);
+        const conc = mixc(p.walk, p.base, 0.62);
+        for (let i = 0; i < pads; i++) {
+          const pw = 120 + rng() * 190, ph = 110 + rng() * 175;
+          const px2 = inX + 30 + rng() * (inW - pw - 60);
+          const py2 = inY + 30 + rng() * (inW - ph - 60);
+          if (Math.abs((vert ? px2 + pw / 2 : py2 + ph / 2) - along) < 130) continue;
+          g.fill(conc[0], conc[1], conc[2], 95 + rng() * 45);
+          g.rect(px2, py2, pw, ph, 3);
+          g.stroke(0, 0, 0, 34); g.strokeWeight(1.3);
+          for (let l = px2 + 60 + rng() * 40; l < px2 + pw - 20; l += 70 + rng() * 50) g.line(l, py2, l, py2 + ph);
+          for (let l = py2 + 60 + rng() * 40; l < py2 + ph - 20; l += 70 + rng() * 50) g.line(px2, l, px2 + pw, l);
+          g.noStroke();
+          softStamp(g, px2 + pw * rng(), py2 + ph * rng(), (30 + rng() * 70) * 2.1, (24 + rng() * 50) * 2.1, [0, 0, 0], (20 + rng() * 26) * 0.62);
+        }
+
+        // Weeds along the sidewalk edge, where nothing gets driven over
+        g.stroke(p.grass[0], p.grass[1], p.grass[2], 130); g.strokeWeight(2);
+        for (let i = 0; i < 60; i++) {
+          const edge = Math.floor(rng() * 4);
+          const t = rng() * inW;
+          const d = rng() * 22;
+          const wx = edge === 0 ? inX + t : edge === 1 ? inX + t : inX + d;
+          const wy = edge === 0 ? inY + d : edge === 1 ? inY + inW - d : inY + t;
+          const sx = edge === 2 ? inX + inW - d : wx;
+          const a = -HALF_PI + (rng() - 0.5) * 1.2, ln = 5 + rng() * 9;
+          g.line(sx, wy, sx + Math.cos(a) * ln, wy + Math.sin(a) * ln);
+        }
+        g.noStroke();
+      }
+
+      // --- Sidewalks ---
+      const walkW = 45, bs = 960;
+      const wsx = ox + 120, wsy = oy + 120;
+      g.fill(p.walk[0], p.walk[1], p.walk[2]);
+      g.rect(wsx, wsy, bs, walkW);
+      g.rect(wsx, wsy + bs - walkW, bs, walkW);
+      g.rect(wsx, wsy + walkW, walkW, bs - walkW * 2);
+      g.rect(wsx + bs - walkW, wsy + walkW, walkW, bs - walkW * 2);
+      // Paving joints
+      g.stroke(0, 0, 0, 46); g.strokeWeight(1.4);
+      for (let l = wsx; l < wsx + bs; l += 40) {
+        g.line(l, wsy, l, wsy + walkW);
+        g.line(l, wsy + bs - walkW, l, wsy + bs);
+      }
+      for (let l = wsy + walkW; l < wsy + bs - walkW; l += 40) {
+        g.line(wsx, l, wsx + walkW, l);
+        g.line(wsx + bs - walkW, l, wsx + bs, l);
+      }
+      g.noStroke();
+
+      // --- Lane markings ---
+      // Centre lines sit ON the street centre, which is the chunk boundary, so
+      // each dash is drawn half here and half by the neighbour. The run stops
+      // short of both intersections the way the hand-authored grid does.
+      g.fill(p.mark[0], p.mark[1], p.mark[2], 165);
+      for (let j = oy + 160; j < oy + CHUNK_W - 200; j += 80) {
+        g.rect(ox - 4, j, 8, 40);
+        g.rect(ox + CHUNK_W - 4, j, 8, 40);
+      }
+      for (let i = ox + 160; i < ox + CHUNK_W - 200; i += 80) {
+        g.rect(i, oy - 4, 40, 8);
+        g.rect(i, oy + CHUNK_W - 4, 40, 8);
+      }
+
+      // Crosswalk ladders. The intersections are the chunk's four corners, so
+      // all four are painted and the buffer clips each to its own quadrant —
+      // the neighbouring chunks paint the rest.
+      g.fill(228, 228, 224, 190);
+      const xings = [[ox, oy], [ox + CHUNK_W, oy], [ox, oy + CHUNK_W], [ox + CHUNK_W, oy + CHUNK_W]];
+      for (const [ix, iy] of xings) {
+        for (let w = -75; w <= 75; w += 25) {
+          g.rect(ix + w - 6, iy - 110, 12, 30);
+          g.rect(ix + w - 6, iy + 80,  12, 30);
+          g.rect(ix - 110, iy + w - 6, 30, 12);
+          g.rect(ix + 80,  iy + w - 6, 30, 12);
+        }
+      }
+
+      // Oil stains and tyre scuff — the lived-in layer, on the carriageway
+      // only. Spread over the whole chunk it also greased the parks.
+      for (let i = 0; i < 16; i++) {
+        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+        const lx = rx - ox, ly = ry - oy;
+        if (!(lx < ROAD_H || lx > CHUNK_W - ROAD_H || ly < ROAD_H || ly > CHUNK_W - ROAD_H)) continue;
+        softStamp(g, rx, ry, (30 + rng() * 90) * 2.1, (22 + rng() * 60) * 2.1, [0, 0, 0], (18 + rng() * 30) * 0.62);
+      }
+      break;
+    }
+
+    case "FRONTIER": {
+      // --- Dirt track ------------------------------------------------------
+      // The centreline is a pure function of the chunk COLUMN and world y, so
+      // every chunk in a column computes the identical curve and the segments
+      // meet exactly at the horizontal seams.
+      //
+      // It used to be seeded from the chunk's own (ox, oy) and then meander on
+      // noise sampled at that per-chunk x. Vertically adjacent chunks therefore
+      // picked different centres AND sampled the meander from different places,
+      // which is what broke the trail into an unaligned staircase.
+      const trackAt = (wy) => frontierTrailX(biome, cx, wy);
+
+      // Sample past both ends so the polygon's end caps fall outside the
+      // buffer and no flat edge shows at the seam. 24 steps rather than 12:
+      // the road is only ~140 wide, so a coarse polyline reads as a chain of
+      // straight facets rather than a curve.
+      const S0 = -2, S1 = 26, SN = 24;
+      const yAt = (s) => oy + (s / SN) * CHUNK_W;
+
+      // Verges first: a wider, softer band of scuffed ground either side, so
+      // the road meets the desert through a transition instead of a hard cut.
+      //
+      // The palette's road colour is *lighter* than the sand it sits on, which
+      // is why the trail used to vanish into the ground. Packed earth under
+      // wheels is darker and greyer than loose sand, so the bands work down
+      // from a pale scuffed verge to a dark compacted core.
+      // Width along the run. Two effects multiply into one function: the trail
+      // broadens into the authored high street where it doubles as Main Street,
+      // and it tapers to nothing in the columns that only clip authored ground.
+      const plan = authoredRoadPlan();
+      const spineGain = plan ? plan.spine.edgeHalf / 124 - 1 : 0;
+      const widthAt = (wy) => {
+        let f = frontierTrailFade(biome, cx, wy);
+        if (plan && Math.floor(plan.spine.x / CHUNK_W) === cx) {
+          f *= 1 + spineGain * dgSpineWeight(plan.spine, wy);
+        }
+        return f;
+      };
+
+      bakeRibbon(g, trackAt, yAt, S0, S1, 124, 62,
+                 [200, 174, 134], [124,  99,  68], 12, 44, widthAt);
+
+      // Wagon ruts. Fixed spacing: a rut is an axle width apart and stays that
+      // way whether the road is a track or a high street. Scaling the offsets
+      // with the carriageway made the pair visibly splay apart and close up
+      // again wherever the width changed, which read as the road wobbling.
+      const onTrack = (yy) => widthAt(yy) >= 0.35;
+      g.stroke(p.mark[0], p.mark[1], p.mark[2], 150); g.strokeWeight(7); g.noFill();
+      for (const side of [-34, 34]) {
+        g.beginShape();
+        for (let s = S0; s <= S1; s++) {
+          const yy = yAt(s);
+          if (!onTrack(yy)) continue;
+          g.vertex(trackAt(yy) + side, yy);
+        }
+        g.endShape();
+      }
+      g.stroke(0, 0, 0, 46); g.strokeWeight(2.5);
+      for (const side of [-40, -28, 28, 40]) {
+        g.beginShape();
+        for (let s = S0; s <= S1; s++) {
+          const yy = yAt(s);
+          if (!onTrack(yy)) continue;
+          g.vertex(trackAt(yy) + side, yy);
+        }
+        g.endShape();
+      }
+      g.noStroke();
+
+      // Loose gravel kicked to the shoulders
+      for (let i = 0; i < 90; i++) {
+        const yy = oy + rng() * CHUNK_W;
+        const wf = widthAt(yy);
+        if (wf < 0.35) continue;
+        const sx = trackAt(yy) + (rng() > 0.5 ? 1 : -1) * (52 + rng() * 52) * wf;
+        g.fill(p.dark[0], p.dark[1], p.dark[2], 40 + rng() * 55);
+        g.ellipse(sx, yy, 3 + rng() * 7, 3 + rng() * 5);
+      }
+
+      // --- Authored cross streets ------------------------------------------
+      // Front Street and the farm track, painted into the chunk texture from
+      // the same numbers the town is laid out against. Clamped to the chunk and
+      // only tapered at the street's real ends, so a row of chunks reads as one
+      // continuous road with no seam.
+      if (plan) {
+        for (const c of plan.cross) {
+          if (c.y < oy - 300 || c.y > oy + CHUNK_W + 300) continue;
+          const sx0 = Math.max(c.x0, ox), sx1 = Math.min(c.x1, ox + CHUNK_W);
+          if (sx1 <= sx0) continue;
+          bakeStreet(g, sx0, sx1, c.y, c.edgeHalf, c.coreHalf,
+                     [202, 176, 136], [130, 104, 72], 12, 44,
+                     sx0 === c.x0, sx1 === c.x1);
+          g.stroke(p.mark[0], p.mark[1], p.mark[2], 140); g.strokeWeight(6); g.noFill();
+          for (const side of [-c.coreHalf * 0.5, c.coreHalf * 0.5]) {
+            g.line(sx0 + 6, c.y + side, sx1 - 6, c.y + side);
+          }
+          g.noStroke();
+        }
+      }
+
+      // --- Relief -----------------------------------------------------------
+      // Benches, knolls and stair flights, over the roads so a haul road that
+      // climbs onto a bench reads as climbing rather than as ending.
+      bakeElevation(g, ox, oy);
+
+      // --- Town main street -------------------------------------------------
+      // Painted from the same numbers the generator lines with storefronts, so
+      // the buildings sit on a kerb rather than beside an imaginary one.
+      // Skipped over authored ground: the procedural street knows nothing about
+      // the hand-placed town and would lay a second one across it.
+      if (frontierIsTown(biome, ox, oy) && !chunkInAuthoredCore(cx, cy)) {
+        const my = frontierMainStreetY(biome, cy);
+        // Painted exactly edge to edge, and into a neighbouring town chunk so a
+        // row of them reads as one street. Any overlap here would be
+        // double-painted alpha, showing as a bright seam the height of the
+        // chunk; the ends taper off where the town actually stops.
+        const townW = frontierIsTown(biome, ox - CHUNK_W, oy);
+        const townE = frontierIsTown(biome, ox + CHUNK_W, oy);
+        bakeStreet(g, ox, ox + CHUNK_W, my, 156, 96,
+                   [202, 176, 136], [130, 104, 72], 12, 44, !townW, !townE);
+        // Hoof and wheel scuff across the junction
+        g.stroke(0, 0, 0, 40); g.strokeWeight(2);
+        for (let i = 0; i < 34; i++) {
+          const sx = ox + rng() * CHUNK_W, sy = my + (rng() - 0.5) * 190;
+          const a = (rng() - 0.5) * 0.6;
+          g.line(sx, sy, sx + Math.cos(a) * (18 + rng() * 40), sy + Math.sin(a) * (18 + rng() * 40));
+        }
+        g.noStroke();
+      }
+
+      // Off-road texture only. Undisturbed ground detail painted over the
+      // carriageway is what made the trail read as a stain rather than a road.
+      // The authored streets count as road too, and the trail's keep-clear
+      // tracks its width so the high street stays swept.
+      const offRoad = (x, y) => {
+        if (Math.abs(x - trackAt(y)) < 96 * Math.max(0.35, widthAt(y))) return false;
+        if (plan) {
+          for (const c of plan.cross) {
+            if (x > c.x0 - 40 && x < c.x1 + 40 && Math.abs(y - c.y) < c.edgeHalf * 0.8) return false;
+          }
+        }
+        return true;
+      };
+
+      // Sand ripples — long, low-contrast arcs
+      g.stroke(p.dark[0], p.dark[1], p.dark[2], 30); g.strokeWeight(2.4); g.noFill();
+      for (let i = 0; i < 44; i++) {
+        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+        const w = 70 + rng() * 150;
+        if (!offRoad(rx, ry)) continue;
+        g.arc(rx, ry, w, w * 0.32, PI * 0.15, PI * 0.85);
+      }
+      g.noStroke();
+
+      // Dry cracked hardpan patches
+      for (let i = 0; i < 5; i++) {
+        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+        if (!offRoad(rx, ry)) continue;
+        g.stroke(p.dark[0], p.dark[1], p.dark[2], 58); g.strokeWeight(1.3); g.noFill();
+        for (let k = 0; k < 7; k++) {
+          let a = rng() * TWO_PI, px2 = rx, py2 = ry;
+          g.beginShape();
+          for (let s = 0; s < 4; s++) {
+            g.vertex(px2, py2);
+            a += (rng() - 0.5) * 1.7;
+            px2 += Math.cos(a) * (14 + rng() * 22);
+            py2 += Math.sin(a) * (14 + rng() * 22);
+          }
+          g.endShape();
+        }
+      }
+      g.noStroke();
+      break;
+    }
+
+    case "WOODLAND": {
+      // Meadow and shade. The base pass has already laid the grass; this is the
+      // structure on top of it -- where the canopy darkens the floor, where the
+      // ground opens out, and the track running through.
+      const canopy = bnoise(biome, ox, oy, 0.00055);
+
+      // Pools of shade under the standing timber, and lighter meadow where it
+      // thins. Radial and edge-free so neither reads as a painted patch.
+      const nShade = 6 + Math.round(canopy * 12);
+      for (let i = 0; i < nShade; i++) {
+        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+        if (bnoise(biome, rx, ry, 0.0026) < 0.42) continue;
+        softStamp(g, rx, ry, 180 + rng() * 260, 150 + rng() * 220, [16, 30, 14], 16 + rng() * 20);
+      }
+      for (let i = 0; i < 7; i++) {
+        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+        softStamp(g, rx, ry, 220 + rng() * 300, 180 + rng() * 260,
+                  [p.accent[0], p.accent[1], p.accent[2]], 14 + rng() * 16);
+      }
+
+      // The track. Narrower than a wagon road and greener at the edges: two
+      // ruts worn through turf rather than a graded carriageway.
+      const trackAtW = (wy) => woodTrailX(biome, cx, wy);
+      const S0w = -2, S1w = 26, SNw = 24;
+      const yAtW = (sIdx) => oy + (sIdx / SNw) * CHUNK_W;
+      bakeRibbon(g, trackAtW, yAtW, S0w, S1w, 96, 46,
+                 [110, 128, 78], [118, 100, 72], 12, 42);
+      g.stroke(p.mark[0], p.mark[1], p.mark[2], 120); g.strokeWeight(5); g.noFill();
+      for (const side of [-24, 24]) {
+        g.beginShape();
+        for (let sIdx = S0w; sIdx <= S1w; sIdx++) g.vertex(trackAtW(yAtW(sIdx)) + side, yAtW(sIdx));
+        g.endShape();
+      }
+      g.noStroke();
+
+      // Fallen leaf litter off the track, and the odd bare patch of earth.
+      const offTrack = (x, y) => Math.abs(x - trackAtW(y)) > 80;
+      for (let i = 0; i < 26; i++) {
+        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+        if (!offTrack(rx, ry)) continue;
+        g.fill(126, 108, 62, 26 + rng() * 34);
+        g.ellipse(rx, ry, 16 + rng() * 42, 12 + rng() * 30);
+      }
+      for (let i = 0; i < 4; i++) {
+        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+        if (!offTrack(rx, ry)) continue;
+        softStamp(g, rx, ry, 90 + rng() * 130, 70 + rng() * 100, [104, 86, 58], 26 + rng() * 22);
+      }
+
+      // A cleared apron under a Directive post, so the compound is not sitting
+      // in long grass.
+      if (cityIsCheckpoint(biome, cx, cy)) {
+        softStamp(g, ox, oy, 900, 900, [116, 104, 78], 58);
+        g.stroke(0, 0, 0, 30); g.strokeWeight(2);
+        for (let i = 0; i < 26; i++) {
+          const sx = ox + (rng() - 0.5) * 780, sy = oy + (rng() - 0.5) * 780;
+          const a = (rng() - 0.5) * 0.7;
+          g.line(sx, sy, sx + Math.cos(a) * (14 + rng() * 34), sy + Math.sin(a) * (14 + rng() * 34));
+        }
+        g.noStroke();
+      }
+      break;
+    }
+
+    case "JUNGLE": {
+      // --- Mud track --------------------------------------------------------
+      // Same rule as the frontier trail: the centreline depends only on the
+      // chunk COLUMN and world y. It used to be seeded from the chunk's own
+      // (ox, oy) and then meander on noise sampled at that per-chunk constant
+      // x, so vertically adjacent chunks picked different centres and offset
+      // the band by up to 300 units at every horizontal seam — the skew.
+      const trackAt = (wy) => jungleTrailX(biome, cx, wy);
+      const S0 = -2, S1 = 26, SN = 24;
+      const yAt = (s) => oy + (s / SN) * CHUNK_W;
+      // Trodden verge, then bare mud, then the wet churned centre. Wide enough
+      // that a vehicle could plausibly use it — at 110 total it read as a
+      // pencil line drawn over the jungle rather than a road cut through it.
+      bakeRibbon(g, trackAt, yAt, S0, S1, 142, 72,
+                 [84, 100, 50], [78,  58,  34], 12, 46);
+
+      // Tyre ruts holding water
+      g.stroke(52, 44, 30, 150); g.strokeWeight(13); g.noFill();
+      for (const side of [-44, 44]) {
+        g.beginShape();
+        for (let s = S0; s <= S1; s++) g.vertex(trackAt(yAt(s)) + side, yAt(s));
+        g.endShape();
+      }
+      g.stroke(150, 168, 148, 60); g.strokeWeight(3);
+      for (const side of [-50, 50]) {
+        g.beginShape();
+        for (let s = S0; s <= S1; s++) g.vertex(trackAt(yAt(s)) + side, yAt(s));
+        g.endShape();
+      }
+      g.noStroke();
+      // Grass tufts pushing through the crown between the ruts
+      for (let i = 0; i < 30; i++) {
+        const yy = oy + rng() * CHUNK_W;
+        const sx = trackAt(yy) + (rng() - 0.5) * 34;
+        g.stroke(74, 106, 48, 120 + rng() * 70); g.strokeWeight(1.7);
+        const a = -HALF_PI + (rng() - 0.5) * 1.0, len = 6 + rng() * 11;
+        g.line(sx, yy, sx + Math.cos(a) * len, yy + Math.sin(a) * len);
+      }
+      g.noStroke();
+
+      // Grass blades — thousands of tiny strokes, baked once. They stop at the
+      // verge; grass growing straight through the middle of a used track is
+      // what made the road look like a smear laid over the ground.
+      g.strokeWeight(1.9);
+      for (let i = 0; i < 900; i++) {
+        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+        const off = Math.abs(rx - trackAt(ry));
+        if (off < 96 + rng() * 40) continue;
+        const lush = sample(latA, (rx - ox) * (CHUNK_BASE / CHUNK_W), (ry - oy) * (CHUNK_BASE / CHUNK_W));
+        if (lush < 0.4) continue;
+        const shade = 40 + rng() * 70;
+        g.stroke(shade * 0.5, shade + 40, shade * 0.4, 120 + rng() * 90);
+        const a = -HALF_PI + (rng() - 0.5) * 1.1;
+        const len = 8 + rng() * 16;
+        g.line(rx, ry, rx + Math.cos(a) * len, ry + Math.sin(a) * len);
+      }
+      g.noStroke();
+
+      // Standing water / rot patches — deepest in the ruts, where it collects.
+      for (let i = 0; i < 4; i++) {
+        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+        if (Math.abs(rx - trackAt(ry)) < 100) continue;
+        softStamp(g, rx, ry, 240 + rng() * 320, 190 + rng() * 240, [30, 50, 40], 22 + rng() * 22);
+      }
+      for (let i = 0; i < 7; i++) {
+        const yy = oy + rng() * CHUNK_W;
+        const px2 = trackAt(yy) + (rng() > 0.5 ? 44 : -44) + (rng() - 0.5) * 18;
+        g.fill(58, 74, 62, 90 + rng() * 60);
+        g.ellipse(px2, yy, 16 + rng() * 26, 10 + rng() * 30);
+        g.fill(150, 175, 160, 30);
+        g.ellipse(px2 - 2, yy - 3, 8 + rng() * 12, 5 + rng() * 12);
+      }
+      break;
+    }
+
+    case "TUNDRA": {
+      // Wind-packed snow drifts — long soft arcs
+      for (let i = 0; i < 10; i++) {
+        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+        softStamp(g, rx, ry, 420 + rng() * 520, 90 + rng() * 130, [255, 255, 255], 16 + rng() * 20);
+      }
+      // Exposed blue ice
+      for (let i = 0; i < 3; i++) {
+        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+        softStamp(g, rx, ry, 250 + rng() * 340, 190 + rng() * 250, [150, 190, 215], 34 + rng() * 30);
+      }
+      // Crevasse hairlines
+      g.stroke(120, 155, 185, 90); g.strokeWeight(1.6); g.noFill();
+      for (let i = 0; i < 9; i++) {
+        let sx = ox + rng() * CHUNK_W, sy = oy + rng() * CHUNK_W, a = rng() * TWO_PI;
+        g.beginShape();
+        for (let s = 0; s < 6; s++) {
+          g.vertex(sx, sy);
+          a += (rng() - 0.5) * 1.1;
+          sx += Math.cos(a) * (30 + rng() * 50);
+          sy += Math.sin(a) * (30 + rng() * 50);
+        }
+        g.endShape();
+      }
+      g.noStroke();
+      break;
+    }
+
+    case "ALIEN": {
+      // Bioluminescent veins threading the ground
+      g.noFill();
+      for (let i = 0; i < 16; i++) {
+        let sx = ox + rng() * CHUNK_W, sy = oy + rng() * CHUNK_W, a = rng() * TWO_PI;
+        g.stroke(p.mark[0], p.mark[1], p.mark[2], 30 + rng() * 55);
+        g.strokeWeight(1.6 + rng() * 3.4);
+        g.beginShape();
+        for (let s = 0; s < 10; s++) {
+          g.vertex(sx, sy);
+          a += (rng() - 0.5) * 1.5;
+          sx += Math.cos(a) * (26 + rng() * 44);
+          sy += Math.sin(a) * (26 + rng() * 44);
+        }
+        g.endShape();
+      }
+      g.noStroke();
+      // Spore bloom rings
+      for (let i = 0; i < 5; i++) {
+        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+        softStamp(g, rx, ry, 260 + rng() * 380, 230 + rng() * 330, [120, 60, 180], 15 + rng() * 20);
+        softStamp(g, rx, ry, 90 + rng() * 150, 80 + rng() * 130, [p.mark[0], p.mark[1], p.mark[2]], 11);
+      }
+      break;
+    }
+
+    case "CRYSTAL": {
+      // Hex-fracture plates
+      g.stroke(p.dark[0], p.dark[1], p.dark[2], 46); g.strokeWeight(1.7); g.noFill();
+      for (let i = 0; i < 26; i++) {
+        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+        const rad = 26 + rng() * 70;
+        g.beginShape();
+        for (let a = 0; a < TWO_PI; a += TWO_PI / 6) {
+          g.vertex(rx + Math.cos(a) * rad, ry + Math.sin(a) * rad);
+        }
+        g.endShape(CLOSE);
+      }
+      g.noStroke();
+      // Refractive glints
+      for (let i = 0; i < 60; i++) {
+        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+        g.fill(p.mark[0], p.mark[1], p.mark[2], 20 + rng() * 55);
+        g.ellipse(rx, ry, 4 + rng() * 12, 4 + rng() * 12);
+      }
+      // Metallic circuit road
+      g.fill(p.road[0], p.road[1], p.road[2], 200);
+      g.rect(ox, oy, CHUNK_W, 200);
+      g.rect(ox, oy, 200, CHUNK_W);
+      g.fill(p.mark[0], p.mark[1], p.mark[2], 110);
+      for (let j = oy + 260; j < oy + CHUNK_W; j += 80) g.rect(ox + 96, j, 8, 40);
+      for (let i = ox + 260; i < ox + CHUNK_W; i += 80) g.rect(i, oy + 96, 40, 8);
+      break;
+    }
+  }
+}
+
+// ###########################################################################
+//  SETTLEMENT POPULATION
+//  The streamer has always built towns and left them empty. Walk out of Dry
+//  Gulch and every settlement past it is a film set: storefronts, boardwalks,
+//  corrals, nobody. This puts residents in them, on the same terms as the
+//  terrain -- streamed in around the player, budgeted, and let go behind him.
+//
+//  Three rules make it behave:
+//
+//  DETERMINISTIC. A settlement's roster comes from the chunk hash, so the same
+//  town has the same people in the same trades every time you walk back into
+//  it. Nothing is stored to get that.
+//
+//  BUDGETED. One global cap on live streamed residents, spawned a few per
+//  frame and nearest settlement first, so arriving at a town never spikes the
+//  frame. Residents are neutral and neutrals are `isFriendly`, which the
+//  hostile respawner already skips when it counts the map, so the wilderness
+//  threat level is unaffected by how many townsfolk are standing around.
+//
+//  CONSEQUENTIAL. When a settlement is released, how many of its people died
+//  there is added to a running tally against its chunk, and a return visit
+//  spawns the roster minus that tally. Shoot up a town and it stays shot up.
+//  Losses rather than survivors on purpose: a settlement that came up short
+//  because the budget was tight has not lost anybody, and must not be recorded
+//  as though it had.
+// ###########################################################################
+const POP_LOAD_R  = 2;     // chunks: populate a settlement once the player is this close
+const POP_KEEP_R  = 4;     // chunks: hold it until he is past here
+const POP_BUDGET  = 84;    // live streamed residents, whole world
+const POP_PER_TICK = 5;    // spawns per frame
+const POP_HOLD_R  = 1600;  // never release anyone still this close to the player
+const POP_HISTORY_MAX = 400;
+
+let chunkPop   = new Map();   // "cx,cy" -> [Character]
+let popLosses  = new Map();   // "cx,cy" -> how many of its people have died there
+
+function resetPopulation() {
+  chunkPop.clear();
+  popLosses.clear();
+}
+
+// Hand a settlement back: pull its people out of the world and bank whatever it
+// lost while the player was there.
+function popRelease(k, list) {
+  let alive = 0;
+  for (const e of list) {
+    const idx = enemiesList.indexOf(e);
+    if (e.hp > 0 && !e.dead) alive++;
+    if (idx > -1) enemiesList.splice(idx, 1);
+  }
+  const lost = list.length - alive;
+  if (lost > 0) popLosses.set(k, (popLosses.get(k) || 0) + lost);
+  chunkPop.delete(k);
+  return list.length;
+}
+
+// Nobody in this settlement is close enough to the player to be mid-fight.
+function popReleasable(list) {
+  for (const e of list) {
+    if (e.hp <= 0 || e.dead) continue;
+    const dx = e.x - player.x, dy = e.y - player.y;
+    if (dx * dx + dy * dy < POP_HOLD_R * POP_HOLD_R) return false;
+  }
+  return true;
+}
+
+// Rejection sampler against the chunk's own solids. A resident standing inside
+// a wall is worse than one missing, so a failed placement is simply dropped.
+function popPlace(rng, solids, x0, x1, y0, y1) {
+  for (let a = 0; a < 20; a++) {
+    const x = x0 + rng() * (x1 - x0), y = y0 + rng() * (y1 - y0);
+    let hit = false;
+    for (let i = 0; i < solids.length; i++) {
+      const s = solids[i];
+      if (s.isCropField || s.isPond || s.isGrassLot) continue;   // walkable surfaces
+      if (Math.abs(x - s.x) < (s.w || 0) / 2 + 28 &&
+          Math.abs(y - s.y) < (s.h || 0) / 2 + 28) { hit = true; break; }
+    }
+    if (!hit) return { x, y };
+  }
+  return null;
+}
+
+// What lives here, if anything. Keyed off the same fields the generator used to
+// decide there was a settlement at all, so the roster and the buildings always
+// agree about whether this chunk is a town.
+function settlementRoster(biome, cx, cy, solids) {
+  const def = BIOMES[biome];
+  if (!def) return null;
+  const ox = cx * CHUNK_W, oy = cy * CHUNK_W;
+  const rng = makeRng(chunkHash(biome, cx, cy, 4177));
+  const out = [];
+  const add = (types, n, x0, x1, y0, y1) => {
+    for (let i = 0; i < n; i++) {
+      const p = popPlace(rng, solids, x0, x1, y0, y1);
+      if (p) out.push({ type: types[(rng() * types.length) | 0], x: p.x, y: p.y });
+    }
+  };
+
+  switch (layoutFor(biome, cx, cy)) {
+    case "FRONTIER": {
+      if (frontierIsTown(biome, ox, oy)) {
+        // A high street works the way Dry Gulch does: townsfolk on the street
+        // where the shops are, drovers at the ends near the stock, the law on
+        // its own beat.
+        const my = frontierMainStreetY(biome, cy);
+        add(["VILLAGER_MALE", "VILLAGER_FEMALE"], rngInt(rng, 4, 8),
+            ox + 120, ox + CHUNK_W - 120, my - 96, my + 96);
+        add(["COWBOY", "COWGIRL"], rngInt(rng, 2, 5),
+            ox + 120, ox + CHUNK_W / 2, my - 300, my + 300);
+        add(["COWBOY", "COWGIRL"], rngInt(rng, 1, 4),
+            ox + CHUNK_W / 2, ox + CHUNK_W - 120, my - 300, my + 300);
+        add(["LOCAL_COP"], rngInt(rng, 1, 3),
+            ox + 200, ox + CHUNK_W - 200, my - 150, my + 150);
+        if (rng() > 0.55) add(["FARMER_MALE", "FARMER_FEMALE"], rngInt(rng, 1, 3),
+            ox + 150, ox + CHUNK_W - 150, my - 380, my + 380);
+        // Saddle stock stood off the street, the way it would be outside a
+        // livery. Loose, so a firefight scatters it.
+        add(["HORSE"], rngInt(rng, 2, 5),
+            ox + 150, ox + CHUNK_W - 150, my - 420, my - 220);
+      } else if (bnoise(biome, ox, oy, 0.0004) < 0.36) {
+        // Farmland. Find the field the generator actually planted rather than
+        // assuming where it is -- it is placed beside the wagon track now, not
+        // at the chunk centre.
+        const field = solids.find(s => s.isCropField);
+        if (field) {
+          add(["FARMER_MALE", "FARMER_FEMALE"], rngInt(rng, 2, 5),
+              field.x - field.w / 2 - 40, field.x + field.w / 2 + 40,
+              field.y - field.h / 2, field.y + field.h / 2);
+          add(["COW"], rngInt(rng, 3, 7),
+              field.x - field.w / 2, field.x + field.w / 2,
+              field.y - 300, field.y + 300);
+          add(["HORSE"], rngInt(rng, 1, 3),
+              field.x - field.w / 2, field.x + field.w / 2,
+              field.y - 360, field.y + 360);
+        }
+      }
+      break;
+    }
+
+    case "CITY":
+    case "CITY_DENSE":
+    case "WOODLAND": {
+      // A checkpoint is manned, and its garrison walks the arterial to the next
+      // one. Hostile, so they count against the wanderer budget the same way the
+      // loose patrols do -- clear a post and the sector gets quieter until you
+      // leave and come back.
+      if (!cityIsCheckpoint(biome, cx, cy)) break;
+      const route = nextCheckpoint(biome, cx, cy);
+      const n = rngInt(rng, 3, 7);
+      for (let i = 0; i < n; i++) {
+        const pt = popPlace(rng, solids, ox - 260, ox + 260, oy - 260, oy + 260);
+        if (!pt) continue;
+        // Who mans a post depends on whether the sector's grid is still up.
+        //
+        //   Towers standing -- the sector's own people. Stick City's men, the
+        //   Undercity's women. These are exactly the ones the towers set free,
+        //   which is why they garrison rather than roam.
+        //
+        //   Towers down -- they are yours now, so NM-0 has nobody left but the
+        //   intake: blue-fatigue rookies, no helmets, no plates. They hold the
+        //   post and nothing else; the road between posts is the machines'.
+        const down = sectorTowersAreDown(biome);
+        const rookie = biome === 2 ? "NM0_ROOKIE_F" : "NM0_ROOKIE";
+        const regular = biome === 2 ? "FEMALE_PISTOL" : (rng() > 0.78 ? "ARMORED_STANDARD" : "NORMAL");
+        out.push({ type: down ? rookie : regular,
+                   x: pt.x, y: pt.y,
+                   // A rookie is leashed to the post he was given. He does not
+                   // walk the arterial -- that was the regulars' beat, and they
+                   // are not NM-0's any more.
+                   route: down ? null : route,
+                   post: down ? { x: ox, y: oy } : null,
+                   home: { x: ox, y: oy } });
+      }
+      break;
+    }
+
+    case "JUNGLE": {
+      // A cordon post is manned. Tan Army regulars, neutral until provoked --
+      // the same troops the story arc has you make contact with.
+      if (bnoise(biome, ox, oy, 0.0005) > 0.6) {
+        const bunkers = solids.filter(s => s.propType === "BUNKER");
+        if (bunkers.length) {
+          const b0 = bunkers[0];
+          add(["MILITARY_NEUTRAL"], rngInt(rng, 3, 7),
+              b0.x - 260, b0.x + 260, b0.y - 200, b0.y + 420);
+        }
+      }
+      break;
+    }
+
+    case "TUNDRA": {
+      if (bnoise(biome, ox, oy, 0.0006) > 0.66) {
+        const huts = solids.filter(s => s.isBlockBuilding);
+        if (huts.length) {
+          const h0 = huts[0];
+          add(["MILITARY_NEUTRAL"], rngInt(rng, 2, 5),
+              h0.x - 300, h0.x + 300, h0.y - 300, h0.y + 300);
+        }
+      }
+      break;
+    }
+  }
+  return out.length ? out : null;
+}
+
+// Called once a frame from the chunk manager, after residency. Releases before
+// it spawns, so a settlement walking out of range frees its share of the budget
+// for the one walking in.
+function refreshPopulation(mgr, pcx, pcy) {
+  if (!mgr || !player) return;
+
+  // -- release ------------------------------------------------------------
+  for (const [k, list] of chunkPop) {
+    const c = k.indexOf(",");
+    const i = +k.slice(0, c), j = +k.slice(c + 1);
+    if (Math.max(Math.abs(i - pcx), Math.abs(j - pcy)) <= POP_KEEP_R) continue;
+    // Anyone who followed the player out of his town is not a resident any
+    // more, he is part of the fight. Defer the whole release until he is not.
+    if (!popReleasable(list)) continue;
+    popRelease(k, list);
+  }
+  // Bounded history: the oldest settlements you visited forget they were shot
+  // up, which is better than a Map that grows for the whole session.
+  while (popLosses.size > POP_HISTORY_MAX) {
+    popLosses.delete(popLosses.keys().next().value);
+  }
+
+  // -- make room ----------------------------------------------------------
+  // The keep radius holds a lot of ground, so a settlement four chunks behind
+  // the player can sit on the whole budget and the town he is walking INTO
+  // comes out half empty. When the budget is tight, let the farthest populated
+  // settlement go early. Distance priority, not arrival order: what matters is
+  // who is near enough to be looked at.
+  let live = 0;
+  for (const l of chunkPop.values()) live += l.length;
+  if (live > POP_BUDGET * 0.8) {
+    let far = null, farD = 2;
+    for (const [k, list] of chunkPop) {
+      if (!list.length) continue;
+      const c = k.indexOf(",");
+      const d = Math.max(Math.abs(+k.slice(0, c) - pcx), Math.abs(+k.slice(c + 1) - pcy));
+      if (d > farD) { farD = d; far = k; }
+    }
+    if (far) {
+      const list = chunkPop.get(far);
+      if (popReleasable(list)) live -= popRelease(far, list);
+    }
+  }
+  if (live >= POP_BUDGET) return;
+
+  let spawned = 0;
+  for (let ring = 0; ring <= POP_LOAD_R && spawned < POP_PER_TICK; ring++) {
+    for (let j = pcy - ring; j <= pcy + ring && spawned < POP_PER_TICK; j++) {
+      for (let i = pcx - ring; i <= pcx + ring && spawned < POP_PER_TICK; i++) {
+        if (Math.max(Math.abs(i - pcx), Math.abs(j - pcy)) !== ring) continue;   // ring only
+        const k = ChunkManager.keyOf(i, j);
+        if (chunkPop.has(k)) continue;
+        const ch = mgr.chunks.get(k);
+        if (!ch) continue;
+        const roster = settlementRoster(mgr.biome, i, j, ch.solid);
+        if (!roster) { chunkPop.set(k, []); continue; }
+
+        const cap = Math.max(0, roster.length - (popLosses.get(k) || 0));
+        const list = [];
+        for (let n = 0; n < roster.length && list.length < cap; n++) {
+          if (live + list.length >= POP_BUDGET) break;
+          const r = roster[n];
+          const c = new Character(r.x, r.y, false, r.type);
+          if (c.eType !== "COW" && c.eType !== "HORSE") c.state = "PATROL";
+          if (r.route) { c.routeA = r.home; c.routeB = r.route; c.routeLeg = 0; }
+          if (r.post)  { c.postX = r.post.x; c.postY = r.post.y; c.postR = 300; }
+          enemiesList.push(c);
+          list.push(c);
+        }
+        chunkPop.set(k, list);
+        live += list.length;
+        spawned += list.length || 1;
+      }
+    }
+  }
+}
+
+// ###########################################################################
+//  CHUNK MANAGER
+//  Streams chunks around the player, rebuilds the shared `buildings` array
+//  only when the resident set actually changes, and evicts distant graphics
+//  buffers so GPU memory stays flat no matter how far the player walks.
+// ###########################################################################
+class ChunkManager {
+  constructor(biome) {
+    this.biome    = biome;
+    this.chunks   = new Map();     // "cx,cy" -> chunk record
+    this.bakeQ    = [];            // pending terrain bakes
+    // Directive helipad / checkpoint / outpost are the landmarks a pure biome
+    // arrives at. A hybrid sector already has its own — the Great Gates — and
+    // these sit at the origin, right on top of the authored core.
+    this.anchors  = authoredCore ? [] : buildAnchorStructures(biome);
+    this.lastKey  = null;
+    this.dirty    = true;
+    // Retired terrain buffers, most-recently-used last. Walking back the way
+    // you came pulls from here instead of re-baking.
+    this.texCache = new Map();
+    this.stats    = { loaded: 0, baked: 0, evicted: 0, forced: 0 };
+  }
+
+  static keyOf(cx, cy) { return cx + "," + cy; }
+
+  worldToChunk(x, y) {
+    return { cx: Math.floor(x / CHUNK_W), cy: Math.floor(y / CHUNK_W) };
+  }
+
+  // Chunk index range the camera can actually see this frame. Residency used
+  // to be driven purely off the player's own chunk, which is not the same
+  // question: at zoom 0.45 the view is over two chunks tall, and during a
+  // travel arrival or a killcam the camera is not on the player at all.
+  visibleRange(pad) {
+    const p = pad || 0;
+    return {
+      i0: Math.floor((viewLeft   - p) / CHUNK_W),
+      i1: Math.floor((viewRight  + p) / CHUNK_W),
+      j0: Math.floor((viewTop    - p) / CHUNK_W),
+      j1: Math.floor((viewBottom + p) / CHUNK_W)
+    };
+  }
+
+  // -- Called every frame ---------------------------------------------------
+  // Residency is now recomputed every frame rather than only when the player
+  // crosses a chunk border. It is a couple of dozen Map lookups; the expensive
+  // half (generateChunkContent, the terrain bake) still only runs for chunks
+  // that are genuinely new. Gating it on border crossings meant a fast mover,
+  // a teleport or a camera that left the player behind could all outrun the
+  // resident set and leave the view sitting over chunks that did not exist.
+  update(px, py) {
+    const { cx, cy } = this.worldToChunk(px, py);
+    this.lastKey = ChunkManager.keyOf(cx, cy);
+    this.refreshResidency(cx, cy);
+    refreshPopulation(this, cx, cy);
+    this.processBakeQueue();
+    if (this.dirty) {
+      this.rebuildWorldArrays();
+      this.dirty = false;
+    }
+  }
+
+  // Create a chunk record and publish its contents. Split out of
+  // refreshResidency so drawTerrain can adopt a chunk the camera reached first.
+  adopt(i, j) {
+    const k = ChunkManager.keyOf(i, j);
+    let ch = this.chunks.get(k);
+    if (ch) return ch;
+    const content = generateChunkContent(this.biome, i, j);
+    // Tag them as the streamer's own. buildings[] is one flat array of
+    // authored core + anchors + every resident chunk, so without this the
+    // late-adoption pass below cannot tell a hand-placed solid from a
+    // streamed one and promotes the whole chunk into the authored core.
+    for (let s = 0; s < content.solid.length; s++) content.solid[s].isChunkSolid = true;
+    for (let s = 0; s < content.cars.length;  s++) content.cars[s].isChunkSolid  = true;
+    ch = {
+      cx: i, cy: j,
+      solid: content.solid,
+      decor: content.decor,           // animated only — drawn live
+      decorBake: content.decorBake,   // static — stamped into the terrain buffer
+      cars:  content.cars,
+      tex:   null,
+      queued: false
+    };
+    this.chunks.set(k, ch);
+    this.stats.loaded++;
+    this.dirty = true;
+    return ch;
+  }
+
+  // Bake, or recover the buffer from the retire cache.
+  bakeChunk(ch) {
+    if (ch.tex) return ch.tex;
+    const k = ChunkManager.keyOf(ch.cx, ch.cy);
+    const cached = this.texCache.get(k);
+    if (cached) {
+      this.texCache.delete(k);
+      ch.tex = cached;
+      ch.queued = false;
+      return ch.tex;
+    }
+    ch.tex = bakeChunkTerrain(this.biome, ch.cx, ch.cy, ch.decorBake);
+    ch.queued = false;
+    this.stats.baked++;
+    return ch.tex;
+  }
+
+  // Evicting used to destroy the buffer outright, so backtracking across a
+  // border re-baked from scratch and showed flat fill until it landed. Patrol
+  // a boundary and the world strobed once per crossing. Retiring the buffer to
+  // a bounded cache makes the return trip free.
+  retire(ch) {
+    if (!ch.tex) return;
+    const k = ChunkManager.keyOf(ch.cx, ch.cy);
+    // delete-then-set: Map.set on a key that already exists keeps its original
+    // insertion position, which would leave a chunk you keep re-treading
+    // sitting at the front of the queue and getting thrown away first.
+    this.texCache.delete(k);
+    this.texCache.set(k, ch.tex);
+    ch.tex = null;
+    while (this.texCache.size > CHUNK_TEX_CACHE) {
+      const oldest = this.texCache.keys().next().value;
+      const g = this.texCache.get(oldest);
+      this.texCache.delete(oldest);
+      if (g) g.remove();
+    }
+  }
+
+  refreshResidency(cx, cy) {
+    // Load the ring around the player, and — separately — everything the
+    // camera can see plus a chunk of margin, so terrain is always resident and
+    // baked before it can scroll into frame.
+    for (let j = cy - CHUNK_LOAD_R; j <= cy + CHUNK_LOAD_R; j++) {
+      for (let i = cx - CHUNK_LOAD_R; i <= cx + CHUNK_LOAD_R; i++) this.adopt(i, j);
+    }
+    const vis = this.visibleRange(CHUNK_W);
+    for (let j = vis.j0; j <= vis.j1; j++) {
+      for (let i = vis.i0; i <= vis.i1; i++) this.adopt(i, j);
+    }
+
+    // Rebuild the bake queue every frame, ordered by what the camera is about
+    // to need: on screen first, then outward from the player. Priority is a
+    // function of where the camera is now, so it has to be recomputed as the
+    // camera moves rather than fixed at residency time.
+    const onScreen = this.visibleRange(0);
+    const pending = [];
+    for (const [k, ch] of this.chunks) {
+      if (ch.tex) continue;
+      const seen = ch.cx >= onScreen.i0 && ch.cx <= onScreen.i1 &&
+                   ch.cy >= onScreen.j0 && ch.cy <= onScreen.j1;
+      const d = Math.max(Math.abs(ch.cx - cx), Math.abs(ch.cy - cy));
+      pending.push({ k, d: seen ? -1 : d });
+    }
+    pending.sort((a, b) => a.d - b.d);
+    this.bakeQ.length = 0;
+    for (const q of pending) {
+      this.chunks.get(q.k).queued = true;
+      this.bakeQ.push(q.k);
+    }
+
+    // Evict everything past the keep radius — unless the camera is looking at
+    // it. Without that second test a camera pulled away from the player (the
+    // killcam, an overworld pull-back) could evict the very chunks on screen.
+    const keep = this.visibleRange(CHUNK_W);
+    for (const [k, ch] of this.chunks) {
+      const d = Math.max(Math.abs(ch.cx - cx), Math.abs(ch.cy - cy));
+      if (d <= CHUNK_KEEP_R) continue;
+      if (ch.cx >= keep.i0 && ch.cx <= keep.i1 && ch.cy >= keep.j0 && ch.cy <= keep.j1) continue;
+      this.retire(ch);
+      this.chunks.delete(k);
+      this.stats.evicted++;
+      this.dirty = true;
+    }
+  }
+
+  // -- Amortised baking: bounded by count AND by wall-clock ------------------
+  processBakeQueue() {
+    const clock = (typeof performance !== 'undefined' && performance.now)
+                ? () => performance.now() : () => Date.now();
+    const t0 = clock();
+    let n = 0;
+    while (this.bakeQ.length && n < CHUNK_BAKE_CAP) {
+      const k = this.bakeQ.shift();
+      const ch = this.chunks.get(k);
+      if (!ch || ch.tex) continue;
+      this.bakeChunk(ch);
+      n++;
+      if (clock() - t0 >= CHUNK_BAKE_MS) break;
+    }
+  }
+
+  // Anything on screen is baked before it is drawn, synchronously if the
+  // amortised queue has not reached it yet. This is the guarantee that removes
+  // the flashing: there is no longer any frame in which a visible chunk lacks
+  // its texture, so there is nothing for the old flat-fill fallback to do.
+  //
+  // The cost lands only where it is unavoidable — a teleport or a travel
+  // arrival, both of which happen behind a fade — and one honest hitch there is
+  // worth far more than seconds of strobing terrain.
+  ensureVisibleBaked() {
+    const vis = this.visibleRange(80);
+    for (let j = vis.j0; j <= vis.j1; j++) {
+      for (let i = vis.i0; i <= vis.i1; i++) {
+        const ch = this.adopt(i, j);
+        if (!ch.tex) { this.bakeChunk(ch); this.stats.forced++; }
+      }
+    }
+  }
+
+  // -- Publish chunk contents into the arrays the rest of the game reads ----
+  // This is the integration seam: after this runs, every existing system
+  // (collision, LOS, bullets, culling, spawning) sees the streamed world as
+  // if it had been authored by hand.
+  // Gameplay removes solids by splicing them straight out of buildings[] —
+  // exploded cars, dropped towers, cleared corners. Because the authored core
+  // is republished from its own list on every rebuild, those removals have to
+  // be mirrored back or the object reappears the next time a chunk loads.
+  // Anything missing from the live array since the last rebuild is gone.
+  syncAuthoredRemovals() {
+    if (authoredSolids.length) {
+      const live = new Set(buildings);
+      for (let i = 0; i < authoredSolids.length; i++) {
+        if (!live.has(authoredSolids[i])) {
+          authoredSolids = authoredSolids.filter(b => live.has(b));
+          break;
+        }
+      }
+    }
+    if (authoredCars.length) {
+      const liveCars = new Set(parkingCars);
+      for (let i = 0; i < authoredCars.length; i++) {
+        if (!liveCars.has(authoredCars[i])) {
+          authoredCars = authoredCars.filter(c => liveCars.has(c));
+          break;
+        }
+      }
+    }
+  }
+
+  rebuildWorldArrays() {
+    this.syncAuthoredRemovals();
+    // The authored core is republished every rebuild, so a hybrid sector's
+    // hand-placed map survives chunk residency changes and stays live in the
+    // same buildings[] every other system already reads. It goes in first so
+    // damage flags carried on those objects (a breached Great Gate, a dropped
+    // tower) persist across the rebuild by identity.
+    const solids = authoredSolids.slice();
+    const cars   = authoredCars.slice();
+    for (let i = 0; i < this.anchors.length; i++) solids.push(this.anchors[i]);
+    for (const ch of this.chunks.values()) {
+      for (let i = 0; i < ch.solid.length; i++) solids.push(ch.solid[i]);
+      for (let i = 0; i < ch.cars.length;  i++) cars.push(ch.cars[i]);
+    }
+    buildings   = solids;
+    parkingCars = cars;
+
+    // Recull immediately rather than blanking the array and hoping something
+    // refills it later in the frame.
+    //
+    // This used to set activeBuildings = [] and lastActiveUpdate = 0, leaving
+    // the recull to the next updateActiveWorld(). But updateActiveWorld() runs
+    // BEFORE manageChunkMemory() in draw(), so on every frame where chunk
+    // residency changed -- which is every time you cross a chunk border, i.e.
+    // constantly while walking -- the array was emptied after the cull had
+    // already run. Everything that draws from it (buildings, their shadows,
+    // ground lots, pads, biome props, parked cars, street lights) then drew
+    // nothing at all for that frame. Measured while walking: 13 of 203 frames
+    // blanked, each exactly one frame long. That is the buildings blinking in
+    // and out.
+    lastActiveUpdate = 0;
+    activeBuildings = [];
+    updateActiveWorld();
+  }
+
+  // -- Ground blit ----------------------------------------------------------
+  drawTerrain() {
+    // Nothing visible reaches the blit without a texture.
+    this.ensureVisibleBaked();
+
+    // Filtered, not nearest-neighbour. This is the single biggest cause of the
+    // render flicker: the buffer is magnified ~3x, and with nearest sampling
+    // each texel covers a whole block of screen pixels whose boundary lands
+    // wherever the sub-pixel camera offset puts it. Pan by half a texel and
+    // every road edge, kerb, crosswalk, dither speck and baked prop jumps a
+    // whole texel at once -- the entire ground shimmers and crawls, worst of
+    // all while walking, which is exactly when it was reported.
+    //
+    // Nearest was originally chosen because bilinear at 320 turned road
+    // markings to mush. The fix for that is resolution, not filtering: CHUNK_TEX
+    // is 384 now and the vector detail pass already bakes at full buffer size.
+    smooth();
+    // Whole-chunk blits. Source-rectangle clipping to the visible overlap was
+    // measured against this over three interleaved runs and came out inside the
+    // noise (-8%, +7%, -4%) -- Skia already discards the off-screen texels
+    // before it pays to sample them, so the extra arithmetic bought nothing and
+    // this stays the simpler path.
+    for (const ch of this.chunks.values()) {
+      if (!ch.tex) continue;
+      const wx = ch.cx * CHUNK_W, wy = ch.cy * CHUNK_W;
+      if (wx > viewRight + 80 || wx + CHUNK_W < viewLeft - 80)  continue;
+      if (wy > viewBottom + 80 || wy + CHUNK_W < viewTop - 80)  continue;
+      // Half-texel overdraw on the far edges. Filtered sampling reads past the
+      // buffer at its border, and two adjacent chunks each fading to their own
+      // edge texel leaves a hairline seam that flickers as the camera moves.
+      image(ch.tex, wx, wy, CHUNK_W + 2, CHUNK_W + 2);
+    }
+
+    // The flat-fill fallback that used to live here is gone. It painted a
+    // hard-edged rectangle of the biome's alt colour over any visible chunk
+    // whose bake had not landed, then that rectangle snapped to full detail a
+    // frame or twenty later. Those slabs appearing, sliding and popping ARE
+    // the flashing. ensureVisibleBaked() above makes the case unreachable.
+  }
+
+  // -- Decor pass (shadows first, then props) -------------------------------
+  drawDecor() {
+    for (const ch of this.chunks.values()) {
+      const wx = ch.cx * CHUNK_W, wy = ch.cy * CHUNK_W;
+      if (wx > viewRight + 200 || wx + CHUNK_W < viewLeft - 200) continue;
+      if (wy > viewBottom + 200 || wy + CHUNK_W < viewTop - 200) continue;
+      // Cull generously. A tree canopy reaches ~78 units at full scale, so the
+      // old +/-60 margin clipped props whose centre had just left the view
+      // while their crown was still on screen -- they blinked out at the
+      // border instead of sliding off it.
+      for (const d of ch.decor) {
+        if (d.x < viewLeft - 120 || d.x > viewRight + 120)  continue;
+        if (d.y < viewTop - 120  || d.y > viewBottom + 120) continue;
+        paintClutter(window, d, frameCount);
+      }
+    }
+  }
+
+  // One-off, run behind the level-entry fade: bake the whole resident ring with
+  // no per-frame budget, so the first frame you actually see is already
+  // complete rather than resolving itself in front of you.
+  warmUp(limit) {
+    const cap = limit || 40;
+    let n = 0;
+    while (this.bakeQ.length && n < cap) {
+      const ch = this.chunks.get(this.bakeQ.shift());
+      if (!ch || ch.tex) continue;
+      this.bakeChunk(ch);
+      n++;
+    }
+  }
+
+  dispose() {
+    for (const ch of this.chunks.values()) if (ch.tex) ch.tex.remove();
+    for (const g of this.texCache.values()) if (g) g.remove();
+    this.texCache.clear();
+    this.chunks.clear();
+    this.bakeQ.length = 0;
+  }
+}
+
+let chunkMgr = null;
+
+// ###########################################################################
+//  GLOBAL LIGHT MODEL
+//  One sun direction for the whole world. Every prop, building and character
+//  casts along the same vector, which is what makes a top-down scene read as
+//  a coherent space rather than a collection of sprites.
+// ###########################################################################
+// Bounds of a sector that is fully enclosed by geometry, or null. Read by the
+// spawners so nothing is ever placed on the wrong side of a wall it cannot get
+// back through.
+let sealedSector = null;
+
+function insideSector(x, y, pad) {
+  if (!sealedSector) return true;
+  const m = pad === undefined ? 80 : pad;
+  return x > sealedSector.x0 + m && x < sealedSector.x1 - m &&
+         y > sealedSector.y0 + m && y < sealedSector.y1 - m;
+}
+
+const LIGHT_DX = 0.58;
+const LIGHT_DY = 0.81;
+
+// How far a building's walls extrude past its footprint, and how far the mass
+// may then throw. Both are capped well inside BUILDING_GAP_MIN -- the tightest
+// alley the block subdivider will ever leave -- so a building's own geometry
+// and its own shadow can never reach its neighbour. That reach is what made
+// two separate buildings read as one overlapping blob.
+const BUILDING_RISE_MAX   = 26;
+const BUILDING_SHADOW_MAX = 24;
+const BUILDING_GAP_MIN    = 90;
+
+// Deterministic per-building mass, hashed off the footprint's world position so
+// it is identical every time the chunk loads and across sessions. One function,
+// read by both the shadow pass and the body pass: if those two disagreed about
+// how tall a building is, its shadow would detach from its walls, which is
+// exactly the "second building" artefact this replaces.
+function buildingRise(b) {
+  if (b._rise !== undefined) return b._rise;
+  const foot = Math.min(b.w || 0, b.h || 0);
+  let h = Math.imul((b.x | 0) ^ 0x9e3779b9, 0x85ebca6b) ^
+          Math.imul((b.y | 0) ^ 0x27d4eb2f, 0xc2b2ae35);
+  h = Math.imul(h ^ (h >>> 15), 0x2545f491);
+  const r01 = ((h ^ (h >>> 13)) >>> 0) / 4294967296;
+  // Bigger footprints carry more storeys, but the cap always wins.
+  b._rise = Math.min(BUILDING_RISE_MAX, 5 + foot * 0.075 + r01 * foot * 0.09);
+  return b._rise;
+}
+
+// Shadow colour. Never pure black: outdoor shade is lit by the sky above it,
+// so a flat black shadow reads as a hole cut in the ground. This tints toward
+// the biome's own sky and lets the time of day set how firm the shadow is.
+function shadowFill(alpha) {
+  const s = (BIOME_ACTIVE && BIOMES[currentBiome]) ? BIOMES[currentBiome].sky : [30, 36, 48];
+  const k = BIOME_ACTIVE ? shadowDensity() : 1;
+  fill(s[0] * 0.30, s[1] * 0.30, s[2] * 0.34, (alpha === undefined ? 80 : alpha) * k);
+  noStroke();
+}
+function castShadow(x, y, w, h, len, alpha) {
+  const L = BIOME_ACTIVE ? len * shadowLengthScale() : len;
+  shadowFill(alpha);
+  ellipse(x + LIGHT_DX * L, y + LIGHT_DY * L, w, h);
+}
+function castShadowRect(x, y, w, h, len, alpha, round) {
+  const L = BIOME_ACTIVE ? len * shadowLengthScale() : len;
+  shadowFill(alpha);
+  rect(x - w / 2 + LIGHT_DX * L, y - h / 2 + LIGHT_DY * L, w, h, round || 0);
+}
+
+// Character shadows. Same light vector and the same sky tint as everything
+// else, drawn in the character's own translated frame. Outside a streamed
+// biome these fall back to the flat black offset the hand-authored levels were
+// drawn against, so nothing about Levels 0 and 8 changes.
+function charShadowX(off) { return BIOME_ACTIVE ? LIGHT_DX * off * 1.35 * shadowLengthScale() : off; }
+function charShadowY(off) { return BIOME_ACTIVE ? LIGHT_DY * off * 1.35 * shadowLengthScale() : off; }
+function charShadowFill(alpha) {
+  noStroke();
+  if (!BIOME_ACTIVE) { fill(0, alpha); return; }
+  const s = BIOMES[currentBiome] ? BIOMES[currentBiome].sky : [30, 36, 48];
+  fill(s[0] * 0.30, s[1] * 0.30, s[2] * 0.34, alpha * shadowDensity());
+}
+
+// Shadow pass for streamed biomes. Offset scales with the caster's footprint —
+// bigger masses sit higher and throw longer — but the direction is always the
+// one global light vector, which is what sells the scene as a single lit space.
+function drawBiomeShadows() {
+  noStroke();
+  // Sun-driven: long and soft at dawn and dusk, short and firm at noon. The
+  // direction is fixed for the whole scene -- props bake their own shadows
+  // against LIGHT_DX/DY and cannot be re-baked hourly -- so only length and
+  // density move, which is what keeps a live building's shadow agreeing with
+  // a baked pebble's at every hour.
+  const SL = shadowLengthScale(), SD = shadowDensity();
+  const sky = BIOMES[currentBiome] ? BIOMES[currentBiome].sky : [30, 36, 48];
+  const sr = sky[0] * 0.30, sg = sky[1] * 0.30, sb = sky[2] * 0.34;
+  for (const b of activeBuildings) {
+    if (b.isBiomeProp) continue;          // drawn with their own shadows later
+    if (b.isTreeTrunk) continue;          // the canopy casts it, not the trunk
+    // activeBuildings is a 1500-unit ring rebuilt every ten frames, so most of
+    // it is off screen. Every other pass culls; this one was painting a shadow
+    // for all of them and letting the rasteriser clip, which on a fill-rate
+    // bound canvas is the expensive way to draw nothing.
+    if (!inView(b.x, b.y, Math.max(b.w || 0, b.h || 0) + 120)) continue;
+    // Water is a hole in the ground, not a mass standing on it. Ponds were
+    // falling through to the generic building branch and having a shadow the
+    // size of their bounding box painted straight over the surface — and
+    // because the pond itself is drawn back in the ground stack, that black
+    // box landed on top of the water rather than under it.
+    if (b.isPond || b.isWater) continue;
+    if (b.isGrassLot) continue;
+    if (b.isCropField || b.isParkingLot) continue;
+
+    const w = b.w || 0, h = b.h || 0;
+    const size = Math.max(w, h);
+    const len  = Math.min(26, Math.max(5, size * 0.10)) * SL;
+    // Sky-tinted rather than black, at the density the current sun supports.
+    const sh = (a) => fill(sr, sg, sb, a * SD);
+
+    if (b.isPalm) {
+      // Canopy blob rather than a trunk-shaped slab
+      sh(70);
+      ellipse(b.x + LIGHT_DX * len * 1.6, b.y + LIGHT_DY * len * 1.6, 74, 60);
+    } else if (b.isStreetLight) {
+      sh(70);
+      ellipse(b.x + LIGHT_DX * len, b.y + LIGHT_DY * len, w * 1.4, h * 1.2);
+    } else if (b.isRock) {
+      sh(78);
+      ellipse(b.x + LIGHT_DX * len, b.y + LIGHT_DY * len, w * 1.05, h * 0.9);
+    } else if (b.isAlienPlant || b.isEnergyPole || b.isPinkPlanet) {
+      sh(66);
+      ellipse(b.x + LIGHT_DX * len, b.y + LIGHT_DY * len, w * 0.9, h * 0.75);
+    } else if (b.isDumpster || b.isCar) {
+      push();
+      translate(b.x + LIGHT_DX * len, b.y + LIGHT_DY * len);
+      rotate(b.angle || 0);
+      sh(85); rect(-w / 2, -h / 2, w, h, 2);
+      pop();
+    } else if (b.isFence) {
+      sh(60);
+      if (w > h) rect(b.x - w / 2 + LIGHT_DX * 5 * SL, b.y - h / 2 + LIGHT_DY * 5 * SL, w, 6);
+      else       rect(b.x - w / 2 + LIGHT_DX * 5 * SL, b.y - h / 2 + LIGHT_DY * 5 * SL, 6, h);
+    } else if (b.isCactusProp) {
+      // A cactus throws a long thin shadow, not a slab the size of its cell
+      sh(72);
+      ellipse(b.x + LIGHT_DX * 20 * SL, b.y + LIGHT_DY * 20 * SL + 4, 20, 13);
+      push();
+      translate(b.x, b.y + h / 2 - 4);
+      rotate(Math.atan2(LIGHT_DY, LIGHT_DX));
+      rect(0, -5, h * 0.8 * SL, 10, 5);
+      pop();
+    } else if (b.isHayBale || b.isCrateProp || b.isWell) {
+      sh(74);
+      ellipse(b.x + LIGHT_DX * len, b.y + LIGHT_DY * len, w * 1.15, h * 1.0);
+    } else if (b.isWagonProp) {
+      sh(70);
+      ellipse(b.x + LIGHT_DX * len, b.y + LIGHT_DY * len + 4, w * 1.05, h * 0.8);
+    } else if (b.isWaterTower) {
+      sh(76);
+      ellipse(b.x + LIGHT_DX * 26 * SL, b.y + LIGHT_DY * 26 * SL + 20, 70, 34);
+    } else if (b.isGiantBarrier) {
+      // A 10400-unit slab: shadow only the stretch the camera can see, or the
+      // generic branch below builds a hull polygon spanning the whole wall and
+      // fills it every frame for the sake of the few hundred units on screen.
+      const top = Math.max(b.y - b.h / 2, viewTop - 200);
+      const bot = Math.min(b.y + b.h / 2, viewBottom + 200);
+      if (bot > top) {
+        const rise = 30, sl = 22 * SL;
+        sh(64);
+        rect(b.x - b.w / 2 + LIGHT_DX * (rise + sl),
+             top + LIGHT_DY * (rise + sl), b.w, bot - top);
+      }
+    } else {
+      // Buildings. The old pass drew a full-size copy of the footprint offset
+      // down-right: a rectangle the same size as the building, detached from
+      // it, with a hard edge -- which is why it read as a second building
+      // overlapping the first rather than as a shadow.
+      //
+      // A cast shadow is the convex hull of the silhouette and its offset copy,
+      // so it stays welded to the base it belongs to. The silhouette here is
+      // the footprint plus the wall extrusion drawBuildings() paints, so the
+      // shadow begins exactly where the geometry stops.
+      // Only the masses drawBuildings() actually extrudes get a wall-sized
+      // silhouette. Everything else here paints its own art at footprint size,
+      // and giving it the taller silhouette would detach the shadow again.
+      const rise = b.isBlockBuilding ? buildingRise(b) : 0;
+      const wx = LIGHT_DX * rise, wy = LIGHT_DY * rise;
+      const x0 = b.x - w / 2,      y0 = b.y - h / 2;
+      const x1 = b.x + w / 2 + wx, y1 = b.y + h / 2 + wy;
+      const sl = Math.min(BUILDING_SHADOW_MAX, Math.max(rise, Math.min(w, h) * 0.10) * 0.95) * SL;
+      const dx = LIGHT_DX * sl,    dy = LIGHT_DY * sl;
+
+      // Contact occlusion: nested rings of low alpha. Canvas has no cheap blur
+      // in a per-frame path, and a stack of rings is what a soft contact shadow
+      // looks like from directly above -- it grounds the mass without drawing
+      // a second hard edge anywhere near it.
+      for (let k = 3; k >= 1; k--) {
+        const pad = k * 3;
+        fill(sr, sg, sb, 12 * SD);
+        rect(x0 - pad, y0 - pad, (x1 - x0) + pad * 2, (y1 - y0) + pad * 2, 5);
+      }
+
+      fill(sr, sg, sb, 64 * SD);
+      beginShape();
+      vertex(x0, y0);
+      vertex(x1, y0);
+      vertex(x1 + dx, y0 + dy);
+      vertex(x1 + dx, y1 + dy);
+      vertex(x0 + dx, y1 + dy);
+      vertex(x0, y1);
+      endShape(CLOSE);
+    }
+  }
+}
+
+// ###########################################################################
+//  ENVIRONMENTAL CLUTTER RENDERING
+//  Micro-props. Each one gets a contact shadow so it sits *on* the ground
+//  instead of floating above it.
+// ###########################################################################
+// Target-aware so identical art can be painted into an off-screen chunk buffer
+// (baked once) or drawn live for the handful of props that animate. In p5's
+// global mode every drawing function is a property of `window`, so passing
+// `window` as the target draws to the main canvas.
+function paintClutter(g, d, t) {
+  const s = d.s;
+  g.push();
+  g.translate(d.x, d.y);
+
+  const shadow = (x, y, w, h, len, alpha) => {
+    g.fill(0, 0, 0, alpha); g.noStroke();
+    g.ellipse(x + LIGHT_DX * len, y + LIGHT_DY * len, w, h);
+  };
+  const shadowRect = (w, h, len, alpha, round) => {
+    g.fill(0, 0, 0, alpha); g.noStroke();
+    g.rect(-w / 2 + LIGHT_DX * len, -h / 2 + LIGHT_DY * len, w, h, round || 0);
+  };
+
+  switch (d.t) {
+    case "PEBBLE": {
+      // A chip of broken kerb or aggregate: angular, with one facet catching
+      // the light and the opposite one in shade. Two nested ovals read as a
+      // grey dot; a fractured silhouette reads as stone.
+      shadow(1.5, 1.5, 8.5 * s, 6 * s, 2, 52);
+      g.noStroke();
+      g.rotate(d.r);
+      g.fill(88, 86, 82, 205);
+      g.beginShape();
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * TWO_PI;
+        const rr = (3.6 + 1.5 * Math.sin(i * 2.1 + d.c * 8)) * s;
+        g.vertex(Math.cos(a) * rr, Math.sin(a) * rr * 0.82);
+      }
+      g.endShape(CLOSE);
+      // Lit facet toward the sun, shaded facet away
+      g.fill(146, 143, 136, 165);
+      g.triangle(-LIGHT_DX * 3.2 * s, -LIGHT_DY * 3.2 * s,
+                  1.9 * s, -2.4 * s, -2.6 * s, 1.1 * s);
+      g.fill(38, 37, 35, 110);
+      g.triangle(LIGHT_DX * 3.4 * s, LIGHT_DY * 3.0 * s,
+                 2.4 * s, -0.9 * s, -0.7 * s, 2.6 * s);
+      break;
+    }
+    case "TRASH": {
+      // A crushed drinks can on its side: barrel, two rims, a dented waist and
+      // a highlight running along the top of the cylinder. The old version was
+      // a rounded rectangle with a lighter stripe, which at this size is just a
+      // coloured tile.
+      g.rotate(d.r);
+      shadowRect(13 * s, 8 * s, 2, 48, 3);
+      g.noStroke();
+      const hot = d.c > 0.5;
+      const cr = hot ? 168 : 118, cg = hot ? 58 : 128, cb = hot ? 58 : 142;
+      // Body, pinched at the middle where it was stepped on
+      g.fill(cr, cg, cb, 214);
+      g.beginShape();
+      g.vertex(-6.2 * s, -3.5 * s); g.vertex(-1.0 * s, -2.6 * s);
+      g.vertex( 1.4 * s, -3.4 * s); g.vertex( 6.2 * s, -2.9 * s);
+      g.vertex( 6.2 * s,  2.9 * s); g.vertex( 1.4 * s,  3.4 * s);
+      g.vertex(-1.0 * s,  2.6 * s); g.vertex(-6.2 * s,  3.5 * s);
+      g.endShape(CLOSE);
+      // End rims, slightly proud of the barrel
+      g.fill(cr * 0.72, cg * 0.72, cb * 0.72, 220);
+      g.rect(-6.9 * s, -3.4 * s, 1.3 * s, 6.8 * s, 0.6);
+      g.rect( 5.6 * s, -2.8 * s, 1.3 * s, 5.6 * s, 0.6);
+      // Cylinder highlight along the top, dent shadow along the bottom
+      g.fill(255, 255, 255, 58);
+      g.rect(-5.6 * s, -2.9 * s, 11 * s, 1.5 * s, 0.7);
+      g.fill(0, 0, 0, 46);
+      g.rect(-5.6 * s,  1.7 * s, 11 * s, 1.4 * s, 0.7);
+      break;
+    }
+    case "PAPER": {
+      g.rotate(d.r);
+      shadowRect(11 * s, 13 * s, 2, 40);
+      g.fill(210, 205, 190, 170); g.noStroke();
+      g.quad(-5*s, -6*s, 6*s, -5*s, 5*s, 6*s, -6*s, 5*s);
+      g.stroke(120, 118, 110, 90); g.strokeWeight(0.7);
+      g.line(-3*s, -2*s, 3*s, -2*s); g.line(-3*s, 1*s, 2*s, 1*s);
+      break;
+    }
+    case "PUDDLE": {
+      // Water pooled on a road has an irregular edge -- it fills whatever dip
+      // it is sitting in. Three concentric flat ellipses, which is what this
+      // was, read as a dark oval smudge instead: a perfect ellipse is the one
+      // shape standing water never makes. These are the ovals visible on the
+      // asphalt in the screenshots.
+      //
+      // The outline is a closed loop whose radius wanders on two out-of-phase
+      // harmonics seeded from the prop, so every puddle has its own shape and
+      // none of them is symmetrical. Everything else follows the same global
+      // light as the rest of the scene: the sky reflects off the far side, the
+      // near lip catches a specular sliver, and the rim is darkest where the
+      // water is deepest against the kerb.
+      g.noStroke();
+      const pr = 15 * s, pw = 0.62;                  // radius, and how flat it lies
+      const lip = (k) => {
+        g.beginShape();
+        for (let i = 0; i < 14; i++) {
+          const a = (i / 14) * TWO_PI;
+          const wob = 1 + 0.26 * Math.sin(a * 3 + d.c * 11)
+                        + 0.15 * Math.sin(a * 5 - d.r * 7);
+          g.vertex(Math.cos(a) * pr * wob * k, Math.sin(a) * pr * pw * wob * k);
+        }
+        g.endShape(CLOSE);
+      };
+      // Damp halo soaked into the asphalt past the water line
+      g.fill(28, 30, 34, 46); lip(1.16);
+      // The water body
+      g.fill(24, 32, 42, 132); lip(1.0);
+      // Sky bounce, offset away from the light -- this is what says "wet"
+      g.fill(150, 178, 205, 62);
+      g.push(); g.translate(-LIGHT_DX * pr * 0.22, -LIGHT_DY * pr * 0.22); lip(0.66); g.pop();
+      // Specular sliver on the near lip
+      g.fill(226, 240, 250, 74);
+      g.push();
+      g.translate(-LIGHT_DX * pr * 0.42, -LIGHT_DY * pr * 0.38);
+      g.rotate(Math.atan2(LIGHT_DY, LIGHT_DX) + HALF_PI);
+      g.ellipse(0, 0, pr * 0.72, pr * 0.13);
+      g.pop();
+      break;
+    }
+    case "WEED": {
+      shadow(1, 2, 9 * s, 5 * s, 2, 45);
+      g.stroke(70, 105, 55, 200); g.strokeWeight(1.6);
+      for (let i = 0; i < 5; i++) {
+        const a = -HALF_PI + (i - 2) * 0.38 + d.r * 0.1;
+        g.line(0, 0, Math.cos(a) * 11 * s, Math.sin(a) * 11 * s);
+      }
+      g.noStroke();
+      break;
+    }
+    case "CRACK": {
+      g.stroke(0, 0, 0, 60); g.strokeWeight(1.3); g.noFill();
+      let a = d.r, cx = 0, cy = 0;
+      g.beginShape();
+      for (let i = 0; i < 5; i++) {
+        g.vertex(cx, cy);
+        a += Math.sin(i * 2.4 + d.c * 9) * 0.7;
+        cx += Math.cos(a) * 9 * s; cy += Math.sin(a) * 9 * s;
+      }
+      g.endShape();
+      g.noStroke();
+      break;
+    }
+    case "TUMBLEWEED": {
+      shadow(2, 3, 20 * s, 12 * s, 3, 60);
+      g.translate(Math.sin(t * 0.02 + d.x * 0.01) * 6, 0);
+      g.rotate(t * 0.012 + d.r);
+      g.stroke(150, 120, 70, 210); g.strokeWeight(1.5); g.noFill();
+      for (let i = 0; i < 7; i++) {
+        const a = (i / 7) * TWO_PI;
+        g.line(0, 0, Math.cos(a) * 11 * s, Math.sin(a) * 11 * s);
+      }
+      g.ellipse(0, 0, 15 * s, 13 * s);
+      g.noStroke();
+      break;
+    }
+    case "BONE": {
+      g.rotate(d.r);
+      shadowRect(16 * s, 5 * s, 2, 50);
+      g.fill(226, 220, 200, 210); g.noStroke();
+      g.rect(-7 * s, -1.6 * s, 14 * s, 3.2 * s, 1.5);
+      g.ellipse(-7 * s, 0, 4.5 * s, 4.5 * s);
+      g.ellipse(7 * s, 0, 4.5 * s, 4.5 * s);
+      break;
+    }
+    case "SAGE": {
+      shadow(1.5, 2, 14 * s, 8 * s, 2, 45);
+      g.fill(120, 130, 90, 190); g.noStroke();
+      for (let i = 0; i < 4; i++) {
+        const a = d.r + i * 1.6;
+        g.ellipse(Math.cos(a) * 4 * s, Math.sin(a) * 3 * s, 9 * s, 7 * s);
+      }
+      break;
+    }
+    case "VINE": {
+      g.stroke(50, 95, 45, 180); g.strokeWeight(2.2); g.noFill();
+      let a = d.r, cx = 0, cy = 0;
+      g.beginShape();
+      for (let i = 0; i < 7; i++) {
+        g.vertex(cx, cy);
+        a += Math.sin(i * 1.7 + d.c * 6) * 0.6;
+        cx += Math.cos(a) * 12 * s; cy += Math.sin(a) * 12 * s;
+      }
+      g.endShape();
+      g.noStroke(); g.fill(70, 130, 60, 170);
+      for (let i = 1; i < 6; i++) {
+        g.ellipse(Math.cos(d.r + i) * i * 7 * s, Math.sin(d.r + i) * i * 5 * s, 7 * s, 5 * s);
+      }
+      break;
+    }
+    case "FERN": {
+      shadow(2, 2, 18 * s, 10 * s, 3, 50);
+      g.noStroke();
+      for (let i = 0; i < 6; i++) {
+        const a = d.r + (i / 6) * TWO_PI;
+        g.fill(45, 100 + i * 6, 40, 190);
+        g.push(); g.rotate(a); g.ellipse(9 * s, 0, 18 * s, 6 * s); g.pop();
+      }
+      break;
+    }
+    case "LOG": {
+      g.rotate(d.r);
+      shadowRect(34 * s, 12 * s, 4, 70, 3);
+      g.fill(74, 54, 34, 220); g.noStroke();
+      g.rect(-16 * s, -5 * s, 32 * s, 10 * s, 3);
+      g.fill(96, 72, 46, 200); g.ellipse(-16 * s, 0, 9 * s, 10 * s);
+      g.fill(56, 40, 26, 200); g.ellipse(16 * s, 0, 9 * s, 10 * s);
+      break;
+    }
+    case "ICE": {
+      g.noStroke();
+      g.fill(180, 215, 235, 110);
+      g.beginShape();
+      for (let i = 0; i < 5; i++) {
+        const a = d.r + (i / 5) * TWO_PI;
+        const rr = (8 + Math.sin(i * 3 + d.c * 8) * 3) * s;
+        g.vertex(Math.cos(a) * rr, Math.sin(a) * rr * 0.7);
+      }
+      g.endShape(CLOSE);
+      g.fill(255, 255, 255, 80);
+      g.ellipse(-2 * s, -2 * s, 6 * s, 3 * s);
+      break;
+    }
+    case "DRIFT": {
+      g.noStroke();
+      g.fill(255, 255, 255, 70); g.ellipse(0, 0, 40 * s, 12 * s);
+      g.fill(255, 255, 255, 45); g.ellipse(4 * s, -2 * s, 26 * s, 8 * s);
+      break;
+    }
+    case "SPOREPOD": {
+      shadow(1.5, 2, 12 * s, 7 * s, 2, 60);
+      const pulse = 0.5 + 0.5 * Math.sin(t * 0.04 + d.c * 10);
+      g.fill(90, 45, 130, 210); g.noStroke();
+      g.ellipse(0, 0, 11 * s, 13 * s);
+      g.fill(120, 240, 140, 90 + pulse * 110);
+      g.ellipse(0, -2 * s, 5 * s, 6 * s);
+      break;
+    }
+    case "GLOWMOSS": {
+      const pulse = 0.5 + 0.5 * Math.sin(t * 0.03 + d.x * 0.02);
+      g.noStroke();
+      g.fill(80, 220, 120, 24 + pulse * 30);
+      g.ellipse(0, 0, 26 * s, 20 * s);
+      g.fill(110, 250, 150, 60 + pulse * 60);
+      for (let i = 0; i < 4; i++) {
+        const a = d.r + i * 1.57;
+        g.ellipse(Math.cos(a) * 5 * s, Math.sin(a) * 4 * s, 5 * s, 4 * s);
+      }
+      break;
+    }
+    case "SHARD": {
+      shadow(2, 2, 12 * s, 7 * s, 3, 55);
+      g.rotate(d.r);
+      const glint = 0.5 + 0.5 * Math.sin(t * 0.05 + d.c * 12);
+      g.fill(150, 220, 240, 170); g.stroke(220, 250, 255, 130); g.strokeWeight(1);
+      g.quad(0, -11 * s, 5 * s, 0, 0, 10 * s, -5 * s, 0);
+      g.noStroke(); g.fill(255, 255, 255, 60 + glint * 90);
+      g.quad(0, -9 * s, 2 * s, 0, 0, 7 * s, -1 * s, 0);
+      break;
+    }
+    case "TREE": {
+      // The canopy lobes ride a ring that is WIDER than the lobes themselves.
+      // The old version put seven 30x28 ellipses -- radius 15 -- on a ring of
+      // radius 13, so every lobe overlapped every other one almost exactly:
+      // they bunched into a single concentric stack instead of a crown. A ring
+      // radius greater than the lobe radius is the whole trick.
+      const R  = 15 * s;                  // ring the lobes sit on
+      const LW = 23 * s, LH = 21 * s;     // lobe size -- radius 11.5, under R
+      shadow(4, 5, 52 * s, 33 * s, 10, 64);
+      g.noStroke();
+      // Trunk
+      g.fill(52, 38, 24); g.ellipse(0, 0, 12 * s, 12 * s);
+      // Under-canopy mass, so the gaps between lobes do not show ground
+      // through the middle of the tree
+      g.fill(30, 58, 30, 205); g.ellipse(0, 2 * s, 44 * s, 40 * s);
+      // Lobes, each shaded by how squarely it faces the global light vector.
+      // Same sun as every other caster in the scene, so a tree reads as part
+      // of the lit space rather than a sprite dropped into it.
+      for (let i = 0; i < 6; i++) {
+        const a = d.r + (i / 6) * TWO_PI;
+        const face = -(Math.cos(a) * LIGHT_DX + Math.sin(a) * LIGHT_DY);
+        const k = 0.80 + 0.28 * face;
+        g.fill(46 * k, 106 * k, 46 * k, 240);
+        g.ellipse(Math.cos(a) * R, Math.sin(a) * R, LW, LH);
+      }
+      g.fill(64, 128, 58, 232); g.ellipse(0, -2 * s, 30 * s, 28 * s);
+      g.fill(255, 255, 255, 26);
+      g.ellipse(-LIGHT_DX * 11 * s, -LIGHT_DY * 11 * s, 22 * s, 18 * s);
+      break;
+    }
+  }
+  g.pop();
+}
+
+// ###########################################################################
+//  BIOME PROP RENDERING
+//  The travel anchors — helipad, Directive checkpoint, border wall outpost —
+//  plus wrecks. These are the lore landmarks the travel system spawns you at.
+// ###########################################################################
+function drawBiomeProps() {
+  for (const b of activeBuildings) {
+    if (!b.isBiomeProp) continue;
+    const def = BIOMES[currentBiome] || BIOMES[1];
+
+    switch (b.propType) {
+
+      case "HELIPAD": {
+        push(); translate(b.x, b.y);
+        noStroke();
+        fill(48, 50, 54); ellipse(0, 0, b.w, b.h);
+        fill(38, 40, 44); ellipse(0, 0, b.w - 30, b.h - 30);
+        // Painted H
+        fill(224, 220, 200, 210);
+        rect(-58, -70, 22, 140, 3);
+        rect(36, -70, 22, 140, 3);
+        rect(-58, -18, 116, 26, 3);
+        // Circle marking
+        noFill(); stroke(224, 220, 200, 180); strokeWeight(8);
+        ellipse(0, 0, b.w - 56, b.h - 56);
+        // Approach lights
+        noStroke();
+        const blink = (frameCount % 60) < 30;
+        for (let a = 0; a < TWO_PI; a += PI / 4) {
+          fill(blink ? color(255, 200, 60) : color(120, 90, 30));
+          ellipse(Math.cos(a) * (b.w / 2 - 12), Math.sin(a) * (b.h / 2 - 12), 12, 12);
+        }
+        // Directive stencil, set clear of the painted ring
+        fill(210, 205, 190, 150); textAlign(CENTER, CENTER);
+        textSize(17); textFont('sans-serif');
+        text("NM-0 EXTRACTION", 0, b.h / 2 + 26);
+        pop();
+        break;
+      }
+
+      case "CHECKPOINT": {
+        castShadowRect(b.x, b.y, b.w, b.h, 26, 70, 4);
+        push(); translate(b.x, b.y);
+        fill(52, 56, 60); stroke(24); strokeWeight(5);
+        rect(-b.w / 2, -b.h / 2, b.w, b.h, 4);
+        noStroke();
+        // Hazard chevrons
+        fill(226, 190, 40);
+        for (let i = -b.w / 2 + 12; i < b.w / 2 - 20; i += 44) {
+          quad(i, -b.h / 2 + 8, i + 20, -b.h / 2 + 8, i + 8, b.h / 2 - 8, i - 12, b.h / 2 - 8);
+        }
+        // Scanner arch
+        fill(30, 34, 38); rect(-b.w / 2 - 6, -b.h / 2 - 34, b.w + 12, 30, 3);
+        const scan = (frameCount % 120) / 120;
+        fill(70, 210, 255, 150);
+        rect(-b.w / 2 + scan * b.w, -b.h / 2 - 30, 10, 22);
+        // The banner names the sector's border post. A city roadblock is a
+        // roadblock -- there are dozens of them and they do not each get a
+        // headline.
+        if (b.isAnchor) {
+          fill(220, 220, 210); textAlign(CENTER, CENTER); textSize(16); textFont('sans-serif');
+          text("GOVERNMENT DIRECTIVE — CHECKPOINT " + currentBiome, 0, -b.h / 2 - 50);
+        }
+        pop();
+        break;
+      }
+
+      case "OUTPOST": {
+        castShadowRect(b.x, b.y, b.w, b.h, 30, 75, 6);
+        push(); translate(b.x, b.y);
+        fill(60, 62, 58); stroke(28); strokeWeight(6);
+        rect(-b.w / 2, -b.h / 2, b.w, b.h, 6);
+        noStroke();
+        fill(46, 48, 44); rect(-b.w / 2 + 22, -b.h / 2 + 22, b.w - 44, b.h - 44, 4);
+        // Watch tower roof
+        fill(74, 76, 70); rect(-46, -46, 92, 92, 4);
+        fill(34, 36, 32); rect(-30, -30, 60, 60, 3);
+        // Rotating searchlight
+        push();
+        rotate(frameCount * 0.008);
+        fill(255, 240, 180, 34);
+        triangle(0, 0, 260, -70, 260, 70);
+        fill(255, 240, 190); ellipse(0, 0, 16, 16);
+        pop();
+        fill(210, 210, 200); textAlign(CENTER, CENTER); textSize(15); textFont('sans-serif');
+        text("BORDER WALL OUTPOST", 0, b.h / 2 + 24);
+        pop();
+        break;
+      }
+
+      case "BORDERWALL": {
+        castShadowRect(b.x, b.y, b.w, b.h, 24, 80, 2);
+        push(); translate(b.x, b.y);
+        fill(66, 68, 64); stroke(26); strokeWeight(5);
+        rect(-b.w / 2, -b.h / 2, b.w, b.h, 2);
+        noStroke(); fill(50, 52, 48);
+        for (let i = -b.w / 2 + 16; i < b.w / 2 - 16; i += 90) rect(i, -b.h / 2 + 8, 40, b.h - 16, 2);
+        // Razor coil along the top edge
+        stroke(180, 182, 178, 190); strokeWeight(2); noFill();
+        for (let i = -b.w / 2 + 10; i < b.w / 2 - 10; i += 26) {
+          ellipse(i, -b.h / 2 - 4, 22, 14);
+        }
+        noStroke();
+        pop();
+        break;
+      }
+
+      case "GUARDBOX": {
+        castShadowRect(b.x, b.y, b.w, b.h, 20, 75, 3);
+        push(); translate(b.x, b.y);
+        fill(58, 60, 64); stroke(26); strokeWeight(4);
+        rect(-b.w / 2, -b.h / 2, b.w, b.h, 3);
+        noStroke(); fill(80, 140, 170, 190);
+        rect(-b.w / 2 + 12, -b.h / 2 + 10, b.w - 24, b.h - 20, 2);
+        fill(200, 40, 40, 140 + Math.sin(frameCount * 0.12) * 100);
+        ellipse(0, -b.h / 2 - 8, 12, 12);
+        pop();
+        break;
+      }
+
+      case "BLASTWALL": {
+        castShadowRect(b.x, b.y, b.w, b.h, 18, 75, 2);
+        push(); translate(b.x, b.y);
+        fill(72, 74, 70); stroke(30); strokeWeight(4);
+        rect(-b.w / 2, -b.h / 2, b.w, b.h, 2);
+        noStroke(); fill(226, 190, 40, 170);
+        rect(-b.w / 2, -b.h / 2 + 8, b.w, 8);
+        rect(-b.w / 2, b.h / 2 - 16, b.w, 8);
+        pop();
+        break;
+      }
+
+      case "SANDBAG": {
+        castShadow(b.x, b.y, b.w * 1.1, b.h * 0.7, 10, 70);
+        push(); translate(b.x, b.y); noStroke();
+        for (let r = 0; r < 3; r++) {
+          for (let c = 0; c < 3; c++) {
+            fill(126 - r * 8, 116 - r * 8, 88 - r * 6);
+            ellipse(-22 + c * 22 + (r % 2) * 8, -18 + r * 18, 26, 17);
+          }
+        }
+        pop();
+        break;
+      }
+
+      case "BOULDER": {
+        push(); translate(b.x, b.y);
+        castShadow(0, 0, b.w * 1.02, b.h * 0.82, 14, 80);
+        rotate(b.angle);
+        noStroke();
+        const gr = 78 + b.tint * 26;
+        // Faceted silhouette rather than a plain ellipse
+        fill(gr, gr + 4, gr - 6);
+        beginShape();
+        for (let i = 0; i < 7; i++) {
+          const a = (i / 7) * TWO_PI;
+          const rr = (0.42 + 0.1 * Math.sin(i * 2.7 + b.tint * 9));
+          vertex(Math.cos(a) * b.w * rr, Math.sin(a) * b.h * rr);
+        }
+        endShape(CLOSE);
+        // Lit face toward the global light, shaded face away
+        fill(255, 255, 255, 34);
+        ellipse(-LIGHT_DX * b.w * 0.14, -LIGHT_DY * b.h * 0.14, b.w * 0.5, b.h * 0.42);
+        fill(0, 0, 0, 42);
+        ellipse(LIGHT_DX * b.w * 0.16, LIGHT_DY * b.h * 0.16, b.w * 0.46, b.h * 0.36);
+        // Moss creeping over the shaded side
+        fill(56, 102, 46, 165);
+        for (let i = 0; i < 4; i++) {
+          const a = b.tint * 31 + i * 1.9;
+          ellipse(Math.cos(a) * b.w * 0.2, Math.sin(a) * b.h * 0.2, b.w * 0.26, b.h * 0.2);
+        }
+        pop();
+        break;
+      }
+
+      case "BUNKER": {
+        castShadowRect(b.x, b.y, b.w, b.h, 22, 82, 4);
+        push(); translate(b.x, b.y);
+        const camo = b.tint;
+        // Concrete shell
+        fill(96 + camo * 14, 100 + camo * 12, 88 + camo * 10);
+        stroke(38, 42, 34); strokeWeight(5);
+        rect(-b.w / 2, -b.h / 2, b.w, b.h, 4);
+        noStroke();
+        // Camo dapple, deterministic per structure
+        for (let i = 0; i < 7; i++) {
+          const a = camo * 41 + i * 2.399;
+          fill(72 + (i % 3) * 10, 88 + (i % 2) * 14, 58, 120);
+          ellipse(Math.cos(a) * b.w * 0.28, Math.sin(a) * b.h * 0.28,
+                  b.w * 0.3, b.h * 0.24);
+        }
+        // Reinforced roof slab and vent
+        fill(70, 76, 64); rect(-b.w / 2 + 22, -b.h / 2 + 22, b.w - 44, b.h - 44, 3);
+        fill(52, 56, 48); rect(-26, -20, 52, 40, 3);
+        fill(34, 38, 32); ellipse(0, 0, 26, 26);
+        // Moss reclaiming the north edge
+        fill(58, 104, 48, 150);
+        rect(-b.w / 2, -b.h / 2, b.w, 12, 3);
+        rect(-b.w / 2, -b.h / 2, 12, b.h * 0.55, 3);
+        pop();
+        break;
+      }
+
+      case "WRECK": {
+        push(); translate(b.x, b.y); rotate(b.angle);
+        castShadowRect(0, 0, b.w, b.h, 8, 85, 5);
+        noStroke();
+        const t = b.tint;
+        fill(70 + t * 60, 62 + t * 40, 58 + t * 30);
+        rect(-b.w / 2, -b.h / 2, b.w, b.h, 5);
+        // Burnt-out cabin
+        fill(28, 26, 24);
+        rect(-b.w / 4, -b.h / 2 + 6, b.w / 2, b.h - 12, 3);
+        // Rust streaks
+        fill(120, 70, 30, 120);
+        for (let i = 0; i < 5; i++) {
+          rect(-b.w / 2 + 6 + i * (b.w / 6), -b.h / 2 + 3, 5, b.h - 6, 1);
+        }
+        // Missing wheels
+        fill(22, 22, 24);
+        ellipse(-b.w / 2 + 16, -b.h / 2 - 3, 20, 12);
+        ellipse(b.w / 2 - 16, b.h / 2 + 3, 20, 12);
+        pop();
+        break;
+      }
+    }
+  }
+}
+
+// ###########################################################################
+//  DYNAMIC WEATHER & PARTICLES
+//  Fixed-size pools that wrap around the view rather than allocating. Cost is
+//  constant regardless of how long the player stays in a biome.
+// ###########################################################################
+// ---------------------------------------------------------------------------
+// SOFT BLOB
+// Concentric rings whose alphas accumulate into a smooth radial falloff. A
+// single flat-alpha ellipse has a hard edge, which is what made the fog banks
+// and smoke puffs read as pasted-on circles rather than atmosphere.
+//
+// Deliberately not a canvas radial gradient: those need a new gradient object
+// per position, and blitting a pre-baked sprite measured far slower than flat
+// fills on this software canvas (see drawNightLights).
+// One radial gradient per colour, built once and reused. Gradients are defined
+// in user space at fill time, so a unit-radius gradient at the origin can be
+// scaled by the transform to any size — which is what makes caching possible.
+let _gradCache = new Map();
+let _gradCtx = null;
+
+function radialFalloff(ctx, r, g, b) {
+  if (ctx !== _gradCtx) { _gradCache = new Map(); _gradCtx = ctx; }   // canvas was rebuilt
+  const key = (r << 16) | (g << 8) | b;
+  let gr = _gradCache.get(key);
+  if (!gr) {
+    gr = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+    const c = r + ',' + g + ',' + b;
+    gr.addColorStop(0.00, 'rgba(' + c + ',1)');
+    gr.addColorStop(0.38, 'rgba(' + c + ',0.66)');
+    gr.addColorStop(0.68, 'rgba(' + c + ',0.27)');
+    gr.addColorStop(0.87, 'rgba(' + c + ',0.07)');
+    gr.addColorStop(1.00, 'rgba(' + c + ',0)');
+    _gradCache.set(key, gr);
+  }
+  return gr;
+}
+
+function softBlob(x, y, rx, ry, r, g, b, peak) {
+  if (!(peak > 0.5) || rx <= 0 || ry <= 0) return;
+  const ctx = drawingContext;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(rx * 0.5, ry * 0.5);
+  ctx.globalAlpha = Math.min(1, peak / 255);
+  ctx.fillStyle = radialFalloff(ctx, r | 0, g | 0, b | 0);
+  ctx.beginPath();
+  ctx.arc(0, 0, 1, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+// Rectangular sibling of softBlob: a slab whose edge fades in over a feather
+// band instead of stopping dead. Ground tints laid over streamed terrain need
+// this or they read as pasted-on rectangles.
+function softRect(x, y, w, h, r, g, b, peak, feather, steps, rad) {
+  const n = steps || 5;
+  const rr = rad === undefined ? 8 : rad;
+  const f = Math.min(feather, Math.min(w, h) * 0.45);
+
+  // Solid core, filled once. Restacking the whole slab per step is what a
+  // naive version does, and on a 1000x1580 ground pad that cost ~20 fps.
+  noStroke();
+  fill(r, g, b, peak);
+  rect(x + f, y + f, w - 2 * f, h - 2 * f, rr);
+
+  // Feather band: concentric strokes. Each is a thin ring, so the cost is
+  // perimeter, not area.
+  noFill();
+  const sw = f / n;
+  for (let i = 0; i < n; i++) {
+    const t = (i + 0.5) / n;                 // 0 at the core, 1 at the outer edge
+    const inset = f - (i + 0.5) * sw;
+    stroke(r, g, b, peak * (1 - t));
+    strokeWeight(sw + 1);
+    rect(x + inset, y + inset, w - 2 * inset, h - 2 * inset, rr);
+  }
+  noStroke();
+}
+
+class WeatherSystem {
+  constructor(kind) {
+    this.parts = [];
+    this.splashes = [];
+    this.gust = 0;
+    this.setKind(kind);
+  }
+
+  // The sky changes during play, so the pool is rebuilt in place rather than
+  // the whole system being reconstructed.
+  setKind(kind) {
+    this.kind = kind;
+    this.splashes.length = 0;
+
+    // Fog banks are huge translucent ellipses, so they are fill-rate bound —
+    // a few large ones read better and cost far less than many small ones.
+    // Fog: many smaller banks rather than a handful of enormous ones. Eight
+    // banks 560-1080 units across could not survive any wrap margin wide enough
+    // to hide their own teleport, and at that size you see the individual
+    // blob rather than a fog layer. Twenty-four banks at roughly half the
+    // diameter cover the view more evenly, layer into real depth, and come out
+    // cheaper: fill scales with the square of the radius, so 24 x 320 is less
+    // ink than 8 x 810.
+    const counts = { ACID_RAIN: 220, DUST: 150, FOG: 24, SNOW: 200, SPORES: 90, SHIMMER: 54 };
+    const n = kind ? (counts[kind] || 120) : 0;
+    this.parts.length = 0;
+    for (let i = 0; i < n; i++) this.parts.push(this.spawn(true));
+  }
+
+  spawn(initial) {
+    // Weather can be constructed before the camera has framed anything (level
+    // entry runs ahead of the first draw), so fall back to canvas extents.
+    const vw = (typeof width === 'number') ? width : 800;
+    const vh = (typeof height === 'number') ? height : 600;
+    const l = (typeof viewLeft === 'number') ? viewLeft : 0;
+    const t = (typeof viewTop === 'number') ? viewTop : 0;
+    const w = ((viewRight - viewLeft) || vw);
+    const h = ((viewBottom - viewTop) || vh);
+    const s = Math.random();
+    return {
+      x: l + Math.random() * w,
+      y: t + Math.random() * h,
+      vx: 0, vy: 0,
+      life: Math.random(),
+      s: s,
+      // Depth tier, fixed at spawn. Lets the renderer set stroke/fill once per
+      // tier instead of once per particle — 3 state changes instead of 200+.
+      tier: s < 0.34 ? 0 : (s < 0.67 ? 1 : 2),
+      seed: Math.random() * 1000
+    };
+  }
+
+  update() {
+    // Slow-varying wind so gusts feel weathered rather than random
+    this.gust = noise(frameCount * 0.004, 77.7) * 2 - 1;
+
+    // Wrap margin has to clear the particle's own radius, or it teleports
+    // across the view while still covering part of it.
+    //
+    // This was set to 1300 for fog, which was wrong in a way that mattered: the
+    // pool is a fixed count, so widening the wrap box four times over spread
+    // the same eight banks across four times the area and almost none of them
+    // were on screen any more. That is why the fog disappeared. The real fix is
+    // smaller banks -- see setKind() and drawWorld() -- which need a margin
+    // barely larger than the old one and read as more layered fog, not less.
+    const M = this.kind === "FOG" ? 360 : (this.kind === "SHIMMER" ? 130 : 100);
+    const L = viewLeft - M, R = viewRight + M;
+    const T = viewTop - M,  B = viewBottom + M;
+    const w = R - L, h = B - T;
+
+    for (const p of this.parts) {
+      switch (this.kind) {
+        case "ACID_RAIN":
+          p.vx = 3.2 + this.gust * 2.2;
+          p.vy = 15 + p.s * 9;
+          break;
+        case "DUST":
+          p.vx = 4.5 + this.gust * 5.5 + p.s * 2;
+          p.vy = Math.sin(frameCount * 0.02 + p.seed) * 1.1;
+          break;
+        case "SNOW":
+          p.vx = 1.1 + this.gust * 2.4 + Math.sin(frameCount * 0.02 + p.seed) * 0.9;
+          p.vy = 1.3 + p.s * 1.9;
+          break;
+        case "SPORES":
+          p.vx = Math.sin(frameCount * 0.011 + p.seed) * 1.5 + this.gust * 0.9;
+          p.vy = -0.5 - p.s * 0.9;
+          break;
+        case "FOG":
+          // Near banks outrun far ones — the parallax cue.
+          p.vx = (0.18 + p.s * 0.62) + this.gust * (0.28 + p.s * 0.55);
+          p.vy = Math.sin(frameCount * 0.006 + p.seed) * 0.16;
+          break;
+        case "SHIMMER":
+          p.vx = this.gust * 0.6;
+          p.vy = -0.35 - p.s * 0.5;
+          break;
+      }
+      p.x += p.vx; p.y += p.vy;
+
+      // Acid rain leaves splash decals where it lands
+      if (this.kind === "ACID_RAIN" && Math.random() < 0.012 && this.splashes.length < 90) {
+        this.splashes.push({ x: p.x, y: p.y, t: 0, s: 0.6 + Math.random() * 0.9 });
+        p.y = T;
+        p.x = L + Math.random() * w;
+        continue;
+      }
+
+      // Toroidal wrap keeps the pool alive forever with zero allocation
+      if (p.x < L) p.x += w; else if (p.x > R) p.x -= w;
+      if (p.y < T) p.y += h; else if (p.y > B) p.y -= h;
+    }
+
+    for (let i = this.splashes.length - 1; i >= 0; i--) {
+      this.splashes[i].t += 0.07;
+      if (this.splashes[i].t >= 1) this.splashes.splice(i, 1);
+    }
+  }
+
+  // World-space layer: drawn inside the camera transform
+  drawWorld() {
+    noStroke();
+    switch (this.kind) {
+
+      case "ACID_RAIN": {
+        strokeWeight(1.6);
+        // Batched by depth tier — one stroke() per tier, not per droplet
+        for (let tier = 0; tier < 3; tier++) {
+          stroke(150, 230, 130, 70 + tier * 40);
+          for (const p of this.parts) {
+            if (p.tier !== tier) continue;
+            line(p.x, p.y, p.x - p.vx * 1.5, p.y - p.vy * 1.5);
+          }
+        }
+        noStroke();
+        for (const sp of this.splashes) {
+          const a = (1 - sp.t) * 150;
+          noFill(); stroke(160, 240, 140, a); strokeWeight(1.6);
+          ellipse(sp.x, sp.y, sp.t * 26 * sp.s, sp.t * 13 * sp.s);
+          noStroke(); fill(150, 230, 130, a * 0.5);
+          ellipse(sp.x, sp.y, 4 * sp.s, 2.5 * sp.s);
+        }
+        break;
+      }
+
+      case "DUST": {
+        // A handful of haze veils give the storm body without the fill cost of
+        // one behind every mote.
+        for (let i = 0; i < this.parts.length; i += 9) {
+          const p = this.parts[i];
+          const r = 90 + p.s * 120;
+          softBlob(p.x, p.y, r, r * 0.5, 206, 180, 138, 10);
+        }
+        for (let tier = 0; tier < 3; tier++) {
+          fill(206, 180, 138, 40 + tier * 32);
+          const w = 4 + tier * 3, h = 3 + tier * 2;
+          for (const p of this.parts) {
+            if (p.tier !== tier) continue;
+            ellipse(p.x, p.y, w, h);
+          }
+        }
+        // Motion streaks on the fastest motes only, in one batched pass
+        stroke(206, 180, 138, 55); strokeWeight(1.4);
+        for (const p of this.parts) {
+          if (p.tier !== 2) continue;
+          line(p.x, p.y, p.x - p.vx * 2.5, p.y - p.vy * 2.5);
+        }
+        noStroke();
+        break;
+      }
+
+      case "SNOW": {
+        for (let tier = 0; tier < 3; tier++) {
+          fill(255, 255, 255, 100 + tier * 55);
+          const sz = 3 + tier * 2;
+          for (const p of this.parts) {
+            if (p.tier !== tier) continue;
+            ellipse(p.x, p.y, sz, sz);
+          }
+        }
+        break;
+      }
+
+      case "SPORES": {
+        for (const p of this.parts) {
+          const pulse = 0.5 + 0.5 * Math.sin(frameCount * 0.05 + p.seed);
+          // Graded halo, then a tight core on top.
+          const halo = 14 + p.s * 22;
+          softBlob(p.x, p.y, halo, halo, 90, 220, 120, 18 + pulse * 26);
+          fill(150, 255, 170, 40 + pulse * 90);
+          ellipse(p.x, p.y, 2.5 + p.s * 5, 2.5 + p.s * 5);
+        }
+        break;
+      }
+
+      case "FOG": {
+        // Volumetric banks: large, soft, slow. Each is a graded blob rather
+        // than a flat ellipse, so the layer reads as depth in the air instead
+        // of a scatter of grey ovals. Fewer, larger banks than before, since
+        // each now costs a small ring stack.
+        // Three depths: far banks are big, faint and slow; near ones are
+        // tighter, denser and drift visibly faster. That parallax is what makes
+        // a fog layer feel like air with volume instead of a flat wash.
+        // Few banks, each large and smoothly graded. A gradient fill costs
+        // roughly what a flat ellipse of the same size does plus the per-pixel
+        // ramp, so volume is bought with size rather than count -- eleven big
+        // banks read deeper than twenty-six small ones and cost less.
+        for (const p of this.parts) {
+          const r = 330 + p.s * 300;
+          const drift = Math.sin(frameCount * 0.004 + p.seed) * 34;
+          const dens = 18 + p.tier * 9 + p.s * 20;
+          softBlob(p.x + drift, p.y, r, r * 0.46, 172, 192, 168, dens);
+        }
+        break;
+      }
+
+      case "SHIMMER": {
+        for (const p of this.parts) {
+          const wob = Math.sin(frameCount * 0.06 + p.seed) * 8;
+          const w = 26 + p.s * 62, h = 7 + p.s * 15;
+          softBlob(p.x + wob, p.y, w, h, 235, 245, 250, 14 + p.s * 34);
+        }
+        break;
+      }
+    }
+  }
+
+  // Screen-space layer: atmospheric grading, drawn after the camera pops
+  drawScreen(def) {
+    if (this.kind === "ACID_RAIN") {
+      // Lightning flash
+      if (Math.random() < 0.0016) window.__wxFlash = 12;
+      if (window.__wxFlash > 0) {
+        window.__wxFlash--;
+        fill(180, 230, 170, window.__wxFlash * 7);
+        rect(0, 0, width, height);
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// SCREEN-SPACE GRADE
+// Fog, vignette and the day/night wash. Lifted out of WeatherSystem because it
+// has to run whether or not there is any weather — a clear night still has to
+// be dark.
+// ---------------------------------------------------------------------------
+// SCREEN GRADE
+// Night, haze and vignette, composited into ONE small offscreen layer and
+// blitted up over the frame.
+//
+// This pass was measured at 7.45 ms of a 25 ms frame -- 29%, the single most
+// expensive thing the renderer did. It was running up to three full-screen
+// operations every frame: a blend-mode grade, a wash, and a radial-gradient
+// vignette, each touching every pixel of a 1080x2340 canvas. Evaluating a
+// radial gradient per pixel per frame is the worst of them.
+//
+// Every layer here is smooth and low-frequency by definition -- a flat wash
+// and a soft radial -- so none of it needs to exist at screen resolution. It
+// is rendered once into a 128px-wide buffer and stretched, which is exact for
+// this content, and rebuilt only when the light actually changes: the day is
+// 48 real minutes long, so that is a handful of times a minute rather than
+// sixty times a second.
+let _gradeBuf = null, _gradeKey = '', _gradeLoad = 0;
+
+const GRADE_W = 128;
+
+function buildGradeLayer(night, g, fogRGBA, w, h) {
+  const gh = Math.max(16, Math.round(GRADE_W * h / w));
+  if (!_gradeBuf || _gradeBuf.width !== GRADE_W || _gradeBuf.height !== gh) {
+    if (_gradeBuf) _gradeBuf.remove();
+    _gradeBuf = createGraphics(GRADE_W, gh);
+    _gradeBuf.pixelDensity(1);
+  }
+  const b = _gradeBuf;
+  b.clear();
+  b.noStroke();
+
+  // Haze and the golden band only.
+  //
+  // Night used to be done here, as a flat 59%-opaque navy fill over the whole
+  // frame -- and this pass runs AFTER the lamps have been drawn, so every pool
+  // of light was painted over by the same sheet that made it night. That is
+  // why the lamps never read as light sources: they were being covered up by
+  // the darkness a fraction of a second after being added to it. Darkness is
+  // the light rig's job now (see drawLightPass); haze is additive scatter and
+  // genuinely does sit on top of everything.
+  if (g > 0.01) { b.fill(255, 146, 58, 52 * g); b.rect(0, 0, GRADE_W, gh); }
+
+  // Haze only when the light rig did not already carry it (i.e. in daylight,
+  // where there is no darkness sheet for it to ride along in).
+  const af = (_rigTookHaze || !fogRGBA) ? 0 : (fogRGBA[3] / 255) * (0.34 + 0.66 * night);
+  _gradeLoad = af + (g > 0.01 ? g * 0.2 : 0);
+  if (af > 0.004) {
+    b.fill(fogRGBA[0], fogRGBA[1], fogRGBA[2], af * 255);
+    b.rect(0, 0, GRADE_W, gh);
+  }
+  return b;
+}
+
+// ###########################################################################
+//  LIGHT RIG
+//  A screen-space light map, multiplied over the finished frame.
+//
+//  Darkness was previously a flat wash laid over everything, which is why
+//  night looked like a blue filter rather than a place: it moved every pixel
+//  toward the same navy, so a lit road, a dark alley and a white wall all
+//  ended up the same colour, and lamp glows drawn earlier in the frame were
+//  simply painted over.
+//
+//  Multiplying instead of washing fixes both at once. The map holds how much
+//  light reaches each part of the screen -- ambient moonlight everywhere, plus
+//  a pool around every source -- and the frame is multiplied by it. Ground
+//  under a lamp keeps its own daylight colour because it is multiplied by 1;
+//  ground away from one is scaled down but keeps its contrast, so the world
+//  still reads as a world. Nothing is ever flattened toward a single hue.
+//
+//  It is cheap because light is low frequency. The map is 192 px wide however
+//  big the canvas is, and stretched on the way out -- one small buffer, a
+//  handful of gradient fills, one full-screen blit, and none of it runs at all
+//  in broad daylight.
+// ###########################################################################
+const LIGHT_W = 192;
+const LIGHT_BUDGET = 26;           // sources per frame, nearest first
+let _lightBuf = null, _lightGrads = null, _lightCtx = null;
+let _rigTookHaze = false;   // set per frame: did the rig already composite the haze?
+
+// One cached radial per colour, in unit space, scaled by the transform.
+function lightGradient(ctx, r, g, b) {
+  if (ctx !== _lightCtx) { _lightGrads = new Map(); _lightCtx = ctx; }
+  const key = (r << 16) | (g << 8) | b;
+  let grad = _lightGrads.get(key);
+  if (!grad) {
+    grad = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+    const c = r + ',' + g + ',' + b;
+    // Inverse-square-ish: bright core, long thin tail. A linear ramp reads as
+    // a flat disc with an edge, which is what a light must never look like.
+    grad.addColorStop(0.00, 'rgba(' + c + ',1)');
+    grad.addColorStop(0.22, 'rgba(' + c + ',0.62)');
+    grad.addColorStop(0.50, 'rgba(' + c + ',0.26)');
+    grad.addColorStop(0.78, 'rgba(' + c + ',0.07)');
+    grad.addColorStop(1.00, 'rgba(' + c + ',0)');
+    _lightGrads.set(key, grad);
+  }
+  return grad;
+}
+
+// Punch a light out of the darkness.
+//
+// The map holds DARKNESS, not light: it starts as an even sheet whose alpha is
+// how much of the world the night is hiding, and each source erases some of it
+// with 'destination-out'. Composited back over the frame with ordinary
+// source-over, alpha a leaves dst*(1-a) -- a true per-pixel multiply, so the
+// world keeps its own hues and its own contrast and simply gets darker.
+//
+// The obvious alternative is to accumulate light additively and composite with
+// 'multiply'. It was built that way first and measured: 'multiply' has to read
+// the destination for every pixel of a 1080x2340 canvas and cost 10 ms a frame,
+// a 37% loss at night. This gets the same result through the cheapest blend
+// the compositor has.
+function addLight(buf, bx, by, br, power) {
+  if (!(power > 0.004) || !(br > 0.4)) return;
+  const ctx = buf.drawingContext;
+  ctx.save();
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.globalAlpha = power > 1 ? 1 : power;
+  ctx.translate(bx, by);
+  ctx.scale(br, br * 0.82);          // slightly flattened: a top-down pool
+  ctx.fillStyle = lightGradient(ctx, 0, 0, 0);
+  ctx.beginPath();
+  ctx.arc(0, 0, 1, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawLightPass() {
+  const d = daylight();
+  // How much of its own colour the world keeps where nothing is lighting it.
+  // Deliberately not near zero: a playable night is a dim one, not a black
+  // one, and crushing it was the complaint this replaces.
+  const amb = 0.50 + 0.50 * d;
+  _rigTookHaze = false;
+  if (amb >= 0.995) return;                     // broad daylight: no rig at all
+
+  const lw = LIGHT_W;
+  const lh = Math.max(16, Math.round(lw * height / width));
+  if (!_lightBuf || _lightBuf.width !== lw || _lightBuf.height !== lh) {
+    if (_lightBuf) _lightBuf.remove();
+    _lightBuf = createGraphics(lw, lh);
+    _lightBuf.pixelDensity(1);
+    _lightGrads = null; _lightCtx = null;
+  }
+  const buf = _lightBuf;
+  const night = 1 - d;
+
+  // An even sheet of night, with the biome's haze folded into it.
+  //
+  // Very dark blue rather than black, so the deepest shadows keep a trace of
+  // moonlight instead of going to dead grey -- at these alphas it is a tint,
+  // not a wash, and the world underneath keeps its own colour.
+  //
+  // Haze is composited in here analytically rather than run as its own
+  // full-screen pass afterwards. Night over haze is
+  //     dst*(1-aN)*(1-aF) + N*aN*(1-aF) + F*aF
+  // which is exactly one source-over of alpha 1-(1-aN)(1-aF) in the colour
+  // that leaves. One blit at night instead of two, and the result is identical
+  // rather than approximate.
+  const def0 = BIOMES[currentBiome];
+  const fog = def0 ? def0.fog : null;
+  const aN = 1 - amb;
+  const aF = fog ? (fog[3] / 255) * (0.34 + 0.66 * night) : 0;
+  const aT = 1 - (1 - aN) * (1 - aF);
+  _rigTookHaze = aF > 0.004;
+  buf.clear();
+  buf.noStroke();
+  if (aT > 0.002) {
+    const mix = (nc, fc) => (nc * aN * (1 - aF) + fc * aF) / aT;
+    buf.fill(mix(9, fog ? fog[0] : 0), mix(13, fog ? fog[1] : 0),
+             mix(28, fog ? fog[2] : 0), aT * 255);
+    buf.rect(0, 0, lw, lh);
+  }
+
+  // World -> light-buffer transform. Screen shake is deliberately ignored:
+  // light that jitters with an explosion looks like a fault, not a shake.
+  const k = lw / width;
+  const sx = (wx) => (wx - camX) * zoom * k;
+  const sy = (wy) => (wy - camY) * zoom * k;
+  const sr = zoom * k;
+  const pad = 220;
+
+  // Gather, nearest first, and spend a fixed budget. Which lights are lit has
+  // to depend on geometry rather than array order, or crossing a chunk border
+  // reshuffles the list and lamps swap on and off.
+  const px0 = player ? player.x : (viewLeft + viewRight) / 2;
+  const py0 = player ? player.y : (viewTop + viewBottom) / 2;
+  const src = [];
+  for (const b of activeBuildings) {
+    if (!b.isStreetLight) continue;
+    if (!inView(b.x, b.y, pad)) continue;
+    const dx = b.x - px0, dy = b.y - py0;
+    // Power is set so the core of a pool lands just short of saturation over
+    // the ambient floor rather than several times past it. Anything more and
+    // overlapping pools along a street clip to flat white, which is a blown
+    // highlight, not a lit road. Radius likewise: 330 units covers the
+    // carriageway and the near pavement, which is what a street light does.
+    src.push({ x: b.x, y: b.y + 14, r: 330,
+               p: 0.92 * (0.965 + 0.035 * Math.sin(frameCount * 0.031 + b.x * 0.013)),
+               d2: dx * dx + dy * dy });
+  }
+  if (typeof fires !== 'undefined' && fires) {
+    for (const f of fires) {
+      if (!inView(f.x, f.y, pad)) continue;
+      const flick = 0.78 + 0.22 * Math.sin(frameCount * 0.21 + f.x * 0.05)
+                         * Math.sin(frameCount * 0.13 + f.y * 0.03);
+      const dx = f.x - px0, dy = f.y - py0;
+      src.push({ x: f.x, y: f.y, r: 150 + f.r * 1.9,
+                 p: 0.98 * flick * Math.min(1, f.life / 60), d2: dx * dx + dy * dy });
+    }
+  }
+  src.sort((a, b) => a.d2 - b.d2);
+
+  const n = src.length < LIGHT_BUDGET ? src.length : LIGHT_BUDGET;
+  for (let i = 0; i < n; i++) {
+    const L = src[i];
+    addLight(buf, sx(L.x), sy(L.y), L.r * sr, L.p);
+  }
+
+  // The player carries a little light of their own, so a dark street stays
+  // playable without the rig having to lift the whole frame.
+  if (player && player.hp > 0) {
+    addLight(buf, sx(player.x), sy(player.y + 6), 240 * sr, 0.52);
+  }
+
+  // Vignette lives here rather than in the grade layer: closing the frame down
+  // is a reduction in light, so multiplying is what it actually is.
+  if (night > 0.02) {
+    const vig = 0.26 * night;
+    const ctx = buf.drawingContext;
+    const grd = ctx.createRadialGradient(
+      lw / 2, lh / 2, Math.min(lw, lh) * 0.62,
+      lw / 2, lh / 2, Math.max(lw, lh) * 0.95);
+    grd.addColorStop(0.00, 'rgba(9,13,28,0)');
+    grd.addColorStop(0.55, 'rgba(9,13,28,' + (vig * 0.34).toFixed(3) + ')');
+    grd.addColorStop(1.00, 'rgba(9,13,28,' + vig.toFixed(3) + ')');
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.fillStyle = grd;
+    ctx.fillRect(0, 0, lw, lh);
+    ctx.restore();
+  }
+
+  image(buf, 0, 0, width, height);
+}
+
+function drawBiomeScreenLayer() {
+  const def = BIOMES[currentBiome];
+  if (!def) return;
+  noStroke();
+
+  const d = daylight(), g = goldenHour();
+  const night = 1 - d;
+
+  // Quantised so slow light changes do not rebuild the layer every frame.
+  const key = (night * 48 | 0) + '|' + (g * 24 | 0) + '|' + currentBiome + '|' +
+              (_rigTookHaze ? 'H' : '-') + '|' + (width | 0) + 'x' + (height | 0);
+  if (key !== _gradeKey || !_gradeBuf) {
+    buildGradeLayer(night, g, def.fog, width, height);
+    _gradeKey = key;
+  }
+
+  // In flat daylight the layer is empty -- no night, no golden band, and the
+  // vignette is gone -- so there is nothing to composite and the most
+  // expensive pass in the renderer costs nothing at all.
+  if (_gradeLoad > 0.004) image(_gradeBuf, 0, 0, width, height);
+
+  if (weather) weather.drawScreen(def);
+}
+
+// Clock and temperature, under the score. Only where a climate exists —
+// Level 0's basement and Level 8's HQ interior have no sky.
+function drawClimateReadout() {
+  if (!BIOME_ACTIVE) return;
+  const c = biomeClimate();
+  if (!c) return;
+
+  const d = daylight(), g = goldenHour();
+  let phase = "NIGHT", pc = [120, 150, 220];
+  if (g > 0.35 && d > 0.5)      { phase = "DUSK";  pc = [255, 170, 90]; }
+  else if (g > 0.35)            { phase = "DAWN";  pc = [255, 170, 90]; }
+  else if (d > 0.9)             { phase = "DAY";   pc = [255, 226, 150]; }
+  else if (d > 0.1)             { phase = "DUSK";  pc = [255, 170, 90]; }
+  // Before noon a horizon sun is coming up, after it is going down.
+  if (phase === "DUSK" && worldHour() < 12) phase = "DAWN";
+
+  // Sits left of the pause button, which owns width-60 .. width-20 at y 40-80.
+  push();
+  textAlign(RIGHT, TOP); textFont('monospace'); noStroke();
+  fill(pc[0], pc[1], pc[2]); textSize(11);
+  text(worldClockLabel() + " " + phase, width - 70, 42);
+  fill(230); textSize(11);
+  text(Math.round(worldTemperatureF()) + "°F" + (isRaining ? "  RAIN" : ""), width - 70, 56);
+  pop();
+}
+
+// Street lights earn their keep after dark: three stacked falloff rings per
+// lamp, additive so the pools blend like light rather than stacking into grey.
+//
+// The obvious optimisation — bake the falloff into one small buffer and blit
+// it — is a pessimisation here. Measured over three rounds in the dense
+// Undercity at midnight: no lights 56.7 fps, these ellipses 56.0, the baked
+// blit 45.8. Scaling a 128px buffer up 3x with smoothing costs the software
+// canvas far more than three flat radial fills do.
+function drawNightLights() {
+  // Only the fixtures themselves now: the bulb, its housing glow and the wet
+  // sheen it throws straight down. The pool of light each one casts across the
+  // ground is the light rig's job (see drawLightPass), because a pool has to
+  // be applied to the frame multiplicatively to read as illumination rather
+  // than as a bright decal sitting on top of the road.
+  //
+  // These are drawn inside the camera transform and stay small, so they cost a
+  // couple of fills per visible lamp and land in exactly the part of the light
+  // map that is already at full brightness -- the fixture is never dimmed by
+  // the very light it is casting.
+  if (!BIOME_ACTIVE) return;
+  const d = daylight();
+  if (d > 0.62) return;
+  const amt = 1 - d / 0.62;
+
+  const ctx = drawingContext;
+  const prevOp = ctx.globalCompositeOperation;
+  ctx.globalCompositeOperation = 'lighter';
+  noStroke();
+
+  const px0 = player ? player.x : (viewLeft + viewRight) / 2;
+  const py0 = player ? player.y : (viewTop + viewBottom) / 2;
+  const lamps = [];
+  for (const b of activeBuildings) {
+    if (!b.isStreetLight) continue;
+    if (!inView(b.x, b.y, 120)) continue;
+    const dx = b.x - px0, dy = b.y - py0;
+    lamps.push({ b: b, d2: dx * dx + dy * dy });
+  }
+  lamps.sort((l1, l2) => l1.d2 - l2.d2);
+  const lit = lamps.length < 30 ? lamps.length : 30;
+  for (let i = 0; i < lit; i++) {
+    const b = lamps[i].b;
+    // Slow shallow mains hum rather than a per-frame random, which buzzed.
+    const hum = 0.965 + 0.035 * Math.sin(frameCount * 0.031 + b.x * 0.013);
+    // The colour of the light. The rig decides how much of the world a lamp
+    // reveals; this decides what temperature it is. Doing the tint here, in
+    // world space over a few hundred units, costs a couple of fills per lamp
+    // -- carrying it through the rig instead would mean compositing the whole
+    // canvas with a blend that has to read every pixel back.
+    // One modest tint blob. A 460-unit gradient here measured 4.37 ms a frame
+    // for three visible lamps -- gradient fill is priced by area, and the rig
+    // is already doing the wide falloff. This only has to say "warm".
+    softBlob(b.x, b.y + 7, 200, 146, 255, 202, 128, 34 * amt * hum);
+    fill(255, 236, 198, 74 * amt * hum); ellipse(b.x, b.y, 30, 30);
+    fill(255, 252, 236, 96 * amt * hum); ellipse(b.x, b.y, 13, 13);
+  }
+
+  ctx.globalCompositeOperation = prevOp;
+}
+
+let weather = null;
+
+// ###########################################################################
+//  WORLD CLOCK, SUN AND CLIMATE
+//  One full day/night cycle takes 48 real minutes: 24 of daylight, 24 of
+//  night, split like a summer solstice with sunrise at 06:00 and sunset at
+//  18:00. Nothing snaps — the sun drives a continuous altitude, and light,
+//  sky colour and temperature are all read off that one number.
+// ###########################################################################
+const DAY_MS      = 48 * 60 * 1000;      // real milliseconds per in-game day
+const SUNRISE_H   = 6;                   // in-game hour the sun crosses up
+const DAY_SPAN_H  = 12;                  // hours of daylight (06:00 -> 18:00)
+
+let worldTimeMs   = DAY_MS * (8 / 24);   // replaced by seedWorldClock() on run start
+let clockLastMs   = null;
+
+// Milliseconds of world time that passed on the last tick. This is the single
+// clock the whole game runs on: the sun reads it, and so do the directive
+// meters (see updateProductionMeters). Zero while paused or in a menu, so
+// nothing accrues in either place while the world is stopped.
+let worldClockDtMs = 0;
+
+// Where the day opens.
+//
+// Every run used to start at 08:00 on the dot, in every sector, so the light
+// was the same every time you played. This picks an hour once per run and then
+// leaves it alone -- the clock runs forward from there and is never reset by
+// entering a level, so walking out of Stick City at dusk puts you in the next
+// sector at dusk. It rides the save the same way the directive XP does.
+//
+// Weighted rather than flat: most runs open in working daylight, the rest at
+// dawn, at dusk, or into the night. A flat 0-24 roll would drop a quarter of
+// all runs into pitch dark before the player has a weapon worth carrying.
+function seedWorldClock() {
+  const r = Math.random();
+  let h;
+  if (r < 0.62)      h = 7.0  + Math.random() * 9.5;    // 07:00 - 16:30, ordinary daylight
+  else if (r < 0.80) h = 16.5 + Math.random() * 3.0;    // 16:30 - 19:30, afternoon into dusk
+  else if (r < 0.92) h = 4.8  + Math.random() * 2.2;    // 04:48 - 07:00, dawn
+  else               h = (20.0 + Math.random() * 8.0) % 24;   // night watch
+  worldTimeMs = DAY_MS * (h / 24);
+  clockLastMs = null;                 // do not bill the seeding to the clock
+  lastWeatherRollHour = -1;           // let the new hour roll its own sky
+  window.worldClockSeeded = true;
+}
+let isRaining     = false;
+let lastWeatherRollHour = -1;
+
+function biomeClimate() {
+  const def = BIOMES[currentBiome];
+  return (def && def.climate) ? def.climate : null;
+}
+
+function worldHour() { return (worldTimeMs / DAY_MS) * 24; }
+
+// +1 at noon, 0 at sunrise and sunset, -1 at midnight.
+function sunAltitude() {
+  return Math.sin(((worldHour() - SUNRISE_H) / DAY_SPAN_H) * Math.PI);
+}
+
+// 0 in full night, 1 in full day, with a smooth ramp across the horizon that
+// works out to roughly three real minutes of dawn and three of dusk.
+function daylight() {
+  const t = (sunAltitude() + 0.10) / 0.36;
+  const k = t < 0 ? 0 : t > 1 ? 1 : t;
+  return k * k * (3 - 2 * k);            // smoothstep
+}
+
+// Peaks at the horizon — the weight of the golden hour on sky and grade.
+function goldenHour() {
+  const g = 1 - Math.abs(sunAltitude()) / 0.34;
+  return g < 0 ? 0 : g > 1 ? 1 : g;
+}
+
+// How high the sun actually is, 0 at the horizon to 1 at noon.
+//
+// daylight() saturates the moment the sun clears 0.26 of altitude, which is
+// about 07:00, so from seven in the morning to five in the evening every one of
+// those hours graded identically -- and identically to the flat, colourless
+// wash that made 08:20 look like midnight. This is the term that keeps
+// changing across the day: it drives how warm the light is, how far shadows
+// throw, and how much lift the ground gets.
+function sunHeight() {
+  const a = sunAltitude();
+  return a < 0 ? 0 : a > 1 ? 1 : a;
+}
+
+// Colour of the key light. Low sun is warm and orange, high sun is close to
+// white with a trace of warmth left in it, and cloud cover pulls the whole
+// thing toward flat blue-grey skylight. One function, read by the grade, the
+// sky, the lamps and the shadows, so nothing can disagree about what the light
+// is doing.
+//
+// Held under 250 on every channel on purpose: the grade composites in
+// 'overlay', and a channel at 255 pins every mid-to-light surface to white
+// regardless of what was underneath it.
+function sunColour() {
+  const h = sunHeight(), q = skyDiffusion();
+  const r = 246, g = 176 + 62 * h, b = 116 + 108 * h;
+  // Overcast: warm key -> cool even skylight.
+  return [r + (196 - r) * q, g + (206 - g) * q, b + (224 - b) * q];
+}
+
+// How much key light actually lands. Full sun under a clear sky is 1; heavy
+// overcast is a bit over half, because the sky is still bright, it is just no
+// longer a point source.
+function keyStrength() { return 1 - 0.42 * skyDiffusion(); }
+
+// Shadows are long and soft when the sun is low, short and firm at noon, and
+// they fade out entirely under cloud -- an overcast day has no hard shadows at
+// all. Cast direction never changes: LIGHT_DX/DY is the whole scene's one
+// light vector and props bake their shadows against it, so only length and
+// density move.
+function shadowLengthScale() { return (1.55 - 0.62 * sunHeight()) * (1 - 0.25 * skyDiffusion()); }
+function shadowDensity()     { return (0.55 + 0.45 * sunHeight()) * (1 - 0.55 * skyDiffusion()); }
+
+// Air temperature lags the sun: coldest just before dawn, hottest mid
+// afternoon rather than at noon. 0 at 03:00, 1 at 15:00.
+function warmth() {
+  const h = worldHour();
+  return 0.5 - 0.5 * Math.cos((((h - 3) + 24) % 24) / 24 * Math.PI * 2);
+}
+
+// Daylight picks which band applies, warmth picks the position inside it. So
+// the reading stays within the biome's night band for the whole night and its
+// day band for the whole day, crossing between them over dawn and dusk with
+// nothing to step on. Bottoms out at nightLo just before dawn and peaks at
+// dayHi mid-afternoon. Rain knocks a few degrees off.
+function worldTemperatureF() {
+  const c = biomeClimate();
+  if (!c) return null;
+  const d = daylight(), w = warmth();
+  const lo = c.nightF[0] + (c.dayF[0] - c.nightF[0]) * d;
+  const hi = c.nightF[1] + (c.dayF[1] - c.nightF[1]) * d;
+  let t = lo + (hi - lo) * w;
+  if (isRaining) t -= 6;
+  return t;
+}
+
+function worldClockLabel() {
+  const h = worldHour();
+  const hh = Math.floor(h) % 24;
+  const mm = Math.floor((h - Math.floor(h)) * 60);
+  return (hh < 10 ? "0" : "") + hh + ":" + (mm < 10 ? "0" : "") + mm;
+}
+
+function updateWorldClock() {
+  const now = (typeof millis === 'function') ? millis() : Date.now();
+  if (clockLastMs === null) { clockLastMs = now; return; }
+  let dt = now - clockLastMs;
+  clockLastMs = now;
+  // A backgrounded tab or a breakpoint must not fast-forward the day.
+  if (!(dt > 0) || dt > 1000) dt = 16;
+  worldClockDtMs = 0;
+  if (isPaused || !started || inWorldBuildingMenu || inOverworldView || inTravelMenu) return;
+
+  worldClockDtMs = dt;
+  worldTimeMs = (worldTimeMs + dt) % DAY_MS;
+
+  // One weather roll per in-game hour — 24 chances a day, which is what makes
+  // the per-biome numbers read the way they are written: the Green Line at 15%
+  // is wet most days, Stick City at 0.09% a handful of times a year, Dry Gulch
+  // at 0.01% effectively never.
+  const h = Math.floor(worldHour());
+  if (h !== lastWeatherRollHour) {
+    lastWeatherRollHour = h;
+    rollWeather();
+  }
+}
+
+function rollWeather() {
+  const c = biomeClimate();
+  if (!c) return;
+  if (isRaining) {
+    // Showers run about two hours on average rather than flicking on and off.
+    if (Math.random() < 0.45) setRaining(false);
+  } else if (Math.random() < c.rain) {
+    setRaining(true);
+  }
+}
+
+function setRaining(on) {
+  isRaining = !!on;
+  applyBiomeWeather();
+}
+
+// Point the particle system at whatever the sky is currently doing. Rebuilds
+// the pool only when the kind actually changes.
+function applyBiomeWeather() {
+  const c = biomeClimate();
+  const kind = c ? (isRaining ? c.wet : c.clear) : null;
+  if (weather && weather.kind === kind) return;
+  if (!kind) { weather = null; return; }
+  if (weather) weather.setKind(kind);
+  else weather = new WeatherSystem(kind);
+}
+
+// Fresh roll on entering a sector, so arriving somewhere wet is possible.
+function initBiomeWeather() {
+  const c = biomeClimate();
+  isRaining = !!(c && Math.random() < c.rain);
+  lastWeatherRollHour = Math.floor(worldHour());
+  weather = null;
+  applyBiomeWeather();
+}
+
+// ###########################################################################
+//  TRAVEL SYSTEM
+//  The Travel Menu is the macro-story spine. SOUTH advances the sequence --
+//  Stick City, the Undercity, Dry Gulch, and on to the Terminus -- and NORTH
+//  walks it back. Dad's plan was always "we have to head SOUTH".
+//
+//  North out of Stick City is not a retreat: it is Sector 09, beyond the north
+//  Great Gate. That level does not exist yet, so the route is announced and
+//  held shut rather than hidden.
+// ###########################################################################
+let currentBiome = 1;
+
+const SECTOR_9_NAME = "SECTOR 09";   // north of Stick City — not yet built
+
+function travelDestination(dir) {
+  const i = BIOME_ORDER.indexOf(currentBiome);
+  if (i === -1) return null;
+  if (dir === "SOUTH") return i < BIOME_ORDER.length - 1 ? BIOME_ORDER[i + 1] : null;
+  if (dir === "NORTH") return i > 0 ? BIOME_ORDER[i - 1] : null;
+  return null;
+}
+
+// Stick City's southern wall is sealed until the south Great Gate comes down.
+// That is what the opening objective sends you at, and breaching it is what
+// opens the road south.
+function southGateOpen() {
+  return !!window.southGateBreachedStatus;
+}
+
+function canTravel(dir) {
+  const d = travelDestination(dir);
+  if (d === null) return false;
+  if (dir === "SOUTH" && currentBiome === 1 && !southGateOpen()) return false;
+  return true;
+}
+
+function travelBlockedReason(dir) {
+  if (travelDestination(dir) === null) {
+    if (dir === "SOUTH") return "(No mapped sector south. Terminus.)";
+    // North of Stick City is Sector 09; everywhere else north is just backwards.
+    return currentBiome === 1 ? "(" + SECTOR_9_NAME + " — beyond the north Great Gate. Not yet mapped.)"
+                              : "(Nothing further north.)";
+  }
+  if (dir === "SOUTH" && currentBiome === 1 && !southGateOpen()) {
+    return "(South Great Gate intact. Path blocked.)";
+  }
+  return "";
+}
+
+// -- Extraction cinematic ---------------------------------------------------
+let extraction = null;
+
+function startExtraction(dir) {
+  const dest = travelDestination(dir);
+  if (dest === null) return;
+  extraction = {
+    dir, dest,
+    from: currentBiome,
+    timer: 0,
+    dur: 190,
+    fired: false
+  };
+  inTravelMenu = false;
+  townCitizens = [];
+  if (typeof sfx !== 'undefined' && sfx.charge) sfx.charge();
+}
+
+function updateExtraction() {
+  if (!extraction) return;
+  const e = extraction;
+  e.timer++;
+
+  const t = e.timer / e.dur;
+  push();
+  // Fade to black through the first half, hold, then fade up in the new world
+  const fade = t < 0.45 ? (t / 0.45) : 1;
+  fill(0, 0, 0, 255 * Math.min(1, fade));
+  noStroke(); rect(0, 0, width, height);
+
+  if (t > 0.25) {
+    const a = Math.min(255, (t - 0.25) * 700);
+    textAlign(CENTER, CENTER); textFont('sans-serif');
+
+    fill(70, 210, 255, a); textSize(15);
+    text("GOVERNMENT DIRECTIVE — TRANSIT AUTHORISATION", width / 2, height / 2 - 120);
+
+    fill(255, 255, 255, a); textSize(38);
+    text("EXTRACTION IN PROGRESS", width / 2, height / 2 - 66);
+
+    fill(180, 180, 180, a); textSize(18);
+    text("HEADING " + e.dir, width / 2, height / 2 - 20);
+
+    const dd = BIOMES[e.dest];
+    fill(255, 200, 60, a); textSize(30);
+    text(dd.name, width / 2, height / 2 + 26);
+    fill(150, 150, 150, a); textSize(14);
+    text(dd.region, width / 2, height / 2 + 58);
+    fill(120, 120, 120, a); textSize(13);
+    text(dd.lore, width / 2, height / 2 + 84);
+
+    // Loading bar tied to actual chunk bake progress once we're in-world
+    const barW = 320;
+    noFill(); stroke(90, 90, 90, a); strokeWeight(2);
+    rect(width / 2 - barW / 2, height / 2 + 118, barW, 10, 5);
+    noStroke(); fill(70, 210, 255, a);
+    let prog = Math.min(1, t / 0.85);
+    if (e.fired && chunkMgr) {
+      const want = (CHUNK_LOAD_R * 2 + 1) ** 2;
+      let have = 0;
+      for (const c of chunkMgr.chunks.values()) if (c.tex) have++;
+      prog = Math.max(prog, Math.min(1, have / want));
+    }
+    rect(width / 2 - barW / 2 + 2, height / 2 + 120, (barW - 4) * prog, 6, 3);
+  }
+  pop();
+
+  // Mid-fade: actually swap worlds
+  if (!e.fired && t >= 0.45) {
+    e.fired = true;
+    window.travelArrival = e.dir;
+    startAtLevel(e.dest);
+  }
+
+  if (e.timer >= e.dur) {
+    extraction = null;
+    streakMsgText = "ARRIVED — " + BIOMES[currentBiome].name;
+    streakMsgTimer = 150;
+  }
+}
+
+// -- Arrival placement ------------------------------------------------------
+// Sectors run north-to-south in sequence order, so heading SOUTH into the next
+// one puts you through its northern Directive checkpoint, and doubling back
+// NORTH into the previous one puts you through its southern Border Wall
+// outpost. Both anchors are fixed in world space (checkpoint north, outpost
+// south), so the mapping is a straight consequence of which edge you cross.
+function arrivalAnchor(dir) {
+  if (dir === "SOUTH") return ANCHOR_CHECKPOINT;
+  if (dir === "NORTH") return ANCHOR_OUTPOST;
+  return ANCHOR_HELIPAD;
+}
+
+function placePlayerAtAnchor(biome, type) {
+  const a = getAnchorPos(biome, type);
+  let px2 = a.x, py2 = a.y, face = -HALF_PI;
+
+  // You always end up facing the way you were travelling: arriving at the
+  // northern checkpoint means you came south and keep going south.
+  if (type === ANCHOR_OUTPOST)         { py2 = a.y + 210; face = -HALF_PI; }
+  else if (type === ANCHOR_CHECKPOINT) { py2 = a.y + 150; face =  HALF_PI; }
+  else                                 { py2 = a.y + 190; face = -HALF_PI; }
+
+  if (player) {
+    player.x = px2; player.y = py2;
+    player.aimAngle = face;
+    player.moveAngle = face;
+  }
+  camX = px2 - (width / 2) / zoom;
+  camY = py2 - (height / 2) / zoom;
+  getBiomeState(biome).discoveredAnchors[type] = true;
+
+  if (typeof emit === 'function') emit(px2, py2, 26, color(70, 210, 255), "SPARK");
+}
+
+// ###########################################################################
+//  ENGINE HOOKS
+//  Each of these replaces a legacy function. The legacy body is preserved
+//  under a legacy* name and still runs for Level 0 and Level 8, so the
+//  prologue and the NM-0 HQ interior are byte-for-byte what they were.
+// ###########################################################################
+
+// -- Map generation ---------------------------------------------------------
+function generateMap() {
+  const hybrid = hasAuthoredCore(currentLevel);
+
+  authoredSolids = [];
+  authoredCars   = [];
+  authoredCore   = null;
+  authoredChunks = null;
+  authoredMask   = null;
+  // Residents belong to the world that is being torn down, and their chunk keys
+  // mean nothing in the next one.
+  resetPopulation();
+  // And you do not ride a horse from one sector into the next.
+  if (player && player.mounted) { player.mounted = false; player.mountFacing = undefined; }
+
+  if (!isStreamedLevel(currentLevel)) {
+    // Level 0's house and Level 8's HQ interior: closed rooms, no streaming.
+    BIOME_ACTIVE = false;
+    if (chunkMgr) { chunkMgr.dispose(); chunkMgr = null; }
+    weather = null;
+    legacyGenerateMap();
+    return;
+  }
+
+  BIOME_ACTIVE = true;
+  currentBiome = currentLevel;
+  // Pins the perlin field so terrain is identical across sessions. Layout
+  // determinism does not depend on this (that comes from chunkHash), so if the
+  // host p5 build doesn't expose it we simply carry on.
+  if (typeof noiseSeed === 'function') noiseSeed(BIOME_SEED);
+
+  // --- Authored core -------------------------------------------------------
+  // legacyGenerateMap() writes into buildings[] / parkingCars[]; lift the
+  // result out so the chunk manager can republish it every frame alongside the
+  // streamed chunks. Tagged so ground pads and the story systems can tell the
+  // hand-placed map apart from generated geometry.
+  buildings = []; parkingCars = [];
+  if (hybrid) {
+    legacyGenerateMap();
+    for (const b of buildings)   b.isAuthored = true;
+    for (const c of parkingCars) c.isAuthored = true;
+    authoredSolids = buildings;
+    authoredCars   = parkingCars;
+    authoredCore   = computeAuthoredCore(authoredSolids);
+    authoredChunks = buildAuthoredChunkSet(authoredSolids);
+    authoredMask   = buildAuthoredMask(authoredSolids);
+  }
+
+  if (chunkMgr) chunkMgr.dispose();
+  chunkMgr = new ChunkManager(currentBiome);
+  initBiomeWeather();
+
+  // Keep the authored map live from frame zero; syncAuthoredRemovals() reads
+  // this array to work out what gameplay has since destroyed.
+  buildings   = authoredSolids.slice();
+  parkingCars = authoredCars.slice();
+
+  // Seed the chunks around wherever we're about to spawn, so the first frame
+  // already has ground under it. A hybrid sector spawns you somewhere in its
+  // authored core, so centre the first residency ring there.
+  const arrive = window.travelArrival;
+  let sx0, sy0;
+  if (authoredCore) {
+    sx0 = (authoredCore.x0 + authoredCore.x1) / 2;
+    sy0 = (authoredCore.y0 + authoredCore.y1) / 2;
+  } else {
+    const ap = getAnchorPos(currentBiome, arrive ? arrivalAnchor(arrive) : ANCHOR_HELIPAD);
+    sx0 = ap.x; sy0 = ap.y;
+  }
+  chunkMgr.lastKey = null;
+  // viewLeft..viewBottom still describe wherever the camera was before this
+  // level loaded, and residency reads them. Point them at the spawn now — the
+  // camera snaps here on the next frame anyway — so the ring that gets baked
+  // is the one you are about to be looking at.
+  const halfW = (width  / zoom) / 2, halfH = (height / zoom) / 2;
+  viewLeft = sx0 - halfW; viewRight  = sx0 + halfW;
+  viewTop  = sy0 - halfH; viewBottom = sy0 + halfH;
+  chunkMgr.refreshResidency(Math.floor(sx0 / CHUNK_W), Math.floor(sy0 / CHUNK_W));
+  // Bake the whole ring up front — a one-off cost, and it lands during the
+  // fade. Arriving on a fully-resolved world is the entire point.
+  chunkMgr.warmUp((CHUNK_LOAD_R * 2 + 1) * (CHUNK_LOAD_R * 2 + 1));
+  chunkMgr.rebuildWorldArrays();
+  chunkMgr.dirty = false;
+
+  getBiomeState(currentBiome).visited = true;
+}
+
+// -- Ground rendering -------------------------------------------------------
+function drawGround() {
+  if (!BIOME_ACTIVE || !chunkMgr) { legacyDrawGround(); return; }
+  chunkMgr.drawTerrain();
+  drawAuthoredGroundOverlay();
+  chunkMgr.drawDecor();
+  // Cloud shadows land on the ground layer, under the buildings and units, so
+  // the world darkens as weather passes over without ever obscuring anything
+  // you need to read.
+  drawCloudShadows();
+}
+
+// ###########################################################################
+//  CLOUD SHADOWS
+//  The signature atmospheric effect for a top-down camera: the sky is off
+//  screen, so you show weather by what it does to the ground. A tiling cloud
+//  mask is scrolled across the world and subtracts light from the terrain.
+//
+//  Two layers at different scales and speeds give parallax — a high thin deck
+//  drifting slowly behind a lower, denser one — which is what stops it reading
+//  as a flat texture sliding around.
+//
+//  Done as a scrolled tile rather than per-blob shapes: the whole effect is
+//  4-8 image() calls a frame regardless of how much cloud there is.
+// ###########################################################################
+// How much of the sky is covered right now: a slow drift around the biome's
+// baseline, pinned high while it rains.
+function cloudCover() {
+  const c = biomeClimate();
+  const base = (c && c.cloud !== undefined) ? c.cloud : 0.35;
+  const t = worldTimeMs / DAY_MS;
+  let v = base
+        + 0.26 * Math.sin(t * Math.PI * 2 * 2.0 + currentBiome * 1.7)
+        + 0.14 * Math.sin(t * Math.PI * 2 * 5.0 + currentBiome * 3.1);
+  if (isRaining) v = Math.max(v, 0.88);
+  return v < 0 ? 0 : v > 1 ? 1 : v;
+}
+
+// Cheap deterministic hash for a cloud cell.
+function cloudHash(i, j, salt) {
+  let h = Math.imul(i, 0x27d4eb2d) ^ Math.imul(j, 0x165667b1) ^ Math.imul(salt, 0x9e3779b9);
+  h = Math.imul(h ^ (h >>> 15), 1 | h);
+  h = (h + Math.imul(h ^ (h >>> 7), 61 | h)) ^ h;
+  return ((h ^ (h >>> 14)) >>> 0) / 4294967296;
+}
+
+function drawCloudShadows() {
+  // Deliberately nothing. This pass used to scatter softBlob discs of 500 to
+  // 1600 world units across the ground -- at the game's zoom that is 300 to
+  // 1000 screen pixels, so what you actually saw was a handful of enormous
+  // pale circles overlapping each other with visible edges, sitting on the
+  // grass with no visible cause. From directly above, with no sky in frame,
+  // there is nothing on screen to explain them: they read as smudges on the
+  // lens, not as weather.
+  //
+  // Overcast is modelled where it belongs instead -- in the light itself. See
+  // skyDiffusion(): cloud cover now takes the edge off the sun, cools the key,
+  // flattens the shadows and drops the contrast, which is exactly what a
+  // cloudy day looks like and costs nothing to draw. Kept as a no-op so the
+  // ground stack keeps its shape and nothing else has to know.
+}
+
+// How diffuse the light is right now, 0 = hard direct sun, 1 = fully overcast.
+// This is the single number that carries weather into the lighting: it is read
+// by the grade, by the shadow pass and by the sky.
+function skyDiffusion() {
+  const c = cloudCover();
+  const d = c < 0 ? 0 : c > 1 ? 1 : c;
+  return d * d * (3 - 2 * d);          // smoothstep -- thin cloud barely counts
+}
+
+
+// The chunk terrain is the ground everywhere, including under the authored
+// core — that is what makes the seam invisible, since the CITY layout lays its
+// blocks and streets on the same 1200 pitch the hand-authored grid uses.
+//
+// The one thing worth painting back on top is Dry Gulch's western town: its
+// boardwalks, wagon ruts, plaza and entrance arch are hand-drawn and the
+// FRONTIER terrain has no equivalent. Everything else the authored ground used
+// to draw — base fills, the farmland patch, the shanty-town roads, Level 4's
+// road grid — is flat colour meant to sit on flat colour, and laying it over
+// the streamed terrain just cuts hard-edged rectangles across it. Dropped.
+function drawAuthoredGroundOverlay() {
+  if (!authoredCore) return;
+  if (currentLevel === 3) legacyDrawGround(true);
+}
+
+// -- Spawn selection --------------------------------------------------------
+// In an endless world "pick a random point on the map" is meaningless, so
+// spawns are chosen on a ring around the player instead of a fixed rectangle.
+function getSafeSpawn(away) {
+  if (!BIOME_ACTIVE) return legacyGetSafeSpawn(away);
+
+  // Fresh arrival: the player's own spawn is the travel anchor
+  if (!away && window.__biomeAnchorPending) {
+    const a = getAnchorPos(currentBiome, window.__biomeAnchorPending);
+    return { x: a.x, y: a.y + 190 };
+  }
+
+  const cx2 = player ? player.x : 0;
+  const cy2 = player ? player.y : 0;
+  const minR = away ? 620 : 140;
+  const maxR = away ? 1500 : 900;
+
+  for (let att = 0; att < 220; att++) {
+    const a = Math.random() * TWO_PI;
+    const r = minR + Math.random() * (maxR - minR);
+    const rx = cx2 + Math.cos(a) * r;
+    const ry = cy2 + Math.sin(a) * r;
+    if (!insideSector(rx, ry)) continue;
+    // Never drop a random hostile into a settlement whose story arc is still
+    // running, even when the player is standing just outside it.
+    if (away && isStoryMode && hasAuthoredCore(currentLevel) && !storyArcCleared(currentLevel) &&
+        inAuthoredSector(rx, ry, 500)) continue;
+
+    let hit = false;
+    for (const b of buildings) {
+      if (b.noClip) continue;
+      if (b.isPalm || b.isAlienPlant || b.isEnergyPole) continue;
+      if (b.isGrassLot && !b.isPond) continue;
+      if (rx + 40 > b.x - b.w / 2 && rx - 40 < b.x + b.w / 2 &&
+          ry + 40 > b.y - b.h / 2 && ry - 40 < b.y + b.h / 2) { hit = true; break; }
+    }
+    if (!hit) {
+      for (const c of parkingCars) {
+        if (rx + 40 > c.x - 25 && rx - 40 < c.x + 25 && ry + 40 > c.y - 45 && ry - 40 < c.y + 45) { hit = true; break; }
+      }
+    }
+    if (!hit) return { x: rx, y: ry };
+  }
+  // Last resort: step back toward the middle of the sector rather than blindly
+  // outward, which near a wall is the one direction that cannot work.
+  if (sealedSector) {
+    const mx = (sealedSector.x0 + sealedSector.x1) / 2;
+    const my = (sealedSector.y0 + sealedSector.y1) / 2;
+    const a2 = Math.atan2(my - cy2, mx - cx2);
+    return { x: cx2 + Math.cos(a2) * 700, y: cy2 + Math.sin(a2) * 700 };
+  }
+  return { x: cx2 + 700, y: cy2 + 700 };
+}
+
+// -- Level entry ------------------------------------------------------------
+function startAtLevel(lvl, isLoading = false) {
+  const arrive = window.travelArrival;
+  if (isBiomeLevel(lvl) && arrive) {
+    window.__biomeAnchorPending = arrivalAnchor(arrive);
+  } else if (isBiomeLevel(lvl)) {
+    window.__biomeAnchorPending = ANCHOR_HELIPAD;
+  } else {
+    window.__biomeAnchorPending = null;
+  }
+
+  legacyStartAtLevel(lvl, isLoading);
+
+  // The Travel Menu reads currentBiome for its sector names and its north/south
+  // destinations, so it has to track the current sector whether that sector is
+  // still an authored story arena or already a streamed world.
+  if (lvl >= 1 && lvl <= 7) currentBiome = lvl;
+
+  // legacyStartAtLevel() wipes the story flags on every entry, which is right
+  // for a fresh sector but wrong when re-entering one mid-arc (the NM-0 HQ round
+  // trip rebuilds Stick City underneath the player). Put the authored world back
+  // the way the player left it.
+  if (isStoryMode && !isBiomeLevel(lvl)) restoreAuthoredStoryState(lvl);
+
+  // legacyStartAtLevel() can push more authored geometry after generateMap()
+  // has already lifted the map out — Stick City's two gate-guard target walls.
+  // Adopt anything new so the chunk manager republishes it rather than dropping
+  // it the first time chunk residency changes.
+  adoptLateAuthoredSolids();
+
+  if (isBiomeLevel(lvl)) {
+    currentBiome = lvl;
+    // Arriving by Travel Menu overrides any scripted story placement so the
+    // player always lands on a Directive structure.
+    if (arrive) {
+      placePlayerAtAnchor(lvl, arrivalAnchor(arrive));
+      streakMsgText = BIOMES[lvl].name + " — " + BIOMES[lvl].region;
+      streakMsgTimer = 200;
+    } else if (player) {
+      // Fresh entry (new game / level select): helipad drop
+      const st = getBiomeState(lvl);
+      if (!st.visited || !isStoryMode) placePlayerAtAnchor(lvl, ANCHOR_HELIPAD);
+    }
+    if (chunkMgr && player) { chunkMgr.lastKey = null; chunkMgr.update(player.x, player.y); }
+  } else if (arrive && BIOMES[lvl]) {
+    // Travelling into a sector that is still authored still announces itself,
+    // and lands on that map's own border structure rather than a random spot.
+    placePlayerAtAuthoredEntry(lvl, arrive);
+    streakMsgText = BIOMES[lvl].name + " — " + BIOMES[lvl].region;
+    streakMsgTimer = 200;
+  }
+
+  // A hybrid sector seeded its first chunks around the core's centre before the
+  // player existed. Now that they are placed, recentre residency on them.
+  if (authoredCore && chunkMgr && player) {
+    chunkMgr.lastKey = null;
+    chunkMgr.update(player.x, player.y);
+  }
+
+  window.travelArrival = null;
+  window.__biomeAnchorPending = null;
+}
+
+// -- Authored-sector arrival -------------------------------------------------
+// Streamed sectors drop you on a Directive anchor. Authored ones have real
+// borders already drawn into the map, so arrivals land on those instead.
+// The Undercity lies south of Stick City, so doubling back NORTH into Stick
+// City walks you in through its south Great Gate; arriving from the north
+// (Sector 09, once it exists) comes through the north gate.
+function placePlayerAtAuthoredEntry(lvl, dir) {
+  if (!player) return;
+  let px2 = player.x, py2 = player.y, face = player.aimAngle;
+
+  if (lvl === 1) {
+    const viaSouthGate = (dir === "NORTH");
+    const gate = buildings.find(b => b.isGovFortress && (viaSouthGate ? b.y > 0 : b.y < 0));
+    if (!gate) return;
+    // Just inside the gate, on the city side of it, facing into the city.
+    px2 = gate.x;
+    py2 = viaSouthGate ? gate.y - gate.h / 2 - 300 : gate.y + gate.h / 2 + 300;
+    face = viaSouthGate ? -HALF_PI : HALF_PI;
+  } else {
+    return;   // sector 2's authored spawn is already set by legacyStartAtLevel
+  }
+
+  player.x = px2; player.y = py2;
+  player.aimAngle = face; player.moveAngle = face;
+  camX = px2 - (width / 2) / zoom;
+  camY = py2 - (height / 2) / zoom;
+  if (typeof emit === 'function') emit(px2, py2, 26, color(70, 210, 255), "SPARK");
+}
+
+// -- Authored-sector continuity ---------------------------------------------
+// legacyStartAtLevel() clears towersDefeated, the ambush counters and the
+// cutscene flags every time it runs, and legacyGenerateMap() rebuilds the
+// towers and both Great Gates at full health. That is correct for a first
+// entry, but Stick City is re-entered mid-arc (out of the NM-0 HQ, and off a
+// save), so the permanent progress flags have to be re-applied to the freshly
+// built map or the player walks back into towers they already dropped.
+function restoreAuthoredStoryState(lvl) {
+  if (lvl !== 1 && lvl !== 2) return;
+  const t = (typeof townsData !== 'undefined') ? townsData[lvl] : null;
+
+  // Towers you actually dropped stay dropped. Recorded per sector rather than
+  // read off the town being established, because the genocide route establishes
+  // a town with both towers still standing — those have to come back up.
+  if (window.towersDefeated || (t && t.towersDown)) {
+    window.towersDefeated = true;
+    for (let i = buildings.length - 1; i >= 0; i--) {
+      if (buildings[i].isTower) buildings.splice(i, 1);
+    }
+  }
+
+  // A breached Great Gate stays breached — this is what keeps the "ENTER NM-0
+  // HQ" prompt alive after the HQ round trip, and what keeps travel north open.
+  if (lvl === 1) {
+    for (const b of buildings) {
+      if (!b.isGovFortress) continue;
+      if (b.y < 0 && (window.northGateBreachedStatus || window.northGateBreached)) b.hp = 0;
+      if (b.y > 0 && window.southGateBreachedStatus) b.hp = 0;
+    }
+  }
+
+  // Same for the Undercity's curtain wall. Blowing it open is a real cost in
+  // rockets and it is the only way through the sector, so it is not something
+  // to make the player pay for twice on a re-entry or a reload.
+  if (lvl === 2) {
+    for (const b of buildings) {
+      if (!b.isGovFortress) continue;
+      if (b.y < 0 && window.undercityNorthBreached) b.hp = 0;
+      if (b.y > 0 && window.undercitySouthBreached) b.hp = 0;
+    }
+  }
+}
+
+// -- Per-frame streaming + memory management --------------------------------
+// This replaces the old no-op stub and is already called once per frame from
+// draw(), so no extra call site is needed.
+function manageChunkMemory() {
+  if (!BIOME_ACTIVE || !chunkMgr || !player) return;
+  chunkMgr.update(player.x, player.y);
+  if (weather) weather.update();
+  cullDistantEnemies();
+}
+
+// Enemies left far behind in an endless world are pure cost. Recycle them.
+function cullDistantEnemies() {
+  if (frameCount % 45 !== 0) return;
+  if (!player) return;
+  const limit = CHUNK_W * (CHUNK_KEEP_R + 1);
+  for (let i = enemiesList.length - 1; i >= 0; i--) {
+    const e = enemiesList[i];
+    if (!e || e.isFriendly || e.isMilitary) continue;   // never drop the squad
+    if (e.eType === "DAD" || e.eType === "SIA") continue;
+    // Scripted ambushers spawn at fixed map coordinates — the Great Gates are
+    // 4000+ units from where the town cutscene leaves you. Recycling them would
+    // silently gut the ambush the moment a hybrid sector starts streaming.
+    if (e.isAmbush) continue;
+    const dx = e.x - player.x, dy = e.y - player.y;
+    if (dx * dx + dy * dy > limit * limit) enemiesList.splice(i, 1);
+  }
+  // Corpses and splatter far away can go too
+  for (let i = corpses.length - 1; i >= 0; i--) {
+    const c = corpses[i];
+    const dx = c.x - player.x, dy = c.y - player.y;
+    if (dx * dx + dy * dy > (limit * 1.4) ** 2) corpses.splice(i, 1);
+  }
+}
+
+// -- Sky ---------------------------------------------------------------------
+function biomeBackground() {
+  const s = BIOMES[currentBiome].sky;
+  const d = daylight(), g = goldenHour(), h = sunHeight();
+  // The biome's own sky is its midday colour; blend it down to a common night
+  // sky and warm the band while the sun is on the horizon.
+  const nr = 7, ng = 11, nb = 26;
+  let r = nr + (s[0] - nr) * d;
+  let gg = ng + (s[1] - ng) * d;
+  let b = nb + (s[2] - nb) * d;
+  // Lift with the sun. Without this the sky sat at exactly the biome's stored
+  // colour from seven in the morning to five at night -- the same flat grey as
+  // the roads, which is a large part of why the world never read as lit.
+  const lift = 34 * h * d;
+  r += lift; gg += lift * 0.98; b += lift * 0.92;
+  r += 62 * g; gg += 24 * g; b -= 4 * g;
+  background(r < 0 ? 0 : r > 255 ? 255 : r,
+             gg < 0 ? 0 : gg > 255 ? 255 : gg,
+             b < 0 ? 0 : b > 255 ? 255 : b);
+}
+
+// -- Debug / telemetry readout ----------------------------------------------
+function drawBiomeHud() {
+  if (!BIOME_ACTIVE || !chunkMgr || !window.showChunkDebug) return;
+  push();
+  fill(0, 170); noStroke(); rect(10, height - 96, 240, 84, 6);
+  fill(0, 255, 160); textAlign(LEFT, TOP); textSize(11); textFont('monospace');
+  const c = chunkMgr.worldToChunk(player.x, player.y);
+  text("BIOME   " + currentBiome + "  " + BIOMES[currentBiome].name, 20, height - 88);
+  text("CHUNK   " + c.cx + ", " + c.cy, 20, height - 74);
+  text("LIVE    " + chunkMgr.chunks.size + "   QUEUE " + chunkMgr.bakeQ.length, 20, height - 60);
+  text("BAKED   " + chunkMgr.stats.baked + "   EVICT " + chunkMgr.stats.evicted, 20, height - 46);
+  text("SOLIDS  " + buildings.length + "   FPS " + Math.round(frameRate()), 20, height - 32);
+  pop();
+}
