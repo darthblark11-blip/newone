@@ -184,6 +184,38 @@ taper with the paint*. Canal and river solids are skipped wherever the taper has
 the channel — otherwise you get an invisible wall standing on dry ground beside the
 city. `tools/check-render.js` guards exactly this.
 
+### Sub-biomes (Sector 2's woodland)
+
+A biome is one palette and one layout; a landscape is not. `woodRegion(biome, wx, wy)`
+resolves six regions off three slow world-space fields — `MEADOW · TIMBER · MARSH ·
+HEATH · BURN · FARM` — at roughly a three-chunk patch size. Measured coverage: meadow
+35%, timber 21%, marsh 16%, burn 11%, farm 10%, heath 7%.
+
+The system has two halves and they answer different questions:
+
+- **Tone is continuous.** One extra noise lattice (`latD`) in `bakeChunkTerrain`, applied
+  per texel as an (r,g,b) swing from `ZONE_TINT[layout]`. Three multiply-adds, no seam
+  possible, and it is what stops a kilometre of the same grass reading as a tiled
+  texture. Only `WOODLAND`/`CITY`/`CITY_DENSE` have a tint; everything else is untouched.
+- **Content is discrete, and asked per FEATURE — never per chunk.** A tree checks the
+  region at its own trunk (`RG_TREES` gives the acceptance rate, `RG_CANOPY` the foliage
+  colour bias); a piece of clutter checks it at its own position; each pass of regional
+  ground paint checks it at its own sample point. A boundary then comes out as one kind
+  of thing thinning while another thickens, which is what an ecotone looks like — rather
+  than a line down a chunk edge where everything changes at once.
+
+The exception is the handful of set pieces that only make sense several pieces at a time
+— a boulder field, a hedged field, a spread of marsh pools — which are decided once from
+the region at the chunk's own middle.
+
+**Set pieces are placed before the timber, and by attempts rather than by the lattice.**
+Both matter. The lattice hands out whole cells, and once a trunk road, a river and thirty
+trees have taken their share of a 64-cell grid there is no contiguous 5×4 block left:
+asking it for a field failed in four chunks out of five and a stone row never landed at
+all. `findSpot(w, h, pad)` inside the `WOODLAND` case asks the far weaker question a set
+piece actually needs — is this patch of ground clear — and the lattice keeps the scatter
+around it honest.
+
 ### Water and decks
 
 Two flags carry the semantics, because neither is an ordinary mass:
@@ -215,7 +247,7 @@ reach the centreline.
 | # | Name | Layout | Weather | Character |
 |---|---|---|---|---|
 | 1 | Stick City | `CITY` | ACID_RAIN | Grid megablock, always authored core; canal and tram rows |
-| 2 | The Undercity | `WOODLAND` | ACID_RAIN | Dark; `CITY_DENSE` inside the curtain wall, road network and rivers outside |
+| 2 | The Undercity | `WOODLAND` | ACID_RAIN | Dark; `CITY_DENSE` inside the curtain wall, road network, rivers and six sub-biomes outside |
 | 3 | Dry Gulch | `FRONTIER` | DUST | Agrarian belt, ghost town, mine bench relief |
 | 4 | The Green Line | `JUNGLE` | FOG | Overgrown military cordon |
 | 5 | The White Silence | `TUNDRA` | SNOW | Sparse, `clutterDensity: 0.35` |
@@ -299,9 +331,13 @@ The micro-prop art. Target-aware: same code paints into a chunk buffer or the li
 canvas. Every prop gets a **contact shadow** so it sits *on* the ground rather than
 floating. Existing cases:
 
-`PEBBLE · TRASH · PAPER · PUDDLE · WEED · CRACK · GRASS · TUMBLEWEED · BONE · SAGE ·
-VINE · FERN · LOG · STUMP · MUSHROOM · REED · ICE · DRIFT · SPOREPOD · GLOWMOSS ·
-SHARD · RIPPLE · MANHOLE · CONE · TREE`
+`PEBBLE · TRASH · PAPER · PUDDLE · WEED · CRACK · GRASS · FLOWER · HEATHER · ASH ·
+TUMBLEWEED · BONE · SAGE · VINE · FERN · LOG · STUMP · MUSHROOM · REED · ICE · DRIFT ·
+SPOREPOD · GLOWMOSS · SHARD · RIPPLE · MANHOLE · CONE · TREE · PINE · SNAG`
+
+`pickClutterType(def, rng, layout, region)` takes the sub-biome as a fourth argument and
+keeps a separate rotation per region. Ground cover is the fastest read a sub-biome has —
+the litter under your feet changes several strides before the tree line does.
 
 `CLUTTER_ANIMATED` (~14467) decides baked vs live. A type goes in the live list only
 if it animates (`TUMBLEWEED`, `SPOREPOD`, `GLOWMOSS`, `SHARD`) **or** it is too large
@@ -333,7 +369,9 @@ It culls with `inView()` before the switch.
 - Civic square: `FOUNTAIN · PLANTER · BENCH`
 - Building site: `HOARDING · SPOIL · MATERIALS · SITEHUT`
 - Street furniture: `HYDRANT · POSTBOX · KIOSK · BUSSTOP`
-- Woodland: `CABIN · LOGPILE · SIGNPOST · RUINWALL`
+- Woodland: `CABIN · LOGPILE · SIGNPOST · RUINWALL · MONOLITH · HEDGE · WATCHTOWER`
+- Surfaces drawn in the ground pass by `drawBiomeDecks()`: `BRIDGE · CANALBRIDGE ·
+  BOARDWALK` (the deck only — their rails and parapets are in `drawBiomeProps()`)
 - Collision only, no art by design: `RIVER · CANAL`
 
 Two conventions worth keeping:
@@ -446,21 +484,36 @@ drawGround()               → chunkMgr.drawTerrain() → drawAuthoredGroundOver
                              (or legacyDrawGround() when not BIOME_ACTIVE)
 drawBuildingPads()
 drawGroundLots()
+drawBiomeDecks()           (BIOME_ACTIVE only) — bridge and boardwalk surfaces
 drawBloodChunks()
 updateCorpses()
+─── everything above is GROUND. Everything below is drawn OVER the player. ───
+player.show() / updateEntities()      ← the player and every character
 drawBuildingShadows()      → drawBiomeShadows() in biomes
-drawBiomeProps()           (BIOME_ACTIVE only)
-updateEntities()
-drawParkingCars()
 drawBuildings()
+drawBiomeProps()           (BIOME_ACTIVE only)
+drawParkingCars()
 projectiles / particles / orbs / shockwaves
 drawNightLights() + weather.drawWorld()   (BIOME_ACTIVE only)
 drawLightPass() + drawBiomeScreenLayer()  (BIOME_ACTIVE only)
 drawUI() / drawBiomeHud() / updateExtraction()
 ```
 
+**The characters are drawn in the middle of this list, not at the end.**
+`drawBuildings()` and `drawBiomeProps()` run *after* them on purpose: a roof has to
+occlude anyone standing inside its footprint, which is what tells you they are behind
+it. That makes the ordering question for any new art "is this a mass or a surface?":
+
+- **A mass** (building, boulder, hedge, parapet, tree canopy) goes in the late pass and
+  draws over the player. That is correct.
+- **A surface** (bridge deck, boardwalk, road, lot, water) must go in the ground stack,
+  before the characters, or the player walks *under* it. `drawBiomeDecks()` exists for
+  exactly this: it draws the flat half of every `isDeck` prop, and the standing half —
+  handrails, parapets — stays in `drawBiomeProps()` so the far rail still passes in
+  front of whoever is crossing.
+
 Anything new must be inserted at the layer that matches its physical height, or it will
-read as floating.
+read as floating — or, worse, swallow the player.
 
 ---
 
@@ -531,8 +584,14 @@ What is asserted: chunks regenerate bit-for-bit; roads and rivers meet at seams 
 inside their own row; a solved crossing lands on both curves and inside its chunk; the
 gap left for a deck actually clears it; no two solids in a chunk intersect; every chunk
 bakes without throwing; every clutter type has art; every emitted `propType` has a branch
-in `drawBiomeProps`; and water collision never survives where the core taper has closed
-the channel.
+in `drawBiomeProps` or `drawBiomeDecks`; and water collision never survives where the
+core taper has closed the channel.
+
+`tools/harness.js` stands in for `noise()` with **four octaves at halving amplitude**,
+because p5's is octave-summed and therefore bell-shaped around 0.5 where a single lattice
+is close to uniform. Every threshold in the world generation is a percentile of that
+distribution, so a flat stand-in reports region coverage and feature frequencies the real
+game never produces. Do not tune a threshold against a flat-noise measurement.
 
 ## Files
 

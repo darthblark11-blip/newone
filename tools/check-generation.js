@@ -155,7 +155,8 @@ for (const b of [1, 2]) {
           // box on its corner are one post, and the four runs of a site
           // hoarding meet at the corners because a fence is closed.
           const pair = [a.propType, c.propType].sort().join('|');
-          if (pair === 'CHECKPOINT|GUARDBOX' || pair === 'HOARDING|HOARDING') continue;
+          if (pair === 'CHECKPOINT|GUARDBOX' || pair === 'HOARDING|HOARDING' ||
+              pair === 'HEDGE|HEDGE') continue;   // a fence corner is closed
           const ox2 = (a.w + c.w) / 2 - Math.abs(a.x - c.x);
           const oy2 = (a.h + c.h) / 2 - Math.abs(a.y - c.y);
           if (ox2 > 0 && oy2 > 0) {
@@ -197,7 +198,20 @@ ok('every chunk bakes without throwing', threw === null, threw || '');
 console.log('\n== clutter ==');
 const types = new Set();
 for (const lay of ['CITY', 'CITY_DENSE', 'WOODLAND']) {
-  for (let i = 0; i < 4000; i++) types.add(P(`pickClutterType(BIOMES[2], makeRng(${i * 7 + 3}), "${lay}")`));
+  for (let i = 0; i < 3000; i++) types.add(P(`pickClutterType(BIOMES[2], makeRng(${i * 7 + 3}), "${lay}")`));
+}
+// Every sub-biome's own rotation as well, and every species the generator
+// pushes into decor directly rather than through pickClutterType.
+for (const rg of ['MEADOW', 'TIMBER', 'MARSH', 'HEATH', 'BURN', 'FARM']) {
+  for (let i = 0; i < 3000; i++) types.add(P(`pickClutterType(BIOMES[2], makeRng(${i * 11 + 5}), "WOODLAND", "${rg}")`));
+}
+for (const b of [1, 2]) {
+  probe(`authoredCore = null; authoredChunks = null; authoredMask = null; biomeState = {}; currentLevel = ${b}; currentBiome = ${b};`);
+  for (let cx = -8; cx <= 8; cx++) for (let cy = -8; cy <= 8; cy++) {
+    const ch = P(`generateChunkContent(${b}, ${cx}, ${cy})`);
+    for (const d of ch.decor) types.add(d.t);
+    for (const d of ch.decorBake) types.add(d.t);
+  }
 }
 const painted = [];
 for (const t of types) {

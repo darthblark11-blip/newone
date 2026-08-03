@@ -13,8 +13,11 @@ const seen = new Set();
 for (const b of [1, 2]) {
   probe(`authoredCore = null; authoredChunks = null; authoredMask = null; biomeState = {};
          currentLevel = ${b}; currentBiome = ${b}; BIOME_ACTIVE = true;`);
+  // Wide enough to catch the rare landmarks -- a stone row turns up in roughly
+  // one chunk in ninety, and a prop that is never drawn is never tested.
   const all = [];
-  for (let cx = -7; cx <= 7; cx++) for (let cy = -7; cy <= 7; cy++) {
+  const R = b === 2 ? 13 : 8;
+  for (let cx = -R; cx <= R; cx++) for (let cy = -R; cy <= R; cy++) {
     const ch = P(`generateChunkContent(${b}, ${cx}, ${cy})`);
     for (const s of ch.solid) { all.push(s); if (s.propType) seen.add(s.propType); }
   }
@@ -34,9 +37,16 @@ console.log('   prop types drawn: ' + Array.from(seen).sort().join(' '));
 
 // Every propType the generators emit must have a branch in drawBiomeProps,
 // otherwise it is a solid with no art -- an invisible wall.
-const cases = new Set(require('fs').readFileSync(process.env.GAME_JS || __dirname + '/../game.js','utf8')
-  .split('function drawBiomeProps')[1].split(/\n}\n/)[0]
-  .split('\n').map(l => (l.match(/^\s*case "([A-Z]+)":/) || [])[1]).filter(Boolean));
+const src = require('fs').readFileSync(process.env.GAME_JS || __dirname + '/../game.js','utf8');
+const cases = new Set();
+// drawBiomeProps dispatches on a switch; drawBiomeDecks on an if-chain, because
+// a deck is drawn in the ground stack rather than with the standing props.
+for (const l of src.split('function drawBiomeProps')[1].split(/\n}\n/)[0].split('\n')) {
+  const m = l.match(/^\s*case "([A-Z]+)":/); if (m) cases.add(m[1]);
+}
+for (const m of src.split('function drawBiomeDecks')[1].split(/\n}\n/)[0].matchAll(/propType === "([A-Z]+)"/g)) {
+  cases.add(m[1]);
+}
 const invisible = Array.from(seen).filter(t => !cases.has(t));
 console.log('   deliberately invisible (collision only): ' + invisible.join(' '));
 ok('the only art-less props are the water volumes',

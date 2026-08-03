@@ -10,12 +10,22 @@ const vm = require('vm');
 // world generation actually requires of it.
 function fade(t){ return t*t*t*(t*(t*6-15)+10); }
 function hash2(x,y){ let h=Math.imul(x^0x9e3779b9,0x85ebca6b)^Math.imul(y^0x27d4eb2f,0xc2b2ae35); h=Math.imul(h^(h>>>15),0x2545f491); return ((h^(h>>>13))>>>0)/4294967296; }
-function noise(x,y){
-  x=x||0; y=y||0;
+function lattice(x,y){
   const xi=Math.floor(x), yi=Math.floor(y), xf=x-xi, yf=y-yi;
   const u=fade(xf), v=fade(yf);
   const a=hash2(xi,yi), b=hash2(xi+1,yi), c=hash2(xi,yi+1), d=hash2(xi+1,yi+1);
   return (a+(b-a)*u)*(1-v)+(c+(d-c)*u)*v;
+}
+// p5's noise() is four octaves at halving amplitude, which matters here for
+// more than texture: octave-summed noise is bell-shaped around 0.5, where a
+// single lattice is close to uniform. Every threshold in the world generation
+// is a percentile of that distribution, so a flat stand-in would report region
+// coverage and feature frequencies that the real game never produces.
+function noise(x,y){
+  x=x||0; y=y||0;
+  let v=0, amp=0.5, f=1, tot=0;
+  for (let o=0;o<4;o++){ v += lattice(x*f, y*f)*amp; tot += amp; amp*=0.5; f*=2; }
+  return v/tot;
 }
 
 const calls = { shape: 0, fill: 0, stroke: 0, img: 0 };
