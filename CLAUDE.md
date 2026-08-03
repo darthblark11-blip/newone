@@ -141,6 +141,68 @@ Travel plumbing: `travelDestination`, `canTravel`, `travelBlockedReason`,
 `startExtraction`, `updateExtraction`, `arrivalAnchor`, `placePlayerAtAnchor`
 (~17802–17960).
 
+### The overworld network (Sectors 1 and 2)
+
+Sits between the trail helpers and the chunk generator, and is read by **both**
+`generateChunkContent()` and `bakeBiomeDetail()` — that is the whole point of it. All
+of it is decided by one axis index, so a chunk can answer questions about a neighbour
+it has never generated.
+
+```
+axisHash(biome, i, salt)        // stable 0..1 per column OR per row
+woodHasTrunk(biome, cx)         // ~42% of columns. Column 0 always — the anchors sit on it
+woodHasLink(biome, cy)          // ~25% of rows, never a river row
+woodHasRiver(biome, cy)         // ~24% of rows
+woodLinkY(biome, cy, wx)        // east-west centreline, f(row, world x)
+woodRiverY / woodRiverHalf      // ditto, plus a width that breathes along its length
+woodCrossing(biome, cx, cy)     // where a trunk meets the water → {x, y, half, ford}
+woodJunction(biome, cx, cy)     // where a trunk meets a link
+woodSpur(biome, cx, cy)         // dead-end fork, wholly inside one chunk
+cityHasCanal / cityCanalY / cityCanalHalf     // east-west waterway through a block row
+cityHasTram(biome, cy)          // rails on the street along row cy's NORTH edge
+cityZoneAt(biome, ox, oy)       // PARK PLAZA INDUSTRIAL CONSTRUCTION COMMERCIAL RESIDENTIAL
+coreTaperX / coreTaperY         // 0..1, eases to 0 approaching the authored core
+```
+
+Three rules this layer exists to enforce:
+
+1. **North-south features are a function of column and world y; east-west features are a
+   function of row and world x.** Never of the chunk record. That is what makes a river
+   meet itself across a vertical seam and a road meet itself across a horizontal one.
+2. **Crossings are solved, not stored.** `woodCrossing` and `woodJunction` iterate a
+   fixed-point solve over the two centrelines. The chunk north of a river and the chunk
+   south of it both get the same answer without either having generated the other, which
+   is what lets the approach roads on both banks aim at the same deck.
+3. **Anything with its own rng stream keeps it.** `woodSpur` builds its own
+   `makeRng(chunkHash(…, 6553))` rather than drawing from the caller's, because the
+   generator and the bake run against different seeds. Drawing from either would put the
+   painted road and the clearing it leads to in different places.
+
+**`coreTaperX` / `coreTaperY` are not optional.** A waterway or road that runs into
+hand-authored ground has to ease out over its last ~430 units, and *collision has to
+taper with the paint*. Canal and river solids are skipped wherever the taper has closed
+the channel — otherwise you get an invisible wall standing on dry ground beside the
+city. `tools/check-render.js` guards exactly this.
+
+### Water and decks
+
+Two flags carry the semantics, because neither is an ordinary mass:
+
+- **`isRiver`** — blocks characters, but not bullets, orbs or line of sight. Only the
+  deep channel is solid; the painted shallows either side are passable, so brushing the
+  bank costs a step sideways rather than stopping you on a line you cannot see. Emitted
+  as `propType: "RIVER"` / `"CANAL"` biome props with **no case in `drawBiomeProps()`** —
+  they are collision volumes only; the water you see is baked into the terrain.
+- **`isDeck`** — never blocks anything. Bridges are built to be stood on.
+
+Both are handled in `Character.checkCol`, `updateBullets`, `hasLOS`, `updateOrbs` and
+`getPatrolBuilding`. **A new water body or walkable surface needs all five.**
+
+Crossings come in two grades on purpose — `BRIDGE` (a structure, visible from a
+distance, a destination) and a ford (a gravel bar, no structure, just the evidence of
+one). The gap left in the collision run must clear the deck's *own width*, not merely
+reach the centreline.
+
 ---
 
 ## The seven biomes
@@ -152,8 +214,8 @@ Travel plumbing: `travelDestination`, `canTravel`, `travelBlockedReason`,
 
 | # | Name | Layout | Weather | Character |
 |---|---|---|---|---|
-| 1 | Stick City | `CITY` | ACID_RAIN | Grid megablock, always authored core |
-| 2 | The Undercity | `WOODLAND` | ACID_RAIN | Dark; `CITY_DENSE` inside the curtain wall, open country outside |
+| 1 | Stick City | `CITY` | ACID_RAIN | Grid megablock, always authored core; canal and tram rows |
+| 2 | The Undercity | `WOODLAND` | ACID_RAIN | Dark; `CITY_DENSE` inside the curtain wall, road network and rivers outside |
 | 3 | Dry Gulch | `FRONTIER` | DUST | Agrarian belt, ghost town, mine bench relief |
 | 4 | The Green Line | `JUNGLE` | FOG | Overgrown military cordon |
 | 5 | The White Silence | `TUNDRA` | SNOW | Sparse, `clutterDensity: 0.35` |
@@ -183,7 +245,20 @@ alpha blending) is paid once per chunk. Noise is sampled on a coarse lattice and
 bilinearly interpolated — ~2,500 lookups instead of ~40,000.
 
 Helpers: `softStamp` (soft-edged blob), `bakeRibbon` (a road/river that follows a
-centre function down the chunk), `bakeStreet` (straight street with optional open ends).
+centre function down the chunk), `bakeRibbonH` (the same thing running east-west),
+`bakeStreet` (straight street with optional open ends), `bakeWatercourse` (bank →
+shallows → channel → current streaks).
+
+`bakeRibbonH` takes an optional `shoulders` count (default 5) and, if you pass small
+multipliers for `edgeHalf`/`coreHalf` and the real half-width through `widthAt`, defines
+the ribbon entirely in units of its own width — which is how a river gets a channel that
+breathes along its length.
+
+**Ribbon layer counts are the most expensive knob in the bake.** Every layer is another
+full-chunk polygon. A woodland river row already carries the column's trunk road and
+usually a spur, so the watercourse deliberately runs at 5+6 layers and 3 shoulders where
+a road uses 12 and 5. Measured in draw calls per chunk (`tools/`): biome 2 averages
+~1460 with a worst case of ~3400 on a trunk+river+spur chunk.
 
 ### 2. `bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, layout)` — ~14846
 
@@ -224,7 +299,9 @@ The micro-prop art. Target-aware: same code paints into a chunk buffer or the li
 canvas. Every prop gets a **contact shadow** so it sits *on* the ground rather than
 floating. Existing cases:
 
-`PEBBLE · TRASH · PAPER · PUDDLE · WEED · CRACK · TUMBLEWEED · BONE · SAGE · VINE · FERN · LOG · ICE · DRIFT · SPOREPOD · GLOWMOSS · SHARD · TREE`
+`PEBBLE · TRASH · PAPER · PUDDLE · WEED · CRACK · GRASS · TUMBLEWEED · BONE · SAGE ·
+VINE · FERN · LOG · STUMP · MUSHROOM · REED · ICE · DRIFT · SPOREPOD · GLOWMOSS ·
+SHARD · RIPPLE · MANHOLE · CONE · TREE`
 
 `CLUTTER_ANIMATED` (~14467) decides baked vs live. A type goes in the live list only
 if it animates (`TUMBLEWEED`, `SPOREPOD`, `GLOWMOSS`, `SHARD`) **or** it is too large
@@ -232,13 +309,43 @@ and too round to survive rasterising at 3.125 world units per texel (`TREE` — 
 canopy lobe is 9 texels and comes back as hard squares).
 
 **Adding a clutter type = three edits:** a `case` in `paintClutter`, a return in
-`pickClutterType`, and a `CLUTTER_ANIMATED` entry if it animates.
+`pickClutterType`, and a `CLUTTER_ANIMATED` entry if it animates. Miss the first and the
+type still gets picked — it just falls through the switch and paints nothing. `GRASS` did
+exactly that for a quarter of all woodland clutter until it was found by
+`tools/check-generation.js`, which asserts every type `pickClutterType` can return has
+art.
+
+`REED` and `RIPPLE` are placed by the water code rather than by the general clutter
+scatter. `RIPPLE` is live because it is the only thing that moves on a baked water
+surface — but do **not** put one on an `isPond`: a pond is drawn later, by
+`drawGroundLots()`, and its opaque ellipse covers anything baked inside it. That is also
+why pond reeds ring it from outside its silhouette.
 
 ### 5. `drawBiomeProps()` — ~16675 and `drawBuildings()` — ~2004
 
-`drawBiomeProps()` draws everything flagged `isBiomeProp` (anchors and set pieces):
-`HELIPAD · CHECKPOINT · OUTPOST · BORDERWALL · GUARDBOX · BLASTWALL · SANDBAG ·
-BOULDER · BUNKER · WRECK`.
+`drawBiomeProps()` draws everything flagged `isBiomeProp` (anchors and set pieces).
+It culls with `inView()` before the switch.
+
+- Anchors and posts: `HELIPAD · CHECKPOINT · OUTPOST · BORDERWALL · GUARDBOX ·
+  BLASTWALL · SANDBAG · BOULDER · BUNKER · WRECK`
+- Crossings: `BRIDGE · CANALBRIDGE`
+- Waterside: `BOLLARD · BARGE · QUAYCRANE`
+- Civic square: `FOUNTAIN · PLANTER · BENCH`
+- Building site: `HOARDING · SPOIL · MATERIALS · SITEHUT`
+- Street furniture: `HYDRANT · POSTBOX · KIOSK · BUSSTOP`
+- Woodland: `CABIN · LOGPILE · SIGNPOST · RUINWALL`
+- Collision only, no art by design: `RIVER · CANAL`
+
+Two conventions worth keeping:
+
+- **Cast the shadow before you rotate.** `rotate()` carries `LIGHT_DX/DY` around with it,
+  and a scene where half the props throw north-east and half throw south-east has no sun
+  in it. Prefer encoding orientation in which of `w`/`h` is longer over carrying a
+  separate `angle` — an `angle` rotates only the art, while collision stays axis-aligned
+  on the unrotated `w`/`h`.
+- **A bridge is a surface, not a mass.** Draw the deck flat and put everything with
+  height — parapets, rails, posts — at the rim throwing inward, or it reads as a crate
+  lying in the river.
 
 `drawBuildings()` is the legacy/authored building renderer — a long dispatch over
 boolean flags on each building record. Current flags include:
@@ -403,7 +510,33 @@ the world. Useful debug affordances already present:
 When changing chunk generation, check the **seams** specifically: walk across a chunk
 boundary in both axes, and walk out of an authored core into the streamed world.
 
+### Headless checks
+
+`tools/` runs the parts of the world that are pure arithmetic without a canvas. It is not
+a substitute for looking at the game — nothing there can tell you whether a river reads
+as water — but it catches the class of bug that is invisible until you are standing on it.
+
+```
+node tools/check-generation.js     # determinism, seams, crossings, overlaps, bakes
+node tools/check-render.js         # live draw path at four times of day, hybrid core
+GAME_JS=/path/to/other.js node tools/check-generation.js    # compare against a baseline
+```
+
+`tools/harness.js` loads `game.js` into a `vm` context with p5's global-mode API stubbed
+and a deterministic stand-in for `noise()`. Because the file's top-level `const`/`let`
+land in the context's global lexical scope rather than on the context object, reach them
+with the exported `probe('expression')` rather than by property access.
+
+What is asserted: chunks regenerate bit-for-bit; roads and rivers meet at seams and stay
+inside their own row; a solved crossing lands on both curves and inside its chunk; the
+gap left for a deck actually clears it; no two solids in a chunk intersect; every chunk
+bakes without throwing; every clutter type has art; every emitted `propType` has a branch
+in `drawBiomeProps`; and water collision never survives where the core taper has closed
+the channel.
+
 ## Files
 
 - `game.js` — the entire game. Uploaded as `game_1_14_26.js` (2026-01-14 snapshot).
 - `CLAUDE.md` — this file.
+- `tools/` — optional headless checks. Not loaded by the game, not part of the
+  OpenProcessing upload.

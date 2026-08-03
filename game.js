@@ -5693,6 +5693,7 @@ for (let b of buildings) {
       if (currentLevel === 4 && b.isPalm) continue; 
       if (currentLevel === 6 && (b.isAlienPlant || b.isEnergyPole)) continue; 
       if ((currentLevel === 1 || currentLevel === 2) && (b.isGrassLot || b.isCar)) continue; 
+      if (b.isRiver || b.isDeck) continue;   // you can see straight across water
       if (b.x + b.w / 2 > minX && b.x - b.w / 2 < maxX && b.y + b.h / 2 > minY && b.y - b.h / 2 < maxY) {
           relB.push(b);
       }
@@ -6262,7 +6263,8 @@ function getPatrolBuilding() {
     if (!buildings || buildings.length === 0) return null;
     
     // Filter out flat ground elements so enemies patrol actual physical structures
-    let validBuildings = buildings.filter(b => !b.isGrassLot && !b.isParkingLot && !b.isPond);
+    let validBuildings = buildings.filter(b => !b.isGrassLot && !b.isParkingLot && !b.isPond &&
+                                                !b.isRiver && !b.isDeck);
     
     // Pick a random valid building
     if (validBuildings.length > 0) {
@@ -6570,6 +6572,7 @@ class Orb {
         if (currentLevel === 4 && b.isPalm) continue; 
         if (currentLevel === 6 && (b.isAlienPlant || b.isEnergyPole)) continue; 
         if ((currentLevel === 1 || currentLevel === 2) && (b.isGrassLot || b.isCar)) continue; 
+        if (b.isRiver || b.isDeck) continue;
         if (this.x > b.x - b.w / 2 && this.x < b.x + b.w / 2 && this.y > b.y - b.h / 2 && this.y < b.y + b.h / 2) { hit = true; break; } 
     }
     
@@ -7624,7 +7627,10 @@ this.skeletonTimer = 0;
         if (b.isCropField || b.isMarket) continue; 
         if (currentLevel === 4 && b.isPalm) continue; 
         if (currentLevel === 6 && (b.isAlienPlant || b.isEnergyPole)) continue; 
-        if ((currentLevel === 1 || currentLevel === 2) && b.isGrassLot) continue;         if (b.isUBarrier) {
+        if ((currentLevel === 1 || currentLevel === 2) && b.isGrassLot) continue;
+        // A deck is a surface, not a mass: bridges are built to be stood on.
+        if (b.isDeck) continue;
+        if (b.isUBarrier) {
             let wT = 15;
             if (nx + r > b.x - b.w/2 - wT && nx - r < b.x - b.w/2 + wT && ny + r > b.y - b.h/2 && ny - r < b.y + b.h/2) return true; 
             if (nx + r > b.x + b.w/2 - wT && nx - r < b.x + b.w/2 + wT && ny + r > b.y - b.h/2 && ny - r < b.y + b.h/2) return true; 
@@ -10676,6 +10682,9 @@ function updateBullets() {
                 if (currentLevel === 4 && bldg.isPalm) continue; 
                 if (currentLevel === 6 && (bldg.isAlienPlant || bldg.isEnergyPole)) continue; 
                 if ((currentLevel === 1 || currentLevel === 2) && bldg.isGrassLot) continue; 
+                // Water stops people, not rounds, and a bridge deck stops
+                // neither. Both are collision volumes with no mass in them.
+                if (bldg.isRiver || bldg.isDeck) continue;
                 
                 // Cheap pre-check for buildings before bounding box check
                 if (Math.abs(b.x - bldg.x) > bldg.w || Math.abs(b.y - bldg.y) > bldg.h) continue;
@@ -13692,6 +13701,192 @@ function frontierTrailX(biome, cx, wy) {
 }
 function jungleTrailX(biome, cx, wy)   { return trailCentreX(biome, cx, wy, 3300, 520, 260); }
 
+// ###########################################################################
+//  OVERWORLD NETWORK  —  SECTORS 1 & 2
+//
+//  The streamed world used to give every chunk column its own north-south
+//  track. Walking east you crossed an identical trail every 1200 units, which
+//  is the one thing a landscape must not do: repeat on the player's own
+//  stride. What replaces it is a sparse *network* -- trunk roads on some
+//  columns, link roads on some rows, rivers on others, spurs off the trunks --
+//  so the ground between two Directive posts has junctions, forks, crossings
+//  and dead ends in it rather than one endless parallel repeat.
+//
+//  Everything here obeys the seam rule the trails already did. A feature that
+//  runs north-south is a pure function of its COLUMN and world y; one that
+//  runs east-west is a pure function of its ROW and world x. Nothing reads the
+//  chunk record, so two chunks that share an edge always agree about what
+//  crosses it, and a chunk can answer questions about a neighbour it has never
+//  generated.
+// ###########################################################################
+
+// Stable 0..1 for a single axis index: chunkHash with the other axis pinned to
+// zero, so a column's answer is identical in every row and a row's in every
+// column. Hashed rather than sampled from noise because this is a yes/no
+// decision -- perlin clusters its own high and low ground, and a road grid that
+// inherits that clustering comes out as bands of five roads and then nothing.
+function axisHash(biome, i, salt) { return chunkHash(biome, i, 0, salt) / 4294967296; }
+
+const WOOD_TRUNK_SALT = 6101;
+const WOOD_LINK_SALT  = 6217;
+const WOOD_RIVER_SALT = 6337;
+const WOOD_FORD_SALT  = 6449;
+
+// The track down a column, one in roughly two and a half. Column 0 always
+// carries one: the three travel anchors are strung down x = 0, and the road
+// between one Directive post and the next is the reason they are where they
+// are. It also guarantees an arrival always has a way out that crosses every
+// river on a bridge rather than by wading the length of the world.
+function woodHasTrunk(biome, cx) {
+  if (cx === 0) return true;
+  return axisHash(biome, cx, WOOD_TRUNK_SALT) < 0.40;
+}
+// A river takes the whole row, so nothing else may claim it.
+function woodHasRiver(biome, cy) { return axisHash(biome, cy, WOOD_RIVER_SALT) < 0.24; }
+// The east-west link. Trunks are the through routes; links are what turn a set
+// of parallel roads into a network you can actually navigate by.
+function woodHasLink(biome, cy) {
+  if (woodHasRiver(biome, cy)) return false;
+  return axisHash(biome, cy, WOOD_LINK_SALT) < 0.32;
+}
+
+// Link centreline: the transpose of trailCentreX. Function of ROW and world x,
+// bounded well inside the row so it can never wander into its neighbour.
+function woodLinkY(biome, cy, wx) {
+  return cy * CHUNK_W + CHUNK_W / 2
+       + (bnoise(biome, 4096, cy * 4096 + WOOD_LINK_SALT, 0.0009) - 0.5) * 300
+       + (bnoise(biome, wx, cy * 4096 + WOOD_LINK_SALT + 811, 0.00055) - 0.5) * 260;
+}
+// River centreline and half-width. Same construction, its own salt, and a
+// width that breathes along its length so it reads as water rather than as a
+// blue road.
+function woodRiverY(biome, cy, wx) {
+  return cy * CHUNK_W + CHUNK_W / 2
+       + (bnoise(biome, 2048, cy * 4096 + WOOD_RIVER_SALT, 0.0009) - 0.5) * 260
+       + (bnoise(biome, wx, cy * 4096 + WOOD_RIVER_SALT + 411, 0.00055) - 0.5) * 300;
+}
+function woodRiverHalf(biome, cy, wx) {
+  return 74 + bnoise(biome, wx, cy * 4096 + WOOD_RIVER_SALT + 77, 0.0011) * 64;
+}
+
+// Where a trunk column meets the water in a river row, and whether that
+// crossing is a bridge or a ford.
+//
+// Both curves are smooth and near-perpendicular to each other, so a handful of
+// fixed-point steps lands on the intersection to well under a pixel. It is
+// arithmetic on two pure functions, so the chunk north of the river and the
+// chunk south of it get the same answer without either having generated the
+// other -- which is what lets the approach roads on both banks aim at the same
+// deck.
+function woodCrossing(biome, cx, cy) {
+  if (!woodHasRiver(biome, cy) || !woodHasTrunk(biome, cx)) return null;
+  let y = cy * CHUNK_W + CHUNK_W / 2;
+  let x = woodTrailX(biome, cx, y);
+  for (let i = 0; i < 5; i++) { y = woodRiverY(biome, cy, x); x = woodTrailX(biome, cx, y); }
+  // A ford is the cheap crossing: a gravel bar where the channel runs wide and
+  // shallow. Mixing the two means the road network has two grades of crossing
+  // and the player learns to read which is which from a distance.
+  const ford = (chunkHash(biome, cx, cy, WOOD_FORD_SALT) % 100) < 34;
+  return { x: x, y: y, half: woodRiverHalf(biome, cy, x), ford: ford };
+}
+// The junction where a trunk crosses a link. Same solve, same reason.
+function woodJunction(biome, cx, cy) {
+  if (!woodHasTrunk(biome, cx) || !woodHasLink(biome, cy)) return null;
+  let y = cy * CHUNK_W + CHUNK_W / 2;
+  let x = woodTrailX(biome, cx, y);
+  for (let i = 0; i < 5; i++) { y = woodLinkY(biome, cy, x); x = woodTrailX(biome, cx, y); }
+  return { x: x, y: y };
+}
+
+// A spur is a dead end: it leaves the trunk inside one chunk, runs a few
+// hundred units to whatever the chunk put out there, and stops. Deliberately
+// contained -- both ends inside the chunk it belongs to -- so it needs no seam
+// agreement at all and can be seeded from the chunk's own rng like any other
+// piece of local dressing. Seeing a road fork and one branch simply end is
+// worth more to a landscape than another road that goes on forever.
+// Its own rng stream rather than the caller's, because both the chunk
+// generator and the terrain bake have to agree about where the spur goes and
+// they run against different seeds. Drawing from either one's stream would put
+// the painted road and the clearing it leads to in different places -- and
+// would shift every other prop in the chunk depending on who asked first.
+function woodSpur(biome, cx, cy) {
+  if (!woodHasTrunk(biome, cx)) return null;
+  const rng = makeRng(chunkHash(biome, cx, cy, 6553));
+  if (rng() > 0.46) return null;
+  const ox = cx * CHUNK_W, oy = cy * CHUNK_W;
+  const y  = oy + rngRange(rng, 300, 900);
+  const x0 = woodTrailX(biome, cx, y);
+  const dir = rng() > 0.5 ? 1 : -1;
+  const len = rngRange(rng, 250, 430);
+  // Clamped inside the chunk so the head never lands under the neighbour's
+  // geometry, which has already been generated and knows nothing about it.
+  const x1 = Math.max(ox + 150, Math.min(ox + CHUNK_W - 150, x0 + dir * len));
+  if (Math.abs(x1 - x0) < 170) return null;
+  return { x0: x0, y0: y, x1: x1, y1: y + rngRange(rng, -110, 110) };
+}
+
+// ---------------------------------------------------------------------------
+// AUTHORED-GROUND TAPER
+// A waterway or a road that runs into the hand-authored core has to stop
+// somewhere, and stopping on a hard edge at the seam is the one thing that
+// reads as a bug. These return a 0..1 width multiplier that eases to nothing
+// over the last few hundred units before authored ground -- the same treatment
+// frontierTrailFade() gives the Dry Gulch wagon track, for the same reason.
+// ---------------------------------------------------------------------------
+const CORE_TAPER = 430;
+function coreTaperX(cx, cy, wx) {
+  if (!authoredChunks) return 1;
+  if (chunkInAuthoredCore(cx, cy)) return 0;
+  let f = 1;
+  if (chunkInAuthoredCore(cx - 1, cy)) f = Math.min(f, smooth01((wx - cx * CHUNK_W) / CORE_TAPER));
+  if (chunkInAuthoredCore(cx + 1, cy)) f = Math.min(f, smooth01(((cx + 1) * CHUNK_W - wx) / CORE_TAPER));
+  return f;
+}
+function coreTaperY(cx, cy, wy) {
+  if (!authoredChunks) return 1;
+  if (chunkInAuthoredCore(cx, cy)) return 0;
+  let f = 1;
+  if (chunkInAuthoredCore(cx, cy - 1)) f = Math.min(f, smooth01((wy - cy * CHUNK_W) / CORE_TAPER));
+  if (chunkInAuthoredCore(cx, cy + 1)) f = Math.min(f, smooth01(((cy + 1) * CHUNK_W - wy) / CORE_TAPER));
+  return f;
+}
+
+// ---------------------------------------------------------------------------
+// STICK CITY WATERWAY AND TRAMWAY
+// The grid itself is load-bearing -- legacyGenerateMap() and the CITY chunk
+// layout share the 1200 pitch and the 960 block, and streets, kerbs and lane
+// markings line up across the seam because of it. So neither of these moves a
+// street: the canal is cut through the block interiors and bridged where the
+// north-south streets cross it, and the tramway is laid down the middle of a
+// street that was already there.
+// ---------------------------------------------------------------------------
+const CITY_CANAL_SALT = 7211;
+const CITY_TRAM_SALT  = 7331;
+
+function cityHasCanal(biome, cy) { return axisHash(biome, cy, CITY_CANAL_SALT) < 0.19; }
+// "The street along the NORTH edge of row cy carries rails." Both the row above
+// and the row below paint their own half of it, exactly as they already do for
+// the centre line.
+function cityHasTram(biome, cy) {
+  if (cityHasCanal(biome, cy) || cityHasCanal(biome, cy - 1)) return false;
+  return axisHash(biome, cy, CITY_TRAM_SALT) < 0.24;
+}
+// Canal centreline, kept inside ±95 of the row's middle so the block interior
+// (oy+165 .. oy+1035) always keeps a buildable terrace on both banks.
+function cityCanalY(biome, cy, wx) {
+  return cy * CHUNK_W + CHUNK_W / 2
+       + (bnoise(biome, wx, cy * 4096 + CITY_CANAL_SALT, 0.00048) - 0.5) * 190;
+}
+function cityCanalHalf(biome, cy, wx) {
+  return 74 + bnoise(biome, wx, cy * 4096 + CITY_CANAL_SALT + 53, 0.0009) * 34;
+}
+const CITY_QUAY = 30;        // masonry embankment either side of the water
+// Every north-south street bridges the canal, and a street is centred on the
+// chunk boundary. A chunk owns the bridge on its WEST edge only, so the deck is
+// instantiated once even though the two chunks either side both paint the water
+// that runs under it.
+const CITY_BRIDGE_HALF = 132;
+
 // A city chunk carries a Directive checkpoint where the control field runs
 // high. Streets run along the chunk edges -- a block occupies ox+120..ox+1080 --
 // so the crossing at (ox, oy) is a road junction 240 wide, and a roadblock
@@ -13713,6 +13908,27 @@ function nextCheckpoint(biome, cx, cy) {
     }
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------
+// CITY DISTRICTS
+// One function, asked by both the chunk generator and the terrain bake. It used
+// to be the same three-way noise threshold written out twice, which is a latent
+// bug waiting for someone to retune one copy: the ground under a block would
+// then be lawn while the generator stood warehouses on it.
+//
+// Six districts rather than four. A grid reads as a city by its variety of
+// blocks, and PARK / INDUSTRIAL / COMMERCIAL / RESIDENTIAL is a small enough
+// vocabulary that a five-minute walk sees every word in it twice.
+// ---------------------------------------------------------------------------
+function cityZoneAt(biome, ox, oy) {
+  const n = bnoise(biome, ox, oy, 0.00035);
+  if (n < 0.20) return "PARK";
+  if (n < 0.30) return "PLAZA";
+  if (n < 0.44) return "INDUSTRIAL";
+  if (n < 0.52) return "CONSTRUCTION";
+  if (n > 0.74) return "COMMERCIAL";
+  return "RESIDENTIAL";
 }
 
 // A frontier chunk grows a town where the settlement field runs high. Both the
@@ -13895,7 +14111,8 @@ function solidsClearAt(list, x, y, w, h, pad) {
 function placeCheckpoint(solid, biome, cx, cy, ox, oy, nearAnchor) {
   if (!cityIsCheckpoint(biome, cx, cy)) return;
   if (nearAnchor && nearAnchor(ox, oy, 900)) return;
-  const P = (x, y, w, h, t) => solid.push({ x, y, w, h, isBiomeProp: true, propType: t });
+  const parts = [];
+  const P = (x, y, w, h, t) => parts.push({ x, y, w, h, isBiomeProp: true, propType: t });
   P(ox, oy - 150, 300, 70, "CHECKPOINT");
   P(ox, oy + 150, 300, 70, "CHECKPOINT");
   P(ox - 190, oy - 190, 150, 55, "GUARDBOX");
@@ -13904,6 +14121,25 @@ function placeCheckpoint(solid, biome, cx, cy, ox, oy, nearAnchor) {
   P(ox + 210, oy - 130, 60, 60, "SANDBAG");
   P(ox - 330, oy - 330, 36, 150, "BLASTWALL");
   P(ox + 330, oy + 330, 36, 150, "BLASTWALL");
+
+  // The post takes its ground. This runs last -- the junction has already been
+  // built on by the time the Directive turns up -- and the pieces used to be
+  // pushed straight in on top of whatever was there: a blast wall through a
+  // warehouse wall, a guard box inside a block, a street light growing out of
+  // the barrier. Every other placement in a chunk goes through the lattice or
+  // solidsClearAt; this one could not, because a roadblock has to be ON the
+  // junction and nowhere else. So it clears instead of dodging, which is the
+  // right of way a checkpoint has anyway.
+  for (let i = solid.length - 1; i >= 0; i--) {
+    const s = solid[i];
+    if (s.isGrassLot && !s.isPond) continue;      // surfaces, not masses
+    const sw = s.w || 0, sh = s.h || 0;
+    for (const q of parts) {
+      if (Math.abs(s.x - q.x) < (sw + q.w) / 2 + 14 &&
+          Math.abs(s.y - q.y) < (sh + q.h) / 2 + 14) { solid.splice(i, 1); break; }
+    }
+  }
+  for (const q of parts) solid.push(q);
 }
 
 function generateChunkContent(biome, cx, cy) {
@@ -13958,16 +14194,198 @@ function generateChunkContent(biome, cx, cy) {
       const clearOf = solidsClearAt;
 
       // Districts are noise-driven so the city has coherent neighbourhoods
-      // that read at a distance rather than random per-block noise.
-      const zoneN = bnoise(biome, ox, oy, 0.00035);
-      let zone = "RESIDENTIAL";
-      if (zoneN < 0.34) zone = "PARK";
-      else if (zoneN < 0.5) zone = "INDUSTRIAL";
-      else if (zoneN > 0.72) zone = "COMMERCIAL";
+      // that read at a distance rather than random per-block noise. Resolved
+      // by cityZoneAt() so the terrain bake paints the ground for the district
+      // that was actually built here.
+      let zone = cityZoneAt(biome, ox, oy);
 
       if (nearAnchor(ox + 600, oy + 600, 900)) { zone = "PARK"; }
 
-      if (zone === "PARK" && !nearAnchor(ox + 600, oy + 600, 700)) {
+      // A canal takes the whole row and overrides whatever district the noise
+      // wanted: the block interiors become waterside terraces, and the only way
+      // across the row is over one of the bridged streets.
+      // The taper gate matters as much as the row does. A canal row that runs
+      // into Stick City's authored core has its water tapered away by the bake
+      // over the last 430 units, and collision that ignored that would leave an
+      // invisible wall standing on dry ground beside the city.
+      const canal = cityHasCanal(biome, cy) && !chunkInAuthoredCore(cx, cy) &&
+                    !nearAnchor(ox + 600, oy + 600, 900) &&
+                    coreTaperX(cx, cy, ox + CHUNK_W / 2) > 0.35;
+
+      if (canal) {
+        const midAt  = (wx) => cityCanalY(biome, cy, wx);
+        const halfAt = (wx) => cityCanalHalf(biome, cy, wx);
+
+        // The water is a wall. Segments follow the meander across the chunk
+        // with a gap held open at both edges, because a street is centred on
+        // the chunk boundary and the two chunks either side of it each have to
+        // leave room for the same deck.
+        for (let sx = ox + 62; sx < ox + CHUNK_W; sx += 124) {
+          const fromW = sx - ox, fromE = (ox + CHUNK_W) - sx;
+          if (fromW < CITY_BRIDGE_HALF + 62 || fromE < CITY_BRIDGE_HALF + 62) continue;
+          if (coreTaperX(cx, cy, sx) < 0.4) continue;      // culverted under authored ground
+          solid.push({ x: sx, y: midAt(sx), w: 128, h: halfAt(sx) * 2,
+                       isBiomeProp: true, propType: "CANAL", isRiver: true, isWater: true });
+        }
+
+        // The deck on this chunk's west boundary. Owned by one chunk only, so
+        // it is built once however many chunks paint the water beneath it.
+        if (coreTaperX(cx, cy, ox) > 0.5) {
+          solid.push({ x: ox, y: midAt(ox), w: CITY_BRIDGE_HALF * 2,
+                       h: halfAt(ox) * 2 + CITY_QUAY * 2 + 104,
+                       isBiomeProp: true, propType: "CANALBRIDGE", isDeck: true, tint: rng() });
+        }
+
+        // A wharf crane stands ON the quay, in a gap in the terrace. It has to
+        // claim its frontage BEFORE the terrace is laid out, not compete with
+        // it afterwards: the towpath between the water and the building line is
+        // only about seventy units wide, so a crane placed second could never
+        // find clearance and simply never appeared.
+        const crane = rng() > 0.42
+          ? { x: ox + rngRange(rng, 300, 900), side: rng() > 0.5 ? 1 : -1 }
+          : null;
+        if (crane && Math.abs(crane.x - ox) < CITY_BRIDGE_HALF + 120) crane.x = null;
+
+        // Waterside terraces. Narrow frontages packed along each bank, fitted
+        // to whatever room the meander leaves between the quay and the block's
+        // own sidewalk — so the buildings follow the water instead of ignoring
+        // it the way a subdivided block would.
+        for (const side of [-1, 1]) {
+          const lim = side < 0 ? oy + 200 : oy + CHUNK_W - 200;
+          let bx = ox + 200;
+          while (bx < ox + CHUNK_W - 220) {
+            const bw  = rngRange(rng, 120, 235);
+            const mx  = bx + bw / 2;
+            const quay = midAt(mx) + side * (halfAt(mx) + CITY_QUAY + 36);
+            const room = side < 0 ? quay - lim : lim - quay;
+            const clearOfCrane = !crane || crane.x === null || crane.side !== side ||
+                                 Math.abs(mx - crane.x) > bw / 2 + 68;
+            if (room > 74 && clearOfCrane && rng() > 0.15) {
+              const bh = Math.min(room, rngRange(rng, 95, 195));
+              solid.push({ x: mx, y: quay + side * bh / 2, w: bw, h: bh, details: [],
+                           style: rngInt(rng, 0, 4), isBlockBuilding: true });
+            }
+            bx += bw + rngRange(rng, 30, 96);
+          }
+        }
+        if (crane && crane.x !== null) {
+          const kx = crane.x, ky = midAt(kx) + crane.side * (halfAt(kx) + CITY_QUAY + 30);
+          if (clearOf(solid, kx, ky, 62, 62, 10)) {
+            solid.push({ x: kx, y: ky, w: 58, h: 58, isBiomeProp: true, propType: "QUAYCRANE",
+                         tint: rng(), angle: crane.side > 0 ? -HALF_PI : HALF_PI });
+          }
+        }
+
+        // Quay furniture: bollards along the copings, the odd crane, and a
+        // barge tied up where there is room for one.
+        for (const side of [-1, 1]) {
+          for (let bx = ox + 210; bx < ox + CHUNK_W - 150; bx += rngRange(rng, 150, 260)) {
+            const by = midAt(bx) + side * (halfAt(bx) + CITY_QUAY - 8);
+            if (Math.abs(bx - ox) < CITY_BRIDGE_HALF + 70) continue;
+            if (!clearOf(solid, bx, by, 26, 26, 12)) continue;
+            solid.push({ x: bx, y: by, w: 22, h: 22, isBiomeProp: true, propType: "BOLLARD" });
+          }
+        }
+        if (rng() > 0.42) {
+          const bx = ox + rngRange(rng, 360, 860);
+          const side = rng() > 0.5 ? 1 : -1;
+          const by = midAt(bx) - side * (halfAt(bx) * 0.42);
+          if (Math.abs(bx - ox) > CITY_BRIDGE_HALF + 150) {
+            solid.push({ x: bx, y: by, w: rngRange(rng, 180, 260), h: 62,
+                         isBiomeProp: true, propType: "BARGE", tint: rng(), angle: 0 });
+          }
+        }
+
+      } else if (zone === "PLAZA") {
+        // A civic square: the one block in the grid that is deliberately empty.
+        // It reads as a hole in an otherwise unbroken run of roofs, which is
+        // exactly what makes it navigable as a landmark.
+        const px0 = ox + 600, py0 = oy + 600;
+        solid.push({ x: px0, y: py0, w: 190, h: 190, isBiomeProp: true, propType: "FOUNTAIN", tint: rng() });
+        const ringN = rngInt(rng, 7, 12);
+        for (let i = 0; i < ringN; i++) {
+          const a  = (i / ringN) * TWO_PI + rng() * 0.24;
+          const rr = 300 + rng() * 90;
+          const bx = px0 + Math.cos(a) * rr, by = py0 + Math.sin(a) * rr * 0.94;
+          if (!clearOf(solid, bx, by, 96, 96, 22)) continue;
+          if (rng() > 0.44) solid.push({ x: bx, y: by, w: 70, h: 70, isBiomeProp: true, propType: "PLANTER", tint: rng() });
+          else              solid.push({ x: bx, y: by, w: 84, h: 26, isBiomeProp: true, propType: "BENCH", angle: a + HALF_PI });
+        }
+        // Trees at the corners of the square, live-drawn like every other
+        // canopy — see CLUTTER_ANIMATED.
+        for (let i = 0; i < rngInt(rng, 3, 7); i++) {
+          const tx = ox + rngRange(rng, 230, 970), ty = oy + rngRange(rng, 230, 970);
+          if (Math.abs(tx - px0) < 240 && Math.abs(ty - py0) < 240) continue;
+          if (!clearOf(solid, tx, ty, 74, 74, 14)) continue;
+          decor.push({ t: "TREE", x: tx, y: ty, s: rngRange(rng, 0.85, 1.3), r: rng() * TWO_PI, c: rng() });
+        }
+        // One civic mass on an edge, so the square has something to face.
+        if (rng() > 0.3) {
+          const edge = rngInt(rng, 0, 4);
+          const bw = rngRange(rng, 260, 400), bh = rngRange(rng, 130, 190);
+          const bx = edge < 2 ? ox + 600 : (edge === 2 ? ox + 300 : ox + 900);
+          const by = edge < 2 ? (edge === 0 ? oy + 260 : oy + 940) : oy + 600;
+          const b = { x: bx, y: by, w: edge < 2 ? bw : bh, h: edge < 2 ? bh : bw,
+                      details: [], style: rngInt(rng, 0, 4), isBlockBuilding: true };
+          if (clearOf(solid, b.x, b.y, b.w, b.h, 30)) solid.push(b);
+        }
+
+      } else if (zone === "CONSTRUCTION") {
+        // A block taken back to the dirt. The hoarding is the whole point: a
+        // continuous run of boards with one gate in it turns a block you could
+        // cut across into one you have to go round, which is the cheapest
+        // variety a grid can be given.
+        const hx = ox + 600, hy = oy + 600, hs = blockSz - 150;
+        const gate = rngInt(rng, 0, 4);
+        for (let e = 0; e < 4; e++) {
+          const horiz = e < 2;
+          const at = e === 0 ? hy - hs / 2 : e === 1 ? hy + hs / 2 : (e === 2 ? hx - hs / 2 : hx + hs / 2);
+          if (e === gate) {
+            // Two runs with a gap in the middle: the site entrance.
+            const seg = (hs - 190) / 2;
+            for (const s of [-1, 1]) {
+              const off = s * (190 / 2 + seg / 2);
+              solid.push(horiz ? { x: hx + off, y: at, w: seg, h: 20, isBiomeProp: true, propType: "HOARDING", tint: rng() }
+                               : { x: at, y: hy + off, w: 20, h: seg, isBiomeProp: true, propType: "HOARDING", tint: rng() });
+            }
+          } else {
+            solid.push(horiz ? { x: hx, y: at, w: hs, h: 20, isBiomeProp: true, propType: "HOARDING", tint: rng() }
+                             : { x: at, y: hy, w: 20, h: hs, isBiomeProp: true, propType: "HOARDING", tint: rng() });
+          }
+        }
+        // Spoil, stacked materials and a site hut around the pit the bake digs.
+        for (let i = 0; i < rngInt(rng, 2, 5); i++) {
+          const sx = hx + rngRange(rng, -hs / 2 + 90, hs / 2 - 90);
+          const sy = hy + rngRange(rng, -hs / 2 + 90, hs / 2 - 90);
+          if (!clearOf(solid, sx, sy, 130, 130, 24)) continue;
+          solid.push({ x: sx, y: sy, w: rngRange(rng, 90, 150), h: rngRange(rng, 70, 120),
+                       isBiomeProp: true, propType: "SPOIL", tint: rng() });
+        }
+        // Orientation is carried by which of w/h is longer rather than by a
+        // separate angle, so the art and the collision box always describe the
+        // same footprint. An `angle` on a rectangular prop rotates only the
+        // art -- collision stays axis-aligned on the unrotated w/h -- which is
+        // fine for a dumpster and wrong for anything the player can walk along.
+        for (let i = 0; i < rngInt(rng, 1, 4); i++) {
+          const sx = hx + rngRange(rng, -hs / 2 + 80, hs / 2 - 80);
+          const sy = hy + rngRange(rng, -hs / 2 + 80, hs / 2 - 80);
+          if (!clearOf(solid, sx, sy, 130, 130, 22)) continue;
+          const ln = rngRange(rng, 84, 132), wd = rngRange(rng, 54, 88);
+          const vert = rng() > 0.5;
+          solid.push({ x: sx, y: sy, w: vert ? wd : ln, h: vert ? ln : wd,
+                       isBiomeProp: true, propType: "MATERIALS", tint: rng() });
+        }
+        {
+          const sx = hx + rngRange(rng, -hs / 2 + 70, hs / 2 - 70);
+          const sy = hy + rngRange(rng, -hs / 2 + 70, hs / 2 - 70);
+          const vert = rng() > 0.5;
+          if (clearOf(solid, sx, sy, 130, 130, 26)) {
+            solid.push({ x: sx, y: sy, w: vert ? 66 : 106, h: vert ? 106 : 66,
+                         isBiomeProp: true, propType: "SITEHUT", tint: rng() });
+          }
+        }
+
+      } else if (zone === "PARK" && !nearAnchor(ox + 600, oy + 600, 700)) {
         // Green lot with a pond and scattered trees
         solid.push({ x: ox + 600, y: oy + 600, w: blockSz - 90, h: blockSz - 90, isGrassLot: true, isParkingLot: false });
         if (rng() > 0.45) {
@@ -14079,6 +14497,31 @@ function generateChunkContent(biome, cx, cy) {
         }
       }
 
+      // Street furniture on the sidewalk ring. Every district gets some, which
+      // is the point: the kerb is the one part of a block the player walks past
+      // whatever is built behind it, so it is where a few units of dressing buy
+      // the most. Placed on the walk itself, never in the carriageway.
+      {
+        const WALK_MID = 142;
+        const furn = ["HYDRANT", "POSTBOX", "KIOSK", "BUSSTOP", "HYDRANT", "POSTBOX"];
+        const nF = rngInt(rng, 3, 7);
+        for (let i = 0; i < nF; i++) {
+          const t = rngPick(rng, furn);
+          const big = t === "KIOSK" || t === "BUSSTOP";
+          const along = rngRange(rng, 230, 970);
+          const edge = rngInt(rng, 0, 4);
+          const fx = edge < 2 ? ox + along
+                              : (edge === 2 ? ox + WALK_MID : ox + CHUNK_W - WALK_MID);
+          const fy = edge < 2 ? (edge === 0 ? oy + WALK_MID : oy + CHUNK_W - WALK_MID)
+                              : oy + along;
+          const fw = big ? (edge < 2 ? 96 : 34) : 22;
+          const fh = big ? (edge < 2 ? 34 : 96) : 22;
+          if (!clearOf(solid, fx, fy, fw + 16, fh + 16, 10)) continue;
+          solid.push({ x: fx, y: fy, w: fw, h: fh, isBiomeProp: true, propType: t,
+                       tint: rng(), angle: edge < 2 ? 0 : HALF_PI });
+        }
+      }
+
       placeCheckpoint(solid, biome, cx, cy, ox, oy, nearAnchor);
       break;
     }
@@ -14090,11 +14533,195 @@ function generateChunkContent(biome, cx, cy) {
     case "WOODLAND": {
       lat = makeLattice(rng, ox, oy, 150);
       for (const a of anchors) lat.block(a.x, a.y, 1100, 1100);
-      // The track stays clear, and so does the post.
-      for (let wy = oy - 60; wy <= oy + CHUNK_W + 60; wy += 60) {
-        lat.block(woodTrailX(biome, cx, wy), wy, 260, 90);
+
+      // What this chunk's share of the network actually is. Every one of these
+      // is decided by column or row alone, so the neighbour agrees before it
+      // has been generated.
+      const hasTrunk = woodHasTrunk(biome, cx);
+      const hasLink  = woodHasLink(biome, cy);
+      const hasRiver = woodHasRiver(biome, cy);
+      const cross    = woodCrossing(biome, cx, cy);
+      const junction = woodJunction(biome, cx, cy);
+      const spur     = woodSpur(biome, cx, cy);
+
+      // Roads and water keep their own ground clear.
+      if (hasTrunk) {
+        for (let wy = oy - 60; wy <= oy + CHUNK_W + 60; wy += 60) {
+          lat.block(woodTrailX(biome, cx, wy), wy, 260, 90);
+        }
+      }
+      if (hasLink) {
+        for (let wx = ox - 60; wx <= ox + CHUNK_W + 60; wx += 60) {
+          lat.block(wx, woodLinkY(biome, cy, wx), 90, 260);
+        }
+      }
+      if (spur) {
+        const steps = 8;
+        for (let s = 0; s <= steps; s++) {
+          const t = s / steps;
+          lat.block(spur.x0 + (spur.x1 - spur.x0) * t, spur.y0 + (spur.y1 - spur.y0) * t, 150, 150);
+        }
+      }
+      if (hasRiver) {
+        for (let wx = ox - 60; wx <= ox + CHUNK_W + 60; wx += 60) {
+          lat.block(wx, woodRiverY(biome, cy, wx), 100, woodRiverHalf(biome, cy, wx) * 2 + 170);
+        }
       }
       if (cityIsCheckpoint(biome, cx, cy)) lat.block(ox, oy, 900, 900);
+
+      // --- The river -------------------------------------------------------
+      // Water is a wall with doors in it. The channel blocks movement for its
+      // whole run across the row except at the one crossing this column
+      // carries, which is what gives the road network somewhere to go: a
+      // bridge you can see from a distance is a destination, and a river you
+      // cannot wade is what makes it one.
+      //
+      // Only the deep channel is solid -- the shallows either side of it are
+      // painted but passable -- so brushing the bank costs you a step sideways
+      // rather than stopping you dead on a line you cannot see.
+      if (hasRiver) {
+        // Wide enough that no segment can reach the deck: the deck is 168
+        // across and a segment 114, so anything closer than 141 to the crossing
+        // still lands on it. 158 leaves a margin for the meander between the
+        // segment's own x and the deck's.
+        const gapW = cross ? (cross.ford ? 190 : 158) : 0;
+        for (let sx = ox + 55; sx < ox + CHUNK_W; sx += 110) {
+          if (cross && Math.abs(sx - cross.x) < gapW) continue;
+          if (coreTaperX(cx, cy, sx) < 0.4) continue;      // culverted under authored ground
+          const ry = woodRiverY(biome, cy, sx);
+          if (nearAnchor(sx, ry, 460)) continue;
+          solid.push({ x: sx, y: ry, w: 114, h: woodRiverHalf(biome, cy, sx) * 1.52,
+                       isBiomeProp: true, propType: "RIVER", isRiver: true, isWater: true });
+        }
+
+        if (cross && coreTaperX(cx, cy, cross.x) > 0.5 && !nearAnchor(cross.x, cross.y, 460)) {
+          if (cross.ford) {
+            // A ford needs no structure, only the evidence of one: the stones
+            // people have rolled aside to get a cart through.
+            for (let i = 0; i < 5; i++) {
+              const fx = cross.x + rngRange(rng, -105, 105);
+              const fy = cross.y + (i - 2) * (cross.half * 0.46) + rngRange(rng, -14, 14);
+              decorBake.push({ t: "PEBBLE", x: fx, y: fy, s: rngRange(rng, 1.5, 2.6),
+                               r: rng() * TWO_PI, c: rng() });
+            }
+            const mkx = cross.x - 150, mky = cross.y - cross.half - 40;
+            if (solidsClearAt(solid, mkx, mky, 92, 74, 22)) {
+              solid.push({ x: mkx, y: mky, w: 92, h: 74,
+                           isBiomeProp: true, propType: "BOULDER", tint: rng(), angle: rng() * TWO_PI });
+            }
+          } else {
+            solid.push({ x: cross.x, y: cross.y, w: 168, h: cross.half * 2 + 210,
+                         isBiomeProp: true, propType: "BRIDGE", isDeck: true, tint: rng() });
+          }
+        }
+
+        // Bank dressing: reeds in the shallows, a drift of gravel, and a few
+        // live glints on the surface so the water is not a painted stripe.
+        for (let i = 0; i < 22; i++) {
+          const rx = ox + rng() * CHUNK_W;
+          if (coreTaperX(cx, cy, rx) < 0.4) continue;
+          const rh = woodRiverHalf(biome, cy, rx);
+          const side = rng() > 0.5 ? 1 : -1;
+          const ry = woodRiverY(biome, cy, rx) + side * rh * rngRange(rng, 0.82, 1.12);
+          if (cross && Math.abs(rx - cross.x) < 120) continue;
+          decorBake.push({ t: "REED", x: rx, y: ry, s: rngRange(rng, 0.7, 1.5),
+                           r: rng() * TWO_PI, c: rng() });
+        }
+        for (let i = 0; i < 5; i++) {
+          const rx = ox + rng() * CHUNK_W;
+          if (coreTaperX(cx, cy, rx) < 0.4) continue;
+          decor.push({ t: "RIPPLE", x: rx, y: woodRiverY(biome, cy, rx) + rngRange(rng, -30, 30),
+                       s: rngRange(rng, 0.8, 1.7), r: rng() * TWO_PI, c: rng() });
+        }
+      }
+
+      // A fingerpost where the through road meets the link. It is the only
+      // thing in the woods that tells you the roads are a system rather than a
+      // coincidence.
+      if (junction && !nearAnchor(junction.x, junction.y, 420)) {
+        const sx = junction.x + (rng() > 0.5 ? 96 : -96);
+        const sy = junction.y + (rng() > 0.5 ? 92 : -92);
+        if (solidsClearAt(solid, sx, sy, 40, 40, 20)) {
+          solid.push({ x: sx, y: sy, w: 26, h: 26, isBiomeProp: true, propType: "SIGNPOST", tint: rng() });
+        }
+        lat.block(junction.x, junction.y, 420, 420);
+      }
+
+      // --- What the spur leads to ------------------------------------------
+      // A dead-end road that arrives nowhere is worse than no road at all, so
+      // the head of every spur gets a reason to exist. Without a spur the same
+      // set pieces still appear, just placed by the lattice like anything else.
+      {
+        let head = null;
+        if (spur) head = { x: spur.x1, y: spur.y1 };
+        else if (rng() > 0.62) { const s = lat.take(430, 380); if (s) head = s; }
+
+        if (head && !nearAnchor(head.x, head.y, 640) && !hitsAuthored(head.x, head.y, 520, 470, 0)) {
+          lat.block(head.x, head.y, 560, 500);
+          const kind = rng();
+
+          if (kind < 0.4) {
+            // Woodcutter's camp: a cabin, stacked cordwood, and the stumps of
+            // everything that used to stand in the clearing.
+            solid.push({ x: head.x, y: head.y, w: 130, h: 96, isBiomeProp: true,
+                         propType: "CABIN", tint: rng(), angle: 0 });
+            for (let i = 0; i < rngInt(rng, 2, 5); i++) {
+              const lx = head.x + rngRange(rng, -230, 230), ly = head.y + rngRange(rng, -190, 190);
+              if (!solidsClearAt(solid, lx, ly, 130, 130, 26)) continue;
+              const ln = rngRange(rng, 86, 132), wd = rngRange(rng, 50, 74);
+              const vert = rng() > 0.5;
+              solid.push({ x: lx, y: ly, w: vert ? wd : ln, h: vert ? ln : wd,
+                           isBiomeProp: true, propType: "LOGPILE", tint: rng() });
+            }
+            for (let i = 0; i < 9; i++) {
+              decorBake.push({ t: "STUMP", x: head.x + rngRange(rng, -280, 280),
+                               y: head.y + rngRange(rng, -240, 240),
+                               s: rngRange(rng, 0.8, 1.5), r: rng() * TWO_PI, c: rng() });
+            }
+
+          } else if (kind < 0.74) {
+            // A hamlet the grid left behind: roofless shells around a green,
+            // with the drystone walls that outlasted them.
+            const nR = rngInt(rng, 3, 6);
+            for (let i = 0; i < nR; i++) {
+              const a = (i / nR) * TWO_PI + rng() * 0.5;
+              const rx = head.x + Math.cos(a) * rngRange(rng, 170, 260);
+              const ry = head.y + Math.sin(a) * rngRange(rng, 150, 230);
+              const w = rngRange(rng, 92, 165), h = rngRange(rng, 84, 140);
+              if (!solidsClearAt(solid, rx, ry, w, h, 34)) continue;
+              solid.push({ x: rx, y: ry, w, h, style: rngInt(rng, 0, 4), details: [],
+                           isBlockBuilding: true });
+            }
+            for (let i = 0; i < rngInt(rng, 2, 5); i++) {
+              const horiz = rng() > 0.5;
+              const wx2 = head.x + rngRange(rng, -300, 300), wy2 = head.y + rngRange(rng, -260, 260);
+              const wl = rngRange(rng, 130, 240);
+              const w = horiz ? wl : 20, h = horiz ? 20 : wl;
+              if (!solidsClearAt(solid, wx2, wy2, w, h, 26)) continue;
+              solid.push({ x: wx2, y: wy2, w, h, isBiomeProp: true, propType: "RUINWALL", tint: rng() });
+            }
+
+          } else {
+            // A pond in the low ground, with the reeds that go with it.
+            //
+            // The reeds ring the pond from OUTSIDE its silhouette on purpose.
+            // A pond is drawn live by drawGroundLots(), which runs after the
+            // chunk terrain and paints an opaque ellipse on its own w/h -- so
+            // anything baked inside that ellipse, reeds included, is covered
+            // over. It also draws its own ripples, which is why there are no
+            // RIPPLE props here the way there are on the river.
+            const pw = rngRange(rng, 250, 400), ph = rngRange(rng, 190, 300);
+            solid.push({ x: head.x, y: head.y, w: pw, h: ph,
+                         isPond: true, isGrassLot: true, isWater: true });
+            for (let i = 0; i < 18; i++) {
+              const a = rng() * TWO_PI, rr = rngRange(rng, 0.58, 0.74);
+              decorBake.push({ t: "REED", x: head.x + Math.cos(a) * pw * rr,
+                               y: head.y + Math.sin(a) * ph * rr,
+                               s: rngRange(rng, 0.7, 1.4), r: rng() * TWO_PI, c: rng() });
+            }
+          }
+        }
+      }
 
       // Copses, not an even sprinkle. Trees cluster where the canopy field runs
       // high and thin out to meadow between, which is what makes woodland read
@@ -14469,6 +15096,7 @@ const CLUTTER_ANIMATED = {
   SPOREPOD:   true,   // bioluminescent pulse
   GLOWMOSS:   true,   // bioluminescent pulse
   SHARD:      true,   // refractive glint
+  RIPPLE:     true,   // the only thing that moves on a baked water surface
   TREE:       true    // canopy is the biggest curve in the set -- bake it and
                       // it comes back as squares
 };
@@ -14499,15 +15127,19 @@ function pickClutterType(def, rng, layout) {
   const r = rng();
   switch (layout || def.layout) {
     case "WOODLAND":
-      if (r > 0.8)  return "LOG";
-      if (r > 0.6)  return "FERN";
-      if (r > 0.42) return "WEED";
+      if (r > 0.86) return "LOG";
+      if (r > 0.78) return "STUMP";
+      if (r > 0.72) return "MUSHROOM";
+      if (r > 0.56) return "FERN";
+      if (r > 0.40) return "WEED";
       if (r > 0.24) return "PEBBLE";
       return "GRASS";
     case "CITY":
     case "CITY_DENSE":
-      if (r > 0.82) return "TRASH";
-      if (r > 0.64) return "PEBBLE";
+      if (r > 0.86) return "TRASH";
+      if (r > 0.80) return "CONE";
+      if (r > 0.74) return "MANHOLE";
+      if (r > 0.62) return "PEBBLE";
       if (r > 0.5)  return "PUDDLE";
       if (r > 0.36) return "PAPER";
       if (r > 0.22) return "WEED";
@@ -14843,6 +15475,84 @@ function bakeStreet(g, x0, x1, my, edgeHalf, coreHalf, edgeCol, coreCol, layers,
   }
 }
 
+// The same ramp for a road or a watercourse that runs EAST-WEST. bakeRibbon
+// walks down y and offsets in x; this walks along x and offsets in y. Written
+// out rather than folded into bakeRibbon behind an axis flag: these inner loops
+// are the expensive half of a chunk bake, and a per-vertex branch costs more
+// than the duplication does.
+//
+// Passing edgeHalf/coreHalf as small multipliers and the real half-width
+// through `widthAt` is how a river gets a channel that breathes along its
+// length -- the ribbon is then defined entirely in units of its own width.
+function bakeRibbonH(g, centreAt, xAt, S0, S1, edgeHalf, coreHalf, edgeCol, coreCol, layers, alpha, widthAt, shoulders) {
+  const wf = widthAt || (() => 1);
+  // Every shoulder pass is another full-width polygon over the whole chunk, so
+  // this is the cheapest knob on the bake. A road wants the full five to
+  // dissolve its edge into open ground; a watercourse laid down as two stacked
+  // ribbons already has a transition and only needs a hint of one.
+  const SH = shoulders || 5;
+  for (let k = SH; k >= 1; k--) {
+    const grow = 1 + (k / SH) * 0.72;
+    g.fill(edgeCol[0], edgeCol[1], edgeCol[2], alpha * 0.34 * (1 - k / (SH + 1)));
+    g.beginShape();
+    for (let s = S0; s <= S1; s++) { const xx = xAt(s); g.vertex(xx, centreAt(xx) - edgeHalf * grow * wf(xx)); }
+    for (let s = S1; s >= S0; s--) { const xx = xAt(s); g.vertex(xx, centreAt(xx) + edgeHalf * grow * wf(xx)); }
+    g.endShape(CLOSE);
+  }
+  for (let k = 0; k < layers; k++) {
+    const t = layers > 1 ? k / (layers - 1) : 1;
+    const half = coreHalf + (edgeHalf - coreHalf) * Math.pow(1 - t, 0.6);
+    const ct = Math.pow(t, 0.45);
+    g.fill(edgeCol[0] + (coreCol[0] - edgeCol[0]) * ct,
+           edgeCol[1] + (coreCol[1] - edgeCol[1]) * ct,
+           edgeCol[2] + (coreCol[2] - edgeCol[2]) * ct, alpha);
+    g.beginShape();
+    for (let s = S0; s <= S1; s++) { const xx = xAt(s); g.vertex(xx, centreAt(xx) - half * wf(xx)); }
+    for (let s = S1; s >= S0; s--) { const xx = xAt(s); g.vertex(xx, centreAt(xx) + half * wf(xx)); }
+    g.endShape(CLOSE);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// WATERCOURSE
+// A river or a canal, painted east-west across a chunk. Four things have to be
+// there or it reads as a blue road: a damp bank outside the water, shallows
+// that let the ground colour through, a deep channel, and something moving
+// along it. The first three are the ribbon ramp; the last is a set of current
+// streaks laid along the flow, which is the only cue a baked surface has for
+// direction.
+// ---------------------------------------------------------------------------
+function bakeWatercourse(g, centreAt, halfAt, ox, oy, bank, shallow, deep, alpha, rng) {
+  // Step count and layer counts are held down deliberately. A river row already
+  // carries the column's trunk road and usually a spur as well, and each of
+  // those is its own stack of full-chunk polygons -- at the counts a road uses
+  // this was the single most expensive chunk in either sector to bake, by
+  // three times. Water gets away with fewer layers than a road does because
+  // its two ribbons already step from bank to shallow to channel.
+  const SN = 20;
+  const xAt = (s) => ox - 40 + (s / SN) * (CHUNK_W + 80);
+  bakeRibbonH(g, centreAt, xAt, 0, SN, 1.30, 0.66, bank, shallow, 5, alpha, halfAt, 3);
+  bakeRibbonH(g, centreAt, xAt, 0, SN, 0.74, 0.30, shallow, deep, 6, alpha, halfAt, 3);
+  // Current: pale streaks strung along the flow at a fraction of the channel
+  // width, thinning out toward both banks the way a stream's fastest water
+  // does. Drawn as strokes, so they cost the bake almost nothing.
+  g.noFill();
+  for (let i = 0; i < 9; i++) {
+    const off = (rng() * 2 - 1) * 0.52;
+    const x0 = ox - 40 + rng() * CHUNK_W * 0.7;
+    const len = CHUNK_W * (0.2 + rng() * 0.34);
+    g.stroke(226, 240, 246, 16 + rng() * 26);
+    g.strokeWeight(1.4 + rng() * 3);
+    g.beginShape();
+    for (let s = 0; s <= 9; s++) {
+      const xx = x0 + (s / 9) * len;
+      g.vertex(xx, centreAt(xx) + halfAt(xx) * off);
+    }
+    g.endShape();
+  }
+  g.noStroke();
+}
+
 function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, layout) {
   const p = pal || def.pal;
   g.noStroke();
@@ -14914,14 +15624,122 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
       // it, so it is never a park however the noise falls — a lawn under nine
       // tower blocks is worse than no surface at all. The authored map paints
       // its own green where it wants green.
-      const zn = bnoise(biome, ox, oy, 0.00035);
-      let zone = zn < 0.34 ? "PARK" : (zn < 0.5 ? "INDUSTRIAL" : (zn > 0.72 ? "COMMERCIAL" : "RESIDENTIAL"));
-      if (chunkInAuthoredCore(cx, cy) && zone === "PARK") zone = "RESIDENTIAL";
+      let zone = cityZoneAt(biome, ox, oy);
+      // A hand-placed block already has buildings standing on it, so it is
+      // never open ground however the noise falls -- a lawn, a civic square or
+      // a building site under nine tower blocks is worse than no surface at
+      // all. The authored map paints its own open ground where it wants it.
+      if (chunkInAuthoredCore(cx, cy) &&
+          (zone === "PARK" || zone === "PLAZA" || zone === "CONSTRUCTION")) zone = "RESIDENTIAL";
+      // A canal row is neither: both banks are quay, and the water is laid over
+      // the top of it at the end of the pass.
+      const canalB = cityHasCanal(biome, cy) && !chunkInAuthoredCore(cx, cy) &&
+                     coreTaperX(cx, cy, ox + CHUNK_W / 2) > 0.35;
       const inX = ox + 165, inY = oy + 165, inW = 870;
       const mixc = (a, c, t) => [a[0] + (c[0] - a[0]) * t,
                                  a[1] + (c[1] - a[1]) * t,
                                  a[2] + (c[2] - a[2]) * t];
-      if (zone === "PARK") {
+      if (canalB) {
+        // Quayside: paved right up to the water on both banks, because that is
+        // what the whole row is for. Setts rather than the poured slab a yard
+        // gets -- a wharf is older than the block behind it.
+        const sett = mixc(p.walk, p.dark, 0.30);
+        g.fill(sett[0], sett[1], sett[2], 226);
+        g.rect(inX, inY, inW, inW);
+        const worn = mixc(p.walk, p.base, 0.5);
+        for (let i = 0; i < 8; i++) {
+          softStamp(g, inX + rng() * inW, inY + rng() * inW,
+                    280 + rng() * 380, 220 + rng() * 300, worn, 18 + rng() * 20);
+        }
+        // Sett courses, run along the quay rather than across it.
+        g.stroke(0, 0, 0, 30); g.strokeWeight(1.2);
+        for (let l = inY + 26; l < inY + inW; l += 46) g.line(inX, l, inX + inW, l);
+        g.strokeWeight(1);
+        for (let l = inX + 34; l < inX + inW; l += 62) g.line(l, inY, l, inY + inW);
+        g.noStroke();
+        // Spilled cargo and the black of a working wharf.
+        for (let i = 0; i < 9; i++) {
+          softStamp(g, inX + rng() * inW, inY + rng() * inW,
+                    60 + rng() * 150, 46 + rng() * 110, [0, 0, 0], 14 + rng() * 22);
+        }
+      } else if (zone === "PLAZA") {
+        // A civic square: one large paved surface, laid on a radial pattern so
+        // it reads as designed rather than as a block that failed to be built
+        // on. Everything else in the grid is orthogonal, which is exactly why
+        // this lands as a landmark.
+        const slab = mixc(p.walk, p.accent, 0.34);
+        g.fill(slab[0], slab[1], slab[2], 238);
+        g.rect(inX, inY, inW, inW);
+        const px0 = ox + 600, py0 = oy + 600;
+        // Concentric courses around the centrepiece.
+        g.noFill();
+        const ring = mixc(p.walk, p.dark, 0.42);
+        for (let r = 150; r < 760; r += 78) {
+          g.stroke(ring[0], ring[1], ring[2], 60);
+          g.strokeWeight(2.2);
+          g.ellipse(px0, py0, r * 2, r * 1.94);
+        }
+        // Radial joints, stopping short of the middle so the fountain sits in
+        // clear stone.
+        g.strokeWeight(1.6);
+        for (let i = 0; i < 16; i++) {
+          const a = (i / 16) * TWO_PI;
+          g.stroke(ring[0], ring[1], ring[2], 46);
+          g.line(px0 + Math.cos(a) * 150, py0 + Math.sin(a) * 146,
+                 px0 + Math.cos(a) * 700, py0 + Math.sin(a) * 680);
+        }
+        g.noStroke();
+        // Sun and wear across the stone, and the dark ring standing water
+        // leaves at the centrepiece.
+        const litp = mixc(p.accent, [255, 255, 255], 0.16);
+        for (let i = 0; i < 6; i++) {
+          softStamp(g, inX + rng() * inW, inY + rng() * inW,
+                    360 + rng() * 420, 300 + rng() * 340, litp, 14 + rng() * 16);
+        }
+        softStamp(g, px0, py0, 330, 320, p.dark, 30);
+      } else if (zone === "CONSTRUCTION") {
+        // A block back to the dirt. Churned earth, the pit for the basement,
+        // and the plant tracks that made both.
+        const mud = mixc(p.dark, [96, 78, 54], 0.62);
+        g.fill(mud[0], mud[1], mud[2], 224);
+        g.rect(inX, inY, inW, inW);
+        for (let i = 0; i < 9; i++) {
+          softStamp(g, inX + rng() * inW, inY + rng() * inW,
+                    240 + rng() * 380, 200 + rng() * 300,
+                    rng() > 0.5 ? [118, 96, 66] : [72, 58, 42], 20 + rng() * 26);
+        }
+        // The pit: a dark excavation with a lighter batter around its rim, off
+        // centre because a foundation follows the building, not the block.
+        const pw = 380 + rng() * 200, ph = 300 + rng() * 180;
+        const pxq = ox + 600 + (rng() - 0.5) * 200, pyq = oy + 600 + (rng() - 0.5) * 200;
+        softStamp(g, pxq, pyq, pw * 1.32, ph * 1.32, [126, 106, 74], 120);
+        g.fill(48, 40, 30, 232);
+        g.rect(pxq - pw / 2, pyq - ph / 2, pw, ph, 8);
+        g.fill(30, 25, 19, 210);
+        g.rect(pxq - pw / 2 + 26, pyq - ph / 2 + 26, pw - 52, ph - 52, 6);
+        // Rebar grid in the bottom of the pit.
+        g.stroke(150, 132, 104, 70); g.strokeWeight(1.4);
+        for (let l = pxq - pw / 2 + 46; l < pxq + pw / 2 - 20; l += 46) g.line(l, pyq - ph / 2 + 34, l, pyq + ph / 2 - 34);
+        for (let l = pyq - ph / 2 + 46; l < pyq + ph / 2 - 20; l += 46) g.line(pxq - pw / 2 + 34, l, pxq + pw / 2 - 34, l);
+        g.noStroke();
+        // Plant tracks: wide, paired, and wandering, because a tracked machine
+        // turns by dragging one side.
+        g.noFill();
+        for (let i = 0; i < 3; i++) {
+          const ty0 = inY + 60 + rng() * (inW - 120);
+          const amp = (rng() - 0.5) * 220;
+          for (const wheel of [-30, 30]) {
+            g.stroke(0, 0, 0, 26); g.strokeWeight(17);
+            g.beginShape();
+            for (let s = 0; s <= 10; s++) {
+              const t = s / 10;
+              g.vertex(inX + t * inW, ty0 + Math.sin(t * PI) * amp + wheel);
+            }
+            g.endShape();
+          }
+        }
+        g.noStroke();
+      } else if (zone === "PARK") {
         // Lawn, mottled rather than a flat field of one green.
         const lawn = mixc(p.grass, p.dark, 0.18);
         g.fill(lawn[0], lawn[1], lawn[2], 232);
@@ -15080,14 +15898,50 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
       // Centre lines sit ON the street centre, which is the chunk boundary, so
       // each dash is drawn half here and half by the neighbour. The run stops
       // short of both intersections the way the hand-authored grid does.
+      // A street carrying rails has no centre line: the track is the middle of
+      // it. Each chunk paints the half of the tramway on its own side of the
+      // street, exactly as it already does for the dashes it replaces.
+      const tramN = !chunkInAuthoredCore(cx, cy) && cityHasTram(biome, cy);
+      const tramS = !chunkInAuthoredCore(cx, cy) && cityHasTram(biome, cy + 1);
+
       g.fill(p.mark[0], p.mark[1], p.mark[2], 165);
       for (let j = oy + 160; j < oy + CHUNK_W - 200; j += 80) {
         g.rect(ox - 4, j, 8, 40);
         g.rect(ox + CHUNK_W - 4, j, 8, 40);
       }
       for (let i = ox + 160; i < ox + CHUNK_W - 200; i += 80) {
-        g.rect(i, oy - 4, 40, 8);
-        g.rect(i, oy + CHUNK_W - 4, 40, 8);
+        if (!tramN) g.rect(i, oy - 4, 40, 8);
+        if (!tramS) g.rect(i, oy + CHUNK_W - 4, 40, 8);
+      }
+
+      // --- Tramway ---
+      // Laid down the middle of a street that was already there, so nothing
+      // about the 1200 pitch or the 960 block moves. Setts between the rails,
+      // sleepers under them, and two lines of polished steel: the one thing in
+      // the city that catches the light in a straight line for a kilometre.
+      for (const ty of [tramN ? oy : null, tramS ? oy + CHUNK_W : null]) {
+        if (ty === null) continue;
+        const bed = mixc(p.road, p.dark, 0.42);
+        g.fill(bed[0], bed[1], bed[2], 210);
+        g.rect(ox, ty - 42, CHUNK_W, 84);
+        // Sleepers. CHUNK_W divides by the 40-unit pitch, so starting at the
+        // chunk's own origin is already world-aligned and the run continues
+        // straight through the seam.
+        g.fill(0, 0, 0, 46);
+        for (let l = ox; l < ox + CHUNK_W; l += 40) g.rect(l - 13, ty - 34, 26, 68);
+        // Rails: a dark web with a lit head, which is what makes them read as
+        // steel rather than as two more painted lines.
+        for (const r of [-26, 26]) {
+          g.fill(38, 40, 44, 235); g.rect(ox, ty + r - 5, CHUNK_W, 10);
+          g.fill(196, 198, 202, 190); g.rect(ox, ty + r - 4, CHUNK_W, 3);
+        }
+        // Grooved setts either side of the track bed.
+        g.stroke(0, 0, 0, 34); g.strokeWeight(1.2);
+        for (let l = ox; l < ox + CHUNK_W; l += 40) {
+          g.line(l, ty - 42, l, ty - 34);
+          g.line(l, ty + 34, l, ty + 42);
+        }
+        g.noStroke();
       }
 
       // Crosswalk ladders. The intersections are the chunk's four corners, so
@@ -15111,6 +15965,59 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
         const lx = rx - ox, ly = ry - oy;
         if (!(lx < ROAD_H || lx > CHUNK_W - ROAD_H || ly < ROAD_H || ly > CHUNK_W - ROAD_H)) continue;
         softStamp(g, rx, ry, (30 + rng() * 90) * 2.1, (22 + rng() * 60) * 2.1, [0, 0, 0], (18 + rng() * 30) * 0.62);
+      }
+
+      // --- Canal ------------------------------------------------------------
+      // Painted last, because it cuts everything: the block interior, the
+      // sidewalk ring and the north-south street at the chunk boundary. All of
+      // those have already been laid down, so the water simply takes what it
+      // needs out of them.
+      //
+      // A city canal is walled, not banked. The edge is a hard masonry line --
+      // the exact opposite of the river's feathered shallows in the woods --
+      // and that contrast is most of what tells the two sectors apart from
+      // directly overhead.
+      if (canalB) {
+        const midAtC  = (wx) => cityCanalY(biome, cy, wx);
+        const halfAtC = (wx) => cityCanalHalf(biome, cy, wx) * coreTaperX(cx, cy, wx);
+        const SNc = 26;
+        const wAtC = (s) => ox - 40 + (s / SNc) * (CHUNK_W + 80);
+        const band = (add, col, alpha) => {
+          g.fill(col[0], col[1], col[2], alpha);
+          g.beginShape();
+          for (let s = 0; s <= SNc; s++) { const wx = wAtC(s); g.vertex(wx, midAtC(wx) - halfAtC(wx) - add * coreTaperX(cx, cy, wx)); }
+          for (let s = SNc; s >= 0; s--) { const wx = wAtC(s); g.vertex(wx, midAtC(wx) + halfAtC(wx) + add * coreTaperX(cx, cy, wx)); }
+          g.endShape(CLOSE);
+        };
+        const stone = mixc(p.walk, p.dark, 0.22);
+        band(CITY_QUAY + 9, [0, 0, 0], 44);                    // contact shade on the pavement
+        band(CITY_QUAY, stone, 250);                           // coping and wall head
+        band(CITY_QUAY - 10, mixc(p.walk, p.accent, 0.5), 150); // lit edge of the coping
+        band(2, [16, 20, 22], 220);                            // the wall's own shadow on the water
+        band(0, [30, 54, 58], 252);                            // water
+        band(-16, [40, 74, 76], 150);                          // the channel's lighter middle
+        // Scum along the walls, and the sheen the sky leaves down the centre.
+        g.noFill();
+        for (const sgn of [-1, 1]) {
+          g.stroke(66, 84, 54, 90); g.strokeWeight(4);
+          g.beginShape();
+          for (let s = 0; s <= SNc; s++) { const wx = wAtC(s); g.vertex(wx, midAtC(wx) + sgn * (halfAtC(wx) - 6)); }
+          g.endShape();
+        }
+        for (let i = 0; i < 7; i++) {
+          const x0c = ox - 40 + rng() * CHUNK_W * 0.72;
+          const len = CHUNK_W * (0.18 + rng() * 0.3);
+          const off = (rng() * 2 - 1) * 0.44;
+          g.stroke(178, 208, 214, 20 + rng() * 26);
+          g.strokeWeight(1.4 + rng() * 2.6);
+          g.beginShape();
+          for (let s = 0; s <= 9; s++) {
+            const wx = x0c + (s / 9) * len;
+            g.vertex(wx, midAtC(wx) + halfAtC(wx) * off);
+          }
+          g.endShape();
+        }
+        g.noStroke();
       }
       break;
     }
@@ -15310,23 +16217,121 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
                   [p.accent[0], p.accent[1], p.accent[2]], 14 + rng() * 16);
       }
 
-      // The track. Narrower than a wagon road and greener at the edges: two
-      // ruts worn through turf rather than a graded carriageway.
+      // --- The road network -------------------------------------------------
+      // Only the columns and rows that actually carry a road paint one. What
+      // stood here before painted a track down every single column, which meant
+      // walking east crossed the identical trail every 1200 units for as long
+      // as you cared to walk -- the landscape repeating on the player's stride.
+      //
+      // Roads go down before the water does, so a ford comes out as a track
+      // running into the river and out the far side. At a bridge the deck is a
+      // live prop wide enough to cover the whole channel, so the same order
+      // works there too.
+      const hasTrunkB = woodHasTrunk(biome, cx);
+      const hasLinkB  = woodHasLink(biome, cy);
+      const hasRiverB = woodHasRiver(biome, cy);
+      const crossB    = woodCrossing(biome, cx, cy);
+      const spurB     = woodSpur(biome, cx, cy);
+
       const trackAtW = (wy) => woodTrailX(biome, cx, wy);
+      const linkAtW  = (wx) => woodLinkY(biome, cy, wx);
       const S0w = -2, S1w = 26, SNw = 24;
       const yAtW = (sIdx) => oy + (sIdx / SNw) * CHUNK_W;
-      bakeRibbon(g, trackAtW, yAtW, S0w, S1w, 96, 46,
-                 [110, 128, 78], [118, 100, 72], 12, 42);
-      g.stroke(p.mark[0], p.mark[1], p.mark[2], 120); g.strokeWeight(5); g.noFill();
-      for (const side of [-24, 24]) {
-        g.beginShape();
-        for (let sIdx = S0w; sIdx <= S1w; sIdx++) g.vertex(trackAtW(yAtW(sIdx)) + side, yAtW(sIdx));
-        g.endShape();
-      }
-      g.noStroke();
+      const SNl  = 20;
+      const xAtL = (sIdx) => ox - 60 + (sIdx / SNl) * (CHUNK_W + 120);
 
-      // Fallen leaf litter off the track, and the odd bare patch of earth.
-      const offTrack = (x, y) => Math.abs(x - trackAtW(y)) > 80;
+      const RUT = (col, alpha) => { g.stroke(col[0], col[1], col[2], alpha); g.strokeWeight(5); g.noFill(); };
+
+      if (hasTrunkB) {
+        // The through road: two ruts worn through turf, not a graded
+        // carriageway. Tapered to nothing where it runs into authored ground.
+        bakeRibbon(g, trackAtW, yAtW, S0w, S1w, 96, 46,
+                   [110, 128, 78], [118, 100, 72], 12, 42,
+                   (wy) => coreTaperY(cx, cy, wy));
+        RUT(p.mark, 120);
+        for (const side of [-24, 24]) {
+          g.beginShape();
+          for (let sIdx = S0w; sIdx <= S1w; sIdx++) {
+            const wy = yAtW(sIdx);
+            g.vertex(trackAtW(wy) + side * coreTaperY(cx, cy, wy), wy);
+          }
+          g.endShape();
+        }
+        g.noStroke();
+      }
+
+      if (hasLinkB) {
+        // The link is narrower than the trunk on purpose: a road network the
+        // player can navigate needs its through routes to read differently from
+        // its cross-country connections at a glance.
+        bakeRibbonH(g, linkAtW, xAtL, 0, SNl, 78, 37,
+                    [110, 128, 78], [118, 100, 72], 9, 40,
+                    (wx) => coreTaperX(cx, cy, wx));
+        RUT(p.mark, 110);
+        for (const side of [-20, 20]) {
+          g.beginShape();
+          for (let sIdx = 0; sIdx <= SNl; sIdx++) {
+            const wx = xAtL(sIdx);
+            g.vertex(wx, linkAtW(wx) + side * coreTaperX(cx, cy, wx));
+          }
+          g.endShape();
+        }
+        g.noStroke();
+      }
+
+      if (spurB) {
+        // A fork off the trunk that stops at whatever the chunk put out there.
+        // Fades out over its last half rather than ending on a cap, because a
+        // farm track does not have an end, it has a place where people stopped
+        // driving over it.
+        const sdx = spurB.x1 - spurB.x0;
+        const clamp01 = (t) => t < 0 ? 0 : t > 1 ? 1 : t;
+        const spurT = (wx) => clamp01((wx - spurB.x0) / sdx);
+        const spurC = (wx) => spurB.y0 + (spurB.y1 - spurB.y0) * spurT(wx);
+        const spurW = (wx) => (1 - smooth01((spurT(wx) - 0.5) / 0.5)) * 0.85 + 0.15;
+        const SNs = 14;
+        bakeRibbonH(g, spurC, (s) => spurB.x0 + (s / SNs) * sdx, 0, SNs, 62, 30,
+                    [110, 128, 78], [116, 100, 74], 8, 38, spurW, 3);
+      }
+
+      // --- The river --------------------------------------------------------
+      if (hasRiverB) {
+        const midAtR  = (wx) => woodRiverY(biome, cy, wx);
+        const halfAtR = (wx) => woodRiverHalf(biome, cy, wx) * coreTaperX(cx, cy, wx);
+        bakeWatercourse(g, midAtR, halfAtR, ox, oy,
+                        [96, 88, 60], [88, 122, 106], [36, 62, 70], 208, rng);
+
+        if (crossB && crossB.ford) {
+          // A ford is where the channel runs wide and shallow over gravel. Pale
+          // bed showing through the water is the whole read: you can see the
+          // bottom, so you know you can walk it.
+          const fh = halfAtR(crossB.x);
+          softStamp(g, crossB.x, crossB.y, 300, fh * 2.5, [186, 178, 148], 120);
+          softStamp(g, crossB.x, crossB.y, 210, fh * 1.7, [206, 200, 172], 96);
+          g.noFill(); g.stroke(232, 240, 236, 46); g.strokeWeight(2);
+          for (let i = 0; i < 7; i++) {
+            const fy = crossB.y + (i - 3) * fh * 0.3;
+            g.line(crossB.x - 120, fy, crossB.x + 120, fy + (rng() - 0.5) * 12);
+          }
+          g.noStroke();
+        } else if (crossB) {
+          // Abutments: the packed earth ramp up onto the deck, painted so the
+          // bridge lands on something rather than floating over the bank.
+          const ah = halfAtR(crossB.x);
+          for (const side of [-1, 1]) {
+            softStamp(g, crossB.x, crossB.y + side * (ah + 74), 200, 150, [104, 92, 66], 118);
+          }
+        }
+      }
+
+      // Fallen leaf litter off the roads and out of the water, and the odd bare
+      // patch of earth.
+      const offTrack = (x, y) => {
+        if (hasTrunkB && Math.abs(x - trackAtW(y)) < 80) return false;
+        if (hasLinkB  && Math.abs(y - linkAtW(x)) < 70) return false;
+        if (hasRiverB && Math.abs(y - woodRiverY(biome, cy, x)) < woodRiverHalf(biome, cy, x) * 1.4) return false;
+        return true;
+      };
       for (let i = 0; i < 26; i++) {
         const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
         if (!offTrack(rx, ry)) continue;
@@ -15342,6 +16347,22 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
       // A cleared apron under a Directive post, so the compound is not sitting
       // in long grass.
       if (cityIsCheckpoint(biome, cx, cy)) {
+        // The access road in off the trunk. A post sits on the chunk corner and
+        // the through road runs down the middle of the column, so without this
+        // the Directive's own checkpoints are the one thing in the sector with
+        // no road to them -- which reads as scenery rather than as a garrison.
+        if (hasTrunkB) {
+          const ax0 = trackAtW(oy + 330), ax1 = ox + 80;
+          const adx = ax1 - ax0;
+          if (Math.abs(adx) > 120) {
+            const at01 = (wx) => { const t = (wx - ax0) / adx; return t < 0 ? 0 : t > 1 ? 1 : t; };
+            const SNa = 12;
+            bakeRibbonH(g, (wx) => (oy + 330) + (oy + 80 - (oy + 330)) * at01(wx),
+                        (s) => ax0 + (s / SNa) * adx, 0, SNa, 58, 28,
+                        [110, 128, 78], [116, 100, 74], 8, 38,
+                        (wx) => 0.35 + 0.65 * (1 - at01(wx)), 3);
+          }
+        }
         softStamp(g, ox, oy, 900, 900, [116, 104, 78], 58);
         g.stroke(0, 0, 0, 30); g.strokeWeight(2);
         for (let i = 0; i < 26; i++) {
@@ -16663,6 +17684,135 @@ function paintClutter(g, d, t) {
       g.ellipse(-LIGHT_DX * 11 * s, -LIGHT_DY * 11 * s, 22 * s, 18 * s);
       break;
     }
+    case "GRASS": {
+      // A tussock. pickClutterType has been returning this for a quarter of all
+      // woodland clutter since the layout was written, and with no case here
+      // every one of those draws fell through the switch and painted nothing --
+      // which is a quarter of the ground cover missing from the one biome that
+      // is supposed to be overgrown.
+      shadow(1, 1.5, 13 * s, 7 * s, 2, 44);
+      g.noStroke();
+      g.fill(72, 104, 52, 150);
+      g.ellipse(0, 0, 12 * s, 7 * s);
+      g.strokeWeight(1.6 * s);
+      for (let i = 0; i < 7; i++) {
+        const a = -HALF_PI + (i - 3) * 0.34 + (d.c - 0.5) * 0.5;
+        const ln = (7 + ((i * 37 + d.c * 91) % 6)) * s;
+        // Blades lit on the side facing the sun, so a field of them still has
+        // one light in it.
+        const face = -(Math.cos(a) * LIGHT_DX + Math.sin(a) * LIGHT_DY);
+        g.stroke(74 + face * 26, 118 + face * 32, 54 + face * 18, 220);
+        g.line(0, 0, Math.cos(a) * ln, Math.sin(a) * ln);
+      }
+      g.noStroke();
+      break;
+    }
+    case "STUMP": {
+      // Cut, not broken: a dark rim of bark and a pale sawn face with the rings
+      // still on it. The one prop that says somebody worked here.
+      shadow(2, 2.5, 20 * s, 14 * s, 4, 66);
+      g.noStroke();
+      g.rotate(d.r);
+      // Roots spreading into the ground, so it is not a disc lying on the turf.
+      g.fill(58, 44, 30, 200);
+      for (let i = 0; i < 5; i++) {
+        const a = d.c * 6 + i * 1.257;
+        g.ellipse(Math.cos(a) * 8 * s, Math.sin(a) * 7 * s, 9 * s, 6 * s);
+      }
+      g.fill(64, 48, 32); g.ellipse(0, 0, 19 * s, 17 * s);
+      g.fill(168, 142, 96); g.ellipse(-LIGHT_DX * s, -LIGHT_DY * s, 14 * s, 12.5 * s);
+      g.noFill(); g.strokeWeight(0.9 * s);
+      for (let r = 3; r <= 11; r += 3.2) {
+        g.stroke(128, 104, 68, 170);
+        g.ellipse(-LIGHT_DX * s, -LIGHT_DY * s, r * s, r * 0.9 * s);
+      }
+      // The saw's last cut across the face.
+      g.stroke(96, 76, 48, 150); g.strokeWeight(1.1 * s);
+      g.line(-6 * s, -1 * s, 6 * s, 2 * s);
+      g.noStroke();
+      break;
+    }
+    case "MUSHROOM": {
+      shadow(1, 1.2, 9 * s, 5 * s, 1.5, 44);
+      g.noStroke();
+      for (let i = 0; i < 3; i++) {
+        const a  = d.r + i * 2.09;
+        const px = Math.cos(a) * 4 * s, py = Math.sin(a) * 3 * s;
+        const cs = (2.6 + ((i * 53 + d.c * 71) % 2)) * s;
+        g.fill(196, 188, 170, 220); g.rect(px - 0.8 * s, py - 1 * s, 1.7 * s, 4 * s);
+        g.fill(150 + d.c * 60, 96 + d.c * 40, 70, 235);
+        g.ellipse(px, py - 1.5 * s, cs * 2, cs * 1.5);
+        g.fill(255, 255, 255, 40);
+        g.ellipse(px - LIGHT_DX * cs * 0.4, py - 1.5 * s - LIGHT_DY * cs * 0.4, cs * 0.9, cs * 0.6);
+      }
+      break;
+    }
+    case "REED": {
+      // Waterside. No contact shadow worth the name -- reeds stand in water or
+      // in mud that is already dark -- but they do get their own reflection,
+      // which is the cue that says the ground here is wet.
+      g.noStroke();
+      g.fill(20, 34, 30, 60);
+      g.ellipse(LIGHT_DX * 4, LIGHT_DY * 4 + 2 * s, 15 * s, 6 * s);
+      const lean = (d.c - 0.5) * 0.5;
+      g.strokeWeight(1.5 * s);
+      for (let i = 0; i < 8; i++) {
+        const a  = -HALF_PI + lean + (i - 3.5) * 0.16;
+        const ln = (12 + ((i * 41 + d.c * 83) % 9)) * s;
+        g.stroke(96, 124, 68, 225);
+        g.line((i - 3.5) * 1.6 * s, 0, (i - 3.5) * 1.6 * s + Math.cos(a) * ln, Math.sin(a) * ln);
+      }
+      g.noStroke();
+      // Seed heads on a couple of the stems.
+      for (let i = 0; i < 3; i++) {
+        const a  = -HALF_PI + lean + (i * 1.7 - 1.7) * 0.16;
+        const ln = (15 + ((i * 29 + d.c * 47) % 6)) * s;
+        g.fill(102, 76, 46, 230);
+        g.ellipse((i * 1.7 - 1.7) * 1.6 * s + Math.cos(a) * ln, Math.sin(a) * ln, 2.6 * s, 6 * s);
+      }
+      break;
+    }
+    case "RIPPLE": {
+      // Live, on water. Three rings on the same drift, each one further through
+      // its life than the last, so the surface never reads as still. No shadow
+      // and no body -- a ripple is a disturbance, not an object.
+      g.noFill();
+      for (let i = 0; i < 3; i++) {
+        const k = ((t * 0.0055) + d.c + i / 3) % 1;
+        g.stroke(206, 232, 240, 46 * (1 - k) * (k > 0.08 ? 1 : k / 0.08));
+        g.strokeWeight(1.6 * s);
+        g.ellipse(0, 0, (6 + k * 34) * s, (4 + k * 24) * s);
+      }
+      g.noStroke();
+      break;
+    }
+    case "MANHOLE": {
+      // Cast iron, seated a little below the road, so the collar reads as a
+      // recess rather than a disc lying on the surface.
+      g.noStroke();
+      g.rotate(d.r);
+      g.fill(0, 0, 0, 46); g.ellipse(0, 0, 17 * s, 16 * s);
+      g.fill(58, 58, 60);   g.ellipse(0, 0, 14 * s, 13 * s);
+      g.fill(74, 74, 76);   g.ellipse(-LIGHT_DX * 0.8 * s, -LIGHT_DY * 0.8 * s, 12 * s, 11 * s);
+      g.stroke(38, 38, 40, 200); g.strokeWeight(0.9 * s);
+      for (let i = 0; i < 4; i++) {
+        const a = i * 0.785;
+        g.line(-Math.cos(a) * 5 * s, -Math.sin(a) * 4.6 * s, Math.cos(a) * 5 * s, Math.sin(a) * 4.6 * s);
+      }
+      g.noStroke();
+      break;
+    }
+    case "CONE": {
+      shadow(2, 2, 13 * s, 8 * s, 3, 62);
+      g.noStroke();
+      g.fill(24, 24, 26, 220); g.ellipse(0, 1.5 * s, 12 * s, 8 * s);       // base
+      g.fill(206, 88, 26);     g.ellipse(0, 0, 9 * s, 8 * s);
+      g.fill(232, 236, 238);   g.ellipse(0, -0.6 * s, 6 * s, 5 * s);        // reflective band
+      g.fill(226, 108, 36);    g.ellipse(0, -1.4 * s, 3.6 * s, 3.2 * s);    // tip
+      g.fill(255, 255, 255, 34);
+      g.ellipse(-LIGHT_DX * 2 * s, -LIGHT_DY * 2 * s, 5 * s, 4 * s);
+      break;
+    }
   }
   g.pop();
 }
@@ -16675,6 +17825,11 @@ function paintClutter(g, d, t) {
 function drawBiomeProps() {
   for (const b of activeBuildings) {
     if (!b.isBiomeProp) continue;
+    // activeBuildings is a 1500-unit ring, so most of it is off screen on any
+    // given frame. Every other pass in the render order culls before it draws;
+    // this one was letting the rasteriser clip instead, which on a fill-rate
+    // bound canvas is the expensive way to draw nothing.
+    if (!inView(b.x, b.y, Math.max(b.w || 0, b.h || 0) + 150)) continue;
     const def = BIOMES[currentBiome] || BIOMES[1];
 
     switch (b.propType) {
@@ -16890,6 +18045,569 @@ function drawBiomeProps() {
         ellipse(-b.w / 2 + 16, -b.h / 2 - 3, 20, 12);
         ellipse(b.w / 2 - 16, b.h / 2 + 3, 20, 12);
         pop();
+        break;
+      }
+
+      // =====================================================================
+      //  CROSSINGS
+      //  A bridge is the one prop in the set that the player stands ON, so it
+      //  is drawn as a surface with edges rather than as a mass: the deck sits
+      //  flat on the water and everything with height -- parapets, rails,
+      //  posts -- is drawn at the rim, throwing inward. Get that backwards and
+      //  it reads as a crate lying in the river.
+      // =====================================================================
+      case "BRIDGE": {
+        // Timber trestle over a woodland river. Travel runs north-south, so the
+        // planks run across it and the handrails run along its length.
+        castShadowRect(b.x, b.y, b.w - 12, b.h - 40, 16, 86, 3);
+        push(); translate(b.x, b.y);
+        noStroke();
+        const hw = b.w / 2, hh = b.h / 2;
+        // Abutments: the packed stone the deck lands on at each bank.
+        fill(96, 90, 74);
+        rect(-hw - 8, -hh, b.w + 16, 34, 3);
+        rect(-hw - 8, hh - 34, b.w + 16, 34, 3);
+        // Deck
+        fill(122, 96, 62); rect(-hw, -hh, b.w, b.h, 2);
+        // Planks across the run. Alternating tone with a per-plank wobble keyed
+        // off the bridge's own tint, so no two crossings deck out the same.
+        for (let py = -hh + 4; py < hh - 4; py += 13) {
+          const k = ((py * 7.3 + b.tint * 91) % 3);
+          fill(136 - k * 12, 108 - k * 10, 68 - k * 6, 235);
+          rect(-hw + 3, py, b.w - 6, 10, 1);
+        }
+        // Stringers under the plank ends, and the wear down the middle where
+        // everything that crosses actually walks.
+        fill(84, 64, 40, 200);
+        rect(-hw + 3, -hh + 4, 7, b.h - 8);
+        rect(hw - 10, -hh + 4, 7, b.h - 8);
+        fill(96, 76, 48, 90); rect(-22, -hh + 8, 44, b.h - 16);
+        // Handrails: posts and a top rail on each side, lit on the sun side.
+        for (const sx of [-1, 1]) {
+          const rx = sx * (hw - 2);
+          fill(74, 58, 36);
+          for (let py = -hh + 16; py < hh - 10; py += 46) rect(rx - 4, py, 9, 11, 1);
+          fill(sx * LIGHT_DX > 0 ? 104 : 138, sx * LIGHT_DX > 0 ? 82 : 110, sx * LIGHT_DX > 0 ? 52 : 70);
+          rect(rx - 5, -hh + 14, 11, b.h - 28, 2);
+          fill(255, 255, 255, 26); rect(rx - 5, -hh + 14, 11, 4, 2);
+        }
+        pop();
+        break;
+      }
+
+      case "CANALBRIDGE": {
+        // Masonry road bridge. The street runs straight over it, so the deck
+        // carries the same surface and the same centre line as the carriageway
+        // either side -- the parapets are the only thing that says it is a
+        // bridge at all, which is exactly right for a city canal.
+        castShadowRect(b.x, b.y, b.w - 10, b.h - 30, 18, 92, 2);
+        push(); translate(b.x, b.y);
+        noStroke();
+        const hw2 = b.w / 2, hh2 = b.h / 2;
+        const pal2 = BIOMES[currentBiome] ? BIOMES[currentBiome].pal : BIOMES[1].pal;
+        // Deck: the road surface, continuous with the street.
+        fill(pal2.road[0], pal2.road[1], pal2.road[2]);
+        rect(-hw2, -hh2, b.w, b.h);
+        // Aggregate and a wet patch at each parapet foot.
+        fill(255, 255, 255, 16);
+        for (let i = 0; i < 14; i++) {
+          const a = b.tint * 37 + i * 2.399;
+          ellipse(Math.cos(a) * hw2 * 0.7, Math.sin(a) * hh2 * 0.8, 7, 5);
+        }
+        // Centre line, dashed, picking up where the street's leaves off.
+        fill(pal2.mark[0], pal2.mark[1], pal2.mark[2], 165);
+        for (let py = -hh2 + 14; py < hh2 - 20; py += 80) rect(-4, py, 8, 40);
+        // Kerbs and parapets. The parapet is a wall seen from above: a thin
+        // top face with a shaded inner return, so the deck reads as sunk
+        // between two masses.
+        for (const sx of [-1, 1]) {
+          const px2 = sx * (hw2 - 20);
+          fill(0, 0, 0, 54);  rect(px2 - sx * 6 - 9, -hh2 + 8, 18, b.h - 16);
+          fill(150, 148, 140); rect(px2 - 11, -hh2 + 6, 22, b.h - 12, 2);
+          fill(186, 184, 174); rect(px2 - 11 - LIGHT_DX * 3, -hh2 + 6 - LIGHT_DY * 3, 22, b.h - 12, 2);
+          // Coping joints
+          fill(0, 0, 0, 40);
+          for (let py = -hh2 + 20; py < hh2 - 12; py += 54) rect(px2 - 11, py, 22, 2);
+        }
+        // The bearing courses where the deck meets the quay, top and bottom.
+        fill(126, 124, 116);
+        rect(-hw2, -hh2, b.w, 12);
+        rect(-hw2, hh2 - 12, b.w, 12);
+        pop();
+        break;
+      }
+
+      // =====================================================================
+      //  WATERSIDE
+      // =====================================================================
+      case "BOLLARD": {
+        castShadow(b.x, b.y, 26, 18, 6, 74);
+        push(); translate(b.x, b.y); noStroke();
+        fill(44, 46, 50); ellipse(0, 0, b.w, b.h);
+        fill(66, 68, 74); ellipse(-LIGHT_DX * 2, -LIGHT_DY * 2, b.w - 6, b.h - 6);
+        fill(96, 98, 104); ellipse(-LIGHT_DX * 3.5, -LIGHT_DY * 3.5, b.w - 12, b.h - 12);
+        // Rope scuff around the neck
+        fill(150, 138, 108, 120); ellipse(0, 0, b.w + 5, b.h + 4);
+        fill(44, 46, 50); ellipse(0, 0, b.w - 2, b.h - 2);
+        fill(88, 90, 96); ellipse(-LIGHT_DX * 3, -LIGHT_DY * 3, b.w - 11, b.h - 11);
+        pop();
+        break;
+      }
+
+      case "BARGE": {
+        push(); translate(b.x, b.y); rotate(b.angle || 0);
+        // Hull shadow goes ON the water, short and dark -- a hull floats in
+        // its own shadow rather than casting one across the surface.
+        noStroke();
+        fill(10, 24, 28, 120);
+        rect(-b.w / 2 + 4, -b.h / 2 + 5, b.w, b.h, 12);
+        const t2 = b.tint;
+        // Hull
+        fill(58 + t2 * 40, 62 + t2 * 26, 56 + t2 * 20);
+        rect(-b.w / 2, -b.h / 2, b.w, b.h, 12);
+        // Gunwale, lit on the sun side
+        fill(92 + t2 * 40, 96 + t2 * 26, 88 + t2 * 20);
+        rect(-b.w / 2, -b.h / 2, b.w, 8, 4);
+        fill(30, 32, 30, 150);
+        rect(-b.w / 2, b.h / 2 - 8, b.w, 8, 4);
+        // Open hold with a tarped load
+        fill(28, 26, 24); rect(-b.w / 2 + 24, -b.h / 2 + 12, b.w * 0.52, b.h - 24, 3);
+        fill(96, 88, 62); rect(-b.w / 2 + 30, -b.h / 2 + 16, b.w * 0.44, b.h - 32, 3);
+        fill(0, 0, 0, 50); rect(-b.w / 2 + 30, -b.h / 2 + 16, b.w * 0.44, 6, 3);
+        // Wheelhouse aft
+        fill(74, 76, 78); rect(b.w / 2 - 46, -b.h / 2 + 10, 32, b.h - 20, 3);
+        fill(24, 28, 32); rect(b.w / 2 - 41, -b.h / 2 + 15, 22, 10, 2);
+        fill(210, 190, 120, 60); rect(b.w / 2 - 41, -b.h / 2 + 15, 22, 4, 2);
+        // Rust down the waterline
+        fill(120, 68, 32, 90);
+        for (let i = 0; i < 4; i++) rect(-b.w / 2 + 20 + i * (b.w / 5), b.h / 2 - 12, 6, 10, 1);
+        pop();
+        break;
+      }
+
+      case "QUAYCRANE": {
+        castShadow(b.x, b.y, b.w * 1.3, b.h * 1.0, 20, 78);
+        push(); translate(b.x, b.y); noStroke();
+        // Base and slew ring
+        fill(72, 74, 78); ellipse(0, 0, b.w, b.h);
+        fill(96, 98, 102); ellipse(-LIGHT_DX * 2, -LIGHT_DY * 2, b.w - 14, b.h - 14);
+        rotate(b.angle || 0);
+        // Counterweight behind, jib reaching out over the water
+        fill(52, 54, 58); rect(-30, -14, 30, 28, 3);
+        fill(186, 146, 40); rect(-8, -11, 22, 22, 3);
+        fill(210, 168, 52); rect(-8, -11, 22, 6, 3);
+        // Lattice jib: two booms and the cross bracing between them
+        fill(178, 140, 38);
+        rect(10, -9, 96, 5, 2);
+        rect(10, 4, 96, 5, 2);
+        stroke(178, 140, 38); strokeWeight(3);
+        for (let i = 0; i < 6; i++) line(14 + i * 16, -5, 26 + i * 16, 5);
+        noStroke();
+        // Hook block out at the jib head
+        fill(40, 42, 46); rect(96, -5, 9, 12, 2);
+        fill(22, 24, 26); ellipse(100, 8, 7, 7);
+        pop();
+        break;
+      }
+
+      // =====================================================================
+      //  CIVIC SQUARE
+      // =====================================================================
+      case "FOUNTAIN": {
+        castShadow(b.x, b.y, b.w * 1.04, b.h * 0.9, 14, 76);
+        push(); translate(b.x, b.y); noStroke();
+        const R2 = b.w / 2;
+        // Basin wall, with a lit rim on the sun side
+        fill(150, 148, 140); ellipse(0, 0, b.w, b.h);
+        fill(184, 182, 172); ellipse(-LIGHT_DX * 4, -LIGHT_DY * 4, b.w - 10, b.h - 10);
+        fill(118, 116, 110); ellipse(0, 0, b.w - 26, b.h - 26);
+        // Water, darker at the wall where the basin is deepest
+        fill(38, 74, 92, 240); ellipse(0, 0, b.w - 34, b.h - 34);
+        fill(58, 110, 138, 200); ellipse(0, 0, b.w - 58, b.h - 58);
+        // Rings running out from the jet
+        noFill(); strokeWeight(2);
+        for (let i = 0; i < 3; i++) {
+          const k = ((frameCount * 0.006) + i / 3) % 1;
+          stroke(196, 226, 240, 54 * (1 - k));
+          ellipse(0, 0, (b.w - 60) * (0.2 + k * 0.8), (b.h - 60) * (0.2 + k * 0.8));
+        }
+        noStroke();
+        // Plinth and jet
+        fill(140, 138, 130); ellipse(0, 0, 40, 36);
+        fill(174, 172, 162); ellipse(-LIGHT_DX * 2, -LIGHT_DY * 2, 32, 28);
+        const jet = 10 + Math.sin(frameCount * 0.07) * 2.2;
+        fill(214, 236, 246, 190); ellipse(0, -2, jet, jet * 0.9);
+        fill(255, 255, 255, 120); ellipse(-1, -4, jet * 0.5, jet * 0.45);
+        // Coins and the green line the water leaves on the stone
+        fill(88, 128, 96, 70); ellipse(0, 0, b.w - 32, b.h - 32);
+        fill(38, 74, 92, 230); ellipse(0, 0, b.w - 40, b.h - 40);
+        pop();
+        break;
+      }
+
+      case "PLANTER": {
+        castShadowRect(b.x, b.y, b.w * 1.02, b.h * 0.95, 10, 76, 3);
+        push(); translate(b.x, b.y); noStroke();
+        fill(138, 136, 128); rect(-b.w / 2, -b.h / 2, b.w, b.h, 4);
+        fill(170, 168, 158); rect(-b.w / 2 - LIGHT_DX * 3, -b.h / 2 - LIGHT_DY * 3, b.w, b.h, 4);
+        fill(62, 50, 36); rect(-b.w / 2 + 9, -b.h / 2 + 9, b.w - 18, b.h - 18, 3);
+        // Shrub: lobes on a ring, shaded against the same sun as everything else
+        for (let i = 0; i < 5; i++) {
+          const a = b.tint * 9 + (i / 5) * TWO_PI;
+          const face = -(Math.cos(a) * LIGHT_DX + Math.sin(a) * LIGHT_DY);
+          const k = 0.82 + 0.3 * face;
+          fill(48 * k, 104 * k, 46 * k, 240);
+          ellipse(Math.cos(a) * b.w * 0.16, Math.sin(a) * b.h * 0.16, b.w * 0.44, b.h * 0.40);
+        }
+        fill(70, 132, 60, 220); ellipse(0, -2, b.w * 0.34, b.h * 0.3);
+        pop();
+        break;
+      }
+
+      case "BENCH": {
+        // Rotated silhouette, but displaced along the world light vector
+        // rather than the bench's own, so a ring of benches all throw the
+        // same way.
+        const bl = 8 * (BIOME_ACTIVE ? shadowLengthScale() : 1);
+        push(); translate(b.x + LIGHT_DX * bl, b.y + LIGHT_DY * bl); rotate(b.angle || 0);
+        shadowFill(70); rect(-b.w * 0.49, -b.h * 0.45, b.w * 0.98, b.h * 0.9, 2);
+        pop();
+        push(); translate(b.x, b.y); rotate(b.angle || 0);
+        noStroke();
+        // Legs first, so the seat sits on top of them
+        fill(58, 60, 64);
+        rect(-b.w / 2 + 6, -b.h / 2 - 2, 8, b.h + 4, 2);
+        rect(b.w / 2 - 14, -b.h / 2 - 2, 8, b.h + 4, 2);
+        // Slats
+        for (let i = 0; i < 3; i++) {
+          const sy2 = -b.h / 2 + 3 + i * (b.h / 3);
+          fill(126 - i * 6, 96 - i * 5, 60 - i * 3);
+          rect(-b.w / 2 + 2, sy2, b.w - 4, b.h / 3 - 4, 2);
+          fill(255, 255, 255, 20);
+          rect(-b.w / 2 + 2, sy2, b.w - 4, 2, 2);
+        }
+        pop();
+        break;
+      }
+
+      // =====================================================================
+      //  BUILDING SITE
+      // =====================================================================
+      case "HOARDING": {
+        // A long thin run. Clamped to the visible span for the same reason the
+        // curtain wall is: a full block's worth of boards is 800 units, and at
+        // most a couple of hundred of it is ever on screen.
+        const horiz = b.w > b.h;
+        const x0h = Math.max(b.x - b.w / 2, viewLeft - 120);
+        const x1h = Math.min(b.x + b.w / 2, viewRight + 120);
+        const y0h = Math.max(b.y - b.h / 2, viewTop - 120);
+        const y1h = Math.min(b.y + b.h / 2, viewBottom + 120);
+        if (x1h <= x0h || y1h <= y0h) break;
+        shadowFill(66);
+        rect(x0h + LIGHT_DX * 9, y0h + LIGHT_DY * 9, x1h - x0h, y1h - y0h, 1);
+        noStroke();
+        fill(72, 78, 86);
+        rect(x0h, y0h, x1h - x0h, y1h - y0h, 1);
+        // Boards, on a world-space pitch so the run reads as continuous panels
+        // rather than as one painted strip.
+        const pitch = 46;
+        if (horiz) {
+          const f0 = Math.floor(x0h / pitch) * pitch;
+          for (let l = f0; l < x1h; l += pitch) {
+            const k = Math.abs((l * 0.017 + b.tint * 5) % 1);
+            fill(96 + k * 34, 102 + k * 30, 110 + k * 26);
+            rect(Math.max(l + 2, x0h), y0h + 2, Math.min(pitch - 4, x1h - l - 2), y1h - y0h - 4, 1);
+          }
+          fill(255, 255, 255, 24); rect(x0h, y0h, x1h - x0h, 3);
+        } else {
+          const f0 = Math.floor(y0h / pitch) * pitch;
+          for (let l = f0; l < y1h; l += pitch) {
+            const k = Math.abs((l * 0.017 + b.tint * 5) % 1);
+            fill(96 + k * 34, 102 + k * 30, 110 + k * 26);
+            rect(x0h + 2, Math.max(l + 2, y0h), x1h - x0h - 4, Math.min(pitch - 4, y1h - l - 2), 1);
+          }
+          fill(255, 255, 255, 24); rect(x0h, y0h, 3, y1h - y0h);
+        }
+        break;
+      }
+
+      case "SPOIL": {
+        castShadow(b.x, b.y, b.w * 1.06, b.h * 0.86, 12, 74);
+        push(); translate(b.x, b.y); noStroke();
+        // A heap is a stack of shrinking, rising layers -- flat ellipses read
+        // as a stain, and one ellipse reads as a boulder.
+        for (let i = 0; i < 4; i++) {
+          const k = i / 3;
+          fill(74 + k * 46, 60 + k * 38, 42 + k * 26);
+          ellipse(-LIGHT_DX * k * 7, -LIGHT_DY * k * 7, b.w * (1 - k * 0.34), b.h * (1 - k * 0.34));
+        }
+        // Loose stone and the slumped skirt at the toe
+        fill(0, 0, 0, 34);
+        ellipse(LIGHT_DX * 8, LIGHT_DY * 8, b.w * 0.9, b.h * 0.6);
+        for (let i = 0; i < 6; i++) {
+          const a = b.tint * 27 + i * 1.9;
+          fill(112 + (i % 3) * 12, 100 + (i % 2) * 10, 82);
+          ellipse(Math.cos(a) * b.w * 0.3, Math.sin(a) * b.h * 0.3, 8, 6);
+        }
+        pop();
+        break;
+      }
+
+      case "MATERIALS": {
+        // Shadow is cast before the rotate, in world space. Rotating first
+        // rotates LIGHT_DX/DY with the prop, and a scene where half the props
+        // throw north-east and half throw south-east has no sun in it.
+        const vertM = b.h > b.w;
+        castShadowRect(b.x, b.y, b.w, b.h, 12, 78, 2);
+        push(); translate(b.x, b.y); if (vertM) rotate(HALF_PI);
+        const L = vertM ? b.h : b.w, W = vertM ? b.w : b.h;
+        noStroke();
+        // Pipes seen end on: a stack of tubes, each with a dark bore.
+        fill(58, 60, 62); rect(-L / 2, -W / 2, L, W, 3);
+        const rows = 2, per = Math.max(3, Math.round(L / 22));
+        for (let r = 0; r < rows; r++) {
+          for (let i = 0; i < per; i++) {
+            const px3 = -L / 2 + 11 + i * ((L - 22) / Math.max(1, per - 1));
+            const py3 = -W / 2 + 9 + r * (W - 18);
+            fill(126 + b.tint * 40, 124 + b.tint * 30, 118);
+            ellipse(px3, py3, 17, 15);
+            fill(150 + b.tint * 40, 148 + b.tint * 30, 140);
+            ellipse(px3 - LIGHT_DX * 2, py3 - LIGHT_DY * 2, 13, 11);
+            fill(32, 34, 36); ellipse(px3, py3, 7, 6);
+          }
+        }
+        // Banding strap over the stack
+        fill(60, 62, 66, 220);
+        rect(-L * 0.22, -W / 2 - 1, 5, W + 2);
+        rect(L * 0.18, -W / 2 - 1, 5, W + 2);
+        pop();
+        break;
+      }
+
+      case "SITEHUT": {
+        const vertH = b.h > b.w;
+        castShadowRect(b.x, b.y, b.w + 6, b.h + 6, 16, 84, 2);
+        push(); translate(b.x, b.y); if (vertH) rotate(HALF_PI);
+        const L2 = vertH ? b.h : b.w, W2 = vertH ? b.w : b.h;
+        noStroke();
+        // Jack legs under the corners, then the box on top of them
+        fill(44, 46, 48);
+        rect(-L2 / 2 + 4, W2 / 2 - 4, 10, 8, 1);
+        rect(L2 / 2 - 14, W2 / 2 - 4, 10, 8, 1);
+        fill(196, 190, 172); rect(-L2 / 2, -W2 / 2, L2, W2, 2);
+        // Corrugated roof: ribs along the length, lit on the sun side
+        fill(0, 0, 0, 26);
+        for (let l = -L2 / 2 + 5; l < L2 / 2 - 2; l += 9) rect(l, -W2 / 2 + 3, 4, W2 - 6);
+        fill(255, 255, 255, 30); rect(-L2 / 2, -W2 / 2, L2, 4, 2);
+        fill(0, 0, 0, 44);       rect(-L2 / 2, W2 / 2 - 5, L2, 5, 2);
+        // Door and window on the long side
+        fill(96, 92, 80); rect(-L2 / 2 + 12, W2 / 2 - 7, 22, 7, 1);
+        fill(48, 58, 62); rect(L2 / 2 - 34, W2 / 2 - 6, 20, 5, 1);
+        // Site number stencilled on the roof
+        fill(120, 60, 30, 150); rect(L2 / 2 - 22, -W2 / 2 + 7, 14, 9, 1);
+        pop();
+        break;
+      }
+
+      // =====================================================================
+      //  STREET FURNITURE
+      // =====================================================================
+      case "HYDRANT": {
+        castShadow(b.x, b.y, 24, 16, 5, 70);
+        push(); translate(b.x, b.y); noStroke();
+        fill(140, 34, 28); ellipse(0, 0, 20, 19);
+        fill(176, 48, 36); ellipse(-LIGHT_DX * 2, -LIGHT_DY * 2, 15, 14);
+        // Side outlets
+        fill(120, 28, 24);
+        ellipse(-9, 1, 7, 6); ellipse(9, 1, 7, 6);
+        // Bonnet
+        fill(198, 62, 44); ellipse(-LIGHT_DX * 3, -LIGHT_DY * 3, 9, 8);
+        fill(255, 255, 255, 40); ellipse(-LIGHT_DX * 4, -LIGHT_DY * 4, 5, 4);
+        pop();
+        break;
+      }
+
+      case "POSTBOX": {
+        castShadow(b.x, b.y, 26, 17, 6, 72);
+        push(); translate(b.x, b.y); noStroke();
+        fill(28, 60, 96); ellipse(0, 0, 22, 21);
+        fill(40, 84, 130); ellipse(-LIGHT_DX * 2.5, -LIGHT_DY * 2.5, 17, 16);
+        fill(18, 40, 66); rect(-7, -2, 14, 4, 1);            // the slot
+        fill(255, 255, 255, 34); ellipse(-LIGHT_DX * 4, -LIGHT_DY * 4, 7, 6);
+        pop();
+        break;
+      }
+
+      case "KIOSK": {
+        const vertK = b.h > b.w;
+        castShadowRect(b.x, b.y, b.w + 4, b.h + 4, 14, 82, 2);
+        push(); translate(b.x, b.y); if (vertK) rotate(HALF_PI);
+        const L3 = vertK ? b.h : b.w, W3 = vertK ? b.w : b.h;
+        noStroke();
+        fill(64, 60, 54); rect(-L3 / 2, -W3 / 2, L3, W3, 2);
+        fill(92, 86, 76); rect(-L3 / 2 + 3, -W3 / 2 + 3, L3 - 6, W3 - 6, 2);
+        // Awning over the serving side, striped, with its own shade beneath
+        fill(0, 0, 0, 50); rect(-L3 / 2, W3 / 2 - 2, L3, 14, 2);
+        for (let i = 0; i < Math.round(L3 / 14); i++) {
+          if (i % 2) fill(178, 62, 52); else fill(216, 210, 196);
+          rect(-L3 / 2 + i * 14, W3 / 2 - 4, 14, 12, 1);
+        }
+        // Counter and stacked print
+        fill(46, 44, 40); rect(-L3 / 2 + 8, W3 / 2 - 8, L3 - 16, 5, 1);
+        for (let i = 0; i < 3; i++) {
+          fill(196, 192, 180, 220);
+          rect(-L3 / 2 + 14 + i * 22, -W3 / 2 + 8, 15, 10, 1);
+        }
+        fill(255, 255, 255, 24); rect(-L3 / 2 + 3, -W3 / 2 + 3, L3 - 6, 3, 2);
+        pop();
+        break;
+      }
+
+      case "BUSSTOP": {
+        const vertB = b.h > b.w;
+        castShadowRect(b.x, b.y, b.w, b.h, 18, 74, 2);
+        push(); translate(b.x, b.y); if (vertB) rotate(HALF_PI);
+        const L4 = vertB ? b.h : b.w, W4 = vertB ? b.w : b.h;
+        noStroke();
+        // Bench inside, then the canopy over it -- translucent, so the shelter
+        // reads as a roof rather than as a solid box.
+        fill(78, 74, 68); rect(-L4 / 2 + 10, W4 / 2 - 12, L4 - 20, 7, 2);
+        fill(52, 56, 60, 170); rect(-L4 / 2, -W4 / 2, L4, W4, 3);
+        fill(120, 140, 156, 90); rect(-L4 / 2 + 4, -W4 / 2 + 4, L4 - 8, W4 - 8, 2);
+        // Frame members and the glazing bar down the middle
+        fill(58, 62, 66);
+        rect(-L4 / 2, -W4 / 2, L4, 5, 2);
+        rect(-L4 / 2, W4 / 2 - 5, L4, 5, 2);
+        rect(-3, -W4 / 2, 6, W4);
+        // Flag sign on a post at one end
+        fill(48, 50, 54); ellipse(-L4 / 2 - 10, 0, 8, 8);
+        fill(206, 200, 60); rect(-L4 / 2 - 20, -8, 18, 12, 2);
+        fill(40, 42, 46); rect(-L4 / 2 - 17, -5, 12, 2);
+        pop();
+        break;
+      }
+
+      // =====================================================================
+      //  WOODLAND
+      // =====================================================================
+      case "CABIN": {
+        castShadowRect(b.x, b.y, b.w + 8, b.h + 8, 20, 86, 2);
+        push(); translate(b.x, b.y); noStroke();
+        const hwC = b.w / 2, hhC = b.h / 2;
+        // Pitched roof read from above: two slopes meeting on a ridge, the one
+        // facing the sun lighter. That single tonal split is what separates a
+        // cabin from a shed at this camera height.
+        fill(78, 58, 40); rect(-hwC, -hhC, b.w, hhC, 2);
+        fill(58, 42, 30); rect(-hwC, 0, b.w, hhC, 2);
+        // Shingle courses
+        fill(0, 0, 0, 34);
+        for (let l = -hhC + 8; l < hhC; l += 11) rect(-hwC + 2, l, b.w - 4, 2);
+        // Ridge
+        fill(104, 80, 54); rect(-hwC, -3, b.w, 6, 2);
+        fill(255, 255, 255, 26); rect(-hwC, -3, b.w, 2, 2);
+        // Log ends at the gables
+        fill(126, 100, 66);
+        for (let l = -hhC + 6; l < hhC - 4; l += 12) {
+          ellipse(-hwC - 2, l, 8, 9);
+          ellipse(hwC + 2, l, 8, 9);
+        }
+        // Stone chimney with smoke staining
+        fill(96, 92, 84); rect(hwC - 30, -hhC + 8, 20, 18, 2);
+        fill(124, 120, 110); rect(hwC - 30 - LIGHT_DX * 2, -hhC + 8 - LIGHT_DY * 2, 20, 18, 2);
+        fill(26, 24, 22); ellipse(hwC - 20, -hhC + 17, 9, 8);
+        // Porch canopy over the door on the sun side
+        fill(0, 0, 0, 46); rect(-18, hhC - 2, 36, 12, 2);
+        fill(92, 70, 46); rect(-18, hhC - 4, 36, 11, 2);
+        pop();
+        break;
+      }
+
+      case "LOGPILE": {
+        const vertL = b.h > b.w;
+        castShadowRect(b.x, b.y, b.w + 4, b.h + 4, 12, 80, 2);
+        push(); translate(b.x, b.y); if (vertL) rotate(HALF_PI);
+        const L5 = vertL ? b.h : b.w, W5 = vertL ? b.w : b.h;
+        noStroke();
+        // Cordwood stacked with the ends out: rounds with bark rims and pale
+        // sawn faces, which is the same read as the STUMP clutter at a
+        // different scale -- the camp and the clearing agree about what a cut
+        // tree looks like.
+        fill(46, 36, 24); rect(-L5 / 2, -W5 / 2, L5, W5, 2);
+        const cols = Math.max(3, Math.round(L5 / 19));
+        const rows2 = Math.max(2, Math.round(W5 / 19));
+        for (let r = 0; r < rows2; r++) {
+          for (let i = 0; i < cols; i++) {
+            const jx = ((r * 7 + i * 13 + b.tint * 29) % 3) - 1;
+            const px4 = -L5 / 2 + 9 + i * ((L5 - 18) / Math.max(1, cols - 1)) + jx;
+            const py4 = -W5 / 2 + 9 + r * ((W5 - 18) / Math.max(1, rows2 - 1));
+            fill(62, 46, 30); ellipse(px4, py4, 18, 17);
+            fill(150 + jx * 8, 124 + jx * 6, 84); ellipse(px4 - LIGHT_DX, py4 - LIGHT_DY, 13, 12);
+            fill(112, 92, 60, 150); ellipse(px4 - LIGHT_DX, py4 - LIGHT_DY, 6, 5);
+          }
+        }
+        // The stakes that keep the ends of the stack up
+        fill(74, 56, 36);
+        rect(-L5 / 2 - 3, -W5 / 2 - 2, 5, W5 + 4, 1);
+        rect(L5 / 2 - 2, -W5 / 2 - 2, 5, W5 + 4, 1);
+        pop();
+        break;
+      }
+
+      case "SIGNPOST": {
+        castShadow(b.x, b.y, 20, 13, 8, 70);
+        push(); translate(b.x, b.y); noStroke();
+        // Fingerboards at the height of the post, thrown out along the roads
+        // they name. Two or three, deterministic from the post's own tint.
+        const arms = 2 + ((b.tint * 10) | 0) % 2;
+        for (let i = 0; i < arms; i++) {
+          const a = b.tint * 11 + i * (TWO_PI / arms) + 0.4;
+          push(); rotate(a);
+          shadowFill(48); rect(6 + LIGHT_DX * 6, -5 + LIGHT_DY * 6, 34, 10, 1);
+          noStroke();
+          fill(146, 122, 82); rect(6, -5, 34, 10, 1);
+          fill(255, 255, 255, 30); rect(6, -5, 34, 3, 1);
+          fill(64, 52, 34); rect(10, -2, 22, 2);      // the lettering, as a bar
+          pop();
+        }
+        fill(58, 44, 28); ellipse(0, 0, 13, 13);
+        fill(96, 76, 50); ellipse(-LIGHT_DX * 1.5, -LIGHT_DY * 1.5, 9, 9);
+        pop();
+        break;
+      }
+
+      case "RUINWALL": {
+        // Drystone: irregular courses with the odd stone missing, so it reads
+        // as something that fell down rather than as a wall someone built low.
+        const horizW = b.w > b.h;
+        const x0w = Math.max(b.x - b.w / 2, viewLeft - 100);
+        const x1w = Math.min(b.x + b.w / 2, viewRight + 100);
+        const y0w = Math.max(b.y - b.h / 2, viewTop - 100);
+        const y1w = Math.min(b.y + b.h / 2, viewBottom + 100);
+        if (x1w <= x0w || y1w <= y0w) break;
+        shadowFill(64);
+        rect(x0w + LIGHT_DX * 7, y0w + LIGHT_DY * 7, x1w - x0w, y1w - y0w, 2);
+        noStroke();
+        fill(96, 96, 88); rect(x0w, y0w, x1w - x0w, y1w - y0w, 2);
+        const step = 17;
+        if (horizW) {
+          const f1 = Math.floor(x0w / step) * step;
+          for (let l = f1; l < x1w; l += step) {
+            const k = Math.abs((l * 0.031 + b.tint * 7) % 1);
+            if (k > 0.88) continue;                       // a stone gone from the top course
+            fill(116 + k * 46, 116 + k * 42, 106 + k * 36);
+            rect(Math.max(l + 1, x0w), y0w + 2, Math.min(step - 2, x1w - l - 1), (y1w - y0w) - 6, 1);
+          }
+          fill(66, 92, 52, 90); rect(x0w, y1w - 4, x1w - x0w, 4);   // moss at the foot
+        } else {
+          const f1 = Math.floor(y0w / step) * step;
+          for (let l = f1; l < y1w; l += step) {
+            const k = Math.abs((l * 0.031 + b.tint * 7) % 1);
+            if (k > 0.88) continue;
+            fill(116 + k * 46, 116 + k * 42, 106 + k * 36);
+            rect(x0w + 2, Math.max(l + 1, y0w), (x1w - x0w) - 6, Math.min(step - 2, y1w - l - 1), 1);
+          }
+          fill(66, 92, 52, 90); rect(x1w - 4, y0w, 4, y1w - y0w);
+        }
         break;
       }
     }
