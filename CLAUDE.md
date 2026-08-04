@@ -526,6 +526,50 @@ their chunk's solids; `Citizen` (~10751) is the wandering NPC class. `nearSettle
 and neutrals in the right places — a settlement whose story arc is still running is a
 neutral scene, the country past it is not.
 
+### The sector population (Sectors 1 and 2, story mode)
+
+**This is not the wanderer system and must never be routed through it.**
+`seedSectorPopulation(level, count)` places 80 of the sector's own people around the
+blocks near the player when a story arena opens, and `legacyStartAtLevel()` calls it
+*last*, after the barrels and pickups exist, so nobody is placed inside one.
+
+It is a closed loop and every part of it depends on the roster being a fixed pool:
+
+```
+seedSectorPopulation()  →  80 hostiles, all in RECRUITABLE, flagged isPopulation
+the player kills some   →  spawnSingleEnemy() declines to refill an authored core
+the arc completes       →  recruitSectorSurvivors() converts whoever is left
+                        →  seedSectorPopulationFromSurvivors() → popTotal
+```
+
+Three guards make "eighty minus what you shot" true, and breaking any one of them
+silently breaks the mechanic rather than crashing:
+
+1. **It cannot go through `spawnSingleEnemy()`.** That function tops up the open road
+   and carries two correct guards against putting strangers inside a settlement — it
+   bails when the *player* is not in the outer region, and `getSafeSpawn(true)` rejects
+   every candidate inside an authored core mid-arc. At the start of Levels 1 and 2 the
+   player is standing in the middle of exactly such a core, so the original
+   `for (80) spawnSingleEnemy()` returned eighty times without creating anything and the
+   sector opened with nine people in it. That is the bug this exists to fix.
+2. **It is never culled.** `cullDistantEnemies()` drops anything past `CHUNK_W * 4`
+   (4800); Stick City is ~10600 across. Without the `isPopulation` exemption the roster
+   would shrink as the player walked, which is indistinguishable from killing them.
+3. **It is never topped up.** Same guard as (1), working in our favour: kills are
+   permanent, which is what makes sparing anyone a decision.
+
+`SECTOR_POP_MIX` is deliberately *all* recruitable types (`NORMAL`/`MOLOTOV` for Stick
+City, `FEMALE_PISTOL` for the Undercity) so the count is exact rather than
+eighty-of-which-sixty-seven-mattered. Those types are also in `SECTOR_GARRISON`, so
+`sweepForeignHostiles()` leaves them standing. NM-0's armour arrives with the story
+beats instead; to give the sector a standing garrison, add it to `SECTOR_POP_MIX` and
+raise the seed count by the same amount so the eighty stays eighty.
+
+`node tools/check-population.js` asserts the roster seeds at exactly 80, that nobody
+spawns inside geometry, that it survives a walk across the sector, that kills reduce it
+and nothing refills it, and that none of this happens in arcade mode, in a cleared
+sector, or in any other level.
+
 ---
 
 ## Working rules for this repo
@@ -572,8 +616,13 @@ as water — but it catches the class of bug that is invisible until you are sta
 ```
 node tools/check-generation.js     # determinism, seams, crossings, overlaps, bakes
 node tools/check-render.js         # live draw path at four times of day, hybrid core
+node tools/check-population.js     # the Sector 1/2 story roster and what it converts to
 GAME_JS=/path/to/other.js node tools/check-generation.js    # compare against a baseline
 ```
+
+`check-population.js` overrides the harness's `random()` with a seeded generator, because
+`legacyStartAtLevel()` runs against p5's global RNG rather than the chunk hashes — the
+constant stub is fine for world generation and useless for a spawn ladder.
 
 `tools/harness.js` loads `game.js` into a `vm` context with p5's global-mode API stubbed
 and a deterministic stand-in for `noise()`. Because the file's top-level `const`/`let`

@@ -476,6 +476,9 @@ if (isStoryMode) {
         // so re-entering it by travel drops you into the open world instead of
         // replaying the cutscene against geometry that no longer exists.
         const scripted = isStoryMode && !storyArcCleared(lvl);
+        // Which sector, if any, still owes its population. Deferred to the end
+        // of this block rather than placed inline -- see below.
+        let seedPopLevel = 0;
 
         if (lvl === 1 && scripted) {
             player.x = 600;
@@ -589,6 +592,14 @@ if (isStoryMode) {
             lvl4Phase = 1;
             lvl4Timer = 90; // Wait 1.5 seconds before walking
 
+        } else if (isStoryMode && (lvl === 1 || lvl === 2) && !storyArcCleared(lvl)) {
+            // Stick City and the Undercity open with their own population
+            // standing around the blocks, not with wanderers. See
+            // seedSectorPopulation() for why this cannot go through
+            // spawnSingleEnemy(): both of that function's guards refuse to put
+            // anyone inside an authored core, and the player is standing in the
+            // middle of one, so all eighty calls came back empty.
+            seedPopLevel = lvl;
         } else {
             for (let i = 0; i < TARGET_ENEMY_COUNT; i++) spawnSingleEnemy();
         }
@@ -630,6 +641,14 @@ if (isStoryMode) {
         if (isStoryMode) {
             for (let i = 0; i < 8; i++) { let gS = getSafeSpawn(false); grenadePickups.push({ x: gS.x, y: gS.y }); }
         }
+
+        // The sector's population goes down LAST, once every other thing that
+        // occupies ground exists. Barrels and pickups are scattered by
+        // getSafeSpawn(), which knows nothing about who is already standing
+        // where -- placed before them, roughly one person in eighty came up
+        // inside a barrel and had to be shoved out by forceNudge() on their
+        // first frame.
+        if (seedPopLevel) seedSectorPopulation(seedPopLevel, TARGET_ENEMY_COUNT);
     }
 }
 
@@ -5358,6 +5377,147 @@ if (bugCount < 10) {
   }
 
   enemiesList.push(new Character(eS.x, eS.y, false, type));
+}
+
+// ---------------------------------------------------------------------------
+// SECTOR POPULATION
+//
+// The people who live in Stick City and the Undercity, placed once when the
+// story arena opens. This is emphatically NOT the wanderer system and must not
+// be routed through it.
+//
+// spawnSingleEnemy() tops up the OPEN ROAD, and it carries two guards that both
+// -- correctly -- refuse to put a stranger inside a story settlement: it bails
+// out when the player is not standing in the outer region, and getSafeSpawn()
+// rejects every candidate point inside an authored core while that sector's arc
+// is still running. At the start of Levels 1 and 2 the player is standing in
+// the middle of exactly such a core, so the opening `for (80) spawnSingleEnemy()`
+// returned eighty times without creating anything and the sector came up with
+// nine people in it.
+//
+// The population is what those two sectors are FOR. Whoever is still alive when
+// the town is established is who the player inherits (recruitSectorSurvivors),
+// so the count the player leaves standing is the whole mechanic. It follows
+// that this roster must also never be topped up and never be recycled:
+//
+//   - It is not refilled. spawnSingleEnemy() still declines to spawn inside the
+//     arena, which is what makes a kill permanent. Killing here has to COST the
+//     player something later or the choice is not a choice.
+//   - It is not culled. cullDistantEnemies() drops anything past 4800 units,
+//     and Stick City is ten thousand across -- without the exemption the roster
+//     would quietly shrink as the player walked, which is the same as killing
+//     them but without the player doing it.
+//
+// The mix is the sector's own garrison. The pistol regulars are its people and
+// are recruitable; the armour is NM-0 proper and is not. Both are in
+// SECTOR_GARRISON, so sweepForeignHostiles() leaves them where they stand.
+// ---------------------------------------------------------------------------
+// [type, weight]. Every one of these is in RECRUITABLE, deliberately: the
+// roster is eighty and the citizens the player inherits are eighty minus the
+// ones they shot, with nothing in between to explain away. Mixing armour into
+// the roster would have made the count eighty-of-which-sixty-seven-mattered,
+// which is a worse mechanic and a harder one to read while playing.
+//
+// It also means the sector's own people are the only thing standing in it at
+// open. NM-0's armour arrives with the story beats -- the gate guards, the HQ
+// ambush -- which is where the level's teeth are meant to be. To put a standing
+// garrison in as well, add ARMORED_STANDARD here and raise the seed count by
+// the same amount so the eighty stays eighty.
+const SECTOR_POP_MIX = {
+  1: [["NORMAL", 86], ["MOLOTOV", 14]],
+  2: [["FEMALE_PISTOL", 100]]
+};
+
+function sectorPopType(level, r) {
+  const mix = SECTOR_POP_MIX[level];
+  if (!mix) return "NORMAL";
+  let total = 0;
+  for (const m of mix) total += m[1];
+  let acc = r * total;
+  for (const m of mix) { acc -= m[1]; if (acc <= 0) return m[0]; }
+  return mix[0][0];
+}
+
+function seedSectorPopulation(level, count) {
+  if (!player) return 0;
+
+  // The blocks they live around. Anything that is a mass with a footprint big
+  // enough to stand beside -- not a lot, not a kerbside fitting, and not one of
+  // the kilometre-long slabs the Great Gates are made of.
+  const blocks = [];
+  for (const b of buildings) {
+    if (!b || !b.w || !b.h) continue;
+    if (b.isGrassLot && !b.isPond) continue;
+    if (b.isPond || b.isCropField || b.isParkingLot) continue;
+    if (b.isStreetLight || b.isTreeTrunk || b.isDumpster || b.isBiomeProp) continue;
+    if (b.isWall || b.isGiantBarrier || b.isUBarrier || b.isGovFortress) continue;
+    if (b.w > 1200 || b.h > 1200) continue;
+    if (b.w < 60 || b.h < 60) continue;
+    blocks.push(b);
+  }
+  if (!blocks.length) return 0;
+
+  // Nearest first, so the weighting below fills the streets around the player
+  // and thins out with distance instead of scattering eighty people evenly
+  // across a hundred square blocks where the player will never meet them.
+  blocks.sort((a, b) => {
+    const da = (a.x - player.x) * (a.x - player.x) + (a.y - player.y) * (a.y - player.y);
+    const db = (b.x - player.x) * (b.x - player.x) + (b.y - player.y) * (b.y - player.y);
+    return da - db;
+  });
+  const pool = blocks.slice(0, Math.min(blocks.length, 150));
+
+  const clearAt = (x, y) => {
+    if (typeof insideSector === 'function' && !insideSector(x, y)) return false;
+    for (const b of buildings) {
+      if (b.noClip) continue;
+      if (b.isGrassLot && !b.isPond) continue;
+      if (b.isPalm || b.isAlienPlant || b.isEnergyPole) continue;
+      if (x + 34 > b.x - b.w / 2 && x - 34 < b.x + b.w / 2 &&
+          y + 34 > b.y - b.h / 2 && y - 34 < b.y + b.h / 2) return false;
+    }
+    for (const c of parkingCars) {
+      if (x + 34 > c.x - 28 && x - 34 < c.x + 28 && y + 34 > c.y - 48 && y - 34 < c.y + 48) return false;
+    }
+    for (const b of barrels) {
+      const dx = x - b.x, dy = y - b.y;
+      if (dx * dx + dy * dy < 52 * 52) return false;
+    }
+    return true;
+  };
+
+  // One flat attempt loop rather than a fixed number of tries per person. A
+  // per-person budget quietly gave up and left the roster one or two short when
+  // it happened to pick a crowded block, and the roster size IS the mechanic --
+  // eighty minus what the player shot has to actually start at eighty.
+  let made = 0, attempts = 0;
+  const MAX_ATTEMPTS = count * 40;
+  while (made < count && attempts < MAX_ATTEMPTS) {
+    attempts++;
+    // Biased toward the head of the list -- the blocks nearest the player.
+    const b = pool[Math.floor(Math.pow(random(), 1.7) * pool.length) % pool.length];
+    // Along a frontage, not on a circle around the block. A ring of
+    // max(w, h) / 2 is right for a square and wrong for everything else: on a
+    // city block twice as long as it is deep it stands a third of the roster a
+    // hundred units out in the middle of the road, which is where a wanderer
+    // would be and not where a resident is.
+    const side = (random() * 4) | 0;
+    const t = random() - 0.5;
+    const gap = 46 + random(110);
+    let x, y;
+    if (side === 0)      { x = b.x + t * b.w;         y = b.y - b.h / 2 - gap; }
+    else if (side === 1) { x = b.x + t * b.w;         y = b.y + b.h / 2 + gap; }
+    else if (side === 2) { x = b.x - b.w / 2 - gap;   y = b.y + t * b.h; }
+    else                 { x = b.x + b.w / 2 + gap;   y = b.y + t * b.h; }
+    const dx = x - player.x, dy = y - player.y;
+    if (dx * dx + dy * dy < 260 * 260) continue;       // not on the player's head
+    if (!clearAt(x, y)) continue;
+    const e = new Character(x, y, false, sectorPopType(level, random()));
+    e.isPopulation = true;
+    enemiesList.push(e);
+    made++;
+  }
+  return made;
 }
 
 
@@ -20865,6 +21025,11 @@ function cullDistantEnemies() {
     // 4000+ units from where the town cutscene leaves you. Recycling them would
     // silently gut the ambush the moment a hybrid sector starts streaming.
     if (e.isAmbush) continue;
+    // The sector's own population is a fixed roster, not ambient wildlife.
+    // Stick City is ten thousand units across and this limit is 4800, so
+    // recycling them would shrink the pool as the player walked -- and the
+    // number left standing is exactly what the town-building system reads.
+    if (e.isPopulation) continue;
     const dx = e.x - player.x, dy = e.y - player.y;
     if (dx * dx + dy * dy > limit * limit) enemiesList.splice(i, 1);
   }
