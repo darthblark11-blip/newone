@@ -49,6 +49,10 @@ for (const lvl of [1, 2]) {
           const dd = Math.hypot(dx, dy); if (dd < best) best = dd; }
         if (best < 170) n++; }
       return n; })()`);
+  const molotov = P('enemiesList.filter(e => e.isPopulation && e.eType === "MOLOTOV").length');
+  ok(`level ${lvl} no incendiary throwers in the roster`, molotov === 0, molotov + ' molotov');
+  // Anything recruitable that is NOT the roster must not become a citizen.
+  probe('enemiesList.push(new Character(player.x + 340, player.y + 340, false, "NORMAL"));');
   ok(`level ${lvl} they stand around the blocks`, nearBlock / pop > 0.9,
      `${nearBlock}/${pop} within 170u of a building`);
 
@@ -90,6 +94,97 @@ for (const l of [3, 4, 5]) {
   ok(`level ${l} seeds no city population`,
      roster('isStoryMode = true; townsData = {}; window.southGateBreachedStatus = false;', l) === 0);
 }
+
+
+// ---------------------------------------------------------------------------
+// THE ESCORT
+// Soldiers assigned at the travel menu have to arrive, arrive WITH the player,
+// count toward the destination's population, and not be conjured a second time.
+// ---------------------------------------------------------------------------
+const trip = (label, dest) => {
+  console.log('\n== escort: ' + label + ' ==');
+  probe(`isStoryMode = true;
+         townsData = {1: {established: true}${dest === 'streamed' ? ', 2: {established: true}' : ''}};
+         window.southGateBreachedStatus = true;
+         window.militaryToBring = 0; window.militaryToBringM = 0; window.militaryToBringF = 0;`);
+  probe('startAtLevel(1);');
+  probe('window.militaryToBringM = 28; window.militaryToBringF = 28;');   // chosen at the travel menu
+  probe('window.travelArrival = "NORTH"; startAtLevel(2);');
+
+  const allies = P('enemiesList.filter(e => e.isMilitary && e.isFriendly).length');
+  const near = P('enemiesList.filter(e => e.isMilitary && Math.hypot(e.x-player.x, e.y-player.y) < 700).length');
+  ok(label + ': the whole escort arrives', allies === 56, allies + ' of 56');
+  ok(label + ': it arrives WITH the player', near === allies, `${near} of ${allies} within 700u`);
+  ok(label + ': it counts toward the sector population', P('window.militaryToBring') === 56, P('window.militaryToBring'));
+  ok(label + ': the pending assignment is consumed',
+     P('window.militaryToBringM') === 0 && P('window.militaryToBringF') === 0);
+  probe('window.travelArrival = "NORTH"; startAtLevel(3);');
+  ok(label + ': it is not re-created on the next hop',
+     P('enemiesList.filter(e => e.isMilitary && e.isFriendly).length') === 0);
+};
+trip('into a story arena', 'authored');
+trip('into a streamed biome', 'streamed');
+
+// ---------------------------------------------------------------------------
+// THE GREAT GATES
+// A breached gate has to become a road the player can actually walk down.
+// checkCol only reads activeBuildings, so publish everything first — a walk test
+// against a list that does not contain the wall passes for the wrong reason.
+// ---------------------------------------------------------------------------
+const walkThrough = (southward) => P(`(() => {
+  activeBuildings = buildings;
+  const g = buildings.find(b => b.isGovFortress && (${southward} ? b.y > 0 : b.y < 0));
+  if (!g) return 'no gate';
+  const pr = new Character(g.x, g.y, false, "NORMAL");
+  const y0 = ${southward} ? g.y - g.h/2 - 120 : g.y + g.h/2 + 120;
+  const y1 = ${southward} ? g.y + g.h/2 + 120 : g.y - g.h/2 - 120;
+  const step = ${southward} ? 20 : -20;
+  for (let y = y0; ${southward} ? y <= y1 : y >= y1; y += step) if (pr.checkCol(g.x, y)) return false;
+  return true; })()`);
+
+console.log('\n== gates: level 1 ==');
+probe(`isStoryMode = true; townsData = {}; window.southGateBreachedStatus = false;
+       window.nm0AmbushClearedStatus = false; nm0AmbushActive = false;`);
+probe('startAtLevel(1);');
+ok('south gate is shut before it is breached', walkThrough(true) === false);
+probe('window.southGateBreachedStatus = true; nm0AmbushActive = true;');
+ok('south gate stays shut while the muster is on the field', walkThrough(true) === false);
+probe('nm0AmbushActive = false; window.nm0AmbushClearedStatus = true; clearGateApproach();');
+ok('south gate opens once breached and the ambush is beaten', walkThrough(true) === true);
+ok('the wings either side are still a wall', P(`(() => {
+     activeBuildings = buildings;
+     const g = buildings.find(b => b.isGovFortress && b.y > 0);
+     const pr = new Character(0, 0, false, "NORMAL");
+     return pr.checkCol(g.x - 900, g.y) && pr.checkCol(g.x + 900, g.y); })()`));
+ok('rounds pass through the doorway and not the wings', P(`(() => {
+     const g = buildings.find(b => b.isGovFortress && b.y > 0);
+     return inOpenGateway(g, g.x) && !inOpenGateway(g, g.x - 900); })()`));
+ok('the north gate stays shut (it is the HQ approach)', walkThrough(false) === false);
+
+console.log('\n== gates: level 2 ==');
+probe(`isStoryMode = true; townsData = {}; window.nm0AmbushClearedStatus = false;
+       nm0AmbushActive = false; window.towersDefeated = false;
+       window.undercitySouthBreached = false; window.undercityNorthBreached = false;`);
+probe('startAtLevel(2);');
+ok('south shut before the towers fall', walkThrough(true) === false);
+ok('north shut before the towers fall', walkThrough(false) === false);
+probe('window.towersDefeated = true; window.nm0AmbushClearedStatus = true; clearGateApproach();');
+ok('south opens with the towers down and the ambush clear', walkThrough(true) === true);
+ok('north opens with it', walkThrough(false) === true);
+
+// ---------------------------------------------------------------------------
+// The roster must never be what is holding an ambush open. It is the thing the
+// player is being asked not to shoot.
+// ---------------------------------------------------------------------------
+console.log('\n== ambush ==');
+probe(`isStoryMode = true; townsData = {}; window.southGateBreachedStatus = false;
+       window.nm0AmbushClearedStatus = false;`);
+probe('startAtLevel(1);');
+probe(`nm0AmbushActive = true; window.ambushSpawnsRemaining = 0;
+       window.nm0AmbushCleared = false; isWin = false; killcamMode = false;
+       enemiesList = enemiesList.filter(e => e.isPopulation);`);
+probe('checkAmbushCleared();');
+ok('an ambush clears with the whole population spared', P('window.nm0AmbushCleared') === true);
 
 console.log(`\n${checks - fails}/${checks} checks passed`);
 process.exit(fails ? 1 : 0);

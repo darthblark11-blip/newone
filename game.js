@@ -608,6 +608,19 @@ if (isStoryMode) {
             let spawnCountM = window.militaryToBringM || 0;
             let spawnCountF = window.militaryToBringF || 0;
 
+            // The escort is now the destination sector's people. Every popTotal
+            // calculation in the game reads window.militaryToBring (the
+            // singular), and nothing ever assigned it from the M/F split the
+            // travel menu actually fills in -- so a player who marched
+            // fifty-six soldiers north arrived, counted them, and found the
+            // sector's population had not heard of any of them.
+            window.militaryToBring = spawnCountM + spawnCountF;
+            // Consumed here. Left standing, the same escort was re-created from
+            // scratch on every subsequent level entry -- travel twice and the
+            // fifty-six became a hundred and twelve.
+            window.militaryToBringM = 0;
+            window.militaryToBringF = 0;
+
             for (let i = 0; i < spawnCountM + spawnCountF; i++) {
                 let isFemale = i >= spawnCountM; // Spawns exact male count, then switches to female
                 let type = isFemale ? "FEMALE_PISTOL" : "NORMAL";
@@ -2099,22 +2112,63 @@ function drawBuildings() {
         rect(b.x - b.w/2 + 100, b.y - b.h/2 + 100, b.w - 200, b.h - 200);
         
         let gateY = b.y < 0 ? b.y + b.h/2 - 80 : b.y - b.h/2;
-        
-        // Gate visually stays closed forever (collision remains solid)
-        fill(isFlashing ? 255 : 10); rect(b.x - 300, gateY, 600, 80); 
-        fill(isFlashing ? 200 : 50); for(let gx = b.x - 280; gx < b.x + 300; gx += 40) rect(gx, gateY, 10, 80);
-        
+        const gateOpen = gateIsOpen(b);
+
+        if (!gateOpen) {
+            // Shut: the leaf and its bars, straight across the opening.
+            fill(isFlashing ? 255 : 10); rect(b.x - 300, gateY, 600, 80);
+            fill(isFlashing ? 200 : 50); for(let gx = b.x - 280; gx < b.x + 300; gx += 40) rect(gx, gateY, 10, 80);
+        } else {
+            // Open: the doorway is a hole clean through the slab, so it is
+            // painted as the ground beyond it rather than as a dark panel --
+            // the player has to be able to see that it is a way out from far
+            // enough away to walk toward it.
+            const thruY = b.y - b.h / 2, thruH = b.h;
+            fill(24, 26, 30);            rect(b.x - 300, thruY, 600, thruH);
+            // The passage floor, lit from the far end.
+            fill(52, 54, 58);            rect(b.x - 282, thruY + 12, 564, thruH - 24);
+            fill(70, 73, 78);            rect(b.x - 282, thruY + 12, 564, 26);
+            // Jambs: what is left of the frame, scorched at the break.
+            fill(18, 18, 20);            rect(b.x - 312, thruY, 30, thruH);
+            fill(18, 18, 20);            rect(b.x + 282, thruY, 30, thruH);
+            fill(96, 46, 20, 150);       rect(b.x - 312, gateY - 10, 30, 100);
+            fill(96, 46, 20, 150);       rect(b.x + 282, gateY - 10, 30, 100);
+            // Bar stubs, sheared off at the jamb -- the bars did not vanish,
+            // they were blown apart, and the ends are still in the frame.
+            fill(isFlashing ? 200 : 46);
+            for (let gx = b.x - 280; gx < b.x + 300; gx += 40) {
+                const stub = 10 + ((Math.abs(gx * 7) % 17));
+                rect(gx, gateY, 10, stub);
+                rect(gx, gateY + 80 - stub * 0.7, 10, stub * 0.7);
+            }
+            // Rubble and twisted plate on the ground in the opening.
+            fill(38, 38, 42);
+            for (let i = 0; i < 7; i++) {
+                const rx = b.x - 250 + ((i * 173) % 500);
+                const ry = thruY + 40 + ((i * 91) % (thruH - 90));
+                ellipse(rx, ry, 26 + (i % 3) * 12, 16 + (i % 2) * 9);
+            }
+            fill(58, 58, 62);
+            for (let i = 0; i < 4; i++) {
+                const rx = b.x - 200 + ((i * 227) % 400);
+                const ry = thruY + 70 + ((i * 149) % (thruH - 140));
+                rect(rx, ry, 44, 12, 2);
+            }
+            // Cold smoke still coming off the break.
+            if (frameCount % 11 === 0) emit(b.x + random(-260, 260), gateY + 40, 1, color(90), "SMOKE");
+        }
+
         if (b.hp > 0 && b.hp < b.maxHp) {
             // Health Bar
             fill(0, 150); rect(b.x - 100, gateY - 30, 200, 10);
             fill(255, 50, 50); rect(b.x - 100, gateY - 30, 200 * (b.hp / b.maxHp), 10);
-        } else if (b.hp <= 0) {
-            // Battle Damage
+        } else if (b.hp <= 0 && !gateOpen) {
+            // Blown, but the muster is still on the field: burning, not yet a road.
             fill(255, 100, 0, 100); rect(b.x - 300, gateY, 600, 80); // Fire glow covering the door
             if (frameCount % 5 === 0) emit(b.x + random(-150, 150), gateY + 40, 1, color(100), "SMOKE");
         }
         
-        push(); let stripeY = b.y < 0 ? b.y + b.h/2 - 100 : b.y - b.h/2 + 80; stroke(255, 200, 0); strokeWeight(20); strokeCap(SQUARE); for(let i = -300; i < 300; i += 40) line(b.x + i, stripeY, b.x + i + 20, stripeY); pop();
+        if (!gateOpen) { push(); let stripeY = b.y < 0 ? b.y + b.h/2 - 100 : b.y - b.h/2 + 80; stroke(255, 200, 0); strokeWeight(20); strokeCap(SQUARE); for(let i = -300; i < 300; i += 40) line(b.x + i, stripeY, b.x + i + 20, stripeY); pop(); }
         push(); translate(b.x, b.y); noFill(); stroke(255, 200, 0, 150); strokeWeight(8); ellipse(-800, 0, 300, 300); ellipse(800, 0, 300, 300); strokeWeight(4); ellipse(-800, 0, 200, 200); ellipse(800, 0, 200, 200);
         for(let fx of [-1400, -1200, 1200, 1400]) { fill(15); noStroke(); rect(fx - 60, -60, 120, 120, 10); fill(30); ellipse(fx, 0, 100, 100); push(); translate(fx, 0); rotate(frameCount * 0.1); fill(10); rect(-45, -10, 90, 20); rect(-10, -45, 20, 90); pop(); }
         for(let ax of [-500, 500]) { fill(20); stroke(10); strokeWeight(2); ellipse(ax, 150, 40, 40); fill(255, 0, 0, 150 + sin(frameCount * 0.2)*100); noStroke(); ellipse(ax, 150, 15, 15); }
@@ -3109,6 +3163,8 @@ popArchitecture = 0;
         window.nm0AmbushCleared = false;
         nm0AmbushActive = false;
         window.nm0AmbushClearedStatus = true;
+        // The breach becomes a road at exactly this moment.
+        if (typeof clearGateApproach === 'function') clearGateApproach();
 
         // Which ambush just ended decides which beat this is. Read it out and
         // clear it here so the next one starts from a clean slate whichever
@@ -4788,6 +4844,13 @@ function recruitSectorSurvivors() {
   let n = 0, f = 0;
   for (const e of enemiesList) {
     if (!e || e.isFriendly || e.dead || e.hp <= 0) continue;
+    // The sector's own roster and nothing else. Checkpoint garrisons, settlement
+    // residents streamed in from the chunk population layer and any wanderer
+    // that drifted into the arena are all the right TYPE to recruit, and none of
+    // them are people the player spared -- counting them handed out citizens
+    // nobody earned and broke the one promise the mechanic makes, which is that
+    // the number you get is the number you did not shoot.
+    if (!e.isPopulation) continue;
     if (RECRUITABLE.indexOf(e.eType) === -1) continue;
     e.isFriendly = true;
     e.isNeutral  = false;
@@ -5424,7 +5487,11 @@ if (bugCount < 10) {
 // garrison in as well, add ARMORED_STANDARD here and raise the seed count by
 // the same amount so the eighty stays eighty.
 const SECTOR_POP_MIX = {
-  1: [["NORMAL", 86], ["MOLOTOV", 14]],
+  // Stick City is pistol regulars and nothing else. Molotov throwers were in
+  // here for variety and they are the wrong read entirely: an incendiary is a
+  // weapon you use on a place you are not coming back to, and these people live
+  // here. They also set fire to the city the player is trying to inherit.
+  1: [["NORMAL", 100]],
   2: [["FEMALE_PISTOL", 100]]
 };
 
@@ -5883,6 +5950,7 @@ for (let b of buildings) {
       if (currentLevel === 6 && (b.isAlienPlant || b.isEnergyPole)) continue; 
       if ((currentLevel === 1 || currentLevel === 2) && (b.isGrassLot || b.isCar)) continue; 
       if (b.isRiver || b.isDeck) continue;   // you can see straight across water
+      if (b.isGovFortress && gateIsOpen(b)) continue;   // and straight through an open gate
       if (b.x + b.w / 2 > minX && b.x - b.w / 2 < maxX && b.y + b.h / 2 > minY && b.y - b.h / 2 < maxY) {
           relB.push(b);
       }
@@ -7853,6 +7921,8 @@ this.skeletonTimer = 0;
         if ((currentLevel === 1 || currentLevel === 2) && b.isGrassLot) continue;
         // A deck is a surface, not a mass: bridges are built to be stood on.
         if (b.isDeck) continue;
+        // A breached gate has a hole in it. The wings still block.
+        if (b.isGovFortress && inOpenGateway(b, nx)) continue;
         if (b.isUBarrier) {
             let wT = 15;
             if (nx + r > b.x - b.w/2 - wT && nx - r < b.x - b.w/2 + wT && ny + r > b.y - b.h/2 && ny - r < b.y + b.h/2) return true; 
@@ -10633,6 +10703,12 @@ function checkAmbushCleared() {
   if (window.ambushSpawnsRemaining !== undefined && window.ambushSpawnsRemaining > 0) return;
 
   for (const e of enemiesList) {
+    // The sector's own population is not part of the muster. It stands around
+    // the blocks whatever happens at the gate, and it is exactly what the player
+    // is being asked NOT to shoot -- so counting it here meant the ambush could
+    // only ever be cleared by killing all eighty of them, which is the opposite
+    // of the mechanic and left the gate sealed for anyone who spared a soul.
+    if (e.isPopulation) continue;
     if (!e.isFriendly && e.hp > 0 && !e.dead) return;   // still hostiles on the field
   }
 
@@ -10908,6 +10984,7 @@ function updateBullets() {
                 // Water stops people, not rounds, and a bridge deck stops
                 // neither. Both are collision volumes with no mass in them.
                 if (bldg.isRiver || bldg.isDeck) continue;
+                if (bldg.isGovFortress && inOpenGateway(bldg, b.x)) continue;
                 
                 // Cheap pre-check for buildings before bounding box check
                 if (Math.abs(b.x - bldg.x) > bldg.w || Math.abs(b.y - bldg.y) > bldg.h) continue;
@@ -20497,6 +20574,87 @@ function southGateOpen() {
   return !!window.southGateBreachedStatus;
 }
 
+// ---------------------------------------------------------------------------
+// THE GREAT GATES
+//
+// A gate is a 9600-wide slab with a 600-wide door in the middle of it. Blowing
+// the door used to change nothing but the paint: the art said "gate visually
+// stays closed forever (collision remains solid)" and the slab went on blocking
+// the whole width, so the road the objective had just announced as open was a
+// wall you could stand and watch smoke come out of.
+//
+// Opening it takes the door out of the collision run and leaves the rest of the
+// slab exactly as it was. The wings either side are still a wall -- the point of
+// a gate is that it is the only way through -- and the curtain walls down the
+// flanks are untouched.
+// ---------------------------------------------------------------------------
+const GATE_DOOR_HALF = 300;      // matches the doorway the art draws
+
+function gateIsOpen(b) {
+  if (!b || !b.isGovFortress) return false;
+  // While the muster is still on the field the breach is not yet a road.
+  if (nm0AmbushActive) return false;
+  if (!window.nm0AmbushClearedStatus) return false;
+
+  if (currentLevel === 1) {
+    // South is the way onward and the only gate that opens. North is the NM-0
+    // HQ approach -- an interaction, not a walk-through.
+    return b.y > 0 && !!window.southGateBreachedStatus;
+  }
+  if (currentLevel === 2) {
+    // Both of the Undercity's gates open together once the towers are down:
+    // the sector's grid is severed, and nothing is holding either door.
+    if (window.towersDefeated || sectorTowersAreDown(2)) return true;
+    // Or on its own breach, for a player who blows one before the towers.
+    return b.y > 0 ? !!window.undercitySouthBreached : !!window.undercityNorthBreached;
+  }
+  return false;
+}
+
+// Is this point in the doorway of an open gate? Asked by everything that treats
+// the slab as solid, so movement, bullets and line of sight all agree about
+// where the hole is.
+function inOpenGateway(b, x) {
+  return b.isGovFortress && Math.abs(x - b.x) < GATE_DOOR_HALF && gateIsOpen(b);
+}
+
+// A road that is open has to be open all the way through.
+//
+// Both gates have small walls standing in the doorway -- the guard blocks the
+// map builder lays either side of the opening, and the two target walls Stick
+// City's gate guards are given to defend. Between them they cover all but
+// twenty-five units of a six-hundred-unit door, so taking the leaf out of the
+// collision run on its own still left the player standing at an open gate with
+// no way through it. Once the gate opens they have no job left and they come out.
+//
+// Idempotent, and recorded on the gate itself: it is called at level entry and
+// again when the muster is beaten, and the second call is free.
+function clearGateApproach() {
+  for (const g of buildings) {
+    if (!g.isGovFortress || g.__approachCleared || !gateIsOpen(g)) continue;
+    g.__approachCleared = true;
+    const y0 = g.y - g.h / 2 - 260, y1 = g.y + g.h / 2 + 260;
+    const inDoor = (x, y) => Math.abs(x - g.x) <= GATE_DOOR_HALF + 80 && y >= y0 && y <= y1;
+    for (let i = buildings.length - 1; i >= 0; i--) {
+      const b = buildings[i];
+      if (b === g || !b.isWall) continue;              // only the small blocking walls
+      if (b.w > 420 || b.h > 420) continue;
+      if (!inDoor(b.x, b.y)) continue;
+      buildings.splice(i, 1);
+    }
+    // And the loose things. Barrels are scattered by getSafeSpawn(), which
+    // places them 140..900 units from the player and knows nothing about the
+    // gate -- one landing in the approach blocks it just as completely as the
+    // wall did, and it did, in about one entry in six.
+    for (let i = barrels.length - 1; i >= 0; i--) {
+      if (inDoor(barrels[i].x, barrels[i].y)) barrels.splice(i, 1);
+    }
+    for (let i = parkingCars.length - 1; i >= 0; i--) {
+      if (inDoor(parkingCars[i].x, parkingCars[i].y)) parkingCars.splice(i, 1);
+    }
+  }
+}
+
 function canTravel(dir) {
   const d = travelDestination(dir);
   if (d === null) return false;
@@ -20889,7 +21047,11 @@ function startAtLevel(lvl, isLoading = false) {
   // for a fresh sector but wrong when re-entering one mid-arc (the NM-0 HQ round
   // trip rebuilds Stick City underneath the player). Put the authored world back
   // the way the player left it.
-  if (isStoryMode && !isBiomeLevel(lvl)) restoreAuthoredStoryState(lvl);
+  if (isStoryMode && !isBiomeLevel(lvl)) {
+    restoreAuthoredStoryState(lvl);
+    // Re-entering or reloading a sector whose gate the player already opened.
+    clearGateApproach();
+  }
 
   // legacyStartAtLevel() can push more authored geometry after generateMap()
   // has already lifted the map out — Stick City's two gate-guard target walls.
@@ -20924,6 +21086,30 @@ function startAtLevel(lvl, isLoading = false) {
   if (authoredCore && chunkMgr && player) {
     chunkMgr.lastKey = null;
     chunkMgr.update(player.x, player.y);
+  }
+
+  // The escort marches in with the player, wherever the player actually ended
+  // up. legacyStartAtLevel() places them relative to where the player was when
+  // it ran, and both arrival paths above can move the player AFTER that:
+  // placePlayerAtAnchor() drops them on a travel anchor and
+  // placePlayerAtAuthoredEntry() puts them just inside a Great Gate. Marching
+  // fifty-six soldiers north and arriving alone -- with the escort standing in a
+  // field a chunk away, outside the AI range that would have let them follow --
+  // is that ordering, not a lost count. Re-forming here is ordering-proof: it
+  // runs last, and it only touches anyone who is not already with the player.
+  if (player) {
+    let formed = 0;
+    for (const e of enemiesList) {
+      if (!e || !e.isMilitary || !e.isFriendly) continue;
+      const dx = e.x - player.x, dy = e.y - player.y;
+      if (dx * dx + dy * dy < 700 * 700) continue;
+      const a = (formed * 2.399) % TWO_PI;
+      const r = 90 + (formed % 7) * 34;
+      e.x = player.x + Math.cos(a) * r;
+      e.y = player.y + Math.sin(a) * r;
+      if (typeof e.forceNudge === 'function') e.forceNudge();
+      formed++;
+    }
   }
 
   window.travelArrival = null;

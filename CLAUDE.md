@@ -570,6 +570,58 @@ spawns inside geometry, that it survives a walk across the sector, that kills re
 and nothing refills it, and that none of this happens in arcade mode, in a cleared
 sector, or in any other level.
 
+**Only the roster converts.** `recruitSectorSurvivors()` requires `isPopulation`.
+Checkpoint garrisons, streamed settlement residents and any wanderer that drifted in are
+all the right *type* to recruit and none of them are people the player spared.
+
+**The roster is not part of any ambush.** `checkAmbushCleared()` skips `isPopulation`
+for the same reason — it waits for the field to be clear of hostiles, and eighty
+residents standing around the blocks are never going to clear. Left in, the gate ambush
+could only be finished by killing all eighty, which is the exact opposite of the
+mechanic and sealed the sector for anyone who spared a soul.
+
+### The escort
+
+Soldiers assigned in the travel menu (`militaryToBringM` / `militaryToBringF`) are
+spawned by `legacyStartAtLevel()` on arrival. Three things that layer has to do, all of
+which it silently did not:
+
+- **Count.** Every `popTotal` calculation reads `window.militaryToBring` — the
+  *singular* — and nothing ever assigned it from the M/F split the menu fills in, so an
+  escort arrived and the destination's population had never heard of it.
+- **Be consumed.** Left set, the same escort was re-created from scratch on every
+  subsequent level entry.
+- **Arrive with the player.** They are placed relative to wherever the player was when
+  `legacyStartAtLevel()` ran, and *both* arrival paths move the player afterwards —
+  `placePlayerAtAnchor()` for a streamed biome, `placePlayerAtAuthoredEntry()` for a
+  Great Gate. `startAtLevel()` re-forms them on the player at the very end, which is
+  ordering-proof and only touches anyone not already alongside.
+
+### The Great Gates
+
+A gate is a 9600-wide `isGovFortress` slab with a 600-wide door in it
+(`GATE_DOOR_HALF`). It used to say so in a comment — *"gate visually stays closed
+forever (collision remains solid)"* — so the road the objective announced as open was a
+wall you could watch smoke come out of.
+
+`gateIsOpen(b)` is the single predicate; `inOpenGateway(b, x)` is what
+`Character.checkCol`, `updateBullets` and `hasLOS` all consult, so movement, rounds and
+sight agree about where the hole is. The wings either side stay solid — the point of a
+gate is that it is the only way through.
+
+- **Sector 1:** the *south* gate opens once breached and the muster is beaten. North is
+  the NM-0 HQ approach — an interaction, not a walk-through.
+- **Sector 2:** *both* gates open together once the towers are down and the ambush is
+  clear, or on their own breach flag.
+
+`clearGateApproach()` is the other half and is not optional. Both gates have small walls
+standing inside the doorway — the guard blocks, and Stick City's two gate-guard target
+walls — which between them cover all but 25 units of a 600-unit door. Barrels are worse:
+`getSafeSpawn()` scatters them 140–900 units from the player and knows nothing about the
+gate, so one landed in the approach and sealed it in about one entry in six. The sweep
+runs at level entry and again the moment the ambush clears, and is recorded per gate so
+the second call is free.
+
 ---
 
 ## Working rules for this repo
