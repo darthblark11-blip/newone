@@ -3163,6 +3163,8 @@ popArchitecture = 0;
         window.nm0AmbushCleared = false;
         nm0AmbushActive = false;
         window.nm0AmbushClearedStatus = true;
+        // Towers down and the muster beaten opens the south gate on its own.
+        if (typeof recordSouthGateBreached === 'function') recordSouthGateBreached(currentLevel);
         // The breach becomes a road at exactly this moment.
         if (typeof clearGateApproach === 'function') clearGateApproach();
 
@@ -5967,6 +5969,42 @@ for (let b of buildings) {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// WADING
+// Standing water the player can actually walk into. The river's channel is
+// solid and the canal is walled, so pools are the whole set -- which is what
+// makes this cheap: the list is rebuilt once a frame and is almost always
+// empty, and each character then tests against two or three ellipses.
+// ---------------------------------------------------------------------------
+let _waterFrame = -1;
+let _waterList = [];
+function waterBodies() {
+  if (_waterFrame === frameCount) return _waterList;
+  _waterFrame = frameCount;
+  const out = [];
+  for (let i = 0; i < activeBuildings.length; i++) {
+    const b = activeBuildings[i];
+    if (b.isPond) out.push(b);
+  }
+  _waterList = out;
+  return out;
+}
+// 0 on dry land, 1 in the middle of a pool. Elliptical, so it follows the
+// pool's own footprint rather than a circle drawn inside it, and it ramps
+// quickly off the rim so the shallows are a step rather than a slope.
+function waterDepthAt(x, y) {
+  const list = waterBodies();
+  for (let i = 0; i < list.length; i++) {
+    const b = list[i];
+    const dx = (x - b.x) / (b.w * 0.5), dy = (y - b.y) / (b.h * 0.5);
+    const d2 = dx * dx + dy * dy;
+    if (d2 >= 1) continue;
+    const d = 1 - Math.sqrt(d2);
+    return d > 0.42 ? 1 : d / 0.42;
+  }
+  return 0;
+}
+
 function inView(x, y, pad = 100) {
   return x >= viewLeft - pad && x <= viewRight + pad && y >= viewTop - pad && y <= viewBottom + pad;
 }
@@ -5978,6 +6016,9 @@ function inView(x, y, pad = 100) {
 function drawGroundLots() {
   for (let b of activeBuildings) {
       if (!inView(b.x, b.y, Math.max(b.w || 0, b.h || 0) + 150)) continue;
+      // A marsh pool is terrain now. Painting it again here would put the hard
+      // disc straight back on top of the baked one.
+      if (b.isMarshPool) continue;
       if (b.isPond) {
           // A pond is an oval. The old outline was swept with `a += 0.5`, which
           // is thirteen vertices for the whole circumference -- a visible
@@ -5989,13 +6030,19 @@ function drawGroundLots() {
           // water you can see matches the water you can stand in. The motion
           // is ripples ON the surface, which is what water actually does and
           // costs the outline nothing.
-          push(); translate(b.x, b.y);
           const rx0 = b.w / 2, ry0 = b.h / 2;
+          // Damp ground with no edge of its own, so a built basin still sits in
+          // the lawn rather than on it.
+          softStamp(window, b.x, b.y, b.w * 1.7, b.h * 1.7, [42, 58, 44], 60);
+          push(); translate(b.x, b.y);
           noStroke();
           fill(24, 40, 34, 90);   ellipse(0, 0, b.w + 26, b.h + 26);  // damp bank
           fill(36, 58, 48, 150);  ellipse(0, 0, b.w + 11, b.h + 11);  // wet margin
-          fill(46, 104, 168, 226); ellipse(0, 0, b.w, b.h);           // water
-          fill(62, 132, 202, 150); ellipse(0, 0, b.w * 0.84, b.h * 0.84);
+          // Kept in the same family as the baked marsh pools and the river.
+          // A pond used to come out at 46,104,168 -- a saturated blue disc that
+          // belonged to a different painting from the ground around it.
+          fill(44, 84, 104, 232); ellipse(0, 0, b.w, b.h);            // water
+          fill(56, 104, 124, 150); ellipse(0, 0, b.w * 0.84, b.h * 0.84);
           // Ripple rings drifting outward. Slow, low alpha, and they never
           // touch the silhouette.
           noFill(); strokeWeight(2);
@@ -7989,6 +8036,21 @@ this.skeletonTimer = 0;
     // through the collision path, player and pedestrian alike.
     const eF = elevSpeedFactor(this.x, this.y, vx, vy);
     if (eF !== 1) { vx *= eF; vy *= eF; }
+
+    // Wading takes its cut in the same place and for the same reason. Water you
+    // can walk into has to cost something, or it is a texture rather than a
+    // piece of terrain -- and a pool becomes somewhere you think about crossing
+    // rather than somewhere you happen to be standing.
+    const wD = waterDepthAt(this.x, this.y);
+    if (wD > 0) {
+      const wF = 1 - 0.44 * wD;
+      vx *= wF; vy *= wF;
+      // A splash, thrown only while actually moving and only near enough to
+      // see. Enemies wading a pool half a sector away do not need particles.
+      if (frameCount % 6 === 0 && (vx * vx + vy * vy) > 0.35 && inView(this.x, this.y, 120)) {
+        emit(this.x, this.y + 6, 2, color(168, 208, 216), "SPARK", vx * 0.4, vy * 0.4);
+      }
+    }
 
     let speed = dist(0, 0, vx, vy);
     let intendedAngle = atan2(vy, vx);
@@ -10293,6 +10355,33 @@ if (lArmSwing > frontThreshold || lArmSwing < backThreshold) {
     }
 
     pop();
+
+    // Wading. Nothing about the body art changes -- the water is drawn OVER the
+    // lower half of it, which is exactly what half-submerged looks like from
+    // directly above. Legs run to about y 20 in this rig, so a waterline in the
+    // 6..-3 band takes them from ankle-deep to mid-thigh.
+    const _wd = waterDepthAt(this.x, this.y);
+    if (_wd > 0.03 && !this.dead && this.hp > 0) {
+        const wl = 7 - _wd * 10;
+        noStroke();
+        // The submerged half, tinted toward the pool's own deep water.
+        fill(30, 56, 64, 118 + _wd * 86);
+        rect(-11, wl, 22, 26 - wl, 4);
+        // Waterline: a bright meniscus where the body breaks the surface.
+        fill(126, 174, 180, 96);
+        ellipse(0, wl, 25, 8);
+        fill(198, 228, 234, 70);
+        ellipse(0, wl - 1, 19, 5);
+        // The ring the body pushes out, breathing rather than expanding, so a
+        // figure standing still in water is still doing something.
+        noFill();
+        stroke(190, 222, 228, 46 + _wd * 40);
+        strokeWeight(1.6);
+        const _wr = 26 + Math.sin(frameCount * 0.08 + this.x * 0.013) * 5;
+        ellipse(0, wl + 1, _wr, _wr * 0.4);
+        noStroke();
+    }
+
     pop(); 
 }
 }
@@ -14122,7 +14211,18 @@ function woodSpur(biome, cx, cy) {
   // geometry, which has already been generated and knows nothing about it.
   const x1 = Math.max(ox + 150, Math.min(ox + CHUNK_W - 150, x0 + dir * len));
   if (Math.abs(x1 - x0) < 170) return null;
-  return { x0: x0, y0: y, x1: x1, y1: y + rngRange(rng, -110, 110) };
+  const y1 = y + rngRange(rng, -110, 110);
+  // The head is where a set piece gets built, and the marsh pools are laid down
+  // before any of that. Both are deterministic, so the spur can simply decline
+  // to point at water -- which is better than a road that ends in a pond, and
+  // better than a cabin standing in one.
+  const pools = woodPools(biome, cx, cy);
+  if (pools) {
+    for (const p of pools) {
+      if (Math.abs(x1 - p.x) < p.w / 2 + 320 && Math.abs(y1 - p.y) < p.h / 2 + 300) return null;
+    }
+  }
+  return { x0: x0, y0: y, x1: x1, y1: y1 };
 }
 
 // ###########################################################################
@@ -14210,6 +14310,67 @@ const ZONE_TINT = {
   CITY:       [ 24,  17,   8],
   CITY_DENSE: [ 24,  17,   8]
 };
+
+// ---------------------------------------------------------------------------
+// MARSH POOLS
+//
+// Standing water in the wet ground, decided from its own stream so the terrain
+// bake and the chunk generator agree about where it is without either drawing
+// from the other's rng -- the same arrangement woodSpur() uses, for the same
+// reason. That agreement is what lets the pool be PAINTED INTO the terrain
+// instead of drawn live over the top of it.
+//
+// Every rejection below is in here rather than in the caller, because the two
+// callers have to produce the identical list. A pool the generator threw away
+// but the bake still painted would be water you could not stand in.
+// ---------------------------------------------------------------------------
+function woodPools(biome, cx, cy) {
+  const ox = cx * CHUNK_W, oy = cy * CHUNK_W;
+  if (woodRegion(biome, ox + 600, oy + 600) !== RG_MARSH) return null;
+  const rng = makeRng(chunkHash(biome, cx, cy, 7717));
+  const out = [];
+  // The travel anchors are the one place in the sector the player is guaranteed
+  // to arrive at, and a pool on the helipad apron is the first thing they see.
+  const anch = authoredCore ? null : [
+    getAnchorPos(biome, ANCHOR_HELIPAD),
+    getAnchorPos(biome, ANCHOR_CHECKPOINT),
+    getAnchorPos(biome, ANCHOR_OUTPOST)
+  ];
+  for (let att = 0; att < 30 && out.length < 5; att++) {
+    const w = rngRange(rng, 190, 340), h = rngRange(rng, 140, 250);
+    const x = ox + rngRange(rng, w / 2 + 160, CHUNK_W - w / 2 - 160);
+    const y = oy + rngRange(rng, h / 2 + 160, CHUNK_W - h / 2 - 160);
+    const k = rng();
+    // Asked at the pool's own centre, not the chunk's, so the water thins out
+    // toward the edge of the wet ground rather than stopping on a chunk line.
+    if (woodRegion(biome, x, y) !== RG_MARSH) continue;
+    if (coreTaperX(cx, cy, x) < 0.6 || coreTaperY(cx, cy, y) < 0.6) continue;
+    let clash = false;
+    if (anch) {
+      for (const a of anch) {
+        if (Math.abs(x - a.x) < w / 2 + 820 && Math.abs(y - a.y) < h / 2 + 820) { clash = true; break; }
+      }
+      if (clash) continue;
+    }
+    // A Directive post sits on a chunk CORNER, so all four of this chunk's
+    // corners matter, not just its own.
+    for (const [ix, iy] of [[cx, cy], [cx + 1, cy], [cx, cy + 1], [cx + 1, cy + 1]]) {
+      if (!cityIsCheckpoint(biome, ix, iy)) continue;
+      if (Math.abs(x - ix * CHUNK_W) < w / 2 + 640 && Math.abs(y - iy * CHUNK_W) < h / 2 + 640) { clash = true; break; }
+    }
+    if (clash) continue;
+    if (woodHasTrunk(biome, cx) && Math.abs(x - woodTrailX(biome, cx, y)) < w / 2 + 180) continue;
+    if (woodHasLink(biome, cy) && Math.abs(y - woodLinkY(biome, cy, x)) < h / 2 + 170) continue;
+    if (woodHasRiver(biome, cy) &&
+        Math.abs(y - woodRiverY(biome, cy, x)) < h / 2 + woodRiverHalf(biome, cy, x) + 160) continue;
+    for (const p of out) {
+      if (Math.abs(p.x - x) < (p.w + w) / 2 + 140 && Math.abs(p.y - y) < (p.h + h) / 2 + 140) { clash = true; break; }
+    }
+    if (clash) continue;
+    out.push({ x: x, y: y, w: w, h: h, k: k });
+  }
+  return out.length ? out : null;
+}
 
 // ---------------------------------------------------------------------------
 // AUTHORED-GROUND TAPER
@@ -14978,6 +15139,35 @@ function generateChunkContent(biome, cx, cy) {
       }
       if (cityIsCheckpoint(biome, cx, cy)) lat.block(ox, oy, 900, 900);
 
+      // --- Standing water ---------------------------------------------------
+      // First, before anything that has to keep out of it. The pools are the
+      // one piece of this chunk the generator does NOT get to move: the terrain
+      // bake paints them from the same list, so wherever woodPools() puts them
+      // is where the water is. Everything placed afterwards tests against them
+      // through solidsClearAt() and the lattice; placed the other way round,
+      // pools came down on top of a cabin, a hedge line and a ruin.
+      const pools = woodPools(biome, cx, cy);
+      if (pools) for (const p of pools) {
+        solid.push({ x: p.x, y: p.y, w: p.w, h: p.h,
+                     isPond: true, isGrassLot: true, isWater: true, isMarshPool: true, k: p.k });
+        lat.block(p.x, p.y, p.w + 170, p.h + 170);
+        // Reeds stand AT the waterline now. They used to be pushed out past the
+        // pool's silhouette because the live ellipse painted over anything
+        // inside it; the baked pool goes down before the static decor does, so
+        // they can grow where reeds actually grow.
+        for (let i = 0; i < 17; i++) {
+          const a = rng() * TWO_PI, rr = rngRange(rng, 0.42, 0.66);
+          decorBake.push({ t: "REED", x: p.x + Math.cos(a) * p.w * rr,
+                           y: p.y + Math.sin(a) * p.h * rr,
+                           s: rngRange(rng, 0.7, 1.5), r: rng() * TWO_PI, c: rng() });
+        }
+        for (let i = 0; i < 2; i++) {
+          decor.push({ t: "RIPPLE", x: p.x + rngRange(rng, -p.w * 0.26, p.w * 0.26),
+                       y: p.y + rngRange(rng, -p.h * 0.26, p.h * 0.26),
+                       s: rngRange(rng, 0.8, 1.5), r: rng() * TWO_PI, c: rng() });
+        }
+      }
+
       // --- The river -------------------------------------------------------
       // Water is a wall with doors in it. The channel blocks movement for its
       // whole run across the row except at the one crossing this column
@@ -15066,6 +15256,7 @@ function generateChunkContent(biome, cx, cy) {
         else if (rng() > 0.62) { const s = lat.take(430, 380); if (s) head = s; }
 
         if (head && !nearAnchor(head.x, head.y, 640) && !hitsAuthored(head.x, head.y, 520, 470, 0)) {
+          const before = solid.length;
           lat.block(head.x, head.y, 560, 500);
           const kind = rng();
 
@@ -15111,23 +15302,40 @@ function generateChunkContent(biome, cx, cy) {
             }
 
           } else {
-            // A pond in the low ground, with the reeds that go with it.
+            // A clearing with a watering trough and the stock pen that used it.
             //
-            // The reeds ring the pond from OUTSIDE its silhouette on purpose.
-            // A pond is drawn live by drawGroundLots(), which runs after the
-            // chunk terrain and paints an opaque ellipse on its own w/h -- so
-            // anything baked inside that ellipse, reeds included, is covered
-            // over. It also draws its own ripples, which is why there are no
-            // RIPPLE props here the way there are on the river.
-            const pw = rngRange(rng, 250, 400), ph = rngRange(rng, 190, 300);
-            solid.push({ x: head.x, y: head.y, w: pw, h: ph,
-                         isPond: true, isGrassLot: true, isWater: true });
-            for (let i = 0; i < 18; i++) {
-              const a = rng() * TWO_PI, rr = rngRange(rng, 0.58, 0.74);
-              decorBake.push({ t: "REED", x: head.x + Math.cos(a) * pw * rr,
-                               y: head.y + Math.sin(a) * ph * rr,
-                               s: rngRange(rng, 0.7, 1.4), r: rng() * TWO_PI, c: rng() });
+            // This used to be a pond, and a pond here could not be baked: the
+            // spur head is chosen from the chunk's own rng and the terrain bake
+            // has no way to recompute it, so the water had to be drawn live as
+            // an opaque disc over the ground. Water belongs to the marsh, where
+            // woodPools() can hand the same list to both.
+            solid.push({ x: head.x, y: head.y, w: 96, h: 44,
+                         isBiomeProp: true, propType: "LOGPILE", tint: rng() });
+            for (let i = 0; i < rngInt(rng, 3, 6); i++) {
+              const a = (i / 5) * TWO_PI + rng() * 0.4;
+              const fx = head.x + Math.cos(a) * rngRange(rng, 170, 250);
+              const fy = head.y + Math.sin(a) * rngRange(rng, 150, 220);
+              const horiz = Math.abs(Math.cos(a)) < 0.5;
+              const ln = rngRange(rng, 150, 250);
+              if (!solidsClearAt(solid, fx, fy, horiz ? ln : 24, horiz ? 24 : ln, 22)) continue;
+              solid.push({ x: fx, y: fy, w: horiz ? ln : 24, h: horiz ? 24 : ln,
+                           isBiomeProp: true, propType: "HEDGE", tint: rng() });
             }
+            for (let i = 0; i < 10; i++) {
+              decorBake.push({ t: "STUMP", x: head.x + rngRange(rng, -260, 260),
+                               y: head.y + rngRange(rng, -220, 220),
+                               s: rngRange(rng, 0.7, 1.3), r: rng() * TWO_PI, c: rng() });
+            }
+          }
+
+          // Reserve the ground the set piece actually occupies, not the box it
+          // was centred on. A hedge line, a ruin ring and a cordwood stack all
+          // reach further out than the 560x500 block above, and the timber
+          // scatter runs afterwards -- so without this the lattice happily put
+          // a trunk through whatever the set piece had just built out there.
+          for (let i = before; i < solid.length; i++) {
+            const sp = solid[i];
+            lat.block(sp.x, sp.y, (sp.w || 0) + 70, (sp.h || 0) + 70);
           }
         }
       }
@@ -15145,6 +15353,7 @@ function generateChunkContent(biome, cx, cy) {
       // farmland produced no field, no hedge and no steading anywhere in eight
       // hundred chunks -- the region existed and had nothing in it.
       const midReg = woodRegion(biome, ox + 600, oy + 600);
+      const regionFirst = solid.length;
 
       if (midReg === RG_HEATH) {
         // A stone row on the skyline. Placed before the loose rock, because it
@@ -15187,21 +15396,9 @@ function generateChunkContent(biome, cx, cy) {
       } else if (midReg === RG_MARSH) {
         // Standing water in the hollows, and the plank walk somebody laid to
         // get across it. The walk is a deck, so you can actually use it.
-        const nPool = rngInt(rng, 2, 6);
-        for (let k = 0; k < nPool; k++) {
-          const pw = rngRange(rng, 170, 330), ph = rngRange(rng, 130, 240);
-          const spot = lat.take(pw + 50, ph + 50);
-          if (!spot) break;
-          if (nearAnchor(spot.x, spot.y, 460)) continue;
-          solid.push({ x: spot.x, y: spot.y, w: pw, h: ph,
-                       isPond: true, isGrassLot: true, isWater: true });
-          for (let i = 0; i < 14; i++) {
-            const a = rng() * TWO_PI, rr = rngRange(rng, 0.58, 0.76);
-            decorBake.push({ t: "REED", x: spot.x + Math.cos(a) * pw * rr,
-                             y: spot.y + Math.sin(a) * ph * rr,
-                             s: rngRange(rng, 0.7, 1.5), r: rng() * TWO_PI, c: rng() });
-          }
-        }
+        //
+        // The pools themselves went down at the top of this case, before
+        // anything that has to keep out of them.
         if (rng() > 0.5) {
           // A boardwalk. Runs across the chunk on one axis, in three sections
           // with gaps, because nobody maintains it.
@@ -15313,6 +15510,14 @@ function generateChunkContent(biome, cx, cy) {
                      s: rngRange(rng, sp === "PINE" ? 1.0 : 0.9, sp === "SNAG" ? 1.3 : 1.7),
                      r: rng() * TWO_PI, c: rng(),
                      k: (RG_CANOPY[reg] || 0) + rngRange(rng, -0.14, 0.14) });
+      }
+
+      // Same reservation sweep as the spur head, and for the same reason: a
+      // stone row, a hedged field or a spread of pools all reach past whatever
+      // box they were placed against.
+      for (let i = regionFirst; i < solid.length; i++) {
+        const sp = solid[i];
+        lat.block(sp.x, sp.y, (sp.w || 0) + 70, (sp.h || 0) + 70);
       }
 
       // A ruin every so often -- the grid used to come out this far.
@@ -16192,6 +16397,49 @@ function bakeWatercourse(g, centreAt, halfAt, ox, oy, bank, shallow, deep, alpha
   g.noStroke();
 }
 
+// ---------------------------------------------------------------------------
+// MARSH POOL
+// Standing water, painted into the terrain. A pond used to be an opaque ellipse
+// laid over the ground every frame by drawGroundLots(): a hard-edged, saturated
+// disc that sat ON the landscape rather than in it, and covered anything baked
+// underneath. The river running past three hundred units away was already doing
+// this properly, and this is the same treatment -- a feathered damp margin with
+// no edge of its own, then an outline that is not a circle, then depth.
+// ---------------------------------------------------------------------------
+function bakePool(g, p) {
+  const rx = p.w / 2, ry = p.h / 2;
+  // Two harmonics off the pool's own seed. A perfect ellipse is the single
+  // loudest tell that a piece of terrain was stamped rather than formed.
+  const edgeAt = (a) => 1 + 0.17 * Math.sin(a * 3 + p.k * 21) + 0.09 * Math.sin(a * 5 - p.k * 13);
+  const ring = (sc, col, alpha) => {
+    g.fill(col[0], col[1], col[2], alpha);
+    g.beginShape();
+    for (let i = 0; i < 24; i++) {
+      const a = (i / 24) * TWO_PI, e = edgeAt(a) * sc;
+      g.vertex(p.x + Math.cos(a) * rx * e, p.y + Math.sin(a) * ry * e);
+    }
+    g.endShape(CLOSE);
+  };
+  // Ground that is simply wet, well outside the water and with no edge at all,
+  // so the pool fades into the marsh instead of being cut out of it.
+  softStamp(g, p.x, p.y, p.w * 2.3, p.h * 2.3, [56, 68, 48], 46);
+  softStamp(g, p.x, p.y, p.w * 1.6, p.h * 1.6, [42, 54, 42], 62);
+  ring(1.14, [74, 70, 50], 140);            // mud rim, trodden
+  ring(1.00, [80, 112, 100], 205);          // shallows -- the bed still reads through
+  ring(0.80, [46, 78, 82], 230);            // the drop-off
+  ring(0.54, [30, 56, 64], 235);            // deep water
+  // Sky on the surface, offset against the same light as every other highlight.
+  g.fill(158, 196, 204, 40);
+  g.ellipse(p.x - LIGHT_DX * rx * 0.32, p.y - LIGHT_DY * ry * 0.32, rx * 0.95, ry * 0.6);
+  // Weed mats at the margin, and the darker water under them.
+  for (let i = 0; i < 5; i++) {
+    const a = p.k * 37 + i * 1.9;
+    const e = edgeAt(a) * 0.86;
+    g.fill(64, 92, 58, 120);
+    g.ellipse(p.x + Math.cos(a) * rx * e, p.y + Math.sin(a) * ry * e, rx * 0.34, ry * 0.28);
+  }
+}
+
 function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, layout) {
   const p = pal || def.pal;
   g.noStroke();
@@ -16912,6 +17160,14 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
           default:
             break;
         }
+      }
+
+      // Marsh pools. Painted with the ground rather than drawn over it -- see
+      // bakePool(). woodPools() hands the generator the identical list, so the
+      // water you can see and the water you can wade are the same water.
+      {
+        const bPools = woodPools(biome, cx, cy);
+        if (bPools) for (const bp of bPools) bakePool(g, bp);
       }
 
       // Ploughed ground. The bearing comes off a very slow world field, so a
@@ -20599,7 +20855,14 @@ function gateIsOpen(b) {
   if (currentLevel === 1) {
     // South is the way onward and the only gate that opens. North is the NM-0
     // HQ approach -- an interaction, not a walk-through.
-    return b.y > 0 && !!window.southGateBreachedStatus;
+    //
+    // Dropping the sector's transmission towers unseals it just as surely as
+    // putting a rocket through the door does: the grid holding it shut is the
+    // thing that just went down. So the towers open it too, and
+    // recordSouthGateBreached() writes the same flag a real breach would, so
+    // nothing downstream has to know which of the two happened.
+    if (b.y <= 0) return false;
+    return !!window.southGateBreachedStatus || window.towersDefeated || sectorTowersAreDown(1);
   }
   if (currentLevel === 2) {
     // Both of the Undercity's gates open together once the towers are down:
@@ -20609,6 +20872,18 @@ function gateIsOpen(b) {
     return b.y > 0 ? !!window.undercitySouthBreached : !!window.undercityNorthBreached;
   }
   return false;
+}
+
+// Write the breach down as if the player had blown it. Called when a muster is
+// beaten with the towers already down: storyArcCleared(), the travel menu and
+// the objective line all read the breach flag, and leaving it unset meant a
+// sector could be visibly open and still officially sealed.
+function recordSouthGateBreached(level) {
+  if (level !== 1 && level !== 2) return;
+  if (!window.towersDefeated && !sectorTowersAreDown(level)) return;
+  if (level === 1) window.southGateBreachedStatus = true;
+  else            window.undercitySouthBreached = true;
+  for (const b of buildings) if (b.isGovFortress && b.y > 0 && b.hp > 0) b.hp = 0;
 }
 
 // Is this point in the doorway of an open gate? Asked by everything that treats

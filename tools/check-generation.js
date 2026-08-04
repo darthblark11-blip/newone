@@ -230,5 +230,55 @@ for (const t of types) {
 console.log('   types in rotation: ' + Array.from(types).sort().join(' '));
 ok('every clutter type pickClutterType can return has art', painted.length === 0, painted.join(','));
 
+// ---------------------------------------------------------------------------
+// MARSH POOLS
+// The generator and the terrain bake both call woodPools(). If they ever
+// disagree the player gets water they cannot wade, or wades ground that looks
+// dry — so the agreement is the whole contract, and the placement rules have to
+// live inside woodPools() rather than in either caller.
+// ---------------------------------------------------------------------------
+console.log('\n== marsh pools ==');
+probe('authoredCore = null; authoredChunks = null; authoredMask = null; biomeState = {}; currentLevel = 2; currentBiome = 2;');
+{
+  let chunks = 0, wet = 0, marsh = 0, total = 0, mismatch = 0, tooNear = 0, overlap = 0;
+  for (let cx = -12; cx <= 12; cx++) for (let cy = -12; cy <= 12; cy++) {
+    chunks++;
+    if (P(`woodRegion(2, ${cx * 1200 + 600}, ${cy * 1200 + 600})`) === 'MARSH') marsh++;
+    const list = P(`woodPools(2, ${cx}, ${cy})`) || [];
+    const built = P(`generateChunkContent(2, ${cx}, ${cy})`).solid.filter(s => s.isMarshPool);
+    if (built.length !== list.length) mismatch++;
+    if (list.length) { wet++; total += list.length; }
+    for (const p of list) {
+      // Never on a travel anchor — that is the first ground the player stands on.
+      for (const a of [[0, 0], [0, -2400], [0, 2400]]) {
+        if (Math.abs(p.x - a[0]) < p.w / 2 + 780 && Math.abs(p.y - a[1]) < p.h / 2 + 780) tooNear++;
+      }
+      if (P(`woodHasTrunk(2, ${cx})`) &&
+          Math.abs(p.x - P(`woodTrailX(2, ${cx}, ${p.y})`)) < p.w / 2 + 160) tooNear++;
+      if (P(`woodHasRiver(2, ${cy})`) &&
+          Math.abs(p.y - P(`woodRiverY(2, ${cy}, ${p.x})`)) <
+            p.h / 2 + P(`woodRiverHalf(2, ${cy}, ${p.x})`) + 140) tooNear++;
+      for (const q of list) {
+        if (q === p) continue;
+        if (Math.abs(p.x - q.x) < (p.w + q.w) / 2 && Math.abs(p.y - q.y) < (p.h + q.h) / 2) overlap++;
+      }
+    }
+  }
+  console.log(`   ${chunks} chunks: ${marsh} marsh, ${wet} carrying water, ${total} pools`);
+  ok('the bake and the generator agree about where the water is', mismatch === 0, mismatch + ' chunks differ');
+  ok('marsh country actually has water in it', wet / marsh > 0.4, `${(100 * wet / marsh).toFixed(0)}% of marsh chunks`);
+  ok('no pool sits on an anchor, a road or the river', tooNear === 0, tooNear + ' bad');
+  ok('pools do not overlap each other', overlap === 0, overlap + ' pairs');
+  // Depth ramps from the rim to the middle, and stops at the rim.
+  const one = P(`(() => { for (let cx=-12;cx<=12;cx++) for (let cy=-12;cy<=12;cy++) { const l = woodPools(2,cx,cy); if (l) return l[0]; } return null; })()`);
+  ctx.__pool = one;
+  probe('activeBuildings = [Object.assign({}, window.__pool, {isPond: true})]; frameCount = 1;');
+  ok('a pool is wadeable in the middle', P('waterDepthAt(window.__pool.x, window.__pool.y)') === 1);
+  ok('and dry outside it', P('waterDepthAt(window.__pool.x + window.__pool.w, window.__pool.y)') === 0);
+  probe('frameCount = 2;');
+  ok('depth ramps rather than steps at the rim',
+     P('waterDepthAt(window.__pool.x + window.__pool.w * 0.47, window.__pool.y)') < 0.5);
+}
+
 console.log(`\n${checks - fails}/${checks} checks passed`);
 process.exit(fails ? 1 : 0);

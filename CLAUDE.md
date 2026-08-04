@@ -184,6 +184,38 @@ taper with the paint*. Canal and river solids are skipped wherever the taper has
 the channel — otherwise you get an invisible wall standing on dry ground beside the
 city. `tools/check-render.js` guards exactly this.
 
+### Standing water and wading
+
+Marsh pools are **baked into the terrain**, not drawn live. A pond used to be an opaque
+ellipse laid over the ground by `drawGroundLots()` every frame — a hard-edged saturated
+disc that sat *on* the landscape rather than in it, and covered anything baked
+underneath (which is why reeds had to ring it from outside its own silhouette). The
+river 300 units away was already doing this properly.
+
+`woodPools(biome, cx, cy)` is the shared list, on its own rng stream for the same reason
+`woodSpur()` has one: the generator and `bakeBiomeDetail()` must produce the identical
+pools or the player gets water they cannot wade. **Every rejection lives inside
+`woodPools()`** — region at the pool's own centre, core taper, anchors, checkpoints
+(all four chunk corners), trunk, link, river, and each other — because a pool one caller
+threw away and the other still painted is exactly the bug this arrangement prevents.
+
+Consequences for placement order: **pools go down first in the `WOODLAND` case**, before
+anything that has to keep out of them. They are the one thing the generator does not get
+to move, so the spur head, the set pieces and the timber all test against them through
+`solidsClearAt()` and the lattice. `woodSpur()` also declines a head that would land in
+water — better than a road that ends in a pond.
+
+`waterDepthAt(x, y)` (0 dry, 1 mid-pool) drives both halves of wading: a 44% speed cut in
+`attemptMove()` — the same choke point `elevSpeedFactor` uses, so it lands on everything
+that moves — and the half-submerged read at the end of `Character.show()`, which draws
+water *over* the body's lower half rather than changing the body art. The pond list is
+rebuilt once a frame and is almost always empty.
+
+**Set pieces must reserve the ground they actually occupy**, not the box they were
+centred on. A hedge line, a ruin ring or a cordwood stack all reach past the
+`lat.block()` around their centre, and the timber scatter runs afterwards — so both the
+region branch and the spur head sweep every solid they created back into the lattice.
+
 ### Sub-biomes (Sector 2's woodland)
 
 A biome is one palette and one layout; a landscape is not. `woodRegion(biome, wx, wy)`
@@ -565,6 +597,10 @@ eighty-of-which-sixty-seven-mattered. Those types are also in `SECTOR_GARRISON`,
 beats instead; to give the sector a standing garrison, add it to `SECTOR_POP_MIX` and
 raise the seed count by the same amount so the eighty stays eighty.
 
+`tools/check-generation.js` also asserts that `woodPools()` and the chunk generator agree
+chunk for chunk, that marsh country actually carries water, that no pool sits on an
+anchor, a road or the river, and that `waterDepthAt()` ramps rather than steps.
+
 `node tools/check-population.js` asserts the roster seeds at exactly 80, that nobody
 spawns inside geometry, that it survives a walk across the sector, that kills reduce it
 and nothing refills it, and that none of this happens in arcade mode, in a cleared
@@ -609,10 +645,16 @@ wall you could watch smoke come out of.
 sight agree about where the hole is. The wings either side stay solid — the point of a
 gate is that it is the only way through.
 
-- **Sector 1:** the *south* gate opens once breached and the muster is beaten. North is
-  the NM-0 HQ approach — an interaction, not a walk-through.
+- **Sector 1:** the *south* gate opens once breached and the muster is beaten — or once
+  the sector's transmission towers are down and that muster is beaten, since the grid
+  holding the door shut is the thing that just went out. North is the NM-0 HQ approach —
+  an interaction, not a walk-through.
 - **Sector 2:** *both* gates open together once the towers are down and the ambush is
   clear, or on their own breach flag.
+
+`recordSouthGateBreached(level)` writes the breach flag when the towers open a gate, so
+`storyArcCleared()`, the travel menu and the objective line all read one state instead of
+two. Without it a sector could be visibly open and still officially sealed.
 
 `clearGateApproach()` is the other half and is not optional. Both gates have small walls
 standing inside the doorway — the guard blocks, and Stick City's two gate-guard target

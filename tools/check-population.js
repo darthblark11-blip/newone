@@ -161,6 +161,23 @@ ok('rounds pass through the doorway and not the wings', P(`(() => {
      return inOpenGateway(g, g.x) && !inOpenGateway(g, g.x - 900); })()`));
 ok('the north gate stays shut (it is the HQ approach)', walkThrough(false) === false);
 
+// Dropping the towers unseals the sector on its own — the player should not have
+// to also blow a door they have already made pointless.
+console.log('\n== gates: level 1, opened by the towers ==');
+probe(`isStoryMode = true; townsData = {}; window.southGateBreachedStatus = false;
+       window.nm0AmbushClearedStatus = false; nm0AmbushActive = false; window.towersDefeated = false;`);
+probe('startAtLevel(1);');
+ok('shut with the towers still up', walkThrough(true) === false);
+probe('window.towersDefeated = true; markSectorTowersDown(1); nm0AmbushActive = true;');
+ok('still shut while the tower muster is on the field', walkThrough(true) === false);
+probe('nm0AmbushActive = false;');
+ok('and still shut until that muster is beaten', walkThrough(true) === false);
+probe(`window.nm0AmbushClearedStatus = true; recordSouthGateBreached(1); clearGateApproach();`);
+ok('opens once the tower ambush is beaten, with no gate ever shot', walkThrough(true) === true);
+ok('and is recorded as breached, so the arc and the travel menu agree',
+   P('window.southGateBreachedStatus') === true);
+ok('the gate itself reads as blown', P('buildings.filter(b => b.isGovFortress && b.y > 0)[0].hp') <= 0);
+
 console.log('\n== gates: level 2 ==');
 probe(`isStoryMode = true; townsData = {}; window.nm0AmbushClearedStatus = false;
        nm0AmbushActive = false; window.towersDefeated = false;
