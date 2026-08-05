@@ -3108,8 +3108,32 @@ function draw() {
                     window.towersDefeated = true;
                     markSectorTowersDown(currentLevel);
                     inTownCutscene = true; townPhase = 1; townTimer = 120;
-                    let candidates = enemiesList.filter(e => e.eType === "NORMAL" || e.eType === "FEMALE_PISTOL" || e.eType === "BUG" || e.eType === "SNAIL" || e.eType === "MOLOTOV");
-                    for(let e of candidates) { e.isFriendly = true; e.state = "IDLE"; e.hp = 300; globalPopulation++; }
+                    // Speakers come from the sector's own people, and only from
+                    // the ones standing INSIDE it.
+                    //
+                    // This used to take every enemy in the world of a
+                    // recruitable type and pick the first one. In a hybrid
+                    // sector enemiesList also holds the streamed country past
+                    // the curtain wall, where a checkpoint garrison is a
+                    // FEMALE_PISTOL and sorts no differently from a resident --
+                    // so townPhase 2, which teleports the player onto the
+                    // speaker, dropped them inside the south gate slab, out of
+                    // bounds, with the muster spawning back inside the sector
+                    // behind a shut gate.
+                    //
+                    // recruitSectorSurvivors() already changed the roster's side
+                    // the moment the towers fell, so there is nothing to convert
+                    // here either -- the old loop was handing out a second set
+                    // of citizens, from outside the sector, that nobody spared.
+                    let candidates = enemiesList.filter(e =>
+                        e && e.hp > 0 && !e.dead && (e.isPopulation || e.isRecruit) &&
+                        insideSector(e.x, e.y, 200));
+                    candidates.sort((a, b) =>
+                        dist(player.x, player.y, a.x, a.y) - dist(player.x, player.y, b.x, b.y));
+                    for (const e of candidates) {
+                        e.isFriendly = true; e.isNeutral = false;
+                        e.state = "IDLE"; if (e.hp < 300) e.hp = 300;
+                    }
                     townSpeaker1 = candidates.length > 0 ? candidates[0] : player; 
                     townSpeaker2 = candidates.length > 1 ? candidates[1] : townSpeaker1; 
                     killcamTarget = {x: townSpeaker1.x, y: townSpeaker1.y};
@@ -3252,12 +3276,22 @@ popArchitecture = 0;
             popUnassigned = popTotal;
             popMilitary = 0; popFarming = 0; popScience = 0; popArchitecture = 0; 
 
-            window.allies.sort((a,b) => dist(player.x, player.y, a.x, a.y) - dist(player.x, player.y, b.x, b.y));
+            // In-sector allies first, then by distance. Same reason as the
+            // town cutscene: the player gets teleported onto the speaker, and a
+            // speaker outside the walls takes them with it.
+            window.allies.sort((a, b) => {
+                const ia = insideSector(a.x, a.y, 200) ? 0 : 1;
+                const ib = insideSector(b.x, b.y, 200) ? 0 : 1;
+                if (ia !== ib) return ia - ib;
+                return dist(player.x, player.y, a.x, a.y) - dist(player.x, player.y, b.x, b.y);
+            });
             townSpeaker1 = window.allies[0];
             townSpeaker2 = window.allies[1];
 
-            player.x = townSpeaker1.x + 50;
-            player.y = townSpeaker1.y + 50;
+            const _pp = clampToSector(townSpeaker1.x + 50, townSpeaker1.y + 50);
+            player.x = _pp.x;
+            player.y = _pp.y;
+            if (typeof player.forceNudge === 'function') player.forceNudge();
             camX = player.x - (width / 2) / zoom;
             camY = player.y - (height / 2) / zoom;
             player.aimAngle = atan2(townSpeaker1.y - player.y, townSpeaker1.x - player.x);
@@ -3704,9 +3738,18 @@ viewBottom = camY + height / zoom + shakePad;
       if (townPhase === 1) { townTimer--; if (townTimer <= 0) townPhase = 2; } 
       else if (townPhase === 2) {
           let ang = atan2(player.y - townSpeaker1.y, player.x - townSpeaker1.x);
-          player.x = townSpeaker1.x + cos(ang) * 70;
-          player.y = townSpeaker1.y + sin(ang) * 70;
+          // Belt and braces on top of the speaker being in-sector: clamp the
+          // landing to the story's ground and shove the player out of anything
+          // they happen to have landed in. A cutscene is the one moment the
+          // player cannot walk themselves out of a bad placement.
+          const _tp = clampToSector(townSpeaker1.x + cos(ang) * 70,
+                                    townSpeaker1.y + sin(ang) * 70);
+          player.x = _tp.x;
+          player.y = _tp.y;
+          if (typeof player.forceNudge === 'function') player.forceNudge();
           player.aimAngle = atan2(townSpeaker1.y - player.y, townSpeaker1.x - player.x);
+          camX = player.x - (width / 2) / zoom;
+          camY = player.y - (height / 2) / zoom;
           emit(player.x, player.y, 20, color(0, 200, 255), "SPARK"); sfx.dash();
           player.isMoving = false; townPhase = 3; 
       } else if (townPhase === 3) { drawSpeechBubble(width/2, height/2 - 100, "it was the towers! As soon as they went down,\nyou guys got your wits back about you."); } 
@@ -3757,6 +3800,7 @@ viewBottom = camY + height / zoom + shakePad;
           window.ambushKind = "TOWER";
 
           inTownCutscene = false; 
+          markStoryBeat("L" + currentLevel + "_TOWN");
           objectiveTimer = 360; 
           streakMsgTimer = 120;
           
@@ -4702,7 +4746,24 @@ function beginSelectedRun() {
     if (sfx.ctx && sfx.ctx.state === 'suspended') sfx.ctx.resume();
 }
 
+// ---------------------------------------------------------------------------
+// STORY BEATS
+// Which cutscenes have actually played, recorded by name rather than inferred
+// from whatever state they happened to leave behind. Replay used to be gated
+// entirely on side effects -- the town is established, the towers are down,
+// the arc is cleared -- which works right up until a save is reloaded between
+// a beat starting and the state it sets being written.
+// ---------------------------------------------------------------------------
+function markStoryBeat(name) {
+  if (!window.storyBeats) window.storyBeats = {};
+  window.storyBeats[name] = true;
+}
+function storyBeatDone(name) {
+  return !!(window.storyBeats && window.storyBeats[name]);
+}
+
 function resetStoryProgress() {
+    window.storyBeats = {};
     window.northGateBreached = false;
     window.northGateBreachedStatus = false;
     window.southGateBreachedStatus = false;
@@ -12444,7 +12505,7 @@ else if (mx > width/2 - 120 && mx < width/2 + 120 && my > height/2 - 110 && my <
           } 
           // B Choice
           else if (mx > width/2 - 210 && mx < width/2 + 210 && my > height/2 + 15 && my < height/2 + 65) {
-              inFarmCutscene = false;
+              inFarmCutscene = false; markStoryBeat("L3_FARM");
               for (let e of enemiesList) {
                   if (e.eType === "FARMER_MALE" || e.eType === "FARMER_FEMALE") {
                       e.isNeutral = false; e.isFriendly = false; e.state = "CHASE";
@@ -12457,11 +12518,11 @@ else if (mx > width/2 - 120 && mx < width/2 + 120 && my > height/2 - 110 && my <
       } else if (farmPhase === 5) {
           // YES Choice
           if (mx > width/2 - 130 && mx < width/2 - 30 && my > height/2 + 15 && my < height/2 + 65) {
-              inFarmCutscene = false; triggerBugAmbush(); sfx.charge();
+              inFarmCutscene = false; markStoryBeat("L3_FARM"); triggerBugAmbush(); sfx.charge();
           } 
           // NO Choice
           else if (mx > width/2 + 30 && mx < width/2 + 130 && my > height/2 + 15 && my < height/2 + 65) {
-              inFarmCutscene = false; sfx.charge();
+              inFarmCutscene = false; markStoryBeat("L3_FARM"); sfx.charge();
           }
       }
       return false; // <-- CRITICAL: This bracket now safely closes the block!
@@ -12477,7 +12538,7 @@ if (typeof inFarmPostCutscene !== 'undefined' && inFarmPostCutscene) {
         window.farmerBlueprintUnlocked = true;
         if (typeof sfx !== 'undefined' && sfx.charge) sfx.charge();
     } else if (farmPostPhase === 2) {
-        inFarmPostCutscene = false;
+        inFarmPostCutscene = false; markStoryBeat("L3_FARMPOST");
         
         // STRICT FILTER: Only count actual Farmers
         let survivingFarmers = enemiesList.filter(e => 
@@ -12509,6 +12570,7 @@ else if (typeof inPostAmbushCutscene !== 'undefined' && inPostAmbushCutscene) {
         postAmbushPhase = 0;
         inPostAmbushCutscene = false; 
         window.postAmbushCutscenePlayed = true; 
+        markStoryBeat("L" + currentLevel + "_POSTAMBUSH"); 
         
         // Removed the destructive popMilitary = 0 overrides here!
         // The Gov Directive menu handles the math safely now.
@@ -12634,7 +12696,7 @@ else if (inTravelMenu) {
           } 
           // B Choice (Hostile Route)
           else if (mx > width/2 - 240 && mx < width/2 + 240 && my > height/2 + 15 && my < height/2 + 65) {
-              inLvl4Cutscene = false;
+              inLvl4Cutscene = false; markStoryBeat("L4_CONTACT");
               for (let e of enemiesList) {
                   if (e.eType === "MILITARY_NEUTRAL") {
                       e.isNeutral = false; e.isFriendly = false; e.state = "CHASE"; e.loseSightTimer = 3500;
@@ -12643,7 +12705,7 @@ else if (inTravelMenu) {
               streakMsgText = "MILITARY AGGROED!"; streakMsgTimer = 90; sfx.charge();
           }
       } else if (lvl4Phase === 5) {
-          inLvl4Cutscene = false;
+          inLvl4Cutscene = false; markStoryBeat("L4_CONTACT");
           // Assign them as your permanent allies
           for (let e of enemiesList) {
               if (e.eType === "MILITARY_NEUTRAL") {
@@ -12783,7 +12845,7 @@ if (inTravelMenu) {
           } 
           // B Choice
           else if (mx > width/2 - 210 && mx < width/2 + 210 && my > height/2 + 15 && my < height/2 + 65) {
-              inFarmCutscene = false;
+              inFarmCutscene = false; markStoryBeat("L3_FARM");
               for (let e of enemiesList) {
                   if (e.eType === "FARMER_MALE" || e.eType === "FARMER_FEMALE") {
                       e.isNeutral = false; e.isFriendly = false; e.state = "CHASE";
@@ -12796,11 +12858,11 @@ if (inTravelMenu) {
       } else if (farmPhase === 5) {
           // YES Choice
           if (mx > width/2 - 130 && mx < width/2 - 30 && my > height/2 + 15 && my < height/2 + 65) {
-              inFarmCutscene = false; triggerBugAmbush(); sfx.charge();
+              inFarmCutscene = false; markStoryBeat("L3_FARM"); triggerBugAmbush(); sfx.charge();
           } 
           // NO Choice
           else if (mx > width/2 + 30 && mx < width/2 + 130 && my > height/2 + 15 && my < height/2 + 65) {
-              inFarmCutscene = false; sfx.charge();
+              inFarmCutscene = false; markStoryBeat("L3_FARM"); sfx.charge();
           }
       }
       return false;
@@ -13075,6 +13137,20 @@ document.addEventListener('touchmove', function(e) {
 function touchMoved() {
     return false;
 }
+// Live escort on the map, by sex. Used at save time to fold the soldiers who
+// have already arrived back into the pending assignment, so a reload brings the
+// same number in again rather than losing them with the entity list.
+function countEscort(female) {
+  let n = 0;
+  if (typeof enemiesList === 'undefined') return 0;
+  for (const e of enemiesList) {
+    if (!e || !e.isFriendly || !e.isMilitary || e.hp <= 0 || e.dead) continue;
+    const isF = String(e.eType || "").toUpperCase().indexOf("FEMALE") !== -1;
+    if (isF === !!female) n++;
+  }
+  return n;
+}
+
 function saveGame() {
     let state = {
         currentLevel, isStoryMode, score, totalKills,
@@ -13109,7 +13185,7 @@ function saveGame() {
         farmLvl: window.farmLvl || 1, milLvl: window.milLvl || 1, sciLvl: window.sciLvl || 1, archLvl: window.archLvl || 1,
 
         inTownCutscene, townPhase, townTimer, 
-        nm0AmbushActive, nm0AmbushKills, objectiveTimer,
+        objectiveTimer,
         inPostAmbushCutscene, postAmbushPhase, 
         inWorldBuildingMenu, inOverworldView,
         statVit, statMen, statPhy, statObe, statInt, 
@@ -13119,8 +13195,36 @@ function saveGame() {
         playerShield: player ? player.shield : 100,
         playerX: player ? player.x : null,
         playerY: player ? player.y : null,
-        militaryToBringM: window.militaryToBringM,
-militaryToBringF: window.militaryToBringF,
+
+        // --- CUTSCENES ---
+        // Which beats have played, by name. Everything else here is the state
+        // of a cutscene that is mid-run; storyBeats is the record of the ones
+        // that finished, so a reload cannot replay one.
+        storyBeats: window.storyBeats || {},
+        prologuePhase, storyPhase, inStoryIntro, inStoryRoom,
+        inUpstairsRoom, upstairsPhase, tvWatched, hasSword,
+        inFarmCutscene, farmPhase, inFarmPostCutscene, farmPostPhase,
+        inLvl4Cutscene, lvl4Phase, lvl4Timer,
+        inDarchonCall, callPhase,
+
+        // --- AMBUSHES ---
+        // All three of them. An ambush is a live counter plus a spawn budget:
+        // saving one without the other reloads into a fight that can never be
+        // finished, because checkAmbushCleared() waits on ambushSpawnsRemaining.
+        nm0AmbushActive, nm0AmbushKills,
+        ambushSpawnsRemaining: window.ambushSpawnsRemaining || 0,
+        farmAmbushActive,
+        farmAmbushKills: window.farmAmbushKills || 0,
+        farmAmbushCleared: window.farmAmbushCleared || false,
+        nm0AmbushClearedFlag: window.nm0AmbushCleared || false,
+
+        // --- THE ESCORT ---
+        // Soldiers the player marched in with. Once they have landed they are
+        // allies on the map rather than a pending assignment, and the map is not
+        // saved -- so the live ones are folded back into the pending counts and
+        // re-spawned on load, which is the same path a normal arrival takes.
+        militaryToBringM: (window.militaryToBringM || 0) + countEscort(false),
+        militaryToBringF: (window.militaryToBringF || 0) + countEscort(true),
 
         // --- NEW FOR TOWN PERSISTENCE ---
         townsData: typeof townsData !== 'undefined' ? townsData : null,
@@ -13129,7 +13233,12 @@ militaryToBringF: window.militaryToBringF,
         // --- BIOME WORLD PERSISTENCE ---
         // Chunk layout is fully procedural, so only the deltas need storing.
         worldTimeMs: typeof worldTimeMs !== 'undefined' ? worldTimeMs : 0,
+        // The sky, and where it is in its own cycle. isRaining alone is not the
+        // weather: lastWeatherRollHour is what says whether this hour's roll has
+        // already happened, and without it a reload either re-rolls immediately
+        // or suppresses the next roll for a full in-game hour.
         isRaining: typeof isRaining !== 'undefined' ? isRaining : false,
+        lastWeatherRollHour: typeof lastWeatherRollHour !== 'undefined' ? lastWeatherRollHour : -1,
         currentBiome: typeof currentBiome !== 'undefined' ? currentBiome : 1,
         biomeState: typeof biomeState !== 'undefined' ? biomeState : {}
     };
@@ -13169,6 +13278,15 @@ function loadGame() {
         window.genocideAmbushCleared = state.genocideAmbushCleared || false;
         window.postAmbushCutscenePlayed = state.postAmbushCutscenePlayed || false;
         window.towersDefeated = state.towersDefeated || false;
+        window.storyBeats = state.storyBeats || {};
+
+        // The escort has to be pending BEFORE the level is built, because
+        // legacyStartAtLevel() is what spawns it -- exactly as it does on a
+        // normal arrival. Restored after startAtLevel (which is where it used
+        // to be) the soldiers never landed, and the counts then sat there
+        // waiting to conjure a second escort at the next level entry.
+        window.militaryToBringM = state.militaryToBringM || 0;
+        window.militaryToBringF = state.militaryToBringF || 0;
 
         startAtLevel(state.currentLevel, true); // true = skip hard reset
 
@@ -13178,8 +13296,44 @@ function loadGame() {
         nm0AmbushActive = state.nm0AmbushActive || false; 
         nm0AmbushKills = state.nm0AmbushKills || 0; 
         inTownCutscene = state.inTownCutscene || false;
-        window.militaryToBringM = state.militaryToBringM || 0;
-window.militaryToBringF = state.militaryToBringF || 0;
+        window.ambushSpawnsRemaining = state.ambushSpawnsRemaining || 0;
+        // Restored again here: it is set before startAtLevel() for the map
+        // builder's benefit, and legacyStartAtLevel() nulls it on every entry.
+        window.ambushKind = state.ambushKind || null;
+
+        // --- CUTSCENES ---
+        // Restored after startAtLevel(), which resets every one of them for a
+        // fresh entry. A save made mid-cutscene comes back mid-cutscene.
+        window.storyBeats = state.storyBeats || {};
+        prologuePhase = state.prologuePhase || 0;
+        storyPhase = state.storyPhase || 0;
+        inStoryIntro = state.inStoryIntro || false;
+        inStoryRoom = state.inStoryRoom || false;
+        inUpstairsRoom = state.inUpstairsRoom || false;
+        upstairsPhase = state.upstairsPhase || 0;
+        tvWatched = state.tvWatched || false;
+        hasSword = state.hasSword || false;
+        inFarmCutscene = state.inFarmCutscene || false;
+        farmPhase = state.farmPhase || 0;
+        inFarmPostCutscene = state.inFarmPostCutscene || false;
+        farmPostPhase = state.farmPostPhase || 0;
+        inLvl4Cutscene = state.inLvl4Cutscene || false;
+        lvl4Phase = state.lvl4Phase || 0;
+        lvl4Timer = state.lvl4Timer || 0;
+        inDarchonCall = state.inDarchonCall || false;
+        callPhase = state.callPhase || 0;
+        inPostAmbushCutscene = state.inPostAmbushCutscene || false;
+        postAmbushPhase = state.postAmbushPhase || 0;
+        townPhase = state.townPhase || 0;
+        townTimer = state.townTimer || 0;
+        objectiveTimer = state.objectiveTimer || 0;
+
+        // --- AMBUSHES ---
+        farmAmbushActive = state.farmAmbushActive || false;
+        window.farmAmbushKills = state.farmAmbushKills || 0;
+        window.farmAmbushCleared = state.farmAmbushCleared || false;
+        if (state.nm0AmbushClearedFlag !== undefined) window.nm0AmbushCleared = state.nm0AmbushClearedFlag;
+
         score = state.score || 0;
         totalKills = state.totalKills || 0;
         
@@ -13199,18 +13353,23 @@ window.militaryToBringF = state.militaryToBringF || 0;
         if (state.biomeState) biomeState = state.biomeState;
         if (state.currentBiome) currentBiome = state.currentBiome;
         if (typeof state.worldTimeMs === 'number') worldTimeMs = state.worldTimeMs;
-        // Roll the sky fresh, exactly the way walking into a sector does.
+        // Put the sky back where it was, rather than rolling a new one.
         //
-        // This used to restore state.isRaining from the save and then set
-        // lastWeatherRollHour to the current hour, which suppressed the next
-        // roll as well. Between them, a save made on a dry day came back dry
-        // every single time and stayed dry for a further in-game hour -- two
-        // real minutes -- so changing a biome's rain probability had no visible
-        // effect however many times you reloaded. Entry rolls; loading is an
-        // entry.
-        isRaining = false;
-        lastWeatherRollHour = Math.floor(worldHour());
-        initBiomeWeather();
+        // Loading used to force isRaining false and set lastWeatherRollHour to
+        // the current hour, which threw away the storm you saved in AND
+        // suppressed the next roll for the rest of that hour. Restoring the
+        // SAVED roll hour is what makes both halves right: if the save was taken
+        // after this hour's roll the next one is due at the hour boundary, and
+        // if it was taken before, it fires almost immediately. The rain
+        // probability drives it either way.
+        //
+        // applyBiomeWeather() rather than initBiomeWeather(), because init
+        // re-rolls isRaining from scratch, which is the thing we are restoring.
+        isRaining = !!state.isRaining;
+        lastWeatherRollHour = (typeof state.lastWeatherRollHour === 'number')
+                              ? state.lastWeatherRollHour : Math.floor(worldHour());
+        weather = null;
+        applyBiomeWeather();
         if (state.townsData) townsData = state.townsData;
         if (state.viewingTownId) viewingTownId = state.viewingTownId;
         window.farmXP = Number(state.farmXP) || 0; window.milXP = Number(state.milXP) || 0; 
@@ -13222,10 +13381,42 @@ window.militaryToBringF = state.militaryToBringF || 0;
         journalRead = state.journalRead; tabletPickedUp = state.tabletPickedUp; swordPickedUp = state.swordPickedUp;
         darchonCallCompleted = state.darchonCallCompleted;
 window.militaryToBring = state.militaryToBring || 0;
-        townPhase = state.townPhase || 0; townTimer = state.townTimer || 0;
-        objectiveTimer = state.objectiveTimer || 0;
-        inPostAmbushCutscene = state.inPostAmbushCutscene || false; postAmbushPhase = state.postAmbushPhase || 0;
+        // townPhase / townTimer / objectiveTimer / the post-ambush pair are
+        // restored with the rest of the cutscene block above.
         inWorldBuildingMenu = state.inWorldBuildingMenu || false; inOverworldView = state.inOverworldView || false;
+
+        // --- CUTSCENE ACTORS ---
+        // Speakers are object references into enemiesList, and the entity list
+        // is not saved. A cutscene restored mid-run therefore comes back with
+        // null speakers and reads .x off them on the next frame. Re-cast from
+        // whoever is actually standing here, and if the sector has nobody left
+        // to say the lines, close the scene rather than crash in it.
+        if (inTownCutscene || inPostAmbushCutscene) {
+            const cast = enemiesList.filter(e => e && e.isFriendly && e.hp > 0 && !e.dead && !e.isMilitary);
+            cast.sort((a, b) => {
+                const ia = insideSector(a.x, a.y, 200) ? 0 : 1;
+                const ib = insideSector(b.x, b.y, 200) ? 0 : 1;
+                if (ia !== ib) return ia - ib;
+                return dist(player.x, player.y, a.x, a.y) - dist(player.x, player.y, b.x, b.y);
+            });
+            if (cast.length) {
+                townSpeaker1 = cast[0];
+                townSpeaker2 = cast.length > 1 ? cast[1] : cast[0];
+                if (inPostAmbushCutscene) window.allies = cast;
+            } else {
+                inTownCutscene = false; inPostAmbushCutscene = false;
+                townPhase = 0; postAmbushPhase = 0;
+            }
+        }
+        if (inFarmCutscene || inFarmPostCutscene) {
+            farmSpeaker = enemiesList.find(e => e && e.hp > 0 && !e.dead &&
+                (e.eType === "FARMER_MALE" || e.eType === "FARMER_FEMALE")) || null;
+            if (!farmSpeaker) { inFarmCutscene = false; inFarmPostCutscene = false; farmPhase = 0; farmPostPhase = 0; }
+        }
+        if (inLvl4Cutscene) {
+            tanLeader = enemiesList.find(e => e && e.hp > 0 && !e.dead && e.eType === "MILITARY_NEUTRAL") || null;
+            if (!tanLeader) { inLvl4Cutscene = false; lvl4Phase = 0; }
+        }
 
         if (player) {
             player.hp = state.playerHp || 100;
@@ -13331,7 +13522,16 @@ window.militaryToBring = state.militaryToBring || 0;
             }
 
             // TRIGGER CUTSCENE IF SAVED RIGHT AS TOWERS FELL
-            if (!window.nm0AmbushCleared && !nm0AmbushActive && !inTownCutscene) {
+            //
+            // Only if it has not already played. Every flag this keys off is
+            // cleared by the beat that FOLLOWS the town scene -- nm0AmbushCleared
+            // is reset by its own handler and the muster ends -- so after the
+            // sector was liberated a reload put the player straight back into
+            // the cutscene they had already watched. storyBeats is the record
+            // that survives that.
+            if (!window.nm0AmbushCleared && !nm0AmbushActive && !inTownCutscene &&
+                !window.nm0AmbushClearedStatus &&
+                !storyBeatDone("L" + currentLevel + "_TOWN")) {
                 inTownCutscene = true; townPhase = 1; townTimer = 120;
             }
             
@@ -18190,6 +18390,18 @@ function insideSector(x, y, pad) {
   const m = pad === undefined ? 80 : pad;
   return x > sealedSector.x0 + m && x < sealedSector.x1 - m &&
          y > sealedSector.y0 + m && y < sealedSector.y1 - m;
+}
+// Keep a scripted placement on the story's own ground. The sector is walled and
+// gated, every beat that follows spawns inside it, and the gates stay shut until
+// the muster is beaten -- so a cutscene that puts the player outside strands
+// them there with nothing to do.
+function clampToSector(x, y, pad) {
+  if (!sealedSector) return { x: x, y: y };
+  const m = pad === undefined ? 260 : pad;
+  return {
+    x: Math.min(Math.max(x, sealedSector.x0 + m), sealedSector.x1 - m),
+    y: Math.min(Math.max(y, sealedSector.y0 + m), sealedSector.y1 - m)
+  };
 }
 
 const LIGHT_DX = 0.58;

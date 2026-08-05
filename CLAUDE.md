@@ -601,6 +601,17 @@ raise the seed count by the same amount so the eighty stays eighty.
 chunk for chunk, that marsh country actually carries water, that no pool sits on an
 anchor, a road or the river, and that `waterDepthAt()` ramps rather than steps.
 
+`node tools/check-saveload.js` round-trips the save: the escort, the world clock, the
+sky and its roll schedule, all three ambushes with their spawn budgets, a cutscene
+restored mid-run, and a finished one that must not replay. The save is a flat snapshot
+of a very wide slice of state and the failure is always one of two shapes — something
+written but never read back, or read back *before* `startAtLevel()` overwrites it.
+`militaryToBringM/F` and `ambushKind` were both the second kind.
+
+`node tools/check-cutscene.js` plants a garrison outside the curtain wall and checks the
+tower cutscene still leaves the player in-sector, clear of geometry, on the same side of
+the gate as the muster.
+
 `node tools/check-population.js` asserts the roster seeds at exactly 80, that nobody
 spawns inside geometry, that it survives a walk across the sector, that kills reduce it
 and nothing refills it, and that none of this happens in arcade mode, in a cleared
@@ -615,6 +626,27 @@ for the same reason — it waits for the field to be clear of hostiles, and eigh
 residents standing around the blocks are never going to clear. Left in, the gate ambush
 could only be finished by killing all eighty, which is the exact opposite of the
 mechanic and sealed the sector for anyone who spared a soul.
+
+### Cutscenes and scripted placement
+
+Every cutscene that teleports the player onto a speaker has to pick that speaker
+from **inside the sealed sector**. `sealedSector` is set by `legacyGenerateMap()` for
+Sectors 1 and 2, and `insideSector()` / `clampToSector()` are the tests. In a hybrid
+sector `enemiesList` also holds the streamed country past the curtain wall, where a
+checkpoint garrison is a `FEMALE_PISTOL` and sorts no differently from a resident — the
+tower cutscene picked one of those and dropped the player inside the south gate slab,
+out of bounds, with the muster spawning back inside the sector behind a shut gate.
+
+`window.storyBeats` (`markStoryBeat` / `storyBeatDone`) is the record of which cutscenes
+have actually finished, by name — `L1_TOWN`, `L3_FARM`, `L4_CONTACT` and so on. Replay
+used to be gated purely on side effects, and every flag the town scene's replay guard
+keyed off is cleared by the beat that follows it, so reloading a liberated sector put
+the player straight back into a cutscene they had already watched.
+
+**Cutscene speakers are object references into `enemiesList`, and the entity list is not
+saved.** `loadGame()` re-casts them from whoever is actually standing there, and closes
+the scene if the sector has nobody left to say the lines — a restored cutscene with a
+null speaker reads `.x` off it on the very next frame.
 
 ### The escort
 
@@ -711,6 +743,8 @@ as water — but it catches the class of bug that is invisible until you are sta
 node tools/check-generation.js     # determinism, seams, crossings, overlaps, bakes
 node tools/check-render.js         # live draw path at four times of day, hybrid core
 node tools/check-population.js     # the Sector 1/2 story roster and what it converts to
+node tools/check-saveload.js       # save/load round trip
+node tools/check-cutscene.js       # scripted placement stays inside the sector
 GAME_JS=/path/to/other.js node tools/check-generation.js    # compare against a baseline
 ```
 
