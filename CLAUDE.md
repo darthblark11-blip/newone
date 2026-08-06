@@ -802,6 +802,38 @@ Adding one is a `BLUEPRINTS` entry, a name in `BUILD_ORDER`, and a branch in
 `drawBuiltStructure()`. `FARM` is the model for a blueprint that emits more than one
 solid: a barn plus an `isCropField` ground lot beside it, from `buildSiteSolids()`.
 
+**Footprints are authored at 1× and multiplied by `BUILD_SCALE` (9).** At the 20 units
+to the metre a parked car sets, that puts them at real sizes — the warehouse is 104×68 m,
+the range's lanes are a hundred metres. `BUILD_SCALE` is the only number to touch to
+re-proportion the whole set, because **all the structure art is written in fractions of
+its own footprint** rather than in absolute units: a `u = min(w, h) * 0.018` trim unit,
+and every repeated element (roof ribs, lane dividers, scaffold standards, hoarding
+dashes, cupolas) is a `span(n, lo, hi)` count rather than a fixed pitch. Author new art
+the same way or it will either vanish or turn to hatching at a different scale.
+
+Three things a 9× footprint broke, all fixed and all worth knowing before changing the
+scale again:
+
+- **The ghost stopped fitting on screen.** `buildPlacementZoom()` pulls the camera back
+  while placing so the whole outline is visible, and `updateBuildPlacement()` caps the
+  reach at 300 — a small footprint still sits in front of the player, a large one closes
+  over them, which is the only thing that works once it is wider than the view.
+- **There was nowhere to put it.** Measured over the woodland, a 2070×1350 warehouse
+  found **0 clear spots in 81 sampled**. `buildClearable()` is the answer: a build site is
+  a *cleared lot*, and ground scatter is the first day's work, not an obstruction.
+  `clearBuildLot()` removes it on placement and banks what it was worth. Judged on **area**
+  (`BUILD_CLEAR_AREA` 9000, `BUILD_CLEAR_MAX` 520) rather than on a list of flags — a
+  fence bay is 470×10 and a hedge run longer, and the scatter set is different in every
+  biome, so a flag list goes stale the next time one gets dressed. A river, a bridge deck,
+  a pond, authored ground, a travel anchor and any building over about a ten-metre square
+  still refuse the site. Measured after: woodland 3–11%, Dry Gulch 23–40%, jungle ~50%,
+  tundra ~60%. The woodland is low because it is genuinely threaded with water — you
+  cannot put a hundred-metre warehouse across a river, and the outline says so.
+- **The crew's numbers were relative to a shed.** `nearestBuildSite()` measures its reach
+  against the site's own size, and `buildSlotFor()`'s perimeter pad scales, or an
+  architect leaning on one end of a hundred-metre slab decides the job is too far to walk
+  to.
+
 ```
 BUILD_DAY_PER_UNIT = 0.01   // 1% of a structure per in-game day per assigned architect
 buildCrew()                 // popArchitectureM + popArchitectureF

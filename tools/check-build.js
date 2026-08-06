@@ -38,6 +38,34 @@ console.log('== the blueprint list ==');
     if (!bp || !(bp.w > 40) || !(bp.h > 40) || !bp.label) bad = k;
   }
   ok('every one has a label and a footprint', bad === null, bad || '');
+  // Footprints are authored at 1x and multiplied. At the 20 units to the metre
+  // a parked car sets, these have to come out at building sizes rather than
+  // shed sizes — the warehouse is the one to hold the line on.
+  const wh = P('BLUEPRINTS.WAREHOUSE');
+  ok('the scale multiplier is applied', wh.w === 230 * P('BUILD_SCALE') && wh.h === 150 * P('BUILD_SCALE'),
+     `x${P('BUILD_SCALE')} -> ${wh.w} x ${wh.h} units = ${Math.round(wh.w / 20)} x ${Math.round(wh.h / 20)} m`);
+  ok('and every footprint is a real structure, not a shed',
+     BUILD_ORDER_MIN() >= 900, 'smallest side ' + BUILD_ORDER_MIN() + ' units');
+  function BUILD_ORDER_MIN() {
+    let m = Infinity;
+    for (const k of kinds) { const b = P(`BLUEPRINTS[${JSON.stringify(k)}]`); m = Math.min(m, b.w, b.h); }
+    return m;
+  }
+}
+
+console.log('\n== the camera makes room for the outline ==');
+{
+  // A ghost whose edges are off screen is one the player cannot line up, so
+  // placement pulls the camera back to fit the footprint.
+  ok('no placement zoom when nothing is being placed', P('buildPlacementZoom()') === null);
+  probe('width = 400; height = 800; startBuildPlacement("WAREHOUSE"); updateBuildPlacement();');
+  const z = P('buildPlacementZoom()');
+  const g = P('buildGhost');
+  const halfSpan = Math.abs(P('buildGhost.x') - P('player.x')) + g.w / 2;
+  ok('the whole footprint fits across the screen', z !== null && (400 / z) / 2 >= halfSpan,
+     `zoom ${z.toFixed(3)} shows ${Math.round(400 / z)} units across, needs ${Math.round(halfSpan * 2)}`);
+  ok('and it never zooms further out than is useful', z >= 0.10 && z <= 0.66, z.toFixed(3));
+  probe('cancelBuildPlacement(); width = 1200; height = 800;');
 }
 
 console.log('\n== the ghost ==');
@@ -64,8 +92,9 @@ probe(`window.popArchitectureM = 20; window.popArchitectureF = 0;`);
      Math.abs(g1.x - g0.x) > 200, `x ${Math.round(g0.x)} -> ${Math.round(g1.x)}`);
   probe('player.aimAngle = 0; updateBuildPlacement();');
 
-  // Drop a wall on it. The outline must go red.
-  probe(`window.__wall = { x: buildGhost.x, y: buildGhost.y, w: 90, h: 90, isBlockBuilding: true };
+  // Drop a real building on it — big enough that the crew would not simply
+  // clear it. The outline must go red.
+  probe(`window.__wall = { x: buildGhost.x, y: buildGhost.y, w: 320, h: 300, isBlockBuilding: true };
          buildings.push(window.__wall); lastActiveUpdate = 0; activeBuildings = []; updateActiveWorld();
          updateBuildPlacement();`);
   ok('a solid under the footprint blocks it', P('buildGhost.ok') === false);
@@ -76,8 +105,62 @@ probe(`window.popArchitectureM = 20; window.popArchitectureF = 0;`);
   ok('and clears again when it moves off', P('buildGhost.ok') === true);
 }
 
+console.log('\n== the crew clears the lot ==');
+{
+  // At 9x, ground scatter is not an obstruction — it is the first day's work.
+  // Without this the big footprints were unplaceable: measured over the
+  // woodland, a warehouse found 0 clear spots in 81 sampled.
+  const cases = [
+    ['a tree', '{ x: 0, y: 0, w: 34, h: 34, isTreeTrunk: true, girth: 1.3 }', true],
+    ['a boulder', '{ x: 0, y: 0, w: 90, h: 80, isBiomeProp: true, propType: "BOULDER" }', true],
+    ['a cactus', '{ x: 0, y: 0, w: 60, h: 60, isCactusProp: true }', true],
+    ['a fence bay', '{ x: 0, y: 0, w: 470, h: 10, isFence: true }', true],
+    ['a hay bale', '{ x: 0, y: 0, w: 70, h: 70, isHayBale: true }', true],
+    ['a cabin', '{ x: 0, y: 0, w: 200, h: 160, isBiomeProp: true, propType: "CABIN" }', false],
+    ['a river', '{ x: 0, y: 0, w: 300, h: 300, isRiver: true }', false],
+    ['a pond', '{ x: 0, y: 0, w: 200, h: 160, isPond: true, isGrassLot: true }', false],
+    ['a bridge deck', '{ x: 0, y: 0, w: 200, h: 160, isBiomeProp: true, propType: "BRIDGE", isDeck: true }', false],
+    ['authored ground', '{ x: 0, y: 0, w: 200, h: 160, isAuthored: true }', false],
+    ['a checkpoint', '{ x: 0, y: 0, w: 200, h: 160, isBiomeProp: true, propType: "CHECKPOINT" }', false],
+    ['another structure', '{ x: 0, y: 0, w: 300, h: 300, isPlayerBuilt: true, isBuiltStructure: true }', false]
+  ];
+  let wrong = null;
+  for (const [name, obj, want] of cases) {
+    ctx.__t = null;
+    const got = P(`(function(){ window.__t = ${obj}; return buildClearable(window.__t); })()`);
+    if (got !== want) wrong = `${name}: clearable=${got}, wanted ${want}`;
+  }
+  ok('scatter is clearable, structures and water are not', wrong === null, wrong || cases.length + ' cases');
+
+  // Break ground on a lot with timber on it and the timber goes to stores.
+  probe(`window.resources = { WOOD: 0, METAL: 0, STONE: 0 };
+         window.__lot = [];
+         for (let i = 0; i < 6; i++) {
+           const t = { x: buildGhost ? 0 : 0, y: 0, w: 34, h: 34, isTreeTrunk: true, girth: 1.2 };
+           window.__lot.push(t);
+         }`);
+  probe(`startBuildPlacement("WAREHOUSE"); updateBuildPlacement();
+         window.__trees = [];
+         for (let i = 0; i < 6; i++) {
+           const t = { x: buildGhost.x - 400 + i * 160, y: buildGhost.y, w: 34, h: 34,
+                       isTreeTrunk: true, girth: 1.2 };
+           window.__trees.push(t); buildings.push(t);
+         }
+         lastActiveUpdate = 0; activeBuildings = []; updateActiveWorld(); updateBuildPlacement();`);
+  ok('timber on the lot does not refuse the site', P('buildGhost.ok') === true);
+  const wood0 = P('resourceCount("WOOD")');
+  probe('confirmBuildPlacement();');
+  ok('and breaking ground takes it out',
+     P('window.__trees.filter(t => buildings.indexOf(t) > -1).length') === 0);
+  ok('with the timber banked, not scattered',
+     P('resourceCount("WOOD")') > wood0 && P('resourceDrops.length') === 0,
+     `+${P('resourceCount("WOOD")') - wood0} wood, ${P('resourceDrops.length')} piles on the ground`);
+  probe('buildSites = []; republishPlayerStructures();');
+}
+
 console.log('\n== breaking ground ==');
 {
+  probe(`player.aimAngle = 0; startBuildPlacement("WAREHOUSE"); updateBuildPlacement();`);
   ok('placing it starts a site', P('confirmBuildPlacement()') === true && P('buildSites.length') === 1);
   ok('the ghost is put away', P('buildGhost') === null);
   const s = P('buildSites[0]');

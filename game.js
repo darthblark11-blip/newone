@@ -3342,7 +3342,11 @@ popArchitecture = 0;
         camY = lerp(camY, killcamTarget.y - (height / 2) / zoom, 0.08);
     } else {
         // NORMAL WALKING CAMERA
-        zoom = lerp(zoom, inOverworldView ? 0.45 : targetZoom, 0.1); 
+        // Laying out a footprint is a planning view: the camera pulls back far
+        // enough to show the whole outline, because a ghost whose edges are off
+        // screen is one the player cannot line up.
+        const _bz = (typeof buildPlacementZoom === 'function') ? buildPlacementZoom() : null;
+        zoom = lerp(zoom, _bz !== null ? _bz : (inOverworldView ? 0.45 : targetZoom), _bz !== null ? 0.14 : 0.1);
         if (window.currentPan === undefined) window.currentPan = 0;
 
         let targetPan = rightStick.active ? (150 * rightStick.dist) : 0; 
@@ -14377,14 +14381,22 @@ function buildBarrier() {
 
 // Footprints are the ghost, the ground the crew clears and the collision box,
 // all one number -- so what the player lines up is what they get.
+//
+// Authored at 1x and multiplied by BUILD_SCALE, which is the only number to
+// touch if the whole set wants re-proportioning: every piece of structure art
+// below is written in fractions of its own footprint rather than in absolute
+// units, so it reads the same at any scale. At 9x -- and at the 20 units to the
+// metre a parked car sets -- these come out at real sizes: the warehouse is
+// 104 x 68 m, the range's lanes are a hundred metres long.
+const BUILD_SCALE = 9;
 const BLUEPRINTS = {
-    WAREHOUSE:  { label: "WAREHOUSE",      w: 230, h: 150,
-                  blurb: "Bulk storage. Corrugated shell, roll-up door." },
-    LABORATORY: { label: "LABORATORY",     w: 170, h: 140,
+    WAREHOUSE:  { label: "WAREHOUSE",      w: 230 * BUILD_SCALE, h: 150 * BUILD_SCALE,
+                  blurb: "Bulk storage. Corrugated shell, loading bays." },
+    LABORATORY: { label: "LABORATORY",     w: 170 * BUILD_SCALE, h: 140 * BUILD_SCALE,
                   blurb: "Clean rooms and roof plant for the science wing." },
-    RANGE:      { label: "SHOOTING RANGE", w: 260, h: 110,
+    RANGE:      { label: "SHOOTING RANGE", w: 260 * BUILD_SCALE, h: 110 * BUILD_SCALE,
                   blurb: "Firing line, six lanes, earth backstop." },
-    FARM:       { label: "BARN & FIELD",   w: 260, h: 190,
+    FARM:       { label: "BARN & FIELD",   w: 260 * BUILD_SCALE, h: 190 * BUILD_SCALE,
                   blurb: "Gambrel barn with a worked field alongside." }
 };
 const BUILD_ORDER = ["WAREHOUSE", "LABORATORY", "RANGE", "FARM"];
@@ -14413,13 +14425,61 @@ function buildEtaDays(fraction) {
 // Ground has to be clear of solids, of authored geometry, of standing water and
 // of other sites. Same question the chunk generator asks before it places
 // anything, asked through the same helpers.
+// A build site is a CLEARED lot, and clearing it is the first day's work.
+// Ground scatter -- a tree, a boulder, a log pile -- is not an obstruction; the
+// crew takes it out and the timber and stone go to stores. Anything that is not
+// scatter still refuses the site: a standing structure, a river, hand-authored
+// ground, another site.
+//
+// Without this the 9x footprints were unplaceable. Measured over the woodland:
+// a 2070 x 1350 warehouse found 0 clear spots in 81 sampled; treating scatter
+// as clearable puts it back to roughly what the small footprints saw.
+// Anything up to about seven metres across, plus anything the pickaxe already
+// recognises as a resource. Deliberately a size rule rather than a list of
+// flags: the scatter that fills a biome is a different set in every one of them
+// -- timber and boulders in the woods, cactus and hay and crates in Dry Gulch --
+// and enumerating them all is a list that goes stale the next time a biome gets
+// dressed. What is NOT clearable is the short list that matters: a river, a
+// bridge deck, hand-authored ground, another structure, and any building big
+// enough that flattening it would be a decision rather than a morning's work.
+// Judged on AREA, not on the longer side: a fence panel is 300 x 12 and a hedge
+// run is longer still, and both are a morning with a chain rather than a
+// decision. 9000 sq units is about a ten-metre square -- a cactus, a hay bale,
+// a crate, a signpost, a fence bay, a tree. A cabin at 200 x 160 is four times
+// that and stays put, which is the line worth drawing.
+const BUILD_CLEAR_AREA = 9000;
+const BUILD_CLEAR_MAX = 520;   // a fence bay in Dry Gulch runs to ~470
+function buildClearable(o) {
+    if (!o || o.isAuthored || o.isRiver || o.isDeck || o.isPlayerBuilt) return false;
+    if (o.isGovFortress || o.isGiantBarrier || o.isPond || o.isWater) return false;
+    if (o.isBiomeProp && (o.propType === "BRIDGE" || o.propType === "CANALBRIDGE" ||
+                          o.propType === "BOARDWALK" || o.propType === "HELIPAD" ||
+                          o.propType === "CHECKPOINT" || o.propType === "OUTPOST" ||
+                          o.propType === "BORDERWALL")) return false;
+    if (typeof harvestProfile === 'function' && harvestProfile(o)) return true;
+    const w = o.w || 0, h = o.h || 0;
+    return Math.max(w, h) <= BUILD_CLEAR_MAX && w * h <= BUILD_CLEAR_AREA;
+}
+
 function buildSpotClear(x, y, w, h) {
-    if (!solidsClearAt(activeBuildings, x, y, w, h, 16)) return false;
+    for (const o of activeBuildings) {
+        // Ground, not mass. A lawn or a worked field is something you build ON.
+        if (o.isGrassLot && !o.isPond) continue;
+        if (o.isCropField || o.isParkingLot) continue;
+        if (buildClearable(o)) continue;
+        if (Math.abs(x - o.x) < (w + (o.w || 0)) / 2 + 16 &&
+            Math.abs(y - o.y) < (h + (o.h || 0)) / 2 + 16) return false;
+    }
     if (typeof hitsAuthored === 'function' && hitsAuthored(x, y, w, h, 20)) return false;
     if (typeof waterDepthAt === 'function') {
-        const hw = w / 2, hh = h / 2;
-        const pts = [[0, 0], [-hw, -hh], [hw, -hh], [-hw, hh], [hw, hh]];
-        for (const p of pts) if (waterDepthAt(x + p[0], y + p[1]) > 0.02) return false;
+        // Sampled on a grid rather than at five points: five was plenty for a
+        // 230-unit shed and would step clean over a whole pond inside a
+        // 2000-unit one.
+        const cols = Math.max(2, Math.ceil(w / 200)), rows = Math.max(2, Math.ceil(h / 200));
+        for (let i = 0; i <= cols; i++) for (let j = 0; j <= rows; j++) {
+            const px = x - w / 2 + (w * i) / cols, py = y - h / 2 + (h * j) / rows;
+            if (waterDepthAt(px, py) > 0.02) return false;
+        }
     }
     for (const s of buildSites) {
         if (s.level !== currentLevel) continue;
@@ -14446,13 +14506,63 @@ function cancelBuildPlacement() {
 // carries it and the right stick swings it around -- no second cursor to learn.
 function updateBuildPlacement() {
     if (!buildGhost || !player) return;
-    const reach = 110 + Math.max(buildGhost.w, buildGhost.h) * 0.5;
+    // The reach is capped, so a small footprint sits in front of the player the
+    // way it always did and a large one closes over them -- you stand in the
+    // middle of the ground you are laying out, which is the only thing that
+    // works once a footprint is wider than the screen.
+    const reach = Math.min(110 + Math.max(buildGhost.w, buildGhost.h) * 0.5, 300);
     buildGhost.x = player.x + Math.cos(player.aimAngle) * reach;
     buildGhost.y = player.y + Math.sin(player.aimAngle) * reach;
     buildGhost.ok = buildSpotClear(buildGhost.x, buildGhost.y, buildGhost.w, buildGhost.h);
 }
+// How far out the camera has to pull for the whole footprint to be on screen.
+// Returns null when nothing is being placed, so the caller keeps its own zoom.
+function buildPlacementZoom() {
+    if (!buildGhost) return null;
+    const reach = Math.min(110 + Math.max(buildGhost.w, buildGhost.h) * 0.5, 300);
+    // Camera sits on the player, so the span to cover is the player out to the
+    // ghost's far edge, in both axes, with a margin.
+    const spanX = (reach + buildGhost.w / 2) * 2.35;
+    const spanY = (reach + buildGhost.h / 2) * 2.35;
+    return Math.max(0.10, Math.min(0.66, Math.min(width / spanX, height / spanY)));
+}
+// Take the scatter off the lot and bank what it was worth. Credited straight
+// rather than through spawnResourceDrop(), because a hundred-metre footprint
+// can hold thirty trees and that is thirty scattered pickup piles to walk over.
+function clearBuildLot(x, y, w, h) {
+    const won = {};
+    for (let i = buildings.length - 1; i >= 0; i--) {
+        const o = buildings[i];
+        if (!buildClearable(o)) continue;
+        if (Math.abs(x - o.x) > (w + (o.w || 0)) / 2 || Math.abs(y - o.y) > (h + (o.h || 0)) / 2) continue;
+        const hv = harvestProfile(o);
+        if (hv) { won[hv.kind] = (won[hv.kind] || 0) + hv.yield; addResource(hv.kind, hv.yield); }
+        // A felled tree loses its canopy, same as one taken down with a pick.
+        if (o.isTreeTrunk && typeof chunkMgr !== 'undefined' && chunkMgr) {
+            for (const ch of chunkMgr.chunks.values()) {
+                for (let d = ch.decor.length - 1; d >= 0; d--) {
+                    const dc = ch.decor[d];
+                    if ((dc.t === "TREE" || dc.t === "PINE" || dc.t === "SNAG") &&
+                        Math.abs(dc.x - o.x) < 6 && Math.abs(dc.y - o.y) < 6) ch.decor.splice(d, 1);
+                }
+            }
+        }
+        if (o.chunkKey && typeof markPropDestroyed === 'function' && BIOME_ACTIVE) {
+            markPropDestroyed(currentBiome, o.chunkKey);
+        }
+        buildings.splice(i, 1);
+        const ai = activeBuildings.indexOf(o);
+        if (ai > -1) activeBuildings.splice(ai, 1);
+    }
+    return won;
+}
+
 function confirmBuildPlacement() {
     if (!buildGhost || !buildGhost.ok) return false;
+    const won = clearBuildLot(buildGhost.x, buildGhost.y, buildGhost.w, buildGhost.h);
+    const parts = [];
+    for (const k of RESOURCE_KINDS) if (won[k]) parts.push("+" + won[k] + " " + k);
+    if (parts.length) floatingScores.push({ y: 100, text: "LOT CLEARED  " + parts.join("  "), life: 110, maxLife: 110 });
     buildSites.push({
         level: currentLevel, kind: buildGhost.kind,
         x: Math.round(buildGhost.x), y: Math.round(buildGhost.y),
@@ -14537,7 +14647,8 @@ function republishPlayerStructures() {
 // site instead of standing in one heap on its centre.
 function buildSlotFor(s, seed) {
     const p = ((seed || 0) % TWO_PI) / TWO_PI;          // 0..1 around the border
-    const hw = s.w / 2 + 26, hh = s.h / 2 + 26;
+    const pad = 26 + Math.min(s.w, s.h) * 0.02;
+    const hw = s.w / 2 + pad, hh = s.h / 2 + pad;
     const per = 2 * (hw * 2 + hh * 2), d = p * per;
     let t = d;
     if (t < hw * 2) return { x: s.x - hw + t, y: s.y - hh };
@@ -14552,11 +14663,15 @@ function buildSlotFor(s, seed) {
 // are left alone so a citizen across the map keeps wandering instead of
 // striking out on a thousand-unit march.
 function nearestBuildSite(x, y, maxD) {
-    let best = null, bestD = (maxD || 1100);
+    let best = null, bestD = Infinity;
     for (const s of buildSites) {
         if (s.done || s.level !== currentLevel) continue;
+        // Measured against the site's own size: a fixed radius would have a
+        // crew member standing at one end of a hundred-metre slab decide the
+        // job it is leaning on is too far away to walk to.
+        const reach = (maxD || 1100) + Math.max(s.w, s.h) * 0.5;
         const d = dist(x, y, s.x, s.y);
-        if (d < bestD) { bestD = d; best = s; }
+        if (d < reach && d < bestD) { bestD = d; best = s; }
     }
     return best;
 }
@@ -14590,82 +14705,159 @@ function drawBuildGhost() {
 function drawBuildSite(b) {
     const s = b.site, p = s ? s.progress : 0;
     const hw = b.w / 2, hh = b.h / 2;
+    // Everything is a fraction of the footprint, so the same code reads as a
+    // hoarded lot at 200 units across and at 2000. `u` is the detail unit --
+    // the width of a scaffold pole, near enough -- and it never gets so small
+    // that a line disappears or so large that it swallows the slab.
+    const u = Math.max(3, Math.min(b.w, b.h) * 0.018);
     push(); translate(b.x, b.y);
     noStroke();
-    fill(118, 110, 98); rect(-hw, -hh, b.w, b.h, 3);            // graded pad
+    fill(118, 110, 98); rect(-hw, -hh, b.w, b.h, u);                    // graded pad
     fill(150, 144, 132, 190);
-    rect(-hw + 8, -hh + 8, b.w - 16, b.h - 16, 2);              // poured slab
+    rect(-hw + u * 2.5, -hh + u * 2.5, b.w - u * 5, b.h - u * 5, u);    // poured slab
     // The frame goes up course by course, so the site reads its own progress
     // from across the street without a number on it.
     const rows = Math.max(1, Math.round(p * 5));
-    stroke(126, 96, 58); strokeWeight(5);
+    stroke(126, 96, 58); strokeWeight(u * 1.5);
     for (let i = 0; i < rows; i++) {
-        const inset = 10 + i * 3;
+        const inset = u * (3.2 + i * 1.1);
         noFill(); rect(-hw + inset, -hh + inset, b.w - inset * 2, b.h - inset * 2);
     }
-    // Scaffold standards on the corners, and a materials drop by the gate.
+    // Scaffold standards all round, not only on the corners: at this size four
+    // poles on a hundred-metre slab read as four specks.
     noStroke(); fill(178, 150, 62);
-    for (const sx of [-1, 1]) for (const sy of [-1, 1]) rect(sx * (hw - 14) - 4, sy * (hh - 14) - 4, 8, 8, 1);
-    fill(96, 78, 52); rect(-hw + 16, hh - 30, 40, 14, 2);
-    fill(120, 100, 68); rect(-hw + 20, hh - 34, 40, 14, 2);
-    // Progress bar, near only. Hoarding tape all round.
-    stroke(226, 176, 40); strokeWeight(2);
-    for (let x = -hw; x < hw; x += 26) { line(x, -hh, x + 13, -hh); line(x, hh, x + 13, hh); }
+    const px = Math.max(2, Math.round(b.w / (u * 26))), py = Math.max(2, Math.round(b.h / (u * 26)));
+    for (let i = 0; i <= px; i++) for (const sy of [-1, 1]) {
+        rect(-hw + u * 4 + ((b.w - u * 8) * i) / px - u, sy * (hh - u * 4) - u, u * 2, u * 2, u * 0.3);
+    }
+    for (let j = 1; j < py; j++) for (const sx of [-1, 1]) {
+        rect(sx * (hw - u * 4) - u, -hh + u * 4 + ((b.h - u * 8) * j) / py - u, u * 2, u * 2, u * 0.3);
+    }
+    // Materials drop and a spoil heap by the site gate.
+    fill(96, 78, 52); rect(-hw + u * 5, hh - u * 10, u * 13, u * 4.5, u * 0.5);
+    fill(120, 100, 68); rect(-hw + u * 6.4, hh - u * 11.4, u * 13, u * 4.5, u * 0.5);
+    fill(104, 96, 84); ellipse(-hw + u * 26, hh - u * 9, u * 14, u * 8);
+    // Hoarding tape all round, dash count scaled so it stays a dashed line.
+    stroke(226, 176, 40); strokeWeight(Math.max(2, u * 0.7));
+    const dashes = Math.max(6, Math.min(40, Math.round(b.w / (u * 8))));
+    for (let i = 0; i < dashes; i++) {
+        const x0 = -hw + (b.w * i) / dashes, x1 = x0 + b.w / (dashes * 2);
+        line(x0, -hh, x1, -hh); line(x0, hh, x1, hh);
+    }
     noStroke();
-    if (player && dist(player.x, player.y, b.x, b.y) < 520) {
-        fill(0, 170); rect(-52, -hh - 22, 104, 10, 3);
-        fill(90, 170, 255); rect(-50, -hh - 20, 100 * p, 6, 2);
-        fill(235); textAlign(CENTER, CENTER); textSize(11); textFont('sans-serif');
-        text(Math.floor(p * 100) + "%", 0, -hh - 32);
+    // Progress readout, near only. Sized off the footprint so it stays legible
+    // at the zoom the structure forces.
+    if (player && dist(player.x, player.y, b.x, b.y) < 520 + Math.max(b.w, b.h) * 0.6) {
+        const bw = Math.min(b.w * 0.4, 260), bh = Math.max(10, u * 3);
+        fill(0, 170); rect(-bw / 2 - u, -hh - bh - u * 3, bw + u * 2, bh + u * 2, u);
+        fill(90, 170, 255); rect(-bw / 2, -hh - bh - u * 2, bw * p, bh, u * 0.6);
+        fill(235); textAlign(CENTER, CENTER); textSize(Math.max(11, u * 3.4)); textFont('sans-serif');
+        text(Math.floor(p * 100) + "%", 0, -hh - bh - u * 7);
     }
     pop();
 }
 
 function drawBuiltStructure(b) {
     const hw = b.w / 2, hh = b.h / 2;
+    // Same rule as the site: proportions, not absolute units. `u` is the trim
+    // width, and every count below is clamped so a corrugated roof stays a
+    // corrugated roof rather than becoming either two ribs or four hundred.
+    const u = Math.max(3, Math.min(b.w, b.h) * 0.018);
+    const span = (n, lo, hi) => Math.max(lo, Math.min(hi, Math.round(n)));
     push(); translate(b.x, b.y);
     noStroke();
     if (b.kind === "WAREHOUSE") {
-        fill(96, 104, 112); rect(-hw, -hh, b.w, b.h, 3);            // shell
-        fill(122, 130, 138); rect(-hw + 6, -hh + 6, b.w - 12, b.h - 12, 2);
-        stroke(88, 96, 104); strokeWeight(2);                        // ribbed roof
-        for (let x = -hw + 14; x < hw - 10; x += 16) line(x, -hh + 8, x, hh - 8);
+        fill(96, 104, 112); rect(-hw, -hh, b.w, b.h, u);                       // shell
+        fill(122, 130, 138); rect(-hw + u * 2, -hh + u * 2, b.w - u * 4, b.h - u * 4, u * 0.6);
+        // Corrugation, then saw-tooth glazing running the length of the roof.
+        stroke(88, 96, 104); strokeWeight(Math.max(1.5, u * 0.5));
+        const ribs = span(b.w / (u * 5), 12, 44);
+        for (let i = 1; i < ribs; i++) {
+            const x = -hw + u * 4 + ((b.w - u * 8) * i) / ribs;
+            line(x, -hh + u * 3, x, hh - u * 3);
+        }
         noStroke();
-        fill(150, 160, 170, 170);                                    // skylights
-        for (let x = -hw + 30; x < hw - 30; x += 58) rect(x, -14, 30, 28, 2);
-        fill(58, 62, 68); rect(-hw + 2, -34, 12, 68, 2);             // roll-up door
-        fill(196, 150, 44); rect(-hw + 2, -34, 12, 6, 1);
+        fill(150, 160, 170, 165);
+        const bands = span(b.h / (u * 26), 2, 5);
+        for (let j = 0; j < bands; j++) {
+            const y = -hh + (b.h * (j + 0.5)) / bands;
+            rect(-hw + u * 10, y - u * 2.2, b.w - u * 20, u * 4.4, u * 0.6);
+        }
+        // Loading bays down the west face, with an apron they open onto.
+        fill(78, 74, 68); rect(-hw - u * 7, -hh + u * 6, u * 7, b.h - u * 12, u * 0.4);
+        const bays = span(b.h / (u * 18), 2, 6);
+        for (let j = 0; j < bays; j++) {
+            const y = -hh + (b.h * (j + 0.5)) / bays;
+            fill(58, 62, 68); rect(-hw, y - u * 5, u * 4, u * 10, u * 0.5);
+            fill(196, 150, 44); rect(-hw, y - u * 5, u * 4, u * 1.6, u * 0.3);
+        }
     } else if (b.kind === "LABORATORY") {
-        fill(206, 210, 214); rect(-hw, -hh, b.w, b.h, 4);
-        fill(228, 232, 236); rect(-hw + 7, -hh + 7, b.w - 14, b.h - 14, 3);
-        fill(96, 160, 190, 200); rect(-hw + 16, -12, b.w - 32, 24, 2);   // atrium glazing
-        fill(150, 158, 166);                                             // roof plant
-        rect(hw - 52, -hh + 14, 34, 26, 2); rect(hw - 52, hh - 40, 34, 26, 2);
-        fill(180, 188, 196); rect(hw - 48, -hh + 18, 26, 18, 1); rect(hw - 48, hh - 36, 26, 18, 1);
-        fill(70, 130, 170); rect(-hw + 4, -18, 8, 36, 2);                // entry
+        fill(206, 210, 214); rect(-hw, -hh, b.w, b.h, u * 1.4);
+        fill(228, 232, 236); rect(-hw + u * 2.4, -hh + u * 2.4, b.w - u * 4.8, b.h - u * 4.8, u);
+        // Glazed atrium across the middle, mullions at a readable pitch.
+        fill(96, 160, 190, 200); rect(-hw + u * 6, -u * 4.5, b.w - u * 12, u * 9, u * 0.6);
+        stroke(226, 232, 236); strokeWeight(Math.max(1.5, u * 0.45));
+        const mull = span(b.w / (u * 9), 6, 26);
+        for (let i = 1; i < mull; i++) {
+            const x = -hw + u * 6 + ((b.w - u * 12) * i) / mull;
+            line(x, -u * 4.5, x, u * 4.5);
+        }
+        noStroke();
+        // Roof plant: chiller decks along both flanks.
+        const decks = span(b.h / (u * 30), 2, 5);
+        for (let j = 0; j < decks; j++) {
+            const y = -hh + (b.h * (j + 0.5)) / decks;
+            if (Math.abs(y) < u * 8) continue;                                 // clear of the atrium
+            fill(150, 158, 166); rect(hw - u * 17, y - u * 5, u * 12, u * 10, u * 0.6);
+            fill(180, 188, 196); rect(hw - u * 15.5, y - u * 3.6, u * 9, u * 7.2, u * 0.4);
+            fill(150, 158, 166); rect(-hw + u * 5, y - u * 4, u * 9, u * 8, u * 0.6);
+        }
+        fill(70, 130, 170); rect(-hw - u * 3, -u * 7, u * 3.4, u * 14, u * 0.6); // entry
     } else if (b.kind === "RANGE") {
-        fill(132, 122, 104); rect(-hw, -hh, b.w, b.h, 3);            // gravel apron
-        fill(112, 104, 88); rect(-hw + 10, -hh + 10, b.w - 20, b.h - 20, 2);
-        fill(88, 74, 52); rect(hw - 34, -hh + 6, 30, b.h - 12, 3);   // earth backstop
-        fill(104, 88, 62); rect(hw - 30, -hh + 10, 22, b.h - 20, 2);
-        stroke(150, 142, 126); strokeWeight(2);                       // lane dividers
-        for (let y = -hh + 22; y < hh - 14; y += 18) line(-hw + 26, y, hw - 38, y);
+        fill(132, 122, 104); rect(-hw, -hh, b.w, b.h, u);                      // gravel apron
+        fill(112, 104, 88); rect(-hw + u * 3, -hh + u * 3, b.w - u * 6, b.h - u * 6, u * 0.6);
+        // Earth backstop across the east end, crest catching the light.
+        fill(88, 74, 52); rect(hw - u * 11, -hh + u * 2, u * 10, b.h - u * 4, u);
+        fill(104, 88, 62); rect(hw - u * 9.6, -hh + u * 4, u * 7, b.h - u * 8, u * 0.6);
+        fill(124, 106, 76); rect(hw - u * 8.4, -hh + u * 5, u * 3, b.h - u * 10, u * 0.4);
+        // Six lanes, whatever the footprint: the count is the design, not the
+        // spacing, so they stay lanes rather than becoming hatching.
+        const lanes = 6;
+        stroke(150, 142, 126); strokeWeight(Math.max(1.5, u * 0.6));
+        for (let j = 1; j < lanes; j++) {
+            const y = -hh + u * 5 + ((b.h - u * 10) * j) / lanes;
+            line(-hw + u * 12, y, hw - u * 12, y);
+        }
         noStroke();
-        fill(226, 226, 220);                                          // target boards
-        for (let y = -hh + 22; y < hh - 14; y += 18) rect(hw - 44, y - 6, 6, 12, 1);
-        fill(64, 60, 54); rect(-hw + 6, -hh + 8, 18, b.h - 16, 2);    // firing line canopy
-        fill(196, 60, 50); rect(-hw + 8, -6, 14, 12, 1);
+        for (let j = 0; j < lanes; j++) {
+            const y = -hh + u * 5 + ((b.h - u * 10) * (j + 0.5)) / lanes;
+            fill(226, 226, 220); rect(hw - u * 14, y - u * 2.6, u * 2.2, u * 5.2, u * 0.3);
+            fill(190, 60, 50); ellipse(hw - u * 12.9, y, u * 1.6, u * 1.6);
+            fill(74, 70, 64); rect(-hw + u * 7, y - u * 2, u * 5, u * 4, u * 0.4);  // benches
+        }
+        fill(64, 60, 54); rect(-hw + u * 2.5, -hh + u * 3, u * 4, b.h - u * 6, u * 0.5);  // firing line
+        fill(196, 60, 50); rect(-hw + u * 3, -u * 3, u * 3, u * 6, u * 0.3);
     } else if (b.kind === "FARM") {
-        fill(146, 44, 38); rect(-hw, -hh, b.w, b.h, 3);              // barn
-        fill(172, 58, 48); rect(-hw + 5, -hh + 5, b.w - 10, b.h - 10, 2);
-        fill(120, 34, 30);                                            // gambrel ridge
-        rect(-6, -hh + 5, 12, b.h - 10);
-        stroke(226, 220, 208); strokeWeight(3); noFill();             // trim
-        rect(-hw + 5, -hh + 5, b.w - 10, b.h - 10, 2);
+        fill(146, 44, 38); rect(-hw, -hh, b.w, b.h, u);                        // barn
+        fill(172, 58, 48); rect(-hw + u * 1.8, -hh + u * 1.8, b.w - u * 3.6, b.h - u * 3.6, u * 0.6);
+        // Gambrel read from above: ridge down the spine with a shaded plane
+        // either side, so it is a roof rather than a red rectangle.
+        fill(158, 50, 42); rect(-hw + u * 1.8, -u * 7, b.w - u * 3.6, u * 14);
+        fill(120, 34, 30); rect(-u * 2.2, -hh + u * 1.8, u * 4.4, b.h - u * 3.6);
+        stroke(226, 220, 208); strokeWeight(Math.max(2, u));                    // trim
+        noFill(); rect(-hw + u * 1.8, -hh + u * 1.8, b.w - u * 3.6, b.h - u * 3.6, u * 0.6);
         noStroke();
-        fill(226, 220, 208); rect(-hw + 2, -26, 9, 52, 1);            // big doors
-        fill(120, 34, 30); rect(-hw + 2, -2, 9, 4);
-        fill(206, 176, 92); rect(hw - 22, -12, 16, 24, 2);            // hay door
+        fill(226, 220, 208);                                                    // big doors
+        rect(-hw - u * 1.2, -u * 9, u * 3.4, u * 18, u * 0.4);
+        fill(120, 34, 30); rect(-hw - u * 1.2, -u * 0.7, u * 3.4, u * 1.4);
+        fill(206, 176, 92); rect(hw - u * 8, -u * 4, u * 6, u * 8, u * 0.6);     // hay door
+        // Cupolas along the ridge -- the tell that says barn from a distance.
+        const cup = span(b.w / (u * 34), 2, 5);
+        for (let i = 0; i < cup; i++) {
+            const x = -hw + (b.w * (i + 0.5)) / cup;
+            fill(226, 220, 208); rect(x - u * 2, -u * 2, u * 4, u * 4, u * 0.4);
+            fill(120, 34, 30); rect(x - u * 1.2, -u * 1.2, u * 2.4, u * 2.4, u * 0.3);
+        }
     }
     pop();
 }
