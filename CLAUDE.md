@@ -969,6 +969,65 @@ that all four kinds plus both site states draw through both shadow passes.
 
 ---
 
+## Getting round things
+
+`steerAvoid(ent, ang, speed, blocked)` (~7960) is how everything that walks and is not
+the player deals with an obstacle. The player is steered by the player.
+
+**What it replaced was a wall slide.** Movement was applied per axis, so a runner meeting
+a wall head-on had one axis blocked and the other free and smeared along the face — and a
+second block of code then added *extra* sideways travel on top, so hitting a wall square
+sped them up along it. A real turn only happened when both axes were blocked at once, and
+it was a blind 45-frame commitment to a heading nobody had checked was clear.
+
+It turns now. When the heading ahead is blocked it fans out from it and takes the first
+heading that is actually open. Three things about the search are load-bearing:
+
+- **Side-first, not offset-first.** The preferred hand is exhausted across *every* offset
+  before the other hand is tried at all. Sweeping offset-first — narrowest gap wins,
+  whichever side it is on — ping-pongs: turn left, drift, find the narrowest gap is now on
+  the right, turn back. Traced against a 400-long wall it never got more than 27 units off
+  the centreline in 500 frames. Side-first is "keep turning the way you already turned",
+  which is what actually rounds things.
+- **Progress is measured along the heading they wanted**, not as distance travelled. A
+  runner pacing the back wall of a courtyard covers plenty of ground and gets nowhere, so
+  an odometer never fires; the projection onto the wanted heading is zero for exactly that
+  motion. No progress in `AVOID_MARK` (240 frames) → sweep from the **widest** offset
+  instead of the narrowest, which turns "hug the obstacle" into "back out of it".
+  The window is four seconds because going round a long wall is a legitimate detour that
+  scores zero while it lasts — at 90 frames, honest wall-following read as stuck.
+- **The panic does not re-arm while it is running.** Backing out means heading away from
+  the goal, which scores as no progress, which re-arms it — a runner that escaped its
+  courtyard then kept running west for the rest of the level.
+
+A reactive steerer cannot *solve* a concave trap whose goal lies beyond the closed end —
+that wants a real path. What it must do is find the mouth and not be pinned to the back
+wall, and `tools/check-pathing.js` asserts exactly that much.
+
+**Citizens have collision at all now** — they used to walk straight through houses.
+`Citizen.citizenBlocked()` gates on `inView`, which is correctness before it is an
+optimisation: `activeBuildings` is a ring around the camera, so a citizen outside it would
+be answering from missing data. A build site and its lorry are exempt, because a hauler
+has to reach into the container and a mason has to stand against the hoarding; a
+*finished* structure blocks them like anything else.
+
+### The collision index
+
+Giving 130 citizens collision took the game to **118,000 AABB comparisons a frame** —
+499 tests over a 235-solid `activeBuildings`. `colNear(x, y)` is a uniform grid
+(`COL_CELL` 220) rebuilt at the end of every `updateActiveWorld()`; solids are inserted
+into every cell they overlap **padded by the largest body radius**, so a point query only
+ever reads one cell. Anything longer than a few cells (the Great Gates are 9600 across)
+goes in `colBig` and is always scanned. Measured after: **1.3 solids per query, 755
+comparisons a frame.**
+
+Anything that splices `activeBuildings` directly must call `invalidateColIndex()`, which
+drops back to the full scan until the next rebuild. `check-pathing.js` compares 3000
+indexed queries against the brute-force scan on a real streamed world — the index is only
+worth having if it can never *miss*.
+
+---
+
 ## The arm rig
 
 `Character.show()` draws the torso, then the attire, then the arms, then the head. That
@@ -1105,6 +1164,7 @@ node tools/check-character.js      # the arm rig: hands present, and behind the 
 node tools/check-build.js          # blueprints, placement, build rate, the crew
 node tools/check-ballistics.js     # hostile rounds are always slower than the player's
 node tools/check-menu.js           # travel lives in the pause menu, and nowhere else
+node tools/check-pathing.js        # walkers turn round obstacles; the collision index
 GAME_JS=/path/to/other.js node tools/check-generation.js    # compare against a baseline
 ```
 

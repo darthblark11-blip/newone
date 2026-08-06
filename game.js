@@ -2907,6 +2907,55 @@ let activeBuildings = [];
 let activeParkingCars = [];
 
 let lastActiveUpdate = 0;
+// --- COLLISION INDEX -------------------------------------------------------
+// A uniform grid over activeBuildings, rebuilt whenever that array is.
+//
+// Every collision test in the game was a linear scan of activeBuildings, which
+// is ~235 solids in a woodland scene. That was affordable while only the player
+// and a few dozen enemies moved. Giving the citizens collision made it not:
+// measured with a 130-strong architecture department, 499 tests a frame across
+// 235 solids each is **118,000 AABB comparisons a frame**, which is exactly the
+// kind of thing the rest of this file has comments about not doing.
+//
+// Solids are inserted into every cell they overlap, padded by the largest body
+// radius so a point query only ever has to look at ONE cell. Anything longer
+// than a few cells -- the Great Gates are 9600 across -- would smear over the
+// whole map, so those go in a short list that is always scanned.
+const COL_CELL = 220;
+const COL_PAD  = 30;           // largest body radius, so one cell lookup suffices
+let colGrid = null, colBig = null;
+
+function buildColIndex() {
+  colGrid = new Map(); colBig = [];
+  for (const b of activeBuildings) {
+    const w = b.w || 0, h = b.h || 0;
+    if (Math.max(w, h) > COL_CELL * 4) { colBig.push(b); continue; }
+    const x0 = Math.floor((b.x - w / 2 - COL_PAD) / COL_CELL);
+    const x1 = Math.floor((b.x + w / 2 + COL_PAD) / COL_CELL);
+    const y0 = Math.floor((b.y - h / 2 - COL_PAD) / COL_CELL);
+    const y1 = Math.floor((b.y + h / 2 + COL_PAD) / COL_CELL);
+    for (let i = x0; i <= x1; i++) {
+      for (let j = y0; j <= y1; j++) {
+        const k = i + "," + j;
+        let a = colGrid.get(k);
+        if (!a) { a = []; colGrid.set(k, a); }
+        a.push(b);
+      }
+    }
+  }
+}
+// Whatever could possibly touch a body at (x, y). Falls back to the whole array
+// when the index has been invalidated, so a stale entry can never be consulted.
+function colNear(x, y) {
+  if (!colGrid) return activeBuildings;
+  const a = colGrid.get(Math.floor(x / COL_CELL) + "," + Math.floor(y / COL_CELL));
+  if (!colBig.length) return a || EMPTY_LIST;
+  return a ? a.concat(colBig) : colBig;
+}
+const EMPTY_LIST = [];
+// Anything that splices activeBuildings out from under the index calls this.
+function invalidateColIndex() { colGrid = null; colBig = null; }
+
 function updateActiveWorld() {
     // THROTTLE: Only generate this array once every 10 frames to save massive CPU/Battery
     if (frameCount - lastActiveUpdate < 10 && activeBuildings.length > 0) return;
@@ -2927,6 +2976,7 @@ function updateActiveWorld() {
             activeParkingCars.push(c);
         }
     }
+    buildColIndex();
 }
 
 
@@ -5063,7 +5113,7 @@ function damageHarvestable(b, amount) {
   const bi = buildings.indexOf(b);
   if (bi > -1) buildings.splice(bi, 1);
   const ai = activeBuildings.indexOf(b);
-  if (ai > -1) activeBuildings.splice(ai, 1);
+  if (ai > -1) { activeBuildings.splice(ai, 1); invalidateColIndex(); }
   return true;
 }
 
@@ -8063,6 +8113,121 @@ function updateLightnings() {
 const TOWNSFOLK = ["FARMER_MALE", "FARMER_FEMALE", "COWBOY", "COWGIRL",
                    "LOCAL_COP", "VILLAGER_MALE", "VILLAGER_FEMALE"];
 
+// --- OBSTACLE STEERING -----------------------------------------------------
+// Everything that walks and is not the player goes through this.
+//
+// What it replaced was a WALL SLIDE. Movement was applied on each axis
+// separately, so a runner meeting a wall head-on had one axis blocked and the
+// other free, and smeared along the face of it -- and a second block of code
+// then added EXTRA sideways travel on top, so hitting a wall square actually
+// sped them up along it. A real turn only happened when BOTH axes were blocked
+// at once, i.e. in a corner, and it was a blind 45-frame commitment to a
+// heading nobody had checked was clear; the failsafe for picking a wall was to
+// wait out the 45 frames and flip.
+//
+// This turns instead, which is what the player does. When the heading ahead is
+// blocked it fans out from it in widening steps, alternating sides, and takes
+// the first heading that is actually open. A flat wall met at a glance picks
+// the narrowest offset and they carry on past it; a corner picks a wide one; a
+// dead end picks the way back out.
+//
+// **Cost is the constraint that shapes it.** `checkCol()` is a linear scan of
+// activeBuildings, so the fan may only run when it has to:
+//   - clear road            1 probe a frame
+//   - committed to a turn   1 probe a frame, re-testing only that heading
+//   - newly blocked         up to 12, once, then held for AVOID_HOLD frames
+// Walking a long wall therefore averages under two probes a frame, against the
+// two-to-four the slide cost.
+const AVOID_FAN    = [0.42, 0.85, 1.30, 1.75, 2.20, 2.70];   // ~24 deg out to ~155
+const AVOID_HOLD   = 14;    // frames a chosen turn is kept before re-deciding
+const AVOID_MARK   = 240;   // how often "am I actually getting anywhere?" is asked
+// ground toward the goal that must be made in a window, as a fraction of what
+// the entity's own speed could have covered -- see the projection in steerAvoid
+const AVOID_PANIC  = 150;   // frames spent backing out once the answer is no
+
+function steerAvoid(ent, ang, speed, blocked) {
+    // Look further than one step, so the turn starts before they are against
+    // the thing rather than after they have already ground into it.
+    const reach = Math.max(16, speed * 2.6);
+    const open = (a) => !blocked(ent.x + Math.cos(a) * reach, ent.y + Math.sin(a) * reach);
+
+    // Are they actually getting anywhere? Asked every call, not only when
+    // blocked -- which is the whole point. A purely reactive steerer has one
+    // failure mode and this is it: dropped in a three-sided pocket, the way out
+    // is BACKWARDS, and the direct heading stays locally open the whole time
+    // because the walls are a courtyard away. So they drive at the back wall,
+    // turn, drift, drive at it again. Traced without this, a runner paced a
+    // 40-unit box for 1500 frames and never once headed for the opening.
+    // Progress is measured ALONG THE HEADING THEY WANTED, not as distance
+    // travelled. Distance travelled is the wrong question: a runner pacing the
+    // back wall of a courtyard covers plenty of ground and gets nowhere, so a
+    // straight odometer never fires. The projection onto the wanted heading is
+    // zero for exactly that motion.
+    //
+    // The bar scales with speed -- a sixth of the ground they could have made in
+    // the window -- so a citizen at 0.8 a frame is not held to a runner's 3.
+    //
+    // The window is FOUR SECONDS on purpose. Going round a long wall is a
+    // legitimate detour that scores zero on this axis while it lasts, so a
+    // short window flags honest wall-following as stuck: at 90 frames a runner
+    // rounding a 400-unit wall panicked halfway along it and backed off. Four
+    // seconds is longer than any detour a single obstacle can cause, and a
+    // concave trap still scores zero across it.
+    const want = speed * AVOID_MARK * 0.15;
+    const along = (m) => (ent.x - m.x) * Math.cos(m.ang) + (ent.y - m.y) * Math.sin(m.ang);
+    if (ent.avoidPanic > 0) {
+        // The check is NOT run while backing out. Backing out means heading
+        // away from the goal, which scores as no progress, which re-arms the
+        // panic -- a runner that escaped its courtyard then kept running west
+        // for the rest of the level. It is a fixed stretch and then it is over.
+        if (--ent.avoidPanic === 0) ent.avoidMark = { x: ent.x, y: ent.y, t: frameCount, ang: ang };
+    } else if (!ent.avoidMark || frameCount - ent.avoidMark.t > AVOID_MARK) {
+        if (ent.avoidMark && along(ent.avoidMark) < want) ent.avoidPanic = AVOID_PANIC;
+        ent.avoidMark = { x: ent.x, y: ent.y, t: frameCount, ang: ang };
+    }
+    const backingOut = ent.avoidPanic > 0;
+
+    if (ent.avoidHold > 0) {
+        ent.avoidHold--;
+        if (open(ent.avoidAngle)) return ent.avoidAngle;   // committed, still clear
+    }
+    // While backing out the direct heading is precisely the one that has been
+    // failing, so it is not offered.
+    if (!backingOut && open(ang)) { ent.avoidHold = 0; return ang; }
+
+    // The preferred side is exhausted across every offset BEFORE the other side
+    // is tried at all, and this ordering is the whole thing.
+    //
+    // Sweeping offset-first -- narrowest gap wins, whichever hand it is on --
+    // reads as reasonable and ping-pongs: the runner turns left, drifts a few
+    // units, finds the narrowest opening is now on the right, turns back, and
+    // paces the same stretch of wall forever. Traced against a 400-long wall it
+    // never got more than 27 units off the centreline in 500 frames.
+    //
+    // Side-first is "keep turning the way you already turned, as far as you
+    // need to", which is what a person does and what actually gets round
+    // things: each time the committed heading closes up it opens out further on
+    // the same hand until it clears the end. Backing out reverses the offsets
+    // so the widest -- nearly the way they came -- is tried first.
+    if (!ent.avoidSide) ent.avoidSide = random() > 0.5 ? 1 : -1;
+    for (const s of [ent.avoidSide, -ent.avoidSide]) {
+        for (let k = 0; k < AVOID_FAN.length; k++) {
+            const i = backingOut ? AVOID_FAN.length - 1 - k : k;
+            const a = ang + AVOID_FAN[i] * s;
+            if (open(a)) {
+                ent.avoidSide = s; ent.avoidAngle = a;
+                ent.avoidHold = backingOut ? AVOID_HOLD * 2 : AVOID_HOLD;
+                return a;
+            }
+        }
+    }
+    // Boxed in on every heading: back out, and favour the other hand next time.
+    ent.avoidSide = -(ent.avoidSide || 1);
+    ent.avoidAngle = ang + PI;
+    ent.avoidHold = AVOID_HOLD;
+    return ent.avoidAngle;
+}
+
 // Head of a pickaxe, drawn at the far end of whatever haft the caller just laid
 // down -- `len` is where the haft ends. One bar driven through an eye, pointed
 // at BOTH ends: no adze, no hammer poll. Two things drove that. The first pass
@@ -8520,7 +8685,7 @@ this.skeletonTimer = 0;
     
     let r = (this.eType === "ARMORED" || this.eType === "ALIEN_GATOR" || this.eType === "SNAIL_HYBRID") ? 28 : (this.eType === "BUG" ? 10 : (this.eType === "SNAIL" ? 15 : 15));
     
-    for (let b of activeBuildings) { 
+    for (let b of colNear(nx, ny)) {
         if (b.isCropField || b.isMarket) continue; 
         if (currentLevel === 4 && b.isPalm) continue; 
         if (currentLevel === 6 && (b.isAlienPlant || b.isEnergyPole)) continue; 
@@ -8582,12 +8747,12 @@ this.skeletonTimer = 0;
   }
 
  attemptMove(vx, vy) {
-    // 1. Initialize persistent evasion and slide memory
-    if (this.evadeTimer === undefined) {
-        this.evadeTimer = 0;
-        this.evadeDir = 1;
-        this.slideDir = random() > 0.5 ? 1 : -1; // Lock in a preference!
-        this.blockedAngle = 0;
+    // Steering memory: which hand they favour going round things, the heading
+    // they are currently committed to, and how long that commitment has left.
+    if (this.avoidSide === undefined) {
+        this.avoidSide = random() > 0.5 ? 1 : -1;
+        this.avoidAngle = 0;
+        this.avoidHold = 0;
     }
 
     // Ground that rises against you takes some of the step with it. Applied
@@ -8611,61 +8776,31 @@ this.skeletonTimer = 0;
       }
     }
 
-    let speed = dist(0, 0, vx, vy);
-    let intendedAngle = atan2(vy, vx);
+    const speed = dist(0, 0, vx, vy);
+    const intendedAngle = atan2(vy, vx);
 
-    // 2. OVERRIDE: If actively evading a hard corner, hijack their trajectory 
-    if (!this.isPlayer && this.evadeTimer > 0) {
-        this.evadeTimer--;
-        let evadeAngle = this.blockedAngle + (HALF_PI * this.evadeDir);
-        vx = cos(evadeAngle) * speed;
-        vy = sin(evadeAngle) * speed;
+    // 2. Steer round whatever is in the way. The player is steered by the
+    //    player; everyone else turns. See steerAvoid() for what this replaced
+    //    and why it is not a wall slide any more.
+    //
+    //    Skipped when already standing inside something -- forceNudge() is what
+    //    gets them out of that, and a sweep from inside a wall finds nothing.
+    if (!this.isPlayer && speed > 0.0001 && !this.checkCol(this.x, this.y)) {
+        const a = steerAvoid(this, intendedAngle, speed, (x, y) => this.checkCol(x, y));
+        if (a !== intendedAngle) { vx = cos(a) * speed; vy = sin(a) * speed; }
     }
 
-    let mX = false, mY = false;
     let finalDx = 0, finalDy = 0;
 
-    // 3. Test primary movement
-    if (!this.checkCol(this.x + vx, this.y)) { this.x += vx; finalDx = vx; mX = true; }
-    if (!this.checkCol(this.x, this.y + vy)) { this.y += vy; finalDy = vy; mY = true; }
+    // 3. Move. Still applied per axis, because a glancing contact should cost a
+    //    step sideways rather than stopping dead -- but with the turn above
+    //    they are rarely in contact long enough for it to read as a slide.
+    if (!this.checkCol(this.x + vx, this.y)) { this.x += vx; finalDx = vx; }
+    if (!this.checkCol(this.x, this.y + vy)) { this.y += vy; finalDy = vy; }
 
-    // 4. Resolve sliding with PERSISTENT direction to stop jitter
-    if (!mX && mY) {
-        // If moving at an angle, follow the angle. If moving perfectly flat, use memory!
-        let dir = (abs(vy) > 0.1) ? Math.sign(vy) : this.slideDir;
-        let slideDy = dir * abs(vx);
-        
-        if (!this.checkCol(this.x, this.y + slideDy)) { 
-            this.y += slideDy; finalDy = slideDy; 
-        } else {
-            this.slideDir *= -1; // Flip memory if they slide into a corner
-        }
-    } else if (!mY && mX) {
-        let dir = (abs(vx) > 0.1) ? Math.sign(vx) : this.slideDir;
-        let slideDx = dir * abs(vy);
-        
-        if (!this.checkCol(this.x + slideDx, this.y)) { 
-            this.x += slideDx; finalDx = slideDx; 
-        } else {
-            this.slideDir *= -1; // Flip memory if they slide into a corner
-        }
-    } 
-    // 5. HARD BLOCKED (Corners/Pockets): Trigger the 90-degree commitment!
-    else if (!mX && !mY && !this.isPlayer) {
-        if (this.evadeTimer <= 0) {
-            this.evadeTimer = 45; 
-            this.evadeDir = this.slideDir; // Sync 90-degree turn with their slide preference
-            this.blockedAngle = intendedAngle;
-        } else {
-            // Corner failsafe: If they get stuck WHILE evading
-            this.evadeDir *= -1;
-            this.slideDir *= -1; 
-            this.evadeTimer = 45; 
-        }
-    }
-
-    // Keep the sliding flag active so the visual body rotation stays engaged
-    this.isSliding = (abs(finalDx - vx) > 0.05 || abs(finalDy - vy) > 0.05) || this.evadeTimer > 0;
+    // Kept for the visual body rotation: true whenever they are not going the
+    // way they meant to.
+    this.isSliding = (abs(finalDx - vx) > 0.05 || abs(finalDy - vy) > 0.05) || this.avoidHold > 0;
     return { x: finalDx, y: finalDy };
 }
 
@@ -11869,13 +12004,7 @@ class Citizen {
         }
         
         if (this.state === "WANDER") {
-            let d = dist(this.x, this.y, this.tx, this.ty);
-            if (d > 10) {
-                this.moveAngle = atan2(this.ty - this.y, this.tx - this.x);
-                this.x += cos(this.moveAngle) * 0.8; 
-                this.y += sin(this.moveAngle) * 0.8;
-                this.walkCycle += 0.1;
-            } else {
+            if (this.walkTo(this.tx, this.ty, 0.8)) {
                 this.state = "IDLE";
                 this.timer = floor(random(60, 120));
             }
@@ -11893,15 +12022,7 @@ class Citizen {
     // off hammering, takes it, sets it in the wall, and goes back to work. The
     // pairing is decided for the whole crew at once by updateBuildCrews().
     updateBuildWork(site) {
-        const step = (tx, ty, spd) => {
-            const d = dist(this.x, this.y, tx, ty);
-            if (d <= (spd || 1.15) * 1.5) return true;
-            this.moveAngle = atan2(ty - this.y, tx - this.x);
-            this.x += cos(this.moveAngle) * (spd || 1.15);
-            this.y += sin(this.moveAngle) * (spd || 1.15);
-            this.walkCycle += 0.13;
-            return false;
-        };
+        const step = (tx, ty, spd) => this.walkTo(tx, ty, spd || 1.15);
 
         if (this.buildRole === "HAUL" && this.pairMason) {
             const truck = buildTruckAt(site);
@@ -11977,6 +12098,62 @@ class Citizen {
         this.carrying = kind || "STONE";
         this.placeTimer = BUILD_PLACE;
         this.state = "PLACING";
+    }
+
+    // Citizens used to walk through the world entirely -- no collision at all,
+    // so a townsman crossing a settlement went straight through the houses.
+    // Two things shape this test.
+    //
+    // First, `activeBuildings` is a ring around the camera, so a citizen
+    // outside it has nothing to collide against and a test would be answering
+    // from missing data. Gating on inView is therefore correctness before it is
+    // an optimisation -- and it also caps the cost, which matters when the
+    // architecture department alone can be well over a hundred people.
+    //
+    // Second, a build site and its lorry are exempt. A hauler has to reach into
+    // the container and a mason has to stand against the hoarding: what the
+    // player put up is not an obstacle to the crew putting it up. A FINISHED
+    // structure blocks them like any other building.
+    citizenBlocked(x, y) {
+        if (!inView(this.x, this.y, 320)) return false;
+        const r = 13;
+        for (const b of colNear(x, y)) {
+            if (b.isCropField || b.isMarket || b.isDeck || b.isGrassLot) continue;
+            if (b.isBuildSite || b.isBuildTruck) continue;
+            if (currentLevel === 4 && b.isPalm) continue;
+            if (currentLevel === 6 && (b.isAlienPlant || b.isEnergyPole)) continue;
+            if (b.isGovFortress && inOpenGateway(b, x)) continue;
+            if (x + r > b.x - b.w / 2 && x - r < b.x + b.w / 2 &&
+                y + r > b.y - b.h / 2 && y - r < b.y + b.h / 2) return true;
+        }
+        for (const c of activeParkingCars) {
+            if (x + r > c.x - 25 && x - r < c.x + 25 && y + r > c.y - 45 && y - r < c.y + 45) return true;
+        }
+        return false;
+    }
+
+    // One step toward a point, turning round anything in the way. Returns true
+    // once they are there. Every bit of citizen movement goes through this so
+    // the wander and the build loop steer identically.
+    walkTo(tx, ty, spd) {
+        const d = dist(this.x, this.y, tx, ty);
+        if (d <= spd * 1.5) return true;
+        if (this.avoidSide === undefined) {
+            this.avoidSide = random() > 0.5 ? 1 : -1;
+            this.avoidAngle = 0; this.avoidHold = 0;
+        }
+        let ang = atan2(ty - this.y, tx - this.x);
+        // Standing inside something: walk straight out rather than sweeping
+        // from a position where every heading reads as blocked.
+        if (!this.citizenBlocked(this.x, this.y)) {
+            ang = steerAvoid(this, ang, spd, (x, y) => this.citizenBlocked(x, y));
+        }
+        this.moveAngle = ang;
+        const nx = this.x + cos(ang) * spd, ny = this.y + sin(ang) * spd;
+        if (!this.citizenBlocked(nx, this.y)) this.x = nx;
+        if (!this.citizenBlocked(this.x, ny)) this.y = ny;
+        this.walkCycle += 0.13;
+        return false;
     }
 
     resolveCollisions() {
@@ -14798,7 +14975,7 @@ function clearBuildLot(x, y, w, h) {
         }
         buildings.splice(i, 1);
         const ai = activeBuildings.indexOf(o);
-        if (ai > -1) activeBuildings.splice(ai, 1);
+        if (ai > -1) { activeBuildings.splice(ai, 1); invalidateColIndex(); }
     }
     return won;
 }
