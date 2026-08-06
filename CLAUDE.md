@@ -761,18 +761,8 @@ harvest sweep runs at the `meleeTimer === 10` frame, guarded by `this.isPlayer`,
 
 ### Holding it — the melee arm rig
 
-The idle/walking arms in `Character.show()` (~10380) used to hide a hand whenever the
-swing sat between a `frontThreshold` and a `backThreshold`, as a stand-in for depth.
-**Top-down there is no depth to stand in for** — the arms swing along the *side* of the
-torso, never through it — so all the test did was delete the sword twice a stride and
-leave an idle player (swing is exactly 0 when `isMoving` is false) holding nothing.
-
-What replaced it: `armLimb()` draws a real limb, shoulder to hand, at every point of the
-cycle; the hands ride 3 units further out so they clear the body silhouette; and the back
-half of the swing gets a translucent shade over the arm rather than being removed. The
-tool has a carry pose of its own — outboard of the hip so the haft never crosses the
-torso, trailing as the arm goes back, levelling as it comes forward, with a slow
-`sin(frameCount * 0.045)` breath while standing still.
+See **The arm rig** below: the tool is carried by the same two-pass rig as everyone
+else's arms, and always rides the front pass.
 
 `pickHead(len)` is one bar through an eye, pointed at **both** ends, with both tips
 sweeping back toward the user. Two prongs curving forward is a clamp rather than a tool;
@@ -794,6 +784,51 @@ by kind), that a swing takes a prop apart in the expected number of hits, that t
 collected, that a fist and a pick differ, that robots are salvage, that a destroyed prop
 stays destroyed across a reload, and that the drop art draws. It needs `leftStick` /
 `rightStick` stubbed before `player.show()` — a harness gap, not a game bug.
+
+---
+
+## The arm rig
+
+`Character.show()` draws the torso, then the attire, then the arms, then the head. That
+order is right for a character holding a **gun** — the arm reaches forward and belongs on
+top — and wrong for every other pose, because a sleeve is a 15-unit ellipse centred on a
+shoulder that is only 13 units from the middle of a 21×27 body. Drawn over the torso, its
+whole inner half sits *on* the body: that is the bulged-shoulder read. Half of a sleeve is
+meant to be inside the torso.
+
+`Citizen.show()` (~11700) has always done it correctly and is the reference: sleeves and
+the **trailing** hand go down before the body, the body covers their inner halves, and the
+**leading** hand goes on top afterwards. The occlusion *is* the stride — nothing is hidden,
+things pass behind.
+
+So `show()` now builds an `armPass(front)` closure immediately before the torso ellipse and
+calls it twice — `armPass(false)` there, `armPass(true)` from the arm block further down.
+It covers everyone who is not holding a gun: the player empty-handed or with a melee tool,
+and every neutral in `TOWNSFOLK` (hoisted to module scope; it was being rebuilt per
+character per frame).
+
+- Each arm is one tapering limb — upper arm plus forearm — from the shoulder to a hand
+  that leads slightly outboard as it swings forward, rather than a blob at each end.
+- `rest = sin(frameCount * 0.045 + this.x * 0.01)` when `!isMoving`, so a standing figure
+  breathes and a crowd does not do it in unison.
+- **A held melee tool always takes the front pass**, whatever the swing is doing — half a
+  pickaxe swallowed by a torso is worse than one drawn a layer too high.
+
+**The failure mode this replaced is worth knowing, because the obvious fix is wrong in the
+other direction.** The original code hid a hand whenever the swing sat between a
+`frontThreshold` and a `backThreshold`, as a stand-in for depth. Top-down there is no depth
+to stand in for, so that only deleted the sword twice a stride and — since `swing` is
+exactly 0 when `isMoving` is false — left an idle player holding nothing. Removing the test
+and drawing every arm on top fixes the disappearing and *causes* the bulge. Only the draw
+order fixes both.
+
+`tools/check-character.js` watches the order of `ellipse()` calls (a hand is 8×8, the torso
+is `bodyW × bodyH`) and asserts both hands exist at all 16 points of the cycle, that both
+sit behind the body at rest, that the trailing one passes behind mid-stride, and that a
+tool hand never falls behind.
+
+Armed poses are deliberately untouched: the muzzle offsets (`bLX/bLY`) are tuned against
+those arm positions.
 
 ---
 
@@ -884,6 +919,7 @@ node tools/check-saveload.js       # save/load round trip
 node tools/check-cutscene.js       # scripted placement stays inside the sector
 node tools/check-resources.js      # harvestables, drops, the melee tool, persistence
 node tools/check-robot.js          # a machine dies like a machine, on all six paths
+node tools/check-character.js      # the arm rig: hands present, and behind the body
 GAME_JS=/path/to/other.js node tools/check-generation.js    # compare against a baseline
 ```
 

@@ -7949,6 +7949,44 @@ function updateLightnings() {
     }
 }
 
+// Everyone who stands around with empty hands rather than a gun. Hoisted out
+// of Character.show(), which was rebuilding the array once per character per
+// frame.
+const TOWNSFOLK = ["FARMER_MALE", "FARMER_FEMALE", "COWBOY", "COWGIRL",
+                   "LOCAL_COP", "VILLAGER_MALE", "VILLAGER_FEMALE"];
+
+// Head of a pickaxe, drawn at the far end of whatever haft the caller just laid
+// down -- `len` is where the haft ends. One bar driven through an eye, pointed
+// at BOTH ends: no adze, no hammer poll. Two things drove that. The first pass
+// had both prongs curving forward off the end of the haft, which is a clamp
+// rather than a tool; and a single flat poll seen from directly above has to
+// face some fixed direction all the time, which reads as a mistake in a view
+// that has no side to it. Symmetrical, it is legible from any angle, and both
+// tips sweep BACK toward the user the way a pick actually bites.
+//
+// Module scope because the carry pose and both swing branches share it, and the
+// carry pose is now drawn before the torso while the swings are drawn after.
+function pickHead(len) {
+    fill(96, 74, 46); rect(-8, -2.4, 9, 4.8, 1);       // butt behind the grip
+    push(); translate(len, 0);
+    for (const s of [-1, 1]) {
+        fill(66, 70, 76);
+        beginShape();                                  // the spike
+        vertex(3, -3 * s); vertex(3.6, -9.5 * s); vertex(1.2, -15 * s);
+        vertex(-6, -19 * s); vertex(-4.6, -14.5 * s); vertex(-2.4, -9.5 * s);
+        vertex(-3, -3 * s);
+        endShape(CLOSE);
+        fill(150, 156, 166);                           // ground edge, catching light
+        beginShape();
+        vertex(3.6, -9.5 * s); vertex(1.2, -15 * s); vertex(-6, -19 * s);
+        vertex(-4, -13.6 * s); vertex(0.4, -8.6 * s);
+        endShape(CLOSE);
+    }
+    fill(150, 156, 166); rect(-4.5, -4.5, 9, 9, 2);     // the eye
+    fill(206, 212, 222, 170); rect(-4.5, -4.5, 9, 2.4, 1);
+    pop();
+}
+
 class Character {
   constructor(x, y, isP, eT = "NORMAL") {
     this.isFriendly = false;
@@ -10267,9 +10305,103 @@ if (this.isPlayer) {
     else if (this.isPlayer && typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) { this.shirtCol = color(255); this.pantsCol = color(15); } 
     else if (this.isPlayer && ninjaSuitUnlocked) { this.shirtCol = color(20); this.pantsCol = color(15); }
 
-    noStroke(); 
+    // --- ARMS FOR ANYONE NOT HOLDING A GUN --------------------------------
+    // Two passes around the torso: the sleeves and the trailing hand go down
+    // FIRST and let the body cover their inner halves, the leading hand goes on
+    // top afterwards. That occlusion is the entire read of a stride, and it is
+    // how Citizen.show() has always done it.
+    //
+    // Drawing every arm over the torso instead -- which is what this did -- put
+    // two whole sleeve ellipses on the shoulders with nothing to sink them into
+    // the body, which is the bulge; and the older fix for the resulting mess
+    // (hiding a hand between a front and a back threshold) deleted the sword
+    // twice a stride and left an idle player empty-handed.
+    let armPass = null;
+    {
+        const isTownsfolk = this.isNeutral && TOWNSFOLK.indexOf(this.eType) !== -1;
+        const isEmptyHanded = this.isPlayer && !this.isArmed && this.meleeTimer <= 0;
+        if (isTownsfolk || isEmptyHanded) {
+            const swing = isTownsfolk ? (this.isMoving ? sin(this.walkCycle) : 0)
+                                      : ((typeof lS !== 'undefined') ? (lS / 12) : 0);
+            // Standing still, the shoulders settle and breathe rather than
+            // locking solid. Offset per character so a crowd is not in unison.
+            const rest = this.isMoving ? 0 : sin(frameCount * 0.045 + this.x * 0.01);
+            const skin = this.isCharred ? color(50, 40, 40) : color(235, 180, 140);
+            const usingSword = this.isPlayer && typeof swordPickedUp !== 'undefined' &&
+                               swordPickedUp && window.swordEquipped !== false;
+            const usingPick = this.isPlayer && typeof meleeTool === 'function' &&
+                              meleeTool() === "PICKAXE";
+            const armedMelee = usingSword || usingPick;
+            const sides = [{ sy: -14, sw: -swing }, { sy: 11, sw: swing, right: true }];
+
+            // Shoulder to hand as one tapering limb rather than a blob at each
+            // end, so the arm reads as a limb at every point of the cycle. The
+            // hand leads slightly outboard as it comes forward.
+            const limb = (sy, sw) => {
+                const hx = sw * 14, hy = sy + sw * 1.5 + rest * 0.5;
+                const d = Math.max(0.001, Math.hypot(hx, hy - sy));
+                push(); translate(0, sy); rotate(atan2(hy - sy, hx));
+                fill(this.shirtCol);
+                ellipse(d * 0.34, 0, Math.max(13, d * 0.80), 8.6);   // upper arm
+                ellipse(d * 0.74, 0, Math.max(9, d * 0.56), 7.2);    // forearm
+                pop();
+                return { x: hx, y: hy };
+            };
+
+            armPass = (front) => {
+                // Both limbs go under the torso -- that is what sinks the
+                // shoulder into the body instead of parking a blob on it. Only
+                // the hands are sorted front to back.
+                if (!front) for (const s of sides) limb(s.sy, s.sw);
+                for (const s of sides) {
+                    // A held tool always rides the front pass: it is the thing
+                    // the player is looking at, and half a pickaxe swallowed by
+                    // a torso is worse than one drawn a layer too high.
+                    const holdsTool = !!(s.right && armedMelee);
+                    const isFront = holdsTool ? true : s.sw > 0.2;
+                    if (isFront !== front) continue;
+                    const h = { x: s.sw * 14, y: s.sy + s.sw * 1.5 + rest * 0.5 };
+
+                    if (!s.right && this.isPlayer && isChemist) {
+                        push(); translate(h.x, h.y); rotate(s.sw * 0.22);
+                        fill(80); rect(-4, -4, 16, 8, 2);
+                        fill(0, 255, 200); ellipse(12, 0, 6, 8);
+                        pop();
+                    } else {
+                        fill(skin); ellipse(h.x, h.y, 8, 8);
+                    }
+
+                    if (holdsTool) {
+                        // Carried rather than presented: outboard of the hip so
+                        // the haft never crosses the torso, trailing as the arm
+                        // goes back and levelling as it comes forward.
+                        push(); translate(h.x, h.y);
+                        rotate(0.30 - s.sw * 0.26 + rest * 0.05);
+                        if (usingPick) {
+                            fill(122, 92, 56); rect(0, -2.5, 40, 5, 2);   // haft
+                            pickHead(40);
+                        } else {
+                            fill(90, 60, 30); rect(-9, -2.6, 10, 5.2, 2);  // grip
+                            fill(150, 120, 40); ellipse(-9, 0, 6, 6);      // pommel
+                            fill(180, 150, 40); rect(-1, -6, 4, 12, 1);    // guard
+                            fill(120);
+                            beginShape();                                  // tapered blade
+                            vertex(3, -3.2); vertex(38, -2.6); vertex(46, 0);
+                            vertex(38, 2.6); vertex(3, 3.2);
+                            endShape(CLOSE);
+                            fill(198, 202, 210, 200); rect(4, -1.2, 32, 1.6, 1);  // fuller
+                        }
+                        pop();
+                    }
+                }
+            };
+            armPass(false);
+        }
+    }
+
+    noStroke();
     if (this.hitFlash > 0) { this.hitFlash--; fill(255); } else { fill(this.shirtCol); }
-    ellipse(0, 0, this.bodyW, this.bodyH); 
+    ellipse(0, 0, this.bodyW, this.bodyH);
 
     // Male Farmer Overalls
     if (this.eType === "FARMER_MALE") {
@@ -10388,28 +10520,14 @@ if (this.isPlayer) {
     let lAY = this.eType === "ARMORED" ? -30 : -14, rAY = this.eType === "ARMORED" ? 30 : 11;
     let a = 255; let f = this.fP || 0; let sK = this.isCharred ? color(50, 40, 40, a) : color(235, 180, 140, a);
 
-    const TOWNSFOLK = ["FARMER_MALE", "FARMER_FEMALE", "COWBOY", "COWGIRL",
-                       "LOCAL_COP", "VILLAGER_MALE", "VILLAGER_FEMALE"];
     let isNeutralFarmer = this.isNeutral && TOWNSFOLK.indexOf(this.eType) !== -1;
 
     // --- NEUTRAL ARM SWING OVERRIDE ---
         if (isNeutralFarmer) {
-        let swing = this.isMoving ? sin(this.walkCycle) : 0;
-        let lArmSwing = -swing; 
-        let rArmSwing = swing;  
-        let armLY = -14; 
-        let armRY = 11;  
-        
-        // Sleeves
-        fill(this.shirtCol); 
-        ellipse(lArmSwing * 4, armLY, 16, 9);
-        ellipse(rArmSwing * 4, armRY, 16, 9);
-
-        // Hands. Empty on purpose: a townsman at ease has his gun in the
-        // holster drawn on his hip, not in his fist.
-        fill(235, 180, 140);
-        ellipse(lArmSwing * 14, armLY, 8, 8);
-        ellipse(rArmSwing * 14, armRY, 8, 8);
+        // The limbs and the trailing hand already went down under the torso;
+        // this is the leading hand on top. Empty on purpose: a townsman at ease
+        // has his gun in the holster drawn on his hip, not in his fist.
+        if (armPass) armPass(true);
 
         // Falls through to the shared head-and-close section below, which is
         // where the hat, the head decals and this method's two closing pop()s
@@ -10425,35 +10543,6 @@ if (this.isPlayer) {
         // in the hand forks.
         const usingPick = (this.isPlayer && typeof meleeTool === 'function' && meleeTool() === "PICKAXE");
         const armedMelee = usingSword || usingPick;
-        // Head of a pickaxe, drawn at the far end of whatever haft the caller
-        // just laid down. `len` is where the haft ends.
-        // One bar driven through an eye, pointed at BOTH ends -- no adze, no
-        // hammer poll. Two things drove that: the first pass had both prongs
-        // curving forward off the end of the haft, which is a clamp rather than
-        // a tool; and a single flat poll seen from directly above has to face
-        // some fixed direction all the time, which reads as a mistake in a view
-        // that has no side to it. Symmetrical, it is legible from any angle.
-        // Both tips sweep BACK toward the user, the way a pick actually bites.
-        const pickHead = (len) => {
-            fill(96, 74, 46); rect(-8, -2.4, 9, 4.8, 1);       // butt behind the grip
-            push(); translate(len, 0);
-            for (const s of [-1, 1]) {
-                fill(66, 70, 76);
-                beginShape();                                  // the spike
-                vertex(3, -3 * s); vertex(3.6, -9.5 * s); vertex(1.2, -15 * s);
-                vertex(-6, -19 * s); vertex(-4.6, -14.5 * s); vertex(-2.4, -9.5 * s);
-                vertex(-3, -3 * s);
-                endShape(CLOSE);
-                fill(150, 156, 166);                           // ground edge, catching light
-                beginShape();
-                vertex(3.6, -9.5 * s); vertex(1.2, -15 * s); vertex(-6, -19 * s);
-                vertex(-4, -13.6 * s); vertex(0.4, -8.6 * s);
-                endShape(CLOSE);
-            }
-            fill(150, 156, 166); rect(-4.5, -4.5, 9, 9, 2);     // the eye
-            fill(206, 212, 222, 170); rect(-4.5, -4.5, 9, 2.4, 1);
-            pop();
-        };
 
         // --- STANDARD WEAPON & LEFT ARM LOGIC ---
         // THE FIX 1: We ONLY draw unarmed/sword arms if we are strictly !this.isArmed
@@ -10463,72 +10552,10 @@ if (this.isPlayer) {
 
             if (this.meleeTimer <= 0) {
                 // --- IDLE / WALKING ARMS ---
-                let swing = (typeof lS !== 'undefined') ? (lS / 12) : 0;
-                let lArmSwing = -swing;
-                let rArmSwing = swing;
-
-                // This used to hide a hand whenever the swing sat between two
-                // thresholds, as a stand-in for depth. Top-down there is no
-                // depth to stand in for -- the arms swing along the SIDE of the
-                // torso, not through it -- so all it did was blink the sword out
-                // twice a stride and leave an idle player (swing === 0) holding
-                // nothing. Now the arm is a real limb that is always on screen,
-                // pushed far enough out to clear the body, and the back half of
-                // the cycle is shaded instead of deleted.
-                const rest = this.isMoving ? 0 : sin(frameCount * 0.045);
-                const lHx = lArmSwing * 14, lHy = lSy - 3 - rest * 0.6;
-                const rHx = rArmSwing * 14, rHy = rSy + 3 + rest * 0.6;
-
-                const armLimb = (sy, hx, hy, back) => {
-                    const dx = hx, dy = hy - sy;
-                    const d = max(6, sqrt(dx * dx + dy * dy));
-                    push(); translate(0, sy); rotate(atan2(dy, dx));
-                    fill(this.shirtCol); ellipse(d * 0.45, 0, d + 12, 9);
-                    if (back) { fill(0, 0, 0, 46); ellipse(d * 0.45, 0, d + 12, 9); }
-                    pop();
-                };
-                armLimb(lSy, lHx, lHy, lArmSwing < 0);
-                armLimb(rSy, rHx, rHy, rArmSwing < 0);
-
-                // --- LEFT HAND ---
-                if (this.isPlayer && isChemist) {
-                    push(); translate(lHx, lHy); rotate(lArmSwing * 0.22);
-                    fill(80); rect(-4, -4, 16, 8, 2);
-                    fill(0, 255, 200); ellipse(12, 0, 6, 8);
-                    pop();
-                } else {
-                    fill(235, 180, 140); ellipse(lHx, lHy, 8, 8);
-                    if (lArmSwing < 0) { fill(0, 0, 0, 46); ellipse(lHx, lHy, 8, 8); }
-                }
-
-                // --- RIGHT HAND & MELEE TOOL ---
-                fill(235, 180, 140); ellipse(rHx, rHy, 8, 8);
-                if (rArmSwing < 0) { fill(0, 0, 0, 46); ellipse(rHx, rHy, 8, 8); }
-
-                if (armedMelee) {
-                    // Carried rather than presented: the haft rides outboard of
-                    // the hip so it never crosses the torso, trails as the arm
-                    // goes back, levels off as it comes forward, and breathes on
-                    // the spot when the player is standing still.
-                    push();
-                    translate(rHx, rHy);
-                    rotate(0.30 - rArmSwing * 0.26 + rest * 0.05);
-                    if (usingPick) {
-                        fill(122, 92, 56); rect(0, -2.5, 40, 5, 2);   // haft
-                        pickHead(40);
-                    } else {
-                        fill(90, 60, 30); rect(-9, -2.6, 10, 5.2, 2);  // grip
-                        fill(150, 120, 40); ellipse(-9, 0, 6, 6);      // pommel
-                        fill(180, 150, 40); rect(-1, -6, 4, 12, 1);    // guard
-                        fill(120);
-                        beginShape();                                  // tapered blade
-                        vertex(3, -3.2); vertex(38, -2.6); vertex(46, 0);
-                        vertex(38, 2.6); vertex(3, 3.2);
-                        endShape(CLOSE);
-                        fill(198, 202, 210, 200); rect(4, -1.2, 32, 1.6, 1);  // fuller
-                    }
-                    pop();
-                }
+                // The limbs and the trailing hand were drawn before the torso so
+                // the body could cover them; this is the leading hand and the
+                // held tool, on top. See the two-pass rig above the torso.
+                if (armPass) armPass(true);
 
             } else {
                 // --- SWORD VS PUNCH COMBO ---

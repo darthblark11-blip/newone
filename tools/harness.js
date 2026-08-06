@@ -59,6 +59,7 @@ const ctx = {
   PI: Math.PI, TWO_PI: Math.PI*2, HALF_PI: Math.PI/2, QUARTER_PI: Math.PI/4,
   CENTER:'center', CLOSE:'close', LEFT:'left', RIGHT:'right', TOP:'top', BOTTOM:'bottom',
   RADIUS:'radius', CORNER:'corner', CORNERS:'corners', BLEND:'blend',
+  CHORD:'chord', PIE:'pie', OPEN:'open', SQUARE:'square', ROUND:'round', PROJECT:'project',
   width: 1200, height: 800, frameCount: 100, deltaTime: 16, mouseX:0, mouseY:0,
   windowWidth:1200, windowHeight:800, touches: [], keyCode:0, key:'',
   frameRate(){ return 60; },
