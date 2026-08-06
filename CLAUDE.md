@@ -787,6 +787,37 @@ stays destroyed across a reload, and that the drop art draws. It needs `leftStic
 
 ---
 
+## Ballistics
+
+Two constants at the top of the file, read by `Bullet.init()`:
+
+```
+ENEMY_BULLET_SPEED  = 12.5   // every hostile round, whatever the weapon
+PLAYER_BULLET_SPEED = 35     // the player's and their allies' small arms
+```
+
+**A hostile round is always slower than the player's**, whatever it came out of — the
+player has to be able to read an incoming shot and step out of it, and that only works if
+every incoming round travels at one known speed.
+
+The rule is written as **"not on the player's side"**, not as a list of weapons. It used
+to be a special case for the enemy `PISTOL` alone, so every hostile carrying anything else
+fell through to the 25 default and out-ran it: NM-0's grey and tan riflemen at 25 with
+assault rifles, and Dry Gulch's bandit, cowboy and town cop at 25 with revolver and coach
+gun. Written by side, a hostile added later inherits the rule instead of needing to be
+remembered.
+
+`iP` is `isPlayer || isFriendly`, so an ally and a recruited townsperson keep the fast
+rounds — they are shooting *for* you. A neutral has `isFriendly` cleared by
+`turnBandGroup()` and the wake-up cascade in `takeDamage()`, so their fire slows at the
+same moment they become a threat, not before.
+
+Outside the rule on purpose: beams (`RED_LASER`/`PINK_LASER`/`ORANGE_BEAM`/`ALIEN_LASER`)
+at 9.8 — slower still, because the robot's beam is a tell; the rocket at 16 both ways; and
+the taser at 20. `tools/check-ballistics.js` sweeps every type that can shoot at you.
+
+---
+
 ## Construction
 
 The architecture department made visible. `BUILD` in the pause menu (gated on
@@ -1020,6 +1051,7 @@ node tools/check-resources.js      # harvestables, drops, the melee tool, persis
 node tools/check-robot.js          # a machine dies like a machine, on all six paths
 node tools/check-character.js      # the arm rig: hands present, and behind the body
 node tools/check-build.js          # blueprints, placement, build rate, the crew
+node tools/check-ballistics.js     # hostile rounds are always slower than the player's
 GAME_JS=/path/to/other.js node tools/check-generation.js    # compare against a baseline
 ```
 

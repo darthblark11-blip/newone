@@ -139,6 +139,12 @@ const SPARK_COL        = [255, 214, 140];
 let playerRespawnTimer = 0, prevGamepadButtons = [];
 let headshotCounter = 0, bodyOverkillCounter = 0, lightningCounter = 0; 
 
+// Muzzle velocities, in world units per frame. Two numbers rather than a
+// per-weapon field on purpose: what a round travels at is a readability rule
+// about who fired it, not a property of the gun. See Bullet.init().
+const ENEMY_BULLET_SPEED  = 12.5;   // every hostile round, whatever the weapon
+const PLAYER_BULLET_SPEED = 35;     // the player's and their allies' small arms
+
 const WEAPONS = {
   PISTOL: { name: "PISTOL", fireCooldown: 15, enemyCooldown: 48, maxAmmo: 17, bodyDmg: 20, headDmg: 100, spread: 0, pellets: 1 },
   SMG: { name: "MACHINE GUN", fireCooldown: 6, enemyCooldown: 48, maxAmmo: 30, bodyDmg: 20, headDmg: 50, spread: 0.1, pellets: 1 },
@@ -12085,11 +12091,28 @@ class Bullet {
     this.tetheredTarget = null;
     this.tetherTimer = 0;
 
-    let s = 25; 
-    if (this.isAlienLaser || this.isRedLaser || this.isPinkLaser || this.isOrangeBeam) { s = 9.8; } 
-    else if (this.isRocket) { s = 16; } 
-    else if (w === WEAPONS.PISTOL && !iP) { s = 12.5; } 
-    else if (iP && (w === WEAPONS.PISTOL || w === WEAPONS.SHOTGUN || w === WEAPONS.ASSAULT_RIFLE)) { s = 35; }
+    // Enemy fire is always slower than the player's, whatever is in their
+    // hands. The player has to be able to read an incoming round and step out
+    // of it, and that only works if hostile rounds travel at one known speed.
+    //
+    // This used to be written as a special case for the enemy PISTOL, so every
+    // hostile carrying anything else fell through to the 25 default and
+    // out-ran the rule -- NM-0's grey and tan riflemen at 25, and the bandit,
+    // the cowboy and the town cop at 25 with revolver and coach gun. It is
+    // written as "not on the player's side" now rather than as a list of
+    // weapons, so a hostile added later inherits the rule instead of needing
+    // to be remembered.
+    //
+    // `iP` is `isPlayer || isFriendly`, so an ally and a recruited townsperson
+    // keep the fast rounds -- they are shooting for you, not at you. A neutral
+    // who turns has isFriendly cleared by turnBandGroup() and the wake-up
+    // cascade in takeDamage(), so their fire slows down at the same moment
+    // they become a threat.
+    let s = 25;
+    if (this.isAlienLaser || this.isRedLaser || this.isPinkLaser || this.isOrangeBeam) { s = 9.8; }
+    else if (this.isRocket) { s = 16; }
+    else if (!iP) { s = ENEMY_BULLET_SPEED; }
+    else if (w === WEAPONS.PISTOL || w === WEAPONS.SHOTGUN || w === WEAPONS.ASSAULT_RIFLE) { s = PLAYER_BULLET_SPEED; }
     if (this.isTaser) s = 20;
 
     this.vx = cos(a) * s; this.vy = sin(a) * s; 
