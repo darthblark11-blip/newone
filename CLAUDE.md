@@ -141,6 +141,14 @@ Travel plumbing: `travelDestination`, `canTravel`, `travelBlockedReason`,
 `startExtraction`, `updateExtraction`, `arrivalAnchor`, `placePlayerAtAnchor`
 (~17802–17960).
 
+**The way in is the pause menu**, on the right half of the `CONTINUE` row and only while
+`inOverworldView`. It used to be a green button drawn over the play screen, and there were
+**three** hitboxes that started travel — that one, plus two with nothing drawn over them at
+all — so a stray tap while exploring could end the level. A button that ends a level does
+not belong on the play screen; the deliberate act of opening the pause menu is what the
+old press-and-hold timer on it was standing in for. `tools/check-menu.js` sweeps the whole
+unpaused overworld screen and asserts no tap anywhere starts travel.
+
 ### The overworld network (Sectors 1 and 2)
 
 Sits between the trail helpers and the chunk generator, and is read by **both**
@@ -1083,6 +1091,7 @@ node tools/check-robot.js          # a machine dies like a machine, on all six p
 node tools/check-character.js      # the arm rig: hands present, and behind the body
 node tools/check-build.js          # blueprints, placement, build rate, the crew
 node tools/check-ballistics.js     # hostile rounds are always slower than the player's
+node tools/check-menu.js           # travel lives in the pause menu, and nowhere else
 GAME_JS=/path/to/other.js node tools/check-generation.js    # compare against a baseline
 ```
 

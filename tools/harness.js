@@ -60,9 +60,11 @@ const ctx = {
   CENTER:'center', CLOSE:'close', LEFT:'left', RIGHT:'right', TOP:'top', BOTTOM:'bottom',
   RADIUS:'radius', CORNER:'corner', CORNERS:'corners', BLEND:'blend',
   CHORD:'chord', PIE:'pie', OPEN:'open', SQUARE:'square', ROUND:'round', PROJECT:'project',
+  NORMAL:'normal', BOLD:'bold', ITALIC:'italic', BOLDITALIC:'bolditalic', BASELINE:'baseline',
   width: 1200, height: 800, frameCount: 100, deltaTime: 16, mouseX:0, mouseY:0,
   windowWidth:1200, windowHeight:800, touches: [], keyCode:0, key:'',
-  frameRate(){ return 60; },
+  frameRate(){ return 60; }, keyIsDown(){ return false; }, keyIsPressed: false,
+  mouseIsPressed: false, movedX: 0, movedY: 0,
   dist(x1,y1,x2,y2){ return Math.hypot(x2-x1,y2-y1); },
   lerp(a,b,t){ return a+(b-a)*t; },
   constrain(v,a,b){ return v<a?a:v>b?b:v; },
@@ -90,13 +92,14 @@ for (const fn of ['push','pop','translate','rotate','scale','fill','noFill','str
   'beginShape','vertex','endShape','curveVertex','bezier','textAlign','textSize','textLeading',
   'textFont','background','clear','smooth','noSmooth','tint','noTint','rectMode','ellipseMode',
   'imageMode','angleMode','blendMode','cursor','noCursor','saveCanvas','strokeCap','strokeJoin',
+  'textStyle','textWrap','textWidth','textAscent','textDescent','curve','bezierVertex','curveTightness',
   'drawingContext','shearX','shearY','applyMatrix','resetMatrix','erase','noErase','circle','square']) {
   if (!(fn in ctx)) ctx[fn] = function(){};
 }
 ctx.drawingContext = mkG().drawingContext;
 ctx.document = { addEventListener(){}, removeEventListener(){}, body:{}, getElementById(){return null;},
   createElement(){ return { getContext(){ return {}; }, style:{}, appendChild(){} }; } };
-ctx.navigator = { userAgent: 'node', maxTouchPoints: 0 };
+ctx.navigator = { userAgent: 'node', maxTouchPoints: 0, getGamepads(){ return []; } };
 ctx.millis = () => 0;
 ctx.addEventListener = function(){};
 ctx.removeEventListener = function(){};

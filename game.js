@@ -4229,56 +4229,19 @@ else if (typeof viewingTownId !== 'undefined' && typeof townsData !== 'undefined
               trueGlobalPop += townsData[id].popTotal;
           }
       }
-      // Sync the global variable to match the data exactly
+      // Sync the global variable to match the data exactly. The readout that
+      // used to sit on top of this is gone -- see below -- but the sum is not
+      // just for display: globalPopulation is read elsewhere.
       globalPopulation = trueGlobalPop;
 
-      fill(0, 150); noStroke();
-      rect(20, 120, 280, 200, 10); // Made slightly taller to fit the extra line
-      
-      fill(255); textAlign(LEFT, TOP); textFont('sans-serif'); textSize(18);
-      text("TOWN OVERVIEW", 35, 135);
-      
-      fill(200); textSize(12);
-      text(`LOCAL POPULATION: ${popTotal}`, 35, 165);
-      
-      fill(50, 255, 50); // Colored green to stand out
-      text(`GLOBAL POPULATION: ${globalPopulation}`, 35, 185);
-      
-      fill(255, 200, 0);
-      text(`VITALITY: Lv.${statVit}`, 35, 210);
-      text(`MENTAL: Lv.${statMen}`, 35, 230);
-      text(`PHYSICAL: Lv.${statPhy}`, 35, 250);
-      text(`OBEDIENCE: Lv.${statObe}`, 35, 270);
-      text(`INTELLIGENCE: Lv.${statInt}`, 35, 290);
-
-      fill(50, 200, 50); stroke(255); strokeWeight(2);
-      rect(width - 220, height - 80, 200, 50, 8);
-      fill(0); noStroke(); textAlign(CENTER, CENTER); textSize(16); 
-      text("TRAVEL", width - 120, height - 55);
-      // --- PROCEED SOUTH or north BUTTON CLICK LOGIC ---
-      let ovPressing = mouseIsPressed || (typeof touches !== 'undefined' && touches.length > 0);
-      if (!ovPressing) window.overworldTimer = 0;
-      else if (window.overworldTimer === undefined) window.overworldTimer = 1;
-      else window.overworldTimer++;
-
-              // Only allow clicking the travel button after being in the overworld view for at least 30 frames (half a second)
-    if (typeof window.overworldTimer !== 'undefined' && window.overworldTimer > 500) { 
-        let omx = typeof touches !== 'undefined' && touches.length > 0 ? touches[0].x : mouseX;
-        let omy = typeof touches !== 'undefined' && touches.length > 0 ? touches[0].y : mouseY;
-        
-        if (omx > width - 220 && omx < width - 20 && omy > height - 80 && omy < height - 30) {
-            inOverworldView = false;
-            inTravelMenu = true;
-            travelDirection = null;
-            window.militaryToBringM = 0;
-            window.militaryToBringF = 0;
-            sfx.charge();
-        }
-    }
-
-
-}
+      // The TOWN OVERVIEW panel and the TRAVEL button both used to be drawn
+      // here, over the live world. Travel now lives in the pause menu beside
+      // CONTINUE, which is the point: a button on the play screen is a button
+      // you press by accident while exploring, and this one ends the level.
+      // The press-and-hold timer that used to guard it went with it -- opening
+      // the pause menu is the deliberate act that guard was standing in for.
   }
+}
 
 
   if (isPaused) {
@@ -4286,9 +4249,23 @@ else if (typeof viewingTownId !== 'undefined' && typeof townsData !== 'undefined
       let drawBtn = (y, txt) => { fill(40); stroke(255, 200, 0); strokeWeight(2); rect(width/2 - 120, y, 240, 40, 8); fill(255); noStroke(); textSize(16); text(txt, width/2, y + 20); };
       
                                  if (pauseMenuState === "MAIN") {
-          fill(255); textSize(40); text("PAUSED", width/2, height/2 - 260); 
-          drawBtn(height/2 - 210, "CONTINUE"); 
-          drawBtn(height/2 - 160, "SAVE GAME"); 
+          fill(255); textSize(40); text("PAUSED", width/2, height/2 - 260);
+          // TRAVEL takes the right half of the CONTINUE row, and only while the
+          // overworld is open. Beside CONTINUE rather than in the stack because
+          // it is the one button here that ends the level -- it wants its own
+          // place, not a slot in a column of identical yellow buttons.
+          if (inOverworldView) {
+              const ty = height/2 - 210, hw = 114;
+              fill(40); stroke(255, 200, 0); strokeWeight(2);
+              rect(width/2 - 120, ty, hw, 40, 8);
+              fill(255); noStroke(); textSize(15); text("CONTINUE", width/2 - 120 + hw/2, ty + 20);
+              fill(50, 200, 50); stroke(255); strokeWeight(2);
+              rect(width/2 + 6, ty, hw, 40, 8);
+              fill(0); noStroke(); textSize(15); text("TRAVEL", width/2 + 6 + hw/2, ty + 20);
+          } else {
+              drawBtn(height/2 - 210, "CONTINUE");
+          }
+          drawBtn(height/2 - 160, "SAVE GAME");
           
       // --- DRAW MELEE SWITCHER BUTTON ---
 if (swordPickedUp || window.pickaxeOwned) {
@@ -13137,7 +13114,22 @@ function touchStarted() {
 
                                   if (pauseMenuState === "MAIN") {
               if (mx > btnX && mx < btnX + btnW) {
-                  if (my > height/2 - 210 && my < height/2 - 170) { isPaused = false; window.lastPauseTime = millis(); return false; } 
+                  if (my > height/2 - 210 && my < height/2 - 170) {
+                      // Right half of this row is TRAVEL while the overworld is
+                      // open; the whole row is CONTINUE otherwise.
+                      if (inOverworldView && mx > width/2 + 6) {
+                          isPaused = false;
+                          inOverworldView = false;
+                          inTravelMenu = true;
+                          travelDirection = null;
+                          window.militaryToBringM = 0;
+                          window.militaryToBringF = 0;
+                          window.lastPauseTime = millis();
+                          sfx.charge();
+                          return false;
+                      }
+                      isPaused = false; window.lastPauseTime = millis(); return false;
+                  }
                   if (my > height/2 - 160 && my < height/2 - 120) { saveGame(); isPaused = false; window.lastPauseTime = millis(); return false; } 
                   
                   // --- NEW TOGGLE HITBOX ---
@@ -13422,15 +13414,10 @@ else if (typeof inOverworldView !== 'undefined' && inOverworldView) {
         }
     }
 
-    if (mx > width/2 - 120 && mx < width/2 + 120 && my > height - 90 && my < height - 40) {
-        if (typeof saveTownData === 'function') saveTownData(viewingTownId);
-        inOverworldView = false;
-        inTravelMenu = true;
-        travelDirection = null;
-        militaryToBring = 0;
-        if (typeof sfx !== 'undefined' && sfx.charge) sfx.charge();
-        return false; 
-    }
+    // A second travel hitbox used to sit here, bottom-centre, with nothing
+    // drawn over it in this view -- an invisible button that ended the level.
+    // Travel is in the pause menu now and this was the same accident waiting to
+    // happen, so it is gone with the visible one.
 }
 
 // --- NEW TRAVEL MENU HITBOXES ---
@@ -13522,16 +13509,11 @@ if (inOverworldView) {
             return false;
         }
     }
-   // TRAVEL Button (Bottom Right) -> Opens Travel Menu
-    if (mx > width - 220 && mx < width - 20 && my > height - 80 && my < height - 30) {
-        saveTownData(viewingTownId);
-        inOverworldView = false;
-        inTravelMenu = true;
-        travelDirection = null;
-        militaryToBring = 0;
-        sfx.charge();
-        return false; 
-    }
+   // The bottom-right TRAVEL hitbox lived here, matching the green button that
+   // used to be drawn over the play screen. Both are gone -- travel is in the
+   // pause menu beside CONTINUE now. There were three of these entry points in
+   // all, two of them with nothing drawn over them, which is why a stray tap
+   // while exploring could end the level.
 }
 // ^ ^ ^ ^ ^ STOP HIGHLIGHTING HERE ^ ^ ^ ^ ^
 
