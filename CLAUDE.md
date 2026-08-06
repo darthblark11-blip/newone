@@ -698,6 +698,81 @@ the second call is free.
 
 ---
 
+## Resources and harvesting
+
+Three materials — `WOOD`, `METAL`, `STONE` — held in `window.resources`, earned by taking
+the world apart. The whole system sits in one block immediately above
+`updateHealthPacks()` (~4728–4960), on purpose: pickups already had a working shape there
+(`updateHealthPacks`, `updateWeaponDrops` — which does exist and is called from `draw()`
+at ~3562, despite its stray leading tab) and resource drops are the same idea with a
+different payload.
+
+```
+RESOURCE_KINDS / RESOURCE_DEF        // label + col/edge/lit per material
+resourceCount(kind) / addResource(kind, qty)
+spawnResourceDrop(x, y, kind, qty)   // splits into up to 4 stacks, scattered 18..54
+updateResourceDrops()                // MAGNET 150 draw-in, TAKE 34 pickup, 3600f life
+harvestProfile(b) / damageHarvestable(b, amount)
+HARVEST_YIELD / HARVEST_SWING
+meleeTool() / meleeToolOptions() / setMeleeTool(t) / cycleMeleeTool()
+```
+
+### What is harvestable
+
+`harvestProfile(b)` is the single question — it answers `null` for anything that isn't,
+and caches the answer on `b.__hv` so the melee sweep can ask it of every solid in range
+without recomputing. Three sources:
+
+- `isTreeTrunk` → **wood**, `3 + girth * 9`. `girth` is set by the woodland generator and
+  is also the decor entry's scale, so **the tree you see is the tree you're paid for** —
+  a fat oak is worth more than a snag because it is visibly bigger.
+- `isRock` → **stone**, by area.
+- `propType` in `HARVEST_YIELD` → `LOGPILE` wood; `BOULDER`/`MONOLITH`/`RUINWALL`/`SPOIL`
+  stone; `MATERIALS`/`BARGE`/`WRECK` metal. Densities differ per prop because they are not
+  all solid mass — a barge is a hull, a monolith is rock all the way through.
+- Robots drop 5–15 metal from `processKill`, before anything else in that function runs.
+
+Yield is clamped to 40 and **work scales with it** (`60 + amount * 9`), so a pick clears
+anything in 1–5 swings and the payout, not a separate hp number, is what makes a monolith
+a job.
+
+`damageHarvestable(b, amount)` is the only way in, so a pick, a rifle round and a rocket
+all take the same path and the drop can fire exactly once. On death it also removes the
+canopy decor for a felled tree (otherwise the crown hangs in the air), and calls
+`markPropDestroyed(currentBiome, b.chunkKey)` — **which is why `generateChunkContent()`
+stamps `chunkKey` onto every solid before the destroyed-strip runs.** That ordering is
+load-bearing: `hitsAuthored()` renumbers the array afterwards, so a key assigned later
+would point at a different prop when the chunk reloads.
+
+### The melee tool
+
+`window.meleeToolSel` is `"NONE" | "SWORD" | "PICKAXE"`, cycled from the existing melee
+button in the pause menu. `setMeleeTool()` keeps `window.swordEquipped` derived from it,
+so every existing swing, animation and damage branch works unchanged — the pickaxe is a
+third value of a flag that already existed, not a parallel system.
+
+`HARVEST_SWING = { PICKAXE: 100, SWORD: 26, NONE: 7 }` against harvestables; against
+people the pick does 120 to the sword's 200. It is a tool that can be used as a weapon,
+which is the trade the player is choosing between.
+
+`window.pickaxeOwned` defaults true — set it false to gate the pick behind a pickup. The
+harvest sweep runs at the `meleeTimer === 10` frame, guarded by `this.isPlayer`, and walks
+`activeBuildings` **backwards** because `damageHarvestable` splices out of it.
+
+### Inventory
+
+Dad's Tablet is now five buttons (`height/2 - 100` through `+100`, hitboxes to match) and
+`pauseMenuState === "INVENTORY"` draws a swatch, label and count per material. Resources,
+`pickaxeOwned` and `meleeToolSel` all round-trip through `saveGame`/`loadGame`.
+
+`node tools/check-resources.js` asserts the world is worth something (harvestable solids
+by kind), that a swing takes a prop apart in the expected number of hits, that the drop is
+collected, that a fist and a pick differ, that robots are salvage, that a destroyed prop
+stays destroyed across a reload, and that the drop art draws. It needs `leftStick` /
+`rightStick` stubbed before `player.show()` — a harness gap, not a game bug.
+
+---
+
 ## Working rules for this repo
 
 1. **Read the surrounding comments first.** This file documents its own performance
@@ -745,6 +820,7 @@ node tools/check-render.js         # live draw path at four times of day, hybrid
 node tools/check-population.js     # the Sector 1/2 story roster and what it converts to
 node tools/check-saveload.js       # save/load round trip
 node tools/check-cutscene.js       # scripted placement stays inside the sector
+node tools/check-resources.js      # harvestables, drops, the melee tool, persistence
 GAME_JS=/path/to/other.js node tools/check-generation.js    # compare against a baseline
 ```
 

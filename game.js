@@ -73,6 +73,16 @@ let militaryToBring = 0;
 window.northGateBreached = false;
 window.southGateBreached = false;
 window.militaryToBring = 0; // Carries over to level 2
+// --- RESOURCES ---
+// Materials the player harvests out of the world. Held on window so the town
+// systems, the tablet inventory and the save all read one object.
+window.resources = { WOOD: 0, METAL: 0, STONE: 0 };
+// The pickaxe is a tool rather than a weapon reward, so it is owned from the
+// start -- the resource system is unreachable without it. Set this false and
+// grant it somewhere to make it something the player has to find.
+window.pickaxeOwned = true;
+window.meleeToolSel = "NONE";
+
 let globalPopulation = 0;
 let popTotal = 0;
 let popUnassigned = 0;
@@ -422,7 +432,7 @@ if (isStoryMode) {
     pauseMenuState = "MAIN";
 	
     started = true; isDead = false; isWin = false; killStreak = 0; screenShake = 0;
-    bullets = []; particles = []; splatters = []; corpses = []; enemiesList = []; barrels = []; orbs = []; grenades = []; fires = []; sludges = []; healthPacks = []; weaponDrops = [];
+    bullets = []; particles = []; splatters = []; corpses = []; enemiesList = []; barrels = []; orbs = []; grenades = []; fires = []; sludges = []; healthPacks = []; weaponDrops = []; resourceDrops = [];
     grenadePickups = []; 
   
     generateMap(); 
@@ -3551,6 +3561,7 @@ viewBottom = camY + height / zoom + shakePad;
 
   if (typeof updateWeaponDrops === 'function') updateWeaponDrops(); 
   if (typeof updateHealthPacks === 'function') updateHealthPacks(); 
+  if (typeof updateResourceDrops === 'function') updateResourceDrops(); 
   if (typeof updateGrenadePickups === 'function') updateGrenadePickups();
   for (let i = barrels.length - 1; i >= 0; i--) {
     let b = barrels[i]; if (inView(b.x, b.y, 50)) { fill(200, 30, 30); stroke(100, 0, 0); strokeWeight(2); ellipse(b.x, b.y, 24, 24); fill(40); noStroke(); ellipse(b.x, b.y, 16, 16); fill(255, 70); noStroke(); ellipse(b.x - 4, b.y - 4, 8, 8); }
@@ -4248,14 +4259,9 @@ else if (typeof viewingTownId !== 'undefined' && typeof townsData !== 'undefined
           drawBtn(height/2 - 160, "SAVE GAME"); 
           
       // --- DRAW MELEE SWITCHER BUTTON ---
-if (swordPickedUp) {
-    // If it's not explicitly false, assume it's true (equipped)
-    let isEquipped = (window.swordEquipped !== false); 
-    
-    // Set the text based on our new variable, NOT player.isArmed!
-    let meleeText = isEquipped ? "MELEE: SWORD" : "MELEE: UNARMED";
-    
-    drawBtn(height/2 - 110, meleeText);
+if (swordPickedUp || window.pickaxeOwned) {
+    const _mt = meleeTool();
+    drawBtn(height/2 - 110, "MELEE: " + (_mt === "NONE" ? "UNARMED" : _mt));
 } else {
 
               fill(30); stroke(100); strokeWeight(2); rect(width/2 - 120, height/2 - 110, 240, 40, 8); 
@@ -4550,7 +4556,39 @@ else if (typeof viewingTownId !== 'undefined' && typeof townsData !== 'undefined
           drawUpgradeMenu();
       } 
       else if (pauseMenuState === "TABLET") {
-          fill(0, 150, 255); textSize(40); text("DAD'S TABLET", width/2, height/2 - 150); drawBtn(height/2 - 90, "SUIT AUGMENTS"); drawBtn(height/2 - 30, "WEAPONS"); drawBtn(height/2 + 30, "JOURNAL"); drawBtn(height/2 + 90, "BACK");
+          fill(0, 150, 255); textSize(40); text("DAD'S TABLET", width/2, height/2 - 150);
+          drawBtn(height/2 - 100, "SUIT AUGMENTS");
+          drawBtn(height/2 - 50, "WEAPONS");
+          drawBtn(height/2, "INVENTORY");
+          drawBtn(height/2 + 50, "JOURNAL");
+          drawBtn(height/2 + 100, "BACK");
+      } 
+      else if (pauseMenuState === "INVENTORY") {
+          // Materials on hand. One row per resource with the same swatch the
+          // pickup uses, so what you walked over and what you own read as the
+          // same thing.
+          fill(210, 180, 110); textSize(30); text("INVENTORY", width/2, height/2 - 150);
+          let iy = height/2 - 88;
+          for (const k of RESOURCE_KINDS) {
+              const c = RESOURCE_DEF[k];
+              noStroke(); fill(20, 22, 26); rect(width/2 - 150, iy - 16, 300, 34, 6);
+              fill(c.col[0], c.col[1], c.col[2]);
+              stroke(c.edge[0], c.edge[1], c.edge[2]); strokeWeight(2);
+              rect(width/2 - 138, iy - 9, 20, 20, 4);
+              noStroke(); fill(c.lit[0], c.lit[1], c.lit[2], 170);
+              rect(width/2 - 138, iy - 9, 20, 6, 3);
+              fill(225); textAlign(LEFT, CENTER); textSize(17);
+              text(c.label, width/2 - 104, iy + 1);
+              fill(255, 210, 120); textAlign(RIGHT, CENTER); textSize(20);
+              text(resourceCount(k), width/2 + 136, iy + 1);
+              textAlign(CENTER, CENTER);
+              iy += 46;
+          }
+          fill(130); textSize(13);
+          text(window.pickaxeOwned ? "Equip the PICKAXE from the pause menu to mine faster."
+                                   : "Find a pickaxe to harvest properly.",
+               width/2, iy + 10);
+          drawBtn(height/2 + 120, "BACK");
       } 
       else if (pauseMenuState === "AUGMENTS") {
           fill(0, 200, 100); textSize(30); text("SUIT AUGMENTS", width/2, height/2 - 150); fill(255); textSize(18); text("🛡️ SHIELD - Level 1", width/2, height/2 - 80); text("⚡ RECHARGEABLE - Level 1", width/2, height/2 - 40); drawBtn(height/2 + 120, "BACK");
@@ -4674,6 +4712,253 @@ else if (typeof viewingTownId !== 'undefined' && typeof townsData !== 'undefined
   }
 }
 
+// ###########################################################################
+//  RESOURCES
+//
+//  Materials the player harvests out of the world and spends in the town
+//  systems. Three of them, deliberately: wood from anything that grew, stone
+//  from anything quarried, metal from anything NM-0 built. A fourth would need
+//  a fourth source, and every source has to be a thing already standing in the
+//  world or it is a spawner wearing a costume.
+//
+//  Drops use the same shape as health packs and weapon drops -- a flat array,
+//  one update function that both draws and collects, called once from draw().
+//  Nothing here is per-entity state, so a drop costs nothing until it exists.
+// ###########################################################################
+const RESOURCE_KINDS = ["WOOD", "METAL", "STONE"];
+const RESOURCE_DEF = {
+  WOOD:  { label: "WOOD",  col: [142, 98, 52],   edge: [88, 58, 30],  lit: [186, 142, 88] },
+  METAL: { label: "METAL", col: [150, 156, 166], edge: [86, 92, 102], lit: [206, 212, 222] },
+  STONE: { label: "STONE", col: [138, 134, 124], edge: [82, 80, 74],  lit: [182, 178, 166] }
+};
+let resourceDrops = [];
+
+// ---------------------------------------------------------------------------
+// MELEE TOOL
+// Three states rather than the sword's original two, cycled from the pause
+// menu. window.swordEquipped stays the source of truth for "is the sword in
+// hand" because half a dozen places in the combat and animation code already
+// read it; meleeTool() is the wider question, and the two are kept in step by
+// setMeleeTool() so neither can drift.
+// ---------------------------------------------------------------------------
+function meleeTool() {
+  if (window.meleeToolSel === "PICKAXE" && window.pickaxeOwned) return "PICKAXE";
+  if (typeof swordPickedUp !== 'undefined' && swordPickedUp && window.swordEquipped !== false) return "SWORD";
+  return "NONE";
+}
+function meleeToolOptions() {
+  const out = ["NONE"];
+  if (typeof swordPickedUp !== 'undefined' && swordPickedUp) out.push("SWORD");
+  if (window.pickaxeOwned) out.push("PICKAXE");
+  return out;
+}
+function setMeleeTool(t) {
+  window.meleeToolSel = t;
+  // The sword flag is what the swing code and the hand art read. Keeping it
+  // derived here means adding a tool never needs those touched again.
+  window.swordEquipped = (t === "SWORD");
+}
+function cycleMeleeTool() {
+  const opts = meleeToolOptions();
+  if (opts.length < 2) return;
+  const cur = meleeTool();
+  setMeleeTool(opts[(opts.indexOf(cur) + 1) % opts.length]);
+}
+// How hard a swing hits a harvestable. The pick is the tool; a blade takes
+// chips out of a tree and a fist does almost nothing, which is the whole
+// argument for carrying one.
+const HARVEST_SWING = { PICKAXE: 100, SWORD: 26, NONE: 7 };
+
+function resourceCount(kind) {
+  if (!window.resources) window.resources = { WOOD: 0, METAL: 0, STONE: 0 };
+  return window.resources[kind] || 0;
+}
+function addResource(kind, qty) {
+  if (!RESOURCE_DEF[kind] || !(qty > 0)) return 0;
+  if (!window.resources) window.resources = { WOOD: 0, METAL: 0, STONE: 0 };
+  window.resources[kind] = (window.resources[kind] || 0) + qty;
+  return window.resources[kind];
+}
+
+// Dropped in stacks rather than one pickup per unit. Twelve wood is three
+// bundles you walk over, not twelve pickups to hoover up one at a time.
+function spawnResourceDrop(x, y, kind, qty) {
+  if (!RESOURCE_DEF[kind] || !(qty > 0)) return;
+  const stacks = Math.max(1, Math.min(4, Math.round(qty / 4)));
+  const per = Math.floor(qty / stacks);
+  let left = qty;
+  for (let i = 0; i < stacks; i++) {
+    const amount = (i === stacks - 1) ? left : per;
+    left -= amount;
+    if (amount <= 0) continue;
+    const a = random(TWO_PI), d = random(18, 54);
+    resourceDrops.push({
+      x: x + Math.cos(a) * d, y: y + Math.sin(a) * d,
+      kind: kind, qty: amount, life: 3600, r: random(TWO_PI)
+    });
+  }
+}
+
+function updateResourceDrops() {
+  const MAGNET = 150, TAKE = 34;
+  for (let i = resourceDrops.length - 1; i >= 0; i--) {
+    const d = resourceDrops[i];
+    if (doTick && d.life !== undefined) { d.life--; if (d.life <= 0) { resourceDrops.splice(i, 1); continue; } }
+
+    if (player && player.hp > 0) {
+      const dx = player.x - d.x, dy = player.y - d.y;
+      const dd = Math.hypot(dx, dy);
+      // Drift in once the player is near. Without this a bundle that landed
+      // behind a trunk is a chore rather than a reward, and the whole point of
+      // harvesting is that it should feel like being paid.
+      if (dd < MAGNET && doTick) {
+        const pull = 1 - dd / MAGNET;
+        d.x += (dx / (dd || 1)) * (1.2 + pull * 6);
+        d.y += (dy / (dd || 1)) * (1.2 + pull * 6);
+      }
+      if (dd < TAKE) {
+        addResource(d.kind, d.qty);
+        const c = RESOURCE_DEF[d.kind];
+        emit(d.x, d.y, 8, color(c.lit[0], c.lit[1], c.lit[2]), "SPARK");
+        floatingScores.push({ y: 100, text: "+" + d.qty + " " + c.label, life: 80, maxLife: 80 });
+        if (sfx && sfx.reload) sfx.reload();
+        resourceDrops.splice(i, 1);
+        continue;
+      }
+    }
+
+    if (!inView(d.x, d.y, 60)) continue;
+    const c = RESOURCE_DEF[d.kind];
+    push(); translate(d.x, d.y);
+    translate(0, Math.sin(frameCount * 0.05 + d.r) * 4);
+    // Contact shadow first, on the same light vector as everything else, so a
+    // bundle sits on the ground rather than hovering over it.
+    noStroke(); fill(0, 0, 0, 60);
+    ellipse(LIGHT_DX * 6, LIGHT_DY * 6 + 7, 22, 10);
+    rotate(d.r);
+    if (d.kind === "WOOD") {
+      // A short bundle of split logs, banded.
+      for (let k = -1; k <= 1; k++) {
+        fill(c.col[0], c.col[1], c.col[2]); stroke(c.edge[0], c.edge[1], c.edge[2]); strokeWeight(1.5);
+        rect(-10, k * 5 - 2.5, 20, 5, 2);
+        noStroke(); fill(c.lit[0], c.lit[1], c.lit[2], 150);
+        ellipse(9, k * 5, 3.4, 4);
+      }
+      noStroke(); fill(70, 58, 40); rect(-2, -9, 4, 18, 1);
+    } else if (d.kind === "METAL") {
+      // Salvaged plate, stacked and dented.
+      for (let k = 0; k < 3; k++) {
+        fill(c.col[0] - k * 12, c.col[1] - k * 12, c.col[2] - k * 12);
+        stroke(c.edge[0], c.edge[1], c.edge[2]); strokeWeight(1.4);
+        rect(-9 + k * 1.5, -7 + k * 4, 18 - k * 3, 7, 1);
+      }
+      noStroke(); fill(c.lit[0], c.lit[1], c.lit[2], 170);
+      rect(-8, -6.5, 16, 1.6, 1);
+    } else {
+      // Broken stone, faceted so it does not read as a pebble.
+      stroke(c.edge[0], c.edge[1], c.edge[2]); strokeWeight(1.5);
+      fill(c.col[0], c.col[1], c.col[2]);
+      beginShape();
+      for (let k = 0; k < 6; k++) {
+        const a = (k / 6) * TWO_PI;
+        const rr = 9 + ((k * 37) % 5);
+        vertex(Math.cos(a) * rr, Math.sin(a) * rr * 0.8);
+      }
+      endShape(CLOSE);
+      noStroke(); fill(c.lit[0], c.lit[1], c.lit[2], 130);
+      ellipse(-LIGHT_DX * 3, -LIGHT_DY * 3, 8, 6);
+    }
+    pop();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// HARVESTABLES
+//
+// What a piece of the world is worth, and how much work it takes to get it.
+// Resolved lazily off flags the world already carries rather than assigned at
+// generation, so it covers the streamed chunks, the hand-authored maps and
+// anything added later without a second place to keep in step.
+//
+// Yield scales with footprint, which is what makes a monolith worth more than
+// a boulder and a full-grown tree worth more than a sapling. Trees carry their
+// canopy scale as `girth` because every trunk collides at the same 34x34 -- the
+// tree the player can see is the decor entry, and that is the one with a size.
+// ---------------------------------------------------------------------------
+const HARVEST_YIELD = {
+  LOGPILE:   { kind: "WOOD",  dens: 0.0016 },
+  BOULDER:   { kind: "STONE", dens: 0.0013 },
+  MONOLITH:  { kind: "STONE", dens: 0.0130 },
+  RUINWALL:  { kind: "STONE", dens: 0.0011 },
+  SPOIL:     { kind: "STONE", dens: 0.0011 },
+  MATERIALS: { kind: "METAL", dens: 0.0016 },
+  BARGE:     { kind: "METAL", dens: 0.0009 },
+  WRECK:     { kind: "METAL", dens: 0.0022 }
+};
+
+function harvestProfile(b) {
+  if (!b) return null;
+  if (b.__hv !== undefined) return b.__hv;
+  let kind = null, amount = 0;
+  if (b.isTreeTrunk) {
+    kind = "WOOD";
+    amount = Math.round(3 + (b.girth || 1) * 9);
+  } else if (b.isRock) {
+    kind = "STONE";
+    amount = Math.max(3, Math.round((b.w || 40) * (b.h || 40) * 0.0013));
+  } else if (b.propType && HARVEST_YIELD[b.propType]) {
+    const h = HARVEST_YIELD[b.propType];
+    kind = h.kind;
+    amount = Math.max(3, Math.round((b.w || 40) * (b.h || 40) * h.dens));
+  }
+  if (!kind) { b.__hv = null; return null; }
+  amount = Math.min(40, amount);
+  // Work scales with the payout, so a monolith is a job and a sapling is two
+  // swings. A pick does 100 a hit, so this is 1-5 swings across the range.
+  const work = 60 + amount * 9;
+  b.__hv = { kind: kind, yield: amount, hp: work, maxHp: work };
+  return b.__hv;
+}
+
+// One entry point, so a pick, a rifle round and a rocket all take the same path
+// into a harvestable and the drop can only happen once.
+function damageHarvestable(b, amount) {
+  const hv = harvestProfile(b);
+  if (!hv || amount <= 0) return false;
+  hv.hp -= amount;
+  b.hitFlash = 4;
+  const c = RESOURCE_DEF[hv.kind];
+  emit(b.x, b.y, 4, color(c.col[0], c.col[1], c.col[2]), "CHIP");
+  if (hv.hp > 0) return true;
+
+  spawnResourceDrop(b.x, b.y, hv.kind, hv.yield);
+  emit(b.x, b.y, 16, color(c.lit[0], c.lit[1], c.lit[2]), "DUST");
+  if (sfx && sfx.hitArmor) sfx.hitArmor();
+
+  // A felled tree loses its canopy too, or the wood walks off and the crown
+  // stays hanging in the air.
+  if (b.isTreeTrunk && chunkMgr) {
+    for (const ch of chunkMgr.chunks.values()) {
+      for (let i = ch.decor.length - 1; i >= 0; i--) {
+        const d = ch.decor[i];
+        if ((d.t === "TREE" || d.t === "PINE" || d.t === "SNAG") &&
+            Math.abs(d.x - b.x) < 6 && Math.abs(d.y - b.y) < 6) ch.decor.splice(i, 1);
+      }
+    }
+  }
+  // Remembered, so it does not grow back when the chunk reloads. Chunk solids
+  // carry the key the generator will strip them by; authored ones are handled
+  // by syncAuthoredRemovals() picking up the removal from buildings[].
+  if (b.chunkKey && typeof markPropDestroyed === 'function' && BIOME_ACTIVE) {
+    markPropDestroyed(currentBiome, b.chunkKey);
+  }
+  const bi = buildings.indexOf(b);
+  if (bi > -1) buildings.splice(bi, 1);
+  const ai = activeBuildings.indexOf(b);
+  if (ai > -1) activeBuildings.splice(ai, 1);
+  return true;
+}
+
 function updateHealthPacks() {
   for (let i = healthPacks.length - 1; i >= 0; i--) {
     let hpk = healthPacks[i];
@@ -4764,6 +5049,9 @@ function storyBeatDone(name) {
 
 function resetStoryProgress() {
     window.storyBeats = {};
+    window.resources = { WOOD: 0, METAL: 0, STONE: 0 };
+    window.meleeToolSel = "NONE";
+    window.swordEquipped = false;
     window.northGateBreached = false;
     window.northGateBreachedStatus = false;
     window.southGateBreachedStatus = false;
@@ -8234,7 +8522,10 @@ this.skeletonTimer = 0;
 
       // 1. CHECK IF WE WANT TO USE THE SWORD
       // True ONLY IF the sword is picked up in the world AND the pause menu hasn't disabled it.
-      let usingSword = (typeof swordPickedUp !== 'undefined' && swordPickedUp) && (window.swordEquipped !== false);
+      // Anything in the hand swings on the armed arcs. A pick is not a fist.
+      let usingSword = this.isPlayer
+          ? (typeof meleeTool === 'function' && meleeTool() !== "NONE")
+          : ((typeof swordPickedUp !== 'undefined' && swordPickedUp) && (window.swordEquipped !== false));
     
       // --- DECOUPLED COMBO INITIALIZATION ---
       if (!usingSword) {
@@ -8277,7 +8568,10 @@ this.skeletonTimer = 0;
           if (bestTarget) this.aimAngle = atan2(bestTarget.y - this.y, bestTarget.x - this.x);
       }
 
-      let usingSword = (typeof swordPickedUp !== 'undefined' && swordPickedUp) && (window.swordEquipped !== false);
+      // Anything in the hand swings on the armed arcs. A pick is not a fist.
+      let usingSword = this.isPlayer
+          ? (typeof meleeTool === 'function' && meleeTool() !== "NONE")
+          : ((typeof swordPickedUp !== 'undefined' && swordPickedUp) && (window.swordEquipped !== false));
 
       if (!usingSword) {
           // UNARMED 4-HIT COMBO
@@ -8565,14 +8859,28 @@ this.skeletonTimer = 0;
       }
              else if (this.meleePhase !== 4 && this.meleeTimer === 10) { 
           screenShake = 12; 
+          // A swing lands on the world as well as on people. Same arc, same
+          // frame of the animation, so chopping and fighting are one action
+          // rather than two systems that happen to share a button.
+          if (this.isPlayer && typeof damageHarvestable === 'function') {
+              const swing = HARVEST_SWING[meleeTool()] || 7;
+              for (let n = activeBuildings.length - 1; n >= 0; n--) {
+                  const hb = activeBuildings[n];
+                  if (!hb || !harvestProfile(hb)) continue;
+                  const hd = dist(this.x, this.y, hb.x, hb.y);
+                  if (hd > 78 + Math.max(hb.w || 0, hb.h || 0) * 0.5) continue;
+                  const ha = (atan2(hb.y - this.y, hb.x - this.x) - this.aimAngle + PI * 3) % TWO_PI - PI;
+                  if (abs(ha) > PI / 2 && hd > 44) continue;
+                  damageHarvestable(hb, swing);
+              }
+          }
           for (let e of enemiesList) { 
                                 let mR = e.eType === "ARMORED" || e.eType === "ALIEN_GATOR" || e.eType === "SAUCER" || e.eType === "SAUCER_RED" || e.eType === "SNAIL_HYBRID" ? 110 : 70; 
                   
                   // ---> THE FIX: Calculate damage based on equipped weapon, NOT graphic state
                   let isFistAttack = false;
                   if (this.isPlayer) {
-                      let usingSword = (typeof swordPickedUp !== 'undefined' && swordPickedUp && window.swordEquipped !== false);
-                      isFistAttack = !usingSword; // If not using sword, it's a fist
+                      isFistAttack = (typeof meleeTool !== 'function') || meleeTool() === "NONE";
                   } else {
                       isFistAttack = !this.isArmed; // Keep enemy logic identical
                   }
@@ -8594,7 +8902,12 @@ this.skeletonTimer = 0;
                                   sfx.charge(); // Audio cue for stun
                               }
                           } else {
-                              e.takeDamage(200); // Sword deals 100 damage!
+                              // A pick is a heavy tool, not a weapon: it hits
+                              // the world far harder than a blade and people
+                              // rather less.
+                              const _mp = (this.isPlayer && typeof meleeTool === 'function' &&
+                                           meleeTool() === "PICKAXE");
+                              e.takeDamage(_mp ? 120 : 200);
                           }
 
                       
@@ -10026,6 +10339,25 @@ if (this.isPlayer) {
     } else {
                 // ---> DEFINE SWORD STATE HERE <---
         let usingSword = (this.isPlayer && typeof swordPickedUp !== 'undefined' && swordPickedUp && window.swordEquipped !== false);
+        // A pick swings on the same arcs as a blade -- it is the head at the end
+        // of the haft that differs, so the animation is shared and only the art
+        // in the hand forks.
+        const usingPick = (this.isPlayer && typeof meleeTool === 'function' && meleeTool() === "PICKAXE");
+        const armedMelee = usingSword || usingPick;
+        // Head of a pickaxe, drawn at the far end of whatever haft the caller
+        // just laid down. `len` is where the haft ends.
+        const pickHead = (len) => {
+            fill(96, 74, 46); rect(-8, -2, 8, 4);            // butt of the haft
+            fill(74, 78, 84);
+            push(); translate(len, 0);
+            beginShape();                                     // the pick, curved
+            vertex(-3, -3); vertex(16, -13); vertex(19, -9); vertex(2, 2);
+            vertex(19, 9); vertex(16, 13); vertex(-3, 3);
+            endShape(CLOSE);
+            fill(150, 156, 166); rect(-4, -4.5, 8, 9, 2);      // the eye
+            fill(198, 204, 214, 180); rect(-4, -4.5, 8, 2.4, 1);
+            pop();
+        };
 
         // --- STANDARD WEAPON & LEFT ARM LOGIC ---
         // THE FIX 1: We ONLY draw unarmed/sword arms if we are strictly !this.isArmed
@@ -10079,18 +10411,23 @@ if (lArmSwing > frontThreshold || lArmSwing < backThreshold) {
                     fill(235, 180, 140);
                     ellipse(rArmSwing * 14, rSy, 8, 8);
 
-                    if (usingSword) {
+                    if (armedMelee) {
     push();
     translate(rArmSwing * 14, rSy);
     rotate(PI / 6);          // adjust until it looks right
-    fill(120);                // blade
-    rect(0, -2, 45, 4, 2);
+    if (usingPick) {
+        fill(122, 92, 56); rect(0, -2.5, 40, 5, 2);   // haft
+        pickHead(40);
+    } else {
+        fill(120);                // blade
+        rect(0, -2, 45, 4, 2);
 
-    fill(90, 60, 30);         // handle
-    rect(-8, -2, 8, 4);
+        fill(90, 60, 30);         // handle
+        rect(-8, -2, 8, 4);
 
-    fill(180, 150, 40);       // guard
-    rect(-2, -5, 3, 10, 2);
+        fill(180, 150, 40);       // guard
+        rect(-2, -5, 3, 10, 2);
+    }
     pop();
 }
                 }
@@ -10100,17 +10437,26 @@ if (lArmSwing > frontThreshold || lArmSwing < backThreshold) {
                 // (Keep all your existing combo logic exactly the same below here)
 
                 // --- SWORD VS PUNCH COMBO ---
-                if (usingSword) {
+                if (armedMelee) {
                     if (this.meleePhase === 4) {
                         let p = 1 - (this.meleeTimer / 30); let sA = PI - (PI * p * 1.25);
-                        push(); rotate(sA); fill(this.shirtCol); ellipse(15, -10, 16, 8); fill(235, 180, 140); ellipse(25, -10, 8, 8); fill(200); rect(25, -12, 60, 6, 2); pop(); 
+                        push(); rotate(sA); fill(this.shirtCol); ellipse(15, -10, 16, 8); fill(235, 180, 140); ellipse(25, -10, 8, 8);
+                        if (usingPick) { push(); translate(25, -10); fill(122, 92, 56); rect(0, -3, 52, 6, 2); pickHead(52); pop(); }
+                        else { fill(200); rect(25, -12, 60, 6, 2); }
+                        pop(); 
                         
                         push(); noFill(); stroke(255, 100, 0, 255 * (1 - p)); strokeWeight(8); line(15, 0, 15 + (p * 60), 0); pop();
                     } else {
                         let p = 1 - (this.meleeTimer / 20); let sA = PI / 2 - (PI * p); if (this.isBackhand) sA = -PI / 2 + (PI * p); 
-                        push(); rotate(sA); if (this.isBackhand) scale(1, -1); fill(this.shirtCol); ellipse(15, -10, 16, 8); fill(235, 180, 140); ellipse(25, -10, 8, 8); fill(200); rect(25, -12, 45, 4, 2); pop(); 
+                        push(); rotate(sA); if (this.isBackhand) scale(1, -1); fill(this.shirtCol); ellipse(15, -10, 16, 8); fill(235, 180, 140); ellipse(25, -10, 8, 8);
+                        if (usingPick) { push(); translate(25, -10); fill(122, 92, 56); rect(0, -2.5, 40, 5, 2); pickHead(40); pop(); }
+                        else { fill(200); rect(25, -12, 45, 4, 2); }
+                        pop(); 
                         
-                        push(); noFill(); stroke(255, 150, 0, 255 * (1 - p)); strokeWeight(6); 
+                        // A pick throws dust off its arc, not a blade glint.
+                        push(); noFill();
+                        if (usingPick) stroke(180, 168, 140, 210 * (1 - p)); else stroke(255, 150, 0, 255 * (1 - p));
+                        strokeWeight(6); 
                         if (this.isBackhand) { arc(0, 0, 90, 90, -PI/2, -PI/2 + (PI * p)); } 
                         else { arc(0, 0, 90, 90, PI/2 - (PI * p), PI/2); }
                         pop(); 
@@ -10469,6 +10815,14 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
     // NEW: Find the exact enemy that just died using the coordinates we already have!
     let deadGuy = enemiesList.find(e => e.x === x && e.y === y && e.dead);
     let isAmbushKill = deadGuy ? deadGuy.isAmbush : false;
+
+    // A machine is a pile of salvage the moment it stops working. Done here
+    // rather than at any of the half-dozen places that splice a dead body out
+    // of the list, so every way of killing one pays the same.
+    if (eType === "ROBOT" && x !== undefined && y !== undefined &&
+        typeof spawnResourceDrop === 'function') {
+        spawnResourceDrop(x, y, "METAL", Math.round(random(5, 15)));
+    }
 
     // --- STRICT FARM BUG AMBUSH KILL COUNTER ---
     if (typeof farmAmbushActive !== 'undefined' && farmAmbushActive && eType === "BUG") {
@@ -11141,6 +11495,13 @@ function updateBullets() {
 
                 if (b.x > bldg.x - bldg.w / 2 && b.x < bldg.x + bldg.w / 2 && b.y > bldg.y - bldg.h / 2 && b.y < bldg.y + bldg.h / 2) { 
                     b.l = 0; b.active = false; hitSomething = true;
+                    // Gunfire will bring a tree down eventually, but slowly --
+                    // a third of the round's damage. The point is that the pick
+                    // is the right tool, not that it is the only one.
+                    if (b.isP && typeof damageHarvestable === 'function' && harvestProfile(bldg)) {
+                        const wd = (b.w && b.w.bodyDmg) ? b.w.bodyDmg : 20;
+                        damageHarvestable(bldg, Math.max(4, wd * 0.34));
+                    }
                     if (bldg.isPinkPlanet && b.isP) {
                         bldg.flashTimer = 4; if (bldg.hp === undefined) bldg.hp = 750; 
                         let dmg = b.w === WEAPONS.SHOTGUN ? 25 : (b.w === WEAPONS.ROCKET_LAUNCHER ? 350 : (b.isRedLaser || b.isPinkLaser ? 30 : (b.isAlienLaser ? 25 : (b.w.bodyDmg || 20))));
@@ -12373,13 +12734,9 @@ function touchStarted() {
                   // --- NEW TOGGLE HITBOX ---
                  // --- MELEE SWORD TOGGLE BUTTON ---
 else if (mx > width/2 - 120 && mx < width/2 + 120 && my > height/2 - 110 && my < height/2 - 70) {
-    if (typeof swordPickedUp !== 'undefined' && swordPickedUp) { 
-        // Only flip the switch if they actually own the sword!
-        window.swordEquipped = (window.swordEquipped === false) ? true : false;
-        
-        // If you have a click sound, uncomment the next line:
-        // sfx.click(); 
-    }
+    // Cycles UNARMED -> SWORD -> PICKAXE through whatever the player owns.
+    cycleMeleeTool();
+    if (sfx && sfx.reload) sfx.reload();
 }
 
                   
@@ -12476,10 +12833,11 @@ else if (mx > width/2 - 120 && mx < width/2 + 120 && my > height/2 - 110 && my <
       else if (pauseMenuState === "TABLET") {
 
           if (mx > btnX && mx < btnX + btnW) {
-              if (my > height/2 - 90 && my < height/2 - 45) { pauseMenuState = "AUGMENTS"; return false; }
-              if (my > height/2 - 30 && my < height/2 + 15) { pauseMenuState = "WEAPONS"; return false; }
-              if (my > height/2 + 30 && my < height/2 + 75) { journalRead = true; pauseMenuState = "JOURNAL"; return false; }
-              if (my > height/2 + 90 && my < height/2 + 135) { pauseMenuState = "MAIN"; return false; } 
+              if (my > height/2 - 100 && my < height/2 - 60) { pauseMenuState = "AUGMENTS"; return false; }
+              if (my > height/2 - 50 && my < height/2 - 10) { pauseMenuState = "WEAPONS"; return false; }
+              if (my > height/2 && my < height/2 + 40) { pauseMenuState = "INVENTORY"; return false; }
+              if (my > height/2 + 50 && my < height/2 + 90) { journalRead = true; pauseMenuState = "JOURNAL"; return false; }
+              if (my > height/2 + 100 && my < height/2 + 140) { pauseMenuState = "MAIN"; return false; } 
           }
       } else { 
           // For AUGMENTS, WEAPONS, JOURNAL (Fallback "BACK" button logic)
@@ -13196,6 +13554,12 @@ function saveGame() {
         playerX: player ? player.x : null,
         playerY: player ? player.y : null,
 
+        // --- RESOURCES ---
+        resources: window.resources || { WOOD: 0, METAL: 0, STONE: 0 },
+        pickaxeOwned: !!window.pickaxeOwned,
+        meleeToolSel: window.meleeToolSel || "NONE",
+        swordEquipped: window.swordEquipped !== false,
+
         // --- CUTSCENES ---
         // Which beats have played, by name. Everything else here is the state
         // of a cutscene that is mid-run; storyBeats is the record of the ones
@@ -13327,6 +13691,14 @@ function loadGame() {
         townPhase = state.townPhase || 0;
         townTimer = state.townTimer || 0;
         objectiveTimer = state.objectiveTimer || 0;
+
+        // --- RESOURCES ---
+        window.resources = state.resources || { WOOD: 0, METAL: 0, STONE: 0 };
+        for (const k of RESOURCE_KINDS) if (typeof window.resources[k] !== 'number') window.resources[k] = 0;
+        window.pickaxeOwned = state.pickaxeOwned !== undefined ? !!state.pickaxeOwned : true;
+        // setMeleeTool keeps swordEquipped in step, which is what the swing code
+        // and the hand art actually read.
+        setMeleeTool(state.meleeToolSel || (state.swordEquipped ? "SWORD" : "NONE"));
 
         // --- AMBUSHES ---
         farmAmbushActive = state.farmAmbushActive || false;
@@ -15698,7 +16070,6 @@ function generateChunkContent(biome, cx, cy) {
         if (rng() > (RG_TREES[reg] || 0.3)) continue;
         // Local gaps inside a stand -- glades, blowdown, thin soil.
         if (bnoise(biome, spot.x, spot.y, 0.0026) < (reg === RG_TIMBER ? 0.30 : 0.42)) continue;
-        solid.push({ x: spot.x, y: spot.y, w: 34, h: 34, isTreeTrunk: true });
         // Species from the region. Conifer in the deep timber, broadleaf in
         // the open, and nothing alive on the burn.
         let sp = "TREE";
@@ -15706,8 +16077,13 @@ function generateChunkContent(biome, cx, cy) {
         else if (reg === RG_MARSH) sp = rng() > 0.45 ? "SNAG" : "TREE";
         else if (reg === RG_TIMBER) sp = rng() > 0.42 ? "PINE" : "TREE";
         else if (rng() > 0.86) sp = "PINE";
+        const girth = rngRange(rng, sp === "PINE" ? 1.0 : 0.9, sp === "SNAG" ? 1.3 : 1.7);
+        // The trunk collides at a fixed 34x34 whatever the tree is, so it keeps
+        // the canopy's scale for anything that needs to know how big the tree
+        // actually is -- harvestProfile() reads it for the wood yield.
+        solid.push({ x: spot.x, y: spot.y, w: 34, h: 34, isTreeTrunk: true, girth: girth });
         decor.push({ t: sp, x: spot.x, y: spot.y,
-                     s: rngRange(rng, sp === "PINE" ? 1.0 : 0.9, sp === "SNAG" ? 1.3 : 1.7),
+                     s: girth,
                      r: rng() * TWO_PI, c: rng(),
                      k: (RG_CANOPY[reg] || 0) + rngRange(rng, -0.14, 0.14) });
       }
@@ -16057,6 +16433,13 @@ function generateChunkContent(biome, cx, cy) {
                    angle: rng() * TWO_PI, tint: rng() });
     }
   }
+
+  // Every solid carries the key it will be remembered by if the player destroys
+  // it. Assigned BEFORE the strip below, so the index a solid is tagged with is
+  // the index the strip looks for on the next visit -- the hitsAuthored filter
+  // further down renumbers the array, and a key assigned after it would point
+  // at a different piece of the world every time the chunk loaded.
+  for (let i = 0; i < solid.length; i++) solid[i].chunkKey = cx + "," + cy + "," + i;
 
   // Strip anything the player already destroyed on a previous visit
   for (let i = solid.length - 1; i >= 0; i--) {
