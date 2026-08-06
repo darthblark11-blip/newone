@@ -4298,16 +4298,72 @@ if (swordPickedUp || window.pickaxeOwned) {
               drawBtn(height/2 + 140, "SQUAD COMMAND");
           }
 
-          // The architecture department is the prerequisite, not a story flag:
-          // no architects, nobody to raise anything.
-          if (buildCrew() > 0) {
-              drawBtn(height/2 + 190, "BUILD");
-          } else {
-              fill(30); stroke(100); strokeWeight(2); rect(width/2 - 120, height/2 + 190, 240, 40, 8);
-              fill(150); noStroke(); textSize(15); text("BUILD (NO ARCHITECTS)", width/2, height/2 + 210);
+          // BUILD and MY BUILDINGS share a row rather than each taking one. The
+          // stack already runs from -260 to +240 and the menu has to fit on a
+          // phone; the two are the same subject anyway.
+          {
+              const by = height/2 + 190, hw = 114;
+              const canBuild = buildCrew() > 0;
+              const anySites = buildSites.length > 0;
+              // The architecture department is the prerequisite for BUILD, not a
+              // story flag: no architects, nobody to raise anything.
+              fill(canBuild ? 40 : 30); stroke(canBuild ? color(255, 200, 0) : color(100)); strokeWeight(2);
+              rect(width/2 - 120, by, hw, 40, 8);
+              fill(canBuild ? 255 : 150); noStroke(); textSize(canBuild ? 15 : 11);
+              text(canBuild ? "BUILD" : "NO ARCHITECTS", width/2 - 120 + hw/2, by + 20);
+
+              fill(anySites ? 40 : 30); stroke(anySites ? color(90, 160, 240) : color(100)); strokeWeight(2);
+              rect(width/2 + 6, by, hw, 40, 8);
+              fill(anySites ? 255 : 150); noStroke(); textSize(12);
+              text("MY BUILDINGS", width/2 + 6 + hw/2, by + 20);
           }
 
           drawBtn(height/2 + 240, "RESET GAME");
+      }
+
+      else if (pauseMenuState === "BUILDINGS") {
+          fill(255); textSize(34); text("MY BUILDINGS", width/2, height/2 - 230);
+          fill(170); textSize(13);
+          text("TAP TO MARK ON THE HUD  ·  ORANGE BUILDING, BLUE BUILT", width/2, height/2 - 200);
+          if (buildSites.length === 0) {
+              fill(140); textSize(15);
+              text("Nothing raised yet. Pick a blueprint from BUILD.", width/2, height/2 - 40);
+          }
+          // This sector first, then anything going up elsewhere -- a site in
+          // another sector still advances, so it belongs on this list even
+          // though it cannot be marked from here.
+          const rows = buildSites.slice().sort((a, b) =>
+              (a.level === currentLevel ? 0 : 1) - (b.level === currentLevel ? 0 : 1) ||
+              (a.done ? 1 : 0) - (b.done ? 1 : 0));
+          const shown = Math.min(rows.length, 7);
+          for (let i = 0; i < shown; i++) {
+              const s = rows[i], bp = BLUEPRINTS[s.kind];
+              const y = height/2 - 170 + i * 54, here = (s.level === currentLevel);
+              fill(34, 38, 44);
+              stroke(s.marked && here ? (s.done ? color(70, 160, 255) : color(255, 150, 40))
+                                      : color(70, 78, 88));
+              strokeWeight(s.marked && here ? 3 : 2);
+              rect(width/2 - 170, y, 340, 46, 8);
+              noStroke(); fill(here ? 235 : 150); textAlign(LEFT, TOP); textSize(16);
+              text(bp ? bp.label : s.kind, width/2 - 156, y + 6);
+              textAlign(RIGHT, TOP); textSize(11);
+              fill(here ? 150 : 120);
+              text(here ? (s.marked ? "MARKED" : "SECTOR " + s.level)
+                        : "SECTOR " + s.level, width/2 + 156, y + 7);
+              // The same bar that floats over the site itself, at the same
+              // colours, so the two readouts are obviously the same number.
+              fill(0, 150); rect(width/2 - 156, y + 28, 300, 10, 3);
+              if (s.done) { fill(70, 160, 255); rect(width/2 - 156, y + 28, 300, 10, 3); }
+              else { fill(255, 150, 40); rect(width/2 - 156, y + 28, 300 * s.progress, 10, 3); }
+              fill(235); textAlign(RIGHT, TOP); textSize(11);
+              text(s.done ? "BUILT" : Math.floor(s.progress * 100) + "%", width/2 + 156, y + 27);
+              textAlign(CENTER, CENTER);
+          }
+          if (rows.length > shown) {
+              fill(150); textSize(12); textAlign(CENTER, CENTER);
+              text("+" + (rows.length - shown) + " more", width/2, height/2 - 170 + shown * 54 + 14);
+          }
+          drawBtn(height/2 + 190, "BACK");
       }
 
       else if (pauseMenuState === "BUILD") {
@@ -12700,6 +12756,35 @@ function drawUI() {
           }
       }
   }
+
+  // Marked structures. Same screen-edge arrow the transmission towers use, so
+  // there is one language for "something you care about is off that way" --
+  // orange while it is going up, blue once it is finished.
+  if (typeof buildSites !== 'undefined' && player && player.hp > 0) {
+      for (const s of buildSites) {
+          if (!s.marked || s.level !== currentLevel) continue;
+          const d = dist(player.x, player.y, s.x, s.y);
+          if (d <= 450) continue;
+          const ang = atan2(s.y - player.y, s.x - player.x);
+          const pad = 15, dx = cos(ang), dy = sin(ang);
+          const multiplier = min((width / 2 - pad) / abs(dx), (height / 2 - pad) / abs(dy));
+          push(); translate(width / 2 + dx * multiplier, height / 2 + dy * multiplier);
+          push(); translate(-cos(ang) * 25, -sin(ang) * 25);
+          fill(255, 255, 0); stroke(0); strokeWeight(2); textSize(12);
+          textAlign(CENTER, CENTER); textFont('sans-serif');
+          text(floor(d / 10) + "m", 0, 0);
+          // The percentage rides with the arrow while it is unfinished, so the
+          // marker answers "how far along" without walking back to the site.
+          if (!s.done) { textSize(10); fill(255, 170, 60); text(Math.floor(s.progress * 100) + "%", 0, 13); }
+          pop();
+          rotate(ang);
+          if (s.done) fill(70, 160, 255, 235);
+          else if (frameCount % 60 < 30) fill(255, 150, 40, 235);
+          else fill(210, 110, 20, 235);
+          stroke(0); strokeWeight(2); triangle(12, 0, -8, -8, -8, 8);
+          pop();
+      }
+  }
 }
 
 
@@ -13160,7 +13245,10 @@ else if (mx > width/2 - 120 && mx < width/2 + 120 && my > height/2 - 110 && my <
                   }
 
                   if (my > height/2 + 190 && my < height/2 + 230) {
-                      if (buildCrew() > 0) { pauseMenuState = "BUILD"; sfx.charge(); }
+                      // Left half BUILD, right half MY BUILDINGS.
+                      if (mx > width/2 + 6) {
+                          if (buildSites.length > 0) { pauseMenuState = "BUILDINGS"; sfx.charge(); }
+                      } else if (buildCrew() > 0) { pauseMenuState = "BUILD"; sfx.charge(); }
                       return false;
                   }
 
@@ -13171,6 +13259,27 @@ else if (mx > width/2 - 120 && mx < width/2 + 120 && my > height/2 - 110 && my <
                   }
               }
 
+
+            } else if (pauseMenuState === "BUILDINGS") {
+              // Same ordering the list is drawn in, so row n on screen is row n
+              // here. Only this sector's can be marked — an arrow pointing at a
+              // structure two biomes away is pointing at nothing.
+              const rows = buildSites.slice().sort((a, b) =>
+                  (a.level === currentLevel ? 0 : 1) - (b.level === currentLevel ? 0 : 1) ||
+                  (a.done ? 1 : 0) - (b.done ? 1 : 0));
+              for (let i = 0; i < Math.min(rows.length, 7); i++) {
+                  const y = height / 2 - 170 + i * 54;
+                  if (mx > width / 2 - 170 && mx < width / 2 + 170 && my > y && my < y + 46) {
+                      if (rows[i].level === currentLevel) {
+                          rows[i].marked = !rows[i].marked;
+                          if (sfx && sfx.reload) sfx.reload();
+                      }
+                      return false;
+                  }
+              }
+              if (mx > btnX && mx < btnX + btnW && my > height / 2 + 190 && my < height / 2 + 230) {
+                  pauseMenuState = "MAIN"; return false;
+              }
 
             } else if (pauseMenuState === "BUILD") {
               // Blueprint cards are wider than the standard button column, so
@@ -13978,7 +14087,7 @@ function saveGame() {
         // cycle. Barriers ride along in the same list they now live in.
         buildSites: (typeof buildSites !== 'undefined' ? buildSites : []).map((s) => ({
             level: s.level, kind: s.kind, x: s.x, y: s.y, w: s.w, h: s.h,
-            progress: s.progress, done: !!s.done
+            progress: s.progress, done: !!s.done, marked: !!s.marked
         })),
         playerBarriers: (typeof playerStructures !== 'undefined' ? playerStructures : [])
             .filter((b) => b.isUBarrier)
@@ -14133,7 +14242,8 @@ function loadGame() {
             x: Number(s.x) || 0, y: Number(s.y) || 0,
             w: Number(s.w) || (BLUEPRINTS[s.kind] ? BLUEPRINTS[s.kind].w : 160),
             h: Number(s.h) || (BLUEPRINTS[s.kind] ? BLUEPRINTS[s.kind].h : 140),
-            progress: Math.min(1, Math.max(0, Number(s.progress) || 0)), done: !!s.done
+            progress: Math.min(1, Math.max(0, Number(s.progress) || 0)), done: !!s.done,
+            marked: !!s.marked
         })).filter((s) => BLUEPRINTS[s.kind]) : [];
         playerStructures = (Array.isArray(state.playerBarriers) ? state.playerBarriers : [])
             .map((b) => ({ x: b.x, y: b.y, w: b.w || 200, h: b.h || 200, isUBarrier: true,
@@ -22471,7 +22581,11 @@ function updateWorldClock() {
   // A backgrounded tab or a breakpoint must not fast-forward the day.
   if (!(dt > 0) || dt > 1000) dt = 16;
   worldClockDtMs = 0;
-  if (isPaused || !started || inWorldBuildingMenu || inOverworldView || inTravelMenu) return;
+  // The overworld is not a menu, it is the world with a different camera on it,
+  // so the day runs while the player is in it -- and with it the weather rolls,
+  // the production meters and the build sites. Only the screens that genuinely
+  // stop play hold the clock: the pause menu, the Directive, the travel menu.
+  if (isPaused || !started || inWorldBuildingMenu || inTravelMenu) return;
 
   worldClockDtMs = dt;
   worldTimeMs = (worldTimeMs + dt) % DAY_MS;

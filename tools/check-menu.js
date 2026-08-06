@@ -21,6 +21,9 @@ ctx.random = function (a, b) {
   return a + r * (b - a);
 };
 
+let slot = null;
+ctx.localStorage = { getItem: () => slot, setItem: (k, v) => { slot = v; }, removeItem: () => { slot = null; } };
+
 probe(`isStoryMode = false; townsData = {}; startAtLevel(2); started = true; doTick = true;
        viewLeft = -1e6; viewRight = 1e6; viewTop = -1e6; viewBottom = 1e6;
        width = 400; height = 800;
@@ -116,6 +119,137 @@ console.log('\n== nothing on the play screen still travels ==');
   }
   ok('no tap anywhere on the overworld play screen starts travel', fired === null,
      fired ? 'travelled from ' + fired : `${Math.ceil(W / 12) * Math.ceil(H / 12)} points swept, none`);
+}
+
+console.log('\n== the day does not stop for the overworld ==');
+{
+  // The overworld is the world with a different camera on it, not a menu. Only
+  // the screens that genuinely stop play may hold the clock.
+  const tick = (setup) => {
+    probe(`${setup} clockLastMs = null; worldClockDtMs = 0; updateWorldClock();`);
+    // First call only seeds clockLastMs; the second is the one that bills time.
+    probe('updateWorldClock();');
+    return P('worldClockDtMs');
+  };
+  ctx.millis = (() => { let t = 0; return () => (t += 16); })();
+  ok('the clock runs while exploring the overworld',
+     tick('isPaused = false; inOverworldView = true; inWorldBuildingMenu = false; inTravelMenu = false;') > 0,
+     tick('isPaused = false; inOverworldView = true; inWorldBuildingMenu = false; inTravelMenu = false;') + ' ms billed');
+  ok('and so do the build sites it drives', (() => {
+    probe(`buildSites = [{ level: currentLevel, kind: "WAREHOUSE", x: 0, y: 0,
+                           w: BLUEPRINTS.WAREHOUSE.w, h: BLUEPRINTS.WAREHOUSE.h,
+                           progress: 0, done: false }];
+           window.popArchitectureM = 100; window.popArchitectureF = 0; window.archLvl = 1;
+           isPaused = false; inOverworldView = true; inWorldBuildingMenu = false; inTravelMenu = false;
+           worldClockDtMs = DAY_MS / 4; updateBuildSites();`);
+    return P('buildSites[0].progress') > 0.2;
+  })(), (P('buildSites[0].progress') * 100).toFixed(0) + '% in a quarter day');
+  ok('the pause menu still holds it',
+     tick('isPaused = true; inOverworldView = false; inWorldBuildingMenu = false; inTravelMenu = false;') === 0);
+  ok('so does the Directive',
+     tick('isPaused = false; inOverworldView = false; inWorldBuildingMenu = true; inTravelMenu = false;') === 0);
+  ok('and so does the travel menu',
+     tick('isPaused = false; inOverworldView = false; inWorldBuildingMenu = false; inTravelMenu = true;') === 0);
+  probe('isPaused = false; inOverworldView = false; inWorldBuildingMenu = false; inTravelMenu = false;');
+}
+
+console.log('\n== MY BUILDINGS ==');
+{
+  probe(`buildSites = [
+           { level: currentLevel, kind: "WAREHOUSE",  x: player.x + 4000, y: player.y,
+             w: BLUEPRINTS.WAREHOUSE.w,  h: BLUEPRINTS.WAREHOUSE.h,  progress: 0.4, done: false, marked: false },
+           { level: currentLevel, kind: "LABORATORY", x: player.x - 4000, y: player.y,
+             w: BLUEPRINTS.LABORATORY.w, h: BLUEPRINTS.LABORATORY.h, progress: 1, done: true, marked: false },
+           { level: currentLevel + 3, kind: "RANGE",  x: 0, y: 0,
+             w: BLUEPRINTS.RANGE.w,      h: BLUEPRINTS.RANGE.h,      progress: 0.6, done: false, marked: false }];
+         republishPlayerStructures();`);
+  const main = labels('isPaused = true; pauseMenuState = "MAIN"; inOverworldView = false;');
+  ok('the button is on the main menu', main.some((t) => t.s.trim() === 'MY BUILDINGS'));
+  const bld = main.find((t) => t.s.trim() === 'BUILD' || t.s.trim() === 'NO ARCHITECTS');
+  const mine = main.find((t) => t.s.trim() === 'MY BUILDINGS');
+  ok('sharing a row with BUILD rather than growing the stack',
+     bld && mine && Math.abs(bld.y - mine.y) < 1 && mine.x > bld.x);
+
+  const list = labels('pauseMenuState = "BUILDINGS";');
+  ok('the list names every structure',
+     list.some((t) => t.s === 'WAREHOUSE') && list.some((t) => t.s === 'LABORATORY') &&
+     list.some((t) => t.s === 'SHOOTING RANGE'));
+  ok('a finished one reads BUILT', list.some((t) => t.s === 'BUILT'));
+  ok('and one under construction reads its percentage',
+     list.some((t) => t.s === '40%') && list.some((t) => t.s === '60%'),
+     list.filter((t) => /%$/.test(t.s)).map((t) => t.s).join(' '));
+  ok('a site in another sector says which one',
+     list.some((t) => t.s === 'SECTOR ' + (P('currentLevel') + 3)));
+
+  // Tapping row 0 marks it. Rows are sorted: this sector first, unfinished
+  // first — so row 0 is the warehouse.
+  const row0 = () => P('buildSites.find(s => s.kind === "WAREHOUSE").marked');
+  tap(W / 2, H / 2 - 150, 'isPaused = true; pauseMenuState = "BUILDINGS";');
+  ok('tapping a row marks it', row0() === true);
+  tap(W / 2, H / 2 - 150, 'isPaused = true; pauseMenuState = "BUILDINGS";');
+  ok('and tapping again clears it', row0() === false);
+
+  // A structure in another sector cannot be marked from here: the arrow would
+  // point at nothing.
+  const far = () => P('buildSites.find(s => s.kind === "RANGE").marked');
+  tap(W / 2, H / 2 - 170 + 2 * 54 + 20, 'isPaused = true; pauseMenuState = "BUILDINGS";');
+  ok('a site in another sector cannot be marked', far() === false);
+  ok('BACK returns to the main menu', (() => {
+    tap(W / 2, H / 2 + 210, 'isPaused = true; pauseMenuState = "BUILDINGS";');
+    return P('pauseMenuState') === 'MAIN';
+  })());
+}
+
+console.log('\n== the marker arrows ==');
+{
+  // Same screen-edge arrow the towers use. Orange while building, blue once
+  // built, and only for marked sites in this sector.
+  const arrows = (setup) => {
+    const real = ctx.triangle, real2 = ctx.fill, seen = [];
+    let last = null;
+    ctx.fill = (...a) => { last = a; };
+    ctx.triangle = (x1, y1) => { if (x1 === 12) seen.push(last); };
+    probe(setup);
+    try { probe('drawUI();'); } catch (e) { /* the arrows are what matter */ }
+    ctx.triangle = real; ctx.fill = real2;
+    return seen;
+  };
+  probe(`isPaused = false; pauseMenuState = "MAIN"; isStoryMode = false;
+         buildSites.forEach(s => s.marked = false);`);
+  ok('an unmarked structure draws no arrow', arrows('').length === 0);
+
+  probe('buildSites.find(s => s.kind === "WAREHOUSE").marked = true;');
+  let a = arrows('');
+  ok('a marked site under construction draws one', a.length === 1, JSON.stringify(a));
+  ok('and it is orange', a.length === 1 && a[0][0] > 200 && a[0][1] > 90 && a[0][1] < 180 && a[0][2] < 90,
+     a.length ? `rgb(${a[0].slice(0, 3).join(',')})` : '');
+
+  probe(`buildSites.find(s => s.kind === "WAREHOUSE").marked = false;
+         buildSites.find(s => s.kind === "LABORATORY").marked = true;`);
+  a = arrows('');
+  ok('a marked finished one draws one too', a.length === 1);
+  ok('and it is blue', a.length === 1 && a[0][2] > 200 && a[0][0] < 130,
+     a.length ? `rgb(${a[0].slice(0, 3).join(',')})` : '');
+
+  probe('buildSites.find(s => s.kind === "RANGE").marked = true;');
+  ok('a marked site in another sector is not drawn here', arrows('').length === 1);
+
+  // Standing on it, there is nothing to point at.
+  probe(`player.x = buildSites.find(s => s.kind === "LABORATORY").x;
+         player.y = buildSites.find(s => s.kind === "LABORATORY").y;`);
+  ok('and the arrow goes once you are there', arrows('').length === 0);
+}
+
+console.log('\n== the mark survives a reload ==');
+{
+  probe(`player.x = 0; player.y = 0;
+         buildSites.forEach(s => s.marked = false);
+         buildSites.find(s => s.kind === "WAREHOUSE").marked = true;
+         saveGame(); buildSites = []; loadGame();`);
+  ok('a marked structure is still marked',
+     P('buildSites.filter(s => s.marked).length') === 1 &&
+     P('buildSites.find(s => s.marked).kind') === 'WAREHOUSE',
+     P('buildSites.map(s => s.kind + (s.marked ? "*" : "")).join(" ")'));
 }
 
 console.log(`\n${checks - fails}/${checks} checks passed`);

@@ -901,6 +901,19 @@ Three things this has to get right, and the third is the one that bites:
    since it was written and had always been quietly swept away a few strides later; it
    goes through `playerStructures` now too.
 
+**`MY BUILDINGS`** shares the `BUILD` row in the pause menu and lists every site in every
+sector — this one's first, unfinished first — with the same progress bar that floats over
+the site itself. Tapping a row in the current sector toggles `site.marked`, which puts a
+screen-edge arrow on the HUD using the same rig the transmission towers use
+(`drawUI()`, just after the tower block): **orange and pulsing while it is going up, blue
+once it is built**, with the percentage under the distance. Sites in other sectors are
+listed but cannot be marked — an arrow pointing two biomes away points at nothing.
+
+**The world clock does not stop for the overworld.** `updateWorldClock()` holds only for
+the pause menu, the Directive and the travel menu. The overworld is the world with a
+different camera on it, so the day, the weather rolls, the production meters and the build
+sites all keep running while the player is in it.
+
 `republishPlayerStructures()` is the one way structures reach the world — called on
 placement, on completion, on level entry (last in `startAtLevel`, after everything that
 regenerates `buildings[]`) and on load. It also rebuilds the `site` back-pointer that
