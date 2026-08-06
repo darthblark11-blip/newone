@@ -787,6 +787,73 @@ stays destroyed across a reload, and that the drop art draws. It needs `leftStic
 
 ---
 
+## Construction
+
+The architecture department made visible. `BUILD` in the pause menu (gated on
+`buildCrew() > 0` — no architects, nobody to raise anything) opens a blueprint list;
+picking one drops a ghost footprint that rides in front of the player on `aimAngle`, so
+the left stick carries it and the right stick swings it around. Blue outline where it
+fits, red where it does not, `PLACE`/`CANCEL` on screen.
+
+Four blueprints to start: `WAREHOUSE · LABORATORY · RANGE · FARM` in `BLUEPRINTS`
+(~14170). Footprint `w`/`h` is one number doing three jobs — the ghost, the ground the
+crew clears and the collision box — so what the player lines up is what they get.
+Adding one is a `BLUEPRINTS` entry, a name in `BUILD_ORDER`, and a branch in
+`drawBuiltStructure()`. `FARM` is the model for a blueprint that emits more than one
+solid: a barn plus an `isCropField` ground lot beside it, from `buildSiteSolids()`.
+
+```
+BUILD_DAY_PER_UNIT = 0.01   // 1% of a structure per in-game day per assigned architect
+buildCrew()                 // popArchitectureM + popArchitectureF
+buildSpeedMult()            // archLvl — the "Build Speed" the Directive already advertises
+buildSpotClear(x, y, w, h)  // solids, hitsAuthored, waterDepthAt, other sites
+buildSites[]                // every site in EVERY sector; the save's record
+playerStructures[]          // this sector's solids, republished on every chunk rebuild
+```
+
+Three things this has to get right, and the third is the one that bites:
+
+1. **Rate is a function of the assigned department, not of the sprites.** `townCitizens`
+   is the visualisation and is rebuilt from the same counts whenever the Directive is
+   confirmed; tying progress to the sprites would stall every site each time the roster
+   was repopulated.
+2. **Progress accrues against `worldClockDtMs`** — the same millisecond delta the sun and
+   `updateProductionMeters()` run on — so a day of building is a day of building at any
+   frame rate. `updateBuildSites()` walks **every** site in every sector and only the ones
+   in `currentLevel` are ever drawn, which is what "it remains being built while you are
+   away" means.
+3. **`buildings[]` is replaced wholesale by `ChunkManager.rebuildWorldArrays()`**, and in
+   a streamed biome that runs every time the player crosses a chunk edge. Anything the
+   player puts in the world has to live in its own list the rebuild republishes, exactly
+   the way the travel anchors do. `buildBarrier()` had pushed straight into `buildings[]`
+   since it was written and had always been quietly swept away a few strides later; it
+   goes through `playerStructures` now too.
+
+`republishPlayerStructures()` is the one way structures reach the world — called on
+placement, on completion, on level entry (last in `startAtLevel`, after everything that
+regenerates `buildings[]`) and on load. It also rebuilds the `site` back-pointer that
+`drawBuildSite()` reads progress from; that pointer is a cycle and is deliberately not
+saved.
+
+**The crew.** A `Citizen` with `role === "ARCHITECTURE"` takes a build site over its
+wander timer entirely: `nearestBuildSite()` within 1100 units, `buildSlotFor()` gives it
+its own patch of the perimeter from a `slotSeed` fixed at birth (so twenty architects ring
+the job instead of piling onto its centre), and it stands there swinging. Top-down a hammer
+swing has no rise to show, so it reads as **reach** — the arm drives forward and the head
+rolls over the wrist on the down-stroke. States `TO_SITE` and `BUILDING` both count as
+moving for the walk cycle; only `BUILDING` suppresses the normal front hand.
+
+**No material cost.** Not asked for, and deliberately not invented — but `confirmBuildPlacement()`
+is the single funnel if you want `window.resources` to be the gate.
+
+`node tools/check-build.js` covers the ghost refusing bad ground, the exact rate at
+several crew sizes and architecture levels, a site advancing while the player is in
+another level, the barn's field being walkable while the barn is not, survival across
+`rebuildWorldArrays()` and across a save/load, the crew finding and ringing the job, and
+that all four kinds plus both site states draw through both shadow passes.
+
+---
+
 ## The arm rig
 
 `Character.show()` draws the torso, then the attire, then the arms, then the head. That
@@ -920,6 +987,7 @@ node tools/check-cutscene.js       # scripted placement stays inside the sector
 node tools/check-resources.js      # harvestables, drops, the melee tool, persistence
 node tools/check-robot.js          # a machine dies like a machine, on all six paths
 node tools/check-character.js      # the arm rig: hands present, and behind the body
+node tools/check-build.js          # blueprints, placement, build rate, the crew
 GAME_JS=/path/to/other.js node tools/check-generation.js    # compare against a baseline
 ```
 

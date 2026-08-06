@@ -2016,7 +2016,15 @@ function drawBuildingShadows() {
     if ((currentLevel === 1 || currentLevel === 2) && b.isGrassLot) continue;
     if (b.isCropField) continue; // Don't shadow the ground
 
-    let shadowAlpha = (currentLevel === 1 || currentLevel === 3) ? 45 : 150; 
+    let shadowAlpha = (currentLevel === 1 || currentLevel === 3) ? 45 : 150;
+    // A site is a slab and some scaffold, so it throws a short soft one; a
+    // finished structure throws the same slab shadow every other mass does.
+    if (b.isBuildSite || b.isBuiltStructure) {
+        const sl = b.isBuildSite ? 8 : 22;
+        fill(0, b.isBuildSite ? Math.round(shadowAlpha * 0.5) : shadowAlpha); noStroke();
+        rect(b.x - b.w / 2 + sl, b.y - b.h / 2 + sl, b.w, b.h, 3);
+        continue;
+    }
     let sL = (currentLevel === 1 || currentLevel === 3) ? 40 : 25; 
     fill(0, shadowAlpha); noStroke();
     if (b.isDumpster) { push(); translate(b.x + sL/2, b.y + sL/2); rotate(b.angle); rect(-b.w/2, -b.h/2, b.w, b.h, 2); pop(); } 
@@ -2055,6 +2063,8 @@ function drawBuildings() {
     if ((currentLevel === 1 || currentLevel === 2) && b.isGrassLot && !b.isPond && !b.isParkingLot) continue;
     if (b.isParkingCar) continue; 
     if (b.isCropField || b.isPond || b.isParkingLot) continue; // MOVED TO GROUND RENDER STACK
+    if (b.isBuildSite) { drawBuildSite(b); continue; }
+    if (b.isBuiltStructure) { drawBuiltStructure(b); continue; }
     if (b.isUBarrier) {
         let isFlashing = b.hitFlash && b.hitFlash > 0;
         if (isFlashing) b.hitFlash--;
@@ -3376,6 +3386,10 @@ viewBottom = camY + height / zoom + shakePad;
   // meters both see the same delta on the same frame.
   updateWorldClock();
   updateProductionMeters();
+  // Every sector's sites, not just this one's — walk away from a half-built
+  // warehouse and it keeps going up while you are elsewhere.
+  if (typeof updateBuildSites === 'function') updateBuildSites();
+  if (typeof updateBuildPlacement === 'function') updateBuildPlacement();
   if (BIOME_ACTIVE) biomeBackground();
   else if (currentLevel === 1) background(45, 110, 45);
   else if (currentLevel === 2) background(20, 25, 40);
@@ -3573,6 +3587,10 @@ viewBottom = camY + height / zoom + shakePad;
 
   // Weather particles live in world space so they parallax with the camera
   if (BIOME_ACTIVE) { drawNightLights(); if (weather) weather.drawWorld(); }
+  // The blueprint ghost is world-space but reads as UI, so it goes last inside
+  // the camera — over the buildings it has to be checked against, under the
+  // screen HUD that confirms it.
+  if (typeof drawBuildGhost === 'function') drawBuildGhost();
   pop();
 
   // Lighting first: the rig multiplies the finished world, so a lamp's pool
@@ -4286,10 +4304,52 @@ if (swordPickedUp || window.pickaxeOwned) {
           drawBtn(height/2 + 90, "DAD'S TABLET"); 
      
           if (window.towersDefeated || (isStoryMode && currentLevel >= 2)) {
-              drawBtn(height/2 + 140, "SQUAD COMMAND"); 
+              drawBtn(height/2 + 140, "SQUAD COMMAND");
           }
-          
-          drawBtn(height/2 + 190, "RESET GAME"); 
+
+          // The architecture department is the prerequisite, not a story flag:
+          // no architects, nobody to raise anything.
+          if (buildCrew() > 0) {
+              drawBtn(height/2 + 190, "BUILD");
+          } else {
+              fill(30); stroke(100); strokeWeight(2); rect(width/2 - 120, height/2 + 190, 240, 40, 8);
+              fill(150); noStroke(); textSize(15); text("BUILD (NO ARCHITECTS)", width/2, height/2 + 210);
+          }
+
+          drawBtn(height/2 + 240, "RESET GAME");
+      }
+
+      else if (pauseMenuState === "BUILD") {
+          fill(255); textSize(34); text("BLUEPRINTS", width/2, height/2 - 230);
+          const crew = buildCrew();
+          fill(170); textSize(14);
+          text("ARCHITECTURE DEPT: " + crew + "  ·  LEVEL " + (window.archLvl || 1) +
+               "  ·  " + (crew * BUILD_DAY_PER_UNIT * buildSpeedMult() * 100).toFixed(0) + "% PER DAY",
+               width/2, height/2 - 198);
+          for (let i = 0; i < BUILD_ORDER.length; i++) {
+              const bp = BLUEPRINTS[BUILD_ORDER[i]];
+              const y = height/2 - 160 + i * 76;
+              fill(34, 38, 44); stroke(90, 140, 190); strokeWeight(2);
+              rect(width/2 - 170, y, 340, 64, 8);
+              noStroke(); fill(235); textAlign(LEFT, TOP); textSize(18);
+              text(bp.label, width/2 - 156, y + 9);
+              fill(150); textSize(12); text(bp.blurb, width/2 - 156, y + 32);
+              fill(120, 180, 240); textSize(12); textAlign(RIGHT, TOP);
+              const eta = buildEtaDays(1);
+              text(bp.w + " x " + bp.h, width/2 + 156, y + 9);
+              text(eta === Infinity ? "--" : (eta < 1 ? "< 1 day" : Math.ceil(eta) + " days"),
+                   width/2 + 156, y + 32);
+              textAlign(CENTER, CENTER);
+          }
+          // Anything already going up in this sector, so the player can see the
+          // department is actually working without walking back to the site.
+          let ip = 0;
+          for (const s of buildSites) if (s.level === currentLevel && !s.done) ip++;
+          if (ip > 0) {
+              fill(180); textSize(13);
+              text(ip + " under construction in this sector", width/2, height/2 + 168);
+          }
+          drawBtn(height/2 + 190, "BACK");
       }
 
 
@@ -4636,6 +4696,7 @@ else if (typeof viewingTownId !== 'undefined' && typeof townsData !== 'undefined
 
   // Chunk streaming telemetry (toggle with window.showChunkDebug = true)
   drawBiomeHud();
+  if (typeof drawBuildHud === 'function') drawBuildHud();
 
   // Travel extraction cinematic — drawn last so it covers all other layers
   updateExtraction();
@@ -11704,7 +11765,12 @@ class Citizen {
         this.speed = random(0.8, 1.4);
         this.moveAngle = random(TWO_PI);
         this.walkCycle = 0;
-        
+        // Own patch of a site's perimeter, fixed at birth so a crew rings the
+        // job rather than piling onto its centre.
+        this.slotSeed = random(TWO_PI);
+        this.hammer = 0;
+        this.lastStrike = -1;
+
         // Adjust proportions based on gender
         this.bodyW = (this.gender === "FEMALE") ? 16 : 21;
         this.bodyH = (this.gender === "FEMALE") ? 25 : 27;
@@ -11715,8 +11781,44 @@ class Citizen {
     }
     
     update() {
+        // A build site is what the architecture department is FOR, so it takes
+        // priority over the wander timer entirely: an architect within reach of
+        // unfinished work walks to their slot on the hoarding and stays there
+        // swinging until it tops out.
+        if (this.role === "ARCHITECTURE" && typeof nearestBuildSite === 'function') {
+            const site = nearestBuildSite(this.x, this.y);
+            if (site) {
+                const slot = buildSlotFor(site, this.slotSeed);
+                const d = dist(this.x, this.y, slot.x, slot.y);
+                if (d > 12) {
+                    this.state = "TO_SITE";
+                    this.moveAngle = atan2(slot.y - this.y, slot.x - this.x);
+                    this.x += cos(this.moveAngle) * 1.15;
+                    this.y += sin(this.moveAngle) * 1.15;
+                    this.walkCycle += 0.13;
+                } else {
+                    this.state = "BUILDING";
+                    this.moveAngle = atan2(site.y - this.y, site.x - this.x);
+                    this.hammer += 0.17;
+                    // One puff of dust per swing, on the frame the head lands.
+                    const strike = Math.floor(this.hammer / TWO_PI);
+                    if (strike !== this.lastStrike) {
+                        this.lastStrike = strike;
+                        if (inView(this.x, this.y, 60) && random() < 0.55) {
+                            emit(this.x + cos(this.moveAngle) * 22, this.y + sin(this.moveAngle) * 22,
+                                 2, color(186, 176, 152), "CHIP");
+                        }
+                    }
+                }
+                this.resolveCollisions();
+                return;
+            }
+            this.hammer = 0;
+            if (this.state === "BUILDING" || this.state === "TO_SITE") { this.state = "IDLE"; this.timer = 30; }
+        }
+
         this.timer--;
-        
+
         if (this.timer <= 0) {
             if (random() > 0.5) {
                 this.state = "WANDER";
@@ -11829,10 +11931,12 @@ class Citizen {
         
         push(); translate(this.x, this.y); 
         
-        let rot = (this.state === "WANDER") ? this.moveAngle : sin(frameCount * 0.05 + this.x) * 0.1;
-        rotate(rot); 
-        
-        let isMoving = (this.state === "WANDER");
+        let isBuilding = (this.state === "BUILDING");
+        let rot = (this.state === "WANDER" || this.state === "TO_SITE" || isBuilding)
+                  ? this.moveAngle : sin(frameCount * 0.05 + this.x) * 0.1;
+        rotate(rot);
+
+        let isMoving = (this.state === "WANDER" || this.state === "TO_SITE");
         let swing = isMoving ? sin(this.walkCycle) : 0;
         let bob = isMoving ? abs(sin(this.walkCycle)) * 2 : 0;
         
@@ -11933,8 +12037,25 @@ class Citizen {
         // Front hands
         fill(this.skinCol);
         if (lArmSwing > 0.2) ellipse(lHandX, armLY, 8, 8);
-        if (rArmSwing > 0.2) ellipse(rHandX, armRY, 8, 8);
-        
+        if (!isBuilding && rArmSwing > 0.2) ellipse(rHandX, armRY, 8, 8);
+
+        // The hammer. Top-down a swing has no rise to show, so it reads as
+        // reach: the arm drives forward and the head rolls over the wrist on
+        // the down-stroke, then recovers back over the shoulder.
+        if (isBuilding) {
+            const sw = sin(this.hammer || 0);              // -1 back, +1 struck
+            const drive = 13 + sw * 7;
+            push(); translate(drive, armRY - sw * 1.5);
+            fill(this.shirtCol); ellipse(-5, 0, 15, 8);    // forearm following it out
+            fill(this.skinCol); ellipse(0, 0, 8, 8);       // fist
+            rotate(-0.75 + sw * 1.25);
+            fill(122, 92, 56); rect(0, -2.2, 21, 4.4, 1);  // haft
+            fill(70, 74, 80); rect(19, -6.5, 10, 13, 2);   // head
+            fill(150, 156, 166); rect(19, -6.5, 10, 4, 1); // struck face
+            fill(96, 100, 108); rect(19, 3.5, 10, 3, 1);   // claw
+            pop();
+        }
+
         pop();
     }
 }
@@ -12747,6 +12868,11 @@ function touchStarted() {
   let mx = touches.length > 0 ? touches[touches.length - 1].x : mouseX;
   let my = touches.length > 0 ? touches[touches.length - 1].y : mouseY;
 
+  // Placement owns the screen while it is up: PLACE and CANCEL are checked
+  // before anything else so a tap near the sticks cannot fire a weapon through
+  // the ghost the player is still lining up.
+  if (typeof handleBuildHudTap === 'function' && handleBuildHudTap(mx, my)) return false;
+
   // THEN check the barrier button
   if (window.archBarrierReady) {
       let bbX = width / 2, bbY = height - 100;
@@ -12879,17 +13005,36 @@ else if (mx > width/2 - 120 && mx < width/2 + 120 && my > height/2 - 110 && my <
                   if (my > height/2 + 40 && my < height/2 + 80) { pauseMenuState = "SHOP"; return false; } 
                   if (my > height/2 + 90 && my < height/2 + 130) { pauseMenuState = "TABLET"; return false; } 
                   
-                  if ((window.towersDefeated || (isStoryMode && currentLevel >= 2)) && my > height/2 + 140 && my < height/2 + 180) { 
-                      pauseMenuState = "SQUAD"; return false; 
+                  if ((window.towersDefeated || (isStoryMode && currentLevel >= 2)) && my > height/2 + 140 && my < height/2 + 180) {
+                      pauseMenuState = "SQUAD"; return false;
                   }
-                  
-                  if (my > height/2 + 190 && my < height/2 + 230) { 
+
+                  if (my > height/2 + 190 && my < height/2 + 230) {
+                      if (buildCrew() > 0) { pauseMenuState = "BUILD"; sfx.charge(); }
+                      return false;
+                  }
+
+                  if (my > height/2 + 240 && my < height/2 + 280) {
                       isPaused = false; started = false; isStoryMode = false;
                       inStoryRoom = false; inStoryIntro = false; prologuePhase = 0;
                       inUpstairsRoom = false; journalRead = false; sfx.charge(); return false; 
                   }
               }
-          
+
+
+            } else if (pauseMenuState === "BUILD") {
+              // Blueprint cards are wider than the standard button column, so
+              // they test their own x range rather than btnX.
+              for (let i = 0; i < BUILD_ORDER.length; i++) {
+                  const y = height / 2 - 160 + i * 76;
+                  if (mx > width / 2 - 170 && mx < width / 2 + 170 && my > y && my < y + 64) {
+                      startBuildPlacement(BUILD_ORDER[i]);
+                      return false;
+                  }
+              }
+              if (mx > btnX && mx < btnX + btnW && my > height / 2 + 190 && my < height / 2 + 230) {
+                  pauseMenuState = "MAIN"; return false;
+              }
 
             } else if (pauseMenuState === "SQUAD") {
 
@@ -13685,6 +13830,20 @@ function saveGame() {
         meleeToolSel: window.meleeToolSel || "NONE",
         swordEquipped: window.swordEquipped !== false,
 
+        // --- CONSTRUCTION ---
+        // Every sector's sites, not just this one's: a warehouse half up in
+        // Stick City has to still be half up after a reload in the Undercity.
+        // Flattened rather than stored by reference, because buildSiteSolids()
+        // hands each solid a `site` back-pointer and JSON will not take a
+        // cycle. Barriers ride along in the same list they now live in.
+        buildSites: (typeof buildSites !== 'undefined' ? buildSites : []).map((s) => ({
+            level: s.level, kind: s.kind, x: s.x, y: s.y, w: s.w, h: s.h,
+            progress: s.progress, done: !!s.done
+        })),
+        playerBarriers: (typeof playerStructures !== 'undefined' ? playerStructures : [])
+            .filter((b) => b.isUBarrier)
+            .map((b) => ({ x: b.x, y: b.y, w: b.w, h: b.h, hp: b.hp, maxHp: b.maxHp, level: b.buildLevel })),
+
         // --- CUTSCENES ---
         // Which beats have played, by name. Everything else here is the state
         // of a cutscene that is mid-run; storyBeats is the record of the ones
@@ -13824,6 +13983,24 @@ function loadGame() {
         // setMeleeTool keeps swordEquipped in step, which is what the swing code
         // and the hand art actually read.
         setMeleeTool(state.meleeToolSel || (state.swordEquipped ? "SWORD" : "NONE"));
+
+        // --- CONSTRUCTION ---
+        // After startAtLevel(), which regenerates the world and would otherwise
+        // wipe the structures straight back out of buildings[]. The `site`
+        // back-pointers are rebuilt by republishPlayerStructures(), not saved.
+        buildSites = Array.isArray(state.buildSites) ? state.buildSites.map((s) => ({
+            level: Number(s.level) || 1, kind: s.kind,
+            x: Number(s.x) || 0, y: Number(s.y) || 0,
+            w: Number(s.w) || (BLUEPRINTS[s.kind] ? BLUEPRINTS[s.kind].w : 160),
+            h: Number(s.h) || (BLUEPRINTS[s.kind] ? BLUEPRINTS[s.kind].h : 140),
+            progress: Math.min(1, Math.max(0, Number(s.progress) || 0)), done: !!s.done
+        })).filter((s) => BLUEPRINTS[s.kind]) : [];
+        playerStructures = (Array.isArray(state.playerBarriers) ? state.playerBarriers : [])
+            .map((b) => ({ x: b.x, y: b.y, w: b.w || 200, h: b.h || 200, isUBarrier: true,
+                           hp: b.hp || 1000, maxHp: b.maxHp || 1000, hitFlash: 0,
+                           isPlayerBuilt: true, buildLevel: b.level }));
+        buildGhost = null;
+        republishPlayerStructures();
 
         // --- AMBUSHES ---
         farmAmbushActive = state.farmAmbushActive || false;
@@ -14160,8 +14337,370 @@ function checkLevelUps() {
 function buildBarrier() {
     if (!window.archBarrierReady) return;
     window.archBarrierReady = false;
-    buildings.push({ x: player.x, y: player.y - 20, w: 200, h: 200, isUBarrier: true, hp: 1000, maxHp: 1000, hitFlash: 0 });
+    // Through playerStructures rather than straight into buildings[]: see the
+    // construction block below for why anything the player puts in the world
+    // has to survive rebuildWorldArrays().
+    playerStructures.push({ x: player.x, y: player.y - 20, w: 200, h: 200, isUBarrier: true,
+                            hp: 1000, maxHp: 1000, hitFlash: 0,
+                            isPlayerBuilt: true, buildLevel: currentLevel });
+    republishPlayerStructures();
     sfx.charge();
+}
+
+// ############################################################################
+// ##  CONSTRUCTION                                                          ##
+// ############################################################################
+//
+// The architecture department made visible. The player picks a blueprint from
+// the pause menu, walks a ghost footprint to a clear patch of ground, and the
+// crew raises it over the following in-game days.
+//
+// Three things this has to get right, and the third is the one that bites:
+//
+// 1. **Rate is a function of the assigned department, not of the sprites.**
+//    `townCitizens` is the visualisation and is rebuilt from the same counts
+//    whenever the Directive is confirmed; tying progress to the sprites would
+//    stall every site each time the roster was repopulated.
+// 2. **Progress accrues against `worldClockDtMs`** -- the same millisecond
+//    delta the sun and the production meters run on -- so a day of building is
+//    a day of building at any frame rate, and it keeps accruing while the
+//    player is in a different level. That is what "it remains being built"
+//    means: `updateBuildSites()` walks every site in every sector, and only
+//    the ones in `currentLevel` are ever drawn.
+// 3. **`buildings[]` is REPLACED wholesale** by `ChunkManager.rebuildWorldArrays()`
+//    every time chunk residency changes -- in a streamed biome, every time you
+//    cross a chunk edge, which is constantly. Anything the player puts in the
+//    world therefore has to live in its own list that the rebuild republishes,
+//    exactly the way the travel anchors do. `buildBarrier()` has always pushed
+//    straight into `buildings[]` and has always been quietly swept away a few
+//    strides later; it goes through the same list now.
+
+// Footprints are the ghost, the ground the crew clears and the collision box,
+// all one number -- so what the player lines up is what they get.
+const BLUEPRINTS = {
+    WAREHOUSE:  { label: "WAREHOUSE",      w: 230, h: 150,
+                  blurb: "Bulk storage. Corrugated shell, roll-up door." },
+    LABORATORY: { label: "LABORATORY",     w: 170, h: 140,
+                  blurb: "Clean rooms and roof plant for the science wing." },
+    RANGE:      { label: "SHOOTING RANGE", w: 260, h: 110,
+                  blurb: "Firing line, six lanes, earth backstop." },
+    FARM:       { label: "BARN & FIELD",   w: 260, h: 190,
+                  blurb: "Gambrel barn with a worked field alongside." }
+};
+const BUILD_ORDER = ["WAREHOUSE", "LABORATORY", "RANGE", "FARM"];
+
+// 1% of a structure per in-game day per assigned architect, so a full hundred
+// raises one in a single day. Architecture level multiplies it -- the same
+// department stat the Directive already advertises as "Build Speed".
+const BUILD_DAY_PER_UNIT = 0.01;
+
+let buildSites = [];          // every site in every sector; the save's record
+let playerStructures = [];    // the current sector's solids, republished on rebuild
+let buildGhost = null;        // { kind, x, y, w, h, ok } only while placing
+let buildMenuPage = 0;
+
+function buildCrew() {
+    return (Number(window.popArchitectureM) || 0) + (Number(window.popArchitectureF) || 0);
+}
+function buildSpeedMult() { return Math.max(1, Number(window.archLvl) || 1); }
+// Days to finish from a standing start, for the blueprint list. Infinity reads
+// as "nobody assigned", which is the honest answer.
+function buildEtaDays(fraction) {
+    const rate = buildCrew() * BUILD_DAY_PER_UNIT * buildSpeedMult();
+    return rate > 0 ? (fraction / rate) : Infinity;
+}
+
+// Ground has to be clear of solids, of authored geometry, of standing water and
+// of other sites. Same question the chunk generator asks before it places
+// anything, asked through the same helpers.
+function buildSpotClear(x, y, w, h) {
+    if (!solidsClearAt(activeBuildings, x, y, w, h, 16)) return false;
+    if (typeof hitsAuthored === 'function' && hitsAuthored(x, y, w, h, 20)) return false;
+    if (typeof waterDepthAt === 'function') {
+        const hw = w / 2, hh = h / 2;
+        const pts = [[0, 0], [-hw, -hh], [hw, -hh], [-hw, hh], [hw, hh]];
+        for (const p of pts) if (waterDepthAt(x + p[0], y + p[1]) > 0.02) return false;
+    }
+    for (const s of buildSites) {
+        if (s.level !== currentLevel) continue;
+        if (Math.abs(x - s.x) < (w + s.w) / 2 + 24 && Math.abs(y - s.y) < (h + s.h) / 2 + 24) return false;
+    }
+    return true;
+}
+
+function startBuildPlacement(kind) {
+    const bp = BLUEPRINTS[kind];
+    if (!bp) return false;
+    buildGhost = { kind: kind, x: player.x, y: player.y, w: bp.w, h: bp.h, ok: false };
+    isPaused = false;
+    pauseMenuState = "MAIN";
+    window.lastPauseTime = millis();
+    if (sfx && sfx.charge) sfx.charge();
+    return true;
+}
+function cancelBuildPlacement() {
+    buildGhost = null;
+    if (sfx && sfx.reload) sfx.reload();
+}
+// The ghost rides in front of the player on the aim angle, so the left stick
+// carries it and the right stick swings it around -- no second cursor to learn.
+function updateBuildPlacement() {
+    if (!buildGhost || !player) return;
+    const reach = 110 + Math.max(buildGhost.w, buildGhost.h) * 0.5;
+    buildGhost.x = player.x + Math.cos(player.aimAngle) * reach;
+    buildGhost.y = player.y + Math.sin(player.aimAngle) * reach;
+    buildGhost.ok = buildSpotClear(buildGhost.x, buildGhost.y, buildGhost.w, buildGhost.h);
+}
+function confirmBuildPlacement() {
+    if (!buildGhost || !buildGhost.ok) return false;
+    buildSites.push({
+        level: currentLevel, kind: buildGhost.kind,
+        x: Math.round(buildGhost.x), y: Math.round(buildGhost.y),
+        w: buildGhost.w, h: buildGhost.h, progress: 0, done: false
+    });
+    buildGhost = null;
+    republishPlayerStructures();
+    streakMsgText = "GROUND BROKEN"; streakMsgTimer = 110;
+    if (sfx && sfx.charge) sfx.charge();
+    return true;
+}
+
+// Every site in every sector advances, which is the whole point -- walk away
+// from a half-built warehouse, clear a biome, come back and it is up.
+function updateBuildSites() {
+    const dt = worldClockDtMs;
+    if (!(dt > 0) || buildSites.length === 0) return;
+    const crew = buildCrew();
+    if (crew <= 0) return;
+    const rate = (crew * BUILD_DAY_PER_UNIT * buildSpeedMult()) / DAY_MS;
+    let finished = false;
+    for (const s of buildSites) {
+        if (s.done) continue;
+        s.progress = Math.min(1, s.progress + rate * dt);
+        if (s.progress >= 1) {
+            s.done = true;
+            finished = true;
+            if (s.level === currentLevel) {
+                streakMsgText = (BLUEPRINTS[s.kind] ? BLUEPRINTS[s.kind].label : "STRUCTURE") + " COMPLETE";
+                streakMsgTimer = 140;
+                if (sfx && sfx.charge) sfx.charge();
+            }
+        }
+    }
+    if (finished) republishPlayerStructures();
+}
+
+// The solids one site contributes. A site under construction is a hoarded lot
+// you cannot walk through; a finished one is the structure, plus whatever
+// ground the blueprint lays down beside it.
+function buildSiteSolids(s) {
+    const out = [];
+    if (!s.done) {
+        out.push({ x: s.x, y: s.y, w: s.w, h: s.h, isBuildSite: true, site: s,
+                   isPlayerBuilt: true, buildLevel: s.level });
+        return out;
+    }
+    if (s.kind === "FARM") {
+        // Barn on the west third, worked ground on the rest. The field is a
+        // ground lot, so it draws under the player and never blocks a step.
+        const bw = Math.round(s.w * 0.42);
+        out.push({ x: s.x - (s.w - bw) / 2, y: s.y, w: bw, h: s.h * 0.8,
+                   isBuiltStructure: true, kind: s.kind, site: s,
+                   isPlayerBuilt: true, buildLevel: s.level });
+        out.push({ x: s.x + bw / 2, y: s.y, w: s.w - bw, h: s.h, isCropField: true,
+                   isPlayerBuilt: true, buildLevel: s.level });
+        return out;
+    }
+    out.push({ x: s.x, y: s.y, w: s.w, h: s.h, isBuiltStructure: true, kind: s.kind, site: s,
+               isPlayerBuilt: true, buildLevel: s.level });
+    return out;
+}
+
+// Rebuild the current sector's structure list and get it into buildings[].
+// Called on level entry, on placement and on completion -- and appended again
+// by rebuildWorldArrays() every time the chunk streamer republishes the world.
+function republishPlayerStructures() {
+    const keep = playerStructures.filter((b) => b.isUBarrier && b.buildLevel === currentLevel);
+    playerStructures = keep;
+    for (const s of buildSites) {
+        if (s.level !== currentLevel) continue;
+        for (const b of buildSiteSolids(s)) playerStructures.push(b);
+    }
+    for (let i = buildings.length - 1; i >= 0; i--) if (buildings[i].isPlayerBuilt) buildings.splice(i, 1);
+    for (const b of playerStructures) buildings.push(b);
+    lastActiveUpdate = 0;
+    activeBuildings = [];
+    if (typeof updateActiveWorld === 'function') updateActiveWorld();
+}
+
+// A crew member's own patch of the perimeter, so twenty architects ring the
+// site instead of standing in one heap on its centre.
+function buildSlotFor(s, seed) {
+    const p = ((seed || 0) % TWO_PI) / TWO_PI;          // 0..1 around the border
+    const hw = s.w / 2 + 26, hh = s.h / 2 + 26;
+    const per = 2 * (hw * 2 + hh * 2), d = p * per;
+    let t = d;
+    if (t < hw * 2) return { x: s.x - hw + t, y: s.y - hh };
+    t -= hw * 2;
+    if (t < hh * 2) return { x: s.x + hw, y: s.y - hh + t };
+    t -= hh * 2;
+    if (t < hw * 2) return { x: s.x + hw - t, y: s.y + hh };
+    t -= hw * 2;
+    return { x: s.x - hw, y: s.y + hh - t };
+}
+// The nearest site in this sector still wanting work, or null. Far-off sites
+// are left alone so a citizen across the map keeps wandering instead of
+// striking out on a thousand-unit march.
+function nearestBuildSite(x, y, maxD) {
+    let best = null, bestD = (maxD || 1100);
+    for (const s of buildSites) {
+        if (s.done || s.level !== currentLevel) continue;
+        const d = dist(x, y, s.x, s.y);
+        if (d < bestD) { bestD = d; best = s; }
+    }
+    return best;
+}
+
+// --- the ghost, in world space, drawn over everything ---------------------
+function drawBuildGhost() {
+    if (!buildGhost) return;
+    const g = buildGhost;
+    const c = g.ok ? [90, 170, 255] : [235, 70, 60];
+    push(); translate(g.x, g.y);
+    noStroke(); fill(c[0], c[1], c[2], 34);
+    rect(-g.w / 2, -g.h / 2, g.w, g.h, 4);
+    // Corner ticks rather than a full box: the outline stays readable over
+    // busy ground, and the corners are what the player is actually aligning.
+    stroke(c[0], c[1], c[2], 235); strokeWeight(3); noFill();
+    const t = Math.min(34, Math.min(g.w, g.h) * 0.3), hw = g.w / 2, hh = g.h / 2;
+    for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
+        line(sx * hw, sy * hh, sx * (hw - t), sy * hh);
+        line(sx * hw, sy * hh, sx * hw, sy * (hh - t));
+    }
+    strokeWeight(1.5); stroke(c[0], c[1], c[2], 110);
+    rect(-hw, -hh, g.w, g.h);
+    // A line back to the player, so it is obvious what is carrying the ghost.
+    stroke(c[0], c[1], c[2], 90); strokeWeight(2);
+    line(0, 0, player.x - g.x, player.y - g.y);
+    noStroke();
+    pop();
+}
+
+// --- the site and the finished structures ---------------------------------
+function drawBuildSite(b) {
+    const s = b.site, p = s ? s.progress : 0;
+    const hw = b.w / 2, hh = b.h / 2;
+    push(); translate(b.x, b.y);
+    noStroke();
+    fill(118, 110, 98); rect(-hw, -hh, b.w, b.h, 3);            // graded pad
+    fill(150, 144, 132, 190);
+    rect(-hw + 8, -hh + 8, b.w - 16, b.h - 16, 2);              // poured slab
+    // The frame goes up course by course, so the site reads its own progress
+    // from across the street without a number on it.
+    const rows = Math.max(1, Math.round(p * 5));
+    stroke(126, 96, 58); strokeWeight(5);
+    for (let i = 0; i < rows; i++) {
+        const inset = 10 + i * 3;
+        noFill(); rect(-hw + inset, -hh + inset, b.w - inset * 2, b.h - inset * 2);
+    }
+    // Scaffold standards on the corners, and a materials drop by the gate.
+    noStroke(); fill(178, 150, 62);
+    for (const sx of [-1, 1]) for (const sy of [-1, 1]) rect(sx * (hw - 14) - 4, sy * (hh - 14) - 4, 8, 8, 1);
+    fill(96, 78, 52); rect(-hw + 16, hh - 30, 40, 14, 2);
+    fill(120, 100, 68); rect(-hw + 20, hh - 34, 40, 14, 2);
+    // Progress bar, near only. Hoarding tape all round.
+    stroke(226, 176, 40); strokeWeight(2);
+    for (let x = -hw; x < hw; x += 26) { line(x, -hh, x + 13, -hh); line(x, hh, x + 13, hh); }
+    noStroke();
+    if (player && dist(player.x, player.y, b.x, b.y) < 520) {
+        fill(0, 170); rect(-52, -hh - 22, 104, 10, 3);
+        fill(90, 170, 255); rect(-50, -hh - 20, 100 * p, 6, 2);
+        fill(235); textAlign(CENTER, CENTER); textSize(11); textFont('sans-serif');
+        text(Math.floor(p * 100) + "%", 0, -hh - 32);
+    }
+    pop();
+}
+
+function drawBuiltStructure(b) {
+    const hw = b.w / 2, hh = b.h / 2;
+    push(); translate(b.x, b.y);
+    noStroke();
+    if (b.kind === "WAREHOUSE") {
+        fill(96, 104, 112); rect(-hw, -hh, b.w, b.h, 3);            // shell
+        fill(122, 130, 138); rect(-hw + 6, -hh + 6, b.w - 12, b.h - 12, 2);
+        stroke(88, 96, 104); strokeWeight(2);                        // ribbed roof
+        for (let x = -hw + 14; x < hw - 10; x += 16) line(x, -hh + 8, x, hh - 8);
+        noStroke();
+        fill(150, 160, 170, 170);                                    // skylights
+        for (let x = -hw + 30; x < hw - 30; x += 58) rect(x, -14, 30, 28, 2);
+        fill(58, 62, 68); rect(-hw + 2, -34, 12, 68, 2);             // roll-up door
+        fill(196, 150, 44); rect(-hw + 2, -34, 12, 6, 1);
+    } else if (b.kind === "LABORATORY") {
+        fill(206, 210, 214); rect(-hw, -hh, b.w, b.h, 4);
+        fill(228, 232, 236); rect(-hw + 7, -hh + 7, b.w - 14, b.h - 14, 3);
+        fill(96, 160, 190, 200); rect(-hw + 16, -12, b.w - 32, 24, 2);   // atrium glazing
+        fill(150, 158, 166);                                             // roof plant
+        rect(hw - 52, -hh + 14, 34, 26, 2); rect(hw - 52, hh - 40, 34, 26, 2);
+        fill(180, 188, 196); rect(hw - 48, -hh + 18, 26, 18, 1); rect(hw - 48, hh - 36, 26, 18, 1);
+        fill(70, 130, 170); rect(-hw + 4, -18, 8, 36, 2);                // entry
+    } else if (b.kind === "RANGE") {
+        fill(132, 122, 104); rect(-hw, -hh, b.w, b.h, 3);            // gravel apron
+        fill(112, 104, 88); rect(-hw + 10, -hh + 10, b.w - 20, b.h - 20, 2);
+        fill(88, 74, 52); rect(hw - 34, -hh + 6, 30, b.h - 12, 3);   // earth backstop
+        fill(104, 88, 62); rect(hw - 30, -hh + 10, 22, b.h - 20, 2);
+        stroke(150, 142, 126); strokeWeight(2);                       // lane dividers
+        for (let y = -hh + 22; y < hh - 14; y += 18) line(-hw + 26, y, hw - 38, y);
+        noStroke();
+        fill(226, 226, 220);                                          // target boards
+        for (let y = -hh + 22; y < hh - 14; y += 18) rect(hw - 44, y - 6, 6, 12, 1);
+        fill(64, 60, 54); rect(-hw + 6, -hh + 8, 18, b.h - 16, 2);    // firing line canopy
+        fill(196, 60, 50); rect(-hw + 8, -6, 14, 12, 1);
+    } else if (b.kind === "FARM") {
+        fill(146, 44, 38); rect(-hw, -hh, b.w, b.h, 3);              // barn
+        fill(172, 58, 48); rect(-hw + 5, -hh + 5, b.w - 10, b.h - 10, 2);
+        fill(120, 34, 30);                                            // gambrel ridge
+        rect(-6, -hh + 5, 12, b.h - 10);
+        stroke(226, 220, 208); strokeWeight(3); noFill();             // trim
+        rect(-hw + 5, -hh + 5, b.w - 10, b.h - 10, 2);
+        noStroke();
+        fill(226, 220, 208); rect(-hw + 2, -26, 9, 52, 1);            // big doors
+        fill(120, 34, 30); rect(-hw + 2, -2, 9, 4);
+        fill(206, 176, 92); rect(hw - 22, -12, 16, 24, 2);            // hay door
+    }
+    pop();
+}
+
+// --- the placement HUD, screen space --------------------------------------
+function drawBuildHud() {
+    if (!buildGhost) return;
+    const bw = 150, bh = 46, y = height - 150;
+    const okCol = buildGhost.ok ? [40, 120, 200] : [70, 70, 70];
+    push(); textAlign(CENTER, CENTER); textFont('sans-serif');
+    fill(0, 150); noStroke(); rect(width / 2 - 210, y - 76, 420, 44, 8);
+    fill(235); textSize(15);
+    const bp = BLUEPRINTS[buildGhost.kind];
+    const eta = buildEtaDays(1);
+    text((bp ? bp.label : buildGhost.kind) + "  -  " +
+         (buildCrew() > 0 ? (eta < 1 ? "under a day" : Math.ceil(eta) + " day" + (Math.ceil(eta) > 1 ? "s" : ""))
+                          : "NO CREW ASSIGNED"), width / 2, y - 54);
+
+    fill(okCol[0], okCol[1], okCol[2], 220);
+    stroke(buildGhost.ok ? color(120, 200, 255) : color(120)); strokeWeight(2);
+    rect(width / 2 - 160, y, bw, bh, 8);
+    fill(120, 40, 40, 220); stroke(220, 120, 120); rect(width / 2 + 10, y, bw, bh, 8);
+    noStroke(); fill(255); textSize(18);
+    text(buildGhost.ok ? "PLACE" : "BLOCKED", width / 2 - 160 + bw / 2, y + bh / 2);
+    text("CANCEL", width / 2 + 10 + bw / 2, y + bh / 2);
+    pop();
+}
+// Returns true if the tap was the placement HUD's, so the caller stops there.
+function handleBuildHudTap(mx, my) {
+    if (!buildGhost) return false;
+    const bw = 150, bh = 46, y = height - 150;
+    if (my < y || my > y + bh) return false;
+    if (mx > width / 2 - 160 && mx < width / 2 - 160 + bw) { confirmBuildPlacement(); return true; }
+    if (mx > width / 2 + 10 && mx < width / 2 + 10 + bw) { cancelBuildPlacement(); return true; }
+    return false;
 }
 function updateProductionMeters() {
     if (window.farmLvl === undefined) {
@@ -18778,6 +19317,13 @@ class ChunkManager {
       for (let i = 0; i < ch.solid.length; i++) solids.push(ch.solid[i]);
       for (let i = 0; i < ch.cars.length;  i++) cars.push(ch.cars[i]);
     }
+    // Anything the player put in the world -- build sites, finished structures,
+    // a raised barrier -- rides along for the same reason the anchors do: this
+    // assignment REPLACES buildings[], and in a streamed biome it runs every
+    // time you cross a chunk edge.
+    if (typeof playerStructures !== 'undefined') {
+      for (let i = 0; i < playerStructures.length; i++) solids.push(playerStructures[i]);
+    }
     buildings   = solids;
     parkingCars = cars;
 
@@ -19051,6 +19597,11 @@ function drawBiomeShadows() {
     } else if (b.isWaterTower) {
       sh(76);
       ellipse(b.x + LIGHT_DX * 26 * SL, b.y + LIGHT_DY * 26 * SL + 20, 70, 34);
+    } else if (b.isBuildSite) {
+      // A slab and some scaffold standards. Nothing here is tall enough to
+      // throw the wall-sized shadow the generic branch below would give it.
+      sh(48);
+      rect(b.x - w / 2 + LIGHT_DX * 7 * SL, b.y - h / 2 + LIGHT_DY * 7 * SL, w, h);
     } else if (b.isGiantBarrier) {
       // A 10400-unit slab: shadow only the stretch the camera can see, or the
       // generic branch below builds a hull polygon spanning the whole wall and
@@ -22106,6 +22657,12 @@ function startAtLevel(lvl, isLoading = false) {
       formed++;
     }
   }
+
+  // The sector's construction, back into a world that has just been rebuilt
+  // from scratch. Last, for the same reason the escort re-forms last: every
+  // path into this function regenerates buildings[] at some point along it.
+  buildGhost = null;
+  if (typeof republishPlayerStructures === 'function') republishPlayerStructures();
 
   window.travelArrival = null;
   window.__biomeAnchorPending = null;
