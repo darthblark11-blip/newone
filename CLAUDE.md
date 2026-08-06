@@ -833,9 +833,9 @@ Adding one is a `BLUEPRINTS` entry, a name in `BUILD_ORDER`, and a branch in
 `drawBuiltStructure()`. `FARM` is the model for a blueprint that emits more than one
 solid: a barn plus an `isCropField` ground lot beside it, from `buildSiteSolids()`.
 
-**Footprints are authored at 1× and multiplied by `BUILD_SCALE` (9).** At the 20 units
-to the metre a parked car sets, that puts them at real sizes — the warehouse is 104×68 m,
-the range's lanes are a hundred metres. `BUILD_SCALE` is the only number to touch to
+**Footprints are authored at 1× and multiplied by `BUILD_SCALE` (2.25).** At the 20 units
+to the metre a parked car sets, that puts the warehouse at 26×17 m — a shed you walk the
+length of, rather than the garden hut 1× was or the airfield 9× was. `BUILD_SCALE` is the only number to touch to
 re-proportion the whole set, because **all the structure art is written in fractions of
 its own footprint** rather than in absolute units: a `u = min(w, h) * 0.018` trim unit,
 and every repeated element (roof ribs, lane dividers, scaffold standards, hoarding
@@ -857,9 +857,10 @@ scale again:
   fence bay is 470×10 and a hedge run longer, and the scatter set is different in every
   biome, so a flag list goes stale the next time one gets dressed. A river, a bridge deck,
   a pond, authored ground, a travel anchor and any building over about a ten-metre square
-  still refuse the site. Measured after: woodland 3–11%, Dry Gulch 23–40%, jungle ~50%,
-  tundra ~60%. The woodland is low because it is genuinely threaded with water — you
-  cannot put a hundred-metre warehouse across a river, and the outline says so.
+  still refuse the site. Measured at the current 2.25×: woodland 46–60%, Dry Gulch 73–77%.
+  (At 9× the same measurement was woodland 3–11% — worth knowing before scaling up again,
+  because the woodland is genuinely threaded with water and a footprint cannot cross a
+  river.)
 - **The crew's numbers were relative to a shed.** `nearestBuildSite()` measures its reach
   against the site's own size, and `buildSlotFor()`'s perimeter pad scales, or an
   architect leaning on one end of a hundred-metre slab decides the job is too far to walk
@@ -898,13 +899,43 @@ regenerates `buildings[]`) and on load. It also rebuilds the `site` back-pointer
 `drawBuildSite()` reads progress from; that pointer is a cycle and is deliberately not
 saved.
 
-**The crew.** A `Citizen` with `role === "ARCHITECTURE"` takes a build site over its
-wander timer entirely: `nearestBuildSite()` within 1100 units, `buildSlotFor()` gives it
-its own patch of the perimeter from a `slotSeed` fixed at birth (so twenty architects ring
-the job instead of piling onto its centre), and it stands there swinging. Top-down a hammer
-swing has no rise to show, so it reads as **reach** — the arm drives forward and the head
-rolls over the wrist on the down-stroke. States `TO_SITE` and `BUILDING` both count as
-moving for the walk cycle; only `BUILDING` suppresses the normal front hand.
+**The crew: two trades running one loop.** A `Citizen` with `role === "ARCHITECTURE"`
+takes a build site over its wander timer entirely — `nearestBuildSite()`, then
+`updateBuildWork()` drives everything.
+
+`updateBuildCrews()` runs **once a frame for the whole sector**, not per citizen, because
+the trade split and the pairing are properties of the crew as a group; a citizen deciding
+on its own would flip roles every time somebody walked in or out of range.
+
+- **Roles alternate down a roster sorted by `slotSeed`**, so it is half and half and the
+  split is stable. Haulers take the odd one (`i % 2 === 0` is `HAUL`), which is what makes
+  the doubling-up case below reachable at all.
+- **Pairing is round-robin**: hauler *k* works with mason *k % masons*. That is the
+  round-robin form of "find the next unpaired mason" — with equal numbers every mason gets
+  exactly one hauler, and a mason only ever sees a second one when there are more haulers
+  than masons, i.e. when the crew is odd. It is also stable frame to frame, which a search
+  is not.
+- A crew of one hammers rather than fetching for nobody.
+
+The loop: `TO_TRUCK` → `LOADING` (reaching into the container) → `TO_MASON` (carrying a
+`RESOURCE_KINDS` block) → `HANDOFF`, which calls `mason.takeMaterial()` and puts the mason
+into `PLACING` for `BUILD_PLACE` frames; the mason sets it in the wall and returns to
+`BUILDING`, the hauler walks back. Haulers stop a pace short of their mason — walking to
+the same point makes the two of them shove each other apart through `resolveCollisions()`
+forever.
+
+`buildTruckAt(s)` parks the lorry broadside south of the site, clear of the hoarding, and
+`truckSlot(t, 0..2)` is the three unloading faces — both flanks of the container and the
+tailgate. Which one a hauler uses is fixed at birth from `slotSeed`, so the approaches
+stay evenly used. The truck is a solid (so the player walks round it) but citizens do not
+collide with buildings, so it never blocks the crew.
+
+Top-down a hammer swing has no rise to show, so it reads as **reach** — the arm drives
+forward and the head rolls over the wrist on the down-stroke. Carrying, handing over and
+placing are all one rig (two arms out front with the load between them, only the reach
+changes) so the block never jumps between poses. `TO_SITE`/`TO_TRUCK`/`TO_MASON` count as
+moving for the walk cycle; `BUILDING`, `LOADING`, `HANDOFF` and `PLACING` each suppress
+the normal hands and draw their own.
 
 **No material cost.** Not asked for, and deliberately not invented — but `confirmBuildPlacement()`
 is the single funnel if you want `window.resources` to be the gate.

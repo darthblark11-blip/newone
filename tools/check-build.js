@@ -42,10 +42,14 @@ console.log('== the blueprint list ==');
   // a parked car sets, these have to come out at building sizes rather than
   // shed sizes — the warehouse is the one to hold the line on.
   const wh = P('BLUEPRINTS.WAREHOUSE');
-  ok('the scale multiplier is applied', wh.w === 230 * P('BUILD_SCALE') && wh.h === 150 * P('BUILD_SCALE'),
+  ok('the scale multiplier is applied',
+     wh.w === Math.round(230 * P('BUILD_SCALE')) && wh.h === Math.round(150 * P('BUILD_SCALE')),
      `x${P('BUILD_SCALE')} -> ${wh.w} x ${wh.h} units = ${Math.round(wh.w / 20)} x ${Math.round(wh.h / 20)} m`);
+  // At 20 units to the metre, ten metres is the line between a building you
+  // walk the length of and a garden shed.
   ok('and every footprint is a real structure, not a shed',
-     BUILD_ORDER_MIN() >= 900, 'smallest side ' + BUILD_ORDER_MIN() + ' units');
+     BUILD_ORDER_MIN() >= 200, 'smallest side ' + BUILD_ORDER_MIN() + ' units = ' +
+     Math.round(BUILD_ORDER_MIN() / 20) + ' m');
   function BUILD_ORDER_MIN() {
     let m = Infinity;
     for (const k of kinds) { const b = P(`BLUEPRINTS[${JSON.stringify(k)}]`); m = Math.min(m, b.w, b.h); }
@@ -142,8 +146,8 @@ console.log('\n== the crew clears the lot ==');
   probe(`startBuildPlacement("WAREHOUSE"); updateBuildPlacement();
          window.__trees = [];
          for (let i = 0; i < 6; i++) {
-           const t = { x: buildGhost.x - 400 + i * 160, y: buildGhost.y, w: 34, h: 34,
-                       isTreeTrunk: true, girth: 1.2 };
+           const t = { x: buildGhost.x - buildGhost.w * 0.35 + (buildGhost.w * 0.7 * i) / 5,
+                       y: buildGhost.y, w: 34, h: 34, isTreeTrunk: true, girth: 1.2 };
            window.__trees.push(t); buildings.push(t);
          }
          lastActiveUpdate = 0; activeBuildings = []; updateActiveWorld(); updateBuildPlacement();`);
@@ -295,6 +299,14 @@ console.log('\n== it survives a reload ==');
 }
 
 console.log('\n== the crew ==');
+// One tick of the world the way draw() does it: the trades and pairings are a
+// property of the crew as a group, so they are decided once for everybody
+// before anyone acts on them.
+function tick(n) {
+  for (let i = 0; i < n; i++) {
+    probe('frameCount++; updateBuildCrews(); for (const c of townCitizens) c.update();');
+  }
+}
 {
   probe(`buildSites = [{ level: currentLevel, kind: "WAREHOUSE", x: player.x + 300, y: player.y,
                          w: BLUEPRINTS.WAREHOUSE.w, h: BLUEPRINTS.WAREHOUSE.h,
@@ -306,32 +318,128 @@ console.log('\n== the crew ==');
          window.__w = new Citizen(player.x + 700, player.y + 400, "FARMING", "FEMALE");
          townCitizens.push(window.__w);`);
   ok('an architect finds the job', P('nearestBuildSite(window.__c.x, window.__c.y) !== null'));
-  for (let i = 0; i < 900; i++) probe('frameCount++; window.__c.update();');
-  ok('walks to the hoarding and gets to work', P('window.__c.state') === 'BUILDING', P('window.__c.state'));
+  tick(900);
+  ok('a lone architect hammers rather than fetching for nobody',
+     P('window.__c.state') === 'BUILDING', P('window.__c.state') + ' / ' + P('window.__c.buildRole'));
   const h0 = P('window.__c.hammer');
-  for (let i = 0; i < 60; i++) probe('frameCount++; window.__c.update();');
+  tick(60);
   ok('and keeps swinging', P('window.__c.hammer') > h0,
      `${h0.toFixed(1)} -> ${P('window.__c.hammer').toFixed(1)} rad`);
   const at = P('({ x: window.__c.x, y: window.__c.y })');
   const s = P('buildSites[0]');
-  const onEdge = Math.abs(Math.abs(at.x - s.x) - (s.w / 2 + 26)) < 40 ||
-                 Math.abs(Math.abs(at.y - s.y) - (s.h / 2 + 26)) < 40;
+  const pad = 26 + Math.min(s.w, s.h) * 0.02;
+  const onEdge = Math.abs(Math.abs(at.x - s.x) - (s.w / 2 + pad)) < 40 ||
+                 Math.abs(Math.abs(at.y - s.y) - (s.h / 2 + pad)) < 40;
   ok('standing on the perimeter, not inside the walls', onEdge,
      `(${Math.round(at.x - s.x)}, ${Math.round(at.y - s.y)}) from centre`);
 
-  for (let i = 0; i < 600; i++) probe('frameCount++; window.__w.update();');
   ok('a farmer is not conscripted onto the site',
-     P('window.__w.state') !== 'BUILDING' && P('window.__w.state') !== 'TO_SITE', P('window.__w.state'));
+     P('window.__w.state') !== 'BUILDING' && P('window.__w.buildSite') == null, P('window.__w.state'));
+}
 
-  // Two architects must not stand in the same place.
-  probe(`window.__c2 = new Citizen(player.x + 700, player.y + 400, "ARCHITECTURE", "FEMALE");
-         window.__c2.slotSeed = (window.__c.slotSeed + Math.PI) % (Math.PI * 2);
-         townCitizens.push(window.__c2);`);
-  for (let i = 0; i < 900; i++) probe('frameCount++; window.__c2.update();');
-  const a2 = P('({ x: window.__c2.x, y: window.__c2.y })');
-  ok('a second architect takes a different slot',
-     Math.hypot(a2.x - at.x, a2.y - at.y) > 60,
-     Math.round(Math.hypot(a2.x - at.x, a2.y - at.y)) + ' units apart');
+console.log('\n== the lorry ==');
+{
+  const t = P('buildTruckAt(buildSites[0])');
+  const s = P('buildSites[0]');
+  ok('a supply truck parks at the site', t && t.w > 0);
+  ok('clear of the hoarding, not on it',
+     Math.abs(t.y - s.y) > s.h / 2 + t.h / 2,
+     `${Math.round(Math.abs(t.y - s.y))} units out, needs ${Math.round(s.h / 2 + t.h / 2)}`);
+  ok('and it is in the world while the job runs',
+     P('buildings.filter(b => b.isBuildTruck).length') === 1);
+  // Three unloading faces: both flanks of the container and the tailgate.
+  const slots = [0, 1, 2].map((i) => P(`truckSlot(buildTruckAt(buildSites[0]), ${i})`));
+  ok('three approaches, all outside the body',
+     slots.every((q) => Math.abs(q.x - t.x) > t.w / 2 || Math.abs(q.y - t.y) > t.h / 2),
+     slots.map((q) => `(${Math.round(q.x - t.x)},${Math.round(q.y - t.y)})`).join(' '));
+  ok('and they are three distinct places',
+     new Set(slots.map((q) => Math.round(q.x) + ',' + Math.round(q.y))).size === 3);
+  probe('buildSites[0].done = true; republishPlayerStructures();');
+  ok('it leaves when the job is finished', P('buildings.filter(b => b.isBuildTruck).length') === 0);
+  probe('buildSites[0].done = false; buildSites[0].progress = 0.2; republishPlayerStructures();');
+}
+
+console.log('\n== who hammers, who hauls ==');
+function crewOf(n) {
+  probe(`townCitizens = [];
+         for (let i = 0; i < ${n}; i++) {
+           const c = new Citizen(buildSites[0].x + 40 * i, buildSites[0].y + 300, "ARCHITECTURE", "MALE");
+           c.slotSeed = (i + 1) * 0.37;
+           townCitizens.push(c);
+         }`);
+  probe('updateBuildCrews();');
+  return {
+    roles: P('townCitizens.map(c => c.buildRole)'),
+    pairs: P('townCitizens.map(c => c.buildRole === "HAUL" ? townCitizens.indexOf(c.pairMason) : -1)')
+  };
+}
+{
+  for (const n of [2, 4, 8, 20]) {
+    const r = crewOf(n);
+    const haul = r.roles.filter((x) => x === 'HAUL').length;
+    const ham = r.roles.filter((x) => x === 'HAMMER').length;
+    ok(`${n} architects split evenly`, haul === n / 2 && ham === n / 2, `${haul} hauling, ${ham} hammering`);
+    // Every hauler has exactly one mason, and no mason has two.
+    const load = {};
+    r.pairs.forEach((m) => { if (m >= 0) load[m] = (load[m] || 0) + 1; });
+    const counts = Object.values(load);
+    ok(`  and every pair is exactly two`, counts.length === ham && counts.every((c) => c === 1),
+       counts.join(',') + ' haulers per mason');
+  }
+  // The odd case is the ONLY one where a mason may take a second hauler.
+  for (const n of [3, 5, 7]) {
+    const r = crewOf(n);
+    const haul = r.roles.filter((x) => x === 'HAUL').length;
+    const ham = r.roles.filter((x) => x === 'HAMMER').length;
+    const load = {};
+    r.pairs.forEach((m) => { if (m >= 0) load[m] = (load[m] || 0) + 1; });
+    const counts = Object.values(load);
+    const doubles = counts.filter((c) => c === 2).length;
+    ok(`${n} architects: ${haul} hauling, ${ham} hammering`, haul + ham === n);
+    ok(`  exactly one mason doubles up, nobody takes three`,
+       doubles === 1 && counts.every((c) => c <= 2) && counts.length === ham,
+       counts.join(',') + ' haulers per mason');
+  }
+  // Roles must not flicker: a citizen who is hauling this frame is hauling the
+  // next one, or the whole loop restarts every tick.
+  const before = P('townCitizens.map(c => c.buildRole)');
+  tick(20);
+  ok('roles are stable frame to frame',
+     JSON.stringify(P('townCitizens.map(c => c.buildRole)')) === JSON.stringify(before));
+}
+
+console.log('\n== the hauling loop ==');
+{
+  crewOf(4);
+  const seen = new Set();
+  let carried = 0, handoffs = 0, placed = 0;
+  for (let i = 0; i < 4000; i++) {
+    probe('frameCount++; updateBuildCrews(); for (const c of townCitizens) c.update();');
+    for (const st of P('townCitizens.map(c => c.state)')) seen.add(st);
+    carried += P('townCitizens.filter(c => c.state === "TO_MASON" && c.carrying).length') > 0 ? 1 : 0;
+    handoffs += P('townCitizens.filter(c => c.state === "HANDOFF").length') > 0 ? 1 : 0;
+    placed += P('townCitizens.filter(c => c.state === "PLACING").length') > 0 ? 1 : 0;
+    if (carried && handoffs && placed && seen.has('LOADING') && seen.has('BUILDING')) break;
+  }
+  ok('haulers walk to the lorry', seen.has('TO_TRUCK'));
+  ok('and reach into the container', seen.has('LOADING'));
+  ok('then carry a material to their mason', seen.has('TO_MASON') && carried > 0);
+  ok('the two of them make the exchange', seen.has('HANDOFF') && handoffs > 0);
+  ok('the mason breaks off to set it in the wall', seen.has('PLACING') && placed > 0);
+  ok('and goes back to hammering afterwards', seen.has('BUILDING'));
+  ok('a hauler only ever carries a real material',
+     P('townCitizens.every(c => c.carrying === null || RESOURCE_KINDS.indexOf(c.carrying) > -1)'));
+  // It is a loop, not a one-shot: keep running and they go round again.
+  const rounds = P('townCitizens.filter(c => c.buildRole === "HAUL").length');
+  let backToTruck = 0;
+  for (let i = 0; i < 2500 && !backToTruck; i++) {
+    probe('frameCount++; updateBuildCrews(); for (const c of townCitizens) c.update();');
+    if (P('townCitizens.filter(c => c.buildRole === "HAUL" && c.state === "TO_TRUCK").length') === rounds) backToTruck = i;
+  }
+  ok('and every hauler goes back for another load', backToTruck > 0, 'all ' + rounds + ' returning');
+  // A mason with his hands full is not also swinging a hammer.
+  const bad = P(`townCitizens.filter(c => c.state === "PLACING" && c.placeTimer <= 0).length`);
+  ok('nobody hammers with their hands full', bad === 0);
 }
 
 console.log('\n== it all draws ==');

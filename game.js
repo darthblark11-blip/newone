@@ -2070,6 +2070,7 @@ function drawBuildings() {
     if (b.isParkingCar) continue; 
     if (b.isCropField || b.isPond || b.isParkingLot) continue; // MOVED TO GROUND RENDER STACK
     if (b.isBuildSite) { drawBuildSite(b); continue; }
+    if (b.isBuildTruck) { drawSupplyTruck(b); continue; }
     if (b.isBuiltStructure) { drawBuiltStructure(b); continue; }
     if (b.isUBarrier) {
         let isFlashing = b.hitFlash && b.hitFlash > 0;
@@ -3399,6 +3400,9 @@ viewBottom = camY + height / zoom + shakePad;
   // Every sector's sites, not just this one's — walk away from a half-built
   // warehouse and it keeps going up while you are elsewhere.
   if (typeof updateBuildSites === 'function') updateBuildSites();
+  // Trades and pairings are a property of the crew as a group, so they are
+  // decided once here rather than by each citizen on its own.
+  if (typeof updateBuildCrews === 'function' && doTick) updateBuildCrews();
   if (typeof updateBuildPlacement === 'function') updateBuildPlacement();
   if (BIOME_ACTIVE) biomeBackground();
   else if (currentLevel === 1) background(45, 110, 45);
@@ -11780,6 +11784,15 @@ class Citizen {
         this.slotSeed = random(TWO_PI);
         this.hammer = 0;
         this.lastStrike = -1;
+        // Construction work: which trade, who they are paired with, and what is
+        // in their hands. All assigned by updateBuildCrews() / updateBuildWork().
+        this.buildSite = null;
+        this.buildRole = "HAMMER";
+        this.pairMason = null;
+        this.carrying = null;
+        this.placeTimer = 0;
+        this.loadTimer = 0;
+        this.handTimer = 0;
 
         // Adjust proportions based on gender
         this.bodyW = (this.gender === "FEMALE") ? 16 : 21;
@@ -11795,36 +11808,17 @@ class Citizen {
         // priority over the wander timer entirely: an architect within reach of
         // unfinished work walks to their slot on the hoarding and stays there
         // swinging until it tops out.
-        if (this.role === "ARCHITECTURE" && typeof nearestBuildSite === 'function') {
-            const site = nearestBuildSite(this.x, this.y);
-            if (site) {
-                const slot = buildSlotFor(site, this.slotSeed);
-                const d = dist(this.x, this.y, slot.x, slot.y);
-                if (d > 12) {
-                    this.state = "TO_SITE";
-                    this.moveAngle = atan2(slot.y - this.y, slot.x - this.x);
-                    this.x += cos(this.moveAngle) * 1.15;
-                    this.y += sin(this.moveAngle) * 1.15;
-                    this.walkCycle += 0.13;
-                } else {
-                    this.state = "BUILDING";
-                    this.moveAngle = atan2(site.y - this.y, site.x - this.x);
-                    this.hammer += 0.17;
-                    // One puff of dust per swing, on the frame the head lands.
-                    const strike = Math.floor(this.hammer / TWO_PI);
-                    if (strike !== this.lastStrike) {
-                        this.lastStrike = strike;
-                        if (inView(this.x, this.y, 60) && random() < 0.55) {
-                            emit(this.x + cos(this.moveAngle) * 22, this.y + sin(this.moveAngle) * 22,
-                                 2, color(186, 176, 152), "CHIP");
-                        }
-                    }
-                }
-                this.resolveCollisions();
-                return;
-            }
-            this.hammer = 0;
-            if (this.state === "BUILDING" || this.state === "TO_SITE") { this.state = "IDLE"; this.timer = 30; }
+        if (this.role === "ARCHITECTURE" && this.buildSite) {
+            this.updateBuildWork(this.buildSite);
+            this.resolveCollisions();
+            return;
+        }
+        if (this.role === "ARCHITECTURE") {
+            this.hammer = 0; this.carrying = null;
+            if (this.state === "BUILDING" || this.state === "TO_SITE" ||
+                this.state === "TO_TRUCK" || this.state === "LOADING" ||
+                this.state === "TO_MASON" || this.state === "HANDOFF" ||
+                this.state === "PLACING") { this.state = "IDLE"; this.timer = 30; }
         }
 
         this.timer--;
@@ -11859,6 +11853,97 @@ class Citizen {
         }
 
         this.resolveCollisions();
+    }
+
+    // A site is worked by two trades running one loop between them. A hauler
+    // fetches from the lorry and carries it to their mason; the mason breaks
+    // off hammering, takes it, sets it in the wall, and goes back to work. The
+    // pairing is decided for the whole crew at once by updateBuildCrews().
+    updateBuildWork(site) {
+        const step = (tx, ty, spd) => {
+            const d = dist(this.x, this.y, tx, ty);
+            if (d <= (spd || 1.15) * 1.5) return true;
+            this.moveAngle = atan2(ty - this.y, tx - this.x);
+            this.x += cos(this.moveAngle) * (spd || 1.15);
+            this.y += sin(this.moveAngle) * (spd || 1.15);
+            this.walkCycle += 0.13;
+            return false;
+        };
+
+        if (this.buildRole === "HAUL" && this.pairMason) {
+            const truck = buildTruckAt(site);
+            if (this.state !== "TO_TRUCK" && this.state !== "LOADING" &&
+                this.state !== "TO_MASON" && this.state !== "HANDOFF") {
+                this.state = "TO_TRUCK"; this.carrying = null;
+            }
+            if (this.state === "TO_TRUCK") {
+                // Which face of the container they favour is fixed at birth, so
+                // the three approaches stay evenly used and nobody swaps queue.
+                const slot = truckSlot(truck, Math.floor(this.slotSeed * 1000) % 3);
+                if (step(slot.x, slot.y)) { this.state = "LOADING"; this.loadTimer = BUILD_HAUL_LOAD; }
+                return;
+            }
+            if (this.state === "LOADING") {
+                this.moveAngle = atan2(truck.y - this.y, truck.x - this.x);
+                if (--this.loadTimer <= 0) {
+                    this.carrying = RESOURCE_KINDS[Math.floor(random(RESOURCE_KINDS.length)) % RESOURCE_KINDS.length];
+                    this.state = "TO_MASON";
+                }
+                return;
+            }
+            if (this.state === "TO_MASON") {
+                const m = this.pairMason;
+                // Stop a pace short: two people walking into the same point
+                // shove each other apart through resolveCollisions() forever.
+                const a = atan2(this.y - m.y, this.x - m.x);
+                if (step(m.x + cos(a) * 26, m.y + sin(a) * 26)) {
+                    this.state = "HANDOFF"; this.handTimer = BUILD_HANDOFF;
+                    if (m.placeTimer === undefined || m.placeTimer <= 0) {
+                        m.takeMaterial(this.carrying);
+                    }
+                }
+                return;
+            }
+            if (this.state === "HANDOFF") {
+                this.moveAngle = atan2(this.pairMason.y - this.y, this.pairMason.x - this.x);
+                if (--this.handTimer <= 0) { this.carrying = null; this.state = "TO_TRUCK"; }
+                return;
+            }
+        }
+
+        // Masons, and any hauler with nobody to fetch for.
+        const slot = buildSlotFor(site, this.slotSeed);
+        if (!step(slot.x, slot.y)) { this.state = "TO_SITE"; return; }
+        this.moveAngle = atan2(site.y - this.y, site.x - this.x);
+        if (this.placeTimer > 0) {
+            // Setting the delivered material into the wall: reach out, lay it
+            // down, straighten up. No hammering while their hands are full.
+            this.placeTimer--;
+            this.state = "PLACING";
+            if (this.placeTimer === Math.floor(BUILD_PLACE * 0.35) && inView(this.x, this.y, 60)) {
+                const c = RESOURCE_DEF[this.carrying || "STONE"];
+                emit(this.x + cos(this.moveAngle) * 26, this.y + sin(this.moveAngle) * 26,
+                     3, color(c.col[0], c.col[1], c.col[2]), "CHIP");
+            }
+            if (this.placeTimer <= 0) { this.carrying = null; this.state = "BUILDING"; }
+            return;
+        }
+        this.state = "BUILDING";
+        this.hammer += 0.17;
+        const strike = Math.floor(this.hammer / TWO_PI);
+        if (strike !== this.lastStrike) {
+            this.lastStrike = strike;
+            if (inView(this.x, this.y, 60) && random() < 0.55) {
+                emit(this.x + cos(this.moveAngle) * 22, this.y + sin(this.moveAngle) * 22,
+                     2, color(186, 176, 152), "CHIP");
+            }
+        }
+    }
+
+    takeMaterial(kind) {
+        this.carrying = kind || "STONE";
+        this.placeTimer = BUILD_PLACE;
+        this.state = "PLACING";
     }
 
     resolveCollisions() {
@@ -11942,11 +12027,13 @@ class Citizen {
         push(); translate(this.x, this.y); 
         
         let isBuilding = (this.state === "BUILDING");
-        let rot = (this.state === "WANDER" || this.state === "TO_SITE" || isBuilding)
+        const WORK = ["TO_SITE", "BUILDING", "PLACING", "TO_TRUCK", "LOADING", "TO_MASON", "HANDOFF"];
+        let rot = (this.state === "WANDER" || WORK.indexOf(this.state) !== -1)
                   ? this.moveAngle : sin(frameCount * 0.05 + this.x) * 0.1;
         rotate(rot);
 
-        let isMoving = (this.state === "WANDER" || this.state === "TO_SITE");
+        let isMoving = (this.state === "WANDER" || this.state === "TO_SITE" ||
+                        this.state === "TO_TRUCK" || this.state === "TO_MASON");
         let swing = isMoving ? sin(this.walkCycle) : 0;
         let bob = isMoving ? abs(sin(this.walkCycle)) * 2 : 0;
         
@@ -12044,10 +12131,15 @@ class Citizen {
             push(); translate(-5, 0); rotate(radians(isMoving ? sin(frameCount * 0.3) * 15 : 0)); ellipse(-6, 0, 12, 6); pop();
         }
 
-        // Front hands
+        // Front hands. Suppressed whenever both hands are on something: a load
+        // out of the container, a block being carried, a block going into the
+        // wall. Those poses draw their own arms below.
+        const bothHands = (this.state === "TO_MASON" || this.state === "HANDOFF" ||
+                           this.state === "PLACING") && !!this.carrying;
+        const reaching = (this.state === "LOADING");
         fill(this.skinCol);
-        if (lArmSwing > 0.2) ellipse(lHandX, armLY, 8, 8);
-        if (!isBuilding && rArmSwing > 0.2) ellipse(rHandX, armRY, 8, 8);
+        if (!bothHands && !reaching && lArmSwing > 0.2) ellipse(lHandX, armLY, 8, 8);
+        if (!bothHands && !reaching && !isBuilding && rArmSwing > 0.2) ellipse(rHandX, armRY, 8, 8);
 
         // The hammer. Top-down a swing has no rise to show, so it reads as
         // reach: the arm drives forward and the head rolls over the wrist on
@@ -12063,6 +12155,45 @@ class Citizen {
             fill(70, 74, 80); rect(19, -6.5, 10, 13, 2);   // head
             fill(150, 156, 166); rect(19, -6.5, 10, 4, 1); // struck face
             fill(96, 100, 108); rect(19, 3.5, 10, 3, 1);   // claw
+            pop();
+        }
+
+        // Reaching into the container: one arm in past the elbow, shoulders
+        // squared to the truck, and a little sway so it reads as rummaging.
+        if (reaching) {
+            const dig = 15 + sin(frameCount * 0.16 + this.x) * 4;
+            for (const sy of [armLY, armRY]) {
+                push(); translate(0, sy); rotate(atan2(-sy, dig) * 0.55);
+                fill(this.shirtCol); ellipse(dig * 0.45, 0, dig + 10, 8.4);
+                fill(this.skinCol); ellipse(dig, 0, 8, 8);
+                pop();
+            }
+        }
+
+        // Carrying, handing over, or setting into the wall. All three are the
+        // same rig -- two arms out front with the load between them -- so the
+        // block never jumps between poses; only how far out it is held changes.
+        if (bothHands) {
+            const c = RESOURCE_DEF[this.carrying] || RESOURCE_DEF.STONE;
+            let out = 17, lift = 0;
+            if (this.state === "HANDOFF") out = 23;                       // offered forward
+            if (this.state === "PLACING") {
+                // Reach out, lay it down, straighten up.
+                const p = 1 - (this.placeTimer / BUILD_PLACE);
+                out = 17 + sin(Math.min(1, p * 1.4) * PI) * 13;
+                lift = sin(Math.min(1, p * 1.4) * PI) * 2;
+            }
+            for (const sy of [armLY, armRY]) {
+                push(); translate(0, sy); rotate(atan2(-sy * 0.55, out));
+                fill(this.shirtCol); ellipse(out * 0.45, 0, out + 9, 8.4);
+                pop();
+            }
+            push(); translate(out, lift);
+            fill(c.edge[0], c.edge[1], c.edge[2]); rect(-8, -9, 16, 18, 2);
+            fill(c.col[0], c.col[1], c.col[2]);    rect(-6.5, -7.5, 13, 15, 1.5);
+            fill(c.lit[0], c.lit[1], c.lit[2]);    rect(-6.5, -7.5, 13, 4.5, 1);
+            fill(this.skinCol);
+            ellipse(-2, -10.5, 8, 8); ellipse(-2, 10.5, 8, 8);            // hands on it
             pop();
         }
 
@@ -14408,18 +14539,18 @@ function buildBarrier() {
 // Authored at 1x and multiplied by BUILD_SCALE, which is the only number to
 // touch if the whole set wants re-proportioning: every piece of structure art
 // below is written in fractions of its own footprint rather than in absolute
-// units, so it reads the same at any scale. At 9x -- and at the 20 units to the
-// metre a parked car sets -- these come out at real sizes: the warehouse is
-// 104 x 68 m, the range's lanes are a hundred metres long.
-const BUILD_SCALE = 9;
+// units, so it reads the same at any scale. At the 20 units to the metre a
+// parked car sets, 2.25x puts the warehouse at 26 x 17 m -- a real shed you
+// walk the length of, rather than the garden hut 1x was or the airfield 9x was.
+const BUILD_SCALE = 2.25;
 const BLUEPRINTS = {
-    WAREHOUSE:  { label: "WAREHOUSE",      w: 230 * BUILD_SCALE, h: 150 * BUILD_SCALE,
+    WAREHOUSE:  { label: "WAREHOUSE",      w: Math.round(230 * BUILD_SCALE), h: Math.round(150 * BUILD_SCALE),
                   blurb: "Bulk storage. Corrugated shell, loading bays." },
-    LABORATORY: { label: "LABORATORY",     w: 170 * BUILD_SCALE, h: 140 * BUILD_SCALE,
+    LABORATORY: { label: "LABORATORY",     w: Math.round(170 * BUILD_SCALE), h: Math.round(140 * BUILD_SCALE),
                   blurb: "Clean rooms and roof plant for the science wing." },
-    RANGE:      { label: "SHOOTING RANGE", w: 260 * BUILD_SCALE, h: 110 * BUILD_SCALE,
+    RANGE:      { label: "SHOOTING RANGE", w: Math.round(260 * BUILD_SCALE), h: Math.round(110 * BUILD_SCALE),
                   blurb: "Firing line, six lanes, earth backstop." },
-    FARM:       { label: "BARN & FIELD",   w: 260 * BUILD_SCALE, h: 190 * BUILD_SCALE,
+    FARM:       { label: "BARN & FIELD",   w: Math.round(260 * BUILD_SCALE), h: Math.round(190 * BUILD_SCALE),
                   blurb: "Gambrel barn with a worked field alongside." }
 };
 const BUILD_ORDER = ["WAREHOUSE", "LABORATORY", "RANGE", "FARM"];
@@ -14626,10 +14757,34 @@ function updateBuildSites() {
 // The solids one site contributes. A site under construction is a hoarded lot
 // you cannot walk through; a finished one is the structure, plus whatever
 // ground the blueprint lays down beside it.
+// Where the supply truck parks. Broadside to the south of the site and clear of
+// the hoarding, so all three of its unloading faces -- both flanks of the
+// container and its rear -- are approachable without anyone walking through the
+// site. Derived from the site rather than stored, so it cannot drift.
+const TRUCK_W = 250, TRUCK_H = 92;
+function buildTruckAt(s) {
+    return { x: s.x, y: s.y + s.h / 2 + 130, w: TRUCK_W, h: TRUCK_H };
+}
+// The three places a hauler can reach into the container: left flank, right
+// flank, tailgate. The cab is the east end, so the container's middle sits back
+// from the truck's own centre.
+function truckSlot(t, i) {
+    const cx = t.x - t.w * 0.16;
+    if (i === 0) return { x: cx, y: t.y - t.h / 2 - 22 };
+    if (i === 1) return { x: cx, y: t.y + t.h / 2 + 22 };
+    return { x: t.x - t.w / 2 - 24, y: t.y };
+}
+
 function buildSiteSolids(s) {
     const out = [];
     if (!s.done) {
         out.push({ x: s.x, y: s.y, w: s.w, h: s.h, isBuildSite: true, site: s,
+                   isPlayerBuilt: true, buildLevel: s.level });
+        // The materials lorry, parked for as long as there is a job. It is a
+        // solid so the player has to walk round it like any other vehicle;
+        // citizens do not collide with buildings, so it never blocks the crew.
+        const t = buildTruckAt(s);
+        out.push({ x: t.x, y: t.y, w: t.w, h: t.h, isBuildTruck: true, site: s,
                    isPlayerBuilt: true, buildLevel: s.level });
         return out;
     }
@@ -14697,6 +14852,67 @@ function nearestBuildSite(x, y, maxD) {
         if (d < reach && d < bestD) { bestD = d; best = s; }
     }
     return best;
+}
+
+// --- the crew: who hammers, who hauls, and who works with whom ------------
+//
+// Run once a frame for the whole sector rather than per citizen, because the
+// split and the pairing are properties of the crew as a group and a citizen
+// deciding on its own would flip roles every time the roster changed.
+//
+// Roles alternate down a stable roster, so it is half and half (haulers take
+// the odd one, which is what makes the doubling-up case below reachable at all).
+// Pairing is then round-robin: hauler k works with hammer k % hammers. That is
+// the round-robin form of "find the next unpaired mason" -- with equal numbers
+// every mason gets exactly one hauler, and a mason only ever sees a second one
+// when there are more haulers than masons, i.e. when the crew is odd. It is
+// also stable frame to frame, which a search is not.
+const BUILD_HAUL_LOAD = 46;      // frames spent reaching into the container
+const BUILD_HANDOFF   = 30;      // frames the two of them spend on the exchange
+const BUILD_PLACE     = 54;      // frames the mason spends setting the material
+
+function updateBuildCrews() {
+    if (typeof townCitizens === 'undefined' || !townCitizens.length) return;
+    const live = [];
+    for (const s of buildSites) {
+        if (s.done || s.level !== currentLevel) continue;
+        s.__crew = [];
+        live.push(s);
+    }
+    if (!live.length) {
+        for (const c of townCitizens) {
+            if (c.role !== "ARCHITECTURE") continue;
+            c.buildSite = null; c.pairMason = null; c.carrying = null;
+        }
+        return;
+    }
+    for (const c of townCitizens) {
+        if (c.role !== "ARCHITECTURE") continue;
+        const s = nearestBuildSite(c.x, c.y);
+        c.buildSite = s;
+        if (s) s.__crew.push(c);
+        else { c.pairMason = null; c.carrying = null; }
+    }
+    for (const s of live) {
+        const crew = s.__crew;
+        // Stable order, so the split does not reshuffle as people walk about.
+        crew.sort((a, b) => a.slotSeed - b.slotSeed);
+        const masons = [], haulers = [];
+        for (let i = 0; i < crew.length; i++) {
+            const c = crew[i];
+            c.buildRole = (i % 2 === 0) ? "HAUL" : "HAMMER";
+            (c.buildRole === "HAUL" ? haulers : masons).push(c);
+        }
+        // One mason and nobody to fetch for them still works -- they hammer.
+        // One hauler and no mason has nowhere to carry to, so they hammer too.
+        if (!masons.length) { for (const c of crew) { c.buildRole = "HAMMER"; c.carrying = null; c.pairMason = null; } continue; }
+        for (const m of masons) m.haulerCount = 0;
+        for (let k = 0; k < haulers.length; k++) {
+            const m = masons[k % masons.length];
+            haulers[k].pairMason = m;
+            m.haulerCount++;
+        }
+    }
 }
 
 // --- the ghost, in world space, drawn over everything ---------------------
@@ -14777,6 +14993,44 @@ function drawBuildSite(b) {
         fill(235); textAlign(CENTER, CENTER); textSize(Math.max(11, u * 3.4)); textFont('sans-serif');
         text(Math.floor(p * 100) + "%", 0, -hh - bh - u * 7);
     }
+    pop();
+}
+
+// The materials lorry: flat-nosed cab at the east end, square container barrel
+// behind it. Drawn nose-east because that is the axis truckSlot() hands the
+// crew their three approaches on -- both flanks and the tailgate.
+function drawSupplyTruck(b) {
+    const hw = b.w / 2, hh = b.h / 2;
+    const cabW = b.w * 0.30, conW = b.w * 0.62;
+    push(); translate(b.x, b.y);
+    noStroke();
+    // Wheels first, so the body sits on them.
+    fill(28, 26, 26);
+    for (const wx of [hw - cabW * 0.68, -hw + conW * 0.22, -hw + conW * 0.72]) {
+        rect(wx - 11, -hh - 3, 22, 10, 3); rect(wx - 11, hh - 7, 22, 10, 3);
+    }
+    // Chassis rail running the length.
+    fill(52, 50, 50); rect(-hw + 4, -hh + 14, b.w - 8, b.h - 28, 3);
+    // Container: ribbed square barrel with a hatch on the roof and a tailgate.
+    fill(122, 118, 108); rect(-hw, -hh + 8, conW, b.h - 16, 5);
+    fill(146, 142, 130); rect(-hw + 5, -hh + 13, conW - 10, b.h - 26, 3);
+    stroke(104, 100, 92); strokeWeight(2);
+    for (let i = 1; i < 6; i++) {
+        const x = -hw + (conW * i) / 6;
+        line(x, -hh + 12, x, hh - 12);
+    }
+    noStroke();
+    fill(96, 92, 86); rect(-hw + conW * 0.30, -18, conW * 0.40, 36, 4);   // roof hatch
+    fill(168, 164, 152); rect(-hw + conW * 0.34, -14, conW * 0.32, 8, 2);
+    fill(74, 70, 64); rect(-hw - 3, -hh + 12, 7, b.h - 24, 2);            // tailgate
+    fill(196, 150, 44); rect(-hw - 3, -4, 7, 8, 1);                        // catch
+    // Cab.
+    fill(178, 76, 44); rect(hw - cabW, -hh + 6, cabW, b.h - 12, 5);
+    fill(202, 92, 56); rect(hw - cabW + 4, -hh + 10, cabW - 8, b.h - 20, 3);
+    fill(70, 96, 118, 220); rect(hw - 14, -hh + 14, 10, b.h - 28, 2);     // windscreen
+    fill(40, 38, 38); rect(hw - cabW - 5, -hh + 16, 6, b.h - 32, 2);      // back of the cab
+    fill(226, 222, 208); ellipse(hw - 3, -hh + 20, 7, 7);                 // lamps
+    ellipse(hw - 3, hh - 20, 7, 7);
     pop();
 }
 
