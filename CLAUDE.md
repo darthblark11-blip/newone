@@ -774,10 +774,11 @@ tool has a carry pose of its own — outboard of the hip so the haft never cross
 torso, trailing as the arm goes back, levelling as it comes forward, with a slow
 `sin(frameCount * 0.045)` breath while standing still.
 
-`pickHead(len)` is one bar through an eye: a long spike whose tip sweeps **back** toward
-the user, and a short chisel opposite. Two prongs both curving forward is a clamp, not a
-tool. It is shared by the carry pose and both swing branches, so the head only has to be
-right once.
+`pickHead(len)` is one bar through an eye, pointed at **both** ends, with both tips
+sweeping back toward the user. Two prongs curving forward is a clamp rather than a tool;
+a single flat poll has to face some fixed direction all the time, which reads as a
+mistake in a view that has no side to it. It is shared by the carry pose and both swing
+branches, so the head only has to be right once.
 
 `check-resources.js` counts the geometry an equipped tool adds at nine points of the walk
 cycle including rest; any point returning zero means the weapon has vanished again.
@@ -793,6 +794,44 @@ by kind), that a swing takes a prop apart in the expected number of hits, that t
 collected, that a fist and a pick differ, that robots are salvage, that a destroyed prop
 stays destroyed across a reload, and that the drop art draws. It needs `leftStick` /
 `rightStick` stubbed before `player.show()` — a harness gap, not a game bug.
+
+---
+
+## How a robot dies
+
+`ROBOT` is the only non-organic hostile that fights on foot, and every death site in the
+file reached straight for the human gore table — so a machine burst into red mist and
+bone, and the shotgun and lightning overkill rotations tore it into a torso and two arms
+it does not have. `robotDeathBurst(e, a, sourceIsPlayer, knockback)` (~7390) is the one
+way a robot dies: sparks, oil, swarf, smoke, an oil splatter, a `"ROBOT"` corpse, and a
+secondary detonation.
+
+Six places kill one and all six now route through it — `triggerExplosion`,
+`triggerRocketExplosion`, the melee sweep in `updatePlayer`, the jetpack dash blast, the
+chemist cannon's tesla chain, and `Shockwave.update`. The bullet path in `updateBullets`
+had its own branch already and keeps it (it needs the impact point, not the body's).
+
+Three things to know before touching it:
+
+- **The detonation is deferred.** `setTimeout` rather than a direct call, because every
+  caller is standing inside a loop over `enemiesList` and `triggerExplosion` splices out
+  of it. The beat between the body landing and the charge going off is also the tell —
+  the same reason the car chain in `triggerExplosion` staggers itself.
+- **A melee kill throws the body first.** `ROBOT_MELEE_KB = 100` — 5 m, taking a parked
+  car (90 units, ~4.5 m) as the scale — stepped through `checkCol` so a wall stops it.
+  The blast is then raised with `sourceIsPlayer = true`, so it damages whatever the
+  machine was knocked *into*; and because the throw is longer than `ROBOT_BLAST_R = 110`,
+  it clears whoever swung. Shorten the knockback or widen the radius and the player
+  starts killing themselves on their own melee finishers.
+- **The hit markers matter as much as the death.** A robot that *survives* a hit used to
+  spray blood from five separate hit-marker branches. They all fork on `ROBOT` now and
+  throw `FLECK` in `SPARK_COL`.
+
+The `Corpse` constructor coerces any `CORPSE_GIB_DEATHS` value to 0 for `eT === "ROBOT"`.
+That is belt-and-braces on the six branches: a seventh death site added later cannot gib
+a machine even if it asks to. `tools/check-robot.js` walks all six paths and asserts no
+meat, an un-gibbed chassis, one armed charge, and — for melee — the throw distance, its
+direction, and that the blast clears the player.
 
 ---
 
@@ -844,6 +883,7 @@ node tools/check-population.js     # the Sector 1/2 story roster and what it con
 node tools/check-saveload.js       # save/load round trip
 node tools/check-cutscene.js       # scripted placement stays inside the sector
 node tools/check-resources.js      # harvestables, drops, the melee tool, persistence
+node tools/check-robot.js          # a machine dies like a machine, on all six paths
 GAME_JS=/path/to/other.js node tools/check-generation.js    # compare against a baseline
 ```
 

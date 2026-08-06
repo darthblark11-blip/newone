@@ -6064,17 +6064,22 @@ function triggerExplosion(ex, ey, rad, isMolotov = false, sourceIsPlayer = true)
           let a = atan2(e.y - ey, e.x - ex); 
           let bCol = (e.eType === "BUG" || e.eType === "SNAIL" || e.eType === "SNAIL_HYBRID") ? color(200, 230, 40) : color(90, 0, 0);
           
-          emit(e.x, e.y, 40, bCol, "GORE"); 
-          if (e.eType === "ALIEN_GATOR") { emit(e.x, e.y, 40, color(30, 180, 30), "GORE"); }
-          corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 5, a, e.decals, e.currentWeapon, a, e.eType, e.bodyW, e.bodyH));
-          spawnSplatter(e.x, e.y, "BLOOD", bCol);
-          
+          if (e.eType === "ROBOT") {
+              robotDeathBurst(e, a, sourceIsPlayer);
+          } else {
+              emit(e.x, e.y, 40, bCol, "GORE");
+              if (e.eType === "ALIEN_GATOR") { emit(e.x, e.y, 40, color(30, 180, 30), "GORE"); }
+              corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 5, a, e.decals, e.currentWeapon, a, e.eType, e.bodyW, e.bodyH));
+              spawnSplatter(e.x, e.y, "BLOOD", bCol);
+          }
+
           processKill(e.x, e.y, false, e.eType, e.isFriendly);
           
           enemiesList.splice(i, 1); 
           if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100);
       } else if (e.hp > 0) {
-          sfx.hitBody(); emit(e.x, e.y, 15, color(90, 0, 0), "BLOOD");
+          if (e.eType === "ROBOT") { sfx.hitArmor(); emit(e.x, e.y, 12, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK"); }
+          else { sfx.hitBody(); emit(e.x, e.y, 15, color(90, 0, 0), "BLOOD"); }
       }
     }
   }
@@ -6157,6 +6162,7 @@ function triggerRocketExplosion(ex, ey, sourceIsPlayer, directHitTarget = null) 
                   spawnSplatter(e.x, e.y, "BLOOD", color(90, 0, 0));
                   if(dT === 10) emit(e.x, e.y, 120, color(90, 0, 0), "GORE");
               }
+              else if (e.eType === "ROBOT") { robotDeathBurst(e, a, sourceIsPlayer); }
               else {
                   emit(e.x, e.y, 60, bCol, "GORE");
                   let choices = [2, 5, 7, 10, 11]; 
@@ -6169,11 +6175,14 @@ function triggerRocketExplosion(ex, ey, sourceIsPlayer, directHitTarget = null) 
               enemiesList.splice(i, 1); 
               if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100);
           } else if (e.hp > 0) {
-              if ((e.eType === "ARMORED" && e.hp > 300) || (e.eType === "ARMORED_STANDARD" && e.hp > 50) || e.eType === "SAUCER" || e.eType === "SAUCER_RED" || (e.eType === "SNAIL_HYBRID" && e.hp > 150)) {
-                  sfx.hitArmor(); 
+              if (e.eType === "ROBOT") {
+                  sfx.hitArmor();
+                  emit(e.x, e.y, 12, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK");
+              } else if ((e.eType === "ARMORED" && e.hp > 300) || (e.eType === "ARMORED_STANDARD" && e.hp > 50) || e.eType === "SAUCER" || e.eType === "SAUCER_RED" || (e.eType === "SNAIL_HYBRID" && e.hp > 150)) {
+                  sfx.hitArmor();
                   emit(e.x, e.y, 10, color(255, 200, 0), "SPARK");
-              } else { 
-                  sfx.hitBody(); 
+              } else {
+                  sfx.hitBody();
                   emit(e.x, e.y, 15, bCol, "BLOOD"); 
               }
           }
@@ -7317,9 +7326,10 @@ class Shockwave {
                 // NEW: Make ALL enemies flash white on Finisher hits!
                 if (e.hp > 0) e.hitFlash = 4;
                 
-                let bCol = (e.eType === "BUG" || e.eType === "SNAIL" || e.eType === "SNAIL_HYBRID") ? color(200, 230, 40) : color(90, 0, 0); 
-                sfx.hitBody(); emit(e.x, e.y, 20, bCol, "BLOOD");
-                
+                let bCol = (e.eType === "BUG" || e.eType === "SNAIL" || e.eType === "SNAIL_HYBRID") ? color(200, 230, 40) : color(90, 0, 0);
+                if (e.eType === "ROBOT") { sfx.hitArmor(); emit(e.x, e.y, 12, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK"); }
+                else { sfx.hitBody(); emit(e.x, e.y, 20, bCol, "BLOOD"); }
+
                 if (e.hp <= 0) { 
                     e.dead = true; 
                     if (e.eType === "SAUCER" || e.eType === "SAUCER_RED") { 
@@ -7328,10 +7338,13 @@ class Shockwave {
                         emit(e.x, e.y, 40, color(255, 100, 0), "EXPLOSION"); sfx.explosion();
                         spawnSplatter(e.x, e.y, "BLOOD", color(90, 0, 0));
                         corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 11, this.a, e.decals, e.currentWeapon, this.a, e.eType, e.bodyW, e.bodyH));
+                    } else if (e.eType === "ROBOT") {
+                        // A blade parts a man. It knocks a machine off its feet.
+                        robotDeathBurst(e, this.a, true, ROBOT_MELEE_KB);
                     } else if (e.eType === "ARMORED" || e.eType === "ARMORED_STANDARD" || e.eType === "ALIEN_GATOR") {
                         emit(e.x, e.y, 60, bCol, "GORE"); spawnSplatter(e.x, e.y, "BLOOD", bCol);
                         corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 10, this.a, e.decals, e.currentWeapon, this.a, e.eType, e.bodyW, e.bodyH));
-                    } else { 
+                    } else {
                         emit(e.x, e.y, 60, bCol, "GORE"); spawnSplatter(e.x, e.y, "BLOOD", bCol); 
                         corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 14, this.a, e.decals, e.currentWeapon, this.a, e.eType, e.bodyW, e.bodyH)); 
                     } 
@@ -7387,6 +7400,52 @@ function manageChunkMemory() {
 
 const CORPSE_GIB_DEATHS = [2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15];
 
+// --- ROBOT DEATH ---------------------------------------------------------
+// A machine does not bleed, does not gib and does not leave meat. Every death
+// site in this file went straight to the human gore table, so a robot taken out
+// by a grenade, a rocket, a lightning arc or a sword burst into red mist and
+// bone -- and the shotgun and lightning overkill rotations tore it into a torso
+// and limbs it does not have. There is one way a robot dies: the cell lets go.
+//
+// This lives in one function because six different places kill one and all six
+// have to agree.
+const ROBOT_BLAST_R = 110;
+const ROBOT_MELEE_KB = 100;   // 5 m. A parked car is 90 units long and ~4.5 m.
+
+function robotDeathBurst(e, a, sourceIsPlayer = true, knockback = 0) {
+  // Flung before it goes off, so the charge detonates where it lands rather
+  // than where it stood. That is what puts the blast among whatever it was
+  // knocked into, and what keeps it clear of whoever swung.
+  if (knockback > 0) {
+    const sx = cos(a) * 4, sy = sin(a) * 4;
+    for (let k = 0; k < knockback / 4; k++) {
+      let moved = false;
+      if (!e.checkCol(e.x + sx, e.y)) { e.x += sx; moved = true; }
+      if (!e.checkCol(e.x, e.y + sy)) { e.y += sy; moved = true; }
+      if (!moved) break;                       // pinned against something
+    }
+    emit(e.x, e.y, 8, color(96, 100, 106), "CHIP", -sx, -sy);
+  }
+
+  emit(e.x, e.y, 26, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK");
+  emit(e.x, e.y, 20, color(OIL_COL[0], OIL_COL[1], OIL_COL[2]), "OIL", cos(a) * 1.5, sin(a) * 1.5);
+  emit(e.x, e.y, 12, color(96, 100, 106), "CHIP");
+  emit(e.x, e.y, 8, color(70), "SMOKE");
+  spawnSplatter(e.x, e.y, "BLOOD", color(OIL_COL[0], OIL_COL[1], OIL_COL[2]));
+  sfx.hitArmor();
+  corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol,
+                          e.enraged ? 1 : 0, a, e.decals, e.currentWeapon, a,
+                          "ROBOT", e.bodyW, e.bodyH));
+
+  // Deferred, because every caller is standing inside a loop over enemiesList
+  // and triggerExplosion splices out of it. The beat between the body coming to
+  // rest and the charge going off is also the tell -- the same reason the car
+  // chain in triggerExplosion staggers itself rather than going up at once.
+  const bx = e.x, by = e.y;
+  const fuse = knockback > 0 ? 180 : random(70, 150);
+  setTimeout(() => { if (started) triggerExplosion(bx, by, ROBOT_BLAST_R, false, sourceIsPlayer); }, fuse);
+}
+
 // How many intact bodies may lie within one 72-unit patch of ground before the
 // ones underneath are pressed into the permanent blood layer. A body is roughly
 // 50 units across, so a cell this size holds bodies that are genuinely on top
@@ -7398,7 +7457,12 @@ class Corpse {
   constructor(x, y, mA, aA, sC, pC, dT, hA, dec, cW, bA, eT, bW, bH) { 
     this.eT = eT; this.x = x; this.y = y; 
     if (eT === "ARMORED" || eT === "ARMORED_STANDARD" || eT === "ALIEN_GATOR") { this.mA = mA; this.aA = aA; } else { this.mA = mA + PI; this.aA = aA + PI; }
-    this.sC = sC; this.pC = pC; this.dT = dT; this.hA = hA; this.bA = bA; this.dec = dec; this.cW = cW; this.bW = bW; this.bH = bH; 
+    // Last word on the overkill tables: a robot never comes apart into a torso
+    // and two arms, never scatters a skull and a ribcage, and is never halved.
+    // The six death sites all route through robotDeathBurst() now, but this is
+    // the guard that makes a seventh one impossible to get wrong.
+    if (eT === "ROBOT" && CORPSE_GIB_DEATHS.indexOf(dT) !== -1) dT = 0;
+    this.sC = sC; this.pC = pC; this.dT = dT; this.hA = hA; this.bA = bA; this.dec = dec; this.cW = cW; this.bW = bW; this.bH = bH;
     this.bT = 120; this.fP = 0; this.sep = 0; this.bits = []; this.stopMotionTimer = 156;
     this.bornAt = frameCount;
     // Is this a body lying on the ground, or is it wreckage?
@@ -8723,17 +8787,21 @@ this.skeletonTimer = 0;
                         lightningCounter++;
                         let bCol = (t.eType === "BUG" || t.eType === "SNAIL" || t.eType === "SNAIL_HYBRID") ? color(200, 230, 40) : color(90, 0, 0);
                         
+                        if (t.eType === "ROBOT") {
+                            robotDeathBurst(t, this.aimAngle, true);
+                        } else {
                         if (dT === 5) {
                             emit(t.x, t.y, 40, color(255, 150, 0), "EXPLOSION"); sfx.explosion();
                             spawnSplatter(t.x, t.y, "SCORCH");
                         }
                         emit(t.x, t.y, 60, bCol, "GORE");
                         spawnSplatter(t.x, t.y, "BLOOD", bCol);
-                        
+
                         let c = new Corpse(t.x, t.y, t.moveAngle, t.aimAngle, color(40), color(20), dT, this.aimAngle, t.decals, t.currentWeapon, this.aimAngle, t.eType, t.bodyW, t.bodyH);
-                        c.smokeTimer = 198; c.isCharred = true; c.bloodTimer = 198; 
+                        c.smokeTimer = 198; c.isCharred = true; c.bloodTimer = 198;
                         corpses.push(c);
-                        
+                        }
+
                         processKill(t.x, t.y, false, t.eType, t.isFriendly);
                         
                         let idx = enemiesList.indexOf(t);
@@ -8810,11 +8878,15 @@ this.skeletonTimer = 0;
                     for(let k = 0; k < 15; k++) { if(!e.checkCol(e.x + cos(ang)*2, e.y)) e.x += cos(ang)*2; if(!e.checkCol(e.x, e.y + sin(ang)*2)) e.y += sin(ang)*2; }
                     let bCol = (e.eType === "BUG" || e.eType === "SNAIL" || e.eType === "SNAIL_HYBRID") ? color(200, 230, 40) : color(90, 0, 0);
                     let mDmg = ninjaSuitUnlocked ? 120 : 100; e.takeDamage(mDmg); 
-                    if ((e.eType === "ARMORED" && e.hp > 300) || (e.eType === "ARMORED_STANDARD" && e.hp > 50) || e.eType === "SAUCER" || e.eType === "SAUCER_RED" || (e.eType === "SNAIL_HYBRID" && e.hp > 150)) { sfx.hitArmor(); emit(e.x, e.y, 10, color(0, 200, 255), "SPARK"); } else { sfx.hitBody(); emit(e.x, e.y, 15, bCol, "BLOOD"); }
+                    if (e.eType === "ROBOT") { sfx.hitArmor(); emit(e.x, e.y, 12, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK"); }
+                    else if ((e.eType === "ARMORED" && e.hp > 300) || (e.eType === "ARMORED_STANDARD" && e.hp > 50) || e.eType === "SAUCER" || e.eType === "SAUCER_RED" || (e.eType === "SNAIL_HYBRID" && e.hp > 150)) { sfx.hitArmor(); emit(e.x, e.y, 10, color(0, 200, 255), "SPARK"); } else { sfx.hitBody(); emit(e.x, e.y, 15, bCol, "BLOOD"); }
 
                     if (e.hp <= 0) {
                         e.dead = true;
                         if (e.eType === "SAUCER" || e.eType === "SAUCER_RED") { triggerExplosion(e.x, e.y, 160); }
+                        // The burst has already shoved it clear, so this one
+                        // just goes up where it landed.
+                        else if (e.eType === "ROBOT") { robotDeathBurst(e, ang, true); }
                         else { emit(e.x, e.y, 40, bCol, "GORE"); spawnSplatter(e.x, e.y, "BLOOD", bCol); corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 3, 0, e.decals, e.currentWeapon, ang, e.eType, e.bodyW, e.bodyH)); }
                         processKill(e.x, e.y, false, e.eType, e.isFriendly);
                     }
@@ -8914,12 +8986,21 @@ this.skeletonTimer = 0;
                       if (e.hp > 0) { e.hitFlash = 4; }
                       
                       let bCol = (e.eType === "BUG" || e.eType === "SNAIL" || e.eType === "SNAIL_HYBRID") ? color(200, 230, 40) : color(90, 0, 0);
-                      if (e.eType === "SAUCER" || e.eType === "SAUCER_RED" || (e.eType === "ARMORED" && e.hp > 300) || (e.eType === "ARMORED_STANDARD" && e.hp > 50) || (e.eType === "SNAIL_HYBRID" && e.hp > 150)) { sfx.hitArmor(); emit(e.x, e.y, 10, color(255, 200, 0), "SPARK"); } else { sfx.hitBody(); emit(e.x, e.y, 20, bCol, "BLOOD"); } 
+                      if (e.eType === "ROBOT") { sfx.hitArmor(); emit(e.x, e.y, 12, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK"); }
+                      else if (e.eType === "SAUCER" || e.eType === "SAUCER_RED" || (e.eType === "ARMORED" && e.hp > 300) || (e.eType === "ARMORED_STANDARD" && e.hp > 50) || (e.eType === "SNAIL_HYBRID" && e.hp > 150)) { sfx.hitArmor(); emit(e.x, e.y, 10, color(255, 200, 0), "SPARK"); } else { sfx.hitBody(); emit(e.x, e.y, 20, bCol, "BLOOD"); }
 
                       if (e.hp <= 0) { 
                           e.dead = true; 
-                          if (e.eType === "SAUCER" || e.eType === "SAUCER_RED") triggerExplosion(e.x, e.y, 160); 
-                          else { emit(e.x, e.y, 60, bCol, "GORE"); spawnSplatter(e.x, e.y, "BLOOD", bCol); corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 3, 0, e.decals, e.currentWeapon, this.aimAngle, e.eType, e.bodyW, e.bodyH)); } 
+                          if (e.eType === "SAUCER" || e.eType === "SAUCER_RED") triggerExplosion(e.x, e.y, 160);
+                          // Struck down rather than cut open: thrown 5 m along
+                          // the swing and detonated where it lands, and the
+                          // blast is the player's -- so anything it was knocked
+                          // into wears it too.
+                          else if (e.eType === "ROBOT") {
+                              robotDeathBurst(e, atan2(e.y - this.y, e.x - this.x),
+                                              !!(this.isPlayer || this.isFriendly), ROBOT_MELEE_KB);
+                          }
+                          else { emit(e.x, e.y, 60, bCol, "GORE"); spawnSplatter(e.x, e.y, "BLOOD", bCol); corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 3, 0, e.decals, e.currentWeapon, this.aimAngle, e.eType, e.bodyW, e.bodyH)); }
                           
                           processKill(e.x, e.y, false, e.eType, e.isFriendly); 
                       } 
@@ -10346,27 +10427,30 @@ if (this.isPlayer) {
         const armedMelee = usingSword || usingPick;
         // Head of a pickaxe, drawn at the far end of whatever haft the caller
         // just laid down. `len` is where the haft ends.
-        // A pick is one bar driven through an eye: a long spike on one side whose
-        // tip sweeps BACK toward the user, and a short chisel on the other. The
-        // first pass had two prongs both curving forward off the end of the
-        // haft, which is a clamp -- nothing about it said tool.
+        // One bar driven through an eye, pointed at BOTH ends -- no adze, no
+        // hammer poll. Two things drove that: the first pass had both prongs
+        // curving forward off the end of the haft, which is a clamp rather than
+        // a tool; and a single flat poll seen from directly above has to face
+        // some fixed direction all the time, which reads as a mistake in a view
+        // that has no side to it. Symmetrical, it is legible from any angle.
+        // Both tips sweep BACK toward the user, the way a pick actually bites.
         const pickHead = (len) => {
             fill(96, 74, 46); rect(-8, -2.4, 9, 4.8, 1);       // butt behind the grip
             push(); translate(len, 0);
-            fill(66, 70, 76);
-            beginShape();                                      // the spike, trailing back
-            vertex(3, -3); vertex(3.6, -9.5); vertex(1.2, -15);
-            vertex(-6, -19); vertex(-4.6, -14.5); vertex(-2.4, -9.5); vertex(-3, -3);
-            endShape(CLOSE);
-            beginShape();                                      // the chisel
-            vertex(3, 3); vertex(2, 9.6); vertex(-4, 9.6); vertex(-3, 3);
-            endShape(CLOSE);
-            fill(150, 156, 166);                               // ground edges catch the light
-            beginShape();
-            vertex(3.6, -9.5); vertex(1.2, -15); vertex(-6, -19); vertex(-4, -13.6); vertex(0.4, -8.6);
-            endShape(CLOSE);
-            rect(-4, 7.6, 6, 2, 1);
-            rect(-4.5, -4.5, 9, 9, 2);                         // the eye
+            for (const s of [-1, 1]) {
+                fill(66, 70, 76);
+                beginShape();                                  // the spike
+                vertex(3, -3 * s); vertex(3.6, -9.5 * s); vertex(1.2, -15 * s);
+                vertex(-6, -19 * s); vertex(-4.6, -14.5 * s); vertex(-2.4, -9.5 * s);
+                vertex(-3, -3 * s);
+                endShape(CLOSE);
+                fill(150, 156, 166);                           // ground edge, catching light
+                beginShape();
+                vertex(3.6, -9.5 * s); vertex(1.2, -15 * s); vertex(-6, -19 * s);
+                vertex(-4, -13.6 * s); vertex(0.4, -8.6 * s);
+                endShape(CLOSE);
+            }
+            fill(150, 156, 166); rect(-4.5, -4.5, 9, 9, 2);     // the eye
             fill(206, 212, 222, 170); rect(-4.5, -4.5, 9, 2.4, 1);
             pop();
         };
