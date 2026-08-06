@@ -10346,16 +10346,28 @@ if (this.isPlayer) {
         const armedMelee = usingSword || usingPick;
         // Head of a pickaxe, drawn at the far end of whatever haft the caller
         // just laid down. `len` is where the haft ends.
+        // A pick is one bar driven through an eye: a long spike on one side whose
+        // tip sweeps BACK toward the user, and a short chisel on the other. The
+        // first pass had two prongs both curving forward off the end of the
+        // haft, which is a clamp -- nothing about it said tool.
         const pickHead = (len) => {
-            fill(96, 74, 46); rect(-8, -2, 8, 4);            // butt of the haft
-            fill(74, 78, 84);
+            fill(96, 74, 46); rect(-8, -2.4, 9, 4.8, 1);       // butt behind the grip
             push(); translate(len, 0);
-            beginShape();                                     // the pick, curved
-            vertex(-3, -3); vertex(16, -13); vertex(19, -9); vertex(2, 2);
-            vertex(19, 9); vertex(16, 13); vertex(-3, 3);
+            fill(66, 70, 76);
+            beginShape();                                      // the spike, trailing back
+            vertex(3, -3); vertex(3.6, -9.5); vertex(1.2, -15);
+            vertex(-6, -19); vertex(-4.6, -14.5); vertex(-2.4, -9.5); vertex(-3, -3);
             endShape(CLOSE);
-            fill(150, 156, 166); rect(-4, -4.5, 8, 9, 2);      // the eye
-            fill(198, 204, 214, 180); rect(-4, -4.5, 8, 2.4, 1);
+            beginShape();                                      // the chisel
+            vertex(3, 3); vertex(2, 9.6); vertex(-4, 9.6); vertex(-3, 3);
+            endShape(CLOSE);
+            fill(150, 156, 166);                               // ground edges catch the light
+            beginShape();
+            vertex(3.6, -9.5); vertex(1.2, -15); vertex(-6, -19); vertex(-4, -13.6); vertex(0.4, -8.6);
+            endShape(CLOSE);
+            rect(-4, 7.6, 6, 2, 1);
+            rect(-4.5, -4.5, 9, 9, 2);                         // the eye
+            fill(206, 212, 222, 170); rect(-4.5, -4.5, 9, 2.4, 1);
             pop();
         };
 
@@ -10371,65 +10383,67 @@ if (this.isPlayer) {
                 let lArmSwing = -swing;
                 let rArmSwing = swing;
 
-                // 1. ALWAYS draw the sleeves so the arm swing is preserved
-                fill(this.shirtCol);
-                ellipse(lArmSwing * 4, lSy, 16, 9);
-                ellipse(rArmSwing * 4, rSy, 16, 9);
+                // This used to hide a hand whenever the swing sat between two
+                // thresholds, as a stand-in for depth. Top-down there is no
+                // depth to stand in for -- the arms swing along the SIDE of the
+                // torso, not through it -- so all it did was blink the sword out
+                // twice a stride and leave an idle player (swing === 0) holding
+                // nothing. Now the arm is a real limb that is always on screen,
+                // pushed far enough out to clear the body, and the back half of
+                // the cycle is shaded instead of deleted.
+                const rest = this.isMoving ? 0 : sin(frameCount * 0.045);
+                const lHx = lArmSwing * 14, lHy = lSy - 3 - rest * 0.6;
+                const rHx = rArmSwing * 14, rHy = rSy + 3 + rest * 0.6;
 
-                // 2. Depth Layering Thresholds
-                let frontThreshold = 0.01; 
-                let backThreshold = -0.45; // TUNE THIS: A lower negative (e.g., -0.5) makes the hand 
-                                           // stay hidden longer before peeking out the back.
+                const armLimb = (sy, hx, hy, back) => {
+                    const dx = hx, dy = hy - sy;
+                    const d = max(6, sqrt(dx * dx + dy * dy));
+                    push(); translate(0, sy); rotate(atan2(dy, dx));
+                    fill(this.shirtCol); ellipse(d * 0.45, 0, d + 12, 9);
+                    if (back) { fill(0, 0, 0, 46); ellipse(d * 0.45, 0, d + 12, 9); }
+                    pop();
+                };
+                armLimb(lSy, lHx, lHy, lArmSwing < 0);
+                armLimb(rSy, rHx, rHy, rArmSwing < 0);
 
                 // --- LEFT HAND ---
-                // Visible when swinging forward OR when swung far enough back to clear the torso
-                // --- LEFT HAND ---
-// --- LEFT HAND ---
-if (lArmSwing > frontThreshold || lArmSwing < backThreshold) {
-    
-    // 1. Check if it's the Player AND wearing the Chemist suit
-    if (this.isPlayer && isChemist) {
-        // DRAW CANNON (Grey)
-        fill(80); 
-        rect((lArmSwing * 14) - 4, lSy - 4, 16, 8, 2); 
-        fill(0, 255, 200); 
-        ellipse((lArmSwing * 14) + 12, lSy, 6, 8);
-    } 
-    // 2. IMPORTANT: Everyone else gets the skin color
-    else {
-        fill(235, 180, 140); // This resets the color for all enemies
-        ellipse(lArmSwing * 14, lSy, 8, 8);
-    }
-}
+                if (this.isPlayer && isChemist) {
+                    push(); translate(lHx, lHy); rotate(lArmSwing * 0.22);
+                    fill(80); rect(-4, -4, 16, 8, 2);
+                    fill(0, 255, 200); ellipse(12, 0, 6, 8);
+                    pop();
+                } else {
+                    fill(235, 180, 140); ellipse(lHx, lHy, 8, 8);
+                    if (lArmSwing < 0) { fill(0, 0, 0, 46); ellipse(lHx, lHy, 8, 8); }
+                }
 
+                // --- RIGHT HAND & MELEE TOOL ---
+                fill(235, 180, 140); ellipse(rHx, rHy, 8, 8);
+                if (rArmSwing < 0) { fill(0, 0, 0, 46); ellipse(rHx, rHy, 8, 8); }
 
-
-
-                // --- RIGHT HAND & SWORD ---
-                // Visible when swinging forward OR when swung far enough back to clear the torso
-                if (rArmSwing > frontThreshold || rArmSwing < backThreshold) {
-                    fill(235, 180, 140);
-                    ellipse(rArmSwing * 14, rSy, 8, 8);
-
-                    if (armedMelee) {
-    push();
-    translate(rArmSwing * 14, rSy);
-    rotate(PI / 6);          // adjust until it looks right
-    if (usingPick) {
-        fill(122, 92, 56); rect(0, -2.5, 40, 5, 2);   // haft
-        pickHead(40);
-    } else {
-        fill(120);                // blade
-        rect(0, -2, 45, 4, 2);
-
-        fill(90, 60, 30);         // handle
-        rect(-8, -2, 8, 4);
-
-        fill(180, 150, 40);       // guard
-        rect(-2, -5, 3, 10, 2);
-    }
-    pop();
-}
+                if (armedMelee) {
+                    // Carried rather than presented: the haft rides outboard of
+                    // the hip so it never crosses the torso, trails as the arm
+                    // goes back, levels off as it comes forward, and breathes on
+                    // the spot when the player is standing still.
+                    push();
+                    translate(rHx, rHy);
+                    rotate(0.30 - rArmSwing * 0.26 + rest * 0.05);
+                    if (usingPick) {
+                        fill(122, 92, 56); rect(0, -2.5, 40, 5, 2);   // haft
+                        pickHead(40);
+                    } else {
+                        fill(90, 60, 30); rect(-9, -2.6, 10, 5.2, 2);  // grip
+                        fill(150, 120, 40); ellipse(-9, 0, 6, 6);      // pommel
+                        fill(180, 150, 40); rect(-1, -6, 4, 12, 1);    // guard
+                        fill(120);
+                        beginShape();                                  // tapered blade
+                        vertex(3, -3.2); vertex(38, -2.6); vertex(46, 0);
+                        vertex(38, 2.6); vertex(3, 3.2);
+                        endShape(CLOSE);
+                        fill(198, 202, 210, 200); rect(4, -1.2, 32, 1.6, 1);  // fuller
+                    }
+                    pop();
                 }
 
             } else {

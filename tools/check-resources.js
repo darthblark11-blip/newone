@@ -146,5 +146,32 @@ probe('viewLeft = -100000; viewRight = 100000; viewTop = -100000; viewBottom = 1
   }
 }
 
+// The arm swing used to hide the hand between two thresholds to fake depth,
+// which deleted the weapon twice a stride and left an idle player (swing === 0)
+// empty-handed. Count the geometry an equipped tool adds at every point of the
+// cycle; if any point comes back at zero the tool has vanished again.
+console.log('\n== the tool stays in hand ==');
+{
+  let geo = 0;
+  const rect0 = ctx.rect, ell0 = ctx.ellipse, bs0 = ctx.beginShape;
+  ctx.rect = () => { geo++; }; ctx.ellipse = () => { geo++; }; ctx.beginShape = () => { geo++; };
+  const shapes = (tool, moving, phase) => {
+    probe(`setMeleeTool("${tool}"); player.isArmed = false; player.meleeTimer = 0;
+           player.meleePhase = 0; player.isMoving = ${moving}; player.walkCycle = ${phase};`);
+    geo = 0; probe('player.show()'); return geo;
+  };
+  let worst = Infinity, worstAt = '';
+  for (const tool of ['SWORD', 'PICKAXE']) {
+    for (let i = 0; i <= 8; i++) {
+      const moving = i < 8, ph = (i * Math.PI) / 4;
+      const d = shapes(tool, moving, ph) - shapes('NONE', moving, ph);
+      if (d < worst) { worst = d; worstAt = tool + (moving ? ' @ stride ' + i + '/8' : ' idle'); }
+    }
+  }
+  ctx.rect = rect0; ctx.ellipse = ell0; ctx.beginShape = bs0;
+  ok('an equipped melee tool never blinks out mid-stride or at rest',
+     worst > 0, 'thinnest frame ' + worstAt + ' = +' + worst + ' shapes');
+}
+
 console.log(`\n${checks - fails}/${checks} checks passed`);
 process.exit(fails ? 1 : 0);

@@ -759,6 +759,29 @@ which is the trade the player is choosing between.
 harvest sweep runs at the `meleeTimer === 10` frame, guarded by `this.isPlayer`, and walks
 `activeBuildings` **backwards** because `damageHarvestable` splices out of it.
 
+### Holding it — the melee arm rig
+
+The idle/walking arms in `Character.show()` (~10380) used to hide a hand whenever the
+swing sat between a `frontThreshold` and a `backThreshold`, as a stand-in for depth.
+**Top-down there is no depth to stand in for** — the arms swing along the *side* of the
+torso, never through it — so all the test did was delete the sword twice a stride and
+leave an idle player (swing is exactly 0 when `isMoving` is false) holding nothing.
+
+What replaced it: `armLimb()` draws a real limb, shoulder to hand, at every point of the
+cycle; the hands ride 3 units further out so they clear the body silhouette; and the back
+half of the swing gets a translucent shade over the arm rather than being removed. The
+tool has a carry pose of its own — outboard of the hip so the haft never crosses the
+torso, trailing as the arm goes back, levelling as it comes forward, with a slow
+`sin(frameCount * 0.045)` breath while standing still.
+
+`pickHead(len)` is one bar through an eye: a long spike whose tip sweeps **back** toward
+the user, and a short chisel opposite. Two prongs both curving forward is a clamp, not a
+tool. It is shared by the carry pose and both swing branches, so the head only has to be
+right once.
+
+`check-resources.js` counts the geometry an equipped tool adds at nine points of the walk
+cycle including rest; any point returning zero means the weapon has vanished again.
+
 ### Inventory
 
 Dad's Tablet is now five buttons (`height/2 - 100` through `+100`, hitboxes to match) and
