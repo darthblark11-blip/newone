@@ -1005,9 +1005,20 @@ elbow at 0.630. Every one of them says the same thing — **the leg is the long 
 `H` is recovered from the torso plate (`TL * 0.78` *is* the shoulder-to-hip span, and that
 span is 0.288 H), so re-proportioning the plate carries every limb with it and one number
 stays in charge. For the standard 21 × 27 body that gives a 31 × 18 plate, a 20.6 thigh
-and a 20.7 shank — the knee halving the leg, as it does — a 15.8 upper arm against a 12.2
+and a 20.7 shank — the knee halving the leg, as it does — a 15.1 upper arm against a 13.5
 forearm, hips at the *base* of the torso rather than a third of the way up it, and a whole
 body seven and a half heads long.
+
+**The drawn arm is not the bone split**, and assuming it was is what made the forearm read
+short against an abnormally long shoulder-to-elbow. Two errors push the same way: the
+shoulder joint sits ~1.5 units *inboard* of the real acromion (it has to, or the sleeve
+hangs off the side of the chest), so part of the upper arm is buried in the torso and the
+rest reads longer than it is; and the hand adds another 0.108 H below the elbow that a
+bone ratio leaves out entirely. So the upper arm is trimmed below its 0.188 H, the forearm
+grown above its 0.145 H, and `ragLimb` puts the hand and the boot *past* the joint rather
+than centred on it — a circle centred on the wrist buries half of itself in the forearm.
+Elbow-to-fingertip now comes out at about 1.5× the visible upper arm, which is what an arm
+looks like.
 
 Two failures worth knowing, because the second is not fixed by fixing the first:
 
@@ -1029,7 +1040,7 @@ The variation comes from four places and none of them is a simulation:
   angle on every body.
 - **A pose archetype, picked before the jitter.** `RAG_ARM_POSES` (sprawled · thrown back
   overhead · down along the body · forearm folded across the chest · half raised) and
-  `RAG_LEG_POSES` (straight · knee drawn up · ankles crossed) are windows, not values, and
+  `RAG_LEG_POSES` (together · splayed · one hip rolled out) are windows, not values, and
   the per-limb random draws happen *inside* the chosen window. Four independent uniforms
   give you variety that all looks the same — most of a uniform's mass sits in the middle of
   its range, so every body ends up with its arms at half mast. About half of bodies take a
@@ -1041,6 +1052,26 @@ The variation comes from four places and none of them is a simulation:
 
 Frame zero is the pose they were shot standing in — arms hanging at the sides, legs
 together — so everything after it is the fall.
+
+### The legs do not cross
+
+The arms are where the variety lives; the legs are where the realism is, and they have two
+hard rules that the arms do not.
+
+**A hip's relaxed position is rolled outward, so a body on the ground splays.** Legs
+scissored over one another read as a rag. `a` is splay measured from straight down the
+body and is floored just above zero, so the torso spin can never drag a foot over the
+midline however hard the round hit. The sign of that angle was inverted when the archetypes
+went in — positive `a` swung the left foot from −4.3 clean across to +11.8 — so *every*
+body crossed its legs, and the archetype labelled "crossed" was the only one splaying them.
+`check-corpse.js` now reconstructs the foot position the way the draw does and asserts no
+foot ever reaches the centreline at any impact angle.
+
+**A knee bends in one plane, and lying on your back that plane stands perpendicular to the
+ground.** So from directly above a bent knee shows as a *shorter* shin, not a full-length
+shin swung out sideways — drawing the full length at an angle is exactly what makes a leg
+noodle. `ragShin(rig, bend)` foreshortens by the fold, and the knee is capped at 54° rather
+than the arm's 115°, because past that a leg lying down is mostly pointing at the camera.
 
 Applied to the death types that leave a body lying down — `0, 1, 2, 4, 6, 7, 8, 9`, which
 is every headshot and body-shot outcome. The gib deaths (`3, 5, 10, 11, 12, 13, 14, 15`)

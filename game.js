@@ -7655,13 +7655,17 @@ const RAG_ARM_POSES = [
     [-0.20,  0.40, 1.25, 1.95],   // forearm folded across the chest
     [-0.65,  0.10, 0.60, 1.60]    // half raised, elbow out
 ];
-// A leg lying down has far less arc to play with, so the difference between one
-// body and the next is mostly the knee: straight out, one drawn up, or the
-// ankles fallen across one another.
+// Legs have far less arc to play with, and unlike the arms they have a hard
+// rule: THEY DO NOT CROSS. A hip's relaxed position is rolled outward, so a
+// body on the ground splays; legs scissored over one another is a rag, not a
+// person. `a` here is splay measured from straight down the body, and it is
+// floored just above zero so the torso spin can never drag a foot over the
+// midline however hard the round hit. `b` is the knee, and it stays modest --
+// see ragShin() for why a big one cannot read from above anyway.
 const RAG_LEG_POSES = [
-    [ 0.02, 0.30, 0.05, 0.35],    // straight out
-    [ 0.20, 0.66, 0.55, 1.35],    // knee drawn up
-    [-0.20, 0.12, 0.10, 0.70]     // crossed over
+    [ 0.03, 0.16, 0.04, 0.22],    // together, near straight
+    [ 0.14, 0.42, 0.06, 0.34],    // splayed
+    [ 0.10, 0.34, 0.45, 0.92]     // one hip rolled out, knee bent
 ];
 
 function ragBuild(eT, bW, bA, aA) {
@@ -7697,13 +7701,13 @@ function ragBuild(eT, bW, bA, aA) {
         // the fold is stored as a magnitude and given its sign at draw time --
         // letting it take either sign is what had half the bodies bending
         // backwards at the knee.
-        const lo = arm ? -1.15 : -0.22, hi = arm ? 1.15 : 0.68;
+        const lo = arm ? -1.15 : 0.02, hi = arm ? 1.15 : 0.55;
         limbs.push({
             // Frame zero is the pose they were shot standing in: arms hanging
             // at the sides, legs together. Everything after it is the fall.
             a: arm ? 0.85 : 0.06, va: 0, b: arm ? 0.15 : 0.05, vb: 0,
             lo: lo, hi: hi,
-            bMax: arm ? 2.0 : 1.5,
+            bMax: arm ? 2.0 : 0.95,
             // Where it ends up: inside the archetype's window, leaned downwind
             // of the shot, clamped to what the joint can actually do.
             rest:  Math.max(lo, Math.min(hi, random(w[0], w[1]) + cross * (arm ? 0.40 : 0.14))),
@@ -7740,14 +7744,25 @@ function ragStep(rg) {
 // One two-bone limb: upper segment out from the joint, lower from the elbow or
 // knee, hand or foot at the end. Same shape language as the live arm rig, so a
 // body on the floor is recognisably the thing that was standing up.
+// The hand and the boot sit PAST the joint, not on it. A circle centred on the
+// wrist buries half of itself in the forearm and adds only its radius to the
+// arm -- which is most of why the lower half of the arm read short against the
+// upper: from the elbow, a real arm is forearm AND hand, and the hand is most
+// of the difference (0.145 of standing height against 0.108).
 function ragLimb(r, ox, oy, ang, bend, l1, l2, w1, w2, col, tip, tipSz) {
     r.push(); r.translate(ox, oy); r.rotate(ang);
     r.fill(col); r.ellipse(l1 * 0.5, 0, l1 + w1, w1);
     r.translate(l1, 0); r.rotate(bend);
     r.ellipse(l2 * 0.5, 0, l2 + w2, w2);
-    if (tip) { r.fill(tip); r.ellipse(l2, 0, tipSz, tipSz); }
+    if (tip) { r.fill(tip); r.ellipse(l2 + tipSz * 0.30, 0, tipSz, tipSz * 0.86); }
     r.pop();
 }
+
+// A knee bends in ONE plane, and for a body on its back that plane stands
+// perpendicular to the ground -- so seen from directly above a bent knee shows
+// as a SHORTER shin, not a shin swung out sideways at full length. Drawing the
+// full length at an angle is exactly what makes a leg noodle.
+function ragShin(rig, bend) { return rig.shin * (0.58 + 0.42 * Math.cos(bend)); }
 
 // --- the measurements ------------------------------------------------------
 //
@@ -7781,7 +7796,16 @@ function ragRig(bW, bH) {
         TL: TL, TW: TW, H: H,
         shX:   TL *  0.34, shY:  TW * 0.44,   // shoulders, at the chest's widest
         hipX: -TL *  0.44, hipY: TW * 0.24,   // hips, at the base of the torso
-        upper: H * 0.188, fore: H * 0.145, hand: 8,
+        // The bones are 0.188 H and 0.145 H, but the DRAWN split is not the
+        // bone split: the shoulder joint sits ~1.5 units inboard of the real
+        // acromion (it has to, or the sleeve hangs off the side of the chest),
+        // which lengthens the upper arm you can actually see, while the hand
+        // adds another 0.108 H below the elbow that the bone ratio leaves out.
+        // Both errors push the same way, which is how the forearm came to read
+        // short against an abnormally long shoulder-to-elbow. Trimming one and
+        // growing the other puts elbow-to-fingertip back at about 1.5x the
+        // visible upper arm, which is what an arm looks like.
+        upper: H * 0.180, fore: H * 0.160, hand: 9,
         upperW: 8, foreW: 6.5,
         thigh: H * 0.245, shin: H * 0.246, foot: 8.5,
         thighW: 9, shinW: 7
@@ -8147,8 +8171,8 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       const RP = ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW;
       if (RG) {
           const bootC = color(this.pC.levels[0] * 0.55, this.pC.levels[1] * 0.55, this.pC.levels[2] * 0.55, a);
-          ragLimb(r, RP.hipX, -RP.hipY, PI - RG.limbs[2].a * 0.7, -RG.limbs[2].b * 0.7, RP.thigh, RP.shin, RP.thighW, RP.shinW, this.pC, bootC, RP.foot);
-          ragLimb(r, RP.hipX,  RP.hipY, PI + RG.limbs[3].a * 0.7,  RG.limbs[3].b * 0.7, RP.thigh, RP.shin, RP.thighW, RP.shinW, this.pC, bootC, RP.foot);
+          ragLimb(r, RP.hipX, -RP.hipY, PI + RG.limbs[2].a * 0.7,  RG.limbs[2].b * 0.7, RP.thigh, ragShin(RP, RG.limbs[2].b * 0.7), RP.thighW, RP.shinW, this.pC, bootC, RP.foot);
+          ragLimb(r, RP.hipX,  RP.hipY, PI - RG.limbs[3].a * 0.7, -RG.limbs[3].b * 0.7, RP.thigh, ragShin(RP, RG.limbs[3].b * 0.7), RP.thighW, RP.shinW, this.pC, bootC, RP.foot);
           // Arms trapped beneath the chest: short reach, hard fold inward.
           const sK7 = color(235, 180, 140, a);
           ragLimb(r, RP.shX, -RP.shY, -(HALF_PI + RG.limbs[0].a * 0.35 - 0.5), -1.2, RP.upper * 0.75, RP.fore * 0.82, RP.upperW * 0.92, RP.foreW * 0.92, this.sC, sK7, RP.hand * 0.94);
@@ -8175,7 +8199,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.fill(sK); r.ellipse(0, -5, 11, 11); r.noStroke(); for (let d of this.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.pop(); 
   } 
   else { 
-      r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.aA); const RG = this.rag; if (RG) r.rotate(RG.ang); r.noStroke(); const RP = ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW; r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -10 : -10, lY2 = this.bW === 105 ? 15 : 2; r.push(); if (RG) { const bootC = color(this.pC.levels[0] * 0.55, this.pC.levels[1] * 0.55, this.pC.levels[2] * 0.55, a); ragLimb(r, RP.hipX, -RP.hipY, PI - RG.limbs[2].a, -RG.limbs[2].b, RP.thigh, RP.shin, RP.thighW, RP.shinW, this.pC, bootC, RP.foot); ragLimb(r, RP.hipX,  RP.hipY, PI + RG.limbs[3].a,  RG.limbs[3].b, RP.thigh, RP.shin, RP.thighW, RP.shinW, this.pC, bootC, RP.foot); } else { r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4); } if (this.dT === 2 || this.dT === 4) { r.fill(90, 0, 0, a); r.ellipse(lX, -4, 12, 16); } r.pop(); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); if (RG) { r.ellipse(0, 0, TL, TW); r.ellipse(TL * 0.30, 0, TL * 0.42, TW * 1.06); } else r.ellipse(0, 0, this.bW + 15 * f, this.bH); 
+      r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.aA); const RG = this.rag; if (RG) r.rotate(RG.ang); r.noStroke(); const RP = ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW; r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -10 : -10, lY2 = this.bW === 105 ? 15 : 2; r.push(); if (RG) { const bootC = color(this.pC.levels[0] * 0.55, this.pC.levels[1] * 0.55, this.pC.levels[2] * 0.55, a); ragLimb(r, RP.hipX, -RP.hipY, PI + RG.limbs[2].a,  RG.limbs[2].b, RP.thigh, ragShin(RP, RG.limbs[2].b), RP.thighW, RP.shinW, this.pC, bootC, RP.foot); ragLimb(r, RP.hipX,  RP.hipY, PI - RG.limbs[3].a, -RG.limbs[3].b, RP.thigh, ragShin(RP, RG.limbs[3].b), RP.thighW, RP.shinW, this.pC, bootC, RP.foot); } else { r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4); } if (this.dT === 2 || this.dT === 4) { r.fill(90, 0, 0, a); r.ellipse(lX, -4, 12, 16); } r.pop(); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); if (RG) { r.ellipse(0, 0, TL, TW); r.ellipse(TL * 0.30, 0, TL * 0.42, TW * 1.06); } else r.ellipse(0, 0, this.bW + 15 * f, this.bH); 
       if (this.eT === "ARMORED_STANDARD") { r.fill(100); if (RG) r.rect(-TL * 0.26, -TW * 0.46, TL * 0.58, TW * 0.92, 4); else r.rect(-10, -12, 20, 24, 4); } 
       if (this.eT === "FEMALE_PISTOL") { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(4, -6, 12, 10); r.ellipse(4, 6, 12, 10); } 
       r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } } 

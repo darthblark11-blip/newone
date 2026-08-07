@@ -158,6 +158,48 @@ console.log('\n== nothing bends the wrong way ==');
      `arm ${lim[0].toFixed(2)} rad vs leg ${lim[2].toFixed(2)} rad`);
 }
 
+console.log('\n== the legs do not cross ==');
+{
+  // A hip's relaxed position is rolled OUTWARD, so a body on the ground splays.
+  // Legs scissored over one another read as a rag, not a person. The sign of
+  // the hip angle was inverted, so every body was crossing and the archetype
+  // labelled "crossed" was the only one splaying — this is the check that
+  // would have caught it.
+  const R = P(`(function () { const r = ragRig(21, 27);
+    return { hipY: r.hipY, thigh: r.thigh, shin: r.shin }; })()`);
+  let worst = -1e9, bent = 0, n = 0;
+  for (let i = 0; i < 48; i++) {
+    const r = drop(0, 'NORMAL', (i / 48) * Math.PI * 2, 0);
+    const shin = P(`[ragShin(ragRig(21, 27), corpses[0].rag.limbs[2].b),
+                     ragShin(ragRig(21, 27), corpses[0].rag.limbs[3].b)]`);
+    for (const k of [2, 3]) {
+      const [a, b] = r.pose[k];
+      // Mirror the draw: left hip at -hipY on PI + a, right at +hipY on PI - a.
+      const y = R.hipY + Math.sin(a) * R.thigh + Math.sin(a + b) * shin[k - 2];
+      worst = Math.max(worst, -y);      // how far past the midline the foot got
+      if (b > 0.05) bent++;
+      n++;
+    }
+  }
+  ok('no foot ever reaches the midline, at any impact angle', worst < 0,
+     `closest approach ${(-worst).toFixed(1)} units clear of centre, over ${n} legs`);
+  ok('the hip can only splay outward', R.hipY > 0 && P('ragRig(21, 27) && corpses[0].rag.limbs[2].lo') > 0,
+     `floor at ${P('corpses[0].rag.limbs[2].lo')} radians`);
+  ok('and the knees are still doing something', bent > n * 0.5, bent + '/' + n + ' bent');
+
+  // A knee bends in one plane, and lying on your back that plane stands
+  // perpendicular to the ground — so from above a bent knee is a SHORTER
+  // shin, not a full-length shin swung sideways. That is the noodle.
+  const full = P('ragShin(ragRig(21, 27), 0)');
+  const folded = P('ragShin(ragRig(21, 27), corpses[0].rag.limbs[2].bMax)');
+  ok('a bent knee foreshortens the shin rather than swinging it out',
+     folded < full * 0.92 && folded > full * 0.6,
+     `${full.toFixed(1)} straight, ${folded.toFixed(1)} at full fold`);
+  ok('and a knee cannot fold to a right angle lying down',
+     P('corpses[0].rag.limbs[2].bMax') < 1.1,
+     `${(P('corpses[0].rag.limbs[2].bMax') * 57.3).toFixed(0)} degrees`);
+}
+
 console.log('\n== the proportions ==');
 {
   // The torso was doing the legs' job: 36 long and 27 wide, wider than a
@@ -167,7 +209,7 @@ console.log('\n== the proportions ==');
     const c = new Corpse(0, 0, 0, 0, color(1), color(1), 0, 0, [], null, 0, "NORMAL", 21, 27);
     const R = ragRig(c.bW, c.bH);
     return { TL: R.TL, TW: R.TW, H: R.H, shX: R.shX, shY: R.shY, hipX: R.hipX, hipY: R.hipY,
-             upper: R.upper, fore: R.fore, upperW: R.upperW, foreW: R.foreW,
+             upper: R.upper, fore: R.fore, hand: R.hand, upperW: R.upperW, foreW: R.foreW,
              thigh: R.thigh, shin: R.shin, thighW: R.thighW, shinW: R.shinW,
              bW: c.bW, bH: c.bH };
   })()`);
@@ -190,8 +232,19 @@ console.log('\n== the proportions ==');
      `${legReach.toFixed(1)} of leg against ${g.TL.toFixed(1)} of torso`);
   ok('the knee lands at the middle of the leg', Math.abs(g.thigh - g.shin) < 2,
      `thigh ${g.thigh.toFixed(1)}, shank ${g.shin.toFixed(1)}`);
-  ok('the upper arm is longer than the forearm', g.upper > g.fore * 1.2,
+  ok('the upper arm bone is longer than the forearm bone', g.upper > g.fore * 1.08,
      `${g.upper.toFixed(1)} vs ${g.fore.toFixed(1)} = ${(g.upper / g.fore).toFixed(2)}:1`);
+  // But the DRAWN arm is not the bone split. The shoulder joint sits inboard
+  // of the chest's edge, so part of the upper arm is buried and the rest reads
+  // longer than it is; and the hand adds a third again below the elbow. Both
+  // errors push the same way — which is how the forearm came to read short
+  // against an abnormally long shoulder-to-elbow. From the elbow, an arm is
+  // half again as long as it is above it.
+  const visUpper = g.upper - (g.TW * 0.53 - g.shY);   // the part clear of the chest
+  const visLower = g.fore + g.hand * 0.30 + g.hand / 2;  // elbow to fingertip
+  ok('and the arm below the elbow out-reaches the arm above it',
+     visLower > visUpper * 1.25 && visLower < visUpper * 1.75,
+     `${visUpper.toFixed(1)} of visible upper arm to ${visLower.toFixed(1)} of forearm and hand = ${(visLower / visUpper).toFixed(2)}`);
   ok('and the arm is about two thirds of the leg',
      armReach / legReach > 0.58 && armReach / legReach < 0.74,
      `${armReach.toFixed(1)} of arm to ${legReach.toFixed(1)} of leg = ${(armReach / legReach).toFixed(2)}`);
