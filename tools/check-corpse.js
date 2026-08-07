@@ -106,6 +106,25 @@ console.log('\n== no two bodies land the same ==');
   const bent = r.pose.filter((p) => Math.abs(p[1]) > 0.05).length;
   ok('the limbs end up somewhere, not all at neutral', moved >= 3, moved + '/4 shoulders and hips');
   ok('and all four hinges are bent', bent === 4, bent + '/4 elbows and knees');
+
+  // The arms carry most of what a body is doing, so across a crowd they have
+  // to use the whole arc — thrown back overhead, out wide, folded across the
+  // chest — and a fair share of bodies have to land LOPSIDED. Four independent
+  // uniforms cannot do that: they pile up in the middle of the range.
+  let lo = 9, hi = -9, asym = 0, folded = 0, overhead = 0;
+  for (let i = 0; i < 40; i++) {
+    drop(0, 'NORMAL', 0.3, 0, 1);
+    const rest = P('corpses[0].rag.limbs.map(function (L) { return [L.rest, L.restB]; })');
+    for (const k of [0, 1]) { lo = Math.min(lo, rest[k][0]); hi = Math.max(hi, rest[k][0]); }
+    if (Math.abs(rest[0][0] - rest[1][0]) > 0.7) asym++;
+    if (rest[0][1] > 1.2 || rest[1][1] > 1.2) folded++;
+    if (rest[0][0] < -0.5 || rest[1][0] < -0.5) overhead++;
+  }
+  ok('arms land everywhere from overhead to down at the side', hi - lo > 1.7,
+     `${lo.toFixed(2)} to ${hi.toFixed(2)} radians over 40 bodies`);
+  ok('a good few land lopsided, one arm up and one down', asym >= 6, asym + '/40');
+  ok('some land with the forearm folded across the chest', folded >= 5, folded + '/40');
+  ok('and some with an arm thrown back past the head', overhead >= 5, overhead + '/40');
 }
 
 console.log('\n== nothing bends the wrong way ==');
@@ -142,21 +161,62 @@ console.log('\n== nothing bends the wrong way ==');
 console.log('\n== the proportions ==');
 {
   // The torso was doing the legs' job: 36 long and 27 wide, wider than a
-  // person and short enough that the limbs had nothing to reach with.
+  // person and short enough that the limbs had nothing to reach with. These
+  // all come off ragRig(), which is the one place the measurements live.
   const g = P(`(function () {
     const c = new Corpse(0, 0, 0, 0, color(1), color(1), 0, 0, [], null, 0, "NORMAL", 21, 27);
-    return { TL: c.bH * 1.15, TW: c.bW * 0.78, bW: c.bW, bH: c.bH };
+    const R = ragRig(c.bW, c.bH);
+    return { TL: R.TL, TW: R.TW, H: R.H, shX: R.shX, shY: R.shY, hipX: R.hipX, hipY: R.hipY,
+             upper: R.upper, fore: R.fore, upperW: R.upperW, foreW: R.foreW,
+             thigh: R.thigh, shin: R.shin, thighW: R.thighW, shinW: R.shinW,
+             bW: c.bW, bH: c.bH };
   })()`);
   ok('the torso is longer than it is wide', g.TL > g.TW * 1.6,
      `${g.TL.toFixed(1)} long x ${g.TW.toFixed(1)} wide = ${(g.TL / g.TW).toFixed(2)}:1`);
   ok('and narrower than the old one', g.TW < g.bH, `${g.TW.toFixed(1)} vs the old ${g.bH}`);
-  // Hip to heel has to out-reach the torso, or the body is all chest.
-  const legReach = 17 + 16;
-  ok('the legs are longer than the torso', legReach > g.TL,
-     `${legReach} of leg against ${g.TL.toFixed(1)} of torso`);
-  const total = (g.TL * 0.5 + 5 + 5.5) + (g.TL * 0.36 + legReach);
-  ok('and the whole body reads at about six heads tall', total / 11 > 5.5 && total / 11 < 7,
+
+  // The leg is the long part of a person. Hip joint to ankle is half of
+  // standing height — get this wrong and the body reads as all ribcage,
+  // which is what it was doing with 33 units of leg on 31 of torso.
+  const legReach = g.thigh + g.shin;
+  const armReach = g.upper + g.fore;
+  // Head centre rides at 20 units out (the draw's `translate(20 * f, 0)`),
+  // radius 5.5; the far end is the hip offset plus the whole leg.
+  const total = (20 + 5.5) + (-g.hipX + legReach);
+  ok('the leg is half the body, hip to ankle',
+     legReach / total > 0.47 && legReach / total < 0.56,
+     `${legReach.toFixed(1)} of leg in ${total.toFixed(1)} of body = ${(legReach / total).toFixed(2)}`);
+  ok('and it out-reaches the torso by a third', legReach > g.TL * 1.25,
+     `${legReach.toFixed(1)} of leg against ${g.TL.toFixed(1)} of torso`);
+  ok('the knee lands at the middle of the leg', Math.abs(g.thigh - g.shin) < 2,
+     `thigh ${g.thigh.toFixed(1)}, shank ${g.shin.toFixed(1)}`);
+  ok('the upper arm is longer than the forearm', g.upper > g.fore * 1.2,
+     `${g.upper.toFixed(1)} vs ${g.fore.toFixed(1)} = ${(g.upper / g.fore).toFixed(2)}:1`);
+  ok('and the arm is about two thirds of the leg',
+     armReach / legReach > 0.58 && armReach / legReach < 0.74,
+     `${armReach.toFixed(1)} of arm to ${legReach.toFixed(1)} of leg = ${(armReach / legReach).toFixed(2)}`);
+  // The hips belong at the base of the torso, not a third of the way up it.
+  ok('the hips sit at the base of the torso', -g.hipX > g.TL * 0.40,
+     `${(-g.hipX).toFixed(1)} back on a ${(g.TL / 2).toFixed(1)} half-length`);
+  ok('and the shoulders are a torso-length away from them', g.shX - g.hipX > g.TL * 0.7,
+     `${(g.shX - g.hipX).toFixed(1)} of spine`);
+  ok('the whole body reads at seven and a half heads tall',
+     total / 11 > 6.8 && total / 11 < 8.1,
      `${total.toFixed(0)} units = ${(total / 11).toFixed(1)} heads`);
+
+  // Seen from above a body is a TAPER, and it is the widths that carry it.
+  // A pair of 11-wide thighs spread across a 16-wide chest is wider at the
+  // hip than at the shoulder, and the legs and the torso merge into one tube
+  // with feet on the end — long legs and all. The silhouette must only ever
+  // narrow going down.
+  const chest = g.TW * 1.06;
+  const hips  = 2 * (g.hipY + g.thighW / 2);
+  const knees = 2 * (g.hipY + g.shinW / 2);
+  ok('the silhouette only ever narrows going down',
+     chest > g.TW && g.TW > hips && hips > knees,
+     `chest ${chest.toFixed(1)} > waist ${g.TW.toFixed(1)} > hips ${hips.toFixed(1)} > knees ${knees.toFixed(1)}`);
+  ok('and the legs are thinner than the arms are long', g.thighW < g.upper,
+     `thigh ${g.thighW} wide against ${g.upper.toFixed(1)} of upper arm`);
 }
 
 console.log('\n== it stops ==');

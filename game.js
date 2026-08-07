@@ -7637,40 +7637,77 @@ const RAG_NONHUMAN = ["BUG", "SNAIL", "SNAIL_HYBRID", "COW", "HORSE", "ALIEN_GAT
                       "SAUCER", "SAUCER_RED", "ROBOT", "ARMORED"];
 function ragHumanoid(eT, bW) { return RAG_NONHUMAN.indexOf(eT) === -1 && bW !== 105; }
 
+// Rest poses come out of a small set of ARCHETYPES rather than out of four
+// independent uniforms, because four uniforms give you variety that all looks
+// the same: most of a uniform's mass sits in the middle of its range, so every
+// body ends up with its arms at half mast and the crowd reads as one drawing
+// with jitter on it. Pick the pose first and jitter inside it and the bodies
+// are recognisably DOING different things -- one flung back overhead, one
+// folded across the chest, one still down at the sides.
+//
+// `a` is the shoulder measured from straight out to the side: negative swings
+// the arm up past the head, positive brings it down along the ribs. `b` is the
+// elbow -- 0 straight, 2 folded shut. Each row is [aLo, aHi, bLo, bHi].
+const RAG_ARM_POSES = [
+    [-0.30,  0.45, 0.05, 0.55],   // sprawled: out wide, near straight
+    [-1.12, -0.40, 0.10, 1.00],   // thrown back past the head
+    [ 0.40,  1.12, 0.20, 1.15],   // down along the body
+    [-0.20,  0.40, 1.25, 1.95],   // forearm folded across the chest
+    [-0.65,  0.10, 0.60, 1.60]    // half raised, elbow out
+];
+// A leg lying down has far less arc to play with, so the difference between one
+// body and the next is mostly the knee: straight out, one drawn up, or the
+// ankles fallen across one another.
+const RAG_LEG_POSES = [
+    [ 0.02, 0.30, 0.05, 0.35],    // straight out
+    [ 0.20, 0.66, 0.55, 1.35],    // knee drawn up
+    [-0.20, 0.12, 0.10, 0.70]     // crossed over
+];
+
 function ragBuild(eT, bW, bA, aA) {
     if (!ragHumanoid(eT, bW)) return null;
     // How far across the body the round arrived. sin of the angle between the
     // shot and the way they were facing IS that, and it costs one call: 0 for
     // a hit straight up the spine, ±1 for one through the ribs.
     const cross = Math.sin((bA || 0) - (aA || 0));
+    // One pose for the pair -- unless this is one of the bodies that lands
+    // lopsided, which is where most of the character is. An arm overhead and
+    // the other folded under reads as a person; two arms at the same angle
+    // reads as a doll.
+    const armPose = floor(random(RAG_ARM_POSES.length)), legPose = floor(random(RAG_LEG_POSES.length));
+    const armSplit = random() < 0.55, legSplit = random() < 0.40;
     const limbs = [];
     for (let i = 0; i < 4; i++) {
         const arm = i < 2;
+        const tbl = arm ? RAG_ARM_POSES : RAG_LEG_POSES;
+        const w = arm ? tbl[armSplit ? floor(random(tbl.length)) : armPose]
+                      : tbl[legSplit ? floor(random(tbl.length)) : legPose];
         // Joints have limits, and this is where the pose stops being a rag and
         // starts being a body.
         //
         // A shoulder swings the arm from roughly along the head-end of the
         // body round to along the foot-end and CANNOT take it through the
-        // chest; a hip, lying down, splays about thirty degrees. Both are held
-        // inside those arcs by ragStep() every frame, so the impact lean and
-        // the torso drag can shove a limb about without ever putting it
-        // somewhere a person does not go.
+        // chest; a hip, lying down, splays about forty degrees and crosses a
+        // little the other way. Both are held inside those arcs by ragStep()
+        // every frame, so the impact lean and the torso drag can shove a limb
+        // about without ever putting it somewhere a person does not go.
         //
         // Elbows and knees are hinges: they bend ONE way. An elbow folds the
         // forearm in, a knee takes the heel back, and neither hyperextends. So
         // the fold is stored as a magnitude and given its sign at draw time --
         // letting it take either sign is what had half the bodies bending
         // backwards at the knee.
+        const lo = arm ? -1.15 : -0.22, hi = arm ? 1.15 : 0.68;
         limbs.push({
-            a: arm ? 0.25 : -0.05, va: 0, b: 0.1, vb: 0,
-            lo: arm ? -1.15 : -0.12,
-            hi: arm ?  1.15 :  0.62,
+            // Frame zero is the pose they were shot standing in: arms hanging
+            // at the sides, legs together. Everything after it is the fall.
+            a: arm ? 0.85 : 0.06, va: 0, b: arm ? 0.15 : 0.05, vb: 0,
+            lo: lo, hi: hi,
             bMax: arm ? 2.0 : 1.5,
-            // Where it ends up. Drawn once per corpse -- this is where the
-            // variation actually lives -- and leaned downwind of the shot.
-            rest:  arm ? Math.max(-1.15, Math.min(1.15, random(-0.5, 0.95) + cross * 0.5))
-                       : Math.max(-0.12, Math.min(0.62, random(0.04, 0.5) + cross * 0.16)),
-            restB: arm ? random(0.20, 1.35) : random(0.10, 1.05),
+            // Where it ends up: inside the archetype's window, leaned downwind
+            // of the shot, clamped to what the joint can actually do.
+            rest:  Math.max(lo, Math.min(hi, random(w[0], w[1]) + cross * (arm ? 0.40 : 0.14))),
+            restB: random(w[2], w[3]),
             lag:   arm ? random(1.5, 2.8) : random(0.6, 1.3)
         });
     }
@@ -7710,6 +7747,45 @@ function ragLimb(r, ox, oy, ang, bend, l1, l2, w1, w2, col, tip, tipSz) {
     r.ellipse(l2 * 0.5, 0, l2 + w2, w2);
     if (tip) { r.fill(tip); r.ellipse(l2, 0, tipSz, tipSz); }
     r.pop();
+}
+
+// --- the measurements ------------------------------------------------------
+//
+// Seen from directly above, a body on the ground is the ONE view in this game
+// that shows a person at full height, so its proportions have nowhere to hide.
+// These are the standing-height fractions the anthropometry tables give
+// (Drillis & Contini), and every one of them says the same thing: the leg is
+// the long part.
+//
+//   hip joint at 0.53 of standing height  -> hip to ankle is HALF the body
+//   knee at 0.285                         -> thigh and shank are near enough equal
+//   shoulder at 0.818, elbow at 0.630     -> upper arm 0.19, forearm 0.145
+//   shoulder to hip = 0.288               -> the torso is barely a quarter
+//
+// The numbers this replaced had 33 units of leg hung on 31 of torso and the
+// hips a third of the way up the chest -- a body that is nearly all ribcage,
+// which is exactly what a wrong leg-and-hip ratio looks like from above. H is
+// recovered from the torso plate (TL * 0.78 IS the shoulder-to-hip span, and
+// that span is 0.288 H), so re-proportioning the plate carries the limbs with
+// it and one number stays in charge.
+// The widths matter as much as the lengths, and for one reason: a body seen
+// from above is a TAPER. Chest widest, then the waist, then the hips, then the
+// knees, then the ankles. Get that backwards -- which is what a pair of 11-wide
+// thighs spread across a 16-wide chest does -- and the legs and the torso merge
+// into a single tube with feet on the end, no matter how long the legs are.
+// Everything below is sized so the silhouette only ever narrows going down:
+// chest lobe 19.2, plate 18.1, hips 17.7, and on down to the boots.
+function ragRig(bW, bH) {
+    const TL = bH * 1.15, TW = bW * 0.86, H = TL * 0.78 / 0.288;
+    return {
+        TL: TL, TW: TW, H: H,
+        shX:   TL *  0.34, shY:  TW * 0.44,   // shoulders, at the chest's widest
+        hipX: -TL *  0.44, hipY: TW * 0.24,   // hips, at the base of the torso
+        upper: H * 0.188, fore: H * 0.145, hand: 8,
+        upperW: 8, foreW: 6.5,
+        thigh: H * 0.245, shin: H * 0.246, foot: 8.5,
+        thighW: 9, shinW: 7
+    };
 }
 
 class Corpse {
@@ -8068,14 +8144,15 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       r.push(); r.rotate(this.mA); const RG = this.rag; if (RG) r.rotate(RG.ang * 0.6); r.noStroke();
       let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -25 : -10, lY2 = this.bW === 105 ? 15 : 2;
       r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a);
-      const TL = this.bH * 1.15, TW = this.bW * 0.78;
+      const RP = ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW;
       if (RG) {
-          ragLimb(r, -TL * 0.36, -TW * 0.30, PI - RG.limbs[2].a * 0.7, -RG.limbs[2].b * 0.7, 17, 16, 10, 8.5, this.pC, null, 0);
-          ragLimb(r, -TL * 0.36,  TW * 0.30, PI + RG.limbs[3].a * 0.7,  RG.limbs[3].b * 0.7, 17, 16, 10, 8.5, this.pC, null, 0);
+          const bootC = color(this.pC.levels[0] * 0.55, this.pC.levels[1] * 0.55, this.pC.levels[2] * 0.55, a);
+          ragLimb(r, RP.hipX, -RP.hipY, PI - RG.limbs[2].a * 0.7, -RG.limbs[2].b * 0.7, RP.thigh, RP.shin, RP.thighW, RP.shinW, this.pC, bootC, RP.foot);
+          ragLimb(r, RP.hipX,  RP.hipY, PI + RG.limbs[3].a * 0.7,  RG.limbs[3].b * 0.7, RP.thigh, RP.shin, RP.thighW, RP.shinW, this.pC, bootC, RP.foot);
           // Arms trapped beneath the chest: short reach, hard fold inward.
           const sK7 = color(235, 180, 140, a);
-          ragLimb(r, TL * 0.30, -TW * 0.44, -(HALF_PI + RG.limbs[0].a * 0.35 - 0.5), -1.2, 12, 10, 8, 6.5, this.sC, sK7, 7.5);
-          ragLimb(r, TL * 0.30,  TW * 0.44,   HALF_PI + RG.limbs[1].a * 0.35 - 0.5,   1.2, 12, 10, 8, 6.5, this.sC, sK7, 7.5);
+          ragLimb(r, RP.shX, -RP.shY, -(HALF_PI + RG.limbs[0].a * 0.35 - 0.5), -1.2, RP.upper * 0.75, RP.fore * 0.82, RP.upperW * 0.92, RP.foreW * 0.92, this.sC, sK7, RP.hand * 0.94);
+          ragLimb(r, RP.shX,  RP.shY,   HALF_PI + RG.limbs[1].a * 0.35 - 0.5,   1.2, RP.upper * 0.75, RP.fore * 0.82, RP.upperW * 0.92, RP.foreW * 0.92, this.sC, sK7, RP.hand * 0.94);
           // Torso over the top of them, and the pool spreading out from under.
           r.fill(90, 0, 0, a * 0.85); r.ellipse(-4, 0, TL + 14 * f, TW * 1.5);
           r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a);
@@ -8098,12 +8175,12 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.fill(sK); r.ellipse(0, -5, 11, 11); r.noStroke(); for (let d of this.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.pop(); 
   } 
   else { 
-      r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.aA); const RG = this.rag; if (RG) r.rotate(RG.ang); r.noStroke(); const TL = this.bH * 1.15, TW = this.bW * 0.78; r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -10 : -10, lY2 = this.bW === 105 ? 15 : 2; r.push(); if (RG) { ragLimb(r, -TL * 0.36, -TW * 0.30, PI - RG.limbs[2].a, -RG.limbs[2].b, 17, 16, 10, 8.5, this.pC, null, 0); ragLimb(r, -TL * 0.36,  TW * 0.30, PI + RG.limbs[3].a,  RG.limbs[3].b, 17, 16, 10, 8.5, this.pC, null, 0); } else { r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4); } if (this.dT === 2 || this.dT === 4) { r.fill(90, 0, 0, a); r.ellipse(lX, -4, 12, 16); } r.pop(); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); if (RG) { r.ellipse(0, 0, TL, TW); r.ellipse(TL * 0.30, 0, TL * 0.42, TW * 1.06); } else r.ellipse(0, 0, this.bW + 15 * f, this.bH); 
+      r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.aA); const RG = this.rag; if (RG) r.rotate(RG.ang); r.noStroke(); const RP = ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW; r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -10 : -10, lY2 = this.bW === 105 ? 15 : 2; r.push(); if (RG) { const bootC = color(this.pC.levels[0] * 0.55, this.pC.levels[1] * 0.55, this.pC.levels[2] * 0.55, a); ragLimb(r, RP.hipX, -RP.hipY, PI - RG.limbs[2].a, -RG.limbs[2].b, RP.thigh, RP.shin, RP.thighW, RP.shinW, this.pC, bootC, RP.foot); ragLimb(r, RP.hipX,  RP.hipY, PI + RG.limbs[3].a,  RG.limbs[3].b, RP.thigh, RP.shin, RP.thighW, RP.shinW, this.pC, bootC, RP.foot); } else { r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4); } if (this.dT === 2 || this.dT === 4) { r.fill(90, 0, 0, a); r.ellipse(lX, -4, 12, 16); } r.pop(); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); if (RG) { r.ellipse(0, 0, TL, TW); r.ellipse(TL * 0.30, 0, TL * 0.42, TW * 1.06); } else r.ellipse(0, 0, this.bW + 15 * f, this.bH); 
       if (this.eT === "ARMORED_STANDARD") { r.fill(100); if (RG) r.rect(-TL * 0.26, -TW * 0.46, TL * 0.58, TW * 0.92, 4); else r.rect(-10, -12, 20, 24, 4); } 
       if (this.eT === "FEMALE_PISTOL") { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(4, -6, 12, 10); r.ellipse(4, 6, 12, 10); } 
       r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } } 
       let lAY = this.eT === "ARMORED" ? -30 : -14, rAY = this.eT === "ARMORED" ? 30 : 11, slX = lerp(-5, 0, f), hX = lerp(-12, 12, f), armLY = lerp(lAY, lAY + 3, f), rslX = lerp(15, 0, f), rhX = lerp(25, 12, f), armRY = lerp(rAY, rAY + 3, f); 
-      if (RG) { ragLimb(r,  TL * 0.30, -TW * 0.44, -(HALF_PI + RG.limbs[0].a), -RG.limbs[0].b, 14, 13, 8.5, 7, this.sC, sK, 8); ragLimb(r,  TL * 0.30,  TW * 0.44,   HALF_PI + RG.limbs[1].a,   RG.limbs[1].b, 14, 13, 8.5, 7, this.sC, sK, 8); } else { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(slX, armLY, 16, 8); r.fill(sK); r.ellipse(hX, armLY, 8, 8); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(rslX, armRY, 25, 8); r.fill(sK); r.ellipse(rhX, armRY, 8, 8); } 
+      if (RG) { ragLimb(r,  RP.shX, -RP.shY, -(HALF_PI + RG.limbs[0].a), -RG.limbs[0].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand); ragLimb(r,  RP.shX,  RP.shY,   HALF_PI + RG.limbs[1].a,   RG.limbs[1].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand); } else { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(slX, armLY, 16, 8); r.fill(sK); r.ellipse(hX, armLY, 8, 8); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(rslX, armRY, 25, 8); r.fill(sK); r.ellipse(rhX, armRY, 8, 8); } 
       if (this.eT === "AERIAL" || this.eT === "AERIAL_PISTOL") { r.fill(80, a); r.rect(-18, -12, 12, 24, 3); } 
       if (this.eT !== "ARMORED" && this.eT !== "MOLOTOV" && this.eT !== "AERIAL") { r.push(); r.translate(20 - 10 * f, 8 + 15 * f); r.rotate(f * PI / 2); if (this.cW === WEAPONS.SMG || this.cW === WEAPONS.DUAL_SMG) { r.fill(40); r.rect(31, 12, 24, 8, 2); r.rect(35, 20, 6, 12); } else if (this.cW === WEAPONS.ASSAULT_RIFLE) { r.fill(40); r.rect(5, 4, 42, 4, 1); r.fill(139, 69, 19); r.rect(15, 3, 12, 6, 1); r.rect(0, 3, 8, 6, 1); } else if (this.cW === WEAPONS.SHOTGUN) { r.fill(30); r.rect(5, 4, 40, 5, 1); r.fill(15); r.rect(20, 3, 14, 7, 1); r.fill(50); r.rect(5, 3, 12, 7, 2); } else if (this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { r.fill(50, 70, 50); r.rect(5, 4, 45, 6, 2); r.fill(30); r.rect(20, 2, 10, 10, 1); } else { r.fill(40); r.rect(15, 5, 16, 6, 2); } r.pop(); if (this.cW === WEAPONS.DUAL_SMG) { r.push(); r.translate(20 - 10 * f, -14 - 15 * f); r.rotate(-f * PI / 2); r.fill(40); r.rect(15, -7, 24, 8, 2); r.rect(19, -19, 6, 12); r.pop(); } } else if (this.eType === "MOLOTOV") { r.push(); r.translate(20 - 10 * f, 8 + 15 * f); r.rotate(f * PI / 2); r.fill(30, 120, 30); r.rect(0, -8, 8, 16, 2); r.pop(); } else if (this.eType === "ARMORED") { r.push(); r.translate(30 - 10 * f, 25 + 15 * f); r.rotate(f * PI / 2); r.fill(30); r.rect(0, -10, 50, 20, 4); r.pop(); } 
       if (this.dT === 2 || this.dT === 4) { r.fill(90, 0, 0, a); r.ellipse(0, 0, this.bW + 15 * f, 20); } r.translate(20 * f, 0); if (this.dT === 4) { r.fill(90, 0, 0); r.ellipse(0, 0, 14, 14); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 1) { r.fill(sK); r.arc(0, 0, 11, 11, this.hA + PI / 4, this.hA + TWO_PI - PI / 4, PIE); r.fill(90, 0, 0); r.arc(0, 0, 8, 8, this.hA - PI / 4, this.hA + PI / 4, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } if (this.eT === "FEMALE_PISTOL") { r.fill(15, a); r.arc(0, 0, 12, 12, HALF_PI, PI + HALF_PI); r.ellipse(-11, 0, 12, 6); } } else if (this.dT === 6) { r.push(); r.rotate(this.hA); r.fill(90, 0, 0); r.ellipse(0, 0, 10, 10); let spread = min(this.sep * 0.4, 8); r.fill(sK); r.arc(0, -spread, 11, 11, PI, TWO_PI, CHORD); r.arc(0, spread, 11, 11, 0, PI, CHORD); r.pop(); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 8) { r.push(); r.rotate(this.hA); r.fill(sK); r.arc(0, 0, 11, 11, 0, PI + HALF_PI, PIE); r.fill(90, 0, 0); r.arc(0, 0, 11, 11, PI + HALF_PI, TWO_PI, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } r.pop(); } else if (this.dT === 9) { let nX = 10 + 5 * this.fP; r.fill(90, 0, 0); r.ellipse(nX, 0, 12, 12); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else { r.fill(sK); r.ellipse(0, 0, 11, 11); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } if (this.eT === "FEMALE_PISTOL") { r.fill(15, a); r.arc(0, 0, 12, 12, HALF_PI, PI + HALF_PI); r.ellipse(-11, 0, 12, 6); } } r.noStroke(); for (let d of this.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.pop(); } r.pop();

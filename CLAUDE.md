@@ -993,21 +993,54 @@ draw time, because letting it take either sign had half the bodies bending backw
 knee. `ragStep()` clamps the state, not just the target: a hard enough shove would
 otherwise carry a limb straight through a limit on its way to a legal rest pose.
 
-Proportions are derived from `bH`/`bW` once per draw — `TL = bH * 1.15` for torso length,
-`TW = bW * 0.78` for shoulder width — and the shoulders and hips hang off those rather
-than off the middle of the chest. The torso used to be 36 long and 27 wide, wider than a
-person and short enough that the limbs had nothing to reach with; it is 31 × 16 now, the
-legs out-reach it at 33, and the whole body lands at about six heads tall.
+### The measurements
 
-The variation comes from three places and none of them is a simulation:
+**`ragRig(bW, bH)` is the one place a body's proportions live** — both draw sites and
+`check-corpse.js` read it, so there is no second copy to drift. A body seen from directly
+above is the only view in this game that shows a person at full height, so the numbers
+have nowhere to hide, and they are the standing-height fractions the anthropometry tables
+give (Drillis & Contini): hip joint at 0.53 of height, knee at 0.285, shoulder at 0.818,
+elbow at 0.630. Every one of them says the same thing — **the leg is the long part.**
+
+`H` is recovered from the torso plate (`TL * 0.78` *is* the shoulder-to-hip span, and that
+span is 0.288 H), so re-proportioning the plate carries every limb with it and one number
+stays in charge. For the standard 21 × 27 body that gives a 31 × 18 plate, a 20.6 thigh
+and a 20.7 shank — the knee halving the leg, as it does — a 15.8 upper arm against a 12.2
+forearm, hips at the *base* of the torso rather than a third of the way up it, and a whole
+body seven and a half heads long.
+
+Two failures worth knowing, because the second is not fixed by fixing the first:
+
+- **Torso doing the legs' job.** 36 long and 27 wide with 33 of leg hung off it is a body
+  that is nearly all ribcage. That is what a wrong leg-and-hip ratio looks like from above.
+- **The taper running backwards.** *Widths* carry the read as much as lengths: a body from
+  above is chest, then waist, then hips, then knees, then ankles, each narrower than the
+  last. Two 11-wide thighs spread across a 16-wide chest are wider at the hip than at the
+  shoulder, and the legs and the torso merge into a single tube with feet on the end — long
+  legs and all. `ragRig` sizes every width so the silhouette only ever narrows going down
+  (chest 19.1 → waist 18.1 → hips 17.7 → knees 15.7), and `check-corpse.js` asserts it.
+
+The variation comes from four places and none of them is a simulation:
 
 - **How square the hit was.** `Math.sin(bA - aA)` is exactly "how far across the body the
   round arrived" — 0 up the spine, ±1 through the ribs — and it costs one call. It sets
   the torso spin and leans every limb's rest pose downwind of the shot.
 - **A rest pose drawn once at death** per limb, so the arms fling wide at a different
   angle on every body.
+- **A pose archetype, picked before the jitter.** `RAG_ARM_POSES` (sprawled · thrown back
+  overhead · down along the body · forearm folded across the chest · half raised) and
+  `RAG_LEG_POSES` (straight · knee drawn up · ankles crossed) are windows, not values, and
+  the per-limb random draws happen *inside* the chosen window. Four independent uniforms
+  give you variety that all looks the same — most of a uniform's mass sits in the middle of
+  its range, so every body ends up with its arms at half mast. About half of bodies take a
+  **different archetype per arm**, which is where the lopsided ones come from: an arm
+  overhead and the other folded under reads as a person, two arms at the same angle reads
+  as a doll.
 - **Each limb's own `lag`** behind the torso, which is what makes an arm trail a body
   that is still turning instead of arriving already folded.
+
+Frame zero is the pose they were shot standing in — arms hanging at the sides, legs
+together — so everything after it is the fall.
 
 Applied to the death types that leave a body lying down — `0, 1, 2, 4, 6, 7, 8, 9`, which
 is every headshot and body-shot outcome. The gib deaths (`3, 5, 10, 11, 12, 13, 14, 15`)
@@ -1022,8 +1055,10 @@ on your face and landing on your back.
 
 `tools/check-corpse.js` asserts who gets a settle and who does not, that the impact
 direction is read (and read the right way round), that eight identical kills produce eight
-different poses, that all four elbows and knees actually bend, and — the cost argument for
-the whole feature — that it freezes and does not drift by a hair over the next 300 frames.
+different poses, that all four elbows and knees actually bend, that across forty bodies the
+arms use the whole arc and a good share land lopsided, every proportion above including the
+taper, and — the cost argument for the whole feature — that it freezes and does not drift
+by a hair over the next 300 frames.
 
 ---
 
