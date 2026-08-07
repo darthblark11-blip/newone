@@ -7857,7 +7857,7 @@ function ragRig(bW, bH) {
     // better a little heavy than a little spindly, and the thin dark legs were
     // the part that looked like sticks. The fractions below are untouched --
     // this is one length knob and one width knob, so the proportions hold.
-    const TL = bH * 1.08, TW = bW * 0.90, H = TL * 0.78 / 0.288;
+    const TL = bH * 1.08, TW = bW * 0.96, H = TL * 0.78 / 0.288;
     return {
         TL: TL, TW: TW, H: H,
         shX:   TL *  0.34, shY:  TW * 0.44,   // shoulders, at the chest's widest
@@ -7871,10 +7871,10 @@ function ragRig(bW, bH) {
         // short against an abnormally long shoulder-to-elbow. Trimming one and
         // growing the other puts elbow-to-fingertip back at about 1.5x the
         // visible upper arm, which is what an arm looks like.
-        upper: H * 0.180, fore: H * 0.160, hand: 9,
-        upperW: 9.5, foreW: 7.5,
-        thigh: H * 0.245, shin: H * 0.246, foot: 9.5,
-        thighW: 10.5, shinW: 8
+        upper: H * 0.180, fore: H * 0.160, hand: 9.5,
+        upperW: 10.5, foreW: 8.4,
+        thigh: H * 0.245, shin: H * 0.246, foot: 10.5,
+        thighW: 12, shinW: 9.2
     };
 }
 

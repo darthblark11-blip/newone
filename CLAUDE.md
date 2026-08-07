@@ -1006,7 +1006,7 @@ elbow at 0.630. Every one of them says the same thing — **the leg is the long 
 span is 0.288 H), so re-proportioning the plate carries every limb with it and one number
 stays in charge. Two knobs sit on top of the anatomy — a length factor on the plate and a
 width factor — set stocky on purpose, because a figure drawn at this size reads better a
-little heavy than a little spindly. For the standard 21 × 27 body that gives a 29 × 19
+little heavy than a little spindly. For the standard 21 × 27 body that gives a 29 × 20
 plate, a 19.4 thigh and a 19.4 shank — the knee halving the leg, as it does — a 14.2 upper
 arm against a 12.6 forearm, hips at the *base* of the torso rather than a third of the way
 up it, and a whole body just under seven heads long.
@@ -1026,14 +1026,16 @@ Two failures worth knowing, because the second is not fixed by fixing the first:
 
 - **Torso doing the legs' job.** 36 long and 27 wide with 33 of leg hung off it is a body
   that is nearly all ribcage. That is what a wrong leg-and-hip ratio looks like from above.
-- **The taper running backwards.** *Widths* carry the read as much as lengths: a body from
-  above is chest, then waist, then hips, then knees, then ankles, each narrower than the
-  last. Two 11-wide thighs spread across a 16-wide chest are wider at the hip than at the
-  shoulder, and the legs and the torso merge into a single tube with feet on the end — long
-  legs and all. `ragRig` sizes every width so the silhouette only ever narrows going down
-  (chest 20.0 → waist 18.9 → hips 18.4 → knees 15.9), and `check-corpse.js` asserts it.
-  It is also the constraint that decides `hipY`: widening the thighs pushes the hip span
-  out, so the hips have to come *in* to stay under the waist.
+- **The taper running backwards.** *Widths* carry the read as much as lengths. Two 11-wide
+  thighs spread across a 16-wide chest are wider at the hip than at the shoulder, and the
+  legs and the torso merge into a single tube with feet on the end — long legs and all.
+  The rule `ragRig` is sized against, and `check-corpse.js` asserts, is **the chest is the
+  widest thing on the body and the legs narrow from the hip down**: chest 21.4, waist 20.2,
+  hips 20.5, knees 17.7. Note the hips coming out a shade wider than the waist — that is
+  correct and deliberate, because a real body is too; the step that must never come back is
+  thighs wider than the shoulders. An earlier strict chest > waist > hips > knees ordering
+  read fine but fought every attempt to thicken the legs, since widening a thigh pushes the
+  hip span straight out.
 
 The variation comes from four places and none of them is a simulation:
 

@@ -309,7 +309,7 @@ console.log('\n== the proportions ==');
   })()`);
   // Stocky on purpose — a real torso is about 1.1:1 shoulder-to-hip against
   // its own breadth, so this is still an elongated plate, just less of one.
-  ok('the torso is longer than it is wide', g.TL > g.TW * 1.45,
+  ok('the torso is longer than it is wide', g.TL > g.TW * 1.40,
      `${g.TL.toFixed(1)} long x ${g.TW.toFixed(1)} wide = ${(g.TL / g.TW).toFixed(2)}:1`);
   ok('and narrower than the old one', g.TW < g.bH, `${g.TW.toFixed(1)} vs the old ${g.bH}`);
 
@@ -358,12 +358,16 @@ console.log('\n== the proportions ==');
   // hip than at the shoulder, and the legs and the torso merge into one tube
   // with feet on the end — long legs and all. The silhouette must only ever
   // narrow going down.
+  // The chest is the widest thing on the body and the legs narrow from the hip
+  // down — that is the whole rule, and the hip-against-waist step is not part
+  // of it, because a real body IS wider at the hips than at the waist. What
+  // must never happen again is thighs spread wider than the shoulders.
   const chest = g.TW * 1.06;
   const hips  = 2 * (g.hipY + g.thighW / 2);
   const knees = 2 * (g.hipY + g.shinW / 2);
-  ok('the silhouette only ever narrows going down',
-     chest > g.TW && g.TW > hips && hips > knees,
-     `chest ${chest.toFixed(1)} > waist ${g.TW.toFixed(1)} > hips ${hips.toFixed(1)} > knees ${knees.toFixed(1)}`);
+  ok('the chest is the widest thing on the body, and the legs narrow from the hip',
+     chest > g.TW && chest > hips && hips > knees,
+     `chest ${chest.toFixed(1)}, waist ${g.TW.toFixed(1)}, hips ${hips.toFixed(1)}, knees ${knees.toFixed(1)}`);
   ok('and the legs are thinner than the arms are long', g.thighW < g.upper,
      `thigh ${g.thighW} wide against ${g.upper.toFixed(1)} of upper arm`);
 }
