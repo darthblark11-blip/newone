@@ -985,6 +985,20 @@ one pair per limb — shoved by the round that did the killing and left to settl
 corpse costs nothing once it is down, which is nearly all of the time it exists. A hundred
 bodies mid-fall is 800 multiply-adds; a hundred bodies on the floor is zero.
 
+**The joints have limits, and that is what makes it a body rather than a rag.** A shoulder
+swings the arm from roughly along the head-end round to along the foot-end and cannot take
+it *through* the chest; a hip, lying down, splays about thirty degrees. Elbows and knees
+are hinges that bend **one way** — the fold is stored as a magnitude and given its sign at
+draw time, because letting it take either sign had half the bodies bending backwards at the
+knee. `ragStep()` clamps the state, not just the target: a hard enough shove would
+otherwise carry a limb straight through a limit on its way to a legal rest pose.
+
+Proportions are derived from `bH`/`bW` once per draw — `TL = bH * 1.15` for torso length,
+`TW = bW * 0.78` for shoulder width — and the shoulders and hips hang off those rather
+than off the middle of the chest. The torso used to be 36 long and 27 wide, wider than a
+person and short enough that the limbs had nothing to reach with; it is 31 × 16 now, the
+legs out-reach it at 33, and the whole body lands at about six heads tall.
+
 The variation comes from three places and none of them is a simulation:
 
 - **How square the hit was.** `Math.sin(bA - aA)` is exactly "how far across the body the

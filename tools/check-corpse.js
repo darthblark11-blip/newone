@@ -99,13 +99,64 @@ console.log('\n== no two bodies land the same ==');
   ok('and the difference is visible, not a rounding error', spread > 1.0,
      `widest spread ${spread.toFixed(2)} radians across 8 joints`);
 
-  // Every joint has to actually be doing something — a limb that never leaves
-  // zero is a limb with no joint in it.
+  // Every joint has to actually be doing something. A leg may legitimately
+  // settle straight, so the bar is that the SET is not all at neutral.
   const r = drop(0, 'NORMAL', 0.6, 0);
   const moved = r.pose.filter((p) => Math.abs(p[0]) > 0.05).length;
   const bent = r.pose.filter((p) => Math.abs(p[1]) > 0.05).length;
-  ok('all four limbs end up somewhere', moved === 4, moved + '/4 shoulders and hips');
-  ok('and all four joints are bent', bent === 4, bent + '/4 elbows and knees');
+  ok('the limbs end up somewhere, not all at neutral', moved >= 3, moved + '/4 shoulders and hips');
+  ok('and all four hinges are bent', bent === 4, bent + '/4 elbows and knees');
+}
+
+console.log('\n== nothing bends the wrong way ==');
+{
+  // The anatomy is the point of the limits: a shoulder cannot swing the arm
+  // through the chest, a hip lying down splays about thirty degrees, and an
+  // elbow and a knee are hinges that fold ONE way. Sampled hard, because the
+  // impact lean and the torso drag both shove these about.
+  let bad = null, n = 0;
+  for (let i = 0; i < 60 && !bad; i++) {
+    const bA = (i / 60) * Math.PI * 2;
+    for (const f of [1, 3, 6, 11, 18, 26, FRAMES + 4]) {
+      const r = drop(0, 'NORMAL', bA, 0, f);
+      const lim = P('corpses[0].rag.limbs.map(function (L) { return [L.lo, L.hi, L.bMax]; })');
+      for (let k = 0; k < 4 && !bad; k++) {
+        const [a, b] = r.pose[k], [lo, hi, bMax] = lim[k];
+        if (a < lo - 1e-9 || a > hi + 1e-9) bad = `limb ${k} shoulder/hip at ${a.toFixed(2)}, limit ${lo}..${hi}`;
+        if (b < -1e-9) bad = `limb ${k} hinge hyperextended to ${b.toFixed(2)}`;
+        if (b > bMax + 1e-9) bad = `limb ${k} hinge folded past ${bMax} to ${b.toFixed(2)}`;
+        n++;
+      }
+    }
+  }
+  ok('no joint ever leaves its range, at any frame of the fall', bad === null,
+     bad || n + ' joint readings across 60 impact angles');
+
+  // Arms and legs are not held to the same arc — an arm swings much further
+  // than a hip does when you are lying on the ground.
+  const lim = P('corpses[0].rag.limbs.map(function (L) { return L.hi - L.lo; })');
+  ok('a shoulder has a wider arc than a hip', lim[0] > lim[2] * 2,
+     `arm ${lim[0].toFixed(2)} rad vs leg ${lim[2].toFixed(2)} rad`);
+}
+
+console.log('\n== the proportions ==');
+{
+  // The torso was doing the legs' job: 36 long and 27 wide, wider than a
+  // person and short enough that the limbs had nothing to reach with.
+  const g = P(`(function () {
+    const c = new Corpse(0, 0, 0, 0, color(1), color(1), 0, 0, [], null, 0, "NORMAL", 21, 27);
+    return { TL: c.bH * 1.15, TW: c.bW * 0.78, bW: c.bW, bH: c.bH };
+  })()`);
+  ok('the torso is longer than it is wide', g.TL > g.TW * 1.6,
+     `${g.TL.toFixed(1)} long x ${g.TW.toFixed(1)} wide = ${(g.TL / g.TW).toFixed(2)}:1`);
+  ok('and narrower than the old one', g.TW < g.bH, `${g.TW.toFixed(1)} vs the old ${g.bH}`);
+  // Hip to heel has to out-reach the torso, or the body is all chest.
+  const legReach = 17 + 16;
+  ok('the legs are longer than the torso', legReach > g.TL,
+     `${legReach} of leg against ${g.TL.toFixed(1)} of torso`);
+  const total = (g.TL * 0.5 + 5 + 5.5) + (g.TL * 0.36 + legReach);
+  ok('and the whole body reads at about six heads tall', total / 11 > 5.5 && total / 11 < 7,
+     `${total.toFixed(0)} units = ${(total / 11).toFixed(1)} heads`);
 }
 
 console.log('\n== it stops ==');
