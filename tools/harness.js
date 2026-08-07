@@ -75,7 +75,15 @@ const ctx = {
   radians(d){ return d * Math.PI / 180; }, degrees(r){ return r * 180 / Math.PI; },
   asin: Math.asin, acos: Math.acos, atan: Math.atan, log: Math.log, mag(x,y){ return Math.hypot(x,y); },
   norm(v,a,b){ return (v-a)/(b-a); }, fract(v){ return v - Math.floor(v); },
-  color(){ return {}; }, red(){return 0;}, green(){return 0;}, blue(){return 0;},
+  // p5.Color exposes .levels — the corpse art reads sC.levels[0..2] directly,
+  // so a bare {} makes every body draw throw on a property of undefined.
+  color(a,b,c,d){
+    if (typeof a === 'object' && a && a.levels) return a;
+    const l = (b === undefined) ? [a|0,a|0,a|0,255] : (d === undefined && c === undefined) ? [a|0,a|0,a|0,b|0]
+            : [a|0,b|0,c|0, d === undefined ? 255 : d|0];
+    return { levels: l, toString(){ return 'rgba('+l.join(',')+')'; } };
+  },
+  red(v){return v&&v.levels?v.levels[0]:0;}, green(v){return v&&v.levels?v.levels[1]:0;}, blue(v){return v&&v.levels?v.levels[2]:0;},
   loadImage(){ return {}; }, loadSound(){ return {}; }, loadFont(){ return {}; },
   localStorage: { getItem(){return null;}, setItem(){}, removeItem(){} },
   AudioContext: function(){ return { state:'running', resume(){}, currentTime:0,

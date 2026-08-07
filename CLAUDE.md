@@ -969,6 +969,50 @@ that all four kinds plus both site states draw through both shadow passes.
 
 ---
 
+## How a body comes to rest
+
+Every corpse used to land in one pose. The legs were two rects at fixed offsets, the arms
+two ellipses lerped between two constants, and the whole figure was rotated to face the
+way it died — so twenty bodies in a room were twenty copies of one drawing at twenty
+angles.
+
+`ragBuild` / `ragStep` / `ragLimb` (~7614) replace that with a five-piece pseudo-ragdoll:
+a torso spin plus **eight damped springs** — a shoulder and an elbow, a hip and a knee,
+one pair per limb — shoved by the round that did the killing and left to settle.
+
+**It is deliberately not a physics engine.** Eight scalars integrated per body for
+`RAG_FRAMES` (34) and then **frozen**: `rg.done` stops the integration for good, so a
+corpse costs nothing once it is down, which is nearly all of the time it exists. A hundred
+bodies mid-fall is 800 multiply-adds; a hundred bodies on the floor is zero.
+
+The variation comes from three places and none of them is a simulation:
+
+- **How square the hit was.** `Math.sin(bA - aA)` is exactly "how far across the body the
+  round arrived" — 0 up the spine, ±1 through the ribs — and it costs one call. It sets
+  the torso spin and leans every limb's rest pose downwind of the shot.
+- **A rest pose drawn once at death** per limb, so the arms fling wide at a different
+  angle on every body.
+- **Each limb's own `lag`** behind the torso, which is what makes an arm trail a body
+  that is still turning instead of arriving already folded.
+
+Applied to the death types that leave a body lying down — `0, 1, 2, 4, 6, 7, 8, 9`, which
+is every headshot and body-shot outcome. The gib deaths (`3, 5, 10, 11, 12, 13, 14, 15`)
+come apart into their own pieces and are untouched. `ragHumanoid()` gates it on being
+shaped like a person: the beasts, the vehicles, the machine and ARMORED's 105-wide slab
+keep the old art.
+
+`dT 7` — face down — used to draw two leg rects and a pool of blood with **no body between
+them**, a pair of trousers lying in the street. It gets the same rig with the arms folded
+under the chest and the back of the head showing, which is the difference between landing
+on your face and landing on your back.
+
+`tools/check-corpse.js` asserts who gets a settle and who does not, that the impact
+direction is read (and read the right way round), that eight identical kills produce eight
+different poses, that all four elbows and knees actually bend, and — the cost argument for
+the whole feature — that it freezes and does not drift by a hair over the next 300 frames.
+
+---
+
 ## Getting round things
 
 `steerAvoid(ent, ang, speed, blocked)` (~7960) is how everything that walks and is not
@@ -1165,6 +1209,7 @@ node tools/check-build.js          # blueprints, placement, build rate, the crew
 node tools/check-ballistics.js     # hostile rounds are always slower than the player's
 node tools/check-menu.js           # travel lives in the pause menu, and nowhere else
 node tools/check-pathing.js        # walkers turn round obstacles; the collision index
+node tools/check-corpse.js         # the settle: variation, impact direction, and it freezes
 GAME_JS=/path/to/other.js node tools/check-generation.js    # compare against a baseline
 ```
 
