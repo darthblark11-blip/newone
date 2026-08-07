@@ -7764,6 +7764,56 @@ function ragLimb(r, ox, oy, ang, bend, l1, l2, w1, w2, col, tip, tipSz) {
 // full length at an angle is exactly what makes a leg noodle.
 function ragShin(rig, bend) { return rig.shin * (0.58 + 0.42 * Math.cos(bend)); }
 
+// And it only ever closes TOWARD the body's axis: the hip is rolled out, the
+// knee is the outermost point of the leg, and the heel comes back in under it.
+// Letting the shin swing FURTHER out than the thigh is what makes a body
+// bow-legged -- knees pointing at each other, feet turned out -- which is not a
+// shape a relaxed leg makes. Capping the fold at the splay says exactly that,
+// and it has a second effect worth having: the foot then always lands between
+// the hip line and the thigh line, so it can never reach the midline either,
+// and the joint can never come back through straight into a hyperextension.
+function ragKnee(L) { return Math.min(L.b, L.a); }
+
+// Corpses were reading large against the standing figures. The whole body is
+// one scale so the proportions above survive it -- a smaller person, not a
+// differently shaped one.
+const RAG_SCALE = 0.80;
+
+// --- what a headshot leaves on the body -----------------------------------
+//
+// Every death that takes the head off already throws a pool onto the GROUND
+// around it. None of it landed on the person it came out of, so a body with
+// no head above the collar had a clean shirt. This is the part that falls back
+// on them: a fan over the collar and chest, heaviest at the neck and thinning
+// down the ribs, leaning the way the round left.
+//
+// Drawn once in the constructor and then never touched, like the rest pose --
+// a corpse must not develop new blood while you stand looking at it.
+const CORPSE_HEADSHOT_DEATHS = [1, 4, 6, 8, 9];
+function bloodSpray(rig, lean) {
+    const out = [], collar = rig.shX + rig.TL * 0.16;
+    // Two draws multiplied together pile the mass at t = 0, which is the
+    // collar. One uniform would spread it evenly down a torso that should be
+    // soaked at the top and flecked at the bottom.
+    for (let i = 0, n = 7 + floor(random(6)); i < n; i++) {
+        const t = random(1) * random(1);
+        const sp = rig.TW * (0.18 + t * 0.34);
+        out.push({ x: collar - t * rig.TL * 0.62,
+                   y: random(-sp, sp) + lean * sp * 0.8,
+                   r: 2.2 + random(4.4) * (1 - t * 0.5),
+                   a: 150 + random(75) });
+    }
+    // The fine stuff carries further and wider, and it is what stops the fan
+    // reading as a row of dots.
+    for (let i = 0; i < 6; i++) {
+        const t = random(1);
+        out.push({ x: collar - t * rig.TL * 0.82,
+                   y: random(-rig.TW * 0.60, rig.TW * 0.60) + lean * rig.TW * 0.3,
+                   r: 0.9 + random(1.7), a: 120 + random(90) });
+    }
+    return out;
+}
+
 // --- the measurements ------------------------------------------------------
 //
 // Seen from directly above, a body on the ground is the ONE view in this game
@@ -7837,6 +7887,10 @@ class Corpse {
     // Only the deaths that leave a body lying down get a settle. 3/5/10/11/13/
     // 14/15 come apart into pieces and draw their own thing; 12 flies off.
     this.rag = [0, 1, 2, 4, 6, 7, 8, 9].indexOf(dT) !== -1 ? ragBuild(eT, bW, bA, aA) : null;
+    // Blood down the front, but only off a head wound and only on something
+    // that has blood in it -- a machine is handled six other ways.
+    this.spray = (this.rag && CORPSE_HEADSHOT_DEATHS.indexOf(dT) !== -1)
+        ? bloodSpray(ragRig(bW, bH), Math.sin((bA || 0) - (aA || 0))) : null;
     this.bloodTimer = (dT === 5 || dT === 7 || dT === 8 || dT === 9 || dT === 10 || dT === 11 || dT === 13 || dT === 14) ? 180 : 0; 
 
     if (dT === 14) { this.splitA = bA; this.lH = { x: 0, y: 0, vx: cos(this.splitA - HALF_PI) * 2, vy: sin(this.splitA - HALF_PI) * 2 }; this.rH = { x: 0, y: 0, vx: cos(this.splitA + HALF_PI) * 2, vy: sin(this.splitA + HALF_PI) * 2 }; }
@@ -8165,14 +8219,14 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       // UNDER rather than flung wide, which is the difference between landing
       // on your face and landing on your back.
       r.push(); r.translate(this.x, this.y); let a = 255, f = this.fP;
-      r.push(); r.rotate(this.mA); const RG = this.rag; if (RG) r.rotate(RG.ang * 0.6); r.noStroke();
+      r.push(); r.rotate(this.mA); const RG = this.rag; if (RG) { r.rotate(RG.ang * 0.6); r.scale(RAG_SCALE); } r.noStroke();
       let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -25 : -10, lY2 = this.bW === 105 ? 15 : 2;
       r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a);
       const RP = ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW;
       if (RG) {
           const bootC = color(this.pC.levels[0] * 0.55, this.pC.levels[1] * 0.55, this.pC.levels[2] * 0.55, a);
-          ragLimb(r, RP.hipX, -RP.hipY, PI + RG.limbs[2].a * 0.7,  RG.limbs[2].b * 0.7, RP.thigh, ragShin(RP, RG.limbs[2].b * 0.7), RP.thighW, RP.shinW, this.pC, bootC, RP.foot);
-          ragLimb(r, RP.hipX,  RP.hipY, PI - RG.limbs[3].a * 0.7, -RG.limbs[3].b * 0.7, RP.thigh, ragShin(RP, RG.limbs[3].b * 0.7), RP.thighW, RP.shinW, this.pC, bootC, RP.foot);
+          ragLimb(r, RP.hipX, -RP.hipY, PI + RG.limbs[2].a * 0.7, -ragKnee(RG.limbs[2]) * 0.7, RP.thigh, ragShin(RP, ragKnee(RG.limbs[2]) * 0.7), RP.thighW, RP.shinW, this.pC, bootC, RP.foot);
+          ragLimb(r, RP.hipX,  RP.hipY, PI - RG.limbs[3].a * 0.7,  ragKnee(RG.limbs[3]) * 0.7, RP.thigh, ragShin(RP, ragKnee(RG.limbs[3]) * 0.7), RP.thighW, RP.shinW, this.pC, bootC, RP.foot);
           // Arms trapped beneath the chest: short reach, hard fold inward.
           const sK7 = color(235, 180, 140, a);
           ragLimb(r, RP.shX, -RP.shY, -(HALF_PI + RG.limbs[0].a * 0.35 - 0.5), -1.2, RP.upper * 0.75, RP.fore * 0.82, RP.upperW * 0.92, RP.foreW * 0.92, this.sC, sK7, RP.hand * 0.94);
@@ -8199,10 +8253,13 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.fill(sK); r.ellipse(0, -5, 11, 11); r.noStroke(); for (let d of this.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.pop(); 
   } 
   else { 
-      r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.aA); const RG = this.rag; if (RG) r.rotate(RG.ang); r.noStroke(); const RP = ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW; r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -10 : -10, lY2 = this.bW === 105 ? 15 : 2; r.push(); if (RG) { const bootC = color(this.pC.levels[0] * 0.55, this.pC.levels[1] * 0.55, this.pC.levels[2] * 0.55, a); ragLimb(r, RP.hipX, -RP.hipY, PI + RG.limbs[2].a,  RG.limbs[2].b, RP.thigh, ragShin(RP, RG.limbs[2].b), RP.thighW, RP.shinW, this.pC, bootC, RP.foot); ragLimb(r, RP.hipX,  RP.hipY, PI - RG.limbs[3].a, -RG.limbs[3].b, RP.thigh, ragShin(RP, RG.limbs[3].b), RP.thighW, RP.shinW, this.pC, bootC, RP.foot); } else { r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4); } if (this.dT === 2 || this.dT === 4) { r.fill(90, 0, 0, a); r.ellipse(lX, -4, 12, 16); } r.pop(); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); if (RG) { r.ellipse(0, 0, TL, TW); r.ellipse(TL * 0.30, 0, TL * 0.42, TW * 1.06); } else r.ellipse(0, 0, this.bW + 15 * f, this.bH); 
+      r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.aA); const RG = this.rag; if (RG) { r.rotate(RG.ang); r.scale(RAG_SCALE); } r.noStroke(); const RP = ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW; r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -10 : -10, lY2 = this.bW === 105 ? 15 : 2; r.push(); if (RG) { const bootC = color(this.pC.levels[0] * 0.55, this.pC.levels[1] * 0.55, this.pC.levels[2] * 0.55, a); ragLimb(r, RP.hipX, -RP.hipY, PI + RG.limbs[2].a, -ragKnee(RG.limbs[2]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[2])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot); ragLimb(r, RP.hipX,  RP.hipY, PI - RG.limbs[3].a,  ragKnee(RG.limbs[3]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[3])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot); } else { r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4); } if (this.dT === 2 || this.dT === 4) { r.fill(90, 0, 0, a); r.ellipse(lX, -4, 12, 16); } r.pop(); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); if (RG) { r.ellipse(0, 0, TL, TW); r.ellipse(TL * 0.30, 0, TL * 0.42, TW * 1.06); } else r.ellipse(0, 0, this.bW + 15 * f, this.bH); 
       if (this.eT === "ARMORED_STANDARD") { r.fill(100); if (RG) r.rect(-TL * 0.26, -TW * 0.46, TL * 0.58, TW * 0.92, 4); else r.rect(-10, -12, 20, 24, 4); } 
       if (this.eT === "FEMALE_PISTOL") { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(4, -6, 12, 10); r.ellipse(4, 6, 12, 10); } 
       r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } } 
+      // Head-wound spray, over the shirt but under the sleeves, so an arm laid
+      // across the chest still passes in front of it.
+      if (this.spray) { for (let sp of this.spray) { r.fill(96, 6, 6, sp.a * (a / 255)); r.ellipse(sp.x, sp.y, sp.r * 2, sp.r * 1.74); } } 
       let lAY = this.eT === "ARMORED" ? -30 : -14, rAY = this.eT === "ARMORED" ? 30 : 11, slX = lerp(-5, 0, f), hX = lerp(-12, 12, f), armLY = lerp(lAY, lAY + 3, f), rslX = lerp(15, 0, f), rhX = lerp(25, 12, f), armRY = lerp(rAY, rAY + 3, f); 
       if (RG) { ragLimb(r,  RP.shX, -RP.shY, -(HALF_PI + RG.limbs[0].a), -RG.limbs[0].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand); ragLimb(r,  RP.shX,  RP.shY,   HALF_PI + RG.limbs[1].a,   RG.limbs[1].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand); } else { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(slX, armLY, 16, 8); r.fill(sK); r.ellipse(hX, armLY, 8, 8); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(rslX, armRY, 25, 8); r.fill(sK); r.ellipse(rhX, armRY, 8, 8); } 
       if (this.eT === "AERIAL" || this.eT === "AERIAL_PISTOL") { r.fill(80, a); r.rect(-18, -12, 12, 24, 3); } 

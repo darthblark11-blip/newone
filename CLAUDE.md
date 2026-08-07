@@ -1073,6 +1073,33 @@ shin swung out sideways — drawing the full length at an angle is exactly what 
 noodle. `ragShin(rig, bend)` foreshortens by the fold, and the knee is capped at 54° rather
 than the arm's 115°, because past that a leg lying down is mostly pointing at the camera.
 
+**And the knee only ever closes *toward* the body's axis.** `ragKnee(L)` caps the fold at
+the splay, which says: hip rolled out, knee the outermost point of the leg, heel coming
+back in under it. Letting the shin swing *further* out than the thigh is what makes a body
+bow-legged — knees pointing at each other, feet turned out — and it is not a shape a
+relaxed leg makes. The cap buys two more things for free: the foot always lands between
+the hip line and the thigh line, so it cannot reach the midline; and the hinge can never
+come back through straight into a hyperextension.
+
+`RAG_SCALE` (0.80) is one scale over the whole body, applied inside the corpse's own
+transform. Every proportion above survives it — a smaller person, not a differently shaped
+one. It puts a body at about 2.4× the standing body length, or ~1.5× the standing figure's
+drawn extent.
+
+### What a headshot leaves on the body
+
+Every death that takes the head off already throws a pool onto the *ground* around it, and
+none of it landed on the person it came out of — so a body with no head above the collar
+had a clean shirt. `bloodSpray(rig, lean)` is the part that falls back on them: a fan over
+the collar and chest, heaviest at the neck and thinning down the ribs, leaning the way the
+round left. Two random draws multiplied together pile the mass at the collar; one uniform
+would spread it evenly down a torso that should be soaked at the top and flecked at the
+bottom. It is drawn **once in the constructor and then frozen**, like the rest pose — a
+corpse must not develop new blood while you stand looking at it — and it goes down over the
+shirt but *under* the sleeves, so an arm laid across the chest still passes in front of it.
+`CORPSE_HEADSHOT_DEATHS` is the gate (`1, 4, 6, 8, 9`), and it is additionally gated on
+`this.rag`, so a machine never bleeds.
+
 Applied to the death types that leave a body lying down — `0, 1, 2, 4, 6, 7, 8, 9`, which
 is every headshot and body-shot outcome. The gib deaths (`3, 5, 10, 11, 12, 13, 14, 15`)
 come apart into their own pieces and are untouched. `ragHumanoid()` gates it on being

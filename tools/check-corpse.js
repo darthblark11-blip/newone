@@ -167,22 +167,28 @@ console.log('\n== the legs do not cross ==');
   // would have caught it.
   const R = P(`(function () { const r = ragRig(21, 27);
     return { hipY: r.hipY, thigh: r.thigh, shin: r.shin }; })()`);
-  let worst = -1e9, bent = 0, n = 0;
+  let worst = -1e9, bent = 0, bow = 0, n = 0;
   for (let i = 0; i < 48; i++) {
     const r = drop(0, 'NORMAL', (i / 48) * Math.PI * 2, 0);
-    const shin = P(`[ragShin(ragRig(21, 27), corpses[0].rag.limbs[2].b),
-                     ragShin(ragRig(21, 27), corpses[0].rag.limbs[3].b)]`);
+    const knee = P(`[ragKnee(corpses[0].rag.limbs[2]), ragKnee(corpses[0].rag.limbs[3])]`);
+    const shin = P(`[ragShin(ragRig(21, 27), ragKnee(corpses[0].rag.limbs[2])),
+                     ragShin(ragRig(21, 27), ragKnee(corpses[0].rag.limbs[3]))]`);
     for (const k of [2, 3]) {
-      const [a, b] = r.pose[k];
-      // Mirror the draw: left hip at -hipY on PI + a, right at +hipY on PI - a.
-      const y = R.hipY + Math.sin(a) * R.thigh + Math.sin(a + b) * shin[k - 2];
+      const [a, b] = r.pose[k], kn = knee[k - 2];
+      // Mirror the draw: left hip at -hipY, thigh out at `a`, shin at `a - kn`.
+      const y = R.hipY + Math.sin(a) * R.thigh + Math.sin(a - kn) * shin[k - 2];
       worst = Math.max(worst, -y);      // how far past the midline the foot got
+      // Bow-legged is the shin angled FURTHER out than the thigh: the knee
+      // ends up the inner point of the leg and the foot turns out.
+      if (a - kn > a + 1e-9 || kn < -1e-9) bow++;
       if (b > 0.05) bent++;
       n++;
     }
   }
   ok('no foot ever reaches the midline, at any impact angle', worst < 0,
      `closest approach ${(-worst).toFixed(1)} units clear of centre, over ${n} legs`);
+  ok('and the knee is never the inner point of the leg', bow === 0,
+     bow === 0 ? n + ' legs, none bow-legged' : bow + '/' + n + ' bow-legged');
   ok('the hip can only splay outward', R.hipY > 0 && P('ragRig(21, 27) && corpses[0].rag.limbs[2].lo') > 0,
      `floor at ${P('corpses[0].rag.limbs[2].lo')} radians`);
   ok('and the knees are still doing something', bent > n * 0.5, bent + '/' + n + ' bent');
@@ -198,6 +204,80 @@ console.log('\n== the legs do not cross ==');
   ok('and a knee cannot fold to a right angle lying down',
      P('corpses[0].rag.limbs[2].bMax') < 1.1,
      `${(P('corpses[0].rag.limbs[2].bMax') * 57.3).toFixed(0)} degrees`);
+  // A hinge that can be driven negative is a hyperextension, whatever the
+  // spring did on the way there.
+  let neg = 0;
+  for (let i = 0; i < 24; i++) {
+    drop(0, 'NORMAL', (i / 24) * Math.PI * 2, 0, 1 + (i % 9));
+    const kn = P(`[ragKnee(corpses[0].rag.limbs[2]), ragKnee(corpses[0].rag.limbs[3])]`);
+    if (kn[0] < -1e-9 || kn[1] < -1e-9) neg++;
+  }
+  ok('the knee never hyperextends, at any frame of the fall', neg === 0, neg + ' of 24 bodies');
+}
+
+console.log('\n== the size on screen ==');
+{
+  // Corpses were reading large against the standing figures. One scale over
+  // the whole body, so every proportion above survives it.
+  const S = P('RAG_SCALE');
+  const g = P(`(function () { const R = ragRig(21, 27);
+    return { hipX: R.hipX, thigh: R.thigh, shin: R.shin }; })()`);
+  const drawn = ((20 + 5.5) + (-g.hipX + g.thigh + g.shin)) * S;
+  ok('the shrink is a real reduction but not a different figure', S > 0.7 && S < 0.95,
+     `x${S}`);
+  ok('a body lies about two and a half times the standing body length',
+     drawn / 27 > 2.0 && drawn / 27 < 2.7,
+     `${drawn.toFixed(0)} units against a ${27}-long standing body = ${(drawn / 27).toFixed(2)}x`);
+
+  // The scale must be inside the corpse's own transform, or it would shift
+  // where the body sits rather than how big it is.
+  const before = P('(corpses[0].x + "," + corpses[0].y)');
+  probe('corpses[0].show();');
+  ok('and it does not move the body', P('(corpses[0].x + "," + corpses[0].y)') === before, before);
+}
+
+console.log('\n== a headshot leaves blood on the body ==');
+{
+  // Every head death already throws a pool onto the GROUND. None of it landed
+  // on the person it came out of, so a body with no head above the collar had
+  // a clean shirt.
+  const R = P('(function () { const r = ragRig(21, 27); return { TL: r.TL, TW: r.TW, shX: r.shX }; })()');
+  let missing = null;
+  for (const dT of [1, 4, 6, 8, 9]) {
+    drop(dT, 'NORMAL', 0.6, 0, 2);
+    if (!P('corpses[0].spray || null')) missing = dT;
+  }
+  ok('every head death sprays the torso', missing === null, missing === null ? 'dT 1,4,6,8,9' : 'dT ' + missing);
+
+  let wrong = null;
+  for (const dT of [0, 2, 7]) { drop(dT, 'NORMAL', 0.6, 0, 2); if (P('corpses[0].spray || null')) wrong = dT; }
+  ok('and a body shot does not', wrong === null, wrong === null ? 'dT 0,2,7' : 'dT ' + wrong);
+  drop(1, 'ROBOT', 0.6, 0, 2);
+  ok('nor does a machine', P('corpses[0].spray || null') === null);
+
+  // It has to land ON the shirt: forward of the hips, behind the head, and
+  // inside the body's own width. Blood floating off the shoulder is worse
+  // than none.
+  drop(1, 'NORMAL', 0.6, 0, 2);
+  const sp = P('corpses[0].spray.map(function (s) { return [s.x, s.y, s.r, s.a]; })');
+  const off = sp.filter((s) => s[0] > R.shX + R.TL * 0.22 || s[0] < -R.TL * 0.5 || Math.abs(s[1]) > R.TW * 0.75);
+  ok('the fan lands on the torso, not off the side of it', off.length === 0,
+     `${sp.length} marks, ${off.length} off the body`);
+  // Heaviest at the collar, thinning down the ribs.
+  const top = sp.filter((s) => s[0] > R.shX * 0.5).reduce((a, s) => a + s[2], 0);
+  const bot = sp.filter((s) => s[0] <= R.shX * 0.5).reduce((a, s) => a + s[2], 0);
+  ok('and it is heaviest at the collar', top > bot,
+     `${top.toFixed(1)} of radius above the shoulders against ${bot.toFixed(1)} below`);
+  ok('with fine spatter as well as the heavy marks',
+     sp.some((s) => s[2] < 2) && sp.some((s) => s[2] > 3.5),
+     `${sp.filter((s) => s[2] < 2).length} specks, ${sp.filter((s) => s[2] > 3.5).length} heavy`);
+
+  // Drawn once and frozen: a corpse must not develop new blood while you
+  // stand looking at it.
+  for (let i = 0; i < 120; i++) probe('frameCount++; corpses[0].update();');
+  const later = P('corpses[0].spray.map(function (s) { return [s.x, s.y, s.r, s.a]; })');
+  ok('the spray never changes after the body lands',
+     JSON.stringify(later) === JSON.stringify(sp), sp.length + ' marks, 120 frames');
 }
 
 console.log('\n== the proportions ==');
