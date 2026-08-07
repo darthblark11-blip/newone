@@ -7662,11 +7662,19 @@ const RAG_ARM_POSES = [
 // floored just above zero so the torso spin can never drag a foot over the
 // midline however hard the round hit. `b` is the knee, and it stays modest --
 // see ragShin() for why a big one cannot read from above anyway.
+// The fifth column is how far the knee may fold PAST the splay -- how far the
+// shin is allowed to come back inward, which is the only fold that reads as a
+// knee rather than as a slightly bent leg. It is zero on the straight poses and
+// small on the bent one: a body shot standing lands with its legs mostly
+// extended, and a visible knee on every corpse reads as a crowd of broken toys.
 const RAG_LEG_POSES = [
-    [ 0.03, 0.16, 0.04, 0.22],    // together, near straight
-    [ 0.14, 0.42, 0.06, 0.34],    // splayed
-    [ 0.10, 0.34, 0.45, 0.92]     // one hip rolled out, knee bent
+    [ 0.03, 0.16, 0.04, 0.20, 0    ],   // together, near straight
+    [ 0.14, 0.42, 0.06, 0.30, 0    ],   // splayed
+    [ 0.10, 0.34, 0.45, 0.92, 0.13 ]    // one hip rolled out, knee bent
 ];
+// Weighted rather than uniform, so the bent one turns up on roughly a leg in
+// six instead of one in three.
+function ragLegPose() { const r = random(1); return r < 0.45 ? 0 : r < 0.84 ? 1 : 2; }
 
 function ragBuild(eT, bW, bA, aA) {
     if (!ragHumanoid(eT, bW)) return null;
@@ -7678,14 +7686,14 @@ function ragBuild(eT, bW, bA, aA) {
     // lopsided, which is where most of the character is. An arm overhead and
     // the other folded under reads as a person; two arms at the same angle
     // reads as a doll.
-    const armPose = floor(random(RAG_ARM_POSES.length)), legPose = floor(random(RAG_LEG_POSES.length));
+    const armPose = floor(random(RAG_ARM_POSES.length)), legPose = ragLegPose();
     const armSplit = random() < 0.55, legSplit = random() < 0.40;
     const limbs = [];
     for (let i = 0; i < 4; i++) {
         const arm = i < 2;
         const tbl = arm ? RAG_ARM_POSES : RAG_LEG_POSES;
         const w = arm ? tbl[armSplit ? floor(random(tbl.length)) : armPose]
-                      : tbl[legSplit ? floor(random(tbl.length)) : legPose];
+                      : tbl[legSplit ? ragLegPose() : legPose];
         // Joints have limits, and this is where the pose stops being a rag and
         // starts being a body.
         //
@@ -7712,6 +7720,7 @@ function ragBuild(eT, bW, bA, aA) {
             // of the shot, clamped to what the joint can actually do.
             rest:  Math.max(lo, Math.min(hi, random(w[0], w[1]) + cross * (arm ? 0.40 : 0.14))),
             restB: random(w[2], w[3]),
+            room:  w[4] ? random(w[4] * 0.6, w[4]) : 0,
             lag:   arm ? random(1.5, 2.8) : random(0.6, 1.3)
         });
     }
@@ -7768,11 +7777,13 @@ function ragShin(rig, bend) { return rig.shin * (0.58 + 0.42 * Math.cos(bend)); 
 // knee is the outermost point of the leg, and the heel comes back in under it.
 // Letting the shin swing FURTHER out than the thigh is what makes a body
 // bow-legged -- knees pointing at each other, feet turned out -- which is not a
-// shape a relaxed leg makes. Capping the fold at the splay says exactly that,
-// and it has a second effect worth having: the foot then always lands between
-// the hip line and the thigh line, so it can never reach the midline either,
-// and the joint can never come back through straight into a hyperextension.
-function ragKnee(L) { return Math.min(L.b, L.a); }
+// shape a relaxed leg makes. So the fold is capped at the splay plus whatever
+// headroom the pose carries (`room`, zero on every straight pose), which lets a
+// real knee show on the minority of bodies that get one without ever letting
+// the joint invert. The cap also floors at zero, so no hyperextension, and the
+// room is small enough that a heel coming inward still cannot reach the
+// midline -- check-corpse.js proves that bound rather than trusting it.
+function ragKnee(L) { return Math.max(0, Math.min(L.b, L.a + (L.room || 0))); }
 
 // Corpses were reading large against the standing figures. The whole body is
 // one scale so the proportions above survive it -- a smaller person, not a
@@ -7841,11 +7852,16 @@ function bloodSpray(rig, lean) {
 // Everything below is sized so the silhouette only ever narrows going down:
 // chest lobe 19.2, plate 18.1, hips 17.7, and on down to the boots.
 function ragRig(bW, bH) {
-    const TL = bH * 1.15, TW = bW * 0.86, H = TL * 0.78 / 0.288;
+    // Stockier than the anatomy alone would give: shorter in the plate and
+    // wider through every limb, because a figure drawn at this size reads
+    // better a little heavy than a little spindly, and the thin dark legs were
+    // the part that looked like sticks. The fractions below are untouched --
+    // this is one length knob and one width knob, so the proportions hold.
+    const TL = bH * 1.08, TW = bW * 0.90, H = TL * 0.78 / 0.288;
     return {
         TL: TL, TW: TW, H: H,
         shX:   TL *  0.34, shY:  TW * 0.44,   // shoulders, at the chest's widest
-        hipX: -TL *  0.44, hipY: TW * 0.24,   // hips, at the base of the torso
+        hipX: -TL *  0.44, hipY: TW * 0.21,   // hips, at the base of the torso
         // The bones are 0.188 H and 0.145 H, but the DRAWN split is not the
         // bone split: the shoulder joint sits ~1.5 units inboard of the real
         // acromion (it has to, or the sleeve hangs off the side of the chest),
@@ -7856,9 +7872,9 @@ function ragRig(bW, bH) {
         // growing the other puts elbow-to-fingertip back at about 1.5x the
         // visible upper arm, which is what an arm looks like.
         upper: H * 0.180, fore: H * 0.160, hand: 9,
-        upperW: 8, foreW: 6.5,
-        thigh: H * 0.245, shin: H * 0.246, foot: 8.5,
-        thighW: 9, shinW: 7
+        upperW: 9.5, foreW: 7.5,
+        thigh: H * 0.245, shin: H * 0.246, foot: 9.5,
+        thighW: 10.5, shinW: 8
     };
 }
 
@@ -8264,7 +8280,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       if (RG) { ragLimb(r,  RP.shX, -RP.shY, -(HALF_PI + RG.limbs[0].a), -RG.limbs[0].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand); ragLimb(r,  RP.shX,  RP.shY,   HALF_PI + RG.limbs[1].a,   RG.limbs[1].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand); } else { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(slX, armLY, 16, 8); r.fill(sK); r.ellipse(hX, armLY, 8, 8); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(rslX, armRY, 25, 8); r.fill(sK); r.ellipse(rhX, armRY, 8, 8); } 
       if (this.eT === "AERIAL" || this.eT === "AERIAL_PISTOL") { r.fill(80, a); r.rect(-18, -12, 12, 24, 3); } 
       if (this.eT !== "ARMORED" && this.eT !== "MOLOTOV" && this.eT !== "AERIAL") { r.push(); r.translate(20 - 10 * f, 8 + 15 * f); r.rotate(f * PI / 2); if (this.cW === WEAPONS.SMG || this.cW === WEAPONS.DUAL_SMG) { r.fill(40); r.rect(31, 12, 24, 8, 2); r.rect(35, 20, 6, 12); } else if (this.cW === WEAPONS.ASSAULT_RIFLE) { r.fill(40); r.rect(5, 4, 42, 4, 1); r.fill(139, 69, 19); r.rect(15, 3, 12, 6, 1); r.rect(0, 3, 8, 6, 1); } else if (this.cW === WEAPONS.SHOTGUN) { r.fill(30); r.rect(5, 4, 40, 5, 1); r.fill(15); r.rect(20, 3, 14, 7, 1); r.fill(50); r.rect(5, 3, 12, 7, 2); } else if (this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { r.fill(50, 70, 50); r.rect(5, 4, 45, 6, 2); r.fill(30); r.rect(20, 2, 10, 10, 1); } else { r.fill(40); r.rect(15, 5, 16, 6, 2); } r.pop(); if (this.cW === WEAPONS.DUAL_SMG) { r.push(); r.translate(20 - 10 * f, -14 - 15 * f); r.rotate(-f * PI / 2); r.fill(40); r.rect(15, -7, 24, 8, 2); r.rect(19, -19, 6, 12); r.pop(); } } else if (this.eType === "MOLOTOV") { r.push(); r.translate(20 - 10 * f, 8 + 15 * f); r.rotate(f * PI / 2); r.fill(30, 120, 30); r.rect(0, -8, 8, 16, 2); r.pop(); } else if (this.eType === "ARMORED") { r.push(); r.translate(30 - 10 * f, 25 + 15 * f); r.rotate(f * PI / 2); r.fill(30); r.rect(0, -10, 50, 20, 4); r.pop(); } 
-      if (this.dT === 2 || this.dT === 4) { r.fill(90, 0, 0, a); r.ellipse(0, 0, this.bW + 15 * f, 20); } r.translate(20 * f, 0); if (this.dT === 4) { r.fill(90, 0, 0); r.ellipse(0, 0, 14, 14); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 1) { r.fill(sK); r.arc(0, 0, 11, 11, this.hA + PI / 4, this.hA + TWO_PI - PI / 4, PIE); r.fill(90, 0, 0); r.arc(0, 0, 8, 8, this.hA - PI / 4, this.hA + PI / 4, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } if (this.eT === "FEMALE_PISTOL") { r.fill(15, a); r.arc(0, 0, 12, 12, HALF_PI, PI + HALF_PI); r.ellipse(-11, 0, 12, 6); } } else if (this.dT === 6) { r.push(); r.rotate(this.hA); r.fill(90, 0, 0); r.ellipse(0, 0, 10, 10); let spread = min(this.sep * 0.4, 8); r.fill(sK); r.arc(0, -spread, 11, 11, PI, TWO_PI, CHORD); r.arc(0, spread, 11, 11, 0, PI, CHORD); r.pop(); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 8) { r.push(); r.rotate(this.hA); r.fill(sK); r.arc(0, 0, 11, 11, 0, PI + HALF_PI, PIE); r.fill(90, 0, 0); r.arc(0, 0, 11, 11, PI + HALF_PI, TWO_PI, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } r.pop(); } else if (this.dT === 9) { let nX = 10 + 5 * this.fP; r.fill(90, 0, 0); r.ellipse(nX, 0, 12, 12); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else { r.fill(sK); r.ellipse(0, 0, 11, 11); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } if (this.eT === "FEMALE_PISTOL") { r.fill(15, a); r.arc(0, 0, 12, 12, HALF_PI, PI + HALF_PI); r.ellipse(-11, 0, 12, 6); } } r.noStroke(); for (let d of this.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.pop(); } r.pop();
+      if (this.dT === 2 || this.dT === 4) { r.fill(90, 0, 0, a); r.ellipse(0, 0, this.bW + 15 * f, 20); } r.translate((RG ? 18 : 20) * f, 0); if (this.dT === 4) { r.fill(90, 0, 0); r.ellipse(0, 0, 14, 14); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 1) { r.fill(sK); r.arc(0, 0, 11, 11, this.hA + PI / 4, this.hA + TWO_PI - PI / 4, PIE); r.fill(90, 0, 0); r.arc(0, 0, 8, 8, this.hA - PI / 4, this.hA + PI / 4, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } if (this.eT === "FEMALE_PISTOL") { r.fill(15, a); r.arc(0, 0, 12, 12, HALF_PI, PI + HALF_PI); r.ellipse(-11, 0, 12, 6); } } else if (this.dT === 6) { r.push(); r.rotate(this.hA); r.fill(90, 0, 0); r.ellipse(0, 0, 10, 10); let spread = min(this.sep * 0.4, 8); r.fill(sK); r.arc(0, -spread, 11, 11, PI, TWO_PI, CHORD); r.arc(0, spread, 11, 11, 0, PI, CHORD); r.pop(); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 8) { r.push(); r.rotate(this.hA); r.fill(sK); r.arc(0, 0, 11, 11, 0, PI + HALF_PI, PIE); r.fill(90, 0, 0); r.arc(0, 0, 11, 11, PI + HALF_PI, TWO_PI, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } r.pop(); } else if (this.dT === 9) { let nX = 10 + 5 * this.fP; r.fill(90, 0, 0); r.ellipse(nX, 0, 12, 12); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else { r.fill(sK); r.ellipse(0, 0, 11, 11); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } if (this.eT === "FEMALE_PISTOL") { r.fill(15, a); r.arc(0, 0, 12, 12, HALF_PI, PI + HALF_PI); r.ellipse(-11, 0, 12, 6); } } r.noStroke(); for (let d of this.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.pop(); } r.pop();
 }
 }
 

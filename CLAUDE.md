@@ -1004,10 +1004,12 @@ elbow at 0.630. Every one of them says the same thing — **the leg is the long 
 
 `H` is recovered from the torso plate (`TL * 0.78` *is* the shoulder-to-hip span, and that
 span is 0.288 H), so re-proportioning the plate carries every limb with it and one number
-stays in charge. For the standard 21 × 27 body that gives a 31 × 18 plate, a 20.6 thigh
-and a 20.7 shank — the knee halving the leg, as it does — a 15.1 upper arm against a 13.5
-forearm, hips at the *base* of the torso rather than a third of the way up it, and a whole
-body seven and a half heads long.
+stays in charge. Two knobs sit on top of the anatomy — a length factor on the plate and a
+width factor — set stocky on purpose, because a figure drawn at this size reads better a
+little heavy than a little spindly. For the standard 21 × 27 body that gives a 29 × 19
+plate, a 19.4 thigh and a 19.4 shank — the knee halving the leg, as it does — a 14.2 upper
+arm against a 12.6 forearm, hips at the *base* of the torso rather than a third of the way
+up it, and a whole body just under seven heads long.
 
 **The drawn arm is not the bone split**, and assuming it was is what made the forearm read
 short against an abnormally long shoulder-to-elbow. Two errors push the same way: the
@@ -1029,7 +1031,9 @@ Two failures worth knowing, because the second is not fixed by fixing the first:
   last. Two 11-wide thighs spread across a 16-wide chest are wider at the hip than at the
   shoulder, and the legs and the torso merge into a single tube with feet on the end — long
   legs and all. `ragRig` sizes every width so the silhouette only ever narrows going down
-  (chest 19.1 → waist 18.1 → hips 17.7 → knees 15.7), and `check-corpse.js` asserts it.
+  (chest 20.0 → waist 18.9 → hips 18.4 → knees 15.9), and `check-corpse.js` asserts it.
+  It is also the constraint that decides `hipY`: widening the thighs pushes the hip span
+  out, so the hips have to come *in* to stay under the waist.
 
 The variation comes from four places and none of them is a simulation:
 
@@ -1074,16 +1078,25 @@ noodle. `ragShin(rig, bend)` foreshortens by the fold, and the knee is capped at
 than the arm's 115°, because past that a leg lying down is mostly pointing at the camera.
 
 **And the knee only ever closes *toward* the body's axis.** `ragKnee(L)` caps the fold at
-the splay, which says: hip rolled out, knee the outermost point of the leg, heel coming
-back in under it. Letting the shin swing *further* out than the thigh is what makes a body
-bow-legged — knees pointing at each other, feet turned out — and it is not a shape a
-relaxed leg makes. The cap buys two more things for free: the foot always lands between
-the hip line and the thigh line, so it cannot reach the midline; and the hinge can never
+the splay plus the pose's own `room`, which says: hip rolled out, knee the outermost point
+of the leg, heel coming back in under it. Letting the shin swing *further* out than the
+thigh is what makes a body bow-legged — knees pointing at each other, feet turned out — and
+it is not a shape a relaxed leg makes. The cap also floors at zero, so the hinge can never
 come back through straight into a hyperextension.
+
+`room` is the fifth column of `RAG_LEG_POSES`: how far the shin may come back *past* the
+thigh, which is the only fold that reads as a knee rather than as a slightly angled
+straight leg. It is **zero on both straight poses and 0.13 on the bent one**, and
+`ragLegPose()` is weighted rather than uniform so the bent one lands on roughly a leg in
+six. A body shot standing lands with its legs mostly extended; a visible knee on every
+corpse reads as a crowd of broken toys. The room is small enough that a heel coming inward
+still cannot reach the midline — `check-corpse.js` proves that bound by reconstructing the
+foot at every impact angle rather than trusting it, and separately asserts the *frequency*
+stays between 4% and 30% of legs.
 
 `RAG_SCALE` (0.80) is one scale over the whole body, applied inside the corpse's own
 transform. Every proportion above survives it — a smaller person, not a differently shaped
-one. It puts a body at about 2.4× the standing body length, or ~1.5× the standing figure's
+one. It puts a body at about 2.2× the standing body length, or ~1.5× the standing figure's
 drawn extent.
 
 ### What a headshot leaves on the body

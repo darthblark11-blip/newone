@@ -213,6 +213,20 @@ console.log('\n== the legs do not cross ==');
     if (kn[0] < -1e-9 || kn[1] < -1e-9) neg++;
   }
   ok('the knee never hyperextends, at any frame of the fall', neg === 0, neg + ' of 24 bodies');
+
+  // A knee is only a knee when the shin comes back INWARD past the thigh —
+  // anything less is a slightly angled straight leg. That is the fold worth
+  // having, and it has to be the minority: a body shot standing lands with its
+  // legs mostly extended, and a visible knee on every corpse reads as a crowd
+  // of broken toys.
+  let kneed = 0, legs = 0;
+  for (let i = 0; i < 60; i++) {
+    const r = drop(0, 'NORMAL', (i / 60) * Math.PI * 2, 0);
+    const kn = P(`[ragKnee(corpses[0].rag.limbs[2]), ragKnee(corpses[0].rag.limbs[3])]`);
+    for (const k of [2, 3]) { if (r.pose[k][0] - kn[k - 2] < -0.02) kneed++; legs++; }
+  }
+  ok('a knee shows on some legs and not most', kneed > legs * 0.04 && kneed < legs * 0.30,
+     `${kneed}/${legs} legs = ${(100 * kneed / legs).toFixed(0)}%`);
 }
 
 console.log('\n== the size on screen ==');
@@ -222,7 +236,7 @@ console.log('\n== the size on screen ==');
   const S = P('RAG_SCALE');
   const g = P(`(function () { const R = ragRig(21, 27);
     return { hipX: R.hipX, thigh: R.thigh, shin: R.shin }; })()`);
-  const drawn = ((20 + 5.5) + (-g.hipX + g.thigh + g.shin)) * S;
+  const drawn = ((18 + 5.5) + (-g.hipX + g.thigh + g.shin)) * S;
   ok('the shrink is a real reduction but not a different figure', S > 0.7 && S < 0.95,
      `x${S}`);
   ok('a body lies about two and a half times the standing body length',
@@ -293,7 +307,9 @@ console.log('\n== the proportions ==');
              thigh: R.thigh, shin: R.shin, thighW: R.thighW, shinW: R.shinW,
              bW: c.bW, bH: c.bH };
   })()`);
-  ok('the torso is longer than it is wide', g.TL > g.TW * 1.6,
+  // Stocky on purpose — a real torso is about 1.1:1 shoulder-to-hip against
+  // its own breadth, so this is still an elongated plate, just less of one.
+  ok('the torso is longer than it is wide', g.TL > g.TW * 1.45,
      `${g.TL.toFixed(1)} long x ${g.TW.toFixed(1)} wide = ${(g.TL / g.TW).toFixed(2)}:1`);
   ok('and narrower than the old one', g.TW < g.bH, `${g.TW.toFixed(1)} vs the old ${g.bH}`);
 
@@ -304,7 +320,7 @@ console.log('\n== the proportions ==');
   const armReach = g.upper + g.fore;
   // Head centre rides at 20 units out (the draw's `translate(20 * f, 0)`),
   // radius 5.5; the far end is the hip offset plus the whole leg.
-  const total = (20 + 5.5) + (-g.hipX + legReach);
+  const total = (18 + 5.5) + (-g.hipX + legReach);
   ok('the leg is half the body, hip to ankle',
      legReach / total > 0.47 && legReach / total < 0.56,
      `${legReach.toFixed(1)} of leg in ${total.toFixed(1)} of body = ${(legReach / total).toFixed(2)}`);
@@ -333,8 +349,8 @@ console.log('\n== the proportions ==');
      `${(-g.hipX).toFixed(1)} back on a ${(g.TL / 2).toFixed(1)} half-length`);
   ok('and the shoulders are a torso-length away from them', g.shX - g.hipX > g.TL * 0.7,
      `${(g.shX - g.hipX).toFixed(1)} of spine`);
-  ok('the whole body reads at seven and a half heads tall',
-     total / 11 > 6.8 && total / 11 < 8.1,
+  ok('the whole body reads just under seven heads tall',
+     total / 11 > 6.4 && total / 11 < 7.6,
      `${total.toFixed(0)} units = ${(total / 11).toFixed(1)} heads`);
 
   // Seen from above a body is a TAPER, and it is the widths that carry it.
