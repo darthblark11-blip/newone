@@ -1167,6 +1167,28 @@ The clock is ticked in **one place** at the top of `Corpse.update()` now, and
 frames instead of 156, because its pose froze at `RAG_FRAMES` and there was nothing left
 to draw.
 
+**The ground remembers, per biome.** `legacyStartAtLevel()` used to call `clearAllBlood()`
+on entry, so the ground you soaked in Stick City was spotless again the moment you came
+back from the Undercity. Surfaces are **banked per sector** (`bloodBanks`, `useBloodBank`)
+and swapped in on arrival instead. Nothing is serialised, which is the whole reason it is
+cheap: chunk generation is a pure function of `(biome, cx, cy)`, so world coordinates mean
+the same thing on every visit and a mark laid down an hour ago is still under the same
+tree. `bloodChunks` / `bloodChunkUse` stay exactly what they were — the *active* bank — so
+every painter and the draw loop are untouched.
+
+`retireCorpsesToBloodBank()` runs first, before the swap: `corpses[]` does not survive a
+level change, so anything still falling is fast-forwarded and pressed in rather than
+dropped.
+
+Two ceilings, not one. `BLOOD_BUDGET_BYTES` (96 MB) is now the total across **all** banks
+and `trimBloodBudget()` evicts globally by least-recently-painted — so the memory ceiling
+is the one it always was, and what gives first is the oldest blood in the biome you have
+not been back to. `BLOOD_MAX_SURFACES` (256) is the second: every surface is its own
+canvas element and a browser refuses those long before it runs out of bytes, since a
+soaked session is hundreds of 256×256 buffers rather than a few big ones. `clearAllBlood()`
+now empties only the active bank; `wipeAllBloodBanks()` is the genuine reset and only
+`restartGame()` calls it.
+
 **A body that dies off screen retires too.** `updateCorpses()` only ran `update()` within
 `inView(…, 800)`, so anything killed and walked away from sat in the live list until the
 player happened to wander back past it — over a long biome run, every body they ever left
@@ -1181,8 +1203,10 @@ different poses, that all four elbows and knees actually bend, that across forty
 arms use the whole arc and a good share land lopsided, every proportion above including the
 taper, and — the cost argument for the whole feature — that it freezes and does not drift
 by a hair over the next 300 frames, that every death type retires into the ground layer,
-that a body dying off screen retires as well, and — the cost argument stated as a number —
-that sixty bodies mid-fall are expensive and sixty bodies on the floor draw nothing at all.
+that a body dying off screen retires as well, that a biome's ground keeps its dead across a
+trip to another biome and back while a restart wipes every bank, and — the cost argument
+stated as a number — that sixty bodies mid-fall are expensive and sixty bodies on the floor
+draw nothing at all.
 
 ---
 

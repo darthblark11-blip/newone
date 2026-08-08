@@ -365,8 +365,11 @@ function preload() {
 
 
 function legacyStartAtLevel(lvl, isLoading = false) {
-    clearAllBlood();
-    bloodChunks = {}; 
+    // The ground the player is leaving keeps what was spilled on it, and the
+    // ground they are arriving at gets its own back. Anything still falling is
+    // pressed in first, because corpses[] does not survive the level change.
+    retireCorpsesToBloodBank();
+    useBloodBank(lvl);
     
     currentLevel = lvl;
   
@@ -2901,7 +2904,7 @@ function drawParkingCars() {
 
 function windowResized() { resizeCanvas(windowWidth, windowHeight); leftStick.base = { x: 80, y: height - 160 }; rightStick.base = { x: width - 80, y: height - 110 }; }
 function nextLevel() { startAtLevel(currentLevel + 1); }
-function restartGame() { seedWorldClock(); startAtLevel(1); }
+function restartGame() { wipeAllBloodBanks(); seedWorldClock(); startAtLevel(1); }
 function emit(x, y, c, col, typ, vx = 0, vy = 0) { for (let i = 0; i < c; i++) { particles.push(new Particle(x, y, col, typ, vx, vy)); } }
 let activeBuildings = [];
 let activeParkingCars = [];
@@ -3012,15 +3015,17 @@ function updateGrenadePickups() {
 }
 
 
+// Empties the bank the player is standing in, and only that one. Wiping every
+// biome's ground because one room was left is what this whole arrangement
+// exists to stop -- see wipeAllBloodBanks() for the genuine reset.
 function clearAllBlood() {
-    bloodChunkUse = {};
-    bloodBytes = 0;
-    for (const pg of bloodSurfacePool) pg.remove();
-    bloodSurfacePool.length = 0;
-    for (let key in bloodChunks) {
-        bloodChunks[key].pg.remove(); // Destroys the p5.Graphics object
+    for (const key in bloodChunks) {
+        bloodBytes -= bloodSurfaceBytes(bloodChunks[key].pg);
+        bloodSurfaces--;
+        bloodChunks[key].pg.remove();   // Destroys the p5.Graphics object
+        delete bloodChunks[key];
+        delete bloodChunkUse[key];
     }
-    bloodChunks = {}; // Resets the dictionary
 }
 
 
@@ -6995,9 +7000,74 @@ class Splatter {
 // hour ago is still there when you walk back.
 const BLOOD_GROW = 256;                     // buffers grow on this lattice
 const BLOOD_BUDGET_BYTES = 96 * 1024 * 1024;  // backstop, not a routine limit
+// Every surface is its own canvas element, and a browser will start refusing
+// them long before it runs out of the bytes above -- a soaked session is
+// hundreds of 256x256 buffers, not a few big ones. So the live set is bounded
+// by COUNT as well as by size, whichever gives first.
+const BLOOD_MAX_SURFACES = 256;
 let bloodChunkUse = {};                     // key -> frameCount when last painted
 let bloodSurfacePool = [];                  // retired buffers, cleared and reused
 let bloodBytes = 0;
+let bloodSurfaces = 0;
+
+// --- the ground remembers, per biome --------------------------------------
+//
+// A stamped body lives in a surface keyed by world chunk, and legacyStartAtLevel()
+// used to throw the whole lot away on entry -- so the ground you soaked in Stick
+// City was clean again the moment you came back from the Undercity. The surfaces
+// are BANKED per sector now and swapped in on arrival instead of cleared.
+//
+// Nothing has to be serialised for this to work, which is the whole reason it is
+// cheap: chunk generation is a pure function of (biome, cx, cy), so world
+// coordinates mean the same thing on every visit and a mark laid down an hour ago
+// is still under the same tree.
+//
+// `bloodChunks` and `bloodChunkUse` stay exactly what they were -- the ACTIVE
+// bank -- so every painter and the draw loop are untouched. The budget is the
+// total across all banks, and eviction is global by least-recently-painted: the
+// ceiling is the one it always was, and what gives first is the oldest blood in
+// the biome you have not been back to.
+let bloodBanks = {};
+let bloodBankId = null;
+
+function useBloodBank(id) {
+  const key = String(id);
+  if (bloodBankId === key) return;
+  if (bloodBankId !== null) bloodBanks[bloodBankId] = { chunks: bloodChunks, use: bloodChunkUse };
+  bloodBankId = key;
+  let bank = bloodBanks[key];
+  if (!bank) { bank = { chunks: {}, use: {} }; bloodBanks[key] = bank; }
+  bloodChunks = bank.chunks;
+  bloodChunkUse = bank.use;
+}
+
+// Everything, everywhere. Only a genuine restart wants this.
+function wipeAllBloodBanks() {
+  for (const id in bloodBanks) {
+    const b = bloodBanks[id];
+    for (const k in b.chunks) b.chunks[k].pg.remove();
+  }
+  bloodBanks = {}; bloodBankId = null;
+  bloodChunks = {}; bloodChunkUse = {};
+  bloodBytes = 0; bloodSurfaces = 0;
+  for (const pg of bloodSurfacePool) pg.remove();
+  bloodSurfacePool.length = 0;
+}
+
+// Anything still lying there when the player leaves belongs to the ground they
+// are leaving, not to the one they are arriving at. The settle is deterministic
+// and freezes anyway, so fast-forwarding it costs at most RAG_FRAMES steps and
+// stamps the same body they would have watched land.
+function retireCorpsesToBloodBank() {
+  for (const c of corpses) {
+    if (c.isStatic) continue;
+    c.fP = 1;
+    c.sep = corpseSepMax(c.dT);
+    if (c.rag) while (!c.rag.done) ragStep(c.rag);
+    stampCorpse(c);
+  }
+  corpses.length = 0;
+}
 
 function bloodSurfaceBytes(pg) { return pg.width * pg.height * 4; }
 
@@ -7060,6 +7130,7 @@ function acquireBloodChunk(key, x0, y0, x1, y1) {
   e = { pg: pg, bx: rx0, by: ry0 };
   bloodChunks[key] = e;
   bloodBytes += bloodSurfaceBytes(pg);
+  bloodSurfaces++;
   bloodChunkUse[key] = frameCount;
   trimBloodBudget(key);
   return e;
@@ -7068,17 +7139,27 @@ function acquireBloodChunk(key, x0, y0, x1, y1) {
 // Only ever runs if a session paints an implausible amount of ground. Drops the
 // least recently bled surfaces first and never the one being painted right now.
 function trimBloodBudget(keepKey) {
-  if (bloodBytes <= BLOOD_BUDGET_BYTES) return;
-  const keys = Object.keys(bloodChunks)
-    .sort((a, b) => (bloodChunkUse[a] || 0) - (bloodChunkUse[b] || 0));
-  for (const k of keys) {
-    if (bloodBytes <= BLOOD_BUDGET_BYTES * 0.85) break;
-    if (k === keepKey) continue;
-    const ent = bloodChunks[k];
+  if (bloodBytes <= BLOOD_BUDGET_BYTES && bloodSurfaces <= BLOOD_MAX_SURFACES) return;
+  // Every bank, not just the one being painted. The budget belongs to the
+  // process, so the right thing to give up is the oldest blood ANYWHERE --
+  // which is the biome the player has not been back to, not the fight they are
+  // standing in.
+  const all = [];
+  for (const id in bloodBanks) {
+    const b = bloodBanks[id];
+    for (const k in b.chunks) all.push([id, k, b.use[k] || 0]);
+  }
+  all.sort((a, b) => a[2] - b[2]);
+  for (const [id, k] of all) {
+    if (bloodBytes <= BLOOD_BUDGET_BYTES * 0.85 && bloodSurfaces <= BLOOD_MAX_SURFACES * 0.85) break;
+    if (id === bloodBankId && k === keepKey) continue;
+    const bank = bloodBanks[id], ent = bank.chunks[k];
+    if (!ent) continue;
     bloodBytes -= bloodSurfaceBytes(ent.pg);
+    bloodSurfaces--;
     ent.pg.remove();
-    delete bloodChunks[k];
-    delete bloodChunkUse[k];
+    delete bank.chunks[k];
+    delete bank.use[k];
   }
 }
 

@@ -504,5 +504,61 @@ console.log('\n== a body presses itself into the ground ==');
      P('Object.keys(bloodChunks).length') === surfaces, surfaces + ' surfaces intact');
 }
 
+console.log('\n== and the ground keeps it, per biome ==');
+{
+  // Leaving a biome used to burn its blood layer to the ground: legacyStartAtLevel()
+  // called clearAllBlood() on entry, so Stick City was spotless again the moment
+  // you came back from the Undercity. The surfaces are banked per sector now.
+  probe('wipeAllBloodBanks(); isStoryMode = false; townsData = {};');
+  const fight = (n) => {
+    probe(`corpses = []; player.x = 0; player.y = 0;
+      for (let i = 0; i < ${n}; i++) { const a = i * 0.7, r = 60 + (i % 7) * 40;
+        corpses.push(new Corpse(Math.cos(a)*r, Math.sin(a)*r, a, a, color(1), color(1),
+                                i % 5, 0.3, [], null, a + 0.9, "NORMAL", 21, 27)); }`);
+    for (let i = 0; i < 300 && P('corpses.length'); i++) probe('frameCount++; updateCorpses();');
+  };
+  const live = () => P('Object.keys(bloodChunks).length');
+
+  probe('startAtLevel(2);'); fight(40);
+  const two = live();
+  ok('a fight leaves marks on the ground', two > 0, two + ' surfaces in sector 2');
+
+  probe('startAtLevel(3);');
+  ok('arriving in another biome lands on clean ground', live() === 0);
+  fight(15);
+  const three = live();
+
+  probe('startAtLevel(2);');
+  ok('and coming back finds the bodies still there', live() === two,
+     `${live()} of ${two} surfaces`);
+  probe('startAtLevel(3);');
+  ok('both biomes keep their own', live() === three, `${live()} of ${three}`);
+
+  // A body still falling when the player leaves must not be lost with corpses[].
+  probe('startAtLevel(5);');
+  probe(`corpses = []; player.x = 0; player.y = 0;
+    for (let i = 0; i < 6; i++) corpses.push(new Corpse(i * 40, 0, 0.3, 0.3, color(1),
+      color(1), 0, 0.2, [], null, 0.7, "NORMAL", 21, 27));`);
+  probe('frameCount++; updateCorpses();');
+  const falling = P('corpses.length');
+  probe('startAtLevel(6); startAtLevel(5);');
+  ok('bodies still falling at the moment of departure are pressed in, not dropped',
+     falling > 0 && live() > 0 && P('corpses.length') === 0,
+     `${falling} mid-fall -> ${live()} surfaces`);
+
+  // Bounded: the budget is the whole process's, in bytes AND in canvases.
+  ok('the live set is capped by canvas count as well as by size',
+     P('bloodSurfaces') <= P('BLOOD_MAX_SURFACES') && P('bloodBytes') <= P('BLOOD_BUDGET_BYTES'),
+     `${P('bloodSurfaces')}/${P('BLOOD_MAX_SURFACES')} surfaces, ` +
+     `${(P('bloodBytes') / 1048576).toFixed(1)}/${(P('BLOOD_BUDGET_BYTES') / 1048576).toFixed(0)} MB`);
+  ok('and the accounting never goes negative',
+     P('bloodSurfaces') >= 0 && P('bloodBytes') >= 0);
+
+  // A genuine restart starts on clean ground.
+  probe('restartGame();');
+  ok('restarting the game wipes every biome', P('bloodSurfaces') === 0 &&
+     P('Object.keys(bloodBanks).every(function(k){ return Object.keys(bloodBanks[k].chunks).length === 0; })'));
+}
+
 console.log(`\n${checks - fails}/${checks} checks passed`);
 process.exit(fails ? 1 : 0);
