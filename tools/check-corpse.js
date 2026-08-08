@@ -436,5 +436,73 @@ console.log('\n== it all draws ==');
   ok('a limb is upper arm, forearm and hand', n === 3, n + ' pieces');
 }
 
+console.log('\n== a body presses itself into the ground ==');
+{
+  // The whole cost argument for keeping every corpse: a settled body stops
+  // being a drawing object and becomes part of the permanent blood layer, so a
+  // massacre costs a handful of texture blits instead of hundreds of ellipses
+  // a frame. None of this worked. `smokeTimer` was only ever set by the fire
+  // code and left undefined everywhere else — and `undefined <= 0` is FALSE —
+  // so the retirement test could not pass and NO corpse in the game had ever
+  // stamped itself. Every body stayed live for the rest of the level.
+  probe('corpses = []; clearAllBlood();');
+  ok('every corpse starts with a settle clock that can actually run out',
+     P(`(function () {
+       const c = new Corpse(0, 0, 0, 0, color(1), color(1), 0, 0, [], null, 0, "NORMAL", 21, 27);
+       return typeof c.smokeTimer === 'number' && c.smokeTimer <= 0;
+     })()`), 'smokeTimer initialised');
+
+  // Drop a body of each kind in view and run. Every one has to retire.
+  let stuck = [];
+  for (const dT of [0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15]) {
+    probe(`corpses = []; player.x = 0; player.y = 0;
+           corpses.push(new Corpse(0, 0, 0.3, 0.3, color(1), color(1), ${dT}, 0.2, [], null,
+                                   0.7, "NORMAL", 21, 27));`);
+    for (let i = 0; i < 400 && P('corpses.length'); i++) probe('frameCount++; updateCorpses();');
+    if (P('corpses.length')) stuck.push(dT);
+  }
+  ok('every death type retires into the ground layer', stuck.length === 0,
+     stuck.length ? 'still live: dT ' + stuck.join(',') : '14 death types');
+
+  // And one that dies where nobody is looking. It used to sit in the live list
+  // until the player happened to wander back past it, which over a long biome
+  // run is every body they ever left behind.
+  probe(`corpses = []; player.x = 0; player.y = 0;
+         corpses.push(new Corpse(60000, 60000, 0.3, 0.3, color(1), color(1), 0, 0.2, [], null,
+                                 0.7, "NORMAL", 21, 27));`);
+  for (let i = 0; i < 400 && P('corpses.length'); i++) probe('frameCount++; updateCorpses();');
+  ok('a body that falls off screen retires too', P('corpses.length') === 0);
+
+  // Cost: sixty bodies, before and after.
+  probe('corpses = []; clearAllBlood(); player.x = 0; player.y = 0;');
+  probe(`for (let i = 0; i < 60; i++) { const a = i * 0.7, r = 60 + (i % 7) * 40;
+           corpses.push(new Corpse(Math.cos(a)*r, Math.sin(a)*r, a, a, color(1), color(1),
+                                   i % 5, 0.3, [], null, a + 0.9, "NORMAL", 21, 27)); }`);
+  const realE = ctx.ellipse; let n = 0;
+  ctx.ellipse = () => { n++; };
+  probe('frameCount++; updateCorpses();');
+  const live = n;
+  for (let i = 0; i < 400 && P('corpses.length'); i++) probe('frameCount++; updateCorpses();');
+  n = 0; probe('frameCount++; updateCorpses();');
+  const settled = n;
+  ctx.ellipse = realE;
+  ok('sixty bodies mid-fall are expensive, as they should be', live > 500, live + ' ellipses');
+  ok('and sixty bodies on the floor cost nothing at all', settled === 0,
+     `${live} ellipses a frame -> ${settled}`);
+  ok('they are all in the blood layer now', P('corpses.length') === 0 &&
+     P('Object.keys(bloodChunks).length') > 0,
+     P('Object.keys(bloodChunks).length') + ' surfaces, ' +
+     (P('bloodBytes') / 1048576).toFixed(1) + ' MB of a ' +
+     (P('BLOOD_BUDGET_BYTES') / 1048576).toFixed(0) + ' MB budget');
+
+  // And they stay there. This is the half the player actually asked for.
+  const surfaces = P('Object.keys(bloodChunks).length');
+  probe('player.x = 60000; player.y = 60000;');
+  for (let i = 0; i < 300; i++) probe('frameCount++; updateCorpses();');
+  probe('player.x = 0; player.y = 0;');
+  ok('and walking a biome away and back does not lose them',
+     P('Object.keys(bloodChunks).length') === surfaces, surfaces + ' surfaces intact');
+}
+
 console.log(`\n${checks - fails}/${checks} checks passed`);
 process.exit(fails ? 1 : 0);

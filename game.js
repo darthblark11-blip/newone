@@ -5662,6 +5662,16 @@ const OVERWORLD = {
   3: [["BANDIT", 100]],
   4: [["NM0_GREY_FATIGUE", 68], ["ARMORED_STANDARD", 22], ["ARMORED", 10]]
 };
+// What a city sector spawns once its transmission grid is down and its people
+// have changed sides. Machines mostly -- they do not defect and nobody mourns
+// them -- with NM-0's own intake filling the posts back up. Deliberately holds
+// no recruitable type: after the towers, every human in the sector wearing that
+// uniform is one the player spared, and spawning more of them takes that back.
+const LIBERATED_SPAWN = {
+  1: ["ROBOT", "ROBOT", "NM0_ROOKIE"],
+  2: ["ROBOT", "ROBOT", "NM0_ROOKIE_F"]
+};
+
 // What each sector's own army is, as distinct from what its open road spawns.
 // A garrison unit is left alone by the whitelist sweep wherever it is standing;
 // it simply never spawns as a wanderer.
@@ -5781,6 +5791,28 @@ function spawnSingleEnemy() {
   // wanderers, and after the towers there are no HUMAN wanderers left to send.
   if (window.towersDefeated && !OVERWORLD_SET[currentLevel]) return;
   if (isStoryMode && sectorTowersAreDown(currentLevel) && !OVERWORLD_SET[currentLevel]) return;
+
+  // A liberated city sector never spawns another local.
+  //
+  // The two guards above only bail for a sector with no overworld table at all;
+  // 1 and 2 have one, so they fell through on the assumption that
+  // inBiomeOverworld() would route them to the machine table. Anywhere that is
+  // not true -- the authored streets, the moment before BIOME_ACTIVE comes up,
+  // an ambush window -- the per-level ladder further down runs instead, and for
+  // Stick City that ladder hands out NORMAL. Yellow regulars kept walking into
+  // a sector whose yellow regulars the player had just freed, wearing the same
+  // shirt as the citizens standing next to them and shooting at them.
+  //
+  // What NM-0 actually has left to send is hardware and fresh intake, so that
+  // is what this sends: mostly machines, some rookies. Both are in
+  // SECTOR_GARRISON, so sweepForeignHostiles() leaves them where they land.
+  if ((currentLevel === 1 || currentLevel === 2) &&
+      (window.towersDefeated || sectorTowersAreDown(currentLevel))) {
+      const eS = getSafeSpawn(true);
+      const t = LIBERATED_SPAWN[currentLevel][floor(random(LIBERATED_SPAWN[currentLevel].length))];
+      enemiesList.push(new Character(eS.x, eS.y, false, t));
+      return;
+  }
   // Random wanderers belong in the outer region and nowhere else. A town is held
   // by its residents, an outpost by its garrison, an NM-0 facility by the story;
   // none of them want a stranger materialising in the middle of them. This used
@@ -7889,6 +7921,13 @@ class Corpse {
     if (eT === "ROBOT" && CORPSE_GIB_DEATHS.indexOf(dT) !== -1) dT = 0;
     this.sC = sC; this.pC = pC; this.dT = dT; this.hA = hA; this.bA = bA; this.dec = dec; this.cW = cW; this.bW = bW; this.bH = bH;
     this.bT = 120; this.fP = 0; this.sep = 0; this.bits = []; this.stopMotionTimer = 156;
+    // Only the charred deaths ever set this (one site, in the fire code), and
+    // it was left undefined on every other body. `undefined <= 0` is FALSE, so
+    // the retirement test in updateCorpses() could never pass and NO corpse in
+    // the game ever stamped itself into the ground -- every one of them stayed
+    // a live drawing object for the rest of the level. Costed at 60 bodies:
+    // 1,189 ellipses a frame, forever.
+    this.smokeTimer = 0;
     this.bornAt = frameCount;
     // Is this a body lying on the ground, or is it wreckage?
     //
@@ -7934,6 +7973,12 @@ class Corpse {
   update() { 
     if (this.fP < 1) this.fP += 0.15;
     ragStep(this.rag);
+    // The settle clock, ticked in ONE place for every body. It used to be
+    // decremented inside three death-type branches (10/15, the bits deaths and
+    // 14) and nowhere else, so an ordinary body -- the common case, and every
+    // headshot -- held it at 156 forever and never satisfied the retirement
+    // test. The branches below read it; none of them steps it any more.
+    if (this.stopMotionTimer > 0) this.stopMotionTimer--;
     let bCol = (this.eT === "BUG" || this.eT === "SNAIL" || this.eT === "SNAIL_HYBRID") ? color(200, 230, 40) : color(90, 0, 0);
     
     if (this.smokeTimer > 0) {
@@ -7954,8 +7999,12 @@ class Corpse {
         }
     }
 
-    if (this.dT === 13 && this.sep < 50) {
-        this.sep += 3;
+    // The bleed used to be nested inside the parting, so once the two halves
+    // reached their 50-unit gap the timer stopped counting and stayed above
+    // zero for good -- which meant a sword kill could never satisfy the
+    // retirement test and never pressed itself into the ground.
+    if (this.dT === 13) {
+        if (this.sep < 50) this.sep += 3;
         if (this.bloodTimer > 0) {
             this.bloodTimer--;
             if (this.bloodTimer % 2 === 0) emit(this.x, this.y, 2, color(90,0,0), "BLOOD", random(-5,5), random(-5,5));
@@ -7985,7 +8034,6 @@ class Corpse {
         if (this.kamikazeTimer <= 0) { triggerExplosion(this.x, this.y, 160, false, false); emit(this.x, this.y, 60, color(90, 0, 0), "GORE"); emit(this.x, this.y, 15, color(220, 200, 200), "BONE"); spawnSplatter(this.x, this.y, "BLOOD", color(90, 0, 0)); this.exploded = true; }
     }
     if (this.dT === 10 || this.dT === 15) {
-        if (this.stopMotionTimer > 0) this.stopMotionTimer--;
         if (this.bloodTimer > 0) {
             this.bloodTimer--;
             for (let ob of this.overkillBits) {
@@ -8013,7 +8061,6 @@ class Corpse {
         if (this.bloodTimer % 20 === 0) { spawnSplatter(headX + random(-15, 15), headY + random(-15, 15), "BLOOD", bCol); }
     }
     if (this.dT === 5 || this.dT === 9) { 
-        if (this.stopMotionTimer > 0) this.stopMotionTimer--; 
         for(let b of this.bits) { 
             if (this.stopMotionTimer > 0) { b.x += b.vx; b.y += b.vy; b.vx *= 0.93; b.vy *= 0.93; b.rot += b.vr; } else { b.vx = 0; b.vy = 0; b.vr = 0; } 
             let isBrainMeat = (this.dT === 9 && b.type === 'meat') || (this.dT === 5 && (b.type === 'heart' || b.type === 'meat' || b.type === 'intestine' || b.type === 'brain'));
@@ -8033,7 +8080,7 @@ class Corpse {
         else if (this.dT === 6) { let sA = this.hA + PI + random(-0.4, 0.4); let headX = this.x + cos(this.aA) * (20 * this.fP), headY = this.y + sin(this.aA) * (20 * this.fP); emit(headX, headY, 1, bCol, "BLOOD", cos(sA) * 6, sin(sA) * 6); } 
     } 
     if (this.dT === 14) {
-        if (this.stopMotionTimer > 0) { this.stopMotionTimer--; this.lH.x += this.lH.vx; this.lH.y += this.lH.vy; this.rH.x += this.rH.vx; this.rH.y += this.rH.vy; this.lH.vx *= 0.9; this.lH.vy *= 0.9; this.rH.vx *= 0.9; this.rH.vy *= 0.9; }
+        if (this.stopMotionTimer > 0) { this.lH.x += this.lH.vx; this.lH.y += this.lH.vy; this.rH.x += this.rH.vx; this.rH.y += this.rH.vy; this.lH.vx *= 0.9; this.lH.vy *= 0.9; this.rH.vx *= 0.9; this.rH.vy *= 0.9; }
         if (this.bloodTimer > 0) { this.bloodTimer--; if (this.bloodTimer % 3 === 0) { emit(this.x + this.lH.x, this.y + this.lH.y, 2, bCol, "BLOOD"); emit(this.x + this.rH.x, this.y + this.rH.y, 2, bCol, "BLOOD"); } if (this.bloodTimer % 15 === 0) { spawnSplatter(this.x + this.lH.x, this.y + this.lH.y, "BLOOD", bCol); spawnSplatter(this.x + this.rH.x, this.y + this.rH.y, "BLOOD", bCol); } }
     }
   }
@@ -8325,24 +8372,68 @@ function stampCorpse(c) {
 
 
 
+// Is there anything left about this body that is still moving?
+//
+// The old test waited on every clock the class owns, whether or not the death
+// type reads it. An ordinary lay-down body has a pose that freezes after
+// RAG_FRAMES (34) and no pieces, no spurt and no smoke -- and it still sat in
+// the live list for 156 frames, redrawing the identical picture 120 more times,
+// because a counter only the dismemberment deaths consult had not run out. Ask
+// per death type instead and the common case retires four times sooner.
+const CORPSE_SPURT_DEATHS = [1, 2, 3, 4, 6];          // arterial spurt, driven by bT
+const CORPSE_MOVING_BITS  = [5, 9, 10, 11, 13, 14, 15]; // pieces still sliding
+function corpseSepMax(dT) {
+    if (dT === 13) return 50;
+    if (dT === 2 || dT === 3 || dT === 4 || dT === 6 || dT === 8) return 35;
+    return 0;
+}
+function corpseSettled(c) {
+    if (c.dT === 12 && !c.exploded) return false;                 // still in the air
+    if (c.fP < 1) return false;                                   // still falling
+    if (c.rag && !c.rag.done) return false;                       // still settling
+    if (c.bloodTimer > 0 || c.smokeTimer > 0) return false;       // bleeding or burning
+    if (c.sep < corpseSepMax(c.dT)) return false;                 // halves still parting
+    if (CORPSE_SPURT_DEATHS.indexOf(c.dT) !== -1 && c.bT > 0) return false;
+    if (CORPSE_MOVING_BITS.indexOf(c.dT) !== -1 && c.stopMotionTimer > 0) return false;
+    return true;
+}
+
 function updateCorpses() {
   // Pass 1: advance and retire. Backwards, because it splices.
   for (let i = corpses.length - 1; i >= 0; i--) {
       let c = corpses[i];
 
-      if (doTick) {
-          if (!c.isStatic && inView(c.x, c.y, 800)) {
+      if (doTick && !c.isStatic) {
+          // dT 12 is a body still flying at something with a charge on it. It
+          // has to run wherever it is, or it never reaches its target and never
+          // retires.
+          if (inView(c.x, c.y, 800) || (c.dT === 12 && !c.exploded)) {
               c.update();
+          } else {
+              // Off screen, and it still has to finish falling -- otherwise it
+              // never satisfies the test below and sits in the live list until
+              // the player happens to wander back past it, which on a long
+              // biome run is every body they ever left behind.
+              //
+              // Nobody is watching, so this is the clock and nothing else: no
+              // particles, no smoke, no per-piece motion. The pose is
+              // fast-forwarded to where it would have ended up -- the settle is
+              // deterministic and freezes after RAG_FRAMES anyway -- so what
+              // gets stamped is the same body you would have seen land.
+              c.fP = 1;
+              if (c.bT > 0) c.bT--;
+              if (c.bloodTimer > 0) c.bloodTimer--;
+              if (c.smokeTimer > 0) c.smokeTimer--;
+              if (c.stopMotionTimer > 0) c.stopMotionTimer--;
+              if (c.rag && !c.rag.done) ragStep(c.rag);
+              c.sep = corpseSepMax(c.dT);
+          }
 
-              let isDone = (c.bloodTimer <= 0 && c.stopMotionTimer <= 0 && c.smokeTimer <= 0 && c.bT <= 0);
-              if (c.dT === 12 && !c.exploded) isDone = false; // Kamikaze exception
-
-              if (isDone && c.fP >= 1) {
-                  c.isStatic = true;
-                  stampCorpse(c);         // Stamp it permanently to the ground chunk
-                  corpses.splice(i, 1);   // Delete the object to save CPU & GPU
-                  continue;               // Skip the rest of the loop
-              }
+          if (corpseSettled(c)) {
+              c.isStatic = true;
+              stampCorpse(c);         // Stamp it permanently to the ground chunk
+              corpses.splice(i, 1);   // Delete the object to save CPU & GPU
+              continue;               // Skip the rest of the loop
           }
       }
   }

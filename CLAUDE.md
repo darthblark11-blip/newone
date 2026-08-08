@@ -598,6 +598,18 @@ silently breaks the mechanic rather than crashing:
 3. **It is never topped up.** Same guard as (1), working in our favour: kills are
    permanent, which is what makes sparing anyone a decision.
 
+**A liberated sector never spawns another local.** The two towers-down guards in
+`spawnSingleEnemy()` only bail for a sector with *no* overworld table, so 1 and 2 fell
+through on the assumption that `inBiomeOverworld()` would route them to the machine table.
+Anywhere that is not true — the authored streets, the moment before `BIOME_ACTIVE` comes
+up, an ambush window — the per-level ladder runs instead, and for Stick City that ladder
+hands out `NORMAL`. Yellow regulars kept walking into a sector whose yellow regulars the
+player had just freed, wearing the same shirt as the citizens standing next to them and
+shooting at them. `LIBERATED_SPAWN` is what NM-0 actually has left to send: machines
+mostly, plus its own intake (`NM0_ROOKIE`). It holds **no recruitable type** — after the
+towers, every human in that uniform is one the player spared, and spawning more takes it
+back. Both entries are in `SECTOR_GARRISON`, so `sweepForeignHostiles()` leaves them.
+
 `SECTOR_POP_MIX` is deliberately *all* recruitable types (`NORMAL`/`MOLOTOV` for Stick
 City, `FEMALE_PISTOL` for the Undercity) so the count is exact rather than
 eighty-of-which-sixty-seven-mattered. Those types are also in `SECTOR_GARRISON`, so
@@ -1126,12 +1138,51 @@ them**, a pair of trousers lying in the street. It gets the same rig with the ar
 under the chest and the back of the head showing, which is the difference between landing
 on your face and landing on your back.
 
+### A body is only a drawing for a moment
+
+The point of the whole system is that a corpse stops being an object. Once nothing
+about it is still moving, `stampCorpse()` paints it into the permanent blood layer
+(`bloodChunks`, 1 texel per world unit, 96 MB LRU backstop that a normal session never
+reaches) and the live object is spliced away. Sixty bodies go from **~1,180 ellipses a
+frame to four `image()` blits**, and they stay on the ground for the rest of the level —
+walking a biome away and back does not lose them.
+
+None of that was happening. Three separate faults, all of the same shape — a clock that
+could never reach zero:
+
+- **`smokeTimer` was only ever assigned by the fire code** and left `undefined` on every
+  other body. The retirement test read `c.smokeTimer <= 0`, and `undefined <= 0` is
+  **false**, so *no corpse in the game had ever stamped itself*. Every body stayed live
+  for the rest of the level.
+- **`stopMotionTimer` was decremented inside three death-type branches** (10/15, the bits
+  deaths, 14) and nowhere else, so an ordinary body — the common case, and every
+  headshot — held it at 156 forever.
+- **dT 13's bleed was nested inside its parting**, so once the two halves reached their
+  50-unit gap the timer stopped counting and stayed above zero for good.
+
+The clock is ticked in **one place** at the top of `Corpse.update()` now, and
+`corpseSettled(c)` asks per death type what is actually still moving — spurt (`bT`, only
+1/2/3/4/6), sliding pieces (`stopMotionTimer`, only 5/9/10/11/13/14/15), separation
+(`corpseSepMax`), the fall, the settle, bleed and smoke. An ordinary body retires in ~35
+frames instead of 156, because its pose froze at `RAG_FRAMES` and there was nothing left
+to draw.
+
+**A body that dies off screen retires too.** `updateCorpses()` only ran `update()` within
+`inView(…, 800)`, so anything killed and walked away from sat in the live list until the
+player happened to wander back past it — over a long biome run, every body they ever left
+behind. Off screen it now runs the clock and nothing else: no particles, no smoke, no
+per-piece motion, with the pose fast-forwarded to where it would have ended up (the settle
+is deterministic and freezes anyway). dT 12 is the exception — it is a body still flying at
+something with a charge on it, so it runs wherever it is.
+
 `tools/check-corpse.js` asserts who gets a settle and who does not, that the impact
 direction is read (and read the right way round), that eight identical kills produce eight
 different poses, that all four elbows and knees actually bend, that across forty bodies the
 arms use the whole arc and a good share land lopsided, every proportion above including the
 taper, and — the cost argument for the whole feature — that it freezes and does not drift
-by a hair over the next 300 frames.
+by a hair over the next 300 frames, that every death type retires into the ground layer,
+that a body dying off screen retires as well, and — the cost argument stated as a number —
+that sixty bodies mid-fall are expensive and sixty bodies on the floor draw nothing at all.
 
 ---
 

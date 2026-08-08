@@ -203,5 +203,42 @@ probe(`nm0AmbushActive = true; window.ambushSpawnsRemaining = 0;
 probe('checkAmbushCleared();');
 ok('an ambush clears with the whole population spared', P('window.nm0AmbushCleared') === true);
 
+// ---------------------------------------------------------------------------
+// A liberated sector never spawns another local. The two towers-down guards in
+// spawnSingleEnemy() only bail for a sector with NO overworld table, so 1 and 2
+// fell through to the per-level ladder -- which hands out NORMAL for Stick City
+// and FEMALE_PISTOL for the Undercity. Yellow regulars kept walking into a
+// sector whose yellow regulars the player had just freed, in the same shirt as
+// the citizens standing next to them, shooting at them.
+// ---------------------------------------------------------------------------
+console.log('\n== what a liberated sector sends ==');
+for (const lvl of [1, 2]) {
+  probe(`isStoryMode = true; townsData = {}; window.towersDefeated = false;
+         window.southGateBreachedStatus = false; window.nm0AmbushClearedStatus = false;
+         nm0AmbushActive = false;`);
+  probe(`startAtLevel(${lvl});`);
+  probe(`for (const b of buildings) if (b.isTower) b.hp = 0;
+         markSectorTowersDown(currentLevel); recruitSectorSurvivors();
+         enemiesList = enemiesList.filter(e => e.isFriendly);`);
+  const got = P(`(function () {
+    const start = enemiesList.length, out = {};
+    for (let i = 0; i < 300; i++) { frameCount++; spawnSingleEnemy(); }
+    for (let i = start; i < enemiesList.length; i++) {
+      const t = enemiesList[i].eType; out[t] = (out[t] || 0) + 1;
+    }
+    return out;
+  })()`);
+  const types = Object.keys(got);
+  const recruitable = P('RECRUITABLE');
+  const local = types.filter((t) => recruitable.indexOf(t) !== -1);
+  ok(`sector ${lvl} still sends something after the towers`, types.length > 0,
+     JSON.stringify(got));
+  ok(`sector ${lvl} never sends another recruitable local`, local.length === 0,
+     local.length ? 'spawned ' + local.join(',') : 'no ' + recruitable.join('/'));
+  ok(`sector ${lvl} sends machines and NM-0's own intake`,
+     types.indexOf('ROBOT') !== -1 && types.some((t) => t.indexOf('NM0_ROOKIE') === 0),
+     types.join(', '));
+}
+
 console.log(`\n${checks - fails}/${checks} checks passed`);
 process.exit(fails ? 1 : 0);
