@@ -384,5 +384,63 @@ ok('the Undercity hands over women', s2.total === 68 && s2.unF === 68 && s2.unM 
      P('popTotal') === 0 && P('popUnassigned') === 0, 'popTotal 0');
 }
 
+// The Green Line's tan outpost is the awkward one: a sector that gains its
+// people from a scripted alliance rather than a liberated roster, entered with
+// an escort, while another sector is already organised. Every one of those is a
+// chance to overwrite somebody's Directive.
+console.log('\n== the tan outpost does not disturb anyone else ==');
+{
+  probe(`isStoryMode = true; townsData = {}; window.southGateBreachedStatus = false;`);
+  probe('startAtLevel(1);');
+  probe(`for (const b of buildings) if (b.isTower) b.hp = 0;
+         markSectorTowersDown(1); recruitSectorSurvivors();
+         loadLedgerIntoWindow(1);
+         window.popFarmingM = 25; window.popMilitaryM = 30; window.popArchitectureM = 15;
+         window.popUnassignedM = window.popUnassignedM - 70;
+         storeWindowIntoLedger(1); townsData[1].established = true;`);
+  const one = led(1);
+  ok('sector 1 starts organised', one.farm === 25 && one.mil === 30 && one.total === 80,
+     JSON.stringify(one));
+
+  probe(`window.escortHome = 1; window.escortWasF = 0;
+         window.militaryToBringM = 8; window.militaryToBringF = 0;
+         window.travelArrival = "NORTH";`);
+  probe('startAtLevel(4);');
+  ok('arriving at the outpost leaves sector 1 alone',
+     JSON.stringify(led(1)) === JSON.stringify(one), JSON.stringify(led(1)));
+
+  // The tan army are allies but they are NOT the player's escort, so their
+  // deaths must not come off Stick City's military roll.
+  ok('the tan army are not flagged as the escort',
+     P('enemiesList.filter(function(e){return e.eType==="MILITARY_NEUTRAL" && e.isMilitary;}).length') === 0);
+  probe(`for (const e of enemiesList) if (e.eType === "MILITARY_NEUTRAL") {
+           e.isNeutral = false; e.isFriendly = true; }`);
+  probe(`(function () { let n = 0; for (const e of enemiesList) {
+     if (e.eType === "MILITARY_NEUTRAL" && n < 5) {
+       e.dead = true; processKill(e.x, e.y, false, e.eType, true); n++; } } })()`);
+  ok('and their casualties do not come off it either',
+     JSON.stringify(led(1)) === JSON.stringify(one), JSON.stringify(led(1)));
+
+  probe('openDirectiveWithGrant(4);');
+  ok('the outpost opens its OWN Directive, unassigned', led(4).total > 0 &&
+     led(4).unM + led(4).unF === led(4).total, JSON.stringify(led(4)));
+  ok('and sector 1 is still exactly as the player left it',
+     JSON.stringify(led(1)) === JSON.stringify(one), JSON.stringify(led(1)));
+  ok('the panel is pointed at the sector it is showing', P('viewingTownId') === 4);
+  ok('and the edit buffer holds that sector, not the last one',
+     P('popTotal') === led(4).total && P('popFarming') === 0,
+     `buffer total ${P('popTotal')}, sector 4 ${led(4).total}`);
+}
+
+// A Directive opened before any sector has been viewed must not mint a phantom.
+console.log('\n== no phantom sectors ==');
+{
+  probe(`isStoryMode = true; townsData = {}; viewingTownId = undefined;`);
+  probe('startAtLevel(1); sectorLedger(viewingTownId);');
+  ok('a ledger asked for with no sector falls back to the current one',
+     P('Object.keys(townsData).every(function (k) { return isFinite(Number(k)); })'),
+     Object.keys(P('townsData')).join(','));
+}
+
 console.log(`\n${checks - fails}/${checks} checks passed`);
 process.exit(fails ? 1 : 0);

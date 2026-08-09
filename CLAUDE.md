@@ -614,6 +614,15 @@ because they are standing next to you, which is all that bar has ever meant. Dyi
 one thing that changes the ledger, and it is deducted as an integer at the moment it
 happens.
 
+**Two holes the tan outpost fell down, both closed.** `viewingTownId` is `undefined` until
+a Directive has been opened, and it is what most callers pass — keyed on that,
+`sectorLedger()` minted a phantom sector that `globalPopulationCount()` then added to the
+world's total; it falls back to `currentLevel` now. And `ensureDirectiveRoster()` used to
+invent an unassigned roster by halving the scalar `popTotal` whenever the gendered counts
+looked empty. Against a ledger that can only do damage — `popTotal` is whatever sector was
+last looked at, so opening the Green Line's Directive dealt Stick City's headcount into the
+Green Line's columns. It is a ledger load.
+
 **What was removed.** `seedSectorPopulationFromSurvivors()` zeroed all eight department
 counts and dumped everyone back into UNASSIGNED, and it was called from five places
 including the plain level-finish fallback — so clearing an ambush in a sector the player had

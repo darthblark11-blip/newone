@@ -5223,12 +5223,11 @@ function openSectorDirective(level) {
     viewingTownId = id;
     if (typeof townsData === 'undefined') window.townsData = {};
     if (!townsData[id]) {
-        townsData[id] = {
-            established: false, popTotal: 0, popUnassigned: 0, popFarming: 0,
-            popMilitary: 0, popScience: 0, popArchitecture: 0,
-            statVit: 1, statMen: 1, statPhy: 1, statObe: 1, statInt: 1
-        };
+        townsData[id] = { established: false, statVit: 1, statMen: 1, statPhy: 1,
+                          statObe: 1, statInt: 1 };
     }
+    sectorLedger(id);          // guarantees every column, zeroed
+    if (popTotal > 0 && popUnassigned <= 0) { /* handled by the ledger below */ }
 
     // An already-settled town skips straight to the map; a fresh one has to be
     // assigned and established first.
@@ -5237,7 +5236,6 @@ function openSectorDirective(level) {
         inWorldBuildingMenu = false;
         inOverworldView = true;
     } else {
-        if (popTotal > 0 && popUnassigned <= 0) popUnassigned = popTotal;
         ensureDirectiveRoster();
         inWorldBuildingMenu = true;
         inOverworldView = false;
@@ -5252,17 +5250,13 @@ function openSectorDirective(level) {
 // the button on "ASSIGN CITIZENS" with nothing to assign: a dead end in the
 // middle of the loop. Guarantee a roster whenever the Directive opens.
 function ensureDirectiveRoster() {
-    const m = Number(window.popUnassignedM), f = Number(window.popUnassignedF);
-    const assigned = (Number(window.popFarmingM) || 0) + (Number(window.popFarmingF) || 0)
-                   + (Number(window.popMilitaryM) || 0) + (Number(window.popMilitaryF) || 0)
-                   + (Number(window.popScienceM) || 0) + (Number(window.popScienceF) || 0)
-                   + (Number(window.popArchitectureM) || 0) + (Number(window.popArchitectureF) || 0);
-
-    if (Number.isFinite(m) && Number.isFinite(f) && m + f + assigned > 0) return;
-
-    const free = Math.max(0, (Number(popTotal) || 0) - assigned);
-    window.popUnassignedM = Math.ceil(free / 2);
-    window.popUnassignedF = free - window.popUnassignedM;
+    // This used to invent an unassigned roster by halving the scalar `popTotal`
+    // whenever the gendered counts looked empty -- a patch over the entity scan
+    // leaving them undefined. Against a ledger it can only do damage: `popTotal`
+    // is whatever sector was last looked at, so opening a fresh sector's
+    // Directive would deal ANOTHER sector's headcount into this one's columns.
+    // The ledger already guarantees the fields exist.
+    loadLedgerIntoWindow(viewingTownId);
 }
 
 // Population seeding for the sectors that end on a straight ambush clear
@@ -5296,6 +5290,10 @@ const SECTOR_POP_SEED = 80;   // what seedSectorPopulation() puts on the ground
 
 function sectorLedger(id) {
     if (typeof townsData === 'undefined' || !townsData) window.townsData = {};
+    // `viewingTownId` is undefined until a Directive has been opened, and it is
+    // what most callers pass. Keyed on undefined this minted a phantom sector
+    // that globalPopulationCount() then happily added to the world's total.
+    if (id === undefined || id === null || id === '' || !isFinite(Number(id))) id = currentLevel;
     let t = townsData[id];
     if (!t) { t = { established: false }; townsData[id] = t; }
     for (const d of POP_DEPTS) {
