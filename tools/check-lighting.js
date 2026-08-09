@@ -106,21 +106,34 @@ console.log('\n== the player carries no light, the weapon does ==');
 // difference worth having.
 ok('nothing is emitted from the player themselves',
    !/x: player\.x, y: player\.y \+ 6, r: 240/.test(src));
-const torchKeys = (emitFn.match(/WEAPON_TORCH\[weaponKey\(w\)\]/) || []).length === 1;
-ok('the torch is keyed off the equipped weapon', torchKeys);
+ok('the torch is keyed off the equipped weapon',
+   /const wk = w \? weaponKey\(w\) : '';/.test(emitFn) && /WEAPON_TORCH\[wk\]/.test(emitFn));
+ok('and leaves from the muzzle, not the player centre',
+   /WEAPON_MUZZLE\[wk\]/.test(emitFn) && /ca \* m\[0\] - sa \* m\[1\]/.test(emitFn));
 // A key that is not in WEAPONS is silent: the lookup just never matches and
 // that weapon quietly has no torch.
 const wt = /const WEAPON_TORCH = \{([\s\S]*?)\};/.exec(src);
 const wkeys = wt ? (wt[1].match(/(\w+):\s*1/g) || []).map(s => s.split(':')[0].trim()) : [];
 const known = Object.keys(probe('WEAPONS'));
 const bogus = wkeys.filter(k => !known.includes(k));
+// A muzzle offset that does not match the one Character.show() fires from puts
+// the beam and the rounds in different places.
+const mz = /const WEAPON_MUZZLE = \{([\s\S]*?)\};/.exec(src);
+const mkeys = mz ? (mz[1].match(/(\w+):\s*\[/g) || []).map(x => x.split(':')[0].trim()) : [];
+ok('every torch weapon has a muzzle offset',
+   wkeys.length > 0 && wkeys.every(k => mkeys.includes(k)), mkeys.join(' '));
 ok('every WEAPON_TORCH key is a real weapon', wkeys.length > 0 && bogus.length === 0,
    bogus.length ? 'unknown: ' + bogus.join(' ') : wkeys.join(' '));
 ok('the scavenged guns deliberately have none',
    !wkeys.includes('SHOTGUN') && !wkeys.includes('REVOLVER') && !wkeys.includes('COACH_GUN'),
    'no torch: SHOTGUN REVOLVER COACH_GUN');
-ok('and the torch clears its own bearer',
-   /fix: 'TORCH'[\s\S]{0,400}?rMin: \d+|rMin: \d+[\s\S]{0,400}?fix: 'TORCH'/.test(emitFn));
+// The muzzle is out in front of the player, so the clearance has to reach back
+// past them or the reduction finds the bearer's own silhouette behind the lamp.
+ok('and the torch clears its own bearer', /rMin: m\[0\] \+ \d+/.test(emitFn));
+ok('it draws no fixture -- the beam is the light', /fix: null/.test(emitFn));
+ok('its spill is a fixed world radius, not a fraction of the beam',
+   /const TORCH_SPILL_R = \d+;/.test(src) &&
+   /uSpill \* \(1\.0 - smoothstep\(0\.0, uSpillR, r\)\)/.test(rig));
 
 console.log('\n== outposts light themselves ==');
 const pe = /const PROP_EMITTERS = \{([\s\S]*?)\n\};/.exec(src);
@@ -157,13 +170,25 @@ ok('an omnidirectional source passes a window that is always satisfied',
 ok('the canvas rig draws a wedge for a cone too',
    /ctx\.arc\(0, 0, 1, aim - half, aim \+ half\)/.test(src));
 
-console.log('\n== timber casts off its crown ==');
-// The trunk collides at a fixed 34x34 whatever the tree is, so the collision
-// box is the wrong silhouette to cast from.
-ok('isTreeTrunk is a caster, sized by girth',
-   /if \(b\.isTreeTrunk\) \{[\s\S]{0,300}?b\.girth[\s\S]{0,200}?g\.ellipse/.test(rig));
-ok('and is no longer skipped by the height pass',
-   !/if \(b\.isTreeTrunk\) continue;/.test(rig));
+console.log('\n== canopies cast, in every biome ==');
+// Only the woodland gives its timber an isTreeTrunk solid. The jungle's trees,
+// and every tree the clutter scatter drops, are decor and nothing else -- so
+// the height pass has to read the decor list, not the solids.
+ok('the height pass walks the live decor list', /for \(const dc of ch\.decor\)/.test(rig));
+ok('sized off CANOPY_MASS at the entry own scale',
+   /CANOPY_MASS\[dc\.t\]/.test(rig) && /cp\[1\] \* cs, cp\[2\] \* cs/.test(rig));
+ok('the trunk stays a collision volume', /if \(b\.isTreeTrunk\) continue;/.test(rig));
+// A CANOPY_MASS key that no clutter type produces is a caster for a tree that
+// does not exist; one with no art in paintClutter is worse.
+const cm = /const CANOPY_MASS = \{([\s\S]*?)\};/.exec(src);
+const ckeys = cm ? (cm[1].match(/(\w+):\s*\[/g) || []).map(x => x.split(':')[0].trim()) : [];
+const clutterArt = new Set((src.match(/case "(\w+)":/g) || []).map(x => /"(\w+)"/.exec(x)[1]));
+ok('every canopy type has clutter art', ckeys.length > 0 && ckeys.every(k => clutterArt.has(k)),
+   ckeys.join(' '));
+ok('a canopy drops its painted oval when the rig is casting for it',
+   /CANOPY_MASS\[d\.t\] && typeof glRigOwnsSunShadows/.test(src));
+ok('and every other live contact shadow fades with the sun',
+   /const a = alpha \* sd;/.test(src) && /sd = CANOPY_MASS/.test(src));
 
 console.log('\n== every uniform the JS sets is one the GLSL declares ==');
 // Collect declarations per shader, and the names the render path writes.
@@ -237,6 +262,32 @@ ok('the lit frame goes back into the 2D canvas, not onto the page',
    !/appendChild\(GLRig\.canvas\)|document\.body\.appendChild\(cv\)/.test(rig));
 ok('the haze interlock with drawBiomeScreenLayer() is honoured',
    /_rigTookHaze = hazeA > 0\.004;/.test(frameFn));
+
+console.log('\n== a shadow needs a sun ==');
+// The painted ovals used to sit at 55% density at midnight, thrown by a sun
+// that had set hours earlier, while the rig had correctly stopped casting.
+probe('seedWorldClock();');
+probe('worldTimeMs = 2 / 24 * DAY_MS;');
+const nightSD = probe('shadowDensity()');
+ok('nothing is cast at 02:00', nightSD < 0.01, 'density ' + nightSD.toFixed(3));
+probe('worldTimeMs = 13 / 24 * DAY_MS;');
+const daySD = probe('shadowDensity()');
+// Not asserted near 1: the harness's weather stub is heavily overcast, and
+// skyDiffusion() legitimately takes most of the hard shadow out of a cloudy
+// noon. What matters is that midday casts and midnight does not.
+const q = probe('skyDiffusion()');
+ok('and real weight at 13:00', daySD > 0.4,
+   'density ' + daySD.toFixed(3) + ' at skyDiffusion ' + q.toFixed(2));
+// Sunset is 18:00 and daylight() is fully out a little after it, so the ramp
+// has to be sampled inside the window rather than past it.
+probe('worldTimeMs = 18 / 24 * DAY_MS;');
+const duskSD = probe('shadowDensity()');
+ok('easing off through dusk rather than snapping', duskSD > 0.01 && duskSD < daySD * 0.6,
+   'density ' + duskSD.toFixed(3) + ' at 18:00');
+// shadowLengthScale() must NOT take the same term: it is how long a shadow is,
+// not how dark, and the rig derives its ray-march slope from it.
+ok('shadow LENGTH is left alone -- the rig marches against it',
+   !/function shadowLengthScale\(\)[^\n]*daylight\(\)/.test(src));
 
 console.log('\n== it stands down cleanly with no GPU ==');
 // The harness stubs getContext() with a bare object. A rig that trusted that

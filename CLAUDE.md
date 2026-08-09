@@ -516,10 +516,18 @@ light attached to a prop that is never emitted is silent.
 **The torch is a property of the gun, not of the player.** `WEAPON_TORCH` lists which
 weapons carry one — `PISTOL · SMG · DUAL_SMG · ASSAULT_RIFLE · ROCKET_LAUNCHER · TASER`.
 The shotgun and the three western guns deliberately do not: they are the scavenged and
-the improvised, and picking one up at night should put you back in the dark. It emits
-from the *muzzle*, 17 units ahead of the player — a beam that starts inside the bearer
-lights the bearer — and it sorts first in the budget, so the player's own beam is never
-the light that gets dropped when a street gets busy.
+the improvised, and picking one up at night should put you back in the dark. It leaves
+the **muzzle**, at the `WEAPON_MUZZLE` offset that mirrors the `bLX`/`bLY` the bullets
+are fired from, so the light and the rounds come out of the same place; its `rMin`
+is measured from there and has to reach back *past* the bearer. It sorts first in the
+budget, so the player's own beam is never the light that gets dropped when a street gets
+busy, and it draws no fixture — the beam is the light, and a bulb at the source is just a
+bright disc sitting on the gun.
+
+`TORCH_SPILL` is the bleed at the source, held to the fixed world radius `TORCH_SPILL_R`
+rather than to a fraction of the beam. Scaled to the beam it was a 460-unit pool centred
+on the gun — a disc under the player with the cone growing out of it, which read as a
+base plate rather than as light.
 
 Cones are `aim` plus an inner and outer half-angle. In the GPU path they are one dot and
 one `smoothstep` against `uCone = (cos outer, cos inner)`, with omnidirectional sources
@@ -600,9 +608,12 @@ Two things the height field cannot hold, and what happens instead:
   `CHAR_AIRBORNE` keeps them out of the buffer and keeps their offset oval, which is the
   correct shadow for an airborne caster and the only one this projection allows.
 - **A tree's crown, from its trunk.** Timber collides at a fixed 34×34 whatever the tree
-  is, so the collision box is the wrong silhouette to cast from. The height pass reads
-  `girth` — the same number the decor entry uses as its scale and `harvestProfile()` uses
-  for the wood yield — so the shadow a tree throws is the size of the tree you can see.
+  is, so the collision box is the wrong silhouette to cast from — and only the woodland
+  gives its trees a trunk solid at all. The jungle's canopies, and every tree the clutter
+  scatter drops, are **decor and nothing else**. So the height pass walks the same live
+  decor list `drawDecor()` paints from and sizes each crown off `CANOPY_MASS` at the
+  entry's own `s`. Keyed on the solid instead, a jungle at night had trees that occluded
+  no lamp, took no torch and threw nothing but a painted oval.
 
 **The player carries no light; their weapon does.** There used to be a 240-unit pool
 pinned to the player, and the GPU rig inherited it. It meant the player was never
@@ -617,6 +628,22 @@ resolution (every march sample and every occlusion resample reads it), and
 `glRigWatchdog()` drops through `GLRIG_SCALES` and finally stands the rig down if the
 frame budget goes — fall fast, recover slowly, because a rig oscillating between tiers
 reads as flicker.
+
+### A shadow needs a sun
+
+`shadowDensity()` is multiplied by `daylight()`. It used to bottom out at 0.55, so at
+midnight every prop in the world still had a hard oval lying beside it thrown by a sun
+that had set hours earlier — while the deferred rig, whose sun term goes to zero on its
+own, had correctly stopped casting. The two disagreed and the painted one was wrong.
+
+**`shadowLengthScale()` deliberately does not take the same term.** It is how *long* a
+shadow is, not how dark, and the rig derives its ray-march slope from it.
+
+The painted contact shadows in `paintClutter()` follow the same rule, but only on the
+**live** pass: a baked shadow is part of the chunk's albedo and that one texture has to
+serve every hour of the day, which is the reason the baked list is only ever the small
+stuff. A canopy drops its painted oval altogether once the rig is running, because the
+rig is marching a real one off the crown's own silhouette.
 
 ### Weather
 

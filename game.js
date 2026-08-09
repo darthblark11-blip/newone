@@ -21171,6 +21171,20 @@ function castShadowRect(x, y, w, h, len, alpha, round) {
 // airborne caster and the only one available in this projection.
 const CHAR_AIRBORNE = { SAUCER: 1, SAUCER_RED: 1, AERIAL: 1, AERIAL_PISTOL: 1 };
 
+// Live canopies, as [height, width, depth] at scale 1. These are the decor
+// types big enough to be worth a place in the deferred rig's height field --
+// they occlude lamps, they take the torch, and they throw a marched shadow
+// sized to the crown you can actually see. Everything smaller in the clutter
+// set keeps its painted contact oval and nothing else.
+//
+// Widths follow the art: a TREE's lobes ride a ring of radius 15*s with lobes
+// 23*s across, so the crown reaches about 46*s.
+const CANOPY_MASS = {
+  TREE: [21, 46, 40],
+  PINE: [26, 34, 34],
+  SNAG: [15, 20, 20]
+};
+
 // True when the deferred rig is already casting this character's shadow, so the
 // flat contact oval must not be drawn on top of it.
 function charShadowOwned(eT) {
@@ -21344,12 +21358,31 @@ function paintClutter(g, d, t) {
   g.push();
   g.translate(d.x, d.y);
 
+  // A contact shadow is thrown by the sun, so it has to leave when the sun
+  // does. Only the LIVE pass can follow it down -- a baked shadow is part of
+  // the chunk's albedo and that one texture has to serve every hour of the
+  // day, which is the reason the baked list is only ever the small stuff.
+  //
+  // A canopy drops its painted shadow altogether once the deferred rig is
+  // running, because the rig is marching a real one off the crown's own
+  // silhouette (see CANOPY_MASS) and two shadows under one tree is what a
+  // scene with two suns in it looks like.
+  let sd = 1;
+  if (typeof window !== 'undefined' && g === window && BIOME_ACTIVE) {
+    sd = CANOPY_MASS[d.t] && typeof glRigOwnsSunShadows === 'function' &&
+         glRigOwnsSunShadows() ? 0 : shadowDensity();
+  }
+
   const shadow = (x, y, w, h, len, alpha) => {
-    g.fill(0, 0, 0, alpha); g.noStroke();
+    const a = alpha * sd;
+    if (a < 1.5) return;
+    g.fill(0, 0, 0, a); g.noStroke();
     g.ellipse(x + LIGHT_DX * len, y + LIGHT_DY * len, w, h);
   };
   const shadowRect = (w, h, len, alpha, round) => {
-    g.fill(0, 0, 0, alpha); g.noStroke();
+    const a = alpha * sd;
+    if (a < 1.5) return;
+    g.fill(0, 0, 0, a); g.noStroke();
     g.rect(-w / 2 + LIGHT_DX * len, -h / 2 + LIGHT_DY * len, w, h, round || 0);
   };
 
@@ -23292,13 +23325,34 @@ const WEAPON_TORCH = {
   PISTOL: 1, SMG: 1, DUAL_SMG: 1, ASSAULT_RIFLE: 1, ROCKET_LAUNCHER: 1, TASER: 1
 };
 
-// Torch geometry. The inner cone is the beam; between inner and outer it falls
-// off, and SPILL is the small omnidirectional bleed around the bearer that
-// stops a torch reading as a cardboard cut-out taped to the gun.
-const TORCH_R     = 460;
-const TORCH_INNER = 0.30;
-const TORCH_OUTER = 0.52;
-const TORCH_SPILL = 0.16;
+// Where the beam actually leaves the gun. These mirror the bLX/bLY offsets
+// Character.show() fires bullets from, so the light and the rounds come out of
+// the same place -- a torch that emits from the middle of the player is a torch
+// that lights the player.
+const WEAPON_MUZZLE = {
+  PISTOL:          [31, 8],
+  TASER:           [31, 8],
+  SMG:             [38, 11],
+  DUAL_SMG:        [38, 11],
+  ASSAULT_RIFLE:   [47, 6],
+  ROCKET_LAUNCHER: [47, 6]
+};
+
+// Torch geometry. The inner cone is the beam and it falls off between inner and
+// outer.
+//
+// SPILL is the bleed around the source, and it is deliberately tied to a fixed
+// world radius rather than to a fraction of the beam's length. Scaled to the
+// beam it was a 460-unit pool centred on the gun -- a bright disc sitting under
+// the player with the cone growing out of it, which read as a base plate rather
+// than as light. Held to TORCH_SPILL_R it is a glow hugging the barrel, which
+// is the only thing it was ever for: stopping the apex of the cone being a
+// point.
+const TORCH_R       = 460;
+const TORCH_INNER   = 0.30;
+const TORCH_OUTER   = 0.52;
+const TORCH_SPILL   = 0.30;
+const TORCH_SPILL_R = 34;
 
 let _emitList = [], _emitFrame = -1;
 
@@ -23364,20 +23418,28 @@ function sceneEmitters() {
   // a property of the gun in their hands, so holstering it or picking up a
   // scavenged shotgun puts them back in the dark, which is the whole point.
   const w = player && player.currentWeapon;
-  if (player && player.hp > 0 && w && WEAPON_TORCH[weaponKey(w)]) {
+  const wk = w ? weaponKey(w) : '';
+  if (player && player.hp > 0 && WEAPON_TORCH[wk]) {
     const a = player.aimAngle || 0;
-    // Out at the muzzle, not at the player's middle: a beam that starts inside
-    // the bearer lights the bearer.
-    const mx = player.x + Math.cos(a) * 17;
-    const my = player.y + Math.sin(a) * 17;
+    const ca = Math.cos(a), sa = Math.sin(a);
+    // The muzzle, in the gun's own frame: forward along the aim and offset to
+    // whichever side the weapon is held. Same transform the bullets use.
+    const m = WEAPON_MUZZLE[wk] || [31, 8];
+    const mx = player.x + ca * m[0] - sa * m[1];
+    const my = player.y + sa * m[0] + ca * m[1];
     out.push({
       x: mx, y: my, z: 22, r: TORCH_R,
-      // Big rMin. The bearer stands right behind the lamp, and without this the
-      // polar reduction finds their own silhouette at r=0 across the whole
-      // beam and the torch comes out as a wedge with a hole in it.
-      rMin: 30, soft: 0.024, p: 0.96,
+      // rMin has to reach back past the bearer. The muzzle is out in front of
+      // them, so the clearance is measured from there: without it the polar
+      // reduction finds the player's own silhouette behind the lamp and the
+      // beam comes out as a wedge with a hole punched in it.
+      rMin: m[0] + 18, soft: 0.024, p: 0.96,
       c: [0.90, 0.95, 1.00], aim: a, half: TORCH_OUTER, inner: TORCH_INNER,
-      spill: TORCH_SPILL, fix: 'TORCH',
+      spill: TORCH_SPILL, spillR: TORCH_SPILL_R,
+      // No fixture. The beam is the light; a bulb drawn at the source is a
+      // bright disc sitting on the gun, and the muzzle flash already covers
+      // the one moment there is something there to see.
+      fix: null,
       // Always first in the budget: the player's own beam may never be the
       // light that gets dropped when a street gets busy.
       d2: -1
@@ -23466,7 +23528,7 @@ function lightGradient(ctx, r, g, b) {
 // `aim`/`half` make this a cone instead of a pool. The buffer is in screen
 // space with y running down, which is the same frame aimAngle is in, so the
 // angle needs no conversion here.
-function addLight(buf, bx, by, br, power, aim, half, spill) {
+function addLight(buf, bx, by, br, power, aim, half, spill, spillR) {
   if (!(power > 0.004) || !(br > 0.4)) return;
   const ctx = buf.drawingContext;
   ctx.save();
@@ -23484,13 +23546,12 @@ function addLight(buf, bx, by, br, power, aim, half, spill) {
     ctx.closePath();
   }
   ctx.fill();
-  // A torch is not a cardboard wedge taped to the gun -- some light gets out
-  // sideways. One small pool at the source sells the difference, and the GPU
-  // path does the same thing with uSpill.
-  if (spill > 0) {
+  // The same glow the GPU path draws with uSpill/uSpillR: held to a fixed world
+  // radius so it hugs the barrel instead of pooling under the bearer.
+  if (spill > 0 && spillR > 0) {
     ctx.globalAlpha = Math.min(1, power * spill);
     ctx.beginPath();
-    ctx.arc(0, 0, 0.34, 0, Math.PI * 2);
+    ctx.arc(0, 0, spillR, 0, Math.PI * 2);
     ctx.fill();
   }
   ctx.restore();
@@ -23560,7 +23621,8 @@ function drawLightPass() {
   const n = src.length < LIGHT_BUDGET ? src.length : LIGHT_BUDGET;
   for (let i = 0; i < n; i++) {
     const L = src[i];
-    addLight(buf, sx(L.x), sy(L.y), L.r * sr, L.p, L.aim, L.half, L.spill);
+    addLight(buf, sx(L.x), sy(L.y), L.r * sr, L.p, L.aim, L.half, L.spill,
+             L.spillR ? L.spillR / L.r : 0);
   }
 
   // The player deliberately carries NO light of their own.
@@ -23922,6 +23984,7 @@ uniform float uShine;
 uniform vec2  uAim;
 uniform vec2  uCone;
 uniform float uSpill;
+uniform float uSpillR;
 out vec4 oCol;
 
 void main() {
@@ -23935,9 +23998,11 @@ void main() {
   // branch here is worse on a tile GPU than the arithmetic it saves.
   float ca = dot(d / max(r, 1e-4), uAim);
   float cone = smoothstep(uCone.x, uCone.y, ca);
-  // Some light always gets out sideways at the source. Without this a torch
-  // reads as a cardboard wedge taped to the gun.
-  cone = max(cone, uSpill * (1.0 - r));
+  // Some light always gets out sideways at the source, but only right AT the
+  // source: uSpillR is a fixed world radius, not a fraction of the beam, so
+  // this is a glow on the barrel rather than a disc under the bearer with the
+  // cone growing out of it.
+  cone = max(cone, uSpill * (1.0 - smoothstep(0.0, uSpillR, r)));
   if (cone <= 0.002) discard;
 
   float a = fract(atan(d.y, d.x) / 6.28318530718);
@@ -24295,17 +24360,9 @@ function glRigPaintHeight() {
     const w = b.w || 0, h = b.h || 0;
     if (!inView(b.x, b.y, Math.max(w, h) + 120)) continue;
 
-    // Timber. The trunk collides at a fixed 34x34 whatever the tree is, so the
-    // 34x34 box is the wrong silhouette to cast from -- what throws the shadow
-    // and blocks the lamp is the crown. `girth` is the canopy's own scale (it
-    // is the decor entry's `s`), so the shadow a tree throws is the size of the
-    // tree you can see, the same way its wood yield is.
-    if (b.isTreeTrunk) {
-      const s = b.girth || 1;
-      glRigMat(g, 20 + s * 9 + groundElev(b.x, b.y), 0.05, 0);
-      g.ellipse(b.x, b.y, 46 * s, 40 * s);
-      continue;
-    }
+    // The trunk is a collision volume; the crown is a decor entry, and that is
+    // what casts. Painted below, off the same list drawDecor() walks.
+    if (b.isTreeTrunk) continue;
 
     // Water is below the ground, not above it, and it is the glossiest thing in
     // the scene -- this is what puts a lamp's reflection on the canal.
@@ -24333,7 +24390,33 @@ function glRigPaintHeight() {
     else                                      g.rect(b.x - w / 2, b.y - h / 2, w, h);
   }
 
-  // 3. Characters. Their facing goes in as the rotation channel, which is the
+  // 3. Canopies, off the same live decor list drawDecor() paints from.
+  //
+  //    Taking them from the decor rather than from the isTreeTrunk solid is
+  //    what makes this work in every biome. Only the woodland gives its timber
+  //    a trunk solid; the jungle's trees, and every tree the clutter scatter
+  //    drops, are decor and nothing else -- so keyed on the solid, a jungle at
+  //    night had canopies that occluded no lamp, threw no shadow, and had only
+  //    a flat painted oval underneath them that the sun had stopped casting
+  //    hours ago. `d.s` is the same girth the trunk carries.
+  if (typeof chunkMgr !== 'undefined' && chunkMgr && chunkMgr.chunks) {
+    for (const ch of chunkMgr.chunks.values()) {
+      const cwx = ch.cx * CHUNK_W, cwy = ch.cy * CHUNK_W;
+      if (cwx > viewRight + 200 || cwx + CHUNK_W < viewLeft - 200) continue;
+      if (cwy > viewBottom + 200 || cwy + CHUNK_W < viewTop - 200) continue;
+      for (const dc of ch.decor) {
+        const cp = CANOPY_MASS[dc.t];
+        if (!cp) continue;
+        if (dc.x < viewLeft - 120 || dc.x > viewRight + 120) continue;
+        if (dc.y < viewTop - 120  || dc.y > viewBottom + 120) continue;
+        const cs = dc.s || 1;
+        glRigMat(g, cp[0] * cs + groundElev(dc.x, dc.y), 0.05, 0);
+        g.ellipse(dc.x, dc.y, cp[1] * cs, cp[2] * cs);
+      }
+    }
+  }
+
+  // 4. Characters. Their facing goes in as the rotation channel, which is the
   //    term the tangent-space branch of the normal pass reads.
   const CH = 17;
   const one = (c) => {
@@ -24612,10 +24695,12 @@ function glRigFrame() {
         gl.uniform2f(p._u.uAim, Math.cos(Lg.aim), -Math.sin(Lg.aim));
         gl.uniform2f(p._u.uCone, Math.cos(Lg.half), Math.cos(Lg.inner));
         gl.uniform1f(p._u.uSpill, Lg.spill || 0);
+        gl.uniform1f(p._u.uSpillR, (Lg.spillR || 1) / Lg.r);
       } else {
         gl.uniform2f(p._u.uAim, 1, 0);
         gl.uniform2f(p._u.uCone, -1.001, -1.0);
         gl.uniform1f(p._u.uSpill, 0);
+        gl.uniform1f(p._u.uSpillR, 1);
       }
       // The quad is already the light's box, so the scissor is belt and braces
       // against a partially covered tile rather than the cull itself.
@@ -24796,10 +24881,6 @@ function drawNightLights() {
         softBlob(L.x, L.y, 170, 128, cr * 0.7, cg * 0.9, cb, 44 * k);
         fill(cr, cg, cb, 120 * k); ellipse(L.x, L.y, 16, 16);
         break;
-      case 'TORCH':
-        // Just the hot spot at the muzzle. The beam itself is the rig's job.
-        fill(235, 245, 255, 120 * k); ellipse(L.x, L.y, 9, 9);
-        break;
     }
   }
 
@@ -24920,7 +25001,12 @@ function keyStrength() { return 1 - 0.42 * skyDiffusion(); }
 // light vector and props bake their shadows against it, so only length and
 // density move.
 function shadowLengthScale() { return (1.55 - 0.62 * sunHeight()) * (1 - 0.25 * skyDiffusion()); }
-function shadowDensity()     { return (0.55 + 0.45 * sunHeight()) * (1 - 0.55 * skyDiffusion()); }
+// Multiplied by daylight() because a shadow needs a sun to throw it. This used
+// to bottom out at 0.55, so at midnight every prop in the world still had a
+// hard oval lying beside it, cast by a sun that had set hours earlier -- while
+// the deferred rig, whose sun term goes to zero on its own, had correctly
+// stopped casting. The two disagreed and the painted one was wrong.
+function shadowDensity()     { return daylight() * (0.55 + 0.45 * sunHeight()) * (1 - 0.55 * skyDiffusion()); }
 
 // Air temperature lags the sun: coldest just before dawn, hottest mid
 // afternoon rather than at noon. 0 at 03:00, 1 at 15:00.
