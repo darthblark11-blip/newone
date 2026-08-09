@@ -442,5 +442,50 @@ console.log('\n== no phantom sectors ==');
      Object.keys(P('townsData')).join(','));
 }
 
+// Every door into the Directive has to grant on the way through. This bug bit
+// twice: openSectorDirective() opens the panel and the panel reads the ledger,
+// so a caller that opens it without granting shows a sector of nobody with
+// nothing to assign. The Green Line's tan outpost came through the post-ambush
+// cutscene, which did exactly that. Checked structurally, because the failure
+// is a missing call and there is no runtime symptom to assert on.
+console.log('\n== every door grants ==');
+{
+  const src = require('fs').readFileSync(
+    process.env.GAME_JS || __dirname + '/../game.js', 'utf8');
+  const lines = src.split('\n');
+  const stray = [];
+  lines.forEach((ln, i) => {
+    if (ln.indexOf('openSectorDirective(') === -1) return;
+    if (/function openSectorDirective/.test(ln)) return;          // the definition
+    // the one legitimate call, inside the wrapper
+    const near = lines.slice(Math.max(0, i - 3), i + 1).join('\n');
+    if (/function openDirectiveWithGrant/.test(near)) return;
+    stray.push(i + 1);
+  });
+  ok('nothing opens the Directive without granting first', stray.length === 0,
+     stray.length ? 'bare openSectorDirective() at line ' + stray.join(', ')
+                  : 'all callers use openDirectiveWithGrant()');
+}
+
+// And a zero must never latch on a sector whose people are counted off the
+// ground -- they may not have changed sides yet when the panel opens.
+console.log('\n== a premature zero does not stick ==');
+{
+  probe('isStoryMode = true; townsData = {}; startAtLevel(4);');
+  probe(`for (const e of enemiesList) { e.isFriendly = false; e.isNeutral = true; }`);
+  probe('openDirectiveWithGrant(4);');
+  ok('an empty sector does not latch its grant',
+     P('sectorLedger(4).popTotal') === 0 && !P('!!sectorLedger(4).popGranted'),
+     'total ' + P('sectorLedger(4).popTotal'));
+  probe(`for (const e of enemiesList) if (e.eType === "MILITARY_NEUTRAL") e.isFriendly = true;`);
+  probe('openDirectiveWithGrant(4);');
+  ok('and pays out once the cordon has actually changed sides',
+     P('sectorLedger(4).popTotal') > 0 && P('!!sectorLedger(4).popGranted'),
+     'total ' + P('sectorLedger(4).popTotal'));
+  const t = P('sectorLedger(4).popTotal');
+  probe('openDirectiveWithGrant(4); openDirectiveWithGrant(4);');
+  ok('and only once', P('sectorLedger(4).popTotal') === t, `${t} -> ${P('sectorLedger(4).popTotal')}`);
+}
+
 console.log(`\n${checks - fails}/${checks} checks passed`);
 process.exit(fails ? 1 : 0);

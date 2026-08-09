@@ -614,6 +614,22 @@ because they are standing next to you, which is all that bar has ever meant. Dyi
 one thing that changes the ledger, and it is deducted as an integer at the moment it
 happens.
 
+**Every door into the Directive must grant on the way through.** `openSectorDirective()`
+opens the panel and the panel reads the ledger, so a caller that opens it without granting
+shows a sector of nobody with nothing to assign. Three callers were doing exactly that —
+the post-ambush cutscene (which is the Green Line's tan outpost, and every other ambush
+sector), the farm hand-off, and Stick City's northern branch — each setting the old scalar
+`popTotal` and then opening a panel that no longer reads it. They all go through
+`openDirectiveWithGrant()` now, and `check-population.js` asserts *structurally* that no
+bare `openSectorDirective(` call survives outside the wrapper, because the failure is a
+missing call with no runtime symptom to catch.
+
+**A zero must not latch on a sector that counts its people off the ground.** The tan
+outpost flips the whole cordon friendly in one cutscene beat and opens the Directive on
+another; granted in the wrong order, `popGranted` would record nobody and the sector would
+be empty for the rest of the game. A zero is only ever final where the arithmetic says so —
+`popSeeded` minus `popKilled`.
+
 **Two holes the tan outpost fell down, both closed.** `viewingTownId` is `undefined` until
 a Directive has been opened, and it is what most callers pass — keyed on that,
 `sectorLedger()` minted a phantom sector that `globalPopulationCount()` then added to the

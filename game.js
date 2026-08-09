@@ -5394,6 +5394,12 @@ function grantSectorSurvivors(level) {
     const t = sectorLedger(level);
     if (t.popGranted) return 0;
     const n = sectorSurvivorCount(level);
+    // A sector that counts its allies off the ground can be asked before they
+    // have finished changing sides -- the tan outpost flips the whole cordon
+    // friendly in one cutscene beat, and the Directive opens on another. Latch
+    // a zero there and the sector is empty for the rest of the game. So a zero
+    // is only ever final where the arithmetic says so: seeded minus killed.
+    if (n <= 0 && !t.popSeeded) return 0;
     // Who they are is settled by the sector, not by a headcount: Stick City's
     // regulars are men, the Undercity's are women. Anywhere else, split by what
     // was actually freed.
@@ -13880,18 +13886,10 @@ function touchStarted() {
           streakMsgTimer = 200;
 
           // Queue the Government Directive / Overworld sequence
-          if (!townsData[1] || !townsData[1].established) {
-              // Set population based on Route
-              if (window.genocideRouteActive || window.genocideAmbushCleared) {
-                  popTotal = window.militaryToBring || 0; // Stick population destroyed
-              } else {
-                  popTotal = Math.max(10, popTotal); // Savior route gets survivors
-              }
-
-              popUnassigned = popTotal;
-              popFarming = 0; popScience = 0; popArchitecture = 0; popMilitary = 0;
-          }
-          openSectorDirective(1);
+          // Both routes go through the same door. On the savior route the
+          // grant is already latched from the towers falling; on the genocide
+          // route there is nobody to grant, and the panel says CONTINUE.
+          openDirectiveWithGrant(1);
 
           sfx.charge();
           return false;
@@ -14150,20 +14148,12 @@ if (typeof inFarmPostCutscene !== 'undefined' && inFarmPostCutscene) {
     } else if (farmPostPhase === 2) {
         inFarmPostCutscene = false; markStoryBeat("L3_FARMPOST");
         
-        // STRICT FILTER: Only count actual Farmers
-        let survivingFarmers = enemiesList.filter(e => 
-            (e.eType === "FARMER_MALE" || e.eType === "FARMER_FEMALE") && 
-            e.hp > 0 && 
-            !e.dead
-        );
-        
-        popTotal = survivingFarmers.length + (window.militaryToBring || 0);
-        if (popTotal <= 0) popTotal = 10;
-        popUnassigned = popTotal;
-        popMilitary = 0; popFarming = 0; popScience = 0; popArchitecture = 0;
-
-        // The farm hands off to the same loop every other sector uses.
-        openSectorDirective(currentLevel);
+        // The farm hands off to the same loop every other sector uses -- and
+        // through the same door, so the citizens actually reach the ledger.
+        // Setting the scalars and then opening the panel was how this used to
+        // work, and against a ledger it shows a sector of nobody: the panel
+        // reads the record, and nothing had written to it.
+        openDirectiveWithGrant(currentLevel);
         if (typeof sfx !== 'undefined' && sfx.charge) sfx.charge();
     }
     return false; 
@@ -14182,10 +14172,11 @@ else if (typeof inPostAmbushCutscene !== 'undefined' && inPostAmbushCutscene) {
         window.postAmbushCutscenePlayed = true; 
         markStoryBeat("L" + currentLevel + "_POSTAMBUSH"); 
         
-        // Removed the destructive popMilitary = 0 overrides here!
-        // The Gov Directive menu handles the math safely now.
-
-        openSectorDirective(currentLevel);
+        // This is the door every ambush sector comes through, the Green Line's
+        // tan outpost included -- and it opened the panel WITHOUT granting
+        // anybody, so the Directive showed a sector of nobody with nothing to
+        // assign. The scalars it used to set instead were never the record.
+        openDirectiveWithGrant(currentLevel);
         if (typeof sfx !== 'undefined' && sfx.charge) sfx.charge();
     }
     return false;
