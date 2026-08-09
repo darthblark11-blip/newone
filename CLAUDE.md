@@ -566,6 +566,66 @@ their chunk's solids; `Citizen` (~10751) is the wandering NPC class. `nearSettle
 and neutrals in the right places — a settlement whose story arc is still running is a
 neutral scene, the country past it is not.
 
+### The population ledger
+
+**Population, allies, surviving citizens and the global count were four names for one
+thing, computed four different ways, and every one of them derived from whatever entities
+happened to be standing in the world when somebody asked.** Entities come and go — culled,
+streamed, released with their settlement, rebuilt on a level change — so the number drifted
+whenever the player moved, and the Directive "corrected" itself against the drift by
+unassigning everybody.
+
+There is one ledger now: `townsData[sector]`, a hard integer per department per sex.
+Nothing derives it from the world. It changes only on events that should change it:
+
+```
+sectorLedger(id)              // the record, fields guaranteed
+sectorPopSum(t)               // popTotal IS this — never stored independently
+grantCitizens(id, m, f)       // the only way anybody joins; lands in UNASSIGNED
+grantSectorSurvivors(level)   // one payout per sector, ever (`popGranted` latch)
+sectorSurvivorCount(level)    // popSeeded − popKilled for 1 and 2
+globalPopulationCount()       // the sum of the sectors
+loadLedgerIntoWindow(id)      // fill the Directive's edit buffer
+storeWindowIntoLedger(id)     // write it back
+escortCasualty()              // one soldier off their HOME sector's roll
+```
+
+**`window.pop*` is an edit buffer, not state.** It is loaded when the Directive opens and
+written back when it is confirmed; between those two moments nothing else may touch it.
+BACK simply reloads, which is what makes it a cancel.
+
+**Surviving citizens are arithmetic.** For Stick City and the Undercity it is
+`popSeeded − popKilled` — eighty minus the ones shot before the towers came down —
+recorded by `processKill()` as it happens. A headcount could never be right: the roster is
+spawned, streamed and rebuilt, so the answer changed depending on where the player was
+standing when the towers fell. The stun baton and the taser exist so that *all eighty* is
+reachable, and it is not reachable against a live headcount. Sectors 3 and up have no
+seeded roster, so their allies are counted once at the moment the arc closes and then
+written down as a number like everything else.
+
+**`popGranted` is the latch that stops a sector paying out twice.** Re-entering, re-clearing
+an ambush or reloading a save all used to recompute the population from whoever was standing
+there.
+
+**The escort is a loan, not an emigration.** Soldiers taken through the travel menu stay on
+their home sector's military roll (`escortHome`), so travelling moves nobody between ledgers
+and the global count does not change because the player did. They appear in the allies bar
+because they are standing next to you, which is all that bar has ever meant. Dying is the
+one thing that changes the ledger, and it is deducted as an integer at the moment it
+happens.
+
+**What was removed.** `seedSectorPopulationFromSurvivors()` zeroed all eight department
+counts and dumped everyone back into UNASSIGNED, and it was called from five places
+including the plain level-finish fallback — so clearing an ambush in a sector the player had
+already organised threw the whole Directive away. That is the "the game unassigns all
+citizens" bug. A third copy of the ESTABLISH handler also lived inside `draw()`, reading
+`mx`/`my` and flipping a town to `established` without writing the assignments anywhere.
+
+The Directive panel exists twice (the overworld trigger and the pause menu). Both now read
+`loadLedgerIntoWindow()` and nothing else, both carry a **BACK** button, and both show
+**CONTINUE** instead of a greyed-out ASSIGN when the sector has nobody to hand over — which
+used to be a dead end with no way forward and no way out.
+
 ### The sector population (Sectors 1 and 2, story mode)
 
 **This is not the wanderer system and must never be routed through it.**

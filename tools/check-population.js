@@ -292,5 +292,97 @@ for (const lvl of [1, 2]) {
   ok(`sector ${lvl} none of them land in a town`, r.inTown === 0, r.inTown + ' in a settlement');
 }
 
+// ---------------------------------------------------------------------------
+// THE LEDGER
+// Population, allies, surviving citizens and the global count were four names
+// for one thing, each derived from whatever entities happened to be alive when
+// somebody asked. Entities drift; the number must not.
+// ---------------------------------------------------------------------------
+console.log('\n== the population ledger ==');
+const led = (id) => P(`(function () { const t = sectorLedger(${id});
+  return { seeded: t.popSeeded, killed: t.popKilled, granted: !!t.popGranted,
+           total: t.popTotal, unM: t.popUnassignedM, unF: t.popUnassignedF,
+           mil: t.popMilitaryM + t.popMilitaryF, farm: t.popFarmingM + t.popFarmingF }; })()`);
+
+function liberate(lvl, kills) {
+  probe(`isStoryMode = true; townsData = {}; window.towersDefeated = false;
+         window.southGateBreachedStatus = false; window.nm0AmbushClearedStatus = false;`);
+  probe(`startAtLevel(${lvl});`);
+  probe(`(function () { let n = 0;
+    for (const e of enemiesList) {
+      if (e.isPopulation && !e.isFriendly && n < ${kills}) {
+        e.dead = true; processKill(e.x, e.y, false, e.eType, false); n++;
+      } } })()`);
+  probe(`for (const b of buildings) if (b.isTower) b.hp = 0;
+         markSectorTowersDown(currentLevel); recruitSectorSurvivors();`);
+  return led(lvl);
+}
+
+// Spare everyone and you get everyone. That is what the taser is for.
+ok('sparing the whole sector hands over all eighty', liberate(1, 0).total === 80,
+   liberate(1, 0).total + ' of 80');
+for (const k of [1, 20, 55]) {
+  const t = liberate(1, k);
+  ok(`${k} shot before the towers leaves ${80 - k}`, t.total === 80 - k,
+     `${t.total}, seeded ${t.seeded} killed ${t.killed}`);
+}
+ok('shooting all eighty leaves nobody', liberate(1, 80).total === 0);
+const s2 = liberate(2, 12);
+ok('the Undercity hands over women', s2.total === 68 && s2.unF === 68 && s2.unM === 0,
+   `${s2.total} total, ${s2.unF}F / ${s2.unM}M`);
+
+// The grant is latched. Re-entering, re-clearing or reloading must not pay out
+// a second population — the old code recomputed from whoever was standing there
+// every single time it was asked.
+{
+  const before = liberate(1, 10).total;
+  probe('recruitSectorSurvivors(); recruitSectorSurvivors(); openDirectiveWithGrant(1);');
+  ok('a sector pays out exactly once', led(1).total === before, `${before} -> ${led(1).total}`);
+}
+
+// Nothing unassigns anybody. This is the bug the whole rewrite is for.
+{
+  probe(`loadLedgerIntoWindow(1);
+         window.popFarmingM = 30; window.popMilitaryM = 20;
+         window.popUnassignedM = window.popUnassignedM - 50; storeWindowIntoLedger(1);`);
+  const set = led(1);
+  ok('an assignment sticks', set.farm === 30 && set.mil === 20, JSON.stringify(set));
+  probe('openDirectiveWithGrant(1);');
+  ok('re-opening the Directive does not unassign anyone',
+     led(1).farm === 30 && led(1).mil === 20, JSON.stringify(led(1)));
+  probe('startAtLevel(3); startAtLevel(1);');
+  ok('and neither does leaving the sector and coming back',
+     led(1).farm === 30 && led(1).mil === 20, JSON.stringify(led(1)));
+  ok('the total is always the sum of the columns',
+     P('sectorPopSum(townsData[1])') === led(1).total, led(1).total + '');
+}
+
+// The escort is a loan. Travelling must not create or destroy citizens.
+{
+  probe(`window.escortHome = 1; window.escortWasF = 0;
+         window.militaryToBringM = 10; window.militaryToBringF = 0;`);
+  const before = P('globalPopulationCount()');
+  const milBefore = led(1).mil;
+  probe('window.travelArrival = "NORTH"; startAtLevel(3);');
+  ok('marching an escort out does not change the global count',
+     P('globalPopulationCount()') === before, `${before} -> ${P('globalPopulationCount()')}`);
+  ok('and they are still on their home sector\'s military roll',
+     led(1).mil === milBefore, `${milBefore} -> ${led(1).mil}`);
+  probe('escortCasualty(); escortCasualty();');
+  ok('a soldier who does not come back comes off that roll',
+     led(1).mil === milBefore - 2 && P('globalPopulationCount()') === before - 2,
+     `military ${led(1).mil}, global ${P('globalPopulationCount()')}`);
+}
+
+// A sector with nobody left still has to be exitable.
+{
+  const t = liberate(1, 80);
+  ok('a sector the player emptied reports zero, not NaN',
+     t.total === 0 && !isNaN(t.total));
+  probe('openDirectiveWithGrant(1);');
+  ok('and the Directive offers CONTINUE rather than a dead end',
+     P('popTotal') === 0 && P('popUnassigned') === 0, 'popTotal 0');
+}
+
 console.log(`\n${checks - fails}/${checks} checks passed`);
 process.exit(fails ? 1 : 0);

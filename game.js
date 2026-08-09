@@ -311,21 +311,13 @@ function setup() {
   });
 
 
+// Both of these are now thin wrappers over the ledger, kept because a lot of
+// call sites say them by name. loadTownData() fills the Directive's edit
+// buffer; saveTownData() writes it back and recomputes the total from the
+// columns, so the two can never disagree.
 function loadTownData(id) {
-    if (!id || typeof townsData === 'undefined' || !townsData[id]) return;
-    let t = townsData[id];
-
-    window.popFarmingM = t.popFarmingM || 0;
-    window.popFarmingF = t.popFarmingF || 0;
-    window.popMilitaryM = t.popMilitaryM || 0;
-    window.popMilitaryF = t.popMilitaryF || 0;
-    window.popScienceM = t.popScienceM || 0;
-    window.popScienceF = t.popScienceF || 0;
-    window.popArchitectureM = t.popArchitectureM || 0;
-    window.popArchitectureF = t.popArchitectureF || 0;
-    window.popUnassignedM = t.popUnassignedM || 0;
-    window.popUnassignedF = t.popUnassignedF || 0;
-    window.popTotal = t.popTotal || 0;
+    if (!id) return;
+    loadLedgerIntoWindow(id);
 }
 function saveTownData(id) {
     if (!id) return;
@@ -344,13 +336,10 @@ function saveTownData(id) {
     t.popUnassignedM = window.popUnassignedM || 0;
     t.popUnassignedF = window.popUnassignedF || 0;
     
-    // 100% safe calculation directly from the verified town object
-    t.popTotal = t.popFarmingM + t.popFarmingF + 
-                 t.popMilitaryM + t.popMilitaryF + 
-                 t.popScienceM + t.popScienceF + 
-                 t.popArchitectureM + t.popArchitectureF + 
-                 t.popUnassignedM + t.popUnassignedF;
-                 
+    // The total is the sum of the columns, always. It is never stored as an
+    // independent number, so it cannot drift away from them.
+    t.popTotal = sectorPopSum(t);
+    globalPopulation = globalPopulationCount();
     t.established = true;
 }
 
@@ -627,13 +616,14 @@ if (isStoryMode) {
             let spawnCountM = window.militaryToBringM || 0;
             let spawnCountF = window.militaryToBringF || 0;
 
-            // The escort is now the destination sector's people. Every popTotal
-            // calculation in the game reads window.militaryToBring (the
-            // singular), and nothing ever assigned it from the M/F split the
-            // travel menu actually fills in -- so a player who marched
-            // fifty-six soldiers north arrived, counted them, and found the
-            // sector's population had not heard of any of them.
+            // The escort is a DETACHMENT, not an emigration. These soldiers
+            // stay on their home sector's military roll for as long as they are
+            // away, so travelling moves nobody between ledgers and the global
+            // population does not change because the player did. They show up
+            // in the allies bar because they are standing next to you, which is
+            // all that bar has ever meant.
             window.militaryToBring = spawnCountM + spawnCountF;
+            window.escortWasF = spawnCountF;
             // Consumed here. Left standing, the same escort was re-created from
             // scratch on every subsequent level entry -- travel twice and the
             // fifty-six became a hundred and twelve.
@@ -3246,12 +3236,10 @@ function draw() {
     farmSpeaker = window.allies[0];
 
     // FIX 3: Explicitly bind these to window so your global UI and level transitions can read them
-   popTotal = (window.militaryToBring || 0) + window.allies.length;
-popUnassigned = popTotal;
-popMilitary = 0;
-popFarming = 0;
-popScience = 0;
-popArchitecture = 0;
+    // The farm's freed workers are granted once, as a number, and the escort
+    // is NOT among them -- those soldiers are still Stick City's.
+    grantSectorSurvivors(currentLevel);
+    loadLedgerIntoWindow(currentLevel);
 
     player.x = farmSpeaker.x + 50;
     player.y = farmSpeaker.y + 50;
@@ -3304,8 +3292,7 @@ popArchitecture = 0;
             // If the town was never put under a Directive, open it now —
             // otherwise the loop has nowhere to go from here.
             if (!(townsData[1] && townsData[1].established)) {
-                seedSectorPopulationFromSurvivors();
-                openSectorDirective(1);
+                openDirectiveWithGrant(1);
             }
         } else if (currentLevel === 2 && clearedKind === "GATE") {
             // THE UNDERCITY'S CURTAIN WALL — the same shape of beat as a Great
@@ -3326,17 +3313,14 @@ popArchitecture = 0;
             // GREEN LINE / FRONTIER SECTORS — no towers and no town to liberate,
             // so a cleared ambush is the whole objective and the Directive opens
             // straight off it.
-            seedSectorPopulationFromSurvivors();
-            openSectorDirective(currentLevel);
+            openDirectiveWithGrant(currentLevel);
             camX = player.x - (width / 2) / zoom;
             camY = player.y - (height / 2) / zoom;
         } else if (towersAlive > 0 || window.genocideRouteActive) {
             // GENOCIDE ROUTE (Towers not destroyed)
             window.genocideAmbushCleared = true;
             // Trigger Government Directive
-            popTotal = window.militaryToBring || 0;
-            popUnassigned = popTotal;
-            openSectorDirective(currentLevel);
+            openDirectiveWithGrant(currentLevel);
         } else {
             // SAVIOR ROUTE (Towers destroyed, Ambush cleared)
             inPostAmbushCutscene = true;
@@ -3344,7 +3328,9 @@ popArchitecture = 0;
 
             // Using window.allies makes it globally permanent so it survives into the next frames
             window.allies = enemiesList.filter(e => e.isFriendly && e.hp > 0 && !e.dead);
-            popTotal = window.allies.length;
+            // The cutscene needs bodies to speak; the LEDGER decides the number.
+            grantSectorSurvivors(currentLevel);
+            loadLedgerIntoWindow(currentLevel);
 
             // Ensure minimum population for the cutscene
             if (popTotal < 2) {
@@ -3352,11 +3338,7 @@ popArchitecture = 0;
                 let a1 = new Character(player.x + 80, player.y, false, allyType); a1.isFriendly = true; enemiesList.push(a1);
                 let a2 = new Character(player.x - 80, player.y, false, allyType); a2.isFriendly = true; enemiesList.push(a2);
                 window.allies.push(a1, a2);
-                popTotal = window.allies.length;
             }
-
-            popUnassigned = popTotal;
-            popMilitary = 0; popFarming = 0; popScience = 0; popArchitecture = 0; 
 
             // In-sector allies first, then by distance. Same reason as the
             // town cutscene: the player gets teleported onto the speaker, and a
@@ -3383,8 +3365,7 @@ popArchitecture = 0;
 
     // STANDARD LEVEL FINISH FALLBACK
     } else if (isStoryMode && currentLevel >= 1 && currentLevel <= 4) {
-        seedSectorPopulationFromSurvivors();
-        openSectorDirective(currentLevel);
+        openDirectiveWithGrant(currentLevel);
     } else if (inTownCutscene || inFarmCutscene || inFarmPostCutscene || inPostAmbushCutscene || inWorldBuildingMenu) {
     
     // Only run the camera lerp for the specific cutscenes that need it
@@ -4020,94 +4001,16 @@ viewBottom = camY + height / zoom + shakePad;
       
       // --- SAFETY INITIALIZER ---
    // --- 1. SAFE DEFAULTS (Always run first to prevent NaN) ---
-window.popFarmingM = window.popFarmingM || 0;
-window.popFarmingF = window.popFarmingF || 0;
-window.popMilitaryM = window.popMilitaryM || 0;
-window.popMilitaryF = window.popMilitaryF || 0;
-window.popScienceM = window.popScienceM || 0;
-window.popScienceF = window.popScienceF || 0;
-window.popArchitectureM = window.popArchitectureM || 0;
-window.popArchitectureF = window.popArchitectureF || 0;
-// popUnassigned is derived from these two below; leaving them undefined makes it NaN.
-window.popUnassignedM = Number(window.popUnassignedM) || 0;
-window.popUnassignedF = Number(window.popUnassignedF) || 0;
-
-// --- 2. DETERMINE THE STRICT SOURCE OF TRUTH ---
-let liveMales = 0;
-let totalLive = 0;
-let readingFromPhysicalObjects = false;
-
-// BUG FIX: Safely check overworld status. If the variable hasn't been set to true yet, we assume we are in an active level!
-let inOverworld = (typeof inOverworldView !== 'undefined' && inOverworldView === true);
-
-// If we are in an active level, scan the physical allies
-if (!inOverworld && typeof allies !== 'undefined' && Array.isArray(allies) && allies.length > 0) {
-    readingFromPhysicalObjects = true;
-    totalLive = allies.length;
-    for (let i = 0; i < allies.length; i++) {
-        if (allies[i]) {
-            // BULLETPROOF: Checks eType, falls back to eT, forces string, forces uppercase.
-            let eTypeStr = String(allies[i].eType || allies[i].eT || "NORMAL").toUpperCase();
-            
-            if (!eTypeStr.includes("FEMALE")) {
-                liveMales++;
-            }
-        }
-    }
-} 
-// If we are looking directly at a populated town (physical entities)
-else if (typeof townCitizens !== 'undefined' && Array.isArray(townCitizens) && townCitizens.length > 0) {
-    readingFromPhysicalObjects = true;
-    totalLive = townCitizens.length;
-    for (let i = 0; i < townCitizens.length; i++) {
-        if (townCitizens[i]) {
-            let eTypeStr = String(townCitizens[i].eType || townCitizens[i].eT || "NORMAL").toUpperCase();
-            
-            if (!eTypeStr.includes("FEMALE")) {
-                liveMales++;
-            }
-        }
-    }
-}
-
-// --- 3. PROCESS THE DATA ---
-if (readingFromPhysicalObjects) {
-    let liveFemales = Math.max(0, totalLive - liveMales);
-
-    let assignedM = window.popFarmingM + window.popMilitaryM + window.popScienceM + window.popArchitectureM;
-    let assignedF = window.popFarmingF + window.popMilitaryF + window.popScienceF + window.popArchitectureF;
-
-    // Military Culling (Trims the military if soldiers died in combat)
-    if (assignedM > liveMales) {
-        window.popMilitaryM = Math.max(0, window.popMilitaryM - (assignedM - liveMales));
-        assignedM = window.popFarmingM + window.popMilitaryM + window.popScienceM + window.popArchitectureM;
-    }
-    if (assignedF > liveFemales) {
-        window.popMilitaryF = Math.max(0, window.popMilitaryF - (assignedF - liveFemales));
-        assignedF = window.popFarmingF + window.popMilitaryF + window.popScienceF + window.popArchitectureF;
-    }
-
-    window.popUnassignedM = Math.max(0, liveMales - assignedM);
-    window.popUnassignedF = Math.max(0, liveFemales - assignedF);
-    window.popTotal = totalLive;
-} 
-// If we are in the Overworld, DO NOT scan objects. Load the saved string data.
-else if (typeof viewingTownId !== 'undefined' && typeof townsData !== 'undefined' && townsData[viewingTownId]) {
-    let t = townsData[viewingTownId];
-    if (t.established) {
-        window.popFarmingM = t.popFarmingM || 0;
-        window.popFarmingF = t.popFarmingF || 0;
-        window.popMilitaryM = t.popMilitaryM || 0;
-        window.popMilitaryF = t.popMilitaryF || 0;
-        window.popScienceM = t.popScienceM || 0;
-        window.popScienceF = t.popScienceF || 0;
-        window.popArchitectureM = t.popArchitectureM || 0;
-        window.popArchitectureF = t.popArchitectureF || 0;
-        window.popUnassignedM = t.popUnassignedM || 0;
-        window.popUnassignedF = t.popUnassignedF || 0;
-        window.popTotal = t.popTotal || 0;
-    }
-}
+// --- THE LEDGER IS THE TRUTH, AND IT IS THE ONLY TRUTH -------------------
+      //
+      // What stood here scanned `allies` or `townCitizens` and rebuilt every
+      // department count from whatever was alive at that instant, "culling" the
+      // military to match. Those arrays are VIEWS -- townCitizens is literally
+      // rebuilt from these same numbers when the Directive is confirmed -- so
+      // the panel was correcting itself against its own output, and every
+      // stream, cull or level rebuild that moved a body moved the population.
+      // It reads the ledger and nothing else now.
+      loadLedgerIntoWindow(viewingTownId);
 
 
       fill(255); textAlign(CENTER, CENTER); textSize(32); textFont('sans-serif');
@@ -4201,13 +4104,26 @@ else if (typeof viewingTownId !== 'undefined' && typeof townsData !== 'undefined
       popUnassigned = window.popUnassignedM + window.popUnassignedF;
 
       let isEst = typeof townsData !== 'undefined' && townsData[viewingTownId] && townsData[viewingTownId].established;
-      let btnText = (popUnassigned === 0) ? (isEst ? "UPDATE DIRECTIVE" : "ESTABLISH") : "ASSIGN CITIZENS";
+      // A sector can complete its arc with nobody left to hand over -- the
+      // player shot all eighty, or it never had a roster. There is nothing to
+      // assign and the panel used to be a dead end: a greyed-out ASSIGN button
+      // over four empty rows, with no way forward and no way out.
+      const nothingToAssign = (popTotal === 0);
+      let btnText = nothingToAssign ? "CONTINUE"
+                  : (popUnassigned === 0) ? (isEst ? "UPDATE DIRECTIVE" : "ESTABLISH")
+                  : "ASSIGN CITIZENS";
 
-      fill((popUnassigned === 0) ? color(50, 200, 255) : color(80)); 
+      fill((nothingToAssign || popUnassigned === 0) ? color(50, 200, 255) : color(80));
       stroke(255); strokeWeight(2);
       rect(width/2 - 120, height - 90, 240, 50, 8);
       fill(0); noStroke(); textSize(18); 
       text(btnText, width/2, height - 65);
+
+      // And a way back out of it, which neither copy of this panel had.
+      fill(40); stroke(150); strokeWeight(2);
+      rect(width/2 - 70, height - 34, 140, 28, 6);
+      fill(200); noStroke(); textSize(14);
+      text("BACK", width/2, height - 20);
   }
   // --- TRAVEL DEPARTURE MENU ---
   if (inTravelMenu) {
@@ -4278,12 +4194,10 @@ else if (typeof viewingTownId !== 'undefined' && typeof townsData !== 'undefined
   // --- OVERWORLD VIEW UI ---
   if (inOverworldView) {
       // 1. Dynamically sum up ALL allies across ALL levels to get the true Global Population
-      let trueGlobalPop = 0;
-      for (let id in townsData) {
-          if (townsData[id].established) {
-              trueGlobalPop += townsData[id].popTotal;
-          }
-      }
+      // Every sector's ledger, established or not -- a sector the player has
+      // liberated but not yet organised still has its people, and leaving them
+      // out is why the global count jumped when a Directive was confirmed.
+      let trueGlobalPop = globalPopulationCount();
       // Sync the global variable to match the data exactly. The readout that
       // used to sit on top of this is gone -- see below -- but the sum is not
       // just for display: globalPopulation is read elsewhere.
@@ -4475,109 +4389,16 @@ if (swordPickedUp || window.pickaxeOwned) {
       } 
             else if (pauseMenuState === "GOV_DIRECTIVE") {
          
-window.popFarmingM = window.popFarmingM || 0;
-window.popFarmingF = window.popFarmingF || 0;
-window.popMilitaryM = window.popMilitaryM || 0;
-window.popMilitaryF = window.popMilitaryF || 0;
-window.popScienceM = window.popScienceM || 0;
-window.popScienceF = window.popScienceF || 0;
-window.popArchitectureM = window.popArchitectureM || 0;
-window.popArchitectureF = window.popArchitectureF || 0;
-// popUnassigned is derived from these two below; leaving them undefined makes it NaN.
-window.popUnassignedM = Number(window.popUnassignedM) || 0;
-window.popUnassignedF = Number(window.popUnassignedF) || 0;
-
-// --- 2. DETERMINE THE STRICT SOURCE OF TRUTH ---
-let liveMales = 0;
-let totalLive = 0;
-let readingFromPhysicalObjects = false;
-
-let inOverworld = (typeof inOverworldView !== 'undefined' && inOverworldView === true);
-
-// If we are in an active level, scan the physical allies
-if (!inOverworld && typeof allies !== 'undefined' && Array.isArray(allies) && allies.length > 0) {
-    readingFromPhysicalObjects = true;
-    totalLive = allies.length;
-    for (let i = 0; i < allies.length; i++) {
-        let c = allies[i];
-        if (c) {
-            // Check direct gender property first; fallback to eType string parsing if missing
-            let isMale = false;
-            if (c.gender) {
-                isMale = (c.gender === "MALE");
-            } else {
-                let eTypeStr = String(c.eType || c.eT || "NORMAL").toUpperCase();
-                isMale = !eTypeStr.includes("FEMALE");
-            }
-
-            if (isMale) {
-                liveMales++;
-            }
-        }
-    }
-} 
-// If we are looking directly at a populated town (physical entities)
-else if (typeof townCitizens !== 'undefined' && Array.isArray(townCitizens) && townCitizens.length > 0) {
-    readingFromPhysicalObjects = true;
-    totalLive = townCitizens.length;
-    for (let i = 0; i < townCitizens.length; i++) {
-        let c = townCitizens[i];
-        if (c) {
-            let isMale = false;
-            if (c.gender) {
-                isMale = (c.gender === "MALE");
-            } else {
-                let eTypeStr = String(c.eType || c.eT || "NORMAL").toUpperCase();
-                isMale = !eTypeStr.includes("FEMALE");
-            }
-
-            if (isMale) {
-                liveMales++;
-            }
-        }
-    }
-}
-
-
-
-// --- 3. PROCESS THE DATA ---
-if (readingFromPhysicalObjects) {
-    let liveFemales = Math.max(0, totalLive - liveMales);
-
-    let assignedM = window.popFarmingM + window.popMilitaryM + window.popScienceM + window.popArchitectureM;
-    let assignedF = window.popFarmingF + window.popMilitaryF + window.popScienceF + window.popArchitectureF;
-
-    // Military Culling (Trims the military if soldiers died in combat)
-    if (assignedM > liveMales) {
-        window.popMilitaryM = Math.max(0, window.popMilitaryM - (assignedM - liveMales));
-        assignedM = window.popFarmingM + window.popMilitaryM + window.popScienceM + window.popArchitectureM;
-    }
-    if (assignedF > liveFemales) {
-        window.popMilitaryF = Math.max(0, window.popMilitaryF - (assignedF - liveFemales));
-        assignedF = window.popFarmingF + window.popMilitaryF + window.popScienceF + window.popArchitectureF;
-    }
-
-    window.popUnassignedM = Math.max(0, liveMales - assignedM);
-    window.popUnassignedF = Math.max(0, liveFemales - assignedF);
-    window.popTotal = totalLive;
-} 
-// If we are in the Overworld, DO NOT scan objects. Load the saved string data.
-else if (typeof viewingTownId !== 'undefined' && typeof townsData !== 'undefined' && townsData[viewingTownId]) {
-    let t = townsData[viewingTownId];
-    if (t.established) {
-        window.popFarmingM = t.popFarmingM || 0;
-        window.popFarmingF = t.popFarmingF || 0;
-        window.popMilitaryM = t.popMilitaryM || 0;
-        window.popMilitaryF = t.popMilitaryF || 0;
-        window.popScienceM = t.popScienceM || 0;
-        window.popScienceF = t.popScienceF || 0;
-        window.popArchitectureM = t.popArchitectureM || 0;
-        window.popArchitectureF = t.popArchitectureF || 0;
-        window.popUnassignedM = t.popUnassignedM || 0;
-        window.popUnassignedF = t.popUnassignedF || 0;
-        window.popTotal = t.popTotal || 0;
-    }
-}
+// --- THE LEDGER IS THE TRUTH, AND IT IS THE ONLY TRUTH -------------------
+      //
+      // What stood here scanned `allies` or `townCitizens` and rebuilt every
+      // department count from whatever was alive at that instant, "culling" the
+      // military to match. Those arrays are VIEWS -- townCitizens is literally
+      // rebuilt from these same numbers when the Directive is confirmed -- so
+      // the panel was correcting itself against its own output, and every
+      // stream, cull or level rebuild that moved a body moved the population.
+      // It reads the ledger and nothing else now.
+      loadLedgerIntoWindow(viewingTownId);
 
   // --- 1. USE YOUR EXACT trueGlobalPop LOGIC FROM SCREENSHOT 1000206223.jpg ---
   let trueGlobalPop = 0;
@@ -4689,30 +4510,27 @@ else if (typeof viewingTownId !== 'undefined' && typeof townsData !== 'undefined
       popUnassigned = window.popUnassignedM + window.popUnassignedF;
 
       let isEst = typeof townsData !== 'undefined' && townsData[viewingTownId] && townsData[viewingTownId].established;
-      let btnText = (popUnassigned === 0) ? (isEst ? "UPDATE DIRECTIVE" : "ESTABLISH") : "ASSIGN CITIZENS";
+      const nothingToAssign = (popTotal === 0);
+      let btnText = nothingToAssign ? "CONTINUE"
+                  : (popUnassigned === 0) ? (isEst ? "UPDATE DIRECTIVE" : "ESTABLISH")
+                  : "ASSIGN CITIZENS";
 
-      fill((popUnassigned === 0) ? color(50, 200, 255) : color(80)); 
+      fill((nothingToAssign || popUnassigned === 0) ? color(50, 200, 255) : color(80));
       stroke(255); strokeWeight(2);
       rect(width/2 - 120, height - 90, 240, 50, 8);
       fill(0); noStroke(); textSize(18); 
       text(btnText, width/2, height - 65);
 
-                      // --- ESTABLISH BUTTON CLICK LOGIC ---
-      if (window.govHoldTimer === 1) { // Fires only on the initial tap
-          if (mx > width/2 - 120 && mx < width/2 + 120 && my > height - 90 && my < height - 40) {
-              if (popUnassigned === 0) {
-                  inWorldBuildingMenu = false;
-                  
-                  // Safely mark town as established
-                  if (typeof townsData !== 'undefined' && typeof viewingTownId !== 'undefined' && townsData[viewingTownId]) {
-                      townsData[viewingTownId].established = true;
-                  }
-                  
-                  inOverworldView = true;
-              }
-          }
-      }
+      fill(40); stroke(150); strokeWeight(2);
+      rect(width/2 - 70, height - 34, 140, 28, 6);
+      fill(200); noStroke(); textSize(14);
+      text("BACK", width/2, height - 20);
 
+      // A third copy of the ESTABLISH handler used to sit here, inside the DRAW
+      // pass, reading mx/my and flipping the town to `established` without
+      // writing the assignments anywhere. It fired on a frame the real handler
+      // had already dealt with, so the Directive closed and the ledger kept
+      // whatever it had before. Gone -- the click path owns the click.
             }
       else if (pauseMenuState === "SHOP") {
           drawUpgradeMenu();
@@ -5373,7 +5191,6 @@ function recruitSectorSurvivors() {
     e.hp         = 300;
     e.loseSightTimer = 0;
     e.routeA = e.routeB = undefined;      // off the checkpoint beat, they work for you now
-    globalPopulation++;
     n++;
     if (String(e.eType).toUpperCase().indexOf("FEMALE") !== -1) f++;
   }
@@ -5384,7 +5201,14 @@ function recruitSectorSurvivors() {
     const keep = list.filter(e => !e.isRecruit);
     if (keep.length !== list.length) chunkPop.set(k, keep);
   }
-  return { total: n, female: f };
+  // The bodies that changed sides are `n`. What the player is OWED is the
+  // ledger's arithmetic -- seeded minus killed -- and the two are allowed to
+  // disagree, because a resident who wandered out of the chunk the player was
+  // standing in is still one of the eighty. The grant is latched, so this is
+  // safe to call again on a re-entry or a reload.
+  const owed = grantSectorSurvivors(currentLevel);
+  loadLedgerIntoWindow(currentLevel);
+  return { total: owed, female: f, converted: n };
 }
 
 function markSectorTowersDown(level) {
@@ -5443,20 +5267,179 @@ function ensureDirectiveRoster() {
 
 // Population seeding for the sectors that end on a straight ambush clear
 // (the Green Line) rather than on a scripted survivor cutscene.
-function seedSectorPopulationFromSurvivors() {
-    const survivors = enemiesList.filter(e => e.isFriendly && e.hp > 0 && !e.dead);
-    const females = survivors.filter(e => String(e.eType || "").toUpperCase().includes("FEMALE")).length;
+// ###########################################################################
+//  THE POPULATION LEDGER
+//
+//  Population, allies, surviving citizens and the global count were four names
+//  for the same thing, computed four different ways, and every one of them
+//  derived from whatever entities happened to be standing in the world at the
+//  moment somebody asked. Entities come and go -- they are culled, streamed,
+//  released with their settlement, replaced on a level rebuild -- so the number
+//  drifted every time the player did anything, and the Directive "corrected"
+//  itself against the drift by unassigning people.
+//
+//  There is one ledger now: `townsData[sector]`, holding a hard integer per
+//  department per sex. NOTHING derives it from the world. It changes only when
+//  something happens that should change it:
+//
+//    - a sector is liberated  -> grantCitizens() adds its survivors, ONCE
+//    - the player assigns     -> the Directive moves integers between columns
+//    - an escort soldier dies -> escortCasualty() deducts one from their home
+//
+//  `popTotal` is never stored independently; it is the sum of the columns, so
+//  it cannot disagree with them. `globalPopulationCount()` is the sum of the
+//  sectors. Everything else -- townCitizens, the allies array, the HUD bar --
+//  is a VIEW of the ledger and is rebuilt from it, never read back into it.
+// ###########################################################################
+const POP_DEPTS = ["Farming", "Military", "Science", "Architecture"];
+const SECTOR_POP_SEED = 80;   // what seedSectorPopulation() puts on the ground
 
-    popTotal = (window.militaryToBring || 0) + survivors.length;
-    popUnassigned = popTotal;
-    popMilitary = 0; popFarming = 0; popScience = 0; popArchitecture = 0;
+function sectorLedger(id) {
+    if (typeof townsData === 'undefined' || !townsData) window.townsData = {};
+    let t = townsData[id];
+    if (!t) { t = { established: false }; townsData[id] = t; }
+    for (const d of POP_DEPTS) {
+        t["pop" + d + "M"] = Number(t["pop" + d + "M"]) || 0;
+        t["pop" + d + "F"] = Number(t["pop" + d + "F"]) || 0;
+    }
+    t.popUnassignedM = Number(t.popUnassignedM) || 0;
+    t.popUnassignedF = Number(t.popUnassignedF) || 0;
+    t.popSeeded  = Number(t.popSeeded)  || 0;   // how many were put on the ground
+    t.popKilled  = Number(t.popKilled)  || 0;   // how many of them the player shot
+    t.popTotal   = sectorPopSum(t);
+    return t;
+}
 
-    window.popFarmingM = 0; window.popFarmingF = 0;
-    window.popMilitaryM = 0; window.popMilitaryF = 0;
-    window.popScienceM = 0; window.popScienceF = 0;
-    window.popArchitectureM = 0; window.popArchitectureF = 0;
-    window.popUnassignedF = females + Math.floor((window.militaryToBring || 0) / 2);
-    window.popUnassignedM = Math.max(0, popTotal - window.popUnassignedF);
+function sectorPopSum(t) {
+    let n = (Number(t.popUnassignedM) || 0) + (Number(t.popUnassignedF) || 0);
+    for (const d of POP_DEPTS) n += (Number(t["pop" + d + "M"]) || 0) + (Number(t["pop" + d + "F"]) || 0);
+    return n;
+}
+
+// The only way anybody joins. Lands in the unassigned column, because a new
+// citizen has not been given a job yet -- and crucially it ADDS, so a sector
+// the player comes back to keeps the Directive they already set.
+function grantCitizens(id, males, females) {
+    const t = sectorLedger(id);
+    t.popUnassignedM += Math.max(0, Math.round(males || 0));
+    t.popUnassignedF += Math.max(0, Math.round(females || 0));
+    t.popTotal = sectorPopSum(t);
+    return t;
+}
+
+function globalPopulationCount() {
+    let n = 0;
+    if (typeof townsData !== 'undefined' && townsData)
+        for (const id in townsData) n += sectorPopSum(townsData[id]);
+    return n;
+}
+
+// The window.pop* globals are the Directive's edit buffer and nothing more.
+// They are loaded from the ledger when it opens and written back when it is
+// confirmed; between those two moments nothing else may touch them.
+function loadLedgerIntoWindow(id) {
+    const t = sectorLedger(id);
+    for (const d of POP_DEPTS) {
+        window["pop" + d + "M"] = t["pop" + d + "M"];
+        window["pop" + d + "F"] = t["pop" + d + "F"];
+    }
+    window.popUnassignedM = t.popUnassignedM;
+    window.popUnassignedF = t.popUnassignedF;
+    window.popTotal = t.popTotal;
+    popTotal      = t.popTotal;
+    popUnassigned = t.popUnassignedM + t.popUnassignedF;
+    popFarming      = t.popFarmingM + t.popFarmingF;
+    popMilitary     = t.popMilitaryM + t.popMilitaryF;
+    popScience      = t.popScienceM + t.popScienceF;
+    popArchitecture = t.popArchitectureM + t.popArchitectureF;
+    globalPopulation = globalPopulationCount();
+    return t;
+}
+
+function storeWindowIntoLedger(id) {
+    const t = sectorLedger(id);
+    for (const d of POP_DEPTS) {
+        t["pop" + d + "M"] = Number(window["pop" + d + "M"]) || 0;
+        t["pop" + d + "F"] = Number(window["pop" + d + "F"]) || 0;
+    }
+    t.popUnassignedM = Number(window.popUnassignedM) || 0;
+    t.popUnassignedF = Number(window.popUnassignedF) || 0;
+    t.popTotal = sectorPopSum(t);
+    globalPopulation = globalPopulationCount();
+    return t;
+}
+
+// What the sector owes the player when its arc completes.
+//
+// For Stick City and the Undercity this is pure arithmetic -- eighty seeded
+// minus the ones they shot before the towers came down -- and that is the whole
+// point of the mechanic. Counting the bodies still standing could never be
+// right: the roster is spawned, streamed, culled and rebuilt, so the answer
+// changed depending on where the player was standing when the towers fell.
+// The stun baton and the taser exist so that "all eighty" is reachable, and it
+// is not reachable against a live headcount.
+//
+// Sectors 3 and up have no seeded roster -- their allies are whoever was freed
+// during the fight -- so those are counted once, at the moment the arc closes,
+// and then written down as a number like everything else.
+function sectorSurvivorCount(level) {
+    const t = sectorLedger(level);
+    if (t.popSeeded > 0) return Math.max(0, t.popSeeded - t.popKilled);
+    return enemiesList.filter(e => e && e.isFriendly && e.hp > 0 && !e.dead && !e.isMilitary).length;
+}
+
+// One grant per sector, ever. `popGranted` is the latch: re-entering a
+// liberated sector, re-clearing an ambush or reloading a save must not hand out
+// a second population, which is what the old "recompute from whoever is
+// standing here" did every single time.
+function grantSectorSurvivors(level) {
+    const t = sectorLedger(level);
+    if (t.popGranted) return 0;
+    const n = sectorSurvivorCount(level);
+    // Who they are is settled by the sector, not by a headcount: Stick City's
+    // regulars are men, the Undercity's are women. Anywhere else, split by what
+    // was actually freed.
+    let f = 0;
+    if (t.popSeeded > 0) f = (level === 2) ? n : 0;
+    else {
+        const freed = enemiesList.filter(e => e && e.isFriendly && e.hp > 0 && !e.dead && !e.isMilitary);
+        const fem = freed.filter(e => String(e.eType || "").toUpperCase().indexOf("FEMALE") !== -1).length;
+        f = Math.min(n, fem);
+    }
+    grantCitizens(level, n - f, f);
+    t.popGranted = true;
+    return n;
+}
+
+// An escort soldier is a loan, not an emigrant: they stay on their home
+// sector's military roll while they are away, so travelling moves nobody
+// between ledgers and the global count does not move when the player does.
+// Dying is the one thing that does change it, and it is deducted as an integer
+// at the moment it happens rather than inferred later from who is missing.
+function escortCasualty() {
+    const home = window.escortHome;
+    if (!home) return;
+    const t = sectorLedger(home);
+    if (t.popMilitaryF > 0 && (window.escortWasF || 0) > 0) { t.popMilitaryF--; window.escortWasF--; }
+    else if (t.popMilitaryM > 0) t.popMilitaryM--;
+    else if (t.popMilitaryF > 0) t.popMilitaryF--;
+    t.popTotal = sectorPopSum(t);
+    globalPopulation = globalPopulationCount();
+}
+
+// Opens a sector's Directive without disturbing what is already assigned.
+//
+// This replaced seedSectorPopulationFromSurvivors(), which zeroed every
+// department and dumped the whole population back into UNASSIGNED. It was
+// called from four places -- including the plain level-finish fallback -- so
+// clearing an ambush in a sector the player had already organised threw the
+// entire Directive away. That is the "the game unassigns all citizens"
+// complaint, and it was a single line: `window.popFarmingM = 0;` and its
+// seven siblings.
+function openDirectiveWithGrant(level) {
+    grantSectorSurvivors(level);
+    openSectorDirective(level);
+    loadLedgerIntoWindow(level);
 }
 
 function handleStoryWinLoop() {
@@ -5501,8 +5484,7 @@ function handleStoryWinLoop() {
                 window.towersDefeated = true;
                 markSectorTowersDown(currentLevel);
             }
-            seedSectorPopulationFromSurvivors();
-            openSectorDirective(currentLevel);
+            openDirectiveWithGrant(currentLevel);
             saveGame();
         }
     }
@@ -6168,6 +6150,12 @@ function seedSectorPopulation(level, count) {
     enemiesList.push(e);
     made++;
   }
+  // Written down as the sector's seed the first time it is laid out, and never
+  // again -- this is the "eighty" that everything downstream subtracts from.
+  // Re-entering the arena re-places the bodies but must not re-open the count,
+  // or every visit would hand the player a fresh eighty to spare.
+  const t = sectorLedger(level);
+  if (!t.popSeeded) t.popSeeded = made;
   return made;
 }
 
@@ -11715,6 +11703,20 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
     let deadGuy = enemiesList.find(e => e.x === x && e.y === y && e.dead);
     let isAmbushKill = deadGuy ? deadGuy.isAmbush : false;
 
+    // One of the sector's own, shot before the towers came down. This is the
+    // ONLY thing that reduces what the player inherits, and it is counted here,
+    // as it happens, rather than inferred later from who is still standing --
+    // a headcount cannot tell "spared" from "wandered off" or "not streamed in
+    // right now", which is why the number used to move on its own.
+    if (deadGuy && deadGuy.isPopulation && !deadGuy.isFriendly) {
+        const t = sectorLedger(currentLevel);
+        if (!t.popGranted) t.popKilled++;
+    }
+    // A soldier the player marched here from somewhere else. They belong to the
+    // sector that raised them, so that is the ledger the loss comes off.
+    if (deadGuy && deadGuy.isMilitary && deadGuy.isFriendly &&
+        typeof escortCasualty === 'function') escortCasualty();
+
     // A machine is a pile of salvage the moment it stops working. Done here
     // rather than at any of the half-dozen places that splice a dead body out
     // of the list, so every way of killing one pays the same.
@@ -14021,8 +14023,22 @@ else if (mx > width/2 - 120 && mx < width/2 + 120 && my > height/2 - 110 && my <
               if (my > height / 2 + 150 && my < height / 2 + 190) { pauseMenuState = "SQUAD"; return false; }
           }
       } else if (pauseMenuState === "GOV_DIRECTIVE") {
-                   // ONLY ESTABLISH BUTTON REMAINS HERE
+          // Out, without committing anything. The Directive is an edit buffer
+          // over the ledger, so backing out simply reloads it.
+          if (mx > width/2 - 70 && mx < width/2 + 70 && my > height - 34 && my < height - 6) {
+              loadLedgerIntoWindow(viewingTownId);
+              if (inWorldBuildingMenu) { inWorldBuildingMenu = false; inOverworldView = true; }
+              else pauseMenuState = "MAIN";
+              return false;
+          }
           if (mx > width/2 - 120 && mx < width/2 + 120 && my > height - 90 && my < height - 40) {
+              // Nobody to assign: the button is CONTINUE and it just leaves.
+              if (popTotal === 0) {
+                  if (inWorldBuildingMenu) { inWorldBuildingMenu = false; inOverworldView = true; }
+                  else pauseMenuState = "MAIN";
+                  sfx.charge();
+                  return false;
+              }
               if (popUnassigned === 0) { 
                   // RE-POPULATE: Clear old ones
                   townCitizens = []; 
@@ -14040,6 +14056,7 @@ else if (mx > width/2 - 120 && mx < width/2 + 120 && my > height/2 - 110 && my <
                   for (let i = 0; i < window.popArchitectureM; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "ARCHITECTURE", "MALE"));
                   for (let i = 0; i < window.popArchitectureF; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "ARCHITECTURE", "FEMALE"));
 
+                  storeWindowIntoLedger(viewingTownId);
                   saveTownData(viewingTownId);
                   townsData[viewingTownId].established = true;
                   
@@ -14180,7 +14197,17 @@ else if (typeof inPostAmbushCutscene !== 'undefined' && inPostAmbushCutscene) {
 // 3. GOV DIRECTIVE MENU -> OVERWORLD (Merged)
 // ==========================================
 else if (typeof inWorldBuildingMenu !== 'undefined' && inWorldBuildingMenu) {
+    if (mx > width/2 - 70 && mx < width/2 + 70 && my > height - 34 && my < height - 6) {
+        loadLedgerIntoWindow(viewingTownId);
+        inWorldBuildingMenu = false; inOverworldView = true;
+        return false;
+    }
     if (mx > width/2 - 120 && mx < width/2 + 120 && my > height - 90 && my < height - 40) {
+        if (popTotal === 0) {
+            inWorldBuildingMenu = false; inOverworldView = true;
+            if (typeof sfx !== 'undefined' && sfx.charge) sfx.charge();
+            return false;
+        }
         if (popUnassigned === 0) { 
             inWorldBuildingMenu = false;
             
@@ -14191,6 +14218,7 @@ else if (typeof inWorldBuildingMenu !== 'undefined' && inWorldBuildingMenu) {
                 if (!townsData[targetId]) townsData[targetId] = {};
                 townsData[targetId].established = true;
             }
+            storeWindowIntoLedger(targetId);
             if (typeof saveTownData === 'function') saveTownData(targetId);
             
             // B. Physically spawn the gender-accurate citizens
@@ -14260,6 +14288,11 @@ else if (inTravelMenu) {
               isWin = false;
               winTimer = 0;
               inUpgradeMenu = false;
+              // Whose soldiers these are. They stay on this sector's military
+              // roll while they are away, and any of them that do not come back
+              // come off it -- see escortCasualty().
+              window.escortHome = viewingTownId || currentLevel;
+              window.escortWasF = window.militaryToBringF || 0;
               startExtraction(travelDirection);
               travelDirection = null;
           }
@@ -14357,6 +14390,11 @@ if (inTravelMenu) {
               isWin = false;
               winTimer = 0;
               inUpgradeMenu = false;
+              // Whose soldiers these are. They stay on this sector's military
+              // roll while they are away, and any of them that do not come back
+              // come off it -- see escortCasualty().
+              window.escortHome = viewingTownId || currentLevel;
+              window.escortWasF = window.militaryToBringF || 0;
               startExtraction(travelDirection);
               travelDirection = null;
           }
@@ -14833,6 +14871,11 @@ function saveGame() {
 
         // --- NEW FOR TOWN PERSISTENCE ---
         townsData: typeof townsData !== 'undefined' ? townsData : null,
+        // The ledger itself rides along inside townsData (popSeeded, popKilled,
+        // popGranted are plain fields on it). These two are the escort's
+        // paperwork and live on window, so they have to be named.
+        escortHome: window.escortHome || null,
+        escortWasF: window.escortWasF || 0,
         viewingTownId: typeof viewingTownId !== 'undefined' ? viewingTownId : 1,
 
         // --- BIOME WORLD PERSISTENCE ---
@@ -14864,6 +14907,8 @@ function loadGame() {
         // townsData. They have to be in place before the map is generated,
         // otherwise every save reloads into the wrong world.
         if (state.townsData) townsData = state.townsData;
+        window.escortHome = state.escortHome || null;
+        window.escortWasF = state.escortWasF || 0;
         if (state.viewingTownId) viewingTownId = state.viewingTownId;
         if (state.biomeState) biomeState = state.biomeState;
         if (state.currentBiome) currentBiome = state.currentBiome;
@@ -15003,6 +15048,8 @@ function loadGame() {
         weather = null;
         applyBiomeWeather();
         if (state.townsData) townsData = state.townsData;
+        window.escortHome = state.escortHome || null;
+        window.escortWasF = state.escortWasF || 0;
         if (state.viewingTownId) viewingTownId = state.viewingTownId;
         window.farmXP = Number(state.farmXP) || 0; window.milXP = Number(state.milXP) || 0; 
         window.sciXP = Number(state.sciXP) || 0; window.archXP = Number(state.archXP) || 0;
