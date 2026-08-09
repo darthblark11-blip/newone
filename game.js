@@ -354,6 +354,7 @@ function preload() {
 
 
 function legacyStartAtLevel(lvl, isLoading = false) {
+    if (typeof invalidateDirectiveBuffer === 'function') invalidateDirectiveBuffer();
     // The ground the player is leaving keeps what was spilled on it, and the
     // ground they are arriving at gets its own back. Anything still falling is
     // pressed in first, because corpses[] does not survive the level change.
@@ -4009,8 +4010,8 @@ viewBottom = camY + height / zoom + shakePad;
       // rebuilt from these same numbers when the Directive is confirmed -- so
       // the panel was correcting itself against its own output, and every
       // stream, cull or level rebuild that moved a body moved the population.
-      // It reads the ledger and nothing else now.
-      loadLedgerIntoWindow(viewingTownId);
+      // It reads the ledger and nothing else now, and reads it ONCE.
+      beginDirective(viewingTownId, 'WORLD');
 
 
       fill(255); textAlign(CENTER, CENTER); textSize(32); textFont('sans-serif');
@@ -4397,8 +4398,8 @@ if (swordPickedUp || window.pickaxeOwned) {
       // rebuilt from these same numbers when the Directive is confirmed -- so
       // the panel was correcting itself against its own output, and every
       // stream, cull or level rebuild that moved a body moved the population.
-      // It reads the ledger and nothing else now.
-      loadLedgerIntoWindow(viewingTownId);
+      // It reads the ledger and nothing else now, and reads it ONCE.
+      beginDirective(viewingTownId, 'PAUSE');
 
   // --- 1. USE YOUR EXACT trueGlobalPop LOGIC FROM SCREENSHOT 1000206223.jpg ---
   let trueGlobalPop = 0;
@@ -5250,6 +5251,7 @@ function openSectorDirective(level) {
 // the button on "ASSIGN CITIZENS" with nothing to assign: a dead end in the
 // middle of the loop. Guarantee a roster whenever the Directive opens.
 function ensureDirectiveRoster() {
+    invalidateDirectiveBuffer();
     // This used to invent an unassigned roster by halving the scalar `popTotal`
     // whenever the gendered counts looked empty -- a patch over the entity scan
     // leaving them undefined. Against a ledger it can only do damage: `popTotal`
@@ -5322,6 +5324,7 @@ function grantCitizens(id, males, females) {
     t.popUnassignedM += Math.max(0, Math.round(males || 0));
     t.popUnassignedF += Math.max(0, Math.round(females || 0));
     t.popTotal = sectorPopSum(t);
+    invalidateDirectiveBuffer();      // new people have to show up in the panel
     return t;
 }
 
@@ -5334,7 +5337,30 @@ function globalPopulationCount() {
 
 // The window.pop* globals are the Directive's edit buffer and nothing more.
 // They are loaded from the ledger when it opens and written back when it is
-// confirmed; between those two moments nothing else may touch them.
+// confirmed; between those two moments NOTHING ELSE MAY TOUCH THEM -- and that
+// includes the panel's own draw pass.
+//
+// This is not a style preference, it is the whole reason the + and - buttons
+// work. They write to the buffer from inside the draw block; a reload at the
+// top of that same block undoes every press before it can be drawn, so the
+// counts sit at zero and nothing can be assigned at all. `beginDirective()` is
+// what makes the load happen ONCE, when the panel opens on a sector, rather
+// than sixty times a second while the player is trying to use it.
+let directiveBufferFor = null;
+
+function beginDirective(id, panel) {
+    const key = (panel || 'X') + ':' +
+                ((id === undefined || id === null) ? currentLevel : id);
+    if (directiveBufferFor === key) return;
+    directiveBufferFor = key;
+    loadLedgerIntoWindow(id);
+}
+
+// Anything that changes the ledger under an open panel -- a grant, a confirm,
+// a level change -- has to say so, or the panel keeps showing the buffer it
+// loaded before.
+function invalidateDirectiveBuffer() { directiveBufferFor = null; }
+
 function loadLedgerIntoWindow(id) {
     const t = sectorLedger(id);
     for (const d of POP_DEPTS) {
@@ -5355,6 +5381,7 @@ function loadLedgerIntoWindow(id) {
 }
 
 function storeWindowIntoLedger(id) {
+    invalidateDirectiveBuffer();
     const t = sectorLedger(id);
     for (const d of POP_DEPTS) {
         t["pop" + d + "M"] = Number(window["pop" + d + "M"]) || 0;
@@ -5441,6 +5468,7 @@ function escortCasualty() {
 // complaint, and it was a single line: `window.popFarmingM = 0;` and its
 // seven siblings.
 function openDirectiveWithGrant(level) {
+    invalidateDirectiveBuffer();
     grantSectorSurvivors(level);
     openSectorDirective(level);
     loadLedgerIntoWindow(level);
@@ -13932,7 +13960,17 @@ else if (mx > width/2 - 120 && mx < width/2 + 120 && my > height/2 - 110 && my <
 }
 
                   
-                  if (my > height/2 - 60 && my < height/2 - 20) { pauseMenuState = "GOV_DIRECTIVE"; return false; }
+                  if (my > height/2 - 60 && my < height/2 - 20) {
+                      // Point the panel at the sector the player is STANDING IN.
+                      // It used to open on whatever `viewingTownId` happened to
+                      // hold -- the last town looked at, or nothing at all --
+                      // so opening it from the Green Line showed Stick City's
+                      // ledger, or an empty one.
+                      openDirectiveWithGrant(currentLevel);
+                      pauseMenuState = "GOV_DIRECTIVE";
+                      inWorldBuildingMenu = false;
+                      return false;
+                  }
                   
                   if (my > height/2 - 10 && my < height/2 + 30) { 
                       if (typeof townsData !== 'undefined' && townsData[currentLevel] && townsData[currentLevel].established) {
@@ -14022,7 +14060,7 @@ else if (mx > width/2 - 120 && mx < width/2 + 120 && my > height/2 - 110 && my <
           // Out, without committing anything. The Directive is an edit buffer
           // over the ledger, so backing out simply reloads it.
           if (mx > width/2 - 70 && mx < width/2 + 70 && my > height - 34 && my < height - 6) {
-              loadLedgerIntoWindow(viewingTownId);
+              invalidateDirectiveBuffer(); loadLedgerIntoWindow(viewingTownId);
               if (inWorldBuildingMenu) { inWorldBuildingMenu = false; inOverworldView = true; }
               else pauseMenuState = "MAIN";
               return false;
@@ -14187,7 +14225,7 @@ else if (typeof inPostAmbushCutscene !== 'undefined' && inPostAmbushCutscene) {
 // ==========================================
 else if (typeof inWorldBuildingMenu !== 'undefined' && inWorldBuildingMenu) {
     if (mx > width/2 - 70 && mx < width/2 + 70 && my > height - 34 && my < height - 6) {
-        loadLedgerIntoWindow(viewingTownId);
+        invalidateDirectiveBuffer(); loadLedgerIntoWindow(viewingTownId);
         inWorldBuildingMenu = false; inOverworldView = true;
         return false;
     }

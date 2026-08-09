@@ -487,5 +487,45 @@ console.log('\n== a premature zero does not stick ==');
   ok('and only once', P('sectorLedger(4).popTotal') === t, `${t} -> ${P('sectorLedger(4).popTotal')}`);
 }
 
+// THE EDIT BUFFER IS LOADED ONCE, NOT EVERY FRAME.
+//
+// The + and - buttons write to window.pop* from inside the panel's DRAW block.
+// A reload at the top of that same block undoes every press before it can be
+// drawn — the counts sit at zero and nothing can be assigned at all. This is
+// the check for that, and it drives the buffer the way a frame does.
+console.log('\n== the player can actually assign somebody ==');
+{
+  probe('isStoryMode = true; townsData = {}; startAtLevel(4);');
+  probe(`for (const e of enemiesList) if (e.eType === "MILITARY_NEUTRAL") e.isFriendly = true;`);
+  probe('openDirectiveWithGrant(4);');
+  const granted = P('sectorLedger(4).popTotal');
+  ok('the outpost hands over its cordon', granted > 0, granted + ' citizens');
+
+  probe("beginDirective(viewingTownId, 'WORLD');");
+  ok('and the panel shows them', P('popTotal') === granted && P('popUnassigned') === granted,
+     `total ${P('popTotal')}, unassigned ${P('popUnassigned')}`);
+
+  // Five taps, each followed by the next frame's draw.
+  for (let i = 0; i < 5; i++) {
+    probe('window.popMilitaryM++; window.popUnassignedM--;');
+    probe("frameCount++; beginDirective(viewingTownId, 'WORLD');");
+  }
+  ok('five taps on MILITARY + leave five in MILITARY', P('window.popMilitaryM') === 5,
+     P('window.popMilitaryM') + ' assigned after 5 taps');
+  ok('and they came out of UNASSIGNED', P('window.popUnassignedM') === granted - 5,
+     `${P('window.popUnassignedM')} of ${granted - 5}`);
+
+  probe('storeWindowIntoLedger(viewingTownId);');
+  ok('confirming writes them to the ledger', P('sectorLedger(4).popMilitaryM') === 5);
+  ok('and the total does not change when people move columns',
+     P('sectorLedger(4).popTotal') === granted, `${P('sectorLedger(4).popTotal')} of ${granted}`);
+  probe("frameCount++; beginDirective(viewingTownId, 'WORLD');");
+  ok('re-opening the panel shows the assignment', P('window.popMilitaryM') === 5);
+
+  // Switching between the two panels must reload, not carry a stale buffer.
+  probe("beginDirective(viewingTownId, 'PAUSE');");
+  ok('and so does the other copy of the panel', P('window.popMilitaryM') === 5);
+}
+
 console.log(`\n${checks - fails}/${checks} checks passed`);
 process.exit(fails ? 1 : 0);

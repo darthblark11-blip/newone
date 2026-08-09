@@ -591,8 +591,18 @@ escortCasualty()              // one soldier off their HOME sector's roll
 ```
 
 **`window.pop*` is an edit buffer, not state.** It is loaded when the Directive opens and
-written back when it is confirmed; between those two moments nothing else may touch it.
-BACK simply reloads, which is what makes it a cancel.
+written back when it is confirmed; between those two moments **nothing else may touch it —
+including the panel's own draw pass.** That is not a style preference, it is the whole
+reason the `+` and `−` buttons work: they write to the buffer from inside the draw block,
+so a reload at the top of that same block undoes every press before it can be drawn, and
+nothing can be assigned at all. `beginDirective(id, panel)` makes the load happen **once**,
+when the panel opens on a sector, rather than sixty times a second while the player is
+using it; `invalidateDirectiveBuffer()` is how a grant, a confirm or a level change says
+the buffer is stale. BACK invalidates and reloads, which is what makes it a cancel.
+
+**Opening the pause Directive points it at the sector the player is standing in.** It used
+to open on whatever `viewingTownId` happened to hold — the last town looked at, or nothing
+at all — so opening it from the Green Line showed Stick City's ledger, or an empty one.
 
 **Surviving citizens are arithmetic.** For Stick City and the Undercity it is
 `popSeeded − popKilled` — eighty minus the ones shot before the towers came down —
