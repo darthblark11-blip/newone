@@ -610,6 +610,17 @@ mostly, plus its own intake (`NM0_ROOKIE`). It holds **no recruitable type** —
 towers, every human in that uniform is one the player spared, and spawning more takes it
 back. Both entries are in `SECTOR_GARRISON`, so `sweepForeignHostiles()` leaves them.
 
+**A wanderer belongs on the open road, not in the authored streets.** `getOuterSpawn()`
+is what guarantees that. The outer-region guard clears the *player*; `getSafeSpawn()` then
+scatters the body 140–900 units away from them and knows nothing about the curtain wall —
+and the authored-core rejection inside `getSafeSpawn()` only applies **mid-arc**, which is
+exactly the window that ends when the ambush is cleared. So it re-rolls until the point
+itself is clear of `inAuthoredSector(…, 500)` and of any settlement, and **declines rather
+than force a placement**: a missed spawn is invisible, a robot in the town square is not.
+It deliberately does *not* use the full `outerRegionUncached()` test — that also rejects
+the 3×3 chunk neighbourhood around every checkpoint, and at 21% checkpoint density it
+refused so much ground that standing near a post stopped the spawner dead.
+
 `SECTOR_POP_MIX` is deliberately *all* recruitable types (`NORMAL`/`MOLOTOV` for Stick
 City, `FEMALE_PISTOL` for the Undercity) so the count is exact rather than
 eighty-of-which-sixty-seven-mattered. Those types are also in `SECTOR_GARRISON`, so
@@ -1175,6 +1186,13 @@ cheap: chunk generation is a pure function of `(biome, cx, cy)`, so world coordi
 the same thing on every visit and a mark laid down an hour ago is still under the same
 tree. `bloodChunks` / `bloodChunkUse` stay exactly what they were — the *active* bank — so
 every painter and the draw loop are untouched.
+
+**Two layers per ground chunk, and the order is the point.** A splatter thrown *after* a
+body has been pressed in must not land on top of it — blood goes on the floor. The layer is
+a suffix on the chunk key (`bloodKey`, `isBodyLayer`) and nothing else, so the bank swap,
+the budget and the wipe are all untouched; `drawBloodChunks()` just lays every floor
+surface down before every body surface. A separate pair of dictionaries would have meant
+touching all three for a two-line ordering problem.
 
 `retireCorpsesToBloodBank()` runs first, before the swap: `corpses[]` does not survive a
 level change, so anything still falling is fast-forwarded and pressed in rather than

@@ -220,6 +220,18 @@ for (const lvl of [1, 2]) {
   probe(`for (const b of buildings) if (b.isTower) b.hp = 0;
          markSectorTowersDown(currentLevel); recruitSectorSurvivors();
          enemiesList = enemiesList.filter(e => e.isFriendly);`);
+  // Stand on the open road. A wanderer is only ever drawn out there, and since
+  // the liberated pick sits below the outer-region guard it answers from there
+  // too — standing in the city, the correct number of spawns is none.
+  probe(`(function () {
+    for (let r = 7000; r < 40000; r += 900)
+      for (let a = 0; a < 12; a++) {
+        const x = Math.cos(a) * r, y = Math.sin(a) * r;
+        if (!inAuthoredSector(x, y, 900) && outerRegionUncached(x, y)) {
+          player.x = x; player.y = y; return;
+        }
+      }
+  })()`);
   const got = P(`(function () {
     const start = enemiesList.length, out = {};
     for (let i = 0; i < 300; i++) { frameCount++; spawnSingleEnemy(); }
@@ -238,6 +250,46 @@ for (const lvl of [1, 2]) {
   ok(`sector ${lvl} sends machines and NM-0's own intake`,
      types.indexOf('ROBOT') !== -1 && types.some((t) => t.indexOf('NM0_ROOKIE') === 0),
      types.join(', '));
+}
+
+// A wanderer belongs on the open road, not in the hand-authored streets. The
+// outer-region guard clears the PLAYER; getSafeSpawn() then scatters the body
+// 140-900 units from them and knows nothing about the curtain wall. Worse, the
+// authored-core rejection inside getSafeSpawn() only applies mid-arc — which is
+// exactly the window that ends when the ambush is cleared.
+console.log('\n== overworld spawns stay out of the legacy map ==');
+for (const lvl of [1, 2]) {
+  probe(`isStoryMode = true; townsData = {}; window.towersDefeated = false;
+         window.southGateBreachedStatus = false; window.nm0AmbushClearedStatus = false;
+         nm0AmbushActive = false;`);
+  probe(`startAtLevel(${lvl});`);
+  probe(`for (const b of buildings) if (b.isTower) b.hp = 0;
+         markSectorTowersDown(currentLevel); window.towersDefeated = true;
+         window.nm0AmbushCleared = true; window.southGateBreachedStatus = true;
+         recruitSectorSurvivors(); enemiesList = enemiesList.filter(e => e.isFriendly);`);
+  const r = P(`(function () {
+    let placed = 0, inside = 0, inTown = 0;
+    const c = authoredCore;
+    for (let d = 950; d <= 3000; d += 100)
+      for (let k = -3; k <= 3; k++) {
+        const x = c.rx1 + d, y = k * 900;
+        if (inAuthoredSector(x, y, 900)) continue;
+        player.x = x; player.y = y;
+        for (let i = 0; i < 8; i++) {
+          frameCount++;
+          const s = getOuterSpawn();
+          if (!s) continue;
+          placed++;
+          if (inAuthoredSector(s.x, s.y, 0)) inside++;
+          if (typeof nearSettlement === 'function' && nearSettlement(s.x, s.y)) inTown++;
+        }
+      }
+    return { placed: placed, inside: inside, inTown: inTown };
+  })()`);
+  ok(`sector ${lvl} still finds somewhere to put them`, r.placed > 100, r.placed + ' placements');
+  ok(`sector ${lvl} none of them land in the legacy map`, r.inside === 0,
+     r.inside + ' of ' + r.placed + ' inside the authored core');
+  ok(`sector ${lvl} none of them land in a town`, r.inTown === 0, r.inTown + ' in a settlement');
 }
 
 console.log(`\n${checks - fails}/${checks} checks passed`);

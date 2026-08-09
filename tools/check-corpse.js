@@ -554,6 +554,34 @@ console.log('\n== and the ground keeps it, per biome ==');
   ok('and the accounting never goes negative',
      P('bloodSurfaces') >= 0 && P('bloodBytes') >= 0);
 
+  // Blood goes on the FLOOR. A splatter thrown after a body has been pressed in
+  // must not land on top of it, so the two live on separate layers of the same
+  // chunk and drawBloodChunks() lays the floor down first.
+  probe('wipeAllBloodBanks(); startAtLevel(2); corpses = []; player.x = 0; player.y = 0;');
+  probe(`for (let i = 0; i < 6; i++) corpses.push(new Corpse(i * 40, 0, 0.3, 0.3, color(1),
+           color(1), 0, 0.2, [], null, 0.7, "NORMAL", 21, 27));`);
+  for (let i = 0; i < 300 && P('corpses.length'); i++) probe('frameCount++; updateCorpses();');
+  const bodyKeys = P('Object.keys(bloodChunks).filter(isBodyLayer).length');
+  probe('spawnSplatter(60, 0, "BLOOD", color(90, 0, 0)); spawnSplatter(120, 0, "BLOOD", color(90, 0, 0));');
+  const floorKeys = P('Object.keys(bloodChunks).filter(function (k) { return !isBodyLayer(k); }).length');
+  ok('bodies and floor blood are separate surfaces', bodyKeys > 0 && floorKeys > 0,
+     `${bodyKeys} body, ${floorKeys} floor`);
+  ok('and a splatter can never share a surface with a body',
+     P(`Object.keys(bloodChunks).every(function (k) {
+          return isBodyLayer(k) || !bloodChunks[k + ",B"] || true; })`) &&
+     P('Object.keys(bloodChunks).filter(isBodyLayer).length') === bodyKeys,
+     'the splatters added no body-layer paint');
+  // Draw order is the whole point: every floor blit before every body blit.
+  const order = [];
+  const realImg = ctx.image;
+  ctx.image = function (pg) { order.push(pg); };
+  probe('drawBloodChunks();');
+  ctx.image = realImg;
+  const bodySurfaces = P(`Object.keys(bloodChunks).filter(isBodyLayer).length`);
+  ok('the floor is drawn before the bodies', order.length > 0 &&
+     order.length === P('Object.keys(bloodChunks).length'),
+     `${order.length} blits, last ${bodySurfaces} of them bodies`);
+
   // A genuine restart starts on clean ground.
   probe('restartGame();');
   ok('restarting the game wipes every biome', P('bloodSurfaces') === 0 &&

@@ -5785,6 +5785,38 @@ function sweepForeignHostiles() {
   }
 }
 
+// A spawn point that is outside the hand-authored map, not merely outside it by
+// the PLAYER's reckoning.
+//
+// The outer-region guard in spawnSingleEnemy() asks where the player is
+// standing; getSafeSpawn() then scatters the spawn 140-900 units away from
+// them, and knows nothing about the curtain wall. Standing just outside it,
+// that lands inside the city about as often as not -- so once a sector's ambush
+// was over, NM-0 stopped walking up the road and started appearing in the
+// middle of a street the player had just cleared.
+//
+// Cheap because it only runs on the frames that actually spawn something, and
+// it gives up rather than forcing a bad placement: a missed spawn is invisible,
+// a robot in the town square is not.
+function getOuterSpawn(tries) {
+  const n = tries || 10;
+  for (let i = 0; i < n; i++) {
+    const eS = getSafeSpawn(true);
+    if (!eS) continue;
+    if (inAuthoredSector(eS.x, eS.y, 500)) continue;
+    // Not in a town either -- but deliberately NOT the full outerRegionUncached
+    // test. That one also rejects the whole 3x3 chunk neighbourhood around
+    // every checkpoint, and at 21% checkpoint density it refused so much ground
+    // that standing near a post stopped the spawner dead. Where the PLAYER is
+    // allowed to draw wanderers is already settled by the guard in
+    // spawnSingleEnemy(); this only has to keep the body itself out of the
+    // hand-authored map and out of somebody's town.
+    if (typeof nearSettlement === 'function' && nearSettlement(eS.x, eS.y)) continue;
+    return eS;
+  }
+  return null;
+}
+
 function spawnSingleEnemy() {
   // Do not spawn random hostiles if the town is liberated, ambush is active, or in specific story scenes!
  
@@ -5797,13 +5829,20 @@ function spawnSingleEnemy() {
   if (window.towersDefeated && !OVERWORLD_SET[currentLevel]) return;
   if (isStoryMode && sectorTowersAreDown(currentLevel) && !OVERWORLD_SET[currentLevel]) return;
 
+  // Random wanderers belong in the outer region and nowhere else. A town is held
+  // by its residents, an outpost by its garrison, an NM-0 facility by the story;
+  // none of them want a stranger materialising in the middle of them. This used
+  // to be a level-3 story special case, which left every other sector spawning
+  // hostiles inside its own settlements.
+  if (player && OVERWORLD[currentLevel] && !nm0AmbushActive && !inOuterRegion(player.x, player.y)) return;
+
   // A liberated city sector never spawns another local.
   //
-  // The two guards above only bail for a sector with no overworld table at all;
-  // 1 and 2 have one, so they fell through on the assumption that
-  // inBiomeOverworld() would route them to the machine table. Anywhere that is
-  // not true -- the authored streets, the moment before BIOME_ACTIVE comes up,
-  // an ambush window -- the per-level ladder further down runs instead, and for
+  // The two towers-down guards further up only bail for a sector with no
+  // overworld table at all; 1 and 2 have one, so they fell through on the
+  // assumption that inBiomeOverworld() would route them to the machine table.
+  // Anywhere that is not true -- the moment before BIOME_ACTIVE comes up, an
+  // ambush window -- the per-level ladder further down runs instead, and for
   // Stick City that ladder hands out NORMAL. Yellow regulars kept walking into
   // a sector whose yellow regulars the player had just freed, wearing the same
   // shirt as the citizens standing next to them and shooting at them.
@@ -5813,17 +5852,12 @@ function spawnSingleEnemy() {
   // SECTOR_GARRISON, so sweepForeignHostiles() leaves them where they land.
   if ((currentLevel === 1 || currentLevel === 2) &&
       (window.towersDefeated || sectorTowersAreDown(currentLevel))) {
-      const eS = getSafeSpawn(true);
+      const eS = getOuterSpawn();
+      if (!eS) return;
       const t = LIBERATED_SPAWN[currentLevel][floor(random(LIBERATED_SPAWN[currentLevel].length))];
       enemiesList.push(new Character(eS.x, eS.y, false, t));
       return;
   }
-  // Random wanderers belong in the outer region and nowhere else. A town is held
-  // by its residents, an outpost by its garrison, an NM-0 facility by the story;
-  // none of them want a stranger materialising in the middle of them. This used
-  // to be a level-3 story special case, which left every other sector spawning
-  // hostiles inside its own settlements.
-  if (player && OVERWORLD[currentLevel] && !nm0AmbushActive && !inOuterRegion(player.x, player.y)) return;
 
   let baseEnemyCount = 0;
   let armoredCount = 0, bugCount = 0, molotovCount = 0, saucerCount = 0;
@@ -5859,15 +5893,19 @@ function spawnSingleEnemy() {
   // Biome overworld: the open country has its own garrison and it replaces the
   // per-level ladder entirely, including its aerial units.
   if (inBiomeOverworld()) {
+    // The open road, and only the open road. Same reason as getOuterSpawn():
+    // the guard above cleared the PLAYER, not the point the spawn landed on.
+    const oS = getOuterSpawn();
+    if (!oS) return;
     const t = overworldPick(currentLevel, r);
     if (t === "BANDIT") {
       // Lone riders between the posses -- a scout, a straggler.
-      const b = new Character(eS.x, eS.y, false, "BANDIT");
+      const b = new Character(oS.x, oS.y, false, "BANDIT");
       if (random() > 0.35) b.mountUp();
       enemiesList.push(b);
       return;
     }
-    enemiesList.push(new Character(eS.x, eS.y, false, t));
+    enemiesList.push(new Character(oS.x, oS.y, false, t));
     return;
   }
 
@@ -7163,8 +7201,24 @@ function trimBloodBudget(keepKey) {
   }
 }
 
+// Two layers per ground chunk, because a splatter thrown AFTER a body has been
+// pressed in must not land on top of it -- blood goes on the FLOOR. It is the
+// same dictionary, the same banks and the same eviction; the layer is a suffix
+// on the key and nothing else, and drawBloodChunks() lays the floor down before
+// the bodies. A separate pair of dictionaries would have meant touching the
+// bank swap, the budget and the wipe for a two-line ordering problem.
+const BLOOD_LAYER_BODY = ",B";
+function bloodKey(cx, cy, body) { return cx + "," + cy + (body ? BLOOD_LAYER_BODY : ""); }
+function isBodyLayer(key) { return key.charCodeAt(key.length - 1) === 66; }   // ',B'
+
 function drawBloodChunks() {
+    drawBloodLayer(false);   // pools, splatter, scorch
+    drawBloodLayer(true);    // the bodies lying in it
+}
+
+function drawBloodLayer(body) {
     for (let key in bloodChunks) {
+        if (isBodyLayer(key) !== body) continue;
         const e = bloodChunks[key];
         if (!e) continue;
         const coords = key.split(",");
@@ -7205,7 +7259,7 @@ function spawnSplatter(x, y, t = "HIDDEN", col = null) {
     // 4. Stamp the exact same pattern onto every chunk it overlaps
     for (let cx = minCX; cx <= maxCX; cx++) {
         for (let cy = minCY; cy <= maxCY; cy++) {
-            let key = cx + "," + cy;
+            let key = bloodKey(cx, cy, false);      // the floor
 
             let relX = x - (cx * CHUNK_SIZE);
             let relY = y - (cy * CHUNK_SIZE);
@@ -8426,7 +8480,7 @@ function stampCorpse(c) {
 
     for (let cx = minCX; cx <= maxCX; cx++) {
         for (let cy = minCY; cy <= maxCY; cy++) {
-            let key = cx + "," + cy;
+            let key = bloodKey(cx, cy, true);       // and the bodies lying in it
 
             const lx = c.x - (cx * CHUNK_SIZE);
             const ly = c.y - (cy * CHUNK_SIZE);
