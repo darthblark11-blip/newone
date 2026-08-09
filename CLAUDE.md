@@ -487,6 +487,72 @@ only the *fixtures* (bulb, housing glow, wet sheen straight down) with
 `globalCompositeOperation = 'lighter'`, sorted by distance to the player and clamped to
 visible lamps — the ground pool is the light rig's job, not this function's.
 
+### The deferred rig (WebGL2)
+
+`GLRig` sits in front of `drawLightPass()` and does the same job on the GPU, plus the
+things a canvas cannot do: per-pixel relief shading, Blinn-Phong specular, ray-marched
+sun shadows and **shadows cast by point lights**. `glRigFrame()` returns false on
+anything without WebGL2, and the canvas rig — which is untouched — carries that frame
+instead. One line in `draw()` chooses between them.
+
+**The game is p5 in 2D mode, so there is no geometry pass to hang G-buffer outputs off.**
+The rig is built on the two things that already exist instead:
+
+- **Diffuse** is the finished p5 canvas, uploaded as a texture. It is the frame the game
+  was going to draw anyway, so it costs nothing to produce.
+- **Height/material** is `glRigPaintHeight()`, a small second p5.Graphics painted with
+  flat greys from the same lists `drawBiomeShadows()` walks. **No art and no per-type
+  dispatch** — it reads `buildingRise()`, `groundElev()` and a standing height, so adding
+  a building type does *not* mean touching it. Channels are `R` height, `G` gloss,
+  `B` facing as turns, `A` coverage.
+- **Normals** are Sobel-differenced from that height field on the GPU. There are no
+  authored normal maps in this game and no UV set to hang them on; deriving them is the
+  honest answer, and it gives real relief on walls, kerbs and benches for four taps.
+  The tangent-space path — sampling an atlas and rotating it into the entity's own facing
+  with a 2D rotation matrix — **is implemented and running**, fed a neutral 1×1 texture
+  until an atlas exists. `glRigSetNormalAtlas(img, mix)` is the way in.
+
+Six passes, in this order, all pre-allocated in `glRigInit()`:
+
+```
+height paint -> upload -> normals -> ambient+sun (heightmap ray march)
+             -> per light: occlusion -> polar reduction -> additive composite
+             -> final composite -> drawImage back into the 2D canvas
+```
+
+Five things here are load-bearing:
+
+1. **The rig must be a no-op on flat, unlit, unoccluded ground.** Both light colours are
+   normalised to luma 1 and the ambient term is `amb - sunPow * Lz`, so a bare road at
+   noon comes out of the GPU path pixel-identical to the canvas path and everything the
+   rig adds is a departure from that baseline. Every biome palette in this file was
+   authored at midday against that level; regrading the whole scene would invalidate all
+   of them. `check-lighting.js` and the browser suite both assert it.
+2. **It goes back into the p5 canvas, not onto the page.** The HUD, the sticks and every
+   cutscene overlay are drawn *after* the light pass, so a GL canvas stacked over the top
+   would bury all of them.
+3. **Exactly one pass casts the sun.** `drawBiomeShadows()` early-outs on
+   `glRigOwnsSunShadows()`, because both cast from the same silhouettes and running both
+   doubles the alpha on every wall. Micro-prop shadows baked into the terrain stay either
+   way — they are in the albedo, and they were baked against the same `LIGHT_DX/DY` the
+   march uses. `slope` is derived from `shadowLengthScale()` so a marched shadow is the
+   length the 2D pass would have drawn.
+4. **An emitter is never shadowed by its carrier.** `rMin` per light. The player's torch
+   sits nine units above the player's own silhouette, so without it the polar reduction
+   finds an occluder at r=0 in every direction and the light comes out as a wedge with the
+   bearer standing in a hole.
+5. **The polar reduction takes the occluder's peak, not its first edge sample.** The
+   occlusion target is LINEAR filtered, so the sample that trips the threshold is sitting
+   on the occluder's filtered edge and reads about half its true height. Recording that
+   let half of every point light through every wall in the scene.
+
+Cost control: point lights are scissored to their own screen box, the light list is the
+same nearest-first budget `drawLightPass()` uses, the height buffer runs at half rig
+resolution (every march sample and every occlusion resample reads it), and
+`glRigWatchdog()` drops through `GLRIG_SCALES` and finally stands the rig down if the
+frame budget goes — fall fast, recover slowly, because a rig oscillating between tiers
+reads as flicker.
+
 ### Weather
 
 `WeatherSystem` (~16978). Particle pool sizes by kind:
@@ -535,7 +601,8 @@ drawBiomeProps()           (BIOME_ACTIVE only)
 drawParkingCars()
 projectiles / particles / orbs / shockwaves
 drawNightLights() + weather.drawWorld()   (BIOME_ACTIVE only)
-drawLightPass() + drawBiomeScreenLayer()  (BIOME_ACTIVE only)
+glRigFrame() or drawLightPass()           (BIOME_ACTIVE only — GPU rig first)
+drawBiomeScreenLayer()
 drawUI() / drawBiomeHud() / updateExtraction()
 ```
 
@@ -1562,8 +1629,19 @@ node tools/check-ballistics.js     # hostile rounds are always slower than the p
 node tools/check-menu.js           # travel lives in the pause menu, and nowhere else
 node tools/check-pathing.js        # walkers turn round obstacles; the collision index
 node tools/check-corpse.js         # the settle: variation, impact direction, and it freezes
+node tools/check-lighting.js       # the deferred rig: uniforms resolve, nothing allocates per frame
 GAME_JS=/path/to/other.js node tools/check-generation.js    # compare against a baseline
 ```
+
+**`check-lighting.js` cannot compile the GLSL** — the harness has no GPU, and the rig
+detects the stubbed `getContext()` and stands down, which is the first thing that file
+asserts. What it *can* catch is the class of bug that is otherwise silent:
+`gl.getUniformLocation` returns null for a name the shader does not declare and
+`gl.uniform*(null, v)` is a **no-op**, so a mistyped uniform does not throw, does not
+warn and does not draw wrong — the term just stays at zero. It cross-checks every
+uniform the JS writes against every uniform the seven shaders declare, in both
+directions, and additionally asserts that nothing allocates a GPU object inside
+`glRigFrame()`. Anything about how the rig actually *looks* needs a browser.
 
 `check-population.js` overrides the harness's `random()` with a seeded generator, because
 `legacyStartAtLevel()` runs against p5's global RNG rather than the chunk hashes — the
