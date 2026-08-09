@@ -53,6 +53,51 @@ ok('drawBiomeShadows() stands down when the rig owns them',
 ok('and it only owns them inside a streamed biome',
    /function glRigOwnsSunShadows\(\)[\s\S]{0,200}?BIOME_ACTIVE/.test(rig));
 
+// Every prop that calls these is in activeBuildings, so the rig has already
+// marched a shadow off its real silhouette. Left ungated they drew a second,
+// differently shaped shadow under every anchor, bridge and hedge in the world.
+for (const fn of ['castShadow', 'castShadowRect']) {
+  const body = src.slice(src.indexOf('function ' + fn + '('),
+                         src.indexOf('function ' + fn + '(') + 320);
+  ok(fn + '() stands down too', /glRigOwnsSunShadows\(\)\)\s*return;/.test(body));
+}
+ok('character contact ovals stand down as well',
+   (src.match(/if \(!charShadowOwned\(this\.eType\)\)/g) || []).length === 2,
+   (src.match(/if \(!charShadowOwned\(this\.eType\)\)/g) || []).length + ' of 2 draw sites');
+
+console.log('\n== a height field cannot hold a flying unit ==');
+// Entered into it, a saucer reads as a tower standing on the ground: it would
+// occlude lamps around its own footprint and cast from its base, not the air.
+ok('airborne types are named once and shared',
+   /const CHAR_AIRBORNE = \{[^}]*SAUCER[^}]*AERIAL[^}]*\}/.test(src));
+ok('they are excluded from the height buffer',
+   /CHAR_AIRBORNE\[c\.eType\]\) return;/.test(rig));
+ok('and they keep their own offset oval',
+   /function charShadowOwned\(eT\) \{\s*if \(CHAR_AIRBORNE\[eT\]\) return false;/.test(src));
+
+console.log('\n== the player carries no light ==');
+// A pool pinned to the player means the player is never in the dark, which is
+// the whole point of a night.
+const gather = rig.slice(rig.indexOf('function glRigGatherLights()'),
+                         rig.indexOf('function glRigWatchdog()'));
+ok('none in the deferred rig', !/out\.push\(\{ x: player\.x/.test(gather));
+const pass2d = src.slice(src.indexOf('function drawLightPass()'),
+                         src.indexOf('function glRigInit') > 0
+                           ? src.indexOf('// DEFERRED LIGHTING AND SHADOW RIG (WebGL2)')
+                           : src.length);
+ok('and none in the canvas rig either', !/addLight\(buf, sx\(player\.x\)/.test(pass2d));
+ok('both rigs still light street lamps and fires',
+   /isStreetLight/.test(gather) && /fires/.test(gather) &&
+   /isStreetLight/.test(pass2d) && /fires/.test(pass2d));
+
+console.log('\n== timber casts off its crown ==');
+// The trunk collides at a fixed 34x34 whatever the tree is, so the collision
+// box is the wrong silhouette to cast from.
+ok('isTreeTrunk is a caster, sized by girth',
+   /if \(b\.isTreeTrunk\) \{[\s\S]{0,300}?b\.girth[\s\S]{0,200}?g\.ellipse/.test(rig));
+ok('and is no longer skipped by the height pass',
+   !/if \(b\.isTreeTrunk\) continue;/.test(rig));
+
 console.log('\n== every uniform the JS sets is one the GLSL declares ==');
 // Collect declarations per shader, and the names the render path writes.
 const shaders = {};

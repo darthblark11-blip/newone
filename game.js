@@ -10948,8 +10948,10 @@ if (this.stunTimer > 0 && this.skeletonTimer <= 0) {
     
     let sOff = (currentLevel === 1 || currentLevel === 3) ? 15 : 10;
     let sAlp = (currentLevel === 1 || currentLevel === 3) ? 45 : 80;
-    charShadowFill(sAlp);
-    ellipse(charShadowX(sOff), charShadowY(sOff), this.bodyW + 20, this.bodyH + 5); 
+    if (!charShadowOwned(this.eType)) {
+      charShadowFill(sAlp);
+      ellipse(charShadowX(sOff), charShadowY(sOff), this.bodyW + 20, this.bodyH + 5);
+    }
 
     let lW = 18, lX = -18, lY1 = -10, lY2 = 2;
 
@@ -10996,16 +10998,24 @@ if (this.stunTimer > 0 && this.skeletonTimer <= 0) {
 
     let sOff = (currentLevel === 1 || currentLevel === 3) ? 15 : 10;
     let sAlp = (currentLevel === 1 || currentLevel === 3) ? 45 : 80;
-    charShadowFill(sAlp);
 
     // Offset along the scene's one light vector, not down-and-right at 45
     // degrees. Every prop, tree and building in a streamed biome throws along
     // LIGHT_DX/DY; characters throwing somewhere else is what made them look
     // pasted on top of the world rather than standing in it.
+    //
+    // Skipped entirely once the deferred rig is running: it marches this body's
+    // own silhouette out of the height buffer, so the flat oval would be a
+    // second shadow sitting under the real one -- which is what made a lit
+    // scene look like it had two suns in it. Airborne units are the exception,
+    // see CHAR_AIRBORNE.
+    if (!charShadowOwned(this.eType)) {
+    charShadowFill(sAlp);
     if (this.eType === "SAUCER" || this.eType === "SAUCER_RED") { ellipse(charShadowX(sOff * 2), charShadowY(sOff * 2), 80, 80); }
     else if (this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL") { ellipse(charShadowX(sOff * 2), charShadowY(sOff * 2), this.bodyW, this.bodyH); }
     else if (this.eType === "ARMORED" || this.eType === "ALIEN_GATOR" || this.eType === "SNAIL_HYBRID") { ellipse(charShadowX(sOff), charShadowY(sOff), this.bodyW * 0.8, this.bodyH); }
     else { ellipse(charShadowX(sOff), charShadowY(sOff), this.bodyW + 5, this.bodyH + 5); }
+    }
 
     if (this.muzzleFlash > 0 && this.reloadTimer <= 0) {
         push();
@@ -21125,12 +21135,20 @@ function shadowFill(alpha) {
   fill(s[0] * 0.30, s[1] * 0.30, s[2] * 0.34, (alpha === undefined ? 80 : alpha) * k);
   noStroke();
 }
+// Both of these are called only from drawBiomeProps(), and every prop that
+// calls them is in activeBuildings -- which means the deferred rig has already
+// painted it into the height buffer and marched a shadow off its real
+// silhouette. Drawing the flat oval as well put a second, differently shaped
+// shadow under every anchor, bridge and hedge in the world. One caster, one
+// shadow: whichever pass owns the sun draws it.
 function castShadow(x, y, w, h, len, alpha) {
+  if (typeof glRigOwnsSunShadows === 'function' && glRigOwnsSunShadows()) return;
   const L = BIOME_ACTIVE ? len * shadowLengthScale() : len;
   shadowFill(alpha);
   ellipse(x + LIGHT_DX * L, y + LIGHT_DY * L, w, h);
 }
 function castShadowRect(x, y, w, h, len, alpha, round) {
+  if (typeof glRigOwnsSunShadows === 'function' && glRigOwnsSunShadows()) return;
   const L = BIOME_ACTIVE ? len * shadowLengthScale() : len;
   shadowFill(alpha);
   rect(x - w / 2 + LIGHT_DX * L, y - h / 2 + LIGHT_DY * L, w, h, round || 0);
@@ -21140,6 +21158,26 @@ function castShadowRect(x, y, w, h, len, alpha, round) {
 // else, drawn in the character's own translated frame. Outside a streamed
 // biome these fall back to the flat black offset the hand-authored levels were
 // drawn against, so nothing about Levels 0 and 8 changes.
+// Units that are not standing on the ground. They keep their flat offset oval
+// forever, and they are the one thing deliberately kept OUT of the deferred
+// rig's height buffer.
+//
+// The rig's shadow term is a HEIGHT FIELD, and a height field cannot express
+// "floating at altitude" -- it only knows how high the ground is at a point. A
+// saucer entered into it does not read as a craft casting a shadow below
+// itself, it reads as a tower standing on the ground: it would occlude lamps
+// around its own footprint and cast from its base rather than from the air. A
+// detached oval, offset by the craft's altitude, is the correct shadow for an
+// airborne caster and the only one available in this projection.
+const CHAR_AIRBORNE = { SAUCER: 1, SAUCER_RED: 1, AERIAL: 1, AERIAL_PISTOL: 1 };
+
+// True when the deferred rig is already casting this character's shadow, so the
+// flat contact oval must not be drawn on top of it.
+function charShadowOwned(eT) {
+  if (CHAR_AIRBORNE[eT]) return false;
+  return typeof glRigOwnsSunShadows === 'function' && glRigOwnsSunShadows();
+}
+
 function charShadowX(off) { return BIOME_ACTIVE ? LIGHT_DX * off * 1.35 * shadowLengthScale() : off; }
 function charShadowY(off) { return BIOME_ACTIVE ? LIGHT_DY * off * 1.35 * shadowLengthScale() : off; }
 function charShadowFill(alpha) {
@@ -23364,11 +23402,13 @@ function drawLightPass() {
     addLight(buf, sx(L.x), sy(L.y), L.r * sr, L.p);
   }
 
-  // The player carries a little light of their own, so a dark street stays
-  // playable without the rig having to lift the whole frame.
-  if (player && player.hp > 0) {
-    addLight(buf, sx(player.x), sy(player.y + 6), 240 * sr, 0.52);
-  }
+  // The player deliberately carries NO light of their own.
+  //
+  // There used to be a 240-unit pool pinned to them, which meant the player was
+  // never actually in the dark: the one thing a night is supposed to do -- make
+  // you walk toward the lamps -- could not happen, because the light came with
+  // you. A torch is an item, not a property of being alive. Reinstate it here
+  // and in glRigGatherLights() together if it ever becomes one.
 
   // Vignette lives here rather than in the grade layer: closing the frame down
   // is a reduction in light, so multiplying is what it actually is.
@@ -24077,9 +24117,20 @@ function glRigPaintHeight() {
   // 2. Masses. The same cull and the same skips as the 2D shadow pass, so the
   //    two agree about what is a caster.
   for (const b of activeBuildings) {
-    if (b.isTreeTrunk) continue;                    // the canopy is a decor entry
     const w = b.w || 0, h = b.h || 0;
     if (!inView(b.x, b.y, Math.max(w, h) + 120)) continue;
+
+    // Timber. The trunk collides at a fixed 34x34 whatever the tree is, so the
+    // 34x34 box is the wrong silhouette to cast from -- what throws the shadow
+    // and blocks the lamp is the crown. `girth` is the canopy's own scale (it
+    // is the decor entry's `s`), so the shadow a tree throws is the size of the
+    // tree you can see, the same way its wood yield is.
+    if (b.isTreeTrunk) {
+      const s = b.girth || 1;
+      glRigMat(g, 20 + s * 9 + groundElev(b.x, b.y), 0.05, 0);
+      g.ellipse(b.x, b.y, 46 * s, 40 * s);
+      continue;
+    }
 
     // Water is below the ground, not above it, and it is the glossiest thing in
     // the scene -- this is what puts a lamp's reflection on the canal.
@@ -24112,6 +24163,9 @@ function glRigPaintHeight() {
   const CH = 17;
   const one = (c) => {
     if (!c || c.hp <= 0 || c.dead) return;
+    // A height field cannot hold a flying unit -- see CHAR_AIRBORNE. They keep
+    // their own offset oval instead.
+    if (CHAR_AIRBORNE[c.eType]) return;
     if (!inView(c.x, c.y, 60)) return;
     glRigMat(g, CH + groundElev(c.x, c.y), 0.18 + 0.25 * wet,
              (c.aimAngle || 0) / (Math.PI * 2));
@@ -24175,12 +24229,12 @@ function glRigGatherLights() {
       });
     }
   }
-  if (player && player.hp > 0) {
-    // rMin clears the player's own 20-unit body, which stands only 9 units
-    // below the light they are holding.
-    out.push({ x: player.x, y: player.y + 6, r: 240, z: 26, p: 0.52, rMin: 22,
-               c: [0.86, 0.92, 1.00], soft: 0.030, d2: -1 });
-  }
+  // No light on the player. See the note in drawLightPass(): a pool pinned to
+  // the player means the player is never in the dark, which is the whole point
+  // of a night. If a torch ever becomes an item, add it back in both rigs at
+  // once, and give it an rMin -- it sits only 9 units above the bearer's own
+  // silhouette, so without one the polar reduction finds an occluder at r=0 in
+  // every direction and the light comes out as a wedge.
 
   // Nearest first, then a hard budget: which lights are lit has to depend on
   // geometry rather than array order, or crossing a chunk border reshuffles the

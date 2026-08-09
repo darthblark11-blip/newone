@@ -531,12 +531,16 @@ Five things here are load-bearing:
 2. **It goes back into the p5 canvas, not onto the page.** The HUD, the sticks and every
    cutscene overlay are drawn *after* the light pass, so a GL canvas stacked over the top
    would bury all of them.
-3. **Exactly one pass casts the sun.** `drawBiomeShadows()` early-outs on
-   `glRigOwnsSunShadows()`, because both cast from the same silhouettes and running both
-   doubles the alpha on every wall. Micro-prop shadows baked into the terrain stay either
-   way — they are in the albedo, and they were baked against the same `LIGHT_DX/DY` the
-   march uses. `slope` is derived from `shadowLengthScale()` so a marched shadow is the
-   length the 2D pass would have drawn.
+3. **Exactly one pass casts the sun, and it is the whole pass list.** Every caster in
+   `activeBuildings` is in the height buffer, so *three* separate places had to stand
+   down, not one: `drawBiomeShadows()`, the `castShadow`/`castShadowRect` pair that
+   `drawBiomeProps()` calls 28 times, and the contact oval in `Character.show()`
+   (`charShadowOwned()`). Each of them was drawing a second, differently shaped shadow
+   under the marched one, which is what a scene with two suns in it looks like.
+   Micro-prop shadows baked into the terrain stay either way — they are in the albedo,
+   and they were baked against the same `LIGHT_DX/DY` the march uses. `slope` is derived
+   from `shadowLengthScale()` so a marched shadow is the length the 2D pass would have
+   drawn.
 4. **An emitter is never shadowed by its carrier.** `rMin` per light. The player's torch
    sits nine units above the player's own silhouette, so without it the polar reduction
    finds an occluder at r=0 in every direction and the light comes out as a wedge with the
@@ -545,6 +549,24 @@ Five things here are load-bearing:
    occlusion target is LINEAR filtered, so the sample that trips the threshold is sitting
    on the occluder's filtered edge and reads about half its true height. Recording that
    let half of every point light through every wall in the scene.
+
+Two things the height field cannot hold, and what happens instead:
+
+- **A flying unit.** A height field only knows how high the ground is at a point, so a
+  saucer entered into it reads as a *tower standing on the ground* — occluding lamps
+  around its own footprint and casting from its base rather than from the air.
+  `CHAR_AIRBORNE` keeps them out of the buffer and keeps their offset oval, which is the
+  correct shadow for an airborne caster and the only one this projection allows.
+- **A tree's crown, from its trunk.** Timber collides at a fixed 34×34 whatever the tree
+  is, so the collision box is the wrong silhouette to cast from. The height pass reads
+  `girth` — the same number the decor entry uses as its scale and `harvestProfile()` uses
+  for the wood yield — so the shadow a tree throws is the size of the tree you can see.
+
+**The player carries no light.** There used to be a 240-unit pool pinned to them in
+`drawLightPass()`, and the GPU rig inherited it. It meant the player was never actually
+in the dark, so the one thing a night is for — making you walk toward the lamps — could
+not happen, because the light came with you. A torch is an item, not a property of being
+alive; if it becomes one, reinstate it in **both** rigs together and give it an `rMin`.
 
 Cost control: point lights are scissored to their own screen box, the light list is the
 same nearest-first budget `drawLightPass()` uses, the height buffer runs at half rig
