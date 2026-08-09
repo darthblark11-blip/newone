@@ -23236,6 +23236,174 @@ function buildGradeLayer(night, g, fogRGBA, w, h) {
 }
 
 // ###########################################################################
+//  EMITTERS
+//  Every light in the world, in one list, gathered once a frame.
+//
+//  There are three consumers -- the canvas rig (drawLightPass), the GPU rig
+//  (glRigFrame) and the fixture pass (drawNightLights) -- and each of them used
+//  to walk activeBuildings itself and decide independently what was lit. Three
+//  copies of "which lamps are on" is three chances for a lamp to throw a pool
+//  with no bulb in it, or a bulb with no pool, or for the GPU and canvas paths
+//  to disagree about the scene the moment the watchdog swaps them. There is one
+//  answer now and all three read it.
+//
+//  An emitter is:
+//    x, y      world position of the source
+//    z         height above the ground, world units. Decides what can occlude
+//              it: a 46-unit lamp head is not shadowed by a 26-unit wall.
+//    r         radius in world units
+//    p         power, 0..1, before either rig applies its own night factor
+//    c         colour as 0..1 rgb -- the temperature, not the brightness
+//    soft      how fast the penumbra opens out (see the polar pass)
+//    rMin      clearance around the source: nothing inside this can shadow it,
+//              which is what stops a carried light being eaten by its bearer
+//    aim, half optional cone, radians. Omitted for an omnidirectional source
+//    fix       which fixture drawNightLights should draw, if any
+// ###########################################################################
+
+// Outpost and settlement lighting. A biome prop lights the ground around it
+// simply by being in this table -- no per-prop code anywhere else.
+//
+// Offsets are from the prop's own centre, because the thing that emits is
+// rarely the middle of the thing that carries it: a watchtower's floodlight is
+// at the top of the mast, a hut's light comes out of its windows.
+const PROP_EMITTERS = {
+  // The three travel anchors. These are the first thing the player sees on
+  // arriving in a biome after dark, and the only fixed light for a kilometre in
+  // most of the streamed world, so they are the brightest things in it.
+  OUTPOST:    { dx: 0, dy: -30, r: 340, z: 58, p: 0.98, c: [1.00, 0.94, 0.80], soft: 0.020, rMin: 40, fix: 'FLOOD' },
+  CHECKPOINT: { dx: 0, dy: -26, r: 310, z: 52, p: 0.95, c: [1.00, 0.95, 0.84], soft: 0.020, rMin: 36, fix: 'FLOOD' },
+  HELIPAD:    { dx: 0, dy: 0,   r: 260, z: 12, p: 0.70, c: [0.52, 0.84, 1.00], soft: 0.045, rMin: 0,  fix: 'BEACON', pulse: 1 },
+  // The posts around them.
+  WATCHTOWER: { dx: 0, dy: -22, r: 380, z: 86, p: 1.00, c: [1.00, 0.97, 0.90], soft: 0.016, rMin: 30, fix: 'FLOOD' },
+  GUARDBOX:   { dx: 0, dy: -14, r: 200, z: 42, p: 0.82, c: [1.00, 0.90, 0.70], soft: 0.026, rMin: 22, fix: 'LAMP'  },
+  BUNKER:     { dx: 0, dy: 12,  r: 160, z: 20, p: 0.55, c: [1.00, 0.76, 0.48], soft: 0.040, rMin: 24, fix: 'WINDOW' },
+  // Anywhere somebody is living or working.
+  CABIN:      { dx: 0, dy: 10,  r: 180, z: 26, p: 0.62, c: [1.00, 0.74, 0.44], soft: 0.038, rMin: 26, fix: 'WINDOW' },
+  SITEHUT:    { dx: 0, dy: 8,   r: 160, z: 24, p: 0.60, c: [1.00, 0.84, 0.58], soft: 0.038, rMin: 24, fix: 'WINDOW' },
+  KIOSK:      { dx: 0, dy: 0,   r: 150, z: 30, p: 0.60, c: [0.84, 0.96, 1.00], soft: 0.034, rMin: 20, fix: 'WINDOW' },
+  BUSSTOP:    { dx: 0, dy: -8,  r: 160, z: 34, p: 0.56, c: [0.88, 0.96, 1.00], soft: 0.030, rMin: 20, fix: 'LAMP'  }
+};
+
+// Which weapons carry a torch under the barrel. The three western guns and the
+// shotgun deliberately do not: they are the scavenged and the improvised, and
+// the difference should be legible the moment the player picks one up at night.
+const WEAPON_TORCH = {
+  PISTOL: 1, SMG: 1, DUAL_SMG: 1, ASSAULT_RIFLE: 1, ROCKET_LAUNCHER: 1, TASER: 1
+};
+
+// Torch geometry. The inner cone is the beam; between inner and outer it falls
+// off, and SPILL is the small omnidirectional bleed around the bearer that
+// stops a torch reading as a cardboard cut-out taped to the gun.
+const TORCH_R     = 460;
+const TORCH_INNER = 0.30;
+const TORCH_OUTER = 0.52;
+const TORCH_SPILL = 0.16;
+
+let _emitList = [], _emitFrame = -1;
+
+// The one gather. Cached on frameCount because all three consumers run in the
+// same frame and the list is identical for each of them.
+function sceneEmitters() {
+  if (_emitFrame === frameCount) return _emitList;
+  _emitFrame = frameCount;
+  const out = _emitList;
+  out.length = 0;
+  if (!BIOME_ACTIVE) return out;
+
+  const pad = 260;
+  const px0 = player ? player.x : (viewLeft + viewRight) / 2;
+  const py0 = player ? player.y : (viewTop + viewBottom) / 2;
+
+  for (const b of activeBuildings) {
+    if (b.isStreetLight) {
+      if (!inView(b.x, b.y, pad)) continue;
+      const dx = b.x - px0, dy = b.y - py0;
+      out.push({
+        x: b.x, y: b.y + 14, z: 46, r: 330, rMin: 24, soft: 0.020,
+        // Slow shallow mains hum rather than a per-frame random, which buzzed.
+        p: 0.92 * (0.965 + 0.035 * Math.sin(frameCount * 0.031 + b.x * 0.013)),
+        c: [1.00, 0.93, 0.78], fix: 'LAMP', b: b, d2: dx * dx + dy * dy
+      });
+      continue;
+    }
+    const e = b.propType ? PROP_EMITTERS[b.propType] : null;
+    if (!e) continue;
+    if (!inView(b.x, b.y, pad)) continue;
+    const ex = b.x + e.dx, ey = b.y + e.dy;
+    const dx = ex - px0, dy = ey - py0;
+    // A beacon pulses; everything else holds steady with the same mains hum the
+    // street lamps have, offset by position so a row of them does not throb in
+    // unison.
+    const k = e.pulse
+      ? 0.45 + 0.55 * Math.pow(0.5 + 0.5 * Math.sin(frameCount * 0.055), 2)
+      : 0.965 + 0.035 * Math.sin(frameCount * 0.029 + ex * 0.011);
+    out.push({
+      x: ex, y: ey, z: e.z, r: e.r, rMin: e.rMin, soft: e.soft,
+      p: e.p * k, c: e.c, fix: e.fix, b: b, d2: dx * dx + dy * dy
+    });
+  }
+
+  if (typeof fires !== 'undefined' && fires) {
+    for (const f of fires) {
+      if (!inView(f.x, f.y, pad)) continue;
+      const flick = 0.78 + 0.22 * Math.sin(frameCount * 0.21 + f.x * 0.05)
+                         * Math.sin(frameCount * 0.13 + f.y * 0.03);
+      const dx = f.x - px0, dy = f.y - py0;
+      out.push({
+        x: f.x, y: f.y, z: 18, r: 150 + f.r * 1.9, rMin: 10,
+        // A fire is a big soft emitter close to the ground, so its penumbra
+        // opens much faster than a lamp's.
+        soft: 0.055, p: 0.98 * flick * Math.min(1, f.life / 60),
+        c: [1.00, 0.66, 0.34], fix: null, d2: dx * dx + dy * dy
+      });
+    }
+  }
+
+  // The weapon torch. The player still carries no light of their own -- this is
+  // a property of the gun in their hands, so holstering it or picking up a
+  // scavenged shotgun puts them back in the dark, which is the whole point.
+  const w = player && player.currentWeapon;
+  if (player && player.hp > 0 && w && WEAPON_TORCH[weaponKey(w)]) {
+    const a = player.aimAngle || 0;
+    // Out at the muzzle, not at the player's middle: a beam that starts inside
+    // the bearer lights the bearer.
+    const mx = player.x + Math.cos(a) * 17;
+    const my = player.y + Math.sin(a) * 17;
+    out.push({
+      x: mx, y: my, z: 22, r: TORCH_R,
+      // Big rMin. The bearer stands right behind the lamp, and without this the
+      // polar reduction finds their own silhouette at r=0 across the whole
+      // beam and the torch comes out as a wedge with a hole in it.
+      rMin: 30, soft: 0.024, p: 0.96,
+      c: [0.90, 0.95, 1.00], aim: a, half: TORCH_OUTER, inner: TORCH_INNER,
+      spill: TORCH_SPILL, fix: 'TORCH',
+      // Always first in the budget: the player's own beam may never be the
+      // light that gets dropped when a street gets busy.
+      d2: -1
+    });
+  }
+
+  // Nearest first. Which lights are lit has to depend on geometry rather than
+  // array order, or crossing a chunk border reshuffles the list and lamps swap
+  // on and off.
+  out.sort((a, b) => a.d2 - b.d2);
+  return out;
+}
+
+// WEAPONS entries are compared by identity everywhere else in the file, so the
+// torch table is keyed by the table's own key rather than by the display name
+// ("MACHINE GUN" is SMG, and DUAL_SMG's name is "DUAL SMGS").
+let _weaponKeys = null;
+function weaponKey(w) {
+  if (!_weaponKeys) {
+    _weaponKeys = new Map();
+    for (const k in WEAPONS) _weaponKeys.set(WEAPONS[k], k);
+  }
+  return _weaponKeys.get(w) || '';
+}
+
+// ###########################################################################
 //  LIGHT RIG
 //  A screen-space light map, multiplied over the finished frame.
 //
@@ -23295,7 +23463,10 @@ function lightGradient(ctx, r, g, b) {
 // the destination for every pixel of a 1080x2340 canvas and cost 10 ms a frame,
 // a 37% loss at night. This gets the same result through the cheapest blend
 // the compositor has.
-function addLight(buf, bx, by, br, power) {
+// `aim`/`half` make this a cone instead of a pool. The buffer is in screen
+// space with y running down, which is the same frame aimAngle is in, so the
+// angle needs no conversion here.
+function addLight(buf, bx, by, br, power, aim, half, spill) {
   if (!(power > 0.004) || !(br > 0.4)) return;
   const ctx = buf.drawingContext;
   ctx.save();
@@ -23305,8 +23476,23 @@ function addLight(buf, bx, by, br, power) {
   ctx.scale(br, br * 0.82);          // slightly flattened: a top-down pool
   ctx.fillStyle = lightGradient(ctx, 0, 0, 0);
   ctx.beginPath();
-  ctx.arc(0, 0, 1, 0, Math.PI * 2);
+  if (half === undefined || half >= Math.PI) {
+    ctx.arc(0, 0, 1, 0, Math.PI * 2);
+  } else {
+    ctx.moveTo(0, 0);
+    ctx.arc(0, 0, 1, aim - half, aim + half);
+    ctx.closePath();
+  }
   ctx.fill();
+  // A torch is not a cardboard wedge taped to the gun -- some light gets out
+  // sideways. One small pool at the source sells the difference, and the GPU
+  // path does the same thing with uSpill.
+  if (spill > 0) {
+    ctx.globalAlpha = Math.min(1, power * spill);
+    ctx.beginPath();
+    ctx.arc(0, 0, 0.34, 0, Math.PI * 2);
+    ctx.fill();
+  }
   ctx.restore();
 }
 
@@ -23365,41 +23551,16 @@ function drawLightPass() {
   const sr = zoom * k;
   const pad = 220;
 
-  // Gather, nearest first, and spend a fixed budget. Which lights are lit has
-  // to depend on geometry rather than array order, or crossing a chunk border
-  // reshuffles the list and lamps swap on and off.
-  const px0 = player ? player.x : (viewLeft + viewRight) / 2;
-  const py0 = player ? player.y : (viewTop + viewBottom) / 2;
-  const src = [];
-  for (const b of activeBuildings) {
-    if (!b.isStreetLight) continue;
-    if (!inView(b.x, b.y, pad)) continue;
-    const dx = b.x - px0, dy = b.y - py0;
-    // Power is set so the core of a pool lands just short of saturation over
-    // the ambient floor rather than several times past it. Anything more and
-    // overlapping pools along a street clip to flat white, which is a blown
-    // highlight, not a lit road. Radius likewise: 330 units covers the
-    // carriageway and the near pavement, which is what a street light does.
-    src.push({ x: b.x, y: b.y + 14, r: 330,
-               p: 0.92 * (0.965 + 0.035 * Math.sin(frameCount * 0.031 + b.x * 0.013)),
-               d2: dx * dx + dy * dy });
-  }
-  if (typeof fires !== 'undefined' && fires) {
-    for (const f of fires) {
-      if (!inView(f.x, f.y, pad)) continue;
-      const flick = 0.78 + 0.22 * Math.sin(frameCount * 0.21 + f.x * 0.05)
-                         * Math.sin(frameCount * 0.13 + f.y * 0.03);
-      const dx = f.x - px0, dy = f.y - py0;
-      src.push({ x: f.x, y: f.y, r: 150 + f.r * 1.9,
-                 p: 0.98 * flick * Math.min(1, f.life / 60), d2: dx * dx + dy * dy });
-    }
-  }
-  src.sort((a, b) => a.d2 - b.d2);
-
+  // One shared gather, nearest first, spent against a fixed budget. Powers are
+  // set so the core of a pool lands just short of saturation over the ambient
+  // floor rather than several times past it -- anything more and overlapping
+  // pools along a street clip to flat white, which is a blown highlight, not a
+  // lit road.
+  const src = sceneEmitters();
   const n = src.length < LIGHT_BUDGET ? src.length : LIGHT_BUDGET;
   for (let i = 0; i < n; i++) {
     const L = src[i];
-    addLight(buf, sx(L.x), sy(L.y), L.r * sr, L.p);
+    addLight(buf, sx(L.x), sy(L.y), L.r * sr, L.p, L.aim, L.half, L.spill);
   }
 
   // The player deliberately carries NO light of their own.
@@ -23758,12 +23919,26 @@ uniform float uRow;
 uniform float uSoft;
 uniform float uSpec;
 uniform float uShine;
+uniform vec2  uAim;
+uniform vec2  uCone;
+uniform float uSpill;
 out vec4 oCol;
 
 void main() {
   vec2 d = (vUV - uLightUV) / uRadUV;
   float r = length(d);
   if (r > 1.0) discard;
+
+  // Cone. uCone is (cos outer, cos inner) so the smoothstep runs the right way
+  // round, and an omnidirectional source passes (-1.001, -1.0), which is always
+  // 1 and costs one dot and one smoothstep rather than a branch -- a divergent
+  // branch here is worse on a tile GPU than the arithmetic it saves.
+  float ca = dot(d / max(r, 1e-4), uAim);
+  float cone = smoothstep(uCone.x, uCone.y, ca);
+  // Some light always gets out sideways at the source. Without this a torch
+  // reads as a cardboard wedge taped to the gun.
+  cone = max(cone, uSpill * (1.0 - r));
+  if (cone <= 0.002) discard;
 
   float a = fract(atan(d.y, d.x) / 6.28318530718);
 
@@ -23799,7 +23974,7 @@ void main() {
   float fall = 1.0 - r;
   fall *= fall;
 
-  oCol = vec4(uCol * (uPower * fall * sh * (0.15 + 0.85 * ndl + spec)), 1.0);
+  oCol = vec4(uCol * (uPower * fall * cone * sh * (0.15 + 0.85 * ndl + spec)), 1.0);
 }`;
 
 // Final composite. Albedo times the accumulated light, then the biome's haze
@@ -24195,52 +24370,21 @@ function glRigBindTex(gl, prog, name, unit, tex) {
 
 const GLRIG_FULL = [-1, -1, 1, 1];
 
-// Local lights, gathered exactly the way drawLightPass() gathers them so the
-// two rigs agree about which lamps are lit -- a light that appears when the GPU
-// path drops out is worse than no GPU path.
+// The shared emitter list, clamped to however many shadow-casting lights the
+// rig can afford. Both rigs read the same gather so they cannot disagree about
+// which lamps are lit -- a light that appears when the GPU path drops out is
+// worse than no GPU path.
+//
+// The budget here is much tighter than the canvas rig's, because each of these
+// costs three passes rather than one gradient fill. sceneEmitters() has already
+// sorted nearest-first, and the player's own torch sorts first of all.
 function glRigGatherLights() {
+  const src = sceneEmitters();
   const out = GLRig.lights;
   out.length = 0;
-  const pad = 220;
-  const px0 = player ? player.x : (viewLeft + viewRight) / 2;
-  const py0 = player ? player.y : (viewTop + viewBottom) / 2;
-
-  for (const b of activeBuildings) {
-    if (!b.isStreetLight || !inView(b.x, b.y, pad)) continue;
-    const dx = b.x - px0, dy = b.y - py0;
-    out.push({
-      x: b.x, y: b.y + 14, r: 330, z: 46, rMin: 24,
-      p: 0.92 * (0.965 + 0.035 * Math.sin(frameCount * 0.031 + b.x * 0.013)),
-      c: [1.00, 0.93, 0.78], soft: 0.020, d2: dx * dx + dy * dy
-    });
+  for (let i = 0; i < src.length && out.length < GLRIG_LIGHTS; i++) {
+    if (src[i].p > 0.004) out.push(src[i]);
   }
-  if (typeof fires !== 'undefined' && fires) {
-    for (const f of fires) {
-      if (!inView(f.x, f.y, pad)) continue;
-      const flick = 0.78 + 0.22 * Math.sin(frameCount * 0.21 + f.x * 0.05)
-                         * Math.sin(frameCount * 0.13 + f.y * 0.03);
-      const dx = f.x - px0, dy = f.y - py0;
-      out.push({
-        x: f.x, y: f.y, r: 150 + f.r * 1.9, z: 18, rMin: 10,
-        p: 0.98 * flick * Math.min(1, f.life / 60),
-        // A fire is a big soft emitter close to the ground, so its penumbra
-        // opens much faster than a lamp's.
-        c: [1.00, 0.66, 0.34], soft: 0.055, d2: dx * dx + dy * dy
-      });
-    }
-  }
-  // No light on the player. See the note in drawLightPass(): a pool pinned to
-  // the player means the player is never in the dark, which is the whole point
-  // of a night. If a torch ever becomes an item, add it back in both rigs at
-  // once, and give it an rMin -- it sits only 9 units above the bearer's own
-  // silhouette, so without one the polar reduction finds an occluder at r=0 in
-  // every direction and the light comes out as a wedge.
-
-  // Nearest first, then a hard budget: which lights are lit has to depend on
-  // geometry rather than array order, or crossing a chunk border reshuffles the
-  // list and lamps swap on and off.
-  out.sort((a, b) => a.d2 - b.d2);
-  if (out.length > GLRIG_LIGHTS) out.length = GLRIG_LIGHTS;
   return out;
 }
 
@@ -24461,6 +24605,18 @@ function glRigFrame() {
       gl.uniform1f(p._u.uSoft, Lg.soft);
       gl.uniform1f(p._u.uSpec, 1.15);
       gl.uniform1f(p._u.uShine, 34);
+      // Cone. aimAngle is in world space, where y runs DOWN; the shading frame
+      // has y up, so the bearing's y component negates. An omnidirectional
+      // source passes a window that is always satisfied.
+      if (Lg.half !== undefined) {
+        gl.uniform2f(p._u.uAim, Math.cos(Lg.aim), -Math.sin(Lg.aim));
+        gl.uniform2f(p._u.uCone, Math.cos(Lg.half), Math.cos(Lg.inner));
+        gl.uniform1f(p._u.uSpill, Lg.spill || 0);
+      } else {
+        gl.uniform2f(p._u.uAim, 1, 0);
+        gl.uniform2f(p._u.uCone, -1.001, -1.0);
+        gl.uniform1f(p._u.uSpill, 0);
+      }
       // The quad is already the light's box, so the scissor is belt and braces
       // against a partially covered tile rather than the cull itself.
       glRigDraw(gl, p, [lu * 2 - 1 - ru * 2, lv * 2 - 1 - rv * 2,
@@ -24591,32 +24747,60 @@ function drawNightLights() {
   ctx.globalCompositeOperation = 'lighter';
   noStroke();
 
-  const px0 = player ? player.x : (viewLeft + viewRight) / 2;
-  const py0 = player ? player.y : (viewTop + viewBottom) / 2;
-  const lamps = [];
-  for (const b of activeBuildings) {
-    if (!b.isStreetLight) continue;
-    if (!inView(b.x, b.y, 120)) continue;
-    const dx = b.x - px0, dy = b.y - py0;
-    lamps.push({ b: b, d2: dx * dx + dy * dy });
-  }
-  lamps.sort((l1, l2) => l1.d2 - l2.d2);
-  const lit = lamps.length < 30 ? lamps.length : 30;
+  // Same list both rigs light the ground from, so a bulb can never be lit
+  // without its pool or the other way round.
+  const src = sceneEmitters();
+  const lit = src.length < 30 ? src.length : 30;
   for (let i = 0; i < lit; i++) {
-    const b = lamps[i].b;
-    // Slow shallow mains hum rather than a per-frame random, which buzzed.
-    const hum = 0.965 + 0.035 * Math.sin(frameCount * 0.031 + b.x * 0.013);
-    // The colour of the light. The rig decides how much of the world a lamp
+    const L = src[i];
+    if (!L.fix) continue;                       // a fire draws its own flames
+    const k = amt * L.p;
+    if (k < 0.01) continue;
+    // The colour of the light. The rig decides how much of the world a source
     // reveals; this decides what temperature it is. Doing the tint here, in
     // world space over a few hundred units, costs a couple of fills per lamp
     // -- carrying it through the rig instead would mean compositing the whole
     // canvas with a blend that has to read every pixel back.
-    // One modest tint blob. A 460-unit gradient here measured 4.37 ms a frame
-    // for three visible lamps -- gradient fill is priced by area, and the rig
-    // is already doing the wide falloff. This only has to say "warm".
-    softBlob(b.x, b.y + 7, 200, 146, 255, 202, 128, 34 * amt * hum);
-    fill(255, 236, 198, 74 * amt * hum); ellipse(b.x, b.y, 30, 30);
-    fill(255, 252, 236, 96 * amt * hum); ellipse(b.x, b.y, 13, 13);
+    const cr = L.c[0] * 255, cg = L.c[1] * 255, cb = L.c[2] * 255;
+
+    switch (L.fix) {
+      case 'LAMP':
+        // One modest tint blob. A 460-unit gradient here measured 4.37 ms a
+        // frame for three visible lamps -- gradient fill is priced by area, and
+        // the rig is already doing the wide falloff. This only has to say
+        // "warm".
+        softBlob(L.x, L.y + 7, 200, 146, cr, cg * 0.87, cb * 0.66, 37 * k);
+        fill(cr, cg * 0.93, cb * 0.79, 80 * k); ellipse(L.x, L.y, 30, 30);
+        fill(255, 252, 236, 104 * k);           ellipse(L.x, L.y, 13, 13);
+        break;
+      case 'FLOOD':
+        // A floodlight housing: wider, harder, and squared off, so an outpost
+        // reads as installed rather than as a bigger street lamp.
+        softBlob(L.x, L.y + 10, 260, 190, cr, cg * 0.9, cb * 0.72, 40 * k);
+        fill(cr, cg * 0.95, cb * 0.82, 86 * k); ellipse(L.x, L.y, 38, 26);
+        fill(255, 253, 242, 118 * k);           ellipse(L.x, L.y, 17, 12);
+        break;
+      case 'WINDOW': {
+        // Light coming out of a building, not a fixture hanging on one. Two
+        // squat panes so it reads as a window rather than a bulb sitting on
+        // the roof.
+        softBlob(L.x, L.y + 4, 150, 110, cr, cg * 0.8, cb * 0.55, 34 * k);
+        fill(cr, cg * 0.86, cb * 0.6, 72 * k);
+        rect(L.x - 13, L.y - 5, 11, 9, 2);
+        rect(L.x + 2,  L.y - 5, 11, 9, 2);
+        break;
+      }
+      case 'BEACON':
+        // A helipad beacon. Cool, and it is the pulse in L.p that reads, so
+        // the fixture itself stays small.
+        softBlob(L.x, L.y, 170, 128, cr * 0.7, cg * 0.9, cb, 44 * k);
+        fill(cr, cg, cb, 120 * k); ellipse(L.x, L.y, 16, 16);
+        break;
+      case 'TORCH':
+        // Just the hot spot at the muzzle. The beam itself is the rig's job.
+        fill(235, 245, 255, 120 * k); ellipse(L.x, L.y, 9, 9);
+        break;
+    }
   }
 
   ctx.globalCompositeOperation = prevOp;

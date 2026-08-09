@@ -487,6 +487,48 @@ only the *fixtures* (bulb, housing glow, wet sheen straight down) with
 `globalCompositeOperation = 'lighter'`, sorted by distance to the player and clamped to
 visible lamps — the ground pool is the light rig's job, not this function's.
 
+### Emitters — the one list of lights
+
+`sceneEmitters()` is every light in the world, gathered once a frame and read by all
+three consumers: the canvas rig, the GPU rig and `drawNightLights()`. Each of them used
+to walk `activeBuildings` itself and decide independently what was lit, which is three
+chances for a lamp to throw a pool with no bulb in it, or for the two rigs to disagree
+about the scene the moment the watchdog swaps them.
+
+An emitter carries `x, y, z, r, p, c, soft, rMin`, an optional cone (`aim`, `half`,
+`inner`, `spill`) and a `fix` naming which fixture `drawNightLights()` should draw.
+`z` is what decides what can occlude it — a 46-unit lamp head is not shadowed by a
+26-unit wall — and **`rMin` is not optional on anything carried**: it is the clearance
+inside which nothing may shadow the source, and without it the polar reduction finds the
+bearer's own silhouette at r=0 in every direction.
+
+**`PROP_EMITTERS` is how the overworld lights itself.** A biome prop throws light purely
+by having an entry — no per-prop code anywhere else. Offsets are from the prop's centre
+because the thing that emits is rarely the middle of the thing that carries it: a
+watchtower's floodlight is at the top of the mast, a hut's light comes out of its
+windows. Currently lit: the three travel anchors (`OUTPOST`, `CHECKPOINT`, `HELIPAD` —
+the first thing a player sees arriving after dark, and often the only fixed light for a
+kilometre), the posts around them (`WATCHTOWER`, `GUARDBOX`, `BUNKER`) and anywhere
+somebody lives or works (`CABIN`, `SITEHUT`, `KIOSK`, `BUSSTOP`). `check-lighting.js`
+asserts every key is a `propType` that actually reaches `drawBiomeProps()`, because a
+light attached to a prop that is never emitted is silent.
+
+**The torch is a property of the gun, not of the player.** `WEAPON_TORCH` lists which
+weapons carry one — `PISTOL · SMG · DUAL_SMG · ASSAULT_RIFLE · ROCKET_LAUNCHER · TASER`.
+The shotgun and the three western guns deliberately do not: they are the scavenged and
+the improvised, and picking one up at night should put you back in the dark. It emits
+from the *muzzle*, 17 units ahead of the player — a beam that starts inside the bearer
+lights the bearer — and it sorts first in the budget, so the player's own beam is never
+the light that gets dropped when a street gets busy.
+
+Cones are `aim` plus an inner and outer half-angle. In the GPU path they are one dot and
+one `smoothstep` against `uCone = (cos outer, cos inner)`, with omnidirectional sources
+passing `(-1.001, -1.0)` — always satisfied — rather than taking a branch, because a
+divergent branch on a tile GPU costs more than the arithmetic it saves. `TORCH_SPILL` is
+the small omnidirectional bleed at the source; without it a torch reads as a cardboard
+wedge taped to the gun. The canvas rig draws the same cone as a wedge path plus a small
+core pool.
+
 ### The deferred rig (WebGL2)
 
 `GLRig` sits in front of `drawLightPass()` and does the same job on the GPU, plus the
@@ -562,11 +604,12 @@ Two things the height field cannot hold, and what happens instead:
   `girth` — the same number the decor entry uses as its scale and `harvestProfile()` uses
   for the wood yield — so the shadow a tree throws is the size of the tree you can see.
 
-**The player carries no light.** There used to be a 240-unit pool pinned to them in
-`drawLightPass()`, and the GPU rig inherited it. It meant the player was never actually
-in the dark, so the one thing a night is for — making you walk toward the lamps — could
-not happen, because the light came with you. A torch is an item, not a property of being
-alive; if it becomes one, reinstate it in **both** rigs together and give it an `rMin`.
+**The player carries no light; their weapon does.** There used to be a 240-unit pool
+pinned to the player, and the GPU rig inherited it. It meant the player was never
+actually in the dark, so the one thing a night is for — making you walk toward the lamps
+— could not happen, because the light came with you. What replaced it is the weapon
+torch (see **Emitters**), which is a cone, comes off the muzzle, and goes away when the
+player picks up a scavenged gun.
 
 Cost control: point lights are scissored to their own screen box, the light list is the
 same nearest-first budget `drawLightPass()` uses, the height buffer runs at half rig

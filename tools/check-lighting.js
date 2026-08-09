@@ -75,20 +75,87 @@ ok('they are excluded from the height buffer',
 ok('and they keep their own offset oval',
    /function charShadowOwned\(eT\) \{\s*if \(CHAR_AIRBORNE\[eT\]\) return false;/.test(src));
 
-console.log('\n== the player carries no light ==');
-// A pool pinned to the player means the player is never in the dark, which is
-// the whole point of a night.
-const gather = rig.slice(rig.indexOf('function glRigGatherLights()'),
-                         rig.indexOf('function glRigWatchdog()'));
-ok('none in the deferred rig', !/out\.push\(\{ x: player\.x/.test(gather));
-const pass2d = src.slice(src.indexOf('function drawLightPass()'),
-                         src.indexOf('function glRigInit') > 0
-                           ? src.indexOf('// DEFERRED LIGHTING AND SHADOW RIG (WebGL2)')
-                           : src.length);
-ok('and none in the canvas rig either', !/addLight\(buf, sx\(player\.x\)/.test(pass2d));
-ok('both rigs still light street lamps and fires',
-   /isStreetLight/.test(gather) && /fires/.test(gather) &&
-   /isStreetLight/.test(pass2d) && /fires/.test(pass2d));
+console.log('\n== there is exactly one list of lights ==');
+// Three consumers used to walk activeBuildings themselves and each decide what
+// was lit. Three copies of "which lamps are on" is three chances for a lamp to
+// throw a pool with no bulb in it, or for the two rigs to disagree the moment
+// the watchdog swaps them.
+const gather  = rig.slice(rig.indexOf('function glRigGatherLights()'),
+                          rig.indexOf('function glRigWatchdog()'));
+const emitFn  = src.slice(src.indexOf('function sceneEmitters()'),
+                          src.indexOf('function weaponKey('));
+// Bounded at the rig block, which sits between drawLightPass() and
+// drawBiomeScreenLayer() -- otherwise this slice swallows glRigPaintHeight().
+const pass2d  = src.slice(src.indexOf('function drawLightPass()'), rigStart);
+const nightFn = src.slice(src.indexOf('function drawNightLights()'),
+                          src.indexOf('let weather = null;'));
+for (const [n, body] of [['the deferred rig', gather], ['the canvas rig', pass2d],
+                         ['the fixture pass', nightFn]]) {
+  ok(n + ' reads sceneEmitters()', /sceneEmitters\(\)/.test(body));
+  ok(n + ' gathers no lights of its own',
+     !/for \(const b of activeBuildings\)/.test(body) && !/of fires\)/.test(body));
+}
+ok('and sceneEmitters() is the one place that does',
+   /for \(const b of activeBuildings\)/.test(emitFn) && /of fires\)/.test(emitFn));
+ok('it is gathered once a frame, not once per consumer',
+   /_emitFrame === frameCount/.test(emitFn));
+
+console.log('\n== the player carries no light, the weapon does ==');
+// A pool pinned to the PLAYER means the player is never in the dark. A torch
+// bolted to the gun goes away when they pick up a scavenged one, which is the
+// difference worth having.
+ok('nothing is emitted from the player themselves',
+   !/x: player\.x, y: player\.y \+ 6, r: 240/.test(src));
+const torchKeys = (emitFn.match(/WEAPON_TORCH\[weaponKey\(w\)\]/) || []).length === 1;
+ok('the torch is keyed off the equipped weapon', torchKeys);
+// A key that is not in WEAPONS is silent: the lookup just never matches and
+// that weapon quietly has no torch.
+const wt = /const WEAPON_TORCH = \{([\s\S]*?)\};/.exec(src);
+const wkeys = wt ? (wt[1].match(/(\w+):\s*1/g) || []).map(s => s.split(':')[0].trim()) : [];
+const known = Object.keys(probe('WEAPONS'));
+const bogus = wkeys.filter(k => !known.includes(k));
+ok('every WEAPON_TORCH key is a real weapon', wkeys.length > 0 && bogus.length === 0,
+   bogus.length ? 'unknown: ' + bogus.join(' ') : wkeys.join(' '));
+ok('the scavenged guns deliberately have none',
+   !wkeys.includes('SHOTGUN') && !wkeys.includes('REVOLVER') && !wkeys.includes('COACH_GUN'),
+   'no torch: SHOTGUN REVOLVER COACH_GUN');
+ok('and the torch clears its own bearer',
+   /fix: 'TORCH'[\s\S]{0,400}?rMin: \d+|rMin: \d+[\s\S]{0,400}?fix: 'TORCH'/.test(emitFn));
+
+console.log('\n== outposts light themselves ==');
+const pe = /const PROP_EMITTERS = \{([\s\S]*?)\n\};/.exec(src);
+ok('PROP_EMITTERS exists', !!pe);
+const rows = pe ? pe[1].split('\n').filter(l => /^\s*\w+:\s*\{/.test(l)) : [];
+ok('the three travel anchors are all lit',
+   ['OUTPOST', 'CHECKPOINT', 'HELIPAD'].every(k => new RegExp('\\b' + k + ':\\s*\\{').test(pe ? pe[1] : '')),
+   rows.length + ' prop types emit');
+let shape = true, badRow = '';
+for (const l of rows) {
+  for (const f of ['dx:', 'dy:', 'r:', 'z:', 'p:', 'c:', 'soft:', 'rMin:', 'fix:']) {
+    if (!l.includes(f)) { shape = false; badRow = l.trim().split(':')[0] + ' missing ' + f; }
+  }
+}
+ok('every emitter carries the full descriptor', shape, badRow || 'all ' + rows.length);
+// A PROP_EMITTERS key with no prop behind it is a light attached to nothing.
+// Taken from the case labels in drawBiomeProps() rather than from `propType:`
+// literals, because the street furniture is emitted from an array with
+// `propType: t` and a literal scan misses every one of them.
+const propsFn = src.slice(src.indexOf('function drawBiomeProps()'),
+                          src.indexOf('function drawLightPass()'));
+const propTypes = new Set((propsFn.match(/case *["'](\w+)["'] *:/g) || [])
+  .map(s => /["'](\w+)["']/.exec(s)[1]));
+const orphanLights = rows.map(l => l.trim().split(':')[0]).filter(k => !propTypes.has(k));
+ok('no emitter is attached to a propType that is never emitted',
+   orphanLights.length === 0, orphanLights.join(' ') || 'all reachable');
+
+console.log('\n== cones ==');
+ok('the light shader takes an aim, a cone and a spill',
+   /uniform vec2  uAim;/.test(rig) && /uniform vec2  uCone;/.test(rig) &&
+   /uniform float uSpill;/.test(rig));
+ok('an omnidirectional source passes a window that is always satisfied',
+   /uCone, -1\.001, -1\.0/.test(rig));
+ok('the canvas rig draws a wedge for a cone too',
+   /ctx\.arc\(0, 0, 1, aim - half, aim \+ half\)/.test(src));
 
 console.log('\n== timber casts off its crown ==');
 // The trunk collides at a fixed 34x34 whatever the tree is, so the collision
