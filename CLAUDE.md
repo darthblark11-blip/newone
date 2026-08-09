@@ -624,6 +624,14 @@ because they are standing next to you, which is all that bar has ever meant. Dyi
 one thing that changes the ledger, and it is deducted as an integer at the moment it
 happens.
 
+**A save written before the ledger keeps its people.** The old records stored the total as
+its own number and the departments *without* a sex split — `popFarming: 25, popMilitary: 30,
+popTotal: 80` — so a ledger reading only the M/F columns reads the whole town as **zero**,
+and `saveTownData()` then writes the zeros straight back. Loading an old file destroyed the
+save rather than merely mis-displaying it. `migrateLegacyLedger()` adopts such a record on
+first read; the sum being non-zero is what stops it running twice, and which sex column it
+lands in is decided by the sector, because the old record does not say.
+
 **Every door into the Directive must grant on the way through.** `openSectorDirective()`
 opens the panel and the panel reads the ledger, so a caller that opens it without granting
 shows a sector of nobody with nothing to assign. Three callers were doing exactly that —

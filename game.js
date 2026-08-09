@@ -5306,8 +5306,41 @@ function sectorLedger(id) {
     t.popUnassignedF = Number(t.popUnassignedF) || 0;
     t.popSeeded  = Number(t.popSeeded)  || 0;   // how many were put on the ground
     t.popKilled  = Number(t.popKilled)  || 0;   // how many of them the player shot
+    migrateLegacyLedger(id, t);
     t.popTotal   = sectorPopSum(t);
     return t;
+}
+
+// A save written before the ledger existed.
+//
+// The old records stored the total as its own number and the departments
+// WITHOUT a sex split -- `popFarming: 25, popMilitary: 30, popTotal: 80` -- so
+// a ledger that only reads the M/F columns reads the whole town as ZERO, and
+// the player's save is wiped the first time anything asks. That is not a
+// display bug: saveTownData() would then write the zeros straight back.
+//
+// Adopted once, on first read. The sum being non-zero is what stops it running
+// twice, so a record that has already been converted is never touched again,
+// and a sector that is genuinely empty stays empty.
+function migrateLegacyLedger(id, t) {
+    if (sectorPopSum(t) > 0) return;
+    const legacy = {};
+    let assigned = 0;
+    for (const d of POP_DEPTS) {
+        legacy[d] = Number(t["pop" + d]) || 0;      // the old un-sexed column
+        assigned += legacy[d];
+    }
+    const total = Math.max(Number(t.popTotal) || 0,
+                           assigned + (Number(t.popUnassigned) || 0));
+    if (total <= 0 && assigned <= 0) return;
+    // Which column they land in is decided by the sector, because the old
+    // record does not say: Stick City's people are men, the Undercity's women.
+    const sex = (Number(id) === 2) ? "F" : "M";
+    for (const d of POP_DEPTS) t["pop" + d + sex] = legacy[d];
+    t["popUnassigned" + sex] = Math.max(0, total - assigned);
+    // A migrated sector has already been paid; do not hand it a second
+    // population the next time its arc is asked about.
+    if (total > 0) t.popGranted = true;
 }
 
 function sectorPopSum(t) {

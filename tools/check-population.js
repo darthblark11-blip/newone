@@ -527,5 +527,58 @@ console.log('\n== the player can actually assign somebody ==');
   ok('and so does the other copy of the panel', P('window.popMilitaryM') === 5);
 }
 
+// A SAVE WRITTEN BEFORE THE LEDGER EXISTED.
+//
+// The old records stored the total as its own number and the departments
+// without a sex split. A ledger that only reads the M/F columns reads such a
+// town as ZERO — and saveTownData() then writes the zeros straight back, so
+// loading an old file destroyed the save rather than merely mis-displaying it.
+console.log('\n== an old save still has its people ==');
+{
+  probe('isStoryMode = true; started = true; doTick = true;');
+  probe(`townsData = {
+    1: { established: true, popTotal: 80, popUnassigned: 0,
+         popFarming: 25, popMilitary: 30, popScience: 10, popArchitecture: 15 },
+    2: { established: true, popTotal: 68, popUnassigned: 8,
+         popFarming: 20, popMilitary: 25, popScience: 10, popArchitecture: 5 } };`);
+  const one = P(`(function () { const t = sectorLedger(1);
+    return { total: t.popTotal, farm: t.popFarmingM + t.popFarmingF,
+             mil: t.popMilitaryM + t.popMilitaryF }; })()`);
+  ok('an un-sexed record is adopted, not read as zero',
+     one.total === 80 && one.farm === 25 && one.mil === 30, JSON.stringify(one));
+  const two = P(`(function () { const t = sectorLedger(2);
+    return { total: t.popTotal, unF: t.popUnassignedF }; })()`);
+  ok('and its unassigned column comes with it', two.total === 68 && two.unF === 8,
+     JSON.stringify(two));
+  ok('the Undercity adopts as women', P('sectorLedger(2).popFarmingF') === 20 &&
+     P('sectorLedger(2).popFarmingM') === 0);
+  ok('a migrated sector is not paid a second time', P('!!sectorLedger(1).popGranted'));
+  ok('the global count is the sum of both', P('globalPopulationCount()') === 148,
+     P('globalPopulationCount()') + '');
+
+  // Migration runs once. Reading it again must not double anything.
+  probe('sectorLedger(1); sectorLedger(1); sectorLedger(2);');
+  ok('and reading it again does not double it', P('globalPopulationCount()') === 148,
+     P('globalPopulationCount()') + '');
+
+  // Entering a level must leave the loaded sectors exactly as they were.
+  probe('window.travelArrival = "NORTH"; startAtLevel(4);');
+  ok('starting the next level does not touch them',
+     P('sectorLedger(1).popTotal') === 80 && P('sectorLedger(2).popTotal') === 68,
+     `${P('sectorLedger(1).popTotal')} / ${P('sectorLedger(2).popTotal')}`);
+
+  // And organising the NEW sector must not damage the old ones.
+  probe(`for (const e of enemiesList) if (e.eType === "MILITARY_NEUTRAL") e.isFriendly = true;`);
+  probe(`openDirectiveWithGrant(4); beginDirective(viewingTownId, 'PAUSE');
+         window.popMilitaryM += 5; window.popUnassignedM -= 5;
+         storeWindowIntoLedger(viewingTownId); saveTownData(viewingTownId);`);
+  ok('assigning in a new sector leaves the old ones alone',
+     P('sectorLedger(1).popTotal') === 80 && P('sectorLedger(1).popFarmingM') === 25 &&
+     P('sectorLedger(2).popTotal') === 68,
+     `${P('sectorLedger(1).popTotal')} / ${P('sectorLedger(2).popTotal')}`);
+  ok('and the new sector keeps its own assignment',
+     P('sectorLedger(4).popMilitaryM') === 5, P('sectorLedger(4).popMilitaryM') + '');
+}
+
 console.log(`\n${checks - fails}/${checks} checks passed`);
 process.exit(fails ? 1 : 0);
