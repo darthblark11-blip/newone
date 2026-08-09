@@ -217,6 +217,12 @@ function setup() {
   pixelDensity(Math.min(displayDensity(), 2));
   createCanvas(windowWidth, windowHeight);
 
+  // Deferred lighting rig. Allocates every framebuffer it will ever use up
+  // front, here, so that nothing in the render loop can trigger a collection.
+  // Returns false and stands aside on anything without WebGL2 -- drawLightPass()
+  // is untouched and carries those devices exactly as before.
+  if (typeof glRigInit === 'function') glRigInit();
+
   // --- INVISIBLE BGM PLAYER ---
   sfx.bgm = document.createElement('audio');
   
@@ -2893,7 +2899,7 @@ function drawParkingCars() {
 
 
 
-function windowResized() { resizeCanvas(windowWidth, windowHeight); leftStick.base = { x: 80, y: height - 160 }; rightStick.base = { x: width - 80, y: height - 110 }; }
+function windowResized() { resizeCanvas(windowWidth, windowHeight); leftStick.base = { x: 80, y: height - 160 }; rightStick.base = { x: width - 80, y: height - 110 }; if (typeof glRigResize === 'function') glRigResize(); }
 function nextLevel() { startAtLevel(currentLevel + 1); }
 function restartGame() { wipeAllBloodBanks(); seedWorldClock(); startAtLevel(1); }
 function emit(x, y, c, col, typ, vx = 0, vy = 0) { for (let i = 0; i < c; i++) { particles.push(new Particle(x, y, col, typ, vx, vy)); } }
@@ -3648,7 +3654,14 @@ viewBottom = camY + height / zoom + shakePad;
   // survives instead of being painted over by the darkness. Haze goes on top
   // of the lit result, because scatter is something light does on its way to
   // the camera.
-  if (BIOME_ACTIVE) { drawLightPass(); drawBiomeScreenLayer(); }
+  // The deferred rig gets first refusal. It consumes the finished frame as its
+  // albedo G-buffer and blits the lit result back into this same canvas, so the
+  // HUD below still paints over the top of it. If it is not there, or it stood
+  // down, the canvas rig runs instead and nothing else in the frame changes.
+  if (BIOME_ACTIVE) {
+    if (!(typeof glRigFrame === 'function' && glRigFrame())) drawLightPass();
+    drawBiomeScreenLayer();
+  }
  
 
   // SCREEN UI
@@ -21140,6 +21153,12 @@ function charShadowFill(alpha) {
 // bigger masses sit higher and throw longer — but the direction is always the
 // one global light vector, which is what sells the scene as a single lit space.
 function drawBiomeShadows() {
+  // The deferred rig ray-marches the sun against the same silhouettes this
+  // pass draws from, so exactly one of the two may run -- both would double the
+  // alpha on every wall in the scene. Micro-prop shadows baked into the terrain
+  // stay either way: they are in the albedo, they are tiny, and they were baked
+  // against the same LIGHT_DX/DY the march uses.
+  if (typeof glRigOwnsSunShadows === 'function' && glRigOwnsSunShadows()) return;
   noStroke();
   // Sun-driven: long and soft at dawn and dusk, short and firm at noon. The
   // direction is fixed for the whole scene -- props bake their own shadows
@@ -23370,6 +23389,1073 @@ function drawLightPass() {
   }
 
   image(buf, 0, 0, width, height);
+}
+
+// ===========================================================================
+// DEFERRED LIGHTING AND SHADOW RIG (WebGL2)
+// ===========================================================================
+//
+// WHY IT IS SHAPED LIKE THIS
+//
+// The game renders through p5's 2D canvas. Every one of the ~24k lines of art
+// in this file paints with fill()/rect()/ellipse(), and none of it has a normal
+// map, a UV set or a tangent frame. So a deferred renderer cannot be built the
+// usual way -- there is no geometry pass to attach G-buffer outputs to.
+//
+// What it CAN be built on is the fact that the finished 2D frame is already a
+// perfectly good albedo buffer, and that the scene's height field is already
+// data the game owns: buildingRise() gives every mass its storeys, groundElev()
+// gives the terrain its relief, and characters have a known standing height.
+// So:
+//
+//   G-Diffuse  <- the p5 canvas itself, uploaded as a texture. Free to produce;
+//                 it is the frame the game was going to draw anyway.
+//   G-Height   <- a second, small p5.Graphics painted with flat greys from the
+//                 SAME entity lists the shadow pass already walks. No art, no
+//                 per-type branches, ~200 flat fills at half resolution.
+//   G-Normal   <- derived on the GPU by Sobel-differencing G-Height. This is
+//                 the honest answer for art that has no authored normals, and
+//                 it gives real per-pixel relief on walls, kerbs and benches.
+//                 The authored-normal path (with the 2D rotation matrix that
+//                 turns a tangent-space normal into the entity's facing) is
+//                 implemented and live; it is fed a neutral 1x1 texture until
+//                 somebody supplies an atlas via glRigSetNormalAtlas().
+//
+// The lit result is blitted back INTO the p5 canvas at the exact point
+// drawLightPass() used to run. That is not a detail: the HUD, the joysticks and
+// every cutscene overlay are drawn after that line, so a GL canvas sitting on
+// top of the page would bury all of them. Going back through drawImage() keeps
+// the existing render order true and makes the whole rig removable.
+//
+// If WebGL2 is missing, the context is lost, or the frame budget goes, the rig
+// stands down and drawLightPass() -- which is untouched -- takes over again.
+//
+// COST, MEASURED IN WHAT IT ADDS PER FRAME
+//   1 canvas->texture upload (diffuse, full res)   -- GPU-side copy
+//   1 canvas->texture upload (height, ~half res)   -- GPU-side copy
+//   1 normal-derive pass                           -- full rig res
+//   1 sun pass with the height ray march           -- full rig res
+//   3 draws per point light, the last one scissored to the light's own box
+//   1 composite + 1 drawImage back into the 2D canvas
+//
+// ---------------------------------------------------------------------------
+
+// Height byte 255 means this many world units. Nothing in the game is taller
+// than a BUILDING_RISE_MAX mass standing on the tallest ELEV_ZONES bench, so
+// this leaves headroom without throwing away precision in an 8-bit channel.
+const GLRIG_HEIGHT_MAX = 200;
+
+// Angular resolution of the 1D polar shadow map, and how many radial samples
+// the reduction walks looking for the first occluder. 256 bins is one bin per
+// 1.4 degrees, which at a 330-unit street lamp radius is finer than the
+// penumbra the compositing pass then blurs it with.
+const GLRIG_POLAR_BINS  = 256;
+const GLRIG_POLAR_STEPS = 48;
+
+// Edge of the light-centred occlusion target. Fixed regardless of light radius,
+// so a big lamp and a small fire cost the same and neither can spike the frame.
+const GLRIG_OCC = 96;
+
+// Hard ceiling on shadow-casting local lights. Rows in the polar atlas.
+const GLRIG_LIGHTS = 8;
+
+// Ray march budget for the directional pass. Steps grow geometrically, so 20
+// steps reach ~14x the first step's length -- long enough for a dawn shadow.
+const GLRIG_SUN_STEPS = 20;
+
+// Taps either side of centre in the penumbra filter. 4 gives a 9-tap Gaussian.
+const GLRIG_PCF = 4;
+
+// Set false to hand directional shadows back to drawBiomeShadows(). The rig
+// owns them by default: it is casting from the same silhouettes that pass draws
+// from, so running both would double the alpha on every wall in the scene.
+const GLRIG_OWN_SHADOWS = true;
+
+const GLRIG_SCALES = [1.0, 0.78, 0.6];
+
+const GLRig = {
+  ok: false,          // context exists and every program linked
+  on: false,          // ok, and not stood down by the watchdog
+  gl: null,
+  canvas: null,       // offscreen; never enters the DOM
+  host: null,         // p5's canvas element
+  prog: {},
+  tex: {},
+  fbo: {},
+  hgt: null,          // p5.Graphics carrying height/gloss/facing/coverage
+  quad: null,
+  vao: null,
+  w: 0, h: 0,         // rig backing store, pixels
+  hw: 0, hh: 0,       // height buffer, pixels
+  tier: 0,            // index into GLRIG_SCALES
+  slow: 0,            // consecutive frames over budget
+  fast: 0,
+  lights: [],
+  failure: ''
+};
+
+// --- shader sources --------------------------------------------------------
+//
+// One vertex shader for every pass. uRect is the destination rectangle in NDC,
+// which is how a pass addresses a scissored light box or a single row of the
+// polar atlas without a second program.
+
+const GLRIG_VS = `#version 300 es
+precision highp float;
+in vec2 aPos;
+uniform vec4 uRect;
+out vec2 vUV;
+void main() {
+  vec2 p = mix(uRect.xy, uRect.zw, aPos);
+  vUV = p * 0.5 + 0.5;
+  gl_Position = vec4(p, 0.0, 1.0);
+}`;
+
+// Normal reconstruction.
+//
+// The height field is differenced with a 4-tap central difference rather than a
+// full Sobel: at half resolution the extra diagonal taps buy nothing but they
+// cost four more samples on every pixel of the screen.
+//
+// The authored-normal branch is the tangent-space path. A sprite's normal map
+// is drawn in the sprite's own frame, so it has to be rotated into the world by
+// the entity's facing before it can be lit -- otherwise a character turning
+// round keeps its highlight nailed to the same shoulder. The facing arrives in
+// the G-buffer's blue channel as turns (angle / 2pi), written by
+// glRigPaintHeight() from the entity's aimAngle.
+const GLRIG_FS_NORMAL = `#version 300 es
+precision highp float;
+in vec2 vUV;
+uniform sampler2D uHgt;
+uniform sampler2D uNrmAtlas;
+uniform vec2 uTexel;
+uniform float uRelief;
+uniform float uAtlasMix;
+out vec4 oCol;
+
+void main() {
+  vec4 c = texture(uHgt, vUV);
+  float hl = texture(uHgt, vUV - vec2(uTexel.x, 0.0)).r;
+  float hr = texture(uHgt, vUV + vec2(uTexel.x, 0.0)).r;
+  float hd = texture(uHgt, vUV - vec2(0.0, uTexel.y)).r;
+  float hu = texture(uHgt, vUV + vec2(0.0, uTexel.y)).r;
+
+  // z = h(x, y)  ->  n = normalize(-dh/dx, -dh/dy, 1)
+  vec3 n = normalize(vec3(-(hr - hl) * uRelief, -(hu - hd) * uRelief, 1.0));
+
+  if (uAtlasMix > 0.0 && c.a > 0.5) {
+    vec3 t = texture(uNrmAtlas, vUV).xyz * 2.0 - 1.0;
+    float a  = c.b * 6.28318530718;
+    float ca = cos(a), sa = sin(a);
+    mat2 R = mat2(ca, -sa, sa, ca);       // entity frame -> world frame
+    t.xy = R * t.xy;
+    n = normalize(mix(n, normalize(t), uAtlasMix));
+  }
+
+  oCol = vec4(n * 0.5 + 0.5, c.r);
+}`;
+
+// Ambient + sun, with the directional shadow ray march.
+//
+// The march walks the height buffer along the sun's screen bearing and compares
+// the elevation of a ray leaving this pixel against the elevation of the ground
+// it passes over. The ray climbs at uSlope world units per world unit walked,
+// which is tied to shadowLengthScale() so a mass of height H throws the same
+// length of shadow the 2D pass would have drawn for it.
+//
+// Steps grow geometrically. A shadow's near end needs the resolution -- that is
+// where the boundary is -- and its far end only needs to be found.
+const GLRIG_FS_SUN = `#version 300 es
+precision highp float;
+in vec2 vUV;
+uniform sampler2D uHgt;
+uniform sampler2D uNrm;
+uniform vec2  uMarchUV;
+uniform float uSlope;
+uniform float uHeightMax;
+uniform float uStep0;
+uniform float uGrow;
+uniform float uPenumbra;
+uniform vec3  uSunDir;
+uniform vec3  uSunCol;
+uniform vec3  uAmbCol;
+uniform float uSunPow;
+uniform float uSpec;
+uniform float uShine;
+out vec4 oCol;
+
+float marchSun(vec2 uv, float h0) {
+  float vis = 1.0;
+  float t = 0.0;
+  float s = uStep0;
+  for (int i = 0; i < ${GLRIG_SUN_STEPS}; i++) {
+    t += s;
+    s *= uGrow;
+    vec2 p = uv + uMarchUV * t;
+    if (p.x < 0.0 || p.y < 0.0 || p.x > 1.0 || p.y > 1.0) break;
+    float hs  = texture(uHgt, p).r * uHeightMax;
+    float ray = h0 + uSlope * t;
+    float over = hs - ray;
+    if (over > 0.0) {
+      // The penumbra widens with distance from the caster, so a wall's shadow
+      // is crisp at its foot and soft where it ends. +1 keeps the divide safe.
+      float pen = uPenumbra * t + 1.0;
+      vis = min(vis, 1.0 - clamp(over / pen, 0.0, 1.0));
+    }
+  }
+  return vis;
+}
+
+void main() {
+  vec4 hgt = texture(uHgt, vUV);
+  vec3 N = texture(uNrm, vUV).xyz * 2.0 - 1.0;
+  float h0 = hgt.r * uHeightMax;
+
+  float ndl = max(dot(N, uSunDir), 0.0);
+  float vis = marchSun(vUV, h0);
+
+  // Overhead camera: the eye looks straight down, so V is constant and the
+  // Blinn-Phong halfway vector costs one normalize for the whole screen.
+  vec3 H = normalize(uSunDir + vec3(0.0, 0.0, 1.0));
+  float spec = pow(max(dot(N, H), 0.0), uShine) * hgt.g * uSpec;
+
+  vec3 lit = uAmbCol + uSunCol * (uSunPow * ndl + spec) * vis;
+  oCol = vec4(lit, 1.0);
+}`;
+
+// Pass 4a -- occlusion. Resamples the screen height buffer into a square
+// centred on the light, so the polar reduction that follows has a fixed-size,
+// light-local source whatever the light's radius is.
+//
+// Stored as the fraction of the emitter's own height the occluder reaches: 1
+// means it blocks the lamp outright, 0.4 means light still spills over it.
+const GLRIG_FS_OCC = `#version 300 es
+precision highp float;
+in vec2 vUV;
+uniform sampler2D uHgt;
+uniform vec2  uLightUV;
+uniform vec2  uSpanUV;
+uniform float uHeightMax;
+uniform float uLightZ;
+out vec4 oCol;
+
+void main() {
+  vec2 p = uLightUV + (vUV * 2.0 - 1.0) * uSpanUV;
+  float h = 0.0;
+  if (p.x >= 0.0 && p.y >= 0.0 && p.x <= 1.0 && p.y <= 1.0) {
+    h = texture(uHgt, p).r * uHeightMax;
+  }
+  oCol = vec4(clamp(h / max(uLightZ, 1.0), 0.0, 1.0), 0.0, 0.0, 1.0);
+}`;
+
+// Pass 4b -- polar reduction. One row of the atlas per light. x is the angle,
+// and the reduction walks outward until it meets the first occluder, collapsing
+// a GLRIG_OCC^2 image into GLRIG_POLAR_BINS texels.
+//
+// This is the pass that makes radial shadows affordable: the compositing pass
+// that follows is a single texture read per pixel instead of a ray march per
+// pixel, and it is the same read whether the light covers 40 pixels or 40,000.
+const GLRIG_FS_POLAR = `#version 300 es
+precision highp float;
+in vec2 vUV;
+uniform sampler2D uOcc;
+uniform float uRMin;
+out vec4 oCol;
+
+void main() {
+  float a = vUV.x * 6.28318530718;
+  vec2 dir = vec2(cos(a), sin(a));
+  float nearest = 1.0;
+  float strength = 0.0;
+  int hit = 0, extra = 0;
+  for (int i = 1; i <= ${GLRIG_POLAR_STEPS}; i++) {
+    float r = float(i) / float(${GLRIG_POLAR_STEPS});
+    // An emitter is never shadowed by whatever is carrying it. The player's
+    // torch sits 9 units above the player's own silhouette, so without this the
+    // reduction finds an occluder at r=0 in EVERY direction and the light comes
+    // out as a wedge with the bearer standing in a hole. Same for a lamp and
+    // its post.
+    if (r < uRMin) continue;
+    float o = texture(uOcc, vec2(0.5) + dir * r * 0.5).r;
+    if (hit == 0) {
+      if (o > 0.35) { nearest = r; strength = o; hit = 1; }
+    } else {
+      // Keep going a little past the first crossing and take the peak.
+      //
+      // The occlusion target is LINEAR filtered, so the sample that trips the
+      // threshold is sitting on the occluder's filtered EDGE and reads about
+      // half its true height. Recording that as the occluder's strength let
+      // half of every point light through every wall in the scene. The body of
+      // the occluder is a few texels further along the ray; six extra taps
+      // find it and cost nothing, because they only run once a ray has
+      // actually hit something.
+      strength = max(strength, o);
+      extra++;
+      if (extra >= 6) break;
+    }
+  }
+  oCol = vec4(nearest, clamp(strength, 0.0, 1.0), 0.0, 1.0);
+}`;
+
+// Pass 4c -- compositing, additively accumulated and scissored to the light's
+// own box. Reads the 1D lookup with a Gaussian whose width scales with distance
+// from the emitter, which is what turns a hard 1D boundary into a penumbra that
+// opens out the further the shadow is thrown.
+const GLRIG_FS_LIGHT = `#version 300 es
+precision highp float;
+in vec2 vUV;
+uniform sampler2D uHgt;
+uniform sampler2D uNrm;
+uniform sampler2D uPolar;
+uniform vec2  uLightUV;
+uniform vec2  uRadUV;
+uniform vec2  uUVToWorld;
+uniform vec3  uCol;
+uniform float uPower;
+uniform float uLightZ;
+uniform float uHeightMax;
+uniform float uRow;
+uniform float uSoft;
+uniform float uSpec;
+uniform float uShine;
+out vec4 oCol;
+
+void main() {
+  vec2 d = (vUV - uLightUV) / uRadUV;
+  float r = length(d);
+  if (r > 1.0) discard;
+
+  float a = fract(atan(d.y, d.x) / 6.28318530718);
+
+  // Distance-scaled Gaussian. sigma is in turns, so the same angular blur is a
+  // wider band of pixels the further out you are -- a real penumbra rather than
+  // a constant-width smudge.
+  float sigma = uSoft * r;
+  float sh = 0.0, wsum = 0.0;
+  for (int i = -${GLRIG_PCF}; i <= ${GLRIG_PCF}; i++) {
+    float fi = float(i);
+    float off = fi / float(${GLRIG_PCF}) * sigma;
+    float w = exp(-fi * fi / (2.0 * ${(GLRIG_PCF * GLRIG_PCF / 4).toFixed(1)}));
+    vec2 s = texture(uPolar, vec2(fract(a + off), uRow)).rg;
+    // Past the occluder the surface keeps whatever light spills over the top.
+    sh += ((r <= s.x + 0.004) ? 1.0 : (1.0 - s.y)) * w;
+    wsum += w;
+  }
+  sh /= wsum;
+  if (sh <= 0.002) discard;
+
+  vec4 hgt = texture(uHgt, vUV);
+  vec3 N = texture(uNrm, vUV).xyz * 2.0 - 1.0;
+  float h = hgt.r * uHeightMax;
+
+  // uv y runs up the screen and so does the shading frame, so the offset needs
+  // no flip -- it is already in the space the normals were built in.
+  vec3 L = normalize(vec3((uLightUV - vUV) * uUVToWorld, max(uLightZ - h, 4.0)));
+  float ndl = max(dot(N, L), 0.0);
+
+  vec3 H = normalize(L + vec3(0.0, 0.0, 1.0));
+  float spec = pow(max(dot(N, H), 0.0), uShine) * hgt.g * uSpec;
+
+  float fall = 1.0 - r;
+  fall *= fall;
+
+  oCol = vec4(uCol * (uPower * fall * sh * (0.15 + 0.85 * ndl + spec)), 1.0);
+}`;
+
+// Final composite. Albedo times the accumulated light, then the biome's haze
+// laid over the lit result, because scatter is something light does on its way
+// to the camera rather than a property of the ground.
+const GLRIG_FS_COMPOSITE = `#version 300 es
+precision highp float;
+in vec2 vUV;
+uniform sampler2D uDiffuse;
+uniform sampler2D uLight;
+uniform vec3  uHaze;
+uniform float uHazeA;
+uniform float uVignette;
+out vec4 oCol;
+
+void main() {
+  vec3 base = texture(uDiffuse, vUV).rgb;
+  vec3 lit  = texture(uLight, vUV).rgb;
+  vec3 c = base * lit;
+
+  vec2 v = (vUV - 0.5) * 2.0;
+  c *= 1.0 - uVignette * clamp(dot(v, v) * 0.5, 0.0, 1.0);
+
+  c = mix(c, uHaze, uHazeA);
+  oCol = vec4(c, 1.0);
+}`;
+
+// --- GL plumbing -----------------------------------------------------------
+
+function glRigCompile(gl, type, src, tag) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src);
+  gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
+    GLRig.failure = tag + ': ' + gl.getShaderInfoLog(s);
+    gl.deleteShader(s);
+    return null;
+  }
+  return s;
+}
+
+// Uniform locations are looked up once and cached on the program object.
+// getUniformLocation is a string lookup into the driver and this rig would run
+// it a few hundred times a frame otherwise.
+function glRigProgram(gl, fs, tag) {
+  const v = glRigCompile(gl, gl.VERTEX_SHADER, GLRIG_VS, tag + '.vs');
+  if (!v) return null;
+  const f = glRigCompile(gl, gl.FRAGMENT_SHADER, fs, tag + '.fs');
+  if (!f) { gl.deleteShader(v); return null; }
+  const p = gl.createProgram();
+  gl.attachShader(p, v);
+  gl.attachShader(p, f);
+  gl.bindAttribLocation(p, 0, 'aPos');
+  gl.linkProgram(p);
+  gl.deleteShader(v);
+  gl.deleteShader(f);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
+    GLRig.failure = tag + ': ' + gl.getProgramInfoLog(p);
+    gl.deleteProgram(p);
+    return null;
+  }
+  p._u = {};
+  const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
+  for (let i = 0; i < n; i++) {
+    const nm = gl.getActiveUniform(p, i).name.replace(/\[0\]$/, '');
+    p._u[nm] = gl.getUniformLocation(p, nm);
+  }
+  return p;
+}
+
+function glRigTexture(gl, w, h, filter) {
+  const t = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_2D, t);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  const f = filter || gl.LINEAR;
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, f);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, f);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  return t;
+}
+
+function glRigTarget(gl, w, h, filter) {
+  const tex = glRigTexture(gl, w, h, filter);
+  const fbo = gl.createFramebuffer();
+  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+  const ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  if (!ok) { GLRig.failure = 'incomplete framebuffer ' + w + 'x' + h; return null; }
+  return { tex, fbo, w, h };
+}
+
+// --- lifecycle -------------------------------------------------------------
+
+// Every FBO the rig will ever use is built here. Nothing in the draw path
+// allocates: a createTexture() inside the render loop is a GC pause with a
+// frame number on it, and the whole point of a deferred pipeline is that its
+// cost stops depending on how many lights are on screen.
+function glRigInit() {
+  if (GLRig.ok) return true;
+  GLRig.failure = '';
+  try {
+    if (typeof document === 'undefined' || !document.createElement) return false;
+    const host = (typeof drawingContext !== 'undefined' && drawingContext)
+      ? drawingContext.canvas : null;
+    if (!host || !host.getContext) return false;
+
+    const cv = document.createElement('canvas');
+    if (!cv || !cv.getContext) return false;
+    const gl = cv.getContext('webgl2', {
+      alpha: false,
+      depth: false,
+      stencil: false,
+      antialias: false,
+      // drawImage() out of a WebGL canvas is only guaranteed to see the frame
+      // that was just rendered if the drawing buffer is preserved. It costs a
+      // copy the driver would otherwise skip, and it is the difference between
+      // a lit frame and a black one on the browsers that clear eagerly.
+      preserveDrawingBuffer: true,
+      premultipliedAlpha: false,
+      powerPreference: 'high-performance',
+      failIfMajorPerformanceCaveat: false
+    });
+    // The headless harness stubs getContext() with a bare object, so probe for
+    // something only a real context has before touching anything else.
+    if (!gl || typeof gl.createProgram !== 'function') return false;
+
+    GLRig.canvas = cv;
+    GLRig.host = host;
+    GLRig.gl = gl;
+
+    GLRig.prog.normal = glRigProgram(gl, GLRIG_FS_NORMAL, 'normal');
+    GLRig.prog.sun    = glRigProgram(gl, GLRIG_FS_SUN, 'sun');
+    GLRig.prog.occ    = glRigProgram(gl, GLRIG_FS_OCC, 'occ');
+    GLRig.prog.polar  = glRigProgram(gl, GLRIG_FS_POLAR, 'polar');
+    GLRig.prog.light  = glRigProgram(gl, GLRIG_FS_LIGHT, 'light');
+    GLRig.prog.comp   = glRigProgram(gl, GLRIG_FS_COMPOSITE, 'composite');
+    for (const k in GLRig.prog) if (!GLRig.prog[k]) return glRigFail();
+
+    // One unit quad, one VAO, reused by every pass.
+    GLRig.quad = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, GLRig.quad);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([0, 0, 1, 0, 0, 1, 1, 1]), gl.STATIC_DRAW);
+    GLRig.vao = gl.createVertexArray();
+    gl.bindVertexArray(GLRig.vao);
+    gl.enableVertexAttribArray(0);
+    gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    gl.bindVertexArray(null);
+
+    // Uploaded from the two canvases; never rendered into, so plain textures.
+    GLRig.tex.diffuse = glRigTexture(gl, 4, 4);
+    GLRig.tex.height  = glRigTexture(gl, 4, 4);
+
+    // Neutral tangent-space normal. Keeps the authored-normal branch compiled,
+    // bound and exercised without an atlas existing yet.
+    GLRig.tex.atlas = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, GLRig.tex.atlas);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE,
+                  new Uint8Array([128, 128, 255, 255]));
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    GLRig.atlasMix = 0;
+
+    // Light-local targets. Fixed size, so they are allocated once here and
+    // never touched by a resize.
+    GLRig.fbo.occ   = glRigTarget(gl, GLRIG_OCC, GLRIG_OCC);
+    GLRig.fbo.polar = glRigTarget(gl, GLRIG_POLAR_BINS, GLRIG_LIGHTS, gl.NEAREST);
+    if (!GLRig.fbo.occ || !GLRig.fbo.polar) return glRigFail();
+
+    // Losing the context is normal on mobile (tab backgrounded, GPU reset).
+    // Stand down cleanly and let the 2D rig carry the frame.
+    cv.addEventListener('webglcontextlost', (e) => {
+      e.preventDefault();
+      GLRig.ok = false; GLRig.on = false;
+      GLRig.failure = 'context lost';
+    }, false);
+    cv.addEventListener('webglcontextrestored', () => {
+      GLRig.ok = false;
+      GLRig.prog = {}; GLRig.tex = {}; GLRig.fbo = {};
+      GLRig.w = GLRig.h = 0;
+      glRigInit();
+    }, false);
+
+    GLRig.ok = true;
+    GLRig.on = true;
+    GLRig.tier = 0;
+    glRigResize();
+    return GLRig.ok;
+  } catch (err) {
+    GLRig.failure = String(err && err.message ? err.message : err);
+    return glRigFail();
+  }
+}
+
+function glRigFail() {
+  GLRig.ok = false;
+  GLRig.on = false;
+  return false;
+}
+
+function glRigActive() {
+  return GLRig.ok && GLRig.on && GLRig.w > 0;
+}
+
+// True when the rig, not drawBiomeShadows(), is casting the sun's shadows.
+// Both cast from the same silhouettes, so exactly one of them may run.
+function glRigOwnsSunShadows() {
+  return GLRIG_OWN_SHADOWS && glRigActive() && BIOME_ACTIVE;
+}
+
+// Screen-sized targets. Called on init, on window resize and whenever the
+// watchdog changes tier -- never from inside a frame.
+function glRigResize() {
+  if (!GLRig.ok) return;
+  const gl = GLRig.gl;
+  const dens = (typeof pixelDensity === 'function') ? pixelDensity() : 1;
+  const scale = GLRIG_SCALES[GLRig.tier] || 1;
+
+  const w = Math.max(64, Math.round(width * dens * scale));
+  const h = Math.max(64, Math.round(height * dens * scale));
+  if (w === GLRig.w && h === GLRig.h) return;
+
+  GLRig.w = w; GLRig.h = h;
+  GLRig.canvas.width = w;
+  GLRig.canvas.height = h;
+
+  if (GLRig.fbo.normal) { gl.deleteFramebuffer(GLRig.fbo.normal.fbo); gl.deleteTexture(GLRig.fbo.normal.tex); }
+  if (GLRig.fbo.light)  { gl.deleteFramebuffer(GLRig.fbo.light.fbo);  gl.deleteTexture(GLRig.fbo.light.tex); }
+  GLRig.fbo.normal = glRigTarget(gl, w, h);
+  GLRig.fbo.light  = glRigTarget(gl, w, h);
+  if (!GLRig.fbo.normal || !GLRig.fbo.light) { glRigFail(); return; }
+
+  // The height field is low frequency -- masses, kerbs and benches, nothing
+  // with an edge finer than a wall -- so it runs at half the rig's resolution.
+  // Every ray-march sample and every occlusion resample reads it, so this is
+  // the single most effective knob on the rig's bandwidth.
+  const hw = Math.max(64, Math.round(w * 0.5));
+  const hh = Math.max(64, Math.round(h * 0.5));
+  if (!GLRig.hgt || GLRig.hw !== hw || GLRig.hh !== hh) {
+    if (GLRig.hgt) GLRig.hgt.remove();
+    GLRig.hgt = createGraphics(hw, hh);
+    GLRig.hgt.pixelDensity(1);
+    GLRig.hgt.noSmooth();
+    GLRig.hw = hw; GLRig.hh = hh;
+  }
+}
+
+// Supply authored tangent-space normal maps. The atlas must be in the same
+// screen layout as the frame -- i.e. something that painted normals where the
+// entities are -- which is why nothing feeds it yet. The shader path, including
+// the 2D rotation into each entity's facing, is live the moment one exists.
+function glRigSetNormalAtlas(src, mix) {
+  if (!GLRig.ok || !src) return false;
+  const gl = GLRig.gl;
+  const el = src.canvas || src.elt || src;
+  try {
+    gl.bindTexture(gl.TEXTURE_2D, GLRig.tex.atlas);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, el);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    GLRig.atlasMix = mix === undefined ? 1 : mix;
+    return true;
+  } catch (err) {
+    GLRig.failure = 'normal atlas: ' + err;
+    return false;
+  }
+}
+
+// --- the height / material G-buffer ----------------------------------------
+
+// Packs one entity's material into the buffer's four channels:
+//   R  height, world units scaled by GLRIG_HEIGHT_MAX
+//   G  gloss -- how much Blinn-Phong specular the surface takes
+//   B  facing as turns, for the tangent-space rotation in the normal pass
+//   A  coverage: 1 where geometry stands, 0 on bare ground
+function glRigMat(g, hWorld, gloss, turns) {
+  const r = hWorld <= 0 ? 0 : (hWorld >= GLRIG_HEIGHT_MAX ? 255 : (hWorld / GLRIG_HEIGHT_MAX) * 255);
+  g.fill(r, gloss * 255, ((turns % 1) + 1) % 1 * 255, 255);
+}
+
+// Draws the scene's height field. This is the only new per-frame scene pass the
+// rig adds, and it is deliberately not art: flat fills over the same lists
+// drawBiomeShadows() already walks, at half rig resolution, with no per-type
+// dispatch. Adding a building type does NOT require touching this function --
+// it picks the mass up from buildingRise() like everything else.
+function glRigPaintHeight() {
+  const g = GLRig.hgt;
+  const k = GLRig.hw / width;          // css px -> height buffer px
+  const wet = (typeof isRaining !== 'undefined' && isRaining) ? 1 : 0;
+
+  g.clear();
+  g.push();
+  g.noStroke();
+  g.scale(k * zoom);
+  g.translate(-camX, -camY);
+
+  // 1. Ground relief. Concentric insets reproduce groundElev()'s feather, so
+  //    the bench the player walks up shades and self-shadows as one surface
+  //    rather than appearing as a cliff with a painted edge.
+  const zs = (typeof elevZones === 'function') ? elevZones() : null;
+  if (zs) {
+    for (const z of zs) {
+      if (!inView(z.x, z.y, Math.max(z.w, z.h))) continue;
+      const x0 = z.x - z.w / 2, y0 = z.y - z.h / 2;
+      for (let i = 0; i < 6; i++) {
+        const t = (i + 1) / 6;
+        const ins = z.f * (1 - t);
+        glRigMat(g, z.z * smooth01(t), 0.05, 0);
+        g.rect(x0 + ins, y0 + ins, z.w - ins * 2, z.h - ins * 2);
+      }
+    }
+  }
+
+  // 2. Masses. The same cull and the same skips as the 2D shadow pass, so the
+  //    two agree about what is a caster.
+  for (const b of activeBuildings) {
+    if (b.isTreeTrunk) continue;                    // the canopy is a decor entry
+    const w = b.w || 0, h = b.h || 0;
+    if (!inView(b.x, b.y, Math.max(w, h) + 120)) continue;
+
+    // Water is below the ground, not above it, and it is the glossiest thing in
+    // the scene -- this is what puts a lamp's reflection on the canal.
+    if (b.isRiver || b.isWater || b.isPond) {
+      glRigMat(g, 0, 0.95, 0);
+      g.rect(b.x - w / 2, b.y - h / 2, w, h);
+      continue;
+    }
+    // Surfaces: walkable, so no mass, but they still take a highlight.
+    if (b.isDeck || b.isParkingLot || b.isCropField || b.isGrassLot) {
+      glRigMat(g, 1.5, 0.10 + 0.35 * wet, 0);
+      g.rect(b.x - w / 2, b.y - h / 2, w, h);
+      continue;
+    }
+    if (b.isStreetLight) {
+      glRigMat(g, 46, 0.35, 0);
+      g.rect(b.x - 4, b.y - 4, 8, 8);
+      continue;
+    }
+
+    const rise = (typeof buildingRise === 'function') ? buildingRise(b) : 12;
+    const gloss = 0.12 + 0.30 * wet + (b.isCar || b.isParkingCar ? 0.45 : 0);
+    glRigMat(g, rise + groundElev(b.x, b.y), gloss, b.angle || 0);
+    if (b.isRock || b.propType === 'BOULDER') g.ellipse(b.x, b.y, w, h);
+    else                                      g.rect(b.x - w / 2, b.y - h / 2, w, h);
+  }
+
+  // 3. Characters. Their facing goes in as the rotation channel, which is the
+  //    term the tangent-space branch of the normal pass reads.
+  const CH = 17;
+  const one = (c) => {
+    if (!c || c.hp <= 0 || c.dead) return;
+    if (!inView(c.x, c.y, 60)) return;
+    glRigMat(g, CH + groundElev(c.x, c.y), 0.18 + 0.25 * wet,
+             (c.aimAngle || 0) / (Math.PI * 2));
+    g.ellipse(c.x, c.y, 20, 20);
+  };
+  one(player);
+  for (const e of enemiesList) one(e);
+  if (typeof allies !== 'undefined' && allies) for (const a of allies) one(a);
+
+  g.pop();
+}
+
+// --- per-frame passes ------------------------------------------------------
+
+function glRigDraw(gl, prog, rect) {
+  gl.uniform4f(prog._u.uRect, rect[0], rect[1], rect[2], rect[3]);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+
+function glRigBindTex(gl, prog, name, unit, tex) {
+  const loc = prog._u[name];
+  if (loc === undefined) return;
+  gl.activeTexture(gl.TEXTURE0 + unit);
+  gl.bindTexture(gl.TEXTURE_2D, tex);
+  gl.uniform1i(loc, unit);
+}
+
+const GLRIG_FULL = [-1, -1, 1, 1];
+
+// Local lights, gathered exactly the way drawLightPass() gathers them so the
+// two rigs agree about which lamps are lit -- a light that appears when the GPU
+// path drops out is worse than no GPU path.
+function glRigGatherLights() {
+  const out = GLRig.lights;
+  out.length = 0;
+  const pad = 220;
+  const px0 = player ? player.x : (viewLeft + viewRight) / 2;
+  const py0 = player ? player.y : (viewTop + viewBottom) / 2;
+
+  for (const b of activeBuildings) {
+    if (!b.isStreetLight || !inView(b.x, b.y, pad)) continue;
+    const dx = b.x - px0, dy = b.y - py0;
+    out.push({
+      x: b.x, y: b.y + 14, r: 330, z: 46, rMin: 24,
+      p: 0.92 * (0.965 + 0.035 * Math.sin(frameCount * 0.031 + b.x * 0.013)),
+      c: [1.00, 0.93, 0.78], soft: 0.020, d2: dx * dx + dy * dy
+    });
+  }
+  if (typeof fires !== 'undefined' && fires) {
+    for (const f of fires) {
+      if (!inView(f.x, f.y, pad)) continue;
+      const flick = 0.78 + 0.22 * Math.sin(frameCount * 0.21 + f.x * 0.05)
+                         * Math.sin(frameCount * 0.13 + f.y * 0.03);
+      const dx = f.x - px0, dy = f.y - py0;
+      out.push({
+        x: f.x, y: f.y, r: 150 + f.r * 1.9, z: 18, rMin: 10,
+        p: 0.98 * flick * Math.min(1, f.life / 60),
+        // A fire is a big soft emitter close to the ground, so its penumbra
+        // opens much faster than a lamp's.
+        c: [1.00, 0.66, 0.34], soft: 0.055, d2: dx * dx + dy * dy
+      });
+    }
+  }
+  if (player && player.hp > 0) {
+    // rMin clears the player's own 20-unit body, which stands only 9 units
+    // below the light they are holding.
+    out.push({ x: player.x, y: player.y + 6, r: 240, z: 26, p: 0.52, rMin: 22,
+               c: [0.86, 0.92, 1.00], soft: 0.030, d2: -1 });
+  }
+
+  // Nearest first, then a hard budget: which lights are lit has to depend on
+  // geometry rather than array order, or crossing a chunk border reshuffles the
+  // list and lamps swap on and off.
+  out.sort((a, b) => a.d2 - b.d2);
+  if (out.length > GLRIG_LIGHTS) out.length = GLRIG_LIGHTS;
+  return out;
+}
+
+// Drops a tier (or stands down entirely) when the frame budget goes, and climbs
+// back when it comes home. Hysteresis is deliberately lopsided -- fall fast,
+// recover slowly -- because a rig oscillating between tiers reads as flicker.
+function glRigWatchdog() {
+  const dt = (typeof deltaTime === 'number' && deltaTime > 0) ? deltaTime : 16;
+  if (dt > 26) { GLRig.slow++; GLRig.fast = 0; } else if (dt < 19) { GLRig.fast++; GLRig.slow = 0; }
+  if (GLRig.slow > 90) {
+    GLRig.slow = 0;
+    if (GLRig.tier < GLRIG_SCALES.length - 1) { GLRig.tier++; glRigResize(); }
+    else { GLRig.on = false; GLRig.failure = 'stood down: frame budget'; }
+  } else if (GLRig.fast > 600 && GLRig.tier > 0) {
+    GLRig.fast = 0;
+    GLRig.tier--;
+    glRigResize();
+  }
+}
+
+// The whole rig, one frame. Returns false if it did not composite, in which
+// case the caller runs the 2D light pass instead.
+function glRigFrame() {
+  if (!glRigActive()) return false;
+  const gl = GLRig.gl;
+  const W = GLRig.w, H = GLRig.h;
+
+  try {
+    // --- G-buffer -----------------------------------------------------------
+    glRigPaintHeight();
+
+    gl.bindVertexArray(GLRig.vao);
+    gl.disable(gl.DEPTH_TEST);
+    gl.disable(gl.BLEND);
+    gl.disable(gl.SCISSOR_TEST);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, GLRig.tex.diffuse);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, GLRig.host);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, GLRig.tex.height);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE,
+                  GLRig.hgt.canvas || GLRig.hgt.elt);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+
+    // --- scene terms --------------------------------------------------------
+    const d = daylight();
+    const sh = sunHeight();
+    const sc = sunColour();
+    const key = keyStrength();
+    const amb = 0.50 + 0.50 * d;
+    const def0 = BIOMES[currentBiome];
+    const fog = def0 ? def0.fog : null;
+    const night = 1 - d;
+
+    // Relief exaggeration. The Sobel runs on a normalised height field at half
+    // resolution, so this converts its gradient back into something with the
+    // slope the world actually has, then leans on it a little -- an overhead
+    // camera sees almost no shading otherwise.
+    const relief = 5.5;
+
+    // The march has to agree with the rest of the scene about how long a shadow
+    // is. shadowLengthScale() is what every drawn shadow in the game is built
+    // on, and charShadowX() carries the same 1.35, so inverting the pair gives
+    // a ray whose climb produces the length the 2D pass would have drawn.
+    const slope = 1 / Math.max(0.35, shadowLengthScale() * 1.35);
+
+    // uv travelled per world unit marched toward the sun. Screen y runs down
+    // and uv y runs up, hence the sign flip on the second term.
+    const marchU = -LIGHT_DX * zoom / width;
+    const marchV =  LIGHT_DY * zoom / height;
+
+    // --- pass 1: normals ----------------------------------------------------
+    let p = GLRig.prog.normal;
+    gl.useProgram(p);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, GLRig.fbo.normal.fbo);
+    gl.viewport(0, 0, W, H);
+    glRigBindTex(gl, p, 'uHgt', 1, GLRig.tex.height);
+    glRigBindTex(gl, p, 'uNrmAtlas', 2, GLRig.tex.atlas);
+    gl.uniform2f(p._u.uTexel, 1 / GLRig.hw, 1 / GLRig.hh);
+    gl.uniform1f(p._u.uRelief, relief);
+    gl.uniform1f(p._u.uAtlasMix, GLRig.atlasMix || 0);
+    glRigDraw(gl, p, GLRIG_FULL);
+
+    // --- pass 2: ambient + sun, with the heightmap ray march ----------------
+    p = GLRig.prog.sun;
+    gl.useProgram(p);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, GLRig.fbo.light.fbo);
+    gl.viewport(0, 0, W, H);
+    glRigBindTex(gl, p, 'uHgt', 1, GLRig.tex.height);
+    glRigBindTex(gl, p, 'uNrm', 3, GLRig.fbo.normal.tex);
+    gl.uniform2f(p._u.uMarchUV, marchU, marchV);
+    gl.uniform1f(p._u.uSlope, slope);
+    gl.uniform1f(p._u.uHeightMax, GLRIG_HEIGHT_MAX);
+    // First step just clears the caster's own texel; the growth factor then
+    // reaches ~14x that in GLRIG_SUN_STEPS.
+    gl.uniform1f(p._u.uStep0, 3.5);
+    gl.uniform1f(p._u.uGrow, 1.14);
+    gl.uniform1f(p._u.uPenumbra, 0.10 + 0.55 * skyDiffusion());
+    // Direction TOWARD the sun. LIGHT_DX/DY point the way shadows fall, and the
+    // shading frame has y up, so x negates and y does not.
+    const L = [-LIGHT_DX, LIGHT_DY, slope];
+    const Lm = Math.hypot(L[0], L[1], L[2]) || 1;
+    const Lz = L[2] / Lm;                       // N.L on flat, unoccluded ground
+    gl.uniform3f(p._u.uSunDir, L[0] / Lm, L[1] / Lm, Lz);
+
+    // THE RIG MUST BE A NO-OP ON FLAT, UNLIT, UNOCCLUDED GROUND.
+    //
+    // This is the whole reason it can be dropped into a finished game. Both
+    // light colours are normalised to luma 1 so they carry hue only, and the
+    // ambient term is then whatever is left over after the key light:
+    //
+    //     lit_flat = ambScalar + sunPow * Lz  ==  amb
+    //
+    // where amb is exactly the level the 2D rig would have left the frame at.
+    // So a bare road at noon comes out of the GPU path pixel-identical to the
+    // canvas path, and everything the rig adds -- relief shading, cast shadows,
+    // specular, lamp pools -- is a departure from that baseline rather than a
+    // regrade of the whole scene. Get this wrong and every biome palette in the
+    // game, all of which were authored at midday, is wrong with it.
+    const lum = (r, g2, b2) => r * 0.30 + g2 * 0.59 + b2 * 0.11;
+    const scL = lum(sc[0], sc[1], sc[2]) / 255 || 1;
+    gl.uniform3f(p._u.uSunCol, sc[0] / 255 / scL, sc[1] / 255 / scL, sc[2] / 255 / scL);
+
+    const sunPow = 0.55 * d * key;
+    const ambScalar = Math.max(0.04, amb - sunPow * Lz);
+
+    // Shade keeps a trace of the biome's own sky rather than going to dead
+    // grey, and leans blue after dark -- the same intent as the 2D rig's navy
+    // sheet, expressed as a hue on a multiply instead of a wash on top.
+    const skyc = def0 ? def0.sky : [30, 36, 48];
+    let tr = 1 + (skyc[0] - 70) / 950 - 0.10 * night;
+    let tg = 1 + (skyc[1] - 70) / 950 - 0.04 * night;
+    let tb = 1 + (skyc[2] - 70) / 950 + 0.14 * night;
+    const tl = lum(tr, tg, tb) || 1;
+    gl.uniform3f(p._u.uAmbCol, ambScalar * tr / tl, ambScalar * tg / tl, ambScalar * tb / tl);
+
+    gl.uniform1f(p._u.uSunPow, sunPow);
+    // Specular is gated on the G-buffer's gloss channel, which is zero on bare
+    // ground -- so this cannot lift the terrain, only wet tarmac, water, glass
+    // and metal.
+    gl.uniform1f(p._u.uSpec, 0.85 * key * (0.35 + 0.65 * sh));
+    gl.uniform1f(p._u.uShine, 26);
+    glRigDraw(gl, p, GLRIG_FULL);
+
+    // --- pass 3: local lights, three passes each ----------------------------
+    const lights = glRigGatherLights();
+    const dens = W / width;                       // css px -> rig px
+    const uvW = width / zoom, uvH = height / zoom; // world units across the view
+
+    for (let i = 0; i < lights.length; i++) {
+      const Lg = lights[i];
+      if (!(Lg.p > 0.004)) continue;
+
+      // Screen uv of the emitter. uv y runs up, screen y runs down.
+      const sxp = (Lg.x - camX) * zoom;
+      const syp = (Lg.y - camY) * zoom;
+      const lu = sxp / width;
+      const lv = 1 - syp / height;
+      const ru = (Lg.r * zoom) / width;
+      const rv = (Lg.r * zoom) / height;
+      if (lu + ru < 0 || lu - ru > 1 || lv + rv < 0 || lv - rv > 1) continue;
+
+      // 3a. Occlusion: the light's neighbourhood of the height field, resampled
+      //     into a fixed light-centred target.
+      p = GLRig.prog.occ;
+      gl.useProgram(p);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, GLRig.fbo.occ.fbo);
+      gl.viewport(0, 0, GLRIG_OCC, GLRIG_OCC);
+      glRigBindTex(gl, p, 'uHgt', 1, GLRig.tex.height);
+      gl.uniform2f(p._u.uLightUV, lu, lv);
+      gl.uniform2f(p._u.uSpanUV, ru, rv);
+      gl.uniform1f(p._u.uHeightMax, GLRIG_HEIGHT_MAX);
+      gl.uniform1f(p._u.uLightZ, Lg.z);
+      glRigDraw(gl, p, GLRIG_FULL);
+
+      // 3b. Polar reduction into this light's row of the 1D atlas.
+      p = GLRig.prog.polar;
+      gl.useProgram(p);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, GLRig.fbo.polar.fbo);
+      gl.viewport(0, 0, GLRIG_POLAR_BINS, GLRIG_LIGHTS);
+      glRigBindTex(gl, p, 'uOcc', 4, GLRig.fbo.occ.tex);
+      gl.uniform1f(p._u.uRMin, Math.min(0.4, (Lg.rMin || 0) / Lg.r));
+      const y0 = (i / GLRIG_LIGHTS) * 2 - 1;
+      const y1 = ((i + 1) / GLRIG_LIGHTS) * 2 - 1;
+      glRigDraw(gl, p, [-1, y0, 1, y1]);
+
+      // 3c. Composite, additively, inside a scissor box the size of the light.
+      //     This is the pass that would otherwise evaluate every fragment on
+      //     screen for a lamp lighting a tenth of it.
+      p = GLRig.prog.light;
+      gl.useProgram(p);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, GLRig.fbo.light.fbo);
+      gl.viewport(0, 0, W, H);
+      gl.enable(gl.BLEND);
+      gl.blendFunc(gl.ONE, gl.ONE);
+      gl.enable(gl.SCISSOR_TEST);
+      const sx0 = Math.max(0, Math.floor((sxp - Lg.r * zoom) * dens));
+      const sy0 = Math.max(0, Math.floor((height - syp - Lg.r * zoom) * dens));
+      const sx1 = Math.min(W, Math.ceil((sxp + Lg.r * zoom) * dens));
+      const sy1 = Math.min(H, Math.ceil((height - syp + Lg.r * zoom) * dens));
+      if (sx1 <= sx0 || sy1 <= sy0) continue;
+      gl.scissor(sx0, sy0, sx1 - sx0, sy1 - sy0);
+
+      glRigBindTex(gl, p, 'uHgt', 1, GLRig.tex.height);
+      glRigBindTex(gl, p, 'uNrm', 3, GLRig.fbo.normal.tex);
+      glRigBindTex(gl, p, 'uPolar', 5, GLRig.fbo.polar.tex);
+      gl.uniform2f(p._u.uLightUV, lu, lv);
+      gl.uniform2f(p._u.uRadUV, ru, rv);
+      gl.uniform2f(p._u.uUVToWorld, uvW, uvH);
+      gl.uniform3f(p._u.uCol, Lg.c[0], Lg.c[1], Lg.c[2]);
+      gl.uniform1f(p._u.uPower, Lg.p * (0.35 + 0.85 * night));
+      gl.uniform1f(p._u.uLightZ, Lg.z);
+      gl.uniform1f(p._u.uHeightMax, GLRIG_HEIGHT_MAX);
+      gl.uniform1f(p._u.uRow, (i + 0.5) / GLRIG_LIGHTS);
+      gl.uniform1f(p._u.uSoft, Lg.soft);
+      gl.uniform1f(p._u.uSpec, 1.15);
+      gl.uniform1f(p._u.uShine, 34);
+      // The quad is already the light's box, so the scissor is belt and braces
+      // against a partially covered tile rather than the cull itself.
+      glRigDraw(gl, p, [lu * 2 - 1 - ru * 2, lv * 2 - 1 - rv * 2,
+                        lu * 2 - 1 + ru * 2, lv * 2 - 1 + rv * 2]);
+
+      gl.disable(gl.SCISSOR_TEST);
+      gl.disable(gl.BLEND);
+    }
+
+    // --- pass 4: composite --------------------------------------------------
+    p = GLRig.prog.comp;
+    gl.useProgram(p);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.viewport(0, 0, W, H);
+    glRigBindTex(gl, p, 'uDiffuse', 0, GLRig.tex.diffuse);
+    glRigBindTex(gl, p, 'uLight', 6, GLRig.fbo.light.tex);
+    // Haze folded in here rather than run as its own full-screen pass, exactly
+    // as drawLightPass() does it -- one composite instead of two.
+    const hazeA = fog ? (fog[3] / 255) * (0.34 + 0.66 * night) : 0;
+    gl.uniform3f(p._u.uHaze, fog ? fog[0] / 255 : 0, fog ? fog[1] / 255 : 0, fog ? fog[2] / 255 : 0);
+    gl.uniform1f(p._u.uHazeA, hazeA);
+    gl.uniform1f(p._u.uVignette, 0.26 * night);
+    glRigDraw(gl, p, GLRIG_FULL);
+
+    gl.bindVertexArray(null);
+
+    // --- back into the 2D canvas -------------------------------------------
+    // Not onto the page. Everything after this line in draw() -- the HUD, the
+    // sticks, the cutscene bars -- is painted on the p5 canvas, and a GL canvas
+    // stacked on top of it would bury all of them.
+    const ctx = drawingContext;
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(GLRig.canvas, 0, 0, width, height);
+    ctx.restore();
+
+    // The rig has taken the haze, so drawBiomeScreenLayer() must not lay it
+    // down a second time. Same contract drawLightPass() has with that pass.
+    _rigTookHaze = hazeA > 0.004;
+
+    glRigWatchdog();
+    return true;
+  } catch (err) {
+    GLRig.failure = String(err && err.message ? err.message : err);
+    GLRig.on = false;
+    return false;
+  }
 }
 
 function drawBiomeScreenLayer() {
