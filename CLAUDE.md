@@ -590,6 +590,24 @@ storeWindowIntoLedger(id)     // write it back
 escortCasualty()              // one soldier off their HOME sector's roll
 ```
 
+**One army by default; splitting it is a choice.** The Directive is *undivided*: everyone
+the player frees joins a single roster (`POP_POOL`) that travels with them, so Stick City's
+eighty and the Green Line's cordon are one column of numbers and clearing a new sector
+**adds** to it while the jobs already handed out survive. Every grant lands in the pool.
+
+Dividing it is the second half, and it is a **move, not a second system**. `postCitizen(
+dept, sex, from, to)` shifts one integer out of the pool into a sector's own ledger or back
+— a subtraction and an addition that always happen together, so a citizen is in exactly one
+place and `globalPopulationCount()` (which sums every record, pool included) can neither
+double-count nor lose anybody. `drawGarrisonMenu()` / `handleGarrisonClicks()` are the
+screen: pick a sector, move people per department per sex. Reached from **DEPLOY BY
+SECTOR** beside BACK on either copy of the Directive.
+
+The pool is just another ledger record, which is the whole reason this was a small change:
+the invariants, the save, the legacy migration and both structural checks apply to it
+unaltered. `consolidateLegacyIntoPool()` runs once on load — an older save has its people
+filed under the sectors they were freed in, and undivided is the default now.
+
 **`window.pop*` is an edit buffer, not state.** It is loaded when the Directive opens and
 written back when it is confirmed; between those two moments **nothing else may touch it —
 including the panel's own draw pass.** That is not a style preference, it is the whole

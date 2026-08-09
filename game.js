@@ -4011,7 +4011,7 @@ viewBottom = camY + height / zoom + shakePad;
       // the panel was correcting itself against its own output, and every
       // stream, cull or level rebuild that moved a body moved the population.
       // It reads the ledger and nothing else now, and reads it ONCE.
-      beginDirective(viewingTownId, 'WORLD');
+      beginDirective(POP_POOL, 'WORLD');
 
 
       fill(255); textAlign(CENTER, CENTER); textSize(32); textFont('sans-serif');
@@ -4121,10 +4121,16 @@ viewBottom = camY + height / zoom + shakePad;
       text(btnText, width/2, height - 65);
 
       // And a way back out of it, which neither copy of this panel had.
+      // BACK, plus the door to splitting this roster between sectors.
       fill(40); stroke(150); strokeWeight(2);
-      rect(width/2 - 70, height - 34, 140, 28, 6);
+      rect(width/2 - 160, height - 34, 150, 28, 6);
       fill(200); noStroke(); textSize(14);
-      text("BACK", width/2, height - 20);
+      text("BACK", width/2 - 85, height - 20);
+      fill(popTotal > 0 ? color(40, 70, 90) : color(30));
+      stroke(popTotal > 0 ? color(70, 180, 230) : color(80));
+      rect(width/2 + 10, height - 34, 150, 28, 6);
+      fill(popTotal > 0 ? color(150, 220, 255) : color(90)); noStroke(); textSize(14);
+      text("DEPLOY BY SECTOR", width/2 + 85, height - 20);
   }
   // --- TRAVEL DEPARTURE MENU ---
   if (inTravelMenu) {
@@ -4399,7 +4405,7 @@ if (swordPickedUp || window.pickaxeOwned) {
       // the panel was correcting itself against its own output, and every
       // stream, cull or level rebuild that moved a body moved the population.
       // It reads the ledger and nothing else now, and reads it ONCE.
-      beginDirective(viewingTownId, 'PAUSE');
+      beginDirective(POP_POOL, 'PAUSE');
 
   // --- 1. USE YOUR EXACT trueGlobalPop LOGIC FROM SCREENSHOT 1000206223.jpg ---
   let trueGlobalPop = 0;
@@ -4522,10 +4528,16 @@ if (swordPickedUp || window.pickaxeOwned) {
       fill(0); noStroke(); textSize(18); 
       text(btnText, width/2, height - 65);
 
+      // BACK, plus the door to splitting this roster between sectors.
       fill(40); stroke(150); strokeWeight(2);
-      rect(width/2 - 70, height - 34, 140, 28, 6);
+      rect(width/2 - 160, height - 34, 150, 28, 6);
       fill(200); noStroke(); textSize(14);
-      text("BACK", width/2, height - 20);
+      text("BACK", width/2 - 85, height - 20);
+      fill(popTotal > 0 ? color(40, 70, 90) : color(30));
+      stroke(popTotal > 0 ? color(70, 180, 230) : color(80));
+      rect(width/2 + 10, height - 34, 150, 28, 6);
+      fill(popTotal > 0 ? color(150, 220, 255) : color(90)); noStroke(); textSize(14);
+      text("DEPLOY BY SECTOR", width/2 + 85, height - 20);
 
       // A third copy of the ESTABLISH handler used to sit here, inside the DRAW
       // pass, reading mx/my and flipping the town to `established` without
@@ -4533,6 +4545,9 @@ if (swordPickedUp || window.pickaxeOwned) {
       // had already dealt with, so the Directive closed and the ledger kept
       // whatever it had before. Gone -- the click path owns the click.
             }
+      else if (pauseMenuState === "GARRISON") {
+          drawGarrisonMenu();
+      }
       else if (pauseMenuState === "SHOP") {
           drawUpgradeMenu();
       } 
@@ -5211,7 +5226,7 @@ function recruitSectorSurvivors() {
   // standing in is still one of the eighty. The grant is latched, so this is
   // safe to call again on a re-entry or a reload.
   const owed = grantSectorSurvivors(currentLevel);
-  loadLedgerIntoWindow(currentLevel);
+  loadLedgerIntoWindow(POP_POOL);
   return { total: owed, female: f, converted: n };
 }
 
@@ -5260,8 +5275,9 @@ function ensureDirectiveRoster() {
     // leaving them undefined. Against a ledger it can only do damage: `popTotal`
     // is whatever sector was last looked at, so opening a fresh sector's
     // Directive would deal ANOTHER sector's headcount into this one's columns.
-    // The ledger already guarantees the fields exist.
-    loadLedgerIntoWindow(viewingTownId);
+    // The ledger already guarantees the fields exist, and the panel edits the
+    // POOL -- the one undivided roster -- not the sector it was opened from.
+    loadLedgerIntoWindow(POP_POOL);
 }
 
 // Population seeding for the sectors that end on a straight ambush clear
@@ -5293,12 +5309,57 @@ function ensureDirectiveRoster() {
 const POP_DEPTS = ["Farming", "Military", "Science", "Architecture"];
 const SECTOR_POP_SEED = 80;   // what seedSectorPopulation() puts on the ground
 
+// --- one army, and the places it has been posted --------------------------
+//
+// By default the Directive is UNDIVIDED: everyone the player frees joins a
+// single roster that travels with them, so Stick City's eighty and the Green
+// Line's cordon are one column of numbers and clearing a new sector adds to it
+// rather than starting again. That is the pool, and it is where every grant
+// lands.
+//
+// Dividing it is the second half, and it is a MOVE, not a second system: the
+// garrison screen shifts integers out of the pool into a sector's own ledger
+// and back. A citizen is therefore in exactly one place at any moment, and
+// globalPopulationCount() -- which sums every record including the pool --
+// cannot double-count or lose anybody.
+const POP_POOL = "POOL";
+function poolLedger() { return sectorLedger(POP_POOL); }
+
+// An older save has its people filed under the sectors they were freed in,
+// because that is how the Directive used to work. Undivided is the default now,
+// so they are consolidated into the travelling army on first load -- otherwise
+// a returning player opens the Directive and finds an empty one while their
+// citizens sit in records nothing shows. Runs once: after it, the sectors are
+// empty and the pool is not.
+function consolidateLegacyIntoPool() {
+    if (typeof townsData === 'undefined' || !townsData) return 0;
+    const pool = sectorLedger(POP_POOL);
+    if (sectorPopSum(pool) > 0) return 0;            // already an army
+    let moved = 0;
+    for (const id in townsData) {
+        if (id === POP_POOL) continue;
+        const t = sectorLedger(id);
+        for (const d of POP_DEPTS) for (const sex of ['M', 'F']) {
+            const k = "pop" + d + sex;
+            pool[k] += t[k]; moved += t[k]; t[k] = 0;
+        }
+        pool.popUnassignedM += t.popUnassignedM; moved += t.popUnassignedM; t.popUnassignedM = 0;
+        pool.popUnassignedF += t.popUnassignedF; moved += t.popUnassignedF; t.popUnassignedF = 0;
+        t.popTotal = 0;
+    }
+    pool.popTotal = sectorPopSum(pool);
+    globalPopulation = globalPopulationCount();
+    invalidateDirectiveBuffer();
+    return moved;
+}
+
 function sectorLedger(id) {
     if (typeof townsData === 'undefined' || !townsData) window.townsData = {};
     // `viewingTownId` is undefined until a Directive has been opened, and it is
     // what most callers pass. Keyed on undefined this minted a phantom sector
     // that globalPopulationCount() then happily added to the world's total.
-    if (id === undefined || id === null || id === '' || !isFinite(Number(id))) id = currentLevel;
+    if (id !== POP_POOL &&
+        (id === undefined || id === null || id === '' || !isFinite(Number(id)))) id = currentLevel;
     let t = townsData[id];
     if (!t) { t = { established: false }; townsData[id] = t; }
     for (const d of POP_DEPTS) {
@@ -5478,9 +5539,145 @@ function grantSectorSurvivors(level) {
         const fem = freed.filter(e => String(e.eType || "").toUpperCase().indexOf("FEMALE") !== -1).length;
         f = Math.min(n, fem);
     }
-    grantCitizens(level, n - f, f);
+    // Into the POOL. The sector keeps the record of what it seeded, what was
+    // killed there and that it has paid out -- those are facts about the
+    // sector -- but the people themselves join the one roster.
+    grantCitizens(POP_POOL, n - f, f);
     t.popGranted = true;
     return n;
+}
+
+// Post one citizen from one ledger to another, or bring them home. This is the
+// ONLY way anybody moves between the pool and a sector -- a move is a
+// subtraction and an addition that must always happen together, or the global
+// count changes when nobody joined or left.
+function postCitizen(dept, sex, fromId, toId) {
+    if (POP_DEPTS.indexOf(dept) === -1 || (sex !== 'M' && sex !== 'F')) return false;
+    const key = "pop" + dept + sex;
+    const a = sectorLedger(fromId), b = sectorLedger(toId);
+    if (a === b || (Number(a[key]) || 0) <= 0) return false;
+    a[key]--; b[key]++;
+    a.popTotal = sectorPopSum(a);
+    b.popTotal = sectorPopSum(b);
+    invalidateDirectiveBuffer();
+    globalPopulation = globalPopulationCount();
+    return true;
+}
+
+// --- the garrison screen ---------------------------------------------------
+//
+// The Directive is one undivided roster by default. This is where the player
+// splits it: pick a sector, and move people out of the travelling army into
+// that sector's own ledger, or bring them back. Nothing is created or
+// destroyed here -- every button is a postCitizen(), which is a subtraction
+// and an addition in one step.
+let garrisonSector = 0;      // index into garrisonSectors()
+
+function drawGarrisonMenu() {
+    const secs = garrisonSectors();
+    if (garrisonSector >= secs.length) garrisonSector = 0;
+    const sec = secs[garrisonSector];
+    const pool = poolLedger(), t = sectorLedger(sec);
+
+    fill(255); textAlign(CENTER, CENTER); textFont('sans-serif');
+    textSize(28); text("DEPLOY BY SECTOR", width / 2, 46);
+    textSize(13); fill(150);
+    text("Move people out of the travelling army and into a sector's own roll.",
+         width / 2, 74);
+
+    // Sector selector
+    fill(40); stroke(120); strokeWeight(2);
+    rect(width / 2 - 150, 96, 300, 42, 8);
+    fill(255); noStroke(); textSize(19);
+    const nm = (typeof BIOMES !== 'undefined' && BIOMES[sec]) ? BIOMES[sec].name : ("SECTOR " + sec);
+    text(nm, width / 2, 117);
+    fill(secs.length > 1 ? 220 : 80); textSize(22);
+    text("<", width / 2 - 128, 117);
+    text(">", width / 2 + 128, 117);
+
+    textSize(14); fill(180);
+    text("TRAVELLING ARMY: " + pool.popTotal + "     POSTED HERE: " + t.popTotal,
+         width / 2, 158);
+
+    // One row per department: pool count, arrows, sector count.
+    for (let i = 0; i < POP_DEPTS.length; i++) {
+        const d = POP_DEPTS[i], y = 190 + i * 74;
+        fill(28); stroke(70); strokeWeight(1);
+        rect(width / 2 - 250, y, 500, 64, 8);
+        fill(230); noStroke(); textSize(17); textAlign(LEFT, CENTER);
+        text(d.toUpperCase(), width / 2 - 236, y + 22);
+        textAlign(CENTER, CENTER);
+
+        for (let g = 0; g < 2; g++) {
+            const sex = g ? 'F' : 'M', key = "pop" + d + sex;
+            const ry = y + 14 + g * 26, lab = g ? "F" : "M";
+            fill(g ? color(255, 105, 180) : color(100, 150, 255));
+            textSize(13); text(lab, width / 2 - 120, ry);
+            fill(255); textSize(15);
+            text(pool[key], width / 2 - 74, ry);          // in the army
+            text(t[key],   width / 2 + 150, ry);          // posted here
+
+            fill(pool[key] > 0 ? color(50, 200, 50) : color(70));
+            rect(width / 2 + 6, ry - 11, 40, 22, 4);
+            fill(255); textSize(13); text("POST >", width / 2 + 26, ry);
+
+            fill(t[key] > 0 ? color(200, 120, 50) : color(70));
+            rect(width / 2 - 52, ry - 11, 44, 22, 4);
+            fill(255); text("< BACK", width / 2 - 30, ry);
+        }
+    }
+
+    fill(40); stroke(150); strokeWeight(2);
+    rect(width / 2 - 70, height - 62, 140, 34, 6);
+    fill(220); noStroke(); textSize(15);
+    text("DONE", width / 2, height - 45);
+}
+
+function handleGarrisonClicks(mx, my) {
+    const secs = garrisonSectors();
+    if (garrisonSector >= secs.length) garrisonSector = 0;
+    const sec = secs[garrisonSector];
+
+    if (my > 96 && my < 138) {
+        if (mx > width / 2 - 150 && mx < width / 2 - 100) {
+            garrisonSector = (garrisonSector + secs.length - 1) % secs.length; return true;
+        }
+        if (mx > width / 2 + 100 && mx < width / 2 + 150) {
+            garrisonSector = (garrisonSector + 1) % secs.length; return true;
+        }
+    }
+    for (let i = 0; i < POP_DEPTS.length; i++) {
+        const d = POP_DEPTS[i], y = 190 + i * 74;
+        for (let g = 0; g < 2; g++) {
+            const sex = g ? 'F' : 'M', ry = y + 14 + g * 26;
+            if (my < ry - 11 || my > ry + 11) continue;
+            if (mx > width / 2 + 6 && mx < width / 2 + 46) {
+                if (postCitizen(d, sex, POP_POOL, sec) && typeof sfx !== 'undefined') sfx.reload();
+                return true;
+            }
+            if (mx > width / 2 - 52 && mx < width / 2 - 8) {
+                if (postCitizen(d, sex, sec, POP_POOL) && typeof sfx !== 'undefined') sfx.hitArmor();
+                return true;
+            }
+        }
+    }
+    if (mx > width / 2 - 70 && mx < width / 2 + 70 && my > height - 62 && my < height - 28) {
+        pauseMenuState = "GOV_DIRECTIVE";
+        invalidateDirectiveBuffer();
+        if (typeof sfx !== 'undefined') sfx.charge();
+        return true;
+    }
+    return false;
+}
+
+// Which sectors the player has actually been to, so the garrison screen has
+// somewhere to post people to.
+function garrisonSectors() {
+    const out = [];
+    for (let l = 1; l <= 7; l++) {
+        if (l === currentLevel || (townsData && townsData[l])) out.push(l);
+    }
+    return out.length ? out : [currentLevel || 1];
 }
 
 // An escort soldier is a loan, not an emigrant: they stay on their home
@@ -5512,7 +5709,7 @@ function openDirectiveWithGrant(level) {
     invalidateDirectiveBuffer();
     grantSectorSurvivors(level);
     openSectorDirective(level);
-    loadLedgerIntoWindow(level);
+    loadLedgerIntoWindow(POP_POOL);
 }
 
 function handleStoryWinLoop() {
@@ -14110,10 +14307,19 @@ else if (mx > width/2 - 120 && mx < width/2 + 120 && my > height/2 - 110 && my <
       } else if (pauseMenuState === "GOV_DIRECTIVE") {
           // Out, without committing anything. The Directive is an edit buffer
           // over the ledger, so backing out simply reloads it.
-          if (mx > width/2 - 70 && mx < width/2 + 70 && my > height - 34 && my < height - 6) {
-              invalidateDirectiveBuffer(); loadLedgerIntoWindow(viewingTownId);
+          if (mx > width/2 - 160 && mx < width/2 - 10 && my > height - 34 && my < height - 6) {
+              invalidateDirectiveBuffer(); loadLedgerIntoWindow(POP_POOL);
               if (inWorldBuildingMenu) { inWorldBuildingMenu = false; inOverworldView = true; }
               else pauseMenuState = "MAIN";
+              return false;
+          }
+          // Split the travelling army between sectors.
+          if (mx > width/2 + 10 && mx < width/2 + 160 && my > height - 34 && my < height - 6) {
+              if (popTotal > 0) {
+                  storeWindowIntoLedger(POP_POOL);   // bank what is on screen first
+                  pauseMenuState = "GARRISON"; inWorldBuildingMenu = false;
+                  sfx.charge();
+              }
               return false;
           }
           if (mx > width/2 - 120 && mx < width/2 + 120 && my > height - 90 && my < height - 40) {
@@ -14141,9 +14347,8 @@ else if (mx > width/2 - 120 && mx < width/2 + 120 && my > height/2 - 110 && my <
                   for (let i = 0; i < window.popArchitectureM; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "ARCHITECTURE", "MALE"));
                   for (let i = 0; i < window.popArchitectureF; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "ARCHITECTURE", "FEMALE"));
 
-                  storeWindowIntoLedger(viewingTownId);
-                  saveTownData(viewingTownId);
-                  townsData[viewingTownId].established = true;
+                  storeWindowIntoLedger(POP_POOL);
+                  sectorLedger(viewingTownId).established = true;
                   
                   if (inWorldBuildingMenu) {
                       inWorldBuildingMenu = false;
@@ -14160,6 +14365,10 @@ else if (mx > width/2 - 120 && mx < width/2 + 120 && my > height/2 - 110 && my <
 }
 
       
+      else if (pauseMenuState === "GARRISON") {
+          handleGarrisonClicks(mx, my);
+          return false;
+      }
       else if (pauseMenuState === "SHOP") {
           // The Shop ONLY handles shop clicks and the back button
           if (mx > width/2 - 125 && mx < width/2 + 125 && my > height - 70 && my < height - 20) { 
@@ -14275,9 +14484,17 @@ else if (typeof inPostAmbushCutscene !== 'undefined' && inPostAmbushCutscene) {
 // 3. GOV DIRECTIVE MENU -> OVERWORLD (Merged)
 // ==========================================
 else if (typeof inWorldBuildingMenu !== 'undefined' && inWorldBuildingMenu) {
-    if (mx > width/2 - 70 && mx < width/2 + 70 && my > height - 34 && my < height - 6) {
-        invalidateDirectiveBuffer(); loadLedgerIntoWindow(viewingTownId);
+    if (mx > width/2 - 160 && mx < width/2 - 10 && my > height - 34 && my < height - 6) {
+        invalidateDirectiveBuffer(); loadLedgerIntoWindow(POP_POOL);
         inWorldBuildingMenu = false; inOverworldView = true;
+        return false;
+    }
+    if (mx > width/2 + 10 && mx < width/2 + 160 && my > height - 34 && my < height - 6) {
+        if (popTotal > 0) {
+            storeWindowIntoLedger(POP_POOL);
+            inWorldBuildingMenu = false; isPaused = true; pauseMenuState = "GARRISON";
+            if (typeof sfx !== 'undefined' && sfx.charge) sfx.charge();
+        }
         return false;
     }
     if (mx > width/2 - 120 && mx < width/2 + 120 && my > height - 90 && my < height - 40) {
@@ -14296,8 +14513,8 @@ else if (typeof inWorldBuildingMenu !== 'undefined' && inWorldBuildingMenu) {
                 if (!townsData[targetId]) townsData[targetId] = {};
                 townsData[targetId].established = true;
             }
-            storeWindowIntoLedger(targetId);
-            if (typeof saveTownData === 'function') saveTownData(targetId);
+            storeWindowIntoLedger(POP_POOL);
+            sectorLedger(targetId).established = true;
             
             // B. Physically spawn the gender-accurate citizens
             townCitizens = []; 
@@ -14985,6 +15202,7 @@ function loadGame() {
         // townsData. They have to be in place before the map is generated,
         // otherwise every save reloads into the wrong world.
         if (state.townsData) townsData = state.townsData;
+        consolidateLegacyIntoPool();
         window.escortHome = state.escortHome || null;
         window.escortWasF = state.escortWasF || 0;
         if (state.viewingTownId) viewingTownId = state.viewingTownId;
@@ -15129,6 +15347,7 @@ function loadGame() {
         weather = null;
         applyBiomeWeather();
         if (state.townsData) townsData = state.townsData;
+        consolidateLegacyIntoPool();
         window.escortHome = state.escortHome || null;
         window.escortWasF = state.escortWasF || 0;
         if (state.viewingTownId) viewingTownId = state.viewingTownId;

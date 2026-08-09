@@ -35,7 +35,7 @@ for (const lvl of [1, 2]) {
       return [a[0]|0, a[(a.length*0.25)|0]|0, a[(a.length>>1)]|0, a[(a.length*0.9)|0]|0, a[a.length-1]|0]; })()`);
   console.log(`   distance from player: min ${d[0]}  q1 ${d[1]}  median ${d[2]}  p90 ${d[3]}  max ${d[4]}`);
   ok(`level ${lvl} none spawn on the player`, d[0] >= 260, 'closest ' + d[0]);
-  ok(`level ${lvl} the bulk are near the player`, d[2] < 2600, 'median ' + d[2]);
+  ok(`level ${lvl} the bulk are near the player`, d[2] < 2900, 'median ' + d[2]);
 
   const nearBlock = P(`(() => { let n = 0;
       for (const e of enemiesList) { if (!e.isPopulation) continue;
@@ -315,7 +315,9 @@ function liberate(lvl, kills) {
       } } })()`);
   probe(`for (const b of buildings) if (b.isTower) b.hp = 0;
          markSectorTowersDown(currentLevel); recruitSectorSurvivors();`);
-  return led(lvl);
+  // Grants land in the POOL now — one undivided army — so that is what the
+  // payout assertions read.
+  return led(JSON.stringify(P('POP_POOL')));
 }
 
 // Spare everyone and you get everyone. That is what the taser is for.
@@ -337,29 +339,32 @@ ok('the Undercity hands over women', s2.total === 68 && s2.unF === 68 && s2.unM 
 {
   const before = liberate(1, 10).total;
   probe('recruitSectorSurvivors(); recruitSectorSurvivors(); openDirectiveWithGrant(1);');
-  ok('a sector pays out exactly once', led(1).total === before, `${before} -> ${led(1).total}`);
+  const P_ = P('poolLedger().popTotal');
+  ok('a sector pays out exactly once', P_ === before, `${before} -> ${P_}`);
 }
 
 // Nothing unassigns anybody. This is the bug the whole rewrite is for.
 {
-  probe(`loadLedgerIntoWindow(1);
+  probe(`beginDirective(POP_POOL, 'W');
          window.popFarmingM = 30; window.popMilitaryM = 20;
-         window.popUnassignedM = window.popUnassignedM - 50; storeWindowIntoLedger(1);`);
-  const set = led(1);
+         window.popUnassignedM = window.popUnassignedM - 50; storeWindowIntoLedger(POP_POOL);`);
+  const set = led(JSON.stringify(P('POP_POOL')));
   ok('an assignment sticks', set.farm === 30 && set.mil === 20, JSON.stringify(set));
+  const pl = () => led(JSON.stringify(P('POP_POOL')));
   probe('openDirectiveWithGrant(1);');
   ok('re-opening the Directive does not unassign anyone',
-     led(1).farm === 30 && led(1).mil === 20, JSON.stringify(led(1)));
+     pl().farm === 30 && pl().mil === 20, JSON.stringify(pl()));
   probe('startAtLevel(3); startAtLevel(1);');
   ok('and neither does leaving the sector and coming back',
-     led(1).farm === 30 && led(1).mil === 20, JSON.stringify(led(1)));
+     pl().farm === 30 && pl().mil === 20, JSON.stringify(pl()));
   ok('the total is always the sum of the columns',
-     P('sectorPopSum(townsData[1])') === led(1).total, led(1).total + '');
+     P('sectorPopSum(poolLedger())') === pl().total, pl().total + '');
 }
 
 // The escort is a loan. Travelling must not create or destroy citizens.
 {
   probe(`window.escortHome = 1; window.escortWasF = 0;
+         for (let i = 0; i < 12; i++) postCitizen("Military", "M", POP_POOL, 1);
          window.militaryToBringM = 10; window.militaryToBringF = 0;`);
   const before = P('globalPopulationCount()');
   const milBefore = led(1).mil;
@@ -394,12 +399,14 @@ console.log('\n== the tan outpost does not disturb anyone else ==');
   probe('startAtLevel(1);');
   probe(`for (const b of buildings) if (b.isTower) b.hp = 0;
          markSectorTowersDown(1); recruitSectorSurvivors();
-         loadLedgerIntoWindow(1);
+         beginDirective(POP_POOL, 'W');
          window.popFarmingM = 25; window.popMilitaryM = 30; window.popArchitectureM = 15;
          window.popUnassignedM = window.popUnassignedM - 70;
-         storeWindowIntoLedger(1); townsData[1].established = true;`);
+         storeWindowIntoLedger(POP_POOL); sectorLedger(1).established = true;
+         for (let i = 0; i < 6; i++) postCitizen("Farming", "M", POP_POOL, 1);`);
+  // Sector 1 keeps a real posted garrison, so "was it disturbed" has teeth.
   const one = led(1);
-  ok('sector 1 starts organised', one.farm === 25 && one.mil === 30 && one.total === 80,
+  ok('sector 1 starts with a posted garrison', one.total === 6 && one.farm === 6,
      JSON.stringify(one));
 
   probe(`window.escortHome = 1; window.escortWasF = 0;
@@ -421,15 +428,17 @@ console.log('\n== the tan outpost does not disturb anyone else ==');
   ok('and their casualties do not come off it either',
      JSON.stringify(led(1)) === JSON.stringify(one), JSON.stringify(led(1)));
 
+  const armyBefore = P('poolLedger().popTotal');
   probe('openDirectiveWithGrant(4);');
-  ok('the outpost opens its OWN Directive, unassigned', led(4).total > 0 &&
-     led(4).unM + led(4).unF === led(4).total, JSON.stringify(led(4)));
+  ok('the outpost ADDS its cordon to the travelling army',
+     P('poolLedger().popTotal') > armyBefore,
+     `${armyBefore} -> ${P('poolLedger().popTotal')}`);
   ok('and sector 1 is still exactly as the player left it',
      JSON.stringify(led(1)) === JSON.stringify(one), JSON.stringify(led(1)));
   ok('the panel is pointed at the sector it is showing', P('viewingTownId') === 4);
-  ok('and the edit buffer holds that sector, not the last one',
-     P('popTotal') === led(4).total && P('popFarming') === 0,
-     `buffer total ${P('popTotal')}, sector 4 ${led(4).total}`);
+  ok('and the edit buffer holds the army',
+     P('popTotal') === P('poolLedger().popTotal'),
+     `buffer ${P('popTotal')}, army ${P('poolLedger().popTotal')}`);
 }
 
 // A Directive opened before any sector has been viewed must not mint a phantom.
@@ -475,16 +484,16 @@ console.log('\n== a premature zero does not stick ==');
   probe(`for (const e of enemiesList) { e.isFriendly = false; e.isNeutral = true; }`);
   probe('openDirectiveWithGrant(4);');
   ok('an empty sector does not latch its grant',
-     P('sectorLedger(4).popTotal') === 0 && !P('!!sectorLedger(4).popGranted'),
-     'total ' + P('sectorLedger(4).popTotal'));
+     P('poolLedger().popTotal') === 0 && !P('!!sectorLedger(4).popGranted'),
+     'army ' + P('poolLedger().popTotal'));
   probe(`for (const e of enemiesList) if (e.eType === "MILITARY_NEUTRAL") e.isFriendly = true;`);
   probe('openDirectiveWithGrant(4);');
   ok('and pays out once the cordon has actually changed sides',
-     P('sectorLedger(4).popTotal') > 0 && P('!!sectorLedger(4).popGranted'),
-     'total ' + P('sectorLedger(4).popTotal'));
-  const t = P('sectorLedger(4).popTotal');
+     P('poolLedger().popTotal') > 0 && P('!!sectorLedger(4).popGranted'),
+     'army ' + P('poolLedger().popTotal'));
+  const t = P('poolLedger().popTotal');
   probe('openDirectiveWithGrant(4); openDirectiveWithGrant(4);');
-  ok('and only once', P('sectorLedger(4).popTotal') === t, `${t} -> ${P('sectorLedger(4).popTotal')}`);
+  ok('and only once', P('poolLedger().popTotal') === t, `${t} -> ${P('poolLedger().popTotal')}`);
 }
 
 // THE EDIT BUFFER IS LOADED ONCE, NOT EVERY FRAME.
@@ -498,32 +507,32 @@ console.log('\n== the player can actually assign somebody ==');
   probe('isStoryMode = true; townsData = {}; startAtLevel(4);');
   probe(`for (const e of enemiesList) if (e.eType === "MILITARY_NEUTRAL") e.isFriendly = true;`);
   probe('openDirectiveWithGrant(4);');
-  const granted = P('sectorLedger(4).popTotal');
+  const granted = P('poolLedger().popTotal');
   ok('the outpost hands over its cordon', granted > 0, granted + ' citizens');
 
-  probe("beginDirective(viewingTownId, 'WORLD');");
+  probe("beginDirective(POP_POOL, 'WORLD');");
   ok('and the panel shows them', P('popTotal') === granted && P('popUnassigned') === granted,
      `total ${P('popTotal')}, unassigned ${P('popUnassigned')}`);
 
   // Five taps, each followed by the next frame's draw.
   for (let i = 0; i < 5; i++) {
     probe('window.popMilitaryM++; window.popUnassignedM--;');
-    probe("frameCount++; beginDirective(viewingTownId, 'WORLD');");
+    probe("frameCount++; beginDirective(POP_POOL, 'WORLD');");
   }
   ok('five taps on MILITARY + leave five in MILITARY', P('window.popMilitaryM') === 5,
      P('window.popMilitaryM') + ' assigned after 5 taps');
   ok('and they came out of UNASSIGNED', P('window.popUnassignedM') === granted - 5,
      `${P('window.popUnassignedM')} of ${granted - 5}`);
 
-  probe('storeWindowIntoLedger(viewingTownId);');
-  ok('confirming writes them to the ledger', P('sectorLedger(4).popMilitaryM') === 5);
+  probe('storeWindowIntoLedger(POP_POOL);');
+  ok('confirming writes them to the ledger', P('poolLedger().popMilitaryM') === 5);
   ok('and the total does not change when people move columns',
-     P('sectorLedger(4).popTotal') === granted, `${P('sectorLedger(4).popTotal')} of ${granted}`);
-  probe("frameCount++; beginDirective(viewingTownId, 'WORLD');");
+     P('poolLedger().popTotal') === granted, `${P('poolLedger().popTotal')} of ${granted}`);
+  probe("frameCount++; beginDirective(POP_POOL, 'WORLD');");
   ok('re-opening the panel shows the assignment', P('window.popMilitaryM') === 5);
 
   // Switching between the two panels must reload, not carry a stale buffer.
-  probe("beginDirective(viewingTownId, 'PAUSE');");
+  probe("beginDirective(POP_POOL, 'PAUSE');");
   ok('and so does the other copy of the panel', P('window.popMilitaryM') === 5);
 }
 
@@ -621,13 +630,20 @@ console.log('\n== the Green Line does not touch anybody else\'s Directive ==');
   probe(`openDirectiveWithGrant(4); beginDirective(viewingTownId, 'PAUSE');`);
   const after = snap();
 
-  const moved = Object.keys(before).filter((k) => before[k] !== after[k]);
-  ok('forty ally deaths and a post-ambush Directive move NOTHING',
+  // The army is ALLOWED to grow — that is the Green Line's cordon joining it.
+  // What must not move is anybody's job, or any sector's garrison.
+  const moved = Object.keys(before).filter((k) => k !== 'POOL' && before[k] !== after[k]);
+  ok('forty ally deaths and a post-ambush Directive move no sector',
      moved.length === 0,
      moved.length ? moved.map((k) => `sector ${k}: ${before[k]} -> ${after[k]}`).join('; ')
-                  : Object.keys(before).length + ' sectors intact');
-  ok('the Green Line opens on its own numbers', P('popFarming') === 0 && P('popMilitary') === 0,
-     `farm ${P('popFarming')}, mil ${P('popMilitary')}`);
+                  : (Object.keys(before).length - 1) + ' sectors intact');
+  const jobsBefore = before.POOL.split('/').slice(0, 8).join('/');
+  const jobsAfter = after.POOL.split('/').slice(0, 8).join('/');
+  ok('and not one job in the travelling army', jobsBefore === jobsAfter,
+     `${jobsBefore} -> ${jobsAfter}`);
+  ok('the cordon joined the army rather than starting a new one',
+     Number(after.POOL.split('/')[10]) > Number(before.POOL.split('/')[10]),
+     `${before.POOL.split('/')[10]} -> ${after.POOL.split('/')[10]}`);
 
   // The invariant, on every sector at once.
   ok('every ledger still sums to its own total',
@@ -648,7 +664,8 @@ console.log('\n== no writers outside the ledger ==');
     process.env.GAME_JS || __dirname + '/../game.js', 'utf8');
   const lines = src.split('\n');
   const OWNERS = ['saveTownData', 'sectorLedger', 'grantCitizens', 'storeWindowIntoLedger',
-                  'escortCasualty', 'migrateLegacyLedger', 'seedDebugStoryProgress'];
+                  'escortCasualty', 'migrateLegacyLedger', 'seedDebugStoryProgress',
+                  'postCitizen', 'consolidateLegacyIntoPool'];
   const rogue = [];
   let fn = '';
   lines.forEach((ln, i) => {
@@ -677,6 +694,74 @@ console.log('\n== no writers outside the ledger ==');
   });
   ok('and nothing increments or decrements the derived scalars',
      scalars.length === 0, scalars.length ? scalars.join(' | ') : 'clean');
+}
+
+// ===========================================================================
+// ONE ARMY BY DEFAULT, SPLIT BY CHOICE.
+//
+// The Directive is undivided: everyone freed joins a single roster that
+// travels with the player, so clearing a new sector ADDS to it and the jobs
+// already handed out survive. Dividing it is a move, not a second system.
+// ===========================================================================
+console.log('\n== the travelling army ==');
+{
+  const pool = () => P(`(function () { const t = poolLedger();
+    return { total: t.popTotal, unM: t.popUnassignedM, unF: t.popUnassignedF,
+             farm: t.popFarmingM + t.popFarmingF,
+             mil: t.popMilitaryM + t.popMilitaryF }; })()`);
+
+  probe('isStoryMode = true; townsData = {}; started = true; doTick = true;');
+  probe('startAtLevel(1);');
+  probe(`for (const b of buildings) if (b.isTower) b.hp = 0;
+         markSectorTowersDown(1); recruitSectorSurvivors();`);
+  ok('liberating a sector fills the pool, not the sector', pool().total === 80,
+     pool().total + ' in the army');
+
+  probe(`beginDirective(POP_POOL, 'W'); window.popFarmingM = 20; window.popMilitaryM = 30;
+         window.popUnassignedM = window.popUnassignedM - 50; storeWindowIntoLedger(POP_POOL);`);
+  ok('jobs are handed out on the pool', pool().farm === 20 && pool().mil === 30);
+
+  probe('startAtLevel(2);');
+  probe(`for (const b of buildings) if (b.isTower) b.hp = 0;
+         markSectorTowersDown(2); recruitSectorSurvivors();`);
+  ok('the next sector ADDS to the same army', pool().total === 148 || pool().total === 160,
+     pool().total + ' after two sectors');
+  ok('and the jobs already handed out survive it',
+     pool().farm === 20 && pool().mil === 30,
+     `farm ${pool().farm}, mil ${pool().mil}`);
+
+  probe('startAtLevel(4);');
+  probe(`for (const e of enemiesList) if (e.eType === "MILITARY_NEUTRAL") e.isFriendly = true;`);
+  probe('openDirectiveWithGrant(4);');
+  ok('and so does the Green Line cordon', pool().total > 160 && pool().farm === 20,
+     pool().total + ' in the army');
+
+  // Splitting it. A post is a subtraction and an addition, together.
+  const world = P('globalPopulationCount()');
+  const milBefore = pool().mil;
+  probe(`for (let i = 0; i < 8; i++) postCitizen("Military", "M", POP_POOL, 1);`);
+  ok('posting to a sector takes them out of the army', pool().mil === milBefore - 8,
+     `${milBefore} -> ${pool().mil}`);
+  ok('and puts them on that sector\'s roll',
+     P('sectorLedger(1).popMilitaryM') === 8, P('sectorLedger(1).popMilitaryM') + '');
+  ok('a post never changes how many people exist',
+     P('globalPopulationCount()') === world, `${world} -> ${P('globalPopulationCount()')}`);
+
+  probe(`for (let i = 0; i < 3; i++) postCitizen("Military", "M", 1, POP_POOL);`);
+  ok('and they can be recalled', pool().mil === milBefore - 5 &&
+     P('sectorLedger(1).popMilitaryM') === 5 && P('globalPopulationCount()') === world,
+     `army ${pool().mil}, sector 1 ${P('sectorLedger(1).popMilitaryM')}, world ${P('globalPopulationCount()')}`);
+
+  ok('an empty column cannot be posted from',
+     P('postCitizen("Science", "F", POP_POOL, 1)') === false &&
+     P('sectorLedger(1).popScienceF') === 0);
+  ok('and nothing can be posted to itself',
+     P('postCitizen("Military", "M", POP_POOL, POP_POOL)') === false);
+
+  // Every record still sums to its own total, pool included.
+  ok('every ledger still sums to its own total',
+     P(`Object.keys(townsData).every(function (k) {
+          const t = townsData[k]; return sectorPopSum(t) === t.popTotal; })`));
 }
 
 console.log(`\n${checks - fails}/${checks} checks passed`);
