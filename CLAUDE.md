@@ -657,6 +657,22 @@ looked empty. Against a ledger that can only do damage — `popTotal` is whateve
 last looked at, so opening the Green Line's Directive dealt Stick City's headcount into the
 Green Line's columns. It is a ledger load.
 
+**The one that was actually doing it.** `processKill()`'s ally-death branch decremented
+*four* different things on every friendly death — `globalPopulation`, the `popTotal`
+scalar, the `popMilitary` scalar, and **`townsData[1].popMilitary` / `.popTotal`,
+hard-coded to sector 1** whatever sector the player was standing in. In the Green Line's
+post-ambush that fires dozens of times, so a firefight two biomes away rewrote Stick City's
+Directive; and on a record with no legacy `popMilitary` field it wrote
+`Math.max(0, undefined - 1)` — NaN — into the save. An ally death is one event on one
+ledger and goes through `escortCasualty()`, which knows which.
+
+Two structural checks now hold the line, and they are the guarantee rather than a sample of
+it: **nothing writes a `townsData` record outside the ledger API**, and **nothing increments
+or decrements the derived scalars** (`popTotal`, `popMilitary`, `globalPopulation` and the
+rest are recomputed, never adjusted — a body changing sides used to mint a citizen out of
+nothing). `storeWindowIntoLedger()` additionally refuses to write a sector the edit buffer
+was not loaded for, so a panel opened on the Green Line cannot overwrite Stick City.
+
 **What was removed.** `seedSectorPopulationFromSurvivors()` zeroed all eight department
 counts and dumped everyone back into UNASSIGNED, and it was called from five places
 including the plain level-finish fallback — so clearing an ambush in a sector the player had

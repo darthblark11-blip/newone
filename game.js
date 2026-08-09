@@ -5112,9 +5112,11 @@ function seedDebugStoryProgress(level) {
             popUnassignedM: 0, popUnassignedF: 0,
             statVit: 1, statMen: 1, statPhy: 1, statObe: 1, statInt: 1
         };
-        t.popTotal = t.popFarmingM + t.popFarmingF + t.popMilitaryM + t.popMilitaryF;
+        // Already paid, or clearing the arc again would hand out a second
+        // population on top of the one this just wrote down.
+        t.popGranted = true;
         townsData[l] = t;
-        globalPopulation += t.popTotal;
+        sectorLedger(l);                    // computes popTotal from the columns
     }
 
     // Point the live roster at the last town you settled.
@@ -5137,6 +5139,7 @@ function seedDebugStoryProgress(level) {
     popArchitecture = window.popArchitectureM + window.popArchitectureF;
     popUnassigned = window.popUnassignedM + window.popUnassignedF;
     popTotal = window.popTotal;
+    globalPopulation = globalPopulationCount();
 
     // Kit you would have earned by this point. Levels 0 and 1 reset the
     // loadout inside legacyStartAtLevel, which is correct -- the run starts
@@ -5414,6 +5417,11 @@ function loadLedgerIntoWindow(id) {
 }
 
 function storeWindowIntoLedger(id) {
+    // The buffer holds ONE sector. Writing it into a different one is how a
+    // panel opened on the Green Line overwrites Stick City, so it is refused
+    // rather than trusted -- the caller has to be looking at what it saves.
+    if (directiveBufferFor !== null &&
+        String(directiveBufferFor).split(':')[1] !== String(id)) return sectorLedger(id);
     invalidateDirectiveBuffer();
     const t = sectorLedger(id);
     for (const d of POP_DEPTS) {
@@ -5672,9 +5680,13 @@ function triggerGateAmbush(fortressY, isNorthGate = false) {
     if (window.towersDefeated) {
         let candidates = enemiesList.filter(e => e.eType === "NORMAL" || e.eType === "BUG" || e.eType === "SNAIL" || e.eType === "MOLOTOV");
         for(let e of candidates) { 
-            if (!e.isFriendly) globalPopulation++;
+            // Waking them up changes whose side they are on, not how many
+            // people the sector has. globalPopulation is the sum of the
+            // ledgers and is recomputed, never incremented -- a body changing
+            // sides used to mint a citizen out of nothing here.
             e.isFriendly = true; e.state = "CHASE"; e.hp = 300; e.loseSightTimer = 999; 
         }
+        globalPopulation = globalPopulationCount();
     }
 }
 
@@ -11820,13 +11832,19 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
     // --- ALLY DEATH LOGIC ---
  
     if (isFriendly) {
-        globalPopulation = Math.max(0, globalPopulation - 1); 
-        if (typeof popTotal !== 'undefined') popTotal = Math.max(0, popTotal - 1);
-        if (typeof popMilitary !== 'undefined' && popMilitary > 0) {
-            popMilitary--; 
-            if (window.militaryToBring && window.militaryToBring > 0) window.militaryToBring--;
-            if (townsData[1]) { townsData[1].popMilitary = Math.max(0, townsData[1].popMilitary - 1); townsData[1].popTotal = Math.max(0, townsData[1].popTotal - 1); }
-        }
+        // An ally died. That is ONE event on ONE ledger and it goes through the
+        // one function that knows which: escortCasualty(), called from the top
+        // of processKill() for soldiers the player actually marched somewhere.
+        //
+        // What stood here decremented four different things on every friendly
+        // death -- globalPopulation, the popTotal scalar, the popMilitary
+        // scalar, and townsData[1].popMilitary / .popTotal, HARD-CODED to
+        // sector 1 whatever sector the player was standing in. In the Green
+        // Line's post-ambush that fires dozens of times, so a fight two biomes
+        // away rewrote Stick City's Directive; and on a record that had no
+        // legacy `popMilitary` field it wrote `Math.max(0, undefined - 1)`,
+        // which is NaN, into the save.
+        if (window.militaryToBring && window.militaryToBring > 0) window.militaryToBring--;
         if (x !== undefined && y !== undefined) floatingScores.push({ y: 100, text: "ALLY LOST!", life: 90, maxLife: 90 });
         return; 
     }
@@ -15083,8 +15101,11 @@ function loadGame() {
         
         grenadesUnlocked = state.grenadesUnlocked; pGrenadeAmmo = state.pGrenadeAmmo; pFlaskAmmo = state.pFlaskAmmo;
         
-        popTotal = state.popTotal || 0; popUnassigned = state.popUnassigned || 0; popFarming = state.popFarming || 0; 
-        popMilitary = state.popMilitary || 0; popScience = state.popScience || 0; popArchitecture = state.popArchitecture || 0;
+        // popTotal / popUnassigned / popFarming / popMilitary / popScience /
+        // popArchitecture are DERIVED from the ledger and are recomputed by
+        // loadLedgerIntoWindow(). Restoring them from the save put a stale copy
+        // of some other sector's numbers in front of the record.
+        loadLedgerIntoWindow(state.viewingTownId || currentLevel);
         statVit = state.statVit || 1; statMen = state.statMen || 1; statPhy = state.statPhy || 1; statObe = state.statObe || 1; statInt = state.statInt || 1;
         
         if (state.biomeState) biomeState = state.biomeState;

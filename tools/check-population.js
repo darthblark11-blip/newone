@@ -580,5 +580,104 @@ console.log('\n== an old save still has its people ==');
      P('sectorLedger(4).popMilitaryM') === 5, P('sectorLedger(4).popMilitaryM') + '');
 }
 
+// ===========================================================================
+// THE ONE THAT MATTERS: nothing unassigns anybody by itself.
+//
+// Level 4, story mode, post NM-0 ambush. Two sectors already organised, an
+// escort marched in, the tan cordon allied, and then forty friendly deaths --
+// which is what a post-ambush actually is. Not one department anywhere may move.
+// ===========================================================================
+console.log('\n== the Green Line does not touch anybody else\'s Directive ==');
+{
+  const snap = () => P(`(function () { const o = {};
+    for (const id in townsData) { const t = sectorLedger(id);
+      o[id] = [t.popFarmingM, t.popFarmingF, t.popMilitaryM, t.popMilitaryF,
+               t.popScienceM, t.popScienceF, t.popArchitectureM, t.popArchitectureF,
+               t.popUnassignedM, t.popUnassignedF, t.popTotal].join('/'); }
+    return o; })()`);
+
+  probe('isStoryMode = true; townsData = {}; started = true; doTick = true;');
+  probe('startAtLevel(1);');
+  probe(`for (const b of buildings) if (b.isTower) b.hp = 0;
+         markSectorTowersDown(1); recruitSectorSurvivors();`);
+  probe(`beginDirective(1, 'W'); window.popFarmingM = 25; window.popMilitaryM = 30;
+         window.popScienceM = 10; window.popArchitectureM = 15; window.popUnassignedM = 0;
+         storeWindowIntoLedger(1); townsData[1].established = true;`);
+  probe('startAtLevel(2);');
+  probe(`for (const b of buildings) if (b.isTower) b.hp = 0;
+         markSectorTowersDown(2); recruitSectorSurvivors();`);
+  probe(`beginDirective(2, 'W'); window.popFarmingF = 20; window.popMilitaryF = 25;
+         window.popUnassignedF = 23; storeWindowIntoLedger(2); townsData[2].established = true;`);
+  const before = snap();
+
+  probe(`window.escortHome = 1; window.escortWasF = 0;
+         window.militaryToBringM = 8; window.militaryToBringF = 0;
+         window.travelArrival = "NORTH";`);
+  probe('startAtLevel(4);');
+  probe(`for (const e of enemiesList) if (e.eType === "MILITARY_NEUTRAL") e.isFriendly = true;`);
+  probe(`(function () { let n = 0; for (const e of enemiesList) {
+     if (e.isFriendly && n < 40) { e.dead = true;
+       processKill(e.x, e.y, false, e.eType, true); n++; } } })()`);
+  probe(`openDirectiveWithGrant(4); beginDirective(viewingTownId, 'PAUSE');`);
+  const after = snap();
+
+  const moved = Object.keys(before).filter((k) => before[k] !== after[k]);
+  ok('forty ally deaths and a post-ambush Directive move NOTHING',
+     moved.length === 0,
+     moved.length ? moved.map((k) => `sector ${k}: ${before[k]} -> ${after[k]}`).join('; ')
+                  : Object.keys(before).length + ' sectors intact');
+  ok('the Green Line opens on its own numbers', P('popFarming') === 0 && P('popMilitary') === 0,
+     `farm ${P('popFarming')}, mil ${P('popMilitary')}`);
+
+  // The invariant, on every sector at once.
+  ok('every ledger still sums to its own total',
+     P(`Object.keys(townsData).every(function (k) {
+          const t = townsData[k]; return sectorPopSum(t) === t.popTotal; })`));
+}
+
+// Structural: nothing outside the ledger API may write a department column.
+// This is the guarantee, not a sample of it -- a rogue writer hard-coded to
+// townsData[1] is what rewrote Stick City from two biomes away.
+console.log('\n== no writers outside the ledger ==');
+{
+  // The rogue-writer shape, exactly: a line that reaches into a townsData
+  // record and changes a population field. One of those, hard-coded to
+  // townsData[1] and fired on every friendly death, is what rewrote Stick
+  // City's Directive from two biomes away.
+  const src = require('fs').readFileSync(
+    process.env.GAME_JS || __dirname + '/../game.js', 'utf8');
+  const lines = src.split('\n');
+  const OWNERS = ['saveTownData', 'sectorLedger', 'grantCitizens', 'storeWindowIntoLedger',
+                  'escortCasualty', 'migrateLegacyLedger', 'seedDebugStoryProgress'];
+  const rogue = [];
+  let fn = '';
+  lines.forEach((ln, i) => {
+    const m = ln.match(/^function\s+(\w+)/);
+    if (m) fn = m[1];
+    const code = ln.replace(/\/\/.*$/, '');
+    if (!/townsData\s*\[[^\]]*\]\s*\.\s*pop\w*\s*(=[^=]|\+\+|--|\+=|-=)/.test(code)) return;
+    if (OWNERS.indexOf(fn) !== -1) return;
+    rogue.push((i + 1) + ': ' + ln.trim().slice(0, 70));
+  });
+  ok('nothing writes a ledger record from outside the ledger', rogue.length === 0,
+     rogue.length ? rogue.join(' | ') : 'clean');
+
+  // And the derived scalars are never a source. popTotal/popMilitary/etc are
+  // recomputed from the buffer; decrementing them is how a display drifts away
+  // from the record behind it.
+  const scalars = [];
+  fn = '';
+  lines.forEach((ln, i) => {
+    const m = ln.match(/^function\s+(\w+)/);
+    if (m) fn = m[1];
+    const code = ln.replace(/\/\/.*$/, '');
+    if (!/(^|[^.\w])(popTotal|popMilitary|popFarming|popScience|popArchitecture|popUnassigned|globalPopulation)\s*(\+\+|--|\+=|-=)/.test(code)) return;
+    if (OWNERS.indexOf(fn) !== -1) return;
+    scalars.push((i + 1) + ': ' + ln.trim().slice(0, 70));
+  });
+  ok('and nothing increments or decrements the derived scalars',
+     scalars.length === 0, scalars.length ? scalars.join(' | ') : 'clean');
+}
+
 console.log(`\n${checks - fails}/${checks} checks passed`);
 process.exit(fails ? 1 : 0);
