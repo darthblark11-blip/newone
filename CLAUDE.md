@@ -661,10 +661,47 @@ speeds (parallax), subtracting light from the ground layer *under* buildings and
 
 ### The pseudo-3D projection
 
-A top-down camera has no horizon, so the only cue that a mass has height is its **roof
+A top-down camera has no horizon, so the only cue that a mass has height is its **top
 being displaced from its footprint, away from the middle of the screen**. `massLean(wx,
-wy, rise)` is that displacement, and `MASS_LEAN` (1.5) is the one number that sets how
-strong the whole effect is — it is the fake camera's focal length, nothing more.
+wy, rise)` is that displacement and `drawMassSides()` draws the faces it opens up. Those
+two functions are the projection: **everything in the world that stands off the ground
+goes through them, and anything added from here on must too.** That is what keeps one
+constant in charge of the whole look.
+
+```
+MASS_LEAN  1.5    parallax strength — the fake camera's focal length
+MASS_TILT  0.42   a few degrees of camera tilt, added to every mass
+CHAR_RISE  11     how tall a figure is, in the units masses use
+PROP_RISE         which biome props are masses, and how tall
+```
+
+**`MASS_TILT` exists because the camera follows the player.** Pure parallax is zero at
+the principal point, so the player — the one figure always dead centre — would be the
+only thing in the world with no volume at all. A camera looking very slightly north gives
+every mass a constant southward term as well, proportional to its own height. Keep it
+small: past a few degrees the footprints stop reading as the ground plane.
+
+**A prop becomes a mass by having a `PROP_RISE` entry**, the same way it becomes a light
+by having a `PROP_EMITTERS` one — the lean is applied once, generically, around the whole
+`drawBiomeProps()` switch, so none of the forty cases knows the projection exists. Two
+forms: `[rise, r, g, b]` is a box and gets extruded sides in that colour; `[rise]` alone
+leans without them. The short form is for anything not box-shaped — `drawMassSides()` is
+axis-aligned and works off the **collision** rect, so a boulder (round, and drawn well
+inside its own box) came out as a rectangular slab standing behind a rock. Decks
+(`BRIDGE`, `CANALBRIDGE`, `BOARDWALK`) are deliberately absent: a surface you stand on
+with walls round it reads as a crate lying in the river.
+
+**A figure is a mass too**, leaning by `CHAR_RISE` from `Character.show()`'s own
+translate — far below a building's rise, because a figure displaced by its own body
+length reads as a sprite that has come unstuck from its feet. Airborne units are excluded
+for the same reason they are kept out of the rig's height field (`CHAR_AIRBORNE`). The
+lean moves the body and never the feet: collision, the contact point the depth sort uses
+and the rig's height ellipse all stay at `(x, y)`.
+
+**Still flat, and the next thing to convert:** the per-flag branches in `drawBuildings()`
+— `isHouse`, `isBarn`, `isWesternBldg`, `isGiantBarrier`, `isShanty` and the rest. They
+are reachable the same way, but each needs its rise and its side colour chosen against
+its own art, so they want doing a cluster at a time with something rendered to look at.
 
 Three things about it are load-bearing:
 
@@ -1737,6 +1774,9 @@ direction, and that the blast clears the player.
 8. **Palettes at midday.** Night is subtractive.
 9. **Never place blind.** Use the lattice, `solidsClearAt`, `nearAnchor`, and let
    `hitsAuthored` have the last word.
+10. **Anything that stands off the ground leans.** New art goes through `massLean()` and
+    `drawMassSides()` — never its own extrusion, and never along `LIGHT_DX/DY`. The base
+    stays on the collision rect, the top moves, and the shadow is the sun's job.
 
 ## Verifying changes
 

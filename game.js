@@ -2861,42 +2861,7 @@ function drawBuildings(list, i0, i1) {
     const x1 = b.x + b.w / 2, y1 = b.y + b.h / 2;
 
     noStroke();
-    if (rise > 0 && (lx !== 0 || ly !== 0)) {
-      // Shading is per FACE, from that face's own outward normal against the
-      // scene's one light vector -- not from which faces happen to be showing.
-      // That is what keeps a building's lit side the same side as the camera
-      // moves around it, instead of the near wall always being the dark one.
-      // The ambient term keeps walls off pure black in the night biomes, where
-      // bM is already dark to begin with.
-      const face = (nx, ny) => {
-        const d = -(nx * LIGHT_DX + ny * LIGHT_DY);
-        const k = 0.34 + 0.46 * (d > 0 ? d : 0);
-        fill(bM[0] * k + 5, bM[1] * k + 6, bM[2] * k + 10);
-      };
-      if (ly > 0)      { face(0, -1); quad(x0, y0, x1, y0, x1 + lx, y0 + ly, x0 + lx, y0 + ly); }
-      else if (ly < 0) { face(0,  1); quad(x0, y1, x1, y1, x1 + lx, y1 + ly, x0 + lx, y1 + ly); }
-      if (lx > 0)      { face(-1, 0); quad(x0, y0, x0, y1, x0 + lx, y1 + ly, x0 + lx, y0 + ly); }
-      else if (lx < 0) { face( 1, 0); quad(x1, y0, x1, y1, x1 + lx, y1 + ly, x1 + lx, y0 + ly); }
-
-      // Mullions, running from the footprint UP THE LEAN to the roof.
-      //
-      // Storey lines banded across the face instead, which is what a wall
-      // really has, and at this depth of projection they read as a stack of
-      // plates rather than as height -- there is only ever a few dozen pixels
-      // of face to divide. Lines along the lean say "this is one surface going
-      // away from you", which is the thing the eye needs told.
-      stroke(0, 0, 0, 42); strokeWeight(1);
-      const mull = 26;
-      if (ly !== 0) {
-        const yb = ly > 0 ? y0 : y1;
-        for (let mx = x0 + mull; mx < x1 - 2; mx += mull) line(mx, yb, mx + lx, yb + ly);
-      }
-      if (lx !== 0) {
-        const xb = lx > 0 ? x0 : x1;
-        for (let my = y0 + mull; my < y1 - 2; my += mull) line(xb, my, xb + lx, my + ly);
-      }
-      noStroke();
-    }
+    if (rise > 0) drawMassSides(x0, y0, x1, y1, lx, ly, bM[0], bM[1], bM[2], 26);
 
     // Everything from here down is ROOF, so it rides up to the top of the
     // walls. Drawn in the footprint's own coordinates and translated, so none
@@ -3017,7 +2982,15 @@ function drawBuildings(list, i0, i1) {
 
 function drawParkingCars() {
   for (let c of activeParkingCars) {
-    push(); translate(c.x, c.y); rotate(c.angle || HALF_PI); fill(c.col[0], c.col[1], c.col[2]); stroke(15); strokeWeight(2); rect(-25, -45, 50, 90, 6); fill(25); noStroke(); rect(-20, -25, 40, 15, 2); rect(-20, 15, 40, 12, 2); fill(30, 20, 15, 180); ellipse(0, -5, 30, 25); fill(10, 150); ellipse(-10, 20, 15, 15); pop();
+    // Lean only, no extruded sides: a car carries its own rotation and
+    // drawMassSides() is axis-aligned, so a skirt would not line up with the
+    // body it belongs to.
+    push(); translate(c.x, c.y);
+    if (BIOME_ACTIVE) {
+      massLean(c.x, c.y, 9, _leanTmp);
+      translate(_leanTmp[0], _leanTmp[1]);
+    }
+    rotate(c.angle || HALF_PI); fill(c.col[0], c.col[1], c.col[2]); stroke(15); strokeWeight(2); rect(-25, -45, 50, 90, 6); fill(25); noStroke(); rect(-20, -25, 40, 15, 2); rect(-20, 15, 40, 12, 2); fill(30, 20, 15, 180); ellipse(0, -5, 30, 25); fill(10, 150); ellipse(-10, 20, 15, 15); pop();
   }
 }
 
@@ -11061,6 +11034,21 @@ if (this.eType === "COW") {
 
   show() {
     push(); translate(this.x, this.y);
+    // A figure is a mass too. Its feet are on the ground and the rest of it is
+    // up in the air, so it projects displaced from its own footprint exactly
+    // the way a building does -- and it has to, or it is the one flat thing
+    // left in a world of solids.
+    //
+    // Airborne units are excluded for the same reason they are kept out of the
+    // rig's height field: this displacement is for something STANDING on the
+    // ground, and a saucer is not (see CHAR_AIRBORNE).
+    //
+    // The lean moves the body, never the feet: collision, the contact point the
+    // depth sort uses and the rig's height ellipse all stay at (x, y).
+    if (BIOME_ACTIVE && !CHAR_AIRBORNE[this.eType]) {
+      massLean(this.x, this.y, CHAR_RISE, _leanTmp);
+      if (_leanTmp[0] !== 0 || _leanTmp[1] !== 0) translate(_leanTmp[0], _leanTmp[1]);
+    }
     // Standing higher up puts you nearer an overhead camera, so you read
     // bigger. This is the whole of the relief illusion as far as figures are
     // concerned -- it scales the shadow with the body, which is what keeps a
@@ -21285,6 +21273,24 @@ function buildingRise(b) {
 // roof to the collision box and slid its base around would appear to skate on
 // the ground every time the camera panned.
 const MASS_LEAN = 1.5;
+
+// A few degrees of camera tilt, on top of the parallax.
+//
+// Pure parallax is zero at the principal point, and the camera follows the
+// player -- so the player, the one figure always at the middle of the screen,
+// would be the only thing in the world with no volume at all. A camera looking
+// very slightly north gives every mass a constant southward displacement as
+// well, proportional to its own height, so nothing is ever perfectly flat.
+// Keep it small: this is a tilt, not an isometric turn, and past a few degrees
+// the footprints stop reading as the ground plane.
+const MASS_TILT = 0.42;
+
+// Standing height of a figure, in the same units masses use. Deliberately far
+// below a building's: a person is a metre or two against a three-storey block,
+// and a figure displaced by its own body length reads as a sprite that has come
+// unstuck from its feet rather than as someone standing up.
+const CHAR_RISE = 11;
+
 const _leanTmp = [0, 0];
 function massLean(wx, wy, rise, out) {
   out = out || _leanTmp;
@@ -21298,8 +21304,52 @@ function massLean(wx, wy, rise, out) {
   if (nx < -1) nx = -1; else if (nx > 1) nx = 1;
   if (ny < -1) ny = -1; else if (ny > 1) ny = 1;
   out[0] = nx * rise * MASS_LEAN;
-  out[1] = ny * rise * MASS_LEAN;
+  out[1] = ny * rise * MASS_LEAN + rise * MASS_TILT;
   return out;
+}
+
+// The extruded sides of an axis-aligned mass, from its footprint up to its
+// leaned top. ONE function for buildings, props and anything added later, so
+// everything in the world leans the same way, shades the same way, and stays
+// consistent when MASS_LEAN is retuned.
+//
+// Only the two faces the lean turns toward the camera exist, and which two that
+// is flips as the mass crosses the middle of the view. Each is shaded from its
+// OWN outward normal against the scene's one light vector -- not from whether
+// it happens to be showing -- which is what keeps a mass's lit side the same
+// side while that flip happens.
+function drawMassSides(x0, y0, x1, y1, lx, ly, cr, cg, cb, mullion) {
+  if (lx === 0 && ly === 0) return;
+  noStroke();
+  const face = (nx, ny) => {
+    const d = -(nx * LIGHT_DX + ny * LIGHT_DY);
+    const k = 0.34 + 0.46 * (d > 0 ? d : 0);
+    fill(cr * k + 5, cg * k + 6, cb * k + 10);
+  };
+  if (ly > 0)      { face(0, -1); quad(x0, y0, x1, y0, x1 + lx, y0 + ly, x0 + lx, y0 + ly); }
+  else if (ly < 0) { face(0,  1); quad(x0, y1, x1, y1, x1 + lx, y1 + ly, x0 + lx, y1 + ly); }
+  if (lx > 0)      { face(-1, 0); quad(x0, y0, x0, y1, x0 + lx, y1 + ly, x0 + lx, y0 + ly); }
+  else if (lx < 0) { face( 1, 0); quad(x1, y0, x1, y1, x1 + lx, y1 + ly, x1 + lx, y0 + ly); }
+
+  // Mullions, running from the footprint UP THE LEAN.
+  //
+  // Storey lines banded across the face instead, which is what a wall really
+  // has, and at this depth of projection they read as a stack of plates rather
+  // than as height -- there is only ever a few dozen pixels of face to divide.
+  // Lines along the lean say "this is one surface going away from you", which
+  // is the thing the eye needs told.
+  if (mullion > 0) {
+    stroke(0, 0, 0, 42); strokeWeight(1);
+    if (ly !== 0) {
+      const yb = ly > 0 ? y0 : y1;
+      for (let mx = x0 + mullion; mx < x1 - 2; mx += mullion) line(mx, yb, mx + lx, yb + ly);
+    }
+    if (lx !== 0) {
+      const xb = lx > 0 ? x0 : x1;
+      for (let my = y0 + mullion; my < y1 - 2; my += mullion) line(xb, my, xb + lx, my + ly);
+    }
+    noStroke();
+  }
 }
 
 // Shadow colour. Never pure black: outdoor shade is lit by the sky above it,
@@ -22199,6 +22249,44 @@ function drawBiomeDecks() {
   }
 }
 
+
+// Which biome props are MASSES, and how tall. A prop gets extruded sides and a
+// leaned top purely by having an entry here -- no per-prop code anywhere else,
+// the same way PROP_EMITTERS lights one.
+//
+//   [ rise, side r, side g, side b ]   a box: extruded sides in that colour
+//   [ rise ]                            lean only, no sides
+//
+// The colour is the prop's own body colour; drawMassSides() shades each face
+// from that against the light.
+//
+// The one-element form is for anything that is not box-shaped. drawMassSides()
+// is axis-aligned and works off the COLLISION rect, so a boulder -- round, and
+// drawn well inside its own box -- came out as a rectangular slab standing
+// behind a rock. Those still lean, they just do not get walls.
+//
+// Deliberately absent: BRIDGE, CANALBRIDGE and BOARDWALK are decks -- surfaces
+// you stand ON, and a surface with walls round it reads as a crate lying in the
+// river. RIVER and CANAL have no art at all, and HELIPAD is painted on the
+// ground.
+const PROP_RISE = {
+  OUTPOST:    [26, 118, 122, 116],  CHECKPOINT: [22, 122, 126, 120],
+  GUARDBOX:   [24, 116, 112,  98],  BUNKER:     [20, 104, 106,  96],
+  BLASTWALL:  [22, 122, 122, 118],  BORDERWALL: [26, 112, 114, 108],
+  WATCHTOWER: [34, 108, 100,  84],  SANDBAG:    [12, 132, 122,  92],
+  BOULDER:    [16],                 MONOLITH:   [30],
+  RUINWALL:   [18, 116, 116, 106],  WRECK:      [14],
+  CABIN:      [24, 112,  86,  58],  LOGPILE:    [12, 118,  92,  60],
+  SITEHUT:    [20, 136, 128,  96],  HOARDING:   [16, 124, 118, 100],
+  MATERIALS:  [12, 128, 122, 104],  SPOIL:      [12],
+  KIOSK:      [20, 116, 118, 124],  BUSSTOP:    [20, 112, 116, 124],
+  HEDGE:      [16],                 FOUNTAIN:   [12],
+  PLANTER:    [10, 118, 110,  98],  BENCH:      [ 8, 116,  98,  74],
+  POSTBOX:    [14, 122,  86,  80],  HYDRANT:    [10, 132,  92,  84],
+  BARGE:      [10],                 QUAYCRANE:  [30, 126, 116,  84],
+  BOLLARD:    [ 8, 110, 110, 106],  SIGNPOST:   [14, 116, 104,  82]
+};
+
 function drawBiomeProps(list, i0, i1) {
   const _arr = list || activeBuildings;
   const _lo = i0 === undefined ? 0 : i0;
@@ -22211,6 +22299,24 @@ function drawBiomeProps(list, i0, i1) {
     // bound canvas is the expensive way to draw nothing.
     if (!inView(b.x, b.y, Math.max(b.w || 0, b.h || 0) + 150)) continue;
     const def = BIOMES[currentBiome] || BIOMES[1];
+
+    // Every prop that is a mass gets its sides drawn from the footprint and its
+    // art lifted to the leaned top -- generically, here, so none of the forty
+    // cases below has to know the projection exists. Same rule as a building:
+    // the base stays on the collision rect and the top moves.
+    const _pr = PROP_RISE[b.propType];
+    let _plx = 0, _ply = 0;
+    if (_pr) {
+      massLean(b.x, b.y, _pr[0], _leanTmp);
+      _plx = _leanTmp[0]; _ply = _leanTmp[1];
+      if (_pr.length > 1) {
+        const _pw = b.w || 0, _ph = b.h || 0;
+        drawMassSides(b.x - _pw / 2, b.y - _ph / 2, b.x + _pw / 2, b.y + _ph / 2,
+                      _plx, _ply, _pr[1], _pr[2], _pr[3], 0);
+      }
+    }
+    push();
+    if (_plx !== 0 || _ply !== 0) translate(_plx, _ply);
 
     switch (b.propType) {
 
@@ -23065,6 +23171,8 @@ function drawBiomeProps(list, i0, i1) {
         break;
       }
     }
+
+    pop();   // closes the lean translate — see PROP_RISE
   }
 }
 
