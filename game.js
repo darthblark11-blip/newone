@@ -2057,8 +2057,110 @@ function drawBuildingShadows() {
 
 
 
-function drawBuildings() {
-  for (let b of activeBuildings) { // Changed to activeBuildings
+// `list`/`i0`/`i1` let the depth-sorted pass hand this function one run of an
+// already-sorted array instead of the whole world. Called bare it behaves
+// exactly as it always did. The body below is untouched.
+
+// ###########################################################################
+//  DEPTH SORTING
+//  The pass order that makes a top-down scene read as a place with height in
+//  it, rather than as a stack of layers.
+//
+//  It used to be: every character, then every mass on top of them. That is
+//  right for somebody standing INSIDE a footprint -- a roof has to hide them,
+//  and that is what tells you they are indoors -- and wrong for everybody
+//  else, which is most of the time. Walking along the south face of a building
+//  made the player sink into it, because the wall drawn in front of them was a
+//  wall they were standing in front of.
+//
+//  Both cases are the same rule once the pass is sorted. Everything standing on
+//  the ground gets a depth key at its GROUND CONTACT -- the south edge of a
+//  footprint, the feet of a character -- and the pass draws in ascending order.
+//  Inside a footprint your feet are north of its base, so the mass still draws
+//  over you. In front of it they are south, so you draw over the mass. One
+//  comparison, and the special case disappears.
+//
+//  Only the streamed and hybrid biomes are sorted. Levels 0 and 8 are closed
+//  interiors whose art was composed against the old fixed order, and there is
+//  nothing to gain there -- see depthSortActive().
+// ###########################################################################
+
+let _depthActors = [];      // reused; actors queued by actorShow() this frame
+let _depthMasses = [];      // reused; visible masses, sorted by base y
+let _depthOn = false;
+
+function depthSortActive() { return BIOME_ACTIVE; }
+
+// A character's contact point is their origin. Everything else in the file
+// already treats it that way -- collision is a circle around it, the contact
+// shadow is drawn on it, and the deferred rig stamps their height ellipse
+// there -- so sorting anywhere else would put a character's depth somewhere
+// their own shadow is not.
+function actorDepth(c) { return c.y; }
+
+// A mass contacts the ground along the south edge of the rect it collides on,
+// so that is where it has to sort. Using the centre would put a character level
+// with a building's middle in front of its far wall.
+function massDepth(b) { return b.y + (b.h || 0) / 2; }
+
+// Every character draw goes through here. Outside a biome it is a straight
+// call, so nothing about the legacy levels changes.
+function actorShow(c) {
+  if (_depthOn) { _depthActors.push(c); return; }
+  c.show();
+}
+
+// One run of the sorted array. A run can hold both ordinary masses and biome
+// props, and they are drawn by different functions -- so it is split into
+// stretches of a single kind. Both functions already skip the other kind, so
+// the split is purely to avoid walking every run twice.
+function drawMassRun(arr, i0, i1) {
+  let s = i0;
+  while (s < i1) {
+    const prop = !!arr[s].isBiomeProp;
+    let e = s + 1;
+    while (e < i1 && !!arr[e].isBiomeProp === prop) e++;
+    if (prop) drawBiomeProps(arr, s, e);
+    else      drawBuildings(arr, s, e);
+    s = e;
+  }
+}
+
+function drawDepthSorted() {
+  const masses = _depthMasses;
+  masses.length = 0;
+  for (let i = 0; i < activeBuildings.length; i++) {
+    const b = activeBuildings[i];
+    // The same cull both draw functions apply. Doing it once here keeps the
+    // sort down to what is actually on screen, which is a fraction of the
+    // 1500-unit ring activeBuildings holds.
+    if (!inView(b.x, b.y, Math.max(b.w || 0, b.h || 0) + 150)) continue;
+    masses.push(b);
+  }
+  masses.sort((p, q) => massDepth(p) - massDepth(q));
+
+  const actors = _depthActors;
+  actors.sort((p, q) => actorDepth(p) - actorDepth(q));
+
+  let mi = 0;
+  for (let ai = 0; ai < actors.length; ai++) {
+    const ad = actorDepth(actors[ai]);
+    const start = mi;
+    while (mi < masses.length && massDepth(masses[mi]) <= ad) mi++;
+    if (mi > start) drawMassRun(masses, start, mi);
+    actors[ai].show();
+  }
+  if (mi < masses.length) drawMassRun(masses, mi, masses.length);
+
+  actors.length = 0;
+  _depthOn = false;
+}
+
+function drawBuildings(list, i0, i1) {
+  const _arr = list || activeBuildings;
+  const _lo = i0 === undefined ? 0 : i0;
+  const _hi = i1 === undefined ? _arr.length : i1;
+  for (let _i = _lo; _i < _hi; _i++) { let b = _arr[_i];
     if (!inView(b.x, b.y, Math.max(b.w || 0, b.h || 0) + 150)) continue;
     if (b.isBiomeProp) continue; // drawn by drawBiomeProps()
     // A trunk is a collision volume so you cannot walk through a tree. The
@@ -2748,35 +2850,24 @@ function drawBuildings() {
     // next starts -- neighbouring roofs of similar colour fuse into a single
     // shape, and anything cast beside them reads as yet another building.
     //
-    // Extruding the two walls that face away from the sun fixes that outright:
-    // every footprint gets an unambiguous silhouette and a base that sits ON
-    // the ground. The roof stays exactly on the collision rect, so this changes
-    // nothing about where the building actually blocks movement or bullets.
+    // The walls run from the footprint -- which IS the collision rect, and stays
+    // put -- up to the roof, which is that rect displaced by massLean(). Only
+    // the two faces the lean turns toward the camera are drawn, and which two
+    // that is changes as the building crosses the middle of the screen.
     const rise = b.isBlockBuilding ? buildingRise(b) : 0;
-    const wx = LIGHT_DX * rise, wy = LIGHT_DY * rise;
+    massLean(b.x, b.y, rise, _leanTmp);
+    const lx = _leanTmp[0], ly = _leanTmp[1];
     const x0 = b.x - b.w / 2, y0 = b.y - b.h / 2;
     const x1 = b.x + b.w / 2, y1 = b.y + b.h / 2;
-    const floors = Math.max(2, Math.round(rise / 6));
 
     noStroke();
-    if (rise > 0) {
-      // South face is turned most directly away from the light, so it is the
-      // darkest. Neither face is a straight multiply: a small ambient term
-      // keeps the walls off pure black in the night biomes, where bM is
-      // already dark to begin with.
-      fill(bM[0] * 0.40 + 5, bM[1] * 0.40 + 6, bM[2] * 0.40 + 10);
-      quad(x0, y1, x1, y1, x1 + wx, y1 + wy, x0 + wx, y1 + wy);
-      fill(bM[0] * 0.56 + 7, bM[1] * 0.56 + 8, bM[2] * 0.56 + 13);
-      quad(x1, y0, x1 + wx, y0 + wy, x1 + wx, y1 + wy, x1, y1);
-      // Storey lines — the cheapest possible cue that the wall has height.
-      stroke(0, 0, 0, 50); strokeWeight(1);
-      for (let f = 1; f < floors; f++) {
-        const t = f / floors;
-        line(x0 + wx * t, y1 + wy * t, x1 + wx * t, y1 + wy * t);
-        line(x1 + wx * t, y0 + wy * t, x1 + wx * t, y1 + wy * t);
-      }
-      noStroke();
-    }
+    if (rise > 0) drawMassSides(x0, y0, x1, y1, lx, ly, bM[0], bM[1], bM[2], 26);
+
+    // Everything from here down is ROOF, so it rides up to the top of the
+    // walls. Drawn in the footprint's own coordinates and translated, so none
+    // of the art below has to know the building leans at all.
+    push();
+    translate(lx, ly);
 
     fill(bM[0], bM[1], bM[2]);
     stroke(currentLevel === 1 || currentLevel === 3 ? 100 : 10); strokeWeight(2);
@@ -2878,6 +2969,8 @@ function drawBuildings() {
             } pop();
         }
     }
+
+    pop();   // closes the roof translate — see massLean()
   }
 }
 
@@ -2889,7 +2982,15 @@ function drawBuildings() {
 
 function drawParkingCars() {
   for (let c of activeParkingCars) {
-    push(); translate(c.x, c.y); rotate(c.angle || HALF_PI); fill(c.col[0], c.col[1], c.col[2]); stroke(15); strokeWeight(2); rect(-25, -45, 50, 90, 6); fill(25); noStroke(); rect(-20, -25, 40, 15, 2); rect(-20, 15, 40, 12, 2); fill(30, 20, 15, 180); ellipse(0, -5, 30, 25); fill(10, 150); ellipse(-10, 20, 15, 15); pop();
+    // Lean only, no extruded sides: a car carries its own rotation and
+    // drawMassSides() is axis-aligned, so a skirt would not line up with the
+    // body it belongs to.
+    push(); translate(c.x, c.y);
+    if (BIOME_ACTIVE) {
+      massLean(c.x, c.y, 9, _leanTmp);
+      translate(_leanTmp[0], _leanTmp[1]);
+    }
+    rotate(c.angle || HALF_PI); fill(c.col[0], c.col[1], c.col[2]); stroke(15); strokeWeight(2); rect(-25, -45, 50, 90, 6); fill(25); noStroke(); rect(-20, -25, 40, 15, 2); rect(-20, 15, 40, 12, 2); fill(30, 20, 15, 180); ellipse(0, -5, 30, 25); fill(10, 150); ellipse(-10, 20, 15, 15); pop();
   }
 }
 
@@ -3566,13 +3667,18 @@ viewBottom = camY + height / zoom + shakePad;
       if (dToDad > 40) { let ang = atan2(dadEntity.y - player.y, dadEntity.x - player.x); player.isMoving = true; player.walkCycle += 0.2; player.moveAngle = ang; player.aimAngle = ang; let dx = cos(ang) * 4; let dy = sin(ang) * 4; if (!player.checkCol(player.x + dx, player.y)) player.x += dx; if (!player.checkCol(player.x, player.y + dy)) player.y += dy; } else { player.isMoving = false; prologuePhase = 4;  }
   }
 
-   if (player.hp > 0) { if (!isWin && doTick) player.updatePlayer(); player.show(); } else if (!isWin && !isDead) { playerRespawnTimer--; if (playerRespawnTimer <= 0) { isDead = true; } }
+   // From here to drawDepthSorted() every character draw is QUEUED rather than
+   // painted, so the masses can be interleaved with them by depth. Outside a
+   // biome the flag stays down and actorShow() paints immediately, exactly as
+   // this line used to.
+   _depthOn = depthSortActive();
+   if (player.hp > 0) { if (!isWin && doTick) player.updatePlayer(); actorShow(player); } else if (!isWin && !isDead) { playerRespawnTimer--; if (playerRespawnTimer <= 0) { isDead = true; } }
   updateEntities(); 
 
   // Draw civilians ALWAYS, so they populate the town while you run around
   for (let c of townCitizens) {
       if (doTick) c.update();
-      c.show();
+      actorShow(c);
   }
   
   // The shadow pass used to run here as well as immediately before
@@ -3582,13 +3688,19 @@ viewBottom = camY + height / zoom + shakePad;
   if (inOverworldView) {
       for (let c of townCitizens) {
           if (doTick) c.update();
-          c.show();
+          actorShow(c);
       }
   }
   
   if (typeof drawBuildingShadows === 'function') drawBuildingShadows();
-  drawBuildings();
-  if (BIOME_ACTIVE) drawBiomeProps();
+  if (_depthOn) {
+    // Masses and characters in one pass, ordered by where each of them touches
+    // the ground. See the DEPTH SORTING block.
+    drawDepthSorted();
+  } else {
+    drawBuildings();
+    if (BIOME_ACTIVE) drawBiomeProps();
+  }
 
     // NM-0 HQ Custom Level Props
   if (currentLevel === 8) {
@@ -10922,6 +11034,21 @@ if (this.eType === "COW") {
 
   show() {
     push(); translate(this.x, this.y);
+    // A figure is a mass too. Its feet are on the ground and the rest of it is
+    // up in the air, so it projects displaced from its own footprint exactly
+    // the way a building does -- and it has to, or it is the one flat thing
+    // left in a world of solids.
+    //
+    // Airborne units are excluded for the same reason they are kept out of the
+    // rig's height field: this displacement is for something STANDING on the
+    // ground, and a saucer is not (see CHAR_AIRBORNE).
+    //
+    // The lean moves the body, never the feet: collision, the contact point the
+    // depth sort uses and the rig's height ellipse all stay at (x, y).
+    if (BIOME_ACTIVE && !CHAR_AIRBORNE[this.eType]) {
+      massLean(this.x, this.y, CHAR_RISE, _leanTmp);
+      if (_leanTmp[0] !== 0 || _leanTmp[1] !== 0) translate(_leanTmp[0], _leanTmp[1]);
+    }
     // Standing higher up puts you nearer an overhead camera, so you read
     // bigger. This is the whole of the relief illusion as far as figures are
     // concerned -- it scales the shadow with the body, which is what keeps a
@@ -10948,8 +11075,10 @@ if (this.stunTimer > 0 && this.skeletonTimer <= 0) {
     
     let sOff = (currentLevel === 1 || currentLevel === 3) ? 15 : 10;
     let sAlp = (currentLevel === 1 || currentLevel === 3) ? 45 : 80;
-    charShadowFill(sAlp);
-    ellipse(charShadowX(sOff), charShadowY(sOff), this.bodyW + 20, this.bodyH + 5); 
+    if (!charShadowOwned(this.eType)) {
+      charShadowFill(sAlp);
+      ellipse(charShadowX(sOff), charShadowY(sOff), this.bodyW + 20, this.bodyH + 5);
+    }
 
     let lW = 18, lX = -18, lY1 = -10, lY2 = 2;
 
@@ -10996,16 +11125,24 @@ if (this.stunTimer > 0 && this.skeletonTimer <= 0) {
 
     let sOff = (currentLevel === 1 || currentLevel === 3) ? 15 : 10;
     let sAlp = (currentLevel === 1 || currentLevel === 3) ? 45 : 80;
-    charShadowFill(sAlp);
 
     // Offset along the scene's one light vector, not down-and-right at 45
     // degrees. Every prop, tree and building in a streamed biome throws along
     // LIGHT_DX/DY; characters throwing somewhere else is what made them look
     // pasted on top of the world rather than standing in it.
+    //
+    // Skipped entirely once the deferred rig is running: it marches this body's
+    // own silhouette out of the height buffer, so the flat oval would be a
+    // second shadow sitting under the real one -- which is what made a lit
+    // scene look like it had two suns in it. Airborne units are the exception,
+    // see CHAR_AIRBORNE.
+    if (!charShadowOwned(this.eType)) {
+    charShadowFill(sAlp);
     if (this.eType === "SAUCER" || this.eType === "SAUCER_RED") { ellipse(charShadowX(sOff * 2), charShadowY(sOff * 2), 80, 80); }
     else if (this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL") { ellipse(charShadowX(sOff * 2), charShadowY(sOff * 2), this.bodyW, this.bodyH); }
     else if (this.eType === "ARMORED" || this.eType === "ALIEN_GATOR" || this.eType === "SNAIL_HYBRID") { ellipse(charShadowX(sOff), charShadowY(sOff), this.bodyW * 0.8, this.bodyH); }
     else { ellipse(charShadowX(sOff), charShadowY(sOff), this.bodyW + 5, this.bodyH + 5); }
+    }
 
     if (this.muzzleFlash > 0 && this.reloadTimer <= 0) {
         push();
@@ -12226,7 +12363,7 @@ function updateEntities() {
       }
 
       
-      if (inView(e.x, e.y, 150)) e.show();
+      if (inView(e.x, e.y, 150)) actorShow(e);
       if (e.hp <= 0 && !e.dead) { e.dead = true; processKill(e.x, e.y, false, e.eType, e.isFriendly); enemiesList.splice(i, 1); if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100); }
   }
 
@@ -21116,6 +21253,105 @@ function buildingRise(b) {
   return b._rise;
 }
 
+// How far the TOP of a mass is displaced from its BASE on screen.
+//
+// A camera directly above the middle of the screen sees the roof of a building
+// at the centre sitting square on its own footprint, and sees the roofs toward
+// the edges pushed outward, away from the principal point. In a projection with
+// no horizon that displacement is the only cue there is that a thing has
+// height, which is what makes it worth spending on.
+//
+// **This is not the light vector.** The walls used to extrude along
+// LIGHT_DX/DY, so every building in the city leaned the same way its own shadow
+// fell and the two merged into a single smear -- which is exactly why a street
+// of them read as flat shapes with stains beside them rather than as blocks.
+// The lean is where the CAMERA is; the shadow is where the SUN is; they are
+// different directions and the scene only reads as solid when they disagree.
+//
+// The base stays on the collision rect and the roof moves, never the other way
+// round. What you bump into is at ground level, so a building that pinned its
+// roof to the collision box and slid its base around would appear to skate on
+// the ground every time the camera panned.
+const MASS_LEAN = 1.5;
+
+// A few degrees of camera tilt, on top of the parallax.
+//
+// Pure parallax is zero at the principal point, and the camera follows the
+// player -- so the player, the one figure always at the middle of the screen,
+// would be the only thing in the world with no volume at all. A camera looking
+// very slightly north gives every mass a constant southward displacement as
+// well, proportional to its own height, so nothing is ever perfectly flat.
+// Keep it small: this is a tilt, not an isometric turn, and past a few degrees
+// the footprints stop reading as the ground plane.
+const MASS_TILT = 0.42;
+
+// Standing height of a figure, in the same units masses use. Deliberately far
+// below a building's: a person is a metre or two against a three-storey block,
+// and a figure displaced by its own body length reads as a sprite that has come
+// unstuck from its feet rather than as someone standing up.
+const CHAR_RISE = 11;
+
+const _leanTmp = [0, 0];
+function massLean(wx, wy, rise, out) {
+  out = out || _leanTmp;
+  out[0] = 0; out[1] = 0;
+  if (!(rise > 0) || !zoom || !width || !height) return out;
+  const hw = width / zoom * 0.5, hh = height / zoom * 0.5;
+  let nx = (wx - (camX + hw)) / hw;
+  let ny = (wy - (camY + hh)) / hh;
+  // Clamped, so a mass hanging off the edge of the view does not shear away to
+  // nothing. Past the frame the lean simply stops growing.
+  if (nx < -1) nx = -1; else if (nx > 1) nx = 1;
+  if (ny < -1) ny = -1; else if (ny > 1) ny = 1;
+  out[0] = nx * rise * MASS_LEAN;
+  out[1] = ny * rise * MASS_LEAN + rise * MASS_TILT;
+  return out;
+}
+
+// The extruded sides of an axis-aligned mass, from its footprint up to its
+// leaned top. ONE function for buildings, props and anything added later, so
+// everything in the world leans the same way, shades the same way, and stays
+// consistent when MASS_LEAN is retuned.
+//
+// Only the two faces the lean turns toward the camera exist, and which two that
+// is flips as the mass crosses the middle of the view. Each is shaded from its
+// OWN outward normal against the scene's one light vector -- not from whether
+// it happens to be showing -- which is what keeps a mass's lit side the same
+// side while that flip happens.
+function drawMassSides(x0, y0, x1, y1, lx, ly, cr, cg, cb, mullion) {
+  if (lx === 0 && ly === 0) return;
+  noStroke();
+  const face = (nx, ny) => {
+    const d = -(nx * LIGHT_DX + ny * LIGHT_DY);
+    const k = 0.34 + 0.46 * (d > 0 ? d : 0);
+    fill(cr * k + 5, cg * k + 6, cb * k + 10);
+  };
+  if (ly > 0)      { face(0, -1); quad(x0, y0, x1, y0, x1 + lx, y0 + ly, x0 + lx, y0 + ly); }
+  else if (ly < 0) { face(0,  1); quad(x0, y1, x1, y1, x1 + lx, y1 + ly, x0 + lx, y1 + ly); }
+  if (lx > 0)      { face(-1, 0); quad(x0, y0, x0, y1, x0 + lx, y1 + ly, x0 + lx, y0 + ly); }
+  else if (lx < 0) { face( 1, 0); quad(x1, y0, x1, y1, x1 + lx, y1 + ly, x1 + lx, y0 + ly); }
+
+  // Mullions, running from the footprint UP THE LEAN.
+  //
+  // Storey lines banded across the face instead, which is what a wall really
+  // has, and at this depth of projection they read as a stack of plates rather
+  // than as height -- there is only ever a few dozen pixels of face to divide.
+  // Lines along the lean say "this is one surface going away from you", which
+  // is the thing the eye needs told.
+  if (mullion > 0) {
+    stroke(0, 0, 0, 42); strokeWeight(1);
+    if (ly !== 0) {
+      const yb = ly > 0 ? y0 : y1;
+      for (let mx = x0 + mullion; mx < x1 - 2; mx += mullion) line(mx, yb, mx + lx, yb + ly);
+    }
+    if (lx !== 0) {
+      const xb = lx > 0 ? x0 : x1;
+      for (let my = y0 + mullion; my < y1 - 2; my += mullion) line(xb, my, xb + lx, my + ly);
+    }
+    noStroke();
+  }
+}
+
 // Shadow colour. Never pure black: outdoor shade is lit by the sky above it,
 // so a flat black shadow reads as a hole cut in the ground. This tints toward
 // the biome's own sky and lets the time of day set how firm the shadow is.
@@ -21125,12 +21361,20 @@ function shadowFill(alpha) {
   fill(s[0] * 0.30, s[1] * 0.30, s[2] * 0.34, (alpha === undefined ? 80 : alpha) * k);
   noStroke();
 }
+// Both of these are called only from drawBiomeProps(), and every prop that
+// calls them is in activeBuildings -- which means the deferred rig has already
+// painted it into the height buffer and marched a shadow off its real
+// silhouette. Drawing the flat oval as well put a second, differently shaped
+// shadow under every anchor, bridge and hedge in the world. One caster, one
+// shadow: whichever pass owns the sun draws it.
 function castShadow(x, y, w, h, len, alpha) {
+  if (typeof glRigOwnsSunShadows === 'function' && glRigOwnsSunShadows()) return;
   const L = BIOME_ACTIVE ? len * shadowLengthScale() : len;
   shadowFill(alpha);
   ellipse(x + LIGHT_DX * L, y + LIGHT_DY * L, w, h);
 }
 function castShadowRect(x, y, w, h, len, alpha, round) {
+  if (typeof glRigOwnsSunShadows === 'function' && glRigOwnsSunShadows()) return;
   const L = BIOME_ACTIVE ? len * shadowLengthScale() : len;
   shadowFill(alpha);
   rect(x - w / 2 + LIGHT_DX * L, y - h / 2 + LIGHT_DY * L, w, h, round || 0);
@@ -21140,6 +21384,40 @@ function castShadowRect(x, y, w, h, len, alpha, round) {
 // else, drawn in the character's own translated frame. Outside a streamed
 // biome these fall back to the flat black offset the hand-authored levels were
 // drawn against, so nothing about Levels 0 and 8 changes.
+// Units that are not standing on the ground. They keep their flat offset oval
+// forever, and they are the one thing deliberately kept OUT of the deferred
+// rig's height buffer.
+//
+// The rig's shadow term is a HEIGHT FIELD, and a height field cannot express
+// "floating at altitude" -- it only knows how high the ground is at a point. A
+// saucer entered into it does not read as a craft casting a shadow below
+// itself, it reads as a tower standing on the ground: it would occlude lamps
+// around its own footprint and cast from its base rather than from the air. A
+// detached oval, offset by the craft's altitude, is the correct shadow for an
+// airborne caster and the only one available in this projection.
+const CHAR_AIRBORNE = { SAUCER: 1, SAUCER_RED: 1, AERIAL: 1, AERIAL_PISTOL: 1 };
+
+// Live canopies, as [height, width, depth] at scale 1. These are the decor
+// types big enough to be worth a place in the deferred rig's height field --
+// they occlude lamps, they take the torch, and they throw a marched shadow
+// sized to the crown you can actually see. Everything smaller in the clutter
+// set keeps its painted contact oval and nothing else.
+//
+// Widths follow the art: a TREE's lobes ride a ring of radius 15*s with lobes
+// 23*s across, so the crown reaches about 46*s.
+const CANOPY_MASS = {
+  TREE: [21, 46, 40],
+  PINE: [26, 34, 34],
+  SNAG: [15, 20, 20]
+};
+
+// True when the deferred rig is already casting this character's shadow, so the
+// flat contact oval must not be drawn on top of it.
+function charShadowOwned(eT) {
+  if (CHAR_AIRBORNE[eT]) return false;
+  return typeof glRigOwnsSunShadows === 'function' && glRigOwnsSunShadows();
+}
+
 function charShadowX(off) { return BIOME_ACTIVE ? LIGHT_DX * off * 1.35 * shadowLengthScale() : off; }
 function charShadowY(off) { return BIOME_ACTIVE ? LIGHT_DY * off * 1.35 * shadowLengthScale() : off; }
 function charShadowFill(alpha) {
@@ -21306,12 +21584,31 @@ function paintClutter(g, d, t) {
   g.push();
   g.translate(d.x, d.y);
 
+  // A contact shadow is thrown by the sun, so it has to leave when the sun
+  // does. Only the LIVE pass can follow it down -- a baked shadow is part of
+  // the chunk's albedo and that one texture has to serve every hour of the
+  // day, which is the reason the baked list is only ever the small stuff.
+  //
+  // A canopy drops its painted shadow altogether once the deferred rig is
+  // running, because the rig is marching a real one off the crown's own
+  // silhouette (see CANOPY_MASS) and two shadows under one tree is what a
+  // scene with two suns in it looks like.
+  let sd = 1;
+  if (typeof window !== 'undefined' && g === window && BIOME_ACTIVE) {
+    sd = CANOPY_MASS[d.t] && typeof glRigOwnsSunShadows === 'function' &&
+         glRigOwnsSunShadows() ? 0 : shadowDensity();
+  }
+
   const shadow = (x, y, w, h, len, alpha) => {
-    g.fill(0, 0, 0, alpha); g.noStroke();
+    const a = alpha * sd;
+    if (a < 1.5) return;
+    g.fill(0, 0, 0, a); g.noStroke();
     g.ellipse(x + LIGHT_DX * len, y + LIGHT_DY * len, w, h);
   };
   const shadowRect = (w, h, len, alpha, round) => {
-    g.fill(0, 0, 0, alpha); g.noStroke();
+    const a = alpha * sd;
+    if (a < 1.5) return;
+    g.fill(0, 0, 0, a); g.noStroke();
     g.rect(-w / 2 + LIGHT_DX * len, -h / 2 + LIGHT_DY * len, w, h, round || 0);
   };
 
@@ -21952,8 +22249,49 @@ function drawBiomeDecks() {
   }
 }
 
-function drawBiomeProps() {
-  for (const b of activeBuildings) {
+
+// Which biome props are MASSES, and how tall. A prop gets extruded sides and a
+// leaned top purely by having an entry here -- no per-prop code anywhere else,
+// the same way PROP_EMITTERS lights one.
+//
+//   [ rise, side r, side g, side b ]   a box: extruded sides in that colour
+//   [ rise ]                            lean only, no sides
+//
+// The colour is the prop's own body colour; drawMassSides() shades each face
+// from that against the light.
+//
+// The one-element form is for anything that is not box-shaped. drawMassSides()
+// is axis-aligned and works off the COLLISION rect, so a boulder -- round, and
+// drawn well inside its own box -- came out as a rectangular slab standing
+// behind a rock. Those still lean, they just do not get walls.
+//
+// Deliberately absent: BRIDGE, CANALBRIDGE and BOARDWALK are decks -- surfaces
+// you stand ON, and a surface with walls round it reads as a crate lying in the
+// river. RIVER and CANAL have no art at all, and HELIPAD is painted on the
+// ground.
+const PROP_RISE = {
+  OUTPOST:    [26, 118, 122, 116],  CHECKPOINT: [22, 122, 126, 120],
+  GUARDBOX:   [24, 116, 112,  98],  BUNKER:     [20, 104, 106,  96],
+  BLASTWALL:  [22, 122, 122, 118],  BORDERWALL: [26, 112, 114, 108],
+  WATCHTOWER: [34, 108, 100,  84],  SANDBAG:    [12, 132, 122,  92],
+  BOULDER:    [16],                 MONOLITH:   [30],
+  RUINWALL:   [18, 116, 116, 106],  WRECK:      [14],
+  CABIN:      [24, 112,  86,  58],  LOGPILE:    [12, 118,  92,  60],
+  SITEHUT:    [20, 136, 128,  96],  HOARDING:   [16, 124, 118, 100],
+  MATERIALS:  [12, 128, 122, 104],  SPOIL:      [12],
+  KIOSK:      [20, 116, 118, 124],  BUSSTOP:    [20, 112, 116, 124],
+  HEDGE:      [16],                 FOUNTAIN:   [12],
+  PLANTER:    [10, 118, 110,  98],  BENCH:      [ 8, 116,  98,  74],
+  POSTBOX:    [14, 122,  86,  80],  HYDRANT:    [10, 132,  92,  84],
+  BARGE:      [10],                 QUAYCRANE:  [30, 126, 116,  84],
+  BOLLARD:    [ 8, 110, 110, 106],  SIGNPOST:   [14, 116, 104,  82]
+};
+
+function drawBiomeProps(list, i0, i1) {
+  const _arr = list || activeBuildings;
+  const _lo = i0 === undefined ? 0 : i0;
+  const _hi = i1 === undefined ? _arr.length : i1;
+  for (let _i = _lo; _i < _hi; _i++) { const b = _arr[_i];
     if (!b.isBiomeProp) continue;
     // activeBuildings is a 1500-unit ring, so most of it is off screen on any
     // given frame. Every other pass in the render order culls before it draws;
@@ -21961,6 +22299,24 @@ function drawBiomeProps() {
     // bound canvas is the expensive way to draw nothing.
     if (!inView(b.x, b.y, Math.max(b.w || 0, b.h || 0) + 150)) continue;
     const def = BIOMES[currentBiome] || BIOMES[1];
+
+    // Every prop that is a mass gets its sides drawn from the footprint and its
+    // art lifted to the leaned top -- generically, here, so none of the forty
+    // cases below has to know the projection exists. Same rule as a building:
+    // the base stays on the collision rect and the top moves.
+    const _pr = PROP_RISE[b.propType];
+    let _plx = 0, _ply = 0;
+    if (_pr) {
+      massLean(b.x, b.y, _pr[0], _leanTmp);
+      _plx = _leanTmp[0]; _ply = _leanTmp[1];
+      if (_pr.length > 1) {
+        const _pw = b.w || 0, _ph = b.h || 0;
+        drawMassSides(b.x - _pw / 2, b.y - _ph / 2, b.x + _pw / 2, b.y + _ph / 2,
+                      _plx, _ply, _pr[1], _pr[2], _pr[3], 0);
+      }
+    }
+    push();
+    if (_plx !== 0 || _ply !== 0) translate(_plx, _ply);
 
     switch (b.propType) {
 
@@ -22815,6 +23171,8 @@ function drawBiomeProps() {
         break;
       }
     }
+
+    pop();   // closes the lean translate — see PROP_RISE
   }
 }
 
@@ -23198,6 +23556,203 @@ function buildGradeLayer(night, g, fogRGBA, w, h) {
 }
 
 // ###########################################################################
+//  EMITTERS
+//  Every light in the world, in one list, gathered once a frame.
+//
+//  There are three consumers -- the canvas rig (drawLightPass), the GPU rig
+//  (glRigFrame) and the fixture pass (drawNightLights) -- and each of them used
+//  to walk activeBuildings itself and decide independently what was lit. Three
+//  copies of "which lamps are on" is three chances for a lamp to throw a pool
+//  with no bulb in it, or a bulb with no pool, or for the GPU and canvas paths
+//  to disagree about the scene the moment the watchdog swaps them. There is one
+//  answer now and all three read it.
+//
+//  An emitter is:
+//    x, y      world position of the source
+//    z         height above the ground, world units. Decides what can occlude
+//              it: a 46-unit lamp head is not shadowed by a 26-unit wall.
+//    r         radius in world units
+//    p         power, 0..1, before either rig applies its own night factor
+//    c         colour as 0..1 rgb -- the temperature, not the brightness
+//    soft      how fast the penumbra opens out (see the polar pass)
+//    rMin      clearance around the source: nothing inside this can shadow it,
+//              which is what stops a carried light being eaten by its bearer
+//    aim, half optional cone, radians. Omitted for an omnidirectional source
+//    fix       which fixture drawNightLights should draw, if any
+// ###########################################################################
+
+// Outpost and settlement lighting. A biome prop lights the ground around it
+// simply by being in this table -- no per-prop code anywhere else.
+//
+// Offsets are from the prop's own centre, because the thing that emits is
+// rarely the middle of the thing that carries it: a watchtower's floodlight is
+// at the top of the mast, a hut's light comes out of its windows.
+const PROP_EMITTERS = {
+  // The three travel anchors. These are the first thing the player sees on
+  // arriving in a biome after dark, and the only fixed light for a kilometre in
+  // most of the streamed world, so they are the brightest things in it.
+  OUTPOST:    { dx: 0, dy: -30, r: 340, z: 58, p: 0.98, c: [1.00, 0.94, 0.80], soft: 0.020, rMin: 40, fix: 'FLOOD' },
+  CHECKPOINT: { dx: 0, dy: -26, r: 310, z: 52, p: 0.95, c: [1.00, 0.95, 0.84], soft: 0.020, rMin: 36, fix: 'FLOOD' },
+  HELIPAD:    { dx: 0, dy: 0,   r: 260, z: 12, p: 0.70, c: [0.52, 0.84, 1.00], soft: 0.045, rMin: 0,  fix: 'BEACON', pulse: 1 },
+  // The posts around them.
+  WATCHTOWER: { dx: 0, dy: -22, r: 380, z: 86, p: 1.00, c: [1.00, 0.97, 0.90], soft: 0.016, rMin: 30, fix: 'FLOOD' },
+  GUARDBOX:   { dx: 0, dy: -14, r: 200, z: 42, p: 0.82, c: [1.00, 0.90, 0.70], soft: 0.026, rMin: 22, fix: 'LAMP'  },
+  BUNKER:     { dx: 0, dy: 12,  r: 160, z: 20, p: 0.55, c: [1.00, 0.76, 0.48], soft: 0.040, rMin: 24, fix: 'WINDOW' },
+  // Anywhere somebody is living or working.
+  CABIN:      { dx: 0, dy: 10,  r: 180, z: 26, p: 0.62, c: [1.00, 0.74, 0.44], soft: 0.038, rMin: 26, fix: 'WINDOW' },
+  SITEHUT:    { dx: 0, dy: 8,   r: 160, z: 24, p: 0.60, c: [1.00, 0.84, 0.58], soft: 0.038, rMin: 24, fix: 'WINDOW' },
+  KIOSK:      { dx: 0, dy: 0,   r: 150, z: 30, p: 0.60, c: [0.84, 0.96, 1.00], soft: 0.034, rMin: 20, fix: 'WINDOW' },
+  BUSSTOP:    { dx: 0, dy: -8,  r: 160, z: 34, p: 0.56, c: [0.88, 0.96, 1.00], soft: 0.030, rMin: 20, fix: 'LAMP'  }
+};
+
+// Which weapons carry a torch under the barrel. The three western guns and the
+// shotgun deliberately do not: they are the scavenged and the improvised, and
+// the difference should be legible the moment the player picks one up at night.
+const WEAPON_TORCH = {
+  PISTOL: 1, SMG: 1, DUAL_SMG: 1, ASSAULT_RIFLE: 1, ROCKET_LAUNCHER: 1, TASER: 1
+};
+
+// Where the beam actually leaves the gun. These mirror the bLX/bLY offsets
+// Character.show() fires bullets from, so the light and the rounds come out of
+// the same place -- a torch that emits from the middle of the player is a torch
+// that lights the player.
+const WEAPON_MUZZLE = {
+  PISTOL:          [31, 8],
+  TASER:           [31, 8],
+  SMG:             [38, 11],
+  DUAL_SMG:        [38, 11],
+  ASSAULT_RIFLE:   [47, 6],
+  ROCKET_LAUNCHER: [47, 6]
+};
+
+// Torch geometry. The inner cone is the beam and it falls off between inner and
+// outer.
+//
+// SPILL is the bleed around the source, and it is deliberately tied to a fixed
+// world radius rather than to a fraction of the beam's length. Scaled to the
+// beam it was a 460-unit pool centred on the gun -- a bright disc sitting under
+// the player with the cone growing out of it, which read as a base plate rather
+// than as light. Held to TORCH_SPILL_R it is a glow hugging the barrel, which
+// is the only thing it was ever for: stopping the apex of the cone being a
+// point.
+const TORCH_R       = 460;
+const TORCH_INNER   = 0.30;
+const TORCH_OUTER   = 0.52;
+const TORCH_SPILL   = 0.30;
+const TORCH_SPILL_R = 34;
+
+let _emitList = [], _emitFrame = -1;
+
+// The one gather. Cached on frameCount because all three consumers run in the
+// same frame and the list is identical for each of them.
+function sceneEmitters() {
+  if (_emitFrame === frameCount) return _emitList;
+  _emitFrame = frameCount;
+  const out = _emitList;
+  out.length = 0;
+  if (!BIOME_ACTIVE) return out;
+
+  const pad = 260;
+  const px0 = player ? player.x : (viewLeft + viewRight) / 2;
+  const py0 = player ? player.y : (viewTop + viewBottom) / 2;
+
+  for (const b of activeBuildings) {
+    if (b.isStreetLight) {
+      if (!inView(b.x, b.y, pad)) continue;
+      const dx = b.x - px0, dy = b.y - py0;
+      out.push({
+        x: b.x, y: b.y + 14, z: 46, r: 330, rMin: 24, soft: 0.020,
+        // Slow shallow mains hum rather than a per-frame random, which buzzed.
+        p: 0.92 * (0.965 + 0.035 * Math.sin(frameCount * 0.031 + b.x * 0.013)),
+        c: [1.00, 0.93, 0.78], fix: 'LAMP', b: b, d2: dx * dx + dy * dy
+      });
+      continue;
+    }
+    const e = b.propType ? PROP_EMITTERS[b.propType] : null;
+    if (!e) continue;
+    if (!inView(b.x, b.y, pad)) continue;
+    const ex = b.x + e.dx, ey = b.y + e.dy;
+    const dx = ex - px0, dy = ey - py0;
+    // A beacon pulses; everything else holds steady with the same mains hum the
+    // street lamps have, offset by position so a row of them does not throb in
+    // unison.
+    const k = e.pulse
+      ? 0.45 + 0.55 * Math.pow(0.5 + 0.5 * Math.sin(frameCount * 0.055), 2)
+      : 0.965 + 0.035 * Math.sin(frameCount * 0.029 + ex * 0.011);
+    out.push({
+      x: ex, y: ey, z: e.z, r: e.r, rMin: e.rMin, soft: e.soft,
+      p: e.p * k, c: e.c, fix: e.fix, b: b, d2: dx * dx + dy * dy
+    });
+  }
+
+  if (typeof fires !== 'undefined' && fires) {
+    for (const f of fires) {
+      if (!inView(f.x, f.y, pad)) continue;
+      const flick = 0.78 + 0.22 * Math.sin(frameCount * 0.21 + f.x * 0.05)
+                         * Math.sin(frameCount * 0.13 + f.y * 0.03);
+      const dx = f.x - px0, dy = f.y - py0;
+      out.push({
+        x: f.x, y: f.y, z: 18, r: 150 + f.r * 1.9, rMin: 10,
+        // A fire is a big soft emitter close to the ground, so its penumbra
+        // opens much faster than a lamp's.
+        soft: 0.055, p: 0.98 * flick * Math.min(1, f.life / 60),
+        c: [1.00, 0.66, 0.34], fix: null, d2: dx * dx + dy * dy
+      });
+    }
+  }
+
+  // The weapon torch. The player still carries no light of their own -- this is
+  // a property of the gun in their hands, so holstering it or picking up a
+  // scavenged shotgun puts them back in the dark, which is the whole point.
+  const w = player && player.currentWeapon;
+  const wk = w ? weaponKey(w) : '';
+  if (player && player.hp > 0 && WEAPON_TORCH[wk]) {
+    const a = player.aimAngle || 0;
+    const ca = Math.cos(a), sa = Math.sin(a);
+    // The muzzle, in the gun's own frame: forward along the aim and offset to
+    // whichever side the weapon is held. Same transform the bullets use.
+    const m = WEAPON_MUZZLE[wk] || [31, 8];
+    const mx = player.x + ca * m[0] - sa * m[1];
+    const my = player.y + sa * m[0] + ca * m[1];
+    out.push({
+      x: mx, y: my, z: 22, r: TORCH_R,
+      // rMin has to reach back past the bearer. The muzzle is out in front of
+      // them, so the clearance is measured from there: without it the polar
+      // reduction finds the player's own silhouette behind the lamp and the
+      // beam comes out as a wedge with a hole punched in it.
+      rMin: m[0] + 18, soft: 0.024, p: 0.96,
+      c: [0.90, 0.95, 1.00], aim: a, half: TORCH_OUTER, inner: TORCH_INNER,
+      spill: TORCH_SPILL, spillR: TORCH_SPILL_R,
+      // No fixture. The beam is the light; a bulb drawn at the source is a
+      // bright disc sitting on the gun, and the muzzle flash already covers
+      // the one moment there is something there to see.
+      fix: null,
+      // Always first in the budget: the player's own beam may never be the
+      // light that gets dropped when a street gets busy.
+      d2: -1
+    });
+  }
+
+  // Nearest first. Which lights are lit has to depend on geometry rather than
+  // array order, or crossing a chunk border reshuffles the list and lamps swap
+  // on and off.
+  out.sort((a, b) => a.d2 - b.d2);
+  return out;
+}
+
+// WEAPONS entries are compared by identity everywhere else in the file, so the
+// torch table is keyed by the table's own key rather than by the display name
+// ("MACHINE GUN" is SMG, and DUAL_SMG's name is "DUAL SMGS").
+let _weaponKeys = null;
+function weaponKey(w) {
+  if (!_weaponKeys) {
+    _weaponKeys = new Map();
+    for (const k in WEAPONS) _weaponKeys.set(WEAPONS[k], k);
+  }
+  return _weaponKeys.get(w) || '';
+}
+
+// ###########################################################################
 //  LIGHT RIG
 //  A screen-space light map, multiplied over the finished frame.
 //
@@ -23257,7 +23812,10 @@ function lightGradient(ctx, r, g, b) {
 // the destination for every pixel of a 1080x2340 canvas and cost 10 ms a frame,
 // a 37% loss at night. This gets the same result through the cheapest blend
 // the compositor has.
-function addLight(buf, bx, by, br, power) {
+// `aim`/`half` make this a cone instead of a pool. The buffer is in screen
+// space with y running down, which is the same frame aimAngle is in, so the
+// angle needs no conversion here.
+function addLight(buf, bx, by, br, power, aim, half, spill, spillR) {
   if (!(power > 0.004) || !(br > 0.4)) return;
   const ctx = buf.drawingContext;
   ctx.save();
@@ -23267,8 +23825,22 @@ function addLight(buf, bx, by, br, power) {
   ctx.scale(br, br * 0.82);          // slightly flattened: a top-down pool
   ctx.fillStyle = lightGradient(ctx, 0, 0, 0);
   ctx.beginPath();
-  ctx.arc(0, 0, 1, 0, Math.PI * 2);
+  if (half === undefined || half >= Math.PI) {
+    ctx.arc(0, 0, 1, 0, Math.PI * 2);
+  } else {
+    ctx.moveTo(0, 0);
+    ctx.arc(0, 0, 1, aim - half, aim + half);
+    ctx.closePath();
+  }
   ctx.fill();
+  // The same glow the GPU path draws with uSpill/uSpillR: held to a fixed world
+  // radius so it hugs the barrel instead of pooling under the bearer.
+  if (spill > 0 && spillR > 0) {
+    ctx.globalAlpha = Math.min(1, power * spill);
+    ctx.beginPath();
+    ctx.arc(0, 0, spillR, 0, Math.PI * 2);
+    ctx.fill();
+  }
   ctx.restore();
 }
 
@@ -23327,48 +23899,26 @@ function drawLightPass() {
   const sr = zoom * k;
   const pad = 220;
 
-  // Gather, nearest first, and spend a fixed budget. Which lights are lit has
-  // to depend on geometry rather than array order, or crossing a chunk border
-  // reshuffles the list and lamps swap on and off.
-  const px0 = player ? player.x : (viewLeft + viewRight) / 2;
-  const py0 = player ? player.y : (viewTop + viewBottom) / 2;
-  const src = [];
-  for (const b of activeBuildings) {
-    if (!b.isStreetLight) continue;
-    if (!inView(b.x, b.y, pad)) continue;
-    const dx = b.x - px0, dy = b.y - py0;
-    // Power is set so the core of a pool lands just short of saturation over
-    // the ambient floor rather than several times past it. Anything more and
-    // overlapping pools along a street clip to flat white, which is a blown
-    // highlight, not a lit road. Radius likewise: 330 units covers the
-    // carriageway and the near pavement, which is what a street light does.
-    src.push({ x: b.x, y: b.y + 14, r: 330,
-               p: 0.92 * (0.965 + 0.035 * Math.sin(frameCount * 0.031 + b.x * 0.013)),
-               d2: dx * dx + dy * dy });
-  }
-  if (typeof fires !== 'undefined' && fires) {
-    for (const f of fires) {
-      if (!inView(f.x, f.y, pad)) continue;
-      const flick = 0.78 + 0.22 * Math.sin(frameCount * 0.21 + f.x * 0.05)
-                         * Math.sin(frameCount * 0.13 + f.y * 0.03);
-      const dx = f.x - px0, dy = f.y - py0;
-      src.push({ x: f.x, y: f.y, r: 150 + f.r * 1.9,
-                 p: 0.98 * flick * Math.min(1, f.life / 60), d2: dx * dx + dy * dy });
-    }
-  }
-  src.sort((a, b) => a.d2 - b.d2);
-
+  // One shared gather, nearest first, spent against a fixed budget. Powers are
+  // set so the core of a pool lands just short of saturation over the ambient
+  // floor rather than several times past it -- anything more and overlapping
+  // pools along a street clip to flat white, which is a blown highlight, not a
+  // lit road.
+  const src = sceneEmitters();
   const n = src.length < LIGHT_BUDGET ? src.length : LIGHT_BUDGET;
   for (let i = 0; i < n; i++) {
     const L = src[i];
-    addLight(buf, sx(L.x), sy(L.y), L.r * sr, L.p);
+    addLight(buf, sx(L.x), sy(L.y), L.r * sr, L.p, L.aim, L.half, L.spill,
+             L.spillR ? L.spillR / L.r : 0);
   }
 
-  // The player carries a little light of their own, so a dark street stays
-  // playable without the rig having to lift the whole frame.
-  if (player && player.hp > 0) {
-    addLight(buf, sx(player.x), sy(player.y + 6), 240 * sr, 0.52);
-  }
+  // The player deliberately carries NO light of their own.
+  //
+  // There used to be a 240-unit pool pinned to them, which meant the player was
+  // never actually in the dark: the one thing a night is supposed to do -- make
+  // you walk toward the lamps -- could not happen, because the light came with
+  // you. A torch is an item, not a property of being alive. Reinstate it here
+  // and in glRigGatherLights() together if it ever becomes one.
 
   // Vignette lives here rather than in the grade layer: closing the frame down
   // is a reduction in light, so multiplying is what it actually is.
@@ -23718,12 +24268,29 @@ uniform float uRow;
 uniform float uSoft;
 uniform float uSpec;
 uniform float uShine;
+uniform vec2  uAim;
+uniform vec2  uCone;
+uniform float uSpill;
+uniform float uSpillR;
 out vec4 oCol;
 
 void main() {
   vec2 d = (vUV - uLightUV) / uRadUV;
   float r = length(d);
   if (r > 1.0) discard;
+
+  // Cone. uCone is (cos outer, cos inner) so the smoothstep runs the right way
+  // round, and an omnidirectional source passes (-1.001, -1.0), which is always
+  // 1 and costs one dot and one smoothstep rather than a branch -- a divergent
+  // branch here is worse on a tile GPU than the arithmetic it saves.
+  float ca = dot(d / max(r, 1e-4), uAim);
+  float cone = smoothstep(uCone.x, uCone.y, ca);
+  // Some light always gets out sideways at the source, but only right AT the
+  // source: uSpillR is a fixed world radius, not a fraction of the beam, so
+  // this is a glow on the barrel rather than a disc under the bearer with the
+  // cone growing out of it.
+  cone = max(cone, uSpill * (1.0 - smoothstep(0.0, uSpillR, r)));
+  if (cone <= 0.002) discard;
 
   float a = fract(atan(d.y, d.x) / 6.28318530718);
 
@@ -23759,7 +24326,7 @@ void main() {
   float fall = 1.0 - r;
   fall *= fall;
 
-  oCol = vec4(uCol * (uPower * fall * sh * (0.15 + 0.85 * ndl + spec)), 1.0);
+  oCol = vec4(uCol * (uPower * fall * cone * sh * (0.15 + 0.85 * ndl + spec)), 1.0);
 }`;
 
 // Final composite. Albedo times the accumulated light, then the biome's haze
@@ -24077,9 +24644,12 @@ function glRigPaintHeight() {
   // 2. Masses. The same cull and the same skips as the 2D shadow pass, so the
   //    two agree about what is a caster.
   for (const b of activeBuildings) {
-    if (b.isTreeTrunk) continue;                    // the canopy is a decor entry
     const w = b.w || 0, h = b.h || 0;
     if (!inView(b.x, b.y, Math.max(w, h) + 120)) continue;
+
+    // The trunk is a collision volume; the crown is a decor entry, and that is
+    // what casts. Painted below, off the same list drawDecor() walks.
+    if (b.isTreeTrunk) continue;
 
     // Water is below the ground, not above it, and it is the glossiest thing in
     // the scene -- this is what puts a lamp's reflection on the canal.
@@ -24107,11 +24677,40 @@ function glRigPaintHeight() {
     else                                      g.rect(b.x - w / 2, b.y - h / 2, w, h);
   }
 
-  // 3. Characters. Their facing goes in as the rotation channel, which is the
+  // 3. Canopies, off the same live decor list drawDecor() paints from.
+  //
+  //    Taking them from the decor rather than from the isTreeTrunk solid is
+  //    what makes this work in every biome. Only the woodland gives its timber
+  //    a trunk solid; the jungle's trees, and every tree the clutter scatter
+  //    drops, are decor and nothing else -- so keyed on the solid, a jungle at
+  //    night had canopies that occluded no lamp, threw no shadow, and had only
+  //    a flat painted oval underneath them that the sun had stopped casting
+  //    hours ago. `d.s` is the same girth the trunk carries.
+  if (typeof chunkMgr !== 'undefined' && chunkMgr && chunkMgr.chunks) {
+    for (const ch of chunkMgr.chunks.values()) {
+      const cwx = ch.cx * CHUNK_W, cwy = ch.cy * CHUNK_W;
+      if (cwx > viewRight + 200 || cwx + CHUNK_W < viewLeft - 200) continue;
+      if (cwy > viewBottom + 200 || cwy + CHUNK_W < viewTop - 200) continue;
+      for (const dc of ch.decor) {
+        const cp = CANOPY_MASS[dc.t];
+        if (!cp) continue;
+        if (dc.x < viewLeft - 120 || dc.x > viewRight + 120) continue;
+        if (dc.y < viewTop - 120  || dc.y > viewBottom + 120) continue;
+        const cs = dc.s || 1;
+        glRigMat(g, cp[0] * cs + groundElev(dc.x, dc.y), 0.05, 0);
+        g.ellipse(dc.x, dc.y, cp[1] * cs, cp[2] * cs);
+      }
+    }
+  }
+
+  // 4. Characters. Their facing goes in as the rotation channel, which is the
   //    term the tangent-space branch of the normal pass reads.
   const CH = 17;
   const one = (c) => {
     if (!c || c.hp <= 0 || c.dead) return;
+    // A height field cannot hold a flying unit -- see CHAR_AIRBORNE. They keep
+    // their own offset oval instead.
+    if (CHAR_AIRBORNE[c.eType]) return;
     if (!inView(c.x, c.y, 60)) return;
     glRigMat(g, CH + groundElev(c.x, c.y), 0.18 + 0.25 * wet,
              (c.aimAngle || 0) / (Math.PI * 2));
@@ -24141,52 +24740,21 @@ function glRigBindTex(gl, prog, name, unit, tex) {
 
 const GLRIG_FULL = [-1, -1, 1, 1];
 
-// Local lights, gathered exactly the way drawLightPass() gathers them so the
-// two rigs agree about which lamps are lit -- a light that appears when the GPU
-// path drops out is worse than no GPU path.
+// The shared emitter list, clamped to however many shadow-casting lights the
+// rig can afford. Both rigs read the same gather so they cannot disagree about
+// which lamps are lit -- a light that appears when the GPU path drops out is
+// worse than no GPU path.
+//
+// The budget here is much tighter than the canvas rig's, because each of these
+// costs three passes rather than one gradient fill. sceneEmitters() has already
+// sorted nearest-first, and the player's own torch sorts first of all.
 function glRigGatherLights() {
+  const src = sceneEmitters();
   const out = GLRig.lights;
   out.length = 0;
-  const pad = 220;
-  const px0 = player ? player.x : (viewLeft + viewRight) / 2;
-  const py0 = player ? player.y : (viewTop + viewBottom) / 2;
-
-  for (const b of activeBuildings) {
-    if (!b.isStreetLight || !inView(b.x, b.y, pad)) continue;
-    const dx = b.x - px0, dy = b.y - py0;
-    out.push({
-      x: b.x, y: b.y + 14, r: 330, z: 46, rMin: 24,
-      p: 0.92 * (0.965 + 0.035 * Math.sin(frameCount * 0.031 + b.x * 0.013)),
-      c: [1.00, 0.93, 0.78], soft: 0.020, d2: dx * dx + dy * dy
-    });
+  for (let i = 0; i < src.length && out.length < GLRIG_LIGHTS; i++) {
+    if (src[i].p > 0.004) out.push(src[i]);
   }
-  if (typeof fires !== 'undefined' && fires) {
-    for (const f of fires) {
-      if (!inView(f.x, f.y, pad)) continue;
-      const flick = 0.78 + 0.22 * Math.sin(frameCount * 0.21 + f.x * 0.05)
-                         * Math.sin(frameCount * 0.13 + f.y * 0.03);
-      const dx = f.x - px0, dy = f.y - py0;
-      out.push({
-        x: f.x, y: f.y, r: 150 + f.r * 1.9, z: 18, rMin: 10,
-        p: 0.98 * flick * Math.min(1, f.life / 60),
-        // A fire is a big soft emitter close to the ground, so its penumbra
-        // opens much faster than a lamp's.
-        c: [1.00, 0.66, 0.34], soft: 0.055, d2: dx * dx + dy * dy
-      });
-    }
-  }
-  if (player && player.hp > 0) {
-    // rMin clears the player's own 20-unit body, which stands only 9 units
-    // below the light they are holding.
-    out.push({ x: player.x, y: player.y + 6, r: 240, z: 26, p: 0.52, rMin: 22,
-               c: [0.86, 0.92, 1.00], soft: 0.030, d2: -1 });
-  }
-
-  // Nearest first, then a hard budget: which lights are lit has to depend on
-  // geometry rather than array order, or crossing a chunk border reshuffles the
-  // list and lamps swap on and off.
-  out.sort((a, b) => a.d2 - b.d2);
-  if (out.length > GLRIG_LIGHTS) out.length = GLRIG_LIGHTS;
   return out;
 }
 
@@ -24407,6 +24975,20 @@ function glRigFrame() {
       gl.uniform1f(p._u.uSoft, Lg.soft);
       gl.uniform1f(p._u.uSpec, 1.15);
       gl.uniform1f(p._u.uShine, 34);
+      // Cone. aimAngle is in world space, where y runs DOWN; the shading frame
+      // has y up, so the bearing's y component negates. An omnidirectional
+      // source passes a window that is always satisfied.
+      if (Lg.half !== undefined) {
+        gl.uniform2f(p._u.uAim, Math.cos(Lg.aim), -Math.sin(Lg.aim));
+        gl.uniform2f(p._u.uCone, Math.cos(Lg.half), Math.cos(Lg.inner));
+        gl.uniform1f(p._u.uSpill, Lg.spill || 0);
+        gl.uniform1f(p._u.uSpillR, (Lg.spillR || 1) / Lg.r);
+      } else {
+        gl.uniform2f(p._u.uAim, 1, 0);
+        gl.uniform2f(p._u.uCone, -1.001, -1.0);
+        gl.uniform1f(p._u.uSpill, 0);
+        gl.uniform1f(p._u.uSpillR, 1);
+      }
       // The quad is already the light's box, so the scissor is belt and braces
       // against a partially covered tile rather than the cull itself.
       glRigDraw(gl, p, [lu * 2 - 1 - ru * 2, lv * 2 - 1 - rv * 2,
@@ -24537,32 +25119,56 @@ function drawNightLights() {
   ctx.globalCompositeOperation = 'lighter';
   noStroke();
 
-  const px0 = player ? player.x : (viewLeft + viewRight) / 2;
-  const py0 = player ? player.y : (viewTop + viewBottom) / 2;
-  const lamps = [];
-  for (const b of activeBuildings) {
-    if (!b.isStreetLight) continue;
-    if (!inView(b.x, b.y, 120)) continue;
-    const dx = b.x - px0, dy = b.y - py0;
-    lamps.push({ b: b, d2: dx * dx + dy * dy });
-  }
-  lamps.sort((l1, l2) => l1.d2 - l2.d2);
-  const lit = lamps.length < 30 ? lamps.length : 30;
+  // Same list both rigs light the ground from, so a bulb can never be lit
+  // without its pool or the other way round.
+  const src = sceneEmitters();
+  const lit = src.length < 30 ? src.length : 30;
   for (let i = 0; i < lit; i++) {
-    const b = lamps[i].b;
-    // Slow shallow mains hum rather than a per-frame random, which buzzed.
-    const hum = 0.965 + 0.035 * Math.sin(frameCount * 0.031 + b.x * 0.013);
-    // The colour of the light. The rig decides how much of the world a lamp
+    const L = src[i];
+    if (!L.fix) continue;                       // a fire draws its own flames
+    const k = amt * L.p;
+    if (k < 0.01) continue;
+    // The colour of the light. The rig decides how much of the world a source
     // reveals; this decides what temperature it is. Doing the tint here, in
     // world space over a few hundred units, costs a couple of fills per lamp
     // -- carrying it through the rig instead would mean compositing the whole
     // canvas with a blend that has to read every pixel back.
-    // One modest tint blob. A 460-unit gradient here measured 4.37 ms a frame
-    // for three visible lamps -- gradient fill is priced by area, and the rig
-    // is already doing the wide falloff. This only has to say "warm".
-    softBlob(b.x, b.y + 7, 200, 146, 255, 202, 128, 34 * amt * hum);
-    fill(255, 236, 198, 74 * amt * hum); ellipse(b.x, b.y, 30, 30);
-    fill(255, 252, 236, 96 * amt * hum); ellipse(b.x, b.y, 13, 13);
+    const cr = L.c[0] * 255, cg = L.c[1] * 255, cb = L.c[2] * 255;
+
+    switch (L.fix) {
+      case 'LAMP':
+        // One modest tint blob. A 460-unit gradient here measured 4.37 ms a
+        // frame for three visible lamps -- gradient fill is priced by area, and
+        // the rig is already doing the wide falloff. This only has to say
+        // "warm".
+        softBlob(L.x, L.y + 7, 200, 146, cr, cg * 0.87, cb * 0.66, 37 * k);
+        fill(cr, cg * 0.93, cb * 0.79, 80 * k); ellipse(L.x, L.y, 30, 30);
+        fill(255, 252, 236, 104 * k);           ellipse(L.x, L.y, 13, 13);
+        break;
+      case 'FLOOD':
+        // A floodlight housing: wider, harder, and squared off, so an outpost
+        // reads as installed rather than as a bigger street lamp.
+        softBlob(L.x, L.y + 10, 260, 190, cr, cg * 0.9, cb * 0.72, 40 * k);
+        fill(cr, cg * 0.95, cb * 0.82, 86 * k); ellipse(L.x, L.y, 38, 26);
+        fill(255, 253, 242, 118 * k);           ellipse(L.x, L.y, 17, 12);
+        break;
+      case 'WINDOW': {
+        // Light coming out of a building, not a fixture hanging on one. Two
+        // squat panes so it reads as a window rather than a bulb sitting on
+        // the roof.
+        softBlob(L.x, L.y + 4, 150, 110, cr, cg * 0.8, cb * 0.55, 34 * k);
+        fill(cr, cg * 0.86, cb * 0.6, 72 * k);
+        rect(L.x - 13, L.y - 5, 11, 9, 2);
+        rect(L.x + 2,  L.y - 5, 11, 9, 2);
+        break;
+      }
+      case 'BEACON':
+        // A helipad beacon. Cool, and it is the pulse in L.p that reads, so
+        // the fixture itself stays small.
+        softBlob(L.x, L.y, 170, 128, cr * 0.7, cg * 0.9, cb, 44 * k);
+        fill(cr, cg, cb, 120 * k); ellipse(L.x, L.y, 16, 16);
+        break;
+    }
   }
 
   ctx.globalCompositeOperation = prevOp;
@@ -24682,7 +25288,12 @@ function keyStrength() { return 1 - 0.42 * skyDiffusion(); }
 // light vector and props bake their shadows against it, so only length and
 // density move.
 function shadowLengthScale() { return (1.55 - 0.62 * sunHeight()) * (1 - 0.25 * skyDiffusion()); }
-function shadowDensity()     { return (0.55 + 0.45 * sunHeight()) * (1 - 0.55 * skyDiffusion()); }
+// Multiplied by daylight() because a shadow needs a sun to throw it. This used
+// to bottom out at 0.55, so at midnight every prop in the world still had a
+// hard oval lying beside it, cast by a sun that had set hours earlier -- while
+// the deferred rig, whose sun term goes to zero on its own, had correctly
+// stopped casting. The two disagreed and the painted one was wrong.
+function shadowDensity()     { return daylight() * (0.55 + 0.45 * sunHeight()) * (1 - 0.55 * skyDiffusion()); }
 
 // Air temperature lags the sun: coldest just before dawn, hottest mid
 // afternoon rather than at noon. 0 at 03:00, 1 at 15:00.

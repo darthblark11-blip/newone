@@ -53,6 +53,145 @@ ok('drawBiomeShadows() stands down when the rig owns them',
 ok('and it only owns them inside a streamed biome',
    /function glRigOwnsSunShadows\(\)[\s\S]{0,200}?BIOME_ACTIVE/.test(rig));
 
+// Every prop that calls these is in activeBuildings, so the rig has already
+// marched a shadow off its real silhouette. Left ungated they drew a second,
+// differently shaped shadow under every anchor, bridge and hedge in the world.
+for (const fn of ['castShadow', 'castShadowRect']) {
+  const body = src.slice(src.indexOf('function ' + fn + '('),
+                         src.indexOf('function ' + fn + '(') + 320);
+  ok(fn + '() stands down too', /glRigOwnsSunShadows\(\)\)\s*return;/.test(body));
+}
+ok('character contact ovals stand down as well',
+   (src.match(/if \(!charShadowOwned\(this\.eType\)\)/g) || []).length === 2,
+   (src.match(/if \(!charShadowOwned\(this\.eType\)\)/g) || []).length + ' of 2 draw sites');
+
+console.log('\n== a height field cannot hold a flying unit ==');
+// Entered into it, a saucer reads as a tower standing on the ground: it would
+// occlude lamps around its own footprint and cast from its base, not the air.
+ok('airborne types are named once and shared',
+   /const CHAR_AIRBORNE = \{[^}]*SAUCER[^}]*AERIAL[^}]*\}/.test(src));
+ok('they are excluded from the height buffer',
+   /CHAR_AIRBORNE\[c\.eType\]\) return;/.test(rig));
+ok('and they keep their own offset oval',
+   /function charShadowOwned\(eT\) \{\s*if \(CHAR_AIRBORNE\[eT\]\) return false;/.test(src));
+
+console.log('\n== there is exactly one list of lights ==');
+// Three consumers used to walk activeBuildings themselves and each decide what
+// was lit. Three copies of "which lamps are on" is three chances for a lamp to
+// throw a pool with no bulb in it, or for the two rigs to disagree the moment
+// the watchdog swaps them.
+const gather  = rig.slice(rig.indexOf('function glRigGatherLights()'),
+                          rig.indexOf('function glRigWatchdog()'));
+const emitFn  = src.slice(src.indexOf('function sceneEmitters()'),
+                          src.indexOf('function weaponKey('));
+// Bounded at the rig block, which sits between drawLightPass() and
+// drawBiomeScreenLayer() -- otherwise this slice swallows glRigPaintHeight().
+const pass2d  = src.slice(src.indexOf('function drawLightPass()'), rigStart);
+const nightFn = src.slice(src.indexOf('function drawNightLights()'),
+                          src.indexOf('let weather = null;'));
+for (const [n, body] of [['the deferred rig', gather], ['the canvas rig', pass2d],
+                         ['the fixture pass', nightFn]]) {
+  ok(n + ' reads sceneEmitters()', /sceneEmitters\(\)/.test(body));
+  ok(n + ' gathers no lights of its own',
+     !/for \(const b of activeBuildings\)/.test(body) && !/of fires\)/.test(body));
+}
+ok('and sceneEmitters() is the one place that does',
+   /for \(const b of activeBuildings\)/.test(emitFn) && /of fires\)/.test(emitFn));
+ok('it is gathered once a frame, not once per consumer',
+   /_emitFrame === frameCount/.test(emitFn));
+
+console.log('\n== the player carries no light, the weapon does ==');
+// A pool pinned to the PLAYER means the player is never in the dark. A torch
+// bolted to the gun goes away when they pick up a scavenged one, which is the
+// difference worth having.
+ok('nothing is emitted from the player themselves',
+   !/x: player\.x, y: player\.y \+ 6, r: 240/.test(src));
+ok('the torch is keyed off the equipped weapon',
+   /const wk = w \? weaponKey\(w\) : '';/.test(emitFn) && /WEAPON_TORCH\[wk\]/.test(emitFn));
+ok('and leaves from the muzzle, not the player centre',
+   /WEAPON_MUZZLE\[wk\]/.test(emitFn) && /ca \* m\[0\] - sa \* m\[1\]/.test(emitFn));
+// A key that is not in WEAPONS is silent: the lookup just never matches and
+// that weapon quietly has no torch.
+const wt = /const WEAPON_TORCH = \{([\s\S]*?)\};/.exec(src);
+const wkeys = wt ? (wt[1].match(/(\w+):\s*1/g) || []).map(s => s.split(':')[0].trim()) : [];
+const known = Object.keys(probe('WEAPONS'));
+const bogus = wkeys.filter(k => !known.includes(k));
+// A muzzle offset that does not match the one Character.show() fires from puts
+// the beam and the rounds in different places.
+const mz = /const WEAPON_MUZZLE = \{([\s\S]*?)\};/.exec(src);
+const mkeys = mz ? (mz[1].match(/(\w+):\s*\[/g) || []).map(x => x.split(':')[0].trim()) : [];
+ok('every torch weapon has a muzzle offset',
+   wkeys.length > 0 && wkeys.every(k => mkeys.includes(k)), mkeys.join(' '));
+ok('every WEAPON_TORCH key is a real weapon', wkeys.length > 0 && bogus.length === 0,
+   bogus.length ? 'unknown: ' + bogus.join(' ') : wkeys.join(' '));
+ok('the scavenged guns deliberately have none',
+   !wkeys.includes('SHOTGUN') && !wkeys.includes('REVOLVER') && !wkeys.includes('COACH_GUN'),
+   'no torch: SHOTGUN REVOLVER COACH_GUN');
+// The muzzle is out in front of the player, so the clearance has to reach back
+// past them or the reduction finds the bearer's own silhouette behind the lamp.
+ok('and the torch clears its own bearer', /rMin: m\[0\] \+ \d+/.test(emitFn));
+ok('it draws no fixture -- the beam is the light', /fix: null/.test(emitFn));
+ok('its spill is a fixed world radius, not a fraction of the beam',
+   /const TORCH_SPILL_R = \d+;/.test(src) &&
+   /uSpill \* \(1\.0 - smoothstep\(0\.0, uSpillR, r\)\)/.test(rig));
+
+console.log('\n== outposts light themselves ==');
+const pe = /const PROP_EMITTERS = \{([\s\S]*?)\n\};/.exec(src);
+ok('PROP_EMITTERS exists', !!pe);
+const rows = pe ? pe[1].split('\n').filter(l => /^\s*\w+:\s*\{/.test(l)) : [];
+ok('the three travel anchors are all lit',
+   ['OUTPOST', 'CHECKPOINT', 'HELIPAD'].every(k => new RegExp('\\b' + k + ':\\s*\\{').test(pe ? pe[1] : '')),
+   rows.length + ' prop types emit');
+let shape = true, badRow = '';
+for (const l of rows) {
+  for (const f of ['dx:', 'dy:', 'r:', 'z:', 'p:', 'c:', 'soft:', 'rMin:', 'fix:']) {
+    if (!l.includes(f)) { shape = false; badRow = l.trim().split(':')[0] + ' missing ' + f; }
+  }
+}
+ok('every emitter carries the full descriptor', shape, badRow || 'all ' + rows.length);
+// A PROP_EMITTERS key with no prop behind it is a light attached to nothing.
+// Taken from the case labels in drawBiomeProps() rather than from `propType:`
+// literals, because the street furniture is emitted from an array with
+// `propType: t` and a literal scan misses every one of them.
+// Signature-agnostic: drawBiomeProps() grew (list, i0, i1) parameters when the
+// depth-sorted pass started handing it runs of an already-sorted array.
+const propsAt = src.search(/function drawBiomeProps\s*\(/);
+const propsFn = src.slice(propsAt, src.indexOf('function drawLightPass()'));
+const propTypes = new Set((propsFn.match(/case *["'](\w+)["'] *:/g) || [])
+  .map(s => /["'](\w+)["']/.exec(s)[1]));
+const orphanLights = rows.map(l => l.trim().split(':')[0]).filter(k => !propTypes.has(k));
+ok('no emitter is attached to a propType that is never emitted',
+   orphanLights.length === 0, orphanLights.join(' ') || 'all reachable');
+
+console.log('\n== cones ==');
+ok('the light shader takes an aim, a cone and a spill',
+   /uniform vec2  uAim;/.test(rig) && /uniform vec2  uCone;/.test(rig) &&
+   /uniform float uSpill;/.test(rig));
+ok('an omnidirectional source passes a window that is always satisfied',
+   /uCone, -1\.001, -1\.0/.test(rig));
+ok('the canvas rig draws a wedge for a cone too',
+   /ctx\.arc\(0, 0, 1, aim - half, aim \+ half\)/.test(src));
+
+console.log('\n== canopies cast, in every biome ==');
+// Only the woodland gives its timber an isTreeTrunk solid. The jungle's trees,
+// and every tree the clutter scatter drops, are decor and nothing else -- so
+// the height pass has to read the decor list, not the solids.
+ok('the height pass walks the live decor list', /for \(const dc of ch\.decor\)/.test(rig));
+ok('sized off CANOPY_MASS at the entry own scale',
+   /CANOPY_MASS\[dc\.t\]/.test(rig) && /cp\[1\] \* cs, cp\[2\] \* cs/.test(rig));
+ok('the trunk stays a collision volume', /if \(b\.isTreeTrunk\) continue;/.test(rig));
+// A CANOPY_MASS key that no clutter type produces is a caster for a tree that
+// does not exist; one with no art in paintClutter is worse.
+const cm = /const CANOPY_MASS = \{([\s\S]*?)\};/.exec(src);
+const ckeys = cm ? (cm[1].match(/(\w+):\s*\[/g) || []).map(x => x.split(':')[0].trim()) : [];
+const clutterArt = new Set((src.match(/case "(\w+)":/g) || []).map(x => /"(\w+)"/.exec(x)[1]));
+ok('every canopy type has clutter art', ckeys.length > 0 && ckeys.every(k => clutterArt.has(k)),
+   ckeys.join(' '));
+ok('a canopy drops its painted oval when the rig is casting for it',
+   /CANOPY_MASS\[d\.t\] && typeof glRigOwnsSunShadows/.test(src));
+ok('and every other live contact shadow fades with the sun',
+   /const a = alpha \* sd;/.test(src) && /sd = CANOPY_MASS/.test(src));
+
 console.log('\n== every uniform the JS sets is one the GLSL declares ==');
 // Collect declarations per shader, and the names the render path writes.
 const shaders = {};
@@ -125,6 +264,32 @@ ok('the lit frame goes back into the 2D canvas, not onto the page',
    !/appendChild\(GLRig\.canvas\)|document\.body\.appendChild\(cv\)/.test(rig));
 ok('the haze interlock with drawBiomeScreenLayer() is honoured',
    /_rigTookHaze = hazeA > 0\.004;/.test(frameFn));
+
+console.log('\n== a shadow needs a sun ==');
+// The painted ovals used to sit at 55% density at midnight, thrown by a sun
+// that had set hours earlier, while the rig had correctly stopped casting.
+probe('seedWorldClock();');
+probe('worldTimeMs = 2 / 24 * DAY_MS;');
+const nightSD = probe('shadowDensity()');
+ok('nothing is cast at 02:00', nightSD < 0.01, 'density ' + nightSD.toFixed(3));
+probe('worldTimeMs = 13 / 24 * DAY_MS;');
+const daySD = probe('shadowDensity()');
+// Not asserted near 1: the harness's weather stub is heavily overcast, and
+// skyDiffusion() legitimately takes most of the hard shadow out of a cloudy
+// noon. What matters is that midday casts and midnight does not.
+const q = probe('skyDiffusion()');
+ok('and real weight at 13:00', daySD > 0.4,
+   'density ' + daySD.toFixed(3) + ' at skyDiffusion ' + q.toFixed(2));
+// Sunset is 18:00 and daylight() is fully out a little after it, so the ramp
+// has to be sampled inside the window rather than past it.
+probe('worldTimeMs = 18 / 24 * DAY_MS;');
+const duskSD = probe('shadowDensity()');
+ok('easing off through dusk rather than snapping', duskSD > 0.01 && duskSD < daySD * 0.6,
+   'density ' + duskSD.toFixed(3) + ' at 18:00');
+// shadowLengthScale() must NOT take the same term: it is how long a shadow is,
+// not how dark, and the rig derives its ray-march slope from it.
+ok('shadow LENGTH is left alone -- the rig marches against it',
+   !/function shadowLengthScale\(\)[^\n]*daylight\(\)/.test(src));
 
 console.log('\n== it stands down cleanly with no GPU ==');
 // The harness stubs getContext() with a bare object. A rig that trusted that

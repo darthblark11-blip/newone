@@ -487,6 +487,56 @@ only the *fixtures* (bulb, housing glow, wet sheen straight down) with
 `globalCompositeOperation = 'lighter'`, sorted by distance to the player and clamped to
 visible lamps — the ground pool is the light rig's job, not this function's.
 
+### Emitters — the one list of lights
+
+`sceneEmitters()` is every light in the world, gathered once a frame and read by all
+three consumers: the canvas rig, the GPU rig and `drawNightLights()`. Each of them used
+to walk `activeBuildings` itself and decide independently what was lit, which is three
+chances for a lamp to throw a pool with no bulb in it, or for the two rigs to disagree
+about the scene the moment the watchdog swaps them.
+
+An emitter carries `x, y, z, r, p, c, soft, rMin`, an optional cone (`aim`, `half`,
+`inner`, `spill`) and a `fix` naming which fixture `drawNightLights()` should draw.
+`z` is what decides what can occlude it — a 46-unit lamp head is not shadowed by a
+26-unit wall — and **`rMin` is not optional on anything carried**: it is the clearance
+inside which nothing may shadow the source, and without it the polar reduction finds the
+bearer's own silhouette at r=0 in every direction.
+
+**`PROP_EMITTERS` is how the overworld lights itself.** A biome prop throws light purely
+by having an entry — no per-prop code anywhere else. Offsets are from the prop's centre
+because the thing that emits is rarely the middle of the thing that carries it: a
+watchtower's floodlight is at the top of the mast, a hut's light comes out of its
+windows. Currently lit: the three travel anchors (`OUTPOST`, `CHECKPOINT`, `HELIPAD` —
+the first thing a player sees arriving after dark, and often the only fixed light for a
+kilometre), the posts around them (`WATCHTOWER`, `GUARDBOX`, `BUNKER`) and anywhere
+somebody lives or works (`CABIN`, `SITEHUT`, `KIOSK`, `BUSSTOP`). `check-lighting.js`
+asserts every key is a `propType` that actually reaches `drawBiomeProps()`, because a
+light attached to a prop that is never emitted is silent.
+
+**The torch is a property of the gun, not of the player.** `WEAPON_TORCH` lists which
+weapons carry one — `PISTOL · SMG · DUAL_SMG · ASSAULT_RIFLE · ROCKET_LAUNCHER · TASER`.
+The shotgun and the three western guns deliberately do not: they are the scavenged and
+the improvised, and picking one up at night should put you back in the dark. It leaves
+the **muzzle**, at the `WEAPON_MUZZLE` offset that mirrors the `bLX`/`bLY` the bullets
+are fired from, so the light and the rounds come out of the same place; its `rMin`
+is measured from there and has to reach back *past* the bearer. It sorts first in the
+budget, so the player's own beam is never the light that gets dropped when a street gets
+busy, and it draws no fixture — the beam is the light, and a bulb at the source is just a
+bright disc sitting on the gun.
+
+`TORCH_SPILL` is the bleed at the source, held to the fixed world radius `TORCH_SPILL_R`
+rather than to a fraction of the beam. Scaled to the beam it was a 460-unit pool centred
+on the gun — a disc under the player with the cone growing out of it, which read as a
+base plate rather than as light.
+
+Cones are `aim` plus an inner and outer half-angle. In the GPU path they are one dot and
+one `smoothstep` against `uCone = (cos outer, cos inner)`, with omnidirectional sources
+passing `(-1.001, -1.0)` — always satisfied — rather than taking a branch, because a
+divergent branch on a tile GPU costs more than the arithmetic it saves. `TORCH_SPILL` is
+the small omnidirectional bleed at the source; without it a torch reads as a cardboard
+wedge taped to the gun. The canvas rig draws the same cone as a wedge path plus a small
+core pool.
+
 ### The deferred rig (WebGL2)
 
 `GLRig` sits in front of `drawLightPass()` and does the same job on the GPU, plus the
@@ -531,12 +581,16 @@ Five things here are load-bearing:
 2. **It goes back into the p5 canvas, not onto the page.** The HUD, the sticks and every
    cutscene overlay are drawn *after* the light pass, so a GL canvas stacked over the top
    would bury all of them.
-3. **Exactly one pass casts the sun.** `drawBiomeShadows()` early-outs on
-   `glRigOwnsSunShadows()`, because both cast from the same silhouettes and running both
-   doubles the alpha on every wall. Micro-prop shadows baked into the terrain stay either
-   way — they are in the albedo, and they were baked against the same `LIGHT_DX/DY` the
-   march uses. `slope` is derived from `shadowLengthScale()` so a marched shadow is the
-   length the 2D pass would have drawn.
+3. **Exactly one pass casts the sun, and it is the whole pass list.** Every caster in
+   `activeBuildings` is in the height buffer, so *three* separate places had to stand
+   down, not one: `drawBiomeShadows()`, the `castShadow`/`castShadowRect` pair that
+   `drawBiomeProps()` calls 28 times, and the contact oval in `Character.show()`
+   (`charShadowOwned()`). Each of them was drawing a second, differently shaped shadow
+   under the marched one, which is what a scene with two suns in it looks like.
+   Micro-prop shadows baked into the terrain stay either way — they are in the albedo,
+   and they were baked against the same `LIGHT_DX/DY` the march uses. `slope` is derived
+   from `shadowLengthScale()` so a marched shadow is the length the 2D pass would have
+   drawn.
 4. **An emitter is never shadowed by its carrier.** `rMin` per light. The player's torch
    sits nine units above the player's own silhouette, so without it the polar reduction
    finds an occluder at r=0 in every direction and the light comes out as a wedge with the
@@ -546,12 +600,50 @@ Five things here are load-bearing:
    on the occluder's filtered edge and reads about half its true height. Recording that
    let half of every point light through every wall in the scene.
 
+Two things the height field cannot hold, and what happens instead:
+
+- **A flying unit.** A height field only knows how high the ground is at a point, so a
+  saucer entered into it reads as a *tower standing on the ground* — occluding lamps
+  around its own footprint and casting from its base rather than from the air.
+  `CHAR_AIRBORNE` keeps them out of the buffer and keeps their offset oval, which is the
+  correct shadow for an airborne caster and the only one this projection allows.
+- **A tree's crown, from its trunk.** Timber collides at a fixed 34×34 whatever the tree
+  is, so the collision box is the wrong silhouette to cast from — and only the woodland
+  gives its trees a trunk solid at all. The jungle's canopies, and every tree the clutter
+  scatter drops, are **decor and nothing else**. So the height pass walks the same live
+  decor list `drawDecor()` paints from and sizes each crown off `CANOPY_MASS` at the
+  entry's own `s`. Keyed on the solid instead, a jungle at night had trees that occluded
+  no lamp, took no torch and threw nothing but a painted oval.
+
+**The player carries no light; their weapon does.** There used to be a 240-unit pool
+pinned to the player, and the GPU rig inherited it. It meant the player was never
+actually in the dark, so the one thing a night is for — making you walk toward the lamps
+— could not happen, because the light came with you. What replaced it is the weapon
+torch (see **Emitters**), which is a cone, comes off the muzzle, and goes away when the
+player picks up a scavenged gun.
+
 Cost control: point lights are scissored to their own screen box, the light list is the
 same nearest-first budget `drawLightPass()` uses, the height buffer runs at half rig
 resolution (every march sample and every occlusion resample reads it), and
 `glRigWatchdog()` drops through `GLRIG_SCALES` and finally stands the rig down if the
 frame budget goes — fall fast, recover slowly, because a rig oscillating between tiers
 reads as flicker.
+
+### A shadow needs a sun
+
+`shadowDensity()` is multiplied by `daylight()`. It used to bottom out at 0.55, so at
+midnight every prop in the world still had a hard oval lying beside it thrown by a sun
+that had set hours earlier — while the deferred rig, whose sun term goes to zero on its
+own, had correctly stopped casting. The two disagreed and the painted one was wrong.
+
+**`shadowLengthScale()` deliberately does not take the same term.** It is how *long* a
+shadow is, not how dark, and the rig derives its ray-march slope from it.
+
+The painted contact shadows in `paintClutter()` follow the same rule, but only on the
+**live** pass: a baked shadow is part of the chunk's albedo and that one texture has to
+serve every hour of the day, which is the reason the baked list is only ever the small
+stuff. A canopy drops its painted oval altogether once the rig is running, because the
+rig is marching a real one off the crown's own silhouette.
 
 ### Weather
 
@@ -566,6 +658,78 @@ Fog is fill-rate bound, hence few large banks. `rollWeather`, `setRaining`,
 sky is off-screen. A tiling cloud mask scrolled across the world at two scales and
 speeds (parallax), subtracting light from the ground layer *under* buildings and units.
 4–8 `image()` calls per frame regardless of cloud density. `cloudCover()`, `cloudHash()`.
+
+### The pseudo-3D projection
+
+A top-down camera has no horizon, so the only cue that a mass has height is its **top
+being displaced from its footprint, away from the middle of the screen**. `massLean(wx,
+wy, rise)` is that displacement and `drawMassSides()` draws the faces it opens up. Those
+two functions are the projection: **everything in the world that stands off the ground
+goes through them, and anything added from here on must too.** That is what keeps one
+constant in charge of the whole look.
+
+```
+MASS_LEAN  1.5    parallax strength — the fake camera's focal length
+MASS_TILT  0.42   a few degrees of camera tilt, added to every mass
+CHAR_RISE  11     how tall a figure is, in the units masses use
+PROP_RISE         which biome props are masses, and how tall
+```
+
+**`MASS_TILT` exists because the camera follows the player.** Pure parallax is zero at
+the principal point, so the player — the one figure always dead centre — would be the
+only thing in the world with no volume at all. A camera looking very slightly north gives
+every mass a constant southward term as well, proportional to its own height. Keep it
+small: past a few degrees the footprints stop reading as the ground plane.
+
+**A prop becomes a mass by having a `PROP_RISE` entry**, the same way it becomes a light
+by having a `PROP_EMITTERS` one — the lean is applied once, generically, around the whole
+`drawBiomeProps()` switch, so none of the forty cases knows the projection exists. Two
+forms: `[rise, r, g, b]` is a box and gets extruded sides in that colour; `[rise]` alone
+leans without them. The short form is for anything not box-shaped — `drawMassSides()` is
+axis-aligned and works off the **collision** rect, so a boulder (round, and drawn well
+inside its own box) came out as a rectangular slab standing behind a rock. Decks
+(`BRIDGE`, `CANALBRIDGE`, `BOARDWALK`) are deliberately absent: a surface you stand on
+with walls round it reads as a crate lying in the river.
+
+**A figure is a mass too**, leaning by `CHAR_RISE` from `Character.show()`'s own
+translate — far below a building's rise, because a figure displaced by its own body
+length reads as a sprite that has come unstuck from its feet. Airborne units are excluded
+for the same reason they are kept out of the rig's height field (`CHAR_AIRBORNE`). The
+lean moves the body and never the feet: collision, the contact point the depth sort uses
+and the rig's height ellipse all stay at `(x, y)`.
+
+**Still flat, and the next thing to convert:** the per-flag branches in `drawBuildings()`
+— `isHouse`, `isBarn`, `isWesternBldg`, `isGiantBarrier`, `isShanty` and the rest. They
+are reachable the same way, but each needs its rise and its side colour chosen against
+its own art, so they want doing a cluster at a time with something rendered to look at.
+
+Three things about it are load-bearing:
+
+1. **It is not the light vector.** The walls used to extrude along `LIGHT_DX/DY`, so
+   every building in the city leaned the same way its own shadow fell and the two merged
+   into a single smear — which is exactly why a street of them read as flat shapes with
+   stains beside them. The lean is where the **camera** is; the shadow is where the
+   **sun** is; the scene only reads as solid when those two disagree.
+2. **The base stays on the collision rect and the roof moves**, never the other way
+   round. What you bump into is at ground level, so a building that pinned its roof to
+   the collision box and slid its base around would appear to skate on the ground every
+   time the camera panned. It also keeps the rig's height field — which stamps masses at
+   their collision rect — agreeing with what is drawn.
+3. **Faces are shaded by their own normal, not by which of them is showing.** Only the
+   two faces the lean turns toward the camera are drawn, and which two that is flips as a
+   building crosses the middle of the view; shading per normal is what keeps its lit side
+   the *same* side while that happens.
+
+Wall detail runs **along** the lean (mullions), not across it. Storey lines banded across
+the face read as a stack of plates at this depth of projection — there are only ever a
+few dozen pixels of face to divide.
+
+`node tools/check-depth.js` covers both halves: the sort order (in front, behind, inside
+a footprint, several characters interleaved, nothing dropped or drawn twice, props routed
+to the right pass) and the projection (the lean reverses across the view where the sun
+does not, the footprint stays on the collision rect, the visible faces flip in all four
+quadrants, and `drawBuildings()` leaves the canvas transform balanced over every solid a
+city chunk can produce).
 
 ### Elevation
 
@@ -594,10 +758,11 @@ drawBiomeDecks()           (BIOME_ACTIVE only) — bridge and boardwalk surfaces
 drawBloodChunks()
 updateCorpses()
 ─── everything above is GROUND. Everything below is drawn OVER the player. ───
-player.show() / updateEntities()      ← the player and every character
+player.show() / updateEntities()      ← characters QUEUE via actorShow()
 drawBuildingShadows()      → drawBiomeShadows() in biomes
-drawBuildings()
-drawBiomeProps()           (BIOME_ACTIVE only)
+drawDepthSorted()          → the queued characters interleaved with
+                             drawBuildings() / drawBiomeProps() by ground contact
+                             (outside a biome: the old flat order)
 drawParkingCars()
 projectiles / particles / orbs / shockwaves
 drawNightLights() + weather.drawWorld()   (BIOME_ACTIVE only)
@@ -606,10 +771,24 @@ drawBiomeScreenLayer()
 drawUI() / drawBiomeHud() / updateExtraction()
 ```
 
-**The characters are drawn in the middle of this list, not at the end.**
-`drawBuildings()` and `drawBiomeProps()` run *after* them on purpose: a roof has to
-occlude anyone standing inside its footprint, which is what tells you they are behind
-it. That makes the ordering question for any new art "is this a mass or a surface?":
+**Masses and characters are one depth-sorted pass** (`drawDepthSorted()`), not two
+layers. Every character draw goes through `actorShow()`, which queues rather than paints
+while `_depthOn`; the queue is then interleaved with the visible masses in ascending
+order of **ground contact** — `massDepth()` is the south edge of a footprint,
+`actorDepth()` is a character's own origin, which is where their collision circle, their
+contact shadow and their entry in the rig's height field all already are.
+
+That one comparison replaces the old fixed order. Standing inside a footprint puts your
+feet north of its base, so the roof still hides you — which is what the old order existed
+to get right. Standing in front of it puts them south, so you draw over the wall, which
+the old order got wrong: walking along a building's south face made the player sink into
+it. `drawBuildings()` and `drawBiomeProps()` take an optional `(list, i0, i1)` so the
+sorted pass can hand each of them one run of an already-sorted array.
+
+Levels 0 and 8 are not sorted (`depthSortActive()` is `BIOME_ACTIVE`) — closed interiors
+composed against the old order, with nothing to gain.
+
+The ordering question for any new art is still "is this a mass or a surface?":
 
 - **A mass** (building, boulder, hedge, parapet, tree canopy) goes in the late pass and
   draws over the player. That is correct.
@@ -1595,6 +1774,9 @@ direction, and that the blast clears the player.
 8. **Palettes at midday.** Night is subtractive.
 9. **Never place blind.** Use the lattice, `solidsClearAt`, `nearAnchor`, and let
    `hitsAuthored` have the last word.
+10. **Anything that stands off the ground leans.** New art goes through `massLean()` and
+    `drawMassSides()` — never its own extrusion, and never along `LIGHT_DX/DY`. The base
+    stays on the collision rect, the top moves, and the shadow is the sun's job.
 
 ## Verifying changes
 
@@ -1629,6 +1811,7 @@ node tools/check-ballistics.js     # hostile rounds are always slower than the p
 node tools/check-menu.js           # travel lives in the pause menu, and nowhere else
 node tools/check-pathing.js        # walkers turn round obstacles; the collision index
 node tools/check-corpse.js         # the settle: variation, impact direction, and it freezes
+node tools/check-depth.js          # depth order, and how a mass projects
 node tools/check-lighting.js       # the deferred rig: uniforms resolve, nothing allocates per frame
 GAME_JS=/path/to/other.js node tools/check-generation.js    # compare against a baseline
 ```
