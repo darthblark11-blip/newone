@@ -312,6 +312,52 @@ ok('parked cars lean as well', /function drawParkingCars\(\)[\s\S]{0,400}?massLe
 ok('a figure keeps its feet where the depth sort and the rig expect them',
    /push\(\); translate\(this\.x, this\.y\);/.test(src));
 
+console.log('\n== the legacy flags are masses now, and safely ==');
+// Every branch in drawBuildings() ends in `continue`, so the lean around them
+// cannot be a plain push/pop -- the close is deferred to the top of the next
+// iteration. The failure mode is an unbalanced transform, and it is silent.
+const lm = /const LEGACY_MASS = \{([\s\S]*?)\n\};/.exec(src);
+const lmkeys = lm ? (lm[1].match(/(is\w+):/g) || []).map(x => x.slice(0, -1)) : [];
+ok('LEGACY_MASS exists and covers the frontier and the city blocks',
+   lmkeys.length >= 15, lmkeys.length + ' flags');
+// A flag with no branch is a skirt drawn for nothing; worse, a typo is silent.
+const bodyFn = src.slice(src.search(/function drawBuildings\s*\(/), src.indexOf('function drawParkingCars()'));
+const ghosts2 = lmkeys.filter(k => !new RegExp('b\\.' + k + '\\b').test(bodyFn));
+ok('every flag is one drawBuildings() actually dispatches on', ghosts2.length === 0,
+   ghosts2.join(' ') || 'all reachable');
+ok('the gates and the energy barriers are deliberately absent',
+   !lmkeys.includes('isGovFortress') && !lmkeys.includes('isUBarrier') &&
+   !lmkeys.includes('isGiantBarrier'), 'no isGovFortress / isUBarrier / isGiantBarrier');
+ok('the rise is buildingRise(b), the same number the shadow is cast with',
+   /const _lr = buildingRise\(b\);[\s\S]{0,120}?massLean\(b\.x, b\.y, _lr/.test(bodyFn));
+ok('the close is deferred past the branch continues',
+   /_lgClose\(\);\s*\n\s*if \(!inView/.test(bodyFn) && /}\s*\n\s*_lgClose\(\);\s*\n}/.test(bodyFn));
+
+// And prove the balance over a biome that actually generates these flags.
+probe(`
+  currentLevel = 3; currentBiome = 3; BIOME_ACTIVE = true;
+  authoredCore = null; authoredChunks = null; authoredMask = null; biomeState = {};
+  viewLeft = -1e5; viewRight = 1e5; viewTop = -1e5; viewBottom = 1e5;
+  width = 1200; height = 800; zoom = 1; camX = -600; camY = -400;
+  var all3 = [], flags3 = {};
+  for (var cx = -8; cx <= 8; cx++) for (var cy = -8; cy <= 8; cy++) {
+    var ch = generateChunkContent(3, cx, cy);
+    for (var i = 0; i < ch.solid.length; i++) {
+      var sld = ch.solid[i];
+      all3.push(sld);
+      for (var k in sld) if (k.slice(0,2) === 'is' && sld[k] === true) flags3[k] = 1;
+    }
+  }
+  activeBuildings = all3;
+  __flags3 = Object.keys(flags3).length;
+  __depth = 0; __minDepth = 0; __maxDepth = 0;
+  drawBuildings();
+`);
+ok('drawBuildings() stays balanced across the frontier',
+   probe('__depth') === 0 && probe('__minDepth') === 0,
+   'net ' + probe('__depth') + ' over ' + probe('activeBuildings.length') + ' solids, ' +
+   probe('__flags3') + ' distinct flags');
+
 console.log('\n== drawBiomeProps() leaves the transform balanced ==');
 // The lean wraps the whole switch, so a case that returned or continued would
 // strand a push(). Run every prop type the two sectors can produce.

@@ -2156,11 +2156,55 @@ function drawDepthSorted() {
   _depthOn = false;
 }
 
+
+// The legacy building flags that are MASSES, and the colour their extruded
+// sides take. Same convention as PROP_RISE: [r, g, b] is a box and gets walls,
+// `true` leans without them (round or self-shaped things -- a water tower's
+// tank, a lattice mast, a tent). Each side colour is the branch's own dominant
+// fill pulled toward the ground, so the walls read as the same material as the
+// roof above them.
+//
+// The RISE is deliberately not stored here: it is buildingRise(b), the same
+// hashed number drawBiomeShadows() throws the shadow with and the deferred rig
+// stamps into its height buffer. These buildings have cast mass-sized shadows
+// since the rig went in -- this table is the drawn walls catching up with the
+// shadows, and using the same number is what makes wall and shadow agree to
+// the pixel.
+//
+// Deliberately absent: isGovFortress (the Great Gates have a door the wings
+// must not paint across, and three cutscenes stage against them), isUBarrier
+// (an energy field), isGiantBarrier (segment-looped with its own view clamp),
+// and everything in Levels 0 and 8, which the BIOME_ACTIVE gate excludes
+// wholesale.
+const LEGACY_MASS = {
+  isHouse:       [148, 150, 154],   isBarn:        [104,  36,  32],
+  isTrailer:     [146, 146, 150],   isShanty:      [126, 116,  98],
+  isMarket:      [166, 140, 106],   isGasStation:  [176, 176, 178],
+  isLiquorStore: [ 58,  96, 148],   isApartment:   [166, 146, 120],
+  isWesternBldg: [148, 118,  86],   isMall:        [132, 136, 142],
+  isCasino:      [ 46,  46,  58],   isTheater:     [ 56,  42,  56],
+  isArena:       [ 74,  74,  78],
+  isWaterTower:  true,  isWell: true,  isTower: true,  isCircus: true,
+  isDumpster:    [ 84,  96,  84]
+};
+function legacyMassOf(b) {
+  for (const k in LEGACY_MASS) if (b[k]) return LEGACY_MASS[k];
+  return null;
+}
+
 function drawBuildings(list, i0, i1) {
   const _arr = list || activeBuildings;
   const _lo = i0 === undefined ? 0 : i0;
   const _hi = i1 === undefined ? _arr.length : i1;
+  // The lean around a legacy branch cannot be a plain push/pop pair: every one
+  // of the forty branches below ends in `continue`, which would jump the pop
+  // and leave the canvas translated for the rest of the frame. So the close is
+  // DEFERRED -- it runs at the top of the next iteration, which `continue`
+  // cannot skip, and once more after the loop for the final record.
+  let _lgOpen = false;
+  const _lgClose = () => { if (_lgOpen) { pop(); _lgOpen = false; } };
   for (let _i = _lo; _i < _hi; _i++) { let b = _arr[_i];
+    _lgClose();
     if (!inView(b.x, b.y, Math.max(b.w || 0, b.h || 0) + 150)) continue;
     if (b.isBiomeProp) continue; // drawn by drawBiomeProps()
     // A trunk is a collision volume so you cannot walk through a tree. The
@@ -2171,6 +2215,26 @@ function drawBuildings(list, i0, i1) {
     if ((currentLevel === 1 || currentLevel === 2) && b.isGrassLot && !b.isPond && !b.isParkingLot) continue;
     if (b.isParkingCar) continue; 
     if (b.isCropField || b.isPond || b.isParkingLot) continue; // MOVED TO GROUND RENDER STACK
+    // Legacy masses take the same projection as everything else: sides off
+    // the footprint, art lifted to the leaned top. buildingRise(b) is the
+    // number their shadow has been cast with since the rig went in.
+    if (BIOME_ACTIVE) {
+      const _lm = legacyMassOf(b);
+      if (_lm) {
+        const _lr = buildingRise(b);
+        massLean(b.x, b.y, _lr, _leanTmp);
+        if (_leanTmp[0] !== 0 || _leanTmp[1] !== 0) {
+          if (_lm !== true) {
+            drawMassSides(b.x - b.w / 2, b.y - b.h / 2, b.x + b.w / 2, b.y + b.h / 2,
+                          _leanTmp[0], _leanTmp[1], _lm[0], _lm[1], _lm[2], 24);
+          }
+          push();
+          translate(_leanTmp[0], _leanTmp[1]);
+          _lgOpen = true;
+        }
+      }
+    }
+
     if (b.isBuildSite) { drawBuildSite(b); continue; }
     if (b.isBuildTruck) { drawSupplyTruck(b); continue; }
     if (b.isBuiltStructure) { drawBuiltStructure(b); continue; }
@@ -2972,6 +3036,7 @@ function drawBuildings(list, i0, i1) {
 
     pop();   // closes the roof translate — see massLean()
   }
+  _lgClose();
 }
 
 
@@ -11047,7 +11112,12 @@ if (this.eType === "COW") {
     // depth sort uses and the rig's height ellipse all stay at (x, y).
     if (BIOME_ACTIVE && !CHAR_AIRBORNE[this.eType]) {
       massLean(this.x, this.y, CHAR_RISE, _leanTmp);
-      if (_leanTmp[0] !== 0 || _leanTmp[1] !== 0) translate(_leanTmp[0], _leanTmp[1]);
+      const _clx = _leanTmp[0], _cly = _leanTmp[1];
+      if (_clx !== 0 || _cly !== 0) {
+        drawFigureRiser(this.bodyW * 0.92, this.bodyH * 0.82, _clx, _cly,
+                        red(this.shirtCol), green(this.shirtCol), blue(this.shirtCol));
+        translate(_clx, _cly);
+      }
     }
     // Standing higher up puts you nearer an overhead camera, so you read
     // bigger. This is the whole of the relief illusion as far as figures are
@@ -11588,6 +11658,25 @@ if (this.isPlayer) {
     noStroke();
     if (this.hitFlash > 0) { this.hitFlash--; fill(255); } else { fill(this.shirtCol); }
     ellipse(0, 0, this.bodyW, this.bodyH);
+    // Round the torso off against the scene's one light vector: a lit rim on
+    // the edge the sun reaches and a shaded one opposite. The riser under the
+    // figure gives it height, but height alone still reads as a flat disc
+    // standing on a stalk -- this is what makes the disc a body. It is two
+    // strokes, and it works at the middle of the screen where the projection
+    // gives a figure no lean to speak of.
+    if (BIOME_ACTIVE && this.hitFlash <= 0) {
+      const _ra = Math.atan2(-LIGHT_DY, -LIGHT_DX);
+      // A soft inner shade around the whole lower half first, then the two
+      // rims. Three cheap strokes and the disc becomes a shoulder.
+      noFill();
+      stroke(0, 0, 0, 34); strokeWeight(4);
+      arc(0, 0, this.bodyW - 4, this.bodyH - 4, _ra + PI - 1.5, _ra + PI + 1.5);
+      stroke(255, 255, 255, 62); strokeWeight(2.6);
+      arc(0, 0, this.bodyW - 2, this.bodyH - 2, _ra - 0.78, _ra + 0.78);
+      stroke(0, 0, 0, 72); strokeWeight(2.6);
+      arc(0, 0, this.bodyW - 2, this.bodyH - 2, _ra + PI - 0.78, _ra + PI + 0.78);
+      noStroke();
+    }
 
     // Male Farmer Overalls
     if (this.eType === "FARMER_MALE") {
@@ -13197,8 +13286,20 @@ class Citizen {
         }
 
         
-        push(); translate(this.x, this.y); 
-        
+        push(); translate(this.x, this.y);
+        // Citizens are figures like everyone else: riser below, body lifted by
+        // the same projection. Kept OUTSIDE the rotate() below -- the lean is a
+        // screen-space displacement, and rotated with the body it would swing
+        // around as they turned.
+        if (BIOME_ACTIVE) {
+          massLean(this.x, this.y, CHAR_RISE, _leanTmp);
+          if (_leanTmp[0] !== 0 || _leanTmp[1] !== 0) {
+            drawFigureRiser(this.bodyW * 0.92, 22, _leanTmp[0], _leanTmp[1],
+                            red(this.shirtCol), green(this.shirtCol), blue(this.shirtCol));
+            translate(_leanTmp[0], _leanTmp[1]);
+          }
+        }
+
         let isBuilding = (this.state === "BUILDING");
         const WORK = ["TO_SITE", "BUILDING", "PLACING", "TO_TRUCK", "LOADING", "TO_MASON", "HANDOFF"];
         let rot = (this.state === "WANDER" || WORK.indexOf(this.state) !== -1)
@@ -21283,13 +21384,24 @@ const MASS_LEAN = 1.5;
 // well, proportional to its own height, so nothing is ever perfectly flat.
 // Keep it small: this is a tilt, not an isometric turn, and past a few degrees
 // the footprints stop reading as the ground plane.
-const MASS_TILT = 0.42;
+const MASS_TILT = 0.62;
 
-// Standing height of a figure, in the same units masses use. Deliberately far
-// below a building's: a person is a metre or two against a three-storey block,
-// and a figure displaced by its own body length reads as a sprite that has come
-// unstuck from its feet rather than as someone standing up.
-const CHAR_RISE = 11;
+// Standing height of a figure, in the same units masses use.
+//
+// Deliberately tiny next to a building's 26, and the reason is worth writing
+// down because the obvious value is wrong. Parallax displacement scales with
+// height but the thing being displaced has its own SIZE, and what the eye reads
+// is the ratio. A 39-unit lean on a 150-wide building moves the roof a quarter
+// of its own width and looks like a building. The same lean on a 21-wide figure
+// moves it twice its own width, and the base stops being hidden behind the body
+// at all -- it comes out as a dark blob sitting next to the person, which reads
+// as a second shadow rather than as their legs.
+//
+// So a figure gets a small honest lean and gets its volume from SHADING
+// instead: the riser below it, the rim on the torso, and the cast shadow the
+// deferred rig marches off its height ellipse. Height is not a thing you can
+// fake with parallax on an object a few pixels across.
+const CHAR_RISE = 6;
 
 const _leanTmp = [0, 0];
 function massLean(wx, wy, rise, out) {
@@ -21350,6 +21462,36 @@ function drawMassSides(x0, y0, x1, y1, lx, ly, cr, cg, cb, mullion) {
     }
     noStroke();
   }
+}
+
+// The side of a FIGURE.
+//
+// Same job drawMassSides() does for a box: the swept silhouette between where
+// someone's feet are and where the projection puts the rest of them. A person
+// is round, so it is a capsule rather than two faces -- the ellipse at the
+// base, plus the two tangent lines of that ellipse along the sweep.
+//
+// Drawn BEFORE the figure and covered by it, so all that shows is the part
+// below the body: a shaded column standing on the ground with the person on
+// top of it. Without this the figure simply floats -- the lean moves it off its
+// own feet and leaves nothing in between.
+function drawFigureRiser(bw, bh, lx, ly, cr, cg, cb) {
+  const m = Math.hypot(lx, ly);
+  if (m < 0.35) return;
+  noStroke();
+  // The face we can see is turned back along the lean, so it is shaded against
+  // the sun exactly the way a wall is.
+  // Floored well above black. A wall may go dark because there is a lot of it
+  // and the eye reads the whole plane; a few pixels of shaded body below a
+  // figure just reads as a stain on the ground if it goes that far down.
+  const d = -((-lx / m) * LIGHT_DX + (-ly / m) * LIGHT_DY);
+  const k = 0.50 + 0.30 * (d > 0 ? d : 0);
+  fill(cr * k + 4, cg * k + 5, cb * k + 8);
+  // Tangents perpendicular to the sweep, scaled per axis so the band matches
+  // the ellipse being swept rather than a circle.
+  const px = (-ly / m) * bw * 0.5, py = (lx / m) * bh * 0.5;
+  quad(px, py, -px, -py, -px + lx, -py + ly, px + lx, py + ly);
+  ellipse(0, 0, bw, bh);
 }
 
 // Shadow colour. Never pure black: outdoor shade is lit by the sky above it,
@@ -21593,10 +21735,42 @@ function paintClutter(g, d, t) {
   // running, because the rig is marching a real one off the crown's own
   // silhouette (see CANOPY_MASS) and two shadows under one tree is what a
   // scene with two suns in it looks like.
+  const live = (typeof window !== 'undefined' && g === window && BIOME_ACTIVE);
   let sd = 1;
-  if (typeof window !== 'undefined' && g === window && BIOME_ACTIVE) {
+  if (live) {
     sd = CANOPY_MASS[d.t] && typeof glRigOwnsSunShadows === 'function' &&
          glRigOwnsSunShadows() ? 0 : shadowDensity();
+  }
+
+  // A tree stands UP. Its crown is metres above the ground, so of everything in
+  // the world it is the thing the projection displaces most -- and unlike a
+  // figure it is wide enough to carry that displacement, because what fills the
+  // gap is a trunk, which is exactly what you would see.
+  //
+  // Live canopies only. A baked one is in the chunk texture and the same texels
+  // have to serve every camera position, so it cannot lean at all.
+  const cm = live ? CANOPY_MASS[d.t] : null;
+  if (cm) {
+    massLean(d.x, d.y, cm[0] * (s || 1), _leanTmp);
+    const tlx = _leanTmp[0], tly = _leanTmp[1];
+    if (tlx !== 0 || tly !== 0) {
+      // Trunk, from the roots up to wherever the crown has gone. Tapered, and
+      // lit down one side against the scene's light vector like any other mass.
+      const tw = 5.2 * (s || 1);
+      const m = Math.hypot(tlx, tly);
+      const px = (-tly / m) * tw, py = (tlx / m) * tw;
+      g.noStroke();
+      g.fill(44, 32, 20);
+      g.quad(px, py, -px, -py, -px * 0.72 + tlx, -py * 0.72 + tly,
+             px * 0.72 + tlx, py * 0.72 + tly);
+      // Sunlit edge of the bark: one strip down the side the light is on.
+      const lit = ((-tlx / m) * LIGHT_DX + (-tly / m) * LIGHT_DY) < 0 ? 1 : -1;
+      g.fill(78, 58, 36);
+      g.quad(px * lit, py * lit, px * lit * 0.42, py * lit * 0.42,
+             px * lit * 0.30 + tlx, py * lit * 0.30 + tly,
+             px * lit * 0.72 + tlx, py * lit * 0.72 + tly);
+      g.translate(tlx, tly);
+    }
   }
 
   const shadow = (x, y, w, h, len, alpha) => {
