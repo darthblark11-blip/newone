@@ -659,6 +659,41 @@ sky is off-screen. A tiling cloud mask scrolled across the world at two scales a
 speeds (parallax), subtracting light from the ground layer *under* buildings and units.
 4–8 `image()` calls per frame regardless of cloud density. `cloudCover()`, `cloudHash()`.
 
+### The pseudo-3D projection
+
+A top-down camera has no horizon, so the only cue that a mass has height is its **roof
+being displaced from its footprint, away from the middle of the screen**. `massLean(wx,
+wy, rise)` is that displacement, and `MASS_LEAN` (1.5) is the one number that sets how
+strong the whole effect is — it is the fake camera's focal length, nothing more.
+
+Three things about it are load-bearing:
+
+1. **It is not the light vector.** The walls used to extrude along `LIGHT_DX/DY`, so
+   every building in the city leaned the same way its own shadow fell and the two merged
+   into a single smear — which is exactly why a street of them read as flat shapes with
+   stains beside them. The lean is where the **camera** is; the shadow is where the
+   **sun** is; the scene only reads as solid when those two disagree.
+2. **The base stays on the collision rect and the roof moves**, never the other way
+   round. What you bump into is at ground level, so a building that pinned its roof to
+   the collision box and slid its base around would appear to skate on the ground every
+   time the camera panned. It also keeps the rig's height field — which stamps masses at
+   their collision rect — agreeing with what is drawn.
+3. **Faces are shaded by their own normal, not by which of them is showing.** Only the
+   two faces the lean turns toward the camera are drawn, and which two that is flips as a
+   building crosses the middle of the view; shading per normal is what keeps its lit side
+   the *same* side while that happens.
+
+Wall detail runs **along** the lean (mullions), not across it. Storey lines banded across
+the face read as a stack of plates at this depth of projection — there are only ever a
+few dozen pixels of face to divide.
+
+`node tools/check-depth.js` covers both halves: the sort order (in front, behind, inside
+a footprint, several characters interleaved, nothing dropped or drawn twice, props routed
+to the right pass) and the projection (the lean reverses across the view where the sun
+does not, the footprint stays on the collision rect, the visible faces flip in all four
+quadrants, and `drawBuildings()` leaves the canvas transform balanced over every solid a
+city chunk can produce).
+
 ### Elevation
 
 `ELEV_ZONES` (~1827) — currently only Sector 3 (mine bench, boot hill, stock bench,
@@ -686,10 +721,11 @@ drawBiomeDecks()           (BIOME_ACTIVE only) — bridge and boardwalk surfaces
 drawBloodChunks()
 updateCorpses()
 ─── everything above is GROUND. Everything below is drawn OVER the player. ───
-player.show() / updateEntities()      ← the player and every character
+player.show() / updateEntities()      ← characters QUEUE via actorShow()
 drawBuildingShadows()      → drawBiomeShadows() in biomes
-drawBuildings()
-drawBiomeProps()           (BIOME_ACTIVE only)
+drawDepthSorted()          → the queued characters interleaved with
+                             drawBuildings() / drawBiomeProps() by ground contact
+                             (outside a biome: the old flat order)
 drawParkingCars()
 projectiles / particles / orbs / shockwaves
 drawNightLights() + weather.drawWorld()   (BIOME_ACTIVE only)
@@ -698,10 +734,24 @@ drawBiomeScreenLayer()
 drawUI() / drawBiomeHud() / updateExtraction()
 ```
 
-**The characters are drawn in the middle of this list, not at the end.**
-`drawBuildings()` and `drawBiomeProps()` run *after* them on purpose: a roof has to
-occlude anyone standing inside its footprint, which is what tells you they are behind
-it. That makes the ordering question for any new art "is this a mass or a surface?":
+**Masses and characters are one depth-sorted pass** (`drawDepthSorted()`), not two
+layers. Every character draw goes through `actorShow()`, which queues rather than paints
+while `_depthOn`; the queue is then interleaved with the visible masses in ascending
+order of **ground contact** — `massDepth()` is the south edge of a footprint,
+`actorDepth()` is a character's own origin, which is where their collision circle, their
+contact shadow and their entry in the rig's height field all already are.
+
+That one comparison replaces the old fixed order. Standing inside a footprint puts your
+feet north of its base, so the roof still hides you — which is what the old order existed
+to get right. Standing in front of it puts them south, so you draw over the wall, which
+the old order got wrong: walking along a building's south face made the player sink into
+it. `drawBuildings()` and `drawBiomeProps()` take an optional `(list, i0, i1)` so the
+sorted pass can hand each of them one run of an already-sorted array.
+
+Levels 0 and 8 are not sorted (`depthSortActive()` is `BIOME_ACTIVE`) — closed interiors
+composed against the old order, with nothing to gain.
+
+The ordering question for any new art is still "is this a mass or a surface?":
 
 - **A mass** (building, boulder, hedge, parapet, tree canopy) goes in the late pass and
   draws over the player. That is correct.
@@ -1721,6 +1771,7 @@ node tools/check-ballistics.js     # hostile rounds are always slower than the p
 node tools/check-menu.js           # travel lives in the pause menu, and nowhere else
 node tools/check-pathing.js        # walkers turn round obstacles; the collision index
 node tools/check-corpse.js         # the settle: variation, impact direction, and it freezes
+node tools/check-depth.js          # depth order, and how a mass projects
 node tools/check-lighting.js       # the deferred rig: uniforms resolve, nothing allocates per frame
 GAME_JS=/path/to/other.js node tools/check-generation.js    # compare against a baseline
 ```

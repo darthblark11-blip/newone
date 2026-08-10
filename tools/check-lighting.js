@@ -153,8 +153,10 @@ ok('every emitter carries the full descriptor', shape, badRow || 'all ' + rows.l
 // Taken from the case labels in drawBiomeProps() rather than from `propType:`
 // literals, because the street furniture is emitted from an array with
 // `propType: t` and a literal scan misses every one of them.
-const propsFn = src.slice(src.indexOf('function drawBiomeProps()'),
-                          src.indexOf('function drawLightPass()'));
+// Signature-agnostic: drawBiomeProps() grew (list, i0, i1) parameters when the
+// depth-sorted pass started handing it runs of an already-sorted array.
+const propsAt = src.search(/function drawBiomeProps\s*\(/);
+const propsFn = src.slice(propsAt, src.indexOf('function drawLightPass()'));
 const propTypes = new Set((propsFn.match(/case *["'](\w+)["'] *:/g) || [])
   .map(s => /["'](\w+)["']/.exec(s)[1]));
 const orphanLights = rows.map(l => l.trim().split(':')[0]).filter(k => !propTypes.has(k));

@@ -2057,8 +2057,110 @@ function drawBuildingShadows() {
 
 
 
-function drawBuildings() {
-  for (let b of activeBuildings) { // Changed to activeBuildings
+// `list`/`i0`/`i1` let the depth-sorted pass hand this function one run of an
+// already-sorted array instead of the whole world. Called bare it behaves
+// exactly as it always did. The body below is untouched.
+
+// ###########################################################################
+//  DEPTH SORTING
+//  The pass order that makes a top-down scene read as a place with height in
+//  it, rather than as a stack of layers.
+//
+//  It used to be: every character, then every mass on top of them. That is
+//  right for somebody standing INSIDE a footprint -- a roof has to hide them,
+//  and that is what tells you they are indoors -- and wrong for everybody
+//  else, which is most of the time. Walking along the south face of a building
+//  made the player sink into it, because the wall drawn in front of them was a
+//  wall they were standing in front of.
+//
+//  Both cases are the same rule once the pass is sorted. Everything standing on
+//  the ground gets a depth key at its GROUND CONTACT -- the south edge of a
+//  footprint, the feet of a character -- and the pass draws in ascending order.
+//  Inside a footprint your feet are north of its base, so the mass still draws
+//  over you. In front of it they are south, so you draw over the mass. One
+//  comparison, and the special case disappears.
+//
+//  Only the streamed and hybrid biomes are sorted. Levels 0 and 8 are closed
+//  interiors whose art was composed against the old fixed order, and there is
+//  nothing to gain there -- see depthSortActive().
+// ###########################################################################
+
+let _depthActors = [];      // reused; actors queued by actorShow() this frame
+let _depthMasses = [];      // reused; visible masses, sorted by base y
+let _depthOn = false;
+
+function depthSortActive() { return BIOME_ACTIVE; }
+
+// A character's contact point is their origin. Everything else in the file
+// already treats it that way -- collision is a circle around it, the contact
+// shadow is drawn on it, and the deferred rig stamps their height ellipse
+// there -- so sorting anywhere else would put a character's depth somewhere
+// their own shadow is not.
+function actorDepth(c) { return c.y; }
+
+// A mass contacts the ground along the south edge of the rect it collides on,
+// so that is where it has to sort. Using the centre would put a character level
+// with a building's middle in front of its far wall.
+function massDepth(b) { return b.y + (b.h || 0) / 2; }
+
+// Every character draw goes through here. Outside a biome it is a straight
+// call, so nothing about the legacy levels changes.
+function actorShow(c) {
+  if (_depthOn) { _depthActors.push(c); return; }
+  c.show();
+}
+
+// One run of the sorted array. A run can hold both ordinary masses and biome
+// props, and they are drawn by different functions -- so it is split into
+// stretches of a single kind. Both functions already skip the other kind, so
+// the split is purely to avoid walking every run twice.
+function drawMassRun(arr, i0, i1) {
+  let s = i0;
+  while (s < i1) {
+    const prop = !!arr[s].isBiomeProp;
+    let e = s + 1;
+    while (e < i1 && !!arr[e].isBiomeProp === prop) e++;
+    if (prop) drawBiomeProps(arr, s, e);
+    else      drawBuildings(arr, s, e);
+    s = e;
+  }
+}
+
+function drawDepthSorted() {
+  const masses = _depthMasses;
+  masses.length = 0;
+  for (let i = 0; i < activeBuildings.length; i++) {
+    const b = activeBuildings[i];
+    // The same cull both draw functions apply. Doing it once here keeps the
+    // sort down to what is actually on screen, which is a fraction of the
+    // 1500-unit ring activeBuildings holds.
+    if (!inView(b.x, b.y, Math.max(b.w || 0, b.h || 0) + 150)) continue;
+    masses.push(b);
+  }
+  masses.sort((p, q) => massDepth(p) - massDepth(q));
+
+  const actors = _depthActors;
+  actors.sort((p, q) => actorDepth(p) - actorDepth(q));
+
+  let mi = 0;
+  for (let ai = 0; ai < actors.length; ai++) {
+    const ad = actorDepth(actors[ai]);
+    const start = mi;
+    while (mi < masses.length && massDepth(masses[mi]) <= ad) mi++;
+    if (mi > start) drawMassRun(masses, start, mi);
+    actors[ai].show();
+  }
+  if (mi < masses.length) drawMassRun(masses, mi, masses.length);
+
+  actors.length = 0;
+  _depthOn = false;
+}
+
+function drawBuildings(list, i0, i1) {
+  const _arr = list || activeBuildings;
+  const _lo = i0 === undefined ? 0 : i0;
+  const _hi = i1 === undefined ? _arr.length : i1;
+  for (let _i = _lo; _i < _hi; _i++) { let b = _arr[_i];
     if (!inView(b.x, b.y, Math.max(b.w || 0, b.h || 0) + 150)) continue;
     if (b.isBiomeProp) continue; // drawn by drawBiomeProps()
     // A trunk is a collision volume so you cannot walk through a tree. The
@@ -2748,35 +2850,59 @@ function drawBuildings() {
     // next starts -- neighbouring roofs of similar colour fuse into a single
     // shape, and anything cast beside them reads as yet another building.
     //
-    // Extruding the two walls that face away from the sun fixes that outright:
-    // every footprint gets an unambiguous silhouette and a base that sits ON
-    // the ground. The roof stays exactly on the collision rect, so this changes
-    // nothing about where the building actually blocks movement or bullets.
+    // The walls run from the footprint -- which IS the collision rect, and stays
+    // put -- up to the roof, which is that rect displaced by massLean(). Only
+    // the two faces the lean turns toward the camera are drawn, and which two
+    // that is changes as the building crosses the middle of the screen.
     const rise = b.isBlockBuilding ? buildingRise(b) : 0;
-    const wx = LIGHT_DX * rise, wy = LIGHT_DY * rise;
+    massLean(b.x, b.y, rise, _leanTmp);
+    const lx = _leanTmp[0], ly = _leanTmp[1];
     const x0 = b.x - b.w / 2, y0 = b.y - b.h / 2;
     const x1 = b.x + b.w / 2, y1 = b.y + b.h / 2;
-    const floors = Math.max(2, Math.round(rise / 6));
 
     noStroke();
-    if (rise > 0) {
-      // South face is turned most directly away from the light, so it is the
-      // darkest. Neither face is a straight multiply: a small ambient term
-      // keeps the walls off pure black in the night biomes, where bM is
-      // already dark to begin with.
-      fill(bM[0] * 0.40 + 5, bM[1] * 0.40 + 6, bM[2] * 0.40 + 10);
-      quad(x0, y1, x1, y1, x1 + wx, y1 + wy, x0 + wx, y1 + wy);
-      fill(bM[0] * 0.56 + 7, bM[1] * 0.56 + 8, bM[2] * 0.56 + 13);
-      quad(x1, y0, x1 + wx, y0 + wy, x1 + wx, y1 + wy, x1, y1);
-      // Storey lines — the cheapest possible cue that the wall has height.
-      stroke(0, 0, 0, 50); strokeWeight(1);
-      for (let f = 1; f < floors; f++) {
-        const t = f / floors;
-        line(x0 + wx * t, y1 + wy * t, x1 + wx * t, y1 + wy * t);
-        line(x1 + wx * t, y0 + wy * t, x1 + wx * t, y1 + wy * t);
+    if (rise > 0 && (lx !== 0 || ly !== 0)) {
+      // Shading is per FACE, from that face's own outward normal against the
+      // scene's one light vector -- not from which faces happen to be showing.
+      // That is what keeps a building's lit side the same side as the camera
+      // moves around it, instead of the near wall always being the dark one.
+      // The ambient term keeps walls off pure black in the night biomes, where
+      // bM is already dark to begin with.
+      const face = (nx, ny) => {
+        const d = -(nx * LIGHT_DX + ny * LIGHT_DY);
+        const k = 0.34 + 0.46 * (d > 0 ? d : 0);
+        fill(bM[0] * k + 5, bM[1] * k + 6, bM[2] * k + 10);
+      };
+      if (ly > 0)      { face(0, -1); quad(x0, y0, x1, y0, x1 + lx, y0 + ly, x0 + lx, y0 + ly); }
+      else if (ly < 0) { face(0,  1); quad(x0, y1, x1, y1, x1 + lx, y1 + ly, x0 + lx, y1 + ly); }
+      if (lx > 0)      { face(-1, 0); quad(x0, y0, x0, y1, x0 + lx, y1 + ly, x0 + lx, y0 + ly); }
+      else if (lx < 0) { face( 1, 0); quad(x1, y0, x1, y1, x1 + lx, y1 + ly, x1 + lx, y0 + ly); }
+
+      // Mullions, running from the footprint UP THE LEAN to the roof.
+      //
+      // Storey lines banded across the face instead, which is what a wall
+      // really has, and at this depth of projection they read as a stack of
+      // plates rather than as height -- there is only ever a few dozen pixels
+      // of face to divide. Lines along the lean say "this is one surface going
+      // away from you", which is the thing the eye needs told.
+      stroke(0, 0, 0, 42); strokeWeight(1);
+      const mull = 26;
+      if (ly !== 0) {
+        const yb = ly > 0 ? y0 : y1;
+        for (let mx = x0 + mull; mx < x1 - 2; mx += mull) line(mx, yb, mx + lx, yb + ly);
+      }
+      if (lx !== 0) {
+        const xb = lx > 0 ? x0 : x1;
+        for (let my = y0 + mull; my < y1 - 2; my += mull) line(xb, my, xb + lx, my + ly);
       }
       noStroke();
     }
+
+    // Everything from here down is ROOF, so it rides up to the top of the
+    // walls. Drawn in the footprint's own coordinates and translated, so none
+    // of the art below has to know the building leans at all.
+    push();
+    translate(lx, ly);
 
     fill(bM[0], bM[1], bM[2]);
     stroke(currentLevel === 1 || currentLevel === 3 ? 100 : 10); strokeWeight(2);
@@ -2878,6 +3004,8 @@ function drawBuildings() {
             } pop();
         }
     }
+
+    pop();   // closes the roof translate — see massLean()
   }
 }
 
@@ -3566,13 +3694,18 @@ viewBottom = camY + height / zoom + shakePad;
       if (dToDad > 40) { let ang = atan2(dadEntity.y - player.y, dadEntity.x - player.x); player.isMoving = true; player.walkCycle += 0.2; player.moveAngle = ang; player.aimAngle = ang; let dx = cos(ang) * 4; let dy = sin(ang) * 4; if (!player.checkCol(player.x + dx, player.y)) player.x += dx; if (!player.checkCol(player.x, player.y + dy)) player.y += dy; } else { player.isMoving = false; prologuePhase = 4;  }
   }
 
-   if (player.hp > 0) { if (!isWin && doTick) player.updatePlayer(); player.show(); } else if (!isWin && !isDead) { playerRespawnTimer--; if (playerRespawnTimer <= 0) { isDead = true; } }
+   // From here to drawDepthSorted() every character draw is QUEUED rather than
+   // painted, so the masses can be interleaved with them by depth. Outside a
+   // biome the flag stays down and actorShow() paints immediately, exactly as
+   // this line used to.
+   _depthOn = depthSortActive();
+   if (player.hp > 0) { if (!isWin && doTick) player.updatePlayer(); actorShow(player); } else if (!isWin && !isDead) { playerRespawnTimer--; if (playerRespawnTimer <= 0) { isDead = true; } }
   updateEntities(); 
 
   // Draw civilians ALWAYS, so they populate the town while you run around
   for (let c of townCitizens) {
       if (doTick) c.update();
-      c.show();
+      actorShow(c);
   }
   
   // The shadow pass used to run here as well as immediately before
@@ -3582,13 +3715,19 @@ viewBottom = camY + height / zoom + shakePad;
   if (inOverworldView) {
       for (let c of townCitizens) {
           if (doTick) c.update();
-          c.show();
+          actorShow(c);
       }
   }
   
   if (typeof drawBuildingShadows === 'function') drawBuildingShadows();
-  drawBuildings();
-  if (BIOME_ACTIVE) drawBiomeProps();
+  if (_depthOn) {
+    // Masses and characters in one pass, ordered by where each of them touches
+    // the ground. See the DEPTH SORTING block.
+    drawDepthSorted();
+  } else {
+    drawBuildings();
+    if (BIOME_ACTIVE) drawBiomeProps();
+  }
 
     // NM-0 HQ Custom Level Props
   if (currentLevel === 8) {
@@ -12236,7 +12375,7 @@ function updateEntities() {
       }
 
       
-      if (inView(e.x, e.y, 150)) e.show();
+      if (inView(e.x, e.y, 150)) actorShow(e);
       if (e.hp <= 0 && !e.dead) { e.dead = true; processKill(e.x, e.y, false, e.eType, e.isFriendly); enemiesList.splice(i, 1); if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100); }
   }
 
@@ -21126,6 +21265,43 @@ function buildingRise(b) {
   return b._rise;
 }
 
+// How far the TOP of a mass is displaced from its BASE on screen.
+//
+// A camera directly above the middle of the screen sees the roof of a building
+// at the centre sitting square on its own footprint, and sees the roofs toward
+// the edges pushed outward, away from the principal point. In a projection with
+// no horizon that displacement is the only cue there is that a thing has
+// height, which is what makes it worth spending on.
+//
+// **This is not the light vector.** The walls used to extrude along
+// LIGHT_DX/DY, so every building in the city leaned the same way its own shadow
+// fell and the two merged into a single smear -- which is exactly why a street
+// of them read as flat shapes with stains beside them rather than as blocks.
+// The lean is where the CAMERA is; the shadow is where the SUN is; they are
+// different directions and the scene only reads as solid when they disagree.
+//
+// The base stays on the collision rect and the roof moves, never the other way
+// round. What you bump into is at ground level, so a building that pinned its
+// roof to the collision box and slid its base around would appear to skate on
+// the ground every time the camera panned.
+const MASS_LEAN = 1.5;
+const _leanTmp = [0, 0];
+function massLean(wx, wy, rise, out) {
+  out = out || _leanTmp;
+  out[0] = 0; out[1] = 0;
+  if (!(rise > 0) || !zoom || !width || !height) return out;
+  const hw = width / zoom * 0.5, hh = height / zoom * 0.5;
+  let nx = (wx - (camX + hw)) / hw;
+  let ny = (wy - (camY + hh)) / hh;
+  // Clamped, so a mass hanging off the edge of the view does not shear away to
+  // nothing. Past the frame the lean simply stops growing.
+  if (nx < -1) nx = -1; else if (nx > 1) nx = 1;
+  if (ny < -1) ny = -1; else if (ny > 1) ny = 1;
+  out[0] = nx * rise * MASS_LEAN;
+  out[1] = ny * rise * MASS_LEAN;
+  return out;
+}
+
 // Shadow colour. Never pure black: outdoor shade is lit by the sky above it,
 // so a flat black shadow reads as a hole cut in the ground. This tints toward
 // the biome's own sky and lets the time of day set how firm the shadow is.
@@ -22023,8 +22199,11 @@ function drawBiomeDecks() {
   }
 }
 
-function drawBiomeProps() {
-  for (const b of activeBuildings) {
+function drawBiomeProps(list, i0, i1) {
+  const _arr = list || activeBuildings;
+  const _lo = i0 === undefined ? 0 : i0;
+  const _hi = i1 === undefined ? _arr.length : i1;
+  for (let _i = _lo; _i < _hi; _i++) { const b = _arr[_i];
     if (!b.isBiomeProp) continue;
     // activeBuildings is a 1500-unit ring, so most of it is off screen on any
     // given frame. Every other pass in the render order culls before it draws;
