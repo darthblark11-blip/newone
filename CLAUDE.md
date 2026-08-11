@@ -691,12 +691,14 @@ inside its own box) came out as a rectangular slab standing behind a rock. Decks
 (`BRIDGE`, `CANALBRIDGE`, `BOARDWALK`) are deliberately absent: a surface you stand on
 with walls round it reads as a crate lying in the river.
 
-**A figure is a mass too**, leaning by `CHAR_RISE` from `Character.show()`'s own
-translate — far below a building's rise, because a figure displaced by its own body
-length reads as a sprite that has come unstuck from its feet. Airborne units are excluded
-for the same reason they are kept out of the rig's height field (`CHAR_AIRBORNE`). The
-lean moves the body and never the feet: collision, the contact point the depth sort uses
-and the rig's height ellipse all stay at `(x, y)`.
+**Figures are deliberately NOT leaned, and the attempt is worth remembering.** A riser
+capsule swept from the feet to a leaned body was built, rendered, shipped and reverted on
+sight: parallax sells height as a **ratio** of displacement to size, and a figure a
+couple of dozen pixels across is too small to have one — the riser read as a dark blob
+stuck to the model, worst on the wide animals. A figure's third dimension comes from the
+two systems that already carry it: the deferred rig marching a real cast shadow off its
+height ellipse, and the depth sort walking it in front of and behind the masses. Do not
+reintroduce a drawn side on anything smaller than a crate.
 
 **Still flat, and the next thing to convert:** the per-flag branches in `drawBuildings()`
 — `isHouse`, `isBarn`, `isWesternBldg`, `isGiantBarrier`, `isShanty` and the rest. They

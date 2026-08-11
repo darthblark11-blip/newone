@@ -305,10 +305,15 @@ console.log('\n== every mass uses the one projection ==');
 // buildings, props and figures all through massLean/drawMassSides, so retuning
 // MASS_LEAN moves the whole world together.
 ok('buildings go through drawMassSides()', /if \(rise > 0\) drawMassSides\(/.test(src));
-ok('figures lean by CHAR_RISE, and airborne ones do not',
-   /massLean\(this\.x, this\.y, CHAR_RISE, _leanTmp\)/.test(src) &&
-   /BIOME_ACTIVE && !CHAR_AIRBORNE\[this\.eType\]/.test(src));
-ok('parked cars lean as well', /function drawParkingCars\(\)[\s\S]{0,400}?massLean\(/.test(src));
+// Figures are deliberately NOT leaned. It was tried and reverted: parallax
+// sells height as a ratio of displacement to size, and a figure is too small
+// to have one -- the riser under it read as a dark blob stuck to the model.
+// Their third dimension is the rig's marched shadow plus the depth sort.
+ok('figures are deliberately not run through the projection',
+   !/drawFigureRiser/.test(src) && !/CHAR_RISE/.test(src),
+   'no riser, no figure lean');
+ok('and neither are parked cars',
+   !/function drawParkingCars\(\)[\s\S]{0,400}?massLean\(/.test(src));
 ok('a figure keeps its feet where the depth sort and the rig expect them',
    /push\(\); translate\(this\.x, this\.y\);/.test(src));
 
@@ -318,8 +323,11 @@ console.log('\n== the legacy flags are masses now, and safely ==');
 // iteration. The failure mode is an unbalanced transform, and it is silent.
 const lm = /const LEGACY_MASS = \{([\s\S]*?)\n\};/.exec(src);
 const lmkeys = lm ? (lm[1].match(/(is\w+):/g) || []).map(x => x.slice(0, -1)) : [];
-ok('LEGACY_MASS exists and covers the frontier and the city blocks',
-   lmkeys.length >= 15, lmkeys.length + ' flags');
+ok('LEGACY_MASS exists and covers the frontier, the city blocks and the scatter props',
+   lmkeys.length >= 24, lmkeys.length + ' flags');
+ok('the walk-past props are in -- crates, rocks, bales, wagons, cacti, palms',
+   ['isCrateProp','isRock','isHayBale','isWagonProp','isCactusProp','isPalm']
+     .every(k => lmkeys.includes(k)));
 // A flag with no branch is a skirt drawn for nothing; worse, a typo is silent.
 const bodyFn = src.slice(src.search(/function drawBuildings\s*\(/), src.indexOf('function drawParkingCars()'));
 const ghosts2 = lmkeys.filter(k => !new RegExp('b\\.' + k + '\\b').test(bodyFn));
