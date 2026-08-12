@@ -9549,7 +9549,7 @@ this.punchHitCount = 0;
     this.dead = false; this.aimAngle = 0; this.moveAngle = 0; this.lastMoveAngle = 0; if (!this.currentWeapon) this.currentWeapon = WEAPONS.PISTOL; this.fireTimer = 0; this.reloadTimer = 0; this.orbChargeTimer = 0; 
     this.dashTimer = 0; this.dashCooldown = 0; this.dashCount = 0; this.dashWindow = 0; this.meleeTimer = 0; this.meleeCooldown = 0; this.meleePhase = 0; this.meleeComboTimer = 0; this.isBackhand = false; this.meleeQueued = false;
     this.throwAnimTimer = 0; this.cannonAmmo = 4; this.cannonCooldown = 0; this.cannonFireDelay = 0; this.cannonCharge = 0;
-    this.muzzleFlash = 0; this.decals = []; this.isMoving = false; this.walkCycle = 0; this.armDrag = 0; this.lastHitFrame = 0; this.frameDamage = 0; this.shieldFlashTimer = 0; this.shieldBurstTimer = 0;
+    this.muzzleFlash = 0; this.decals = []; this.isMoving = false; this.walkCycle = 0; this.gait = 0; this.armDrag = 0; this.lastHitFrame = 0; this.frameDamage = 0; this.shieldFlashTimer = 0; this.shieldBurstTimer = 0;
        this.weaponAmmo = { 
         "PISTOL": WEAPONS.PISTOL.maxAmmo, 
         "MACHINE GUN": WEAPONS.SMG.maxAmmo, 
@@ -9858,6 +9858,14 @@ this.skeletonTimer = 0;
     // Kept for the visual body rotation: true whenever they are not going the
     // way they meant to.
     this.isSliding = (abs(finalDx - vx) > 0.05 || abs(finalDy - vy) > 0.05) || this.avoidHold > 0;
+
+    // Everyone who is not the player gets their gait from what they actually
+    // covered. This is the one choke point every NPC step goes through, the
+    // same reason elevSpeedFactor and the wading cut are applied here -- set in
+    // each caller instead it would be missing from whichever one gets added
+    // next, and a walker with no gait animates as though standing still.
+    this.gait += (Math.min(1, dist(0, 0, finalDx, finalDy) / GAIT_FULL) - this.gait) * GAIT_EASE;
+
     return { x: finalDx, y: finalDy };
 }
 
@@ -10197,6 +10205,10 @@ this.skeletonTimer = 0;
     }
 
     this.prevMeleeInputHeld = meleeInputHeld;
+
+    // Whether the gun is up, with a short hold on the way down. See AIM_HOLD.
+    this.aimHold = aimIntent(this) ? AIM_HOLD : Math.max(0, (this.aimHold || 0) - 1);
+
     // Mounted, on the flat, a horse is most of twice a man's pace.
     let speed = (ninjaSuitUnlocked ? 6.6 : 6.0) * (this.mounted ? 1.78 : 1);
 
@@ -10243,7 +10255,14 @@ this.skeletonTimer = 0;
         }
         
         let aDx = 0, aDy = 0; 
-        if (abs(dx) > 0.05 || abs(dy) > 0.05) { if (!this.checkCol(this.x + dx, this.y)) { this.x += dx; aDx = dx; } if (!this.checkCol(this.x, this.y + dy)) { this.y += dy; aDy = dy; } if (aDx !== 0 || aDy !== 0) { this.isMoving = true; this.walkCycle += 0.25; this.moveAngle = atan2(aDy, aDx); this.lastMoveAngle = this.moveAngle; } else this.isMoving = false; } else this.isMoving = false; 
+        if (abs(dx) > 0.05 || abs(dy) > 0.05) { if (!this.checkCol(this.x + dx, this.y)) { this.x += dx; aDx = dx; } if (!this.checkCol(this.x, this.y + dy)) { this.y += dy; aDy = dy; } if (aDx !== 0 || aDy !== 0) { this.isMoving = true; this.moveAngle = atan2(aDy, aDx); this.lastMoveAngle = this.moveAngle; } else this.isMoving = false; } else this.isMoving = false;
+        // The throttle is the stick's own throw, not the distance covered: a
+        // player leaning into a wall is still asking to run, and reading the
+        // achieved motion instead would drop them to a walk every time they
+        // brushed a kerb. See GAIT.
+        const _thr = this.isMoving ? Math.min(1, Math.hypot(leftStick.dx, leftStick.dy)) : 0;
+        this.gait += (_thr - this.gait) * GAIT_EASE;
+        if (this.isMoving) this.walkCycle += gaitPose(this.gait).cadence;
     }
 
     // Drive the gait, and turn the animal toward where it is actually going. A
@@ -11513,7 +11532,12 @@ if (this.stunTimer > 0 && this.skeletonTimer <= 0) {
         pop();
     }
 
-    let lS = this.isMoving ? sin(this.walkCycle) * 12 : 0, bob = this.isMoving ? abs(sin(this.walkCycle)) * 2 : 0;
+    // The gait drives the stride, the bob and the shoulder twist together. See
+    // GAIT: one throttle, and each of these reads it on its own curve, so a
+    // walk lengthening into a run has nothing in it that switches.
+    const GP = gaitPose(this.isMoving ? this.gait : 0);
+    let lS = this.isMoving ? sin(this.walkCycle) * 12 * GP.swing : 0,
+        bob = this.isMoving ? abs(sin(this.walkCycle)) * 2 * GP.bob + GP.lean : 0;
     if (this.mounted) { lS *= 0.35; bob *= 0.4; }
     if (this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL") { bob += sin(frameCount * 0.1) * 15; lS = 0; }
     if (this.reloadTimer > 0) { let rP = 1 - (this.reloadTimer / 90); push(); noFill(); stroke(0, 200, 255, 150); strokeWeight(4); arc(0, 0, 50, 50, -PI / 2, -PI / 2 + (rP * TWO_PI)); pop(); bob += sin(frameCount * 0.5) * 3; }
@@ -11658,15 +11682,35 @@ if (this.isPlayer) {
         }
         pop();
     }
-    push(); rotate(this.aimAngle); translate(bob, 0); 
-    
+    // Carrying rather than presenting: the player is armed but not aiming, so
+    // the weapon comes down off the line and the walking arm rig takes over.
+    // See GAIT / playerAiming(). Declared out here because three later blocks
+    // have to stand down for it -- the left-arm pose, the right arm, and the
+    // weapon itself, all of which are laid out around a gun that is up.
+    const carryMode = (this.isPlayer && this.isArmed && this.meleeTimer <= 0 &&
+                       !playerAiming(this)) ? weaponHands(this.currentWeapon) : 0;
+
+    // The shoulders counter-rotate against the hips -- which are drawn in the
+    // block above at moveAngle and do NOT turn with this. That opposition is
+    // the gait at this camera angle: it is the only cue that changes the
+    // figure's silhouette rather than moving a limb around inside it.
+    //
+    // Suppressed whenever the weapon is up, because the muzzle offsets below
+    // are measured in this frame -- twisting it would walk the rounds off the
+    // line the aim laser is drawn on.
+    const _tw = (this.isMoving && !(this.isArmed && this.meleeTimer <= 0 && playerAiming(this)))
+                ? sin(this.walkCycle) * GP.twist : 0;
+    push(); rotate(this.aimAngle + _tw); translate(bob, 0);
+
     let bLX = 31, bLY = 8, bLX_L = 59, bLY_L = -17;
     if (this.isArmed && this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { bLX = 47; bLY = 6; } 
     else if (this.currentWeapon === WEAPONS.SMG || this.currentWeapon === WEAPONS.DUAL_SMG) { bLX = 38; bLY = 11; bLX_L = 38; bLY_L = -11; }
-    else if (this.isArmed && this.currentWeapon === WEAPONS.TASER) {
-        fill(255, 255, 0); stroke(10); strokeWeight(1); 
-        rect(15, 5, 14, 8, 2); fill(20); rect(18, 13, 6, 8); 
-    } 
+    else if (this.isArmed && !carryMode && this.currentWeapon === WEAPONS.TASER) {
+        // The presented taser. On a carry it is drawn in the hand instead --
+        // left here it would be a second one floating at the hip.
+        fill(255, 255, 0); stroke(10); strokeWeight(1);
+        rect(15, 5, 14, 8, 2); fill(20); rect(18, 13, 6, 8);
+    }
 
     if (this.eType === "AERIAL_PISTOL") { bLX = 51; bLY = 16; }
 
@@ -11700,9 +11744,10 @@ if (this.isPlayer) {
     {
         const isTownsfolk = this.isNeutral && TOWNSFOLK.indexOf(this.eType) !== -1;
         const isEmptyHanded = this.isPlayer && !this.isArmed && this.meleeTimer <= 0;
-        if (isTownsfolk || isEmptyHanded) {
-            const swing = isTownsfolk ? (this.isMoving ? sin(this.walkCycle) : 0)
-                                      : ((typeof lS !== 'undefined') ? (lS / 12) : 0);
+        if (isTownsfolk || isEmptyHanded || carryMode) {
+            const swing = isTownsfolk
+                ? (this.isMoving ? sin(this.walkCycle) * GP.swing : 0)
+                : ((typeof lS !== 'undefined') ? (lS / 12) : 0);
             // Standing still, the shoulders settle and breathe rather than
             // locking solid. Offset per character so a crowd is not in unison.
             const rest = this.isMoving ? 0 : sin(frameCount * 0.045 + this.x * 0.01);
@@ -11729,29 +11774,107 @@ if (this.isPlayer) {
             // past its own hand: floored at the rig's full bone length, 21 units
             // of arm ran off the end of a 14-unit reach and the limb came out as
             // a chain of lobes pointing away from the body.
-            for (const s of sides) {
-                s.hx = s.sw * REACH;
-                // At rest the hand sits just outboard of the shoulder, which is
-                // what you actually see from overhead: a hanging arm is almost
-                // entirely foreshortened away and the hand is the only part of
-                // it clear of the torso.
-                s.hy = s.sy + s.sgn * RG.upperW * 0.34 + s.sw * 1.4 + rest * 0.5;
+            //
+            // A JOG AND A RUN BRING THE HANDS IN. That is the whole mechanism
+            // behind the bent elbow: a runner's hands travel a short arc up by
+            // the ribs, not a long one down at the hips, and the elbow folds
+            // because the target got nearer -- not because a second pose was
+            // switched to. GP.bend shortens the arc and lifts the hands forward
+            // and outboard, and the solve below does the rest.
+            const carrying = carryMode;
+            const carrySway = sin(this.walkCycle) * (0.09 + GP.band * 0.055);
+            // The long gun's own frame: laid ACROSS the chest, butt down by the
+            // strong hip and muzzle up past the off shoulder, swaying with the
+            // stride rather than welded to the body.
+            //
+            // Across, not along. "Parallel to the body" from this camera has to
+            // mean the shoulder line, because a rifle pointed down the line of
+            // travel is exactly what the AIMED pose looks like from directly
+            // above -- and the entire point of a carry is that one glance tells
+            // you whether the weapon is up. Across the chest is also the only
+            // arrangement where both grips land inside the arms' reach: the
+            // strong hand keeps its own shoulder and the support hand crosses,
+            // which is what a man actually does with a rifle he is not firing.
+            const cAng = -1.02 + carrySway;
+            const cX = 10 + GP.lean * 0.5;
+            const cY = -sin(this.walkCycle) * 1.8 * GP.swing;
+            if (carrying === 2) {
+                // Both hands go onto the weapon, so it sets where they are
+                // rather than the swing: butt grip to the strong hand, fore
+                // grip to the other.
+                for (const s of sides) {
+                    const g = s.right ? -11 : 9;
+                    s.hx = cX + cos(cAng) * g;
+                    s.hy = cY + sin(cAng) * g;
+                }
+            } else {
+                const R = REACH * (1 - 0.52 * GP.bend);
+                for (const s of sides) {
+                    s.hx = s.sw * R + GP.bend * 4.5;
+                    // At rest the hand sits just outboard of the shoulder, which
+                    // is what you actually see from overhead: a hanging arm is
+                    // almost entirely foreshortened away and the hand is the
+                    // only part of it clear of the torso.
+                    s.hy = s.sy + s.sgn * (RG.upperW * 0.34 + GP.bend * 2.6)
+                                + s.sw * 1.4 + rest * 0.5;
+                }
             }
 
-            const limb = (s) => {
+            // The projected bone lengths -- what a straight arm MEASURES from
+            // directly above, not what it is. The solve has to work in the same
+            // space the drawing does or it would find an elbow for an arm twice
+            // the length of the one on screen.
+            //
+            // Reaching ACROSS the chest is the opposite case to the one
+            // STAND_FORE_ARM describes. That factor is for an arm swinging
+            // beside the body, pointing away from the camera and losing most of
+            // its length to the projection; a support hand crossing to a fore
+            // grip lies nearly square to the view and keeps almost all of it.
+            // Clamped to the hanging figure's reach it stopped four units short
+            // of the weapon it was supposed to be holding.
+            const _fs = carrying === 2 ? 0.92 : STAND_FORE_ARM;
+            const PU = RG.upper * _fs, PF = RG.fore * _fs;
+
+            for (const s of sides) {
                 const dx = s.hx, dy = s.hy - s.sy;
-                const d = Math.max(0.001, Math.hypot(dx, dy));
-                const u = d * EL, f = d - u;
-                push(); translate(0, s.sy); rotate(atan2(dy, dx));
+                const raw = Math.max(0.001, Math.hypot(dx, dy));
+                const d = Math.min(raw, (PU + PF) * 0.98);
+                const nx = dx / raw, ny = dy / raw;
+                // Where the elbow sits along the shoulder-to-hand line, blended
+                // from "on the line" to the real two-bone solve by GP.bend.
+                //
+                // The blend is not a shortcut, it is the correction for this
+                // projection: an arm hanging at a walk is foreshortened so hard
+                // that a true solve folds it double and throws the elbow right
+                // out to the side, which is not what a walking arm does. At a
+                // run the arm is genuinely across the view and the solve is
+                // right. Bend interpolates between the two readings, which is
+                // also exactly the transition the gait is making.
+                const aLine = d * EL;
+                const aIK = (d * d + PU * PU - PF * PF) / (2 * d);
+                const a = aLine + (aIK - aLine) * GP.bend;
+                const eh = Math.sqrt(Math.max(0, PU * PU - a * a)) * GP.bend;
+                // Outboard: an elbow cannot fold through the chest.
+                s.ex = nx * a - ny * eh * s.sgn;
+                s.ey = s.sy + ny * a + nx * eh * s.sgn;
+                s.hx = nx * d;
+                s.hy = s.sy + ny * d;
+            }
+
+            // One segment, in ragLimb()'s shape language: length + its own
+            // width, so the caps round the joints off either end and the two
+            // overlap into a taper rather than butting at the elbow.
+            const seg = (x0, y0, x1, y1, w) => {
+                const dx = x1 - x0, dy = y1 - y0, L = Math.hypot(dx, dy);
+                push(); translate(x0, y0); rotate(atan2(dy, dx));
+                ellipse(L * 0.5, 0, L + w, w);
+                pop();
+            };
+            const limb = (s) => {
                 if (BIOME_ACTIVE) figureContour();
                 fill(this.shirtCol);
-                // Length + the segment's own width, as ragLimb does: the flat
-                // span is the bone and the caps round the joints off either
-                // end, so the two overlap into one taper rather than butting
-                // together at the elbow.
-                ellipse(u * 0.5, 0, u + RG.upperW, RG.upperW);
-                ellipse(u + f * 0.5, 0, f + RG.foreW, RG.foreW);
-                pop();
+                seg(0, s.sy, s.ex, s.ey, RG.upperW);
+                seg(s.ex, s.ey, s.hx, s.hy, RG.foreW);
             };
 
             armPass = (front) => {
@@ -11759,12 +11882,24 @@ if (this.isPlayer) {
                 // shoulder into the body instead of parking a blob on it. Only
                 // the hands are sorted front to back.
                 if (!front) for (const s of sides) limb(s);
+                // A long gun carried across the chest is in FRONT of the body,
+                // so it goes down with the hands that are on it and after the
+                // torso -- the whole reason this pass is split in two.
+                if (front && carrying === 2) {
+                    push(); translate(cX, cY); rotate(cAng);
+                    if (BIOME_ACTIVE) figureContour();
+                    carryLongGun(this.currentWeapon);
+                    pop();
+                }
                 for (const s of sides) {
                     // A held tool always rides the front pass: it is the thing
                     // the player is looking at, and half a pickaxe swallowed by
-                    // a torso is worse than one drawn a layer too high.
+                    // a torso is worse than one drawn a layer too high. Both
+                    // hands on a carried long gun ride it for the same reason.
                     const holdsTool = !!(s.right && armedMelee);
-                    const isFront = holdsTool ? true : s.sw > 0.2;
+                    const holdsGun = !!(s.right && carrying === 1);
+                    const isFront = (holdsTool || holdsGun || carrying === 2)
+                                    ? true : s.sw > 0.2;
                     if (isFront !== front) continue;
                     const h = { x: s.hx, y: s.hy };
 
@@ -11797,6 +11932,18 @@ if (this.isPlayer) {
                             endShape(CLOSE);
                             fill(198, 202, 210, 200); rect(4, -1.2, 32, 1.6, 1);  // fuller
                         }
+                        pop();
+                    }
+
+                    if (holdsGun) {
+                        // A sidearm rides the arm that swings it, so it points
+                        // wherever the FOREARM is pointing plus a cant outboard
+                        // and down. Squared to the facing it would read as an
+                        // aim, which is the one thing a carry must not do.
+                        push(); translate(h.x, h.y);
+                        rotate(atan2(h.y - s.ey, h.x - s.ex) + 0.44 * s.sgn);
+                        if (BIOME_ACTIVE) figureContour();
+                        carryHandGun(this.currentWeapon);
                         pop();
                     }
                 }
@@ -11979,7 +12126,11 @@ if (this.isPlayer) {
 
         // --- STANDARD WEAPON & LEFT ARM LOGIC ---
         // THE FIX 1: We ONLY draw unarmed/sword arms if we are strictly !this.isArmed
-               if (this.isPlayer && !this.isArmed) {
+               // Carrying takes the walking rig, same as empty-handed: the
+               // three blocks below all lay their arms out around a gun that is
+               // UP, so every one of them has to stand down for a carry or the
+               // player grows a second pair of arms holding a second weapon.
+               if (carryMode || (this.isPlayer && !this.isArmed)) {
             let lSy = -14; // Left shoulder base Y
             let rSy = 11;  // Right shoulder base Y
 
@@ -12106,7 +12257,7 @@ if (this.isPlayer) {
         // THE FIX 3: ONLY run this if Armed or an Enemy. Removes the duplicate unarmed drawings.
                // --- WEAPON & RIGHT ARM RENDERING LOGIC ---
         // THE FIX 3: ONLY run this if Armed or an Enemy. Removes the duplicate unarmed drawings.
-        if (this.meleeTimer <= 0 && (this.isArmed || !this.isPlayer)) {
+        if (!carryMode && this.meleeTimer <= 0 && (this.isArmed || !this.isPlayer)) {
             let skinC = (typeof chemistSuitUnlocked === 'undefined' && chemistSuitUnlocked) ? color(180, 180, 190) : color(235, 180, 140);
             
             // 1. DRAW RIGHT ARM & HAND FIRST
@@ -21865,6 +22016,151 @@ function volShadeCol(x, y, w, h, c, k, lx, ly) {
 // arm swings through a wide arc out in front where much more of it lies across
 // the view.
 const STAND_FORE_LEG = 0.46;
+// (STAND_FORE_ARM is below the gait block, which is what reads it.)
+
+// ###########################################################################
+//  GAIT
+//  One throttle, three gaits, and no seam between them.
+//
+//  The player's left stick is already normalised to its own radius, so its
+//  magnitude IS the throttle:
+//
+//      1-32%  WALK        33-65%  JOG        66-100%  RUN
+//
+//  These are NOT three animations with a switch between them. A switch at 32%
+//  would pop, and a thumb resting near a band edge crosses it several times a
+//  second -- which reads as the character stuttering rather than as the player
+//  easing off. Every parameter below interpolates across the whole range on its
+//  own curve instead, and the band edges are only where those curves change
+//  slope. Easing the stick forward lengthens a walk into a jog and winds a jog
+//  up into a run with nothing to see in between.
+//
+//  The throttle is also SMOOTHED rather than read raw. A thumb arrives at 80%
+//  in one frame and a body does not: without the ease the arms snap to a full
+//  running stride on the frame the stick moves, which reads as the animation
+//  being changed rather than as the figure accelerating.
+//
+//  What the parameters do, and why these and not others -- from above, the
+//  three gaits are told apart by exactly four things:
+//
+//    CADENCE  how fast the cycle turns over. It does NOT scale with speed:
+//             most of the extra pace in a run is a longer stride, not a faster
+//             one, so cadence rises about half as fast as the throttle does.
+//    SWING    stride and arm amplitude. This is the other half of the speed.
+//    BEND     a walk swings a near-straight arm from the shoulder; a run folds
+//             the elbow to about a right angle and drives it. Zero through the
+//             whole walk band, which is what makes a walk look like a walk.
+//    TWIST    the shoulders counter-rotating against the hips. Barely there at
+//             a walk, unmissable at a run, and the single clearest cue at this
+//             camera angle -- it is the only one that changes the SILHOUETTE
+//             rather than moving a limb around inside it.
+// ###########################################################################
+const GAIT_WALK = 0.32;    // top of the walk band, as a fraction of stick throw
+const GAIT_JOG  = 0.65;    // top of the jog band
+const GAIT_EASE = 0.14;    // how fast the body catches up with the thumb
+// Full pace, in units per frame, for turning an NPC's actual travel into a
+// throttle. The player's own run is 6.0; a little under that so a hurrying
+// pedestrian reads as hurrying rather than as ambling.
+const GAIT_FULL = 5.2;
+
+// Rewritten in place: this runs once per visible figure per frame and a fresh
+// object each time is GC churn the phone cannot afford.
+const _gp = { band: 0, cadence: 0.14, swing: 0.55, bend: 0, twist: 0.02,
+              bob: 0.75, lean: 0 };
+function gaitPose(t) {
+  t = t < 0 ? 0 : t > 1 ? 1 : t;
+  // 0 standing, 1 at the top of the walk, 2 at the top of the jog, 3 flat out.
+  // Whole numbers are the band edges; the fraction is where in the band the
+  // thumb is sitting. Everything below is linear in THIS, not in the throttle,
+  // which is what gives each band its own slope from one expression.
+  const band = t <= GAIT_WALK ? t / GAIT_WALK
+             : t <= GAIT_JOG  ? 1 + (t - GAIT_WALK) / (GAIT_JOG - GAIT_WALK)
+                              : 2 + (t - GAIT_JOG) / (1 - GAIT_JOG);
+  _gp.band    = band;
+  _gp.cadence = 0.140 + band * 0.055;
+  _gp.swing   = 0.55  + band * 0.235;
+  _gp.bend    = band <= 1 ? 0 : Math.min(1, (band - 1) * 0.72);
+  _gp.twist   = 0.02  + band * 0.048;
+  _gp.bob     = 0.75  + band * 0.55;
+  _gp.lean    = band * 1.15;
+  return _gp;
+}
+
+// Which hands a weapon needs when it is being CARRIED rather than presented.
+// 2 is a long gun that wants both hands on it; 1 rides in the strong hand and
+// swings with that arm; 0 is empty.
+function weaponHands(w) {
+  if (!w) return 0;
+  if (w === WEAPONS.ASSAULT_RIFLE || w === WEAPONS.SHOTGUN ||
+      w === WEAPONS.ROCKET_LAUNCHER || w === WEAPONS.COACH_GUN) return 2;
+  return 1;
+}
+
+// The guns as CARRIED, drawn about their own middle so the carry pose can put
+// them anywhere and swing them. Deliberately NOT shared with the presented art
+// in Character.show(): that is laid out around the muzzle offsets the bullets
+// are actually fired from (bLX/bLY) and cannot be moved without walking the
+// rounds off the barrel. Same materials, different origin.
+function carryLongGun(w) {
+  if (w === WEAPONS.SHOTGUN) {
+    fill(52, 40, 30); rect(-21, -3.6, 15, 7.2, 2);      // stock
+    fill(30);         rect(-8, -2.6, 33, 5.2, 1);       // barrels
+    fill(16);         rect(-3, -3.6, 13, 7.2, 1);       // receiver
+  } else if (w === WEAPONS.ROCKET_LAUNCHER) {
+    fill(50, 70, 50); rect(-22, -3.2, 48, 6.4, 2);      // tube
+    fill(30);         rect(-7, -5.4, 11, 10.8, 1);      // sight block
+    fill(38, 52, 38); rect(14, -4.4, 5, 8.8, 1);        // muzzle bell
+  } else if (w === WEAPONS.COACH_GUN) {
+    fill(96, 62, 34); rect(-20, -3.6, 16, 7.2, 2);
+    fill(42);         rect(-5, -3.2, 29, 6.4, 1);
+  } else {                                              // assault rifle
+    fill(40);         rect(-22, -2.1, 46, 4.2, 1);      // barrel and receiver
+    fill(139, 69, 19); rect(-13, -3.2, 13, 6.4, 1);     // grip wrap
+    fill(139, 69, 19); rect(-24, -3.2, 9, 6.4, 1);      // stock
+    fill(40);         rect(-5, 1.6, 5, 9, 1);           // magazine
+  }
+}
+
+// A sidearm, drawn about its GRIP at the origin with the muzzle out along +x,
+// because that is where the hand holding it is.
+function carryHandGun(w) {
+  if (w === WEAPONS.SMG || w === WEAPONS.DUAL_SMG) {
+    fill(40); rect(-3, -4, 23, 7, 2); rect(1, 3, 5, 10, 1);
+  } else if (w === WEAPONS.REVOLVER) {
+    fill(86, 56, 34);   rect(-4, -0.5, 8, 8, 2);        // grip
+    fill(188, 192, 200); rect(-1, -3.6, 12, 6, 1);      // frame
+    fill(152, 158, 166); ellipse(5, -0.6, 7, 7);        // cylinder
+    fill(214, 218, 226); rect(10, -2.6, 13, 3.6, 1);    // barrel
+  } else if (w === WEAPONS.TASER) {
+    fill(255, 255, 0); rect(-1, -4, 14, 7, 2);
+    fill(20);          rect(2, 3, 5, 8, 1);
+  } else {                                              // pistol
+    fill(40); rect(-2, -3.6, 17, 6, 2); rect(1, 2, 5, 8, 1);
+    fill(64); rect(6, -3.2, 9, 2.2, 1);                 // slide rib
+  }
+}
+
+// Presenting the weapon, as opposed to carrying it. The right stick is the aim
+// stick, so holding it IS aiming; a shot in the last few frames and a reload
+// both keep the gun up, because dropping to a carry between rounds would make
+// every burst look like a flinch.
+function aimIntent(c) {
+  if (typeof rightStick === 'undefined') return true;
+  return !!rightStick.active || c.muzzleFlash > 0 || c.reloadTimer > 0 ||
+         c.meleeTimer > 0 || (typeof isCooking !== 'undefined' && isCooking) ||
+         c.throwAnimTimer > 0 || c.dashTimer > 0;
+}
+
+// How long the gun stays up after the aim stick lets go. Two jobs: a thumb
+// brushing the stick must not flicker the weapon between carried and presented
+// several times a second, and LOWERING a gun should read as a decision rather
+// than as the animation resetting. Raising it stays instant, which is the way
+// round that matters when something is shooting at you.
+const AIM_HOLD = 14;
+function playerAiming(c) {
+  if (!c.isPlayer) return true;         // everyone else presents; see CARRY.
+  return (c.aimHold || 0) > 0;
+}
 const STAND_FORE_ARM = 0.65;
 let _figRigCache = null, _figRigKey = '';
 function figureRig(bW, bH) {

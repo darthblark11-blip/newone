@@ -1809,6 +1809,88 @@ worth having if it can never *miss*.
 
 ---
 
+## Gait — walk, jog, run
+
+One throttle drives everything a moving figure does. The player's left stick is already
+normalised to its own radius, so its magnitude **is** the throttle: **1–32% walk, 33–65%
+jog, 66–100% run**. `gaitPose(t)` turns it into the numbers every pose reads, and
+`GAIT_EASE` smooths it first — a thumb reaches 100% in one frame and a body does not, so
+without the ease the arms snap to a full running stride on the frame the stick moves,
+which reads as the animation being *switched* rather than the figure accelerating.
+
+**These are not three animations with a switch between them.** A switch at 32% would pop,
+and a thumb resting near a band edge crosses it several times a second. Every parameter
+interpolates across the whole range on its own curve and the band edges are only where
+those curves change slope. Internally that is one number, `band` ∈ [0,3]: whole numbers
+are the band edges, the fraction is where in the band the thumb is sitting, and every
+parameter is linear in *that* rather than in the throttle. `check-character.js` sweeps 400
+throttles and asserts no parameter steps anywhere.
+
+From directly above, four things tell the three gaits apart:
+
+- **cadence** — how fast the cycle turns over. It deliberately does *not* scale with
+  speed: most of the extra pace in a run is a longer stride, not a faster one, so cadence
+  rises about half as fast as the throttle. (The old flat `0.25` is now the top of the
+  jog band, so running feels the same and walking is genuinely slower.)
+- **swing** — stride and arm amplitude, which is the other half of the speed.
+- **bend** — **zero across the whole walk band**, which is what makes a walk look like a
+  walk: a near-straight arm swinging from the shoulder. A jog and a run fold the elbow.
+- **twist** — the shoulders counter-rotating against the hips, which are drawn at
+  `moveAngle` and do not turn with them. This is the clearest cue at this camera angle,
+  because it is the only one that changes the figure's **silhouette** rather than moving a
+  limb around inside it. Suppressed whenever the weapon is up: the muzzle offsets are
+  measured in that frame, so twisting it walks the rounds off the aim laser.
+
+**The bent elbow is not a second pose.** A jog and a run bring the hands *in* — a runner's
+hands travel a short arc by the ribs, not a long one at the hips — and the elbow folds
+because the target got nearer. `bend` shortens the arc and the two-bone solve does the
+rest, with the elbow always outboard (it cannot fold through the chest).
+
+**The solve is blended, and the blend is the projection correction.** An arm hanging at a
+walk is foreshortened so hard that a true two-bone solve folds it double and throws the
+elbow out sideways, which is not what a walking arm does; at a run the arm is genuinely
+across the view and the solve is right. `bend` interpolates the elbow from *on the
+shoulder-to-hand line* to the real solve — which is exactly the transition the gait is
+making anyway. The bones are solved at their **projected** lengths (`STAND_FORE_ARM`), or
+it would be finding an elbow for an arm twice the length of the one on screen.
+
+### Carrying a weapon, as opposed to presenting one
+
+`playerAiming()` is the switch, and it is the player only — everyone else presents,
+because the enemy muzzle offsets are tuned against the presented pose. Armed and *not*
+aiming, the gun comes down and the walking rig takes over.
+
+- **One-handed** rides the arm that swings it, pointing wherever the **forearm** points
+  plus a cant outboard and down. Squared to the facing it would read as an aim.
+- **Two-handed** (`weaponHands()`: assault rifle, shotgun, rocket launcher, coach gun)
+  lies **across the chest** — butt at the strong hip, muzzle past the off shoulder, both
+  hands on it, swaying with the stride. *Across*, not along: "parallel to the body" from
+  this camera has to mean the shoulder line, because a rifle pointed down the line of
+  travel is exactly what the aimed pose looks like from directly above, and the whole
+  point of a carry is that one glance tells you whether the weapon is up. It is also the
+  only arrangement where both grips land inside the arms' reach.
+
+Two things this has to get right and both fail silently:
+
+1. **Three separate blocks lay their arms out around a gun that is UP** — the left-arm
+   pose, the right arm, and the weapon art — and any one of them left running gives the
+   player a second pair of arms holding a second weapon. All three stand down on
+   `carryMode`, as does the early-drawn presented taser.
+2. **A long gun held across the chest is in FRONT of the body**, so it goes down with the
+   hands after the torso. Drawn in the back pass it is swallowed by the shirt — which is
+   the whole reason the arm rig is split in two.
+
+A support hand crossing to a fore grip is the one case `STAND_FORE_ARM` gets backwards:
+that factor is for an arm swinging beside the body, pointing away from the camera and
+losing most of its length, while an arm reaching across the chest lies nearly square to
+the view and keeps almost all of it. Clamped to the hanging figure's reach it stopped four
+units short of the weapon it was holding.
+
+**`AIM_HOLD` keeps the gun up for a few frames after the stick lets go.** Two jobs: a
+thumb brushing the stick must not flicker the weapon between carried and presented several
+times a second, and lowering a gun should read as a decision. Raising it stays instant,
+which is the way round that matters when something is shooting at you.
+
 ## The arm rig
 
 `Character.show()` draws the torso, then the attire, then the arms, then the head. That
@@ -1948,7 +2030,7 @@ node tools/check-saveload.js       # save/load round trip
 node tools/check-cutscene.js       # scripted placement stays inside the sector
 node tools/check-resources.js      # harvestables, drops, the melee tool, persistence
 node tools/check-robot.js          # a machine dies like a machine, on all six paths
-node tools/check-character.js      # the arm rig: hands present, and behind the body
+node tools/check-character.js      # the arm rig, the gait bands, and carrying a weapon
 node tools/check-build.js          # blueprints, placement, build rate, the crew
 node tools/check-ballistics.js     # hostile rounds are always slower than the player's
 node tools/check-menu.js           # travel lives in the pause menu, and nowhere else

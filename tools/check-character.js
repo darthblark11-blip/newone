@@ -192,5 +192,179 @@ console.log('\n== a living figure is the same build as its own corpse ==');
      (overAt === null ? '' : ` (frame ${overAt})`));
 }
 
+console.log('\n== the gait: one throttle, three bands, no seam ==');
+// The whole design is that walk, jog and run are one interpolation and not
+// three animations with a switch between them. A discontinuity at a band edge
+// is exactly the pop this exists to avoid, and it is invisible in a still —
+// you only see it as a stutter while a thumb rests near 32% or 65%.
+{
+  const W = P('GAIT_WALK'), J = P('GAIT_JOG');
+  ok('the bands are the ones asked for: 1-32 walk, 33-65 jog, 66-100 run',
+     Math.abs(W - 0.32) < 1e-9 && Math.abs(J - 0.65) < 1e-9, `${W} / ${J}`);
+
+  // Walk the throttle across its whole range and watch every parameter.
+  const keys = ['band', 'cadence', 'swing', 'twist', 'bob', 'lean'];
+  const N = 400;
+  let worstJump = 0, jumpAt = 0, nonMono = null, bendInWalk = 0;
+  let prev = null;
+  for (let i = 0; i <= N; i++) {
+    const t = i / N;
+    const g = P(`(function(){var g=gaitPose(${t});var o={};` +
+                `for(var k in g)o[k]=g[k];return o;})()`);
+    if (prev) {
+      for (const k of keys) {
+        const d = Math.abs(g[k] - prev[k]);
+        if (d > worstJump) { worstJump = d; jumpAt = t; }
+        if (g[k] < prev[k] - 1e-9) nonMono = k + ' at ' + t.toFixed(3);
+      }
+    }
+    if (t <= W && g.bend > 0) bendInWalk++;
+    prev = g;
+  }
+  // A step at a band edge would be orders of magnitude bigger than the
+  // per-sample slope; the largest legitimate step here is `band` itself.
+  ok('no parameter steps at a band edge — the three gaits are one curve',
+     worstJump < 0.05, 'largest step ' + worstJump.toFixed(4) +
+     ' at throttle ' + jumpAt.toFixed(3));
+  ok('and every one of them rises with the throttle', nonMono === null,
+     nonMono || 'cadence, swing, twist, bob, lean all monotonic');
+  // Zero bend through the walk is what makes a walk look like a walk: a
+  // straight arm swinging from the shoulder, not a jogger's folded one.
+  ok('the elbow stays straight for the whole walk band', bendInWalk === 0,
+     bendInWalk + ' samples with a bent elbow below ' + W);
+  const run = P('(function(){var g=gaitPose(1);return [g.cadence,g.swing,g.bend,g.twist];})()');
+  const walk = P('(function(){var g=gaitPose(0.16);return [g.cadence,g.swing,g.bend,g.twist];})()');
+  ok('and a run is visibly a different gait from a walk, not a faster one',
+     run[0] / walk[0] > 1.5 && run[1] / walk[1] > 1.5 && run[2] > 0.9 &&
+     run[3] / walk[3] > 2.5,
+     `cadence x${(run[0] / walk[0]).toFixed(2)}, swing x${(run[1] / walk[1]).toFixed(2)}, ` +
+     `bend ${run[2].toFixed(2)}, twist x${(run[3] / walk[3]).toFixed(2)}`);
+
+  // The throttle is eased, not read raw: a thumb reaches 100% in one frame and
+  // a body does not. Without this the arms snap to a full running stride on the
+  // frame the stick moves, which reads as the animation being switched.
+  probe(`player.gait = 0; player.isMoving = true;
+         leftStick.active = true; leftStick.dx = 1; leftStick.dy = 0;`);
+  const g1 = P('(function(){player.gait += (1 - player.gait) * GAIT_EASE; return player.gait;})()');
+  let frames = 1, gv = g1;
+  while (gv < 0.9 && frames < 200) {
+    gv = P('(function(){player.gait += (1 - player.gait) * GAIT_EASE; return player.gait;})()');
+    frames++;
+  }
+  ok('the body eases into a new throttle rather than snapping to it',
+     g1 < 0.25 && frames > 8 && frames < 60,
+     `${(g1 * 100).toFixed(0)}% after one frame, 90% after ${frames}`);
+}
+
+console.log('\n== carrying a weapon, as opposed to presenting one ==');
+// Armed and not aiming, the gun comes down and the walking rig takes over. The
+// silent failure is the opposite: three separate blocks lay their arms out
+// around a gun that is UP, and any one of them left running gives the player a
+// second pair of arms holding a second weapon.
+{
+  const setArm = (w, aiming) => probe(`
+    player.isArmed = true; player.currentWeapon = WEAPONS.${w};
+    player.meleeTimer = 0; player.reloadTimer = 0; player.muzzleFlash = 0;
+    player.throwAnimTimer = 0; player.dashTimer = 0; player.isNeutral = false;
+    swordPickedUp = false; setMeleeTool("NONE");
+    rightStick.active = ${!!aiming};
+    player.aimHold = ${aiming ? 'AIM_HOLD' : 0};
+    player.isMoving = true; player.walkCycle = 1.9; player.gait = 0.5;
+  `);
+
+  setArm('ASSAULT_RIFLE', false);
+  const carried = trace('', 'player');
+  ok('a carried long gun puts BOTH hands on it, in front of the body',
+     carried.total === 2 && carried.infront === 2 && carried.behind === 0,
+     JSON.stringify(carried));
+
+  setArm('ASSAULT_RIFLE', true);
+  const presented = trace('', 'player');
+  ok('and presenting it hands the arms back to the aimed pose',
+     presented.total === 0, presented.total + ' rig hands while aiming');
+
+  setArm('PISTOL', false);
+  const side = trace('', 'player');
+  ok('a carried sidearm swings with its own arm: one hand leading, one trailing',
+     side.total === 2 && side.infront >= 1, JSON.stringify(side));
+
+  // The draw sequence. A long gun held across the chest is IN FRONT of the
+  // body, so it has to go down after the torso — drawn with the back pass it
+  // would be swallowed by the shirt, which is the whole reason the arm rig is
+  // split in two.
+  setArm('ASSAULT_RIFLE', false);
+  {
+    const realE = ctx.ellipse, realR = ctx.rect;
+    const seq = [];
+    ctx.ellipse = (x, y, w, h) => { seq.push(['e', w, h]); };
+    ctx.rect = (x, y, w, h) => { seq.push(['r', w, h]); };
+    probe('player.show();');
+    ctx.ellipse = realE; ctx.rect = realR;
+    const torso = seq.findIndex((s) => s[0] === 'e' && s[1] === BODY_W && s[2] === BODY_H);
+    // The carried rifle's barrel: the one 46-long rect in the figure.
+    const gun = seq.findIndex((s) => s[0] === 'r' && Math.abs(s[1] - 46) < 0.01);
+    ok('the carried long gun is drawn after the torso, not behind it',
+       torso >= 0 && gun > torso, `torso at ${torso}, gun at ${gun}`);
+  }
+
+  // Both grips must be inside the arms' reach, or the hands hang short of the
+  // weapon and it floats. Measured through the transform, like the sleeve test.
+  setArm('ASSAULT_RIFLE', false);
+  {
+    const realE = ctx.ellipse;
+    const st = [{ x: 0, y: 0, c: 1, s: 0 }], stack = [];
+    const realP = ctx.push, realO = ctx.pop, realT = ctx.translate, realRo = ctx.rotate;
+    const hands = [], gunPts = [];
+    ctx.push = () => { stack.push(Object.assign({}, st[0])); };
+    ctx.pop = () => { if (stack.length) st[0] = stack.pop(); };
+    ctx.translate = (x, y) => { const m = st[0]; m.x += x * m.c - y * m.s; m.y += x * m.s + y * m.c; };
+    ctx.rotate = (a) => { const m = st[0], c = Math.cos(a), s = Math.sin(a);
+                          const nc = m.c * c - m.s * s, ns = m.s * c + m.c * s; m.c = nc; m.s = ns; };
+    ctx.ellipse = (x, y, w, h) => {
+      const m = st[0];
+      if (w === HAND && h === HAND) hands.push([m.x + x * m.c - y * m.s, m.y + x * m.s + y * m.c]);
+    };
+    const realRe = ctx.rect;
+    ctx.rect = (x, y, w, h) => {
+      const m = st[0];
+      if (Math.abs(w - 46) < 0.01) {          // the barrel, in its own frame
+        for (const g of [-11, 9]) gunPts.push([m.x + g * m.c, m.y + g * m.s]);
+      }
+    };
+    probe('player.show();');
+    Object.assign(ctx, { ellipse: realE, rect: realRe, push: realP, pop: realO,
+                         translate: realT, rotate: realRo });
+    let worst = 0;
+    for (const g of gunPts) {
+      let best = Infinity;
+      for (const h of hands) best = Math.min(best, Math.hypot(g[0] - h[0], g[1] - h[1]));
+      worst = Math.max(worst, best);
+    }
+    ok('both hands actually reach the grips they are holding',
+       gunPts.length === 2 && hands.length === 2 && worst < 3.0,
+       `worst hand-to-grip gap ${worst.toFixed(2)} over ${gunPts.length} grips`);
+  }
+}
+
+console.log('\n== the gun comes up instantly and goes down deliberately ==');
+{
+  probe(`player.isArmed = true; player.currentWeapon = WEAPONS.PISTOL;
+         player.meleeTimer = 0; player.reloadTimer = 0; player.muzzleFlash = 0;
+         player.throwAnimTimer = 0; player.dashTimer = 0; player.aimHold = 0;
+         rightStick.active = true;`);
+  probe('player.aimHold = aimIntent(player) ? AIM_HOLD : Math.max(0, player.aimHold - 1);');
+  ok('touching the aim stick presents the weapon on the same frame',
+     P('playerAiming(player)') === true);
+  probe('rightStick.active = false;');
+  let held = 0;
+  while (P('playerAiming(player)') && held < 200) {
+    probe('player.aimHold = aimIntent(player) ? AIM_HOLD : Math.max(0, player.aimHold - 1);');
+    held++;
+  }
+  ok('and letting go holds it up briefly rather than dropping it that frame',
+     held === P('AIM_HOLD'), held + ' frames, AIM_HOLD is ' + P('AIM_HOLD'));
+  probe('rightStick.active = false; player.aimHold = 0;');
+}
+
 console.log(`\n${checks - fails}/${checks} checks passed`);
 process.exit(fails ? 1 : 0);
