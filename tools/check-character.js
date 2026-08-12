@@ -149,7 +149,12 @@ function poseOf(setup) {
     else if (w === HAND && h === HAND) hands.push([wx, wy]);
     // A sleeve segment: longer than it is wide, at one of the rig's two widths.
     else if (w > h && (Math.abs(h - RIGW.u) < 1e-6 || Math.abs(h - RIGW.f) < 1e-6)) {
-      segs.push({ w: h, len: w - h });
+      // Drawn as ellipse(L/2, 0, L + w, w) inside the segment's own frame, so
+      // it runs from local (0,0) to (L,0) and both ends come back through the
+      // transform. The ends are what say whether a sleeve left the silhouette.
+      const L = w - h;
+      segs.push({ w: h, len: L,
+                  a: [m.x, m.y], b: [m.x + L * m.c, m.y + L * m.s] });
     }
   };
   // Every rect, with its ends in the figure's own frame and its place in the
@@ -172,11 +177,11 @@ function poseOf(setup) {
   }
   // The two grips, as fractions along the barrel. Expressed that way they ride
   // the weapon's own foreshortening: the rect runs from -22 to +24 in the gun's
-  // frame and the grips sit at -11 and +9 inside it, whatever it is squashed to.
+  // frame and the grips sit at -11 and +5 inside it, whatever it is squashed to.
   if (best) {
     const f = (t) => [best.a[0] + (best.b[0] - best.a[0]) * t,
                       best.a[1] + (best.b[1] - best.a[1]) * t];
-    best.grips = [f(11 / 46), f(31 / 46)];
+    best.grips = [f(11 / 46), f(27 / 46)];
   }
   return { hands, segs, guns: best ? [best] : [], torsoAt, bodyAng };
 }
@@ -327,6 +332,73 @@ console.log('\n== a carried weapon sits ON the man, not off his side ==');
   }
   ok('and the sidearm foreshortens through the swing rather than staying rigid',
      hi / lo > 1.3, `${lo.toFixed(1)} to ${hi.toFixed(1)} units long across the stride`);
+}
+
+console.log('\n== the carry keeps off the body it is being carried on ==');
+{
+  const halfH = BODY_H / 2;
+
+  // A sidearm swung back with the free arm's whole arc lies right along the
+  // flank, and a 17-unit weapon extending forward from there covers the sleeve
+  // and the shoulder it is meant to be hanging beside. The hand holding it is
+  // damped, so the grip stays out in front of the hip.
+  probe(`player.isArmed = true; player.currentWeapon = WEAPONS.PISTOL;
+         player.meleeTimer = 0; player.reloadTimer = 0; player.muzzleFlash = 0;
+         player.throwAnimTimer = 0; player.dashTimer = 0;
+         rightStick.active = false; player.aimHold = 0;
+         swordPickedUp = false; setMeleeTool("NONE");`);
+  let back = -Infinity, at = '';
+  for (const g of [0.15, 0.5, 1.0]) {
+    for (let i = 0; i < 16; i++) {
+      const p = poseOf(`player.isMoving = true; player.gait = ${g};
+                        player.walkCycle = ${(i * Math.PI) / 8};`);
+      for (const gun of p.guns) {
+        if (-gun.a[0] > back) { back = -gun.a[0]; at = `gait ${g}, phase ${i}`; }
+      }
+    }
+  }
+  ok('a carried sidearm never swings back across the shoulder line',
+     back < 5, `grip reaches ${back.toFixed(1)} behind the shoulders — ${at}`);
+
+  // The support arm crossing to a long gun's handguard is the one that can push
+  // a sleeve out past the FAR side of the body. Out at the muzzle with its
+  // elbow left at the shoulder, it did.
+  probe(`player.currentWeapon = WEAPONS.ASSAULT_RIFLE;`);
+  let proud = 0, pat = '';
+  for (const g of [0.15, 0.5, 1.0]) {
+    for (let i = 0; i < 16; i++) {
+      const p = poseOf(`player.isMoving = true; player.gait = ${g};
+                        player.walkCycle = ${(i * Math.PI) / 8};`);
+      for (const sg of p.segs) {
+        // The segment's CENTRELINE, not its rim: a sleeve sitting on the
+        // shoulder always has half its width past the silhouette, and that is
+        // what a shoulder looks like. What must not happen is the joint itself
+        // travelling outside the body.
+        for (const e of [sg.a, sg.b]) {
+          const o = Math.abs(e[1]) - halfH;
+          if (o > proud) { proud = o; pat = `gait ${g}, phase ${i}`; }
+        }
+      }
+    }
+  }
+  ok('and no sleeve on a two-handed carry clips out past the shoulder',
+     proud < 1.5, `worst joint ${proud.toFixed(1)} past the silhouette — ${pat}`);
+
+  // Across the chest at EVERY pace. Bringing it parallel with the line of
+  // travel at a sprint was tried: from directly above that is the aimed pose,
+  // and it costs the support hand its grip.
+  let flattest = Math.PI;
+  for (const g of [0.15, 0.5, 1.0]) {
+    for (let i = 0; i < 12; i++) {
+      const p = poseOf(`player.isMoving = true; player.gait = ${g};
+                        player.walkCycle = ${(i * Math.PI) / 6};`);
+      for (const gun of p.guns) flattest = Math.min(flattest, Math.abs(gun.ang));
+    }
+  }
+  ok('the long gun stays across the chest even flat out, never along the body',
+     flattest > 0.45,
+     `shallowest cant ${((flattest * 180) / Math.PI).toFixed(0)} degrees off the facing`);
+  probe('player.isArmed = false; player.aimHold = 0;');
 }
 
 console.log('\n== one thing in the hand at a time ==');

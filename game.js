@@ -11816,8 +11816,8 @@ if (this.isPlayer) {
             // rather than a rotation: a rifle moving with a walking man travels
             // with his chest, it does not pivot about its own middle. Swung as
             // an angle it read as the gun flapping about, which is the wobble.
-            const swayA = sin(this.walkCycle) * (0.016 + GP.band * 0.011);
-            const swayX = sin(this.walkCycle) * (0.9 + GP.band * 0.7);
+            const swayA = sin(this.walkCycle) * (0.016 + GP.band * 0.014);
+            const swayX = sin(this.walkCycle) * (0.9 + GP.band * 1.0);
             // The long gun's frame: laid across the chest, butt down by the
             // strong hip and muzzle past the off shoulder.
             //
@@ -11853,11 +11853,14 @@ if (this.isPlayer) {
             // make the elbow fold was backwards: it folded the arm and took the
             // axial swing away with it, so a run had bent arms that barely
             // moved. The fold comes from where the elbow is put (below).
-            //
-            // Worked out for BOTH sides whatever is in the hands, because a
-            // sprinting man carries a rifle in one hand and pumps the other --
-            // so the free arm needs its ordinary station to fall back to.
             const HY = this.bodyH * 0.49 - GP.bend * 2.0;
+            // A HAND WITH A GUN IN IT SWINGS LESS. It is carrying something,
+            // and it is also the reason the pistol used to sweep back across
+            // the shoulder every stride: given the free arm's whole arc, a
+            // 17-unit weapon extending forward from the back of it lies right
+            // along the flank and covers the sleeve it is supposed to be
+            // hanging beside. Damped, it stays out in front of the hip where a
+            // carried sidearm actually rides.
             const R = REACH * (0.44 + 0.13 * GP.band);
             // The forward hand comes IN as well as forward -- a running arm
             // sweeps across the front of the chest, ending up near the body's
@@ -11867,38 +11870,40 @@ if (this.isPlayer) {
             // is the crab again on the back stroke.
             const IN = GP.bend * 5.6, OUT = 1.1 + GP.bend * 0.6;
             for (const s of sides) {
-                s.hx = -1.5 + GP.bend * 3.0 + s.sw * R;
-                const f = s.sw > 0 ? s.sw : 0, b = s.sw < 0 ? -s.sw : 0;
-                s.hy = s.sgn * (HY - f * IN + b * OUT) + rest * 0.4;
+                // The strong hand is damped when there is a sidearm in it, and
+                // pushed a shade forward and out so the weapon rides in front
+                // of the hip instead of back along the flank.
+                const held = (carrying === 1 && s.right);
+                const sw = held ? s.sw * 0.55 : s.sw;
+                s.hx = -1.5 + GP.bend * 3.0 + sw * R + (held ? 3.5 : 0);
+                const f = sw > 0 ? sw : 0, b = sw < 0 ? -sw : 0;
+                s.hy = s.sgn * (HY - f * IN + b * OUT + (held ? 1.4 : 0))
+                       + rest * 0.4;
             }
 
-            // AT A SPRINT THE RIFLE COMES PARALLEL WITH THE BODY. Across the
-            // chest is what a man does at a walk or a jog, when he still has
-            // both hands on it and is ready to bring it up. Flat out he cannot
-            // hold that: the weapon goes down to the strong side, muzzle along
-            // the line of travel, and it swings with him. The support arm comes
-            // OFF it and pumps -- which is also the only way the far grip stops
-            // being out of reach once the gun is no longer across the chest.
-            const runP = Math.max(0, Math.min(1, (GP.band - 1.6) / 1.4));
-            const cAng = -0.72 * (1 - runP) - 0.10 * runP + swayA;
+            // The long gun stays ACROSS THE CHEST at every pace, both hands on
+            // it. Flat out it does not come parallel with the line of travel --
+            // that was tried and it is the aimed pose from directly above, and
+            // it costs the support hand its grip. What a sprint changes is the
+            // energy: the weapon shifts further with the chest and cants a few
+            // more degrees, and the whole man leans into it.
+            const cAng = -0.72 + swayA;
             // The butt tucks at the strong shoulder rather than hanging off the
             // flank behind it. Slung about the body's middle, the stock swung
             // out past the silhouette every stride and read as a loose plank
             // stuck to his side -- which it was.
-            const cX = 9 + GP.lean * 0.45 + swayX * 0.5 + runP * swing * 5;
-            const cY = -swayX + runP * (5 + sin(this.walkCycle) * 3.4);
+            const cX = 9 + GP.lean * 0.45 + swayX * 0.5;
+            const cY = -swayX;
             if (carrying === 2) {
                 for (const s of sides) {
                     // Measured in the FORESHORTENED frame, or the hands hold a
-                    // gun that is no longer under them.
-                    const g = (s.right ? -11 : 9) * CARRY_DIP;
-                    const gx = cX + cos(cAng) * g, gy = cY + sin(cAng) * g;
-                    if (s.right) { s.hx = gx; s.hy = gy; }
-                    else {
-                        // The support hand lets go as the sprint comes on.
-                        s.hx += (gx - s.hx) * (1 - runP);
-                        s.hy += (gy - s.hy) * (1 - runP);
-                    }
+                    // gun that is no longer under them. The support hand is on
+                    // the HANDGUARD, not out at the muzzle: at 9 it sat four
+                    // fifths of the way down the barrel, which put it past the
+                    // off shoulder and dragged the whole arm across it.
+                    const g = (s.right ? -11 : 5) * CARRY_DIP;
+                    s.hx = cX + cos(cAng) * g;
+                    s.hy = cY + sin(cAng) * g;
                 }
             }
 
@@ -11963,6 +11968,15 @@ if (this.isPlayer) {
                 // is as far out as an elbow ever gets from directly above.
                 const ep = [(s.hx + 1.5) * ELBOW_LEAD - GP.bend * 1.6,
                             s.sgn * (SH + 0.6 + GP.bend * 1.5)];
+                // Except when the arm is reaching ACROSS the chest for a long
+                // gun's handguard. An arm doing that tucks its elbow in and
+                // down; kept out at the shoulder the sleeve pokes past the
+                // silhouette on the FAR side of the body, which is the clip.
+                // A swinging arm is the opposite case and keeps its elbow put.
+                if (carrying === 2 && !s.right) {
+                    ep[0] = Math.max(ep[0], s.hx * 0.5);
+                    ep[1] = (s.sy + s.hy) * 0.5;
+                }
                 // Now make the bones honest. Two passes of pulling the elbow
                 // back inside each end's reach converge in the small distances
                 // this rig works over, and unlike a solve they cannot produce a
@@ -22322,24 +22336,30 @@ function carryHandGun(w, k, L) {
   L = L || _figLit;
   const X = (v) => v * k;
   if (BIOME_ACTIVE) figureContour();
+  // THE GRIP IS UNDER THE GUN, NOT BESIDE IT. On a pistol the butt runs
+  // straight DOWN from the rear of the frame, so from a bird's eye it is almost
+  // entirely hidden behind the slide and the fist wrapped round it -- a couple
+  // of units of heel peeking out at the back and nothing more. Drawn as a full
+  // block hanging off the side it was as big as the weapon and the whole thing
+  // read as a black L lying on the man.
   if (w === WEAPONS.SMG || w === WEAPONS.DUAL_SMG) {
-    gunBox(X(1), 3, X(5), 10, 1, 34, 36, 42, L, 0.18);             // magazine
-    gunBox(X(-3), -4, X(23), 7, 2, 46, 48, 55, L, 0.30);           // receiver
-    gunMuzzle(X(20), -0.5, 7, k, 46, 48, 55);
+    gunBox(X(0), 1.4, X(4.4), 6.2, 1, 34, 36, 42, L, 0.18);        // magazine
+    gunBox(X(-3), -3.4, X(23), 6.4, 2, 46, 48, 55, L, 0.30);       // receiver
+    gunMuzzle(X(20), -0.2, 6.4, k, 46, 48, 55);
   } else if (w === WEAPONS.REVOLVER) {
-    gunBox(X(-4), -0.5, X(8), 8, 2, 96, 62, 38, L, 0.26);          // grip
-    gunBox(X(-1), -3.6, X(12), 6, 1, 168, 174, 184, L, 0.34);      // frame
-    fill(152, 158, 166); ellipse(X(5), -0.6, X(7) + 2, 7);         // cylinder
-    gunBox(X(10), -2.6, X(13), 3.6, 1, 196, 202, 212, L, 0.36);    // barrel
-    gunMuzzle(X(23), -0.8, 3.6, k, 196, 202, 212);
+    gunBox(X(-3), -0.6, X(6.4), 5.6, 2, 96, 62, 38, L, 0.26);      // grip heel
+    gunBox(X(-1), -3.4, X(12), 5.8, 1, 168, 174, 184, L, 0.34);    // frame
+    fill(152, 158, 166); ellipse(X(5), -0.5, X(7) + 2, 6.6);       // cylinder
+    gunBox(X(10), -2.4, X(13), 3.6, 1, 196, 202, 212, L, 0.36);    // barrel
+    gunMuzzle(X(23), -0.6, 3.6, k, 196, 202, 212);
   } else if (w === WEAPONS.TASER) {
-    gunBox(X(2), 3, X(5), 8, 1, 30, 30, 34, L, 0.16);
-    gunBox(X(-1), -4, X(14), 7, 2, 214, 208, 40, L, 0.34);
-    gunMuzzle(X(13), -0.5, 7, k, 214, 208, 40);
+    gunBox(X(1), 1.4, X(4.4), 5.4, 1, 30, 30, 34, L, 0.16);
+    gunBox(X(-1), -3.6, X(14), 6.4, 2, 214, 208, 40, L, 0.34);
+    gunMuzzle(X(13), -0.4, 6.4, k, 214, 208, 40);
   } else {                                                          // pistol
-    gunBox(X(1), 2, X(5), 8, 1, 34, 36, 42, L, 0.18);              // grip
-    gunBox(X(-2), -3.6, X(17), 6, 2, 44, 46, 53, L, 0.32);         // slide
-    gunMuzzle(X(15), -0.6, 6, k, 44, 46, 53);
+    gunBox(X(0), 1.2, X(4.6), 5.4, 1, 34, 36, 42, L, 0.18);        // grip heel
+    gunBox(X(-2), -3.4, X(17), 5.8, 2, 44, 46, 53, L, 0.32);       // slide
+    gunMuzzle(X(15), -0.5, 5.8, k, 44, 46, 53);
   }
   noStroke();
 }

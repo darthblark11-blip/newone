@@ -1916,12 +1916,26 @@ aiming, the gun comes down and the walking rig takes over.
   point of a carry is that one glance tells you whether the weapon is up. It is also the
   only arrangement where both grips land inside the arms' reach.
 
-**At a SPRINT the long gun comes parallel with the body.** Across the chest is what a man
-does at a walk or a jog, when both hands are still on it and he is ready to bring it up.
-Flat out he cannot hold that: the weapon drops to the strong side, muzzle along the line
-of travel, swinging with him — and the support hand comes **off** it and pumps, which is
-also the only way the far grip stops being out of reach once the gun is no longer across
-the chest. `runP` eases the whole change in over the top of the jog band.
+**It stays across the chest at every pace.** Bringing it parallel with the line of travel
+at a sprint was tried and reverted: from directly above that *is* the aimed pose, and it
+costs the support hand its grip. What a sprint changes is the energy — the weapon shifts
+further with the chest and cants a few more degrees.
+
+**The support hand is on the HANDGUARD, not out at the muzzle**, and its elbow tucks in
+and down rather than staying at the shoulder. Out at four fifths of the barrel with the
+elbow left where a swinging arm keeps it, the whole arm dragged across the off shoulder
+and its sleeve poked past the silhouette on the far side — the clip.
+
+**A hand with a gun in it swings less.** It is carrying something, and it is also why the
+sidearm used to sweep back over the shoulder: given the free arm's whole arc, a 17-unit
+weapon extending forward from the back of that arc lies right along the flank and covers
+the sleeve it is supposed to be hanging beside. Damped, it rides in front of the hip.
+
+**The grip is UNDER the gun, not beside it.** A pistol's butt runs straight down from the
+rear of the frame, so from a bird's eye it is almost entirely hidden behind the slide and
+the fist round it — a couple of units of heel at the back and nothing more. Drawn as a
+full block hanging off the side it was as big as the weapon and the whole thing read as a
+black L lying on the man.
 
 **A carried weapon is DEPRESSED, and from directly above a depressed barrel is a SHORT
 one.** That foreshortening is the whole top-down read of "carried": a full-length bar
