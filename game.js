@@ -1475,19 +1475,26 @@ function dgGable(aw, ah, col, colHi, inset) {
 // beat. At a walk the swing is small and the nod is slow; at a gallop the same
 // cycle runs three times as fast and four times as far, which is all it takes to
 // read as a different gait from directly above.
-function drawHorseArt(coat, mane, walk, moving, gallop, sock) {
+// `ang` is the horse's own facing. Both call sites draw inside rotate(), so the
+// sun has to be brought into that frame -- see figureLight(). Omitting it lights
+// the horse from straight ahead, which is only right for an unrotated caller.
+function drawHorseArt(coat, mane, walk, moving, gallop, sock, ang) {
   const amp = gallop ? 9 : 3.6;
   const sw = moving ? sin(walk) * amp : 0;
   const sw2 = moving ? sin(walk + PI * 0.62) * amp : 0;
   const heave = moving ? abs(sin(walk)) * (gallop ? 2.6 : 0.9) : 0;
   const cr = red(coat), cg = green(coat), cb = blue(coat);
   const dark = (f) => fill(cr * f, cg * f, cb * f);
+  const L = figureLight(ang || 0);
 
   push();
   translate(heave * 0.4, 0);
 
-  // Legs on diagonal pairs, hind heavier than fore.
-  noStroke();
+  // Legs on diagonal pairs, hind heavier than fore. The contour goes on here
+  // and every part after it inherits one, the same way it works on a person --
+  // an animal drawn with no stroked silhouette is the one thing in a lit scene
+  // still floating over its own ground.
+  if (BIOME_ACTIVE) figureContour(); else noStroke();
   dark(0.62);
   rect(-19 + sw, -13, 7, 9, 3);      // near hind
   rect(15 + sw2, -12, 6, 8, 3);      // near fore
@@ -1504,11 +1511,18 @@ function drawHorseArt(coat, mane, walk, moving, gallop, sock) {
   quad(0, -3, 0, 3, -15, 6, -13, -5);
   pop();
 
-  // Barrel: quarters, ribcage, then the withers, so it is not one flat oval.
-  dark(0.86); ellipse(-13, 0, 34, 30);              // hindquarters
-  fill(cr, cg, cb); ellipse(4, 0, 46, 27);          // ribcage
-  dark(1.14); ellipse(9, -4, 30, 12);               // lit top line
-  dark(0.68); ellipse(2, 9, 34, 9);                 // shaded belly line
+  // Barrel: quarters, ribcage, then the two flanks, so it is not one flat oval.
+  //
+  // The flanks follow the SUN, not the spine. Pinned above the backbone -- which
+  // is what they were -- a horse walking a circle carried its own highlight
+  // round with it and had a private sun that agreed with nothing else in the
+  // scene. Offset by the light, its lit side stays west while it turns, and
+  // when the sun is end-on the bands slide fore and aft onto the shoulder and
+  // the rump instead, which is where the light would actually catch it.
+  dark(0.86); ellipse(-13, 0, 34, 30);                          // hindquarters
+  fill(cr, cg, cb); ellipse(4, 0, 46, 27);                      // ribcage
+  dark(1.14); ellipse(6 - L[0] * 5, -L[1] * 9, 30, 12);         // lit flank
+  dark(0.68); ellipse(2 + L[0] * 5,  L[1] * 9, 34, 9);          // shaded flank
 
   // Neck and head, nodding on half the leg beat.
   push();
@@ -11234,7 +11248,7 @@ if (this.stunTimer > 0 && this.skeletonTimer <= 0) {
         push(); rotate(this.aimAngle);
         if (this.hitFlash > 0) this.hitFlash--;
         drawHorseArt(this.coatCol, this.maneCol, this.walkCycle, this.isMoving,
-                     this.boltTimer > 0, this.sock);
+                     this.boltTimer > 0, this.sock, this.aimAngle);
         pop();
         pop();
         return;
@@ -11259,9 +11273,16 @@ if (this.stunTimer > 0 && this.skeletonTimer <= 0) {
         line(-this.bodyW/2, 0, -this.bodyW/2 - 12 + (swing * 0.5), 0);
         noStroke();
 
-        // Main Body (White)
-        if (this.hitFlash > 0) { this.hitFlash--; fill(255); } else fill(245);
-        ellipse(0, 0, this.bodyW, this.bodyH);
+        // Main Body (White). The widest animal in the game, so the flattest
+        // without it -- and the one the volume treatment was asked for first.
+        if (this.hitFlash > 0) { this.hitFlash--; fill(255); ellipse(0, 0, this.bodyW, this.bodyH); }
+        else if (BIOME_ACTIVE) {
+            const _vl = figureLight(this.aimAngle);
+            volShade(0, 0, this.bodyW, this.bodyH, 245, 245, 245, 1, _vl[0], _vl[1]);
+            // A marking lies IN the hide, so it takes no contour of its own --
+            // the same rule the blood decals follow.
+            noStroke();
+        } else { fill(245); ellipse(0, 0, this.bodyW, this.bodyH); }
 
         // Random Spots
         for (let d of this.decals) {
@@ -11272,6 +11293,8 @@ if (this.stunTimer > 0 && this.skeletonTimer <= 0) {
         // Head setup
         push();
         translate(this.bodyW/2 + 4, 0);
+        // ...but the head is a mass again, so the contour comes back on.
+        if (BIOME_ACTIVE) figureContour();
         let headBob = this.isMoving ? sin(this.walkCycle * 0.5) * 0.15 : 0;
         rotate(headBob); // Head sways slightly as it walks
 
@@ -11415,15 +11438,16 @@ if (this.stunTimer > 0 && this.skeletonTimer <= 0) {
     // the man is always on top of the animal, whatever order the two sit in
     // enemiesList -- and it means one horse can never be drawn twice.
     if (this.mounted) {
+        const _mf = this.mountFacing !== undefined ? this.mountFacing : this.aimAngle;
         push();
-        rotate(this.mountFacing !== undefined ? this.mountFacing : this.aimAngle);
+        rotate(_mf);
         // Drawn up a quarter. A horse is bigger than the man on it and the rider
         // art is fixed, so this is where the size relationship gets set -- at
         // parity the rider covered the whole barrel and it read as a man wearing
         // a horse.
         scale(1.26);
         drawHorseArt(this.mountCoat, this.mountMane, this.mountWalk || 0,
-                     this.isMoving, true, this.mountSock);
+                     this.isMoving, true, this.mountSock, _mf);
         drawHorseTack();
         pop();
     }
@@ -11433,9 +11457,14 @@ if (this.stunTimer > 0 && this.skeletonTimer <= 0) {
     if (this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL") { bob += sin(frameCount * 0.1) * 15; lS = 0; }
     if (this.reloadTimer > 0) { let rP = 1 - (this.reloadTimer / 90); push(); noFill(); stroke(0, 200, 255, 150); strokeWeight(4); arc(0, 0, 50, 50, -PI / 2, -PI / 2 + (rP * TWO_PI)); pop(); bob += sin(frameCount * 0.5) * 3; }
     if (this.eType === "ALIEN_GATOR") { 
-        push(); rotate(this.moveAngle); fill(this.pantsCol); noStroke(); rect(-30 + lS*3, -30, 54, 24, 12); rect(-30 - lS*3, 6, 54, 24, 12); pop(); 
-        push(); rotate(this.aimAngle); translate(bob*3, 0); fill(this.shirtCol); ellipse(0, 0, this.bodyW, this.bodyH); 
-        fill(30, 180, 30); ellipse(20, -42, 48, 24); ellipse(40, -42, 24, 24); fill(30, 180, 30); ellipse(45, 33, 75, 24); ellipse(75, 33, 30, 30); 
+        push(); rotate(this.moveAngle); fill(this.pantsCol); if (BIOME_ACTIVE) figureContour(); else noStroke(); rect(-30 + lS*3, -30, 54, 24, 12); rect(-30 - lS*3, 6, 54, 24, 12); pop();
+        push(); rotate(this.aimAngle); translate(bob*3, 0);
+        // 63 x 81 -- the widest body in the game, so the flattest as a bare
+        // fill, and the one the volume treatment was asked for first. Every
+        // limb and plate after it inherits the contour volShade leaves set.
+        if (BIOME_ACTIVE) { const _vl = figureLight(this.aimAngle); volShadeCol(0, 0, this.bodyW, this.bodyH, this.shirtCol, 1, _vl[0], _vl[1]); }
+        else { fill(this.shirtCol); noStroke(); ellipse(0, 0, this.bodyW, this.bodyH); }
+        fill(30, 180, 30); ellipse(20, -42, 48, 24); ellipse(40, -42, 24, 24); fill(30, 180, 30); ellipse(45, 33, 75, 24); ellipse(75, 33, 30, 30);
         fill(40); rect(50, 8, 45, 12, 2); fill(20); rect(90, 6, 10, 16); fill(30, 180, 30); ellipse(0, 0, 33, 33); rect(0, -15, 60, 30, 10); fill(0); ellipse(20, -10, 5, 5); ellipse(20, 10, 5, 5); noStroke(); 
         for (let d of this.decals) { if (d.col) fill(d.col[0], d.col[1], d.col[2], d.col[3]); else fill(90, 0, 0, 220); ellipse(d.x, d.y, d.sz, d.sz); } pop(); pop(); return; 
     }
@@ -11520,7 +11549,53 @@ if (this.isPlayer) {
     } else {
         // ... (Keep your standard non-chemist fallback here)
 
-        push(); rotate(this.moveAngle); noStroke(); fill(this.pantsCol); let lW = this.bodyW === 105 ? 40 : 18, lX = this.bodyW === 105 ? -30 : -10, lY1 = this.bodyW === 105 ? -10 : -10, lY2 = this.bodyW === 105 ? 15 : 2; rect(lX + lS, lY1, lW, 8, 4); rect(lX - lS, lY2, lW, 8, 4); pop();
+        push(); rotate(this.moveAngle); noStroke(); fill(this.pantsCol);
+        if (this.bodyW === 105) {
+          // ARMORED's 105-wide slab keeps its own legs; the rig is shaped like
+          // a person and that is not one.
+          rect(-30 + lS, -10, 40, 8, 4); rect(-30 - lS, 15, 40, 8, 4);
+        } else {
+          // Thigh, shin and boot as separate segments at the rig's own widths
+          // and its own split, in ragLimb()'s shape language and foreshortened
+          // by STAND_FORE_LEG. One flat rect could never taper, and the taper
+          // -- widest at the hip, narrowing to the ankle -- is the whole reason
+          // a leg reads as a leg and not as a stick. It is also the rule the
+          // corpse rig is sized against: the silhouette only ever narrows on
+          // the way down.
+          const RGl = figureRig(this.bodyW, this.bodyH);
+          const th = RGl.thigh * STAND_FORE_LEG, sh = RGl.shin * STAND_FORE_LEG;
+          // The boot is the trousers darkened, exactly as the corpse does it --
+          // not a near-black, which against a contour that is itself nearly
+          // black reads as a hole punched in the end of the leg.
+          const bootC = [red(this.pantsCol) * 0.55, green(this.pantsCol) * 0.55,
+                         blue(this.pantsCol) * 0.55];
+          if (BIOME_ACTIVE) figureContour();
+          for (const sgn of [1, -1]) {
+            // Hips either side of the axis at the spacing the old pair of rects
+            // used -- wide enough that two 9.6 thighs do not merge at the
+            // midline, which is the other half of reading as two legs. The
+            // whole leg is shifted forward by half a thigh so the hip's round
+            // cap lands ON the hip: unshifted, ragLimb's form hangs half a
+            // thigh-width off the back of the pelvis, and on the trailing leg
+            // of a stride that is five more units of dark lozenge sticking out
+            // behind a figure that already has a shadow back there.
+            const sx = -10 + lS * sgn + RGl.thighW * 0.5, cy = sgn * -6;
+            ellipse(sx + th * 0.5, cy, th + RGl.thighW, RGl.thighW);
+            ellipse(sx + th + sh * 0.5, cy, sh + RGl.shinW, RGl.shinW);
+            fill(bootC[0], bootC[1], bootC[2]);
+            // The boot takes the rig's length UNFORESHORTENED, because a foot
+            // is the one part of a standing body that lies flat to this camera
+            // -- the leg above it is pointing away and loses more than half its
+            // length, the foot is side-on to the ground and loses none. It also
+            // sits past the ankle rather than centred on it, for the reason
+            // ragLimb gives: a circle on the joint buries half of itself in the
+            // shin and adds only its radius to the leg.
+            ellipse(sx + th + sh + RGl.foot * 0.30, cy, RGl.foot, RGl.foot * 0.86);
+            fill(this.pantsCol);
+          }
+          noStroke();
+        }
+        pop();
     }
     push(); rotate(this.aimAngle); translate(bob, 0); 
     
@@ -11576,28 +11651,53 @@ if (this.isPlayer) {
             const usingPick = this.isPlayer && typeof meleeTool === 'function' &&
                               meleeTool() === "PICKAXE";
             const armedMelee = usingSword || usingPick;
-            const sides = [{ sy: -14, sw: -swing }, { sy: 11, sw: swing, right: true }];
+            const sides = [{ sy: -14, sw: -swing, sgn: -1 },
+                           { sy: 11, sw: swing, sgn: 1, right: true }];
 
-            // Shoulder to hand as one tapering limb rather than a blob at each
-            // end, so the arm reads as a limb at every point of the cycle. The
-            // hand leads slightly outboard as it comes forward.
-            const limb = (sy, sw) => {
-                const hx = sw * 14, hy = sy + sw * 1.5 + rest * 0.5;
-                const d = Math.max(0.001, Math.hypot(hx, hy - sy));
-                push(); translate(0, sy); rotate(atan2(hy - sy, hx));
+            // Shoulder to hand as one tapering two-bone limb -- the corpse's
+            // ragLimb() shape language exactly, so an arm is the same arm
+            // standing up and lying down.
+            const RG = figureRig(this.bodyW, this.bodyH);
+            // Where the elbow falls along the arm, from the rig rather than
+            // from a pair of hand-picked constants.
+            const EL = RG.upper / (RG.upper + RG.fore);
+            const REACH = (RG.upper + RG.fore) * STAND_FORE_ARM;
+
+            // The hand is worked out ONCE per side and the segments are then
+            // fitted to it. Deriving the two independently is what put a sleeve
+            // past its own hand: floored at the rig's full bone length, 21 units
+            // of arm ran off the end of a 14-unit reach and the limb came out as
+            // a chain of lobes pointing away from the body.
+            for (const s of sides) {
+                s.hx = s.sw * REACH;
+                // At rest the hand sits just outboard of the shoulder, which is
+                // what you actually see from overhead: a hanging arm is almost
+                // entirely foreshortened away and the hand is the only part of
+                // it clear of the torso.
+                s.hy = s.sy + s.sgn * RG.upperW * 0.34 + s.sw * 1.4 + rest * 0.5;
+            }
+
+            const limb = (s) => {
+                const dx = s.hx, dy = s.hy - s.sy;
+                const d = Math.max(0.001, Math.hypot(dx, dy));
+                const u = d * EL, f = d - u;
+                push(); translate(0, s.sy); rotate(atan2(dy, dx));
                 if (BIOME_ACTIVE) figureContour();
                 fill(this.shirtCol);
-                ellipse(d * 0.34, 0, Math.max(13, d * 0.80), 8.6);   // upper arm
-                ellipse(d * 0.74, 0, Math.max(9, d * 0.56), 7.2);    // forearm
+                // Length + the segment's own width, as ragLimb does: the flat
+                // span is the bone and the caps round the joints off either
+                // end, so the two overlap into one taper rather than butting
+                // together at the elbow.
+                ellipse(u * 0.5, 0, u + RG.upperW, RG.upperW);
+                ellipse(u + f * 0.5, 0, f + RG.foreW, RG.foreW);
                 pop();
-                return { x: hx, y: hy };
             };
 
             armPass = (front) => {
                 // Both limbs go under the torso -- that is what sinks the
                 // shoulder into the body instead of parking a blob on it. Only
                 // the hands are sorted front to back.
-                if (!front) for (const s of sides) limb(s.sy, s.sw);
+                if (!front) for (const s of sides) limb(s);
                 for (const s of sides) {
                     // A held tool always rides the front pass: it is the thing
                     // the player is looking at, and half a pickaxe swallowed by
@@ -11605,7 +11705,7 @@ if (this.isPlayer) {
                     const holdsTool = !!(s.right && armedMelee);
                     const isFront = holdsTool ? true : s.sw > 0.2;
                     if (isFront !== front) continue;
-                    const h = { x: s.sw * 14, y: s.sy + s.sw * 1.5 + rest * 0.5 };
+                    const h = { x: s.hx, y: s.hy };
 
                     if (!s.right && this.isPlayer && isChemist) {
                         push(); translate(h.x, h.y); rotate(s.sw * 0.22);
@@ -11613,7 +11713,7 @@ if (this.isPlayer) {
                         fill(0, 255, 200); ellipse(12, 0, 6, 8);
                         pop();
                     } else {
-                        fill(skin); ellipse(h.x, h.y, 8, 8);
+                        fill(skin); ellipse(h.x, h.y, RG.hand, RG.hand);
                     }
 
                     if (holdsTool) {
@@ -11652,8 +11752,10 @@ if (this.isPlayer) {
     } else if (BIOME_ACTIVE) {
       // A shoulder, not a disc. See FIGURE VOLUME. volShade() leaves the
       // contour set, so every sleeve, hand and boot drawn after this inherits
-      // it without its own call site knowing.
-      volShadeCol(0, 0, this.bodyW, this.bodyH, this.shirtCol, 1);
+      // it without its own call site knowing. The light is brought into the
+      // figure's own facing -- this whole block is inside rotate(aimAngle).
+      const _vl = figureLight(this.aimAngle);
+      volShadeCol(0, 0, this.bodyW, this.bodyH, this.shirtCol, 1, _vl[0], _vl[1]);
     } else {
       fill(this.shirtCol); ellipse(0, 0, this.bodyW, this.bodyH);
     }
@@ -13345,8 +13447,12 @@ class Citizen {
         }
 
         // Body. Same volume treatment as everyone else -- a citizen standing
-        // next to a soldier has to be lit by the same sun. See FIGURE VOLUME.
-        if (BIOME_ACTIVE) volShadeCol(0, 0, this.bodyW, this.bodyH, this.shirtCol, 1);
+        // next to a soldier has to be lit by the same sun, and `rot` is what
+        // this pass is rotated by. See FIGURE VOLUME.
+        if (BIOME_ACTIVE) {
+            const _vl = figureLight(rot);
+            volShadeCol(0, 0, this.bodyW, this.bodyH, this.shirtCol, 1, _vl[0], _vl[1]);
+        }
         else ellipse(0, 0, this.bodyW, this.bodyH);
 
         
@@ -21461,7 +21567,9 @@ function drawMassSides(x0, y0, x1, y1, lx, ly, cr, cg, cb, mullion) {
 //    3. a TERMINATOR, the crescent of shade where the surface turns away.
 //
 //  All three are offset along LIGHT_DX/DY, so every figure in the world is lit
-//  from the same place as every wall and every roof.
+//  from the same place as every wall and every roof -- but see figureLight():
+//  a figure is drawn inside its own facing, and the light has to be brought
+//  into that frame or it turns with the model.
 // ###########################################################################
 
 // How far the highlight rides off centre, as a fraction of the blob's radius.
@@ -21471,10 +21579,30 @@ const VOL_LINE   = 0.085;
 // Steps in the lit gradient. Four is the fewest that shows no banding.
 const VOL_STEPS  = 4;
 
+// The sun, expressed in a figure's OWN rotated frame.
+//
+// Every body, head and limb in this file is drawn inside rotate(aimAngle), and
+// rotate() carries the light vector round with it -- the same trap the prop
+// shadows have. Written straight, LIGHT_DX/DY put the highlight on a figure's
+// left shoulder whichever way they were pointing, so a squad facing four ways
+// had four suns and none of them agreed with the buildings. Counter-rotating by
+// the figure's own angle puts the highlight back on the world's west side and
+// keeps it there while they turn -- which is also the only reason a figure
+// walking a circle reads as turning rather than as spinning art.
+const _figLit = [LIGHT_DX, LIGHT_DY];
+function figureLight(ang) {
+  const c = Math.cos(ang), s = Math.sin(ang);
+  _figLit[0] =  LIGHT_DX * c + LIGHT_DY * s;
+  _figLit[1] = -LIGHT_DX * s + LIGHT_DY * c;
+  return _figLit;
+}
+
 // One rounded mass. `k` scales the whole effect: 1 for a torso, less for the
-// little parts where a full contour would swallow them.
-function volShade(x, y, w, h, cr, cg, cb, k) {
+// little parts where a full contour would swallow them. `lx`/`ly` are the light
+// in the caller's frame -- omit them only where the caller is unrotated.
+function volShade(x, y, w, h, cr, cg, cb, k, lx, ly) {
   k = k === undefined ? 1 : k;
+  if (lx === undefined) { lx = LIGHT_DX; ly = LIGHT_DY; }
   const lw = Math.max(0.9, Math.min(2.4, Math.min(w, h) * VOL_LINE)) * k;
 
   // 1. Contour. Drawn as the fill's own stroke so it hugs the silhouette
@@ -21488,7 +21616,7 @@ function volShade(x, y, w, h, cr, cg, cb, k) {
   // 2. Terminator: one soft crescent on the far side, kept weak. A strong one
   //    reads as a stain lying on the shirt rather than as the surface turning.
   fill(cr * 0.70, cg * 0.70, cb * 0.74, 96);
-  ellipse(x + LIGHT_DX * w * 0.19 * k, y + LIGHT_DY * h * 0.19 * k, w * 0.93, h * 0.93);
+  ellipse(x + lx * w * 0.19 * k, y + ly * h * 0.19 * k, w * 0.93, h * 0.93);
 
   // 3. The lit side, as NESTED STEPS rather than one cap.
   //
@@ -21503,15 +21631,52 @@ function volShade(x, y, w, h, cr, cg, cb, k) {
     const off = t * VOL_CAP;
     fill(cr + (255 - cr) * t * 0.30, cg + (255 - cg) * t * 0.30,
          cb + (255 - cb) * t * 0.26, 64);
-    ellipse(x - LIGHT_DX * w * off * k, y - LIGHT_DY * h * off * k, w * sz, h * sz);
+    ellipse(x - lx * w * off * k, y - ly * h * off * k, w * sz, h * sz);
   }
   // Hand the contour back to whatever draws next -- see figureContour().
   figureContour();
 }
 
 // The same, taking a p5 colour.
-function volShadeCol(x, y, w, h, c, k) {
-  volShade(x, y, w, h, red(c), green(c), blue(c), k);
+function volShadeCol(x, y, w, h, c, k, lx, ly) {
+  volShade(x, y, w, h, red(c), green(c), blue(c), k, lx, ly);
+}
+
+// The LIVING figure's limb proportions, taken from the corpse rig.
+//
+// ragRig() is where this game's anatomy lives -- it is sized against the
+// Drillis & Contini standing-height fractions and it is what a body on the
+// ground is drawn from. A living figure drawn to different numbers is a
+// different person, and the swap between them at the moment of death is
+// exactly where that shows. So the living figure reads the same rig.
+//
+// Two things have to be converted on the way across, and getting either wrong
+// makes the living figure a different build from its own body.
+//
+// SCALE. A corpse is drawn inside RAG_SCALE, so the rig's raw numbers are not
+// what is on the screen -- a 10.5 upper arm is painted at 8.4. Matching the
+// corpse means matching what it DRAWS, so the whole rig is pre-scaled here and
+// every caller reads finished widths. (Read raw, the living arm came out a
+// quarter fatter than the arm it turns into.)
+//
+// LENGTH. A body on the ground is seen at full extension from directly above;
+// a body standing up is seen down its own axis. Widths, taper and the two-bone
+// split carry over untouched -- only the along-the-limb extent is compressed,
+// and by different amounts per limb, because a leg hangs near-vertical while an
+// arm swings through a wide arc out in front where much more of it lies across
+// the view.
+const STAND_FORE_LEG = 0.46;
+const STAND_FORE_ARM = 0.65;
+let _figRigCache = null, _figRigKey = '';
+function figureRig(bW, bH) {
+  const key = bW + 'x' + bH;
+  if (key !== _figRigKey) {
+    _figRigKey = key;
+    const r = ragRig(bW, bH), o = {};
+    for (const k in r) o[k] = r[k] * RAG_SCALE;
+    _figRigCache = o;
+  }
+  return _figRigCache;
 }
 
 // The figure's contour, set as canvas STATE rather than drawn per part.

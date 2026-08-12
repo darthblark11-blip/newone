@@ -370,9 +370,10 @@ console.log('\n== figures get volume from shading, not from displacement ==');
 // The projection cannot help at figure scale, so the three terms that DO
 // survive twenty pixels are used instead: a contour, a lit cap and a
 // terminator, all offset along the scene's one light vector.
-ok('volShade() exists and is driven by the light vector',
-   /function volShade\(/.test(src) &&
-   /LIGHT_DX \* w \* off \* k/.test(src) && /LIGHT_DX \* w \* 0\.19/.test(src));
+ok('volShade() exists and is driven by a light vector it is handed',
+   /function volShade\(x, y, w, h, cr, cg, cb, k, lx, ly\)/.test(src) &&
+   /lx = LIGHT_DX; ly = LIGHT_DY;/.test(src) &&
+   /lx \* w \* off \* k/.test(src) && /lx \* w \* 0\.19/.test(src));
 ok('the lit side is stepped, not a single inset cap',
    /for \(let i = 1; i <= VOL_STEPS; i\+\+\)/.test(src) && /const VOL_STEPS/.test(src));
 ok('the contour is canvas STATE, so parts added later inherit it',
@@ -381,11 +382,51 @@ ok('the contour is canvas STATE, so parts added later inherit it',
 const contourSites = (src.match(/figureContour\(\)/g) || []).length;
 ok('and it is switched on for the torso, the limbs and the citizens',
    contourSites >= 5, contourSites + ' call sites');
-ok('the player, the enemies and the citizens all use the same helper',
-   (src.match(/volShadeCol\(0, 0, this\.bodyW, this\.bodyH/g) || []).length === 2);
-ok('none of it runs outside a biome, so Levels 0 and 8 are untouched',
-   /if \(BIOME_ACTIVE\) volShadeCol/.test(src) &&
-   /\} else if \(BIOME_ACTIVE\) \{[\s\S]{0,300}?volShadeCol/.test(src));
+const bodySites = (src.match(/volShade(?:Col)?\(0, 0, this\.bodyW, this\.bodyH/g) || []).length;
+ok('every body -- player, enemy, citizen, gator, cow -- uses the one helper',
+   bodySites === 4, bodySites + ' call sites');
+{
+  // Every body call site must be behind a BIOME_ACTIVE guard (Levels 0 and 8
+  // are closed interiors composed against the flat look) and must be handed a
+  // counter-rotated light. Checked per site rather than as one big pattern, so
+  // a fifth animal added without either is a failure and not a silent pass.
+  const re = /volShade(?:Col)?\(0, 0, this\.bodyW/g;
+  let m, guarded = 0, lit = 0, total = 0;
+  while ((m = re.exec(src))) {
+    total++;
+    const before = src.slice(Math.max(0, m.index - 460), m.index);
+    if (/BIOME_ACTIVE/.test(before)) guarded++;
+    if (/figureLight\(/.test(before.slice(-200))) lit++;
+  }
+  ok('none of it runs outside a biome, so Levels 0 and 8 are untouched',
+     total === 4 && guarded === 4, guarded + '/' + total + ' guarded');
+  ok('and every one of them is handed the light in its own frame',
+     total === 4 && lit === 4, lit + '/' + total + ' counter-rotated');
+}
+
+// A figure is drawn INSIDE rotate(facing), and rotate() carries the light round
+// with it. Left in world space the highlight sat on the model's own left
+// shoulder whichever way it pointed, so a squad facing four ways had four suns.
+// The property that has to hold is a round trip: bring the light into the
+// figure's frame, rotate it back out by the same angle, and it must be the
+// scene's one light vector again — for every facing, not just the axes.
+ok('figureLight() counter-rotates, so a turning figure keeps one sun',
+   /function figureLight\(ang\)/.test(src) &&
+   /-LIGHT_DX \* s \+ LIGHT_DY \* c/.test(src));
+{
+  const LDX = probe('LIGHT_DX'), LDY = probe('LIGHT_DY');
+  let worst = 0;
+  for (let i = 0; i < 24; i++) {
+    const a = (i / 24) * Math.PI * 2;
+    const l = probe(`figureLight(${a}).slice()`);
+    // Back out of the figure's frame: rotate by +a.
+    const bx = l[0] * Math.cos(a) - l[1] * Math.sin(a);
+    const by = l[0] * Math.sin(a) + l[1] * Math.cos(a);
+    worst = Math.max(worst, Math.abs(bx - LDX), Math.abs(by - LDY));
+  }
+  ok('and the round trip is exact at every facing', worst < 1e-9,
+     'worst error ' + worst.toExponential(1));
+}
 
 console.log('\n== drawBiomeProps() leaves the transform balanced ==');
 // The lean wraps the whole switch, so a case that returned or continued would

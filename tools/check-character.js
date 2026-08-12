@@ -9,8 +9,12 @@
 // The fix is the one Citizen.show() has always used: limbs and the trailing
 // hand under the torso, the leading hand over it. Occlusion, not omission.
 //
-// Asserted by watching the order of ellipse() calls: a hand is 8x8, the torso
-// is bodyW x bodyH. Where the hands fall in that sequence is the rig.
+// Asserted by watching the order of ellipse() calls: a hand is a circle at the
+// rig's own hand size, the torso is bodyW x bodyH. Where the hands fall in that
+// sequence is the rig. The hand size is READ from figureRig() rather than
+// written down here — it moved once already, when the living figure was
+// re-proportioned against the corpse, and a literal turns this whole file into
+// eight failures that say nothing about the thing it is guarding.
 const { ctx, probe } = require('./harness.js');
 const P = (s) => probe('(' + s + ')');
 let fails = 0, checks = 0;
@@ -32,6 +36,7 @@ probe(`isStoryMode = false; townsData = {}; startAtLevel(2); started = true; doT
        rightStick = { active: false, dx: 0, dy: 0, dist: 0, base: { x: 0, y: 0 } };`);
 
 const BODY_W = P('player.bodyW'), BODY_H = P('player.bodyH');
+const HAND = P(`figureRig(${BODY_W}, ${BODY_H}).hand`);
 
 // Record every ellipse, in order, while one character draws itself.
 function trace(setup, target) {
@@ -43,7 +48,7 @@ function trace(setup, target) {
   ctx.ellipse = real;
   const torso = seq.findIndex((e) => e[0] === BODY_W && e[1] === BODY_H);
   const hands = [];
-  seq.forEach((e, i) => { if (e[0] === 8 && e[1] === 8) hands.push(i); });
+  seq.forEach((e, i) => { if (e[0] === HAND && e[1] === HAND) hands.push(i); });
   return {
     torso,
     behind: hands.filter((i) => i < torso).length,
@@ -101,6 +106,90 @@ console.log('\n== townsfolk ==');
   const mid = trace('window.__t.isMoving = true; window.__t.walkCycle = 1.5708;', 'window.__t');
   ok('and splits front to back once walking',
      mid.behind === 1 && mid.infront === 1, JSON.stringify(mid));
+}
+
+console.log('\n== a living figure is the same build as its own corpse ==');
+// The swap between the two happens in one frame, in front of the player, and a
+// figure whose arms and legs change proportion as it falls is two different
+// people. So the living rig is not a second set of numbers to keep in step —
+// it IS ragRig(), scaled by the same RAG_SCALE the corpse is drawn inside.
+{
+  const RS = P('RAG_SCALE');
+  const raw = P(`ragRig(${BODY_W}, ${BODY_H})`);
+  const fig = P(`figureRig(${BODY_W}, ${BODY_H})`);
+  let worstKey = null, worst = 0;
+  for (const k of Object.keys(raw)) {
+    const e = Math.abs(fig[k] - raw[k] * RS);
+    if (e > worst) { worst = e; worstKey = k; }
+  }
+  ok('figureRig() is ragRig() at the corpse\'s own drawn scale',
+     worst < 1e-9, worstKey ? `worst ${worstKey} off by ${worst.toExponential(1)}` : '');
+
+  // The taper is the read. check-corpse.js asserts it on the body lying down;
+  // it has to survive the trip to the standing figure or the legs and the torso
+  // merge into one tube with feet on the end.
+  ok('and the silhouette still only narrows going down',
+     fig.thighW > fig.shinW && fig.upperW > fig.foreW,
+     `thigh ${fig.thighW.toFixed(1)} > shin ${fig.shinW.toFixed(1)}, ` +
+     `upper ${fig.upperW.toFixed(1)} > fore ${fig.foreW.toFixed(1)}`);
+
+  // The bug this replaced: the sleeve's length was floored at the rig's full
+  // bone length while the hand only reached a fraction of it, so a whole
+  // forearm hung off the end of the arm pointing away from the body — a chain
+  // of lobes, worst at rest, where the reach is near zero and the direction is
+  // whatever atan2 makes of it. Fitting the segments TO the hand is the fix,
+  // and the property is that nothing draws past the hand but a joint cap.
+  //
+  // Measured by tracking the transform: limbs are drawn inside their own
+  // translate+rotate, so an ellipse's far tip has to be brought back into the
+  // character's frame before it can be compared with anything.
+  const fore = fig.foreW;
+  let over = 0, overAt = null;
+  for (let i = 0; i < 16; i++) {
+    const ph = (i * Math.PI) / 8;
+    // Replay the rig's own arithmetic is NOT what this does — it reads the
+    // ellipses the game actually emitted and where the transform put them.
+    const st = [{ x: 0, y: 0, c: 1, s: 0 }];
+    const stack = [];
+    const real = { e: ctx.ellipse, p: ctx.push, o: ctx.pop, t: ctx.translate, r: ctx.rotate };
+    const tips = [], hands = [];
+    ctx.push = () => { stack.push(Object.assign({}, st[0])); };
+    ctx.pop = () => { if (stack.length) st[0] = stack.pop(); };
+    ctx.translate = (x, y) => {
+      const m = st[0];
+      m.x += x * m.c - y * m.s; m.y += x * m.s + y * m.c;
+    };
+    ctx.rotate = (a) => {
+      const m = st[0], c = Math.cos(a), s = Math.sin(a);
+      const nc = m.c * c - m.s * s, ns = m.s * c + m.c * s;
+      m.c = nc; m.s = ns;
+    };
+    ctx.ellipse = (x, y, w, h) => {
+      const m = st[0];
+      const wx = m.x + x * m.c - y * m.s, wy = m.y + x * m.s + y * m.c;
+      // A limb segment is longer than it is wide and lies along the local +x.
+      if (w === HAND && h === HAND) hands.push([wx, wy]);
+      else if (w > h && Math.abs(h - fore) < 1e-6) {
+        tips.push([wx + (w / 2) * m.c, wy + (w / 2) * m.s]);
+      }
+    };
+    probe(`player.isArmed = false; setMeleeTool("NONE");
+           player.isMoving = true; player.walkCycle = ${ph};`);
+    probe('player.show();');
+    Object.assign(ctx, { ellipse: real.e, push: real.p, pop: real.o,
+                         translate: real.t, rotate: real.r });
+    for (const t of tips) {
+      // Distance from this sleeve's tip to the NEAREST hand. A tip is allowed
+      // to sit one cap radius past its hand and no further.
+      let best = Infinity;
+      for (const h of hands) best = Math.min(best, Math.hypot(t[0] - h[0], t[1] - h[1]));
+      if (best > over) { over = best; overAt = i; }
+    }
+  }
+  ok('and no sleeve is ever drawn past its own hand',
+     over <= fore * 0.60 + 1e-6,
+     `worst tip ${over.toFixed(2)} from the hand, cap allows ${(fore * 0.60).toFixed(2)}` +
+     (overAt === null ? '' : ` (frame ${overAt})`));
 }
 
 console.log(`\n${checks - fails}/${checks} checks passed`);

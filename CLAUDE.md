@@ -694,8 +694,8 @@ with walls round it reads as a crate lying in the river.
 ### Figure volume
 
 A figure gets its third dimension from **shading**, never from the projection.
-`volShade(x, y, w, h, r, g, b, k)` is the one function, and it draws three terms in this
-order:
+`volShade(x, y, w, h, r, g, b, k, lx, ly)` is the one function, and it draws three terms
+in this order:
 
 1. a **contour**, applied as the fill's own stroke so it hugs the silhouette exactly.
    This is the single biggest read — a stroked silhouette is why a figure sits in a scene
@@ -707,8 +707,26 @@ order:
    and the join between them is a visible ring; four shrinking ones accumulate into a
    gradient, which is the only way a flat-fill renderer gets one.
 
-All three offset along `LIGHT_DX/DY`, so a figure is lit from the same place as every
-wall and roof.
+All three offset along the light, so a figure is lit from the same place as every wall
+and roof — but see below: it has to be the light **in the figure's own frame**.
+
+**The sun has to be counter-rotated in, or it turns with the model.** Every body in this
+file is drawn inside `rotate(aimAngle)`, and `rotate()` carries `LIGHT_DX/DY` round with
+it — the same trap the prop shadows have. Written in world space the highlight sat on a
+figure's own left shoulder whichever way they were pointing, so a squad facing four ways
+had four suns and none of them agreed with the buildings behind. `figureLight(ang)`
+rotates the world vector by `-ang` and every body call site passes the result. The
+property is a round trip — bring the light in, rotate it back out by the same angle, get
+`LIGHT_DX/DY` — and `check-depth.js` asserts it at 24 facings rather than at the axes,
+because the axis cases pass under a sign error.
+
+**The animals go through it too, and they were the worst without it** — the cow at 55
+across and `ALIEN_GATOR` at 63 × 81 are the widest bodies in the game, so the flattest as
+a bare fill. The horse is the exception that keeps its own art: it is already composed
+out of hindquarters, ribcage and two flank bands rather than one oval, so it takes the
+contour and has its **flanks** driven by `figureLight` instead — lit band on the sun's
+side, shaded band on the far one. Pinned above the backbone, which is what they were, a
+horse walking a circle carried its highlight round with it.
 
 **The contour is canvas STATE, not a per-part call.** A person is a couple of dozen
 ellipses — sleeves, hands, boots, packs, hats — spread over a dozen pose branches, and
@@ -726,6 +744,42 @@ stuck to the model, worst on the wide animals. A figure's third dimension comes 
 two systems that already carry it: the deferred rig marching a real cast shadow off its
 height ellipse, and the depth sort walking it in front of and behind the masses. Do not
 reintroduce a drawn side on anything smaller than a crate.
+
+### The living figure is the same build as its own corpse
+
+The swap between the two happens in one frame, in front of the player, so a figure whose
+arms and legs change proportion as it falls is two different people. `ragRig()` is where
+this game's anatomy lives (see **How a body comes to rest**), and the living figure reads
+it rather than keeping a second set of numbers in step: `figureRig(bW, bH)` **is**
+`ragRig(bW, bH)`, and both draw sites and `check-character.js` read that one function.
+
+Two things are converted on the way across, and getting either wrong makes the living
+figure a different build:
+
+- **Scale.** A corpse is drawn inside `RAG_SCALE`, so the rig's raw numbers are not what
+  is on the screen — a 10.5 upper arm is *painted* at 8.4. Matching the corpse means
+  matching what it draws, so `figureRig()` pre-scales the whole rig and callers read
+  finished widths. Read raw, the living arm came out a quarter fatter than the arm it
+  turns into.
+- **Length, per limb.** A body on the ground is seen at full extension from directly
+  above; a body standing up is seen down its own axis. Widths, taper and the two-bone
+  split carry over untouched — only the along-the-limb extent is compressed, and by
+  different amounts, because a leg hangs near-vertical (`STAND_FORE_LEG` 0.46) while an
+  arm swings through a wide arc out in front where much more of it lies across the view
+  (`STAND_FORE_ARM` 0.65). The **boot** takes no foreshortening at all: a foot is the one
+  part of a standing body lying flat to this camera.
+
+Both limbs use `ragLimb()`'s shape language — each segment an ellipse `length + its own
+width` long, so the caps round the joints off either end and the two overlap into one
+taper instead of butting at the elbow.
+
+**Fit the segments to the hand, never the other way round.** The hand is worked out once
+per side and the limb is then drawn to reach it. Deriving the two independently — which
+is what a `Math.max(rig.upper, …)` floor does — put a whole forearm past the end of a
+reach that was shorter than the bone, and the arm came out as a chain of lobes pointing
+away from the body, worst at rest where the reach is near zero and the direction is
+whatever `atan2` makes of it. `check-character.js` measures the drawn tip against the
+drawn hand through the transform, so it catches this without re-deriving the arithmetic.
 
 **Still flat, and the next thing to convert:** the per-flag branches in `drawBuildings()`
 — `isHouse`, `isBarn`, `isWesternBldg`, `isGiantBarrier`, `isShanty` and the rest. They
@@ -758,7 +812,10 @@ a footprint, several characters interleaved, nothing dropped or drawn twice, pro
 to the right pass) and the projection (the lean reverses across the view where the sun
 does not, the footprint stays on the collision rect, the visible faces flip in all four
 quadrants, and `drawBuildings()` leaves the canvas transform balanced over every solid a
-city chunk can produce).
+city chunk can produce). It also holds the figure-volume line: that every body — player,
+enemy, citizen, gator, cow — goes through the one helper, behind a `BIOME_ACTIVE` guard,
+handed a counter-rotated light, and that `figureLight()` round-trips exactly at 24
+facings.
 
 ### Elevation
 
@@ -1734,10 +1791,14 @@ exactly 0 when `isMoving` is false — left an idle player holding nothing. Remo
 and drawing every arm on top fixes the disappearing and *causes* the bulge. Only the draw
 order fixes both.
 
-`tools/check-character.js` watches the order of `ellipse()` calls (a hand is 8×8, the torso
-is `bodyW × bodyH`) and asserts both hands exist at all 16 points of the cycle, that both
-sit behind the body at rest, that the trailing one passes behind mid-stride, and that a
-tool hand never falls behind.
+`tools/check-character.js` watches the order of `ellipse()` calls (a hand is a circle at
+the rig's own hand size, the torso is `bodyW × bodyH`) and asserts both hands exist at all
+16 points of the cycle, that both sit behind the body at rest, that the trailing one
+passes behind mid-stride, and that a tool hand never falls behind. It then tracks the
+transform to assert the limb proportions against `ragRig()` — see **The living figure is
+the same build as its own corpse**. The hand size is *read* from `figureRig()` rather than
+written down: as a literal it went stale the first time the figure was re-proportioned and
+turned the whole file into eight failures that said nothing about the rig.
 
 Armed poses are deliberately untouched: the muzzle offsets (`bLX/bLY`) are tuned against
 those arm positions.
