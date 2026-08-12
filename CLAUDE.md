@@ -1841,18 +1841,34 @@ From directly above, four things tell the three gaits apart:
   limb around inside it. Suppressed whenever the weapon is up: the muzzle offsets are
   measured in that frame, so twisting it walks the rounds off the aim laser.
 
-**The bent elbow is not a second pose.** A jog and a run bring the hands *in* — a runner's
-hands travel a short arc by the ribs, not a long one at the hips — and the elbow folds
-because the target got nearer. `bend` shortens the arc and the two-bone solve does the
-rest, with the elbow always outboard (it cannot fold through the chest).
+**The arc, not the reach, is what a run adds.** A jog and a run bring the hands *in*
+laterally — a runner's hands sweep across the front of the chest, ending near the body's
+own centreline — while their **fore-and-aft travel grows**. Shrinking the whole reach to
+make the elbow fold was backwards: it folded the arm and took the axial swing away with
+it, so a run had bent arms that barely moved. The forward and trailing halves of the arc
+are separate terms, because a hand pushed out on the back stroke as far as it comes in on
+the front is the crab again.
 
-**The solve is blended, and the blend is the projection correction.** An arm hanging at a
-walk is foreshortened so hard that a true two-bone solve folds it double and throws the
-elbow out sideways, which is not what a walking arm does; at a run the arm is genuinely
-across the view and the solve is right. `bend` interpolates the elbow from *on the
-shoulder-to-hand line* to the real solve — which is exactly the transition the gait is
-making anyway. The bones are solved at their **projected** lengths (`STAND_FORE_ARM`), or
-it would be finding an elbow for an arm twice the length of the one on screen.
+**Foreshortening is not a constant across the gait.** An arm swinging hard at a run lies
+far more across the view than one hanging at a walk, so it loses much less of its length
+to the projection. Held at the walk's `STAND_FORE_ARM`, the reach clamp was capping the
+run at the walk's arc.
+
+**The elbow is PLACED, not solved.** A two-bone solve is the right tool when both ends are
+pinned in three dimensions; here they are not. Handed a hand that has come in close —
+which is exactly what a run does — the solve answers with the elbow flung out to the side,
+because sideways is where the arithmetic has room. That is the flare, and capping it does
+not fix the *direction*. What an elbow actually does from overhead is almost nothing
+laterally: it stays a shade outside the shoulder and travels fore and aft at about half
+the hand's excursion, trailing it. Two lines. The bone lengths are then imposed by
+**relaxation** — a couple of passes pulling the elbow back inside each end's reach — which,
+unlike a solve, can only ever shorten what is already there and can never invent a
+direction.
+
+**The sleeve is drawn a shade under the torso.** Same garment, but an arm lying over a
+chest of exactly the same value has nothing but its contour to separate it, and at twenty
+pixels that is not enough — the limb disappears into the body and a run reads as a torso
+with two hands orbiting it.
 
 ### Three ways an arm rig goes wrong, and where the limits live
 
@@ -1860,20 +1876,17 @@ it would be finding an elbow for an arm twice the length of the one on screen.
   both sat *on* the silhouette before the arm had swung anywhere, and every unit of
   outboard reach after that came off the far side of the torso. A shoulder joint belongs
   well inside the chest (`bodyH * 0.425`, symmetric — a person is), and the hand's resting
-  station belongs *on* the body's own edge, not out from it. Everything the arm does is a
-  departure from that station. `check-character.js` sweeps three gaits × sixteen phases
-  and asserts no hand strays more than its own width past the shoulder line.
+  station belongs *on* the body's own edge, not out from it. `check-character.js` sweeps
+  three gaits × sixteen phases and asserts no hand strays more than its own width past the
+  shoulder line, and separately that the fore-and-aft travel grows walk → jog → run.
 - **The bow tie.** Two bones cannot reach a point nearer than the difference between them,
   and asking is not a near miss — it is a division that runs away. Mid-stride the hand
-  passes within a whisker of its own shoulder, and there the unclamped solve put the elbow
+  passes within a whisker of its own shoulder, and there an unclamped solve put the elbow
   *thirty* units out on a seven-unit bone; the forearm then ran all the way back and the
-  arm crossed itself through the chest. Both ends of the reach are clamped and the elbow
-  is held inside its own bone length, so no pose the gait can ask for has a degenerate
-  answer. The check asserts no drawn segment is ever longer than the bone it represents.
-- **The elbow needs a ceiling too.** Outboard is the only direction it can fold, but it
-  can hardly go anywhere either — a runner's elbow tucks against the ribs and drives back.
-  Uncapped, the raw solve swung it a third of a body clear on each side, which is the crab
-  again with the arms bent.
+  arm crossed itself through the chest. The check asserts no drawn segment is ever longer
+  than the bone it represents.
+- **The flare** — see above. It is a direction problem, not a magnitude one, which is why
+  the answer was to stop solving.
 
 ### Carrying a weapon, as opposed to presenting one
 
@@ -1884,12 +1897,27 @@ aiming, the gun comes down and the walking rig takes over.
 - **One-handed** hangs at the strong side, muzzle forward and canted outboard. Squared to
   the facing it would read as an aim.
 - **Two-handed** (`weaponHands()`: assault rifle, shotgun, rocket launcher, coach gun)
-  lies **across the chest** — butt at the strong hip, muzzle past the off shoulder, both
-  hands on it, swaying with the stride. *Across*, not along: "parallel to the body" from
-  this camera has to mean the shoulder line, because a rifle pointed down the line of
+  lies **across the chest** — butt at the strong shoulder, muzzle past the off shoulder,
+  both hands on it, swaying with the stride. *Across*, not along: "parallel to the body"
+  from this camera has to mean the shoulder line, because a rifle pointed down the line of
   travel is exactly what the aimed pose looks like from directly above, and the whole
   point of a carry is that one glance tells you whether the weapon is up. It is also the
   only arrangement where both grips land inside the arms' reach.
+
+**A carried weapon is DEPRESSED, and from directly above a depressed barrel is a SHORT
+one.** That foreshortening is the whole top-down read of "carried": a full-length bar
+lying flat on the screen is what a *levelled* weapon looks like, which is the aim. So the
+gun is drawn at its true angle and squashed along its own axis — one transform, the same
+trick `TORSO_DEPTH` plays, and it does what no amount of repositioning could. The
+sidearm's dip rides the swing, so it visibly extends as the wrist comes up at the front of
+the arc and retracts as the muzzle drops at the back; drawn rigid it read as a bar held
+out sideways. The grips are measured in the dipped frame too, or the hands hold a gun that
+is no longer under them.
+
+**A long gun slung about the body's middle hangs off the flank.** Its stock swung out past
+the silhouette behind the strong shoulder every stride and read as a loose plank stuck to
+his side. The butt is anchored at the shoulder instead, and `check-character.js` asserts
+it never clears the shoulder line.
 
 **The stride belongs in the weapon's POSITION, not its rotation.** A wrist keeps a pistol
 pointing where it is put, so the gun's angle is held against the *body*; welded to a

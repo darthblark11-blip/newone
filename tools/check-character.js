@@ -116,10 +116,16 @@ function poseOf(setup) {
   probe(setup);
   const px = P('player.x'), py = P('player.y');
   const real = {};
-  for (const k of ['ellipse', 'rect', 'push', 'pop', 'translate', 'rotate']) real[k] = ctx[k];
+  for (const k of ['ellipse', 'rect', 'push', 'pop', 'translate', 'rotate', 'scale']) {
+    real[k] = ctx[k];
+  }
   // Start at the character's own origin, so everything below is in the frame
-  // the pose is authored in rather than out in the world.
-  let m = { x: -px, y: -py, c: 1, s: 0 };
+  // the pose is authored in rather than out in the world. `k` accumulates the
+  // along-axis squash the figure uses in two places — the torso's depth and a
+  // carried weapon's depression — both of which are scale(k, 1) applied right
+  // before the thing they squash, so carrying it as a scalar is exact here and
+  // leaves the rotation clean to read angles off.
+  let m = { x: -px, y: -py, c: 1, s: 0, k: 1 };
   const stack = [];
   const hands = [], segs = [], guns = [];
   // The torso's own angle. A weapon held against the body turns WITH the body,
@@ -134,7 +140,9 @@ function poseOf(setup) {
     const nc = m.c * c - m.s * s, ns = m.s * c + m.c * s;
     m.c = nc; m.s = ns;
   };
+  ctx.scale = (a, b) => { m.k *= a; };
   ctx.ellipse = (x, y, w, h) => {
+    x *= m.k;
     const wx = m.x + x * m.c - y * m.s, wy = m.y + x * m.s + y * m.c;
     if (w === BODY_W && h === BODY_H) bodyAng = Math.atan2(m.s, m.c);
     else if (w === HAND && h === HAND) hands.push([wx, wy]);
@@ -144,9 +152,12 @@ function poseOf(setup) {
     }
   };
   ctx.rect = (x, y, w, h) => {
-    // The carried guns: the rifle's 46 barrel, the pistol's 17 frame.
+    // The carried guns: the rifle's 46 barrel, the pistol's 17 frame. Both ends
+    // are recorded so the weapon's own footprint can be checked, not just its
+    // angle — the fault they had was overhang, not rotation.
     if (Math.abs(w - 46) < 0.01 || Math.abs(w - 17) < 0.01) {
-      guns.push({ w: w, ang: Math.atan2(m.s, m.c) - bodyAng });
+      const e = (t) => [m.x + t * m.k * m.c, m.y + t * m.k * m.s];
+      guns.push({ w: w, ang: Math.atan2(m.s, m.c) - bodyAng, a: e(x), b: e(x + w) });
     }
   };
   probe('player.show();');
@@ -224,6 +235,82 @@ console.log('\n== a carried gun is held, not waved about ==');
     ok(`${label} swings less than ${cap} degrees over a full stride at a run`,
        n > 0 && deg < cap, n ? deg.toFixed(1) + ' degrees across 24 phases' : 'gun never drawn');
   }
+}
+
+console.log('\n== the run is a run: elbows in, and a real fore-and-aft swing ==');
+{
+  probe(`player.isArmed = false; player.meleeTimer = 0; player.isNeutral = false;
+         swordPickedUp = false; setMeleeTool("NONE"); rightStick.active = false;
+         player.aimHold = 0; player.aimAngle = 0; player.moveAngle = 0;`);
+  // Shrinking the whole reach to fold the elbow took the axial swing away with
+  // it, so a run had bent arms that barely moved. The fold comes from where the
+  // elbow is PUT; the reach is free to grow, and this is the property that says
+  // it did — the hands have to cover more ground the faster he goes.
+  const travel = {};
+  for (const [g, name] of [[0.15, 'walk'], [0.5, 'jog'], [1.0, 'run']]) {
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < 24; i++) {
+      const p = poseOf(`player.isMoving = true; player.gait = ${g};
+                        player.walkCycle = ${(i * Math.PI) / 12};`);
+      for (const h of p.hands) { lo = Math.min(lo, h[0]); hi = Math.max(hi, h[0]); }
+    }
+    travel[name] = hi - lo;
+  }
+  ok('the hands travel further fore-and-aft the faster he goes',
+     travel.walk < travel.jog && travel.jog < travel.run,
+     `walk ${travel.walk.toFixed(1)}, jog ${travel.jog.toFixed(1)}, run ${travel.run.toFixed(1)} units`);
+  ok('and a run swings them most of a body length',
+     travel.run > BODY_W * 1.15,
+     `${travel.run.toFixed(1)} against a ${BODY_W}-deep body`);
+}
+
+console.log('\n== a carried weapon sits ON the man, not off his side ==');
+// The glitch was the long gun slung about the body's middle: its stock swung
+// out past the silhouette behind the strong shoulder every stride and read as a
+// loose plank stuck to his flank. A carried weapon's BUTT belongs on the man.
+{
+  for (const [w, label, dipped] of [['ASSAULT_RIFLE', 'the long gun', true],
+                                    ['PISTOL', 'the sidearm', true]]) {
+    probe(`player.isArmed = true; player.currentWeapon = WEAPONS.${w};
+           player.meleeTimer = 0; player.reloadTimer = 0; player.muzzleFlash = 0;
+           player.throwAnimTimer = 0; player.dashTimer = 0;
+           rightStick.active = false; player.aimHold = 0;
+           swordPickedUp = false; setMeleeTool("NONE");`);
+    let worstBack = -Infinity, worstSide = 0, len = { lo: Infinity, hi: -Infinity };
+    for (const g of [0.15, 0.5, 1.0]) {
+      for (let i = 0; i < 16; i++) {
+        const p = poseOf(`player.isMoving = true; player.gait = ${g};
+                          player.walkCycle = ${(i * Math.PI) / 8};`);
+        for (const gun of p.guns) {
+          // `a` is the butt end: the rect starts at the stock.
+          worstBack = Math.max(worstBack, -gun.a[0]);
+          worstSide = Math.max(worstSide, Math.abs(gun.a[1]) - BODY_H / 2);
+          const L = Math.hypot(gun.b[0] - gun.a[0], gun.b[1] - gun.a[1]);
+          len.lo = Math.min(len.lo, L); len.hi = Math.max(len.hi, L);
+        }
+      }
+    }
+    ok(`${label}'s butt stays on the body, not out past his flank`,
+       worstSide < 2.5 && worstBack < BODY_W * 0.7,
+       `${worstSide.toFixed(1)} past the shoulder line, ${worstBack.toFixed(1)} behind centre`);
+  }
+
+  // A carried weapon is depressed, and from directly above a depressed barrel
+  // is a SHORT one. The sidearm's dip rides the swing, so it visibly extends as
+  // the wrist comes up and retracts as the muzzle drops — drawn at a fixed
+  // length it reads as a bar held out sideways, which is the one thing this
+  // camera cannot show as depression.
+  probe(`player.currentWeapon = WEAPONS.PISTOL; player.gait = 1;`);
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < 24; i++) {
+    const p = poseOf(`player.isMoving = true; player.walkCycle = ${(i * Math.PI) / 12};`);
+    for (const gun of p.guns) {
+      const L = Math.hypot(gun.b[0] - gun.a[0], gun.b[1] - gun.a[1]);
+      lo = Math.min(lo, L); hi = Math.max(hi, L);
+    }
+  }
+  ok('and the sidearm foreshortens through the swing rather than staying rigid',
+     hi / lo > 1.3, `${lo.toFixed(1)} to ${hi.toFixed(1)} units long across the stride`);
 }
 
 console.log('\n== one thing in the hand at a time ==');
@@ -462,8 +549,8 @@ console.log('\n== carrying a weapon, as opposed to presenting one ==');
   // weapon and it floats. Measured through the transform, like the sleeve test.
   setArm('ASSAULT_RIFLE', false);
   {
-    const realE = ctx.ellipse;
-    const st = [{ x: 0, y: 0, c: 1, s: 0 }], stack = [];
+    const realE = ctx.ellipse, realSc = ctx.scale;
+    const st = [{ x: 0, y: 0, c: 1, s: 0, k: 1 }], stack = [];
     const realP = ctx.push, realO = ctx.pop, realT = ctx.translate, realRo = ctx.rotate;
     const hands = [], gunPts = [];
     ctx.push = () => { stack.push(Object.assign({}, st[0])); };
@@ -476,15 +563,19 @@ console.log('\n== carrying a weapon, as opposed to presenting one ==');
       if (w === HAND && h === HAND) hands.push([m.x + x * m.c - y * m.s, m.y + x * m.s + y * m.c]);
     };
     const realRe = ctx.rect;
+    ctx.scale = (a) => { st[0].k = (st[0].k === undefined ? 1 : st[0].k) * a; };
     ctx.rect = (x, y, w, h) => {
-      const m = st[0];
+      const m = st[0], k = m.k === undefined ? 1 : m.k;
       if (Math.abs(w - 46) < 0.01) {          // the barrel, in its own frame
-        for (const g of [-11, 9]) gunPts.push([m.x + g * m.c, m.y + g * m.s]);
+        // The grips are measured in the weapon's DIPPED frame, the same one the
+        // hands were placed in — a carried gun is foreshortened along its own
+        // axis and the grips ride that squash with it.
+        for (const g of [-11 * k, 9 * k]) gunPts.push([m.x + g * m.c, m.y + g * m.s]);
       }
     };
     probe('player.show();');
     Object.assign(ctx, { ellipse: realE, rect: realRe, push: realP, pop: realO,
-                         translate: realT, rotate: realRo });
+                         translate: realT, rotate: realRo, scale: realSc });
     let worst = 0;
     for (const g of gunPts) {
       let best = Infinity;

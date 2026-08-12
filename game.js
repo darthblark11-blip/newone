@@ -11820,15 +11820,29 @@ if (this.isPlayer) {
             // which is what a man actually does with a rifle he is not firing.
             // Shallower than a true port arms, so it still reads as pointed
             // somewhere rather than as being cradled on parade.
+            //
+            // A CARRIED WEAPON IS DEPRESSED, AND FROM DIRECTLY ABOVE A
+            // DEPRESSED BARREL IS A SHORT ONE. That foreshortening is the whole
+            // top-down read of "carried": a full-length bar lying flat on the
+            // screen is what a LEVELLED weapon looks like, which is the aim. So
+            // the gun is drawn at its true angle and squashed along its own
+            // axis, which costs one transform and does what no amount of
+            // repositioning could -- the same trick TORSO_DEPTH plays.
+            const CARRY_DIP = 0.62;
             const cAng = -0.72 + swayA;
-            const cX = 8 + GP.lean * 0.45 + swayX * 0.5;
-            const cY = 1.5 - swayX;
+            // The butt tucks at the strong shoulder rather than hanging off the
+            // flank behind it. Slung about the body's middle, the stock swung
+            // out past the silhouette every stride and read as a loose plank
+            // stuck to his side -- which it was.
+            const cX = 9 + GP.lean * 0.45 + swayX * 0.5;
+            const cY = -swayX;
             if (carrying === 2) {
                 // Both hands go onto the weapon, so it sets where they are
                 // rather than the swing: butt grip to the strong hand, fore
-                // grip to the other.
+                // grip to the other. Both measured in the FORESHORTENED frame,
+                // or the hands hold a gun that is no longer under them.
                 for (const s of sides) {
-                    const g = s.right ? -11 : 9;
+                    const g = (s.right ? -11 : 9) * CARRY_DIP;
                     s.hx = cX + cos(cAng) * g;
                     s.hy = cY + sin(cAng) * g;
                 }
@@ -11839,15 +11853,27 @@ if (this.isPlayer) {
                 // out from there it reads as a figure holding its arms away
                 // from itself, which is the crab. Everything the arm does is a
                 // departure from this station and returns to it.
-                const HY = this.bodyH * 0.49 - GP.bend * 2.2;
-                const R = REACH * (1 - 0.52 * GP.bend);
+                // The hands come IN laterally as the gait rises -- a runner's
+                // hands travel by the ribs, not out at the hips -- while their
+                // FORE-AND-AFT arc gets longer, not shorter. Shrinking the whole
+                // reach to make the elbow fold was backwards: it folded the arm
+                // and took the axial swing away with it, so a run had bent arms
+                // that barely moved. The fold comes from where the elbow is put
+                // (below), and the reach is free to grow.
+                const HY = this.bodyH * 0.49 - GP.bend * 2.0;
+                const R = REACH * (0.44 + 0.13 * GP.band);
+                // The forward hand comes IN as well as forward -- a running arm
+                // sweeps across the front of the chest, ending up near the
+                // body's own centreline and well clear of the torso, which is
+                // the half of the arc you can actually see from up here. The
+                // trailing hand only drifts out a little; pushed out as far as
+                // the other comes in, it is the crab again on the back stroke.
+                // Split so the two halves can differ, because they do.
+                const IN = GP.bend * 5.6, OUT = 1.1 + GP.bend * 0.6;
                 for (const s of sides) {
-                    // Forward on the swing, and a touch in: an arm coming
-                    // forward crosses slightly toward the middle of the body
-                    // and the trailing one falls away from it. That is what
-                    // makes a walk read as a walk rather than as two pendulums.
-                    s.hx = -1.5 + GP.bend * 4.0 + s.sw * R;
-                    s.hy = s.sgn * (HY - s.sw * 1.9) + rest * 0.4;
+                    s.hx = -1.5 + GP.bend * 3.0 + s.sw * R;
+                    const f = s.sw > 0 ? s.sw : 0, b = s.sw < 0 ? -s.sw : 0;
+                    s.hy = s.sgn * (HY - f * IN + b * OUT) + rest * 0.4;
                 }
             }
 
@@ -11863,52 +11889,65 @@ if (this.isPlayer) {
             // grip lies nearly square to the view and keeps almost all of it.
             // Clamped to the hanging figure's reach it stopped four units short
             // of the weapon it was supposed to be holding.
-            const _fs = carrying === 2 ? 0.92 : STAND_FORE_ARM;
+            //
+            // And it is not a constant across the gait either. An arm swinging
+            // hard at a run lies far more across the view than one hanging at a
+            // walk, so it loses much less of its length to the projection. Held
+            // at the walk's value, the reach clamp was capping the run at the
+            // walk's arc and quietly eating the fore-and-aft swing that is most
+            // of what tells a run from a stroll.
+            const _fs = carrying === 2 ? 0.92 : (STAND_FORE_ARM + 0.16 * GP.bend);
             const PU = RG.upper * _fs, PF = RG.fore * _fs;
 
-            // Two bones cannot reach a point nearer than the difference between
-            // them, and asking them to is not a near miss -- it is a division
-            // that runs away. Mid-stride the hand passes within a whisker of
-            // its own shoulder, and there the unclamped solve put the elbow
-            // THIRTY units out on a seven-unit bone: the forearm then ran all
-            // the way back to the hand and the arm came out as a bow tie
-            // sticking through the chest. Both ends are clamped, and the elbow
-            // is additionally held inside its own bone length, so no pose the
-            // gait can ask for has a degenerate answer.
-            const REACH_MIN = Math.abs(PU - PF) + 0.6;
+            // THE ELBOW IS PLACED, NOT SOLVED, AND THAT IS THE HONEST ANSWER
+            // FOR THIS VIEW.
+            //
+            // A two-bone solve is the right tool when both ends are pinned in
+            // three dimensions. Here they are not: this is a projection, and
+            // the solve has no way of knowing that a human elbow has almost no
+            // LATERAL freedom. Handed a hand that has come in close -- which is
+            // exactly what a run does -- it answers with the elbow flung out to
+            // the side, because sideways is where the arithmetic has room. That
+            // is the flare, and no amount of capping fixes the direction.
+            //
+            // What an elbow actually does, seen from overhead, is almost
+            // nothing laterally: it stays tucked a shade outside the shoulder
+            // and travels fore and aft at about half the hand's excursion,
+            // trailing it. Two lines, and the only version that reads as
+            // running. The bone lengths are then imposed afterwards by
+            // relaxation rather than assumed -- see below.
+            const ELBOW_LEAD = 0.42;
             const REACH_MAX = (PU + PF) * 0.98;
 
+            // Pull `p` back inside a disc of radius `r` about `c`.
+            const toDisc = (p, cx, cy, r) => {
+                const dx = p[0] - cx, dy = p[1] - cy, L = Math.hypot(dx, dy);
+                if (L <= r || L < 1e-6) return;
+                p[0] = cx + (dx / L) * r; p[1] = cy + (dy / L) * r;
+            };
+
             for (const s of sides) {
-                const dx = s.hx, dy = s.hy - s.sy;
-                const raw = Math.max(0.001, Math.hypot(dx, dy));
-                const d = Math.min(Math.max(raw, REACH_MIN), REACH_MAX);
-                const nx = dx / raw, ny = dy / raw;
-                // Where the elbow sits along the shoulder-to-hand line, blended
-                // from "on the line" to the real two-bone solve by GP.bend.
-                //
-                // The blend is not a shortcut, it is the correction for this
-                // projection: an arm hanging at a walk is foreshortened so hard
-                // that a true solve folds it double and throws the elbow right
-                // out to the side, which is not what a walking arm does. At a
-                // run the arm is genuinely across the view and the solve is
-                // right. Bend interpolates between the two readings, which is
-                // also exactly the transition the gait is making.
-                const aLine = d * EL;
-                const aIK = (d * d + PU * PU - PF * PF) / (2 * d);
-                const a = Math.max(-PU * 0.98, Math.min(PU * 0.98,
-                                   aLine + (aIK - aLine) * GP.bend));
-                // Outboard, because an elbow cannot fold through the chest --
-                // but CAPPED, because it can hardly go anywhere either. A
-                // runner's elbow tucks in against the ribs and drives back; let
-                // the raw solve have its way and it swings a third of a body
-                // clear on each side, which is the crab again with the arms
-                // bent. The cap is a shade over half a chest.
-                const eh = Math.min(Math.sqrt(Math.max(0, PU * PU - a * a)),
-                                    this.bodyH * 0.20) * GP.bend;
-                s.ex = nx * a - ny * eh * s.sgn;
-                s.ey = s.sy + ny * a + nx * eh * s.sgn;
-                s.hx = nx * d;
-                s.hy = s.sy + ny * d;
+                // The hand first: nothing may ask for a reach the arm has not
+                // got, or the segments stretch to cover it.
+                const hp = [s.hx, s.hy];
+                toDisc(hp, 0, s.sy, REACH_MAX);
+                s.hx = hp[0]; s.hy = hp[1];
+
+                // Then the elbow, placed. Aft of the hand by construction --
+                // it lags the swing -- and a shade outside the shoulder, which
+                // is as far out as an elbow ever gets from directly above.
+                const ep = [(s.hx + 1.5) * ELBOW_LEAD - GP.bend * 1.6,
+                            s.sgn * (SH + 0.6 + GP.bend * 1.5)];
+                // Now make the bones honest. Two passes of pulling the elbow
+                // back inside each end's reach converge in the small distances
+                // this rig works over, and unlike a solve they cannot produce a
+                // direction -- they only ever shorten what is already there.
+                for (let it = 0; it < 2; it++) {
+                    toDisc(ep, 0, s.sy, PU);
+                    toDisc(ep, s.hx, s.hy, PF);
+                }
+                toDisc(ep, 0, s.sy, PU);
+                s.ex = ep[0]; s.ey = ep[1];
             }
 
             // One segment, in ragLimb()'s shape language: length + its own
@@ -11920,9 +11959,19 @@ if (this.isPlayer) {
                 ellipse(L * 0.5, 0, L + w, w);
                 pop();
             };
+            // The sleeve goes down a shade under the torso. Same garment, but an
+            // arm lying over a chest of exactly the same value has nothing but
+            // its contour to separate it, and at twenty pixels that is not
+            // enough: the limb disappears into the body and a run reads as a
+            // torso with two hands orbiting it. A few per cent is all it takes,
+            // and it is what a real arm does anyway -- it is turned away from
+            // the sky the chest is facing.
+            const _sc = this.shirtCol;
+            const armR = red(_sc) * 0.87, armG = green(_sc) * 0.87,
+                  armB = blue(_sc) * 0.90;
             const limb = (s) => {
                 if (BIOME_ACTIVE) figureContour();
-                fill(this.shirtCol);
+                fill(armR, armG, armB);
                 seg(0, s.sy, s.ex, s.ey, RG.upperW);
                 seg(s.ex, s.ey, s.hx, s.hy, RG.foreW);
             };
@@ -11936,7 +11985,7 @@ if (this.isPlayer) {
                 // so it goes down with the hands that are on it and after the
                 // torso -- the whole reason this pass is split in two.
                 if (front && carrying === 2) {
-                    push(); translate(cX, cY); rotate(cAng);
+                    push(); translate(cX, cY); rotate(cAng); scale(CARRY_DIP, 1);
                     if (BIOME_ACTIVE) figureContour();
                     carryLongGun(this.currentWeapon);
                     pop();
@@ -11992,10 +12041,21 @@ if (this.isPlayer) {
                         // through a wide arc every stride is what made the gun
                         // wave about, and a weapon that flaps reads as a glitch
                         // rather than as a walk. So: muzzle forward, canted out
-                        // and down off the strong side, with only a few degrees
-                        // of the stride in it.
+                        // off the strong side, with only a few degrees of the
+                        // stride in its rotation.
+                        //
+                        // The stride goes into its LENGTH instead. A carried
+                        // pistol hangs muzzle-down, and from directly above a
+                        // barrel pointing at the ground is a short one -- so
+                        // the gun visibly extends as the hand swings forward
+                        // and the wrist comes up, and retracts as it goes back
+                        // and the muzzle drops. Drawn at a fixed length it read
+                        // as a bar held out sideways, which is the one thing a
+                        // top-down view cannot show as depression.
+                        const dip = 0.44 + 0.32 * (0.5 + 0.5 * s.sw);
                         push(); translate(h.x, h.y);
                         rotate(0.30 * s.sgn + s.sw * 0.055);
+                        scale(dip, 1);
                         if (BIOME_ACTIVE) figureContour();
                         carryHandGun(this.currentWeapon);
                         pop();
