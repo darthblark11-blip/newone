@@ -2185,11 +2185,13 @@ function drawDepthSorted() {
 // shadows, and using the same number is what makes wall and shadow agree to
 // the pixel.
 //
-// Deliberately absent: isGovFortress (the Great Gates have a door the wings
-// must not paint across, and three cutscenes stage against them), isUBarrier
-// (an energy field), isGiantBarrier (segment-looped with its own view clamp),
-// and everything in Levels 0 and 8, which the BIOME_ACTIVE gate excludes
-// wholesale.
+// Deliberately absent: isGovFortress and isGiantBarrier, which are longer than
+// the screen and go through the slab path instead (see drawSlabFace) --  the
+// gate because a breached one is a hole the wings must not paint across, the
+// curtain wall because a face spanning 10400 units needs its own view clamp;
+// isUBarrier, which is an energy field and has no mass; isBlockBuilding, which
+// already carries its own rise; and everything in Levels 0 and 8, which the
+// BIOME_ACTIVE gate excludes wholesale.
 const LEGACY_MASS = {
   isHouse:       [148, 150, 154],   isBarn:        [104,  36,  32],
   isTrailer:     [146, 146, 150],   isShanty:      [126, 116,  98],
@@ -2206,7 +2208,17 @@ const LEGACY_MASS = {
   // self-shaped and leans without sides.
   isCrateProp:   [148, 118,  80],
   isRock: true,  isHayBale: true,  isWagonProp: true,  isCactusProp: true,
-  isPalm: true,  isEnergyPole: true,  isAlienPlant: true
+  isPalm: true,  isEnergyPole: true,  isAlienPlant: true,
+  // The last of the flat ones. isWall is the guard block standing in a gate
+  // approach and the low walls around a compound -- short, but the player is
+  // right next to them, which is where a missing side shows most. The alien
+  // sectors' architecture is boxes; their planet and their pyramid are not, so
+  // those lean without walls, as does a lamp post (a round mast) and a fence
+  // (a 470 x 10 bay, which drawMassSides would turn into a slab lying down).
+  isWall:        [ 62,  62,  66],   isTerminal:    [ 88,  88,  92],
+  isAlienBldg:   [ 70,  50,  90],   isAmusementPark: [45, 70, 45],
+  isChip:        [ 26,  32,  26],
+  isPyramid: true,  isPinkPlanet: true,  isStreetLight: true,  isFence: true
 };
 function legacyMassOf(b) {
   for (const k in LEGACY_MASS) if (b[k]) return LEGACY_MASS[k];
@@ -2240,18 +2252,39 @@ function drawBuildings(list, i0, i1) {
     // the footprint, art lifted to the leaned top. buildingRise(b) is the
     // number their shadow has been cast with since the rig went in.
     if (BIOME_ACTIVE) {
-      const _lm = legacyMassOf(b);
-      if (_lm) {
-        const _lr = buildingRise(b);
-        massLean(b.x, b.y, _lr, _leanTmp);
+      // The two NM-0 slabs are longer than the screen and take the slab path:
+      // one clamped face, and for a breached gate a hole left in it. See
+      // drawSlabFace().
+      const _sl = b.isGovFortress ? GATE_SIDE : (b.isGiantBarrier ? WALL_SIDE : null);
+      if (_sl) {
+        // A gate anchors its lean on its own doorway; a curtain wall has no
+        // feature and anchors on the middle of the screen. See longMassLean().
+        longMassLean(b, buildingRise(b), _leanTmp,
+                     b.isGovFortress ? b.x : undefined);
         if (_leanTmp[0] !== 0 || _leanTmp[1] !== 0) {
-          if (_lm !== true) {
-            drawMassSides(b.x - b.w / 2, b.y - b.h / 2, b.x + b.w / 2, b.y + b.h / 2,
-                          _leanTmp[0], _leanTmp[1], _lm[0], _lm[1], _lm[2], 24);
+          let _g0 = 0, _g1 = 0;
+          if (b.isGovFortress && gateIsOpen(b)) {
+            _g0 = b.x - GATE_DOOR_HALF; _g1 = b.x + GATE_DOOR_HALF;
           }
+          drawSlabFace(b, _leanTmp[0], _leanTmp[1], _sl[0], _sl[1], _sl[2], 110, _g0, _g1);
           push();
           translate(_leanTmp[0], _leanTmp[1]);
           _lgOpen = true;
+        }
+      } else {
+        const _lm = legacyMassOf(b);
+        if (_lm) {
+          const _lr = buildingRise(b);
+          massLean(b.x, b.y, _lr, _leanTmp);
+          if (_leanTmp[0] !== 0 || _leanTmp[1] !== 0) {
+            if (_lm !== true) {
+              drawMassSides(b.x - b.w / 2, b.y - b.h / 2, b.x + b.w / 2, b.y + b.h / 2,
+                            _leanTmp[0], _leanTmp[1], _lm[0], _lm[1], _lm[2], 24);
+            }
+            push();
+            translate(_leanTmp[0], _leanTmp[1]);
+            _lgOpen = true;
+          }
         }
       }
     }
@@ -8403,6 +8436,28 @@ function ragLimb(r, ox, oy, ang, bend, l1, l2, w1, w2, col, tip, tipSz) {
 // perpendicular to the ground -- so seen from directly above a bent knee shows
 // as a SHORTER shin, not a shin swung out sideways at full length. Drawing the
 // full length at an angle is exactly what makes a leg noodle.
+// The corpse's contour, on whatever target it is being drawn into.
+//
+// It has to be the SAME line the living figure carries. The swap between the
+// two happens in one frame in front of the player, and a body that loses its
+// outline as it falls reads as the art changing rather than as somebody dying
+// -- which is exactly how it looked: contoured figures standing over flat
+// silhouettes lying in the road.
+//
+// Two conversions, both easy to get wrong. The weight is divided by RAG_SCALE
+// because the whole body is drawn inside that scale and a stroke scales with
+// the transform, so the untouched 1.15 would land thinner than the living
+// figure's. And the alpha follows the corpse's own fade, or a body going out
+// leaves a wire drawing of itself behind.
+//
+// It also survives stampCorpse(): the stamp runs this same path with the blood
+// layer as its target, so the line is baked in with the body rather than
+// disappearing at the moment a corpse retires into the ground.
+function ragContour(r, a) {
+    r.stroke(22, 19, 24, (a === undefined ? 255 : a) * 0.66);
+    r.strokeWeight(1.15 / RAG_SCALE);
+}
+
 function ragShin(rig, bend) { return rig.shin * (0.58 + 0.42 * Math.cos(bend)); }
 
 // And it only ever closes TOWARD the body's axis: the hip is rolled out, the
@@ -8882,7 +8937,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       // UNDER rather than flung wide, which is the difference between landing
       // on your face and landing on your back.
       r.push(); r.translate(this.x, this.y); let a = 255, f = this.fP;
-      r.push(); r.rotate(this.mA); const RG = this.rag; if (RG) { r.rotate(RG.ang * 0.6); r.scale(RAG_SCALE); } r.noStroke();
+      r.push(); r.rotate(this.mA); const RG = this.rag; if (RG) { r.rotate(RG.ang * 0.6); r.scale(RAG_SCALE); } if (RG) ragContour(r, a); else r.noStroke();
       let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -25 : -10, lY2 = this.bW === 105 ? 15 : 2;
       r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a);
       const RP = ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW;
@@ -8895,11 +8950,15 @@ if (this.eT === "COW" || this.eT === "HORSE") {
           ragLimb(r, RP.shX, -RP.shY, -(HALF_PI + RG.limbs[0].a * 0.35 - 0.5), -1.2, RP.upper * 0.75, RP.fore * 0.82, RP.upperW * 0.92, RP.foreW * 0.92, this.sC, sK7, RP.hand * 0.94);
           ragLimb(r, RP.shX,  RP.shY,   HALF_PI + RG.limbs[1].a * 0.35 - 0.5,   1.2, RP.upper * 0.75, RP.fore * 0.82, RP.upperW * 0.92, RP.foreW * 0.92, this.sC, sK7, RP.hand * 0.94);
           // Torso over the top of them, and the pool spreading out from under.
-          r.fill(90, 0, 0, a * 0.85); r.ellipse(-4, 0, TL + 14 * f, TW * 1.5);
+          // The pool is on the FLOOR, so it takes no contour -- an outlined
+          // pool of blood reads as an object lying beside the body.
+          r.noStroke(); r.fill(90, 0, 0, a * 0.85); r.ellipse(-4, 0, TL + 14 * f, TW * 1.5);
+          ragContour(r, a);
           r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a);
           r.ellipse(0, 0, TL, TW); r.ellipse(TL * 0.30, 0, TL * 0.42, TW * 1.06);
           r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } }
           // Back of the head: no face, they are looking at the ground.
+          ragContour(r, a);
           r.fill(this.hairCol || color(52, 40, 30)); r.ellipse(TL * 0.5 + 5 + 4 * f, 0, 11, 11);
       } else {
           r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4);
@@ -8916,7 +8975,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.fill(sK); r.ellipse(0, -5, 11, 11); r.noStroke(); for (let d of this.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.pop(); 
   } 
   else { 
-      r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.aA); const RG = this.rag; if (RG) { r.rotate(RG.ang); r.scale(RAG_SCALE); } r.noStroke(); const RP = ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW; r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -10 : -10, lY2 = this.bW === 105 ? 15 : 2; r.push(); if (RG) { const bootC = color(this.pC.levels[0] * 0.55, this.pC.levels[1] * 0.55, this.pC.levels[2] * 0.55, a); ragLimb(r, RP.hipX, -RP.hipY, PI + RG.limbs[2].a, -ragKnee(RG.limbs[2]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[2])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot); ragLimb(r, RP.hipX,  RP.hipY, PI - RG.limbs[3].a,  ragKnee(RG.limbs[3]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[3])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot); } else { r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4); } if (this.dT === 2 || this.dT === 4) { r.fill(90, 0, 0, a); r.ellipse(lX, -4, 12, 16); } r.pop(); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); if (RG) { r.ellipse(0, 0, TL, TW); r.ellipse(TL * 0.30, 0, TL * 0.42, TW * 1.06); } else r.ellipse(0, 0, this.bW + 15 * f, this.bH); 
+      r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.aA); const RG = this.rag; if (RG) { r.rotate(RG.ang); r.scale(RAG_SCALE); } if (RG) ragContour(r, a); else r.noStroke(); const RP = ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW; r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -10 : -10, lY2 = this.bW === 105 ? 15 : 2; r.push(); if (RG) { const bootC = color(this.pC.levels[0] * 0.55, this.pC.levels[1] * 0.55, this.pC.levels[2] * 0.55, a); ragLimb(r, RP.hipX, -RP.hipY, PI + RG.limbs[2].a, -ragKnee(RG.limbs[2]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[2])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot); ragLimb(r, RP.hipX,  RP.hipY, PI - RG.limbs[3].a,  ragKnee(RG.limbs[3]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[3])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot); } else { r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4); } if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(lX, -4, 12, 16); } r.pop(); if (RG) ragContour(r, a); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); if (RG) { r.ellipse(0, 0, TL, TW); r.ellipse(TL * 0.30, 0, TL * 0.42, TW * 1.06); } else r.ellipse(0, 0, this.bW + 15 * f, this.bH);
       if (this.eT === "ARMORED_STANDARD") { r.fill(100); if (RG) r.rect(-TL * 0.26, -TW * 0.46, TL * 0.58, TW * 0.92, 4); else r.rect(-10, -12, 20, 24, 4); } 
       if (this.eT === "FEMALE_PISTOL") { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(4, -6, 12, 10); r.ellipse(4, 6, 12, 10); } 
       r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } } 
@@ -8924,10 +8983,12 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       // across the chest still passes in front of it.
       if (this.spray) { for (let sp of this.spray) { r.fill(96, 6, 6, sp.a * (a / 255)); r.ellipse(sp.x, sp.y, sp.r * 2, sp.r * 1.74); } } 
       let lAY = this.eT === "ARMORED" ? -30 : -14, rAY = this.eT === "ARMORED" ? 30 : 11, slX = lerp(-5, 0, f), hX = lerp(-12, 12, f), armLY = lerp(lAY, lAY + 3, f), rslX = lerp(15, 0, f), rhX = lerp(25, 12, f), armRY = lerp(rAY, rAY + 3, f); 
-      if (RG) { ragLimb(r,  RP.shX, -RP.shY, -(HALF_PI + RG.limbs[0].a), -RG.limbs[0].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand); ragLimb(r,  RP.shX,  RP.shY,   HALF_PI + RG.limbs[1].a,   RG.limbs[1].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand); } else { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(slX, armLY, 16, 8); r.fill(sK); r.ellipse(hX, armLY, 8, 8); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(rslX, armRY, 25, 8); r.fill(sK); r.ellipse(rhX, armRY, 8, 8); } 
+      // Decals and spray are stains and cleared the stroke; the arms are limbs
+      // and take it back, the same handover the living figure does.
+      if (RG) { ragContour(r, a); ragLimb(r,  RP.shX, -RP.shY, -(HALF_PI + RG.limbs[0].a), -RG.limbs[0].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand); ragLimb(r,  RP.shX,  RP.shY,   HALF_PI + RG.limbs[1].a,   RG.limbs[1].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand); } else { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(slX, armLY, 16, 8); r.fill(sK); r.ellipse(hX, armLY, 8, 8); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(rslX, armRY, 25, 8); r.fill(sK); r.ellipse(rhX, armRY, 8, 8); } 
       if (this.eT === "AERIAL" || this.eT === "AERIAL_PISTOL") { r.fill(80, a); r.rect(-18, -12, 12, 24, 3); } 
       if (this.eT !== "ARMORED" && this.eT !== "MOLOTOV" && this.eT !== "AERIAL") { r.push(); r.translate(20 - 10 * f, 8 + 15 * f); r.rotate(f * PI / 2); if (this.cW === WEAPONS.SMG || this.cW === WEAPONS.DUAL_SMG) { r.fill(40); r.rect(31, 12, 24, 8, 2); r.rect(35, 20, 6, 12); } else if (this.cW === WEAPONS.ASSAULT_RIFLE) { r.fill(40); r.rect(5, 4, 42, 4, 1); r.fill(139, 69, 19); r.rect(15, 3, 12, 6, 1); r.rect(0, 3, 8, 6, 1); } else if (this.cW === WEAPONS.SHOTGUN) { r.fill(30); r.rect(5, 4, 40, 5, 1); r.fill(15); r.rect(20, 3, 14, 7, 1); r.fill(50); r.rect(5, 3, 12, 7, 2); } else if (this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { r.fill(50, 70, 50); r.rect(5, 4, 45, 6, 2); r.fill(30); r.rect(20, 2, 10, 10, 1); } else { r.fill(40); r.rect(15, 5, 16, 6, 2); } r.pop(); if (this.cW === WEAPONS.DUAL_SMG) { r.push(); r.translate(20 - 10 * f, -14 - 15 * f); r.rotate(-f * PI / 2); r.fill(40); r.rect(15, -7, 24, 8, 2); r.rect(19, -19, 6, 12); r.pop(); } } else if (this.eType === "MOLOTOV") { r.push(); r.translate(20 - 10 * f, 8 + 15 * f); r.rotate(f * PI / 2); r.fill(30, 120, 30); r.rect(0, -8, 8, 16, 2); r.pop(); } else if (this.eType === "ARMORED") { r.push(); r.translate(30 - 10 * f, 25 + 15 * f); r.rotate(f * PI / 2); r.fill(30); r.rect(0, -10, 50, 20, 4); r.pop(); } 
-      if (this.dT === 2 || this.dT === 4) { r.fill(90, 0, 0, a); r.ellipse(0, 0, this.bW + 15 * f, 20); } r.translate((RG ? 18 : 20) * f, 0); if (this.dT === 4) { r.fill(90, 0, 0); r.ellipse(0, 0, 14, 14); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 1) { r.fill(sK); r.arc(0, 0, 11, 11, this.hA + PI / 4, this.hA + TWO_PI - PI / 4, PIE); r.fill(90, 0, 0); r.arc(0, 0, 8, 8, this.hA - PI / 4, this.hA + PI / 4, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } if (this.eT === "FEMALE_PISTOL") { r.fill(15, a); r.arc(0, 0, 12, 12, HALF_PI, PI + HALF_PI); r.ellipse(-11, 0, 12, 6); } } else if (this.dT === 6) { r.push(); r.rotate(this.hA); r.fill(90, 0, 0); r.ellipse(0, 0, 10, 10); let spread = min(this.sep * 0.4, 8); r.fill(sK); r.arc(0, -spread, 11, 11, PI, TWO_PI, CHORD); r.arc(0, spread, 11, 11, 0, PI, CHORD); r.pop(); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 8) { r.push(); r.rotate(this.hA); r.fill(sK); r.arc(0, 0, 11, 11, 0, PI + HALF_PI, PIE); r.fill(90, 0, 0); r.arc(0, 0, 11, 11, PI + HALF_PI, TWO_PI, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } r.pop(); } else if (this.dT === 9) { let nX = 10 + 5 * this.fP; r.fill(90, 0, 0); r.ellipse(nX, 0, 12, 12); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else { r.fill(sK); r.ellipse(0, 0, 11, 11); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } if (this.eT === "FEMALE_PISTOL") { r.fill(15, a); r.arc(0, 0, 12, 12, HALF_PI, PI + HALF_PI); r.ellipse(-11, 0, 12, 6); } } r.noStroke(); for (let d of this.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.pop(); } r.pop();
+      if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(0, 0, this.bW + 15 * f, 20); if (RG) ragContour(r, a); } r.translate((RG ? 18 : 20) * f, 0); if (this.dT === 4) { r.fill(90, 0, 0); r.ellipse(0, 0, 14, 14); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 1) { r.fill(sK); r.arc(0, 0, 11, 11, this.hA + PI / 4, this.hA + TWO_PI - PI / 4, PIE); r.fill(90, 0, 0); r.arc(0, 0, 8, 8, this.hA - PI / 4, this.hA + PI / 4, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } if (this.eT === "FEMALE_PISTOL") { r.fill(15, a); r.arc(0, 0, 12, 12, HALF_PI, PI + HALF_PI); r.ellipse(-11, 0, 12, 6); } } else if (this.dT === 6) { r.push(); r.rotate(this.hA); r.fill(90, 0, 0); r.ellipse(0, 0, 10, 10); let spread = min(this.sep * 0.4, 8); r.fill(sK); r.arc(0, -spread, 11, 11, PI, TWO_PI, CHORD); r.arc(0, spread, 11, 11, 0, PI, CHORD); r.pop(); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 8) { r.push(); r.rotate(this.hA); r.fill(sK); r.arc(0, 0, 11, 11, 0, PI + HALF_PI, PIE); r.fill(90, 0, 0); r.arc(0, 0, 11, 11, PI + HALF_PI, TWO_PI, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } r.pop(); } else if (this.dT === 9) { let nX = 10 + 5 * this.fP; r.fill(90, 0, 0); r.ellipse(nX, 0, 12, 12); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else { r.fill(sK); r.ellipse(0, 0, 11, 11); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } if (this.eT === "FEMALE_PISTOL") { r.fill(15, a); r.arc(0, 0, 12, 12, HALF_PI, PI + HALF_PI); r.ellipse(-11, 0, 12, 6); } } r.noStroke(); for (let d of this.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.pop(); } r.pop();
 }
 }
 
@@ -11745,6 +11806,17 @@ if (this.isPlayer) {
     }
 
     noStroke();
+    // The torso is drawn NARROWER than it collides. A person seen from directly
+    // above is much wider across the shoulders than they are deep front to back
+    // -- roughly 45cm by 25cm -- and at 21 x 27 the body ellipse is near enough
+    // a circle, which is the fat-oval read. Squashing the depth axis is one
+    // transform rather than twenty edits: every rect, arc and strap of attire
+    // below is positioned against bodyW and compresses with it, so a coat still
+    // fits the body it is on. The limbs are outside it and keep their own
+    // proportions, and bodyW/bodyH themselves are untouched -- collision, the
+    // corpse rig and the height field all still measure the same person.
+    const _tsq = this.bodyW < 40;
+    if (_tsq) { push(); scale(TORSO_DEPTH, 1); }
     if (this.hitFlash > 0) {
       this.hitFlash--;
       fill(255); ellipse(0, 0, this.bodyW, this.bodyH);
@@ -11873,6 +11945,7 @@ if (this.isPlayer) {
     if (this.isPlayer && ninjaSuitUnlocked) { fill(100, 0, 200); rect(-this.bodyW/2, -4, this.bodyW, 8, 2); } 
  
     noStroke(); for (let d of this.decals) { if (!d.isHead) { if (d.col) fill(d.col[0], d.col[1], d.col[2], d.col[3]); else fill(90, 0, 0, 220); ellipse(d.x, d.y, d.sz, d.sz); } }
+    if (_tsq) pop();
     // Blood decals are stains ON the shirt and take no contour; everything
     // after them -- sleeves, hands, boots, packs -- is a limb and does.
     if (BIOME_ACTIVE) figureContour();
@@ -13448,7 +13521,10 @@ class Citizen {
 
         // Body. Same volume treatment as everyone else -- a citizen standing
         // next to a soldier has to be lit by the same sun, and `rot` is what
-        // this pass is rotated by. See FIGURE VOLUME.
+        // this pass is rotated by. Squashed on the depth axis by the same
+        // TORSO_DEPTH, or a townsperson is visibly rounder than the soldier
+        // beside them. See FIGURE VOLUME.
+        push(); scale(TORSO_DEPTH, 1);
         if (BIOME_ACTIVE) {
             const _vl = figureLight(rot);
             volShadeCol(0, 0, this.bodyW, this.bodyH, this.shirtCol, 1, _vl[0], _vl[1]);
@@ -13483,9 +13559,11 @@ class Citizen {
             }
         }
 
+        pop();   // the torso squash ends here; a head is a head, not an oval
+
         // Head
-        fill(this.skinCol); 
-        ellipse(0, 0, 11, 11); 
+        fill(this.skinCol);
+        ellipse(0, 0, 11, 11);
 
         // Hair and Helmets
         if (this.role === "MILITARY" && hasArmor) {
@@ -21546,6 +21624,112 @@ function drawMassSides(x0, y0, x1, y1, lx, ly, cr, cg, cb, mullion) {
 }
 
 
+// --- slabs longer than the screen ------------------------------------------
+//
+// The Great Gates are 9600 units across and the curtain wall runs 10400 down
+// each flank. Neither can go through the ordinary path, and both were left out
+// of the first conversion for the same two reasons.
+//
+// **One lean will not do, and the record's own centre is the worst choice for
+// it.** massLean() is a function of POSITION and a wall that crosses the whole
+// view spans the range of it; worse, the centre of a 9600-unit gate is usually
+// off screen entirely, where the clamp hands back the same extreme lean
+// everywhere. What saves it is that the component which VARIES along a long
+// slab is the one pointing ALONG it -- and sliding a long band along its own
+// length changes nothing you can see. The component ACROSS it, the one that
+// opens up the visible face, is identical at every point, because every point
+// on the slab shares the across-axis coordinate. So the lean is taken at the
+// point of the slab nearest the middle of the screen: exact where the player is
+// looking, and invisible everywhere else.
+// `fx`/`fy` pin the anchor to a FEATURE on the slab instead. A gate's doorway
+// is the one place on a long wall where the along-axis component is visible --
+// it is what reveals the jamb and gives the passage its thickness -- so a gate
+// anchors on its door and lets the rest of the wall slide sideways, which is
+// precisely the displacement nobody can see.
+function longMassLean(b, rise, out, fx, fy) {
+  const cx = fx === undefined ? camX + width / zoom * 0.5 : fx;
+  const cy = fy === undefined ? camY + height / zoom * 0.5 : fy;
+  const ax = Math.max(b.x - b.w / 2, Math.min(cx, b.x + b.w / 2));
+  const ay = Math.max(b.y - b.h / 2, Math.min(cy, b.y + b.h / 2));
+  return massLean(ax, ay, rise, out);
+}
+
+// **And drawMassSides() is the wrong shape of answer.** It draws all four faces
+// off the record's rect, so clamping its span to the view would stand a fake
+// end-cap wherever the clamp fell. What a long wall actually shows is ONE face
+// -- the long one the lean turns toward the camera. Its two real ends are half
+// a kilometre away and hardly ever on screen.
+//
+// The clamp is not for the quad, which the rasteriser clips for free. It is for
+// the mullion loop, which over 9600 units would run four hundred times a frame
+// to paint the dozen lines the camera can see.
+//
+// `gap0`/`gap1` leave a hole along the long axis, and that is the other half of
+// why the Gates waited: an open gateway is a hole you walk through, and a face
+// painted across it puts a wall back in front of the road the objective has
+// just announced as open.
+function drawSlabFace(b, lx, ly, cr, cg, cb, mullion, gap0, gap1) {
+  const vert = b.h > b.w;                  // the long axis is y
+  if ((vert ? lx : ly) === 0) return;      // this face is edge-on; nothing to show
+  // A slab whose SHORT axis is off screen shows nothing, and inView() cannot
+  // reject it: the pad it uses is the record's longest side, so a gate a
+  // kilometre north of the camera still passes because its x span reaches it.
+  // Without this the mullion loop below runs the full visible width for a wall
+  // nobody can see -- which on Stick City is a second gate and two curtain
+  // walls, every frame, for nothing.
+  if (vert) { if (b.x + b.w / 2 < viewLeft - 220 || b.x - b.w / 2 > viewRight  + 220) return; }
+  else      { if (b.y + b.h / 2 < viewTop  - 220 || b.y - b.h / 2 > viewBottom + 220) return; }
+  const shade = (nx, ny) => {
+    const d = -(nx * LIGHT_DX + ny * LIGHT_DY);
+    const k = 0.34 + 0.46 * (d > 0 ? d : 0);
+    fill(cr * k + 5, cg * k + 6, cb * k + 10);
+  };
+  // The edge the face rises from is the near side, whichever way the top slid.
+  const edge = vert ? (lx > 0 ? b.x - b.w / 2 : b.x + b.w / 2)
+                    : (ly > 0 ? b.y - b.h / 2 : b.y + b.h / 2);
+  const span = (a0, a1) => {
+    if (a1 <= a0) return;
+    noStroke();
+    shade(vert ? (lx > 0 ? -1 : 1) : 0, vert ? 0 : (ly > 0 ? -1 : 1));
+    if (vert) quad(edge, a0, edge, a1, edge + lx, a1 + ly, edge + lx, a0 + ly);
+    else      quad(a0, edge, a1, edge, a1 + lx, edge + ly, a0 + lx, edge + ly);
+    if (mullion > 0) {
+      stroke(0, 0, 0, 42); strokeWeight(1);
+      for (let m = a0 + mullion; m < a1 - 2; m += mullion) {
+        if (vert) line(edge, m, edge + lx, m + ly);
+        else      line(m, edge, m + lx, edge + ly);
+      }
+      noStroke();
+    }
+  };
+  const lo = Math.max(vert ? b.y - b.h / 2 : b.x - b.w / 2,
+                      (vert ? viewTop : viewLeft) - 220);
+  const hi = Math.min(vert ? b.y + b.h / 2 : b.x + b.w / 2,
+                      (vert ? viewBottom : viewRight) + 220);
+  if (!(gap1 > gap0)) { span(lo, hi); return; }
+
+  span(lo, Math.min(hi, gap0));
+  span(Math.max(lo, gap1), hi);
+
+  // The jamb. Exactly ONE of the two shows: the top of the near jamb slides
+  // across the opening and reveals its own inward face, while at the far side
+  // the top slides off the opening and reveals nothing but the ground beyond.
+  // That single face is what gives a gateway thickness -- without it the gap
+  // reads as a slot cut in a sheet of paper rather than a way through a wall.
+  if (!vert && lx !== 0) {
+    const jx = lx > 0 ? gap0 : gap1;
+    const y0 = b.y - b.h / 2, y1 = b.y + b.h / 2;
+    noStroke();
+    shade(lx > 0 ? 1 : -1, 0);
+    quad(jx, y0, jx, y1, jx + lx, y1 + ly, jx + lx, y0 + ly);
+  }
+}
+
+// Side colours for the two NM-0 slabs, same convention as LEGACY_MASS: the
+// branch's own dominant fill, pulled toward the ground.
+const GATE_SIDE = [46, 52, 58];     // isGovFortress -- black concrete
+const WALL_SIDE = [70, 75, 80];     // isGiantBarrier -- the panelled curtain
+
 // ###########################################################################
 //  FIGURE VOLUME
 //  Turning a flat top-down blob into a lit mass.
@@ -21571,6 +21755,21 @@ function drawMassSides(x0, y0, x1, y1, lx, ly, cr, cg, cb, mullion) {
 //  a figure is drawn inside its own facing, and the light has to be brought
 //  into that frame or it turns with the model.
 // ###########################################################################
+
+// How deep a torso is drawn, as a fraction of how deep it collides.
+//
+// bodyW is the front-to-back axis and bodyH is across the shoulders, so a
+// standard figure is 21 deep by 27 wide -- near enough a circle, and a circle
+// from above is the flat oval blob. A real person is about 45cm across the
+// shoulders by 25cm deep. This does not go all the way to that 0.55, because a
+// figure this small still has to read as a body rather than as a plank, but it
+// is enough to put the shoulders back in charge of the silhouette.
+//
+// It is a transform on the DRAWN torso only. bodyW/bodyH are untouched, so
+// collision, the corpse rig, the contact shadow and the deferred rig's height
+// field all still measure the same person -- and every piece of attire, which
+// is positioned against bodyW, compresses along with the body it is worn on.
+const TORSO_DEPTH = 0.84;
 
 // How far the highlight rides off centre, as a fraction of the blob's radius.
 const VOL_CAP    = 0.30;

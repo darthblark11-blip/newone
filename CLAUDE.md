@@ -710,6 +710,17 @@ in this order:
 All three offset along the light, so a figure is lit from the same place as every wall
 and roof — but see below: it has to be the light **in the figure's own frame**.
 
+**A torso is drawn narrower than it collides.** `bodyW` is the front-to-back axis and
+`bodyH` is across the shoulders, so a standard figure is 21 deep by 27 wide — near enough
+a circle, and a circle from above is the flat oval blob. A real person is about 45cm
+across by 25cm deep. `TORSO_DEPTH` (0.84) squashes the drawn depth and stops short of the
+true 0.55, because a figure this small still has to read as a body rather than a plank.
+It is one transform rather than twenty edits: every rect, arc and strap of attire is
+positioned against `bodyW` and compresses with it, so a coat still fits the body it is
+on. The limbs sit outside it and keep their own proportions, and `bodyW`/`bodyH`
+themselves are untouched — collision, the corpse rig, the contact shadow and the rig's
+height field all still measure the same person.
+
 **The sun has to be counter-rotated in, or it turns with the model.** Every body in this
 file is drawn inside `rotate(aimAngle)`, and `rotate()` carries `LIGHT_DX/DY` round with
 it — the same trap the prop shadows have. Written in world space the highlight sat on a
@@ -781,12 +792,41 @@ away from the body, worst at rest where the reach is near zero and the direction
 whatever `atan2` makes of it. `check-character.js` measures the drawn tip against the
 drawn hand through the transform, so it catches this without re-deriving the arithmetic.
 
-**Still flat, and the next thing to convert:** the per-flag branches in `drawBuildings()`
-— `isHouse`, `isBarn`, `isWesternBldg`, `isGiantBarrier`, `isShanty` and the rest. They
-are reachable the same way, but each needs its rise and its side colour chosen against
-its own art, so they want doing a cluster at a time with something rendered to look at.
+**Slabs longer than the screen — the Great Gates and the curtain wall.** These are the
+two structures the first conversion left out, and both were left out for reasons that
+are still true; they take a separate path (`longMassLean`, `drawSlabFace`) rather than a
+`LEGACY_MASS` entry.
 
-Three things about it are load-bearing:
+- **One lean will not do, and the record's own centre is the worst possible choice for
+  it.** `massLean()` is a function of *position* and a wall crossing the whole view spans
+  the range of it — worse, the middle of a 9600-unit gate is usually off screen, where
+  the clamp hands back the same extreme lean everywhere. What rescues it: the component
+  that *varies* along a long slab is the one pointing **along** it, and sliding a long
+  band along its own length changes nothing you can see. The component **across** it — the
+  one that opens the visible face — is identical at every point, because every point
+  shares the across-axis coordinate. So the lean is taken at the point of the slab nearest
+  the middle of the screen: exact where the player is looking, invisible everywhere else.
+- **A gate anchors on its doorway instead.** The door is the one place on a long wall
+  where the along-axis component *is* visible — it is what reveals the jamb and gives the
+  passage thickness — so the gate pins its anchor there and lets the rest of the wall
+  slide sideways.
+- **`drawMassSides()` is the wrong shape of answer.** It draws all four faces off the
+  record's rect, so clamping its span to the view stands a fake end-cap wherever the clamp
+  falls. A long wall shows **one** face; its two real ends are half a kilometre away. The
+  clamp is not for the quad — the rasteriser clips that for free — it is for the mullion
+  loop, which unclamped runs the full length of every slab every frame. A slab whose short
+  axis is off screen returns immediately, because `inView()` cannot reject it: the pad it
+  uses is the record's longest side, so a gate a kilometre north still passes.
+- **A breached gate must have a hole left in its face.** An open gateway is something you
+  walk through, and a face painted across it puts a wall back in front of the road the
+  objective has just announced as open. `drawSlabFace` takes a gap and draws exactly one
+  jamb — the near one, whose top slides across the opening and reveals its own inward
+  face; at the far side the top slides *off* the opening and reveals nothing but ground.
+
+`isUBarrier` stays out on purpose (an energy field has no mass) and so does
+`isBlockBuilding`, which already carries its own rise.
+
+Three things about the projection are load-bearing:
 
 1. **It is not the light vector.** The walls used to extrude along `LIGHT_DX/DY`, so
    every building in the city leaned the same way its own shadow fell and the two merged
@@ -1592,6 +1632,19 @@ stays between 4% and 30% of legs.
 transform. Every proportion above survives it — a smaller person, not a differently shaped
 one. It puts a body at about 2.2× the standing body length, or ~1.5× the standing figure's
 drawn extent.
+
+**A corpse carries the same contour the living figure does.** `ragContour(r, a)` — the
+swap between the two happens in one frame, in front of the player, and a body that loses
+its outline as it falls reads as the art changing rather than as somebody dying, which
+is exactly how it looked: stroked figures standing over flat silhouettes lying in the
+road. Two conversions, both easy to get wrong. The weight is divided by `RAG_SCALE`,
+because the body is drawn inside that scale and a stroke scales with the transform. And
+the alpha follows the corpse's own fade, or a body going out leaves a wire drawing of
+itself behind. Blood takes no contour and clears it — an outlined pool reads as an object
+lying beside the body rather than a stain under it — and the part drawn after each pool
+turns it back on, the same handover `volShade()` does for the living figure. It also
+survives `stampCorpse()`, which runs the same path with the blood layer as its target, so
+the line is baked in with the body instead of vanishing the moment a corpse retires.
 
 ### What a headshot leaves on the body
 
