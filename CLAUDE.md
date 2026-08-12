@@ -691,6 +691,33 @@ inside its own box) came out as a rectangular slab standing behind a rock. Decks
 (`BRIDGE`, `CANALBRIDGE`, `BOARDWALK`) are deliberately absent: a surface you stand on
 with walls round it reads as a crate lying in the river.
 
+### Figure volume
+
+A figure gets its third dimension from **shading**, never from the projection.
+`volShade(x, y, w, h, r, g, b, k)` is the one function, and it draws three terms in this
+order:
+
+1. a **contour**, applied as the fill's own stroke so it hugs the silhouette exactly.
+   This is the single biggest read — a stroked silhouette is why a figure sits in a scene
+   instead of floating over it;
+2. a **terminator**, one weak crescent on the far side. Strong, it reads as a stain lying
+   on the shirt rather than as the surface turning;
+3. the **lit side**, as `VOL_STEPS` nested ellipses each pushed a little further against
+   the sun at low alpha. A single inset highlight is a second disc sitting on the first
+   and the join between them is a visible ring; four shrinking ones accumulate into a
+   gradient, which is the only way a flat-fill renderer gets one.
+
+All three offset along `LIGHT_DX/DY`, so a figure is lit from the same place as every
+wall and roof.
+
+**The contour is canvas STATE, not a per-part call.** A person is a couple of dozen
+ellipses — sleeves, hands, boots, packs, hats — spread over a dozen pose branches, and
+stroking each at its own call site means touching every branch and missing the next one
+somebody adds. `figureContour()` is set once before the body goes down and `volShade()`
+hands it back on the way out, so everything drawn after inherits it. The two places that
+must switch it back on explicitly are the ones that legitimately clear it: the blood
+decals (stains take no contour) and the `limb()` rig, which runs before the torso.
+
 **Figures are deliberately NOT leaned, and the attempt is worth remembering.** A riser
 capsule swept from the feet to a leaned body was built, rendered, shipped and reverted on
 sight: parallax sells height as a **ratio** of displacement to size, and a figure a

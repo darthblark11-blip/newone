@@ -11585,6 +11585,7 @@ if (this.isPlayer) {
                 const hx = sw * 14, hy = sy + sw * 1.5 + rest * 0.5;
                 const d = Math.max(0.001, Math.hypot(hx, hy - sy));
                 push(); translate(0, sy); rotate(atan2(hy - sy, hx));
+                if (BIOME_ACTIVE) figureContour();
                 fill(this.shirtCol);
                 ellipse(d * 0.34, 0, Math.max(13, d * 0.80), 8.6);   // upper arm
                 ellipse(d * 0.74, 0, Math.max(9, d * 0.56), 7.2);    // forearm
@@ -11644,8 +11645,18 @@ if (this.isPlayer) {
     }
 
     noStroke();
-    if (this.hitFlash > 0) { this.hitFlash--; fill(255); } else { fill(this.shirtCol); }
-    ellipse(0, 0, this.bodyW, this.bodyH);
+    if (this.hitFlash > 0) {
+      this.hitFlash--;
+      fill(255); ellipse(0, 0, this.bodyW, this.bodyH);
+      if (BIOME_ACTIVE) figureContour();
+    } else if (BIOME_ACTIVE) {
+      // A shoulder, not a disc. See FIGURE VOLUME. volShade() leaves the
+      // contour set, so every sleeve, hand and boot drawn after this inherits
+      // it without its own call site knowing.
+      volShadeCol(0, 0, this.bodyW, this.bodyH, this.shirtCol, 1);
+    } else {
+      fill(this.shirtCol); ellipse(0, 0, this.bodyW, this.bodyH);
+    }
 
     // Male Farmer Overalls
     if (this.eType === "FARMER_MALE") {
@@ -11760,6 +11771,9 @@ if (this.isPlayer) {
     if (this.isPlayer && ninjaSuitUnlocked) { fill(100, 0, 200); rect(-this.bodyW/2, -4, this.bodyW, 8, 2); } 
  
     noStroke(); for (let d of this.decals) { if (!d.isHead) { if (d.col) fill(d.col[0], d.col[1], d.col[2], d.col[3]); else fill(90, 0, 0, 220); ellipse(d.x, d.y, d.sz, d.sz); } }
+    // Blood decals are stains ON the shirt and take no contour; everything
+    // after them -- sleeves, hands, boots, packs -- is a limb and does.
+    if (BIOME_ACTIVE) figureContour();
     
     let lAY = this.eType === "ARMORED" ? -30 : -14, rAY = this.eType === "ARMORED" ? 30 : 11;
     let a = 255; let f = this.fP || 0; let sK = this.isCharred ? color(50, 40, 40, a) : color(235, 180, 140, a);
@@ -12121,6 +12135,24 @@ if (this.isPlayer) {
         fill(235, 180, 140); ellipse(hX, hY, 11, 11); 
     }
 
+
+    // The head is a dome, whichever of the twenty variants above drew it --
+    // bare, helmeted, hatted or haired. Rather than shade each one, the volume
+    // goes on top as a contour and a lit cap sampled from what is already
+    // there: one call, and a helmet rounds off exactly like a scalp.
+    if (BIOME_ACTIVE) {
+      noFill();
+      stroke(20, 18, 22, 130); strokeWeight(1.1);
+      ellipse(hX, hY, 11.8, 11.8);
+      noStroke();
+      fill(0, 0, 0, 34);
+      ellipse(hX + LIGHT_DX * 2.2, hY + LIGHT_DY * 2.2, 9.6, 9.6);
+      for (let i = 1; i <= 3; i++) {
+        const t = i / 3;
+        fill(255, 252, 244, 34);
+        ellipse(hX - LIGHT_DX * 3.0 * t, hY - LIGHT_DY * 3.0 * t, 9 * (1 - t * 0.5), 9 * (1 - t * 0.5));
+      }
+    }
 
     if ((this.eType === "ARMORED" && this.hp > 300) || (this.eType === "ARMORED_STANDARD" && this.hp > 50)) { fill(20); push(); translate(hX, hY); rotate(HALF_PI); arc(0, 0, 15, 15, 0, PI, CHORD); pop(); } 
     noStroke(); for (let d of this.decals) { if (d.isHead) { if (d.col) fill(d.col[0], d.col[1], d.col[2], d.col[3]); else fill(90, 0, 0, 220); ellipse(d.x + hX, d.y + hY, d.sz, d.sz); } }
@@ -13297,6 +13329,7 @@ class Citizen {
         if (lArmSwing <= 0.2) ellipse(lHandX, armLY, 8, 8);
         if (rArmSwing <= 0.2) ellipse(rHandX, armRY, 8, 8);
         // Sleeves
+        if (BIOME_ACTIVE) figureContour();
         fill(this.shirtCol); 
         ellipse(lShoulderX, armLY, 16, 9);
         ellipse(rShoulderX, armRY, 16, 9);
@@ -13311,8 +13344,10 @@ class Citizen {
             pop();
         }
 
-        // Body
-        ellipse(0, 0, this.bodyW, this.bodyH); 
+        // Body. Same volume treatment as everyone else -- a citizen standing
+        // next to a soldier has to be lit by the same sun. See FIGURE VOLUME.
+        if (BIOME_ACTIVE) volShadeCol(0, 0, this.bodyW, this.bodyH, this.shirtCol, 1);
+        else ellipse(0, 0, this.bodyW, this.bodyH);
 
         
         // Farmer Male Overalls
@@ -21402,6 +21437,94 @@ function drawMassSides(x0, y0, x1, y1, lx, ly, cr, cg, cb, mullion) {
     }
     noStroke();
   }
+}
+
+
+// ###########################################################################
+//  FIGURE VOLUME
+//  Turning a flat top-down blob into a lit mass.
+//
+//  Everything on a figure -- torso, head, helmet, shoulder -- is an ellipse
+//  seen from directly above, and an ellipse with one flat fill is a DISC. The
+//  mass projection cannot help here: parallax sells height as a ratio of
+//  displacement to size, and at twenty pixels across there is no ratio to sell
+//  (that was the riser, and it read as a blob glued to the model).
+//
+//  What does survive at this size is shading, and only three terms of it:
+//
+//    1. a CONTOUR, so the figure separates from whatever is behind it. This is
+//       the single biggest read -- a stroked silhouette is why a hand-drawn
+//       character sits in a scene and an unstroked one floats over it;
+//    2. a LIT CAP, an inset ellipse pushed toward the sun. On a sphere the
+//       highlight is not centred, and putting it off-centre is the whole
+//       difference between a ball and a circle;
+//    3. a TERMINATOR, the crescent of shade where the surface turns away.
+//
+//  All three are offset along LIGHT_DX/DY, so every figure in the world is lit
+//  from the same place as every wall and every roof.
+// ###########################################################################
+
+// How far the highlight rides off centre, as a fraction of the blob's radius.
+const VOL_CAP    = 0.30;
+// Contour weight relative to the blob's smaller axis, and its floor/ceiling.
+const VOL_LINE   = 0.085;
+// Steps in the lit gradient. Four is the fewest that shows no banding.
+const VOL_STEPS  = 4;
+
+// One rounded mass. `k` scales the whole effect: 1 for a torso, less for the
+// little parts where a full contour would swallow them.
+function volShade(x, y, w, h, cr, cg, cb, k) {
+  k = k === undefined ? 1 : k;
+  const lw = Math.max(0.9, Math.min(2.4, Math.min(w, h) * VOL_LINE)) * k;
+
+  // 1. Contour. Drawn as the fill's own stroke so it hugs the silhouette
+  //    exactly -- a separate ring would show seams where the two disagree.
+  stroke(cr * 0.26, cg * 0.26, cb * 0.30, 205);
+  strokeWeight(lw);
+  fill(cr, cg, cb);
+  ellipse(x, y, w, h);
+  noStroke();
+
+  // 2. Terminator: one soft crescent on the far side, kept weak. A strong one
+  //    reads as a stain lying on the shirt rather than as the surface turning.
+  fill(cr * 0.70, cg * 0.70, cb * 0.74, 96);
+  ellipse(x + LIGHT_DX * w * 0.19 * k, y + LIGHT_DY * h * 0.19 * k, w * 0.93, h * 0.93);
+
+  // 3. The lit side, as NESTED STEPS rather than one cap.
+  //
+  //    A single inset highlight is a second disc sitting on the first, and at
+  //    this size the join between them is a visible ring. Four shrinking
+  //    ellipses, each pushed a little further against the sun at a low alpha,
+  //    accumulate into something with no edge in it -- a gradient, drawn with
+  //    the only tool a flat-fill renderer has.
+  for (let i = 1; i <= VOL_STEPS; i++) {
+    const t = i / VOL_STEPS;
+    const sz = 1 - t * 0.58;
+    const off = t * VOL_CAP;
+    fill(cr + (255 - cr) * t * 0.30, cg + (255 - cg) * t * 0.30,
+         cb + (255 - cb) * t * 0.26, 64);
+    ellipse(x - LIGHT_DX * w * off * k, y - LIGHT_DY * h * off * k, w * sz, h * sz);
+  }
+  // Hand the contour back to whatever draws next -- see figureContour().
+  figureContour();
+}
+
+// The same, taking a p5 colour.
+function volShadeCol(x, y, w, h, c, k) {
+  volShade(x, y, w, h, red(c), green(c), blue(c), k);
+}
+
+// The figure's contour, set as canvas STATE rather than drawn per part.
+//
+// A person is a couple of dozen ellipses -- sleeves, hands, boots, packs, hats
+// -- scattered over a dozen pose branches, and stroking each one at its own
+// call site would mean touching every branch and missing the next one somebody
+// adds. Set once before the body goes down, every ellipse drawn after it
+// inherits a contour, and the silhouette closes for free. That is the single
+// biggest thing separating a figure from the ground it stands on.
+function figureContour() {
+  stroke(22, 19, 24, 168);
+  strokeWeight(1.15);
 }
 
 // Shadow colour. Never pure black: outdoor shade is lit by the sky above it,

@@ -366,6 +366,27 @@ ok('drawBuildings() stays balanced across the frontier',
    'net ' + probe('__depth') + ' over ' + probe('activeBuildings.length') + ' solids, ' +
    probe('__flags3') + ' distinct flags');
 
+console.log('\n== figures get volume from shading, not from displacement ==');
+// The projection cannot help at figure scale, so the three terms that DO
+// survive twenty pixels are used instead: a contour, a lit cap and a
+// terminator, all offset along the scene's one light vector.
+ok('volShade() exists and is driven by the light vector',
+   /function volShade\(/.test(src) &&
+   /LIGHT_DX \* w \* off \* k/.test(src) && /LIGHT_DX \* w \* 0\.19/.test(src));
+ok('the lit side is stepped, not a single inset cap',
+   /for \(let i = 1; i <= VOL_STEPS; i\+\+\)/.test(src) && /const VOL_STEPS/.test(src));
+ok('the contour is canvas STATE, so parts added later inherit it',
+   /function figureContour\(\)/.test(src) &&
+   /volShade[\s\S]{0,2400}?figureContour\(\);\n}/.test(src));
+const contourSites = (src.match(/figureContour\(\)/g) || []).length;
+ok('and it is switched on for the torso, the limbs and the citizens',
+   contourSites >= 5, contourSites + ' call sites');
+ok('the player, the enemies and the citizens all use the same helper',
+   (src.match(/volShadeCol\(0, 0, this\.bodyW, this\.bodyH/g) || []).length === 2);
+ok('none of it runs outside a biome, so Levels 0 and 8 are untouched',
+   /if \(BIOME_ACTIVE\) volShadeCol/.test(src) &&
+   /\} else if \(BIOME_ACTIVE\) \{[\s\S]{0,300}?volShadeCol/.test(src));
+
 console.log('\n== drawBiomeProps() leaves the transform balanced ==');
 // The lean wraps the whole switch, so a case that returned or continued would
 // strand a push(). Run every prop type the two sectors can produce.
