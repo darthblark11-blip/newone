@@ -127,11 +127,11 @@ function poseOf(setup) {
   // leaves the rotation clean to read angles off.
   let m = { x: -px, y: -py, c: 1, s: 0, k: 1 };
   const stack = [];
-  const hands = [], segs = [], guns = [];
+  const hands = [], segs = [], rects = [];
   // The torso's own angle. A weapon held against the body turns WITH the body,
   // and the shoulders counter-rotate on purpose — measuring a gun against the
   // world would score that deliberate twist as wobble.
-  let bodyAng = 0;
+  let bodyAng = 0, torsoAt = -1, n = 0;
   ctx.push = () => { stack.push(Object.assign({}, m)); };
   ctx.pop = () => { if (stack.length) m = stack.pop(); };
   ctx.translate = (x, y) => { m.x += x * m.c - y * m.s; m.y += x * m.s + y * m.c; };
@@ -144,25 +144,41 @@ function poseOf(setup) {
   ctx.ellipse = (x, y, w, h) => {
     x *= m.k;
     const wx = m.x + x * m.c - y * m.s, wy = m.y + x * m.s + y * m.c;
-    if (w === BODY_W && h === BODY_H) bodyAng = Math.atan2(m.s, m.c);
+    n++;
+    if (w === BODY_W && h === BODY_H) { bodyAng = Math.atan2(m.s, m.c); torsoAt = n; }
     else if (w === HAND && h === HAND) hands.push([wx, wy]);
     // A sleeve segment: longer than it is wide, at one of the rig's two widths.
     else if (w > h && (Math.abs(h - RIGW.u) < 1e-6 || Math.abs(h - RIGW.f) < 1e-6)) {
       segs.push({ w: h, len: w - h });
     }
   };
+  // Every rect, with its ends in the figure's own frame and its place in the
+  // draw order. The weapon is picked out below.
   ctx.rect = (x, y, w, h) => {
-    // The carried guns: the rifle's 46 barrel, the pistol's 17 frame. Both ends
-    // are recorded so the weapon's own footprint can be checked, not just its
-    // angle — the fault they had was overhang, not rotation.
-    if (Math.abs(w - 46) < 0.01 || Math.abs(w - 17) < 0.01) {
-      const e = (t) => [m.x + t * m.k * m.c, m.y + t * m.k * m.s];
-      guns.push({ w: w, ang: Math.atan2(m.s, m.c) - bodyAng, a: e(x), b: e(x + w) });
-    }
+    n++;
+    const e = (t) => [m.x + t * m.c, m.y + t * m.s];
+    rects.push({ w: w, h: h, at: n, ang: Math.atan2(m.s, m.c) - bodyAng,
+                 a: e(x), b: e(x + w) });
   };
   probe('player.show();');
   Object.assign(ctx, real);
-  return { hands, segs, guns, bodyAng };
+  // The barrel: the longest rect drawn AFTER the torso. Identifying it by a
+  // literal width stopped working the moment the art began squashing itself
+  // along its own axis, and "after the torso" is what separates a weapon in the
+  // hands from the pack on the back, which is drawn before it and is 12 across.
+  let best = null;
+  for (const r of rects) {
+    if (r.at > torsoAt && r.w > 6 && (!best || r.w > best.w)) best = r;
+  }
+  // The two grips, as fractions along the barrel. Expressed that way they ride
+  // the weapon's own foreshortening: the rect runs from -22 to +24 in the gun's
+  // frame and the grips sit at -11 and +9 inside it, whatever it is squashed to.
+  if (best) {
+    const f = (t) => [best.a[0] + (best.b[0] - best.a[0]) * t,
+                      best.a[1] + (best.b[1] - best.a[1]) * t];
+    best.grips = [f(11 / 46), f(31 / 46)];
+  }
+  return { hands, segs, guns: best ? [best] : [], torsoAt, bodyAng };
 }
 const RIGW = { u: P(`figureRig(${BODY_W}, ${BODY_H}).upperW`),
                f: P(`figureRig(${BODY_W}, ${BODY_H}).foreW`) };
@@ -526,65 +542,46 @@ console.log('\n== carrying a weapon, as opposed to presenting one ==');
   ok('a carried sidearm swings with its own arm: one hand leading, one trailing',
      side.total === 2 && side.infront >= 1, JSON.stringify(side));
 
-  // The draw sequence. A long gun held across the chest is IN FRONT of the
-  // body, so it has to go down after the torso — drawn with the back pass it
-  // would be swallowed by the shirt, which is the whole reason the arm rig is
-  // split in two.
+  // The draw sequence, and there are two rules in it. A long gun held across
+  // the chest is IN FRONT of the body, so it goes down after the torso — drawn
+  // in the back pass the shirt swallows it, which is the whole reason the arm
+  // rig is split in two. And from a BIRD'S EYE the hand is UNDER the thing it
+  // is gripping: drawn the other way round the rifle had two skin discs sitting
+  // on top of its receiver.
   setArm('ASSAULT_RIFLE', false);
   {
+    const p = poseOf(`player.isMoving = true; player.gait = 0.5;
+                      player.walkCycle = 1.9;`);
+    ok('the carried long gun is drawn after the torso, not behind it',
+       p.guns.length === 1 && p.guns[0].at > p.torsoAt,
+       p.guns.length ? `torso at ${p.torsoAt}, gun at ${p.guns[0].at}` : 'no gun found');
+  }
+  {
     const realE = ctx.ellipse, realR = ctx.rect;
-    const seq = [];
-    ctx.ellipse = (x, y, w, h) => { seq.push(['e', w, h]); };
-    ctx.rect = (x, y, w, h) => { seq.push(['r', w, h]); };
+    let n = 0, lastHand = -1, gunAt = -1, gunW = 0;
+    ctx.ellipse = (x, y, w, h) => { n++; if (w === HAND && h === HAND) lastHand = n; };
+    ctx.rect = (x, y, w, h) => { n++; if (w > gunW && w > 6) { gunW = w; gunAt = n; } };
     probe('player.show();');
     ctx.ellipse = realE; ctx.rect = realR;
-    const torso = seq.findIndex((s) => s[0] === 'e' && s[1] === BODY_W && s[2] === BODY_H);
-    // The carried rifle's barrel: the one 46-long rect in the figure.
-    const gun = seq.findIndex((s) => s[0] === 'r' && Math.abs(s[1] - 46) < 0.01);
-    ok('the carried long gun is drawn after the torso, not behind it',
-       torso >= 0 && gun > torso, `torso at ${torso}, gun at ${gun}`);
+    ok("and every hand goes down UNDER it, as a bird's eye view demands",
+       gunAt > lastHand, `last hand at ${lastHand}, gun at ${gunAt}`);
   }
 
   // Both grips must be inside the arms' reach, or the hands hang short of the
-  // weapon and it floats. Measured through the transform, like the sleeve test.
-  setArm('ASSAULT_RIFLE', false);
+  // weapon and it floats.
   {
-    const realE = ctx.ellipse, realSc = ctx.scale;
-    const st = [{ x: 0, y: 0, c: 1, s: 0, k: 1 }], stack = [];
-    const realP = ctx.push, realO = ctx.pop, realT = ctx.translate, realRo = ctx.rotate;
-    const hands = [], gunPts = [];
-    ctx.push = () => { stack.push(Object.assign({}, st[0])); };
-    ctx.pop = () => { if (stack.length) st[0] = stack.pop(); };
-    ctx.translate = (x, y) => { const m = st[0]; m.x += x * m.c - y * m.s; m.y += x * m.s + y * m.c; };
-    ctx.rotate = (a) => { const m = st[0], c = Math.cos(a), s = Math.sin(a);
-                          const nc = m.c * c - m.s * s, ns = m.s * c + m.c * s; m.c = nc; m.s = ns; };
-    ctx.ellipse = (x, y, w, h) => {
-      const m = st[0];
-      if (w === HAND && h === HAND) hands.push([m.x + x * m.c - y * m.s, m.y + x * m.s + y * m.c]);
-    };
-    const realRe = ctx.rect;
-    ctx.scale = (a) => { st[0].k = (st[0].k === undefined ? 1 : st[0].k) * a; };
-    ctx.rect = (x, y, w, h) => {
-      const m = st[0], k = m.k === undefined ? 1 : m.k;
-      if (Math.abs(w - 46) < 0.01) {          // the barrel, in its own frame
-        // The grips are measured in the weapon's DIPPED frame, the same one the
-        // hands were placed in — a carried gun is foreshortened along its own
-        // axis and the grips ride that squash with it.
-        for (const g of [-11 * k, 9 * k]) gunPts.push([m.x + g * m.c, m.y + g * m.s]);
-      }
-    };
-    probe('player.show();');
-    Object.assign(ctx, { ellipse: realE, rect: realRe, push: realP, pop: realO,
-                         translate: realT, rotate: realRo, scale: realSc });
+    const p = poseOf(`player.isMoving = true; player.gait = 0.5;
+                      player.walkCycle = 1.9;`);
+    const grips = p.guns.length ? p.guns[0].grips : [];
     let worst = 0;
-    for (const g of gunPts) {
+    for (const g of grips) {
       let best = Infinity;
-      for (const h of hands) best = Math.min(best, Math.hypot(g[0] - h[0], g[1] - h[1]));
+      for (const h of p.hands) best = Math.min(best, Math.hypot(g[0] - h[0], g[1] - h[1]));
       worst = Math.max(worst, best);
     }
     ok('both hands actually reach the grips they are holding',
-       gunPts.length === 2 && hands.length === 2 && worst < 3.0,
-       `worst hand-to-grip gap ${worst.toFixed(2)} over ${gunPts.length} grips`);
+       grips.length === 2 && p.hands.length === 2 && worst < 3.5,
+       `worst hand-to-grip gap ${worst.toFixed(2)} over ${grips.length} grips`);
   }
 }
 

@@ -11655,18 +11655,25 @@ if (this.isPlayer) {
           const bootC = [red(this.pantsCol) * 0.55, green(this.pantsCol) * 0.55,
                          blue(this.pantsCol) * 0.55];
           if (BIOME_ACTIVE) figureContour();
+          // THE LEG HAS TO NARROW ALL THE WAY DOWN, or it is a sausage.
+          //
+          // Drawn with a full round cap at each joint the thigh, the shin and
+          // the boot all came out at about the same width and overlapped into
+          // one uniform lozenge -- no knee, no ankle, and a 9.6-wide dome at
+          // the hip that on the trailing leg of a stride is a balloon hanging
+          // off the back of the figure. That is the wide rear end.
+          //
+          // Fixed by the two things the arm already does: a real taper (hip
+          // 9.6, knee 7.4, ankle 5.9) and a trimmed cap at the top, where the
+          // pelvis is under the torso anyway and nothing needs rounding off.
+          const wHip = RGl.thighW, wKnee = RGl.shinW, wAnkle = RGl.shinW * 0.80;
           for (const sgn of [1, -1]) {
             // Hips either side of the axis at the spacing the old pair of rects
-            // used -- wide enough that two 9.6 thighs do not merge at the
-            // midline, which is the other half of reading as two legs. The
-            // whole leg is shifted forward by half a thigh so the hip's round
-            // cap lands ON the hip: unshifted, ragLimb's form hangs half a
-            // thigh-width off the back of the pelvis, and on the trailing leg
-            // of a stride that is five more units of dark lozenge sticking out
-            // behind a figure that already has a shadow back there.
+            // used -- wide enough that the two thighs do not merge at the
+            // midline, which is the other half of reading as two legs.
             const sx = -10 + lS * sgn + RGl.thighW * 0.5, cy = sgn * -6;
-            ellipse(sx + th * 0.5, cy, th + RGl.thighW, RGl.thighW);
-            ellipse(sx + th + sh * 0.5, cy, sh + RGl.shinW, RGl.shinW);
+            ellipse(sx + th * 0.5, cy, th + wHip * 0.55, wHip);
+            ellipse(sx + th * 0.92 + sh * 0.5, cy, sh + wKnee * 0.80, wKnee);
             fill(bootC[0], bootC[1], bootC[2]);
             // The boot takes the rig's length UNFORESHORTENED, because a foot
             // is the one part of a standing body that lies flat to this camera
@@ -11675,7 +11682,7 @@ if (this.isPlayer) {
             // sits past the ankle rather than centred on it, for the reason
             // ragLimb gives: a circle on the joint buries half of itself in the
             // shin and adds only its radius to the leg.
-            ellipse(sx + th + sh + RGl.foot * 0.30, cy, RGl.foot, RGl.foot * 0.86);
+            ellipse(sx + th * 0.92 + sh + RGl.foot * 0.34, cy, RGl.foot, wAnkle);
             fill(this.pantsCol);
           }
           noStroke();
@@ -11724,7 +11731,11 @@ if (this.isPlayer) {
         if (this.shieldFlashTimer > 0) { push(); noFill(); stroke(0, 200, 255, this.shieldFlashTimer * 25); strokeWeight(3); ellipse(0, 0, this.bodyW + 8, this.bodyH + 8); pop(); }
     }
 
-    if ((this.isPlayer && jetpackUnlocked) || this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL") { fill(80); rect(-18, -12, 12, 24, 3); fill(255, 100, 0); rect(-20, -8, 4, 16); }
+    // The pack rides against the BACK of the torso, and the torso is drawn
+    // narrower than it collides (TORSO_DEPTH) -- so its old fixed offsets left
+    // it floating a body's width off the spine with clear ground between.
+    // Measured off the drawn back edge instead, it stays put whatever the depth.
+    if ((this.isPlayer && jetpackUnlocked) || this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL") { const _bk = -this.bodyW * TORSO_DEPTH * 0.5; fill(80); rect(_bk - 6.5, -12, 12, 24, 3); fill(255, 100, 0); rect(_bk - 8.5, -8, 4, 16); }
     if ((this.isPlayer || this.isMilitary) && typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked) { this.shirtCol = color(60, 100, 40); this.pantsCol = color(139, 115, 85); }
     else if (this.isPlayer && typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) { this.shirtCol = color(255); this.pantsCol = color(15); } 
     else if (this.isPlayer && ninjaSuitUnlocked) { this.shirtCol = color(20); this.pantsCol = color(15); }
@@ -11829,51 +11840,65 @@ if (this.isPlayer) {
             // axis, which costs one transform and does what no amount of
             // repositioning could -- the same trick TORSO_DEPTH plays.
             const CARRY_DIP = 0.62;
-            const cAng = -0.72 + swayA;
+
+            // THE HAND'S RESTING STATION IS ON THE SILHOUETTE, NOT OUTSIDE IT.
+            // A relaxed arm hangs BESIDE the torso, so from directly above the
+            // hand sits about on the body's own edge -- pushed out from there it
+            // reads as a figure holding its arms away from itself, which is the
+            // crab. Everything the arm does is a departure from this station.
+            //
+            // The hands come IN laterally as the gait rises -- a runner's hands
+            // travel by the ribs, not out at the hips -- while their FORE-AND-
+            // AFT arc gets longer, not shorter. Shrinking the whole reach to
+            // make the elbow fold was backwards: it folded the arm and took the
+            // axial swing away with it, so a run had bent arms that barely
+            // moved. The fold comes from where the elbow is put (below).
+            //
+            // Worked out for BOTH sides whatever is in the hands, because a
+            // sprinting man carries a rifle in one hand and pumps the other --
+            // so the free arm needs its ordinary station to fall back to.
+            const HY = this.bodyH * 0.49 - GP.bend * 2.0;
+            const R = REACH * (0.44 + 0.13 * GP.band);
+            // The forward hand comes IN as well as forward -- a running arm
+            // sweeps across the front of the chest, ending up near the body's
+            // own centreline and well clear of the torso, which is the half of
+            // the arc you can actually see from up here. The trailing hand only
+            // drifts out a little; pushed out as far as the other comes in, it
+            // is the crab again on the back stroke.
+            const IN = GP.bend * 5.6, OUT = 1.1 + GP.bend * 0.6;
+            for (const s of sides) {
+                s.hx = -1.5 + GP.bend * 3.0 + s.sw * R;
+                const f = s.sw > 0 ? s.sw : 0, b = s.sw < 0 ? -s.sw : 0;
+                s.hy = s.sgn * (HY - f * IN + b * OUT) + rest * 0.4;
+            }
+
+            // AT A SPRINT THE RIFLE COMES PARALLEL WITH THE BODY. Across the
+            // chest is what a man does at a walk or a jog, when he still has
+            // both hands on it and is ready to bring it up. Flat out he cannot
+            // hold that: the weapon goes down to the strong side, muzzle along
+            // the line of travel, and it swings with him. The support arm comes
+            // OFF it and pumps -- which is also the only way the far grip stops
+            // being out of reach once the gun is no longer across the chest.
+            const runP = Math.max(0, Math.min(1, (GP.band - 1.6) / 1.4));
+            const cAng = -0.72 * (1 - runP) - 0.10 * runP + swayA;
             // The butt tucks at the strong shoulder rather than hanging off the
             // flank behind it. Slung about the body's middle, the stock swung
             // out past the silhouette every stride and read as a loose plank
             // stuck to his side -- which it was.
-            const cX = 9 + GP.lean * 0.45 + swayX * 0.5;
-            const cY = -swayX;
+            const cX = 9 + GP.lean * 0.45 + swayX * 0.5 + runP * swing * 5;
+            const cY = -swayX + runP * (5 + sin(this.walkCycle) * 3.4);
             if (carrying === 2) {
-                // Both hands go onto the weapon, so it sets where they are
-                // rather than the swing: butt grip to the strong hand, fore
-                // grip to the other. Both measured in the FORESHORTENED frame,
-                // or the hands hold a gun that is no longer under them.
                 for (const s of sides) {
+                    // Measured in the FORESHORTENED frame, or the hands hold a
+                    // gun that is no longer under them.
                     const g = (s.right ? -11 : 9) * CARRY_DIP;
-                    s.hx = cX + cos(cAng) * g;
-                    s.hy = cY + sin(cAng) * g;
-                }
-            } else {
-                // THE HAND'S RESTING STATION IS ON THE SILHOUETTE, NOT OUTSIDE
-                // IT. A relaxed arm hangs BESIDE the torso, so from directly
-                // above the hand sits about on the body's own edge -- pushed
-                // out from there it reads as a figure holding its arms away
-                // from itself, which is the crab. Everything the arm does is a
-                // departure from this station and returns to it.
-                // The hands come IN laterally as the gait rises -- a runner's
-                // hands travel by the ribs, not out at the hips -- while their
-                // FORE-AND-AFT arc gets longer, not shorter. Shrinking the whole
-                // reach to make the elbow fold was backwards: it folded the arm
-                // and took the axial swing away with it, so a run had bent arms
-                // that barely moved. The fold comes from where the elbow is put
-                // (below), and the reach is free to grow.
-                const HY = this.bodyH * 0.49 - GP.bend * 2.0;
-                const R = REACH * (0.44 + 0.13 * GP.band);
-                // The forward hand comes IN as well as forward -- a running arm
-                // sweeps across the front of the chest, ending up near the
-                // body's own centreline and well clear of the torso, which is
-                // the half of the arc you can actually see from up here. The
-                // trailing hand only drifts out a little; pushed out as far as
-                // the other comes in, it is the crab again on the back stroke.
-                // Split so the two halves can differ, because they do.
-                const IN = GP.bend * 5.6, OUT = 1.1 + GP.bend * 0.6;
-                for (const s of sides) {
-                    s.hx = -1.5 + GP.bend * 3.0 + s.sw * R;
-                    const f = s.sw > 0 ? s.sw : 0, b = s.sw < 0 ? -s.sw : 0;
-                    s.hy = s.sgn * (HY - f * IN + b * OUT) + rest * 0.4;
+                    const gx = cX + cos(cAng) * g, gy = cY + sin(cAng) * g;
+                    if (s.right) { s.hx = gx; s.hy = gy; }
+                    else {
+                        // The support hand lets go as the sprint comes on.
+                        s.hx += (gx - s.hx) * (1 - runP);
+                        s.hy += (gy - s.hy) * (1 - runP);
+                    }
                 }
             }
 
@@ -11981,15 +12006,6 @@ if (this.isPlayer) {
                 // shoulder into the body instead of parking a blob on it. Only
                 // the hands are sorted front to back.
                 if (!front) for (const s of sides) limb(s);
-                // A long gun carried across the chest is in FRONT of the body,
-                // so it goes down with the hands that are on it and after the
-                // torso -- the whole reason this pass is split in two.
-                if (front && carrying === 2) {
-                    push(); translate(cX, cY); rotate(cAng); scale(CARRY_DIP, 1);
-                    if (BIOME_ACTIVE) figureContour();
-                    carryLongGun(this.currentWeapon);
-                    pop();
-                }
                 for (const s of sides) {
                     // A held tool always rides the front pass: it is the thing
                     // the player is looking at, and half a pickaxe swallowed by
@@ -12052,14 +12068,23 @@ if (this.isPlayer) {
                         // and the muzzle drops. Drawn at a fixed length it read
                         // as a bar held out sideways, which is the one thing a
                         // top-down view cannot show as depression.
-                        const dip = 0.44 + 0.32 * (0.5 + 0.5 * s.sw);
-                        push(); translate(h.x, h.y);
-                        rotate(0.30 * s.sgn + s.sw * 0.055);
-                        scale(dip, 1);
-                        if (BIOME_ACTIVE) figureContour();
-                        carryHandGun(this.currentWeapon);
+                        const dip = 0.60 + 0.30 * (0.5 + 0.5 * s.sw);
+                        const gAng = 0.30 * s.sgn + s.sw * 0.055;
+                        push(); translate(h.x, h.y); rotate(gAng);
+                        const gl = figureLight(this.aimAngle + _tw + gAng);
+                        carryHandGun(this.currentWeapon, dip, gl);
                         pop();
                     }
+                }
+                // THE WEAPON GOES ON TOP OF THE HANDS. From a bird's eye view a
+                // hand is UNDER the thing it is gripping -- you see the top of
+                // the weapon and the fingers wrapped beneath it. Drawn first,
+                // the long gun had two skin discs sitting on its receiver.
+                if (front && carrying === 2) {
+                    push(); translate(cX, cY); rotate(cAng);
+                    const gl = figureLight(this.aimAngle + _tw + cAng);
+                    carryLongGun(this.currentWeapon, CARRY_DIP, gl);
+                    pop();
                 }
             };
             armPass(false);
@@ -22215,43 +22240,108 @@ function weaponHands(w) {
 // in Character.show(): that is laid out around the muzzle offsets the bullets
 // are actually fired from (bLX/bLY) and cannot be moved without walking the
 // rounds off the barrel. Same materials, different origin.
-function carryLongGun(w) {
+// A carried weapon, drawn as a SOLID rather than as a plan view.
+//
+// `k` is how much of its length you can see. A carried gun is depressed, and
+// from directly above a depressed barrel is a short one -- that foreshortening
+// is the whole top-down read of "carried", because a full-length bar lying flat
+// on the screen is what a LEVELLED weapon looks like, which is the aim.
+//
+// The squash is applied to the ART, not by scale(). Scaled non-uniformly the
+// contour thins along one axis and the whole thing turns into a paper cut-out,
+// which is exactly what it looked like at the ends of the swing where the
+// squash is hardest. Drawn at its own length instead, the outline keeps an even
+// weight all the way round and the gun stays an object.
+//
+// Three things carry the third dimension at this size, and they are the same
+// three volShade() uses on a figure:
+//
+//   1. a CONTOUR, so it separates from the hand and the body under it;
+//   2. a TOP PLANE -- the slide, the receiver rib, the barrel shroud -- drawn
+//      inset and offset AGAINST the sun, which is what says "this has a top and
+//      a side" rather than "this is a shape";
+//   3. a MUZZLE CAP that opens from a sliver into a circle as the barrel dips,
+//      because a bore you are looking down is a hole and a bore you are looking
+//      across is an edge. It is the one cue that reads the depression directly.
+//
+// `L` is the light in the WEAPON's own frame -- brought in by figureLight(), or
+// the highlight would ride round with the gun as the figure turns.
+
+// One box of the gun: body, then its lit top plane inset against the sun.
+function gunBox(x, y, w, h, r, br, bg, bb, L, lift) {
+  fill(br, bg, bb);
+  rect(x, y, w, h, r);
+  if (!(lift > 0)) return;
+  const ix = Math.min(w * 0.22, 2.2), iy = Math.min(h * 0.24, 1.7);
+  fill(br + (255 - br) * lift, bg + (255 - bg) * lift, bb + (255 - bb) * lift);
+  rect(x + ix - L[0] * 0.9, y + iy - L[1] * 0.9,
+       Math.max(0.6, w - ix * 2), Math.max(0.6, h - iy * 2), r * 0.6);
+}
+
+// The bore, seen from wherever we are seeing it from. At k = 1 the barrel is
+// level and you get its end-on edge; as it dips the ellipse opens out.
+function gunMuzzle(x, y, h, k, br, bg, bb) {
+  const open = 1 - k;
+  fill(br * 0.35, bg * 0.35, bb * 0.40);
+  ellipse(x, y, Math.max(1.3, h * (0.22 + open * 0.75)), h * 0.86);
+}
+
+function carryLongGun(w, k, L) {
+  k = k === undefined ? 1 : k;
+  L = L || _figLit;
+  const X = (v) => v * k;
+  if (BIOME_ACTIVE) figureContour();
   if (w === WEAPONS.SHOTGUN) {
-    fill(52, 40, 30); rect(-21, -3.6, 15, 7.2, 2);      // stock
-    fill(30);         rect(-8, -2.6, 33, 5.2, 1);       // barrels
-    fill(16);         rect(-3, -3.6, 13, 7.2, 1);       // receiver
+    gunBox(X(-21), -3.6, X(15), 7.2, 2, 62, 46, 32, L, 0.26);      // stock
+    gunBox(X(-8), -2.6, X(33), 5.2, 1, 38, 40, 46, L, 0.30);       // barrels
+    gunBox(X(-3), -3.6, X(13), 7.2, 1, 22, 24, 28, L, 0.24);       // receiver
+    gunMuzzle(X(24), 0, 5.2, k, 38, 40, 46);
   } else if (w === WEAPONS.ROCKET_LAUNCHER) {
-    fill(50, 70, 50); rect(-22, -3.2, 48, 6.4, 2);      // tube
-    fill(30);         rect(-7, -5.4, 11, 10.8, 1);      // sight block
-    fill(38, 52, 38); rect(14, -4.4, 5, 8.8, 1);        // muzzle bell
+    gunBox(X(-22), -3.2, X(48), 6.4, 2, 52, 72, 52, L, 0.24);      // tube
+    gunBox(X(-7), -5.4, X(11), 10.8, 1, 34, 40, 34, L, 0.22);      // sight block
+    gunBox(X(14), -4.4, X(5), 8.8, 1, 40, 54, 40, L, 0.20);        // bell
+    gunMuzzle(X(25), 0, 8.8, k, 40, 54, 40);
   } else if (w === WEAPONS.COACH_GUN) {
-    fill(96, 62, 34); rect(-20, -3.6, 16, 7.2, 2);
-    fill(42);         rect(-5, -3.2, 29, 6.4, 1);
-  } else {                                              // assault rifle
-    fill(40);         rect(-22, -2.1, 46, 4.2, 1);      // barrel and receiver
-    fill(139, 69, 19); rect(-13, -3.2, 13, 6.4, 1);     // grip wrap
-    fill(139, 69, 19); rect(-24, -3.2, 9, 6.4, 1);      // stock
-    fill(40);         rect(-5, 1.6, 5, 9, 1);           // magazine
+    gunBox(X(-20), -3.6, X(16), 7.2, 2, 104, 68, 38, L, 0.26);
+    gunBox(X(-5), -3.2, X(29), 6.4, 1, 50, 52, 58, L, 0.28);
+    gunMuzzle(X(23), 0, 6.4, k, 50, 52, 58);
+  } else {                                                          // rifle
+    gunBox(X(-24), -3.2, X(11), 6.4, 1, 132, 74, 34, L, 0.24);     // stock
+    gunBox(X(-22), -2.1, X(46), 4.2, 1, 46, 48, 54, L, 0.32);      // barrel
+    gunBox(X(-13), -3.2, X(13), 6.4, 1, 138, 78, 36, L, 0.24);     // grip wrap
+    gunBox(X(-5), 1.6, X(5), 9, 1, 40, 42, 48, L, 0.18);           // magazine
+    gunMuzzle(X(23), 0, 4.2, k, 46, 48, 54);
   }
+  noStroke();
 }
 
 // A sidearm, drawn about its GRIP at the origin with the muzzle out along +x,
 // because that is where the hand holding it is.
-function carryHandGun(w) {
+function carryHandGun(w, k, L) {
+  k = k === undefined ? 1 : k;
+  L = L || _figLit;
+  const X = (v) => v * k;
+  if (BIOME_ACTIVE) figureContour();
   if (w === WEAPONS.SMG || w === WEAPONS.DUAL_SMG) {
-    fill(40); rect(-3, -4, 23, 7, 2); rect(1, 3, 5, 10, 1);
+    gunBox(X(1), 3, X(5), 10, 1, 34, 36, 42, L, 0.18);             // magazine
+    gunBox(X(-3), -4, X(23), 7, 2, 46, 48, 55, L, 0.30);           // receiver
+    gunMuzzle(X(20), -0.5, 7, k, 46, 48, 55);
   } else if (w === WEAPONS.REVOLVER) {
-    fill(86, 56, 34);   rect(-4, -0.5, 8, 8, 2);        // grip
-    fill(188, 192, 200); rect(-1, -3.6, 12, 6, 1);      // frame
-    fill(152, 158, 166); ellipse(5, -0.6, 7, 7);        // cylinder
-    fill(214, 218, 226); rect(10, -2.6, 13, 3.6, 1);    // barrel
+    gunBox(X(-4), -0.5, X(8), 8, 2, 96, 62, 38, L, 0.26);          // grip
+    gunBox(X(-1), -3.6, X(12), 6, 1, 168, 174, 184, L, 0.34);      // frame
+    fill(152, 158, 166); ellipse(X(5), -0.6, X(7) + 2, 7);         // cylinder
+    gunBox(X(10), -2.6, X(13), 3.6, 1, 196, 202, 212, L, 0.36);    // barrel
+    gunMuzzle(X(23), -0.8, 3.6, k, 196, 202, 212);
   } else if (w === WEAPONS.TASER) {
-    fill(255, 255, 0); rect(-1, -4, 14, 7, 2);
-    fill(20);          rect(2, 3, 5, 8, 1);
-  } else {                                              // pistol
-    fill(40); rect(-2, -3.6, 17, 6, 2); rect(1, 2, 5, 8, 1);
-    fill(64); rect(6, -3.2, 9, 2.2, 1);                 // slide rib
+    gunBox(X(2), 3, X(5), 8, 1, 30, 30, 34, L, 0.16);
+    gunBox(X(-1), -4, X(14), 7, 2, 214, 208, 40, L, 0.34);
+    gunMuzzle(X(13), -0.5, 7, k, 214, 208, 40);
+  } else {                                                          // pistol
+    gunBox(X(1), 2, X(5), 8, 1, 34, 36, 42, L, 0.18);              // grip
+    gunBox(X(-2), -3.6, X(17), 6, 2, 44, 46, 53, L, 0.32);         // slide
+    gunMuzzle(X(15), -0.6, 6, k, 44, 46, 53);
   }
+  noStroke();
 }
 
 // Presenting the weapon, as opposed to carrying it. The right stick is the aim

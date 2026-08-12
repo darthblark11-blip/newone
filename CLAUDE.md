@@ -710,6 +710,18 @@ in this order:
 All three offset along the light, so a figure is lit from the same place as every wall
 and roof — but see below: it has to be the light **in the figure's own frame**.
 
+**A leg has to narrow all the way down, or it is a sausage.** Drawn with a full round cap
+at each joint, the thigh, the shin and the boot all came out at about the same width and
+overlapped into one uniform lozenge — no knee, no ankle, and a 9.6-wide dome at the hip
+that on the trailing leg of a stride is a balloon hanging off the back of the figure. It
+takes the same two things the arm needed: a real taper (hip 9.6, knee 7.4, ankle 5.9) and
+a trimmed cap at the top, where the pelvis is under the torso anyway.
+
+**Anything worn on the body has to be measured off the DRAWN torso, not the collision
+box.** The jetpack sat at fixed offsets from `bodyW`, so narrowing the torso left it
+floating clear of the spine with ground showing between. Measured off
+`bodyW * TORSO_DEPTH` it stays put whatever the depth becomes.
+
 **A torso is drawn narrower than it collides.** `bodyW` is the front-to-back axis and
 `bodyH` is across the shoulders, so a standard figure is 21 deep by 27 wide — near enough
 a circle, and a circle from above is the flat oval blob. A real person is about 45cm
@@ -1897,22 +1909,44 @@ aiming, the gun comes down and the walking rig takes over.
 - **One-handed** hangs at the strong side, muzzle forward and canted outboard. Squared to
   the facing it would read as an aim.
 - **Two-handed** (`weaponHands()`: assault rifle, shotgun, rocket launcher, coach gun)
-  lies **across the chest** — butt at the strong shoulder, muzzle past the off shoulder,
-  both hands on it, swaying with the stride. *Across*, not along: "parallel to the body"
+  lies **across the chest** at a walk and a jog — butt at the strong shoulder, muzzle past
+  the off shoulder, both hands on it, swaying with the stride. *Across*, not along: "parallel to the body"
   from this camera has to mean the shoulder line, because a rifle pointed down the line of
   travel is exactly what the aimed pose looks like from directly above, and the whole
   point of a carry is that one glance tells you whether the weapon is up. It is also the
   only arrangement where both grips land inside the arms' reach.
 
+**At a SPRINT the long gun comes parallel with the body.** Across the chest is what a man
+does at a walk or a jog, when both hands are still on it and he is ready to bring it up.
+Flat out he cannot hold that: the weapon drops to the strong side, muzzle along the line
+of travel, swinging with him — and the support hand comes **off** it and pumps, which is
+also the only way the far grip stops being out of reach once the gun is no longer across
+the chest. `runP` eases the whole change in over the top of the jog band.
+
 **A carried weapon is DEPRESSED, and from directly above a depressed barrel is a SHORT
 one.** That foreshortening is the whole top-down read of "carried": a full-length bar
-lying flat on the screen is what a *levelled* weapon looks like, which is the aim. So the
-gun is drawn at its true angle and squashed along its own axis — one transform, the same
-trick `TORSO_DEPTH` plays, and it does what no amount of repositioning could. The
+lying flat on the screen is what a *levelled* weapon looks like, which is the aim. The
 sidearm's dip rides the swing, so it visibly extends as the wrist comes up at the front of
 the arc and retracts as the muzzle drops at the back; drawn rigid it read as a bar held
-out sideways. The grips are measured in the dipped frame too, or the hands hold a gun that
-is no longer under them.
+out sideways. The grips are read in the dipped frame too, or the hands hold a gun that is
+no longer under them.
+
+**The squash is applied to the ART, not by `scale()`.** Scaled non-uniformly the contour
+thins along one axis and the whole weapon turns into a paper cut-out — worst at the ends
+of the swing, where the squash is hardest. Drawn at its own length instead, the outline
+keeps an even weight all the way round.
+
+**And a carried weapon is drawn as a solid, not as a plan view.** `gunBox()` and
+`gunMuzzle()` carry the same three terms `volShade()` uses on a figure: a contour, a top
+plane inset and offset **against the sun** (in the weapon's own frame — `figureLight()`,
+or the highlight rides round with the gun as the figure turns), and a bore that opens from
+a sliver into a circle as the barrel dips. That last one is the only cue that reads the
+depression directly: a bore you are looking down is a hole, one you are looking across is
+an edge.
+
+**The weapon goes on top of the hands.** From a bird's eye a hand is *under* the thing it
+grips — you see the top of the weapon and the fingers beneath it. Drawn first, the long
+gun had two skin discs sitting on its receiver.
 
 **A long gun slung about the body's middle hangs off the flank.** Its stock swung out past
 the silhouette behind the strong shoulder every stride and read as a loose plank stuck to
