@@ -11752,13 +11752,33 @@ if (this.isPlayer) {
             // locking solid. Offset per character so a crowd is not in unison.
             const rest = this.isMoving ? 0 : sin(frameCount * 0.045 + this.x * 0.01);
             const skin = this.isCharred ? color(50, 40, 40) : color(235, 180, 140);
-            const usingSword = this.isPlayer && typeof swordPickedUp !== 'undefined' &&
+            // A hand holds ONE thing. The tool is only in it while there is no
+            // gun in it -- the moment the player raises or fires a weapon,
+            // isArmed goes true and the blade goes away, which is how it worked
+            // before the carry existed and is what the carry nearly broke: the
+            // tool test and the gun test are both "is this the strong hand",
+            // and without this guard the right hand drew a pistol AND a sword.
+            const gunInHand = !!this.isArmed;
+            const usingSword = this.isPlayer && !gunInHand &&
+                               typeof swordPickedUp !== 'undefined' &&
                                swordPickedUp && window.swordEquipped !== false;
-            const usingPick = this.isPlayer && typeof meleeTool === 'function' &&
+            const usingPick = this.isPlayer && !gunInHand &&
+                              typeof meleeTool === 'function' &&
                               meleeTool() === "PICKAXE";
             const armedMelee = usingSword || usingPick;
-            const sides = [{ sy: -14, sw: -swing, sgn: -1 },
-                           { sy: 11, sw: swing, sgn: 1, right: true }];
+
+            // The shoulder joints, and they sit INBOARD of the silhouette.
+            //
+            // They used to be at -14 and +11 against a body half-height of
+            // 13.5, so both were already on or outside the edge before the arm
+            // had swung anywhere -- and every unit of outboard reach after that
+            // came off the far side of the torso. That is the crab: two hands
+            // held out clear of the body on stalks. A real shoulder joint is
+            // well inside the chest, and the sleeve is meant to be half buried
+            // in it. Symmetric, because a person is.
+            const SH = this.bodyH * 0.425;
+            const sides = [{ sy: -SH, sw: -swing, sgn: -1 },
+                           { sy:  SH, sw:  swing, sgn: 1, right: true }];
 
             // Shoulder to hand as one tapering two-bone limb -- the corpse's
             // ragLimb() shape language exactly, so an arm is the same arm
@@ -11779,13 +11799,16 @@ if (this.isPlayer) {
             // behind the bent elbow: a runner's hands travel a short arc up by
             // the ribs, not a long one down at the hips, and the elbow folds
             // because the target got nearer -- not because a second pose was
-            // switched to. GP.bend shortens the arc and lifts the hands forward
-            // and outboard, and the solve below does the rest.
+            // switched to. GP.bend shortens the arc and the solve does the rest.
             const carrying = carryMode;
-            const carrySway = sin(this.walkCycle) * (0.09 + GP.band * 0.055);
-            // The long gun's own frame: laid ACROSS the chest, butt down by the
-            // strong hip and muzzle up past the off shoulder, swaying with the
-            // stride rather than welded to the body.
+            // The stride sway a carried weapon takes. Small, and mostly a SHIFT
+            // rather than a rotation: a rifle moving with a walking man travels
+            // with his chest, it does not pivot about its own middle. Swung as
+            // an angle it read as the gun flapping about, which is the wobble.
+            const swayA = sin(this.walkCycle) * (0.016 + GP.band * 0.011);
+            const swayX = sin(this.walkCycle) * (0.9 + GP.band * 0.7);
+            // The long gun's frame: laid across the chest, butt down by the
+            // strong hip and muzzle past the off shoulder.
             //
             // Across, not along. "Parallel to the body" from this camera has to
             // mean the shoulder line, because a rifle pointed down the line of
@@ -11795,9 +11818,11 @@ if (this.isPlayer) {
             // arrangement where both grips land inside the arms' reach: the
             // strong hand keeps its own shoulder and the support hand crosses,
             // which is what a man actually does with a rifle he is not firing.
-            const cAng = -1.02 + carrySway;
-            const cX = 10 + GP.lean * 0.5;
-            const cY = -sin(this.walkCycle) * 1.8 * GP.swing;
+            // Shallower than a true port arms, so it still reads as pointed
+            // somewhere rather than as being cradled on parade.
+            const cAng = -0.72 + swayA;
+            const cX = 8 + GP.lean * 0.45 + swayX * 0.5;
+            const cY = 1.5 - swayX;
             if (carrying === 2) {
                 // Both hands go onto the weapon, so it sets where they are
                 // rather than the swing: butt grip to the strong hand, fore
@@ -11808,15 +11833,21 @@ if (this.isPlayer) {
                     s.hy = cY + sin(cAng) * g;
                 }
             } else {
+                // THE HAND'S RESTING STATION IS ON THE SILHOUETTE, NOT OUTSIDE
+                // IT. A relaxed arm hangs BESIDE the torso, so from directly
+                // above the hand sits about on the body's own edge -- pushed
+                // out from there it reads as a figure holding its arms away
+                // from itself, which is the crab. Everything the arm does is a
+                // departure from this station and returns to it.
+                const HY = this.bodyH * 0.49 - GP.bend * 2.2;
                 const R = REACH * (1 - 0.52 * GP.bend);
                 for (const s of sides) {
-                    s.hx = s.sw * R + GP.bend * 4.5;
-                    // At rest the hand sits just outboard of the shoulder, which
-                    // is what you actually see from overhead: a hanging arm is
-                    // almost entirely foreshortened away and the hand is the
-                    // only part of it clear of the torso.
-                    s.hy = s.sy + s.sgn * (RG.upperW * 0.34 + GP.bend * 2.6)
-                                + s.sw * 1.4 + rest * 0.5;
+                    // Forward on the swing, and a touch in: an arm coming
+                    // forward crosses slightly toward the middle of the body
+                    // and the trailing one falls away from it. That is what
+                    // makes a walk read as a walk rather than as two pendulums.
+                    s.hx = -1.5 + GP.bend * 4.0 + s.sw * R;
+                    s.hy = s.sgn * (HY - s.sw * 1.9) + rest * 0.4;
                 }
             }
 
@@ -11835,10 +11866,22 @@ if (this.isPlayer) {
             const _fs = carrying === 2 ? 0.92 : STAND_FORE_ARM;
             const PU = RG.upper * _fs, PF = RG.fore * _fs;
 
+            // Two bones cannot reach a point nearer than the difference between
+            // them, and asking them to is not a near miss -- it is a division
+            // that runs away. Mid-stride the hand passes within a whisker of
+            // its own shoulder, and there the unclamped solve put the elbow
+            // THIRTY units out on a seven-unit bone: the forearm then ran all
+            // the way back to the hand and the arm came out as a bow tie
+            // sticking through the chest. Both ends are clamped, and the elbow
+            // is additionally held inside its own bone length, so no pose the
+            // gait can ask for has a degenerate answer.
+            const REACH_MIN = Math.abs(PU - PF) + 0.6;
+            const REACH_MAX = (PU + PF) * 0.98;
+
             for (const s of sides) {
                 const dx = s.hx, dy = s.hy - s.sy;
                 const raw = Math.max(0.001, Math.hypot(dx, dy));
-                const d = Math.min(raw, (PU + PF) * 0.98);
+                const d = Math.min(Math.max(raw, REACH_MIN), REACH_MAX);
                 const nx = dx / raw, ny = dy / raw;
                 // Where the elbow sits along the shoulder-to-hand line, blended
                 // from "on the line" to the real two-bone solve by GP.bend.
@@ -11852,9 +11895,16 @@ if (this.isPlayer) {
                 // also exactly the transition the gait is making.
                 const aLine = d * EL;
                 const aIK = (d * d + PU * PU - PF * PF) / (2 * d);
-                const a = aLine + (aIK - aLine) * GP.bend;
-                const eh = Math.sqrt(Math.max(0, PU * PU - a * a)) * GP.bend;
-                // Outboard: an elbow cannot fold through the chest.
+                const a = Math.max(-PU * 0.98, Math.min(PU * 0.98,
+                                   aLine + (aIK - aLine) * GP.bend));
+                // Outboard, because an elbow cannot fold through the chest --
+                // but CAPPED, because it can hardly go anywhere either. A
+                // runner's elbow tucks in against the ribs and drives back; let
+                // the raw solve have its way and it swings a third of a body
+                // clear on each side, which is the crab again with the arms
+                // bent. The cap is a shade over half a chest.
+                const eh = Math.min(Math.sqrt(Math.max(0, PU * PU - a * a)),
+                                    this.bodyH * 0.20) * GP.bend;
                 s.ex = nx * a - ny * eh * s.sgn;
                 s.ey = s.sy + ny * a + nx * eh * s.sgn;
                 s.hx = nx * d;
@@ -11936,12 +11986,16 @@ if (this.isPlayer) {
                     }
 
                     if (holdsGun) {
-                        // A sidearm rides the arm that swings it, so it points
-                        // wherever the FOREARM is pointing plus a cant outboard
-                        // and down. Squared to the facing it would read as an
-                        // aim, which is the one thing a carry must not do.
+                        // A sidearm is held against the BODY, not carried round
+                        // by the forearm. A wrist keeps a pistol pointing where
+                        // it is put; welding its angle to a limb that swings
+                        // through a wide arc every stride is what made the gun
+                        // wave about, and a weapon that flaps reads as a glitch
+                        // rather than as a walk. So: muzzle forward, canted out
+                        // and down off the strong side, with only a few degrees
+                        // of the stride in it.
                         push(); translate(h.x, h.y);
-                        rotate(atan2(h.y - s.ey, h.x - s.ex) + 0.44 * s.sgn);
+                        rotate(0.30 * s.sgn + s.sw * 0.055);
                         if (BIOME_ACTIVE) figureContour();
                         carryHandGun(this.currentWeapon);
                         pop();

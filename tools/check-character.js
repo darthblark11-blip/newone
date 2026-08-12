@@ -108,6 +108,157 @@ console.log('\n== townsfolk ==');
      mid.behind === 1 && mid.infront === 1, JSON.stringify(mid));
 }
 
+// Draw the player once and report where the art actually landed, in the
+// character's own frame — hand centres, sleeve segment lengths, and the angle
+// any carried weapon was drawn at. Everything below needs the transform, not
+// the arguments, because every limb is drawn inside its own translate+rotate.
+function poseOf(setup) {
+  probe(setup);
+  const px = P('player.x'), py = P('player.y');
+  const real = {};
+  for (const k of ['ellipse', 'rect', 'push', 'pop', 'translate', 'rotate']) real[k] = ctx[k];
+  // Start at the character's own origin, so everything below is in the frame
+  // the pose is authored in rather than out in the world.
+  let m = { x: -px, y: -py, c: 1, s: 0 };
+  const stack = [];
+  const hands = [], segs = [], guns = [];
+  // The torso's own angle. A weapon held against the body turns WITH the body,
+  // and the shoulders counter-rotate on purpose — measuring a gun against the
+  // world would score that deliberate twist as wobble.
+  let bodyAng = 0;
+  ctx.push = () => { stack.push(Object.assign({}, m)); };
+  ctx.pop = () => { if (stack.length) m = stack.pop(); };
+  ctx.translate = (x, y) => { m.x += x * m.c - y * m.s; m.y += x * m.s + y * m.c; };
+  ctx.rotate = (a) => {
+    const c = Math.cos(a), s = Math.sin(a);
+    const nc = m.c * c - m.s * s, ns = m.s * c + m.c * s;
+    m.c = nc; m.s = ns;
+  };
+  ctx.ellipse = (x, y, w, h) => {
+    const wx = m.x + x * m.c - y * m.s, wy = m.y + x * m.s + y * m.c;
+    if (w === BODY_W && h === BODY_H) bodyAng = Math.atan2(m.s, m.c);
+    else if (w === HAND && h === HAND) hands.push([wx, wy]);
+    // A sleeve segment: longer than it is wide, at one of the rig's two widths.
+    else if (w > h && (Math.abs(h - RIGW.u) < 1e-6 || Math.abs(h - RIGW.f) < 1e-6)) {
+      segs.push({ w: h, len: w - h });
+    }
+  };
+  ctx.rect = (x, y, w, h) => {
+    // The carried guns: the rifle's 46 barrel, the pistol's 17 frame.
+    if (Math.abs(w - 46) < 0.01 || Math.abs(w - 17) < 0.01) {
+      guns.push({ w: w, ang: Math.atan2(m.s, m.c) - bodyAng });
+    }
+  };
+  probe('player.show();');
+  Object.assign(ctx, real);
+  return { hands, segs, guns, bodyAng };
+}
+const RIGW = { u: P(`figureRig(${BODY_W}, ${BODY_H}).upperW`),
+               f: P(`figureRig(${BODY_W}, ${BODY_H}).foreW`) };
+
+console.log('\n== relaxed arms: the hands stay on the body, not out on stalks ==');
+// The crab. The shoulder joints used to sit ON the silhouette and every unit of
+// outboard reach after that came off the far side of the torso, so the figure
+// walked with both hands held clear of itself. A hand is allowed to show past
+// the shoulder line — they do — but only by about its own width.
+{
+  probe(`player.isArmed = false; player.meleeTimer = 0; player.isNeutral = false;
+         swordPickedUp = false; setMeleeTool("NONE"); rightStick.active = false;
+         player.aimHold = 0; player.aimAngle = 0; player.moveAngle = 0;`);
+  const halfH = BODY_H / 2;
+  let worst = 0, worstAt = '';
+  for (const g of [0.15, 0.5, 1.0]) {
+    for (let i = 0; i < 16; i++) {
+      const p = poseOf(`player.isMoving = true; player.gait = ${g};
+                        player.walkCycle = ${(i * Math.PI) / 8};`);
+      for (const h of p.hands) {
+        const proud = Math.abs(h[1]) - halfH;
+        if (proud > worst) { worst = proud; worstAt = `gait ${g}, phase ${i}`; }
+      }
+    }
+  }
+  ok('a hand never strays more than its own width past the shoulder line',
+     worst < HAND, `worst ${worst.toFixed(2)} past the edge (hand is ${HAND}) — ${worstAt}`);
+
+  // The bow tie. Mid-stride the hand passes within a whisker of its own
+  // shoulder, and an unclamped two-bone solve answers that with an elbow thirty
+  // units out on a seven-unit bone — the forearm then runs all the way back and
+  // the arm crosses itself through the chest. Every drawn segment has to stay
+  // inside the bone it represents.
+  let longest = 0, at = '';
+  for (const g of [0.15, 0.34, 0.5, 0.66, 1.0]) {
+    for (let i = 0; i < 24; i++) {
+      const p = poseOf(`player.isMoving = true; player.gait = ${g};
+                        player.walkCycle = ${(i * Math.PI) / 12};`);
+      for (const s of p.segs) {
+        const bone = Math.abs(s.w - RIGW.u) < 1e-6
+          ? P(`figureRig(${BODY_W}, ${BODY_H}).upper`)
+          : P(`figureRig(${BODY_W}, ${BODY_H}).fore`);
+        const over = s.len / bone;
+        if (over > longest) { longest = over; at = `gait ${g}, phase ${i}`; }
+      }
+    }
+  }
+  ok('and no segment is ever drawn longer than the bone it is',
+     longest <= 1.001, `longest ${(longest * 100).toFixed(0)}% of its bone — ${at}`);
+}
+
+console.log('\n== a carried gun is held, not waved about ==');
+// Welded to the forearm, the weapon's angle swung through the arm's whole arc
+// every stride and read as a physics glitch. A wrist keeps a pistol pointing
+// where it is put; the stride belongs in the hand's POSITION, not its rotation.
+{
+  for (const [w, label, cap] of [['PISTOL', 'a sidearm', 10], ['ASSAULT_RIFLE', 'a long gun', 7]]) {
+    probe(`player.isArmed = true; player.currentWeapon = WEAPONS.${w};
+           player.meleeTimer = 0; player.reloadTimer = 0; player.muzzleFlash = 0;
+           player.throwAnimTimer = 0; player.dashTimer = 0;
+           rightStick.active = false; player.aimHold = 0;
+           swordPickedUp = false; setMeleeTool("NONE");`);
+    let lo = Infinity, hi = -Infinity, n = 0;
+    for (let i = 0; i < 24; i++) {
+      const p = poseOf(`player.isMoving = true; player.gait = 1;
+                        player.walkCycle = ${(i * Math.PI) / 12};`);
+      for (const g of p.guns) { lo = Math.min(lo, g.ang); hi = Math.max(hi, g.ang); n++; }
+    }
+    const deg = ((hi - lo) * 180) / Math.PI;
+    ok(`${label} swings less than ${cap} degrees over a full stride at a run`,
+       n > 0 && deg < cap, n ? deg.toFixed(1) + ' degrees across 24 phases' : 'gun never drawn');
+  }
+}
+
+console.log('\n== one thing in the hand at a time ==');
+// The tool test and the gun test are both "is this the strong hand", so without
+// a guard the right hand drew a pistol AND a sword. The blade goes away the
+// moment the player raises or fires a weapon, which is how it worked before the
+// carry existed.
+{
+  const swordVerts = () => {
+    let n = 0;
+    const real = ctx.vertex;
+    ctx.vertex = () => { n++; };
+    probe('player.show();');
+    ctx.vertex = real;
+    return n;
+  };
+  probe(`swordPickedUp = true; window.swordEquipped = true; setMeleeTool("SWORD");
+         player.meleeTimer = 0; player.isMoving = true; player.gait = 0.5;
+         player.walkCycle = 1.2; player.isNeutral = false;
+         player.isArmed = false; rightStick.active = false; player.aimHold = 0;`);
+  const unarmed = swordVerts();
+  ok('unarmed, the blade is in the hand', unarmed >= 5, unarmed + ' blade vertices');
+
+  probe(`player.isArmed = true; player.currentWeapon = WEAPONS.PISTOL;
+         rightStick.active = true; player.aimHold = AIM_HOLD;`);
+  ok('raising a gun puts the blade away', swordVerts() === 0);
+
+  probe('rightStick.active = false; player.aimHold = 0;');
+  ok('and it stays away while the gun is merely carried', swordVerts() === 0);
+
+  probe(`player.isArmed = false; rightStick.active = false; player.aimHold = 0;`);
+  ok('putting the gun away brings it back', swordVerts() >= 5);
+  probe('swordPickedUp = false; setMeleeTool("NONE"); player.isArmed = false;');
+}
+
 console.log('\n== a living figure is the same build as its own corpse ==');
 // The swap between the two happens in one frame, in front of the player, and a
 // figure whose arms and legs change proportion as it falls is two different

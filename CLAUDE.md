@@ -1854,14 +1854,35 @@ shoulder-to-hand line* to the real solve — which is exactly the transition the
 making anyway. The bones are solved at their **projected** lengths (`STAND_FORE_ARM`), or
 it would be finding an elbow for an arm twice the length of the one on screen.
 
+### Three ways an arm rig goes wrong, and where the limits live
+
+- **The crab.** The shoulders were at −14 and +11 against a body half-height of 13.5, so
+  both sat *on* the silhouette before the arm had swung anywhere, and every unit of
+  outboard reach after that came off the far side of the torso. A shoulder joint belongs
+  well inside the chest (`bodyH * 0.425`, symmetric — a person is), and the hand's resting
+  station belongs *on* the body's own edge, not out from it. Everything the arm does is a
+  departure from that station. `check-character.js` sweeps three gaits × sixteen phases
+  and asserts no hand strays more than its own width past the shoulder line.
+- **The bow tie.** Two bones cannot reach a point nearer than the difference between them,
+  and asking is not a near miss — it is a division that runs away. Mid-stride the hand
+  passes within a whisker of its own shoulder, and there the unclamped solve put the elbow
+  *thirty* units out on a seven-unit bone; the forearm then ran all the way back and the
+  arm crossed itself through the chest. Both ends of the reach are clamped and the elbow
+  is held inside its own bone length, so no pose the gait can ask for has a degenerate
+  answer. The check asserts no drawn segment is ever longer than the bone it represents.
+- **The elbow needs a ceiling too.** Outboard is the only direction it can fold, but it
+  can hardly go anywhere either — a runner's elbow tucks against the ribs and drives back.
+  Uncapped, the raw solve swung it a third of a body clear on each side, which is the crab
+  again with the arms bent.
+
 ### Carrying a weapon, as opposed to presenting one
 
 `playerAiming()` is the switch, and it is the player only — everyone else presents,
 because the enemy muzzle offsets are tuned against the presented pose. Armed and *not*
 aiming, the gun comes down and the walking rig takes over.
 
-- **One-handed** rides the arm that swings it, pointing wherever the **forearm** points
-  plus a cant outboard and down. Squared to the facing it would read as an aim.
+- **One-handed** hangs at the strong side, muzzle forward and canted outboard. Squared to
+  the facing it would read as an aim.
 - **Two-handed** (`weaponHands()`: assault rifle, shotgun, rocket launcher, coach gun)
   lies **across the chest** — butt at the strong hip, muzzle past the off shoulder, both
   hands on it, swaying with the stride. *Across*, not along: "parallel to the body" from
@@ -1870,7 +1891,14 @@ aiming, the gun comes down and the walking rig takes over.
   point of a carry is that one glance tells you whether the weapon is up. It is also the
   only arrangement where both grips land inside the arms' reach.
 
-Two things this has to get right and both fail silently:
+**The stride belongs in the weapon's POSITION, not its rotation.** A wrist keeps a pistol
+pointing where it is put, so the gun's angle is held against the *body*; welded to a
+forearm that swings through a wide arc every stride it waved about and read as a physics
+glitch. What is left is a few degrees of cant that grows with the gait — under 8° for a
+sidearm and under 6° for a long gun at a full run, both asserted — plus a real shift of
+the whole weapon with the chest, which is what carrying weight actually looks like.
+
+Three things this has to get right and all three fail silently:
 
 1. **Three separate blocks lay their arms out around a gun that is UP** — the left-arm
    pose, the right arm, and the weapon art — and any one of them left running gives the
@@ -1879,6 +1907,11 @@ Two things this has to get right and both fail silently:
 2. **A long gun held across the chest is in FRONT of the body**, so it goes down with the
    hands after the torso. Drawn in the back pass it is swallowed by the shirt — which is
    the whole reason the arm rig is split in two.
+3. **A hand holds one thing.** The tool test and the gun test are both "is this the strong
+   hand", so without a guard the right hand drew a pistol *and* a sword. The blade goes
+   away the moment `isArmed` goes true — that is, the moment the player raises or fires a
+   weapon — and comes back when the gun is put away, which is how it worked before the
+   carry existed.
 
 A support hand crossing to a fore grip is the one case `STAND_FORE_ARM` gets backwards:
 that factor is for an arm swinging beside the body, pointing away from the camera and
