@@ -1933,10 +1933,15 @@ drift out of step with the legs, and blending it against the stride-rate sway by
 and the sprint arrives at the pendulum without a seam. `check-character.js` asserts the
 period directly: the pose repeats after two strides and visibly does not after one.
 
-At half rate the arc can afford to be **wide** — 30° of swing, the muzzle crossing 28 units
-across against 15 along — where at stride rate the same arc was a windscreen wiper. Both
+At half rate the arc can afford to be **wide** — 28° of swing, the muzzle crossing 27 units
+across against 16 along — where at stride rate the same arc was a windscreen wiper. Both
 ends of it are still bounded: coming round to the line of travel is the aimed pose, and
 standing square across him hangs the butt a body-height off his strong side.
+
+**Flat out the whole weapon is carried further ACROSS and further FORWARD than at a jog** —
+a man at a sprint drives it out in front of his chest rather than letting it ride on his
+hip. Both are gated on `runS`, so the walk and the jog are untouched, and both move the
+grips, so the arms follow without a second adjustment.
 
 **The stride-rate sway gives way to the rock rather than riding on top of it.** Left in, it
 is a fast ripple laid over a slow pendulum — which is the fast wobble, however calm the

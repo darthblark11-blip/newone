@@ -11973,8 +11973,8 @@ if (this.isPlayer) {
             // The stride-rate sway gives WAY to the rock rather than riding on
             // top of it: left in, it is a fast ripple laid over a slow pendulum,
             // which is the fast wobble however calm the pendulum is.
-            const cBase = -0.72 - runS * 0.16 + swayA * (1 - runS);
-            const cAng = cBase + runS * sway * 0.26;
+            const cBase = -0.72 - runS * 0.26 + swayA * (1 - runS);
+            const cAng = cBase + runS * sway * 0.24;
             // Fore-and-aft the weapon settles as the sprint comes on: at this
             // pace what should be moving is the traverse, and a chest shift
             // stacked on top of it turns the path into a diagonal scrub.
@@ -11983,7 +11983,12 @@ if (this.isPlayer) {
             // to be eleven units of weapon behind the grip is now zero, and
             // left alone the whole rifle rode a hand's width forward and sat
             // over the man's head instead of across his chest.
-            const cX0 = 0.8 + GP.lean * 0.45 + swayX * 0.5 * (1 - runS);
+            // Flat out the whole weapon is carried further ACROSS and further
+            // FORWARD than at a jog -- a man at a sprint drives it out in front
+            // of his chest rather than letting it ride on his hip. Both are
+            // gated on runS, so the walk and the jog are untouched.
+            const cX0 = 0.8 + GP.lean * 0.45 + runS * 4.0
+                      + swayX * 0.5 * (1 - runS);
             // The slide is one-sided on purpose: the weapon is driven ACROSS to
             // the off shoulder and comes back to the body, never past it.
             // Symmetric, it swings far enough onto the strong side that the
