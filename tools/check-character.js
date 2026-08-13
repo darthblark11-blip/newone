@@ -326,10 +326,14 @@ console.log('\n== the sprint sweep: a rifle at port goes SIDE to SIDE ==');
          player.throwAnimTimer = 0; player.dashTimer = 0;
          rightStick.active = false; player.aimHold = 0;
          swordPickedUp = false; setMeleeTool("NONE");`);
+  // TWO stride cycles, not one. The sprint rocks the rifle at half the stride
+  // rate — one pendulum sweep per two paces — so a single cycle of walkCycle
+  // sees only half the rock and misses both of its ends.
+  const SPAN = 48;
   const travel = (gait) => {
     let lo = Infinity, hi = -Infinity;
     let mx = [Infinity, -Infinity], my = [Infinity, -Infinity];
-    for (let i = 0; i < 24; i++) {
+    for (let i = 0; i < SPAN; i++) {
       const p = poseOf(`player.isMoving = true; player.gait = ${gait};
                         player.walkCycle = ${(i * Math.PI) / 12};`);
       for (const g of p.guns) {
@@ -351,9 +355,13 @@ console.log('\n== the sprint sweep: a rifle at port goes SIDE to SIDE ==');
   ok('and it is a SWEEP, not a jab: across beats fore-and-aft',
      run.dy > run.dx * 1.2,
      `${run.dy.toFixed(1)} across to ${run.dx.toFixed(1)} along`);
-  ok('the cant only ROLLS — it never spins round to the line of travel',
-     run.hi - run.lo < 0.42 && run.lo > 0.55 && run.hi < 1.25,
-     `${deg(run.hi - run.lo).toFixed(0)} degrees of roll, inside ` +
+  // The arc is allowed to be WIDE because it is slow — see the sub-harmonic
+  // below. What must not happen is either end of it: coming round to the line
+  // of travel is the aimed pose, and standing square across him hangs the butt
+  // a body-height off his strong side.
+  ok('the pendulum keeps inside its ends: never along him, never square across',
+     run.hi - run.lo < 0.62 && run.lo > 0.55 && run.hi < 1.25,
+     `${deg(run.hi - run.lo).toFixed(0)} degrees of swing, inside ` +
      `${deg(run.lo).toFixed(0)}..${deg(run.hi).toFixed(0)} off the facing`);
   ok('and none of it reaches the jog, which keeps the steady carry',
      jog.dy < 5, `${jog.dy.toFixed(1)} across at a jog`);
@@ -365,7 +373,7 @@ console.log('\n== the sprint sweep: a rifle at port goes SIDE to SIDE ==');
   // barrel shortening and drooping together, which is a continuous change of
   // attitude — and the drawn length is what says it happened.
   let shortest = Infinity, longest = 0;
-  for (let i = 0; i < 24; i++) {
+  for (let i = 0; i < SPAN; i++) {
     const p = poseOf(`player.isMoving = true; player.gait = 1;
                       player.walkCycle = ${(i * Math.PI) / 12};`);
     for (const g of p.guns) {
@@ -402,6 +410,50 @@ console.log('\n== the sprint sweep: a rifle at port goes SIDE to SIDE ==');
        `steady to the band edge, ${deg(flatOut.hi - flatOut.lo).toFixed(0)} degrees of arc flat out`);
   }
 
+  // THE ROCK IS A SUB-HARMONIC, and that is the whole reason it reads as a
+  // pendulum rather than as a flick. Everything else on the figure rides
+  // `walkCycle`; the sprint's weapon rides half of it, so one sweep takes two
+  // paces. Asserted as a period rather than as an amplitude, because amplitude
+  // was never the problem — two passes shrank the swing and it still looked
+  // frantic, because it was still happening on every footfall.
+  {
+    const at = (wc) => {
+      const p = poseOf(`player.isMoving = true; player.gait = 1;
+                        player.walkCycle = ${wc};`);
+      return p.guns.length ? [p.guns[0].b[0] - p.torsoXY[0],
+                              p.guns[0].b[1] - p.torsoXY[1]] : [0, 0];
+    };
+    const d = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1]);
+    const base = at(0.7), oneStride = at(0.7 + 2 * Math.PI),
+          twoStrides = at(0.7 + 4 * Math.PI);
+    ok('the sprint rocks the rifle once per TWO strides, not once per footfall',
+       d(base, twoStrides) < 0.5 && d(base, oneStride) > 8,
+       `${d(base, oneStride).toFixed(1)} units apart after one stride, ` +
+       `${d(base, twoStrides).toFixed(2)} after two`);
+
+    // And the walk is the opposite case: there is very little for a rifle held
+    // in two hands to do at a stroll, and the sway is quadratic in the band so
+    // that the jog — the one pace that was already right — keeps exactly what
+    // it had while the walk all but stills.
+    const span = (gait) => {
+      const lo = [Infinity, Infinity], hi = [-Infinity, -Infinity];
+      for (let i = 0; i < 24; i++) {
+        const p = poseOf(`player.isMoving = true; player.gait = ${gait};
+                          player.walkCycle = ${(i * Math.PI) / 12};`);
+        for (const g of p.guns) {
+          const rx = g.b[0] - p.torsoXY[0], ry = g.b[1] - p.torsoXY[1];
+          lo[0] = Math.min(lo[0], rx); hi[0] = Math.max(hi[0], rx);
+          lo[1] = Math.min(lo[1], ry); hi[1] = Math.max(hi[1], ry);
+        }
+      }
+      return Math.hypot(hi[0] - lo[0], hi[1] - lo[1]);
+    };
+    const w = span(0.15), j = span(0.5);
+    ok('and a walk barely moves it at all, while the jog keeps its sway',
+       w < 4 && j > w * 1.8,
+       `${w.toFixed(1)} units of muzzle travel walking, ${j.toFixed(1)} jogging`);
+  }
+
   // SEAMLESS. The complaint the traverse was rebuilt for was that it looked
   // jerky, and jerk is measurable: sampled at the cadence the run actually
   // turns over at, a pose driven by smooth curves has a second difference a
@@ -410,7 +462,9 @@ console.log('\n== the sprint sweep: a rifle at port goes SIDE to SIDE ==');
   {
     const cad = P('gaitPose(1).cadence');
     const pts = [];
-    for (let i = 0; i < 26; i++) {
+    // Long enough to cover a whole rock, so a seam at either end of the
+    // pendulum is inside the window rather than just past it.
+    for (let i = 0; i < Math.ceil((4 * Math.PI) / cad) + 2; i++) {
       const p = poseOf(`player.isMoving = true; player.gait = 1;
                         player.walkCycle = ${i * cad};`);
       pts.push(p.guns.length ? [p.guns[0].b[0] - p.torsoXY[0],

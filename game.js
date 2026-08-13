@@ -11816,8 +11816,14 @@ if (this.isPlayer) {
             // rather than a rotation: a rifle moving with a walking man travels
             // with his chest, it does not pivot about its own middle. Swung as
             // an angle it read as the gun flapping about, which is the wobble.
-            const swayA = sin(this.walkCycle) * (0.016 + GP.band * 0.014);
-            const swayX = sin(this.walkCycle) * (0.9 + GP.band * 1.0);
+            // The sway is QUADRATIC in the band, not linear. Linear, a walk
+            // carried nearly half the jog's sway, and at a walking pace there
+            // is very little for a rifle held in two hands to do -- the man is
+            // strolling. Quadratic leaves the jog exactly where it was (it is
+            // the one pace that was right) and all but stills the walk.
+            const _sq = GP.band * GP.band;
+            const swayA = sin(this.walkCycle) * (0.004 + _sq * 0.0138);
+            const swayX = sin(this.walkCycle) * _sq * 1.02;
             // The long gun's frame: laid across the chest, butt down by the
             // strong hip and muzzle past the off shoulder.
             //
@@ -11911,10 +11917,24 @@ if (this.isPlayer) {
             // longer whips round to do it.
             const runS = Math.max(0, Math.min(1, GP.band - 2));
             const beat = sin(this.walkCycle);
+            // THE SPRINT ROCKS THE RIFLE AT HALF THE STRIDE RATE. A man
+            // sprinting with a rifle at port swings it the way you rock a baby:
+            // one slow pendulum sweep across the body per TWO paces, not a flick
+            // on every footfall. Everything else on the figure rides
+            // `walkCycle`, and driving the weapon off it too is what made the
+            // sweep read as frantic however small the amplitude got -- the
+            // problem was never how far it went, it was how often.
+            //
+            // A sub-harmonic of the same clock, so it can never drift out of
+            // step with the legs, and blending the two by `runS` is continuous
+            // in time: the jog keeps the stride-rate sway it already had and the
+            // sprint arrives at the rock without a seam.
+            const rock = sin(this.walkCycle * 0.5);
+            const sway = beat + (rock - beat) * runS;
             // The muzzle is DOWN at neutral and stays down at every phase of
             // the run -- see longGunElevation(), which is where that arc lives
             // and which check-character.js reads rather than re-deriving.
-            const cEl = longGunElevation(GP.band, beat);
+            const cEl = longGunElevation(GP.band, sway);
             const cDip = cos(cEl);
             // The grips, in the weapon's own frame. The support hand is on the
             // HANDGUARD, not out at the muzzle: at 9 it sat four fifths of the
@@ -11950,8 +11970,11 @@ if (this.isPlayer) {
             //    the whole weapon toward the off shoulder as the muzzle gets
             //    there and brings it back to the body as the muzzle comes
             //    round front.
-            const cBase = -0.72 - runS * 0.16 + swayA;
-            const cAng = cBase + runS * beat * 0.11;
+            // The stride-rate sway gives WAY to the rock rather than riding on
+            // top of it: left in, it is a fast ripple laid over a slow pendulum,
+            // which is the fast wobble however calm the pendulum is.
+            const cBase = -0.72 - runS * 0.16 + swayA * (1 - runS);
+            const cAng = cBase + runS * sway * 0.26;
             // Fore-and-aft the weapon settles as the sprint comes on: at this
             // pace what should be moving is the traverse, and a chest shift
             // stacked on top of it turns the path into a diagonal scrub.
@@ -11960,14 +11983,14 @@ if (this.isPlayer) {
             // to be eleven units of weapon behind the grip is now zero, and
             // left alone the whole rifle rode a hand's width forward and sat
             // over the man's head instead of across his chest.
-            const cX0 = 0.8 + GP.lean * 0.45 + swayX * 0.5 * (1 - runS * 0.6);
+            const cX0 = 0.8 + GP.lean * 0.45 + swayX * 0.5 * (1 - runS);
             // The slide is one-sided on purpose: the weapon is driven ACROSS to
             // the off shoulder and comes back to the body, never past it.
             // Symmetric, it swings far enough onto the strong side that the
             // support arm can no longer reach its grip -- the crossing arm is
             // the binding constraint on this whole motion and the first thing
             // to run out.
-            const cY0 = 7.2 - swayX * (1 - runS * 0.55) - runS * (1 - beat) * 3.0;
+            const cY0 = 7.2 - swayX * (1 - runS) - runS * (1 - sway) * 5.5;
             // THE WEAPON PIVOTS ABOUT THE HANDS, not about its own origin.
             // Swung about the origin the whole sweep is in the strong hand -- an
             // eleven-unit radius on one grip and almost none on the other -- so
@@ -22394,7 +22417,13 @@ function carryElevation(band, phase, moving) {
 const CARRY_EL = -0.42;
 function longGunElevation(band, phase) {
   const run = band < 2 ? 0 : band > 3 ? 1 : band - 2;
-  return CARRY_EL - run * (0.33 + phase * 0.24);
+  // THE MUZZLE LIFTS AT THE APEX OF THE ROCK -- at BOTH ends of the pendulum,
+  // which is what `phase * phase` says and what a rocking arm actually does.
+  // Through the middle of the sweep, where the weapon is travelling fastest, it
+  // rides deepest. That pairing is most of what makes the motion read as a
+  // pendulum rather than as a pan: a pendulum is slowest and highest at its
+  // ends, and here "highest" is the one thing this camera can show directly.
+  return CARRY_EL - run * (0.40 + phase * 0.08 - phase * phase * 0.30);
 }
 
 // Which hands a weapon needs when it is being CARRIED rather than presented.

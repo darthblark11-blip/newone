@@ -1920,22 +1920,44 @@ aiming, the gun comes down and the walking rig takes over.
 at a sprint was tried and reverted: from directly above that *is* the aimed pose, and it
 costs the support hand its grip.
 
-**What a sprint adds goes into the weapon's ATTITUDE, not into a plan-view spin.** A rifle
-held in both hands is locked to the chest; it does not pivot sixty degrees about the grips
-twice a second, and drawn that way it reads as a windscreen wiper — which is exactly what
-the first two attempts looked like. What actually moves through a stride is the weapon's
-**angle in space**: the muzzle rides down and comes back up. This projection can draw that,
-because an elevation change comes out as the barrel shortening and drooping *together* —
-a continuous change of attitude rather than a swing.
+**THE SPRINT ROCKS THE RIFLE AT HALF THE STRIDE RATE, and the frequency is the whole
+thing.** A man sprinting with a rifle at port swings it the way you rock a baby: one slow
+pendulum sweep across the body per *two* paces, not a flick on every footfall. Everything
+else on the figure rides `walkCycle`, and driving the weapon off it too is what made the
+sweep read as frantic however small the amplitude got — two passes shrank the swing and it
+still looked wrong, because the problem was never how far it went, it was how often.
 
-So the plan-view roll is held to **19°** and the difference is spent on elevation, which
-opens to a **28° arc** over the run band. The muzzle still travels sideways — the slide and
-the shoulder twist do that, 24.9 units across against 8.3 along — but it no longer whips
-round to get there. `longGunElevation(band, phase)` is where that arc lives, read by the
-draw site and by `check-character.js` alike, the same arrangement `carryElevation()` has.
+`rock = sin(walkCycle * 0.5)` is a **sub-harmonic of the same clock**, so it can never
+drift out of step with the legs, and blending it against the stride-rate sway by `runS`
+(`sway = beat + (rock − beat) * runS`) is continuous in time — the jog keeps what it had
+and the sprint arrives at the pendulum without a seam. `check-character.js` asserts the
+period directly: the pose repeats after two strides and visibly does not after one.
+
+At half rate the arc can afford to be **wide** — 30° of swing, the muzzle crossing 28 units
+across against 15 along — where at stride rate the same arc was a windscreen wiper. Both
+ends of it are still bounded: coming round to the line of travel is the aimed pose, and
+standing square across him hangs the butt a body-height off his strong side.
+
+**The stride-rate sway gives way to the rock rather than riding on top of it.** Left in, it
+is a fast ripple laid over a slow pendulum — which is the fast wobble, however calm the
+pendulum underneath.
+
+**The muzzle lifts at the APEX of the rock**, at *both* ends of the pendulum — that is what
+`phase * phase` says in `longGunElevation()`, and what a rocking arm actually does. Through
+the middle of the sweep, where the weapon is travelling fastest, it rides deepest. That
+pairing is most of what makes the motion read as a pendulum rather than as a pan: a
+pendulum is slowest and highest at its ends, and "highest" is the one thing this camera can
+show directly. `longGunElevation(band, phase)` is where the arc lives, read by the draw site
+and by `check-character.js` alike, the same arrangement `carryElevation()` has.
+
+**The sway is quadratic in the band, not linear.** Linear, a walk carried nearly half the
+jog's sway, and at a walking pace there is very little for a rifle held in two hands to do —
+the man is strolling. Quadratic leaves the jog exactly where it was (it is the one pace that
+was right first time) and all but stills the walk: 3.2 units of muzzle travel against the
+jog's 7.8.
 
 **The muzzle never comes up level, at any pace or phase.** A rifle that does is aiming,
-whatever its arms are doing — 24° down at a walk and a jog, 29°–57° through the sprint.
+whatever its arms are doing — 24° down at a walk and a jog, 25°–47° through the sprint.
 
 **Three things move the muzzle sideways and all three have to push the same way, or they
 eat each other.** Getting any one sign wrong turned the sweep into a jab:
