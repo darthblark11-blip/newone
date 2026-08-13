@@ -1920,35 +1920,47 @@ aiming, the gun comes down and the walking rig takes over.
 at a sprint was tried and reverted: from directly above that *is* the aimed pose, and it
 costs the support hand its grip.
 
-**What a sprint adds is the SWEEP.** A man running with a rifle at port drives it side to
-side across his chest with every stride, and that is a 46° arc with the muzzle crossing
-20 units — most of his own width. It comes on over the run band alone (`runS`), so the
-walk and the jog keep the steady carry unchanged, bit for bit.
+**What a sprint adds is a SIDEWAYS sweep, and sideways is the whole point of it.** A man
+running with a rifle at port drives it *left and right* across his chest, carried there by
+the shoulder counter-rotation of his own stride. Measured against the torso, the muzzle
+crosses 15.6 units — better than half his width — against 10.6 fore-and-aft. It comes on
+over the run band alone (`runS`), so the walk and the jog keep the steady carry unchanged,
+bit for bit.
 
-Four things make the sweep possible at all, and each of them was the thing blocking it:
+**Which AXIS the muzzle travels along is the property, not how far it goes.** The first
+version swung the weapon through a wide 46° arc instead, which is a bayonet thrust rather
+than a carry: at this cant most of a rotation about the grips lands *along* the line of
+travel, so it moved the muzzle 20 units fore-and-aft against 9 across and read as the rifle
+jabbing in and out. Rotation and translation are not interchangeable here — the cant
+decides which axis a term moves the muzzle along, and at fifty degrees a rotation is mostly
+the wrong one. The check is therefore a **ratio**, and it is taken against the torso: the
+body itself bobs several units up the line of travel every stride, and that belongs to the
+run, not to the weapon.
 
-- **The weapon pivots about the HANDS, not about its own origin.** Swung about the origin
-  the whole arc is in the strong hand — an eleven-unit radius on one grip and almost none
-  on the other — so that arm runs out of reach long before the muzzle has gone anywhere,
-  and the reach clamp then tears the hand off the gun. Held at the **midpoint of the two
-  grips** both arms give a little and the muzzle, twice as far out, does the travelling.
-  It is written as a correction against the *un-swept* angle, which is what keeps the walk
-  and the jog identical to what they were.
-- **The sweep runs WITH the walking sway, not against it.** The steady sway is already a
-  beat-driven roll of the same weapon; opposed, a sprint term of the other sign spent a
-  sixth of itself undoing that before it moved anything (52° of authored amplitude came
-  out as 46° on screen, and reversing the sign put it at 59°).
-- **Both ends of the arc are bounded, and neither bound is arbitrary.** Past about **80°**
-  the weapon stands square across the man and its butt hangs a body-height off his strong
-  side; inside about **35°** it points where he is going, which from directly above is the
-  aimed pose. The base angle steepens into the sprint so the arc lands between the two.
-- **The lateral slide is one-sided.** The weapon is driven *across* to the off shoulder
-  and comes back to the body, never past it — a symmetric slide throws it far enough onto
-  the strong side that the support arm cannot reach its grip.
+**Three things move the muzzle and all three have to push the same way, or they eat each
+other.** Getting any one sign wrong turned the sweep back into a jab:
+
+1. **The shoulder twist the run already has.** The weapon is carried a good sixteen units
+   in front of the body's centre, so `_tw` swings it sideways for free — and it is the one
+   term whose sign is not ours to choose, so the other two are chosen to match it. Set
+   against it, it quietly ate six of eleven units of slide.
+2. **The slide across the chest**, keyed to the same beat. One-sided on purpose: the weapon
+   is driven *across* to the off shoulder and comes back to the body, never past it. The
+   crossing arm is the binding constraint on this whole motion and the first thing to run
+   out; a symmetric slide throws the weapon far enough onto the strong side that the
+   support hand cannot reach its grip.
+3. **The cant**, steepening as the weapon crosses. Deliberately small — 14° of roll. A
+   rifle held in both hands is locked to the chest, and past a few degrees an angular swing
+   costs more in fore-and-aft jab than it buys across.
+
+**The weapon pivots about the HANDS, not about its own origin.** Swung about the origin the
+whole rotation lands in the strong hand — an eleven-unit radius on one grip and almost none
+on the other — so that arm runs out of reach and the clamp tears the hand off the gun. Held
+at the **midpoint of the two grips** both arms give a little. It is written as a correction
+against the *un-swept* angle, which is what keeps the walk and the jog identical.
 
 **The support hand chokes up as the sprint comes on.** Both what a man does with a weapon
-he is running with, and what keeps that grip inside the crossing arm's reach while the
-gun sweeps.
+he is running with, and what keeps that grip inside the crossing arm's reach.
 
 **The support hand is on the HANDGUARD, not out at the muzzle**, and its elbow tucks in
 and down rather than staying at the shoulder. Out at four fifths of the barrel with the
@@ -1973,6 +1985,38 @@ sidearm's dip rides the swing, so it visibly extends as the wrist comes up at th
 the arc and retracts as the muzzle drops at the back; drawn rigid it read as a bar held
 out sideways. The grips are read in the dipped frame too, or the hands hold a gun that is
 no longer under them.
+
+**Both carry functions take an ELEVATION IN RADIANS, not a squash factor** — signed,
+negative for a muzzle at the ground. This matters because the squash is only `cos(el)` and
+**cosine is even**: from directly above, a barrel forty degrees below the horizontal and
+one forty above draw *exactly the same short bar*. A length can say the weapon is tilted;
+only a signed angle can say which way, and the art needs to know.
+
+`gunMuzzle()` is where the sign becomes something you can see, and the bore is the only cue
+that carries it. **Elevated**, the muzzle is turned toward the camera and the bore opens
+into a hole (capped at the barrel's own height — a bore wider than its tube reads as a
+funnel bolted on). **Depressed**, it is turned away: no hole at all, just the crown and the
+front sight standing on top of it, which is what you see looking at the upper surface of
+something pointing at your feet. Drawing the hole in both cases is what made a pistol
+carried muzzle-down read as one carried muzzle-up. `gunFaces()` fades the lit top plane by
+the same term, because a barrel swung up turns its *underside* to this camera.
+
+**`carryElevation(band, phase, moving)` is where a sidearm's arc lives**, and it is a
+three-way thing rather than one pose:
+
+| | where the muzzle points |
+|---|---|
+| standing | at the floor, arm at the side |
+| walk / jog | up toward level at the front of the arc, down again at the back — **never past the horizontal**, because a man at a walk is not presenting anything |
+| sprint | the same arc carries it **above** level, which is what a man running with a pistol actually does and the one thing in the pose that says sprinting rather than jogging |
+
+Both the arc's centre and its amplitude grow with the band, which is what makes the top end
+cross zero while the bottom stays at the floor. **The run band needs its own term on each**:
+spread linearly across all three bands, the numbers that put a sprint above level put a
+*jog* a degree or two above it too — and a degree above level is enough to flip the muzzle
+art, so a jog came out looking down the bore. It is one function because the draw site and
+`check-character.js` both read it; a second copy of the arithmetic in the check would only
+assert that the two copies agree. Same reason `figureRig()` is `ragRig()`.
 
 **And the foreshortening is DIFFERENTIAL — the muzzle recedes, the butt does not.** Applied
 evenly, the whole weapon shrank toward its own middle from both directions at once, which

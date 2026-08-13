@@ -131,7 +131,7 @@ function poseOf(setup) {
   // The torso's own angle. A weapon held against the body turns WITH the body,
   // and the shoulders counter-rotate on purpose — measuring a gun against the
   // world would score that deliberate twist as wobble.
-  let bodyAng = 0, torsoAt = -1, n = 0;
+  let bodyAng = 0, torsoAt = -1, n = 0, torsoXY = [0, 0];
   ctx.push = () => { stack.push(Object.assign({}, m)); };
   ctx.pop = () => { if (stack.length) m = stack.pop(); };
   ctx.translate = (x, y) => { m.x += x * m.c - y * m.s; m.y += x * m.s + y * m.c; };
@@ -145,7 +145,9 @@ function poseOf(setup) {
     x *= m.k;
     const wx = m.x + x * m.c - y * m.s, wy = m.y + x * m.s + y * m.c;
     n++;
-    if (w === BODY_W && h === BODY_H) { bodyAng = Math.atan2(m.s, m.c); torsoAt = n; }
+    if (w === BODY_W && h === BODY_H) {
+      bodyAng = Math.atan2(m.s, m.c); torsoAt = n; torsoXY = [wx, wy];
+    }
     else if (w === HAND && h === HAND) hands.push([wx, wy]);
     // A sleeve segment: longer than it is wide, at one of the rig's two widths.
     else if (w > h && (Math.abs(h - RIGW.u) < 1e-6 || Math.abs(h - RIGW.f) < 1e-6)) {
@@ -205,7 +207,7 @@ function poseOf(setup) {
     };
   }
   if (best) best.axis = axis;
-  return { hands, segs, guns: best ? [best] : [], torsoAt, bodyAng };
+  return { hands, segs, guns: best ? [best] : [], torsoAt, torsoXY, bodyAng };
 }
 const RIGW = { u: P(`figureRig(${BODY_W}, ${BODY_H}).upperW`),
                f: P(`figureRig(${BODY_W}, ${BODY_H}).foreW`) };
@@ -290,40 +292,117 @@ console.log('\n== a carried gun is held, not waved about ==');
      `walk ${walk.toFixed(1)}, jog ${jog.toFixed(1)} degrees`);
 }
 
-console.log('\n== the sprint sweep: a rifle at port goes side to side ==');
-// A man sprinting with a rifle drives it across his chest with every stride.
-// This is the one place the weapon is SUPPOSED to move a long way, so the check
-// is that it does — a floor, not a cap. Both bounds on the arc are real: past
-// about eighty degrees the weapon stands square across him and its butt hangs a
-// body-height off his strong side, and inside about thirty-five it points where
-// he is going, which from directly above is the aimed pose.
+console.log('\n== the sprint sweep: a rifle at port goes SIDE to SIDE ==');
+// A man sprinting with a rifle drives it left and right across his chest, and
+// which AXIS the muzzle travels along is the whole property — a weapon that
+// moves just as far but fore-and-aft is a bayonet thrust, and that is exactly
+// what the first version of this was. The measurement is therefore a ratio, not
+// a distance. It is taken against the TORSO rather than the world, because the
+// body itself bobs several units up the line of travel every stride and that
+// belongs to the run, not to the weapon.
 {
   probe(`player.isArmed = true; player.currentWeapon = WEAPONS.ASSAULT_RIFLE;
          player.meleeTimer = 0; player.reloadTimer = 0; player.muzzleFlash = 0;
          player.throwAnimTimer = 0; player.dashTimer = 0;
          rightStick.active = false; player.aimHold = 0;
          swordPickedUp = false; setMeleeTool("NONE");`);
-  let lo = Infinity, hi = -Infinity;
-  let mx = [Infinity, -Infinity], my = [Infinity, -Infinity];
-  for (let i = 0; i < 24; i++) {
-    const p = poseOf(`player.isMoving = true; player.gait = 1;
-                      player.walkCycle = ${(i * Math.PI) / 12};`);
-    for (const g of p.guns) {
-      const c = Math.abs(g.ang);
-      lo = Math.min(lo, c); hi = Math.max(hi, c);
-      mx[0] = Math.min(mx[0], g.b[0]); mx[1] = Math.max(mx[1], g.b[0]);
-      my[0] = Math.min(my[0], g.b[1]); my[1] = Math.max(my[1], g.b[1]);
+  const travel = (gait) => {
+    let lo = Infinity, hi = -Infinity;
+    let mx = [Infinity, -Infinity], my = [Infinity, -Infinity];
+    for (let i = 0; i < 24; i++) {
+      const p = poseOf(`player.isMoving = true; player.gait = ${gait};
+                        player.walkCycle = ${(i * Math.PI) / 12};`);
+      for (const g of p.guns) {
+        const c = Math.abs(g.ang);
+        lo = Math.min(lo, c); hi = Math.max(hi, c);
+        const rx = g.b[0] - p.torsoXY[0], ry = g.b[1] - p.torsoXY[1];
+        mx[0] = Math.min(mx[0], rx); mx[1] = Math.max(mx[1], rx);
+        my[0] = Math.min(my[0], ry); my[1] = Math.max(my[1], ry);
+      }
     }
-  }
+    return { lo, hi, dx: mx[1] - mx[0], dy: my[1] - my[0] };
+  };
   const deg = (r) => (r * 180) / Math.PI;
-  ok('flat out the rifle sweeps a wide arc rather than riding steady',
-     hi - lo > 0.6, `${deg(hi - lo).toFixed(0)} degrees, ${deg(lo).toFixed(0)} to ${deg(hi).toFixed(0)} off the facing`);
-  ok('and the muzzle crosses most of his own width doing it',
-     mx[1] - mx[0] > BODY_H * 0.6,
-     `muzzle travels ${(mx[1] - mx[0]).toFixed(1)} x ${(my[1] - my[0]).toFixed(1)} against a ${BODY_H}-wide man`);
-  ok('but never swings square across him, nor round to where he is going',
-     hi < 1.48 && lo > 0.55,
-     `arc stays inside ${deg(lo).toFixed(0)}..${deg(hi).toFixed(0)} degrees`);
+  const run = travel(1), jog = travel(0.5);
+
+  ok('flat out the muzzle crosses most of his own width, sideways',
+     run.dy > BODY_H * 0.5,
+     `${run.dy.toFixed(1)} across against a ${BODY_H}-wide man`);
+  ok('and it is a SWEEP, not a jab: across beats fore-and-aft',
+     run.dy > run.dx * 1.2,
+     `${run.dy.toFixed(1)} across to ${run.dx.toFixed(1)} along`);
+  ok('the cant rolls with it rather than swinging on its own',
+     run.hi - run.lo > 0.12 && run.hi - run.lo < 0.45,
+     `${deg(run.hi - run.lo).toFixed(0)} degrees of roll, ${deg(run.lo).toFixed(0)} to ${deg(run.hi).toFixed(0)} off the facing`);
+  ok('but it never swings square across him, nor round to where he is going',
+     run.hi < 1.40 && run.lo > 0.55,
+     `stays inside ${deg(run.lo).toFixed(0)}..${deg(run.hi).toFixed(0)} degrees`);
+  ok('and none of it reaches the jog, which keeps the steady carry',
+     jog.dy < 3, `${jog.dy.toFixed(1)} across at a jog`);
+}
+
+console.log('\n== a carried sidearm points somewhere, and where changes with the pace ==');
+// Standing it is at the floor; walking and jogging it comes up toward level and
+// falls again; sprinting it goes PAST level, because that is what a man running
+// with a pistol in his hand does. Read out of carryElevation() rather than
+// re-derived, so this asserts the shape of the arc rather than that two copies
+// of the arithmetic agree — the same reason figureRig() is ragRig().
+{
+  const band = (t) => P(`gaitPose(${t}).band`);
+  const arc = (t) => {
+    const b = band(t);
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i <= 64; i++) {
+      const e = P(`carryElevation(${b}, ${Math.sin((i * Math.PI) / 32)}, true)`);
+      lo = Math.min(lo, e); hi = Math.max(hi, e);
+    }
+    return { lo, hi };
+  };
+  const deg = (r) => ((r * 180) / Math.PI).toFixed(0);
+  const idle = P('carryElevation(0, 0, false)');
+  const walk = arc(0.2), jog = arc(0.55), edge = arc(0.65), run = arc(1);
+
+  ok('standing, the muzzle is at the floor', idle < -0.9,
+     `${deg(idle)} degrees below level`);
+  ok('a walk brings it up toward level and never past it',
+     walk.hi < -0.05 && walk.lo < -0.7,
+     `${deg(walk.lo)} to ${deg(walk.hi)} degrees`);
+  ok('nor does a jog, right up to the top of the band',
+     jog.hi < -0.02 && edge.hi < -0.02,
+     `jog tops out at ${deg(jog.hi)}, band edge at ${deg(edge.hi)} degrees`);
+  ok('a sprint carries it above the horizontal at the front of the arc',
+     run.hi > 0.2, `${deg(run.lo)} to ${deg(run.hi)} degrees`);
+  ok('and still drops it at the back — it is an arc, not a raised gun',
+     run.lo < -0.6, `back of the arc at ${deg(run.lo)} degrees`);
+
+  // The arc has to open up smoothly, or the muzzle jumps as the thumb crosses a
+  // band edge. Every parameter in gaitPose() is held to this and so is this one.
+  let step = 0, at = 0;
+  let prev = P(`carryElevation(${band(0.02)}, 1, true)`);
+  for (let i = 1; i <= 200; i++) {
+    const t = 0.02 + (i / 200) * 0.98;
+    const v = P(`carryElevation(${band(t)}, 1, true)`);
+    if (Math.abs(v - prev) > step) { step = Math.abs(v - prev); at = t; }
+    prev = v;
+  }
+  ok('and it opens smoothly across the whole throttle, with no step at a band edge',
+     step < 0.02, `largest step ${step.toFixed(4)} rad at throttle ${at.toFixed(3)}`);
+
+  // Up and down draw the same short bar from directly above, so the sign has to
+  // reach the ART. The bore is the only cue that carries it: a muzzle turned
+  // toward the camera is a hole, one turned away is a crown with a sight on it.
+  const boreAt = (el) => {
+    const real = ctx.ellipse, real2 = ctx.rect;
+    let last = null, n = 0;
+    ctx.ellipse = (x, y, w) => { last = w; n++; };
+    ctx.rect = () => { n++; };
+    probe(`carryHandGun(WEAPONS.PISTOL, ${el}, [0, 0]);`);
+    ctx.ellipse = real; ctx.rect = real2;
+    return last;
+  };
+  const down = boreAt(-0.9), up = boreAt(0.35);
+  ok('and the art tells a raised muzzle from a lowered one, not just a short one',
+     up > down * 1.8, `bore ${up.toFixed(1)} wide pointing up, ${down.toFixed(1)} pointing down`);
 }
 
 console.log('\n== the run is a run: elbows in, and a real fore-and-aft swing ==');
