@@ -11842,8 +11842,11 @@ if (this.isPlayer) {
             // The long gun's own depression, as an ANGLE -- see gunMuzzle().
             // A rifle at port is held level enough to be pointed somewhere, so
             // it is nowhere near the sidearm's idle plunge at the floor.
-            const CARRY_EL = -0.90;
-            const CARRY_DIP = cos(CARRY_EL);
+            // A long gun is carried far SHALLOWER than a sidearm, and it has
+            // to be: the rifle reaches thirty-nine units past the hand, so at
+            // the pistol's idle plunge its muzzle would be a foot underground.
+            // Twenty-four degrees down puts it where a man actually holds one.
+            const CARRY_EL = -0.42;
 
             // THE HAND'S RESTING STATION IS ON THE SILHOUETTE, NOT OUTSIDE IT.
             // A relaxed arm hangs BESIDE the torso, so from directly above the
@@ -11890,23 +11893,27 @@ if (this.isPlayer) {
             // that was tried and from directly above it is the aimed pose, and
             // it costs the support hand its grip.
             //
-            // WHAT A SPRINT ADDS IS A SIDEWAYS SWEEP, AND SIDEWAYS IS THE WHOLE
-            // POINT OF IT. A soldier running with a rifle at port drives it
-            // LEFT AND RIGHT across his chest, carried there by the shoulder
-            // counter-rotation of his own stride -- the kinetic chain, not a
-            // wrist. It comes on over the run band alone, so the walk and the
-            // jog keep the steady carry that was already right.
+            // WHAT A SPRINT ADDS IS THE TACTICAL SWEEP: the muzzle traverses
+            // from roughly where he is GOING round to hard across his own left,
+            // once a stride, carried by the shoulder counter-rotation of the
+            // run rather than by a wrist. It comes on over the run band alone
+            // (66-100% of the stick), so the walk and the jog keep the steady
+            // carry that was already right, bit for bit.
             //
-            // The first attempt swung the weapon through a wide ANGLE instead,
-            // and that is a bayonet thrust rather than a carry: at this cant
-            // most of a rotation about the grips lands along the line of travel
-            // (measured, it moved the muzzle 20 units fore-and-aft against 9
-            // across), so what it read as was the rifle jabbing in and out.
-            // Rotation and translation are not interchangeable here -- which
-            // axis a term moves the muzzle along is decided by the cant, and at
-            // fifty degrees a rotation is mostly the wrong one.
+            // THE ELEVATION IS COUPLED TO THE TRAVERSE, and that is what lets
+            // the arc reach all the way round to the line of travel without
+            // ever reading as an aim. Pointing where he is going, the barrel is
+            // driven hard DOWN -- seventy degrees at the ground, so a third of
+            // its length is all you can see; coming across, it levels toward
+            // the carry angle. A rifle pointed forward and flat is the aimed
+            // pose from directly above and nothing else will do; a rifle
+            // pointed forward at the dirt is a man running with it.
             const runS = Math.max(0, Math.min(1, GP.band - 2));
             const beat = sin(this.walkCycle);
+            // Elevation, coupled to the traverse: driven down as the muzzle
+            // comes round toward the line of travel, levelling as it crosses.
+            const cEl = CARRY_EL + runS * (0.035 - beat * 0.20);
+            const cDip = cos(cEl);
             // The grips, in the weapon's own frame. The support hand is on the
             // HANDGUARD, not out at the muzzle: at 9 it sat four fifths of the
             // way down the barrel, which put it past the off shoulder and
@@ -11918,41 +11925,41 @@ if (this.isPlayer) {
             // They ride the weapon's own foreshortening, and that is
             // DIFFERENTIAL -- the butt end hardly moves, the muzzle end comes
             // right in -- so each grip takes the same rule the art does.
-            const gRear = -11, gFore = (5 - runS * 2) * CARRY_DIP;
-            // The base carry angle steepens a little into the sprint, so the
-            // shallow end of the sweep still never comes parallel with the line
-            // of travel. From directly above, that IS the aimed pose.
+            const gRear = 0, gFore = (14 - runS * 3) * cDip;
             // THREE THINGS MOVE THE MUZZLE, AND ALL THREE HAVE TO PUSH THE SAME
             // WAY OR THEY EAT EACH OTHER. This is the whole difficulty of the
-            // sweep, and getting any one sign wrong turned it back into a jab.
+            // traverse, and getting any one sign wrong turned it into a jab.
             //
             // 1. The SHOULDER TWIST the run already has. The weapon is carried
             //    a good sixteen units in front of the body's centre, so `_tw`
             //    swings it sideways for free -- and it is the term whose sign
             //    is not ours to choose, so the other two are chosen to match
             //    it. Set against it, it quietly ate six of eleven units.
-            // 2. The SLIDE across the chest, keyed to the same beat.
-            // 3. The CANT, steepening as the weapon crosses.
-            //
-            // The cant deliberately moves only a little. A rifle held in both
-            // hands is locked to the chest, and a big angular swing is a
-            // bayonet thrust rather than a carry: at this angle most of a
-            // rotation about the grips lands along the line of travel, so past
-            // a few degrees it costs more in fore-and-aft jab than it buys
-            // across.
-            const cBase = -0.72 - runS * 0.26 + swayA;
-            const cAng = cBase + runS * beat * 0.06;
+            // 2. The TRAVERSE: the cant itself, swinging the muzzle round from
+            //    the line of travel to hard across. This is the big one now,
+            //    and it is only safe because the elevation goes with it.
+            // 3. The SLIDE across the chest, on the same beat, which carries
+            //    the whole weapon toward the off shoulder as the muzzle gets
+            //    there and brings it back to the body as the muzzle comes
+            //    round front.
+            const cBase = -0.72 - runS * 0.10 + swayA;
+            const cAng = cBase + runS * beat * 0.47;
             // Fore-and-aft the weapon settles as the sprint comes on: at this
-            // pace what should be moving is the lateral sweep, and a chest
-            // shift stacked on top of it turns the path into a diagonal scrub.
-            const cX0 = 9 + GP.lean * 0.45 + swayX * 0.5 * (1 - runS * 0.6);
+            // pace what should be moving is the traverse, and a chest shift
+            // stacked on top of it turns the path into a diagonal scrub.
+            // Both origins are the REAR HAND now rather than the weapon's
+            // middle, so the station it is placed at moved with it: what used
+            // to be eleven units of weapon behind the grip is now zero, and
+            // left alone the whole rifle rode a hand's width forward and sat
+            // over the man's head instead of across his chest.
+            const cX0 = 0.8 + GP.lean * 0.45 + swayX * 0.5 * (1 - runS * 0.6);
             // The slide is one-sided on purpose: the weapon is driven ACROSS to
             // the off shoulder and comes back to the body, never past it.
             // Symmetric, it swings far enough onto the strong side that the
             // support arm can no longer reach its grip -- the crossing arm is
             // the binding constraint on this whole motion and the first thing
             // to run out.
-            const cY0 = -swayX * (1 - runS * 0.55) - runS * (1 - beat) * 5.4;
+            const cY0 = 7.2 - swayX * (1 - runS * 0.55) - runS * (1 - beat) * 4.2;
             // THE WEAPON PIVOTS ABOUT THE HANDS, not about its own origin.
             // Swung about the origin the whole sweep is in the strong hand -- an
             // eleven-unit radius on one grip and almost none on the other -- so
@@ -12155,8 +12162,10 @@ if (this.isPlayer) {
                                  + (this.isMoving ? 0 : rest * 0.05);
                         const gAng = 0.30 * s.sgn + s.sw * 0.055;
                         push(); translate(h.x, h.y); rotate(gAng);
-                        const gl = figureLight(this.aimAngle + _tw + gAng);
-                        carryHandGun(this.currentWeapon, el, gl);
+                        const _wa = this.aimAngle + _tw + gAng;
+                        const gl = figureLight(_wa);
+                        carryHandGun(this.currentWeapon, el, gl,
+                                     figureSouth(_wa));
                         pop();
                     }
                 }
@@ -12166,8 +12175,10 @@ if (this.isPlayer) {
                 // the long gun had two skin discs sitting on its receiver.
                 if (front && carrying === 2) {
                     push(); translate(cX, cY); rotate(cAng);
-                    const gl = figureLight(this.aimAngle + _tw + cAng);
-                    carryLongGun(this.currentWeapon, CARRY_EL, gl);
+                    const _wa = this.aimAngle + _tw + cAng;
+                    const gl = figureLight(_wa);
+                    carryLongGun(this.currentWeapon, cEl, gl,
+                                 figureSouth(_wa));
                     pop();
                 }
             };
@@ -12558,8 +12569,18 @@ if (this.isPlayer) {
     // Everything from here down is common to both arms above. It used to sit
     // inside the armed arm, which is why a neutral citizen came out headless
     // and why only the ones you had already angered got their faces back.
+    // THE HEAD CANTS TO THE WEAPON ONLY WHILE THE WEAPON IS UP. A long gun in
+    // the shoulder puts the shooter's cheek on the stock, and that offset is
+    // what sells the aim from directly above -- but a man CARRYING a rifle is
+    // not looking down it, he is looking where he is going. Left on through the
+    // carry it read as aiming at nothing, and it fought the whole point of the
+    // walk/jog/sprint poses, which is that one glance tells you the gun is down.
     let hX = 0, hY = 0;
-   if (this.isArmed && (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) && this.reloadTimer <= 0 && this.meleeTimer <= 0 && !this.dead) { hX = 3; hY = 4; }
+    if (this.isArmed && !carryMode && this.reloadTimer <= 0 && this.meleeTimer <= 0 &&
+        !this.dead &&
+        (this.currentWeapon === WEAPONS.ASSAULT_RIFLE ||
+         this.currentWeapon === WEAPONS.SHOTGUN ||
+         this.currentWeapon === WEAPONS.ROCKET_LAUNCHER)) { hX = 3; hY = 4; }
 
     
         // --- FEMALE PISTOL HAIR / NORMAL HEAD ---
@@ -22355,47 +22376,143 @@ function weaponHands(w) {
   return 1;
 }
 
-// The guns as CARRIED, drawn about their own middle so the carry pose can put
-// them anywhere and swing them. Deliberately NOT shared with the presented art
+// The guns as CARRIED, drawn about their own GRIP so the carry pose can put
+// them anywhere and swing them. Deliberately not shared with the presented art
 // in Character.show(): that is laid out around the muzzle offsets the bullets
-// are actually fired from (bLX/bLY) and cannot be moved without walking the
-// rounds off the barrel. Same materials, different origin.
-// A carried weapon, drawn as a SOLID rather than as a plan view.
+// are fired from (bLX/bLY) and cannot be moved without walking the rounds off
+// the barrel. The MATERIALS are shared, though -- every colour below is read
+// off the aimed drawing of the same weapon, because a rifle that is black with
+// walnut furniture when it is up must not turn blue-grey when it comes down.
 //
-// `k` is how much of its length you can see. A carried gun is depressed, and
-// from directly above a depressed barrel is a short one -- that foreshortening
-// is the whole top-down read of "carried", because a full-length bar lying flat
-// on the screen is what a LEVELLED weapon looks like, which is the aim.
+// A CARRIED WEAPON IS DRAWN THROUGH A PROJECTION, NOT SQUASHED.
 //
-// The squash is applied to the ART, not by scale(). Scaled non-uniformly the
-// contour thins along one axis and the whole thing turns into a paper cut-out,
-// which is exactly what it looked like at the ends of the swing where the
-// squash is hardest. Drawn at its own length instead, the outline keeps an even
-// weight all the way round and the gun stays an object.
+// Shortening a barrel along its own axis is ORTHOGRAPHIC, and orthographic is
+// precisely the projection that cannot say which way a thing is tilted: it
+// scales the plan view down and the result reads as the art being crushed. Four
+// separate consequences of the muzzle being somewhere other than the height of
+// the hand are drawn instead, and between them they are the optics:
 //
-// Three things carry the third dimension at this size, and they are the same
-// three volShade() uses on a figure:
+//   FORESHORTENING  the part past the grip recedes, and only that part. The
+//                   end you are holding is under the wrist already and hardly
+//                   moves -- applied evenly, the grip slides backwards out of
+//                   the fist while the barrel comes in, which is the crushing.
+//   PERSPECTIVE     and NARROWS as it recedes. A far end subtends a smaller
+//                   angle than a near one; a plain scale-down does not, and
+//                   that missing taper is most of why a squash reads as paper.
+//   PARALLAX        it is at a different HEIGHT from the grip, and in this game
+//                   a height difference is a displacement -- MASS_TILT, the
+//                   term every mass in the world leans by. A carried weapon is
+//                   in the player's hand and the player is the middle of the
+//                   screen, so the position-dependent half of massLean() is
+//                   zero here and the tilt term is the whole of it: constant,
+//                   cheap, and it REVERSES with the elevation, which is the
+//                   thing a length can never do.
+//   OCCLUSION       the end nearer the ground sees less sky and goes darker,
+//                   the end swung up catches more and lifts. Drawn as a few
+//                   bands along the piece, which is the only way a flat-fill
+//                   renderer gets a gradient -- the same trick volShade() uses.
 //
-//   1. a CONTOUR, so it separates from the hand and the body under it;
-//   2. a TOP PLANE -- the slide, the receiver rib, the barrel shroud -- drawn
-//      inset and offset AGAINST the sun, which is what says "this has a top and
-//      a side" rather than "this is a shape";
-//   3. a MUZZLE CAP that opens from a sliver into a circle as the barrel dips,
-//      because a bore you are looking down is a hole and a bore you are looking
-//      across is an edge. It is the one cue that reads the depression directly.
+// On top of those, the three terms volShade() puts on a figure: a CONTOUR so it
+// separates from the hand and the body under it, a LIT TOP PLANE inset and
+// offset against the sun, and the MUZZLE, which is where the sign of the
+// elevation becomes something you can see.
 //
-// `L` is the light in the WEAPON's own frame -- brought in by figureLight(), or
-// the highlight would ride round with the gun as the figure turns.
+// `L` is the sun in the WEAPON's own frame -- brought in by figureLight(), or
+// the highlight rides round with the gun as the figure turns. `S` is world
+// SOUTH in that same frame, which is the axis the parallax displaces along.
 
-// One box of the gun: body, then its lit top plane inset against the sun.
-function gunBox(x, y, w, h, r, br, bg, bb, L, lift) {
-  fill(br, bg, bb);
-  rect(x, y, w, h, r);
+// World SOUTH expressed in a frame rotated by `ang`. The same round trip
+// figureLight() does, and for the same reason: rotate() carries the world's
+// axes round with it, so a term written in world space quietly turns with the
+// model. MASS_TILT pushes a raised point south; this is south, from in here.
+const _figSth = [0, 1];
+function figureSouth(ang) {
+  const c = Math.cos(ang), s = Math.sin(ang);
+  _figSth[0] = s; _figSth[1] = c;
+  return _figSth;
+}
+
+// A HELD WEAPON PIVOTS ABOUT THE HAND, AND EVERY WEAPON BELOW IS AUTHORED WITH
+// THE GRIP AT THE ORIGIN SO THAT PIVOT IS JUST v = 0.
+//
+// That one convention is what lets the projection be AFFINE, and affine is not
+// a nicety here -- a rigid rod stays straight under any real projection, so any
+// fold in the maths is a fold you can see. The version before this one had one:
+// the along-axis squash was applied only to the part past the grip, and the
+// height only to the part past the grip, both clamped flat behind it. Every
+// weapon came out kinked at the wrist, a receiver and a barrel meeting in a V.
+// Scaling about the MIDDLE was the original sin that hack was written to avoid
+// -- it slid the grip backwards out of the fist -- and putting the origin on
+// the grip removes the reason for the hack entirely.
+//
+// GUN_TILT is the camera's tilt as it applies to something held in the air.
+// MASS_TILT is authored for a mass standing ON the ground, where the base is
+// pinned and only the top moves; run at full strength on a hand-held object it
+// swings the weapon nearly forty degrees off the pose it is being drawn in,
+// which is a bigger correction than the cant it was meant to decorate.
+const GUN_TILT = 0.22;
+function gunProj(el, L, S) {
+  const k = Math.cos(el), up = Math.sin(el);
+  return {
+    k: k, up: up, L: L, S: S || _figSth,
+    // A lit top plane fades as the muzzle rises: a barrel swung up turns its
+    // UNDERSIDE to this camera, and a highlight there is on a face pointing
+    // away from the sky.
+    lit: 1 - 0.72 * Math.max(0, up),
+    // Along the axis: what a tilted rod measures from directly above.
+    x: function (v) { return v * k; },
+    // How far ABOVE the hand a point at local v sits. Signed and linear through
+    // the grip -- the muzzle drops, the butt rises, as a rigid thing does.
+    h: function (v) { return v * up; },
+    // Perspective. The end nearer the ground is further from an overhead camera
+    // and subtends a smaller angle; the end swung up is nearer and subtends a
+    // larger one. This is the taper, and it is what separates a projection from
+    // a plan view scaled down -- a scaled plan view has no near end.
+    w: function (v) {
+      const t = 1 + v * up * 0.007;
+      return t < 0.66 ? 0.66 : t > 1.28 ? 1.28 : t;
+    }
+  };
+}
+
+// One piece, as a run of bands along its own length. Each band is a quad, so
+// the taper is real geometry rather than a scaled rect, and each carries its
+// own shade from the height of the ground under it.
+const GUN_BANDS = 3;
+function gunPiece(P, x0, x1, y, h, br, bg, bb, lift) {
+  const yc = y + h * 0.5, half = h * 0.5;
+  const n = Math.abs(P.x(x1) - P.x(x0)) > 9 ? GUN_BANDS : 1;
+  const at = function (v, o) {
+    const ht = P.h(v), t = P.w(v) * half;
+    // MASS_TILT is the whole of the lean at the middle of the screen.
+    const d = ht * GUN_TILT;
+    o[0] = P.x(v) + P.S[0] * d;
+    o[1] = yc + P.S[1] * d + t;
+    o[2] = t;
+    return o;
+  };
+  const a = [0, 0, 0], b = [0, 0, 0];
+  for (let i = 0; i < n; i++) {
+    const v0 = x0 + ((x1 - x0) * i) / n, v1 = x0 + ((x1 - x0) * (i + 1)) / n;
+    at(v0, a); at(v1, b);
+    // Nearer the ground is darker; swung up toward the sky is lighter. Keyed
+    // to the band's own midpoint, which is what makes it a gradient.
+    const sh = 1 + Math.max(-0.30, Math.min(0.16, P.h((v0 + v1) * 0.5) * 0.020));
+    fill(br * sh, bg * sh, bb * sh);
+    quad(a[0], a[1] - a[2] * 2, b[0], b[1] - b[2] * 2, b[0], b[1], a[0], a[1]);
+  }
   if (!(lift > 0)) return;
-  const ix = Math.min(w * 0.22, 2.2), iy = Math.min(h * 0.24, 1.7);
-  fill(br + (255 - br) * lift, bg + (255 - bg) * lift, bb + (255 - bb) * lift);
-  rect(x + ix - L[0] * 0.9, y + iy - L[1] * 0.9,
-       Math.max(0.6, w - ix * 2), Math.max(0.6, h - iy * 2), r * 0.6);
+  // The lit top plane, inset and pushed against the sun. One quad over the
+  // whole piece: banding it as well would put three seams down the highlight.
+  const l = lift * P.lit;
+  if (!(l > 0.02)) return;
+  at(x0, a); at(x1, b);
+  const ia = Math.max(0.5, a[2] * 0.52), ib = Math.max(0.5, b[2] * 0.52);
+  const ox = -P.L[0] * 0.9, oy = -P.L[1] * 0.9;
+  const ex = (b[0] - a[0]) * 0.13, ey = (b[1] - a[1]) * 0.13;
+  fill(br + (255 - br) * l, bg + (255 - bg) * l, bb + (255 - bb) * l);
+  quad(a[0] + ox + ex, a[1] + oy - a[2] - ia, b[0] + ox - ex, b[1] + oy - b[2] - ib,
+       b[0] + ox - ex, b[1] + oy - b[2] + ib, a[0] + ox + ex, a[1] + oy - a[2] + ia);
 }
 
 // The muzzle end, and it is the ONE cue that says which way the barrel is
@@ -22405,79 +22522,70 @@ function gunBox(x, y, w, h, r, br, bg, bb, L, lift) {
 //
 // What separates them is whether you can see down the bore. Elevated, the
 // muzzle is turned toward the camera and the bore opens into a hole. Depressed,
-// it is turned away — there is no hole at all, just the crown of the barrel and
-// the front sight standing on top of it, which is the view you get looking at
-// the upper surface of something pointing at your feet. Drawing the hole in
+// it is turned away -- there is no hole at all, just the crown of the barrel
+// and the front sight standing on top of it, which is the view you get looking
+// at the upper surface of something pointing at your feet. Drawing the hole in
 // both cases is what made a pistol carried muzzle-down read as one carried
 // muzzle-up.
-function gunMuzzle(x, y, h, el, br, bg, bb) {
-  const up = Math.sin(el);
+function gunMuzzle(P, x, y, h, br, bg, bb) {
+  const up = P.up, d = P.h(x) * GUN_TILT;
+  const cx = P.x(x) + P.S[0] * d, cy = y + P.S[1] * d;
+  const t = P.w(x);
   if (up > 0.02) {
-    // Looking INTO it. Capped at the barrel's own height -- a bore wider than
-    // the tube it is in reads as a funnel bolted to the end.
     fill(br * 0.26, bg * 0.26, bb * 0.32);
-    ellipse(x, y, Math.min(h * 0.86, Math.max(1.2, h * (0.14 + up * 1.45))), h * 0.86);
+    ellipse(cx, cy, Math.min(h * 0.86, Math.max(1.2, h * (0.14 + up * 1.45))), h * 0.86 * t);
   } else {
     fill(Math.min(255, br * 1.22), Math.min(255, bg * 1.22), Math.min(255, bb * 1.22));
-    ellipse(x, y, Math.max(1.0, h * 0.30), h * 0.84);
+    ellipse(cx, cy, Math.max(1.0, h * 0.30), h * 0.84 * t);
     fill(br * 0.44, bg * 0.44, bb * 0.48);
-    rect(x - h * 0.18, y - h * 0.17, h * 0.36, h * 0.34, 0.6);
+    rect(cx - h * 0.18, cy - h * 0.17 * t, h * 0.36, h * 0.34 * t, 0.6);
   }
 }
 
-// THE FORESHORTENING IS DIFFERENTIAL, AND THAT IS WHAT SEPARATES "POINTING AT
-// THE FLOOR" FROM "SQUASHED".
-//
-// Scale the whole weapon by k and every part of it shrinks together, grip
-// included -- which is a smaller gun, not a tilted one, and it reads as the art
-// being squeezed. A barrel actually pointing down does something different: the
-// end nearest the hand hardly moves, because it is nearly under the wrist
-// already, while the muzzle swings away from the camera and comes right in. So
-// the squash is applied per END, and only to the part forward of the hand.
-//
-// `gunSeg` takes the two ends in the weapon's own frame rather than a start and
-// a width, because a width cannot be foreshortened per end.
-function gunFore(k) { return (v) => (v > 0 ? v * k : v); }
-
-// Both carry functions take the barrel's ELEVATION in radians -- negative for a
-// muzzle pointed at the ground, positive for one brought up -- rather than a
-// bare squash factor. The squash is only cos(el), which is the same either way,
-// so a signed angle is the only form that can tell the muzzle art which face of
-// the weapon is showing. `lift` fades with elevation for the same reason: a
-// barrel swung up turns its UNDERSIDE to this camera, and a lit top plane
-// painted on it is a highlight on a surface pointing away from the sky.
-function gunFaces(el) {
-  return { k: Math.cos(el), lit: 1 - 0.72 * Math.max(0, Math.sin(el)) };
-}
-
-function carryLongGun(w, el, L) {
+// A long gun, authored about the grip at the origin with the muzzle out along
+// +x. Colours are the aimed drawings' own: the rifle is black with walnut
+// furniture, the shotgun is three greys, the launcher is olive with a black
+// sight block, the coach gun is walnut under two blued barrels.
+function carryLongGun(w, el, L, S) {
   el = el === undefined ? 0 : el;
   L = L || _figLit;
-  const F = gunFaces(el), k = F.k;
-  const X = gunFore(k);
-  const seg = (x0, x1, y, h, r, br, bg, bb, lift) =>
-      gunBox(X(x0), y, X(x1) - X(x0), h, r, br, bg, bb, L, lift * F.lit);
+  const P = gunProj(el, L, S);
+  const seg = function (x0, x1, y, h, br, bg, bb, lift) {
+    gunPiece(P, x0, x1, y, h, br, bg, bb, lift);
+  };
   if (BIOME_ACTIVE) figureContour();
+  // Every layout below is the aimed drawing's own, re-anchored so the rear
+  // hand sits at the origin instead of at the muzzle offset the bullets leave
+  // from. Widths, colours and the order the pieces stack in all carry over --
+  // a rifle that is black with two blocks of walnut on it when it is up has to
+  // be the same rifle when it comes down.
+  // Every layout below is the aimed drawing's own, shifted so the REAR HAND is
+  // at the origin instead of the muzzle offset the bullets leave from. Widths,
+  // colours and the order the pieces stack in all carry over -- a rifle that is
+  // black with two blocks of walnut on it when it is up has to be the same
+  // rifle when it comes down.
   if (w === WEAPONS.SHOTGUN) {
-    seg(-21, -6, -3.6, 7.2, 2, 62, 46, 32, 0.26);      // stock
-    seg(-8, 25, -2.6, 5.2, 1, 38, 40, 46, 0.30);       // barrels
-    seg(-3, 10, -3.6, 7.2, 1, 22, 24, 28, 0.24);       // receiver
-    gunMuzzle(X(24), 0, 5.2, el, 38, 40, 46);
+    seg(-8, 3, -3.5, 7, 50, 50, 50, 0.26);             // stock
+    seg(-3, 37, -2.5, 5, 30, 30, 30, 0.30);            // barrels
+    seg(5, 19, -3.5, 7, 15, 15, 15, 0.24);             // receiver
+    gunMuzzle(P, 37, 0, 5, 30, 30, 30);
   } else if (w === WEAPONS.ROCKET_LAUNCHER) {
-    seg(-22, 26, -3.2, 6.4, 2, 52, 72, 52, 0.24);      // tube
-    seg(-7, 4, -5.4, 10.8, 1, 34, 40, 34, 0.22);       // sight block
-    seg(14, 19, -4.4, 8.8, 1, 40, 54, 40, 0.20);       // bell
-    gunMuzzle(X(25), 0, 8.8, el, 40, 54, 40);
+    seg(-5, 42, -3, 6, 50, 70, 50, 0.24);              // tube
+    seg(9, 19, -5, 10, 30, 30, 30, 0.22);              // sight block
+    gunMuzzle(P, 42, 0, 6, 50, 70, 50);
   } else if (w === WEAPONS.COACH_GUN) {
-    seg(-20, -4, -3.6, 7.2, 2, 104, 68, 38, 0.26);
-    seg(-5, 24, -3.2, 6.4, 1, 50, 52, 58, 0.28);
-    gunMuzzle(X(23), 0, 6.4, el, 50, 52, 58);
+    seg(-4, 10, -4, 8, 84, 56, 32, 0.26);              // walnut stock
+    seg(8, 16, -4.5, 9, 120, 82, 46, 0.24);            // receiver
+    seg(15, 37, -3.4, 3.4, 58, 60, 66, 0.30);          // upper barrel
+    seg(15, 37, 0, 3.4, 48, 50, 56, 0.24);             // lower barrel
+    seg(13, 15.5, -3.4, 6.8, 150, 120, 70, 0.20);      // breech face
+    gunMuzzle(P, 37, -1.7, 3.4, 58, 60, 66);
   } else {                                              // rifle
-    seg(-24, -13, -3.2, 6.4, 1, 132, 74, 34, 0.24);    // stock
-    seg(-22, 24, -2.1, 4.2, 1, 46, 48, 54, 0.32);      // barrel
-    seg(-13, 0, -3.2, 6.4, 1, 138, 78, 36, 0.24);      // grip wrap
-    seg(-5, 0, 1.6, 9, 1, 40, 42, 48, 0.18);           // magazine
-    gunMuzzle(X(23), 0, 4.2, el, 46, 48, 54);
+    seg(-8, 0, -3, 6, 139, 69, 19, 0.24);              // walnut stock
+    seg(-3, 39, -2, 4, 40, 40, 40, 0.32);              // black barrel
+    seg(7, 19, -3, 6, 139, 69, 19, 0.22);              // walnut handguard
+    seg(2, 7, 1.4, 7.5, 34, 34, 34, 0.18);             // magazine
+    gunMuzzle(P, 39, 0, 4, 40, 40, 40);
   }
   noStroke();
 }
@@ -22485,13 +22593,13 @@ function carryLongGun(w, el, L) {
 // A sidearm, drawn about its GRIP at the origin with the muzzle out along +x,
 // because that is where the hand holding it is -- and because that is the point
 // the foreshortening pivots about.
-function carryHandGun(w, el, L) {
+function carryHandGun(w, el, L, S) {
   el = el === undefined ? 0 : el;
   L = L || _figLit;
-  const F = gunFaces(el), k = F.k;
-  const X = gunFore(k);
-  const seg = (x0, x1, y, h, r, br, bg, bb, lift) =>
-      gunBox(X(x0), y, X(x1) - X(x0), h, r, br, bg, bb, L, lift * F.lit);
+  const P = gunProj(el, L, S);
+  const seg = function (x0, x1, y, h, br, bg, bb, lift) {
+    gunPiece(P, x0, x1, y, h, br, bg, bb, lift);
+  };
   if (BIOME_ACTIVE) figureContour();
   // THE GRIP IS UNDER THE GUN, NOT BESIDE IT. On a pistol the butt runs
   // straight DOWN from the rear of the frame, so from a bird's eye it is almost
@@ -22500,23 +22608,25 @@ function carryHandGun(w, el, L) {
   // block hanging off the side it was as big as the weapon and the whole thing
   // read as a black L lying on the man.
   if (w === WEAPONS.SMG || w === WEAPONS.DUAL_SMG) {
-    seg(0, 4.4, 1.4, 6.2, 1, 34, 36, 42, 0.18);        // magazine
-    seg(-3, 20, -3.4, 6.4, 2, 46, 48, 55, 0.30);       // receiver
-    gunMuzzle(X(20), -0.2, 6.4, el, 46, 48, 55);
+    seg(-5, 1, 2.4, 9, 40, 40, 40, 0.16);              // magazine
+    seg(-9, 16, -4, 8, 40, 40, 40, 0.30);              // receiver
+    gunMuzzle(P, 16, 0, 8, 40, 40, 40);
   } else if (w === WEAPONS.REVOLVER) {
-    seg(-3, 3.4, -0.6, 5.6, 2, 96, 62, 38, 0.26);      // grip heel
-    seg(-1, 11, -3.4, 5.8, 1, 168, 174, 184, 0.34);    // frame
-    fill(152, 158, 166); ellipse(X(5), -0.5, X(7) + 2, 6.6);  // cylinder
-    seg(10, 23, -2.4, 3.6, 1, 196, 202, 212, 0.36);    // barrel
-    gunMuzzle(X(23), -0.6, 3.6, el, 196, 202, 212);
+    seg(-3, 3.4, -0.6, 5.6, 86, 56, 34, 0.26);         // walnut grip heel
+    seg(-1, 8, -3.4, 5.8, 188, 192, 200, 0.34);        // frame
+    seg(9, 23, -2.4, 3.6, 214, 218, 226, 0.36);        // barrel
+    seg(9, 23, -2.4, 1.2, 240, 244, 250, 0.30);        // top rib
+    fill(152, 158, 166);
+    ellipse(P.x(5), -0.5, Math.max(3, P.x(7) + 2), 6.6 * P.w(5));   // cylinder
+    gunMuzzle(P, 23, -0.6, 3.6, 110, 116, 124);
   } else if (w === WEAPONS.TASER) {
-    seg(1, 5.4, 1.4, 5.4, 1, 30, 30, 34, 0.16);
-    seg(-1, 13, -3.6, 6.4, 2, 214, 208, 40, 0.34);
-    gunMuzzle(X(13), -0.4, 6.4, el, 214, 208, 40);
+    seg(1, 5.4, 1.4, 5.4, 20, 20, 20, 0.16);           // battery
+    seg(-1, 13, -3.6, 6.4, 255, 255, 0, 0.28);         // body
+    gunMuzzle(P, 13, -0.4, 6.4, 214, 208, 40);
   } else {                                              // pistol
-    seg(0, 4.6, 1.2, 5.4, 1, 34, 36, 42, 0.18);        // grip heel
-    seg(-2, 15, -3.4, 5.8, 2, 44, 46, 53, 0.32);       // slide
-    gunMuzzle(X(15), -0.5, 5.8, el, 44, 46, 53);
+    seg(0, 4.6, 1.2, 5.4, 34, 34, 34, 0.18);           // grip heel
+    seg(-2, 15, -3.4, 5.8, 40, 40, 40, 0.32);          // slide
+    gunMuzzle(P, 15, -0.5, 5.8, 40, 40, 40);
   }
   noStroke();
 }

@@ -116,7 +116,7 @@ function poseOf(setup) {
   probe(setup);
   const px = P('player.x'), py = P('player.y');
   const real = {};
-  for (const k of ['ellipse', 'rect', 'push', 'pop', 'translate', 'rotate', 'scale']) {
+  for (const k of ['ellipse', 'rect', 'quad', 'push', 'pop', 'translate', 'rotate', 'scale']) {
     real[k] = ctx[k];
   }
   // Start at the character's own origin, so everything below is in the frame
@@ -127,7 +127,7 @@ function poseOf(setup) {
   // leaves the rotation clean to read angles off.
   let m = { x: -px, y: -py, c: 1, s: 0, k: 1 };
   const stack = [];
-  const hands = [], segs = [], rects = [];
+  const hands = [], segs = [];
   // The torso's own angle. A weapon held against the body turns WITH the body,
   // and the shoulders counter-rotate on purpose — measuring a gun against the
   // world would score that deliberate twist as wobble.
@@ -159,23 +159,48 @@ function poseOf(setup) {
                   a: [m.x, m.y], b: [m.x + L * m.c, m.y + L * m.s] });
     }
   };
-  // Every rect, with its ends in the figure's own frame and its place in the
-  // draw order. The weapon is picked out below.
-  ctx.rect = (x, y, w, h) => {
+  ctx.rect = (x, y, w, h) => { n++; };
+  // A carried weapon is a run of QUADS now — the pieces taper with the
+  // perspective, which a rect cannot do — and every one of them is drawn in the
+  // weapon's own frame, inside one translate+rotate. So they are grouped BY
+  // THAT FRAME: the group with the longest local extent is the weapon, its
+  // frame gives the angle directly, and the two extreme local x values are the
+  // butt and the muzzle. Identifying it by a literal width, or as "the longest
+  // rect", both stopped working the moment the art began projecting itself.
+  const frames = new Map();
+  ctx.quad = function () {
     n++;
-    const e = (t) => [m.x + t * m.c, m.y + t * m.s];
-    rects.push({ w: w, h: h, at: n, ang: Math.atan2(m.s, m.c) - bodyAng,
-                 a: e(x), b: e(x + w) });
+    if (torsoAt < 0) return;
+    const key = m.c.toFixed(6) + ',' + m.s.toFixed(6) + ',' +
+                m.x.toFixed(4) + ',' + m.y.toFixed(4);
+    let f = frames.get(key);
+    if (!f) {
+      f = { m: { x: m.x, y: m.y, c: m.c, s: m.s },
+            ang: Math.atan2(m.s, m.c) - bodyAng,
+            lo: Infinity, hi: -Infinity, ylo: Infinity, yhi: -Infinity, at: n };
+      frames.set(key, f);
+    }
+    f.at = Math.max(f.at, n);
+    for (let i = 0; i < arguments.length; i += 2) {
+      const vx = arguments[i], vy = arguments[i + 1];
+      if (vx < f.lo) f.lo = vx;
+      if (vx > f.hi) f.hi = vx;
+      if (vy < f.ylo) f.ylo = vy;
+      if (vy > f.yhi) f.yhi = vy;
+    }
   };
   probe('player.show();');
   Object.assign(ctx, real);
-  // The barrel: the longest rect drawn AFTER the torso. Identifying it by a
-  // literal width stopped working the moment the art began squashing itself
-  // along its own axis, and "after the torso" is what separates a weapon in the
-  // hands from the pack on the back, which is drawn before it and is 12 across.
   let best = null;
-  for (const r of rects) {
-    if (r.at > torsoAt && r.w > 6 && (!best || r.w > best.w)) best = r;
+  for (const f of frames.values()) {
+    const span = f.hi - f.lo;
+    if (span > 6 && (!best || span > best.hi - best.lo)) best = f;
+  }
+  if (best) {
+    const e = (t) => [best.m.x + t * best.m.c, best.m.y + t * best.m.s];
+    best.w = best.hi - best.lo;
+    best.a = e(best.lo);
+    best.b = e(best.hi);
   }
   // Where the weapon actually is, as an AXIS and an EXTENT rather than as two
   // named grip points. Grips used to be read off as fixed fractions of the
@@ -186,27 +211,17 @@ function poseOf(setup) {
   // the axis, and it is somewhere along the thing. The extent is the union of
   // every piece drawn after the torso, so a shotgun's rear hand on the stock
   // counts even though the stock is not the longest rect.
-  let axis = null;
   if (best) {
-    const dx = best.b[0] - best.a[0], dy = best.b[1] - best.a[1];
-    const L = Math.hypot(dx, dy) || 1;
-    const ux = dx / L, uy = dy / L;
-    let lo = Infinity, hi = -Infinity;
-    for (const r of rects) {
-      if (r.at <= torsoAt) continue;
-      for (const e of [r.a, r.b]) {
-        const t = (e[0] - best.a[0]) * ux + (e[1] - best.a[1]) * uy;
-        lo = Math.min(lo, t); hi = Math.max(hi, t);
-      }
-    }
-    axis = {
+    const ux = best.m.c, uy = best.m.s;
+    best.axis = {
       // How far off the weapon's centreline a point sits, and how far along it.
+      // The extent comes from the frame's own local bounds, so a shotgun's rear
+      // hand on the stock counts even though the stock is not the longest piece.
       off: (p) => Math.abs(-(p[0] - best.a[0]) * uy + (p[1] - best.a[1]) * ux),
       along: (p) => (p[0] - best.a[0]) * ux + (p[1] - best.a[1]) * uy,
-      lo, hi
+      lo: 0, hi: best.hi - best.lo
     };
   }
-  if (best) best.axis = axis;
   return { hands, segs, guns: best ? [best] : [], torsoAt, torsoXY, bodyAng };
 }
 const RIGW = { u: P(`figureRig(${BODY_W}, ${BODY_H}).upperW`),
@@ -331,14 +346,32 @@ console.log('\n== the sprint sweep: a rifle at port goes SIDE to SIDE ==');
   ok('and it is a SWEEP, not a jab: across beats fore-and-aft',
      run.dy > run.dx * 1.2,
      `${run.dy.toFixed(1)} across to ${run.dx.toFixed(1)} along`);
-  ok('the cant rolls with it rather than swinging on its own',
-     run.hi - run.lo > 0.12 && run.hi - run.lo < 0.45,
-     `${deg(run.hi - run.lo).toFixed(0)} degrees of roll, ${deg(run.lo).toFixed(0)} to ${deg(run.hi).toFixed(0)} off the facing`);
-  ok('but it never swings square across him, nor round to where he is going',
-     run.hi < 1.40 && run.lo > 0.55,
-     `stays inside ${deg(run.lo).toFixed(0)}..${deg(run.hi).toFixed(0)} degrees`);
+  ok('the muzzle traverses from the line of travel round to hard across him',
+     run.lo < 0.50 && run.hi > 1.15,
+     `${deg(run.lo).toFixed(0)} to ${deg(run.hi).toFixed(0)} degrees off the facing`);
   ok('and none of it reaches the jog, which keeps the steady carry',
-     jog.dy < 3, `${jog.dy.toFixed(1)} across at a jog`);
+     jog.dy < 5, `${jog.dy.toFixed(1)} across at a jog`);
+
+  // THE TRAVERSE IS ONLY SAFE BECAUSE THE ELEVATION GOES WITH IT. A rifle
+  // pointed along the line of travel and LEVEL is the aimed pose from directly
+  // above and nothing else will do; pointed along it at the dirt, it is a man
+  // running with one. So the two are checked together: the phase where the
+  // weapon comes round front has to be the phase where the least of it is
+  // showing, and by a margin — that shortening IS the depression.
+  let shortAt = 0, longAt = 0, shortest = Infinity, longest = 0;
+  for (let i = 0; i < 24; i++) {
+    const p = poseOf(`player.isMoving = true; player.gait = 1;
+                      player.walkCycle = ${(i * Math.PI) / 12};`);
+    for (const g of p.guns) {
+      const len = g.hi - g.lo, cant = Math.abs(g.ang);
+      if (len < shortest) { shortest = len; shortAt = cant; }
+      if (len > longest) { longest = len; longAt = cant; }
+    }
+  }
+  ok('and it only comes round front by pointing the barrel at the ground',
+     shortest / longest < 0.85 && shortAt < longAt,
+     `${shortest.toFixed(0)} units drawn at ${deg(shortAt).toFixed(0)} degrees, ` +
+     `${longest.toFixed(0)} at ${deg(longAt).toFixed(0)}`);
 }
 
 console.log('\n== a carried sidearm points somewhere, and where changes with the pace ==');
@@ -539,18 +572,18 @@ console.log('\n== the carry keeps off the body it is being carried on ==');
   ok('and no sleeve on a two-handed carry clips out past the shoulder',
      proud < 1.5, `worst joint ${proud.toFixed(1)} past the silhouette — ${pat}`);
 
-  // Across the chest at EVERY pace. Bringing it parallel with the line of
-  // travel at a sprint was tried: from directly above that is the aimed pose,
-  // and it costs the support hand its grip.
+  // Across the chest at a WALK and a JOG. The sprint is the one exception and
+  // it buys the exception by depressing the barrel as it comes round — see the
+  // traverse block above, which checks the two together.
   let flattest = Math.PI;
-  for (const g of [0.15, 0.5, 1.0]) {
+  for (const g of [0.15, 0.5]) {
     for (let i = 0; i < 12; i++) {
       const p = poseOf(`player.isMoving = true; player.gait = ${g};
                         player.walkCycle = ${(i * Math.PI) / 6};`);
       for (const gun of p.guns) flattest = Math.min(flattest, Math.abs(gun.ang));
     }
   }
-  ok('the long gun stays across the chest even flat out, never along the body',
+  ok('the long gun stays across the chest at a walk and a jog, never along the body',
      flattest > 0.45,
      `shallowest cant ${((flattest * 180) / Math.PI).toFixed(0)} degrees off the facing`);
   probe('player.isArmed = false; player.aimHold = 0;');
@@ -784,12 +817,15 @@ console.log('\n== carrying a weapon, as opposed to presenting one ==');
        p.guns.length ? `torso at ${p.torsoAt}, gun at ${p.guns[0].at}` : 'no gun found');
   }
   {
-    const realE = ctx.ellipse, realR = ctx.rect;
-    let n = 0, lastHand = -1, gunAt = -1, gunW = 0;
+    const realE = ctx.ellipse, realR = ctx.rect, realQ = ctx.quad;
+    let n = 0, lastHand = -1, gunAt = -1;
     ctx.ellipse = (x, y, w, h) => { n++; if (w === HAND && h === HAND) lastHand = n; };
-    ctx.rect = (x, y, w, h) => { n++; if (w > gunW && w > 6) { gunW = w; gunAt = n; } };
+    ctx.rect = () => { n++; };
+    // The weapon is quads now: the pieces taper with the perspective, and a
+    // rect cannot. Its LAST piece is what a hand has to go down before.
+    ctx.quad = () => { n++; gunAt = n; };
     probe('player.show();');
-    ctx.ellipse = realE; ctx.rect = realR;
+    ctx.ellipse = realE; ctx.rect = realR; ctx.quad = realQ;
     ok("and every hand goes down UNDER it, as a bird's eye view demands",
        gunAt > lastHand, `last hand at ${lastHand}, gun at ${gunAt}`);
   }

@@ -1920,38 +1920,49 @@ aiming, the gun comes down and the walking rig takes over.
 at a sprint was tried and reverted: from directly above that *is* the aimed pose, and it
 costs the support hand its grip.
 
-**What a sprint adds is a SIDEWAYS sweep, and sideways is the whole point of it.** A man
-running with a rifle at port drives it *left and right* across his chest, carried there by
-the shoulder counter-rotation of his own stride. Measured against the torso, the muzzle
-crosses 15.6 units — better than half his width — against 10.6 fore-and-aft. It comes on
-over the run band alone (`runS`), so the walk and the jog keep the steady carry unchanged,
-bit for bit.
+**What a sprint adds is the TACTICAL TRAVERSE.** The muzzle sweeps from roughly where he
+is *going* round to hard across his own left, once a stride — 17° to 77° off the facing,
+with the muzzle crossing 38 units sideways against 28 fore-and-aft. It comes on over the
+run band alone (`runS`, 66–100% of the stick), so the walk and the jog keep the steady
+carry unchanged, bit for bit.
 
-**Which AXIS the muzzle travels along is the property, not how far it goes.** The first
-version swung the weapon through a wide 46° arc instead, which is a bayonet thrust rather
-than a carry: at this cant most of a rotation about the grips lands *along* the line of
-travel, so it moved the muzzle 20 units fore-and-aft against 9 across and read as the rifle
-jabbing in and out. Rotation and translation are not interchangeable here — the cant
-decides which axis a term moves the muzzle along, and at fifty degrees a rotation is mostly
-the wrong one. The check is therefore a **ratio**, and it is taken against the torso: the
+**THE ELEVATION IS COUPLED TO THE TRAVERSE, and that coupling is what lets the arc reach
+all the way round to the line of travel without ever reading as an aim.** Pointing where
+he is going, the barrel is driven hard down — a third of its length is all you can see;
+coming across, it levels back toward the carry angle. A rifle pointed forward and *flat*
+is the aimed pose from directly above and nothing else will do; a rifle pointed forward at
+the dirt is a man running with one. `check-character.js` asserts the two together: the
+phase with the shallowest cant must also be the phase with the least of the weapon showing.
+
+**Which AXIS the muzzle travels along is the property, not how far it goes.** An earlier
+version swung the weapon through a wide arc about the grips with the elevation held
+constant, and at a fifty-degree cant most of a rotation lands *along* the line of travel —
+20 units fore-and-aft against 9 across, which reads as the rifle jabbing in and out.
+Rotation and translation are not interchangeable here; the cant decides which axis a term
+moves the muzzle along. The check is therefore a **ratio**, taken against the torso: the
 body itself bobs several units up the line of travel every stride, and that belongs to the
 run, not to the weapon.
 
 **Three things move the muzzle and all three have to push the same way, or they eat each
-other.** Getting any one sign wrong turned the sweep back into a jab:
+other.** Getting any one sign wrong turned the traverse back into a jab:
 
-1. **The shoulder twist the run already has.** The weapon is carried a good sixteen units
-   in front of the body's centre, so `_tw` swings it sideways for free — and it is the one
-   term whose sign is not ours to choose, so the other two are chosen to match it. Set
-   against it, it quietly ate six of eleven units of slide.
-2. **The slide across the chest**, keyed to the same beat. One-sided on purpose: the weapon
-   is driven *across* to the off shoulder and comes back to the body, never past it. The
+1. **The shoulder twist the run already has.** The weapon is carried well in front of the
+   body's centre, so `_tw` swings it sideways for free — and it is the one term whose sign
+   is not ours to choose, so the other two are chosen to match it. Set against it, it
+   quietly ate six of eleven units of slide.
+2. **The traverse itself**, the cant swinging the muzzle round. This is the big term, and
+   it is only safe because the elevation goes with it.
+3. **The slide across the chest**, on the same beat. One-sided on purpose: the weapon is
+   driven *across* to the off shoulder and comes back to the body, never past it. The
    crossing arm is the binding constraint on this whole motion and the first thing to run
    out; a symmetric slide throws the weapon far enough onto the strong side that the
    support hand cannot reach its grip.
-3. **The cant**, steepening as the weapon crosses. Deliberately small — 14° of roll. A
-   rifle held in both hands is locked to the chest, and past a few degrees an angular swing
-   costs more in fore-and-aft jab than it buys across.
+
+**The head does NOT cant to the weapon during a carry.** A long gun in the shoulder puts
+the shooter's cheek on the stock, and that offset (`hX`/`hY`) is what sells an aim from
+directly above — but a man carrying a rifle is looking where he is going, not down the
+sights. Left on through the carry it read as aiming at nothing, and it fought the whole
+point of the walk/jog/sprint poses, which is that one glance tells you the gun is down.
 
 **The weapon pivots about the HANDS, not about its own origin.** Swung about the origin the
 whole rotation lands in the strong hand — an eleven-unit radius on one grip and almost none
@@ -2018,22 +2029,50 @@ art, so a jog came out looking down the bore. It is one function because the dra
 `check-character.js` both read it; a second copy of the arithmetic in the check would only
 assert that the two copies agree. Same reason `figureRig()` is `ragRig()`.
 
-**And the foreshortening is DIFFERENTIAL — the muzzle recedes, the butt does not.** Applied
-evenly, the whole weapon shrank toward its own middle from both directions at once, which
-is not depression, it is a thing being squashed: the grip slid backwards out of the fist
-holding it while the barrel came in, and the read was paper crumpling rather than a barrel
-pointing at the floor. What a depressed weapon actually does is pivot about the hand — the
-end you are holding stays where it is and the far end swings *under* the near one, so only
-what lies past the grip recedes. `gunFore(k)` is that rule, one line: `v > 0 ? v * k : v`,
-applied to every piece's **ends** rather than to its width. Both `carryLongGun()` and
-`carryHandGun()` are authored about the grip at the origin with the muzzle out along `+x`
-for exactly this reason, and the bore then opens from a sliver to a full circle as `k`
-closes — the one cue that reads the depression directly rather than by inference.
+**A held weapon PIVOTS ABOUT THE HAND, and every carried weapon is authored with the grip
+at the origin so that pivot is just `v = 0`.** That one convention is what lets the
+projection be **affine**, and affine is not a nicety: a rigid rod stays straight under any
+real projection, so any fold in the maths is a fold you can see. Two versions had one — the
+squash and the height both applied only to the part *past* the grip and clamped flat behind
+it — and every weapon came out kinked at the wrist, a receiver and a barrel meeting in a V.
+Scaling about the *middle* was the original sin that hack was written to avoid (it slid the
+grip backwards out of the fist); putting the origin on the grip removes the reason for the
+hack entirely.
 
-**The squash is applied to the ART, not by `scale()`.** Scaled non-uniformly the contour
-thins along one axis and the whole weapon turns into a paper cut-out — worst at the ends
-of the swing, where the squash is hardest. Drawn at its own length instead, the outline
-keeps an even weight all the way round.
+**A squash on its own is orthographic, and orthographic is exactly the projection that
+cannot say which way a thing is tilted.** It scales the plan view down, and the result
+reads as the art being crushed — which is what "paper squishing" was. Four separate
+consequences of the muzzle being somewhere other than the height of the hand are drawn
+instead, and between them they are the optics:
+
+| | |
+|---|---|
+| **foreshortening** | the along-axis extent, `v · cos(el)`, about the grip |
+| **perspective** | and it **narrows** as it recedes. A far end subtends a smaller angle than a near one; a plain scale-down does not, and that missing taper is most of why a squash reads as paper. Each piece is a run of `quad()`s, so the taper is real geometry |
+| **parallax** | it is at a different **height** from the grip, and in this game a height difference is a displacement. The weapon is in the player's hand and the player is the middle of the screen, so the position-dependent half of `massLean()` is zero here and the tilt term is the whole of it — constant, cheap, and it **reverses with the elevation**, which is the thing a length can never do |
+| **occlusion** | the end nearer the ground sees less sky and goes darker, the end swung up lifts. Drawn as a few bands along each piece, which is the only way a flat-fill renderer gets a gradient — the same trick `volShade()` uses |
+
+**`GUN_TILT` is `MASS_TILT` for something held in the air, and it is much smaller.**
+`MASS_TILT` is authored for a mass standing *on* the ground, where the base is pinned and
+only the top moves. Run at full strength on a hand-held object it swings the weapon nearly
+forty degrees off the pose it is being drawn in — a bigger correction than the cant it was
+meant to decorate.
+
+**A long gun is carried far shallower than a sidearm, and it has to be.** The rifle reaches
+thirty-nine units past the hand, so at the pistol's idle plunge its muzzle would be a foot
+underground. `CARRY_EL` is 24° down; the sidearm's idle is 63°.
+
+**The materials come from the AIMED drawings.** Every colour and every piece in
+`carryLongGun` / `carryHandGun` is read off the same weapon's presented art in
+`Character.show()`, with the layout shifted so the rear hand sits at the origin instead of
+at the muzzle offset the bullets leave from. A rifle that is black with two blocks of
+walnut on it when it is up has to be the same rifle when it comes down — invent the carried
+art separately and the weapon changes species every time the player lets go of the stick.
+
+**The projection is applied to the ART, not by `scale()`.** Scaled non-uniformly the
+contour thins along one axis and the whole weapon turns into a paper cut-out — worst at the
+ends of the swing, where the squash is hardest. Drawn at its own projected size instead,
+the outline keeps an even weight all the way round.
 
 **And a carried weapon is drawn as a solid, not as a plan view.** `gunBox()` and
 `gunMuzzle()` carry the same three terms `volShade()` uses on a figure: a contour, a top
