@@ -11842,11 +11842,6 @@ if (this.isPlayer) {
             // The long gun's own depression, as an ANGLE -- see gunMuzzle().
             // A rifle at port is held level enough to be pointed somewhere, so
             // it is nowhere near the sidearm's idle plunge at the floor.
-            // A long gun is carried far SHALLOWER than a sidearm, and it has
-            // to be: the rifle reaches thirty-nine units past the hand, so at
-            // the pistol's idle plunge its muzzle would be a foot underground.
-            // Twenty-four degrees down puts it where a man actually holds one.
-            const CARRY_EL = -0.42;
 
             // THE HAND'S RESTING STATION IS ON THE SILHOUETTE, NOT OUTSIDE IT.
             // A relaxed arm hangs BESIDE the torso, so from directly above the
@@ -11900,19 +11895,26 @@ if (this.isPlayer) {
             // (66-100% of the stick), so the walk and the jog keep the steady
             // carry that was already right, bit for bit.
             //
-            // THE ELEVATION IS COUPLED TO THE TRAVERSE, and that is what lets
-            // the arc reach all the way round to the line of travel without
-            // ever reading as an aim. Pointing where he is going, the barrel is
-            // driven hard DOWN -- seventy degrees at the ground, so a third of
-            // its length is all you can see; coming across, it levels toward
-            // the carry angle. A rifle pointed forward and flat is the aimed
-            // pose from directly above and nothing else will do; a rifle
-            // pointed forward at the dirt is a man running with it.
+            // THE STRIDE GOES INTO THE WEAPON'S ATTITUDE, NOT INTO A PLAN-VIEW
+            // SPIN. A rifle held in both hands is locked to the chest; it does
+            // not pivot sixty degrees about the grips twice a second, and drawn
+            // that way it reads as a windscreen wiper rather than as a man
+            // running. What actually moves through a stride is the weapon's
+            // ANGLE IN SPACE -- the muzzle rides down and comes back up -- and
+            // this projection can draw that: an elevation change comes out as
+            // the barrel shortening and drooping together, which is a smooth,
+            // continuous attitude rather than a swing.
+            //
+            // So the plan-view traverse is cut to a fifth of what it was and
+            // the difference is spent on elevation. The muzzle still travels
+            // sideways -- the slide and the shoulder twist do that -- but it no
+            // longer whips round to do it.
             const runS = Math.max(0, Math.min(1, GP.band - 2));
             const beat = sin(this.walkCycle);
-            // Elevation, coupled to the traverse: driven down as the muzzle
-            // comes round toward the line of travel, levelling as it crosses.
-            const cEl = CARRY_EL + runS * (0.035 - beat * 0.20);
+            // The muzzle is DOWN at neutral and stays down at every phase of
+            // the run -- see longGunElevation(), which is where that arc lives
+            // and which check-character.js reads rather than re-deriving.
+            const cEl = longGunElevation(GP.band, beat);
             const cDip = cos(cEl);
             // The grips, in the weapon's own frame. The support hand is on the
             // HANDGUARD, not out at the muzzle: at 9 it sat four fifths of the
@@ -11925,7 +11927,13 @@ if (this.isPlayer) {
             // They ride the weapon's own foreshortening, and that is
             // DIFFERENTIAL -- the butt end hardly moves, the muzzle end comes
             // right in -- so each grip takes the same rule the art does.
-            const gRear = 0, gFore = (14 - runS * 3) * cDip;
+            // THE SUPPORT HAND GOES OUT ON THE HANDGUARD, which is authored
+            // at 7..19 -- forward of the receiver, well down the barrel, where
+            // a shooter actually puts it. Back at the receiver it looked like
+            // the weapon was being cradled rather than held. It rides the
+            // weapon's own foreshortening, so the grip stays on the handguard
+            // whatever attitude the barrel is at.
+            const gRear = 0, gFore = (18.5 - runS * 1.5) * cDip;
             // THREE THINGS MOVE THE MUZZLE, AND ALL THREE HAVE TO PUSH THE SAME
             // WAY OR THEY EAT EACH OTHER. This is the whole difficulty of the
             // traverse, and getting any one sign wrong turned it into a jab.
@@ -11942,8 +11950,8 @@ if (this.isPlayer) {
             //    the whole weapon toward the off shoulder as the muzzle gets
             //    there and brings it back to the body as the muzzle comes
             //    round front.
-            const cBase = -0.72 - runS * 0.10 + swayA;
-            const cAng = cBase + runS * beat * 0.47;
+            const cBase = -0.72 - runS * 0.16 + swayA;
+            const cAng = cBase + runS * beat * 0.11;
             // Fore-and-aft the weapon settles as the sprint comes on: at this
             // pace what should be moving is the traverse, and a chest shift
             // stacked on top of it turns the path into a diagonal scrub.
@@ -11959,7 +11967,7 @@ if (this.isPlayer) {
             // support arm can no longer reach its grip -- the crossing arm is
             // the binding constraint on this whole motion and the first thing
             // to run out.
-            const cY0 = 7.2 - swayX * (1 - runS * 0.55) - runS * (1 - beat) * 4.2;
+            const cY0 = 7.2 - swayX * (1 - runS * 0.55) - runS * (1 - beat) * 3.0;
             // THE WEAPON PIVOTS ABOUT THE HANDS, not about its own origin.
             // Swung about the origin the whole sweep is in the strong hand -- an
             // eleven-unit radius on one grip and almost none on the other -- so
@@ -22366,6 +22374,29 @@ function carryElevation(band, phase, moving) {
        + phase * (0.33 + band * 0.055 + run * 0.20);
 }
 
+// WHERE A CARRIED LONG GUN'S MUZZLE IS POINTING, on the same terms.
+//
+// A long gun is carried far SHALLOWER than a sidearm and it has to be: the
+// rifle reaches thirty-nine units past the hand, so at the pistol's idle plunge
+// its muzzle would be a foot underground. Twenty-four degrees down is where a
+// man actually holds one.
+//
+// THE STRIDE GOES IN HERE RATHER THAN INTO A PLAN-VIEW SPIN. A rifle in both
+// hands is locked to the chest; it does not pivot sixty degrees about the grips
+// twice a second, and drawn that way it reads as a windscreen wiper. What
+// actually moves through a stride is the weapon's ANGLE IN SPACE, and this
+// projection can draw that: an elevation change comes out as the barrel
+// shortening and drooping together, which is a continuous attitude rather than
+// a swing.
+//
+// The arc never reaches zero, and that bound is the whole safety of it: a rifle
+// that comes up LEVEL is aiming, whatever its arms are doing.
+const CARRY_EL = -0.42;
+function longGunElevation(band, phase) {
+  const run = band < 2 ? 0 : band > 3 ? 1 : band - 2;
+  return CARRY_EL - run * (0.33 + phase * 0.24);
+}
+
 // Which hands a weapon needs when it is being CARRIED rather than presented.
 // 2 is a long gun that wants both hands on it; 1 rides in the strong hand and
 // swings with that arm; 0 is empty.
@@ -22531,14 +22562,26 @@ function gunMuzzle(P, x, y, h, br, bg, bb) {
   const up = P.up, d = P.h(x) * GUN_TILT;
   const cx = P.x(x) + P.S[0] * d, cy = y + P.S[1] * d;
   const t = P.w(x);
-  if (up > 0.02) {
-    fill(br * 0.26, bg * 0.26, bb * 0.32);
-    ellipse(cx, cy, Math.min(h * 0.86, Math.max(1.2, h * (0.14 + up * 1.45))), h * 0.86 * t);
-  } else {
-    fill(Math.min(255, br * 1.22), Math.min(255, bg * 1.22), Math.min(255, bb * 1.22));
-    ellipse(cx, cy, Math.max(1.0, h * 0.30), h * 0.84 * t);
-    fill(br * 0.44, bg * 0.44, bb * 0.48);
+  // The crown is always there -- it is the end of the barrel -- and the bore
+  // OPENS OUT OF IT rather than replacing it. Drawn as two cases either side of
+  // level, the muzzle popped between two different drawings every time the arc
+  // crossed the horizontal, which at a sprint is twice a stride.
+  fill(Math.min(255, br * 1.22), Math.min(255, bg * 1.22), Math.min(255, bb * 1.22));
+  ellipse(cx, cy, Math.max(1.0, h * 0.30), h * 0.84 * t);
+  // The front sight standing on top of it, which is only visible while you are
+  // looking at the barrel's upper surface. It fades as the muzzle comes up.
+  const f = 1 - Math.min(1, Math.max(0, up / 0.20));
+  if (f > 0.01) {
+    fill(br * 0.44, bg * 0.44, bb * 0.48, 255 * f);
     rect(cx - h * 0.18, cy - h * 0.17 * t, h * 0.36, h * 0.34 * t, 0.6);
+  }
+  // And the bore, growing FROM NOTHING as the muzzle turns toward the camera.
+  // Capped at the barrel's own height -- a bore wider than the tube it is in
+  // reads as a funnel bolted to the end.
+  if (up > 0.001) {
+    fill(br * 0.26, bg * 0.26, bb * 0.32);
+    ellipse(cx, cy, Math.min(h * 0.86, h * up * 2.1),
+            h * 0.86 * t * Math.min(1, up * 3.2));
   }
 }
 

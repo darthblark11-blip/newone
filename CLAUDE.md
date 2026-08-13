@@ -1920,43 +1920,63 @@ aiming, the gun comes down and the walking rig takes over.
 at a sprint was tried and reverted: from directly above that *is* the aimed pose, and it
 costs the support hand its grip.
 
-**What a sprint adds is the TACTICAL TRAVERSE.** The muzzle sweeps from roughly where he
-is *going* round to hard across his own left, once a stride — 17° to 77° off the facing,
-with the muzzle crossing 38 units sideways against 28 fore-and-aft. It comes on over the
-run band alone (`runS`, 66–100% of the stick), so the walk and the jog keep the steady
-carry unchanged, bit for bit.
+**What a sprint adds goes into the weapon's ATTITUDE, not into a plan-view spin.** A rifle
+held in both hands is locked to the chest; it does not pivot sixty degrees about the grips
+twice a second, and drawn that way it reads as a windscreen wiper — which is exactly what
+the first two attempts looked like. What actually moves through a stride is the weapon's
+**angle in space**: the muzzle rides down and comes back up. This projection can draw that,
+because an elevation change comes out as the barrel shortening and drooping *together* —
+a continuous change of attitude rather than a swing.
 
-**THE ELEVATION IS COUPLED TO THE TRAVERSE, and that coupling is what lets the arc reach
-all the way round to the line of travel without ever reading as an aim.** Pointing where
-he is going, the barrel is driven hard down — a third of its length is all you can see;
-coming across, it levels back toward the carry angle. A rifle pointed forward and *flat*
-is the aimed pose from directly above and nothing else will do; a rifle pointed forward at
-the dirt is a man running with one. `check-character.js` asserts the two together: the
-phase with the shallowest cant must also be the phase with the least of the weapon showing.
+So the plan-view roll is held to **19°** and the difference is spent on elevation, which
+opens to a **28° arc** over the run band. The muzzle still travels sideways — the slide and
+the shoulder twist do that, 24.9 units across against 8.3 along — but it no longer whips
+round to get there. `longGunElevation(band, phase)` is where that arc lives, read by the
+draw site and by `check-character.js` alike, the same arrangement `carryElevation()` has.
 
-**Which AXIS the muzzle travels along is the property, not how far it goes.** An earlier
-version swung the weapon through a wide arc about the grips with the elevation held
-constant, and at a fifty-degree cant most of a rotation lands *along* the line of travel —
-20 units fore-and-aft against 9 across, which reads as the rifle jabbing in and out.
-Rotation and translation are not interchangeable here; the cant decides which axis a term
-moves the muzzle along. The check is therefore a **ratio**, taken against the torso: the
-body itself bobs several units up the line of travel every stride, and that belongs to the
-run, not to the weapon.
+**The muzzle never comes up level, at any pace or phase.** A rifle that does is aiming,
+whatever its arms are doing — 24° down at a walk and a jog, 29°–57° through the sprint.
 
-**Three things move the muzzle and all three have to push the same way, or they eat each
-other.** Getting any one sign wrong turned the traverse back into a jab:
+**Three things move the muzzle sideways and all three have to push the same way, or they
+eat each other.** Getting any one sign wrong turned the sweep into a jab:
 
 1. **The shoulder twist the run already has.** The weapon is carried well in front of the
    body's centre, so `_tw` swings it sideways for free — and it is the one term whose sign
    is not ours to choose, so the other two are chosen to match it. Set against it, it
    quietly ate six of eleven units of slide.
-2. **The traverse itself**, the cant swinging the muzzle round. This is the big term, and
-   it is only safe because the elevation goes with it.
-3. **The slide across the chest**, on the same beat. One-sided on purpose: the weapon is
+2. **The slide across the chest**, on the same beat. One-sided on purpose: the weapon is
    driven *across* to the off shoulder and comes back to the body, never past it. The
    crossing arm is the binding constraint on this whole motion and the first thing to run
    out; a symmetric slide throws the weapon far enough onto the strong side that the
    support hand cannot reach its grip.
+3. **The roll**, what little of it there is, in the same direction.
+
+**Which AXIS the muzzle travels along is the property, not how far it goes.** An earlier
+version swung the weapon through a wide arc about the grips, and at a fifty-degree cant most
+of a rotation lands *along* the line of travel — 20 units fore-and-aft against 9 across,
+which reads as the rifle jabbing in and out. Rotation and translation are not
+interchangeable here; the cant decides which axis a term moves the muzzle along. The check
+is therefore a **ratio**, taken against the torso: the body itself bobs several units up the
+line of travel every stride, and that belongs to the run, not to the weapon.
+
+**The support hand goes out on the HANDGUARD**, forward of the receiver and well down the
+barrel, where a shooter actually puts it — and it rides the weapon's own foreshortening, so
+the grip stays on the handguard whatever attitude the barrel is at. Back at the receiver the
+weapon read as being cradled rather than held.
+
+**"Jerky" is measurable, and two of the three causes were in the ART rather than the pose.**
+Sampled at the cadence the run actually turns over at, a pose driven by smooth curves has a
+second difference about a third of its first; a pop spikes it. `check-character.js` measures
+exactly that. The two that were real:
+
+- **The band count was keyed to the projected length.** `gunPiece()` splits a piece into
+  bands to fake a gradient, and the count flipped from three to one as the weapon
+  foreshortened past nine units — so the shading appeared and disappeared mid-stride. It is
+  keyed to the piece's *authored* length now, which cannot change.
+- **The muzzle was two drawings with a switch between them.** Crown-and-front-sight below
+  level, bore above; at a sprint the sidearm's arc crosses level twice a stride, so it
+  popped between them twice a stride. The crown is always drawn now and the bore **opens out
+  of it** from zero width, with the front sight fading as the muzzle comes up.
 
 **The head does NOT cant to the weapon during a carry.** A long gun in the shoulder puts
 the shooter's cheek on the stock, and that offset (`hX`/`hY`) is what sells an aim from

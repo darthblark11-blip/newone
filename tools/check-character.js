@@ -201,6 +201,11 @@ function poseOf(setup) {
     best.w = best.hi - best.lo;
     best.a = e(best.lo);
     best.b = e(best.hi);
+    // How much of the weapon is on screen, as the diagonal of everything it
+    // drew. The local x-extent alone will not do: the parallax displaces along
+    // WORLD south, so part of it lands on the weapon's own axis and a depressed
+    // barrel can measure longer than a flat one.
+    best.len = Math.hypot(best.hi - best.lo, best.yhi - best.ylo);
   }
   // Where the weapon actually is, as an AXIS and an EXTENT rather than as two
   // named grip points. Grips used to be read off as fixed fractions of the
@@ -346,32 +351,85 @@ console.log('\n== the sprint sweep: a rifle at port goes SIDE to SIDE ==');
   ok('and it is a SWEEP, not a jab: across beats fore-and-aft',
      run.dy > run.dx * 1.2,
      `${run.dy.toFixed(1)} across to ${run.dx.toFixed(1)} along`);
-  ok('the muzzle traverses from the line of travel round to hard across him',
-     run.lo < 0.50 && run.hi > 1.15,
-     `${deg(run.lo).toFixed(0)} to ${deg(run.hi).toFixed(0)} degrees off the facing`);
+  ok('the cant only ROLLS — it never spins round to the line of travel',
+     run.hi - run.lo < 0.42 && run.lo > 0.55 && run.hi < 1.25,
+     `${deg(run.hi - run.lo).toFixed(0)} degrees of roll, inside ` +
+     `${deg(run.lo).toFixed(0)}..${deg(run.hi).toFixed(0)} off the facing`);
   ok('and none of it reaches the jog, which keeps the steady carry',
      jog.dy < 5, `${jog.dy.toFixed(1)} across at a jog`);
 
-  // THE TRAVERSE IS ONLY SAFE BECAUSE THE ELEVATION GOES WITH IT. A rifle
-  // pointed along the line of travel and LEVEL is the aimed pose from directly
-  // above and nothing else will do; pointed along it at the dirt, it is a man
-  // running with one. So the two are checked together: the phase where the
-  // weapon comes round front has to be the phase where the least of it is
-  // showing, and by a margin — that shortening IS the depression.
-  let shortAt = 0, longAt = 0, shortest = Infinity, longest = 0;
+  // WHAT MOVES THROUGH A STRIDE IS THE WEAPON'S ATTITUDE, NOT ITS PLAN ANGLE.
+  // A rifle in both hands is locked to the chest; it does not pivot sixty
+  // degrees about the grips twice a second, and drawn that way it reads as a
+  // windscreen wiper. Spending the stride on ELEVATION instead comes out as the
+  // barrel shortening and drooping together, which is a continuous change of
+  // attitude — and the drawn length is what says it happened.
+  let shortest = Infinity, longest = 0;
   for (let i = 0; i < 24; i++) {
     const p = poseOf(`player.isMoving = true; player.gait = 1;
                       player.walkCycle = ${(i * Math.PI) / 12};`);
     for (const g of p.guns) {
-      const len = g.hi - g.lo, cant = Math.abs(g.ang);
-      if (len < shortest) { shortest = len; shortAt = cant; }
-      if (len > longest) { longest = len; longAt = cant; }
+      if (g.len < shortest) shortest = g.len;
+      if (g.len > longest) longest = g.len;
     }
   }
-  ok('and it only comes round front by pointing the barrel at the ground',
-     shortest / longest < 0.85 && shortAt < longAt,
-     `${shortest.toFixed(0)} units drawn at ${deg(shortAt).toFixed(0)} degrees, ` +
-     `${longest.toFixed(0)} at ${deg(longAt).toFixed(0)}`);
+  ok('the stride rides the barrel down and up, and that is where it goes',
+     shortest / longest < 0.86,
+     `${shortest.toFixed(0)} to ${longest.toFixed(0)} units of weapon showing`);
+  // A rifle that comes up LEVEL is aiming, whatever its arms are doing, so no
+  // phase of the run may reach it. Read out of longGunElevation() rather than
+  // inferred from the drawn length, which the parallax makes a poor proxy for
+  // it: the tilt displaces along WORLD south, so part of it lands on the
+  // weapon's own axis and a depressed barrel can measure longer than a flat one.
+  {
+    const arcAt = (t) => {
+      const b = P(`gaitPose(${t}).band`);
+      let lo = Infinity, hi = -Infinity;
+      for (let i = 0; i <= 48; i++) {
+        const e = P(`longGunElevation(${b}, ${Math.sin((i * Math.PI) / 24)})`);
+        lo = Math.min(lo, e); hi = Math.max(hi, e);
+      }
+      return { lo, hi };
+    };
+    const neutral = arcAt(0.2), edge = arcAt(0.65), flatOut = arcAt(1);
+    ok('the muzzle points at the ground at every pace, and never comes up level',
+       neutral.hi < -0.30 && edge.hi < -0.30 && flatOut.hi < -0.40,
+       `walk ${deg(neutral.hi).toFixed(0)}, band edge ${deg(edge.hi).toFixed(0)}, ` +
+       `run ${deg(flatOut.lo).toFixed(0)}..${deg(flatOut.hi).toFixed(0)} degrees`);
+    ok('and the stride opens that arc only over the run band',
+       Math.abs(neutral.hi - neutral.lo) < 0.02 &&
+       Math.abs(edge.hi - edge.lo) < 0.02 && flatOut.hi - flatOut.lo > 0.35,
+       `steady to the band edge, ${deg(flatOut.hi - flatOut.lo).toFixed(0)} degrees of arc flat out`);
+  }
+
+  // SEAMLESS. The complaint the traverse was rebuilt for was that it looked
+  // jerky, and jerk is measurable: sampled at the cadence the run actually
+  // turns over at, a pose driven by smooth curves has a second difference a
+  // fraction of its first. A pop — an art branch flipping, a band count
+  // changing with the foreshortening — spikes it, and both of those were real.
+  {
+    const cad = P('gaitPose(1).cadence');
+    const pts = [];
+    for (let i = 0; i < 26; i++) {
+      const p = poseOf(`player.isMoving = true; player.gait = 1;
+                        player.walkCycle = ${i * cad};`);
+      pts.push(p.guns.length ? [p.guns[0].b[0] - p.torsoXY[0],
+                                p.guns[0].b[1] - p.torsoXY[1]] : null);
+    }
+    let step = 0, jerk = 0;
+    for (let i = 1; i < pts.length; i++) {
+      step = Math.max(step, Math.hypot(pts[i][0] - pts[i - 1][0],
+                                       pts[i][1] - pts[i - 1][1]));
+    }
+    for (let i = 1; i < pts.length - 1; i++) {
+      jerk = Math.max(jerk, Math.hypot(
+        pts[i + 1][0] - 2 * pts[i][0] + pts[i - 1][0],
+        pts[i + 1][1] - 2 * pts[i][1] + pts[i - 1][1]));
+    }
+    ok('and the whole thing is smooth frame to frame, not jerky',
+       jerk < step * 0.5,
+       `worst jerk ${jerk.toFixed(2)} against a ${step.toFixed(2)} step`);
+  }
 }
 
 console.log('\n== a carried sidearm points somewhere, and where changes with the pace ==');
