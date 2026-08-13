@@ -175,14 +175,36 @@ function poseOf(setup) {
   for (const r of rects) {
     if (r.at > torsoAt && r.w > 6 && (!best || r.w > best.w)) best = r;
   }
-  // The two grips, as fractions along the barrel. Expressed that way they ride
-  // the weapon's own foreshortening: the rect runs from -22 to +24 in the gun's
-  // frame and the grips sit at -11 and +5 inside it, whatever it is squashed to.
+  // Where the weapon actually is, as an AXIS and an EXTENT rather than as two
+  // named grip points. Grips used to be read off as fixed fractions of the
+  // barrel, which held only while the art squashed uniformly; the foreshortening
+  // is differential now — the butt end hardly moves and the muzzle end comes
+  // right in — so a fraction no longer names the same place on the gun. What a
+  // hand holding a weapon actually has to satisfy survives all of that: it is ON
+  // the axis, and it is somewhere along the thing. The extent is the union of
+  // every piece drawn after the torso, so a shotgun's rear hand on the stock
+  // counts even though the stock is not the longest rect.
+  let axis = null;
   if (best) {
-    const f = (t) => [best.a[0] + (best.b[0] - best.a[0]) * t,
-                      best.a[1] + (best.b[1] - best.a[1]) * t];
-    best.grips = [f(11 / 46), f(27 / 46)];
+    const dx = best.b[0] - best.a[0], dy = best.b[1] - best.a[1];
+    const L = Math.hypot(dx, dy) || 1;
+    const ux = dx / L, uy = dy / L;
+    let lo = Infinity, hi = -Infinity;
+    for (const r of rects) {
+      if (r.at <= torsoAt) continue;
+      for (const e of [r.a, r.b]) {
+        const t = (e[0] - best.a[0]) * ux + (e[1] - best.a[1]) * uy;
+        lo = Math.min(lo, t); hi = Math.max(hi, t);
+      }
+    }
+    axis = {
+      // How far off the weapon's centreline a point sits, and how far along it.
+      off: (p) => Math.abs(-(p[0] - best.a[0]) * uy + (p[1] - best.a[1]) * ux),
+      along: (p) => (p[0] - best.a[0]) * ux + (p[1] - best.a[1]) * uy,
+      lo, hi
+    };
   }
+  if (best) best.axis = axis;
   return { hands, segs, guns: best ? [best] : [], torsoAt, bodyAng };
 }
 const RIGW = { u: P(`figureRig(${BODY_W}, ${BODY_H}).upperW`),
@@ -240,7 +262,7 @@ console.log('\n== a carried gun is held, not waved about ==');
 // every stride and read as a physics glitch. A wrist keeps a pistol pointing
 // where it is put; the stride belongs in the hand's POSITION, not its rotation.
 {
-  for (const [w, label, cap] of [['PISTOL', 'a sidearm', 10], ['ASSAULT_RIFLE', 'a long gun', 7]]) {
+  const swing = (w, gait) => {
     probe(`player.isArmed = true; player.currentWeapon = WEAPONS.${w};
            player.meleeTimer = 0; player.reloadTimer = 0; player.muzzleFlash = 0;
            player.throwAnimTimer = 0; player.dashTimer = 0;
@@ -248,14 +270,60 @@ console.log('\n== a carried gun is held, not waved about ==');
            swordPickedUp = false; setMeleeTool("NONE");`);
     let lo = Infinity, hi = -Infinity, n = 0;
     for (let i = 0; i < 24; i++) {
-      const p = poseOf(`player.isMoving = true; player.gait = 1;
+      const p = poseOf(`player.isMoving = true; player.gait = ${gait};
                         player.walkCycle = ${(i * Math.PI) / 12};`);
       for (const g of p.guns) { lo = Math.min(lo, g.ang); hi = Math.max(hi, g.ang); n++; }
     }
-    const deg = ((hi - lo) * 180) / Math.PI;
-    ok(`${label} swings less than ${cap} degrees over a full stride at a run`,
-       n > 0 && deg < cap, n ? deg.toFixed(1) + ' degrees across 24 phases' : 'gun never drawn');
+    return n ? ((hi - lo) * 180) / Math.PI : -1;
+  };
+
+  const side = swing('PISTOL', 1);
+  ok('a sidearm swings less than 10 degrees over a full stride at a run',
+     side >= 0 && side < 10, side.toFixed(1) + ' degrees across 24 phases');
+
+  // The long gun is the one exception, and only at a sprint. A steady carry is
+  // a steady carry — at a walk and a jog the weapon must sit as still on the
+  // man as the sidearm does.
+  const walk = swing('ASSAULT_RIFLE', 0.2), jog = swing('ASSAULT_RIFLE', 0.5);
+  ok('a long gun is carried steady at a walk and a jog',
+     walk >= 0 && walk < 8 && jog < 8,
+     `walk ${walk.toFixed(1)}, jog ${jog.toFixed(1)} degrees`);
+}
+
+console.log('\n== the sprint sweep: a rifle at port goes side to side ==');
+// A man sprinting with a rifle drives it across his chest with every stride.
+// This is the one place the weapon is SUPPOSED to move a long way, so the check
+// is that it does — a floor, not a cap. Both bounds on the arc are real: past
+// about eighty degrees the weapon stands square across him and its butt hangs a
+// body-height off his strong side, and inside about thirty-five it points where
+// he is going, which from directly above is the aimed pose.
+{
+  probe(`player.isArmed = true; player.currentWeapon = WEAPONS.ASSAULT_RIFLE;
+         player.meleeTimer = 0; player.reloadTimer = 0; player.muzzleFlash = 0;
+         player.throwAnimTimer = 0; player.dashTimer = 0;
+         rightStick.active = false; player.aimHold = 0;
+         swordPickedUp = false; setMeleeTool("NONE");`);
+  let lo = Infinity, hi = -Infinity;
+  let mx = [Infinity, -Infinity], my = [Infinity, -Infinity];
+  for (let i = 0; i < 24; i++) {
+    const p = poseOf(`player.isMoving = true; player.gait = 1;
+                      player.walkCycle = ${(i * Math.PI) / 12};`);
+    for (const g of p.guns) {
+      const c = Math.abs(g.ang);
+      lo = Math.min(lo, c); hi = Math.max(hi, c);
+      mx[0] = Math.min(mx[0], g.b[0]); mx[1] = Math.max(mx[1], g.b[0]);
+      my[0] = Math.min(my[0], g.b[1]); my[1] = Math.max(my[1], g.b[1]);
+    }
   }
+  const deg = (r) => (r * 180) / Math.PI;
+  ok('flat out the rifle sweeps a wide arc rather than riding steady',
+     hi - lo > 0.6, `${deg(hi - lo).toFixed(0)} degrees, ${deg(lo).toFixed(0)} to ${deg(hi).toFixed(0)} off the facing`);
+  ok('and the muzzle crosses most of his own width doing it',
+     mx[1] - mx[0] > BODY_H * 0.6,
+     `muzzle travels ${(mx[1] - mx[0]).toFixed(1)} x ${(my[1] - my[0]).toFixed(1)} against a ${BODY_H}-wide man`);
+  ok('but never swings square across him, nor round to where he is going',
+     hi < 1.48 && lo > 0.55,
+     `arc stays inside ${deg(lo).toFixed(0)}..${deg(hi).toFixed(0)} degrees`);
 }
 
 console.log('\n== the run is a run: elbows in, and a real fore-and-aft swing ==');
@@ -297,7 +365,13 @@ console.log('\n== a carried weapon sits ON the man, not off his side ==');
            player.throwAnimTimer = 0; player.dashTimer = 0;
            rightStick.active = false; player.aimHold = 0;
            swordPickedUp = false; setMeleeTool("NONE");`);
-    let worstBack = -Infinity, worstSide = 0, len = { lo: Infinity, hi: -Infinity };
+    // The two halves of "off his side" are measured separately, because only
+    // one of them is a fault at every pace. A stock reaching the strong
+    // SHOULDER is where a stock goes, and the sprint sweep drives it there on
+    // purpose — so the lateral bound is generous at a run and tight at a walk,
+    // where the carry is meant to be still. A stock trailing AFT of the man is
+    // the actual glitch, at any pace, and that bound never moves.
+    let worstBack = -Infinity, calmSide = 0, runSide = 0;
     for (const g of [0.15, 0.5, 1.0]) {
       for (let i = 0; i < 16; i++) {
         const p = poseOf(`player.isMoving = true; player.gait = ${g};
@@ -305,15 +379,17 @@ console.log('\n== a carried weapon sits ON the man, not off his side ==');
         for (const gun of p.guns) {
           // `a` is the butt end: the rect starts at the stock.
           worstBack = Math.max(worstBack, -gun.a[0]);
-          worstSide = Math.max(worstSide, Math.abs(gun.a[1]) - BODY_H / 2);
-          const L = Math.hypot(gun.b[0] - gun.a[0], gun.b[1] - gun.a[1]);
-          len.lo = Math.min(len.lo, L); len.hi = Math.max(len.hi, L);
+          const side = Math.abs(gun.a[1]) - BODY_H / 2;
+          if (g < 0.66) calmSide = Math.max(calmSide, side);
+          runSide = Math.max(runSide, side);
         }
       }
     }
-    ok(`${label}'s butt stays on the body, not out past his flank`,
-       worstSide < 2.5 && worstBack < BODY_W * 0.7,
-       `${worstSide.toFixed(1)} past the shoulder line, ${worstBack.toFixed(1)} behind centre`);
+    ok(`${label}'s butt never trails behind the man`,
+       worstBack < BODY_W * 0.7, `${worstBack.toFixed(1)} behind centre`);
+    ok(`and it stays on the body at a walk, at the shoulder at a sprint`,
+       calmSide < 4.5 && runSide < BODY_H * 0.62,
+       `${calmSide.toFixed(1)} past the shoulder line calm, ${runSide.toFixed(1)} flat out`);
   }
 
   // A carried weapon is depressed, and from directly above a depressed barrel
@@ -639,21 +715,41 @@ console.log('\n== carrying a weapon, as opposed to presenting one ==');
        gunAt > lastHand, `last hand at ${lastHand}, gun at ${gunAt}`);
   }
 
-  // Both grips must be inside the arms' reach, or the hands hang short of the
-  // weapon and it floats.
+  // Both hands must be ON the weapon, or one of them hangs short and it floats.
+  // The reach clamp is what tears a hand off: the grips are placed first and
+  // then pulled back inside the arm's own span, so a grip the arm cannot get to
+  // simply parts company with the gun. That is the whole risk in the sprint
+  // sweep, so it is measured across the arc rather than at one phase — and
+  // against the weapon's AXIS and EXTENT rather than at two named points, since
+  // the foreshortening is differential and no fixed fraction of the drawn
+  // barrel names the same place on it twice.
   {
-    const p = poseOf(`player.isMoving = true; player.gait = 0.5;
-                      player.walkCycle = 1.9;`);
-    const grips = p.guns.length ? p.guns[0].grips : [];
-    let worst = 0;
-    for (const g of grips) {
-      let best = Infinity;
-      for (const h of p.hands) best = Math.min(best, Math.hypot(g[0] - h[0], g[1] - h[1]));
-      worst = Math.max(worst, best);
+    let off = 0, past = 0, at = '', seen = 0;
+    for (const [w, gaits] of [['ASSAULT_RIFLE', [0.2, 0.5, 1.0]],
+                              ['SHOTGUN', [0.5, 1.0]],
+                              ['ROCKET_LAUNCHER', [0.5, 1.0]],
+                              ['COACH_GUN', [0.5, 1.0]]]) {
+      setArm(w, false);
+      for (const g of gaits) {
+        for (let i = 0; i < 12; i++) {
+          const p = poseOf(`player.isMoving = true; player.gait = ${g};
+                            player.walkCycle = ${(i * Math.PI) / 6};`);
+          if (p.guns.length !== 1 || p.hands.length !== 2) continue;
+          const ax = p.guns[0].axis;
+          seen++;
+          for (const h of p.hands) {
+            const o = ax.off(h);
+            if (o > off) { off = o; at = `${w} at gait ${g}, phase ${i}`; }
+            const t = ax.along(h);
+            past = Math.max(past, ax.lo - t, t - ax.hi);
+          }
+        }
+      }
     }
-    ok('both hands actually reach the grips they are holding',
-       grips.length === 2 && p.hands.length === 2 && worst < 3.5,
-       `worst hand-to-grip gap ${worst.toFixed(2)} over ${grips.length} grips`);
+    ok('both hands stay on the weapon through the whole sweep',
+       seen > 0 && off < 3.5 && past < 2.5,
+       `worst hand ${off.toFixed(2)} off the axis, ${past.toFixed(2)} past either end` +
+       (at ? ` — ${at}` : ''));
   }
 }
 

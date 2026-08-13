@@ -1918,8 +1918,37 @@ aiming, the gun comes down and the walking rig takes over.
 
 **It stays across the chest at every pace.** Bringing it parallel with the line of travel
 at a sprint was tried and reverted: from directly above that *is* the aimed pose, and it
-costs the support hand its grip. What a sprint changes is the energy — the weapon shifts
-further with the chest and cants a few more degrees.
+costs the support hand its grip.
+
+**What a sprint adds is the SWEEP.** A man running with a rifle at port drives it side to
+side across his chest with every stride, and that is a 46° arc with the muzzle crossing
+20 units — most of his own width. It comes on over the run band alone (`runS`), so the
+walk and the jog keep the steady carry unchanged, bit for bit.
+
+Four things make the sweep possible at all, and each of them was the thing blocking it:
+
+- **The weapon pivots about the HANDS, not about its own origin.** Swung about the origin
+  the whole arc is in the strong hand — an eleven-unit radius on one grip and almost none
+  on the other — so that arm runs out of reach long before the muzzle has gone anywhere,
+  and the reach clamp then tears the hand off the gun. Held at the **midpoint of the two
+  grips** both arms give a little and the muzzle, twice as far out, does the travelling.
+  It is written as a correction against the *un-swept* angle, which is what keeps the walk
+  and the jog identical to what they were.
+- **The sweep runs WITH the walking sway, not against it.** The steady sway is already a
+  beat-driven roll of the same weapon; opposed, a sprint term of the other sign spent a
+  sixth of itself undoing that before it moved anything (52° of authored amplitude came
+  out as 46° on screen, and reversing the sign put it at 59°).
+- **Both ends of the arc are bounded, and neither bound is arbitrary.** Past about **80°**
+  the weapon stands square across the man and its butt hangs a body-height off his strong
+  side; inside about **35°** it points where he is going, which from directly above is the
+  aimed pose. The base angle steepens into the sprint so the arc lands between the two.
+- **The lateral slide is one-sided.** The weapon is driven *across* to the off shoulder
+  and comes back to the body, never past it — a symmetric slide throws it far enough onto
+  the strong side that the support arm cannot reach its grip.
+
+**The support hand chokes up as the sprint comes on.** Both what a man does with a weapon
+he is running with, and what keeps that grip inside the crossing arm's reach while the
+gun sweeps.
 
 **The support hand is on the HANDGUARD, not out at the muzzle**, and its elbow tucks in
 and down rather than staying at the shoulder. Out at four fifths of the barrel with the
@@ -1945,6 +1974,18 @@ the arc and retracts as the muzzle drops at the back; drawn rigid it read as a b
 out sideways. The grips are read in the dipped frame too, or the hands hold a gun that is
 no longer under them.
 
+**And the foreshortening is DIFFERENTIAL — the muzzle recedes, the butt does not.** Applied
+evenly, the whole weapon shrank toward its own middle from both directions at once, which
+is not depression, it is a thing being squashed: the grip slid backwards out of the fist
+holding it while the barrel came in, and the read was paper crumpling rather than a barrel
+pointing at the floor. What a depressed weapon actually does is pivot about the hand — the
+end you are holding stays where it is and the far end swings *under* the near one, so only
+what lies past the grip recedes. `gunFore(k)` is that rule, one line: `v > 0 ? v * k : v`,
+applied to every piece's **ends** rather than to its width. Both `carryLongGun()` and
+`carryHandGun()` are authored about the grip at the origin with the muzzle out along `+x`
+for exactly this reason, and the bore then opens from a sliver to a full circle as `k`
+closes — the one cue that reads the depression directly rather than by inference.
+
 **The squash is applied to the ART, not by `scale()`.** Scaled non-uniformly the contour
 thins along one axis and the whole weapon turns into a paper cut-out — worst at the ends
 of the swing, where the squash is hardest. Drawn at its own length instead, the outline
@@ -1964,15 +2005,29 @@ gun had two skin discs sitting on its receiver.
 
 **A long gun slung about the body's middle hangs off the flank.** Its stock swung out past
 the silhouette behind the strong shoulder every stride and read as a loose plank stuck to
-his side. The butt is anchored at the shoulder instead, and `check-character.js` asserts
-it never clears the shoulder line.
+his side. The butt is anchored at the shoulder instead. The two halves of "off his side"
+are asserted separately, because only one of them is a fault at every pace: a stock
+reaching the strong **shoulder** is where a stock goes and the sprint sweep drives it
+there on purpose, so that bound is generous at a run and tight at a walk — while a stock
+trailing **aft** of the man is the actual glitch, at any pace, and that bound never moves.
 
-**The stride belongs in the weapon's POSITION, not its rotation.** A wrist keeps a pistol
-pointing where it is put, so the gun's angle is held against the *body*; welded to a
-forearm that swings through a wide arc every stride it waved about and read as a physics
-glitch. What is left is a few degrees of cant that grows with the gait — under 8° for a
-sidearm and under 6° for a long gun at a full run, both asserted — plus a real shift of
-the whole weapon with the chest, which is what carrying weight actually looks like.
+**The stride belongs in the weapon's POSITION, not its rotation** — everywhere except the
+sprint sweep, which is rotation and is the point. A wrist keeps a pistol pointing where it
+is put, so the gun's angle is held against the *body*; welded to a forearm that swings
+through a wide arc every stride it waved about and read as a physics glitch. So a sidearm
+stays under 10° over a full stride at any pace and a long gun under 8° at a walk and a
+jog, both asserted — plus a real shift of the whole weapon with the chest, which is what
+carrying weight actually looks like.
+
+**The grip check is against the weapon's AXIS and EXTENT, not two named points on it.**
+Grips used to be read off as fixed fractions of the drawn barrel, which held only while
+the art squashed uniformly; under differential foreshortening no fraction names the same
+place on the gun twice, and a shotgun's rear hand is on the stock rather than on the
+longest rect at all. What a hand holding a weapon has to satisfy survives all of that:
+it is **on** the axis, and it is **somewhere along** the thing. That is also the exact
+failure the sweep risks — the reach clamp runs after the grips are placed, so a grip the
+arm cannot get to simply parts company with the gun — which is why it is measured across
+the whole arc, on all four two-handed weapons, rather than at one phase.
 
 Three things this has to get right and all three fail silently:
 
