@@ -1943,6 +1943,14 @@ a man at a sprint drives it out in front of his chest rather than letting it rid
 hip. Both are gated on `runS`, so the walk and the jog are untouched, and both move the
 grips, so the arms follow without a second adjustment.
 
+**And the strong-side elbow flares as the sprint comes on.** Both hands are locked to a
+weapon carried out in front of the chest, and the only place left for that arm to fold is
+outboard; tucked in at the shoulder it reads as the elbow being pinned to his ribs while the
+hands drive forward. The two halves of "a sleeve past the silhouette" are therefore checked
+separately, because only one of them is a fault: the **crossing** arm poking out past the
+far shoulder is the old clip and stays capped tight, while the **strong** elbow going
+outboard on its own side is where a sprinter's elbow belongs and is driven there on purpose.
+
 **The stride-rate sway gives way to the rock rather than riding on top of it.** Left in, it
 is a fast ripple laid over a slow pendulum — which is the fast wobble, however calm the
 pendulum underneath.
@@ -1957,9 +1965,19 @@ and by `check-character.js` alike, the same arrangement `carryElevation()` has.
 
 **The sway is quadratic in the band, not linear.** Linear, a walk carried nearly half the
 jog's sway, and at a walking pace there is very little for a rifle held in two hands to do —
-the man is strolling. Quadratic leaves the jog exactly where it was (it is the one pace that
-was right first time) and all but stills the walk: 3.2 units of muzzle travel against the
-jog's 7.8.
+the man is strolling. Quadratic all but stills the walk.
+
+**But at a walk the sway was never most of the motion — the SHOULDER ROLL was.** A rifle in
+two hands is bolted to the shoulder girdle, so it rides `_tw` for free, and the muzzle sits
+the better part of forty units out from the body's centre: the twist swings it there
+whatever the sway does, and after the sway came down it was all that was left. A man walking
+with a rifle at the ready does not let that happen — the arms give, and the muzzle stays
+where he is looking while his shoulders work underneath it. **The arms absorb half of it**,
+countered on the weapon's own frame rather than by damping `GP.twist`, which belongs to the
+torso and everything else riding on it. Released over the run band, where the twist is one
+of the three terms driving the pendulum and taking it out would flatten the sweep.
+
+Between them: 1.6 units of muzzle travel at a walk and 4.2 at a jog, against 27 flat out.
 
 **The muzzle never comes up level, at any pace or phase.** A rifle that does is aiming,
 whatever its arms are doing — 24° down at a walk and a jog, 25°–47° through the sprint.

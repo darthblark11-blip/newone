@@ -11822,8 +11822,8 @@ if (this.isPlayer) {
             // strolling. Quadratic leaves the jog exactly where it was (it is
             // the one pace that was right) and all but stills the walk.
             const _sq = GP.band * GP.band;
-            const swayA = sin(this.walkCycle) * (0.004 + _sq * 0.0138);
-            const swayX = sin(this.walkCycle) * _sq * 1.02;
+            const swayA = sin(this.walkCycle) * (0.002 + _sq * 0.0082);
+            const swayX = sin(this.walkCycle) * _sq * 0.60;
             // The long gun's frame: laid across the chest, butt down by the
             // strong hip and muzzle past the off shoulder.
             //
@@ -11973,7 +11973,7 @@ if (this.isPlayer) {
             // The stride-rate sway gives WAY to the rock rather than riding on
             // top of it: left in, it is a fast ripple laid over a slow pendulum,
             // which is the fast wobble however calm the pendulum is.
-            const cBase = -0.72 - runS * 0.26 + swayA * (1 - runS);
+            const cBase = -0.72 - runS * 0.17 + swayA * (1 - runS);
             const cAng = cBase + runS * sway * 0.24;
             // Fore-and-aft the weapon settles as the sprint comes on: at this
             // pace what should be moving is the traverse, and a chest shift
@@ -11987,7 +11987,7 @@ if (this.isPlayer) {
             // FORWARD than at a jog -- a man at a sprint drives it out in front
             // of his chest rather than letting it ride on his hip. Both are
             // gated on runS, so the walk and the jog are untouched.
-            const cX0 = 0.8 + GP.lean * 0.45 + runS * 4.0
+            const cX0 = 0.8 + GP.lean * 0.45 + runS * 5.5
                       + swayX * 0.5 * (1 - runS);
             // The slide is one-sided on purpose: the weapon is driven ACROSS to
             // the off shoulder and comes back to the body, never past it.
@@ -11995,7 +11995,7 @@ if (this.isPlayer) {
             // support arm can no longer reach its grip -- the crossing arm is
             // the binding constraint on this whole motion and the first thing
             // to run out.
-            const cY0 = 7.2 - swayX * (1 - runS) - runS * (1 - sway) * 5.5;
+            const cY0 = 7.2 - swayX * (1 - runS) - runS * (1 - sway) * 4.4;
             // THE WEAPON PIVOTS ABOUT THE HANDS, not about its own origin.
             // Swung about the origin the whole sweep is in the strong hand -- an
             // eleven-unit radius on one grip and almost none on the other -- so
@@ -12006,13 +12006,31 @@ if (this.isPlayer) {
             // Written as a correction against the un-swept angle so the walk and
             // the jog, where there is no sweep, come out bit-for-bit unchanged.
             const gMid = (gRear + gFore) * 0.5;
-            const cX = cX0 + gMid * (cos(cBase) - cos(cAng));
-            const cY = cY0 + gMid * (sin(cBase) - sin(cAng));
+            const cXp = cX0 + gMid * (cos(cBase) - cos(cAng));
+            const cYp = cY0 + gMid * (sin(cBase) - sin(cAng));
+            // THE ARMS ABSORB PART OF THE SHOULDER ROLL. A rifle in two hands
+            // is bolted to the shoulder girdle, so it rides `_tw` for free --
+            // and at a walk that is nearly ALL the motion the weapon has, since
+            // the muzzle sits the better part of forty units out from the
+            // body's centre and the twist swings it there whatever the sway
+            // does. A man walking with a rifle at the ready does not let that
+            // happen: the arms give, and the muzzle stays where he is looking
+            // while his shoulders work underneath it.
+            //
+            // Countered here rather than by damping GP.twist, which belongs to
+            // the torso and to everything else riding on it. And released over
+            // the run band, where the twist is one of the three terms driving
+            // the pendulum and taking it out would flatten the sweep.
+            const _abs = -_tw * 0.5 * (1 - runS);
+            const _ac = cos(_abs), _as = sin(_abs);
+            const cX = cXp * _ac - cYp * _as;
+            const cY = cXp * _as + cYp * _ac;
+            const cAngA = cAng + _abs;
             if (carrying === 2) {
                 for (const s of sides) {
                     const g = s.right ? gRear : gFore;
-                    s.hx = cX + cos(cAng) * g;
-                    s.hy = cY + sin(cAng) * g;
+                    s.hx = cX + cos(cAngA) * g;
+                    s.hy = cY + sin(cAngA) * g;
                 }
             }
 
@@ -12075,8 +12093,14 @@ if (this.isPlayer) {
                 // Then the elbow, placed. Aft of the hand by construction --
                 // it lags the swing -- and a shade outside the shoulder, which
                 // is as far out as an elbow ever gets from directly above.
+                // The strong-side elbow FLARES as the sprint comes on. Both
+                // hands are locked to a weapon carried out in front of the
+                // chest, and the only place left for that arm to fold is
+                // outboard -- tucked in at the shoulder it reads as the elbow
+                // being pinned to his ribs while the hands drive forward.
+                const _fl = (carrying === 2 && s.right) ? runS * 3.2 : 0;
                 const ep = [(s.hx + 1.5) * ELBOW_LEAD - GP.bend * 1.6,
-                            s.sgn * (SH + 0.6 + GP.bend * 1.5)];
+                            s.sgn * (SH + 0.6 + GP.bend * 1.5 + _fl)];
                 // Except when the arm is reaching ACROSS the chest for a long
                 // gun's handguard. An arm doing that tucks its elbow in and
                 // down; kept out at the shoulder the sleeve pokes past the
@@ -12210,8 +12234,8 @@ if (this.isPlayer) {
                 // the weapon and the fingers wrapped beneath it. Drawn first,
                 // the long gun had two skin discs sitting on its receiver.
                 if (front && carrying === 2) {
-                    push(); translate(cX, cY); rotate(cAng);
-                    const _wa = this.aimAngle + _tw + cAng;
+                    push(); translate(cX, cY); rotate(cAngA);
+                    const _wa = this.aimAngle + _tw + cAngA;
                     const gl = figureLight(_wa);
                     carryLongGun(this.currentWeapon, cEl, gl,
                                  figureSouth(_wa));
