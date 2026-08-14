@@ -575,6 +575,50 @@ console.log('\n== the sprint sweep: a rifle at port goes SIDE to SIDE ==');
   }
 }
 
+console.log('\n== the carry looks the same whichever way he is running ==');
+// The parallax used to be taken along WORLD south, the way a mass on the ground
+// leans. On a building that is perspective. On a weapon that turns with the
+// player it makes the drawn shape depend on his heading: the shear adds to the
+// plan direction for a barrel pointed north and subtracts for one pointed
+// south, so the same rifle drew 55 units long running east and 39 running west,
+// and it read as the art distorting as he changed direction. Taken in the
+// weapon's own frame instead, the shape is identical at every heading — which
+// is the same call the figures already make by not leaning at all.
+{
+  const NAMES = ['E', 'SE', 'S', 'SW', 'W', 'NW', 'N', 'NE'];
+  for (const [w, label] of [['ASSAULT_RIFLE', 'the long gun'],
+                            ['PISTOL', 'the sidearm']]) {
+    probe(`player.isArmed = true; player.currentWeapon = WEAPONS.${w};
+           player.meleeTimer = 0; player.reloadTimer = 0; player.muzzleFlash = 0;
+           player.throwAnimTimer = 0; player.dashTimer = 0;
+           rightStick.active = false; player.aimHold = 0;
+           swordPickedUp = false; setMeleeTool("NONE");`);
+    for (const [gait, pace] of [[0.5, 'a jog'], [1, 'a sprint']]) {
+      let lo = Infinity, hi = -Infinity, alo = Infinity, ahi = -Infinity;
+      const seen = [];
+      for (let h = 0; h < 8; h++) {
+        const A = (h * Math.PI) / 4;
+        const p = poseOf(`player.isMoving = true; player.gait = ${gait};
+                          player.walkCycle = 1.7;
+                          player.aimAngle = ${A}; player.moveAngle = ${A};`);
+        for (const g of p.guns) {
+          lo = Math.min(lo, g.len); hi = Math.max(hi, g.len);
+          // Against the body, so turning the man does not count as turning it.
+          let d = g.ang; while (d > Math.PI) d -= 2 * Math.PI;
+          while (d < -Math.PI) d += 2 * Math.PI;
+          alo = Math.min(alo, d); ahi = Math.max(ahi, d);
+          seen.push(NAMES[h] + ' ' + g.len.toFixed(0));
+        }
+      }
+      ok(`${label} draws the same at all eight headings at ${pace}`,
+         hi - lo < 1.5 && ahi - alo < 0.05,
+         `${(hi - lo).toFixed(1)} units and ` +
+         `${(((ahi - alo) * 180) / Math.PI).toFixed(1)} degrees of spread — ${seen.join(' ')}`);
+    }
+  }
+  probe('player.aimAngle = 0; player.moveAngle = 0; player.isArmed = false; player.aimHold = 0;');
+}
+
 console.log('\n== a carried sidearm points somewhere, and where changes with the pace ==');
 // Standing it is at the floor; walking and jogging it comes up toward level and
 // falls again; sprinting it goes PAST level, because that is what a man running

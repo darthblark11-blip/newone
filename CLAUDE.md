@@ -2140,7 +2140,7 @@ instead, and between them they are the optics:
 |---|---|
 | **foreshortening** | the along-axis extent, `v · cos(el)`, about the grip |
 | **perspective** | and it **narrows** as it recedes. A far end subtends a smaller angle than a near one; a plain scale-down does not, and that missing taper is most of why a squash reads as paper. Each piece is a run of `quad()`s, so the taper is real geometry |
-| **parallax** | it is at a different **height** from the grip, and in this game a height difference is a displacement. The weapon is in the player's hand and the player is the middle of the screen, so the position-dependent half of `massLean()` is zero here and the tilt term is the whole of it — constant, cheap, and it **reverses with the elevation**, which is the thing a length can never do |
+| **parallax** | it is at a different **height** from the grip, and in this game a height difference is a displacement. Constant, cheap, and it **reverses with the elevation**, which is the thing a length can never do |
 | **occlusion** | the end nearer the ground sees less sky and goes darker, the end swung up lifts. Drawn as a few bands along each piece, which is the only way a flat-fill renderer gets a gradient — the same trick `volShade()` uses |
 
 **`GUN_TILT` is `MASS_TILT` — the same camera — at a stated share of it, and setting that
@@ -2163,6 +2163,28 @@ directions of the trade are real:
 placed along the plan axis while the art was drawn along the sheared one, which left a hand
 six units off the weapon it was supposedly holding — invisible at a third of the tilt,
 obvious at the whole of it. Both go through the same projection now.
+
+**THE PARALLAX IS TAKEN IN THE WEAPON'S OWN FRAME, NOT THE WORLD'S, and that is the one
+place this projection deliberately stops being honest.** A mass on the ground leans toward
+world south, so a building's lean is the same lean whichever way you walk past it. Written
+that way for a hand-held weapon it makes the drawn shape depend on **which way the player is
+facing**: the shear adds to the plan direction for a barrel pointed north and subtracts for
+one pointed south, so the same rifle drew **55 units long running east and 39 running
+west**. On a building that is perspective; on a weapon that turns with the player it reads
+as the art distorting as he changes heading — and it hits the two weapons on opposite
+headings, because the rifle is carried across the body and the sidearm along it.
+
+It is the same call the figures already make (see *Figures are deliberately NOT leaned*):
+parallax sells height as a ratio of displacement to size, and past a certain smallness the
+honest term reads as a defect. So the low end of a barrel is displaced toward the weapon's
+**own underside**. The shape is then identical at every heading, the drawn length is exactly
+`L · sqrt(cos²el + sin²el · GUN_TILT²)` whichever way he runs, and the cue still reverses
+with the elevation, which is all it was ever for. `check-character.js` asserts it at all
+eight headings, for both weapons, at a jog and a sprint.
+
+One knock-on: the shear now turns the drawn weapon a constant ~20° further across in its own
+frame, so **the pose has to be pulled back by about what the shear adds** — posing a rifle at
+the angle it should *appear* at overshoots square and puts the muzzle behind him.
 
 **A long gun is carried far shallower than a sidearm, and it has to be.** The rifle reaches
 thirty-nine units past the hand, so at the pistol's idle plunge its muzzle would be a foot

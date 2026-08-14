@@ -11992,7 +11992,12 @@ if (this.isPlayer) {
             // a forty-unit barrel put the muzzle three body-depths ahead of the
             // torso, which is a man carrying a rifle beside himself rather than
             // against himself.
-            const cBase = -0.72 - runS * 0.62 + swayA * (1 - runS);
+            // The posed angle is pulled back by roughly what the shear adds:
+            // the parallax now turns the DRAWN weapon a constant twenty
+            // degrees or so further across in its own frame, so posing it at
+            // the angle it should appear at overshoots square and puts the
+            // muzzle behind him.
+            const cBase = -0.72 - runS * 0.42 + swayA * (1 - runS);
             // Laid square across the chest the pendulum has to change form. A
             // ROTATION at this cant moves the muzzle fore-and-aft -- that is
             // the jab again, just at ninety degrees -- because the muzzle's
@@ -12064,15 +12069,15 @@ if (this.isPlayer) {
                 // tilt shears the art off its own axis -- that is the whole
                 // point of it -- so a hand placed along the plan axis is left
                 // holding air a good six units from the weapon. Same projection
-                // the art uses: the along-axis foreshortening, plus the
-                // parallax along WORLD south, which in here is `_asx/_asy`.
-                const _asx = sin(this.aimAngle + _tw), _asy = cos(this.aimAngle + _tw);
+                // the art uses: the along-axis foreshortening, plus the shear
+                // perpendicular to the weapon's own axis.
                 const _dn = sin(cEl) * GUN_TILT;
+                const _px = -sin(cAngA), _py = cos(cAngA);
                 for (const s of sides) {
                     const g = s.right ? gRear : gFore;
                     const along = g * cDip, dn = g * _dn;
-                    s.hx = cX + cos(cAngA) * along + _asx * dn;
-                    s.hy = cY + sin(cAngA) * along + _asy * dn;
+                    s.hx = cX + cos(cAngA) * along + _px * dn;
+                    s.hy = cY + sin(cAngA) * along + _py * dn;
                 }
             }
 
@@ -12292,10 +12297,8 @@ if (this.isPlayer) {
                         const gAng = 0.30 * s.sgn + s.sw * 0.055
                                    + s.sgn * _bk * (0.08 + 0.22 * GP.band / 3);
                         push(); translate(h.x, h.y); rotate(gAng);
-                        const _wa = this.aimAngle + _tw + gAng;
-                        const gl = figureLight(_wa);
-                        carryHandGun(this.currentWeapon, el, gl,
-                                     figureSouth(_wa));
+                        const gl = figureLight(this.aimAngle + _tw + gAng);
+                        carryHandGun(this.currentWeapon, el, gl);
                         pop();
                     }
                 }
@@ -12305,10 +12308,8 @@ if (this.isPlayer) {
                 // the long gun had two skin discs sitting on its receiver.
                 if (front && carrying === 2) {
                     push(); translate(cX, cY); rotate(cAngA);
-                    const _wa = this.aimAngle + _tw + cAngA;
-                    const gl = figureLight(_wa);
-                    carryLongGun(this.currentWeapon, cEl, gl,
-                                 figureSouth(_wa));
+                    const gl = figureLight(this.aimAngle + _tw + cAngA);
+                    carryLongGun(this.currentWeapon, cEl, gl);
                     pop();
                 }
             };
@@ -22584,16 +22585,24 @@ function weaponHands(w) {
 // the highlight rides round with the gun as the figure turns. `S` is world
 // SOUTH in that same frame, which is the axis the parallax displaces along.
 
-// World SOUTH expressed in a frame rotated by `ang`. The same round trip
-// figureLight() does, and for the same reason: rotate() carries the world's
-// axes round with it, so a term written in world space quietly turns with the
-// model. MASS_TILT pushes a raised point south; this is south, from in here.
-const _figSth = [0, 1];
-function figureSouth(ang) {
-  const c = Math.cos(ang), s = Math.sin(ang);
-  _figSth[0] = s; _figSth[1] = c;
-  return _figSth;
-}
+// THE PARALLAX IS TAKEN IN THE WEAPON'S OWN FRAME, NOT THE WORLD'S, AND THAT IS
+// THE ONE PLACE THIS PROJECTION DELIBERATELY STOPS BEING HONEST.
+//
+// A mass on the ground leans toward world south, so a building's lean is the
+// same lean whichever way you walk past it. Written that way for a hand-held
+// weapon it makes the drawn shape depend on which way the PLAYER IS FACING: the
+// shear adds to the plan direction for a barrel pointed north and subtracts for
+// one pointed south, so the same rifle draws 55 units long running east and 39
+// running west. On a building that is perspective; on a seventeen-unit pistol
+// that turns with the player it is the art distorting as he changes heading.
+//
+// It is the same call the figures already make -- see "Figures are deliberately
+// NOT leaned": parallax sells height as a ratio of displacement to size, and
+// past a certain smallness the honest term reads as a defect. So the low end of
+// a barrel is displaced toward the weapon's own underside rather than toward
+// world south. The shape is then identical at every heading, the drawn length
+// is exactly `L * sqrt(cos²el + sin²el * GUN_TILT²)` whichever way he runs, and
+// the cue still reverses with the elevation, which is all it was ever for.
 
 // A HELD WEAPON PIVOTS ABOUT THE HAND, AND EVERY WEAPON BELOW IS AUTHORED WITH
 // THE GRIP AT THE ORIGIN SO THAT PIVOT IS JUST v = 0.
@@ -22632,10 +22641,10 @@ function figureSouth(ang) {
 // angle does for a barrel pointed across the body -- the two add rather than
 // cancel -- and a 47-unit rifle came out drawn 55 long.
 const GUN_TILT = MASS_TILT * 0.65;
-function gunProj(el, L, S) {
+function gunProj(el, L) {
   const k = Math.cos(el), up = Math.sin(el);
   return {
-    k: k, up: up, L: L, S: S || _figSth,
+    k: k, up: up, L: L,
     // A lit top plane fades as the muzzle rises: a barrel swung up turns its
     // UNDERSIDE to this camera, and a highlight there is on a face pointing
     // away from the sky.
@@ -22664,11 +22673,11 @@ function gunPiece(P, x0, x1, y, h, br, bg, bb, lift) {
   const yc = y + h * 0.5, half = h * 0.5;
   const n = Math.abs(P.x(x1) - P.x(x0)) > 9 ? GUN_BANDS : 1;
   const at = function (v, o) {
-    const ht = P.h(v), t = P.w(v) * half;
-    // MASS_TILT is the whole of the lean at the middle of the screen.
-    const d = ht * GUN_TILT;
-    o[0] = P.x(v) + P.S[0] * d;
-    o[1] = yc + P.S[1] * d + t;
+    const t = P.w(v) * half;
+    // Perpendicular to the weapon's own axis, so the shear is the same at
+    // every heading -- see the note above gunProj().
+    o[0] = P.x(v);
+    o[1] = yc + P.h(v) * GUN_TILT + t;
     o[2] = t;
     return o;
   };
@@ -22709,8 +22718,8 @@ function gunPiece(P, x0, x1, y, h, br, bg, bb, lift) {
 // both cases is what made a pistol carried muzzle-down read as one carried
 // muzzle-up.
 function gunMuzzle(P, x, y, h, br, bg, bb) {
-  const up = P.up, d = P.h(x) * GUN_TILT;
-  const cx = P.x(x) + P.S[0] * d, cy = y + P.S[1] * d;
+  const up = P.up;
+  const cx = P.x(x), cy = y + P.h(x) * GUN_TILT;
   const t = P.w(x);
   // The crown is always there -- it is the end of the barrel -- and the bore
   // OPENS OUT OF IT rather than replacing it. Drawn as two cases either side of
@@ -22739,10 +22748,10 @@ function gunMuzzle(P, x, y, h, br, bg, bb) {
 // +x. Colours are the aimed drawings' own: the rifle is black with walnut
 // furniture, the shotgun is three greys, the launcher is olive with a black
 // sight block, the coach gun is walnut under two blued barrels.
-function carryLongGun(w, el, L, S) {
+function carryLongGun(w, el, L) {
   el = el === undefined ? 0 : el;
   L = L || _figLit;
-  const P = gunProj(el, L, S);
+  const P = gunProj(el, L);
   const seg = function (x0, x1, y, h, br, bg, bb, lift) {
     gunPiece(P, x0, x1, y, h, br, bg, bb, lift);
   };
@@ -22786,10 +22795,10 @@ function carryLongGun(w, el, L, S) {
 // A sidearm, drawn about its GRIP at the origin with the muzzle out along +x,
 // because that is where the hand holding it is -- and because that is the point
 // the foreshortening pivots about.
-function carryHandGun(w, el, L, S) {
+function carryHandGun(w, el, L) {
   el = el === undefined ? 0 : el;
   L = L || _figLit;
-  const P = gunProj(el, L, S);
+  const P = gunProj(el, L);
   const seg = function (x0, x1, y, h, br, bg, bb, lift) {
     gunPiece(P, x0, x1, y, h, br, bg, bb, lift);
   };
