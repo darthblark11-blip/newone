@@ -2074,11 +2074,22 @@ parallax droop instead of adding to it, and the two cancel: a 17-unit pistol cam
 *two* units long, which is the vanishing the whole projection exists to prevent. What puts
 the gun behind him is the hand being behind him, not the muzzle swinging round.
 
-**The grip is UNDER the gun, not beside it.** A pistol's butt runs straight down from the
-rear of the frame, so from a bird's eye it is almost entirely hidden behind the slide and
-the fist round it — a couple of units of heel at the back and nothing more. Drawn as a
-full block hanging off the side it was as big as the weapon and the whole thing read as a
-black L lying on the man.
+**The BUTT is the one part of a sidearm that is not along the barrel, and drawn as a flat
+block bolted to the side it is a right angle lying on the man — the paper L.** A pistol's
+grip runs down from the rear of the frame at roughly right angles to the bore, so what you
+see of it from directly above is decided **entirely by how far the barrel is depressed**,
+and the projection already knows that:
+
+| barrel | what shows of the butt |
+|---|---|
+| level | it points straight **down**, so from up here it is nothing at all — hidden behind the slide and the fist |
+| muzzle at the floor | it has swung back toward horizontal, and a heel of it shows behind the frame |
+| muzzle raised | it swings **forward** instead, under the barrel |
+
+So `gunButt()` gives it an along-axis extent of `len · sin(el)` and a height of
+`−len · cos(el)` — the exact complement of the barrel's own foreshortening, which is why it
+self-hides rather than needing a rule, and why the heel appears and disappears with the
+carry instead of being painted on. It takes the same lean everything else does.
 
 **A carried weapon is DEPRESSED, and from directly above a depressed barrel is a SHORT
 one.** That foreshortening is the whole top-down read of "carried": a full-length bar
@@ -2142,6 +2153,30 @@ instead, and between them they are the optics:
 | **perspective** | and it **narrows** as it recedes. A far end subtends a smaller angle than a near one; a plain scale-down does not, and that missing taper is most of why a squash reads as paper. Each piece is a run of `quad()`s, so the taper is real geometry |
 | **parallax** | it is at a different **height** from the grip, and in this game a height difference is a displacement. Constant, cheap, and it **reverses with the elevation**, which is the thing a length can never do |
 | **occlusion** | the end nearer the ground sees less sky and goes darker, the end swung up lifts. Drawn as a few bands along each piece, which is the only way a flat-fill renderer gets a gradient — the same trick `volShade()` uses |
+
+**And the component of the lean that runs ALONG the barrel is damped (`GUN_AXIAL`), because
+it is the one that does not carry the cue.** The lean is a world vector, so in the weapon's
+own frame it splits two ways and the halves do different jobs:
+
+| | |
+|---|---|
+| **across** the barrel | displaces the low end off its own axis. *This* is the third dimension — it says the muzzle is nearer the ground than the hand, it reverses with the elevation, and it never changes how long the weapon is |
+| **along** the barrel | adds to or subtracts from the apparent **length**, and carries no attitude at all |
+
+Undamped, the second one made the carry distort as the player turned: a barrel pointed north
+gets the whole lean added to its length and one pointed south gets it taken away, so the same
+rifle drew **48 units running east and 28 running west**. It lands on the two weapons at
+*opposite* headings, because the rifle is carried across the body and the sidearm along it.
+Damping it to a fifth leaves the lean pointing where the world says, keeps every bit of the
+attitude cue (23° of drawn attitude across eight headings at a jog, 34° at a sprint —
+unchanged), and drops the length spread from 43% to 12%.
+
+The check is written around the property rather than a number: **turning must distort the
+weapon less than its own animation does.** The reference is the stride at a sprint, the
+weapon's full range — a walk and a jog hold the carry deliberately steady, so measuring each
+pace against itself would demand perfect rigidity exactly where nothing is meant to move. A
+second check holds the other side: the drawn attitude must still change with heading, or the
+across-component has been damped out too and the depth has gone with it.
 
 **`GUN_TILT` is `MASS_TILT` — the same camera — at a stated share of it, and setting that
 share too low was most of the "paper" read.** The share exists because of the figure: a

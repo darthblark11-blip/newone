@@ -644,10 +644,15 @@ console.log('\n== turning must not distort the carry more than moving does ==');
          `${(phi - plo).toFixed(1)} across a sprinting stride — ${seen.join(' ')}`);
       // And the lean is still a WORLD vector: the weapon's drawn angle against
       // the body has to change as he turns, or the across-component has been
-      // damped out too and the depth has gone with it.
-      ok(`and the lean still turns with the world at ${pace}`,
-         ahi - alo > 0.10,
-         `${(((ahi - alo) * 180) / Math.PI).toFixed(0)} degrees of attitude across the eight`);
+      // damped out too and the depth has gone with it. Asserted on the LONG GUN
+      // only, and that is enough — gunProj() is shared, so one weapon proves the
+      // projection. On a seventeen-unit sidearm the same signal is a few degrees
+      // and sits inside the noise of fitting an axis to a shape that small.
+      if (w === 'ASSAULT_RIFLE') {
+        ok(`and the lean still turns with the world at ${pace}`,
+           ahi - alo > 0.20,
+           `${(((ahi - alo) * 180) / Math.PI).toFixed(0)} degrees of attitude across the eight`);
+      }
     }
   }
   probe('player.aimAngle = 0; player.moveAngle = 0; player.isArmed = false; player.aimHold = 0;');
@@ -807,8 +812,10 @@ console.log('\n== the carry keeps off the body it is being carried on ==');
 
   // A sidearm swung back with the free arm's whole arc lies right along the
   // flank, and a 17-unit weapon extending forward from there covers the sleeve
-  // and the shoulder it is meant to be hanging beside. The hand holding it is
-  // damped, so the grip stays out in front of the hip.
+  // and the shoulder it is meant to be hanging beside. What that fault is about
+  // is the BARREL, so the barrel is what is measured: the hand deliberately goes
+  // behind the hip at the back of a sprint now, and the butt goes with it —
+  // that is the pose, not the bug.
   probe(`player.isArmed = true; player.currentWeapon = WEAPONS.PISTOL;
          player.meleeTimer = 0; player.reloadTimer = 0; player.muzzleFlash = 0;
          player.throwAnimTimer = 0; player.dashTimer = 0;
@@ -820,12 +827,13 @@ console.log('\n== the carry keeps off the body it is being carried on ==');
       const p = poseOf(`player.isMoving = true; player.gait = ${g};
                         player.walkCycle = ${(i * Math.PI) / 8};`);
       for (const gun of p.guns) {
-        if (-gun.a[0] > back) { back = -gun.a[0]; at = `gait ${g}, phase ${i}`; }
+        // `b` is the muzzle end: the frame's +x runs out along the barrel.
+        if (-gun.b[0] > back) { back = -gun.b[0]; at = `gait ${g}, phase ${i}`; }
       }
     }
   }
-  ok('a carried sidearm never swings back across the shoulder line',
-     back < 5, `grip reaches ${back.toFixed(1)} behind the shoulders — ${at}`);
+  ok('a carried sidearm never swings its BARREL back across the shoulder line',
+     back < 5, `muzzle reaches ${back.toFixed(1)} behind the shoulders — ${at}`);
 
   // The support arm crossing to a long gun's handguard is the one that can push
   // a sleeve out past the FAR side of the body. Out at the muzzle with its

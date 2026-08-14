@@ -22889,6 +22889,39 @@ function gunMuzzle(P, x, y, h, br, bg, bb) {
   }
 }
 
+// THE BUTT OF A SIDEARM IS THE ONE PART OF IT THAT IS NOT ALONG THE BARREL, and
+// drawn as a flat block bolted to the side it is the right angle lying on the
+// man -- the paper L.
+//
+// A pistol's grip runs down from the rear of the frame at roughly right angles
+// to the bore, so what you see of it from directly above is decided ENTIRELY by
+// how far the barrel is depressed, and the projection already knows that:
+//
+//   barrel level        the grip points straight DOWN, so from up here it is
+//                       nothing at all -- hidden behind the slide and the fist
+//   muzzle at the floor  it has swung back toward horizontal, and a heel of it
+//                       shows behind the frame
+//   muzzle raised        it swings forward instead, under the barrel
+//
+// So its along-axis extent is `len * sin(el)` and its height is `-len * cos(el)`
+// -- the exact complement of the barrel's own foreshortening, and the reason it
+// self-hides rather than needing a rule. It takes the same lean everything else
+// does, so the heel sits where the projection says a thing that low should.
+function gunButt(P, x, y, len, w, br, bg, bb) {
+  const h0 = P.h(x), h1 = h0 - len * P.k;
+  const px = function (hx, ht) {
+    return hx + P.S[0] * ht * GUN_TILT * GUN_AXIAL;
+  };
+  const py = function (ht) { return y + P.S[1] * ht * GUN_TILT; };
+  const ax = px(P.x(x), h0), ay = py(h0);
+  const bx = px(P.x(x) + len * P.up, h1), by = py(h1);
+  const dx = bx - ax, dy = by - ay, L = Math.hypot(dx, dy);
+  if (L < 0.35) return;                 // level: there is nothing to see
+  const nx = (-dy / L) * w * 0.5, ny = (dx / L) * w * 0.5;
+  fill(br, bg, bb);
+  quad(ax + nx, ay + ny, bx + nx, by + ny, bx - nx, by - ny, ax - nx, ay - ny);
+}
+
 // A long gun, authored about the grip at the origin with the muzzle out along
 // +x. Colours are the aimed drawings' own: the rifle is black with walnut
 // furniture, the shotgun is three greys, the launcher is olive with a black
@@ -22955,11 +22988,11 @@ function carryHandGun(w, el, L, S) {
   // block hanging off the side it was as big as the weapon and the whole thing
   // read as a black L lying on the man.
   if (w === WEAPONS.SMG || w === WEAPONS.DUAL_SMG) {
-    seg(-5, 1, 2.4, 9, 40, 40, 40, 0.16);              // magazine
+    gunButt(P, -2, 0.9, 6.5, 5.4, 30, 30, 30);         // magazine, hanging
     seg(-9, 16, -4, 8, 40, 40, 40, 0.30);              // receiver
     gunMuzzle(P, 16, 0, 8, 40, 40, 40);
   } else if (w === WEAPONS.REVOLVER) {
-    seg(-3, 3.4, -0.6, 5.6, 86, 56, 34, 0.26);         // walnut grip heel
+    gunButt(P, -1, 0.5, 5.2, 4.8, 74, 48, 28);         // walnut grip
     seg(-1, 8, -3.4, 5.8, 188, 192, 200, 0.34);        // frame
     seg(9, 23, -2.4, 3.6, 214, 218, 226, 0.36);        // barrel
     seg(9, 23, -2.4, 1.2, 240, 244, 250, 0.30);        // top rib
@@ -22967,11 +23000,11 @@ function carryHandGun(w, el, L, S) {
     ellipse(P.x(5), -0.5, Math.max(3, P.x(7) + 2), 6.6 * P.w(5));   // cylinder
     gunMuzzle(P, 23, -0.6, 3.6, 110, 116, 124);
   } else if (w === WEAPONS.TASER) {
-    seg(1, 5.4, 1.4, 5.4, 20, 20, 20, 0.16);           // battery
+    gunButt(P, 1, 0.7, 4.6, 4.6, 20, 20, 20);          // battery in the butt
     seg(-1, 13, -3.6, 6.4, 255, 255, 0, 0.28);         // body
     gunMuzzle(P, 13, -0.4, 6.4, 214, 208, 40);
   } else {                                              // pistol
-    seg(0, 4.6, 1.2, 5.4, 34, 34, 34, 0.18);           // grip heel
+    gunButt(P, -0.5, 0.6, 4.6, 4.4, 30, 30, 30);       // grip
     seg(-2, 15, -3.4, 5.8, 40, 40, 40, 0.32);          // slide
     gunMuzzle(P, 15, -0.5, 5.8, 40, 40, 40);
   }
