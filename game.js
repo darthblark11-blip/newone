@@ -13385,7 +13385,7 @@ function updateBullets() {
         continue;
     }
 
-    if (b.active && inView(b.x, b.y, 50)) b.show(); 
+    if (b.active && inView(b.x, b.y, 50) && !b.isAllyProjectile()) b.show(); 
     
     if (doTick && b.active) {
         let hB = false;
@@ -14242,11 +14242,17 @@ class Bullet {
     return this;
   }
 
+  isAllyProjectile() {
+      return this.isP && this.shooter && !this.shooter.isPlayer;
+  }
+
   update() { 
       if (!this.active) return;
-      this.history.push({x: this.x, y: this.y});
-      let maxLen = this.isRocket ? 15 : (this.isAlienLaser || this.isRedLaser || this.isPinkLaser || this.isOrangeBeam ? 8 : 5);
-      if (this.history.length > maxLen) this.history.shift();
+      if (!this.isAllyProjectile()) {
+          this.history.push({x: this.x, y: this.y});
+          let maxLen = this.isRocket ? 15 : (this.isAlienLaser || this.isRedLaser || this.isPinkLaser || this.isOrangeBeam ? 8 : 5);
+          if (this.history.length > maxLen) this.history.shift();
+      }
 
       if (this.isTaser) {
           if (this.tetheredTarget) {
