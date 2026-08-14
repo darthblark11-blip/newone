@@ -165,44 +165,157 @@ const WEAPONS = {
 
 
 const sfx = {
+  // Web Audio routing: source/noise -> tone filter -> voice gain -> stereo pan ->
+  // obstruction low-pass -> master limiter gain -> destination.  The public
+  // methods keep their old names/signatures, but may also accept (weapon, x, y)
+  // or ({ x, y, weapon, kind }) for spatial, context-aware playback.
   ctx: null,
-  bgm: null, 
-  
-  init() { 
-    // Splitting this into two lines makes the OpenProcessing linter happy
+  bgm: null,
+  master: null,
+  maxVoices: 24,
+  activeVoices: 0,
+  noiseBuffers: {},
+
+  init() {
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
-    this.ctx = new AudioCtx(); 
-    
-    if (this.ctx.state === 'suspended') this.ctx.resume(); 
+    if (!AudioCtx) return;
+    this.ctx = new AudioCtx();
+    this.master = this.ctx.createGain();
+    this.master.gain.setValueAtTime(0.82, this.ctx.currentTime);
+    this.master.connect(this.ctx.destination);
+    this.buildNoiseBuffers();
+    if (this.ctx.state === 'suspended') this.ctx.resume();
   },
-  
-          playBGM() {
-      if (this.bgm && this.bgm.paused) {
-          // This fires the exact moment you tap the screen
-          this.bgm.play().catch(e => console.log("BGM Error: ", e));
+
+  buildNoiseBuffers() {
+    if (!this.ctx) return;
+    const defs = { snap: 0.08, body: 0.28, tail: 0.9, impact: 0.18, rumble: 1.1 };
+    for (const k in defs) {
+      const n = Math.max(1, Math.floor(this.ctx.sampleRate * defs[k]));
+      const b = this.ctx.createBuffer(1, n, this.ctx.sampleRate);
+      const d = b.getChannelData(0);
+      for (let i = 0; i < n; i++) {
+        const fade = 1 - i / n;
+        d[i] = (Math.random() * 2 - 1) * fade;
       }
+      this.noiseBuffers[k] = b;
+    }
   },
 
+  playBGM() {
+    if (this.bgm && this.bgm.paused) {
+      this.bgm.play().catch(e => console.log("BGM Error: ", e));
+    }
+  },
 
+  rand(a, b) { return a + Math.random() * (b - a); },
 
+  profile(weapon) {
+    const name = typeof weapon === 'string' ? weapon : (weapon && weapon.name) || '';
+    if (weapon === WEAPONS.SHOTGUN || name === 'SHOTGUN' || name === 'COACH GUN') return { snap: 4200, body: 120, tail: 0.42, gain: 1.0, mech: 900 };
+    if (weapon === WEAPONS.ROCKET_LAUNCHER || name === 'ROCKET LAUNCHER') return { snap: 1700, body: 58, tail: 0.8, gain: 1.2, mech: 260 };
+    if (weapon === WEAPONS.SMG || weapon === WEAPONS.DUAL_SMG || name === 'MACHINE GUN' || name === 'DUAL SMGS') return { snap: 5600, body: 190, tail: 0.22, gain: 0.62, mech: 1800 };
+    if (name === 'REVOLVER') return { snap: 5000, body: 145, tail: 0.5, gain: 0.92, mech: 720 };
+    if (name === 'ASSAULT RIFLE') return { snap: 5200, body: 165, tail: 0.32, gain: 0.78, mech: 1300 };
+    if (name.indexOf('LASER') >= 0 || name.indexOf('BEAM') >= 0 || weapon === 'RED_LASER' || weapon === 'PINK_LASER' || weapon === 'ORANGE_BEAM' || weapon === 'ALIEN_LASER') return { snap: 7000, body: 520, tail: 0.34, gain: 0.7, mech: 2400, energy: true };
+    return { snap: 4600, body: 210, tail: 0.28, gain: 0.7, mech: 1100 };
+  },
 
-  play(f, t, d, v, s) { if (!this.ctx) return; let o = this.ctx.createOscillator(), g = this.ctx.createGain(); o.type = t; o.connect(g); g.connect(this.ctx.destination); o.frequency.setValueAtTime(f, this.ctx.currentTime); if (s) o.frequency.exponentialRampToValueAtTime(s, this.ctx.currentTime + d); g.gain.setValueAtTime(v, this.ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + d); o.start(); o.stop(this.ctx.currentTime + d); },
-  
-  noise(d, v, f, t, e) { if (!this.ctx) return; let bs = this.ctx.sampleRate * d, b = this.ctx.createBuffer(1, bs, this.ctx.sampleRate), dat = b.getChannelData(0); for (let i = 0; i < bs; i++) dat[i] = Math.random() * 2 - 1; let s = this.ctx.createBufferSource(), fil = this.ctx.createBiquadFilter(), g = this.ctx.createGain(); s.buffer = b; fil.type = t || 'lowpass'; fil.frequency.setValueAtTime(f || 1000, this.ctx.currentTime); if (e) fil.frequency.exponentialRampToValueAtTime(e, this.ctx.currentTime + d); s.connect(fil); fil.connect(g); g.connect(this.ctx.destination); g.gain.setValueAtTime(v, this.ctx.currentTime); g.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + d); s.start(); },
-  
-  shoot() { this.noise(0.1, 0.4, 2000, 'highpass'); this.play(400, 'square', 0.1, 0.1, 100); }, 
-  shotgun() { this.noise(0.2, 0.7, 500, 'lowpass'); this.play(150, 'sawtooth', 0.2, 0.2, 50); }, 
-  hitBody() { this.noise(0.15, 0.8, 1000, 'bandpass', 400); }, 
-  hitHead() { this.noise(0.15, 0.9, 3000, 'highpass'); this.play(800, 'triangle', 0.1, 0.2, 200); }, 
-  hitArmor() { this.noise(0.1, 0.6, 800, 'bandpass', 2000); this.play(600, 'sine', 0.1, 0.3, 100); }, 
-  deathGrunt() { this.play(120, 'square', 0.3, 0.4, 60); this.noise(0.2, 0.3, 400, 'lowpass'); }, 
-  slash() { this.noise(0.15, 0.7, 3000, 'bandpass', 8000); this.play(800, 'sine', 0.1, 0.1, 1200); }, 
-  dash() { this.noise(0.3, 0.6, 600, 'lowpass'); this.play(100, 'sawtooth', 0.2, 0.3, 50); }, 
-  reload() { this.noise(0.3, 0.5, 800, 'bandpass', 1500); this.play(300, 'square', 0.15, 0.1, 100); }, 
-  explosion() { this.noise(0.8, 1.0, 150, 'lowpass'); this.play(60, 'sawtooth', 0.8, 0.8, 10); }, 
-  charge() { this.play(400, 'sine', 2.0, 0.1, 800); }, 
-  throwG() { this.noise(0.2, 0.5, 1000, 'highpass'); this.play(600, 'sine', 0.2, 0.1, 300); },
-  bite() { this.play(300, 'triangle', 0.1, 0.3, 100); this.noise(0.1, 0.5, 2000, 'highpass'); }
+  spatial(x, y, priority = 0.5) {
+    if (!player || x === undefined || y === undefined) return { gain: 1, pan: 0, lp: 18000, priority: 1 + priority };
+    const dx = x - player.x, dy = y - player.y;
+    const d = Math.hypot(dx, dy);
+    const gain = 1 / (1 + d / 560 + (d * d) / 1600000);
+    const span = Math.max(1, (typeof viewRight !== 'undefined' && typeof viewLeft !== 'undefined') ? (viewRight - viewLeft) * 0.5 : 700);
+    const pan = Math.max(-1, Math.min(1, dx / span));
+    const off = (typeof inView === 'function' && !inView(x, y, 120)) ? 0.55 : 1;
+    return { gain: gain * off, pan, lp: off < 1 ? 3600 : 18000, priority: gain + priority };
+  },
+
+  reserve(priority) {
+    if (!this.ctx || !this.master) return false;
+    if (this.activeVoices >= this.maxVoices && priority < 0.9) return false;
+    this.activeVoices++;
+    return true;
+  },
+
+  releaseAfter(seconds) {
+    setTimeout(() => { this.activeVoices = Math.max(0, this.activeVoices - 1); }, Math.max(30, seconds * 1000));
+  },
+
+  chain(gain, x, y, dur, priority) {
+    const sp = this.spatial(x, y, priority);
+    if (!this.reserve(sp.priority)) return null;
+    const now = this.ctx.currentTime;
+    const g = this.ctx.createGain();
+    const filter = this.ctx.createBiquadFilter();
+    const pan = this.ctx.createStereoPanner ? this.ctx.createStereoPanner() : null;
+    g.gain.setValueAtTime(Math.max(0.0001, gain * sp.gain), now);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(sp.lp, now);
+    if (pan) { pan.pan.setValueAtTime(sp.pan, now); g.connect(pan); pan.connect(filter); }
+    else g.connect(filter);
+    filter.connect(this.master);
+    this.releaseAfter(dur);
+    return { input: g, now };
+  },
+
+  tone(f, type, d, v, endF, x, y, priority = 0.5) {
+    if (!this.ctx) return;
+    const c = this.chain(v, x, y, d, priority); if (!c) return;
+    const o = this.ctx.createOscillator();
+    o.type = type; o.connect(c.input);
+    o.frequency.setValueAtTime(f * this.rand(0.96, 1.04), c.now);
+    if (endF) o.frequency.exponentialRampToValueAtTime(Math.max(1, endF), c.now + d);
+    o.start(c.now); o.stop(c.now + d);
+  },
+
+  burst(bufferKey, d, v, f, t, endF, x, y, priority = 0.5) {
+    if (!this.ctx) return;
+    const c = this.chain(v * this.rand(0.94, 1.06), x, y, d, priority); if (!c) return;
+    const s = this.ctx.createBufferSource();
+    const fil = this.ctx.createBiquadFilter();
+    s.buffer = this.noiseBuffers[bufferKey] || this.noiseBuffers.impact;
+    fil.type = t || 'lowpass';
+    fil.frequency.setValueAtTime((f || 1000) * this.rand(0.96, 1.04), c.now);
+    if (endF) fil.frequency.exponentialRampToValueAtTime(Math.max(1, endF), c.now + d);
+    s.connect(fil); fil.connect(c.input); s.start(c.now); s.stop(c.now + d);
+  },
+
+  play(f, t, d, v, s, x, y) { this.tone(f, t, d, v, s, x, y); },
+  noise(d, v, f, t, e, x, y) { this.burst('impact', d, v, f, t, e, x, y); },
+
+  shoot(weapon, x, y) {
+    const p = this.profile(weapon);
+    if (p.energy) {
+      this.burst('snap', 0.07, 0.24 * p.gain, p.snap, 'highpass', p.snap * 0.7, x, y, 0.75);
+      this.tone(p.body, 'sawtooth', 0.16, 0.16 * p.gain, p.mech, x, y, 0.75);
+      this.burst('tail', p.tail, 0.09 * p.gain, 2200, 'bandpass', 520, x, y, 0.35);
+      return;
+    }
+    this.burst('snap', 0.035, 0.34 * p.gain, p.snap, 'highpass', p.snap * 0.55, x, y, 0.85);
+    this.burst('body', 0.13, 0.28 * p.gain, p.body * 3.5, 'lowpass', p.body, x, y, 0.8);
+    this.tone(p.mech, 'square', 0.045, 0.055 * p.gain, p.mech * 0.45, x, y, 0.55);
+    this.burst('tail', p.tail, 0.08 * p.gain, 1200, 'bandpass', 260, x, y, 0.25);
+  },
+
+  shotgun(x, y) { this.shoot(WEAPONS.SHOTGUN, x, y); },
+  hitBody(x, y) { this.burst('impact', 0.12, 0.5, 720, 'bandpass', 260, x, y, 0.55); this.tone(95, 'triangle', 0.08, 0.06, 45, x, y, 0.4); },
+  hitHead(x, y) { this.burst('impact', 0.09, 0.42, 2600, 'highpass', 900, x, y, 0.65); this.tone(520, 'triangle', 0.07, 0.08, 160, x, y, 0.5); },
+  hitArmor(x, y) { this.burst('impact', 0.08, 0.38, 1600, 'bandpass', 3600, x, y, 0.65); this.tone(720, 'sine', 0.12, 0.12, 210, x, y, 0.55); },
+  deathGrunt(x, y, kind) {
+    const base = kind === 'BUG' || kind === 'SNAIL' ? 210 : (kind === 'ROBOT' ? 80 : this.rand(86, 132));
+    this.tone(base, 'sawtooth', 0.34, 0.18, base * 0.45, x, y, 0.7);
+    this.burst('body', 0.22, 0.18, kind === 'ROBOT' ? 900 : 360, 'lowpass', 120, x, y, 0.45);
+  },
+  slash(x, y) { this.burst('snap', 0.13, 0.38, 4200, 'bandpass', 7600, x, y, 0.55); this.tone(900, 'sine', 0.08, 0.06, 1300, x, y); },
+  dash(x, y) { this.burst('tail', 0.24, 0.26, 620, 'lowpass', 180, x, y, 0.4); this.tone(115, 'sawtooth', 0.18, 0.1, 55, x, y); },
+  reload(x, y) { this.burst('impact', 0.18, 0.24, 1400, 'bandpass', 2300, x, y, 0.4); this.tone(320, 'square', 0.09, 0.045, 120, x, y); },
+  explosion(x, y) { this.burst('rumble', 0.85, 0.9, 180, 'lowpass', 45, x, y, 1.0); this.tone(62, 'sawtooth', 0.72, 0.32, 12, x, y, 1.0); this.burst('snap', 0.08, 0.55, 2600, 'highpass', 700, x, y, 1.0); },
+  charge(x, y) { this.tone(390, 'sine', 1.4, 0.08, 880, x, y, 0.35); this.burst('tail', 0.7, 0.08, 2400, 'bandpass', 5200, x, y, 0.35); },
+  throwG(x, y) { this.burst('snap', 0.12, 0.25, 1200, 'highpass', 500, x, y, 0.35); this.tone(620, 'sine', 0.12, 0.06, 260, x, y); },
+  bite(x, y) { this.tone(280, 'triangle', 0.1, 0.16, 90, x, y, 0.45); this.burst('impact', 0.08, 0.25, 2100, 'highpass', 700, x, y, 0.45); }
 };
 
 
@@ -3760,7 +3873,7 @@ viewBottom = camY + height / zoom + shakePad;
       } else if (prologueTimer <= 0 && prologueTimer > -40) { // CATCH-ALL: Prevent frame skips from bypassing the 0 frame
           if (shooter && dadEntity && !dadEntity.dead) {
               let a = atan2(dadEntity.y - shooter.y, dadEntity.x - shooter.x); shooter.aimAngle = a; let bLX = 31, bLY = 8; let tX = shooter.x + cos(a) * bLX - sin(a) * bLY; let tY = shooter.y + sin(a) * bLX + cos(a) * bLY;
-              sfx.shoot(); shooter.muzzleFlash = 3; emit(tX, tY, 3, color(255, 200, 0), "MUZZLE", cos(a) * 5, sin(a) * 5); spawnBullet(tX, tY, a, false, "HEAD", WEAPONS.PISTOL); 
+              sfx.shoot(WEAPONS.PISTOL, tX, tY); shooter.muzzleFlash = 3; emit(tX, tY, 3, color(255, 200, 0), "MUZZLE", cos(a) * 5, sin(a) * 5); spawnBullet(tX, tY, a, false, "HEAD", WEAPONS.PISTOL); 
               dadEntity.dead = true; dadEntity.hp = 0; sfx.hitHead(); sfx.deathGrunt(); 
               let bCol = color(90, 0, 0); emit(dadEntity.x, dadEntity.y, 15, color(220, 200, 200), "BONE", cos(a)*10, sin(a)*10); emit(dadEntity.x, dadEntity.y, 40, bCol, "GORE"); 
               
@@ -10170,7 +10283,7 @@ this.skeletonTimer = 0;
                 shockPts.push({x: this.x + cos(pA)*range, y: this.y + sin(pA)*range}); 
             }
             for (let i = 1; i < shockPts.length; i++) emit(shockPts[i].x, shockPts[i].y, 15, color(255, 255, 0), "SPARK");
-            lightnings.push(new Lightning(shockPts)); sfx.shoot(); screenShake = 10;
+            lightnings.push(new Lightning(shockPts)); sfx.shoot("LIGHTNING", this.x, this.y); screenShake = 10;
 
             this.cannonAmmo--; this.cannonCharge = 0; this.cannonFireDelay = 48; 
             if (this.cannonAmmo <= 0) { this.cannonCooldown = 180; this.cannonAmmo = 4; } 
@@ -10230,7 +10343,7 @@ this.skeletonTimer = 0;
         if (!this.checkCol(this.x + dx, this.y)) this.x += dx; if (!this.checkCol(this.x, this.y + dy)) this.y += dy; this.isMoving = true; 
         
         if (this.dashTimer <= 0 && jetpackFireExplosion) {
-            screenShake = 15; sfx.charge(); sfx.shotgun(); 
+            screenShake = 15; sfx.charge(this.x, this.y); sfx.shotgun(this.x, this.y); 
             for (let a = 0; a < TWO_PI; a += 0.15) { emit(this.x, this.y, 1, color(0, 200, 255), "THRUST", cos(a) * 16, sin(a) * 16); emit(this.x, this.y, 1, color(150, 240, 255), "SPARK", cos(a) * 8, sin(a) * 8); }
             emit(this.x, this.y, 30, color(0, 100, 255), "EXPLOSION");
             for (let e of enemiesList) {
@@ -10829,7 +10942,7 @@ if (this.eType === "COW") {
                 const my = this.y + sin(aR) * 34 + cos(aR) * 13;
                 spawnBullet(mx, my, aR, false, "BODY", "ORANGE_BEAM", this);
                 emit(mx, my, 5, color(255, 170, 60), "MUZZLE", cos(aR) * 6, sin(aR) * 6);
-                sfx.shoot();
+                sfx.shoot("ORANGE_BEAM", mx, my);
                 this.muzzleFlash = 3;
                 this.burstLeft--;
                 this.burstGap = ROBOT_BURST_GAP;
@@ -10979,7 +11092,7 @@ if (this.eType === "COW") {
                         let tX_L = this.x + cos(this.aimAngle) * 70 - sin(this.aimAngle) * -10, tY_L = this.y + sin(this.aimAngle) * 70 + cos(this.aimAngle) * -10;
                         spawnBullet(tX_R, tY_R, iA, false, "BODY", "PINK_LASER", this); 
                         spawnBullet(tX_L, tY_L, iA, false, "BODY", "PINK_LASER", this);
-                        sfx.shoot(); this.burstsFired++; if (this.burstsFired >= 3) { this.burstCooldown = 156; this.burstsFired = 0; } else { this.fireTimer = 30; }
+                        sfx.shoot("PINK_LASER", tX_R, tY_R); this.burstsFired++; if (this.burstsFired >= 3) { this.burstCooldown = 156; this.burstsFired = 0; } else { this.fireTimer = 30; }
                     }
                 }
                 if (canSee || distToTarget > 20) {
@@ -11161,18 +11274,18 @@ if (this.eType === "COW") {
     
     let tX = this.x + cos(this.aimAngle) * (bLX + bob) - sin(this.aimAngle) * bLY, tY = this.y + sin(this.aimAngle) * (bLX + bob) + cos(this.aimAngle) * bLY;
     
-    if (this.eType === "ALIEN_GATOR") { spawnOrb(tX, tY, false, true); sfx.shoot(); this.fireTimer = 90; } 
+    if (this.eType === "ALIEN_GATOR") { spawnOrb(tX, tY, false, true); sfx.shoot("ALIEN_LASER", tX, tY); this.fireTimer = 90; } 
     else if (this.eType === "SAUCER_RED") {
         let tX_R = this.x + cos(this.aimAngle) * 45 - sin(this.aimAngle) * 25, tY_R = this.y + sin(this.aimAngle) * 45 + cos(this.aimAngle) * 25;
         let tX_L = this.x + cos(this.aimAngle) * 45 - sin(this.aimAngle) * -25, tY_L = this.y + sin(this.aimAngle) * 45 + cos(this.aimAngle) * -25;
         spawnBullet(tX_R, tY_R, sA + random(-0.1, 0.1), false, "BODY", "RED_LASER", this); 
-        spawnBullet(tX_L, tY_L, sA + random(-0.1, 0.1), false, "BODY", "RED_LASER", this); sfx.shoot();
+        spawnBullet(tX_L, tY_L, sA + random(-0.1, 0.1), false, "BODY", "RED_LASER", this); sfx.shoot("RED_LASER", tX_R, tY_R);
     } else if (this.currentWeapon === WEAPONS.DUAL_SMG) {
         let tX_L = this.x + cos(this.aimAngle) * (bLX_L + bob) - sin(this.aimAngle) * bLY_L, tY_L = this.y + sin(this.aimAngle) * (bLX_L + bob) + cos(this.aimAngle) * bLY_L;
         let iP = this.isPlayer || this.isFriendly;
         spawnBullet(tX, tY, sA + random(-this.currentWeapon.spread, this.currentWeapon.spread), iP, aH, this.currentWeapon, this);
         spawnBullet(tX_L, tY_L, sA + random(-this.currentWeapon.spread, this.currentWeapon.spread), iP, aH, this.currentWeapon, this);
-        sfx.shoot(); 
+        sfx.shoot(this.currentWeapon, tX, tY); 
         
         // EXCLUSIVE PLAYER SHAKE
         if (this.isPlayer) screenShake = 3; 
@@ -11180,7 +11293,7 @@ if (this.eType === "COW") {
         emit(tX, tY, 3, color(255, 200, 0), "MUZZLE", cos(sA) * 5, sin(sA) * 5); emit(tX_L, tY_L, 3, color(255, 200, 0), "MUZZLE", cos(sA) * 5, sin(sA) * 5); 
     } else if (this.currentWeapon === WEAPONS.SHOTGUN) { 
         let s = [-0.1275, -0.0425, 0.0425, 0.1275]; for (let i = 0; i < 4; i++) spawnBullet(tX, tY, sA + s[i], this.isPlayer || this.isFriendly, aH, this.currentWeapon, this); 
-        sfx.shotgun(); 
+        sfx.shotgun(tX, tY); 
         
         // EXCLUSIVE PLAYER SHAKE
         if (this.isPlayer) screenShake = 8; 
@@ -11188,7 +11301,7 @@ if (this.eType === "COW") {
         emit(tX, tY, 6, color(255, 200, 0), "MUZZLE", cos(sA) * 8, sin(sA) * 8); 
     } else { 
         spawnBullet(tX, tY, sA + random(-this.currentWeapon.spread, this.currentWeapon.spread), this.isPlayer || this.isFriendly, aH, this.currentWeapon, this); 
-        sfx.shoot(); 
+        sfx.shoot(this.currentWeapon, tX, tY); 
         
         // EXCLUSIVE PLAYER SHAKE
         if (this.isPlayer && (this.currentWeapon === WEAPONS.SMG || this.currentWeapon === WEAPONS.ASSAULT_RIFLE)) screenShake = 2; 
