@@ -90,8 +90,9 @@ const ctx = {
     createOscillator(){return{type:'',frequency:{setValueAtTime(){},exponentialRampToValueAtTime(){}},connect(){},start(){},stop(){}};},
     createGain(){return{gain:{setValueAtTime(){},exponentialRampToValueAtTime(){}},connect(){}};},
     createBuffer(){return{getChannelData(){return new Float32Array(10);}};},
-    createBufferSource(){return{buffer:null,connect(){},start(){}};},
+    createBufferSource(){return{buffer:null,connect(){},start(){},stop(){}};},
     createBiquadFilter(){return{type:'',frequency:{setValueAtTime(){},exponentialRampToValueAtTime(){}},connect(){}};},
+    createStereoPanner(){return{pan:{setValueAtTime(){}},connect(){}};},
     destination:{}, sampleRate:44100 };},
 };
 // every p5 drawing call the file makes in global mode
