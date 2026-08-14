@@ -2149,18 +2149,20 @@ function drawDepthSorted() {
     // sort down to what is actually on screen, which is a fraction of the
     // 1500-unit ring activeBuildings holds.
     if (!inView(b.x, b.y, Math.max(b.w || 0, b.h || 0) + 150)) continue;
+    b._depthKey = b.y + (b.h || 0) / 2;
     masses.push(b);
   }
-  masses.sort((p, q) => massDepth(p) - massDepth(q));
+  masses.sort((p, q) => p._depthKey - q._depthKey);
 
   const actors = _depthActors;
-  actors.sort((p, q) => actorDepth(p) - actorDepth(q));
+  for (let i = 0; i < actors.length; i++) actors[i]._depthKey = actors[i].y;
+  actors.sort((p, q) => p._depthKey - q._depthKey);
 
   let mi = 0;
   for (let ai = 0; ai < actors.length; ai++) {
-    const ad = actorDepth(actors[ai]);
+    const ad = actors[ai]._depthKey;
     const start = mi;
-    while (mi < masses.length && massDepth(masses[mi]) <= ad) mi++;
+    while (mi < masses.length && masses[mi]._depthKey <= ad) mi++;
     if (mi > start) drawMassRun(masses, start, mi);
     actors[ai].show();
   }
@@ -3136,6 +3138,11 @@ let lastActiveUpdate = 0;
 const COL_CELL = 220;
 const COL_PAD  = 30;           // largest body radius, so one cell lookup suffices
 let colGrid = null, colBig = null;
+// Reused by colNear() whenever a local cell and the always-scanned long
+// solids both contribute collision candidates. The old a.concat(colBig)
+// allocated a fresh array for every moving body probe, which is exactly the
+// hot path this grid exists to protect.
+const colScratch = [];
 
 function buildColIndex() {
   colGrid = new Map(); colBig = [];
@@ -3162,7 +3169,11 @@ function colNear(x, y) {
   if (!colGrid) return activeBuildings;
   const a = colGrid.get(Math.floor(x / COL_CELL) + "," + Math.floor(y / COL_CELL));
   if (!colBig.length) return a || EMPTY_LIST;
-  return a ? a.concat(colBig) : colBig;
+  if (!a || !a.length) return colBig;
+  colScratch.length = 0;
+  for (let i = 0; i < a.length; i++) colScratch.push(a[i]);
+  for (let i = 0; i < colBig.length; i++) colScratch.push(colBig[i]);
+  return colScratch;
 }
 const EMPTY_LIST = [];
 // Anything that splices activeBuildings out from under the index calls this.
