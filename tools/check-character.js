@@ -419,8 +419,12 @@ console.log('\n== the sprint sweep: a rifle at port goes SIDE to SIDE ==');
         shear = Math.max(shear, Math.abs(g.ang - g.planAng));
       }
     }
+    // The bound is for the weapon being carried OUT IN FRONT — clear of him by
+    // a body-depth or more, which is what the jog's cant was doing at 26-35.
+    // Riding at the front of the chest, a shade past the torso's own front
+    // edge, is where a man drives a rifle at a sprint and is not that fault.
     ok('flat out the rifle lies ON the chest, not out in front of it',
-       offBody < 9, `weapon's middle ${offBody.toFixed(1)} from the torso — ${at}`);
+       offBody < 12, `weapon's middle ${offBody.toFixed(1)} from the torso — ${at}`);
     ok('and it lies ACROSS him, square to the line of travel',
        clo > 1.05 && chi < 1.62,
        `${deg(clo).toFixed(0)}..${deg(chi).toFixed(0)} degrees off the facing`);

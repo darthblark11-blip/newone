@@ -11962,7 +11962,11 @@ if (this.isPlayer) {
             // the weapon was being cradled rather than held. It rides the
             // weapon's own foreshortening, so the grip stays on the handguard
             // whatever attitude the barrel is at.
-            const gRear = 0, gFore = 18.5 - runS * 1.5;
+            // Flat out the support hand goes further UP the barrel, not
+            // shorter: at a sprint the weapon is driven out in front and the
+            // hand goes with it, which is the opposite of the choke-up a
+            // steadier carry wants.
+            const gRear = 0, gFore = 18.5 + runS * 2.5;
             // THREE THINGS MOVE THE MUZZLE, AND ALL THREE HAVE TO PUSH THE SAME
             // WAY OR THEY EAT EACH OTHER. This is the whole difficulty of the
             // traverse, and getting any one sign wrong turned it into a jab.
@@ -12015,7 +12019,7 @@ if (this.isPlayer) {
             // butt hanging a body-height off his flank: laid across the middle
             // it reaches a little past both shoulders, which is what a rifle
             // this long does on a man this size.
-            const cX0 = 0.8 + GP.lean * 0.45 - runS * 2.0
+            const cX0 = 0.8 + GP.lean * 0.45 + runS * 1.6
                       + swayX * 0.5 * (1 - runS);
             // The slide is one-sided on purpose: the weapon is driven ACROSS to
             // the off shoulder and comes back to the body, never past it.
