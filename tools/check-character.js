@@ -575,15 +575,34 @@ console.log('\n== the sprint sweep: a rifle at port goes SIDE to SIDE ==');
   }
 }
 
-console.log('\n== the carry looks the same whichever way he is running ==');
-// The parallax used to be taken along WORLD south, the way a mass on the ground
-// leans. On a building that is perspective. On a weapon that turns with the
-// player it makes the drawn shape depend on his heading: the shear adds to the
-// plan direction for a barrel pointed north and subtracts for one pointed
-// south, so the same rifle drew 55 units long running east and 39 running west,
-// and it read as the art distorting as he changed direction. Taken in the
-// weapon's own frame instead, the shape is identical at every heading — which
-// is the same call the figures already make by not leaning at all.
+console.log('\n== turning must not distort the carry more than moving does ==');
+// THE LEAN IS A WORLD VECTOR AND STAYS ONE — that is the house projection and it
+// is what gives a carried weapon its depth. But in the weapon's own frame it
+// splits two ways, and the halves do different jobs:
+//
+//   ACROSS the barrel  displaces the low end off its own axis. THIS is the
+//                      third dimension: it says the muzzle is nearer the ground
+//                      than the hand, it reverses with the elevation, and it
+//                      never changes how long the weapon is.
+//   ALONG the barrel   adds to or subtracts from the apparent LENGTH, and
+//                      carries no attitude at all.
+//
+// Undamped, the second one made the carry distort as the player turned — a
+// barrel pointed north gets the whole lean added to its length and one pointed
+// south gets it taken away, so the same rifle drew 48 units running east and 28
+// running west. And it lands on the two weapons at OPPOSITE headings, because
+// the rifle is carried across the body and the sidearm along it.
+//
+// So the bound is not "the shape must not change with heading" — it must, that
+// is the projection working. It is that TURNING must distort the weapon less
+// than its own ANIMATION does: if a change of heading stretches it further than
+// the stride ever does, the projection has stopped being a depth cue and
+// started being a defect. Self-scaling, and it needs no number.
+//
+// The reference is the stride at a SPRINT, which is the weapon's own full range
+// — a walk and a jog hold the carry deliberately steady, so measuring each pace
+// against itself would demand that turning be perfectly rigid at exactly the
+// paces where nothing is supposed to move.
 {
   const NAMES = ['E', 'SE', 'S', 'SW', 'W', 'NW', 'N', 'NE'];
   for (const [w, label] of [['ASSAULT_RIFLE', 'the long gun'],
@@ -593,6 +612,16 @@ console.log('\n== the carry looks the same whichever way he is running ==');
            player.throwAnimTimer = 0; player.dashTimer = 0;
            rightStick.active = false; player.aimHold = 0;
            swordPickedUp = false; setMeleeTool("NONE");`);
+    // The weapon's own full animation range: the stride at a sprint.
+    let plo = Infinity, phi = -Infinity;
+    for (let i = 0; i < 24; i++) {
+      const p = poseOf(`player.isMoving = true; player.gait = 1;
+                        player.walkCycle = ${(i / 24) * 4 * Math.PI};
+                        player.aimAngle = 0; player.moveAngle = 0;`);
+      for (const g of p.guns) {
+        plo = Math.min(plo, g.len); phi = Math.max(phi, g.len);
+      }
+    }
     for (const [gait, pace] of [[0.5, 'a jog'], [1, 'a sprint']]) {
       let lo = Infinity, hi = -Infinity, alo = Infinity, ahi = -Infinity;
       const seen = [];
@@ -603,17 +632,22 @@ console.log('\n== the carry looks the same whichever way he is running ==');
                           player.aimAngle = ${A}; player.moveAngle = ${A};`);
         for (const g of p.guns) {
           lo = Math.min(lo, g.len); hi = Math.max(hi, g.len);
-          // Against the body, so turning the man does not count as turning it.
           let d = g.ang; while (d > Math.PI) d -= 2 * Math.PI;
           while (d < -Math.PI) d += 2 * Math.PI;
           alo = Math.min(alo, d); ahi = Math.max(ahi, d);
           seen.push(NAMES[h] + ' ' + g.len.toFixed(0));
         }
       }
-      ok(`${label} draws the same at all eight headings at ${pace}`,
-         hi - lo < 1.5 && ahi - alo < 0.05,
-         `${(hi - lo).toFixed(1)} units and ` +
-         `${(((ahi - alo) * 180) / Math.PI).toFixed(1)} degrees of spread — ${seen.join(' ')}`);
+      ok(`${label} distorts less as he turns than as he runs, at ${pace}`,
+         hi - lo < phi - plo,
+         `${(hi - lo).toFixed(1)} units across eight headings against ` +
+         `${(phi - plo).toFixed(1)} across a sprinting stride — ${seen.join(' ')}`);
+      // And the lean is still a WORLD vector: the weapon's drawn angle against
+      // the body has to change as he turns, or the across-component has been
+      // damped out too and the depth has gone with it.
+      ok(`and the lean still turns with the world at ${pace}`,
+         ahi - alo > 0.10,
+         `${(((ahi - alo) * 180) / Math.PI).toFixed(0)} degrees of attitude across the eight`);
     }
   }
   probe('player.aimAngle = 0; player.moveAngle = 0; player.isArmed = false; player.aimHold = 0;');
