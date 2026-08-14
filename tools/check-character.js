@@ -397,7 +397,7 @@ console.log('\n== the sprint sweep: a rifle at port goes SIDE to SIDE ==');
   // a man carrying a rifle beside himself rather than against himself.
   {
     let offBody = 0, at = '', clo = Math.PI, chi = 0, reach = 0;
-    let maxLen = 0, shear = 0;
+    let maxLen = 0, shear = 0, buttOut = 0, muzzleOut = 0;
     for (let i = 0; i < SPAN; i++) {
       const p = poseOf(`player.isMoving = true; player.gait = 1;
                         player.walkCycle = ${(i * Math.PI) / 12};`);
@@ -421,28 +421,42 @@ console.log('\n== the sprint sweep: a rifle at port goes SIDE to SIDE ==');
                                 Math.abs(b[1]) - BODY_H / 2);
         maxLen = Math.max(maxLen, g.len);
         shear = Math.max(shear, Math.abs(g.ang - g.planAng));
+        // Which end is which: the butt is the one on his strong side.
+        const butt = a[1] > b[1] ? a : b, muzzle = a[1] > b[1] ? b : a;
+        buttOut = Math.max(buttOut, butt[1] - BODY_H / 2);
+        muzzleOut = Math.max(muzzleOut, -muzzle[1] - BODY_H / 2);
       }
     }
     // The bound is for the weapon being carried OUT IN FRONT — clear of him by
     // a body-depth or more, which is what the jog's cant was doing at 26-35.
     // Riding at the front of the chest, a shade past the torso's own front
     // edge, is where a man drives a rifle at a sprint and is not that fault.
+    // Bounded by the ARMS rather than by a number. A weapon whose middle is
+    // further from the shoulder line than a hand can reach is not being held
+    // against the body, whatever else is true of it — and that bound cannot
+    // drift as the pose is tuned, which a literal here did, twice.
+    const armSpan = P(`figureRig(${BODY_W}, ${BODY_H}).upper`)
+                  + P(`figureRig(${BODY_W}, ${BODY_H}).fore`);
     ok('flat out the rifle lies ON the chest, not out in front of it',
-       offBody < 14,
-       `weapon's middle ${offBody.toFixed(1)} forward of the torso — ${at}`);
+       offBody < armSpan * 0.92,
+       `weapon's middle ${offBody.toFixed(1)} forward of the torso, ` +
+       `against ${(armSpan * 0.92).toFixed(1)} of arm — ${at}`);
     ok('and it lies ACROSS him, square to the line of travel',
        clo > 1.05 && chi < 1.62,
        `${deg(clo).toFixed(0)}..${deg(chi).toFixed(0)} degrees off the facing`);
-    // A rifle this long centred on a man this wide reaches past both shoulders.
-    // That is correct and unavoidable, so the bound is derived from the drawn
-    // length rather than written down: half of it, less the half-width of the
-    // man, is where an end sits when the weapon is exactly centred. What must
-    // not happen is one end hanging much further out than that — a plank.
-    const even = maxLen / 2 - BODY_H / 2;
-    ok('reaching past both shoulders, as a rifle that long must, and evenly',
-       reach > 4 && reach < even + 8,
-       `worst end ${reach.toFixed(1)} past the shoulder line, ` +
-       `${even.toFixed(1)} if it were dead centred`);
+    // A rifle this long laid across a man this wide reaches past both
+    // shoulders, and NOT evenly — the muzzle is thirty-nine units from the
+    // grip and the butt eight, so port arms puts the barrel well out over the
+    // off shoulder while the stock stays near the strong one. Only that second
+    // half is a fault when it goes: a stock reaching the shoulder is where a
+    // stock goes, a stock out past his flank is the plank.
+    ok('reaching past both shoulders, as a rifle laid across a man must',
+       muzzleOut > 4 && buttOut > 0,
+       `muzzle ${muzzleOut.toFixed(1)} past the off shoulder, ` +
+       `stock ${buttOut.toFixed(1)} past the strong one`);
+    ok('and the stock stays by the shoulder rather than out past his flank',
+       buttOut < BODY_H * 0.55,
+       `${buttOut.toFixed(1)} past the shoulder line`);
     // THE TILT IS DOING WORK. The projection shears the art off the angle the
     // pose puts it at — that shear IS the third dimension here, and if it ever
     // went to zero the weapon would be back to a plan view being scaled down.
