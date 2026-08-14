@@ -11881,8 +11881,17 @@ if (this.isPlayer) {
                 // The strong hand is damped when there is a sidearm in it, and
                 // pushed a shade forward and out so the weapon rides in front
                 // of the hip instead of back along the flank.
+                // THE ARMED HAND'S SWING IS ASYMMETRIC: damped going forward,
+                // let out going BACK. A man running with a pistol drives the
+                // hand well behind his hip at the back of the stride -- that is
+                // where the elbow ends up behind the body and the muzzle with
+                // it -- while the forward half stays short, because a weapon
+                // thrown out in front is a presentation, not a carry. Damped
+                // both ways it read as the gun being held rather than swung.
                 const held = (carrying === 1 && s.right);
-                const sw = held ? s.sw * 0.55 : s.sw;
+                const sw = held ? (s.sw > 0 ? s.sw * 0.55
+                                            : s.sw * (0.55 + 0.75 * GP.band / 3))
+                                : s.sw;
                 s.hx = -1.5 + GP.bend * 3.0 + sw * R + (held ? 3.5 : 0);
                 const f = sw > 0 ? sw : 0, b = sw < 0 ? -sw : 0;
                 s.hy = s.sgn * (HY - f * IN + b * OUT + (held ? 1.4 : 0))
@@ -11953,7 +11962,7 @@ if (this.isPlayer) {
             // the weapon was being cradled rather than held. It rides the
             // weapon's own foreshortening, so the grip stays on the handguard
             // whatever attitude the barrel is at.
-            const gRear = 0, gFore = (18.5 - runS * 1.5) * cDip;
+            const gRear = 0, gFore = 18.5 - runS * 1.5;
             // THREE THINGS MOVE THE MUZZLE, AND ALL THREE HAVE TO PUSH THE SAME
             // WAY OR THEY EAT EACH OTHER. This is the whole difficulty of the
             // traverse, and getting any one sign wrong turned it into a jab.
@@ -12014,7 +12023,7 @@ if (this.isPlayer) {
             // support arm can no longer reach its grip -- the crossing arm is
             // the binding constraint on this whole motion and the first thing
             // to run out.
-            const cY0 = 7.2 + runS * 11.5 - swayX * (1 - runS)
+            const cY0 = 7.2 + runS * 13.5 - swayX * (1 - runS)
                       - runS * (1 - sway) * 4.0;
             // THE WEAPON PIVOTS ABOUT THE HANDS, not about its own origin.
             // Swung about the origin the whole sweep is in the strong hand -- an
@@ -12025,7 +12034,7 @@ if (this.isPlayer) {
             // little and the muzzle, twice as far out, does the travelling.
             // Written as a correction against the un-swept angle so the walk and
             // the jog, where there is no sweep, come out bit-for-bit unchanged.
-            const gMid = (gRear + gFore) * 0.5;
+            const gMid = (gRear + gFore) * 0.5 * cDip;
             const cXp = cX0 + gMid * (cos(cBase) - cos(cAng));
             const cYp = cY0 + gMid * (sin(cBase) - sin(cAng));
             // THE ARMS ABSORB PART OF THE SHOULDER ROLL. A rifle in two hands
@@ -12047,10 +12056,19 @@ if (this.isPlayer) {
             const cY = cXp * _as + cYp * _ac;
             const cAngA = cAng + _abs;
             if (carrying === 2) {
+                // THE GRIPS ARE READ IN THE DRAWN FRAME, NOT THE PLAN ONE. The
+                // tilt shears the art off its own axis -- that is the whole
+                // point of it -- so a hand placed along the plan axis is left
+                // holding air a good six units from the weapon. Same projection
+                // the art uses: the along-axis foreshortening, plus the
+                // parallax along WORLD south, which in here is `_asx/_asy`.
+                const _asx = sin(this.aimAngle + _tw), _asy = cos(this.aimAngle + _tw);
+                const _dn = sin(cEl) * GUN_TILT;
                 for (const s of sides) {
                     const g = s.right ? gRear : gFore;
-                    s.hx = cX + cos(cAngA) * g;
-                    s.hy = cY + sin(cAngA) * g;
+                    const along = g * cDip, dn = g * _dn;
+                    s.hx = cX + cos(cAngA) * along + _asx * dn;
+                    s.hy = cY + sin(cAngA) * along + _asy * dn;
                 }
             }
 
@@ -12121,6 +12139,15 @@ if (this.isPlayer) {
                 const _fl = (carrying === 2 && s.right) ? runS * 1.8 : 0;
                 const ep = [(s.hx + 1.5) * ELBOW_LEAD - GP.bend * 1.6,
                             s.sgn * (SH + 0.6 + GP.bend * 1.5 + _fl)];
+                // AND ON THE BACK STROKE THE ARMED ELBOW GOES BEHIND HIM. It is
+                // the one place an elbow really does travel a long way in this
+                // view: the hand is aft of the hip, the shoulder is not, so the
+                // joint between them has to be further aft still. Left on the
+                // generic lead it trailed the hand by less than half and the
+                // arm read as being held out rather than swung through.
+                if (carrying === 1 && s.right && s.hx < 0) {
+                    ep[0] = Math.min(ep[0], s.hx * (0.62 + 0.28 * GP.band / 3));
+                }
                 // Except when the arm is reaching ACROSS the chest for a long
                 // gun's handguard. An arm doing that tucks its elbow in and
                 // down; kept out at the shoulder the sleeve pokes past the
@@ -12240,7 +12267,26 @@ if (this.isPlayer) {
                         const _ph = this.isMoving ? s.sw / GP.swing : 0;
                         const el = carryElevation(GP.band, _ph, this.isMoving)
                                  + (this.isMoving ? 0 : rest * 0.05);
-                        const gAng = 0.30 * s.sgn + s.sw * 0.055;
+                        // AND IT TURNS REARWARD AT THE BACK OF THE ARC. With
+                        // the hand aft of the hip and the elbow behind him,
+                        // a wrist cannot keep a pistol pointing down the line
+                        // of travel -- it comes round to point outboard and
+                        // back, at the ground. Only on the back stroke, and
+                        // only as the pace rises: at a walk it stays where it
+                        // is put, which is what stopped it flapping in the
+                        // first place.
+                        const _bk = (s.sw < 0 && GP.swing > 0)
+                                  ? Math.min(1, -s.sw / GP.swing) : 0;
+                        // Kept SMALL, and the reason is the projection rather
+                        // than the pose: turned hard rearward, the weapon's
+                        // plan direction ends up opposing the parallax droop
+                        // instead of adding to it, and the two cancel -- a
+                        // seventeen-unit pistol came out drawn TWO units long,
+                        // which is the vanishing the whole projection exists to
+                        // stop. What puts the gun behind him is the HAND being
+                        // behind him, not the muzzle swinging round.
+                        const gAng = 0.30 * s.sgn + s.sw * 0.055
+                                   + s.sgn * _bk * (0.08 + 0.22 * GP.band / 3);
                         push(); translate(h.x, h.y); rotate(gAng);
                         const _wa = this.aimAngle + _tw + gAng;
                         const gl = figureLight(_wa);
@@ -22472,7 +22518,11 @@ function longGunElevation(band, phase) {
   // rides deepest. That pairing is most of what makes the motion read as a
   // pendulum rather than as a pan: a pendulum is slowest and highest at its
   // ends, and here "highest" is the one thing this camera can show directly.
-  return CARRY_EL - run * (0.40 + phase * 0.08 - phase * phase * 0.30);
+  // Shallower than it was, because the projection now tells the truth about
+  // how far down the muzzle is: at fifty-seven degrees a thirty-nine-unit
+  // barrel puts its muzzle further below the hand than the hand is above the
+  // ground, and the tilt duly drew it there.
+  return CARRY_EL - run * (0.24 + phase * 0.06 - phase * phase * 0.18);
 }
 
 // Which hands a weapon needs when it is being CARRIED rather than presented.
@@ -22554,12 +22604,30 @@ function figureSouth(ang) {
 // -- it slid the grip backwards out of the fist -- and putting the origin on
 // the grip removes the reason for the hack entirely.
 //
-// GUN_TILT is the camera's tilt as it applies to something held in the air.
-// MASS_TILT is authored for a mass standing ON the ground, where the base is
-// pinned and only the top moves; run at full strength on a hand-held object it
-// swings the weapon nearly forty degrees off the pose it is being drawn in,
-// which is a bigger correction than the cant it was meant to decorate.
-const GUN_TILT = 0.22;
+// GUN_TILT is the camera's tilt, and it is the SAME CAMERA -- so it is
+// MASS_TILT. It was held down to a third of that for one version, back when the
+// projection still had a fold in it and the displacement was the only thing
+// making the fold visible. Affine, there is no reason to fake a shallower
+// camera for the one class of object held in the air, and two reasons not to:
+//
+//  - it is what stops the foreshortening reading as SHRINKING. A rod at sixty
+//    degrees draws at 0.53 of its length under a 0.22 tilt and 0.73 under the
+//    real one, because the part of the drop that a plan view throws away is
+//    exactly the part the tilt turns into screen displacement. The under-set
+//    constant was most of the "paper" read.
+//  - the displacement it does produce is the cue: it reverses with the
+//    elevation, which is the one thing a length can never do.
+//
+// It takes a SHARE of the camera's tilt rather than all of it, and the reason
+// is the figure carrying it. A figure is deliberately not leaned at all (see
+// "Figures are deliberately NOT leaned"): parallax sells height as a ratio of
+// displacement to size, and a figure a couple of dozen pixels across has no
+// such ratio. The hand is therefore at the figure's own UNLEANED position, so a
+// weapon hanging off it can only take as much tilt as the body it is attached
+// to will carry. At full strength the shear also runs the same way the plan
+// angle does for a barrel pointed across the body -- the two add rather than
+// cancel -- and a 47-unit rifle came out drawn 55 long.
+const GUN_TILT = MASS_TILT * 0.65;
 function gunProj(el, L, S) {
   const k = Math.cos(el), up = Math.sin(el);
   return {
@@ -22578,8 +22646,8 @@ function gunProj(el, L, S) {
     // larger one. This is the taper, and it is what separates a projection from
     // a plan view scaled down -- a scaled plan view has no near end.
     w: function (v) {
-      const t = 1 + v * up * 0.007;
-      return t < 0.66 ? 0.66 : t > 1.28 ? 1.28 : t;
+      const t = 1 + v * up * 0.014;
+      return t < 0.58 ? 0.58 : t > 1.34 ? 1.34 : t;
     }
   };
 }

@@ -2057,10 +2057,22 @@ and down rather than staying at the shoulder. Out at four fifths of the barrel w
 elbow left where a swinging arm keeps it, the whole arm dragged across the off shoulder
 and its sleeve poked past the silhouette on the far side — the clip.
 
-**A hand with a gun in it swings less.** It is carrying something, and it is also why the
-sidearm used to sweep back over the shoulder: given the free arm's whole arc, a 17-unit
-weapon extending forward from the back of that arc lies right along the flank and covers
-the sleeve it is supposed to be hanging beside. Damped, it rides in front of the hip.
+**A hand with a gun in it swings less — going FORWARD.** It is carrying something, and it
+is also why the sidearm used to sweep back over the shoulder: given the free arm's whole
+arc, a 17-unit weapon extending forward from the back of that arc lies right along the
+flank and covers the sleeve it is supposed to be hanging beside.
+
+**Going BACK it is let out, and the elbow goes behind him.** That is the one place an elbow
+really does travel a long way in this view: the hand is aft of the hip and the shoulder is
+not, so the joint between them has to be further aft still. Damped both ways and left on
+the generic elbow lead, the arm read as *holding* the gun rather than swinging it through,
+and the muzzle never got behind the body at all.
+
+**The wrist turns rearward with it, but only a little, and the limit is the PROJECTION
+rather than the pose.** Turned hard round, the weapon's plan direction ends up opposing the
+parallax droop instead of adding to it, and the two cancel: a 17-unit pistol came out drawn
+*two* units long, which is the vanishing the whole projection exists to prevent. What puts
+the gun behind him is the hand being behind him, not the muzzle swinging round.
 
 **The grip is UNDER the gun, not beside it.** A pistol's butt runs straight down from the
 rear of the frame, so from a bird's eye it is almost entirely hidden behind the slide and
@@ -2131,11 +2143,26 @@ instead, and between them they are the optics:
 | **parallax** | it is at a different **height** from the grip, and in this game a height difference is a displacement. The weapon is in the player's hand and the player is the middle of the screen, so the position-dependent half of `massLean()` is zero here and the tilt term is the whole of it — constant, cheap, and it **reverses with the elevation**, which is the thing a length can never do |
 | **occlusion** | the end nearer the ground sees less sky and goes darker, the end swung up lifts. Drawn as a few bands along each piece, which is the only way a flat-fill renderer gets a gradient — the same trick `volShade()` uses |
 
-**`GUN_TILT` is `MASS_TILT` for something held in the air, and it is much smaller.**
-`MASS_TILT` is authored for a mass standing *on* the ground, where the base is pinned and
-only the top moves. Run at full strength on a hand-held object it swings the weapon nearly
-forty degrees off the pose it is being drawn in — a bigger correction than the cant it was
-meant to decorate.
+**`GUN_TILT` is `MASS_TILT` — the same camera — at a stated share of it, and setting that
+share too low was most of the "paper" read.** The share exists because of the figure: a
+figure is deliberately not leaned at all (see *Figures are deliberately NOT leaned*), so the
+hand is at the body's own unleaned position and a weapon hanging off it can only take as
+much tilt as the body it is attached to will carry. Two thirds is the compromise, and both
+directions of the trade are real:
+
+- **Too low and the foreshortening reads as SHRINKING.** A rod at sixty degrees draws at
+  0.53 of its length under a third of the tilt and 0.73 under the whole of it, because the
+  part of the drop a plan view throws away is exactly the part the tilt turns into screen
+  displacement. The under-set constant was doing the crushing the projection was written to
+  stop.
+- **Too high and the shear runs away with the weapon.** For a barrel pointed *across* the
+  body the shear and the plan angle push the same way rather than cancelling, so a 47-unit
+  rifle came out drawn 55 long, and the whole pose had to be re-tuned around it.
+
+**Because the shear is real, the GRIPS have to be read in the drawn frame too.** They were
+placed along the plan axis while the art was drawn along the sheared one, which left a hand
+six units off the weapon it was supposedly holding — invisible at a third of the tilt,
+obvious at the whole of it. Both go through the same projection now.
 
 **A long gun is carried far shallower than a sidearm, and it has to be.** The rifle reaches
 thirty-nine units past the hand, so at the pistol's idle plunge its muzzle would be a foot
