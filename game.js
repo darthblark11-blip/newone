@@ -12019,7 +12019,7 @@ if (this.isPlayer) {
             // butt hanging a body-height off his flank: laid across the middle
             // it reaches a little past both shoulders, which is what a rifle
             // this long does on a man this size.
-            const cX0 = 0.8 + GP.lean * 0.45 + runS * 1.6
+            const cX0 = 0.8 + GP.lean * 0.45 + runS * 5.0
                       + swayX * 0.5 * (1 - runS);
             // The slide is one-sided on purpose: the weapon is driven ACROSS to
             // the off shoulder and comes back to the body, never past it.
@@ -12027,7 +12027,7 @@ if (this.isPlayer) {
             // support arm can no longer reach its grip -- the crossing arm is
             // the binding constraint on this whole motion and the first thing
             // to run out.
-            const cY0 = 7.2 + runS * 13.5 - swayX * (1 - runS)
+            const cY0 = 7.2 + runS * 11.0 - swayX * (1 - runS)
                       - runS * (1 - sway) * 4.0;
             // THE WEAPON PIVOTS ABOUT THE HANDS, not about its own origin.
             // Swung about the origin the whole sweep is in the strong hand -- an

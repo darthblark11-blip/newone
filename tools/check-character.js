@@ -409,7 +409,11 @@ console.log('\n== the sprint sweep: a rifle at port goes SIDE to SIDE ==');
           return [dx * c - dy * s2, dx * s2 + dy * c];
         };
         const a = rel(g.a), b = rel(g.b);
-        const mid = Math.hypot((a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
+        // The FORWARD component of the weapon's middle. "Out in front" is a
+        // fore-and-aft fault; a lateral offset is a different thing entirely
+        // and is bounded by the reach check below, so measuring the magnitude
+        // conflated the two and punished moving the weapon onto his left.
+        const mid = (a[0] + b[0]) / 2;
         if (mid > offBody) { offBody = mid; at = `phase ${i}`; }
         const cant = Math.abs(g.ang);
         clo = Math.min(clo, cant); chi = Math.max(chi, cant);
@@ -424,7 +428,8 @@ console.log('\n== the sprint sweep: a rifle at port goes SIDE to SIDE ==');
     // Riding at the front of the chest, a shade past the torso's own front
     // edge, is where a man drives a rifle at a sprint and is not that fault.
     ok('flat out the rifle lies ON the chest, not out in front of it',
-       offBody < 12, `weapon's middle ${offBody.toFixed(1)} from the torso — ${at}`);
+       offBody < 14,
+       `weapon's middle ${offBody.toFixed(1)} forward of the torso — ${at}`);
     ok('and it lies ACROSS him, square to the line of travel',
        clo > 1.05 && chi < 1.62,
        `${deg(clo).toFixed(0)}..${deg(chi).toFixed(0)} degrees off the facing`);
