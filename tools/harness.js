@@ -86,13 +86,22 @@ const ctx = {
   red(v){return v&&v.levels?v.levels[0]:0;}, green(v){return v&&v.levels?v.levels[1]:0;}, blue(v){return v&&v.levels?v.levels[2]:0;},
   loadImage(){ return {}; }, loadSound(){ return {}; }, loadFont(){ return {}; },
   localStorage: { getItem(){return null;}, setItem(){}, removeItem(){} },
-  AudioContext: function(){ return { state:'running', resume(){}, currentTime:0,
-    createOscillator(){return{type:'',frequency:{setValueAtTime(){},exponentialRampToValueAtTime(){}},connect(){},start(){},stop(){}};},
-    createGain(){return{gain:{setValueAtTime(){},exponentialRampToValueAtTime(){}},connect(){}};},
-    createBuffer(){return{getChannelData(){return new Float32Array(10);}};},
-    createBufferSource(){return{buffer:null,connect(){},start(){},stop(){}};},
-    createBiquadFilter(){return{type:'',frequency:{setValueAtTime(){},exponentialRampToValueAtTime(){}},connect(){}};},
-    createStereoPanner(){return{pan:{setValueAtTime(){}},connect(){}};},
+  // Enough of Web Audio for sfx.init() and every cue to run without throwing.
+  // Buffers report a real duration because the noise layers pick a random
+  // start offset inside one, but hand back a short channel array -- nothing
+  // here listens, and filling two seconds of noise per check is pure cost.
+  AudioContext: function(){
+    const param = () => ({ value:0, setValueAtTime(){}, linearRampToValueAtTime(){}, exponentialRampToValueAtTime(){}, setTargetAtTime(){} });
+    return { state:'running', resume(){}, currentTime:0,
+    createOscillator(){return{type:'',frequency:param(),detune:param(),connect(){},start(){},stop(){}};},
+    createGain(){return{gain:param(),connect(){}};},
+    createBuffer(n,len,sr){return{numberOfChannels:n,length:len,sampleRate:sr,duration:len/sr,
+      getChannelData(){return new Float32Array(Math.min(len,1024));}};},
+    createBufferSource(){return{buffer:null,playbackRate:param(),connect(){},start(){},stop(){}};},
+    createBiquadFilter(){return{type:'',frequency:param(),Q:param(),gain:param(),connect(){}};},
+    createStereoPanner(){return{pan:param(),connect(){}};},
+    createWaveShaper(){return{curve:null,oversample:'none',connect(){}};},
+    createDynamicsCompressor(){return{threshold:param(),knee:param(),ratio:param(),attack:param(),release:param(),connect(){}};},
     destination:{}, sampleRate:44100 };},
 };
 // every p5 drawing call the file makes in global mode

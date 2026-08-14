@@ -165,16 +165,20 @@ const WEAPONS = {
 
 
 const sfx = {
-  // Web Audio routing: source/noise -> tone filter -> voice gain -> stereo pan ->
-  // obstruction low-pass -> master limiter gain -> destination.  The public
-  // methods keep their old names/signatures, but may also accept (weapon, x, y)
-  // or ({ x, y, weapon, kind }) for spatial, context-aware playback.
+  // Web Audio routing: source/noise -> tone filter -> [saturator] -> voice gain
+  // -> stereo pan -> obstruction low-pass -> master -> limiter -> destination.
+  // The public methods keep their old names/signatures, but may also accept
+  // (weapon, x, y) or ({ x, y, weapon, kind }) for spatial, context-aware
+  // playback.
   ctx: null,
   bgm: null,
   master: null,
+  limiter: null,
+  satCurve: null,
   maxVoices: 24,
   activeVoices: 0,
   noiseBuffers: {},
+  noiseSeconds: 2,
 
   init() {
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -182,24 +186,65 @@ const sfx = {
     this.ctx = new AudioCtx();
     this.master = this.ctx.createGain();
     this.master.gain.setValueAtTime(0.82, this.ctx.currentTime);
-    this.master.connect(this.ctx.destination);
+    // A gunshot is loud enough to bully everything else out of the way for a
+    // moment, and that ducking is a good part of why one reads as a gun. The
+    // attack is deliberately slower than the transient it is catching, so the
+    // crack passes through untouched and only the body behind it gets clamped
+    // -- which is what makes a shot feel loud rather than merely peak loud.
+    if (this.ctx.createDynamicsCompressor) {
+      this.limiter = this.ctx.createDynamicsCompressor();
+      const t = this.ctx.currentTime;
+      this.limiter.threshold.setValueAtTime(-9, t);
+      this.limiter.knee.setValueAtTime(4, t);
+      this.limiter.ratio.setValueAtTime(8, t);
+      this.limiter.attack.setValueAtTime(0.004, t);
+      this.limiter.release.setValueAtTime(0.22, t);
+      this.master.connect(this.limiter);
+      this.limiter.connect(this.ctx.destination);
+    } else {
+      this.master.connect(this.ctx.destination);
+    }
+    this.satCurve = this.buildSatCurve(2.4);
     this.buildNoiseBuffers();
     if (this.ctx.state === 'suspended') this.ctx.resume();
   },
 
+  // tanh soft clip, normalised so the curve still spans [-1, 1]. A muzzle
+  // blast clips; synthesising one with no nonlinearity anywhere is most of why
+  // the old shots came out polite.
+  buildSatCurve(drive) {
+    const n = 1024, c = new Float32Array(n), k = Math.tanh(drive);
+    for (let i = 0; i < n; i++) c[i] = Math.tanh(((i / (n - 1)) * 2 - 1) * drive) / k;
+    return c;
+  },
+
   buildNoiseBuffers() {
     if (!this.ctx) return;
-    const defs = { snap: 0.08, body: 0.28, tail: 0.9, impact: 0.18, rumble: 1.1 };
-    for (const k in defs) {
-      const n = Math.max(1, Math.floor(this.ctx.sampleRate * defs[k]));
-      const b = this.ctx.createBuffer(1, n, this.ctx.sampleRate);
-      const d = b.getChannelData(0);
-      for (let i = 0; i < n; i++) {
-        const fade = 1 - i / n;
-        d[i] = (Math.random() * 2 - 1) * fade;
-      }
-      this.noiseBuffers[k] = b;
+    const sr = this.ctx.sampleRate, n = Math.max(1, Math.floor(sr * this.noiseSeconds));
+    // Two textures, each long enough that every shot can start at a different
+    // offset. The old buffers were short and always played from sample zero,
+    // so every shot fired the identical handful of samples -- and identical
+    // noise repeated at a fire rate is exactly what reads as a machine rather
+    // than as a weapon. No amplitude fade is baked in any more either: the
+    // voice envelope shapes these, and a second decay underneath it only
+    // fought the transient.
+    const white = this.ctx.createBuffer(1, n, sr), wd = white.getChannelData(0);
+    for (let i = 0; i < wd.length; i++) wd[i] = Math.random() * 2 - 1;
+    // Pink: white tilted about -3 dB/octave, via Paul Kellet's one-pole bank.
+    // A muzzle blast carries far more energy low than flat noise does, and
+    // using white for the body of a shot is why the old ones sounded thin.
+    const pink = this.ctx.createBuffer(1, n, sr), pd = pink.getChannelData(0);
+    let b0 = 0, b1 = 0, b2 = 0;
+    for (let i = 0; i < pd.length; i++) {
+      const w = Math.random() * 2 - 1;
+      b0 = 0.99765 * b0 + w * 0.0990460;
+      b1 = 0.96300 * b1 + w * 0.2965164;
+      b2 = 0.57000 * b2 + w * 1.0526913;
+      pd[i] = (b0 + b1 + b2 + w * 0.1848) * 0.22;
     }
+    // The legacy keys stay pointed at whichever texture suits them, so the
+    // cues that are not gunfire keep working unchanged.
+    this.noiseBuffers = { white, pink, snap: white, body: pink, tail: pink, impact: white, rumble: pink };
   },
 
   playBGM() {
@@ -210,15 +255,33 @@ const sfx = {
 
   rand(a, b) { return a + Math.random() * (b - a); },
 
+  // Muzzle acoustics, one entry per weapon family. These are the properties
+  // that actually tell two guns apart by ear:
+  //   blast   opening cutoff of the muzzle blast, i.e. how bright the shot is
+  //   decay   how fast that blast collapses; short barrels snap, big bores boom
+  //   crack   level of the supersonic N-wave off the bullet. A smoothbore
+  //           firing shot has none at all, which is most of why a shotgun
+  //           reads as a shotgun and not as a loud pistol
+  //   punch   frequency of the low pressure thump, swept down to about a third
+  //   mech    level, centre frequency and lateness of the action cycling
+  //   tail    how long the surroundings keep ringing afterwards
   profile(weapon) {
     const name = typeof weapon === 'string' ? weapon : (weapon && weapon.name) || '';
-    if (weapon === WEAPONS.SHOTGUN || name === 'SHOTGUN' || name === 'COACH GUN') return { snap: 4200, body: 120, tail: 0.42, gain: 1.0, mech: 900 };
-    if (weapon === WEAPONS.ROCKET_LAUNCHER || name === 'ROCKET LAUNCHER') return { snap: 1700, body: 58, tail: 0.8, gain: 1.2, mech: 260 };
-    if (weapon === WEAPONS.SMG || weapon === WEAPONS.DUAL_SMG || name === 'MACHINE GUN' || name === 'DUAL SMGS') return { snap: 5600, body: 190, tail: 0.22, gain: 0.62, mech: 1800 };
-    if (name === 'REVOLVER') return { snap: 5000, body: 145, tail: 0.5, gain: 0.92, mech: 720 };
-    if (name === 'ASSAULT RIFLE') return { snap: 5200, body: 165, tail: 0.32, gain: 0.78, mech: 1300 };
-    if (name.indexOf('LASER') >= 0 || name.indexOf('BEAM') >= 0 || weapon === 'RED_LASER' || weapon === 'PINK_LASER' || weapon === 'ORANGE_BEAM' || weapon === 'ALIEN_LASER') return { snap: 7000, body: 520, tail: 0.34, gain: 0.7, mech: 2400, energy: true };
-    return { snap: 4600, body: 210, tail: 0.28, gain: 0.7, mech: 1100 };
+    // The robot's arc cannon is a discharge, not a cartridge; it belongs with
+    // the beams rather than falling through to the sidearm report below.
+    if (name.indexOf('LASER') >= 0 || name.indexOf('BEAM') >= 0 || name === 'LIGHTNING' || weapon === 'RED_LASER' || weapon === 'PINK_LASER' || weapon === 'ORANGE_BEAM' || weapon === 'ALIEN_LASER')
+      return { energy: true, gain: 0.7, snap: 7000, body: 520, mech: 2400, tail: 0.34 };
+    if (weapon === WEAPONS.SHOTGUN || name === 'SHOTGUN' || name === 'COACH GUN')
+      return { gain: 1.00, blast: 2800, decay: 0.140, crack: 0,    punch: 118, tail: 0.52, mech: 0.17, mechF: 1900, mechAt: 0.085 };
+    if (weapon === WEAPONS.ROCKET_LAUNCHER || name === 'ROCKET LAUNCHER')
+      return { gain: 1.25, blast: 1500, decay: 0.300, crack: 0,    punch: 68,  tail: 0.85, mech: 0.05, mechF: 900,  mechAt: 0.050 };
+    if (weapon === WEAPONS.SMG || weapon === WEAPONS.DUAL_SMG || name === 'MACHINE GUN' || name === 'DUAL SMGS')
+      return { gain: 0.60, blast: 4200, decay: 0.045, crack: 0.30, punch: 152, tail: 0.17, mech: 0.22, mechF: 3000, mechAt: 0.022 };
+    if (name === 'REVOLVER')
+      return { gain: 0.95, blast: 3800, decay: 0.105, crack: 0.42, punch: 132, tail: 0.46, mech: 0.05, mechF: 2400, mechAt: 0.050 };
+    if (name === 'ASSAULT RIFLE')
+      return { gain: 0.82, blast: 4600, decay: 0.072, crack: 0.55, punch: 146, tail: 0.30, mech: 0.20, mechF: 3200, mechAt: 0.028 };
+    return   { gain: 0.70, blast: 4000, decay: 0.062, crack: 0.28, punch: 140, tail: 0.26, mech: 0.16, mechF: 2800, mechAt: 0.030 };
   },
 
   spatial(x, y, priority = 0.5) {
@@ -229,8 +292,14 @@ const sfx = {
     const span = Math.max(1, (typeof viewRight !== 'undefined' && typeof viewLeft !== 'undefined') ? (viewRight - viewLeft) * 0.5 : 700);
     const pan = Math.max(-1, Math.min(1, dx / span));
     const off = (typeof inView === 'function' && !inView(x, y, 120)) ? 0.55 : 1;
-    return { gain: gain * off, pan, lp: off < 1 ? 3600 : 18000, priority: gain + priority };
+    return { gain: gain * off, pan, lp: off < 1 ? 3600 : 18000, priority: this.rank(priority, gain * off) };
   },
+
+  // What a layer is worth keeping when the budget is under pressure. Distance
+  // may only ever lower a layer's standing, never raise it: summing the two,
+  // as this used to, meant anything close by scored above the cut no matter
+  // how inessential it was, and the budget stopped protecting anything at all.
+  rank(priority, gain) { return priority * (0.4 + 0.6 * gain); },
 
   reserve(priority) {
     if (!this.ctx || !this.master) return false;
@@ -243,27 +312,61 @@ const sfx = {
     setTimeout(() => { this.activeVoices = Math.max(0, this.activeVoices - 1); }, Math.max(30, seconds * 1000));
   },
 
-  chain(gain, x, y, dur, priority) {
-    const sp = this.spatial(x, y, priority);
+  // `shape` is optional and carries the things a layer of a composite sound
+  // needs beyond level and duration:
+  //   attack  seconds to reach peak. Defaults to 0.4 ms -- still instant to
+  //           the ear, but not so instant that it adds a pop of its own on top
+  //           of whatever transient the layer is already carrying.
+  //   delay   seconds to wait before the voice starts, so the layers of one
+  //           event can arrive in the order the real thing would produce them.
+  //   sat     run the layer into the soft clipper before the distance gain.
+  //   sp      a spatial() result to reuse, so one event solves its distance
+  //           once instead of once per layer.
+  chain(gain, x, y, dur, priority, shape) {
+    const sh = shape || {};
+    // Priority is still per-layer even when the distance solve is shared, so
+    // the budget sheds the tail of a shot before it sheds the shot.
+    const sp = sh.sp ? { gain: sh.sp.gain, pan: sh.sp.pan, lp: sh.sp.lp, priority: this.rank(priority, sh.sp.gain) }
+                     : this.spatial(x, y, priority);
     if (!this.reserve(sp.priority)) return null;
-    const now = this.ctx.currentTime;
+    const delay = sh.delay || 0;
+    const now = this.ctx.currentTime + delay;
     const g = this.ctx.createGain();
     const filter = this.ctx.createBiquadFilter();
     const pan = this.ctx.createStereoPanner ? this.ctx.createStereoPanner() : null;
-    g.gain.setValueAtTime(Math.max(0.0001, gain * sp.gain), now);
+    const peak = Math.max(0.0001, gain * sp.gain);
+    const atk = sh.attack === undefined ? 0.0004 : sh.attack;
+    if (atk > 0 && atk < dur) {
+      g.gain.setValueAtTime(0.0001, now);
+      g.gain.linearRampToValueAtTime(peak, now + atk);
+    } else {
+      g.gain.setValueAtTime(peak, now);
+    }
     g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
     filter.type = 'lowpass';
     filter.frequency.setValueAtTime(sp.lp, now);
     if (pan) { pan.pan.setValueAtTime(sp.pan, now); g.connect(pan); pan.connect(filter); }
     else g.connect(filter);
     filter.connect(this.master);
-    this.releaseAfter(dur);
-    return { input: g, now };
+    // Saturate ahead of the distance gain, so how hard a shot is driven does
+    // not depend on how far away it went off.
+    let input = g;
+    if (sh.sat && this.satCurve && this.ctx.createWaveShaper) {
+      const ws = this.ctx.createWaveShaper();
+      ws.curve = this.satCurve;
+      // Clipping broadband noise folds energy back down the spectrum as
+      // aliasing, which sounds like grit that does not belong to the shot.
+      ws.oversample = '2x';
+      ws.connect(g);
+      input = ws;
+    }
+    this.releaseAfter(dur + delay);
+    return { input, now };
   },
 
-  tone(f, type, d, v, endF, x, y, priority = 0.5) {
+  tone(f, type, d, v, endF, x, y, priority = 0.5, shape) {
     if (!this.ctx) return;
-    const c = this.chain(v, x, y, d, priority); if (!c) return;
+    const c = this.chain(v, x, y, d, priority, shape); if (!c) return;
     const o = this.ctx.createOscillator();
     o.type = type; o.connect(c.input);
     o.frequency.setValueAtTime(f * this.rand(0.96, 1.04), c.now);
@@ -271,33 +374,80 @@ const sfx = {
     o.start(c.now); o.stop(c.now + d);
   },
 
-  burst(bufferKey, d, v, f, t, endF, x, y, priority = 0.5) {
+  burst(bufferKey, d, v, f, t, endF, x, y, priority = 0.5, shape) {
     if (!this.ctx) return;
-    const c = this.chain(v * this.rand(0.94, 1.06), x, y, d, priority); if (!c) return;
+    const sh = shape || {};
+    const c = this.chain(v * this.rand(0.94, 1.06), x, y, d, priority, shape); if (!c) return;
     const s = this.ctx.createBufferSource();
     const fil = this.ctx.createBiquadFilter();
-    s.buffer = this.noiseBuffers[bufferKey] || this.noiseBuffers.impact;
+    s.buffer = this.noiseBuffers[bufferKey] || this.noiseBuffers.white;
     fil.type = t || 'lowpass';
     fil.frequency.setValueAtTime((f || 1000) * this.rand(0.96, 1.04), c.now);
     if (endF) fil.frequency.exponentialRampToValueAtTime(Math.max(1, endF), c.now + d);
-    s.connect(fil); fil.connect(c.input); s.start(c.now); s.stop(c.now + d);
+    // Q is what separates a resonant metallic clack from a dull filtered hiss,
+    // so the mechanical layers can ask for one.
+    if (sh.q && fil.Q) fil.Q.setValueAtTime(sh.q, c.now);
+    // Enter the buffer somewhere random: two shots in a row are then two
+    // different pieces of noise rather than the same click twice.
+    const dur = (s.buffer && s.buffer.duration) || 0;
+    const off = dur > d ? Math.random() * (dur - d) : 0;
+    s.connect(fil); fil.connect(c.input);
+    s.start(c.now, off); s.stop(c.now + d);
   },
 
   play(f, t, d, v, s, x, y) { this.tone(f, t, d, v, s, x, y); },
   noise(d, v, f, t, e, x, y) { this.burst('impact', d, v, f, t, e, x, y); },
 
+  // A gunshot is five separate events that happen close together, not one
+  // sound. Firing them as one layered blip -- all starting on the same sample,
+  // with a pitched square sweep in the middle of it and a resonant bandpass
+  // sweeping down behind that -- is what made these read as pinball machines:
+  // a pitch you can hum plus a boing is an arcade cabinet, whatever the
+  // amplitude. Every layer here is noise or a sub-bass sine, and they arrive
+  // in the order the real thing produces them.
   shoot(weapon, x, y) {
+    if (!this.ctx) return;
     const p = this.profile(weapon);
+    const sp = this.spatial(x, y, 0.8);
     if (p.energy) {
-      this.burst('snap', 0.07, 0.24 * p.gain, p.snap, 'highpass', p.snap * 0.7, x, y, 0.75);
-      this.tone(p.body, 'sawtooth', 0.16, 0.16 * p.gain, p.mech, x, y, 0.75);
-      this.burst('tail', p.tail, 0.09 * p.gain, 2200, 'bandpass', 520, x, y, 0.35);
+      this.burst('white', 0.07, 0.24 * p.gain, p.snap, 'highpass', p.snap * 0.7, x, y, 0.75, { sp });
+      this.tone(p.body, 'sawtooth', 0.16, 0.16 * p.gain, p.mech, x, y, 0.75, { sp });
+      this.burst('pink', p.tail, 0.09 * p.gain, 2200, 'bandpass', 520, x, y, 0.35, { sp });
       return;
     }
-    this.burst('snap', 0.035, 0.34 * p.gain, p.snap, 'highpass', p.snap * 0.55, x, y, 0.85);
-    this.burst('body', 0.13, 0.28 * p.gain, p.body * 3.5, 'lowpass', p.body, x, y, 0.8);
-    this.tone(p.mech, 'square', 0.045, 0.055 * p.gain, p.mech * 0.45, x, y, 0.55);
-    this.burst('tail', p.tail, 0.08 * p.gain, 1200, 'bandpass', 260, x, y, 0.25);
+    const g = p.gain;
+    // Distance takes a gunshot apart from the top down. The crack and the
+    // action are gone long before the blast is, and from far enough away all
+    // that is left is a dull thump and its tail. Dropping those layers with
+    // range is both what the ear expects and what keeps a firefight inside the
+    // voice budget. Under pressure the budget makes the same cut a second way:
+    // crack, blast and punch are priced above the cut and always sound, the
+    // action and the tail are priced below it and are the first things shed.
+    const near = sp.gain > 0.34, mid = sp.gain > 0.11;
+
+    // 1. The supersonic crack. Two milliseconds, and the sharpest thing in the
+    //    mix -- this is the edge that says rifle rather than firework.
+    if (p.crack > 0 && near)
+      this.burst('white', 0.004, 0.52 * p.crack * g, 5200, 'highpass', 3200, x, y, 0.92, { sp, attack: 0.0002, q: 0.7 });
+
+    // 2. The muzzle blast: the body of the shot. Pink rather than white,
+    //    because a blast is weighted low, and saturated, because a real one
+    //    clips. Last layer to be dropped under load -- it is the shot.
+    this.burst('pink', p.decay, 0.50 * g, p.blast, 'lowpass', p.blast * 0.14, x, y, 0.98, { sp, attack: 0.0004, q: 1.3, sat: true });
+
+    // 3. The pressure wave, as a sine so it is felt rather than heard as a
+    //    note. A square wave here has harmonics all the way up the mids, and
+    //    sweeping one is a siren; this is the layer that used to be the blip.
+    this.tone(p.punch, 'sine', p.decay * 1.9, 0.34 * g, p.punch * 0.34, x, y, 0.92, { sp, attack: 0.001 });
+
+    // 4. The action cycling, arriving behind the blast instead of inside it.
+    //    High Q, because a bolt is a metallic ring and not a filtered hiss.
+    if (p.mech > 0 && near)
+      this.burst('white', 0.022, p.mech * g, p.mechF, 'bandpass', p.mechF * 0.7, x, y, 0.50, { sp, attack: 0.0003, q: 7, delay: p.mechAt });
+
+    // 5. Reflections off whatever is standing nearby: last to arrive, and dull.
+    if (mid)
+      this.burst('pink', p.tail, 0.10 * g, 1000, 'lowpass', 200, x, y, 0.30, { sp, attack: 0.004, delay: 0.012 });
   },
 
   shotgun(x, y) { this.shoot(WEAPONS.SHOTGUN, x, y); },
