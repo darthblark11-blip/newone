@@ -95,8 +95,8 @@ const ctx = {
     return { state:'running', resume(){}, currentTime:0,
     createOscillator(){return{type:'',frequency:param(),detune:param(),connect(){},start(){},stop(){}};},
     createGain(){return{gain:param(),connect(){}};},
-    createBuffer(n,len,sr){return{numberOfChannels:n,length:len,sampleRate:sr,duration:len/sr,
-      getChannelData(){return new Float32Array(Math.min(len,1024));}};},
+    createBuffer(n,len,sr){const d=new Float32Array(len);
+      return{numberOfChannels:n,length:len,sampleRate:sr,duration:len/sr,getChannelData(){return d;}};},
     createBufferSource(){return{buffer:null,playbackRate:param(),connect(){},start(){},stop(){}};},
     createBiquadFilter(){return{type:'',frequency:param(),Q:param(),gain:param(),connect(){}};},
     createStereoPanner(){return{pan:param(),connect(){}};},

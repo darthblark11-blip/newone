@@ -1,13 +1,18 @@
-// Gunfire is synthesised, so there is nothing to listen to in CI and nothing
-// to diff either. What can be checked is the shape of the graph each shot
-// builds, and the shape is where the old shots went wrong: they were a pitched
-// square-wave sweep with a resonant bandpass sweeping down behind it, every
-// layer starting on the same sample, replaying the same few noise samples
-// every time. That is an arcade cabinet, not a weapon, and every one of those
-// properties is visible in the node graph.
+// Gunfire is synthesised, so there is nothing to listen to in CI. But the two
+// ways it has been wrong so far are both measurable, and neither is subtle.
 //
-// So this stands a recording AudioContext up in place of the harness stub,
-// fires each weapon through the real sfx path, and asserts on what got built.
+// Attempt one was a square wave sweeping down through the mids with a resonant
+// bandpass sweeping behind it: a pitch plus a boing, which is a pinball table.
+// Attempt two replaced the square with a sine sweeping 140 Hz to 47 Hz over a
+// noise body -- which is, exactly, the recipe for a kick drum. Both failures
+// show up as periodicity in the low band, and the second also shows up as a
+// crest factor down at drum levels, because a drum sustains and a gunshot does
+// not.
+//
+// So this renders the real waveforms through the real code and measures them,
+// with a textbook kick drum built alongside as a control: every discriminator
+// below is checked to actually fire on the drum before it is trusted on the
+// guns. Graph-shape checks cover what is left.
 const { ctx, probe } = require('./harness.js');
 let fails = 0, checks = 0;
 const ok = (n, c, x) => { checks++; console.log((c ? '  ok   ' : '  FAIL ') + n + (x !== undefined ? '  ' + x : '')); if (!c) fails++; };
@@ -30,14 +35,15 @@ function mk(kind) {
 }
 const DEST = { kind: 'destination', outs: [] };
 function scheduled(n) {
-  n.startedAt = null; n.stoppedAt = null; n.offset = null;
+  n.startedAt = null; n.offset = null;
   n.start = (t, o) => { n.startedAt = t; n.offset = o; };
-  n.stop = (t) => { n.stoppedAt = t; };
+  n.stop = () => {};
   return n;
 }
+const SR = 44100;
 ctx.AudioContext = function () {
   return {
-    state: 'running', resume() {}, sampleRate: 44100, currentTime: 0, destination: DEST,
+    state: 'running', resume() {}, sampleRate: SR, currentTime: 0, destination: DEST,
     createOscillator() { const n = scheduled(mk('osc')); n.type = ''; n.frequency = param(); n.detune = param(); return n; },
     createGain() { const n = mk('gain'); n.gain = param(); return n; },
     createBufferSource() { const n = scheduled(mk('src')); n.buffer = null; n.playbackRate = param(); return n; },
@@ -46,187 +52,235 @@ ctx.AudioContext = function () {
     createWaveShaper() { const n = mk('shaper'); n.curve = null; n.oversample = 'none'; return n; },
     createDynamicsCompressor() { const n = mk('comp'); for (const k of ['threshold', 'knee', 'ratio', 'attack', 'release']) n[k] = param(); return n; },
     createBuffer(nc, len, sr) {
-      // Real duration, short channel array: the layers pick a random start
-      // offset inside a buffer, but nobody here is listening to the samples.
-      return { numberOfChannels: nc, length: len, sampleRate: sr, duration: len / sr,
-               getChannelData: () => new Float32Array(Math.min(len, 4096)) };
+      // Real storage: the gunshots are rendered into these, and reading the
+      // samples back out is how the checks below judge them.
+      const d = new Float32Array(len);
+      return { numberOfChannels: nc, length: len, sampleRate: sr, duration: len / sr, getChannelData: () => d };
     }
   };
 };
 
+const t0 = Date.now();
 probe('sfx.init()');
+const initMs = Date.now() - t0;
 probe('viewLeft = -1e6; viewRight = 1e6; viewTop = -1e6; viewBottom = 1e6; player = { x: 0, y: 0 };');
 
-const first = (p) => (p && p.events.length ? p.events[0].v : null);
-const dive = (n, kind, seen) => {           // first node of `kind` downstream
-  seen = seen || new Set();
-  for (const o of n.outs || []) {
-    if (seen.has(o)) continue;
-    seen.add(o);
-    if (o.kind === kind) return o;
-    const hit = dive(o, kind, seen);
-    if (hit) return hit;
+// --- measurements ----------------------------------------------------------
+const peakOf = (a) => { let p = 0; for (let i = 0; i < a.length; i++) { const v = a[i] < 0 ? -a[i] : a[i]; if (v > p) p = v; } return p; };
+const rmsOf = (a, from, to) => {
+  const i0 = Math.floor(from), i1 = Math.floor(Math.min(to, a.length));
+  let s = 0, n = 0;
+  for (let i = i0; i < i1; i++) { s += a[i] * a[i]; n++; }
+  return n ? Math.sqrt(s / n) : 0;
+};
+const peakAt = (a) => { let p = 0, at = 0; for (let i = 0; i < a.length; i++) { const v = a[i] < 0 ? -a[i] : a[i]; if (v > p) { p = v; at = i; } } return at; };
+// Peak against the energy of the body behind it. An impulse runs high here;
+// anything that sustains -- a drum, a note -- runs low. This is "punch",
+// measured: it is the one number that separates a bang from a thud.
+const crest = (a) => peakOf(a) / (rmsOf(a, SR * 0.005, SR * 0.12) || 1e-9);
+
+// The drum discriminator. Autocorrelation is no use for this -- a kick drum is
+// a *swept* tone, so its period is never the same twice and it correlates with
+// itself no better than noise does. What does separate them is where the low
+// band's energy sits within a short window: a tone, swept or not, is one bin
+// out of forty, and noise is spread across all of them. So: loudest low bin
+// over the mean low bin, worst window in the shot.
+function lowBandPeakiness(a, from, secs) {
+  const i0 = Math.floor(from * SR), n = Math.floor(secs * SR);
+  const win = Math.floor(SR * 0.025), hop = win >> 1, bins = 40, f0 = 35, f1 = 400;
+  let best = 0;
+  for (let s = i0; s + win <= i0 + n && s + win <= a.length; s += hop) {
+    let tot = 0, mx = 0;
+    for (let b = 0; b < bins; b++) {
+      const f = f0 + (f1 - f0) * b / (bins - 1), co = 2 * Math.cos(2 * Math.PI * f / SR);
+      let s0 = 0, s1 = 0, s2 = 0;
+      for (let i = 0; i < win; i++) { s0 = a[s + i] + co * s1 - s2; s2 = s1; s1 = s0; }
+      const m = Math.sqrt(Math.max(0, s1 * s1 + s2 * s2 - co * s1 * s2));
+      tot += m; if (m > mx) mx = m;
+    }
+    if (tot < 1e-7) continue;
+    const r = mx / (tot / bins);
+    if (r > best) best = r;
   }
-  return null;
-};
-const attackOf = (g) => {
-  const e = g && g.gain.events;
-  if (!e || e.length < 2) return null;
-  return e[1].k === 'lin' ? +(e[1].t - e[0].t).toFixed(6) : 0;
-};
-// One entry per voice the shot built, described the way the ear would hear it.
-function fire(weaponExpr, x, y) {
-  nodes = [];
-  probe(`sfx.activeVoices = 0; sfx.shoot(${weaponExpr}, ${x}, ${y});`);
-  return nodes.filter(n => n.kind === 'src' || n.kind === 'osc').map(s => {
-    // A noise layer is shaped by the filter it feeds; an oscillator carries
-    // its own frequency and goes straight to the voice, so read each where it
-    // actually lives rather than off whatever happens to be downstream.
-    const isOsc = s.kind === 'osc';
-    const f = (isOsc ? null : s.outs[0]) || {};
-    const g = dive(s, 'gain');
-    return {
-      src: s.kind, wave: s.type, at: s.startedAt, offset: s.offset,
-      filt: f.type, freq: isOsc ? first(s.frequency) : first(f.frequency), q: first(f.Q),
-      sat: !!dive(s, 'shaper'), attack: attackOf(g), peak: g ? (g.gain.events[1] || g.gain.events[0]).v : null
-    };
-  });
+  return best;
 }
 
+// Spectral centroid over the attack, by Goertzel on log-spaced bins -- enough
+// to rank weapons by brightness without pulling in an FFT.
+function centroid(a, secs) {
+  const n = Math.min(a.length, Math.floor(secs * SR));
+  let num = 0, den = 0;
+  for (let b = 0; b < 48; b++) {
+    const f = 60 * Math.pow(12000 / 60, b / 47), w = 2 * Math.PI * f / SR;
+    const coeff = 2 * Math.cos(w);
+    let s0 = 0, s1 = 0, s2 = 0;
+    for (let i = 0; i < n; i++) { s0 = a[i] + coeff * s1 - s2; s2 = s1; s1 = s0; }
+    const mag = Math.sqrt(s1 * s1 + s2 * s2 - coeff * s1 * s2);
+    num += f * mag; den += mag;
+  }
+  return den ? num / den : 0;
+}
+
+// The control: the textbook kick drum, and what the previous attempt was.
+function kickDrum() {
+  const n = Math.floor(SR * 0.4), a = new Float32Array(n);
+  let ph = 0;
+  for (let i = 0; i < n; i++) {
+    const t = i / SR, f = 47 + (140 - 47) * Math.exp(-t / 0.030);
+    ph += 2 * Math.PI * f / SR;
+    a[i] = Math.sin(ph) * Math.exp(-t / 0.11);
+    if (i < 60) a[i] += (1 - i / 60) * 0.6;              // the click on top
+  }
+  return a;
+}
+
+const shotOf = (w, v) => probe(`sfx.shotBuffers(sfx.profile(${w}))[${v || 0}].getChannelData(0)`);
 const GUNS = ['WEAPONS.PISTOL', 'WEAPONS.SMG', 'WEAPONS.DUAL_SMG', 'WEAPONS.ASSAULT_RIFLE',
               'WEAPONS.SHOTGUN', 'WEAPONS.REVOLVER', 'WEAPONS.COACH_GUN', 'WEAPONS.ROCKET_LAUNCHER'];
 
-console.log('== nothing in a gunshot is pitched ==');
+console.log('== the control: the discriminators fire on a kick drum ==');
+const drum = kickDrum();
+const drumPeaky = lowBandPeakiness(drum, 0, 0.15), drumCrest = crest(drum);
 {
-  // The whole complaint. A square or sawtooth sweep through the mids is a note
-  // with harmonics stacked on it, and the ear names notes -- that is the blip.
-  // The only oscillator a ballistic shot is allowed is the sub-bass pressure
-  // wave, which has to be a sine and has to sit under the range where pitch
-  // reads as melody.
-  let pitched = null, tooHigh = null;
+  ok('a kick drum puts its low band in one bin', drumPeaky > 6, drumPeaky.toFixed(2) + 'x the mean bin');
+  ok('and its crest factor sits where sustained sounds sit', drumCrest < 3, drumCrest.toFixed(1));
+}
+
+console.log('== the shots are not drums ==');
+{
+  let worst = 0, worstGun = '';
   for (const w of GUNS) {
-    for (const l of fire(w, 0, 0)) {
-      if (l.src !== 'osc') continue;
-      if (l.wave !== 'sine') pitched = `${w} has a ${l.wave} oscillator`;
-      if (l.freq >= 200) tooHigh = `${w} oscillator starts at ${Math.round(l.freq)} Hz`;
-    }
+    const r = lowBandPeakiness(shotOf(w), 0, 0.15);
+    if (r > worst) { worst = r; worstGun = w.replace('WEAPONS.', ''); }
   }
-  ok('no ballistic weapon uses a square or sawtooth voice', pitched === null, pitched || 'sine only, every gun');
-  ok('and its one oscillator stays under 200 Hz, where pitch is felt not named',
-     tooHigh === null, tooHigh || 'every punch layer is sub-bass');
-  // Energy weapons are supposed to sound synthetic, so they keep the sawtooth.
-  const laser = fire('"RED_LASER"', 0, 0);
-  ok('lasers keep their sawtooth -- they are meant to sound electronic',
-     laser.some(l => l.wave === 'sawtooth'), laser.length + ' layers');
-  ok('and the arc cannon is a discharge, not a cartridge',
-     fire('"LIGHTNING"', 0, 0).some(l => l.wave === 'sawtooth'), 'routed to the energy profile');
+  ok('no weapon concentrates its low band the way a tone does', worst < 4,
+     `worst is ${worstGun} at ${worst.toFixed(2)}x, drum is ${drumPeaky.toFixed(2)}x`);
+  ok('and the measure discriminates rather than passing everything',
+     drumPeaky / worst > 2, `${(drumPeaky / worst).toFixed(1)}x apart`);
+  ok('no oscillator is created anywhere in a ballistic shot', (() => {
+    for (const w of GUNS) { nodes = []; probe(`sfx.activeVoices = 0; sfx.shoot(${w}, 0, 0)`); if (nodes.some(n => n.kind === 'osc')) return false; }
+    return true;
+  })(), 'impulse-rendered, nothing synthesised from tones');
 }
 
-console.log('== a shot is several events, not one blip ==');
+console.log('== and they punch ==');
 {
-  const rifle = fire('WEAPONS.ASSAULT_RIFLE', 0, 0);
-  const starts = rifle.map(l => l.at);
-  const spread = Math.max(...starts) - Math.min(...starts);
-  ok('a close shot builds its full stack of layers', rifle.length === 5, rifle.length + ' voices');
-  ok('they do not all start on the same sample', new Set(starts).size > 1,
-     `${new Set(starts).size} distinct start times, ${Math.round(spread * 1000)} ms apart`);
-  ok('the action cycles behind the blast rather than inside it', spread >= 0.01,
-     `latest layer lands at +${Math.round(spread * 1000)} ms`);
-  const blast = rifle.find(l => l.sat);
-  ok('the muzzle blast is driven into the soft clipper', !!blast, blast ? `lowpass from ${Math.round(blast.freq)} Hz` : 'no saturated layer');
-  ok('the blast opens in well under a millisecond', blast && blast.attack !== null && blast.attack <= 0.0005,
-     blast ? (blast.attack * 1000).toFixed(2) + ' ms' : 'n/a');
-  const mech = rifle.find(l => l.q && l.q >= 5);
-  ok('the action layer is resonant, so it rings like metal', !!mech,
-     mech ? `Q ${mech.q} at ${Math.round(mech.freq)} Hz` : 'no high-Q layer');
-  ok('every voice ramps in rather than jumping to peak', rifle.every(l => l.attack !== null && l.attack > 0),
-     rifle.map(l => (l.attack * 1000).toFixed(2)).join(' / ') + ' ms');
+  const small = ['WEAPONS.PISTOL', 'WEAPONS.SMG', 'WEAPONS.ASSAULT_RIFLE', 'WEAPONS.REVOLVER'];
+  let worst = 1e9, worstGun = '', worstSmall = 1e9;
+  for (const w of GUNS) {
+    const c = crest(shotOf(w));
+    if (c < worst) { worst = c; worstGun = w.replace('WEAPONS.', ''); }
+    if (small.includes(w)) worstSmall = Math.min(worstSmall, c);
+  }
+  ok('every shot is an impulse, not something sustained', worst > 7,
+     `weakest is ${worstGun} at ${worst.toFixed(1)}, drum is ${drumCrest.toFixed(1)}`);
+  ok('and the small arms are sharper still', worstSmall > 20, worstSmall.toFixed(1) + ' at worst');
+  const rifle = shotOf('WEAPONS.ASSAULT_RIFLE');
+  ok('the peak lands inside the first tenth of a millisecond', peakAt(rifle) < SR * 0.0001,
+     (peakAt(rifle) / SR * 1000).toFixed(3) + ' ms in');
+  ok('the shot is normalised, so the weapon sets its own level', Math.abs(peakOf(rifle) - 0.99) < 0.02,
+     'peak ' + peakOf(rifle).toFixed(3));
+  // Energy has to collapse. A drum's does not, which is what makes it a note.
+  const early = rmsOf(rifle, 0, SR * 0.01), late = rmsOf(rifle, SR * 0.09, SR * 0.11);
+  ok('and it collapses rather than ringing on', early / late > 8,
+     `${(20 * Math.log10(early / late)).toFixed(0)} dB down by 100 ms`);
 }
 
-console.log('== two shots in a row are two different sounds ==');
+console.log('== they happen somewhere, which is half of sounding real ==');
 {
-  // Every shot used to replay the same opening samples of the same buffer, and
-  // an identical click at a fire rate is what turns a weapon into a machine.
-  const a = fire('WEAPONS.SMG', 0, 0).filter(l => l.src === 'src').map(l => l.offset);
-  const b = fire('WEAPONS.SMG', 0, 0).filter(l => l.src === 'src').map(l => l.offset);
-  ok('noise layers enter the buffer at an offset', a.every(o => typeof o === 'number' && o > 0), a.map(o => o.toFixed(3)).join(' / '));
-  ok('and a second shot draws different noise than the first',
-     a.every((o, i) => o !== b[i]), 'no repeated sample window');
-}
-
-console.log('== distance takes a shot apart from the top down ==');
-{
-  const near = fire('WEAPONS.ASSAULT_RIFLE', 0, 0);
-  const mid = fire('WEAPONS.ASSAULT_RIFLE', 900, 0);
-  const far = fire('WEAPONS.ASSAULT_RIFLE', 3000, 0);
-  ok('close by you get the crack and the action', near.length === 5, near.length + ' voices');
-  ok('further out both are gone, blast and tail remain', mid.length === 3,
-     mid.length + ' voices at 900 units');
-  ok('far off it is a thump and nothing else', far.length === 2,
-     far.length + ' voices at 3000 units');
-  ok('and it gets quieter as well as simpler', far[0].peak < mid[0].peak && mid[0].peak < near[0].peak,
-     [near[0].peak, mid[0].peak, far[0].peak].map(v => v.toFixed(3)).join(' > '));
+  const rifle = shotOf('WEAPONS.ASSAULT_RIFLE');
+  // Reflections and the diffuse tail: present, well below the shot, still there
+  // at a fifth of a second. A dry impulse with nothing after it is a drum hit.
+  const refl = rmsOf(rifle, SR * 0.007, SR * 0.09), tail = rmsOf(rifle, SR * 0.18, SR * 0.26);
+  ok('a shot has early reflections behind it', refl > peakOf(rifle) * 0.004, 'reflections at ' + refl.toFixed(4));
+  ok('and a diffuse tail still running at 200 ms', tail > 1e-5 && tail < refl,
+     'tail at ' + tail.toFixed(6));
+  ok('the reflection taps are irregularly spaced, so they cannot comb into a pitch',
+     (() => {
+       const t = probe('JSON.stringify(sfx.REFLECTIONS.map(r => r[0]))');
+       const g = JSON.parse(t).map((v, i, a) => (i ? +(v - a[i - 1]).toFixed(5) : v));
+       return new Set(g).size === g.length;
+     })(), 'no repeated gap');
 }
 
 console.log('== the guns are told apart by ear ==');
 {
-  const crackOf = (w) => { const l = fire(w, 0, 0).find(x => x.filt === 'highpass'); return l ? l.peak : 0; };
-  const punchOf = (w) => { const l = fire(w, 0, 0).find(x => x.src === 'osc'); return l ? l.freq : 0; };
-  // A smoothbore firing shot puts nothing supersonic downrange, so it has no
-  // N-wave at all -- which is most of why a shotgun is not just a loud pistol.
-  ok('the shotgun has no supersonic crack', crackOf('WEAPONS.SHOTGUN') === 0, 'no N-wave layer');
-  ok('the coach gun agrees with it', crackOf('WEAPONS.COACH_GUN') === 0, 'no N-wave layer');
+  const bright = (w) => centroid(shotOf(w), 0.03);
+  const c = { rocket: bright('WEAPONS.ROCKET_LAUNCHER'), shotgun: bright('WEAPONS.SHOTGUN'),
+              pistol: bright('WEAPONS.PISTOL'), smg: bright('WEAPONS.SMG') };
+  ok('the big bores are darker than the small ones',
+     c.rocket < c.shotgun && c.shotgun < c.pistol && c.pistol < c.smg,
+     Object.entries(c).map(([k, v]) => `${k} ${Math.round(v)}`).join(' < ') + ' Hz');
+  ok('the smoothbores have no supersonic crack',
+     probe('sfx.profile(WEAPONS.SHOTGUN).crack === 0 && sfx.profile(WEAPONS.COACH_GUN).crack === 0'),
+     'no N-wave');
   ok('the rifle cracks hardest of the small arms',
-     crackOf('WEAPONS.ASSAULT_RIFLE') > crackOf('WEAPONS.REVOLVER') &&
-     crackOf('WEAPONS.REVOLVER') > crackOf('WEAPONS.SMG'), 'rifle > revolver > SMG');
-  ok('the big bores thump lower than the small ones',
-     punchOf('WEAPONS.ROCKET_LAUNCHER') < punchOf('WEAPONS.SHOTGUN') &&
-     punchOf('WEAPONS.SHOTGUN') < punchOf('WEAPONS.SMG'),
-     ['ROCKET', 'SHOTGUN', 'SMG'].map((n, i) => n + ' ' + Math.round([punchOf('WEAPONS.ROCKET_LAUNCHER'), punchOf('WEAPONS.SHOTGUN'), punchOf('WEAPONS.SMG')][i]) + 'Hz').join(' < '));
-  const rates = GUNS.map(w => Math.round(fire(w, 0, 0).find(l => l.sat).freq));
-  ok('and every one of them opens its blast at its own brightness',
-     new Set(rates).size >= 5, rates.join(' / ') + ' Hz');
+     probe(`sfx.profile(WEAPONS.ASSAULT_RIFLE).crack > sfx.profile(WEAPONS.REVOLVER).crack &&
+            sfx.profile(WEAPONS.REVOLVER).crack > sfx.profile(WEAPONS.SMG).crack`), 'rifle > revolver > SMG');
+  ok('the big bores ring for longer afterwards',
+     probe('sfx.profile(WEAPONS.ROCKET_LAUNCHER).tail > sfx.profile(WEAPONS.SHOTGUN).tail && sfx.profile(WEAPONS.SHOTGUN).tail > sfx.profile(WEAPONS.SMG).tail'),
+     'rocket > shotgun > SMG');
+  ok('lasers keep their sawtooth -- they are meant to sound electronic', (() => {
+    nodes = []; probe('sfx.activeVoices = 0; sfx.shoot("RED_LASER", 0, 0)');
+    return nodes.some(n => n.kind === 'osc' && n.type === 'sawtooth');
+  })(), 'energy path unchanged');
+  ok('and the arc cannon is a discharge, not a cartridge', (() => {
+    nodes = []; probe('sfx.activeVoices = 0; sfx.shoot("LIGHTNING", 0, 0)');
+    return nodes.some(n => n.kind === 'osc' && n.type === 'sawtooth');
+  })(), 'routed to the energy profile');
 }
 
-console.log('== the bus and the budget ==');
+console.log('== no two shots are the same shot ==');
 {
-  ok('master runs through a limiter into the destination',
-     probe('!!(sfx.limiter && sfx.master)'), 'compressor present');
-  // Reservations are handed back on a timer, so firing a burst without ever
-  // yielding is the worst case the budget will ever see: nothing is released
-  // while the burst runs. What has to hold is not a hard cap -- every shot has
-  // to be audible, so the essential layers are always allowed through -- but
-  // that the inessential ones stop being built once the budget is spent.
+  const a = shotOf('WEAPONS.SMG', 0), b = shotOf('WEAPONS.SMG', 1), c = shotOf('WEAPONS.SMG', 2);
+  const diff = (x, y) => { let s = 0; for (let i = 0; i < 2000; i++) s += Math.abs(x[i] - y[i]); return s; };
+  ok('each weapon renders three distinct waveforms', diff(a, b) > 1 && diff(b, c) > 1 && diff(a, c) > 1,
+     'variants differ');
+  ok('and playback detunes on top of that', (() => {
+    const rates = new Set();
+    for (let i = 0; i < 8; i++) {
+      nodes = []; probe('sfx.activeVoices = 0; sfx.shoot(WEAPONS.SMG, 0, 0)');
+      const s = nodes.find(n => n.kind === 'src');
+      rates.add(s.playbackRate.events[0].v.toFixed(4));
+    }
+    return rates.size >= 6;
+  })(), 'shot-to-shot rate jitter');
+}
+
+console.log('== cost ==');
+{
   nodes = [];
+  probe('sfx.activeVoices = 0; sfx.shoot(WEAPONS.ASSAULT_RIFLE, 0, 0)');
+  ok('firing costs one voice, not a graph of five',
+     nodes.filter(n => n.kind === 'src' || n.kind === 'osc').length === 1,
+     nodes.length + ' nodes total');
+  ok('so a full-auto burst never reaches the voice budget', (() => {
+    probe('sfx.activeVoices = 0');
+    for (let i = 0; i < 20; i++) probe('sfx.shoot(WEAPONS.SMG, 0, 0)');
+    return probe('sfx.activeVoices') <= probe('sfx.maxVoices');
+  })(), probe('sfx.activeVoices') + ' / ' + probe('sfx.maxVoices') + ' after 20 shots');
+  ok('rendering every weapon up front is quick enough to hide in startup', initMs < 400, initMs + ' ms');
+  ok('distance darkens a shot as well as quietening it', (() => {
+    const lp = (x) => { nodes = []; probe(`sfx.activeVoices = 0; sfx.shoot(WEAPONS.ASSAULT_RIFLE, ${x}, 0)`);
+      const f = nodes.find(n => n.kind === 'biquad' && n.type === 'lowpass'); return f.frequency.events[0].v; };
+    return lp(0) > lp(600) && lp(600) > lp(2500);
+  })(), 'air absorption with range');
+}
+
+console.log('== everything that is not a gunshot still works ==');
+{
   probe('sfx.activeVoices = 0');
-  const burst = [];
-  for (let i = 0; i < 12; i++) {
-    nodes = [];
-    probe('sfx.shoot(WEAPONS.SMG, 0, 0)');
-    burst.push(nodes.filter(n => n.kind === 'src' || n.kind === 'osc').length);
-  }
-  ok('a burst sheds the action and the tail once the budget is spent',
-     burst[0] === 5 && burst[burst.length - 1] === 3, burst.join(' '));
-  ok('but every shot in it still gets crack, blast and punch',
-     burst.every(c => c >= 3), Math.min(...burst) + ' layers at worst');
-  ok('so the burst costs far less than it would unbudgeted',
-     burst.reduce((a, b) => a + b, 0) < 12 * 5,
-     burst.reduce((a, b) => a + b, 0) + ' voices instead of ' + 12 * 5);
-  probe('sfx.activeVoices = 0');
-  ok('the noise textures are long enough to keep offsets meaningful',
-     probe('sfx.noiseBuffers.pink.duration >= 1 && sfx.noiseBuffers.white.duration >= 1'),
-     probe('sfx.noiseBuffers.pink.duration') + ' s');
-  ok('every cue that is not gunfire still finds a buffer',
-     probe(`['snap','body','tail','impact','rumble'].every(k => !!sfx.noiseBuffers[k])`),
-     'legacy keys intact');
-  ok('and every one of those cues still plays without throwing',
+  ok('master runs through a limiter into the destination', probe('!!(sfx.limiter && sfx.master)'), 'compressor present');
+  ok('the legacy noise keys are all still there',
+     probe(`['snap','body','tail','impact','rumble','white','pink'].every(k => !!sfx.noiseBuffers[k])`), 'intact');
+  ok('and every other cue still plays without throwing',
      probe(`(function () {
        try {
          sfx.activeVoices = 0;
          sfx.hitBody(0,0); sfx.hitHead(0,0); sfx.hitArmor(0,0); sfx.deathGrunt(0,0,'ROBOT');
          sfx.slash(0,0); sfx.dash(0,0); sfx.reload(0,0); sfx.explosion(0,0);
-         sfx.charge(0,0); sfx.throwG(0,0); sfx.bite(0,0); sfx.play(440,'sine',0.1,0.2);
-         sfx.noise(0.1,0.2,800,'lowpass');
+         sfx.charge(0,0); sfx.throwG(0,0); sfx.bite(0,0); sfx.shotgun(0,0);
+         sfx.play(440,'sine',0.1,0.2); sfx.noise(0.1,0.2,800,'lowpass');
          return true;
        } catch (e) { return String(e); }
      })()`) === true, 'all cues');

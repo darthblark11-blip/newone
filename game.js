@@ -185,20 +185,19 @@ const sfx = {
     if (!AudioCtx) return;
     this.ctx = new AudioCtx();
     this.master = this.ctx.createGain();
-    this.master.gain.setValueAtTime(0.82, this.ctx.currentTime);
-    // A gunshot is loud enough to bully everything else out of the way for a
-    // moment, and that ducking is a good part of why one reads as a gun. The
-    // attack is deliberately slower than the transient it is catching, so the
-    // crack passes through untouched and only the body behind it gets clamped
-    // -- which is what makes a shot feel loud rather than merely peak loud.
+    this.master.gain.setValueAtTime(0.9, this.ctx.currentTime);
+    // Deliberately slow off the mark. A gunshot's peak is a millisecond long
+    // and 20-odd dB above its own body; catching that peak is what flattens a
+    // shot into a thud. This lets the impulse through untouched and only rides
+    // the sum when several are overlapping.
     if (this.ctx.createDynamicsCompressor) {
       this.limiter = this.ctx.createDynamicsCompressor();
       const t = this.ctx.currentTime;
-      this.limiter.threshold.setValueAtTime(-9, t);
-      this.limiter.knee.setValueAtTime(4, t);
-      this.limiter.ratio.setValueAtTime(8, t);
-      this.limiter.attack.setValueAtTime(0.004, t);
-      this.limiter.release.setValueAtTime(0.22, t);
+      this.limiter.threshold.setValueAtTime(-3, t);
+      this.limiter.knee.setValueAtTime(6, t);
+      this.limiter.ratio.setValueAtTime(4, t);
+      this.limiter.attack.setValueAtTime(0.006, t);
+      this.limiter.release.setValueAtTime(0.25, t);
       this.master.connect(this.limiter);
       this.limiter.connect(this.ctx.destination);
     } else {
@@ -206,6 +205,11 @@ const sfx = {
     }
     this.satCurve = this.buildSatCurve(2.4);
     this.buildNoiseBuffers();
+    // Render the shot waveforms up front. Left lazy, the cost would land on
+    // the first trigger pull of each weapon -- the one moment a stutter would
+    // actually be heard.
+    for (const w of [WEAPONS.PISTOL, WEAPONS.SMG, WEAPONS.ASSAULT_RIFLE, WEAPONS.SHOTGUN,
+                     WEAPONS.REVOLVER, WEAPONS.ROCKET_LAUNCHER]) this.shotBuffers(this.profile(w));
     if (this.ctx.state === 'suspended') this.ctx.resume();
   },
 
@@ -255,33 +259,214 @@ const sfx = {
 
   rand(a, b) { return a + Math.random() * (b - a); },
 
-  // Muzzle acoustics, one entry per weapon family. These are the properties
-  // that actually tell two guns apart by ear:
-  //   blast   opening cutoff of the muzzle blast, i.e. how bright the shot is
-  //   decay   how fast that blast collapses; short barrels snap, big bores boom
-  //   crack   level of the supersonic N-wave off the bullet. A smoothbore
-  //           firing shot has none at all, which is most of why a shotgun
-  //           reads as a shotgun and not as a loud pistol
-  //   punch   frequency of the low pressure thump, swept down to about a third
+  // Muzzle acoustics, one entry per weapon family. These are parameters of the
+  // pressure wave the gun actually makes, not filter settings:
+  //   shockT  time constant of the blast wave. This alone sets both how sharp
+  //           the shot is and how low it sits -- a big bore is a long shockT
+  //   crack   amplitude of the supersonic N-wave off the bullet, and how long
+  //           it lasts. A smoothbore firing shot has none, which is most of
+  //           why a shotgun is not simply a loud pistol
+  //   turb    duration, cutoff and level of the gas jet behind the shock
+  //   drive   how hard the direct arrival is saturated
+  //   refl    level of the early reflections -- the sense of standing outdoors
+  //   tail    length, opening cutoff and level of the diffuse decay
   //   mech    level, centre frequency and lateness of the action cycling
-  //   tail    how long the surroundings keep ringing afterwards
   profile(weapon) {
     const name = typeof weapon === 'string' ? weapon : (weapon && weapon.name) || '';
     // The robot's arc cannon is a discharge, not a cartridge; it belongs with
     // the beams rather than falling through to the sidearm report below.
     if (name.indexOf('LASER') >= 0 || name.indexOf('BEAM') >= 0 || name === 'LIGHTNING' || weapon === 'RED_LASER' || weapon === 'PINK_LASER' || weapon === 'ORANGE_BEAM' || weapon === 'ALIEN_LASER')
-      return { energy: true, gain: 0.7, snap: 7000, body: 520, mech: 2400, tail: 0.34 };
+      return { key: 'energy', energy: true, gain: 0.7, snap: 7000, body: 520, mech: 2400, tail: 0.34 };
     if (weapon === WEAPONS.SHOTGUN || name === 'SHOTGUN' || name === 'COACH GUN')
-      return { gain: 1.00, blast: 2800, decay: 0.140, crack: 0,    punch: 118, tail: 0.52, mech: 0.17, mechF: 1900, mechAt: 0.085 };
+      return { key: 'shotgun', gain: 0.95, shockT: 0.00165, crack: 0,    crackT: 0,       turb: 0.022, turbHz: 1500, turbAmt: 0.42, drive: 1.35, refl: 1.15, tail: 0.52, tailHz: 1700, tailAmt: 0.055, mech: 0.13, mechHz: 1900, mechAt: 0.085 };
     if (weapon === WEAPONS.ROCKET_LAUNCHER || name === 'ROCKET LAUNCHER')
-      return { gain: 1.25, blast: 1500, decay: 0.300, crack: 0,    punch: 68,  tail: 0.85, mech: 0.05, mechF: 900,  mechAt: 0.050 };
+      return { key: 'rocket',  gain: 1.00, shockT: 0.00360, crack: 0,    crackT: 0,       turb: 0.038, turbHz: 620,  turbAmt: 0.52, drive: 1.45, refl: 1.30, tail: 0.85, tailHz: 1200, tailAmt: 0.070, mech: 0.05, mechHz: 900,  mechAt: 0.050 };
     if (weapon === WEAPONS.SMG || weapon === WEAPONS.DUAL_SMG || name === 'MACHINE GUN' || name === 'DUAL SMGS')
-      return { gain: 0.60, blast: 4200, decay: 0.045, crack: 0.30, punch: 152, tail: 0.17, mech: 0.22, mechF: 3000, mechAt: 0.022 };
+      return { key: 'smg',     gain: 0.62, shockT: 0.00042, crack: 0.34, crackT: 0.00018, turb: 0.007, turbHz: 3800, turbAmt: 0.30, drive: 1.15, refl: 0.80, tail: 0.20, tailHz: 2800, tailAmt: 0.035, mech: 0.15, mechHz: 3100, mechAt: 0.022 };
     if (name === 'REVOLVER')
-      return { gain: 0.95, blast: 3800, decay: 0.105, crack: 0.42, punch: 132, tail: 0.46, mech: 0.05, mechF: 2400, mechAt: 0.050 };
+      return { key: 'revolver',gain: 0.90, shockT: 0.00095, crack: 0.44, crackT: 0.00024, turb: 0.015, turbHz: 2600, turbAmt: 0.36, drive: 1.30, refl: 1.10, tail: 0.46, tailHz: 2300, tailAmt: 0.050, mech: 0.05, mechHz: 2400, mechAt: 0.050 };
     if (name === 'ASSAULT RIFLE')
-      return { gain: 0.82, blast: 4600, decay: 0.072, crack: 0.55, punch: 146, tail: 0.30, mech: 0.20, mechF: 3200, mechAt: 0.028 };
-    return   { gain: 0.70, blast: 4000, decay: 0.062, crack: 0.28, punch: 140, tail: 0.26, mech: 0.16, mechF: 2800, mechAt: 0.030 };
+      return { key: 'rifle',   gain: 0.78, shockT: 0.00062, crack: 0.55, crackT: 0.00020, turb: 0.010, turbHz: 3400, turbAmt: 0.33, drive: 1.25, refl: 0.95, tail: 0.34, tailHz: 3000, tailAmt: 0.040, mech: 0.14, mechHz: 3300, mechAt: 0.028 };
+    return   { key: 'pistol',  gain: 0.70, shockT: 0.00055, crack: 0.30, crackT: 0.00022, turb: 0.009, turbHz: 3200, turbAmt: 0.32, drive: 1.20, refl: 0.90, tail: 0.30, tailHz: 2600, tailAmt: 0.038, mech: 0.12, mechHz: 2800, mechAt: 0.030 };
+  },
+
+  // Ground bounce first, then whatever is standing around, each arrival later
+  // and darker than the last. Spacing is irregular on purpose: evenly spaced
+  // taps comb-filter into an audible pitch, which is the exact failure being
+  // designed out here.
+  REFLECTIONS: [[0.0075, 0.42, 5200], [0.0138, 0.30, 3400], [0.0231, 0.22, 2200],
+                [0.0392, 0.15, 1400], [0.0611, 0.10, 900],  [0.0898, 0.06, 620]],
+
+  // xorshift, so a given weapon renders the same set of variants every run and
+  // the checks have something stable to measure.
+  rng(seed) {
+    let s = (seed >>> 0) || 1;
+    return () => { s ^= s << 13; s >>>= 0; s ^= s >>> 17; s ^= s << 5; s >>>= 0; return s / 4294967296; };
+  },
+
+  onePole(hz, sr) { return 1 - Math.exp(-2 * Math.PI * Math.min(hz, sr * 0.45) / sr); },
+
+  // A gunshot is an impulse and the response of everything around it. It is
+  // not an oscillator with an envelope, and every previous attempt at this
+  // failed on exactly that point: a pitch sweeping downwards with a click on
+  // top and a noise body is the textbook recipe for a kick drum, whether the
+  // oscillator is a square or a sine. There is no oscillator anywhere below.
+  // The low end comes from the negative phase of the shock, which is where a
+  // real gun's low end comes from, and the body of the sound is reflections
+  // rather than sustain.
+  //
+  // Rendering it sample by sample and caching the result also makes it cheap:
+  // firing costs one buffer source, not a graph of five.
+  renderShot(p, sr, seed) {
+    const rnd = this.rng(seed);
+    const tailN = Math.max(8, Math.floor(sr * p.tail));
+    const len = Math.floor(sr * 0.11) + tailN;
+    const out = new Float32Array(len);
+
+    // -- the shock ---------------------------------------------------------
+    // Friedlander: near-instant rise, decay through zero into a rarefaction,
+    // then recovery. One expression carrying both the transient and the
+    // weight, and nothing about it is periodic.
+    const T = Math.max(2, p.shockT * sr);
+    const rise = Math.max(2, Math.round(sr * 0.00006));
+    const shockN = Math.min(len, Math.ceil(T * 26));
+    for (let i = 0; i < shockN; i++) {
+      const t = i / T;
+      let v = (1 - t) * Math.exp(-t);
+      if (i < rise) v *= 0.5 - 0.5 * Math.cos(Math.PI * i / rise);
+      out[i] += v;
+    }
+
+    // -- the gas jet behind it ---------------------------------------------
+    // Two poles rather than one, because flat white noise under a decay is
+    // hiss, and hiss is what a shot sounds like when the jet is wrong.
+    // Built separately and scaled to a stated fraction of the shock: left to
+    // whatever amplitude the filters happen to produce, this layer drowns the
+    // transient it is supposed to sit behind, and a shot whose body is as loud
+    // as its peak is a drum however it was generated.
+    const turbN = Math.min(len, Math.max(4, Math.floor(sr * p.turb)));
+    const aT = this.onePole(p.turbHz, sr);
+    const jet = new Float32Array(turbN);
+    let t1 = 0, t2 = 0, jp = 0;
+    for (let i = 0; i < turbN; i++) {
+      t1 += ((rnd() * 2 - 1) - t1) * aT;
+      t2 += (t1 - t2) * aT;
+      const v = t2 * Math.exp(-3.4 * i / turbN);
+      jet[i] = v;
+      const m = v < 0 ? -v : v;
+      if (m > jp) jp = m;
+    }
+    if (jp > 0) { const s = p.turbAmt / jp; for (let i = 0; i < turbN; i++) out[i] += jet[i] * s; }
+
+    // -- the supersonic crack ----------------------------------------------
+    // A literal N-wave: up, straight down through zero, and cut. Both ends are
+    // discontinuities, which is why it is the sharpest thing in the shot.
+    if (p.crack > 0) {
+      const nN = Math.max(3, Math.round(sr * p.crackT));
+      for (let i = 0; i < nN && i < len; i++) out[i] += (1 - 2 * i / nN) * p.crack;
+    }
+
+    // -- nonlinearity --------------------------------------------------------
+    // A shock is a nonlinear phenomenon and any real recording of one is
+    // clipped somewhere in the chain, but only just: the drive here is
+    // deliberately gentle. Saturation is a compressor, and hard drive on a
+    // signal whose whole character is a peak 20 dB above its own body pulls
+    // that body up to meet the peak -- which is precisely how a gunshot turns
+    // into a drum hit. It rounds the very top and leaves the rest alone.
+    const directN = Math.min(len, Math.max(shockN, turbN) + 8);
+    const k = Math.tanh(p.drive);
+    for (let i = 0; i < directN; i++) out[i] = Math.tanh(out[i] * p.drive) / k;
+    let dPeak = 0;
+    for (let i = 0; i < directN; i++) { const m = out[i] < 0 ? -out[i] : out[i]; if (m > dPeak) dPeak = m; }
+    dPeak = dPeak || 1;
+
+    // -- early reflections ---------------------------------------------------
+    // The layer that says "outdoors" instead of "drum in a booth".
+    const direct = out.slice(0, directN);
+    for (let r = 0; r < this.REFLECTIONS.length; r++) {
+      const tap = this.REFLECTIONS[r];
+      const d0 = Math.floor(sr * tap[0] * (0.85 + rnd() * 0.3));
+      const amp = tap[1] * p.refl * (0.8 + rnd() * 0.4);
+      const a = this.onePole(tap[2], sr);
+      let z = 0;
+      for (let i = 0; i < directN; i++) {
+        const j = i + d0;
+        if (j >= len) break;
+        z += (direct[i] - z) * a;
+        out[j] += z * amp;
+      }
+    }
+
+    // -- the diffuse tail ----------------------------------------------------
+    // Late reverberation: dense noise losing its top as it goes. This is the
+    // layer the ear reads as space, and a shot without one is a drum hit -- but
+    // it belongs well under the shot, so it is scaled against the direct peak
+    // rather than left at whatever the filters produced.
+    const tStart = Math.floor(sr * 0.006);
+    const hi = this.onePole(p.tailHz, sr), lo = this.onePole(240, sr);
+    const build = Math.max(1, sr * 0.012);
+    const rev = new Float32Array(tailN);
+    let d1 = 0, d2 = 0, rp = 0;
+    for (let i = 0; i < tailN; i++) {
+      const u = i / tailN, a = hi + (lo - hi) * u;
+      d1 += ((rnd() * 2 - 1) - d1) * a;
+      d2 += (d1 - d2) * a;
+      const v = d2 * Math.min(1, i / build) * Math.exp(-4.2 * u);
+      rev[i] = v;
+      const m = v < 0 ? -v : v;
+      if (m > rp) rp = m;
+    }
+    if (rp > 0) {
+      const s = dPeak * p.tailAmt / rp;
+      for (let i = 0; i < tailN; i++) { const j = i + tStart; if (j >= len) break; out[j] += rev[i] * s; }
+    }
+
+    // -- the action ----------------------------------------------------------
+    // A state-variable filter rung by a noise burst: metal, not filtered hiss.
+    if (p.mech > 0) {
+      const m0 = Math.floor(sr * p.mechAt), mN = Math.floor(sr * 0.02);
+      const f = 2 * Math.sin(Math.PI * Math.min(p.mechHz, sr * 0.45) / sr), q = 0.16;
+      const clack = new Float32Array(mN);
+      let low = 0, band = 0, cp = 0;
+      for (let i = 0; i < mN; i++) {
+        low += f * band;
+        band += f * ((rnd() * 2 - 1) * Math.exp(-5.5 * i / mN) - low - q * band);
+        clack[i] = band;
+        const m = band < 0 ? -band : band;
+        if (m > cp) cp = m;
+      }
+      if (cp > 0) {
+        const s = dPeak * p.mech / cp;
+        for (let i = 0; i < mN; i++) { const j = i + m0; if (j >= len) break; out[j] += clack[i] * s; }
+      }
+    }
+
+    // -- DC block, then normalise so peak level is the gun's to set -----------
+    let x1 = 0, y1 = 0;
+    for (let i = 0; i < len; i++) { const x = out[i]; y1 = x - x1 + 0.9985 * y1; x1 = x; out[i] = y1; }
+    let peak = 0;
+    for (let i = 0; i < len; i++) { const a = out[i] < 0 ? -out[i] : out[i]; if (a > peak) peak = a; }
+    if (peak > 0) { const g = 0.99 / peak; for (let i = 0; i < len; i++) out[i] *= g; }
+    return out;
+  },
+
+  // Three renders per weapon, rotated at random and detuned a little on top,
+  // so sustained fire never repeats a waveform.
+  shots: {},
+  shotBuffers(p) {
+    let v = this.shots[p.key];
+    if (v) return v;
+    v = this.shots[p.key] = [];
+    const sr = this.ctx.sampleRate;
+    for (let i = 0; i < 3; i++) {
+      let h = 2166136261;
+      for (let c = 0; c < p.key.length; c++) h = Math.imul(h ^ p.key.charCodeAt(c), 16777619);
+      const data = this.renderShot(p, sr, (h ^ Math.imul(i + 1, 2654435761)) >>> 0);
+      const b = this.ctx.createBuffer(1, data.length, sr);
+      b.getChannelData(0).set(data);
+      v.push(b);
+    }
+    return v;
   },
 
   spatial(x, y, priority = 0.5) {
@@ -292,7 +477,11 @@ const sfx = {
     const span = Math.max(1, (typeof viewRight !== 'undefined' && typeof viewLeft !== 'undefined') ? (viewRight - viewLeft) * 0.5 : 700);
     const pan = Math.max(-1, Math.min(1, dx / span));
     const off = (typeof inView === 'function' && !inView(x, y, 120)) ? 0.55 : 1;
-    return { gain: gain * off, pan, lp: off < 1 ? 3600 : 18000, priority: this.rank(priority, gain * off) };
+    // Air takes the top off a shot long before it takes the body, so range
+    // darkens as well as quietens. This is what turns a distant shot into a
+    // thump without having to synthesise a separate distant version of it.
+    const air = 18000 / (1 + d / 260);
+    return { gain: gain * off, pan, lp: Math.min(air, off < 1 ? 3600 : 18000), priority: this.rank(priority, gain * off) };
   },
 
   // What a layer is worth keeping when the budget is under pressure. Distance
@@ -336,7 +525,11 @@ const sfx = {
     const pan = this.ctx.createStereoPanner ? this.ctx.createStereoPanner() : null;
     const peak = Math.max(0.0001, gain * sp.gain);
     const atk = sh.attack === undefined ? 0.0004 : sh.attack;
-    if (atk > 0 && atk < dur) {
+    // A pre-rendered voice carries its own envelope in the samples; putting a
+    // second one over the top would only round off the transient it exists for.
+    if (sh.flat) {
+      g.gain.setValueAtTime(peak, now);
+    } else if (atk > 0 && atk < dur) {
       g.gain.setValueAtTime(0.0001, now);
       g.gain.linearRampToValueAtTime(peak, now + atk);
     } else {
@@ -398,56 +591,33 @@ const sfx = {
   play(f, t, d, v, s, x, y) { this.tone(f, t, d, v, s, x, y); },
   noise(d, v, f, t, e, x, y) { this.burst('impact', d, v, f, t, e, x, y); },
 
-  // A gunshot is five separate events that happen close together, not one
-  // sound. Firing them as one layered blip -- all starting on the same sample,
-  // with a pitched square sweep in the middle of it and a resonant bandpass
-  // sweeping down behind that -- is what made these read as pinball machines:
-  // a pitch you can hum plus a boing is an arcade cabinet, whatever the
-  // amplitude. Every layer here is noise or a sub-bass sine, and they arrive
-  // in the order the real thing produces them.
+  // One pre-rendered waveform, played flat. Everything that makes the shot --
+  // shock, jet, crack, reflections, tail, action -- is already in the samples,
+  // sample-accurate and with the crest factor intact, which is something a
+  // graph of gain ramps cannot produce. Distance is the only thing applied at
+  // fire time, as level, pan, and the top end the air has taken off.
   shoot(weapon, x, y) {
     if (!this.ctx) return;
     const p = this.profile(weapon);
-    const sp = this.spatial(x, y, 0.8);
     if (p.energy) {
+      const sp = this.spatial(x, y, 0.8);
       this.burst('white', 0.07, 0.24 * p.gain, p.snap, 'highpass', p.snap * 0.7, x, y, 0.75, { sp });
       this.tone(p.body, 'sawtooth', 0.16, 0.16 * p.gain, p.mech, x, y, 0.75, { sp });
       this.burst('pink', p.tail, 0.09 * p.gain, 2200, 'bandpass', 520, x, y, 0.35, { sp });
       return;
     }
-    const g = p.gain;
-    // Distance takes a gunshot apart from the top down. The crack and the
-    // action are gone long before the blast is, and from far enough away all
-    // that is left is a dull thump and its tail. Dropping those layers with
-    // range is both what the ear expects and what keeps a firefight inside the
-    // voice budget. Under pressure the budget makes the same cut a second way:
-    // crack, blast and punch are priced above the cut and always sound, the
-    // action and the tail are priced below it and are the first things shed.
-    const near = sp.gain > 0.34, mid = sp.gain > 0.11;
-
-    // 1. The supersonic crack. Two milliseconds, and the sharpest thing in the
-    //    mix -- this is the edge that says rifle rather than firework.
-    if (p.crack > 0 && near)
-      this.burst('white', 0.004, 0.52 * p.crack * g, 5200, 'highpass', 3200, x, y, 0.92, { sp, attack: 0.0002, q: 0.7 });
-
-    // 2. The muzzle blast: the body of the shot. Pink rather than white,
-    //    because a blast is weighted low, and saturated, because a real one
-    //    clips. Last layer to be dropped under load -- it is the shot.
-    this.burst('pink', p.decay, 0.50 * g, p.blast, 'lowpass', p.blast * 0.14, x, y, 0.98, { sp, attack: 0.0004, q: 1.3, sat: true });
-
-    // 3. The pressure wave, as a sine so it is felt rather than heard as a
-    //    note. A square wave here has harmonics all the way up the mids, and
-    //    sweeping one is a siren; this is the layer that used to be the blip.
-    this.tone(p.punch, 'sine', p.decay * 1.9, 0.34 * g, p.punch * 0.34, x, y, 0.92, { sp, attack: 0.001 });
-
-    // 4. The action cycling, arriving behind the blast instead of inside it.
-    //    High Q, because a bolt is a metallic ring and not a filtered hiss.
-    if (p.mech > 0 && near)
-      this.burst('white', 0.022, p.mech * g, p.mechF, 'bandpass', p.mechF * 0.7, x, y, 0.50, { sp, attack: 0.0003, q: 7, delay: p.mechAt });
-
-    // 5. Reflections off whatever is standing nearby: last to arrive, and dull.
-    if (mid)
-      this.burst('pink', p.tail, 0.10 * g, 1000, 'lowpass', 200, x, y, 0.30, { sp, attack: 0.004, delay: 0.012 });
+    const bufs = this.shotBuffers(p);
+    if (!bufs.length) return;
+    const b = bufs[(Math.random() * bufs.length) | 0];
+    const c = this.chain(p.gain, x, y, b.duration, 0.98, { flat: true });
+    if (!c) return;
+    const s = this.ctx.createBufferSource();
+    s.buffer = b;
+    // A few percent either way: barrel to barrel, and shot to shot down one
+    // barrel, no two reports are quite the same length or quite the same size.
+    s.playbackRate.setValueAtTime(this.rand(0.97, 1.03), c.now);
+    s.connect(c.input);
+    s.start(c.now);
   },
 
   shotgun(x, y) { this.shoot(WEAPONS.SHOTGUN, x, y); },
