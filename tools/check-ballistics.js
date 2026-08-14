@@ -153,5 +153,26 @@ console.log('\n== who counts as "them" ==');
      `${before} -> ${after} units/frame`);
 }
 
+console.log('\n== ally projectiles are simulated but not drawn ==');
+{
+  const r = P(`(function () {
+    bullets.length = 0; enemiesList.length = 0; barrels.length = 0;
+    player = { x: 10000, y: 10000, hp: 100, isPlayer: true, isFriendly: true, dead: false };
+    viewLeft = -1000; viewRight = 1000; viewTop = -1000; viewBottom = 1000; doTick = true;
+    const ally = { isPlayer: false, isFriendly: true };
+    const hostile = new Character(500, 500, false, "NORMAL");
+    hostile.isFriendly = false; hostile.isNeutral = false; enemiesList.push(hostile);
+    const oldShow = Bullet.prototype.show;
+    let shown = 0;
+    Bullet.prototype.show = function () { shown++; };
+    const b = spawnBullet(0, 0, 0, true, "BODY", WEAPONS.PISTOL, ally);
+    updateBullets();
+    Bullet.prototype.show = oldShow;
+    return { shown, active: b.active, x: Math.round(b.x * 1000) / 1000, history: b.history.length };
+  })()`);
+  ok('an ally round still advances through simulation', r.x === PLAYER, JSON.stringify(r));
+  ok('but it never enters the draw path or builds a trail', r.shown === 0 && r.history === 0, JSON.stringify(r));
+}
+
 console.log(`\n${checks - fails}/${checks} checks passed`);
 process.exit(fails ? 1 : 0);
