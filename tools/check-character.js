@@ -349,20 +349,45 @@ console.log('\n== the sprint sweep: a rifle at port goes SIDE to SIDE ==');
   const deg = (r) => (r * 180) / Math.PI;
   const run = travel(1), jog = travel(0.5);
 
-  ok('flat out the muzzle crosses most of his own width, sideways',
-     run.dy > BODY_H * 0.5,
-     `${run.dy.toFixed(1)} across against a ${BODY_H}-wide man`);
-  ok('and it is a SWEEP, not a jab: across beats fore-and-aft',
-     run.dy > run.dx * 1.2,
-     `${run.dy.toFixed(1)} across to ${run.dx.toFixed(1)} along`);
-  // The arc is allowed to be WIDE because it is slow — see the sub-harmonic
-  // below. What must not happen is either end of it: coming round to the line
-  // of travel is the aimed pose, and standing square across him hangs the butt
-  // a body-height off his strong side.
-  ok('the pendulum keeps inside its ends: never along him, never square across',
-     run.hi - run.lo < 0.62 && run.lo > 0.55 && run.hi < 1.25,
-     `${deg(run.hi - run.lo).toFixed(0)} degrees of swing, inside ` +
-     `${deg(run.lo).toFixed(0)}..${deg(run.hi).toFixed(0)} off the facing`);
+  // FLAT OUT THE RIFLE LIES SQUARE ACROSS THE CHEST. That is a claim about
+  // WHERE it is, not how far it moves, so it is measured as a position: the
+  // weapon's own middle has to sit on the torso, and it has to lie along the
+  // shoulder line rather than point down the line of travel. Held at the jog's
+  // cant, a forty-unit barrel put the muzzle three body-depths out in front —
+  // a man carrying a rifle beside himself rather than against himself.
+  {
+    let offBody = 0, at = '', clo = Math.PI, chi = 0, reach = 0;
+    for (let i = 0; i < SPAN; i++) {
+      const p = poseOf(`player.isMoving = true; player.gait = 1;
+                        player.walkCycle = ${(i * Math.PI) / 12};`);
+      for (const g of p.guns) {
+        // Into the body's own frame: +x forward, +y the strong side.
+        const c = Math.cos(-p.bodyAng), s2 = Math.sin(-p.bodyAng);
+        const rel = (q) => {
+          const dx = q[0] - p.torsoXY[0], dy = q[1] - p.torsoXY[1];
+          return [dx * c - dy * s2, dx * s2 + dy * c];
+        };
+        const a = rel(g.a), b = rel(g.b);
+        const mid = Math.hypot((a[0] + b[0]) / 2, (a[1] + b[1]) / 2);
+        if (mid > offBody) { offBody = mid; at = `phase ${i}`; }
+        const cant = Math.abs(g.ang);
+        clo = Math.min(clo, cant); chi = Math.max(chi, cant);
+        reach = Math.max(reach, Math.abs(a[1]) - BODY_H / 2,
+                                Math.abs(b[1]) - BODY_H / 2);
+      }
+    }
+    ok('flat out the rifle lies ON the chest, not out in front of it',
+       offBody < 9, `weapon's middle ${offBody.toFixed(1)} from the torso — ${at}`);
+    ok('and it lies ACROSS him, square to the line of travel',
+       clo > 1.05 && chi < 1.62,
+       `${deg(clo).toFixed(0)}..${deg(chi).toFixed(0)} degrees off the facing`);
+    // A forty-seven-unit rifle centred on a twenty-seven-wide man reaches past
+    // both shoulders. That is correct and unavoidable; what it must not do is
+    // hang off one end like a plank.
+    ok('reaching a little past both shoulders, as a rifle that long must',
+       reach > 4 && reach < 16,
+       `worst end ${reach.toFixed(1)} past the shoulder line`);
+  }
   ok('and none of it reaches the jog, which keeps the steady carry',
      jog.dy < 5, `${jog.dy.toFixed(1)} across at a jog`);
 
@@ -690,8 +715,13 @@ console.log('\n== the carry keeps off the body it is being carried on ==');
   }
   ok('the crossing arm never pokes out past the FAR shoulder',
      across < 1.5, `worst joint ${across.toFixed(1)} past the silhouette — ${aat}`);
+  // A rifle laid square across the chest and CENTRED on it necessarily puts the
+  // rear grip outboard of the strong shoulder — the weapon's middle is on the
+  // body, so its butt end is past him. The strong arm therefore sits outside
+  // the silhouette by a few units before the flare adds anything, and that is
+  // geometry rather than a fault.
   ok('and the strong elbow flares only as far as a sprinter carries it',
-     flare < 4, `worst joint ${flare.toFixed(1)} past the silhouette — ${fat}`);
+     flare < 6, `worst joint ${flare.toFixed(1)} past the silhouette — ${fat}`);
 
   // Across the chest at a WALK and a JOG. The sprint is the one exception and
   // it buys the exception by depressing the barrel as it comes round — see the

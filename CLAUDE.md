@@ -1933,15 +1933,29 @@ drift out of step with the legs, and blending it against the stride-rate sway by
 and the sprint arrives at the pendulum without a seam. `check-character.js` asserts the
 period directly: the pose repeats after two strides and visibly does not after one.
 
-At half rate the arc can afford to be **wide** — 28° of swing, the muzzle crossing 27 units
-across against 16 along — where at stride rate the same arc was a windscreen wiper. Both
-ends of it are still bounded: coming round to the line of travel is the aimed pose, and
-standing square across him hangs the butt a body-height off his strong side.
+**Flat out the rifle comes round to lie SQUARE ACROSS THE CHEST** — 69°–84° off the line of
+travel, butt at one shoulder and muzzle past the other, and **centred on the body** rather
+than anchored at the strong grip. Held at the jog's shallower cant, a forty-unit barrel put
+the muzzle *three body-depths out in front of the torso*: a man carrying a rifle beside
+himself rather than against himself. That is measured as a **position**, not a distance —
+the weapon's own middle has to sit on the torso.
 
-**Flat out the whole weapon is carried further ACROSS and further FORWARD than at a jog** —
-a man at a sprint drives it out in front of his chest rather than letting it ride on his
-hip. Both are gated on `runS`, so the walk and the jog are untouched, and both move the
-grips, so the arms follow without a second adjustment.
+Centring it is what lets it come square without the butt hanging off his flank. It also
+means the strong grip is necessarily **outboard of the shoulder**: the weapon's middle is on
+the body, so its butt end is past him. The strong arm sits a few units outside the
+silhouette before the flare adds anything, and that is geometry rather than a fault. A
+47-unit rifle centred on a 27-wide man reaches past *both* shoulders; what it must not do is
+hang off one end like a plank.
+
+**Square across, the pendulum has to change form.** A *rotation* at this cant moves the
+muzzle fore-and-aft — the jab again, just at ninety degrees — because a muzzle's travel under
+rotation is perpendicular to the barrel, and the barrel is now across the man. So most of the
+rock becomes a **slide along the shoulder line**, which at this cant runs along the weapon's
+own length, and the turn is only what a shoulder roll gives it.
+
+**Flat out the whole weapon is carried further ACROSS than at a jog.** Gated on `runS`, so the
+walk and the jog are untouched, and it moves the grips, so the arms follow without a second
+adjustment.
 
 **And the strong-side elbow flares as the sprint comes on.** Both hands are locked to a
 weapon carried out in front of the chest, and the only place left for that arm to fold is

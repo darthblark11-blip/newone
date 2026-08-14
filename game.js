@@ -11973,8 +11973,22 @@ if (this.isPlayer) {
             // The stride-rate sway gives WAY to the rock rather than riding on
             // top of it: left in, it is a fast ripple laid over a slow pendulum,
             // which is the fast wobble however calm the pendulum is.
-            const cBase = -0.72 - runS * 0.17 + swayA * (1 - runS);
-            const cAng = cBase + runS * sway * 0.24;
+            // Flat out the rifle comes round to lie SQUARE ACROSS THE CHEST --
+            // butt at one shoulder, muzzle past the other, the whole weapon on
+            // the body rather than out in front of it. Held at the jog's cant,
+            // a forty-unit barrel put the muzzle three body-depths ahead of the
+            // torso, which is a man carrying a rifle beside himself rather than
+            // against himself.
+            const cBase = -0.72 - runS * 0.62 + swayA * (1 - runS);
+            // Laid square across the chest the pendulum has to change form. A
+            // ROTATION at this cant moves the muzzle fore-and-aft -- that is
+            // the jab again, just at ninety degrees -- because the muzzle's
+            // travel under rotation is perpendicular to the barrel, and the
+            // barrel is now across the man. So most of the rock becomes a SLIDE
+            // along the shoulder line (cY0 below, which at this cant runs along
+            // the weapon's own length) and the turn is only what a shoulder
+            // roll gives it.
+            const cAng = cBase + runS * sway * 0.13;
             // Fore-and-aft the weapon settles as the sprint comes on: at this
             // pace what should be moving is the traverse, and a chest shift
             // stacked on top of it turns the path into a diagonal scrub.
@@ -11987,7 +12001,12 @@ if (this.isPlayer) {
             // FORWARD than at a jog -- a man at a sprint drives it out in front
             // of his chest rather than letting it ride on his hip. Both are
             // gated on runS, so the walk and the jog are untouched.
-            const cX0 = 0.8 + GP.lean * 0.45 + runS * 5.5
+            // AND IT IS CENTRED ON THE BODY, not anchored at the strong grip.
+            // That is the whole reason it can come square across without the
+            // butt hanging a body-height off his flank: laid across the middle
+            // it reaches a little past both shoulders, which is what a rifle
+            // this long does on a man this size.
+            const cX0 = 0.8 + GP.lean * 0.45 - runS * 2.0
                       + swayX * 0.5 * (1 - runS);
             // The slide is one-sided on purpose: the weapon is driven ACROSS to
             // the off shoulder and comes back to the body, never past it.
@@ -11995,7 +12014,8 @@ if (this.isPlayer) {
             // support arm can no longer reach its grip -- the crossing arm is
             // the binding constraint on this whole motion and the first thing
             // to run out.
-            const cY0 = 7.2 - swayX * (1 - runS) - runS * (1 - sway) * 4.4;
+            const cY0 = 7.2 + runS * 11.5 - swayX * (1 - runS)
+                      - runS * (1 - sway) * 4.0;
             // THE WEAPON PIVOTS ABOUT THE HANDS, not about its own origin.
             // Swung about the origin the whole sweep is in the strong hand -- an
             // eleven-unit radius on one grip and almost none on the other -- so
@@ -12098,7 +12118,7 @@ if (this.isPlayer) {
                 // chest, and the only place left for that arm to fold is
                 // outboard -- tucked in at the shoulder it reads as the elbow
                 // being pinned to his ribs while the hands drive forward.
-                const _fl = (carrying === 2 && s.right) ? runS * 3.2 : 0;
+                const _fl = (carrying === 2 && s.right) ? runS * 1.8 : 0;
                 const ep = [(s.hx + 1.5) * ELBOW_LEAD - GP.bend * 1.6,
                             s.sgn * (SH + 0.6 + GP.bend * 1.5 + _fl)];
                 // Except when the arm is reaching ACROSS the chest for a long
