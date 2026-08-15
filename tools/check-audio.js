@@ -370,13 +370,16 @@ console.log('== the supplied recordings ==');
     for (const d of list) {
       const buf = Buffer.from(d, 'base64');
       total += buf.length; clips++;
-      if (buf.slice(0, 3).toString() !== 'ID3') bad = k + ' is not an MP3';
-      const secs = buf.length / (96000 / 8);          // an upper bound on length
-      if (secs < 0.1 || secs > 3) bad = `${k} is ${secs.toFixed(1)}s`;
+      // MP3 for anything with a body to it, WAV for the very short transients
+      // where the codec's own padding would be a large fraction of the sound.
+      const mp3 = buf.slice(0, 3).toString() === 'ID3', wav = buf.slice(0, 4).toString() === 'RIFF';
+      if (!mp3 && !wav) bad = k + ' is neither MP3 nor WAV';
+      const secs = mp3 ? buf.length / (96000 / 8) : buf.readUInt32LE(40) / (buf.readUInt32LE(28) || 1);
+      if (secs < 0.02 || secs > 3) bad = `${k} is ${secs.toFixed(2)}s`;
     }
   }
-  ok('all of them decode from base64 to a real MP3 of sane length', bad === null,
-     bad || clips + ' clips, ID3 framed');
+  ok('all of them decode from base64 to real audio of sane length', bad === null,
+     bad || clips + ' clips');
   ok('and the lot costs about what one texture would', total < 320 * 1024,
      (total / 1024).toFixed(1) + ' KB of audio embedded');
   ok('nothing is set to a gain that would clip it',
@@ -387,8 +390,23 @@ console.log('== the supplied recordings ==');
   ok('the frequent cues sit below the rare ones', defs.swing.gain < defs.meleekill.gain &&
      defs.armour.gain < defs.death.gain, `swing ${defs.swing.gain} < kill ${defs.meleekill.gain}`);
   ok('the cues that repeat in a row carry more than one take',
-     ['meleekill', 'swing', 'blood', 'armour'].every(k => typeof defs[k].data !== 'string' && defs[k].data.length > 1),
-     'melee kill, swing, blood and armour');
+     ['meleekill', 'swing', 'blood', 'armour', 'shieldhit'].every(k => typeof defs[k].data !== 'string' && defs[k].data.length > 1),
+     'melee kill, swing, blood, armour and shield hit');
+  // The shield hit is a per-round cue and has to be SHORT. The recording it
+  // came from is a burst of ten rounds followed by a long swell, and playing
+  // the whole file on every hit is what made it read as the shield breaking
+  // instead. One round is one impact -- and a hit must never be longer than
+  // the break it is supposed to be distinguishable from.
+  const clipMs = (d) => {
+    const b = Buffer.from(d, 'base64');
+    if (b.slice(0, 4).toString() === 'RIFF') return b.readUInt32LE(40) / (b.readUInt32LE(28) || 1) * 1000;
+    return b.length / (64000 / 8) * 1000;             // an upper bound for MP3
+  };
+  const hitMs = Math.max(...defs.shieldhit.data.map(clipMs));
+  ok('the shield hit is one impact, not the whole burst', hitMs < 120,
+     hitMs.toFixed(0) + ' ms per take');
+  ok('and it is far shorter than the break', hitMs < clipMs(defs.shieldbreak.data) * 0.25,
+     `hit ${hitMs.toFixed(0)} ms vs break ${clipMs(defs.shieldbreak.data).toFixed(0)} ms`);
   // A shield hit answers every incoming round while the shield holds, so it
   // has to be the quietest thing here or it becomes the whole soundtrack of a
   // firefight; the break happens once.
@@ -514,8 +532,12 @@ console.log('== the cues that repeat fastest are gated ==');
   ok('the armour impact and the shield hit both carry a retrigger gate',
      defs.armour.every > 0 && defs.shieldhit.every > 0,
      `armour ${defs.armour.every}s, shield ${defs.shieldhit.every}s`);
-  ok('and the shield is gated far harder, because its cue is far longer',
-     defs.shieldhit.every > defs.armour.every * 4, 'a full second of sound');
+  // Both are per-round cues on the same frame budget, so both gates only need
+  // to be long enough to collapse a shotgun's pellets into one impact and
+  // short enough to leave ordinary fire alone.
+  ok('both gates collapse a same-frame volley without touching ordinary fire',
+     [defs.armour.every, defs.shieldhit.every].every(e => e >= 1 / 60 && e <= 0.06),
+     `armour ${defs.armour.every}s, shield ${defs.shieldhit.every}s, one frame is 0.017s`);
   const burst = (call, n) => {
     probe('sfx.lastPlayed = {}; sfx.activeVoices = 0;');
     nodes = [];

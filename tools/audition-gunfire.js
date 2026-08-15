@@ -155,7 +155,10 @@ for (const [name, expr] of GUNS) {
     const list = typeof defs[key].data === 'string' ? [defs[key].data] : defs[key].data;
     list.forEach((d, i) => {
       const b = Buffer.from(d, 'base64');
-      const name = `sample-${key}${list.length > 1 ? '-' + (i + 1) : ''}.mp3`;
+      // Sniff the container: the very short cues are embedded as WAV, and
+      // writing those out as .mp3 gives you a file nothing will open.
+      const ext = b.slice(0, 4).toString() === 'RIFF' ? 'wav' : 'mp3';
+      const name = `sample-${key}${list.length > 1 ? '-' + (i + 1) : ''}.${ext}`;
       fs.writeFileSync(path.join(OUT, name), b);
       console.log(`  ${name}  ${(b.length / 1024).toFixed(1)} KB  plays at gain ${defs[key].gain}`);
     });
