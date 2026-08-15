@@ -137,6 +137,13 @@ const ROBOT_OIL_AT     = 100;   // chassis HP at which it starts leaking
 const OIL_COL          = [18, 16, 15];
 const SPARK_COL        = [255, 214, 140];
 let playerRespawnTimer = 0, prevGamepadButtons = [];
+// The health bar's chip-damage trail: how much the bar SHOWED before the last
+// hit, how long to hold it there, and what it read last frame. A bar that
+// simply follows hp tells you that you were hit; holding the old value for a
+// beat and then draining it tells you how hard, which is the thing worth
+// knowing while it is happening.
+let hpGhost = 100, hpGhostHold = 0, hpPrev = 100;
+const HP_GHOST_HOLD = 20;
 let headshotCounter = 0, bodyOverkillCounter = 0, lightningCounter = 0; 
 
 // Muzzle velocities, in world units per frame. Two numbers rather than a
@@ -7531,9 +7538,9 @@ function triggerExplosion(ex, ey, rad, isMolotov = false, sourceIsPlayer = true)
       if (!explosiveArmorUnlocked || isMolotov || !sourceIsPlayer) {
           let dRes = player.takeDamage(60); 
           if (dRes.blocked) { 
-              emit(player.x, player.y, dRes.broken ? 30 : 15, color(0, 200, 255), "SPARK"); 
+              emit(player.x, player.y, dRes.broken ? 30 : 15, dRes.broken ? color(0, 200, 255) : color(255, 170, 40), "SPARK"); 
           } else { 
-              emit(player.x, player.y, 15, color(90, 0, 0), "BLOOD"); 
+              emit(player.x, player.y, 15, color(90, 0, 0), "BLOOD"); spawnSplatter(player.x, player.y, "BLOOD", color(90, 0, 0)); 
           }
           if (player.hp <= 0 && !player.dead) { 
               player.dead = true; sfx.deathGrunt(); 
@@ -7606,9 +7613,9 @@ function triggerRocketExplosion(ex, ey, sourceIsPlayer, directHitTarget = null) 
       if (!explosiveArmorUnlocked || !sourceIsPlayer) {
           let dRes = player.takeDamage(60); 
           if (dRes.blocked) { 
-              emit(player.x, player.y, dRes.broken ? 30 : 15, color(0, 200, 255), "SPARK"); 
+              emit(player.x, player.y, dRes.broken ? 30 : 15, dRes.broken ? color(0, 200, 255) : color(255, 170, 40), "SPARK"); 
           } else { 
-              emit(player.x, player.y, 15, color(90, 0, 0), "BLOOD"); 
+              emit(player.x, player.y, 15, color(90, 0, 0), "BLOOD"); spawnSplatter(player.x, player.y, "BLOOD", color(90, 0, 0)); 
           }
           if (player.hp <= 0 && !player.dead) {
               player.dead = true; sfx.deathGrunt();
@@ -10824,6 +10831,10 @@ this.skeletonTimer = 0;
    this.forceNudge();
 	  if (this.shieldFlashTimer > 0) this.shieldFlashTimer--; if (this.shieldBurstTimer > 0) this.shieldBurstTimer--;
     if (this.shieldRechargeTimer > 0) { this.shieldRechargeTimer--; } else if (this.shield < 100) { this.shield = min(100, this.shield + 25 / 60); }
+    // Holes are a property of being unprotected, so they last exactly as long
+    // as that does. The moment the shield has anything in it -- the same moment
+    // takeDamage starts blocking again -- they come off.
+    if (this.isPlayer && this.shield > 0 && this.decals.length) this.decals.length = 0;
     if (this.dashWindow > 0) { this.dashWindow--; if (this.dashWindow <= 0) this.dashCount = 0; }
     
     if (this.meleeCharge === undefined) this.meleeCharge = 0;
@@ -11788,9 +11799,9 @@ if (this.eType === "COW") {
                 if (!hitFence && distToTarget < 35 && this.biteCooldown <= 0) {  // <--- CHANGED dToP to distToTarget
                     let dRes = trg.takeDamage(5); 
                     if (dRes.blocked) { 
-                        emit(trg.x, trg.y, dRes.broken ? 15 : 8, color(0, 200, 255), "SPARK"); 
+                        emit(trg.x, trg.y, dRes.broken ? 15 : 8, dRes.broken ? color(0, 200, 255) : color(255, 170, 40), "SPARK"); 
                     } else { 
-                        emit(trg.x, trg.y, 8, color(90, 0, 0), "BLOOD"); 
+                        emit(trg.x, trg.y, 8, color(90, 0, 0), "BLOOD"); if (trg.isPlayer) spawnSplatter(trg.x, trg.y, "BLOOD", color(90, 0, 0)); 
                     }
                     sfx.bite(); this.biteCooldown = 84; 
                     if (trg.hp <= 0 && !trg.dead) { 
@@ -12501,7 +12512,22 @@ if (this.isPlayer) {
     
     if (this.isPlayer) {
         if (this.shieldBurstTimer > 0) { push(); noFill(); stroke(0, 200, 255, this.shieldBurstTimer * 17); strokeWeight(3); let bSz = map(this.shieldBurstTimer, 15, 0, this.bodyW, this.bodyW + 50); ellipse(0, 0, bSz, bSz); pop(); }
-        if (this.shieldFlashTimer > 0) { push(); noFill(); stroke(0, 200, 255, this.shieldFlashTimer * 25); strokeWeight(3); ellipse(0, 0, this.bodyW + 8, this.bodyH + 8); pop(); }
+        // The energy shield, visible only in the moment it takes a round: an
+        // orange-yellow silhouette sitting just off the body. Several rings
+        // rather than one, each wider, weaker and cooler than the last -- a
+        // single stroke reads as a hoop drawn around the player, and the point
+        // of this is that it hugs him. The outermost is the softest, so the
+        // whole thing falls off into the air instead of ending on an edge.
+        if (this.shieldFlashTimer > 0) {
+          push(); noFill();
+          const k = this.shieldFlashTimer / 10;
+          for (let i = 4; i >= 0; i--) {
+            stroke(255, 150 + i * 22, 30 + i * 18, 210 * k * (1 - i * 0.17));
+            strokeWeight(3.4 - i * 0.5);
+            ellipse(0, 0, this.bodyW + 6 + i * 6, this.bodyH + 6 + i * 6);
+          }
+          pop();
+        }
     }
 
     // The pack rides against the BACK of the torso, and the torso is drawn
@@ -14279,7 +14305,11 @@ function updateBullets() {
                 if (wA) dCol = [20, 20, 20, 220]; 
                 // A machine does not bleed. Its bullet holes are burnt metal.
                 if (t.eType === "ROBOT") dCol = [16, 15, 14, 230]; 
-                t.decals.push({ x: lX, y: lY, sz: random(4, 7), col: dCol, isHead: b.tH === "HEAD" });
+                // A round the shield stopped never reached him, so it leaves no
+                // hole. Holes belong to the health bar: they start when the
+                // shield is gone and last only as long as it stays gone.
+                if (!(t.isPlayer && dRes.blocked))
+                  t.decals.push({ x: lX, y: lY, sz: random(4, 7), col: dCol, isHead: b.tH === "HEAD" });
                 
                 if (t.eType === "ROBOT") {
                     // Sparks the whole way down; oil once the chassis is opened
@@ -14294,8 +14324,17 @@ function updateBullets() {
                 } 
                 else if (wA) { sfx.hitArmor(); emit(b.x, b.y, 10, color(255, 150, 0), "SPARK"); emit(b.x, b.y, 5, color(100), "CHIP"); } 
                 else { 
-                    if (t.isPlayer && dRes.blocked) { emit(b.x, b.y, dRes.broken ? 20 : 8, color(0, 200, 255), "SPARK", b.vx, b.vy); } 
-                    else { if (b.tH === "HEAD" && t.eType !== "BUG" && t.eType !== "SNAIL" && t.eType !== "SNAIL_HYBRID") sfx.hitHead(); else sfx.hitBody(); emit(b.x, b.y, 8, bCol, "BLOOD", b.vx, b.vy); }
+                    // Sparks in the shield's own colour while it holds; the break
+                    // keeps its blue, which is the one moment the two should not
+                    // look like the same event.
+                    if (t.isPlayer && dRes.blocked) { emit(b.x, b.y, dRes.broken ? 20 : 8, dRes.broken ? color(0, 200, 255) : color(255, 170, 40), "SPARK", b.vx, b.vy); } 
+                    else {
+                      if (b.tH === "HEAD" && t.eType !== "BUG" && t.eType !== "SNAIL" && t.eType !== "SNAIL_HYBRID") sfx.hitHead(); else sfx.hitBody();
+                      emit(b.x, b.y, 8, bCol, "BLOOD", b.vx, b.vy);
+                      // 3. Once the shield is gone, every round that lands marks
+                      //    the ground. That mark is the read that he is unprotected.
+                      if (t.isPlayer) spawnSplatter(t.x, t.y, "BLOOD", bCol);
+                    }
                 } 
                 if (t.isPlayer) screenShake = 5; 
                 
@@ -15231,8 +15270,27 @@ function updateParticles() {
 }
 
 function drawUI() {
+  const hpNow = player ? max(0, player.hp) : 0;
+  // Healing overtakes the trail rather than dragging it along behind.
+  if (hpNow > hpGhost) { hpGhost = hpNow; hpGhostHold = 0; }
+  if (hpNow < hpPrev) hpGhostHold = HP_GHOST_HOLD;
+  hpPrev = hpNow;
+  if (hpGhost > hpNow) {
+    if (hpGhostHold > 0) hpGhostHold--;
+    // Proportional, with a floor: a big chunk drains fast and a scratch still
+    // finishes, instead of creeping for several seconds.
+    else hpGhost = max(hpNow, hpGhost - max(0.4, (hpGhost - hpNow) * 0.09));
+  }
+
   fill(50, 200); noStroke(); rect(20, 20, 200, 15, 4); 
-  fill(220, 30, 30); rect(20, 20, player ? max(0, player.hp) * 2 : 0, 15, 4);
+  // The lost chunk, drawn full width underneath so the live bar masks all but
+  // the part that has just gone. White while it is held, cooling as it drains.
+  if (hpGhost > hpNow) {
+    const held = hpGhostHold > 0;
+    fill(255, held ? 245 : 165, held ? 225 : 70, held ? 235 : 195);
+    rect(20, 20, hpGhost * 2, 15, 4);
+  }
+  fill(220, 30, 30); rect(20, 20, hpNow * 2, 15, 4);
   
   fill(50, 200); rect(20, 40, 200, 10, 4); 
   fill(0, 200, 255); rect(20, 40, player ? max(0, player.shield) * 2 : 0, 10, 4);

@@ -2411,6 +2411,7 @@ node tools/check-ballistics.js     # hostile rounds are always slower than the p
 node tools/check-menu.js           # travel lives in the pause menu, and nowhere else
 node tools/check-pathing.js        # walkers turn round obstacles; the collision index
 node tools/check-corpse.js         # the settle: variation, impact direction, and it freezes
+node tools/check-damage-feedback.js # what the player is told when hit, shield up vs down
 node tools/check-depth.js          # depth order, and how a mass projects
 node tools/check-lighting.js       # the deferred rig: uniforms resolve, nothing allocates per frame
 GAME_JS=/path/to/other.js node tools/check-generation.js    # compare against a baseline
