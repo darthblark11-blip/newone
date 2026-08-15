@@ -151,9 +151,14 @@ for (const [name, expr] of GUNS) {
 {
   const defs = probe('sfx.SAMPLES');
   for (const key in defs) {
-    const b = Buffer.from(defs[key].data, 'base64');
-    fs.writeFileSync(path.join(OUT, 'sample-' + key + '.mp3'), b);
-    console.log(`  sample-${key}.mp3  ${(b.length / 1024).toFixed(1)} KB  plays at gain ${defs[key].gain}`);
+    // A key may hold several takes, so write each one out separately.
+    const list = typeof defs[key].data === 'string' ? [defs[key].data] : defs[key].data;
+    list.forEach((d, i) => {
+      const b = Buffer.from(d, 'base64');
+      const name = `sample-${key}${list.length > 1 ? '-' + (i + 1) : ''}.mp3`;
+      fs.writeFileSync(path.join(OUT, name), b);
+      console.log(`  ${name}  ${(b.length / 1024).toFixed(1)} KB  plays at gain ${defs[key].gain}`);
+    });
   }
 }
 

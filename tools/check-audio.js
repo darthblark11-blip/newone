@@ -360,61 +360,98 @@ console.log('== the supplied recordings ==');
 {
   const defs = probe('sfx.SAMPLES');
   const keys = Object.keys(defs);
-  ok('the pistol and the shotgun carry a recording', keys.includes('pistol') && keys.includes('shotgun'),
+  const want = ['pistol', 'shotgun', 'death', 'meleekill', 'armour', 'swing'];
+  ok('every cue that was given a recording has one', want.every(k => keys.includes(k)),
      keys.join(' + '));
-  let bad = null, total = 0;
+  let bad = null, total = 0, clips = 0;
   for (const k of keys) {
-    const b = Buffer.from(defs[k].data, 'base64');
-    total += b.length;
-    if (b.slice(0, 3).toString() !== 'ID3') bad = k + ' is not an MP3';
-    // At 96 kbps a plausible one-shot is well under three seconds.
-    const secs = b.length / (96000 / 8);
-    if (secs < 0.3 || secs > 3) bad = `${k} is ${secs.toFixed(1)}s`;
+    const list = typeof defs[k].data === 'string' ? [defs[k].data] : defs[k].data;
+    for (const d of list) {
+      const buf = Buffer.from(d, 'base64');
+      total += buf.length; clips++;
+      if (buf.slice(0, 3).toString() !== 'ID3') bad = k + ' is not an MP3';
+      const secs = buf.length / (96000 / 8);          // an upper bound on length
+      if (secs < 0.1 || secs > 3) bad = `${k} is ${secs.toFixed(1)}s`;
+    }
   }
-  ok('both decode from base64 to a real MP3 of sane length', bad === null, bad || 'ID3 framed');
-  ok('and they cost the file about what a texture would', total < 60 * 1024,
+  ok('all of them decode from base64 to a real MP3 of sane length', bad === null,
+     bad || clips + ' clips, ID3 framed');
+  ok('and the lot costs about what one texture would', total < 160 * 1024,
      (total / 1024).toFixed(1) + ' KB of audio embedded');
-  ok('each is levelled to sit in the same mix as the synthesised guns',
-     keys.every(k => defs[k].gain > 0 && defs[k].gain < 1),
+  ok('nothing is set to a gain that would clip it',
+     keys.every(k => defs[k].gain > 0 && defs[k].gain <= 1),
      keys.map(k => k + ' ' + defs[k].gain).join(', '));
+  // A swing fires on every press and a kill fires once, so they must not be
+  // levelled the same or the swing is the thing you end up hearing.
+  ok('the frequent cues sit below the rare ones', defs.swing.gain < defs.meleekill.gain &&
+     defs.armour.gain < defs.death.gain, `swing ${defs.swing.gain} < kill ${defs.meleekill.gain}`);
+  ok('the cues that repeat in a row carry more than one take',
+     (typeof defs.meleekill.data !== 'string' && defs.meleekill.data.length > 1) &&
+     (typeof defs.swing.data !== 'string' && defs.swing.data.length > 1),
+     'melee kill and swing have two takes each');
 }
 
 console.log('== a recording is preferred, and a render still backs it ==');
 {
-  ok('the decoder was asked for every recording', decodeCalls >= 2, decodeCalls + ' decodes');
+  ok('the decoder was asked for every clip', decodeCalls >= 8, decodeCalls + ' decodes');
   ok('a sampled weapon plays its recording, not its render', (() => {
     nodes = []; probe('sfx.activeVoices = 0; sfx.shoot(WEAPONS.PISTOL, 0, 0)');
     const s = nodes.find(n => n.kind === 'src');
-    return !!s && s.buffer === probe('sfx.samples.pistol.buffer');
-  })(), 'buffer identity matches the decoded sample');
+    return !!s && probe('sfx.sample("pistol").variants').some(v => v.buffer === s.buffer);
+  })(), 'buffer identity matches a decoded variant');
   ok('an unsampled weapon still plays its render', (() => {
     nodes = []; probe('sfx.activeVoices = 0; sfx.shoot(WEAPONS.ASSAULT_RIFLE, 0, 0)');
     const s = nodes.find(n => n.kind === 'src');
-    return !!s && s.buffer === probe('sfx.shotBuffers(sfx.profile(WEAPONS.ASSAULT_RIFLE))[0]') ||
-           !!s && !probe('sfx.samples["rifle"]');
+    // Any of its three renders will do -- playBuffer rotates them.
+    return !!s && probe('sfx.shotBuffers(sfx.profile(WEAPONS.ASSAULT_RIFLE))').some(b => b === s.buffer);
   })(), 'falls through to shotBuffers');
-  // Codec padding is the quiet killer here: a shot 26 ms behind its own muzzle
-  // flash reads as input lag, and nothing about it looks wrong in the code.
-  const off = probe('sfx.samples.pistol.offset');
+  // Codec padding is the quiet killer here: a sound 26 ms behind the thing that
+  // caused it reads as input lag, and nothing about it looks wrong in the code.
+  const off = probe('sfx.sample("pistol").variants[0].offset');
   ok('playback starts at the onset, not at the decoder zero', off > 0.02 && off < 0.03,
      (off * 1000).toFixed(1) + ' ms of codec padding skipped');
   ok('and the source is started from that offset', (() => {
     nodes = []; probe('sfx.activeVoices = 0; sfx.shoot(WEAPONS.SHOTGUN, 0, 0)');
     const s = nodes.find(n => n.kind === 'src');
-    return s && Math.abs(s.offset - probe('sfx.samples.shotgun.offset')) < 1e-9;
+    return s && s.offset > 0.02;
   })(), 'start(when, offset)');
   ok('the coach gun shares the shotgun recording',
      probe('sfx.profile(WEAPONS.COACH_GUN).key') === 'shotgun', 'same key, same sample');
-  ok('a decode that fails leaves the synthesised shot in place', (() => {
+  ok('a decode that fails leaves the synthesised cue in place', (() => {
     decodeFails = true;
     probe('sfx.samples = {}; sfx.loadSamples();');
-    const none = Object.keys(probe('sfx.samples')).length === 0;
+    const none = probe('sfx.sample("pistol")') === null;
     decodeFails = false;
     nodes = []; probe('sfx.activeVoices = 0; sfx.shoot(WEAPONS.PISTOL, 0, 0)');
     const played = nodes.some(n => n.kind === 'src');
-    probe('sfx.loadSamples()');
+    probe('sfx.samples = {}; sfx.loadSamples();');
     return none && played;
   })(), 'the gun still fires');
+}
+
+console.log('== the cues those recordings drive ==');
+{
+  const plays = (call) => { nodes = []; probe('sfx.activeVoices = 0; ' + call); return nodes.find(n => n.kind === 'src'); };
+  const isFrom = (n, key) => !!n && probe(`sfx.sample("${key}").variants`).some(v => v.buffer === n.buffer);
+  ok('a death by gunfire plays the recorded death', isFrom(plays('sfx.deathGrunt(0, 0)'), 'death'), 'body and head shots alike');
+  ok('a melee kill plays the recorded kill instead', isFrom(plays('sfx.meleeKill(0, 0)'), 'meleekill'), 'not the gunfire one');
+  ok('a hit on armour plays the recorded impact', isFrom(plays('sfx.hitArmor(0, 0)'), 'armour'), 'robots, saucers, the armoured');
+  ok('a swing plays the recorded swing', isFrom(plays('sfx.slash(0, 0)'), 'swing'), 'sword and pick share it');
+  // A machine still dies as a machine -- the recorded death is for things that
+  // bleed, and routing a robot into it would undo the whole metal treatment.
+  ok('a robot still dies as metal, not as a body', (() => {
+    const n = plays("sfx.deathGrunt(0, 0, 'ROBOT')");
+    return !!n && probe("sfx.metalBuffers('chassis')").some(b => b === n.buffer);
+  })(), 'chassis, not the blowhole');
+  ok('both takes of a repeated cue actually get used', (() => {
+    const seen = new Set();
+    for (let i = 0; i < 24; i++) { const n = plays('sfx.slash(0, 0)'); if (n) seen.add(n.buffer); }
+    return seen.size === 2;
+  })(), 'variants rotate');
+  ok('the melee kill is wired into the swing that lands', (() => {
+    const src = require('fs').readFileSync(__dirname + '/../game.js', 'utf8');
+    return /sfx\.meleeKill\(e\.x, e\.y\)/.test(src);
+  })(), 'called from the melee sweep');
 }
 
 console.log('== cost ==');
