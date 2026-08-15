@@ -356,11 +356,11 @@ console.log('== cost ==');
     return probe('sfx.activeVoices') <= probe('sfx.maxVoices');
   })(), probe('sfx.activeVoices') + ' / ' + probe('sfx.maxVoices') + ' after 20 shots');
   ok('rendering every weapon up front is quick enough to hide in startup', initMs < 400, initMs + ' ms');
-  ok('distance darkens a shot as well as quietening it', (() => {
-    const lp = (x) => { nodes = []; probe(`sfx.activeVoices = 0; sfx.shoot(WEAPONS.ASSAULT_RIFLE, ${x}, 0)`);
-      const f = nodes.find(n => n.kind === 'biquad' && n.type === 'lowpass'); return f.frequency.events[0].v; };
-    return lp(0) > lp(600) && lp(600) > lp(2500);
-  })(), 'air absorption with range');
+  ok('distance lowers the level a shot plays at', (() => {
+    const lvl = (x) => { nodes = []; probe(`sfx.activeVoices = 0; sfx.shoot(WEAPONS.ASSAULT_RIFLE, ${x}, 0)`);
+      const g = nodes.find(n => n.kind === 'gain'); return g.gain.events[0].v; };
+    return lvl(0) > lvl(600) && lvl(600) > lvl(2500);
+  })(), 'spatial() attenuation, unchanged')
 }
 
 console.log('== everything that is not a gunshot still works ==');

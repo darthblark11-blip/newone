@@ -56,14 +56,6 @@ function place(dst, src, at, gain, rate) {
   }
 }
 
-// One-pole lowpass, matching what distance does to a shot in sfx.spatial().
-function darken(a, hz) {
-  const c = 1 - Math.exp(-2 * Math.PI * Math.min(hz, SR * 0.45) / SR);
-  let z = 0;
-  for (let i = 0; i < a.length; i++) { z += (a[i] - z) * c; a[i] = z; }
-  return a;
-}
-
 function wav(name, data) {
   let peak = 0;
   for (let i = 0; i < data.length; i++) { const v = Math.abs(data[i]); if (v > peak) peak = v; }
@@ -139,7 +131,7 @@ for (const [name, expr] of GUNS) {
   [0, 300, 700, 1400, 2800].forEach((d, i) => {
     const one = new Float32Array(SR * 1.1);
     place(one, shot('WEAPONS.ASSAULT_RIFLE', i % 3), 0, gainOf('WEAPONS.ASSAULT_RIFLE') * MASTER, 1);
-    darken(one, 18000 / (1 + d / 260));
+    // Level only -- that is all sfx.spatial() does with range.
     const lvl = 1 / (1 + d / 560 + (d * d) / 1600000);
     for (let k = 0; k < one.length; k++) { const j = Math.floor(SR * (0.1 + i)) + k; if (j < out.length) out[j] += one[k] * lvl; }
   });
