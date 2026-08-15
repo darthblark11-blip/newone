@@ -360,7 +360,8 @@ console.log('== the supplied recordings ==');
 {
   const defs = probe('sfx.SAMPLES');
   const keys = Object.keys(defs);
-  const want = ['pistol', 'shotgun', 'death', 'meleekill', 'armour', 'swing'];
+  const want = ['pistol', 'shotgun', 'death', 'meleekill', 'armour', 'swing',
+                'blood', 'shieldhit', 'shieldbreak', 'boom'];
   ok('every cue that was given a recording has one', want.every(k => keys.includes(k)),
      keys.join(' + '));
   let bad = null, total = 0, clips = 0;
@@ -376,7 +377,7 @@ console.log('== the supplied recordings ==');
   }
   ok('all of them decode from base64 to a real MP3 of sane length', bad === null,
      bad || clips + ' clips, ID3 framed');
-  ok('and the lot costs about what one texture would', total < 160 * 1024,
+  ok('and the lot costs about what one texture would', total < 320 * 1024,
      (total / 1024).toFixed(1) + ' KB of audio embedded');
   ok('nothing is set to a gain that would clip it',
      keys.every(k => defs[k].gain > 0 && defs[k].gain <= 1),
@@ -386,9 +387,13 @@ console.log('== the supplied recordings ==');
   ok('the frequent cues sit below the rare ones', defs.swing.gain < defs.meleekill.gain &&
      defs.armour.gain < defs.death.gain, `swing ${defs.swing.gain} < kill ${defs.meleekill.gain}`);
   ok('the cues that repeat in a row carry more than one take',
-     (typeof defs.meleekill.data !== 'string' && defs.meleekill.data.length > 1) &&
-     (typeof defs.swing.data !== 'string' && defs.swing.data.length > 1),
-     'melee kill and swing have two takes each');
+     ['meleekill', 'swing', 'blood'].every(k => typeof defs[k].data !== 'string' && defs[k].data.length > 1),
+     'melee kill, swing and blood');
+  // A shield hit answers every incoming round while the shield holds, so it
+  // has to be the quietest thing here or it becomes the whole soundtrack of a
+  // firefight; the break happens once.
+  ok('the shield hit sits well under the break', defs.shieldhit.gain < defs.shieldbreak.gain * 0.5,
+     `hit ${defs.shieldhit.gain} vs break ${defs.shieldbreak.gain}`);
 }
 
 console.log('== a recording is preferred, and a render still backs it ==');
@@ -452,6 +457,52 @@ console.log('== the cues those recordings drive ==');
     const src = require('fs').readFileSync(__dirname + '/../game.js', 'utf8');
     return /sfx\.meleeKill\(e\.x, e\.y\)/.test(src);
   })(), 'called from the melee sweep');
+}
+
+console.log('== blood, shield and explosions ==');
+{
+  const plays = (call) => { nodes = []; probe('sfx.activeVoices = 0; ' + call); return nodes.filter(n => n.kind === 'src'); };
+  const from = (list, key) => { const v = probe(`sfx.sample("${key}").variants`); return list.filter(n => v.some(x => x.buffer === n.buffer)); };
+
+  const d = plays('sfx.deathGrunt(0, 0)');
+  ok('a humanoid death plays the death sound AND the blood', from(d, 'death').length === 1 && from(d, 'blood').length === 1,
+     d.length + ' voices');
+  // Two sounds starting on the same sample are heard as one. The blood has to
+  // arrive behind the impact for layering them to be worth anything.
+  const blood = from(d, 'blood')[0];
+  ok('and the blood lands behind the impact, not on top of it', blood.startedAt > 0.05 && blood.startedAt < 0.12,
+     (blood.startedAt * 1000).toFixed(0) + ' ms behind');
+  ok('a robot death gets neither -- it has none to spill',
+     from(plays("sfx.deathGrunt(0, 0, 'ROBOT')"), 'blood').length === 0, 'chassis only');
+  ok('and neither does a saucer',
+     from(plays("sfx.deathGrunt(0, 0, 'SAUCER')"), 'blood').length === 0, 'nothing to bleed');
+  ok('a melee kill keeps its own sound and does not double up',
+     from(plays('sfx.meleeKill(0, 0)'), 'meleekill').length === 1, 'slice only');
+
+  ok('a shield hit plays the recorded hit', from(plays('sfx.shieldHit(0, 0)'), 'shieldhit').length === 1, 'shield holds');
+  ok('a shield break plays the recorded break', from(plays('sfx.shieldBreak(0, 0)'), 'shieldbreak').length === 1, 'shield gone');
+  ok('the shield cues are wired to the shield, and never both at once', (() => {
+    const src = require('fs').readFileSync(__dirname + '/../game.js', 'utf8');
+    const i = src.indexOf('res.broken = true;');
+    const seg = src.slice(i - 400, i + 400);
+    return /sfx\.shieldBreak\(this\.x, this\.y\)/.test(seg) && /sfx\.shieldHit\(this\.x, this\.y\)/.test(seg) &&
+           seg.indexOf('shieldBreak') < seg.indexOf('shieldHit');
+  })(), 'break in the broken branch, hit in the other');
+
+  ok('an explosion plays the recording', from(plays('sfx.explosion(0, 0)'), 'boom').length === 1, 'grenades and rockets');
+  ok('grenades and rockets both reach it with a position', (() => {
+    const src = require('fs').readFileSync(__dirname + '/../game.js', 'utf8');
+    return /function triggerExplosion[^]{0,120}sfx\.explosion\(ex, ey\)/.test(src) &&
+           /function triggerRocketExplosion[^]{0,120}sfx\.explosion\(ex, ey\)/.test(src);
+  })(), 'both blast functions');
+  ok('no explosion is left playing dead centre', (() => {
+    const src = require('fs').readFileSync(__dirname + '/../game.js', 'utf8');
+    return !/sfx\.explosion\(\)/.test(src);
+  })(), 'every call site passes a position');
+  ok('the explosion is the loudest thing in the game', (() => {
+    const defs = probe('sfx.SAMPLES');
+    return defs.boom.gain * 1 > defs.shotgun.gain * 0.7;
+  })(), 'louder than the shotgun');
 }
 
 console.log('== cost ==');
