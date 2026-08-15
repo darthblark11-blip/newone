@@ -674,8 +674,18 @@ const sfx = {
     const span = Math.max(1, (typeof viewRight !== 'undefined' && typeof viewLeft !== 'undefined') ? (viewRight - viewLeft) * 0.5 : 700);
     const pan = Math.max(-1, Math.min(1, dx / span));
     const off = (typeof inView === 'function' && !inView(x, y, 120)) ? 0.55 : 1;
-    return { gain: gain * off, pan, lp: off < 1 ? 3600 : 18000, priority: gain + priority };
+    // Air takes the top off a shot long before it takes the body, so range
+    // darkens as well as quietens. This is what turns a distant shot into a
+    // thump without having to synthesise a separate distant version of it.
+    const air = 18000 / (1 + d / 260);
+    return { gain: gain * off, pan, lp: Math.min(air, off < 1 ? 3600 : 18000), priority: this.rank(priority, gain * off) };
   },
+
+  // What a layer is worth keeping when the budget is under pressure. Distance
+  // may only ever lower a layer's standing, never raise it: summing the two,
+  // as this used to, meant anything close by scored above the cut no matter
+  // how inessential it was, and the budget stopped protecting anything at all.
+  rank(priority, gain) { return priority * (0.4 + 0.6 * gain); },
 
   reserve(priority) {
     if (!this.ctx || !this.master) return false;
@@ -696,11 +706,14 @@ const sfx = {
   //   delay   seconds to wait before the voice starts, so the layers of one
   //           event can arrive in the order the real thing would produce them.
   //   sat     run the layer into the soft clipper before the distance gain.
-  //   flat    the layer is pre-rendered and carries its own envelope, so hold
-  //           the voice gain steady rather than shaping it here.
+  //   sp      a spatial() result to reuse, so one event solves its distance
+  //           once instead of once per layer.
   chain(gain, x, y, dur, priority, shape) {
     const sh = shape || {};
-    const sp = this.spatial(x, y, priority);
+    // Priority is still per-layer even when the distance solve is shared, so
+    // the budget sheds the tail of a shot before it sheds the shot.
+    const sp = sh.sp ? { gain: sh.sp.gain, pan: sh.sp.pan, lp: sh.sp.lp, priority: this.rank(priority, sh.sp.gain) }
+                     : this.spatial(x, y, priority);
     if (!this.reserve(sp.priority)) return null;
     const delay = sh.delay || 0;
     const now = this.ctx.currentTime + delay;
