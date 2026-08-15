@@ -146,4 +146,15 @@ for (const [name, expr] of GUNS) {
   wav('rifle-by-distance.wav', out);
 }
 
+// --- the embedded recordings, written straight back out as .mp3 ------------
+// No decoding involved: this is exactly the data the game carries.
+{
+  const defs = probe('sfx.SAMPLES');
+  for (const key in defs) {
+    const b = Buffer.from(defs[key].data, 'base64');
+    fs.writeFileSync(path.join(OUT, 'sample-' + key + '.mp3'), b);
+    console.log(`  sample-${key}.mp3  ${(b.length / 1024).toFixed(1)} KB  plays at gain ${defs[key].gain}`);
+  }
+}
+
 console.log('done');

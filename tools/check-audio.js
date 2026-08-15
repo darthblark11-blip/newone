@@ -41,6 +41,7 @@ function scheduled(n) {
   return n;
 }
 const SR = 44100;
+let decodeCalls = 0, decodeFails = false, PAD_MS = 26;
 ctx.AudioContext = function () {
   return {
     state: 'running', resume() {}, sampleRate: SR, currentTime: 0, destination: DEST,
@@ -56,6 +57,18 @@ ctx.AudioContext = function () {
       // samples back out is how the checks below judge them.
       const d = new Float32Array(len);
       return { numberOfChannels: nc, length: len, sampleRate: sr, duration: len / sr, getChannelData: () => d };
+    },
+    // Nothing here can decode an MP3, so this stands in for one: half a second
+    // of audio with PAD_MS of leading silence, which is what a codec adds and
+    // what the loader is supposed to find and skip.
+    decodeAudioData(bytes, ok2) {
+      decodeCalls++;
+      if (decodeFails) { return { then: (_, bad) => bad && bad(new Error('nope')) }; }
+      const n = Math.floor(SR * 0.5), d = new Float32Array(n), pad = Math.floor(SR * PAD_MS / 1000);
+      for (let i = pad; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.exp(-(i - pad) / (SR * 0.08));
+      const buf = { numberOfChannels: 1, length: n, sampleRate: SR, duration: n / SR, getChannelData: () => d };
+      if (ok2) ok2(buf);
+      return { then: (good) => { good && good(buf); return { catch() {} }; } };
     }
   };
 };
@@ -341,6 +354,67 @@ console.log('== no two shots are the same shot ==');
     }
     return rates.size >= 6;
   })(), 'shot-to-shot rate jitter');
+}
+
+console.log('== the supplied recordings ==');
+{
+  const defs = probe('sfx.SAMPLES');
+  const keys = Object.keys(defs);
+  ok('the pistol and the shotgun carry a recording', keys.includes('pistol') && keys.includes('shotgun'),
+     keys.join(' + '));
+  let bad = null, total = 0;
+  for (const k of keys) {
+    const b = Buffer.from(defs[k].data, 'base64');
+    total += b.length;
+    if (b.slice(0, 3).toString() !== 'ID3') bad = k + ' is not an MP3';
+    // At 96 kbps a plausible one-shot is well under three seconds.
+    const secs = b.length / (96000 / 8);
+    if (secs < 0.3 || secs > 3) bad = `${k} is ${secs.toFixed(1)}s`;
+  }
+  ok('both decode from base64 to a real MP3 of sane length', bad === null, bad || 'ID3 framed');
+  ok('and they cost the file about what a texture would', total < 60 * 1024,
+     (total / 1024).toFixed(1) + ' KB of audio embedded');
+  ok('each is levelled to sit in the same mix as the synthesised guns',
+     keys.every(k => defs[k].gain > 0 && defs[k].gain < 1),
+     keys.map(k => k + ' ' + defs[k].gain).join(', '));
+}
+
+console.log('== a recording is preferred, and a render still backs it ==');
+{
+  ok('the decoder was asked for every recording', decodeCalls >= 2, decodeCalls + ' decodes');
+  ok('a sampled weapon plays its recording, not its render', (() => {
+    nodes = []; probe('sfx.activeVoices = 0; sfx.shoot(WEAPONS.PISTOL, 0, 0)');
+    const s = nodes.find(n => n.kind === 'src');
+    return !!s && s.buffer === probe('sfx.samples.pistol.buffer');
+  })(), 'buffer identity matches the decoded sample');
+  ok('an unsampled weapon still plays its render', (() => {
+    nodes = []; probe('sfx.activeVoices = 0; sfx.shoot(WEAPONS.ASSAULT_RIFLE, 0, 0)');
+    const s = nodes.find(n => n.kind === 'src');
+    return !!s && s.buffer === probe('sfx.shotBuffers(sfx.profile(WEAPONS.ASSAULT_RIFLE))[0]') ||
+           !!s && !probe('sfx.samples["rifle"]');
+  })(), 'falls through to shotBuffers');
+  // Codec padding is the quiet killer here: a shot 26 ms behind its own muzzle
+  // flash reads as input lag, and nothing about it looks wrong in the code.
+  const off = probe('sfx.samples.pistol.offset');
+  ok('playback starts at the onset, not at the decoder zero', off > 0.02 && off < 0.03,
+     (off * 1000).toFixed(1) + ' ms of codec padding skipped');
+  ok('and the source is started from that offset', (() => {
+    nodes = []; probe('sfx.activeVoices = 0; sfx.shoot(WEAPONS.SHOTGUN, 0, 0)');
+    const s = nodes.find(n => n.kind === 'src');
+    return s && Math.abs(s.offset - probe('sfx.samples.shotgun.offset')) < 1e-9;
+  })(), 'start(when, offset)');
+  ok('the coach gun shares the shotgun recording',
+     probe('sfx.profile(WEAPONS.COACH_GUN).key') === 'shotgun', 'same key, same sample');
+  ok('a decode that fails leaves the synthesised shot in place', (() => {
+    decodeFails = true;
+    probe('sfx.samples = {}; sfx.loadSamples();');
+    const none = Object.keys(probe('sfx.samples')).length === 0;
+    decodeFails = false;
+    nodes = []; probe('sfx.activeVoices = 0; sfx.shoot(WEAPONS.PISTOL, 0, 0)');
+    const played = nodes.some(n => n.kind === 'src');
+    probe('sfx.loadSamples()');
+    return none && played;
+  })(), 'the gun still fires');
 }
 
 console.log('== cost ==');

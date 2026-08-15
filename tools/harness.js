@@ -86,6 +86,11 @@ const ctx = {
   red(v){return v&&v.levels?v.levels[0]:0;}, green(v){return v&&v.levels?v.levels[1]:0;}, blue(v){return v&&v.levels?v.levels[2]:0;},
   loadImage(){ return {}; }, loadSound(){ return {}; }, loadFont(){ return {}; },
   localStorage: { getItem(){return null;}, setItem(){}, removeItem(){} },
+  // The sample loader needs it to turn embedded base64 into bytes. There is no
+  // decodeAudioData in the stub below, so the loader stops right after this
+  // and every check keeps the synthesised weapons -- which is the fallback
+  // path the game itself takes on a browser that will not decode the format.
+  atob: (b) => Buffer.from(b, 'base64').toString('binary'),
   // Enough of Web Audio for sfx.init() and every cue to run without throwing.
   // Buffers report a real duration because the noise layers pick a random
   // start offset inside one, but hand back a short channel array -- nothing
