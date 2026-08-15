@@ -7531,7 +7531,7 @@ function triggerExplosion(ex, ey, rad, isMolotov = false, sourceIsPlayer = true)
       if (!explosiveArmorUnlocked || isMolotov || !sourceIsPlayer) {
           let dRes = player.takeDamage(60); 
           if (dRes.blocked) { 
-              emit(player.x, player.y, dRes.broken ? 30 : 15, color(0, 200, 255), "SPARK"); sfx.hitArmor(); 
+              emit(player.x, player.y, dRes.broken ? 30 : 15, color(0, 200, 255), "SPARK"); 
           } else { 
               emit(player.x, player.y, 15, color(90, 0, 0), "BLOOD"); 
           }
@@ -7607,7 +7607,6 @@ function triggerRocketExplosion(ex, ey, sourceIsPlayer, directHitTarget = null) 
           let dRes = player.takeDamage(60); 
           if (dRes.blocked) { 
               emit(player.x, player.y, dRes.broken ? 30 : 15, color(0, 200, 255), "SPARK"); 
-              sfx.hitArmor(); 
           } else { 
               emit(player.x, player.y, 15, color(90, 0, 0), "BLOOD"); 
           }
@@ -11789,7 +11788,7 @@ if (this.eType === "COW") {
                 if (!hitFence && distToTarget < 35 && this.biteCooldown <= 0) {  // <--- CHANGED dToP to distToTarget
                     let dRes = trg.takeDamage(5); 
                     if (dRes.blocked) { 
-                        emit(trg.x, trg.y, dRes.broken ? 15 : 8, color(0, 200, 255), "SPARK"); sfx.hitArmor(); 
+                        emit(trg.x, trg.y, dRes.broken ? 15 : 8, color(0, 200, 255), "SPARK"); 
                     } else { 
                         emit(trg.x, trg.y, 8, color(90, 0, 0), "BLOOD"); 
                     }
@@ -14295,7 +14294,7 @@ function updateBullets() {
                 } 
                 else if (wA) { sfx.hitArmor(); emit(b.x, b.y, 10, color(255, 150, 0), "SPARK"); emit(b.x, b.y, 5, color(100), "CHIP"); } 
                 else { 
-                    if (t.isPlayer && dRes.blocked) { sfx.hitArmor(); emit(b.x, b.y, dRes.broken ? 20 : 8, color(0, 200, 255), "SPARK", b.vx, b.vy); } 
+                    if (t.isPlayer && dRes.blocked) { emit(b.x, b.y, dRes.broken ? 20 : 8, color(0, 200, 255), "SPARK", b.vx, b.vy); } 
                     else { if (b.tH === "HEAD" && t.eType !== "BUG" && t.eType !== "SNAIL" && t.eType !== "SNAIL_HYBRID") sfx.hitHead(); else sfx.hitBody(); emit(b.x, b.y, 8, bCol, "BLOOD", b.vx, b.vy); }
                 } 
                 if (t.isPlayer) screenShake = 5; 

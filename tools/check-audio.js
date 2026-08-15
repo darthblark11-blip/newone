@@ -499,6 +499,25 @@ console.log('== blood, shield and explosions ==');
 
   ok('a shield hit plays the recorded hit', from(plays('sfx.shieldHit(0, 0)'), 'shieldhit').length === 1, 'shield holds');
   ok('a shield break plays the recorded break', from(plays('sfx.shieldBreak(0, 0)'), 'shieldbreak').length === 1, 'shield gone');
+  // The bug this exists to catch: takeDamage plays the shield cue, and every
+  // one of the four callers that checks `blocked` ALSO played the robot impact
+  // on top of it. Both were firing; the metal one is louder, so it was the only
+  // one audible, and auditioning the shield cue on its own could never show it.
+  // A cue is not correct until nothing else answers the same event.
+  ok('no shield block answers the hit with the robot impact', (() => {
+    const src = require('fs').readFileSync(__dirname + '/../game.js', 'utf8').split('\n');
+    const bad = [];
+    src.forEach((line, i) => {
+      if (!/\bdRes\.blocked\b/.test(line)) return;
+      if (src.slice(i, i + 5).some(l => /sfx\.hitArmor\(/.test(l))) bad.push(i + 1);
+    });
+    return bad.length === 0;
+  })(), 'the shield sounds like a shield, not like a robot');
+  ok('and the shield cue is only ever raised from takeDamage', (() => {
+    const src = require('fs').readFileSync(__dirname + '/../game.js', 'utf8');
+    const calls = src.match(/sfx\.shield(Hit|Break)\(/g) || [];
+    return calls.length === 2;                 // one hit, one break, both in the branch
+  })(), 'one choke point, which is the only place that knows if it broke');
   ok('the shield cues are wired to the shield, and never both at once', (() => {
     const src = require('fs').readFileSync(__dirname + '/../game.js', 'utf8');
     const i = src.indexOf('res.broken = true;');
