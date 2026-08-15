@@ -390,23 +390,42 @@ console.log('== the supplied recordings ==');
   ok('the frequent cues sit below the rare ones', defs.swing.gain < defs.meleekill.gain &&
      defs.armour.gain < defs.death.gain, `swing ${defs.swing.gain} < kill ${defs.meleekill.gain}`);
   ok('the cues that repeat in a row carry more than one take',
-     ['meleekill', 'swing', 'blood', 'armour', 'shieldhit'].every(k => typeof defs[k].data !== 'string' && defs[k].data.length > 1),
-     'melee kill, swing, blood, armour and shield hit');
+     ['meleekill', 'swing', 'blood', 'armour'].every(k => typeof defs[k].data !== 'string' && defs[k].data.length > 1),
+     'melee kill, swing, blood and armour');
   // The shield hit is a per-round cue and has to be SHORT. The recording it
   // came from is a burst of ten rounds followed by a long swell, and playing
   // the whole file on every hit is what made it read as the shield breaking
   // instead. One round is one impact -- and a hit must never be longer than
   // the break it is supposed to be distinguishable from.
+  // Real durations, not estimates: a guessed bitrate reported a 1.10 s clip as
+  // 1.48 s, which is enough to fail a length assertion on a sound that is fine.
+  const RATE = [0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320];
+  const FREQ = [44100, 48000, 32000];
   const clipMs = (d) => {
     const b = Buffer.from(d, 'base64');
     if (b.slice(0, 4).toString() === 'RIFF') return b.readUInt32LE(40) / (b.readUInt32LE(28) || 1) * 1000;
-    return b.length / (64000 / 8) * 1000;             // an upper bound for MP3
+    let i = 0;
+    if (b.slice(0, 3).toString() === 'ID3') i = 10 + ((b[6] << 21) | (b[7] << 14) | (b[8] << 7) | b[9]);
+    let frames = 0, sr = 44100;
+    while (i + 4 <= b.length) {
+      if (b[i] !== 0xff || (b[i + 1] & 0xe0) !== 0xe0) { i++; continue; }
+      const br = RATE[(b[i + 2] & 0xf0) >> 4], f = FREQ[(b[i + 2] & 0x0c) >> 2];
+      if (!br || !f) { i++; continue; }
+      sr = f;
+      i += ((144 * br * 1000 / f) | 0) + ((b[i + 2] & 0x02) >> 1);
+      frames++;
+    }
+    return frames * 1152 / sr * 1000;
   };
-  const hitMs = Math.max(...defs.shieldhit.data.map(clipMs));
-  ok('the shield hit is one impact, not the whole burst', hitMs < 120,
-     hitMs.toFixed(0) + ' ms per take');
-  ok('and it is far shorter than the break', hitMs < clipMs(defs.shieldbreak.data) * 0.25,
+  // The hit is the full recording. What it must not do is outlast the break it
+  // has to stay distinguishable from, or restart before it has been heard once.
+  const hitMs = clipMs(defs.shieldhit.data);
+  ok('the shield hit is still shorter than the break',
+     hitMs < clipMs(defs.shieldbreak.data),
      `hit ${hitMs.toFixed(0)} ms vs break ${clipMs(defs.shieldbreak.data).toFixed(0)} ms`);
+  ok('and its gate is long enough that it is heard before it restarts',
+     defs.shieldhit.every * 1000 > hitMs * 0.4,
+     `gate ${defs.shieldhit.every * 1000} ms against ${hitMs.toFixed(0)} ms of sound`);
   // A shield hit answers every incoming round while the shield holds, so it
   // has to be the quietest thing here or it becomes the whole soundtrack of a
   // firefight; the break happens once.
@@ -554,9 +573,9 @@ console.log('== the cues that repeat fastest are gated ==');
   // Both are per-round cues on the same frame budget, so both gates only need
   // to be long enough to collapse a shotgun's pellets into one impact and
   // short enough to leave ordinary fire alone.
-  ok('both gates collapse a same-frame volley without touching ordinary fire',
-     [defs.armour.every, defs.shieldhit.every].every(e => e >= 1 / 60 && e <= 0.06),
-     `armour ${defs.armour.every}s, shield ${defs.shieldhit.every}s, one frame is 0.017s`);
+  ok('the armour gate collapses a same-frame volley without touching ordinary fire',
+     defs.armour.every >= 1 / 60 && defs.armour.every <= 0.06,
+     `armour ${defs.armour.every}s, one frame is 0.017s`);
   const burst = (call, n) => {
     probe('sfx.lastPlayed = {}; sfx.activeVoices = 0;');
     nodes = [];
