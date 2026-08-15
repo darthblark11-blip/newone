@@ -387,8 +387,8 @@ console.log('== the supplied recordings ==');
   ok('the frequent cues sit below the rare ones', defs.swing.gain < defs.meleekill.gain &&
      defs.armour.gain < defs.death.gain, `swing ${defs.swing.gain} < kill ${defs.meleekill.gain}`);
   ok('the cues that repeat in a row carry more than one take',
-     ['meleekill', 'swing', 'blood'].every(k => typeof defs[k].data !== 'string' && defs[k].data.length > 1),
-     'melee kill, swing and blood');
+     ['meleekill', 'swing', 'blood', 'armour'].every(k => typeof defs[k].data !== 'string' && defs[k].data.length > 1),
+     'melee kill, swing, blood and armour');
   // A shield hit answers every incoming round while the shield holds, so it
   // has to be the quietest thing here or it becomes the whole soundtrack of a
   // firefight; the break happens once.
@@ -436,7 +436,7 @@ console.log('== a recording is preferred, and a render still backs it ==');
 
 console.log('== the cues those recordings drive ==');
 {
-  const plays = (call) => { nodes = []; probe('sfx.activeVoices = 0; ' + call); return nodes.find(n => n.kind === 'src'); };
+  const plays = (call) => { nodes = []; probe('sfx.lastPlayed = {}; sfx.activeVoices = 0; ' + call); return nodes.find(n => n.kind === 'src'); };
   const isFrom = (n, key) => !!n && probe(`sfx.sample("${key}").variants`).some(v => v.buffer === n.buffer);
   ok('a death by gunfire plays the recorded death', isFrom(plays('sfx.deathGrunt(0, 0)'), 'death'), 'body and head shots alike');
   ok('a melee kill plays the recorded kill instead', isFrom(plays('sfx.meleeKill(0, 0)'), 'meleekill'), 'not the gunfire one');
@@ -461,7 +461,7 @@ console.log('== the cues those recordings drive ==');
 
 console.log('== blood, shield and explosions ==');
 {
-  const plays = (call) => { nodes = []; probe('sfx.activeVoices = 0; ' + call); return nodes.filter(n => n.kind === 'src'); };
+  const plays = (call) => { nodes = []; probe('sfx.lastPlayed = {}; sfx.activeVoices = 0; ' + call); return nodes.filter(n => n.kind === 'src'); };
   const from = (list, key) => { const v = probe(`sfx.sample("${key}").variants`); return list.filter(n => v.some(x => x.buffer === n.buffer)); };
 
   const d = plays('sfx.deathGrunt(0, 0)');
@@ -505,6 +505,34 @@ console.log('== blood, shield and explosions ==');
   })(), 'louder than the shotgun');
 }
 
+console.log('== the cues that repeat fastest are gated ==');
+{
+  // A shotgun lands four pellets on a robot in one frame and the shield answers
+  // every incoming round. Ungated, those arrive as one cue stacked several deep
+  // -- several times the level rather than several hits.
+  const defs = probe('sfx.SAMPLES');
+  ok('the armour impact and the shield hit both carry a retrigger gate',
+     defs.armour.every > 0 && defs.shieldhit.every > 0,
+     `armour ${defs.armour.every}s, shield ${defs.shieldhit.every}s`);
+  ok('and the shield is gated far harder, because its cue is far longer',
+     defs.shieldhit.every > defs.armour.every * 4, 'a full second of sound');
+  const burst = (call, n) => {
+    probe('sfx.lastPlayed = {}; sfx.activeVoices = 0;');
+    nodes = [];
+    for (let i = 0; i < n; i++) probe(call);
+    return nodes.filter(x => x.kind === 'src').length;
+  };
+  // currentTime is frozen at 0 in this harness, so every call after the first
+  // lands inside the window -- which is exactly the same-frame case.
+  ok('four pellets on the same frame make one impact, not four',
+     burst('sfx.hitArmor(0, 0)', 4) === 1, 'gated to the first');
+  ok('and a burst on the shield does not stack either',
+     burst('sfx.shieldHit(0, 0)', 6) === 1, 'gated to the first');
+  ok('an ungated cue is still free to overlap', burst('sfx.explosion(0, 0)', 3) === 3,
+     'explosions are not gated');
+  probe('sfx.lastPlayed = {};');
+}
+
 console.log('== cost ==');
 {
   nodes = [];
@@ -517,7 +545,16 @@ console.log('== cost ==');
     for (let i = 0; i < 20; i++) probe('sfx.shoot(WEAPONS.SMG, 0, 0)');
     return probe('sfx.activeVoices') <= probe('sfx.maxVoices');
   })(), probe('sfx.activeVoices') + ' / ' + probe('sfx.maxVoices') + ' after 20 shots');
-  ok('rendering every weapon up front is quick enough to hide in startup', initMs < 400, initMs + ' ms');
+  const t1 = Date.now();
+  probe(`sfx.shots = {};
+         for (const w of [WEAPONS.PISTOL, WEAPONS.SMG, WEAPONS.ASSAULT_RIFLE, WEAPONS.SHOTGUN,
+                          WEAPONS.REVOLVER, WEAPONS.ROCKET_LAUNCHER, WEAPONS.TASER,
+                          'ORANGE_BEAM', 'RED_LASER', 'ALIEN_LASER', 'LIGHTNING'])
+           sfx.shotBuffers(sfx.profile(w));
+         sfx.metalBuffers('armour'); sfx.metalBuffers('chassis');`);
+  const renderMs = Date.now() - t1;
+  ok('rendering every fallback up front is quick enough to hide in startup', renderMs < 400,
+     renderMs + ' ms of synthesis (init total ' + initMs + ' ms, the rest is the stub decoder)');
   ok('distance darkens a shot as well as quietening it', (() => {
     const lp = (x) => { nodes = []; probe(`sfx.activeVoices = 0; sfx.shoot(WEAPONS.ASSAULT_RIFLE, ${x}, 0)`);
       const f = nodes.find(n => n.kind === 'biquad' && n.type === 'lowpass'); return f.frequency.events[0].v; };
