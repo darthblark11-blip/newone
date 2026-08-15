@@ -33,7 +33,9 @@ probe('sfx.init()');
 const GUNS = [
   ['pistol', 'WEAPONS.PISTOL'], ['smg', 'WEAPONS.SMG'], ['assault-rifle', 'WEAPONS.ASSAULT_RIFLE'],
   ['shotgun', 'WEAPONS.SHOTGUN'], ['revolver', 'WEAPONS.REVOLVER'], ['coach-gun', 'WEAPONS.COACH_GUN'],
-  ['rocket-launcher', 'WEAPONS.ROCKET_LAUNCHER']
+  ['rocket-launcher', 'WEAPONS.ROCKET_LAUNCHER'],
+  ['robot-beam', '"ORANGE_BEAM"'], ['laser', '"RED_LASER"'], ['alien-laser', '"ALIEN_LASER"'],
+  ['lightning', '"LIGHTNING"'], ['taser', 'WEAPONS.TASER']
 ];
 const shot = (w, v) => probe(`sfx.shotBuffers(sfx.profile(${w}))[${v}].getChannelData(0)`);
 const gainOf = (w) => probe(`sfx.profile(${w}).gain`);
@@ -99,6 +101,26 @@ for (const [name, expr] of GUNS) {
   const out = new Float32Array(SR * (GUNS.length * 1.2 + 1));
   GUNS.forEach(([, expr], i) => place(out, shot(expr, 0), Math.floor(SR * (0.15 + i * 1.2)), gainOf(expr) * MASTER, 1));
   wav('all-weapons.wav', out);
+}
+
+// --- the robot: shot at, and killed ----------------------------------------
+{
+  const armour = probe("sfx.metalBuffers('armour')"), chassis = probe("sfx.metalBuffers('chassis')");
+  const out = new Float32Array(SR * 4);
+  for (let i = 0; i < 4; i++) place(out, armour[i % 3].getChannelData(0), Math.floor(SR * (0.1 + i * 0.42)), 0.62 * MASTER, 0.92 + i * 0.05);
+  place(out, chassis[0].getChannelData(0), Math.floor(SR * 2.0), 0.72 * MASTER, 1);
+  wav('robot-hit-and-death.wav', out);
+}
+
+// --- the robot shooting, at its own burst rate ------------------------------
+{
+  const g = gainOf('"ORANGE_BEAM"') * MASTER;
+  const out = new Float32Array(SR * 3);
+  for (let i = 0; i < 6; i++) {
+    const at = Math.floor(SR * (0.15 + Math.floor(i / 2) * 0.9 + (i % 2) * (9 / 60)));
+    place(out, shot('"ORANGE_BEAM"', i % 3), at, g, 0.97 + Math.random() * 0.06);
+  }
+  wav('robot-firing.wav', out);
 }
 
 // --- sustained fire, at the rate the SMG actually fires ---------------------

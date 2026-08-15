@@ -209,7 +209,10 @@ const sfx = {
     // the first trigger pull of each weapon -- the one moment a stutter would
     // actually be heard.
     for (const w of [WEAPONS.PISTOL, WEAPONS.SMG, WEAPONS.ASSAULT_RIFLE, WEAPONS.SHOTGUN,
-                     WEAPONS.REVOLVER, WEAPONS.ROCKET_LAUNCHER]) this.shotBuffers(this.profile(w));
+                     WEAPONS.REVOLVER, WEAPONS.ROCKET_LAUNCHER, WEAPONS.TASER,
+                     'ORANGE_BEAM', 'RED_LASER', 'ALIEN_LASER', 'LIGHTNING'])
+      this.shotBuffers(this.profile(w));
+    this.metalBuffers('armour'); this.metalBuffers('chassis');
     if (this.ctx.state === 'suspended') this.ctx.resume();
   },
 
@@ -273,29 +276,65 @@ const sfx = {
   //   mech    level, centre frequency and lateness of the action cycling
   profile(weapon) {
     const name = typeof weapon === 'string' ? weapon : (weapon && weapon.name) || '';
-    // The robot's arc cannon is a discharge, not a cartridge; it belongs with
-    // the beams rather than falling through to the sidearm report below.
-    if (name.indexOf('LASER') >= 0 || name.indexOf('BEAM') >= 0 || name === 'LIGHTNING' || weapon === 'RED_LASER' || weapon === 'PINK_LASER' || weapon === 'ORANGE_BEAM' || weapon === 'ALIEN_LASER')
-      return { key: 'energy', energy: true, gain: 0.7, snap: 7000, body: 520, mech: 2400, tail: 0.34 };
+    // -- energy weapons. Rendered the same way as everything else now: an
+    // impulse and an arc, with no oscillator anywhere near them.
+    if (name === 'LIGHTNING')
+      return { key: 'lightning', gain: 1.00, shockT: 0.00060, crack: 0.55, crackT: 0.00050, turb: 0.010, turbHz: 6000, turbAmt: 0.35, drive: 1.5, refl: 0.85, tail: 0.40, tailHz: 4200, tailAmt: 0.075, mech: 0,
+               crackle: 130, crackleT: 0.30, crackleAmt: 0.60 };
+    if (weapon === WEAPONS.TASER || name === 'TASER')
+      return { key: 'taser',  gain: 0.70, shockT: 0.00040, crack: 0.30, crackT: 0.00036, turb: 0.006, turbHz: 5000, turbAmt: 0.26, drive: 1.3, refl: 0.75, tail: 0.34, tailHz: 3600, tailAmt: 0.065, mech: 0,
+               crackle: 70, crackleT: 0.26, crackleAmt: 0.34, arc: 1, arcHi: 2200, arcLo: 300, arcT: 0.18, arcQ: 0.14, arcAmt: 0.34, flutter: 260 };
+    if (name === 'ALIEN LASER' || weapon === 'ALIEN_LASER')
+      return { key: 'alien',  gain: 0.84, shockT: 0.00045, crack: 0.42, crackT: 0.00040, turb: 0.008, turbHz: 2600, turbAmt: 0.30, drive: 1.4, refl: 0.90, tail: 0.42, tailHz: 2400, tailAmt: 0.085, mech: 0,
+               arc: 1, arcHi: 2600, arcLo: 190, arcT: 0.26, arcQ: 0.075, arcAmt: 0.50, flutter: 90 };
+    if (weapon === 'ORANGE_BEAM' || name.indexOf('BEAM') >= 0)
+      return { key: 'beam',   gain: 0.86, shockT: 0.00038, crack: 0.52, crackT: 0.00034, turb: 0.007, turbHz: 5200, turbAmt: 0.30, drive: 1.4, refl: 0.80, tail: 0.30, tailHz: 3400, tailAmt: 0.060, mech: 0,
+               arc: 1, arcHi: 3400, arcLo: 340, arcT: 0.15, arcQ: 0.105, arcAmt: 0.54, flutter: 170 };
+    if (name.indexOf('LASER') >= 0 || weapon === 'RED_LASER' || weapon === 'PINK_LASER')
+      return { key: 'laser',  gain: 0.80, shockT: 0.00032, crack: 0.56, crackT: 0.00028, turb: 0.005, turbHz: 6500, turbAmt: 0.26, drive: 1.3, refl: 0.70, tail: 0.24, tailHz: 4000, tailAmt: 0.050, mech: 0,
+               arc: 1, arcHi: 4600, arcLo: 620, arcT: 0.10, arcQ: 0.130, arcAmt: 0.44, flutter: 230 };
+
+    // -- firearms. Levels and body are up sharply on the first cut of this:
+    // measured off a recording of the game, a pistol was landing at a quarter
+    // of the shotgun's energy and every shot was a click with nothing behind
+    // it. Crest factor is punch, but crest factor alone is a tick -- what
+    // makes a shot read as an explosion is the energy in the 5 to 60 ms behind
+    // the transient, and there was almost none of it.
     if (weapon === WEAPONS.SHOTGUN || name === 'SHOTGUN' || name === 'COACH GUN')
-      return { key: 'shotgun', gain: 0.95, shockT: 0.00165, crack: 0,    crackT: 0,       turb: 0.022, turbHz: 1500, turbAmt: 0.42, drive: 1.35, refl: 1.15, tail: 0.52, tailHz: 1700, tailAmt: 0.055, mech: 0.13, mechHz: 1900, mechAt: 0.085 };
+      return { key: 'shotgun', gain: 1.00, shockT: 0.00230, crack: 0.62, crackT: 0.00070, turb: 0.048, turbHz: 2600, turbAmt: 0.78, drive: 1.55, refl: 1.25, tail: 0.62, tailHz: 2100, tailAmt: 0.115, mech: 0.11, mechHz: 1900, mechAt: 0.095 };
     if (weapon === WEAPONS.ROCKET_LAUNCHER || name === 'ROCKET LAUNCHER')
-      return { key: 'rocket',  gain: 1.00, shockT: 0.00360, crack: 0,    crackT: 0,       turb: 0.038, turbHz: 620,  turbAmt: 0.52, drive: 1.45, refl: 1.30, tail: 0.85, tailHz: 1200, tailAmt: 0.070, mech: 0.05, mechHz: 900,  mechAt: 0.050 };
+      return { key: 'rocket',  gain: 1.00, shockT: 0.00360, crack: 0.34, crackT: 0.00090, turb: 0.070, turbHz: 780,  turbAmt: 0.58, drive: 1.60, refl: 1.35, tail: 0.95, tailHz: 1300, tailAmt: 0.130, mech: 0.05, mechHz: 900,  mechAt: 0.050 };
     if (weapon === WEAPONS.SMG || weapon === WEAPONS.DUAL_SMG || name === 'MACHINE GUN' || name === 'DUAL SMGS')
-      return { key: 'smg',     gain: 0.62, shockT: 0.00042, crack: 0.34, crackT: 0.00018, turb: 0.007, turbHz: 3800, turbAmt: 0.30, drive: 1.15, refl: 0.80, tail: 0.20, tailHz: 2800, tailAmt: 0.035, mech: 0.15, mechHz: 3100, mechAt: 0.022 };
+      // The action is quiet and early on purpose. At a 5-frame cooldown a
+      // distinct clack 22 ms behind the shot is heard as a second weapon.
+      return { key: 'smg',     gain: 0.86, shockT: 0.00072, crack: 0.72, crackT: 0.00034, turb: 0.020, turbHz: 4400, turbAmt: 0.58, drive: 1.35, refl: 1.00, tail: 0.26, tailHz: 3400, tailAmt: 0.070, mech: 0.05, mechHz: 3100, mechAt: 0.013 };
     if (name === 'REVOLVER')
-      return { key: 'revolver',gain: 0.90, shockT: 0.00095, crack: 0.44, crackT: 0.00024, turb: 0.015, turbHz: 2600, turbAmt: 0.36, drive: 1.30, refl: 1.10, tail: 0.46, tailHz: 2300, tailAmt: 0.050, mech: 0.05, mechHz: 2400, mechAt: 0.050 };
+      return { key: 'revolver',gain: 0.98, shockT: 0.00135, crack: 0.80, crackT: 0.00046, turb: 0.032, turbHz: 3000, turbAmt: 0.66, drive: 1.50, refl: 1.20, tail: 0.55, tailHz: 2600, tailAmt: 0.105, mech: 0.05, mechHz: 2400, mechAt: 0.055 };
     if (name === 'ASSAULT RIFLE')
-      return { key: 'rifle',   gain: 0.78, shockT: 0.00062, crack: 0.55, crackT: 0.00020, turb: 0.010, turbHz: 3400, turbAmt: 0.33, drive: 1.25, refl: 0.95, tail: 0.34, tailHz: 3000, tailAmt: 0.040, mech: 0.14, mechHz: 3300, mechAt: 0.028 };
-    return   { key: 'pistol',  gain: 0.70, shockT: 0.00055, crack: 0.30, crackT: 0.00022, turb: 0.009, turbHz: 3200, turbAmt: 0.32, drive: 1.20, refl: 0.90, tail: 0.30, tailHz: 2600, tailAmt: 0.038, mech: 0.12, mechHz: 2800, mechAt: 0.030 };
+      return { key: 'rifle',   gain: 0.90, shockT: 0.00088, crack: 0.88, crackT: 0.00038, turb: 0.024, turbHz: 4000, turbAmt: 0.60, drive: 1.42, refl: 1.05, tail: 0.38, tailHz: 3200, tailAmt: 0.080, mech: 0.07, mechHz: 3300, mechAt: 0.016 };
+    return   { key: 'pistol',  gain: 0.94, shockT: 0.00105, crack: 0.66, crackT: 0.00042, turb: 0.028, turbHz: 3400, turbAmt: 0.64, drive: 1.45, refl: 1.15, tail: 0.42, tailHz: 2800, tailAmt: 0.095, mech: 0.07, mechHz: 2800, mechAt: 0.030 };
   },
 
   // Ground bounce first, then whatever is standing around, each arrival later
-  // and darker than the last. Spacing is irregular on purpose: evenly spaced
-  // taps comb-filter into an audible pitch, which is the exact failure being
-  // designed out here.
-  REFLECTIONS: [[0.0075, 0.42, 5200], [0.0138, 0.30, 3400], [0.0231, 0.22, 2200],
-                [0.0392, 0.15, 1400], [0.0611, 0.10, 900],  [0.0898, 0.06, 620]],
+  // and darker than the last. Two properties matter and both were wrong.
+  //
+  // Spacing is irregular, because evenly spaced taps comb-filter into an
+  // audible pitch. And the first arrivals are EARLY -- inside the couple of
+  // milliseconds where the ear fuses an echo into the sound that caused it.
+  // The first tap used to sit at 7.5 ms, which is past that window at this
+  // level, so it was heard as a second, quieter shot: at a 100 ms fire rate
+  // that reads as two guns going off instead of one. Pulled inside the fusion
+  // window the same energy stops being an echo and becomes part of the bang,
+  // which makes the shot louder and bigger rather than doubled.
+  // Levels are held well under the direct arrival, and that is a hard rule
+  // rather than taste: the shock has to stay the loudest thing in the shot. An
+  // earlier pass at this cranked the reflections until their sum beat it, and
+  // the waveform's peak moved 3.5 ms late -- which is a smeared attack, and
+  // reads as a soft shot no matter how much energy is behind it.
+  REFLECTIONS: [[0.0017, 0.30, 7000], [0.0031, 0.25, 6000], [0.0046, 0.21, 5000],
+                [0.0069, 0.17, 4200], [0.0103, 0.13, 3400], [0.0151, 0.10, 2600],
+                [0.0227, 0.075, 1900], [0.0330, 0.050, 1300], [0.0488, 0.033, 900],
+                [0.0721, 0.022, 640]],
 
   // xorshift, so a given weapon renders the same set of variants every run and
   // the checks have something stable to measure.
@@ -305,6 +344,145 @@ const sfx = {
   },
 
   onePole(hz, sr) { return 1 - Math.exp(-2 * Math.PI * Math.min(hz, sr * 0.45) / sr); },
+
+  // A resonant filter swept DOWNWARD and excited by noise. Both halves of that
+  // matter. The robot's beam used to be a sawtooth oscillator gliding from
+  // 520 Hz up to 2400 -- measured off a recording of the game, a clean partial
+  // climbing 593, 716, 863, 1041, 1256 Hz -- and a rising pure tone is exactly
+  // what "squeaky" means. Falling reads as discharge and as power; exciting a
+  // filter with noise instead of running an oscillator makes it a sound rather
+  // than a note.
+  addArc(out, len, sr, rnd, p) {
+    const aN = Math.min(len, Math.floor(sr * p.arcT));
+    const fl = this.onePole(p.flutter, sr);
+    const glide = Math.pow(p.arcLo / p.arcHi, 1 / Math.max(1, aN)), aDec = Math.exp(-3.1 / Math.max(1, aN));
+    const buf = new Float32Array(aN);
+    let low = 0, band = 0, f1 = 0, f2 = 0, fc = p.arcHi, aE = 1, f = 0, ap = 0;
+    for (let i = 0; i < aN; i++) {
+      // The cutoff glides slowly enough that refreshing the coefficient every
+      // eighth sample is inaudible and saves a sin() on the other seven.
+      if ((i & 7) === 0) f = 2 * Math.sin(Math.PI * Math.min(fc, sr * 0.45) / sr);
+      fc *= glide;
+      // An arc is unstable: the level flickers rather than decaying smoothly.
+      f1 += ((rnd() * 2 - 1) - f1) * fl;
+      f2 += (f1 - f2) * fl;
+      low += f * band;
+      band += f * ((rnd() * 2 - 1) - low - p.arcQ * band);
+      const v = band * aE * (0.72 + 1.4 * (f2 < 0 ? -f2 : f2));
+      buf[i] = v;
+      const m = v < 0 ? -v : v;
+      if (m > ap) ap = m;
+      aE *= aDec;
+    }
+    if (ap > 0) { const g = p.arcAmt / ap; for (let i = 0; i < aN; i++) out[i] += buf[i] * g; }
+  },
+
+  // A scatter of micro-impulses rather than anything continuous. Lightning is
+  // a sequence of discharges and nothing about it is pitched at all.
+  addCrackle(out, len, sr, rnd, p) {
+    const cN = Math.min(len, Math.floor(sr * p.crackleT));
+    for (let s = 0; s < p.crackle; s++) {
+      const at = Math.floor(rnd() * cN), w = 6 + Math.floor(rnd() * 40);
+      const amp = (0.25 + rnd() * 0.75) * p.crackleAmt * Math.exp(-2.6 * at / cN);
+      for (let i = 0; i < w; i++) {
+        const j = at + i;
+        if (j >= len) break;
+        out[j] += (rnd() * 2 - 1) * amp * (1 - i / w);
+      }
+    }
+  },
+
+  // Struck metal is a handful of INHARMONIC modes ringing together, and that
+  // inharmonicity is the whole difference between a clank and a bell -- and
+  // between a clank and the single swept sine this replaces, which read as a
+  // cartoon ping rather than as a round hitting a machine. Ratios are
+  // deliberately not small whole numbers.
+  METAL: {
+    armour: { f: 430, dur: 0.17, strike: 0.60, strikeHz: 3800, body: 0.11,
+              modes: [[1, 1, 0.055], [1.71, 0.62, 0.040], [2.43, 0.44, 0.030], [3.86, 0.30, 0.021], [5.19, 0.18, 0.015], [6.94, 0.11, 0.010]] },
+    // A machine coming apart: the same metal an octave and a half down, ringing
+    // far longer, with the power draining out of it and debris after.
+    chassis: { f: 172, dur: 0.95, strike: 1.05, strikeHz: 2100, body: 0.26,
+               modes: [[1, 1, 0.34], [1.62, 0.72, 0.26], [2.31, 0.52, 0.19], [3.44, 0.35, 0.13], [4.77, 0.22, 0.09], [6.08, 0.13, 0.06]],
+               arc: 1, arcHi: 1500, arcLo: 78, arcT: 0.62, arcQ: 0.085, arcAmt: 0.26, flutter: 55,
+               crackle: 34, crackleT: 0.55, crackleAmt: 0.20 }
+  },
+
+  renderMetal(o, sr, seed) {
+    const rnd = this.rng(seed);
+    const len = Math.max(64, Math.floor(sr * o.dur));
+    const out = new Float32Array(len);
+    // The strike itself: broadband, and over in a few milliseconds.
+    const sN = Math.min(len, Math.floor(sr * 0.004));
+    const aS = this.onePole(o.strikeHz, sr);
+    const hit = new Float32Array(sN);
+    let z = 0, hp = 0;
+    for (let i = 0; i < sN; i++) {
+      z += ((rnd() * 2 - 1) - z) * aS;
+      const v = z * (1 - i / sN);
+      hit[i] = v;
+      const m = v < 0 ? -v : v;
+      if (m > hp) hp = m;
+    }
+    if (hp > 0) { const g = o.strike / hp; for (let i = 0; i < sN; i++) out[i] += hit[i] * g; }
+    // The modes it set ringing.
+    for (const [ratio, amp, tau] of o.modes) {
+      const f = o.f * ratio * (0.98 + rnd() * 0.04), w = 2 * Math.PI * f / sr;
+      const ph = rnd() * Math.PI * 2, n = Math.min(len, Math.floor(sr * tau * 5));
+      const c2 = 2 * Math.cos(w), dec = Math.exp(-1 / (sr * tau));
+      let y1 = Math.sin(ph), y2 = Math.sin(ph - w), env = amp * 0.34;
+      for (let i = 0; i < n; i++) {
+        out[i] += y1 * env;
+        const y0 = c2 * y1 - y2; y2 = y1; y1 = y0;
+        env *= dec;
+      }
+    }
+    // Loose material rattling after it.
+    const bN = Math.min(len, Math.floor(sr * o.dur * 0.8));
+    const aB = this.onePole(1400, sr);
+    const bDec = Math.exp(-4 / Math.max(1, bN));
+    let b1 = 0, b2 = 0, bE = 1;
+    for (let i = 0; i < bN; i++) {
+      b1 += ((rnd() * 2 - 1) - b1) * aB; b2 += (b1 - b2) * aB;
+      out[i] += b2 * bE * o.body * 2.4;
+      bE *= bDec;
+    }
+    if (o.arc) this.addArc(out, len, sr, rnd, o);
+    if (o.crackle) this.addCrackle(out, len, sr, rnd, o);
+    let peak = 0;
+    for (let i = 0; i < len; i++) { const m = out[i] < 0 ? -out[i] : out[i]; if (m > peak) peak = m; }
+    if (peak > 0) { const g = 0.99 / peak; for (let i = 0; i < len; i++) out[i] *= g; }
+    return out;
+  },
+
+  metalBuffers(name) {
+    if (!this.ctx) return [];
+    let v = this.shots['metal:' + name];
+    if (v) return v;
+    v = this.shots['metal:' + name] = [];
+    const o = this.METAL[name], sr = this.ctx.sampleRate;
+    for (let i = 0; i < 3; i++) {
+      const data = this.renderMetal(o, sr, Math.imul(name.length + i + 1, 2654435761) >>> 0);
+      const b = this.ctx.createBuffer(1, data.length, sr);
+      b.getChannelData(0).set(data);
+      v.push(b);
+    }
+    return v;
+  },
+
+  // One cached waveform, played flat: the shared way anything pre-rendered
+  // reaches the mix.
+  playBuffer(list, gain, x, y, priority, lo, hi) {
+    if (!this.ctx || !list || !list.length) return;
+    const b = list[(Math.random() * list.length) | 0];
+    const c = this.chain(gain, x, y, b.duration, priority, { flat: true });
+    if (!c) return;
+    const s = this.ctx.createBufferSource();
+    s.buffer = b;
+    s.playbackRate.setValueAtTime(this.rand(lo === undefined ? 0.97 : lo, hi === undefined ? 1.03 : hi), c.now);
+    s.connect(c.input);
+    s.start(c.now);
+  },
 
   // A gunshot is an impulse and the response of everything around it. It is
   // not an oscillator with an envelope, and every previous attempt at this
@@ -330,9 +508,11 @@ const sfx = {
     const T = Math.max(2, p.shockT * sr);
     const rise = Math.max(2, Math.round(sr * 0.00006));
     const shockN = Math.min(len, Math.ceil(T * 26));
+    const sDec = Math.exp(-1 / T);
+    let sE = 1;
     for (let i = 0; i < shockN; i++) {
-      const t = i / T;
-      let v = (1 - t) * Math.exp(-t);
+      let v = (1 - i / T) * sE;
+      sE *= sDec;
       if (i < rise) v *= 0.5 - 0.5 * Math.cos(Math.PI * i / rise);
       out[i] += v;
     }
@@ -347,24 +527,36 @@ const sfx = {
     const turbN = Math.min(len, Math.max(4, Math.floor(sr * p.turb)));
     const aT = this.onePole(p.turbHz, sr);
     const jet = new Float32Array(turbN);
-    let t1 = 0, t2 = 0, jp = 0;
+    const jDec = Math.exp(-3.4 / turbN);
+    let t1 = 0, t2 = 0, jp = 0, jE = 1;
     for (let i = 0; i < turbN; i++) {
       t1 += ((rnd() * 2 - 1) - t1) * aT;
       t2 += (t1 - t2) * aT;
-      const v = t2 * Math.exp(-3.4 * i / turbN);
+      const v = t2 * jE;
+      jE *= jDec;
       jet[i] = v;
       const m = v < 0 ? -v : v;
       if (m > jp) jp = m;
     }
     if (jp > 0) { const s = p.turbAmt / jp; for (let i = 0; i < turbN; i++) out[i] += jet[i] * s; }
 
-    // -- the supersonic crack ----------------------------------------------
-    // A literal N-wave: up, straight down through zero, and cut. Both ends are
-    // discontinuities, which is why it is the sharpest thing in the shot.
+    // -- the crack -----------------------------------------------------------
+    // An N-wave: up, straight down through zero, and cut. Both ends are
+    // discontinuities, which is why it is the sharpest thing in the shot. A
+    // rifle gets one off the bullet; a shotgun gets one off the leading edge
+    // of its own blast, which is why it is no longer zeroed for smoothbores --
+    // being literal about the bullet cost the shotgun all of its bite.
+    // Noise is mixed into it, because a real crack is not a clean shape.
     if (p.crack > 0) {
-      const nN = Math.max(3, Math.round(sr * p.crackT));
-      for (let i = 0; i < nN && i < len; i++) out[i] += (1 - 2 * i / nN) * p.crack;
+      const nN = Math.max(4, Math.round(sr * p.crackT));
+      for (let i = 0; i < nN && i < len; i++) {
+        const u = i / nN;
+        out[i] += ((1 - 2 * u) * 0.72 + (rnd() * 2 - 1) * 0.28 * (1 - u)) * p.crack;
+      }
     }
+
+    if (p.arc) this.addArc(out, len, sr, rnd, p);
+    if (p.crackle > 0) this.addCrackle(out, len, sr, rnd, p);
 
     // -- nonlinearity --------------------------------------------------------
     // A shock is a nonlinear phenomenon and any real recording of one is
@@ -406,12 +598,14 @@ const sfx = {
     const hi = this.onePole(p.tailHz, sr), lo = this.onePole(240, sr);
     const build = Math.max(1, sr * 0.012);
     const rev = new Float32Array(tailN);
-    let d1 = 0, d2 = 0, rp = 0;
+    const rDec = Math.exp(-4.2 / tailN);
+    let d1 = 0, d2 = 0, rp = 0, rE = 1;
     for (let i = 0; i < tailN; i++) {
       const u = i / tailN, a = hi + (lo - hi) * u;
       d1 += ((rnd() * 2 - 1) - d1) * a;
       d2 += (d1 - d2) * a;
-      const v = d2 * Math.min(1, i / build) * Math.exp(-4.2 * u);
+      const v = d2 * Math.min(1, i / build) * rE;
+      rE *= rDec;
       rev[i] = v;
       const m = v < 0 ? -v : v;
       if (m > rp) rp = m;
@@ -427,10 +621,12 @@ const sfx = {
       const m0 = Math.floor(sr * p.mechAt), mN = Math.floor(sr * 0.02);
       const f = 2 * Math.sin(Math.PI * Math.min(p.mechHz, sr * 0.45) / sr), q = 0.16;
       const clack = new Float32Array(mN);
-      let low = 0, band = 0, cp = 0;
+      const mDec = Math.exp(-5.5 / mN);
+      let low = 0, band = 0, cp = 0, mE = 1;
       for (let i = 0; i < mN; i++) {
         low += f * band;
-        band += f * ((rnd() * 2 - 1) * Math.exp(-5.5 * i / mN) - low - q * band);
+        band += f * ((rnd() * 2 - 1) * mE - low - q * band);
+        mE *= mDec;
         clack[i] = band;
         const m = band < 0 ? -band : band;
         if (m > cp) cp = m;
@@ -454,6 +650,7 @@ const sfx = {
   // so sustained fire never repeats a waveform.
   shots: {},
   shotBuffers(p) {
+    if (!this.ctx) return [];
     let v = this.shots[p.key];
     if (v) return v;
     v = this.shots[p.key] = [];
@@ -599,35 +796,24 @@ const sfx = {
   shoot(weapon, x, y) {
     if (!this.ctx) return;
     const p = this.profile(weapon);
-    if (p.energy) {
-      const sp = this.spatial(x, y, 0.8);
-      this.burst('white', 0.07, 0.24 * p.gain, p.snap, 'highpass', p.snap * 0.7, x, y, 0.75, { sp });
-      this.tone(p.body, 'sawtooth', 0.16, 0.16 * p.gain, p.mech, x, y, 0.75, { sp });
-      this.burst('pink', p.tail, 0.09 * p.gain, 2200, 'bandpass', 520, x, y, 0.35, { sp });
-      return;
-    }
-    const bufs = this.shotBuffers(p);
-    if (!bufs.length) return;
-    const b = bufs[(Math.random() * bufs.length) | 0];
-    const c = this.chain(p.gain, x, y, b.duration, 0.98, { flat: true });
-    if (!c) return;
-    const s = this.ctx.createBufferSource();
-    s.buffer = b;
     // A few percent either way: barrel to barrel, and shot to shot down one
     // barrel, no two reports are quite the same length or quite the same size.
-    s.playbackRate.setValueAtTime(this.rand(0.97, 1.03), c.now);
-    s.connect(c.input);
-    s.start(c.now);
+    this.playBuffer(this.shotBuffers(p), p.gain, x, y, 0.98);
   },
 
   shotgun(x, y) { this.shoot(WEAPONS.SHOTGUN, x, y); },
   hitBody(x, y) { this.burst('impact', 0.12, 0.5, 720, 'bandpass', 260, x, y, 0.55); this.tone(95, 'triangle', 0.08, 0.06, 45, x, y, 0.4); },
   hitHead(x, y) { this.burst('impact', 0.09, 0.42, 2600, 'highpass', 900, x, y, 0.65); this.tone(520, 'triangle', 0.07, 0.08, 160, x, y, 0.5); },
-  hitArmor(x, y) { this.burst('impact', 0.08, 0.38, 1600, 'bandpass', 3600, x, y, 0.65); this.tone(720, 'sine', 0.12, 0.12, 210, x, y, 0.55); },
+  // A round off armour plate, as struck metal rather than as a swept sine.
+  hitArmor(x, y) { this.playBuffer(this.metalBuffers('armour'), 0.62, x, y, 0.65, 0.92, 1.09); },
   deathGrunt(x, y, kind) {
-    const base = kind === 'BUG' || kind === 'SNAIL' ? 210 : (kind === 'ROBOT' ? 80 : this.rand(86, 132));
+    // A machine does not grunt. It loses power and falls over, so it gets the
+    // chassis ringing, the arc draining away and debris after it -- not a
+    // sawtooth, which is a voice and was the wrong instrument entirely.
+    if (kind === 'ROBOT') { this.playBuffer(this.metalBuffers('chassis'), 0.72, x, y, 0.7, 0.94, 1.07); return; }
+    const base = kind === 'BUG' || kind === 'SNAIL' ? 210 : this.rand(86, 132);
     this.tone(base, 'sawtooth', 0.34, 0.18, base * 0.45, x, y, 0.7);
-    this.burst('body', 0.22, 0.18, kind === 'ROBOT' ? 900 : 360, 'lowpass', 120, x, y, 0.45);
+    this.burst('body', 0.22, 0.18, 360, 'lowpass', 120, x, y, 0.45);
   },
   slash(x, y) { this.burst('snap', 0.13, 0.38, 4200, 'bandpass', 7600, x, y, 0.55); this.tone(900, 'sine', 0.08, 0.06, 1300, x, y); },
   dash(x, y) { this.burst('tail', 0.24, 0.26, 620, 'lowpass', 180, x, y, 0.4); this.tone(115, 'sawtooth', 0.18, 0.1, 55, x, y); },

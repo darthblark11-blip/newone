@@ -134,6 +134,51 @@ function kickDrum() {
   return a;
 }
 
+
+// "Squeaky", measured. Track the loudest partial window by window and fit a
+// slope to it in octaves per second. A falling partial reads as a discharge
+// and as power; a RISING one is the single most cartoonish thing a synthesised
+// weapon can do, and it is what the robot's beam was doing -- a sawtooth
+// gliding 520 Hz to 2400. Measured off a recording of the game the partial
+// climbed 593, 716, 863, 1041, 1256 Hz, window after window.
+function partialSlope(a, secs) {
+  const win = Math.floor(SR * 0.020), pts = [];
+  for (let s = 0; s + win <= Math.min(a.length, secs * SR); s += win) {
+    let mx = 0, at = 0, tot = 0;
+    for (let b = 0; b < 44; b++) {
+      const f = 180 * Math.pow(6500 / 180, b / 43), co = 2 * Math.cos(2 * Math.PI * f / SR);
+      let s0 = 0, s1 = 0, s2 = 0;
+      for (let i = 0; i < win; i++) { s0 = a[s + i] + co * s1 - s2; s2 = s1; s1 = s0; }
+      const m = Math.sqrt(Math.max(0, s1 * s1 + s2 * s2 - co * s1 * s2));
+      tot += m;
+      if (m > mx) { mx = m; at = f; }
+    }
+    // Only windows with a partial that actually stands out have a "dominant"
+    // frequency worth fitting; broadband noise does not.
+    if (tot > 1e-6 && mx / (tot / 44) > 3.2) pts.push([s / SR, Math.log2(at)]);
+  }
+  if (pts.length < 3) return 0;
+  let mt = 0, mf = 0;
+  for (const [t, f] of pts) { mt += t; mf += f; }
+  mt /= pts.length; mf /= pts.length;
+  let num = 0, den = 0;
+  for (const [t, f] of pts) { num += (t - mt) * (f - mf); den += (t - mt) * (t - mt); }
+  return den ? num / den : 0;               // octaves per second
+}
+
+// The control: the robot's old beam, rebuilt.
+function risingSaw() {
+  const n = Math.floor(SR * 0.16), a = new Float32Array(n);
+  let ph = 0;
+  for (let i = 0; i < n; i++) {
+    const u = i / n, f = 520 * Math.pow(2400 / 520, u);
+    ph += f / SR;
+    ph -= Math.floor(ph);
+    a[i] = (ph * 2 - 1) * Math.exp(-2.6 * u);
+  }
+  return a;
+}
+
 const shotOf = (w, v) => probe(`sfx.shotBuffers(sfx.profile(${w}))[${v || 0}].getChannelData(0)`);
 const GUNS = ['WEAPONS.PISTOL', 'WEAPONS.SMG', 'WEAPONS.DUAL_SMG', 'WEAPONS.ASSAULT_RIFLE',
               'WEAPONS.SHOTGUN', 'WEAPONS.REVOLVER', 'WEAPONS.COACH_GUN', 'WEAPONS.ROCKET_LAUNCHER'];
@@ -172,12 +217,26 @@ console.log('== and they punch ==');
     if (c < worst) { worst = c; worstGun = w.replace('WEAPONS.', ''); }
     if (small.includes(w)) worstSmall = Math.min(worstSmall, c);
   }
-  ok('every shot is an impulse, not something sustained', worst > 7,
+  // Stated against the drum rather than as bare numbers, because the absolute
+  // figure is a tuning decision and the ratio is the property. Crest came down
+  // deliberately from the previous cut: shots measured off a recording of the
+  // game were clicks with no body, which is why they were "not punchy" despite
+  // having the highest crest factor this has ever measured. Punch is a sharp
+  // peak AND energy behind it, and only the first half was there.
+  ok('every shot is an impulse, not something sustained', worst / drumCrest > 2,
      `weakest is ${worstGun} at ${worst.toFixed(1)}, drum is ${drumCrest.toFixed(1)}`);
-  ok('and the small arms are sharper still', worstSmall > 20, worstSmall.toFixed(1) + ' at worst');
+  ok('and the small arms are sharper still', worstSmall / drumCrest > 6, worstSmall.toFixed(1) + ' at worst');
   const rifle = shotOf('WEAPONS.ASSAULT_RIFLE');
-  ok('the peak lands inside the first tenth of a millisecond', peakAt(rifle) < SR * 0.0001,
-     (peakAt(rifle) / SR * 1000).toFixed(3) + ' ms in');
+  // The direct arrival has to stay the loudest thing in the shot. When the
+  // reflection field was cranked past it the peak moved 3.5 ms late, and a
+  // late peak is a smeared attack however much energy is behind it.
+  let latest = 0, lateGun = '';
+  for (const w of ['WEAPONS.PISTOL', 'WEAPONS.SMG', 'WEAPONS.ASSAULT_RIFLE', 'WEAPONS.SHOTGUN', 'WEAPONS.REVOLVER']) {
+    const t = peakAt(shotOf(w)) / SR * 1000;
+    if (t > latest) { latest = t; lateGun = w.replace('WEAPONS.', ''); }
+  }
+  ok('the peak is the direct arrival, not a reflection', latest < 0.2,
+     `latest onset is ${lateGun} at ${latest.toFixed(3)} ms`);
   ok('the shot is normalised, so the weapon sets its own level', Math.abs(peakOf(rifle) - 0.99) < 0.02,
      'peak ' + peakOf(rifle).toFixed(3));
   // Energy has to collapse. A drum's does not, which is what makes it a note.
@@ -211,23 +270,60 @@ console.log('== the guns are told apart by ear ==');
   ok('the big bores are darker than the small ones',
      c.rocket < c.shotgun && c.shotgun < c.pistol && c.pistol < c.smg,
      Object.entries(c).map(([k, v]) => `${k} ${Math.round(v)}`).join(' < ') + ' Hz');
-  ok('the smoothbores have no supersonic crack',
-     probe('sfx.profile(WEAPONS.SHOTGUN).crack === 0 && sfx.profile(WEAPONS.COACH_GUN).crack === 0'),
-     'no N-wave');
+  // Being literal about the supersonic N-wave -- a smoothbore firing shot has
+  // none -- cost the shotgun all of its bite, and it was the loudest complaint
+  // about the last cut. It gets a crack off the leading edge of its own blast
+  // instead: broader and later than a rifle's, and bigger.
+  ok('the shotgun cracks, and broader than a rifle does',
+     probe(`sfx.profile(WEAPONS.SHOTGUN).crack > 0.5 &&
+            sfx.profile(WEAPONS.SHOTGUN).crackT > sfx.profile(WEAPONS.ASSAULT_RIFLE).crackT`),
+     'blast edge, not a bullet wave');
+  ok('and it is the heaviest thing in the small-arms rack',
+     probe(`sfx.profile(WEAPONS.SHOTGUN).shockT > sfx.profile(WEAPONS.REVOLVER).shockT &&
+            sfx.profile(WEAPONS.SHOTGUN).gain >= sfx.profile(WEAPONS.PISTOL).gain`), 'longest shock, highest level');
   ok('the rifle cracks hardest of the small arms',
      probe(`sfx.profile(WEAPONS.ASSAULT_RIFLE).crack > sfx.profile(WEAPONS.REVOLVER).crack &&
             sfx.profile(WEAPONS.REVOLVER).crack > sfx.profile(WEAPONS.SMG).crack`), 'rifle > revolver > SMG');
   ok('the big bores ring for longer afterwards',
      probe('sfx.profile(WEAPONS.ROCKET_LAUNCHER).tail > sfx.profile(WEAPONS.SHOTGUN).tail && sfx.profile(WEAPONS.SHOTGUN).tail > sfx.profile(WEAPONS.SMG).tail'),
      'rocket > shotgun > SMG');
-  ok('lasers keep their sawtooth -- they are meant to sound electronic', (() => {
-    nodes = []; probe('sfx.activeVoices = 0; sfx.shoot("RED_LASER", 0, 0)');
-    return nodes.some(n => n.kind === 'osc' && n.type === 'sawtooth');
-  })(), 'energy path unchanged');
-  ok('and the arc cannon is a discharge, not a cartridge', (() => {
-    nodes = []; probe('sfx.activeVoices = 0; sfx.shoot("LIGHTNING", 0, 0)');
-    return nodes.some(n => n.kind === 'osc' && n.type === 'sawtooth');
-  })(), 'routed to the energy profile');
+  ok('every energy weapon has a profile of its own', (() => {
+    const k = ['"ORANGE_BEAM"', '"RED_LASER"', '"ALIEN_LASER"', '"LIGHTNING"', 'WEAPONS.TASER']
+      .map(w => probe(`sfx.profile(${w}).key`));
+    return new Set(k).size === k.length;
+  })(), 'beam / laser / alien / lightning / taser');
+}
+
+console.log('== nothing squeaks ==');
+{
+  const ctl = partialSlope(risingSaw(), 0.16);
+  ok('the control -- the beam as it was -- reads as a rising partial', ctl > 2,
+     '+' + ctl.toFixed(1) + ' octaves/sec');
+  const ENERGY = [['beam', '"ORANGE_BEAM"'], ['laser', '"RED_LASER"'], ['alien', '"ALIEN_LASER"'],
+                  ['lightning', '"LIGHTNING"'], ['taser', 'WEAPONS.TASER']];
+  let worst = -99, worstName = '';
+  for (const [n, w] of ENERGY) {
+    const sl = partialSlope(shotOf(w), 0.16);
+    if (sl > worst) { worst = sl; worstName = n; }
+  }
+  ok('no energy weapon glides upward', worst <= 0,
+     `worst is ${worstName} at ${worst >= 0 ? '+' : ''}${worst.toFixed(1)} octaves/sec`);
+  let gWorst = -99, gName = '';
+  for (const w of GUNS) {
+    const sl = partialSlope(shotOf(w), 0.12);
+    if (sl > gWorst) { gWorst = sl; gName = w.replace('WEAPONS.', ''); }
+  }
+  ok('and neither does any firearm', gWorst <= 0,
+     `worst is ${gName} at ${gWorst >= 0 ? '+' : ''}${gWorst.toFixed(1)} octaves/sec`);
+  ok('the robot is hit and killed as metal, not as a voice', probe(`(function () {
+    const before = sfx.shots['metal:armour'];
+    sfx.hitArmor(0, 0); sfx.deathGrunt(0, 0, 'ROBOT');
+    return !!sfx.shots['metal:armour'] && !!sfx.shots['metal:chassis'];
+  })()`), 'modal clank and chassis collapse');
+  ok('its modes are inharmonic, so it clanks rather than chimes', (() => {
+    const r = JSON.parse(probe(`JSON.stringify(sfx.METAL.armour.modes.map(m => m[0]))`));
+    return r.every(v => Math.abs(v - Math.round(v)) > 0.05 || v === 1);
+  })(), 'no whole-number ratios');
 }
 
 console.log('== no two shots are the same shot ==');
