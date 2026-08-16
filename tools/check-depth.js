@@ -305,12 +305,230 @@ console.log('\n== every mass uses the one projection ==');
 // buildings, props and figures all through massLean/drawMassSides, so retuning
 // MASS_LEAN moves the whole world together.
 ok('buildings go through drawMassSides()', /if \(rise > 0\) drawMassSides\(/.test(src));
-ok('figures lean by CHAR_RISE, and airborne ones do not',
-   /massLean\(this\.x, this\.y, CHAR_RISE, _leanTmp\)/.test(src) &&
-   /BIOME_ACTIVE && !CHAR_AIRBORNE\[this\.eType\]/.test(src));
-ok('parked cars lean as well', /function drawParkingCars\(\)[\s\S]{0,400}?massLean\(/.test(src));
+// Figures are deliberately NOT leaned. It was tried and reverted: parallax
+// sells height as a ratio of displacement to size, and a figure is too small
+// to have one -- the riser under it read as a dark blob stuck to the model.
+// Their third dimension is the rig's marched shadow plus the depth sort.
+ok('figures are deliberately not run through the projection',
+   !/drawFigureRiser/.test(src) && !/CHAR_RISE/.test(src),
+   'no riser, no figure lean');
+ok('and neither are parked cars',
+   !/function drawParkingCars\(\)[\s\S]{0,400}?massLean\(/.test(src));
 ok('a figure keeps its feet where the depth sort and the rig expect them',
    /push\(\); translate\(this\.x, this\.y\);/.test(src));
+
+console.log('\n== the legacy flags are masses now, and safely ==');
+// Every branch in drawBuildings() ends in `continue`, so the lean around them
+// cannot be a plain push/pop -- the close is deferred to the top of the next
+// iteration. The failure mode is an unbalanced transform, and it is silent.
+const lm = /const LEGACY_MASS = \{([\s\S]*?)\n\};/.exec(src);
+const lmkeys = lm ? (lm[1].match(/(is\w+):/g) || []).map(x => x.slice(0, -1)) : [];
+ok('LEGACY_MASS exists and covers the frontier, the city blocks and the scatter props',
+   lmkeys.length >= 24, lmkeys.length + ' flags');
+ok('the walk-past props are in -- crates, rocks, bales, wagons, cacti, palms',
+   ['isCrateProp','isRock','isHayBale','isWagonProp','isCactusProp','isPalm']
+     .every(k => lmkeys.includes(k)));
+// A flag with no branch is a skirt drawn for nothing; worse, a typo is silent.
+const bodyFn = src.slice(src.search(/function drawBuildings\s*\(/), src.indexOf('function drawParkingCars()'));
+const ghosts2 = lmkeys.filter(k => !new RegExp('b\\.' + k + '\\b').test(bodyFn));
+ok('every flag is one drawBuildings() actually dispatches on', ghosts2.length === 0,
+   ghosts2.join(' ') || 'all reachable');
+ok('the two long slabs and the energy barrier are out of the table',
+   !lmkeys.includes('isGovFortress') && !lmkeys.includes('isUBarrier') &&
+   !lmkeys.includes('isGiantBarrier'), 'no isGovFortress / isUBarrier / isGiantBarrier');
+ok('the rise is buildingRise(b), the same number the shadow is cast with',
+   /const _lr = buildingRise\(b\);[\s\S]{0,120}?massLean\(b\.x, b\.y, _lr/.test(bodyFn));
+ok('the close is deferred past the branch continues',
+   /_lgClose\(\);\s*\n\s*if \(!inView/.test(bodyFn) && /}\s*\n\s*_lgClose\(\);\s*\n}/.test(bodyFn));
+
+// And prove the balance over a biome that actually generates these flags.
+probe(`
+  currentLevel = 3; currentBiome = 3; BIOME_ACTIVE = true;
+  authoredCore = null; authoredChunks = null; authoredMask = null; biomeState = {};
+  viewLeft = -1e5; viewRight = 1e5; viewTop = -1e5; viewBottom = 1e5;
+  width = 1200; height = 800; zoom = 1; camX = -600; camY = -400;
+  var all3 = [], flags3 = {};
+  for (var cx = -8; cx <= 8; cx++) for (var cy = -8; cy <= 8; cy++) {
+    var ch = generateChunkContent(3, cx, cy);
+    for (var i = 0; i < ch.solid.length; i++) {
+      var sld = ch.solid[i];
+      all3.push(sld);
+      for (var k in sld) if (k.slice(0,2) === 'is' && sld[k] === true) flags3[k] = 1;
+    }
+  }
+  activeBuildings = all3;
+  __flags3 = Object.keys(flags3).length;
+  __depth = 0; __minDepth = 0; __maxDepth = 0;
+  drawBuildings();
+`);
+ok('drawBuildings() stays balanced across the frontier',
+   probe('__depth') === 0 && probe('__minDepth') === 0,
+   'net ' + probe('__depth') + ' over ' + probe('activeBuildings.length') + ' solids, ' +
+   probe('__flags3') + ' distinct flags');
+
+console.log('\n== the Great Gates and the curtain wall ==');
+// Slabs longer than the screen. Three things have to hold and every one of them
+// fails silently: the lean cannot be taken at the record's own centre (which is
+// usually off screen, where the clamp returns the same extreme everywhere), the
+// face has to be clamped or its mullion loop runs the length of the wall, and a
+// BREACHED gate must not have its face painted across the opening — that puts a
+// wall back in front of the road the objective has just announced as open.
+{
+  // Sector 1's south gate: 9600 x 800 at (600, 5400), door 600 wide at its
+  // centre. Camera south of it, so the lean opens the face toward the player.
+  const setup = (open) => probe(`
+    isStoryMode = false; townsData = {}; startAtLevel(1);
+    currentLevel = 1; currentBiome = 1; BIOME_ACTIVE = true;
+    width = 900; height = 560; zoom = 900 / 6000;
+    camX = 600 - 3000; camY = 6600 - 1860;
+    viewLeft = camX; viewRight = camX + 6000;
+    viewTop = camY; viewBottom = camY + 3720;
+    nm0AmbushActive = false; window.nm0AmbushClearedStatus = true;
+    window.southGateBreachedStatus = ${!!open}; window.towersDefeated = ${!!open};
+    activeBuildings = buildings.filter(function (b) {
+      return b.isGovFortress || b.isGiantBarrier;
+    });
+    __gate = activeBuildings.filter(function (b) { return b.isGovFortress && b.y > 0; })[0];
+    __quads = []; __lines = 0;
+    __realQuad2 = quad; __realLine2 = line;
+    quad = function (x0, y0, x1, y1, x2, y2, x3, y3) { __quads.push([x0, x1, x2, x3]); };
+    line = function () { __lines++; };
+    __depth = 0; __minDepth = 0;
+    push = function () { __depth++; };
+    pop  = function () { __depth--; if (__depth < __minDepth) __minDepth = __depth; };
+    drawBuildings();
+    quad = __realQuad2; line = __realLine2;
+    push = __realPush; pop = __realPop;
+  `);
+
+  setup(false);
+  ok('the gate is found and shut', probe('!!__gate') && probe('!gateIsOpen(__gate)'));
+  ok('shut, drawBuildings() stays balanced',
+     probe('__depth') === 0 && probe('__minDepth') === 0, 'net ' + probe('__depth'));
+  const shutQ = probe('__quads.length'), shutL = probe('__lines');
+  ok('the slab throws a face', shutQ > 0, shutQ + ' quads');
+  // Unclamped this is one sweep of each slab's full length at pitch 110: 87 for
+  // each 9600 gate and 95 for each 10400 wall, times four slabs, every frame,
+  // for the dozen lines the camera can actually see.
+  ok('its mullions are clamped to the view, not to the 9600-unit wall',
+     shutL < 150, shutL + ' lines against ~360 for four unclamped slabs');
+  ok('and a slab whose short axis is off screen draws nothing at all',
+     shutQ === 1, shutQ + ' quads — the north gate and both walls are out of view');
+
+  setup(true);
+  ok('breached, the gate reports open', probe('gateIsOpen(__gate)'));
+  ok('breached, drawBuildings() stays balanced',
+     probe('__depth') === 0 && probe('__minDepth') === 0, 'net ' + probe('__depth'));
+  // The doorway. No face quad may span it: the two runs stop at the jambs.
+  const gx = probe('__gate.x'), half = probe('GATE_DOOR_HALF');
+  const quads = probe('__quads');
+  let across = 0;
+  for (const q of quads) {
+    const lo = Math.min.apply(null, q), hi = Math.max.apply(null, q);
+    // A quad that starts left of the door and ends right of it is painted over
+    // the opening. The jamb face is allowed — it lives inside the doorway and
+    // spans only the lean, which is far narrower than the 600-unit door.
+    if (lo < gx - half + 1 && hi > gx + half - 1) across++;
+  }
+  ok('no face is painted across the open doorway', across === 0,
+     across + ' of ' + quads.length + ' quads span the gap');
+
+  // The jamb only exists when there is along-axis parallax to reveal it, which
+  // means the doorway has to be off the middle of the screen. Standing square
+  // in front of it there is nothing to see and nothing is drawn — that is the
+  // correct answer, not a missing case, so it has to be checked from a camera
+  // that is actually looking at the door from one side.
+  probe(`
+    camX = 600 + 1200 - 3000; viewLeft = camX; viewRight = camX + 6000;
+    __quads = []; __realQuad2 = quad;
+    quad = function (x0, y0, x1, y1, x2, y2, x3, y3) { __quads.push([x0, x1, x2, x3]); };
+    __depth = 0; __minDepth = 0;
+    push = function () { __depth++; }; pop = function () { __depth--; if (__depth < __minDepth) __minDepth = __depth; };
+    drawBuildings();
+    quad = __realQuad2; push = __realPush; pop = __realPop;
+  `);
+  const off = probe('__quads');
+  // The jamb is the one quad narrower than the doorway and sitting inside it.
+  const jambs = off.filter((q) => {
+    const lo = Math.min.apply(null, q), hi = Math.max.apply(null, q);
+    return hi - lo < half && lo >= gx - half - 1 && hi <= gx + half + 1;
+  });
+  ok('seen from one side, the doorway reveals exactly one jamb',
+     jambs.length === 1, jambs.length + ' jamb faces of ' + off.length + ' quads');
+  // The camera is EAST of the door, so the door sits left of the principal
+  // point, its top slides further left, and the face that comes into view is
+  // the EAST jamb's — the one at gap1, reaching back into the opening. Getting
+  // this backwards draws the reveal on the wrong side of a hole, which reads as
+  // the passage bending.
+  ok('and it is the jamb the top slid over, not the one it slid away from',
+     jambs.length === 1 && Math.abs(Math.max.apply(null, jambs[0]) - (gx + half)) < 1,
+     jambs.length ? 'outer edge at x ' + Math.max.apply(null, jambs[0]).toFixed(0) +
+                    ', east jamb is at ' + (gx + half) : '');
+  ok('the off-centre view is still balanced',
+     probe('__depth') === 0 && probe('__minDepth') === 0, 'net ' + probe('__depth'));
+}
+
+console.log('\n== figures get volume from shading, not from displacement ==');
+// The projection cannot help at figure scale, so the three terms that DO
+// survive twenty pixels are used instead: a contour, a lit cap and a
+// terminator, all offset along the scene's one light vector.
+ok('volShade() exists and is driven by a light vector it is handed',
+   /function volShade\(x, y, w, h, cr, cg, cb, k, lx, ly\)/.test(src) &&
+   /lx = LIGHT_DX; ly = LIGHT_DY;/.test(src) &&
+   /lx \* w \* off \* k/.test(src) && /lx \* w \* 0\.19/.test(src));
+ok('the lit side is stepped, not a single inset cap',
+   /for \(let i = 1; i <= VOL_STEPS; i\+\+\)/.test(src) && /const VOL_STEPS/.test(src));
+ok('the contour is canvas STATE, so parts added later inherit it',
+   /function figureContour\(\)/.test(src) &&
+   /volShade[\s\S]{0,2400}?figureContour\(\);\n}/.test(src));
+const contourSites = (src.match(/figureContour\(\)/g) || []).length;
+ok('and it is switched on for the torso, the limbs and the citizens',
+   contourSites >= 5, contourSites + ' call sites');
+const bodySites = (src.match(/volShade(?:Col)?\(0, 0, this\.bodyW, this\.bodyH/g) || []).length;
+ok('every body -- player, enemy, citizen, gator, cow -- uses the one helper',
+   bodySites === 4, bodySites + ' call sites');
+{
+  // Every body call site must be behind a BIOME_ACTIVE guard (Levels 0 and 8
+  // are closed interiors composed against the flat look) and must be handed a
+  // counter-rotated light. Checked per site rather than as one big pattern, so
+  // a fifth animal added without either is a failure and not a silent pass.
+  const re = /volShade(?:Col)?\(0, 0, this\.bodyW/g;
+  let m, guarded = 0, lit = 0, total = 0;
+  while ((m = re.exec(src))) {
+    total++;
+    const before = src.slice(Math.max(0, m.index - 460), m.index);
+    if (/BIOME_ACTIVE/.test(before)) guarded++;
+    if (/figureLight\(/.test(before.slice(-200))) lit++;
+  }
+  ok('none of it runs outside a biome, so Levels 0 and 8 are untouched',
+     total === 4 && guarded === 4, guarded + '/' + total + ' guarded');
+  ok('and every one of them is handed the light in its own frame',
+     total === 4 && lit === 4, lit + '/' + total + ' counter-rotated');
+}
+
+// A figure is drawn INSIDE rotate(facing), and rotate() carries the light round
+// with it. Left in world space the highlight sat on the model's own left
+// shoulder whichever way it pointed, so a squad facing four ways had four suns.
+// The property that has to hold is a round trip: bring the light into the
+// figure's frame, rotate it back out by the same angle, and it must be the
+// scene's one light vector again — for every facing, not just the axes.
+ok('figureLight() counter-rotates, so a turning figure keeps one sun',
+   /function figureLight\(ang\)/.test(src) &&
+   /-LIGHT_DX \* s \+ LIGHT_DY \* c/.test(src));
+{
+  const LDX = probe('LIGHT_DX'), LDY = probe('LIGHT_DY');
+  let worst = 0;
+  for (let i = 0; i < 24; i++) {
+    const a = (i / 24) * Math.PI * 2;
+    const l = probe(`figureLight(${a}).slice()`);
+    // Back out of the figure's frame: rotate by +a.
+    const bx = l[0] * Math.cos(a) - l[1] * Math.sin(a);
+    const by = l[0] * Math.sin(a) + l[1] * Math.cos(a);
+    worst = Math.max(worst, Math.abs(bx - LDX), Math.abs(by - LDY));
+  }
+  ok('and the round trip is exact at every facing', worst < 1e-9,
+     'worst error ' + worst.toExponential(1));
+}
 
 console.log('\n== drawBiomeProps() leaves the transform balanced ==');
 // The lean wraps the whole switch, so a case that returned or continued would

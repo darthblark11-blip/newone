@@ -691,19 +691,154 @@ inside its own box) came out as a rectangular slab standing behind a rock. Decks
 (`BRIDGE`, `CANALBRIDGE`, `BOARDWALK`) are deliberately absent: a surface you stand on
 with walls round it reads as a crate lying in the river.
 
-**A figure is a mass too**, leaning by `CHAR_RISE` from `Character.show()`'s own
-translate — far below a building's rise, because a figure displaced by its own body
-length reads as a sprite that has come unstuck from its feet. Airborne units are excluded
-for the same reason they are kept out of the rig's height field (`CHAR_AIRBORNE`). The
-lean moves the body and never the feet: collision, the contact point the depth sort uses
-and the rig's height ellipse all stay at `(x, y)`.
+### Figure volume
 
-**Still flat, and the next thing to convert:** the per-flag branches in `drawBuildings()`
-— `isHouse`, `isBarn`, `isWesternBldg`, `isGiantBarrier`, `isShanty` and the rest. They
-are reachable the same way, but each needs its rise and its side colour chosen against
-its own art, so they want doing a cluster at a time with something rendered to look at.
+A figure gets its third dimension from **shading**, never from the projection.
+`volShade(x, y, w, h, r, g, b, k, lx, ly)` is the one function, and it draws three terms
+in this order:
 
-Three things about it are load-bearing:
+1. a **contour**, applied as the fill's own stroke so it hugs the silhouette exactly.
+   This is the single biggest read — a stroked silhouette is why a figure sits in a scene
+   instead of floating over it;
+2. a **terminator**, one weak crescent on the far side. Strong, it reads as a stain lying
+   on the shirt rather than as the surface turning;
+3. the **lit side**, as `VOL_STEPS` nested ellipses each pushed a little further against
+   the sun at low alpha. A single inset highlight is a second disc sitting on the first
+   and the join between them is a visible ring; four shrinking ones accumulate into a
+   gradient, which is the only way a flat-fill renderer gets one.
+
+All three offset along the light, so a figure is lit from the same place as every wall
+and roof — but see below: it has to be the light **in the figure's own frame**.
+
+**A leg has to narrow all the way down, or it is a sausage.** Drawn with a full round cap
+at each joint, the thigh, the shin and the boot all came out at about the same width and
+overlapped into one uniform lozenge — no knee, no ankle, and a 9.6-wide dome at the hip
+that on the trailing leg of a stride is a balloon hanging off the back of the figure. It
+takes the same two things the arm needed: a real taper (hip 9.6, knee 7.4, ankle 5.9) and
+a trimmed cap at the top, where the pelvis is under the torso anyway.
+
+**Anything worn on the body has to be measured off the DRAWN torso, not the collision
+box.** The jetpack sat at fixed offsets from `bodyW`, so narrowing the torso left it
+floating clear of the spine with ground showing between. Measured off
+`bodyW * TORSO_DEPTH` it stays put whatever the depth becomes.
+
+**A torso is drawn narrower than it collides.** `bodyW` is the front-to-back axis and
+`bodyH` is across the shoulders, so a standard figure is 21 deep by 27 wide — near enough
+a circle, and a circle from above is the flat oval blob. A real person is about 45cm
+across by 25cm deep. `TORSO_DEPTH` (0.84) squashes the drawn depth and stops short of the
+true 0.55, because a figure this small still has to read as a body rather than a plank.
+It is one transform rather than twenty edits: every rect, arc and strap of attire is
+positioned against `bodyW` and compresses with it, so a coat still fits the body it is
+on. The limbs sit outside it and keep their own proportions, and `bodyW`/`bodyH`
+themselves are untouched — collision, the corpse rig, the contact shadow and the rig's
+height field all still measure the same person.
+
+**The sun has to be counter-rotated in, or it turns with the model.** Every body in this
+file is drawn inside `rotate(aimAngle)`, and `rotate()` carries `LIGHT_DX/DY` round with
+it — the same trap the prop shadows have. Written in world space the highlight sat on a
+figure's own left shoulder whichever way they were pointing, so a squad facing four ways
+had four suns and none of them agreed with the buildings behind. `figureLight(ang)`
+rotates the world vector by `-ang` and every body call site passes the result. The
+property is a round trip — bring the light in, rotate it back out by the same angle, get
+`LIGHT_DX/DY` — and `check-depth.js` asserts it at 24 facings rather than at the axes,
+because the axis cases pass under a sign error.
+
+**The animals go through it too, and they were the worst without it** — the cow at 55
+across and `ALIEN_GATOR` at 63 × 81 are the widest bodies in the game, so the flattest as
+a bare fill. The horse is the exception that keeps its own art: it is already composed
+out of hindquarters, ribcage and two flank bands rather than one oval, so it takes the
+contour and has its **flanks** driven by `figureLight` instead — lit band on the sun's
+side, shaded band on the far one. Pinned above the backbone, which is what they were, a
+horse walking a circle carried its highlight round with it.
+
+**The contour is canvas STATE, not a per-part call.** A person is a couple of dozen
+ellipses — sleeves, hands, boots, packs, hats — spread over a dozen pose branches, and
+stroking each at its own call site means touching every branch and missing the next one
+somebody adds. `figureContour()` is set once before the body goes down and `volShade()`
+hands it back on the way out, so everything drawn after inherits it. The two places that
+must switch it back on explicitly are the ones that legitimately clear it: the blood
+decals (stains take no contour) and the `limb()` rig, which runs before the torso.
+
+**Figures are deliberately NOT leaned, and the attempt is worth remembering.** A riser
+capsule swept from the feet to a leaned body was built, rendered, shipped and reverted on
+sight: parallax sells height as a **ratio** of displacement to size, and a figure a
+couple of dozen pixels across is too small to have one — the riser read as a dark blob
+stuck to the model, worst on the wide animals. A figure's third dimension comes from the
+two systems that already carry it: the deferred rig marching a real cast shadow off its
+height ellipse, and the depth sort walking it in front of and behind the masses. Do not
+reintroduce a drawn side on anything smaller than a crate.
+
+### The living figure is the same build as its own corpse
+
+The swap between the two happens in one frame, in front of the player, so a figure whose
+arms and legs change proportion as it falls is two different people. `ragRig()` is where
+this game's anatomy lives (see **How a body comes to rest**), and the living figure reads
+it rather than keeping a second set of numbers in step: `figureRig(bW, bH)` **is**
+`ragRig(bW, bH)`, and both draw sites and `check-character.js` read that one function.
+
+Two things are converted on the way across, and getting either wrong makes the living
+figure a different build:
+
+- **Scale.** A corpse is drawn inside `RAG_SCALE`, so the rig's raw numbers are not what
+  is on the screen — a 10.5 upper arm is *painted* at 8.4. Matching the corpse means
+  matching what it draws, so `figureRig()` pre-scales the whole rig and callers read
+  finished widths. Read raw, the living arm came out a quarter fatter than the arm it
+  turns into.
+- **Length, per limb.** A body on the ground is seen at full extension from directly
+  above; a body standing up is seen down its own axis. Widths, taper and the two-bone
+  split carry over untouched — only the along-the-limb extent is compressed, and by
+  different amounts, because a leg hangs near-vertical (`STAND_FORE_LEG` 0.46) while an
+  arm swings through a wide arc out in front where much more of it lies across the view
+  (`STAND_FORE_ARM` 0.65). The **boot** takes no foreshortening at all: a foot is the one
+  part of a standing body lying flat to this camera.
+
+Both limbs use `ragLimb()`'s shape language — each segment an ellipse `length + its own
+width` long, so the caps round the joints off either end and the two overlap into one
+taper instead of butting at the elbow.
+
+**Fit the segments to the hand, never the other way round.** The hand is worked out once
+per side and the limb is then drawn to reach it. Deriving the two independently — which
+is what a `Math.max(rig.upper, …)` floor does — put a whole forearm past the end of a
+reach that was shorter than the bone, and the arm came out as a chain of lobes pointing
+away from the body, worst at rest where the reach is near zero and the direction is
+whatever `atan2` makes of it. `check-character.js` measures the drawn tip against the
+drawn hand through the transform, so it catches this without re-deriving the arithmetic.
+
+**Slabs longer than the screen — the Great Gates and the curtain wall.** These are the
+two structures the first conversion left out, and both were left out for reasons that
+are still true; they take a separate path (`longMassLean`, `drawSlabFace`) rather than a
+`LEGACY_MASS` entry.
+
+- **One lean will not do, and the record's own centre is the worst possible choice for
+  it.** `massLean()` is a function of *position* and a wall crossing the whole view spans
+  the range of it — worse, the middle of a 9600-unit gate is usually off screen, where
+  the clamp hands back the same extreme lean everywhere. What rescues it: the component
+  that *varies* along a long slab is the one pointing **along** it, and sliding a long
+  band along its own length changes nothing you can see. The component **across** it — the
+  one that opens the visible face — is identical at every point, because every point
+  shares the across-axis coordinate. So the lean is taken at the point of the slab nearest
+  the middle of the screen: exact where the player is looking, invisible everywhere else.
+- **A gate anchors on its doorway instead.** The door is the one place on a long wall
+  where the along-axis component *is* visible — it is what reveals the jamb and gives the
+  passage thickness — so the gate pins its anchor there and lets the rest of the wall
+  slide sideways.
+- **`drawMassSides()` is the wrong shape of answer.** It draws all four faces off the
+  record's rect, so clamping its span to the view stands a fake end-cap wherever the clamp
+  falls. A long wall shows **one** face; its two real ends are half a kilometre away. The
+  clamp is not for the quad — the rasteriser clips that for free — it is for the mullion
+  loop, which unclamped runs the full length of every slab every frame. A slab whose short
+  axis is off screen returns immediately, because `inView()` cannot reject it: the pad it
+  uses is the record's longest side, so a gate a kilometre north still passes.
+- **A breached gate must have a hole left in its face.** An open gateway is something you
+  walk through, and a face painted across it puts a wall back in front of the road the
+  objective has just announced as open. `drawSlabFace` takes a gap and draws exactly one
+  jamb — the near one, whose top slides across the opening and reveals its own inward
+  face; at the far side the top slides *off* the opening and reveals nothing but ground.
+
+`isUBarrier` stays out on purpose (an energy field has no mass) and so does
+`isBlockBuilding`, which already carries its own rise.
+
+Three things about the projection are load-bearing:
 
 1. **It is not the light vector.** The walls used to extrude along `LIGHT_DX/DY`, so
    every building in the city leaned the same way its own shadow fell and the two merged
@@ -729,7 +864,10 @@ a footprint, several characters interleaved, nothing dropped or drawn twice, pro
 to the right pass) and the projection (the lean reverses across the view where the sun
 does not, the footprint stays on the collision rect, the visible faces flip in all four
 quadrants, and `drawBuildings()` leaves the canvas transform balanced over every solid a
-city chunk can produce).
+city chunk can produce). It also holds the figure-volume line: that every body — player,
+enemy, citizen, gator, cow — goes through the one helper, behind a `BIOME_ACTIVE` guard,
+handed a counter-rotated light, and that `figureLight()` round-trips exactly at 24
+facings.
 
 ### Elevation
 
@@ -1507,6 +1645,19 @@ transform. Every proportion above survives it — a smaller person, not a differ
 one. It puts a body at about 2.2× the standing body length, or ~1.5× the standing figure's
 drawn extent.
 
+**A corpse carries the same contour the living figure does.** `ragContour(r, a)` — the
+swap between the two happens in one frame, in front of the player, and a body that loses
+its outline as it falls reads as the art changing rather than as somebody dying, which
+is exactly how it looked: stroked figures standing over flat silhouettes lying in the
+road. Two conversions, both easy to get wrong. The weight is divided by `RAG_SCALE`,
+because the body is drawn inside that scale and a stroke scales with the transform. And
+the alpha follows the corpse's own fade, or a body going out leaves a wire drawing of
+itself behind. Blood takes no contour and clears it — an outlined pool reads as an object
+lying beside the body rather than a stain under it — and the part drawn after each pool
+turns it back on, the same handover `volShade()` does for the living figure. It also
+survives `stampCorpse()`, which runs the same path with the blood layer as its target, so
+the line is baked in with the body instead of vanishing the moment a corpse retires.
+
 ### What a headshot leaves on the body
 
 Every death that takes the head off already throws a pool onto the *ground* around it, and
@@ -1670,6 +1821,451 @@ worth having if it can never *miss*.
 
 ---
 
+## Gait — walk, jog, run
+
+One throttle drives everything a moving figure does. The player's left stick is already
+normalised to its own radius, so its magnitude **is** the throttle: **1–32% walk, 33–65%
+jog, 66–100% run**. `gaitPose(t)` turns it into the numbers every pose reads, and
+`GAIT_EASE` smooths it first — a thumb reaches 100% in one frame and a body does not, so
+without the ease the arms snap to a full running stride on the frame the stick moves,
+which reads as the animation being *switched* rather than the figure accelerating.
+
+**These are not three animations with a switch between them.** A switch at 32% would pop,
+and a thumb resting near a band edge crosses it several times a second. Every parameter
+interpolates across the whole range on its own curve and the band edges are only where
+those curves change slope. Internally that is one number, `band` ∈ [0,3]: whole numbers
+are the band edges, the fraction is where in the band the thumb is sitting, and every
+parameter is linear in *that* rather than in the throttle. `check-character.js` sweeps 400
+throttles and asserts no parameter steps anywhere.
+
+From directly above, four things tell the three gaits apart:
+
+- **cadence** — how fast the cycle turns over. It deliberately does *not* scale with
+  speed: most of the extra pace in a run is a longer stride, not a faster one, so cadence
+  rises about half as fast as the throttle. (The old flat `0.25` is now the top of the
+  jog band, so running feels the same and walking is genuinely slower.)
+- **swing** — stride and arm amplitude, which is the other half of the speed.
+- **bend** — **zero across the whole walk band**, which is what makes a walk look like a
+  walk: a near-straight arm swinging from the shoulder. A jog and a run fold the elbow.
+- **twist** — the shoulders counter-rotating against the hips, which are drawn at
+  `moveAngle` and do not turn with them. This is the clearest cue at this camera angle,
+  because it is the only one that changes the figure's **silhouette** rather than moving a
+  limb around inside it. Suppressed whenever the weapon is up: the muzzle offsets are
+  measured in that frame, so twisting it walks the rounds off the aim laser.
+
+**The arc, not the reach, is what a run adds.** A jog and a run bring the hands *in*
+laterally — a runner's hands sweep across the front of the chest, ending near the body's
+own centreline — while their **fore-and-aft travel grows**. Shrinking the whole reach to
+make the elbow fold was backwards: it folded the arm and took the axial swing away with
+it, so a run had bent arms that barely moved. The forward and trailing halves of the arc
+are separate terms, because a hand pushed out on the back stroke as far as it comes in on
+the front is the crab again.
+
+**Foreshortening is not a constant across the gait.** An arm swinging hard at a run lies
+far more across the view than one hanging at a walk, so it loses much less of its length
+to the projection. Held at the walk's `STAND_FORE_ARM`, the reach clamp was capping the
+run at the walk's arc.
+
+**The elbow is PLACED, not solved.** A two-bone solve is the right tool when both ends are
+pinned in three dimensions; here they are not. Handed a hand that has come in close —
+which is exactly what a run does — the solve answers with the elbow flung out to the side,
+because sideways is where the arithmetic has room. That is the flare, and capping it does
+not fix the *direction*. What an elbow actually does from overhead is almost nothing
+laterally: it stays a shade outside the shoulder and travels fore and aft at about half
+the hand's excursion, trailing it. Two lines. The bone lengths are then imposed by
+**relaxation** — a couple of passes pulling the elbow back inside each end's reach — which,
+unlike a solve, can only ever shorten what is already there and can never invent a
+direction.
+
+**The sleeve is drawn a shade under the torso.** Same garment, but an arm lying over a
+chest of exactly the same value has nothing but its contour to separate it, and at twenty
+pixels that is not enough — the limb disappears into the body and a run reads as a torso
+with two hands orbiting it.
+
+### Three ways an arm rig goes wrong, and where the limits live
+
+- **The crab.** The shoulders were at −14 and +11 against a body half-height of 13.5, so
+  both sat *on* the silhouette before the arm had swung anywhere, and every unit of
+  outboard reach after that came off the far side of the torso. A shoulder joint belongs
+  well inside the chest (`bodyH * 0.425`, symmetric — a person is), and the hand's resting
+  station belongs *on* the body's own edge, not out from it. `check-character.js` sweeps
+  three gaits × sixteen phases and asserts no hand strays more than its own width past the
+  shoulder line, and separately that the fore-and-aft travel grows walk → jog → run.
+- **The bow tie.** Two bones cannot reach a point nearer than the difference between them,
+  and asking is not a near miss — it is a division that runs away. Mid-stride the hand
+  passes within a whisker of its own shoulder, and there an unclamped solve put the elbow
+  *thirty* units out on a seven-unit bone; the forearm then ran all the way back and the
+  arm crossed itself through the chest. The check asserts no drawn segment is ever longer
+  than the bone it represents.
+- **The flare** — see above. It is a direction problem, not a magnitude one, which is why
+  the answer was to stop solving.
+
+### Carrying a weapon, as opposed to presenting one
+
+`playerAiming()` is the switch, and it is the player only — everyone else presents,
+because the enemy muzzle offsets are tuned against the presented pose. Armed and *not*
+aiming, the gun comes down and the walking rig takes over.
+
+- **One-handed** hangs at the strong side, muzzle forward and canted outboard. Squared to
+  the facing it would read as an aim.
+- **Two-handed** (`weaponHands()`: assault rifle, shotgun, rocket launcher, coach gun)
+  lies **across the chest** at a walk and a jog — butt at the strong shoulder, muzzle past
+  the off shoulder, both hands on it, swaying with the stride. *Across*, not along: "parallel to the body"
+  from this camera has to mean the shoulder line, because a rifle pointed down the line of
+  travel is exactly what the aimed pose looks like from directly above, and the whole
+  point of a carry is that one glance tells you whether the weapon is up. It is also the
+  only arrangement where both grips land inside the arms' reach.
+
+**It stays across the chest at every pace.** Bringing it parallel with the line of travel
+at a sprint was tried and reverted: from directly above that *is* the aimed pose, and it
+costs the support hand its grip.
+
+**THE SPRINT ROCKS THE RIFLE AT HALF THE STRIDE RATE, and the frequency is the whole
+thing.** A man sprinting with a rifle at port swings it the way you rock a baby: one slow
+pendulum sweep across the body per *two* paces, not a flick on every footfall. Everything
+else on the figure rides `walkCycle`, and driving the weapon off it too is what made the
+sweep read as frantic however small the amplitude got — two passes shrank the swing and it
+still looked wrong, because the problem was never how far it went, it was how often.
+
+`rock = sin(walkCycle * 0.5)` is a **sub-harmonic of the same clock**, so it can never
+drift out of step with the legs, and blending it against the stride-rate sway by `runS`
+(`sway = beat + (rock − beat) * runS`) is continuous in time — the jog keeps what it had
+and the sprint arrives at the pendulum without a seam. `check-character.js` asserts the
+period directly: the pose repeats after two strides and visibly does not after one.
+
+**Flat out the rifle comes round to lie SQUARE ACROSS THE CHEST** — 69°–84° off the line of
+travel, butt at one shoulder and muzzle past the other, and **centred on the body** rather
+than anchored at the strong grip. Held at the jog's shallower cant, a forty-unit barrel put
+the muzzle *three body-depths out in front of the torso*: a man carrying a rifle beside
+himself rather than against himself. That is measured as a **position**, not a distance —
+the weapon's own middle has to sit on the torso.
+
+Centring it is what lets it come square without the butt hanging off his flank. It also
+means the strong grip is necessarily **outboard of the shoulder**: the weapon's middle is on
+the body, so its butt end is past him. The strong arm sits a few units outside the
+silhouette before the flare adds anything, and that is geometry rather than a fault. A
+47-unit rifle centred on a 27-wide man reaches past *both* shoulders; what it must not do is
+hang off one end like a plank.
+
+**Square across, the pendulum has to change form.** A *rotation* at this cant moves the
+muzzle fore-and-aft — the jab again, just at ninety degrees — because a muzzle's travel under
+rotation is perpendicular to the barrel, and the barrel is now across the man. So most of the
+rock becomes a **slide along the shoulder line**, which at this cant runs along the weapon's
+own length, and the turn is only what a shoulder roll gives it.
+
+**Flat out the whole weapon is carried further ACROSS than at a jog.** Gated on `runS`, so the
+walk and the jog are untouched, and it moves the grips, so the arms follow without a second
+adjustment.
+
+**And the strong-side elbow flares as the sprint comes on.** Both hands are locked to a
+weapon carried out in front of the chest, and the only place left for that arm to fold is
+outboard; tucked in at the shoulder it reads as the elbow being pinned to his ribs while the
+hands drive forward. The two halves of "a sleeve past the silhouette" are therefore checked
+separately, because only one of them is a fault: the **crossing** arm poking out past the
+far shoulder is the old clip and stays capped tight, while the **strong** elbow going
+outboard on its own side is where a sprinter's elbow belongs and is driven there on purpose.
+
+**The stride-rate sway gives way to the rock rather than riding on top of it.** Left in, it
+is a fast ripple laid over a slow pendulum — which is the fast wobble, however calm the
+pendulum underneath.
+
+**The muzzle lifts at the APEX of the rock**, at *both* ends of the pendulum — that is what
+`phase * phase` says in `longGunElevation()`, and what a rocking arm actually does. Through
+the middle of the sweep, where the weapon is travelling fastest, it rides deepest. That
+pairing is most of what makes the motion read as a pendulum rather than as a pan: a
+pendulum is slowest and highest at its ends, and "highest" is the one thing this camera can
+show directly. `longGunElevation(band, phase)` is where the arc lives, read by the draw site
+and by `check-character.js` alike, the same arrangement `carryElevation()` has.
+
+**The sway is quadratic in the band, not linear.** Linear, a walk carried nearly half the
+jog's sway, and at a walking pace there is very little for a rifle held in two hands to do —
+the man is strolling. Quadratic all but stills the walk.
+
+**But at a walk the sway was never most of the motion — the SHOULDER ROLL was.** A rifle in
+two hands is bolted to the shoulder girdle, so it rides `_tw` for free, and the muzzle sits
+the better part of forty units out from the body's centre: the twist swings it there
+whatever the sway does, and after the sway came down it was all that was left. A man walking
+with a rifle at the ready does not let that happen — the arms give, and the muzzle stays
+where he is looking while his shoulders work underneath it. **The arms absorb half of it**,
+countered on the weapon's own frame rather than by damping `GP.twist`, which belongs to the
+torso and everything else riding on it. Released over the run band, where the twist is one
+of the three terms driving the pendulum and taking it out would flatten the sweep.
+
+Between them: 1.6 units of muzzle travel at a walk and 4.2 at a jog, against 27 flat out.
+
+**The muzzle never comes up level, at any pace or phase.** A rifle that does is aiming,
+whatever its arms are doing — 24° down at a walk and a jog, 25°–47° through the sprint.
+
+**Three things move the muzzle sideways and all three have to push the same way, or they
+eat each other.** Getting any one sign wrong turned the sweep into a jab:
+
+1. **The shoulder twist the run already has.** The weapon is carried well in front of the
+   body's centre, so `_tw` swings it sideways for free — and it is the one term whose sign
+   is not ours to choose, so the other two are chosen to match it. Set against it, it
+   quietly ate six of eleven units of slide.
+2. **The slide across the chest**, on the same beat. One-sided on purpose: the weapon is
+   driven *across* to the off shoulder and comes back to the body, never past it. The
+   crossing arm is the binding constraint on this whole motion and the first thing to run
+   out; a symmetric slide throws the weapon far enough onto the strong side that the
+   support hand cannot reach its grip.
+3. **The roll**, what little of it there is, in the same direction.
+
+**Which AXIS the muzzle travels along is the property, not how far it goes.** An earlier
+version swung the weapon through a wide arc about the grips, and at a fifty-degree cant most
+of a rotation lands *along* the line of travel — 20 units fore-and-aft against 9 across,
+which reads as the rifle jabbing in and out. Rotation and translation are not
+interchangeable here; the cant decides which axis a term moves the muzzle along. The check
+is therefore a **ratio**, taken against the torso: the body itself bobs several units up the
+line of travel every stride, and that belongs to the run, not to the weapon.
+
+**The support hand goes out on the HANDGUARD**, forward of the receiver and well down the
+barrel, where a shooter actually puts it — and it rides the weapon's own foreshortening, so
+the grip stays on the handguard whatever attitude the barrel is at. Back at the receiver the
+weapon read as being cradled rather than held.
+
+**"Jerky" is measurable, and two of the three causes were in the ART rather than the pose.**
+Sampled at the cadence the run actually turns over at, a pose driven by smooth curves has a
+second difference about a third of its first; a pop spikes it. `check-character.js` measures
+exactly that. The two that were real:
+
+- **The band count was keyed to the projected length.** `gunPiece()` splits a piece into
+  bands to fake a gradient, and the count flipped from three to one as the weapon
+  foreshortened past nine units — so the shading appeared and disappeared mid-stride. It is
+  keyed to the piece's *authored* length now, which cannot change.
+- **The muzzle was two drawings with a switch between them.** Crown-and-front-sight below
+  level, bore above; at a sprint the sidearm's arc crosses level twice a stride, so it
+  popped between them twice a stride. The crown is always drawn now and the bore **opens out
+  of it** from zero width, with the front sight fading as the muzzle comes up.
+
+**The head does NOT cant to the weapon during a carry.** A long gun in the shoulder puts
+the shooter's cheek on the stock, and that offset (`hX`/`hY`) is what sells an aim from
+directly above — but a man carrying a rifle is looking where he is going, not down the
+sights. Left on through the carry it read as aiming at nothing, and it fought the whole
+point of the walk/jog/sprint poses, which is that one glance tells you the gun is down.
+
+**The weapon pivots about the HANDS, not about its own origin.** Swung about the origin the
+whole rotation lands in the strong hand — an eleven-unit radius on one grip and almost none
+on the other — so that arm runs out of reach and the clamp tears the hand off the gun. Held
+at the **midpoint of the two grips** both arms give a little. It is written as a correction
+against the *un-swept* angle, which is what keeps the walk and the jog identical.
+
+**The support hand chokes up as the sprint comes on.** Both what a man does with a weapon
+he is running with, and what keeps that grip inside the crossing arm's reach.
+
+**The support hand is on the HANDGUARD, not out at the muzzle**, and its elbow tucks in
+and down rather than staying at the shoulder. Out at four fifths of the barrel with the
+elbow left where a swinging arm keeps it, the whole arm dragged across the off shoulder
+and its sleeve poked past the silhouette on the far side — the clip.
+
+**A hand with a gun in it swings less — going FORWARD.** It is carrying something, and it
+is also why the sidearm used to sweep back over the shoulder: given the free arm's whole
+arc, a 17-unit weapon extending forward from the back of that arc lies right along the
+flank and covers the sleeve it is supposed to be hanging beside.
+
+**Going BACK it is let out, and the elbow goes behind him.** That is the one place an elbow
+really does travel a long way in this view: the hand is aft of the hip and the shoulder is
+not, so the joint between them has to be further aft still. Damped both ways and left on
+the generic elbow lead, the arm read as *holding* the gun rather than swinging it through,
+and the muzzle never got behind the body at all.
+
+**The wrist turns rearward with it, but only a little, and the limit is the PROJECTION
+rather than the pose.** Turned hard round, the weapon's plan direction ends up opposing the
+parallax droop instead of adding to it, and the two cancel: a 17-unit pistol came out drawn
+*two* units long, which is the vanishing the whole projection exists to prevent. What puts
+the gun behind him is the hand being behind him, not the muzzle swinging round.
+
+**The grip is UNDER the gun, not beside it.** A pistol's butt runs straight down from the
+rear of the frame, so from a bird's eye it is almost entirely hidden behind the slide and
+the fist round it — a couple of units of heel at the back and nothing more. Drawn as a
+full block hanging off the side it was as big as the weapon and the whole thing read as a
+black L lying on the man.
+
+**A carried weapon is DEPRESSED, and from directly above a depressed barrel is a SHORT
+one.** That foreshortening is the whole top-down read of "carried": a full-length bar
+lying flat on the screen is what a *levelled* weapon looks like, which is the aim. The
+sidearm's dip rides the swing, so it visibly extends as the wrist comes up at the front of
+the arc and retracts as the muzzle drops at the back; drawn rigid it read as a bar held
+out sideways. The grips are read in the dipped frame too, or the hands hold a gun that is
+no longer under them.
+
+**Both carry functions take an ELEVATION IN RADIANS, not a squash factor** — signed,
+negative for a muzzle at the ground. This matters because the squash is only `cos(el)` and
+**cosine is even**: from directly above, a barrel forty degrees below the horizontal and
+one forty above draw *exactly the same short bar*. A length can say the weapon is tilted;
+only a signed angle can say which way, and the art needs to know.
+
+`gunMuzzle()` is where the sign becomes something you can see, and the bore is the only cue
+that carries it. **Elevated**, the muzzle is turned toward the camera and the bore opens
+into a hole (capped at the barrel's own height — a bore wider than its tube reads as a
+funnel bolted on). **Depressed**, it is turned away: no hole at all, just the crown and the
+front sight standing on top of it, which is what you see looking at the upper surface of
+something pointing at your feet. Drawing the hole in both cases is what made a pistol
+carried muzzle-down read as one carried muzzle-up. `gunFaces()` fades the lit top plane by
+the same term, because a barrel swung up turns its *underside* to this camera.
+
+**`carryElevation(band, phase, moving)` is where a sidearm's arc lives**, and it is a
+three-way thing rather than one pose:
+
+| | where the muzzle points |
+|---|---|
+| standing | at the floor, arm at the side |
+| walk / jog | up toward level at the front of the arc, down again at the back — **never past the horizontal**, because a man at a walk is not presenting anything |
+| sprint | the same arc carries it **above** level, which is what a man running with a pistol actually does and the one thing in the pose that says sprinting rather than jogging |
+
+Both the arc's centre and its amplitude grow with the band, which is what makes the top end
+cross zero while the bottom stays at the floor. **The run band needs its own term on each**:
+spread linearly across all three bands, the numbers that put a sprint above level put a
+*jog* a degree or two above it too — and a degree above level is enough to flip the muzzle
+art, so a jog came out looking down the bore. It is one function because the draw site and
+`check-character.js` both read it; a second copy of the arithmetic in the check would only
+assert that the two copies agree. Same reason `figureRig()` is `ragRig()`.
+
+**A held weapon PIVOTS ABOUT THE HAND, and every carried weapon is authored with the grip
+at the origin so that pivot is just `v = 0`.** That one convention is what lets the
+projection be **affine**, and affine is not a nicety: a rigid rod stays straight under any
+real projection, so any fold in the maths is a fold you can see. Two versions had one — the
+squash and the height both applied only to the part *past* the grip and clamped flat behind
+it — and every weapon came out kinked at the wrist, a receiver and a barrel meeting in a V.
+Scaling about the *middle* was the original sin that hack was written to avoid (it slid the
+grip backwards out of the fist); putting the origin on the grip removes the reason for the
+hack entirely.
+
+**A squash on its own is orthographic, and orthographic is exactly the projection that
+cannot say which way a thing is tilted.** It scales the plan view down, and the result
+reads as the art being crushed — which is what "paper squishing" was. Four separate
+consequences of the muzzle being somewhere other than the height of the hand are drawn
+instead, and between them they are the optics:
+
+| | |
+|---|---|
+| **foreshortening** | the along-axis extent, `v · cos(el)`, about the grip |
+| **perspective** | and it **narrows** as it recedes. A far end subtends a smaller angle than a near one; a plain scale-down does not, and that missing taper is most of why a squash reads as paper. Each piece is a run of `quad()`s, so the taper is real geometry |
+| **parallax** | it is at a different **height** from the grip, and in this game a height difference is a displacement. Constant, cheap, and it **reverses with the elevation**, which is the thing a length can never do |
+| **occlusion** | the end nearer the ground sees less sky and goes darker, the end swung up lifts. Drawn as a few bands along each piece, which is the only way a flat-fill renderer gets a gradient — the same trick `volShade()` uses |
+
+**`GUN_TILT` is `MASS_TILT` — the same camera — at a stated share of it, and setting that
+share too low was most of the "paper" read.** The share exists because of the figure: a
+figure is deliberately not leaned at all (see *Figures are deliberately NOT leaned*), so the
+hand is at the body's own unleaned position and a weapon hanging off it can only take as
+much tilt as the body it is attached to will carry. Two thirds is the compromise, and both
+directions of the trade are real:
+
+- **Too low and the foreshortening reads as SHRINKING.** A rod at sixty degrees draws at
+  0.53 of its length under a third of the tilt and 0.73 under the whole of it, because the
+  part of the drop a plan view throws away is exactly the part the tilt turns into screen
+  displacement. The under-set constant was doing the crushing the projection was written to
+  stop.
+- **Too high and the shear runs away with the weapon.** For a barrel pointed *across* the
+  body the shear and the plan angle push the same way rather than cancelling, so a 47-unit
+  rifle came out drawn 55 long, and the whole pose had to be re-tuned around it.
+
+**Because the shear is real, the GRIPS have to be read in the drawn frame too.** They were
+placed along the plan axis while the art was drawn along the sheared one, which left a hand
+six units off the weapon it was supposedly holding — invisible at a third of the tilt,
+obvious at the whole of it. Both go through the same projection now.
+
+**THE PARALLAX IS TAKEN IN THE WEAPON'S OWN FRAME, NOT THE WORLD'S, and that is the one
+place this projection deliberately stops being honest.** A mass on the ground leans toward
+world south, so a building's lean is the same lean whichever way you walk past it. Written
+that way for a hand-held weapon it makes the drawn shape depend on **which way the player is
+facing**: the shear adds to the plan direction for a barrel pointed north and subtracts for
+one pointed south, so the same rifle drew **55 units long running east and 39 running
+west**. On a building that is perspective; on a weapon that turns with the player it reads
+as the art distorting as he changes heading — and it hits the two weapons on opposite
+headings, because the rifle is carried across the body and the sidearm along it.
+
+It is the same call the figures already make (see *Figures are deliberately NOT leaned*):
+parallax sells height as a ratio of displacement to size, and past a certain smallness the
+honest term reads as a defect. So the low end of a barrel is displaced toward the weapon's
+**own underside**. The shape is then identical at every heading, the drawn length is exactly
+`L · sqrt(cos²el + sin²el · GUN_TILT²)` whichever way he runs, and the cue still reverses
+with the elevation, which is all it was ever for. `check-character.js` asserts it at all
+eight headings, for both weapons, at a jog and a sprint.
+
+One knock-on: the shear now turns the drawn weapon a constant ~20° further across in its own
+frame, so **the pose has to be pulled back by about what the shear adds** — posing a rifle at
+the angle it should *appear* at overshoots square and puts the muzzle behind him.
+
+**A long gun is carried far shallower than a sidearm, and it has to be.** The rifle reaches
+thirty-nine units past the hand, so at the pistol's idle plunge its muzzle would be a foot
+underground. `CARRY_EL` is 24° down; the sidearm's idle is 63°.
+
+**The materials come from the AIMED drawings.** Every colour and every piece in
+`carryLongGun` / `carryHandGun` is read off the same weapon's presented art in
+`Character.show()`, with the layout shifted so the rear hand sits at the origin instead of
+at the muzzle offset the bullets leave from. A rifle that is black with two blocks of
+walnut on it when it is up has to be the same rifle when it comes down — invent the carried
+art separately and the weapon changes species every time the player lets go of the stick.
+
+**The projection is applied to the ART, not by `scale()`.** Scaled non-uniformly the
+contour thins along one axis and the whole weapon turns into a paper cut-out — worst at the
+ends of the swing, where the squash is hardest. Drawn at its own projected size instead,
+the outline keeps an even weight all the way round.
+
+**And a carried weapon is drawn as a solid, not as a plan view.** `gunBox()` and
+`gunMuzzle()` carry the same three terms `volShade()` uses on a figure: a contour, a top
+plane inset and offset **against the sun** (in the weapon's own frame — `figureLight()`,
+or the highlight rides round with the gun as the figure turns), and a bore that opens from
+a sliver into a circle as the barrel dips. That last one is the only cue that reads the
+depression directly: a bore you are looking down is a hole, one you are looking across is
+an edge.
+
+**The weapon goes on top of the hands.** From a bird's eye a hand is *under* the thing it
+grips — you see the top of the weapon and the fingers beneath it. Drawn first, the long
+gun had two skin discs sitting on its receiver.
+
+**A long gun slung about the body's middle hangs off the flank.** Its stock swung out past
+the silhouette behind the strong shoulder every stride and read as a loose plank stuck to
+his side. The butt is anchored at the shoulder instead. The two halves of "off his side"
+are asserted separately, because only one of them is a fault at every pace: a stock
+reaching the strong **shoulder** is where a stock goes and the sprint sweep drives it
+there on purpose, so that bound is generous at a run and tight at a walk — while a stock
+trailing **aft** of the man is the actual glitch, at any pace, and that bound never moves.
+
+**The stride belongs in the weapon's POSITION, not its rotation** — everywhere except the
+sprint sweep, which is rotation and is the point. A wrist keeps a pistol pointing where it
+is put, so the gun's angle is held against the *body*; welded to a forearm that swings
+through a wide arc every stride it waved about and read as a physics glitch. So a sidearm
+stays under 10° over a full stride at any pace and a long gun under 8° at a walk and a
+jog, both asserted — plus a real shift of the whole weapon with the chest, which is what
+carrying weight actually looks like.
+
+**The grip check is against the weapon's AXIS and EXTENT, not two named points on it.**
+Grips used to be read off as fixed fractions of the drawn barrel, which held only while
+the art squashed uniformly; under differential foreshortening no fraction names the same
+place on the gun twice, and a shotgun's rear hand is on the stock rather than on the
+longest rect at all. What a hand holding a weapon has to satisfy survives all of that:
+it is **on** the axis, and it is **somewhere along** the thing. That is also the exact
+failure the sweep risks — the reach clamp runs after the grips are placed, so a grip the
+arm cannot get to simply parts company with the gun — which is why it is measured across
+the whole arc, on all four two-handed weapons, rather than at one phase.
+
+Three things this has to get right and all three fail silently:
+
+1. **Three separate blocks lay their arms out around a gun that is UP** — the left-arm
+   pose, the right arm, and the weapon art — and any one of them left running gives the
+   player a second pair of arms holding a second weapon. All three stand down on
+   `carryMode`, as does the early-drawn presented taser.
+2. **A long gun held across the chest is in FRONT of the body**, so it goes down with the
+   hands after the torso. Drawn in the back pass it is swallowed by the shirt — which is
+   the whole reason the arm rig is split in two.
+3. **A hand holds one thing.** The tool test and the gun test are both "is this the strong
+   hand", so without a guard the right hand drew a pistol *and* a sword. The blade goes
+   away the moment `isArmed` goes true — that is, the moment the player raises or fires a
+   weapon — and comes back when the gun is put away, which is how it worked before the
+   carry existed.
+
+A support hand crossing to a fore grip is the one case `STAND_FORE_ARM` gets backwards:
+that factor is for an arm swinging beside the body, pointing away from the camera and
+losing most of its length, while an arm reaching across the chest lies nearly square to
+the view and keeps almost all of it. Clamped to the hanging figure's reach it stopped four
+units short of the weapon it was holding.
+
+**`AIM_HOLD` keeps the gun up for a few frames after the stick lets go.** Two jobs: a
+thumb brushing the stick must not flicker the weapon between carried and presented several
+times a second, and lowering a gun should read as a decision. Raising it stays instant,
+which is the way round that matters when something is shooting at you.
+
 ## The arm rig
 
 `Character.show()` draws the torso, then the attire, then the arms, then the head. That
@@ -1705,10 +2301,14 @@ exactly 0 when `isMoving` is false — left an idle player holding nothing. Remo
 and drawing every arm on top fixes the disappearing and *causes* the bulge. Only the draw
 order fixes both.
 
-`tools/check-character.js` watches the order of `ellipse()` calls (a hand is 8×8, the torso
-is `bodyW × bodyH`) and asserts both hands exist at all 16 points of the cycle, that both
-sit behind the body at rest, that the trailing one passes behind mid-stride, and that a
-tool hand never falls behind.
+`tools/check-character.js` watches the order of `ellipse()` calls (a hand is a circle at
+the rig's own hand size, the torso is `bodyW × bodyH`) and asserts both hands exist at all
+16 points of the cycle, that both sit behind the body at rest, that the trailing one
+passes behind mid-stride, and that a tool hand never falls behind. It then tracks the
+transform to assert the limb proportions against `ragRig()` — see **The living figure is
+the same build as its own corpse**. The hand size is *read* from `figureRig()` rather than
+written down: as a literal it went stale the first time the figure was re-proportioned and
+turned the whole file into eight failures that said nothing about the rig.
 
 Armed poses are deliberately untouched: the muzzle offsets (`bLX/bLY`) are tuned against
 those arm positions.
@@ -1805,12 +2405,13 @@ node tools/check-saveload.js       # save/load round trip
 node tools/check-cutscene.js       # scripted placement stays inside the sector
 node tools/check-resources.js      # harvestables, drops, the melee tool, persistence
 node tools/check-robot.js          # a machine dies like a machine, on all six paths
-node tools/check-character.js      # the arm rig: hands present, and behind the body
+node tools/check-character.js      # the arm rig, the gait bands, and carrying a weapon
 node tools/check-build.js          # blueprints, placement, build rate, the crew
 node tools/check-ballistics.js     # hostile rounds are always slower than the player's
 node tools/check-menu.js           # travel lives in the pause menu, and nowhere else
 node tools/check-pathing.js        # walkers turn round obstacles; the collision index
 node tools/check-corpse.js         # the settle: variation, impact direction, and it freezes
+node tools/check-damage-feedback.js # what the player is told when hit, shield up vs down
 node tools/check-depth.js          # depth order, and how a mass projects
 node tools/check-lighting.js       # the deferred rig: uniforms resolve, nothing allocates per frame
 GAME_JS=/path/to/other.js node tools/check-generation.js    # compare against a baseline

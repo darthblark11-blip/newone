@@ -86,12 +86,27 @@ const ctx = {
   red(v){return v&&v.levels?v.levels[0]:0;}, green(v){return v&&v.levels?v.levels[1]:0;}, blue(v){return v&&v.levels?v.levels[2]:0;},
   loadImage(){ return {}; }, loadSound(){ return {}; }, loadFont(){ return {}; },
   localStorage: { getItem(){return null;}, setItem(){}, removeItem(){} },
-  AudioContext: function(){ return { state:'running', resume(){}, currentTime:0,
-    createOscillator(){return{type:'',frequency:{setValueAtTime(){},exponentialRampToValueAtTime(){}},connect(){},start(){},stop(){}};},
-    createGain(){return{gain:{setValueAtTime(){},exponentialRampToValueAtTime(){}},connect(){}};},
-    createBuffer(){return{getChannelData(){return new Float32Array(10);}};},
-    createBufferSource(){return{buffer:null,connect(){},start(){}};},
-    createBiquadFilter(){return{type:'',frequency:{setValueAtTime(){},exponentialRampToValueAtTime(){}},connect(){}};},
+  // The sample loader needs it to turn embedded base64 into bytes. There is no
+  // decodeAudioData in the stub below, so the loader stops right after this
+  // and every check keeps the synthesised weapons -- which is the fallback
+  // path the game itself takes on a browser that will not decode the format.
+  atob: (b) => Buffer.from(b, 'base64').toString('binary'),
+  // Enough of Web Audio for sfx.init() and every cue to run without throwing.
+  // Buffers report a real duration because the noise layers pick a random
+  // start offset inside one, but hand back a short channel array -- nothing
+  // here listens, and filling two seconds of noise per check is pure cost.
+  AudioContext: function(){
+    const param = () => ({ value:0, setValueAtTime(){}, linearRampToValueAtTime(){}, exponentialRampToValueAtTime(){}, setTargetAtTime(){} });
+    return { state:'running', resume(){}, currentTime:0,
+    createOscillator(){return{type:'',frequency:param(),detune:param(),connect(){},start(){},stop(){}};},
+    createGain(){return{gain:param(),connect(){}};},
+    createBuffer(n,len,sr){const d=new Float32Array(len);
+      return{numberOfChannels:n,length:len,sampleRate:sr,duration:len/sr,getChannelData(){return d;}};},
+    createBufferSource(){return{buffer:null,playbackRate:param(),connect(){},start(){},stop(){}};},
+    createBiquadFilter(){return{type:'',frequency:param(),Q:param(),gain:param(),connect(){}};},
+    createStereoPanner(){return{pan:param(),connect(){}};},
+    createWaveShaper(){return{curve:null,oversample:'none',connect(){}};},
+    createDynamicsCompressor(){return{threshold:param(),knee:param(),ratio:param(),attack:param(),release:param(),connect(){}};},
     destination:{}, sampleRate:44100 };},
 };
 // every p5 drawing call the file makes in global mode
