@@ -11,6 +11,50 @@ let started = false, isDead = false, isWin = false, currentLevel = 1, headAimTog
 const SPATIAL_CELL_SIZE = 150; 
 let spatialGrid = {};
 
+function distSq(x1, y1, x2, y2) {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    return dx * dx + dy * dy;
+}
+
+function buildSpatialBuckets(list, cellSize, getX, getY) {
+    const buckets = new Map();
+    for (let i = 0; i < list.length; i++) {
+        const item = list[i];
+        if (!item || item.hp <= 0 || item.dead) continue;
+        const key = Math.floor(getX(item) / cellSize) + "," + Math.floor(getY(item) / cellSize);
+        let bucket = buckets.get(key);
+        if (!bucket) {
+            bucket = [];
+            buckets.set(key, bucket);
+        }
+        bucket.push(item);
+    }
+    return buckets;
+}
+
+function querySpatialBuckets(buckets, x, y, cellSize, radius, radiusSq, include = null) {
+    const cx = Math.floor(x / cellSize);
+    const cy = Math.floor(y / cellSize);
+    const out = [];
+    const r = Math.ceil(radius / cellSize) + 1;
+    for (let ox = -r; ox <= r; ox++) {
+        for (let oy = -r; oy <= r; oy++) {
+            const key = (cx + ox) + "," + (cy + oy);
+            const bucket = buckets.get(key);
+            if (!bucket) continue;
+            for (let i = 0; i < bucket.length; i++) {
+                const item = bucket[i];
+                if (!item || item === include || item.hp <= 0 || item.dead) continue;
+                const dx = item.x - x;
+                const dy = item.y - y;
+                if (dx * dx + dy * dy <= radiusSq) out.push(item);
+            }
+        }
+    }
+    return out;
+}
+
 // Helper to calculate which bucket an entity belongs to
 function getSpatialKey(x, y) {
     return Math.floor(x / SPATIAL_CELL_SIZE) + "," + Math.floor(y / SPATIAL_CELL_SIZE);
@@ -13872,6 +13916,8 @@ function updateEntities() {
           spatialGrid[key].push(a);
       }
 
+      const actorBuckets = buildSpatialBuckets(actors, SPATIAL_CELL_SIZE, a => a.x, a => a.y);
+
       for (let i = 0; i < actors.length; i++) {
           let A = actors[i];
           if (player && player.dashTimer > 0 && A.isPlayer) continue;
@@ -13883,7 +13929,7 @@ function updateEntities() {
           for (let ox = -1; ox <= 1; ox++) {
               for (let oy = -1; oy <= 1; oy++) {
                   let neighborKey = (cx + ox) + "," + (cy + oy);
-                  let neighbors = spatialGrid[neighborKey];
+                  let neighbors = actorBuckets.get(neighborKey) || spatialGrid[neighborKey];
 
                   if (neighbors) {
                       for (let B of neighbors) {
@@ -13895,8 +13941,9 @@ function updateEntities() {
                           let radB = B.isPlayer ? 18 : (B.eType === "ARMORED" || B.eType === "ALIEN_GATOR" || B.eType === "SNAIL_HYBRID" ? 40 : (B.eType === "BUG" ? 12 : 20));
                           let minDist = radA + radB;
                           
-                          let d = dist(A.x, A.y, B.x, B.y);
-                          if (d < minDist && d > 0) {
+                          let dSq = distSq(A.x, A.y, B.x, B.y);
+                          let d = Math.sqrt(dSq);
+                          if (dSq < minDist * minDist && d > 0) {
                               let pA = atan2(A.y - B.y, A.x - B.x);
                               let moveA = !(A.isPlayer && B.eType === "BUG");
                               let moveB = !(B.isPlayer && A.eType === "BUG");
@@ -14151,15 +14198,17 @@ function checkAmbushCleared() {
 function updateBullets() {
   const CULL_PAD = 400; 
 
-  // OPTIMIZATION 1: Generate target lists ONCE per frame, not once per bullet!
-  // This completely eliminates the Garbage Collection panic.
   const playerTgs = [];
   const enemyTgs = [player];
   for (let i = 0; i < enemiesList.length; i++) {
       let e = enemiesList[i];
+      if (!e || e.hp <= 0 || e.dead) continue;
       if (!e.isFriendly || e.isNeutral) playerTgs.push(e);
       if (e.isFriendly && !e.isNeutral) enemyTgs.push(e);
   }
+
+  const playerBuckets = buildSpatialBuckets(playerTgs, SPATIAL_CELL_SIZE, t => t.x, t => t.y);
+  const enemyBuckets = buildSpatialBuckets(enemyTgs, SPATIAL_CELL_SIZE, t => t.x, t => t.y);
 
   for (let i = bullets.length - 1; i >= 0; i--) {
     let b = bullets[i]; 
@@ -14178,9 +14227,7 @@ function updateBullets() {
     if (doTick && b.active) {
         let hB = false;
         for (let j = 0; j < barrels.length; j++) {
-            // Cheap distance pre-check for barrels
             if (Math.abs(b.x - barrels[j].x) > 30 || Math.abs(b.y - barrels[j].y) > 30) continue; 
-
             if (b.isP && b.tH !== "HEAD" && dist(b.x, b.y, barrels[j].x, barrels[j].y) < 15) { 
                 hB = true; totalShotsHit++; 
                 if (b.w === WEAPONS.SHOTGUN) barrels[j].hp -= 25; 
@@ -14193,43 +14240,41 @@ function updateBullets() {
         }
         if (hB) { if (b.w === WEAPONS.ROCKET_LAUNCHER) { triggerRocketExplosion(b.x, b.y, b.isP); } b.active = false; continue; }
 
-        // Use the pre-computed lists
         let tgs = b.isP ? playerTgs : enemyTgs;
+        const targetBuckets = b.isP ? playerBuckets : enemyBuckets;
+        const localTargets = querySpatialBuckets(targetBuckets, b.x, b.y, SPATIAL_CELL_SIZE, 60, 3600);
 
-        for (let t of tgs) {
-          if (t && t.hp > 0 && !t.dead) {
-            
-            if (t.eType === "COW" && b.shooter && !b.shooter.isPlayer) continue;
-            if (b.tH === "HEAD" && (t.eType === "BUG" || t.eType === "SNAIL")) continue;
-            
-            // OPTIMIZATION 2: Broad-phase AABB Culling. 
-            // If the bullet is more than 60 pixels away on X or Y, completely skip the heavy math!
-            if (Math.abs(b.x - t.x) > 60 || Math.abs(b.y - t.y) > 60) continue;
-
-            let isLg = (t.eType === "ARMORED" || t.eType === "ALIEN_GATOR" || t.eType === "SAUCER" || t.eType === "SAUCER_RED" || t.eType === "SNAIL_HYBRID");
-            let hR = b.tH === "HEAD" ? (isLg ? (t.eType === "SNAIL_HYBRID" ? 35 : 15) : 6) : (isLg ? 40 : ((t.eType === "BUG" || t.eType === "SNAIL") ? (t.eType === "SNAIL" ? 15 : 10) : 12));
-            
-            let hit = false; 
-            for (let j = 0; j <= 3; j++) { if (dist(b.x - b.vx * (j / 3), b.y - b.vy * (j / 3), t.x, t.y) < hR) { hit = true; break; } }
-            
-            if (hit) {
-                if (b.isP && b.active && !b.isTaser) totalShotsHit++; 
-                
-                if (b.isTaser) {
-                    if (!b.tetheredTarget && !b.retracting) {
-                        let isUnarmored = (t.eType === "NORMAL" || t.eType === "FEMALE_PISTOL" || t.eType === "SIA" || t.eType === "MOLOTOV");
-                        
-                        if (isUnarmored && t.hp > 0 && t.state !== "STUNNED") {
-                            t.stunTimer = 15000; t.skeletonTimer = 66; t.state = "STUNNED";
-                            sfx.charge(); emit(t.x, t.y, 15, color(255, 255, 0), "SPARK");
-                            t.isMoving = false; t.aimAngle = random(TWO_PI); 
-                            b.tetheredTarget = t; b.tetherTimer = 66;
-                        } else {
-                            sfx.hitArmor(); emit(b.x, b.y, 5, color(255, 255, 0), "SPARK"); b.retracting = true;
-                        }
-                    }
-                    continue; 
-                }
+        for (let t of localTargets) {
+          if (!t || t.hp <= 0 || t.dead) continue;
+          if (tgs.indexOf(t) === -1) continue;
+          
+          if (t.eType === "COW" && b.shooter && !b.shooter.isPlayer) continue;
+          if (b.tH === "HEAD" && (t.eType === "BUG" || t.eType === "SNAIL")) continue;
+          
+          let isLg = (t.eType === "ARMORED" || t.eType === "ALIEN_GATOR" || t.eType === "SAUCER" || t.eType === "SAUCER_RED" || t.eType === "SNAIL_HYBRID");
+          let hR = b.tH === "HEAD" ? (isLg ? (t.eType === "SNAIL_HYBRID" ? 35 : 15) : 6) : (isLg ? 40 : ((t.eType === "BUG" || t.eType === "SNAIL") ? (t.eType === "SNAIL" ? 15 : 10) : 12));
+          
+          let hit = false; 
+          for (let j = 0; j <= 3; j++) { if (dist(b.x - b.vx * (j / 3), b.y - b.vy * (j / 3), t.x, t.y) < hR) { hit = true; break; } }
+          
+          if (hit) {
+              if (b.isP && b.active && !b.isTaser) totalShotsHit++; 
+              
+              if (b.isTaser) {
+                  if (!b.tetheredTarget && !b.retracting) {
+                      let isUnarmored = (t.eType === "NORMAL" || t.eType === "FEMALE_PISTOL" || t.eType === "SIA" || t.eType === "MOLOTOV");
+                      
+                      if (isUnarmored && t.hp > 0 && t.state !== "STUNNED") {
+                          t.stunTimer = 15000; t.skeletonTimer = 66; t.state = "STUNNED";
+                          sfx.charge(); emit(t.x, t.y, 15, color(255, 255, 0), "SPARK");
+                          t.isMoving = false; t.aimAngle = random(TWO_PI); 
+                          b.tetheredTarget = t; b.tetherTimer = 66;
+                      } else {
+                          sfx.hitArmor(); emit(b.x, b.y, 5, color(255, 255, 0), "SPARK"); b.retracting = true;
+                      }
+                  }
+                  continue; 
+              }
 
                 if (b.w === WEAPONS.ROCKET_LAUNCHER) { b.l = 0; triggerRocketExplosion(b.x, b.y, b.isP, t); continue; }
                 
@@ -14497,8 +14542,6 @@ function updateBullets() {
         }
     }
   }
-}
-
 
 
 class Citizen {
