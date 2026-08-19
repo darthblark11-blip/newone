@@ -187,6 +187,7 @@ let playerRespawnTimer = 0, prevGamepadButtons = [];
 // beat and then draining it tells you how hard, which is the thing worth
 // knowing while it is happening.
 let hpGhost = 100, hpGhostHold = 0, hpPrev = 100;
+let shGhost = 100, shGhostHold = 0, shPrev = 100;
 const HP_GHOST_HOLD = 20;
 let headshotCounter = 0, bodyOverkillCounter = 0, lightningCounter = 0; 
 
@@ -4578,7 +4579,7 @@ viewBottom = camY + height / zoom + shakePad;
               
               if (typeof headshotCounter === 'undefined') window.headshotCounter = 0; // Prevent crash if uninitialized
               let choices = [1, 8, 9]; let dT = choices[headshotCounter % 3]; headshotCounter++; 
-              corpses.push(new Corpse(dadEntity.x, dadEntity.y, dadEntity.moveAngle, dadEntity.aimAngle, dadEntity.shirtCol, dadEntity.pantsCol, dT, a, dadEntity.decals, dadEntity.currentWeapon, a, "DAD", dadEntity.bodyW, dadEntity.bodyH)); 
+              corpses.push(new Corpse(dadEntity.x, dadEntity.y, dadEntity.moveAngle, dadEntity.aimAngle, dadEntity.shirtCol, dadEntity.pantsCol, dT, a, dadEntity.decals, dadEntity.currentWeapon, a, "DAD", dadEntity.bodyW, dadEntity.bodyH, dadEntity)); 
               spawnSplatter(dadEntity.x, dadEntity.y, "BLOOD", bCol); 
               
               let eI = enemiesList.indexOf(dadEntity); if (eI > -1) enemiesList.splice(eI, 1);
@@ -7589,7 +7590,7 @@ function triggerExplosion(ex, ey, rad, isMolotov = false, sourceIsPlayer = true)
           if (player.hp <= 0 && !player.dead) { 
               player.dead = true; sfx.deathGrunt(); 
               let a = atan2(player.y - ey, player.x - ex); 
-              corpses.push(new Corpse(player.x, player.y, player.moveAngle, player.aimAngle, player.shirtCol, player.pantsCol, 5, a, player.decals, player.currentWeapon, a, "NORMAL", player.bodyW, player.bodyH)); 
+              corpses.push(new Corpse(player.x, player.y, player.moveAngle, player.aimAngle, player.shirtCol, player.pantsCol, 5, a, player.decals, player.currentWeapon, a, "NORMAL", player.bodyW, player.bodyH, player)); 
               playerRespawnTimer = 0; 
           } 
       }
@@ -7623,7 +7624,7 @@ function triggerExplosion(ex, ey, rad, isMolotov = false, sourceIsPlayer = true)
           } else {
               emit(e.x, e.y, 40, bCol, "GORE");
               if (e.eType === "ALIEN_GATOR") { emit(e.x, e.y, 40, color(30, 180, 30), "GORE"); }
-              corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 5, a, e.decals, e.currentWeapon, a, e.eType, e.bodyW, e.bodyH));
+              corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 5, a, e.decals, e.currentWeapon, a, e.eType, e.bodyW, e.bodyH, e));
               spawnSplatter(e.x, e.y, "BLOOD", bCol);
           }
 
@@ -7663,7 +7664,7 @@ function triggerRocketExplosion(ex, ey, sourceIsPlayer, directHitTarget = null) 
           }
           if (player.hp <= 0 && !player.dead) {
               player.dead = true; sfx.deathGrunt();
-              corpses.push(new Corpse(player.x, player.y, player.moveAngle, player.aimAngle, player.shirtCol, player.pantsCol, 5, 0, player.decals, player.currentWeapon, 0, "NORMAL", player.bodyW, player.bodyH));
+              corpses.push(new Corpse(player.x, player.y, player.moveAngle, player.aimAngle, player.shirtCol, player.pantsCol, 5, 0, player.decals, player.currentWeapon, 0, "NORMAL", player.bodyW, player.bodyH, player));
               playerRespawnTimer = 90;
           }
       }
@@ -7709,7 +7710,7 @@ function triggerRocketExplosion(ex, ey, sourceIsPlayer, directHitTarget = null) 
               else if (e.eType === "AERIAL" || e.eType === "AERIAL_PISTOL") {
                   let choices = [11, 5, 10]; 
                   let dT = choices[floor(random(choices.length))];
-                  corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, dT, a, e.decals, e.currentWeapon, a, e.eType, e.bodyW, e.bodyH));
+                  corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, dT, a, e.decals, e.currentWeapon, a, e.eType, e.bodyW, e.bodyH, e));
                   
                   emit(e.x, e.y, 40, color(255, 100, 0), "EXPLOSION");
                   spawnSplatter(e.x, e.y, "BLOOD", color(90, 0, 0));
@@ -7720,7 +7721,7 @@ function triggerRocketExplosion(ex, ey, sourceIsPlayer, directHitTarget = null) 
                   emit(e.x, e.y, 60, bCol, "GORE");
                   let choices = [2, 5, 7, 10, 11]; 
                   let dT = choices[floor(random(choices.length))];
-                  corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, dT, a, e.decals, e.currentWeapon, a, e.eType, e.bodyW, e.bodyH));
+                  corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, dT, a, e.decals, e.currentWeapon, a, e.eType, e.bodyW, e.bodyH, e));
                   spawnSplatter(e.x, e.y, "BLOOD", bCol);
               }
 
@@ -7777,7 +7778,7 @@ class FireZone {
             player.takeDamage(dmg); 
             if (player.hp <= 0 && !player.dead) { 
                 player.dead = true; sfx.deathGrunt(); 
-                corpses.push(new Corpse(player.x, player.y, player.moveAngle, player.aimAngle, player.shirtCol, player.pantsCol, 0, 0, player.decals, player.currentWeapon, 0, "NORMAL", player.bodyW, player.bodyH)); 
+                corpses.push(new Corpse(player.x, player.y, player.moveAngle, player.aimAngle, player.shirtCol, player.pantsCol, 0, 0, player.decals, player.currentWeapon, 0, "NORMAL", player.bodyW, player.bodyH, player)); 
                 playerRespawnTimer = 90; 
             } 
         }
@@ -7829,7 +7830,7 @@ class SludgeZone {
         this.life--; let dmg = 5 / 60; 
         if (player.hp > 0 && dist(this.x, this.y, player.x, player.y) < this.r) { 
             player.takeDamage(dmg); 
-            if (player.hp <= 0 && !player.dead) { player.dead = true; sfx.deathGrunt(); corpses.push(new Corpse(player.x, player.y, player.moveAngle, player.aimAngle, player.shirtCol, player.pantsCol, 0, 0, player.decals, player.currentWeapon, 0, "NORMAL", player.bodyW, player.bodyH)); playerRespawnTimer = 90; } 
+            if (player.hp <= 0 && !player.dead) { player.dead = true; sfx.deathGrunt(); corpses.push(new Corpse(player.x, player.y, player.moveAngle, player.aimAngle, player.shirtCol, player.pantsCol, 0, 0, player.decals, player.currentWeapon, 0, "NORMAL", player.bodyW, player.bodyH, player)); playerRespawnTimer = 90; } 
         }
         if (frameCount % 10 === 0) emit(this.x + random(-this.r, this.r), this.y + random(-this.r, this.r), 1, color(50, 200, 50), "BLOOD");
     }
@@ -8685,7 +8686,7 @@ class PlayerGrenade {
                             } else { 
                                 emit(e.x, e.y, 40, color(255, 100, 0), "EXPLOSION"); sfx.explosion(e.x, e.y);
                                 spawnSplatter(e.x, e.y, "BLOOD", color(90, 0, 0));
-                                corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 11, a, e.decals, e.currentWeapon, a, e.eType, e.bodyW, e.bodyH));
+                                corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 11, a, e.decals, e.currentWeapon, a, e.eType, e.bodyW, e.bodyH, e));
                             }
                             processKill(e.x, e.y, false, e.eType, e.isFriendly);
                             enemiesList.splice(i, 1); 
@@ -8982,16 +8983,16 @@ class Shockwave {
                     } else if (e.eType === "AERIAL" || e.eType === "AERIAL_PISTOL") {
                         emit(e.x, e.y, 40, color(255, 100, 0), "EXPLOSION"); sfx.explosion(e.x, e.y);
                         spawnSplatter(e.x, e.y, "BLOOD", color(90, 0, 0));
-                        corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 11, this.a, e.decals, e.currentWeapon, this.a, e.eType, e.bodyW, e.bodyH));
+                        corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 11, this.a, e.decals, e.currentWeapon, this.a, e.eType, e.bodyW, e.bodyH, e));
                     } else if (e.eType === "ROBOT") {
                         // A blade parts a man. It knocks a machine off its feet.
                         robotDeathBurst(e, this.a, true, ROBOT_MELEE_KB);
                     } else if (e.eType === "ARMORED" || e.eType === "ARMORED_STANDARD" || e.eType === "ALIEN_GATOR") {
                         emit(e.x, e.y, 60, bCol, "GORE"); spawnSplatter(e.x, e.y, "BLOOD", bCol);
-                        corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 10, this.a, e.decals, e.currentWeapon, this.a, e.eType, e.bodyW, e.bodyH));
+                        corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 10, this.a, e.decals, e.currentWeapon, this.a, e.eType, e.bodyW, e.bodyH, e));
                     } else {
                         emit(e.x, e.y, 60, bCol, "GORE"); spawnSplatter(e.x, e.y, "BLOOD", bCol); 
-                        corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 14, this.a, e.decals, e.currentWeapon, this.a, e.eType, e.bodyW, e.bodyH)); 
+                        corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 14, this.a, e.decals, e.currentWeapon, this.a, e.eType, e.bodyW, e.bodyH, e)); 
                     } 
                     processKill(e.x, e.y, false, e.eType, e.isFriendly); 
                 }
@@ -9080,7 +9081,7 @@ function robotDeathBurst(e, a, sourceIsPlayer = true, knockback = 0) {
   sfx.hitArmor();
   corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol,
                           e.enraged ? 1 : 0, a, e.decals, e.currentWeapon, a,
-                          "ROBOT", e.bodyW, e.bodyH));
+                          "ROBOT", e.bodyW, e.bodyH, e));
 
   // Deferred, because every caller is standing inside a loop over enemiesList
   // and triggerExplosion splices out of it. The beat between the body coming to
@@ -9387,8 +9388,174 @@ function ragRig(bW, bH) {
     };
 }
 
+// --- one head, worn by the living figure and by its own corpse -------------
+// This art used to live inline in Character.show(), which meant a body had no
+// way to keep what the person had been wearing: every corpse in the game came
+// to rest bare-headed and brown-haired whatever it was in life, and the
+// overkill pieces were a plain skin dome. It is a function now, driven by an
+// identity object rather than by `this`, on exactly the principle
+// figureRig()/ragRig() already follow -- one description, read by both, so the
+// two can never drift.
+//
+// The split into hair and headwear is what lets a hat come off: the body keeps
+// its skin and its hair, and the hat is drawn separately where it landed.
+
+// What is on this head, if anything. Null means bare.
+function headwearOf(id) {
+  if (!id) return null;
+  const eT = id.eType;
+  if (id.isPlayer && typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked) return 'VISOR';
+  if (eT === "MILITARY_NEUTRAL" || eT === "NM0_GREY_FATIGUE" ||
+      (id.isMilitary && typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked)) return 'HELMET';
+  if (id.isPlayer && typeof ninjaSuitUnlocked !== 'undefined' && ninjaSuitUnlocked) return 'HOOD';
+  if (eT === "BANDIT") return 'BANDIT_HAT';
+  if (eT === "COWBOY" || eT === "COWGIRL") return 'STETSON';
+  if (eT === "LOCAL_COP") return 'COP_HAT';
+  if (eT === "VILLAGER_MALE") return 'FLAT_CAP';
+  if (eT === "VILLAGER_FEMALE") return 'BONNET';
+  if (eT === "FARMER_MALE") return 'STRAW';
+  return null;
+}
+// A hood is worn rather than perched, so it is the one thing that stays on.
+function headwearFalls(kind) { return !!kind && kind !== 'HOOD'; }
+
+// Drawn at the origin: the caller has already translated to the head, or to
+// wherever the thing has come to rest.
+function drawHeadwear(g, id, kind) {
+  if (!kind) return;
+  if (kind === 'VISOR') {
+    g.push(); g.rotate(-HALF_PI); g.fill(40, 80, 40); g.arc(0, -1, 14, 14, PI, TWO_PI); g.pop();
+    g.push(); g.rotate(radians(33)); g.fill(80, 50, 20); g.rect(4, -1, 8, 3); g.fill(255, 100, 0); g.ellipse(12, 0.5, 2, 2); g.pop();
+    return;
+  }
+  if (kind === 'HELMET') {
+    g.push(); g.rotate(-HALF_PI);
+    if (id.isMilitary) g.fill(40, 80, 40);                       // player's green
+    else if (id.eType === "NM0_GREY_FATIGUE") g.fill(170, 175, 180);
+    else g.fill(190, 170, 130);                                  // neutral tan
+    g.stroke(0); g.strokeWeight(1.5);
+    g.arc(0, -1, 14, 14, PI, TWO_PI, CHORD);
+    g.pop(); g.noStroke();
+    return;
+  }
+  if (kind === 'HOOD') {
+    g.fill(15); g.ellipse(0, 0, 12, 12); g.fill(240); g.arc(0, 0, 12, 12, -HALF_PI, HALF_PI);
+    g.fill(235, 180, 140); g.rect(1, -3, 3, 6, 1);
+    g.fill(0); g.ellipse(2, -.5, 1.5, 1.5); g.ellipse(2, 1.5, 1.5, 1.5);
+    return;
+  }
+  if (kind === 'BANDIT_HAT') {
+    const bh = id.hatCol || color(34, 30, 30);
+    g.fill(red(bh) * 0.7, green(bh) * 0.7, blue(bh) * 0.7); g.ellipse(0, 0, 27, 25);
+    g.fill(bh); g.ellipse(0, 0, 21, 19);
+    g.fill(red(bh) * 1.5 + 10, green(bh) * 1.5 + 10, blue(bh) * 1.5 + 10);
+    g.ellipse(-1, 0, 14, 12);
+    g.fill(96, 26, 24); g.rect(-7, -1.4, 14, 2.8);
+    return;
+  }
+  if (kind === 'STETSON') {
+    const hc = id.hatCol || color(96, 72, 46);
+    // Wide oval brim, then the crown, then a crease down it and a hatband
+    // where the two meet. From above that silhouette is the whole hat.
+    const bw = id.eType === "COWGIRL" ? 25 : 28;
+    g.fill(red(hc) * 0.82, green(hc) * 0.82, blue(hc) * 0.82);
+    g.ellipse(0, 0, bw, bw * 0.93);
+    g.fill(hc); g.ellipse(0, 0, bw - 5, bw * 0.93 - 5);
+    g.fill(red(hc) * 1.18 + 12, green(hc) * 1.18 + 12, blue(hc) * 1.18 + 12);
+    g.ellipse(-1, 0, bw - 13, bw * 0.93 - 12);
+    g.fill(42, 30, 20); g.rect(-((bw - 13) / 2), -1.4, bw - 13, 2.8);
+    g.stroke(red(hc) * 0.6, green(hc) * 0.6, blue(hc) * 0.6); g.strokeWeight(1.2);
+    g.line(-((bw - 15) / 2), 0, (bw - 15) / 2, 0);
+    g.noStroke();
+    return;
+  }
+  if (kind === 'COP_HAT') {
+    g.fill(34, 32, 40); g.ellipse(0, 0, 26, 24);
+    g.fill(id.hatCol || color(46, 44, 52)); g.ellipse(0, 0, 17, 16);
+    g.fill(210, 188, 104); g.rect(-4, -1.4, 8, 2.8);
+    return;
+  }
+  if (kind === 'FLAT_CAP') {
+    g.fill(id.hatCol || color(84, 74, 58)); g.ellipse(0, 0, 15, 14);
+    g.fill(64, 56, 44); g.arc(0, 0, 19, 14, -0.9, 0.9, CHORD);
+    return;
+  }
+  if (kind === 'BONNET') {
+    g.fill(id.bonnetCol || color(228, 220, 204));
+    g.arc(-1, 0, 21, 19, HALF_PI, PI + HALF_PI, CHORD);
+    g.fill(214, 204, 184); g.arc(2, 0, 13, 17, -HALF_PI, HALF_PI, CHORD);
+    g.fill(178, 152, 168); g.rect(-2, 7.5, 7, 2, 1);
+    return;
+  }
+  if (kind === 'STRAW') {
+    g.fill(210, 180, 70); g.ellipse(0, 0, 24, 24);
+    g.fill(190, 160, 50); g.ellipse(0, 0, 14, 14);
+    return;
+  }
+}
+
+// Skin, hair and whatever is worn over them. `sway` is the braid's swing, in
+// degrees -- the living figure passes its walk cycle, a corpse passes nothing.
+function drawFigureHead(g, id, hX, hY, wear = true, sway = 0) {
+  const eT = id.eType;
+  g.fill(eT === "BANDIT" ? color(214, 168, 132) : color(235, 180, 140));
+  g.ellipse(hX, hY, 11, 11);
+  drawFigureHair(g, id, hX, hY, sway);
+  if (wear) { const k = headwearOf(id); if (k) { g.push(); g.translate(hX, hY); drawHeadwear(g, id, k); g.pop(); } }
+}
+
+// The hair alone. A corpse's head is already drawn by its death type, so it
+// adds this over the top rather than drawing the head again.
+function drawFigureHair(g, id, hX, hY, sway = 0) {
+  if (!id) return;
+  const eT = id.eType;
+  if (eT === "FEMALE_PISTOL") {
+    g.fill(15); g.arc(hX, hY, 12, 12, HALF_PI, PI + HALF_PI);
+    g.push(); g.translate(hX - 5, hY); g.rotate(radians(sway)); g.ellipse(-6, 0, 12, 6); g.pop();
+  } else if (eT === "NM0_ROOKIE_F") {
+    g.fill(64, 46, 32); g.arc(hX, hY, 12, 12, HALF_PI, PI + HALF_PI);
+    g.push(); g.translate(hX - 5, hY); g.rotate(radians(sway)); g.ellipse(-6, 0, 12, 6); g.pop();
+    g.fill(id.shirtCol || color(60, 90, 170)); g.ellipse(hX - 6.5, hY, 5, 7);
+  } else if (eT === "NM0_ROOKIE") {
+    g.fill(58, 44, 32); g.arc(hX, hY, 11.5, 11.5, PI + 0.5, TWO_PI - 0.5);
+    g.fill(id.shirtCol || color(60, 90, 170)); g.ellipse(hX - 6.5, hY, 5, 7);
+  } else if (eT === "COWGIRL") {
+    g.push(); g.translate(hX - 5, hY); g.rotate(radians(sway));
+    g.fill(id.hairCol || color(122, 74, 38)); g.ellipse(-7, 0, 13, 6); g.pop();
+  } else if (eT === "VILLAGER_FEMALE") {
+    g.fill(id.hairCol || color(122, 74, 38)); g.arc(hX, hY, 12, 12, HALF_PI, PI + HALF_PI);
+  } else if (eT === "FARMER_FEMALE") {
+    g.fill(id.hairCol || color(150, 80, 40)); g.arc(hX, hY, 12, 12, HALF_PI, PI + HALF_PI);
+    g.push(); g.translate(hX - 5, hY); g.rotate(radians(sway)); g.ellipse(-6, 0, 12, 6); g.pop();
+  } else if (eT === "BANDIT") {
+    // The bandana is over the face, not on top of the head, so it is part of
+    // him rather than part of the hat -- it does not come off with it.
+    g.push(); g.translate(hX, hY);
+    g.fill(id.kerchiefCol || color(124, 40, 36)); g.arc(0, 0, 12, 12, -HALF_PI, HALF_PI);
+    g.pop();
+  }
+
+}
+
+// Everything a head needs to be drawn again later, frozen at the moment of
+// death. A corpse cannot read it off the character: the character is gone.
+function figureIdentity(c) {
+  if (!c) return null;
+  return { eType: c.eType, isPlayer: !!c.isPlayer, isMilitary: !!c.isMilitary,
+           hairCol: c.hairCol, hatCol: c.hatCol, kerchiefCol: c.kerchiefCol,
+           bonnetCol: c.bonnetCol, shirtCol: c.shirtCol };
+}
+
 class Corpse {
-  constructor(x, y, mA, aA, sC, pC, dT, hA, dec, cW, bA, eT, bW, bH) {
+  constructor(x, y, mA, aA, sC, pC, dT, hA, dec, cW, bA, eT, bW, bH, src) {
+    // Frozen at the moment of death, because a corpse cannot read anything off
+    // the character it came from -- that object is already gone. Without it a
+    // body has no way to keep the hair or the hat the person was wearing, which
+    // is why every corpse in the game used to come to rest bare-headed.
+    this.id = figureIdentity(src) || { eType: eT };
+    this.hatOff = headwearFalls(headwearOf(this.id))
+      ? { x: cos(bA || 0) * (18 + Math.random() * 14), y: sin(bA || 0) * (18 + Math.random() * 14), r: Math.random() * TWO_PI }
+      : null;
     this.eT = eT; this.x = x; this.y = y; 
     if (eT === "ARMORED" || eT === "ARMORED_STANDARD" || eT === "ALIEN_GATOR") { this.mA = mA; this.aA = aA; } else { this.mA = mA + PI; this.aA = aA + PI; }
     // Last word on the overkill tables: a robot never comes apart into a torso
@@ -9718,7 +9885,24 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       r.push(); r.translate(this.x, this.y); let a = 255, f = this.fP;
       for (let ob of this.overkillBits) {
           r.push(); r.translate(ob.x, ob.y); r.rotate(ob.rot);
-          if (ob.type === 'torso') { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(0, 0, this.bW, this.bH * 0.7); r.fill(90, 0, 0); r.ellipse(0, this.bH * 0.35, this.bW * 0.8, 12); r.fill(235, 180, 140, a); r.ellipse(0, -this.bH * 0.4, 11, 11); } 
+          if (ob.type === 'torso') {
+            r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(0, 0, this.bW, this.bH * 0.7);
+            r.fill(90, 0, 0); r.ellipse(0, this.bH * 0.35, this.bW * 0.8, 12);
+            r.fill(235, 180, 140, a); r.ellipse(0, -this.bH * 0.4, 11, 11);
+            // The head still on this piece is still the head of whoever this
+            // was: same hair, same hat, on the same identity the intact body
+            // reads. A torso spinning past with a bare dome on it was the one
+            // place the overkill deaths gave the character away as generic.
+            if (this.id) {
+              r.push();
+              if (r.drawingContext) r.drawingContext.globalAlpha = Math.max(0, Math.min(1, a / 255));
+              drawFigureHair(r, this.id, 0, -this.bH * 0.4, 0);
+              const hw = headwearOf(this.id);
+              if (hw && !headwearFalls(hw)) { r.push(); r.translate(0, -this.bH * 0.4); drawHeadwear(r, this.id, hw); r.pop(); }
+              if (r.drawingContext) r.drawingContext.globalAlpha = 1;
+              r.pop();
+            }
+          } 
           else if (ob.type === 'lArm' || ob.type === 'rArm') { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(0, 0, 16, 8); r.fill(235, 180, 140, a); r.ellipse(10, 0, 8, 8); r.fill(90, 0, 0); r.ellipse(-6, 0, 8, 8); } r.pop();
       }
       r.push(); r.rotate(this.mA); let fallOffset = lerp(0, -15, f), fallSquish = lerp(1, 0.6, f); r.translate(fallOffset, 0); r.scale(fallSquish, 1); r.noStroke(); r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a);
@@ -9810,7 +9994,26 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       if (RG) { ragContour(r, a); ragLimb(r,  RP.shX, -RP.shY, -(HALF_PI + RG.limbs[0].a), -RG.limbs[0].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand); ragLimb(r,  RP.shX,  RP.shY,   HALF_PI + RG.limbs[1].a,   RG.limbs[1].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand); } else { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(slX, armLY, 16, 8); r.fill(sK); r.ellipse(hX, armLY, 8, 8); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(rslX, armRY, 25, 8); r.fill(sK); r.ellipse(rhX, armRY, 8, 8); } 
       if (this.eT === "AERIAL" || this.eT === "AERIAL_PISTOL") { r.fill(80, a); r.rect(-18, -12, 12, 24, 3); } 
       if (this.eT !== "ARMORED" && this.eT !== "MOLOTOV" && this.eT !== "AERIAL") { r.push(); r.translate(20 - 10 * f, 8 + 15 * f); r.rotate(f * PI / 2); if (this.cW === WEAPONS.SMG || this.cW === WEAPONS.DUAL_SMG) { r.fill(40); r.rect(31, 12, 24, 8, 2); r.rect(35, 20, 6, 12); } else if (this.cW === WEAPONS.ASSAULT_RIFLE) { r.fill(40); r.rect(5, 4, 42, 4, 1); r.fill(139, 69, 19); r.rect(15, 3, 12, 6, 1); r.rect(0, 3, 8, 6, 1); } else if (this.cW === WEAPONS.SHOTGUN) { r.fill(30); r.rect(5, 4, 40, 5, 1); r.fill(15); r.rect(20, 3, 14, 7, 1); r.fill(50); r.rect(5, 3, 12, 7, 2); } else if (this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { r.fill(50, 70, 50); r.rect(5, 4, 45, 6, 2); r.fill(30); r.rect(20, 2, 10, 10, 1); } else { r.fill(40); r.rect(15, 5, 16, 6, 2); } r.pop(); if (this.cW === WEAPONS.DUAL_SMG) { r.push(); r.translate(20 - 10 * f, -14 - 15 * f); r.rotate(-f * PI / 2); r.fill(40); r.rect(15, -7, 24, 8, 2); r.rect(19, -19, 6, 12); r.pop(); } } else if (this.eType === "MOLOTOV") { r.push(); r.translate(20 - 10 * f, 8 + 15 * f); r.rotate(f * PI / 2); r.fill(30, 120, 30); r.rect(0, -8, 8, 16, 2); r.pop(); } else if (this.eType === "ARMORED") { r.push(); r.translate(30 - 10 * f, 25 + 15 * f); r.rotate(f * PI / 2); r.fill(30); r.rect(0, -10, 50, 20, 4); r.pop(); } 
-      if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(0, 0, this.bW + 15 * f, 20); if (RG) ragContour(r, a); } r.translate((RG ? 18 : 20) * f, 0); if (this.dT === 4) { r.fill(90, 0, 0); r.ellipse(0, 0, 14, 14); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 1) { r.fill(sK); r.arc(0, 0, 11, 11, this.hA + PI / 4, this.hA + TWO_PI - PI / 4, PIE); r.fill(90, 0, 0); r.arc(0, 0, 8, 8, this.hA - PI / 4, this.hA + PI / 4, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } if (this.eT === "FEMALE_PISTOL") { r.fill(15, a); r.arc(0, 0, 12, 12, HALF_PI, PI + HALF_PI); r.ellipse(-11, 0, 12, 6); } } else if (this.dT === 6) { r.push(); r.rotate(this.hA); r.fill(90, 0, 0); r.ellipse(0, 0, 10, 10); let spread = min(this.sep * 0.4, 8); r.fill(sK); r.arc(0, -spread, 11, 11, PI, TWO_PI, CHORD); r.arc(0, spread, 11, 11, 0, PI, CHORD); r.pop(); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 8) { r.push(); r.rotate(this.hA); r.fill(sK); r.arc(0, 0, 11, 11, 0, PI + HALF_PI, PIE); r.fill(90, 0, 0); r.arc(0, 0, 11, 11, PI + HALF_PI, TWO_PI, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } r.pop(); } else if (this.dT === 9) { let nX = 10 + 5 * this.fP; r.fill(90, 0, 0); r.ellipse(nX, 0, 12, 12); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else { r.fill(sK); r.ellipse(0, 0, 11, 11); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } if (this.eT === "FEMALE_PISTOL") { r.fill(15, a); r.arc(0, 0, 12, 12, HALF_PI, PI + HALF_PI); r.ellipse(-11, 0, 12, 6); } } r.noStroke(); for (let d of this.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.pop(); } r.pop();
+      if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(0, 0, this.bW + 15 * f, 20); if (RG) ragContour(r, a); } r.translate((RG ? 18 : 20) * f, 0); if (this.dT === 4) { r.fill(90, 0, 0); r.ellipse(0, 0, 14, 14); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 1) { r.fill(sK); r.arc(0, 0, 11, 11, this.hA + PI / 4, this.hA + TWO_PI - PI / 4, PIE); r.fill(90, 0, 0); r.arc(0, 0, 8, 8, this.hA - PI / 4, this.hA + PI / 4, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 6) { r.push(); r.rotate(this.hA); r.fill(90, 0, 0); r.ellipse(0, 0, 10, 10); let spread = min(this.sep * 0.4, 8); r.fill(sK); r.arc(0, -spread, 11, 11, PI, TWO_PI, CHORD); r.arc(0, spread, 11, 11, 0, PI, CHORD); r.pop(); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 8) { r.push(); r.rotate(this.hA); r.fill(sK); r.arc(0, 0, 11, 11, 0, PI + HALF_PI, PIE); r.fill(90, 0, 0); r.arc(0, 0, 11, 11, PI + HALF_PI, TWO_PI, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } r.pop(); } else if (this.dT === 9) { let nX = 10 + 5 * this.fP; r.fill(90, 0, 0); r.ellipse(nX, 0, 12, 12); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else { r.fill(sK); r.ellipse(0, 0, 11, 11); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } r.noStroke();
+      // The hair, and whatever was on the head. The identity was frozen at the
+      // moment of death (figureIdentity), so this body keeps what the person
+      // was wearing instead of coming to rest as a bare skin dome. Anything
+      // perched rather than worn is drawn where it FELL -- a hat does not stay
+      // on through this, and one lying clear of the head is half the read.
+      if (this.id) {
+        r.push();
+        if (r.drawingContext) r.drawingContext.globalAlpha = Math.max(0, Math.min(1, a / 255));
+        drawFigureHair(r, this.id, 0, 0, 0);
+        const hw = headwearOf(this.id);
+        if (hw && !headwearFalls(hw)) drawHeadwear(r, this.id, hw);
+        else if (hw && this.hatOff) {
+          r.push(); r.translate(this.hatOff.x, this.hatOff.y); r.rotate(this.hatOff.r);
+          drawHeadwear(r, this.id, hw); r.pop();
+        }
+        if (r.drawingContext) r.drawingContext.globalAlpha = 1;
+        r.pop();
+      }
+      for (let d of this.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.pop(); } r.pop();
 }
 }
 
@@ -10971,7 +11174,7 @@ this.skeletonTimer = 0;
                         emit(t.x, t.y, 60, bCol, "GORE");
                         spawnSplatter(t.x, t.y, "BLOOD", bCol);
 
-                        let c = new Corpse(t.x, t.y, t.moveAngle, t.aimAngle, color(40), color(20), dT, this.aimAngle, t.decals, t.currentWeapon, this.aimAngle, t.eType, t.bodyW, t.bodyH);
+                        let c = new Corpse(t.x, t.y, t.moveAngle, t.aimAngle, color(40), color(20), dT, this.aimAngle, t.decals, t.currentWeapon, this.aimAngle, t.eType, t.bodyW, t.bodyH, t);
                         c.smokeTimer = 198; c.isCharred = true; c.bloodTimer = 198;
                         corpses.push(c);
                         }
@@ -11065,7 +11268,7 @@ this.skeletonTimer = 0;
                         // The burst has already shoved it clear, so this one
                         // just goes up where it landed.
                         else if (e.eType === "ROBOT") { robotDeathBurst(e, ang, true); }
-                        else { emit(e.x, e.y, 40, bCol, "GORE"); spawnSplatter(e.x, e.y, "BLOOD", bCol); corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 3, 0, e.decals, e.currentWeapon, ang, e.eType, e.bodyW, e.bodyH)); }
+                        else { emit(e.x, e.y, 40, bCol, "GORE"); spawnSplatter(e.x, e.y, "BLOOD", bCol); corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 3, 0, e.decals, e.currentWeapon, ang, e.eType, e.bodyW, e.bodyH, e)); }
                         processKill(e.x, e.y, false, e.eType, e.isFriendly);
                     }
                 }
@@ -11185,7 +11388,7 @@ this.skeletonTimer = 0;
                               robotDeathBurst(e, atan2(e.y - this.y, e.x - this.x),
                                               !!(this.isPlayer || this.isFriendly), ROBOT_MELEE_KB);
                           }
-                          else { sfx.meleeKill(e.x, e.y); emit(e.x, e.y, 60, bCol, "GORE"); spawnSplatter(e.x, e.y, "BLOOD", bCol); corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 3, 0, e.decals, e.currentWeapon, this.aimAngle, e.eType, e.bodyW, e.bodyH)); }
+                          else { sfx.meleeKill(e.x, e.y); emit(e.x, e.y, 60, bCol, "GORE"); spawnSplatter(e.x, e.y, "BLOOD", bCol); corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 3, 0, e.decals, e.currentWeapon, this.aimAngle, e.eType, e.bodyW, e.bodyH, e)); }
                           
                           processKill(e.x, e.y, false, e.eType, e.isFriendly); 
                       } 
@@ -11787,7 +11990,7 @@ if (this.eType === "COW") {
                     let vx = cos(iA) * 3.5 * spd, vy = sin(iA) * 3.5 * spd; let m = this.attemptMove(vx, vy); aDx = m.x; aDy = m.y;
                 }
                 if (frameCount % 15 === 0) { spawnSplatter(this.x, this.y, "BLOOD", color(0, 100, 0)); emit(this.x, this.y, 3, color(0, 100, 0), "BLOOD"); }
-                if (dToP < 70 && trg.hp > 0 && !trg.dead) { trg.takeDamage(999); trg.dead = true; sfx.deathGrunt(); corpses.push(new Corpse(trg.x, trg.y, trg.moveAngle, trg.aimAngle, trg.shirtCol, trg.pantsCol, 13, 0, trg.decals, trg.currentWeapon, 0, "NORMAL", trg.bodyW, trg.bodyH)); if(trg.isPlayer) playerRespawnTimer = 90; }
+                if (dToP < 70 && trg.hp > 0 && !trg.dead) { trg.takeDamage(999); trg.dead = true; sfx.deathGrunt(); corpses.push(new Corpse(trg.x, trg.y, trg.moveAngle, trg.aimAngle, trg.shirtCol, trg.pantsCol, 13, 0, trg.decals, trg.currentWeapon, 0, "NORMAL", trg.bodyW, trg.bodyH, trg)); if(trg.isPlayer) playerRespawnTimer = 90; }
             } else {
                 if (canSee && dToP < 600) {
                     if (this.burstCooldown > 0) { this.burstCooldown--; } 
@@ -11850,7 +12053,7 @@ if (this.eType === "COW") {
                     sfx.bite(); this.biteCooldown = 84; 
                     if (trg.hp <= 0 && !trg.dead) { 
                         trg.dead = true; sfx.deathGrunt(); 
-                        corpses.push(new Corpse(trg.x, trg.y, trg.moveAngle, trg.aimAngle, trg.shirtCol, trg.pantsCol, 0, 0, trg.decals, trg.currentWeapon, 0, "NORMAL", trg.bodyW, trg.bodyH)); 
+                        corpses.push(new Corpse(trg.x, trg.y, trg.moveAngle, trg.aimAngle, trg.shirtCol, trg.pantsCol, 0, 0, trg.decals, trg.currentWeapon, 0, "NORMAL", trg.bodyW, trg.bodyH, trg)); 
                         if(trg.isPlayer) playerRespawnTimer = 90; 
                     }
                 } 
@@ -13556,127 +13759,10 @@ if (this.isPlayer) {
          this.currentWeapon === WEAPONS.ROCKET_LAUNCHER)) { hX = 3; hY = 4; }
 
     
-        // --- FEMALE PISTOL HAIR / NORMAL HEAD ---
-    if (this.isPlayer && typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked) {
-        fill(235, 180, 140); ellipse(hX, hY, 11, 11);
-        push(); translate(hX, hY); rotate(-HALF_PI); fill(40, 80, 40); arc(0, -1, 14, 14, PI, TWO_PI); pop(); 
-        push(); translate(hX, hY); rotate(radians(33)); fill(80, 50, 20); rect(4, -1, 8, 3); fill(255, 100, 0); ellipse(12, 0.5, 2, 2); pop(); 
-    } else if (this.eType === "MILITARY_NEUTRAL" || this.eType === "NM0_GREY_FATIGUE" || (this.isMilitary && typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked)) {
-        fill(235, 180, 140); ellipse(hX, hY, 11, 11);
-        push(); translate(hX, hY); rotate(-HALF_PI); 
-        
-        if (this.isMilitary) fill(40, 80, 40); // Player's green helmet
-        else if (this.eType === "NM0_GREY_FATIGUE") fill(170, 175, 180); // Grey helmet
-        else fill(190, 170, 130); // Neutral tan helmet
-        
-        stroke(0); strokeWeight(1.5); 
-        arc(0, -1, 14, 14, PI, TWO_PI, CHORD); 
-        pop(); 
-    
- 
-    } else if (this.isPlayer && ninjaSuitUnlocked) {
-
-
-        fill(235, 180, 140); ellipse(hX, hY, 11, 11); push(); translate(hX, hY); fill(15); ellipse(0, 0, 12, 12); fill(240); arc(0, 0, 12, 12, -HALF_PI, HALF_PI); fill(235, 180, 140); rect(1, -3, 3, 6, 1); fill(0); ellipse(2, -.5, 1.5, 1.5); ellipse(2, 1.5, 1.5, 1.5); pop();
-        } else if (this.eType === "FEMALE_PISTOL") {
-        fill(235, 180, 140); ellipse(hX, hY, 11, 11); 
-        fill(15); arc(hX, hY, 12, 12, HALF_PI, PI + HALF_PI);
-        push(); translate(hX - 5, hY); rotate(radians(this.isMoving ? sin(frameCount * 0.3) * 15 : 0)); ellipse(-6, 0, 12, 6); pop();
-    } else if (this.eType === "NM0_ROOKIE" || this.eType === "NM0_ROOKIE_F") {
-        // Bare head. No helmet is the point -- against a sector full of
-        // helmeted regulars and armoured machines, an uncovered head reads as
-        // "new" from across the street, and it is where you shoot him.
-        fill(235, 180, 140); ellipse(hX, hY, 11, 11);
-        if (this.eType === "NM0_ROOKIE_F") {
-            fill(64, 46, 32); arc(hX, hY, 12, 12, HALF_PI, PI + HALF_PI);
-            push(); translate(hX - 5, hY);
-            rotate(radians(this.isMoving ? sin(frameCount * 0.3) * 15 : 0));
-            ellipse(-6, 0, 12, 6); pop();
-        } else {
-            fill(58, 44, 32); arc(hX, hY, 11.5, 11.5, PI + 0.5, TWO_PI - 0.5);
-        }
-        // Recruit's collar flash, so the blue reads even at a glance.
-        fill(this.shirtCol); ellipse(hX - 6.5, hY, 5, 7);
-    } else if (this.eType === "BANDIT") {
-        fill(214, 168, 132); ellipse(hX, hY, 11, 11);
-        push(); translate(hX, hY);
-        // Bandana pulled up over the nose, drawn before the hat so the brim
-        // overlaps it the way it would.
-        fill(this.kerchiefCol || color(124, 40, 36));
-        arc(0, 0, 12, 12, -HALF_PI, HALF_PI);
-        const bh = this.hatCol || color(34, 30, 30);
-        fill(red(bh) * 0.7, green(bh) * 0.7, blue(bh) * 0.7); ellipse(0, 0, 27, 25);
-        fill(bh); ellipse(0, 0, 21, 19);
-        fill(red(bh) * 1.5 + 10, green(bh) * 1.5 + 10, blue(bh) * 1.5 + 10);
-        ellipse(-1, 0, 14, 12);
-        fill(96, 26, 24); rect(-7, -1.4, 14, 2.8);
-        pop();
-    } else if (this.eType === "COWBOY" || this.eType === "COWGIRL") {
-        fill(235, 180, 140); ellipse(hX, hY, 11, 11);
-        if (this.eType === "COWGIRL") {
-            // Braid down the back, swinging with the walk.
-            push(); translate(hX - 5, hY);
-            rotate(radians(this.isMoving ? sin(frameCount * 0.3) * 15 : 0));
-            fill(this.hairCol || color(122, 74, 38)); ellipse(-7, 0, 13, 6);
-            pop();
-        }
-        push(); translate(hX, hY);
-        const hc = this.hatCol || color(96, 72, 46);
-        // Stetson: wide oval brim, then the crown, then a crease down it and a
-        // hatband where the two meet. Read from above that silhouette is the
-        // whole character of the hat.
-        const bw = this.eType === "COWGIRL" ? 25 : 28;
-        fill(red(hc) * 0.82, green(hc) * 0.82, blue(hc) * 0.82);
-        ellipse(0, 0, bw, bw * 0.93);
-        fill(hc); ellipse(0, 0, bw - 5, bw * 0.93 - 5);
-        fill(red(hc) * 1.18 + 12, green(hc) * 1.18 + 12, blue(hc) * 1.18 + 12);
-        ellipse(-1, 0, bw - 13, bw * 0.93 - 12);
-        fill(42, 30, 20); rect(-((bw - 13) / 2), -1.4, bw - 13, 2.8);
-        stroke(red(hc) * 0.6, green(hc) * 0.6, blue(hc) * 0.6); strokeWeight(1.2);
-        line(-((bw - 15) / 2), 0, (bw - 15) / 2, 0);
-        noStroke();
-        pop();
-    } else if (this.eType === "LOCAL_COP") {
-        fill(235, 180, 140); ellipse(hX, hY, 11, 11);
-        push(); translate(hX, hY);
-        // Flat-brimmed lawman's hat, darker and squarer than a drover's.
-        fill(34, 32, 40); ellipse(0, 0, 26, 24);
-        fill(this.hatCol || color(46, 44, 52)); ellipse(0, 0, 17, 16);
-        fill(210, 188, 104); rect(-4, -1.4, 8, 2.8);   // band badge
-        pop();
-    } else if (this.eType === "VILLAGER_MALE") {
-        fill(235, 180, 140); ellipse(hX, hY, 11, 11);
-        push(); translate(hX, hY);
-        // Soft flat cap with a stubby peak toward the front.
-        fill(this.hatCol || color(84, 74, 58)); ellipse(0, 0, 15, 14);
-        fill(64, 56, 44); arc(0, 0, 19, 14, -0.9, 0.9, CHORD);
-        pop();
-    } else if (this.eType === "VILLAGER_FEMALE") {
-        fill(235, 180, 140); ellipse(hX, hY, 11, 11);
-        push(); translate(hX, hY);
-        fill(this.hairCol || color(122, 74, 38));
-        arc(0, 0, 12, 12, HALF_PI, PI + HALF_PI);
-        // Sun bonnet: deep scoop round the back of the head, brim to the front,
-        // ribbon tied under the chin.
-        fill(this.bonnetCol || color(228, 220, 204));
-        arc(-1, 0, 21, 19, HALF_PI, PI + HALF_PI, CHORD);
-        fill(214, 204, 184); arc(2, 0, 13, 17, -HALF_PI, HALF_PI, CHORD);
-        fill(178, 152, 168); rect(-2, 7.5, 7, 2, 1);
-        pop();
-    } else if (this.eType === "FARMER_MALE") {
-        fill(235, 180, 140); ellipse(hX, hY, 11, 11); 
-        push(); translate(hX, hY);
-        fill(210, 180, 70); ellipse(0, 0, 24, 24); // Straw hat brim
-        fill(190, 160, 50); ellipse(0, 0, 14, 14); // Straw hat crown
-        pop();
-    } else if (this.eType === "FARMER_FEMALE") {
-        fill(235, 180, 140); ellipse(hX, hY, 11, 11); 
-        fill(150, 80, 40); // Brown hair
-        arc(hX, hY, 12, 12, HALF_PI, PI + HALF_PI);
-        push(); translate(hX - 5, hY); rotate(radians(this.isMoving ? sin(frameCount * 0.3) * 15 : 0)); ellipse(-6, 0, 12, 6); pop();
-    } else {
-        fill(235, 180, 140); ellipse(hX, hY, 11, 11); 
-    }
+        // --- head, hair and headwear ---
+    // One description, shared with the corpse and with the overkill pieces, so
+    // that a body keeps what the person was wearing. See drawFigureHead().
+    drawFigureHead(window, this, hX, hY, true, this.isMoving ? sin(frameCount * 0.3) * 15 : 0);
 
 
     // The head is a dome, whichever of the twenty variants above drew it --
@@ -14398,7 +14484,7 @@ function updateBullets() {
                         sfx.hitArmor();
                         corpses.push(new Corpse(t.x, t.y, t.moveAngle, t.aimAngle, t.shirtCol, t.pantsCol,
                                                 t.enraged ? 1 : 0, hA, t.decals, t.currentWeapon, b.a,
-                                                "ROBOT", t.bodyW, t.bodyH));
+                                                "ROBOT", t.bodyW, t.bodyH, t));
                         processKill(t.x, t.y, b.tH === "HEAD", t.eType, t.isFriendly);
                         // `i` here is the BULLET index -- the target loop is a
                         // for-of with no index of its own -- so the body has to
@@ -14412,7 +14498,7 @@ function updateBullets() {
                     if (t.eType === "SAUCER" || t.eType === "SAUCER_RED") { triggerExplosion(t.x, t.y, 160); } 
                     else if (t.eType === "AERIAL" || t.eType === "AERIAL_PISTOL") {
                         if (b.tH === "HEAD") { dT = 12; } else { let choices = [11, 5, 10]; dT = choices[floor(random(3))]; }
-                        corpses.push(new Corpse(t.x, t.y, t.moveAngle, t.aimAngle, t.shirtCol, t.pantsCol, dT, hA, t.decals, t.currentWeapon, b.a, t.eType, t.bodyW, t.bodyH));
+                        corpses.push(new Corpse(t.x, t.y, t.moveAngle, t.aimAngle, t.shirtCol, t.pantsCol, dT, hA, t.decals, t.currentWeapon, b.a, t.eType, t.bodyW, t.bodyH, t));
                         if (dT === 11) { spawnSplatter(t.x, t.y, "BLOOD", color(90, 0, 0)); } 
                         else if (dT === 5 || dT === 10) { emit(t.x, t.y, 40, color(255, 100, 0), "EXPLOSION"); sfx.explosion(t.x, t.y); spawnSplatter(t.x, t.y, "BLOOD", color(90, 0, 0)); spawnSplatter(t.x, t.y, "SCORCH"); if (dT === 10) { emit(b.x, b.y, 30, color(220, 200, 200), "BONE", b.vx, b.vy); emit(t.x, t.y, 120, color(90, 0, 0), "GORE"); } }
                     } else { 
@@ -14440,7 +14526,7 @@ function updateBullets() {
                             dT = 10; emit(b.x, b.y, 30, color(220, 200, 200), "BONE", b.vx, b.vy); emit(t.x, t.y, 120, bCol, "GORE");
                         } else { dT = 0; emit(t.x, t.y, 40, bCol, "GORE"); } 
                         
-                        corpses.push(new Corpse(t.x, t.y, t.moveAngle, t.aimAngle, t.shirtCol, t.pantsCol, dT, hA, t.decals, t.currentWeapon, b.a, t.eType, t.bodyW, t.bodyH)); 
+                        corpses.push(new Corpse(t.x, t.y, t.moveAngle, t.aimAngle, t.shirtCol, t.pantsCol, dT, hA, t.decals, t.currentWeapon, b.a, t.eType, t.bodyW, t.bodyH, t)); 
                         spawnSplatter(t.x, t.y, "BLOOD", bCol); 
                     } 
                     if (t.isPlayer) { playerRespawnTimer = 90; } else { 
@@ -15335,8 +15421,26 @@ function drawUI() {
   }
   fill(220, 30, 30); rect(20, 20, hpNow * 2, 15, 4);
   
+  // The shield bar carries the same trail, for the same reason: the chunk a
+  // hit took off it is worth seeing while it is happening. It recharges on its
+  // own, so the trail is doing real work here -- without it a shield that is
+  // draining and refilling reads as a bar that merely wobbles.
+  const shNow = player ? max(0, player.shield) : 0;
+  if (shNow > shGhost) { shGhost = shNow; shGhostHold = 0; }
+  if (shNow < shPrev) shGhostHold = HP_GHOST_HOLD;
+  shPrev = shNow;
+  if (shGhost > shNow) {
+    if (shGhostHold > 0) shGhostHold--;
+    else shGhost = max(shNow, shGhost - max(0.4, (shGhost - shNow) * 0.09));
+  }
+
   fill(50, 200); rect(20, 40, 200, 10, 4); 
-  fill(0, 200, 255); rect(20, 40, player ? max(0, player.shield) * 2 : 0, 10, 4);
+  if (shGhost > shNow) {
+    const held = shGhostHold > 0;
+    fill(held ? 255 : 150, held ? 250 : 225, held ? 235 : 255, held ? 235 : 195);
+    rect(20, 40, shGhost * 2, 10, 4);
+  }
+  fill(0, 200, 255); rect(20, 40, shNow * 2, 10, 4);
 
   // --- PERSISTENT ARMY BAR CALCULATION ---
   // Now includes currentLevel === 8 to prevent reset
