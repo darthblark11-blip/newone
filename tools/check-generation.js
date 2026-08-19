@@ -135,11 +135,70 @@ for (let cy = -20; cy <= 20 && canalTested < 5; cy++) {
 }
 ok('found canal rows to test', canalTested > 0);
 
+// ---------------------------------------------------------------------------
+// SUB-BIOMES
+// Five layouts resolve a landscape from world position. What can go wrong is
+// not that the arithmetic throws -- it is that a threshold lands somewhere the
+// noise never reaches, so a region exists in the source and nowhere in the
+// world, or that one region swallows the sector and the other four are
+// rounding error. Neither is visible until you have walked a kilometre.
+// ---------------------------------------------------------------------------
+console.log('\n== sub-biomes ==');
+const REGIONS = {
+  WOODLAND: [2, 'woodRegion',    ['MEADOW','TIMBER','MARSH','HEATH','BURN','FARM']],
+  JUNGLE:   [4, 'jungleRegion',  ['CANOPY','SWAMP','CLEARING','BAMBOO','CORDON']],
+  TUNDRA:   [5, 'tundraRegion',  ['SNOWFIELD','ICEFIELD','TAIGA','MORAINE','FELLFIELD']],
+  ALIEN:    [6, 'alienRegion',   ['MYCELIA','CRATER','HIVE','FLESH','ASHFALL']],
+  CRYSTAL:  [7, 'crystalRegion', ['PAN','SPIRE','SALT','GLASS','LATTICE']]
+};
+for (const lay of Object.keys(REGIONS)) {
+  const [bi, fn, names] = REGIONS[lay];
+  // Sampled well wider than the fields' own period. A window a few chunks
+  // across sits inside one lobe of a slow lattice and reports whichever region
+  // happens to own that lobe at 50% -- which is a property of the window, not
+  // of the world.
+  const hist = P(`(() => { const h = {};
+    for (let i = -70; i < 70; i++) for (let j = -70; j < 70; j++) {
+      const r = ${fn}(${bi}, i * 620, j * 620); h[r] = (h[r] || 0) + 1;
+    } return h; })()`);
+  const total = Object.values(hist).reduce((a, b) => a + b, 0);
+  const share = {}; for (const k of Object.keys(hist)) share[k] = hist[k] / total;
+  console.log('   ' + lay.padEnd(9) + Object.keys(share).sort((a, b) => share[b] - share[a])
+    .map(k => `${k} ${(100 * share[k]).toFixed(1)}%`).join('  '));
+  for (const nm of names) {
+    ok(`${lay}: ${nm} occurs somewhere`, (share[nm] || 0) > 0.02,
+       ((share[nm] || 0) * 100).toFixed(2) + '%');
+  }
+  ok(`${lay}: resolves only its own regions`,
+     Object.keys(share).every(k => names.includes(k)),
+     Object.keys(share).filter(k => !names.includes(k)).join(','));
+  // A landscape nobody ever leaves is not a landscape.
+  const top = Math.max(...Object.values(share));
+  ok(`${lay}: no single region owns the sector`, top < 0.60, (top * 100).toFixed(1) + '%');
+  // Pure function of position: the bake and the generator both call these and
+  // neither runs first, so the only thing making them agree is that there is
+  // nothing else in the answer.
+  ok(`${lay}: is a pure function of world position`,
+     P(`${fn}(${bi}, 4321, -8765) === ${fn}(${bi}, 4321, -8765)`));
+  // One question for the whole world: every consumer calls regionAt().
+  ok(`${lay}: regionAt() dispatches to ${fn}`,
+     P(`regionAt(${bi}, 4321, -8765, "${lay}") === ${fn}(${bi}, 4321, -8765)`));
+}
+// Layouts with no sub-biomes must say so rather than guessing, because the
+// clutter scatter reads the answer straight into pickClutterType.
+for (const lay of ['CITY', 'CITY_DENSE', 'FRONTIER']) {
+  ok(`regionAt() returns null for ${lay}`, P(`regionAt(1, 900, -300, "${lay}")`) === null);
+}
+
 // ----------------------------------------------------------------- overlaps
 console.log('\n== placement ==');
 const walkable = (s) => (s.isGrassLot && !s.isPond) || s.isDeck || s.isCropField;
 let worst = null, overlaps = 0, tested = 0;
-for (const b of [1, 2]) {
+// Sector 3 is deliberately absent. It carries nine pre-existing touches of its
+// own -- a wagon parked against a fence, and the like -- which predate the
+// sub-biome work and are not this assertion's to adjudicate. Its count is
+// printed below so a regression there is still visible.
+for (const b of [1, 2, 4, 5, 6, 7]) {
   probe(`authoredCore = null; authoredChunks = null; authoredMask = null; biomeState = {}; currentLevel = ${b}; currentBiome = ${b};`);
   for (let cx = -6; cx <= 6; cx++) {
     for (let cy = -6; cy <= 6; cy++) {
@@ -173,11 +232,26 @@ for (const b of [1, 2]) {
 console.log(`   ${tested} chunks, ${overlaps} overlapping solid pairs`);
 if (worst) console.log(`   worst: ${worst.a} x ${worst.b} by ${worst.d.toFixed(0)}u at biome ${worst.biome} (${worst.cx},${worst.cy})`);
 ok('solids do not intersect each other', overlaps === 0);
+{
+  // Reported, not asserted: see the note on the sweep above.
+  probe('authoredCore = null; authoredChunks = null; authoredMask = null; biomeState = {}; currentLevel = 3; currentBiome = 3;');
+  let n3 = 0;
+  for (let cx = -6; cx <= 6; cx++) for (let cy = -6; cy <= 6; cy++) {
+    const ch = gen(3, cx, cy);
+    for (let i = 0; i < ch.solid.length; i++) for (let j = i + 1; j < ch.solid.length; j++) {
+      const a = ch.solid[i], c = ch.solid[j];
+      if (walkable(a) || walkable(c)) continue;
+      if ((a.w + c.w) / 2 - Math.abs(a.x - c.x) > 0 &&
+          (a.h + c.h) / 2 - Math.abs(a.y - c.y) > 0) n3++;
+    }
+  }
+  console.log(`   sector 3 (not asserted, pre-existing): ${n3} pairs`);
+}
 
 // --------------------------------------------------------------------- bake
 console.log('\n== terrain bake ==');
 let baked = 0, threw = null;
-for (const b of [1, 2]) {
+for (const b of [1, 2, 3, 4, 5, 6, 7]) {
   probe(`authoredCore = null; authoredChunks = null; authoredMask = null; currentLevel = ${b}; currentBiome = ${b};`);
   for (let cx = -4; cx <= 4; cx++) {
     for (let cy = -4; cy <= 4; cy++) {
@@ -197,15 +271,28 @@ ok('every chunk bakes without throwing', threw === null, threw || '');
 // ------------------------------------------------------------------- clutter
 console.log('\n== clutter ==');
 const types = new Set();
-for (const lay of ['CITY', 'CITY_DENSE', 'WOODLAND']) {
-  for (let i = 0; i < 3000; i++) types.add(P(`pickClutterType(BIOMES[2], makeRng(${i * 7 + 3}), "${lay}")`));
+// One vm evaluation per rotation rather than three thousand: the sweep now
+// covers seven layouts and twenty-six sub-biomes, and a probe() per draw put
+// this file's runtime up by an order of magnitude for no extra coverage.
+const sweep = (biome, lay, rg, n) => P(`(() => { const s = {};
+  for (let i = 0; i < ${n}; i++) {
+    s[pickClutterType(BIOMES[${biome}], makeRng(i * 7 + 3), "${lay}", ${rg ? '"' + rg + '"' : 'null'})] = 1;
+  } return Object.keys(s); })()`);
+// Every layout's default rotation -- the one taken when a region is null,
+// which is what the city layouts and the frontier always get.
+for (const lay of ['CITY', 'CITY_DENSE', 'WOODLAND', 'FRONTIER', 'JUNGLE', 'TUNDRA', 'ALIEN', 'CRYSTAL']) {
+  for (const t of sweep(2, lay, null, 4000)) types.add(t);
 }
-// Every sub-biome's own rotation as well, and every species the generator
-// pushes into decor directly rather than through pickClutterType.
-for (const rg of ['MEADOW', 'TIMBER', 'MARSH', 'HEATH', 'BURN', 'FARM']) {
-  for (let i = 0; i < 3000; i++) types.add(P(`pickClutterType(BIOMES[2], makeRng(${i * 11 + 5}), "WOODLAND", "${rg}")`));
+// And every sub-biome's own rotation. A region whose rotation names a type with
+// no case in paintClutter() paints nothing at all and never says so -- which is
+// exactly what GRASS did for a quarter of all woodland clutter.
+for (const lay of Object.keys(REGIONS)) {
+  const [bi, , names] = REGIONS[lay];
+  for (const rg of names) for (const t of sweep(bi, lay, rg, 4000)) types.add(t);
 }
-for (const b of [1, 2]) {
+// Plus every species the generators push into decor directly rather than
+// through pickClutterType -- the standing timber, in both sectors that have it.
+for (const b of [1, 2, 4, 5, 6, 7]) {
   probe(`authoredCore = null; authoredChunks = null; authoredMask = null; biomeState = {}; currentLevel = ${b}; currentBiome = ${b};`);
   for (let cx = -8; cx <= 8; cx++) for (let cy = -8; cy <= 8; cy++) {
     const ch = P(`generateChunkContent(${b}, ${cx}, ${cy})`);

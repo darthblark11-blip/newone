@@ -10,13 +10,18 @@ probe('seedWorldClock();');
 // so the sun-driven shadow helpers are exercised at both ends of their range.
 // ---------------------------------------------------------------------------
 const seen = new Set();
-for (const b of [1, 2]) {
+// Every streamed sector, not only the two authored ones. The outer sectors grew
+// sub-biomes with their own set pieces, and a prop that no test ever draws is a
+// prop nobody finds out is broken until they walk into it a kilometre from the
+// nearest checkpoint.
+for (const b of [1, 2, 3, 4, 5, 6, 7]) {
   probe(`authoredCore = null; authoredChunks = null; authoredMask = null; biomeState = {};
          currentLevel = ${b}; currentBiome = ${b}; BIOME_ACTIVE = true;`);
   // Wide enough to catch the rare landmarks -- a stone row turns up in roughly
-  // one chunk in ninety, and a prop that is never drawn is never tested.
+  // one chunk in ninety, an impactor in one in forty, and a prop that is never
+  // drawn is never tested.
   const all = [];
-  const R = b === 2 ? 13 : 8;
+  const R = b === 2 ? 13 : b >= 3 ? 12 : 8;
   for (let cx = -R; cx <= R; cx++) for (let cy = -R; cy <= R; cy++) {
     const ch = P(`generateChunkContent(${b}, ${cx}, ${cy})`);
     for (const s of ch.solid) { all.push(s); if (s.propType) seen.add(s.propType); }
@@ -26,7 +31,8 @@ for (const b of [1, 2]) {
   probe('viewLeft = -100000; viewRight = 100000; viewTop = -100000; viewBottom = 100000;');
   for (const hour of [2, 8, 13, 19]) {
     probe(`worldTimeMs = ${hour} / 24 * DAY_MS;`);
-    for (const fn of ['drawBiomeProps()', 'drawBiomeShadows()', 'drawGroundLots()', 'drawBuildings()']) {
+    for (const fn of ['drawBiomeProps()', 'drawBiomeShadows()', 'drawBiomeDecks()',
+                      'drawGroundLots()', 'drawBuildings()', 'sceneEmitters()']) {
       let err = null;
       try { probe(fn); } catch (e) { err = e.message; }
       ok(`biome ${b} ${hour}:00 ${fn}`, err === null, err || '');
