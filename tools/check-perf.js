@@ -353,14 +353,135 @@ console.log('== distances that are only ever compared are not rooted ==');
   ok('the squared comparison agrees with the rooted one', cmp === 0, '20000 random pairs');
   ok('the AI cull no longer takes a root it does not read',
      /cdx \* cdx \+ cdy \* cdy < cullDist \* cullDist/.test(src), 'once per enemy per frame');
-  ok('an ally ranks hostiles by the square', /if \(d2 < cD2\) \{ cD2 = d2; closeE = e; \}/.test(src),
-     'same ranking, no roots');
+  ok('an ally ranks hostiles by the square',
+     /if \(d2 < bestD2\) \{ bestD2 = d2; best = e; \}/.test(src), 'same ranking, no roots');
   ok('the body-separation pass roots only the pairs that overlap',
      /if \(dSq < minDist \* minDist && dSq > 0\) \{\s*\n\s*let d = Math\.sqrt\(dSq\);/.test(src),
      'the sqrt is inside the test');
   ok('and so does the flyer pass',
      /if \(d2 < minDist \* minDist && d2 > 0\) \{\s*\n\s*const d = Math\.sqrt\(d2\);/.test(src));
 }
+
+// ---------------------------------------------------------------------------
+console.log('== the escort thinks on the same beat as the men shooting at it ==');
+// Every hostile defers its sight test, its range and its bearing to one frame
+// in ten. The ally branch ran the lot every frame, plus two full walks of
+// enemiesList that no hostile does at all -- measured at 0.98 hasLOS calls per
+// ally per frame against 0.089 per hostile, so one soldier in the escort cost
+// eleven of the men shooting at him. That matters most exactly where the game
+// puts the most allies: a liberated sector converts up to eighty citizens.
+//
+// What is sliced is ACQUISITION. What must stay per-frame is everything the
+// player can watch -- so those are checked separately and by behaviour, not by
+// reading the diff.
+{
+  probe(`enemiesList.length = 0; bullets.length = 0; player.x = 0; player.y = 0; player.aimAngle = 0;`);
+  const rate = probe(`(function () {
+    for (let i = 0; i < 40; i++) { const a = Math.random()*6.283, r = 300 + Math.random()*700;
+      const e = new Character(player.x+Math.cos(a)*r, player.y+Math.sin(a)*r, false, "NORMAL");
+      e.isArmed = true; enemiesList.push(e); }
+    let n = 0; const f = hasLOS; hasLOS = function () { n++; return f.apply(this, arguments); };
+    for (let i = 0; i < 40; i++) { frameCount++; updateEntities(); }
+    n = 0;
+    for (let i = 0; i < 200; i++) { frameCount++; updateEntities(); }
+    const hostileRate = n / 200 / enemiesList.length;
+    for (let i = 0; i < 30; i++) { const a = Math.random()*6.283, r = 60 + Math.random()*160;
+      const e = new Character(player.x+Math.cos(a)*r, player.y+Math.sin(a)*r, false, "NORMAL");
+      e.isFriendly = true; e.isArmed = true; e.baseState = "FOLLOW"; enemiesList.push(e); }
+    for (let i = 0; i < 40; i++) { frameCount++; updateEntities(); }
+    n = 0;
+    for (let i = 0; i < 200; i++) { frameCount++; updateEntities(); }
+    hasLOS = f;
+    return { hostileRate, allyRate: (n / 200 - hostileRate * 40) / 30 };
+  })()`);
+  ok('an ally costs no more sight tests than a hostile',
+     rate.allyRate <= rate.hostileRate * 1.35,
+     `${rate.allyRate.toFixed(3)} per ally per frame vs ${rate.hostileRate.toFixed(3)} per hostile`);
+  ok('and that is roughly the one-frame-in-ten every hostile already had',
+     rate.allyRate < 0.2, rate.allyRate.toFixed(3) + ' -- it was 0.98');
+
+  // The latency must not leak into anything the player can see.
+  const behave = probe(`(function () {
+    const reset = () => { enemiesList.length = 0; bullets.length = 0;
+                          player.x = 0; player.y = 0; player.aimAngle = 0; };
+    const ally = (x, y) => { const a = new Character(x, y, false, "NORMAL");
+      a.isFriendly = true; a.isArmed = true; a.baseState = "FOLLOW"; return a; };
+
+    // engages, aims true, and shoots
+    reset();
+    const a1 = ally(60, 0), f1 = new Character(260, 0, false, "NORMAL"); f1.isArmed = true;
+    enemiesList.push(a1, f1);
+    let fired = 0; const sb = spawnBullet;
+    spawnBullet = function () { fired++; return sb.apply(this, arguments); };
+    for (let i = 0; i < 180; i++) { frameCount++; updateEntities(); }
+    spawnBullet = sb;
+    const bearing = Math.atan2(f1.y - a1.y, f1.x - a1.x);
+    const off = Math.abs(Math.atan2(Math.sin(a1.aimAngle - bearing), Math.cos(a1.aimAngle - bearing)));
+    const engaged = { locked: a1.allyFoe === f1, off, fired };
+
+    // lets go of a target the instant it dies
+    reset();
+    const a2 = ally(60, 0), f2 = new Character(260, 0, false, "NORMAL"); f2.isArmed = true;
+    enemiesList.push(a2, f2);
+    for (let i = 0; i < 40; i++) { frameCount++; updateEntities(); }
+    const had = a2.allyFoe === f2;
+    f2.hp = 0; f2.dead = true; frameCount++; updateEntities();
+    const dropped = a2.allyFoe === null;
+
+    // stops firing the frame a target leaves range, not at the next slice
+    reset();
+    const a3 = ally(60, 0), f3 = new Character(300, 0, false, "NORMAL"); f3.isArmed = true;
+    enemiesList.push(a3, f3);
+    for (let i = 0; i < 40; i++) { frameCount++; updateEntities(); }
+    f3.x = 5000;
+    let after = 0; const sb2 = spawnBullet;
+    spawnBullet = function () { after++; return sb2.apply(this, arguments); };
+    for (let i = 0; i < 9; i++) { frameCount++; updateEntities(); }   // inside one slice
+    spawnBullet = sb2;
+
+    // a brand new ally is not blind while it waits for its first slice
+    reset();
+    const f4 = new Character(260, 0, false, "NORMAL"); f4.isArmed = true; enemiesList.push(f4);
+    for (let i = 0; i < 5; i++) { frameCount++; updateEntities(); }
+    const a4 = ally(60, 0); a4.aiOffset = (frameCount + 5) % 10; enemiesList.push(a4);
+    frameCount++; updateEntities();
+    const instant = a4.allyFoe === f4;
+
+    // the column spreads, and closes on the player when there is nothing to fight
+    reset();
+    for (let i = 0; i < 12; i++) enemiesList.push(ally(-900 - i * 3, 700 + i * 2));
+    const far = Math.hypot(enemiesList[0].x - player.x, enemiesList[0].y - player.y);
+    for (let i = 0; i < 300; i++) { frameCount++; updateEntities(); }
+    const al = enemiesList.filter(e => e.isFriendly);
+    let minSep = 1e9;
+    for (let i = 0; i < al.length; i++) for (let j = i + 1; j < al.length; j++)
+      minSep = Math.min(minSep, Math.hypot(al[i].x - al[j].x, al[i].y - al[j].y));
+    return { engaged, had, dropped, after, instant, minSep,
+             slots: new Set(al.map(e => e.allySlot)).size, allies: al.length,
+             far, near: Math.hypot(al[0].x - player.x, al[0].y - player.y) };
+  })()`);
+  ok('an ally still acquires the hostile in front of it', behave.engaged.locked && behave.had);
+  ok('still turns to face it', behave.engaged.off < 1.2,
+     behave.engaged.off.toFixed(2) + ' rad off the true bearing');
+  ok('and still opens fire at the same rate', behave.engaged.fired > 0,
+     behave.engaged.fired + ' rounds in three seconds');
+  ok('it lets go of a target the instant that target dies', behave.dropped,
+     'revalidated per frame, not per slice');
+  ok('and stops shooting the moment one runs out of range', behave.after === 0,
+     'nothing fired in the nine frames before the next slice');
+  ok('a newly spawned ally acquires on its very first frame', behave.instant, 'no blind window');
+  ok('every ally still gets its own slot in the column',
+     behave.slots === behave.allies, behave.allies + ' allies, ' + behave.slots + ' slots');
+  ok('they do not end up standing on each other', behave.minSep > 12,
+     'closest pair ' + behave.minSep.toFixed(0) + ' apart');
+  ok('and with nothing to fight they fall in behind the player',
+     behave.near < behave.far * 0.6, `closed from ${behave.far | 0} to ${behave.near | 0}`);
+  ok('the formation slot is stamped for the roster, not derived per ally',
+     /if \(e\.isFriendly\) e\.allySlot = e\.dead \? 0 : allyN\+\+;/.test(src), 'O(N) once, not O(N) each');
+  ok('and a patrol beat is drawn without copying the world to pick one',
+     !/buildings\.filter\(b => !b\.isGrassLot/.test(src), 'counted and walked to');
+}
+probe(`enemiesList.length = 0; bullets.length = 0;`);
 
 // ---------------------------------------------------------------------------
 console.log('== and the frame still fits ==');

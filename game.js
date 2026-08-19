@@ -8655,19 +8655,34 @@ function spawnSplatter(x, y, t = "HIDDEN", col = null) {
 function patrolCornerX(b, i) { return (i === 1 || i === 2) ? b.x + b.w / 2 + 40 : b.x - b.w / 2 - 40; }
 function patrolCornerY(b, i) { return (i >= 2) ? b.y + b.h / 2 + 40 : b.y - b.h / 2 - 40; }
 
+// Counted, then walked to -- not filtered into a new array first.
+//
+// This built a copy of every patrollable solid in the world (~300 of the 374 in
+// a woodland scene) plus a closure, every time any enemy needed a new beat, and
+// then read exactly ONE element out of it. Worse, the caller asks again on any
+// frame where targetBuilding is null, so a level with nothing to patrol rebuilt
+// that array sixty times a second per enemy.
+//
+// Two passes over the array and one random() gives the identical uniform draw
+// over the identical set, and allocates nothing at all.
 function getPatrolBuilding() {
     // If the map hasn't generated buildings yet, return null safely
     if (!buildings || buildings.length === 0) return null;
-    
-    // Filter out flat ground elements so enemies patrol actual physical structures
-    let validBuildings = buildings.filter(b => !b.isGrassLot && !b.isParkingLot && !b.isPond &&
-                                                !b.isRiver && !b.isDeck);
-    
-    // Pick a random valid building
-    if (validBuildings.length > 0) {
-        return validBuildings[floor(random(validBuildings.length))];
+
+    // Flat ground elements are not structures, so patrols do not walk them.
+    const patrollable = (b) => !b.isGrassLot && !b.isParkingLot && !b.isPond &&
+                               !b.isRiver && !b.isDeck;
+    let n = 0;
+    for (let i = 0; i < buildings.length; i++) if (patrollable(buildings[i])) n++;
+
+    if (n > 0) {
+        let k = floor(random(n));
+        for (let i = 0; i < buildings.length; i++) {
+            if (!patrollable(buildings[i])) continue;
+            if (k-- === 0) return buildings[i];
+        }
     }
-    
+
     // Failsafe if the map is empty of standard structures
     return buildings[floor(random(buildings.length))];
 }
@@ -10944,7 +10959,12 @@ this.skeletonTimer = 0;
     //    Skipped when already standing inside something -- forceNudge() is what
     //    gets them out of that, and a sweep from inside a wall finds nothing.
     if (!this.isPlayer && speed > 0.0001 && !this.checkCol(this.x, this.y)) {
-        const a = steerAvoid(this, intendedAngle, speed, (x, y) => this.checkCol(x, y));
+        // The probe is built once per entity and kept, not rebuilt per step.
+        // steerAvoid takes a callback because its two callers test different
+        // things -- a character's checkCol against a citizen's citizenBlocked --
+        // but neither ever changes for a given body.
+        if (!this._blockFn) this._blockFn = (x, y) => this.checkCol(x, y);
+        const a = steerAvoid(this, intendedAngle, speed, this._blockFn);
         if (a !== intendedAngle) { vx = cos(a) * speed; vy = sin(a) * speed; }
     }
 
@@ -11712,26 +11732,62 @@ if (this.eType === "COW") {
     if (this.isFriendly) {
         if (this.baseState === undefined) this.baseState = "FOLLOW";
 
-        // Nearest hostile, per ally, per frame -- so an escort of ten against a
-        // field of sixty was sixty hypots each, six hundred a frame, to answer
-        // a question that only ever asks which is SMALLER. Ranking by the
-        // square is the same ranking, exactly, and the one threshold that reads
-        // the value is squared to match.
-        let closeE = null, cD2 = Infinity;
-        for (let i = 0; i < enemiesList.length; i++) {
-            const e = enemiesList[i];
-            if (!e.isFriendly && !e.dead && e.hp > 0) {
-                const ex = this.x - e.x, ey = this.y - e.y;
-                const d2 = ex * ex + ey * ey;
-                if (d2 < cD2) { cD2 = d2; closeE = e; }
+        // ###################################################################
+        // AN ALLY GETS THE SAME ONE-FRAME-IN-TEN SLICE EVERY HOSTILE HAS.
+        //
+        // It did not. Every hostile in the game defers its expensive thinking
+        // to `frameCount % 10 === this.aiOffset` -- the sight test, the range,
+        // the bearing -- and the ally branch above it ran the lot on EVERY
+        // frame, plus two full walks of enemiesList that no hostile does at
+        // all. Measured against a field of forty-five hostiles: 0.98 hasLOS
+        // calls per ally per frame against 0.089 per hostile. One soldier in
+        // the escort cost eleven of the men shooting at him.
+        //
+        // What is sliced is ACQUISITION -- which hostile, and can he see it.
+        // What stays per-frame is everything you can watch: the bearing, the
+        // range, the steering, the walk cycle and the trigger. So the column
+        // still moves and shoots at sixty frames a second; it just notices a
+        // new nearest target, or a wall coming between, on the same 6 Hz beat
+        // the men shooting at the player have always used. That is not a
+        // downgrade to the escort, it is the escort finally being as cheap as
+        // its opposition.
+        // ###################################################################
+        if (this.allyTick === undefined || frameCount % 10 === this.aiOffset) {
+            this.allyTick = frameCount;
+            // Nearest hostile. Ranked by the SQUARE -- the same ranking, and
+            // the one threshold that reads it is squared to match.
+            let best = null, bestD2 = Infinity;
+            for (let i = 0; i < enemiesList.length; i++) {
+                const e = enemiesList[i];
+                if (!e.isFriendly && !e.dead && e.hp > 0) {
+                    const ex = this.x - e.x, ey = this.y - e.y;
+                    const d2 = ex * ex + ey * ey;
+                    if (d2 < bestD2) { bestD2 = d2; best = e; }
+                }
             }
+            this.allyFoe = best;
         }
+
+        // Revalidated EVERY frame, because a target can die between slices and
+        // an ally holding a stale pointer keeps aiming at a corpse.
+        let closeE = this.allyFoe;
+        if (closeE && (closeE.dead || closeE.hp <= 0 || closeE.isFriendly)) closeE = this.allyFoe = null;
 
         let isFighting = false;
         let trg = player;
-        if (closeE && cD2 < 600 * 600) { trg = closeE; isFighting = true; }
-
-        let distToTarget = dist(this.x, this.y, trg.x, trg.y);
+        let distToTarget;
+        if (closeE) {
+            // Re-measured rather than cached: both of them have moved since the
+            // slice, and an ally still engaging something that has run out of
+            // range is the one thing the latency must not cause.
+            const fx = closeE.x - this.x, fy = closeE.y - this.y;
+            const fd2 = fx * fx + fy * fy;
+            if (fd2 < 600 * 600) { trg = closeE; isFighting = true; distToTarget = Math.sqrt(fd2); }
+        }
+        if (distToTarget === undefined) {
+            const px = trg.x - this.x, py = trg.y - this.y;
+            distToTarget = Math.sqrt(px * px + py * py);
+        }
         let angToTarget = atan2(trg.y - this.y, trg.x - this.x);
         let shouldMove = false;
         let moveTargetX = this.x, moveTargetY = this.y;
@@ -11772,24 +11828,11 @@ if (this.eType === "COW") {
                 this.aimAngle = angToTarget;
                 if (distToTarget > 200) { moveTargetX = trg.x; moveTargetY = trg.y; shouldMove = true; }
             } else {
-                // Which slot in the column this ally stands in. This was
-                // enemiesList.filter(...).indexOf(this) -- an array of every
-                // ally allocated, and then linearly searched, once per ally per
-                // frame: quadratic work AND a fresh array per escort member,
-                // sixty times a second, to recover one integer. Counting the
-                // allies ahead of this one in the same order the filter would
-                // have produced gives the identical answer -- including the
-                // -1 for an ally already dead, which the filter dropped and
-                // indexOf then failed to find -- with no array and a break
-                // as soon as it is known.
-                let myIndex = -1;
-                for (let i = 0, k = 0; i < enemiesList.length; i++) {
-                    const e = enemiesList[i];
-                    if (!e.isFriendly || e.dead) continue;
-                    if (e === this) { myIndex = k; break; }
-                    k++;
-                }
-                let slot = myIndex > -1 ? myIndex : 0;
+                // Stamped for the whole column once a frame by updateEntities().
+                // This was enemiesList.filter(...).indexOf(this) -- an array of
+                // every ally allocated and then linearly searched, per ally,
+                // per frame, to recover one integer.
+                let slot = this.allySlot || 0;
 
                 let rowWidth = 5; 
                 let row = Math.floor(slot / rowWidth) + 1.2; 
@@ -11821,7 +11864,17 @@ if (this.eType === "COW") {
             let m = this.attemptMove(vx, vy); aDx = m.x; aDy = m.y;
         }
 
-        let canSee = hasLOS(this.x, this.y, trg.x, trg.y);
+        // Sight is the expensive one -- hasLOS is the single costliest call in
+        // the AI -- so it rides the same slice, keyed on WHO it was measured
+        // against. If the target changed since the slice (the foe died, or one
+        // came into range) the cached answer is about somebody else and is
+        // recomputed on the spot; that costs a sight test only on the frame the
+        // target actually changes, which is rare.
+        if (this.allySeeOf !== trg || this.allyTick === frameCount) {
+            this.allySee = hasLOS(this.x, this.y, trg.x, trg.y);
+            this.allySeeOf = trg;
+        }
+        let canSee = this.allySee;
         if (isFighting && canSee && distToTarget < 600 && this.fireTimer <= 0 && this.ammo > 0 && this.reloadTimer <= 0) {
             let sA = angToTarget;
             if (random() > 0.25 && distToTarget > 80) sA = angToTarget + atan2(random(30, 60) * (random() > 0.5 ? 1 : -1), distToTarget);
@@ -14094,9 +14147,21 @@ function updateEntities() {
       const actors = _pushActors, aerials = _pushAerials;
       actors.length = 0; aerials.length = 0;
       actors.push(player);
+      // The escort's formation slots are stamped HERE, once for the whole
+      // column, rather than each ally deriving its own. A slot is a property of
+      // the roster and not of the man standing in it -- the same reason
+      // updateBuildCrews() decides the trade split for the crew as a group --
+      // and derived per ally it was O(N) work per ally, every frame, to recover
+      // one integer that the walk below was already in a position to count.
+      // The filter and the order are exactly the ones the old
+      // .filter(isFriendly && !dead).indexOf(this) produced, including the 0 it
+      // fell back to for an ally already down.
+      let allyN = 0;
       for (let n = 0; n < enemiesList.length; n++) {
           const e = enemiesList[n];
-          if (!e || e.hp <= 0 || e.dead) continue;
+          if (!e) continue;
+          if (e.isFriendly) e.allySlot = e.dead ? 0 : allyN++;
+          if (e.hp <= 0 || e.dead) continue;
           if (e.eType === "AERIAL" || e.eType === "AERIAL_PISTOL" ||
               e.eType === "SAUCER" || e.eType === "SAUCER_RED") { aerials.push(e); continue; }
           const dx0 = e.x - player.x, dy0 = e.y - player.y;
@@ -14985,7 +15050,8 @@ class Citizen {
         // Standing inside something: walk straight out rather than sweeping
         // from a position where every heading reads as blocked.
         if (!this.citizenBlocked(this.x, this.y)) {
-            ang = steerAvoid(this, ang, spd, (x, y) => this.citizenBlocked(x, y));
+            if (!this._blockFn) this._blockFn = (x, y) => this.citizenBlocked(x, y);
+            ang = steerAvoid(this, ang, spd, this._blockFn);
         }
         this.moveAngle = ang;
         const nx = this.x + cos(ang) * spd, ny = this.y + sin(ang) * spd;
