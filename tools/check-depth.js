@@ -329,44 +329,6 @@ console.log('\n== standing decor goes through the depth sort ==');
 }
 
 // ---------------------------------------------------------------------------
-// NOTHING IS DRAWN FLAT
-// A mass gets sides from drawMassSides() if it is a box and from
-// drawMassColumn() if it is round. Anything with neither leans with nothing
-// underneath it, which is what a disc painted on the ground was standing in for.
-// ---------------------------------------------------------------------------
-console.log('\n== every mass has a visible side ==');
-{
-  const grab = (n) => {
-    const r = new RegExp('const ' + n + ' = \\{([\\s\\S]*?)\\n\\};').exec(src2);
-    return r ? r[1] : '';
-  };
-  const keysOf = (s, pre) =>
-    new Set(Array.from(s.matchAll(new RegExp('(' + pre + '\\w+):\\s*\\[', 'g'))).map(m => m[1]));
-  const riseSrc = grab('PROP_RISE'), roundSrc = grab('PROP_ROUND');
-  const riseK = keysOf(riseSrc, ''), roundK = keysOf(roundSrc, '');
-  ok('PROP_ROUND exists and covers the round props', roundK.size > 8, roundK.size + ' entries');
-  const boxed = Array.from(riseK).filter(k => {
-    const m = new RegExp(k + ':\\s*\\[([^\\]]*)\\]').exec(riseSrc);
-    return m && m[1].split(',').length > 1;
-  });
-  // HEDGE is the one deliberate exception: a 500-long run clamped to the view,
-  // which builds its own volume out of lobes.
-  const flatProps = Array.from(riseK).filter(k => !roundK.has(k) && !boxed.includes(k) && k !== 'HEDGE');
-  ok('every prop that leans has a box or a column under it', flatProps.length === 0,
-     flatProps.join(' '));
-  // And the legacy half of the same table.
-  const lmSrc = grab('LEGACY_MASS'), lrK = keysOf(grab('LEGACY_ROUND'), 'is');
-  const lmTrue = Array.from(lmSrc.matchAll(/(is\w+):\s*true/g)).map(m => m[1]);
-  ok('LEGACY_ROUND exists', lrK.size > 8, lrK.size + ' entries');
-  // isFence is 470 x 10: a column swept across it is a slab lying down.
-  const flatLegacy = lmTrue.filter(k => !lrK.has(k) && k !== 'isFence');
-  ok('every round legacy mass has a column too', flatLegacy.length === 0, flatLegacy.join(' '));
-  ok('the column is applied once, generically, in each pass',
-     (src2.match(/drawMassColumn\(/g) || []).length === 3,
-     (src2.match(/drawMassColumn\(/g) || []).length + ' call sites (1 definition + 2 passes)');
-}
-
-// ---------------------------------------------------------------------------
 // THE SUN DOES NOT TURN WITH THE MODEL
 // rotate() carries LIGHT_DX/DY round with it. A clutter case that rotates by
 // d.r and then offsets against the world light gives every instance its own

@@ -810,30 +810,6 @@ only thing in the world with no volume at all. A camera looking very slightly no
 every mass a constant southward term as well, proportional to its own height. Keep it
 small: past a few degrees the footprints stop reading as the ground plane.
 
-**A round mass gets a swept COLUMN, not four flat faces.** `drawMassSides()` is
-axis-aligned and works off the collision rect, so a boulder — round, and drawn well
-inside its own box — came out as a rectangular slab standing behind a rock. That is why
-every round thing in the file used to take the short `[rise]` form and lean with *no
-side at all*: correct, and it left a tree, a rock, a cactus, a hive tower or a bamboo
-clump with no visible height, so the only thing left to suggest one was **a disc painted
-on the ground underneath it**. That disc is the hump, and `drawMassColumn()` is what
-replaced it: the sweep of the footprint ellipse along the lean, drawn as a run of strips
-so each carries its own normal — the same reason `drawMassSides()` shades per face and
-`volShade()` builds its gradient out of steps.
-
-Two tables name the round masses, one per pass: `PROP_ROUND` for biome props and
-`LEGACY_ROUND` for the legacy flags, both `[r, g, b, widthFrac, taper]`. `widthFrac` is
-how much of the collision rect the art actually fills — the column has to rise off the
-drawn silhouette, not the box — and `taper` is the top radius as a fraction of the base,
-so 1 is a cylinder and 0 is a cone. Strip count scales with size: six strips on a street
-light is six quads to shade thirty pixels, and street lights are the numerous ones.
-
-**Exactly two things are still deliberately sideless**, and both because one swept
-ellipse is the wrong shape for them: `HEDGE`, a run up to 500 long clamped to the visible
-span that builds its own volume out of lobes, and `isFence`, a 470 × 10 bay a column
-would turn into a slab lying down. `check-depth.js` asserts the list is those two and
-nothing else.
-
 **A prop becomes a mass by having a `PROP_RISE` entry**, the same way it becomes a light
 by having a `PROP_EMITTERS` one — the lean is applied once, generically, around the whole
 `drawBiomeProps()` switch, so none of the forty cases knows the projection exists. Two
@@ -2558,6 +2534,45 @@ the world. Useful debug affordances already present:
 
 When changing chunk generation, check the **seams** specifically: walk across a chunk
 boundary in both axes, and walk out of an authored core into the streamed world.
+
+### Looking at it
+
+`node tools/visual.js` renders the game's own prop and clutter painters --
+unmodified, against real p5 in real headless Chromium -- into a contact sheet in
+`tools/out/`, one cell per prop at the size the generators actually emit.
+
+**This exists because `tools/` could only ever prove that art RUNS.** Two changes
+shipped that passed every check in this directory and were wrong on sight: a boulder
+with a bare quad hanging off it, a fallen trunk drawn as a chain of beads. Nothing
+headless can catch that, and neither can a description of the intent — the only thing
+that catches it is looking.
+
+```
+node tools/visual.js                 # every prop      -> tools/out/props.png
+node tools/visual.js BOULDER FALLEN  # just these
+node tools/visual.js --clutter       # the micro-props -> tools/out/clutter.png
+```
+
+It needs `playwright` and `p5@1.9.4` in the scratchpad and uses the pre-installed
+Chromium; the file's header says how to restore both. It stubs `preload()` and the
+asset loaders, because p5 will not reach `setup()` until preload resolves and the
+sprite files are not part of this harness.
+
+**What the sheet is for is comparison.** `TREE`, `CABIN`, `LOGPILE` and `WRECK` read
+correctly and are the bar; anything that looks like mush beside them is mush. Three
+rules came straight out of doing that:
+
+- **Regular radial elements read as a wheel, and irregular ones read as a star.** At
+  sixty pixels the eye resolves the radial pattern long before it resolves what the
+  lines are. Three separate attempts at mangrove stilt roots failed this way before the
+  roots were dropped entirely. `ROOT` had the same fault and is now two crossing roots
+  rather than a rosette of fins.
+- **Value range is what makes a prop read, not hue.** Every new prop was drawn dark and
+  low-contrast and every one came out as a blob. `TREE` spans 46→127 green with a white
+  specular on top; `PINE` and `KRUMMHOLZ` sat inside twenty levels of one dark green and
+  read as black balls until they were lifted to the same range.
+- **A contact shadow at footprint size becomes the silhouette.** `BRAKE` and `MONOLITH`
+  both read as "dark ellipse with something on it" until their shadows came down.
 
 ### Headless checks
 
