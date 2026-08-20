@@ -194,11 +194,12 @@ for (const lay of ['CITY', 'CITY_DENSE', 'FRONTIER']) {
 console.log('\n== placement ==');
 const walkable = (s) => (s.isGrassLot && !s.isPond) || s.isDeck || s.isCropField;
 let worst = null, overlaps = 0, tested = 0;
-// Sector 3 is deliberately absent. It carries nine pre-existing touches of its
-// own -- a wagon parked against a fence, and the like -- which predate the
-// sub-biome work and are not this assertion's to adjudicate. Its count is
-// printed below so a regression there is still visible.
-for (const b of [1, 2, 4, 5, 6, 7]) {
+// Every streamed sector. Sector 3 used to be exempt here for nine touches of
+// its own -- a wagon and a cactus standing in a field fence -- which turned out
+// to be one missing lattice block rather than nine separate accidents: the
+// field's two rails stand 340 out from its middle and only the field itself was
+// ever reserved.
+for (const b of [1, 2, 3, 4, 5, 6, 7]) {
   probe(`authoredCore = null; authoredChunks = null; authoredMask = null; biomeState = {}; currentLevel = ${b}; currentBiome = ${b};`);
   for (let cx = -6; cx <= 6; cx++) {
     for (let cy = -6; cy <= 6; cy++) {
@@ -232,20 +233,39 @@ for (const b of [1, 2, 4, 5, 6, 7]) {
 console.log(`   ${tested} chunks, ${overlaps} overlapping solid pairs`);
 if (worst) console.log(`   worst: ${worst.a} x ${worst.b} by ${worst.d.toFixed(0)}u at biome ${worst.biome} (${worst.cx},${worst.cy})`);
 ok('solids do not intersect each other', overlaps === 0);
+
+
+// ---------------------------------------------------------------------------
+// NOTHING IS BUILT ON A ROAD OR IN THE WATER
+// The placements are eleven searches across five layouts and several of them
+// place by offset from a seed rather than by a search at all, so this is
+// asserted against the final output rather than trusted to any of them.
+// ---------------------------------------------------------------------------
+console.log('\n== reserved ground ==');
 {
-  // Reported, not asserted: see the note on the sweep above.
-  probe('authoredCore = null; authoredChunks = null; authoredMask = null; biomeState = {}; currentLevel = 3; currentBiome = 3;');
-  let n3 = 0;
-  for (let cx = -6; cx <= 6; cx++) for (let cy = -6; cy <= 6; cy++) {
-    const ch = gen(3, cx, cy);
-    for (let i = 0; i < ch.solid.length; i++) for (let j = i + 1; j < ch.solid.length; j++) {
-      const a = ch.solid[i], c = ch.solid[j];
-      if (walkable(a) || walkable(c)) continue;
-      if ((a.w + c.w) / 2 - Math.abs(a.x - c.x) > 0 &&
-          (a.h + c.h) / 2 - Math.abs(a.y - c.y) > 0) n3++;
+  let onRoad = 0, checked = 0;
+  const worstK = {};
+  for (const b of [1, 2, 3, 4, 5, 6, 7]) {
+    probe(`authoredCore = null; authoredChunks = null; authoredMask = null; biomeState = {}; currentLevel = ${b}; currentBiome = ${b};`);
+    for (let cx = -5; cx <= 5; cx++) for (let cy = -5; cy <= 5; cy++) {
+      for (const s of gen(b, cx, cy).solid) {
+        // The water volumes, the things built to be stood on and the quayside
+        // furniture are what a waterway LOOKS like, not something put on one.
+        if (s.isDeck || s.isMarshPool || s.isPond) continue;
+        if (['RIVER','CANAL','BRIDGE','CANALBRIDGE','BOARDWALK',
+             'BARGE','BOLLARD','QUAYCRANE'].includes(s.propType)) continue;
+        checked++;
+        if (P(`groundReserved(${b},${cx},${cy},${s.x},${s.y},${s.w || 0},${s.h || 0},0)`)) {
+          onRoad++;
+          const k = s.propType || Object.keys(s).filter(q => q.startsWith('is'))[0] || '?';
+          worstK[k] = (worstK[k] || 0) + 1;
+        }
+      }
     }
   }
-  console.log(`   sector 3 (not asserted, pre-existing): ${n3} pairs`);
+  console.log(`   ${checked} solids checked across seven sectors`);
+  ok('no structure stands on a trail, a road or in the water', onRoad === 0,
+     Object.entries(worstK).map(([k, v]) => `${k}:${v}`).join(' '));
 }
 
 // --------------------------------------------------------------------- bake

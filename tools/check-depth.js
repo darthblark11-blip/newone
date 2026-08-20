@@ -279,6 +279,7 @@ ok('the roof translate is actually being used',
 console.log('\n== props are masses too ==');
 const fs = require('fs');
 const src = fs.readFileSync(process.env.GAME_JS || __dirname + '/../game.js', 'utf8');
+const src2 = src;
 const propsAt = src.search(/function drawBiomeProps\s*\(/);
 const propsFn = src.slice(propsAt, src.indexOf('function drawLightPass()'));
 const drawn = new Set((propsFn.match(/case *["'](\w+)["'] *:/g) || [])
@@ -300,6 +301,92 @@ ok('surfaces and collision volumes are left flat', wrong.length === 0,
 ok('the lean is applied once, generically, not per case',
    /const _pr = PROP_RISE\[b\.propType\]/.test(propsFn) &&
    (propsFn.match(/drawMassSides\(/g) || []).length === 1);
+
+// ---------------------------------------------------------------------------
+// A TREE IS NOT GROUND COVER
+// Standing decor was painted by chunkMgr.drawDecor(), which runs in the ground
+// stack -- so the player was drawn on top of every canopy in the world, which
+// from directly above reads as standing on the tree.
+// ---------------------------------------------------------------------------
+console.log('\n== standing decor goes through the depth sort ==');
+{
+  const stand = /const DECOR_STANDING = \{([\s\S]*?)\};/.exec(src2);
+  ok('DECOR_STANDING names the species that stand', !!stand &&
+     ['TREE', 'PINE', 'SNAG', 'KRUMMHOLZ'].every(t => stand[1].includes(t)),
+     stand ? stand[1].replace(/\s+/g, ' ').trim() : 'missing');
+  // drawDecor() holds them back, drawDepthSorted() takes them, and the run
+  // dispatcher knows a third kind.
+  ok('drawDecor() queues them instead of painting them',
+     /if \(stand && DECOR_STANDING\[d\.t\]\) \{ _standDecor\.push\(d\); continue; \}/.test(src2));
+  ok('drawDepthSorted() merges the queue in before the sort',
+     /_standDecor\[i\]\._depthKey = _standDecor\[i\]\.y;[\s\S]{0,80}masses\.push\(_standDecor\[i\]\)/.test(src2));
+  ok('the run dispatcher paints them as their own kind',
+     /function massRunKind\(b\) \{\s*if \(DECOR_STANDING\[b\.t\]\) return 2;/.test(src2));
+  // A tree's depth key is its trunk, which is where its shadow and its entry in
+  // the rig's height field already are -- not its crown, which has leaned away.
+  ok('a tree sorts on its trunk, not its crown',
+     /_standDecor\[i\]\._depthKey = _standDecor\[i\]\.y;/.test(src2));
+}
+
+// ---------------------------------------------------------------------------
+// NOTHING IS DRAWN FLAT
+// A mass gets sides from drawMassSides() if it is a box and from
+// drawMassColumn() if it is round. Anything with neither leans with nothing
+// underneath it, which is what a disc painted on the ground was standing in for.
+// ---------------------------------------------------------------------------
+console.log('\n== every mass has a visible side ==');
+{
+  const grab = (n) => {
+    const r = new RegExp('const ' + n + ' = \\{([\\s\\S]*?)\\n\\};').exec(src2);
+    return r ? r[1] : '';
+  };
+  const keysOf = (s, pre) =>
+    new Set(Array.from(s.matchAll(new RegExp('(' + pre + '\\w+):\\s*\\[', 'g'))).map(m => m[1]));
+  const riseSrc = grab('PROP_RISE'), roundSrc = grab('PROP_ROUND');
+  const riseK = keysOf(riseSrc, ''), roundK = keysOf(roundSrc, '');
+  ok('PROP_ROUND exists and covers the round props', roundK.size > 8, roundK.size + ' entries');
+  const boxed = Array.from(riseK).filter(k => {
+    const m = new RegExp(k + ':\\s*\\[([^\\]]*)\\]').exec(riseSrc);
+    return m && m[1].split(',').length > 1;
+  });
+  // HEDGE is the one deliberate exception: a 500-long run clamped to the view,
+  // which builds its own volume out of lobes.
+  const flatProps = Array.from(riseK).filter(k => !roundK.has(k) && !boxed.includes(k) && k !== 'HEDGE');
+  ok('every prop that leans has a box or a column under it', flatProps.length === 0,
+     flatProps.join(' '));
+  // And the legacy half of the same table.
+  const lmSrc = grab('LEGACY_MASS'), lrK = keysOf(grab('LEGACY_ROUND'), 'is');
+  const lmTrue = Array.from(lmSrc.matchAll(/(is\w+):\s*true/g)).map(m => m[1]);
+  ok('LEGACY_ROUND exists', lrK.size > 8, lrK.size + ' entries');
+  // isFence is 470 x 10: a column swept across it is a slab lying down.
+  const flatLegacy = lmTrue.filter(k => !lrK.has(k) && k !== 'isFence');
+  ok('every round legacy mass has a column too', flatLegacy.length === 0, flatLegacy.join(' '));
+  ok('the column is applied once, generically, in each pass',
+     (src2.match(/drawMassColumn\(/g) || []).length === 3,
+     (src2.match(/drawMassColumn\(/g) || []).length + ' call sites (1 definition + 2 passes)');
+}
+
+// ---------------------------------------------------------------------------
+// THE SUN DOES NOT TURN WITH THE MODEL
+// rotate() carries LIGHT_DX/DY round with it. A clutter case that rotates by
+// d.r and then offsets against the world light gives every instance its own
+// sun -- the same trap figureLight() closes for a body.
+// ---------------------------------------------------------------------------
+console.log('\n== one sun over the micro-props ==');
+{
+  const i2 = src2.indexOf('function paintClutter(g, d, t) {');
+  const fn2 = src2.slice(i2, src2.indexOf('\n}\n', i2));
+  ok('paintClutter counter-rotates the light into the piece frame',
+     /const LDX = LIGHT_DX \* _cl - LIGHT_DY \* _sl;/.test(fn2));
+  const parts = fn2.split(/\n    case "[A-Z]+": \{/);
+  const names = Array.from(fn2.matchAll(/\n    case "([A-Z]+)": \{/g)).map(m => m[1]);
+  const wrong = [];
+  for (let k = 1; k < parts.length; k++) {
+    if (parts[k].includes('g.rotate(d.r)') &&
+        (parts[k].includes('LIGHT_DX') || parts[k].includes('LIGHT_DY'))) wrong.push(names[k - 1]);
+  }
+  ok('no rotated case reads the world light directly', wrong.length === 0, wrong.join(' '));
+}
 
 console.log('\n== every mass uses the one projection ==');
 // buildings, props and figures all through massLean/drawMassSides, so retuning

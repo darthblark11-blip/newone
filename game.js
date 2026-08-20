@@ -2915,6 +2915,21 @@ let _depthActors = [];      // reused; actors queued by actorShow() this frame
 let _depthMasses = [];      // reused; visible masses, sorted by base y
 let _depthOn = false;
 
+// Live decor that STANDS, as opposed to lying on the ground.
+//
+// A tree is not ground cover. Its crown is metres up and the player walks
+// BEHIND it -- but every decor entry was painted by chunkMgr.drawDecor(), which
+// runs in the ground stack, so the player was drawn on top of every canopy in
+// the world. From directly above that reads as the player standing on the tree.
+//
+// These four go through the same depth sort the masses do, keyed on their own
+// ground contact, which is where the trunk is. Everything else in the live list
+// -- ripples, spore pods, glow moss, tendrils, a drifting tumbleweed -- really
+// is on the floor and stays in the ground pass, where the player belongs on top
+// of it.
+const DECOR_STANDING = { TREE: 1, PINE: 1, SNAG: 1, KRUMMHOLZ: 1 };
+let _standDecor = [];       // reused; standing decor queued by drawDecor()
+
 function depthSortActive() { return BIOME_ACTIVE; }
 
 // A character's contact point is their origin. Everything else in the file
@@ -2940,14 +2955,25 @@ function actorShow(c) {
 // props, and they are drawn by different functions -- so it is split into
 // stretches of a single kind. Both functions already skip the other kind, so
 // the split is purely to avoid walking every run twice.
+// Three kinds now, not two: an ordinary mass, a biome prop, and a standing
+// decor entry, which is painted one at a time by paintClutter() rather than by
+// a run function. Keyed off DECOR_STANDING rather than off a flag written onto
+// the record, because the decor objects are chunk content -- regenerated
+// bit-for-bit from (biome, cx, cy) -- and nothing in the render path may leave
+// a mark on them.
+function massRunKind(b) {
+  if (DECOR_STANDING[b.t]) return 2;
+  return b.isBiomeProp ? 1 : 0;
+}
 function drawMassRun(arr, i0, i1) {
   let s = i0;
   while (s < i1) {
-    const prop = !!arr[s].isBiomeProp;
+    const kind = massRunKind(arr[s]);
     let e = s + 1;
-    while (e < i1 && !!arr[e].isBiomeProp === prop) e++;
-    if (prop) drawBiomeProps(arr, s, e);
-    else      drawBuildings(arr, s, e);
+    while (e < i1 && massRunKind(arr[e]) === kind) e++;
+    if (kind === 2)      for (let k = s; k < e; k++) paintClutter(window, arr[k], frameCount);
+    else if (kind === 1) drawBiomeProps(arr, s, e);
+    else                 drawBuildings(arr, s, e);
     s = e;
   }
 }
@@ -2964,6 +2990,14 @@ function drawDepthSorted() {
     b._depthKey = b.y + (b.h || 0) / 2;
     masses.push(b);
   }
+  // Standing decor, queued by drawDecor() earlier in the same frame. A tree's
+  // ground contact is its trunk, which is its own origin -- the same point its
+  // contact shadow and its entry in the rig's height field already use.
+  for (let i = 0; i < _standDecor.length; i++) {
+    _standDecor[i]._depthKey = _standDecor[i].y;
+    masses.push(_standDecor[i]);
+  }
+  _standDecor.length = 0;
   masses.sort((p, q) => p._depthKey - q._depthKey);
 
   const actors = _depthActors;
@@ -3034,8 +3068,46 @@ const LEGACY_MASS = {
   isChip:        [ 26,  32,  26],
   isPyramid: true,  isPinkPlanet: true,  isStreetLight: true,  isFence: true
 };
+
+// The ROUND half of the same table, and the same gap PROP_ROUND closed for the
+// biome props.
+//
+// A `true` entry above means "lean, but draw no sides", because drawMassSides()
+// is axis-aligned and works off the collision rect -- so a rock, a palm or a
+// cactus boxed by it comes out as a rectangular slab standing behind itself.
+// Correct, but it left every round thing in the world with no visible height at
+// all: the art slid up the lean and nothing filled the gap underneath, which is
+// what made a jungle of palms and a desert of cacti read as decals on the
+// ground however far they leaned.
+//
+// A swept column is the shape that was missing. [r, g, b, widthFrac, taper]:
+// widthFrac is how much of the collision rect the art actually fills, because
+// the column has to rise off the drawn silhouette rather than off the box.
+const LEGACY_ROUND = {
+  isPalm:        [ 78,  56,  30, 0.44, 0.70],   // a trunk, not the frond spread
+  isRock:        [ 92,  92,  86, 0.86, 0.72],
+  isHayBale:     [148, 124,  70, 0.92, 0.88],
+  isCactusProp:  [ 62, 104,  56, 0.52, 0.82],
+  isWagonProp:   [110,  86,  56, 0.80, 0.84],
+  isEnergyPole:  [ 74,  62, 102, 0.40, 0.62],
+  isAlienPlant:  [ 66,  48,  92, 0.72, 0.50],
+  isPinkPlanet:  [128,  78, 128, 0.90, 0.78],
+  isPyramid:     [ 96,  92,  76, 0.90, 0.24],   // a pyramid is a cone from above
+  isStreetLight: [ 84,  86,  90, 0.34, 0.80],
+  isWell:        [104,  98,  88, 0.86, 0.86],
+  isWaterTower:  [126, 122, 112, 0.50, 0.80],
+  isTower:       [104, 106, 112, 0.72, 0.66],
+  isCircus:      [140,  58,  58, 0.86, 0.34]    // a big top is a cone too
+  // isFence stays out, and for the reason the LEGACY_MASS comment already
+  // gives: a bay is 470 x 10, so a column swept across it is a slab lying down.
+  // Its posts and rails carry what little height it has.
+};
 function legacyMassOf(b) {
   for (const k in LEGACY_MASS) if (b[k]) return LEGACY_MASS[k];
+  return null;
+}
+function legacyRoundOf(b) {
+  for (const k in LEGACY_ROUND) if (b[k]) return LEGACY_ROUND[k];
   return null;
 }
 
@@ -3094,6 +3166,11 @@ function drawBuildings(list, i0, i1) {
             if (_lm !== true) {
               drawMassSides(b.x - b.w / 2, b.y - b.h / 2, b.x + b.w / 2, b.y + b.h / 2,
                             _leanTmp[0], _leanTmp[1], _lm[0], _lm[1], _lm[2], 24);
+            } else {
+              // Round or self-shaped: a swept column instead of four flat faces.
+              const _lc = legacyRoundOf(b);
+              if (_lc) drawMassColumn(b.x, b.y, (b.w || 0) * _lc[3], (b.h || 0) * _lc[3],
+                                      _leanTmp[0], _leanTmp[1], _lc[0], _lc[1], _lc[2], _lc[4]);
             }
             push();
             translate(_leanTmp[0], _leanTmp[1]);
@@ -19527,6 +19604,142 @@ function buildAnchorStructures(biome) {
 //
 // Lots are not blockers — a park is somewhere you stand. Ponds are, because a
 // dumpster in a pond is the same artefact wearing a different colour.
+// ###########################################################################
+//  GROUND THAT IS ALREADY SPOKEN FOR
+//
+//  One predicate for "something else owns this patch". Every open layout has a
+//  road down it and most have water across it, and until this existed each
+//  placement re-derived its own idea of where those were: the lattice knew
+//  about the trunk road and the river because generateChunkContent() blocked
+//  those cells by hand, and findSpot() -- which does not use the lattice at all
+//  -- knew about neither. So a hedge line, a cabin or a stone row could land
+//  squarely in the water the terrain bake had already painted, and a set piece
+//  could sit across the only road through the chunk.
+//
+//  It is a pure function of world position and the chunk column and row, like
+//  everything else in this layer, so the generator and the bake reach the same
+//  answer without either having run first.
+// ###########################################################################
+
+// Half the keep-clear band each layout's road takes, in world units. These are
+// half of the widths generateChunkContent() blocks out of the lattice, written
+// once here so the two can never drift apart.
+const ROAD_HALF = { WOODLAND: 130, FRONTIER: 125, JUNGLE: 140 };
+
+// Does a footprint cross a NORTH-SOUTH line whose x is a function of world y?
+// Sampled down the footprint's own y extent rather than at its centre, because
+// the centreline meanders: a 500-long hedge can cross a road without either of
+// its ends being anywhere near the point a single sample would have tested.
+function crossesNS(centreAt, x, y, hw, hh, half) {
+  for (let i = 0; i <= 4; i++) {
+    if (Math.abs(x - centreAt(y - hh + hh * 0.5 * i)) < hw + half) return true;
+  }
+  return false;
+}
+// The same for an EAST-WEST line whose y is a function of world x, with the
+// half width itself a function of x -- which is how a river that breathes along
+// its length is tested against its real bank rather than its average one.
+function crossesEW(centreAt, halfAt, x, y, hw, hh) {
+  for (let i = 0; i <= 4; i++) {
+    const sx = x - hw + hw * 0.5 * i;
+    if (Math.abs(y - centreAt(sx)) < hh + halfAt(sx)) return true;
+  }
+  return false;
+}
+// Does a segment -- the woodland's dead-end spur -- touch a footprint?
+//
+// Sampled ALONG the segment and tested against the rectangle, rather than
+// measuring segment-to-centre against one radius. A radius has to be the
+// footprint's longest half-extent to catch a hedge crossing the road, and at
+// that size it also rejects every hedge lying harmlessly parallel to it a
+// hundred units away -- which is most of the ground a spur head is built on.
+// Twelve samples over a few hundred units is a 30-unit pitch against a road
+// 150 wide, so nothing can slip between two samples.
+function segHitsRect(x0, y0, x1, y1, rx, ry, hw, hh) {
+  for (let i = 0; i <= 12; i++) {
+    const t = i / 12;
+    if (Math.abs(x0 + (x1 - x0) * t - rx) < hw &&
+        Math.abs(y0 + (y1 - y0) * t - ry) < hh) return true;
+  }
+  return false;
+}
+const SPUR_HALF = 75;
+
+// The things that are ALLOWED on reserved ground, because they are what a road
+// or a waterway looks like rather than something built on top of one.
+const RESERVED_OK = {
+  RIVER: 1, CANAL: 1,              // the collision volumes; they ARE the water
+  BRIDGE: 1, CANALBRIDGE: 1, BOARDWALK: 1,   // built to be stood on
+  BARGE: 1, BOLLARD: 1, QUAYCRANE: 1         // a quayside is furniture at the edge
+};
+
+// `pad` is the clearance wanted beyond the footprint: a road wants a verge and
+// water wants a bank. Defaults to a stride.
+function groundReserved(biome, cx, cy, x, y, w, h, pad) {
+  const p  = pad === undefined ? 40 : pad;
+  const hw = (w || 0) / 2 + p, hh = (h || 0) / 2 + p;
+  const lay = layoutFor(biome, cx, cy);
+
+  switch (lay) {
+    case "WOODLAND": {
+      const RH = ROAD_HALF.WOODLAND;
+      if (woodHasTrunk(biome, cx) &&
+          crossesNS((sy) => woodTrailX(biome, cx, sy), x, y, hw, hh, RH)) return true;
+      if (woodHasLink(biome, cy) &&
+          crossesEW((sx) => woodLinkY(biome, cy, sx), () => RH, x, y, hw, hh)) return true;
+      // The river is tested against its painted shallows, not its channel: the
+      // deep water is what blocks a character, but a cabin standing on the
+      // gravel bar still reads as a cabin standing in the river.
+      if (woodHasRiver(biome, cy) &&
+          crossesEW((sx) => woodRiverY(biome, cy, sx),
+                    (sx) => woodRiverHalf(biome, cy, sx) * 1.35, x, y, hw, hh)) return true;
+      // The spur, minus its last stretch. A dead-end track ENDS in the yard it
+      // was cut for, and the cabin, the cordwood and the stock pen at the head
+      // are the reason the road exists -- reserving the terminus would delete
+      // the destination and leave a road arriving nowhere, which is the exact
+      // thing the spur head was built to prevent. What must stay clear is the
+      // carriageway, so the reserved run stops short of the head.
+      const sp = woodSpur(biome, cx, cy);
+      if (sp && segHitsRect(sp.x0, sp.y0,
+                            sp.x0 + (sp.x1 - sp.x0) * 0.82, sp.y0 + (sp.y1 - sp.y0) * 0.82,
+                            x, y, hw + SPUR_HALF, hh + SPUR_HALF)) return true;
+      const pools = woodPools(biome, cx, cy);
+      if (pools) {
+        for (let i = 0; i < pools.length; i++) {
+          const q = pools[i];
+          if (Math.abs(x - q.x) < hw + q.w / 2 && Math.abs(y - q.y) < hh + q.h / 2) return true;
+        }
+      }
+      return false;
+    }
+    case "CITY":
+    case "CITY_DENSE":
+      // The water only. The quay either side is ground -- it is where the
+      // bollards, the crane and anybody walking the towpath belong -- so
+      // reserving it would have banned the furniture that defines a waterside.
+      return cityHasCanal(biome, cy) &&
+             crossesEW((sx) => cityCanalY(biome, cy, sx),
+                       (sx) => cityCanalHalf(biome, cy, sx) * 1.15, x, y, hw, hh);
+    case "FRONTIER":
+      return crossesNS((sy) => frontierTrailX(biome, cx, sy), x, y, hw, hh, ROAD_HALF.FRONTIER);
+    case "JUNGLE":
+      return crossesNS((sy) => jungleTrailX(biome, cx, sy), x, y, hw, hh, ROAD_HALF.JUNGLE);
+    case "CRYSTAL": {
+      // The circuit bus: two straight 200-wide bands on the chunk's own north
+      // and west edges, gated at each edge's own midpoint exactly the way
+      // bakeBiomeDetail() gates them, so nothing can stand on a run of metal
+      // ground and nothing keeps clear of a run that was never painted.
+      const ox = cx * CHUNK_W, oy = cy * CHUNK_W;
+      if (crystalRegion(biome, ox + CHUNK_W / 2, oy + 100) === CR_LATTICE &&
+          y - hh < oy + 200) return true;
+      if (crystalRegion(biome, ox + 100, oy + CHUNK_W / 2) === CR_LATTICE &&
+          x - hw < ox + 200) return true;
+      return false;
+    }
+  }
+  return false;
+}
+
 function solidsClearAt(list, x, y, w, h, pad) {
   const p = pad || 0;
   for (let i = 0; i < list.length; i++) {
@@ -19994,6 +20207,12 @@ function generateChunkContent(biome, cx, cy) {
         for (let a = 0; a < (tries || 22); a++) {
           const x = ox + rngRange(rng, mn, mx), y = oy + rngRange(rng, ny, my);
           if (nearAnchor(x, y, Math.max(w, h) * 0.5 + 420)) continue;
+          // The lattice knows about the trunk road, the link, the river and the
+          // pools because this case blocks those cells by hand -- and findSpot
+          // does not use the lattice at all, so without this it was the one
+          // placement in the sector that could put a steading in the water or a
+          // stone row across the only road through the chunk.
+          if (groundReserved(biome, cx, cy, x, y, w, h, 30)) continue;
           if (hitsAuthored(x, y, w, h, 24)) continue;
           if (!solidsClearAt(solid, x, y, w, h, pad)) continue;
           return { x: x, y: y };
@@ -20125,8 +20344,10 @@ function generateChunkContent(biome, cx, cy) {
       // thing in the woods that tells you the roads are a system rather than a
       // coincidence.
       if (junction && !nearAnchor(junction.x, junction.y, 420)) {
-        const sx = junction.x + (rng() > 0.5 ? 96 : -96);
-        const sy = junction.y + (rng() > 0.5 ? 92 : -92);
+        // Clear of both carriageways. At the old +/-96 it stood in the road it
+        // was signing, because the trunk's keep-clear band is 130 either side.
+        const sx = junction.x + (rng() > 0.5 ? 168 : -168);
+        const sy = junction.y + (rng() > 0.5 ? 164 : -164);
         if (solidsClearAt(solid, sx, sy, 40, 40, 20)) {
           solid.push({ x: sx, y: sy, w: 26, h: 26, isBiomeProp: true, propType: "SIGNPOST", tint: rng() });
         }
@@ -20295,6 +20516,11 @@ function generateChunkContent(biome, cx, cy) {
             const t0 = 0.08 + sIdx * 0.31, len = rngRange(rng, 190, 300);
             const at = (vert ? oy : ox) + t0 * CHUNK_W;
             const bx2 = vert ? along : at + len / 2, by2 = vert ? at + len / 2 : along;
+            // A plank walk over the marsh is the whole point of it; one laid
+            // across the river is a bridge, and the river already has one.
+            if (woodHasRiver(biome, cy) &&
+                Math.abs(by2 - woodRiverY(biome, cy, bx2)) <
+                  (vert ? len : 74) / 2 + woodRiverHalf(biome, cy, bx2) * 1.35) continue;
             if (!solidsClearAt(solid, bx2, by2, vert ? 74 : len, vert ? len : 74, 10)) continue;
             solid.push({ x: bx2, y: by2, w: vert ? 74 : len, h: vert ? len : 74,
                          isBiomeProp: true, propType: "BOARDWALK", isDeck: true, tint: rng() });
@@ -20543,14 +20769,22 @@ function generateChunkContent(biome, cx, cy) {
           const fx = west ? tW - CLR - fw / 2 : tE + CLR + fw / 2;
 
           solid.push({ x: fx, y: fy, w: fw, h: fh, isCropField: true });
+          // Fences bracket the field, so they take its width and its offset.
+          solid.push({ x: fx, y: fy - 340, w: fw + 20, h: 10, isFence: true, hp: 2000, maxHp: 2000 });
+          solid.push({ x: fx, y: fy + 340, w: fw + 20, h: 10, isFence: true, hp: 2000, maxHp: 2000 });
+          // The field AND both its rails go into the lattice before anything
+          // else takes a cell from it. The rails stand 340 out from the field's
+          // middle and a field is rarely 680 deep, so blocking only the field
+          // left both of them outside the lattice -- which is exactly why the
+          // scatter parked a wagon, a cactus and a crate straight through them,
+          // and why a barn could land on one.
           lat.block(fx, fy, fw + 80, fh + 80);
+          lat.block(fx, fy - 340, fw + 100, 90);
+          lat.block(fx, fy + 340, fw + 100, 90);
           if (rng() > 0.6) {
             const s = lat.take(300, 240);
             if (s) solid.push({ x: s.x, y: s.y, w: 300, h: 240, isBarn: true });
           }
-          // Fences bracket the field, so they take its width and its offset.
-          solid.push({ x: fx, y: fy - 340, w: fw + 20, h: 10, isFence: true, hp: 2000, maxHp: 2000 });
-          solid.push({ x: fx, y: fy + 340, w: fw + 20, h: 10, isFence: true, hp: 2000, maxHp: 2000 });
         }
       }
 
@@ -20599,11 +20833,12 @@ function generateChunkContent(biome, cx, cy) {
         for (let a = 0; a < (tries || 18); a++) {
           const x = ox + rngRange(rng, mn, mx), y = oy + rngRange(rng, ny, my);
           if (nearAnchor(x, y, Math.max(w, h) * 0.5 + 420)) continue;
-          // The track band is 280 wide, so a piece clears it when its own half
-          // width plus that band's half width is smaller than the offset. Taken
-          // off w rather than off the smaller side on purpose: a log lying
-          // east-west across the road is exactly the case this has to reject.
-          if (Math.abs(x - jungleTrailX(biome, cx, y)) < w / 2 + 140) continue;
+          // Roads and water, through the one predicate. Its NS test samples the
+          // centreline down the footprint's own y extent, which the private
+          // single-sample version here could not -- a log lying east-west
+          // across the track passed it whenever its centre happened to sit in
+          // a bend.
+          if (groundReserved(biome, cx, cy, x, y, w, h, 30)) continue;
           if (hitsAuthored(x, y, w, h, 24)) continue;
           if (!solidsClearAt(solid, x, y, w, h, pad)) continue;
           return { x: x, y: y };
@@ -20794,6 +21029,7 @@ function generateChunkContent(biome, cx, cy) {
         for (let a = 0; a < (tries || 18); a++) {
           const x = ox + rngRange(rng, mn, mx), y = oy + rngRange(rng, ny, my);
           if (nearAnchor(x, y, Math.max(w, h) * 0.5 + 420)) continue;
+          if (groundReserved(biome, cx, cy, x, y, w, h, 30)) continue;
           if (hitsAuthored(x, y, w, h, 24)) continue;
           if (!solidsClearAt(solid, x, y, w, h, pad)) continue;
           return { x: x, y: y };
@@ -20955,6 +21191,7 @@ function generateChunkContent(biome, cx, cy) {
         for (let a = 0; a < (tries || 18); a++) {
           const x = ox + rngRange(rng, mn, mx), y = oy + rngRange(rng, ny, my);
           if (nearAnchor(x, y, Math.max(w, h) * 0.5 + 420)) continue;
+          if (groundReserved(biome, cx, cy, x, y, w, h, 30)) continue;
           if (hitsAuthored(x, y, w, h, 24)) continue;
           if (!solidsClearAt(solid, x, y, w, h, pad)) continue;
           return { x: x, y: y };
@@ -21049,6 +21286,18 @@ function generateChunkContent(biome, cx, cy) {
       const cMid   = crystalRegion(biome, ox + 600, oy + 600);
       const cFirst = solid.length;
 
+      // The circuit bus is a road, so it is blocked out of the lattice exactly
+      // the way every other layout blocks its trail. Gated at each edge's own
+      // midpoint, the same test bakeBiomeDetail() uses to decide whether to
+      // paint the band at all -- so nothing stands on metal ground, and nothing
+      // keeps clear of a run that was never painted.
+      if (crystalRegion(biome, ox + CHUNK_W / 2, oy + 100) === CR_LATTICE) {
+        for (let bx = ox; bx <= ox + CHUNK_W; bx += 100) lat.block(bx, oy + 100, 160, 260);
+      }
+      if (crystalRegion(biome, ox + 100, oy + CHUNK_W / 2) === CR_LATTICE) {
+        for (let by = oy; by <= oy + CHUNK_W; by += 100) lat.block(ox + 100, by, 260, 160);
+      }
+
       // The lattice ground is machinery and it carries machinery. A pylon is
       // sited ON a bus rather than anywhere in the region, so the run of metal
       // the bake painted has something standing on it -- paint with nothing on
@@ -21065,8 +21314,12 @@ function generateChunkContent(biome, cx, cy) {
           // Standing beside the bus, not on the conductor: 200 wide of metal
           // ground, and the pylon's foot goes just off its edge.
           const onN = latN && (!latW || rng() > 0.5);
-          const px2 = onN ? ox + rngRange(rng, 260, CHUNK_W - 160) : ox + 240 + rngRange(rng, -34, 46);
-          const py2 = onN ? oy + 240 + rngRange(rng, -34, 46) : oy + rngRange(rng, 260, CHUNK_W - 160);
+          // The band runs to 200 and the foot is 88 across, so the nearest its
+          // centre may sit is 244 -- at the old 240 +/- 34 a corner was always
+          // on the conductor, which is the one place a pylon does not stand.
+          const off = 252 + rngRange(rng, 0, 84);
+          const px2 = onN ? ox + rngRange(rng, 300, CHUNK_W - 160) : ox + off;
+          const py2 = onN ? oy + off : oy + rngRange(rng, 300, CHUNK_W - 160);
           if (nearAnchor(px2, py2, 440)) continue;
           if (!solidsClearAt(solid, px2, py2, 104, 104, 26)) continue;
           if (hitsAuthored(px2, py2, 104, 104, 24)) continue;
@@ -21090,6 +21343,7 @@ function generateChunkContent(biome, cx, cy) {
           if (px2 < ox + 90 || px2 > ox + CHUNK_W - 90) continue;
           if (py2 < oy + 90 || py2 > oy + CHUNK_W - 90) continue;
           if (nearAnchor(px2, py2, 440)) continue;
+          if (groundReserved(biome, cx, cy, px2, py2, w, h, 24)) continue;
           if (!solidsClearAt(solid, px2, py2, w, h, 12)) continue;
           solid.push({ x: px2, y: py2, w, h, isBiomeProp: true, propType: "CRYSTALSPIRE",
                        tint: rng() });
@@ -21183,6 +21437,7 @@ function generateChunkContent(biome, cx, cy) {
       for (let att = 0; att < 16; att++) {
         const wx2 = ox + rngRange(rng, 150, 1050);
         const wy2 = oy + rngRange(rng, 150, 1050);
+        if (groundReserved(biome, cx, cy, wx2, wy2, 96, 54, 24)) continue;
         if (!solidsClearAt(solid, wx2, wy2, 96, 54, 30)) continue;
         spot = { x: wx2, y: wy2 };
         break;
@@ -21204,6 +21459,28 @@ function generateChunkContent(biome, cx, cy) {
   // Strip anything the player already destroyed on a previous visit
   for (let i = solid.length - 1; i >= 0; i--) {
     if (state.destroyed[cx + "," + cy + "," + i]) solid.splice(i, 1);
+  }
+
+  // Nothing is BUILT on a road or in the water.
+  //
+  // Every placement above already tries to avoid it, and this is what turns
+  // that into a guarantee: they are eleven different searches across five
+  // layouts, several of them placing by offset from a seed rather than by a
+  // search at all, and each one was a separate chance to get it wrong. Same
+  // shape as the hitsAuthored filter below and for the same reason -- one rule
+  // with the last word beats eleven that mostly agree.
+  //
+  // What is exempt is the handful of things that are what a waterway or a road
+  // LOOKS like rather than something put on top of one: the water volumes
+  // themselves, anything you walk across, and the quayside furniture. A barge
+  // floats in the canal; that is not a structure built on the water.
+  const onReserved = (s) =>
+    !(RESERVED_OK[s.propType] || s.isDeck || s.isMarshPool || s.isPond) &&
+    groundReserved(biome, cx, cy, s.x, s.y, s.w || 0, s.h || 0, 0);
+  for (let i = solid.length - 1; i >= 0; i--) if (onReserved(solid[i])) solid.splice(i, 1);
+  for (let i = cars.length - 1; i >= 0; i--) {
+    if (groundReserved(biome, cx, cy, cars[i].x, cars[i].y,
+                       cars[i].w || 90, cars[i].h || 50, 0)) cars.splice(i, 1);
   }
 
   // Authored structures that overhang the core — Stick City's Great Gates run
@@ -24050,6 +24327,8 @@ class ChunkManager {
 
   // -- Decor pass (shadows first, then props) -------------------------------
   drawDecor() {
+    const stand = _depthOn;
+    if (stand) _standDecor.length = 0;
     for (const ch of this.chunks.values()) {
       const wx = ch.cx * CHUNK_W, wy = ch.cy * CHUNK_W;
       if (wx > viewRight + 200 || wx + CHUNK_W < viewLeft - 200) continue;
@@ -24061,6 +24340,10 @@ class ChunkManager {
       for (const d of ch.decor) {
         if (d.x < viewLeft - 120 || d.x > viewRight + 120)  continue;
         if (d.y < viewTop - 120  || d.y > viewBottom + 120) continue;
+        // A tree is handed to the depth sort instead, so the player passes
+        // behind its crown rather than standing on it. Outside a sorted level
+        // there is nothing to hand it to, so it paints here as it always did.
+        if (stand && DECOR_STANDING[d.t]) { _standDecor.push(d); continue; }
         paintClutter(window, d, frameCount);
       }
     }
@@ -24243,6 +24526,57 @@ function drawMassSides(x0, y0, x1, y1, lx, ly, cr, cg, cb, mullion) {
   }
 }
 
+
+// The extruded side of a ROUND mass.
+//
+// drawMassSides() is axis-aligned and works off the collision rect, so a
+// boulder -- round, and drawn well inside its own box -- came out as a
+// rectangular slab standing behind a rock. That is why every round prop in this
+// file takes the short PROP_RISE form and leans with no sides at all: correct,
+// but it leaves a tower, a stump, a hive or a bamboo clump with no visible
+// height, and the only thing left to suggest one was a disc painted underneath.
+// That disc is the hump, and this is what replaces it.
+//
+// The sweep of an ellipse along the lean is the quad between its two tangent
+// points, and it is drawn as a run of strips so each can carry its own normal
+// -- the same reason drawMassSides() shades per face and volShade() builds its
+// gradient out of steps. A flat-fill renderer has no other way to get one.
+//
+// `taper` is the top radius as a fraction of the base: 1 is a cylinder, 0 is a
+// cone, and everything between is a tower that narrows as it rises.
+function drawMassColumn(x, y, rw, rh, lx, ly, cr, cg, cb, taper) {
+  const m = Math.hypot(lx, ly);
+  if (!(m > 0.01) || !(rw > 0) || !(rh > 0)) return;
+  const ux = -ly / m, uy = lx / m;            // unit vector ACROSS the lean
+  const ax = rw * 0.5, by = rh * 0.5;
+  // Where the silhouette leaves the ellipse: its radius in the across
+  // direction. Exact for a circle and within a pixel for anything as round as
+  // the props this is used on.
+  const rad = 1 / Math.sqrt((ux * ux) / (ax * ax) + (uy * uy) / (by * by));
+  const tp = taper === undefined ? 1 : taper;
+  const alx = -lx / m, aly = -ly / m;         // back down the lean, toward us
+  noStroke();
+  // Strip count scales with the mass. Six strips on a street light or a cactus
+  // is six quads to shade thirty pixels of column -- and those are the numerous
+  // ones, so that is where the frame goes. A big rock or a hive tower is where
+  // the gradient is actually visible.
+  const N = (rw + rh) > 150 ? 6 : 3;
+  for (let i = 0; i < N; i++) {
+    const s0 = -1 + 2 * (i / N), s1 = -1 + 2 * ((i + 1) / N);
+    const sm = (s0 + s1) * 0.5;
+    // Surface normal of the near face of a cylinder at this point across it:
+    // an across component, plus what is left over pointing back at the camera.
+    const along = Math.sqrt(1 - sm * sm > 0 ? 1 - sm * sm : 0);
+    const nx = ux * sm + alx * along, ny = uy * sm + aly * along;
+    const d = -(nx * LIGHT_DX + ny * LIGHT_DY);
+    const k = 0.32 + 0.50 * (d > 0 ? d : 0);
+    fill(cr * k + 5, cg * k + 6, cb * k + 10);
+    quad(x + ux * rad * s0,           y + uy * rad * s0,
+         x + ux * rad * s1,           y + uy * rad * s1,
+         x + ux * rad * s1 * tp + lx, y + uy * rad * s1 * tp + ly,
+         x + ux * rad * s0 * tp + lx, y + uy * rad * s0 * tp + ly);
+  }
+}
 
 // --- slabs longer than the screen ------------------------------------------
 //
@@ -25269,6 +25603,23 @@ function paintClutter(g, d, t) {
     }
   }
 
+  // THE SUN, IN THE PIECE'S OWN FRAME.
+  //
+  // g.rotate() carries LIGHT_DX/DY round with it. A case that rotates by d.r
+  // and then offsets a highlight against the WORLD light is lighting itself
+  // from a direction that turns with the model -- so a field of pebbles, a
+  // stand of conifers or a scatter of shards each had its own sun, and none of
+  // them agreed with the walls behind them. It is the same trap the prop
+  // shadows have a note about and the one figureLight() exists to close for a
+  // body; this is that function for a micro-prop.
+  //
+  // The property is a round trip: bring the light in, rotate it back out by the
+  // same angle, and you have LIGHT_DX/DY again. Every case below that calls
+  // g.rotate(d.r) reads these two instead of the globals.
+  const _cl = Math.cos(-d.r), _sl = Math.sin(-d.r);
+  const LDX = LIGHT_DX * _cl - LIGHT_DY * _sl;
+  const LDY = LIGHT_DX * _sl + LIGHT_DY * _cl;
+
   const shadow = (x, y, w, h, len, alpha) => {
     const a = alpha * sd;
     if (a < 1.5) return;
@@ -25300,10 +25651,10 @@ function paintClutter(g, d, t) {
       g.endShape(CLOSE);
       // Lit facet toward the sun, shaded facet away
       g.fill(146, 143, 136, 165);
-      g.triangle(-LIGHT_DX * 3.2 * s, -LIGHT_DY * 3.2 * s,
+      g.triangle(-LDX * 3.2 * s, -LDY * 3.2 * s,
                   1.9 * s, -2.4 * s, -2.6 * s, 1.1 * s);
       g.fill(38, 37, 35, 110);
-      g.triangle(LIGHT_DX * 3.4 * s, LIGHT_DY * 3.0 * s,
+      g.triangle(LDX * 3.4 * s, LDY * 3.0 * s,
                  2.4 * s, -0.9 * s, -0.7 * s, 2.6 * s);
       break;
     }
@@ -25598,11 +25949,11 @@ function paintClutter(g, d, t) {
         g.ellipse(Math.cos(a) * 8 * s, Math.sin(a) * 7 * s, 9 * s, 6 * s);
       }
       g.fill(64, 48, 32); g.ellipse(0, 0, 19 * s, 17 * s);
-      g.fill(168, 142, 96); g.ellipse(-LIGHT_DX * s, -LIGHT_DY * s, 14 * s, 12.5 * s);
+      g.fill(168, 142, 96); g.ellipse(-LDX * s, -LDY * s, 14 * s, 12.5 * s);
       g.noFill(); g.strokeWeight(0.9 * s);
       for (let r = 3; r <= 11; r += 3.2) {
         g.stroke(128, 104, 68, 170);
-        g.ellipse(-LIGHT_DX * s, -LIGHT_DY * s, r * s, r * 0.9 * s);
+        g.ellipse(-LDX * s, -LDY * s, r * s, r * 0.9 * s);
       }
       // The saw's last cut across the face.
       g.stroke(96, 76, 48, 150); g.strokeWeight(1.1 * s);
@@ -25671,7 +26022,7 @@ function paintClutter(g, d, t) {
       g.rotate(d.r);
       g.fill(0, 0, 0, 46); g.ellipse(0, 0, 17 * s, 16 * s);
       g.fill(58, 58, 60);   g.ellipse(0, 0, 14 * s, 13 * s);
-      g.fill(74, 74, 76);   g.ellipse(-LIGHT_DX * 0.8 * s, -LIGHT_DY * 0.8 * s, 12 * s, 11 * s);
+      g.fill(74, 74, 76);   g.ellipse(-LDX * 0.8 * s, -LDY * 0.8 * s, 12 * s, 11 * s);
       g.stroke(38, 38, 40, 200); g.strokeWeight(0.9 * s);
       for (let i = 0; i < 4; i++) {
         const a = i * 0.785;
@@ -25727,7 +26078,7 @@ function paintClutter(g, d, t) {
         }
       }
       g.fill(255, 255, 255, 22);
-      g.ellipse(-LIGHT_DX * 3 * s, -LIGHT_DY * 3 * s, 8 * s, 6 * s);
+      g.ellipse(-LDX * 3 * s, -LDY * 3 * s, 8 * s, 6 * s);
       break;
     }
     case "ASH": {
@@ -25750,25 +26101,41 @@ function paintClutter(g, d, t) {
       // directly above is a whorl of stiff radial branches around a hard point,
       // and that silhouette difference is the entire reason for a second
       // species -- a wood of one tree shape is a wallpaper.
+      // Nine branches on a 26-unit whorl leaves eighteen units of gap between
+      // the tips with nothing behind them, so the crown came out as a black
+      // star rather than as a tree -- worst at dusk, where the fill goes dark
+      // and every gap goes to ground colour. Three things fix it and all three
+      // are about coverage rather than colour: enough branches that neighbours
+      // touch at mid length, a lobe with real width instead of a needle, and an
+      // under-canopy behind the whorls, which is what TREE has always had.
       shadow(4, 5, 40 * s, 30 * s, 10, 62);
       g.noStroke();
       g.rotate(d.r);
+      const kp = d.k || 0;
+      const PR = 34 + kp * 26, PG = 80 + kp * 18, PB = 52 - kp * 10;
+      g.fill(PR * 0.52, PG * 0.48, PB * 0.54, 218);
+      g.ellipse(0, 1.5 * s, 40 * s, 37 * s);
       // Two whorls, the lower one wider and darker, so the crown has depth.
-      for (const [ring, len, wid, dk] of [[0, 26, 7.5, 0.62], [1, 18, 6, 0.86]]) {
-        for (let i = 0; i < 9; i++) {
-          const a = (i / 9) * TWO_PI + ring * 0.35;
-          const face = -(Math.cos(a) * LIGHT_DX + Math.sin(a) * LIGHT_DY);
-          const k = dk * (0.86 + 0.26 * face);
-          const kp = d.k || 0;
-          g.fill((34 + kp * 26) * k, (78 + kp * 18) * k, (52 - kp * 10) * k, 244);
+      for (let ring = 0; ring < 2; ring++) {
+        const len = ring === 0 ? 21 : 14.5;
+        const wid = ring === 0 ? 11 : 9.5;
+        const dk  = ring === 0 ? 0.70 : 0.96;
+        const n   = ring === 0 ? 13 : 11;
+        for (let i = 0; i < n; i++) {
+          const a = (i / n) * TWO_PI + ring * 0.28;
+          const ca = Math.cos(a), sa = Math.sin(a);
+          const k = dk * (0.86 + 0.26 * (-(ca * LDX + sa * LDY)));
+          g.fill(PR * k, PG * k, PB * k, 246);
           g.push();
           g.rotate(a);
-          g.triangle(2 * s, -wid * s * 0.5, len * s, 0, 2 * s, wid * s * 0.5);
+          g.triangle(3 * s, -wid * s * 0.5, len * s, 0, 3 * s, wid * s * 0.5);
           g.pop();
         }
       }
-      g.fill(30, 62, 44, 250); g.ellipse(0, 0, 13 * s, 12 * s);
-      g.fill(72, 126, 78, 230); g.ellipse(-LIGHT_DX * 2 * s, -LIGHT_DY * 2 * s, 7 * s, 6.5 * s);
+      // The leader, and the light on it.
+      g.fill(30, 62, 44, 250); g.ellipse(0, 0, 12 * s, 11 * s);
+      g.fill(PR * 1.5, PG * 1.34, PB * 1.30, 236);
+      g.ellipse(-LDX * 2 * s, -LDY * 2 * s, 7.5 * s, 7 * s);
       break;
     }
     case "SNAG": {
@@ -25820,7 +26187,7 @@ function paintClutter(g, d, t) {
         const a  = (i / nbam) * TWO_PI + d.c * 6;
         const rr = (3.4 + (i % 3) * 1.6) * s;
         const bx = Math.cos(a) * rr * 1.9, by = Math.sin(a) * rr * 1.6;
-        const k  = 0.80 + 0.40 * (-(Math.cos(a) * LIGHT_DX + Math.sin(a) * LIGHT_DY));
+        const k  = 0.80 + 0.40 * (-(Math.cos(a) * LDX + Math.sin(a) * LDY));
         g.fill(118 * k, 138 * k, 62 * k, 246);
         g.ellipse(bx, by, 5.4 * s, 5.4 * s);
         g.fill(46, 58, 28, 220);
@@ -25851,13 +26218,13 @@ function paintClutter(g, d, t) {
         const a  = (i / nrt) * TWO_PI + d.c * 4;
         const ln = (12 + (i % 2) * 6) * s;
         const ca = Math.cos(a), sa = Math.sin(a);
-        const face = -(-sa * LIGHT_DX + ca * LIGHT_DY);
+        const face = -(-sa * LDX + ca * LDY);
         g.fill(72 + face * 18, 54 + face * 13, 34 + face * 8, 244);
         g.triangle(-sa * 3.4 * s, ca * 3.4 * s, sa * 3.4 * s, -ca * 3.4 * s, ca * ln, sa * ln);
       }
       g.fill(58, 42, 26, 250); g.ellipse(0, 0, 9 * s, 8.4 * s);
       g.fill(104, 82, 52, 150);
-      g.ellipse(-LIGHT_DX * 2 * s, -LIGHT_DY * 2 * s, 5 * s, 4.6 * s);
+      g.ellipse(-LDX * 2 * s, -LDY * 2 * s, 5 * s, 4.6 * s);
       break;
     }
 
@@ -25873,7 +26240,7 @@ function paintClutter(g, d, t) {
         g.stroke(28, 30, 32, 205); g.strokeWeight(2.4 * s);
         g.ellipse(wx2, 0, 13 * s, 9 * s);
         g.stroke(188, 194, 200, 140); g.strokeWeight(0.9 * s);
-        g.ellipse(wx2 - LIGHT_DX * 1.1 * s, -LIGHT_DY * 1.1 * s, 13 * s, 9 * s);
+        g.ellipse(wx2 - LDX * 1.1 * s, -LDY * 1.1 * s, 13 * s, 9 * s);
       }
       // The barbs are what make it razor rather than fencing.
       g.stroke(150, 156, 160, 170); g.strokeWeight(1.1 * s);
@@ -25924,7 +26291,7 @@ function paintClutter(g, d, t) {
       for (let i = 0; i < 7; i++) {
         const a   = -1.1 + (i / 6) * 2.2;
         const len = (9 + Math.cos(a) * 7) * s;
-        const k   = 0.84 + 0.26 * (-(Math.cos(a) * LIGHT_DX + Math.sin(a) * LIGHT_DY));
+        const k   = 0.84 + 0.26 * (-(Math.cos(a) * LDX + Math.sin(a) * LDY));
         g.fill((38 + kzB * 24) * k, (62 + kzB * 16) * k, (46 - kzB * 10) * k, 246);
         g.push();
         g.rotate(a);
@@ -25939,7 +26306,7 @@ function paintClutter(g, d, t) {
       g.noStroke();
       g.fill(30, 50, 40, 250); g.ellipse(0, 0, 7 * s, 6.4 * s);
       g.fill(96, 132, 104, 140);
-      g.ellipse(-LIGHT_DX * 1.6 * s, -LIGHT_DY * 1.6 * s, 4 * s, 3.6 * s);
+      g.ellipse(-LDX * 1.6 * s, -LDY * 1.6 * s, 4 * s, 3.6 * s);
       break;
     }
 
@@ -25990,7 +26357,7 @@ function paintClutter(g, d, t) {
       g.ellipse(0, 0, 13 * s, 10 * s);
       g.noStroke();
       g.fill(180, 160, 208, 60);
-      g.ellipse(-LIGHT_DX * 2.4 * s, -LIGHT_DY * 2.4 * s, 6 * s, 4.4 * s);
+      g.ellipse(-LDX * 2.4 * s, -LDY * 2.4 * s, 6 * s, 4.4 * s);
       break;
     }
 
@@ -26033,7 +26400,7 @@ function paintClutter(g, d, t) {
         g.ellipse(Math.cos(a) * 6 * s, Math.sin(a) * 4.4 * s, 6 * s, 4.4 * s);
       }
       g.fill(206, 214, 230, 105);
-      g.ellipse(-LIGHT_DX * 4 * s, -LIGHT_DY * 3 * s, 7 * s, 3 * s);
+      g.ellipse(-LDX * 4 * s, -LDY * 3 * s, 7 * s, 3 * s);
       break;
     }
 
@@ -26060,7 +26427,7 @@ function paintClutter(g, d, t) {
       g.fill(178, 176, 164, 150);
       g.ellipse(0, 0, scr * 1.00, scr * 0.82);
       g.fill(244, 246, 240, 120);
-      g.ellipse(LIGHT_DX * 2.4 * s, LIGHT_DY * 2.0 * s, scr * 0.52, scr * 0.40);
+      g.ellipse(LDX * 2.4 * s, LDY * 2.0 * s, scr * 0.52, scr * 0.40);
       break;
     }
 
@@ -26077,7 +26444,7 @@ function paintClutter(g, d, t) {
       g.fill(126, 96, 158, 235); g.ellipse(1 * s, 0.6 * s, 8 * s, 6 * s);
       const gl = 0.5 + 0.5 * Math.sin(t * 0.028 + d.c * 14);
       g.fill(226, 208, 255, 70 + gl * 150);
-      g.ellipse(1 * s - LIGHT_DX * 1.4 * s, 0.6 * s - LIGHT_DY * 1.4 * s, 3.6 * s, 2.8 * s);
+      g.ellipse(1 * s - LDX * 1.4 * s, 0.6 * s - LDY * 1.4 * s, 3.6 * s, 2.8 * s);
       break;
     }
 
@@ -26094,8 +26461,8 @@ function paintClutter(g, d, t) {
       for (let pass = 0; pass < 2; pass++) {
         if (pass === 0) { g.stroke(58, 52, 46, 220); g.strokeWeight(2.2 * s); }
         else            { g.stroke(228, 232, 240, 120); g.strokeWeight(0.8 * s); }
-        const ofx = pass ? -LIGHT_DX * 0.9 * s : 0;
-        const ofy = pass ? -LIGHT_DY * 0.9 * s : 0;
+        const ofx = pass ? -LDX * 0.9 * s : 0;
+        const ofy = pass ? -LDY * 0.9 * s : 0;
         for (let br = 0; br < 3; br++) {
           let fpx = ofx, fpy = ofy, fa = d.c * 12 + br * 2.1;
           g.beginShape();
@@ -26277,6 +26644,45 @@ const PROP_RISE = {
   IMPACTOR:   [20],                 CRYSTALSPIRE: [34]
 };
 
+// A prop becomes a ROUND mass by having an entry here, exactly the way it
+// becomes a box by having a four-long PROP_RISE entry and a light by having a
+// PROP_EMITTERS one -- the column is drawn once, generically, around the whole
+// switch, so none of the forty cases knows the projection exists.
+//
+// This is the form that was missing. Everything round used to take the short
+// PROP_RISE entry and lean with no side at all, which left it with no visible
+// height -- and the only way left to suggest one was a disc or a square painted
+// on the ground underneath it. That is the hump, and every prop that had one is
+// on this list instead.
+//
+// [r, g, b, widthFrac, taper]. widthFrac is how much of the collision rect the
+// art actually fills, because the base has to sit on the drawn silhouette
+// rather than on the box; taper is the top radius as a fraction of the base.
+const PROP_ROUND = {
+  MANGROVE:     [ 72,  54,  34, 0.80, 0.52],   // stilt roots up to one stem
+  BRAKE:        [ 56,  74,  32, 0.96, 0.88],   // a wall of culms, near enough a cylinder
+  FALLEN:       [ 64,  48,  32, 1.00, 0.92],   // a trunk lying down: barely a rise
+  HIVETOWER:    [ 56,  38,  72, 0.92, 0.44],   // accreted, and narrowing hard
+  SPOREVENT:    [ 58,  38,  72, 1.02, 0.60],
+  IMPACTOR:     [ 42,  38,  46, 0.88, 0.74],
+  CAIRN:        [ 78,  78,  74, 0.94, 0.42],
+  CRYSTALSPIRE: [ 78,  86, 112, 0.60, 0.26],   // a spire is nearly a cone
+  // The two that were round long before any of this, and the reason the
+  // comment on drawMassSides() talks about a slab standing behind a rock.
+  BOULDER:      [ 96,  96,  90, 0.90, 0.70],
+  MONOLITH:     [ 92,  92,  88, 0.62, 0.74],
+  // And the last four that leaned with nothing underneath them.
+  WRECK:        [ 74,  66,  62, 0.86, 0.80],
+  SPOIL:        [104,  92,  74, 0.92, 0.34],   // a tip is a cone
+  FOUNTAIN:     [118, 118, 112, 0.94, 0.92],   // a basin is a low drum
+  BARGE:        [ 68,  62,  58, 0.88, 0.90]
+  // HEDGE is deliberately absent and is the only prop left leaning with no
+  // side. It is a run up to 500 long clamped to the visible span, and it builds
+  // its own volume out of overlapping lobes with a sunlit top -- one ellipse
+  // swept along the lean is the wrong shape for it, the same way drawMassSides
+  // is the wrong shape for a boulder.
+};
+
 function drawBiomeProps(list, i0, i1) {
   const _arr = list || activeBuildings;
   const _lo = i0 === undefined ? 0 : i0;
@@ -26299,10 +26705,15 @@ function drawBiomeProps(list, i0, i1) {
     if (_pr) {
       massLean(b.x, b.y, _pr[0], _leanTmp);
       _plx = _leanTmp[0]; _ply = _leanTmp[1];
+      const _pw = b.w || 0, _ph = b.h || 0;
       if (_pr.length > 1) {
-        const _pw = b.w || 0, _ph = b.h || 0;
         drawMassSides(b.x - _pw / 2, b.y - _ph / 2, b.x + _pw / 2, b.y + _ph / 2,
                       _plx, _ply, _pr[1], _pr[2], _pr[3], 0);
+      } else {
+        // Round masses get a swept column instead of four flat faces.
+        const _rd = PROP_ROUND[b.propType];
+        if (_rd) drawMassColumn(b.x, b.y, _pw * _rd[3], _ph * _rd[3],
+                                _plx, _ply, _rd[0], _rd[1], _rd[2], _rd[4]);
       }
     }
     push();
@@ -26444,21 +26855,32 @@ function drawBiomeProps(list, i0, i1) {
       }
 
       case "BOULDER": {
-        push(); translate(b.x, b.y);
-        castShadow(0, 0, b.w * 1.02, b.h * 0.82, 14, 80);
-        rotate(b.angle);
-        noStroke();
+        // The stone the whole "a slab standing behind a rock" note is about: it
+        // is round, drawn well inside its own box, and it now takes a swept
+        // column rather than four flat faces (see PROP_ROUND).
+        //
+        // The rotate() is gone, and that was a real fault rather than a tidy
+        // up. rotate() carries LIGHT_DX/DY round with it and every highlight
+        // below is written in world space, so a field of boulders each had its
+        // own sun -- the exact trap the prop shadows and the figures both have
+        // notes about. The variation the angle was providing is a phase on the
+        // facet seed instead, which turns the silhouette without turning the
+        // light.
+        castShadow(b.x, b.y, b.w * 1.02, b.h * 0.82, 14, 80);
+        push(); translate(b.x, b.y); noStroke();
+        const ba = b.angle || 0;
         const gr = 78 + b.tint * 26;
-        // Faceted silhouette rather than a plain ellipse
-        fill(gr, gr + 4, gr - 6);
+        // Faceted silhouette rather than a plain ellipse, and each facet shaded
+        // from its own outward normal so the lit side survives the camera
+        // crossing the middle of the view.
         beginShape();
         for (let i = 0; i < 7; i++) {
-          const a = (i / 7) * TWO_PI;
+          const a = (i / 7) * TWO_PI + ba;
           const rr = (0.42 + 0.1 * Math.sin(i * 2.7 + b.tint * 9));
           vertex(Math.cos(a) * b.w * rr, Math.sin(a) * b.h * rr);
         }
+        fill(gr, gr + 4, gr - 6);
         endShape(CLOSE);
-        // Lit face toward the global light, shaded face away
         fill(255, 255, 255, 34);
         ellipse(-LIGHT_DX * b.w * 0.14, -LIGHT_DY * b.h * 0.14, b.w * 0.5, b.h * 0.42);
         fill(0, 0, 0, 42);
@@ -26466,7 +26888,7 @@ function drawBiomeProps(list, i0, i1) {
         // Moss creeping over the shaded side
         fill(56, 102, 46, 165);
         for (let i = 0; i < 4; i++) {
-          const a = b.tint * 31 + i * 1.9;
+          const a = b.tint * 31 + i * 1.9 + ba;
           ellipse(Math.cos(a) * b.w * 0.2, Math.sin(a) * b.h * 0.2, b.w * 0.26, b.h * 0.2);
         }
         pop();
@@ -26577,59 +26999,71 @@ function drawBiomeProps(list, i0, i1) {
       }
 
       case "MANGROVE": {
-        // Stilt roots. A mangrove stands ABOVE the water on a cage of them, so
-        // the read is the cage -- an open ring of arches with daylight between,
-        // not a trunk. Round, so it takes the short PROP_RISE form: boxed, it
-        // would stand a rectangular slab behind a cage you can see through.
+        // Stilt roots up to one stem. A mangrove stands ABOVE the water on a
+        // cage of them, so the read is: short thick fins at the GROUND, a stem
+        // rising out of them (the generic column draws that), and the crown at
+        // the leaned top.
         //
-        // The ring is phase-offset by the record's own angle rather than turned
-        // with rotate(). rotate() carries LIGHT_DX/DY round with it, and every
-        // highlight below is written in world space -- turned, a stand of them
-        // would have had a different sun per tree.
-        castShadow(b.x, b.y, b.w * 1.15, b.h * 0.95, 16, 74);
+        // The first version drew the roots as full-radius spokes across the
+        // whole footprint over a flat green disc, which from above is a wagon
+        // wheel -- long thin lines radiating from a hub is the one shape that
+        // reads as a wheel and nothing else. Roots are short, thick, and they
+        // stop well before the canopy's edge.
+        //
+        // Phase-offset by the record's own angle rather than turned with
+        // rotate(): rotate() carries LIGHT_DX/DY round with it, and every
+        // highlight here is written in world space, so a stand of them would
+        // have had a different sun per tree.
+        castShadow(b.x, b.y, b.w * 1.05, b.h * 0.88, 16, 74);
         push(); translate(b.x, b.y); noStroke();
         const mgW = b.w / 2, mgH = b.h / 2, mgA = b.angle || 0;
-        fill(30, 46, 38, 110); ellipse(0, 0, b.w * 1.2, b.h * 1.05);
-        // Each root twice, dark then lit and offset against the scene light,
-        // which is what gives an arch an underside.
-        stroke(44, 32, 22, 250); strokeWeight(5.4); noFill();
-        for (let i = 0; i < 9; i++) {
-          const a = (i / 9) * TWO_PI + mgA;
-          line(0, 0, Math.cos(a) * mgW * 0.95, Math.sin(a) * mgH * 0.95);
+        // Roots, at the base, drawn as tapered fins with a lit edge -- the same
+        // shape language the buttress root clutter uses, at prop scale.
+        for (let i = 0; i < 7; i++) {
+          const a = (i / 7) * TWO_PI + mgA;
+          const ca = Math.cos(a), sa = Math.sin(a);
+          const ln = mgW * (0.62 + 0.20 * Math.sin(i * 2.3 + mgA * 4));
+          const kf = 0.82 + 0.30 * (-(-sa * LIGHT_DX + ca * LIGHT_DY));
+          fill(58 * kf, 44 * kf, 28 * kf, 250);
+          triangle(-sa * mgW * 0.16, ca * mgH * 0.16,
+                    sa * mgW * 0.16, -ca * mgH * 0.16, ca * ln, sa * ln * 0.9);
         }
-        stroke(96, 74, 48, 220); strokeWeight(2.2);
-        for (let i = 0; i < 9; i++) {
-          const a = (i / 9) * TWO_PI + mgA;
-          line(-LIGHT_DX * 2, -LIGHT_DY * 2,
-               Math.cos(a) * mgW * 0.95 - LIGHT_DX * 2,
-               Math.sin(a) * mgH * 0.95 - LIGHT_DY * 2);
+        pop();
+        // Crown, at the leaned top, over the column the wrapper already drew.
+        push(); translate(b.x + _plx, b.y + _ply); noStroke();
+        fill(34, 62, 38, 250); ellipse(0, 0, b.w * 0.86, b.h * 0.78);
+        fill(56, 96, 52, 240);
+        ellipse(-LIGHT_DX * b.w * 0.10, -LIGHT_DY * b.h * 0.10, b.w * 0.62, b.h * 0.56);
+        fill(92, 138, 74, 190);
+        ellipse(-LIGHT_DX * b.w * 0.17, -LIGHT_DY * b.h * 0.17, b.w * 0.34, b.h * 0.30);
+        // A few leaf lobes broken off the rim, so the crown is not one oval.
+        for (let i = 0; i < 5; i++) {
+          const a = i * 1.257 + (b.angle || 0) * 3;
+          fill(46, 84, 46, 230);
+          ellipse(Math.cos(a) * b.w * 0.36, Math.sin(a) * b.h * 0.32,
+                  b.w * 0.26, b.h * 0.23);
         }
-        noStroke();
-        fill(52, 38, 26); ellipse(0, 0, mgW * 0.5, mgH * 0.5);
-        fill(40, 74, 44, 246); ellipse(0, 0, b.w * 0.72, b.h * 0.66);
-        fill(64, 104, 58, 220);
-        ellipse(-LIGHT_DX * mgW * 0.2, -LIGHT_DY * mgH * 0.2, b.w * 0.46, b.h * 0.42);
-        fill(96, 140, 78, 150);
-        ellipse(-LIGHT_DX * mgW * 0.3, -LIGHT_DY * mgH * 0.3, b.w * 0.24, b.h * 0.22);
         pop();
         break;
       }
 
       case "BRAKE": {
-        // A bamboo brake. It is the one thing in the sector that blocks a
-        // sightline without being a building, so it has to READ as impassable:
-        // culm tops packed until there is no ground showing between them, laid
-        // on a phyllotactic spiral at three sizes -- one ring of them is a
-        // stipple, three is a mass.
-        castShadow(b.x, b.y, b.w * 1.05, b.h * 0.92, 18, 76);
-        push(); translate(b.x, b.y); noStroke();
-        fill(38, 52, 26, 220); ellipse(0, 0, b.w, b.h);
+        // A bamboo brake, and the one thing in the sector that blocks a
+        // sightline without being a building -- so it has to read as
+        // impassable. The mass is the generic column; what is drawn here is the
+        // TOP of it: culm tops packed until there is no ground showing between
+        // them, on a phyllotactic spiral at three sizes.
+        //
+        // The flat green disc that used to sit under all this is gone. It was
+        // standing in for the height the column now actually has.
+        castShadow(b.x, b.y, b.w * 1.02, b.h * 0.90, 18, 76);
+        push(); translate(b.x + _plx, b.y + _ply); noStroke();
         const bkN = 24;
         for (let ring = 0; ring < 3; ring++) {
           const rr = 1 - ring * 0.30, dk = 0.72 + ring * 0.20;
           for (let i = 0; i < bkN; i++) {
             const a  = i * 2.399 + b.tint * 9 + ring;
-            const rd = Math.sqrt((i + 1) / bkN) * 0.46 * rr;
+            const rd = Math.sqrt((i + 1) / bkN) * 0.44 * rr;
             const px = Math.cos(a) * b.w * rd, py = Math.sin(a) * b.h * rd;
             fill(96 * dk, 118 * dk, 52 * dk, 250);
             ellipse(px, py, 9, 9);
@@ -26642,44 +27076,70 @@ function drawBiomeProps(list, i0, i1) {
       }
 
       case "FALLEN": {
-        // A forest giant that came down and brought its root plate with it. The
-        // trunk is a run of overlapping barrels rather than one long rect,
-        // because a cylinder lying down has round ends and a rect has corners --
-        // and the plate standing on edge at the butt is what says it fell
-        // rather than that somebody cut and stacked it.
+        // A forest giant that came down and brought its root plate with it.
+        //
+        // Drawn as a CAPSULE -- one body with two round ends -- rather than as
+        // a run of ten overlapping ellipses. Overlapping ellipses of varying
+        // size do not read as a cylinder from above, they read as a chain of
+        // beads, which is exactly what the first version looked like: a line of
+        // circles running away from a wheel. A log has one continuous
+        // silhouette, one lit strip running its whole length, and grain along
+        // it, and all three of those are things a chain of circles destroys.
         const fnH = b.w > b.h;
         const fnL = fnH ? b.w : b.h, fnW = fnH ? b.h : b.w;
-        castShadowRect(b.x + LIGHT_DX * 8, b.y + LIGHT_DY * 8, b.w, b.h, 10, 78, fnW * 0.4);
-        push(); translate(b.x, b.y); noStroke();
-        const fnS = 9;
-        for (let i = 0; i <= fnS; i++) {
-          const t2 = i / fnS;
-          const along = (t2 - 0.5) * fnL;
-          const wid = fnW * (0.92 - t2 * 0.42);
-          const ax = fnH ? along : 0, ay = fnH ? 0 : along;
-          fill(58, 44, 30);
-          ellipse(ax, ay, fnH ? wid * 1.1 : wid, fnH ? wid : wid * 1.1);
-          fill(94, 74, 48);
-          ellipse(ax - LIGHT_DX * fnW * 0.14, ay - LIGHT_DY * fnW * 0.14,
-                  (fnH ? wid * 1.1 : wid) * 0.6, (fnH ? wid : wid * 1.1) * 0.6);
-        }
-        // Root plate at the butt, and the broken roots radiating out of it.
-        const fnBx = fnH ? -fnL / 2 : 0, fnBy = fnH ? 0 : -fnL / 2;
-        fill(40, 30, 20); ellipse(fnBx, fnBy, fnW * 1.9, fnW * 1.9);
-        fill(66, 50, 34);
-        ellipse(fnBx - LIGHT_DX * 4, fnBy - LIGHT_DY * 4, fnW * 1.5, fnW * 1.5);
-        stroke(34, 26, 18, 240); strokeWeight(3); noFill();
-        for (let i = 0; i < 9; i++) {
-          const a = i * 0.698 + b.tint * 7;
-          line(fnBx, fnBy, fnBx + Math.cos(a) * fnW * 0.95, fnBy + Math.sin(a) * fnW * 0.95);
+        castShadowRect(b.x + LIGHT_DX * 8, b.y + LIGHT_DY * 8, b.w, b.h, 10, 78, fnW * 0.45);
+        push(); translate(b.x + _plx, b.y + _ply); noStroke();
+        // Body and caps: the bark, in shadow.
+        const bl = fnL * 0.5 - fnW * 0.5;
+        fill(52, 40, 27);
+        if (fnH) rect(-bl, -fnW * 0.46, bl * 2, fnW * 0.92, fnW * 0.2);
+        else     rect(-fnW * 0.46, -bl, fnW * 0.92, bl * 2, fnW * 0.2);
+        ellipse(fnH ? -bl : 0, fnH ? 0 : -bl, fnW * 0.92, fnW * 0.92);
+        ellipse(fnH ?  bl : 0, fnH ? 0 :  bl, fnW * 0.92, fnW * 0.92);
+        // The sunlit upper strip, offset against the light and narrower -- a
+        // cylinder lit from one side, which is the whole read.
+        const ox2 = -LIGHT_DX * fnW * 0.20, oy2 = -LIGHT_DY * fnW * 0.20;
+        fill(96, 76, 49);
+        if (fnH) rect(-bl + ox2, -fnW * 0.28 + oy2, bl * 2, fnW * 0.56, fnW * 0.16);
+        else     rect(-fnW * 0.28 + ox2, -bl + oy2, fnW * 0.56, bl * 2, fnW * 0.16);
+        ellipse((fnH ? -bl : 0) + ox2, (fnH ? 0 : -bl) + oy2, fnW * 0.56, fnW * 0.56);
+        ellipse((fnH ?  bl : 0) + ox2, (fnH ? 0 :  bl) + oy2, fnW * 0.56, fnW * 0.56);
+        // Grain, ALONG the trunk. Across it, it reads as a stack of plates --
+        // the same thing storey lines do to a wall at this projection.
+        stroke(44, 33, 22, 150); strokeWeight(1.4);
+        for (let i = -1; i <= 1; i++) {
+          const off = i * fnW * 0.20 + (fnH ? oy2 : ox2);
+          if (fnH) line(-bl * 0.92, off, bl * 0.92, off);
+          else     line(off, -bl * 0.92, off, bl * 0.92);
         }
         noStroke();
-        // Moss, on the side the sun reaches.
-        fill(64, 96, 52, 130);
-        for (let i = 0; i < 5; i++) {
-          const t2 = (i + 0.5) / 5, along = (t2 - 0.5) * fnL * 0.8;
-          ellipse((fnH ? along : 0) - LIGHT_DX * fnW * 0.2,
-                  (fnH ? 0 : along) - LIGHT_DY * fnW * 0.2, fnW * 0.5, fnW * 0.5);
+        // End grain at the crown end: rings, which is what a broken trunk shows.
+        const ex = fnH ? bl : 0, ey = fnH ? 0 : bl;
+        fill(126, 104, 72, 220); ellipse(ex, ey, fnW * 0.62, fnW * 0.62);
+        stroke(88, 70, 46, 180); strokeWeight(1.2); noFill();
+        ellipse(ex, ey, fnW * 0.40, fnW * 0.40);
+        ellipse(ex, ey, fnW * 0.20, fnW * 0.20);
+        noStroke();
+        // Root plate at the butt: fins standing on edge, not a disc with spokes
+        // drawn on it. Each fin is shaded by its own normal, so the plate reads
+        // as a torn disc standing up rather than as a painted wheel.
+        const rx = fnH ? -fnL * 0.5 : 0, ry = fnH ? 0 : -fnL * 0.5;
+        for (let i = 0; i < 9; i++) {
+          const a = i * 0.698 + b.tint * 7;
+          const ca = Math.cos(a), sa = Math.sin(a);
+          const kf = 0.74 + 0.34 * (-(ca * LIGHT_DX + sa * LIGHT_DY));
+          fill(52 * kf, 40 * kf, 26 * kf, 246);
+          triangle(rx - sa * fnW * 0.20, ry + ca * fnW * 0.20,
+                   rx + sa * fnW * 0.20, ry - ca * fnW * 0.20,
+                   rx + ca * fnW * 0.95, ry + sa * fnW * 0.95);
+        }
+        fill(74, 58, 38, 250); ellipse(rx, ry, fnW * 0.52, fnW * 0.52);
+        // Moss on the side the sun reaches.
+        fill(64, 96, 52, 120);
+        for (let i = 0; i < 4; i++) {
+          const t2 = (i + 0.7) / 5, along = (t2 - 0.5) * fnL * 0.7;
+          ellipse((fnH ? along : 0) + ox2 * 1.6, (fnH ? 0 : along) + oy2 * 1.6,
+                  fnW * 0.34, fnW * 0.30);
         }
         pop();
         break;
@@ -26724,35 +27184,35 @@ function drawBiomeProps(list, i0, i1) {
         // Somebody stacked this. It is the only made thing on the fell and the
         // only navigation aid a whiteout allows.
         //
-        // The courses are spread along the LEAN the wrapper already applied, not
-        // up the screen: a course at height fraction t of the whole is at
-        // t * lean, and the wrapper has already moved us the full lean, so the
-        // offset back is (t - 1) * lean. That keeps a cairn on the one
-        // projection every other mass in the world uses -- offset up the screen
-        // instead, it leaned the wrong way on the north half of every view.
-        castShadow(b.x, b.y, b.w * 1.3, b.h * 0.95, 22, 84);
+        // The courses ride the LEAN rather than the screen's y: a course at
+        // height fraction t sits at t * lean, and the wrapper has already moved
+        // us the full lean, so the offset back is (t - 1) * lean. Offset up the
+        // screen instead, it leaned the wrong way over the north half of every
+        // view. The generic column fills between the courses, which is what
+        // stops a stack of five discs reading as five discs.
+        castShadow(b.x, b.y, b.w * 1.25, b.h * 0.92, 22, 84);
         push(); translate(b.x, b.y); noStroke();
         const cnN = 5;
-        for (let i = 0; i < cnN; i++) {
+        for (let i = 1; i < cnN; i++) {
           const t2 = i / (cnN - 1);
-          const ux = _plx * (t2 - 1), uy = _ply * (t2 - 1);
-          const rd = 1 - t2 * 0.58;
+          const ux = _plx * t2, uy = _ply * t2;
+          const rd = (1 - t2 * 0.58) * 0.94;
           const k  = 0.82 + t2 * 0.30;
           fill(74 * k, 74 * k, 70 * k, 250);
           ellipse(ux, uy, b.w * rd, b.h * rd * 0.86);
           fill(122 * k, 122 * k, 116 * k, 240);
           ellipse(ux - LIGHT_DX * b.w * 0.10, uy - LIGHT_DY * b.h * 0.10,
-                  b.w * rd * 0.70, b.h * rd * 0.60);
-          fill(0, 0, 0, 40);
+                  b.w * rd * 0.68, b.h * rd * 0.58);
+          fill(0, 0, 0, 38);
           ellipse(ux + LIGHT_DX * b.w * 0.12, uy + LIGHT_DY * b.h * 0.12,
-                  b.w * rd * 0.50, b.h * rd * 0.40);
+                  b.w * rd * 0.48, b.h * rd * 0.38);
         }
         // Lichen: the only warm colour on the fell, and it grows on one side.
         fill(158, 154, 108, 120);
         for (let i = 0; i < 3; i++) {
           const a = b.tint * 19 + i * 2.1;
-          ellipse(Math.cos(a) * b.w * 0.20 + _plx * -0.4,
-                  Math.sin(a) * b.h * 0.20 + _ply * -0.4, b.w * 0.16, b.h * 0.13);
+          ellipse(Math.cos(a) * b.w * 0.18 + _plx * 0.7,
+                  Math.sin(a) * b.h * 0.16 + _ply * 0.7, b.w * 0.15, b.h * 0.12);
         }
         pop();
         break;
@@ -26802,50 +27262,63 @@ function drawBiomeProps(list, i0, i1) {
       // ===================================================================
       case "HIVETOWER": {
         // Grown rather than built: a stack of collars, each narrower than the
-        // one under it, with an open throat at the top. The collars are what
-        // make it read as accreted -- a smooth cone is a traffic bollard.
-        // Spread along the lean, on the same reasoning as the cairn.
-        castShadow(b.x, b.y, b.w * 1.1, b.h * 0.95, 30, 80);
+        // one under it, with an open throat at the top. The collars read as
+        // accretion where a smooth cone reads as a traffic bollard.
+        //
+        // The stack is spread ALONG the lean -- a course at height fraction t
+        // sits at t * lean, and the wrapper has already moved us the full lean,
+        // so the offset back is (t - 1) * lean. The generic column underneath
+        // closes the gaps between the courses, which is what turns a stack of
+        // discs into one tapering solid.
+        castShadow(b.x, b.y, b.w * 1.05, b.h * 0.92, 30, 80);
         push(); translate(b.x, b.y); noStroke();
         const hvN = 5;
-        for (let i = 0; i < hvN; i++) {
+        for (let i = 1; i < hvN; i++) {
           const t2 = i / (hvN - 1);
-          const ux = _plx * (t2 - 1), uy = _ply * (t2 - 1);
-          const rd = 1 - t2 * 0.52;
-          const k  = 0.78 + t2 * 0.36;
+          const ux = _plx * t2, uy = _ply * t2;
+          const rd = (1 - t2 * 0.54) * 0.92;
+          const k  = 0.76 + t2 * 0.38;
           fill(48 * k, 32 * k, 62 * k, 250);
           ellipse(ux, uy, b.w * rd, b.h * rd * 0.90);
           fill(96 * k, 68 * k, 118 * k, 235);
           ellipse(ux - LIGHT_DX * b.w * 0.09, uy - LIGHT_DY * b.h * 0.09,
-                  b.w * rd * 0.74, b.h * rd * 0.64);
+                  b.w * rd * 0.72, b.h * rd * 0.62);
         }
-        // The throat, and the one saturated accent on the whole prop. It is not
-        // an emitter: a hive chunk carries eight of these and the light budget
-        // is twenty-six sources for the entire scene.
-        fill(22, 14, 28, 250); ellipse(0, 0, b.w * 0.28, b.h * 0.24);
-        fill(104, 232, 128, 90); ellipse(0, 0, b.w * 0.18, b.h * 0.15);
+        // The throat, and the one saturated accent on the whole prop. Not an
+        // emitter: a hive chunk carries eight of these and the light budget is
+        // twenty-six sources for the entire scene.
+        push(); translate(_plx, _ply);
+        fill(22, 14, 28, 250); ellipse(0, 0, b.w * 0.26, b.h * 0.22);
+        fill(104, 232, 128, 90); ellipse(0, 0, b.w * 0.17, b.h * 0.14);
+        pop();
         pop();
         break;
       }
 
       case "SPOREVENT": {
         // A vent with pressure behind it, and the sector's designated light
-        // source (see PROP_EMITTERS). The fixture is deliberately small for the
-        // same reason the mast's lamp is: the ground pool belongs to the rig.
-        castShadow(b.x, b.y, b.w * 1.1, b.h * 0.9, 12, 66);
-        push(); translate(b.x, b.y); noStroke();
-        fill(52, 34, 66, 235); ellipse(0, 0, b.w * 1.25, b.h * 1.1);
-        fill(88, 60, 108, 230);
-        ellipse(-LIGHT_DX * b.w * 0.10, -LIGHT_DY * b.h * 0.10, b.w * 0.9, b.h * 0.78);
-        fill(30, 20, 40, 250); ellipse(0, 0, b.w * 0.5, b.h * 0.44);
+        // source (see PROP_EMITTERS). The fixture stays small for the same
+        // reason the mast's lamp does: the ground pool belongs to the rig, and
+        // a bright disc painted here as well is a second sun on the first.
+        //
+        // What used to be a flat purple disc with a hole in it is a cone now --
+        // the column gives it the throw, and this draws its rim and its mouth.
+        castShadow(b.x, b.y, b.w * 1.05, b.h * 0.86, 12, 66);
+        push(); translate(b.x + _plx, b.y + _ply); noStroke();
+        fill(74, 50, 92, 245); ellipse(0, 0, b.w * 0.66, b.h * 0.60);
+        fill(104, 74, 128, 235);
+        ellipse(-LIGHT_DX * b.w * 0.07, -LIGHT_DY * b.h * 0.07, b.w * 0.48, b.h * 0.42);
         // Fringe of tubes round the rim: the thing that says it is alive.
         for (let i = 0; i < 8; i++) {
           const a = i * 0.785 + b.tint * 6;
-          fill(126, 86, 150, 240);
-          ellipse(Math.cos(a) * b.w * 0.34, Math.sin(a) * b.h * 0.30,
-                  b.w * 0.14, b.h * 0.12);
+          const kf = 0.80 + 0.32 * (-(Math.cos(a) * LIGHT_DX + Math.sin(a) * LIGHT_DY));
+          fill(126 * kf, 86 * kf, 150 * kf, 244);
+          ellipse(Math.cos(a) * b.w * 0.30, Math.sin(a) * b.h * 0.27,
+                  b.w * 0.15, b.h * 0.13);
         }
-        fill(150, 250, 172, 120); ellipse(0, 0, b.w * 0.26, b.h * 0.22);
+        // The mouth: dark, because you are looking down a hole.
+        fill(24, 16, 32, 252); ellipse(0, 0, b.w * 0.28, b.h * 0.25);
+        fill(150, 250, 172, 120); ellipse(0, 0, b.w * 0.16, b.h * 0.14);
         pop();
         break;
       }
@@ -26853,28 +27326,36 @@ function drawBiomeProps(list, i0, i1) {
       case "IMPACTOR": {
         // Whatever made the crater, still lying in it. Half buried, so what is
         // above ground is a segment rather than a body -- and the spoil is
-        // heaped down-range of it, which is the only thing that says it arrived
+        // heaped down-range, which is the only thing that says it arrived
         // rather than that somebody put it there.
-        castShadow(b.x, b.y, b.w * 1.15, b.h * 0.9, 20, 82);
-        push(); translate(b.x, b.y); noStroke();
+        //
+        // The spoil goes down at the GROUND and the body at the leaned top, so
+        // the two separate instead of being one flat ellipse on another. That
+        // separation is the whole of the height read at this size.
+        castShadow(b.x, b.y, b.w * 1.10, b.h * 0.86, 20, 82);
         const imA = b.angle || 0, imC = Math.cos(imA), imS = Math.sin(imA);
-        fill(40, 32, 44, 200);
-        ellipse(imC * b.w * 0.30, imS * b.h * 0.30, b.w * 1.15, b.h * 0.95);
-        // The body, faceted, each facet shaded by its OWN normal so the lit side
-        // stays the same side as the camera swings past.
+        push(); translate(b.x, b.y); noStroke();
+        fill(40, 32, 44, 210);
+        ellipse(imC * b.w * 0.30, imS * b.h * 0.30, b.w * 1.10, b.h * 0.92);
+        fill(56, 46, 60, 170);
+        ellipse(imC * b.w * 0.40, imS * b.h * 0.40, b.w * 0.66, b.h * 0.52);
+        pop();
+        push(); translate(b.x + _plx, b.y + _ply); noStroke();
+        // The body, faceted, each facet shaded by its OWN normal so the lit
+        // side stays the same side as the camera swings past.
         for (let i = 0; i < 5; i++) {
           const a = imA + (i / 5) * TWO_PI;
           const k = 0.80 + 0.34 * (-(Math.cos(a) * LIGHT_DX + Math.sin(a) * LIGHT_DY));
           fill(46 * k, 42 * k, 48 * k, 250);
-          ellipse(Math.cos(a) * b.w * 0.16, Math.sin(a) * b.h * 0.14,
-                  b.w * 0.62, b.h * 0.56);
+          ellipse(Math.cos(a) * b.w * 0.13, Math.sin(a) * b.h * 0.11,
+                  b.w * 0.56, b.h * 0.50);
         }
         fill(126, 130, 138, 190);
-        ellipse(-LIGHT_DX * b.w * 0.16, -LIGHT_DY * b.h * 0.14, b.w * 0.34, b.h * 0.28);
+        ellipse(-LIGHT_DX * b.w * 0.14, -LIGHT_DY * b.h * 0.12, b.w * 0.30, b.h * 0.25);
         // Ablation: the face that met the way in is glassed.
         fill(206, 214, 230, 70);
-        ellipse(-imC * b.w * 0.22 - LIGHT_DX * 3, -imS * b.h * 0.20 - LIGHT_DY * 3,
-                b.w * 0.30, b.h * 0.16);
+        ellipse(-imC * b.w * 0.20 - LIGHT_DX * 3, -imS * b.h * 0.18 - LIGHT_DY * 3,
+                b.w * 0.28, b.h * 0.15);
         pop();
         break;
       }
@@ -26883,28 +27364,42 @@ function drawBiomeProps(list, i0, i1) {
       // SECTOR 7 — the crystal flats' sub-biomes
       // ===================================================================
       case "CRYSTALSPIRE": {
-        // The sector's only skyline. A cluster of prisms sharing one root rather
-        // than a single cone, because a crystal grows in habit -- and each prism
-        // is shaded by its own facing, so the stand keeps one lit side while the
-        // camera swings past it. Tips ride the lean, roots stay on the ground.
-        castShadow(b.x, b.y, b.w * 1.05, b.h * 0.85, 34, 74);
+        // The sector's only skyline. A cluster of prisms sharing one root
+        // rather than a single cone, because a crystal grows in habit -- and
+        // each prism is shaded by its own facing, so the stand keeps one lit
+        // side while the camera swings past it.
+        //
+        // The pale halo that used to be painted on the pan under all this is
+        // gone: it was a disc standing in for the height the column now has.
+        // What is left on the ground is the FRACTURE the growth pushed up,
+        // which is a line, not a blob.
+        castShadow(b.x, b.y, b.w * 1.00, b.h * 0.80, 34, 74);
         push(); translate(b.x, b.y); noStroke();
-        // Growth halo on the pan, first, so the prisms sit on top of it.
-        fill(214, 226, 236, 60); ellipse(0, 0, b.w * 0.9, b.h * 0.8);
+        stroke(214, 226, 236, 90); strokeWeight(1.6); noFill();
+        for (let i = 0; i < 6; i++) {
+          const a = i * 1.047 + b.tint * 5;
+          line(Math.cos(a) * b.w * 0.22, Math.sin(a) * b.h * 0.20,
+               Math.cos(a) * b.w * 0.60, Math.sin(a) * b.h * 0.52);
+        }
+        noStroke();
+        // The prisms. Each is its own tapered shaft from the root to its tip,
+        // drawn as a quad so it is a solid rather than a stack of ellipses.
         for (let i = 0; i < 4; i++) {
           const a  = i * 1.571 + b.tint * 7;
-          const rd = 0.16 + 0.10 * Math.abs((i * 0.37 + b.tint * 5) % 1);
+          const rd = 0.14 + 0.09 * Math.abs((i * 0.37 + b.tint * 5) % 1);
           const px = Math.cos(a) * b.w * rd, py = Math.sin(a) * b.h * rd;
-          const t2 = 0.55 + 0.45 * Math.abs((i * 0.61 + b.tint * 11) % 1);
-          const ux = px + _plx * (t2 - 1), uy = py + _ply * (t2 - 1);
-          const k  = 0.78 + 0.34 * (-(Math.cos(a) * LIGHT_DX + Math.sin(a) * LIGHT_DY));
-          fill(86 * k, 92 * k, 118 * k, 245);
-          quad(px - b.w * 0.10, py, px, py - b.h * 0.10,
-               ux + b.w * 0.06, uy, ux, uy + b.h * 0.06);
-          fill(150 * k, 168 * k, 208 * k, 230);
-          ellipse(ux, uy, b.w * 0.24, b.h * 0.20);
-          fill(198, 236, 255, 110);
-          ellipse(ux - LIGHT_DX * 2, uy - LIGHT_DY * 2, b.w * 0.12, b.h * 0.10);
+          const t2 = 0.58 + 0.42 * Math.abs((i * 0.61 + b.tint * 11) % 1);
+          const ux = px + _plx * t2, uy = py + _ply * t2;
+          const k  = 0.76 + 0.36 * (-(Math.cos(a) * LIGHT_DX + Math.sin(a) * LIGHT_DY));
+          const bw = b.w * 0.15, bh = b.h * 0.13;
+          fill(86 * k, 92 * k, 118 * k, 246);
+          quad(px - bw, py, px, py - bh, ux + bw * 0.34, uy, ux, uy + bh * 0.34);
+          fill(120 * k, 132 * k, 168 * k, 240);
+          quad(px, py - bh, px + bw, py, ux, uy - bh * 0.34, ux + bw * 0.34, uy);
+          fill(168 * k, 190 * k, 226 * k, 240);
+          ellipse(ux, uy, b.w * 0.20, b.h * 0.17);
+          fill(214, 244, 255, 120);
+          ellipse(ux - LIGHT_DX * 2, uy - LIGHT_DY * 2, b.w * 0.10, b.h * 0.08);
         }
         pop();
         break;
@@ -27423,10 +27918,15 @@ function drawBiomeProps(list, i0, i1) {
         // long shadow and a hard lit face -- that contrast at a distance is
         // what turns a stone row into a landmark you walk toward.
         castShadow(b.x, b.y, b.w * 1.5, b.h * 1.0, 30, 84);
-        push(); translate(b.x, b.y); noStroke();
         const tl = b.tint;
-        // Footing: the ground heaped where it was set.
-        fill(84, 88, 76, 150); ellipse(0, 0, b.w * 1.5, b.h * 1.15);
+        // Footing: the ground heaped where the stone was set. It goes down at
+        // the BASE, un-leaned. Drawn inside the wrapper's translate it was a
+        // disc half again the size of the stone sitting on top of it -- the
+        // single largest hump in the file, and on the wrong end of the mass.
+        push(); translate(b.x - _plx, b.y - _ply); noStroke();
+        fill(84, 88, 76, 150); ellipse(0, 0, b.w * 1.35, b.h * 1.05);
+        pop();
+        push(); translate(b.x, b.y); noStroke();
         // Faceted shaft, leaning slightly, because none of them stand true.
         rotate((tl - 0.5) * 0.5);
         fill(96 + tl * 16, 96 + tl * 14, 92 + tl * 12);
