@@ -1784,6 +1784,14 @@ function legacyGenerateMap() {
                 if (currentLevel === 1 && bX === 0 && bY === 0 && j === 1 && i === 1) { b.isHouse = true; b.w = 160; b.h = 100; }
                 
                 if (currentLevel === 1 || currentLevel === 2) {
+                    // These ARE city blocks: the same shape of record the
+                    // streamer's CITY layout emits, with the same roof details
+                    // and the same style index. Without the flag they fell
+                    // through legacyMassOf(), drew as flat rectangles, and sat
+                    // next to streamed blocks that had walls -- which is why
+                    // the gated sector read as a floor plan while the country
+                    // outside it read as a city.
+                    if (!b.isHouse) b.isBlockBuilding = true;
                     let numDet = floor(random(1, 4));
                     for(let d = 0; d < numDet; d++) {
                         let t = random(['hvac', 'vent', 'access']);
@@ -19554,8 +19562,11 @@ const TU_TREES = {
   SNOWFIELD: 0.22, ICEFIELD: 0.04, TAIGA: 1.00, MORAINE: 0.26, FELLFIELD: 0.10
 };
 // Alien growth: plants, poles and grown structures share one acceptance.
+// Tuned by looking at it. The first numbers put a structure every eighty
+// units on the mat; halving them emptied the ashfall to literally nothing.
+// Barren has to still have something in it or it reads as an unfinished level.
 const AL_GROWTH = {
-  MYCELIA: 1.00, CRATER: 0.18, HIVE: 0.90, FLESH: 0.60, ASHFALL: 0.12
+  MYCELIA: 0.80, CRATER: 0.20, HIVE: 0.90, FLESH: 0.55, ASHFALL: 0.22
 };
 // Crystal growth. The pan is swept and the lattice is paved; neither grows.
 const CR_GROWTH = {
@@ -19572,6 +19583,47 @@ const CR_GROWTH = {
 // Only the two sectors that have been dressed for it. Everything else keeps
 // exactly the ground it had.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// REGION TONE
+//
+// What each sub-biome does to the GROUND COLOUR, as an (r,g,b) offset added per
+// texel in the terrain bake.
+//
+// This exists because the first attempt did it with paint. Each region case in
+// bakeBiomeDetail() laid six to nine large soft stamps -- up to 720 units
+// across at alpha 90 -- to wash the ground toward its own colour. Two things
+// went wrong and they compounded. A stamp is clipped at the chunk buffer's
+// edge, so any part of it hanging over the boundary is simply cut off in a
+// straight line; and nine stamps that big do not read as patches at all, they
+// cover the chunk. The result was that every chunk came out uniformly tinted
+// toward its own region, with a hard rectangular join to its neighbour -- a
+// visible patchwork of 1200-unit squares across the whole world, which is by
+// far the worst thing in any of these sectors.
+//
+// Tone is a per-texel property and belongs in the noise pass, where it is
+// sampled in WORLD space and no seam is possible. It is resolved once per
+// lattice point and bilinearly interpolated like every other field, so a region
+// boundary arrives as a gradient over a couple of hundred units rather than as
+// an edge -- which is also what an ecotone actually looks like.
+//
+// Keep these small. They are added on top of the material ramp, the mid and
+// fine mottling and ZONE_TINT, and anything past about +/-30 stops reading as
+// ground and starts reading as a stain.
+const REGION_TINT = {
+  WOODLAND: { MEADOW: [0, 0, 0],      TIMBER: [-14, -6, -8],  MARSH: [-10, -6, 4],
+              HEATH:  [10, 6, -4],    BURN:   [-16, -14, -12], FARM: [8, 4, -8] },
+  JUNGLE:   { CANOPY: [-15, -7, -6],  SWAMP:  [-19, -11, -2],
+              CLEARING: [26, 14, -8], BAMBOO: [9, 14, -7],    CORDON: [12, 10, 6] },
+  // A third of the others: this palette is a hundred points brighter than any
+  // other in the game and a full-size swing clips to white.
+  TUNDRA:   { SNOWFIELD: [0, 0, 0],   ICEFIELD: [-17, -6, 8],  TAIGA: [5, 0, -12],
+              MORAINE:  [-9, -9, -10], FELLFIELD: [-5, -4, -8] },
+  ALIEN:    { MYCELIA: [0, 0, 0],     CRATER: [-26, -22, -20], HIVE: [-6, -12, 7],
+              FLESH:   [15, -14, -2], ASHFALL: [12, 14, 12] },
+  CRYSTAL:  { PAN: [0, 0, 0],         SPIRE: [6, 8, 12],       SALT: [16, 16, 12],
+              GLASS:   [-30, -28, -26], LATTICE: [-9, -6, 0] }
+};
+
 const ZONE_TINT = {
   // Grass runs from dry and yellowed on the high ground to deep wet green in
   // the hollows.
@@ -19989,9 +20041,13 @@ const SPUR_HALF = 75;
 // or a waterway looks like rather than something built on top of one.
 const RESERVED_OK = {
   RIVER: 1, CANAL: 1,              // the collision volumes; they ARE the water
-  BRIDGE: 1, CANALBRIDGE: 1, BOARDWALK: 1,   // built to be stood on
+  BRIDGE: 1, CANALBRIDGE: 1,       // a crossing IS the thing that spans the water
   BARGE: 1, BOLLARD: 1, QUAYCRANE: 1         // a quayside is furniture at the edge
 };
+// BOARDWALK is deliberately NOT on that list, and the distinction is the point:
+// a bridge is built across the water and belongs there, while a plank walk is
+// laid over soft ground and has no business lying across the road. Exempting
+// every deck alike put boardwalks flat across the jungle track.
 
 // `pad` is the clearance wanted beyond the footprint: a road wants a verge and
 // water wants a bank. Defaults to a stride.
@@ -21276,7 +21332,9 @@ function generateChunkContent(biome, cx, cy) {
         // A forest giant that came down and took its root plate with it. The
         // trunk is the length of a house and it is the one piece of cover in a
         // closed canopy, where everything else is vertical.
-        if (rng() > 0.5) {
+        // One canopy chunk in four, not one in two. Three of them in a single
+        // screen is a logging yard rather than a forest that has lost a tree.
+        if (rng() > 0.74) {
           // 300-520 was most of a chunk -- on screen it read as a wall rather
           // than as a tree that fell over, and it crowded out everything else
           // in the clearing it landed in.
@@ -21580,7 +21638,7 @@ function generateChunkContent(biome, cx, cy) {
       // so is the SPECIES: a hive grows structures, the mat grows plants, and a
       // crater grows nothing much at all -- which is what the poles are left
       // standing in.
-      const n = rngInt(rng, 8, 17);
+      const n = rngInt(rng, 7, 14);
       for (let i = 0; i < n; i++) {
         const w = rngRange(rng, 90, 220), h = rngRange(rng, 90, 220);
         const spot = lat.take(w, h);
@@ -22116,6 +22174,14 @@ function bakeChunkTerrain(biome, cx, cy, staticDecor) {
   // tint to apply, so nothing else pays for it.
   const tz  = ZONE_TINT[lay];
   const latD = tz ? new Float32Array(gn * gn) : null;
+  // Region tone, resolved per lattice point and interpolated like everything
+  // else -- see REGION_TINT for why this is not painted. Three arrays rather
+  // than one interleaved: the inner loop reads them the same way it reads latA,
+  // and an interleaved buffer would need three multiplies per texel to index.
+  const rt   = REGION_TINT[lay];
+  const latR = rt ? new Float32Array(gn * gn) : null;
+  const latG = rt ? new Float32Array(gn * gn) : null;
+  const latBl = rt ? new Float32Array(gn * gn) : null;
   for (let j = 0; j < gn; j++) {
     for (let i = 0; i < gn; i++) {
       const wx = ox + i * NOISE_GRID * wpp;
@@ -22125,6 +22191,12 @@ function bakeChunkTerrain(biome, cx, cy, staticDecor) {
       latB[k] = bnoise(biome, wx, wy, 0.0042);
       latC[k] = bnoise(biome, wx, wy, 0.017);
       if (latD) latD[k] = bnoise(biome, wx + 3700, wy - 2900, 0.00021);
+      if (latR) {
+        const t = rt[regionAt(biome, wx, wy, lay)] || null;
+        latR[k]  = t ? t[0] : 0;
+        latG[k]  = t ? t[1] : 0;
+        latBl[k] = t ? t[2] : 0;
+      }
     }
   }
   const sample = (lat, fx, fy) => {
@@ -22202,6 +22274,14 @@ function bakeChunkTerrain(biome, cx, cy, staticDecor) {
       if (latD) {
         const nD = sample(latD, x, y) - 0.5;
         r += nD * tz[0]; gg += nD * tz[1]; b += nD * tz[2];
+      }
+
+      // Region tone. Bilinear between lattice points, so a boundary between two
+      // sub-biomes arrives as a gradient a couple of hundred units wide instead
+      // of as an edge -- and because it is sampled in world space there is no
+      // chunk seam for it to fall on.
+      if (latR) {
+        r += sample(latR, x, y); gg += sample(latG, x, y); b += sample(latBl, x, y);
       }
 
       // Ordered dither — ±3 levels, keyed to the pixel's lattice position
@@ -23489,13 +23569,14 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
       // three, in the right places, from one pass each.
       const jrg = (x, y) => jungleRegion(biome, x, y);
 
-      // Closed canopy: no light reaches this ground at all. The shade is laid
-      // as soft sheets rather than a flat wash so it reads as light coming
-      // through a ceiling with holes in it.
-      for (let i = 0; i < 9; i++) {
+      // Closed canopy: the deep shade is REGION_TINT's job now, per texel and
+      // seam-free. What is left here is the dapple -- small, so it reads as
+      // light coming through a ceiling with holes in it rather than as a wash
+      // that fills the chunk.
+      for (let i = 0; i < 10; i++) {
         const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
         if (jrg(rx, ry) !== JG_CANOPY) continue;
-        softStamp(g, rx, ry, 300 + rng() * 420, 260 + rng() * 380, [16, 34, 20], 30 + rng() * 26);
+        softStamp(g, rx, ry, 90 + rng() * 130, 80 + rng() * 110, [16, 34, 20], 26 + rng() * 22);
       }
 
       // Swamp: black water standing under the trees. The sheet is nearly
@@ -23505,12 +23586,12 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
       for (let i = 0; i < 6; i++) {
         const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
         if (jrg(rx, ry) !== JG_SWAMP) continue;
-        const w = 220 + rng() * 300, h = 170 + rng() * 240;
-        softStamp(g, rx, ry, w, h, [12, 24, 20], 90 + rng() * 40);
-        g.noFill();
-        g.stroke(150, 178, 152, 46); g.strokeWeight(2.6);
-        g.ellipse(rx, ry, w * 0.62, h * 0.62);
-        g.noStroke();
+        // Small enough to be a pool rather than a wash over the chunk, and
+        // with NO rim stroke. A thin stroked ellipse on soft ground does not
+        // read as a meniscus, it reads as a drawn circle -- those were the
+        // faint ovals scattered over the jungle.
+        const w = 130 + rng() * 150, h = 100 + rng() * 120;
+        softStamp(g, rx, ry, w, h, [12, 24, 20], 84 + rng() * 38);
         // Rot film: the one warm note on black water.
         g.fill(96, 108, 62, 40);
         for (let k = 0; k < 3; k++) {
@@ -23525,7 +23606,8 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
       for (let i = 0; i < 7; i++) {
         const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
         if (jrg(rx, ry) !== JG_CLEARING) continue;
-        softStamp(g, rx, ry, 280 + rng() * 400, 220 + rng() * 320, [150, 116, 70], 40 + rng() * 30);
+        // The pale laterite is REGION_TINT's; this is only the char on it.
+        softStamp(g, rx, ry, 100 + rng() * 130, 80 + rng() * 110, [150, 116, 70], 34 + rng() * 24);
         g.stroke(30, 26, 22, 90); g.strokeWeight(2.2); g.noFill();
         for (let k = 0; k < 3; k++) {
           const a = rng() * TWO_PI, ln = 40 + rng() * 90;
@@ -23553,10 +23635,18 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
       for (let i = 0; i < 6; i++) {
         const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
         if (jrg(rx, ry) !== JG_CORDON) continue;
-        const w = 190 + rng() * 260, h = 150 + rng() * 200;
-        softStamp(g, rx, ry, w, h, [104, 106, 96], 54 + rng() * 30);
-        g.fill(88, 90, 82, 130);
-        g.rect(rx - w * 0.22, ry - h * 0.22, w * 0.44, h * 0.44, 4);
+        // No hard rect. A rounded grey square laid on grass six times a chunk
+        // is not a slab of concrete, it is a grey square -- they were the
+        // scattered rectangles all over the cordon. What a broken pad actually
+        // shows from above is a patch with no straight edge left on it, so it
+        // is built from overlapping soft stamps and the rubble does the rest.
+        const w = 130 + rng() * 150, h = 100 + rng() * 120;
+        softStamp(g, rx, ry, w, h, [104, 106, 96], 50 + rng() * 26);
+        for (let e = 0; e < 3; e++) {
+          softStamp(g, rx + (rng() - 0.5) * w * 0.5, ry + (rng() - 0.5) * h * 0.5,
+                    w * (0.30 + rng() * 0.22), h * (0.30 + rng() * 0.22),
+                    [116, 118, 108], 44 + rng() * 24);
+        }
         // Rubble off the broken edge.
         g.fill(74, 76, 68, 150);
         for (let k = 0; k < 9; k++) {
@@ -23650,11 +23740,11 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
       for (let i = 0; i < 7; i++) {
         const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
         if (trg(rx, ry) !== TU_ICEFIELD) continue;
-        const w = 240 + rng() * 320, h = 180 + rng() * 240;
-        softStamp(g, rx, ry, w, h, [138, 182, 212], 52 + rng() * 34);
-        g.noFill(); g.stroke(206, 232, 246, 70); g.strokeWeight(2.4);
-        g.ellipse(rx, ry, w * 0.58, h * 0.58);
-        g.noStroke();
+        // The blue is REGION_TINT's. These are the bare patches where the
+        // snow has scoured off it -- and no rim stroke, for the same reason
+        // the swamp lost hers.
+        const w = 120 + rng() * 150, h = 90 + rng() * 120;
+        softStamp(g, rx, ry, w, h, [138, 182, 212], 46 + rng() * 28);
       }
       // Crevasse hairlines, and a pressure ridge where two sheets met. The
       // ridge is the only thing in the sector with a vertical in it, so it is
@@ -23695,9 +23785,9 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
       for (let i = 0; i < 8; i++) {
         const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
         if (trg(rx, ry) !== TU_TAIGA) continue;
-        softStamp(g, rx, ry, 200 + rng() * 280, 170 + rng() * 230, [92, 78, 54], 46 + rng() * 30);
+        softStamp(g, rx, ry, 110 + rng() * 130, 90 + rng() * 110, [92, 78, 54], 40 + rng() * 24);
         softStamp(g, rx + (rng() - 0.5) * 90, ry + (rng() - 0.5) * 80,
-                  90 + rng() * 130, 70 + rng() * 110, [56, 62, 44], 40 + rng() * 26);
+                  70 + rng() * 90, 55 + rng() * 75, [56, 62, 44], 36 + rng() * 22);
       }
 
       // Moraine. Till lies in stripes ALONG the ice's travel, not in patches,
@@ -23705,7 +23795,7 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
       for (let i = 0; i < 5; i++) {
         const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
         if (trg(rx, ry) !== TU_MORAINE) continue;
-        softStamp(g, rx, ry, 260 + rng() * 340, 120 + rng() * 150, [128, 122, 112], 44 + rng() * 28);
+        softStamp(g, rx, ry, 150 + rng() * 170, 80 + rng() * 90, [128, 122, 112], 38 + rng() * 22);
         const a = windA + (rng() - 0.5) * 0.5;
         for (let k = 0; k < 46; k++) {
           const t2 = (rng() - 0.5) * (280 + rng() * 260);
@@ -23729,7 +23819,6 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
         const fy = oy + 180 + rng() * (CHUNK_W - 360);
         if (trg(fx, fy) !== TU_FELLFIELD) continue;
         const cell = 74 + rng() * 34;
-        softStamp(g, fx, fy, cell * 7, cell * 6, [150, 148, 138], 40 + rng() * 22);
         for (let jj = -2; jj <= 2; jj++) {
           for (let ii = -2; ii <= 2; ii++) {
             // Hex centres: every other row offset by half a cell.
@@ -23802,7 +23891,8 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
       for (let i = 0; i < 6; i++) {
         const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
         if (arg(rx, ry) !== AL_CRATER) continue;
-        softStamp(g, rx, ry, 300 + rng() * 400, 250 + rng() * 340, [22, 16, 24], 74 + rng() * 34);
+        // The scorch is REGION_TINT's; these are the darker cores in it.
+        softStamp(g, rx, ry, 120 + rng() * 150, 100 + rng() * 130, [22, 16, 24], 62 + rng() * 28);
         g.stroke(16, 12, 18, 120); g.strokeWeight(3.4); g.noFill();
         for (let k = 0; k < 7; k++) {
           const a = rng() * TWO_PI, ln = 90 + rng() * 190;
@@ -23825,17 +23915,19 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
       // Hive: the ground is comb. Grown in cells rather than laid in a pattern,
       // so the net is drawn from hex centres with the walls thicker where two
       // cells share one -- which is the difference between comb and a grid.
-      for (let i = 0; i < 3; i++) {
-        const hx0 = ox + 180 + rng() * (CHUNK_W - 360);
-        const hy0 = oy + 180 + rng() * (CHUNK_W - 360);
+      // One patch, not three. Three overlapping seven-across nets of hexagons
+      // tiled most of a hive chunk, and a repeated hard-edged tessellation at
+      // that coverage stops reading as ground and starts reading as wallpaper.
+      for (let i = 0; i < 1; i++) {
+        const hx0 = ox + 260 + rng() * (CHUNK_W - 520);
+        const hy0 = oy + 260 + rng() * (CHUNK_W - 520);
         if (arg(hx0, hy0) !== AL_HIVE) continue;
         const cell = 52 + rng() * 26;
-        softStamp(g, hx0, hy0, cell * 8, cell * 7, [64, 42, 78], 60 + rng() * 26);
-        for (let jj = -3; jj <= 3; jj++) {
-          for (let ii = -3; ii <= 3; ii++) {
+        for (let jj = -2; jj <= 2; jj++) {
+          for (let ii = -2; ii <= 2; ii++) {
             const hx = hx0 + (ii + (jj & 1) * 0.5) * cell;
             const hy = hy0 + jj * cell * 0.87;
-            if (Math.hypot(hx - hx0, hy - hy0) > cell * 3.1) continue;
+            if (Math.hypot(hx - hx0, hy - hy0) > cell * 2.0) continue;
             if (arg(hx, hy) !== AL_HIVE) continue;
             const rr = cell * 0.5;
             g.fill(38, 26, 48, 235);
@@ -23866,11 +23958,8 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
       for (let i = 0; i < 6; i++) {
         const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
         if (arg(rx, ry) !== AL_FLESH) continue;
-        const w = 200 + rng() * 260, h = 160 + rng() * 210;
-        softStamp(g, rx, ry, w, h, [78, 22, 54], 96 + rng() * 40);
-        g.noFill(); g.stroke(216, 132, 168, 70); g.strokeWeight(3.2);
-        g.ellipse(rx, ry, w * 0.60, h * 0.60);
-        g.noStroke();
+        const w = 120 + rng() * 140, h = 95 + rng() * 115;
+        softStamp(g, rx, ry, w, h, [78, 22, 54], 90 + rng() * 36);
         g.fill(p.mark[0], p.mark[1], p.mark[2], 34);
         g.ellipse(rx - LIGHT_DX * w * 0.10, ry - LIGHT_DY * h * 0.10, w * 0.34, h * 0.24);
       }
@@ -23881,7 +23970,7 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
       for (let i = 0; i < 7; i++) {
         const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
         if (arg(rx, ry) !== AL_ASHFALL) continue;
-        softStamp(g, rx, ry, 300 + rng() * 380, 250 + rng() * 320, [128, 122, 126], 40 + rng() * 26);
+        softStamp(g, rx, ry, 110 + rng() * 140, 90 + rng() * 120, [128, 122, 126], 34 + rng() * 22);
         g.fill(154, 150, 152, 90);
         for (let k = 0; k < 26; k++) {
           g.ellipse(rx + (rng() - 0.5) * 300, ry + (rng() - 0.5) * 260, 3 + rng() * 6, 2 + rng() * 5);
@@ -23928,8 +24017,8 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
       for (let i = 0; i < 5; i++) {
         const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
         if (crg(rx, ry) !== CR_SPIRE) continue;
-        softStamp(g, rx, ry, 260 + rng() * 340, 220 + rng() * 300,
-                  [p.accent[0], p.accent[1], p.accent[2]], 44 + rng() * 26);
+        softStamp(g, rx, ry, 130 + rng() * 150, 110 + rng() * 130,
+                  [p.accent[0], p.accent[1], p.accent[2]], 38 + rng() * 22);
         g.stroke(p.mark[0], p.mark[1], p.mark[2], 60); g.strokeWeight(1.4); g.noFill();
         for (let k = 0; k < 9; k++) {
           const a = rng() * TWO_PI, r1 = 40 + rng() * 40, r2 = r1 + 60 + rng() * 110;
@@ -23948,7 +24037,6 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
         const sy0 = oy + 160 + rng() * (CHUNK_W - 320);
         if (crg(sx0, sy0) !== CR_SALT) continue;
         const cell = 96 + rng() * 54;
-        softStamp(g, sx0, sy0, cell * 6, cell * 5, [236, 238, 230], 66 + rng() * 26);
         for (let jj = -2; jj <= 2; jj++) {
           for (let ii = -2; ii <= 2; ii++) {
             const px2 = sx0 + (ii + (jj & 1) * 0.5) * cell;
@@ -23979,8 +24067,8 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
       for (let i = 0; i < 6; i++) {
         const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
         if (crg(rx, ry) !== CR_GLASS) continue;
-        const w = 260 + rng() * 340, h = 200 + rng() * 260;
-        softStamp(g, rx, ry, w, h, [34, 30, 34], 80 + rng() * 34);
+        const w = 140 + rng() * 160, h = 110 + rng() * 130;
+        softStamp(g, rx, ry, w, h, [34, 30, 34], 70 + rng() * 30);
         // Iron bleeding out of the fused edge.
         g.fill(126, 66, 34, 60);
         for (let k = 0; k < 6; k++) {
@@ -24753,7 +24841,23 @@ function buildingRise(b) {
   h = Math.imul(h ^ (h >>> 15), 0x2545f491);
   const r01 = ((h ^ (h >>> 13)) >>> 0) / 4294967296;
   // Bigger footprints carry more storeys, but the cap always wins.
-  b._rise = Math.min(BUILDING_RISE_MAX, 5 + foot * 0.075 + r01 * foot * 0.09);
+  // The cap is a PROPORTION, not a constant.
+  //
+  // BUILDING_RISE_MAX exists so a mass's walls and its shadow can never reach
+  // its neighbour, and 26 is the right number for the alley the block
+  // subdivider leaves: streamed city blocks run a median 160 across and hardly
+  // touch it. But it was the same 26 for an 870-wide authored theatre, whose
+  // own formula asks for 109 -- five times the footprint and identical wall
+  // height, which at any zoom is a hairline. That is the whole reason every
+  // landmark in Stick City's gated sector read as a floor decal.
+  //
+  // A bigger building in this game only ever comes out of a bigger block, so
+  // the clearance around it scales with its footprint too. A tenth of the
+  // smallest side keeps the reach -- rise * (MASS_LEAN + MASS_TILT) -- inside
+  // BUILDING_GAP_MIN at every size the subdivider produces, and the floor at
+  // BUILDING_RISE_MAX means nothing that was already correct moves at all.
+  const cap = Math.max(BUILDING_RISE_MAX, Math.min(foot * 0.10, 90));
+  b._rise = Math.min(cap, 5 + foot * 0.075 + r01 * foot * 0.09);
   return b._rise;
 }
 
@@ -25612,17 +25716,54 @@ function shadowFill(alpha) {
 // silhouette. Drawing the flat oval as well put a second, differently shaped
 // shadow under every anchor, bridge and hedge in the world. One caster, one
 // shadow: whichever pass owns the sun draws it.
+// A CAST SHADOW IS WELDED TO ITS CASTER.
+//
+// Both of these used to draw the silhouette DISPLACED: a full-size copy of the
+// prop, moved along the light vector and nothing in between. On a 70-unit guard
+// box with a 20-unit throw that is a second 70-unit rectangle sitting a quarter
+// of its own width away -- which does not read as a shadow at all, it reads as
+// a plain block lying beside the prop. It is the single most common complaint
+// about these props and it was the same two functions every time, called from
+// twenty-eight places.
+//
+// What a shadow actually is at this camera is the CONVEX HULL of the silhouette
+// and its offset copy: a slab that starts under the caster and runs out to the
+// far edge. drawBiomeShadows() has always done this for buildings -- these are
+// the props catching up with it.
 function castShadow(x, y, w, h, len, alpha) {
   if (typeof glRigOwnsSunShadows === 'function' && glRigOwnsSunShadows()) return;
   const L = BIOME_ACTIVE ? len * shadowLengthScale() : len;
+  const dx = LIGHT_DX * L, dy = LIGHT_DY * L;
   shadowFill(alpha);
-  ellipse(x + LIGHT_DX * L, y + LIGHT_DY * L, w, h);
+  // Hull of two ellipses: the half turned away from the light taken at the
+  // base, the half turned toward it taken at the offset. Closing between them
+  // is what fills the gap the old version left.
+  const a = Math.atan2(dy, dx), N = 10;
+  beginShape();
+  for (let i = 0; i <= N; i++) {
+    const t = a + HALF_PI + (i / N) * PI;
+    vertex(x + Math.cos(t) * w * 0.5, y + Math.sin(t) * h * 0.5);
+  }
+  for (let i = 0; i <= N; i++) {
+    const t = a - HALF_PI + (i / N) * PI;
+    vertex(x + dx + Math.cos(t) * w * 0.5, y + dy + Math.sin(t) * h * 0.5);
+  }
+  endShape(CLOSE);
 }
 function castShadowRect(x, y, w, h, len, alpha, round) {
   if (typeof glRigOwnsSunShadows === 'function' && glRigOwnsSunShadows()) return;
   const L = BIOME_ACTIVE ? len * shadowLengthScale() : len;
+  const dx = LIGHT_DX * L, dy = LIGHT_DY * L;
   shadowFill(alpha);
-  rect(x - w / 2 + LIGHT_DX * L, y - h / 2 + LIGHT_DY * L, w, h, round || 0);
+  // LIGHT_DX and LIGHT_DY are both positive, so the hull of two axis-aligned
+  // rects offset by (+dx, +dy) is always this hexagon -- the same six vertices
+  // drawBiomeShadows() walks for a building.
+  const x0 = x - w / 2, y0 = y - h / 2, x1 = x + w / 2, y1 = y + h / 2;
+  beginShape();
+  vertex(x0, y0); vertex(x1, y0);
+  vertex(x1 + dx, y0 + dy); vertex(x1 + dx, y1 + dy);
+  vertex(x0 + dx, y1 + dy); vertex(x0, y1);
+  endShape(CLOSE);
 }
 
 // Character shadows. Same light vector and the same sky tint as everything
@@ -25789,7 +25930,11 @@ function drawBiomeShadows() {
       const wx = LIGHT_DX * rise, wy = LIGHT_DY * rise;
       const x0 = b.x - w / 2,      y0 = b.y - h / 2;
       const x1 = b.x + w / 2 + wx, y1 = b.y + h / 2 + wy;
-      const sl = Math.min(BUILDING_SHADOW_MAX, Math.max(rise, Math.min(w, h) * 0.10) * 0.95) * SL;
+      // Capped in proportion, for the same reason the rise is: a 24-unit
+      // shadow under an 870-unit theatre is a dark line at one corner, and a
+      // mass whose shadow does not scale with it reads as floating.
+      const shCap = Math.max(BUILDING_SHADOW_MAX, Math.min(Math.min(w, h) * 0.09, 80));
+      const sl = Math.min(shCap, Math.max(rise, Math.min(w, h) * 0.10) * 0.95) * SL;
       const dx = LIGHT_DX * sl,    dy = LIGHT_DY * sl;
 
       // Contact occlusion: nested rings of low alpha. Canvas has no cheap blur
@@ -27232,11 +27377,18 @@ function drawBiomeProps(list, i0, i1) {
       // SECTOR 4 — the jungle's sub-biomes
       // ===================================================================
       case "REVETMENT": {
-        // A blast bank: earth held up by timber on the side facing the threat.
-        // Long and thin, so it is clamped to the visible span the way the hedge
-        // and the curtain wall are -- unclamped, the post loop ran the full
-        // length of every bank in the sector every frame, and inView() cannot
-        // reject a bank whose short axis is the only part off screen.
+        // A blast bank: earth, held up by timber on the side that faces out.
+        //
+        // The first version put a timber post every 30 units down a 46-wide
+        // bank, and evenly spaced rungs across a bar is a LADDER -- the same
+        // family of mistake as the wheel and the star, and it is what made
+        // these read as fences lying in the grass. An earth bank has no repeat
+        // in it: it is a long mound with a lit crest, and the revetting shows
+        // as a few posts at no particular spacing.
+        //
+        // Long and thin, so it is clamped to the visible span like the hedge
+        // and the curtain wall -- inView() cannot reject a bank whose short
+        // axis is the only part off screen.
         const rvH = b.w > b.h;
         const rx0 = Math.max(b.x - b.w / 2, viewLeft - 120);
         const rx1 = Math.min(b.x + b.w / 2, viewRight + 120);
@@ -27244,30 +27396,42 @@ function drawBiomeProps(list, i0, i1) {
         const ry1 = Math.min(b.y + b.h / 2, viewBottom + 120);
         if (rx1 <= rx0 || ry1 <= ry0) break;
         const rvT = rvH ? b.h : b.w;
-        shadowFill(70);
-        rect(rx0 + LIGHT_DX * 12, ry0 + LIGHT_DY * 12, rx1 - rx0, ry1 - ry0, 3);
+        shadowFill(66);
+        rect(rx0 + LIGHT_DX * 11, ry0 + LIGHT_DY * 11, rx1 - rx0, ry1 - ry0, rvT * 0.4);
         noStroke();
-        // Earth core, then the crest offset against the light: a bank has a top,
+        // Earth body, and a crest offset against the light. A bank has a top,
         // and the top is the only part of it the sun reaches.
-        fill(62, 54, 40); rect(rx0, ry0, rx1 - rx0, ry1 - ry0, 3);
+        fill(58, 50, 37);
+        rect(rx0, ry0, rx1 - rx0, ry1 - ry0, rvT * 0.42);
         fill(96, 84, 60);
-        rect(rx0 - LIGHT_DX * rvT * 0.16, ry0 - LIGHT_DY * rvT * 0.16,
-             rx1 - rx0, ry1 - ry0, 3);
-        // Timber revetting on the outer face, sandbags along the crest. Both
-        // are laid on a WORLD pitch rather than a fraction of the run, so two
-        // banks of different lengths carry the same size of timber.
-        const rvP = 30;
-        const rvA0 = rvH ? rx0 : ry0, rvA1 = rvH ? rx1 : ry1;
-        const rvC  = rvH ? b.y : b.x;
-        const rvF  = Math.floor(rvA0 / rvP) * rvP;
-        for (let l = rvF; l < rvA1 + rvP; l += rvP) {
-          const k = Math.abs((l * 0.021 + b.tint * 3) % 1);
-          fill(74 + k * 26, 58 + k * 18, 38 + k * 12, 250);
-          if (rvH) rect(l, rvC + rvT * 0.14, 20, rvT * 0.34, 1);
-          else     rect(rvC + rvT * 0.14, l, rvT * 0.34, 20, 1);
-          fill(120 + k * 30, 112 + k * 24, 88 + k * 18, 210);
-          if (rvH) rect(l + 2, rvC - rvT * 0.44, 16, rvT * 0.26, 3);
-          else     rect(rvC - rvT * 0.44, l + 2, rvT * 0.26, 16, 3);
+        const inx = rvH ? 0 : rvT * 0.20, iny = rvH ? rvT * 0.20 : 0;
+        rect(rx0 + inx - LIGHT_DX * rvT * 0.14, ry0 + iny - LIGHT_DY * rvT * 0.14,
+             (rx1 - rx0) - inx * 2, (ry1 - ry0) - iny * 2, rvT * 0.3);
+        // Sandbags along the crest, at irregular spacing. Irregular is the
+        // whole point: at a fixed pitch they are rungs again.
+        const a0 = rvH ? rx0 : ry0, a1 = rvH ? rx1 : ry1;
+        const cr = rvH ? b.y : b.x;
+        let at = a0 + 14 + ((b.tint * 53) % 26);
+        let n = 0;
+        while (at < a1 - 10 && n < 40) {
+          const k = Math.abs(Math.sin(n * 2.3 + b.tint * 9));
+          const bw2 = rvT * (0.40 + k * 0.22);
+          fill(118 + k * 26, 108 + k * 20, 84 + k * 14, 240);
+          if (rvH) ellipse(at, cr - LIGHT_DY * rvT * 0.2, bw2 * 1.5, bw2);
+          else     ellipse(cr - LIGHT_DX * rvT * 0.2, at, bw2, bw2 * 1.5);
+          at += rvT * (0.52 + k * 0.46);
+          n++;
+        }
+        // Three timber posts holding the outer face, at no particular spacing.
+        for (let i = 0; i < 3; i++) {
+          const t = 0.18 + i * 0.31 + (b.tint - 0.5) * 0.12;
+          const px = rvH ? a0 + (a1 - a0) * t : cr + rvT * 0.30;
+          const py = rvH ? cr + rvT * 0.30 : a0 + (a1 - a0) * t;
+          if (rvH && (px < rx0 || px > rx1)) continue;
+          if (!rvH && (py < ry0 || py > ry1)) continue;
+          fill(74, 58, 38, 250);
+          if (rvH) rect(px - rvT * 0.09, py - rvT * 0.20, rvT * 0.18, rvT * 0.34, 2);
+          else     rect(px - rvT * 0.20, py - rvT * 0.09, rvT * 0.34, rvT * 0.18, 2);
         }
         break;
       }
@@ -27585,29 +27749,39 @@ function drawBiomeProps(list, i0, i1) {
       // SECTOR 6 — the violet waste's sub-biomes
       // ===================================================================
       case "HIVETOWER": {
-        // Grown rather than built: a stack of collars, each narrower than the
-        // one under it, with an open throat at the top. The collars are what
-        // make it read as accreted -- a smooth cone is a traffic bollard.
-        // Spread along the lean, on the same reasoning as the cairn.
-        castShadow(b.x, b.y, b.w * 1.1, b.h * 0.95, 30, 80);
+        // Grown rather than built.
+        //
+        // The first version stacked five concentric collars, and concentric
+        // rings seen from directly above are a SNAIL SHELL -- the same family
+        // of mistake as the wheel and the ladder, where a regular repeat
+        // resolves before the subject does. What says accreted instead is a
+        // few irregular plates lapped over one another, none of them centred
+        // on the last, rising up the lean.
+        castShadow(b.x, b.y, b.w * 1.02, b.h * 0.88, 30, 78);
         push(); translate(b.x, b.y); noStroke();
-        const hvN = 5;
-        for (let i = 0; i < hvN; i++) {
-          const t2 = i / (hvN - 1);
-          const ux = _plx * (t2 - 1), uy = _ply * (t2 - 1);
-          const rd = 1 - t2 * 0.52;
-          const k  = 0.78 + t2 * 0.36;
-          fill(48 * k, 32 * k, 62 * k, 250);
-          ellipse(ux, uy, b.w * rd, b.h * rd * 0.90);
-          fill(96 * k, 68 * k, 118 * k, 235);
-          ellipse(ux - LIGHT_DX * b.w * 0.09, uy - LIGHT_DY * b.h * 0.09,
-                  b.w * rd * 0.74, b.h * rd * 0.64);
+        for (let i = 0; i < 4; i++) {
+          const t2 = i / 3;
+          // Each plate rides the lean, and each is offset off-axis so the stack
+          // is a lopsided cone rather than a bullseye.
+          const wob = Math.sin(i * 2.3 + b.tint * 9) * b.w * 0.07;
+          const ux = _plx * t2 + wob, uy = _ply * t2 + wob * 0.5;
+          const rd = 1 - t2 * 0.56;
+          const k  = 0.74 + t2 * 0.42;
+          fill(44 * k, 29 * k, 58 * k, 250);
+          ellipse(ux, uy, b.w * rd, b.h * rd * 0.88);
+          // A lit lip on each plate, on the sun's side only -- that lip is what
+          // makes them read as lapped rather than as drawn circles.
+          fill(104 * k, 74 * k, 128 * k, 240);
+          ellipse(ux - LIGHT_DX * b.w * rd * 0.11, uy - LIGHT_DY * b.h * rd * 0.11,
+                  b.w * rd * 0.76, b.h * rd * 0.64);
         }
         // The throat, and the one saturated accent on the whole prop. It is not
-        // an emitter: a hive chunk carries eight of these and the light budget
-        // is twenty-six sources for the entire scene.
-        fill(22, 14, 28, 250); ellipse(0, 0, b.w * 0.28, b.h * 0.24);
-        fill(104, 232, 128, 90); ellipse(0, 0, b.w * 0.18, b.h * 0.15);
+        // an emitter: a hive chunk carries several of these and the light
+        // budget is twenty-six sources for the entire scene.
+        push(); translate(_plx, _ply);
+        fill(20, 13, 26, 250); ellipse(0, 0, b.w * 0.24, b.h * 0.20);
+        fill(104, 232, 128, 80); ellipse(0, 0, b.w * 0.15, b.h * 0.12);
+        pop();
         pop();
         break;
       }
