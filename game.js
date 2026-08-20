@@ -29767,7 +29767,7 @@ const MUZZLE_FLASH_P   = 1.25;
 const MUZZLE_FLASH_MAX = 4;
 // Reused, so gathering flashes allocates nothing on a frame where shots are
 // being fired -- which is every frame that matters.
-const _flashSrc = [];
+const _flashSrc = [], _flashDist = [];
 
 // Torch geometry. The inner cone is the beam and it falls off between inner and
 // outer.
@@ -29898,23 +29898,28 @@ function sceneEmitters() {
   // Character.muzzleFlash counts down from 3, so a flash is three frames. Every
   // shooter has one, player and hostile alike.
   {
-    const fl = _flashSrc;
-    fl.length = 0;
-    if (player && player.hp > 0 && player.muzzleFlash > 0) fl.push(player);
+    // BOUNDED SELECTION, NOT A SORT. The Green Line ambush puts several hundred
+    // soldiers on the field and a large share of them fire on the same frame --
+    // gathering every one of those and sorting the lot to keep four is work
+    // that scene cannot spare. This keeps the nearest MUZZLE_FLASH_MAX by
+    // insertion: no comparator, no allocation, and the common case (nothing
+    // firing, or one thing firing) costs a single compare.
+    const fl = _flashSrc, fd = _flashDist;
+    let nF = 0;
+    const consider = (c) => {
+      const dx = c.x - px0, dy = c.y - py0, d2 = dx * dx + dy * dy;
+      if (nF === MUZZLE_FLASH_MAX && d2 >= fd[nF - 1]) return;
+      let j = nF < MUZZLE_FLASH_MAX ? nF++ : MUZZLE_FLASH_MAX - 1;
+      while (j > 0 && fd[j - 1] > d2) { fd[j] = fd[j - 1]; fl[j] = fl[j - 1]; j--; }
+      fd[j] = d2; fl[j] = c;
+    };
+    if (player && player.hp > 0 && player.muzzleFlash > 0) consider(player);
     if (typeof enemiesList !== 'undefined' && enemiesList) {
       for (let i = 0; i < enemiesList.length; i++) {
         const e = enemiesList[i];
-        if (e && e.hp > 0 && e.muzzleFlash > 0 && inView(e.x, e.y, pad)) fl.push(e);
+        if (e && e.muzzleFlash > 0 && e.hp > 0 && inView(e.x, e.y, pad)) consider(e);
       }
     }
-    if (fl.length > 1) {
-      fl.sort((a, b) => ((a.x - px0) * (a.x - px0) + (a.y - py0) * (a.y - py0)) -
-                        ((b.x - px0) * (b.x - px0) + (b.y - py0) * (b.y - py0)));
-    }
-    // Capped, because a firefight is exactly when the frame is busiest and
-    // exactly when a dozen simultaneous flashes would eat the whole budget.
-    // The nearest few are the ones the player can see the shadows from anyway.
-    const nF = fl.length < MUZZLE_FLASH_MAX ? fl.length : MUZZLE_FLASH_MAX;
     for (let i = 0; i < nF; i++) {
       const c = fl[i];
       const a = c.aimAngle || 0, ca = Math.cos(a), sa = Math.sin(a);
@@ -30225,13 +30230,32 @@ const GLRIG_OCC = 96;
 // The atlas is a 256 x N texture, so the rows themselves are free; what costs
 // is three passes per light, and on a tile GPU it is the three framebuffer
 // binds rather than the fill.
-const GLRIG_LIGHTS = 24;
+const GLRIG_LIGHTS = 16;
 
 // How many of those rows are actually spent. The watchdog steps DOWN this
 // before it drops resolution: a lamp at the edge of the screen losing its cast
 // shadow is much less visible than the whole frame going soft, and both are far
 // less visible than the rig standing down altogether.
-const GLRIG_LIGHT_TIERS = [24, 14, 8];
+const GLRIG_LIGHT_TIERS = [16, 10, 6];
+
+// The budget follows the MEASURED frame time as well as the tier. Full spend
+// while frames are comfortable, down to the floor as they approach the tier
+// step. The tiers are a backstop that takes 45 frames to react; this is the
+// same idea applied every frame, because shedding a light is instant and
+// nearly invisible and there is no reason to run a second and a half over
+// budget first.
+//
+// The floor is what the rig used to allow in total, so on a machine that is
+// genuinely struggling this settles back to exactly the old behaviour and can
+// never be worse than it was -- the extra lights are headroom being spent, not
+// a cost being imposed.
+const GLRIG_MS_FULL   = 15;
+const GLRIG_MS_SHED   = 26;
+const GLRIG_LIGHTS_MIN = 6;
+
+// Told apart from a lost context or a compile failure, because only this one
+// is worth recovering from.
+const GLRIG_SHED_MSG = 'stood down: frame budget';
 
 // Ray march budget for the directional pass. Steps grow geometrically, so 20
 // steps reach ~14x the first step's length -- long enough for a dawn shadow.
@@ -30263,6 +30287,7 @@ const GLRig = {
   hw: 0, hh: 0,       // height buffer, pixels
   tier: 0,            // index into GLRIG_SCALES
   lightTier: 0,       // index into GLRIG_LIGHT_TIERS; the watchdog drops this first
+  ms: 16,             // smoothed frame time; the light budget is spent against it
   slow: 0,            // consecutive frames over budget
   fast: 0,
   lights: [],
@@ -30980,9 +31005,13 @@ const GLRIG_FULL = [-1, -1, 1, 1];
 // fewest other things in it.
 function glRigLightBudget() {
   const cap = GLRIG_LIGHT_TIERS[GLRig.lightTier] || GLRIG_LIGHT_TIERS[GLRIG_LIGHT_TIERS.length - 1];
-  const n = 1 - daylight();
-  const b = Math.round(cap * (0.30 + 0.70 * n));
-  return b < 4 ? 4 : (b > GLRIG_LIGHTS ? GLRIG_LIGHTS : b);
+  let b = cap * (0.30 + 0.70 * (1 - daylight()));
+  // ...and then only what this machine can afford right now.
+  const head = (GLRIG_MS_SHED - GLRig.ms) / (GLRIG_MS_SHED - GLRIG_MS_FULL);
+  b *= 0.30 + 0.70 * (head < 0 ? 0 : head > 1 ? 1 : head);
+  const n = Math.round(b);
+  return n < GLRIG_LIGHTS_MIN ? GLRIG_LIGHTS_MIN
+       : (n > GLRIG_LIGHTS ? GLRIG_LIGHTS : n);
 }
 
 function glRigGatherLights() {
@@ -30999,6 +31028,35 @@ function glRigGatherLights() {
 // Drops a tier (or stands down entirely) when the frame budget goes, and climbs
 // back when it comes home. Hysteresis is deliberately lopsided -- fall fast,
 // recover slowly -- because a rig oscillating between tiers reads as flicker.
+// THE FRAME CLOCK RUNS WHETHER OR NOT THE RIG DOES.
+//
+// glRigWatchdog() is called at the END of glRigFrame(), which returns early
+// when the rig is not active -- so once it switched itself off for the frame
+// budget, nothing ever ran again to notice the machine had recovered. The
+// lighting vanished for the rest of the session and never came back. That is
+// the "it disappears" report, and it was always there; raising the light
+// budget just made the scene that triggers it reachable.
+let _glDownFor = 0, _glRecoverAt = 900;
+function glRigClock() {
+  const dt = (typeof deltaTime === 'number' && deltaTime > 0 && deltaTime < 250) ? deltaTime : 16;
+  // ~30 frames of smoothing. A budget that chatters reads as the lamps flicking
+  // on and off, which is worse than simply having fewer of them.
+  GLRig.ms += (dt - GLRig.ms) * 0.06;
+  if (!GLRig.ok || GLRig.on || GLRig.failure !== GLRIG_SHED_MSG) return;
+  // It only ever stands down after exhausting every tier, so it is already at
+  // the cheapest settings and can come back without reallocating anything.
+  if (GLRig.ms < 17) _glDownFor++; else _glDownFor = 0;
+  if (_glDownFor > _glRecoverAt) {
+    _glDownFor = 0;
+    // Backoff: a machine that cannot hold it should not be asked again every
+    // fifteen seconds, because a rig oscillating in and out is worse than one
+    // that is simply off.
+    _glRecoverAt *= 3;
+    GLRig.on = true; GLRig.failure = '';
+    GLRig.slow = 0; GLRig.fast = 0;
+  }
+}
+
 function glRigWatchdog() {
   const dt = (typeof deltaTime === 'number' && deltaTime > 0) ? deltaTime : 16;
   if (dt > 26) { GLRig.slow++; GLRig.fast = 0; } else if (dt < 19) { GLRig.fast++; GLRig.slow = 0; }
@@ -31012,7 +31070,7 @@ function glRigWatchdog() {
     // Shadow casters first, then resolution, then give up.
     if (GLRig.lightTier < GLRIG_LIGHT_TIERS.length - 1) GLRig.lightTier++;
     else if (GLRig.tier < GLRIG_SCALES.length - 1) { GLRig.tier++; glRigResize(); }
-    else { GLRig.on = false; GLRig.failure = 'stood down: frame budget'; }
+    else { GLRig.on = false; GLRig.failure = GLRIG_SHED_MSG; }
   } else if (GLRig.fast > 600) {
     GLRig.fast = 0;
     // ...and back up in the reverse order, so resolution returns before the
@@ -31025,6 +31083,7 @@ function glRigWatchdog() {
 // The whole rig, one frame. Returns false if it did not composite, in which
 // case the caller runs the 2D light pass instead.
 function glRigFrame() {
+  glRigClock();                 // before the active test -- see glRigClock()
   if (!glRigActive()) return false;
   const gl = GLRig.gl;
   const W = GLRig.w, H = GLRig.h;
@@ -31334,6 +31393,22 @@ function drawClimateReadout() {
   text(worldClockLabel() + " " + phase, width - 70, 42);
   fill(230); textSize(11);
   text(Math.round(worldTemperatureF()) + "°F" + (isRaining ? "  RAIN" : ""), width - 70, 56);
+
+  // WHAT THE LIGHT RIG IS ACTUALLY DOING. Off by default; set window.SHOW_RIG
+  // from the console to turn it on. It exists because "it feels slow" and "it
+  // disappeared" are the two reports this rig produces, and neither of them
+  // can be acted on without knowing which tier it settled at, how many lights
+  // it is spending, and what the frame time actually is.
+  if (window.SHOW_RIG && typeof GLRig !== 'undefined') {
+    const on = glRigActive();
+    fill(on ? 150 : 230, on ? 230 : 140, 150); textSize(10);
+    text(on ? ('RIG t' + GLRig.tier + ' L' + GLRig.lightTier +
+               '  ' + glRigLightBudget() + '/' + sceneEmitters().length + ' lit' +
+               '  ' + GLRig.ms.toFixed(1) + 'ms')
+            : ('RIG OFF  ' + (GLRig.failure || 'no webgl2') +
+               '  ' + GLRig.ms.toFixed(1) + 'ms'),
+         width - 70, 70);
+  }
   pop();
 }
 

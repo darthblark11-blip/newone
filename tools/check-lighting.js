@@ -196,7 +196,7 @@ console.log('\n== every light casts, and the budget is the thing that gives ==')
 // under it -- a lamp that looks like it is working and is not.
 {
   const rows = +/const GLRIG_LIGHTS = (\d+);/.exec(src)[1];
-  ok('the polar atlas has room for a street full of lamps', rows >= 20, rows + ' rows');
+  ok('the polar atlas has room for a street full of lamps', rows >= 14, rows + ' rows');
   const tiers = /const GLRIG_LIGHT_TIERS = \[([^\]]*)\]/.exec(src);
   ok('the budget is tiered so the watchdog can shed casters', !!tiers, tiers && tiers[1]);
   const t = tiers[1].split(',').map(x => +x.trim());
@@ -218,7 +218,8 @@ console.log('\n== every light casts, and the budget is the thing that gives ==')
   // By day a local light runs at 0.35 power on top of a fully lit scene, so the
   // twentieth one buys nothing; night is when they are the whole picture.
   const budgetAt = (h) => P('(() => { worldTimeMs = ' + h + ' / 24 * DAY_MS;'
-    + ' updateSunVector(); GLRig.lightTier = 0; return glRigLightBudget(); })()');
+    + ' updateSunVector(); GLRig.lightTier = 0; GLRig.ms = GLRIG_MS_FULL;'
+    + ' return glRigLightBudget(); })()');
   const night = budgetAt(1), noon = budgetAt(13);
   ok('the full budget is spent at night', night === t[0], night + ' at 01:00');
   ok('and hardly any of it at noon', noon < night * 0.45, noon + ' at 13:00');
@@ -228,6 +229,55 @@ console.log('\n== every light casts, and the budget is the thing that gives ==')
      /const pooled = \(typeof glRigOwnsSunShadows/.test(nightFn) &&
      /const hz = i < pooled \? 1 : 0\.20;/.test(nightFn) &&
      (nightFn.match(/\* k \* hz\)/g) || []).length === 4);
+}
+
+console.log('\n== a stand-down is not permanent ==');
+// glRigWatchdog() runs at the END of glRigFrame(), which returns early when the
+// rig is not active -- so once it switched itself off for the frame budget,
+// nothing ever ran again to notice the machine had recovered. The lighting
+// vanished for the rest of the session.
+{
+  ok('the frame clock runs before the active test',
+     /function glRigFrame\(\) \{\s*\n\s*glRigClock\(\);[^\n]*\n\s*if \(!glRigActive\(\)\) return false;/.test(src));
+  ok('a budget stand-down is told apart from a broken context',
+     /const GLRIG_SHED_MSG = /.test(src) &&
+     /GLRig\.failure = GLRIG_SHED_MSG;/.test(src) &&
+     /GLRig\.failure !== GLRIG_SHED_MSG\) return;/.test(src));
+  ok('and it comes back after a long stretch of easy frames, with backoff',
+     /_glRecoverAt \*= 3;/.test(src) && /GLRig\.on = true; GLRig\.failure = '';/.test(src));
+  const back = P(`(() => {
+    GLRig.ok = true; GLRig.on = false; GLRig.failure = GLRIG_SHED_MSG;
+    GLRig.ms = 16; deltaTime = 15; _glDownFor = 0; _glRecoverAt = 900;
+    let n = 0;
+    for (let i = 0; i < 4000 && !GLRig.on; i++) { glRigClock(); n++; }
+    const first = GLRig.on ? n : -1;
+    // ...and a second stand-down waits three times as long.
+    GLRig.on = false; GLRig.failure = GLRIG_SHED_MSG;
+    n = 0;
+    for (let i = 0; i < 40000 && !GLRig.on; i++) { glRigClock(); n++; }
+    const second = GLRig.on ? n : -1;
+    GLRig.ok = false; GLRig.on = false; GLRig.failure = '';
+    return [first, second, _glRecoverAt];
+  })()`);
+  ok('a stood-down rig recovers on its own', back[0] > 0, back[0] + ' frames');
+  ok('and waits longer each time', back[1] > back[0] * 2.5, back[1] + ' frames');
+}
+
+console.log('\n== the budget is spent against the measured frame ==');
+{
+  const at = (ms) => P('(() => { BIOME_ACTIVE = true; worldTimeMs = 1 / 24 * DAY_MS;'
+    + ' updateSunVector(); GLRig.lightTier = 0; GLRig.ms = ' + ms + ';'
+    + ' return glRigLightBudget(); })()');
+  const fast = at(14), slow = at(30);
+  ok('a comfortable frame spends the lot', fast === P('GLRIG_LIGHTS'), fast);
+  ok('a struggling one falls back to the floor', slow === P('GLRIG_LIGHTS_MIN'), slow);
+  // The floor is what the rig allowed IN TOTAL before any of this, so a machine
+  // that cannot hold it lands exactly where it used to and never worse.
+  ok('and the floor is no worse than the rig ever was', P('GLRIG_LIGHTS_MIN') <= 8);
+  ok('it moves smoothly between the two, not in one step',
+     at(18) > slow && at(18) < fast, [slow, at(22), at(18), fast].join(' '));
+  ok('the frame clock is smoothed, so the count cannot chatter',
+     /GLRig\.ms \+= \(dt - GLRig\.ms\) \* 0\.06;/.test(src));
 }
 
 console.log('\n== a shot lights the street ==');
@@ -244,8 +294,34 @@ console.log('\n== a shot lights the street ==');
      /rMin: m\[0\] \+ 16/.test(emitFn));
   ok('and it draws no fixture -- the flash sprite is the fixture',
      /p: MUZZLE_FLASH_P \* \(c\.muzzleFlash \/ 3\)[\s\S]{0,240}?fix: null/.test(emitFn));
-  ok('gathering them allocates nothing per frame',
-     /const _flashSrc = \[\];/.test(src) && /const fl = _flashSrc;\s*\n\s*fl\.length = 0;/.test(emitFn));
+  // A mass battle puts several hundred shooters on the field and a large share
+  // fire on the same frame. Gathering all of them and sorting to keep four is
+  // work that scene cannot spare, so it is a bounded insertion instead.
+  ok('gathering them allocates nothing and never sorts',
+     /const _flashSrc = \[\], _flashDist = \[\];/.test(src) &&
+     /const fl = _flashSrc, fd = _flashDist;/.test(emitFn) &&
+     !/fl\.sort\(/.test(emitFn));
+  ok('and it really keeps the NEAREST few, not the first few found', P(`(() => {
+    BIOME_ACTIVE = true; worldTimeMs = 1 / 24 * DAY_MS; updateSunVector();
+    width = 1200; height = 800; zoom = 0.65; camX = -600; camY = -400;
+    viewLeft = -1e5; viewRight = 1e5; viewTop = -1e5; viewBottom = 1e5;
+    buildings = activeBuildings = [];
+    player = { x: 0, y: 0, hp: 100, muzzleFlash: 0, aimAngle: 0,
+               currentWeapon: WEAPONS.PISTOL };
+    enemiesList = [];
+    // Far ones first, so "the first four found" would be the wrong four.
+    for (let i = 9; i >= 1; i--) {
+      enemiesList.push({ x: i * 300, y: 0, hp: 10, muzzleFlash: 3, aimAngle: 0,
+                         currentWeapon: WEAPONS.PISTOL, __d: i });
+    }
+    _emitFrame = -1;
+    // The torch sorts negative too, and it is not a flash -- it is the one
+    // negative source with a cone on it.
+    const e = sceneEmitters().filter(L => L.d2 < 0 && L.aim === undefined);
+    return e.length === MUZZLE_FLASH_MAX &&
+           e.every((L, i) => i === 0 || L.d2 >= e[i - 1].d2) &&
+           Math.abs(e[0].x - 331) < 40;   // the nearest shooter, plus its muzzle
+  })()`));
   ok('and a firefight cannot spend the whole budget on flashes',
      /MUZZLE_FLASH_MAX/.test(emitFn) && P('MUZZLE_FLASH_MAX') <= 6, P('MUZZLE_FLASH_MAX'));
   // Ordering is the whole point: a flash that missed the budget would not read

@@ -916,17 +916,38 @@ only `drawNightLights()`'s haze, which is a glow with no shadow under it. That i
 "some lamps cast shadows and some don't" was: a budget, not a fault in the shadows.
 
 The atlas rows are free (it is a 256×N texture); what costs is three passes per light,
-and on a tile GPU it is the three framebuffer binds rather than the fill. So the ceiling
-is 24 and `glRigLightBudget()` decides how much of it to spend, from two terms:
+and **on a tile GPU it is the three framebuffer binds rather than the fill** — each bind
+can force a tile resolve. That is why the ceiling is 16 and not more: 24 was tried, and
+three times the binds took the Green Line's massed ambush under. `glRigLightBudget()`
+decides how much of the ceiling to spend, from three terms:
 
+- **The measured frame time.** `GLRig.ms` is a smoothed `deltaTime`, and the budget ramps
+  from the full ceiling at `GLRIG_MS_FULL` down to `GLRIG_LIGHTS_MIN` at `GLRIG_MS_SHED`.
+  **The floor is below what the rig allowed in total before any of this**, so a machine
+  that cannot hold it settles somewhere no worse than it started — the extra lights are
+  headroom being spent, never a cost being imposed. Smoothed over ~30 frames, because a
+  budget that chatters reads as the lamps flicking on and off, which is worse than having
+  fewer of them.
 - **`GLRIG_LIGHT_TIERS`**, which the watchdog steps down *before* it drops resolution and
-  sooner than it would (45 slow frames rather than 90). A lamp at the edge of the screen
-  losing its cast shadow is much less visible than the whole frame going soft, and both
-  are far less visible than the rig standing down altogether. It climbs back in the
-  reverse order.
+  sooner than it would (45 slow frames rather than 90). This is now a backstop rather than
+  the main control: the frame-time term reacts on the same frame, and there is no reason
+  to run a second and a half over budget first.
 - **The hour.** By day a local light runs at 0.35 of its power on top of an already fully
-  lit scene, so the twentieth one buys nothing; night is when they are the whole picture,
+  lit scene, so the sixteenth one buys nothing; night is when they are the whole picture,
   and it is also the frame with the fewest other things in it.
+
+**A STAND-DOWN USED TO BE PERMANENT, and that is the "it disappears" report.**
+`glRigWatchdog()` is called at the *end* of `glRigFrame()`, which returns early when the
+rig is not active — so the moment it switched itself off for the frame budget, nothing
+ever ran again to notice the machine had recovered, and the lighting was gone for the
+rest of the session. `glRigClock()` runs *before* that early-out: it keeps the frame clock
+regardless, tells a budget stand-down (`GLRIG_SHED_MSG`) apart from a lost context, and
+brings the rig back after a long stretch of easy frames — at the settings it stood down
+at, so nothing is reallocated — with the wait tripling each time, because a rig
+oscillating in and out is worse than one that is simply off.
+
+The fault was always there; raising the light budget only made the scene that triggers it
+reachable.
 
 **A fixture past the budget loses its haze.** `drawNightLights()` reads the same number,
 because painting a 200-unit blob for a lamp that is getting no pool is a light that looks
@@ -944,6 +965,17 @@ the shooter, and it draws no fixture because the flash sprite already is one. It
 ahead of every fixed light and behind the torch — a flash that missed the budget would not
 read as a dimmer flash, it would read as a shot that did not go off — and
 `MUZZLE_FLASH_MAX` caps it, because a firefight is exactly when the frame is busiest.
+
+Because they sort first, flashes **displace** lamps rather than adding to the total, which
+is the right priority in a firefight. The gather is a **bounded insertion, never a sort**:
+the Green Line's ambush puts several hundred soldiers on the field and a large share of
+them fire on the same frame, so collecting all of those and sorting the lot to keep four
+is work that scene cannot spare.
+
+**`window.SHOW_RIG`** puts the rig's state under the climate readout — tier, light tier,
+lights spent against emitters in view, and the smoothed frame time. It exists because "it
+feels slow" and "it disappeared" are the two reports this rig produces and neither can be
+acted on without those numbers.
 
 Cost control: point lights are scissored to their own screen box, the light list is the
 same nearest-first gather `drawLightPass()` uses, the height buffer runs at half rig
