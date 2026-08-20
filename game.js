@@ -3306,7 +3306,7 @@ function drawBuildings(list, i0, i1) {
         pop(); continue;
     }
     if (b.isCar && !b.isParkingCar) { push(); translate(b.x, b.y); rotate(b.angle || HALF_PI); fill(b.col[0], b.col[1], b.col[2]); stroke(15); strokeWeight(2); rect(-25, -45, 50, 90, 6); fill(25); noStroke(); rect(-20, -25, 40, 15, 2); rect(-20, 15, 40, 12, 2); fill(30, 20, 15, 180); ellipse(0, -5, 30, 25); fill(10, 150); ellipse(-10, 20, 15, 15); pop(); continue; }
-    if (b.isPalm) { drawPalmTree(b.x, b.y); continue; }
+    if (b.isPalm) { drawPalmTree(b.x, b.y, b.k); continue; }
     if (b.isHouse) { fill(120); noStroke(); rect(b.x - 25, b.y, 50, b.h/2 + 65); fill(190, 195, 200); stroke(60); strokeWeight(2); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h); fill(100, 50, 50); stroke(40, 20, 20); strokeWeight(2); rect(b.x - b.w/2 - 10, b.y - b.h/2 - 10, b.w + 20, b.h + 20); line(b.x - b.w/2 - 10, b.y, b.x + b.w/2 + 10, b.y); fill(40); noStroke(); rect(b.x - 12, b.y + b.h/2 - 15, 24, 20); fill(200, 200, 100); ellipse(b.x + 6, b.y + b.h/2 - 5, 4, 4); continue; }
     if (b.isRock) { fill(180, 200, 210); stroke(140, 160, 180); strokeWeight(2); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h, 20); fill(200, 220, 230); noStroke(); rect(b.x - b.w/2 + 10, b.y - b.h/2 + 10, b.w - 30, b.h - 30, 10); continue; }
 
@@ -8317,7 +8317,30 @@ function legacyDrawGround(skipBase) {
 
 
 
-function drawPalmTree(x, y) { fill(90, 60, 30); noStroke(); rect(x - 8, y - 40, 16, 80, 4); fill(40, 140, 40); for (let i = 0; i < 5; i++) { push(); translate(x, y - 40); rotate((i * TWO_PI / 5) + sin(frameCount * 0.02 + x) * 0.2); ellipse(30, 0, 60, 20); pop(); } }
+// The crown takes a foliage bias, read exactly the way a woodland tree reads
+// RG_CANOPY: negative runs the frond darker and bluer, positive lighter and
+// warmer. The jungle's sub-biomes set it per palm off JG_FROND, so the tree
+// line changes colour walking out of standing water into a cut fire lane --
+// without it a jungle holds one green for a kilometre, which is the single
+// loudest tell that its trees came out of a loop.
+//
+// Each frond is also shaded by its OWN facing rather than the crown being one
+// flat disc. The facing is worked out in world space BEFORE the rotate(),
+// because rotate() carries LIGHT_DX/DY round with it -- computed inside, every
+// palm would have kept its highlight on the same frond whichever way the wind
+// had turned it.
+//
+// `k` is optional, so the call sites that have no bias are unchanged.
+function drawPalmTree(x, y, k) {
+  const kb = k || 0;
+  fill(90, 60, 30); noStroke(); rect(x - 8, y - 40, 16, 80, 4);
+  for (let i = 0; i < 5; i++) {
+    const a = (i * TWO_PI / 5) + sin(frameCount * 0.02 + x) * 0.2;
+    const f = 0.86 + 0.24 * (-(Math.cos(a) * LIGHT_DX + Math.sin(a) * LIGHT_DY));
+    fill((40 + kb * 30) * f, (140 + kb * 22) * f, (40 - kb * 14) * f);
+    push(); translate(x, y - 40); rotate(a); ellipse(30, 0, 60, 20); pop();
+  }
+}
 
 class Splatter {
   constructor(x, y, t = "HIDDEN", col = null) { 
@@ -19338,6 +19361,173 @@ const RG_CANOPY = {
   MEADOW: 0.22, TIMBER: -0.55, MARSH: -0.18, HEATH: 0.46, BURN: 0.0, FARM: 0.30
 };
 
+// ###########################################################################
+//  SUB-BIOMES OF THE OUTER SECTORS
+//
+//  woodRegion() gave Sector 2 six landscapes inside one palette. The four
+//  sectors past it had none: a chunk of tundra was the same chunk of tundra a
+//  kilometre away, and the only thing that changed as the player walked was
+//  which rock the lattice happened to hand out. That is a texture, not a
+//  place. This is the same construction applied to the other four open
+//  layouts.
+//
+//  The three rules are the woodland's, unchanged, because they are the whole
+//  design:
+//
+//   * TONE IS CONTINUOUS. One extra slow lattice in the bake (ZONE_TINT),
+//     applied per texel. No seam is possible and it costs three multiply-adds.
+//   * CONTENT IS DISCRETE, AND ASKED PER FEATURE -- never per chunk. A stem
+//     checks the region at its own root, a piece of litter at its own
+//     position, each pass of ground paint at its own sample point. A boundary
+//     then comes out as one kind of thing thinning while another thickens,
+//     which is what an ecotone looks like, rather than a line down a chunk
+//     edge where everything changes at once.
+//   * THE EXCEPTION IS THE SET PIECE -- a bamboo brake, a pressure ridge, a
+//     hive, a fulgurite field -- which only makes sense several pieces at a
+//     time and is therefore decided once, from the region at the chunk's own
+//     middle.
+//
+//  Every field below is slow for the reason woodRegion()'s are: at twice these
+//  frequencies the world crosses a boundary every chunk and a half, and you
+//  are never in a region, only ever in a transition.
+//
+//  All four are pure functions of world position, so the terrain bake and the
+//  chunk generator reach the same answer without either having run first --
+//  the same property that lets the woodland paint its own marsh pools.
+// ###########################################################################
+
+// ----------------------------------------------------- SECTOR 4 : THE JUNGLE
+const JG_CANOPY   = "CANOPY";     // closed triple canopy, deep shade, buttress root
+const JG_SWAMP    = "SWAMP";      // black water under the trees, mangrove, rot
+const JG_CLEARING = "CLEARING";   // fire lane the cordon cut and never reopened
+const JG_BAMBOO   = "BAMBOO";     // a brake: stems too close together to walk
+const JG_CORDON   = "CORDON";     // the wall's own works, swallowed by the green
+
+function jungleRegion(biome, wx, wy) {
+  // The cordon happened TO the jungle, the way the woodland's fire ground
+  // happened to the wood, so it is tested first and overrides what was growing.
+  const cut = bnoise(biome, wx - 4400, wy + 2100, 0.000072);
+  if (cut > 0.700) return JG_CORDON;
+  const wet = bnoise(biome, wx + 7300, wy - 5600, 0.000092);
+  if (wet > 0.650) return JG_SWAMP;
+  const grw = bnoise(biome, wx + 1500, wy + 9400, 0.000115);
+  if (grw > 0.605) return JG_BAMBOO;
+  if (grw < 0.395 && wet < 0.500) return JG_CLEARING;
+  return JG_CANOPY;
+}
+
+// ---------------------------------------------------- SECTOR 5 : THE TUNDRA
+const TU_SNOWFIELD = "SNOWFIELD"; // deep wind-packed drift, sastrugi, nothing
+const TU_ICEFIELD  = "ICEFIELD";  // blue glare ice, pressure ridge, crevasse
+const TU_TAIGA     = "TAIGA";     // the last stunted spruce before the tree line
+const TU_MORAINE   = "MORAINE";   // what the ice left: rubble and erratic trains
+const TU_FELLFIELD = "FELLFIELD"; // scoured bare ground, frost polygons, lichen
+
+function tundraRegion(biome, wx, wy) {
+  const ice = bnoise(biome, wx + 3100, wy - 6200, 0.000068);
+  if (ice > 0.690) return TU_ICEFIELD;
+  const dep = bnoise(biome, wx - 8200, wy + 3900, 0.000088);
+  if (dep > 0.640) return TU_MORAINE;
+  const shl = bnoise(biome, wx + 5600, wy + 7700, 0.000108);
+  if (shl > 0.615) return TU_TAIGA;
+  if (shl < 0.390 && ice < 0.520) return TU_FELLFIELD;
+  return TU_SNOWFIELD;
+}
+
+// ----------------------------------------------- SECTOR 6 : THE VIOLET WASTE
+const AL_MYCELIA = "MYCELIA";     // the fungal mat: glowmoss, pods, soft ground
+const AL_CRATER  = "CRATER";      // impact glass and slag, still sterile
+const AL_HIVE    = "HIVE";        // chitin, packed close, grown rather than built
+const AL_FLESH   = "FLESH";       // viscous pools and the tendrils feeding them
+const AL_ASHFALL = "ASHFALL";     // grey dead ground where the mat never took
+
+function alienRegion(biome, wx, wy) {
+  // The impact is the oldest thing here and everything else grew around it.
+  const imp = bnoise(biome, wx - 2700, wy - 8100, 0.000070);
+  if (imp > 0.705) return AL_CRATER;
+  const org = bnoise(biome, wx + 6400, wy + 2800, 0.000090);
+  if (org > 0.622) return AL_HIVE;
+  const wet = bnoise(biome, wx + 9800, wy - 3300, 0.000112);
+  if (wet > 0.592) return AL_FLESH;
+  if (org < 0.390 && wet < 0.490) return AL_ASHFALL;
+  return AL_MYCELIA;
+}
+
+// ----------------------------------------------- SECTOR 7 : THE CRYSTAL FLATS
+const CR_PAN     = "PAN";         // the bare mirror flat, swept clean by the wind
+const CR_SPIRE   = "SPIRE";       // a crystal forest: the sector's only skyline
+const CR_SALT    = "SALT";        // evaporite, cracked into polygons
+const CR_GLASS   = "GLASS";       // fused black glass, fulgurite, iron staining
+const CR_LATTICE = "LATTICE";     // the metallic circuit ground, still conducting
+
+function crystalRegion(biome, wx, wy) {
+  // The lattice is machinery and it is under everything, so it is tested first.
+  const grd = bnoise(biome, wx + 4800, wy + 6100, 0.000066);
+  if (grd > 0.695) return CR_LATTICE;
+  const grw = bnoise(biome, wx - 6900, wy - 2400, 0.000086);
+  if (grw > 0.616) return CR_SPIRE;
+  const evp = bnoise(biome, wx + 2200, wy - 9600, 0.000110);
+  if (evp > 0.590) return CR_SALT;
+  if (evp < 0.385 && grw < 0.500) return CR_GLASS;
+  return CR_PAN;
+}
+
+// ---------------------------------------------------------------------------
+// ONE QUESTION FOR THE WHOLE WORLD
+//
+// The clutter scatter, the ground paint and the set-piece branches all want to
+// ask "what landscape is this point in" without knowing which sector they are
+// standing in. Five layouts answer; the rest return null, and every consumer
+// treats null as "this layout has no sub-biomes" and falls through to its
+// default rotation. That is what lets one call site serve all seven sectors.
+// ---------------------------------------------------------------------------
+function regionAt(biome, wx, wy, layout) {
+  switch (layout || (BIOMES[biome] && BIOMES[biome].layout)) {
+    case "WOODLAND": return woodRegion(biome, wx, wy);
+    case "JUNGLE":   return jungleRegion(biome, wx, wy);
+    case "TUNDRA":   return tundraRegion(biome, wx, wy);
+    case "ALIEN":    return alienRegion(biome, wx, wy);
+    case "CRYSTAL":  return crystalRegion(biome, wx, wy);
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// HOW MUCH EACH LANDSCAPE ACCEPTS
+//
+// Same arrangement as RG_TREES: the generator makes a uniform number of
+// attempts and the REGION decides the acceptance rate, checked at the piece's
+// own position. Density then fades across a boundary instead of stepping,
+// because the attempts either side of the line are identical and only the
+// odds moved.
+// ---------------------------------------------------------------------------
+// Palms. A brake is nearly solid bamboo and carries no palm at all; a fire lane
+// was cleared on purpose and has not closed over yet.
+const JG_GROWTH = {
+  CANOPY: 1.00, SWAMP: 0.46, CLEARING: 0.14, BAMBOO: 0.30, CORDON: 0.38
+};
+// Foliage bias, carried on each palm as `k`, read the same way RG_CANOPY is:
+// negative runs the frond darker and bluer, positive lighter and warmer.
+const JG_FROND = {
+  CANOPY: -0.42, SWAMP: -0.20, CLEARING: 0.40, BAMBOO: 0.10, CORDON: 0.24
+};
+// Erratics and rubble. A moraine IS the rubble; a snowfield has it buried.
+const TU_STONE = {
+  SNOWFIELD: 0.30, ICEFIELD: 0.16, TAIGA: 0.52, MORAINE: 1.00, FELLFIELD: 0.74
+};
+// The last spruce. Nothing stands on glare ice and very little on scoured rock.
+const TU_TREES = {
+  SNOWFIELD: 0.22, ICEFIELD: 0.04, TAIGA: 1.00, MORAINE: 0.26, FELLFIELD: 0.10
+};
+// Alien growth: plants, poles and grown structures share one acceptance.
+const AL_GROWTH = {
+  MYCELIA: 1.00, CRATER: 0.18, HIVE: 0.90, FLESH: 0.60, ASHFALL: 0.12
+};
+// Crystal growth. The pan is swept and the lattice is paved; neither grows.
+const CR_GROWTH = {
+  PAN: 0.34, SPIRE: 1.00, SALT: 0.44, GLASS: 0.62, LATTICE: 0.20
+};
+
 // ---------------------------------------------------------------------------
 // TONAL ZONES
 // The colour shift applied per texel in the terrain bake, as an (r,g,b) swing
@@ -19355,7 +19545,20 @@ const ZONE_TINT = {
   // Cities do not change colour, they change how dirty they are: soot and
   // brick dust against rain-washed concrete.
   CITY:       [ 24,  17,   8],
-  CITY_DENSE: [ 24,  17,   8]
+  CITY_DENSE: [ 24,  17,   8],
+  // The jungle runs from sunlit laterite on the cut ground to the blue-green
+  // dark under a closed canopy. Green swings least because the whole palette
+  // is already green -- what actually reads is how much red the ground has.
+  JUNGLE:     [ 42,  14, -24],
+  // Snow does not change hue, it changes what is showing through it: blue
+  // shadow-ice in the hollows, dry wind-packed crust on the rises. Held small
+  // deliberately -- this palette is a hundred points brighter than any other
+  // in the game and a swing the size of the woodland's would clip to white.
+  TUNDRA:     [-15,  -5,  22],
+  // Violet ground against the sickly green of the mat growing over it.
+  ALIEN:      [-24,  30, -12],
+  // Bleached salt against iron-stained fused ground.
+  CRYSTAL:    [ 30,  12, -20]
 };
 
 // ---------------------------------------------------------------------------
@@ -20748,36 +20951,186 @@ function generateChunkContent(biome, cx, cy) {
         lat.block(jungleTrailX(biome, cx, wy), wy, 280, 90);
       }
 
-      const clearing = bnoise(biome, ox, oy, 0.0005);
-      if (clearing > 0.6 && !nearAnchor(ox + 600, oy + 600, 700)) {
-        // A cordon post is a compound: bunkers set back off the track in a
-        // line, sharing one cleared apron, rather than dropped at random.
-        const n    = rngInt(rng, 2, 5);
+      // Open ground for a set piece the lattice cannot help with. The same
+      // weaker question the woodland's findSpot() asks, and for the same
+      // reason: once the track and thirty palms have taken their share of a
+      // sixty-four cell grid there is no contiguous block of cells left, so
+      // asking the lattice for a revetment fails in four chunks out of five.
+      const jFind = (w, h, pad, tries) => {
+        const mx = Math.max(120, CHUNK_W - w / 2 - 110), mn = Math.min(mx, w / 2 + 110);
+        const my = Math.max(120, CHUNK_W - h / 2 - 110), ny = Math.min(my, h / 2 + 110);
+        for (let a = 0; a < (tries || 18); a++) {
+          const x = ox + rngRange(rng, mn, mx), y = oy + rngRange(rng, ny, my);
+          if (nearAnchor(x, y, Math.max(w, h) * 0.5 + 420)) continue;
+          // The track band is 280 wide, so a piece clears it when its own half
+          // width plus that band's half width is smaller than the offset. Taken
+          // off w rather than off the smaller side on purpose: a log lying
+          // east-west across the road is exactly the case this has to reject.
+          if (Math.abs(x - jungleTrailX(biome, cx, y)) < w / 2 + 140) continue;
+          if (hitsAuthored(x, y, w, h, 24)) continue;
+          if (!solidsClearAt(solid, x, y, w, h, pad)) continue;
+          return { x: x, y: y };
+        }
+        return null;
+      };
+
+      // --- What each sub-biome builds --------------------------------------
+      // Asked once at the chunk's own middle, because these are the pieces that
+      // only make sense several at a time -- a cordon position, a mangrove
+      // stand, a brake. Everything scattered after this asks per piece.
+      const jMid   = jungleRegion(biome, ox + 600, oy + 600);
+      const jFirst = solid.length;
+
+      if (jMid === JG_CORDON) {
+        // The cordon's own works, and a POSITION rather than a wall: it is
+        // sited to cover the TRACK, because the track is the only thing through
+        // here worth holding. So the bank runs parallel to the road at a set
+        // back, the returns turn away from it -- a straight bank stops nothing
+        // coming from the flank -- and the bunkers sit behind all of it.
+        //
+        // Placed against the road rather than through jFind(), and that is the
+        // whole reason it exists at all. The track runs down the middle of
+        // every column and a 500-long bank is most of a chunk wide, so an open
+        // search that ALSO has to clear the road had nowhere left to land: the
+        // first version of this built a cordon in none of fifty cordon chunks.
         const side = rng() > 0.5 ? 1 : -1;
-        let py     = oy + rngRange(rng, 220, 420);
-        for (let i = 0; i < n; i++) {
-          const w = rngRange(rng, 180, 280), h = rngRange(rng, 160, 240);
-          const bx = jungleTrailX(biome, cx, py) + side * (150 + w / 2 + rngRange(rng, 0, 90));
-          if (bx - w / 2 < ox + 40 || bx + w / 2 > ox + CHUNK_W - 40) { py += h + 90; continue; }
-          if (!nearAnchor(bx, py, 560)) {
-            solid.push({ x: bx, y: py, w, h, isBiomeProp: true, propType: "BUNKER",
-                         tint: rng(), angle: (rng() - 0.5) * 0.22 });
-            lat.block(bx, py, w + 60, h + 60);
+        const run  = rngRange(rng, 300, 470);
+        const by0  = oy + rngRange(rng, run / 2 + 130, CHUNK_W - run / 2 - 130);
+        const bx0  = jungleTrailX(biome, cx, by0) + side * rngRange(rng, 210, 330);
+        if (bx0 > ox + 130 && bx0 < ox + CHUNK_W - 130 && !nearAnchor(bx0, by0, 620) &&
+            !hitsAuthored(bx0, by0, 46, run, 24) && solidsClearAt(solid, bx0, by0, 46, run, 20)) {
+          solid.push({ x: bx0, y: by0, w: 46, h: run,
+                       isBiomeProp: true, propType: "REVETMENT", tint: rng() });
+          for (const sg of [-1, 1]) {
+            const rl  = rngRange(rng, 110, 180);
+            const rx2 = bx0 + side * (rl / 2 - 23);
+            const ry2 = by0 + sg * (run / 2 - 23);
+            if (rx2 - rl / 2 < ox + 40 || rx2 + rl / 2 > ox + CHUNK_W - 40) continue;
+            if (hitsAuthored(rx2, ry2, rl, 46, 24)) continue;
+            if (!solidsClearAt(solid, rx2, ry2, rl, 46, 6)) continue;
+            solid.push({ x: rx2, y: ry2, w: rl, h: 46,
+                         isBiomeProp: true, propType: "REVETMENT", tint: rng() });
           }
-          py += h + rngRange(rng, 70, 190);
-          if (py > oy + CHUNK_W - 200) break;
+          // Behind the bank, where a bunker would actually have been sited.
+          const nb = rngInt(rng, 1, 4);
+          for (let i = 0; i < nb; i++) {
+            const bw = rngRange(rng, 170, 240), bh = rngRange(rng, 150, 210);
+            const bx = bx0 + side * rngRange(rng, 200, 310);
+            const by = by0 + rngRange(rng, -run / 2, run / 2);
+            if (bx - bw / 2 < ox + 40 || bx + bw / 2 > ox + CHUNK_W - 40) continue;
+            if (by - bh / 2 < oy + 40 || by + bh / 2 > oy + CHUNK_W - 40) continue;
+            if (nearAnchor(bx, by, 560)) continue;
+            if (hitsAuthored(bx, by, bw, bh, 24)) continue;
+            if (!solidsClearAt(solid, bx, by, bw, bh, 24)) continue;
+            solid.push({ x: bx, y: by, w: bw, h: bh, isBiomeProp: true, propType: "BUNKER",
+                         tint: rng(), angle: (rng() - 0.5) * 0.22 });
+          }
+        }
+
+      } else if (jMid === JG_SWAMP) {
+        // A mangrove stand, and the plank walk somebody laid through it. The
+        // walk is a deck, so it is a route rather than an obstacle -- which is
+        // the only reason a swamp is somewhere to go instead of somewhere to
+        // avoid.
+        const nMg = rngInt(rng, 3, 8);
+        for (let i = 0; i < nMg; i++) {
+          const w = rngRange(rng, 90, 160), h = rngRange(rng, 84, 150);
+          const spot = lat.take(w, h);
+          if (!spot) break;
+          if (nearAnchor(spot.x, spot.y, 400)) continue;
+          if (jungleRegion(biome, spot.x, spot.y) !== JG_SWAMP) continue;
+          solid.push({ x: spot.x, y: spot.y, w, h, isBiomeProp: true, propType: "MANGROVE",
+                       tint: rng(), angle: rng() * TWO_PI });
+        }
+        if (rng() > 0.45) {
+          const vert  = rng() > 0.5;
+          const along = (vert ? ox : oy) + rngRange(rng, 300, 900);
+          for (let sIdx = 0; sIdx < 3; sIdx++) {
+            const t0 = 0.08 + sIdx * 0.31, len = rngRange(rng, 190, 300);
+            const at = (vert ? oy : ox) + t0 * CHUNK_W;
+            const bx2 = vert ? along : at + len / 2, by2 = vert ? at + len / 2 : along;
+            if (!solidsClearAt(solid, bx2, by2, vert ? 74 : len, vert ? len : 74, 10)) continue;
+            solid.push({ x: bx2, y: by2, w: vert ? 74 : len, h: vert ? len : 74,
+                         isBiomeProp: true, propType: "BOARDWALK", isDeck: true, tint: rng() });
+          }
+        }
+
+      } else if (jMid === JG_BAMBOO) {
+        // A brake. Bamboo does not grow as individuals, it grows as a wall you
+        // walk round, so these are placed in a run rather than scattered -- and
+        // they are the only thing in the sector that blocks a sightline without
+        // being a building.
+        const nBk = rngInt(rng, 3, 7);
+        // A seed, not the run: the clumps walk away from here, so what has to
+        // be clear is one clump's worth of ground rather than all of them.
+        const seed = jFind(160, 160, 20);
+        if (seed) {
+          let bx = seed.x, by = seed.y, ba = rng() * TWO_PI;
+          for (let i = 0; i < nBk; i++) {
+            const w = rngRange(rng, 120, 210), h = rngRange(rng, 110, 190);
+            if (bx > ox + 90 && bx < ox + CHUNK_W - 90 && by > oy + 90 && by < oy + CHUNK_W - 90 &&
+                !nearAnchor(bx, by, 400) && solidsClearAt(solid, bx, by, w, h, 10) &&
+                Math.abs(bx - jungleTrailX(biome, cx, by)) > w / 2 + 170) {
+              solid.push({ x: bx, y: by, w, h, isBiomeProp: true, propType: "BRAKE",
+                           tint: rng(), angle: rng() * TWO_PI });
+            }
+            ba += (rng() - 0.5) * 0.9;
+            bx += Math.cos(ba) * rngRange(rng, 150, 220);
+            by += Math.sin(ba) * rngRange(rng, 150, 220);
+          }
+        }
+
+      } else if (jMid === JG_CANOPY) {
+        // A forest giant that came down and took its root plate with it. The
+        // trunk is the length of a house and it is the one piece of cover in a
+        // closed canopy, where everything else is vertical.
+        if (rng() > 0.5) {
+          const len = rngRange(rng, 300, 520);
+          // Both orientations are tried, preferred one first. A trunk lying
+          // east-west is half a chunk wide and the track keeps out most of the
+          // remaining room, so a single coin toss lost the log in three chunks
+          // out of four -- and the one it lost was always the same one.
+          const first = rng() > 0.5;
+          for (let att = 0; att < 2; att++) {
+            const horiz = att === 0 ? first : !first;
+            const w = horiz ? len : 84, h = horiz ? 84 : len;
+            const spot = jFind(w, h, 22);
+            if (!spot) continue;
+            solid.push({ x: spot.x, y: spot.y, w: w, h: h,
+                         isBiomeProp: true, propType: "FALLEN", tint: rng() });
+            break;
+          }
         }
       }
+
+      // Everything a set piece created is swept back into the lattice before
+      // the scatter runs -- a revetment's returns and a brake's run both reach
+      // well past whatever box they were placed against.
+      for (let i = jFirst; i < solid.length; i++) {
+        const sp = solid[i];
+        lat.block(sp.x, sp.y, (sp.w || 0) + 70, (sp.h || 0) + 70);
+      }
+
       // Palm canopy. Each palm is redrawn every frame (animated fronds plus a
       // matching animated shadow), so density is kept moderate here and the
       // sense of overgrowth comes from the baked fern/vine clutter instead.
-      const nPalm = rngInt(rng, 6, 12);
+      //
+      // Attempts are uniform and the REGION decides acceptance, asked at the
+      // palm's own trunk: a brake carries almost no palm, a fire lane none at
+      // all, and a closed canopy takes every one it is offered. That is what
+      // makes the tree line fade across a boundary rather than stop on it.
+      const nPalm = rngInt(rng, 8, 16);
       for (let i = 0; i < nPalm; i++) {
         const spot = lat.take(52, 52);
         if (!spot) break;
         if (nearAnchor(spot.x, spot.y, 380)) continue;
         if (bnoise(biome, spot.x, spot.y, 0.004) < 0.44) continue;
-        solid.push({ x: spot.x, y: spot.y, w: 30, h: 30, isPalm: true });
+        const jr = jungleRegion(biome, spot.x, spot.y);
+        if (rng() > (JG_GROWTH[jr] || 0.4)) continue;
+        solid.push({ x: spot.x, y: spot.y, w: 30, h: 30, isPalm: true,
+                     // Foliage bias, read the same way a woodland canopy reads
+                     // RG_CANOPY: negative runs the frond darker and bluer.
+                     k: (JG_FROND[jr] || 0) + rngRange(rng, -0.12, 0.12) });
       }
       // Mossy granite, not the pale rock the tundra renderer draws
       const nRock = rngInt(rng, 1, 4);
@@ -20795,17 +21148,105 @@ function generateChunkContent(biome, cx, cy) {
     case "TUNDRA": {
       lat = makeLattice(rng, ox, oy, 150);
       for (const a of anchors) lat.block(a.x, a.y, 1100, 1100);
-      // A ridge line: erratics drop in a drift-aligned band, the way glacial
-      // debris actually lies, instead of one per random spot.
-      const nRock = rngInt(rng, 4, 11);
-      for (let i = 0; i < nRock; i++) {
-        const w = rngRange(rng, 70, 190), h = rngRange(rng, 70, 190);
-        const spot = lat.take(w, h);
-        if (!spot) break;
-        if (nearAnchor(spot.x, spot.y, 400)) continue;
-        solid.push({ x: spot.x, y: spot.y, w, h, isRock: true });
+
+      const tMid   = tundraRegion(biome, ox + 600, oy + 600);
+      const tFirst = solid.length;
+      const tFind = (w, h, pad, tries) => {
+        const mx = Math.max(120, CHUNK_W - w / 2 - 110), mn = Math.min(mx, w / 2 + 110);
+        const my = Math.max(120, CHUNK_W - h / 2 - 110), ny = Math.min(my, h / 2 + 110);
+        for (let a = 0; a < (tries || 18); a++) {
+          const x = ox + rngRange(rng, mn, mx), y = oy + rngRange(rng, ny, my);
+          if (nearAnchor(x, y, Math.max(w, h) * 0.5 + 420)) continue;
+          if (hitsAuthored(x, y, w, h, 24)) continue;
+          if (!solidsClearAt(solid, x, y, w, h, pad)) continue;
+          return { x: x, y: y };
+        }
+        return null;
+      };
+
+      if (tMid === TU_ICEFIELD) {
+        // Seracs: the blocks a moving sheet breaks itself into. They stand in a
+        // LINE, along the direction of travel, because that is where the sheet
+        // cracked -- scattered they are just white rocks.
+        const seed = tFind(320, 300, 22);
+        if (seed) {
+          let sx = seed.x, sy = seed.y;
+          const a0 = rng() * TWO_PI;
+          const n = rngInt(rng, 3, 7);
+          for (let i = 0; i < n; i++) {
+            const w = rngRange(rng, 90, 170), h = rngRange(rng, 84, 150);
+            if (sx > ox + 90 && sx < ox + CHUNK_W - 90 && sy > oy + 90 && sy < oy + CHUNK_W - 90 &&
+                !nearAnchor(sx, sy, 420) && solidsClearAt(solid, sx, sy, w, h, 12)) {
+              solid.push({ x: sx, y: sy, w, h, isBiomeProp: true, propType: "SERAC", tint: rng() });
+            }
+            sx += Math.cos(a0 + (rng() - 0.5) * 0.4) * rngRange(rng, 130, 200);
+            sy += Math.sin(a0 + (rng() - 0.5) * 0.4) * rngRange(rng, 130, 200);
+          }
+        }
+
+      } else if (tMid === TU_MORAINE) {
+        // An erratic train: what the ice carried and dropped in a line when it
+        // stopped. Same construction as the serac run, different material, and
+        // it is the closest thing the sector has to a road sign.
+        const seed = tFind(300, 280, 20);
+        if (seed) {
+          let sx = seed.x, sy = seed.y;
+          const a0 = rng() * TWO_PI;
+          const n = rngInt(rng, 4, 9);
+          for (let i = 0; i < n; i++) {
+            const w = rngRange(rng, 70, 190), h = rngRange(rng, 70, 175);
+            if (sx > ox + 80 && sx < ox + CHUNK_W - 80 && sy > oy + 80 && sy < oy + CHUNK_W - 80 &&
+                !nearAnchor(sx, sy, 400) && solidsClearAt(solid, sx, sy, w, h, 10)) {
+              solid.push({ x: sx, y: sy, w, h, isRock: true });
+            }
+            sx += Math.cos(a0 + (rng() - 0.5) * 0.5) * rngRange(rng, 120, 200);
+            sy += Math.sin(a0 + (rng() - 0.5) * 0.5) * rngRange(rng, 120, 200);
+          }
+        }
+
+      } else if (tMid === TU_FELLFIELD) {
+        // Cairns. Somebody walked this ground before the player did and left
+        // the only navigation aid a whiteout allows -- which is why they are on
+        // the scoured ground rather than the drift: a cairn on snow is buried
+        // by spring and the person who built it knew that.
+        const n = rngInt(rng, 2, 5);
+        for (let i = 0; i < n; i++) {
+          const spot = lat.take(90, 90);
+          if (!spot) break;
+          if (nearAnchor(spot.x, spot.y, 420)) continue;
+          if (tundraRegion(biome, spot.x, spot.y) !== TU_FELLFIELD) continue;
+          solid.push({ x: spot.x, y: spot.y, w: rngRange(rng, 46, 76), h: rngRange(rng, 44, 70),
+                       isBiomeProp: true, propType: "CAIRN", tint: rng() });
+        }
       }
-      if (bnoise(biome, ox, oy, 0.0006) > 0.66 && !nearAnchor(ox + 600, oy + 600, 700)) {
+
+      // Everything the set pieces created goes into the lattice BEFORE anything
+      // else takes a cell from it. The serac and erratic runs place by
+      // solidsClearAt() rather than through the lattice -- they have to, a run
+      // is a line and the lattice hands out a grid -- so until they are swept
+      // in, lat.take() believes that ground is empty. Swept after the station
+      // instead, the station stood on three erratics in eight hundred chunks.
+      for (let i = tFirst; i < solid.length; i++) {
+        const sp = solid[i];
+        lat.block(sp.x, sp.y, (sp.w || 0) + 70, (sp.h || 0) + 70);
+      }
+
+      // A relay mast. Rare, tall, lit, and the reason is the sector rather than
+      // the region: The White Silence is the darkest ground in the game outside
+      // the Undercity and it has no settlement to light it, so ONE fixed light
+      // on the horizon is worth more here than a set piece would be.
+      if (rng() > 0.90 && tMid !== TU_ICEFIELD) {
+        const spot = tFind(150, 150, 40, 12);
+        if (spot) {
+          solid.push({ x: spot.x, y: spot.y, w: 76, h: 76,
+                       isBiomeProp: true, propType: "MAST", tint: rng() });
+        }
+      }
+
+      // The relay station itself. Kept on the ground that would actually carry
+      // a foundation -- nobody builds on a glacier.
+      if (bnoise(biome, ox, oy, 0.0006) > 0.66 && tMid !== TU_ICEFIELD &&
+          !nearAnchor(ox + 600, oy + 600, 700)) {
         const n = rngInt(rng, 1, 4);
         for (let i = 0; i < n; i++) {
           const w = rngRange(rng, 160, 260), h = rngRange(rng, 160, 240);
@@ -20815,6 +21256,52 @@ function generateChunkContent(biome, cx, cy) {
                        isBlockBuilding: true });
         }
       }
+
+      // And again, now the mast and the station are down. Both place by
+      // solidsClearAt() and lat.take() respectively, and the scatter below
+      // takes lattice cells -- so a mast that never went into the lattice is a
+      // mast with an erratic leaning on it.
+      for (let i = tFirst; i < solid.length; i++) {
+        const sp = solid[i];
+        lat.block(sp.x, sp.y, (sp.w || 0) + 70, (sp.h || 0) + 70);
+      }
+
+      // Erratics, scattered. Acceptance is the region's, asked at each stone --
+      // a moraine IS the rubble and a glare-ice sheet has none of it showing.
+      const nRock = rngInt(rng, 5, 13);
+      for (let i = 0; i < nRock; i++) {
+        const w = rngRange(rng, 70, 190), h = rngRange(rng, 70, 190);
+        const spot = lat.take(w, h);
+        if (!spot) break;
+        if (nearAnchor(spot.x, spot.y, 400)) continue;
+        if (rng() > (TU_STONE[tundraRegion(biome, spot.x, spot.y)] || 0.3)) continue;
+        solid.push({ x: spot.x, y: spot.y, w, h, isRock: true });
+      }
+
+      // The last standing timber before the tree line. Emitted exactly the way
+      // the woodland emits a tree -- a fixed 34x34 trunk solid so the harvest
+      // profile and the collision index have something to hold, and the crown
+      // as a live decor entry so the deferred rig marches a shadow off the
+      // crown's own silhouette rather than off the trunk's box.
+      const nSpruce = rngInt(rng, 4, 14);
+      for (let i = 0; i < nSpruce; i++) {
+        const spot = lat.take(56, 56);
+        if (!spot) break;
+        if (nearAnchor(spot.x, spot.y, 420)) continue;
+        const tr = tundraRegion(biome, spot.x, spot.y);
+        if (rng() > (TU_TREES[tr] || 0.2)) continue;
+        if (bnoise(biome, spot.x, spot.y, 0.0026) < 0.36) continue;
+        // At the tree line a spruce is stunted and flagged; back from it there
+        // are a few that made full height, and the dead stay standing for
+        // decades in this air.
+        const sp2 = tr === TU_TAIGA ? (rng() > 0.30 ? "KRUMMHOLZ" : (rng() > 0.4 ? "PINE" : "SNAG"))
+                                    : (rng() > 0.35 ? "KRUMMHOLZ" : "SNAG");
+        const girth = rngRange(rng, 0.7, sp2 === "PINE" ? 1.5 : 1.15);
+        solid.push({ x: spot.x, y: spot.y, w: 34, h: 34, isTreeTrunk: true, girth: girth });
+        decor.push({ t: sp2, x: spot.x, y: spot.y, s: girth,
+                     r: rng() * TWO_PI, c: rng(),
+                     k: tr === TU_TAIGA ? -0.2 : 0.15 });
+      }
       break;
     }
 
@@ -20822,17 +21309,96 @@ function generateChunkContent(biome, cx, cy) {
     case "ALIEN": {
       lat = makeLattice(rng, ox, oy, 150);
       for (const a of anchors) lat.block(a.x, a.y, 1100, 1100);
-      const n = rngInt(rng, 7, 15);
+
+      const aMid   = alienRegion(biome, ox + 600, oy + 600);
+      const aFirst = solid.length;
+      const aFind = (w, h, pad, tries) => {
+        const mx = Math.max(120, CHUNK_W - w / 2 - 110), mn = Math.min(mx, w / 2 + 110);
+        const my = Math.max(120, CHUNK_W - h / 2 - 110), ny = Math.min(my, h / 2 + 110);
+        for (let a = 0; a < (tries || 18); a++) {
+          const x = ox + rngRange(rng, mn, mx), y = oy + rngRange(rng, ny, my);
+          if (nearAnchor(x, y, Math.max(w, h) * 0.5 + 420)) continue;
+          if (hitsAuthored(x, y, w, h, 24)) continue;
+          if (!solidsClearAt(solid, x, y, w, h, pad)) continue;
+          return { x: x, y: y };
+        }
+        return null;
+      };
+
+      if (aMid === AL_HIVE) {
+        // Towers, packed. A hive is the one place in the sector with a skyline,
+        // and they are grouped around a centre rather than spread, because what
+        // makes it read as a hive is the gaps between them being too narrow.
+        const seed = aFind(420, 400, 22);
+        if (seed) {
+          const n = rngInt(rng, 4, 9);
+          for (let i = 0; i < n; i++) {
+            const a  = (i / n) * TWO_PI + rng() * 0.5;
+            const rr = rngRange(rng, 90, 250);
+            const w  = rngRange(rng, 90, 180), h = rngRange(rng, 84, 170);
+            const hx = seed.x + Math.cos(a) * rr, hy = seed.y + Math.sin(a) * rr * 0.86;
+            if (nearAnchor(hx, hy, 420)) continue;
+            if (!solidsClearAt(solid, hx, hy, w, h, 10)) continue;
+            solid.push({ x: hx, y: hy, w, h, isBiomeProp: true, propType: "HIVETOWER",
+                         tint: rng() });
+          }
+        }
+
+      } else if (aMid === AL_CRATER) {
+        // The thing that made the crater, still in it. Half buried, so its
+        // collision box is much wider than it is tall -- and it is the only
+        // landmark in the sector that is not alive.
+        const spot = aFind(420, 340, 30, 24);
+        if (spot) {
+          solid.push({ x: spot.x, y: spot.y, w: rngRange(rng, 260, 380),
+                       h: rngRange(rng, 200, 300),
+                       isBiomeProp: true, propType: "IMPACTOR", tint: rng(),
+                       angle: (rng() - 0.5) * 0.7 });
+        }
+      }
+
+      // A vent, wherever the ground is alive enough to have pressure under it.
+      // It is lit, which is the point: the violet waste has no settlement and
+      // no grid, so its only light after dark is the things growing in it.
+      if ((aMid === AL_FLESH || aMid === AL_MYCELIA) && rng() > 0.55) {
+        const n = rngInt(rng, 1, 4);
+        for (let i = 0; i < n; i++) {
+          const spot = lat.take(120, 120);
+          if (!spot) break;
+          if (nearAnchor(spot.x, spot.y, 420)) continue;
+          const ar = alienRegion(biome, spot.x, spot.y);
+          if (ar !== AL_FLESH && ar !== AL_MYCELIA) continue;
+          solid.push({ x: spot.x, y: spot.y, w: rngRange(rng, 60, 96), h: rngRange(rng, 58, 92),
+                       isBiomeProp: true, propType: "SPOREVENT", tint: rng() });
+        }
+      }
+
+      for (let i = aFirst; i < solid.length; i++) {
+        const sp = solid[i];
+        lat.block(sp.x, sp.y, (sp.w || 0) + 70, (sp.h || 0) + 70);
+      }
+
+      // The general growth. Acceptance is the region's, asked at each piece, and
+      // so is the SPECIES: a hive grows structures, the mat grows plants, and a
+      // crater grows nothing much at all -- which is what the poles are left
+      // standing in.
+      const n = rngInt(rng, 8, 17);
       for (let i = 0; i < n; i++) {
         const w = rngRange(rng, 90, 220), h = rngRange(rng, 90, 220);
         const spot = lat.take(w, h);
         if (!spot) break;
         if (nearAnchor(spot.x, spot.y, 420)) continue;
+        const ar = alienRegion(biome, spot.x, spot.y);
+        if (rng() > (AL_GROWTH[ar] || 0.5)) continue;
         const roll = rng();
         const b = { x: spot.x, y: spot.y, w, h };
-        if (roll > 0.6)      b.isAlienPlant = true;
-        else if (roll > 0.4) b.isEnergyPole = true;
-        else                 b.isAlienBldg  = true;
+        if (ar === AL_HIVE)          { if (roll > 0.3) b.isAlienBldg = true; else b.isAlienPlant = true; }
+        else if (ar === AL_ASHFALL ||
+                 ar === AL_CRATER)   { if (roll > 0.45) b.isEnergyPole = true; else b.isAlienBldg = true; }
+        else if (ar === AL_FLESH)    { if (roll > 0.25) b.isAlienPlant = true; else b.isEnergyPole = true; }
+        else if (roll > 0.6)         b.isAlienPlant = true;
+        else if (roll > 0.4)         b.isEnergyPole = true;
+        else                         b.isAlienBldg  = true;
         solid.push(b);
       }
       break;
@@ -20842,17 +21408,95 @@ function generateChunkContent(biome, cx, cy) {
     case "CRYSTAL": {
       lat = makeLattice(rng, ox, oy, 150);
       for (const a of anchors) lat.block(a.x, a.y, 1100, 1100);
-      const n = rngInt(rng, 5, 11);
+
+      const cMid   = crystalRegion(biome, ox + 600, oy + 600);
+      const cFirst = solid.length;
+
+      // The lattice ground is machinery and it carries machinery. A pylon is
+      // sited ON a bus rather than anywhere in the region, so the run of metal
+      // the bake painted has something standing on it -- paint with nothing on
+      // it is a texture, and this sector had four kilometres of exactly that.
+      //
+      // Both edges are tested the same way bakeBiomeDetail() tests them, at the
+      // edge's own midpoint, so a pylon can never end up on a bus that was
+      // never painted.
+      const latN = crystalRegion(biome, ox + CHUNK_W / 2, oy + 100) === CR_LATTICE;
+      const latW = crystalRegion(biome, ox + 100, oy + CHUNK_W / 2) === CR_LATTICE;
+      if ((latN || latW) && rng() > 0.42) {
+        const n = rngInt(rng, 1, 4);
+        for (let i = 0; i < n; i++) {
+          // Standing beside the bus, not on the conductor: 200 wide of metal
+          // ground, and the pylon's foot goes just off its edge.
+          const onN = latN && (!latW || rng() > 0.5);
+          const px2 = onN ? ox + rngRange(rng, 260, CHUNK_W - 160) : ox + 240 + rngRange(rng, -34, 46);
+          const py2 = onN ? oy + 240 + rngRange(rng, -34, 46) : oy + rngRange(rng, 260, CHUNK_W - 160);
+          if (nearAnchor(px2, py2, 440)) continue;
+          if (!solidsClearAt(solid, px2, py2, 104, 104, 26)) continue;
+          if (hitsAuthored(px2, py2, 104, 104, 24)) continue;
+          solid.push({ x: px2, y: py2, w: 88, h: 88,
+                       isBiomeProp: true, propType: "PYLON", tint: rng() });
+        }
+      }
+
+      if (cMid === CR_SPIRE) {
+        // A stand of crystal. Grown from one seed, so they share a centre and
+        // fall off in size away from it -- which is the only thing that stops a
+        // crystal forest reading as a scatter of cones.
+        const sx0 = ox + rngRange(rng, 320, CHUNK_W - 320);
+        const sy0 = oy + rngRange(rng, 320, CHUNK_W - 320);
+        const n = rngInt(rng, 4, 10);
+        for (let i = 0; i < n; i++) {
+          const a  = rng() * TWO_PI, rr = rngRange(rng, 40, 300);
+          const fall = 1 - (rr / 340) * 0.55;
+          const w  = rngRange(rng, 90, 210) * fall, h = rngRange(rng, 86, 200) * fall;
+          const px2 = sx0 + Math.cos(a) * rr, py2 = sy0 + Math.sin(a) * rr * 0.88;
+          if (px2 < ox + 90 || px2 > ox + CHUNK_W - 90) continue;
+          if (py2 < oy + 90 || py2 > oy + CHUNK_W - 90) continue;
+          if (nearAnchor(px2, py2, 440)) continue;
+          if (!solidsClearAt(solid, px2, py2, w, h, 12)) continue;
+          solid.push({ x: px2, y: py2, w, h, isBiomeProp: true, propType: "CRYSTALSPIRE",
+                       tint: rng() });
+        }
+
+      } else if (cMid === CR_SALT || cMid === CR_GLASS) {
+        // Standing stone on the evaporite and the fused ground alike. Whatever
+        // set them is long gone; what is left is the only vertical for a
+        // kilometre, which is exactly what a monolith is for.
+        const n = rngInt(rng, 2, 6);
+        for (let i = 0; i < n; i++) {
+          const spot = lat.take(110, 110);
+          if (!spot) break;
+          if (nearAnchor(spot.x, spot.y, 440)) continue;
+          const cr = crystalRegion(biome, spot.x, spot.y);
+          if (cr !== CR_SALT && cr !== CR_GLASS) continue;
+          solid.push({ x: spot.x, y: spot.y, w: rngRange(rng, 40, 68), h: rngRange(rng, 36, 60),
+                       isBiomeProp: true, propType: "MONOLITH", tint: rng() });
+        }
+      }
+
+      for (let i = cFirst; i < solid.length; i++) {
+        const sp = solid[i];
+        lat.block(sp.x, sp.y, (sp.w || 0) + 70, (sp.h || 0) + 70);
+      }
+
+      // The sector's own architecture, at the density its ground will carry.
+      const n = rngInt(rng, 5, 12);
       for (let i = 0; i < n; i++) {
         const w = rngRange(rng, 140, 300), h = rngRange(rng, 140, 300);
         const spot = lat.take(w, h);
         if (!spot) break;
         if (nearAnchor(spot.x, spot.y, 460)) continue;
+        const cr = crystalRegion(biome, spot.x, spot.y);
+        if (rng() > (CR_GROWTH[cr] || 0.5)) continue;
         const b = { x: spot.x, y: spot.y, w, h };
         const roll = rng();
-        if (roll > 0.66)      b.isPyramid = true;
-        else if (roll > 0.33) b.isChip = true;
-        else                  b.isPinkPlanet = true;
+        // The lattice is built ground and carries built things; the growth
+        // regions carry grown ones.
+        if (cr === CR_LATTICE)    { if (roll > 0.4) b.isChip = true; else b.isPyramid = true; }
+        else if (cr === CR_SPIRE) { if (roll > 0.45) b.isPinkPlanet = true; else b.isPyramid = true; }
+        else if (roll > 0.66)     b.isPyramid = true;
+        else if (roll > 0.33)     b.isChip = true;
+        else                      b.isPinkPlanet = true;
         solid.push(b);
       }
       break;
@@ -20867,6 +21511,8 @@ function generateChunkContent(biome, cx, cy) {
   // Static clutter is baked straight into the chunk's terrain buffer and costs
   // nothing per frame. Only props that actually animate stay in the live list.
   const clutterCount = Math.floor(70 * def.clutterDensity);
+  // Chunk-constant, so it is resolved once rather than seventy times.
+  const clutLay = layoutFor(biome, cx, cy);
   for (let i = 0; i < clutterCount; i++) {
     let dx = ox + rng() * CHUNK_W;
     let dy = oy + rng() * CHUNK_W;
@@ -20875,8 +21521,10 @@ function generateChunkContent(biome, cx, cy) {
     const item = {
       // Region asked at the piece's own position, not the chunk's. That is what
       // makes a boundary fade over a stride rather than snap at a chunk edge.
-      t: pickClutterType(def, rng, layoutFor(biome, cx, cy),
-                         def.layout === "WOODLAND" ? woodRegion(biome, dx, dy) : null),
+      // regionAt() answers for every layout that has sub-biomes and returns
+      // null for the ones that do not, so this one call site serves all seven
+      // sectors and pickClutterType falls through to its default rotation.
+      t: pickClutterType(def, rng, clutLay, regionAt(biome, dx, dy, clutLay)),
       x: dx, y: dy,
       s: rngRange(rng, 0.6, 1.5),
       r: rng() * TWO_PI,
@@ -20949,7 +21597,10 @@ const CLUTTER_ANIMATED = {
   TREE:       true,   // canopy is the biggest curve in the set -- bake it and
                       // it comes back as squares
   PINE:       true,   // same, and its radial branches are 2-unit strokes
-  SNAG:       true    // bare limbs are thinner still -- baked they vanish
+  SNAG:       true,   // bare limbs are thinner still -- baked they vanish
+  KRUMMHOLZ:  true,   // a conifer's radial branches, and this one is smaller
+  TENDRIL:    true,   // a swell travelling down its length
+  GEODE:      true    // the interior catching the light
 };
 
 // The Undercity is two terrains, and the curtain wall is the join. Inside it
@@ -21038,22 +21689,141 @@ function pickClutterType(def, rng, layout, region) {
       if (r > 0.3)  return "SAGE";
       return "CRACK";
     case "JUNGLE":
+      // Same reasoning as the woodland above: the litter is the fastest read a
+      // sub-biome has, and it changes several strides before the canopy does.
+      switch (region) {
+        case JG_SWAMP:
+          if (r > 0.76) return "REED";
+          if (r > 0.58) return "PUDDLE";
+          if (r > 0.40) return "ROOT";
+          if (r > 0.20) return "LOG";
+          return "VINE";
+        case JG_CLEARING:
+          // Cut and burned, and the grass got here first.
+          if (r > 0.80) return "ASH";
+          if (r > 0.62) return "WEED";
+          if (r > 0.42) return "PEBBLE";
+          if (r > 0.22) return "FERN";
+          return "GRASS";
+        case JG_BAMBOO:
+          if (r > 0.52) return "BAMBOO";
+          if (r > 0.34) return "FERN";
+          if (r > 0.18) return "LOG";
+          return "WEED";
+        case JG_CORDON:
+          // The cordon's own leavings, and the green coming back over them.
+          if (r > 0.74) return "WIRE";
+          if (r > 0.58) return "TRASH";
+          if (r > 0.42) return "CRACK";
+          if (r > 0.22) return "VINE";
+          return "PEBBLE";
+        case JG_CANOPY:
+          if (r > 0.80) return "MUSHROOM";
+          if (r > 0.64) return "ROOT";
+          if (r > 0.44) return "VINE";
+          if (r > 0.20) return "FERN";
+          return "LOG";
+      }
       if (r > 0.78) return "VINE";
       if (r > 0.56) return "FERN";
       if (r > 0.4)  return "PEBBLE";
       if (r > 0.24) return "LOG";
       return "WEED";
     case "TUNDRA":
+      switch (region) {
+        case TU_ICEFIELD:
+          if (r > 0.60) return "ICE";
+          if (r > 0.42) return "CRACK";
+          if (r > 0.22) return "HOARFROST";
+          return "DRIFT";
+        case TU_TAIGA:
+          if (r > 0.72) return "KRUMMHOLZ";
+          if (r > 0.54) return "LICHEN";
+          if (r > 0.36) return "PEBBLE";
+          if (r > 0.18) return "DRIFT";
+          return "BONE";
+        case TU_MORAINE:
+          if (r > 0.62) return "PEBBLE";
+          if (r > 0.44) return "LICHEN";
+          if (r > 0.26) return "BONE";
+          return "DRIFT";
+        case TU_FELLFIELD:
+          if (r > 0.62) return "LICHEN";
+          if (r > 0.44) return "PEBBLE";
+          if (r > 0.26) return "CRACK";
+          if (r > 0.12) return "HOARFROST";
+          return "BONE";
+        case TU_SNOWFIELD:
+          if (r > 0.66) return "DRIFT";
+          if (r > 0.46) return "HOARFROST";
+          if (r > 0.26) return "ICE";
+          return "PEBBLE";
+      }
       if (r > 0.75) return "ICE";
       if (r > 0.55) return "PEBBLE";
       if (r > 0.35) return "DRIFT";
       return "BONE";
     case "ALIEN":
+      switch (region) {
+        case AL_CRATER:
+          if (r > 0.62) return "SLAG";
+          if (r > 0.44) return "ASH";
+          if (r > 0.24) return "CRACK";
+          return "PEBBLE";
+        case AL_HIVE:
+          if (r > 0.58) return "CHITIN";
+          if (r > 0.40) return "SPOREPOD";
+          if (r > 0.20) return "GLOWMOSS";
+          return "VINE";
+        case AL_FLESH:
+          if (r > 0.58) return "TENDRIL";
+          if (r > 0.40) return "PUDDLE";
+          if (r > 0.20) return "GLOWMOSS";
+          return "SPOREPOD";
+        case AL_ASHFALL:
+          // The mat never took here, so nothing on this list is alive.
+          if (r > 0.62) return "ASH";
+          if (r > 0.42) return "PEBBLE";
+          if (r > 0.22) return "CRACK";
+          return "BONE";
+        case AL_MYCELIA:
+          if (r > 0.70) return "MUSHROOM";
+          if (r > 0.52) return "SPOREPOD";
+          if (r > 0.32) return "VINE";
+          return "GLOWMOSS";
+      }
       if (r > 0.74) return "SPOREPOD";
       if (r > 0.54) return "VINE";
       if (r > 0.34) return "PEBBLE";
       return "GLOWMOSS";
     case "CRYSTAL":
+      switch (region) {
+        case CR_SPIRE:
+          if (r > 0.58) return "SHARD";
+          if (r > 0.40) return "GEODE";
+          if (r > 0.20) return "PEBBLE";
+          return "CRACK";
+        case CR_SALT:
+          if (r > 0.56) return "SALTCRUST";
+          if (r > 0.38) return "CRACK";
+          if (r > 0.20) return "PEBBLE";
+          return "SHARD";
+        case CR_GLASS:
+          if (r > 0.64) return "FULGURITE";
+          if (r > 0.46) return "SLAG";
+          if (r > 0.24) return "CRACK";
+          return "SHARD";
+        case CR_LATTICE:
+          if (r > 0.66) return "SHARD";
+          if (r > 0.46) return "CRACK";
+          if (r > 0.24) return "GEODE";
+          return "PEBBLE";
+        case CR_PAN:
+          if (r > 0.72) return "SHARD";
+          if (r > 0.50) return "SALTCRUST";
+          if (r > 0.26) return "CRACK";
+          return "PEBBLE";
+      }
       if (r > 0.7)  return "SHARD";
       if (r > 0.48) return "PEBBLE";
       return "CRACK";
@@ -22472,9 +23242,99 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
       }
       g.noStroke();
 
+      // --- What each sub-biome puts on the ground ---------------------------
+      // Every pass below asks the region at ITS OWN sample point and drops the
+      // sample if it landed somewhere else. Attempts are uniform across the
+      // chunk and only the acceptance moves, so a boundary comes out as swamp
+      // water thinning while cut ground thickens rather than as a line down a
+      // chunk edge. It also means a chunk straddling three regions paints all
+      // three, in the right places, from one pass each.
+      const jrg = (x, y) => jungleRegion(biome, x, y);
+
+      // Closed canopy: no light reaches this ground at all. The shade is laid
+      // as soft sheets rather than a flat wash so it reads as light coming
+      // through a ceiling with holes in it.
+      for (let i = 0; i < 9; i++) {
+        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+        if (jrg(rx, ry) !== JG_CANOPY) continue;
+        softStamp(g, rx, ry, 300 + rng() * 420, 260 + rng() * 380, [16, 34, 20], 30 + rng() * 26);
+      }
+
+      // Swamp: black water standing under the trees. The sheet is nearly
+      // opaque and nearly black -- what makes it read as WATER rather than as
+      // a hole is the bright meniscus where it meets the ground, so the rim
+      // goes down after the sheet and always inside it.
+      for (let i = 0; i < 6; i++) {
+        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+        if (jrg(rx, ry) !== JG_SWAMP) continue;
+        const w = 220 + rng() * 300, h = 170 + rng() * 240;
+        softStamp(g, rx, ry, w, h, [12, 24, 20], 90 + rng() * 40);
+        g.noFill();
+        g.stroke(150, 178, 152, 46); g.strokeWeight(2.6);
+        g.ellipse(rx, ry, w * 0.62, h * 0.62);
+        g.noStroke();
+        // Rot film: the one warm note on black water.
+        g.fill(96, 108, 62, 40);
+        for (let k = 0; k < 3; k++) {
+          g.ellipse(rx + (rng() - 0.5) * w * 0.4, ry + (rng() - 0.5) * h * 0.4,
+                    26 + rng() * 44, 18 + rng() * 30);
+        }
+      }
+
+      // Fire lane: cut, burned, and never allowed to close. Pale laterite with
+      // char still on it -- the char is what says it was cleared rather than
+      // that it simply never grew.
+      for (let i = 0; i < 7; i++) {
+        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+        if (jrg(rx, ry) !== JG_CLEARING) continue;
+        softStamp(g, rx, ry, 280 + rng() * 400, 220 + rng() * 320, [150, 116, 70], 40 + rng() * 30);
+        g.stroke(30, 26, 22, 90); g.strokeWeight(2.2); g.noFill();
+        for (let k = 0; k < 3; k++) {
+          const a = rng() * TWO_PI, ln = 40 + rng() * 90;
+          g.line(rx, ry, rx + Math.cos(a) * ln, ry + Math.sin(a) * ln);
+        }
+        g.noStroke();
+      }
+
+      // Bamboo brake: fallen culms lying every way, pale against the litter.
+      // Short and straight, which is the whole difference between this floor
+      // and the canopy's -- everything under a hardwood is curved.
+      g.strokeWeight(2.4);
+      for (let i = 0; i < 90; i++) {
+        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+        if (Math.abs(rx - trackAt(ry)) < 110) continue;
+        if (jrg(rx, ry) !== JG_BAMBOO) continue;
+        const a = rng() * TWO_PI, ln = 16 + rng() * 30;
+        g.stroke(146 + rng() * 40, 142 + rng() * 34, 88 + rng() * 30, 120 + rng() * 80);
+        g.line(rx, ry, rx + Math.cos(a) * ln, ry + Math.sin(a) * ln);
+      }
+      g.noStroke();
+
+      // Cordon: hardstanding somebody poured and the jungle has not finished
+      // lifting yet. Grey, hard-edged at the middle and broken at the rim.
+      for (let i = 0; i < 6; i++) {
+        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+        if (jrg(rx, ry) !== JG_CORDON) continue;
+        const w = 190 + rng() * 260, h = 150 + rng() * 200;
+        softStamp(g, rx, ry, w, h, [104, 106, 96], 54 + rng() * 30);
+        g.fill(88, 90, 82, 130);
+        g.rect(rx - w * 0.22, ry - h * 0.22, w * 0.44, h * 0.44, 4);
+        // Rubble off the broken edge.
+        g.fill(74, 76, 68, 150);
+        for (let k = 0; k < 9; k++) {
+          g.ellipse(rx + (rng() - 0.5) * w * 0.9, ry + (rng() - 0.5) * h * 0.9,
+                    4 + rng() * 8, 3 + rng() * 6);
+        }
+      }
+
       // Grass blades — thousands of tiny strokes, baked once. They stop at the
       // verge; grass growing straight through the middle of a used track is
       // what made the road look like a smear laid over the ground.
+      //
+      // The region gate is LAST of the four, deliberately: it is the only test
+      // here that costs a noise lookup, and the three cheap ones ahead of it
+      // have already thrown away better than half the samples by the time it
+      // runs.
       g.strokeWeight(1.9);
       for (let i = 0; i < 900; i++) {
         const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
@@ -22482,10 +23342,19 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
         if (off < 96 + rng() * 40) continue;
         const lush = sample(latA, (rx - ox) * (CHUNK_BASE / CHUNK_W), (ry - oy) * (CHUNK_BASE / CHUNK_W));
         if (lush < 0.4) continue;
+        // Ground cover by sub-biome. Elephant grass stands chest high in a cut
+        // lane and there is nothing at all on the floor of a closed canopy or
+        // under standing water, which is the read the whole system exists for.
+        const jr = jrg(rx, ry);
+        const cov = jr === JG_CLEARING ? 1.00 : jr === JG_CORDON ? 0.34 :
+                    jr === JG_BAMBOO   ? 0.44 : jr === JG_SWAMP  ? 0.10 : 0.30;
+        if (rng() > cov) continue;
         const shade = 40 + rng() * 70;
-        g.stroke(shade * 0.5, shade + 40, shade * 0.4, 120 + rng() * 90);
+        // A cut lane is in full sun and burns yellow; canopy floor stays blue.
+        const warm = jr === JG_CLEARING ? 26 : jr === JG_CANOPY ? -12 : 0;
+        g.stroke(shade * 0.5 + warm, shade + 40, shade * 0.4 - warm * 0.4, 120 + rng() * 90);
         const a = -HALF_PI + (rng() - 0.5) * 1.1;
-        const len = 8 + rng() * 16;
+        const len = (8 + rng() * 16) * (jr === JG_CLEARING ? 1.45 : 1);
         g.line(rx, ry, rx + Math.cos(a) * len, ry + Math.sin(a) * len);
       }
       g.noStroke();
@@ -22508,20 +23377,54 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
     }
 
     case "TUNDRA": {
-      // Wind-packed snow drifts — long soft arcs
-      for (let i = 0; i < 10; i++) {
+      // The White Silence used to be one texture: drift, ice, hairline, repeat,
+      // for as far as anybody walked. Every pass below now asks the region at
+      // its own sample point, so the same five hundred draw calls resolve into
+      // snowfield, glare ice, tree line, moraine and scoured fell instead of
+      // into an average of all five everywhere.
+      const trg = (x, y) => tundraRegion(biome, x, y);
+
+      // Wind-packed drift, and the wind has ONE direction. The drifts used to
+      // be axis-aligned ovals, which is why a snowfield read as bedding rather
+      // than as weather: sastrugi are cut by a prevailing wind and they all lie
+      // along it. The bearing is a function of world position only, so it holds
+      // across every seam.
+      const windA = (bnoise(biome, 0, 0, 0.00004) - 0.5) * 1.4 - 0.5;
+      const wcos = Math.cos(windA), wsin = Math.sin(windA);
+      for (let i = 0; i < 14; i++) {
         const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
-        softStamp(g, rx, ry, 420 + rng() * 520, 90 + rng() * 130, [255, 255, 255], 16 + rng() * 20);
+        const r0 = trg(rx, ry);
+        if (r0 !== TU_SNOWFIELD && r0 !== TU_ICEFIELD) continue;
+        // Drawn as a run of overlapping stamps along the wind rather than one
+        // wide ellipse, because a stamp cannot be rotated and a ridge that is
+        // not aligned to the wind is not a ridge.
+        const len = 300 + rng() * 420, wid = 46 + rng() * 46;
+        const steps = 5;
+        for (let k = 0; k <= steps; k++) {
+          const t2 = (k / steps - 0.5) * len;
+          softStamp(g, rx + wcos * t2, ry + wsin * t2, wid * 2.2, wid,
+                    [255, 255, 255], 13 + rng() * 14);
+        }
       }
-      // Exposed blue ice
-      for (let i = 0; i < 3; i++) {
+
+      // Glare ice. Bare blue, and hard enough at the edge to be a surface
+      // change rather than another wash -- so the sheet gets a rim stroke.
+      for (let i = 0; i < 7; i++) {
         const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
-        softStamp(g, rx, ry, 250 + rng() * 340, 190 + rng() * 250, [150, 190, 215], 34 + rng() * 30);
+        if (trg(rx, ry) !== TU_ICEFIELD) continue;
+        const w = 240 + rng() * 320, h = 180 + rng() * 240;
+        softStamp(g, rx, ry, w, h, [138, 182, 212], 52 + rng() * 34);
+        g.noFill(); g.stroke(206, 232, 246, 70); g.strokeWeight(2.4);
+        g.ellipse(rx, ry, w * 0.58, h * 0.58);
+        g.noStroke();
       }
-      // Crevasse hairlines
+      // Crevasse hairlines, and a pressure ridge where two sheets met. The
+      // ridge is the only thing in the sector with a vertical in it, so it is
+      // worth the blocks: a chain of small slabs, each lit on the sun side.
       g.stroke(120, 155, 185, 90); g.strokeWeight(1.6); g.noFill();
-      for (let i = 0; i < 9; i++) {
+      for (let i = 0; i < 11; i++) {
         let sx = ox + rng() * CHUNK_W, sy = oy + rng() * CHUNK_W, a = rng() * TWO_PI;
+        if (trg(sx, sy) !== TU_ICEFIELD) continue;
         g.beginShape();
         for (let s = 0; s < 6; s++) {
           g.vertex(sx, sy);
@@ -22532,15 +23435,109 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
         g.endShape();
       }
       g.noStroke();
+      for (let i = 0; i < 2; i++) {
+        let sx = ox + rng() * CHUNK_W, sy = oy + rng() * CHUNK_W, a = rng() * TWO_PI;
+        if (trg(sx, sy) !== TU_ICEFIELD) continue;
+        for (let s = 0; s < 14; s++) {
+          const bw = 16 + rng() * 22, bh = 12 + rng() * 16;
+          g.fill(70, 104, 138, 90);
+          g.rect(sx - bw / 2 + LIGHT_DX * 7, sy - bh / 2 + LIGHT_DY * 7, bw, bh, 2);
+          g.fill(232, 244, 252, 210);
+          g.rect(sx - bw / 2, sy - bh / 2, bw, bh, 2);
+          g.fill(176, 206, 228, 190);
+          g.rect(sx - bw / 2 + LIGHT_DX * 3, sy - bh / 2 + LIGHT_DY * 3, bw * 0.7, bh * 0.7, 2);
+          a += (rng() - 0.5) * 0.5;
+          sx += Math.cos(a) * (22 + rng() * 16);
+          sy += Math.sin(a) * (22 + rng() * 16);
+        }
+      }
+
+      // Tree line. Needle litter and thawed peat -- the only dark ground in the
+      // sector, and the reason a taiga patch reads from across the valley.
+      for (let i = 0; i < 8; i++) {
+        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+        if (trg(rx, ry) !== TU_TAIGA) continue;
+        softStamp(g, rx, ry, 200 + rng() * 280, 170 + rng() * 230, [92, 78, 54], 46 + rng() * 30);
+        softStamp(g, rx + (rng() - 0.5) * 90, ry + (rng() - 0.5) * 80,
+                  90 + rng() * 130, 70 + rng() * 110, [56, 62, 44], 40 + rng() * 26);
+      }
+
+      // Moraine. Till lies in stripes ALONG the ice's travel, not in patches,
+      // so the gravel is scattered down a line rather than into an ellipse.
+      for (let i = 0; i < 5; i++) {
+        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+        if (trg(rx, ry) !== TU_MORAINE) continue;
+        softStamp(g, rx, ry, 260 + rng() * 340, 120 + rng() * 150, [128, 122, 112], 44 + rng() * 28);
+        const a = windA + (rng() - 0.5) * 0.5;
+        for (let k = 0; k < 46; k++) {
+          const t2 = (rng() - 0.5) * (280 + rng() * 260);
+          const off = (rng() - 0.5) * 90;
+          const gx = rx + Math.cos(a) * t2 - Math.sin(a) * off;
+          const gy = ry + Math.sin(a) * t2 + Math.cos(a) * off;
+          const gs = 3 + rng() * 7;
+          g.fill(60, 58, 54, 70); g.ellipse(gx + LIGHT_DX * 2.5, gy + LIGHT_DY * 2.5, gs, gs * 0.8);
+          g.fill(126 + rng() * 44, 122 + rng() * 40, 114 + rng() * 36, 220);
+          g.ellipse(gx, gy, gs, gs * 0.8);
+        }
+      }
+
+      // Fellfield: frost-heave polygons. Repeated freezing sorts the stones out
+      // of the fines and pushes them to the edges of a cell, so the ground
+      // comes out as a NET of gravel borders around bare centres -- the single
+      // most recognisable thing periglacial ground does, and nothing else in
+      // this game makes a pattern the player can read as a pattern.
+      for (let i = 0; i < 3; i++) {
+        const fx = ox + 180 + rng() * (CHUNK_W - 360);
+        const fy = oy + 180 + rng() * (CHUNK_W - 360);
+        if (trg(fx, fy) !== TU_FELLFIELD) continue;
+        const cell = 74 + rng() * 34;
+        softStamp(g, fx, fy, cell * 7, cell * 6, [150, 148, 138], 40 + rng() * 22);
+        for (let jj = -2; jj <= 2; jj++) {
+          for (let ii = -2; ii <= 2; ii++) {
+            // Hex centres: every other row offset by half a cell.
+            const hx = fx + (ii + (jj & 1) * 0.5) * cell;
+            const hy = fy + jj * cell * 0.87;
+            if (Math.hypot(hx - fx, hy - fy) > cell * 2.4) continue;
+            if (trg(hx, hy) !== TU_FELLFIELD) continue;
+            // Bare fines in the middle of the cell.
+            g.fill(176, 178, 170, 120);
+            g.ellipse(hx, hy, cell * 0.72, cell * 0.66);
+            // Sorted stone around the rim.
+            for (let k = 0; k < 12; k++) {
+              const a = (k / 12) * TWO_PI + rng() * 0.3;
+              const rr = cell * (0.40 + rng() * 0.09);
+              const sx2 = hx + Math.cos(a) * rr, sy2 = hy + Math.sin(a) * rr * 0.92;
+              const ss = 5 + rng() * 6;
+              g.fill(58, 58, 54, 80);
+              g.ellipse(sx2 + LIGHT_DX * 2.6, sy2 + LIGHT_DY * 2.6, ss, ss * 0.8);
+              g.fill(112 + rng() * 40, 110 + rng() * 38, 104 + rng() * 34, 235);
+              g.ellipse(sx2, sy2, ss, ss * 0.8);
+              g.fill(214, 216, 210, 90);
+              g.ellipse(sx2 - LIGHT_DX * 1.2, sy2 - LIGHT_DY * 1.2, ss * 0.5, ss * 0.4);
+            }
+          }
+        }
+      }
       break;
     }
 
     case "ALIEN": {
-      // Bioluminescent veins threading the ground
+      // The veins used to thread every chunk equally, so the whole sector was
+      // one continuous organism at one continuous density. It has a shape now:
+      // a mat that thins into dead ashfall, a hive it packs tight around, pools
+      // it feeds from, and a crater it has never managed to cross.
+      const arg = (x, y) => alienRegion(biome, x, y);
+
+      // Bioluminescent veins. They GROW along the mat, so a vein that wanders
+      // out of it stops -- the walk breaks the moment the region changes, which
+      // is what makes the mat's edge visible without drawing an edge.
       g.noFill();
-      for (let i = 0; i < 16; i++) {
+      for (let i = 0; i < 22; i++) {
         let sx = ox + rng() * CHUNK_W, sy = oy + rng() * CHUNK_W, a = rng() * TWO_PI;
-        g.stroke(p.mark[0], p.mark[1], p.mark[2], 30 + rng() * 55);
+        const r0 = arg(sx, sy);
+        if (r0 !== AL_MYCELIA && r0 !== AL_HIVE && r0 !== AL_FLESH) continue;
+        g.stroke(p.mark[0], p.mark[1], p.mark[2],
+                 (30 + rng() * 55) * (r0 === AL_MYCELIA ? 1 : 0.7));
         g.strokeWeight(1.6 + rng() * 3.4);
         g.beginShape();
         for (let s = 0; s < 10; s++) {
@@ -22548,24 +23545,128 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
           a += (rng() - 0.5) * 1.5;
           sx += Math.cos(a) * (26 + rng() * 44);
           sy += Math.sin(a) * (26 + rng() * 44);
+          if (arg(sx, sy) === AL_CRATER || arg(sx, sy) === AL_ASHFALL) break;
         }
         g.endShape();
       }
       g.noStroke();
-      // Spore bloom rings
-      for (let i = 0; i < 5; i++) {
+
+      // Spore bloom rings, on the mat.
+      for (let i = 0; i < 7; i++) {
         const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+        if (arg(rx, ry) !== AL_MYCELIA) continue;
         softStamp(g, rx, ry, 260 + rng() * 380, 230 + rng() * 330, [120, 60, 180], 15 + rng() * 20);
         softStamp(g, rx, ry, 90 + rng() * 150, 80 + rng() * 130, [p.mark[0], p.mark[1], p.mark[2]], 11);
+      }
+
+      // Crater: sterile. Scorch, fused glass and ejecta rays running OUT of the
+      // middle, which is the only thing that says an impact rather than a burn.
+      for (let i = 0; i < 6; i++) {
+        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+        if (arg(rx, ry) !== AL_CRATER) continue;
+        softStamp(g, rx, ry, 300 + rng() * 400, 250 + rng() * 340, [22, 16, 24], 74 + rng() * 34);
+        g.stroke(16, 12, 18, 120); g.strokeWeight(3.4); g.noFill();
+        for (let k = 0; k < 7; k++) {
+          const a = rng() * TWO_PI, ln = 90 + rng() * 190;
+          g.line(rx + Math.cos(a) * 30, ry + Math.sin(a) * 24,
+                 rx + Math.cos(a) * ln, ry + Math.sin(a) * ln * 0.85);
+        }
+        g.noStroke();
+        // Glass, and one hard highlight on it. Fused ground has no diffuse.
+        g.fill(58, 50, 66, 120);
+        for (let k = 0; k < 5; k++) {
+          const gx = rx + (rng() - 0.5) * 240, gy = ry + (rng() - 0.5) * 200;
+          const gw = 30 + rng() * 60;
+          g.ellipse(gx, gy, gw, gw * 0.66);
+          g.fill(198, 206, 226, 46);
+          g.ellipse(gx - LIGHT_DX * gw * 0.2, gy - LIGHT_DY * gw * 0.14, gw * 0.42, gw * 0.2);
+          g.fill(58, 50, 66, 120);
+        }
+      }
+
+      // Hive: the ground is comb. Grown in cells rather than laid in a pattern,
+      // so the net is drawn from hex centres with the walls thicker where two
+      // cells share one -- which is the difference between comb and a grid.
+      for (let i = 0; i < 3; i++) {
+        const hx0 = ox + 180 + rng() * (CHUNK_W - 360);
+        const hy0 = oy + 180 + rng() * (CHUNK_W - 360);
+        if (arg(hx0, hy0) !== AL_HIVE) continue;
+        const cell = 52 + rng() * 26;
+        softStamp(g, hx0, hy0, cell * 8, cell * 7, [64, 42, 78], 60 + rng() * 26);
+        for (let jj = -3; jj <= 3; jj++) {
+          for (let ii = -3; ii <= 3; ii++) {
+            const hx = hx0 + (ii + (jj & 1) * 0.5) * cell;
+            const hy = hy0 + jj * cell * 0.87;
+            if (Math.hypot(hx - hx0, hy - hy0) > cell * 3.1) continue;
+            if (arg(hx, hy) !== AL_HIVE) continue;
+            const rr = cell * 0.5;
+            g.fill(38, 26, 48, 235);
+            g.beginShape();
+            for (let k = 0; k < 6; k++) {
+              const a = (k / 6) * TWO_PI + 0.26;
+              g.vertex(hx + Math.cos(a) * rr, hy + Math.sin(a) * rr * 0.92);
+            }
+            g.endShape(CLOSE);
+            g.fill(88, 62, 106, 230);
+            g.beginShape();
+            for (let k = 0; k < 6; k++) {
+              const a = (k / 6) * TWO_PI + 0.26;
+              g.vertex(hx + Math.cos(a) * rr * 0.74, hy + Math.sin(a) * rr * 0.68);
+            }
+            g.endShape(CLOSE);
+            // One cell in six is open and lit from inside.
+            if (rng() > 0.84) {
+              g.fill(p.mark[0], p.mark[1], p.mark[2], 90);
+              g.ellipse(hx, hy, rr * 0.7, rr * 0.62);
+            }
+          }
+        }
+      }
+
+      // Flesh pools: viscous, so the rim is a bright meniscus rather than a
+      // shore, and the surface carries a slick that catches the sky.
+      for (let i = 0; i < 6; i++) {
+        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+        if (arg(rx, ry) !== AL_FLESH) continue;
+        const w = 200 + rng() * 260, h = 160 + rng() * 210;
+        softStamp(g, rx, ry, w, h, [78, 22, 54], 96 + rng() * 40);
+        g.noFill(); g.stroke(216, 132, 168, 70); g.strokeWeight(3.2);
+        g.ellipse(rx, ry, w * 0.60, h * 0.60);
+        g.noStroke();
+        g.fill(p.mark[0], p.mark[1], p.mark[2], 34);
+        g.ellipse(rx - LIGHT_DX * w * 0.10, ry - LIGHT_DY * h * 0.10, w * 0.34, h * 0.24);
+      }
+
+      // Ashfall: the mat never took. Flat, grey, and the point of it is that
+      // there is nothing here -- so it gets a wash and a dusting and no accent
+      // colour at all, which is what makes the violet elsewhere read as alive.
+      for (let i = 0; i < 7; i++) {
+        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+        if (arg(rx, ry) !== AL_ASHFALL) continue;
+        softStamp(g, rx, ry, 300 + rng() * 380, 250 + rng() * 320, [128, 122, 126], 40 + rng() * 26);
+        g.fill(154, 150, 152, 90);
+        for (let k = 0; k < 26; k++) {
+          g.ellipse(rx + (rng() - 0.5) * 300, ry + (rng() - 0.5) * 260, 3 + rng() * 6, 2 + rng() * 5);
+        }
       }
       break;
     }
 
     case "CRYSTAL": {
-      // Hex-fracture plates
+      // The terminus was the flattest sector in the game and the circuit road
+      // was most of why: an L of metal ground painted on EVERY chunk, so the
+      // machinery was uniformly everywhere and therefore nowhere. It is a
+      // region now, and the rest of the flats got the four landscapes that
+      // makes it worth walking to.
+      const crg = (x, y) => crystalRegion(biome, x, y);
+
+      // Hex-fracture plates. Everywhere except the salt, which cracks into its
+      // own much larger polygons, and the lattice, which is paved.
       g.stroke(p.dark[0], p.dark[1], p.dark[2], 46); g.strokeWeight(1.7); g.noFill();
-      for (let i = 0; i < 26; i++) {
+      for (let i = 0; i < 30; i++) {
         const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+        const r0 = crg(rx, ry);
+        if (r0 === CR_SALT || r0 === CR_LATTICE) continue;
         const rad = 26 + rng() * 70;
         g.beginShape();
         for (let a = 0; a < TWO_PI; a += TWO_PI / 6) {
@@ -22574,19 +23675,125 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
         g.endShape(CLOSE);
       }
       g.noStroke();
-      // Refractive glints
-      for (let i = 0; i < 60; i++) {
+      // Refractive glints, thickest where the crystal is actually growing.
+      for (let i = 0; i < 70; i++) {
         const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+        const r0 = crg(rx, ry);
+        if (r0 === CR_GLASS || r0 === CR_SALT) continue;
+        if (r0 !== CR_SPIRE && rng() > 0.55) continue;
         g.fill(p.mark[0], p.mark[1], p.mark[2], 20 + rng() * 55);
         g.ellipse(rx, ry, 4 + rng() * 12, 4 + rng() * 12);
       }
-      // Metallic circuit road
-      g.fill(p.road[0], p.road[1], p.road[2], 200);
-      g.rect(ox, oy, CHUNK_W, 200);
-      g.rect(ox, oy, 200, CHUNK_W);
-      g.fill(p.mark[0], p.mark[1], p.mark[2], 110);
-      for (let j = oy + 260; j < oy + CHUNK_W; j += 80) g.rect(ox + 96, j, 8, 40);
-      for (let i = ox + 260; i < ox + CHUNK_W; i += 80) g.rect(i, oy + 96, 40, 8);
+
+      // Spire ground: the growth pushes the pan up around itself, so a stand of
+      // crystal sits in a pale halo with the fracture running away from it.
+      for (let i = 0; i < 5; i++) {
+        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+        if (crg(rx, ry) !== CR_SPIRE) continue;
+        softStamp(g, rx, ry, 260 + rng() * 340, 220 + rng() * 300,
+                  [p.accent[0], p.accent[1], p.accent[2]], 44 + rng() * 26);
+        g.stroke(p.mark[0], p.mark[1], p.mark[2], 60); g.strokeWeight(1.4); g.noFill();
+        for (let k = 0; k < 9; k++) {
+          const a = rng() * TWO_PI, r1 = 40 + rng() * 40, r2 = r1 + 60 + rng() * 110;
+          g.line(rx + Math.cos(a) * r1, ry + Math.sin(a) * r1 * 0.86,
+                 rx + Math.cos(a) * r2, ry + Math.sin(a) * r2 * 0.86);
+        }
+        g.noStroke();
+      }
+
+      // Salt pan. Evaporite dries into plates that push their own edges up as
+      // they shrink, so this is a NET of raised rims around dished centres --
+      // the same thing the SALTCRUST litter draws, three times the size, and
+      // the two sit inside one another without either looking repeated.
+      for (let i = 0; i < 3; i++) {
+        const sx0 = ox + 160 + rng() * (CHUNK_W - 320);
+        const sy0 = oy + 160 + rng() * (CHUNK_W - 320);
+        if (crg(sx0, sy0) !== CR_SALT) continue;
+        const cell = 96 + rng() * 54;
+        softStamp(g, sx0, sy0, cell * 6, cell * 5, [236, 238, 230], 66 + rng() * 26);
+        for (let jj = -2; jj <= 2; jj++) {
+          for (let ii = -2; ii <= 2; ii++) {
+            const px2 = sx0 + (ii + (jj & 1) * 0.5) * cell;
+            const py2 = sy0 + jj * cell * 0.87;
+            if (crg(px2, py2) !== CR_SALT) continue;
+            const rr = cell * 0.5;
+            g.fill(244, 246, 238, 200);
+            g.beginShape();
+            for (let k = 0; k < 6; k++) {
+              const a  = (k / 6) * TWO_PI + 0.2;
+              const rd = rr * (0.88 + 0.16 * Math.sin(k * 2.7 + ii + jj));
+              g.vertex(px2 + Math.cos(a) * rd, py2 + Math.sin(a) * rd * 0.9);
+            }
+            g.endShape(CLOSE);
+            // The dish. Its LIT wall is the far one, on the sun's side of the
+            // middle, which is the opposite of every raised thing beside it.
+            g.fill(186, 184, 170, 170);
+            g.ellipse(px2, py2, rr * 1.42, rr * 1.20);
+            g.fill(252, 252, 246, 120);
+            g.ellipse(px2 + LIGHT_DX * rr * 0.30, py2 + LIGHT_DY * rr * 0.26, rr * 0.68, rr * 0.54);
+          }
+        }
+      }
+
+      // Fused glass. Where the flats took a strike, iron-stained and black --
+      // the one dark ground in a sector that is otherwise all glare, so it
+      // reads from further away than anything else here.
+      for (let i = 0; i < 6; i++) {
+        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+        if (crg(rx, ry) !== CR_GLASS) continue;
+        const w = 260 + rng() * 340, h = 200 + rng() * 260;
+        softStamp(g, rx, ry, w, h, [34, 30, 34], 80 + rng() * 34);
+        // Iron bleeding out of the fused edge.
+        g.fill(126, 66, 34, 60);
+        for (let k = 0; k < 6; k++) {
+          g.ellipse(rx + (rng() - 0.5) * w * 0.9, ry + (rng() - 0.5) * h * 0.9,
+                    30 + rng() * 70, 20 + rng() * 44);
+        }
+        // One hard sheen. Fused glass has no diffuse term worth drawing.
+        g.fill(214, 220, 234, 70);
+        g.ellipse(rx - LIGHT_DX * w * 0.16, ry - LIGHT_DY * h * 0.12, w * 0.30, h * 0.12);
+      }
+
+      // Metallic circuit ground. Now a place rather than a per-chunk decoration.
+      //
+      // Each edge band is gated by the region AT THAT EDGE'S OWN MIDPOINT, not
+      // at the chunk's corner, and exactly one chunk owns each band -- so two
+      // chunks in the same region lay a continuous run, and where the region
+      // ends the run simply stops, which is the ecotone this whole system is
+      // for. Gated on the corner instead, a chunk whose corner fell outside the
+      // lattice would have punched a hole in a road running through it.
+      const latN = crg(ox + CHUNK_W / 2, oy + 100) === CR_LATTICE;
+      const latW = crg(ox + 100, oy + CHUNK_W / 2) === CR_LATTICE;
+      if (latN || latW) {
+        g.fill(p.road[0], p.road[1], p.road[2], 200);
+        if (latN) g.rect(ox, oy, CHUNK_W, 200);
+        if (latW) g.rect(ox, oy, 200, CHUNK_W);
+        g.fill(p.mark[0], p.mark[1], p.mark[2], 110);
+        if (latW) for (let j = oy + 260; j < oy + CHUNK_W; j += 80) g.rect(ox + 96, j, 8, 40);
+        if (latN) for (let i = ox + 260; i < ox + CHUNK_W; i += 80) g.rect(i, oy + 96, 40, 8);
+        // Vias where the two runs meet, and the solder bloom around them.
+        if (latN && latW) {
+          g.fill(p.dark[0], p.dark[1], p.dark[2], 150);
+          g.ellipse(ox + 100, oy + 100, 74, 74);
+          g.fill(p.mark[0], p.mark[1], p.mark[2], 150);
+          g.ellipse(ox + 100, oy + 100, 34, 34);
+          g.fill(p.road[0], p.road[1], p.road[2], 220);
+          g.ellipse(ox + 100, oy + 100, 16, 16);
+        }
+        // Trace spurs running off the bus into the flat, and stopping dead --
+        // whatever they fed is not there any more.
+        g.fill(p.mark[0], p.mark[1], p.mark[2], 70);
+        for (let k = 0; k < 5; k++) {
+          if (latN) {
+            const tx = ox + 240 + rng() * (CHUNK_W - 400);
+            g.rect(tx, oy + 200, 7, 60 + rng() * 170);
+          }
+          if (latW) {
+            const ty = oy + 240 + rng() * (CHUNK_W - 400);
+            g.rect(ox + 200, ty, 60 + rng() * 170, 7);
+          }
+        }
+      }
       break;
     }
   }
@@ -22772,7 +23979,13 @@ function settlementRoster(biome, cx, cy, solids) {
     case "JUNGLE": {
       // A cordon post is manned. Tan Army regulars, neutral until provoked --
       // the same troops the story arc has you make contact with.
-      if (bnoise(biome, ox, oy, 0.0005) > 0.6) {
+      //
+      // Driven by the bunkers the generator actually produced rather than by a
+      // second copy of the condition that produced them. The post is a set
+      // piece of the CORDON sub-biome now, and a roster keyed on its own noise
+      // threshold would have gone on manning chunks that no longer have a post
+      // in them the moment that condition moved.
+      {
         const bunkers = solids.filter(s => s.propType === "BUNKER");
         if (bunkers.length) {
           const b0 = bunkers[0];
@@ -22784,7 +23997,9 @@ function settlementRoster(biome, cx, cy, solids) {
     }
 
     case "TUNDRA": {
-      if (bnoise(biome, ox, oy, 0.0006) > 0.66) {
+      // Same rule: the relay station is what puts people here, so find it
+      // rather than re-deriving where it was allowed to be built.
+      {
         const huts = solids.filter(s => s.isBlockBuilding);
         if (huts.length) {
           const h0 = huts[0];
@@ -24952,6 +26167,314 @@ function paintClutter(g, d, t) {
       g.fill(84, 72, 58); g.ellipse(-LIGHT_DX * 1.4 * s, -LIGHT_DY * 1.4 * s, 5 * s, 4.6 * s);
       break;
     }
+    // ---------------------------------------------------------------------
+    // SECTOR 4 — the jungle's sub-biomes
+    // ---------------------------------------------------------------------
+    case "BAMBOO": {
+      // A brake seen from directly above is not stems, it is the TOPS of stems:
+      // a cluster of small hard rings. The ring is the whole read -- a filled
+      // dot at this size is a pebble -- so each is a pale disc with a dark
+      // hollow core, shaded by which way it faces the sun like any other mass.
+      shadow(2, 3, 24 * s, 20 * s, 5, 52);
+      g.noStroke();
+      g.rotate(d.r);
+      const nbam = 5 + (((d.c * 7) | 0) % 4);
+      for (let i = 0; i < nbam; i++) {
+        const a  = (i / nbam) * TWO_PI + d.c * 6;
+        const rr = (3.4 + (i % 3) * 1.6) * s;
+        const bx = Math.cos(a) * rr * 1.9, by = Math.sin(a) * rr * 1.6;
+        const k  = 0.80 + 0.40 * (-(Math.cos(a) * LIGHT_DX + Math.sin(a) * LIGHT_DY));
+        g.fill(118 * k, 138 * k, 62 * k, 246);
+        g.ellipse(bx, by, 5.4 * s, 5.4 * s);
+        g.fill(46, 58, 28, 220);
+        g.ellipse(bx, by, 2.6 * s, 2.6 * s);
+      }
+      // Two blades hanging off the clump. Without them it is a handful of pipe.
+      g.stroke(96, 128, 54, 190); g.strokeWeight(1.6 * s); g.noFill();
+      for (let i = 0; i < 2; i++) {
+        const a = d.c * 9 + i * 2.6;
+        g.line(0, 0, Math.cos(a) * 15 * s, Math.sin(a) * 12 * s);
+      }
+      g.noStroke();
+      break;
+    }
+
+    case "ROOT": {
+      // Buttress root. A tropical hardwood holds itself up with fins that run
+      // out along the ground, so from above it is a star of tapered ridges --
+      // and a ridge is only legible if it has a lit edge and a shaded one,
+      // because the fin is a wall standing on the ground like anything else.
+      // Shaded per fin NORMAL, not per fin direction: the two fins either side
+      // of the sun line face opposite ways and must not come out the same.
+      shadow(2, 3, 34 * s, 28 * s, 6, 54);
+      g.noStroke();
+      g.rotate(d.r);
+      const nrt = 4 + (((d.c * 5) | 0) % 3);
+      for (let i = 0; i < nrt; i++) {
+        const a  = (i / nrt) * TWO_PI + d.c * 4;
+        const ln = (12 + (i % 2) * 6) * s;
+        const ca = Math.cos(a), sa = Math.sin(a);
+        const face = -(-sa * LIGHT_DX + ca * LIGHT_DY);
+        g.fill(72 + face * 18, 54 + face * 13, 34 + face * 8, 244);
+        g.triangle(-sa * 3.4 * s, ca * 3.4 * s, sa * 3.4 * s, -ca * 3.4 * s, ca * ln, sa * ln);
+      }
+      g.fill(58, 42, 26, 250); g.ellipse(0, 0, 9 * s, 8.4 * s);
+      g.fill(104, 82, 52, 150);
+      g.ellipse(-LIGHT_DX * 2 * s, -LIGHT_DY * 2 * s, 5 * s, 4.6 * s);
+      break;
+    }
+
+    case "WIRE": {
+      // Concertina, collapsed and half grown over. Drawn as a run of separate
+      // rings rather than one coil: a coil at this size is three pixels of
+      // curve and reads as a smudge, where the rings read as wire immediately.
+      shadow(1.5, 2, 42 * s, 13 * s, 3, 40);
+      g.rotate(d.r);
+      g.noFill();
+      for (let i = 0; i < 4; i++) {
+        const wx2 = (i - 1.5) * 9 * s;
+        g.stroke(28, 30, 32, 205); g.strokeWeight(2.4 * s);
+        g.ellipse(wx2, 0, 13 * s, 9 * s);
+        g.stroke(188, 194, 200, 140); g.strokeWeight(0.9 * s);
+        g.ellipse(wx2 - LIGHT_DX * 1.1 * s, -LIGHT_DY * 1.1 * s, 13 * s, 9 * s);
+      }
+      // The barbs are what make it razor rather than fencing.
+      g.stroke(150, 156, 160, 170); g.strokeWeight(1.1 * s);
+      for (let i = 0; i < 6; i++) {
+        const a  = d.c * 13 + i * 1.05;
+        const bx = Math.cos(a) * 16 * s, by = Math.sin(a) * 5 * s;
+        g.line(bx, by, bx + Math.cos(a) * 3.4 * s, by + Math.sin(a) * 3.4 * s);
+      }
+      g.noStroke();
+      break;
+    }
+
+    // ---------------------------------------------------------------------
+    // SECTOR 5 — the tundra's sub-biomes
+    // ---------------------------------------------------------------------
+    case "LICHEN": {
+      // Crustose lichen on scoured rock. No object and no height, so no contact
+      // shadow -- it is a stain the colour of old brass with a paler growing
+      // rim, and the rim is the entire read. It is also the only warm thing in
+      // the sector, which is why a fellfield does not look like a snowfield.
+      g.noStroke();
+      g.rotate(d.r);
+      g.fill(96, 92, 74, 130); g.ellipse(0, 0, 19 * s, 15 * s);
+      for (let i = 0; i < 4; i++) {
+        const a  = d.c * 17 + i * 1.6;
+        const lx = Math.cos(a) * 4.4 * s, ly = Math.sin(a) * 3.6 * s;
+        g.fill(158, 154, 108, 150); g.ellipse(lx, ly, 9 * s, 7 * s);
+        g.fill(196, 198, 156, 110); g.ellipse(lx, ly, 5 * s, 4 * s);
+      }
+      g.fill(214, 218, 182, 70); g.ellipse(-1 * s, -1 * s, 6 * s, 4.6 * s);
+      break;
+    }
+
+    case "KRUMMHOLZ": {
+      // The last spruce before the tree line. The whorl is PINE's, because it
+      // is the same tree -- but the wind has killed every branch on the
+      // windward side, so the crown is a half disc flagged downwind with bare
+      // dead wood pointing into the weather. That asymmetry is the only reason
+      // to draw a second conifer: a symmetrical one at this size is a small
+      // PINE and says nothing about where it is standing.
+      shadow(3, 4, 26 * s, 19 * s, 7, 56);
+      g.noStroke();
+      g.rotate(d.r);
+      // Same foliage bias PINE carries, from the same place: a spruce standing
+      // in the taiga is a deeper green than one that made it out onto the open
+      // snowfield alone, and d.k is where the generator recorded which it is.
+      const kzB = d.k || 0;
+      for (let i = 0; i < 7; i++) {
+        const a   = -1.1 + (i / 6) * 2.2;
+        const len = (9 + Math.cos(a) * 7) * s;
+        const k   = 0.84 + 0.26 * (-(Math.cos(a) * LIGHT_DX + Math.sin(a) * LIGHT_DY));
+        g.fill((38 + kzB * 24) * k, (62 + kzB * 16) * k, (46 - kzB * 10) * k, 246);
+        g.push();
+        g.rotate(a);
+        g.triangle(1.6 * s, -2.6 * s, len, 0, 1.6 * s, 2.6 * s);
+        g.pop();
+      }
+      g.stroke(126, 116, 100, 200); g.strokeWeight(1.3 * s);
+      for (let i = 0; i < 3; i++) {
+        const a = PI + (i - 1) * 0.4;
+        g.line(0, 0, Math.cos(a) * 9 * s, Math.sin(a) * 9 * s);
+      }
+      g.noStroke();
+      g.fill(30, 50, 40, 250); g.ellipse(0, 0, 7 * s, 6.4 * s);
+      g.fill(96, 132, 104, 140);
+      g.ellipse(-LIGHT_DX * 1.6 * s, -LIGHT_DY * 1.6 * s, 4 * s, 3.6 * s);
+      break;
+    }
+
+    case "HOARFROST": {
+      // Frost feathers. Grown out of the air rather than fallen, so they are
+      // radial, needle thin, and they throw no shadow at all -- there is
+      // nothing here thick enough to stop light.
+      g.rotate(d.r);
+      g.stroke(255, 255, 255, 140); g.strokeWeight(0.9 * s);
+      for (let i = 0; i < 9; i++) {
+        const a  = (i / 9) * TWO_PI + d.c * 5;
+        const ln = (5 + ((i * 3 + d.c * 9) % 5)) * s;
+        const ex = Math.cos(a) * ln, ey = Math.sin(a) * ln * 0.72;
+        g.line(0, 0, ex, ey);
+        g.line(ex * 0.55, ey * 0.55,
+               ex * 0.55 + Math.cos(a + 1.1) * 2.4 * s,
+               ey * 0.55 + Math.sin(a + 1.1) * 1.8 * s);
+      }
+      g.noStroke();
+      g.fill(226, 240, 252, 90); g.ellipse(0, 0, 5 * s, 4 * s);
+      break;
+    }
+
+    // ---------------------------------------------------------------------
+    // SECTOR 6 — the violet waste's sub-biomes
+    // ---------------------------------------------------------------------
+    case "CHITIN": {
+      // A shed plate off whatever built the hive. Grown rather than made, so
+      // the edges are hard but nothing is straight, and the rim carries the one
+      // saturated accent against a dull carapace -- the same 90/10 split the
+      // rest of the sector's art uses.
+      shadow(1.5, 2, 20 * s, 14 * s, 3, 58);
+      g.noStroke();
+      g.rotate(d.r);
+      const npl = 2 + (((d.c * 5) | 0) % 2);
+      for (let q = 0; q < npl; q++) {
+        const off = q * 3.2 * s, rr = (8 - q * 2) * s;
+        g.fill(64 - q * 8, 44 - q * 6, 74 - q * 8, 244);
+        g.beginShape();
+        for (let i = 0; i < 5; i++) {
+          const a  = d.c * 8 + q + (i / 5) * TWO_PI;
+          const rd = rr * (0.72 + 0.34 * Math.sin(i * 2.3 + d.c * 6));
+          g.vertex(Math.cos(a) * rd + off, Math.sin(a) * rd * 0.82 - off * 0.5);
+        }
+        g.endShape(CLOSE);
+      }
+      g.stroke(126, 232, 148, 130); g.strokeWeight(1.1 * s); g.noFill();
+      g.ellipse(0, 0, 13 * s, 10 * s);
+      g.noStroke();
+      g.fill(180, 160, 208, 60);
+      g.ellipse(-LIGHT_DX * 2.4 * s, -LIGHT_DY * 2.4 * s, 6 * s, 4.4 * s);
+      break;
+    }
+
+    case "TENDRIL": {
+      // A feeding tendril out of a flesh pool, and the only clutter in the
+      // sector that moves. It moves the way the spore pods pulse rather than by
+      // translating: a swell travelling down its length, phase-offset per
+      // segment, so a field of them breathes out of step instead of waving in
+      // unison -- which is what a wind term would have given.
+      shadow(1.5, 2, 18 * s, 10 * s, 2, 54);
+      g.noStroke();
+      const ph = t * 0.035 + d.c * 11;
+      let tpx = 0, tpy = 0, ta = d.r;
+      for (let i = 0; i < 5; i++) {
+        const sw = 0.5 + 0.5 * Math.sin(ph - i * 0.7);
+        const w  = (5.4 - i * 0.8) * s * (0.86 + 0.28 * sw);
+        g.fill(104 + sw * 40, 40 + sw * 18, 92 + sw * 30, 242);
+        g.ellipse(tpx, tpy, w, w * 0.9);
+        ta  += (d.c - 0.5) * 0.5;
+        tpx += Math.cos(ta) * 4.6 * s;
+        tpy += Math.sin(ta) * 4.6 * s;
+      }
+      g.fill(150, 250, 168, 60 + 90 * (0.5 + 0.5 * Math.sin(ph)));
+      g.ellipse(tpx, tpy, 3.4 * s, 3.2 * s);
+      break;
+    }
+
+    case "SLAG": {
+      // Impact glass. Ground rather than an object, so no contact shadow: a
+      // scorched patch with a skin of fused glass over it, and the glass is the
+      // only thing in a crater that reflects anything -- so it gets one hard
+      // highlight against the light and no diffuse term worth drawing.
+      g.noStroke();
+      g.rotate(d.r);
+      g.fill(24, 20, 26, 190); g.ellipse(0, 0, 28 * s, 20 * s);
+      g.fill(46, 38, 52, 160); g.ellipse(-1 * s, -1 * s, 18 * s, 13 * s);
+      for (let i = 0; i < 3; i++) {
+        const a = d.c * 15 + i * 2.2;
+        g.fill(14, 12, 16, 235);
+        g.ellipse(Math.cos(a) * 6 * s, Math.sin(a) * 4.4 * s, 6 * s, 4.4 * s);
+      }
+      g.fill(206, 214, 230, 105);
+      g.ellipse(-LIGHT_DX * 4 * s, -LIGHT_DY * 3 * s, 7 * s, 3 * s);
+      break;
+    }
+
+    // ---------------------------------------------------------------------
+    // SECTOR 7 — the crystal flats' sub-biomes
+    // ---------------------------------------------------------------------
+    case "SALTCRUST": {
+      // Evaporite polygon. Salt dries into plates that push their own edges up
+      // as they shrink, so the RIM stands proud and the middle is dished. That
+      // is the one thing keeping this from being a white pebble -- and it means
+      // the lit part is the FAR wall of the dish, on the sun's side of centre,
+      // which is the opposite of everything else on this list.
+      g.noStroke();
+      g.rotate(d.r);
+      const scr = 11 * s;
+      g.fill(228, 230, 220, 165);
+      g.beginShape();
+      for (let i = 0; i < 6; i++) {
+        const a  = (i / 6) * TWO_PI;
+        const rd = scr * (0.80 + 0.34 * Math.sin(i * 2.7 + d.c * 7));
+        g.vertex(Math.cos(a) * rd, Math.sin(a) * rd * 0.86);
+      }
+      g.endShape(CLOSE);
+      g.fill(178, 176, 164, 150);
+      g.ellipse(0, 0, scr * 1.00, scr * 0.82);
+      g.fill(244, 246, 240, 120);
+      g.ellipse(LIGHT_DX * 2.4 * s, LIGHT_DY * 2.0 * s, scr * 0.52, scr * 0.40);
+      break;
+    }
+
+    case "GEODE": {
+      // A nodule cracked open. The shell is deliberately drab -- all of its
+      // interest is the interior catching the light, so the glint is the
+      // animation, on the same slow term SHARD uses.
+      shadow(1.5, 2, 17 * s, 12 * s, 3, 62);
+      g.noStroke();
+      g.rotate(d.r);
+      g.fill(112, 104, 96, 244); g.ellipse(0, 0, 14 * s, 11 * s);
+      g.fill(76, 70, 64, 250);
+      g.arc(0, 0, 14 * s, 11 * s, d.c * 6, d.c * 6 + PI);
+      g.fill(126, 96, 158, 235); g.ellipse(1 * s, 0.6 * s, 8 * s, 6 * s);
+      const gl = 0.5 + 0.5 * Math.sin(t * 0.028 + d.c * 14);
+      g.fill(226, 208, 255, 70 + gl * 150);
+      g.ellipse(1 * s - LIGHT_DX * 1.4 * s, 0.6 * s - LIGHT_DY * 1.4 * s, 3.6 * s, 2.8 * s);
+      break;
+    }
+
+    case "FULGURITE": {
+      // Where lightning went into the sand and fused a tube behind it. Seen
+      // from above it is a branching root of glass standing a little proud of
+      // the flat: thin, so it takes a thin shadow and a hard white edge rather
+      // than any fill worth speaking of. Both passes walk the identical branch
+      // arithmetic, offset against the light, so the highlight sits on the tube
+      // instead of beside it.
+      shadow(1.5, 2, 22 * s, 16 * s, 3, 46);
+      g.rotate(d.r);
+      g.noFill();
+      for (let pass = 0; pass < 2; pass++) {
+        if (pass === 0) { g.stroke(58, 52, 46, 220); g.strokeWeight(2.2 * s); }
+        else            { g.stroke(228, 232, 240, 120); g.strokeWeight(0.8 * s); }
+        const ofx = pass ? -LIGHT_DX * 0.9 * s : 0;
+        const ofy = pass ? -LIGHT_DY * 0.9 * s : 0;
+        for (let br = 0; br < 3; br++) {
+          let fpx = ofx, fpy = ofy, fa = d.c * 12 + br * 2.1;
+          g.beginShape();
+          for (let i = 0; i < 4; i++) {
+            g.vertex(fpx, fpy);
+            fa  += (d.c - 0.5) * 0.9;
+            fpx += Math.cos(fa) * 4.2 * s;
+            fpy += Math.sin(fa) * 3.4 * s;
+          }
+          g.endShape();
+        }
+      }
+      g.noStroke();
+      break;
+    }
+
     case "CONE": {
       shadow(2, 2, 13 * s, 8 * s, 3, 62);
       g.noStroke();
@@ -25102,7 +26625,19 @@ const PROP_RISE = {
   PLANTER:    [10, 118, 110,  98],  BENCH:      [ 8, 116,  98,  74],
   POSTBOX:    [14, 122,  86,  80],  HYDRANT:    [10, 132,  92,  84],
   BARGE:      [10],                 QUAYCRANE:  [30, 126, 116,  84],
-  BOLLARD:    [ 8, 110, 110, 106],  SIGNPOST:   [14, 116, 104,  82]
+  BOLLARD:    [ 8, 110, 110, 106],  SIGNPOST:   [14, 116, 104,  82],
+  // The outer sectors' sub-biomes. Box form where the art fills its own
+  // collision rect, short form everywhere else -- drawMassSides() is axis
+  // aligned and works off the rect, so a round thing drawn well inside its box
+  // comes out as a rectangular slab standing behind itself. That is why the
+  // mangrove cage, the brake, the fallen trunk, the cairn, the hive tower, the
+  // vent, the impactor and the crystal stand all lean without sides.
+  REVETMENT:  [20, 104,  92,  70],  SERAC:      [26, 176, 206, 226],
+  MAST:       [40, 118, 122, 128],  PYLON:      [34,  96, 102, 110],
+  MANGROVE:   [18],                 BRAKE:      [22],
+  FALLEN:     [14],                 CAIRN:      [22],
+  HIVETOWER:  [30],                 SPOREVENT:  [12],
+  IMPACTOR:   [20],                 CRYSTALSPIRE: [34]
 };
 
 function drawBiomeProps(list, i0, i1) {
@@ -25360,6 +26895,410 @@ function drawBiomeProps(list, i0, i1) {
       //  posts -- is drawn at the rim, throwing inward. Get that backwards and
       //  it reads as a crate lying in the river.
       // =====================================================================
+      // ===================================================================
+      // SECTOR 4 — the jungle's sub-biomes
+      // ===================================================================
+      case "REVETMENT": {
+        // A blast bank: earth held up by timber on the side facing the threat.
+        // Long and thin, so it is clamped to the visible span the way the hedge
+        // and the curtain wall are -- unclamped, the post loop ran the full
+        // length of every bank in the sector every frame, and inView() cannot
+        // reject a bank whose short axis is the only part off screen.
+        const rvH = b.w > b.h;
+        const rx0 = Math.max(b.x - b.w / 2, viewLeft - 120);
+        const rx1 = Math.min(b.x + b.w / 2, viewRight + 120);
+        const ry0 = Math.max(b.y - b.h / 2, viewTop - 120);
+        const ry1 = Math.min(b.y + b.h / 2, viewBottom + 120);
+        if (rx1 <= rx0 || ry1 <= ry0) break;
+        const rvT = rvH ? b.h : b.w;
+        shadowFill(70);
+        rect(rx0 + LIGHT_DX * 12, ry0 + LIGHT_DY * 12, rx1 - rx0, ry1 - ry0, 3);
+        noStroke();
+        // Earth core, then the crest offset against the light: a bank has a top,
+        // and the top is the only part of it the sun reaches.
+        fill(62, 54, 40); rect(rx0, ry0, rx1 - rx0, ry1 - ry0, 3);
+        fill(96, 84, 60);
+        rect(rx0 - LIGHT_DX * rvT * 0.16, ry0 - LIGHT_DY * rvT * 0.16,
+             rx1 - rx0, ry1 - ry0, 3);
+        // Timber revetting on the outer face, sandbags along the crest. Both
+        // are laid on a WORLD pitch rather than a fraction of the run, so two
+        // banks of different lengths carry the same size of timber.
+        const rvP = 30;
+        const rvA0 = rvH ? rx0 : ry0, rvA1 = rvH ? rx1 : ry1;
+        const rvC  = rvH ? b.y : b.x;
+        const rvF  = Math.floor(rvA0 / rvP) * rvP;
+        for (let l = rvF; l < rvA1 + rvP; l += rvP) {
+          const k = Math.abs((l * 0.021 + b.tint * 3) % 1);
+          fill(74 + k * 26, 58 + k * 18, 38 + k * 12, 250);
+          if (rvH) rect(l, rvC + rvT * 0.14, 20, rvT * 0.34, 1);
+          else     rect(rvC + rvT * 0.14, l, rvT * 0.34, 20, 1);
+          fill(120 + k * 30, 112 + k * 24, 88 + k * 18, 210);
+          if (rvH) rect(l + 2, rvC - rvT * 0.44, 16, rvT * 0.26, 3);
+          else     rect(rvC - rvT * 0.44, l + 2, rvT * 0.26, 16, 3);
+        }
+        break;
+      }
+
+      case "MANGROVE": {
+        // Stilt roots. A mangrove stands ABOVE the water on a cage of them, so
+        // the read is the cage -- an open ring of arches with daylight between,
+        // not a trunk. Round, so it takes the short PROP_RISE form: boxed, it
+        // would stand a rectangular slab behind a cage you can see through.
+        //
+        // The ring is phase-offset by the record's own angle rather than turned
+        // with rotate(). rotate() carries LIGHT_DX/DY round with it, and every
+        // highlight below is written in world space -- turned, a stand of them
+        // would have had a different sun per tree.
+        castShadow(b.x, b.y, b.w * 1.15, b.h * 0.95, 16, 74);
+        push(); translate(b.x, b.y); noStroke();
+        const mgW = b.w / 2, mgH = b.h / 2, mgA = b.angle || 0;
+        fill(30, 46, 38, 110); ellipse(0, 0, b.w * 1.2, b.h * 1.05);
+        // Each root twice, dark then lit and offset against the scene light,
+        // which is what gives an arch an underside.
+        stroke(44, 32, 22, 250); strokeWeight(5.4); noFill();
+        for (let i = 0; i < 9; i++) {
+          const a = (i / 9) * TWO_PI + mgA;
+          line(0, 0, Math.cos(a) * mgW * 0.95, Math.sin(a) * mgH * 0.95);
+        }
+        stroke(96, 74, 48, 220); strokeWeight(2.2);
+        for (let i = 0; i < 9; i++) {
+          const a = (i / 9) * TWO_PI + mgA;
+          line(-LIGHT_DX * 2, -LIGHT_DY * 2,
+               Math.cos(a) * mgW * 0.95 - LIGHT_DX * 2,
+               Math.sin(a) * mgH * 0.95 - LIGHT_DY * 2);
+        }
+        noStroke();
+        fill(52, 38, 26); ellipse(0, 0, mgW * 0.5, mgH * 0.5);
+        fill(40, 74, 44, 246); ellipse(0, 0, b.w * 0.72, b.h * 0.66);
+        fill(64, 104, 58, 220);
+        ellipse(-LIGHT_DX * mgW * 0.2, -LIGHT_DY * mgH * 0.2, b.w * 0.46, b.h * 0.42);
+        fill(96, 140, 78, 150);
+        ellipse(-LIGHT_DX * mgW * 0.3, -LIGHT_DY * mgH * 0.3, b.w * 0.24, b.h * 0.22);
+        pop();
+        break;
+      }
+
+      case "BRAKE": {
+        // A bamboo brake. It is the one thing in the sector that blocks a
+        // sightline without being a building, so it has to READ as impassable:
+        // culm tops packed until there is no ground showing between them, laid
+        // on a phyllotactic spiral at three sizes -- one ring of them is a
+        // stipple, three is a mass.
+        castShadow(b.x, b.y, b.w * 1.05, b.h * 0.92, 18, 76);
+        push(); translate(b.x, b.y); noStroke();
+        fill(38, 52, 26, 220); ellipse(0, 0, b.w, b.h);
+        const bkN = 24;
+        for (let ring = 0; ring < 3; ring++) {
+          const rr = 1 - ring * 0.30, dk = 0.72 + ring * 0.20;
+          for (let i = 0; i < bkN; i++) {
+            const a  = i * 2.399 + b.tint * 9 + ring;
+            const rd = Math.sqrt((i + 1) / bkN) * 0.46 * rr;
+            const px = Math.cos(a) * b.w * rd, py = Math.sin(a) * b.h * rd;
+            fill(96 * dk, 118 * dk, 52 * dk, 250);
+            ellipse(px, py, 9, 9);
+            fill(150 * dk, 168 * dk, 88 * dk, 200);
+            ellipse(px - LIGHT_DX * 1.6, py - LIGHT_DY * 1.6, 5.4, 5.4);
+          }
+        }
+        pop();
+        break;
+      }
+
+      case "FALLEN": {
+        // A forest giant that came down and brought its root plate with it. The
+        // trunk is a run of overlapping barrels rather than one long rect,
+        // because a cylinder lying down has round ends and a rect has corners --
+        // and the plate standing on edge at the butt is what says it fell
+        // rather than that somebody cut and stacked it.
+        const fnH = b.w > b.h;
+        const fnL = fnH ? b.w : b.h, fnW = fnH ? b.h : b.w;
+        castShadowRect(b.x + LIGHT_DX * 8, b.y + LIGHT_DY * 8, b.w, b.h, 10, 78, fnW * 0.4);
+        push(); translate(b.x, b.y); noStroke();
+        const fnS = 9;
+        for (let i = 0; i <= fnS; i++) {
+          const t2 = i / fnS;
+          const along = (t2 - 0.5) * fnL;
+          const wid = fnW * (0.92 - t2 * 0.42);
+          const ax = fnH ? along : 0, ay = fnH ? 0 : along;
+          fill(58, 44, 30);
+          ellipse(ax, ay, fnH ? wid * 1.1 : wid, fnH ? wid : wid * 1.1);
+          fill(94, 74, 48);
+          ellipse(ax - LIGHT_DX * fnW * 0.14, ay - LIGHT_DY * fnW * 0.14,
+                  (fnH ? wid * 1.1 : wid) * 0.6, (fnH ? wid : wid * 1.1) * 0.6);
+        }
+        // Root plate at the butt, and the broken roots radiating out of it.
+        const fnBx = fnH ? -fnL / 2 : 0, fnBy = fnH ? 0 : -fnL / 2;
+        fill(40, 30, 20); ellipse(fnBx, fnBy, fnW * 1.9, fnW * 1.9);
+        fill(66, 50, 34);
+        ellipse(fnBx - LIGHT_DX * 4, fnBy - LIGHT_DY * 4, fnW * 1.5, fnW * 1.5);
+        stroke(34, 26, 18, 240); strokeWeight(3); noFill();
+        for (let i = 0; i < 9; i++) {
+          const a = i * 0.698 + b.tint * 7;
+          line(fnBx, fnBy, fnBx + Math.cos(a) * fnW * 0.95, fnBy + Math.sin(a) * fnW * 0.95);
+        }
+        noStroke();
+        // Moss, on the side the sun reaches.
+        fill(64, 96, 52, 130);
+        for (let i = 0; i < 5; i++) {
+          const t2 = (i + 0.5) / 5, along = (t2 - 0.5) * fnL * 0.8;
+          ellipse((fnH ? along : 0) - LIGHT_DX * fnW * 0.2,
+                  (fnH ? 0 : along) - LIGHT_DY * fnW * 0.2, fnW * 0.5, fnW * 0.5);
+        }
+        pop();
+        break;
+      }
+
+      // ===================================================================
+      // SECTOR 5 — the tundra's sub-biomes
+      // ===================================================================
+      case "SERAC": {
+        // A block the sheet broke itself into. Faceted and translucent, so the
+        // lit face is nearly white while the shaded one keeps its blue -- ice is
+        // the one material in this game whose shadow side is a HUE change rather
+        // than only a value one, and on a palette this bright that is the only
+        // thing left that can carry the form.
+        castShadowRect(b.x, b.y, b.w * 1.05, b.h * 1.0, 26, 80, 4);
+        push(); translate(b.x, b.y); noStroke();
+        const srW = b.w / 2, srH = b.h / 2;
+        fill(138, 176, 206);
+        beginShape();
+        for (let i = 0; i < 6; i++) {
+          const a  = (i / 6) * TWO_PI + b.tint * 3;
+          const rd = 0.44 + 0.12 * Math.sin(i * 2.2 + b.tint * 9);
+          vertex(Math.cos(a) * b.w * rd, Math.sin(a) * b.h * rd);
+        }
+        endShape(CLOSE);
+        fill(232, 244, 252, 235);
+        ellipse(-LIGHT_DX * srW * 0.22, -LIGHT_DY * srH * 0.22, b.w * 0.62, b.h * 0.58);
+        fill(96, 138, 176, 170);
+        ellipse(LIGHT_DX * srW * 0.24, LIGHT_DY * srH * 0.24, b.w * 0.44, b.h * 0.38);
+        stroke(255, 255, 255, 150); strokeWeight(1.8); noFill();
+        for (let i = 0; i < 3; i++) {
+          const a = b.tint * 11 + i * 1.1;
+          line(Math.cos(a) * -srW * 0.7, Math.sin(a) * -srH * 0.7,
+               Math.cos(a) * srW * 0.7, Math.sin(a) * srH * 0.7);
+        }
+        noStroke();
+        pop();
+        break;
+      }
+
+      case "CAIRN": {
+        // Somebody stacked this. It is the only made thing on the fell and the
+        // only navigation aid a whiteout allows.
+        //
+        // The courses are spread along the LEAN the wrapper already applied, not
+        // up the screen: a course at height fraction t of the whole is at
+        // t * lean, and the wrapper has already moved us the full lean, so the
+        // offset back is (t - 1) * lean. That keeps a cairn on the one
+        // projection every other mass in the world uses -- offset up the screen
+        // instead, it leaned the wrong way on the north half of every view.
+        castShadow(b.x, b.y, b.w * 1.3, b.h * 0.95, 22, 84);
+        push(); translate(b.x, b.y); noStroke();
+        const cnN = 5;
+        for (let i = 0; i < cnN; i++) {
+          const t2 = i / (cnN - 1);
+          const ux = _plx * (t2 - 1), uy = _ply * (t2 - 1);
+          const rd = 1 - t2 * 0.58;
+          const k  = 0.82 + t2 * 0.30;
+          fill(74 * k, 74 * k, 70 * k, 250);
+          ellipse(ux, uy, b.w * rd, b.h * rd * 0.86);
+          fill(122 * k, 122 * k, 116 * k, 240);
+          ellipse(ux - LIGHT_DX * b.w * 0.10, uy - LIGHT_DY * b.h * 0.10,
+                  b.w * rd * 0.70, b.h * rd * 0.60);
+          fill(0, 0, 0, 40);
+          ellipse(ux + LIGHT_DX * b.w * 0.12, uy + LIGHT_DY * b.h * 0.12,
+                  b.w * rd * 0.50, b.h * rd * 0.40);
+        }
+        // Lichen: the only warm colour on the fell, and it grows on one side.
+        fill(158, 154, 108, 120);
+        for (let i = 0; i < 3; i++) {
+          const a = b.tint * 19 + i * 2.1;
+          ellipse(Math.cos(a) * b.w * 0.20 + _plx * -0.4,
+                  Math.sin(a) * b.h * 0.20 + _ply * -0.4, b.w * 0.16, b.h * 0.13);
+        }
+        pop();
+        break;
+      }
+
+      case "MAST": {
+        // A relay mast, and the sector's only fixed light. The White Silence has
+        // no settlement and no grid, so one red lamp visible from a kilometre
+        // away does more for it than any set piece could.
+        //
+        // The plinth fills the collision box -- which is the rect the generic
+        // sides pass extrudes -- and everything above it is drawn at the leaned
+        // top, so the tower rises off its own base rather than standing on a
+        // slab of its own invention.
+        castShadowRect(b.x + LIGHT_DX * 22, b.y + LIGHT_DY * 22, b.w, b.h, 40, 88, 3);
+        push(); translate(b.x, b.y); noStroke();
+        const mtW = b.w / 2;
+        fill(118, 122, 128); rect(-mtW, -mtW, b.w, b.w, 3);
+        fill(150, 154, 160); rect(-mtW - LIGHT_DX * 2, -mtW - LIGHT_DY * 2, b.w, b.w, 3);
+        // Lattice legs seen down their own length, and the bracing between them.
+        stroke(74, 78, 84, 250); strokeWeight(3.4); noFill();
+        for (let i = 0; i < 4; i++) {
+          const a = i * HALF_PI + QUARTER_PI;
+          line(Math.cos(a) * mtW * 0.62, Math.sin(a) * mtW * 0.62, 0, 0);
+        }
+        stroke(158, 162, 168, 200); strokeWeight(1.8);
+        for (let i = 0; i < 4; i++) {
+          const a0 = i * HALF_PI + QUARTER_PI, a1 = a0 + HALF_PI;
+          line(Math.cos(a0) * mtW * 0.62, Math.sin(a0) * mtW * 0.62,
+               Math.cos(a1) * mtW * 0.62, Math.sin(a1) * mtW * 0.62);
+        }
+        noStroke();
+        fill(96, 100, 106); ellipse(0, 0, mtW * 0.9, mtW * 0.9);
+        fill(176, 180, 186); ellipse(-LIGHT_DX * 2, -LIGHT_DY * 2, mtW * 0.6, mtW * 0.6);
+        fill(210, 214, 220, 220);
+        ellipse(mtW * 0.34, 0, mtW * 0.34, mtW * 0.5);
+        ellipse(-mtW * 0.34, 0, mtW * 0.34, mtW * 0.5);
+        // The lamp itself stays small: the pool is the light rig's job, and a
+        // bright disc painted here as well is a second sun on top of the first.
+        fill(226, 70, 62); ellipse(0, 0, 7, 7);
+        pop();
+        break;
+      }
+
+      // ===================================================================
+      // SECTOR 6 — the violet waste's sub-biomes
+      // ===================================================================
+      case "HIVETOWER": {
+        // Grown rather than built: a stack of collars, each narrower than the
+        // one under it, with an open throat at the top. The collars are what
+        // make it read as accreted -- a smooth cone is a traffic bollard.
+        // Spread along the lean, on the same reasoning as the cairn.
+        castShadow(b.x, b.y, b.w * 1.1, b.h * 0.95, 30, 80);
+        push(); translate(b.x, b.y); noStroke();
+        const hvN = 5;
+        for (let i = 0; i < hvN; i++) {
+          const t2 = i / (hvN - 1);
+          const ux = _plx * (t2 - 1), uy = _ply * (t2 - 1);
+          const rd = 1 - t2 * 0.52;
+          const k  = 0.78 + t2 * 0.36;
+          fill(48 * k, 32 * k, 62 * k, 250);
+          ellipse(ux, uy, b.w * rd, b.h * rd * 0.90);
+          fill(96 * k, 68 * k, 118 * k, 235);
+          ellipse(ux - LIGHT_DX * b.w * 0.09, uy - LIGHT_DY * b.h * 0.09,
+                  b.w * rd * 0.74, b.h * rd * 0.64);
+        }
+        // The throat, and the one saturated accent on the whole prop. It is not
+        // an emitter: a hive chunk carries eight of these and the light budget
+        // is twenty-six sources for the entire scene.
+        fill(22, 14, 28, 250); ellipse(0, 0, b.w * 0.28, b.h * 0.24);
+        fill(104, 232, 128, 90); ellipse(0, 0, b.w * 0.18, b.h * 0.15);
+        pop();
+        break;
+      }
+
+      case "SPOREVENT": {
+        // A vent with pressure behind it, and the sector's designated light
+        // source (see PROP_EMITTERS). The fixture is deliberately small for the
+        // same reason the mast's lamp is: the ground pool belongs to the rig.
+        castShadow(b.x, b.y, b.w * 1.1, b.h * 0.9, 12, 66);
+        push(); translate(b.x, b.y); noStroke();
+        fill(52, 34, 66, 235); ellipse(0, 0, b.w * 1.25, b.h * 1.1);
+        fill(88, 60, 108, 230);
+        ellipse(-LIGHT_DX * b.w * 0.10, -LIGHT_DY * b.h * 0.10, b.w * 0.9, b.h * 0.78);
+        fill(30, 20, 40, 250); ellipse(0, 0, b.w * 0.5, b.h * 0.44);
+        // Fringe of tubes round the rim: the thing that says it is alive.
+        for (let i = 0; i < 8; i++) {
+          const a = i * 0.785 + b.tint * 6;
+          fill(126, 86, 150, 240);
+          ellipse(Math.cos(a) * b.w * 0.34, Math.sin(a) * b.h * 0.30,
+                  b.w * 0.14, b.h * 0.12);
+        }
+        fill(150, 250, 172, 120); ellipse(0, 0, b.w * 0.26, b.h * 0.22);
+        pop();
+        break;
+      }
+
+      case "IMPACTOR": {
+        // Whatever made the crater, still lying in it. Half buried, so what is
+        // above ground is a segment rather than a body -- and the spoil is
+        // heaped down-range of it, which is the only thing that says it arrived
+        // rather than that somebody put it there.
+        castShadow(b.x, b.y, b.w * 1.15, b.h * 0.9, 20, 82);
+        push(); translate(b.x, b.y); noStroke();
+        const imA = b.angle || 0, imC = Math.cos(imA), imS = Math.sin(imA);
+        fill(40, 32, 44, 200);
+        ellipse(imC * b.w * 0.30, imS * b.h * 0.30, b.w * 1.15, b.h * 0.95);
+        // The body, faceted, each facet shaded by its OWN normal so the lit side
+        // stays the same side as the camera swings past.
+        for (let i = 0; i < 5; i++) {
+          const a = imA + (i / 5) * TWO_PI;
+          const k = 0.80 + 0.34 * (-(Math.cos(a) * LIGHT_DX + Math.sin(a) * LIGHT_DY));
+          fill(46 * k, 42 * k, 48 * k, 250);
+          ellipse(Math.cos(a) * b.w * 0.16, Math.sin(a) * b.h * 0.14,
+                  b.w * 0.62, b.h * 0.56);
+        }
+        fill(126, 130, 138, 190);
+        ellipse(-LIGHT_DX * b.w * 0.16, -LIGHT_DY * b.h * 0.14, b.w * 0.34, b.h * 0.28);
+        // Ablation: the face that met the way in is glassed.
+        fill(206, 214, 230, 70);
+        ellipse(-imC * b.w * 0.22 - LIGHT_DX * 3, -imS * b.h * 0.20 - LIGHT_DY * 3,
+                b.w * 0.30, b.h * 0.16);
+        pop();
+        break;
+      }
+
+      // ===================================================================
+      // SECTOR 7 — the crystal flats' sub-biomes
+      // ===================================================================
+      case "CRYSTALSPIRE": {
+        // The sector's only skyline. A cluster of prisms sharing one root rather
+        // than a single cone, because a crystal grows in habit -- and each prism
+        // is shaded by its own facing, so the stand keeps one lit side while the
+        // camera swings past it. Tips ride the lean, roots stay on the ground.
+        castShadow(b.x, b.y, b.w * 1.05, b.h * 0.85, 34, 74);
+        push(); translate(b.x, b.y); noStroke();
+        // Growth halo on the pan, first, so the prisms sit on top of it.
+        fill(214, 226, 236, 60); ellipse(0, 0, b.w * 0.9, b.h * 0.8);
+        for (let i = 0; i < 4; i++) {
+          const a  = i * 1.571 + b.tint * 7;
+          const rd = 0.16 + 0.10 * Math.abs((i * 0.37 + b.tint * 5) % 1);
+          const px = Math.cos(a) * b.w * rd, py = Math.sin(a) * b.h * rd;
+          const t2 = 0.55 + 0.45 * Math.abs((i * 0.61 + b.tint * 11) % 1);
+          const ux = px + _plx * (t2 - 1), uy = py + _ply * (t2 - 1);
+          const k  = 0.78 + 0.34 * (-(Math.cos(a) * LIGHT_DX + Math.sin(a) * LIGHT_DY));
+          fill(86 * k, 92 * k, 118 * k, 245);
+          quad(px - b.w * 0.10, py, px, py - b.h * 0.10,
+               ux + b.w * 0.06, uy, ux, uy + b.h * 0.06);
+          fill(150 * k, 168 * k, 208 * k, 230);
+          ellipse(ux, uy, b.w * 0.24, b.h * 0.20);
+          fill(198, 236, 255, 110);
+          ellipse(ux - LIGHT_DX * 2, uy - LIGHT_DY * 2, b.w * 0.12, b.h * 0.10);
+        }
+        pop();
+        break;
+      }
+
+      case "PYLON": {
+        // Machinery standing on the circuit ground. Built rather than grown, so
+        // it is the one prop in this sector with right angles in it -- which is
+        // most of the reason for putting it on the bus at all: paint with
+        // nothing standing on it is a texture, and this sector had kilometres
+        // of exactly that.
+        castShadowRect(b.x + LIGHT_DX * 18, b.y + LIGHT_DY * 18, b.w, b.h, 34, 86, 3);
+        push(); translate(b.x, b.y); noStroke();
+        const pyW = b.w / 2;
+        fill(84, 88, 96); rect(-pyW, -pyW, b.w, b.w, 3);
+        fill(112, 118, 128); rect(-pyW - LIGHT_DX * 2, -pyW - LIGHT_DY * 2, b.w, b.w, 3);
+        stroke(58, 62, 70, 250); strokeWeight(4); noFill();
+        for (let i = 0; i < 4; i++) {
+          const a = i * HALF_PI + QUARTER_PI;
+          line(Math.cos(a) * pyW * 0.66, Math.sin(a) * pyW * 0.66, 0, 0);
+        }
+        stroke(150, 158, 170, 210); strokeWeight(2);
+        ellipse(0, 0, b.w * 0.8, b.h * 0.8);
+        noStroke();
+        fill(64, 68, 76); ellipse(0, 0, pyW * 0.9, pyW * 0.9);
+        fill(140, 148, 160); ellipse(-LIGHT_DX * 2, -LIGHT_DY * 2, pyW * 0.6, pyW * 0.6);
+        fill(120, 220, 255); ellipse(0, 0, 8, 8);
+        pop();
+        break;
+      }
+
       case "BRIDGE": {
         // Only the handrails. The deck itself is drawn back in the ground
         // stack by drawBiomeDecks() -- see the comment there.
@@ -26420,7 +28359,23 @@ const PROP_EMITTERS = {
   CABIN:      { dx: 0, dy: 10,  r: 180, z: 26, p: 0.62, c: [1.00, 0.74, 0.44], soft: 0.038, rMin: 26, fix: 'WINDOW' },
   SITEHUT:    { dx: 0, dy: 8,   r: 160, z: 24, p: 0.60, c: [1.00, 0.84, 0.58], soft: 0.038, rMin: 24, fix: 'WINDOW' },
   KIOSK:      { dx: 0, dy: 0,   r: 150, z: 30, p: 0.60, c: [0.84, 0.96, 1.00], soft: 0.034, rMin: 20, fix: 'WINDOW' },
-  BUSSTOP:    { dx: 0, dy: -8,  r: 160, z: 34, p: 0.56, c: [0.88, 0.96, 1.00], soft: 0.030, rMin: 20, fix: 'LAMP'  }
+  BUSSTOP:    { dx: 0, dy: -8,  r: 160, z: 34, p: 0.56, c: [0.88, 0.96, 1.00], soft: 0.030, rMin: 20, fix: 'LAMP'  },
+  // The three outer sectors each get exactly ONE lit prop, and each of them is
+  // rare on purpose. The budget is LIGHT_BUDGET sources for the whole scene,
+  // nearest first, so a common emitter does not light its own sector -- it
+  // spends the budget on itself and drops the player's torch off the end of the
+  // list. That is why a hive tower and a crystal spire carry their glow as
+  // paint instead: there are eight of them per chunk.
+  //
+  // MAST: the only fixed light in The White Silence. High z, because a lamp
+  // ninety units up is not shadowed by anything on the ground -- which is the
+  // whole reason to see it from a kilometre away.
+  MAST:       { dx: 0, dy: 0,   r: 300, z: 96, p: 0.86, c: [1.00, 0.34, 0.30], soft: 0.022, rMin: 30, fix: 'BEACON', pulse: 1 },
+  // SPOREVENT: the violet waste has no grid and no settlement, so the only
+  // thing that lights it is what grows in it.
+  SPOREVENT:  { dx: 0, dy: 0,   r: 190, z: 14, p: 0.58, c: [0.56, 1.00, 0.66], soft: 0.044, rMin: 22, fix: 'BEACON' },
+  // PYLON: still drawing current off a bus nobody maintains.
+  PYLON:      { dx: 0, dy: 0,   r: 210, z: 40, p: 0.62, c: [0.52, 0.86, 1.00], soft: 0.030, rMin: 26, fix: 'LAMP'  }
 };
 
 // Which weapons carry a torch under the barrel. The three western guns and the

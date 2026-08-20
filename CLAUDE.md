@@ -33,6 +33,12 @@ denser, more readable world for both the legacy (hand-authored) maps and the
 procedurally streamed biomes. The systems below are all already implemented and
 working. The job is to *extend* them, not rebuild them.
 
+All five open layouts now carry sub-biomes: the woodland's six (Sector 2) and five
+each for the jungle, tundra, violet waste and crystal flats. The remaining thin ground
+is the **frontier** (Sector 3), which has an authored core and a relief system but no
+region layer, and the **city layouts**, whose variety comes from `cityZoneAt()` rather
+than from a landscape.
+
 ## The gameplay loop this world serves
 
 1. **Story mode / cutscene** opens each level (biome).
@@ -256,6 +262,79 @@ all. `findSpot(w, h, pad)` inside the `WOODLAND` case asks the far weaker questi
 piece actually needs — is this patch of ground clear — and the lattice keeps the scatter
 around it honest.
 
+### Sub-biomes (Sectors 4–7)
+
+The same construction, applied to the four layouts that had none. A chunk of tundra
+used to be the same chunk of tundra a kilometre away — the only thing that changed as
+you walked was which rock the lattice handed out, which is a texture rather than a
+place.
+
+```
+jungleRegion  (4)  CANOPY · SWAMP · CLEARING · BAMBOO · CORDON
+tundraRegion  (5)  SNOWFIELD · ICEFIELD · TAIGA · MORAINE · FELLFIELD
+alienRegion   (6)  MYCELIA · CRATER · HIVE · FLESH · ASHFALL
+crystalRegion (7)  PAN · SPIRE · SALT · GLASS · LATTICE
+regionAt(biome, wx, wy, layout)   // one question for the whole world
+```
+
+Measured coverage is in `check-generation.js`'s `== sub-biomes ==` section; each
+sector runs a ~45% default with the rest between 6% and 19%. **Measure over a window
+much wider than the fields' own period** — a 17×17 chunk sample sits inside one lobe
+of a slow lattice and reports whichever region owns that lobe at 50%, which is a
+property of the window and not of the world.
+
+`regionAt()` is the single call site the clutter scatter uses. It answers for the five
+layouts that have sub-biomes and returns `null` for the rest, and every consumer treats
+`null` as "fall through to the default rotation" — which is what lets one line in
+`generateChunkContent()` serve all seven sectors.
+
+Acceptance tables, read exactly the way `RG_TREES` is (uniform attempts, the region
+moves the odds, asked at the feature's own position): `JG_GROWTH` / `JG_FROND`,
+`TU_STONE` / `TU_TREES`, `AL_GROWTH`, `CR_GROWTH`. `ZONE_TINT` gained an entry for each
+of the four layouts; the tundra's is deliberately about a third of the woodland's
+because that palette is a hundred points brighter and a full-size swing clips to white.
+
+Three things worth knowing before extending these:
+
+- **The crystal flats' circuit road is a region now**, not a per-chunk decoration. It
+  used to be painted as an L on the north and west edge of *every* chunk, so the
+  machinery was uniformly everywhere and therefore nowhere. Each edge band is gated on
+  the region **at that edge's own midpoint** — not at the chunk corner, which would
+  punch a hole in a bus running through a chunk whose corner fell outside the lattice —
+  and exactly one chunk owns each band. `generateChunkContent()` tests the two edges
+  the same way, so a `PYLON` can never stand on a bus that was never painted.
+- **A set piece that has to clear the trail cannot be placed by an open search.** The
+  jungle's track runs down the middle of every column and a 500-long revetment is most
+  of a chunk wide, so a search that also has to clear the road had nowhere left to
+  land: the first version built a cordon in *none* of fifty cordon chunks. The bank is
+  sited **against** the track instead — parallel, at a set-back, which is also where a
+  position covering a road actually goes.
+- **Sweep set pieces into the lattice before anything takes a cell from it, and again
+  after anything that places by `solidsClearAt` instead.** The serac and erratic runs
+  are lines and the lattice hands out a grid, so they have to place by clearance test —
+  and until they are swept in, `lat.take()` believes that ground is empty. One sweep in
+  the wrong place put the relay station on three erratics and a mast under a boulder.
+
+New micro-props (12): `BAMBOO · ROOT · WIRE` (jungle), `LICHEN · KRUMMHOLZ · HOARFROST`
+(tundra), `CHITIN · TENDRIL · SLAG` (alien), `SALTCRUST · GEODE · FULGURITE` (crystal).
+`KRUMMHOLZ`, `TENDRIL` and `GEODE` are in `CLUTTER_ANIMATED`.
+
+New biome props (12): `REVETMENT · MANGROVE · BRAKE · FALLEN` (jungle),
+`SERAC · CAIRN · MAST` (tundra), `HIVETOWER · SPOREVENT · IMPACTOR` (alien),
+`CRYSTALSPIRE · PYLON` (crystal).
+
+**Each of the three outer sectors gets exactly one lit prop, and each is rare on
+purpose** — `MAST`, `SPOREVENT`, `PYLON`. `LIGHT_BUDGET` is 26 sources for the whole
+scene, nearest first, so a *common* emitter does not light its sector: it spends the
+budget on itself and drops the player's own torch off the end of the list. That is why
+a hive tower and a crystal spire carry their glow as paint — there are eight of them
+per chunk.
+
+`CAIRN`, `HIVETOWER` and `CRYSTALSPIRE` stack their courses **along the lean**, not up
+the screen. A course at height fraction `t` sits at `t · lean`, and the generic wrapper
+has already translated by the full lean, so the offset back is `(t − 1) · lean`. Offset
+up the screen instead, they leaned the wrong way over the north half of every view.
+
 ### Water and decks
 
 Two flags carry the semantics, because neither is an ordinary mass:
@@ -289,10 +368,10 @@ reach the centreline.
 | 1 | Stick City | `CITY` | ACID_RAIN | Grid megablock, always authored core; canal and tram rows |
 | 2 | The Undercity | `WOODLAND` | ACID_RAIN | Dark; `CITY_DENSE` inside the curtain wall, road network, rivers and six sub-biomes outside |
 | 3 | Dry Gulch | `FRONTIER` | DUST | Agrarian belt, ghost town, mine bench relief |
-| 4 | The Green Line | `JUNGLE` | FOG | Overgrown military cordon |
-| 5 | The White Silence | `TUNDRA` | SNOW | Sparse, `clutterDensity: 0.35` |
-| 6 | The Violet Waste | `ALIEN` | SPORES | Bioluminescent |
-| 7 | The Crystal Flats | `CRYSTAL` | SHIMMER | Terminus, huge diurnal swing |
+| 4 | The Green Line | `JUNGLE` | FOG | Overgrown military cordon; five sub-biomes |
+| 5 | The White Silence | `TUNDRA` | SNOW | Sparse, `clutterDensity: 0.35`; five sub-biomes |
+| 6 | The Violet Waste | `ALIEN` | SPORES | Bioluminescent; five sub-biomes |
+| 7 | The Crystal Flats | `CRYSTAL` | SHIMMER | Terminus, huge diurnal swing; five sub-biomes |
 
 **Palettes are authored at midday, not midnight.** The whole day/night model
 *subtracts* light — night is a wash laid over the top — so a palette written at night
@@ -373,7 +452,9 @@ floating. Existing cases:
 
 `PEBBLE · TRASH · PAPER · PUDDLE · WEED · CRACK · GRASS · FLOWER · HEATHER · ASH ·
 TUMBLEWEED · BONE · SAGE · VINE · FERN · LOG · STUMP · MUSHROOM · REED · ICE · DRIFT ·
-SPOREPOD · GLOWMOSS · SHARD · RIPPLE · MANHOLE · CONE · TREE · PINE · SNAG`
+SPOREPOD · GLOWMOSS · SHARD · RIPPLE · MANHOLE · CONE · TREE · PINE · SNAG ·
+BAMBOO · ROOT · WIRE · LICHEN · KRUMMHOLZ · HOARFROST · CHITIN · TENDRIL · SLAG ·
+SALTCRUST · GEODE · FULGURITE`
 
 `pickClutterType(def, rng, layout, region)` takes the sub-biome as a fourth argument and
 keeps a separate rotation per region. Ground cover is the fastest read a sub-biome has —
@@ -410,6 +491,10 @@ It culls with `inView()` before the switch.
 - Building site: `HOARDING · SPOIL · MATERIALS · SITEHUT`
 - Street furniture: `HYDRANT · POSTBOX · KIOSK · BUSSTOP`
 - Woodland: `CABIN · LOGPILE · SIGNPOST · RUINWALL · MONOLITH · HEDGE · WATCHTOWER`
+- Jungle: `REVETMENT · MANGROVE · BRAKE · FALLEN`
+- Tundra: `SERAC · CAIRN · MAST`
+- Violet waste: `HIVETOWER · SPOREVENT · IMPACTOR`
+- Crystal flats: `CRYSTALSPIRE · PYLON`
 - Surfaces drawn in the ground pass by `drawBiomeDecks()`: `BRIDGE · CANALBRIDGE ·
   BOARDWALK` (the deck only — their rails and parapets are in `drawBiomeProps()`)
 - Collision only, no art by design: `RIVER · CANAL`
@@ -512,6 +597,12 @@ kilometre), the posts around them (`WATCHTOWER`, `GUARDBOX`, `BUNKER`) and anywh
 somebody lives or works (`CABIN`, `SITEHUT`, `KIOSK`, `BUSSTOP`). `check-lighting.js`
 asserts every key is a `propType` that actually reaches `drawBiomeProps()`, because a
 light attached to a prop that is never emitted is silent.
+
+The outer sectors add one lit prop each — `MAST` (the only fixed light in The White
+Silence, at `z: 96` so nothing on the ground shadows it), `SPOREVENT` (the violet waste
+has no grid, so the only thing lighting it is what grows in it) and `PYLON` (still
+drawing current off a bus nobody maintains). All three are deliberately rare: see
+**Sub-biomes (Sectors 4–7)** for why a common emitter does not light its own sector.
 
 **The torch is a property of the gun, not of the player.** `WEAPON_TORCH` lists which
 weapons carry one — `PISTOL · SMG · DUAL_SMG · ASSAULT_RIFLE · ROCKET_LAUNCHER · TASER`.
@@ -2426,6 +2517,16 @@ warn and does not draw wrong — the term just stays at zero. It cross-checks ev
 uniform the JS writes against every uniform the seven shaders declare, in both
 directions, and additionally asserts that nothing allocates a GPU object inside
 `glRigFrame()`. Anything about how the rig actually *looks* needs a browser.
+
+`check-generation.js` also carries a `== sub-biomes ==` section: every region a
+resolver can name actually occurs, none owns more than 60% of its sector, each is a
+pure function of world position, and `regionAt()` dispatches to the right one (and to
+`null` for the layouts with no sub-biomes). Its placement sweep covers sectors 1, 2 and
+4–7; **sector 3 is reported but not asserted**, because it carries nine pre-existing
+touches of its own — a wagon parked against a fence and the like — that predate this
+work. `check-render.js` walks the live draw path for all seven sectors at four times of
+day, which is what keeps a set piece that only turns up in one chunk in forty from
+being art nobody has ever run.
 
 `check-population.js` overrides the harness's `random()` with a seeded generator, because
 `legacyStartAtLevel()` runs against p5's global RNG rather than the chunk hashes — the
