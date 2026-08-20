@@ -30271,6 +30271,20 @@ const GLRIG_OWN_SHADOWS = true;
 
 const GLRIG_SCALES = [1.0, 0.78, 0.6];
 
+// THE LIGHT ACCUMULATION RUNS COARSER THAN THE COMPOSITE, and this is the
+// single biggest thing the rig can do for a phone.
+//
+// Light is low frequency -- a pool, a penumbra, a wash -- so halving its
+// resolution is invisible. The composite carries every EDGE in the picture and
+// stays at full size, so nothing gets soft. Before this, the normals pass, the
+// sun's twenty-step ray march and every point light all ran at the full canvas:
+// on a 1080x2340 phone that is TWO AND A HALF MILLION pixels, twenty samples
+// deep, every frame -- and it measured 45ms with ONE light in the scene, which
+// is the whole reason the rig was standing itself down in the massed ambush.
+//
+// A quarter of the pixels for the same picture.
+const GLRIG_LIGHT_SCALE = 0.5;
+
 const GLRig = {
   ok: false,          // context exists and every program linked
   on: false,          // ok, and not stood down by the watchdog
@@ -30288,6 +30302,7 @@ const GLRig = {
   tier: 0,            // index into GLRIG_SCALES
   lightTier: 0,       // index into GLRIG_LIGHT_TIERS; the watchdog drops this first
   ms: 16,             // smoothed frame time; the light budget is spent against it
+  lw: 0, lh: 0,       // the light/normal targets, at GLRIG_LIGHT_SCALE of w/h
   slow: 0,            // consecutive frames over budget
   fast: 0,
   lights: [],
@@ -30804,10 +30819,17 @@ function glRigResize() {
   GLRig.canvas.width = w;
   GLRig.canvas.height = h;
 
+  // Normals and light live at GLRIG_LIGHT_SCALE; only the composite is full
+  // size. Both are LINEAR, so the composite samples them by uv and gets a free
+  // smooth upsample -- see GLRIG_LIGHT_SCALE.
+  const lw = Math.max(64, Math.round(w * GLRIG_LIGHT_SCALE));
+  const lh = Math.max(64, Math.round(h * GLRIG_LIGHT_SCALE));
+  GLRig.lw = lw; GLRig.lh = lh;
+
   if (GLRig.fbo.normal) { gl.deleteFramebuffer(GLRig.fbo.normal.fbo); gl.deleteTexture(GLRig.fbo.normal.tex); }
   if (GLRig.fbo.light)  { gl.deleteFramebuffer(GLRig.fbo.light.fbo);  gl.deleteTexture(GLRig.fbo.light.tex); }
-  GLRig.fbo.normal = glRigTarget(gl, w, h);
-  GLRig.fbo.light  = glRigTarget(gl, w, h);
+  GLRig.fbo.normal = glRigTarget(gl, lw, lh);
+  GLRig.fbo.light  = glRigTarget(gl, lw, lh);
   if (!GLRig.fbo.normal || !GLRig.fbo.light) { glRigFail(); return; }
 
   // The height field is low frequency -- masses, kerbs and benches, nothing
@@ -31059,16 +31081,25 @@ function glRigClock() {
 
 function glRigWatchdog() {
   const dt = (typeof deltaTime === 'number' && deltaTime > 0) ? deltaTime : 16;
-  if (dt > 26) { GLRig.slow++; GLRig.fast = 0; } else if (dt < 19) { GLRig.fast++; GLRig.slow = 0; }
-  // Shedding lights is cheap and nearly invisible, so it may react sooner than a
-  // resolution drop: 45 slow frames rather than 90. A hitch the player can feel
-  // for a second and a half before anything gives is a worse trade than losing
-  // the cast shadow on a lamp at the edge of the screen.
-  const slowFor = GLRig.lightTier < GLRIG_LIGHT_TIERS.length - 1 ? 45 : 90;
-  if (GLRig.slow > slowFor) {
+  // WEIGHTED BY HOW LONG THE FRAME TOOK, NOT COUNTED. Frames were the wrong
+  // unit: at twelve frames a second, ninety "slow frames" is seven and a half
+  // seconds of the player waiting for the rig to notice -- and the counter only
+  // advances on frames the rig is already making slow. Weighted, a 60ms frame
+  // is worth four, so a bad scene is answered inside a second.
+  if (dt > 26) { GLRig.slow += dt / 16; GLRig.fast = 0; }
+  else if (dt < 19) { GLRig.fast++; GLRig.slow = 0; }
+  if (GLRig.slow > 45) {
     GLRig.slow = 0;
-    // Shadow casters first, then resolution, then give up.
-    if (GLRig.lightTier < GLRIG_LIGHT_TIERS.length - 1) GLRig.lightTier++;
+    // SHED WHATEVER IS ACTUALLY COSTING SOMETHING.
+    //
+    // Shadow casters first was right in a lit street and wrong everywhere else:
+    // the massed ambush had exactly ONE emitter on the field, so the first two
+    // steps bought nothing at all and the rig sat at full resolution for four
+    // more seconds before it touched the thing that mattered. Resolution is
+    // what the fixed passes cost -- the normals, the sun march, the composite --
+    // and lights are only worth shedding when lights are being spent.
+    if (GLRig.lightTier < GLRIG_LIGHT_TIERS.length - 1 &&
+        GLRig.lights.length > GLRIG_LIGHTS_MIN) GLRig.lightTier++;
     else if (GLRig.tier < GLRIG_SCALES.length - 1) { GLRig.tier++; glRigResize(); }
     else { GLRig.on = false; GLRig.failure = GLRIG_SHED_MSG; }
   } else if (GLRig.fast > 600) {
@@ -31087,6 +31118,9 @@ function glRigFrame() {
   if (!glRigActive()) return false;
   const gl = GLRig.gl;
   const W = GLRig.w, H = GLRig.h;
+  // The light half of the pipeline runs coarser -- see GLRIG_LIGHT_SCALE. Only
+  // the final composite is full size.
+  const LW = GLRig.lw || W, LH = GLRig.lh || H;
 
   try {
     // --- G-buffer -----------------------------------------------------------
@@ -31139,7 +31173,7 @@ function glRigFrame() {
     let p = GLRig.prog.normal;
     gl.useProgram(p);
     gl.bindFramebuffer(gl.FRAMEBUFFER, GLRig.fbo.normal.fbo);
-    gl.viewport(0, 0, W, H);
+    gl.viewport(0, 0, LW, LH);
     glRigBindTex(gl, p, 'uHgt', 1, GLRig.tex.height);
     glRigBindTex(gl, p, 'uNrmAtlas', 2, GLRig.tex.atlas);
     gl.uniform2f(p._u.uTexel, 1 / GLRig.hw, 1 / GLRig.hh);
@@ -31151,7 +31185,7 @@ function glRigFrame() {
     p = GLRig.prog.sun;
     gl.useProgram(p);
     gl.bindFramebuffer(gl.FRAMEBUFFER, GLRig.fbo.light.fbo);
-    gl.viewport(0, 0, W, H);
+    gl.viewport(0, 0, LW, LH);
     glRigBindTex(gl, p, 'uHgt', 1, GLRig.tex.height);
     glRigBindTex(gl, p, 'uNrm', 3, GLRig.fbo.normal.tex);
     gl.uniform2f(p._u.uMarchUV, marchU, marchV);
@@ -31210,7 +31244,7 @@ function glRigFrame() {
 
     // --- pass 3: local lights, three passes each ----------------------------
     const lights = glRigGatherLights();
-    const dens = W / width;                       // css px -> rig px
+    const dens = LW / width;                      // css px -> LIGHT buffer px
     const uvW = width / zoom, uvH = height / zoom; // world units across the view
 
     for (let i = 0; i < lights.length; i++) {
@@ -31256,14 +31290,14 @@ function glRigFrame() {
       p = GLRig.prog.light;
       gl.useProgram(p);
       gl.bindFramebuffer(gl.FRAMEBUFFER, GLRig.fbo.light.fbo);
-      gl.viewport(0, 0, W, H);
+      gl.viewport(0, 0, LW, LH);
       gl.enable(gl.BLEND);
       gl.blendFunc(gl.ONE, gl.ONE);
       gl.enable(gl.SCISSOR_TEST);
       const sx0 = Math.max(0, Math.floor((sxp - Lg.r * zoom) * dens));
       const sy0 = Math.max(0, Math.floor((height - syp - Lg.r * zoom) * dens));
-      const sx1 = Math.min(W, Math.ceil((sxp + Lg.r * zoom) * dens));
-      const sy1 = Math.min(H, Math.ceil((height - syp + Lg.r * zoom) * dens));
+      const sx1 = Math.min(LW, Math.ceil((sxp + Lg.r * zoom) * dens));
+      const sy1 = Math.min(LH, Math.ceil((height - syp + Lg.r * zoom) * dens));
       if (sx1 <= sx0 || sy1 <= sy0) continue;
       gl.scissor(sx0, sy0, sx1 - sx0, sy1 - sy0);
 
@@ -31404,6 +31438,7 @@ function drawClimateReadout() {
     fill(on ? 150 : 230, on ? 230 : 140, 150); textSize(10);
     text(on ? ('RIG t' + GLRig.tier + ' L' + GLRig.lightTier +
                '  ' + glRigLightBudget() + '/' + sceneEmitters().length + ' lit' +
+               '  ' + GLRig.lw + 'x' + GLRig.lh +
                '  ' + GLRig.ms.toFixed(1) + 'ms')
             : ('RIG OFF  ' + (GLRig.failure || 'no webgl2') +
                '  ' + GLRig.ms.toFixed(1) + 'ms'),

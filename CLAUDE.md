@@ -977,12 +977,37 @@ lights spent against emitters in view, and the smoothed frame time. It exists be
 feels slow" and "it disappeared" are the two reports this rig produces and neither can be
 acted on without those numbers.
 
-Cost control: point lights are scissored to their own screen box, the light list is the
-same nearest-first gather `drawLightPass()` uses, the height buffer runs at half rig
-resolution (every march sample and every occlusion resample reads it), and
-`glRigWatchdog()` sheds shadow casters, then drops through `GLRIG_SCALES`, and finally
-stands the rig down if the frame budget goes — fall fast, recover slowly, because a rig
-oscillating between tiers reads as flicker.
+**THE LIGHT HALF RUNS COARSER THAN THE COMPOSITE, and it is the single biggest thing
+this rig does for a phone.** The normals pass, the sun's twenty-step ray march and every
+point light used to run at the full canvas — on a 1080×2340 phone that is **two and a half
+million pixels, twenty samples deep, every frame**, and it measured **45 ms with one light
+in the scene**. Light is low frequency (a pool, a penumbra, a wash), so `GLRIG_LIGHT_SCALE`
+halves its resolution and nothing shows; the composite carries every *edge* in the picture
+and stays full size, so the image itself never softens. Both targets are LINEAR, so the
+upsample is free. Three passes write into them and all three must agree about the
+viewport, and the point-light scissor is in light-buffer pixels — a scissor in the wrong
+pixels clips each pool to a quarter of its own box.
+
+**`glRigWatchdog()` sheds whatever is actually costing something.** Casters-first is right
+in a lit street and wrong everywhere else: the Green Line's massed ambush had *one*
+emitter on the field, so the first two steps bought nothing at all and the rig sat at full
+resolution for four more seconds before it touched the thing that mattered. Resolution is
+what the fixed passes cost; lights are only worth shedding when lights are being spent.
+
+**And it counts overrun by TIME, not by frames.** At twelve frames a second, ninety "slow
+frames" is seven and a half seconds of the player waiting for the rig to notice — and the
+counter only advances on frames the rig is already making slow. Weighted by `dt / 16`, a
+62 ms scene gets an answer in about twelve frames, three quarters of a second.
+
+Cost control otherwise: point lights are scissored to their own box, the light list is the
+same nearest-first gather `drawLightPass()` uses, and the height buffer runs at half the
+light resolution again (every march sample and every occlusion resample reads it). Fall
+fast, recover slowly, because a rig oscillating between tiers reads as flicker.
+
+**`SHOW_RIG` reads `RIG t0 L1  6/1 lit  540x1170  78.6ms`** — resolution tier, light tier,
+budget against emitters in view, the light buffer's real size, and the smoothed frame
+time. The `lit` pair is the one that settles arguments: `6/1` means the budget was six and
+the scene had one light in it, so whatever is costing 78 ms, it is not the lights.
 
 ### A shadow needs a sun
 

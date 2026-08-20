@@ -211,10 +211,40 @@ console.log('\n== every light casts, and the budget is the thing that gives ==')
   // Lights are shed BEFORE resolution, and sooner: a lamp at the edge of the
   // screen losing its cast shadow is much less visible than the frame going
   // soft, and both are far less visible than the rig standing down.
-  ok('the watchdog sheds casters before resolution',
-     /if \(GLRig\.lightTier < GLRIG_LIGHT_TIERS\.length - 1\) GLRig\.lightTier\+\+;\s*\n\s*else if \(GLRig\.tier < GLRIG_SCALES\.length - 1\)/.test(src));
-  ok('and it reacts to a stutter sooner than a resolution drop does',
-     /const slowFor = GLRig\.lightTier < GLRIG_LIGHT_TIERS\.length - 1 \? 45 : 90;/.test(src));
+  // SHED WHAT IS ACTUALLY COSTING SOMETHING. Casters-first is right in a lit
+  // street and wrong everywhere else: the massed ambush had ONE emitter on the
+  // field, so two steps of shedding lights bought nothing and the rig sat at
+  // full resolution for four more seconds before it touched the fixed passes.
+  ok('the watchdog only sheds casters when casters are being spent',
+     /GLRig\.lights\.length > GLRIG_LIGHTS_MIN\) GLRig\.lightTier\+\+;\s*\n\s*else if \(GLRig\.tier < GLRIG_SCALES\.length - 1\)/.test(src));
+  // Frames were the wrong unit: at twelve frames a second, ninety slow frames
+  // is seven and a half seconds of waiting for the rig to notice.
+  ok('and it counts overrun by TIME, not by frames',
+     /GLRig\.slow \+= dt \/ 16;/.test(src));
+  {
+    // Measured on the LAST step -- standing down -- because the earlier steps
+    // call glRigResize(), which wants a real canvas. The step is the same
+    // counter either way, so the timing this reports is the timing of all of
+    // them.
+    const react = P(`(() => {
+      GLRig.ok = true; GLRig.on = true;
+      GLRig.tier = GLRIG_SCALES.length - 1;
+      GLRig.lightTier = GLRIG_LIGHT_TIERS.length - 1;
+      GLRig.slow = 0; GLRig.fast = 0;
+      deltaTime = 62;                       // what the ambush actually measured
+      let n = 0;
+      while (GLRig.on && n < 4000) { glRigWatchdog(); n++; }
+      const out = [n, +(n * 62 / 1000).toFixed(2)];
+      GLRig.tier = 0; GLRig.lightTier = 0; GLRig.slow = 0; deltaTime = 16;
+      GLRig.on = false; GLRig.ok = false; GLRig.failure = '';
+      return out;
+    })()`);
+    ok('a scene at 62ms gets an answer inside a second', react[0] > 0 && react[1] < 1.0,
+       react[0] + ' frames, ' + react[1] + 's');
+    // The old counter needed 45 unweighted frames, which at 62ms is 2.8s -- and
+    // 90 for the resolution step, which is 5.6.
+    ok('which is several times sooner than counting frames was', react[0] < 30, react[0]);
+  }
   // By day a local light runs at 0.35 power on top of a fully lit scene, so the
   // twentieth one buys nothing; night is when they are the whole picture.
   const budgetAt = (h) => P('(() => { worldTimeMs = ' + h + ' / 24 * DAY_MS;'
@@ -229,6 +259,34 @@ console.log('\n== every light casts, and the budget is the thing that gives ==')
      /const pooled = \(typeof glRigOwnsSunShadows/.test(nightFn) &&
      /const hz = i < pooled \? 1 : 0\.20;/.test(nightFn) &&
      (nightFn.match(/\* k \* hz\)/g) || []).length === 4);
+}
+
+console.log('\n== the light half runs coarser than the composite ==');
+// The normals pass, the sun's twenty-step ray march and every point light all
+// ran at the full canvas. On a 1080x2340 phone that is two and a half MILLION
+// pixels, twenty samples deep, every frame -- measured at 45ms with ONE light
+// in the scene, which is why the rig kept standing itself down.
+{
+  ok('there is a light scale, and it is a real reduction',
+     P('GLRIG_LIGHT_SCALE') > 0 && P('GLRIG_LIGHT_SCALE') <= 0.75,
+     P('GLRIG_LIGHT_SCALE'));
+  ok('the normal and light targets are allocated at it',
+     /GLRig\.fbo\.normal = glRigTarget\(gl, lw, lh\);/.test(src) &&
+     /GLRig\.fbo\.light  = glRigTarget\(gl, lw, lh\);/.test(src));
+  // Three passes write into them, and every one has to agree about the size.
+  const vp = (rig.match(/gl\.viewport\(0, 0, LW, LH\);/g) || []).length;
+  ok('and all three passes that write them use that viewport', vp === 3, vp + ' of 3');
+  // The composite is the one thing that must stay full size -- it carries every
+  // edge in the picture, and it samples the light by uv so the upsample is free.
+  ok('the composite still runs at full size',
+     /gl\.bindFramebuffer\(gl\.FRAMEBUFFER, null\);\s*\n\s*gl\.viewport\(0, 0, W, H\);/.test(rig));
+  // A scissor in the wrong pixels clips the light to a quarter of its box.
+  ok('the point-light scissor is in light-buffer pixels',
+     /const dens = LW \/ width;/.test(rig) &&
+     /Math\.min\(LW, Math\.ceil/.test(rig) && /Math\.min\(LH, Math\.ceil/.test(rig));
+  // Both targets are LINEAR, or the upsample would show as blocks.
+  ok('they are LINEAR, so the upsample is smooth',
+     /const f = filter \|\| gl\.LINEAR;/.test(rig));
 }
 
 console.log('\n== a stand-down is not permanent ==');
