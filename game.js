@@ -3106,7 +3106,7 @@ const LEGACY_MASS = {
   isMarket:      [166, 140, 106],   isGasStation:  [176, 176, 178],
   isLiquorStore: [ 58,  96, 148],   isApartment:   [166, 146, 120],
   isWesternBldg: [148, 118,  86],   isMall:        [132, 136, 142],
-  isCasino:      [ 46,  46,  58],   isTheater:     [ 56,  42,  56],
+  isCasino:      [ 46,  46,  58],   isTheater:     [ 88,  76,  82],
   isArena:       [ 74,  74,  78],
   isWaterTower:  true,  isWell: true,  isTower: true,  isCircus: true,
   // The skip's own body colour, not a grey-green near it. A bin is one of the
@@ -3205,6 +3205,7 @@ function drawBuildings(list, i0, i1) {
         if (_lm) {
           const _lr = buildingRise(b);
           massLean(b.x, b.y, _lr, _leanTmp);
+          clampLean(_leanTmp, leanCapOf(b));
           if (_leanTmp[0] !== 0 || _leanTmp[1] !== 0) {
             if (_lm !== true) {
               const _lb = legacyBaseOf(b);
@@ -3397,8 +3398,8 @@ function drawBuildings(list, i0, i1) {
         // than as something lying on the roof.
         for (let i = 0; i < 3; i++) {
           const a = mv * 17 + i * 2.399;
-          fill(126, 128, 130, 46);
-          ellipse(Math.cos(a) * mw * 0.28, Math.sin(a) * mh * 0.26, mw * 0.22, mh * 0.18);
+          fill(132, 134, 136, 30);
+          ellipse(Math.cos(a) * mw * 0.28, Math.sin(a) * mh * 0.26, mw * 0.13, mh * 0.11);
         }
         // Roof lights down the spine. A regular repeat is CORRECT here -- roof
         // lights really are evenly spaced -- but they have to stay small and
@@ -3462,7 +3463,96 @@ function drawBuildings(list, i0, i1) {
         pop(); continue;
     }
     if (b.isCasino) { fill(20, 20, 25); stroke(255, 215, 0); strokeWeight(4); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h, 20); let cTime = frameCount * 0.1; for(let i=0; i<10; i++) { fill(sin(cTime + i)*127+128, 50, 255-sin(cTime + i)*127); noStroke(); ellipse(b.x - b.w/2 + 40 + i*85, b.y - b.h/2 + 30, 18, 18); ellipse(b.x - b.w/2 + 40 + i*85, b.y + b.h/2 - 30, 18, 18); ellipse(b.x - b.w/2 + 30, b.y - b.h/2 + 40 + i*85, 18, 18); ellipse(b.x + b.w/2 - 30, b.y - b.h/2 + 40 + i*85, 18, 18); } fill(200, 30, 30); stroke(255); strokeWeight(3); ellipse(b.x - 150, b.y, 180, 180); fill(255); ellipse(b.x - 190, b.y - 40, 25, 25); ellipse(b.x - 110, b.y + 40, 25, 25); ellipse(b.x - 110, b.y - 40, 25, 25); ellipse(b.x - 190, b.y + 40, 25, 25); ellipse(b.x - 150, b.y, 25, 25); push(); translate(b.x + 150, b.y); rotate(frameCount * 0.05); fill(0); ellipse(0,0, 200, 200); for(let a=0; a<TWO_PI; a+=PI/4) { fill(a%(PI/2)===0?200:30, a%(PI/2)===0?30:200, 30); arc(0,0, 190, 190, a, a+PI/4); } fill(255,215,0); ellipse(0,0,40,40); pop(); continue; }
-    if (b.isTheater) { fill(30, 20, 30); stroke(100); strokeWeight(4); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h, 10); fill(40, 30, 40); stroke(80); strokeWeight(3); rect(b.x - 250, b.y - 150, 500, 450, 20); fill(180, 20, 20); noStroke(); rect(b.x - 60, b.y + b.h/2 - 150, 120, 150); fill(200, 20, 20); stroke(255, 200, 0); strokeWeight(6); rect(b.x - 200, b.y - b.h/2 + 20, 400, 100); fill(255, 255, 200, 150 + sin(frameCount * 0.2)*100); noStroke(); for(let i=0; i<13; i++) { ellipse(b.x - 180 + i*30, b.y - b.h/2 + 100, 10, 10); ellipse(b.x - 180 + i*30, b.y - b.h/2 + 35, 10, 10); } continue; }
+    if (b.isTheater) {
+        // A THEATRE FROM ABOVE, not its façade laid on the floor.
+        //
+        // This was a near-black rectangle the size of a city block with a red
+        // marquee bar across the "top" and a red carpet strip at the "bottom" --
+        // an elevation of the front of the building, drawn flat, in thirty
+        // levels of one colour. On screen it was a void with a red stripe in it.
+        //
+        // What a theatre is from overhead is two roofs at different heights: a
+        // tall FLY TOWER over the stage, and a broad, lower auditorium roof in
+        // front of it whose seams fan out from the proscenium because the
+        // seating does. The marquee is the one part of the façade a top-down
+        // camera really does see, because it projects out over the pavement.
+        const tw = b.w, th = b.h, tu = Math.min(tw, th) * 0.012;
+        const tv = Math.abs((b.x * 0.00117 + b.y * 0.00091) % 1);
+        // Which edge the audience arrives at, from the building's own position.
+        const front = (tv * 4) | 0;
+        push(); translate(b.x, b.y); rotate(front * HALF_PI); noStroke();
+        const L = tw, W = th;      // long axis runs back from the entrance
+        // Auditorium roof: warm dark bitumen, not black. Everything above reads
+        // against this, so it has to leave room above it.
+        fill(74, 64, 70); rect(-L / 2, -W / 2, L, W, tu * 1.5);
+        fill(88, 76, 82); rect(-L / 2 + tu, -W / 2 + tu, L - tu * 2, W - tu * 2, tu);
+        // Seams fanning from the proscenium. A fan is the plan of a seating
+        // bowl, and it is the one cue that says which end the stage is.
+        stroke(66, 58, 64, 170); strokeWeight(1.4);
+        for (let i = 0; i <= 9; i++) {
+          const t = i / 9;
+          // From the proscenium, which is the front of the fly tower, not the
+          // middle of the record -- a fan that starts nowhere fans from nothing.
+          line(-L * 0.15, -W * 0.26 + W * 0.52 * t, L * 0.42, -W * 0.46 + W * 0.92 * t);
+        }
+        noStroke();
+        // The fly tower over the stage: the tall block, so it is lighter, has
+        // its own coping, and carries the roof-access hatch and the winch house.
+        const fw = L * 0.34, fh = W * 0.74;
+        push(); translate(-L / 2 + fw / 2 + tu * 2, 0);
+        fill(0, 0, 0, 54); rect(-fw / 2 + LIGHT_DX * tu * 3, -fh / 2 + LIGHT_DY * tu * 3, fw, fh, tu);
+        fill(104, 92, 96); rect(-fw / 2, -fh / 2, fw, fh, tu);
+        fill(126, 112, 114); rect(-fw / 2 + tu * 1.4, -fh / 2 + tu * 1.4, fw - tu * 2.8, fh - tu * 2.8, tu * 0.6);
+        fill(255, 255, 255, 26);
+        rect(-fw / 2 + tu * 1.4 - LIGHT_DX * tu, -fh / 2 + tu * 1.4 - LIGHT_DY * tu, fw - tu * 2.8, tu * 1.2, tu * 0.5);
+        // Smoke vents down the ridge -- every fly tower has them, and a run of
+        // three says "this is the tall bit" more cheaply than any outline.
+        fill(84, 74, 78);
+        for (let i = 0; i < 3; i++) rect(-fw * 0.14, -fh * 0.30 + fh * 0.30 * i, fw * 0.28, fh * 0.10, tu * 0.4);
+        fill(72, 84, 92);
+        for (let i = 0; i < 3; i++) rect(-fw * 0.11, -fh * 0.30 + fh * 0.30 * i, fw * 0.22, fh * 0.06, tu * 0.3);
+        pop();
+        // Rooftop plant for the auditorium, grouped as it is on the mall.
+        push(); translate(L * 0.24, W * 0.30);   // the side the blade sign is not on
+        fill(96, 88, 90); rect(-L * 0.09, -W * 0.10, L * 0.18, W * 0.20, tu * 0.5);
+        for (let i = 0; i < 2; i++) {
+          const ux = -L * 0.045 + i * L * 0.09;
+          fill(0, 0, 0, 40); rect(ux - L * 0.032 + LIGHT_DX * tu, -W * 0.05 + LIGHT_DY * tu, L * 0.064, W * 0.10, tu * 0.3);
+          fill(136, 128, 128); rect(ux - L * 0.032, -W * 0.05, L * 0.064, W * 0.10, tu * 0.3);
+          fill(58, 54, 56); ellipse(ux, 0, W * 0.055, W * 0.055);
+          stroke(178, 170, 170); strokeWeight(1.2);
+          push(); translate(ux, 0); rotate(frameCount * 0.13 + i);
+          line(-W * 0.022, 0, W * 0.022, 0); line(0, -W * 0.022, 0, W * 0.022);
+          pop(); noStroke();
+        }
+        pop();
+        // The MARQUEE, projecting out over the pavement at the entrance -- the
+        // one piece of the front elevation this camera genuinely sees, because
+        // it is a canopy and canopies are horizontal.
+        const mqW = L * 0.10, mqH = W * 0.46;
+        push(); translate(L / 2 - mqW * 0.30, 0);
+        fill(0, 0, 0, 62); rect(-mqW / 2 + LIGHT_DX * tu * 2.5, -mqH / 2 + LIGHT_DY * tu * 2.5, mqW, mqH, tu * 0.6);
+        fill(150, 34, 32); rect(-mqW / 2, -mqH / 2, mqW, mqH, tu * 0.6);
+        fill(186, 46, 40); rect(-mqW / 2 + tu * 0.8, -mqH / 2 + tu * 0.8, mqW - tu * 1.6, mqH - tu * 1.6, tu * 0.4);
+        // Chaser bulbs round the rim. They run, because a marquee's bulbs do,
+        // and it is the only thing moving on this roof at street level.
+        const nB = 12;
+        for (let i = 0; i < nB; i++) {
+          const on = ((i + ((frameCount / 8) | 0)) % 3) !== 0;
+          fill(on ? 255 : 176, on ? 236 : 150, on ? 168 : 110, on ? 240 : 170);
+          const by = -mqH / 2 + tu * 1.6 + (mqH - tu * 3.2) * (i / (nB - 1));
+          ellipse(-mqW / 2 + tu * 1.5, by, tu * 1.4, tu * 1.4);
+          ellipse(mqW / 2 - tu * 1.5, by, tu * 1.4, tu * 1.4);
+        }
+        pop();
+        // The blade sign standing off the corner of the marquee, and the carpet
+        // under it. Both are what you look for from a street away.
+        fill(0, 0, 0, 50); rect(L * 0.30 + LIGHT_DX * tu * 2, -W * 0.44 + LIGHT_DY * tu * 2, L * 0.055, W * 0.16, tu * 0.5);
+        fill(44, 40, 50); rect(L * 0.30, -W * 0.44, L * 0.055, W * 0.16, tu * 0.5);
+        fill(226, 178, 66); rect(L * 0.312, -W * 0.425, L * 0.031, W * 0.13, tu * 0.3);
+        fill(150, 34, 32, 200); rect(L / 2 - tu * 1.2, -W * 0.09, tu * 2.4, W * 0.18);
+        pop(); continue;
+    }
     if (b.isArena) {
         // A STADIUM, not a target.
         //
@@ -25278,7 +25368,29 @@ const BUILDING_GAP_MIN    = 90;
 const STREET_LAMP_RISE = 30;
 // How far south of the column the lantern hangs. sceneEmitters() offsets the
 // source by the same number, so the lamp and its light are the same object.
-const STREET_LAMP_ARM  = 14;
+const STREET_LAMP_ARM  = 9;
+
+// PARALLAX SELLS HEIGHT AS A RATIO OF DISPLACEMENT TO THE OBJECT'S OWN SIZE,
+// and a lean that is right for a building is absurd on a lamp post. massLean()
+// grows with distance from the middle of the screen, so a 16-unit lamp at a
+// rise of 30 was thrown SEVENTY-EIGHT units at the edge of the view -- five
+// times its own width, which does not read as a post standing up. It reads as a
+// stick lying in the road, and that is exactly what the street lamps became.
+//
+// So anything small caps its lean in absolute units. It is the same call the
+// figures make by not leaning at all (see "Figures are deliberately NOT
+// leaned"), taken one notch less far: a short throw still says "this stands
+// up", a long one says "this fell over".
+// 16 is the lamp's own footprint, so the head lands just clear of its base --
+// the classic top-down lamp read, two small lobes and the gap between them.
+const LEAN_CAP = { isStreetLight: 16 };
+function leanCapOf(b) { for (const k in LEAN_CAP) if (b[k]) return LEAN_CAP[k]; return 0; }
+function clampLean(out, cap) {
+  if (!(cap > 0)) return out;
+  const m = Math.sqrt(out[0] * out[0] + out[1] * out[1]);
+  if (m > cap) { const f = cap / m; out[0] *= f; out[1] *= f; }
+  return out;
+}
 
 // Flags whose height has nothing to do with the size of their base.
 function LEGACY_RISE_OVERRIDE(b) {
@@ -25321,7 +25433,12 @@ function buildingRise(b) {
   // smallest side keeps the reach -- rise * (MASS_LEAN + MASS_TILT) -- inside
   // BUILDING_GAP_MIN at every size the subdivider produces, and the floor at
   // BUILDING_RISE_MAX means nothing that was already correct moves at all.
-  const cap = Math.max(BUILDING_RISE_MAX, Math.min(foot * 0.10, 90));
+  // ...and the ceiling on that proportion is what BUILDING_GAP_MIN says it is.
+  // At 10% of the footprint an 870-wide landmark asked for 87, and 87 through
+  // massLean() is a HUNDRED AND THIRTY units of wall -- half a street, painted
+  // over the road beside it, and darker than anything else in the scene. The
+  // proportion was right; the ceiling was the bug.
+  const cap = Math.max(BUILDING_RISE_MAX, Math.min(foot * 0.075, 42));
   b._rise = Math.min(cap, 5 + foot * 0.075 + r01 * foot * 0.09);
   // A few things are not sized by their footprint at all. A lamp post stands on
   // a 16-unit plate and reaches four metres; the generic formula gives it a
@@ -25397,9 +25514,14 @@ function massLean(wx, wy, rise, out) {
 function drawMassSides(x0, y0, x1, y1, lx, ly, cr, cg, cb, mullion) {
   if (lx === 0 && ly === 0) return;
   noStroke();
+  // The AMBIENT FLOOR is not zero. A face turned away from the sun still sees
+  // most of the sky and the ground bounce, so at 0.34 of its own colour a
+  // mid-grey wall came out near black -- and on a landmark, which carries the
+  // widest wall in the game, that put a void the size of a building beside
+  // every one of them. The lit end is unchanged; only the shaded end lifts.
   const face = (nx, ny) => {
     const d = -(nx * LIGHT_DX + ny * LIGHT_DY);
-    const k = 0.34 + 0.46 * (d > 0 ? d : 0);
+    const k = 0.46 + 0.34 * (d > 0 ? d : 0);
     fill(cr * k + 5, cg * k + 6, cb * k + 10);
   };
   if (ly > 0)      { face(0, -1); quad(x0, y0, x1, y0, x1 + lx, y0 + ly, x0 + lx, y0 + ly); }
@@ -25487,7 +25609,7 @@ function drawMassSkirt(cx, cy, w, h, ang, round, lx, ly, cr, cg, cb, top) {
     if (nx * ((x0 + x1) * 0.5 - cx) + ny * ((y0 + y1) * 0.5 - cy) < 0) { nx = -nx; ny = -ny; }
     if (nx * lx + ny * ly >= 0) continue;   // the leaned top covers this face
     const d = -(nx * LIGHT_DX + ny * LIGHT_DY);
-    const k = 0.34 + 0.46 * (d > 0 ? d : 0);
+    const k = 0.46 + 0.34 * (d > 0 ? d : 0);   // same ambient floor as a box face
     fill(cr * k + 5, cg * k + 6, cb * k + 10);
     quad(x0, y0, x1, y1, Q[j * 2], Q[j * 2 + 1], Q[i * 2], Q[i * 2 + 1]);
   }
@@ -26355,6 +26477,9 @@ function charShadowFill(alpha) {
 // Shadow pass for streamed biomes. Offset scales with the caster's footprint —
 // bigger masses sit higher and throw longer — but the direction is always the
 // one global light vector, which is what sells the scene as a single lit space.
+// Its own scratch pair, because _leanTmp is live in drawBuildings() and in
+// sceneEmitters() and this pass runs between them.
+const _shLean = [0, 0];
 function drawBiomeShadows() {
   // The deferred rig ray-marches the sun against the same silhouettes this
   // pass draws from, so exactly one of the two may run -- both would double the
@@ -26494,14 +26619,26 @@ function drawBiomeShadows() {
       // Only the masses drawBuildings() actually extrudes get a wall-sized
       // silhouette. Everything else here paints its own art at footprint size,
       // and giving it the taller silhouette would detach the shadow again.
+      //
+      // **The wall goes where the LEAN puts it, not where the light does.** This
+      // used to extend the silhouette along LIGHT_DX/DY, which was invisible
+      // while the sun was two constants pointing roughly the same way the lean
+      // did -- and wrong the moment the sun started travelling, since at eight
+      // in the morning the light points left and the wall does not. It also
+      // assumed the extension was positive on both axes, so a mass leaning up
+      // or left inverted its own bounding box.
       const rise = b.isBlockBuilding ? buildingRise(b) : 0;
-      const wx = LIGHT_DX * rise, wy = LIGHT_DY * rise;
-      const x0 = b.x - w / 2,      y0 = b.y - h / 2;
-      const x1 = b.x + w / 2 + wx, y1 = b.y + h / 2 + wy;
+      massLean(b.x, b.y, rise, _shLean);
+      clampLean(_shLean, leanCapOf(b));
+      const lx = _shLean[0], ly = _shLean[1];
+      // The caster's silhouette is the UNION of its footprint and its leaned
+      // top, which is what the sun actually sees.
+      const x0 = b.x - w / 2 + Math.min(0, lx), y0 = b.y - h / 2 + Math.min(0, ly);
+      const x1 = b.x + w / 2 + Math.max(0, lx), y1 = b.y + h / 2 + Math.max(0, ly);
       // Capped in proportion, for the same reason the rise is: a 24-unit
       // shadow under an 870-unit theatre is a dark line at one corner, and a
       // mass whose shadow does not scale with it reads as floating.
-      const shCap = Math.max(BUILDING_SHADOW_MAX, Math.min(Math.min(w, h) * 0.09, 80));
+      const shCap = Math.max(BUILDING_SHADOW_MAX, Math.min(Math.min(w, h) * 0.06, 48));
       const sl = Math.min(shCap, Math.max(rise, Math.min(w, h) * 0.10) * 0.95) * SL;
       const dx = LIGHT_DX * sl,    dy = LIGHT_DY * sl;
 
@@ -29664,6 +29801,7 @@ function sceneEmitters() {
       // that says the lamp is in the air; drawn at the pool the fixture reads
       // as a bright disc lying in the road.
       massLean(b.x, b.y, STREET_LAMP_RISE, _leanTmp);
+      clampLean(_leanTmp, leanCapOf(b));
       out.push({
         x: b.x, y: b.y + STREET_LAMP_ARM, z: 46, r: 330, rMin: 24, soft: 0.020,
         fx: b.x + _leanTmp[0], fy: b.y + STREET_LAMP_ARM + _leanTmp[1],

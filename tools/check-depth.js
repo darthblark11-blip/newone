@@ -11,6 +11,7 @@
 // here is the SCHEDULE -- the order and the multiplicity -- not the art.
 
 const { ctx, probe } = require('./harness.js');
+const P = (src) => probe('(' + src + ')');
 
 let fails = 0, checks = 0;
 const ok = (n, c, x) => {
@@ -333,6 +334,51 @@ ok('the lean is applied once, generically, not per case',
      /function drawMassSkirt\(/.test(src) &&
      /if \(nx \* lx \+ ny \* ly >= 0\) continue;/.test(src) &&
      /const d = -\(nx \* LIGHT_DX \+ ny \* LIGHT_DY\);/.test(src));
+  // PARALLAX IS A RATIO, AND A SMALL PROP CANNOT CARRY A BUILDING'S LEAN.
+  // massLean() grows with distance from the middle of the screen, so a 16-unit
+  // lamp at a rise of 30 was thrown 78 units at the edge of the view -- five
+  // times its own width, which reads as a stick lying in the road rather than
+  // as a post standing up. That is exactly what the street lamps became.
+  const cap = P('LEAN_CAP.isStreetLight');
+  ok('the street lamp caps its lean in absolute units', cap > 0 && cap <= 26, cap);
+  const worst = P(`(() => {
+    width = 1200; height = 800; zoom = 1; camX = -600; camY = -400;
+    const b = { x: 1190, y: 790, w: 16, h: 16, isStreetLight: true };
+    const o = [0, 0];
+    massLean(b.x, b.y, STREET_LAMP_RISE, o);
+    const before = Math.hypot(o[0], o[1]);
+    clampLean(o, leanCapOf(b));
+    return [before.toFixed(1), Math.hypot(o[0], o[1]).toFixed(1)];
+  })()`);
+  ok('and at the corner of the view it is held there', +worst[1] <= cap + 0.01,
+     worst[0] + ' -> ' + worst[1]);
+  ok('which is inside twice the lamp\'s own width', +worst[1] <= 32);
+  ok('the emitter caps it the same way, or the lamp and its light part company',
+     /massLean\(b\.x, b\.y, STREET_LAMP_RISE, _leanTmp\);\s*\n\s*clampLean\(_leanTmp, leanCapOf\(b\)\);/.test(src));
+
+  // A WALL IS WHERE THE LEAN PUTS IT. drawBiomeShadows() used to extend the
+  // caster's silhouette along LIGHT_DX/DY, which was invisible while the sun
+  // was two constants pointing roughly where the lean did -- and wrong the
+  // moment it started travelling.
+  ok('the shadow silhouette is the union of footprint and LEANED top',
+     /massLean\(b\.x, b\.y, rise, _shLean\);/.test(src) &&
+     /Math\.min\(0, lx\)/.test(src) && /Math\.max\(0, lx\)/.test(src));
+  // And the wall itself has to stay inside the gap the cap exists to protect.
+  const widest = P(`(() => {
+    width = 1200; height = 800; zoom = 1; camX = -600; camY = -400;
+    const b = { x: 1190, y: 400, w: 870, h: 870, isMall: true };
+    const o = [0, 0];
+    massLean(b.x, b.y, buildingRise(b), o);
+    return Math.abs(o[0]).toFixed(1);
+  })()`);
+  ok('the widest landmark wall stays inside BUILDING_GAP_MIN',
+     +widest <= P('BUILDING_GAP_MIN'), widest + ' vs ' + P('BUILDING_GAP_MIN'));
+  // A face turned away from the sun still sees the sky. At a third of its own
+  // colour a mid-grey wall is black, and on a landmark that is a void the size
+  // of a building.
+  ok('a shaded face keeps an ambient floor rather than going to black',
+     (src.match(/const k = 0\.46 \+ 0\.34 \* \(d > 0 \? d : 0\);/g) || []).length === 2);
+
   // The legacy half of the same table.
   const lb = /const LEGACY_BASE = \{([\s\S]*?)\};/.exec(src);
   ok('LEGACY_BASE covers the skip, which is drawn rotated', !!lb && /isDumpster/.test(lb[1]),

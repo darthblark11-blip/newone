@@ -46,7 +46,7 @@ const NIGHT = process.argv.includes('night');
 // sweeping the wrong way is invisible in any single frame.
 const HOURARG = (process.argv.find(a => /^hour=/.test(a)) || '').split('=')[1];
 const HOUR = HOURARG === undefined ? (NIGHT ? 23 : 13) : +HOURARG;
-const W = 900, H = 1400;
+const W = +(process.env.VW_W || 900), H = +(process.env.VW_H || 1400);
 
 const page = `<!doctype html><meta charset=utf8>
 <style>html,body{margin:0;background:#111}</style>
@@ -62,6 +62,11 @@ window.__done = false; window.__errs = [];
 window.setup = function () {
   createCanvas(${W}, ${H});
   pixelDensity(1); noLoop();
+  // Reproducible: legacyGenerateMap() runs against p5's global RNG, so without
+  // this the same command renders a different city every time and two shots
+  // cannot be compared. noise() is seeded for the same reason on the streamed
+  // side -- the game does it at startup and this harness skips setup().
+  randomSeed(${+(process.env.VW_SEED || 7)}); noiseSeed(BIOME_SEED);
   seedWorldClock();
   worldTimeMs = ${HOUR} / 24 * DAY_MS;     // 13:00 by default: the hour the palettes are for
   updateSunVector();                      // the sun travels; put it where the clock says
@@ -105,7 +110,7 @@ window.draw = function () {
   _depthOn = true;                          // so standing decor queues, as in game
   if (chunkMgr) step('decor', () => chunkMgr.drawDecor());
   step('decks',   () => drawBiomeDecks());
-  step('shadows', () => drawBuildingShadows());
+  ${process.env.VW_NOSHADOW ? '' : "step('shadows', () => drawBuildingShadows());"}
   // No actors, so this draws every visible mass and every queued tree in one
   // sorted pass -- which is exactly what the game does between characters.
   step('sorted',  () => drawDepthSorted());

@@ -605,9 +605,18 @@ spine roof lights, drains and its plant **grouped** behind one screen where plan
 goes; and a stadium with a trussed roof ring, a tiered bowl, a track and a **rectangular**
 mown pitch. The rectangle is most of the stadium's read: an oval of green is a pond.
 
-Both are written in fractions of their own footprint with every repeat as a **count**
+`isTheater` was the same fault one step worse — a near-black rectangle the size of a city
+block with a red marquee bar across the "top" and a carpet strip at the "bottom", which is
+an *elevation of the front of the building* laid flat, in thirty levels of one colour. On
+screen it was a void with a red stripe in it. What a theatre is from overhead is two roofs
+at different heights: a tall **fly tower** over the stage, and a broad lower auditorium
+roof in front of it whose seams fan out from the proscenium because the seating does. The
+marquee stays, because a canopy projecting over the pavement is the one piece of a façade
+this camera really does see.
+
+All three are written in fractions of their own footprint with every repeat as a **count**
 rather than a pitch, the same rule the built structures follow. Still diagrams and still
-to do: `isCasino`, `isTheater`, `isAmusementPark`, `isCircus`.
+to do: `isCasino`, `isAmusementPark`, `isCircus`.
 
 There is also a dedicated western-building art module (`DG` palette ~1298 plus
 `dgBoards`, `dgBoardwalk`, `dgHitchRail`, `dgFacadeBand`, `dgWindow`, `dgDoor`,
@@ -1002,6 +1011,38 @@ theirs from a point 18–26 units along the light, which leaves clear ground bet
 prop and its own shadow — a hard-edged rectangle lying on grass a whole tower's width
 away, which is the same fault the monolith's footing had. Offset the *length*, never the
 origin.
+
+**A SMALL PROP CANNOT CARRY A BUILDING'S LEAN.** `massLean()` grows with distance from the
+middle of the screen, so a 16-unit lamp post at a rise of 30 was thrown **78 units** at
+the edge of the view — five times its own width. That does not read as a post standing up;
+it reads as a stick lying in the road, and that is exactly what the street lamps became.
+`LEAN_CAP` bounds the lean in **absolute units** for anything too small to carry the
+ratio, applied by `clampLean()` in `drawBuildings()`, in `sceneEmitters()` (or the lamp's
+light parts company with the lamp) and in the shadow pass. It is the same call the figures
+make by not leaning at all, taken one notch less far. The lamp's cap is its own footprint,
+so the head lands just clear of its base — two small lobes and the gap between them, which
+is the whole top-down read of a lamp.
+
+**`BUILDING_RISE_MAX` is a floor, but the ceiling on the proportion is `BUILDING_GAP_MIN`.**
+The cap is `max(BUILDING_RISE_MAX, min(foot * 0.075, 42))`. At 10% of the footprint an
+870-wide landmark asked for 87, and 87 through `massLean()` is a **hundred and thirty
+units of wall** — wider than the tightest alley the subdivider leaves, painted over the
+road beside it. The proportion was right; the ceiling was the bug. `BUILDING_SHADOW_MAX`
+is capped the same way and for the same reason, or the shadow adds another eighty units in
+the direction the wall is already covering.
+
+**A face turned away from the sun still sees the sky.** `drawMassSides()` and
+`drawMassSkirt()` shade at `0.46 + 0.34 · max(0, d)`. At the old floor of 0.34 a mid-grey
+wall came out near black, and on a landmark — which carries the widest wall in the game —
+that put a void the size of a building beside every one of them.
+
+**The wall goes where the LEAN puts it, not where the light does.** `drawBiomeShadows()`
+extended the caster's silhouette along `LIGHT_DX/DY`, which was invisible while the sun was
+two constants pointing roughly the way the lean did, and wrong the moment the sun started
+travelling: at eight in the morning the light points left and the wall does not. It also
+assumed the extension was positive on both axes, so a mass leaning up or left inverted its
+own bounding box. The silhouette is the **union** of the footprint and the leaned top,
+which is what the sun actually sees.
 
 ### Figure volume
 
