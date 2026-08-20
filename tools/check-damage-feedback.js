@@ -153,5 +153,35 @@ console.log('== the health bar shows what it cost ==');
   ok('and a scratch finishes instead of creeping', scratch < 120, scratch + ' frames to settle');
 }
 
+console.log('== and so does the armor bar ==');
+{
+  const r = probe(`(function () {
+    player.shield = 100; shGhost = 100; shPrev = 100; shGhostHold = 0;
+    player.shieldRechargeTimer = 600;          // hold the recharge off
+    drawUI();
+    player.shield = 40;
+    drawUI();
+    const first = { ghost: shGhost, hold: shGhostHold };
+    const held = [];
+    for (let i = 0; i < 12; i++) { drawUI(); held.push(shGhost); }
+    for (let i = 0; i < 400; i++) { player.shield = 40; drawUI(); }
+    return { first, held, settled: shGhost };
+  })()`);
+  ok('a hit on the shield arms the same hold', r.first.hold > 0, r.first.hold + ' frames');
+  ok('the bar keeps showing what the shield had', r.held.every(v => v === 100), 'chunk stays visible');
+  ok('then drains to what is left', Math.abs(r.settled - 40) < 0.01, 'settled at ' + r.settled.toFixed(2));
+  // The shield refills on its own, which the health bar never does: without the
+  // trail overtaking on the way up, a shield draining and recharging would read
+  // as a bar that merely wobbles.
+  const back = probe(`(function () {
+    player.shield = 40; shGhost = 40; shPrev = 40; shGhostHold = 0; drawUI();
+    player.shield = 75; drawUI();
+    return shGhost;
+  })()`);
+  ok('and recharging overtakes the trail rather than lagging it', back === 75, 'ghost ' + back);
+  ok('the two bars keep their own state', probe('hpGhost !== shGhost || hpPrev !== shPrev') !== undefined,
+     'separate ghosts');
+}
+
 console.log(`\n${checks - fails}/${checks} checks passed`);
 process.exit(fails ? 1 : 0);

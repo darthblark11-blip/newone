@@ -7,7 +7,7 @@
 // did the killing. This checks that it varies, that the impact direction is
 // actually read, that it FREEZES (a corpse on the floor must cost nothing), and
 // that the pieces it is not meant to touch are untouched.
-const { ctx, probe } = require('./harness.js');
+const { ctx, probe, calls } = require('./harness.js');
 const P = (s) => probe('(' + s + ')');
 let fails = 0, checks = 0;
 const ok = (n, c, x) => { checks++; console.log((c ? '  ok   ' : '  FAIL ') + n + (x !== undefined ? '  ' + x : '')); if (!c) fails++; };
@@ -586,6 +586,81 @@ console.log('\n== and the ground keeps it, per biome ==');
   probe('restartGame();');
   ok('restarting the game wipes every biome', P('bloodSurfaces') === 0 &&
      P('Object.keys(bloodBanks).every(function(k){ return Object.keys(bloodBanks[k].chunks).length === 0; })'));
+}
+
+console.log('== a body keeps what the person was wearing ==');
+{
+  // The head art used to live inline in Character.show(), so a corpse had no
+  // way to reach it: every body came to rest as a bare skin dome whatever it
+  // had been. It is one shared description now, on the same principle
+  // figureRig()/ragRig() already follow -- if these two ever stop reading the
+  // same function, the corpse silently becomes a different person again.
+  const src = require('fs').readFileSync(__dirname + '/../game.js', 'utf8');
+  ok('the living figure draws its head from the shared description',
+     /drawFigureHead\(window, this, hX, hY/.test(src), 'Character.show calls it');
+  ok('and the corpse reads the same hair and the same headwear',
+     /drawFigureHair\(r, this\.id/.test(src) && /drawHeadwear\(r, this\.id, hw\)/.test(src),
+     'no second copy of the art');
+
+  const wear = (eT) => probe(`headwearOf({ eType: ${JSON.stringify(eT)} })`);
+  ok('a cowboy has a hat and a soldier has a helmet',
+     wear('COWBOY') === 'STETSON' && wear('MILITARY_NEUTRAL') === 'HELMET',
+     `${wear('COWBOY')} / ${wear('MILITARY_NEUTRAL')}`);
+  ok('every attired type is covered',
+     ['COWGIRL', 'BANDIT', 'LOCAL_COP', 'VILLAGER_MALE', 'VILLAGER_FEMALE', 'FARMER_MALE',
+      'NM0_GREY_FATIGUE'].every(t => !!wear(t)), 'seven kinds of headgear');
+  ok('and a bare-headed type stays bare',
+     ['NORMAL', 'FEMALE_PISTOL', 'NM0_ROOKIE', 'FARMER_FEMALE'].every(t => wear(t) === null),
+     'no hat invented');
+
+  // Hair is a property of the head, headwear is a thing balanced on it.
+  const id = (eT) => `figureIdentity({ eType: ${JSON.stringify(eT)}, hairCol: color(120, 70, 40) })`;
+  const built = (eT, dT) => probe(`(function () {
+    const c = new Corpse(0, 0, 0.3, 0.3, color(1), color(1), ${dT}, 0.2, [], null, 0.6,
+                         ${JSON.stringify(eT)}, 21, 27, { eType: ${JSON.stringify(eT)}, hairCol: color(120, 70, 40) });
+    return { hasId: !!c.id, eType: c.id.eType, hatOff: !!c.hatOff };
+  })()`);
+  ok('a corpse carries the identity it died with', built('COWBOY', 0).hasId && built('COWBOY', 0).eType === 'COWBOY',
+     'frozen at death');
+  ok('a hat comes off the body', built('COWBOY', 0).hatOff, 'drawn where it fell');
+  ok('a helmet comes off too', built('MILITARY_NEUTRAL', 0).hatOff, 'rolls clear');
+  ok('and nothing falls off a head that had nothing on it', !built('FEMALE_PISTOL', 0).hatOff,
+     'no phantom hat');
+  ok('a hood is worn rather than perched, so it stays',
+     probe('headwearFalls("HOOD")') === false && probe('headwearFalls("STETSON")') === true,
+     'worn vs balanced');
+
+  // Behavioural: an attired body genuinely draws more than a bare one, and no
+  // death type throws while doing it.
+  const drawn = (eT, dT) => probe(`(function () {
+    corpses.length = 0;
+    corpses.push(new Corpse(0, 0, 0.3, 0.3, color(1), color(1), ${dT}, 0.2, [], null, 0.6,
+                            ${JSON.stringify(eT)}, 21, 27, { eType: ${JSON.stringify(eT)}, hairCol: color(120, 70, 40) }));
+    return 1;
+  })()`);
+  let threw = null, bare = 0, dressed = 0;
+  for (const dT of [0, 1, 6, 7, 8, 9, 10, 11, 15]) {
+    for (const eT of ['NORMAL', 'COWBOY', 'MILITARY_NEUTRAL', 'VILLAGER_FEMALE', 'BANDIT', 'FEMALE_PISTOL']) {
+      try {
+        drawn(eT, dT);
+        // The corpse draws through the global stubs, which the harness's own
+        // counter does not see, so count the ellipses here.
+        let n = 0;
+        const prevE = ctx.ellipse, prevA = ctx.arc;
+        ctx.ellipse = function () { n++; }; ctx.arc = function () { n++; };
+        probe('corpses[0].show();');
+        ctx.ellipse = prevE; ctx.arc = prevA;
+        if (dT === 0 && eT === 'NORMAL') bare = n;
+        if (dT === 0 && eT === 'COWBOY') dressed = n;
+      } catch (e) { threw = `${eT} dT${dT}: ${e.message}`; }
+    }
+  }
+  ok('every humanoid death type draws every kind of attire without throwing', threw === null,
+     threw || '54 combinations');
+  ok('and a dressed body is visibly more than a bare one', dressed > bare,
+     `${dressed} draw calls against ${bare}`);
+  ok('an overkill torso carries the head it had', /drawFigureHair\(r, this\.id, 0, -this\.bH \* 0\.4/.test(src),
+     'body-part gibs are the same person');
 }
 
 console.log(`\n${checks - fails}/${checks} checks passed`);
