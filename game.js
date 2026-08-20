@@ -2869,7 +2869,21 @@ function drawBuildingShadows() {
     fill(0, shadowAlpha); noStroke();
     if (b.isDumpster) { push(); translate(b.x + sL/2, b.y + sL/2); rotate(b.angle); rect(-b.w/2, -b.h/2, b.w, b.h, 2); pop(); } 
     else if (b.isCar) { push(); translate(b.x + sL/2, b.y + sL/2); rotate(b.angle); rect(-25, -45, 50, 90, 6); pop(); } 
-    else if (b.isStreetLight) { ellipse(b.x + sL/2, b.y + sL/2, b.w, b.h); } 
+    else if (b.isStreetLight) {
+        // A four-metre lamp lays a long thin shadow down the pavement. This
+        // used to be a 16-unit oval thrown a fixed 20,20 -- not along the
+        // scene's light, not the length of the thing casting it, and detached
+        // from its own foot, which is three separate ways of reading as a
+        // smudge beside the post rather than as the post's shadow.
+        const slL = STREET_LAMP_RISE * 1.15;
+        const sdx = LIGHT_DX * slL, sdy = LIGHT_DY * slL;
+        const spx = -LIGHT_DY, spy = LIGHT_DX;
+        quad(b.x + spx * 4.6, b.y + spy * 4.6, b.x - spx * 4.6, b.y - spy * 4.6,
+             b.x + sdx - spx * 3.2, b.y + sdy - spy * 3.2,
+             b.x + sdx + spx * 3.2, b.y + sdy + spy * 3.2);
+        ellipse(b.x, b.y, b.w, b.h * 0.8);
+        ellipse(b.x + sdx, b.y + sdy + STREET_LAMP_ARM * 0.7, 16, 12);
+    }
     else if (b.isPalm) { push(); translate(b.x + sL/2, b.y + sL/2); rect(-8, -40, 16, 80, 4); for (let i = 0; i < 5; i++) { push(); translate(0, -40); rotate((i * TWO_PI / 5) + sin(frameCount * 0.02 + b.x) * 0.2); ellipse(30, 0, 60, 20); pop(); } pop(); }
     else if (b.isArena) { ellipse(b.x + sL*1.5, b.y + sL*1.5, b.w - 100, b.h - 150); }
     else if (b.isCircus) { ellipse(b.x + sL*1.5, b.y + sL*1.5, 600, 600); }
@@ -3057,7 +3071,11 @@ const LEGACY_MASS = {
   isCasino:      [ 46,  46,  58],   isTheater:     [ 56,  42,  56],
   isArena:       [ 74,  74,  78],
   isWaterTower:  true,  isWell: true,  isTower: true,  isCircus: true,
-  isDumpster:    [ 84,  96,  84],
+  // The skip's own body colour, not a grey-green near it. A bin is one of the
+  // few things in a street the player stands right next to, so the join between
+  // its side and its lid is read at full size -- and a desaturated skirt under
+  // a saturated lid reads as the bin sitting in a concrete trough.
+  isDumpster:    [ 22,  62,  28],
   // The small stuff the frontier actually scatters -- these ARE the props the
   // player walks past all day, and they were the gap that made the world read
   // half-converted. Crates are boxes; everything else here is round or
@@ -3081,6 +3099,14 @@ function legacyMassOf(b) {
   for (const k in LEGACY_MASS) if (b[k]) return LEGACY_MASS[k];
   return null;
 }
+// The legacy half of PROP_BASE -- see the note there. A skip is drawn inside
+// rotate(b.angle), so an axis-aligned skirt under a bin standing across the
+// kerb is a box lying at forty-five degrees to the bin on it.
+const LEGACY_BASE = { isDumpster: { ang: 1 } };
+function legacyBaseOf(b) {
+  for (const k in LEGACY_BASE) if (b[k]) return LEGACY_BASE[k];
+  return null;
+}
 function drawBuildings(list, i0, i1) {
   const _arr = list || activeBuildings;
   const _lo = i0 === undefined ? 0 : i0;
@@ -3091,7 +3117,15 @@ function drawBuildings(list, i0, i1) {
   // DEFERRED -- it runs at the top of the next iteration, which `continue`
   // cannot skip, and once more after the loop for the final record.
   let _lgOpen = false;
-  const _lgClose = () => { if (_lgOpen) { pop(); _lgOpen = false; } };
+  // How far the wrapper translated this record, so a branch can put part of
+  // itself back at the foot -- a lamp post's base plate stays on the ground
+  // while its head is four metres up, and the distance between the two is the
+  // only thing at this camera that says so.
+  let _lgLx = 0, _lgLy = 0;
+  // Closing the previous record's lean and forgetting how far it went are one
+  // act, so they live in one function -- a branch that read a stale _lgLx would
+  // put its base plate under the lamp post before it.
+  const _lgClose = () => { _lgLx = 0; _lgLy = 0; if (_lgOpen) { pop(); _lgOpen = false; } };
   for (let _i = _lo; _i < _hi; _i++) { let b = _arr[_i];
     _lgClose();
     if (!inView(b.x, b.y, Math.max(b.w || 0, b.h || 0) + 150)) continue;
@@ -3124,7 +3158,8 @@ function drawBuildings(list, i0, i1) {
           }
           drawSlabFace(b, _leanTmp[0], _leanTmp[1], _sl[0], _sl[1], _sl[2], 110, _g0, _g1);
           push();
-          translate(_leanTmp[0], _leanTmp[1]);
+          _lgLx = _leanTmp[0]; _lgLy = _leanTmp[1];
+          translate(_lgLx, _lgLy);
           _lgOpen = true;
         }
       } else {
@@ -3134,11 +3169,19 @@ function drawBuildings(list, i0, i1) {
           massLean(b.x, b.y, _lr, _leanTmp);
           if (_leanTmp[0] !== 0 || _leanTmp[1] !== 0) {
             if (_lm !== true) {
-              drawMassSides(b.x - b.w / 2, b.y - b.h / 2, b.x + b.w / 2, b.y + b.h / 2,
-                            _leanTmp[0], _leanTmp[1], _lm[0], _lm[1], _lm[2], 24);
+              const _lb = legacyBaseOf(b);
+              if (_lb) {
+                drawMassSkirt(b.x, b.y, _lb.w || b.w, _lb.h || b.h,
+                              _lb.ang ? (b.angle || 0) : 0, _lb.round,
+                              _leanTmp[0], _leanTmp[1], _lm[0], _lm[1], _lm[2], _lb.top);
+              } else {
+                drawMassSides(b.x - b.w / 2, b.y - b.h / 2, b.x + b.w / 2, b.y + b.h / 2,
+                              _leanTmp[0], _leanTmp[1], _lm[0], _lm[1], _lm[2], 24);
+              }
             }
             push();
-            translate(_leanTmp[0], _leanTmp[1]);
+            _lgLx = _leanTmp[0]; _lgLy = _leanTmp[1];
+            translate(_lgLx, _lgLy);
             _lgOpen = true;
           }
         }
@@ -3288,19 +3331,54 @@ function drawBuildings(list, i0, i1) {
 
     if (b.isTower) { if (b.hp > 0) { push(); translate(b.x, b.y); let isFlashing = b.hitFlash && b.hitFlash > 0; if (isFlashing) { b.hitFlash--; } fill(isFlashing ? 255 : 40); stroke(isFlashing ? 255 : 20); strokeWeight(2); rect(-b.w/2, -b.h/2, b.w, b.h, 5); stroke(isFlashing ? 255 : 100); strokeWeight(4); line(-b.w/2+10, -b.h/2+10, -10, -80); line(b.w/2-10, -b.h/2+10, 10, -80); line(-b.w/2+10, b.h/2-10, -10, -80); line(b.w/2-10, b.h/2-10, 10, -80); strokeWeight(2); stroke(isFlashing ? 255 : 80); line(-b.w/2+10, -b.h/2+10, b.w/2-10, b.h/2-10); line(-b.w/2+10, b.h/2-10, b.w/2-10, -b.h/2+10); line(-25, -30, 25, -30); line(-15, -60, 15, -60); stroke(isFlashing ? 255 : 150); strokeWeight(3); line(0, -80, 0, -120); noStroke(); if (frameCount % 60 < 30 || isFlashing) fill(255, 0, 0); else fill(100, 0, 0); ellipse(0, -120, 8, 8); if (b.hp < b.maxHp) { fill(0, 150); rect(-40, -140, 80, 6); fill(255, 50, 50); rect(-40, -140, 80 * max(0, b.hp / b.maxHp), 6); } pop(); } else { fill(20); noStroke(); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h); fill(10); ellipse(b.x, b.y, b.w*0.8, b.h*0.8); stroke(40); strokeWeight(4); line(b.x - 20, b.y - 20, b.x + 30, b.y + 10); line(b.x + 10, b.y - 30, b.x - 20, b.y + 20); if (frameCount % 5 === 0) emit(b.x + random(-20, 20), b.y + random(-20, 20), 1, color(100), "SMOKE"); } continue; }
     if (b.isStreetLight) {
-        // A lamp seen from above: base plate, mast, and the head cantilevered
-        // out over the kerb — not a yellow dot on a black dot.
+        // A lamp standard, and the COLUMN is the whole read. At this camera a
+        // post has no height except the distance between the ground it stands
+        // on and the head that has been thrown off it -- draw both at the same
+        // point, as this did, and a four-metre lamp is a manhole cover with a
+        // bulb lying beside it. So the base plate goes back at the foot,
+        // (-_lgLx, -_lgLy), and everything above it stays at the leaned top.
+        //
+        // The head sits STREET_LAMP_ARM south of the top on purpose: that is
+        // the same offset sceneEmitters() puts the light source at, so the
+        // lantern and the pool it casts belong to each other.
         push(); translate(b.x, b.y);
-        const armA = Math.atan2(-LIGHT_DY, -LIGHT_DX);
-        noStroke(); fill(0, 0, 0, 60); ellipse(2, 3, b.w + 12, b.h + 10);
-        fill(46, 48, 52); stroke(20); strokeWeight(2); ellipse(0, 0, b.w + 6, b.h + 6);
-        noStroke(); fill(66, 70, 76); ellipse(0, 0, b.w - 1, b.h - 1);
-        push(); rotate(armA);
-        fill(58, 62, 68); rect(0, -3.5, 26, 7, 3);
-        fill(38, 40, 44); rect(22, -7, 15, 14, 4);
-        fill(252, 244, 198); ellipse(29, 0, 9, 9);
-        pop();
-        fill(96, 100, 106); ellipse(-1, -1, b.w * 0.42, b.h * 0.42);
+        const fX = -_lgLx, fY = -_lgLy;
+        noStroke();
+        // Base plate, and the shadow it presses into the pavement.
+        fill(0, 0, 0, 52); ellipse(fX + 2, fY + 2.5, b.w + 9, b.h * 0.8 + 7);
+        fill(44, 46, 50); ellipse(fX, fY, b.w, b.h * 0.8);
+        fill(64, 68, 74); ellipse(fX - LIGHT_DX * 1.4, fY - LIGHT_DY * 1.4, b.w - 5, b.h * 0.8 - 4);
+        // The column: a tapered quad from the plate to the head, with one long
+        // highlight down its sun side. Two quads rather than a stroked line --
+        // a line of constant weight is a cable, and a cylinder lit from the
+        // side has a bright stripe on it, not an even tone.
+        const mL = Math.sqrt(fX * fX + fY * fY);
+        if (mL > 1.5) {
+          const pX = -fY / mL, pY = fX / mL;          // across the column
+          const r0 = 4.4, r1 = 2.7;
+          fill(40, 42, 46);
+          quad(fX + pX * r0, fY + pY * r0, fX - pX * r0, fY - pY * r0,
+               -pX * r1, -pY * r1, pX * r1, pY * r1);
+          const s = -(pX * LIGHT_DX + pY * LIGHT_DY);
+          fill(96, 100, 108);
+          quad(fX + pX * (s * r0 + r0 * 0.34), fY + pY * (s * r0 + r0 * 0.34),
+               fX + pX * (s * r0 - r0 * 0.34), fY + pY * (s * r0 - r0 * 0.34),
+               pX * (s * r1 - r1 * 0.34), pY * (s * r1 - r1 * 0.34),
+               pX * (s * r1 + r1 * 0.34), pY * (s * r1 + r1 * 0.34));
+        }
+        // Collar, bracket and lantern. The lantern is an oval because what a
+        // top-down camera sees of a lamp head is its reflector.
+        const aY = STREET_LAMP_ARM;
+        fill(56, 60, 66); rect(-2.6, 0, 5.2, aY, 2);
+        fill(74, 78, 86); ellipse(0, 0, 9, 8);
+        fill(34, 36, 40); ellipse(0, aY, 17, 12);
+        fill(58, 62, 68); ellipse(-LIGHT_DX * 1.2, aY - LIGHT_DY * 1.2, 13, 9);
+        // The lens. Dead glass by day; the bulb itself is the light rig's
+        // business after dark, so this only has to stop being a bright dot at
+        // noon -- a lamp that glows in daylight reads as a decal.
+        const lit = 1 - daylight();
+        fill(150 + 100 * lit, 148 + 96 * lit, 130 + 68 * lit, 190 + 60 * lit);
+        ellipse(0, aY, 8, 6);
         pop(); continue;
     }
     if (b.isDumpster) {
@@ -24470,6 +24548,22 @@ const BUILDING_GAP_MIN    = 90;
 // read by both the shadow pass and the body pass: if those two disagreed about
 // how tall a building is, its shadow would detach from its walls, which is
 // exactly the "second building" artefact this replaces.
+// A lamp standard is a 16x16 footprint holding a head four metres up, so the
+// generic "rise from the size of the base" formula gives it about six -- and a
+// six-unit lean is a manhole cover. It is capped well under its true height on
+// purpose: the light SOURCE stays at the post's own ground position (a pool
+// belongs on the floor), so a head thrown much further than this parts company
+// with the pool it is supposed to be casting.
+const STREET_LAMP_RISE = 30;
+// How far south of the column the lantern hangs. sceneEmitters() offsets the
+// source by the same number, so the lamp and its light are the same object.
+const STREET_LAMP_ARM  = 14;
+
+// Flags whose height has nothing to do with the size of their base.
+function LEGACY_RISE_OVERRIDE(b) {
+  if (b.isStreetLight) return STREET_LAMP_RISE;
+  return 0;
+}
 function buildingRise(b) {
   if (b._rise !== undefined) return b._rise;
   const foot = Math.min(b.w || 0, b.h || 0);
@@ -24495,6 +24589,15 @@ function buildingRise(b) {
   // BUILDING_RISE_MAX means nothing that was already correct moves at all.
   const cap = Math.max(BUILDING_RISE_MAX, Math.min(foot * 0.10, 90));
   b._rise = Math.min(cap, 5 + foot * 0.075 + r01 * foot * 0.09);
+  // A few things are not sized by their footprint at all. A lamp post stands on
+  // a 16-unit plate and reaches four metres; the generic formula gives it a
+  // rise of six, so its head was displaced by nine pixels and the whole thing
+  // read as a manhole cover with a bulb lying next to it. Held to 30 rather
+  // than its true height on purpose: the light POOL is at the post's real
+  // ground position, and a head thrown much further than this parts company
+  // with the pool it is supposed to be casting.
+  const ov = LEGACY_RISE_OVERRIDE(b);
+  if (ov) b._rise = ov;
   return b._rise;
 }
 
@@ -24588,6 +24691,71 @@ function drawMassSides(x0, y0, x1, y1, lx, ly, cr, cg, cb, mullion) {
       for (let my = y0 + mullion; my < y1 - 2; my += mullion) line(xb, my, xb + lx, my + ly);
     }
     noStroke();
+  }
+}
+
+// The extruded side of a mass whose DRAWN base is not the axis-aligned
+// collision rect -- a hydrant is a cylinder standing in a 22x22 square, a bench
+// is a plank that has been rotated, a dumpster is a skip lying across the kerb.
+// drawMassSides() gives all three the same four-cornered box, which is exactly
+// the "3d prop sitting on a block" read: a plinth, with the prop balanced on it.
+//
+// Same shading rule and the same visibility rule as drawMassSides(), so a round
+// mass and a square one in the same street agree about where the sun is:
+//   * a face is drawn only when the lean turns it toward the camera, which is
+//     when its outward normal opposes the lean;
+//   * and it is shaded from its OWN normal, never from whether it is showing.
+//
+// `w`/`h` are the size of the drawn base, which is the whole point of this
+// function -- taken off the collision rect the skirt pokes out past the art on
+// every side, which is the mistake the reverted drawMassColumn made.
+// `top` is the width of the head as a fraction of the foot, and it is not
+// cosmetic: swept at a constant width, a round mass whose lean approaches its
+// own diameter comes out as a CAPSULE lying on the pavement -- two identical
+// ends with a straight tube between them, which has no up in it. A hydrant, a
+// postbox and a bollard all genuinely narrow toward the top, and even a little
+// of that turns the pill back into something standing.
+function drawMassSkirt(cx, cy, w, h, ang, round, lx, ly, cr, cg, cb, top) {
+  if (lx === 0 && ly === 0) return;
+  if (!(w > 0) || !(h > 0)) return;
+  const tp = top === undefined ? 1 : top;
+  // The base outline and the head outline, in the same order. An ellipse gets
+  // enough segments that the swept silhouette is smooth at the sizes these
+  // props are drawn at; a rect is its four corners, turned by the same angle
+  // the art is.
+  const P = [], Q = [];
+  const put = (ux, uy) => {
+    P.push(cx + ux, cy + uy);
+    Q.push(cx + lx + ux * tp, cy + ly + uy * tp);
+  };
+  if (round) {
+    const N = 20;
+    for (let i = 0; i < N; i++) {
+      const t = (i / N) * TWO_PI;
+      put(Math.cos(t) * w * 0.5, Math.sin(t) * h * 0.5);
+    }
+  } else {
+    const ca = Math.cos(ang || 0), sa = Math.sin(ang || 0);
+    const hw = w * 0.5, hh = h * 0.5;
+    const c = [-hw, -hh, hw, -hh, hw, hh, -hw, hh];
+    for (let i = 0; i < 8; i += 2) put(c[i] * ca - c[i + 1] * sa, c[i] * sa + c[i + 1] * ca);
+  }
+  const n = P.length / 2;
+  noStroke();
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    const x0 = P[i * 2], y0 = P[i * 2 + 1], x1 = P[j * 2], y1 = P[j * 2 + 1];
+    // Outward normal of this edge: perpendicular to it, taken on whichever
+    // side points away from the centre. That works for both outlines without
+    // either of them having to promise a winding order.
+    let nx = y1 - y0, ny = -(x1 - x0);
+    const m = Math.sqrt(nx * nx + ny * ny) || 1; nx /= m; ny /= m;
+    if (nx * ((x0 + x1) * 0.5 - cx) + ny * ((y0 + y1) * 0.5 - cy) < 0) { nx = -nx; ny = -ny; }
+    if (nx * lx + ny * ly >= 0) continue;   // the leaned top covers this face
+    const d = -(nx * LIGHT_DX + ny * LIGHT_DY);
+    const k = 0.34 + 0.46 * (d > 0 ? d : 0);
+    fill(cr * k + 5, cg * k + 6, cb * k + 10);
+    quad(x0, y0, x1, y1, Q[j * 2], Q[j * 2 + 1], Q[i * 2], Q[i * 2 + 1]);
   }
 }
 
@@ -26702,32 +26870,61 @@ function drawBiomeDecks() {
 // ground.
 const PROP_RISE = {
   OUTPOST:    [26, 118, 122, 116],  CHECKPOINT: [22, 122, 126, 120],
-  GUARDBOX:   [24, 116, 112,  98],  BUNKER:     [20, 104, 106,  96],
+  GUARDBOX:   [24,  62,  64,  68],  BUNKER:     [20, 104, 106,  96],
   BLASTWALL:  [22, 122, 122, 118],  BORDERWALL: [26, 112, 114, 108],
-  WATCHTOWER: [34, 108, 100,  84],  SANDBAG:    [12, 132, 122,  92],
+  WATCHTOWER: [34,  58,  60,  56],  SANDBAG:    [12, 110, 100,  76],
   BOULDER:    [16],                 MONOLITH:   [22],
   RUINWALL:   [18, 116, 116, 106],  WRECK:      [14],
-  CABIN:      [24, 112,  86,  58],  LOGPILE:    [12, 118,  92,  60],
+  CABIN:      [24, 112,  86,  58],  LOGPILE:    [12,  58,  46,  32],
   SITEHUT:    [20, 136, 128,  96],  HOARDING:   [16, 124, 118, 100],
-  MATERIALS:  [12, 128, 122, 104],  SPOIL:      [12],
-  KIOSK:      [20, 116, 118, 124],  BUSSTOP:    [20, 112, 116, 124],
+  MATERIALS:  [12,  66,  68,  70],  SPOIL:      [12],
+  KIOSK:      [20,  86,  80,  70],  BUSSTOP:    [20,  96, 112, 126],
   HEDGE:      [16],                 FOUNTAIN:   [12],
-  PLANTER:    [10, 118, 110,  98],  BENCH:      [ 8, 116,  98,  74],
-  POSTBOX:    [14, 122,  86,  80],  HYDRANT:    [10, 132,  92,  84],
-  BARGE:      [10],                 QUAYCRANE:  [30, 126, 116,  84],
-  BOLLARD:    [ 8, 110, 110, 106],  SIGNPOST:   [14, 116, 104,  82],
+  PLANTER:    [10, 138, 136, 128],  BENCH:      [ 8, 110,  84,  52],
+  POSTBOX:    [14,  28,  60,  96],  HYDRANT:    [10, 140,  34,  28],
+  BARGE:      [10],                 QUAYCRANE:  [30,  72,  74,  78],
+  BOLLARD:    [ 8,  44,  46,  50],  SIGNPOST:   [14,  58,  44,  28],
   // The outer sectors' sub-biomes. Box form where the art fills its own
   // collision rect, short form everywhere else -- drawMassSides() is axis
   // aligned and works off the rect, so a round thing drawn well inside its box
   // comes out as a rectangular slab standing behind itself. That is why the
   // mangrove cage, the brake, the fallen trunk, the cairn, the hive tower, the
   // vent, the impactor and the crystal stand all lean without sides.
-  REVETMENT:  [20, 104,  92,  70],  SERAC:      [26, 176, 206, 226],
-  MAST:       [40, 118, 122, 128],  PYLON:      [34,  96, 102, 110],
+  REVETMENT:  [20, 104,  92,  70],  SERAC:      [26, 150, 184, 212],
+  MAST:       [40, 118, 122, 128],  PYLON:      [34,  84,  88,  96],
   MANGROVE:   [18],                 BRAKE:      [22],
   FALLEN:     [14],                 CAIRN:      [22],
   HIVETOWER:  [30],                 SPOREVENT:  [12],
   IMPACTOR:   [20],                 CRYSTALSPIRE: [34]
+};
+
+// Props whose DRAWN base is not the axis-aligned collision rect, and what shape
+// it actually is. Without this every one of them stands on the same square
+// plinth: a hydrant is a cylinder in a 22x22 box, a bench is a plank that has
+// been turned, a watchtower is four legs with a lot of air between them. The
+// box under them is the "3d prop sitting on a block" read, and it is the block
+// rather than the prop that the eye picks out, because a hard rectangle is a
+// stronger shape than anything drawn on top of it.
+//
+//   round : the base is an ellipse
+//   ang   : the case rotates by b.angle before it draws, so the base does too
+//   legs  : four columns this size at the footprint corners, and nothing between
+//   w / h : the size of the DRAWN base, measured off the art in the case below.
+//
+// That last one is the whole discipline here. The reverted drawMassColumn swept
+// its column from the COLLISION rect, and a boulder is drawn at about half of
+// its own box -- so the column stood out past the rock on every side and read
+// as a slab with a stone balanced on it. A skirt has to be the size of the
+// thing it is under. Where w/h are left out the drawn base really is the rect.
+const PROP_BASE = {
+  HYDRANT:   { round: 1, w: 20, h: 19, top: 0.72 },
+  POSTBOX:   { round: 1, w: 22, h: 21, top: 0.78 },
+  BOLLARD:   { round: 1,               top: 0.84 },
+  SIGNPOST:  { round: 1, w: 13, h: 13, top: 0.78 },
+  QUAYCRANE: { round: 1,               top: 0.86 },
+  SANDBAG:   { round: 1, w: 68, h: 50, top: 0.70 },
+  BENCH:     { ang: 1 },
+  WATCHTOWER:{ legs: 14 }
 };
 
 function drawBiomeProps(list, i0, i1) {
@@ -26754,8 +26951,26 @@ function drawBiomeProps(list, i0, i1) {
       _plx = _leanTmp[0]; _ply = _leanTmp[1];
       const _pw = b.w || 0, _ph = b.h || 0;
       if (_pr.length > 1) {
-        drawMassSides(b.x - _pw / 2, b.y - _ph / 2, b.x + _pw / 2, b.y + _ph / 2,
-                      _plx, _ply, _pr[1], _pr[2], _pr[3], 0);
+        // The base is the collision rect unless PROP_BASE says otherwise --
+        // see the note there for why a skirt has to be the size and shape of
+        // the thing it is under rather than of the box it collides in.
+        const _pb = PROP_BASE[b.propType];
+        if (!_pb) {
+          drawMassSides(b.x - _pw / 2, b.y - _ph / 2, b.x + _pw / 2, b.y + _ph / 2,
+                        _plx, _ply, _pr[1], _pr[2], _pr[3], 0);
+        } else if (_pb.legs) {
+          // Four columns and air between them. A single box under a legged
+          // tower fills in the one thing that says it is standing on legs.
+          const _lg = _pb.legs, _hx = _pw / 2, _hy = _ph / 2;
+          for (let _sx = -1; _sx <= 1; _sx += 2) for (let _sy = -1; _sy <= 1; _sy += 2) {
+            drawMassSkirt(b.x + _sx * _hx, b.y + _sy * _hy, _lg, _lg, 0, 0,
+                          _plx, _ply, _pr[1], _pr[2], _pr[3]);
+          }
+        } else {
+          drawMassSkirt(b.x, b.y, _pb.w || _pw, _pb.h || _ph,
+                        _pb.ang ? (b.angle || 0) : 0, _pb.round,
+                        _plx, _ply, _pr[1], _pr[2], _pr[3], _pb.top);
+        }
       }
     }
     push();
@@ -27352,7 +27567,7 @@ function drawBiomeProps(list, i0, i1) {
         // sides pass extrudes -- and everything above it is drawn at the leaned
         // top, so the tower rises off its own base rather than standing on a
         // slab of its own invention.
-        castShadowRect(b.x + LIGHT_DX * 22, b.y + LIGHT_DY * 22, b.w, b.h, 40, 88, 3);
+        castShadowRect(b.x, b.y, b.w, b.h, 62, 88, 3);
         push(); translate(b.x, b.y); noStroke();
         const mtW = b.w / 2;
         fill(118, 122, 128); rect(-mtW, -mtW, b.w, b.w, 3);
@@ -27511,7 +27726,7 @@ function drawBiomeProps(list, i0, i1) {
         // most of the reason for putting it on the bus at all: paint with
         // nothing standing on it is a texture, and this sector had kilometres
         // of exactly that.
-        castShadowRect(b.x + LIGHT_DX * 18, b.y + LIGHT_DY * 18, b.w, b.h, 34, 86, 3);
+        castShadowRect(b.x, b.y, b.w, b.h, 52, 86, 3);
         push(); translate(b.x, b.y); noStroke();
         const pyW = b.w / 2;
         fill(84, 88, 96); rect(-pyW, -pyW, b.w, b.w, 3);
@@ -28102,7 +28317,7 @@ function drawBiomeProps(list, i0, i1) {
         // on top. The tallest thing in the sector outside the city, so the
         // shadow is long and the platform is drawn offset from its own base --
         // reading that offset is how a top-down camera says "height".
-        castShadowRect(b.x + LIGHT_DX * 26, b.y + LIGHT_DY * 26, b.w * 1.05, b.h * 1.05, 34, 88, 4);
+        castShadowRect(b.x, b.y, b.w * 1.05, b.h * 1.05, 60, 88, 4);
         push(); translate(b.x, b.y); noStroke();
         const hwT = b.w / 2;
         // Legs, splayed, at the footprint corners.
@@ -28679,8 +28894,16 @@ function sceneEmitters() {
     if (b.isStreetLight) {
       if (!inView(b.x, b.y, pad)) continue;
       const dx = b.x - px0, dy = b.y - py0;
+      // x/y is where the light lands -- the post's own ground position, which
+      // is where a source 46 units up puts its pool. fx/fy is where the LAMP
+      // is, which is the leaned top drawBuildings() draws the lantern at. They
+      // are different points and that gap is the only thing at this camera
+      // that says the lamp is in the air; drawn at the pool the fixture reads
+      // as a bright disc lying in the road.
+      massLean(b.x, b.y, STREET_LAMP_RISE, _leanTmp);
       out.push({
-        x: b.x, y: b.y + 14, z: 46, r: 330, rMin: 24, soft: 0.020,
+        x: b.x, y: b.y + STREET_LAMP_ARM, z: 46, r: 330, rMin: 24, soft: 0.020,
+        fx: b.x + _leanTmp[0], fy: b.y + STREET_LAMP_ARM + _leanTmp[1],
         // Slow shallow mains hum rather than a per-frame random, which buzzed.
         p: 0.92 * (0.965 + 0.035 * Math.sin(frameCount * 0.031 + b.x * 0.013)),
         c: [1.00, 0.93, 0.78], fix: 'LAMP', b: b, d2: dx * dx + dy * dy
@@ -30153,23 +30376,37 @@ function drawNightLights() {
     // -- carrying it through the rig instead would mean compositing the whole
     // canvas with a blend that has to read every pixel back.
     const cr = L.c[0] * 255, cg = L.c[1] * 255, cb = L.c[2] * 255;
+    // Where the FIXTURE is, as opposed to where its light lands. A lamp head
+    // is up in the air and its pool is on the road, so a source that leans
+    // (see sceneEmitters) carries the bulb up with it and leaves the pool
+    // behind. Everything without a lean answers at its own position.
+    const fx = L.fx === undefined ? L.x : L.fx;
+    const fy = L.fy === undefined ? L.y : L.fy;
 
+    // A bulb is a RAMP, not a stack of discs. Every one of these used to be a
+    // wide soft blob with two hard-edged ellipses dropped on top of it, and
+    // under 'lighter' a hard edge inside a glow does not read as a brighter
+    // core -- it reads as a contrasted ring, because the eye finds the step
+    // long before it finds the gradient. The cores are gradients now too, so
+    // the whole fixture falls off in one continuous curve.
     switch (L.fix) {
       case 'LAMP':
-        // One modest tint blob. A 460-unit gradient here measured 4.37 ms a
-        // frame for three visible lamps -- gradient fill is priced by area, and
-        // the rig is already doing the wide falloff. This only has to say
-        // "warm".
-        softBlob(L.x, L.y + 7, 200, 146, cr, cg * 0.87, cb * 0.66, 37 * k);
-        fill(cr, cg * 0.93, cb * 0.79, 80 * k); ellipse(L.x, L.y, 30, 30);
-        fill(255, 252, 236, 104 * k);           ellipse(L.x, L.y, 13, 13);
+        // The haze hangs BETWEEN the lantern and the pool it is throwing,
+        // which is the shape a lit lamp has from above and what keeps the
+        // fixture attached to its own light once the lean lifts it off the
+        // road. A 460-unit gradient here measured 4.37 ms a frame for three
+        // visible lamps -- gradient fill is priced by area, and the rig is
+        // already doing the wide falloff. This only has to say "warm".
+        softBlob((fx + L.x) * 0.5, (fy + L.y) * 0.5 + 5, 200, 146, cr, cg * 0.87, cb * 0.66, 37 * k);
+        softBlob(fx, fy, 34, 30, cr, cg * 0.93, cb * 0.79, 96 * k);
+        softBlob(fx, fy, 15, 13, 255, 252, 236, 132 * k);
         break;
       case 'FLOOD':
-        // A floodlight housing: wider, harder, and squared off, so an outpost
-        // reads as installed rather than as a bigger street lamp.
+        // A floodlight housing: wider and hotter, so an outpost reads as
+        // installed rather than as a bigger street lamp.
         softBlob(L.x, L.y + 10, 260, 190, cr, cg * 0.9, cb * 0.72, 40 * k);
-        fill(cr, cg * 0.95, cb * 0.82, 86 * k); ellipse(L.x, L.y, 38, 26);
-        fill(255, 253, 242, 118 * k);           ellipse(L.x, L.y, 17, 12);
+        softBlob(fx, fy, 44, 31, cr, cg * 0.95, cb * 0.82, 104 * k);
+        softBlob(fx, fy, 20, 14, 255, 253, 242, 148 * k);
         break;
       case 'WINDOW': {
         // Light coming out of a building, not a fixture hanging on one. Two
@@ -30185,7 +30422,7 @@ function drawNightLights() {
         // A helipad beacon. Cool, and it is the pulse in L.p that reads, so
         // the fixture itself stays small.
         softBlob(L.x, L.y, 170, 128, cr * 0.7, cg * 0.9, cb, 44 * k);
-        fill(cr, cg, cb, 120 * k); ellipse(L.x, L.y, 16, 16);
+        softBlob(fx, fy, 19, 19, cr, cg, cb, 150 * k);
         break;
     }
   }

@@ -100,6 +100,31 @@ ok('and sceneEmitters() is the one place that does',
 ok('it is gathered once a frame, not once per consumer',
    /_emitFrame === frameCount/.test(emitFn));
 
+// A lamp head is up in the air and the pool it throws is on the road, and at
+// this camera the gap between them is the ONLY thing that says so. x/y is where
+// the light lands -- the post's own ground position -- and fx/fy is where the
+// fixture is drawn, which is the leaned top drawBuildings() puts the lantern
+// at. Collapse the two and a street lamp is a bright disc lying in the street.
+ok('a street lamp separates where its light lands from where its lamp is',
+   /massLean\(b\.x, b\.y, STREET_LAMP_RISE, _leanTmp\);/.test(emitFn) &&
+   /fx: b\.x \+ _leanTmp\[0\], fy: b\.y \+ STREET_LAMP_ARM \+ _leanTmp\[1\]/.test(emitFn));
+// One constant, read by the emitter and by the art. Two copies of "how far
+// south of the column the lantern hangs" drift, and the symptom is a lamp
+// lighting a patch of road it is not over.
+ok('and the arm the source hangs on is the arm the art draws',
+   /const STREET_LAMP_ARM\s*=\s*\d+;/.test(src) &&
+   /b\.y \+ STREET_LAMP_ARM/.test(emitFn) &&
+   /const aY = STREET_LAMP_ARM;/.test(src));
+ok('the fixture pass draws at fx/fy and falls back to the pool',
+   /const fx = L\.fx === undefined \? L\.x : L\.fx;/.test(nightFn) &&
+   /const fy = L\.fy === undefined \? L\.y : L\.fy;/.test(nightFn));
+// Under 'lighter' a hard-edged ellipse inside a glow does not read as a
+// brighter core, it reads as a contrasted RING -- the eye finds the step long
+// before it finds the gradient. Every core is a gradient now.
+ok('no fixture core is a hard-edged disc under the additive blend',
+   !/ellipse\(L\.x, L\.y,/.test(nightFn) && !/ellipse\(fx, fy,/.test(nightFn),
+   (nightFn.match(/softBlob\(/g) || []).length + ' soft cores');
+
 console.log('\n== the player carries no light, the weapon does ==');
 // A pool pinned to the PLAYER means the player is never in the dark. A torch
 // bolted to the gun goes away when they pick up a scavenged one, which is the

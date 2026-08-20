@@ -651,6 +651,22 @@ An emitter carries `x, y, z, r, p, c, soft, rMin`, an optional cone (`aim`, `hal
 inside which nothing may shadow the source, and without it the polar reduction finds the
 bearer's own silhouette at r=0 in every direction.
 
+**Where the light LANDS and where the lamp IS are two different points, and the gap
+between them is the only thing at this camera that says a lamp is in the air.** `x, y` is
+the source's ground position — where a light 46 units up puts its pool, and what both rigs
+march from. Optional `fx, fy` is where `drawNightLights()` paints the *fixture*, which for
+a street lamp is the leaned top `drawBuildings()` draws the lantern at. Collapse the two
+and a lamp post is a bright disc lying in the road. Everything without a lean leaves them
+out and answers at its own position.
+
+**A bulb is a ramp, not a stack of discs.** Every fixture used to be a wide `softBlob`
+with two hard-edged `ellipse()` calls dropped on top of it — and under
+`globalCompositeOperation = 'lighter'` a hard edge inside a glow does not read as a
+brighter core, it reads as a **contrasted ring**, because the eye finds the step long
+before it finds the gradient. The cores are `softBlob`s too now, so the whole fixture falls
+off in one curve. `softBlob` is a cached radial gradient and the cores are 15–44 units
+across, so three of them cost less than the one 200-unit blob already there.
+
 **`PROP_EMITTERS` is how the overworld lights itself.** A biome prop throws light purely
 by having an entry — no per-prop code anywhere else. Offsets are from the prop's centre
 because the thing that emits is rarely the middle of the thing that carries it: a
@@ -667,6 +683,17 @@ Silence, at `z: 96` so nothing on the ground shadows it), `SPOREVENT` (the viole
 has no grid, so the only thing lighting it is what grows in it) and `PYLON` (still
 drawing current off a bus nobody maintains). All three are deliberately rare: see
 **Sub-biomes (Sectors 4–7)** for why a common emitter does not light its own sector.
+
+**The street lamp is the one emitter with its own two constants**, because it is the only
+one where the fixture and the source are separate objects. `STREET_LAMP_RISE` (30) is how
+far the head is thrown — deliberately *under* a real lamp's height, since the pool stays
+at the post's own ground position and a head thrown much further parts company with the
+light it is supposed to be casting. `STREET_LAMP_ARM` (14) is how far south of the column
+the lantern hangs, read by `sceneEmitters()` and by the art in `drawBuildings()` alike, so
+there is no second copy to drift. It also needs `LEGACY_RISE_OVERRIDE`: a 16×16 footprint
+through the generic "rise from the size of the base" formula gives about six, and a
+six-unit lean is a manhole cover with a bulb lying beside it — which is exactly what the
+lamp posts were.
 
 **The torch is a property of the gun, not of the player.** `WEAPON_TORCH` lists which
 weapons carry one — `PISTOL · SMG · DUAL_SMG · ASSAULT_RIFLE · ROCKET_LAUNCHER · TASER`.
@@ -846,6 +873,41 @@ inside its own box) came out as a rectangular slab standing behind a rock. Decks
 (`BRIDGE`, `CANALBRIDGE`, `BOARDWALK`) are deliberately absent: a surface you stand on
 with walls round it reads as a crate lying in the river.
 
+**A skirt is the shape of the thing it is under.** `drawMassSides()` gives every mass the
+same four-cornered box, and for the many props whose *drawn* base is not that box — a
+hydrant is a cylinder in a 22×22 square, a bench is a plank that has been rotated, a
+watchtower is four legs with air between them — the result is a plinth with the prop
+balanced on it. It is the plinth the eye picks out, too, because a hard rectangle is a
+stronger shape than anything drawn on top of it. `drawMassSkirt()` sweeps the same faces
+off a round, rotated or per-leg outline instead, with the same two rules
+`drawMassSides()` has (a face is drawn only when the lean turns it toward the camera; it
+is shaded from its own normal, never from whether it is showing), so a cylinder and a box
+in the same street agree about where the sun is. `PROP_BASE` and `LEGACY_BASE` name which
+props take it.
+
+Three things there are load-bearing:
+
+- **The size is measured off the ART, not the collision rect.** That is the whole
+  discipline: the reverted `drawMassColumn` swept from the rect, and a boulder is drawn at
+  about half of its own box, so the column stood out past the rock on every side. `w`/`h`
+  in `PROP_BASE` exist so that cannot come back; left out, the drawn base really is the
+  rect.
+- **A constant-width sweep is a CAPSULE.** Once the lean approaches a small prop's own
+  diameter — which it does at the edge of the view, because a postbox is about as tall as
+  it is wide — two identical ends with a straight tube between them have no up in them.
+  `top` is the head width as a fraction of the foot, and a hydrant, a postbox and a
+  bollard all genuinely narrow, so a little of it turns the pill back into something
+  standing.
+- **The side colour is the prop's own body colour.** A grey-brown skirt under a *red*
+  hydrant and a *blue* postbox is not a shaded side of anything; it reads as the prop
+  sitting in a concrete trough. Each entry is now the branch's own base fill.
+
+**And a cast shadow starts at the footprint.** `WATCHTOWER`, `MAST` and `PYLON` all threw
+theirs from a point 18–26 units along the light, which leaves clear ground between the
+prop and its own shadow — a hard-edged rectangle lying on grass a whole tower's width
+away, which is the same fault the monolith's footing had. Offset the *length*, never the
+origin.
+
 ### Figure volume
 
 A figure gets its third dimension from **shading**, never from the projection.
@@ -1022,7 +1084,10 @@ quadrants, and `drawBuildings()` leaves the canvas transform balanced over every
 city chunk can produce). It also holds the figure-volume line: that every body — player,
 enemy, citizen, gator, cow — goes through the one helper, behind a `BIOME_ACTIVE` guard,
 handed a counter-rotated light, and that `figureLight()` round-trips exactly at 24
-facings.
+facings. And it holds the skirt line: every `PROP_BASE` key is a prop that actually gets
+sides drawn (a base shape on a lean-only prop is dead weight and a typo is silent), the
+round ones taper, and `drawMassSkirt()` still drops the faces the top covers and shades
+the rest from their own normal.
 
 ### Elevation
 
@@ -2609,10 +2674,10 @@ rules came straight out of doing that:
 
 ### Looking at the WORLD
 
-`node tools/visual-world.js <biome> [x] [y] [zoom] [legacy] [labels]` runs the real streamer over a
-real patch of a real sector — `generateChunkContent`, `bakeChunkTerrain`, the terrain
-blit, the decor pass, the decks, the shadow pass and the depth-sorted pass — and
-screenshots it into `tools/out/`.
+`node tools/visual-world.js <biome> [x] [y] [zoom] [legacy] [labels] [night]` runs the real
+streamer over a real patch of a real sector — `generateChunkContent`, `bakeChunkTerrain`,
+the terrain blit, the decor pass, the decks, the shadow pass and the depth-sorted pass —
+and screenshots it into `tools/out/`.
 
 **`tools/visual.js` is the wrong tool for most complaints and this is the right one.**
 A contact sheet judges one piece of art on a flat background. What players actually
@@ -2624,7 +2689,10 @@ was found by opening this and looking, and none of them by reasoning about the c
 `legacy` draws the AUTHORED map instead of the streamed one — Levels 1 and 2's
 hand-placed sector, which is what the player stands in for the whole story arc and which
 the chunk streamer never touches. `labels` writes each solid's own flag over it; guessing
-which branch drew a given rectangle is how two rounds of this went wrong.
+which branch drew a given rectangle is how two rounds of this went wrong. `night` runs the
+clock round to 23:00 and adds the two passes that only exist after dark — `drawNightLights()`
+for the fixtures and `drawLightPass()` for the pools — because judging a lamp at midday
+tells you nothing about a lamp.
 
 **The single worst bug it found: region tone was being PAINTED.** Each region case in
 `bakeBiomeDetail()` laid six to nine soft stamps up to 720 units across to wash the
@@ -2683,6 +2751,11 @@ warn and does not draw wrong — the term just stays at zero. It cross-checks ev
 uniform the JS writes against every uniform the seven shaders declare, in both
 directions, and additionally asserts that nothing allocates a GPU object inside
 `glRigFrame()`. Anything about how the rig actually *looks* needs a browser.
+
+It also holds the two street-lamp invariants, both of which fail silently: that
+`sceneEmitters()` keeps the source's ground position and the fixture's leaned position as
+separate fields (collapse them and a lamp is a bright disc lying in the road), and that no
+fixture core is a hard-edged `ellipse()` under the additive blend.
 
 `check-generation.js` also carries a `== sub-biomes ==` section: every region a
 resolver can name actually occurs, none owns more than 60% of its sector, each is a

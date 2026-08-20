@@ -37,6 +37,10 @@ const LEGACY = process.argv.includes('legacy');
 // `labels` writes each solid's own flag over it. Guessing which branch drew a
 // given rectangle is how two rounds of this went wrong.
 const LABELS = process.argv.includes('labels');
+// `night` runs the clock round to 23:00 and adds the two passes that only
+// exist after dark: the fixtures (drawNightLights) and the light rig's pool
+// (drawLightPass). Judging a lamp at midday tells you nothing about a lamp.
+const NIGHT = process.argv.includes('night');
 const W = 900, H = 1400;
 
 const page = `<!doctype html><meta charset=utf8>
@@ -54,7 +58,7 @@ window.setup = function () {
   createCanvas(${W}, ${H});
   pixelDensity(1); noLoop();
   seedWorldClock();
-  worldTimeMs = 13 / 24 * DAY_MS;          // midday: the hour the palettes are for
+  worldTimeMs = (${NIGHT} ? 23 : 13) / 24 * DAY_MS;   // midday is the hour the palettes are for
   BIOME_ACTIVE = true;
   currentLevel = ${BIOME}; currentBiome = ${BIOME};
   authoredCore = null; authoredChunks = null; authoredMask = null;
@@ -99,7 +103,9 @@ window.draw = function () {
   // No actors, so this draws every visible mass and every queued tree in one
   // sorted pass -- which is exactly what the game does between characters.
   step('sorted',  () => drawDepthSorted());
+  if (${NIGHT}) step('fixtures', () => drawNightLights());
   pop();
+  if (${NIGHT}) step('lightpass', () => drawLightPass());
   if (${LABELS}) {
     push(); scale(zoom); translate(-camX, -camY);
     textAlign(CENTER, CENTER); textSize(11 / zoom);
@@ -146,7 +152,7 @@ window.draw = function () {
     await browser.close(); process.exit(1);
   }
   const errs = await p.evaluate('window.__errs || []');
-  const file = path.join(OUT, `world-b${BIOME}${LEGACY ? '-legacy' : ''}-${WX}_${WY}.png`);
+  const file = path.join(OUT, `world-b${BIOME}${LEGACY ? '-legacy' : ''}${NIGHT ? '-night' : ''}-${WX}_${WY}.png`);
   try { await p.locator('#defaultCanvas0').screenshot({ path: file, timeout: 15000 }); }
   catch (e) {
     console.log('  screenshot failed: ' + e.message.split('\n')[0]);

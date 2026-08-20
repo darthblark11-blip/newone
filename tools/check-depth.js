@@ -303,6 +303,43 @@ ok('the lean is applied once, generically, not per case',
    (propsFn.match(/drawMassSides\(/g) || []).length === 1);
 
 // ---------------------------------------------------------------------------
+// A SKIRT IS THE SHAPE OF THE THING IT IS UNDER
+// drawMassSides() is axis-aligned and works off the collision rect, so a
+// cylinder, a rotated plank and a legged tower all come out standing on the
+// same square plinth -- and a hard rectangle is a stronger shape than anything
+// drawn on top of it, so it is the plinth the eye picks out.
+// ---------------------------------------------------------------------------
+{
+  const pb = /const PROP_BASE = \{([\s\S]*?)\n\};/.exec(src);
+  const bkeys = pb ? (pb[1].match(/(\w+) *: *\{/g) || []).map(x => x.split(':')[0].trim()) : [];
+  ok('PROP_BASE names the props whose drawn base is not their box',
+     bkeys.length >= 6, bkeys.join(' '));
+  // A base shape declared for a prop with no sides is dead weight, and one
+  // declared for a propType that does not exist is a typo nothing reports.
+  const boxed = new Set(rkeys.filter(k => new RegExp(k + ': *\\[[^\\]]*,')
+    .test(pr[1].replace(/\s+/g, ' '))));
+  const idle = bkeys.filter(k => !boxed.has(k));
+  ok('every one of them is a prop that actually gets sides drawn',
+     idle.length === 0, idle.join(' ') || 'all boxed in PROP_RISE');
+  // The whole discipline: a skirt swept from the COLLISION rect stands out
+  // past art that is drawn well inside its box. That is the drawMassColumn
+  // regression, and w/h here exist so it cannot come back.
+  ok('the round ones carry a measured drawn size or use the rect deliberately',
+     bkeys.every(k => /\{[^}]*\}/.test(pb[1].slice(pb[1].indexOf(k)))));
+  // Swept at constant width a round mass is a capsule, which has no up in it.
+  const tapered = (pb[1].match(/top: *0\./g) || []).length;
+  ok('and the round ones taper toward the head', tapered >= 5, tapered + ' with a top ratio');
+  ok('drawMassSkirt() shades per face and drops the ones the top covers',
+     /function drawMassSkirt\(/.test(src) &&
+     /if \(nx \* lx \+ ny \* ly >= 0\) continue;/.test(src) &&
+     /const d = -\(nx \* LIGHT_DX \+ ny \* LIGHT_DY\);/.test(src));
+  // The legacy half of the same table.
+  const lb = /const LEGACY_BASE = \{([\s\S]*?)\};/.exec(src);
+  ok('LEGACY_BASE covers the skip, which is drawn rotated', !!lb && /isDumpster/.test(lb[1]),
+     lb ? lb[1].replace(/\s+/g, ' ').trim() : 'missing');
+}
+
+// ---------------------------------------------------------------------------
 // A TREE IS NOT GROUND COVER
 // Standing decor was painted by chunkMgr.drawDecor(), which runs in the ground
 // stack -- so the player was drawn on top of every canopy in the world, which
