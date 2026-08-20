@@ -47,10 +47,37 @@ function sig(a){
 }
 function mkG(){
   const g = {
+    // Enough of a 2D context for the light rig, which reaches past p5 into
+    // drawingContext for gradients, clips and composite modes. A missing method
+    // here is not a game bug -- it is this stub being narrower than the game.
     drawingContext: {
-      save(){},restore(){},translate(){},scale(){},beginPath(){},arc(){},fill(){},
+      // The geometric ones fold into calls.sig, the same as the p5 painters do:
+      // the light rig reaches PAST p5 into drawingContext for its gradients, so
+      // a hash that stopped at the p5 API could not see a pool move.
+      save(){},restore(){},translate(){sig(arguments);},scale(){sig(arguments);},
+      rotate(){sig(arguments);},transform(){sig(arguments);},
+      setTransform(){sig(arguments);},resetTransform(){},
+      beginPath(){},closePath(){},moveTo(){sig(arguments);},lineTo(){sig(arguments);},
+      arc(){sig(arguments);},arcTo(){sig(arguments);},ellipse(){sig(arguments);},
+      rect(){sig(arguments);},roundRect(){sig(arguments);},
+      quadraticCurveTo(){sig(arguments);},bezierCurveTo(){sig(arguments);},
+      fill(){},stroke(){},clip(){},clearRect(){},
+      fillRect(){sig(arguments);},strokeRect(){sig(arguments);},
+      drawImage(){sig(arguments);},putImageData(){},
+      getImageData(){ return { data: new Uint8ClampedArray(4), width: 1, height: 1 }; },
       createRadialGradient(){ return { addColorStop(){} }; },
+      createLinearGradient(){ return { addColorStop(){} }; },
+      createPattern(){ return null; },
       set fillStyle(v){}, get fillStyle(){ return null; },
+      set strokeStyle(v){}, get strokeStyle(){ return null; },
+      set lineWidth(v){}, get lineWidth(){ return 1; },
+      set lineCap(v){}, get lineCap(){ return 'butt'; },
+      set lineJoin(v){}, get lineJoin(){ return 'miter'; },
+      set filter(v){}, get filter(){ return 'none'; },
+      set shadowBlur(v){}, get shadowBlur(){ return 0; },
+      set shadowColor(v){}, get shadowColor(){ return null; },
+      set imageSmoothingEnabled(v){}, get imageSmoothingEnabled(){ return true; },
+      set globalCompositeOperation(v){}, get globalCompositeOperation(){ return 'source-over'; },
       set globalAlpha(v){}, get globalAlpha(){ return 1; }
     },
     width: 384, height: 384, pixels: new Uint8ClampedArray(200*200*4),

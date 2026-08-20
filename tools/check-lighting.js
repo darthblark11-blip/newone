@@ -19,7 +19,8 @@
 // pipeline against a real WebGL2 context (see tools/gl/ if present).
 
 const fs = require('fs');
-const { ctx, probe } = require('./harness.js');
+const { ctx, probe, calls } = require('./harness.js');
+const P = (expr) => probe('(' + expr + ')');
 
 const src = fs.readFileSync(process.env.GAME_JS || __dirname + '/../game.js', 'utf8');
 
@@ -187,6 +188,112 @@ const propTypes = new Set((propsFn.match(/case *["'](\w+)["'] *:/g) || [])
 const orphanLights = rows.map(l => l.trim().split(':')[0]).filter(k => !propTypes.has(k));
 ok('no emitter is attached to a propType that is never emitted',
    orphanLights.length === 0, orphanLights.join(' ') || 'all reachable');
+
+console.log('\n== every light casts, and the budget is the thing that gives ==');
+// The complaint this section exists for: at a night crossing in the streamed
+// city there are 12-28 emitters on screen, and the rig could only shadow eight.
+// The other twenty got drawNightLights()'s haze, which is a glow with no shadow
+// under it -- a lamp that looks like it is working and is not.
+{
+  const rows = +/const GLRIG_LIGHTS = (\d+);/.exec(src)[1];
+  ok('the polar atlas has room for a street full of lamps', rows >= 20, rows + ' rows');
+  const tiers = /const GLRIG_LIGHT_TIERS = \[([^\]]*)\]/.exec(src);
+  ok('the budget is tiered so the watchdog can shed casters', !!tiers, tiers && tiers[1]);
+  const t = tiers[1].split(',').map(x => +x.trim());
+  ok('the top tier spends every row it has', t[0] === rows, t[0] + ' of ' + rows);
+  ok('and each tier is smaller than the last', t.every((v, i) => i === 0 || v < t[i - 1]));
+  // The atlas is indexed by row / GLRIG_LIGHTS, so a budget above the row count
+  // would silently wrap two lights onto one row and give them each other's
+  // shadow.
+  ok('the budget can never exceed the atlas', t[0] <= rows);
+  ok('glRigGatherLights() spends the budget, not the ceiling',
+     /out\.length < budget/.test(src) && /const budget = glRigLightBudget\(\);/.test(src));
+  // Lights are shed BEFORE resolution, and sooner: a lamp at the edge of the
+  // screen losing its cast shadow is much less visible than the frame going
+  // soft, and both are far less visible than the rig standing down.
+  ok('the watchdog sheds casters before resolution',
+     /if \(GLRig\.lightTier < GLRIG_LIGHT_TIERS\.length - 1\) GLRig\.lightTier\+\+;\s*\n\s*else if \(GLRig\.tier < GLRIG_SCALES\.length - 1\)/.test(src));
+  ok('and it reacts to a stutter sooner than a resolution drop does',
+     /const slowFor = GLRig\.lightTier < GLRIG_LIGHT_TIERS\.length - 1 \? 45 : 90;/.test(src));
+  // By day a local light runs at 0.35 power on top of a fully lit scene, so the
+  // twentieth one buys nothing; night is when they are the whole picture.
+  const budgetAt = (h) => P('(() => { worldTimeMs = ' + h + ' / 24 * DAY_MS;'
+    + ' updateSunVector(); GLRig.lightTier = 0; return glRigLightBudget(); })()');
+  const night = budgetAt(1), noon = budgetAt(13);
+  ok('the full budget is spent at night', night === t[0], night + ' at 01:00');
+  ok('and hardly any of it at noon', noon < night * 0.45, noon + ' at 13:00');
+  ok('never below a floor, whatever the hour', budgetAt(13) >= 4);
+  // A fixture past the budget gets no pool, so its haze must not pretend.
+  ok('a fixture past the budget loses its haze but keeps its bulb',
+     /const pooled = \(typeof glRigOwnsSunShadows/.test(nightFn) &&
+     /const hz = i < pooled \? 1 : 0\.20;/.test(nightFn) &&
+     (nightFn.match(/\* k \* hz\)/g) || []).length === 4);
+}
+
+console.log('\n== a shot lights the street ==');
+// A muzzle flash used to be a sprite on the barrel and nothing else: the
+// brightest thing in the game lit nothing. It is an emitter now, so it throws
+// the same marched shadows a lamp does -- and a light that MOVES is the
+// strongest depth cue this camera has.
+{
+  ok('the flash is gathered in sceneEmitters(), not in a rig of its own',
+     /Character\.muzzleFlash counts down/.test(emitFn) && /MUZZLE_FLASH_R/.test(emitFn));
+  ok('it leaves the muzzle the rounds leave from',
+     /WEAPON_MUZZLE\[weaponKey\(c\.currentWeapon\)\] \|\| \[31, 8\]/.test(emitFn));
+  ok('its clearance reaches back past the shooter',
+     /rMin: m\[0\] \+ 16/.test(emitFn));
+  ok('and it draws no fixture -- the flash sprite is the fixture',
+     /p: MUZZLE_FLASH_P \* \(c\.muzzleFlash \/ 3\)[\s\S]{0,240}?fix: null/.test(emitFn));
+  ok('gathering them allocates nothing per frame',
+     /const _flashSrc = \[\];/.test(src) && /const fl = _flashSrc;\s*\n\s*fl\.length = 0;/.test(emitFn));
+  ok('and a firefight cannot spend the whole budget on flashes',
+     /MUZZLE_FLASH_MAX/.test(emitFn) && P('MUZZLE_FLASH_MAX') <= 6, P('MUZZLE_FLASH_MAX'));
+  // Ordering is the whole point: a flash that missed the budget would not read
+  // as a dimmer flash, it would read as a shot that did not go off.
+  const order = P(`(() => {
+    BIOME_ACTIVE = true;
+    worldTimeMs = 1 / 24 * DAY_MS; updateSunVector();
+    width = 1200; height = 800; zoom = 0.65;
+    camX = -600; camY = -400;
+    viewLeft = -1e5; viewRight = 1e5; viewTop = -1e5; viewBottom = 1e5;
+    buildings = activeBuildings = [
+      { x: 120, y: 60, w: 16, h: 16, isStreetLight: true },
+      { x: -180, y: -40, w: 16, h: 16, isStreetLight: true }
+    ];
+    player = { x: 0, y: 0, hp: 100, muzzleFlash: 3, aimAngle: 0.4,
+               currentWeapon: WEAPONS.PISTOL };
+    enemiesList = [{ x: 700, y: 300, hp: 10, muzzleFlash: 2, aimAngle: 1.2,
+                     currentWeapon: WEAPONS.ASSAULT_RIFLE }];
+    _emitFrame = -1;
+    const e = sceneEmitters();
+    return e.map(L => (L.fix || 'FLASH/TORCH') + ':' + L.d2.toFixed(3));
+  })()`);
+  ok('the torch is still first of all', /:-1\.000$/.test(order[0]), order[0]);
+  ok('both flashes come next, nearest first',
+     order[1].indexOf('FLASH') === 0 && order[2].indexOf('FLASH') === 0 &&
+     +order[1].split(':')[1] < +order[2].split(':')[1], order.slice(1, 3).join(' '));
+  ok('and every fixed lamp comes after them',
+     order.slice(3).every(r => r.indexOf('LAMP') === 0), order.slice(3).join(' '));
+  // End to end: the light pass has to actually PAINT more with a shot in the
+  // air. calls.sig is a rolling hash of every coordinate drawn, so this cannot
+  // pass by drawing the same thing somewhere else.
+  {
+    const paintAt = (mf) => {
+      probe('BIOME_ACTIVE = true; worldTimeMs = 1 / 24 * DAY_MS; updateSunVector();'
+          + ' player.muzzleFlash = ' + mf + '; enemiesList = []; _emitFrame = -1;');
+      calls.sig = 0; calls.shape = 0;
+      probe('drawLightPass()');
+      return [calls.sig, calls.shape];
+    };
+    const cold = paintAt(0), hot = paintAt(3);
+    ok('the light pass paints differently with a shot in the air',
+       cold[0] !== hot[0], cold[0] + ' vs ' + hot[0]);
+  }
+  ok('a flash fades over its three frames',
+     P(`(() => { player.muzzleFlash = 1; _emitFrame = -1;
+        const a = sceneEmitters()[1].p; player.muzzleFlash = 3; _emitFrame = -1;
+        return sceneEmitters()[1].p > a; })()`));
+}
 
 console.log('\n== cones ==');
 ok('the light shader takes an aim, a cone and a spill',

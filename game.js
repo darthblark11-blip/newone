@@ -29759,6 +29759,16 @@ const WEAPON_MUZZLE = {
   ROCKET_LAUNCHER: [47, 6]
 };
 
+// A muzzle flash as a light source. Short (three frames), hot, and small: a
+// shot lights the ground around the shooter hard and reaches nothing. Capped
+// per frame because a firefight is when the frame is busiest.
+const MUZZLE_FLASH_R   = 230;
+const MUZZLE_FLASH_P   = 1.25;
+const MUZZLE_FLASH_MAX = 4;
+// Reused, so gathering flashes allocates nothing on a frame where shots are
+// being fired -- which is every frame that matters.
+const _flashSrc = [];
+
 // Torch geometry. The inner cone is the beam and it falls off between inner and
 // outer.
 //
@@ -29874,6 +29884,62 @@ function sceneEmitters() {
       // light that gets dropped when a street gets busy.
       d2: -1
     });
+  }
+
+  // GUN FLASHES.
+  //
+  // A shot is the brightest thing that happens in this game and until now it lit
+  // nothing: the flash was a sprite on the barrel and the street around it
+  // stayed exactly as dark. It is an emitter like any other, so it throws the
+  // same marched shadows a lamp does -- and a light that MOVES is the strongest
+  // depth cue this camera has, because every silhouette in the scene swings its
+  // shadow when the shot goes off.
+  //
+  // Character.muzzleFlash counts down from 3, so a flash is three frames. Every
+  // shooter has one, player and hostile alike.
+  {
+    const fl = _flashSrc;
+    fl.length = 0;
+    if (player && player.hp > 0 && player.muzzleFlash > 0) fl.push(player);
+    if (typeof enemiesList !== 'undefined' && enemiesList) {
+      for (let i = 0; i < enemiesList.length; i++) {
+        const e = enemiesList[i];
+        if (e && e.hp > 0 && e.muzzleFlash > 0 && inView(e.x, e.y, pad)) fl.push(e);
+      }
+    }
+    if (fl.length > 1) {
+      fl.sort((a, b) => ((a.x - px0) * (a.x - px0) + (a.y - py0) * (a.y - py0)) -
+                        ((b.x - px0) * (b.x - px0) + (b.y - py0) * (b.y - py0)));
+    }
+    // Capped, because a firefight is exactly when the frame is busiest and
+    // exactly when a dozen simultaneous flashes would eat the whole budget.
+    // The nearest few are the ones the player can see the shadows from anyway.
+    const nF = fl.length < MUZZLE_FLASH_MAX ? fl.length : MUZZLE_FLASH_MAX;
+    for (let i = 0; i < nF; i++) {
+      const c = fl[i];
+      const a = c.aimAngle || 0, ca = Math.cos(a), sa = Math.sin(a);
+      const m = WEAPON_MUZZLE[weaponKey(c.currentWeapon)] || [31, 8];
+      const mx = c.x + ca * m[0] - sa * m[1];
+      const my = c.y + sa * m[0] + ca * m[1];
+      const dx = mx - px0, dy = my - py0, d2 = dx * dx + dy * dy;
+      out.push({
+        x: mx, y: my, z: 20, r: MUZZLE_FLASH_R,
+        // Same reasoning as the torch: the muzzle is out in front of the
+        // shooter, so the clearance has to reach back past them or the polar
+        // reduction finds their own silhouette and the flash comes out as a
+        // wedge with a hole punched in it.
+        rMin: m[0] + 16, soft: 0.030,
+        p: MUZZLE_FLASH_P * (c.muzzleFlash / 3),
+        c: [1.00, 0.86, 0.56],
+        // No fixture: the flash sprite on the barrel already IS the fixture,
+        // and a second bulb drawn at the muzzle is a disc sitting on the gun.
+        fix: null,
+        // Ahead of every fixed light and behind the torch, ordered among
+        // themselves by distance. A flash that missed the budget would not read
+        // as a dimmer flash -- it would read as a shot that did not go off.
+        d2: -0.5 + 0.49 * Math.min(1, d2 / 9e6)
+      });
+    }
   }
 
   // Nearest first. Which lights are lit has to depend on geometry rather than
@@ -30149,8 +30215,23 @@ const GLRIG_POLAR_STEPS = 48;
 // so a big lamp and a small fire cost the same and neither can spike the frame.
 const GLRIG_OCC = 96;
 
-// Hard ceiling on shadow-casting local lights. Rows in the polar atlas.
-const GLRIG_LIGHTS = 8;
+// Rows in the polar atlas, and therefore the hard ceiling on shadow-casting
+// local lights. This was 8, and a night crossing in the streamed city has
+// TWELVE TO TWENTY-EIGHT emitters on screen -- so most of the lamps in a street
+// got no pool from the rig at all, only drawNightLights()'s haze, which is a
+// glow with no shadow under it. That is the "some lamps cast and some do not"
+// report, and it is a budget, not a bug in the shadows.
+//
+// The atlas is a 256 x N texture, so the rows themselves are free; what costs
+// is three passes per light, and on a tile GPU it is the three framebuffer
+// binds rather than the fill.
+const GLRIG_LIGHTS = 24;
+
+// How many of those rows are actually spent. The watchdog steps DOWN this
+// before it drops resolution: a lamp at the edge of the screen losing its cast
+// shadow is much less visible than the whole frame going soft, and both are far
+// less visible than the rig standing down altogether.
+const GLRIG_LIGHT_TIERS = [24, 14, 8];
 
 // Ray march budget for the directional pass. Steps grow geometrically, so 20
 // steps reach ~14x the first step's length -- long enough for a dawn shadow.
@@ -30181,6 +30262,7 @@ const GLRig = {
   w: 0, h: 0,         // rig backing store, pixels
   hw: 0, hh: 0,       // height buffer, pixels
   tier: 0,            // index into GLRIG_SCALES
+  lightTier: 0,       // index into GLRIG_LIGHT_TIERS; the watchdog drops this first
   slow: 0,            // consecutive frames over budget
   fast: 0,
   lights: [],
@@ -30891,11 +30973,24 @@ const GLRIG_FULL = [-1, -1, 1, 1];
 // The budget here is much tighter than the canvas rig's, because each of these
 // costs three passes rather than one gradient fill. sceneEmitters() has already
 // sorted nearest-first, and the player's own torch sorts first of all.
+// How many shadow casters this frame can afford. Two terms: the watchdog's
+// light tier, and the time of day -- by day a local light runs at 0.35 of its
+// power on top of an already fully lit scene, so the twentieth one buys nothing
+// and the budget is better spent at night, which is also the frame with the
+// fewest other things in it.
+function glRigLightBudget() {
+  const cap = GLRIG_LIGHT_TIERS[GLRig.lightTier] || GLRIG_LIGHT_TIERS[GLRIG_LIGHT_TIERS.length - 1];
+  const n = 1 - daylight();
+  const b = Math.round(cap * (0.30 + 0.70 * n));
+  return b < 4 ? 4 : (b > GLRIG_LIGHTS ? GLRIG_LIGHTS : b);
+}
+
 function glRigGatherLights() {
   const src = sceneEmitters();
   const out = GLRig.lights;
+  const budget = glRigLightBudget();
   out.length = 0;
-  for (let i = 0; i < src.length && out.length < GLRIG_LIGHTS; i++) {
+  for (let i = 0; i < src.length && out.length < budget; i++) {
     if (src[i].p > 0.004) out.push(src[i]);
   }
   return out;
@@ -30907,14 +31002,23 @@ function glRigGatherLights() {
 function glRigWatchdog() {
   const dt = (typeof deltaTime === 'number' && deltaTime > 0) ? deltaTime : 16;
   if (dt > 26) { GLRig.slow++; GLRig.fast = 0; } else if (dt < 19) { GLRig.fast++; GLRig.slow = 0; }
-  if (GLRig.slow > 90) {
+  // Shedding lights is cheap and nearly invisible, so it may react sooner than a
+  // resolution drop: 45 slow frames rather than 90. A hitch the player can feel
+  // for a second and a half before anything gives is a worse trade than losing
+  // the cast shadow on a lamp at the edge of the screen.
+  const slowFor = GLRig.lightTier < GLRIG_LIGHT_TIERS.length - 1 ? 45 : 90;
+  if (GLRig.slow > slowFor) {
     GLRig.slow = 0;
-    if (GLRig.tier < GLRIG_SCALES.length - 1) { GLRig.tier++; glRigResize(); }
+    // Shadow casters first, then resolution, then give up.
+    if (GLRig.lightTier < GLRIG_LIGHT_TIERS.length - 1) GLRig.lightTier++;
+    else if (GLRig.tier < GLRIG_SCALES.length - 1) { GLRig.tier++; glRigResize(); }
     else { GLRig.on = false; GLRig.failure = 'stood down: frame budget'; }
-  } else if (GLRig.fast > 600 && GLRig.tier > 0) {
+  } else if (GLRig.fast > 600) {
     GLRig.fast = 0;
-    GLRig.tier--;
-    glRigResize();
+    // ...and back up in the reverse order, so resolution returns before the
+    // last of the lights do.
+    if (GLRig.tier > 0) { GLRig.tier--; glRigResize(); }
+    else if (GLRig.lightTier > 0) GLRig.lightTier--;
   }
 }
 
@@ -31266,11 +31370,21 @@ function drawNightLights() {
   // without its pool or the other way round.
   const src = sceneEmitters();
   const lit = src.length < 30 ? src.length : 30;
+  // HOW MANY OF THESE ARE ACTUALLY GOING TO LIGHT ANYTHING. Beyond whichever
+  // rig is carrying the frame, a lamp gets no pool at all -- so painting its
+  // wide haze would be a glow with nothing underneath it, which is a lamp that
+  // looks like it is working and is not. That is most of what "some lamps cast
+  // shadows and some do not" looked like. Past the budget a fixture keeps its
+  // bulb, because you should still be able to see the lamp is on, and loses the
+  // spread, because it is not spreading anything.
+  const pooled = (typeof glRigOwnsSunShadows === 'function' && glRigOwnsSunShadows())
+    ? glRigLightBudget() : LIGHT_BUDGET;
   for (let i = 0; i < lit; i++) {
     const L = src[i];
     if (!L.fix) continue;                       // a fire draws its own flames
     const k = amt * L.p;
     if (k < 0.01) continue;
+    const hz = i < pooled ? 1 : 0.20;           // haze only where there is a pool
     // The colour of the light. The rig decides how much of the world a source
     // reveals; this decides what temperature it is. Doing the tint here, in
     // world space over a few hundred units, costs a couple of fills per lamp
@@ -31298,14 +31412,14 @@ function drawNightLights() {
         // road. A 460-unit gradient here measured 4.37 ms a frame for three
         // visible lamps -- gradient fill is priced by area, and the rig is
         // already doing the wide falloff. This only has to say "warm".
-        softBlob((fx + L.x) * 0.5, (fy + L.y) * 0.5 + 5, 200, 146, cr, cg * 0.87, cb * 0.66, 37 * k);
+        softBlob((fx + L.x) * 0.5, (fy + L.y) * 0.5 + 5, 200, 146, cr, cg * 0.87, cb * 0.66, 37 * k * hz);
         softBlob(fx, fy, 34, 30, cr, cg * 0.93, cb * 0.79, 96 * k);
         softBlob(fx, fy, 15, 13, 255, 252, 236, 132 * k);
         break;
       case 'FLOOD':
         // A floodlight housing: wider and hotter, so an outpost reads as
         // installed rather than as a bigger street lamp.
-        softBlob(L.x, L.y + 10, 260, 190, cr, cg * 0.9, cb * 0.72, 40 * k);
+        softBlob(L.x, L.y + 10, 260, 190, cr, cg * 0.9, cb * 0.72, 40 * k * hz);
         softBlob(fx, fy, 44, 31, cr, cg * 0.95, cb * 0.82, 104 * k);
         softBlob(fx, fy, 20, 14, 255, 253, 242, 148 * k);
         break;
@@ -31313,7 +31427,7 @@ function drawNightLights() {
         // Light coming out of a building, not a fixture hanging on one. Two
         // squat panes so it reads as a window rather than a bulb sitting on
         // the roof.
-        softBlob(L.x, L.y + 4, 150, 110, cr, cg * 0.8, cb * 0.55, 34 * k);
+        softBlob(L.x, L.y + 4, 150, 110, cr, cg * 0.8, cb * 0.55, 34 * k * hz);
         fill(cr, cg * 0.86, cb * 0.6, 72 * k);
         rect(L.x - 13, L.y - 5, 11, 9, 2);
         rect(L.x + 2,  L.y - 5, 11, 9, 2);
@@ -31322,7 +31436,7 @@ function drawNightLights() {
       case 'BEACON':
         // A helipad beacon. Cool, and it is the pulse in L.p that reads, so
         // the fixture itself stays small.
-        softBlob(L.x, L.y, 170, 128, cr * 0.7, cg * 0.9, cb, 44 * k);
+        softBlob(L.x, L.y, 170, 128, cr * 0.7, cg * 0.9, cb, 44 * k * hz);
         softBlob(fx, fy, 19, 19, cr, cg, cb, 150 * k);
         break;
     }

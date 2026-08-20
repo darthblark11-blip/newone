@@ -908,12 +908,49 @@ actually in the dark, so the one thing a night is for — making you walk toward
 torch (see **Emitters**), which is a cone, comes off the muzzle, and goes away when the
 player picks up a scavenged gun.
 
+**Every light casts, and the BUDGET is the thing that gives.** `GLRIG_LIGHTS` is the
+number of rows in the polar atlas and therefore the ceiling on shadow-casting local
+lights. It was 8, and a night crossing in the streamed city has **twelve to twenty-eight
+emitters on screen** — so most of the lamps in a street got no pool from the rig at all,
+only `drawNightLights()`'s haze, which is a glow with no shadow under it. That is what
+"some lamps cast shadows and some don't" was: a budget, not a fault in the shadows.
+
+The atlas rows are free (it is a 256×N texture); what costs is three passes per light,
+and on a tile GPU it is the three framebuffer binds rather than the fill. So the ceiling
+is 24 and `glRigLightBudget()` decides how much of it to spend, from two terms:
+
+- **`GLRIG_LIGHT_TIERS`**, which the watchdog steps down *before* it drops resolution and
+  sooner than it would (45 slow frames rather than 90). A lamp at the edge of the screen
+  losing its cast shadow is much less visible than the whole frame going soft, and both
+  are far less visible than the rig standing down altogether. It climbs back in the
+  reverse order.
+- **The hour.** By day a local light runs at 0.35 of its power on top of an already fully
+  lit scene, so the twentieth one buys nothing; night is when they are the whole picture,
+  and it is also the frame with the fewest other things in it.
+
+**A fixture past the budget loses its haze.** `drawNightLights()` reads the same number,
+because painting a 200-unit blob for a lamp that is getting no pool is a light that looks
+like it is working and is not. Past the budget a lamp keeps its bulb — you should still
+be able to see it is on — and loses the spread, because it is not spreading anything.
+
+**A gun flash is an emitter.** A shot is the brightest thing that happens in this game and
+it used to light nothing: the flash was a sprite on the barrel and the street around it
+stayed exactly as dark. It goes through `sceneEmitters()` like everything else, so it
+throws the same marched shadows a lamp does — and a light that *moves* is the strongest
+depth cue this camera has, because every silhouette in the scene swings its shadow when
+the shot goes off. `Character.muzzleFlash` counts down from 3, so a flash is three frames;
+it leaves the `WEAPON_MUZZLE` offset the rounds leave from, its `rMin` reaches back past
+the shooter, and it draws no fixture because the flash sprite already is one. It sorts
+ahead of every fixed light and behind the torch — a flash that missed the budget would not
+read as a dimmer flash, it would read as a shot that did not go off — and
+`MUZZLE_FLASH_MAX` caps it, because a firefight is exactly when the frame is busiest.
+
 Cost control: point lights are scissored to their own screen box, the light list is the
-same nearest-first budget `drawLightPass()` uses, the height buffer runs at half rig
+same nearest-first gather `drawLightPass()` uses, the height buffer runs at half rig
 resolution (every march sample and every occlusion resample reads it), and
-`glRigWatchdog()` drops through `GLRIG_SCALES` and finally stands the rig down if the
-frame budget goes — fall fast, recover slowly, because a rig oscillating between tiers
-reads as flicker.
+`glRigWatchdog()` sheds shadow casters, then drops through `GLRIG_SCALES`, and finally
+stands the rig down if the frame budget goes — fall fast, recover slowly, because a rig
+oscillating between tiers reads as flicker.
 
 ### A shadow needs a sun
 
