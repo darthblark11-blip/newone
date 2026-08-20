@@ -2574,6 +2574,42 @@ rules came straight out of doing that:
 - **A contact shadow at footprint size becomes the silhouette.** `BRAKE` and `MONOLITH`
   both read as "dark ellipse with something on it" until their shadows came down.
 
+### Looking at the WORLD
+
+`node tools/visual-world.js <biome> [x] [y] [zoom]` runs the real streamer over a
+real patch of a real sector — `generateChunkContent`, `bakeChunkTerrain`, the terrain
+blit, the decor pass, the decks, the shadow pass and the depth-sorted pass — and
+screenshots it into `tools/out/`.
+
+**`tools/visual.js` is the wrong tool for most complaints and this is the right one.**
+A contact sheet judges one piece of art on a flat background. What players actually
+report — a ring baked into the ground, a deck lying across a road, a chunk-shaped patch
+of the wrong colour, six of the same prop in one screen — are properties of a generated
+chunk, and none of them are visible one prop at a time. Every fault in the list below
+was found by opening this and looking, and none of them by reasoning about the code.
+
+**The single worst bug it found: region tone was being PAINTED.** Each region case in
+`bakeBiomeDetail()` laid six to nine soft stamps up to 720 units across to wash the
+ground toward its own colour. A stamp is clipped at the chunk buffer's edge, and nine
+that big do not read as patches — they cover the chunk. Every chunk came out uniformly
+tinted toward its own region with a hard rectangular join to its neighbour: a visible
+patchwork of 1200-unit squares across the entire world. `REGION_TINT` moves it into the
+per-texel noise pass where it is sampled in world space, resolved once per lattice point
+and bilinearly interpolated, so a boundary arrives as a gradient and no seam can exist.
+**Tone belongs in the texel pass; paint belongs to features.**
+
+Three more shapes that keep failing, on top of the radial one:
+
+- **A regular repeat resolves before its subject does.** Evenly spaced rungs across a
+  bar are a LADDER, which is what made `REVETMENT` read as a fence lying in the grass;
+  concentric rings from above are a SNAIL SHELL, which is what `HIVETOWER` was. Same
+  family as the wheel and the star. Irregular spacing is the fix every time.
+- **A hard-edged rect laid on organic ground is a rectangle, whatever it is meant to
+  be.** Six rounded grey squares a chunk did not read as broken concrete.
+- **A thin stroked ellipse is not a meniscus, it is a drawn circle.** The rim strokes on
+  the swamp pools, the glare ice and the flesh pools were the faint ovals scattered over
+  three sectors.
+
 ### Headless checks
 
 `tools/` runs the parts of the world that are pure arithmetic without a canvas. It is not
