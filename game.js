@@ -2905,6 +2905,23 @@ function drawBuildingShadows() {
         ellipse(b.x, b.y, b.w, b.h * 0.8);
         ellipse(b.x + sdx, b.y + sdy + STREET_LAMP_ARM * 0.7, 16, 12);
     }
+    else if (b.isTower) {
+        // Four legs and a mast, thrown from the FOOTPRINT along the light. The
+        // generic branch below gave it a full-size rounded rect offset 40,40 --
+        // a solid slab beside a structure that is mostly air.
+        const tL = 66, tdx = LIGHT_DX * tL, tdy = LIGHT_DY * tL;
+        const tpx = -LIGHT_DY * 5, tpy = LIGHT_DX * 5;
+        // Each leg throws its OWN shadow, ending under the head. Converging
+        // all four on one point filled the middle in, and a filled square is a
+        // slab -- which is the opposite of what a structure made of air casts.
+        for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
+          const bx = b.x + sx * b.w * 0.17, by = b.y + sy * b.h * 0.17;
+          const ex = b.x + tdx + sx * b.w * 0.075, ey = b.y + tdy + sy * b.h * 0.075;
+          quad(bx + tpx, by + tpy, bx - tpx, by - tpy,
+               ex - tpx * 0.5, ey - tpy * 0.5, ex + tpx * 0.5, ey + tpy * 0.5);
+        }
+        rect(b.x + tdx - b.w * 0.11, b.y + tdy - b.h * 0.11, b.w * 0.22, b.h * 0.22, 3);
+    }
     else if (b.isPalm) { push(); translate(b.x + sL/2, b.y + sL/2); rect(-8, -40, 16, 80, 4); for (let i = 0; i < 5; i++) { push(); translate(0, -40); rotate((i * TWO_PI / 5) + sin(frameCount * 0.02 + b.x) * 0.2); ellipse(30, 0, 60, 20); pop(); } pop(); }
     else if (b.isArena) { ellipse(b.x + sL*1.5, b.y + sL*1.5, b.w - 100, b.h - 150); }
     else if (b.isCircus) { ellipse(b.x + sL*1.5, b.y + sL*1.5, 600, 600); }
@@ -3350,7 +3367,99 @@ function drawBuildings(list, i0, i1) {
     if (b.isAmusementPark) { fill(45, 70, 45); noStroke(); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h, 40); noFill(); stroke(150, 200, 255); strokeWeight(10); beginShape(); for(let t=0; t<TWO_PI; t+=0.2) { vertex(b.x + 150 + cos(t)*200 + sin(t*3)*40, b.y + 150 + sin(t)*200 + cos(t*2)*40); } endShape(CLOSE); push(); translate(b.x - 180, b.y - 180); rotate(frameCount * 0.015); stroke(200); strokeWeight(6); noFill(); ellipse(0,0, 300, 300); for(let a=0; a<TWO_PI; a+=PI/4) { line(0,0, cos(a)*150, sin(a)*150); fill(255, 100, 100); noStroke(); ellipse(cos(a)*150, sin(a)*150, 35, 35); } pop(); fill(255, 200, 0); noStroke(); ellipse(b.x + 250, b.y - 200, 120, 120); fill(200, 50, 255); ellipse(b.x - 200, b.y + 250, 100, 100); continue; }
     if (b.isCircus) { fill(180, 160, 120); noStroke(); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h, 100); push(); translate(b.x, b.y); fill(220); stroke(180); strokeWeight(4); ellipse(0,0, 650, 650); fill(200, 30, 30); noStroke(); for(let a=0; a<TWO_PI; a+=PI/6) { arc(0,0, 650, 650, a, a+PI/12); } fill(50); stroke(255, 200, 0); strokeWeight(5); ellipse(0,0, 100, 100); fill(200, 30, 30); ellipse(-250, 250, 180, 180); fill(220); ellipse(-250, 250, 100, 100); fill(40, 100, 200); ellipse(250, 250, 180, 180); fill(220); ellipse(250, 250, 100, 100); pop(); continue; }
 
-    if (b.isTower) { if (b.hp > 0) { push(); translate(b.x, b.y); let isFlashing = b.hitFlash && b.hitFlash > 0; if (isFlashing) { b.hitFlash--; } fill(isFlashing ? 255 : 40); stroke(isFlashing ? 255 : 20); strokeWeight(2); rect(-b.w/2, -b.h/2, b.w, b.h, 5); stroke(isFlashing ? 255 : 100); strokeWeight(4); line(-b.w/2+10, -b.h/2+10, -10, -80); line(b.w/2-10, -b.h/2+10, 10, -80); line(-b.w/2+10, b.h/2-10, -10, -80); line(b.w/2-10, b.h/2-10, 10, -80); strokeWeight(2); stroke(isFlashing ? 255 : 80); line(-b.w/2+10, -b.h/2+10, b.w/2-10, b.h/2-10); line(-b.w/2+10, b.h/2-10, b.w/2-10, -b.h/2+10); line(-25, -30, 25, -30); line(-15, -60, 15, -60); stroke(isFlashing ? 255 : 150); strokeWeight(3); line(0, -80, 0, -120); noStroke(); if (frameCount % 60 < 30 || isFlashing) fill(255, 0, 0); else fill(100, 0, 0); ellipse(0, -120, 8, 8); if (b.hp < b.maxHp) { fill(0, 150); rect(-40, -140, 80, 6); fill(255, 50, 50); rect(-40, -140, 80 * max(0, b.hp / b.maxHp), 6); } pop(); } else { fill(20); noStroke(); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h); fill(10); ellipse(b.x, b.y, b.w*0.8, b.h*0.8); stroke(40); strokeWeight(4); line(b.x - 20, b.y - 20, b.x + 30, b.y + 10); line(b.x + 10, b.y - 30, b.x - 20, b.y + 20); if (frameCount % 5 === 0) emit(b.x + random(-20, 20), b.y + random(-20, 20), 1, color(100), "SMOKE"); } continue; }
+    if (b.isTower) { if (b.hp > 0) {
+        // A LATTICE MAST, FROM ABOVE.
+        //
+        // This was a side elevation pasted onto a top-down map: four legs
+        // converging to a point EIGHTY UNITS NORTH of the footprint, rungs
+        // banded up the screen at -30 and -60, then a mast to -120 with the
+        // beacon on the end and the health bar above that. Half the drawing
+        // stood outside the thing's own ground, pointing at the top of the
+        // screen -- which is the direction "up" is in a platformer and no
+        // direction at all in this one.
+        //
+        // **The 120-square record is the COMPOUND, not the mast.** Planting the
+        // legs on the corners of it made the rake 45 degrees, and four legs at
+        // 45 degrees is a pyramid: the two far ones stretched to the head and
+        // the two near ones pointed back out, which read as an insect. A real
+        // mast is narrow and steep and stands in a fenced yard, which is also
+        // what a 120-square collision box is actually for. So the yard is
+        // drawn at the record's own size and the mast is a quarter of it.
+        push(); translate(b.x, b.y);
+        const isFlashing = b.hitFlash && b.hitFlash > 0;
+        if (isFlashing) b.hitFlash--;
+        const fX = -_lgLx, fY = -_lgLy;      // the ground, back under the head
+        const hw = b.w / 2, hh = b.h / 2;
+        const lit = isFlashing ? 255 : 0;
+        noStroke();
+        // The compound: a hardstanding with a fence round it. Flat, so it goes
+        // down at the FOOT -- it is ground, and ground does not lean.
+        fill(lit || 108, lit || 106, lit || 96, 86);
+        rect(fX - hw, fY - hh, b.w, b.h, 4);
+        fill(lit || 126, lit || 124, lit || 112, 58);
+        rect(fX - hw + 8, fY - hh + 8, b.w - 16, b.h - 16, 3);
+        stroke(lit || 146, lit || 148, lit || 140, 190); strokeWeight(2); noFill();
+        rect(fX - hw + 3, fY - hh + 3, b.w - 6, b.h - 6, 3);
+        // Fence posts, at no particular pitch -- an even repeat at this size
+        // resolves as a ladder before it resolves as a fence.
+        noStroke(); fill(lit || 150, lit || 152, lit || 146);
+        for (let i = 0; i < 7; i++) {
+          const t = (i + 0.5) / 7, o = ((i * 37) % 11) / 11 * 0.06;
+          ellipse(fX - hw + 3 + (b.w - 6) * (t + o), fY - hh + 3, 5, 5);
+          ellipse(fX - hw + 3 + (b.w - 6) * (t - o), fY + hh - 3, 5, 5);
+        }
+        // The equipment cabinet in one corner, which is what the yard is for.
+        fill(lit || 70, lit || 74, lit || 78);
+        rect(fX + hw * 0.30, fY + hh * 0.42, hw * 0.52, hh * 0.34, 2);
+        fill(lit || 92, lit || 96, lit || 102);
+        rect(fX + hw * 0.30, fY + hh * 0.42, hw * 0.52, hh * 0.10, 2);
+        // The mast. Legs from a narrow base to a narrower head, so the rake is
+        // steep -- which is the whole difference between a mast and a pyramid.
+        const BW = hw * 0.46, TW = hw * 0.22;
+        for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
+          const bx = fX + sx * BW, by = fY + sy * BW;
+          const tx = sx * TW, ty = sy * TW;
+          const m = Math.SQRT2;
+          const nx = sx / m, ny = sy / m;
+          const d = -(nx * LIGHT_DX + ny * LIGHT_DY);
+          const k = 0.42 + 0.48 * (d > 0 ? d : 0);
+          fill(lit || 118 * k + 44, lit || 122 * k + 46, lit || 130 * k + 50);
+          quad(bx - sy * 9, by + sx * 9, bx + sy * 9, by - sx * 9,
+               tx + sy * 5, ty - sx * 5, tx - sy * 5, ty + sx * 5);
+        }
+        // Footings, drawn over the legs so each one sits ON its pad.
+        fill(lit || 74, lit || 76, lit || 78);
+        for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
+          ellipse(fX + sx * BW, fY + sy * BW, 17, 14);
+        }
+        // ONE bracing band at half height, not an X on every face. Four crossed
+        // faces at this size resolve as a star long before they resolve as a
+        // lattice -- the same trap the wheel and the ladder are.
+        stroke(lit || 176, lit || 180, lit || 188, 210); strokeWeight(3); noFill();
+        beginShape();
+        for (const c of [[-1,-1],[1,-1],[1,1],[-1,1]]) {
+          vertex((fX + c[0] * BW + c[0] * TW) * 0.5, (fY + c[1] * BW + c[1] * TW) * 0.5);
+        }
+        endShape(CLOSE);
+        noStroke();
+        // The head: a deck, the dish array it carries, and the beacon at the
+        // centre, where an aircraft warning light actually is.
+        fill(lit || 84, lit || 86, lit || 92); rect(-TW - 5, -TW - 5, TW * 2 + 10, TW * 2 + 10, 3);
+        fill(lit || 168, lit || 172, lit || 182); rect(-TW, -TW, TW * 2, TW * 2, 2);
+        fill(lit || 236, lit || 238, lit || 242,  46); rect(-TW, -TW, TW * 2, TW * 0.7, 2);
+        fill(lit || 208, lit || 212, lit || 220);
+        for (let i = 0; i < 3; i++) {
+          const a2 = b.x * 0.013 + i * (TWO_PI / 3);
+          const rr = TW + 8;
+          push(); translate(Math.cos(a2) * rr, Math.sin(a2) * rr); rotate(a2);
+          rect(-3, -7, 6, 14, 2);
+          pop();
+        }
+        fill(lit || 46, lit || 48, lit || 52); ellipse(0, 0, 13, 13);
+        if (frameCount % 60 < 30 || isFlashing) fill(255, 74, 48); else fill(126, 30, 22);
+        ellipse(0, 0, 8, 8);
+        if (b.hp < b.maxHp) { fill(0, 150); rect(-40, -TW - 24, 80, 6); fill(255, 50, 50); rect(-40, -TW - 24, 80 * max(0, b.hp / b.maxHp), 6); }
+        pop(); } else { fill(20); noStroke(); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h); fill(10); ellipse(b.x, b.y, b.w*0.8, b.h*0.8); stroke(40); strokeWeight(4); line(b.x - 20, b.y - 20, b.x + 30, b.y + 10); line(b.x + 10, b.y - 30, b.x - 20, b.y + 20); if (frameCount % 5 === 0) emit(b.x + random(-20, 20), b.y + random(-20, 20), 1, color(100), "SMOKE"); } continue; }
     if (b.isStreetLight) {
         // A lamp standard, and the COLUMN is the whole read. At this camera a
         // post has no height except the distance between the ground it stands
@@ -24996,6 +25105,19 @@ const STREET_LAMP_ARM  = 14;
 // Flags whose height has nothing to do with the size of their base.
 function LEGACY_RISE_OVERRIDE(b) {
   if (b.isStreetLight) return STREET_LAMP_RISE;
+  // A transmission mast is the tallest thing in the sector and its footprint is
+  // 120 square, which through the generic formula asks for about twenty -- the
+  // same rise as a garden shed. It is the one structure whose height is the
+  // whole point of it, since the objective is to bring it down.
+  // A mast's height is told by its ART -- legs raking inward to a small head --
+  // and by the long shadow it throws, NOT by the lean. Pushed to 36 the head
+  // travelled past the near pair of footings, so those two legs pointed back
+  // out again and the whole thing read as an insect. It is mostly air, so the
+  // gap does not get filled in by a body the way a building's does, and it
+  // comes apart into two objects sooner than a solid would. 26 is the cap for
+  // its own footprint: tall for what it stands on, and the head stays inside
+  // the square its legs are planted in.
+  if (b.isTower) return BUILDING_RISE_MAX;
   return 0;
 }
 function buildingRise(b) {
@@ -26063,11 +26185,11 @@ function drawBiomeShadows() {
   // against the same LIGHT_DX/DY the march uses.
   if (typeof glRigOwnsSunShadows === 'function' && glRigOwnsSunShadows()) return;
   noStroke();
-  // Sun-driven: long and soft at dawn and dusk, short and firm at noon. The
-  // direction is fixed for the whole scene -- props bake their own shadows
-  // against LIGHT_DX/DY and cannot be re-baked hourly -- so only length and
-  // density move, which is what keeps a live building's shadow agreeing with
-  // a baked pebble's at every hour.
+  // Sun-driven: long and soft at dawn and dusk, short and firm at noon, and
+  // swinging round through the day -- see THE SUN TRAVELS. Only the baked
+  // micro-prop shadows hold still, because a chunk buffer is painted once and
+  // has to serve every hour; at 3.125 world units per texel they are two or
+  // three texels and the disagreement does not read.
   const SL = shadowLengthScale(), SD = shadowDensity();
   const sky = BIOMES[currentBiome] ? BIOMES[currentBiome].sky : [30, 36, 48];
   const sr = sky[0] * 0.30, sg = sky[1] * 0.30, sb = sky[2] * 0.34;
@@ -26099,8 +26221,37 @@ function drawBiomeShadows() {
       sh(70);
       ellipse(b.x + LIGHT_DX * len * 1.6, b.y + LIGHT_DY * len * 1.6, 74, 60);
     } else if (b.isStreetLight) {
+      // A four-metre lamp lays a long thin shadow down the pavement. `len` is
+      // derived from the FOOTPRINT, and a lamp's footprint is 16 square -- so
+      // this was a 22-unit blob five units from the post, which is the shape a
+      // manhole cover casts. Its height is the one thing about a lamp post that
+      // is not in its base.
+      const lsL = STREET_LAMP_RISE * 1.15 * SL;
+      const ldx = LIGHT_DX * lsL, ldy = LIGHT_DY * lsL;
+      const lpx = -LIGHT_DY, lpy = LIGHT_DX;
       sh(70);
-      ellipse(b.x + LIGHT_DX * len, b.y + LIGHT_DY * len, w * 1.4, h * 1.2);
+      quad(b.x + lpx * 4.6, b.y + lpy * 4.6, b.x - lpx * 4.6, b.y - lpy * 4.6,
+           b.x + ldx - lpx * 3.2, b.y + ldy - lpy * 3.2,
+           b.x + ldx + lpx * 3.2, b.y + ldy + lpy * 3.2);
+      ellipse(b.x, b.y, w, h * 0.8);
+      ellipse(b.x + ldx, b.y + ldy + STREET_LAMP_ARM * 0.7, 16, 12);
+    } else if (b.isTower) {
+      // Four legs and a head, and nothing in between -- a mast is mostly air,
+      // so the generic branch's full-footprint slab was the one shape it must
+      // not cast. Each leg throws its own; converging them on one point fills
+      // the middle back in.
+      const tsL = 66 * SL;
+      const tdx = LIGHT_DX * tsL, tdy = LIGHT_DY * tsL;
+      const tpx = -LIGHT_DY * 5, tpy = LIGHT_DX * 5;
+      const tB = w * 0.17;
+      sh(66);
+      for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
+        const bx = b.x + sx * tB, by = b.y + sy * tB;
+        const ex = b.x + tdx + sx * w * 0.075, ey = b.y + tdy + sy * h * 0.075;
+        quad(bx + tpx, by + tpy, bx - tpx, by - tpy,
+             ex - tpx * 0.5, ey - tpy * 0.5, ex + tpx * 0.5, ey + tpy * 0.5);
+      }
+      rect(b.x + tdx - w * 0.11, b.y + tdy - h * 0.11, w * 0.22, h * 0.22, 3);
     } else if (b.isRock) {
       sh(78);
       ellipse(b.x + LIGHT_DX * len, b.y + LIGHT_DY * len, w * 1.05, h * 0.9);

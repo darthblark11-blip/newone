@@ -38,12 +38,16 @@ fs.mkdirSync(OUT, { recursive: true });
 
 const args = process.argv.slice(2);
 const clutterMode = args.includes('--clutter');
+// The legacy flags are the OTHER half of the world's art -- the hand-authored
+// sectors the streamer never touches -- and they go through drawBuildings()
+// rather than drawBiomeProps(), so the sheet needs its own path for them.
+const legacyMode = args.includes('--legacy');
 const only = args.filter(a => !a.startsWith('--'));
 
 // Cell geometry. Big enough that a 500-unit prop is legible next to a 40-unit
 // one, which is exactly the comparison that catches a prop drawn at the wrong
 // scale.
-const CELL = 260, COLS = 6, PAD = 8;
+const CELL = +(process.env.VIS_CELL || 260), COLS = +(process.env.VIS_COLS || 6), PAD = 8;
 
 // What to draw, and at what footprint. Sizes are the ones the generators
 // actually emit -- a prop reviewed at a size the world never produces is a
@@ -66,6 +70,22 @@ const PROPS = [
   ['BORDERWALL', 400, 40], ['BRIDGE', 200, 300], ['CANALBRIDGE', 180, 300],
   ['BOARDWALK', 74, 250]
 ];
+// The legacy building flags, at the footprints legacyGenerateMap() emits. Level
+// 0 and 8's interior furniture is left out: those are closed rooms with no
+// projection and nothing to review.
+const LEGACY = [
+  ['isBlockBuilding', 160, 220], ['isStreetLight', 16, 16], ['isHouse', 200, 160],
+  ['isTower', 120, 120], ['isWall', 120, 40], ['isDumpster', 40, 25],
+  ['isCar', 90, 50], ['isMall', 700, 700], ['isCasino', 700, 500],
+  ['isTheater', 700, 700], ['isArena', 800, 800], ['isAmusementPark', 800, 800],
+  ['isCircus', 800, 800], ['isUBarrier', 300, 200], ['isTerminal', 120, 100],
+  ['isWaterTower', 120, 120], ['isWell', 70, 70], ['isFence', 470, 10],
+  ['isHayBale', 70, 70], ['isCrateProp', 60, 60], ['isWagonProp', 120, 70],
+  ['isCactusProp', 50, 50], ['isRock', 90, 70], ['isPalm', 60, 60],
+  ['isBarn', 300, 240], ['isWesternBldg', 220, 180], ['isShanty', 140, 120],
+  ['isTrailer', 200, 90], ['isGasStation', 260, 200], ['isMarket', 240, 200],
+  ['isLiquorStore', 200, 160], ['isApartment', 260, 300]
+];
 const CLUTTER = ['PEBBLE','TRASH','PAPER','PUDDLE','WEED','CRACK','GRASS','FLOWER',
   'HEATHER','ASH','TUMBLEWEED','BONE','SAGE','VINE','FERN','LOG','STUMP','MUSHROOM',
   'REED','ICE','DRIFT','SPOREPOD','GLOWMOSS','SHARD','RIPPLE','MANHOLE','CONE',
@@ -74,6 +94,8 @@ const CLUTTER = ['PEBBLE','TRASH','PAPER','PUDDLE','WEED','CRACK','GRASS','FLOWE
 
 const list = clutterMode
   ? CLUTTER.filter(t => !only.length || only.includes(t)).map(t => [t, 0, 0])
+  : legacyMode
+  ? LEGACY.filter(p => !only.length || only.includes(p[0]))
   : PROPS.filter(p => !only.length || only.includes(p[0]));
 if (!list.length) { console.error('nothing matched: ' + only.join(' ')); process.exit(2); }
 
@@ -87,6 +109,7 @@ const page = `<!doctype html><meta charset=utf8>
 <script>
 window.__CELLS = ${JSON.stringify(list)};
 window.__CELL = ${CELL}; window.__COLS = ${COLS}; window.__CLUT = ${clutterMode};
+window.__LEG = ${legacyMode};
 window.__done = false;
 // game.js has a preload() that loads sprite files this harness does not ship,
 // and p5 will not reach setup() until preload resolves -- so the page came up
@@ -108,7 +131,11 @@ window.setup = function () {
   // for -- and so the sun-driven helpers all return their mid-range values.
   if (typeof seedWorldClock === 'function') seedWorldClock();
   if (typeof worldTimeMs !== 'undefined') worldTimeMs = 13 / 24 * DAY_MS;
-  BIOME_ACTIVE = true; currentLevel = 2; currentBiome = 2;
+  // The legacy flags are Sector 1's, and drawBuildings() takes its mass path
+  // only while BIOME_ACTIVE -- which is exactly the state the hybrid sector is
+  // in, so this is the level as played rather than a special case for the sheet.
+  BIOME_ACTIVE = true;
+  currentLevel = window.__LEG ? 1 : 2; currentBiome = currentLevel;
   frameCount = 40;
   zoom = 1;
   // A prop leans away from the middle of the SCREEN, so every cell is drawn
@@ -156,6 +183,17 @@ window.draw = function () {
     if (window.__CLUT) {
       const d = { t: cells[i][0], x: 0, y: 0, s: 2.2, r: 0.7, c: 0.42, k: 0 };
       try { paintClutter(window, d, frameCount); } catch (e) { drawErr(e); }
+    } else if (window.__LEG) {
+      const b = { x: 0, y: 0, w: w, h: h, details: [], style: 1, tint: 0.42,
+                  // col is an ARRAY on these records -- the car branch reads
+                  // b.col[0..2] directly, and a p5 colour object made it draw white.
+                  angle: 0, hp: 2000, maxHp: 2000, col: [176, 62, 52] };
+      b[cells[i][0]] = true;
+      const arr = [b];
+      activeBuildings = arr; buildings = arr;
+      // Shadows first, then the body -- the same order draw() runs them in, and
+      // a prop whose shadow is drawn over its own art is a fault worth seeing.
+      try { drawBuildingShadows(); drawBuildings(arr, 0, 1); } catch (e) { drawErr(e); }
     } else {
       const b = { x: 0, y: 0, w: w, h: h, isBiomeProp: true, propType: cells[i][0],
                   tint: 0.42, angle: 0.0, isDeck: cells[i][0] === 'BRIDGE' ||
