@@ -439,6 +439,35 @@ Layout cases mirror the biome layouts. Placement discipline:
   place outside the lattice.
 - Respect `nearAnchor(x, y, pad)` clearance.
 - Respect `hitsAuthored()` — the final filter drops anything overlapping authored geometry.
+- Respect `groundReserved(biome, cx, cy, x, y, w, h, pad)` — **nothing is built on a road
+  or in the water.**
+
+`groundReserved()` is one predicate for "something else owns this patch", built from
+three primitives: `crossesNS` (a footprint against a north-south line whose x is a
+function of world y), `crossesEW` (the same for an east-west line, with the half width
+itself a function of x, which is how a river that breathes along its length is tested
+against its real bank) and `segHitsRect` (the woodland's dead-end spur). It covers the
+trunk road, the link, the river and its shallows, the marsh pools, the city canal, the
+frontier and jungle trails, and the crystal flats' circuit bus.
+
+Three things it gets right that the per-placement tests did not:
+
+- **The centreline is sampled down the footprint's own extent**, not at its centre. A
+  500-long hedge can cross a road without either of its ends being anywhere near the
+  point a single sample would have tested.
+- **The spur is reserved minus its last stretch.** A dead-end track *ends* in the yard it
+  was cut for, and the cabin and the stock pen at the head are the reason the road
+  exists — reserving the terminus deleted the destination and left a road arriving
+  nowhere, which is the exact thing the spur head was built to prevent.
+- **The quay is ground, not water.** Reserving it banned the bollards, the barge and the
+  crane that define a waterside in the first place. `RESERVED_OK` names the handful of
+  things that are what a waterway *looks like* rather than something put on one.
+
+A final filter in `generateChunkContent()` gives it the last word, the same shape as the
+`hitsAuthored` filter and for the same reason: the placements are eleven searches across
+five layouts, several placing by offset from a seed rather than by a search at all, and
+each one was a separate chance to get it wrong. `check-generation.js` asserts zero
+across all seven sectors.
 
 Clutter: `clutterCount = floor(70 * def.clutterDensity)`, gated by
 `bnoise(biome, dx, dy, 0.0022) < 0.38` so clutter **pools in low-traffic areas** rather
@@ -464,6 +493,15 @@ the litter under your feet changes several strides before the tree line does.
 if it animates (`TUMBLEWEED`, `SPOREPOD`, `GLOWMOSS`, `SHARD`) **or** it is too large
 and too round to survive rasterising at 3.125 world units per texel (`TREE` — a 30-unit
 canopy lobe is 9 texels and comes back as hard squares).
+
+**`rotate()` carries `LIGHT_DX/DY` round with it, and fourteen cases were reading the
+world light after rotating.** A case that does `g.rotate(d.r)` and then offsets a
+highlight against `LIGHT_DX/DY` is lighting itself from a direction that turns with the
+model — so a field of pebbles, a stand of conifers and a scatter of shards each had their
+own sun and none of them agreed with the walls behind them. It is the same trap the prop
+shadows have a note about and the one `figureLight()` closes for a body. `paintClutter()`
+computes `LDX`/`LDY` once — the sun counter-rotated into the piece's own frame — and every
+rotated case reads those. `check-depth.js` asserts no rotated case reads the globals.
 
 **Adding a clutter type = three edits:** a `case` in `paintClutter`, a return in
 `pickClutterType`, and a `CLUTTER_ANIMATED` entry if it animates. Miss the first and the
@@ -1013,6 +1051,21 @@ to get right. Standing in front of it puts them south, so you draw over the wall
 the old order got wrong: walking along a building's south face made the player sink into
 it. `drawBuildings()` and `drawBiomeProps()` take an optional `(list, i0, i1)` so the
 sorted pass can hand each of them one run of an already-sorted array.
+
+**A tree is not ground cover, and it used to be drawn as if it were.** Every live decor
+entry was painted by `chunkMgr.drawDecor()`, which runs in the ground stack — so the
+player was drawn on top of every canopy in the world, which from directly above reads as
+standing *on* the tree. `DECOR_STANDING` (`TREE · PINE · SNAG · KRUMMHOLZ`) is held back
+by `drawDecor()` into `_standDecor` and merged into the sorted pass, keyed on the trunk
+— which is the decor entry's own origin, and where its contact shadow and its entry in
+the rig's height field already are. Everything else in the live list (ripples, spore
+pods, glow moss, tendrils, a drifting tumbleweed) really is on the floor and stays in the
+ground pass, where the player belongs on top of it.
+
+`massRunKind()` is what makes that work: the sorted run now holds three kinds rather than
+two, and it is keyed off `DECOR_STANDING[b.t]` rather than a flag written onto the
+record, because decor objects are chunk content — regenerated bit-for-bit from
+`(biome, cx, cy)` — and nothing in the render path may leave a mark on them.
 
 Levels 0 and 8 are not sorted (`depthSortActive()` is `BIOME_ACTIVE`) — closed interiors
 composed against the old order, with nothing to gain.
@@ -2481,6 +2534,45 @@ the world. Useful debug affordances already present:
 
 When changing chunk generation, check the **seams** specifically: walk across a chunk
 boundary in both axes, and walk out of an authored core into the streamed world.
+
+### Looking at it
+
+`node tools/visual.js` renders the game's own prop and clutter painters --
+unmodified, against real p5 in real headless Chromium -- into a contact sheet in
+`tools/out/`, one cell per prop at the size the generators actually emit.
+
+**This exists because `tools/` could only ever prove that art RUNS.** Two changes
+shipped that passed every check in this directory and were wrong on sight: a boulder
+with a bare quad hanging off it, a fallen trunk drawn as a chain of beads. Nothing
+headless can catch that, and neither can a description of the intent — the only thing
+that catches it is looking.
+
+```
+node tools/visual.js                 # every prop      -> tools/out/props.png
+node tools/visual.js BOULDER FALLEN  # just these
+node tools/visual.js --clutter       # the micro-props -> tools/out/clutter.png
+```
+
+It needs `playwright` and `p5@1.9.4` in the scratchpad and uses the pre-installed
+Chromium; the file's header says how to restore both. It stubs `preload()` and the
+asset loaders, because p5 will not reach `setup()` until preload resolves and the
+sprite files are not part of this harness.
+
+**What the sheet is for is comparison.** `TREE`, `CABIN`, `LOGPILE` and `WRECK` read
+correctly and are the bar; anything that looks like mush beside them is mush. Three
+rules came straight out of doing that:
+
+- **Regular radial elements read as a wheel, and irregular ones read as a star.** At
+  sixty pixels the eye resolves the radial pattern long before it resolves what the
+  lines are. Three separate attempts at mangrove stilt roots failed this way before the
+  roots were dropped entirely. `ROOT` had the same fault and is now two crossing roots
+  rather than a rosette of fins.
+- **Value range is what makes a prop read, not hue.** Every new prop was drawn dark and
+  low-contrast and every one came out as a blob. `TREE` spans 46→127 green with a white
+  specular on top; `PINE` and `KRUMMHOLZ` sat inside twenty levels of one dark green and
+  read as black balls until they were lifted to the same range.
+- **A contact shadow at footprint size becomes the silhouette.** `BRAKE` and `MONOLITH`
+  both read as "dark ellipse with something on it" until their shadows came down.
 
 ### Headless checks
 

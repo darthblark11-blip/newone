@@ -279,6 +279,7 @@ ok('the roof translate is actually being used',
 console.log('\n== props are masses too ==');
 const fs = require('fs');
 const src = fs.readFileSync(process.env.GAME_JS || __dirname + '/../game.js', 'utf8');
+const src2 = src;
 const propsAt = src.search(/function drawBiomeProps\s*\(/);
 const propsFn = src.slice(propsAt, src.indexOf('function drawLightPass()'));
 const drawn = new Set((propsFn.match(/case *["'](\w+)["'] *:/g) || [])
@@ -300,6 +301,54 @@ ok('surfaces and collision volumes are left flat', wrong.length === 0,
 ok('the lean is applied once, generically, not per case',
    /const _pr = PROP_RISE\[b\.propType\]/.test(propsFn) &&
    (propsFn.match(/drawMassSides\(/g) || []).length === 1);
+
+// ---------------------------------------------------------------------------
+// A TREE IS NOT GROUND COVER
+// Standing decor was painted by chunkMgr.drawDecor(), which runs in the ground
+// stack -- so the player was drawn on top of every canopy in the world, which
+// from directly above reads as standing on the tree.
+// ---------------------------------------------------------------------------
+console.log('\n== standing decor goes through the depth sort ==');
+{
+  const stand = /const DECOR_STANDING = \{([\s\S]*?)\};/.exec(src2);
+  ok('DECOR_STANDING names the species that stand', !!stand &&
+     ['TREE', 'PINE', 'SNAG', 'KRUMMHOLZ'].every(t => stand[1].includes(t)),
+     stand ? stand[1].replace(/\s+/g, ' ').trim() : 'missing');
+  // drawDecor() holds them back, drawDepthSorted() takes them, and the run
+  // dispatcher knows a third kind.
+  ok('drawDecor() queues them instead of painting them',
+     /if \(stand && DECOR_STANDING\[d\.t\]\) \{ _standDecor\.push\(d\); continue; \}/.test(src2));
+  ok('drawDepthSorted() merges the queue in before the sort',
+     /_standDecor\[i\]\._depthKey = _standDecor\[i\]\.y;[\s\S]{0,80}masses\.push\(_standDecor\[i\]\)/.test(src2));
+  ok('the run dispatcher paints them as their own kind',
+     /function massRunKind\(b\) \{\s*if \(DECOR_STANDING\[b\.t\]\) return 2;/.test(src2));
+  // A tree's depth key is its trunk, which is where its shadow and its entry in
+  // the rig's height field already are -- not its crown, which has leaned away.
+  ok('a tree sorts on its trunk, not its crown',
+     /_standDecor\[i\]\._depthKey = _standDecor\[i\]\.y;/.test(src2));
+}
+
+// ---------------------------------------------------------------------------
+// THE SUN DOES NOT TURN WITH THE MODEL
+// rotate() carries LIGHT_DX/DY round with it. A clutter case that rotates by
+// d.r and then offsets against the world light gives every instance its own
+// sun -- the same trap figureLight() closes for a body.
+// ---------------------------------------------------------------------------
+console.log('\n== one sun over the micro-props ==');
+{
+  const i2 = src2.indexOf('function paintClutter(g, d, t) {');
+  const fn2 = src2.slice(i2, src2.indexOf('\n}\n', i2));
+  ok('paintClutter counter-rotates the light into the piece frame',
+     /const LDX = LIGHT_DX \* _cl - LIGHT_DY \* _sl;/.test(fn2));
+  const parts = fn2.split(/\n    case "[A-Z]+": \{/);
+  const names = Array.from(fn2.matchAll(/\n    case "([A-Z]+)": \{/g)).map(m => m[1]);
+  const wrong = [];
+  for (let k = 1; k < parts.length; k++) {
+    if (parts[k].includes('g.rotate(d.r)') &&
+        (parts[k].includes('LIGHT_DX') || parts[k].includes('LIGHT_DY'))) wrong.push(names[k - 1]);
+  }
+  ok('no rotated case reads the world light directly', wrong.length === 0, wrong.join(' '));
+}
 
 console.log('\n== every mass uses the one projection ==');
 // buildings, props and figures all through massLean/drawMassSides, so retuning
