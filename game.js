@@ -3360,10 +3360,188 @@ function drawBuildings(list, i0, i1) {
         continue;
     }
 
-    if (b.isMall) { fill(170, 175, 180); stroke(100); strokeWeight(3); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h, 15); fill(190, 195, 200); noStroke(); rect(b.x - b.w/2 + 25, b.y - b.h/2 + 25, b.w - 50, b.h - 50, 10); push(); translate(b.x, b.y); if (b.w > 200 && b.h > 200) { fill(100, 180, 255, 160); stroke(70, 120, 180); strokeWeight(4); rect(-b.w/4, -b.h/4, b.w/2, b.h/2, 5); stroke(255, 255, 255, 150); strokeWeight(2); for(let gx = -b.w/4 + 40; gx < b.w/4; gx += 40) line(gx, -b.h/4, gx, b.h/4); for(let gy = -b.h/4 + 40; gy < b.h/4; gy += 40) line(-b.w/4, gy, b.w/4, gy); } if (b.details) { for(let det of b.details) { if (det.type === 'hvac_large') { fill(0, 50); noStroke(); rect(det.x - 18, det.y - 18, 40, 40, 4); fill(140); stroke(90); strokeWeight(2); rect(det.x - 20, det.y - 20, 40, 40, 4); fill(40); ellipse(det.x - 8, det.y, 14, 14); ellipse(det.x + 8, det.y, 14, 14); push(); translate(det.x - 8, det.y); rotate(frameCount * 0.15); stroke(200); strokeWeight(2); line(-5,0,5,0); line(0,-5,0,5); pop(); push(); translate(det.x + 8, det.y); rotate(frameCount * 0.15); stroke(200); strokeWeight(2); line(-5,0,5,0); line(0,-5,0,5); pop(); } } } pop(); continue; }
+    if (b.isMall) {
+        // A MALL ROOF, not a floor plan of one.
+        //
+        // This was a pale rectangle with a saturated blue grid across the middle
+        // of it and fifteen identical plant units scattered at random, which
+        // read as a swimming pool in a car park with confetti round it. From
+        // directly above a mall is one very large low-slope membrane roof: panel
+        // seams, a run of roof lights down the spine, the plant GROUPED behind a
+        // screen where it actually goes, drains with a stain round each of them,
+        // and a coping all the way round the parapet.
+        //
+        // Everything is a fraction of the footprint and every repeat is a COUNT
+        // rather than a fixed pitch -- the same rule the built structures follow,
+        // so one piece of code draws a block-sized mall and a small one.
+        const mw = b.w, mh = b.h, mu = Math.min(mw, mh) * 0.012;
+        const mv = Math.abs((b.x * 0.00131 + b.y * 0.00077) % 1);
+        push(); translate(b.x, b.y); noStroke();
+        // Deck and the coping on the parapet. The coping is the lit rim of a
+        // wall this pass has already extruded, so it goes on the sun side.
+        fill(150, 152, 156); rect(-mw / 2, -mh / 2, mw, mh, mu * 1.2);
+        fill(168, 170, 172); rect(-mw / 2 + mu * 1.1, -mh / 2 + mu * 1.1, mw - mu * 2.2, mh - mu * 2.2, mu);
+        fill(255, 255, 255, 30);
+        rect(-mw / 2 + mu * 1.1 - LIGHT_DX * mu * 0.7, -mh / 2 + mu * 1.1 - LIGHT_DY * mu * 0.7,
+             mw - mu * 2.2, mu * 0.9, mu * 0.5);
+        // Membrane seams. A big roof is laid in bays, and the seams are the only
+        // thing at this size that says how big it is.
+        stroke(140, 142, 146, 130); strokeWeight(1);
+        const bays = Math.max(4, Math.round(mw / (mu * 9)));
+        for (let i = 1; i < bays; i++) {
+          const jx = -mw / 2 + (mw * i) / bays;
+          line(jx, -mh / 2 + mu * 1.6, jx, mh / 2 - mu * 1.6);
+        }
+        noStroke();
+        // Weathering, where water sits. Soft, so it reads as staining rather
+        // than as something lying on the roof.
+        for (let i = 0; i < 3; i++) {
+          const a = mv * 17 + i * 2.399;
+          fill(126, 128, 130, 46);
+          ellipse(Math.cos(a) * mw * 0.28, Math.sin(a) * mh * 0.26, mw * 0.22, mh * 0.18);
+        }
+        // Roof lights down the spine. A regular repeat is CORRECT here -- roof
+        // lights really are evenly spaced -- but they have to stay small and
+        // pale, because one big saturated pane is a swimming pool.
+        const nL = Math.max(3, Math.round(mh / (mu * 16)));
+        for (let i = 0; i < nL; i++) {
+          const ly = -mh / 2 + mh * ((i + 0.5) / nL);
+          fill(96, 98, 102, 150); rect(-mw * 0.075, ly - mu * 1.5, mw * 0.15, mu * 3.0, mu * 0.4);
+          fill(176, 196, 210, 190); rect(-mw * 0.068, ly - mu * 1.1, mw * 0.136, mu * 2.2, mu * 0.3);
+          fill(226, 238, 246, 110); rect(-mw * 0.068, ly - mu * 1.1, mw * 0.136, mu * 0.8, mu * 0.3);
+        }
+        // Roof drains, each with its own stain -- the reason the weathering is
+        // where it is.
+        for (const dq of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+          const dx2 = dq[0] * mw * 0.33, dy2 = dq[1] * mh * 0.33;
+          fill(120, 122, 124, 70); ellipse(dx2, dy2, mu * 7, mu * 6);
+          fill(84, 86, 88); ellipse(dx2, dy2, mu * 2.2, mu * 2.0);
+        }
+        // The plant deck: ONE screened compound, in a corner chosen from the
+        // building's own position. Fifteen units spread over the whole roof is
+        // confetti; a mall's plant is grouped behind a screen so it cannot be
+        // seen from the street, which is also where it goes on a real roof.
+        const pq = (mv * 4) | 0;
+        const psx = (pq & 1) ? 1 : -1, psy = (pq & 2) ? 1 : -1;
+        const pw = mw * 0.30, ph = mh * 0.26;
+        push(); translate(psx * (mw / 2 - pw / 2 - mu * 4), psy * (mh / 2 - ph / 2 - mu * 4));
+        fill(134, 136, 138); rect(-pw / 2, -ph / 2, pw, ph, mu * 0.6);
+        fill(112, 114, 116, 90); rect(-pw / 2 + mu, -ph / 2 + mu, pw - mu * 2, ph - mu * 2, mu * 0.4);
+        stroke(158, 160, 162); strokeWeight(mu * 0.7); noFill();
+        rect(-pw / 2, -ph / 2, pw, ph, mu * 0.6);
+        noStroke();
+        // Air handlers in two rows. Plant is installed in rows, and this is the
+        // one place on the roof where a regular repeat is what you actually see.
+        const nP = 3;
+        for (let r = 0; r < 2; r++) for (let c = 0; c < nP; c++) {
+          const ux = -pw / 2 + pw * ((c + 0.5) / nP), uy = -ph / 2 + ph * ((r + 0.5) / 2);
+          const uw = pw / nP * 0.66, uh = ph / 2 * 0.58;
+          fill(0, 0, 0, 46); rect(ux - uw / 2 + LIGHT_DX * mu, uy - uh / 2 + LIGHT_DY * mu, uw, uh, mu * 0.3);
+          fill(146, 148, 152); rect(ux - uw / 2, uy - uh / 2, uw, uh, mu * 0.3);
+          fill(176, 178, 182); rect(ux - uw / 2 - LIGHT_DX * mu * 0.5, uy - uh / 2 - LIGHT_DY * mu * 0.5, uw, uh * 0.34, mu * 0.3);
+          fill(58, 60, 62);
+          for (let f = 0; f < 2; f++) ellipse(ux - uw * 0.22 + f * uw * 0.44, uy + uh * 0.12, uh * 0.42, uh * 0.42);
+          stroke(190, 192, 196); strokeWeight(1.2);
+          for (let f = 0; f < 2; f++) {
+            push(); translate(ux - uw * 0.22 + f * uw * 0.44, uy + uh * 0.12);
+            rotate(frameCount * 0.14 + f * 1.1 + c);
+            line(-uh * 0.16, 0, uh * 0.16, 0); line(0, -uh * 0.16, 0, uh * 0.16);
+            pop();
+          }
+          noStroke();
+        }
+        // Ducting running out of the compound toward the middle of the roof.
+        fill(158, 160, 164);
+        rect(-pw * 0.08, psy > 0 ? -ph / 2 - mu * 5 : ph / 2, pw * 0.16, mu * 5, mu * 0.4);
+        pop();
+        // Roof sign over the entrance, on the side away from the plant.
+        fill(0, 0, 0, 44);
+        rect(-mw * 0.16 + LIGHT_DX * mu * 1.6, -psy * mh * 0.40 - mu * 2 + LIGHT_DY * mu * 1.6, mw * 0.32, mu * 4, mu * 0.5);
+        fill(48, 52, 62); rect(-mw * 0.16, -psy * mh * 0.40 - mu * 2, mw * 0.32, mu * 4, mu * 0.5);
+        fill(214, 96, 62); rect(-mw * 0.145, -psy * mh * 0.40 - mu * 1.2, mw * 0.29, mu * 2.2, mu * 0.4);
+        pop(); continue;
+    }
     if (b.isCasino) { fill(20, 20, 25); stroke(255, 215, 0); strokeWeight(4); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h, 20); let cTime = frameCount * 0.1; for(let i=0; i<10; i++) { fill(sin(cTime + i)*127+128, 50, 255-sin(cTime + i)*127); noStroke(); ellipse(b.x - b.w/2 + 40 + i*85, b.y - b.h/2 + 30, 18, 18); ellipse(b.x - b.w/2 + 40 + i*85, b.y + b.h/2 - 30, 18, 18); ellipse(b.x - b.w/2 + 30, b.y - b.h/2 + 40 + i*85, 18, 18); ellipse(b.x + b.w/2 - 30, b.y - b.h/2 + 40 + i*85, 18, 18); } fill(200, 30, 30); stroke(255); strokeWeight(3); ellipse(b.x - 150, b.y, 180, 180); fill(255); ellipse(b.x - 190, b.y - 40, 25, 25); ellipse(b.x - 110, b.y + 40, 25, 25); ellipse(b.x - 110, b.y - 40, 25, 25); ellipse(b.x - 190, b.y + 40, 25, 25); ellipse(b.x - 150, b.y, 25, 25); push(); translate(b.x + 150, b.y); rotate(frameCount * 0.05); fill(0); ellipse(0,0, 200, 200); for(let a=0; a<TWO_PI; a+=PI/4) { fill(a%(PI/2)===0?200:30, a%(PI/2)===0?30:200, 30); arc(0,0, 190, 190, a, a+PI/4); } fill(255,215,0); ellipse(0,0,40,40); pop(); continue; }
     if (b.isTheater) { fill(30, 20, 30); stroke(100); strokeWeight(4); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h, 10); fill(40, 30, 40); stroke(80); strokeWeight(3); rect(b.x - 250, b.y - 150, 500, 450, 20); fill(180, 20, 20); noStroke(); rect(b.x - 60, b.y + b.h/2 - 150, 120, 150); fill(200, 20, 20); stroke(255, 200, 0); strokeWeight(6); rect(b.x - 200, b.y - b.h/2 + 20, 400, 100); fill(255, 255, 200, 150 + sin(frameCount * 0.2)*100); noStroke(); for(let i=0; i<13; i++) { ellipse(b.x - 180 + i*30, b.y - b.h/2 + 100, 10, 10); ellipse(b.x - 180 + i*30, b.y - b.h/2 + 35, 10, 10); } continue; }
-    if (b.isArena) { fill(60); noStroke(); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h, 40); fill(150, 155, 160); stroke(100); strokeWeight(10); ellipse(b.x, b.y, b.w - 100, b.h - 150); fill(40, 100, 40); stroke(200); strokeWeight(3); ellipse(b.x, b.y, b.w - 300, b.h - 350); fill(255); noStroke(); rect(b.x - 5, b.y - (b.h-350)/2, 10, b.h - 350); ellipse(b.x, b.y, 50, 50); fill(40, 100, 40); ellipse(b.x, b.y, 44, 44); continue; }
+    if (b.isArena) {
+        // A STADIUM, not a target.
+        //
+        // This was a grey ring with a green oval inside it and one white line
+        // down the middle -- three flat discs stacked, which at any size reads
+        // as a logo. What a stadium is from above is four things in a row from
+        // the outside in: a roof over the stands, the bowl of seating under it,
+        // the running track, and a RECTANGULAR pitch. The rectangle is most of
+        // the read: an oval of green is a pond, a mown rectangle inside an oval
+        // is a stadium.
+        const aw = b.w, ah = b.h, au = Math.min(aw, ah) * 0.012;
+        push(); translate(b.x, b.y); noStroke();
+        // The site, and the concourse round the bowl.
+        fill(58, 60, 64); rect(-aw / 2, -ah / 2, aw, ah, au * 3);
+        fill(76, 78, 82); ellipse(0, 0, aw * 0.99, ah * 0.99);
+        // The roof: a broad ring, with ribs. A regular radial repeat normally
+        // resolves as a wheel long before it resolves as its subject -- but a
+        // stadium roof genuinely is a ring of radial trusses, so this is the
+        // one case where the wheel is the right answer. Kept low-contrast so it
+        // is a texture on the roof rather than a spoked shape of its own.
+        fill(150, 152, 156); ellipse(0, 0, aw * 0.94, ah * 0.94);
+        stroke(132, 134, 138, 190); strokeWeight(1.6); noFill();
+        for (let i = 0; i < 30; i++) {
+          const a = (i / 30) * TWO_PI;
+          line(Math.cos(a) * aw * 0.335, Math.sin(a) * ah * 0.335,
+               Math.cos(a) * aw * 0.470, Math.sin(a) * ah * 0.470);
+        }
+        noStroke();
+        // The roof's inner edge overhangs the stands, so the top of the bowl is
+        // in its shade -- and the shade is thrown along the scene's own light,
+        // not evenly, or the roof reads as a flat washer.
+        fill(96, 98, 102, 150);
+        ellipse(LIGHT_DX * au * 3, LIGHT_DY * au * 3, aw * 0.70, ah * 0.70);
+        // The bowl: tiers of seating, banded, with aisles cut through them.
+        fill(72, 76, 86); ellipse(0, 0, aw * 0.68, ah * 0.68);
+        for (let t = 0; t < 3; t++) {
+          const f = 0.68 - t * 0.055;
+          fill(64 + t * 20, 78 + t * 26, 116 + t * 30, 200);
+          ellipse(0, 0, aw * f, ah * f);
+        }
+        stroke(46, 48, 54, 200); strokeWeight(2); noFill();
+        for (let i = 0; i < 16; i++) {
+          const a = (i / 16) * TWO_PI + 0.19;
+          line(Math.cos(a) * aw * 0.262, Math.sin(a) * ah * 0.262,
+               Math.cos(a) * aw * 0.340, Math.sin(a) * ah * 0.340);
+        }
+        noStroke();
+        // The track, then the pitch itself.
+        fill(150, 78, 56); ellipse(0, 0, aw * 0.53, ah * 0.53);
+        fill(56, 112, 48); ellipse(0, 0, aw * 0.47, ah * 0.47);
+        const pw = aw * 0.40, ph = ah * 0.27;
+        fill(48, 104, 42); rect(-pw / 2, -ph / 2, pw, ph);
+        // MOWING STRIPES. This is what makes grass read as a pitch rather than
+        // as a green shape, and it is one alternating fill.
+        fill(64, 126, 54);
+        const nS = 8;
+        for (let i = 0; i < nS; i += 2) rect(-pw / 2 + (pw * i) / nS, -ph / 2, pw / nS, ph);
+        // Markings: touchlines, halfway, centre circle, both boxes, both goals.
+        stroke(232, 236, 232, 225); strokeWeight(2); noFill();
+        rect(-pw / 2 + au, -ph / 2 + au, pw - au * 2, ph - au * 2);
+        line(0, -ph / 2 + au, 0, ph / 2 - au);
+        ellipse(0, 0, ph * 0.30, ph * 0.30);
+        for (const sx of [-1, 1]) {
+          rect(sx > 0 ? pw / 2 - au - pw * 0.13 : -pw / 2 + au, -ph * 0.22, pw * 0.13, ph * 0.44);
+          rect(sx > 0 ? pw / 2 - au - pw * 0.05 : -pw / 2 + au, -ph * 0.11, pw * 0.05, ph * 0.22);
+        }
+        noStroke(); fill(236, 240, 236);
+        for (const sx of [-1, 1]) rect(sx * (pw / 2 - au) - (sx > 0 ? 0 : au * 0.8), -ph * 0.06, au * 0.8, ph * 0.12);
+        // Floodlight masts at the four corners of the roof, leaning with the
+        // rest of the world and lit at the head.
+        for (const q of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+          const fx = q[0] * aw * 0.335, fy = q[1] * ah * 0.335;
+          fill(0, 0, 0, 54); ellipse(fx + LIGHT_DX * au * 2, fy + LIGHT_DY * au * 2, au * 7, au * 6);
+          fill(92, 94, 100); ellipse(fx, fy, au * 5.4, au * 4.8);
+          fill(48, 50, 56); rect(fx - au * 4.4, fy - au * 1.7, au * 8.8, au * 3.4, au * 0.6);
+          fill(238, 236, 214, 210); rect(fx - au * 4.0, fy - au * 1.3, au * 8.0, au * 1.3, au * 0.4);
+        }
+        continue;
+    }
     if (b.isAmusementPark) { fill(45, 70, 45); noStroke(); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h, 40); noFill(); stroke(150, 200, 255); strokeWeight(10); beginShape(); for(let t=0; t<TWO_PI; t+=0.2) { vertex(b.x + 150 + cos(t)*200 + sin(t*3)*40, b.y + 150 + sin(t)*200 + cos(t*2)*40); } endShape(CLOSE); push(); translate(b.x - 180, b.y - 180); rotate(frameCount * 0.015); stroke(200); strokeWeight(6); noFill(); ellipse(0,0, 300, 300); for(let a=0; a<TWO_PI; a+=PI/4) { line(0,0, cos(a)*150, sin(a)*150); fill(255, 100, 100); noStroke(); ellipse(cos(a)*150, sin(a)*150, 35, 35); } pop(); fill(255, 200, 0); noStroke(); ellipse(b.x + 250, b.y - 200, 120, 120); fill(200, 50, 255); ellipse(b.x - 200, b.y + 250, 100, 100); continue; }
     if (b.isCircus) { fill(180, 160, 120); noStroke(); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h, 100); push(); translate(b.x, b.y); fill(220); stroke(180); strokeWeight(4); ellipse(0,0, 650, 650); fill(200, 30, 30); noStroke(); for(let a=0; a<TWO_PI; a+=PI/6) { arc(0,0, 650, 650, a, a+PI/12); } fill(50); stroke(255, 200, 0); strokeWeight(5); ellipse(0,0, 100, 100); fill(200, 30, 30); ellipse(-250, 250, 180, 180); fill(220); ellipse(-250, 250, 100, 100); fill(40, 100, 200); ellipse(250, 250, 180, 180); fill(220); ellipse(250, 250, 100, 100); pop(); continue; }
 

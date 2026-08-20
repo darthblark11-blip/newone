@@ -571,6 +571,44 @@ ground-stack items (`isCropField`, `isPond`, `isParkingLot`) which are drawn by
 `drawBuildingShadows()`.** Skipping the shadow is the most common way a new prop looks
 pasted on.
 
+**A prop drawn side-on is the commonest legacy fault, and it is invisible in the
+source.** `isTower` — Stick City's objective structure — was a side elevation pasted
+onto a top-down map: four legs converging on a point *eighty units north* of the
+footprint, rungs banded up the screen at −30 and −60, a mast running to −120 with the
+beacon on the end and the health bar above that. Half the drawing stood outside the
+thing's own ground pointing at the top of the screen, which is the direction "up" is in
+a platformer and no direction at all in this one. `tools/visual.js --legacy` exists to
+catch this class: the hand-authored flags go through `drawBuildings()` and had no contact
+sheet at all. `isWaterTower`, `isWagonProp` and `isCactusProp` still have it.
+
+Three rules came out of rebuilding the mast, and they generalise:
+
+- **A big collision box is often the YARD, not the thing.** Planting the mast's legs on
+  the corners of its 120-square record made the rake 45°, and four legs at 45° is a
+  pyramid — the far pair stretched to the head, the near pair pointed back out, and the
+  whole thing read as an insect. The record is a fenced compound; the mast is a fifth of
+  it, narrow and steep.
+- **Height is told by the art and the shadow, not by the lean.** Pushed to a rise of 36
+  the head travelled past the near footings and they splayed again. A structure that is
+  mostly air comes apart into two objects sooner than a solid does, because nothing fills
+  the gap. `LEGACY_RISE_OVERRIDE` caps it at `BUILDING_RISE_MAX` and the long
+  four-legged shadow carries the height instead.
+- **Value range, again.** Drawn in the same twenty levels of grey as the ground it stands
+  on, the mast read as a square with dots on it. Galvanised steel is bright.
+
+**And a plan diagram is not art.** `isMall` was a pale rectangle with a saturated blue
+grid across the middle and fifteen identical plant units scattered at random — a swimming
+pool in a car park with confetti round it. `isArena` was a grey ring with a green oval in
+it and one white line: three flat discs stacked, which at any size reads as a logo. Both
+are rebuilt as what the object actually is from above — a membrane roof with seams,
+spine roof lights, drains and its plant **grouped** behind one screen where plant really
+goes; and a stadium with a trussed roof ring, a tiered bowl, a track and a **rectangular**
+mown pitch. The rectangle is most of the stadium's read: an oval of green is a pond.
+
+Both are written in fractions of their own footprint with every repeat as a **count**
+rather than a pitch, the same rule the built structures follow. Still diagrams and still
+to do: `isCasino`, `isTheater`, `isAmusementPark`, `isCircus`.
+
 There is also a dedicated western-building art module (`DG` palette ~1298 plus
 `dgBoards`, `dgBoardwalk`, `dgHitchRail`, `dgFacadeBand`, `dgWindow`, `dgDoor`,
 `dgSignPlate`, `dgAwning`, `dgGable`, `drawWesternBuilding` ~1492). It's the best
