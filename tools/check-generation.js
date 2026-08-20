@@ -1,4 +1,4 @@
-const { ctx, probe, mkG } = require('./harness.js');
+const { ctx, probe, mkG, calls } = require('./harness.js');
 let fails = 0, checks = 0;
 const ok = (name, cond, extra) => {
   checks++;
@@ -287,6 +287,71 @@ for (const b of [1, 2, 3, 4, 5, 6, 7]) {
 }
 console.log(`   ${baked} chunks baked`);
 ok('every chunk bakes without throwing', threw === null, threw || '');
+
+// A CHUNK BAKED AT EIGHT AND ONE BAKED AT FOUR MUST BE THE SAME CHUNK.
+//
+// The sun travels now (see THE SUN TRAVELS in game.js), and a chunk bakes when
+// the player first walks into it -- so if the bake read the LIVE light vector,
+// two neighbours entered an hour apart would carry contact shadows and ground
+// highlights pointing different ways, with a hard seam down the join. And the
+// buffer then has to serve every remaining hour of the day regardless.
+// withBakedSun() pins the bake to SUN_REF_DX/DY; this proves it, by baking the
+// same chunk at four hours and comparing the draw calls it makes.
+// calls.sig is a rolling hash of every coordinate the harness was asked to
+// draw at, so "did these two runs paint the same picture" is one comparison --
+// a call COUNT cannot see this, because a shadow pointing the wrong way is the
+// same number of ellipses landing somewhere else.
+{
+  probe('authoredCore = null; authoredChunks = null; authoredMask = null; currentLevel = 2; currentBiome = 2;');
+  // The clock is moved and the chunk baked with the sky cache still STALE, which
+  // is the case that actually bites: a bake can be the first thing in a frame to
+  // ask for a sky term (shadowDensity() inside paintClutter() does), and that
+  // recomputes every sun-driven term -- including, without the _bakingSun guard,
+  // the direction the buffer is meant to be pinned to. Warming the cache first
+  // would test nothing.
+  const bakeAt = (h) => {
+    probe(`window.__sc = generateChunkContent(2, 3, -2); worldTimeMs = ${h} / 24 * DAY_MS;`);
+    calls.sig = 0;
+    probe('bakeChunkTerrain(2, 3, -2, window.__sc.decorBake)');
+    return [calls.sig, P('(updateSunVector(), LIGHT_DX.toFixed(3))')];
+  };
+  const runs = [7, 11, 15, 18].map(bakeAt);
+  ok('the live sun really does travel across the day',
+     new Set(runs.map(r => r[1])).size === 4, runs.map(r => r[1]).join('  '));
+  ok('and it sweeps one way, dawn to dusk',
+     runs.every((r, i) => i === 0 || +r[1] > +runs[i - 1][1]));
+  ok('but a chunk bakes identically at every hour of it',
+     new Set(runs.map(r => r[0])).size === 1, 'sig ' + runs[0][0]);
+  // And the live vector is put back, or the rest of the frame is lit from the
+  // wrong place -- including when the bake throws.
+  const restored = P(`(() => {
+    worldTimeMs = 9 / 24 * DAY_MS; updateSunVector();
+    const was = LIGHT_DX;
+    try { withBakedSun(() => { throw new Error('x'); }); } catch (e) {}
+    return [was.toFixed(4), LIGHT_DX.toFixed(4)];
+  })()`);
+  ok('withBakedSun() puts the live sun back even when the bake throws',
+     restored[0] === restored[1], restored.join(' -> '));
+  // The sky terms are cached against worldTimeMs and recomputed on the first
+  // read after the clock moves -- and a bake can be that first read, because
+  // paintClutter() asks for shadowDensity(). Nothing in the bake path does
+  // today (it is gated on the live pass), so this asserts the CONTRACT rather
+  // than waiting for the day somebody adds one: inside a bake the direction
+  // holds even when the cache refreshes underneath it.
+  const held = P(`(() => {
+    worldTimeMs = 7 / 24 * DAY_MS; updateSunVector();
+    worldTimeMs = 17 / 24 * DAY_MS;              // clock moves; cache now stale
+    return withBakedSun(() => { shadowDensity(); return LIGHT_DX.toFixed(4); });
+  })()`);
+  ok('a sky term read mid-bake cannot move the baked sun',
+     +held === P('SUN_REF_DX'), held + ' vs ' + P('SUN_REF_DX'));
+  ok('the shadow vector stays a unit vector all day',
+     [6, 9, 12, 15, 18, 23].every(h => {
+       const m = +P(`(() => { worldTimeMs = ${h} / 24 * DAY_MS; updateSunVector();
+         return Math.hypot(LIGHT_DX, LIGHT_DY).toFixed(5); })()`);
+       return Math.abs(m - 1) < 1e-4;
+     }));
+}
 
 // ------------------------------------------------------------------- clutter
 console.log('\n== clutter ==');

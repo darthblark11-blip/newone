@@ -1,4 +1,4 @@
-const { ctx, probe } = require('./harness.js');
+const { ctx, probe, calls } = require('./harness.js');
 const P = (s) => probe('(' + s + ')');
 let fails = 0, checks = 0;
 const ok = (n, c, x) => { checks++; if (!c) { fails++; console.log('  FAIL ' + n + (x !== undefined ? '  ' + x : '')); } };
@@ -30,7 +30,10 @@ for (const b of [1, 2, 3, 4, 5, 6, 7]) {
   probe('buildings = window.__all; activeBuildings = window.__all;');
   probe('viewLeft = -100000; viewRight = 100000; viewTop = -100000; viewBottom = 100000;');
   for (const hour of [2, 8, 13, 19]) {
-    probe(`worldTimeMs = ${hour} / 24 * DAY_MS;`);
+    // updateSunVector() is what draw() runs before any of this; without it the
+    // hour changes and the light does not, which would make this whole sweep
+    // four copies of one test.
+    probe(`worldTimeMs = ${hour} / 24 * DAY_MS; updateSunVector();`);
     for (const fn of ['drawBiomeProps()', 'drawBiomeShadows()', 'drawBiomeDecks()',
                       'drawGroundLots()', 'drawBuildings()', 'sceneEmitters()']) {
       let err = null;
@@ -40,6 +43,37 @@ for (const b of [1, 2, 3, 4, 5, 6, 7]) {
   }
 }
 console.log('   prop types drawn: ' + Array.from(seen).sort().join(' '));
+
+// ---------------------------------------------------------------------------
+// AND THE LIVE PASS ACTUALLY READS THE SUN.
+// The bake is pinned to a reference vector (check-generation proves that), so
+// the danger at this end is the opposite one: a travelling sun that nothing
+// live picks up. calls.sig is a rolling hash of every coordinate drawn, so a
+// shadow landing somewhere else changes it -- which a call count cannot see.
+// ---------------------------------------------------------------------------
+console.log('\n== the live pass reads the travelling sun ==');
+{
+  const drawAt = (h) => {
+    probe(`worldTimeMs = ${h} / 24 * DAY_MS; updateSunVector();`);
+    calls.sig = 0;
+    probe('drawBiomeShadows(); drawBiomeProps(); drawBuildings();');
+    return calls.sig;
+  };
+  const morning = drawAt(9), noon = drawAt(12), evening = drawAt(16);
+  ok('a morning scene and an afternoon one are not the same picture',
+     morning !== evening, morning + ' vs ' + evening);
+  ok('and midday is its own', noon !== morning && noon !== evening);
+  // The projection is the CAMERA and the shadow is the SUN, and the whole scene
+  // only reads as solid when those two disagree. Moving the sun must not move
+  // the lean, or every building goes back to leaning the way its shadow falls.
+  const leanAt = (h) => P(`(() => {
+    worldTimeMs = ${h} / 24 * DAY_MS; updateSunVector();
+    width = 1200; height = 800; zoom = 1; camX = -600; camY = -400;
+    const o = [0, 0]; massLean(400, 250, 20, o); return o.join(',');
+  })()`);
+  ok('the lean is the camera and does not move with the sun',
+     leanAt(8) === leanAt(17), leanAt(8) + ' | ' + leanAt(17));
+}
 
 // Every propType the generators emit must have a branch in drawBiomeProps,
 // otherwise it is a solid with no art -- an invisible wall.

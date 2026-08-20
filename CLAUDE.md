@@ -586,13 +586,70 @@ worked example in the file of composing a rich façade from small reusable primi
 `drawBuildingShadows()` (~1968) forks immediately:
 
 - **Streamed biomes** → `drawBiomeShadows()` (~16240). One **global light vector**
-  (`LIGHT_DX = 0.58`, `LIGHT_DY`, ~16175) for every caster, so the whole scene reads as
-  one lit space. Helpers: `buildingRise`, `shadowFill`, `castShadow`, `castShadowRect`,
+  (`LIGHT_DX`/`LIGHT_DY`) for every caster, so the whole scene reads as one lit space.
+  Helpers: `buildingRise`, `shadowFill`, `castShadow`, `castShadowRect`,
   `charShadowX/Y`, `charShadowFill`.
 - **Legacy maps** → the per-flag branch list, with per-level alpha and offset.
 
 Shadow length and density are driven by the sun: `shadowLengthScale()`,
 `shadowDensity()`, modulated by `skyDiffusion()`.
+
+### The sun travels
+
+`LIGHT_DX`/`LIGHT_DY` is the direction shadows **fall** — the sun is at
+`-LIGHT_DX, -LIGHT_DY`, which is why every highlight in the file is offset that way.
+It used to be two constants, so eight in the morning and five in the afternoon were lit
+identically and the only thing the day did was change how *long* the shadows were.
+
+It is a function of the world clock now: the sun comes up on one side of the map, climbs
+a wide solstice arc — long day, high noon — and sets on the other, so a shadow starts long
+and pointing one way, swings round through the short vertical of midday, and stretches out
+the other way by evening. Over a day everything in the world sweeps its shadow from one
+side to the other, which is the strongest cue this camera has that time is passing.
+
+The arithmetic lives **inside `_skyTerms()`**, with the rest of the sun-driven terms, and
+that placement is the point: that block already invalidates on exactly the thing that moves
+the sun, so any path which steps the clock and then reads a sky term gets a matching sun
+for free — a cutscene, a restored save, the headless tools. `updateSunVector()` is the
+named way in (it just calls `_skyTerms()`, which no-ops when the clock has not moved), and
+`updateWorldClock()` calls it at the **top**, before that function's paused early-out.
+
+**The one thing here that is deliberately not literal is which side of the sky the sun
+sits on.** Physically a mid-northern summer sun spends the middle of the day to the
+south, which from directly above throws every shadow *up* the screen — into the very
+face the lean turns toward the camera, so the shadow hides behind the wall that cast it,
+exactly when shadows are the only thing telling you a flat-looking scene has height in
+it. The arc is kept on the up-screen half. The east–west travel, the altitude arc and
+the sweep are all as they should be; only the hemisphere is chosen for the camera. Same
+call the weapon parallax makes.
+
+**Anything baked takes `SUN_REF_DX`/`SUN_REF_DY` instead, and that is not a nicety.** A
+chunk bakes when the player first walks into it, so a bake reading the live vector would
+give two neighbours entered an hour apart contact shadows pointing different ways, with
+a hard seam down the join — and the buffer then has to serve every remaining hour of the
+day regardless. `withBakedSun()` is the one way in; `bakeChunkTerrain()` and
+`bakeElevation()` are thin wrappers over their own bodies so the swap cannot leak past an
+early return or a throw. The reference value is the pair the whole terrain art was
+authored against, so **nothing baked moved** when the sun started travelling.
+
+`_bakingSun` closes the other half of that. The sky terms are cached against
+`worldTimeMs` and recomputed on the first read after the clock moves — and a bake can *be*
+that first read, since `paintClutter()` asks for `shadowDensity()`. Nothing in the bake
+path does today (it is gated on the live pass), so the guard is holding a contract rather
+than fixing a live bug; `check-generation.js` asserts it directly, because an end-to-end
+bake cannot reach a hazard nothing currently triggers.
+
+That leaves baked micro-prop contact shadows disagreeing slightly with the live sun at
+other hours. They are 1–3 texels at 3.125 world units per texel, which is why the baked
+list is only ever the small stuff in the first place.
+
+`check-generation.js` bakes the same chunk at four hours and asserts one signature while
+the live vector swings across its whole range; `check-render.js` asserts the opposite end
+— that the live pass really does read it, and that `massLean()` does **not** (the
+projection is the camera, the shadow is the sun, and the scene only reads as solid when
+those two disagree). Both use `calls.sig`, a rolling hash of every coordinate the harness
+was asked to draw at: a call *count* cannot see a shadow pointing the wrong way, because
+it is the same number of ellipses landing somewhere else.
 
 **A cast shadow is the convex hull of the silhouette and its offset copy, not the
 offset copy on its own.** `castShadow` / `castShadowRect` — called from twenty-eight
@@ -2674,7 +2731,7 @@ rules came straight out of doing that:
 
 ### Looking at the WORLD
 
-`node tools/visual-world.js <biome> [x] [y] [zoom] [legacy] [labels] [night]` runs the real
+`node tools/visual-world.js <biome> [x] [y] [zoom] [legacy] [labels] [night] [hour=N]` runs the real
 streamer over a real patch of a real sector — `generateChunkContent`, `bakeChunkTerrain`,
 the terrain blit, the decor pass, the decks, the shadow pass and the depth-sorted pass —
 and screenshots it into `tools/out/`.
@@ -2692,7 +2749,9 @@ the chunk streamer never touches. `labels` writes each solid's own flag over it;
 which branch drew a given rectangle is how two rounds of this went wrong. `night` runs the
 clock round to 23:00 and adds the two passes that only exist after dark — `drawNightLights()`
 for the fixtures and `drawLightPass()` for the pools — because judging a lamp at midday
-tells you nothing about a lamp.
+tells you nothing about a lamp. `hour=N` puts the clock at any hour: the sun travels, so
+*which* hour a screenshot was taken at is a property of the picture, and a shadow sweeping
+the wrong way is invisible in any single frame.
 
 **The single worst bug it found: region tone was being PAINTED.** Each region case in
 `bakeBiomeDetail()` laid six to nine soft stamps up to 720 units across to wash the

@@ -28,7 +28,23 @@ function noise(x,y){
   return v/tot;
 }
 
-const calls = { shape: 0, fill: 0, stroke: 0, img: 0 };
+const calls = { shape: 0, fill: 0, stroke: 0, img: 0, sig: 0 };
+// A rolling hash of WHERE things were drawn, not just how many were.
+//
+// Counting calls cannot see a shadow pointing the wrong way -- the same number
+// of ellipses land in different places. This folds every numeric argument into
+// one integer, so "did these two runs paint the same picture" is a comparison
+// of two numbers. Rounded to a tenth of a unit, because the answer has to
+// survive floating point without hiding a real difference.
+function sig(a){
+  let h = calls.sig;
+  for (let i = 0; i < a.length; i++) {
+    const v = a[i];
+    const n = typeof v === 'number' ? Math.round(v * 10) : 0;
+    h = (Math.imul(h ^ (n | 0), 0x01000193) >>> 0);
+  }
+  calls.sig = h;
+}
 function mkG(){
   const g = {
     drawingContext: {
@@ -39,9 +55,12 @@ function mkG(){
     },
     width: 384, height: 384, pixels: new Uint8ClampedArray(200*200*4),
     push(){},pop(){},translate(){},scale(){},rotate(){},
-    fill(){calls.fill++;},stroke(){calls.stroke++;},noFill(){},noStroke(){},strokeWeight(){},
-    rect(){},ellipse(){},line(){},arc(){},quad(){},triangle(){},text(){},image(){calls.img++;},
-    beginShape(){calls.shape++;},vertex(){},endShape(){},curveVertex(){},
+    fill(){calls.fill++;sig(arguments);},stroke(){calls.stroke++;sig(arguments);},
+    noFill(){},noStroke(){},strokeWeight(){},
+    rect(){sig(arguments);},ellipse(){sig(arguments);},line(){sig(arguments);},
+    arc(){sig(arguments);},quad(){sig(arguments);},triangle(){sig(arguments);},text(){},
+    image(){calls.img++;sig(arguments);},
+    beginShape(){calls.shape++;},vertex(){sig(arguments);},endShape(){},curveVertex(){sig(arguments);},
     smooth(){},noSmooth(){},pixelDensity(){},loadPixels(){},updatePixels(){},remove(){},
     background(){},clear(){},textAlign(){},textSize(){},textLeading(){}
   };
@@ -118,6 +137,14 @@ for (const fn of ['push','pop','translate','rotate','scale','fill','noFill','str
   'textStyle','textWrap','textWidth','textAscent','textDescent','curve','bezierVertex','curveTightness',
   'drawingContext','shearX','shearY','applyMatrix','resetMatrix','erase','noErase','circle','square']) {
   if (!(fn in ctx)) ctx[fn] = function(){};
+}
+// The global-mode painters record WHERE they were asked to draw, the same way
+// the buffer stub does -- see sig(). A check that wants to know whether two
+// runs painted the same picture reads calls.sig around them.
+for (const fn of ['rect','ellipse','line','arc','quad','triangle','point','image',
+                  'vertex','curveVertex','bezier','bezierVertex','curve','circle','square']) {
+  const prev = ctx[fn];
+  ctx[fn] = function(){ sig(arguments); return prev.apply(this, arguments); };
 }
 ctx.drawingContext = mkG().drawingContext;
 ctx.document = { addEventListener(){}, removeEventListener(){}, body:{}, getElementById(){return null;},

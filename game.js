@@ -2803,6 +2803,9 @@ function elevSpeedFactor(x, y, vx, vy) {
 // Painted into the chunk terrain buffer, not per frame: at device pixel ratio 3
 // the live version cost 2.7 ms on the mine bench for geometry that never moves.
 function bakeElevation(g, ox, oy) {
+  return withBakedSun(() => bakeElevationAt(g, ox, oy));
+}
+function bakeElevationAt(g, ox, oy) {
   const zs = elevZones();
   if (!zs) return;
   g.noStroke();
@@ -22217,7 +22220,14 @@ function pickClutterType(def, rng, layout, region) {
 //  is the difference between a visible hitch and an imperceptible one.
 // ###########################################################################
 
+// The terrain buffer is painted once and then blitted for the rest of the
+// session, so it takes the reference sun -- see SUN_REF_DX. A thin wrapper
+// rather than a swap inside the body, because the body has early returns and a
+// bake that left the globals swapped would light the rest of the frame wrong.
 function bakeChunkTerrain(biome, cx, cy, staticDecor) {
+  return withBakedSun(() => bakeChunkTerrainAt(biome, cx, cy, staticDecor));
+}
+function bakeChunkTerrainAt(biome, cx, cy, staticDecor) {
   const def = BIOMES[biome];
   const lay = layoutFor(biome, cx, cy);
   const p   = palFor(biome, cx, cy);
@@ -24894,8 +24904,69 @@ function clampToSector(x, y, pad) {
   };
 }
 
-const LIGHT_DX = 0.58;
-const LIGHT_DY = 0.81;
+// ###########################################################################
+// THE SUN TRAVELS, AND EVERY SHADOW IN THE WORLD SWEEPS WITH IT
+//
+// LIGHT_DX/DY is the direction shadows FALL (the sun is at -LIGHT_DX/-LIGHT_DY,
+// which is why every highlight in this file is offset that way). It used to be
+// two constants, so a scene at eight in the morning and the same scene at five
+// in the afternoon were lit identically and the only thing the day did was
+// change how long the shadows were.
+//
+// It is now a function of the world clock. The sun comes up on one side of the
+// map, climbs a wide solstice arc -- long day, high noon -- and sets on the
+// other, so a shadow starts long and pointing one way, swings round through the
+// short vertical of midday, and stretches out the other way by evening. Over a
+// day everything in the world sweeps its shadow from one side to the other,
+// which is the single strongest cue this camera has that time is passing.
+//
+// **The one thing here that is deliberately not literal is which SIDE of the
+// sky the sun sits on.** Physically a mid-northern summer sun spends the middle
+// of the day to the south, which from directly above would throw every shadow
+// UP the screen -- into the very face the mass leans toward the camera, so the
+// shadow is hidden behind the wall that cast it, exactly when shadows are the
+// only thing telling you a flat-looking scene has height in it. So the arc is
+// kept on the up-screen half. The east-west travel, the altitude arc and the
+// sweep are all as they should be; only the hemisphere is chosen for the
+// camera. Same call the weapon parallax makes (see THE PARALLAX IS TAKEN IN
+// THE WEAPON'S OWN FRAME).
+//
+// SUN_EDGE holds the extremes a little off the pure horizontal, so a shadow at
+// either end of the day still has some travel toward the camera in it and does
+// not lie exactly along the screen's own x axis.
+let LIGHT_DX = 0.58;
+let LIGHT_DY = 0.81;
+
+const SUN_EDGE = 0.21;                    // radians off horizontal at each end
+
+// Anything baked into a buffer takes THIS sun rather than the live one, and
+// that is not a nicety. A chunk bakes when the player first walks into it, so
+// two neighbours baked an hour apart would carry contact shadows pointing
+// different ways with a hard seam down the join -- and the buffer then has to
+// serve every remaining hour of the day regardless. The value is the pair the
+// whole game's terrain art was authored against, so nothing baked moves.
+const SUN_REF_DX = 0.58;
+const SUN_REF_DY = 0.81;
+
+// Put the sun where the clock says. The arithmetic lives in _skyTerms(), which
+// recomputes every sun-driven term together and caches them against
+// worldTimeMs; this is the named way in, so a call site reads as intent rather
+// than as "ask for a sky term and hope".
+//
+// The shadow's screen angle runs PI - SUN_EDGE at dawn (pointing left), through
+// HALF_PI at noon (straight down the screen), to SUN_EDGE at dusk (pointing
+// right) -- so a shadow sweeps left to right across the day.
+function updateSunVector() { _skyTerms(); }
+
+// The one way to paint into a buffer. Everything inside sees the reference sun,
+// and the live vector is put back even if the bake throws -- a bake that left
+// the globals swapped would light the rest of the frame from the wrong place.
+let _bakingSun = false;
+function withBakedSun(fn) {
+  const dx = LIGHT_DX, dy = LIGHT_DY, was = _bakingSun;
+  LIGHT_DX = SUN_REF_DX; LIGHT_DY = SUN_REF_DY; _bakingSun = true;
+  try { return fn(); } finally { _bakingSun = was; LIGHT_DX = dx; LIGHT_DY = dy; }
+}
 
 // How far a building's walls extrude past its footprint, and how far the mass
 // may then throw. Both are capped well inside BUILDING_GAP_MIN -- the tightest
@@ -30836,6 +30907,7 @@ function seedWorldClock() {
   worldTimeMs = DAY_MS * (h / 24);
   clockLastMs = null;                 // do not bill the seeding to the clock
   lastWeatherRollHour = -1;           // let the new hour roll its own sky
+  updateSunVector();                  // the first frame is lit by the new hour
   window.worldClockSeeded = true;
 }
 let isRaining     = false;
@@ -30885,6 +30957,30 @@ function _skyTerms() {
   _skDay = k * k * (3 - 2 * k);          // smoothstep
 
   _skHeight = a < 0 ? 0 : a > 1 ? 1 : a;
+
+  // WHERE the sun is, and therefore where every shadow points. It belongs in
+  // this block rather than only in updateWorldClock() because this block
+  // already invalidates on exactly the thing that moves the sun -- so any path
+  // that steps the clock and then reads a sky term gets a matching sun for
+  // free, including a cutscene, a restored save and the headless tools.
+  // See THE SUN TRAVELS.
+  //
+  // Held while a bake is running. A bake can be the first thing in a frame to
+  // ask for a sky term -- shadowDensity() inside paintClutter() will do it --
+  // and this block invalidates on a clock that has just advanced, so without
+  // the guard it would recompute the live sun halfway through a buffer that is
+  // meant to be pinned to the reference one. The other terms are still allowed
+  // to refresh: only the direction has to hold.
+  if (!_bakingSun) {
+    // 0 at sunrise, 1 at sunset, held at the ends through the night: the sun is
+    // below the horizon there and shadowDensity() has already faded every
+    // shadow out, so all this has to do is not spin round unseen.
+    let ts = (hour - SUNRISE_H) / DAY_SPAN_H;
+    ts = ts < 0 ? 0 : ts > 1 ? 1 : ts;
+    const ang = SUN_EDGE + (Math.PI - 2 * SUN_EDGE) * (1 - ts);
+    LIGHT_DX = Math.cos(ang);
+    LIGHT_DY = Math.sin(ang);
+  }
 
   const g = 1 - Math.abs(a) / 0.34;
   _skGolden = g < 0 ? 0 : g > 1 ? 1 : g;
@@ -30950,9 +31046,9 @@ function keyStrength() { return 1 - 0.42 * skyDiffusion(); }
 
 // Shadows are long and soft when the sun is low, short and firm at noon, and
 // they fade out entirely under cloud -- an overcast day has no hard shadows at
-// all. Cast direction never changes: LIGHT_DX/DY is the whole scene's one
-// light vector and props bake their shadows against it, so only length and
-// density move.
+// all. This is only how LONG they are; which way they point is updateSunVector()
+// (see THE SUN TRAVELS), and the deferred rig derives its ray-march slope from
+// this function so a marched shadow is the length the 2D pass would have drawn.
 function shadowLengthScale() { _skyTerms(); return _skShLen; }
 // Multiplied by daylight() because a shadow needs a sun to throw it. This used
 // to bottom out at 0.55, so at midnight every prop in the world still had a
@@ -30992,6 +31088,10 @@ function worldClockLabel() {
 }
 
 function updateWorldClock() {
+  // Before the early-out below: the sun has to be right on a frame the clock is
+  // held, or opening the pause menu would light the world from wherever the sun
+  // happened to be the last time it ran.
+  updateSunVector();
   const now = (typeof millis === 'function') ? millis() : Date.now();
   if (clockLastMs === null) { clockLastMs = now; return; }
   let dt = now - clockLastMs;
