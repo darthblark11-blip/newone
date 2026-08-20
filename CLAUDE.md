@@ -594,6 +594,32 @@ worked example in the file of composing a rich façade from small reusable primi
 Shadow length and density are driven by the sun: `shadowLengthScale()`,
 `shadowDensity()`, modulated by `skyDiffusion()`.
 
+**A cast shadow is the convex hull of the silhouette and its offset copy, not the
+offset copy on its own.** `castShadow` / `castShadowRect` — called from twenty-eight
+places in `drawBiomeProps()` — used to draw a full-size copy displaced along the light
+vector with nothing in between. On a 70-unit guard box with a 20-unit throw that is a
+second 70-unit rectangle sitting a quarter of its own width away, which does not read as
+a shadow at all: it reads as **a plain block lying beside the prop**, and it was the most
+common complaint about these props. `drawBiomeShadows()` had always hulled properly for
+buildings; the props now do the same.
+
+**`BUILDING_RISE_MAX` is a floor, not the cap.** The cap exists so a mass's walls and
+shadow can never reach its neighbour, and 26 is right for the alley the block subdivider
+leaves — streamed city blocks run a median 160 across and hardly touch it. But it was
+the same 26 for Stick City's 870-wide authored theatre, whose own formula asks for 109:
+five times the footprint, identical wall height, a hairline at any zoom. **That is why
+every landmark in the gated sector read as a floor decal.** The cap is
+`max(BUILDING_RISE_MAX, min(foot * 0.10, 90))` — a bigger building only ever comes out
+of a bigger block, so the clearance scales with it, and the floor means nothing that was
+already correct moves. `BUILDING_SHADOW_MAX` is capped the same way, or a mass whose
+shadow does not scale with it reads as floating.
+
+**The authored city blocks had no mass flag at all.** `legacyGenerateMap()` emits the
+same shape of record the streamer's `CITY` layout does — same roof details, same style
+index — but without `isBlockBuilding` they fell through `legacyMassOf()` and drew flat,
+next to streamed blocks that had walls. That is why the gated sector read as a floor plan
+while the country outside it read as a city.
+
 ### World clock and sun
 
 `seedWorldClock`, `updateWorldClock`, `worldHour`, `sunAltitude`, `daylight`,
@@ -2553,6 +2579,13 @@ node tools/visual.js BOULDER FALLEN  # just these
 node tools/visual.js --clutter       # the micro-props -> tools/out/clutter.png
 ```
 
+**The sheet parks each prop 22% of the way to the edge of the screen, and that number
+matters.** `massLean()` is a function of where a mass sits in the VIEW, so a contact
+sheet has to choose one. The first version used 44% — roughly twice the lean the game
+actually shows — and every prop on it looked like it had a slab floating beside it. Two
+props were then "fixed" for a fault that belonged to the harness. If a prop looks wrong
+here, confirm it in `visual-world.js` before touching the art.
+
 It needs `playwright` and `p5@1.9.4` in the scratchpad and uses the pre-installed
 Chromium; the file's header says how to restore both. It stubs `preload()` and the
 asset loaders, because p5 will not reach `setup()` until preload resolves and the
@@ -2576,7 +2609,7 @@ rules came straight out of doing that:
 
 ### Looking at the WORLD
 
-`node tools/visual-world.js <biome> [x] [y] [zoom]` runs the real streamer over a
+`node tools/visual-world.js <biome> [x] [y] [zoom] [legacy] [labels]` runs the real streamer over a
 real patch of a real sector — `generateChunkContent`, `bakeChunkTerrain`, the terrain
 blit, the decor pass, the decks, the shadow pass and the depth-sorted pass — and
 screenshots it into `tools/out/`.
@@ -2587,6 +2620,11 @@ report — a ring baked into the ground, a deck lying across a road, a chunk-sha
 of the wrong colour, six of the same prop in one screen — are properties of a generated
 chunk, and none of them are visible one prop at a time. Every fault in the list below
 was found by opening this and looking, and none of them by reasoning about the code.
+
+`legacy` draws the AUTHORED map instead of the streamed one — Levels 1 and 2's
+hand-placed sector, which is what the player stands in for the whole story arc and which
+the chunk streamer never touches. `labels` writes each solid's own flag over it; guessing
+which branch drew a given rectangle is how two rounds of this went wrong.
 
 **The single worst bug it found: region tone was being PAINTED.** Each region case in
 `bakeBiomeDetail()` laid six to nine soft stamps up to 720 units across to wash the

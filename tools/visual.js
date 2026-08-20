@@ -140,8 +140,13 @@ window.draw = function () {
     // compares lean strength instead of art. Every cell gets the same modest
     // offset -- a prop a third of the way up the screen, which is where the
     // player usually sees one.
+    // A prop 22% of the way to the edge of the screen, which is where the
+    // player is usually looking at one. The first version parked it at 44% and
+    // the lean came out roughly twice what the game shows -- so every prop on
+    // the sheet looked like it had a slab floating beside it, and two of them
+    // got "fixed" for a fault that was the harness's.
     camX = -width / zoom * 0.5;
-    camY = -height / zoom * 0.5 - height / zoom * 0.22;
+    camY = -height / zoom * 0.5 - height / zoom * 0.11;
     push();
     translate(ox, oy);
     // Scale a big prop down so it fits its cell, and say by how much.

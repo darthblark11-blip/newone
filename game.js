@@ -1766,6 +1766,14 @@ function legacyGenerateMap() {
                 if (currentLevel === 1 && bX === 0 && bY === 0 && j === 1 && i === 1) { b.isHouse = true; b.w = 160; b.h = 100; }
                 
                 if (currentLevel === 1 || currentLevel === 2) {
+                    // These ARE city blocks: the same shape of record the
+                    // streamer's CITY layout emits, with the same roof details
+                    // and the same style index. Without the flag they fell
+                    // through legacyMassOf(), drew as flat rectangles, and sat
+                    // next to streamed blocks that had walls -- which is why
+                    // the gated sector read as a floor plan while the country
+                    // outside it read as a city.
+                    if (!b.isHouse) b.isBlockBuilding = true;
                     let numDet = floor(random(1, 4));
                     for(let d = 0; d < numDet; d++) {
                         let t = random(['hvac', 'vent', 'access']);
@@ -24470,7 +24478,23 @@ function buildingRise(b) {
   h = Math.imul(h ^ (h >>> 15), 0x2545f491);
   const r01 = ((h ^ (h >>> 13)) >>> 0) / 4294967296;
   // Bigger footprints carry more storeys, but the cap always wins.
-  b._rise = Math.min(BUILDING_RISE_MAX, 5 + foot * 0.075 + r01 * foot * 0.09);
+  // The cap is a PROPORTION, not a constant.
+  //
+  // BUILDING_RISE_MAX exists so a mass's walls and its shadow can never reach
+  // its neighbour, and 26 is the right number for the alley the block
+  // subdivider leaves: streamed city blocks run a median 160 across and hardly
+  // touch it. But it was the same 26 for an 870-wide authored theatre, whose
+  // own formula asks for 109 -- five times the footprint and identical wall
+  // height, which at any zoom is a hairline. That is the whole reason every
+  // landmark in Stick City's gated sector read as a floor decal.
+  //
+  // A bigger building in this game only ever comes out of a bigger block, so
+  // the clearance around it scales with its footprint too. A tenth of the
+  // smallest side keeps the reach -- rise * (MASS_LEAN + MASS_TILT) -- inside
+  // BUILDING_GAP_MIN at every size the subdivider produces, and the floor at
+  // BUILDING_RISE_MAX means nothing that was already correct moves at all.
+  const cap = Math.max(BUILDING_RISE_MAX, Math.min(foot * 0.10, 90));
+  b._rise = Math.min(cap, 5 + foot * 0.075 + r01 * foot * 0.09);
   return b._rise;
 }
 
@@ -25329,17 +25353,54 @@ function shadowFill(alpha) {
 // silhouette. Drawing the flat oval as well put a second, differently shaped
 // shadow under every anchor, bridge and hedge in the world. One caster, one
 // shadow: whichever pass owns the sun draws it.
+// A CAST SHADOW IS WELDED TO ITS CASTER.
+//
+// Both of these used to draw the silhouette DISPLACED: a full-size copy of the
+// prop, moved along the light vector and nothing in between. On a 70-unit guard
+// box with a 20-unit throw that is a second 70-unit rectangle sitting a quarter
+// of its own width away -- which does not read as a shadow at all, it reads as
+// a plain block lying beside the prop. It is the single most common complaint
+// about these props and it was the same two functions every time, called from
+// twenty-eight places.
+//
+// What a shadow actually is at this camera is the CONVEX HULL of the silhouette
+// and its offset copy: a slab that starts under the caster and runs out to the
+// far edge. drawBiomeShadows() has always done this for buildings -- these are
+// the props catching up with it.
 function castShadow(x, y, w, h, len, alpha) {
   if (typeof glRigOwnsSunShadows === 'function' && glRigOwnsSunShadows()) return;
   const L = BIOME_ACTIVE ? len * shadowLengthScale() : len;
+  const dx = LIGHT_DX * L, dy = LIGHT_DY * L;
   shadowFill(alpha);
-  ellipse(x + LIGHT_DX * L, y + LIGHT_DY * L, w, h);
+  // Hull of two ellipses: the half turned away from the light taken at the
+  // base, the half turned toward it taken at the offset. Closing between them
+  // is what fills the gap the old version left.
+  const a = Math.atan2(dy, dx), N = 10;
+  beginShape();
+  for (let i = 0; i <= N; i++) {
+    const t = a + HALF_PI + (i / N) * PI;
+    vertex(x + Math.cos(t) * w * 0.5, y + Math.sin(t) * h * 0.5);
+  }
+  for (let i = 0; i <= N; i++) {
+    const t = a - HALF_PI + (i / N) * PI;
+    vertex(x + dx + Math.cos(t) * w * 0.5, y + dy + Math.sin(t) * h * 0.5);
+  }
+  endShape(CLOSE);
 }
 function castShadowRect(x, y, w, h, len, alpha, round) {
   if (typeof glRigOwnsSunShadows === 'function' && glRigOwnsSunShadows()) return;
   const L = BIOME_ACTIVE ? len * shadowLengthScale() : len;
+  const dx = LIGHT_DX * L, dy = LIGHT_DY * L;
   shadowFill(alpha);
-  rect(x - w / 2 + LIGHT_DX * L, y - h / 2 + LIGHT_DY * L, w, h, round || 0);
+  // LIGHT_DX and LIGHT_DY are both positive, so the hull of two axis-aligned
+  // rects offset by (+dx, +dy) is always this hexagon -- the same six vertices
+  // drawBiomeShadows() walks for a building.
+  const x0 = x - w / 2, y0 = y - h / 2, x1 = x + w / 2, y1 = y + h / 2;
+  beginShape();
+  vertex(x0, y0); vertex(x1, y0);
+  vertex(x1 + dx, y0 + dy); vertex(x1 + dx, y1 + dy);
+  vertex(x0 + dx, y1 + dy); vertex(x0, y1);
+  endShape(CLOSE);
 }
 
 // Character shadows. Same light vector and the same sky tint as everything
@@ -25506,7 +25567,11 @@ function drawBiomeShadows() {
       const wx = LIGHT_DX * rise, wy = LIGHT_DY * rise;
       const x0 = b.x - w / 2,      y0 = b.y - h / 2;
       const x1 = b.x + w / 2 + wx, y1 = b.y + h / 2 + wy;
-      const sl = Math.min(BUILDING_SHADOW_MAX, Math.max(rise, Math.min(w, h) * 0.10) * 0.95) * SL;
+      // Capped in proportion, for the same reason the rise is: a 24-unit
+      // shadow under an 870-unit theatre is a dark line at one corner, and a
+      // mass whose shadow does not scale with it reads as floating.
+      const shCap = Math.max(BUILDING_SHADOW_MAX, Math.min(Math.min(w, h) * 0.09, 80));
+      const sl = Math.min(shCap, Math.max(rise, Math.min(w, h) * 0.10) * 0.95) * SL;
       const dx = LIGHT_DX * sl,    dy = LIGHT_DY * sl;
 
       // Contact occlusion: nested rings of low alpha. Canvas has no cheap blur

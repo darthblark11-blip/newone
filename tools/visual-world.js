@@ -30,6 +30,13 @@ fs.mkdirSync(OUT, { recursive: true });
 const BIOME = +(process.argv[2] || 4);
 const WX = +(process.argv[3] || 0), WY = +(process.argv[4] || 0);
 const ZOOM = +(process.argv[5] || 0.66);
+// `legacy` draws the AUTHORED map instead of the streamed one: Level 1 and 2's
+// hand-placed sector, which is what the player is standing in for the whole
+// story arc and which the chunk streamer never touches.
+const LEGACY = process.argv.includes('legacy');
+// `labels` writes each solid's own flag over it. Guessing which branch drew a
+// given rectangle is how two rounds of this went wrong.
+const LABELS = process.argv.includes('labels');
 const W = 900, H = 1400;
 
 const page = `<!doctype html><meta charset=utf8>
@@ -61,12 +68,17 @@ window.setup = function () {
   camY = ${WY} - height / zoom * 0.5;
   viewLeft = camX; viewRight = camX + width / zoom;
   viewTop  = camY; viewBottom = camY + height / zoom;
-  chunkMgr = new ChunkManager(${BIOME});
-  try {
-    chunkMgr.update(${WX}, ${WY});
-    chunkMgr.warmUp(120);                  // no per-frame bake budget here
-    chunkMgr.rebuildWorldArrays();
-  } catch (e) { window.__errs.push('stream: ' + e.message); }
+  if (${LEGACY}) {
+    buildings = []; enemiesList = [];
+    try { legacyGenerateMap(); } catch (e) { window.__errs.push('legacy: ' + e.message); }
+  } else {
+    chunkMgr = new ChunkManager(${BIOME});
+    try {
+      chunkMgr.update(${WX}, ${WY});
+      chunkMgr.warmUp(120);                // no per-frame bake budget here
+      chunkMgr.rebuildWorldArrays();
+    } catch (e) { window.__errs.push('stream: ' + e.message); }
+  }
   activeBuildings = buildings;
   redraw();
 };
@@ -77,15 +89,33 @@ window.draw = function () {
   scale(zoom); translate(-camX, -camY);
   const step = (name, fn) => { try { fn(); } catch (e) { window.__errs.push(name + ': ' + e.message); } };
   // The real ground stack, in the real order.
-  step('terrain', () => chunkMgr.drawTerrain());
+  if (chunkMgr) step('terrain', () => chunkMgr.drawTerrain());
+  else          step('ground', () => { noStroke(); fill(86, 90, 96);
+                  rect(camX, camY, width / zoom, height / zoom); });
   _depthOn = true;                          // so standing decor queues, as in game
-  step('decor',   () => chunkMgr.drawDecor());
+  if (chunkMgr) step('decor', () => chunkMgr.drawDecor());
   step('decks',   () => drawBiomeDecks());
   step('shadows', () => drawBuildingShadows());
   // No actors, so this draws every visible mass and every queued tree in one
   // sorted pass -- which is exactly what the game does between characters.
   step('sorted',  () => drawDepthSorted());
   pop();
+  if (${LABELS}) {
+    push(); scale(zoom); translate(-camX, -camY);
+    textAlign(CENTER, CENTER); textSize(11 / zoom);
+    for (const b of activeBuildings) {
+      if (!inView(b.x, b.y, 400)) continue;
+      let k = '';
+      for (const q in b) if (q.charAt(0) === 'i' && q.charAt(1) === 's' && b[q] === true) { k = q.slice(2); break; }
+      if (b.propType) k = b.propType;
+      if (!k) continue;
+      noStroke(); fill(0, 0, 0, 170);
+      rect(b.x - 46 / zoom, b.y - 8 / zoom, 92 / zoom, 16 / zoom, 3 / zoom);
+      fill(255, 235, 120); text(k, b.x, b.y);
+    }
+    pop();
+  }
+
   // A scale bar, because "that oval is huge" needs a number behind it.
   push(); noStroke();
   fill(0, 0, 0, 150); rect(12, height - 44, 240, 32, 4);
@@ -116,7 +146,7 @@ window.draw = function () {
     await browser.close(); process.exit(1);
   }
   const errs = await p.evaluate('window.__errs || []');
-  const file = path.join(OUT, `world-b${BIOME}-${WX}_${WY}.png`);
+  const file = path.join(OUT, `world-b${BIOME}${LEGACY ? '-legacy' : ''}-${WX}_${WY}.png`);
   try { await p.locator('#defaultCanvas0').screenshot({ path: file, timeout: 15000 }); }
   catch (e) {
     console.log('  screenshot failed: ' + e.message.split('\n')[0]);
