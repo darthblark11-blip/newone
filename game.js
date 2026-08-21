@@ -2054,12 +2054,12 @@ function legacyGenerateMap() {
           { x: MAIN_X + 430, y: -2700, w: 72, h: 72, isWaterTower: true },
           { x: MAIN_X - 430, y: -560,  w: 72, h: 72, isWaterTower: true },
           // Cacti on the approaches, where nothing has been cleared
-          { x: MAIN_X - 1320, y: -2300, w: 40, h: 66, isCactusProp: true },
-          { x: MAIN_X + 1400, y: -2500, w: 40, h: 72, isCactusProp: true },
-          { x: MAIN_X - 1360, y: -800,  w: 40, h: 60, isCactusProp: true },
-          { x: MAIN_X + 1420, y: -60,   w: 40, h: 70, isCactusProp: true },
-          { x: MAIN_X - 800,  y: -3080, w: 40, h: 64, isCactusProp: true },
-          { x: MAIN_X + 340,  y: -3120, w: 40, h: 58, isCactusProp: true }
+          { x: MAIN_X - 1320, y: -2300, w: 44, h: 44, isCactusProp: true },
+          { x: MAIN_X + 1400, y: -2500, w: 48, h: 48, isCactusProp: true },
+          { x: MAIN_X - 1360, y: -800,  w: 42, h: 42, isCactusProp: true },
+          { x: MAIN_X + 1420, y: -60,   w: 46, h: 46, isCactusProp: true },
+          { x: MAIN_X - 800,  y: -3080, w: 44, h: 44, isCactusProp: true },
+          { x: MAIN_X + 340,  y: -3120, w: 40, h: 40, isCactusProp: true }
       ];
       for (let t of townProps) buildings.push(t);
 
@@ -2117,8 +2117,8 @@ function legacyGenerateMap() {
 
       // Scattered western dressing
       buildings.push({ x: 1000, y: -1260, w: 75, h: 55, isWagonProp: true });
-      buildings.push({ x: 830,  y: -1900, w: 35, h: 55, isCactusProp: true });
-      buildings.push({ x: 1770, y: -1550, w: 30, h: 50, isCactusProp: true });
+      buildings.push({ x: 830,  y: -1900, w: 40, h: 40, isCactusProp: true });
+      buildings.push({ x: 1770, y: -1550, w: 36, h: 36, isCactusProp: true });
       buildings.push({ x: 950,  y: -1580, w: 30, h: 30, isCrateProp: true });
       buildings.push({ x: 985,  y: -1560, w: 30, h: 30, isCrateProp: true });
       buildings.push({ x: 1600, y: -990,  w: 26, h: 26, isTumbleweedProp: true });
@@ -4545,31 +4545,109 @@ function drawBuildings(list, i0, i1) {
 
     // Water tower prop
     if (b.isWaterTower) {
+        // A TANK ON A FRAME, seen from directly above.
+        //
+        // This was a side elevation: a barrel drawn as a RECT with staves and
+        // hoops banded across it, and four legs running down the screen below
+        // it -- "down" being the direction a platformer's gravity points and no
+        // direction at all in this one. From overhead a water tower is a round
+        // tank with a conical roof, and the frame shows as four legs raking OUT
+        // from under it to a footprint wider than the tank is.
+        //
+        // Its height is told the way the mast's is: by the art and by the long
+        // shadow, not by pushing the lean. A tower is mostly air, so a big lean
+        // parts the tank from its own legs and it comes apart into two objects.
         push(); translate(b.x, b.y);
-        // Splayed timber legs with cross-bracing, then the tank sitting on top
-        stroke(78, 56, 34); strokeWeight(5);
-        line(-25, 34, -19, -8); line(25, 34, 19, -8);
-        line(-12, 34, -9, -8);  line(12, 34, 9, -8);
-        stroke(96, 70, 44); strokeWeight(3);
-        line(-25, 34, 25, 34);
-        line(-24, 20, -10, 20); line(10, 20, 24, 20);
-        line(-24, 20, -10, 4);  line(-10, 20, -24, 4);
-        line(10, 20, 24, 4);    line(24, 20, 10, 4);
-        // Tank staves
-        noStroke(); fill(96, 70, 44, 110); ellipse(4, -14, 66, 52);
-        fill(146, 110, 72); stroke(84, 60, 34); strokeWeight(2);
-        rect(-30, -42, 60, 48, 5);
-        stroke(112, 84, 52, 190); strokeWeight(1.2);
-        for (let px = -22; px < 30; px += 12) line(px, -40, px, 4);
-        // Iron hoops and the roof cap
-        stroke(74, 66, 58); strokeWeight(3); noFill();
-        line(-30, -32, 30, -32); line(-30, -12, 30, -12); line(-30, 0, 30, 0);
-        noStroke(); fill(118, 88, 58); rect(-33, -49, 66, 10, 3);
-        fill(150, 116, 78); rect(-33, -49, 66, 4, 2);
-        fill(70, 50, 30); rect(-3, -47, 6, 14, 1);
-        // Standpipe and rust weep down the near face
-        stroke(80, 74, 66); strokeWeight(3); line(26, 2, 30, 30);
-        noStroke(); fill(128, 78, 44, 90); rect(-14, 0, 7, 22, 3); rect(6, 0, 5, 16, 3);
+        const R = b.w * 0.26, F = b.w * 0.46;
+        noStroke();
+        // The four legs. Each is shaded from the direction it rakes, so the
+        // frame agrees with the sun the same way a wall does.
+        const foot = [];
+        for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
+          const fx = sx * F, fy = sy * F, tx = sx * R * 0.58, ty = sy * R * 0.58;
+          foot.push([fx, fy]);
+          const d = -(sx * LIGHT_DX + sy * LIGHT_DY) * 0.7071;
+          const k = 0.60 + 0.40 * (d > 0 ? d : 0);
+          fill(118 * k + 8, 88 * k + 6, 54 * k + 4);
+          quad(fx - sy * 4.4, fy + sx * 4.4, fx + sy * 4.4, fy - sx * 4.4,
+               tx + sy * 3.0, ty - sx * 3.0, tx - sy * 3.0, ty + sx * 3.0);
+          fill(92, 80, 64); ellipse(fx, fy, 13, 11);
+        }
+        // Bracing, half way up: a band round the four legs and a cross on it.
+        stroke(102, 76, 48, 200); strokeWeight(2.4); noFill();
+        beginShape();
+        for (const p of [foot[0], foot[1], foot[3], foot[2]]) vertex(p[0] * 0.62, p[1] * 0.62);
+        endShape(CLOSE);
+        strokeWeight(1.6);
+        line(foot[0][0] * 0.62, foot[0][1] * 0.62, foot[3][0] * 0.62, foot[3][1] * 0.62);
+        line(foot[1][0] * 0.62, foot[1][1] * 0.62, foot[2][0] * 0.62, foot[2][1] * 0.62);
+        noStroke();
+        // The downpipe, running out from under the tank to a standpipe on the
+        // ground -- the one thing that says what is in it.
+        stroke(96, 90, 82); strokeWeight(4);
+        line(R * 0.5, R * 0.3, F * 0.96, F * 0.86);
+        noStroke();
+        fill(72, 68, 62); ellipse(F * 0.96, F * 0.86, 11, 9);
+        // The catwalk ring round the tank, with its handrail posts. It is what
+        // covers the tops of the legs, and it is the one thing that stops four
+        // struts radiating from a disc reading as a STAR: an outline round the
+        // middle of them turns the radial pattern into a structure.
+        stroke(0, 0, 0, 46); strokeWeight(R * 0.20); noFill();
+        ellipse(LIGHT_DX * 4, LIGHT_DY * 4, R * 2.26, R * 2.26);
+        stroke(132, 124, 110); strokeWeight(R * 0.17);
+        ellipse(0, 0, R * 2.26, R * 2.26);
+        stroke(80, 74, 66, 200); strokeWeight(1.3);
+        ellipse(0, 0, R * 2.42, R * 2.42);
+        noStroke();
+        fill(78, 72, 64);
+        for (let i = 0; i < 10; i++) {
+          const a = i * 0.6283 + 0.2;
+          ellipse(Math.cos(a) * R * 1.21, Math.sin(a) * R * 1.21, 3.2, 3.2);
+        }
+        // The ladder up one side, which is the other thing that breaks the
+        // four-fold symmetry -- a tower with a way up it reads as built.
+        const lx0 = -R * 1.28, lx1 = -F * 1.04, ly0 = -R * 0.34, ly1 = -F * 0.30;
+        const lsp = R * 0.34;
+        stroke(96, 88, 76); strokeWeight(1.8);
+        line(lx0, ly0, lx1, ly1);
+        line(lx0, ly0 + lsp, lx1, ly1 + lsp);
+        strokeWeight(1.1);
+        for (let i = 1; i < 6; i++) {
+          const t = i / 6, rx = lx0 + (lx1 - lx0) * t, ry = ly0 + (ly1 - ly0) * t;
+          line(rx, ry, rx, ry + lsp);
+        }
+        noStroke();
+        // The tank: staves seen end on as a ring, with its iron hoop.
+        fill(0, 0, 0, 46); ellipse(LIGHT_DX * 9, LIGHT_DY * 9, R * 2, R * 2);
+        fill(122, 92, 58); ellipse(0, 0, R * 2, R * 2);
+        stroke(66, 58, 50); strokeWeight(2.4); noFill();
+        ellipse(0, 0, R * 1.94, R * 1.94);
+        noStroke();
+        // The roof is a CONE, so its peak is projected inside the base and
+        // pushed toward the camera -- the same parallax the big top uses, and
+        // the reason a crescent of the tank shows on the far side. Each segment
+        // shades from its own normal, which is what makes it a cone rather than
+        // a pinwheel.
+        massLean(b.x, b.y, 15, _leanTmp);
+        const rax = _leanTmp[0], ray = _leanTmp[1];
+        for (let i = 0; i < 9; i++) {
+          const a0 = (i / 9) * TWO_PI, a1 = ((i + 1) / 9) * TWO_PI;
+          const x0 = Math.cos(a0) * R * 0.94, y0 = Math.sin(a0) * R * 0.94;
+          const x1 = Math.cos(a1) * R * 0.94, y1 = Math.sin(a1) * R * 0.94;
+          let nx = (x0 + x1) * 0.5 - rax, ny = (y0 + y1) * 0.5 - ray;
+          const m = Math.sqrt(nx * nx + ny * ny) || 1;
+          const d = -((nx / m) * LIGHT_DX + (ny / m) * LIGHT_DY);
+          const k = 0.58 + 0.42 * (d > 0 ? d : 0);
+          fill(150 * k + 14, 120 * k + 12, 94 * k + 12);
+          triangle(rax, ray, x0, y0, x1, y1);
+        }
+        // Hatch, and the vent finial on the peak.
+        fill(74, 68, 60);
+        ellipse(rax - LIGHT_DX * R * 0.42, ray - LIGHT_DY * R * 0.42, 11, 11);
+        fill(120, 112, 100);
+        ellipse(rax - LIGHT_DX * R * 0.42 - LIGHT_DX, ray - LIGHT_DY * R * 0.42 - LIGHT_DY, 7, 7);
+        fill(66, 60, 54); ellipse(rax, ray, 8, 8);
+        fill(178, 172, 160); ellipse(rax - LIGHT_DX * 1.2, ray - LIGHT_DY * 1.2, 4.4, 4.4);
         pop();
         continue;
     }
@@ -4631,74 +4709,183 @@ function drawBuildings(list, i0, i1) {
     }
 
     if (b.isWagonProp) {
+        // A CART HAS FOUR WHEELS, and from above you see the tread of each of
+        // them -- a narrow bar lying along the line of travel, not a spoked
+        // disc. The old one drew two spoked circles below the bed, which is a
+        // side elevation: a wagon seen from the kerb, laid flat on the map.
         push(); translate(b.x, b.y);
         const wv = b.seed !== undefined ? b.seed : ((Math.abs(b.x * 0.011 + b.y * 0.009)) % 1);
         rotate((wv - 0.5) * 0.6);
-        // Spoked wheels rather than plain discs
-        for (const wx of [-b.w/2 + 10, b.w/2 - 10]) {
-            const wy = b.h/2 - 2;
-            fill(58, 42, 26); stroke(34, 24, 14); strokeWeight(2); ellipse(wx, wy, 24, 24);
-            noFill(); stroke(96, 70, 42, 210); strokeWeight(1.6);
-            for (let k = 0; k < 6; k++) {
-                const a = wv * 3 + k * (PI / 6) * 2;
-                line(wx, wy, wx + cos(a) * 10, wy + sin(a) * 10);
-            }
-            fill(30, 22, 12); noStroke(); ellipse(wx, wy, 7, 7);
+        const BW = b.w, BH = b.h;
+        noStroke();
+        // Axles first, under everything.
+        fill(58, 46, 32);
+        for (const ax of [-BW * 0.30, BW * 0.30]) rect(ax - 3, -BH * 0.46, 6, BH * 0.92, 2);
+        // The four wheels: the tyre from directly above is a bar as long as the
+        // wheel is tall and as wide as the tyre is thick, with the hub showing
+        // at its middle. The rear pair is larger, as it is on a real wagon.
+        for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
+          const wl = sx > 0 ? 26 : 21;
+          const wx = sx * BW * 0.30, wy = sy * BH * 0.46;
+          fill(0, 0, 0, 52);
+          rect(wx - wl / 2 + LIGHT_DX * 3, wy - 3.6 + LIGHT_DY * 3, wl, 7.2, 2);
+          fill(48, 34, 20); rect(wx - wl / 2, wy - 3.6, wl, 7.2, 2);
+          fill(96, 70, 42); rect(wx - wl / 2 + 1.4, wy - 3.6 - LIGHT_DY * 1.1, wl - 2.8, 2.4, 1);
+          fill(74, 56, 34); ellipse(wx, wy, 6.5, 6.5);
+          fill(30, 22, 12); ellipse(wx, wy, 3.2, 3.2);
         }
-        // Bed: planks with visible joints, plus a sagging canvas bonnet
-        fill(120, 85, 50); stroke(74, 50, 26); strokeWeight(2);
-        rect(-b.w/2, -b.h/2 + 6, b.w, b.h * 0.6, 3);
-        stroke(92, 64, 34, 170); strokeWeight(1);
-        for (let px = -b.w/2 + 9; px < b.w/2 - 4; px += 11) line(px, -b.h/2 + 8, px, -b.h/2 + 6 + b.h * 0.6 - 2);
-        // Draw pole
-        stroke(88, 62, 34); strokeWeight(3); line(-b.w/2, 0, -b.w/2 - 20, -4);
-        // Not every cart is a covered wagon. A third are open flatbeds with a
-        // load on them, so a row of them stops reading as copy-paste.
+        // The bed: boards running fore and aft, with side rails standing proud
+        // of them and throwing inward, which is what says the bed has depth.
+        fill(120, 85, 50); rect(-BW / 2, -BH * 0.40, BW, BH * 0.80, 3);
+        fill(104, 74, 43);
+        for (let py = -BH * 0.40 + 5; py < BH * 0.40 - 2; py += 7) rect(-BW / 2 + 2, py, BW - 4, 1.4);
+        fill(140, 102, 62);
+        rect(-BW / 2, -BH * 0.40 - LIGHT_DY * 1.6, BW, 5, 2);
+        rect(-BW / 2, BH * 0.40 - 5 - LIGHT_DY * 1.6, BW, 5, 2);
+        fill(0, 0, 0, 44);
+        rect(-BW / 2 + 5, -BH * 0.40 + 5 + LIGHT_DY * 2.4, BW - 10, 3);
+        // The tongue and the doubletree, out the front.
+        fill(88, 62, 34); rect(-BW / 2 - 24, -2, 26, 4, 2);
+        rect(-BW / 2 - 24, -9, 4, 18, 2);
         if (wv > 0.62) {
-            noFill(); stroke(190, 178, 158, 200); strokeWeight(2);
-            arc(0, -b.h/2 + 8, b.w * 0.62, b.h * 1.05, PI, TWO_PI);
-            arc(0, -b.h/2 + 8, b.w * 0.86, b.h * 1.2, PI, TWO_PI);
-            stroke(228, 219, 200); strokeWeight(4);
-            arc(0, -b.h/2 + 6, b.w * 0.9, b.h * 1.3, PI, TWO_PI);
-            stroke(150, 140, 122, 120); strokeWeight(1.4);
-            arc(0, -b.h/2 + 3, b.w * 0.9, b.h * 1.3, PI * 1.08, PI * 1.42);
-        } else if (wv > 0.3) {
-            // Barrels and sacks roped to an open bed
+            // A BONNET FROM ABOVE IS A CANVAS OVAL WITH ITS HOOPS SHOWING
+            // THROUGH -- ribs ACROSS the wagon, which is the one direction they
+            // actually run. The old art drew them as arcs opening down the
+            // screen, which is the tilt seen from the roadside again.
+            fill(0, 0, 0, 40); ellipse(LIGHT_DX * 4, LIGHT_DY * 4, BW * 0.94, BH * 1.02);
+            fill(214, 206, 186); ellipse(0, 0, BW * 0.94, BH * 1.02);
+            fill(236, 230, 214);
+            ellipse(-LIGHT_DX * BW * 0.10, -LIGHT_DY * BH * 0.12, BW * 0.62, BH * 0.60);
+            stroke(176, 166, 144, 170); strokeWeight(1.6); noFill();
+            for (let i = 0; i < 5; i++) {
+              const rx = -BW * 0.34 + BW * 0.17 * i;
+              const hh = BH * 0.50 * Math.sqrt(Math.max(0, 1 - (rx / (BW * 0.47)) * (rx / (BW * 0.47))));
+              line(rx, -hh, rx, hh);
+            }
             noStroke();
-            fill(96, 68, 40); ellipse(-14, -6, 17, 17); ellipse(4, -8, 17, 17);
-            fill(124, 92, 56); ellipse(-14, -7, 12, 12); ellipse(4, -9, 12, 12);
-            fill(168, 156, 126); ellipse(19, -4, 20, 15);
-            stroke(72, 58, 40, 190); strokeWeight(1.5); noFill();
-            line(-b.w/2 + 4, -8, b.w/2 - 4, -6);
+            // The puckered mouth at the front, where the sheet is drawn up.
+            fill(150, 140, 120); ellipse(-BW * 0.44, 0, 8, BH * 0.44);
+            fill(96, 88, 74); ellipse(-BW * 0.44, 0, 4.5, BH * 0.30);
+        } else if (wv > 0.3) {
+            // Barrels and sacks roped down: barrels are lids from above, which
+            // is a ring and a bung, not a shaded cylinder.
+            for (const p of [[-BW * 0.24, -BH * 0.13], [-BW * 0.05, -BH * 0.16], [-BW * 0.12, BH * 0.14]]) {
+              fill(0, 0, 0, 44); ellipse(p[0] + LIGHT_DX * 2, p[1] + LIGHT_DY * 2, 19, 19);
+              fill(104, 74, 44); ellipse(p[0], p[1], 19, 19);
+              fill(136, 100, 60); ellipse(p[0], p[1], 15, 15);
+              fill(84, 62, 38); ellipse(p[0], p[1], 4, 4);
+            }
+            fill(0, 0, 0, 40); ellipse(BW * 0.24 + LIGHT_DX * 2, BH * 0.02 + LIGHT_DY * 2, 30, 22);
+            fill(172, 160, 130); ellipse(BW * 0.24, BH * 0.02, 30, 22);
+            fill(196, 186, 156);
+            ellipse(BW * 0.24 - LIGHT_DX * 3, BH * 0.02 - LIGHT_DY * 3, 18, 12);
+            stroke(72, 58, 40, 200); strokeWeight(1.6); noFill();
+            line(-BW * 0.42, -BH * 0.22, BW * 0.42, -BH * 0.18);
+            line(-BW * 0.42, BH * 0.20, BW * 0.42, BH * 0.24);
+            noStroke();
         } else {
-            // Wrecked: one wheel off, bed splintered
-            noStroke(); fill(70, 50, 30, 120); ellipse(6, 2, b.w * 0.7, b.h * 0.5);
-            stroke(88, 62, 34); strokeWeight(3);
-            line(-b.w/2 + 6, -10, b.w/2 - 14, 2); line(-b.w/2 + 12, 2, b.w/2 - 6, -8);
+            // Wrecked: the near rear wheel is off and lying flat beside it, so
+            // that ONE wheel reads as a disc and the three still on the axles
+            // read as bars. The bed is stove in and the boards have sprung.
+            fill(0, 0, 0, 46); ellipse(BW * 0.30 + 6, BH * 0.86, 26, 26);
+            fill(52, 38, 22); ellipse(BW * 0.30 + 4, BH * 0.84, 26, 26);
+            fill(84, 62, 38); ellipse(BW * 0.30 + 4, BH * 0.84, 20, 20);
+            fill(52, 38, 22); ellipse(BW * 0.30 + 4, BH * 0.84, 7, 7);
+            // Stove in: a smooth dark oval in the middle of the bed reads as a
+            // puddle, so the hole is a run of sprung boards instead -- broken
+            // ends at their own angles with the ground showing between them.
+            fill(46, 36, 24);
+            quad(-BW * 0.20, -BH * 0.24, BW * 0.10, -BH * 0.18,
+                 BW * 0.16, BH * 0.20, -BW * 0.14, BH * 0.16);
+            fill(78, 58, 36);
+            for (let i = 0; i < 4; i++) {
+              const px = -BW * 0.18 + BW * 0.10 * i;
+              const t = Math.sin((wv + i) * 5.1);
+              push(); translate(px, BH * 0.02 * t); rotate(t * 0.5);
+              rect(-BW * 0.05, -BH * 0.18, BW * 0.055, BH * 0.36, 1);
+              pop();
+            }
+            stroke(96, 70, 42); strokeWeight(3);
+            line(-BW * 0.34, -BH * 0.16, BW * 0.20, BH * 0.06);
+            line(-BW * 0.26, BH * 0.14, BW * 0.30, -BH * 0.10);
+            noStroke();
         }
         pop(); continue;
     }
 
     if (b.isCactusProp) {
+        // A SAGUARO FROM ABOVE IS A ROSETTE, not a bar with stubs on it.
+        //
+        // The old one was a 14-wide rect running up the screen with two more
+        // rects welded to its side -- the plant drawn in elevation, in twenty
+        // levels of one green, which at any size is a green pill. What this
+        // camera actually sees is the crown of the trunk as a fluted disc, and
+        // each arm as a short run out from the trunk ending in a disc of its
+        // own, lifted and therefore NEARER, so it is drawn brighter and larger
+        // than the run that carries it.
         push(); translate(b.x, b.y);
         const cvv = b.seed !== undefined ? b.seed : ((Math.abs(b.x * 0.017 + b.y * 0.011)) % 1);
-        const arms = cvv > 0.66 ? 2 : (cvv > 0.28 ? 1 : 0);
-        // Trunk: shaded core, ribbed face, sunlit western edge
-        noStroke(); fill(30, 66, 36, 90); ellipse(3, b.h/2 - 3, 22, 9);
-        fill(50, 106, 58); stroke(32, 74, 40); strokeWeight(2);
-        rect(-7, -b.h/2, 14, b.h, 7);
-        if (arms >= 1) { rect(-19, -b.h/2 + 12, 11, 24, 5); rect(-19, -b.h/2 + 12, 20, 11, 5); }
-        if (arms >= 2) { rect(8, -b.h/2 + 22, 11, 20, 5); rect(-1, -b.h/2 + 22, 20, 11, 5); }
+        const arms = cvv > 0.66 ? 3 : (cvv > 0.28 ? 2 : 1);
+        const TR = b.w * 0.32;
         noStroke();
-        fill(88, 148, 92, 150); rect(-6, -b.h/2 + 3, 3.5, b.h - 8, 2);
-        fill(26, 62, 32, 120); rect(3, -b.h/2 + 3, 3, b.h - 8, 2);
-        // Areole spines
-        stroke(226, 224, 196, 170); strokeWeight(1);
-        for (let sy = -b.h/2 + 9; sy < b.h/2 - 4; sy += 15) {
-            line(-8, sy, -12, sy - 2); line(8, sy + 3, 12, sy + 1);
+        // The arms first, so the trunk's crown covers where they leave it.
+        // Their angles are spread by the seed rather than evenly: three limbs
+        // at 120 degrees is a propeller.
+        for (let i = 0; i < arms - 1; i++) {
+          const aa = cvv * 6.283 + i * 2.30 + Math.sin(cvv * 13 + i) * 0.5;
+          const rr = TR * (1.24 + 0.30 * Math.sin(cvv * 9 + i * 2.1));
+          const ex = Math.cos(aa) * rr, ey = Math.sin(aa) * rr;
+          const AR = TR * (0.72 + 0.10 * Math.sin(cvv * 7 + i));
+          fill(0, 0, 0, 48);
+          ellipse(ex + LIGHT_DX * 3.5, ey + LIGHT_DY * 3.5, AR * 2.1, AR * 2.0);
+          // The run out to it. It has to reach BACK INTO the trunk and out PAST
+          // the tip, or the crown covers the near end, the tip covers the far
+          // one, and the plant reads as a big ball with a small ball beside it
+          // instead of as one thing with a limb on it.
+          fill(40, 88, 46);
+          push(); translate(ex * 0.5, ey * 0.5); rotate(aa);
+          rect(-rr * 0.5 - TR * 0.5, -AR * 0.80, rr + TR * 0.5 + AR * 0.5, AR * 1.60, AR * 0.8);
+          pop();
+          // The lifted tip. Higher than the run, so brighter.
+          fill(58, 120, 64); ellipse(ex, ey, AR * 2, AR * 2);
+          fill(96, 164, 96);
+          ellipse(ex - LIGHT_DX * AR * 0.30, ey - LIGHT_DY * AR * 0.30, AR * 1.2, AR * 1.2);
+          fill(28, 66, 36, 120);
+          ellipse(ex + LIGHT_DX * AR * 0.55, ey + LIGHT_DY * AR * 0.55, AR * 0.95, AR * 0.80);
+          if (cvv > 0.82 && i === 0) {
+            fill(232, 226, 208); ellipse(ex, ey, AR * 0.7, AR * 0.7);
+            fill(226, 96, 120); ellipse(ex, ey, AR * 0.5, AR * 0.5);
+          }
         }
-        // A bloom on the tall ones
-        if (cvv > 0.82) { noStroke(); fill(226, 96, 120); ellipse(0, -b.h/2 + 2, 8, 7); fill(250, 214, 130); ellipse(0, -b.h/2 + 2, 3.5, 3.5); }
+        // The trunk's crown. Value range is what makes it read: a dark rim, a
+        // mid body and a bright western flank, the same span TREE and PINE
+        // needed. The flutes are six shallow arcs on the shaded side only --
+        // twelve all the way round is a cog.
+        fill(0, 0, 0, 54); ellipse(LIGHT_DX * 4, LIGHT_DY * 4, TR * 2.2, TR * 2.2);
+        fill(34, 78, 42); ellipse(0, 0, TR * 2.1, TR * 2.1);
+        fill(58, 120, 64); ellipse(0, 0, TR * 1.86, TR * 1.86);
+        fill(112, 184, 110);
+        ellipse(-LIGHT_DX * TR * 0.44, -LIGHT_DY * TR * 0.44, TR * 1.15, TR * 1.15);
+        stroke(30, 72, 38, 150); strokeWeight(1.4); noFill();
+        for (let i = 0; i < 6; i++) {
+          const a = Math.atan2(LIGHT_DY, LIGHT_DX) - 0.9 + i * 0.36;
+          line(Math.cos(a) * TR * 0.55, Math.sin(a) * TR * 0.55,
+               Math.cos(a) * TR * 0.95, Math.sin(a) * TR * 0.95);
+        }
+        // The areoles: a broken ring of pale ticks at the rim, uneven, because
+        // an even ring of them is a gear.
+        stroke(224, 222, 196, 150); strokeWeight(1);
+        for (let i = 0; i < 9; i++) {
+          const a = i * 2.399 + cvv * 5;
+          const r0 = TR * 0.94, r1 = TR * (1.04 + 0.07 * Math.sin(cvv * 21 + i));
+          line(Math.cos(a) * r0, Math.sin(a) * r0, Math.cos(a) * r1, Math.sin(a) * r1);
+        }
+        noStroke();
+        if (cvv > 0.82) {
+          fill(232, 226, 208); ellipse(0, 0, TR * 0.62, TR * 0.62);
+          fill(226, 96, 120); ellipse(0, 0, TR * 0.44, TR * 0.44);
+          fill(250, 214, 130); ellipse(0, 0, TR * 0.20, TR * 0.20);
+        }
         pop(); continue;
     }
 
@@ -27040,13 +27227,18 @@ function drawBiomeShadows() {
       if (w > h) rect(b.x - w / 2 + LIGHT_DX * 5 * SL, b.y - h / 2 + LIGHT_DY * 5 * SL, w, 6);
       else       rect(b.x - w / 2 + LIGHT_DX * 5 * SL, b.y - h / 2 + LIGHT_DY * 5 * SL, 6, h);
     } else if (b.isCactusProp) {
-      // A cactus throws a long thin shadow, not a slab the size of its cell
+      // A cactus throws a long thin shadow, not a slab the size of its cell --
+      // a column laid along the light with the crown on the end of it, and it
+      // starts at the FOOTPRINT rather than a stride away from it. It used to
+      // be pinned to the south edge of the record, which was the elevation's
+      // "base of the plant"; from above the plant stands at its own centre.
       sh(72);
-      ellipse(b.x + LIGHT_DX * 20 * SL, b.y + LIGHT_DY * 20 * SL + 4, 20, 13);
       push();
-      translate(b.x, b.y + h / 2 - 4);
+      translate(b.x, b.y);
       rotate(Math.atan2(LIGHT_DY, LIGHT_DX));
-      rect(0, -5, h * 0.8 * SL, 10, 5);
+      const cSL = w * 1.15 * SL;
+      quad(0, -w * 0.20, cSL, -w * 0.17, cSL, w * 0.17, 0, w * 0.20);
+      ellipse(cSL, 0, w * 0.44, w * 0.40);
       pop();
     } else if (b.isHayBale || b.isCrateProp || b.isWell) {
       sh(74);
@@ -27055,8 +27247,23 @@ function drawBiomeShadows() {
       sh(70);
       ellipse(b.x + LIGHT_DX * len, b.y + LIGHT_DY * len + 4, w * 1.05, h * 0.8);
     } else if (b.isWaterTower) {
-      sh(76);
-      ellipse(b.x + LIGHT_DX * 26 * SL, b.y + LIGHT_DY * 26 * SL + 20, 70, 34);
+      // Four legs and a tank, the same shape of answer the mast needs: a tower
+      // is mostly air, so the one thing it must not cast is a full-footprint
+      // slab. Each leg throws its own from its own footing -- and the footings
+      // are OUTSIDE the tank, so the shadow spreads before it converges, which
+      // is what a frame does.
+      const tsL = 52 * SL;
+      const tdx = LIGHT_DX * tsL, tdy = LIGHT_DY * tsL;
+      const tF = w * 0.42, tR = w * 0.29;
+      sh(70);
+      for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
+        const px = -LIGHT_DY * 4.4, py = LIGHT_DX * 4.4;
+        quad(b.x + sx * tF + px, b.y + sy * tF + py,
+             b.x + sx * tF - px, b.y + sy * tF - py,
+             b.x + tdx + sx * tR * 0.58 - px * 0.6, b.y + tdy + sy * tR * 0.58 - py * 0.6,
+             b.x + tdx + sx * tR * 0.58 + px * 0.6, b.y + tdy + sy * tR * 0.58 + py * 0.6);
+      }
+      ellipse(b.x + tdx, b.y + tdy, tR * 2, tR * 2);
     } else if (b.isBuildSite) {
       // A slab and some scaffold standards. Nothing here is tall enough to
       // throw the wall-sized shadow the generic branch below would give it.

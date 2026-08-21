@@ -579,7 +579,32 @@ beacon on the end and the health bar above that. Half the drawing stood outside 
 thing's own ground pointing at the top of the screen, which is the direction "up" is in
 a platformer and no direction at all in this one. `tools/visual.js --legacy` exists to
 catch this class: the hand-authored flags go through `drawBuildings()` and had no contact
-sheet at all. `isWaterTower`, `isWagonProp` and `isCactusProp` still have it.
+sheet at all.
+
+The frontier's three were the same fault three more times, and each needed a different
+answer:
+
+- **`isWaterTower`** was a barrel drawn as a *rect* with staves and hoops banded across
+  it and four legs running down the screen below it. From overhead it is a round tank
+  with a **conical** roof — the same apex-inside-the-base construction the big top uses —
+  four legs raking *out* from under it to a footprint wider than the tank, a catwalk ring
+  and a ladder. The catwalk earns its place twice over: it is what covers the tops of the
+  legs, and **an outline round the middle of four radiating struts is what stops them
+  reading as a star.** Its height is the mast's answer — the art and a long four-legged
+  shadow, not a bigger lean.
+- **`isWagonProp`** drew two spoked discs *below* the bed: a cart seen from the kerb.
+  A cart has **four** wheels, and from above what you see of one is the tread — a narrow
+  bar lying along the line of travel, with the hub showing at its middle. The one place a
+  wheel is a disc is the wrecked variant's, lying flat beside the axle it came off. A
+  bonnet is a canvas oval with its hoops showing through, and the hoops run **across** the
+  wagon, which is the one direction they actually run.
+- **`isCactusProp`** was a 14-wide rect running up the screen with two more rects welded
+  to its side, in twenty levels of one green — a pill. A saguaro from above is a rosette:
+  the trunk's crown as a fluted disc, each arm a short run out from it ending in a lifted
+  tip. **The run has to reach back into the trunk and out past the tip**, or the crown
+  covers the near end, the tip covers the far one, and the plant reads as a big ball with
+  a small ball beside it. Its collision box was 40 × 70 *because the art was an
+  elevation*; it is square now, like the plant.
 
 Three rules came out of rebuilding the mast, and they generalise:
 
