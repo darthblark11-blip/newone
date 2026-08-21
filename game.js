@@ -1792,20 +1792,10 @@ function legacyGenerateMap() {
                     // the gated sector read as a floor plan while the country
                     // outside it read as a city.
                     if (!b.isHouse) b.isBlockBuilding = true;
-                    let numDet = floor(random(1, 4));
-                    for(let d = 0; d < numDet; d++) {
-                        let t = random(['hvac', 'vent', 'access']);
-                        if (d === 0 && random() > 0.9 && Math.min(bw, bh) > 100) t = 'helipad';
-                        let detX, detY, valid = false, attempts = 0;
-                        let detR = (t === 'hvac' ? 22 : 16); 
-                        
-                        while(!valid && attempts < 25) {
-                            detX = random(-bw/2 + detR + 5, bw/2 - detR - 5); detY = random(-bh/2 + detR + 5, bh/2 - detR - 5); valid = true;
-                            for(let exist of b.details) { let eR = (exist.type === 'hvac' ? 22 : 16); if (dist(detX, detY, exist.x, exist.y) < detR + eR + 5) { valid = false; break; } }
-                            attempts++;
-                        }
-                        if(valid) b.details.push({ type: t, x: detX, y: detY });
-                    }
+                    // One kit for the whole city -- see WHAT IS ON A ROOF. The
+                    // authored core runs on p5's global RNG; a chunk runs on
+                    // its own. Same table either side of the seam.
+                    b.details = roofFurniture(bw, bh, () => random());
                 }
                 buildings.push(b);
               }
@@ -5060,18 +5050,10 @@ function drawBuildings(list, i0, i1) {
 
     if (currentLevel === 1 || currentLevel === 2) {
         if (b.details) {
-            push(); translate(b.x, b.y);
-            for(let det of b.details) {
-                fill(0, 50); noStroke(); 
-                if (det.type === 'hvac') rect(det.x - 13, det.y - 13, 26, 26, 3);
-                else if (det.type === 'access') rect(det.x - 13, det.y - 18, 26, 36);
-                else if (det.type === 'vent') rect(det.x - 6, det.y - 6, 12, 12);
-                
-                if (det.type === 'hvac') { fill(120); stroke(80); strokeWeight(1); rect(det.x - 15, det.y - 15, 30, 30, 3); fill(40); ellipse(det.x, det.y, 18, 18); push(); translate(det.x, det.y); rotate(frameCount * 0.1); stroke(180); strokeWeight(3); line(-7, 0, 7, 0); line(0, -7, 0, 7); pop(); } 
-                else if (det.type === 'access') { fill(bM[0]*0.7, bM[1]*0.7, bM[2]*0.7); stroke(80); strokeWeight(1); rect(det.x - 15, det.y - 20, 30, 40); fill(40); noStroke(); rect(det.x - 6, det.y + 5, 12, 15); } 
-                else if (det.type === 'helipad') { noFill(); stroke(255, 200, 0); strokeWeight(4); ellipse(det.x, det.y, 50, 50); strokeWeight(2); ellipse(det.x, det.y, 30, 30); } 
-                else if (det.type === 'vent') { fill(140); stroke(90); strokeWeight(1); rect(det.x - 8, det.y - 8, 16, 16); fill(50); noStroke(); rect(det.x - 5, det.y - 5, 10, 2); rect(det.x - 5, det.y, 10, 2); rect(det.x - 5, det.y + 5, 10, 2); }
-            } pop();
+            // One dispatch, one kit. See THE ROOFSCAPE.
+            push(); translate(b.x, b.y); noStroke();
+            for (let det of b.details) paintRoofDetail(det, bM, bIc);
+            pop();
         }
     }
 
@@ -5085,6 +5067,253 @@ function drawBuildings(list, i0, i1) {
 
 
 
+
+// ---------------------------------------------------------------------------
+// WHAT IS ON A ROOF, and one table deciding it for the whole city.
+//
+// The authored core and the streamed blocks each had their own copy of this --
+// same three types, different code, different overlap rules (the streamed one
+// had none, so its units stacked). They are the same city either side of one
+// seam, so they get the same kit from one function; the caller only supplies
+// its own random source, because the authored map runs on p5's global RNG and
+// a chunk runs on its own deterministic stream.
+//
+// Size gates matter more than weights here. A stair bulkhead, a water tank and
+// a terrace all need a roof big enough to stand on, and the whole point of the
+// kit is that a big block reads as a BIG roof -- more on it, and things on it
+// that a small roof cannot have -- rather than as the same two stickers scaled
+// up. Count comes off area for the same reason.
+//
+// The uniques are unique because a building has one way onto its roof, one
+// plant compound and one helipad. Without that, a wide roof came out as three
+// stair bulkheads in a row, which is the domino read again.
+const ROOF_KIT = {
+  hvac:    { r: 17, min:   0, w: 30 },
+  vent:    { r: 13, min:   0, w: 26 },
+  sky:     { r: 19, min:  80, w: 16 },
+  tank:    { r: 20, min:  95, w: 12 },
+  access:  { r: 21, min:  70, w: 22, one: true },
+  garden:  { r: 25, min: 120, w:  9, one: true },
+  plant:   { r: 32, min: 155, w:  8, one: true },
+  helipad: { r: 32, min: 170, w:  4, one: true }
+};
+const ROOF_TYPES = Object.keys(ROOF_KIT);
+function roofFurniture(bw, bh, rnd) {
+  const out = [];
+  const foot = Math.min(bw, bh);
+  if (foot < 34) return out;
+  const n = Math.max(1, Math.min(6, 1 + Math.floor((bw * bh) / 11000)));
+  const used = {};
+  for (let i = 0; i < n; i++) {
+    // Weighted pick over whatever this roof is big enough for, minus the
+    // uniques it already has.
+    let total = 0;
+    for (const k of ROOF_TYPES) {
+      const e = ROOF_KIT[k];
+      if (foot < e.min || (e.one && used[k])) continue;
+      total += e.w;
+    }
+    if (total <= 0) break;
+    let r = rnd() * total, t = null;
+    for (const k of ROOF_TYPES) {
+      const e = ROOF_KIT[k];
+      if (foot < e.min || (e.one && used[k])) continue;
+      r -= e.w;
+      if (r <= 0) { t = k; break; }
+    }
+    if (!t) break;
+    const rad = ROOF_KIT[t].r;
+    const spanX = bw / 2 - rad - 8, spanY = bh / 2 - rad - 8;
+    if (spanX <= 0 || spanY <= 0) continue;
+    for (let att = 0; att < 18; att++) {
+      const x = (rnd() * 2 - 1) * spanX, y = (rnd() * 2 - 1) * spanY;
+      let clear = true;
+      for (const e of out) {
+        if (Math.abs(x - e.x) < rad + ROOF_KIT[e.type].r + 4 &&
+            Math.abs(y - e.y) < rad + ROOF_KIT[e.type].r + 4) { clear = false; break; }
+      }
+      if (clear) { out.push({ type: t, x: x, y: y }); used[t] = true; break; }
+    }
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// THE ROOFSCAPE
+//
+// A roof is the ONLY face of a building this camera ever sees, and Stick City's
+// were a coloured rectangle, a parapet, a drain and one or two stickers: a grey
+// square with a spinning cross in it, a smaller grey square, and a slightly
+// taller grey square. A street of them read as a row of tiles because that is
+// what they were.
+//
+// What is actually up there is the plant, the way onto the roof, the water, the
+// light and the aerials -- and each of those has a shape you can name from the
+// air. The kit below is those five things plus a terrace, drawn the same way
+// every other prop in this file is: contact shadow first, value range wide
+// enough to read at thirty pixels, and offsets taken against LIGHT_DX/DY so a
+// roof is lit from the same place as the wall under it.
+//
+// Two rules this had to obey and the old art did not:
+//
+// - NOTHING HERE ANIMATES EXCEPT THE PLANT. The old hvac spun a cross on every
+//   roof in the view; a hundred crosses turning at the same rate is a regular
+//   repeat the eye resolves long before it resolves the buildings, and it cost
+//   a push/rotate/pop per unit per frame. The fans that remain are on the
+//   grouped plant, which is rare and large enough to be an object.
+// - PLANT IS GROUPED, behind a screen, the way plant really is -- the same
+//   lesson the casino's roof needed. Scattered singly it reads as confetti.
+//
+// Cost: every piece is flat fills, no state beyond one push/pop, and the whole
+// list is already inside drawBuildings()' inView() cull.
+function paintRoofDetail(d, bM, bI) {
+  const dx = d.x, dy = d.y;
+  const LX = LIGHT_DX, LY = LIGHT_DY;
+  const t = d.type;
+
+  if (t === 'hvac') {
+    // A condenser: a box with a grille in its lid, sitting on two bearers.
+    fill(0, 0, 0, 60); rect(dx - 13 + LX * 3, dy - 11 + LY * 3, 26, 22, 2);
+    fill(96, 100, 106); rect(dx - 13, dy - 11, 26, 22, 2);
+    fill(148, 152, 158); rect(dx - 13 - LX * 1.4, dy - 11 - LY * 1.4, 26, 9, 2);
+    fill(52, 55, 60);
+    for (let i = 0; i < 3; i++) rect(dx - 9, dy - 3 + i * 4.5, 18, 2.4, 1);
+    fill(178, 182, 188);
+    rect(dx - 13 - LX * 1.4, dy - 11 - LY * 1.4, 26, 2.6, 1);
+    return;
+  }
+
+  if (t === 'plant') {
+    // A screened compound with two units in it, one of them turning. This is
+    // the one thing on a roof that moves, and it is rare on purpose.
+    const w = 54, h = 40;
+    fill(0, 0, 0, 54); rect(dx - w / 2 + LX * 3, dy - h / 2 + LY * 3, w, h, 2);
+    fill(bI[0] * 0.82 + 6, bI[1] * 0.82 + 6, bI[2] * 0.82 + 6);
+    rect(dx - w / 2, dy - h / 2, w, h, 2);
+    stroke(150, 154, 160); strokeWeight(1.6); noFill();
+    rect(dx - w / 2, dy - h / 2, w, h, 2);
+    noStroke();
+    for (let i = 0; i < 2; i++) {
+      const ux = dx - w / 4 + i * (w / 2), uy = dy;
+      fill(0, 0, 0, 50); rect(ux - 9 + LX * 2, uy - 9 + LY * 2, 18, 18, 2);
+      fill(104, 108, 114); rect(ux - 9, uy - 9, 18, 18, 2);
+      fill(44, 47, 52); ellipse(ux, uy, 13, 13);
+      push(); translate(ux, uy); rotate(frameCount * 0.06 + i * 1.7);
+      stroke(186, 190, 196); strokeWeight(2);
+      line(-5, 0, 5, 0); line(0, -5, 0, 5);
+      pop(); noStroke();
+      fill(196, 200, 206); ellipse(ux, uy, 3.4, 3.4);
+    }
+    return;
+  }
+
+  if (t === 'access') {
+    // The stair bulkhead: the way onto the roof, and the tallest small thing on
+    // it. A door in one end and a hard lit lid, so it reads as standing rather
+    // than as a darker patch of deck.
+    const w = 28, h = 38;
+    fill(0, 0, 0, 66); rect(dx - w / 2 + LX * 5, dy - h / 2 + LY * 5, w, h, 2);
+    fill(bM[0] * 0.66 + 6, bM[1] * 0.66 + 6, bM[2] * 0.66 + 6);
+    rect(dx - w / 2, dy - h / 2, w, h, 2);
+    fill(bM[0] * 0.94 + 22, bM[1] * 0.94 + 22, bM[2] * 0.94 + 22);
+    rect(dx - w / 2 - LX * 2.4, dy - h / 2 - LY * 2.4, w, h, 2);
+    fill(255, 255, 255, 40);
+    rect(dx - w / 2 - LX * 2.4, dy - h / 2 - LY * 2.4, w, 3.2, 1.5);
+    fill(38, 40, 44); rect(dx - 6, dy + h / 2 - 12, 12, 11, 1);
+    fill(150, 154, 160); rect(dx + 3.4, dy + h / 2 - 8, 2, 3, 1);
+    return;
+  }
+
+  if (t === 'tank') {
+    // A water tank on a frame. Round, and its legs show past it, which is the
+    // whole read: everything else up here is a box.
+    fill(0, 0, 0, 62); ellipse(dx + LX * 5, dy + LY * 5, 34, 32);
+    fill(74, 62, 50);
+    for (const sx of [-1, 1]) for (const sy of [-1, 1])
+      rect(dx + sx * 14 - 2.4, dy + sy * 13 - 2.4, 4.8, 4.8, 1);
+    fill(96, 78, 58); ellipse(dx, dy, 30, 30);
+    fill(126, 104, 76); ellipse(dx - LX * 2, dy - LY * 2, 24, 24);
+    stroke(58, 48, 38); strokeWeight(1.6); noFill(); ellipse(dx, dy, 27, 27);
+    noStroke();
+    fill(52, 46, 40); ellipse(dx + LX * 5, dy + LY * 5, 8, 7);
+    fill(158, 150, 138); ellipse(dx + LX * 5 - LX, dy + LY * 5 - LY, 5, 4.4);
+    return;
+  }
+
+  if (t === 'vent') {
+    // Three cowls and a small pipe run, not one grey square. Odd numbers and
+    // uneven spacing, because a row of identical squares is a domino.
+    for (let i = 0; i < 3; i++) {
+      const vx = dx - 7 + i * 7.5 + (i === 1 ? 1.6 : 0);
+      const vy = dy + (i === 1 ? -4.5 : 3);
+      const r = i === 1 ? 8 : 6;
+      fill(0, 0, 0, 54); ellipse(vx + LX * 2, vy + LY * 2, r, r * 0.9);
+      fill(88, 92, 98); ellipse(vx, vy, r, r * 0.9);
+      fill(146, 150, 156); ellipse(vx - LX * 0.8, vy - LY * 0.8, r * 0.62, r * 0.56);
+      fill(34, 36, 40); ellipse(vx, vy, r * 0.3, r * 0.28);
+    }
+    return;
+  }
+
+  if (t === 'sky') {
+    // A roof light. The brightest thing on any roof, which is exactly why it
+    // is worth having: it is the only value up here above the parapet's.
+    const w = 32, h = 22;
+    fill(0, 0, 0, 52); rect(dx - w / 2 + LX * 3, dy - h / 2 + LY * 3, w, h, 2);
+    fill(120, 124, 130); rect(dx - w / 2, dy - h / 2, w, h, 2);
+    fill(152, 178, 196); rect(dx - w / 2 + 3, dy - h / 2 + 3, w - 6, h - 6, 1.5);
+    fill(206, 226, 238);
+    rect(dx - w / 2 + 3 - LX * 1.2, dy - h / 2 + 3 - LY * 1.2, w - 6, (h - 6) * 0.44, 1.5);
+    stroke(96, 106, 116, 190); strokeWeight(1.2);
+    line(dx - 4, dy - h / 2 + 3, dx - 4, dy + h / 2 - 3);
+    line(dx + 6, dy - h / 2 + 3, dx + 6, dy + h / 2 - 3);
+    noStroke();
+    return;
+  }
+
+  if (t === 'garden') {
+    // A terrace. Decking, planters and a pair of chairs -- the one piece of the
+    // kit that says somebody lives here rather than something runs here.
+    const w = 42, h = 32;
+    fill(0, 0, 0, 44); rect(dx - w / 2 + LX * 2, dy - h / 2 + LY * 2, w, h, 2);
+    fill(126, 100, 68); rect(dx - w / 2, dy - h / 2, w, h, 2);
+    stroke(102, 80, 54, 180); strokeWeight(1);
+    for (let i = 1; i < 5; i++) line(dx - w / 2 + 2, dy - h / 2 + (h * i) / 5,
+                                    dx + w / 2 - 2, dy - h / 2 + (h * i) / 5);
+    noStroke();
+    for (let i = 0; i < 3; i++) {
+      const px = dx - w / 2 + 7 + i * 14, py = dy - h / 2 + (i === 1 ? 20 : 7);
+      fill(0, 0, 0, 40); ellipse(px + LX * 1.6, py + LY * 1.6, 11, 10);
+      fill(112, 90, 74); rect(px - 5, py - 5, 10, 10, 1.5);
+      fill(58, 104, 56); ellipse(px, py, 11, 9.5);
+      fill(88, 148, 78); ellipse(px - LX * 1.4, py - LY * 1.4, 6.5, 5.5);
+    }
+    fill(216, 212, 200);
+    rect(dx + w / 2 - 11, dy + h / 2 - 12, 7, 9, 1.5);
+    rect(dx + w / 2 - 20, dy + h / 2 - 11, 7, 8, 1.5);
+    return;
+  }
+
+  if (t === 'helipad') {
+    // Kept, because a helipad on a roof is a landmark -- but it is a marked
+    // circle with an H and corner lights, not two stroked rings.
+    fill(0, 0, 0, 34); ellipse(dx + LX * 2, dy + LY * 2, 56, 54);
+    fill(58, 60, 64); ellipse(dx, dy, 54, 52);
+    fill(74, 76, 80); ellipse(dx, dy, 44, 42);
+    noFill(); stroke(228, 208, 80); strokeWeight(3.4); ellipse(dx, dy, 40, 38);
+    strokeWeight(4);
+    line(dx - 7, dy - 8, dx - 7, dy + 8);
+    line(dx + 7, dy - 8, dx + 7, dy + 8);
+    line(dx - 7, dy, dx + 7, dy);
+    noStroke();
+    fill(232, 226, 190);
+    for (let i = 0; i < 4; i++) {
+      const a = i * HALF_PI + QUARTER_PI;
+      ellipse(dx + Math.cos(a) * 24, dy + Math.sin(a) * 23, 3.6, 3.6);
+    }
+    return;
+  }
+}
 
 function drawParkingCars() {
   for (let c of activeParkingCars) {
@@ -21672,12 +21901,10 @@ function generateChunkContent(biome, cx, cy) {
             // keeps a footprint-sized shadow instead of a wall-sized one.
             let b = { x: bx, y: by, w: bw, h: bh, details: [], style: rngInt(rng, 0, 4),
                       isBlockBuilding: true };
-            let nDet = rngInt(rng, 1, 4);
-            for (let d = 0; d < nDet; d++) {
-              let t = rngPick(rng, ["hvac", "vent", "access"]);
-              if (d === 0 && rng() > 0.9 && Math.min(bw, bh) > 100) t = "helipad";
-              b.details.push({ type: t, x: rngRange(rng, -bw/2 + 26, bw/2 - 26), y: rngRange(rng, -bh/2 + 26, bh/2 - 26) });
-            }
+            // The streamed half of the same city. It used to place its units
+            // with no overlap test at all, so they stacked. See WHAT IS ON A
+            // ROOF.
+            b.details = roofFurniture(bw, bh, rng);
             solid.push(b);
           }
         }
