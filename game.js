@@ -3106,9 +3106,15 @@ const LEGACY_MASS = {
   isMarket:      [166, 140, 106],   isGasStation:  [176, 176, 178],
   isLiquorStore: [ 58,  96, 148],   isApartment:   [166, 146, 120],
   isWesternBldg: [148, 118,  86],   isMall:        [132, 136, 142],
-  isCasino:      [ 46,  46,  58],   isTheater:     [ 88,  76,  82],
+  isCasino:      [ 72,  64,  76],   isTheater:     [ 88,  76,  82],
   isArena:       [ 74,  74,  78],
-  isWaterTower:  true,  isWell: true,  isTower: true,  isCircus: true,
+  isWaterTower:  true,  isWell: true,  isTower: true,
+  // The two fairground lots are 870-square SOLID blocks -- the player cannot
+  // walk into either, so what they actually meet is the hoarding round the
+  // outside, and that is what these sides are. The colour is the boarding's
+  // own, the same rule the hydrant and the postbox follow: a grey-green skirt
+  // under a painted fence reads as the lot sitting in a concrete trough.
+  isCircus:      [146, 128, 100],   isAmusementPark: [132, 124, 108],
   // The skip's own body colour, not a grey-green near it. A bin is one of the
   // few things in a street the player stands right next to, so the join between
   // its side and its lid is read at full size -- and a desaturated skirt under
@@ -3128,7 +3134,7 @@ const LEGACY_MASS = {
   // those lean without walls, as does a lamp post (a round mast) and a fence
   // (a 470 x 10 bay, which drawMassSides would turn into a slab lying down).
   isWall:        [ 62,  62,  66],   isTerminal:    [ 88,  88,  92],
-  isAlienBldg:   [ 70,  50,  90],   isAmusementPark: [45, 70, 45],
+  isAlienBldg:   [ 70,  50,  90],
   isChip:        [ 26,  32,  26],
   isPyramid: true,  isPinkPlanet: true,  isStreetLight: true,  isFence: true
 };
@@ -3462,7 +3468,133 @@ function drawBuildings(list, i0, i1) {
         fill(214, 96, 62); rect(-mw * 0.145, -psy * mh * 0.40 - mu * 1.2, mw * 0.29, mu * 2.2, mu * 0.4);
         pop(); continue;
     }
-    if (b.isCasino) { fill(20, 20, 25); stroke(255, 215, 0); strokeWeight(4); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h, 20); let cTime = frameCount * 0.1; for(let i=0; i<10; i++) { fill(sin(cTime + i)*127+128, 50, 255-sin(cTime + i)*127); noStroke(); ellipse(b.x - b.w/2 + 40 + i*85, b.y - b.h/2 + 30, 18, 18); ellipse(b.x - b.w/2 + 40 + i*85, b.y + b.h/2 - 30, 18, 18); ellipse(b.x - b.w/2 + 30, b.y - b.h/2 + 40 + i*85, 18, 18); ellipse(b.x + b.w/2 - 30, b.y - b.h/2 + 40 + i*85, 18, 18); } fill(200, 30, 30); stroke(255); strokeWeight(3); ellipse(b.x - 150, b.y, 180, 180); fill(255); ellipse(b.x - 190, b.y - 40, 25, 25); ellipse(b.x - 110, b.y + 40, 25, 25); ellipse(b.x - 110, b.y - 40, 25, 25); ellipse(b.x - 190, b.y + 40, 25, 25); ellipse(b.x - 150, b.y, 25, 25); push(); translate(b.x + 150, b.y); rotate(frameCount * 0.05); fill(0); ellipse(0,0, 200, 200); for(let a=0; a<TWO_PI; a+=PI/4) { fill(a%(PI/2)===0?200:30, a%(PI/2)===0?30:200, 30); arc(0,0, 190, 190, a, a+PI/4); } fill(255,215,0); ellipse(0,0,40,40); pop(); continue; }
+    if (b.isCasino) {
+        // A CASINO RESORT FROM ABOVE, not its frontage laid on the floor.
+        //
+        // This was a near-black rectangle with a gold border, chase lights
+        // scattered round all four edges, a die and a roulette wheel painted in
+        // the middle -- the sign, flat on the ground, at the size of a city
+        // block. What a resort is from overhead is a big dark roof with three
+        // things on it you can name from a street away: the plant, the pool
+        // deck, and the PORTE-COCHERE over the entrance drive, which is the one
+        // piece of a casino that is unmistakable from the air.
+        const cw = b.w, chh = b.h, cu = Math.min(cw, chh) * 0.012;
+        const cv = Math.abs((b.x * 0.00143 + b.y * 0.00101) % 1);
+        const front = (cv * 4) | 0;
+        push(); translate(b.x, b.y); rotate(front * HALF_PI); noStroke();
+        const L = cw, W = chh;
+        // Roof: dark, but not the void the old one was. Everything above has to
+        // read against it.
+        fill(58, 52, 62); rect(-L / 2, -W / 2, L, W, cu * 1.5);
+        fill(72, 64, 76); rect(-L / 2 + cu, -W / 2 + cu, L - cu * 2, W - cu * 2, cu);
+        // Coping on the sun side, the same rim the mall's parapet gets.
+        fill(255, 255, 255, 26);
+        rect(-L / 2 + cu - LIGHT_DX * cu * 0.7, -W / 2 + cu - LIGHT_DY * cu * 0.7,
+             L - cu * 2, cu * 0.9, cu * 0.5);
+        // Membrane bays, so the roof has a scale.
+        stroke(52, 46, 56, 150); strokeWeight(1);
+        const cb = Math.max(4, Math.round(W / (cu * 10)));
+        for (let i = 1; i < cb; i++) {
+          const jy = -W / 2 + (W * i) / cb;
+          line(-L / 2 + cu * 1.6, jy, L / 2 - cu * 1.6, jy);
+        }
+        noStroke();
+        // THE POOL DECK. A hotel roof really does carry one, and from directly
+        // above it is the most legible thing on the building -- but it has to
+        // read as a POOL, which means a deck round it, a shallow end and some
+        // loungers, not a blue rectangle. That distinction is the whole
+        // difference between this and the skylight the mall used to have.
+        push(); translate(-L * 0.22, 0);
+        const pw = L * 0.26, ph = W * 0.44;
+        fill(158, 152, 140); rect(-pw / 2 - cu * 3, -ph / 2 - cu * 3, pw + cu * 6, ph + cu * 6, cu);
+        fill(140, 134, 122); rect(-pw / 2 - cu * 3, -ph / 2 - cu * 3, pw + cu * 6, cu * 2, cu * 0.5);
+        fill(38, 96, 128); rect(-pw / 2, -ph / 2, pw, ph, cu * 2);
+        fill(54, 132, 168); rect(-pw / 2 + cu * 0.8, -ph / 2 + cu * 0.8, pw - cu * 1.6, ph - cu * 1.6, cu * 1.6);
+        // The shallow end, and the sheen on the sun side.
+        fill(86, 172, 202, 190); rect(-pw / 2 + cu * 0.8, ph / 2 - ph * 0.30, pw - cu * 1.6, ph * 0.28 - cu * 0.8, cu);
+        fill(226, 244, 250, 44);
+        rect(-pw / 2 + cu * 0.8 - LIGHT_DX * cu, -ph / 2 + cu * 0.8 - LIGHT_DY * cu, pw - cu * 1.6, ph * 0.16, cu);
+        // Loungers down both sides -- but NOT evenly, and not one per side per
+        // row. Five white blocks at a fixed pitch down each edge of a bright
+        // band is a FILM STRIP: the eye resolves the sprocket repeat long
+        // before it resolves what the objects are, which is the same trap the
+        // revetment's rungs and the hive tower's rings fell into. Broken up and
+        // set at their own angles they go back to being furniture.
+        const nL2 = 7;
+        for (let i = 0; i < nL2; i++) {
+          const hh2 = Math.sin(cv * 31 + i * 2.399);
+          const sx = hh2 < 0 ? -1 : 1;
+          const ly = -ph / 2 + cu * 2 + (ph - cu * 4) * Math.abs((cv * 3.1 + i * 0.317) % 1);
+          push();
+          translate(sx * (pw / 2 + cu * 1.6), ly);
+          rotate(hh2 * 0.5);
+          fill(0, 0, 0, 40);
+          rect(-cu * 0.9 + LIGHT_DX * cu * 0.8, -cu * 1.7 + LIGHT_DY * cu * 0.8, cu * 1.8, cu * 3.4, cu * 0.4);
+          fill(214, 210, 198); rect(-cu * 0.9, -cu * 1.7, cu * 1.8, cu * 3.4, cu * 0.4);
+          fill(180, 176, 164); rect(-cu * 0.9, -cu * 1.7, cu * 1.8, cu * 1.1, cu * 0.4);
+          pop();
+        }
+        // A pair of parasols, because a deck this size is not all beds.
+        for (let i = 0; i < 2; i++) {
+          const ux2 = (i ? 1 : -1) * (pw / 2 + cu * 1.6);
+          const uy2 = -ph / 2 + ph * (i ? 0.26 : 0.72);
+          fill(0, 0, 0, 44); ellipse(ux2 + LIGHT_DX * cu * 1.4, uy2 + LIGHT_DY * cu * 1.4, cu * 4.4, cu * 4.4);
+          fill(198, 190, 172); ellipse(ux2, uy2, cu * 4.4, cu * 4.4);
+          fill(226, 220, 204); ellipse(ux2 - LIGHT_DX * cu * 0.8, uy2 - LIGHT_DY * cu * 0.8, cu * 2.6, cu * 2.6);
+        }
+        pop();
+        // Plant, grouped behind a screen, on the far side from the pool.
+        push(); translate(L * 0.20, -W * 0.28);
+        const qw = L * 0.20, qh = W * 0.24;
+        fill(92, 84, 94); rect(-qw / 2, -qh / 2, qw, qh, cu * 0.6);
+        stroke(118, 110, 118); strokeWeight(cu * 0.6); noFill();
+        rect(-qw / 2, -qh / 2, qw, qh, cu * 0.6); noStroke();
+        for (let i = 0; i < 2; i++) for (let j = 0; j < 2; j++) {
+          const ux = -qw / 4 + i * qw / 2, uy = -qh / 4 + j * qh / 2;
+          fill(0, 0, 0, 44); rect(ux - qw * 0.16 + LIGHT_DX * cu, uy - qh * 0.16 + LIGHT_DY * cu, qw * 0.32, qh * 0.32, cu * 0.3);
+          fill(132, 126, 132); rect(ux - qw * 0.16, uy - qh * 0.16, qw * 0.32, qh * 0.32, cu * 0.3);
+          fill(56, 52, 56); ellipse(ux, uy, qh * 0.20, qh * 0.20);
+          stroke(176, 170, 176); strokeWeight(1.2);
+          push(); translate(ux, uy); rotate(frameCount * 0.12 + i + j);
+          line(-qh * 0.08, 0, qh * 0.08, 0); line(0, -qh * 0.08, 0, qh * 0.08);
+          pop(); noStroke();
+        }
+        pop();
+        // THE PORTE-COCHERE. A canopy over the drive at the entrance: the one
+        // part of a resort this camera reads instantly, because a canopy is
+        // horizontal and everything else on a facade is not.
+        push(); translate(L * 0.36, W * 0.22);
+        const kw = L * 0.20, kh = W * 0.36;
+        fill(0, 0, 0, 64); rect(-kw / 2 + LIGHT_DX * cu * 3, -kh / 2 + LIGHT_DY * cu * 3, kw, kh, cu);
+        fill(96, 84, 68); rect(-kw / 2, -kh / 2, kw, kh, cu);
+        fill(142, 124, 96); rect(-kw / 2 + cu, -kh / 2 + cu, kw - cu * 2, kh - cu * 2, cu * 0.6);
+        fill(255, 255, 255, 30);
+        rect(-kw / 2 + cu - LIGHT_DX * cu, -kh / 2 + cu - LIGHT_DY * cu, kw - cu * 2, cu * 1.4, cu * 0.5);
+        // Columns at the corners, seen as four dark squares under the canopy.
+        fill(64, 56, 46);
+        for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
+          rect(sx * kw * 0.34 - cu, sy * kh * 0.36 - cu, cu * 2, cu * 2, cu * 0.3);
+        }
+        pop();
+        // THE SIGN, on the roof by the entrance, with the chase lights running.
+        // They are the casino's identity and they stay -- as a board, which is
+        // what a sign is, rather than scattered round the whole block.
+        push(); translate(L * 0.06, W * 0.34);
+        const sw = L * 0.34, sh2 = W * 0.11;
+        fill(0, 0, 0, 56); rect(-sw / 2 + LIGHT_DX * cu * 2, -sh2 / 2 + LIGHT_DY * cu * 2, sw, sh2, cu * 0.6);
+        fill(196, 154, 40); rect(-sw / 2, -sh2 / 2, sw, sh2, cu * 0.6);
+        fill(140, 30, 34); rect(-sw / 2 + cu, -sh2 / 2 + cu, sw - cu * 2, sh2 - cu * 2, cu * 0.4);
+        const nC = 11;
+        for (let i = 0; i < nC; i++) {
+          const on = ((i + ((frameCount / 7) | 0)) % 3) !== 0;
+          fill(on ? 255 : 172, on ? 238 : 152, on ? 176 : 112, on ? 236 : 160);
+          const bx = -sw / 2 + cu * 1.5 + (sw - cu * 3) * (i / (nC - 1));
+          ellipse(bx, -sh2 / 2 + cu * 0.6, cu * 1.3, cu * 1.3);
+          ellipse(bx, sh2 / 2 - cu * 0.6, cu * 1.3, cu * 1.3);
+        }
+        pop();
+        pop(); continue;
+    }
     if (b.isTheater) {
         // A THEATRE FROM ABOVE, not its façade laid on the floor.
         //
@@ -3632,8 +3764,344 @@ function drawBuildings(list, i0, i1) {
         }
         continue;
     }
-    if (b.isAmusementPark) { fill(45, 70, 45); noStroke(); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h, 40); noFill(); stroke(150, 200, 255); strokeWeight(10); beginShape(); for(let t=0; t<TWO_PI; t+=0.2) { vertex(b.x + 150 + cos(t)*200 + sin(t*3)*40, b.y + 150 + sin(t)*200 + cos(t*2)*40); } endShape(CLOSE); push(); translate(b.x - 180, b.y - 180); rotate(frameCount * 0.015); stroke(200); strokeWeight(6); noFill(); ellipse(0,0, 300, 300); for(let a=0; a<TWO_PI; a+=PI/4) { line(0,0, cos(a)*150, sin(a)*150); fill(255, 100, 100); noStroke(); ellipse(cos(a)*150, sin(a)*150, 35, 35); } pop(); fill(255, 200, 0); noStroke(); ellipse(b.x + 250, b.y - 200, 120, 120); fill(200, 50, 255); ellipse(b.x - 200, b.y + 250, 100, 100); continue; }
-    if (b.isCircus) { fill(180, 160, 120); noStroke(); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h, 100); push(); translate(b.x, b.y); fill(220); stroke(180); strokeWeight(4); ellipse(0,0, 650, 650); fill(200, 30, 30); noStroke(); for(let a=0; a<TWO_PI; a+=PI/6) { arc(0,0, 650, 650, a, a+PI/12); } fill(50); stroke(255, 200, 0); strokeWeight(5); ellipse(0,0, 100, 100); fill(200, 30, 30); ellipse(-250, 250, 180, 180); fill(220); ellipse(-250, 250, 100, 100); fill(40, 100, 200); ellipse(250, 250, 180, 180); fill(220); ellipse(250, 250, 100, 100); pop(); continue; }
+    if (b.isAmusementPark) {
+        // A FUNFAIR, and the ferris wheel is the lesson in it.
+        //
+        // The old one drew the wheel as a CIRCLE with spokes and a radius line,
+        // which is a wheel seen from the SIDE -- the same fault the mast had. A
+        // ferris wheel is a vertical disc: from directly above you see its rim
+        // edge on, so it is a long narrow BAND with the hub in the middle, the
+        // two A-frames splayed across it, and the cars strung out along its
+        // length. Drawn as a circle it reads as a roundabout, which is the ride
+        // standing next to it.
+        //
+        // The rest of the site was three coloured discs and a blue lasso. What
+        // a fairground is from overhead is a hardstanding loop with a big ride,
+        // a carousel, a coaster TRACK -- rails on columns, not a line -- and a
+        // row of stalls down one side.
+        const pw = b.w, ph = b.h, pu = Math.min(pw, ph) * 0.012;
+        const pv = Math.abs((b.x * 0.00109 + b.y * 0.00137) % 1);
+        push(); translate(b.x, b.y); noStroke();
+        // The site: a hoarding right round it -- the block is solid, so the
+        // player meets that fence and never the ground inside it, and the top
+        // of it is what the extruded sides join onto -- then worn grass with a
+        // hardstanding loop laid through it.
+        fill(132, 124, 108); rect(-pw / 2, -ph / 2, pw, ph, pu * 3);
+        fill(70, 96, 60); rect(-pw / 2 + pu * 2, -ph / 2 + pu * 2, pw - pu * 4, ph - pu * 4, pu * 2.5);
+        stroke(124, 118, 100, 190); strokeWeight(pu * 3.4); noFill();
+        ellipse(0, 0, pw * 0.74, ph * 0.74);
+        // A spur off the loop to the midway, rather than a chord straight
+        // across it -- a line through the middle of a ring reads as a fault in
+        // the drawing, not as a path.
+        strokeWeight(pu * 2.2);
+        line(0, ph * 0.05, 0, ph * 0.37);
+        noStroke();
+        // THE FERRIS WHEEL, edge on. Its long axis is the wheel's DIAMETER and
+        // its short axis is the width of a gondola, which is why it is a band.
+        push(); translate(-pw * 0.19, -ph * 0.20); rotate(pv * 1.4 - 0.7);
+        const fw = pw * 0.42, fh = ph * 0.055;
+        fill(0, 0, 0, 54);
+        rect(-fw / 2 + LIGHT_DX * pu * 2, -fh / 2 + LIGHT_DY * pu * 2, fw, fh, fh / 2);
+        // The two A-frames, splayed ACROSS the wheel: they are what holds a
+        // vertical disc up, and from above they are the widest thing here.
+        // Drawn as LEGS -- four struts and a footing each -- not as a filled
+        // trapezium: solid, they came out as two dark chevrons that read as
+        // objects lying beside the ride rather than as the structure carrying
+        // it, because a triangle that size is a stronger shape than the band.
+        for (const sy of [-1, 1]) {
+          const fy = sy * ph * 0.105;
+          fill(0, 0, 0, 40);
+          ellipse(LIGHT_DX * pu * 1.6, fy + LIGHT_DY * pu * 1.6, pu * 11, pu * 3.4);
+          fill(150, 154, 162);
+          for (const sx of [-1, 1]) {
+            quad(sx * pu * 0.4, 0, sx * pu * 1.4, 0,
+                 sx * pu * 3.6 + pu * 0.8, fy, sx * pu * 3.6 - pu * 0.8, fy);
+          }
+          fill(122, 126, 134); rect(-pu * 4.6, fy - pu * 0.8, pu * 9.2, pu * 1.6, pu * 0.5);
+          fill(186, 190, 198);
+          rect(-pu * 4.6, fy - pu * 0.8 - LIGHT_DY * pu * 0.4, pu * 9.2, pu * 0.6, pu * 0.3);
+        }
+        // The rim, seen end on. Bright: it is painted steel and the whole ride
+        // has to carry across the block.
+        fill(178, 182, 190); rect(-fw / 2, -fh / 2, fw, fh, fh / 2);
+        fill(214, 218, 224); rect(-fw / 2, -fh / 2, fw, fh * 0.42, fh / 2);
+        // Gondolas, turning. They slide along the band and bunch at the ends,
+        // because that is where the rim turns away from the camera -- and the
+        // ones at the TOP of the wheel are nearer, so they are drawn bigger and
+        // drawn last, over the ones coming round the bottom.
+        const nG = 8;
+        for (let pass = 0; pass < 2; pass++) {
+          for (let i = 0; i < nG; i++) {
+            const ga = (((i / nG) + frameCount * 0.0016) % 1) * TWO_PI;
+            const up = Math.sin(ga);
+            if ((up >= 0) !== (pass === 1)) continue;
+            const gs = 1 + 0.22 * up;
+            if (i % 2) fill(208, 74, 66); else fill(226, 178, 58);
+            ellipse(Math.cos(ga) * fw * 0.46, 0, pu * 3.0 * gs, fh * 1.35 * gs);
+          }
+        }
+        fill(70, 74, 82); ellipse(0, 0, pu * 5, pu * 5);
+        fill(152, 156, 164); ellipse(-LIGHT_DX * pu, -LIGHT_DY * pu, pu * 3, pu * 3);
+        pop();
+        // THE CAROUSEL. This one really IS a disc from above -- a conical
+        // canopy with radial panels -- so the wheel that is wrong on the ferris
+        // wheel is exactly right here.
+        push(); translate(pw * 0.24, -ph * 0.22);
+        const cd = Math.min(pw, ph) * 0.24;
+        fill(0, 0, 0, 50); ellipse(LIGHT_DX * pu * 2, LIGHT_DY * pu * 2, cd, cd);
+        fill(228, 222, 210); ellipse(0, 0, cd, cd);
+        for (let i = 0; i < 12; i += 2) {
+          fill(198, 62, 58);
+          arc(0, 0, cd, cd, (i / 12) * TWO_PI, ((i + 1) / 12) * TWO_PI);
+        }
+        // The ring of horses, turning under the canopy rim. Dark on the pale
+        // panels and pale on the red ones would flicker as they came round, so
+        // they are one mid brown throughout and read against both.
+        for (let i = 0; i < 8; i++) {
+          const ha = (i / 8) * TWO_PI + frameCount * 0.006;
+          const hx = Math.cos(ha) * cd * 0.38, hy = Math.sin(ha) * cd * 0.38;
+          fill(0, 0, 0, 46); ellipse(hx + LIGHT_DX * pu * 0.6, hy + LIGHT_DY * pu * 0.6, pu * 2.6, pu * 1.8);
+          fill(126, 84, 52); ellipse(hx, hy, pu * 2.6, pu * 1.8);
+          fill(196, 156, 112); ellipse(hx - LIGHT_DX * pu * 0.5, hy - LIGHT_DY * pu * 0.5, pu * 1.5, pu * 1.0);
+        }
+        fill(218, 178, 62); ellipse(0, 0, cd * 0.30, cd * 0.30);
+        fill(96, 74, 40); ellipse(0, 0, cd * 0.12, cd * 0.12);
+        pop();
+        // THE COASTER, as a track rather than a line: a shadow thrown clear of
+        // it, a rail, and a highlight down the middle, standing on columns at
+        // no regular spacing. A single stroked curve is a lasso.
+        push(); translate(-pw * 0.03, ph * 0.14);
+        // Each point carries a HEIGHT as well as a position, and that is the
+        // whole read. A closed loop of constant width lying on the ground is a
+        // go-kart circuit; what says coaster is the track parting company with
+        // its own shadow -- the lift hill's shadow swings a long way out and
+        // the shadow of the low turn sits right under the rail, so the two
+        // curves weave, which is exactly what you see from the air.
+        const tp = [], th = [];
+        for (let i = 0; i < 18; i++) {
+          const a = (i / 18) * TWO_PI;
+          const rr = 1 + 0.26 * Math.sin(a * 3 + pv * 6);
+          tp.push([Math.cos(a) * pw * 0.185 * rr, Math.sin(a) * ph * 0.125 * rr]);
+          th.push(0.18 + 0.82 * (0.5 + 0.5 * Math.sin(a * 2 - 1.1 + pv * 4)));
+        }
+        const trackPath = (lift) => {
+          beginShape();
+          for (let i = -1; i <= tp.length + 1; i++) {
+            const j = ((i % tp.length) + tp.length) % tp.length;
+            const k = lift * th[j];
+            curveVertex(tp[j][0] + LIGHT_DX * k, tp[j][1] + LIGHT_DY * k);
+          }
+          endShape();
+        };
+        noFill();
+        stroke(0, 0, 0, 76); strokeWeight(pu * 3.2); trackPath(pu * 5.2);
+        noStroke();
+        // The station. A ride's platform is the one piece of it that is on the
+        // ground and rectangular, and it is what says the loop is a coaster and
+        // not a circuit -- a queue rail, a canopy and the track running through.
+        push(); translate(tp[0][0], tp[0][1] + pu * 3.4);
+        fill(0, 0, 0, 44); rect(-pu * 7 + LIGHT_DX * pu * 1.4, -pu * 3 + LIGHT_DY * pu * 1.4, pu * 14, pu * 6, pu * 0.5);
+        fill(104, 98, 88); rect(-pu * 7, -pu * 3, pu * 14, pu * 6, pu * 0.5);
+        fill(178, 66, 58); rect(-pu * 7, -pu * 3, pu * 14, pu * 2.2, pu * 0.5);
+        fill(146, 142, 132); rect(-pu * 6, pu * 1.2, pu * 12, pu * 1.4, pu * 0.4);
+        pop();
+        // Columns, at no regular spacing, and taller where the track is higher
+        // -- each is a stalk from the ground up to the rail above it.
+        for (let i = 0; i < tp.length; i += 3) {
+          const k = pu * 5.2 * th[i];
+          fill(70, 74, 82);
+          quad(tp[i][0] + LIGHT_DX * k - pu * 0.9, tp[i][1] + LIGHT_DY * k,
+               tp[i][0] + LIGHT_DX * k + pu * 0.9, tp[i][1] + LIGHT_DY * k,
+               tp[i][0] + pu * 0.9, tp[i][1], tp[i][0] - pu * 0.9, tp[i][1]);
+          fill(96, 100, 108); ellipse(tp[i][0], tp[i][1], pu * 2.6, pu * 2.6);
+        }
+        noFill();
+        stroke(84, 90, 100); strokeWeight(pu * 2.8); trackPath(0);
+        stroke(206, 212, 222); strokeWeight(pu * 1.0); trackPath(0);
+        noStroke();
+        // A train on it, so the ride is running.
+        const tt = (frameCount * 0.0035) % 1;
+        for (let c = 0; c < 3; c++) {
+          const ci = (((tt * tp.length) | 0) + c) % tp.length;
+          if (c === 0) fill(226, 92, 62); else fill(72, 120, 190);
+          ellipse(tp[ci][0], tp[ci][1], pu * 3.0, pu * 3.0);
+          fill(255, 255, 255, 70);
+          ellipse(tp[ci][0] - LIGHT_DX * pu * 0.6, tp[ci][1] - LIGHT_DY * pu * 0.6, pu * 1.5, pu * 1.5);
+        }
+        pop();
+        // A ROW OF STALLS along the south edge, with striped awnings. Small,
+        // bright and repeated is what a midway is.
+        const nS = 5;
+        for (let i = 0; i < nS; i++) {
+          const sx = -pw * 0.30 + pw * 0.60 * (i / (nS - 1));
+          push(); translate(sx, ph * 0.40);
+          fill(0, 0, 0, 44);
+          rect(-pu * 4 + LIGHT_DX * pu * 1.5, -pu * 3 + LIGHT_DY * pu * 1.5, pu * 8, pu * 6, pu * 0.4);
+          fill(112, 106, 96); rect(-pu * 4, -pu * 3, pu * 8, pu * 6, pu * 0.4);
+          for (let k = 0; k < 4; k++) {
+            if (k % 2) fill(224, 220, 208); else fill(192, 58, 54);
+            rect(-pu * 4 + k * pu * 2, -pu * 3, pu * 2, pu * 2.4, pu * 0.3);
+          }
+          fill(198, 192, 178); rect(-pu * 3.2, pu * 0.4, pu * 6.4, pu * 1.4, pu * 0.3);
+          pop();
+        }
+        // Planting, so the site is not all machinery.
+        for (let i = 0; i < 7; i++) {
+          const a = pv * 23 + i * 2.399;
+          const tx = Math.cos(a) * pw * 0.40, ty = Math.sin(a) * ph * 0.40;
+          fill(0, 0, 0, 40); ellipse(tx + LIGHT_DX * pu * 1.5, ty + LIGHT_DY * pu * 1.5, pu * 6, pu * 5);
+          fill(46, 92, 44); ellipse(tx, ty, pu * 6, pu * 5.4);
+          fill(68, 124, 58); ellipse(tx - LIGHT_DX * pu, ty - LIGHT_DY * pu, pu * 4, pu * 3.6);
+        }
+        pop(); continue;
+    }
+    if (b.isCircus) {
+        // A BIG TOP IS A CONE, and from directly above a cone shows its WHOLE
+        // lateral surface with the peak projected somewhere inside the base --
+        // not in the middle of it, but pushed toward the camera by exactly the
+        // parallax every other mass in this game uses. That one offset is the
+        // difference between a tent and a dinner plate with red wedges on it,
+        // which is what this was: a flat disc, twelve evenly spaced arcs, a
+        // yellow ring in the centre and two smaller discs beside it.
+        //
+        // Because the panels run apex-to-rim they tile the disc exactly, and
+        // each one can be shaded from its OWN normal -- the direction it faces
+        // out of the cone -- so a big top is lit like every wall in the scene
+        // instead of being a flat colour with a pattern on it.
+        const kw = b.w, kh = b.h, ku = Math.min(kw, kh) * 0.012;
+        const kv = Math.abs((b.x * 0.00127 + b.y * 0.00113) % 1);
+        push(); translate(b.x, b.y); noStroke();
+        // The ground: a hoarding right round the lot -- the block is solid, so
+        // the player meets that fence and never the ground inside it, and its
+        // top is what the extruded sides join onto -- then grass, with the
+        // trodden apron the crowd wears into it.
+        fill(146, 128, 100); rect(-kw / 2, -kh / 2, kw, kh, ku * 3);
+        fill(66, 88, 56); rect(-kw / 2 + ku * 2, -kh / 2 + ku * 2, kw - ku * 4, kh - ku * 4, ku * 2.5);
+        fill(138, 126, 102); ellipse(0, 0, kw * 0.92, kh * 0.92);
+        fill(150, 138, 112); ellipse(-kw * 0.02, kh * 0.03, kw * 0.72, kh * 0.70);
+
+        // A cone: rim circle, apex pushed by its own extra height.
+        const cone = (ox, oy, R, rise, ar, ag, ab, br, bg, bb, panels) => {
+          massLean(b.x + ox, b.y + oy, rise, _leanTmp);
+          const ax = ox + _leanTmp[0], ay = oy + _leanTmp[1];
+          // The tent's own shadow, thrown off the whole silhouette rather than
+          // an offset copy of it -- a rim and a peak, hulled by the quads.
+          const sx = LIGHT_DX * rise * 0.9, sy = LIGHT_DY * rise * 0.9;
+          fill(0, 0, 0, 52);
+          ellipse(ox + sx, oy + sy, R * 2, R * 2);
+          for (let i = 0; i < panels; i++) {
+            const a0 = (i / panels) * TWO_PI, a1 = ((i + 1) / panels) * TWO_PI;
+            const x0 = ox + Math.cos(a0) * R, y0 = oy + Math.sin(a0) * R;
+            const x1 = ox + Math.cos(a1) * R, y1 = oy + Math.sin(a1) * R;
+            // Which way this panel faces: out of the cone, through the middle
+            // of its own rim edge.
+            let nx = (x0 + x1) * 0.5 - ax, ny = (y0 + y1) * 0.5 - ay;
+            const m = Math.sqrt(nx * nx + ny * ny) || 1; nx /= m; ny /= m;
+            const d = -(nx * LIGHT_DX + ny * LIGHT_DY);
+            const k = 0.62 + 0.38 * (d > 0 ? d : 0);
+            if (i % 2) fill(ar * k, ag * k, ab * k); else fill(br * k, bg * k, bb * k);
+            triangle(ax, ay, x0, y0, x1, y1);
+          }
+          // The valance round the rim, and the seam highlight on the sun side.
+          stroke(72, 58, 46, 150); strokeWeight(ku * 0.9); noFill();
+          ellipse(ox, oy, R * 2, R * 2);
+          noStroke();
+          return [ax, ay];
+        };
+
+        // Guy lines and stakes, at no regular spacing -- a ring of evenly
+        // spaced spokes is a wheel, which is the one shape this must not be.
+        const guys = (ox, oy, R, n, seed) => {
+          stroke(214, 206, 186, 130); strokeWeight(ku * 0.5);
+          for (let i = 0; i < n; i++) {
+            const a = (i / n) * TWO_PI + Math.sin(seed * 11 + i * 2.7) * 0.22;
+            const e = R * (1.20 + 0.10 * Math.sin(seed * 7 + i * 1.9));
+            line(ox + Math.cos(a) * R * 0.94, oy + Math.sin(a) * R * 0.94,
+                 ox + Math.cos(a) * e, oy + Math.sin(a) * e);
+          }
+          noStroke();
+          fill(86, 72, 56);
+          for (let i = 0; i < n; i++) {
+            const a = (i / n) * TWO_PI + Math.sin(seed * 11 + i * 2.7) * 0.22;
+            const e = R * (1.20 + 0.10 * Math.sin(seed * 7 + i * 1.9));
+            ellipse(ox + Math.cos(a) * e, oy + Math.sin(a) * e, ku * 1.5, ku * 1.5);
+          }
+        };
+
+        // THE BIG TOP.
+        const R0 = Math.min(kw, kh) * 0.29;
+        guys(-kw * 0.04, -kh * 0.04, R0, 13, kv);
+        const apex = cone(-kw * 0.04, -kh * 0.04, R0, 58, 188, 54, 50, 232, 226, 210, 14);
+        // The king pole comes out of the peak, and the flag flies off it.
+        fill(52, 44, 38); ellipse(apex[0], apex[1], ku * 3.2, ku * 3.2);
+        fill(226, 220, 204); ellipse(apex[0] - LIGHT_DX * ku * 0.7, apex[1] - LIGHT_DY * ku * 0.7, ku * 2.0, ku * 2.0);
+        fill(212, 176, 56);
+        const fl = Math.sin(frameCount * 0.05) * ku * 1.2;
+        triangle(apex[0], apex[1], apex[0] + ku * 6, apex[1] - ku * 2 + fl,
+                 apex[0] + ku * 5.4, apex[1] + ku * 1.4 + fl);
+        // The entrance marquee, a short canopy off the rim toward the drive.
+        // Set on the SOUTH-WEST quarter, clear of both sideshow tents -- put on
+        // the rim nearest the wagons it landed on top of the blue one, and two
+        // striped things overlapping read as one broken thing.
+        push(); translate(-kw * 0.04 - R0 * 0.72, -kh * 0.04 + R0 * 0.66);
+        rotate(-2.40);
+        fill(0, 0, 0, 50); rect(-ku * 2.6 + LIGHT_DX * ku * 1.6, -ku * 5 + LIGHT_DY * ku * 1.6, ku * 9, ku * 10, ku * 0.6);
+        fill(180, 52, 48); rect(-ku * 2.6, -ku * 5, ku * 9, ku * 10, ku * 0.6);
+        fill(230, 224, 208); rect(-ku * 2.6, -ku * 5, ku * 9, ku * 3.2, ku * 0.6);
+        pop();
+
+        // TWO SIDESHOW TENTS, smaller and in their own colours, so the site has
+        // a hierarchy rather than three of the same thing.
+        const R1 = Math.min(kw, kh) * 0.11, R2 = Math.min(kw, kh) * 0.085;
+        guys(kw * 0.31, kh * 0.26, R1, 8, kv + 0.31);
+        cone(kw * 0.31, kh * 0.26, R1, 24, 48, 92, 150, 226, 220, 204, 10);
+        guys(-kw * 0.32, kh * 0.30, R2, 7, kv + 0.62);
+        cone(-kw * 0.32, kh * 0.30, R2, 20, 62, 118, 74, 226, 220, 204, 8);
+
+        // THE WAGONS. A circus arrives on wheels and they stay parked round the
+        // back of the tent for the run -- painted boxes with a pale roof and a
+        // vent, which is all a caravan is from directly overhead.
+        for (let i = 0; i < 4; i++) {
+          const wy2 = -kh * 0.36 + kh * 0.145 * i;
+          const wx2 = kw * 0.36 + Math.sin(kv * 9 + i) * ku * 1.6;
+          push(); translate(wx2, wy2);
+          fill(0, 0, 0, 48); rect(-ku * 8 + LIGHT_DX * ku * 1.6, -ku * 3.4 + LIGHT_DY * ku * 1.6, ku * 16, ku * 6.8, ku * 0.8);
+          const wc = [[172, 56, 52], [56, 96, 150], [196, 160, 52], [120, 72, 132]][i];
+          fill(wc[0], wc[1], wc[2]); rect(-ku * 8, -ku * 3.4, ku * 16, ku * 6.8, ku * 0.8);
+          fill(214, 210, 198); rect(-ku * 7, -ku * 2.6, ku * 14, ku * 5.2, ku * 0.6);
+          fill(255, 255, 255, 34);
+          rect(-ku * 7 - LIGHT_DX * ku * 0.7, -ku * 2.6 - LIGHT_DY * ku * 0.7, ku * 14, ku * 1.2, ku * 0.5);
+          fill(140, 138, 130); rect(-ku * 1.4, -ku * 1.2, ku * 2.8, ku * 2.4, ku * 0.4);
+          // The drawbar, pointing out of the line.
+          fill(74, 66, 58); rect(-ku * 10.6, -ku * 0.5, ku * 2.8, ku * 1.0, ku * 0.3);
+          pop();
+        }
+
+        // The practice ring, off to one side. It is the one flat thing on the
+        // lot and it says what the tent is for -- but a flat disc a shade off
+        // the apron it sits on is a pancake, so it takes the value range every
+        // other prop in this file needed: a dark timber kerb, pale raked sand
+        // inside it, and posts round the outside at their own spacing.
+        push(); translate(-kw * 0.30, -kh * 0.28);
+        const rr2 = Math.min(kw, kh) * 0.095;
+        fill(0, 0, 0, 40); ellipse(LIGHT_DX * ku, LIGHT_DY * ku, rr2 * 2.1, rr2 * 2.1);
+        fill(104, 82, 58); ellipse(0, 0, rr2 * 2, rr2 * 2);
+        fill(190, 172, 138); ellipse(0, 0, rr2 * 1.72, rr2 * 1.72);
+        fill(206, 190, 158);
+        ellipse(-LIGHT_DX * ku * 1.2, -LIGHT_DY * ku * 1.2, rr2 * 1.1, rr2 * 1.1);
+        // Rake marks, curving with the ring rather than banded across it.
+        stroke(178, 160, 128, 150); strokeWeight(ku * 0.5); noFill();
+        ellipse(0, 0, rr2 * 1.22, rr2 * 1.22);
+        ellipse(0, 0, rr2 * 0.72, rr2 * 0.72);
+        noStroke();
+        fill(88, 72, 54);
+        for (let i = 0; i < 9; i++) {
+          const a = (i / 9) * TWO_PI + Math.sin(kv * 17 + i * 3.1) * 0.24;
+          ellipse(Math.cos(a) * rr2 * 1.06, Math.sin(a) * rr2 * 1.06, ku * 1.6, ku * 1.6);
+        }
+        pop();
+        pop(); continue;
+    }
 
     if (b.isTower) { if (b.hp > 0) {
         // A LATTICE MAST, FROM ABOVE.

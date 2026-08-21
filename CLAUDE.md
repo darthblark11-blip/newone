@@ -614,9 +614,51 @@ roof in front of it whose seams fan out from the proscenium because the seating 
 marquee stays, because a canopy projecting over the pavement is the one piece of a façade
 this camera really does see.
 
-All three are written in fractions of their own footprint with every repeat as a **count**
-rather than a pitch, the same rule the built structures follow. Still diagrams and still
-to do: `isCasino`, `isAmusementPark`, `isCircus`.
+`isCasino` was the sign itself, flat on the ground at the size of a city block: a
+near-black rectangle with a gold border, chase lights round all four edges and a die and
+a roulette wheel painted in the middle. What a resort is from overhead is a big dark roof
+with three things on it you can name from a street away — the plant, the pool deck, and
+the **porte-cochère** over the entrance drive, which is the one piece of a casino that is
+unmistakable from the air. The chase lights stay, as a **board** by the entrance, because
+that is what a sign is.
+
+**The last two are LOTS, not buildings, and their record is the fence.** `isAmusementPark`
+and `isCircus` are 870-square *solid* blocks — the player cannot walk into either — so
+what they actually meet is the hoarding round the outside, and that is what their
+`LEGACY_MASS` sides now are (a hoarding colour, not the grass inside; `isCircus` had no
+entry at all and drew flat). Everything else is site: a hardstanding loop, the rides, the
+stalls.
+
+- **A ferris wheel is a vertical disc, so from above it is a BAND.** The old one was a
+  circle with spokes and a radius line — a wheel seen from the *side*, the same fault the
+  mast had. Edge on you see the rim as a long narrow band with the hub in the middle, the
+  two A-frames splayed across it, and the cars strung out along its length and bunching at
+  the ends, where the rim turns away. The cars at the **top** of the wheel are nearer the
+  camera, so they draw bigger and draw last. Drawn as a circle it reads as the roundabout
+  standing next to it — and the carousel *is* a disc from above, so the radial repeat that
+  is wrong on one is exactly right on the other.
+- **A coaster is told by its shadow, not by its line.** A closed loop of constant width
+  lying on the ground is a go-kart circuit. Each track point carries a **height** as well
+  as a position, so the lift hill's shadow swings a long way out while the low turn's sits
+  right under the rail: the two curves weave, which is what a coaster looks like from the
+  air. The columns are stalks from the ground up to the rail above them, and the station —
+  the one part of a ride that is rectangular and on the ground — is what says it is a ride
+  at all.
+- **A BIG TOP IS A CONE, and from directly above a cone shows its whole lateral surface**
+  with the peak projected *inside* the base — pushed toward the camera by the same
+  `massLean()` parallax every mass in the game uses. That one offset is the difference
+  between a tent and a dinner plate with red wedges on it, which is what it was. Because
+  the panels run apex-to-rim they tile the disc exactly, so each one can be shaded from its
+  **own** normal and the tent is lit like every wall in the scene.
+
+All of them are written in fractions of their own footprint with every repeat as a
+**count** rather than a pitch, the same rule the built structures follow.
+
+**And a regular repeat down both sides of a bright band is a FILM STRIP.** The casino's
+first pool deck put five white loungers at a fixed pitch down each edge, and the eye
+resolved the sprocket rhythm long before it resolved the furniture — the same trap the
+revetment's rungs and the hive tower's rings fell into. Broken up, set at their own angles
+and mixed with a couple of parasols they go back to being objects on a deck.
 
 There is also a dedicated western-building art module (`DG` palette ~1298 plus
 `dgBoards`, `dgBoardwalk`, `dgHitchRail`, `dgFacadeBand`, `dgWindow`, `dgDoor`,
