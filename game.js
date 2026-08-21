@@ -5235,6 +5235,55 @@ function clearAllBlood() {
 
 
 
+// ===========================================================================
+// A FRAME THAT FAILS MUST NOT TAKE THE CONTROLS WITH IT
+// ===========================================================================
+//
+// draw() paints the world, then LIGHTS it, then draws the HUD and reads the
+// sticks -- in that order, because a lamp has to multiply a finished frame and
+// the HUD has to sit on top of the lit result. The consequence nobody wanted is
+// that everything the player needs in order to PLAY is downstream of two purely
+// cosmetic passes. Anything that throws in the light rig takes the joysticks,
+// the buttons, the pause button and handleTouches() with it -- and p5 simply
+// calls draw() again next frame, so the game does not stop: it keeps running,
+// ungraded (which is why it looks like broad daylight -- night is a wash laid
+// over the top and the wash is what did not happen), with the player walking in
+// whatever direction the stick was last left in and no way to stop them.
+//
+// That is exactly the "controls go away and it goes to daytime and shifts"
+// report, and it is an ORDERING fault rather than a bug in any one pass: the
+// player's ability to play must not depend on a cosmetic pass succeeding.
+//
+// glRigFrame() already had its own try/catch and stands down cleanly. The 2D
+// light pass, the screen layer, and the whole world block had none, so this
+// guards all of it in one place. Losing a frame's grading is a glitch; losing
+// the controls is the end of the run.
+//
+// The transform has to be put back, because the throw can land between a
+// push() and its pop(). p5 keeps that on the instance, and pop() past the
+// bottom of the stack warns rather than throwing, so the depth is read where
+// p5 actually keeps it and the unwind is bounded.
+function frameStackDepth() {
+  const inst = (typeof p5 !== 'undefined' && p5.instance) ? p5.instance : null;
+  return (inst && inst._styles) ? inst._styles.length : -1;
+}
+function unwindFrameStack(to) {
+  if (!(to >= 0)) return;
+  for (let i = 0; i < 64 && frameStackDepth() > to; i++) pop();
+}
+// One record, not a log: the fault repeats every frame while it lasts, so what
+// is worth keeping is the message, where it happened and how long it has been
+// going on. Surfaced under the ammo counter, because a player who can see it
+// can report it -- which is the whole reason the message is kept at all.
+window.FRAME_FAULT = null;
+function noteFrameFault(where, err) {
+  const msg = String((err && err.message) ? err.message : err);
+  const f = window.FRAME_FAULT;
+  if (f && f.msg === msg && f.where === where) { f.n++; f.at = frameCount; return; }
+  window.FRAME_FAULT = { where: where, msg: msg, n: 1, at: frameCount, since: frameCount };
+  if (typeof console !== 'undefined' && console.warn) console.warn('frame fault in ' + where, err);
+}
+
 function draw() {
   if (!started) {
     background(15); fill(255); textAlign(CENTER, CENTER); textSize(32); textFont('sans-serif'); text("STICK WORLD REVOLUTION", width / 2, height / 2 - 140);
@@ -5670,6 +5719,12 @@ viewBottom = camY + height / zoom + shakePad;
   // there is exactly one background() call per frame and it always runs.
   else background(18, 20, 24);
 
+  // Everything from here to the end of the light pass is the SCENE. If any of
+  // it throws, the frame loses its picture and keeps its controls -- see
+  // A FRAME THAT FAILS MUST NOT TAKE THE CONTROLS WITH IT, above.
+  const _sceneDepth = frameStackDepth();
+  try {
+
   push(); scale(zoom); translate(-camX, -camY);
   if (screenShake > 0) {
     translate(random(-screenShake, screenShake), random(-screenShake, screenShake));
@@ -5881,7 +5936,13 @@ viewBottom = camY + height / zoom + shakePad;
     if (!(typeof glRigFrame === 'function' && glRigFrame())) drawLightPass();
     drawBiomeScreenLayer();
   }
- 
+
+  } catch (_sceneErr) {
+    noteFrameFault('scene', _sceneErr);
+    unwindFrameStack(_sceneDepth);
+    resetMatrix();
+  }
+
 
   // SCREEN UI
   let inCutscene = inTownCutscene || inDarchonCall;
@@ -16836,6 +16897,18 @@ function updateParticles() {
 }
 
 function drawUI() {
+  // If the scene guard caught something, say so. It repeats every frame while
+  // it lasts, so this stays up until it stops -- which is right: the picture is
+  // wrong and the player should know why rather than think the game has bugged
+  // out on its own. See A FRAME THAT FAILS MUST NOT TAKE THE CONTROLS WITH IT.
+  if (window.FRAME_FAULT && frameCount - window.FRAME_FAULT.at < 90) {
+    const ff = window.FRAME_FAULT;
+    push(); noStroke(); textAlign(LEFT, TOP); textFont('monospace'); textSize(10);
+    fill(0, 150); rect(8, height - 26, min(width - 16, 8 + ff.msg.length * 6 + 40), 18, 3);
+    fill(255, 120, 110);
+    text('render fault (' + ff.where + ' x' + ff.n + '): ' + ff.msg, 12, height - 23);
+    pop();
+  }
   const hpNow = player ? max(0, player.hp) : 0;
   // Healing overtakes the trail rather than dragging it along behind.
   if (hpNow > hpGhost) { hpGhost = hpNow; hpGhostHold = 0; }
@@ -30666,6 +30739,8 @@ function weaponKey(w) {
 const LIGHT_W = 192;
 const LIGHT_BUDGET = 26;           // sources per frame, nearest first
 let _lightBuf = null, _lightGrads = null, _lightCtx = null;
+// The vignette's cached gradient, keyed on buffer size and the rounded hour.
+let _vigGrad = null, _vigKey = '', _vigCtx = null;
 let _rigTookHaze = false;   // set per frame: did the rig already composite the haze?
 
 // One cached radial per colour, in unit space, scaled by the transform.
@@ -30749,6 +30824,7 @@ function drawLightPass() {
     _lightBuf = createGraphics(lw, lh);
     _lightBuf.pixelDensity(1);
     _lightGrads = null; _lightCtx = null;
+    _vigGrad = null; _vigKey = ''; _vigCtx = null;
   }
   const buf = _lightBuf;
   const night = 1 - d;
@@ -30812,14 +30888,26 @@ function drawLightPass() {
   // Vignette lives here rather than in the grade layer: closing the frame down
   // is a reduction in light, so multiplying is what it actually is.
   if (night > 0.02) {
-    const vig = 0.26 * night;
+    // Quantised and CACHED. This was building a fresh CanvasGradient on every
+    // frame of every night -- the only per-frame allocation left in this pass,
+    // and an allocation is the one thing in here that can throw when a phone is
+    // under memory pressure, which is exactly when the rig has already stood
+    // down and this pass is carrying the frame alone. The vignette depends only
+    // on the buffer size and the hour, and the hour moves slowly, so rounding
+    // it to a hundredth costs nothing visible and makes this free.
+    const vig = Math.round(0.26 * night * 100) / 100;
     const ctx = buf.drawingContext;
-    const grd = ctx.createRadialGradient(
-      lw / 2, lh / 2, Math.min(lw, lh) * 0.62,
-      lw / 2, lh / 2, Math.max(lw, lh) * 0.95);
-    grd.addColorStop(0.00, 'rgba(9,13,28,0)');
-    grd.addColorStop(0.55, 'rgba(9,13,28,' + (vig * 0.34).toFixed(3) + ')');
-    grd.addColorStop(1.00, 'rgba(9,13,28,' + vig.toFixed(3) + ')');
+    const vkey = lw + 'x' + lh + ':' + vig;
+    if (_vigKey !== vkey || _vigCtx !== ctx) {
+      const g = ctx.createRadialGradient(
+        lw / 2, lh / 2, Math.min(lw, lh) * 0.62,
+        lw / 2, lh / 2, Math.max(lw, lh) * 0.95);
+      g.addColorStop(0.00, 'rgba(9,13,28,0)');
+      g.addColorStop(0.55, 'rgba(9,13,28,' + (vig * 0.34).toFixed(3) + ')');
+      g.addColorStop(1.00, 'rgba(9,13,28,' + vig.toFixed(3) + ')');
+      _vigGrad = g; _vigKey = vkey; _vigCtx = ctx;
+    }
+    const grd = _vigGrad;
     ctx.save();
     ctx.globalCompositeOperation = 'source-over';
     ctx.fillStyle = grd;
@@ -30980,6 +31068,7 @@ const GLRig = {
   lw: 0, lh: 0,       // the light/normal targets, at GLRIG_LIGHT_SCALE of w/h
   slow: 0,            // consecutive frames over budget
   fast: 0,
+  resize: false,      // a tier change is pending; applied at the TOP of a frame
   lights: [],
   failure: ''
 };
@@ -31775,13 +31864,13 @@ function glRigWatchdog() {
     // and lights are only worth shedding when lights are being spent.
     if (GLRig.lightTier < GLRIG_LIGHT_TIERS.length - 1 &&
         GLRig.lights.length > GLRIG_LIGHTS_MIN) GLRig.lightTier++;
-    else if (GLRig.tier < GLRIG_SCALES.length - 1) { GLRig.tier++; glRigResize(); }
+    else if (GLRig.tier < GLRIG_SCALES.length - 1) { GLRig.tier++; GLRig.resize = true; }
     else { GLRig.on = false; GLRig.failure = GLRIG_SHED_MSG; }
   } else if (GLRig.fast > 600) {
     GLRig.fast = 0;
     // ...and back up in the reverse order, so resolution returns before the
     // last of the lights do.
-    if (GLRig.tier > 0) { GLRig.tier--; glRigResize(); }
+    if (GLRig.tier > 0) { GLRig.tier--; GLRig.resize = true; }
     else if (GLRig.lightTier > 0) GLRig.lightTier--;
   }
 }
@@ -31791,6 +31880,13 @@ function glRigWatchdog() {
 function glRigFrame() {
   glRigClock();                 // before the active test -- see glRigClock()
   if (!glRigActive()) return false;
+  // A TIER CHANGE IS APPLIED BETWEEN FRAMES, NOT DURING ONE. glRigResize()
+  // deletes and reallocates both render targets and calls createGraphics() for
+  // the height buffer, and its own comment says it is never called from inside
+  // a frame -- but the watchdog runs at the END of glRigFrame(), which is
+  // inside one, with the rig's framebuffers still bound. It asks for the resize
+  // now and gets it here, before any of this frame's GL state exists.
+  if (GLRig.resize) { GLRig.resize = false; glRigResize(); if (!glRigActive()) return false; }
   const gl = GLRig.gl;
   const W = GLRig.w, H = GLRig.h;
   // The light half of the pipeline runs coarser -- see GLRIG_LIGHT_SCALE. Only

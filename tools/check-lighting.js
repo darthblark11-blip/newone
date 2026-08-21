@@ -502,11 +502,31 @@ ok('each fragment stage takes vUV and writes oCol', ioOk, badIO || 'all 6');
 console.log('\n== nothing allocates inside the render loop ==');
 // A createTexture()/createFramebuffer() per frame is a collection pause with a
 // frame number on it, which is the whole reason the targets are pre-built.
-const frameFn = rig.slice(rig.indexOf('function glRigFrame()'));
+// COMMENTS ARE NOT CODE. This scans source text for allocation calls, so a
+// block comment that NAMES one -- which the notes in this file do constantly,
+// because they explain what must not happen -- failed the check on prose.
+const decomment = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+const frameFn = decomment(rig.slice(rig.indexOf('function glRigFrame()')));
 const allocs = ['createTexture(', 'createFramebuffer(', 'createProgram(', 'createShader(',
                 'createGraphics(', 'createBuffer(', 'createVertexArray('];
 const found = allocs.filter(a => frameFn.includes(a));
 ok('glRigFrame() allocates no GPU object', found.length === 0, found.join(' ') || 'clean');
+
+// A TIER CHANGE IS THE ONE THING THAT LEGITIMATELY REALLOCATES, and it happens
+// at the top of a frame rather than in the middle of one: glRigResize() deletes
+// and rebuilds both render targets, and the watchdog that asks for it runs at
+// the END of glRigFrame(), with this frame's framebuffers still bound. It sets
+// a flag; the next frame acts on it before any GL state exists. So the call is
+// allowed here only behind that flag.
+const body = frameFn.slice(0, frameFn.indexOf('function drawBiomeScreenLayer'));
+const resizeCalls = (body.match(/glRigResize\(\)/g) || []).length;
+ok('a pending resize is applied at the top of the frame, behind its flag',
+   resizeCalls === 0 || /GLRig\.resize\s*\)\s*\{\s*GLRig\.resize\s*=\s*false;\s*glRigResize\(\)/.test(body),
+   resizeCalls + ' call(s), unguarded');
+ok('the watchdog asks for a resize rather than doing one mid-frame',
+   !/glRigResize\(\)/.test(decomment(rig.slice(rig.indexOf('function glRigWatchdog()'),
+                                               rig.indexOf('function glRigFrame()')))),
+   'glRigWatchdog() still calls glRigResize() directly');
 const paintFn = rig.slice(rig.indexOf('function glRigPaintHeight()'),
                           rig.indexOf('function glRigDraw('));
 ok('the height pass allocates no p5 buffer', !paintFn.includes('createGraphics('));

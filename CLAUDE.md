@@ -1471,6 +1471,53 @@ The ordering question for any new art is still "is this a mass or a surface?":
 Anything new must be inserted at the layer that matches its physical height, or it will
 read as floating — or, worse, swallow the player.
 
+### A frame that fails must not take the controls with it
+
+That order has a consequence nobody wanted: **everything the player needs in order to
+play is downstream of two purely cosmetic passes.** The world is painted, then lit, then
+the HUD goes on top and `handleTouches()` reads the sticks — so anything that throws in
+the light rig takes the joysticks, the buttons, the pause button and the input handler
+with it. And p5 does not stop: it calls `draw()` again next frame, so the game keeps
+running, **ungraded** — which is why it looks like broad daylight, since night is a wash
+laid over the top and the wash is the part that did not happen — with the player walking
+in whatever direction the stick was last left in and no way to stop them.
+
+That is the "controls go away and it goes to daytime and shifts" report, and it is an
+**ordering** fault rather than a bug in any one pass. `glRigFrame()` already had its own
+try/catch and stands down cleanly; the 2D light pass, the screen layer and the whole
+world block had none. The scene half of `draw()` is guarded in one place now
+(`noteFrameFault` / `unwindFrameStack`), and the guard puts the transform back, because
+the throw can land between a `push()` and its `pop()` — p5 keeps that depth on the
+instance and `pop()` past the bottom warns rather than throwing, so the unwind reads the
+real depth and is bounded. Losing a frame's grading is a glitch; losing the controls ends
+the run.
+
+The fault is recorded once (message, where, how long it has been going) rather than
+logged per frame, and drawn small under the ammo counter — a player who can see it can
+report it, which is the whole reason the message is kept.
+
+`node tools/check-frame.js` is what holds this, and it is the first check in `tools/`
+that runs the **real `draw()`**, against real p5, in real headless Chromium: the node
+harness has no canvas, so the 2D rig's gradients and composite modes are stubs there and
+the pass that was failing cannot even execute. It walks a night firefight, stands the GPU
+rig down half way so the second half runs the 2D path, then breaks the light pass on
+purpose and asserts the joysticks, `handleTouches()` and the HUD all still run and the
+push/pop stack comes back to where it started.
+
+Two things found while chasing it, both fixed:
+
+- **A tier change reallocated in the middle of a frame.** `glRigResize()` deletes and
+  rebuilds both render targets and calls `createGraphics()` for the height buffer, and
+  its own comment says it is never called from inside a frame — but `glRigWatchdog()`
+  runs at the *end* of `glRigFrame()`, which is inside one, with that frame's
+  framebuffers still bound. It sets `GLRig.resize` now; the next frame applies it at the
+  top, before any GL state exists.
+- **The vignette built a fresh `CanvasGradient` every frame of every night.** It was the
+  last per-frame allocation in `drawLightPass()`, and an allocation is the one thing in
+  there that can throw when a phone is under memory pressure — which is exactly when the
+  GPU rig has already stood down and that pass is carrying the frame alone. It is keyed
+  on buffer size and the hour rounded to a hundredth, which costs nothing visible.
+
 ---
 
 ## Population and settlements
@@ -3038,6 +3085,7 @@ node tools/check-corpse.js         # the settle: variation, impact direction, an
 node tools/check-damage-feedback.js # what the player is told when hit, shield up vs down
 node tools/check-depth.js          # depth order, and how a mass projects
 node tools/check-lighting.js       # the deferred rig: uniforms resolve, nothing allocates per frame
+node tools/check-frame.js          # the real draw() in real Chromium: a failed pass keeps the controls
 GAME_JS=/path/to/other.js node tools/check-generation.js    # compare against a baseline
 ```
 
