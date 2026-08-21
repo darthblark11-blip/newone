@@ -30285,14 +30285,6 @@ const GLRIG_SCALES = [1.0, 0.78, 0.6];
 // A quarter of the pixels for the same picture.
 const GLRIG_LIGHT_SCALE = 0.5;
 
-// How far from the player a character is still entered into the height field.
-// Everything on screen at tier 0, tighter as the watchdog sheds -- because in
-// a massed battle the height paint is several HUNDRED draw calls, and the ones
-// at the edge of the view are casting shadows nobody is looking at. It only
-// bites once the rig is already in trouble, which is exactly when a character
-// at the screen edge losing its shadow is the cheapest thing to give up.
-const GLRIG_CHAR_R = [1e9, 900, 620];
-
 const GLRig = {
   ok: false,          // context exists and every program linked
   on: false,          // ok, and not stood down by the watchdog
@@ -30311,12 +30303,7 @@ const GLRig = {
   lightTier: 0,       // index into GLRIG_LIGHT_TIERS; the watchdog drops this first
   ms: 16,             // smoothed frame time; the light budget is spent against it
   lw: 0, lh: 0,       // the light/normal targets, at GLRIG_LIGHT_SCALE of w/h
-  // What each uploaded texture is currently allocated at, so glRigUpload() can
-  // respecify only when it has to. [diffuse, height].
-  texSize: [[0, 0], [0, 0]],
-  // Smoothed stage timings, collected only while SHOW_RIG is on.
-  t: { hgt: 0, up: 0, pass: 0, blit: 0 },
-  slow: 0,            // overrun, weighted by how long each frame took
+  slow: 0,            // consecutive frames over budget
   fast: 0,
   lights: [],
   failure: ''
@@ -30991,18 +30978,11 @@ function glRigPaintHeight() {
   // 4. Characters. Their facing goes in as the rotation channel, which is the
   //    term the tangent-space branch of the normal pass reads.
   const CH = 17;
-  // One squared distance, computed once -- see GLRIG_CHAR_R.
-  const cr = GLRIG_CHAR_R[GLRig.tier] || GLRIG_CHAR_R[GLRIG_CHAR_R.length - 1];
-  const cr2 = cr * cr;
-  const cpx = player ? player.x : (viewLeft + viewRight) / 2;
-  const cpy = player ? player.y : (viewTop + viewBottom) / 2;
   const one = (c) => {
     if (!c || c.hp <= 0 || c.dead) return;
     // A height field cannot hold a flying unit -- see CHAR_AIRBORNE. They keep
     // their own offset oval instead.
     if (CHAR_AIRBORNE[c.eType]) return;
-    const cdx = c.x - cpx, cdy = c.y - cpy;
-    if (cdx * cdx + cdy * cdy > cr2) return;
     if (!inView(c.x, c.y, 60)) return;
     glRigMat(g, CH + groundElev(c.x, c.y), 0.18 + 0.25 * wet,
              (c.aimAngle || 0) / (Math.PI * 2));
@@ -31016,35 +30996,6 @@ function glRigPaintHeight() {
 }
 
 // --- per-frame passes ------------------------------------------------------
-
-// UPLOAD INTO EXISTING STORAGE, NEVER RESPECIFY IT.
-//
-// texImage2D from a canvas element REALLOCATES the texture on every call, so
-// the finished frame -- several megabytes -- was being freed and allocated
-// sixty times a second on top of being copied across the bus. texSubImage2D
-// reuses the storage, and on a mobile driver that is the difference between an
-// allocation storm and a copy. The size is respecified only when it actually
-// changes, which is a window resize and nothing else.
-//
-// It is also the one cost in this rig that does NOT fall when the watchdog
-// drops a tier -- the source is the game's own canvas, whatever the rig is
-// rendering at -- which is why dropping to tier 2 with a 231x417 light buffer
-// still measured 46ms.
-function glRigUpload(gl, slot, el) {
-  if (!el) return;
-  const w = el.width | 0, h = el.height | 0;
-  if (!w || !h) return;
-  const s = GLRig.texSize[slot];
-  if (s[0] !== w || s[1] !== h) {
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    s[0] = w; s[1] = h;
-  }
-  gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, el);
-}
 
 function glRigDraw(gl, prog, rect) {
   gl.uniform4f(prog._u.uRect, rect[0], rect[1], rect[2], rect[3]);
@@ -31171,25 +31122,9 @@ function glRigFrame() {
   // the final composite is full size.
   const LW = GLRig.lw || W, LH = GLRig.lh || H;
 
-  // STAGE TIMINGS. Only collected while the readout is on, because
-  // performance.now() is cheap but not free and the answer is only ever wanted
-  // while somebody is looking at it.
-  //
-  // These are CPU submission times, which for most GL calls means nothing --
-  // but the two that matter here are not most GL calls. Uploading a canvas is
-  // real synchronous work on this thread, and the drawImage() that puts the
-  // result back into the 2D canvas forces a flush, so it absorbs whatever the
-  // GPU still owed. Between them they say whether the cost is the upload, the
-  // height paint, or the shading.
-  const _tOn = !!window.SHOW_RIG && typeof performance !== 'undefined';
-  const _now = _tOn ? () => performance.now() : null;
-  let _t0 = _tOn ? _now() : 0, _t1 = 0, _t2 = 0, _t3 = 0;
-  const _smooth = (k, v) => { GLRig.t[k] += (v - GLRig.t[k]) * 0.08; };
-
   try {
     // --- G-buffer -----------------------------------------------------------
     glRigPaintHeight();
-    if (_tOn) { _t1 = _now(); _smooth('hgt', _t1 - _t0); }
 
     gl.bindVertexArray(GLRig.vao);
     gl.disable(gl.DEPTH_TEST);
@@ -31200,12 +31135,12 @@ function glRigFrame() {
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, GLRig.tex.diffuse);
-    glRigUpload(gl, 0, GLRig.host);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, GLRig.host);
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, GLRig.tex.height);
-    glRigUpload(gl, 1, GLRig.hgt.canvas || GLRig.hgt.elt);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE,
+                  GLRig.hgt.canvas || GLRig.hgt.elt);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-    if (_tOn) { _t2 = _now(); _smooth('up', _t2 - _t1); }
 
     // --- scene terms --------------------------------------------------------
     const d = daylight();
@@ -31429,10 +31364,8 @@ function glRigFrame() {
     ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1;
     ctx.imageSmoothingEnabled = true;
-    if (_tOn) { _t3 = _now(); _smooth('pass', _t3 - _t2); }
     ctx.drawImage(GLRig.canvas, 0, 0, width, height);
     ctx.restore();
-    if (_tOn) _smooth('blit', _now() - _t3);
 
     // The rig has taken the haze, so drawBiomeScreenLayer() must not lay it
     // down a second time. Same contract drawLightPass() has with that pass.
@@ -31510,17 +31443,6 @@ function drawClimateReadout() {
             : ('RIG OFF  ' + (GLRig.failure || 'no webgl2') +
                '  ' + GLRig.ms.toFixed(1) + 'ms'),
          width - 70, 70);
-    // Where the rig's own time actually goes. hgt is painting the height
-    // buffer, up is the two canvas uploads, pass is submitting the shading,
-    // blit is putting the result back -- and blit absorbs the GPU wait, so a
-    // big number there means the shading, not the copy.
-    if (on) {
-      const t = GLRig.t;
-      fill(150, 200, 230); textSize(10);
-      text('hgt ' + t.hgt.toFixed(1) + '  up ' + t.up.toFixed(1) +
-           '  pass ' + t.pass.toFixed(1) + '  blit ' + t.blit.toFixed(1),
-           width - 70, 82);
-    }
   }
   pop();
 }

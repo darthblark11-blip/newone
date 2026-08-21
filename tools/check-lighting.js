@@ -289,42 +289,6 @@ console.log('\n== the light half runs coarser than the composite ==');
      /const f = filter \|\| gl\.LINEAR;/.test(rig));
 }
 
-console.log('\n== the uploads reuse their storage ==');
-// texImage2D from a canvas element REALLOCATES the texture on every call, so
-// the finished frame -- several megabytes -- was being freed and allocated
-// sixty times a second on top of being copied. It is also the one cost that
-// does NOT fall when the watchdog drops a tier, which is why tier 2 with a
-// 231x417 light buffer still measured 46ms.
-{
-  const frameFn = rig.slice(rig.indexOf('function glRigFrame()'),
-                            rig.indexOf('function drawBiomeScreenLayer'));
-  ok('the per-frame uploads go through one helper',
-     (frameFn.match(/glRigUpload\(gl, \d, /g) || []).length === 2,
-     (frameFn.match(/glRigUpload\(gl, \d, /g) || []).length + ' of 2');
-  ok('and no frame path respecifies a texture from a canvas',
-     !/texImage2D\([^)]*gl\.UNSIGNED_BYTE, GLRig\.host\)/.test(src) &&
-     !/texImage2D\([^)]*GLRig\.hgt\./.test(src));
-  ok('the helper only respecifies when the size actually changed',
-     /if \(s\[0\] !== w \|\| s\[1\] !== h\)/.test(rig) &&
-     /gl\.texSubImage2D\(gl\.TEXTURE_2D, 0, 0, 0, gl\.RGBA, gl\.UNSIGNED_BYTE, el\);/.test(rig));
-  ok('and it tracks a size per slot rather than one shared', /texSize: \[\[0, 0\], \[0, 0\]\]/.test(src));
-}
-
-console.log('\n== the height paint has somewhere to go ==');
-// In a massed battle it is several hundred draw calls, and it is the other
-// cost that does not fall with the tier.
-{
-  ok('a character radius exists and tightens with the tier',
-     /const GLRIG_CHAR_R = \[/.test(src) &&
-     P('GLRIG_CHAR_R[1]') < P('GLRIG_CHAR_R[0]') &&
-     P('GLRIG_CHAR_R[2]') < P('GLRIG_CHAR_R[1]'), P('GLRIG_CHAR_R').join(' '));
-  ok('tier 0 is unbounded, so nothing changes until the rig is in trouble',
-     P('GLRIG_CHAR_R[0]') > 1e6);
-  ok('and the test is one squared distance, hoisted out of the loop',
-     /const cr2 = cr \* cr;/.test(src) &&
-     /if \(cdx \* cdx \+ cdy \* cdy > cr2\) return;/.test(src));
-}
-
 console.log('\n== a stand-down is not permanent ==');
 // glRigWatchdog() runs at the END of glRigFrame(), which returns early when the
 // rig is not active -- so once it switched itself off for the frame budget,

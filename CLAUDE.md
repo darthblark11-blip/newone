@@ -988,21 +988,6 @@ upsample is free. Three passes write into them and all three must agree about th
 viewport, and the point-light scissor is in light-buffer pixels — a scissor in the wrong
 pixels clips each pool to a quarter of its own box.
 
-**Two costs do NOT fall when the watchdog drops a tier**, which is why tier 2 with a
-231×417 light buffer still measured 46 ms in the massed ambush:
-
-- **The canvas uploads.** `texImage2D` from a canvas element *reallocates* the texture on
-  every call, so the finished frame — several megabytes — was being freed and allocated
-  sixty times a second on top of being copied across the bus. `glRigUpload()` respecifies
-  only when the size actually changes and uses `texSubImage2D` otherwise; on a mobile
-  driver that is the difference between an allocation storm and a copy. The source is the
-  game's own canvas, so its size is fixed whatever the rig renders at.
-- **The height paint.** In a massed battle it is several hundred `ellipse()` calls into a
-  p5.Graphics. `GLRIG_CHAR_R` bounds how far from the player a character is still entered
-  into the field: unbounded at tier 0, so nothing changes until the rig is already in
-  trouble, and tighter as it sheds — which is exactly when a character at the edge of the
-  view losing its shadow is the cheapest thing to give up.
-
 **`glRigWatchdog()` sheds whatever is actually costing something.** Casters-first is right
 in a lit street and wrong everywhere else: the Green Line's massed ambush had *one*
 emitter on the field, so the first two steps bought nothing at all and the rig sat at full
@@ -1018,14 +1003,6 @@ Cost control otherwise: point lights are scissored to their own box, the light l
 same nearest-first gather `drawLightPass()` uses, and the height buffer runs at half the
 light resolution again (every march sample and every occlusion resample reads it). Fall
 fast, recover slowly, because a rig oscillating between tiers reads as flicker.
-
-With `SHOW_RIG` on, a second line breaks the rig's own time down — `hgt` is painting the
-height buffer, `up` is the two canvas uploads, `pass` is submitting the shading, `blit` is
-putting the result back. They are CPU submission times, which for most GL calls means
-nothing, but the two that matter here are not most GL calls: uploading a canvas is real
-synchronous work on this thread, and the `drawImage()` that returns the result forces a
-flush, so `blit` absorbs whatever the GPU still owed. A big `up` is the bus; a big `blit`
-is the shading.
 
 **`SHOW_RIG` reads `RIG t0 L1  6/1 lit  540x1170  78.6ms`** — resolution tier, light tier,
 budget against emitters in view, the light buffer's real size, and the smoothed frame
