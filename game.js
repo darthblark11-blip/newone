@@ -3302,7 +3302,7 @@ function drawBuildings(list, i0, i1) {
         noStroke(); 
         rect(b.x - b.w/2 + 100, b.y - b.h/2 + 100, b.w - 200, b.h - 200);
         
-        let gateY = b.y < 0 ? b.y + b.h/2 - 80 : b.y - b.h/2;
+        let gateY = gateFaceY(b);
         const gateOpen = gateIsOpen(b);
 
         if (!gateOpen) {
@@ -5100,7 +5100,7 @@ function drawParkingCars() {
 
 function windowResized() { resizeCanvas(windowWidth, windowHeight); leftStick.base = { x: 80, y: height - 160 }; rightStick.base = { x: width - 80, y: height - 110 }; if (typeof glRigResize === 'function') glRigResize(); }
 function nextLevel() { startAtLevel(currentLevel + 1); }
-function restartGame() { wipeAllBloodBanks(); seedWorldClock(); startAtLevel(1); }
+function restartGame() { wipeAllBloodBanks(); seedWorldClock(); window.outpostForts = {}; startAtLevel(1); }
 function emit(x, y, c, col, typ, vx = 0, vy = 0) { for (let i = 0; i < c; i++) { particles.push(newParticle(x, y, col, typ, vx, vy)); } }
 let activeBuildings = [];
 let activeParkingCars = [];
@@ -5343,8 +5343,9 @@ function draw() {
   // screen this re-armed the cinematic every time the previous one ended.
   if ((currentLevel === 1 || currentLevel === 2) && isStoryMode &&
       !window.towersDefeated && !sectorTowersAreDown(currentLevel)) {
-      let totalTowers = buildings.filter(b => b.isTower).length;
-      let activeTowers = buildings.filter(b => b.isTower && b.hp > 0).length;
+      const _st = sectorTowers();
+      let totalTowers = _st.length;
+      let activeTowers = _st.filter(b => b.hp > 0).length;
       if (totalTowers > 0 && activeTowers === 0 && !isWin && !killcamMode) {
           killcamMode = true; killcamTarget = { x: player.x, y: player.y }; killcamTimer = 150;
           // Everyone left alive in the sector changes sides here, not at the
@@ -5424,7 +5425,7 @@ function draw() {
             if (currentLevel === 0) { prologuePhase = 3; } 
             else if ((currentLevel === 1 || currentLevel === 2) && isStoryMode && !nm0AmbushActive) { 
                 
-                               let towersAlive = buildings.filter(b => b.isTower && b.hp > 0).length;
+                               let towersAlive = sectorTowers().filter(b => b.hp > 0).length;
 
                 if (towersAlive > 0 || window.genocideRouteActive) {
                     // GENOCIDE ROUTE (Towers not destroyed)
@@ -5532,7 +5533,7 @@ function draw() {
         const clearedKind = window.ambushKind;
         window.ambushKind = null;
 
-        let towersAlive = buildings.filter(b => b.isTower && b.hp > 0).length;
+        let towersAlive = sectorTowers().filter(b => b.hp > 0).length;
 
         if (currentLevel === 1 && (window.southGateBreachedStatus || window.northGateBreachedStatus)) {
             // GREAT GATE AMBUSH — a gate came down and its garrison is dead.
@@ -8325,6 +8326,7 @@ function sweepForeignHostiles() {
   for (let i = enemiesList.length - 1; i >= 0 && removed < 3; i--) {
     const e = enemiesList[i];
     if (!e || e.isFriendly || e.dead) continue;
+    if (e.isOutpostGarrison) continue;      // it lives here; the fort is its post
     if (nativeToOverworld(e)) continue;
     if (!inOuterRegion(e.x, e.y)) continue;
     const dx = e.x - player.x, dy = e.y - player.y;
@@ -8790,14 +8792,20 @@ function triggerExplosion(ex, ey, rad, isMolotov = false, sourceIsPlayer = true)
       }
       
             if (b.isGovFortress && b.hp > 0 && sourceIsPlayer && Math.abs(ex - b.x) < 300) {
-                    let gateY = b.y < 0 ? b.y + b.h/2 - 80 : b.y - b.h/2;
+                    let gateY = gateFaceY(b);
           if (dist(ex, ey, b.x, gateY) < rad + 300) {
               b.hp -= 300; b.hitFlash = 4;
               if (b.hp <= 0) { 
                   triggerExplosion(b.x, gateY, 250, false, true); screenShake = 60; 
                   let fY = b.y; 
                   let isNorth = b.y < 0; // <--- ADD THIS
-                  if (typeof triggerGateAmbush === 'function') setTimeout(() => { if (started) triggerGateAmbush(fY, isNorth); }, 2000);
+                  if (b.isOutpostGate) {
+                      // The overworld fort keeps its own record and its own
+                      // muster; Stick City's breach flags are not its business.
+                      const fdef = outpostFortDef(currentBiome);
+                      setTimeout(() => { if (started) triggerOutpostAmbush(fdef); }, 2000);
+                  }
+                  else if (typeof triggerGateAmbush === 'function') setTimeout(() => { if (started) triggerGateAmbush(fY, isNorth); }, 2000);
               }
           }
 
@@ -15251,6 +15259,14 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
     // sector that raised them, so that is the ledger the loss comes off.
     if (deadGuy && deadGuy.isMilitary && deadGuy.isFriendly &&
         typeof escortCasualty === 'function') escortCasualty();
+    // One of the fort's own. Counted here, as it happens, for the same reason
+    // the sector's roster is: walking away and coming back must re-form the
+    // ones the player spared and no more.
+    if (deadGuy && deadGuy.isOutpostGarrison && !deadGuy.isFriendly &&
+        typeof outpostFortState === 'function') {
+        const _fs = outpostFortState(currentBiome);
+        if (_fs.garrison > 0) _fs.garrison--;
+    }
 
     // A machine is a pile of salvage the moment it stops working. Done here
     // rather than at any of the half-dozen places that splice a dead body out
@@ -15527,6 +15543,10 @@ function updateEntities() {
   maintainHostiles();
   cullDepartedBands();
   sweepForeignHostiles();
+  // The overworld fortress: re-form whoever the player did not shoot, and watch
+  // for its second mast going down. See THE OVERWORLD FORTRESS.
+  maintainOutpostGarrison();
+  checkOutpostCaptured();
 }
 
 // The wilderness half of the loop. spawnSingleEnemy() is otherwise only called
@@ -17175,7 +17195,7 @@ function drawUI() {
   if (streakMsgTimer > 0) { push(); fill(255, 200, 0, map(streakMsgTimer, 0, 120, 0, 255)); textAlign(CENTER, CENTER); textSize(40); text(streakMsgText, width / 2, height / 4); pop(); streakMsgTimer--; }
 
   if ((currentLevel === 1 || currentLevel === 2) && isStoryMode && player && player.hp > 0 && (currentLevel === 2 || journalRead)) {
-      let activeTowers = buildings.filter(b => b.isTower && b.hp > 0);
+      let activeTowers = sectorTowers().filter(b => b.hp > 0);
       for (let b of activeTowers) {
           let d = dist(player.x, player.y, b.x, b.y);
           if (d > 450) { 
@@ -17189,6 +17209,32 @@ function drawUI() {
               text(floor(d / 10) + "m", 0, 0); pop(); rotate(ang);
               if (frameCount % 60 < 30) fill(255, 50, 50, 230); else fill(200, 0, 0, 230);
               stroke(0); strokeWeight(2); triangle(12, 0, -8, -8, -8, 8); pop();
+          }
+      }
+  }
+
+  // The overworld fortress. Same screen-edge arrow, in its own colour, and it
+  // is not optional dressing: the fort is four chunks outside the city and a
+  // destination the player has no other way to learn about. It goes out once
+  // the fort is theirs -- there is nothing left to go and do there.
+  if (typeof outpostFortDef === 'function' && player && player.hp > 0 && BIOME_ACTIVE) {
+      const _fd = outpostFortDef(currentBiome);
+      if (_fd && !outpostFortState(currentBiome).captured) {
+          const d = dist(player.x, player.y, _fd.x, _fd.y);
+          if (d > 900) {
+              const ang = atan2(_fd.y - player.y, _fd.x - player.x);
+              const pad = 15, adx = cos(ang), ady = sin(ang);
+              const m = min((width / 2 - pad) / abs(adx), (height / 2 - pad) / abs(ady));
+              push(); translate(width / 2 + adx * m, height / 2 + ady * m);
+              push(); translate(-adx * 30, -ady * 30);
+              fill(255, 210, 90); stroke(0); strokeWeight(2);
+              textSize(11); textAlign(CENTER, CENTER); textFont('sans-serif');
+              text(_fd.name, 0, -9);
+              textSize(12); text(floor(d / 10) + "m", 0, 5);
+              pop(); rotate(ang);
+              fill(255, 190, 60, 235); stroke(0); strokeWeight(2);
+              triangle(12, 0, -8, -8, -8, 8);
+              pop();
           }
       }
   }
@@ -18525,6 +18571,11 @@ function saveGame() {
         popTotal, popUnassigned, popFarming, popMilitary, popScience, popArchitecture,
         journalRead, tabletPickedUp, swordPickedUp,
         towersDefeated: window.towersDefeated,
+        // Every overworld fortress the player has met, in every sector: what is
+        // left of its gate, its masts and its garrison, and whether it is
+        // theirs. The solids are rebuilt from this on entry, so this record IS
+        // the fortress -- see THE OVERWORLD FORTRESS.
+        outpostForts: window.outpostForts || {},
         nm0AmbushCleared: window.nm0AmbushCleared,
 
         // --- STORY ARC PROGRESSION ---
@@ -18671,6 +18722,9 @@ function loadGame() {
         window.postAmbushCutscenePlayed = state.postAmbushCutscenePlayed || false;
         window.towersDefeated = state.towersDefeated || false;
         window.storyBeats = state.storyBeats || {};
+        // Restored BEFORE startAtLevel(), because the ChunkManager builds the
+        // fortress's solids out of this record the moment the level is made.
+        window.outpostForts = state.outpostForts || {};
 
         // The escort has to be pending BEFORE the level is built, because
         // legacyStartAtLevel() is what spawns it -- exactly as it does on a
@@ -20197,7 +20251,7 @@ function adoptLateAuthoredSolids() {
   const known = new Set(authoredSolids);
   let added = false;
   for (const b of buildings) {
-    if (b.isBiomeProp || b.isChunkSolid || known.has(b)) continue;
+    if (b.isBiomeProp || b.isChunkSolid || b.isLandmark || known.has(b)) continue;
     b.isAuthored = true;
     authoredSolids.push(b);
     added = true;
@@ -21144,6 +21198,314 @@ function buildAnchorStructures(biome) {
   return out;
 }
 
+// ###########################################################################
+//  THE OVERWORLD FORTRESS
+//
+//  The world loop this game is being built toward is: take a fortress, work the
+//  country around it for people and materials, take the next one. Sector 1 had
+//  exactly one fortress -- the authored Great Gates -- and past them the
+//  overworld was somewhere to walk rather than somewhere to capture.
+//
+//  This is the second one, and it is deliberately the SAME fortress: it is an
+//  `isGovFortress` slab with a door in it, so `gateIsOpen()`, `inOpenGateway()`,
+//  the bullet and line-of-sight tests, `drawSlabFace()` and the explosion branch
+//  that breaches a gate all already understand it. Nothing downstream needed a
+//  second case; what is new here is where it stands, what is inside it, and the
+//  record that remembers what the player did to it.
+//
+//  The sequence is the sector's own, one scale down:
+//
+//    blow the gate FROM OUTSIDE -> the NM-0 muster comes out and the breach is
+//    written down -> beat the muster and the door is a road -> the yellow
+//    regulars are still in there -> drop the two towers inside and they change
+//    sides, the same way the sector's own people do.
+//
+//  Three things make it work at all:
+//
+//  1. **It is a permanent landmark, not chunk content.** Chunk content is a
+//     pure function of (biome, cx, cy) and must carry no mutable state; a
+//     fortress is nothing but mutable state. So it rides in ChunkManager's
+//     `anchors` list, which is republished by identity on every rebuild --
+//     exactly the way the travel anchors and the player's own structures do --
+//     and its ACROSS-SESSION state lives in `window.outpostForts`, which the
+//     save file carries.
+//  2. **Its towers are not the sector's towers.** `buildings.filter(b =>
+//     b.isTower)` is what decides Stick City's own objective, and quietly
+//     adding two more to the world would have meant the sector needed four
+//     towers down instead of two. Everything that asks about the SECTOR's
+//     towers goes through `sectorTowers()` now, which drops `isOutpost`.
+//  3. **The ground under it is reserved.** `generateChunkContent()` knows
+//     nothing about landmarks except through `nearAnchor()`, so the fort is
+//     folded into that closure -- otherwise the streamer builds a city block
+//     through the middle of the compound.
+// ###########################################################################
+
+// One entry per sector that has one. Placed clear of the authored core -- Stick
+// City's runs x -4800..6000, y -4800..6000 -- and clear of the Great Gates,
+// which span the full width at y -4200 and y 5400. Four chunks south-east of
+// the south gate is a walk, which is the point: it is a destination.
+const OUTPOST_FORT = {
+  1: { x: CHUNK_W * 6, y: CHUNK_W * 9, name: "NM-0 RELAY FORT" }
+};
+const FORT_HALF_W   = 1300;   // compound half-width, wall centreline to centre
+const FORT_HALF_H   = 1100;
+const FORT_GATE_H   = 300;    // the gate slab's depth; the art insets 100 a side
+const FORT_GATE_HP  = 1500;
+const FORT_TOWER_HP = 1600;
+const FORT_GARRISON = 14;     // yellow regulars behind the door
+const FORT_WAKE_R   = 2600;   // the garrison musters when the player gets this close
+
+function outpostFortDef(biome) {
+  const b = (biome === undefined) ? currentBiome : biome;
+  return OUTPOST_FORT[b] || null;
+}
+
+// The record that survives leaving the sector, and the save. Everything the
+// player did to the fort is a number or a flag here; the solids are rebuilt
+// from it on every entry, which is why they can be thrown away freely.
+function outpostFortState(biome) {
+  const b = (biome === undefined) ? currentBiome : biome;
+  if (!window.outpostForts) window.outpostForts = {};
+  let s = window.outpostForts[b];
+  if (!s) {
+    s = window.outpostForts[b] = {
+      breached: false, captured: false,
+      gateHp: FORT_GATE_HP,
+      towerHp: [FORT_TOWER_HP, FORT_TOWER_HP],
+      garrison: FORT_GARRISON
+    };
+  }
+  // An older save has the record without a field a later build added.
+  if (!Array.isArray(s.towerHp) || s.towerHp.length !== 2) s.towerHp = [FORT_TOWER_HP, FORT_TOWER_HP];
+  if (typeof s.garrison !== 'number') s.garrison = FORT_GARRISON;
+  if (typeof s.gateHp !== 'number') s.gateHp = s.breached ? 0 : FORT_GATE_HP;
+  return s;
+}
+
+// The sector's OWN transmission towers. The outpost's two are the same flag and
+// the same art -- they are the same thing, one leash down -- but they answer a
+// different question, and every place that asks "is this sector's grid down"
+// has to ask it of the sector's towers only.
+function sectorTowers() {
+  const out = [];
+  for (const b of buildings) if (b.isTower && !b.isOutpost) out.push(b);
+  return out;
+}
+
+// Which face of a gate the player can reach, and therefore which face takes the
+// charge and carries the leaf. Stick City's gates are blown from INSIDE the
+// city; the outpost is blown from outside, because that is where the player is
+// standing when they find it. One definition, read by the art and by the
+// explosion branch alike, or the two disagree about where the door is.
+function gateFaceY(b) {
+  if (b.isOutpostGate) return b.y + b.h / 2 - 80;
+  return b.y < 0 ? b.y + b.h / 2 - 80 : b.y - b.h / 2;
+}
+
+function buildOutpostFortress(biome) {
+  const def = outpostFortDef(biome);
+  if (!def) return [];
+  const st = outpostFortState(biome);
+  const out = [];
+  const FX = def.x, FY = def.y, W = FORT_HALF_W, H = FORT_HALF_H;
+
+  // The gate wall, on the south side, because that is the side the player
+  // arrives from. isGovFortress is the whole point: it makes this the same
+  // door the Great Gates are, to every system that already knows about them.
+  out.push({ x: FX, y: FY + H, w: W * 2, h: FORT_GATE_H,
+             isGovFortress: true, isOutpost: true, isOutpostGate: true, details: [],
+             hp: st.breached ? 0 : st.gateHp, maxHp: FORT_GATE_HP, hitFlash: 0 });
+
+  // The other three sides. isWall so they take the same extruded sides every
+  // other mass does; over 420 on their long axis, so clearGateApproach() -- which
+  // pulls the small blocking walls out of an opening -- leaves them standing.
+  out.push({ x: FX,     y: FY - H, w: W * 2, h: 220,   isWall: true, isOutpost: true });
+  out.push({ x: FX - W, y: FY,     w: 220,   h: H * 2, isWall: true, isOutpost: true });
+  out.push({ x: FX + W, y: FY,     w: 220,   h: H * 2, isWall: true, isOutpost: true });
+
+  // The two masts. Same flag, same art, same 2000-unit silhouette the sector's
+  // own carry -- and tagged so they are never counted as the sector's.
+  for (let i = 0; i < 2; i++) {
+    out.push({ x: FX + (i ? 660 : -660), y: FY - 430, w: 120, h: 120,
+               isTower: true, isOutpost: true, fortIdx: i,
+               hp: st.towerHp[i], maxHp: FORT_TOWER_HP, hitFlash: 0 });
+  }
+
+  // Dressing, all of it props that already exist and already light themselves.
+  const P = (x, y, w, h, t) => out.push({ x: x, y: y, w: w, h: h, isBiomeProp: true,
+                                          propType: t, isOutpost: true });
+  P(FX,        FY - 120, 300, 220, "BUNKER");            // the command post
+  P(FX - 470,  FY + H - 330, 170, 60, "GUARDBOX");       // either side of the door,
+  P(FX + 470,  FY + H - 330, 170, 60, "GUARDBOX");       // inside
+  P(FX - W + 300, FY - H + 300, 90, 90, "WATCHTOWER");   // the corners, lit
+  P(FX + W - 300, FY - H + 300, 90, 90, "WATCHTOWER");
+  P(FX - 300,  FY + H - 620, 70, 70, "SANDBAG");
+  P(FX + 300,  FY + H - 620, 70, 70, "SANDBAG");
+  P(FX - 900,  FY + 380, 70, 70, "SANDBAG");
+  P(FX + 900,  FY + 380, 70, 70, "SANDBAG");
+  // And the approach outside it, so the compound reads as held from a distance.
+  P(FX - 760,  FY + H + 420, 40, 220, "BLASTWALL");
+  P(FX + 760,  FY + H + 420, 40, 220, "BLASTWALL");
+  // A LANDMARK IS NOT AUTHORED MAP. adoptLateAuthoredSolids() sweeps anything
+  // in buildings[] that is not a chunk solid or a biome prop into
+  // authoredSolids -- which is right for a building the story pushed in late,
+  // and wrong for these: the chunk manager already owns them, so they came out
+  // published TWICE, and the six that are not props were being folded into
+  // authoredMask and authoredChunks as well, which would have blanked the
+  // streamer for four chunks around the fort.
+  for (const o of out) o.isLandmark = true;
+  return out;
+}
+
+// Is this point inside the compound the fort owns? Used by the chunk generator
+// to keep its ground clear and by the garrison placer to stay inside the walls.
+function insideFortYard(biome, x, y, pad) {
+  const def = outpostFortDef(biome);
+  if (!def) return false;
+  const p = pad || 0;
+  return Math.abs(x - def.x) < FORT_HALF_W + p && Math.abs(y - def.y) < FORT_HALF_H + p;
+}
+
+// ---------------------------------------------------------------------------
+// THE GARRISON
+//
+// Yellow regulars, standing in the yard. They are NOT the sector's roster --
+// isPopulation is Stick City's eighty and drives a different ledger -- so they
+// carry their own flag and their own conversion.
+//
+// The count is a NUMBER on the fort, not a headcount of who happens to be
+// streamed in. Walking away lets cullDistantEnemies() recycle them, which is
+// right; coming back re-forms whoever the player did not shoot, which is the
+// same promise the sector's roster makes.
+// ---------------------------------------------------------------------------
+function maintainOutpostGarrison() {
+  if (!doTick || !player || !BIOME_ACTIVE || isWin || isDead || killcamMode) return;
+  if (frameCount % 30 !== 0) return;
+  const def = outpostFortDef(currentBiome);
+  if (!def) return;
+  const st = outpostFortState(currentBiome);
+  if (st.captured || st.garrison <= 0) return;
+  const dx = player.x - def.x, dy = player.y - def.y;
+  if (dx * dx + dy * dy > FORT_WAKE_R * FORT_WAKE_R) return;
+
+  let live = 0;
+  for (const e of enemiesList) if (e && e.isOutpostGarrison && !e.dead && e.hp > 0) live++;
+  if (live >= st.garrison) return;
+
+  // Placed on a jittered grid across the yard rather than at random: the yard
+  // has a command post and two masts in it, and a uniform draw put a third of
+  // them inside one or the other.
+  for (let i = live; i < st.garrison; i++) {
+    let placed = null;
+    for (let att = 0; att < 24 && !placed; att++) {
+      const gx = def.x + (((i * 5 + att) % 5) - 2) * 420 + random(-110, 110);
+      const gy = def.y + (((i * 3 + att) % 3) - 1) * 430 + 230 + random(-110, 110);
+      if (!insideFortYard(currentBiome, gx, gy, -180)) continue;
+      const c = new Character(gx, gy, false, "NORMAL");
+      if (c.checkCol(gx, gy)) continue;
+      placed = c;
+    }
+    if (!placed) break;
+    placed.isOutpostGarrison = true;
+    enemiesList.push(placed);
+  }
+}
+
+// The towers are this fort's leash exactly as the sector's are the sector's.
+function recruitOutpostGarrison() {
+  let n = 0, f = 0;
+  for (const e of enemiesList) {
+    if (!e || !e.isOutpostGarrison || e.isFriendly || e.dead || e.hp <= 0) continue;
+    e.isFriendly = true;
+    e.isNeutral  = false;
+    e.isRecruit  = true;
+    e.state      = "IDLE";
+    e.hp         = 300;
+    e.loseSightTimer = 0;
+    n++;
+    if (String(e.eType).toUpperCase().indexOf("FEMALE") !== -1) f++;
+  }
+  return { total: n, female: f, male: n - f };
+}
+
+// Called every frame the fort's towers can be shot at. One shot: the moment the
+// second mast falls, the yard changes sides and the door stays open for good.
+function checkOutpostCaptured() {
+  const def = outpostFortDef(currentBiome);
+  if (!def) return;
+  const st = outpostFortState(currentBiome);
+  if (st.captured) return;
+  let any = false, standing = 0;
+  for (const b of buildings) {
+    if (!b.isTower || !b.isOutpost) continue;
+    any = true;
+    if (b.hp > 0) standing++;
+    if (b.fortIdx === 0 || b.fortIdx === 1) st.towerHp[b.fortIdx] = Math.max(0, b.hp);
+  }
+  if (!any || standing > 0) return;
+
+  st.captured = true;
+  st.breached = true;
+  st.gateHp = 0;
+  const got = recruitOutpostGarrison();
+  st.garrison = 0;
+  // They join the Directive the same way the sector's survivors do: as integers
+  // in the undivided pool, never as a headcount of who is standing here.
+  if (got.total > 0 && typeof grantCitizens === 'function') {
+    grantCitizens(POP_POOL, got.male, got.female);
+    if (typeof globalPopulation !== 'undefined') globalPopulation = globalPopulationCount();
+  }
+  streakMsgText = got.total > 0
+    ? (def.name + " TAKEN — " + got.total + " FREED")
+    : (def.name + " TAKEN");
+  streakMsgTimer = 220;
+  screenShake = 30;
+}
+
+// The muster that comes out when the door goes in. The sector's own gate ambush
+// is a different size of thing -- fifty armoured on a nine-thousand-unit wall --
+// so this is its own function rather than a parameter on that one, and it
+// writes the FORT's breach flag, not Stick City's.
+function triggerOutpostAmbush(def) {
+  if (!def) return;
+  const st = outpostFortState(currentBiome);
+  st.breached = true;
+  st.gateHp = 0;
+
+  if (nm0AmbushActive) {
+    nm0AmbushKills += 80;
+    window.ambushSpawnsRemaining = (window.ambushSpawnsRemaining || 0) + 30;
+    streakMsgText = "MULTIPLE BREACHES!";
+  } else {
+    nm0AmbushActive = true;
+    nm0AmbushKills = 80;
+    window.ambushSpawnsRemaining = 30;
+    objectiveTimer = 360;
+    // Same contract as a Great Gate breach: it opens a road, it does not finish
+    // the sector, so clearing it must not be read as the story beat.
+    window.ambushKind = "GATE";
+    streakMsgText = "FORT BREACHED — NM-0 MUSTER!";
+  }
+  streakMsgTimer = 140;
+
+  // Just inside the door, spread across the yard.
+  const gy = def.y + FORT_HALF_H - 420;
+  const push2 = (t, n, spread) => {
+    for (let i = 0; i < n; i++) {
+      const e = new Character(def.x + random(-spread, spread), gy + random(-260, 120), false, t);
+      e.isAmbush = true;
+      e.isOutpost = true;
+      enemiesList.push(e);
+    }
+  };
+  push2("ARMORED_STANDARD", 18, 900);
+  push2("ARMORED", 2, 420);
+  push2("AERIAL", 2, 700);
+  for (const e of enemiesList) {
+    if (!e.isFriendly && e.hp > 0 && !e.dead) { e.state = "CHASE"; e.loseSightTimer = 999; }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // CHUNK CONTENT GENERATION
 // Produces solid structures (pushed into the global `buildings` array so all
@@ -21241,6 +21603,18 @@ function groundReserved(biome, cx, cy, x, y, w, h, pad) {
   const p  = pad === undefined ? 40 : pad;
   const hw = (w || 0) / 2 + p, hh = (h || 0) / 2 + p;
   const lay = layoutFor(biome, cx, cy);
+
+  // THE FORTRESS OWNS ITS COMPOUND, and it is asked here rather than only in
+  // nearAnchor() because nearAnchor() is consulted by SOME of the placements
+  // and this is the one predicate with the last word. A city block built
+  // through the middle of a walled compound is exactly the artefact this
+  // function exists to stop; the fort is simply a very large thing that got
+  // there first. See THE OVERWORLD FORTRESS.
+  if (typeof outpostFortDef === 'function') {
+    const fd = outpostFortDef(biome);
+    if (fd && Math.abs(x - fd.x) < FORT_HALF_W + 460 + hw &&
+              Math.abs(y - fd.y) < FORT_HALF_H + 460 + hh) return true;
+  }
 
   switch (lay) {
     case "WOODLAND": {
@@ -21378,8 +21752,15 @@ function generateChunkContent(biome, cx, cy) {
     getAnchorPos(biome, ANCHOR_CHECKPOINT),
     getAnchorPos(biome, ANCHOR_OUTPOST)
   ];
+  // The fortress owns its whole compound plus a margin, which is far more
+  // ground than an anchor's square pad -- and it is folded in here rather than
+  // given its own test so that every existing caller (the block loop, the park
+  // and plaza zoning, the checkpoint placer) reserves it without being touched.
+  const fortDef = (typeof outpostFortDef === 'function') ? outpostFortDef(biome) : null;
   const nearAnchor = (x, y, pad) => {
     for (let a of anchors) if (Math.abs(x - a.x) < pad && Math.abs(y - a.y) < pad) return true;
+    if (fortDef && Math.abs(x - fortDef.x) < FORT_HALF_W + 460 &&
+                   Math.abs(y - fortDef.y) < FORT_HALF_H + 460) return true;
     return false;
   };
 
@@ -23045,7 +23426,16 @@ function generateChunkContent(biome, cx, cy) {
   const onReserved = (s) =>
     !(RESERVED_OK[s.propType] || s.isDeck || s.isMarshPool || s.isPond) &&
     groundReserved(biome, cx, cy, s.x, s.y, s.w || 0, s.h || 0, 0);
-  for (let i = solid.length - 1; i >= 0; i--) if (onReserved(solid[i])) solid.splice(i, 1);
+  // The fortress yard takes precedence over the exemptions too. RESERVED_OK
+  // names the things that ARE a waterway rather than something built on one --
+  // a barge, a bollard -- and a pond is a hole in the ground rather than a
+  // structure. None of that earns them a place inside a walled compound, and a
+  // swimming pool in the middle of a fort is exactly what came out.
+  const inYard = (s) => typeof insideFortYard === 'function' &&
+                        insideFortYard(biome, s.x, s.y, 300);
+  for (let i = solid.length - 1; i >= 0; i--) {
+    if (inYard(solid[i]) || onReserved(solid[i])) solid.splice(i, 1);
+  }
   for (let i = cars.length - 1; i >= 0; i--) {
     if (groundReserved(biome, cx, cy, cars[i].x, cars[i].y,
                        cars[i].w || 90, cars[i].h || 50, 0)) cars.splice(i, 1);
@@ -24245,6 +24635,38 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
         }
         g.noStroke();
       }
+
+      // --- THE FORTRESS YARD ------------------------------------------------
+      // A wall round a city block is a fenced-off city block. What makes it a
+      // fort is the ground inside it: hardstanding, not carriageway and lots.
+      // Painted last so it covers the streets and block interiors this case has
+      // already laid down, and clipped to the chunk it is baking, so a compound
+      // spanning four chunks comes out as one surface with no seam.
+      if (typeof outpostFortDef === 'function') {
+        const fdb = outpostFortDef(biome);
+        if (fdb) {
+          const yx0 = Math.max(ox, fdb.x - FORT_HALF_W), yx1 = Math.min(ox + CHUNK_W, fdb.x + FORT_HALF_W);
+          const yy0 = Math.max(oy, fdb.y - FORT_HALF_H), yy1 = Math.min(oy + CHUNK_W, fdb.y + FORT_HALF_H);
+          if (yx1 > yx0 && yy1 > yy0) {
+            g.fill(88, 88, 84);  g.rect(yx0, yy0, yx1 - yx0, yy1 - yy0);
+            g.fill(96, 96, 91);  g.rect(yx0, yy0, yx1 - yx0, yy1 - yy0);
+            // Bay markings on the hardstanding, and a stained apron in front of
+            // the door where everything drives in and out.
+            g.fill(126, 122, 96, 90);
+            for (let ly = fdb.y - FORT_HALF_H + 300; ly < fdb.y + FORT_HALF_H - 200; ly += 260) {
+              if (ly < yy0 || ly > yy1) continue;
+              const bx0 = Math.max(yx0, fdb.x - FORT_HALF_W + 200);
+              const bx1 = Math.min(yx1, fdb.x - 420);
+              if (bx1 > bx0) g.rect(bx0, ly, bx1 - bx0, 5);
+            }
+            softStamp(g, fdb.x, fdb.y + FORT_HALF_H - 380, 760, 520, [64, 62, 58], 130);
+            // The road in, from the door out into the country.
+            const rx0 = Math.max(yx0, fdb.x - 190), rx1 = Math.min(yx1, fdb.x + 190);
+            if (rx1 > rx0) { g.fill(74, 74, 72); g.rect(rx0, yy0, rx1 - rx0, yy1 - yy0); }
+          }
+        }
+      }
+
       break;
     }
 
@@ -25623,7 +26045,10 @@ class ChunkManager {
     // Directive helipad / checkpoint / outpost are the landmarks a pure biome
     // arrives at. A hybrid sector already has its own — the Great Gates — and
     // these sit at the origin, right on top of the authored core.
-    this.anchors  = authoredCore ? [] : buildAnchorStructures(biome);
+    // A hybrid sector gets no travel anchors -- they would sit on its core --
+    // but it can still carry a fortress, which stands well clear of it.
+    this.anchors  = (authoredCore ? [] : buildAnchorStructures(biome))
+                      .concat(buildOutpostFortress(biome));
     this.lastKey  = null;
     this.dirty    = true;
     // Retired terrain buffers, most-recently-used last. Walking back the way
@@ -32664,6 +33089,13 @@ const GATE_DOOR_HALF = 300;      // matches the doorway the art draws
 
 function gateIsOpen(b) {
   if (!b || !b.isGovFortress) return false;
+  // The overworld fort's door answers to its own record, not to Stick City's
+  // arc flags -- but on the same terms: breached, and the muster beaten.
+  if (b.isOutpostGate) {
+    if (nm0AmbushActive) return false;
+    const st = outpostFortState(currentBiome);
+    return !!(st.captured || st.breached);
+  }
   // While the muster is still on the field the breach is not yet a road.
   if (nm0AmbushActive) return false;
   if (!window.nm0AmbushClearedStatus) return false;

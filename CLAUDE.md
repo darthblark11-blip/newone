@@ -155,6 +155,74 @@ not belong on the play screen; the deliberate act of opening the pause menu is w
 old press-and-hold timer on it was standing in for. `tools/check-menu.js` sweeps the whole
 unpaused overworld screen and asserts no tap anywhere starts travel.
 
+### The overworld fortress
+
+The world loop this game is being built toward is **take a fortress, work the country
+around it for people and materials, take the next one.** Sector 1 had exactly one
+fortress — the authored Great Gates — and past them the overworld was somewhere to walk
+rather than somewhere to capture. `OUTPOST_FORT` is the second one, and the table is the
+extension point: a sector gets a fortress by having an entry in it.
+
+It is deliberately the **same** fortress. The gate wall is an `isGovFortress` slab with a
+door in it, so `gateIsOpen()`, `inOpenGateway()`, the bullet and line-of-sight tests,
+`drawSlabFace()` and the explosion branch that breaches a gate all already understand it;
+nothing downstream needed a second case. The sequence is the sector's own, one scale down:
+
+```
+blow the gate FROM OUTSIDE → the NM-0 muster comes out and the breach is written down
+→ beat the muster and the door is a road → the yellow regulars are still in there
+→ drop the two masts inside and they change sides, exactly as the sector's people do
+```
+
+`OUTPOST_FORT · outpostFortDef · outpostFortState · buildOutpostFortress · insideFortYard ·
+maintainOutpostGarrison · recruitOutpostGarrison · checkOutpostCaptured ·
+triggerOutpostAmbush · sectorTowers · gateFaceY`
+
+Five things make it work, and four of them fail silently:
+
+- **It is a permanent landmark, not chunk content.** Chunk content is a pure function of
+  `(biome, cx, cy)` and may carry no mutable state; a fortress is nothing *but* mutable
+  state. So it rides in `ChunkManager`'s `anchors` list, republished by identity on every
+  rebuild the way the travel anchors and the player's structures are — and its
+  across-session state lives in `window.outpostForts`, which the save carries. **The
+  record IS the fortress**: the solids are rebuilt from it on every entry, which is why
+  they can be thrown away freely.
+- **A landmark is not authored map.** `adoptLateAuthoredSolids()` sweeps anything in
+  `buildings[]` that is neither a chunk solid nor a biome prop into `authoredSolids` —
+  right for a building the story pushes in late, wrong for these. The gate, the three
+  walls and the two masts came out published *twice*, and were being folded into
+  `authoredMask` and `authoredChunks` as well, which would have blanked the streamer for
+  four chunks around the fort. `isLandmark` is the flag that stops it.
+- **Its masts are not the sector's masts.** `buildings.filter(b => b.isTower)` is what
+  decides Stick City's own objective, so two more towers in the world quietly meant the
+  sector needed four down instead of two. Everything asking about the *sector's* grid goes
+  through `sectorTowers()` now, which drops `isOutpost`.
+- **The compound's ground is reserved in `groundReserved()`**, not only in `nearAnchor()`.
+  `nearAnchor` is consulted by *some* placements; `groundReserved` is the one predicate
+  with the last word, and a city block built through the middle of a walled compound looks
+  like a bug in the fort rather than in the generator. The fort also overrides
+  `RESERVED_OK` — that list names things which *are* a waterway rather than something
+  built on one, and none of it earns a place inside a compound. A swimming pool in the
+  middle of a fort is exactly what came out.
+- **`gateFaceY()` is one definition read by the art and by the charge alike.** Stick
+  City's gates are blown from *inside* the city; this one is blown from outside, because
+  that is where the player is standing when they find it. Two copies of that decision and
+  the leaf is painted on one face while the charge lands on the other.
+
+The garrison is a **number on the fort, not a headcount**. Walking away lets
+`cullDistantEnemies()` recycle them, which is right; coming back re-forms whoever the
+player did not shoot — the same promise the sector's roster makes, and for the same
+reason: a headcount cannot tell "spared" from "not streamed in right now". They carry
+`isOutpostGarrison` rather than `isPopulation`, because `isPopulation` is Stick City's
+eighty and drives a different ledger; on capture they are paid into the undivided pool
+through `grantCitizens()` like every other body count in this game.
+
+The ground inside the walls is baked as **hardstanding** at the end of `bakeBiomeDetail`'s
+`CITY` case, clipped to the chunk being baked so a compound spanning four chunks comes out
+as one surface. Without it a wall round a city block is just a fenced-off city block.
+
+`node tools/check-fortress.js` walks the whole loop and asserts each of the silent ones.
+
 ### The overworld network (Sectors 1 and 2)
 
 Sits between the trail helpers and the chunk generator, and is read by **both**
@@ -3109,6 +3177,7 @@ node tools/check-damage-feedback.js # what the player is told when hit, shield u
 node tools/check-depth.js          # depth order, and how a mass projects
 node tools/check-lighting.js       # the deferred rig: uniforms resolve, nothing allocates per frame
 node tools/check-frame.js          # the real draw() in real Chromium: controls survive, and push/pop balances
+node tools/check-fortress.js       # the overworld fortress: breach, muster, garrison, capture, save
 GAME_JS=/path/to/other.js node tools/check-generation.js    # compare against a baseline
 ```
 
