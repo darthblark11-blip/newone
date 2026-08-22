@@ -685,44 +685,6 @@ resolved the sprocket rhythm long before it resolved the furniture — the same 
 revetment's rungs and the hive tower's rings fell into. Broken up, set at their own angles
 and mixed with a couple of parasols they go back to being objects on a deck.
 
-### The roofscape
-
-**A roof is the only face of a building this camera ever sees**, and Stick City's were a
-coloured rectangle, a parapet, a drain and one or two stickers — a grey square with a
-spinning cross in it, a smaller grey square, a slightly taller grey square. A street of
-them read as a row of tiles because that is what they were, and it is the largest single
-surface in Sectors 1 and 2.
-
-`ROOF_KIT` / `roofFurniture(bw, bh, rnd)` decide what is up there; `paintRoofDetail()`
-draws it. Eight types — `hvac · vent · sky · tank · access · garden · plant · helipad` —
-covering the five things you can actually name from the air: the plant, the way onto the
-roof, the water, the light, and somewhere to sit.
-
-- **One table for the whole city.** The authored core and the streamed blocks each had
-  their own copy of the generator: same three types, different code, different rules —
-  the streamed one had **no overlap test at all**, so its units stacked. They are the
-  same city either side of one seam, so they take one function; the caller supplies only
-  its own random source, because the authored map runs on p5's global RNG and a chunk
-  runs on its own deterministic stream.
-- **Size gates matter more than weights.** A stair bulkhead, a water tank and a terrace
-  all need a roof big enough to stand on, and the point of the kit is that a big block
-  reads as a *big roof* — more on it, and things on it a small roof cannot have — rather
-  than as the same two stickers scaled up. Count comes off area for the same reason.
-- **The uniques are unique** because a building has one way onto its roof, one plant
-  compound and one helipad. Without that a wide roof came out as three stair bulkheads in
-  a row, which is the domino read again.
-- **Nothing animates except the plant.** The old `hvac` spun a cross on every roof in the
-  view: a hundred crosses turning at the same rate is a regular repeat the eye resolves
-  long before it resolves the buildings, and it cost a `push`/`rotate`/`pop` per unit per
-  frame. The fans that remain are on the grouped plant, which is rare and large enough to
-  be an object — and **plant is grouped, behind a screen**, the same lesson the casino's
-  roof needed.
-
-Measured over nine fully-visible city chunks: 43 → 45 block buildings, 2.09 → 3.27 items
-per roof, and `drawBuildings()` 5054 → 6880 primitives. In play `inView()` leaves five to
-eight of those buildings on screen, so the real cost is a couple of hundred flat fills a
-frame.
-
 There is also a dedicated western-building art module (`DG` palette ~1298 plus
 `dgBoards`, `dgBoardwalk`, `dgHitchRail`, `dgFacadeBand`, `dgWindow`, `dgDoor`,
 `dgSignPlate`, `dgAwning`, `dgGable`, `drawWesternBuilding` ~1492). It's the best
