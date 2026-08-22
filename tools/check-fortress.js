@@ -38,8 +38,15 @@ ctx.random = function (a, b) {
   if (b === undefined) return r * a;
   return a + r * (b - a);
 };
-// The muster is deferred two seconds in game so the breach has a beat of its own.
-ctx.setTimeout = (fn) => { fn(); return 0; };
+// The muster is deferred two seconds in game so the breach has a beat of its
+// own, and each reinforcement is deferred a fraction of a second after a kill.
+// Both are collected and run on demand, so a fight can be played out a body at
+// a time rather than depending on wall-clock timers.
+const _timers = [];
+ctx.setTimeout = (fn) => { _timers.push(fn); return _timers.length; };
+const flushTimers = () => { let n = 0; while (_timers.length && n++ < 4000) (_timers.shift())(); };
+// The breach itself still resolves immediately, the way the old stub did.
+probe('void 0;');
 
 probe('isStoryMode = true; townsData = {}; window.outpostForts = {};');
 probe('startAtLevel(1); started = true;');
@@ -155,6 +162,7 @@ ok('the gate is shut to begin with', P('gateIsOpen(buildings.find(b=>b.isOutpost
 probe(`player.x = outpostFortDef(1).x; player.y = outpostFortDef(1).y + FORT_HALF_H + 420;
        camX = player.x - width/2/zoom; camY = player.y - height/2/zoom;`);
 probe('for (let i=0;i<6;i++) triggerExplosion(player.x, player.y - 380, 320, true, true);');
+flushTimers();
 ok('the breach is written down', P('outpostFortState(1).breached') === true);
 ok('the muster comes out', P('nm0AmbushActive') === true &&
    P('enemiesList.filter(e=>e.isAmbush && e.isOutpost).length') > 12,
@@ -164,19 +172,114 @@ ok('and it musters INSIDE the walls',
    P('enemiesList.filter(e=>e.isAmbush && e.isOutpost).length'));
 ok('clearing it must not be read as the sector\'s own beat', P('window.ambushKind') === 'GATE',
    String(P('window.ambushKind')));
-ok('the door is not a road while the muster stands',
-   P('gateIsOpen(buildings.find(b=>b.isOutpostGate))') === false);
+// AND IT IS A ROAD IMMEDIATELY. Stick City's gates hold shut until the field
+// is clear -- that gate is the way OUT of the sector, and holding it is what
+// stops the player walking away from the fight. An overworld fort is the other
+// way round: the hole is the way IN, the fight is behind it, and a player who
+// has just spent a rocket on the door walks through it.
+ok('the door is a road the moment it is blown, muster or no muster',
+   P('gateIsOpen(buildings.find(b=>b.isOutpostGate))') === true &&
+   P('nm0AmbushActive') === true);
 
 probe(`for (const e of enemiesList) if (!e.isFriendly) { e.hp = 0; e.dead = true; }
        enemiesList = enemiesList.filter(e=>e.isFriendly);
        window.ambushSpawnsRemaining = 0; checkAmbushCleared();
        nm0AmbushActive = false; killcamMode = false;`);
-ok('and it is one once they are beaten', P('gateIsOpen(buildings.find(b=>b.isOutpostGate))') === true);
+ok('and still one once they are beaten', P('gateIsOpen(buildings.find(b=>b.isOutpostGate))') === true);
 // Movement, rounds and sight all have to agree about where the hole is.
 ok('the doorway is passable at its centre',
    P(`inOpenGateway(buildings.find(b=>b.isOutpostGate), outpostFortDef(1).x)`) === true);
 ok('and the wings either side are not',
    P(`inOpenGateway(buildings.find(b=>b.isOutpostGate), outpostFortDef(1).x + 900)`) === false);
+
+console.log('\n== the muster is a fight you can finish ==');
+// Three things have to agree or the bar cannot reach zero: the number it asks
+// for, the number of bodies that will ever exist, and where those bodies come
+// from. The first build had 80 asked against 22 spawned plus 30 reinforcements,
+// and the reinforcements spawned at Stick City's south gate five chunks away.
+{
+  probe(`isStoryMode = true; townsData = {}; window.outpostForts = {};
+         startAtLevel(1); started = true; doTick = true;
+         window.__spawnLog = [];
+         const _sr = window.spawnAmbushReinforcement;
+         window.spawnAmbushReinforcement = function () {
+           const n0 = enemiesList.length;
+           const r = _sr.apply(this, arguments);
+           for (let i = n0; i < enemiesList.length; i++)
+             window.__spawnLog.push({ x: enemiesList[i].x, y: enemiesList[i].y });
+           return r;
+         };`);
+  // Loose NM-0 already wandering near the fort, which is the state a player in
+  // a liberated sector actually finds it in.
+  probe(`const _d = outpostFortDef(1);
+         for (let i = 0; i < 6; i++)
+           enemiesList.push(new Character(_d.x + (i - 3) * 300, _d.y + 1900, false, "NM0_ROOKIE"));`);
+  probe(`player.x = outpostFortDef(1).x; player.y = outpostFortDef(1).y + FORT_HALF_H + 420;
+         camX = player.x - width/2/zoom; camY = player.y - height/2/zoom;
+         viewLeft=-1e6;viewRight=1e6;viewTop=-1e6;viewBottom=1e6;`);
+  probe('for (let i=0;i<6;i++) triggerExplosion(player.x, player.y - 380, 320, true, true);');
+flushTimers();
+
+  ok('the door loses its collision the moment it is blown',
+     P('gateIsOpen(buildings.find(b=>b.isOutpostGate))') === true &&
+     P('inOpenGateway(buildings.find(b=>b.isOutpostGate), outpostFortDef(1).x)') === true);
+  ok('the loose NM-0 in the area are conscripted into it',
+     P('enemiesList.filter(e=>e.isAmbush && e.eType === "NM0_ROOKIE").length') === 6,
+     P('enemiesList.filter(e=>e.isAmbush && e.eType === "NM0_ROOKIE").length') + ' of 6');
+  const total = P('window.ambushKillsTotal');
+  ok('the bar starts full at its own size, not at a fraction of 300',
+     P('nm0AmbushKills') === total && total > 0, P('nm0AmbushKills') + ' of ' + total);
+  ok('and it asks for exactly the bodies that will exist',
+     total === P('enemiesList.filter(e=>e.isAmbush && !e.dead && e.hp>0).length') +
+              P('window.ambushSpawnsRemaining'),
+     total + ' asked, ' + P('enemiesList.filter(e=>e.isAmbush).length') + ' on the field + ' +
+     P('window.ambushSpawnsRemaining') + ' to come');
+
+  // The garrison must not be part of it, or sparing them is impossible.
+  probe('player.x = outpostFortDef(1).x; player.y = outpostFortDef(1).y + 300; frameCount = 30; maintainOutpostGarrison();');
+  const gar = P('enemiesList.filter(e=>e.isOutpostGarrison).length');
+  ok('the yard garrison musters but is not part of the count', gar === P('FORT_GARRISON') &&
+     P('enemiesList.filter(e=>e.isOutpostGarrison && e.isAmbush).length') === 0, gar + ' in the yard');
+
+  // Fight it out, one body at a time, letting the reinforcement timers run.
+  let rounds = 0, dry = false;
+  while (P('nm0AmbushKills') > 0 && rounds < 600) {
+    rounds++;
+    const hit = P(`(() => { for (const e of enemiesList) {
+        if (e.isAmbush && !e.dead && e.hp > 0) { e.hp = 0; e.dead = true;
+          processKill(e.x, e.y, false, e.eType, false); return 1; } } return 0; })()`);
+    if (!hit) { dry = true; break; }
+    probe('enemiesList = enemiesList.filter(e => !e.dead);');
+    flushTimers();
+  }
+  ok('the bar drains to zero, and never runs out of bodies first',
+     !dry && P('nm0AmbushKills') <= 0, dry ? ('dry with ' + P('nm0AmbushKills') + ' still asked') : (rounds + ' kills'));
+  ok('every wave came from the FORT, not from the city gate',
+     P(`(() => { let m = 0; const d = outpostFortDef(1);
+        for (const p of (window.__spawnLog||[])) { const q = Math.hypot(p.x - d.x, p.y - d.y); if (q > m) m = q; }
+        return m; })()`) < 1600 && P('(window.__spawnLog||[]).length') === P('FORT_MUSTER_WAVES'),
+     P('(window.__spawnLog||[]).length') + ' waves, furthest ' +
+     (P(`(() => { let m = 0; const d = outpostFortDef(1);
+         for (const p of (window.__spawnLog||[])) { const q = Math.hypot(p.x - d.x, p.y - d.y); if (q > m) m = q; }
+         return m | 0; })()`)) + ' units out');
+  probe('checkAmbushCleared();');
+  ok('and the muster clears with the garrison still standing',
+     P('!!window.nm0AmbushCleared') === true &&
+     P('enemiesList.filter(e=>e.isOutpostGarrison && !e.dead && e.hp>0).length') === gar);
+}
+
+// Stick City's own musters must be untouched by all of that.
+console.log('\n== the sector\'s own musters are unchanged ==');
+{
+  probe(`isStoryMode = true; townsData = {}; window.outpostForts = {};
+         startAtLevel(1); nm0AmbushActive = false; window.ambushOrigin = 'sentinel';
+         triggerGateAmbush(5400, false);`);
+  ok('a Great Gate breach still asks for 150', P('nm0AmbushKills') === 150 &&
+     P('window.ambushKillsTotal') === 150 && P('window.ambushSpawnsRemaining') === 100,
+     P('nm0AmbushKills') + '/' + P('window.ambushKillsTotal') + '/' + P('window.ambushSpawnsRemaining'));
+  ok('and spawns its waves against the map constants, not an origin',
+     P('window.ambushOrigin') === null);
+}
 
 console.log('\n== the garrison ==');
 probe(`player.x = outpostFortDef(1).x; player.y = outpostFortDef(1).y + 300;

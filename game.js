@@ -6237,14 +6237,19 @@ viewBottom = camY + height / zoom + shakePad;
           // MERGE ACTIVE AMBUSHES (Scenario 4)
           if (nm0AmbushActive) {
               nm0AmbushKills += 300;
+              window.ambushKillsTotal = (window.ambushKillsTotal || 0) + 300;
               window.ambushSpawnsRemaining += 200;
               streakMsgText = "MULTIPLE AMBUSHES!";
           } else {
               nm0AmbushActive = true;
               nm0AmbushKills = 300;
+              window.ambushKillsTotal = 300;
               window.ambushSpawnsRemaining = 200;
               streakMsgText = "NM-0 AMBUSH!";
           }
+          // The sector's own beat spawns against the map constants in
+          // spawnAmbushReinforcement(); clearing the origin is what selects them.
+          window.ambushOrigin = null;
           // This is the sector's own beat, and it outranks any gate ambush that
           // got folded into it -- clearing the merged field ends the level.
           window.ambushKind = "TOWER";
@@ -8203,11 +8208,13 @@ function triggerGateAmbush(fortressY, isNorthGate = false) {
     // MERGE ACTIVE AMBUSHES (Scenario 4)
     if (nm0AmbushActive) {
         nm0AmbushKills += 150;
+        window.ambushKillsTotal = (window.ambushKillsTotal || 0) + 150;
         window.ambushSpawnsRemaining += 100;
         streakMsgText = "MULTIPLE BREACHES!";
     } else {
         nm0AmbushActive = true;
         nm0AmbushKills = 150;
+        window.ambushKillsTotal = 150;
         window.ambushSpawnsRemaining = 100;
         objectiveTimer = 360;
         // A wall coming down is a wall coming down -- it opens the road, it does
@@ -8216,6 +8223,7 @@ function triggerGateAmbush(fortressY, isNorthGate = false) {
         window.ambushKind = "GATE";
         streakMsgText = isNorthGate ? "NORTH GATE BREACHED!" : "SOUTH GATE BREACHED!";
     }
+    window.ambushOrigin = null;      // the map constants, as before
     streakMsgTimer = 120;
 
     let gateAerY = spawnY < 0 ? spawnY + 100 : spawnY - 100;
@@ -8821,11 +8829,20 @@ function spawnAmbushReinforcement() {
     }
     
     
-    let spawnY = (currentLevel === 1) ? 4950 : 1800;
-    let aerY = (currentLevel === 1) ? 4900 : 1750;
-    
-    // 50/50 chance to spawn on the East (600) or West (-200) flank
-    let sX = random() > 0.5 ? 600 : -200; 
+    // WHERE THE MUSTER IS, not where Stick City's gate is.
+    //
+    // These were map constants: y 4950 just inside the south Great Gate, and
+    // flanks at x 600 / -200. An overworld fortress is five chunks away, so its
+    // reinforcements arrived next to the CITY -- out of sight, out of reach,
+    // and never killed, so the bar could not drain and the ambush could not
+    // clear. The origin is recorded when a muster starts; with none set the
+    // numbers below are exactly the old ones.
+    const org = window.ambushOrigin;
+    const spawnY = org ? org.y  : ((currentLevel === 1) ? 4950 : 1800);
+    const aerY   = org ? org.aerY : ((currentLevel === 1) ? 4900 : 1750);
+    const orgX   = org ? org.x : 200;
+    // 50/50 chance to spawn on the East or West flank of that origin
+    let sX = random() > 0.5 ? orgX + 400 : orgX - 400;
     let sY = spawnY + random(-50, 50);
     
     let r = random();
@@ -15795,6 +15812,12 @@ function checkAmbushCleared() {
     // only ever be cleared by killing all eighty of them, which is the opposite
     // of the mechanic and left the gate sealed for anyone who spared a soul.
     if (e.isPopulation) continue;
+    // Nor is the fort's own garrison. It is exactly the people the player is
+    // being asked NOT to shoot -- dropping the masts is what turns them -- so
+    // counting them here meant the muster could only be cleared by killing the
+    // whole yard, which is the opposite of the mechanic. Same rule, same
+    // reason, as the sector's eighty.
+    if (e.isOutpostGarrison) continue;
     if (!e.isFriendly && e.hp > 0 && !e.dead) return;   // still hostiles on the field
   }
 
@@ -17101,7 +17124,12 @@ function drawUI() {
       uiOffset = 60; 
   }
   if (nm0AmbushActive) {
-      let ambushRatio = max(0, nm0AmbushKills) / 300; 
+      // Out of the muster's OWN size, not a hard-coded 300. Stick City's tower
+      // beat is 300 and reads exactly as it always did; a fort's is a fifth of
+      // that, and against 300 its bar started a fifth full and could never look
+      // like anything but nearly finished.
+      let ambushTotal = window.ambushKillsTotal || 300;
+      let ambushRatio = max(0, nm0AmbushKills) / ambushTotal; 
       
       fill(50, 200); noStroke(); 
       rect(20, 80, 200, 5, 2); 
@@ -18724,6 +18752,11 @@ function saveGame() {
         // finished, because checkAmbushCleared() waits on ambushSpawnsRemaining.
         nm0AmbushActive, nm0AmbushKills,
         ambushSpawnsRemaining: window.ambushSpawnsRemaining || 0,
+        // The muster's own size and where it musters FROM. Without the first
+        // the bar comes back as a fraction of 300; without the second the waves
+        // come back at Stick City's gate however far away the fight is.
+        ambushKillsTotal: window.ambushKillsTotal || 0,
+        ambushOrigin: window.ambushOrigin || null,
         farmAmbushActive,
         farmAmbushKills: window.farmAmbushKills || 0,
         farmAmbushCleared: window.farmAmbushCleared || false,
@@ -18819,6 +18852,8 @@ function loadGame() {
         nm0AmbushKills = state.nm0AmbushKills || 0; 
         inTownCutscene = state.inTownCutscene || false;
         window.ambushSpawnsRemaining = state.ambushSpawnsRemaining || 0;
+        window.ambushKillsTotal = state.ambushKillsTotal || 0;
+        window.ambushOrigin = state.ambushOrigin || null;
         // Restored again here: it is set before startAtLevel() for the map
         // builder's benefit, and legacyStartAtLevel() nulls it on every entry.
         window.ambushKind = state.ambushKind || null;
@@ -19047,6 +19082,7 @@ window.militaryToBring = state.militaryToBring || 0;
                 // Keep the live counter and active spawns perfectly locked
                 let activeToSpawn = Math.min(100, nm0AmbushKills);
                 window.ambushSpawnsRemaining = Math.max(0, nm0AmbushKills - activeToSpawn);
+                if (!window.ambushKillsTotal) window.ambushKillsTotal = nm0AmbushKills;
                 
                 let remainingStandard = Math.ceil(activeToSpawn * 0.84);
                 let remainingArmored = Math.ceil(activeToSpawn * 0.08);
@@ -19935,7 +19971,9 @@ function updateProductionMeters() {
 function triggerLvl4Ambush() {
     nm0AmbushActive = true;
     nm0AmbushKills = 150; 
+    window.ambushKillsTotal = 150;
     window.ambushSpawnsRemaining = 100;
+    window.ambushOrigin = null;
     objectiveTimer = 360;
     streakMsgText = "NM-0 GREY FATIGUE AMBUSH!";
     streakMsgTimer = 120;
@@ -21567,20 +21605,69 @@ function checkOutpostCaptured() {
 // is a different size of thing -- fifty armoured on a nine-thousand-unit wall --
 // so this is its own function rather than a parameter on that one, and it
 // writes the FORT's breach flag, not Stick City's.
+// How far out NM-0 pulls people into the muster when the door goes in.
+const FORT_MUSTER_R = 3200;
+const FORT_MUSTER_WAVES = 30;
+
 function triggerOutpostAmbush(def) {
   if (!def) return;
   const st = outpostFortState(currentBiome);
   st.breached = true;
   st.gateHp = 0;
 
+  // EVERY LOOSE NM-0 BODY IN THE AREA JOINS THE MUSTER.
+  //
+  // The counter is one number and the clear test is another, and they were
+  // counting different populations: the bar drained only on bodies tagged
+  // isAmbush, while checkAmbushCleared() waits for the field to be clear of
+  // ALL hostiles. So in a liberated sector -- which is where a player finds
+  // this fort -- the rookies and machines already wandering the country had to
+  // be killed to finish the ambush and did nothing to the bar while you killed
+  // them. Conscripting them fixes both ends at once: the bar becomes "what
+  // NM-0 still has on the field", and it reaches zero exactly when the field
+  // does. Only what is near enough to be in the fight, because isAmbush is also
+  // what exempts a body from cullDistantEnemies().
+  let conscripted = 0;
+  for (const e of enemiesList) {
+    if (!e || e.isFriendly || e.dead || e.hp <= 0) continue;
+    if (e.isAmbush || e.isPopulation || e.isOutpostGarrison) continue;
+    const dx = e.x - def.x, dy = e.y - def.y;
+    if (dx * dx + dy * dy > FORT_MUSTER_R * FORT_MUSTER_R) continue;
+    e.isAmbush = true;
+    conscripted++;
+  }
+
+  // Just inside the door, spread across the yard.
+  const gy = def.y + FORT_HALF_H - 420;
+  let spawned = 0;
+  const push2 = (t, n, spread) => {
+    for (let i = 0; i < n; i++) {
+      const e = new Character(def.x + random(-spread, spread), gy + random(-260, 120), false, t);
+      e.isAmbush = true;
+      e.isOutpost = true;
+      enemiesList.push(e);
+      spawned++;
+    }
+  };
+  push2("ARMORED_STANDARD", 18, 900);
+  push2("ARMORED", 2, 420);
+  push2("AERIAL", 2, 700);
+
+  // THE BAR IS THE BODY COUNT, and it has to be exactly that or it cannot
+  // reach zero. Stick City's gate ambush sets 150 against 50 spawned plus 100
+  // reinforcements; this was 80 against 22 plus 30, so twenty-eight of the
+  // kills it asked for never existed.
+  const muster = conscripted + spawned + FORT_MUSTER_WAVES;
   if (nm0AmbushActive) {
-    nm0AmbushKills += 80;
-    window.ambushSpawnsRemaining = (window.ambushSpawnsRemaining || 0) + 30;
+    nm0AmbushKills += muster;
+    window.ambushKillsTotal = (window.ambushKillsTotal || 0) + muster;
+    window.ambushSpawnsRemaining = (window.ambushSpawnsRemaining || 0) + FORT_MUSTER_WAVES;
     streakMsgText = "MULTIPLE BREACHES!";
   } else {
     nm0AmbushActive = true;
-    nm0AmbushKills = 80;
-    window.ambushSpawnsRemaining = 30;
+    nm0AmbushKills = muster;
+    window.ambushKillsTotal = muster;
+    window.ambushSpawnsRemaining = FORT_MUSTER_WAVES;
     objectiveTimer = 360;
     // Same contract as a Great Gate breach: it opens a road, it does not finish
     // the sector, so clearing it must not be read as the story beat.
@@ -21588,20 +21675,10 @@ function triggerOutpostAmbush(def) {
     streakMsgText = "FORT BREACHED — NM-0 MUSTER!";
   }
   streakMsgTimer = 140;
+  // And the waves come from the fort, not from the city -- see
+  // spawnAmbushReinforcement().
+  window.ambushOrigin = { x: def.x, y: gy, aerY: gy - 60 };
 
-  // Just inside the door, spread across the yard.
-  const gy = def.y + FORT_HALF_H - 420;
-  const push2 = (t, n, spread) => {
-    for (let i = 0; i < n; i++) {
-      const e = new Character(def.x + random(-spread, spread), gy + random(-260, 120), false, t);
-      e.isAmbush = true;
-      e.isOutpost = true;
-      enemiesList.push(e);
-    }
-  };
-  push2("ARMORED_STANDARD", 18, 900);
-  push2("ARMORED", 2, 420);
-  push2("AERIAL", 2, 700);
   for (const e of enemiesList) {
     if (!e.isFriendly && e.hp > 0 && !e.dead) { e.state = "CHASE"; e.loseSightTimer = 999; }
   }
@@ -33193,7 +33270,15 @@ function gateIsOpen(b) {
   // The overworld fort's door answers to its own record, not to Stick City's
   // arc flags -- but on the same terms: breached, and the muster beaten.
   if (b.isOutpostGate) {
-    if (nm0AmbushActive) return false;
+    // AND IT OPENS THE MOMENT IT IS BLOWN, not when the muster is beaten.
+    //
+    // Stick City's gates wait, and they are right to: that gate is the way OUT
+    // of the sector, and holding it shut until the field is clear is what stops
+    // the player walking away from the fight. An overworld fort is the other
+    // way round -- the hole is the way IN, the fight is on the other side of
+    // it, and a player who has just spent a rocket on the door should be able
+    // to walk through it. Left on the sector's rule, the charge went off and
+    // the doorway stayed solid.
     const st = outpostFortState(currentBiome);
     return !!(st.captured || st.breached);
   }

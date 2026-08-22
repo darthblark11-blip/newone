@@ -233,6 +233,36 @@ Five things make it work, and four of them fail silently:
   primitive's real extent, read the way p5 reads it, since a size is not a position — and
   asserts it lands inside the slab.
 
+**The muster is a fight you can finish, and three numbers have to agree for that
+to be true.** The counter, the bodies that will ever exist, and where those bodies come
+from:
+
+- **`nm0AmbushKills` is the body count.** Stick City's gate beat asks for 150 against 50
+  spawned plus 100 reinforcements; the fort's first build asked for 80 against 22 plus 30,
+  so twenty-eight of the kills it wanted never existed and the bar could not reach zero.
+  `window.ambushKillsTotal` records what it started at, and the HUD bar is a fraction of
+  *that* rather than a hard-coded 300 — against 300 a fort's bar started a fifth full.
+- **Every loose NM-0 body within `FORT_MUSTER_R` is conscripted into it.** The counter and
+  the clear test were counting different populations: the bar drained only on bodies
+  tagged `isAmbush`, while `checkAmbushCleared()` waits for the field to be clear of *all*
+  hostiles. In a liberated sector — which is where a player finds this fort — the rookies
+  and machines already wandering the country had to be killed to finish the muster and did
+  nothing to the bar while you killed them.
+- **`window.ambushOrigin` is where the waves come from.** `spawnAmbushReinforcement()` used
+  map constants — y 4950, just inside the south Great Gate. A fort five chunks away sent
+  its reinforcements to the city, where they were never seen and never killed, so the bar
+  stalled and the ambush never cleared. With no origin set the numbers are exactly the old
+  ones, which is what keeps the sector's own beats unchanged.
+- **The garrison is exempt from `checkAmbushCleared()`**, exactly as `isPopulation` is and
+  for exactly the same reason: they are the people the player is being asked *not* to
+  shoot, so requiring them would mean the muster could only be cleared by killing the yard.
+
+**And an overworld gate opens the moment it is blown.** Stick City's gates hold shut until
+the field is clear, and they are right to: that gate is the way *out* of the sector, and
+holding it is what stops the player walking away from the fight. A fort is the other way
+round — the hole is the way *in*, the fight is behind it, and a player who has just spent a
+rocket on the door should walk through it.
+
 The garrison is a **number on the fort, not a headcount**. Walking away lets
 `cullDistantEnemies()` recycle them, which is right; coming back re-forms whoever the
 player did not shoot — the same promise the sector's roster makes, and for the same
