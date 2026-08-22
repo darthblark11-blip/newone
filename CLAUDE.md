@@ -207,7 +207,23 @@ Five things make it work, and four of them fail silently:
 - **`gateFaceY()` is one definition read by the art and by the charge alike.** Stick
   City's gates are blown from *inside* the city; this one is blown from outside, because
   that is where the player is standing when they find it. Two copies of that decision and
-  the leaf is painted on one face while the charge lands on the other.
+  the leaf is painted on one face while the charge lands on the other. The hazard stripes
+  were keyed off `b.y` and ended up on the far side of the wall from the door.
+- **A GATE IS DRAWN IN FRACTIONS OF ITS OWN SLAB.** Every number in the gate art was
+  absolute, written against a 9600 × 800 Great Gate — a 400-unit `NM-0` roundel, warning
+  rings at ±800, extractor fans at ±1200 and ±1400, alarm lamps 150 below the centreline.
+  On a 2600-wide compound wall *every one of those is wider than the thing it is painted
+  on*: the roundel covered the whole gate and the fans came out as free-floating black
+  boxes in the grass with no wall under them. **It reads as a gate that has been blown
+  apart, on a gate that is shut and solid** — and no amount of testing the logic finds it,
+  because the logic was right. Everything is a fraction of `b.h` now, chosen so an
+  800-deep slab reproduces the original integers exactly (`check-fortress.js` asserts the
+  Great Gates' draw signature is unchanged). The **doorway** stays absolute at
+  `GATE_DOOR_HALF`, because that is the hole movement, bullets and line of sight all agree
+  on, and a door that scaled would be a door the player could not always walk through.
+  `check-fortress.js` measures what the art was actually *asked to draw* — every
+  primitive's real extent, read the way p5 reads it, since a size is not a position — and
+  asserts it lands inside the slab.
 
 The garrison is a **number on the fort, not a headcount**. Walking away lets
 `cullDistantEnemies()` recycle them, which is right; coming back re-forms whoever the

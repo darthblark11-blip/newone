@@ -3291,62 +3291,87 @@ function drawBuildings(list, i0, i1) {
 
     // NM-0 Fortresses
     if (b.isGovFortress) {
+        // A GATE IS DRAWN IN FRACTIONS OF ITS OWN SLAB.
+        //
+        // All of this was written in absolute units against Stick City's Great
+        // Gates, which are 9600 x 800: a 400-unit NM-0 roundel, warning rings at
+        // x +/-800, extractor fans at +/-1200 and +/-1400, alarm lamps 150 below
+        // the centreline. On a 2600-wide compound wall every one of those numbers
+        // is bigger than the thing it is painted on -- the roundel covers the
+        // whole wall and spills into the country either side, and the fans come
+        // out as free-floating black boxes with no wall under them. That reads
+        // as a gate that has been blown apart, which is exactly what it was
+        // reported as, on a gate that is shut and solid.
+        //
+        // Everything below is a fraction of `b.h` and the numbers are chosen so
+        // an 800-deep slab reproduces the sizes above exactly -- the Great Gates
+        // are pixel-identical, and any other gate is the same gate at its own
+        // size. The DOORWAY is the one thing that stays absolute: it is
+        // GATE_DOOR_HALF, because that is the hole movement, bullets and line of
+        // sight all agree on, and a door that scaled would be a door the player
+        // could not always walk through.
+        const gh = b.h || 800;
+        const u  = gh / 800;                       // 1 at Great Gate scale
+        const leaf = gateLeafDepth(b);
         let isFlashing = b.hitFlash && b.hitFlash > 0;
         if (isFlashing) b.hitFlash--;
-        
-        fill(isFlashing ? 255 : 35, isFlashing ? 255 : 40, isFlashing ? 255 : 45); 
-        stroke(15); strokeWeight(8); 
+
+        fill(isFlashing ? 255 : 35, isFlashing ? 255 : 40, isFlashing ? 255 : 45);
+        stroke(15); strokeWeight(8 * Math.min(1, u * 1.6));
         rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h);
-        
-        fill(isFlashing ? 200 : 25, isFlashing ? 200 : 30, isFlashing ? 200 : 35); 
-        noStroke(); 
-        rect(b.x - b.w/2 + 100, b.y - b.h/2 + 100, b.w - 200, b.h - 200);
-        
+
+        fill(isFlashing ? 200 : 25, isFlashing ? 200 : 30, isFlashing ? 200 : 35);
+        noStroke();
+        const ins = gh * 0.125;
+        rect(b.x - b.w/2 + ins, b.y - b.h/2 + ins, b.w - ins * 2, b.h - ins * 2);
+
         let gateY = gateFaceY(b);
         const gateOpen = gateIsOpen(b);
+        const D = GATE_DOOR_HALF;
 
         if (!gateOpen) {
             // Shut: the leaf and its bars, straight across the opening.
-            fill(isFlashing ? 255 : 10); rect(b.x - 300, gateY, 600, 80);
-            fill(isFlashing ? 200 : 50); for(let gx = b.x - 280; gx < b.x + 300; gx += 40) rect(gx, gateY, 10, 80);
+            fill(isFlashing ? 255 : 10); rect(b.x - D, gateY, D * 2, leaf);
+            fill(isFlashing ? 200 : 50);
+            for (let gx = b.x - D + 20; gx < b.x + D; gx += 40) rect(gx, gateY, 10, leaf);
         } else {
             // Open: the doorway is a hole clean through the slab, so it is
             // painted as the ground beyond it rather than as a dark panel --
             // the player has to be able to see that it is a way out from far
             // enough away to walk toward it.
             const thruY = b.y - b.h / 2, thruH = b.h;
-            fill(24, 26, 30);            rect(b.x - 300, thruY, 600, thruH);
+            fill(24, 26, 30);            rect(b.x - D, thruY, D * 2, thruH);
             // The passage floor, lit from the far end.
-            fill(52, 54, 58);            rect(b.x - 282, thruY + 12, 564, thruH - 24);
-            fill(70, 73, 78);            rect(b.x - 282, thruY + 12, 564, 26);
+            fill(52, 54, 58);            rect(b.x - D + 18, thruY + 12, D * 2 - 36, thruH - 24);
+            fill(70, 73, 78);            rect(b.x - D + 18, thruY + 12, D * 2 - 36, Math.min(26, thruH * 0.2));
             // Jambs: what is left of the frame, scorched at the break.
-            fill(18, 18, 20);            rect(b.x - 312, thruY, 30, thruH);
-            fill(18, 18, 20);            rect(b.x + 282, thruY, 30, thruH);
-            fill(96, 46, 20, 150);       rect(b.x - 312, gateY - 10, 30, 100);
-            fill(96, 46, 20, 150);       rect(b.x + 282, gateY - 10, 30, 100);
+            fill(18, 18, 20);            rect(b.x - D - 12, thruY, 30, thruH);
+            fill(18, 18, 20);            rect(b.x + D - 18, thruY, 30, thruH);
+            fill(96, 46, 20, 150);       rect(b.x - D - 12, gateY - 10, 30, leaf + 20);
+            fill(96, 46, 20, 150);       rect(b.x + D - 18, gateY - 10, 30, leaf + 20);
             // Bar stubs, sheared off at the jamb -- the bars did not vanish,
             // they were blown apart, and the ends are still in the frame.
             fill(isFlashing ? 200 : 46);
-            for (let gx = b.x - 280; gx < b.x + 300; gx += 40) {
-                const stub = 10 + ((Math.abs(gx * 7) % 17));
+            for (let gx = b.x - D + 20; gx < b.x + D; gx += 40) {
+                const stub = (10 + ((Math.abs(gx * 7) % 17))) * Math.min(1, leaf / 80);
                 rect(gx, gateY, 10, stub);
-                rect(gx, gateY + 80 - stub * 0.7, 10, stub * 0.7);
+                rect(gx, gateY + leaf - stub * 0.7, 10, stub * 0.7);
             }
             // Rubble and twisted plate on the ground in the opening.
             fill(38, 38, 42);
             for (let i = 0; i < 7; i++) {
-                const rx = b.x - 250 + ((i * 173) % 500);
-                const ry = thruY + 40 + ((i * 91) % (thruH - 90));
+                const rx = b.x - D + 50 + ((i * 173) % (D * 2 - 100));
+                const ry = thruY + thruH * 0.15 + ((i * 91) % Math.max(20, thruH * 0.7));
                 ellipse(rx, ry, 26 + (i % 3) * 12, 16 + (i % 2) * 9);
             }
             fill(58, 58, 62);
             for (let i = 0; i < 4; i++) {
-                const rx = b.x - 200 + ((i * 227) % 400);
-                const ry = thruY + 70 + ((i * 149) % (thruH - 140));
+                const rx = b.x - D + 100 + ((i * 227) % (D * 2 - 200));
+                const ry = thruY + thruH * 0.25 + ((i * 149) % Math.max(20, thruH * 0.5));
                 rect(rx, ry, 44, 12, 2);
             }
             // Cold smoke still coming off the break.
-            if (frameCount % 11 === 0) emit(b.x + random(-260, 260), gateY + 40, 1, color(90), "SMOKE");
+            if (frameCount % 11 === 0) emit(b.x + random(-D + 40, D - 40), gateY + leaf * 0.5, 1, color(90), "SMOKE");
         }
 
         if (b.hp > 0 && b.hp < b.maxHp) {
@@ -3355,15 +3380,66 @@ function drawBuildings(list, i0, i1) {
             fill(255, 50, 50); rect(b.x - 100, gateY - 30, 200 * (b.hp / b.maxHp), 10);
         } else if (b.hp <= 0 && !gateOpen) {
             // Blown, but the muster is still on the field: burning, not yet a road.
-            fill(255, 100, 0, 100); rect(b.x - 300, gateY, 600, 80); // Fire glow covering the door
-            if (frameCount % 5 === 0) emit(b.x + random(-150, 150), gateY + 40, 1, color(100), "SMOKE");
+            fill(255, 100, 0, 100); rect(b.x - D, gateY, D * 2, leaf); // Fire glow covering the door
+            if (frameCount % 5 === 0) emit(b.x + random(-150, 150), gateY + leaf * 0.5, 1, color(100), "SMOKE");
         }
-        
-        if (!gateOpen) { push(); let stripeY = b.y < 0 ? b.y + b.h/2 - 100 : b.y - b.h/2 + 80; stroke(255, 200, 0); strokeWeight(20); strokeCap(SQUARE); for(let i = -300; i < 300; i += 40) line(b.x + i, stripeY, b.x + i + 20, stripeY); pop(); }
-        push(); translate(b.x, b.y); noFill(); stroke(255, 200, 0, 150); strokeWeight(8); ellipse(-800, 0, 300, 300); ellipse(800, 0, 300, 300); strokeWeight(4); ellipse(-800, 0, 200, 200); ellipse(800, 0, 200, 200);
-        for(let fx of [-1400, -1200, 1200, 1400]) { fill(15); noStroke(); rect(fx - 60, -60, 120, 120, 10); fill(30); ellipse(fx, 0, 100, 100); push(); translate(fx, 0); rotate(frameCount * 0.1); fill(10); rect(-45, -10, 90, 20); rect(-10, -45, 20, 90); pop(); }
-        for(let ax of [-500, 500]) { fill(20); stroke(10); strokeWeight(2); ellipse(ax, 150, 40, 40); fill(255, 0, 0, 150 + sin(frameCount * 0.2)*100); noStroke(); ellipse(ax, 150, 15, 15); }
-        fill(200, 0, 0, 200); ellipse(0, 0, 400, 400); fill(15); ellipse(0, 0, 360, 360); fill(200, 0, 0); textAlign(CENTER, CENTER); textSize(120); textFont('sans-serif'); text("NM-0", 0, 0); pop();
+
+        // The hazard stripes go on the SAME face as the leaf and the charge.
+        // Keyed off b.y they ended up on the far side of the outpost's wall
+        // from its door, so the one gate in the game you approach from the
+        // south had its markings facing the yard.
+        if (!gateOpen) {
+            push();
+            // The Great Gates keep their exact original placement; only the
+            // outpost, whose door faces the other way, needs its own.
+            const stripeY = b.isOutpostGate ? gateY - gh * 0.14
+                          : (b.y < 0 ? b.y + b.h/2 - 100 : b.y - b.h/2 + 80);
+            stroke(255, 200, 0); strokeWeight(Math.max(8, 20 * u)); strokeCap(SQUARE);
+            for (let i = -D; i < D; i += 40) line(b.x + i, stripeY, b.x + i + 20, stripeY);
+            pop();
+        }
+
+        // The plant on the face: warning rings, extractor fans, alarm lamps and
+        // the roundel. All of it sized off the slab and set OUTSIDE the doorway,
+        // so it can never cover the one part of a gate the player has to read.
+        push(); translate(b.x, b.y); noStroke();
+        const ringX = Math.max(gh, D + gh * 0.6);
+        const ringR = gh * 0.375, fanX1 = ringX + gh * 0.5, fanX2 = ringX + gh * 0.75;
+        const halfW = b.w / 2;
+        noFill(); stroke(255, 200, 0, 150); strokeWeight(Math.max(3, 8 * u));
+        const ringsFit = ringX + ringR * 0.5 <= halfW;
+        if (ringsFit) {
+          for (const sx of [-1, 1]) ellipse(sx * ringX, 0, ringR, ringR);
+          strokeWeight(Math.max(2, 4 * u));
+          for (const sx of [-1, 1]) ellipse(sx * ringX, 0, ringR * (2 / 3), ringR * (2 / 3));
+        }
+        noStroke();
+        for (const fx of [-fanX2, -fanX1, fanX1, fanX2]) {
+          if (Math.abs(fx) + gh * 0.075 > halfW) continue;
+          fill(15); rect(fx - gh * 0.075, -gh * 0.075, gh * 0.15, gh * 0.15, gh * 0.0125);
+          fill(30); ellipse(fx, 0, gh * 0.125, gh * 0.125);
+          push(); translate(fx, 0); rotate(frameCount * 0.1);
+          fill(10); rect(-gh * 0.05625, -gh * 0.0125, gh * 0.1125, gh * 0.025);
+          rect(-gh * 0.0125, -gh * 0.05625, gh * 0.025, gh * 0.1125); pop();
+        }
+        const lampX = Math.max(D + gh * 0.2, gh * 0.625), lampY = gh * 0.1875;
+        for (const ax of [-lampX, lampX]) {
+          if (Math.abs(ax) + gh * 0.025 > halfW) continue;
+          fill(20); stroke(10); strokeWeight(2); ellipse(ax, lampY, gh * 0.05, gh * 0.05);
+          fill(255, 0, 0, 150 + sin(frameCount * 0.2) * 100); noStroke();
+          ellipse(ax, lampY, gh * 0.01875, gh * 0.01875);
+        }
+        // The roundel. Never wider than the slab it is painted on, and never
+        // wider than the wall either side of the door -- it is a marking on the
+        // gate, not a sign standing in front of it.
+        const rr = Math.min(gh * 0.5, halfW * 0.5);
+        if (rr > 30) {
+          fill(200, 0, 0, 200); ellipse(0, 0, rr, rr);
+          fill(15); ellipse(0, 0, rr * 0.9, rr * 0.9);
+          fill(200, 0, 0); textAlign(CENTER, CENTER);
+          textSize(rr * 0.3); textFont('sans-serif'); text("NM-0", 0, 0);
+        }
+        pop();
         continue;
     }
 
@@ -21249,7 +21325,7 @@ const OUTPOST_FORT = {
 };
 const FORT_HALF_W   = 1300;   // compound half-width, wall centreline to centre
 const FORT_HALF_H   = 1100;
-const FORT_GATE_H   = 300;    // the gate slab's depth; the art insets 100 a side
+const FORT_GATE_H   = 420;    // the gate slab's depth, and the wall thickness with it
 const FORT_GATE_HP  = 1500;
 const FORT_TOWER_HP = 1600;
 const FORT_GARRISON = 14;     // yellow regulars behind the door
@@ -21297,9 +21373,15 @@ function sectorTowers() {
 // city; the outpost is blown from outside, because that is where the player is
 // standing when they find it. One definition, read by the art and by the
 // explosion branch alike, or the two disagree about where the door is.
+// How deep the leaf sits into the slab. A tenth of the slab reproduces the
+// Great Gates' 80 exactly, and gives any other gate a leaf in proportion to
+// the wall it is set in rather than eighty units of bar in a wall that may be
+// three hundred deep.
+function gateLeafDepth(b) { return Math.max(34, (b.h || 800) * 0.10); }
 function gateFaceY(b) {
-  if (b.isOutpostGate) return b.y + b.h / 2 - 80;
-  return b.y < 0 ? b.y + b.h / 2 - 80 : b.y - b.h / 2;
+  const d = gateLeafDepth(b);
+  if (b.isOutpostGate) return b.y + b.h / 2 - d;
+  return b.y < 0 ? b.y + b.h / 2 - d : b.y - b.h / 2;
 }
 
 function buildOutpostFortress(biome) {
@@ -21319,9 +21401,9 @@ function buildOutpostFortress(biome) {
   // The other three sides. isWall so they take the same extruded sides every
   // other mass does; over 420 on their long axis, so clearGateApproach() -- which
   // pulls the small blocking walls out of an opening -- leaves them standing.
-  out.push({ x: FX,     y: FY - H, w: W * 2, h: 220,   isWall: true, isOutpost: true });
-  out.push({ x: FX - W, y: FY,     w: 220,   h: H * 2, isWall: true, isOutpost: true });
-  out.push({ x: FX + W, y: FY,     w: 220,   h: H * 2, isWall: true, isOutpost: true });
+  out.push({ x: FX,     y: FY - H, w: W * 2, h: FORT_GATE_H, isWall: true, isOutpost: true });
+  out.push({ x: FX - W, y: FY,     w: FORT_GATE_H, h: H * 2, isWall: true, isOutpost: true });
+  out.push({ x: FX + W, y: FY,     w: FORT_GATE_H, h: H * 2, isWall: true, isOutpost: true });
 
   // The two masts. Same flag, same art, same 2000-unit silhouette the sector's
   // own carry -- and tagged so they are never counted as the sector's.

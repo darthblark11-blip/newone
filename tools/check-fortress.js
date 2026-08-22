@@ -79,7 +79,76 @@ console.log('\n== the ground under it is the fort\'s ==');
      inside + ' solids in the yard over ' + chunks + ' chunks');
 }
 
+console.log('\n== the art fits the gate it is painted on ==');
+// This is the bug the first build shipped: every number in the gate art was
+// absolute, written against a 9600 x 800 Great Gate -- a 400-unit roundel,
+// warning rings at +/-800, extractor fans at +/-1400. On a 2600-wide compound
+// wall all of it was wider than the wall, so the roundel covered the whole gate
+// and the fans came out as free-floating black boxes in the grass. It reads as
+// a gate that has been blown apart, on a gate that is shut and solid, and no
+// amount of testing the LOGIC finds it.
+//
+// So this measures what the art was actually asked to draw. The gate is put at
+// the origin, which makes the plant's own local coordinates and the world's the
+// same numbers, and every coordinate has to land inside the slab.
+{
+  // Each primitive is read the way p5 reads it, because a size is not a
+  // position: rect(x, y, w, h) reaches x+w, and ellipse(x, y, w, h) reaches
+  // x + w/2. Treating every argument as a coordinate flags a wide gate for
+  // being wide, which is not the fault being looked for.
+  const EXTENT = {
+    rect:     (a) => [[a[0], a[0] + a[2]], [a[1], a[1] + a[3]]],
+    ellipse:  (a) => [[a[0] - a[2] / 2, a[0] + a[2] / 2], [a[1] - a[3] / 2, a[1] + a[3] / 2]],
+    arc:      (a) => [[a[0] - a[2] / 2, a[0] + a[2] / 2], [a[1] - a[3] / 2, a[1] + a[3] / 2]],
+    line:     (a) => [[a[0], a[2]], [a[1], a[3]]],
+    vertex:   (a) => [[a[0]], [a[1]]],
+    triangle: (a) => [[a[0], a[2], a[4]], [a[1], a[3], a[5]]],
+    quad:     (a) => [[a[0], a[2], a[4], a[6]], [a[1], a[3], a[5], a[7]]],
+    text:     (a) => [[a[1]], [a[2]]]
+  };
+  const painters = Object.keys(EXTENT);
+  const saved = {};
+  const measure = (w, h, flags) => {
+    let maxX = 0, maxY = 0;
+    for (const k of painters) {
+      saved[k] = ctx[k];
+      ctx[k] = function () {
+        const e = EXTENT[k](arguments);
+        for (const v of e[0]) if (typeof v === 'number' && isFinite(v) && Math.abs(v) > maxX) maxX = Math.abs(v);
+        for (const v of e[1]) if (typeof v === 'number' && isFinite(v) && Math.abs(v) > maxY) maxY = Math.abs(v);
+        return saved[k] && saved[k].apply(this, arguments);
+      };
+    }
+    ctx.__gate = Object.assign({ x: 0, y: 0, w: w, h: h, isGovFortress: true,
+                                 hp: 1500, maxHp: 1500, hitFlash: 0, details: [] }, flags);
+    probe('activeBuildings = [window.__gate]; camX = -width/2/zoom; camY = -height/2/zoom;');
+    probe('drawBuildings();');
+    for (const k of painters) ctx[k] = saved[k];
+    return { x: maxX, y: maxY };
+  };
+  // A Great Gate: unchanged, and its own plant has always fitted.
+  const gg = measure(9600, 800, {});
+  ok('a Great Gate paints inside its own slab', gg.x <= 4800 + 80 && gg.y <= 400 + 80,
+     'reached ' + (gg.x | 0) + ',' + (gg.y | 0) + ' in a 4800x400 half-slab');
+  // The compound wall, which is a quarter the width and half the depth.
+  const of = measure(P('FORT_HALF_W') * 2, P('FORT_GATE_H'), { isOutpostGate: true });
+  const hw = P('FORT_HALF_W'), hh = P('FORT_GATE_H') / 2;
+  ok('and so does the outpost gate', of.x <= hw + 80 && of.y <= hh + 80,
+     'reached ' + (of.x | 0) + ',' + (of.y | 0) + ' in a ' + hw + 'x' + (hh | 0) + ' half-slab');
+  console.log('   Great Gate reaches ' + (gg.x | 0) + ',' + (gg.y | 0) +
+              '   outpost gate reaches ' + (of.x | 0) + ',' + (of.y | 0));
+  probe('activeBuildings = buildings;');
+}
+
 console.log('\n== blow the door in ==');
+ok('a fresh gate is at full health, not blown',
+   P('buildings.find(b=>b.isOutpostGate).hp') === P('FORT_GATE_HP'),
+   P('buildings.find(b=>b.isOutpostGate).hp') + ' of ' + P('FORT_GATE_HP'));
+ok('and the leaf, the stripes and the charge are all on its OUTSIDE face',
+   P('gateFaceY(buildings.find(b=>b.isOutpostGate))') >
+   P('buildings.find(b=>b.isOutpostGate).y'),
+   'face at ' + P('gateFaceY(buildings.find(b=>b.isOutpostGate))') +
+   ' vs centre ' + P('buildings.find(b=>b.isOutpostGate).y'));
 ok('the gate is shut to begin with', P('gateIsOpen(buildings.find(b=>b.isOutpostGate))') === false);
 // The charge goes on the OUTSIDE face. A player standing in the country south
 // of it is the only person who can reach this fort.
