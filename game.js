@@ -6326,7 +6326,7 @@ viewBottom = camY + height / zoom + shakePad;
       if (currentLevel === 1 && window.nm0AmbushClearedStatus) {
         let GOV_DIRECTIVE
         let established
-          let nGate = buildings.find(b => b.isGovFortress && b.y < 0);
+          let nGate = sectorGates().find(b => b.y < 0);
           if (nGate && nGate.hp <= 0 && dist(player.x, player.y, nGate.x, nGate.y + nGate.h/2) < 250) {
               drawPromptBtn("ENTER NM-0 HQ");
           }
@@ -17672,7 +17672,7 @@ function touchStarted() {
 
   // --- NEW: LEVEL 1 ENTER NM-0 HQ ---
   if (currentLevel === 1 && window.nm0AmbushClearedStatus && !killcamMode && !inTownCutscene && !inPostAmbushCutscene) {
-      let nGate = buildings.find(b => b.isGovFortress && b.y < 0);
+      let nGate = sectorGates().find(b => b.y < 0);
       if (nGate && nGate.hp <= 0 && dist(player.x, player.y, nGate.x, nGate.y + nGate.h/2) < 250 && isClickingBtn(mx, my)) {
           startAtLevel(8);
           sfx.charge();
@@ -21365,6 +21365,25 @@ function outpostFortState(biome) {
 function sectorTowers() {
   const out = [];
   for (const b of buildings) if (b.isTower && !b.isOutpost) out.push(b);
+  return out;
+}
+
+// And the sector's OWN Great Gates, for exactly the same reason.
+//
+// THIS IS THE ONE THAT BIT. An overworld fortress is the same isGovFortress
+// slab with the same door -- that is the whole point of it -- so every sweep
+// that meant "this sector's gates" was also reaching a landmark five chunks
+// out in the country. The level-entry sweep that keeps a breached Great Gate
+// breached does `if (b.y > 0 && southGateBreachedStatus) b.hp = 0`, and the
+// fort's gate is at y = +11900. So entering a Stick City whose south gate was
+// already down loaded the fort with its door destroyed: drawn blown, and still
+// SOLID, because the fort's own record correctly said it had never been
+// touched. "The entrance is in the blown up state on load, and it's blocked
+// with collision" is those two facts, and it is a load-path fault, not an art
+// one.
+function sectorGates() {
+  const out = [];
+  for (const b of buildings) if (b.isGovFortress && !b.isOutpost) out.push(b);
   return out;
 }
 
@@ -33213,7 +33232,7 @@ function recordSouthGateBreached(level) {
   if (!window.towersDefeated && !sectorTowersAreDown(level)) return;
   if (level === 1) window.southGateBreachedStatus = true;
   else            window.undercitySouthBreached = true;
-  for (const b of buildings) if (b.isGovFortress && b.y > 0 && b.hp > 0) b.hp = 0;
+  for (const b of sectorGates()) if (b.y > 0 && b.hp > 0) b.hp = 0;
 }
 
 // Is this point in the doorway of an open gate? Asked by everything that treats
@@ -33726,7 +33745,7 @@ function placePlayerAtAuthoredEntry(lvl, dir) {
 
   if (lvl === 1) {
     const viaSouthGate = (dir === "NORTH");
-    const gate = buildings.find(b => b.isGovFortress && (viaSouthGate ? b.y > 0 : b.y < 0));
+    const gate = sectorGates().find(b => (viaSouthGate ? b.y > 0 : b.y < 0));
     if (!gate) return;
     // Just inside the gate, on the city side of it, facing into the city.
     px2 = gate.x;
@@ -33767,8 +33786,7 @@ function restoreAuthoredStoryState(lvl) {
   // A breached Great Gate stays breached — this is what keeps the "ENTER NM-0
   // HQ" prompt alive after the HQ round trip, and what keeps travel north open.
   if (lvl === 1) {
-    for (const b of buildings) {
-      if (!b.isGovFortress) continue;
+    for (const b of sectorGates()) {
       if (b.y < 0 && (window.northGateBreachedStatus || window.northGateBreached)) b.hp = 0;
       if (b.y > 0 && window.southGateBreachedStatus) b.hp = 0;
     }
@@ -33778,8 +33796,7 @@ function restoreAuthoredStoryState(lvl) {
   // rockets and it is the only way through the sector, so it is not something
   // to make the player pay for twice on a re-entry or a reload.
   if (lvl === 2) {
-    for (const b of buildings) {
-      if (!b.isGovFortress) continue;
+    for (const b of sectorGates()) {
       if (b.y < 0 && window.undercityNorthBreached) b.hp = 0;
       if (b.y > 0 && window.undercitySouthBreached) b.hp = 0;
     }

@@ -249,5 +249,32 @@ ok('and read back', P('outpostFortState(1).captured') === true &&
    P('outpostFortState(1).garrison') === 0,
    'captured ' + P('outpostFortState(1).captured') + '  garrison ' + P('outpostFortState(1).garrison'));
 
+console.log('\n== and Stick City\'s own arc never touches it ==');
+// The state the report was recorded in: the sector is LIBERATED. Its towers are
+// down, both Great Gates are breached and its town is established -- and every
+// sweep that keeps a breached Great Gate breached matched on isGovFortress
+// alone, so entering that Stick City loaded the fort with its door destroyed.
+// Drawn blown, still solid, and its own record correctly saying untouched.
+probe(`isStoryMode = true; townsData = {}; window.outpostForts = {};
+       seedDebugStoryProgress(2);
+       window.northGateBreachedStatus = true; window.southGateBreachedStatus = true;
+       window.northGateBreached = true; window.nm0AmbushClearedStatus = true;
+       townsData[1] = { established: true, towersDown: true };
+       window.towersDefeated = true;
+       startAtLevel(1);`);
+ok('a liberated sector leaves the fort\'s gate at full health',
+   P('buildings.find(b=>b.isOutpostGate).hp') === P('FORT_GATE_HP'),
+   P('buildings.find(b=>b.isOutpostGate).hp') + ' of ' + P('FORT_GATE_HP'));
+ok('and shut', P('gateIsOpen(buildings.find(b=>b.isOutpostGate))') === false);
+ok('while its own Great Gates ARE down',
+   P('sectorGates().every(b => b.hp <= 0)') === true,
+   P('sectorGates().map(b=>b.hp)').join('/'));
+// recordSouthGateBreached() is the other sweep, and it runs on the towers
+// coming down rather than at entry.
+probe('recordSouthGateBreached(1);');
+ok('and recording the breach does not take the fort with it',
+   P('buildings.find(b=>b.isOutpostGate).hp') === P('FORT_GATE_HP'),
+   P('buildings.find(b=>b.isOutpostGate).hp') + ' of ' + P('FORT_GATE_HP'));
+
 console.log('\n' + (fails ? '  ' : '') + (checks - fails) + '/' + checks + ' checks passed');
 process.exit(fails ? 1 : 0);

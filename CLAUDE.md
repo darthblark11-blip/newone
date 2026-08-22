@@ -193,10 +193,18 @@ Five things make it work, and four of them fail silently:
   walls and the two masts came out published *twice*, and were being folded into
   `authoredMask` and `authoredChunks` as well, which would have blanked the streamer for
   four chunks around the fort. `isLandmark` is the flag that stops it.
-- **Its masts are not the sector's masts.** `buildings.filter(b => b.isTower)` is what
-  decides Stick City's own objective, so two more towers in the world quietly meant the
-  sector needed four down instead of two. Everything asking about the *sector's* grid goes
-  through `sectorTowers()` now, which drops `isOutpost`.
+- **Its masts are not the sector's masts, and its gate is not the sector's gate.**
+  `buildings.filter(b => b.isTower)` is what decides Stick City's own objective, so two
+  more towers in the world quietly meant the sector needed four down instead of two.
+  `sectorTowers()` drops `isOutpost`. **The same fault in the gates is the one that
+  actually shipped**: three sweeps meant "this sector's Great Gates" and matched on
+  `isGovFortress` alone. The level-entry sweep that keeps a breached gate breached does
+  `if (b.y > 0 && southGateBreachedStatus) b.hp = 0`, and the fort's gate is at
+  y = +11900 — so entering a *liberated* Stick City loaded the fort with its door
+  destroyed: **drawn blown, and still solid**, because the fort's own record correctly
+  said it had never been touched. `sectorGates()` is the predicate now, and
+  `check-fortress.js` sets up a liberated sector and asserts the fort comes through it
+  untouched. A landmark that borrows a flag inherits every sweep over that flag.
 - **The compound's ground is reserved in `groundReserved()`**, not only in `nearAnchor()`.
   `nearAnchor` is consulted by *some* placements; `groundReserved` is the one predicate
   with the last word, and a city block built through the middle of a walled compound looks
