@@ -1504,7 +1504,30 @@ rig down half way so the second half runs the 2D path, then breaks the light pas
 purpose and asserts the joysticks, `handleTouches()` and the HUD all still run and the
 push/pop stack comes back to where it started.
 
-Two things found while chasing it, both fixed:
+### A MISSING `pop()` LOOKS EXACTLY LIKE A CRASH, AND NOTHING THROWS
+
+`drawBuildings()` is a long dispatch over boolean flags, and every branch that opens a
+`push()` has to close it before its `continue`. `isArena` did not, so the stadium leaked
+one push per frame — and the symptom was indistinguishable from the frame fault above:
+**an ungraded picture with no HUD and no joysticks on it.** The leftover camera transform
+is still in force when the light buffer, the HUD and the sticks are drawn, so all three
+are painted scaled by `zoom` and offset by `-camX, -camY` — thousands of units off
+screen. The world itself looks fine, because it *wants* that transform.
+
+Three things about this are worth keeping:
+
+- **No exception is thrown**, so the `draw()` guard never fires, `check-render.js` is
+  clean, and a sweep of twelve thousand real `draw()` calls over the whole quarter of the
+  map reports nothing. Only measuring the stack finds it.
+- **It is location-specific**, because it only happens on the frames where that one
+  building is in view — which is what "everything bugs out by the stadium" means.
+- `check-depth.js` already asserted this for the solids a **city chunk** produces. The
+  hand-authored flags never had it, and they are the ones drawn by hand-written branches
+  with their own `continue`. `check-frame.js` now walks every solid the Level 1 and
+  Level 3 authored maps emit, one at a time, at five camera positions each, and asserts
+  the depth comes back — about 3,200 draws.
+
+Two more things found while chasing it, both fixed:
 
 - **A tier change reallocated in the middle of a frame.** `glRigResize()` deletes and
   rebuilds both render targets and calls `createGraphics()` for the height buffer, and
@@ -3085,7 +3108,7 @@ node tools/check-corpse.js         # the settle: variation, impact direction, an
 node tools/check-damage-feedback.js # what the player is told when hit, shield up vs down
 node tools/check-depth.js          # depth order, and how a mass projects
 node tools/check-lighting.js       # the deferred rig: uniforms resolve, nothing allocates per frame
-node tools/check-frame.js          # the real draw() in real Chromium: a failed pass keeps the controls
+node tools/check-frame.js          # the real draw() in real Chromium: controls survive, and push/pop balances
 GAME_JS=/path/to/other.js node tools/check-generation.js    # compare against a baseline
 ```
 

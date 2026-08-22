@@ -3762,7 +3762,7 @@ function drawBuildings(list, i0, i1) {
           fill(48, 50, 56); rect(fx - au * 4.4, fy - au * 1.7, au * 8.8, au * 3.4, au * 0.6);
           fill(238, 236, 214, 210); rect(fx - au * 4.0, fy - au * 1.3, au * 8.0, au * 1.3, au * 0.4);
         }
-        continue;
+        pop(); continue;
     }
     if (b.isAmusementPark) {
         // A FUNFAIR, and the ferris wheel is the lesson in it.

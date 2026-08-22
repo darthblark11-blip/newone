@@ -180,6 +180,53 @@ window.__run = function (frames) {
   window.handleTouches = realTouch; window.drawUI = realUI;
   window.FRAME_FAULT = null;
 
+  // ---------------------------------------------------------------------
+  // AND EVERY AUTHORED BRANCH PUTS THE TRANSFORM BACK.
+  //
+  // drawBuildings() is a long dispatch over boolean flags, and every branch
+  // that opens a push() has to close it before its continue. Miss one and
+  // NOTHING THROWS: the leftover camera transform is still in force when the
+  // light buffer, the HUD and the joysticks are drawn, so they are painted
+  // scaled by zoom and offset by -camX,-camY -- thousands of units off screen.
+  // The frame comes out ungraded with no controls on it, which is exactly the
+  // "everything bugs out by the stadium" report, and it is invisible to every
+  // check that only looks for exceptions.
+  //
+  // check-depth.js already asserts this for the solids a CITY CHUNK produces.
+  // The hand-authored flags never had it, and isArena was leaking one push per
+  // frame. This walks every solid the authored maps emit, one at a time, at
+  // five camera positions each so the lean lands in every quadrant.
+  // ---------------------------------------------------------------------
+  const depth = () => (p5.instance && p5.instance._styles) ? p5.instance._styles.length : -1;
+  window.__bal = { n: 0, bad: [] };
+  for (const lvl of [1, 3]) {
+    try { startAtLevel(lvl); } catch (e) { rec('startAtLevel ' + lvl, e); continue; }
+    viewLeft = -1e6; viewRight = 1e6; viewTop = -1e6; viewBottom = 1e6;
+    worldTimeMs = 22 / 24 * DAY_MS;
+    if (typeof updateSunVector === 'function') updateSunVector();
+    const all = buildings.slice();
+    const saveActive = activeBuildings;
+    for (const b of all) {
+      const flag = Object.keys(b).find((k) => /^is[A-Z]/.test(k) && b[k] === true) || 'plain';
+      for (const c of [[0, 0], [900, 900], [-900, -900], [900, -900], [-900, 900]]) {
+        camX = b.x + c[0] - width / 2 / zoom;
+        camY = b.y + c[1] - height / 2 / zoom;
+        activeBuildings = [b];
+        const d0 = depth();
+        let err = null;
+        try { drawBuildings(); } catch (e) { err = String((e && e.message) || e); }
+        const d1 = depth();
+        window.__bal.n++;
+        if (d1 !== d0 || err) {
+          const line = 'level ' + lvl + ' ' + flag + ' drift ' + (d1 - d0) + (err ? ' THROW ' + err : '');
+          if (window.__bal.bad.indexOf(line) === -1) window.__bal.bad.push(line);
+        }
+        while (depth() > d0) pop();
+      }
+    }
+    activeBuildings = saveActive;
+  }
+
   window.__done = true;
 };
 </script>`;
@@ -197,7 +244,7 @@ window.__run = function (frames) {
 
   const out = await pg.evaluate(() => ({
     log: window.__log, errs: window.__errs, done: window.__done, stage: window.__stage,
-    guard: window.__guard
+    guard: window.__guard, bal: window.__bal
   }));
   await browser.close();
 
@@ -223,6 +270,11 @@ window.__run = function (frames) {
      'drawUI ran ' + g.hud + ' times in 12 frames');
   ok('the transform is put back after a caught fault', g.drift === 0,
      'push/pop stack drifted by ' + g.drift);
+
+  const bal = out.bal || { n: 0, bad: ['balance sweep never ran'] };
+  console.log('   authored solids drawn: ' + bal.n);
+  ok('every authored drawBuildings() branch leaves push/pop balanced',
+     bal.n > 500 && bal.bad.length === 0, bal.bad.join('\n     ') || ('only ' + bal.n + ' drawn'));
 
   console.log((fails ? '  ' : '') + (checks - fails) + '/' + checks + ' checks passed');
   process.exit(fails ? 1 : 0);
