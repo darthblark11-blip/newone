@@ -176,7 +176,7 @@ blow the gate FROM OUTSIDE → the NM-0 muster comes out and the breach is writt
 
 `OUTPOST_FORT · outpostFortDef · outpostFortState · buildOutpostFortress · insideFortYard ·
 maintainOutpostGarrison · recruitOutpostGarrison · checkOutpostCaptured ·
-triggerOutpostAmbush · sectorTowers · gateFaceY`
+triggerOutpostAmbush · maintainOutpostMuster · sectorTowers · gateFaceY`
 
 Five things make it work, and four of them fail silently:
 
@@ -242,17 +242,45 @@ from:
   so twenty-eight of the kills it wanted never existed and the bar could not reach zero.
   `window.ambushKillsTotal` records what it started at, and the HUD bar is a fraction of
   *that* rather than a hard-coded 300 — against 300 a fort's bar started a fifth full.
-- **Every loose NM-0 body within `FORT_MUSTER_R` is conscripted into it.** The counter and
-  the clear test were counting different populations: the bar drained only on bodies
-  tagged `isAmbush`, while `checkAmbushCleared()` waits for the field to be clear of *all*
-  hostiles. In a liberated sector — which is where a player finds this fort — the rookies
-  and machines already wandering the country had to be killed to finish the muster and did
-  nothing to the bar while you killed them.
-- **`window.ambushOrigin` is where the waves come from.** `spawnAmbushReinforcement()` used
-  map constants — y 4950, just inside the south Great Gate. A fort five chunks away sent
-  its reinforcements to the city, where they were never seen and never killed, so the bar
-  stalled and the ambush never cleared. With no origin set the numbers are exactly the old
-  ones, which is what keeps the sector's own beats unchanged.
+- **Every loose NM-0 body in the fight is conscripted into it, for as long as the fight
+  lasts.** The counter and the clear test were counting different populations: the bar
+  drained only on bodies tagged `isAmbush`, while `checkAmbushCleared()` waits for the
+  field to be clear of *all* hostiles. In a liberated sector — which is where a player
+  finds this fort — the rookies and machines already wandering the country had to be
+  killed to finish the muster and did nothing to the bar while you killed them.
+
+  **Conscripting once, at breach time, off the fort's own centre is not enough, and the
+  three bugs that came out of it were reported as three separate bugs.** The country round
+  a liberated sector keeps being topped up with `NM0_ROOKIE` and machines for as long as
+  the fight runs, so most of the bodies actually shooting at the player *arrived after the
+  breach*, several thousand units from the compound. Untagged, killing one did nothing to
+  the bar **and scheduled no reinforcement** — `processKill()` does both only for an
+  `isAmbush` kill. So: the rookies did not count, the bar stalled short of zero, and the
+  waves stopped after the first one. One fault, three faces. `maintainOutpostMuster()`
+  runs the conscription as a **tick** instead, near the fort *or* near the player, and
+  adds one to `nm0AmbushKills` and one to `window.ambushKillsTotal` together so the
+  arithmetic stays closed: a body joining the muster is one more body to kill and one more
+  the bar was always going to have to count. `window.ambushFort` is what the tick is
+  gated on — set at the breach, cleared by any other muster starting and by the clear, and
+  **saved**, or one reload puts the stall straight back.
+- **And a wave does not wait on a kill landing.** `processKill()` schedules one
+  reinforcement per ambush kill, which is exactly right in a scripted arena where every
+  body on the field is part of the fight and nothing else can remove one. Out here a wave
+  can be shot by the fort's own garrison, drown in a river or walk out of the fight, and
+  the budget then sits full while nothing arrives. The same tick tops the field back up
+  on a cadence once it thins past `FORT_WAVE_FLOOR` — which is what "spawn waves like the
+  other levels" means from the player's side: there is always something coming, and the
+  budget is what ends it.
+- **`window.ambushOrigin` is where the waves come from, and for a fort that is its NORTH
+  wall.** `spawnAmbushReinforcement()` used map constants — y 4950, just inside the south
+  Great Gate. A fort five chunks away sent its reinforcements to the city, where they were
+  never seen and never killed, so the bar stalled and the ambush never cleared. Moved to
+  the fort it was then put at the *south* end of the yard — which is where the first
+  muster stands and where the player is standing to shoot it, so a wave materialised in
+  their lap three paces inside the door they had just blown. At the north wall it arrives
+  at the far end of the compound with the whole length of the yard to cross, which is what
+  a reinforcement coming in the back gate looks like from the door. With no origin set the
+  numbers are exactly the old ones, which is what keeps the sector's own beats unchanged.
 - **The garrison is exempt from `checkAmbushCleared()`**, exactly as `isPopulation` is and
   for exactly the same reason: they are the people the player is being asked *not* to
   shoot, so requiring them would mean the muster could only be cleared by killing the yard.

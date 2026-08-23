@@ -268,6 +268,64 @@ flushTimers();
      P('enemiesList.filter(e=>e.isOutpostGarrison && !e.dead && e.hp>0).length') === gar);
 }
 
+// ---------------------------------------------------------------------------
+// THE MUSTER KEEPS BEING A FIGHT
+//
+// Conscription used to be one shot at breach time, measured from the fort's own
+// centre -- and the sector this fort stands in is LIBERATED, so the country
+// around it keeps being topped up with rookies and machines for as long as the
+// fight lasts. Every one of those arrived untagged, which meant killing it did
+// nothing to the bar AND scheduled no reinforcement. Three reports, one fault.
+// ---------------------------------------------------------------------------
+console.log('\n== the muster keeps being a fight ==');
+{
+  probe(`isStoryMode = true; townsData = {}; window.outpostForts = {};
+         startAtLevel(1); started = true; doTick = true;
+         player.x = outpostFortDef(1).x; player.y = outpostFortDef(1).y + FORT_HALF_H + 420;
+         camX = player.x - width/2/zoom; camY = player.y - height/2/zoom;
+         viewLeft=-1e6;viewRight=1e6;viewTop=-1e6;viewBottom=1e6;`);
+  probe('for (let i=0;i<6;i++) triggerExplosion(player.x, player.y - 380, 320, true, true);');
+  flushTimers();
+
+  const dy = P('Math.round(window.ambushOrigin.y - outpostFortDef(1).y)');
+  ok('the waves come in the fort\'s NORTH gate, not out of the hole in the front',
+     dy < -P('FORT_HALF_H') * 0.5, 'origin dy ' + dy);
+  ok('and the muster the tick belongs to is written down', P('!!window.ambushFort') === true);
+
+  // Bodies that arrive AFTER the door goes in, out in the country -- which is
+  // where a player actually meets them.
+  probe(`(() => { const d = outpostFortDef(1);
+           for (let i = 0; i < 8; i++)
+             enemiesList.push(new Character(d.x + (i - 4) * 400, d.y + 2600, false, "NM0_ROOKIE")); })()`);
+  const bar0 = P('nm0AmbushKills'), tot0 = P('window.ambushKillsTotal');
+  probe('frameCount = FORT_MUSTER_TICK; maintainOutpostMuster();');
+  const got = P('enemiesList.filter(e=>e.isAmbush && e.eType==="NM0_ROOKIE" && !e.dead).length');
+  ok('a rookie that turns up after the breach is conscripted into the muster', got === 8, got + ' of 8');
+  ok('and the arithmetic stays closed -- one more body, one more kill asked for',
+     P('nm0AmbushKills') === bar0 + 8 && P('window.ambushKillsTotal') === tot0 + 8,
+     (P('nm0AmbushKills') - bar0) + ' on the bar, ' + (P('window.ambushKillsTotal') - tot0) + ' on the total');
+
+  const waves0 = P('window.ambushSpawnsRemaining');
+  probe(`(() => { for (const e of enemiesList) if (e.eType === "NM0_ROOKIE" && !e.dead) {
+           e.hp = 0; e.dead = true; processKill(e.x, e.y, false, e.eType, false); return; } })()`);
+  flushTimers();
+  ok('so shooting one drains the bar AND calls the next wave in',
+     P('nm0AmbushKills') === bar0 + 7 && P('window.ambushSpawnsRemaining') === waves0 - 1,
+     'bar ' + P('nm0AmbushKills') + ', waves ' + P('window.ambushSpawnsRemaining') + ' of ' + waves0);
+
+  // And a wave does not wait on a kill landing: a muster shot to pieces by the
+  // fort's own garrison, or walked away from, must still keep coming.
+  probe('for (const e of enemiesList) if (e.isAmbush) { e.dead = true; e.hp = 0; } enemiesList = enemiesList.filter(e=>!e.dead);');
+  const waves1 = P('window.ambushSpawnsRemaining');
+  probe('frameCount = FORT_MUSTER_TICK * 2; maintainOutpostMuster();');
+  const arrived = P('enemiesList.filter(e=>e.isAmbush && !e.dead).length');
+  ok('an empty field brings the next wave in with no kill at all',
+     P('window.ambushSpawnsRemaining') === waves1 - 1 && arrived > 0,
+     arrived + ' arrived, ' + P('window.ambushSpawnsRemaining') + ' of ' + waves1 + ' left');
+  ok('and it arrives at the north end of the yard',
+     P(`enemiesList.filter(e=>e.isAmbush && !e.dead).every(e => e.y < outpostFortDef(1).y)`) === true);
+}
+
 // Stick City's own musters must be untouched by all of that.
 console.log('\n== the sector\'s own musters are unchanged ==');
 {

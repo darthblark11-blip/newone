@@ -1247,6 +1247,7 @@ if (isStoryMode) {
     nm0AmbushActive = false;
     nm0AmbushKills = 0;
     window.ambushKind = null;
+    window.ambushFort = null;
     inTownCutscene = false;
     inFarmCutscene = false;
     farmAmbushActive = false;
@@ -5608,6 +5609,7 @@ function draw() {
         // branch below runs.
         const clearedKind = window.ambushKind;
         window.ambushKind = null;
+        window.ambushFort = null;
 
         let towersAlive = sectorTowers().filter(b => b.hp > 0).length;
 
@@ -6250,6 +6252,7 @@ viewBottom = camY + height / zoom + shakePad;
           // The sector's own beat spawns against the map constants in
           // spawnAmbushReinforcement(); clearing the origin is what selects them.
           window.ambushOrigin = null;
+          window.ambushFort   = null;   // and it is not a fort's muster any more
           // This is the sector's own beat, and it outranks any gate ambush that
           // got folded into it -- clearing the merged field ends the level.
           window.ambushKind = "TOWER";
@@ -7431,6 +7434,7 @@ function resetStoryProgress() {
     window.undercityNorthBreached = false;
     window.undercitySouthBreached = false;
     window.ambushKind = null;
+    window.ambushFort = null;
     window.nm0AmbushClearedStatus = false;
     window.nm0AmbushCleared = false;
     window.nm0HqCleared = false;
@@ -8224,6 +8228,7 @@ function triggerGateAmbush(fortressY, isNorthGate = false) {
         streakMsgText = isNorthGate ? "NORTH GATE BREACHED!" : "SOUTH GATE BREACHED!";
     }
     window.ambushOrigin = null;      // the map constants, as before
+    window.ambushFort   = null;
     streakMsgTimer = 120;
 
     let gateAerY = spawnY < 0 ? spawnY + 100 : spawnY - 100;
@@ -15639,6 +15644,7 @@ function updateEntities() {
   // The overworld fortress: re-form whoever the player did not shoot, and watch
   // for its second mast going down. See THE OVERWORLD FORTRESS.
   maintainOutpostGarrison();
+  maintainOutpostMuster();
   checkOutpostCaptured();
 }
 
@@ -15823,6 +15829,7 @@ function checkAmbushCleared() {
 
   nm0AmbushKills = 0;
   objectiveTimer = 0;
+  window.ambushFort = null;              // the muster is over; stop conscripting
   window.nm0AmbushCleared = true;        // routes through the killcam into the story loop
   streakMsgText = "AMBUSH CLEARED!";
   streakMsgTimer = 180;
@@ -18757,6 +18764,11 @@ function saveGame() {
         // come back at Stick City's gate however far away the fight is.
         ambushKillsTotal: window.ambushKillsTotal || 0,
         ambushOrigin: window.ambushOrigin || null,
+        // And WHOSE muster it is. Without it a save made inside a fort's
+        // muster reloads with the counter and the budget intact and nothing
+        // conscripting or topping the field up, which is the stall this whole
+        // tick exists to prevent -- one save/load and it is back.
+        ambushFort: window.ambushFort || null,
         farmAmbushActive,
         farmAmbushKills: window.farmAmbushKills || 0,
         farmAmbushCleared: window.farmAmbushCleared || false,
@@ -18854,6 +18866,7 @@ function loadGame() {
         window.ambushSpawnsRemaining = state.ambushSpawnsRemaining || 0;
         window.ambushKillsTotal = state.ambushKillsTotal || 0;
         window.ambushOrigin = state.ambushOrigin || null;
+        window.ambushFort = state.ambushFort || null;
         // Restored again here: it is set before startAtLevel() for the map
         // builder's benefit, and legacyStartAtLevel() nulls it on every entry.
         window.ambushKind = state.ambushKind || null;
@@ -19974,6 +19987,7 @@ function triggerLvl4Ambush() {
     window.ambushKillsTotal = 150;
     window.ambushSpawnsRemaining = 100;
     window.ambushOrigin = null;
+    window.ambushFort   = null;
     objectiveTimer = 360;
     streakMsgText = "NM-0 GREY FATIGUE AMBUSH!";
     streakMsgTimer = 120;
@@ -21675,13 +21689,88 @@ function triggerOutpostAmbush(def) {
     streakMsgText = "FORT BREACHED — NM-0 MUSTER!";
   }
   streakMsgTimer = 140;
-  // And the waves come from the fort, not from the city -- see
-  // spawnAmbushReinforcement().
-  window.ambushOrigin = { x: def.x, y: gy, aerY: gy - 60 };
+
+  // THE WAVES COME IN THE FORT'S BACK DOOR, not out of the hole in the front.
+  //
+  // The origin has to be the fort rather than the city -- that much was already
+  // true, see spawnAmbushReinforcement() -- but it was the SOUTH end of the
+  // yard, which is where the first muster stands and where the player is
+  // standing to shoot it. A wave then materialised in their lap, three paces
+  // inside the door they had just blown, with nothing between the two. Put at
+  // the north wall it arrives at the far end of the compound and has the whole
+  // length of the yard to cross, which is what a reinforcement coming in the
+  // back gate looks like from the door.
+  const wy = def.y - FORT_HALF_H + 320;
+  window.ambushOrigin = { x: def.x, y: wy, aerY: wy - 60 };
+  // And this is the muster the tick below belongs to. It is a position rather
+  // than the def, because the def is rebuilt on every entry and the tick only
+  // ever asks "how far is this body from the fight".
+  window.ambushFort = { x: def.x, y: def.y };
 
   for (const e of enemiesList) {
     if (!e.isFriendly && e.hp > 0 && !e.dead) { e.state = "CHASE"; e.loseSightTimer = 999; }
   }
+}
+
+// How thin the muster is allowed to get on the field before NM-0 sends the next
+// one in, and how often that is asked.
+const FORT_WAVE_FLOOR  = 7;
+const FORT_MUSTER_TICK = 24;
+
+// ---------------------------------------------------------------------------
+// KEEPING THE MUSTER A FIGHT
+//
+// Conscription used to be one shot, taken at the instant the door went in and
+// measured from the fort's own centre. A player finds this fort in a LIBERATED
+// sector, where the country around it is being topped up with NM0_ROOKIE and
+// machines the whole time it is being fought over -- so most of the bodies
+// actually shooting at them arrived AFTER the breach, and several thousand
+// units from the compound. Untagged, killing one did nothing to the bar and
+// scheduled no reinforcement, because processKill() only does either for an
+// isAmbush kill.
+//
+// That is one fault wearing three faces, and all three were reported as
+// separate bugs: the rookies not counting, the bar stalling short of zero, and
+// the waves stopping after the first one.
+// ---------------------------------------------------------------------------
+function maintainOutpostMuster() {
+  if (!doTick || !player || !BIOME_ACTIVE || isWin || isDead || killcamMode) return;
+  if (!nm0AmbushActive) return;
+  const fort = window.ambushFort;
+  if (!fort) return;
+  if (frameCount % FORT_MUSTER_TICK !== 0) return;
+
+  const R2 = FORT_MUSTER_R * FORT_MUSTER_R;
+  let live = 0;
+  for (const e of enemiesList) {
+    if (!e || e.isFriendly || e.dead || e.hp <= 0) continue;
+    // The two populations that are never part of a muster, for the same reason
+    // checkAmbushCleared() skips them: they are the people the player is being
+    // asked not to shoot.
+    if (e.isPopulation || e.isOutpostGarrison) continue;
+    if (e.isAmbush) { live++; continue; }
+    const fx = e.x - fort.x,   fy = e.y - fort.y;
+    const px = e.x - player.x, py = e.y - player.y;
+    // Near the fort OR near the player -- a fight this size moves, and a body
+    // shooting at the player is in it wherever the compound happens to be.
+    if (fx * fx + fy * fy > R2 && px * px + py * py > R2) continue;
+    // The arithmetic stays closed: a body joining the muster is one more body
+    // to kill and one more the bar was always going to have to count.
+    e.isAmbush = true;
+    nm0AmbushKills++;
+    window.ambushKillsTotal = (window.ambushKillsTotal || 0) + 1;
+    live++;
+  }
+
+  // AND A WAVE DOES NOT WAIT ON A KILL LANDING. processKill() schedules one
+  // reinforcement per ambush kill, which is exactly right in a scripted arena
+  // where every body on the field is part of the fight and nothing else can
+  // remove one. Out here a wave can be shot by the fort's own garrison, drown
+  // in a river or walk out of the fight entirely, and the budget then sits full
+  // while nothing arrives. Topping the field up on a cadence is what "spawn
+  // waves like the other levels" means from the player's side: there is always
+  // something coming, and the budget is what ends it.
+  if (live < FORT_WAVE_FLOOR && window.ambushSpawnsRemaining > 0) spawnAmbushReinforcement();
 }
 
 // ---------------------------------------------------------------------------

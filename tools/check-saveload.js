@@ -60,10 +60,13 @@ console.log('\n== ambush state ==');
 probe(`isStoryMode = true; townsData = {}; startAtLevel(3);
        farmAmbushActive = true; window.farmAmbushKills = 317; window.farmAmbushCleared = false;
        nm0AmbushActive = true; nm0AmbushKills = 88; window.ambushSpawnsRemaining = 41;
-       window.ambushKind = "TOWER";`);
+       window.ambushKind = "TOWER";
+       window.ambushOrigin = { x: 7200, y: 9700, aerY: 9640 };
+       window.ambushFort = { x: 7200, y: 10800 };`);
 probe('saveGame();');
 probe(`farmAmbushActive = false; window.farmAmbushKills = 0; nm0AmbushActive = false;
-       nm0AmbushKills = 0; window.ambushSpawnsRemaining = 0; window.ambushKind = null;`);
+       nm0AmbushKills = 0; window.ambushSpawnsRemaining = 0; window.ambushKind = null;
+       window.ambushOrigin = null; window.ambushFort = null;`);
 probe('loadGame();');
 ok('the bug swarm knows how many are left', P('window.farmAmbushKills') === 317, P('window.farmAmbushKills'));
 ok('the bug swarm is still running', P('farmAmbushActive') === true);
@@ -71,6 +74,16 @@ ok('the NM-0 muster keeps its counter', P('nm0AmbushKills') === 88, P('nm0Ambush
 ok('and its spawn budget, which is what lets it ever finish',
    P('window.ambushSpawnsRemaining') === 41, P('window.ambushSpawnsRemaining'));
 ok('and which beat it belongs to', P('window.ambushKind') === "TOWER");
+// A fort's muster is kept alive by maintainOutpostMuster(), and that tick is
+// gated on window.ambushFort. Saved without it, a mid-muster reload comes back
+// with the counter and the budget intact and nothing conscripting or topping
+// the field up -- which is exactly the stall the tick exists to prevent, one
+// save/load away.
+ok('and where it musters from', P('window.ambushOrigin && window.ambushOrigin.y') === 9700,
+   JSON.stringify(P('window.ambushOrigin')));
+ok('and, for an overworld fort, whose muster it is',
+   P('window.ambushFort && window.ambushFort.x') === 7200,
+   JSON.stringify(P('window.ambushFort')));
 
 console.log('\n== cutscenes ==');
 probe(`isStoryMode = true; townsData = {}; window.storyBeats = {}; startAtLevel(3);
