@@ -42,6 +42,8 @@ ctx.random = function (a, b) {
 // own, and each reinforcement is deferred a fraction of a second after a kill.
 // Both are collected and run on demand, so a fight can be played out a body at
 // a time rather than depending on wall-clock timers.
+// The compound's own half-depth plus the muster point outside its north gate.
+const FORT_WAVE_MAX = 1600;
 const _timers = [];
 ctx.setTimeout = (fn) => { _timers.push(fn); return _timers.length; };
 const flushTimers = () => { let n = 0; while (_timers.length && n++ < 4000) (_timers.shift())(); };
@@ -206,14 +208,20 @@ console.log('\n== the muster is a fight you can finish ==');
   probe(`isStoryMode = true; townsData = {}; window.outpostForts = {};
          startAtLevel(1); started = true; doTick = true;
          window.__spawnLog = [];
-         const _sr = window.spawnAmbushReinforcement;
-         window.spawnAmbushReinforcement = function () {
-           const n0 = enemiesList.length;
-           const r = _sr.apply(this, arguments);
-           for (let i = n0; i < enemiesList.length; i++)
-             window.__spawnLog.push({ x: enemiesList[i].x, y: enemiesList[i].y });
-           return r;
-         };`);
+         // Both spawners are watched. A fort uses its own -- the shared one
+         // reads window.ambushOrigin, which four other beats write -- and a
+         // wave arriving through the shared one during a fort muster is
+         // precisely the fault: it lands at Stick City's south Great Gate.
+         for (const nm of ['spawnAmbushReinforcement', 'spawnFortWave']) {
+           const _sr = window[nm];
+           window[nm] = function () {
+             const n0 = enemiesList.length;
+             const r = _sr.apply(this, arguments);
+             for (let i = n0; i < enemiesList.length; i++)
+               window.__spawnLog.push({ x: enemiesList[i].x, y: enemiesList[i].y, via: nm });
+             return r;
+           };
+         }`);
   // Loose NM-0 already wandering near the fort, which is the state a player in
   // a liberated sector actually finds it in.
   probe(`const _d = outpostFortDef(1);
@@ -259,6 +267,9 @@ flushTimers();
   }
   ok('the bar drains to zero, and never runs out of bodies first',
      !dry && P('nm0AmbushKills') <= 0, dry ? ('dry with ' + P('nm0AmbushKills') + ' still asked') : (rounds + ' kills'));
+  ok('and every wave went through the fort\'s OWN spawner',
+     (P('(window.__spawnLog||[])') || []).every(p => p.via === 'spawnFortWave'),
+     (P('(window.__spawnLog||[])') || []).filter(p => p.via !== 'spawnFortWave').length + ' through the shared one');
   ok('every wave came from the FORT, not from the city gate',
      P(`(() => { let m = 0; const d = outpostFortDef(1);
         for (const p of (window.__spawnLog||[])) { const q = Math.hypot(p.x - d.x, p.y - d.y); if (q > m) m = q; }
@@ -307,7 +318,7 @@ console.log('\n== the muster keeps being a fight ==');
      P('buildings.filter(b=>b.isOutpostGate).length') === 2 &&
      P('buildings.filter(b=>b.isOutpostGate).every(b=>gateIsOpen(b))') === true);
   probe('for (const e of enemiesList) if (e.isAmbush) { e.dead=true; e.hp=0; } enemiesList = enemiesList.filter(e=>!e.dead);');
-  probe('for (let i=0;i<10;i++) spawnAmbushReinforcement();');
+  probe('for (let i=0;i<10;i++) spawnFortWave();');
   ok('a wave forms up outside the north gate, in its doorway',
      P(`(() => { const g = buildings.find(b=>b.isOutpostGate && b.fortSide === 'N');
         const a = enemiesList.filter(e=>e.isAmbush && !e.dead);
@@ -356,6 +367,47 @@ console.log('\n== the muster keeps being a fight ==');
      arrived + ' arrived, ' + P('window.ambushSpawnsRemaining') + ' of ' + waves1 + ' left');
   ok('and it arrives at the north end of the yard',
      P(`enemiesList.filter(e=>e.isAmbush && !e.dead).every(e => e.y < outpostFortDef(1).y)`) === true);
+
+  // THE FAULT THE VIDEO SHOWED. spawnAmbushReinforcement() spawns at
+  // window.ambushOrigin and falls back to Stick City's south Great Gate when
+  // there is none -- and FOUR other beats write that global. A fort whose waves
+  // go through it sends them nine thousand units back to the city, which is
+  // what "the waves come out of the beginning fortress" is. The fort spawns its
+  // own now, off window.ambushFort, so nothing else can redirect them.
+  probe('window.ambushOrigin = null;');
+  probe('for (const e of enemiesList) if (e.isAmbush) { e.dead=true; e.hp=0; } enemiesList = enemiesList.filter(e=>!e.dead);');
+  probe('frameCount = FORT_MUSTER_TICK * 3; maintainOutpostMuster();');
+  const far = P(`(() => { const d = outpostFortDef(1); let m = 0;
+      for (const e of enemiesList) if (e.isAmbush && !e.dead) {
+        const q = Math.hypot(e.x - d.x, e.y - d.y); if (q > m) m = q; } return Math.round(m); })()`);
+  ok('a clobbered ambushOrigin cannot send the fort\'s waves back to the city',
+     far > 0 && far < FORT_WAVE_MAX, far + ' units from the fort (the city gate is ~9000)');
+
+  // And a per-kill reinforcement takes the same road.
+  probe(`(() => { const d = outpostFortDef(1);
+           enemiesList.push(new Character(d.x, d.y + 900, false, "NM0_ROOKIE")); })()`);
+  probe('frameCount = FORT_MUSTER_TICK * 4; maintainOutpostMuster();');
+  const n0 = P('enemiesList.filter(e=>e.isAmbush && !e.dead).length');
+  probe(`(() => { for (const e of enemiesList) if (e.eType === "NM0_ROOKIE" && !e.dead) {
+           e.hp = 0; e.dead = true; processKill(e.x, e.y, false, e.eType, false); return; } })()`);
+  flushTimers();
+  const far2 = P(`(() => { const d = outpostFortDef(1); let m = 0;
+      for (const e of enemiesList) if (e.isAmbush && !e.dead) {
+        const q = Math.hypot(e.x - d.x, e.y - d.y); if (q > m) m = q; } return Math.round(m); })()`);
+  ok('and so does the reinforcement a kill calls in', far2 < FORT_WAVE_MAX,
+     far2 + ' units from the fort');
+
+  // A player who has walked back to the city is not fighting the muster, and
+  // the city's own wanderers must not be dealt into a battle two kilometres
+  // away -- that is what put NM-0 bodies at the Great Gate with the bar up.
+  probe(`player.x = 200; player.y = 5000;
+         for (let i = 0; i < 5; i++) enemiesList.push(new Character(200 + i * 120, 5100, false, "NM0_ROOKIE"));`);
+  probe('frameCount = FORT_MUSTER_TICK * 5; maintainOutpostMuster();');
+  ok('and the city\'s own wanderers are not conscripted from two kilometres away',
+     P('enemiesList.filter(e=>e.isAmbush && Math.hypot(e.x-200,e.y-5100) < 700).length') === 0,
+     P('enemiesList.filter(e=>e.isAmbush && Math.hypot(e.x-200,e.y-5100) < 700).length') + ' dragged in');
+  probe(`player.x = outpostFortDef(1).x; player.y = outpostFortDef(1).y + FORT_HALF_H + 420;
+         enemiesList = enemiesList.filter(e => Math.hypot(e.x - 200, e.y - 5100) > 700);`);
 
   // THE TICK ALONE LEAVES A GAP. A body that spawns and dies inside one tick
   // period is never tagged, so killing it drains nothing and calls no wave --

@@ -183,7 +183,8 @@ blow the gate FROM OUTSIDE → the NM-0 muster comes out and the breach is writt
 
 `OUTPOST_FORT · outpostFortDef · outpostFortState · buildOutpostFortress · insideFortYard ·
 maintainOutpostGarrison · recruitOutpostGarrison · checkOutpostCaptured ·
-triggerOutpostAmbush · maintainOutpostMuster · conscriptIntoMuster · sectorTowers · gateFaceY`
+triggerOutpostAmbush · maintainOutpostMuster · conscriptIntoMuster · spawnFortWave ·
+sectorTowers · gateFaceY`
 
 Five things make it work, and four of them fail silently:
 
@@ -278,8 +279,24 @@ from:
   on a cadence once it thins past `FORT_WAVE_FLOOR` — which is what "spawn waves like the
   other levels" means from the player's side: there is always something coming, and the
   budget is what ends it.
-- **`window.ambushOrigin` is where the waves come from, and for a fort that is its NORTH
-  wall.** `spawnAmbushReinforcement()` used map constants — y 4950, just inside the south
+- **A FORT SPAWNS ITS OWN WAVES.** `spawnAmbushReinforcement()` reads
+  `window.ambushOrigin` and falls back to Stick City's map constants — y 4950, just inside
+  the south Great Gate — when there is none. **Four other beats write that global** (the
+  tower beat, the Great Gate beat, the Level 4 beat, `loadGame`), so one of them landing
+  after a fort breach sent the fort's waves nine thousand units back to the city, where
+  the player is not and the bar cannot drain. That is the same shape of fault as
+  `sectorGates()`: a landmark borrowing a global something else owns. `spawnFortWave()`
+  reads `window.ambushFort` and nothing else, and both the tick and `processKill()` route
+  through it while a fort muster is running, so nothing can redirect them.
+- **Conscription near the PLAYER stops when the player leaves the fight.** The "near the
+  fort or near the player" rule is what makes a moving firefight count, but a player who
+  has walked back to the city is not fighting the muster — and dealing the city's own
+  wanderers into a battle two kilometres away is what put NM-0 bodies at the Great Gate
+  with the muster bar up. The player clause is gated on the player still being within
+  `FORT_MUSTER_R * 2` of the compound.
+- **`window.ambushOrigin` is where the SHARED spawner's waves come from, and for a fort it
+  is set to its NORTH wall as well** — belt and braces, since `spawnFortWave()` is what
+  actually runs.** `spawnAmbushReinforcement()` used map constants — y 4950, just inside the south
   Great Gate. A fort five chunks away sent its reinforcements to the city, where they were
   never seen and never killed, so the bar stalled and the ambush never cleared. Moved to
   the fort it was then put at the *south* end of the yard — which is where the first

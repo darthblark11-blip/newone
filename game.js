@@ -15440,7 +15440,13 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
     if (nm0AmbushActive && isAmbushKill) { // <--- ONLY trigger if it's an actual ambush enemy
         nm0AmbushKills--;
         
-        if (window.ambushSpawnsRemaining > 0) setTimeout(spawnAmbushReinforcement, random(200, 800));
+        // An overworld fort spawns its OWN waves, at its own north gate. The
+        // shared reinforcement reads window.ambushOrigin, which four other
+        // beats write and which falls back to Stick City's south Great Gate --
+        // so a fort's waves came out of the city, nine thousand units from the
+        // fight, and the bar could not drain.
+        if (window.ambushSpawnsRemaining > 0)
+            setTimeout(window.ambushFort ? spawnFortWave : spawnAmbushReinforcement, random(200, 800));
         
         if (x !== undefined && y !== undefined) {
             if (isHeadshot) addScore(10, x, y, "HEADSHOT+"); else addScore(5, x, y, "KILL+");
@@ -21769,6 +21775,44 @@ const FORT_MUSTER_TICK = 24;
 // separate bugs: the rookies not counting, the bar stalling short of zero, and
 // the waves stopping after the first one.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// A FORT'S WAVES ARE THE FORT'S, AND THEY DO NOT GO THROUGH A SHARED GLOBAL.
+//
+// spawnAmbushReinforcement() spawns at window.ambushOrigin and falls back to
+// Stick City's map constants -- y 4950, just inside the south Great Gate --
+// when there is none. Four other code paths write that global (the tower beat,
+// the Great Gate beat, the Level 4 beat, loadGame), and any one of them
+// arriving after a fort breach sends the fort's waves nine thousand units back
+// to the city, where the player is not and the bar cannot drain. That is
+// exactly what "the waves come out of the beginning fortress" is, and it is the
+// same shape of fault as sectorGates(): a landmark borrowing a global that
+// something else owns.
+//
+// So the fort spawns its own. It reads window.ambushFort and nothing else, and
+// it puts each body OUTSIDE the north gate, inside that gate's doorway, facing
+// a walk down the whole length of the compound.
+function spawnFortWave() {
+  const fort = window.ambushFort;
+  if (!fort || !nm0AmbushActive || !started || isDead || isWin) return false;
+  if (!(window.ambushSpawnsRemaining > 0)) return false;
+  window.ambushSpawnsRemaining--;
+
+  // Outside the north wall, lined up with its door. GATE_DOOR_HALF is 300, so
+  // the spread has to stay well inside that or half a wave forms up in the slab.
+  const gy = fort.y - FORT_HALF_H - 260;
+  let r = random(), type = "ARMORED_STANDARD", sy = gy;
+  if (r > 0.9) { type = "AERIAL"; sy = gy - 60; }
+  else if (r > 0.8) { type = "ARMORED"; }
+  const sx = fort.x + (random() > 0.5 ? 120 : -120) + random(-90, 90);
+  const e = new Character(sx, sy, false, type);
+  e.state = "CHASE";
+  e.loseSightTimer = 999;
+  e.isAmbush = true;
+  e.isOutpost = true;
+  enemiesList.push(e);
+  return true;
+}
+
 // ONE definition of "this body is in the muster now", read by the tick below
 // and by processKill(). The tick alone leaves a gap: a body that spawns and
 // dies inside one tick period is never tagged, so killing it drains nothing
@@ -21785,12 +21829,19 @@ function conscriptIntoMuster(e) {
   if (!nm0AmbushActive || !fort) return false;
   const R2 = FORT_MUSTER_R * FORT_MUSTER_R;
   const fx = e.x - fort.x, fy = e.y - fort.y;
-  // Near the fort OR near the player -- a fight this size moves, and a body
-  // shooting at the player is in it wherever the compound happens to be.
-  const near = (fx * fx + fy * fy <= R2) ||
-               (player && (e.x - player.x) * (e.x - player.x) +
-                          (e.y - player.y) * (e.y - player.y) <= R2);
-  if (!near) return false;
+  if (fx * fx + fy * fy <= R2) { e.isAmbush = true; nm0AmbushKills++;
+                                 window.ambushKillsTotal = (window.ambushKillsTotal || 0) + 1;
+                                 return true; }
+  // Near the PLAYER also counts -- a fight this size moves, and a body shooting
+  // at them is in it wherever the compound happens to be. But only while they
+  // are still at the fight: a player who has walked back to the city is not
+  // fighting the muster, and dragging the city's own wanderers into it there
+  // makes every random encounter part of a battle two kilometres away.
+  if (!player) return false;
+  const px = player.x - fort.x, py = player.y - fort.y;
+  if (px * px + py * py > (FORT_MUSTER_R * 2) * (FORT_MUSTER_R * 2)) return false;
+  const ex = e.x - player.x, ey = e.y - player.y;
+  if (ex * ex + ey * ey > R2) return false;
   e.isAmbush = true;
   nm0AmbushKills++;
   window.ambushKillsTotal = (window.ambushKillsTotal || 0) + 1;
@@ -21818,7 +21869,7 @@ function maintainOutpostMuster() {
   // while nothing arrives. Topping the field up on a cadence is what "spawn
   // waves like the other levels" means from the player's side: there is always
   // something coming, and the budget is what ends it.
-  if (live < FORT_WAVE_FLOOR && window.ambushSpawnsRemaining > 0) spawnAmbushReinforcement();
+  if (live < FORT_WAVE_FLOOR && window.ambushSpawnsRemaining > 0) spawnFortWave();
 }
 
 // ---------------------------------------------------------------------------
