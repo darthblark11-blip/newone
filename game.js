@@ -15439,6 +15439,10 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
     // --- STRICT NM-0 AMBUSH KILL COUNTER ---
     if (nm0AmbushActive && isAmbushKill) { // <--- ONLY trigger if it's an actual ambush enemy
         nm0AmbushKills--;
+        // The fort's muster is kept on the fort's own record, because nothing
+        // about the entity list survives a save and the counter has to.
+        if (typeof activeFortMuster === 'function' && activeFortMuster(currentBiome))
+            outpostFortState(currentBiome).musterLeft = Math.max(0, nm0AmbushKills);
         
         // An overworld fort spawns its OWN waves, at its own north gate. The
         // shared reinforcement reads window.ambushOrigin, which four other
@@ -15850,6 +15854,13 @@ function checkAmbushCleared() {
 
   nm0AmbushKills = 0;
   objectiveTimer = 0;
+  // The muster is over. Written on the fort's own record so a reload cannot
+  // restart a fight the player has already won, and so the tick above stops.
+  {
+    const _fs = outpostFortState(currentBiome);
+    if (_fs.musterOn) { _fs.musterOn = false; _fs.musterDone = true;
+                        _fs.musterLeft = 0; _fs.musterWaves = 0; }
+  }
   window.ambushFort = null;              // the muster is over; stop conscripting
   window.nm0AmbushCleared = true;        // routes through the killcam into the story loop
   streakMsgText = "AMBUSH CLEARED!";
@@ -19106,9 +19117,13 @@ window.militaryToBring = state.militaryToBring || 0;
                 killcamTarget = {x: townSpeaker1.x, y: townSpeaker1.y};
             }
 
-            // RE-SPAWN AMBUSH HOSTILES IF ACTIVE
-                        // RE-SPAWN AMBUSH HOSTILES IF ACTIVE
-            if (nm0AmbushActive) {
+            // RE-SPAWN AMBUSH HOSTILES IF ACTIVE, at the map constants -- which
+            // are Stick City's south Great Gate. A FORT'S muster is re-formed
+            // from the fort's own record instead, by restoreFortMuster() below;
+            // put through here it came back a hundred strong at the city, which
+            // is the "it's just empty" report from the fort's side and the
+            // "waves out of the beginning fortress" report from the city's.
+            if (nm0AmbushActive && !activeFortMuster(currentBiome)) {
                 let spawnY = (currentLevel === 1) ? 4950 : 1800;
                 let aerY = (currentLevel === 1) ? 4900 : 1750;
                 if (!window.ambushKind) window.ambushKind = "TOWER";
@@ -19180,7 +19195,56 @@ window.militaryToBring = state.militaryToBring || 0;
                 for (let i = 0; i < popArchitecture; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "ARCHITECTURE"));
             }
         }
+        // Unconditionally, and last: the block above sits inside
+        // `if (window.towersDefeated)` and wipes every hostile on the field, so
+        // a fort's muster has to be re-formed after it and outside it.
+        restoreFortMuster();
     }
+}
+
+// ---------------------------------------------------------------------------
+// A FORT'S MUSTER, RE-FORMED FROM THE FORT'S OWN RECORD
+//
+// Nothing about the entity list is saved. loadGame() re-spawns an active
+// muster at Stick City's map constants -- y 4950, just inside the south Great
+// Gate -- which for a fort five chunks out in the country means the fight comes
+// back nine thousand units from where it was, and the compound the player is
+// standing in is empty. The record is the fight; this is how it comes back.
+// ---------------------------------------------------------------------------
+function restoreFortMuster() {
+    const def = (typeof outpostFortDef === 'function') ? outpostFortDef(currentLevel) : null;
+    if (!def) return;
+    const st = outpostFortState(currentLevel);
+
+    // A save written before the fort kept its own record. Its muster fields
+    // default to "the fight was won", which is right for a quiet fort and wrong
+    // here: the save says an ambush is running, and the fort is breached and
+    // not yet taken. That is its muster, and left unadopted the bar hangs at a
+    // number with nothing on the field to take it down.
+    if (st._legacyMuster) {
+        if (nm0AmbushActive && st.breached && !st.captured) {
+            st.musterOn = true; st.musterDone = false;
+            st.musterTotal = Math.max(FORT_MUSTER_TOTAL, nm0AmbushKills || 0);
+            st.musterLeft  = Math.max(1, Math.min(st.musterTotal, nm0AmbushKills || st.musterTotal));
+            st.musterWaves = st.musterLeft;
+        }
+        // And an older record carries the old garrison size.
+        if (st.garrison > 0 && st.garrison < FORT_GARRISON) st.garrison = FORT_GARRISON;
+        st._legacyMuster = false;
+    }
+    if (!st.musterOn) return;
+
+    nm0AmbushActive = true;
+    window.ambushKind = "GATE";
+    nm0AmbushKills = st.musterLeft;
+    window.ambushKillsTotal = st.musterTotal;
+    window.ambushSpawnsRemaining = st.musterWaves;
+    window.ambushFort = { x: def.x, y: def.y };
+    const wp = fortWavePoint(def, false);
+    window.ambushOrigin = { x: def.x, y: wp.y, aerY: wp.y - 60, flank: 120, jitter: 90 };
+    // Seed the compound at once rather than making the player stand in an empty
+    // yard while the tick fills it a body at a time.
+    for (let i = 0; i < FORT_WAVE_FLOOR && st.musterWaves > 0; i++) spawnFortWave();
 }
 
     
@@ -21401,7 +21465,14 @@ const FORT_HALF_H   = 1100;
 const FORT_GATE_H   = 420;    // the gate slab's depth, and the wall thickness with it
 const FORT_GATE_HP  = 1500;
 const FORT_TOWER_HP = 1600;
-const FORT_GARRISON = 14;     // yellow regulars behind the door
+// THE FORT'S OWN NUMBERS, and they are the sector's own beat one scale down.
+// Stick City's gate ambush asks for 150 against 50 spawned plus 100
+// reinforcements; so does this. The garrison is fifty yellow regulars who roam
+// the compound and are NOT part of that fight -- they are the people the player
+// is being asked not to shoot, and dropping the two masts is what turns them.
+const FORT_MUSTER_TOTAL = 150;   // kills the bar asks for
+const FORT_MUSTER_SPAWN = 50;    // of them, standing in the yard when the door goes in
+const FORT_GARRISON     = 50;    // yellow regulars roaming the compound
 const FORT_WAKE_R   = 2600;   // the garrison musters when the player gets this close
 
 function outpostFortDef(biome) {
@@ -21421,14 +21492,45 @@ function outpostFortState(biome) {
       breached: false, captured: false,
       gateHp: FORT_GATE_HP,
       towerHp: [FORT_TOWER_HP, FORT_TOWER_HP],
-      garrison: FORT_GARRISON
+      garrison: FORT_GARRISON,
+      // THE MUSTER LIVES ON THE RECORD, not in a window global.
+      //
+      // Nothing about the entity list is saved, so a reload lands in a sector
+      // with the counter and the spawn budget restored and NOT ONE BODY on the
+      // field -- "the ambush isn't spawning, it's just empty". Everything the
+      // fight needs to re-form itself is here, in the one structure the save
+      // already carries, so a load rebuilds it instead of inheriting a corpse
+      // of it.
+      musterOn: false,     // the fight is running
+      musterDone: false,   // it has been beaten, and never runs again
+      musterLeft: 0,       // kills still asked for
+      musterTotal: 0,      // what the bar started at
+      musterWaves: 0       // reinforcements still to come
     };
   }
   // An older save has the record without a field a later build added.
   if (!Array.isArray(s.towerHp) || s.towerHp.length !== 2) s.towerHp = [FORT_TOWER_HP, FORT_TOWER_HP];
   if (typeof s.garrison !== 'number') s.garrison = FORT_GARRISON;
   if (typeof s.gateHp !== 'number') s.gateHp = s.breached ? 0 : FORT_GATE_HP;
+  // A record written before the muster was kept here cannot say whether the
+  // fight was won or is still on. Assume won: a phantom muster the player has
+  // already beaten is far worse than a fort that is simply quiet.
+  if (typeof s.musterDone !== 'boolean') { s.musterDone = !!s.breached; s._legacyMuster = true; }
+  if (typeof s.musterOn   !== 'boolean') s.musterOn   = false;
+  if (typeof s.musterLeft  !== 'number') s.musterLeft  = 0;
+  if (typeof s.musterTotal !== 'number') s.musterTotal = 0;
+  if (typeof s.musterWaves !== 'number') s.musterWaves = 0;
   return s;
+}
+
+// The fort whose muster is running RIGHT NOW, read off the fort's own record
+// rather than off a window global. window.ambushFort is a cache of this, and a
+// cache is exactly what a save cannot be trusted to have.
+function activeFortMuster(biome) {
+  const def = outpostFortDef(biome);
+  if (!def) return null;
+  const st = outpostFortState(biome);
+  return st.musterOn ? def : null;
 }
 
 // The sector's OWN transmission towers. The outpost's two are the same flag and
@@ -21582,22 +21684,25 @@ function maintainOutpostGarrison() {
   for (const e of enemiesList) if (e && e.isOutpostGarrison && !e.dead && e.hp > 0) live++;
   if (live >= st.garrison) return;
 
-  // Placed on a jittered grid across the yard rather than at random: the yard
-  // has a command post and two masts in it, and a uniform draw put a third of
-  // them inside one or the other.
-  for (let i = live; i < st.garrison; i++) {
-    let placed = null;
-    for (let att = 0; att < 24 && !placed; att++) {
-      const gx = def.x + (((i * 5 + att) % 5) - 2) * 420 + random(-110, 110);
-      const gy = def.y + (((i * 3 + att) % 3) - 1) * 430 + 230 + random(-110, 110);
-      if (!insideFortYard(currentBiome, gx, gy, -180)) continue;
-      const c = new Character(gx, gy, false, "NORMAL");
-      if (c.checkCol(gx, gy)) continue;
-      placed = c;
-    }
-    if (!placed) break;
-    placed.isOutpostGarrison = true;
-    enemiesList.push(placed);
+  // Placed on the fort's own stations rather than at random: the yard has a
+  // command post and two masts in it, and a uniform draw put a third of them
+  // inside one or the other. Fifty regulars need the whole compound, so they
+  // take the same grid the muster forms up on, walked from the far end -- the
+  // muster owns the ground by the door.
+  //
+  // They ROAM: a Character left in its default state patrols, and nothing here
+  // pins them. They are not part of the muster (no isAmbush), they are exempt
+  // from checkAmbushCleared(), and dropping the two masts is what turns them.
+  const pts = fortMusterPoints(def, st.garrison);
+  let put = 0;
+  for (let i = pts.length - 1; i >= 0 && live + put < st.garrison; i--) {
+    const p = pts[i];
+    if (!insideFortYard(currentBiome, p.x, p.y, -160)) continue;
+    const c = new Character(p.x, p.y, false, "NORMAL");
+    if (c.checkCol(p.x, p.y)) continue;
+    c.isOutpostGarrison = true;
+    enemiesList.push(c);
+    put++;
   }
 }
 
@@ -21637,6 +21742,9 @@ function checkOutpostCaptured() {
   st.captured = true;
   st.breached = true;
   st.gateHp = 0;
+  // Taking the compound ends any muster it still had running.
+  st.musterOn = false; st.musterDone = true; st.musterLeft = 0; st.musterWaves = 0;
+  if (window.ambushFort) window.ambushFort = null;
   const got = recruitOutpostGarrison();
   st.garrison = 0;
   // They join the Directive the same way the sector's survivors do: as integers
@@ -21652,35 +21760,65 @@ function checkOutpostCaptured() {
   screenShake = 30;
 }
 
-// The muster that comes out when the door goes in. The sector's own gate ambush
-// is a different size of thing -- fifty armoured on a nine-thousand-unit wall --
-// so this is its own function rather than a parameter on that one, and it
-// writes the FORT's breach flag, not Stick City's.
+// ---------------------------------------------------------------------------
+// THE MUSTER
+//
+// The sector's own gate beat, one scale down and on the fort's own ground.
+// Stick City asks for 150 kills against 50 spawned plus 100 reinforcements;
+// so does this. What differs is where the bodies come from, and that is what
+// the fort's SPAWN POINTS are for: the muster forms up on a ring of stations
+// across the yard, and every reinforcement after that comes in through the
+// north gate and walks the length of the compound.
+// ---------------------------------------------------------------------------
 // How far out NM-0 pulls people into the muster when the door goes in.
-const FORT_MUSTER_R = 3200;
-const FORT_MUSTER_WAVES = 30;
+const FORT_MUSTER_R     = 3200;
+const FORT_MUSTER_WAVES = FORT_MUSTER_TOTAL - FORT_MUSTER_SPAWN;
+
+// THE FORT'S OWN SPAWN POINTS.
+//
+// A jittered grid across the yard, deterministic in its layout and sorted so
+// the first ones handed out are nearest the door the player just blew -- the
+// fight starts at the breach and deepens as they push in, rather than fifty
+// bodies materialising in one corner. Stations inside the command post, under
+// the masts and on top of the guard boxes are dropped by the caller's own
+// collision test rather than being predicted here.
+function fortMusterPoints(def, n) {
+  const out = [];
+  const cols = 9, rows = Math.max(1, Math.ceil(n / cols));
+  const spanX = (FORT_HALF_W - 320) * 2, spanY = (FORT_HALF_H - 300) * 2;
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const fx = cols === 1 ? 0.5 : c / (cols - 1);
+      const fy = rows === 1 ? 0.5 : r / (rows - 1);
+      out.push({ x: def.x - spanX / 2 + fx * spanX + ((c * 37 + r * 91) % 90) - 45,
+                 // From the door northward: fy 0 is the south end of the yard.
+                 y: def.y + FORT_HALF_H - 300 - fy * spanY + ((c * 53 + r * 29) % 90) - 45 });
+    }
+  }
+  return out;
+}
+
+// And where a reinforcement forms up: outside the north gate, inside its
+// doorway, facing the length of the compound. GATE_DOOR_HALF is 300, so the
+// spread has to stay well inside that or half a wave lands in the slab.
+function fortWavePoint(def, aerial) {
+  const gy = def.y - FORT_HALF_H - 260;
+  return { x: def.x + (random() > 0.5 ? 120 : -120) + random(-90, 90),
+           y: aerial ? gy - 60 : gy };
+}
 
 function triggerOutpostAmbush(def) {
   if (!def) return;
   const st = outpostFortState(currentBiome);
+  if (st.musterOn) return;                 // already running
   st.breached = true;
   st.gateHp = 0;
   // Both gates. The breach is the compound's, not one wall's -- and the north
   // one has to be standing open for the waves to come through it.
   for (const b of buildings) if (b.isOutpostGate) b.hp = 0;
 
-  // EVERY LOOSE NM-0 BODY IN THE AREA JOINS THE MUSTER.
-  //
-  // The counter is one number and the clear test is another, and they were
-  // counting different populations: the bar drained only on bodies tagged
-  // isAmbush, while checkAmbushCleared() waits for the field to be clear of
-  // ALL hostiles. So in a liberated sector -- which is where a player finds
-  // this fort -- the rookies and machines already wandering the country had to
-  // be killed to finish the ambush and did nothing to the bar while you killed
-  // them. Conscripting them fixes both ends at once: the bar becomes "what
-  // NM-0 still has on the field", and it reaches zero exactly when the field
-  // does. Only what is near enough to be in the fight, because isAmbush is also
-  // what exempts a body from cullDistantEnemies().
+  // EVERY LOOSE NM-0 BODY IN THE AREA JOINS THE MUSTER. See
+  // conscriptIntoMuster() for why this is a tick as well as a one-shot.
   let conscripted = 0;
   for (const e of enemiesList) {
     if (!e || e.isFriendly || e.dead || e.hp <= 0) continue;
@@ -21691,37 +21829,47 @@ function triggerOutpostAmbush(def) {
     conscripted++;
   }
 
-  // Just inside the door, spread across the yard.
-  const gy = def.y + FORT_HALF_H - 420;
+  // The muster itself, on the fort's stations. Same mix the sector's gate beat
+  // uses -- armour with a little heavy and a little air -- and the same refusal
+  // to stand a body inside geometry that the garrison placer has.
+  const pts = fortMusterPoints(def, FORT_MUSTER_SPAWN);
   let spawned = 0;
-  const push2 = (t, n, spread) => {
-    for (let i = 0; i < n; i++) {
-      const e = new Character(def.x + random(-spread, spread), gy + random(-260, 120), false, t);
-      e.isAmbush = true;
-      e.isOutpost = true;
-      enemiesList.push(e);
-      spawned++;
-    }
-  };
-  push2("ARMORED_STANDARD", 18, 900);
-  push2("ARMORED", 2, 420);
-  push2("AERIAL", 2, 700);
+  for (let i = 0; i < pts.length && spawned < FORT_MUSTER_SPAWN; i++) {
+    const r = i % 10;
+    const t = r === 9 ? "AERIAL" : (r === 8 ? "ARMORED" : "ARMORED_STANDARD");
+    const e = new Character(pts[i].x, pts[i].y, false, t);
+    if (t !== "AERIAL" && e.checkCol(e.x, e.y)) continue;   // a mast, the post, a guard box
+    e.isAmbush = true;
+    e.isOutpost = true;
+    e.state = "CHASE";
+    e.loseSightTimer = 999;
+    enemiesList.push(e);
+    spawned++;
+  }
 
-  // THE BAR IS THE BODY COUNT, and it has to be exactly that or it cannot
-  // reach zero. Stick City's gate ambush sets 150 against 50 spawned plus 100
-  // reinforcements; this was 80 against 22 plus 30, so twenty-eight of the
-  // kills it asked for never existed.
-  const muster = conscripted + spawned + FORT_MUSTER_WAVES;
+  // THE BAR IS THE BODY COUNT, and it has to be exactly that or it cannot reach
+  // zero. Whatever the yard could not hold is added to the wave budget instead,
+  // so the muster is always FORT_MUSTER_TOTAL bodies however many stations were
+  // blocked -- the arithmetic can never be short of the number it asks for.
+  const waves = FORT_MUSTER_WAVES + (FORT_MUSTER_SPAWN - spawned);
+  const muster = conscripted + spawned + waves;
+
+  st.musterOn    = true;
+  st.musterDone  = false;
+  st.musterTotal = muster;
+  st.musterLeft  = muster;
+  st.musterWaves = waves;
+
   if (nm0AmbushActive) {
     nm0AmbushKills += muster;
     window.ambushKillsTotal = (window.ambushKillsTotal || 0) + muster;
-    window.ambushSpawnsRemaining = (window.ambushSpawnsRemaining || 0) + FORT_MUSTER_WAVES;
+    window.ambushSpawnsRemaining = (window.ambushSpawnsRemaining || 0) + waves;
     streakMsgText = "MULTIPLE BREACHES!";
   } else {
     nm0AmbushActive = true;
     nm0AmbushKills = muster;
     window.ambushKillsTotal = muster;
-    window.ambushSpawnsRemaining = FORT_MUSTER_WAVES;
+    window.ambushSpawnsRemaining = waves;
     objectiveTimer = 360;
     // Same contract as a Great Gate breach: it opens a road, it does not finish
     // the sector, so clearing it must not be read as the story beat.
@@ -21730,24 +21878,11 @@ function triggerOutpostAmbush(def) {
   }
   streakMsgTimer = 140;
 
-  // THE WAVES COME IN THROUGH THE NORTH GATE, and they come in from OUTSIDE it.
-  //
-  // The origin has to be the fort rather than the city -- that much was already
-  // true, see spawnAmbushReinforcement() -- but it was the SOUTH end of the
-  // yard, which is where the first muster stands and where the player is
-  // standing to shoot it. A wave then materialised in their lap, three paces
-  // inside the door they had just blown, with nothing between the two. And put
-  // merely at the north END of the yard it is a body appearing out of thin air
-  // against a blank wall, which is why the fort has a north GATE: a wave forms
-  // up outside it, walks in through the doorway, and crosses the whole length
-  // of the compound to reach the player. flank and jitter hold it inside that
-  // doorway -- the map constants' 400+150 is wider than the door.
-  const wy = def.y - FORT_HALF_H - 260;
-  window.ambushOrigin = { x: def.x, y: wy, aerY: wy - 60, flank: 120, jitter: 90 };
-  // And this is the muster the tick below belongs to. It is a position rather
-  // than the def, because the def is rebuilt on every entry and the tick only
-  // ever asks "how far is this body from the fight".
-  window.ambushFort = { x: def.x, y: def.y };
+  // Belt and braces for anything that still goes through the shared spawner:
+  // point it at the north gate too. spawnFortWave() is what actually runs.
+  const wp = fortWavePoint(def, false);
+  window.ambushOrigin = { x: def.x, y: wp.y, aerY: wp.y - 60, flank: 120, jitter: 90 };
+  window.ambushFort   = { x: def.x, y: def.y };
 
   for (const e of enemiesList) {
     if (!e.isFriendly && e.hp > 0 && !e.dead) { e.state = "CHASE"; e.loseSightTimer = 999; }
@@ -21756,7 +21891,7 @@ function triggerOutpostAmbush(def) {
 
 // How thin the muster is allowed to get on the field before NM-0 sends the next
 // one in, and how often that is asked.
-const FORT_WAVE_FLOOR  = 7;
+const FORT_WAVE_FLOOR  = 10;
 const FORT_MUSTER_TICK = 24;
 
 // ---------------------------------------------------------------------------
@@ -21792,19 +21927,17 @@ const FORT_MUSTER_TICK = 24;
 // it puts each body OUTSIDE the north gate, inside that gate's doorway, facing
 // a walk down the whole length of the compound.
 function spawnFortWave() {
-  const fort = window.ambushFort;
-  if (!fort || !nm0AmbushActive || !started || isDead || isWin) return false;
-  if (!(window.ambushSpawnsRemaining > 0)) return false;
-  window.ambushSpawnsRemaining--;
+  const def = activeFortMuster(currentBiome);
+  if (!def || !started || isDead || isWin) return false;
+  const st = outpostFortState(currentBiome);
+  if (!(st.musterWaves > 0)) return false;
+  st.musterWaves--;
+  window.ambushSpawnsRemaining = st.musterWaves;
 
-  // Outside the north wall, lined up with its door. GATE_DOOR_HALF is 300, so
-  // the spread has to stay well inside that or half a wave forms up in the slab.
-  const gy = fort.y - FORT_HALF_H - 260;
-  let r = random(), type = "ARMORED_STANDARD", sy = gy;
-  if (r > 0.9) { type = "AERIAL"; sy = gy - 60; }
-  else if (r > 0.8) { type = "ARMORED"; }
-  const sx = fort.x + (random() > 0.5 ? 120 : -120) + random(-90, 90);
-  const e = new Character(sx, sy, false, type);
+  const r = random();
+  const type = r > 0.9 ? "AERIAL" : (r > 0.8 ? "ARMORED" : "ARMORED_STANDARD");
+  const p = fortWavePoint(def, type === "AERIAL");
+  const e = new Character(p.x, p.y, false, type);
   e.state = "CHASE";
   e.loseSightTimer = 999;
   e.isAmbush = true;
@@ -21825,13 +21958,16 @@ function spawnFortWave() {
 function conscriptIntoMuster(e) {
   if (!e || e.isAmbush || e.isFriendly) return false;
   if (e.isPopulation || e.isOutpostGarrison) return false;   // the ones you are asked to spare
-  const fort = window.ambushFort;
+  const fort = activeFortMuster(currentBiome);
   if (!nm0AmbushActive || !fort) return false;
   const R2 = FORT_MUSTER_R * FORT_MUSTER_R;
   const fx = e.x - fort.x, fy = e.y - fort.y;
-  if (fx * fx + fy * fy <= R2) { e.isAmbush = true; nm0AmbushKills++;
-                                 window.ambushKillsTotal = (window.ambushKillsTotal || 0) + 1;
-                                 return true; }
+  if (fx * fx + fy * fy <= R2) {
+    e.isAmbush = true; nm0AmbushKills++;
+    window.ambushKillsTotal = (window.ambushKillsTotal || 0) + 1;
+    const s0 = outpostFortState(currentBiome); s0.musterLeft++; s0.musterTotal++;
+    return true;
+  }
   // Near the PLAYER also counts -- a fight this size moves, and a body shooting
   // at them is in it wherever the compound happens to be. But only while they
   // are still at the fight: a player who has walked back to the city is not
@@ -21845,13 +21981,34 @@ function conscriptIntoMuster(e) {
   e.isAmbush = true;
   nm0AmbushKills++;
   window.ambushKillsTotal = (window.ambushKillsTotal || 0) + 1;
+  const st = outpostFortState(currentBiome);
+  st.musterLeft++; st.musterTotal++;
   return true;
 }
 
 function maintainOutpostMuster() {
   if (!doTick || !player || !BIOME_ACTIVE || isWin || isDead || killcamMode) return;
-  if (!nm0AmbushActive) return;
-  if (!window.ambushFort) return;
+  const def = activeFortMuster(currentBiome);
+  if (!def) return;
+  const st = outpostFortState(currentBiome);
+
+  // A RELOAD LANDS IN A MUSTER WITH NOTHING ON THE FIELD.
+  //
+  // Nothing about the entity list is saved -- so a save taken mid-fight comes
+  // back with the counter and the budget restored and not one body standing.
+  // "The ambush isn't spawning, it's just empty" is exactly that. The record is
+  // the fight, so re-arm the live globals from it and let the wave floor below
+  // fill the yard back up.
+  if (!nm0AmbushActive) {
+    nm0AmbushActive = true;
+    window.ambushKind = "GATE";
+    objectiveTimer = 360;
+  }
+  nm0AmbushKills = st.musterLeft;
+  window.ambushKillsTotal = st.musterTotal;
+  window.ambushSpawnsRemaining = st.musterWaves;
+  window.ambushFort = { x: def.x, y: def.y };
+
   if (frameCount % FORT_MUSTER_TICK !== 0) return;
 
   let live = 0;
@@ -21869,7 +22026,11 @@ function maintainOutpostMuster() {
   // while nothing arrives. Topping the field up on a cadence is what "spawn
   // waves like the other levels" means from the player's side: there is always
   // something coming, and the budget is what ends it.
-  if (live < FORT_WAVE_FLOOR && window.ambushSpawnsRemaining > 0) spawnFortWave();
+  // Refill toward the floor rather than one at a time: a reload lands with an
+  // empty yard, and one body every twenty-four frames is a trickle, not a
+  // muster. Bounded per tick so a fight is never a wall of bodies either.
+  for (let i = 0; i < 4 && live < FORT_WAVE_FLOOR && st.musterWaves > 0; i++)
+    if (spawnFortWave()) live++;
 }
 
 // ---------------------------------------------------------------------------
@@ -33470,8 +33631,13 @@ function gateIsOpen(b) {
     const st = outpostFortState(currentBiome);
     return !!(st.captured || st.breached);
   }
-  // While the muster is still on the field the breach is not yet a road.
-  if (nm0AmbushActive) return false;
+  // While the muster is still on the field the breach is not yet a road -- but
+  // only THIS SECTOR'S muster. An overworld fort's muster is a fight five
+  // chunks out in the country with nothing to do with the city's gate, and
+  // holding the door on it slammed a gate the player had already paid a rocket
+  // for -- on a reload too, since nm0AmbushActive is saved and the entity list
+  // is not. A gate that has been opened stays open.
+  if (nm0AmbushActive && !activeFortMuster(currentBiome)) return false;
   if (!window.nm0AmbushClearedStatus) return false;
 
   if (currentLevel === 1) {

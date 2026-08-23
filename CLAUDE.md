@@ -184,6 +184,7 @@ blow the gate FROM OUTSIDE → the NM-0 muster comes out and the breach is writt
 `OUTPOST_FORT · outpostFortDef · outpostFortState · buildOutpostFortress · insideFortYard ·
 maintainOutpostGarrison · recruitOutpostGarrison · checkOutpostCaptured ·
 triggerOutpostAmbush · maintainOutpostMuster · conscriptIntoMuster · spawnFortWave ·
+fortMusterPoints · fortWavePoint · activeFortMuster · restoreFortMuster ·
 sectorTowers · gateFaceY`
 
 Five things make it work, and four of them fail silently:
@@ -241,9 +242,47 @@ Five things make it work, and four of them fail silently:
   primitive's real extent, read the way p5 reads it, since a size is not a position — and
   asserts it lands inside the slab.
 
+**THE FIGHT LIVES ON THE FORT'S RECORD, because nothing about the entity list is saved.**
+`outpostFortState()` carries `musterOn · musterDone · musterLeft · musterTotal ·
+musterWaves` alongside the gate and tower hp, and `activeFortMuster()` is the one question
+"is a fort's muster running". Every consumer reads that rather than a `window` global:
+`window.ambushFort` is a *cache* of it, re-armed from the record by
+`maintainOutpostMuster()` and by `restoreFortMuster()`.
+
+It has to be that way because **`loadGame()` re-spawns an active muster at Stick City's
+map constants** — y 4950, just inside the south Great Gate — for any restored
+`nm0AmbushActive`, and that block additionally sits inside `if (window.towersDefeated)`,
+which *wipes every hostile on the field* first. So a save taken inside a fort's muster came
+back with a hundred bodies at the city and an empty compound: both standing reports at
+once — "the ambush isn't spawning at the 2nd fortress, it's just empty" from the fort's
+side and "the waves come out of the beginning fortress" from the city's. That block now
+stands down for a fort muster, and `restoreFortMuster()` runs unconditionally at the end of
+`loadGame()` — after the wipe, and outside it — re-arming the counters from the record and
+seeding the yard to `FORT_WAVE_FLOOR` so the player is not standing in an empty fort while
+the tick fills it a body at a time.
+
+A record written before those fields existed defaults `musterDone` to `breached` — a
+phantom fight the player has already beaten is worse than a quiet fort — **except** when
+the save also says an ambush is running and the fort is breached and untaken, which can
+only be its muster; `_legacyMuster` is the one-shot flag that adopts it, and bumps a
+pre-upgrade garrison count up to `FORT_GARRISON` on the way through.
+
+**AND A FORT'S MUSTER MUST NOT SHUT THE SECTOR'S OWN GATE.** `gateIsOpen()` holds a Great
+Gate shut while `nm0AmbushActive` — which is right for that gate's own muster, since
+holding the door is what stops the player walking away from the fight, and wrong for a
+fight five chunks out in the country. Breaching the fort slammed a gate the player had
+already paid a rocket for, and because `nm0AmbushActive` is saved and the entity list is
+not, a reload did it again. The hold is `nm0AmbushActive && !activeFortMuster()` now.
+
 **The muster is a fight you can finish, and three numbers have to agree for that
 to be true.** The counter, the bodies that will ever exist, and where those bodies come
-from:
+from. The numbers are the sector's own gate beat one scale down — `FORT_MUSTER_TOTAL` 150
+against `FORT_MUSTER_SPAWN` 50 in the yard plus 100 reinforcements, exactly as Stick City
+asks 150 against 50 plus 100 — and `fortMusterPoints()` is the fort's own spawn grid,
+handed out from the door northward so the fight starts at the breach and deepens as the
+player pushes in. Whatever the yard cannot hold (a station inside the command post, under a
+mast, on a guard box) is added to the wave budget instead, so the muster is always 150
+bodies however many stations were blocked.
 
 - **`nm0AmbushKills` is the body count.** Stick City's gate beat asks for 150 against 50
   spawned plus 100 reinforcements; the fort's first build asked for 80 against 22 plus 30,
@@ -323,6 +362,11 @@ the field is clear, and they are right to: that gate is the way *out* of the sec
 holding it is what stops the player walking away from the fight. A fort is the other way
 round — the hole is the way *in*, the fight is behind it, and a player who has just spent a
 rocket on the door should walk through it.
+
+The garrison is **fifty yellow regulars who roam the compound**, and they are not in the
+muster: no `isAmbush`, exempt from `checkAmbushCleared()`, and dropping the two masts is
+what turns them. They take the same station grid the muster forms up on, walked from the
+far end — the muster owns the ground by the door.
 
 The garrison is a **number on the fort, not a headcount**. Walking away lets
 `cullDistantEnemies()` recycle them, which is right; coming back re-forms whoever the

@@ -363,7 +363,7 @@ console.log('\n== the muster keeps being a fight ==');
   probe('frameCount = FORT_MUSTER_TICK * 2; maintainOutpostMuster();');
   const arrived = P('enemiesList.filter(e=>e.isAmbush && !e.dead).length');
   ok('an empty field brings the next wave in with no kill at all',
-     P('window.ambushSpawnsRemaining') === waves1 - 1 && arrived > 0,
+     arrived > 0 && P('window.ambushSpawnsRemaining') === waves1 - arrived,
      arrived + ' arrived, ' + P('window.ambushSpawnsRemaining') + ' of ' + waves1 + ' left');
   ok('and it arrives at the north end of the yard',
      P(`enemiesList.filter(e=>e.isAmbush && !e.dead).every(e => e.y < outpostFortDef(1).y)`) === true);
@@ -425,6 +425,84 @@ console.log('\n== the muster keeps being a fight ==');
      'total +' + (P('window.ambushKillsTotal') - tt) + ', waves ' + P('window.ambushSpawnsRemaining') + ' of ' + tw);
 }
 
+// ---------------------------------------------------------------------------
+// THE FIGHT SURVIVES A RELOAD, AND IT SURVIVES IT AT THE FORT
+//
+// Nothing about the entity list is saved. loadGame() re-spawns an active muster
+// at Stick City's map constants -- y 4950, just inside the south Great Gate --
+// so a save taken inside a fort's muster came back with a hundred bodies at the
+// city and an empty compound. That is BOTH standing reports at once: "the
+// ambush isn't spawning at the 2nd fortress, it's just empty" from the fort's
+// side, and "the waves come out of the beginning fortress" from the city's.
+// The record is the fight, so the fight comes back off the record.
+// ---------------------------------------------------------------------------
+console.log('\n== the fight survives a reload ==');
+{
+  let slot = null;
+  ctx.localStorage = { getItem: () => slot, setItem: (k, v) => { slot = v; }, removeItem: () => { slot = null; } };
+
+  probe(`isStoryMode = true; townsData = {}; window.outpostForts = {};
+         startAtLevel(1); started = true; doTick = true;
+         player.x = outpostFortDef(1).x; player.y = outpostFortDef(1).y + FORT_HALF_H + 420;`);
+  probe('for (let i=0;i<6;i++) triggerExplosion(player.x, player.y - 380, 320, true, true);');
+  flushTimers();
+
+  const rec = P('outpostFortState(1)');
+  ok('the muster is the sector\'s beat one scale down: 150 asked, 50 in the yard',
+     rec.musterTotal === P('FORT_MUSTER_TOTAL') &&
+     rec.musterWaves + P('enemiesList.filter(e=>e.isAmbush && e.isOutpost && !e.dead).length') === rec.musterTotal,
+     JSON.stringify({ total: rec.musterTotal, waves: rec.musterWaves,
+                      yard: P('enemiesList.filter(e=>e.isAmbush && e.isOutpost && !e.dead).length') }));
+  ok('and it is written on the fort\'s own record, which the save carries',
+     rec.musterOn === true && rec.musterDone === false && rec.musterLeft === rec.musterTotal);
+
+  // THE MAIN GATE. A fort's muster is a fight five chunks out in the country
+  // and has nothing to do with the city's door -- but gateIsOpen() held on
+  // nm0AmbushActive, so breaching the fort slammed a Great Gate the player had
+  // already paid a rocket for, and a reload did it again.
+  probe('window.southGateBreachedStatus = true; window.nm0AmbushClearedStatus = true;');
+  ok('a fort muster does not shut a Great Gate the player has already blown',
+     P(`(() => { const g = sectorGates().find(b => b.y > 0); return !!g && gateIsOpen(g); })()`) === true);
+
+  probe('saveGame();');
+  probe(`enemiesList = []; nm0AmbushActive = false; nm0AmbushKills = 0;
+         window.ambushFort = null; window.ambushOrigin = null; window.outpostForts = {};`);
+  probe('loadGame();');
+  ok('the record comes back with the fight still on it',
+     P('outpostFortState(1).musterOn') === true &&
+     P('outpostFortState(1).musterLeft') === rec.musterTotal,
+     JSON.stringify(P('outpostFortState(1)')));
+  const back = P(`(() => { const d = outpostFortDef(1); const a = enemiesList.filter(e => e.isAmbush && !e.dead);
+      return { n: a.length,
+               atFort: a.filter(e => Math.hypot(e.x - d.x, e.y - d.y) < 2000).length,
+               atCity: a.filter(e => Math.hypot(e.x - 200, e.y - 4950) < 2200).length }; })()`);
+  ok('and it re-forms AT THE FORT, not at the city gate',
+     back.n > 0 && back.atFort === back.n && back.atCity === 0, JSON.stringify(back));
+  ok('the bar comes back at the fort\'s own size',
+     P('nm0AmbushActive') === true && P('window.ambushKillsTotal') === rec.musterTotal);
+  ok('and the Great Gate is still open after the reload',
+     P(`(() => { const g = sectorGates().find(b => b.y > 0); return !!g && gateIsOpen(g); })()`) === true);
+
+  // A save written before the fort kept its own record: the muster fields
+  // default to "won", which for a save that says an ambush is running would
+  // hang the bar at a number with nothing on the field to take it down.
+  probe(`isStoryMode = true; townsData = {}; startAtLevel(1); started = true; doTick = true;
+         window.outpostForts = { 1: { breached: true, captured: false, gateHp: 0,
+                                      towerHp: [1600, 1600], garrison: 14 } };
+         nm0AmbushActive = true; nm0AmbushKills = 88; window.ambushKillsTotal = 0;
+         window.ambushSpawnsRemaining = 41; window.ambushKind = "GATE";
+         window.southGateBreachedStatus = true; window.nm0AmbushClearedStatus = true;
+         saveGame();`);
+  probe('enemiesList = []; window.outpostForts = {}; nm0AmbushActive = false; loadGame();');
+  const leg = P('outpostFortState(1)');
+  ok('a save from before the record adopts its stuck muster',
+     leg.musterOn === true && leg.musterLeft === 88 && leg.garrison === P('FORT_GARRISON'),
+     JSON.stringify(leg));
+  const lb = P(`(() => { const d = outpostFortDef(1); const a = enemiesList.filter(e => e.isAmbush && !e.dead);
+      return { n: a.length, atFort: a.filter(e => Math.hypot(e.x - d.x, e.y - d.y) < 2000).length }; })()`);
+  ok('and its fight comes back at the fort too', lb.n > 0 && lb.atFort === lb.n, JSON.stringify(lb));
+}
+
 // Stick City's own musters must be untouched by all of that.
 console.log('\n== the sector\'s own musters are unchanged ==');
 {
@@ -442,7 +520,8 @@ console.log('\n== the garrison ==');
 probe(`player.x = outpostFortDef(1).x; player.y = outpostFortDef(1).y + 300;
        frameCount = 30; doTick = true; maintainOutpostGarrison();`);
 const g0 = P('enemiesList.filter(e=>e.isOutpostGarrison).length');
-ok('yellow regulars muster behind the door', g0 === P('FORT_GARRISON'), g0 + ' placed');
+ok('fifty yellow regulars roam the compound', g0 === P('FORT_GARRISON') && g0 === 50,
+   g0 + ' placed of ' + P('FORT_GARRISON'));
 ok('all of them inside the walls',
    P('enemiesList.filter(e=>e.isOutpostGarrison && insideFortYard(1, e.x, e.y, 0)).length') === g0);
 ok('none of them standing in geometry',
