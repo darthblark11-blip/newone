@@ -62,8 +62,8 @@ ok('it stands clear of the authored core', clearOfCore,
 console.log('   at ' + F.x + ',' + F.y + '  "' + F.name + '"   core ' + JSON.stringify(core));
 
 const kinds = P(`buildings.filter(b=>b.isOutpost).map(b=>b.propType||(b.isOutpostGate?'GATE':b.isTower?'TOWER':b.isWall?'WALL':'?'))`);
-ok('a gate, three walls and two masts', kinds.filter(k => k === 'GATE').length === 1 &&
-   kinds.filter(k => k === 'WALL').length === 3 && kinds.filter(k => k === 'TOWER').length === 2,
+ok('two gates, two flanks and two masts', kinds.filter(k => k === 'GATE').length === 2 &&
+   kinds.filter(k => k === 'WALL').length === 2 && kinds.filter(k => k === 'TOWER').length === 2,
    kinds.join(' '));
 
 // It has to survive the thing that replaces buildings[] every time the player
@@ -142,6 +142,11 @@ console.log('\n== the art fits the gate it is painted on ==');
   const hw = P('FORT_HALF_W'), hh = P('FORT_GATE_H') / 2;
   ok('and so does the outpost gate', of.x <= hw + 80 && of.y <= hh + 80,
      'reached ' + (of.x | 0) + ',' + (of.y | 0) + ' in a ' + hw + 'x' + (hh | 0) + ' half-slab');
+  // And the back one, which is the same slab with its outside face on the
+  // other side -- the stripes and the leaf mirror, so the extent must not grow.
+  const nf = measure(P('FORT_HALF_W') * 2, P('FORT_GATE_H'), { isOutpostGate: true, fortSide: 'N' });
+  ok('and so does the NORTH gate', nf.x <= hw + 80 && nf.y <= hh + 80,
+     'reached ' + (nf.x | 0) + ',' + (nf.y | 0) + ' in a ' + hw + 'x' + (hh | 0) + ' half-slab');
   console.log('   Great Gate reaches ' + (gg.x | 0) + ',' + (gg.y | 0) +
               '   outpost gate reaches ' + (of.x | 0) + ',' + (of.y | 0));
   probe('activeBuildings = buildings;');
@@ -149,14 +154,14 @@ console.log('\n== the art fits the gate it is painted on ==');
 
 console.log('\n== blow the door in ==');
 ok('a fresh gate is at full health, not blown',
-   P('buildings.find(b=>b.isOutpostGate).hp') === P('FORT_GATE_HP'),
-   P('buildings.find(b=>b.isOutpostGate).hp') + ' of ' + P('FORT_GATE_HP'));
+   P('buildings.find(b=>b.isOutpostGate && !b.fortSide).hp') === P('FORT_GATE_HP'),
+   P('buildings.find(b=>b.isOutpostGate && !b.fortSide).hp') + ' of ' + P('FORT_GATE_HP'));
 ok('and the leaf, the stripes and the charge are all on its OUTSIDE face',
-   P('gateFaceY(buildings.find(b=>b.isOutpostGate))') >
-   P('buildings.find(b=>b.isOutpostGate).y'),
-   'face at ' + P('gateFaceY(buildings.find(b=>b.isOutpostGate))') +
-   ' vs centre ' + P('buildings.find(b=>b.isOutpostGate).y'));
-ok('the gate is shut to begin with', P('gateIsOpen(buildings.find(b=>b.isOutpostGate))') === false);
+   P('gateFaceY(buildings.find(b=>b.isOutpostGate && !b.fortSide))') >
+   P('buildings.find(b=>b.isOutpostGate && !b.fortSide).y'),
+   'face at ' + P('gateFaceY(buildings.find(b=>b.isOutpostGate && !b.fortSide))') +
+   ' vs centre ' + P('buildings.find(b=>b.isOutpostGate && !b.fortSide).y'));
+ok('the gate is shut to begin with', P('gateIsOpen(buildings.find(b=>b.isOutpostGate && !b.fortSide))') === false);
 // The charge goes on the OUTSIDE face. A player standing in the country south
 // of it is the only person who can reach this fort.
 probe(`player.x = outpostFortDef(1).x; player.y = outpostFortDef(1).y + FORT_HALF_H + 420;
@@ -178,19 +183,19 @@ ok('clearing it must not be read as the sector\'s own beat', P('window.ambushKin
 // way round: the hole is the way IN, the fight is behind it, and a player who
 // has just spent a rocket on the door walks through it.
 ok('the door is a road the moment it is blown, muster or no muster',
-   P('gateIsOpen(buildings.find(b=>b.isOutpostGate))') === true &&
+   P('gateIsOpen(buildings.find(b=>b.isOutpostGate && !b.fortSide))') === true &&
    P('nm0AmbushActive') === true);
 
 probe(`for (const e of enemiesList) if (!e.isFriendly) { e.hp = 0; e.dead = true; }
        enemiesList = enemiesList.filter(e=>e.isFriendly);
        window.ambushSpawnsRemaining = 0; checkAmbushCleared();
        nm0AmbushActive = false; killcamMode = false;`);
-ok('and still one once they are beaten', P('gateIsOpen(buildings.find(b=>b.isOutpostGate))') === true);
+ok('and still one once they are beaten', P('gateIsOpen(buildings.find(b=>b.isOutpostGate && !b.fortSide))') === true);
 // Movement, rounds and sight all have to agree about where the hole is.
 ok('the doorway is passable at its centre',
-   P(`inOpenGateway(buildings.find(b=>b.isOutpostGate), outpostFortDef(1).x)`) === true);
+   P(`inOpenGateway(buildings.find(b=>b.isOutpostGate && !b.fortSide), outpostFortDef(1).x)`) === true);
 ok('and the wings either side are not',
-   P(`inOpenGateway(buildings.find(b=>b.isOutpostGate), outpostFortDef(1).x + 900)`) === false);
+   P(`inOpenGateway(buildings.find(b=>b.isOutpostGate && !b.fortSide), outpostFortDef(1).x + 900)`) === false);
 
 console.log('\n== the muster is a fight you can finish ==');
 // Three things have to agree or the bar cannot reach zero: the number it asks
@@ -221,8 +226,8 @@ console.log('\n== the muster is a fight you can finish ==');
 flushTimers();
 
   ok('the door loses its collision the moment it is blown',
-     P('gateIsOpen(buildings.find(b=>b.isOutpostGate))') === true &&
-     P('inOpenGateway(buildings.find(b=>b.isOutpostGate), outpostFortDef(1).x)') === true);
+     P('gateIsOpen(buildings.find(b=>b.isOutpostGate && !b.fortSide))') === true &&
+     P('inOpenGateway(buildings.find(b=>b.isOutpostGate && !b.fortSide), outpostFortDef(1).x)') === true);
   ok('the loose NM-0 in the area are conscripted into it',
      P('enemiesList.filter(e=>e.isAmbush && e.eType === "NM0_ROOKIE").length') === 6,
      P('enemiesList.filter(e=>e.isAmbush && e.eType === "NM0_ROOKIE").length') + ' of 6');
@@ -289,8 +294,35 @@ console.log('\n== the muster keeps being a fight ==');
 
   const dy = P('Math.round(window.ambushOrigin.y - outpostFortDef(1).y)');
   ok('the waves come in the fort\'s NORTH gate, not out of the hole in the front',
-     dy < -P('FORT_HALF_H') * 0.5, 'origin dy ' + dy);
+     dy < -P('FORT_HALF_H'), 'origin dy ' + dy + ' vs half-depth ' + P('FORT_HALF_H'));
   ok('and the muster the tick belongs to is written down', P('!!window.ambushFort') === true);
+
+  // A GATE IS SOMETHING YOU COME THROUGH. Put merely at the north END of the
+  // yard a wave is a body appearing out of thin air against a blank wall, which
+  // is why the compound has a back door at all. The waves have to form up
+  // OUTSIDE it and inside its doorway, or half of each one materialises in the
+  // slab -- the map constants spread a wave 400 out with 150 of jitter, which
+  // is wider than a 600-unit door.
+  ok('both gates stand open once the compound is breached',
+     P('buildings.filter(b=>b.isOutpostGate).length') === 2 &&
+     P('buildings.filter(b=>b.isOutpostGate).every(b=>gateIsOpen(b))') === true);
+  probe('for (const e of enemiesList) if (e.isAmbush) { e.dead=true; e.hp=0; } enemiesList = enemiesList.filter(e=>!e.dead);');
+  probe('for (let i=0;i<10;i++) spawnAmbushReinforcement();');
+  ok('a wave forms up outside the north gate, in its doorway',
+     P(`(() => { const g = buildings.find(b=>b.isOutpostGate && b.fortSide === 'N');
+        const a = enemiesList.filter(e=>e.isAmbush && !e.dead);
+        return a.length >= 8 && a.every(e => e.y < g.y - g.h/2) &&
+               a.every(e => Math.abs(e.x - g.x) < GATE_DOOR_HALF); })()`) === true,
+     P(`enemiesList.filter(e=>e.isAmbush && !e.dead).length`) + ' spawned');
+  ok('and the doorway it forms up at is passable',
+     P(`inOpenGateway(buildings.find(b=>b.isOutpostGate && b.fortSide === 'N'), outpostFortDef(1).x)`) === true);
+  // It has to get to the player, or it is a wave that never arrives.
+  probe(`(() => { for (let f = 0; f < 1500; f++) { frameCount++;
+           for (const e of enemiesList) if (e.updateEnemy) e.updateEnemy(); } })()`);
+  const near = P(`Math.round(Math.min.apply(null, enemiesList.filter(e=>e.isAmbush && !e.dead)
+                    .map(e => Math.hypot(e.x - player.x, e.y - player.y))))`);
+  ok('and it crosses the whole compound and reaches the player', near < 900, near + ' units off');
+  probe('for (const e of enemiesList) if (e.isAmbush) { e.dead=true; e.hp=0; } enemiesList = enemiesList.filter(e=>!e.dead);');
 
   // Bodies that arrive AFTER the door goes in, out in the country -- which is
   // where a player actually meets them.
@@ -324,6 +356,21 @@ console.log('\n== the muster keeps being a fight ==');
      arrived + ' arrived, ' + P('window.ambushSpawnsRemaining') + ' of ' + waves1 + ' left');
   ok('and it arrives at the north end of the yard',
      P(`enemiesList.filter(e=>e.isAmbush && !e.dead).every(e => e.y < outpostFortDef(1).y)`) === true);
+
+  // THE TICK ALONE LEAVES A GAP. A body that spawns and dies inside one tick
+  // period is never tagged, so killing it drains nothing and calls no wave --
+  // the same silence the tick was written to end, just narrower. processKill()
+  // conscripts the body it is about to count, so the window closes.
+  probe('for (const e of enemiesList) if (e.isAmbush) { e.dead=true; e.hp=0; } enemiesList = enemiesList.filter(e=>!e.dead);');
+  probe(`(() => { const d = outpostFortDef(1);
+           enemiesList.push(new Character(d.x, d.y + FORT_HALF_H + 700, false, "NM0_ROOKIE")); })()`);
+  const tw = P('window.ambushSpawnsRemaining'), tt = P('window.ambushKillsTotal');
+  probe(`(() => { for (const e of enemiesList) if (e.eType === "NM0_ROOKIE" && !e.dead) {
+           e.hp = 0; e.dead = true; processKill(e.x, e.y, false, e.eType, false); return; } })()`);
+  flushTimers();
+  ok('a body that arrives and dies between two ticks still counts',
+     P('window.ambushKillsTotal') === tt + 1 && P('window.ambushSpawnsRemaining') === tw - 1,
+     'total +' + (P('window.ambushKillsTotal') - tt) + ', waves ' + P('window.ambushSpawnsRemaining') + ' of ' + tw);
 }
 
 // Stick City's own musters must be untouched by all of that.
@@ -377,7 +424,7 @@ ok('and is paid into the Directive as integers',
    P('sectorPopSum(sectorLedger(POP_POOL))') === before + allies,
    'pool ' + before + ' -> ' + P('sectorPopSum(sectorLedger(POP_POOL))'));
 ok('the door stays open once it is theirs',
-   P('gateIsOpen(buildings.find(b=>b.isOutpostGate))') === true);
+   P('gateIsOpen(buildings.find(b=>b.isOutpostGate && !b.fortSide))') === true);
 ok('the sector\'s own masts are STILL standing', P('sectorTowers().filter(b=>b.hp>0).length') === 2);
 
 console.log('\n== and the record is what survives ==');
@@ -386,7 +433,7 @@ console.log('\n== and the record is what survives ==');
 probe('const _s = JSON.stringify(window.outpostForts); window.__fs = _s;');
 probe('startAtLevel(1);');
 ok('a re-entry rebuilds it from the record', P('outpostFortState(1).captured') === true);
-ok('its gate comes back down', P('buildings.find(b=>b.isOutpostGate).hp') === 0);
+ok('its gate comes back down', P('buildings.find(b=>b.isOutpostGate && !b.fortSide).hp') === 0);
 ok('its masts come back down', P('buildings.filter(b=>b.isTower && b.isOutpost).every(b=>b.hp===0)') === true);
 probe(`player.x = outpostFortDef(1).x; player.y = outpostFortDef(1).y;
        frameCount = 30; doTick = true; maintainOutpostGarrison();`);
@@ -424,9 +471,9 @@ probe(`isStoryMode = true; townsData = {}; window.outpostForts = {};
        window.towersDefeated = true;
        startAtLevel(1);`);
 ok('a liberated sector leaves the fort\'s gate at full health',
-   P('buildings.find(b=>b.isOutpostGate).hp') === P('FORT_GATE_HP'),
-   P('buildings.find(b=>b.isOutpostGate).hp') + ' of ' + P('FORT_GATE_HP'));
-ok('and shut', P('gateIsOpen(buildings.find(b=>b.isOutpostGate))') === false);
+   P('buildings.find(b=>b.isOutpostGate && !b.fortSide).hp') === P('FORT_GATE_HP'),
+   P('buildings.find(b=>b.isOutpostGate && !b.fortSide).hp') + ' of ' + P('FORT_GATE_HP'));
+ok('and shut', P('gateIsOpen(buildings.find(b=>b.isOutpostGate && !b.fortSide))') === false);
 ok('while its own Great Gates ARE down',
    P('sectorGates().every(b => b.hp <= 0)') === true,
    P('sectorGates().map(b=>b.hp)').join('/'));
@@ -434,8 +481,8 @@ ok('while its own Great Gates ARE down',
 // coming down rather than at entry.
 probe('recordSouthGateBreached(1);');
 ok('and recording the breach does not take the fort with it',
-   P('buildings.find(b=>b.isOutpostGate).hp') === P('FORT_GATE_HP'),
-   P('buildings.find(b=>b.isOutpostGate).hp') + ' of ' + P('FORT_GATE_HP'));
+   P('buildings.find(b=>b.isOutpostGate && !b.fortSide).hp') === P('FORT_GATE_HP'),
+   P('buildings.find(b=>b.isOutpostGate && !b.fortSide).hp') + ' of ' + P('FORT_GATE_HP'));
 
 console.log('\n' + (fails ? '  ' : '') + (checks - fails) + '/' + checks + ' checks passed');
 process.exit(fails ? 1 : 0);

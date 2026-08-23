@@ -166,7 +166,14 @@ extension point: a sector gets a fortress by having an entry in it.
 It is deliberately the **same** fortress. The gate wall is an `isGovFortress` slab with a
 door in it, so `gateIsOpen()`, `inOpenGateway()`, the bullet and line-of-sight tests,
 `drawSlabFace()` and the explosion branch that breaches a gate all already understand it;
-nothing downstream needed a second case. The sequence is the sector's own, one scale down:
+nothing downstream needed a second case. **It has two of them** — a south gate, which is
+the way in, and a north gate, which is NM-0's back door and the one thing the muster's
+reinforcements come through. `fortSide` is the only field that differs between them, and
+all it decides is which face is the outside one (`gateFaceY()`, the leaf, the hazard
+stripes). A wave has to arrive from somewhere the player is not standing, and the fiction
+"NM-0 is feeding this fight from the back" only reads if there is a back to feed it
+through — put merely at the north *end* of the yard, a wave is a body appearing out of
+thin air against a blank wall. The sequence is the sector's own, one scale down:
 
 ```
 blow the gate FROM OUTSIDE → the NM-0 muster comes out and the breach is written down
@@ -176,7 +183,7 @@ blow the gate FROM OUTSIDE → the NM-0 muster comes out and the breach is writt
 
 `OUTPOST_FORT · outpostFortDef · outpostFortState · buildOutpostFortress · insideFortYard ·
 maintainOutpostGarrison · recruitOutpostGarrison · checkOutpostCaptured ·
-triggerOutpostAmbush · maintainOutpostMuster · sectorTowers · gateFaceY`
+triggerOutpostAmbush · maintainOutpostMuster · conscriptIntoMuster · sectorTowers · gateFaceY`
 
 Five things make it work, and four of them fail silently:
 
@@ -277,10 +284,19 @@ from:
   never seen and never killed, so the bar stalled and the ambush never cleared. Moved to
   the fort it was then put at the *south* end of the yard — which is where the first
   muster stands and where the player is standing to shoot it, so a wave materialised in
-  their lap three paces inside the door they had just blown. At the north wall it arrives
-  at the far end of the compound with the whole length of the yard to cross, which is what
-  a reinforcement coming in the back gate looks like from the door. With no origin set the
-  numbers are exactly the old ones, which is what keeps the sector's own beats unchanged.
+  their lap three paces inside the door they had just blown. It forms up **outside** the
+  north gate now and walks in through the doorway, with the whole length of the compound
+  to cross. An origin may also carry `flank` and `jitter`: the map constants spread a wave
+  400 units out with 150 of jitter, which is right beside a nine-thousand-unit wall and
+  wider than a 600-unit door — half of every wave formed up inside the slab. With no
+  origin set the numbers are exactly the old ones, which is what keeps the sector's own
+  beats unchanged.
+- **And the tick alone leaves a gap.** A body that spawns *and dies* inside one tick
+  period is never tagged, so killing it drains nothing and calls no wave — the same
+  silence the tick was written to end, just narrower. `conscriptIntoMuster()` is one
+  definition read by the tick and by `processKill()`, which runs it on the body it is
+  about to count, so the window closes to nothing. It no-ops unless a fort muster is
+  actually running.
 - **The garrison is exempt from `checkAmbushCleared()`**, exactly as `isPopulation` is and
   for exactly the same reason: they are the people the player is being asked *not* to
   shoot, so requiring them would mean the muster could only be cleared by killing the yard.

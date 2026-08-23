@@ -3393,7 +3393,10 @@ function drawBuildings(list, i0, i1) {
             push();
             // The Great Gates keep their exact original placement; only the
             // outpost, whose door faces the other way, needs its own.
-            const stripeY = b.isOutpostGate ? gateY - gh * 0.14
+            // Always inboard of the leaf, which for a north gate is the other
+            // way round -- the stripes belong on the same face as the door.
+            const stripeY = b.isOutpostGate
+                          ? (b.fortSide === 'N' ? gateY + gh * 0.24 : gateY - gh * 0.14)
                           : (b.y < 0 ? b.y + b.h/2 - 100 : b.y - b.h/2 + 80);
             stroke(255, 200, 0); strokeWeight(Math.max(8, 20 * u)); strokeCap(SQUARE);
             for (let i = -D; i < D; i += 40) line(b.x + i, stripeY, b.x + i + 20, stripeY);
@@ -8846,8 +8849,15 @@ function spawnAmbushReinforcement() {
     const spawnY = org ? org.y  : ((currentLevel === 1) ? 4950 : 1800);
     const aerY   = org ? org.aerY : ((currentLevel === 1) ? 4900 : 1750);
     const orgX   = org ? org.x : 200;
+    // How far either side of the origin a wave forms up. The map constants
+    // spread it 400 out with 150 of jitter, which is right on open ground
+    // beside a nine-thousand-unit wall and wrong at a 600-wide doorway -- half
+    // of every wave would form up INSIDE the gate slab. An origin can narrow
+    // it; with none set the numbers are exactly the old ones.
+    const flank  = org && org.flank  !== undefined ? org.flank  : 400;
+    const jitter = org && org.jitter !== undefined ? org.jitter : 150;
     // 50/50 chance to spawn on the East or West flank of that origin
-    let sX = random() > 0.5 ? orgX + 400 : orgX - 400;
+    let sX = random() > 0.5 ? orgX + flank : orgX - flank;
     let sY = spawnY + random(-50, 50);
     
     let r = random();
@@ -8857,7 +8867,7 @@ function spawnAmbushReinforcement() {
     if (r > 0.9) { type = "AERIAL"; sY = aerY; }
     else if (r > 0.8) { type = "ARMORED"; }
     
-        let e = new Character(sX + random(-150, 150), sY, false, type);
+        let e = new Character(sX + random(-jitter, jitter), sY, false, type);
     e.state = "CHASE";
     e.loseSightTimer = 999;
     e.isAmbush = true; 
@@ -15342,6 +15352,11 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
     
     // NEW: Find the exact enemy that just died using the coordinates we already have!
     let deadGuy = enemiesList.find(e => e.x === x && e.y === y && e.dead);
+    // A fort muster conscripts on a tick, and a body that spawned and died
+    // inside one tick period would slip through it untagged -- which drains
+    // nothing and calls no wave. Ask once more here, on the body itself, and
+    // the window closes. No-ops unless an overworld muster is actually running.
+    if (deadGuy && !deadGuy.isAmbush && typeof conscriptIntoMuster === 'function') conscriptIntoMuster(deadGuy);
     let isAmbushKill = deadGuy ? deadGuy.isAmbush : false;
 
     // One of the sector's own, shot before the towers came down. This is the
@@ -21451,7 +21466,10 @@ function sectorGates() {
 function gateLeafDepth(b) { return Math.max(34, (b.h || 800) * 0.10); }
 function gateFaceY(b) {
   const d = gateLeafDepth(b);
-  if (b.isOutpostGate) return b.y + b.h / 2 - d;
+  // A fort gate faces OUT of the compound, whichever wall it is set in: the
+  // player is outside it and so is everything that comes through it. Stick
+  // City's two face IN, because that is the side its gates are blown from.
+  if (b.isOutpostGate) return b.fortSide === 'N' ? b.y - b.h / 2 : b.y + b.h / 2 - d;
   return b.y < 0 ? b.y + b.h / 2 - d : b.y - b.h / 2;
 }
 
@@ -21469,10 +21487,23 @@ function buildOutpostFortress(biome) {
              isGovFortress: true, isOutpost: true, isOutpostGate: true, details: [],
              hp: st.breached ? 0 : st.gateHp, maxHp: FORT_GATE_HP, hitFlash: 0 });
 
-  // The other three sides. isWall so they take the same extruded sides every
-  // other mass does; over 420 on their long axis, so clearGateApproach() -- which
+  // THE NORTH GATE. The compound's back door, and it is the same object as the
+  // front one -- same slab, same flag, same doorway, same art -- because the
+  // whole point of isGovFortress is that one gate is every gate to every system
+  // downstream. fortSide is the only thing that differs, and all it decides is
+  // which face is the OUTSIDE one.
+  //
+  // It is what the muster's reinforcements come in through. A wave has to
+  // arrive from somewhere the player is not standing, and the fiction "NM-0 is
+  // feeding this fight from the back" only reads if there is a back to feed it
+  // through -- otherwise the bodies simply appear in the yard.
+  out.push({ x: FX, y: FY - H, w: W * 2, h: FORT_GATE_H,
+             isGovFortress: true, isOutpost: true, isOutpostGate: true, fortSide: 'N',
+             details: [], hp: st.breached ? 0 : FORT_GATE_HP, maxHp: FORT_GATE_HP, hitFlash: 0 });
+
+  // The two flanks. isWall so they take the same extruded sides every other
+  // mass does; over 420 on their long axis, so clearGateApproach() -- which
   // pulls the small blocking walls out of an opening -- leaves them standing.
-  out.push({ x: FX,     y: FY - H, w: W * 2, h: FORT_GATE_H, isWall: true, isOutpost: true });
   out.push({ x: FX - W, y: FY,     w: FORT_GATE_H, h: H * 2, isWall: true, isOutpost: true });
   out.push({ x: FX + W, y: FY,     w: FORT_GATE_H, h: H * 2, isWall: true, isOutpost: true });
 
@@ -21628,6 +21659,9 @@ function triggerOutpostAmbush(def) {
   const st = outpostFortState(currentBiome);
   st.breached = true;
   st.gateHp = 0;
+  // Both gates. The breach is the compound's, not one wall's -- and the north
+  // one has to be standing open for the waves to come through it.
+  for (const b of buildings) if (b.isOutpostGate) b.hp = 0;
 
   // EVERY LOOSE NM-0 BODY IN THE AREA JOINS THE MUSTER.
   //
@@ -21690,18 +21724,20 @@ function triggerOutpostAmbush(def) {
   }
   streakMsgTimer = 140;
 
-  // THE WAVES COME IN THE FORT'S BACK DOOR, not out of the hole in the front.
+  // THE WAVES COME IN THROUGH THE NORTH GATE, and they come in from OUTSIDE it.
   //
   // The origin has to be the fort rather than the city -- that much was already
   // true, see spawnAmbushReinforcement() -- but it was the SOUTH end of the
   // yard, which is where the first muster stands and where the player is
   // standing to shoot it. A wave then materialised in their lap, three paces
-  // inside the door they had just blown, with nothing between the two. Put at
-  // the north wall it arrives at the far end of the compound and has the whole
-  // length of the yard to cross, which is what a reinforcement coming in the
-  // back gate looks like from the door.
-  const wy = def.y - FORT_HALF_H + 320;
-  window.ambushOrigin = { x: def.x, y: wy, aerY: wy - 60 };
+  // inside the door they had just blown, with nothing between the two. And put
+  // merely at the north END of the yard it is a body appearing out of thin air
+  // against a blank wall, which is why the fort has a north GATE: a wave forms
+  // up outside it, walks in through the doorway, and crosses the whole length
+  // of the compound to reach the player. flank and jitter hold it inside that
+  // doorway -- the map constants' 400+150 is wider than the door.
+  const wy = def.y - FORT_HALF_H - 260;
+  window.ambushOrigin = { x: def.x, y: wy, aerY: wy - 60, flank: 120, jitter: 90 };
   // And this is the muster the tick below belongs to. It is a position rather
   // than the def, because the def is rebuilt on every entry and the tick only
   // ever asks "how far is this body from the fight".
@@ -21733,33 +21769,45 @@ const FORT_MUSTER_TICK = 24;
 // separate bugs: the rookies not counting, the bar stalling short of zero, and
 // the waves stopping after the first one.
 // ---------------------------------------------------------------------------
+// ONE definition of "this body is in the muster now", read by the tick below
+// and by processKill(). The tick alone leaves a gap: a body that spawns and
+// dies inside one tick period is never tagged, so killing it drains nothing
+// and calls no wave -- which is the same silence the whole tick was written to
+// end, just narrower. processKill() runs this on the body it is about to
+// count, so the window closes to nothing.
+//
+// The arithmetic stays closed both ways: a body joining the muster is one more
+// body to kill AND one more the bar was always going to have to count.
+function conscriptIntoMuster(e) {
+  if (!e || e.isAmbush || e.isFriendly) return false;
+  if (e.isPopulation || e.isOutpostGarrison) return false;   // the ones you are asked to spare
+  const fort = window.ambushFort;
+  if (!nm0AmbushActive || !fort) return false;
+  const R2 = FORT_MUSTER_R * FORT_MUSTER_R;
+  const fx = e.x - fort.x, fy = e.y - fort.y;
+  // Near the fort OR near the player -- a fight this size moves, and a body
+  // shooting at the player is in it wherever the compound happens to be.
+  const near = (fx * fx + fy * fy <= R2) ||
+               (player && (e.x - player.x) * (e.x - player.x) +
+                          (e.y - player.y) * (e.y - player.y) <= R2);
+  if (!near) return false;
+  e.isAmbush = true;
+  nm0AmbushKills++;
+  window.ambushKillsTotal = (window.ambushKillsTotal || 0) + 1;
+  return true;
+}
+
 function maintainOutpostMuster() {
   if (!doTick || !player || !BIOME_ACTIVE || isWin || isDead || killcamMode) return;
   if (!nm0AmbushActive) return;
-  const fort = window.ambushFort;
-  if (!fort) return;
+  if (!window.ambushFort) return;
   if (frameCount % FORT_MUSTER_TICK !== 0) return;
 
-  const R2 = FORT_MUSTER_R * FORT_MUSTER_R;
   let live = 0;
   for (const e of enemiesList) {
     if (!e || e.isFriendly || e.dead || e.hp <= 0) continue;
-    // The two populations that are never part of a muster, for the same reason
-    // checkAmbushCleared() skips them: they are the people the player is being
-    // asked not to shoot.
     if (e.isPopulation || e.isOutpostGarrison) continue;
-    if (e.isAmbush) { live++; continue; }
-    const fx = e.x - fort.x,   fy = e.y - fort.y;
-    const px = e.x - player.x, py = e.y - player.y;
-    // Near the fort OR near the player -- a fight this size moves, and a body
-    // shooting at the player is in it wherever the compound happens to be.
-    if (fx * fx + fy * fy > R2 && px * px + py * py > R2) continue;
-    // The arithmetic stays closed: a body joining the muster is one more body
-    // to kill and one more the bar was always going to have to count.
-    e.isAmbush = true;
-    nm0AmbushKills++;
-    window.ambushKillsTotal = (window.ambushKillsTotal || 0) + 1;
-    live++;
+    if (e.isAmbush || conscriptIntoMuster(e)) live++;
   }
 
   // AND A WAVE DOES NOT WAIT ON A KILL LANDING. processKill() schedules one
