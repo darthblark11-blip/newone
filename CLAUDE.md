@@ -1948,6 +1948,33 @@ The Directive panel exists twice (the overworld trigger and the pause menu). Bot
 **CONTINUE** instead of a greyed-out ASSIGN when the sector has nobody to hand over — which
 used to be a dead end with no way forward and no way out.
 
+### The speed clicker
+
+`holdRepeat(key, pressed)` is the one definition of "this button repeats while held": one
+step on the frame the press lands, then a burst every `HOLD_REPEAT_EVERY` frames once it
+has been held past `HOLD_REPEAT_DELAY`. Read by the Directive's `+`/`−` columns (both
+copies of the panel) and by the travel menu's squad rows, so the two cannot drift apart the
+moment either is tuned. `uiPointer()` is the matching "where is the pointer and is it
+down", mouse or touch alike.
+
+Two things about it are load-bearing:
+
+- **A repeating button cannot live in `touchStarted()`.** A finger held still raises no
+  further tap event, so the step has to be driven from the **draw pass**, which is the only
+  thing running every frame while a menu is up. That is why the Directive's columns were
+  already there.
+- **Which means the tap handlers must NOT also step it.** `touchStarted()` and
+  `mousePressed()` each carried their own copy of the escort `+`/`−`, and left in they land
+  on the same frame as the draw pass's first step — so a single tap moves the count by two.
+  Both are gone; `check-frame.js` asserts a tap moves it by exactly one, that a hold
+  repeats, that the minus comes back to zero, and that a hold cannot deploy more soldiers
+  than the sector has.
+
+Writing to `window.militaryToBring*` from the draw block is safe in a way writing to
+`window.pop*` is not: the escort counts are plain state, not the Directive's edit buffer,
+so nothing reloads them at the top of the same block (see **`window.pop*` is an edit
+buffer, not state**).
+
 ### The sector population (Sectors 1 and 2, story mode)
 
 **This is not the wanderer system and must never be routed through it.**
@@ -3367,7 +3394,7 @@ node tools/check-corpse.js         # the settle: variation, impact direction, an
 node tools/check-damage-feedback.js # what the player is told when hit, shield up vs down
 node tools/check-depth.js          # depth order, and how a mass projects
 node tools/check-lighting.js       # the deferred rig: uniforms resolve, nothing allocates per frame
-node tools/check-frame.js          # the real draw() in real Chromium: controls survive, and push/pop balances
+node tools/check-frame.js          # the real draw() in real Chromium: controls survive, push/pop balances, held buttons repeat
 node tools/check-fortress.js       # the overworld fortress: breach, muster, garrison, capture, save
 GAME_JS=/path/to/other.js node tools/check-generation.js    # compare against a baseline
 ```

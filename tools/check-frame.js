@@ -227,6 +227,54 @@ window.__run = function (frames) {
     activeBuildings = saveActive;
   }
 
+  // ---------------------------------------------------------------------
+  // THE SPEED CLICKER
+  //
+  // A +/- that repeats while held cannot be driven from touchStarted() --
+  // a finger held still raises no further tap -- so it runs in the draw pass,
+  // and that is only reachable through the real draw(). Two things have to
+  // hold: a TAP steps by exactly one (the tap handlers must not also step it,
+  // or a single press counts twice), and a HOLD repeats.
+  // ---------------------------------------------------------------------
+  window.__hold = {};
+  try {
+    const runMenu = (frames, downFor) => {
+      for (let f = 0; f < frames; f++) {
+        mouseIsPressed = f < downFor;
+        window.__stage = 'menu frame ' + f;
+        redraw();
+      }
+      mouseIsPressed = false;
+    };
+    const openTravel = () => {
+      isPaused = true; inTravelMenu = true; travelDirection = 'SOUTH';
+      inWorldBuildingMenu = false; inOverworldView = false;
+      window.popMilitaryM = 40; window.popMilitaryF = 40;
+      window.militaryToBringM = 0; window.militaryToBringF = 0;
+      window._holdTimers = {};
+      // The male '+' box: width/2 + 110 .. +135, y 270 .. 300.
+      mouseX = width / 2 + 122; mouseY = 285;
+    };
+
+    openTravel(); runMenu(3, 1);
+    window.__hold.tap = window.militaryToBringM;
+
+    openTravel(); runMenu(60, 60);
+    window.__hold.held = window.militaryToBringM;
+
+    // The '-' has to come back down the same way, and stop at zero.
+    mouseX = width / 2 - 107;
+    window._holdTimers = {}; runMenu(60, 60);
+    window.__hold.down = window.militaryToBringM;
+
+    // And it must never exceed what the sector actually has.
+    openTravel(); window.popMilitaryM = 3;
+    runMenu(200, 200);
+    window.__hold.capped = window.militaryToBringM;
+
+    isPaused = false; inTravelMenu = false; travelDirection = null;
+  } catch (e) { rec('speed clicker', e); }
+
   window.__done = true;
 };
 </script>`;
@@ -244,7 +292,7 @@ window.__run = function (frames) {
 
   const out = await pg.evaluate(() => ({
     log: window.__log, errs: window.__errs, done: window.__done, stage: window.__stage,
-    guard: window.__guard, bal: window.__bal
+    guard: window.__guard, bal: window.__bal, hold: window.__hold
   }));
   await browser.close();
 
@@ -275,6 +323,16 @@ window.__run = function (frames) {
   console.log('   authored solids drawn: ' + bal.n);
   ok('every authored drawBuildings() branch leaves push/pop balanced',
      bal.n > 500 && bal.bad.length === 0, bal.bad.join('\n     ') || ('only ' + bal.n + ' drawn'));
+
+  const h = out.hold || {};
+  console.log('   speed clicker: tap ' + h.tap + '  held 60f ' + h.held +
+              '  back down ' + h.down + '  capped at ' + h.capped);
+  ok('a tap on the escort +/- steps by exactly one', h.tap === 1,
+     'a single press moved it by ' + h.tap + ' — both the draw pass and a tap handler are stepping it');
+  ok('holding it repeats', h.held > 5, 'held for 60 frames and moved ' + h.held);
+  ok('and holding the minus brings it back to zero', h.down === 0, 'left at ' + h.down);
+  ok('a hold cannot deploy more soldiers than the sector has', h.capped === 3,
+     'brought ' + h.capped + ' of 3 available');
 
   console.log((fails ? '  ' : '') + (checks - fails) + '/' + checks + ' checks passed');
   process.exit(fails ? 1 : 0);

@@ -6482,16 +6482,11 @@ viewBottom = camY + height / zoom + shakePad;
           {name: "ARCHITECTURE", desc: "Increases Physicality & Build Speed", cM: window.popArchitectureM, cF: window.popArchitectureF, y: 445, id: 3, xp: window.archXP, lvl: window.archLvl}
       ];
 
-      // HOLD-TO-SPEED-UP LOGIC
-      let isPressing = mouseIsPressed || (typeof touches !== 'undefined' && touches.length > 0);
-      let mx = typeof touches !== 'undefined' && touches.length > 0 ? touches[0].x : mouseX;
-      let my = typeof touches !== 'undefined' && touches.length > 0 ? touches[0].y : mouseY;
-
-      if (!isPressing) window.govHoldTimer = 0;
-      else if (window.govHoldTimer === undefined) window.govHoldTimer = 1;
-      else window.govHoldTimer++;
-
-      let triggerAction = (window.govHoldTimer === 1) || (window.govHoldTimer > 20 && window.govHoldTimer % 4 === 0);
+      // HOLD-TO-SPEED-UP LOGIC -- see holdRepeat(), which the travel menu's
+      // squad rows read as well, so the two panels cannot drift apart.
+      const _gp = uiPointer();
+      let mx = _gp.x, my = _gp.y;
+      let triggerAction = holdRepeat('gov', _gp.down);
 
       for (let d of depts) {
           fill(40); stroke(200); strokeWeight(2); rect(width/2 - 200, d.y - 5, 400, 70, 8);
@@ -6621,6 +6616,26 @@ viewBottom = camY + height / zoom + shakePad;
           text("SQUAD DEPLOYMENT", width/2, 200);
           textSize(14); fill(150); 
           text(`AVAILABLE MILITARY: ♂ ${window.popMilitaryM}   ♀ ${window.popMilitaryF}`, width/2, 230);
+
+          // HOLD TO SPEED-ASSIGN, exactly as the Directive's columns do -- same
+          // helper, same cadence. Marching thirty soldiers out used to be thirty
+          // separate taps, and the button is the same shape as the ones that
+          // already repeat, so a player has every reason to expect it to.
+          //
+          // Driven from HERE rather than from touchStarted()/mousePressed(),
+          // because a finger held still raises no further tap event. That is
+          // also why the two tap handlers no longer step these buttons: they
+          // would land on the same frame as this block's first step and count a
+          // single tap twice.
+          const _tp = uiPointer();
+          if (holdRepeat('travel', _tp.down)) {
+              const _tx = _tp.x, _ty = _tp.y;
+              const hit = (x0, y0) => _tx > x0 && _tx < x0 + 25 && _ty > y0 && _ty < y0 + 30;
+              if (hit(width/2 - 120, 270) && window.militaryToBringM > 0)                    { window.militaryToBringM--; sfx.hitArmor(); }
+              if (hit(width/2 + 110, 270) && window.militaryToBringM < window.popMilitaryM)   { window.militaryToBringM++; sfx.reload(); }
+              if (hit(width/2 - 120, 330) && window.militaryToBringF > 0)                    { window.militaryToBringF--; sfx.hitArmor(); }
+              if (hit(width/2 + 110, 330) && window.militaryToBringF < window.popMilitaryF)   { window.militaryToBringF++; sfx.reload(); }
+          }
 
           // MALE ROW
           fill(40); stroke(200); strokeWeight(2); rect(width/2 - 150, 260, 300, 50, 8);
@@ -6894,16 +6909,11 @@ if (swordPickedUp || window.pickaxeOwned) {
           {name: "ARCHITECTURE", desc: "Increases Physicality & Build Speed", cM: window.popArchitectureM, cF: window.popArchitectureF, y: 445, id: 3, xp: window.archXP, lvl: window.archLvl}
       ];
 
-      // HOLD-TO-SPEED-UP LOGIC
-      let isPressing = mouseIsPressed || (typeof touches !== 'undefined' && touches.length > 0);
-      let mx = typeof touches !== 'undefined' && touches.length > 0 ? touches[0].x : mouseX;
-      let my = typeof touches !== 'undefined' && touches.length > 0 ? touches[0].y : mouseY;
-
-      if (!isPressing) window.govHoldTimer = 0;
-      else if (window.govHoldTimer === undefined) window.govHoldTimer = 1;
-      else window.govHoldTimer++;
-
-      let triggerAction = (window.govHoldTimer === 1) || (window.govHoldTimer > 20 && window.govHoldTimer % 4 === 0);
+      // HOLD-TO-SPEED-UP LOGIC -- see holdRepeat(), which the travel menu's
+      // squad rows read as well, so the two panels cannot drift apart.
+      const _gp = uiPointer();
+      let mx = _gp.x, my = _gp.y;
+      let triggerAction = holdRepeat('gov', _gp.down);
 
       for (let d of depts) {
           fill(40); stroke(200); strokeWeight(2); rect(width/2 - 200, d.y - 5, 400, 70, 8);
@@ -18281,13 +18291,9 @@ else if (inTravelMenu) {
               travelDirection = "SOUTH"; sfx.charge();
           }
       } else {
-          // Male Military +/-
-          if (mx > width/2 - 120 && mx < width/2 - 95 && my > 270 && my < 300 && window.militaryToBringM > 0) { window.militaryToBringM--; sfx.hitArmor(); }
-          if (mx > width/2 + 110 && mx < width/2 + 135 && my > 270 && my < 300 && window.militaryToBringM < window.popMilitaryM) { window.militaryToBringM++; sfx.reload(); }
-          
-          // Female Military +/-
-          if (mx > width/2 - 120 && mx < width/2 - 95 && my > 330 && my < 360 && window.militaryToBringF > 0) { window.militaryToBringF--; sfx.hitArmor(); }
-          if (mx > width/2 + 110 && mx < width/2 + 135 && my > 330 && my < 360 && window.militaryToBringF < window.popMilitaryF) { window.militaryToBringF++; sfx.reload(); }
+          // The +/- rows are stepped by the draw pass, through holdRepeat(),
+          // so that holding one repeats. Handling them here as well would step
+          // them twice on the frame a tap lands.
 
           // DEPART BUTTON -> begin the Directive extraction into the target biome
           if (mx > width/2 - 120 && mx < width/2 + 120 && my > height - 90 && my < height - 40) {
@@ -18383,13 +18389,9 @@ if (inTravelMenu) {
               travelDirection = "SOUTH"; sfx.charge();
           }
       } else {
-          // Male Military +/-
-          if (mx > width/2 - 120 && mx < width/2 - 95 && my > 270 && my < 300 && window.militaryToBringM > 0) { window.militaryToBringM--; sfx.hitArmor(); }
-          if (mx > width/2 + 110 && mx < width/2 + 135 && my > 270 && my < 300 && window.militaryToBringM < window.popMilitaryM) { window.militaryToBringM++; sfx.reload(); }
-          
-          // Female Military +/-
-          if (mx > width/2 - 120 && mx < width/2 - 95 && my > 330 && my < 360 && window.militaryToBringF > 0) { window.militaryToBringF--; sfx.hitArmor(); }
-          if (mx > width/2 + 110 && mx < width/2 + 135 && my > 330 && my < 360 && window.militaryToBringF < window.popMilitaryF) { window.militaryToBringF++; sfx.reload(); }
+          // The +/- rows are stepped by the draw pass, through holdRepeat(),
+          // so that holding one repeats. Handling them here as well would step
+          // them twice on the frame a tap lands.
 
           // DEPART BUTTON -> begin the Directive extraction into the target biome
           if (mx > width/2 - 120 && mx < width/2 + 120 && my > height - 90 && my < height - 40) {
@@ -19380,6 +19382,37 @@ function issueSquadCommand(cmd, dir = "NORTH") {
     isPaused = false; 
     sfx.charge();
 }
+// ---------------------------------------------------------------------------
+// THE SPEED CLICKER
+//
+// The Directive's +/- buttons repeat while held: one step on the frame the
+// press lands, then a burst once it has been held long enough to read as a hold
+// rather than a tap. Assigning eighty citizens one tap at a time is eighty
+// taps, and the travel menu's squad rows are the same shape of button with the
+// same problem -- so the cadence is ONE definition read by both, rather than a
+// second copy that drifts the moment either is tuned.
+//
+// It is keyed because the timer must not carry across panels: a press held
+// through a screen change would otherwise arrive on the new one already in its
+// repeat burst.
+const HOLD_REPEAT_DELAY = 20;   // frames before a tap becomes a hold
+const HOLD_REPEAT_EVERY = 4;    // and how often it fires after that
+function holdRepeat(key, pressed) {
+  if (!window._holdTimers) window._holdTimers = {};
+  const t = window._holdTimers;
+  if (!pressed) { t[key] = 0; return false; }
+  t[key] = (t[key] || 0) + 1;
+  return t[key] === 1 || (t[key] > HOLD_REPEAT_DELAY && t[key] % HOLD_REPEAT_EVERY === 0);
+}
+
+// Where the pointer is and whether it is down, mouse or touch alike. A held
+// finger raises no further touchStarted(), which is exactly why a repeating
+// button has to be driven from the draw pass rather than from the tap handlers.
+function uiPointer() {
+  const t = (typeof touches !== 'undefined' && touches.length > 0) ? touches[0] : null;
+  return { x: t ? t.x : mouseX, y: t ? t.y : mouseY, down: !!(mouseIsPressed || t) };
+}
+
 function drawMenuBtn(txt, x, y, w, h) {
     fill(255, 200, 0); stroke(200, 100, 0); strokeWeight(2);
     rect(x - w/2, y - h/2, w, h, 8);
