@@ -503,6 +503,103 @@ console.log('\n== the fight survives a reload ==');
   ok('and its fight comes back at the fort too', lb.n > 0 && lb.atFort === lb.n, JSON.stringify(lb));
 }
 
+// ---------------------------------------------------------------------------
+// THE LIBERATION BEAT
+//
+// The sector's own loop, one scale down: masts down -> the freed regulars say
+// what the masts were doing to them -> the Directive -> the overworld. Its own
+// state rather than a mode on inTownCutscene, because that scene runs
+// clampToSector() on its teleport and would drag the player back to the city
+// from a fort five chunks out in the country.
+// ---------------------------------------------------------------------------
+console.log('\n== the liberation beat ==');
+{
+  probe(`isStoryMode = true; townsData = {}; window.outpostForts = {}; window.storyBeats = {};
+         startAtLevel(1); started = true; doTick = true;
+         player.x = outpostFortDef(1).x; player.y = outpostFortDef(1).y + FORT_HALF_H + 420;`);
+  probe('for (let i=0;i<6;i++) triggerExplosion(player.x, player.y - 380, 320, true, true);');
+  flushTimers();
+  probe('player.x = outpostFortDef(1).x; player.y = outpostFortDef(1).y + 300; frameCount = 30; maintainOutpostGarrison();');
+
+  // Masts down MID-FIGHT is a legitimate way to take the fort, and the beat has
+  // to wait for the field the same way the sector's tower cutscene waits on
+  // !nm0AmbushActive -- otherwise the player is reading speech bubbles while
+  // the muster shoots them.
+  probe('for (const b of buildings) if (b.isTower && b.isOutpost) b.hp = 0; checkOutpostCaptured();');
+  ok('the masts turn the whole garrison', P('enemiesList.filter(e=>e.isOutpostGarrison && e.isFriendly).length') === P('FORT_GARRISON'),
+     P('enemiesList.filter(e=>e.isOutpostGarrison && e.isFriendly).length') + ' of ' + P('FORT_GARRISON'));
+  ok('but the beat waits while the muster is still shooting',
+     P('inFortCutscene') === false && P('!!outpostFortState(1).cutscenePending') === true);
+  ok('and taking the fort does not switch its muster off under the sector\'s gate',
+     P('outpostFortState(1).musterOn') === true && P('outpostFortState(1).musterWaves') === 0,
+     'waves ' + P('outpostFortState(1).musterWaves') + ', on ' + P('outpostFortState(1).musterOn'));
+
+  probe('enemiesList = enemiesList.filter(e => e.isFriendly || e.isOutpostGarrison || e.isPopulation);');
+  probe('checkAmbushCleared();');
+  ok('clearing the field hands the beat to the killcam, tagged as the FORT\'s',
+     P('killcamMode') === true && P('!!window.fortMusterJustCleared') === true &&
+     P('outpostFortState(1).musterDone') === true);
+
+  // Now the ordinary order: the fight is over, and the masts come down after.
+  probe(`isStoryMode = true; townsData = {}; window.outpostForts = {}; window.storyBeats = {};
+         startAtLevel(1); started = true; doTick = true;
+         player.x = outpostFortDef(1).x; player.y = outpostFortDef(1).y + FORT_HALF_H + 420;`);
+  probe('for (let i=0;i<6;i++) triggerExplosion(player.x, player.y - 380, 320, true, true);');
+  flushTimers();
+  probe('player.x = outpostFortDef(1).x; player.y = outpostFortDef(1).y + 300; frameCount = 30; maintainOutpostGarrison();');
+  probe(`enemiesList = enemiesList.filter(e => e.isFriendly || e.isOutpostGarrison || e.isPopulation);
+         checkAmbushCleared(); killcamMode = false; window.fortMusterJustCleared = false; nm0AmbushActive = false;`);
+  probe('for (const b of buildings) if (b.isTower && b.isOutpost) b.hp = 0; checkOutpostCaptured();');
+
+  ok('the beat runs once the field is clear', P('inFortCutscene') === true && P('fortPhase') === 1);
+  ok('and its speakers are the fort\'s OWN freed regulars, standing in its yard',
+     P(`!!fortSpeaker1 && fortSpeaker1.isOutpostGarrison && fortSpeaker1.isFriendly &&
+        insideFortYard(1, fortSpeaker1.x, fortSpeaker1.y, 300)`) === true);
+  ok('the controls are locked while it runs',
+     P('(function(){ doTick = (!killcamMode) && !isPaused && !inDarchonCall && !inTownCutscene && !inFarmCutscene && !inFarmPostCutscene && !inPostAmbushCutscene && !inFortCutscene; return doTick; })()') === false);
+
+  // A save taken mid-scene: the speakers are object references into a list that
+  // is not saved, so they are re-cast on load or the next frame reads .x off null.
+  {
+    let slot = null;
+    ctx.localStorage = { getItem: () => slot, setItem: (k, v) => { slot = v; }, removeItem: () => { slot = null; } };
+    probe('fortPhase = 4; saveGame();');
+    probe('fortSpeaker1 = null; fortSpeaker2 = null; inFortCutscene = false; fortPhase = 0;');
+    probe('loadGame();');
+    // Either the scene resumes with a live speaker, or -- if the freed
+    // regulars have already been paid into the Directive and let go, so there
+    // is nobody left in the yard to say the lines -- it completes. What it must
+    // never do is come back running with a null speaker, which reads .x off
+    // null on the very next frame.
+    ok('a save taken mid-scene resumes or completes, never with a dead speaker',
+       (P('inFortCutscene') === true && P('!!fortSpeaker1') === true && P('fortPhase') >= 3) ||
+       (P('inFortCutscene') === false && P('storyBeatDone("FORT_1")') === true),
+       'running ' + P('inFortCutscene') + ', phase ' + P('fortPhase') + ', speaker ' + P('!!fortSpeaker1'));
+  }
+
+  // Tap through to the end. finishFortCapture() is the last phase, and it is
+  // the only place the fort's loop ends: the Directive, then the overworld.
+  probe(`inFortCutscene = true; fortPhase = 3;
+         (function(){ for (let i = 0; i < 3; i++) {
+            if (fortPhase >= 3 && fortPhase < 5) fortPhase++;
+            else if (fortPhase === 5) finishFortCapture(); } })()`);
+  ok('the beat ends in the Directive, not in the middle of a field',
+     P('inFortCutscene') === false && P('inWorldBuildingMenu') === true && P('inOverworldView') === false);
+  ok('and it is written down so it can never replay',
+     P('storyBeatDone("FORT_" + currentLevel)') === true);
+  ok('the freed regulars are in the pool, unassigned and assignable',
+     P('window.popUnassignedM + window.popUnassignedF') >= P('FORT_GARRISON'),
+     P('window.popUnassignedM') + 'M / ' + P('window.popUnassignedF') + 'F unassigned');
+  ok('and they went into the undivided pool, not a sector of their own',
+     P('sectorPopSum(sectorLedger(POP_POOL))') >= P('FORT_GARRISON'),
+     P('sectorPopSum(sectorLedger(POP_POOL))') + ' in the pool');
+
+  // A second capture must not stage the scene again.
+  probe('inFortCutscene = false; fortPhase = 0; inWorldBuildingMenu = false;');
+  probe('startFortCutscene(outpostFortDef(1));');
+  ok('a fort already liberated does not replay its beat', P('inFortCutscene') === false);
+}
+
 // Stick City's own musters must be untouched by all of that.
 console.log('\n== the sector\'s own musters are unchanged ==');
 {
@@ -546,6 +643,10 @@ ok('and none of them is the fort\'s', P('sectorTowers().filter(b=>b.isOutpost).l
 ok('the sector\'s objective is untouched by any of this',
    P('!window.towersDefeated') && P('sectorTowers().filter(b=>b.hp>0).length') === 2);
 
+// Taking the fort now runs its liberation beat, which ends in the Directive --
+// and that pays the SECTOR's one-time survivor grant as well. Spend that latch
+// first so what is measured here is the fort's own contribution and nothing else.
+probe('grantSectorSurvivors(1); markStoryBeat("FORT_1");');
 const before = P('sectorPopSum(sectorLedger(POP_POOL))');
 probe('for (const b of buildings) if (b.isTower && b.isOutpost) b.hp = 0; checkOutpostCaptured();');
 ok('dropping both masts takes the fort', P('outpostFortState(1).captured') === true);

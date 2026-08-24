@@ -94,6 +94,11 @@ let isPaused = false;
 let pauseMenuState = "MAIN";
 let objectiveTimer = 0;
 let inTownCutscene = false, townPhase = 0, townTimer = 0, townSpeaker1 = null, townSpeaker2 = null;
+// The overworld fortress's own liberation beat. Its own state rather than a
+// mode on the town cutscene: that one teleports the player onto a speaker
+// INSIDE the sealed sector (clampToSector), and this one happens five chunks
+// out in the country where that clamp would drag them back to the city.
+let inFortCutscene = false, fortPhase = 0, fortTimer = 0, fortSpeaker1 = null, fortSpeaker2 = null;
 let nm0AmbushActive = false, nm0AmbushKills = 0;
 let isHardMode = false, selectingDifficulty = false, pendingLevel = 1, pendingStoryMode = false;
 let levelSelectStory = false;   // debug: numbered level shortcuts launch story mode
@@ -1249,6 +1254,7 @@ if (isStoryMode) {
     window.ambushKind = null;
     window.ambushFort = null;
     inTownCutscene = false;
+    inFortCutscene = false; fortPhase = 0; fortSpeaker1 = null; fortSpeaker2 = null;
     inFarmCutscene = false;
     farmAmbushActive = false;
     inFarmPostCutscene = false;
@@ -5616,7 +5622,31 @@ function draw() {
 
         let towersAlive = sectorTowers().filter(b => b.hp > 0).length;
 
-        if (currentLevel === 1 && (window.southGateBreachedStatus || window.northGateBreachedStatus)) {
+        // AN OVERWORLD FORT'S MUSTER, which is the sector's gate beat one scale
+        // down and must not be mistaken for it: clearedKind is "GATE" for both.
+        // The fort's loop ends at the Directive exactly as a sector's does --
+        // whichever way round the player does it. Masts already down means the
+        // capture beat has run and this is the last piece; masts still standing
+        // means the yard is theirs and the masts are the objective.
+        if (window.fortMusterJustCleared) {
+            window.fortMusterJustCleared = false;
+            const _fdef = outpostFortDef(currentBiome);
+            const _fst  = outpostFortState(currentBiome);
+            camX = player.x - (width / 2) / zoom;
+            camY = player.y - (height / 2) / zoom;
+            if (_fst.captured) {
+                streakMsgText = (_fdef ? _fdef.name : "FORT") + " SECURED";
+                streakMsgTimer = 180;
+                // The masts came down while the muster was still shooting, so
+                // its beat was deferred to here. Run it now; finishFortCapture()
+                // is its own last phase.
+                if (!startFortCutscene(_fdef)) finishFortCapture();
+            } else {
+                streakMsgText = "YARD CLEARED — DROP THE MASTS";
+                streakMsgTimer = 180;
+                objectiveTimer = 300;
+            }
+        } else if (currentLevel === 1 && (window.southGateBreachedStatus || window.northGateBreachedStatus)) {
             // GREAT GATE AMBUSH — a gate came down and its garrison is dead.
             // Checked ahead of the route split so a savior run does not fall
             // through and replay the town-liberation cutscene for every gate.
@@ -5712,7 +5742,7 @@ function draw() {
     // STANDARD LEVEL FINISH FALLBACK
     } else if (isStoryMode && currentLevel >= 1 && currentLevel <= 4) {
         openDirectiveWithGrant(currentLevel);
-    } else if (inTownCutscene || inFarmCutscene || inFarmPostCutscene || inPostAmbushCutscene || inWorldBuildingMenu) {
+    } else if (inTownCutscene || inFarmCutscene || inFarmPostCutscene || inPostAmbushCutscene || inFortCutscene || inWorldBuildingMenu) {
     
     // Only run the camera lerp for the specific cutscenes that need it
     
@@ -5725,7 +5755,7 @@ function draw() {
         }
 } else {
     // OVERRIDE FOR CUTSCENES
-    if (inTownCutscene || inFarmCutscene || inFarmPostCutscene) {
+    if (inTownCutscene || inFarmCutscene || inFarmPostCutscene || inFortCutscene) {
         zoom = lerp(zoom, 1.4, 0.05); 
         camX = lerp(camX, killcamTarget.x - (width / 2) / zoom, 0.08); 
         camY = lerp(camY, killcamTarget.y - (height / 2) / zoom, 0.08);
@@ -5750,7 +5780,7 @@ function draw() {
 }
 
 }
-doTick = (!killcamMode || (frameCount % 4 === 0)) && !isPaused && !inDarchonCall && !inTownCutscene && !inFarmCutscene && !inFarmPostCutscene && !inPostAmbushCutscene; 
+doTick = (!killcamMode || (frameCount % 4 === 0)) && !isPaused && !inDarchonCall && !inTownCutscene && !inFarmCutscene && !inFarmPostCutscene && !inPostAmbushCutscene && !inFortCutscene; 
 // Screen shake translates the whole world INSIDE the zoom, so during a shake
 // the camera really sees up to screenShake/zoom world units past these edges.
 // Culling to the un-shaken rect let terrain chunks and props at the border
@@ -6271,6 +6301,40 @@ viewBottom = camY + height / zoom + shakePad;
       }
 
       if (townPhase >= 3 && townPhase <= 5) { fill(255); textAlign(CENTER); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40); }
+  }
+
+  // THE FORT'S OWN LIBERATION BEAT -- the sector's tower cutscene one scale
+  // down. Same shape: hold, teleport onto the speaker, three lines, hand off to
+  // the Directive. No clampToSector: this happens out in the country, and that
+  // clamp would drag the player back to the city.
+  if (inFortCutscene) {
+      leftStick.active = false; rightStick.active = false; meleeInputHeld = false; cannonInputHeld = false;
+      fill(0); noStroke(); rect(0, 0, width, height * 0.12); rect(0, height - (height * 0.12), width, height * 0.12);
+
+      // A speaker is an object reference into enemiesList, and the entity list
+      // is not saved -- nor is it safe from a cull. If one goes, end the scene
+      // rather than read .x off null on the next frame.
+      if (!fortSpeaker1 || fortSpeaker1.dead || fortSpeaker1.hp <= 0) { finishFortCapture(); }
+      else if (fortPhase === 1) { fortTimer--; if (fortTimer <= 0) fortPhase = 2; }
+      else if (fortPhase === 2) {
+          const ang = atan2(player.y - fortSpeaker1.y, player.x - fortSpeaker1.x);
+          player.x = fortSpeaker1.x + cos(ang) * 70;
+          player.y = fortSpeaker1.y + sin(ang) * 70;
+          if (typeof player.forceNudge === 'function') player.forceNudge();
+          player.aimAngle = atan2(fortSpeaker1.y - player.y, fortSpeaker1.x - player.x);
+          camX = player.x - (width / 2) / zoom;
+          camY = player.y - (height / 2) / zoom;
+          emit(player.x, player.y, 20, color(0, 200, 255), "SPARK"); sfx.dash();
+          player.isMoving = false; fortPhase = 3;
+      }
+      else if (fortPhase === 3) { killcamTarget = { x: fortSpeaker1.x, y: fortSpeaker1.y };
+          drawSpeechBubble(width/2, height/2 - 100, "The masts. Soon as they went down it was like\nsomebody let go of the back of my neck."); }
+      else if (fortPhase === 4) { killcamTarget = { x: fortSpeaker2.x, y: fortSpeaker2.y };
+          drawSpeechBubble(width/2, height/2 - 100, "Eight years I stood a post out here and I could not\nhave told you what I was guarding."); }
+      else if (fortPhase === 5) { killcamTarget = { x: player.x, y: player.y };
+          drawSpeechBubble(width/2, height/2 - 100, "The relay's ours now. That means the country round it is too.\nYou lot are no good to me stood at a gate —\nlets find you all something to do."); }
+
+      if (fortPhase >= 3 && fortPhase <= 5) { fill(255); textAlign(CENTER); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40); }
   }
 
   if (inDarchonCall) {
@@ -7472,6 +7536,7 @@ function seedDebugStoryProgress(level) {
     inUpstairsRoom = false; upstairsPhase = 0;
     inTownCutscene = false; inFarmCutscene = false; inFarmPostCutscene = false;
     inPostAmbushCutscene = false; inLvl4Cutscene = false;
+    inFortCutscene = false; fortPhase = 0; fortSpeaker1 = null; fortSpeaker2 = null;
     inWorldBuildingMenu = false; inOverworldView = false; inTravelMenu = false;
 
     // Savior route, not genocide.
@@ -12113,7 +12178,7 @@ this.skeletonTimer = 0;
 
       takeDamage(amount) {
     let res = { blocked: false, broken: false };
-    if (this.isPlayer && (killcamMode || isWin || inFarmPostCutscene || inFarmCutscene || inTownCutscene || inPostAmbushCutscene || inDarchonCall)) return res; 
+    if (this.isPlayer && (killcamMode || isWin || inFarmPostCutscene || inFarmCutscene || inTownCutscene || inPostAmbushCutscene || inFortCutscene || inDarchonCall)) return res; 
 
     
     
@@ -15859,7 +15924,12 @@ function checkAmbushCleared() {
   {
     const _fs = outpostFortState(currentBiome);
     if (_fs.musterOn) { _fs.musterOn = false; _fs.musterDone = true;
-                        _fs.musterLeft = 0; _fs.musterWaves = 0; }
+                        _fs.musterLeft = 0; _fs.musterWaves = 0;
+                        // Whose muster just ended. The beat dispatcher reads
+                        // this at the end of the killcam: clearedKind is "GATE"
+                        // for a Great Gate and for a fort alike, so it cannot
+                        // tell them apart on its own.
+                        window.fortMusterJustCleared = true; }
   }
   window.ambushFort = null;              // the muster is over; stop conscripting
   window.nm0AmbushCleared = true;        // routes through the killcam into the story loop
@@ -18034,6 +18104,12 @@ else if (mx > width/2 - 120 && mx < width/2 + 120 && my > height/2 - 110 && my <
       if (townPhase >= 3 && townPhase <= 5) { townPhase++; sfx.charge(); }
       return false;
   }
+
+  if (inFortCutscene) {
+      if (fortPhase >= 3 && fortPhase < 5) { fortPhase++; sfx.charge(); }
+      else if (fortPhase === 5) { finishFortCapture(); sfx.charge(); }
+      return false;
+  }
   
     // ADD THIS EXACTLY HERE:
   if (typeof inFarmCutscene !== 'undefined' && inFarmCutscene) {
@@ -18782,6 +18858,10 @@ function saveGame() {
         prologuePhase, storyPhase, inStoryIntro, inStoryRoom,
         inUpstairsRoom, upstairsPhase, tvWatched, hasSword,
         inFarmCutscene, farmPhase, inFarmPostCutscene, farmPostPhase,
+        // The fort's liberation beat. Its speakers are object references into
+        // enemiesList, which is not saved -- so the phase comes back and the
+        // cast is re-cast on load, exactly as the town scene's is.
+        inFortCutscene, fortPhase,
         inLvl4Cutscene, lvl4Phase, lvl4Timer,
         inDarchonCall, callPhase,
 
@@ -18907,6 +18987,8 @@ function loadGame() {
         // Restored after startAtLevel(), which resets every one of them for a
         // fresh entry. A save made mid-cutscene comes back mid-cutscene.
         window.storyBeats = state.storyBeats || {};
+        inFortCutscene = state.inFortCutscene || false;
+        fortPhase = state.fortPhase || 0;
         prologuePhase = state.prologuePhase || 0;
         storyPhase = state.storyPhase || 0;
         inStoryIntro = state.inStoryIntro || false;
@@ -19199,6 +19281,27 @@ window.militaryToBring = state.militaryToBring || 0;
         // `if (window.towersDefeated)` and wipes every hostile on the field, so
         // a fort's muster has to be re-formed after it and outside it.
         restoreFortMuster();
+        // A cutscene speaker is an object reference into enemiesList, and the
+        // entity list is not saved. Re-cast from whoever is actually standing
+        // in the yard, and close the scene if the fort has nobody left to say
+        // the lines -- a restored cutscene with a null speaker reads .x off it
+        // on the very next frame.
+        if (inFortCutscene) {
+            const _cast = enemiesList.filter(e => e && !e.dead && e.hp > 0 &&
+                                             e.isFriendly && e.isOutpostGarrison);
+            if (_cast.length) {
+                fortSpeaker1 = _cast[0];
+                fortSpeaker2 = _cast.length > 1 ? _cast[1] : _cast[0];
+                if (fortPhase < 3) fortPhase = 3;      // past the teleport, which has happened
+                killcamTarget = { x: fortSpeaker1.x, y: fortSpeaker1.y };
+            } else {
+                // The freed regulars are paid into the Directive as integers and
+                // then let go -- there is nobody left in the yard to say the
+                // lines. Do not strand the player in a half-finished beat: end
+                // it where it was always going to end.
+                finishFortCapture();
+            }
+        }
     }
 }
 
@@ -21742,9 +21845,14 @@ function checkOutpostCaptured() {
   st.captured = true;
   st.breached = true;
   st.gateHp = 0;
-  // Taking the compound ends any muster it still had running.
-  st.musterOn = false; st.musterDone = true; st.musterLeft = 0; st.musterWaves = 0;
-  if (window.ambushFort) window.ambushFort = null;
+  // Taking the compound calls off NM-0's reinforcements, but it does not make
+  // the bodies already on the field vanish -- and musterOn is what keeps the
+  // conscription tick running and what stops a fort's fight holding the CITY'S
+  // gate shut. Switch it off here and the sector's gate slams for as long as
+  // the last of the muster is still shooting. Let the fight end where every
+  // other fight ends: checkAmbushCleared().
+  st.musterWaves = 0;
+  window.ambushSpawnsRemaining = 0;
   const got = recruitOutpostGarrison();
   st.garrison = 0;
   // They join the Directive the same way the sector's survivors do: as integers
@@ -21758,6 +21866,76 @@ function checkOutpostCaptured() {
     : (def.name + " TAKEN");
   streakMsgTimer = 220;
   screenShake = 30;
+
+  // THE SAME BEAT THE SECTOR'S OWN TOWERS RUN, one scale down. Masts down ->
+  // the yard changes sides -> they say so -> the Directive -> the overworld.
+  // Skipped when there is nobody left to speak: a player who shot the garrison
+  // has taken the fort the other way, and there is no liberation to stage.
+  startFortCutscene(def);
+}
+
+// ---------------------------------------------------------------------------
+// THE FORT'S LIBERATION BEAT
+//
+// Sector 1 and 2 run: towers down -> inTownCutscene, the freed regulars work
+// out what the towers were doing to them -> the muster -> beat it ->
+// inPostAmbushCutscene -> the Directive -> the overworld. A fort is that loop
+// one scale down, and its own masts are its towers.
+//
+// It is its own state rather than a mode on inTownCutscene for one concrete
+// reason: that scene runs clampToSector() on the teleport, which is right for a
+// speaker inside the sealed city and would drag the player nine thousand units
+// back to it from out here.
+// ---------------------------------------------------------------------------
+function startFortCutscene(def) {
+  if (!def) return false;
+  if (storyBeatDone("FORT_" + currentLevel)) { finishFortCapture(); return false; }
+  // Not while the muster is still shooting. Dropping the masts mid-fight is a
+  // legitimate way to take the fort; the beat waits for the field, the same way
+  // the sector's tower cutscene waits on !nm0AmbushActive.
+  if (nm0AmbushActive) { outpostFortState(currentBiome).cutscenePending = true; return false; }
+  outpostFortState(currentBiome).cutscenePending = false;
+
+  // The speakers are the fort's OWN freed regulars, standing in its yard --
+  // not whoever happens to be nearest, which out here is as likely to be a
+  // settlement resident or a checkpoint garrison a kilometre away.
+  const cast = [];
+  for (const e of enemiesList) {
+    if (!e || e.dead || e.hp <= 0 || !e.isFriendly) continue;
+    if (!e.isOutpostGarrison) continue;
+    if (!insideFortYard(currentBiome, e.x, e.y, 260)) continue;
+    cast.push(e);
+  }
+  if (!cast.length) { finishFortCapture(); return false; }
+  cast.sort((a, b) => dist(player.x, player.y, a.x, a.y) - dist(player.x, player.y, b.x, b.y));
+
+  fortSpeaker1 = cast[0];
+  fortSpeaker2 = cast.length > 1 ? cast[1] : cast[0];
+  inFortCutscene = true;
+  fortPhase = 1;
+  fortTimer = 90;
+  killcamMode = false;
+  killcamTarget = { x: fortSpeaker1.x, y: fortSpeaker1.y };
+  return true;
+}
+
+// Where the fort's loop ends, and the only place it ends: the Directive, then
+// the overworld -- exactly what a sector does. The freed regulars were already
+// paid into the undivided pool by checkOutpostCaptured(), so they are sitting
+// in UNASSIGNED waiting to be given a department.
+function finishFortCapture() {
+  inFortCutscene = false;
+  fortPhase = 0;
+  markStoryBeat("FORT_" + currentLevel);
+  openDirectiveWithGrant(currentLevel);
+  // An established sector's Directive goes straight to the overworld map. That
+  // is right after a travel arrival and wrong here -- the whole point of taking
+  // the fort is the people it freed, and they need posting. Show the assign
+  // screen whenever there is anybody in the pool without a job.
+  if ((window.popUnassignedM || 0) + (window.popUnassignedF || 0) > 0) {
+    inWorldBuildingMenu = true;
+    inOverworldView = false;
+  }
 }
 
 // ---------------------------------------------------------------------------

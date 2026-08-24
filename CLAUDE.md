@@ -179,13 +179,45 @@ thin air against a blank wall. The sequence is the sector's own, one scale down:
 blow the gate FROM OUTSIDE → the NM-0 muster comes out and the breach is written down
 → beat the muster and the door is a road → the yellow regulars are still in there
 → drop the two masts inside and they change sides, exactly as the sector's people do
+→ the liberation beat → the Directive → the overworld
 ```
+
+**The tail of that is the sector's own beat, one scale down.** Sector 1 and 2 run towers
+down → `inTownCutscene`, where the freed regulars work out what the towers were doing to
+them → the muster → `inPostAmbushCutscene` → the Directive → the overworld. The fort runs
+masts down → `inFortCutscene` → `finishFortCapture()` → the Directive → the overworld, and
+the freed regulars are sitting in the pool's UNASSIGNED column waiting for a department.
+
+Four things about it are load-bearing:
+
+- **It is its own state, not a mode on `inTownCutscene`.** That scene runs
+  `clampToSector()` on its teleport, which is right for a speaker inside the sealed city
+  and would drag the player nine thousand units back to it from a fort out in the country.
+- **The beat waits for the field.** Dropping the masts *during* the muster is a legitimate
+  way to take the fort, and `startFortCutscene()` defers on `nm0AmbushActive` exactly as
+  the sector's tower cutscene does — otherwise the player is reading speech bubbles while
+  the muster shoots them. `cutscenePending` on the record is what the muster's own clear
+  reads to pick it back up.
+- **Capture calls off the reinforcements but does not switch the muster off.** `musterOn`
+  is what keeps the conscription tick running *and* what stops a fort's fight holding the
+  **sector's** gate shut; clearing it at capture slammed the Great Gate for as long as the
+  last of the muster was still shooting. Only `musterWaves` goes to zero; the fight ends
+  where every fight ends, in `checkAmbushCleared()`.
+- **`window.fortMusterJustCleared` is how the beat dispatcher tells the musters apart.**
+  `clearedKind` is `"GATE"` for a Great Gate and for a fort alike, so without it a fort's
+  clear fell into Stick City's gate branch and announced the road south.
+
+`finishFortCapture()` is the one place the loop ends, and it goes through
+`openDirectiveWithGrant()` like every other door into the Directive — then forces the
+**assign** screen when the pool has anybody unassigned, because an established sector's
+Directive otherwise goes straight to the overworld map and the people the fort just freed
+would never be posted.
 
 `OUTPOST_FORT · outpostFortDef · outpostFortState · buildOutpostFortress · insideFortYard ·
 maintainOutpostGarrison · recruitOutpostGarrison · checkOutpostCaptured ·
 triggerOutpostAmbush · maintainOutpostMuster · conscriptIntoMuster · spawnFortWave ·
 fortMusterPoints · fortWavePoint · activeFortMuster · restoreFortMuster ·
-sectorTowers · gateFaceY`
+startFortCutscene · finishFortCapture · sectorTowers · gateFaceY`
 
 Five things make it work, and four of them fail silently:
 
