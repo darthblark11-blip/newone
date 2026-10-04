@@ -41,6 +41,11 @@ const LABELS = process.argv.includes('labels');
 // exist after dark: the fixtures (drawNightLights) and the light rig's pool
 // (drawLightPass). Judging a lamp at midday tells you nothing about a lamp.
 const NIGHT = process.argv.includes('night');
+// `district=0..5` finds a complete generated city plan at real p5 noise.
+// `civic` finds a real generated Level 1 terrace with p5's actual noise.
+const CIVIC = process.argv.includes('civic');
+const DISTRICT = +(process.argv.find(a => /^district=/.test(a)) || 'district=-1').split('=')[1];
+const RAIN = process.argv.includes('rain');
 // `hour=N` puts the world clock at that hour. The sun travels now, so which
 // hour a screenshot was taken at is a property of the picture -- a shadow
 // sweeping the wrong way is invisible in any single frame.
@@ -75,12 +80,31 @@ window.setup = function () {
   authoredCore = null; authoredChunks = null; authoredMask = null;
   biomeState = {};
   weather = null;                          // no screen layer; this is about the ground
+  isRaining = ${RAIN};
+  window.__wx = ${WX}; window.__wy = ${WY};
+  if (${CIVIC}) {
+    let found = false;
+    for (let cy=5;cy<35 && !found;cy++) for (let cx=-18;cx<18;cx++) {
+      if (!hasCivicTerrace(${BIOME},cx,cy)) continue;
+      window.__wx=cx*CHUNK_W+600; window.__wy=cy*CHUNK_W+600; found=true; break;
+    }
+    if (!found) window.__errs.push('No civic terrace found');
+  }
+  if (${DISTRICT} >= 0) {
+    let found=false;
+    for(let cy=5;cy<40&&!found;cy++)for(let cx=-18;cx<18;cx++){
+      const ch=generateChunkContent(1,cx,cy);
+      if(ch.solid.filter(b=>b.cityPlan===${DISTRICT}&&b.isBlockBuilding).length<4)continue;
+      window.__wx=cx*CHUNK_W+600;window.__wy=cy*CHUNK_W+600;found=true;break;
+    }
+    if(!found)window.__errs.push('No city district found');
+  }
   // refreshPopulation() wants a player and a budget. Neither is what this tool
   // is looking at, and both drag in half the entity system.
   refreshPopulation = function () {};
   zoom = ${ZOOM};
-  camX = ${WX} - width / zoom * 0.5;
-  camY = ${WY} - height / zoom * 0.5;
+  camX = window.__wx - width / zoom * 0.5;
+  camY = window.__wy - height / zoom * 0.5;
   viewLeft = camX; viewRight = camX + width / zoom;
   viewTop  = camY; viewBottom = camY + height / zoom;
   if (${LEGACY}) {
@@ -89,7 +113,7 @@ window.setup = function () {
   } else {
     chunkMgr = new ChunkManager(${BIOME});
     try {
-      chunkMgr.update(${WX}, ${WY});
+      chunkMgr.update(window.__wx, window.__wy);
       chunkMgr.warmUp(120);                // no per-frame bake budget here
       chunkMgr.rebuildWorldArrays();
     } catch (e) { window.__errs.push('stream: ' + e.message); }
@@ -163,7 +187,9 @@ window.draw = function () {
     await browser.close(); process.exit(1);
   }
   const errs = await p.evaluate('window.__errs || []');
-  const file = path.join(OUT, `world-b${BIOME}${LEGACY ? '-legacy' : ''}-h${HOUR}-${WX}_${WY}.png`);
+  const position = await p.evaluate('({x:window.__wx,y:window.__wy})');
+  if (CIVIC) console.log('Civic terrace at ' + position.x + ', ' + position.y);
+  const file = path.join(OUT, `world-b${BIOME}${CIVIC ? '-civic' : ''}${DISTRICT >= 0 ? '-district'+DISTRICT : ''}${RAIN ? '-rain' : ''}${LEGACY ? '-legacy' : ''}-h${HOUR}-${WX}_${WY}.png`);
   try { await p.locator('#defaultCanvas0').screenshot({ path: file, timeout: 15000 }); }
   catch (e) {
     console.log('  screenshot failed: ' + e.message.split('\n')[0]);
@@ -176,4 +202,5 @@ window.draw = function () {
   if (errs.length) console.log('  ' + Array.from(new Set(errs)).join('\n  '));
   if (bad.length)  console.log('  ' + Array.from(new Set(bad)).slice(0, 3).join('\n  '));
   console.log('-> ' + file);
+  if (errs.length || bad.length) process.exitCode = 1;
 })();

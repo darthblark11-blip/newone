@@ -3452,3 +3452,55 @@ game never produces. Do not tune a threshold against a flat-noise measurement.
 - `CLAUDE.md` — this file.
 - `tools/` — optional headless checks. Not loaded by the game, not part of the
   OpenProcessing upload.
+
+## Fortress and field-site expansion
+
+`OUTPOST_FORT` now defines one fort in each of Sectors 1–7. The existing per-sector
+record remains the save identity; do not turn it into an array without migrating
+saves, HUD targeting, muster ownership, and the `FORT_<sector>` story beat. Each
+fort retains two gates, two masts, its own muster and the liberation/Directive loop.
+The extra service-court props stay off the central approach.
+
+`bakeFortHardstanding()` runs after biome detail and baked clutter, for every
+layout. Chunk solids and both decor lists clear the compound. Water volumes
+are excluded by their extent, not just their centre, so a river segment cannot
+overhang the paved yard. Joint positions are world anchored across chunk seams.
+
+`appendBiomeFieldSite()` adds region-specific logging, survey, quarantine and
+relay sites using existing projected, shadowed props. It uses an independent
+chunk RNG and appends after old solids so existing destruction keys stay stable.
+Placement checks the entire site's bounds against terrain reservations, authored
+geometry, existing solids and cars. Guardboxes, blast walls and sandbags now carry
+material construction detail and live rain/snow finishes; guardbox light remains
+owned by the existing emitter pipeline.
+
+Run `node tools/check-biome-expansion.js` alongside the fortress, generation,
+rendering, depth and save/load checks. It covers all seven forts and field-site
+determinism, complete groups and placement across the six outer sectors.
+
+## Level 1 civic terraces
+
+Eligible procedural `PLAZA` blocks in Sector 1 now become civic terraces.
+`hasCivicTerrace()` is the common selector for generation, baking and height.
+It excludes canal rows, authored geometry, travel anchors and fort compounds.
+The noise cache is bounded and cleared on map generation; contextual exclusions
+are checked against the current authored footprint rather than cached.
+
+`CIVIC_BENCHES` defines two continuous shelves, 24 and 56 units high.
+`civicLocalHeight()` drives movement and character scale; the material buffer
+reconstructs the same shelves before drawing standing masses. `CIVICTERRACE` is
+a walkable, non-destructible deck and must not fall through to the generic flat
+deck material branch. Surface detail stays in the terrain bake; sun-facing stair
+risers, ramp edges and rain films are live. Ground art remains in world space so
+characters and collision do not slide when the camera moves.
+
+The pavilion, stalls, planted boxes and balustrades use the existing `PROP_RISE`
+projection. Civic lamps add ground height to their light/material descriptors.
+Civic solids use `civic:` destruction keys so an old plaza's removed fountain
+cannot delete its new pavilion or walkable deck. Other districts and levels
+retain their existing elevation behavior.
+
+Verification: `node tools/check-civic-terrace.js`. For visual review,
+`node tools/visual-world.js 1 0 0 0.85 civic hour=9` finds a real plaza using
+p5 noise; add `night rain` for the wet night view. The tool prints the actual
+world coordinates. Its `rain` flag tests surface response, not rain particles.
