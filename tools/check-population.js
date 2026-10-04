@@ -1,4 +1,4 @@
-const { ctx, probe } = require('/home/user/newone/tools/harness.js');
+const { ctx, probe } = require('./harness.js');
 const P = (s) => probe('(' + s + ')');
 let fails = 0, checks = 0;
 const ok = (n, c, x) => { checks++; if (!c) { fails++; console.log('  FAIL ' + n + (x !== undefined ? '  ' + x : '')); } };

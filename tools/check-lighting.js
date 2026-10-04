@@ -63,8 +63,8 @@ for (const fn of ['castShadow', 'castShadowRect']) {
   ok(fn + '() stands down too', /glRigOwnsSunShadows\(\)\)\s*return;/.test(body));
 }
 ok('character contact ovals stand down as well',
-   (src.match(/if \(!charShadowOwned\(this\.eType\)\)/g) || []).length === 2,
-   (src.match(/if \(!charShadowOwned\(this\.eType\)\)/g) || []).length + ' of 2 draw sites');
+   (src.match(/if \(!charShadowOwned\((?:this|e)\.eType\)\)/g) || []).length === 2,
+   (src.match(/if \(!charShadowOwned\((?:this|e)\.eType\)\)/g) || []).length + ' of 2 draw sites');
 
 console.log('\n== a height field cannot hold a flying unit ==');
 // Entered into it, a saucer reads as a tower standing on the ground: it would

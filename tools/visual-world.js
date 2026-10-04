@@ -46,6 +46,7 @@ const NIGHT = process.argv.includes('night');
 const CIVIC = process.argv.includes('civic');
 const DISTRICT = +(process.argv.find(a => /^district=/.test(a)) || 'district=-1').split('=')[1];
 const RAIN = process.argv.includes('rain');
+const PEOPLE = process.argv.includes('people');
 // `hour=N` puts the world clock at that hour. The sun travels now, so which
 // hour a screenshot was taken at is a property of the picture -- a shadow
 // sweeping the wrong way is invisible in any single frame.
@@ -99,6 +100,9 @@ window.setup = function () {
     }
     if(!found)window.__errs.push('No city district found');
   }
+  if (${PEOPLE}) {
+    player=new Character(window.__wx,window.__wy,true);doTick=true;enemiesList=[];
+  }
   // refreshPopulation() wants a player and a budget. Neither is what this tool
   // is looking at, and both drag in half the entity system.
   refreshPopulation = function () {};
@@ -118,7 +122,13 @@ window.setup = function () {
       chunkMgr.rebuildWorldArrays();
     } catch (e) { window.__errs.push('stream: ' + e.message); }
   }
-  activeBuildings = buildings;
+  activeBuildings = buildings;invalidateColIndex();
+  if(${PEOPLE}&&chunkMgr){
+    const pcx=Math.floor(window.__wx/CHUNK_W),pcy=Math.floor(window.__wy/CHUNK_W);
+    for(let i=0;i<20;i++){frameCount+=21;refreshCityPeople(chunkMgr,pcx,pcy);}
+    for(const e of enemiesList){e.isMoving=!e.cityPost;e.gait=e.isCityCivilian?.25:.3;e.walkCycle=e.x*.03;}
+    console.log('City people: '+enemiesList.filter(e=>e.isCityCivilian).length+' civilians / '+enemiesList.filter(e=>e.isCityPatrol).length+' guards');
+  }
   redraw();
 };
 window.draw = function () {
@@ -135,7 +145,8 @@ window.draw = function () {
   if (chunkMgr) step('decor', () => chunkMgr.drawDecor());
   step('decks',   () => drawBiomeDecks());
   ${process.env.VW_NOSHADOW ? '' : "step('shadows', () => drawBuildingShadows());"}
-  // No actors, so this draws every visible mass and every queued tree in one
+  if (${PEOPLE}) step('people',()=>{for(const e of enemiesList)if(inView(e.x,e.y,90))actorShow(e);});
+  // This draws every visible mass and every queued tree in one
   // sorted pass -- which is exactly what the game does between characters.
   step('sorted',  () => drawDepthSorted());
   if (${NIGHT}) step('fixtures', () => drawNightLights());
@@ -189,7 +200,7 @@ window.draw = function () {
   const errs = await p.evaluate('window.__errs || []');
   const position = await p.evaluate('({x:window.__wx,y:window.__wy})');
   if (CIVIC) console.log('Civic terrace at ' + position.x + ', ' + position.y);
-  const file = path.join(OUT, `world-b${BIOME}${CIVIC ? '-civic' : ''}${DISTRICT >= 0 ? '-district'+DISTRICT : ''}${RAIN ? '-rain' : ''}${LEGACY ? '-legacy' : ''}-h${HOUR}-${WX}_${WY}.png`);
+  const file = path.join(OUT, `world-b${BIOME}${CIVIC ? '-civic' : ''}${PEOPLE ? '-people' : ''}${DISTRICT >= 0 ? '-district'+DISTRICT : ''}${RAIN ? '-rain' : ''}${LEGACY ? '-legacy' : ''}-h${HOUR}-${WX}_${WY}.png`);
   try { await p.locator('#defaultCanvas0').screenshot({ path: file, timeout: 15000 }); }
   catch (e) {
     console.log('  screenshot failed: ' + e.message.split('\n')[0]);

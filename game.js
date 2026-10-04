@@ -8469,6 +8469,7 @@ function inBiomeOverworld() {
 function nativeToOverworld(e) {
   const set = OVERWORLD_SET[currentLevel];
   if (!set) return true;
+  if(e.cityPersonKey)return true;
   if (e.isFriendly) return true;                  // civilians, allies, neutral garrisons
   // isAmbush marks a scripted spawn placed at fixed map coordinates. The
   // distance cull already refuses to touch them and neither does this.
@@ -8501,6 +8502,7 @@ function sweepForeignHostiles() {
   for (let i = enemiesList.length - 1; i >= 0 && removed < 3; i--) {
     const e = enemiesList[i];
     if (!e || e.isFriendly || e.dead) continue;
+    if(e.cityPersonKey)continue;
     if (e.isOutpostGarrison) continue;      // it lives here; the fort is its post
     if (nativeToOverworld(e)) continue;
     if (!inOuterRegion(e.x, e.y)) continue;
@@ -10321,6 +10323,7 @@ function spawnOrb(x, y, isPurple = false, isPink = false) {
 }
 
 function spawnBullet(x, y, a, iP, tH, w, shooter = null) {
+    civilianNoise(x,y);
     if (iP) totalShotsFired++; // Tracks player shots
     
     for (let i = 0; i < bullets.length; i++) {
@@ -10912,6 +10915,7 @@ function ragRig(bW, bH) {
 function headwearOf(id) {
   if (!id) return null;
   const eT = id.eType;
+  if(eT==="NM0_CITY_GUARD")return "NM0_HELMET";
   if (id.isPlayer && typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked) return 'VISOR';
   if (eT === "MILITARY_NEUTRAL" || eT === "NM0_GREY_FATIGUE" ||
       (id.isMilitary && typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked)) return 'HELMET';
@@ -10931,6 +10935,10 @@ function headwearFalls(kind) { return !!kind && kind !== 'HOOD'; }
 // wherever the thing has come to rest.
 function drawHeadwear(g, id, kind) {
   if (!kind) return;
+  if(kind==='NM0_HELMET'){
+    g.fill(37,48,48);g.ellipse(-1,0,15,16);g.fill(108,127,118);g.ellipse(-2,-1,12,12);
+    g.fill(50,80,84);g.rect(2,-5,4,10,2);g.fill(145,206,206);g.rect(3,-4,1,6);g.fill(224,188,69);g.rect(-6,-1,3,2);return;
+  }
   if (kind === 'VISOR') {
     g.push(); g.rotate(-HALF_PI); g.fill(40, 80, 40); g.arc(0, -1, 14, 14, PI, TWO_PI); g.pop();
     g.push(); g.rotate(radians(33)); g.fill(80, 50, 20); g.rect(4, -1, 8, 3); g.fill(255, 100, 0); g.ellipse(12, 0.5, 2, 2); g.pop();
@@ -11006,7 +11014,7 @@ function drawHeadwear(g, id, kind) {
 // degrees -- the living figure passes its walk cycle, a corpse passes nothing.
 function drawFigureHead(g, id, hX, hY, wear = true, sway = 0) {
   const eT = id.eType;
-  g.fill(eT === "BANDIT" ? color(214, 168, 132) : color(235, 180, 140));
+  g.fill(id.skinCol||(eT==="BANDIT"?color(214,168,132):color(235,180,140)));
   g.ellipse(hX, hY, 11, 11);
   drawFigureHair(g, id, hX, hY, sway);
   if (wear) { const k = headwearOf(id); if (k) { g.push(); g.translate(hX, hY); drawHeadwear(g, id, k); g.pop(); } }
@@ -11017,6 +11025,17 @@ function drawFigureHead(g, id, hX, hY, wear = true, sway = 0) {
 function drawFigureHair(g, id, hX, hY, sway = 0) {
   if (!id) return;
   const eT = id.eType;
+  if(id.hairStyle!==undefined){
+    const c=id.hairCol||color(32,27,26),style=id.hairStyle;g.fill(c);
+    if(style===2){for(let i=0;i<7;i++){const a=HALF_PI+i*.48;g.ellipse(hX+Math.cos(a)*4,hY+Math.sin(a)*4,5,5);}}
+    else if(style===6){g.arc(hX,hY,12,12,HALF_PI,PI+HALF_PI);g.fill(id.skinCol||color(239,199,168));g.ellipse(hX-1,hY,6,6);}
+    else{g.arc(hX-1,hY,13,13,HALF_PI-.2,PI+HALF_PI+.2);}
+    if(style===1){g.stroke(red(c)*1.35+20,green(c)*1.35+20,blue(c)*1.35+20);g.strokeWeight(.8);g.line(hX-3,hY-4,hX+1,hY-2);g.noStroke();}
+    if(style===3){g.push();g.translate(hX-5,hY);g.rotate(radians(sway*.7));g.fill(c);g.ellipse(-6,0,13,6);g.pop();}
+    if(style===4){g.fill(c);g.ellipse(hX-7,hY,8,8);}
+    if(style===5){g.fill(c);g.ellipse(hX-4,hY-5,8,6);g.ellipse(hX-4,hY+5,8,6);}
+    return;
+  }
   if (eT === "FEMALE_PISTOL") {
     g.fill(15); g.arc(hX, hY, 12, 12, HALF_PI, PI + HALF_PI);
     g.push(); g.translate(hX - 5, hY); g.rotate(radians(sway)); g.ellipse(-6, 0, 12, 6); g.pop();
@@ -11050,7 +11069,7 @@ function drawFigureHair(g, id, hX, hY, sway = 0) {
 function figureIdentity(c) {
   if (!c) return null;
   return { eType: c.eType, isPlayer: !!c.isPlayer, isMilitary: !!c.isMilitary,
-           hairCol: c.hairCol, hatCol: c.hatCol, kerchiefCol: c.kerchiefCol,
+           hairCol:c.hairCol,hairStyle:c.hairStyle,skinCol:c.skinCol,hatCol:c.hatCol,kerchiefCol:c.kerchiefCol,
            bonnetCol: c.bonnetCol, shirtCol: c.shirtCol };
 }
 
@@ -11460,7 +11479,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
           ragLimb(r, RP.hipX, -RP.hipY, PI + RG.limbs[2].a * 0.7, -ragKnee(RG.limbs[2]) * 0.7, RP.thigh, ragShin(RP, ragKnee(RG.limbs[2]) * 0.7), RP.thighW, RP.shinW, this.pC, bootC, RP.foot);
           ragLimb(r, RP.hipX,  RP.hipY, PI - RG.limbs[3].a * 0.7,  ragKnee(RG.limbs[3]) * 0.7, RP.thigh, ragShin(RP, ragKnee(RG.limbs[3]) * 0.7), RP.thighW, RP.shinW, this.pC, bootC, RP.foot);
           // Arms trapped beneath the chest: short reach, hard fold inward.
-          const sK7 = color(235, 180, 140, a);
+          const sK7 = (this.id.skinCol||color(235,180,140,a));
           ragLimb(r, RP.shX, -RP.shY, -(HALF_PI + RG.limbs[0].a * 0.35 - 0.5), -1.2, RP.upper * 0.75, RP.fore * 0.82, RP.upperW * 0.92, RP.foreW * 0.92, this.sC, sK7, RP.hand * 0.94);
           ragLimb(r, RP.shX,  RP.shY,   HALF_PI + RG.limbs[1].a * 0.35 - 0.5,   1.2, RP.upper * 0.75, RP.fore * 0.82, RP.upperW * 0.92, RP.foreW * 0.92, this.sC, sK7, RP.hand * 0.94);
           // Torso over the top of them, and the pool spreading out from under.
@@ -11481,7 +11500,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       r.pop(); r.pop(); return;
   }
 
-  r.push(); r.translate(this.x, this.y); let a = 255, f = this.fP, sK = color(235, 180, 140, a); 
+  r.push(); r.translate(this.x, this.y); let a = 255, f = this.fP, sK = (this.id.skinCol||color(235,180,140,a));
   if (this.dT === 3) { 
       let off = this.sep; r.push(); r.rotate(this.mA); r.noStroke(); r.fill(this.pC); r.rect(-10,-10+off,18,8,4); r.rect(-10,2+off,18,8,4); r.fill(this.sC); r.ellipse(0,off,this.bW,this.bH/2); r.fill(90, 0, 0); r.ellipse(0, -off, this.bW, 10); r.translate(0, -off*1.8); r.ellipse(0, 0, this.bW, this.bH/2); 
       if (this.eT === "ARMORED_STANDARD") { r.fill(100); r.rect(-10, -6, 20, 12, 4); } 
@@ -11850,6 +11869,176 @@ function pickHead(len) {
     pop();
 }
 
+// Ambient city residents are independent of the story recruitment ledger.
+const CITY_CIVILIANS = ["CITY_CITIZEN_M", "CITY_CITIZEN_F"];
+const CITY_SKIN = [[103,66,47],[176,121,83],[239,199,168]];
+let cityNoise = [], cityPeopleFrame = -99;
+function cityAppearance(e, seed) {
+  let n = seed >>> 0; const pick = a => { n=(n+0x6D2B79F5)|0;let t=Math.imul(n^(n>>>15),1|n);t^=t+Math.imul(t^(t>>>7),61|t);return a[Math.floor(((t^(t>>>14))>>>0)/4294967296*a.length)]; };
+  e.isCityCivilian=true; e.isNeutral=true; e.isFriendly=true; e.isUnarmed=true; e.isArmed=false;
+  e.bodyW=e.eType===CITY_CIVILIANS[1]?19:21; e.bodyH=27;
+  e.skinCol=color(...pick(CITY_SKIN));
+  e.hairCol=color(...pick([[32,27,26],[76,45,30],[146,78,39],[216,180,99],[174,175,179]]));
+  e.hairStyle=pick([0,1,2,3,4,5,6]); e.clothingStyle=pick([0,1,2,3]);
+  e.shirtCol=color(...pick([[40,139,163],[228,171,59],[153,71,102],[91,129,80],[213,206,180],[72,91,143],[188,82,59],[101,83,136]]));
+  e.pantsCol=color(...pick([[46,65,91],[83,66,51],[53,58,62],[131,115,90]]));
+  e.panicTimer=0; e.state="WANDER"; e.cityDistance=(seed%3664); e.cityPause=0;
+}
+function unarmedCivilian(e) {
+  return !!e&&!e.isPlayer&&(e.isCityCivilian||e.eType==="FARMER_MALE"||e.eType==="FARMER_FEMALE"||
+    (e.isUnarmed&&TOWNSFOLK.indexOf(e.eType)!==-1));
+}
+function civilianNoise(x,y,radius=620) {
+  const last=cityNoise[cityNoise.length-1];
+  if(last&&last.t===frameCount&&Math.hypot(last.x-x,last.y-y)<80)return;
+  cityNoise.push({x,y,r:radius,t:frameCount});if(cityNoise.length>8)cityNoise.shift();
+}
+function scareCivilian(e,x,y) {
+  e.panicX=x;e.panicY=y;e.panicTimer=360;e.isNeutral=true;e.isFriendly=true;e.isArmed=false;
+  if(e.stunTimer<=0)e.state="FLEE";
+}
+function noticeCivilianNoise(e) {
+  for(let i=cityNoise.length-1;i>=0;i--){const n=cityNoise[i];
+    if(frameCount-n.t>18||n.t<=(e.cityHeard===undefined?-1:e.cityHeard))continue;
+    if(Math.hypot(e.x-n.x,e.y-n.y)<n.r){scareCivilian(e,n.x,n.y);e.cityHeard=n.t;break;}
+  }
+}
+function cityRoute(cx,cy,d) {
+  d=((d%3664)+3664)%3664;const x=cx*CHUNK_W,y=cy*CHUNK_W;
+  if(d<916)return {x:x+142+d,y:y+142,a:0};
+  if(d<1832)return {x:x+1058,y:y+142+d-916,a:HALF_PI};
+  if(d<2748)return {x:x+1058-(d-1832),y:y+1058,a:PI};
+  return {x:x+142,y:y+1058-(d-2748),a:-HALF_PI};
+}
+function cityMove(e,x,y,speed) {
+  const d=Math.hypot(x-e.x,y-e.y);let a=Math.atan2(y-e.y,x-e.x);
+  a=steerAvoid(e,a,speed,(x,y)=>e.checkCol(x,y));const m=e.attemptMove(Math.cos(a)*Math.min(speed,d),Math.sin(a)*Math.min(speed,d));
+  e.isMoving=!!(m.x||m.y);if(e.isMoving){e.moveAngle=a;e.aimAngle=a;}
+  e.gait=lerp(e.gait||0,e.isMoving?Math.min(1,speed/4.5):0,.16);
+  if(e.isMoving)e.walkCycle+=gaitPose(e.gait).cadence;
+  e.armDrag=lerp(e.armDrag||0,e.isMoving?1:0,.15);
+}
+function updateCityCivilian(e) {
+  noticeCivilianNoise(e);e.forceNudge();if(e.hitFlash>0)e.hitFlash--;
+  if(e.panicTimer>0){e.panicTimer--;e.state="FLEE";
+    const a=Math.atan2(e.y-e.panicY,e.x-e.panicX);cityMove(e,e.x+Math.cos(a)*120,e.y+Math.sin(a)*120,4.5);return;
+  }
+  e.state="WANDER";e.isArmed=false;
+  if(e.cityPause>0){e.cityPause--;e.isMoving=false;e.gait=lerp(e.gait,0,.16);return;}
+  const cx=e.cityCx===undefined?Math.floor(e.x/CHUNK_W):e.cityCx,cy=e.cityCy===undefined?Math.floor(e.y/CHUNK_W):e.cityCy;
+  e.cityDistance=(e.cityDistance===undefined?((e.x-cx*CHUNK_W-142+3664)%3664):e.cityDistance)+1.15;
+  const p=cityRoute(cx,cy,e.cityDistance);cityMove(e,p.x,p.y,1.15);
+  if(frameCount%720===e.aiOffset)e.cityPause=75;
+}
+function updateCityPatrol(e) {
+  if(e.cityPost){const p=e.cityPost;if(Math.hypot(e.x-p.x,e.y-p.y)>4)cityMove(e,p.x,p.y,1.15);else{e.isMoving=false;e.gait=0;e.aimAngle=p.a;}return;}
+  const f=e.cityFormation;if(!f)return;
+  if(f.frame!==frameCount){f.distance+=1.15;f.frame=frameCount;}
+  const p=cityRoute(e.cityCx,e.cityCy,f.distance-(e.citySlot||0)*38);cityMove(e,p.x,p.y,1.15);
+}
+function bankCityPerson(e) {
+  if(!e.cityPersonKey)return;
+  const b=getBiomeState(1);const table=b.cityPeople||(b.cityPeople={});
+  table[e.cityPersonKey]={x:e.x,y:e.y,hp:e.hp,dead:e.dead||e.hp<=0,stun:e.stunTimer,
+    stunAge:e.stunPose?e.stunPose.age:0,panic:e.panicTimer||0,px:e.panicX,py:e.panicY,d:e.cityDistance};
+}
+function refreshCityPeople(mgr,pcx,pcy) {
+  if(!mgr||mgr.biome!==1||!player||!doTick||isStoryMode||frameCount-cityPeopleFrame<20)return;
+  cityPeopleFrame=frameCount;let civ=0,guard=0;
+  for(let i=enemiesList.length-1;i>=0;i--){const e=enemiesList[i];if(!e.cityPersonKey)continue;
+    bankCityPerson(e);if(Math.hypot(e.x-player.x,e.y-player.y)>3000){enemiesList.splice(i,1);continue;}
+    if(e.hp>0&&!e.dead){if(e.isCityCivilian)civ++;else guard++;}
+  }
+  const b=getBiomeState(1),table=b.cityPeople||(b.cityPeople={});let made=0;
+  for(let ring=0;ring<=1&&made<4;ring++)for(let cy=pcy-ring;cy<=pcy+ring&&made<4;cy++)for(let cx=pcx-ring;cx<=pcx+ring&&made<4;cx++){
+    if(Math.max(Math.abs(cx-pcx),Math.abs(cy-pcy))!==ring)continue;
+    const key=cx+","+cy,ch=mgr.chunks.get(key),authored=!!(authoredChunks&&authoredChunks.has(key));
+    if((!ch&&!authored)||cityHasCanal(1,cy)||(ch&&ch.solid.some(s=>s.isGovFortress)))continue;
+    const liberated=townsData[1]&&townsData[1].established;
+    const formation={distance:Math.abs(Math.imul(cx,73856093)^Math.imul(cy,19349663))%3664,frame:-1};
+    for(let n=0;n<10&&made<4;n++){
+      const isCiv=n<6,k=key+",people:"+n,old=table[k];
+      if((isCiv?civ>=42:guard>=12)||(!isCiv&&(authored||liberated||nm0AmbushActive))||old&&old.dead||enemiesList.some(e=>e.cityPersonKey===k))continue;
+      const seed=(Math.imul(cx+999,73856093)^Math.imul(cy+999,19349663)^Math.imul(n+1,83492791))>>>0;
+      const d=isCiv?n*577:formation.distance-(n-6)*38,p=cityRoute(cx,cy,d);
+      const e=new Character(old?old.x:p.x,old?old.y:p.y,false,isCiv?CITY_CIVILIANS[n%2]:"NM0_CITY_GUARD");
+      if(isCiv)cityAppearance(e,seed);
+      e.cityPersonKey=k;e.cityCx=cx;e.cityCy=cy;e.cityDistance=old&&old.d!==undefined?old.d:d;
+      if(e.checkCol(e.x,e.y))continue;
+      if(!isCiv){const other=enemiesList.find(g=>g.isCityPatrol&&g.cityCx===cx&&g.cityCy===cy&&g.cityFormation);
+        e.cityFormation=other?other.cityFormation:formation;e.citySlot=n-6;
+        if(n>=8){const post=cityRoute(cx,cy,(n-8)*1832+420);e.cityPost=post;if(!old){e.x=post.x;e.y=post.y;}e.aimAngle=post.a;}}
+      if(old){e.hp=old.hp;e.panicTimer=old.panic||0;e.panicX=old.px;e.panicY=old.py;
+        if(old.stun>0){startPunchStun(e,e.aimAngle);e.stunTimer=old.stun;e.stunPose.age=old.stunAge;}}
+      enemiesList.push(e);if(isCiv)civ++;else guard++;made++;
+    }
+  }
+}
+function boxerPose(e) {
+  const active=e.isPlayer&&!e.isArmed&&!rightStick.active&&e.muzzleFlash<=0&&meleeTool()==="NONE"&&(e.meleeTimer>0||e.boxingHold>0)&&!e.mounted;
+  const p=e.meleeTimer>0?1-e.meleeTimer/(e.punchDuration||20):0,s=Math.sin(Math.max(0,Math.min(1,p))*PI);
+  const twist=s*(e.meleePhase===2?-.88:e.meleePhase===3?.96:.58);
+  return {active,hip:-.22+twist*.38,torso:-.28+twist,extension:s};
+}
+function drawBoxingArms(e,b) {
+  const rig=figureRig(e.bodyW,e.bodyH),skin=e.skinCol||color(235,180,140);
+  for(const s of [-1,1]){
+    const sy=s*rig.shY,reach=b.extension*((s===-1&&e.meleePhase!==2)||(s===1&&e.meleePhase===2)?1:0);
+    const hx=9+reach*22,hy=s*(8-reach*2),dx=hx,dy=hy-sy,l1=rig.upper*.75,l2=rig.fore*.85;
+    const d=Math.max(.1,Math.min(Math.hypot(dx,dy),l1+l2-.01)),a=Math.atan2(dy,dx)+s*Math.acos(Math.max(-1,Math.min(1,(l1*l1+d*d-l2*l2)/(2*l1*d))));
+    const ex=Math.cos(a)*l1,ey=sy+Math.sin(a)*l1;
+    push();translate(0,sy);rotate(a);fill(e.shirtCol);ellipse(l1*.5,0,l1+6,7);pop();
+    push();translate(ex,ey);rotate(Math.atan2(hy-ey,hx-ex));fill(skin);ellipse(l2*.5,0,l2+5,6);ellipse(l2+2,0,8,8);fill(red(skin)*1.1,green(skin)*1.1,blue(skin)*1.1);ellipse(l2+3,-1.2,4,3);pop();
+  }
+}
+function startPunchStun(e,angle) {
+  const duration=unarmedCivilian(e)?240:1500;
+  scareCivilianIfNeeded(e,angle);
+  if(e.stunPose&&e.stunTimer>0){e.stunTimer=Math.max(e.stunTimer,duration);e.stunPose.rag.spin+=.13;e.state="STUNNED";bankCityPerson(e);return;}
+  const r=ragBuild(e.eType,e.bodyW,angle,e.aimAngle);
+  if(!r){e.stunTimer=duration;e.state="STUNNED";e.isMoving=false;return;}
+  r.spin+=.23;for(let i=0;i<4;i++){r.limbs[i].va=(i%2?-.18:.18);r.limbs[i].vb=i<2?.22:.13;}
+  e.stunPose={age:0,impulse:4.8,a:angle,rag:r};e.stunTimer=duration;e.state="STUNNED";e.isMoving=false;bankCityPerson(e);
+}
+function scareCivilianIfNeeded(e,angle){if(unarmedCivilian(e))scareCivilian(e,e.x-Math.cos(angle)*50,e.y-Math.sin(angle)*50);}
+function advanceStun(e) {
+  if(!e.stunPose){const r=ragBuild(e.eType,e.bodyW,e.aimAngle,e.aimAngle);if(r)e.stunPose={age:40,impulse:0,a:e.aimAngle,rag:r};}
+  const p=e.stunPose;if(p){p.age++;ragStep(p.rag);
+    if(p.age<24){const vx=Math.cos(p.a)*p.impulse,vy=Math.sin(p.a)*p.impulse;
+      if(!e.checkCol(e.x+vx,e.y))e.x+=vx;if(!e.checkCol(e.x,e.y+vy))e.y+=vy;p.impulse*=.86;}}
+  e.stunTimer--;if(e.skeletonTimer>0)e.skeletonTimer--;e.isMoving=false;
+  if(e.stunTimer<=0&&e.hp>0){e.state=unarmedCivilian(e)?"FLEE":"CHASE";e.stunPose=null;}
+}
+function stunFall(e) {
+  if(!e.stunPose)return e.stunTimer>0?1:0;
+  const age=e.stunPose.age,t=Math.min(1,age/38),fall=t*t*(3-2*t);
+  const rebound=age>27&&age<62?Math.sin((age-27)/35*PI)*.055:0;
+  const rise=e.stunTimer<32?Math.max(0,e.stunTimer/32):1;
+  return Math.max(0,(fall-rebound)*rise);
+}
+function drawStunnedFigure(e) {
+  const f=stunFall(e),p=e.stunPose,r=p&&p.rag,rig=figureRig(e.bodyW,e.bodyH);
+  if (!charShadowOwned(e.eType)) {charShadowFill(55);ellipse(charShadowX(12*(1-f)),charShadowY(12*(1-f)),20+f*24,21+f*12);}
+  push();rotate(e.aimAngle+(r?r.ang:0)*f);scale(1,.85+.15*(1-f));
+  const skin=e.skinCol||color(235,180,140),boot=color(red(e.pantsCol)*.55,green(e.pantsCol)*.55,blue(e.pantsCol)*.55);
+  if(BIOME_ACTIVE)figureContour();else noStroke();
+  for(let i=0;i<4;i++){const arm=i<2,L=r?r.limbs[i]:{a:.1,b:.2},s=i%2?-1:1;
+    const ox=arm?lerp(0,rig.shX,f):lerp(-6,rig.hipX,f),oy=s*(arm?rig.shY:lerp(6,rig.hipY,f));
+    // The knee passes under the body as it buckles. Signed foreshortening
+    // changes the projected direction while the hip keeps its legal splay;
+    // sweeping a straight leg through a half-circle would dislocate the hip.
+    const projection=lerp(-STAND_FORE_LEG,1,f),legScale=Math.max(.015,Math.abs(projection));
+    const a=arm?PI+s*L.a*f:(projection<0?s*L.a*f:PI-s*L.a*f),b=arm?-s*L.b*f:s*ragKnee(L)*f;
+    const lengthScale=arm?lerp(STAND_FORE_ARM,1,f):legScale;
+    ragLimb(window,ox,oy,a,b,(arm?rig.upper:rig.thigh)*lengthScale,(arm?rig.fore:ragShin(rig,ragKnee(L)*f))*lengthScale,arm?rig.upperW:rig.thighW,arm?rig.foreW:rig.shinW,arm?e.shirtCol:e.pantsCol,arm?skin:boot,arm?rig.hand:rig.foot);
+  }
+  const depth=lerp(e.bodyW*TORSO_DEPTH,rig.TL,f),span=lerp(e.bodyH,rig.TW,f);
+  if(BIOME_ACTIVE){const light=figureLight(e.aimAngle);volShadeCol(0,0,depth,span,e.shirtCol,1,light[0],light[1]);}
+  else{fill(e.shirtCol);ellipse(0,0,depth,span);}
+  drawFigureHead(window,figureIdentity(e),lerp(12,rig.shX+8,f),0,true,0);pop();
+}
+
+
 class Character {
   constructor(x, y, isP, eT = "NORMAL") {
     this.isFriendly = false;
@@ -12114,6 +12303,11 @@ this.skeletonTimer = 0;
 	  if (!isP) { this.state = "PATROL"; this.targetBuilding = getPatrolBuilding(); this.patrolCorner = floor(random(4)); this.patrolTimer = 360; this.loseSightTimer = 0; }
   
       this.maxHp = this.hp;
+    this.boxingHold=0;this.punchDuration=20;
+    if(CITY_CIVILIANS.indexOf(eT)!==-1)cityAppearance(this,Math.floor(x*31+y*17)>>>0);
+    if(eT==="NM0_CITY_GUARD") {this.isCityPatrol=true;this.hp=this.maxHp=280;this.bodyW=24;this.bodyH=29;
+      this.shirtCol=color(102,119,116);this.pantsCol=color(52,64,65);this.currentWeapon=WEAPONS.ASSAULT_RIFLE;}
+    if(unarmedCivilian(this))this.isUnarmed=true;
   }
   get ammo() { return this.weaponAmmo[this.currentWeapon.name]; }
   set ammo(val) { this.weaponAmmo[this.currentWeapon.name] = val; }
@@ -12194,7 +12388,9 @@ this.skeletonTimer = 0;
       if (this.moveAngle === undefined) this.moveAngle = random(TWO_PI);
   }
 
-      takeDamage(amount) {
+      takeDamage(amount, source = null) {
+    if(unarmedCivilian(this))scareCivilian(this,source?source.x:player?player.x:this.x,source?source.y:player?player.y:this.y);
+    if(this.isCityPatrol&&this.hp>80)amount*=.55;
     let res = { blocked: false, broken: false };
     if (this.isPlayer && (killcamMode || isWin || inFarmPostCutscene || inFarmCutscene || inTownCutscene || inPostAmbushCutscene || inFortCutscene || inDarchonCall)) return res; 
 
@@ -12214,9 +12410,10 @@ this.skeletonTimer = 0;
         turnBandGroup(this.bandGroup);
         for (let e of enemiesList) if (e.eType === "HORSE" && dist(e.x, e.y, this.x, this.y) < 700) e.spook(140);
     }
-    else if (this.isNeutral && this.eType !== "COW" && this.eType !== "HORSE") {
+    else if (this.isNeutral && !unarmedCivilian(this) && this.eType !== "COW" && this.eType !== "HORSE") {
         for (let e of enemiesList) {
             if (e.eType === "HORSE") { e.spook(140); continue; }
+            if (unarmedCivilian(e)) {scareCivilian(e,this.x,this.y);continue;}
             if (e.bandGroup) continue;
             if (e.isNeutral && e.eType !== "COW") {
                 e.isNeutral = false;
@@ -12265,6 +12462,7 @@ this.skeletonTimer = 0;
     // dozen places that splice a dead body out of the list, so every way of
     // killing a rider leaves the same loose horse behind.
     if (this.mounted && this.hp <= 0) this.unhorse();
+    bankCityPerson(this);
 
     return res;
   }
@@ -12473,7 +12671,7 @@ this.skeletonTimer = 0;
       if (this.isPlayer) {
           let bestTarget = null, minDist = Infinity;
           for (let e of enemiesList) {
-              if (e.hp > 0 && !e.dead && e.eType !== "AERIAL" && e.eType !== "AERIAL_PISTOL" && !e.isFriendly) {
+              if (e.hp > 0 && !e.dead && e.eType !== "AERIAL" && e.eType !== "AERIAL_PISTOL" && (!e.isFriendly || e.isNeutral)) {
                   let d = dist(this.x, this.y, e.x, e.y);
                   let mR = (e.eType === "ARMORED" || e.eType === "ALIEN_GATOR" || e.eType === "SAUCER" || e.eType === "SAUCER_RED" || e.eType === "SNAIL_HYBRID") ? 120 : 80;
                   if (d < mR) {
@@ -12503,7 +12701,7 @@ this.skeletonTimer = 0;
           
           this.meleeCooldown = 0; 
           this.meleeComboTimer = 60; 
-          this.meleePhase = 1; 
+          this.meleePhase = 1; this.punchDuration=20;this.boxingHold=180;
           if (this.isPlayer) sfx.dash(); 
       } else {
           // SWORD LOGIC
@@ -12524,7 +12722,7 @@ this.skeletonTimer = 0;
       if (this.isPlayer) {
           let bestTarget = null, minDist = Infinity;
           for (let e of enemiesList) {
-              if (e.hp > 0 && !e.dead && e.eType !== "AERIAL" && e.eType !== "AERIAL_PISTOL" && !e.isFriendly) {
+              if (e.hp > 0 && !e.dead && e.eType !== "AERIAL" && e.eType !== "AERIAL_PISTOL" && (!e.isFriendly || e.isNeutral)) {
                   let d = dist(this.x, this.y, e.x, e.y);
                   let mR = (e.eType === "ARMORED" || e.eType === "ALIEN_GATOR" || e.eType === "SAUCER" || e.eType === "SAUCER_RED" || e.eType === "SNAIL_HYBRID") ? 120 : 80;
                   if (d < mR) {
@@ -12543,6 +12741,7 @@ this.skeletonTimer = 0;
           : ((typeof swordPickedUp !== 'undefined' && swordPickedUp) && (window.swordEquipped !== false));
 
       if (!usingSword) {
+          this.punchDuration=15;this.boxingHold=180;
           // UNARMED 4-HIT COMBO
           if (this.isPlayer) this.isArmed = false; // Maintain neutral stance throughout combo
           
@@ -12842,8 +13041,9 @@ this.skeletonTimer = 0;
         }
     }
 
+    if(this.meleeTimer<=0&&this.boxingHold>0)this.boxingHold--;
     if (this.meleeTimer > 0) {
-      this.meleeTimer--; let nx = cos(this.aimAngle) * 3, ny = sin(this.aimAngle) * 3; if (!this.checkCol(this.x + nx, this.y)) this.x += nx; if (!this.checkCol(this.x, this.y + ny)) this.y += ny;
+      this.meleeTimer--;if(meleeTool()==="NONE")this.boxingHold=180; let nx = cos(this.aimAngle) * 3, ny = sin(this.aimAngle) * 3; if (!this.checkCol(this.x + nx, this.y)) this.x += nx; if (!this.checkCol(this.x, this.y + ny)) this.y += ny;
       
       if (this.meleePhase === 4 && this.meleeTimer === 15) { 
           screenShake = 20; 
@@ -12887,11 +13087,8 @@ this.skeletonTimer = 0;
                           if (isFistAttack) {
                                
                               e.punchHitCount = (e.punchHitCount || 0) + 1;
-                              if (e.punchHitCount >= 4) {
-                                  e.stunTimer = 1500; // Stun for 3 seconds
-                                  e.state = "STUNNED";
-                                  e.punchHitCount = 0; // Reset meter
-                                  sfx.charge(); // Audio cue for stun
+                              if (unarmedCivilian(e) || e.punchHitCount >= 4) {
+                                  startPunchStun(e,this.aimAngle);e.punchHitCount=0;sfx.charge();
                               }
                           } else {
                               // A pick is a heavy tool, not a weapon: it hits
@@ -12899,14 +13096,15 @@ this.skeletonTimer = 0;
                               // rather less.
                               const _mp = (this.isPlayer && typeof meleeTool === 'function' &&
                                            meleeTool() === "PICKAXE");
-                              e.takeDamage(_mp ? 120 : 200);
+                              e.takeDamage(_mp ? 120 : 200,this);
                           }
 
                       
                       if (e.hp > 0) { e.hitFlash = 4; }
                       
                       let bCol = (e.eType === "BUG" || e.eType === "SNAIL" || e.eType === "SNAIL_HYBRID") ? color(200, 230, 40) : color(90, 0, 0);
-                      if (e.eType === "ROBOT") { sfx.hitArmor(); emit(e.x, e.y, 12, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK"); }
+                      if(isFistAttack&&unarmedCivilian(e)){sfx.hitBody();emit(e.x,e.y,8,color(200,183,151),"DUST");}
+                      else if (e.eType === "ROBOT") { sfx.hitArmor(); emit(e.x, e.y, 12, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK"); }
                       else if (e.eType === "SAUCER" || e.eType === "SAUCER_RED" || (e.eType === "ARMORED" && e.hp > 300) || (e.eType === "ARMORED_STANDARD" && e.hp > 50) || (e.eType === "SNAIL_HYBRID" && e.hp > 150)) { sfx.hitArmor(); emit(e.x, e.y, 10, color(255, 200, 0), "SPARK"); } else { sfx.hitBody(); emit(e.x, e.y, 20, bCol, "BLOOD"); }
 
                       if (e.hp <= 0) { 
@@ -13046,17 +13244,9 @@ if (this.eType === "COW") {
         }
         return; // Skip the rest of the standard enemy AI
     }
-    if (this.stunTimer > 0) {
-        this.stunTimer--;
-        if (this.skeletonTimer > 0) this.skeletonTimer--;
-        
-        this.isMoving = false;
-        
-        if (this.stunTimer <= 0 && this.hp > 0) {
-            this.state = "CHASE"; 
-        }
-        return; 
-    }
+    if(unarmedCivilian(this))noticeCivilianNoise(this);
+    if(this.stunTimer>0){advanceStun(this);return;}
+    if(unarmedCivilian(this)){updateCityCivilian(this);return;}
 
     this.forceNudge();
 
@@ -13390,6 +13580,8 @@ if (this.eType === "COW") {
             this.lastKnownY = undefined;
         } 
     }
+
+    if(this.isCityPatrol&&this.state==="PATROL"){updateCityPatrol(this);return;}
 
     // ---- ROBOT ---------------------------------------------------------
     // Its own loop rather than a branch inside CHASE: the machine has exactly
@@ -13763,6 +13955,7 @@ if (this.eType === "COW") {
 
 
         fire(sA) {
+    if(unarmedCivilian(this))return;
     if (this.isPlayer) this.isArmed = true;
     let aH = ((this.isPlayer || this.isFriendly) && headAimToggle) ? "HEAD" : "BODY", cd = (this.isPlayer || this.isFriendly) ? this.currentWeapon.fireCooldown : (this.currentWeapon.enemyCooldown || 48), bob = this.isMoving ? abs(sin(this.walkCycle)) * 2 : 0;
     let cost = this.currentWeapon === WEAPONS.DUAL_SMG ? 2 : 1;
@@ -13843,59 +14036,8 @@ if (this.skeletonTimer > 0 && frameCount % 6 < 3) {
     return; // Skip drawing the regular body
 }
 
-// 2. 1-Minute Ground Stun State
-if (this.stunTimer > 0 && this.skeletonTimer <= 0) {
-    rotate(this.aimAngle); // Fall over randomly
-    
-    let sOff = (currentLevel === 1 || currentLevel === 3) ? 15 : 10;
-    let sAlp = (currentLevel === 1 || currentLevel === 3) ? 45 : 80;
-    if (!charShadowOwned(this.eType)) {
-      charShadowFill(sAlp);
-      ellipse(charShadowX(sOff), charShadowY(sOff), this.bodyW + 20, this.bodyH + 5);
-    }
-
-    let lW = 18, lX = -18, lY1 = -10, lY2 = 2;
-
-    fill(this.pantsCol); noStroke();
-    rect(lX, lY1, lW, 8, 4);
-    rect(lX, lY2, lW, 8, 4);
-
-    fill(this.shirtCol);
-    ellipse(0, lY1 - 2, 20, 8); 
-    ellipse(0, lY2 + 2, 20, 8); 
-
-    fill(this.shirtCol);
-    ellipse(0, 0, this.bodyW, this.bodyH);
-
-    if (this.eType === "FEMALE_PISTOL") {
-        fill(this.shirtCol);
-        ellipse(4, -6, 12, 10); ellipse(4, 6, 12, 10);
-    }
-
-    let sK = color(235, 180, 140);
-    fill(sK); ellipse(12, 0, 11, 11);
-    if (this.eType === "FEMALE_PISTOL") {
-        fill(15); arc(12, 0, 12, 12, HALF_PI, PI + HALF_PI);
-    }
-
-    // Draw rotating stars by the head
-    for (let i = 0; i < 3; i++) {
-        let a = frameCount * 0.1 + (i * TWO_PI / 3);
-        fill(255, 255, 0); noStroke();
-        ellipse(15 + cos(a) * 15, sin(a) * 15, 4, 4); 
-    }
-
-    pop();
-    return; // Skip normal standing draw!
-} else if (this.stunTimer > 0) {
-    // Keep stars spinning during the standing non-flashing frames too!
-    for (let i = 0; i < 3; i++) {
-        let a = frameCount * 0.1 + (i * TWO_PI / 3);
-        fill(255, 255, 0); noStroke();
-        ellipse(cos(a) * 15, -25 + sin(a) * 15, 4, 4); 
-    }
-}
-
+// Nonlethal collapse is simulated in updateEnemy, never in the painter.
+if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return;}
 
     let sOff = (currentLevel === 1 || currentLevel === 3) ? 15 : 10;
     let sAlp = (currentLevel === 1 || currentLevel === 3) ? 45 : 80;
@@ -14158,6 +14300,7 @@ if (this.stunTimer > 0 && this.skeletonTimer <= 0) {
     // GAIT: one throttle, and each of these reads it on its own curve, so a
     // walk lengthening into a run has nothing in it that switches.
     const GP = gaitPose(this.isMoving ? this.gait : 0);
+    const boxing=boxerPose(this);
     let lS = this.isMoving ? sin(this.walkCycle) * 12 * GP.swing : 0,
         bob = this.isMoving ? abs(sin(this.walkCycle)) * 2 * GP.bob + GP.lean : 0;
     if (this.mounted) { lS *= 0.35; bob *= 0.4; }
@@ -14256,7 +14399,7 @@ if (this.isPlayer) {
     } else {
         // ... (Keep your standard non-chemist fallback here)
 
-        push(); rotate(this.moveAngle); noStroke(); fill(this.pantsCol);
+        push(); rotate(boxing.active?this.aimAngle+boxing.hip:this.moveAngle); noStroke(); fill(this.pantsCol);
         if (this.bodyW === 105) {
           // ARMORED's 105-wide slab keeps its own legs; the rig is shaped like
           // a person and that is not one.
@@ -14293,9 +14436,10 @@ if (this.isPlayer) {
             // Hips either side of the axis at the spacing the old pair of rects
             // used -- wide enough that the two thighs do not merge at the
             // midline, which is the other half of reading as two legs.
-            const sx = -10 + lS * sgn + RGl.thighW * 0.5, cy = sgn * -6;
-            ellipse(sx + th * 0.5, cy, th + wHip * 0.55, wHip);
-            ellipse(sx + th * 0.92 + sh * 0.5, cy, sh + wKnee * 0.80, wKnee);
+            const sx = boxing.active?(sgn===1?-2:-6):-10+lS*sgn+RGl.thighW*.5, cy=sgn*-6;
+            push();translate(sx,cy);if(boxing.active&&sgn===-1)rotate(PI);
+            ellipse(th*.5,0,th+wHip*.55,wHip);
+            ellipse(th*.92+sh*.5,0,sh+wKnee*.80,wKnee);
             fill(bootC[0], bootC[1], bootC[2]);
             // The boot takes the rig's length UNFORESHORTENED, because a foot
             // is the one part of a standing body that lies flat to this camera
@@ -14304,7 +14448,7 @@ if (this.isPlayer) {
             // sits past the ankle rather than centred on it, for the reason
             // ragLimb gives: a circle on the joint buries half of itself in the
             // shin and adds only its radius to the leg.
-            ellipse(sx + th * 0.92 + sh + RGl.foot * 0.34, cy, RGl.foot, wAnkle);
+            ellipse(th*.92+sh+RGl.foot*.34,0,RGl.foot,wAnkle);pop();
             fill(this.pantsCol);
           }
           noStroke();
@@ -14329,7 +14473,7 @@ if (this.isPlayer) {
     // line the aim laser is drawn on.
     const _tw = (this.isMoving && !(this.isArmed && this.meleeTimer <= 0 && playerAiming(this)))
                 ? sin(this.walkCycle) * GP.twist : 0;
-    push(); rotate(this.aimAngle + _tw); translate(bob, 0);
+    push(); rotate(this.aimAngle+(boxing.active?boxing.torso:_tw)); translate(bob,0);
 
     let bLX = 31, bLY = 8, bLX_L = 59, bLY_L = -17;
     if (this.isArmed && this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { bLX = 47; bLY = 6; } 
@@ -14390,8 +14534,8 @@ if (this.isPlayer) {
     // twice a stride and left an idle player empty-handed.
     let armPass = null;
     {
-        const isTownsfolk = this.isNeutral && TOWNSFOLK.indexOf(this.eType) !== -1;
-        const isEmptyHanded = this.isPlayer && !this.isArmed && this.meleeTimer <= 0;
+        const isTownsfolk = unarmedCivilian(this)||(this.isNeutral&&TOWNSFOLK.indexOf(this.eType)!==-1);
+        const isEmptyHanded = this.isPlayer&&!this.isArmed&&this.meleeTimer<=0&&!boxing.active;
         if (isTownsfolk || isEmptyHanded || carryMode) {
             const swing = isTownsfolk
                 ? (this.isMoving ? sin(this.walkCycle) * GP.swing : 0)
@@ -14399,7 +14543,7 @@ if (this.isPlayer) {
             // Standing still, the shoulders settle and breathe rather than
             // locking solid. Offset per character so a crowd is not in unison.
             const rest = this.isMoving ? 0 : sin(frameCount * 0.045 + this.x * 0.01);
-            const skin = this.isCharred ? color(50, 40, 40) : color(235, 180, 140);
+            const skin = this.isCharred ? color(50, 40, 40) : (this.skinCol||color(235,180,140));
             // A hand holds ONE thing. The tool is only in it while there is no
             // gun in it -- the moment the player raises or fires a weapon,
             // isArmed goes true and the blade goes away, which is how it worked
@@ -15086,6 +15230,13 @@ if (this.isPlayer) {
         noStroke(); arc(-5, 0, 14, 26, HALF_PI, PI+HALF_PI, CHORD); arc(5, 0, 14, 26, -HALF_PI, HALF_PI, CHORD);
     }
 
+    if(this.isCityPatrol){fill(43,57,57);rect(-8,-11,16,22,3);fill(129,147,139);rect(-6,-9,11,8,2);
+      fill(60,72,69);rect(-6,2,11,7,1);fill(225,188,69);rect(-4,-3,7,2);}
+    if(this.isCityCivilian){
+      if(this.clothingStyle===1){fill(red(this.shirtCol)*.7,green(this.shirtCol)*.7,blue(this.shirtCol)*.7);rect(-7,-8,10,16,2);fill(229,218,190);rect(2,-2,4,4,1);}
+      if(this.clothingStyle===2){fill(229,224,202);rect(-2,-9,3,18,1);}
+      if(this.clothingStyle===3){noFill();stroke(236,218,184,135);strokeWeight(1.2);line(-6,-5,6,-5);line(-6,3,6,3);}
+    }
     if (this.eType === "ARMORED_STANDARD") { 
         if (this.hitFlash > 0) fill(255); else fill(100); 
         rect(-10, -12, 20, 24, 4); 
@@ -15099,12 +15250,13 @@ if (this.isPlayer) {
     if (BIOME_ACTIVE) figureContour();
     
     let lAY = this.eType === "ARMORED" ? -30 : -14, rAY = this.eType === "ARMORED" ? 30 : 11;
-    let a = 255; let f = this.fP || 0; let sK = this.isCharred ? color(50, 40, 40, a) : color(235, 180, 140, a);
+    let a = 255; let f = this.fP || 0; let sK = this.isCharred ? color(50, 40, 40, a) : (this.skinCol||color(235,180,140,a));
 
-    let isNeutralFarmer = this.isNeutral && TOWNSFOLK.indexOf(this.eType) !== -1;
+    let isNeutralFarmer = unarmedCivilian(this)||(this.isNeutral&&TOWNSFOLK.indexOf(this.eType)!==-1);
 
     // --- NEUTRAL ARM SWING OVERRIDE ---
-        if (isNeutralFarmer) {
+        if(boxing.active){drawBoxingArms(this,boxing);}
+        else if (isNeutralFarmer) {
         // The limbs and the trailing hand already went down under the torso;
         // this is the leading hand on top. Empty on purpose: a townsman at ease
         // has his gun in the holster drawn on his hip, not in his fist.
@@ -15259,7 +15411,7 @@ if (this.isPlayer) {
                // --- WEAPON & RIGHT ARM RENDERING LOGIC ---
         // THE FIX 3: ONLY run this if Armed or an Enemy. Removes the duplicate unarmed drawings.
         if (!carryMode && this.meleeTimer <= 0 && (this.isArmed || !this.isPlayer)) {
-            let skinC = (typeof chemistSuitUnlocked === 'undefined' && chemistSuitUnlocked) ? color(180, 180, 190) : color(235, 180, 140);
+            let skinC = (typeof chemistSuitUnlocked === 'undefined' && chemistSuitUnlocked) ? color(180, 180, 190) : (this.skinCol||color(235,180,140));
             
             // 1. DRAW RIGHT ARM & HAND FIRST
             // This ensures the arm is painted under the gun
@@ -15432,6 +15584,7 @@ function updateAndDrawFloatingScores() {
 
 
 function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = false) {
+    if(CITY_CIVILIANS.indexOf(eType)!==-1)return;
     
     // NEW: Find the exact enemy that just died using the coordinates we already have!
     let deadGuy = enemiesList.find(e => e.x === x && e.y === y && e.dead);
@@ -15621,7 +15774,7 @@ function updateEntities() {
       for (let n = 0; n < enemiesList.length; n++) {
           const e = enemiesList[n];
           if (!e) continue;
-          if (e.isFriendly) e.allySlot = e.dead ? 0 : allyN++;
+          if (e.isFriendly && !e.isCityCivilian) e.allySlot = e.dead ? 0 : allyN++;
           if (e.hp <= 0 || e.dead) continue;
           if (e.eType === "AERIAL" || e.eType === "AERIAL_PISTOL" ||
               e.eType === "SAUCER" || e.eType === "SAUCER_RED") { aerials.push(e); continue; }
@@ -15925,6 +16078,7 @@ function checkAmbushCleared() {
     // is being asked NOT to shoot -- so counting it here meant the ambush could
     // only ever be cleared by killing all eighty of them, which is the opposite
     // of the mechanic and left the gate sealed for anyone who spared a soul.
+    if(e.cityPersonKey)continue;
     if (e.isPopulation) continue;
     // Nor is the fort's own garrison. It is exactly the people the player is
     // being asked NOT to shoot -- dropping the masts is what turns them -- so
@@ -15969,7 +16123,7 @@ function updateBullets() {
       let e = enemiesList[i];
       if (!e || e.hp <= 0 || e.dead) continue;
       if (!e.isFriendly || e.isNeutral) playerTgs.push(e);
-      if (e.isFriendly && !e.isNeutral) enemyTgs.push(e);
+      if (e.isCityCivilian || (e.isFriendly && !e.isNeutral)) enemyTgs.push(e);
   }
 
   const playerBuckets = buildSpatialBuckets(playerTgs, SPATIAL_CELL_SIZE, t => t.x, t => t.y);
@@ -16067,7 +16221,7 @@ function updateBullets() {
 
                 if (t.lastHitFrame !== frameCount) { t.lastHitFrame = frameCount; t.frameDamage = 0; } 
                 t.frameDamage += dmg; 
-                let dRes = robotHeadAbsorbed ? { blocked: false, broken: false } : t.takeDamage(dmg); 
+                let dRes = robotHeadAbsorbed ? { blocked: false, broken: false } : t.takeDamage(dmg,b.shooter);
                 b.l = 0; 
 
                 if (robotHeadKill) {
@@ -18791,6 +18945,7 @@ function countEscort(female) {
 }
 
 function saveGame() {
+    for(const e of enemiesList)bankCityPerson(e);
     let state = {
         currentLevel, isStoryMode, score, totalKills,
         smgUnlocked, dualSmgUnlocked, shotgunUnlocked, arUnlocked, rocketLauncherUnlocked, taserUnlocked,
@@ -22477,6 +22632,7 @@ function spawnFortWave() {
 // body to kill AND one more the bar was always going to have to count.
 function conscriptIntoMuster(e) {
   if (!e || e.isAmbush || e.isFriendly) return false;
+  if (e.cityPersonKey) return false; // city patrols keep their own resident record
   if (e.isPopulation || e.isOutpostGarrison) return false;   // the ones you are asked to spare
   const fort = activeFortMuster(currentBiome);
   if (!nm0AmbushActive || !fort) return false;
@@ -26909,6 +27065,7 @@ let chunkPop   = new Map();   // "cx,cy" -> [Character]
 let popLosses  = new Map();   // "cx,cy" -> how many of its people have died there
 
 function resetPopulation() {
+  cityNoise=[];cityPeopleFrame=-99;
   chunkPop.clear();
   popLosses.clear();
 }
@@ -27221,6 +27378,7 @@ class ChunkManager {
     this.lastKey = ChunkManager.keyOf(cx, cy);
     this.refreshResidency(cx, cy);
     refreshPopulation(this, cx, cy);
+    refreshCityPeople(this,cx,cy);
     this.processBakeQueue();
     if (this.dirty) {
       this.rebuildWorldArrays();
@@ -33483,9 +33641,10 @@ function glRigPaintHeight() {
     // their own offset oval instead.
     if (CHAR_AIRBORNE[c.eType]) return;
     if (!inView(c.x, c.y, 60)) return;
-    glRigMat(g, CH + groundElev(c.x, c.y), 0.18 + 0.25 * wet,
+    const fallen=c.stunTimer>0?stunFall(c):0;
+    glRigMat(g, CH*(1-fallen)+2*fallen+groundElev(c.x,c.y),0.18+0.25*wet,
              (c.aimAngle || 0) / (Math.PI * 2));
-    g.ellipse(c.x, c.y, 20, 20);
+    g.ellipse(c.x,c.y,20+24*fallen,20+12*fallen);
   };
   one(player);
   for (const e of enemiesList) one(e);
@@ -35053,6 +35212,7 @@ function cullDistantEnemies() {
     // Stick City is ten thousand units across and this limit is 4800, so
     // recycling them would shrink the pool as the player walked -- and the
     // number left standing is exactly what the town-building system reads.
+    if(e.cityPersonKey)continue;
     if (e.isPopulation) continue;
     const dx = e.x - player.x, dy = e.y - player.y;
     if (dx * dx + dy * dy > limit * limit) enemiesList.splice(i, 1);
