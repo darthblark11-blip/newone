@@ -3452,3 +3452,28 @@ game never produces. Do not tune a threshold against a flat-noise measurement.
 - `CLAUDE.md` — this file.
 - `tools/` — optional headless checks. Not loaded by the game, not part of the
   OpenProcessing upload.
+
+## Fortress and field-site expansion
+
+`OUTPOST_FORT` now defines one fort in each of Sectors 1–7. The existing per-sector
+record remains the save identity; do not turn it into an array without migrating
+saves, HUD targeting, muster ownership, and the `FORT_<sector>` story beat. Each
+fort retains two gates, two masts, its own muster and the liberation/Directive loop.
+The extra service-court props stay off the central approach.
+
+`bakeFortHardstanding()` runs after biome detail and baked clutter, for every
+layout. Chunk solids and both decor lists clear the compound. Water volumes
+are excluded by their extent, not just their centre, so a river segment cannot
+overhang the paved yard. Joint positions are world anchored across chunk seams.
+
+`appendBiomeFieldSite()` adds region-specific logging, survey, quarantine and
+relay sites using existing projected, shadowed props. It uses an independent
+chunk RNG and appends after old solids so existing destruction keys stay stable.
+Placement checks the entire site's bounds against terrain reservations, authored
+geometry, existing solids and cars. Guardboxes, blast walls and sandbags now carry
+material construction detail and live rain/snow finishes; guardbox light remains
+owned by the existing emitter pipeline.
+
+Run `node tools/check-biome-expansion.js` alongside the fortress, generation,
+rendering, depth and save/load checks. It covers all seven forts and field-site
+determinism, complete groups and placement across the six outer sectors.

@@ -21555,7 +21555,7 @@ function buildAnchorStructures(biome) {
 //  exactly one fortress -- the authored Great Gates -- and past them the
 //  overworld was somewhere to walk rather than somewhere to capture.
 //
-//  This is the second one, and it is deliberately the SAME fortress: it is an
+//  Each sector now has one, and it is deliberately the SAME fortress: it is an
 //  `isGovFortress` slab with a door in it, so `gateIsOpen()`, `inOpenGateway()`,
 //  the bullet and line-of-sight tests, `drawSlabFace()` and the explosion branch
 //  that breaches a gate all already understand it. Nothing downstream needed a
@@ -21589,12 +21589,18 @@ function buildAnchorStructures(biome) {
 //     through the middle of the compound.
 // ###########################################################################
 
-// One entry per sector that has one. Placed clear of the authored core -- Stick
+// One persistent fort per open sector. Placed clear of the authored core -- Stick
 // City's runs x -4800..6000, y -4800..6000 -- and clear of the Great Gates,
 // which span the full width at y -4200 and y 5400. Four chunks south-east of
 // the south gate is a walk, which is the point: it is a destination.
 const OUTPOST_FORT = {
-  1: { x: CHUNK_W * 6, y: CHUNK_W * 9, name: "NM-0 RELAY FORT" }
+  1: { x: CHUNK_W * 6, y: CHUNK_W * 9, name: "NM-0 RELAY FORT" },
+  2: { x: CHUNK_W * -8, y: CHUNK_W * 9, name: "NM-0 TIMBER WATCH" },
+  3: { x: CHUNK_W * 8, y: CHUNK_W * 8, name: "NM-0 DUST BASTION" },
+  4: { x: CHUNK_W * -8, y: CHUNK_W * 8, name: "NM-0 CANOPY CORDON" },
+  5: { x: CHUNK_W * 8, y: CHUNK_W * -8, name: "NM-0 WHITEOUT STATION" },
+  6: { x: CHUNK_W * -8, y: CHUNK_W * -8, name: "NM-0 SPORE QUARANTINE" },
+  7: { x: CHUNK_W * 9, y: CHUNK_W * 8, name: "NM-0 PRISM ARRAY" }
 };
 const FORT_HALF_W   = 1300;   // compound half-width, wall centreline to centre
 const FORT_HALF_H   = 1100;
@@ -21761,7 +21767,7 @@ function buildOutpostFortress(biome) {
 
   // Dressing, all of it props that already exist and already light themselves.
   const P = (x, y, w, h, t) => out.push({ x: x, y: y, w: w, h: h, isBiomeProp: true,
-                                          propType: t, isOutpost: true });
+                                          propType: t, isOutpost: true, tint: 0.45 });
   P(FX,        FY - 120, 300, 220, "BUNKER");            // the command post
   P(FX - 470,  FY + H - 330, 170, 60, "GUARDBOX");       // either side of the door,
   P(FX + 470,  FY + H - 330, 170, 60, "GUARDBOX");       // inside
@@ -21774,6 +21780,17 @@ function buildOutpostFortress(biome) {
   // And the approach outside it, so the compound reads as held from a distance.
   P(FX - 760,  FY + H + 420, 40, 220, "BLASTWALL");
   P(FX + 760,  FY + H + 420, 40, 220, "BLASTWALL");
+  // Service courts occupy the flanks, leaving both doors, the mast approaches
+  // and the central muster lane clear. Each sector gives the same fort a job.
+  const dress = {
+    2: ["LOGPILE", "CABIN"], 3: ["MATERIALS", "SITEHUT"],
+    4: ["REVETMENT", "BUNKER"], 5: ["SERAC", "MAST"],
+    6: ["SPOREVENT", "GUARDBOX"], 7: ["CRYSTALSPIRE", "PYLON"]
+  }[biome];
+  if (dress) {
+    P(FX - 880, FY + 60, 120, 100, dress[0]);
+    P(FX + 880, FY + 60, 120, 100, dress[1]);
+  }
   // A LANDMARK IS NOT AUTHORED MAP. adoptLateAuthoredSolids() sweeps anything
   // in buildings[] that is not a chunk solid or a biome prop into
   // authoredSolids -- which is right for a building the story pushed in late,
@@ -22461,6 +22478,46 @@ function placeCheckpoint(solid, biome, cx, cy, ox, oy, nearAnchor) {
     }
   }
   for (const q of parts) solid.push(q);
+}
+
+// Small, region-specific destinations. A separate seed and append-only solids
+// preserve the old chunk's RNG stream and destruction keys. The entire site is
+// accepted or rejected together, so filtering cannot leave half a station.
+function appendBiomeFieldSite(biome, cx, cy, solid, cars) {
+  const rng = makeRng(chunkHash(biome, cx, cy, 9417));
+  if (rng() > 0.32) return;
+  const lay = layoutFor(biome, cx, cy);
+  for (let attempt = 0; attempt < 14; attempt++) {
+    const x = cx * CHUNK_W + rngRange(rng, 270, 930);
+    const y = cy * CHUNK_W + rngRange(rng, 230, 970);
+    const region = regionAt(biome, x, y, lay);
+    const kit = lay === "FRONTIER" ? ["SITEHUT", "MATERIALS", "WRECK"] : {
+      MEADOW: ["CABIN", "LOGPILE", "SIGNPOST"],
+      HEATH: ["RUINWALL", "CAIRN", "MONOLITH"],
+      BURN: ["RUINWALL", "WRECK", "LOGPILE"],
+      CLEARING: ["GUARDBOX", "MAST", "SANDBAG"],
+      CORDON: ["GUARDBOX", "REVETMENT", "MATERIALS"],
+      FELLFIELD: ["SITEHUT", "MAST", "CAIRN"],
+      TAIGA: ["CABIN", "LOGPILE", "MAST"],
+      ASHFALL: ["GUARDBOX", "MAST", "IMPACTOR"],
+      MYCELIA: ["GUARDBOX", "SPOREVENT", "MATERIALS"],
+      GLASS: ["PYLON", "MAST", "MONOLITH"],
+      SALT: ["SITEHUT", "PYLON", "CRYSTALSPIRE"]
+    }[region];
+    if (!kit) continue;
+    if (groundReserved(biome, cx, cy, x, y, 460, 340, 35) ||
+        hitsAuthored(x, y, 460, 340, 35) ||
+        !solidsClearAt(solid, x, y, 460, 340, 35) ||
+        !solidsClearAt(cars, x, y, 460, 340, 35)) continue;
+    const parts = [[-100, -35, 150, 100], [120, -65, 70, 70], [80, 100, 100, 50]];
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i];
+      solid.push({ x: x + p[0], y: y + p[1], w: p[2], h: p[3],
+                   isBiomeProp: true, propType: kit[i], tint: rng(),
+                   fieldSite: region || lay });
+    }
+    return;
+  }
 }
 
 function generateChunkContent(biome, cx, cy) {
@@ -24136,6 +24193,8 @@ function generateChunkContent(biome, cx, cy) {
     }
   }
 
+  appendBiomeFieldSite(biome, cx, cy, solid, cars);
+
   // Every solid carries the key it will be remembered by if the player destroys
   // it. Assigned BEFORE the strip below, so the index a solid is tagged with is
   // the index the strip looks for on the next visit -- the hitsAuthored filter
@@ -24170,9 +24229,14 @@ function generateChunkContent(biome, cx, cy) {
   // structure. None of that earns them a place inside a walled compound, and a
   // swimming pool in the middle of a fort is exactly what came out.
   const inYard = (s) => typeof insideFortYard === 'function' &&
-                        insideFortYard(biome, s.x, s.y, 300);
+                        insideFortYard(biome, s.x, s.y,
+                          300 + Math.max(s.w || 0, s.h || 0) / 2);
   for (let i = solid.length - 1; i >= 0; i--) {
     if (inYard(solid[i]) || onReserved(solid[i])) solid.splice(i, 1);
+  }
+  for (const list of [decor, decorBake]) {
+    for (let i = list.length - 1; i >= 0; i--)
+      if (insideFortYard(biome, list[i].x, list[i].y, 380)) list.splice(i, 1);
   }
   for (let i = cars.length - 1; i >= 0; i--) {
     if (groundReserved(biome, cx, cy, cars[i].x, cars[i].y,
@@ -24640,9 +24704,46 @@ function bakeChunkTerrainAt(biome, cx, cy, staticDecor) {
   if (staticDecor) {
     for (let i = 0; i < staticDecor.length; i++) paintClutter(g, staticDecor[i], 0);
   }
+  // Hardstanding belongs to every fortress, including those over wet biomes.
+  // Last in the bake: neither river paint nor tree litter can cover the yard.
+  bakeFortHardstanding(g, biome, ox, oy);
   g.pop();
 
   return g;
+}
+
+function bakeFortHardstanding(g, biome, ox, oy) {
+  const f = outpostFortDef(biome);
+  if (!f) return;
+  const x0 = Math.max(ox, f.x - FORT_HALF_W - 220);
+  const x1 = Math.min(ox + CHUNK_W, f.x + FORT_HALF_W + 220);
+  const y0 = Math.max(oy, f.y - FORT_HALF_H - 260);
+  const y1 = Math.min(oy + CHUNK_W, f.y + FORT_HALF_H + 260);
+  if (x1 <= x0 || y1 <= y0) return;
+  g.noStroke();
+  if (biome === 5) g.fill(152, 165, 173);
+  else if (biome === 3) g.fill(139, 124, 99);
+  else g.fill(96, 96, 91);
+  g.rect(x0, y0, x1 - x0, y1 - y0);
+  // World-anchored slab joints: identical coordinates on either side of a seam.
+  g.stroke(48, 51, 54, 95); g.strokeWeight(3);
+  for (let x = f.x - 1440; x < x1; x += 240)
+    if (x >= x0) g.line(x, y0, x, y1);
+  for (let y = f.y - 1440; y < y1; y += 240)
+    if (y >= y0) g.line(x0, y, x1, y);
+  g.noStroke(); g.fill(69, 72, 73);
+  const rx0 = Math.max(x0, f.x - 190), rx1 = Math.min(x1, f.x + 190);
+  if (rx1 > rx0) g.rect(rx0, y0, rx1 - rx0, y1 - y0);
+  // Interrupted lane paint and drainage slots stay out of the doorway itself.
+  for (let y = f.y - 1320; y < y1; y += 120) {
+    if (y < y0 || y + 42 > y1) continue;
+    for (const side of [-1, 1]) {
+      const x = f.x + side * 180;
+      if (x > x0 && x + 6 < x1) {
+        g.fill(201, 184, 127, 155); g.rect(x, y, 6, 42);
+      }
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -25374,36 +25475,6 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
         g.noStroke();
       }
 
-      // --- THE FORTRESS YARD ------------------------------------------------
-      // A wall round a city block is a fenced-off city block. What makes it a
-      // fort is the ground inside it: hardstanding, not carriageway and lots.
-      // Painted last so it covers the streets and block interiors this case has
-      // already laid down, and clipped to the chunk it is baking, so a compound
-      // spanning four chunks comes out as one surface with no seam.
-      if (typeof outpostFortDef === 'function') {
-        const fdb = outpostFortDef(biome);
-        if (fdb) {
-          const yx0 = Math.max(ox, fdb.x - FORT_HALF_W), yx1 = Math.min(ox + CHUNK_W, fdb.x + FORT_HALF_W);
-          const yy0 = Math.max(oy, fdb.y - FORT_HALF_H), yy1 = Math.min(oy + CHUNK_W, fdb.y + FORT_HALF_H);
-          if (yx1 > yx0 && yy1 > yy0) {
-            g.fill(88, 88, 84);  g.rect(yx0, yy0, yx1 - yx0, yy1 - yy0);
-            g.fill(96, 96, 91);  g.rect(yx0, yy0, yx1 - yx0, yy1 - yy0);
-            // Bay markings on the hardstanding, and a stained apron in front of
-            // the door where everything drives in and out.
-            g.fill(126, 122, 96, 90);
-            for (let ly = fdb.y - FORT_HALF_H + 300; ly < fdb.y + FORT_HALF_H - 200; ly += 260) {
-              if (ly < yy0 || ly > yy1) continue;
-              const bx0 = Math.max(yx0, fdb.x - FORT_HALF_W + 200);
-              const bx1 = Math.min(yx1, fdb.x - 420);
-              if (bx1 > bx0) g.rect(bx0, ly, bx1 - bx0, 5);
-            }
-            softStamp(g, fdb.x, fdb.y + FORT_HALF_H - 380, 760, 520, [64, 62, 58], 130);
-            // The road in, from the door out into the country.
-            const rx0 = Math.max(yx0, fdb.x - 190), rx1 = Math.min(yx1, fdb.x + 190);
-            if (rx1 > rx0) { g.fill(74, 74, 72); g.rect(rx0, yy0, rx1 - rx0, yy1 - yy0); }
-          }
-        }
-      }
 
       break;
     }
@@ -29733,7 +29804,7 @@ const PROP_BASE = {
   BOLLARD:   { round: 1,               top: 0.84 },
   SIGNPOST:  { round: 1, w: 13, h: 13, top: 0.78 },
   QUAYCRANE: { round: 1,               top: 0.86 },
-  SANDBAG:   { round: 1, w: 68, h: 50, top: 0.70 },
+  SANDBAG:   { round: 1, top: 0.88 },
   BENCH:     { ang: 1 },
   WATCHTOWER:{ legs: 14 }
 };
@@ -29885,37 +29956,99 @@ function drawBiomeProps(list, i0, i1) {
       }
 
       case "GUARDBOX": {
-        castShadowRect(b.x, b.y, b.w, b.h, 20, 75, 3);
-        push(); translate(b.x, b.y);
-        fill(58, 60, 64); stroke(26); strokeWeight(4);
-        rect(-b.w / 2, -b.h / 2, b.w, b.h, 3);
-        noStroke(); fill(80, 140, 170, 190);
-        rect(-b.w / 2 + 12, -b.h / 2 + 10, b.w - 24, b.h - 20, 2);
-        fill(200, 40, 40, 140 + Math.sin(frameCount * 0.12) * 100);
-        ellipse(0, -b.h / 2 - 8, 12, 12);
+        castShadowRect(b.x, b.y, b.w, b.h, 24, 75, 3);
+        push(); translate(b.x, b.y); noStroke();
+        // The shared projection already built the walls. The roof is folded
+        // sheet steel, with a recessed skylight, flashings and an inset hatch.
+        fill(116, 124, 129); rect(-b.w/2, -b.h/2, b.w, b.h, 3);
+        fill(64, 72, 78); rect(-b.w/2 + 5, -b.h/2 + 5, b.w - 10, b.h - 10, 2);
+        fill(91, 102, 108); rect(-b.w/2 + 8, -b.h/2 + 8, b.w - 16, b.h - 16, 2);
+        stroke(40, 49, 54, 150); strokeWeight(1.5);
+        for (let x = -b.w/2 + 22; x < b.w/2 - 10; x += 24)
+          line(x, -b.h/2 + 8, x, b.h/2 - 8);
+        noStroke(); fill(23, 38, 47);
+        rect(-b.w * 0.24, -b.h * 0.26, b.w * 0.48, b.h * 0.52, 2);
+        fill(69, 118, 139);
+        rect(-b.w * 0.24 + 3, -b.h * 0.26 + 3, b.w * 0.48 - 6, b.h * 0.52 - 6, 1);
+        fill(181, 220, 229, isRaining ? 150 : 70);
+        quad(-b.w*.20, -b.h*.20, -b.w*.06, -b.h*.20,
+             b.w*.08, b.h*.20, -b.w*.06, b.h*.20);
+        stroke(32, 47, 55); strokeWeight(3); line(0, -b.h*.26, 0, b.h*.26);
+        noStroke();
+        for (const x of [-1, 1]) for (const y of [-1, 1]) {
+          fill(36, 41, 45); ellipse(x*(b.w/2-6), y*(b.h/2-6), 4, 4);
+          fill(191, 198, 197); ellipse(x*(b.w/2-6)-.6, y*(b.h/2-6)-.6, 2, 2);
+        }
+        // Snow lies on opaque ledges, not across the glass. Rain is a narrow
+        // directional glint; it changes live without invalidating chunk bakes.
+        if (weather && weather.kind === "SNOW") {
+          fill(224, 236, 241); rect(-b.w/2+3, -b.h/2+2, b.w-6, 5, 2);
+        } else if (isRaining) {
+          stroke(204, 226, 236, 125); strokeWeight(1.4);
+          line(-b.w/2+5, -b.h/2+4, b.w/2-5, -b.h/2+4); noStroke();
+        }
+        // The real lamp and its pool come from PROP_EMITTER, after dusk.
         pop();
         break;
       }
 
       case "BLASTWALL": {
-        castShadowRect(b.x, b.y, b.w, b.h, 18, 75, 2);
-        push(); translate(b.x, b.y);
-        fill(72, 74, 70); stroke(30); strokeWeight(4);
-        rect(-b.w / 2, -b.h / 2, b.w, b.h, 2);
-        noStroke(); fill(226, 190, 40, 170);
-        rect(-b.w / 2, -b.h / 2 + 8, b.w, 8);
-        rect(-b.w / 2, b.h / 2 - 16, b.w, 8);
+        castShadowRect(b.x, b.y, b.w, b.h, 22, 75, 2);
+        push(); translate(b.x, b.y); noStroke();
+        fill(124, 126, 119); rect(-b.w/2, -b.h/2, b.w, b.h, 2);
+        fill(153, 153, 143); rect(-b.w/2+3, -b.h/2+3, b.w-6, b.h-6, 2);
+        // Recessed joints and lifting sockets. Work along the long axis so
+        // both orientations have the same construction and collision footprint.
+        const vertical = b.h > b.w;
+        const length = vertical ? b.h : b.w;
+        for (let i = -length/2 + 28; i < length/2-12; i += 56) {
+          stroke(66, 70, 69); strokeWeight(2);
+          if (vertical) line(-b.w/2+3, i, b.w/2-3, i);
+          else line(i, -b.h/2+3, i, b.h/2-3);
+          noStroke(); fill(48, 54, 55);
+          ellipse(vertical ? 0 : i+12, vertical ? i+12 : 0, 5, 5);
+        }
+        fill(214, 177, 57);
+        rect(-b.w/2+4, -b.h/2+5, b.w-8, 6);
+        rect(-b.w/2+4, b.h/2-11, b.w-8, 6);
+        // Fine aggregate, deterministic per object and stable between frames.
+        for (let i = 0; i < 12; i++) {
+          const x = -b.w/2+5 + ((i*37+11)%97)/97*(b.w-10);
+          const y = -b.h/2+5 + ((i*61+7)%89)/89*(b.h-10);
+          fill(i%2 ? 74 : 199, i%2 ? 79 : 199, i%2 ? 76 : 183, 120);
+          rect(x, y, 2, 2);
+        }
+        if (weather && weather.kind === "SNOW") {
+          fill(225, 237, 242); rect(-b.w/2+2, -b.h/2+2, b.w-4, 4, 2);
+        } else if (isRaining) {
+          fill(38, 57, 66, 65); rect(-b.w/2+3, -b.h/2+3, b.w-6, b.h-6);
+          stroke(219, 235, 236, 145); strokeWeight(1);
+          line(-LIGHT_DX*b.w*.42, -b.h*.4, -LIGHT_DX*b.w*.42, b.h*.4); noStroke();
+        }
         pop();
         break;
       }
 
       case "SANDBAG": {
-        castShadow(b.x, b.y, b.w * 1.1, b.h * 0.7, 10, 70);
+        castShadow(b.x, b.y, b.w, b.h*.86, 12, 70);
         push(); translate(b.x, b.y); noStroke();
-        for (let r = 0; r < 3; r++) {
-          for (let c = 0; c < 3; c++) {
-            fill(126 - r * 8, 116 - r * 8, 88 - r * 6);
-            ellipse(-22 + c * 22 + (r % 2) * 8, -18 + r * 18, 26, 17);
+        // Staggered courses with tied ends and seams, scaled to the actual
+        // footprint. The old fixed 3x3 ellipses overflowed the smaller bags.
+        const bw = b.w * .29, bh = b.h * .24;
+        for (let r = 0; r < 3; r++) for (let c = 0; c < 3; c++) {
+          const x = (c-1)*b.w*.29 + (r%2 ? b.w*.035 : -b.w*.015);
+          const y = (r-1)*b.h*.25;
+          fill(68, 64, 47); rect(x-bw/2-1, y-bh/2+2, bw+2, bh, bh*.3);
+          fill(isRaining ? 106 : 153, isRaining ? 98 : 139, isRaining ? 72 : 99);
+          rect(x-bw/2, y-bh/2, bw, bh, bh*.35);
+          fill(219, 202, 146, 105);
+          ellipse(x-LIGHT_DX*bw*.14, y-LIGHT_DY*bh*.15, bw*.68, bh*.45);
+          stroke(66, 65, 46, 150); strokeWeight(.8);
+          line(x-bw*.32, y+bh*.25, x+bw*.32, y+bh*.25);
+          noStroke(); fill(96, 88, 59);
+          ellipse(x+bw*.45, y, bw*.12, bh*.32);
+          if (weather && weather.kind === "SNOW" && r === 0) {
+            fill(222, 234, 238, 220); ellipse(x, y-bh*.16, bw*.76, bh*.42);
           }
         }
         pop();
