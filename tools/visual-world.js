@@ -41,8 +41,10 @@ const LABELS = process.argv.includes('labels');
 // exist after dark: the fixtures (drawNightLights) and the light rig's pool
 // (drawLightPass). Judging a lamp at midday tells you nothing about a lamp.
 const NIGHT = process.argv.includes('night');
+// `district=0..5` finds a complete generated city plan at real p5 noise.
 // `civic` finds a real generated Level 1 terrace with p5's actual noise.
 const CIVIC = process.argv.includes('civic');
+const DISTRICT = +(process.argv.find(a => /^district=/.test(a)) || 'district=-1').split('=')[1];
 const RAIN = process.argv.includes('rain');
 // `hour=N` puts the world clock at that hour. The sun travels now, so which
 // hour a screenshot was taken at is a property of the picture -- a shadow
@@ -87,6 +89,15 @@ window.setup = function () {
       window.__wx=cx*CHUNK_W+600; window.__wy=cy*CHUNK_W+600; found=true; break;
     }
     if (!found) window.__errs.push('No civic terrace found');
+  }
+  if (${DISTRICT} >= 0) {
+    let found=false;
+    for(let cy=5;cy<40&&!found;cy++)for(let cx=-18;cx<18;cx++){
+      const ch=generateChunkContent(1,cx,cy);
+      if(ch.solid.filter(b=>b.cityPlan===${DISTRICT}&&b.isBlockBuilding).length<4)continue;
+      window.__wx=cx*CHUNK_W+600;window.__wy=cy*CHUNK_W+600;found=true;break;
+    }
+    if(!found)window.__errs.push('No city district found');
   }
   // refreshPopulation() wants a player and a budget. Neither is what this tool
   // is looking at, and both drag in half the entity system.
@@ -178,7 +189,7 @@ window.draw = function () {
   const errs = await p.evaluate('window.__errs || []');
   const position = await p.evaluate('({x:window.__wx,y:window.__wy})');
   if (CIVIC) console.log('Civic terrace at ' + position.x + ', ' + position.y);
-  const file = path.join(OUT, `world-b${BIOME}${CIVIC ? '-civic' : ''}${RAIN ? '-rain' : ''}${LEGACY ? '-legacy' : ''}-h${HOUR}-${WX}_${WY}.png`);
+  const file = path.join(OUT, `world-b${BIOME}${CIVIC ? '-civic' : ''}${DISTRICT >= 0 ? '-district'+DISTRICT : ''}${RAIN ? '-rain' : ''}${LEGACY ? '-legacy' : ''}-h${HOUR}-${WX}_${WY}.png`);
   try { await p.locator('#defaultCanvas0').screenshot({ path: file, timeout: 15000 }); }
   catch (e) {
     console.log('  screenshot failed: ' + e.message.split('\n')[0]);

@@ -5053,12 +5053,20 @@ function drawBuildings(list, i0, i1) {
 
     noStroke();
     if (rise > 0) drawMassSides(x0, y0, x1, y1, lx, ly, bM[0], bM[1], bM[2], 26);
+    if (b.cityArchitecture !== undefined) drawCityFacades(b,lx,ly);
 
     // Everything from here down is ROOF, so it rides up to the top of the
     // walls. Drawn in the footprint's own coordinates and translated, so none
     // of the art below has to know the building leans at all.
     push();
     translate(lx, ly);
+    if (b.cityArchitecture !== undefined) {
+      fill(bM[0],bM[1],bM[2]);rect(x0,y0,b.w,b.h,2);
+      fill(236,211,167);rect(x0+2,y0+2,b.w-4,5);
+      fill(36,41,45);rect(x1-7,y0+7,5,b.h-9);rect(x0+7,y1-7,b.w-9,5);
+      drawCityArchitecture(b);
+      pop();continue;
+    }
 
     fill(bM[0], bM[1], bM[2]);
     stroke(currentLevel === 1 || currentLevel === 3 ? 100 : 10); strokeWeight(2);
@@ -21393,6 +21401,137 @@ function nextCheckpoint(biome, cx, cy) {
 // blocks, and PARK / INDUSTRIAL / COMMERCIAL / RESIDENTIAL is a small enough
 // vocabulary that a five-minute walk sees every word in it twice.
 // ---------------------------------------------------------------------------
+// Six street-address plans. Rectangular wings keep collision, occlusion and
+// projectile cover identical to the projected architecture; courtyards are air.
+function cityBlockPlan(cx, cy, zone) {
+  const n = chunkHash(1, cx, cy, 8173) >>> 0;
+  return zone === "INDUSTRIAL" ? 4 + n % 2 : n % 6;
+}
+function buildCityDistrict(solid, ox, oy, zone, nearAnchor) {
+  const plan = cityBlockPlan(ox / CHUNK_W, oy / CHUNK_W, zone);
+  const rng = makeRng(chunkHash(1, ox / CHUNK_W, oy / CHUNK_W, 8174));
+  const orientation=chunkHash(1,ox/CHUNK_W,oy/CHUNK_W,8175)>>>0;
+  const add = (x,y,w,h,arch) => {
+    x = (orientation&1 ? -x : x)+ox+600; y = (orientation&2 ? -y : y)+oy+600;
+    if (nearAnchor(x,y,Math.max(w,h)/2+150)) return;
+    solid.push({x,y,w,h,isBlockBuilding:true,cityArchitecture:arch,
+      cityPlan:plan,style:[1,3,2,0,0,2][arch],details:[],
+      cityAccent:rngInt(rng,0,4),cityStoreys:2+arch%3});
+  };
+  if (plan === 0) { // Brownstone mews: two rows, central carriage lane.
+    for (let i=0;i<5;i++) for (const side of [-1,1])
+      add(-320+i*160,side*245,104,280,0);
+  } else if (plan === 1) { // Office campus: offset towers, generous cross routes.
+    add(-240,-240,260,260,1); add(250,-195,230,340,1);
+    add(-215,235,310,230,5); add(270,270,190,190,1);
+  } else if (plan === 2) { // Open courtyard housing: four separated wings.
+    add(0,-310,650,120,2); add(0,310,650,120,2);
+    add(-310,0,120,420,2); add(310,0,120,420,2);
+  } else if (plan === 3) { // Market streets: twelve small pitched shop roofs.
+    for(let i=0;i<4;i++) for(let j=0;j<3;j++)
+      add(-300+i*200,-280+j*280,138,170,3);
+  } else if (plan === 4) { // Workshop yards: sawtooth sheds and loading lanes.
+    add(-220,-240,300,280,4); add(205,-235,320,290,4);
+    add(-270,245,200,260,0); add(170,250,390,250,4);
+  } else { // Garden apartments: staggered terraces, asymmetric passages.
+    add(-240,-230,270,280,5); add(220,-285,300,170,5);
+    add(-245,260,260,210,2); add(235,185,280,370,5);
+  }
+  // Furniture belongs to the open court, never to a roof or doorway.
+  const positions = plan===2 ? [[-90,-90],[90,90]] : [[0,-100],[0,100]];
+  for (const [dx,dy] of positions) {
+    const x=ox+600+dx,y=oy+600+dy;
+    if(nearAnchor(x,y,180)||!solidsClearAt(solid,x,y,62,62,30))continue;
+    solid.push({x,y,w:62,h:62,isBiomeProp:true,propType:"TERRACEPLANTER",cityPlan:plan,tint:rng()});
+  }
+}
+
+// Facade glazing follows the actual base-to-roof quadrilateral, not a flat
+// screen-facing sprite. Only visible faces receive windows; floor bands taper
+// with the same lean as the masonry and remain inside its collision footprint.
+function drawCityFacades(b,lx,ly) {
+  const x0=b.x-b.w/2,y0=b.y-b.h/2,x1=x0+b.w,y1=y0+b.h;
+  const face=(ax,ay,bx,by,len)=>{
+    const bays=Math.max(2,Math.min(12,Math.floor(len/35)));
+    for(let floor=0;floor<b.cityStoreys;floor++)for(let i=0;i<bays;i++){
+      const u=(i+.20)/bays,v=(i+.80)/bays;
+      const t=(floor+.20)/b.cityStoreys,q=(floor+.70)/b.cityStoreys;
+      const lit=((i+floor+b.cityAccent)%4===0)&&daylight()<.75;
+      fill(lit?242:29,lit?181:68,lit?87:83,230);
+      quad(ax+(bx-ax)*u+lx*t,ay+(by-ay)*u+ly*t,
+           ax+(bx-ax)*v+lx*t,ay+(by-ay)*v+ly*t,
+           ax+(bx-ax)*v+lx*q,ay+(by-ay)*v+ly*q,
+           ax+(bx-ax)*u+lx*q,ay+(by-ay)*u+ly*q);
+    }
+  };
+  noStroke();
+  if(Math.abs(lx)>2)face(lx>0?x0:x1,y0,lx>0?x0:x1,y1,b.h);
+  if(Math.abs(ly)>2)face(x0,ly>0?y0:y1,x1,ly>0?y0:y1,b.w);
+}
+// Secondary roof masses use the same projection as the parent, with their own
+// short rise. Coordinates are local to the already lifted roof; never shift the
+// building footprint or register rooftop furniture as ground-level collision.
+function cityRoofBox(b,x,y,w,h,z,c) {
+  massLean(b.x+x,b.y+y,z,_leanTmp);
+  const dx=_leanTmp[0],dy=_leanTmp[1];
+  fill(0,0,0,48);rect(x+LIGHT_DX*z*.65,y+LIGHT_DY*z*.65,w,h,2);
+  drawMassSides(x,y,x+w,y+h,dx,dy,c[0],c[1],c[2],0);
+  fill(c[0],c[1],c[2]);rect(x+dx,y+dy,w,h,2);
+  fill(246,232,181,95);rect(x+dx,y+dy,w,3);
+  return [dx,dy];
+}
+function drawCityArchitecture(b) {
+  push();translate(b.x,b.y);noStroke();
+  const w=b.w-24,h=b.h-24,x=-w/2,y=-h/2,a=b.cityArchitecture;
+  const tone=(b.cityAccent-1.5)*7;
+  if(a===0||a===3){ // Sloped copper / terracotta roofs, ridge and dormer wells.
+    fill((a===0?116:169)+tone,(a===0?76:89)+tone,(a===0?65:57)+tone);rect(x,y,w,h/2);
+    fill(a===0?77:119,a===0?49:58,a===0?46:40);rect(x,0,w,h/2);
+    fill(0,0,0,35);for(let k=y+12;k<h/2;k+=15)rect(x,k,w,2);
+    fill(218,158,105);rect(x,-3,w,6);
+    for(let k=x+18;k<w/2-15;k+=48){
+      fill(35,40,44);rect(k,-h*.30,22,17);fill(97,151,160);rect(k+3,-h*.30+3,16,9);
+      fill(217,173,121);rect(k-3,-h*.30-3,28,4);
+    }
+    cityRoofBox(b,w/2-30,h/2-36,22,23,9,[150,115,90]);
+  }else if(a===1){ // Glass office: recessed atrium, mullions, service core.
+    fill(41,82,100);rect(x+12,y+12,w-24,h-24,3);
+    fill(88,150,166);rect(x+18,y+18,w-36,(h-36)*.42,2);
+    stroke(181,211,199,150);strokeWeight(3);
+    for(let k=x+18;k<w/2-14;k+=32)line(k,y+16,k,h/2-16);
+    for(let k=y+18;k<h/2-14;k+=32)line(x+16,k,w/2-16,k);
+    noStroke();fill(0,0,0,65);rect(x+17,y+17,12,h-34);
+    fill(209,242,230,55);quad(x+20,y+20,x+45,y+20,w/2-22,h/2-22,w/2-47,h/2-22);
+    const core=cityRoofBox(b,w/2-70,h/2-60,50,40,10,[186,182,158]);
+    fill(90,102,105);rect(w/2-66+core[0],h/2-56+core[1],42,8);
+  }else if(a===4){ // Sawtooth shed: repeated opaque slopes / north-light glazing.
+    const n=Math.max(2,Math.floor(h/65)),step=h/n;
+    for(let k=0;k<n;k++){
+      fill(109,139,147);rect(x,y+k*step,w,step*.62);
+      fill(57,80,94);rect(x,y+k*step+step*.62,w,step*.38);
+      fill(155,199,200);rect(x+5,y+k*step+step*.67,w-10,step*.18);
+      fill(214,195,133);rect(x,y+k*step,w,3);
+    }
+    fill(45,53,55);for(let k=x+20;k<w/2;k+=55)rect(k,y,3,h);
+  }else { // Residential roof terraces: planted beds, pergola and service stair.
+    fill(a===5?106:168,a===5?131:142,a===5?107:106);rect(x+4,y+4,w-8,h-8,2);
+    fill(192,169,116);rect(x+12,y+12,w*.38,h-24,2);
+    const bed=cityRoofBox(b,x+w*.52,y+12,w*.34,h*.40,5,[61,86,59]);
+    const leafR=Math.max(6,Math.min(w,h)*.075);
+    for(let k=0;k<7;k++){
+      const px=x+w*(.58+(k%3)*.095)+bed[0],py=y+h*(.18+Math.floor(k/3)*.10)+bed[1];
+      fill(31,65,46);ellipse(px+3,py+4,leafR*2,leafR*1.8);
+      fill(65+k%3*12,126+k%3*9,69);ellipse(px,py,leafR*2,leafR*1.8);
+      fill(149,185,94,155);ellipse(px-LIGHT_DX*3,py-LIGHT_DY*3,leafR,leafR*.8);
+    }
+    fill(49,58,61);rect(x+w*.52,y+h*.64,w*.32,h*.23,2);
+    fill(185,157,105);for(let k=0;k<5;k++)rect(x+w*.51,y+h*.63+k*h*.05,w*.34,4);
+    cityRoofBox(b,x+16,y+h*.64,w*.27,h*.22,9,[126,119,97]);
+  }
+  if(isRaining){fill(34,66,83,38);rect(x,y,w,h);stroke(219,241,245,85);strokeWeight(2);line(x+8,y+6,w/2-8,y+6);}
+  pop();
+}
+
 function cityZoneAt(biome, ox, oy) {
   const n = bnoise(biome, ox, oy, 0.00035);
   if (n < 0.20) return "PARK";
@@ -22961,7 +23100,7 @@ function generateChunkContent(biome, cx, cy) {
             break;
           }
         }
-      } else if (zone === "COMMERCIAL" && rng() > 0.55) {
+      } else if (biome !== 1 && zone === "COMMERCIAL" && rng() > 0.55) {
         // Mall / big-box with rooftop HVAC
         let mall = { x: ox + 600, y: oy + 600, w: blockSz - 90, h: blockSz - 90, isMall: true, details: [] };
         for (let i = 0; i < 14; i++) {
@@ -22982,6 +23121,8 @@ function generateChunkContent(biome, cx, cy) {
             if (rng() > 0.55) cars.push({ x: px + spotW + aisleW + spotW*0.5, y: py + spotH/2, w: 90, h: 50, isCar: true, isParkingCar: true, col: rngPick(rng, carCols), angle: -HALF_PI, hp: 100 });
           }
         }
+      } else if (biome === 1) {
+        buildCityDistrict(solid, ox, oy, zone, nearAnchor);
       } else {
         // Standard subdivided block
         let cols = rngInt(rng, dense ? 3 : 2, dense ? 6 : 5);
@@ -24356,7 +24497,11 @@ function generateChunkContent(biome, cx, cy) {
   // the index the strip looks for on the next visit -- the hitsAuthored filter
   // further down renumbers the array, and a key assigned after it would point
   // at a different piece of the world every time the chunk loaded.
-  for (let i = 0; i < solid.length; i++) solid[i].chunkKey = cx + "," + cy + "," + (solid[i].isCivic ? "civic:" : "") + i;
+  // A replacement district has a different index sequence from the old grid.
+  // Namespace the whole block, including its street fixtures, so an old roof's
+  // saved destruction index cannot erase a new streetlight or court planter.
+  const districtBlock = solid.some(b => b.cityArchitecture !== undefined);
+  for (let i = 0; i < solid.length; i++) solid[i].chunkKey = cx + "," + cy + "," + (districtBlock ? "district:" : solid[i].isCivic ? "civic:" : "") + i;
 
   // Strip anything the player already destroyed on a previous visit
   for (let i = solid.length - 1; i >= 0; i--) {
@@ -25484,6 +25629,27 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
           g.line(sx, wy, sx + Math.cos(a) * ln, wy + Math.sin(a) * ln);
         }
         g.noStroke();
+      }
+
+      // Designed pedestrian routes occupy only actual open space in the new
+      // housing court and market plan. No city-wide tile slab; authored and
+      // canal blocks retain their original ground. Static joints are baked.
+      if (biome === 1 && !chunkInAuthoredCore(cx,cy) && !canalB &&
+          (zone === "RESIDENTIAL" || zone === "COMMERCIAL")) {
+        const plan=cityBlockPlan(cx,cy,zone);
+        if(plan===2){
+          g.fill(64,93,72);g.rect(ox+365,oy+365,470,470,10);
+          g.fill(163,151,119);g.rect(ox+562,oy+365,76,470);g.rect(ox+365,oy+562,470,76);
+          g.stroke(83,80,66,100);g.strokeWeight(2);
+          for(let k=385;k<835;k+=38){g.line(ox+562,oy+k,ox+638,oy+k);g.line(ox+k,oy+562,ox+k,oy+638);}
+          g.noStroke();
+        }else if(plan===3){
+          g.fill(146,124,95,165);
+          for(const k of [180,460,740,1020])g.rect(ox+165,oy+k-25,870,50);
+          g.stroke(59,61,55,100);g.strokeWeight(2);
+          for(const k of [460,740])for(let x=185;x<1035;x+=42)g.line(ox+x,oy+k-24,ox+x,oy+k+24);
+          g.noStroke();
+        }
       }
 
       // --- Sidewalks ---
@@ -29961,6 +30127,7 @@ const PROP_RISE = {
 // thing it is under. Where w/h are left out the drawn base really is the rect.
 const PROP_BASE = {
   ARCADESTALL: { legs: 7 },
+  BUSSTOP: { legs: 4 },
   HYDRANT:   { round: 1, w: 20, h: 19, top: 0.72 },
   POSTBOX:   { round: 1, w: 22, h: 21, top: 0.78 },
   BOLLARD:   { round: 1,               top: 0.84 },
@@ -31291,6 +31458,11 @@ function drawBiomeProps(list, i0, i1) {
           if (i % 2) fill(178, 62, 52); else fill(216, 210, 196);
           rect(-L3 / 2 + i * 14, W3 / 2 - 4, 14, 12, 1);
         }
+        fill(108, 39, 33); rect(-L3 / 2, W3 / 2 + 6, L3, 4);
+        fill(231, 205, 153); rect(-L3 / 2 + 2, -W3 / 2 + 3, L3 - 4, 4);
+        stroke(51, 48, 43); strokeWeight(2);
+        for(let k=-L3/2+14;k<L3/2;k+=22)line(k,-W3/2+9,k,W3/2-13);
+        noStroke();
         // Counter and stacked print
         fill(46, 44, 40); rect(-L3 / 2 + 8, W3 / 2 - 8, L3 - 16, 5, 1);
         for (let i = 0; i < 3; i++) {
@@ -31318,6 +31490,12 @@ function drawBiomeProps(list, i0, i1) {
         rect(-L4 / 2, -W4 / 2, L4, 5, 2);
         rect(-L4 / 2, W4 / 2 - 5, L4, 5, 2);
         rect(-3, -W4 / 2, 6, W4);
+        // Laminated glass reflection and roof-edge thickness. Posts are
+        // projected by PROP_BASE instead of a solid box beneath the glazing.
+        fill(222, 243, 236, 75);
+        quad(-L4/2+8,-W4/2+7,-L4/2+24,-W4/2+7,L4/2-14,W4/2-8,L4/2-30,W4/2-8);
+        fill(36, 48, 58);rect(-L4/2,W4/2-2,L4,5,1);
+        fill(203, 191, 119);rect(-L4/2+5,-W4/2+1,L4-10,2);
         // Flag sign on a post at one end
         fill(48, 50, 54); ellipse(-L4 / 2 - 10, 0, 8, 8);
         fill(206, 200, 60); rect(-L4 / 2 - 20, -8, 18, 12, 2);
