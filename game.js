@@ -2762,8 +2762,8 @@ function smooth01(t) { return t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t); }
 // Height of the ground under a point, in world units.
 function groundElev(x, y) {
   const zs = elevZones();
-  if (!zs) return 0;
-  let h = 0;
+  let h = civicGroundHeight(x, y);
+  if (!zs) return h;
   for (let i = 0; i < zs.length; i++) {
     const z = zs[i];
     const fx = (z.w / 2 - Math.abs(x - z.x)) / z.f;
@@ -2778,7 +2778,7 @@ function groundElev(x, y) {
 
 // Render scale for a figure standing at (x, y). Height reads as proximity.
 function elevRenderScale(x, y) {
-  if (!elevZones()) return 1;
+  if (!elevZones() && (!BIOME_ACTIVE || currentBiome !== 1)) return 1;
   const s = 1 + groundElev(x, y) * ELEV_SCALE;
   return s < ELEV_SCALE_LO ? ELEV_SCALE_LO : s > ELEV_SCALE_HI ? ELEV_SCALE_HI : s;
 }
@@ -2787,7 +2787,7 @@ function elevRenderScale(x, y) {
 // Climbing costs, descending pays a little of it back, and the range is kept
 // narrow -- this is meant to be felt, not fought.
 function elevSpeedFactor(x, y, vx, vy) {
-  if (!elevZones()) return 1;
+  if (!elevZones() && (!BIOME_ACTIVE || currentBiome !== 1)) return 1;
   const m = Math.hypot(vx, vy);
   if (m < 0.01) return 1;
   const step = 26 / m;
@@ -21403,6 +21403,159 @@ function cityZoneAt(biome, ox, oy) {
   return "RESIDENTIAL";
 }
 
+// Level 1's civic terraces. One eligibility decision owns the content, baked
+// paving, live stair edges and physical height. Cache only the noise result;
+// authored geometry and landmark exclusions are checked against current state.
+const civicTerraceSites = new Map();
+function hasCivicTerrace(biome, cx, cy) {
+  if (biome !== 1) return false;
+  const x = cx * CHUNK_W + 600, y = cy * CHUNK_W + 600;
+  if (chunkInAuthoredCore(cx, cy) || hitsAuthored(x, y, 920, 920, 60)) return false;
+  if (insideFortYard(1, x, y, 1100)) return false;
+  if (!authoredCore && Math.abs(x) < 900 &&
+      (Math.abs(y) < 900 || Math.abs(y - 2400) < 900 || Math.abs(y + 2400) < 900)) return false;
+  const key = cx + "," + cy;
+  if (civicTerraceSites.has(key)) return civicTerraceSites.get(key);
+  const yes = !cityHasCanal(1, cy) && cityZoneAt(1, cx * CHUNK_W, cy * CHUNK_W) === "PLAZA";
+  if (civicTerraceSites.size >= 256) civicTerraceSites.clear();
+  civicTerraceSites.set(key, yes);
+  return yes;
+}
+
+// Walkable benches, not invisible solid platforms. North/south are broad
+// stairs; east/west are sloped promenades. Heights meet the street at zero.
+const CIVIC_BENCHES = [
+  { w: 820, h: 700, f: 70, z: 24 },
+  { w: 640, h: 520, f: 80, z: 56 }
+];
+function civicLocalHeight(x, y) {
+  let h = 0;
+  for (const z of CIVIC_BENCHES) {
+    const t = Math.min((z.w / 2 - Math.abs(x)) / z.f,
+                       (z.h / 2 - Math.abs(y)) / z.f);
+    h = Math.max(h, z.z * smooth01(t));
+  }
+  return h;
+}
+function civicGroundHeight(x, y) {
+  if (!BIOME_ACTIVE || currentBiome !== 1) return 0;
+  const cx = Math.floor(x / CHUNK_W), cy = Math.floor(y / CHUNK_W);
+  const dx = x - cx * CHUNK_W - 600, dy = y - cy * CHUNK_W - 600;
+  if (Math.abs(dx) >= 410 || Math.abs(dy) >= 350 || !hasCivicTerrace(1, cx, cy)) return 0;
+  return civicLocalHeight(dx, dy);
+}
+
+function buildCivicTerrace(solid, ox, oy) {
+  const x = ox + 600, y = oy + 600;
+  const add = (dx, dy, w, h, type, tint) => solid.push({
+    x: x + dx, y: y + dy, w, h, propType: type, isBiomeProp: true,
+    isCivic: true, tint: tint || 0
+  });
+  add(0, -115, 230, 100, "CIVICPAVILION", 0);
+  add(0, 105, 100, 100, "FOUNTAIN", 0.45);
+  for (const side of [-1, 1]) {
+    add(side * 220, 110, 110, 76, "ARCADESTALL", side < 0 ? 0 : 1);
+    add(side * 220, -125, 100, 100, "TERRACEPLANTER", side < 0 ? .2 : .7);
+    add(side * 190, -5, 76, 26, "BENCH", .4);
+    for (const end of [-1, 1])
+      add(side * 320, end * 125, 16, 150, "CIVICBALUSTRADE", .4);
+    for (const end of [-1, 1])
+      solid.push({ x: x + side * 295, y: y + end * 210, w: 16, h: 16,
+                   isStreetLight: true, isCivic: true });
+  }
+  // Deck owns no collision or damage. Keeping it last avoids letting its
+  // walkable footprint suppress the plaza's own furniture clearance checks.
+  solid.push({ x, y, w: 820, h: 700, isDeck: true, isCivic: true,
+               isBiomeProp: true, propType: "CIVICTERRACE" });
+}
+
+// Static material detail is baked once; shadows and weather stay live. Paving
+// remains in world coordinates so feet never drift away from collision.
+function bakeCivicTerrace(g, biome, cx, cy) {
+  if (!hasCivicTerrace(biome, cx, cy)) return;
+  const x = cx * CHUNK_W + 600, y = cy * CHUNK_W + 600;
+  g.push(); g.translate(x, y); g.noStroke();
+  g.fill(78, 102, 108); g.rect(-435, -435, 870, 870, 8);
+  // Warm limestone against cool asphalt: broad, legible cel-shaded planes.
+  g.fill(180, 155, 113); g.rect(-410, -350, 820, 700);
+  g.fill(213, 190, 143); g.rect(-340, -280, 680, 560);
+  g.fill(234, 213, 170); g.rect(-240, -180, 480, 360);
+  // Narrow bands of glazed teal tile mark the change in level.
+  g.fill(40, 119, 126);
+  for (const side of [-1, 1]) {
+    g.rect(side < 0 ? -335 : 321, -275, 14, 550);
+    g.rect(-335, side < 0 ? -275 : 261, 670, 14);
+  }
+  // Staggered limestone courses, clipped by construction to each terrace.
+  g.stroke(118, 105, 84, 65); g.strokeWeight(1.5);
+  for (let row = 0; row < 10; row++) {
+    const py = -250 + row * 50;
+    g.line(-310, py, 310, py);
+    for (let px = -290 + (row % 2) * 42; px < 310; px += 84)
+      g.line(px, py, px, py + 48);
+  }
+  g.noStroke();
+  // Long ramp ribbons make the side routes visibly different from the stairs.
+  for (const side of [-1, 1]) {
+    g.fill(151, 172, 164); g.rect(side < 0 ? -410 : 240, -42, 170, 84);
+    g.fill(232, 220, 176);
+    for (let j=0;j<3;j++) g.rect(side * (280+j*42)-8, -3, 16, 6);
+    // Street-level rain gardens and slot drains leave a clear approach on all sides.
+    for (const end of [-1, 1]) {
+      g.fill(39, 68, 57); g.rect(side * 380 - 28, end * 210 - 55, 56, 110, 10);
+      g.fill(76, 138, 91); g.rect(side * 380 - 20, end * 210 - 47, 40, 94, 9);
+      for(let i=0;i<15;i++) {
+        const px=side*380+Math.sin(i*2.4)*14, py=end*210-42+i*6;
+        g.fill(99+i%3*14,153+i%3*12,89); g.ellipse(px,py,12,8);
+      }
+      g.fill(36, 57, 62); g.rect(side * 420 - 5, end * 210 - 60, 10, 120);
+      g.stroke(119, 144, 143); g.strokeWeight(2);
+      for(let j=-50;j<=50;j+=12) g.line(side*420-4,end*210+j,side*420+4,end*210+j);
+      g.noStroke();
+    }
+  }
+  // An inlaid compass, deliberately below the stairs, remains an arrival cue.
+  g.fill(222, 183, 77);
+  g.quad(0, 377, 14, 394, 0, 417, -14, 394);
+  g.fill(49, 111, 119); g.triangle(0, 377, 0, 404, -14, 394);
+  g.pop();
+}
+
+function drawCivicTerrace(b) {
+  push(); translate(b.x, b.y); noStroke();
+  // Treads are sampled from the SAME continuous height field movement reads.
+  // Eight risers on each approach: directional faces, bright nosings, no
+  // screen-space height offset that would slide the character off the steps.
+  for (const side of [-1, 1]) {
+    for (let k = 0; k < 8; k++) {
+      const near = 350 - k * 21, far = near - 21;
+      const h0 = civicLocalHeight(0, near), h1 = civicLocalHeight(0, far);
+      const light = Math.max(0, -side * LIGHT_DY);
+      fill(105 + light*47, 91 + light*42, 68 + light*32);
+      rect(-115, side < 0 ? -near : far, 230, 21);
+      fill(216 + light*20, 187 + light*21, 137 + light*22);
+      rect(-112, side < 0 ? -near+4 : far+4, 224, 16);
+      fill(255, 237, 188, 150); rect(-112, side < 0 ? -near+4 : far+4, 224, 2);
+      // The seam darkens with the rise, rather than every stripe looking equal.
+      fill(40, 45, 44, Math.min(150, 25 + (h1-h0)*16));
+      rect(-115, side < 0 ? -near : far, 230, 3);
+    }
+    // Ramp lips use the sun, not a baked north-west highlight.
+    stroke(242, 221, 171, 100 + 85*Math.max(0,-side*LIGHT_DX)); strokeWeight(3);
+    line(side*410, -44, side*240, -44); line(side*410,44,side*240,44);
+    noStroke();
+  }
+  if (isRaining) {
+    // Rain gathers along the low drains; the walking crown stays readable.
+    fill(66, 111, 126, 65);
+    for(const side of [-1,1]) ellipse(side*408,110,20,110);
+    stroke(182, 222, 226, 110); strokeWeight(1.5);
+    for(const side of [-1,1]) line(side*408,65,side*408,145);
+    noStroke();
+  }
+  pop();
+}
+
 // A frontier chunk grows a town where the settlement field runs high. Both the
 // generator and the terrain bake ask this, so the main street is painted under
 // the storefronts that line it.
@@ -22681,6 +22834,8 @@ function generateChunkContent(biome, cx, cy) {
           }
         }
 
+      } else if (hasCivicTerrace(biome, cx, cy)) {
+        buildCivicTerrace(solid, ox, oy);
       } else if (zone === "PLAZA") {
         // A civic square: the one block in the grid that is deliberately empty.
         // It reads as a hole in an otherwise unbroken run of roofs, which is
@@ -24151,6 +24306,7 @@ function generateChunkContent(biome, cx, cy) {
   for (let i = 0; i < clutterCount; i++) {
     let dx = ox + rng() * CHUNK_W;
     let dy = oy + rng() * CHUNK_W;
+    if (hasCivicTerrace(biome, cx, cy) && Math.abs(dx-ox-600)<435 && Math.abs(dy-oy-600)<435) continue;
     // Noise gate: clutter pools in low-traffic areas instead of spreading evenly
     if (bnoise(biome, dx, dy, 0.0022) < 0.38) continue;
     const item = {
@@ -24200,11 +24356,11 @@ function generateChunkContent(biome, cx, cy) {
   // the index the strip looks for on the next visit -- the hitsAuthored filter
   // further down renumbers the array, and a key assigned after it would point
   // at a different piece of the world every time the chunk loaded.
-  for (let i = 0; i < solid.length; i++) solid[i].chunkKey = cx + "," + cy + "," + i;
+  for (let i = 0; i < solid.length; i++) solid[i].chunkKey = cx + "," + cy + "," + (solid[i].isCivic ? "civic:" : "") + i;
 
   // Strip anything the player already destroyed on a previous visit
   for (let i = solid.length - 1; i >= 0; i--) {
-    if (state.destroyed[cx + "," + cy + "," + i]) solid.splice(i, 1);
+    if (state.destroyed[solid[i].chunkKey]) solid.splice(i, 1);
   }
 
   // Nothing is BUILT on a road or in the water.
@@ -24706,6 +24862,7 @@ function bakeChunkTerrainAt(biome, cx, cy, staticDecor) {
   }
   // Hardstanding belongs to every fortress, including those over wet biomes.
   // Last in the bake: neither river paint nor tree litter can cover the yard.
+  bakeCivicTerrace(g, biome, cx, cy);
   bakeFortHardstanding(g, biome, ox, oy);
   g.pop();
 
@@ -29647,7 +29804,9 @@ function drawBiomeDecks() {
     if (!b.isDeck) continue;
     if (!inView(b.x, b.y, Math.max(b.w || 0, b.h || 0) + 150)) continue;
 
-    if (b.propType === "BRIDGE") {
+    if (b.propType === "CIVICTERRACE") {
+      drawCivicTerrace(b);
+    } else if (b.propType === "BRIDGE") {
       // Timber trestle over a woodland river. Travel runs north-south, so the
       // planks run across it and the stringers run along its length.
       castShadowRect(b.x, b.y, b.w - 12, b.h - 40, 16, 86, 3);
@@ -29751,6 +29910,8 @@ function drawBiomeDecks() {
 // river. RIVER and CANAL have no art at all, and HELIPAD is painted on the
 // ground.
 const PROP_RISE = {
+  CIVICPAVILION: [42, 143, 183, 170], ARCADESTALL: [30, 94, 71, 49],
+  TERRACEPLANTER: [16, 166, 120, 84], CIVICBALUSTRADE: [24, 178, 153, 109],
   OUTPOST:    [26, 118, 122, 116],  CHECKPOINT: [22, 122, 126, 120],
   GUARDBOX:   [24,  62,  64,  68],  BUNKER:     [20, 104, 106,  96],
   BLASTWALL:  [22, 122, 122, 118],  BORDERWALL: [26, 112, 114, 108],
@@ -29799,6 +29960,7 @@ const PROP_RISE = {
 // as a slab with a stone balanced on it. A skirt has to be the size of the
 // thing it is under. Where w/h are left out the drawn base really is the rect.
 const PROP_BASE = {
+  ARCADESTALL: { legs: 7 },
   HYDRANT:   { round: 1, w: 20, h: 19, top: 0.72 },
   POSTBOX:   { round: 1, w: 22, h: 21, top: 0.78 },
   BOLLARD:   { round: 1,               top: 0.84 },
@@ -29859,6 +30021,86 @@ function drawBiomeProps(list, i0, i1) {
     if (_plx !== 0 || _ply !== 0) translate(_plx, _ply);
 
     switch (b.propType) {
+
+      case "CIVICBALUSTRADE": {
+        castShadowRect(b.x,b.y,b.w,b.h,24,64,2);
+        push(); translate(b.x,b.y); noStroke();
+        fill(94,99,83); rect(-b.w/2,-b.h/2,b.w,b.h,2);
+        fill(231,207,154); rect(-b.w/2+2,-b.h/2+2,b.w-4,b.h-4,2);
+        fill(51,128,129); rect(-3,-b.h/2+5,6,b.h-10,1);
+        stroke(126,134,106); strokeWeight(1);
+        for(let y=-b.h/2+24;y<b.h/2;y+=30)line(-b.w/2+2,y,b.w/2-2,y);
+        noStroke(); pop(); break;
+      }
+
+      case "CIVICPAVILION": {
+        castShadowRect(b.x, b.y, b.w, b.h, 42, 78, 5);
+        push(); translate(b.x, b.y); noStroke();
+        // Copper-green civic roof: a deep cornice, recessed glazing and a
+        // raised clerestory. Three broad values keep the silhouette cartoon-clear.
+        fill(26, 63, 67); rect(-b.w/2, -b.h/2, b.w, b.h, 5);
+        fill(64, 142, 142); rect(-b.w/2+5,-b.h/2+5,b.w-10,b.h-10,3);
+        fill(109, 189, 170); rect(-b.w/2+10,-b.h/2+10,b.w-20,b.h-20,2);
+        for(let x=-b.w/2+20;x<b.w/2-12;x+=22) {
+          stroke(39,111,112,160); strokeWeight(2); line(x,-b.h/2+10,x,b.h/2-10);
+        }
+        noStroke(); fill(31, 65, 72); rect(-72,-29,144,58,3);
+        fill(64, 115, 141); rect(-66,-23,132,46,2);
+        fill(153, 214, 220, isRaining ? 160 : 95);
+        quad(-62,-20,-32,-20,-5,20,-35,20);
+        quad(18,-20,35,-20,62,20,45,20);
+        stroke(228, 211, 157); strokeWeight(4);
+        for(let x=-44;x<65;x+=44) line(x,-24,x,24);
+        noStroke(); fill(233,198,105); rect(-90,b.h/2-8,180,8,2);
+        fill(41,76,79); textAlign(CENTER,CENTER); textSize(12); textFont('sans-serif');
+        text("CIVIC EXCHANGE",0,b.h/2-16);
+        // Lit roof edge responds to the shared sun; glazing stays cool.
+        stroke(221,243,211,90+100*Math.max(0,-LIGHT_DY)); strokeWeight(2);
+        line(-b.w/2+6,-b.h/2+5,b.w/2-6,-b.h/2+5); noStroke();
+        pop(); break;
+      }
+      case "ARCADESTALL": {
+        castShadowRect(b.x,b.y,b.w,b.h,30,78,3);
+        push(); translate(b.x,b.y); noStroke();
+        // Axially pitched cloth, not a front elevation laid on the ground.
+        // Cream stripes follow the roof slope; the dark valance has real depth.
+        fill(47,51,53); rect(-b.w/2,-b.h/2,b.w,b.h,3);
+        const warm = b.tint < .5;
+        fill(warm?213:48,warm?94:151,warm?68:165);
+        rect(-b.w/2+3,-b.h/2+3,b.w-6,b.h-6,2);
+        fill(255,224,159,100); rect(-b.w/2+3,-b.h/2+3,b.w-6,b.h/2-3);
+        fill(23,52,66,55); rect(-b.w/2+3,0,b.w-6,b.h/2-3);
+        for(let x=-b.w/2+9;x<b.w/2-4;x+=22) {
+          fill(252,231,177); rect(x,-b.h/2+3,9,b.h-6);
+          fill(168,156,127); rect(x,2,9,b.h/2-5);
+        }
+        stroke(255,240,194); strokeWeight(2); line(-b.w/2+3,0,b.w/2-3,0);
+        noStroke(); fill(58,53,45); rect(-b.w/2+3,b.h/2-8,b.w-6,6,2);
+        // Stitching and corner fasteners are restrained enough to survive zoom.
+        for(const x of [-1,1]) for(const y of [-1,1]) {
+          fill(226,202,142); ellipse(x*(b.w/2-5),y*(b.h/2-5),4,4);
+        }
+        if(isRaining) { fill(190,224,234,65); rect(-b.w/2+5,-b.h/2+4,b.w-10,3); }
+        pop(); break;
+      }
+      case "TERRACEPLANTER": {
+        castShadowRect(b.x,b.y,b.w,b.h,16,68,4);
+        push(); translate(b.x,b.y); noStroke();
+        fill(132,77,54); rect(-b.w/2,-b.h/2,b.w,b.h,4);
+        fill(222,151,103); rect(-b.w/2+3,-b.h/2+3,b.w-6,b.h-6,3);
+        fill(52,60,44); rect(-b.w/2+10,-b.h/2+10,b.w-20,b.h-20,3);
+        // Asymmetric shrubs leave soil visible and keep the ceramic rim crisp.
+        for(let i=0;i<7;i++) {
+          const a=i*2.4+b.tint, px=Math.cos(a)*b.w*.23, py=Math.sin(a)*b.h*.23;
+          fill(30,81,66); ellipse(px+2,py+3,30,27);
+          fill(65+i%3*11,137+i%3*10,80); ellipse(px,py,27,24);
+          fill(144,191,97,170); ellipse(px-LIGHT_DX*4,py-LIGHT_DY*4,13,10);
+          if(i%2===0) { fill(249,177,86); ellipse(px+3,py-2,5,5); }
+        }
+        stroke(250,205,143,170); strokeWeight(2);
+        line(-b.w/2+5,-b.h/2+4,b.w/2-5,-b.h/2+4); noStroke();
+        pop(); break;
+      }
 
       case "HELIPAD": {
         push(); translate(b.x, b.y);
@@ -31750,6 +31992,8 @@ function buildGradeLayer(night, g, fogRGBA, w, h) {
 // rarely the middle of the thing that carries it: a watchtower's floodlight is
 // at the top of the mast, a hut's light comes out of its windows.
 const PROP_EMITTERS = {
+  CIVICPAVILION: { dx: 0, dy: 36, r: 245, z: 48, p: 0.70, c: [1.00, 0.81, 0.51], soft: 0.034, rMin: 34, fix: 'LAMP' },
+  ARCADESTALL: { dx: 0, dy: 14, r: 130, z: 34, p: 0.48, c: [1.00, 0.88, 0.64], soft: 0.04, rMin: 24, fix: 'LAMP' },
   // The three travel anchors. These are the first thing the player sees on
   // arriving in a biome after dark, and the only fixed light for a kilometre in
   // most of the streamed world, so they are the brightest things in it.
@@ -31857,7 +32101,7 @@ function sceneEmitters() {
       massLean(b.x, b.y, STREET_LAMP_RISE, _leanTmp);
       clampLean(_leanTmp, leanCapOf(b));
       out.push({
-        x: b.x, y: b.y + STREET_LAMP_ARM, z: 46, r: 330, rMin: 24, soft: 0.020,
+        x: b.x, y: b.y + STREET_LAMP_ARM, z: 46 + (b.isCivic ? groundElev(b.x, b.y) : 0), r: 330, rMin: 24, soft: 0.020,
         fx: b.x + _leanTmp[0], fy: b.y + STREET_LAMP_ARM + _leanTmp[1],
         // Slow shallow mains hum rather than a per-frame random, which buzzed.
         p: 0.92 * (0.965 + 0.035 * Math.sin(frameCount * 0.031 + b.x * 0.013)),
@@ -31876,8 +32120,11 @@ function sceneEmitters() {
     const k = e.pulse
       ? 0.45 + 0.55 * Math.pow(0.5 + 0.5 * Math.sin(frameCount * 0.055), 2)
       : 0.965 + 0.035 * Math.sin(frameCount * 0.029 + ex * 0.011);
+    if (b.isCivic) massLean(b.x, b.y, PROP_RISE[b.propType][0], _leanTmp);
     out.push({
-      x: ex, y: ey, z: e.z, r: e.r, rMin: e.rMin, soft: e.soft,
+      fx: b.isCivic ? ex + _leanTmp[0] : undefined,
+      fy: b.isCivic ? ey + _leanTmp[1] : undefined,
+      x: ex, y: ey, z: e.z + (b.isCivic ? groundElev(ex, ey) : 0), r: e.r, rMin: e.rMin, soft: e.soft,
       p: e.p * k, c: e.c, fix: e.fix, b: b, d2: dx * dx + dy * dy
     });
   }
@@ -32973,6 +33220,18 @@ function glRigPaintHeight() {
     }
   }
 
+  for (const b of activeBuildings) {
+    if (b.propType !== "CIVICTERRACE" || !inView(b.x, b.y, 900)) continue;
+    for (let j = 0; j < CIVIC_BENCHES.length; j++) {
+      const z = CIVIC_BENCHES[j];
+      for (let i = 0; i <= 8; i++) {
+        const t = i / 8, inset = z.f * t;
+        glRigMat(g, Math.max(j ? 24 : 0, z.z * smooth01(t)), 0.12 + .32*wet, 0);
+        g.rect(b.x-z.w/2+inset, b.y-z.h/2+inset, z.w-2*inset, z.h-2*inset);
+      }
+    }
+  }
+
   // 2. Masses. The same cull and the same skips as the 2D shadow pass, so the
   //    two agree about what is a caster.
   for (const b of activeBuildings) {
@@ -32982,6 +33241,7 @@ function glRigPaintHeight() {
     // The trunk is a collision volume; the crown is a decor entry, and that is
     // what casts. Painted below, off the same list drawDecor() walks.
     if (b.isTreeTrunk) continue;
+    if (b.propType === "CIVICTERRACE") continue;
 
     // Water is below the ground, not above it, and it is the glossiest thing in
     // the scene -- this is what puts a lamp's reflection on the canal.
@@ -32997,12 +33257,13 @@ function glRigPaintHeight() {
       continue;
     }
     if (b.isStreetLight) {
-      glRigMat(g, 46, 0.35, 0);
+      glRigMat(g, 46 + (b.isCivic ? groundElev(b.x, b.y) : 0), 0.35, 0);
       g.rect(b.x - 4, b.y - 4, 8, 8);
       continue;
     }
 
-    const rise = (typeof buildingRise === 'function') ? buildingRise(b) : 12;
+    const rise = b.isCivic && PROP_RISE[b.propType] ? PROP_RISE[b.propType][0]
+      : ((typeof buildingRise === 'function') ? buildingRise(b) : 12);
     const gloss = 0.12 + 0.30 * wet + (b.isCar || b.isParkingCar ? 0.45 : 0);
     glRigMat(g, rise + groundElev(b.x, b.y), gloss, b.angle || 0);
     if (b.isRock || b.propType === 'BOULDER') g.ellipse(b.x, b.y, w, h);
@@ -34206,6 +34467,7 @@ function placePlayerAtAnchor(biome, type) {
 
 // -- Map generation ---------------------------------------------------------
 function generateMap() {
+  civicTerraceSites.clear();
   const hybrid = hasAuthoredCore(currentLevel);
 
   authoredSolids = [];
