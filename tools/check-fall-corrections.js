@@ -36,7 +36,9 @@ function fixture(type,weapon,age=0,facing=.4,motion=-.9){
  for(let i=0;i<${age};i++){frameCount++;c.update();}`);
  matrix=[1,0,0,1,0,0];style={fill:null,stroke:null,weight:1};stack=[];draws=[];heads=[];
  probe('c.show();');assert.equal(stack.length,0);
- return {state:P('({x:c.x,y:c.y,fP:c.fP,sep:c.sep,bits:c.bits,overkill:c.overkillBits,rag:c.rag&&{t:c.rag.t,done:c.rag.done,ang:c.rag.ang,limbs:c.rag.limbs.map(l=>[l.a,l.b,l.va,l.vb])}})'),draws,heads};
+ // Head spatter is intentionally relocated; compare every other primitive.
+ const bodyDraws=draws.filter(d=>!(d[3].fill&&d[3].fill[0]===96&&d[3].fill[1]===6&&d[3].fill[2]===6));
+ return {state:P('({x:c.x,y:c.y,fP:c.fP,sep:c.sep,bits:c.bits,overkill:c.overkillBits,rag:c.rag&&{t:c.rag.t,done:c.rag.done,ang:c.rag.ang,limbs:c.rag.limbs.map(l=>[l.a,l.b,l.va,l.vb])}})'),draws:bodyDraws,heads};
 }
 if(process.argv.includes('--legacy-snapshot')){
  const snapshots=[];
@@ -72,7 +74,7 @@ if(process.argv.includes('--legacy-snapshot')){
   const old=JSON.parse(execFileSync(process.execPath,args,{env:{...process.env,GAME_JS:process.env.FALL_LEGACY_GAME},maxBuffer:12*1024*1024}));
   const current=JSON.parse(execFileSync(process.execPath,args,{env:{...process.env,GAME_JS:require('path').join(__dirname,'../game.js')},maxBuffer:12*1024*1024}));
   assert.deepStrictEqual(current,old,'overkill state or transformed drawing differs from the pre-refinement version');
-  console.log('Legacy comparison passed: 84 shotgun/dual-SMG overkill snapshots match the previous state and transformed drawing.');
+  console.log('Legacy comparison passed: 84 shotgun/dual-SMG overkill snapshots match the previous state and transformed body drawing; head spatter is excluded from the art comparison.');
  }
  for(const [n,fn]of Object.entries(originals))ctx[n]=fn;
  console.log('Corpse head corrections passed: forward/back face orientation in every cardinal direction, unchanged body direction, long hair, detached hat placement, balanced transforms and graphics-target drawing.');

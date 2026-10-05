@@ -250,18 +250,14 @@ console.log('\n== the size on screen ==');
   ok('and it does not move the body', P('(corpses[0].x + "," + corpses[0].y)') === before, before);
 }
 
-console.log('\n== a headshot leaves blood on the body ==');
+console.log('\n== a headshot leaves blood on the head ==');
 {
-  // Every head death already throws a pool onto the GROUND. None of it landed
-  // on the person it came out of, so a body with no head above the collar had
-  // a clean shirt.
-  const R = P('(function () { const r = ragRig(21, 27); return { TL: r.TL, TW: r.TW, shX: r.shX }; })()');
   let missing = null;
   for (const dT of [1, 4, 6, 8, 9]) {
     drop(dT, 'NORMAL', 0.6, 0, 2);
     if (!P('corpses[0].spray || null')) missing = dT;
   }
-  ok('every head death sprays the torso', missing === null, missing === null ? 'dT 1,4,6,8,9' : 'dT ' + missing);
+  ok('every head death leaves spatter on the head', missing === null, missing === null ? 'dT 1,4,6,8,9' : 'dT ' + missing);
 
   let wrong = null;
   for (const dT of [0, 2, 7]) { drop(dT, 'NORMAL', 0.6, 0, 2); if (P('corpses[0].spray || null')) wrong = dT; }
@@ -269,22 +265,17 @@ console.log('\n== a headshot leaves blood on the body ==');
   drop(1, 'ROBOT', 0.6, 0, 2);
   ok('nor does a machine', P('corpses[0].spray || null') === null);
 
-  // It has to land ON the shirt: forward of the hips, behind the head, and
-  // inside the body's own width. Blood floating off the shoulder is worse
-  // than none.
   drop(1, 'NORMAL', 0.6, 0, 2);
   const sp = P('corpses[0].spray.map(function (s) { return [s.x, s.y, s.r, s.a]; })');
-  const off = sp.filter((s) => s[0] > R.shX + R.TL * 0.22 || s[0] < -R.TL * 0.5 || Math.abs(s[1]) > R.TW * 0.75);
-  ok('the fan lands on the torso, not off the side of it', off.length === 0,
-     `${sp.length} marks, ${off.length} off the body`);
-  // Heaviest at the collar, thinning down the ribs.
-  const top = sp.filter((s) => s[0] > R.shX * 0.5).reduce((a, s) => a + s[2], 0);
-  const bot = sp.filter((s) => s[0] <= R.shX * 0.5).reduce((a, s) => a + s[2], 0);
-  ok('and it is heaviest at the collar', top > bot,
-     `${top.toFixed(1)} of radius above the shoulders against ${bot.toFixed(1)} below`);
+  const off = sp.filter(s => Math.hypot(s[0], s[1]) + s[2] > 5.5 + 1e-8);
+  ok('every mark stays inside the head silhouette', off.length === 0,
+     `${sp.length} marks, ${off.length} outside the head`);
+  ok('the head spatter retains a varied fan rather than one flat dot',
+     new Set(sp.map(s => s[0].toFixed(2) + ',' + s[1].toFixed(2))).size > 8,
+     sp.length + ' marks');
   ok('with fine spatter as well as the heavy marks',
-     sp.some((s) => s[2] < 2) && sp.some((s) => s[2] > 3.5),
-     `${sp.filter((s) => s[2] < 2).length} specks, ${sp.filter((s) => s[2] > 3.5).length} heavy`);
+     sp.some(s => s[2] < .8) && sp.some(s => s[2] > 1.5),
+     `${sp.filter(s => s[2] < .8).length} specks, ${sp.filter(s => s[2] > 1.5).length} heavy`);
 
   // Drawn once and frozen: a corpse must not develop new blood while you
   // stand looking at it.

@@ -10813,18 +10813,14 @@ function ragKnee(L) { return Math.max(0, Math.min(L.b, L.a + (L.room || 0))); }
 // differently shaped one.
 const RAG_SCALE = 0.80;
 
-// --- what a headshot leaves on the body -----------------------------------
-//
-// Every death that takes the head off already throws a pool onto the GROUND
-// around it. None of it landed on the person it came out of, so a body with
-// no head above the collar had a clean shirt. This is the part that falls back
-// on them: a fan over the collar and chest, heaviest at the neck and thinning
-// down the ribs, leaning the way the round left.
+// --- what a headshot leaves on the head -----------------------------------
+// Keep the earlier spatter texture at the head wound, inside the head's own
+// silhouette. The shirt carries only the bullet holes that actually hit it.
 //
 // Drawn once in the constructor and then never touched, like the rest pose --
 // a corpse must not develop new blood while you stand looking at it.
 const CORPSE_HEADSHOT_DEATHS = [1, 4, 6, 8, 9];
-function bloodSpray(rig, lean) {
+function bloodSpray(rig, lean, wound) {
     const out = [], collar = rig.shX + rig.TL * 0.16;
     // Two draws multiplied together pile the mass at t = 0, which is the
     // collar. One uniform would spread it evenly down a torso that should be
@@ -10844,6 +10840,14 @@ function bloodSpray(rig, lean) {
         out.push({ x: collar - t * rig.TL * 0.82,
                    y: random(-rig.TW * 0.60, rig.TW * 0.60) + lean * rig.TW * 0.3,
                    r: 0.9 + random(1.7), a: 120 + random(90) });
+    }
+    // Reuse the same random texture without changing the random sequence
+    // that the existing limb and overkill animations depend on.
+    for (const s of out) {
+        s.x=(wound?wound.x:0)+(s.x-collar)*.22;
+        s.y=(wound?wound.y:0)+s.y*.22;s.r*=.42;
+        const d=Math.hypot(s.x,s.y),edge=5.5-s.r;
+        if(d>edge){s.x*=edge/d;s.y*=edge/d;}
     }
     return out;
 }
@@ -11179,14 +11183,17 @@ const FATAL_SPRAY_FRAMES = 210; // 3.5 seconds on the game's 60 Hz simulation cl
 function buildFatalSpray(src,eT) {
   const hit=src&&src.fallHit;
   if(eT==="ROBOT"||!hit||hit.frame!==frameCount||!hit.fatal||!hit.wound)return null;
-  const w=hit.wound;
-  return {left:FATAL_SPRAY_FRAMES,wound:{x:w.x,y:w.y,sz:w.sz,col:w.col&&w.col.slice(),isHead:w.isHead},
+  const w=hit.wound,count=[WEAPONS.SHOTGUN,WEAPONS.ASSAULT_RIFLE,WEAPONS.SMG,WEAPONS.DUAL_SMG].includes(hit.weapon)?3:1;
+  const holes=(src.decals||[]).filter(d=>d.isBulletHole||d===w);
+  if(holes[holes.length-1]!==w)holes.push(w);
+  const wounds=holes.slice(-count).map(d=>({...d,col:d.col&&d.col.slice()}));
+  return {left:FATAL_SPRAY_FRAMES,wound:wounds[wounds.length-1],wounds,
     angle:hit.angle-(src.aimAngle||0),seed:(Math.imul(Math.round(hit.x||0),73856093)^Math.imul(Math.round(hit.y||0),19349663)^frameCount)>>>0};
 }
 // Use the same local decal coordinates and transforms as Corpse.paint(). A
 // fatal spot remains attached when the torso separates or a piece is moving.
-function fatalWoundPoint(c) {
-  const s=c.fatalSpray,w=s.wound,f=c.fP,rg=c.rag;
+function fatalWoundPoint(c,w=c.fatalSpray.wound) {
+  const s=c.fatalSpray,f=c.fP,rg=c.rag;
   let x=c.x,y=c.y,a=c.aA,lx=w.x,ly=w.y,scale=1,turn=0;
   const piece=(c.overkillBits||c.aerialBits||c.bits||[]).find(b=>b.type===(c.dT===5?(w.isHead?'skull':'ribcage'):'torso'));
   if([12,13,14].includes(c.dT)){
@@ -11207,6 +11214,7 @@ function fatalWoundPoint(c) {
     else{lx=w.y;ly=-w.x*.7;turn=-HALF_PI;}
   }else if(c.dT===3){a=c.mA;ly-=c.sep*1.8;
   }else if(c.dT===7){a=c.mA+(rg?rg.ang*.6:0);scale=rg?RAG_SCALE:1;
+    if(w.isHead&&rg)lx+=ragRig(c.bW,c.bH).TL*.5+5+4*f;
   }else{
     if(c.dT===2||c.dT===4){x+=Math.cos(c.bA)*c.sep;y+=Math.sin(c.bA)*c.sep;}
     a=c.fall?figureFallYaw(c.fall,rg):c.aA+(rg?rg.ang:0);scale=rg?RAG_SCALE:1;
@@ -11218,15 +11226,31 @@ function fatalWoundPoint(c) {
     }
   }
   const ca=Math.cos(a),sa=Math.sin(a);
-  return {x:x+(ca*lx-sa*ly)*scale,y:y+(sa*lx+ca*ly)*scale,angle:a+turn+s.angle,scale};
+  return {x:x+(ca*lx-sa*ly)*scale,y:y+(sa*lx+ca*ly)*scale,
+    angle:a+turn+(w.shotA===undefined?(s?s.angle:0):w.shotA),scale};
+}
+function headWoundPoint(c) {
+  const w=c.fatalSpray&&c.fatalSpray.wound;
+  return fatalWoundPoint(c,w&&w.isHead?w:{x:0,y:0,isHead:true,shotA:c.hA||0});
+}
+function retargetHeadHitSpray(c,hit,b) {
+  if(hit.kind!=="HEAD"||!c.fatalSpray)return;
+  const p=headWoundPoint(c);
+  for(let i=hit.particleStart;i<particles.length;i++){
+    const q=particles[i];
+    if((q.t==="BLOOD"||q.t==="GORE"||q.t==="BONE")&&q.x===b.x&&q.y===b.y){q.x=p.x;q.y=p.y;}
+  }
 }
 function drawFatalWound(c,r) {
-  // These piece painters had no bullet decals. Keep the fatal one visible on
+  // These piece painters had no bullet decals. Keep selected holes visible on
   // its surviving piece, using exactly the stream's origin.
   if(!c.fatalSpray||![5,10,11,12,13,14,15].includes(c.dT))return;
   if(['BUG','SNAIL','ALIEN_GATOR'].includes(c.eT)&&![12,13,14].includes(c.dT))return;
-  const p=fatalWoundPoint(c),w=c.fatalSpray.wound,col=w.col||[90,0,0,220];
-  r.push();r.noStroke();r.fill(...col);r.ellipse(p.x,p.y,w.sz*p.scale,w.sz*p.scale);r.pop();
+  r.push();r.noStroke();
+  for(const w of c.fatalSpray.wounds){
+    const p=fatalWoundPoint(c,w),col=w.col||[90,0,0,220];
+    r.fill(...col);r.ellipse(p.x,p.y,w.sz*p.scale,w.sz*p.scale);
+  }r.pop();
 }
 function advanceFatalSpray(c) {
   const s=c.fatalSpray;if(!s||s.left<=0)return;
@@ -11234,11 +11258,13 @@ function advanceFatalSpray(c) {
   if(age%2!==0)return;
   // A local sequence keeps this added effect from rerolling existing gore,
   // limb or overkill randomness. The pooled particle shares the blood painter.
-  s.seed=(Math.imul(s.seed,1664525)+1013904223)>>>0;
-  const u=s.seed/4294967296,p=fatalWoundPoint(c),a=p.angle+(u-.5)*.65;
-  const speed=(2.8+u*1.8)*(.55+.45*s.left/FATAL_SPRAY_FRAMES);
   const col=c.eT==='BUG'||c.eT==='SNAIL'||c.eT==='SNAIL_HYBRID'?color(200,230,40):color(90,0,0);
-  particles.push(newParticle(p.x,p.y,col,'WOUND_BLOOD',Math.cos(a)*speed,Math.sin(a)*speed));
+  for(const w of s.wounds){
+    s.seed=(Math.imul(s.seed,1664525)+1013904223)>>>0;
+    const u=s.seed/4294967296,p=fatalWoundPoint(c,w),a=p.angle+(u-.5)*.65;
+    const speed=(2.8+u*1.8)*(.55+.45*s.left/FATAL_SPRAY_FRAMES);
+    particles.push(newParticle(p.x,p.y,col,'WOUND_BLOOD',Math.cos(a)*speed,Math.sin(a)*speed));
+  }
 }
 function projectFallRig(bW,bH,f) {
   const r=ragRig(bW,bH);
@@ -11341,10 +11367,10 @@ class Corpse {
         if (dT===0&&hit&&hit.frame===frameCount&&hit.kind==="BODY"&&hit.wound&&random()<.58)
             this.fall.hold=woundHold(this.rag,ragRig(bW,bH),hit.wound);
     }
-    // Blood down the front, but only off a head wound and only on something
-    // that has blood in it -- a machine is handled six other ways.
+    // Headshot spatter stays on the head, at the same wound as its stream.
     this.spray = (this.rag && CORPSE_HEADSHOT_DEATHS.indexOf(dT) !== -1)
-        ? bloodSpray(ragRig(bW, bH), Math.sin((bA || 0) - (aA || 0))) : null;
+        ? bloodSpray(ragRig(bW, bH), Math.sin((bA || 0) - (aA || 0)),
+            this.fatalSpray&&this.fatalSpray.wound.isHead?this.fatalSpray.wound:null) : null;
     this.bloodTimer = (dT === 5 || dT === 7 || dT === 8 || dT === 9 || dT === 10 || dT === 11 || dT === 13 || dT === 14) ? 180 : 0; 
 
     if (dT === 14) { this.splitA = bA; this.lH = { x: 0, y: 0, vx: cos(this.splitA - HALF_PI) * 2, vy: sin(this.splitA - HALF_PI) * 2 }; this.rH = { x: 0, y: 0, vx: cos(this.splitA + HALF_PI) * 2, vy: sin(this.splitA + HALF_PI) * 2 }; }
@@ -11425,7 +11451,7 @@ class Corpse {
     if (this.dT === 12 && !this.exploded) {
         if (this.kamikazeTimer > 0) {
             this.kamikazeTimer--; this.x += this.vx; this.y += this.vy;
-            let neckX = this.x + cos(this.aA - PI) * 12, neckY = this.y + sin(this.aA - PI) * 12;
+            const neck=headWoundPoint(this);let neckX=neck.x,neckY=neck.y;
             let thrustX = this.x - cos(this.aA - PI) * 20, thrustY = this.y - sin(this.aA - PI) * 20;
             let trailX = -cos(this.aA - PI) * 3, trailY = -sin(this.aA - PI) * 3;
             if (this.kamikazeTimer % 4 === 0) { emit(thrustX, thrustY, 1, color(200), "SMOKE", trailX, trailY); emit(thrustX, thrustY, 1, color(255, 150, 0), "SPARK", trailX, trailY); }
@@ -11454,10 +11480,8 @@ class Corpse {
         if (this.bloodTimer % 15 === 0) { spawnSplatter(this.x + random(-25, 25), this.y + random(-25, 25), "BLOOD", bCol); }
     }
     if ((this.dT === 8 || this.dT === 9) && this.bloodTimer > 0) {
-        this.bloodTimer--; let fVal = this.dT === 9 ? (10 + 5 * this.fP) : 20 * this.fP; 
-        let headX = this.x + cos(this.aA) * fVal, headY = this.y + sin(this.aA) * fVal;
-        if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { headX = this.x; headY = this.y; }
-        if (this.bloodTimer % 2 === 0) { let sA = this.bA + random(-0.6, 0.6); emit(headX, headY, 1, bCol, "BLOOD", cos(sA) * random(2, 6), sin(sA) * random(2, 6)); }
+        this.bloodTimer--; const head=headWoundPoint(this);let headX=head.x,headY=head.y;
+        if (this.bloodTimer % 2 === 0) { let sA = head.angle + random(-0.6, 0.6); emit(headX, headY, 1, bCol, "BLOOD", cos(sA) * random(2, 6), sin(sA) * random(2, 6)); }
         if (this.bloodTimer % 20 === 0) { spawnSplatter(headX + random(-15, 15), headY + random(-15, 15), "BLOOD", bCol); }
     }
     if (this.dT === 5 || this.dT === 9) { 
@@ -11474,10 +11498,10 @@ class Corpse {
     }
     if ((this.dT === 2 || this.dT === 3 || this.dT === 4 || this.dT === 6 || this.dT === 8) && this.sep < 35) this.sep += 2.5; 
     if (this.bT > 0 && --this.bT % 2 === 0) { 
-        if (this.dT === 1) { let sA = this.aA + this.hA + random(-0.2, 0.2); emit(this.x + cos(this.aA) * (20 * this.fP), this.y + sin(this.aA) * (20 * this.fP), 1, bCol, "BLOOD", cos(sA) * 6, sin(sA) * 6); } 
-        else if (this.dT === 4) { let sA = this.aA + PI + random(-0.4, 0.4); emit(this.x + cos(this.aA) * (15 * this.fP), this.y + sin(this.aA) * (15 * this.fP), 1, bCol, "BLOOD", cos(sA) * 6, sin(sA) * 6); } 
+        if (this.dT === 1) { const head=headWoundPoint(this);let sA=head.angle+random(-0.2,0.2);emit(head.x,head.y,1,bCol,"BLOOD",cos(sA)*6,sin(sA)*6); }
+        else if (this.dT === 4) { const head=headWoundPoint(this);let sA=head.angle+random(-0.4,0.4);emit(head.x,head.y,1,bCol,"BLOOD",cos(sA)*6,sin(sA)*6); }
         else if (this.dT === 2 || this.dT === 3) { let lSA = this.mA - PI / 2 + random(-0.5, 0.5); emit(this.x, this.y, 1, bCol, "BLOOD", cos(lSA) * 4, sin(lSA) * 4); let tSA = this.bA + random(-0.3, 0.3); emit(this.x + cos(this.bA) * this.sep, this.y + sin(this.bA) * this.sep, 1, bCol, "BLOOD", cos(tSA) * 5, sin(tSA) * 5); } 
-        else if (this.dT === 6) { let sA = this.hA + PI + random(-0.4, 0.4); let headX = this.x + cos(this.aA) * (20 * this.fP), headY = this.y + sin(this.aA) * (20 * this.fP); emit(headX, headY, 1, bCol, "BLOOD", cos(sA) * 6, sin(sA) * 6); } 
+        else if (this.dT === 6) { const head=headWoundPoint(this);let sA=head.angle+random(-0.4,0.4);emit(head.x,head.y,1,bCol,"BLOOD",cos(sA)*6,sin(sA)*6); }
     } 
     if (this.dT === 14) {
         if (this.stopMotionTimer > 0) { this.lH.x += this.lH.vx; this.lH.y += this.lH.vy; this.rH.x += this.rH.vx; this.rH.y += this.rH.vy; this.lH.vx *= 0.9; this.lH.vy *= 0.9; this.rH.vx *= 0.9; this.rH.vy *= 0.9; }
@@ -11728,6 +11752,9 @@ if (this.eT === "COW" || this.eT === "HORSE") {
           // Back of the head: no face, they are looking at the ground.
           ragContour(r, a);
           r.fill(this.id.hairCol || color(52, 40, 30)); r.ellipse(TL * 0.5 + 5 + 4 * f, 0, 11, 11);
+          r.push();r.translate(TL*.5+5+4*f,0);r.noStroke();
+          for(const d of this.dec){if(d.isHead){if(d.col)r.fill(...d.col);else r.fill(90,0,0,220);r.ellipse(d.x,d.y,d.sz,d.sz);}}
+          r.pop();
       } else {
           r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4);
           r.fill(90, 0, 0, a); r.ellipse(lX, -4, 20, 28);
@@ -11747,11 +11774,8 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       if (this.eT === "ARMORED_STANDARD") { r.fill(100); if (RG) r.rect(-TL * 0.26, -TW * 0.46, TL * 0.58, TW * 0.92, 4); else r.rect(-10, -12, 20, 24, 4); } 
       if (this.eT === "FEMALE_PISTOL") { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(4, -6, 12, 10); r.ellipse(4, 6, 12, 10); } 
       r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } } 
-      // Head-wound spray, over the shirt but under the sleeves, so an arm laid
-      // across the chest still passes in front of it.
-      if (this.spray) { for (let sp of this.spray) { r.fill(96, 6, 6, sp.a * (a / 255)); r.ellipse(sp.x, sp.y, sp.r * 2, sp.r * 1.74); } } 
       let lAY = this.eT === "ARMORED" ? -30 : -14, rAY = this.eT === "ARMORED" ? 30 : 11, slX = lerp(-5, 0, f), hX = lerp(-12, 12, f), armLY = lerp(lAY, lAY + 3, f), rslX = lerp(15, 0, f), rhX = lerp(25, 12, f), armRY = lerp(rAY, rAY + 3, f); 
-      // Decals and spray are stains and cleared the stroke; the arms are limbs
+      // Decals are stains and cleared the stroke; the arms are limbs
       // and take it back, the same handover the living figure does.
       if (RG) { ragContour(r, a); if(this.fall){drawFallLimb(r,RP,RG,0,f,this.sC,this.pC,sK,null); drawFallLimb(r,RP,RG,1,f,this.sC,this.pC,sK,null);}else{ragLimb(r,  RP.shX, -RP.shY, -(HALF_PI + RG.limbs[0].a), -RG.limbs[0].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand); ragLimb(r,  RP.shX,  RP.shY,   HALF_PI + RG.limbs[1].a,   RG.limbs[1].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand);} } else { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(slX, armLY, 16, 8); r.fill(sK); r.ellipse(hX, armLY, 8, 8); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(rslX, armRY, 25, 8); r.fill(sK); r.ellipse(rhX, armRY, 8, 8); }
       if (this.eT === "AERIAL" || this.eT === "AERIAL_PISTOL") { r.fill(80, a); r.rect(-18, -12, 12, 24, 3); } 
@@ -11776,6 +11800,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
         if (r.drawingContext) r.drawingContext.globalAlpha = 1;
         r.pop();
       }
+      if(this.spray){r.noStroke();for(const sp of this.spray){r.fill(96,6,6,sp.a*(a/255));r.ellipse(sp.x,sp.y,sp.r*2,sp.r*1.74);}}
       for (let d of this.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.pop(); r.pop(); } r.pop();
 }
 }
@@ -16554,11 +16579,13 @@ function updateBullets() {
                 // hole. Holes belong to the health bar: they start when the
                 // shield is gone and last only as long as it stays gone.
                 if (!(t.isPlayer && dRes.blocked)) {
-                  t.decals.push({ x: lX, y: lY, sz: random(4, 7), col: dCol, isHead: b.tH === "HEAD" });
+                  t.decals.push({ x: lX, y: lY, sz: random(4, 7), col: dCol, isHead: b.tH === "HEAD",
+                    isBulletHole:true,shotA:b.a-t.aimAngle });
                   fallHit.wound=t.decals[t.decals.length-1];
                   fallHit.fatal=t.hp<=0;
                 }
                 
+                fallHit.particleStart=particles.length;
                 if (t.eType === "ROBOT") {
                     // Sparks the whole way down; oil once the chassis is opened
                     // up past ROBOT_OIL_AT, and more of it the worse it gets.
@@ -16616,6 +16643,7 @@ function updateBullets() {
                     else if (t.eType === "AERIAL" || t.eType === "AERIAL_PISTOL") {
                         if (b.tH === "HEAD") { dT = 12; } else { let choices = [11, 5, 10]; dT = choices[floor(random(3))]; }
                         corpses.push(new Corpse(t.x, t.y, t.moveAngle, t.aimAngle, t.shirtCol, t.pantsCol, dT, hA, t.decals, t.currentWeapon, b.a, t.eType, t.bodyW, t.bodyH, t));
+                        retargetHeadHitSpray(corpses[corpses.length-1],fallHit,b);
                         if (dT === 11) { spawnSplatter(t.x, t.y, "BLOOD", color(90, 0, 0)); } 
                         else if (dT === 5 || dT === 10) { emit(t.x, t.y, 40, color(255, 100, 0), "EXPLOSION"); sfx.explosion(t.x, t.y); spawnSplatter(t.x, t.y, "BLOOD", color(90, 0, 0)); spawnSplatter(t.x, t.y, "SCORCH"); if (dT === 10) { emit(b.x, b.y, 30, color(220, 200, 200), "BONE", b.vx, b.vy); emit(t.x, t.y, 120, color(90, 0, 0), "GORE"); } }
                     } else { 
@@ -16644,7 +16672,9 @@ function updateBullets() {
                         } else { dT = 0; emit(t.x, t.y, 40, bCol, "GORE"); } 
                         
                         corpses.push(new Corpse(t.x, t.y, t.moveAngle, t.aimAngle, t.shirtCol, t.pantsCol, dT, hA, t.decals, t.currentWeapon, b.a, t.eType, t.bodyW, t.bodyH, t)); 
-                        spawnSplatter(t.x, t.y, "BLOOD", bCol); 
+                        retargetHeadHitSpray(corpses[corpses.length-1],fallHit,b);
+                        const pool=b.tH==="HEAD"?headWoundPoint(corpses[corpses.length-1]):t;
+                        spawnSplatter(pool.x,pool.y,"BLOOD",bCol);
                     } 
                     if (t.isPlayer) { playerRespawnTimer = 90; } else { 
                         let isHeadshot = (b.tH === "HEAD" && t.eType !== "BUG" && t.eType !== "SNAIL" && t.eType !== "SNAIL_HYBRID");
