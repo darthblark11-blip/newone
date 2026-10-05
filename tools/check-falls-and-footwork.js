@@ -15,7 +15,7 @@ const drop=(expr='0')=>probe(`window.c=new Corpse(e.x,e.y,e.moveAngle,e.aimAngle
 for(const a of [0,.7,Math.PI,-Math.PI/2]){
  probe(`window.e=new Character(0,0,false,'CITY_CITIZEN_M');e.aimAngle=-.2;e.isMoving=true;e.moveAngle=${a};rememberFigureMotion(e,Math.cos(${a})*4,Math.sin(${a})*4);`);drop();
  assert(Math.abs(P('Math.atan2(Math.sin(c.fall.a-('+a+')),Math.cos(c.fall.a-('+a+')))'))<1e-9);
- probe('for(let i=0;i<8;i++){frameCount++;c.update();}');assert(P('c.fP<.1'),'fall still snaps to floor');
+ for(let i=1;i<=7;i++){probe('frameCount++;c.update();');assert(Math.abs(P('c.fP')-Math.min(1,i*.15))<1e-9,'original corpse fall speed changed');}
  probe('for(let i=0;i<95;i++){frameCount++;c.update();}');assert(P('c.fP===1&&c.rag.done&&c.fall.done'));
  assert(P('Math.abs(c.rag.ang)<=.26'),'impact overrides locomotion through excessive spin');
  const frozen=P('[c.x,c.y,c.rag.t,c.fall.age,...c.rag.limbs.flatMap(l=>[l.a,l.b])]');
@@ -24,7 +24,7 @@ for(const a of [0,.7,Math.PI,-Math.PI/2]){
 // A collision-blocked walking intention counts as planted.
 probe('window.e=new Character(0,0,false,"NORMAL");e.isMoving=true;e.moveAngle=0;rememberFigureMotion(e,0,0);');drop();assert.equal(P('c.fall.a'),Math.PI/2);assert(!P('c.fall.moving'));
 const weak=P('buildFigureFall(e,0,weaponFallForce(WEAPONS.PISTOL),false,0)');
-const strong=P('buildFigureFall(e,0,weaponFallForce(WEAPONS.SHOTGUN),false,0)');assert(strong.impulse>weak.impulse&&strong.duration<weak.duration);
+const strong=P('buildFigureFall(e,0,weaponFallForce(WEAPONS.SHOTGUN),false,0)');assert(strong.impulse>weak.impulse&&strong.duration===weak.duration);
 // Root movement uses existing collision geometry and respects walls.
 probe('window.e=new Character(0,0,false,"NORMAL");rememberFigureMotion(e,0,0);');
 probe('window.c=new Corpse(0,0,0,0,e.shirtCol,e.pantsCol,0,0,[],null,0,e.eType,e.bodyW,e.bodyH,e);activeBuildings=[{x:40,y:0,w:10,h:200}];buildings=activeBuildings;invalidateColIndex();for(let i=0;i<90;i++){frameCount++;c.update();}');
@@ -39,10 +39,17 @@ function shot(weapon,kind,counter=0,range=0){
  assert(P('corpses.length>0'),weapon+' '+kind+' did not hit');return P('corpses[0].dT');
 }
 assert.equal(shot('PISTOL','BODY'),0);assert.equal(P('corpses[0].fall.a'),Math.PI/2);assert.equal(P('corpses[0].fall.mx'),0);assert.equal(P('corpses[0].fall.my'),4);
-for(const [w,expected] of [['PISTOL',[1,8,9]],['ASSAULT_RIFLE',[6,8,9]],['SHOTGUN',[4,8,9]]])
- for(let i=0;i<3;i++){assert.equal(shot(w,'HEAD',i),expected[i]);assert(!P('corpses[0].fall&&corpses[0].fall.hold'),'headshot clutched a body wound');}
-for(let i=0;i<3;i++){assert.equal(shot('SHOTGUN','BODY',i),[2,7,10][i]);assert(!P('corpses[0].fall&&corpses[0].fall.hold'));}
-assert.equal(shot('SHOTGUN','BODY',0,500),0);assert.equal(shot('DUAL_SMG','BODY'),10);
+for(const [w,expected] of [['PISTOL',[1,8,9]],['ASSAULT_RIFLE',[6,8,9]],['SHOTGUN',[4,8,9]],['DUAL_SMG',[1,8,9]]])
+ for(let i=0;i<3;i++){
+  assert.equal(shot(w,'HEAD',i),expected[i]);assert(!P('corpses[0].fall&&corpses[0].fall.hold'),'headshot clutched a body wound');
+  if(w==='SHOTGUN'||(w==='DUAL_SMG'&&i>0))assert(P('corpses[0].fall===null'),'heavy overkill entered the directional controller');
+ }
+for(let i=0;i<3;i++){
+ assert.equal(shot('SHOTGUN','BODY',i),[2,7,10][i]);assert(P('corpses[0].fall===null'),'shotgun overkill entered the directional controller');
+ assert(P('!corpses[0].rag||corpses[0].rag.turnLimit===undefined'),'overkill received the new spin/limb settings');
+}
+for(const w of ['SHOTGUN','DUAL_SMG']){assert.equal(shot(w,'BODY',0,500),0);assert.equal(P('corpses[0].fall.a'),Math.PI/2);}
+assert.equal(shot('DUAL_SMG','BODY'),10);assert(P('corpses[0].fall===null'));
 // Ordinary body deaths hold a real decal with the arm on the corresponding side.
 let held=0,loose=0;
 for(let i=0;i<50;i++){
@@ -78,4 +85,4 @@ for(const type of [0,1,2,4,6,7,8,9])for(const age of [0,4,15,32,50,90]){
 }
 ctx.push=push;ctx.pop=pop;ctx.ellipse=ellipse;
 probe('corpses=[c];retireCorpsesToBloodBank();');assert.equal(P('corpses.length'),0);
-console.log('Directional falls and footwork passed: movement/force, slower fall, frozen rest, collision, actual bullet metadata, unchanged headshot/overkill tables, wound holding, downed death continuity, actor motion, compact stance, steps, heel pivot and finite balanced rendering.');
+console.log('Directional falls and footwork passed: original corpse speed, movement/force, frozen rest, collision, actual bullet metadata, legacy shotgun/dual-SMG overkill, unchanged death tables, wound holding, downed death continuity, actor motion, compact stance, steps, heel pivot and finite balanced rendering.');
