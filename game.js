@@ -9900,6 +9900,7 @@ function retireCorpsesToBloodBank() {
   for (const c of corpses) {
     if (c.isStatic) continue;
     finishFigureFall(c);
+    if(c.fatalSpray)c.fatalSpray.left=0;
     c.sep = corpseSepMax(c.dT);
     if (c.rag) while (!c.rag.done) ragStep(c.rag);
     stampCorpse(c);
@@ -11105,6 +11106,8 @@ function buildFigureFall(src,angle,force,stun,facing) {
   // A fatal shot at somebody already down continues their current fall.
   if(src&&src.stunPose&&src.stunTimer>0){const old=src.stunPose;
     p.a=old.a;p.facing=old.facing;p.age=Math.min(p.duration,old.age/old.duration*p.duration);p.impulse=old.impulse*.25;}
+  // Forward/backward belongs to this fall, not to north/south on the map.
+  p.faceDown=Math.cos(p.a-p.facing)>=0;
   return p;
 }
 function prepareFallRag(rg,p) {
@@ -11149,10 +11152,93 @@ function legacyOverkillFall(dT,hit) {
     (CORPSE_GIB_DEATHS.indexOf(dT)!==-1&&hit&&hit.frame===frameCount&&
       (hit.weapon===WEAPONS.SHOTGUN||hit.weapon===WEAPONS.DUAL_SMG));
 }
-function corpseHeadTurn(c,f) {
-  // The southward body keeps its travel vector; the head rolls face-up.
-  // Northward falls retain the existing forward-facing head orientation.
-  return c.fall&&Math.sin(c.fall.a)>.001?PI*f:0;
+function figureHeadTurn(p,f) {
+  return p&&!p.faceDown?PI*f:0;
+}
+function fallenHeadColor(id,p,f,skin) {
+  if(!p||!p.faceDown)return skin;
+  const hair=id.hairCol||(id.eType==="FEMALE_PISTOL"?color(15):color(52,40,30));
+  const t=Math.max(0,Math.min(1,f));
+  return color(lerp(red(skin),red(hair),t),lerp(green(skin),green(hair),t),lerp(blue(skin),blue(hair),t));
+}
+function drawFallenFace(g,p,f) {
+  if(!p||p.faceDown||f<=.45)return;
+  // Closed eyes and a small nose distinguish the exposed face at game scale.
+  g.stroke(70,47,37,Math.min(1,(f-.45)/.55)*190);g.strokeWeight(.7);
+  g.line(1.7,-2.2,2.4,-1.1);g.line(1.7,2.2,2.4,1.1);g.noStroke();
+  g.fill(177,116,86,Math.min(1,(f-.45)/.55)*180);g.ellipse(4,0,1.8,2.3);
+}
+function drawFallenHead(g,id,p,f) {
+  const skin=id.skinCol||color(235,180,140);
+  g.fill(fallenHeadColor(id,p,f,skin));g.ellipse(0,0,11,11);
+  drawFigureHair(g,id,0,0,0);drawFallenFace(g,p,f);
+  const hw=headwearOf(id);if(hw)drawHeadwear(g,id,hw);
+}
+
+const FATAL_SPRAY_FRAMES = 210; // 3.5 seconds on the game's 60 Hz simulation clock.
+function buildFatalSpray(src,eT) {
+  const hit=src&&src.fallHit;
+  if(eT==="ROBOT"||!hit||hit.frame!==frameCount||!hit.fatal||!hit.wound)return null;
+  const w=hit.wound;
+  return {left:FATAL_SPRAY_FRAMES,wound:{x:w.x,y:w.y,sz:w.sz,col:w.col&&w.col.slice(),isHead:w.isHead},
+    angle:hit.angle-(src.aimAngle||0),seed:(Math.imul(Math.round(hit.x||0),73856093)^Math.imul(Math.round(hit.y||0),19349663)^frameCount)>>>0};
+}
+// Use the same local decal coordinates and transforms as Corpse.paint(). A
+// fatal spot remains attached when the torso separates or a piece is moving.
+function fatalWoundPoint(c) {
+  const s=c.fatalSpray,w=s.wound,f=c.fP,rg=c.rag;
+  let x=c.x,y=c.y,a=c.aA,lx=w.x,ly=w.y,scale=1,turn=0;
+  const piece=(c.overkillBits||c.aerialBits||c.bits||[]).find(b=>b.type===(c.dT===5?(w.isHead?'skull':'ribcage'):'torso'));
+  if([12,13,14].includes(c.dT)){
+    if(c.dT===13){
+      x+=Math.cos(a)*Math.min(c.sep,50);y+=Math.sin(a)*Math.min(c.sep,50);
+      if(w.isHead)ly-=c.bH*.4;else{lx=w.y;ly=-w.x*.7;turn=-HALF_PI;}
+    }else if(c.dT===14){const b=w.x<0?c.lH:c.rH;x+=b.x;y+=b.y;a=c.splitA;
+    }else{a-=PI;if(w.isHead)lx+=12;}
+  }else if(['BUG','SNAIL'].includes(c.eT)||(['COW','HORSE'].includes(c.eT)&&c.dT!==5)){
+    // These painters put every decal directly in their animal body frame.
+  }else if(c.eT==="ALIEN_GATOR"){
+    a=c.mA;
+    if(c.dT===2||c.dT===4){x+=Math.cos(c.bA+PI)*c.sep;y+=Math.sin(c.bA+PI)*c.sep;}
+    if(w.isHead)lx+=20*f;
+  }else if(c.dT===5||c.dT===10||c.dT===11||c.dT===15){
+    if(piece){x+=piece.x;y+=piece.y;a=piece.rot;}
+    if(w.isHead){if(c.dT!==5)ly-=c.bH*.4;}
+    else{lx=w.y;ly=-w.x*.7;turn=-HALF_PI;}
+  }else if(c.dT===3){a=c.mA;ly-=c.sep*1.8;
+  }else if(c.dT===7){a=c.mA+(rg?rg.ang*.6:0);scale=rg?RAG_SCALE:1;
+  }else{
+    if(c.dT===2||c.dT===4){x+=Math.cos(c.bA)*c.sep;y+=Math.sin(c.bA)*c.sep;}
+    a=c.fall?figureFallYaw(c.fall,rg):c.aA+(rg?rg.ang:0);scale=rg?RAG_SCALE:1;
+    if(w.isHead){
+      const hs=c.fall?lerp(1/RAG_SCALE,1,f):1,ht=figureHeadTurn(c.fall,f);
+      const hx=c.fall?lerp(12/RAG_SCALE,18,f):(rg?18:20)*f;
+      lx=hx+(Math.cos(ht)*w.x-Math.sin(ht)*w.y)*hs;
+      ly=(Math.sin(ht)*w.x+Math.cos(ht)*w.y)*hs;turn=ht;
+    }
+  }
+  const ca=Math.cos(a),sa=Math.sin(a);
+  return {x:x+(ca*lx-sa*ly)*scale,y:y+(sa*lx+ca*ly)*scale,angle:a+turn+s.angle,scale};
+}
+function drawFatalWound(c,r) {
+  // These piece painters had no bullet decals. Keep the fatal one visible on
+  // its surviving piece, using exactly the stream's origin.
+  if(!c.fatalSpray||![5,10,11,12,13,14,15].includes(c.dT))return;
+  if(['BUG','SNAIL','ALIEN_GATOR'].includes(c.eT)&&![12,13,14].includes(c.dT))return;
+  const p=fatalWoundPoint(c),w=c.fatalSpray.wound,col=w.col||[90,0,0,220];
+  r.push();r.noStroke();r.fill(...col);r.ellipse(p.x,p.y,w.sz*p.scale,w.sz*p.scale);r.pop();
+}
+function advanceFatalSpray(c) {
+  const s=c.fatalSpray;if(!s||s.left<=0)return;
+  const age=FATAL_SPRAY_FRAMES-s.left;s.left--;
+  if(age%2!==0)return;
+  // A local sequence keeps this added effect from rerolling existing gore,
+  // limb or overkill randomness. The pooled particle shares the blood painter.
+  s.seed=(Math.imul(s.seed,1664525)+1013904223)>>>0;
+  const u=s.seed/4294967296,p=fatalWoundPoint(c),a=p.angle+(u-.5)*.65;
+  const speed=(2.8+u*1.8)*(.55+.45*s.left/FATAL_SPRAY_FRAMES);
+  const col=c.eT==='BUG'||c.eT==='SNAIL'||c.eT==='SNAIL_HYBRID'?color(200,230,40):color(90,0,0);
+  particles.push(newParticle(p.x,p.y,col,'WOUND_BLOOD',Math.cos(a)*speed,Math.sin(a)*speed));
 }
 function projectFallRig(bW,bH,f) {
   const r=ragRig(bW,bH);
@@ -11218,6 +11304,7 @@ class Corpse {
     // the guard that makes a seventh one impossible to get wrong.
     if (eT === "ROBOT" && CORPSE_GIB_DEATHS.indexOf(dT) !== -1) dT = 0;
     this.sC = sC; this.pC = pC; this.dT = dT; this.hA = hA; this.bA = bA; this.dec = dec; this.cW = cW; this.bW = bW; this.bH = bH;
+    this.fatalSpray = buildFatalSpray(src,eT);
     this.bT = 120; this.fP = 0; this.sep = 0; this.bits = []; this.stopMotionTimer = 156;
     // Only the charred deaths ever set this (one site, in the fire code), and
     // it was left undefined on every other body. `undefined <= 0` is FALSE, so
@@ -11242,6 +11329,7 @@ class Corpse {
     this.rag = [0, 1, 2, 4, 6, 7, 8, 9].indexOf(dT) !== -1 ? ragBuild(eT, bW, bA, aA) : null;
     this.fall = this.rag&&!legacyOverkillFall(dT,src&&src.fallHit) ? buildFigureFall(src,bA,3,false,aA) : null;
     if (this.fall) {
+        this.fP=figureFallProgress(this.fall);
         prepareFallRag(this.rag,this.fall);
         if(src&&src.stunPose&&src.stunPose.rag&&src.stunTimer>0){
             this.rag.ang=src.stunPose.rag.ang;
@@ -11395,9 +11483,15 @@ class Corpse {
         if (this.stopMotionTimer > 0) { this.lH.x += this.lH.vx; this.lH.y += this.lH.vy; this.rH.x += this.rH.vx; this.rH.y += this.rH.vy; this.lH.vx *= 0.9; this.lH.vy *= 0.9; this.rH.vx *= 0.9; this.rH.vy *= 0.9; }
         if (this.bloodTimer > 0) { this.bloodTimer--; if (this.bloodTimer % 3 === 0) { emit(this.x + this.lH.x, this.y + this.lH.y, 2, bCol, "BLOOD"); emit(this.x + this.rH.x, this.y + this.rH.y, 2, bCol, "BLOOD"); } if (this.bloodTimer % 15 === 0) { spawnSplatter(this.x + this.lH.x, this.y + this.lH.y, "BLOOD", bCol); spawnSplatter(this.x + this.rH.x, this.y + this.rH.y, "BLOOD", bCol); } }
     }
+    advanceFatalSpray(this);
   }
     
   show(r = window) {
+    this.paint(r);
+    drawFatalWound(this,r);
+  }
+
+  paint(r = window) {
   r.noStroke();
   if (this.dT === 14) {
       r.push(); r.translate(this.x, this.y); 
@@ -11662,7 +11756,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       if (RG) { ragContour(r, a); if(this.fall){drawFallLimb(r,RP,RG,0,f,this.sC,this.pC,sK,null); drawFallLimb(r,RP,RG,1,f,this.sC,this.pC,sK,null);}else{ragLimb(r,  RP.shX, -RP.shY, -(HALF_PI + RG.limbs[0].a), -RG.limbs[0].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand); ragLimb(r,  RP.shX,  RP.shY,   HALF_PI + RG.limbs[1].a,   RG.limbs[1].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand);} } else { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(slX, armLY, 16, 8); r.fill(sK); r.ellipse(hX, armLY, 8, 8); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(rslX, armRY, 25, 8); r.fill(sK); r.ellipse(rhX, armRY, 8, 8); }
       if (this.eT === "AERIAL" || this.eT === "AERIAL_PISTOL") { r.fill(80, a); r.rect(-18, -12, 12, 24, 3); } 
       if (this.eT !== "ARMORED" && this.eT !== "MOLOTOV" && this.eT !== "AERIAL" && !(this.id&&this.id.isUnarmed)) { r.push(); r.translate(20 - 10 * f, 8 + 15 * f); r.rotate(f * PI / 2); if (this.cW === WEAPONS.SMG || this.cW === WEAPONS.DUAL_SMG) { r.fill(40); r.rect(31, 12, 24, 8, 2); r.rect(35, 20, 6, 12); } else if (this.cW === WEAPONS.ASSAULT_RIFLE) { r.fill(40); r.rect(5, 4, 42, 4, 1); r.fill(139, 69, 19); r.rect(15, 3, 12, 6, 1); r.rect(0, 3, 8, 6, 1); } else if (this.cW === WEAPONS.SHOTGUN) { r.fill(30); r.rect(5, 4, 40, 5, 1); r.fill(15); r.rect(20, 3, 14, 7, 1); r.fill(50); r.rect(5, 3, 12, 7, 2); } else if (this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { r.fill(50, 70, 50); r.rect(5, 4, 45, 6, 2); r.fill(30); r.rect(20, 2, 10, 10, 1); } else { r.fill(40); r.rect(15, 5, 16, 6, 2); } r.pop(); if (this.cW === WEAPONS.DUAL_SMG) { r.push(); r.translate(20 - 10 * f, -14 - 15 * f); r.rotate(-f * PI / 2); r.fill(40); r.rect(15, -7, 24, 8, 2); r.rect(19, -19, 6, 12); r.pop(); } } else if (this.eType === "MOLOTOV") { r.push(); r.translate(20 - 10 * f, 8 + 15 * f); r.rotate(f * PI / 2); r.fill(30, 120, 30); r.rect(0, -8, 8, 16, 2); r.pop(); } else if (this.eType === "ARMORED") { r.push(); r.translate(30 - 10 * f, 25 + 15 * f); r.rotate(f * PI / 2); r.fill(30); r.rect(0, -10, 50, 20, 4); r.pop(); }
-      if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(0, 0, this.bW + 15 * f, 20); if (RG) ragContour(r, a); } r.translate(this.fall?lerp(12/RAG_SCALE,18,f):(RG?18:20)*f,0); if(this.fall)r.scale(lerp(1/RAG_SCALE,1,f)); r.push(); r.rotate(corpseHeadTurn(this,f)); if (this.dT === 4) { r.fill(90, 0, 0); r.ellipse(0, 0, 14, 14); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 1) { r.fill(sK); r.arc(0, 0, 11, 11, this.hA + PI / 4, this.hA + TWO_PI - PI / 4, PIE); r.fill(90, 0, 0); r.arc(0, 0, 8, 8, this.hA - PI / 4, this.hA + PI / 4, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 6) { r.push(); r.rotate(this.hA); r.fill(90, 0, 0); r.ellipse(0, 0, 10, 10); let spread = min(this.sep * 0.4, 8); r.fill(sK); r.arc(0, -spread, 11, 11, PI, TWO_PI, CHORD); r.arc(0, spread, 11, 11, 0, PI, CHORD); r.pop(); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 8) { r.push(); r.rotate(this.hA); r.fill(sK); r.arc(0, 0, 11, 11, 0, PI + HALF_PI, PIE); r.fill(90, 0, 0); r.arc(0, 0, 11, 11, PI + HALF_PI, TWO_PI, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } r.pop(); } else if (this.dT === 9) { let nX = 10 + 5 * this.fP; r.fill(90, 0, 0); r.ellipse(nX, 0, 12, 12); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else { r.fill(sK); r.ellipse(0, 0, 11, 11); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } r.noStroke();
+      if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(0, 0, this.bW + 15 * f, 20); if (RG) ragContour(r, a); } r.translate(this.fall?lerp(12/RAG_SCALE,18,f):(RG?18:20)*f,0); if(this.fall)r.scale(lerp(1/RAG_SCALE,1,f)); r.push(); r.rotate(figureHeadTurn(this.fall,f)); const hK=fallenHeadColor(this.id,this.fall,f,sK); if (this.dT === 4) { r.fill(90, 0, 0); r.ellipse(0, 0, 14, 14); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 1) { r.fill(hK); r.arc(0, 0, 11, 11, this.hA + PI / 4, this.hA + TWO_PI - PI / 4, PIE); r.fill(90, 0, 0); r.arc(0, 0, 8, 8, this.hA - PI / 4, this.hA + PI / 4, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 6) { r.push(); r.rotate(this.hA); r.fill(90, 0, 0); r.ellipse(0, 0, 10, 10); let spread = min(this.sep * 0.4, 8); r.fill(hK); r.arc(0, -spread, 11, 11, PI, TWO_PI, CHORD); r.arc(0, spread, 11, 11, 0, PI, CHORD); r.pop(); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 8) { r.push(); r.rotate(this.hA); r.fill(hK); r.arc(0, 0, 11, 11, 0, PI + HALF_PI, PIE); r.fill(90, 0, 0); r.arc(0, 0, 11, 11, PI + HALF_PI, TWO_PI, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } r.pop(); } else if (this.dT === 9) { let nX = 10 + 5 * this.fP; r.fill(90, 0, 0); r.ellipse(nX, 0, 12, 12); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else { r.fill(hK); r.ellipse(0, 0, 11, 11); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } r.noStroke();
       // The hair, and whatever was on the head. The identity was frozen at the
       // moment of death (figureIdentity), so this body keeps what the person
       // was wearing instead of coming to rest as a bare skin dome. Anything
@@ -11672,10 +11766,11 @@ if (this.eT === "COW" || this.eT === "HORSE") {
         r.push();
         if (r.drawingContext) r.drawingContext.globalAlpha = Math.max(0, Math.min(1, a / 255));
         drawFigureHair(r, this.id, 0, 0, 0);
+        if(this.dT===0)drawFallenFace(r,this.fall,f);
         const hw = headwearOf(this.id);
         if (hw && !headwearFalls(hw)) drawHeadwear(r, this.id, hw);
         else if (hw && this.hatOff) {
-          r.push(); r.rotate(-corpseHeadTurn(this,f)); r.translate(this.hatOff.x, this.hatOff.y); r.rotate(this.hatOff.r);
+          r.push(); r.rotate(-figureHeadTurn(this.fall,f)); r.translate(this.hatOff.x, this.hatOff.y); r.rotate(this.hatOff.r);
           drawHeadwear(r, this.id, hw); r.pop();
         }
         if (r.drawingContext) r.drawingContext.globalAlpha = 1;
@@ -11745,7 +11840,7 @@ function corpseSettled(c) {
     if (c.dT === 12 && !c.exploded) return false;                 // still in the air
     if (c.fP < 1 || (c.fall&&!c.fall.done)) return false;           // falling / contact recoil
     if (c.rag && !c.rag.done) return false;                       // still settling
-    if (c.bloodTimer > 0 || c.smokeTimer > 0) return false;       // bleeding or burning
+    if (c.bloodTimer > 0 || c.smokeTimer > 0 || (c.fatalSpray&&c.fatalSpray.left>0)) return false;
     if (c.sep < corpseSepMax(c.dT)) return false;                 // halves still parting
     if (CORPSE_SPURT_DEATHS.indexOf(c.dT) !== -1 && c.bT > 0) return false;
     if (CORPSE_MOVING_BITS.indexOf(c.dT) !== -1 && c.stopMotionTimer > 0) return false;
@@ -11778,6 +11873,7 @@ function updateCorpses() {
               c.fP = c.fall ? figureFallProgress(c.fall) : 1;
               if (c.bT > 0) c.bT--;
               if (c.bloodTimer > 0) c.bloodTimer--;
+              if (c.fatalSpray&&c.fatalSpray.left>0) c.fatalSpray.left--;
               if (c.smokeTimer > 0) c.smokeTimer--;
               if (c.stopMotionTimer > 0) c.stopMotionTimer--;
               if (c.rag && !c.rag.done) ragStep(c.rag);
@@ -11824,7 +11920,7 @@ function cullCorpseStacks() {
   const cells = new Map();
   for (let i = 0; i < corpses.length; i++) {
       const c = corpses[i];
-      if (!c.isIntactBody) continue;
+      if (!c.isIntactBody || (c.fatalSpray&&c.fatalSpray.left>0)) continue;
       const k = Math.floor(c.x / CORPSE_STACK_CELL) + ',' + Math.floor(c.y / CORPSE_STACK_CELL);
       let list = cells.get(k);
       if (!list) { list = []; cells.set(k, list); }
@@ -12082,7 +12178,8 @@ function bankCityPerson(e) {
   if(!e.cityPersonKey)return;
   const b=getBiomeState(1);const table=b.cityPeople||(b.cityPeople={});
   table[e.cityPersonKey]={x:e.x,y:e.y,hp:e.hp,dead:e.dead||e.hp<=0,stun:e.stunTimer,
-    stunAge:e.stunPose?e.stunPose.age:0,panic:e.panicTimer||0,px:e.panicX,py:e.panicY,d:e.cityDistance};
+    stunAge:e.stunPose?e.stunPose.age:0,stunA:e.stunPose&&e.stunPose.a,stunFacing:e.stunPose&&e.stunPose.facing,
+    panic:e.panicTimer||0,px:e.panicX,py:e.panicY,d:e.cityDistance};
 }
 function refreshCityPeople(mgr,pcx,pcy) {
   if(!mgr||mgr.biome!==1||!player||!doTick||isStoryMode||frameCount-cityPeopleFrame<20)return;
@@ -12111,7 +12208,13 @@ function refreshCityPeople(mgr,pcx,pcy) {
         e.cityFormation=other?other.cityFormation:formation;e.citySlot=n-6;
         if(n>=8){const post=cityRoute(cx,cy,(n-8)*1832+420);e.cityPost=post;if(!old){e.x=post.x;e.y=post.y;}e.aimAngle=post.a;}}
       if(old){e.hp=old.hp;e.panicTimer=old.panic||0;e.panicX=old.px;e.panicY=old.py;
-        if(old.stun>0){startPunchStun(e,e.aimAngle);e.stunTimer=old.stun;e.stunPose.age=old.stunAge;}}
+        if(old.stun>0){
+          if(old.stunFacing!==undefined&&old.stunFacing!==null)e.aimAngle=old.stunFacing;
+          startPunchStun(e,old.stunA===undefined||old.stunA===null?e.aimAngle:old.stunA);
+          e.stunTimer=old.stun;e.stunPose.age=old.stunAge;
+          if(e.stunPose.age>=e.stunPose.duration+16){e.stunPose.done=true;e.stunPose.impulse=0;while(!e.stunPose.rag.done)ragStep(e.stunPose.rag);}
+          bankCityPerson(e);
+        }}
       enemiesList.push(e);if(isCiv)civ++;else guard++;made++;
     }
   }
@@ -12201,7 +12304,7 @@ function drawStunnedFigure(e) {
   if(BIOME_ACTIVE){const light=figureLight(p?p.a:e.aimAngle);volShadeCol(0,0,rig.TL,rig.TW,e.shirtCol,1,light[0],light[1]);}
   else{fill(e.shirtCol);ellipse(0,0,rig.TL,rig.TW);}
   if(rg){for(let i=0;i<2;i++)drawFallLimb(window,rig,rg,i,f,e.shirtCol,e.pantsCol,skin,boot);}
-  translate(lerp(12/RAG_SCALE,18,f),0);scale(lerp(1/RAG_SCALE,1,f));drawFigureHead(window,figureIdentity(e),0,0,true,0);pop();
+  translate(lerp(12/RAG_SCALE,18,f),0);scale(lerp(1/RAG_SCALE,1,f));rotate(figureHeadTurn(p,f));drawFallenHead(window,figureIdentity(e),p,f);pop();
 }
 
 
@@ -16453,6 +16556,7 @@ function updateBullets() {
                 if (!(t.isPlayer && dRes.blocked)) {
                   t.decals.push({ x: lX, y: lY, sz: random(4, 7), col: dCol, isHead: b.tH === "HEAD" });
                   fallHit.wound=t.decals[t.decals.length-1];
+                  fallHit.fatal=t.hp<=0;
                 }
                 
                 if (t.eType === "ROBOT") {
@@ -17400,6 +17504,9 @@ function Particle(x, y, c, t, dX = 0, dY = 0) {
 
 Particle.prototype.init = function(x, y, c, t, dX = 0, dY = 0) {
     this.x = x; this.y = y; this.c = c; this.t = t; this.a = 255;
+    // Fatal-wound droplets receive their cone velocity from their own emitter.
+    // Avoid global random draws so existing overkill animation stays identical.
+    if(t === "WOUND_BLOOD") { this.sz=2.8;this.vx=dX;this.vy=dY;this.l=16;return; }
     // Size is rolled ONCE here. It used to be re-rolled inside show() every
     // frame, so every particle strobed between its extremes at 60Hz — smoke
     // swinging 20px to 40px and back. Dash and melee spawn THRUST, SPARK, GORE

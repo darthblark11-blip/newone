@@ -83,6 +83,14 @@ probe('player.x=post.x+180;player.y=post.y;frameCount+=((post.aiOffset-frameCoun
 // Killed residents stay killed through serialization, streaming out and back.
 probe('window.person=enemiesList.find(e=>e.isCityCivilian);window.key=person.cityPersonKey;person.takeDamage(1000);enemiesList=[];biomeState=JSON.parse(JSON.stringify(biomeState));frameCount+=21;refreshCityPeople(mgr,'+cx+','+cy+');');
 assert(!P('enemiesList.some(e=>e.cityPersonKey===key)'));
+// A face-up stunned resident keeps that head side after streaming/save reload.
+probe(`person=enemiesList.find(e=>e.isCityCivilian);key=person.cityPersonKey;
+  person.aimAngle=PI;person.isMoving=false;rememberFigureMotion(person,0,0);startPunchStun(person,0);
+  for(let i=0;i<60;i++){frameCount++;advanceStun(person);}bankCityPerson(person);window.savedStunAge=person.stunPose.age;
+  enemiesList=[];biomeState=JSON.parse(JSON.stringify(biomeState));frameCount+=21;refreshCityPeople(mgr,${cx},${cy});
+  person=enemiesList.find(e=>e.cityPersonKey===key);`);
+assert(P('person&&person.stunPose&&!person.stunPose.faceDown&&person.stunPose.age===savedStunAge&&person.stunPose.done'));
+assert(P('person.stunPose.a===0&&person.stunPose.facing===PI&&person.stunPose.impulse===0'));
 // Fallen people must also stop casting a standing-height light-rig shadow.
 ctx.__material=mkG();const heightColors=[];let mat;
 ctx.__material.fill=(...a)=>{mat=a;};ctx.__material.ellipse=(...a)=>heightColors.push({mat,a});

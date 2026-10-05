@@ -43,16 +43,19 @@ if(process.argv.includes('--legacy-snapshot')){
  for(const w of ['SHOTGUN','DUAL_SMG'])for(const type of [2,4,7,8,9,10])for(const age of [0,1,4,7,17,34,60])snapshots.push(fixture(type,w,age));
  process.stdout.write(JSON.stringify(snapshots));
 }else{
- for(const a of [-Math.PI/2,Math.PI/2]){
-  const r=fixture(0,'PISTOL',40,a,a);assert(r.heads.length);
-  assert(r.heads[0].axis[1]/Math.hypot(...r.heads[0].axis)<-.94,'north/south corpse head does not face up');
+ for(const a of [0,Math.PI/2,Math.PI,-Math.PI/2])for(const backward of [false,true]){
+  const facing=a+(backward?Math.PI:0),r=fixture(0,'PISTOL',40,facing,a);assert(r.heads.length);
+  assert.equal(P('c.fall.faceDown'),!backward,'forward/back classification depends on map direction');
+  const expected=a+(backward?Math.PI:0)+P('c.rag.ang'),axis=r.heads[0].axis;
+  assert(Math.cos(expected)*axis[0]+Math.sin(expected)*axis[1]>.79,'head did not roll with the fall side');
   const head=r.heads[0].position;
-  assert((head[1]-r.state.y)*Math.sign(a)>10,'head correction reversed the body instead of rotating the head');
-  probe('window.g=ragRig(c.bW,c.bH);window.hair={eType:"FEMALE_PISTOL",hairStyle:3,hairCol:color(55,33,20)};c.id=hair;');
-  draws=[];heads=[];probe('c.show();');assert.equal(stack.length,0);assert(heads[0].axis[1]<0);
+  assert((head[0]-r.state.x)*Math.cos(a)+(head[1]-r.state.y)*Math.sin(a)>10,'head correction reversed the body');
+  probe('window.hair={eType:"FEMALE_PISTOL",hairStyle:3,hairCol:color(55,33,20)};c.id=hair;');
+  draws=[];heads=[];probe('c.show();');assert.equal(stack.length,0);
+  assert(Math.cos(expected)*heads[0].axis[0]+Math.sin(expected)*heads[0].axis[1]>.79);
  }
  // A detached hat stays in its body/world frame when the head alone turns.
- fixture(0,'PISTOL',40,Math.PI/2,Math.PI/2);
+ fixture(0,'PISTOL',40,-Math.PI/2,Math.PI/2);
  probe('c.id={eType:"BANDIT"};c.hatOff={x:20,y:7,r:.5};');
  const hats=[],wear=ctx.drawHeadwear;ctx.drawHeadwear=(g,id,kind)=>{hats.push([...matrix]);wear(g,id,kind);};
  heads=[];probe('c.show();');ctx.drawHeadwear=wear;
@@ -61,7 +64,7 @@ if(process.argv.includes('--legacy-snapshot')){
  assert(Math.abs(hats[0][4]-head[0]-(Math.cos(yaw)*20-Math.sin(yaw)*7)*P('RAG_SCALE'))<1e-8);
  assert(Math.abs(hats[0][5]-head[1]-(Math.sin(yaw)*20+Math.cos(yaw)*7)*P('RAG_SCALE'))<1e-8);
  // Retired bodies use the same orientation on an off-screen graphics target.
- fixture(0,'PISTOL',40,Math.PI/2,Math.PI/2);
+ fixture(0,'PISTOL',40,-Math.PI/2,Math.PI/2);
  const g={...ctx,drawingContext:ctx.drawingContext};ctx.__target=g;heads=[];probe('c.show(__target);');assert(heads[0].axis[1]<0);assert.equal(stack.length,0);
  if(process.env.FALL_LEGACY_GAME){
   assert(fs.existsSync(process.env.FALL_LEGACY_GAME));
@@ -72,5 +75,5 @@ if(process.argv.includes('--legacy-snapshot')){
   console.log('Legacy comparison passed: 84 shotgun/dual-SMG overkill snapshots match the previous state and transformed drawing.');
  }
  for(const [n,fn]of Object.entries(originals))ctx[n]=fn;
- console.log('Corpse head corrections passed: north/south face orientation, unchanged body direction, long hair, detached hat placement, balanced transforms and graphics-target drawing.');
+ console.log('Corpse head corrections passed: forward/back face orientation in every cardinal direction, unchanged body direction, long hair, detached hat placement, balanced transforms and graphics-target drawing.');
 }
