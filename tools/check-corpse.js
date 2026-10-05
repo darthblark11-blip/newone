@@ -69,7 +69,7 @@ console.log('\n== the round that killed them is read ==');
   // A shot across the body turns it. One straight up the spine does not.
   const across = drop(0, 'NORMAL', Math.PI / 2, 0);
   const spine  = drop(0, 'NORMAL', 0, 0);
-  ok('a hit through the ribs spins the body', Math.abs(across.ang) > 0.35,
+  ok('a hit through the ribs turns the body modestly', Math.abs(across.ang) > 0.12 && Math.abs(across.ang) <= 0.26,
      `turned ${(across.ang * 57.3).toFixed(0)} degrees`);
   ok('a hit up the spine barely does', Math.abs(spine.ang) < Math.abs(across.ang) * 0.5,
      `turned ${(spine.ang * 57.3).toFixed(0)} degrees`);
@@ -380,7 +380,8 @@ console.log('\n== it stops ==');
   ok('still settling halfway through', mid.done === false, `frame ${mid.t} of ${FRAMES}`);
   const end = drop(0, 'NORMAL', 0.6, 0, FRAMES + 40);
   ok('frozen once it is down', end.done === true, `stopped at frame ${end.t}`);
-  ok('and the frame counter stops with it', end.t === FRAMES, end.t + ' vs ' + FRAMES);
+  const duration=P('corpses[0].rag.frames');
+  ok('and the frame counter stops with the shared fall clock', end.t === duration, end.t + ' vs ' + duration);
 
   // Prove it by reading the pose either side of a long wait.
   const settled = flat(end);

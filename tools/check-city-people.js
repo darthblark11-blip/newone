@@ -49,7 +49,7 @@ probe('player.updatePlayer();');assert(!P('boxerPose(player).active'));
 probe('player.boxingHold=180;player.isArmed=true;');assert(!P('boxerPose(player).active'));
 probe('player.isArmed=false;swordPickedUp=true;setMeleeTool("SWORD");');assert(!P('boxerPose(player).active'));
 probe('setMeleeTool("NONE");player.meleeTimer=10;player.punchDuration=20;player.meleePhase=1;player.show();');
-assert(P('Math.abs(boxerPose(player).hip+.22)<Math.abs(boxerPose(player).torso+.28)'));
+assert(P('Math.abs(boxerPose(player).hip+.12)<Math.abs(boxerPose(player).torso+.17)'));
 ctx.ellipse=oldEllipse;
 // Measure rendered boot positions through the full p5 transform stack. The
 // lead and rear feet must actually straddle the torso along the aim direction.
