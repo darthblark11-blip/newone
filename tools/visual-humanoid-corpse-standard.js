@@ -10,10 +10,10 @@ probe('frameCount=1000;doTick=true;BIOME_ACTIVE=false;currentLevel=1;activeBuild
 const cases=[
  ['Blue pistol / forward','Bald scalp + full blue/grey NMO back patch','NM0_ROOKIE',-7,false,false],
  ['Blue armor / forward','Upper arm → forearm and hand → torso','ARMORED_STANDARD',7,false,false],
- ['Heavy armor / forward','Shared anatomy + reachable wound hold','ARMORED',-7,false,false],
+ ['Blue female / forward','Actual hair + full blue/grey NMO back patch','NM0_ROOKIE_F',-7,false,false],
  ['Blue pistol / backward','Face up + small upper-right chest emblem','NM0_ROOKIE',-7,true,false],
  ['Blue armor / backward','Face up; dropped helmet stays in body frame','ARMORED_STANDARD',7,true,false],
- ['Heavy armor / backward','Same fall direction and wound-arm layers','ARMORED',-7,true,false]
+ ['Blue female / backward','Face up + small upper-right chest emblem','NM0_ROOKIE_F',-7,true,false]
 ];
 for(const [i,[,,type,side,front,stun]] of cases.entries()){
  const a=front?Math.PI/2:-Math.PI/2,moving=false;
@@ -37,7 +37,7 @@ function draw(frame){
    c.strokeStyle='#415960';c.lineWidth=2;c.beginPath();c.moveTo(x+38,y+102);c.lineTo(x+38,y+148);c.moveTo(x+38,y+(upward?102:148));c.lineTo(x+33,y+(upward?109:141));c.moveTo(x+38,y+(upward?102:148));c.lineTo(x+43,y+(upward?109:141));c.stroke();
    c.font='12px sans-serif';c.fillText('fall',x+25,y+170);
   }
-  c.save();c.beginPath();c.rect(x,y+53,344,247);c.clip();g.push();g.translate(x+177,y+(i>=3?213:159));g.scale(i===2||i===5?1.8:2.7);
+  c.save();c.beginPath();c.rect(x,y+53,344,247);c.clip();g.push();g.translate(x+177,y+(i>=3?213:159));g.scale(2.7);
   probe(`window.v=__humanCases[${i}];__humanPaint.translate(-v.actor.x,-v.actor.y);if(v.stun){push();translate(v.actor.x,v.actor.y);drawStunnedFigure(v.actor);pop();}else v.actor.show(__humanPaint);`);
   g.pop();c.restore();if(!g.balanced())throw Error('Unbalanced arm preview');
  }

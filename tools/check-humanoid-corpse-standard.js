@@ -1,7 +1,7 @@
 // Exercise the shared whole-body fall on every human identity, then actual
 // blue-pistol/armored killshots. Observe game painters rather than copied art.
 const assert=require('assert'),{ctx,probe}=require('./harness'),P=s=>probe('('+s+')');
-const types=['NORMAL','FEMALE_PISTOL','NM0_ROOKIE','NM0_ROOKIE_F','MILITARY_NEUTRAL','NM0_GREY_FATIGUE','NM0_CITY_GUARD','ARMORED_STANDARD','ARMORED','AERIAL','AERIAL_PISTOL','MOLOTOV','SIA','DAD','FARMER_MALE','FARMER_FEMALE','COWBOY','COWGIRL','BANDIT','LOCAL_COP','VILLAGER_MALE','VILLAGER_FEMALE','CITY_CITIZEN_M','CITY_CITIZEN_F'];
+const types=['NORMAL','FEMALE_PISTOL','NM0_ROOKIE','NM0_ROOKIE_F','MILITARY_NEUTRAL','NM0_GREY_FATIGUE','NM0_CITY_GUARD','ARMORED_STANDARD','AERIAL','AERIAL_PISTOL','MOLOTOV','SIA','DAD','FARMER_MALE','FARMER_FEMALE','COWBOY','COWGIRL','BANDIT','LOCAL_COP','VILLAGER_MALE','VILLAGER_FEMALE','CITY_CITIZEN_M','CITY_CITIZEN_F'];
 let seed=4921;ctx.random=(a,b)=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;const v=seed/4294967296;
  return a===undefined?v:Array.isArray(a)?a[Math.floor(v*a.length)]:b===undefined?v*a:a+(b-a)*v;};
 probe(`isStoryMode=false;townsData={};startAtLevel(1);started=true;doTick=true;BIOME_ACTIVE=false;
@@ -27,7 +27,7 @@ function draw(target=false){
  assert.equal(heads.length,1);if(heldArm>=0){assert.deepEqual(events,P('c.fall.faceDown&&c.fP>.45')?['upper','fore','torso']:['torso','upper','fore']);holds++;}
  if(P('c.fP===1')){const yaw=P('figureFallYaw(c.fall,c.rag)'),x=P('c.x'),y=P('c.y');
   assert((heads[0].x-x)*Math.cos(yaw)+(heads[0].y-y)*Math.sin(yaw)>P('ragRig(c.bW,c.bH).TL*RAG_SCALE*.5'),'head buried inside torso');
-  if(P('c.eT==="ARMORED"||c.eT==="ARMORED_STANDARD"')){assert.equal(helmets.length,1);const scale=P('RAG_SCALE');assert(Math.hypot(helmets[0].x-heads[0].x-(Math.cos(yaw)*15-Math.sin(yaw)*10)*scale,helmets[0].y-heads[0].y-(Math.sin(yaw)*15+Math.cos(yaw)*10)*scale)<1e-8,'dropped armor helmet rolled with head');}}
+  if(P('c.eT==="ARMORED_STANDARD"')){assert.equal(helmets.length,1);const scale=P('RAG_SCALE');assert(Math.hypot(helmets[0].x-heads[0].x-(Math.cos(yaw)*15-Math.sin(yaw)*10)*scale,helmets[0].y-heads[0].y-(Math.sin(yaw)*15+Math.cos(yaw)*10)*scale)<1e-8,'dropped armor helmet rolled with head');}}
 }
 for(const type of types)for(const a of [0,Math.PI/2,Math.PI,-Math.PI/2])for(const back of [false,true])for(const moving of [false,true]){
  const facing=a+(back?Math.PI:0);
@@ -47,7 +47,7 @@ for(const type of types)assert(heldTypes.has(type),type+' never held an ordinary
 // Real bullet deaths on the reported classes; armor is depleted before the
 // fatal shot, as in gameplay. Death selection and damage remain unchanged.
 let kills=0;
-for(const type of ['NM0_ROOKIE','ARMORED_STANDARD','ARMORED'])for(const a of [0,Math.PI/2,Math.PI,-Math.PI/2])for(const front of [false,true])for(const kind of ['BODY','HEAD']){
+for(const type of ['NM0_ROOKIE','ARMORED_STANDARD'])for(const a of [0,Math.PI/2,Math.PI,-Math.PI/2])for(const front of [false,true])for(const kind of ['BODY','HEAD']){
  const facing=a+(front?Math.PI:0);
  probe(`frameCount++;bullets=[];corpses=[];particles=[];headshotCounter=bodyOverkillCounter=0;MAX_KILLS=totalKills;
   window.e=new Character(60*Math.cos(${a}),60*Math.sin(${a}),false,'${type}');e.hp=1;e.aimAngle=${facing};e.isFriendly=e.isNeutral=e.isMoving=false;rememberFigureMotion(e,0,0);enemiesList=[e];

@@ -60,8 +60,8 @@ console.log('== who gets a settle ==');
   for (const [t] of nonhuman) if (drop(0, t, 0.5, 0, 2)) human = t;
   ok('a bug, a cow and a machine do not get human joints', human === null, human || '5 types');
   ok('but ARMORED_STANDARD, a person in armour, does', drop(0, 'ARMORED_STANDARD', 0.5, 0, 2) !== null);
-  ok("and heavy armor uses human joints regardless of its footprint",
-     P(`ragHumanoid("ARMORED", 105) && ragHumanoid("ARMORED_STANDARD", 105)`) === true);
+  ok("the red-orb hybrid keeps its own deaths while pistol armor has human joints",
+     P(`!ragHumanoid("ARMORED", 105) && ragHumanoid("ARMORED_STANDARD", 21)`) === true);
 }
 
 console.log('\n== the round that killed them is read ==');

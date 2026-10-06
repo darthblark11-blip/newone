@@ -93,12 +93,22 @@ Stationary fatal-hit displacement follows the actual incoming bullet vector. A s
 
 ## Shared humanoid standard
 
-All human identities use the shared whole-body fall controller, including blue NM-0 pistol units, standard blue armor and heavy armor. Armor no longer excludes a human by its 105-unit collision footprint. The projected heavy rig uses shoulder breadth from the body height, puts the head beyond the collar, and keeps wound holds reachable. The heavy front also retains its plate. Dropped armor helmets stay in the body frame when a backward fall turns the head face-up. Creatures and machines retain their own anatomy.
+All human identities use the shared whole-body fall controller, including blue NM-0 pistol units and the standard blue pistol armor (`ARMORED_STANDARD`). Dropped armor helmets stay in the body frame when a backward fall turns the head face-up. Creatures and machines retain their own anatomy.
+
+The large oval red-orb charge-shot enemy (`ARMORED`) is a robot/human hybrid and is excluded from the humanoid update. Its original collapse, torso, arms, head, helmet, separation, dismemberment and blood effects are restored to the version before the shared-standard update. The human-only heavy shoulder projection and added front plate are removed. The hybrid also retains its previous non-humanoid stun fallback.
 
 The 7-tick corpse collapse, 34-tick limb settle, impact-driven stationary deaths, locomotion-driven moving deaths, front/back scalp/face differences, tapered arms, wound-holding arm order and 40-tick punch stun now share this path across all humanoid types. Existing dismemberment selectors, aerial death pieces and the previously protected shotgun/dual-SMG overkill motion remain. Outfit details, original neck/chest stains and fatal spray retain their body/head frames.
 
-`node tools/check-humanoid-corpse-standard.js` exercises 24 humanoid types in all four directions with stationary/moving and forward/back falls. It checks 2,304 live/stamped wound origins, actual upper/forearm/torso order, a reachable wound hold on every type, heads outside the torso, dropped armor helmets, frozen rest, slow stuns and death while already down. It also exercises 48 actual blue-pistol/standard-armor/heavy-armor body/head killshots. The badge checks cover yellow, blue male and blue female uniforms on both sides in all directions, as well as living/stunned rendering.
+`node tools/check-humanoid-corpse-standard.js` exercises 23 humanoid types in all four directions with stationary/moving and forward/back falls. It checks 2,208 live/stamped wound origins, actual upper/forearm/torso order, a reachable wound hold on every type, heads outside the torso, dropped armor helmets, frozen rest, slow stuns and death while already down. It also exercises 32 actual blue-pistol/standard-armor body/head killshots. The badge checks cover yellow, blue male and blue female uniforms on both sides in all directions, as well as living/stunned rendering.
+
+`node tools/check-armored-hybrid-deaths.js` checks all 16 hybrid death forms with pistol, shotgun and dual-SMG reactions, moving/stationary front/rear hits, early collapse, settled bodies, separated pieces and the end of fatal spray. It includes 16 actual body/head killshots in all four directions and confirms that pistol armor retains the human rig. With the pre-update game supplied, 1,171 complete corpse/effect-state and live/stamped/stun drawing snapshots match exactly; no appearance layers are excluded from this comparison.
+
+```
+git show 25670fa75ecde927d0001ef75087e4d71bba5671:game.js > /tmp/pre-humanoid-standard-game.js
+ARMORED_LEGACY_GAME=/tmp/pre-humanoid-standard-game.js node tools/check-armored-hybrid-deaths.js
+node tools/check-humanoid-corpse-standard.js
+```
 
 The focused preview uses `node tools/visual-humanoid-corpse-standard.js`; add `animate` for the first 90 simulation ticks. The entity back gallery has also been regenerated from the current game.
 
-![Blue pistol identities and shared standard/heavy armored falls](previews/humanoid-corpse-standard.png)
+![Blue male/female pistol identities and shared NMO pistol-armor falls](previews/humanoid-corpse-standard.png)

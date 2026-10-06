@@ -5,7 +5,7 @@ const cases=[
  ['Pistol regular / back','NORMAL',false,'',true],['Pistol regular / front','NORMAL',false,'',false],
  ['Player / back','NORMAL',true,'',true],['Female pistol','FEMALE_PISTOL'],
  ['NM-0 rookie','NM0_ROOKIE'],['Female rookie','NM0_ROOKIE_F'],['Grey fatigue','NM0_GREY_FATIGUE'],['Military neutral','MILITARY_NEUTRAL'],
- ['City guard','NM0_CITY_GUARD'],['Armored regular','ARMORED_STANDARD'],['Heavy armor','ARMORED'],
+ ['City guard','NM0_CITY_GUARD'],['Armored regular','ARMORED_STANDARD'],['Red-orb hybrid / original death','ARMORED'],
  ['Aerial rifle','AERIAL'],['Aerial pistol','AERIAL_PISTOL'],['Molotov carrier','MOLOTOV'],['SIA','SIA'],['Dad','DAD'],
  ['Farmer / overalls','FARMER_MALE'],['Farmer / apron ties','FARMER_FEMALE'],['Cowboy / leather vest','COWBOY'],['Cowgirl / vest & braid','COWGIRL'],
  ['Bandit / duster','BANDIT'],['Local cop / coat','LOCAL_COP'],['Villager / braces','VILLAGER_MALE'],['Villager / pinafore','VILLAGER_FEMALE'],
