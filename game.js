@@ -10949,10 +10949,12 @@ function headwearOf(id) {
   if (!id) return null;
   const eT = id.eType;
   if(eT==="NM0_CITY_GUARD")return "NM0_HELMET";
-  if (id.isPlayer && typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked) return 'VISOR';
+  const armor=id.explosiveArmor!==undefined?id.explosiveArmor:explosiveArmorUnlocked;
+  const ninja=id.ninjaSuit!==undefined?id.ninjaSuit:ninjaSuitUnlocked;
+  if (id.isPlayer && armor) return 'VISOR';
   if (eT === "MILITARY_NEUTRAL" || eT === "NM0_GREY_FATIGUE" ||
-      (id.isMilitary && typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked)) return 'HELMET';
-  if (id.isPlayer && typeof ninjaSuitUnlocked !== 'undefined' && ninjaSuitUnlocked) return 'HOOD';
+      (id.isMilitary && armor)) return 'HELMET';
+  if (id.isPlayer && ninja) return 'HOOD';
   if (eT === "BANDIT") return 'BANDIT_HAT';
   if (eT === "COWBOY" || eT === "COWGIRL") return 'STETSON';
   if (eT === "LOCAL_COP") return 'COP_HAT';
@@ -11102,8 +11104,134 @@ function drawFigureHair(g, id, hX, hY, sway = 0) {
 function figureIdentity(c) {
   if (!c) return null;
   return { eType: c.eType, isPlayer: !!c.isPlayer, isMilitary: !!c.isMilitary, isUnarmed: !!c.isUnarmed,
-           hairCol:c.hairCol,hairStyle:c.hairStyle,skinCol:c.skinCol,hatCol:c.hatCol,kerchiefCol:c.kerchiefCol,
-           bonnetCol: c.bonnetCol, shirtCol: c.shirtCol };
+           hairCol:c.hairCol,hairStyle:c.hairStyle,skinCol:c.skinCol||(c.eType==='SNAIL_HYBRID'?color(20,100,20):undefined),hatCol:c.hatCol,kerchiefCol:c.kerchiefCol,
+           bonnetCol:c.bonnetCol,shirtCol:c.shirtCol,pantsCol:c.pantsCol,vestCol:c.vestCol,
+           isCityCivilian:!!c.isCityCivilian,clothingStyle:c.clothingStyle,maneCol:c.maneCol,isCharred:!!c.isCharred,
+           ninjaSuit:!!(c.isPlayer&&ninjaSuitUnlocked),chemistSuit:!!(c.isPlayer&&chemistSuitUnlocked),
+           explosiveArmor:!!((c.isPlayer||c.isMilitary)&&explosiveArmorUnlocked),
+           jetpack:!!(c.isPlayer&&jetpackUnlocked) };
+}
+
+// The positive X end is the collar; positive Y is the wearer's right.
+// Vector lettering stays legible on both the main canvas and corpse stamps.
+function drawNmoInsignia(g,small=false) {
+  g.push();g.noStroke();g.fill(30,78,178);g.ellipse(0,0,small?3.5:11.5,small?3.5:11.5);
+  if(small){g.fill(184,190,198);g.rect(-.8,-.35,1.6,.7,.2);}
+  else{
+    g.rotate(HALF_PI);g.noFill();g.stroke(184,190,198);g.strokeWeight(.65);
+    g.line(-4,-1.7,-4,1.7);g.line(-4,-1.7,-1.9,1.7);g.line(-1.9,1.7,-1.9,-1.7);
+    g.line(-.9,1.7,-.9,-1.7);g.line(-.9,-1.7,.1,.3);g.line(.1,.3,1.1,-1.7);g.line(1.1,-1.7,1.1,1.7);
+    g.ellipse(3,0,2.2,3.4);
+  }g.pop();
+}
+
+function drawFallenJetpack(g,pistol=false) {
+  g.fill(43,49,55);g.rect(-8,-7,18,14,3);g.fill(113,122,129);g.rect(-6,-4,14,8,2);
+  g.fill(55,62,70);for(let x=-4;x<7;x+=2.5)g.rect(x,-3,1,6,.3);
+  g.fill(pistol?color(129,180,97):color(213,140,63));g.rect(-7,-7,14,2,1);g.rect(-7,5,14,2,1);
+}
+
+// Outfit details ride the existing torso transform, underneath wounds and
+// sleeves. Normalized dimensions also fit stunned bodies and separated torsos.
+function drawFallenAttire(g,id,TL,TW,back,progress=1,half=0) {
+  if(!id)return;
+  const t=id.eType,shirt=id.shirtCol||color(220,200,20),p=Math.max(0,Math.min(1,progress));
+  const nmo=t==='NORMAL'&&!id.isPlayer&&!id.isCharred;
+  g.push();g.scale(TL/30,TW/20);g.noStroke();
+  const dc=g.drawingContext,alpha=dc?dc.globalAlpha:1;
+  if(dc&&half){dc.save();dc.beginPath();dc.rect(half<0?-30:0,-20,30,40);dc.clip();}
+  if(nmo&&(!back||p<1)){
+    if(dc)dc.globalAlpha=alpha*(back?1-p:1);
+    g.push();g.translate(7,4.5);drawNmoInsignia(g,true);g.pop();
+  }
+  if(back&&p>0){
+    if(dc)dc.globalAlpha=alpha*p;
+    g.stroke(red(shirt)*.55,green(shirt)*.55,blue(shirt)*.55);g.strokeWeight(.65);
+    g.line(-10,0,9,0);g.line(7,-6,7,6);g.line(-10,-4,-10,4);g.noStroke();
+    if(id.isCharred){
+      g.stroke(52,48,45);g.strokeWeight(.7);g.line(-8,-3,8,3);g.line(-8,3,8,-3);g.noStroke();
+    }else if(id.isPlayer&&id.chemistSuit){
+      g.fill(238,239,232);g.ellipse(0,0,28,18);g.stroke(154,166,161);g.strokeWeight(.7);
+      g.line(-12,0,10,0);g.line(-8,-6,-8,6);g.line(8,-5,8,5);g.noStroke();
+      g.fill(211,219,211);g.rect(-9,-4,3,8,1);g.fill(108,146,126);g.rect(7,-2,3,4,1);
+    }else if(((id.isPlayer||id.isMilitary)&&id.explosiveArmor)||t==='MILITARY_NEUTRAL'||t==='NM0_GREY_FATIGUE'||t==='NM0_CITY_GUARD'||t==='ARMORED_STANDARD'||t==='ARMORED'){
+      const heavy=t==='ARMORED'||t==='ARMORED_STANDARD';
+      g.fill(heavy?color(51,57,64):color(red(shirt)*.52,green(shirt)*.52,blue(shirt)*.52));
+      g.rect(-9,-7,20,14,3);g.fill(heavy?color(109,118,125):color(red(shirt)*.85,green(shirt)*.85,blue(shirt)*.85));
+      g.rect(-6,-5,13,10,2);g.stroke(39,47,49);g.strokeWeight(.8);
+      for(let x=-4;x<=5;x+=3)g.line(x,-4,x,4);g.noStroke();
+      g.fill(45,51,48);g.rect(8,-7,3,14,1);g.rect(-9,-7,3,14,1);
+      g.fill(170,174,158);for(const x of [-7.5,9.5])for(const y of [-5,5])g.ellipse(x,y,1.3,1.3);
+      if(t==='NM0_CITY_GUARD'){g.fill(224,188,69);g.rect(1,-3,2,6,.5);}
+      if(t==='NM0_GREY_FATIGUE'){g.fill(49,91,166);g.rect(8,-3,2,6,.5);}
+    }else if(id.isPlayer&&id.ninjaSuit){
+      g.stroke(77,69,95);g.strokeWeight(.85);g.line(-8,-5,9,5);g.line(-8,5,9,-5);g.noStroke();
+      g.fill(100,0,200);g.rect(-10,-6,3,12,1);g.fill(148,102,206);g.rect(-10,-2,3,4,.5);
+    }else if(t==='AERIAL'||t==='AERIAL_PISTOL'){
+      drawFallenJetpack(g,t==='AERIAL_PISTOL');
+    }else if(t==='FARMER_MALE'||t==='VILLAGER_MALE'||t==='CITY_CITIZEN_M'&&id.clothingStyle===2){
+      const straps=t==='FARMER_MALE'?(id.pantsCol||color(40,100,200)):color(87,72,55);
+      if(t==='FARMER_MALE'){g.fill(straps);g.rect(-10,-6,15,12,2);}
+      g.stroke(straps);g.strokeWeight(2);g.line(-7,-5,10,5);g.line(-7,5,10,-5);g.noStroke();
+      g.fill(174,166,129);g.ellipse(8,-4.5,1.5,1.5);g.ellipse(8,4.5,1.5,1.5);
+      g.stroke(117,133,141);g.strokeWeight(.6);g.line(-8,-4,-3,-4);g.line(-8,4,-3,4);g.noStroke();
+    }else if(t==='FARMER_FEMALE'||t==='VILLAGER_FEMALE'){
+      g.stroke(226,222,207);g.strokeWeight(1.7);g.line(10,-5,-7,5);g.line(10,5,-7,-5);g.line(-7,-6,-7,6);g.noStroke();
+      g.fill(239,233,217);g.triangle(-7,0,-9,-4,-5,-3);g.triangle(-7,0,-9,4,-5,3);
+      g.fill(166,155,142);g.ellipse(-7,0,1.8,1.8);
+    }else if(t==='COWBOY'||t==='COWGIRL'||t==='BANDIT'){
+      const vest=id.vestCol||(t==='BANDIT'?color(58,48,44):color(88,62,40));
+      g.fill(vest);g.ellipse(0,0,27,17);g.stroke(red(vest)*.6,green(vest)*.6,blue(vest)*.6);g.strokeWeight(.8);
+      g.line(8,-6,8,6);g.line(-11,0,8,0);g.line(-5,-6,-5,6);g.noStroke();
+      g.fill(58,42,30);g.rect(-10,-6,3,12,1);g.fill(111,85,56);g.rect(-8,4,6,3,1);
+      g.fill(id.kerchiefCol||color(168,54,46));g.triangle(11,-3,11,3,6,0);
+      if(t==='BANDIT'){g.fill(43,36,34);g.rect(-11,-5,4,4,1);g.rect(-11,1,4,4,1);}
+      else{g.stroke(184,156,110);g.strokeWeight(.55);g.line(1,-3,5,0);g.line(5,0,1,3);g.noStroke();}
+    }else if(t==='LOCAL_COP'){
+      g.fill(55,58,70);g.rect(-11,-6,20,12,2);g.stroke(89,94,109);g.strokeWeight(.8);
+      g.line(-10,-1,8,-1);g.line(-10,1,8,1);g.line(7,-5,7,5);g.noStroke();
+      g.fill(56,40,28);g.rect(-8,-6,3,12,1);g.rect(-8,4,7,3,1);g.fill(191,167,86);g.rect(8,-4,2,8,.5);
+    }else if(t==='MOLOTOV'){
+      g.stroke(79,56,36);g.strokeWeight(2);g.line(-9,-6,9,6);g.noStroke();
+      g.fill(33,88,50);g.rect(-5,-5,8,3,1);g.rect(-5,1,8,3,1);g.fill(180,151,103);g.rect(2,-4.5,2,2,.5);g.rect(2,1.5,2,2,.5);
+    }else if(t==='SIA'){
+      g.stroke(120,123,174);g.strokeWeight(.75);g.line(5,-6,8,0);g.line(8,0,5,6);g.line(-7,-4,3,-4);g.line(-7,4,3,4);g.noStroke();
+      g.fill(38,39,76);g.rect(-10,-5,3,10,1);
+    }else if(t==='DAD'){
+      g.stroke(127,155,104);g.strokeWeight(.7);g.line(8,-5,5,0);g.line(5,0,8,5);g.line(-7,-4,3,-4);g.line(-7,4,3,4);g.noStroke();
+      g.fill(85,101,60);g.rect(-4,2,4,3,.6);
+    }else if(t==='NM0_ROOKIE'||t==='NM0_ROOKIE_F'){
+      g.push();g.scale(.72);drawNmoInsignia(g);g.pop();g.fill(184,190,198);g.rect(8,-5,1,10,.3);
+    }else if(t==='CITY_CITIZEN_M'||t==='CITY_CITIZEN_F'){
+      if(id.clothingStyle===1){g.fill(red(shirt)*.75,green(shirt)*.75,blue(shirt)*.75);g.rect(-8,-6,17,12,2);g.stroke(202,194,169);g.strokeWeight(.6);g.line(6,-5,6,5);g.line(-6,0,6,0);g.noStroke();}
+      else if(id.clothingStyle===2){g.stroke(229,224,202);g.strokeWeight(1.6);g.line(10,-5,-8,5);g.line(10,5,-8,-5);g.noStroke();}
+      else if(id.clothingStyle===3){g.stroke(236,218,184,150);g.strokeWeight(.9);for(const x of [-7,-2,3,8])g.line(x,-5,x,5);g.noStroke();}
+    }else if(t==='FEMALE_PISTOL'){
+      g.stroke(red(shirt)*.68,green(shirt)*.68,blue(shirt)*.68);g.strokeWeight(.8);g.line(-6,-5,-3,0);g.line(-3,0,-6,5);g.line(6,-5,9,0);g.line(9,0,6,5);g.noStroke();
+      g.fill(175,179,194);g.rect(7,-2,2,4,.6);
+    }else if(t==='BUG'){
+      g.stroke(25,44,24);g.strokeWeight(1);g.line(-11,0,9,0);for(const x of [-6,0,6])g.line(x,-6,x,6);g.noStroke();
+    }else if(t==='SNAIL'||t==='SNAIL_HYBRID'){
+      g.fill(t==='SNAIL'?color(73,95,53):color(120,151,161));g.ellipse(-4,0,19,17);
+      g.noFill();g.stroke(t==='SNAIL'?color(38,57,33):color(63,99,106));g.strokeWeight(.9);g.beginShape();
+      for(let i=0;i<=32;i++){const a=i*.4,r=7*(1-i/35);g.vertex(-4+Math.cos(a)*r,Math.sin(a)*r);}g.endShape();g.noStroke();
+    }else if(t==='ALIEN_GATOR'){
+      g.fill(48,86,49);for(let x=-10;x<=10;x+=5){g.triangle(x-2,-2,x+2,-2,x,2);g.ellipse(x,-5,3,2);g.ellipse(x,5,3,2);}
+      g.stroke(66,72,63);g.strokeWeight(1);g.line(8,-7,8,7);g.noStroke();
+    }else if(t==='HORSE'){
+      g.stroke(id.maneCol||color(red(shirt)*.55,green(shirt)*.55,blue(shirt)*.55));g.strokeWeight(2);
+      g.line(-10,0,12,0);for(let x=0;x<12;x+=3)g.line(x,-1,x+2,2);g.noStroke();
+    }else if(t==='COW'){
+      g.stroke(175,171,159,160);g.strokeWeight(.65);g.line(-11,0,10,0);g.line(-6,-5,-3,0);g.line(-6,5,-3,0);g.noStroke();
+    }else if(t==='ROBOT'||t==='SAUCER'||t==='SAUCER_RED'){
+      g.fill(41,48,54);g.rect(-9,-6,17,12,2);g.fill(99,108,117);g.rect(-7,-4,13,8,1);
+      g.stroke(38,44,49);g.strokeWeight(.8);for(let x=-5;x<=4;x+=3)g.line(x,-3,x,3);g.noStroke();
+      g.fill(t==='SAUCER_RED'?color(214,58,46):color(225,155,52));g.rect(-7,-5,13,1,.3);
+    }
+    if(nmo)drawNmoInsignia(g);
+    if(id.jetpack&&!id.isCharred)drawFallenJetpack(g);
+  }
+  if(dc){dc.globalAlpha=alpha;if(half)dc.restore();}g.pop();
 }
 
 // The fall is a frozen motion event, not another AI state. Voluntary movement
@@ -11188,7 +11316,14 @@ function figureHeadTurn(p,f) {
 }
 function fallenHeadColor(id,p,f,skin) {
   if(!p||!p.faceDown)return skin;
-  const hair=id.hairCol||(id.eType==="FEMALE_PISTOL"?color(15):color(52,40,30));
+  // Hair colour alone is not hair: bald actors and a receding crown keep skin.
+  let hair=null;
+  if(id.hairStyle!==undefined&&id.hairStyle!==6)hair=id.hairCol||color(32,27,26);
+  else if(id.eType==='FEMALE_PISTOL')hair=color(15);
+  else if(id.eType==='NM0_ROOKIE_F')hair=color(64,46,32);
+  else if(id.eType==='NM0_ROOKIE')hair=color(58,44,32);
+  else if(id.eType==='VILLAGER_FEMALE'||id.eType==='FARMER_FEMALE')hair=id.hairCol||color(122,74,38);
+  if(!hair)return skin;
   const t=Math.max(0,Math.min(1,f));
   return color(lerp(red(skin),red(hair),t),lerp(green(skin),green(hair),t),lerp(blue(skin),blue(hair),t));
 }
@@ -11199,11 +11334,15 @@ function drawFallenFace(g,p,f) {
   g.line(1.7,-2.2,2.4,-1.1);g.line(1.7,2.2,2.4,1.1);g.noStroke();
   g.fill(177,116,86,Math.min(1,(f-.45)/.55)*180);g.ellipse(4,0,1.8,2.3);
 }
-function drawFallenHead(g,id,p,f) {
+function drawFallenHeadwear(g,id,kind,back) {
+  if(kind==='HOOD'&&back){g.fill(15);g.ellipse(0,0,12,12);g.stroke(52,47,63);g.strokeWeight(.6);g.line(-4,0,4,0);g.noStroke();}
+  else drawHeadwear(g,id,kind);
+}
+function drawFallenHead(g,id,p,f,wear=true) {
   const skin=id.skinCol||color(235,180,140);
   g.fill(fallenHeadColor(id,p,f,skin));g.ellipse(0,0,11,11);
   drawFigureHair(g,id,0,0,0);drawFallenFace(g,p,f);
-  const hw=headwearOf(id);if(hw)drawHeadwear(g,id,hw);
+  const hw=headwearOf(id);if(wear&&hw)drawFallenHeadwear(g,id,hw,p&&p.faceDown&&f>.5);
 }
 
 const FATAL_SPRAY_FRAMES = 210; // 3.5 seconds on the game's 60 Hz simulation clock.
@@ -11390,6 +11529,7 @@ class Corpse {
     // 14/15 come apart into pieces and draw their own thing; 12 flies off.
     this.rag = [0, 1, 2, 4, 6, 7, 8, 9].indexOf(dT) !== -1 ? ragBuild(eT, bW, bA, aA) : null;
     this.fall = this.rag&&!legacyOverkillFall(dT,src&&src.fallHit) ? buildFigureFall(src,bA,3,false,aA) : null;
+    this.backFacing=dT===7||(this.fall?this.fall.faceDown:Math.cos((mA||0)-(aA||0))>=0);
     if (this.fall) {
         this.fP=figureFallProgress(this.fall);
         prepareFallRag(this.rag,this.fall);
@@ -11427,7 +11567,7 @@ class Corpse {
     } else if (this.dT === 12) {
         this.kamikazeTimer = 126; let fA = this.aA - PI; this.vx = cos(fA) * 3.66; this.vy = sin(fA) * 3.66; this.exploded = false;
         } else if (dT === 15) {
-        this.sC = color(40); this.pC = color(20); 
+        this.sC = color(40); this.pC = color(20); this.id.isCharred=true;
         this.overkillBits = [ { type: 'torso', x: 0, y: 0, vx: cos(this.bA)*6 + random(-2,2), vy: sin(this.bA)*6 + random(-2,2), rot: this.aA, vr: random(-0.2, 0.2) }, { type: 'lArm', x: 0, y: 0, vx: cos(this.bA - PI/3)*7 + random(-2,2), vy: sin(this.bA - PI/3)*7 + random(-2,2), rot: this.aA, vr: random(-0.4, 0.4) }, { type: 'rArm', x: 0, y: 0, vx: cos(this.bA + PI/3)*7 + random(-2,2), vy: sin(this.bA + PI/3)*7 + random(-2,2), rot: this.aA, vr: random(-0.4, 0.4) } ];
 	}
   }
@@ -11557,22 +11697,22 @@ class Corpse {
   r.noStroke();
   if (this.dT === 14) {
       r.push(); r.translate(this.x, this.y); 
-      r.push(); r.translate(this.lH.x, this.lH.y); r.rotate(this.splitA); r.fill(this.sC); r.arc(0, 0, this.bW, this.bH, HALF_PI, PI + HALF_PI, CHORD); r.fill(220, 200, 200); r.ellipse(-6, -this.bH*0.2, 5, 10); r.fill(200, 50, 100); r.ellipse(-8, this.bH*0.1, 7, 12); r.fill(90, 0, 0); r.rect(-3, -this.bH/2, 3, this.bH); r.pop();
-      r.push(); r.translate(this.rH.x, this.rH.y); r.rotate(this.splitA); r.fill(this.sC); r.arc(0, 0, this.bW, this.bH, -HALF_PI, HALF_PI, CHORD); r.fill(220, 200, 200); r.ellipse(6, -this.bH*0.2, 5, 10); r.fill(200, 50, 100); r.ellipse(8, this.bH*0.1, 7, 12); r.fill(90, 0, 0); r.rect(0, -this.bH/2, 3, this.bH); r.pop();
+      r.push(); r.translate(this.lH.x, this.lH.y); r.rotate(this.splitA); r.fill(this.sC); r.arc(0, 0, this.bW, this.bH, HALF_PI, PI + HALF_PI, CHORD); drawFallenAttire(r,this.id,this.bW,this.bH,this.backFacing,1,-1); r.fill(220, 200, 200); r.ellipse(-6, -this.bH*0.2, 5, 10); r.fill(200, 50, 100); r.ellipse(-8, this.bH*0.1, 7, 12); r.fill(90, 0, 0); r.rect(-3, -this.bH/2, 3, this.bH); r.pop();
+      r.push(); r.translate(this.rH.x, this.rH.y); r.rotate(this.splitA); r.fill(this.sC); r.arc(0, 0, this.bW, this.bH, -HALF_PI, HALF_PI, CHORD); drawFallenAttire(r,this.id,this.bW,this.bH,this.backFacing,1,1); r.fill(220, 200, 200); r.ellipse(6, -this.bH*0.2, 5, 10); r.fill(200, 50, 100); r.ellipse(8, this.bH*0.1, 7, 12); r.fill(90, 0, 0); r.rect(0, -this.bH/2, 3, this.bH); r.pop();
       r.pop(); return;
   }
 
   if (this.dT === 13) { 
       r.push(); r.translate(this.x, this.y); let a = 255; r.rotate(this.aA); let spread = min(this.sep, 50);
       r.push(); r.translate(-spread, 0); r.fill(this.pC); r.rect(-10, -10, 18, 8, 4); r.rect(-10, 2, 18, 8, 4); r.fill(90, 0, 0); r.ellipse(0, -4, 18, 22); r.pop();
-      r.push(); r.translate(spread, 0); r.fill(this.sC); r.ellipse(0, 0, this.bW, this.bH * 0.7); r.fill(90, 0, 0); r.ellipse(0, 10, this.bW * 0.8, 12); r.fill(235, 180, 140); r.ellipse(0, -this.bH * 0.4, 11, 11); r.pop();
+      r.push(); r.translate(spread, 0); r.fill(this.sC); r.ellipse(0, 0, this.bW, this.bH * 0.7); r.push();r.rotate(-HALF_PI);drawFallenAttire(r,this.id,this.bH*.7,this.bW,this.backFacing);r.pop(); r.fill(90, 0, 0); r.ellipse(0, 10, this.bW * 0.8, 12); r.fill(235, 180, 140); r.ellipse(0, -this.bH * 0.4, 11, 11); r.pop();
       r.pop(); return;
   }
   if (this.dT === 11) {
       r.push(); r.translate(this.x, this.y);
       for (let b of this.aerialBits) {
           r.push(); r.translate(b.x, b.y); r.rotate(b.rot);
-          if (b.type === 'torso') { r.fill(this.sC); r.ellipse(0, 0, this.bW, this.bH * 0.7); r.fill(80); r.rect(-6, -6, 12, 12, 2); r.fill(90, 0, 0); r.ellipse(0, this.bH * 0.35, 18, 10); } 
+          if (b.type === 'torso') { r.fill(this.sC); r.ellipse(0, 0, this.bW, this.bH * 0.7); r.fill(80); r.rect(-6, -6, 12, 12, 2); r.push();r.rotate(-HALF_PI);drawFallenAttire(r,this.id,this.bH*.7,this.bW,true);r.pop(); r.fill(90, 0, 0); r.ellipse(0, this.bH * 0.35, 18, 10); }
           else if (b.type === 'lArm' || b.type === 'rArm') { r.fill(this.sC); r.ellipse(0, 0, 16, 8); r.fill(235, 180, 140); r.ellipse(8, 0, 8, 8); r.fill(90, 0, 0); r.ellipse(-6, 0, 8, 8); } 
           else if (b.type === 'legs') { r.fill(this.pC); r.rect(-10, -10, 18, 8, 4); r.rect(-10, 2, 18, 8, 4); r.fill(90, 0, 0); r.ellipse(-10, -1, 10, 16); }
           r.pop();
@@ -11582,10 +11722,10 @@ class Corpse {
       if (this.exploded) return;
       r.push(); r.translate(this.x, this.y); r.rotate(this.aA - PI); r.fill(this.pC); r.rect(-25, -10, 18, 8, 4); r.rect(-25, 2, 18, 8, 4);
       r.fill(this.sC); r.ellipse(-5, -14, 16, 8); r.ellipse(-5, 14, 16, 8); r.fill(235, 180, 140); r.ellipse(-10, -14, 8, 8); r.ellipse(-10, 14, 8, 8);
-      r.fill(this.sC); r.ellipse(0, 0, this.bW, this.bH); r.fill(80); r.rect(-18, -12, 12, 24, 3); r.fill(255, 100, 0); r.rect(-20, -8, 4, 16); r.fill(90, 0, 0); r.ellipse(12, 0, 12, 12); r.pop(); return;
+      r.fill(this.sC); r.ellipse(0, 0, this.bW, this.bH); drawFallenAttire(r,this.id,this.bW,this.bH,this.backFacing); r.fill(80); r.rect(-18, -12, 12, 24, 3); r.fill(255, 100, 0); r.rect(-20, -8, 4, 16); r.fill(90, 0, 0); r.ellipse(12, 0, 12, 12); r.pop(); return;
   }
-  if (this.eT === "BUG") { r.push(); r.translate(this.x, this.y); r.rotate(this.aA); r.fill(50, 80, 40); r.ellipse(0, 0, 20, 14); r.fill(30); r.ellipse(8, 0, 10, 10); r.stroke(30); r.strokeWeight(2); r.line(-5, 0, -12, 12); r.line(-5, 0, -12, -12); r.line(5, 0, 12, 12); r.line(5, 0, 12, -12); r.noStroke(); for (let d of this.dec) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(200, 230, 40, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } r.pop(); return; }
-  if (this.eT === "SNAIL") { r.push(); r.translate(this.x, this.y); r.rotate(this.aA); r.fill(20, 100, 20); r.ellipse(0, 0, this.bW, this.bH); r.fill(50, 80, 40); r.ellipse(-5, 0, 24, 20); r.noStroke(); for (let d of this.dec) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(50, 200, 50, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } r.pop(); return; }
+  if (this.eT === "BUG") { r.push(); r.translate(this.x, this.y); r.rotate(this.aA); r.fill(50, 80, 40); r.ellipse(0, 0, 20, 14); drawFallenAttire(r,this.id,20,14,true); r.fill(30); r.ellipse(8, 0, 10, 10); r.stroke(30); r.strokeWeight(2); r.line(-5, 0, -12, 12); r.line(-5, 0, -12, -12); r.line(5, 0, 12, 12); r.line(5, 0, 12, -12); r.noStroke(); for (let d of this.dec) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(200, 230, 40, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } r.pop(); return; }
+  if (this.eT === "SNAIL") { r.push(); r.translate(this.x, this.y); r.rotate(this.aA); r.fill(20, 100, 20); r.ellipse(0, 0, this.bW, this.bH); r.fill(50, 80, 40); r.ellipse(-5, 0, 24, 20); drawFallenAttire(r,this.id,this.bW,this.bH,true); r.noStroke(); for (let d of this.dec) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(50, 200, 50, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } r.pop(); return; }
 if (this.eT === "ROBOT") {
       r.push(); r.translate(this.x, this.y); r.rotate(this.aA);
       r.noStroke();
@@ -11604,6 +11744,7 @@ if (this.eT === "ROBOT") {
       r.beginShape();
       r.vertex(11, 2); r.vertex(1, -9); r.vertex(-8, -6); r.vertex(-7, 8); r.vertex(2, 10);
       r.endShape(r.CLOSE);
+      drawFallenAttire(r,this.id,24,22,true);
       // Cannon arm, still attached, muzzle dark.
       r.fill(70, 76, 84); r.rect(6, 11, 19, 7, 2);
       r.fill(40, 44, 49); r.rect(22, 10.5, 7, 8, 2);
@@ -11650,6 +11791,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
           
           const hide = this.eT === "HORSE" && this.sC ? this.sC : color(245);
           r.fill(hide); r.ellipse(0, 0, this.bW, this.bH);
+          drawFallenAttire(r,this.id,this.bW,this.bH,true);
           
           for (let d of this.dec) {
               if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]);
@@ -11695,12 +11837,18 @@ if (this.eT === "COW" || this.eT === "HORSE") {
         r.push(); r.translate(this.x, this.y); let a = 255, f = this.fP; r.push(); r.rotate(this.mA); r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); r.noStroke();
         r.push(); r.translate(-3 - 30 * f, -18 - 10 * f); r.rotate(-f * 0.5); r.rect(-37, -12, 74, 24, 12); r.pop(); r.push(); r.translate(-3 - 30 * f, 18 + 10 * f); r.rotate(f * 0.5); r.rect(-37, -12, 74, 24, 12); r.pop();  
         const pool=Math.min(1,this.poolAge/BLOOD_POOL_FRAMES),spread=Math.sqrt(pool);
-        r.fill(90,0,0,a*pool);r.ellipse(-15,-12,35*spread,45*spread);r.pop();r.pop();return;
+        r.fill(90,0,0,a*pool);r.ellipse(-15,-12,35*spread,45*spread);
+        r.fill(this.sC);r.ellipse(0,0,this.bW+15*f,this.bH);drawFallenAttire(r,this.id,this.bW+15*f,this.bH,true);
+        for(const d of this.dec){if(!d.isHead){r.fill(...(d.col||[90,0,0,220]));r.ellipse(d.x,d.y,d.sz,d.sz);}}
+        r.push();r.translate(20*f,0);r.fill(30,180,30);r.ellipse(0,0,33,33);r.rect(0,-15,60,30,10);
+        r.fill(40,126,41);for(let x=4;x<45;x+=10)r.triangle(x,-3,x+5,0,x,3);
+        for(const d of this.dec){if(d.isHead){r.fill(...(d.col||[90,0,0,220]));r.ellipse(d.x,d.y,d.sz,d.sz);}}
+        r.pop();r.pop();r.pop();return;
     }
     r.push(); r.translate(this.x, this.y); let a = 255, f = this.fP; r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.mA); if (this.dT === 2) r.rotate(PI); r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); r.noStroke();
     r.push(); r.translate(-3 - 30 * f, -18 - 10 * f); r.rotate(-f * 0.5); r.rect(-37, -12, 74, 24, 12); r.pop(); r.push(); r.translate(-3 - 30 * f, 18 + 10 * f); r.rotate(f * 0.5); r.rect(-37, -12, 74, 24, 12); r.pop();  
     if (this.dT === 2 || this.dT === 4) { r.fill(90, 0, 0, a); r.ellipse(-15, -12, 20, 30); } r.pop();
-    r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA + PI) * this.sep, sin(this.bA + PI) * this.sep); r.rotate(this.mA); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(0, 0, this.bW + 15 * f, this.bH); if (this.dT === 3) { r.fill(90, 0, 0); r.rect(-this.bW/2, -5, this.bW, 10); } r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } }
+    r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA + PI) * this.sep, sin(this.bA + PI) * this.sep); r.rotate(this.mA); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(0, 0, this.bW + 15 * f, this.bH); drawFallenAttire(r,this.id,this.bW+15*f,this.bH,true); if (this.dT === 3) { r.fill(90, 0, 0); r.rect(-this.bW/2, -5, this.bW, 10); } r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } }
     let slX = lerp(20, 10, f), armLY = lerp(-42, -45, f); r.fill(30, 180, 30, a); r.ellipse(slX, armLY, 48, 24); r.ellipse(slX+20, armLY, 24, 24); let rslX = lerp(45, 30, f), armRY = lerp(33, 36, f); r.fill(30, 180, 30, a); r.ellipse(rslX, armRY, 75, 24); r.ellipse(rslX+30, armRY, 30, 30); 
     r.push(); r.translate(40 - 10*f, 8 + 15*f); r.rotate(f * PI/2); r.fill(40); r.rect(15, 5, 45, 12, 2); r.fill(20); r.rect(55, 3, 10, 16); r.pop(); if (this.dT === 2 || this.dT === 4) { r.fill(90, 0, 0, a); r.ellipse(0, 0, this.bW + 15*f, 25); } r.translate(20 * f, 0);
     if (this.dT === 4 || this.dT === 9) { r.fill(90, 0, 0); r.ellipse(0, 0, 20, 20); } else if (this.dT === 1) { r.push(); r.fill(30, 180, 30); r.ellipse(0, 0, 33, 33); r.rect(0, -15, 60, 30, 10); r.fill(0); r.ellipse(20, -10, 5, 5); r.ellipse(20, 10, 5, 5); r.fill(90, 0, 0); r.arc(0, 0, 20, 20, PI-PI/4, PI+PI/4, PIE); r.pop(); } else if (this.dT === 8) { r.push(); r.fill(30, 180, 30); r.ellipse(0, 0, 33, 33); r.rect(0, -15, 60, 30, 10); r.fill(0); r.ellipse(20, -10, 5, 5); r.ellipse(20, 10, 5, 5); r.fill(90, 0, 0); r.arc(0, 0, 35, 35, PI, PI + HALF_PI, PIE); r.pop(); } else { r.fill(30, 180, 30); r.ellipse(0, 0, 33, 33); r.rect(0, -15, 60, 30, 10); r.fill(0); r.ellipse(20, -10, 5, 5); r.ellipse(20, 10, 5, 5); }
@@ -11712,6 +11860,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
           r.push(); r.translate(ob.x, ob.y); r.rotate(ob.rot);
           if (ob.type === 'torso') {
             r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(0, 0, this.bW, this.bH * 0.7);
+            r.push();r.rotate(-HALF_PI);drawFallenAttire(r,this.id,this.bH*.7,this.bW,this.backFacing);r.pop();
             r.fill(90, 0, 0); r.ellipse(0, this.bH * 0.35, this.bW * 0.8, 12);
             r.fill(235, 180, 140, a); r.ellipse(0, -this.bH * 0.4, 11, 11);
             // The head still on this piece is still the head of whoever this
@@ -11788,31 +11937,38 @@ if (this.eT === "COW" || this.eT === "HORSE") {
           ragContour(r, a);
           r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a);
           r.ellipse(0, 0, TL, TW); r.ellipse(TL * 0.30, 0, TL * 0.42, TW * 1.06);
+          drawFallenAttire(r,this.id,TL,TW,true,1);
           r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } }
           // Back of the head: no face, they are looking at the ground.
           ragContour(r, a);
-          r.fill(this.id.hairCol || color(52, 40, 30)); r.ellipse(TL * 0.5 + 5 + 4 * f, 0, 11, 11);
-          r.push();r.translate(TL*.5+5+4*f,0);r.noStroke();
+          r.push();r.translate(TL*.5+5+4*f,0);
+          drawFallenHead(r,this.id,{faceDown:true},f,false);
+          const hw=headwearOf(this.id);
+          if(hw&&!headwearFalls(hw))drawFallenHeadwear(r,this.id,hw,true);
+          else if(hw&&this.hatOff){r.push();r.translate(this.hatOff.x,this.hatOff.y);r.rotate(this.hatOff.r);drawHeadwear(r,this.id,hw);r.pop();}
+          r.noStroke();
           for(const d of this.dec){if(d.isHead){if(d.col)r.fill(...d.col);else r.fill(90,0,0,220);r.ellipse(d.x,d.y,d.sz,d.sz);}}
           r.pop();
       } else {
           r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4);
           r.fill(90, 0, 0, a); r.ellipse(lX, -4, 20, 28);
+          r.fill(this.sC);r.ellipse(0,0,TL,TW);drawFallenAttire(r,this.id,TL,TW,true);
       }
       r.pop(); r.pop(); return;
   }
 
   r.push(); r.translate(this.x, this.y); let a = 255, f = this.fP, sK = (this.id.skinCol||color(235,180,140,a));
   if (this.dT === 3) { 
-      let off = this.sep; r.push(); r.rotate(this.mA); r.noStroke(); r.fill(this.pC); r.rect(-10,-10+off,18,8,4); r.rect(-10,2+off,18,8,4); r.fill(this.sC); r.ellipse(0,off,this.bW,this.bH/2); r.fill(90, 0, 0); r.ellipse(0, -off, this.bW, 10); r.translate(0, -off*1.8); r.ellipse(0, 0, this.bW, this.bH/2); 
+      let off = this.sep; r.push(); r.rotate(this.mA); r.noStroke(); r.fill(this.pC); r.rect(-10,-10+off,18,8,4); r.rect(-10,2+off,18,8,4); r.fill(this.sC); r.ellipse(0,off,this.bW,this.bH/2); r.fill(90, 0, 0); r.ellipse(0, -off, this.bW, 10); r.translate(0, -off*1.8); r.ellipse(0, 0, this.bW, this.bH/2); drawFallenAttire(r,this.id,this.bW,this.bH/2,this.backFacing);
       if (this.eT === "ARMORED_STANDARD") { r.fill(100); r.rect(-10, -6, 20, 12, 4); } 
-      if (this.eT === "FEMALE_PISTOL") { r.fill(this.sC); r.ellipse(4, -6, 12, 10); r.ellipse(4, 6, 12, 10); }
+      if (this.eT === "FEMALE_PISTOL"&&!this.backFacing) { r.fill(this.sC); r.ellipse(4, -6, 12, 10); r.ellipse(4, 6, 12, 10); }
       r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.fill(sK); r.ellipse(0, -5, 11, 11); r.noStroke(); for (let d of this.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.pop(); 
   } 
   else { 
       r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.fall?figureFallYaw(this.fall,this.rag):this.aA); const RG = this.rag; if (RG) { if(!this.fall)r.rotate(RG.ang); r.scale(RAG_SCALE); } if (RG) ragContour(r, a); else r.noStroke(); const RP = this.fall?projectFallRig(this.bW,this.bH,f):ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW; r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -10 : -10, lY2 = this.bW === 105 ? 15 : 2; r.push(); if (RG) { const bootC = color(this.pC.levels[0] * 0.55, this.pC.levels[1] * 0.55, this.pC.levels[2] * 0.55, a); if(this.fall){drawFallLimb(r,RP,RG,2,f,this.sC,this.pC,sK,bootC); drawFallLimb(r,RP,RG,3,f,this.sC,this.pC,sK,bootC);}else{ragLimb(r, RP.hipX, -RP.hipY, PI + RG.limbs[2].a, -ragKnee(RG.limbs[2]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[2])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot); ragLimb(r, RP.hipX,  RP.hipY, PI - RG.limbs[3].a,  ragKnee(RG.limbs[3]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[3])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot);} } else { r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4); } if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(lX, -4, 12, 16); } r.pop(); if (RG) ragContour(r, a); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); if (RG) { r.ellipse(0, 0, TL, TW); r.ellipse(TL * 0.30, 0, TL * 0.42, TW * 1.06); } else r.ellipse(0, 0, this.bW + 15 * f, this.bH);
       if (this.eT === "ARMORED_STANDARD") { r.fill(100); if (RG) r.rect(-TL * 0.26, -TW * 0.46, TL * 0.58, TW * 0.92, 4); else r.rect(-10, -12, 20, 24, 4); } 
-      if (this.eT === "FEMALE_PISTOL") { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(4, -6, 12, 10); r.ellipse(4, 6, 12, 10); } 
+      if (this.eT === "FEMALE_PISTOL" && !(this.backFacing&&(!this.fall||f>.5))) { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(4, -6, 12, 10); r.ellipse(4, 6, 12, 10); }
+      drawFallenAttire(r,this.id,RG?TL:this.bW+15*f,RG?TW:this.bH,this.backFacing,this.fall?f:1);
       r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } } 
       // Blood from the head coats the collar and shirt, under the sleeves.
       if(this.spray){for(const sp of this.spray){r.fill(96,6,6,sp.a*(a/255));r.ellipse(sp.x,sp.y,sp.r*2,sp.r*1.74);}}
@@ -11834,7 +11990,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
         drawFigureHair(r, this.id, 0, 0, 0);
         if(this.dT===0)drawFallenFace(r,this.fall,f);
         const hw = headwearOf(this.id);
-        if (hw && !headwearFalls(hw)) drawHeadwear(r, this.id, hw);
+        if (hw && !headwearFalls(hw)) drawFallenHeadwear(r,this.id,hw,this.backFacing&&f>.5);
         else if (hw && this.hatOff) {
           r.push(); r.rotate(-figureHeadTurn(this.fall,f)); r.translate(this.hatOff.x, this.hatOff.y); r.rotate(this.hatOff.r);
           drawHeadwear(r, this.id, hw); r.pop();
@@ -12371,6 +12527,7 @@ function drawStunnedFigure(e) {
   if(rg){for(let i=2;i<4;i++)drawFallLimb(window,rig,rg,i,f,e.shirtCol,e.pantsCol,skin,boot);}
   if(BIOME_ACTIVE){const light=figureLight(p?p.a:e.aimAngle);volShadeCol(0,0,rig.TL,rig.TW,e.shirtCol,1,light[0],light[1]);}
   else{fill(e.shirtCol);ellipse(0,0,rig.TL,rig.TW);}
+  drawFallenAttire(window,figureIdentity(e),rig.TL,rig.TW,p&&p.faceDown,f);
   if(rg){for(let i=0;i<2;i++)drawFallLimb(window,rig,rg,i,f,e.shirtCol,e.pantsCol,skin,boot);}
   translate(lerp(12/RAG_SCALE,18,f),0);scale(lerp(1/RAG_SCALE,1,f));rotate(figureHeadTurn(p,f));drawFallenHead(window,figureIdentity(e),p,f);pop();
 }
@@ -15467,6 +15624,8 @@ if (this.isPlayer) {
     } else {
       fill(this.shirtCol); ellipse(0, 0, this.bodyW, this.bodyH);
     }
+
+    if(this.eType==='NORMAL'&&!this.isPlayer){push();translate(this.bodyW*.22,this.bodyH*.22);drawNmoInsignia(window,true);pop();}
 
     // Male Farmer Overalls
     if (this.eType === "FARMER_MALE") {

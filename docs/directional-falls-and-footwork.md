@@ -4,7 +4,7 @@ Ordinary humanoid corpse falls and punch stuns use a projected two-bone rig. Act
 
 Corpse collapse retains the previous 0.15-per-frame speed, reaching the floor on the seventh simulation frame. The previous 34-frame limb settle and spring rates are restored. Weapon force still affects displacement, but does not slow the collapse. Punch stuns retain their 40-frame buckle and 16-frame contact settle. The torso, head, shoulders, hips and limbs change projection together; signed leg foreshortening tucks the knees underneath the pelvis before the heels extend onto the floor. Ordinary directional falls limit additional torso spin to 0.26 radians. Final joints freeze and existing corpse retirement still stamps the body into the blood bank.
 
-Shotgun and dual-SMG overkill use the pre-refinement animation path: their original orientation, limb drawing, head scale, separation, dismembered pieces and timings. The directional controller is excluded from these reactions. Head appearance follows the actor’s facing relative to the frozen fall vector, for both killed and stunned bodies. A forward fall shows the back of the head and hair; a backward fall rolls the head face-up and exposes skin, closed eyes and the nose. The same rule works in every map direction. Head wounds retain their damaged shapes. A killed, already stunned actor keeps its head side on the first rendered frame, and streamed/saved city residents keep their stun facing and fall direction. Detached hats stay in their original body/world frame, and off-screen corpse stamping uses the same corrected head transform.
+Shotgun and dual-SMG overkill use the pre-refinement animation path: their original orientation, limb drawing, head scale, separation, dismembered pieces and timings. The directional controller is excluded from these reactions. Head appearance follows the actor’s facing relative to the frozen fall vector, for both killed and stunned bodies. A forward fall shows the back of the actual head, with hair only where the living character has it; a backward fall rolls the head face-up and exposes skin, closed eyes and the nose. The same rule works in every map direction. Head wounds retain their damaged shapes. A killed, already stunned actor keeps its head side on the first rendered frame, and streamed/saved city residents keep their stun facing and fall direction. Detached hats stay in their original body/world frame, and off-screen corpse stamping uses the same corrected head transform.
 
 Ordinary body-shot deaths can randomly fold the nearer hand over the actual wound. Headshots and every existing overkill type are excluded. Off-center body hits bias the corresponding shoulder and elbow, with a small torso roll during the fall. A lethal hit on a stunned actor continues the already fallen pose. Unarmed civilians no longer produce a phantom dropped pistol.
 
@@ -18,15 +18,46 @@ Death selectors, damage thresholds, headshot cycles, close-range overkill cycles
 
 The orthodox guard uses a compact left lead/right rear stance with less resting hip and torso rotation. Forward, backward and lateral movement alternate planted steps and lifted feet without crossing. The lead steps into a jab; the rear heel lifts and pivots into a cross, with the hips following the shoulders. The existing 180-frame guard hold after the completed punch remains.
 
+## Bald heads and outfit backs
+
+Bald pistol regulars and the player retain skin on the back of their heads. An assigned hair color alone no longer creates a hair cap; actual hairstyles, braids and receding crowns are retained. This applies to ordinary deaths, slow punch stuns and the legacy face-down shotgun death. A worn ninja hood shows its fabric back instead of its face opening.
+
+Standard male regulars have a blue circular back patch containing grey vector **NMO** lettering. Their upper right chest has a small blue/grey emblem, also shown on the matching living uniform and face-up corpse. The back patch follows the torso projection during forward falls; it does not move with the head. The player retains the player outfit.
+
+Back appearance follows the entity’s clothing and role:
+
+| Entity | Back details |
+| --- | --- |
+| Player | Shirt yoke/seams, or frozen ninja sash, lab-coat seam/tab, armor carrier and jetpack |
+| Pistol regulars and NM-0 rookies | Circular NMO insignia; rookies have a smaller patch and shoulder trim |
+| Female pistol regular | Tailored shirt seams and small upper-back trim |
+| Military, grey fatigues, city guards and armored units | Carrier plates, webbing, rivets, segmented panels and role-colored trim |
+| Aerial and Molotov units | Jetpack vents/fuel pods or a bottle sling |
+| SIA and Dad | Outfit-colored yokes, work-shirt pleats, stitching and waist details |
+| Cowboys, cowgirls, bandits and local law | Leather vest stitching, duster vents, gunbelts, neckerchiefs or coat pleats |
+| Farmers and villagers | Overall/braces straps, pockets, pinafore/apron ties and cloth stitching |
+| City civilians | Their original jacket, suspenders, striped or plain shirt style |
+| Creatures, livestock and robots | Carapace segments, spiral shells, dorsal scales, hide lines, mane or service-panel vents |
+
+Clothing dimensions use the existing corpse and stun torso frames. Details go below bullet holes, restored neck/chest bloodstains and sleeves. Front-only chest shapes are hidden on back-facing female bodies. Outfit colors, civilian style and player suit/jetpack choices are captured at death and retained when the body is stamped into a ground chunk. Charred bodies keep dark, scorched detail. Remaining torso pieces retain their own portion of the outfit; a split insignia is clipped to its corresponding half. The gator and heavy face-down paths retain their original leg motion while their previously missing back surfaces are drawn.
+
+This pass does not change fall speeds, limb springs, separation, spray origins or blood timers. The actual back previews are generated by `node tools/visual-corpse-backs.js`. The focused view below and full entity gallery use the game’s real corpse painters.
+
+![Bald heads, NMO insignia and outfit backs](previews/corpse-backs.png)
+
+[Full entity back gallery](previews/corpse-back-gallery.png).
+
 ## Verification
 
 `node tools/check-falls-and-footwork.js` exercises actual bullet hits as well as the shared rig: opposed movement/force, planted reactions, the original corpse speed, frozen settled state, wall collision, pre-knockback metadata, pistol/rifle/shotgun/dual-SMG headshot cycles, close shotgun and dual-SMG overkill exclusion, distant ordinary heavy-weapon deaths, random wound holding, downed death continuity, player/NPC motion capture, compact guard, uncrossed forward/back/lateral steps, heel pivot and finite balanced drawing.
 
-`tools/check-fall-corrections.js` verifies transformed forward/back head drawing in all four cardinal directions, unchanged body direction, long hair, detached hat position, balanced transforms, and graphics-target drawing. With the pre-refinement game supplied, 84 controlled shotgun/dual-SMG overkill samples match its animation state and transformed body/limb/gib drawing, including the restored clothing stain. Additional head marks and gradual ground-puddle growth are excluded from that comparison and checked separately.
+`tools/check-fall-corrections.js` verifies transformed forward/back head drawing in all four cardinal directions, unchanged body direction, long hair, detached hat position, balanced transforms, and graphics-target drawing. With the pre-refinement game supplied, 84 controlled shotgun/dual-SMG overkill samples match its animation state and transformed body/limb/gib drawing, including the restored clothing stain. Added clothing detail, corrected bald scalp, additional head marks and gradual ground-puddle growth are excluded from that art comparison and checked separately.
 
 `node tools/check-fatal-wounds.js` exercises actual pistol, SMG, rifle, shotgun and dual-SMG kills; fatal/nonfatal/stale wound metadata; 145 painted-decal origin samples including a rolling head and moving/separating pieces; face-up/face-down heads on deaths and slow punch stuns; death while already down; the exact 210-tick cutoff; pause, off-screen, stack and travel retirement; recycled particles; and unchanged heavy overkill state and global random sequences. The city-people check also verifies backward-stun orientation after serialization and streaming.
 
 `node tools/check-spray-sources.js` exercises actual three-hit histories for all four requested weapons, distinct randomized jet directions, pistol single-hole behavior, selection of the latest holes, fewer available holes, nonbullet-mark exclusion and frozen metadata. It compares 198 mixed head/body origins with the actual painted decals and checks separated jet directions at every sample, restored clothing stains, separate head marks, 12 legacy head jets, 15 actual initial headshot bursts, pause and the exact shared cutoff (315 droplets for three holes over 210 ticks).
+
+`node tools/check-corpse-backs.js` checks bald/receding scalps and actual hair, NMO insignia/chest placement in four map directions, living/stunned/corpse/stamped appearance, wound layering, 31 entity types, 15 remaining-body death forms, front/back clothing, frozen outfits and unchanged drawing randomness. The fatal-wound orientation checks also cover bald and haired heads separately.
 
 `node tools/check-blood-pools.js` checks incremental center-out floor painting, growing droplets, final seam geometry, permanent floor/body layering, unchanged global randomness, pause, biome banking and return, restart cleanup, blood colors, off-screen completion, immediate scorch and gradual human/gator face-down pools with unchanged settled motion.
 
@@ -38,10 +69,12 @@ FALL_LEGACY_GAME=/tmp/pre-directional-game.js node tools/check-fall-corrections.
 node tools/check-fatal-wounds.js
 node tools/check-spray-sources.js
 node tools/check-blood-pools.js
+node tools/check-corpse-backs.js
+node tools/visual-corpse-backs.js
 node tools/visual-spray-sources.js animate
 ```
 
-The current preview calls actual corpse painters, fall controllers, ground-blood banks and deposition, legacy head jets and blood particles. It shows restored clothing stains, distinct random wound jets, growing floor puddles, moving torso pieces and a face-down shotgun body. It runs 4.5 seconds so buildup, the 3.5-second spray cutoff and final pose are visible. The earlier [head/fall preview](previews/fatal-wounds.gif) remains available for the prior directional-head and slow-stun changes.
+The blood-effect preview from the preceding pass calls actual corpse painters, fall controllers, ground-blood banks and deposition, legacy head jets and blood particles. It shows restored clothing stains, distinct random wound jets, growing floor puddles, moving torso pieces and a face-down shotgun body. It runs 4.5 seconds so buildup, the 3.5-second spray cutoff and final pose are visible. The earlier [head/fall preview](previews/fatal-wounds.gif) remains available for the prior directional-head and slow-stun changes.
 
 ![Clothing stains, random jets and growing puddles](previews/spray-sources.gif)
 
