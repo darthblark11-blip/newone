@@ -21,16 +21,29 @@ for(const a of [0,.7,Math.PI,-Math.PI/2]){
  const frozen=P('[c.x,c.y,c.rag.t,c.fall.age,...c.rag.limbs.flatMap(l=>[l.a,l.b])]');
  probe('for(let i=0;i<200;i++){frameCount++;c.update();}');assert.deepEqual(P('[c.x,c.y,c.rag.t,c.fall.age,...c.rag.limbs.flatMap(l=>[l.a,l.b])]'),frozen);
 }
-// Stationary fatalities retain their facing regardless of incoming shot angle.
+// Stationary fatalities move away from the shooter without a turning animation.
 for(const facing of [0,.7,Math.PI,-Math.PI/2])for(const hit of [0,1.3,Math.PI,-2]){
  probe(`window.e=new Character(0,0,false,'NORMAL');e.aimAngle=${facing};rememberFigureMotion(e,0,0);e.fallHit={frame:frameCount,kind:'BODY',angle:${hit},force:3,mx:0,my:0};`);drop();
- assert.equal(P('c.fall.a'),facing);
- for(let n=0;n<20;n++){probe('frameCount++;c.update();');assert(Math.abs(P('figureFallYaw(c.fall,c.rag)-c.fall.facing'))<.31,'stationary corpse swivelled toward shot');}
+ assert.equal(P('c.fall.a'),hit);assert.equal(P('c.fall.faceDown'),Math.cos(hit-facing)>=0);
+ const initial=P('[c.x,c.y]');
+ for(let n=0;n<20;n++){probe('frameCount++;c.update();');assert(Math.abs(P('figureFallYaw(c.fall,c.rag)-c.fall.a'))<.31,'stationary corpse swivelled during collapse');}
+ const shift=P('[c.x,c.y]').map((v,i)=>v-initial[i]);assert(shift[0]*Math.cos(hit)+shift[1]*Math.sin(hit)>0);
+ assert(Math.abs(shift[0]*Math.sin(hit)-shift[1]*Math.cos(hit))<1e-8,'stationary fall moved sideways');
 }
 // A collision-blocked walking intention counts as planted.
 probe('window.e=new Character(0,0,false,"NORMAL");e.isMoving=true;e.moveAngle=0;rememberFigureMotion(e,0,0);');drop();assert.equal(P('c.fall.a'),P('e.aimAngle'));assert(!P('c.fall.moving'));
 const weak=P('buildFigureFall(e,0,weaponFallForce(WEAPONS.PISTOL),false,0)');
 const strong=P('buildFigureFall(e,0,weaponFallForce(WEAPONS.SHOTGUN),false,0)');assert(strong.impulse>weak.impulse&&strong.duration===weak.duration);
+// Actual painted widths fit narrow and ordinary bodies, and preserve elbow/hand geometry.
+const sizes=[];const originalBone=ctx.drawFallBone;
+ctx.drawFallBone=(...args)=>{sizes.push({width:args[5],tip:args[8]});return originalBone(...args);};
+for(const [bw,bh] of [[16,25],[21,27],[36,44]]){
+ const r=P(`projectFallRig(${bw},${bh},1)`);sizes.length=0;
+ probe(`window.r=projectFallRig(${bw},${bh},1);window.rg=ragBuild('NORMAL',${bw},0,0);drawFallLimb(window,r,rg,0,1,color(220),color(30),color(235,180,140));`);
+ assert(sizes[0].width>sizes[1].width&&sizes[0].width<=r.TW*.36,'sleeve is disproportionate to chest');
+ assert(sizes[0].width<8&&sizes[1].width<7&&sizes[1].tip<8,'falling arm remains oversized');
+}
+ctx.drawFallBone=originalBone;
 // Root movement uses existing collision geometry and respects walls.
 probe('window.e=new Character(0,0,false,"NORMAL");rememberFigureMotion(e,0,0);');
 probe('window.c=new Corpse(0,0,0,0,e.shirtCol,e.pantsCol,0,0,[],null,0,e.eType,e.bodyW,e.bodyH,e);activeBuildings=[{x:40,y:0,w:10,h:200}];buildings=activeBuildings;invalidateColIndex();for(let i=0;i<90;i++){frameCount++;c.update();}');
@@ -45,6 +58,16 @@ function shot(weapon,kind,counter=0,range=0){
  assert(P('corpses.length>0'),weapon+' '+kind+' did not hit');return P('corpses[0].dT');
 }
 assert.equal(shot('PISTOL','BODY'),0);assert.equal(P('corpses[0].fall.a'),Math.PI/2);assert.equal(P('corpses[0].fall.mx'),0);assert.equal(P('corpses[0].fall.my'),4);
+// Real front and rear killshots in every cardinal direction select the right side.
+for(const facing of [0,Math.PI/2,Math.PI,-Math.PI/2])for(const front of [true,false]){
+ const a=facing+(front?Math.PI:0);
+ probe(`frameCount++;bullets=[];corpses=[];MAX_KILLS=totalKills;
+  window.e=new Character(40*Math.cos(${a}),40*Math.sin(${a}),false,'NORMAL');e.hp=1;e.isFriendly=false;e.isNeutral=false;e.aimAngle=${facing};rememberFigureMotion(e,0,0);enemiesList=[e];
+  spawnBullet(0,0,${a},true,'BODY',WEAPONS.PISTOL,player);for(let i=0;i<5&&corpses.length===0;i++)updateBullets();`);
+ assert(P('corpses.length===1'));assert.equal(P('corpses[0].fall.moving'),false);assert.equal(P('corpses[0].fall.faceDown'),!front,'stationary front/rear hit selected wrong head/body side');
+ const initial=P('[corpses[0].x,corpses[0].y]');probe('corpses[0].update();');
+ assert((P('corpses[0].x')-initial[0])*Math.cos(a)+(P('corpses[0].y')-initial[1])*Math.sin(a)>0,'killshot pushed toward shooter');
+}
 for(const [w,expected] of [['PISTOL',[1,8,9]],['ASSAULT_RIFLE',[6,8,9]],['SHOTGUN',[4,8,9]],['DUAL_SMG',[1,8,9]]])
  for(let i=0;i<3;i++){
   assert.equal(shot(w,'HEAD',i),expected[i]);assert(!P('corpses[0].fall&&corpses[0].fall.hold'),'headshot clutched a body wound');
@@ -62,20 +85,21 @@ for(let i=0;i<50;i++){
  probe(`frameCount++;window.e=new Character(0,0,false,'CITY_CITIZEN_F');e.aimAngle=0;rememberFigureMotion(e,0,0);
   window.w={x:-2,y:${i%2?7:-7},sz:5,col:[90,0,0,220],isHead:false};e.decals=[w];e.fallHit={frame:frameCount,kind:'BODY',angle:HALF_PI,force:3,mx:0,my:0,wound:w};`);drop();
  if(P('!!c.fall.hold')){held++;assert.equal(P('c.fall.hold.arm'),i%2?1:0);probe('for(let n=0;n<90;n++){frameCount++;c.update();}');
-  assert(P(`(()=>{const r=ragRig(c.bW,c.bH),i=c.fall.hold.arm,s=i?1:-1,L=c.rag.limbs[i],a=s*(HALF_PI+L.a),b=s*L.b;
+  assert(P(`(()=>{const r=projectFallRig(c.bW,c.bH,1),i=c.fall.hold.arm,s=i?1:-1,L=c.rag.limbs[i],a=s*(HALF_PI+L.a),b=s*L.b;
    const x=r.shX+Math.cos(a)*r.upper+Math.cos(a+b)*(r.fore+r.hand*.3),y=s*r.shY+Math.sin(a)*r.upper+Math.sin(a+b)*(r.fore+r.hand*.3);
    return Math.hypot(x-c.fall.hold.x,y-c.fall.hold.y)<r.hand*.55;})()`),'hand missed the wound');
-  // Observe the real painter on both targets: forearm/hand below the torso,
-  // upper arm above it, without painting either segment twice.
-  const originalLimb=ctx.drawFallLimb;
+  // Observe actual bones on both targets: upper arm, forearm/hand, then
+  // torso on forward falls; each segment is painted exactly once.
+  const originalLimb=ctx.drawFallLimb,originalBone=ctx.drawFallBone;
   for(const faceDown of [true,false])for(const f of [.3,1])for(const target of [null,require('./harness').mkG()]){
    probe(`c.fall.faceDown=${faceDown};c.fP=${f};`);
-   const events=[];ctx.drawFallLimb=(...args)=>{if(args[3]===P('c.fall.hold.arm'))events.push(args[10]||'all');return originalLimb(...args);};
+   const events=[];let limb=-1;ctx.drawFallLimb=(...args)=>{limb=args[3];const v=originalLimb(...args);limb=-1;return v;};
+   ctx.drawFallBone=(...args)=>{if(limb===P('c.fall.hold.arm'))events.push(args[7]?'fore':'upper');return originalBone(...args);};
    const r=target||ctx,oldEllipse=r.ellipse;
    r.ellipse=(...args)=>{if(args[0]===0&&args[1]===0&&args[2]===P('projectFallRig(c.bW,c.bH,c.fP).TL'))events.push('torso');return oldEllipse(...args);};
    if(target){ctx.window.layerTarget=target;probe('c.paint(layerTarget,255);');}else probe('c.show();');
-   r.ellipse=oldEllipse;ctx.drawFallLimb=originalLimb;
-   assert.deepEqual(events,faceDown&&f>.45?['fore','torso','upper']:['torso','all'],'held arm has incorrect torso occlusion');
+   r.ellipse=oldEllipse;ctx.drawFallLimb=originalLimb;ctx.drawFallBone=originalBone;
+   assert.deepEqual(events,faceDown&&f>.45?['upper','fore','torso']:['torso','upper','fore'],'held arm has incorrect torso occlusion');
   }
  }else loose++;
 }
@@ -103,4 +127,4 @@ for(const type of [0,1,2,4,6,7,8,9])for(const age of [0,4,15,32,50,90]){
 }
 ctx.push=push;ctx.pop=pop;ctx.ellipse=ellipse;
 probe('corpses=[c];retireCorpsesToBloodBank();');assert.equal(P('corpses.length'),0);
-console.log('Directional falls and footwork passed: original corpse speed, movement/force, frozen rest, collision, actual bullet metadata, legacy shotgun/dual-SMG overkill, unchanged death tables, wound holding, downed death continuity, actor motion, compact stance, steps, heel pivot and finite balanced rendering.');
+console.log('Directional falls and footwork passed: original corpse speed, stationary front/rear killshots without swivel, proportional arm widths and upper/forearm/torso ordering, movement/force, frozen rest, collision, actual bullet metadata, legacy shotgun/dual-SMG overkill, unchanged death tables, wound holding, downed death continuity, actor motion, compact stance, steps, heel pivot and finite balanced rendering.');

@@ -48,12 +48,12 @@ ctx.ellipse=(x,y,w,h)=>{assert([x,y,w,h].every(Number.isFinite));
  if(fill&&fill.join(',')==='91,1,2,223')marks.push({x:m[0]*x+m[2]*y+m[4],y:m[1]*x+m[3]*y+m[5]});originals.ellipse(x,y,w,h);};
 ctx.drawFigureHair=(g,id,x,y,sway)=>{heads.push({axis:[m[0],m[1]],fill});originals.drawFigureHair(g,id,x,y,sway);};
 function resetPaint(){m=[1,0,0,1,0,0];fill=null;stack=[];marks=[];heads=[];}
-function fixture(type,kind='BODY',age=0,eType='NORMAL',a=.7,facing=-.8,wound=true){
+function fixture(type,kind='BODY',age=0,eType='NORMAL',a=.7,facing=-.8,wound=true,stationary=false){
  seed=9181;
  probe(`frameCount=1000;particles=[];window.e=new Character(0,0,false,'${eType}');e.aimAngle=${facing};e.moveAngle=${a};e.isMoving=true;
-  e.hairCol=color(51,34,22);e.skinCol=color(235,180,140);rememberFigureMotion(e,Math.cos(${a})*4,Math.sin(${a})*4);
+  e.hairCol=color(51,34,22);e.skinCol=color(235,180,140);rememberFigureMotion(e,${stationary?'0,0':`Math.cos(${a})*4,Math.sin(${a})*4`});
   window.w={x:3.1,y:-2.7,sz:6.1,col:[91,1,2,223],isHead:${kind==='HEAD'}};e.decals=[w];
-  e.fallHit={frame:frameCount,kind:'${kind}',weapon:WEAPONS.SHOTGUN,angle:-.4,force:6,mx:e.motionX,my:e.motionY,x:0,y:0,fatal:true,wound:${wound?'w':'null'}};
+  e.fallHit={frame:frameCount,kind:'${kind}',weapon:WEAPONS.SHOTGUN,angle:${stationary?a:-.4},force:6,mx:e.motionX,my:e.motionY,x:0,y:0,fatal:true,wound:${wound?'w':'null'}};
   window.c=new Corpse(0,0,e.moveAngle,e.aimAngle,e.shirtCol,e.pantsCol,${type},.3,e.decals,e.currentWeapon,-.4,e.eType,e.bodyW,e.bodyH,e);
   for(let i=0;i<${age};i++){frameCount++;c.update();}`);
 }
@@ -77,6 +77,18 @@ for(const type of [0,1])for(const age of [0,1,4,7,40]){
  fixture(type,'HEAD',age,'NORMAL',.7,.7+Math.PI);resetPaint();probe('c.show();');
  const p=P('fatalWoundPoint(c)');assert.equal(marks.length,1);
  assert(Math.hypot(p.x-marks[0].x,p.y-marks[0].y)<1e-8,'backward head-roll wound origin');origins++;
+}
+// Stationary front/rear impacts keep both body and head jets on painted holes
+// throughout collapse, with the same transform on a corpse-stamp target.
+for(const facing of [0,Math.PI/2,Math.PI,-Math.PI/2])for(const front of [true,false])for(const kind of ['BODY','HEAD'])for(const age of [0,1,4,7,40]){
+ fixture(0,kind,age,'NORMAL',facing+(front?Math.PI:0),facing,true,true);
+ assert.equal(P('c.fall.faceDown'),!front);
+ for(const target of [false,true]){
+  resetPaint();if(target){ctx.__fatalTarget={...ctx};probe('c.show(__fatalTarget);');}else probe('c.show();');
+  assert.equal(stack.length,0);assert.equal(marks.length,1);
+  const p=P('fatalWoundPoint(c)');assert(Math.hypot(p.x-marks[0].x,p.y-marks[0].y)<1e-8,'stationary impact spray missed painted wound');
+ }
+ origins++;
 }
 // Forward/back heads for both stuns and deaths, independent of map direction.
 for(const hairy of [false,true])for(const a of [0,Math.PI/2,Math.PI,-Math.PI/2])for(const backward of [false,true]){

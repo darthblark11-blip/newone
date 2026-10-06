@@ -11255,18 +11255,18 @@ function buildFigureFall(src,angle,force,stun,facing) {
   const hit=!stun&&src&&src.fallHit&&src.fallHit.frame===frameCount?src.fallHit:null;
   const m=hit?{x:hit.mx,y:hit.my}:figureMotion(src),speed=Math.hypot(m.x,m.y);
   if(hit){angle=hit.angle;force=hit.force;}
-  // A stopped death uses the same fall rig along the actor's facing. The
-  // incoming shot must not swivel a planted body into a new heading.
-  const moving=speed>.18,a=moving?Math.atan2(m.y,m.x):(stun?(angle||0):(facing||0));
+  // Bullet angle is its travel direction: a stopped victim falls away from
+  // the shooter. Align that collapse at impact rather than yawing through it.
+  const moving=speed>.18,a=moving?Math.atan2(m.y,m.x):((stun||hit)?(angle||0):(facing||0));
   const wound=hit&&hit.kind==="BODY"&&hit.wound;
-  const p={age:0,a,facing:facing||0,mx:m.x,my:m.y,moving,force,stun:!!stun,
+  const p={age:0,a,facing:facing||0,yawFrom:hit&&!moving?a:(facing||0),mx:m.x,my:m.y,moving,force,stun:!!stun,
     duration:stun?40:7,
     impulse:stun?4.8:Math.min(3.5,speed*.45+force*.35),
     lean:wound?Math.max(-1,Math.min(1,wound.y/((src.bodyH||27)*.4))):0,
     contacted:false,done:false};
   // A fatal shot at somebody already down continues their current fall.
   if(src&&src.stunPose&&src.stunTimer>0){const old=src.stunPose;
-    p.a=old.a;p.facing=old.facing;p.age=Math.min(p.duration,old.age/old.duration*p.duration);p.impulse=old.impulse*.25;}
+    p.a=old.a;p.facing=old.facing;p.yawFrom=old.yawFrom===undefined?old.facing:old.yawFrom;p.age=Math.min(p.duration,old.age/old.duration*p.duration);p.impulse=old.impulse*.25;}
   // Forward/backward belongs to this fall, not to north/south on the map.
   p.faceDown=Math.cos(p.a-p.facing)>=0;
   return p;
@@ -11287,8 +11287,9 @@ function figureFallProgress(p) {
   return Math.max(0,f-contact);
 }
 function figureFallYaw(p,rg,f=figureFallProgress(p)) {
-  const turn=Math.atan2(Math.sin(p.a-p.facing),Math.cos(p.a-p.facing));
-  return p.facing+turn*f+(rg?rg.ang:0)*f+p.lean*Math.sin(f*PI)*.10;
+  const start=p.yawFrom===undefined?p.facing:p.yawFrom;
+  const turn=Math.atan2(Math.sin(p.a-start),Math.cos(p.a-start));
+  return start+turn*f+(rg?rg.ang:0)*f+p.lean*Math.sin(f*PI)*.10;
 }
 function stepFigureFall(p,e,rg) {
   if(p.done)return;
@@ -11444,6 +11445,11 @@ function advanceFatalSpray(c) {
 }
 function projectFallRig(bW,bH,f) {
   const r=ragRig(bW,bH);
+  // Scale sleeves with the chest: narrow figures should not inherit a
+  // stocky upper arm. Keep a small taper into the forearm and palm.
+  r.upperW=lerp(r.upperW,Math.min(r.upperW*.72,r.TW*.36),f);
+  r.foreW=lerp(r.foreW,Math.min(r.foreW*.78,r.TW*.32),f);
+  r.hand=lerp(r.hand,Math.min(r.hand*.80,r.TW*.42),f);
   r.TL=lerp(bW*TORSO_DEPTH/RAG_SCALE,r.TL,f);r.TW=lerp(bH/RAG_SCALE,r.TW,f);
   r.shX=lerp(0,r.shX,f);r.shY=lerp(bH*.44/RAG_SCALE,r.shY,f);
   r.hipX=lerp(-6/RAG_SCALE,r.hipX,f);r.hipY=lerp(6/RAG_SCALE,r.hipY,f);
@@ -11469,7 +11475,7 @@ function drawFallBone(r,x,y,nx,ny,width,col,tip,tipSz) {
   r.ellipse(len*.5,0,len+width,width);
   if(tip){r.fill(tip);r.ellipse(len+tipSz*.30,0,tipSz,tipSz*.86);}r.pop();
 }
-function drawFallLimb(r,rig,rg,i,f,shirt,pants,skin,boot,faceDown=false,part='all') {
+function drawFallLimb(r,rig,rg,i,f,shirt,pants,skin,boot,faceDown=false) {
   const L=rg.limbs[i],arm=i<2,s=i%2?1:-1;
   const ox=arm?rig.shX:rig.hipX,oy=s*(arm?rig.shY:rig.hipY);
   const knee=ragKnee(L)*(faceDown?.7:1),limbA=arm?s*(HALF_PI+(faceDown?L.a*.35-.5:L.a)):PI-s*L.a*(faceDown?.7:1)*f;
@@ -11483,8 +11489,8 @@ function drawFallLimb(r,rig,rg,i,f,shirt,pants,skin,boot,faceDown=false,part='al
   const l2=arm?rig.fore*(faceDown?.82:1):ragShin(rig,knee*f)*(1-.20*Math.sin(f*PI));
   const ex=ox+Math.cos(ang)*l1*projection,ey=oy+Math.sin(ang)*l1;
   const hx=ex+Math.cos(ang+bend)*l2*projection,hy=ey+Math.sin(ang+bend)*l2;
-  if(part!=='fore')drawFallBone(r,ox,oy,ex,ey,arm?rig.upperW*(faceDown?.92:1):rig.thighW,arm?shirt:pants);
-  if(part!=='upper')drawFallBone(r,ex,ey,hx,hy,arm?rig.foreW*(faceDown?.92:1):rig.shinW,arm?shirt:pants,
+  drawFallBone(r,ox,oy,ex,ey,arm?rig.upperW*(faceDown?.92:1):rig.thighW,arm?shirt:pants);
+  drawFallBone(r,ex,ey,hx,hy,arm?rig.foreW*(faceDown?.92:1):rig.shinW,arm?shirt:pants,
     arm?(skin||color(235,180,140)):boot,arm?rig.hand*(faceDown?.94:1):rig.foot);
 }
 
@@ -11543,7 +11549,7 @@ class Corpse {
         // dismemberment and every existing overkill type retain their own art.
         const hit=src&&src.fallHit;
         if (dT===0&&hit&&hit.frame===frameCount&&hit.kind==="BODY"&&hit.wound&&random()<.58)
-            this.fall.hold=woundHold(this.rag,ragRig(bW,bH),hit.wound);
+            this.fall.hold=woundHold(this.rag,projectFallRig(bW,bH,1),hit.wound);
     }
     // Clothes retain the original collar/chest stain; jets stay at the head.
     this.spray = (this.rag && CORPSE_HEADSHOT_DEATHS.indexOf(dT) !== -1)
@@ -11967,7 +11973,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.fill(sK); r.ellipse(0, -5, 11, 11); r.noStroke(); for (let d of this.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.pop(); 
   } 
   else { 
-      r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.fall?figureFallYaw(this.fall,this.rag):this.aA); const RG = this.rag; if (RG) { if(!this.fall)r.rotate(RG.ang); r.scale(RAG_SCALE); } if (RG) ragContour(r, a); else r.noStroke(); const RP = this.fall?projectFallRig(this.bW,this.bH,f):ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW; r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -10 : -10, lY2 = this.bW === 105 ? 15 : 2; r.push(); if (RG) { const bootC = color(this.pC.levels[0] * 0.55, this.pC.levels[1] * 0.55, this.pC.levels[2] * 0.55, a); if(this.fall){drawFallLimb(r,RP,RG,2,f,this.sC,this.pC,sK,bootC); drawFallLimb(r,RP,RG,3,f,this.sC,this.pC,sK,bootC);}else{ragLimb(r, RP.hipX, -RP.hipY, PI + RG.limbs[2].a, -ragKnee(RG.limbs[2]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[2])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot); ragLimb(r, RP.hipX,  RP.hipY, PI - RG.limbs[3].a,  ragKnee(RG.limbs[3]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[3])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot);} } else { r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4); } if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(lX, -4, 12, 16); } r.pop(); const underArm=this.fall&&this.fall.faceDown&&this.fall.hold&&f>.45?this.fall.hold.arm:-1; if(underArm>=0){ragContour(r,a);drawFallLimb(r,RP,RG,underArm,f,this.sC,this.pC,sK,null,false,'fore');} if (RG) ragContour(r, a); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); if (RG) { r.ellipse(0, 0, TL, TW); r.ellipse(TL * 0.30, 0, TL * 0.42, TW * 1.06); } else r.ellipse(0, 0, this.bW + 15 * f, this.bH);
+      r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.fall?figureFallYaw(this.fall,this.rag):this.aA); const RG = this.rag; if (RG) { if(!this.fall)r.rotate(RG.ang); r.scale(RAG_SCALE); } if (RG) ragContour(r, a); else r.noStroke(); const RP = this.fall?projectFallRig(this.bW,this.bH,f):ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW; r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -10 : -10, lY2 = this.bW === 105 ? 15 : 2; r.push(); if (RG) { const bootC = color(this.pC.levels[0] * 0.55, this.pC.levels[1] * 0.55, this.pC.levels[2] * 0.55, a); if(this.fall){drawFallLimb(r,RP,RG,2,f,this.sC,this.pC,sK,bootC); drawFallLimb(r,RP,RG,3,f,this.sC,this.pC,sK,bootC);}else{ragLimb(r, RP.hipX, -RP.hipY, PI + RG.limbs[2].a, -ragKnee(RG.limbs[2]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[2])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot); ragLimb(r, RP.hipX,  RP.hipY, PI - RG.limbs[3].a,  ragKnee(RG.limbs[3]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[3])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot);} } else { r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4); } if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(lX, -4, 12, 16); } r.pop(); const underArm=this.fall&&this.fall.faceDown&&this.fall.hold&&f>.45?this.fall.hold.arm:-1; if(underArm>=0){ragContour(r,a);drawFallLimb(r,RP,RG,underArm,f,this.sC,this.pC,sK);} if (RG) ragContour(r, a); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); if (RG) { r.ellipse(0, 0, TL, TW); r.ellipse(TL * 0.30, 0, TL * 0.42, TW * 1.06); } else r.ellipse(0, 0, this.bW + 15 * f, this.bH);
       if (this.eT === "ARMORED_STANDARD") { r.fill(100); if (RG) r.rect(-TL * 0.26, -TW * 0.46, TL * 0.58, TW * 0.92, 4); else r.rect(-10, -12, 20, 24, 4); } 
       if (this.eT === "FEMALE_PISTOL" && !(this.backFacing&&(!this.fall||f>.5))) { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(4, -6, 12, 10); r.ellipse(4, 6, 12, 10); }
       drawFallenAttire(r,this.id,RG?TL:this.bW+15*f,RG?TW:this.bH,this.backFacing,this.fall?f:1);
@@ -11977,7 +11983,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       let lAY = this.eT === "ARMORED" ? -30 : -14, rAY = this.eT === "ARMORED" ? 30 : 11, slX = lerp(-5, 0, f), hX = lerp(-12, 12, f), armLY = lerp(lAY, lAY + 3, f), rslX = lerp(15, 0, f), rhX = lerp(25, 12, f), armRY = lerp(rAY, rAY + 3, f); 
       // Decals are stains and cleared the stroke; the arms are limbs
       // and take it back, the same handover the living figure does.
-      if (RG) { ragContour(r, a); if(this.fall){drawFallLimb(r,RP,RG,0,f,this.sC,this.pC,sK,null,false,underArm===0?'upper':'all'); drawFallLimb(r,RP,RG,1,f,this.sC,this.pC,sK,null,false,underArm===1?'upper':'all');}else{ragLimb(r,  RP.shX, -RP.shY, -(HALF_PI + RG.limbs[0].a), -RG.limbs[0].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand); ragLimb(r,  RP.shX,  RP.shY,   HALF_PI + RG.limbs[1].a,   RG.limbs[1].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand);} } else { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(slX, armLY, 16, 8); r.fill(sK); r.ellipse(hX, armLY, 8, 8); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(rslX, armRY, 25, 8); r.fill(sK); r.ellipse(rhX, armRY, 8, 8); }
+      if (RG) { ragContour(r, a); if(this.fall){if(underArm!==0)drawFallLimb(r,RP,RG,0,f,this.sC,this.pC,sK); if(underArm!==1)drawFallLimb(r,RP,RG,1,f,this.sC,this.pC,sK);}else{ragLimb(r,  RP.shX, -RP.shY, -(HALF_PI + RG.limbs[0].a), -RG.limbs[0].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand); ragLimb(r,  RP.shX,  RP.shY,   HALF_PI + RG.limbs[1].a,   RG.limbs[1].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand);} } else { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(slX, armLY, 16, 8); r.fill(sK); r.ellipse(hX, armLY, 8, 8); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(rslX, armRY, 25, 8); r.fill(sK); r.ellipse(rhX, armRY, 8, 8); }
       if (this.eT === "AERIAL" || this.eT === "AERIAL_PISTOL") { r.fill(80, a); r.rect(-18, -12, 12, 24, 3); } 
       if (this.eT !== "ARMORED" && this.eT !== "MOLOTOV" && this.eT !== "AERIAL" && !(this.id&&this.id.isUnarmed)) { r.push(); r.translate(20 - 10 * f, 8 + 15 * f); r.rotate(f * PI / 2); if (this.cW === WEAPONS.SMG || this.cW === WEAPONS.DUAL_SMG) { r.fill(40); r.rect(31, 12, 24, 8, 2); r.rect(35, 20, 6, 12); } else if (this.cW === WEAPONS.ASSAULT_RIFLE) { r.fill(40); r.rect(5, 4, 42, 4, 1); r.fill(139, 69, 19); r.rect(15, 3, 12, 6, 1); r.rect(0, 3, 8, 6, 1); } else if (this.cW === WEAPONS.SHOTGUN) { r.fill(30); r.rect(5, 4, 40, 5, 1); r.fill(15); r.rect(20, 3, 14, 7, 1); r.fill(50); r.rect(5, 3, 12, 7, 2); } else if (this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { r.fill(50, 70, 50); r.rect(5, 4, 45, 6, 2); r.fill(30); r.rect(20, 2, 10, 10, 1); } else { r.fill(40); r.rect(15, 5, 16, 6, 2); } r.pop(); if (this.cW === WEAPONS.DUAL_SMG) { r.push(); r.translate(20 - 10 * f, -14 - 15 * f); r.rotate(-f * PI / 2); r.fill(40); r.rect(15, -7, 24, 8, 2); r.rect(19, -19, 6, 12); r.pop(); } } else if (this.eType === "MOLOTOV") { r.push(); r.translate(20 - 10 * f, 8 + 15 * f); r.rotate(f * PI / 2); r.fill(30, 120, 30); r.rect(0, -8, 8, 16, 2); r.pop(); } else if (this.eType === "ARMORED") { r.push(); r.translate(30 - 10 * f, 25 + 15 * f); r.rotate(f * PI / 2); r.fill(30); r.rect(0, -10, 50, 20, 4); r.pop(); }
       if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(0, 0, this.bW + 15 * f, 20); if (RG) ragContour(r, a); } r.translate(this.fall?lerp(12/RAG_SCALE,18,f):(RG?18:20)*f,0); if(this.fall)r.scale(lerp(1/RAG_SCALE,1,f)); r.push(); r.rotate(figureHeadTurn(this.fall,f)); const hK=fallenHeadColor(this.id,this.fall,f,sK); if (this.dT === 4) { r.fill(90, 0, 0); r.ellipse(0, 0, 14, 14); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 1) { r.fill(hK); r.arc(0, 0, 11, 11, this.hA + PI / 4, this.hA + TWO_PI - PI / 4, PIE); r.fill(90, 0, 0); r.arc(0, 0, 8, 8, this.hA - PI / 4, this.hA + PI / 4, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 6) { r.push(); r.rotate(this.hA); r.fill(90, 0, 0); r.ellipse(0, 0, 10, 10); let spread = min(this.sep * 0.4, 8); r.fill(hK); r.arc(0, -spread, 11, 11, PI, TWO_PI, CHORD); r.arc(0, spread, 11, 11, 0, PI, CHORD); r.pop(); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 8) { r.push(); r.rotate(this.hA); r.fill(hK); r.arc(0, 0, 11, 11, 0, PI + HALF_PI, PIE); r.fill(90, 0, 0); r.arc(0, 0, 11, 11, PI + HALF_PI, TWO_PI, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } r.pop(); } else if (this.dT === 9) { let nX = 10 + 5 * this.fP; r.fill(90, 0, 0); r.ellipse(nX, 0, 12, 12); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else { r.fill(hK); r.ellipse(0, 0, 11, 11); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } r.noStroke();
