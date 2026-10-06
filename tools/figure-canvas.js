@@ -13,7 +13,7 @@ function figureCanvas(width,height){
  };
  const paint=()=>{if(fill)c.fill();if(stroke)c.stroke();};
  const polygon=points=>{c.beginPath();c.moveTo(points[0][0],points[0][1]);for(const p of points.slice(1))c.lineTo(...p);c.closePath();paint();};
- const g={drawingContext:c,width,height,
+ const g={canvas,drawingContext:c,width,height,
   push(){c.save();stack.push([fill,stroke]);},pop(){if(!stack.length)throw Error('Unbalanced canvas pop');c.restore();[fill,stroke]=stack.pop();},
   translate(x,y){c.translate(x,y);},rotate(a){c.rotate(a);},scale(x,y=x){c.scale(x,y);},
   fill(...a){fill=true;c.fillStyle=rgba(a);},noFill(){fill=false;},stroke(...a){stroke=true;c.strokeStyle=rgba(a);},noStroke(){stroke=false;},strokeWeight(w){c.lineWidth=w;},
@@ -24,6 +24,8 @@ function figureCanvas(width,height){
   triangle(...a){polygon([[a[0],a[1]],[a[2],a[3]],[a[4],a[5]]]);},quad(...a){polygon([[a[0],a[1]],[a[2],a[3]],[a[4],a[5]],[a[6],a[7]]]);},
   beginShape(){vertices=[];},vertex(x,y){vertices.push([x,y]);},curveVertex(x,y){vertices.push([x,y]);},
   endShape(mode){if(!vertices.length)return;c.beginPath();c.moveTo(...vertices[0]);for(const v of vertices.slice(1))c.lineTo(...v);if(mode==='close')c.closePath();paint();},
+  image(src,x,y,w,h){if(w===undefined)c.drawImage(src.canvas||src,x,y);else c.drawImage(src.canvas||src,x,y,w,h);},
+  pixelDensity(){},remove(){},
   clear(){c.clearRect(0,0,width,height);},balanced(){return stack.length===0;}
  };
  c.lineJoin='round';c.lineCap='round';return {canvas,c,g};

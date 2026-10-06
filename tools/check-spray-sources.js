@@ -22,6 +22,12 @@ for(const weapon of ['SHOTGUN','ASSAULT_RIFLE','SMG','DUAL_SMG','PISTOL']){
  const count=weapon==='PISTOL'?1:3;
  assert.deepStrictEqual(P('c.fatalSpray.wounds'),P('e.decals.slice(-'+count+')'),weapon+' selected the wrong holes');
  assert.equal(P('c.fatalSpray.left'),210);
+ if(count===3){
+  probe('particles=[];advanceFatalSpray(c);');
+  const angles=P('particles.map(p=>Math.atan2(p.vy,p.vx))');
+  for(let i=0;i<3;i++)for(let j=i+1;j<3;j++)
+   assert(Math.abs(Math.atan2(Math.sin(angles[i]-angles[j]),Math.cos(angles[i]-angles[j])))>1,weapon+' jets share the same direction');
+ }
 }
 
 function fixture(type=0,kind='BODY',age=0,eType='NORMAL',weapon='SMG',facing=-.8){
@@ -36,6 +42,10 @@ function fixture(type=0,kind='BODY',age=0,eType='NORMAL',weapon='SMG',facing=-.8
 }
 // Scorches/hide patterns are not holes; fewer holes remain fewer emitters.
 fixture();assert.deepStrictEqual(P('c.fatalSpray.wounds'),P('holes'));
+const directionSeed=seed,directions=P('buildFatalSpray(e,e.eType).directions');
+assert.equal(seed,directionSeed,'random jet directions consumed the global animation sequence');
+probe('frameCount++;e.fallHit.frame=frameCount;');
+assert.notDeepStrictEqual(P('buildFatalSpray(e,e.eType).directions'),directions,'directions do not vary between deaths');
 probe('e.decals.unshift({x:-7,y:-4,isBulletHole:true},{x:5,y:6,isBulletHole:true});');
 assert.deepStrictEqual(P('buildFatalSpray(e,e.eType).wounds'),P('holes'),'older bullet holes remained selected');
 probe('e.decals.splice(2,0,{x:99,y:99,sz:60,isHead:false});');
@@ -47,7 +57,7 @@ const frozen=P('c.fatalSpray.wounds');probe('holes[0].x=99;holes[0].col[0]=0;hol
 assert.deepStrictEqual(P('c.fatalSpray.wounds'),frozen,'corpse spray reads mutable live wounds');
 
 // Capture the game's drawing transforms rather than duplicating its geometry.
-let m=[1,0,0,1,0,0],fill=null,stack=[],marks=[],spatter=[],head=null;
+let m=[1,0,0,1,0,0],fill=null,stack=[],marks=[],spatter=[],bodyStain=[],head=null;
 const originals={};
 for(const n of ['push','pop','translate','rotate','scale','fill','ellipse','drawFigureHair'])originals[n]=ctx[n];
 function mul(u){const t=m;m=[t[0]*u[0]+t[2]*u[1],t[1]*u[0]+t[3]*u[1],t[0]*u[2]+t[2]*u[3],t[1]*u[2]+t[3]*u[3],t[0]*u[4]+t[2]*u[5]+t[4],t[1]*u[4]+t[3]*u[5]+t[5]];}
@@ -60,10 +70,10 @@ ctx.fill=(...a)=>{fill=a[0]&&a[0].levels?[...a[0].levels]:a;originals.fill(...a)
 ctx.ellipse=(x,y,w,h)=>{assert([x,y,w,h].every(Number.isFinite));
  const p={x:m[0]*x+m[2]*y+m[4],y:m[1]*x+m[3]*y+m[5]};
  if(fill&&fill[0]===91&&fill[1]===1&&fill[3]===223)marks.push({...p,id:fill[2]});
- if(fill&&fill[0]===96&&fill[1]===6&&fill[2]===6)spatter.push({...p,r:w*.5*Math.hypot(m[0],m[1])});
+ if(fill&&fill[0]===96&&fill[1]===6&&fill[2]===6)(head?spatter:bodyStain).push({...p,r:w*.5*Math.hypot(m[0],m[1])});
  originals.ellipse(x,y,w,h);};
 ctx.drawFigureHair=(g,id,x,y,sway)=>{head={x:m[0]*x+m[2]*y+m[4],y:m[1]*x+m[3]*y+m[5],r:5.5*Math.hypot(m[0],m[1])};originals.drawFigureHair(g,id,x,y,sway);};
-function paint(){m=[1,0,0,1,0,0];fill=null;stack=[];marks=[];spatter=[];head=null;probe('c.show();');assert.equal(stack.length,0);}
+function paint(){m=[1,0,0,1,0,0];fill=null;stack=[];marks=[];spatter=[];bodyStain=[];head=null;probe('c.show();');assert.equal(stack.length,0);}
 let origins=0;
 for(const type of [0,1,2,4,6,7,8,9,10,11,12])for(const age of [0,1,7,40,150,209]){
  fixture(type,[1,4,6,8,9,12].includes(type)?'HEAD':'BODY',age);paint();
@@ -74,7 +84,12 @@ for(const type of [0,1,2,4,6,7,8,9,10,11,12])for(const age of [0,1,7,40,150,209]
  probe('particles=[];c.fatalSpray.left=210;advanceFatalSpray(c);');
  const drops=P('particles.filter(p=>p.t==="WOUND_BLOOD")');assert.equal(drops.length,3);
  for(let i=0;i<3;i++)near(drops[i],P(`fatalWoundPoint(c,c.fatalSpray.wounds[${i}])`),'selected hole emitted at another hole');
+ const angles=drops.map(p=>Math.atan2(p.vy,p.vx));
+ for(let i=0;i<3;i++)for(let j=i+1;j<3;j++)
+  assert(Math.abs(Math.atan2(Math.sin(angles[i]-angles[j]),Math.cos(angles[i]-angles[j])))>1,`dT ${type} age ${age}: mixed head/body jets converged`);
  if([1,4,6,8,9].includes(type)){
+  assert.equal(bodyStain.length,P('c.spray.length'),'neck-to-chest clothing stain missing');
+  assert(bodyStain.some(p=>Math.hypot(p.x-head.x,p.y-head.y)>head.r),'clothing stain was moved onto the head');
   assert(spatter.length>8&&head,'missing head spatter');
   for(const p of spatter)assert(Math.hypot(p.x-head.x,p.y-head.y)+p.r<=head.r+1e-8,'head spatter painted over the body');
  }
@@ -110,4 +125,4 @@ assert.equal(P('c.fatalSpray.left'),210);assert.equal(P('particles.length'),0);
 probe('doTick=true;for(let i=0;i<210;i++){frameCount++;advanceFatalSpray(c);}');
 assert.equal(P('c.fatalSpray.left'),0);assert.equal(P('particles.filter(p=>p.t==="WOUND_BLOOD").length'),315);
 probe('for(let i=0;i<60;i++)advanceFatalSpray(c);');assert.equal(P('particles.length'),315);
-console.log(`Spray sources passed: real three-hit histories for all four requested weapons, pistol one-hole behavior, fewer real holes, nonbullet-mark exclusion, frozen metadata, ${origins} mixed head/body painted-hole origins, head-only spatter, 12 legacy head jets, ${bursts} actual initial headshot bursts, pause and exact shared 210-tick cutoff.`);
+console.log(`Spray sources passed: real three-hit histories for all four requested weapons, separate randomized jet directions, pistol one-hole behavior, fewer real holes, nonbullet-mark exclusion, frozen metadata, ${origins} mixed head/body painted-hole origins, restored clothing stains and separate head marks, 12 legacy head jets, ${bursts} actual initial headshot bursts, pause and exact shared 210-tick cutoff.`);

@@ -5869,6 +5869,7 @@ viewBottom = camY + height / zoom + shakePad;
   // handrails stay in the late pass, so the far rail still passes in front of
   // whoever is crossing.
   if (BIOME_ACTIVE) drawBiomeDecks();
+  updateBloodPools();
   drawBloodChunks();
 
   if (typeof updateSludges === 'function') updateSludges();
@@ -9867,16 +9868,19 @@ let bloodSurfaces = 0;
 // the biome you have not been back to.
 let bloodBanks = {};
 let bloodBankId = null;
+let bloodPools = [];
+const BLOOD_POOL_FRAMES = 90;
 
 function useBloodBank(id) {
   const key = String(id);
   if (bloodBankId === key) return;
-  if (bloodBankId !== null) bloodBanks[bloodBankId] = { chunks: bloodChunks, use: bloodChunkUse };
+  if (bloodBankId !== null) bloodBanks[bloodBankId] = { chunks: bloodChunks, use: bloodChunkUse, pools: bloodPools };
   bloodBankId = key;
   let bank = bloodBanks[key];
-  if (!bank) { bank = { chunks: {}, use: {} }; bloodBanks[key] = bank; }
+  if (!bank) { bank = { chunks: {}, use: {}, pools: [] }; bloodBanks[key] = bank; }
   bloodChunks = bank.chunks;
   bloodChunkUse = bank.use;
+  bloodPools = bank.pools;
 }
 
 // Everything, everywhere. Only a genuine restart wants this.
@@ -9887,6 +9891,7 @@ function wipeAllBloodBanks() {
   }
   bloodBanks = {}; bloodBankId = null;
   bloodChunks = {}; bloodChunkUse = {};
+  bloodPools = [];
   bloodBytes = 0; bloodSurfaces = 0;
   for (const pg of bloodSurfacePool) pg.remove();
   bloodSurfacePool.length = 0;
@@ -9901,6 +9906,7 @@ function retireCorpsesToBloodBank() {
     if (c.isStatic) continue;
     finishFigureFall(c);
     if(c.fatalSpray)c.fatalSpray.left=0;
+    c.poolAge=BLOOD_POOL_FRAMES;
     c.sep = corpseSepMax(c.dT);
     if (c.rag) while (!c.rag.done) ragStep(c.rag);
     stampCorpse(c);
@@ -10039,13 +10045,7 @@ function spawnSplatter(x, y, t = "HIDDEN", col = null) {
     // 1. Define how far the blood/scorch reaches
     let maxSpread = (t === "SCORCH") ? 100 : 70; 
 
-    // 2. Find every chunk this splatter touches (usually 1, sometimes 2 or 4 if on a corner)
-    let minCX = Math.floor((x - maxSpread) / CHUNK_SIZE);
-    let maxCX = Math.floor((x + maxSpread) / CHUNK_SIZE);
-    let minCY = Math.floor((y - maxSpread) / CHUNK_SIZE);
-    let maxCY = Math.floor((y + maxSpread) / CHUNK_SIZE);
-
-    // 3. Pre-calculate the blobs so they align perfectly across the seam of multiple chunks
+    // Roll the same final pattern once; gradual deposition never rerolls it.
     let blobs = [];
     let blobCount = (t === "SCORCH") ? floor(random(12, 20)) : floor(random(8, 16));
     
@@ -10057,7 +10057,33 @@ function spawnSplatter(x, y, t = "HIDDEN", col = null) {
         }
     }
 
-    // 4. Stamp the exact same pattern onto every chunk it overlaps
+    if(t!=="SCORCH"){
+        blobs.sort((a,b)=>a.ox*a.ox+a.oy*a.oy-b.ox*b.ox-b.oy*b.oy);
+        for(let i=0;i<blobs.length;i++){
+            blobs[i].delay=Math.floor(i*(BLOOD_POOL_FRAMES-24)/Math.max(1,blobs.length-1));
+            blobs[i].stage=0;
+        }
+        bloodPools.push({x,y,col:col||color(90,0,0,220),blobs,age:0});
+    }else stampGroundBlobs(x,y,blobs,color(15,15,15,220),maxSpread);
+}
+
+function updateBloodPools() {
+    if(!doTick)return;
+    for(let i=bloodPools.length-1;i>=0;i--){
+        const pool=bloodPools[i],brushes=[];pool.age++;
+        for(const b of pool.blobs){
+            const stage=Math.max(0,Math.min(4,Math.ceil((pool.age-b.delay)/6)));
+            if(stage>b.stage){b.stage=stage;brushes.push({ox:b.ox,oy:b.oy,sz:b.sz*stage/4});}
+        }
+        if(brushes.length)stampGroundBlobs(pool.x,pool.y,brushes,pool.col,70);
+        if(pool.age>=BLOOD_POOL_FRAMES)bloodPools.splice(i,1);
+    }
+}
+
+function stampGroundBlobs(x,y,blobs,col,maxSpread) {
+    const minCX=Math.floor((x-maxSpread)/CHUNK_SIZE),maxCX=Math.floor((x+maxSpread)/CHUNK_SIZE);
+    const minCY=Math.floor((y-maxSpread)/CHUNK_SIZE),maxCY=Math.floor((y+maxSpread)/CHUNK_SIZE);
+    // The same stage crosses each chunk seam, always on the floor layer.
     for (let cx = minCX; cx <= maxCX; cx++) {
         for (let cy = minCY; cy <= maxCY; cy++) {
             let key = bloodKey(cx, cy, false);      // the floor
@@ -10068,8 +10094,7 @@ function spawnSplatter(x, y, t = "HIDDEN", col = null) {
                                              relX + maxSpread, relY + maxSpread);
             const pg = e.pg;
 
-            if (t === "SCORCH") pg.fill(15, 15, 15, 220);
-            else pg.fill(col || color(90, 0, 0, 220));
+            pg.fill(col);
 
             for (let b of blobs) {
                 pg.ellipse(relX - e.bx + b.ox, relY - e.by + b.oy, b.sz);
@@ -10813,14 +10838,13 @@ function ragKnee(L) { return Math.max(0, Math.min(L.b, L.a + (L.room || 0))); }
 // differently shaped one.
 const RAG_SCALE = 0.80;
 
-// --- what a headshot leaves on the head -----------------------------------
-// Keep the earlier spatter texture at the head wound, inside the head's own
-// silhouette. The shirt carries only the bullet holes that actually hit it.
+// --- what a headshot leaves on the clothes --------------------------------
+// The neck-to-chest stain is separate from the airborne head-wound spray.
 //
 // Drawn once in the constructor and then never touched, like the rest pose --
 // a corpse must not develop new blood while you stand looking at it.
 const CORPSE_HEADSHOT_DEATHS = [1, 4, 6, 8, 9];
-function bloodSpray(rig, lean, wound) {
+function bloodSpray(rig, lean) {
     const out = [], collar = rig.shX + rig.TL * 0.16;
     // Two draws multiplied together pile the mass at t = 0, which is the
     // collar. One uniform would spread it evenly down a torso that should be
@@ -10841,9 +10865,12 @@ function bloodSpray(rig, lean, wound) {
                    y: random(-rig.TW * 0.60, rig.TW * 0.60) + lean * rig.TW * 0.3,
                    r: 0.9 + random(1.7), a: 120 + random(90) });
     }
-    // Reuse the same random texture without changing the random sequence
-    // that the existing limb and overkill animations depend on.
-    for (const s of out) {
+    return out;
+}
+function headBloodSpatter(stain,rig,wound) {
+    // Keep the recent head marks too, derived without additional random draws.
+    const out=stain.map(s=>({...s})),collar=rig.shX+rig.TL*.16;
+    for(const s of out){
         s.x=(wound?wound.x:0)+(s.x-collar)*.22;
         s.y=(wound?wound.y:0)+s.y*.22;s.r*=.42;
         const d=Math.hypot(s.x,s.y),edge=5.5-s.r;
@@ -11187,8 +11214,14 @@ function buildFatalSpray(src,eT) {
   const holes=(src.decals||[]).filter(d=>d.isBulletHole||d===w);
   if(holes[holes.length-1]!==w)holes.push(w);
   const wounds=holes.slice(-count).map(d=>({...d,col:d.col&&d.col.slice()}));
+  let seed=(Math.imul(Math.round(hit.x||0),73856093)^Math.imul(Math.round(hit.y||0),19349663)^frameCount)>>>0;
+  const pick=()=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed/4294967296;};
+  // Randomize separate sectors once, so three jets never share one cone.
+  const turn=wounds.length>1?pick()*TWO_PI:0;
+  const directions=wounds.map((d,i)=>wounds.length>1?
+    turn+i*TWO_PI/wounds.length+(pick()-.5)*.65:0);
   return {left:FATAL_SPRAY_FRAMES,wound:wounds[wounds.length-1],wounds,
-    angle:hit.angle-(src.aimAngle||0),seed:(Math.imul(Math.round(hit.x||0),73856093)^Math.imul(Math.round(hit.y||0),19349663)^frameCount)>>>0};
+    angle:hit.angle-(src.aimAngle||0),seed,directions};
 }
 // Use the same local decal coordinates and transforms as Corpse.paint(). A
 // fatal spot remains attached when the torso separates or a piece is moving.
@@ -11227,7 +11260,7 @@ function fatalWoundPoint(c,w=c.fatalSpray.wound) {
   }
   const ca=Math.cos(a),sa=Math.sin(a);
   return {x:x+(ca*lx-sa*ly)*scale,y:y+(sa*lx+ca*ly)*scale,
-    angle:a+turn+(w.shotA===undefined?(s?s.angle:0):w.shotA),scale};
+    angle:a+turn+(w.shotA===undefined?(s?s.angle:0):w.shotA),frameAngle:a,scale};
 }
 function headWoundPoint(c) {
   const w=c.fatalSpray&&c.fatalSpray.wound;
@@ -11259,9 +11292,11 @@ function advanceFatalSpray(c) {
   // A local sequence keeps this added effect from rerolling existing gore,
   // limb or overkill randomness. The pooled particle shares the blood painter.
   const col=c.eT==='BUG'||c.eT==='SNAIL'||c.eT==='SNAIL_HYBRID'?color(200,230,40):color(90,0,0);
-  for(const w of s.wounds){
+  for(let i=0;i<s.wounds.length;i++){
+    const w=s.wounds[i];
     s.seed=(Math.imul(s.seed,1664525)+1013904223)>>>0;
-    const u=s.seed/4294967296,p=fatalWoundPoint(c,w),a=p.angle+(u-.5)*.65;
+    const u=s.seed/4294967296,p=fatalWoundPoint(c,w);
+    const a=(s.wounds.length>1?p.frameAngle:p.angle)+s.directions[i]+(u-.5)*(s.wounds.length>1?.4:.65);
     const speed=(2.8+u*1.8)*(.55+.45*s.left/FATAL_SPRAY_FRAMES);
     particles.push(newParticle(p.x,p.y,col,'WOUND_BLOOD',Math.cos(a)*speed,Math.sin(a)*speed));
   }
@@ -11340,6 +11375,7 @@ class Corpse {
     // 1,189 ellipses a frame, forever.
     this.smokeTimer = 0;
     this.bornAt = frameCount;
+    this.poolAge = 0;
     // Is this a body lying on the ground, or is it wreckage?
     //
     // Everything in GIB_DEATHS comes apart: 2/3/4/6/8 separate along `sep`,
@@ -11367,10 +11403,11 @@ class Corpse {
         if (dT===0&&hit&&hit.frame===frameCount&&hit.kind==="BODY"&&hit.wound&&random()<.58)
             this.fall.hold=woundHold(this.rag,ragRig(bW,bH),hit.wound);
     }
-    // Headshot spatter stays on the head, at the same wound as its stream.
+    // Clothes retain the original collar/chest stain; jets stay at the head.
     this.spray = (this.rag && CORPSE_HEADSHOT_DEATHS.indexOf(dT) !== -1)
-        ? bloodSpray(ragRig(bW, bH), Math.sin((bA || 0) - (aA || 0)),
-            this.fatalSpray&&this.fatalSpray.wound.isHead?this.fatalSpray.wound:null) : null;
+        ? bloodSpray(ragRig(bW,bH),Math.sin((bA||0)-(aA||0))) : null;
+    this.headSpatter=this.spray?headBloodSpatter(this.spray,ragRig(bW,bH),
+        this.fatalSpray&&this.fatalSpray.wound.isHead?this.fatalSpray.wound:null):null;
     this.bloodTimer = (dT === 5 || dT === 7 || dT === 8 || dT === 9 || dT === 10 || dT === 11 || dT === 13 || dT === 14) ? 180 : 0; 
 
     if (dT === 14) { this.splitA = bA; this.lH = { x: 0, y: 0, vx: cos(this.splitA - HALF_PI) * 2, vy: sin(this.splitA - HALF_PI) * 2 }; this.rH = { x: 0, y: 0, vx: cos(this.splitA + HALF_PI) * 2, vy: sin(this.splitA + HALF_PI) * 2 }; }
@@ -11396,6 +11433,7 @@ class Corpse {
   }
 
   update() { 
+    if(this.dT===7)this.poolAge=Math.min(BLOOD_POOL_FRAMES,this.poolAge+1);
     if (this.fall) { stepFigureFall(this.fall,this,this.rag);this.fP=figureFallProgress(this.fall); }
     else if (this.fP < 1) this.fP += 0.15;
     ragStep(this.rag);
@@ -11656,7 +11694,8 @@ if (this.eT === "COW" || this.eT === "HORSE") {
     if (this.dT === 7) {
         r.push(); r.translate(this.x, this.y); let a = 255, f = this.fP; r.push(); r.rotate(this.mA); r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); r.noStroke();
         r.push(); r.translate(-3 - 30 * f, -18 - 10 * f); r.rotate(-f * 0.5); r.rect(-37, -12, 74, 24, 12); r.pop(); r.push(); r.translate(-3 - 30 * f, 18 + 10 * f); r.rotate(f * 0.5); r.rect(-37, -12, 74, 24, 12); r.pop();  
-        r.fill(90, 0, 0, a); r.ellipse(-15, -12, 35, 45); r.pop(); r.pop(); return;
+        const pool=Math.min(1,this.poolAge/BLOOD_POOL_FRAMES),spread=Math.sqrt(pool);
+        r.fill(90,0,0,a*pool);r.ellipse(-15,-12,35*spread,45*spread);r.pop();r.pop();return;
     }
     r.push(); r.translate(this.x, this.y); let a = 255, f = this.fP; r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.mA); if (this.dT === 2) r.rotate(PI); r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); r.noStroke();
     r.push(); r.translate(-3 - 30 * f, -18 - 10 * f); r.rotate(-f * 0.5); r.rect(-37, -12, 74, 24, 12); r.pop(); r.push(); r.translate(-3 - 30 * f, 18 + 10 * f); r.rotate(f * 0.5); r.rect(-37, -12, 74, 24, 12); r.pop();  
@@ -11744,7 +11783,8 @@ if (this.eT === "COW" || this.eT === "HORSE") {
           // Torso over the top of them, and the pool spreading out from under.
           // The pool is on the FLOOR, so it takes no contour -- an outlined
           // pool of blood reads as an object lying beside the body.
-          r.noStroke(); r.fill(90, 0, 0, a * 0.85); r.ellipse(-4, 0, TL + 14 * f, TW * 1.5);
+          const pool=Math.min(1,this.poolAge/BLOOD_POOL_FRAMES),spread=Math.sqrt(pool);
+          r.noStroke();r.fill(90,0,0,a*.85*pool);r.ellipse(-4,0,(TL+14*f)*spread,TW*1.5*spread);
           ragContour(r, a);
           r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a);
           r.ellipse(0, 0, TL, TW); r.ellipse(TL * 0.30, 0, TL * 0.42, TW * 1.06);
@@ -11774,6 +11814,8 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       if (this.eT === "ARMORED_STANDARD") { r.fill(100); if (RG) r.rect(-TL * 0.26, -TW * 0.46, TL * 0.58, TW * 0.92, 4); else r.rect(-10, -12, 20, 24, 4); } 
       if (this.eT === "FEMALE_PISTOL") { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(4, -6, 12, 10); r.ellipse(4, 6, 12, 10); } 
       r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } } 
+      // Blood from the head coats the collar and shirt, under the sleeves.
+      if(this.spray){for(const sp of this.spray){r.fill(96,6,6,sp.a*(a/255));r.ellipse(sp.x,sp.y,sp.r*2,sp.r*1.74);}}
       let lAY = this.eT === "ARMORED" ? -30 : -14, rAY = this.eT === "ARMORED" ? 30 : 11, slX = lerp(-5, 0, f), hX = lerp(-12, 12, f), armLY = lerp(lAY, lAY + 3, f), rslX = lerp(15, 0, f), rhX = lerp(25, 12, f), armRY = lerp(rAY, rAY + 3, f); 
       // Decals are stains and cleared the stroke; the arms are limbs
       // and take it back, the same handover the living figure does.
@@ -11800,7 +11842,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
         if (r.drawingContext) r.drawingContext.globalAlpha = 1;
         r.pop();
       }
-      if(this.spray){r.noStroke();for(const sp of this.spray){r.fill(96,6,6,sp.a*(a/255));r.ellipse(sp.x,sp.y,sp.r*2,sp.r*1.74);}}
+      if(this.headSpatter){r.noStroke();for(const sp of this.headSpatter){r.fill(96,6,6,sp.a*(a/255));r.ellipse(sp.x,sp.y,sp.r*2,sp.r*1.74);}}
       for (let d of this.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.pop(); r.pop(); } r.pop();
 }
 }
@@ -11899,6 +11941,7 @@ function updateCorpses() {
               if (c.bT > 0) c.bT--;
               if (c.bloodTimer > 0) c.bloodTimer--;
               if (c.fatalSpray&&c.fatalSpray.left>0) c.fatalSpray.left--;
+              c.poolAge=BLOOD_POOL_FRAMES;
               if (c.smokeTimer > 0) c.smokeTimer--;
               if (c.stopMotionTimer > 0) c.stopMotionTimer--;
               if (c.rag && !c.rag.done) ragStep(c.rag);

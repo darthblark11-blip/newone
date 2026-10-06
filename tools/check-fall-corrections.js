@@ -7,7 +7,7 @@ let seed=479;
 ctx.random=(a,b)=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;const v=seed/4294967296;
  return a===undefined?v:Array.isArray(a)?a[Math.floor(v*a.length)]:b===undefined?v*a:a+(b-a)*v;};
 probe('currentLevel=1;buildings=[];activeBuildings=[];activeParkingCars=[];barrels=[];invalidateColIndex();');
-let matrix=[1,0,0,1,0,0],style={fill:null,stroke:null,weight:1},stack=[],draws=[],heads=[];
+let matrix=[1,0,0,1,0,0],style={fill:null,stroke:null,weight:1},stack=[],draws=[],heads=[],headPaint=false;
 const mul=u=>{const t=matrix;matrix=[t[0]*u[0]+t[2]*u[1],t[1]*u[0]+t[3]*u[1],t[0]*u[2]+t[2]*u[3],t[1]*u[2]+t[3]*u[3],t[0]*u[4]+t[2]*u[5]+t[4],t[1]*u[4]+t[3]*u[5]+t[5]];};
 const color=a=>a.map(v=>v&&v.levels?[...v.levels]:v);
 const round=v=>typeof v==='number'?Math.round(v*1e8)/1e8:v;
@@ -24,9 +24,10 @@ ctx.noFill=()=>{style.fill=null;originals.noFill();};
 ctx.noStroke=()=>{style.stroke=null;originals.noStroke();};
 ctx.strokeWeight=w=>{style.weight=w;originals.strokeWeight(w);};
 for(const n of ['ellipse','rect','arc','line','quad','triangle','vertex','curveVertex'])ctx[n]=(...a)=>{
- draws.push([n,a.map(round),matrix.map(round),JSON.parse(JSON.stringify(style))]);originals[n](...a);
+ if(!(headPaint&&style.fill&&style.fill[0]===96&&style.fill[1]===6&&style.fill[2]===6))
+  draws.push([n,a.map(round),matrix.map(round),JSON.parse(JSON.stringify(style))]);originals[n](...a);
 };
-ctx.drawFigureHair=(g,id,x,y,sway)=>{heads.push({axis:[matrix[0],matrix[1]],position:[matrix[0]*x+matrix[2]*y+matrix[4],matrix[1]*x+matrix[3]*y+matrix[5]]});originals.drawFigureHair(g,id,x,y,sway);};
+ctx.drawFigureHair=(g,id,x,y,sway)=>{headPaint=true;heads.push({axis:[matrix[0],matrix[1]],position:[matrix[0]*x+matrix[2]*y+matrix[4],matrix[1]*x+matrix[3]*y+matrix[5]]});originals.drawFigureHair(g,id,x,y,sway);};
 function fixture(type,weapon,age=0,facing=.4,motion=-.9){
  seed=479;probe(`frameCount=1000;corpses=[];particles=[];
  window.source={eType:'NORMAL',isPlayer:false,isMoving:true,moveAngle:${motion},aimAngle:${facing},bodyW:21,bodyH:27,
@@ -34,10 +35,10 @@ function fixture(type,weapon,age=0,facing=.4,motion=-.9){
   fallHit:{frame:frameCount,kind:'BODY',weapon:WEAPONS.${weapon},angle:1.2,force:6,mx:Math.cos(${motion})*4,my:Math.sin(${motion})*4,wound:null}};
  window.c=new Corpse(0,0,source.moveAngle,source.aimAngle,color(70,110,170),color(58,65,84),${type},.7,[],WEAPONS.PISTOL,1.2,'NORMAL',21,27,source);
  for(let i=0;i<${age};i++){frameCount++;c.update();}`);
- matrix=[1,0,0,1,0,0];style={fill:null,stroke:null,weight:1};stack=[];draws=[];heads=[];
+ matrix=[1,0,0,1,0,0];style={fill:null,stroke:null,weight:1};stack=[];draws=[];heads=[];headPaint=false;
  probe('c.show();');assert.equal(stack.length,0);
- // Head spatter is intentionally relocated; compare every other primitive.
- const bodyDraws=draws.filter(d=>!(d[3].fill&&d[3].fill[0]===96&&d[3].fill[1]===6&&d[3].fill[2]===6));
+ // Separate head marks and gradual ground pooling are the intended art changes.
+ const bodyDraws=draws.filter(d=>!(type===7&&d[0]==='ellipse'&&d[1][0]===-4&&d[1][1]===0&&d[3].fill&&d[3].fill[0]===90&&d[3].fill[1]===0&&d[3].fill[2]===0));
  return {state:P('({x:c.x,y:c.y,fP:c.fP,sep:c.sep,bits:c.bits,overkill:c.overkillBits,rag:c.rag&&{t:c.rag.t,done:c.rag.done,ang:c.rag.ang,limbs:c.rag.limbs.map(l=>[l.a,l.b,l.va,l.vb])}})'),draws:bodyDraws,heads};
 }
 if(process.argv.includes('--legacy-snapshot')){
@@ -74,7 +75,7 @@ if(process.argv.includes('--legacy-snapshot')){
   const old=JSON.parse(execFileSync(process.execPath,args,{env:{...process.env,GAME_JS:process.env.FALL_LEGACY_GAME},maxBuffer:12*1024*1024}));
   const current=JSON.parse(execFileSync(process.execPath,args,{env:{...process.env,GAME_JS:require('path').join(__dirname,'../game.js')},maxBuffer:12*1024*1024}));
   assert.deepStrictEqual(current,old,'overkill state or transformed drawing differs from the pre-refinement version');
-  console.log('Legacy comparison passed: 84 shotgun/dual-SMG overkill snapshots match the previous state and transformed body drawing; head spatter is excluded from the art comparison.');
+  console.log('Legacy comparison passed: 84 shotgun/dual-SMG overkill snapshots match the previous state and transformed body drawing; head marks and ground-puddle growth are excluded from the art comparison.');
  }
  for(const [n,fn]of Object.entries(originals))ctx[n]=fn;
  console.log('Corpse head corrections passed: forward/back face orientation in every cardinal direction, unchanged body direction, long hair, detached hat placement, balanced transforms and graphics-target drawing.');
