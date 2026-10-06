@@ -31,24 +31,27 @@ for(const n of ['ellipse','rect','arc','line','quad','triangle','vertex','curveV
   draws.push([n,a.map(round),matrix.map(round),JSON.parse(JSON.stringify(style))]);originals[n](...a);
 };
 ctx.drawFigureHair=(g,id,x,y,sway)=>{headPaint=true;heads.push({axis:[matrix[0],matrix[1]],position:[matrix[0]*x+matrix[2]*y+matrix[4],matrix[1]*x+matrix[3]*y+matrix[5]]});originals.drawFigureHair(g,id,x,y,sway);};
-function fixture(type,weapon,age=0,facing=.4,motion=-.9){
+function fixture(type,weapon,age=0,facing=.4,motion=-.9,eType='NORMAL'){
+ const width=eType==='ARMORED'?105:21,height=eType==='ARMORED'?45:27;
  seed=479;probe(`frameCount=1000;corpses=[];particles=[];
- window.source={eType:'NORMAL',isPlayer:false,isMoving:true,moveAngle:${motion},aimAngle:${facing},bodyW:21,bodyH:27,
+ window.source={eType:'${eType}',isPlayer:false,isMoving:true,moveAngle:${motion},aimAngle:${facing},bodyW:${width},bodyH:${height},
   motionX:Math.cos(${motion})*4,motionY:Math.sin(${motion})*4,motionFrame:frameCount,
   fallHit:{frame:frameCount,kind:'BODY',weapon:WEAPONS.${weapon},angle:1.2,force:6,mx:Math.cos(${motion})*4,my:Math.sin(${motion})*4,wound:null}};
- window.c=new Corpse(0,0,source.moveAngle,source.aimAngle,color(70,110,170),color(58,65,84),${type},.7,[],WEAPONS.PISTOL,1.2,'NORMAL',21,27,source);
+ window.c=new Corpse(0,0,source.moveAngle,source.aimAngle,color(70,110,170),color(58,65,84),${type},.7,[],WEAPONS.PISTOL,1.2,'${eType}',${width},${height},source);
  for(let i=0;i<${age};i++){frameCount++;c.update();}`);
  matrix=[1,0,0,1,0,0];style={fill:null,stroke:null,weight:1};stack=[];draws=[];heads=[];headPaint=false;
  probe('c.show();');assert.equal(stack.length,0);
- // Separate head marks and gradual ground pooling are the intended art changes.
+ // Separate head marks, gradual pooling and the previously added heavy
+ // face-down torso surface are appearance layers, separate from legacy motion.
  const bodyDraws=draws.filter(d=>!(type===7&&d[0]==='ellipse'&&(
   d[1][0]===-4&&d[1][1]===0&&d[3].fill&&d[3].fill[0]===90&&d[3].fill[1]===0&&d[3].fill[2]===0||
-  d[1][1]===0&&d[1][2]===11&&d[1][3]===11)));
+  d[1][1]===0&&d[1][2]===11&&d[1][3]===11||
+  eType==='ARMORED'&&d[1][0]===0&&d[1][1]===0&&Math.abs(d[1][2]-height*1.08)<1e-8&&Math.abs(d[1][3]-width*.96)<1e-8)));
  return {state:P('({x:c.x,y:c.y,fP:c.fP,sep:c.sep,bits:c.bits,overkill:c.overkillBits,rag:c.rag&&{t:c.rag.t,done:c.rag.done,ang:c.rag.ang,limbs:c.rag.limbs.map(l=>[l.a,l.b,l.va,l.vb])}})'),draws:bodyDraws,heads:type===7?[]:heads};
 }
 if(process.argv.includes('--legacy-snapshot')){
  const snapshots=[];
- for(const w of ['SHOTGUN','DUAL_SMG'])for(const type of [2,4,7,8,9,10])for(const age of [0,1,4,7,17,34,60])snapshots.push(fixture(type,w,age));
+ for(const eType of ['NORMAL','ARMORED'])for(const w of ['SHOTGUN','DUAL_SMG'])for(const type of [2,4,7,8,9,10])for(const age of [0,1,4,7,17,34,60])snapshots.push(fixture(type,w,age,.4,-.9,eType));
  process.stdout.write(JSON.stringify(snapshots));
 }else{
  for(const a of [0,Math.PI/2,Math.PI,-Math.PI/2])for(const backward of [false,true]){
@@ -80,7 +83,7 @@ if(process.argv.includes('--legacy-snapshot')){
   const old=JSON.parse(execFileSync(process.execPath,args,{env:{...process.env,GAME_JS:process.env.FALL_LEGACY_GAME},maxBuffer:12*1024*1024}));
   const current=JSON.parse(execFileSync(process.execPath,args,{env:{...process.env,GAME_JS:require('path').join(__dirname,'../game.js')},maxBuffer:12*1024*1024}));
   assert.deepStrictEqual(current,old,'overkill state or transformed drawing differs from the pre-refinement version');
-  console.log('Legacy comparison passed: 84 shotgun/dual-SMG overkill snapshots match the previous state and transformed body drawing; clothing details, bald scalp, head marks and ground-puddle growth are checked separately.');
+  console.log('Legacy comparison passed: 168 ordinary/heavy-armored shotgun/dual-SMG overkill snapshots match the previous state and transformed body drawing; clothing details, bald scalp, head marks and ground-puddle growth are checked separately.');
  }
  for(const [n,fn]of Object.entries(originals))ctx[n]=fn;
  console.log('Corpse head corrections passed: forward/back face orientation in every cardinal direction, unchanged body direction, long hair, detached hat placement, balanced transforms and graphics-target drawing.');
