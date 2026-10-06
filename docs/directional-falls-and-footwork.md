@@ -1,6 +1,6 @@
 # Directional falls and boxing footwork
 
-Ordinary humanoid corpse falls and punch stuns use a projected two-bone rig. Actual locomotion is frozen before bullet knockback: a moving actor falls along that vector, while a planted actor responds to the incoming shot or punch. The bullet's entry position is captured before knockback too, so body-side reactions and wound holding use the decal that actually landed.
+Ordinary humanoid corpse falls and punch stuns use a projected two-bone rig. Actual locomotion is frozen before bullet knockback: a moving actor falls along that vector, while a stationary fatality retains its facing and uses the same fall rig without swivelling toward the shot; punch stuns retain their incoming-punch direction. The bullet's entry position is captured before knockback too, so body-side reactions and wound holding use the decal that actually landed.
 
 Corpse collapse retains the previous 0.15-per-frame speed, reaching the floor on the seventh simulation frame. The previous 34-frame limb settle and spring rates are restored. Weapon force still affects displacement, but does not slow the collapse. Punch stuns retain their 40-frame buckle and 16-frame contact settle. The torso, head, shoulders, hips and limbs change projection together; signed leg foreshortening tucks the knees underneath the pelvis before the heels extend onto the floor. Ordinary directional falls limit additional torso spin to 0.26 radians. Final joints freeze and existing corpse retirement still stamps the body into the blood bank.
 
@@ -79,3 +79,5 @@ The blood-effect preview from the preceding pass calls actual corpse painters, f
 ![Clothing stains, random jets and growing puddles](previews/spray-sources.gif)
 
 Still preview: [spray-sources.png](previews/spray-sources.png).
+
+Forward body-shot corpses render the wound-holding forearm and hand beneath the torso once the collapse passes 45%. The upper arm remains above the torso. Face-up falls and loose arms retain their usual layering. The fall check observes this order on both the live and corpse-stamp drawing targets.

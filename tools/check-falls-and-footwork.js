@@ -1,4 +1,4 @@
-// Behavior checks for locomotion-driven falls, impact-only planted reactions,
+// Behavior checks for locomotion-driven falls, shared stationary fall behavior,
 // wound holding, collision/retirement and orthodox footwork. Uses the game rig.
 const assert=require('assert');
 const {ctx,probe}=require('./harness');
@@ -21,8 +21,14 @@ for(const a of [0,.7,Math.PI,-Math.PI/2]){
  const frozen=P('[c.x,c.y,c.rag.t,c.fall.age,...c.rag.limbs.flatMap(l=>[l.a,l.b])]');
  probe('for(let i=0;i<200;i++){frameCount++;c.update();}');assert.deepEqual(P('[c.x,c.y,c.rag.t,c.fall.age,...c.rag.limbs.flatMap(l=>[l.a,l.b])]'),frozen);
 }
+// Stationary fatalities retain their facing regardless of incoming shot angle.
+for(const facing of [0,.7,Math.PI,-Math.PI/2])for(const hit of [0,1.3,Math.PI,-2]){
+ probe(`window.e=new Character(0,0,false,'NORMAL');e.aimAngle=${facing};rememberFigureMotion(e,0,0);e.fallHit={frame:frameCount,kind:'BODY',angle:${hit},force:3,mx:0,my:0};`);drop();
+ assert.equal(P('c.fall.a'),facing);
+ for(let n=0;n<20;n++){probe('frameCount++;c.update();');assert(Math.abs(P('figureFallYaw(c.fall,c.rag)-c.fall.facing'))<.31,'stationary corpse swivelled toward shot');}
+}
 // A collision-blocked walking intention counts as planted.
-probe('window.e=new Character(0,0,false,"NORMAL");e.isMoving=true;e.moveAngle=0;rememberFigureMotion(e,0,0);');drop();assert.equal(P('c.fall.a'),Math.PI/2);assert(!P('c.fall.moving'));
+probe('window.e=new Character(0,0,false,"NORMAL");e.isMoving=true;e.moveAngle=0;rememberFigureMotion(e,0,0);');drop();assert.equal(P('c.fall.a'),P('e.aimAngle'));assert(!P('c.fall.moving'));
 const weak=P('buildFigureFall(e,0,weaponFallForce(WEAPONS.PISTOL),false,0)');
 const strong=P('buildFigureFall(e,0,weaponFallForce(WEAPONS.SHOTGUN),false,0)');assert(strong.impulse>weak.impulse&&strong.duration===weak.duration);
 // Root movement uses existing collision geometry and respects walls.
@@ -59,6 +65,18 @@ for(let i=0;i<50;i++){
   assert(P(`(()=>{const r=ragRig(c.bW,c.bH),i=c.fall.hold.arm,s=i?1:-1,L=c.rag.limbs[i],a=s*(HALF_PI+L.a),b=s*L.b;
    const x=r.shX+Math.cos(a)*r.upper+Math.cos(a+b)*(r.fore+r.hand*.3),y=s*r.shY+Math.sin(a)*r.upper+Math.sin(a+b)*(r.fore+r.hand*.3);
    return Math.hypot(x-c.fall.hold.x,y-c.fall.hold.y)<r.hand*.55;})()`),'hand missed the wound');
+  // Observe the real painter on both targets: forearm/hand below the torso,
+  // upper arm above it, without painting either segment twice.
+  const originalLimb=ctx.drawFallLimb;
+  for(const faceDown of [true,false])for(const f of [.3,1])for(const target of [null,require('./harness').mkG()]){
+   probe(`c.fall.faceDown=${faceDown};c.fP=${f};`);
+   const events=[];ctx.drawFallLimb=(...args)=>{if(args[3]===P('c.fall.hold.arm'))events.push(args[10]||'all');return originalLimb(...args);};
+   const r=target||ctx,oldEllipse=r.ellipse;
+   r.ellipse=(...args)=>{if(args[0]===0&&args[1]===0&&args[2]===P('projectFallRig(c.bW,c.bH,c.fP).TL'))events.push('torso');return oldEllipse(...args);};
+   if(target){ctx.window.layerTarget=target;probe('c.paint(layerTarget,255);');}else probe('c.show();');
+   r.ellipse=oldEllipse;ctx.drawFallLimb=originalLimb;
+   assert.deepEqual(events,faceDown&&f>.45?['fore','torso','upper']:['torso','all'],'held arm has incorrect torso occlusion');
+  }
  }else loose++;
 }
 assert(held>0&&loose>0,'ordinary reaction variety lost');
