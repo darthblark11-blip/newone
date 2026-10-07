@@ -13,6 +13,15 @@ ctx.random = function (a, b) {
   return a + r * (b - a);
 };
 
+// Ledger/assignment fixtures complete the liberation fight before awarding it.
+// Exercise the game's empty-field clear, rather than granting at tower capture.
+const clearRosterAmbush = `
+  enemiesList = enemiesList.filter(e => e.isPopulation || e.isFriendly);
+  nm0AmbushActive = true; window.ambushSpawnsRemaining = 0;
+  window.ambushFort = null; window.fortMusterJustCleared = false;
+  window.nm0AmbushCleared = false; isWin = false; killcamMode = false;
+  checkAmbushCleared();`;
+
 // The two sectors whose population feeds the town-building system: 80 people
 // seeded at the story arena's open, and the number still standing when the arc
 // completes is the number of citizens the player inherits.
@@ -65,7 +74,9 @@ for (const lvl of [1, 2]) {
   ok(`level ${lvl} the roster survives walking the sector`, after === pop, `${after} of ${pop} left`);
 
   // Killing is the only thing that reduces it, and it must not refill.
-  probe(`(() => { let n = 0; for (const e of enemiesList) { if (e.isPopulation && n < 20) { e.hp = 0; n++; } } })()`);
+  probe(`(() => { let n = 0; for (const e of enemiesList) { if (e.isPopulation && n < 20) {
+    e.hp = 0; e.dead = true; processKill(e.x, e.y, false, e.eType, false, e); n++;
+  } } })()`);
   probe('for (let i = enemiesList.length - 1; i >= 0; i--) if (enemiesList[i].hp <= 0) enemiesList.splice(i, 1);');
   const killed = P('enemiesList.filter(e => e.isPopulation).length');
   ok(`level ${lvl} kills reduce the roster`, killed === pop - 20, `${killed}, expected ${pop - 20}`);
@@ -77,7 +88,9 @@ for (const lvl of [1, 2]) {
   // And what the player would inherit.
   const got = P('recruitSectorSurvivors()');
   console.log(`   recruitSectorSurvivors() -> ${got.total} citizens (${got.female} female)`);
-  ok(`level ${lvl} survivors convert to citizens`, got.total > 30, got.total + ' recruited');
+  ok(`level ${lvl} survivors convert to allies`, got.total === pop - 20 && got.converted === pop - 20,
+     got.total + ' captured');
+  ok(`level ${lvl} capture has not awarded the pool yet`, P('poolLedger().popTotal') === 0);
 }
 
 // The seeding must be scoped to a live story arena and nothing else.
@@ -133,6 +146,7 @@ trip('into a streamed biome', 'streamed');
 // ---------------------------------------------------------------------------
 const walkThrough = (southward) => P(`(() => {
   activeBuildings = buildings;
+  buildColIndex();
   const g = buildings.find(b => b.isGovFortress && (${southward} ? b.y > 0 : b.y < 0));
   if (!g) return 'no gate';
   const pr = new Character(g.x, g.y, false, "NORMAL");
@@ -147,8 +161,8 @@ probe(`isStoryMode = true; townsData = {}; window.southGateBreachedStatus = fals
        window.nm0AmbushClearedStatus = false; nm0AmbushActive = false;`);
 probe('startAtLevel(1);');
 ok('south gate is shut before it is breached', walkThrough(true) === false);
-probe('window.southGateBreachedStatus = true; nm0AmbushActive = true;');
-ok('south gate stays shut while the muster is on the field', walkThrough(true) === false);
+probe('window.southGateBreachedStatus = true; nm0AmbushActive = true; clearGateApproach();');
+ok('south gate opens while the muster is still on the field', walkThrough(true) === true);
 probe('nm0AmbushActive = false; window.nm0AmbushClearedStatus = true; clearGateApproach();');
 ok('south gate opens once breached and the ambush is beaten', walkThrough(true) === true);
 ok('the wings either side are still a wall', P(`(() => {
@@ -314,7 +328,8 @@ function liberate(lvl, kills) {
         e.dead = true; processKill(e.x, e.y, false, e.eType, false); n++;
       } } })()`);
   probe(`for (const b of buildings) if (b.isTower) b.hp = 0;
-         markSectorTowersDown(currentLevel); recruitSectorSurvivors();`);
+         markSectorTowersDown(currentLevel); recruitSectorSurvivors();
+         ${clearRosterAmbush}`);
   // Grants land in the POOL now — one undivided army — so that is what the
   // payout assertions read.
   return led(JSON.stringify(P('POP_POOL')));
@@ -399,6 +414,7 @@ console.log('\n== the tan outpost does not disturb anyone else ==');
   probe('startAtLevel(1);');
   probe(`for (const b of buildings) if (b.isTower) b.hp = 0;
          markSectorTowersDown(1); recruitSectorSurvivors();
+         ${clearRosterAmbush}
          beginDirective(POP_POOL, 'W');
          window.popFarmingM = 25; window.popMilitaryM = 30; window.popArchitectureM = 15;
          window.popUnassignedM = window.popUnassignedM - 70;
@@ -608,13 +624,15 @@ console.log('\n== the Green Line does not touch anybody else\'s Directive ==');
   probe('isStoryMode = true; townsData = {}; started = true; doTick = true;');
   probe('startAtLevel(1);');
   probe(`for (const b of buildings) if (b.isTower) b.hp = 0;
-         markSectorTowersDown(1); recruitSectorSurvivors();`);
+         markSectorTowersDown(1); recruitSectorSurvivors();
+         ${clearRosterAmbush}`);
   probe(`beginDirective(1, 'W'); window.popFarmingM = 25; window.popMilitaryM = 30;
          window.popScienceM = 10; window.popArchitectureM = 15; window.popUnassignedM = 0;
          storeWindowIntoLedger(1); townsData[1].established = true;`);
   probe('startAtLevel(2);');
   probe(`for (const b of buildings) if (b.isTower) b.hp = 0;
-         markSectorTowersDown(2); recruitSectorSurvivors();`);
+         markSectorTowersDown(2); recruitSectorSurvivors();
+         ${clearRosterAmbush}`);
   probe(`beginDirective(2, 'W'); window.popFarmingF = 20; window.popMilitaryF = 25;
          window.popUnassignedF = 23; storeWindowIntoLedger(2); townsData[2].established = true;`);
   const before = snap();
@@ -713,7 +731,8 @@ console.log('\n== the travelling army ==');
   probe('isStoryMode = true; townsData = {}; started = true; doTick = true;');
   probe('startAtLevel(1);');
   probe(`for (const b of buildings) if (b.isTower) b.hp = 0;
-         markSectorTowersDown(1); recruitSectorSurvivors();`);
+         markSectorTowersDown(1); recruitSectorSurvivors();
+         ${clearRosterAmbush}`);
   ok('liberating a sector fills the pool, not the sector', pool().total === 80,
      pool().total + ' in the army');
 
@@ -723,7 +742,8 @@ console.log('\n== the travelling army ==');
 
   probe('startAtLevel(2);');
   probe(`for (const b of buildings) if (b.isTower) b.hp = 0;
-         markSectorTowersDown(2); recruitSectorSurvivors();`);
+         markSectorTowersDown(2); recruitSectorSurvivors();
+         ${clearRosterAmbush}`);
   ok('the next sector ADDS to the same army', pool().total === 148 || pool().total === 160,
      pool().total + ' after two sectors');
   ok('and the jobs already handed out survive it',

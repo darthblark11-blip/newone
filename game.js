@@ -5612,13 +5612,15 @@ function draw() {
             
 
             } else if (window.nm0AmbushCleared) {
+        // Also handles a save made at the final kill before the story beat.
+        finishSectorRecruitment();
         // CLEAR AMBUSH FLAGS
         window.nm0AmbushCleared = false;
         nm0AmbushActive = false;
         window.nm0AmbushClearedStatus = true;
         // Towers down and the muster beaten opens the south gate on its own.
         if (typeof recordSouthGateBreached === 'function') recordSouthGateBreached(currentLevel);
-        // The breach becomes a road at exactly this moment.
+        // Tower-only openings are ready now; physical breaches already opened.
         if (typeof clearGateApproach === 'function') clearGateApproach();
 
         // Which ambush just ended decides which beat this is. Read it out and
@@ -7648,12 +7650,9 @@ function sectorTowersAreDown(level) {
   return !!(t && t.towersDown);
 }
 
-// The towers are the sector's leash. With them down, everyone still standing in
-// it who is a person rather than a machine stops being NM-0's and starts being
-// Stick City's -- which is the whole point of the savior route, and until now it
-// only happened for whoever was left alive at the moment an ambush was cleared.
-// A sector with no ambush in it -- the Undercity, whose objective is the towers
-// themselves -- never converted anybody.
+// The towers are the sector's leash. Dropping them frees its living conscripts
+// to fight alongside the player. The final award waits for the ambush to clear
+// and includes only the members of that captured roster who survived.
 //
 // Armour does not defect. ARMORED and ARMORED_STANDARD are hardware; the pistol
 // regulars and the incendiary crews are conscripts.
@@ -7666,8 +7665,7 @@ function recruitSectorSurvivors() {
     // residents streamed in from the chunk population layer and any wanderer
     // that drifted into the arena are all the right TYPE to recruit, and none of
     // them are people the player spared -- counting them handed out citizens
-    // nobody earned and broke the one promise the mechanic makes, which is that
-    // the number you get is the number you did not shoot.
+    // nobody earned. Only the original roster's survivors can join the army.
     if (!e.isPopulation) continue;
     if (RECRUITABLE.indexOf(e.eType) === -1) continue;
     e.isFriendly = true;
@@ -7687,14 +7685,24 @@ function recruitSectorSurvivors() {
     const keep = list.filter(e => !e.isRecruit);
     if (keep.length !== list.length) chunkPop.set(k, keep);
   }
-  // The bodies that changed sides are `n`. What the player is OWED is the
-  // ledger's arithmetic -- seeded minus killed -- and the two are allowed to
-  // disagree, because a resident who wandered out of the chunk the player was
-  // standing in is still one of the eighty. The grant is latched, so this is
-  // safe to call again on a re-entry or a reload.
-  const owed = grantSectorSurvivors(currentLevel);
+  // Changing sides is the capture, not the award. Their deaths still count
+  // during the ambush; the surviving roster joins the pool when it is clear.
+  return { total: sectorSurvivorCount(currentLevel), female: f, converted: n };
+}
+
+function finishSectorRecruitment() {
+  if (!isStoryMode || (currentLevel !== 1 && currentLevel !== 2) ||
+      !window.nm0AmbushCleared || !sectorTowersAreDown(currentLevel) || window.ambushFort ||
+      window.fortMusterJustCleared || activeFortMuster(currentBiome)) return 0;
+  const t = sectorLedger(currentLevel);
+  if (t.popGranted) return 0;
+  // Per-sector and saved: an earlier gate fight, or another sector's ambush,
+  // must not award this roster before its own liberation fight is finished.
+  t.popAmbushCleared = true;
+  recruitSectorSurvivors();
+  const joined = grantSectorSurvivors(currentLevel);
   loadLedgerIntoWindow(POP_POOL);
-  return { total: owed, female: f, converted: n };
+  return joined;
 }
 
 function markSectorTowersDown(level) {
@@ -7836,7 +7844,7 @@ function sectorLedger(id) {
     t.popUnassignedM = Number(t.popUnassignedM) || 0;
     t.popUnassignedF = Number(t.popUnassignedF) || 0;
     t.popSeeded  = Number(t.popSeeded)  || 0;   // how many were put on the ground
-    t.popKilled  = Number(t.popKilled)  || 0;   // how many of them the player shot
+    t.popKilled  = Number(t.popKilled)  || 0;   // roster deaths before the final award
     migrateLegacyLedger(id, t);
     t.popTotal   = sectorPopSum(t);
     return t;
@@ -7966,8 +7974,8 @@ function storeWindowIntoLedger(id) {
 // What the sector owes the player when its arc completes.
 //
 // For Stick City and the Undercity this is pure arithmetic -- eighty seeded
-// minus the ones they shot before the towers came down -- and that is the whole
-// point of the mechanic. Counting the bodies still standing could never be
+// minus deaths before liberation AND deaths among the freed allies during the
+// ambush. Counting the bodies still standing could never be
 // right: the roster is spawned, streamed, culled and rebuilt, so the answer
 // changed depending on where the player was standing when the towers fell.
 // The stun baton and the taser exist so that "all eighty" is reachable, and it
@@ -7989,6 +7997,7 @@ function sectorSurvivorCount(level) {
 function grantSectorSurvivors(level) {
     const t = sectorLedger(level);
     if (t.popGranted) return 0;
+    if (t.popSeeded > 0 && !t.popAmbushCleared) return 0;
     const n = sectorSurvivorCount(level);
     // A sector that counts its allies off the ground can be asked before they
     // have finished changing sides -- the tan outpost flips the whole cordon
@@ -8289,13 +8298,8 @@ function triggerGateAmbush(fortressY, isNorthGate = false) {
     // and travel out of the sector. The Undercity's wall is a different wall in a
     // different sector and keeps its own record, or blowing it open would mark
     // Stick City's Great Gate down without a shot being fired there.
-    if (currentLevel === 2) {
-        if (isNorthGate) window.undercityNorthBreached = true;
-        else window.undercitySouthBreached = true;
-    } else {
-        if (isNorthGate) window.northGateBreachedStatus = true;
-        else window.southGateBreachedStatus = true;
-    }
+    recordSectorGateBreach(isNorthGate);
+    clearGateApproach();
 
     // MERGE ACTIVE AMBUSHES (Scenario 4)
     if (nm0AmbushActive) {
@@ -8346,7 +8350,7 @@ function triggerGateAmbush(fortressY, isNorthGate = false) {
 
     // If Savior Route, wake up the town allies
     if (window.towersDefeated) {
-        let candidates = enemiesList.filter(e => e.eType === "NORMAL" || e.eType === "BUG" || e.eType === "SNAIL" || e.eType === "MOLOTOV");
+        let candidates = enemiesList.filter(e => e.isRecruit && e.isFriendly && !e.dead && e.hp > 0);
         for(let e of candidates) { 
             // Waking them up changes whose side they are on, not how many
             // people the sector has. globalPopulation is the sum of the
@@ -8821,6 +8825,8 @@ function sectorPopType(level, r) {
 
 function seedSectorPopulation(level, count) {
   if (!player) return 0;
+  const ledger = sectorLedger(level);
+  if (ledger.popSeeded > 0) count = Math.min(count, Math.max(0, ledger.popSeeded - ledger.popKilled));
 
   // The blocks they live around. Anything that is a mass with a footprint big
   // enough to stand beside -- not a lot, not a kerbside fitting, and not one of
@@ -8974,6 +8980,7 @@ function triggerExplosion(ex, ey, rad, isMolotov = false, sourceIsPlayer = true)
   if (isMolotov) fires.push(new FireZone(ex, ey, rad));
   
   let explodingCars = [];
+  let gateBreached = false;
   
   // --- 1. DESTRUCTIBLE BUILDINGS & CARS ---
   for (let i = buildings.length - 1; i >= 0; i--) {
@@ -9000,12 +9007,18 @@ function triggerExplosion(ex, ey, rad, isMolotov = false, sourceIsPlayer = true)
                       const fdef = outpostFortDef(currentBiome);
                       setTimeout(() => { if (started) triggerOutpostAmbush(fdef); }, 2000);
                   }
-                  else if (typeof triggerGateAmbush === 'function') setTimeout(() => { if (started) triggerGateAmbush(fY, isNorth); }, 2000);
+                  else if (typeof triggerGateAmbush === 'function') {
+                      recordSectorGateBreach(isNorth);
+                      gateBreached = true;
+                      setTimeout(() => { if (started) triggerGateAmbush(fY, isNorth); }, 2000);
+                  }
               }
           }
 
       }
 }
+
+  if (gateBreached) clearGateApproach();
 
   for (let i = parkingCars.length - 1; i >= 0; i--) {
       let c = parkingCars[i];
@@ -9064,7 +9077,7 @@ function triggerExplosion(ex, ey, rad, isMolotov = false, sourceIsPlayer = true)
               spawnSplatter(e.x, e.y, "BLOOD", bCol);
           }
 
-          processKill(e.x, e.y, false, e.eType, e.isFriendly);
+          processKill(e.x, e.y, false, e.eType, e.isFriendly, e);
           
           enemiesList.splice(i, 1); 
           if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100);
@@ -9161,7 +9174,7 @@ function triggerRocketExplosion(ex, ey, sourceIsPlayer, directHitTarget = null) 
                   spawnSplatter(e.x, e.y, "BLOOD", bCol);
               }
 
-              processKill(e.x, e.y, false, e.eType, e.isFriendly);
+              processKill(e.x, e.y, false, e.eType, e.isFriendly, e);
               enemiesList.splice(i, 1); 
               if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100);
           } else if (e.hp > 0) {
@@ -10226,7 +10239,7 @@ class PlayerGrenade {
                                 spawnSplatter(e.x, e.y, "BLOOD", color(90, 0, 0));
                                 corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 11, a, e.decals, e.currentWeapon, a, e.eType, e.bodyW, e.bodyH, e));
                             }
-                            processKill(e.x, e.y, false, e.eType, e.isFriendly);
+                            processKill(e.x, e.y, false, e.eType, e.isFriendly, e);
                             enemiesList.splice(i, 1); 
                             if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100);
                         } else {
@@ -10537,7 +10550,7 @@ class Shockwave {
                         emit(e.x, e.y, 60, bCol, "GORE"); spawnSplatter(e.x, e.y, "BLOOD", bCol); 
                         corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 14, this.a, e.decals, e.currentWeapon, this.a, e.eType, e.bodyW, e.bodyH, e)); 
                     } 
-                    processKill(e.x, e.y, false, e.eType, e.isFriendly); 
+                    processKill(e.x, e.y, false, e.eType, e.isFriendly, e);
                 }
             }
         }
@@ -13509,7 +13522,7 @@ this.skeletonTimer = 0;
                         corpses.push(c);
                         }
 
-                        processKill(t.x, t.y, false, t.eType, t.isFriendly);
+                        processKill(t.x, t.y, false, t.eType, t.isFriendly, t);
                         
                         let idx = enemiesList.indexOf(t);
                         if (idx > -1) enemiesList.splice(idx, 1);
@@ -13599,7 +13612,7 @@ this.skeletonTimer = 0;
                         // just goes up where it landed.
                         else if (e.eType === "ROBOT") { robotDeathBurst(e, ang, true); }
                         else { emit(e.x, e.y, 40, bCol, "GORE"); spawnSplatter(e.x, e.y, "BLOOD", bCol); corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 3, 0, e.decals, e.currentWeapon, ang, e.eType, e.bodyW, e.bodyH, e)); }
-                        processKill(e.x, e.y, false, e.eType, e.isFriendly);
+                        processKill(e.x, e.y, false, e.eType, e.isFriendly, e);
                     }
                 }
             }
@@ -13721,7 +13734,7 @@ this.skeletonTimer = 0;
                             corpses.push(meleeTool()==="SWORD"&&ragHumanoid(e.eType,e.bodyW)?swordKillCorpse(e,this.aimAngle):
                               new Corpse(e.x,e.y,e.moveAngle,e.aimAngle,e.shirtCol,e.pantsCol,3,0,e.decals,e.currentWeapon,this.aimAngle,e.eType,e.bodyW,e.bodyH,e)); }
                           
-                          processKill(e.x, e.y, false, e.eType, e.isFriendly); 
+                          processKill(e.x, e.y, false, e.eType, e.isFriendly, e);
                       } 
                   } 
               } 
@@ -16191,11 +16204,11 @@ function updateAndDrawFloatingScores() {
 }
 
 
-function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = false) {
+function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = false, victim = null) {
     if(CITY_CIVILIANS.indexOf(eType)!==-1)return;
     
-    // NEW: Find the exact enemy that just died using the coordinates we already have!
-    let deadGuy = enemiesList.find(e => e.x === x && e.y === y && e.dead);
+    // Use the actual victim: several falling bodies can share the same spot.
+    let deadGuy = victim || enemiesList.find(e => e.x === x && e.y === y && e.dead);
     // A fort muster conscripts on a tick, and a body that spawned and died
     // inside one tick period would slip through it untagged -- which drains
     // nothing and calls no wave. Ask once more here, on the body itself, and
@@ -16203,14 +16216,17 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
     if (deadGuy && !deadGuy.isAmbush && typeof conscriptIntoMuster === 'function') conscriptIntoMuster(deadGuy);
     let isAmbushKill = deadGuy ? deadGuy.isAmbush : false;
 
-    // One of the sector's own, shot before the towers came down. This is the
-    // ONLY thing that reduces what the player inherits, and it is counted here,
+    // A member of the sector's roster, including a freed ally lost in the
+    // ambush. This reduces what the player inherits and is counted here,
     // as it happens, rather than inferred later from who is still standing --
     // a headcount cannot tell "spared" from "wandered off" or "not streamed in
     // right now", which is why the number used to move on its own.
-    if (deadGuy && deadGuy.isPopulation && !deadGuy.isFriendly) {
+    if (deadGuy && deadGuy.isPopulation && !deadGuy.populationDeathCounted) {
         const t = sectorLedger(currentLevel);
-        if (!t.popGranted) t.popKilled++;
+        if (!t.popGranted) {
+            t.popKilled = Math.min(t.popSeeded, t.popKilled + 1);
+            deadGuy.populationDeathCounted = true;
+        }
     }
     // A soldier the player marched here from somewhere else. They belong to the
     // sector that raised them, so that is the ledger the loss comes off.
@@ -16307,7 +16323,8 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
         
         if (nm0AmbushKills <= 0 && !isWin && !killcamMode) { 
             killcamMode = true; killcamTarget = { x: x !== undefined ? x : player.x, y: y !== undefined ? y : player.y }; 
-            killcamTimer = 150; window.nm0AmbushCleared = true; 
+            killcamTimer = 150; window.nm0AmbushCleared = true;
+            finishSectorRecruitment();
         }
         return; // Exits so the ambush kill DOES NOT count toward the Stick City population
     }
@@ -16502,7 +16519,7 @@ function updateEntities() {
 
       
       if (inView(e.x, e.y, 150)) actorShow(e);
-      if (e.hp <= 0 && !e.dead) { e.dead = true; processKill(e.x, e.y, false, e.eType, e.isFriendly); enemiesList.splice(i, 1); if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100); }
+      if (e.hp <= 0 && !e.dead) { e.dead = true; processKill(e.x, e.y, false, e.eType, e.isFriendly, e); enemiesList.splice(i, 1); if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100); }
   }
 
   checkAmbushCleared();
@@ -16713,6 +16730,7 @@ function checkAmbushCleared() {
   }
   window.ambushFort = null;              // the muster is over; stop conscripting
   window.nm0AmbushCleared = true;        // routes through the killcam into the story loop
+  finishSectorRecruitment();
   streakMsgText = "AMBUSH CLEARED!";
   streakMsgTimer = 180;
 
@@ -16936,7 +16954,7 @@ function updateBullets() {
                         corpses.push(new Corpse(t.x, t.y, t.moveAngle, t.aimAngle, t.shirtCol, t.pantsCol,
                                                 t.enraged ? 1 : 0, hA, t.decals, t.currentWeapon, b.a,
                                                 "ROBOT", t.bodyW, t.bodyH, t));
-                        processKill(t.x, t.y, b.tH === "HEAD", t.eType, t.isFriendly);
+                        processKill(t.x, t.y, b.tH === "HEAD", t.eType, t.isFriendly, t);
                         // `i` here is the BULLET index -- the target loop is a
                         // for-of with no index of its own -- so the body has to
                         // be found rather than assumed.
@@ -16985,7 +17003,7 @@ function updateBullets() {
                     } 
                     if (t.isPlayer) { playerRespawnTimer = 90; } else { 
                         let isHeadshot = (b.tH === "HEAD" && t.eType !== "BUG" && t.eType !== "SNAIL" && t.eType !== "SNAIL_HYBRID");
-                        processKill(t.x, t.y, isHeadshot, t.eType, t.isFriendly); 
+                        processKill(t.x, t.y, isHeadshot, t.eType, t.isFriendly, t);
                         let eI = enemiesList.indexOf(t); if (eI > -1) enemiesList.splice(eI, 1); 
                         if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100); 
                     } 
@@ -19701,7 +19719,7 @@ function saveGame() {
         // --- NEW FOR TOWN PERSISTENCE ---
         townsData: typeof townsData !== 'undefined' ? townsData : null,
         // The ledger itself rides along inside townsData (popSeeded, popKilled,
-        // popGranted are plain fields on it). These two are the escort's
+        // popAmbushCleared and popGranted are plain fields). These two are the escort's
         // paperwork and live on window, so they have to be named.
         escortHome: window.escortHome || null,
         escortWasF: window.escortWasF || 0,
@@ -19977,9 +19995,13 @@ window.militaryToBring = state.militaryToBring || 0;
             let isTownEst = townsData && townsData[currentLevel] && townsData[currentLevel].established;
             let survivorCount = 0;
             
-            // ONLY SPAWN SURVIVORS IF THE TOWN ISN'T ESTABLISHED YET
-            if (!isTownEst) {
-                survivorCount = Math.min(80, window.nm0AmbushCleared ? popTotal : Math.max(0, MAX_KILLS - totalKills));
+            // The saved roster includes losses AFTER conversion. Neither the
+            // kill score nor the existing army says how many recruits survived.
+            const sectorRoster = (currentLevel === 1 || currentLevel === 2) &&
+                                 sectorLedger(currentLevel).popSeeded > 0;
+            if (!isTownEst || (sectorRoster && !sectorLedger(currentLevel).popGranted)) {
+                survivorCount = sectorRoster ? sectorSurvivorCount(currentLevel) :
+                    Math.min(80, window.nm0AmbushCleared ? popTotal : Math.max(0, MAX_KILLS - totalKills));
             }
             
             // RE-SPAWN THE EXACT NUMBER OF ALLIES
@@ -19991,6 +20013,8 @@ window.militaryToBring = state.militaryToBring || 0;
                     let a = new Character(ax, ay, false, allyType);
                     
                     a.isFriendly = true;
+                    a.isPopulation = sectorRoster;
+                    a.isRecruit = sectorRoster;
                     a.hp = 300;
                     a.state = nm0AmbushActive ? "CHASE" : "IDLE";
                     
@@ -35198,27 +35222,16 @@ const GATE_DOOR_HALF = 300;      // matches the doorway the art draws
 
 function gateIsOpen(b) {
   if (!b || !b.isGovFortress) return false;
-  // The overworld fort's door answers to its own record, not to Stick City's
-  // arc flags -- but on the same terms: breached, and the muster beaten.
+  // An overworld fort answers to its own record.
   if (b.isOutpostGate) {
-    // AND IT OPENS THE MOMENT IT IS BLOWN, not when the muster is beaten.
-    //
-    // Stick City's gates wait, and they are right to: that gate is the way OUT
-    // of the sector, and holding it shut until the field is clear is what stops
-    // the player walking away from the fight. An overworld fort is the other
-    // way round -- the hole is the way IN, the fight is on the other side of
-    // it, and a player who has just spent a rocket on the door should be able
-    // to walk through it. Left on the sector's rule, the charge went off and
-    // the doorway stayed solid.
     const st = outpostFortState(currentBiome);
     return !!(st.captured || st.breached);
   }
-  // While the muster is still on the field the breach is not yet a road -- but
-  // only THIS SECTOR'S muster. An overworld fort's muster is a fight five
-  // chunks out in the country with nothing to do with the city's gate, and
-  // holding the door on it slammed a gate the player had already paid a rocket
-  // for -- on a reload too, since nm0AmbushActive is saved and the entity list
-  // is not. A gate that has been opened stays open.
+  // A destroyed door opens immediately, including during an active ambush.
+  // Stick City's north wall remains the HQ interaction rather than a road.
+  if (currentLevel === 1 && b.y > 0 && window.southGateBreachedStatus) return true;
+  if (currentLevel === 2 && (b.y > 0 ? window.undercitySouthBreached : window.undercityNorthBreached)) return true;
+  // Unshot doors released by the transmission grid keep the tower-clear beat.
   if (nm0AmbushActive && !activeFortMuster(currentBiome)) return false;
   if (!window.nm0AmbushClearedStatus) return false;
 
@@ -35242,6 +35255,17 @@ function gateIsOpen(b) {
     return b.y > 0 ? !!window.undercitySouthBreached : !!window.undercityNorthBreached;
   }
   return false;
+}
+
+// Record destruction at the blast, before the delayed garrison starts arriving.
+function recordSectorGateBreach(isNorthGate) {
+  if (currentLevel === 2) {
+    if (isNorthGate) window.undercityNorthBreached = true;
+    else window.undercitySouthBreached = true;
+  } else if (currentLevel === 1) {
+    if (isNorthGate) window.northGateBreachedStatus = true;
+    else window.southGateBreachedStatus = true;
+  }
 }
 
 // Write the breach down as if the player had blown it. Called when a muster is
@@ -35273,11 +35297,13 @@ function inOpenGateway(b, x) {
 // no way through it. Once the gate opens they have no job left and they come out.
 //
 // Idempotent, and recorded on the gate itself: it is called at level entry and
-// again when the muster is beaten, and the second call is free.
+// again at a breach or a tower ambush clear, and repeated calls are free.
 function clearGateApproach() {
+  let opened = false;
   for (const g of buildings) {
     if (!g.isGovFortress || g.__approachCleared || !gateIsOpen(g)) continue;
     g.__approachCleared = true;
+    opened = true;
     const y0 = g.y - g.h / 2 - 260, y1 = g.y + g.h / 2 + 260;
     const inDoor = (x, y) => Math.abs(x - g.x) <= GATE_DOOR_HALF + 80 && y >= y0 && y <= y1;
     for (let i = buildings.length - 1; i >= 0; i--) {
@@ -35295,8 +35321,17 @@ function clearGateApproach() {
       if (inDoor(barrels[i].x, barrels[i].y)) barrels.splice(i, 1);
     }
     for (let i = parkingCars.length - 1; i >= 0; i--) {
-      if (inDoor(parkingCars[i].x, parkingCars[i].y)) parkingCars.splice(i, 1);
+      if (inDoor(parkingCars[i].x, parkingCars[i].y)) {
+        parkingCars.splice(i, 1);
+      }
     }
+  }
+  // Collision and drawing caches otherwise retain the rubble for ten frames.
+  if (opened) {
+    const liveBuildings = new Set(buildings), liveCars = new Set(parkingCars);
+    activeBuildings = activeBuildings.filter(b => liveBuildings.has(b));
+    activeParkingCars = activeParkingCars.filter(c => liveCars.has(c));
+    invalidateColIndex();
   }
 }
 
@@ -35803,6 +35838,7 @@ function restoreAuthoredStoryState(lvl) {
     for (let i = buildings.length - 1; i >= 0; i--) {
       if (buildings[i].isTower) buildings.splice(i, 1);
     }
+    recruitSectorSurvivors();
   }
 
   // A breached Great Gate stays breached — this is what keeps the "ENTER NM-0

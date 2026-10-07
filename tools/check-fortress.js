@@ -179,11 +179,8 @@ ok('and it musters INSIDE the walls',
    P('enemiesList.filter(e=>e.isAmbush && e.isOutpost).length'));
 ok('clearing it must not be read as the sector\'s own beat', P('window.ambushKind') === 'GATE',
    String(P('window.ambushKind')));
-// AND IT IS A ROAD IMMEDIATELY. Stick City's gates hold shut until the field
-// is clear -- that gate is the way OUT of the sector, and holding it is what
-// stops the player walking away from the fight. An overworld fort is the other
-// way round: the hole is the way IN, the fight is behind it, and a player who
-// has just spent a rocket on the door walks through it.
+// A destroyed fort door is a road immediately, just like the main sector
+// gates. The ambush continues behind the open doorway.
 ok('the door is a road the moment it is blown, muster or no muster',
    P('gateIsOpen(buildings.find(b=>b.isOutpostGate && !b.fortSide))') === true &&
    P('nm0AmbushActive') === true);
