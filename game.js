@@ -18297,7 +18297,7 @@ function drawUI() {
 
 
 function handleGamepad() {
-  let pads = navigator.getGamepads(), pad = null; for (let i = 0; i < pads.length; i++) if (pads[i]) { pad = pads[i]; break; } if (!pad) return;
+  let pads = navigator.getGamepads(), pad = null; for (let i = 0; i < pads.length; i++) if (pads[i]) { pad = pads[i]; break; } if (!pad) { prevGamepadButtons = []; return; }
   
   let lx = pad.axes[0], ly = pad.axes[1], ld = dist(0, 0, lx, ly); 
   if (ld > 0.2) { leftStick.active = true; leftStick.dx = lx; leftStick.dy = ly; window.showOnScreenControls = false; window.isDesktop = false; } else if (!touches.length && !window.isDesktop) leftStick.active = false;
@@ -18305,25 +18305,40 @@ function handleGamepad() {
   let rx = pad.axes[2], ry = pad.axes[3], rd = dist(0, 0, rx, ry); 
   if (rd > 0.2) { rightStick.active = true; rightStick.dx = rx; rightStick.dy = ry; rightStick.dist = rd; window.showOnScreenControls = false; window.isDesktop = false; } else if (!touches.length && !window.isDesktop) rightStick.active = false;
   
-  let btn = (i) => pad.buttons[i] && pad.buttons[i].pressed, jP = (i) => btn(i) && !prevGamepadButtons[i];
-  let anyBtn = false; for (let i = 0; i < pad.buttons.length; i++) { prevGamepadButtons[i] = btn(i); if (btn(i)) anyBtn = true; }
+  // Backbone One uses the standard browser button layout. Keep the previous
+  // frame until all edge-triggered actions have read it.
+  let btn = (i) => !!pad.buttons[i]?.pressed, jP = (i) => btn(i) && !prevGamepadButtons[i];
+  let anyBtn = false; for (let i = 0; i < pad.buttons.length; i++) { if (btn(i)) anyBtn = true; }
   if (anyBtn) { window.showOnScreenControls = false; window.isDesktop = false; }
   
-  if (jP(0) && (smgUnlocked || shotgunUnlocked || arUnlocked || rocketLauncherUnlocked) && millis() - lastWeaponSwapTime > 300 && player) { 
+  if ((jP(14) || jP(15)) && !(jP(14) && jP(15)) && millis() - lastWeaponSwapTime > 300 && player) {
       let aW = [WEAPONS.PISTOL]; 
+      if (isStoryMode) aW.push(WEAPONS.TASER);
       if (dualSmgUnlocked) aW.push(WEAPONS.DUAL_SMG); else if (smgUnlocked) aW.push(WEAPONS.SMG); 
       if (arUnlocked) aW.push(WEAPONS.ASSAULT_RIFLE); if (shotgunUnlocked) aW.push(WEAPONS.SHOTGUN); if (rocketLauncherUnlocked) aW.push(WEAPONS.ROCKET_LAUNCHER); 
-      let nI = (aW.indexOf(player.currentWeapon) + 1) % aW.length; player.currentWeapon = aW[nI]; player.reloadTimer = 0; lastWeaponSwapTime = millis(); 
+      if (aW.length > 1) {
+          let nI = aW.indexOf(player.currentWeapon);
+          nI = nI < 0 ? (jP(14) ? aW.length - 1 : 0) : (nI + (jP(14) ? -1 : 1) + aW.length) % aW.length;
+          player.currentWeapon = aW[nI]; player.reloadTimer = 0; lastWeaponSwapTime = millis();
+      }
   }
+  if (jP(12) && player) cycleMeleeTool(); // D-pad up only; down stays unmapped.
   if (jP(2) && player && player.reloadTimer <= 0 && player.ammo < player.currentWeapon.maxAmmo) { player.triggerReload(); }
-  if ((pad.buttons[3]?.pressed || pad.buttons[5]?.pressed) && meleeUnlocked) meleeInputHeld = true;   
-  
-  // --- NEW: Controller Support for Grenades ---
-  grenadeInputHeld = (pad.buttons[4]?.pressed || pad.buttons[6]?.pressed) ? true : false;
 
-  if ((jP(3) || jP(5)) && meleeUnlocked && player && player.dashTimer <= 0 && !chemistSuitUnlocked) { player.activateMelee(); }
-  if (jP(1) && millis() - lastToggleTime > 300) { headAimToggle = !headAimToggle; lastToggleTime = millis(); }
-  if ((jP(4) || jP(6)) && jetpackUnlocked && player && player.dashCooldown <= 0 && player.dashTimer <= 0 && player.meleeTimer <= 0) { player.activateDash(); }
+  // L2 holds/cooks the suit's throwable; L1 holds the chemist cannon charge.
+  // Merge with touch input, which clears these held flags at the frame's start.
+  if (chemistSuitUnlocked) {
+      if (btn(6)) meleeInputHeld = true; // Chemist flasks use the existing melee input.
+      if (btn(4)) cannonInputHeld = true; // Suit ability slot; future ninja parry goes here.
+  } else {
+      if ((btn(3) || btn(5)) && meleeUnlocked) meleeInputHeld = true;
+      if (btn(6)) grenadeInputHeld = true;
+  }
+  if (jP(11) && millis() - lastToggleTime > 300) { headAimToggle = !headAimToggle; lastToggleTime = millis(); }
+  if (jP(10) && jetpackUnlocked && player && player.dashCooldown <= 0 && player.dashTimer <= 0 && player.meleeTimer <= 0) { player.activateDash(); }
+
+  prevGamepadButtons.length = pad.buttons.length;
+  for (let i = 0; i < pad.buttons.length; i++) prevGamepadButtons[i] = btn(i);
 }
 
 
