@@ -13,6 +13,10 @@ probe(`isStoryMode=false;townsData={};startAtLevel(1);started=true;doTick=true;B
  viewLeft=viewTop=-1e6;viewRight=viewBottom=1e6;setMeleeTool('NONE');`);
 assert.equal(P('ragHumanoid("ARMORED",105)'),false,'red-orb hybrid entered human anatomy');
 assert.equal(P('ragHumanoid("ARMORED_STANDARD",21)'),true,'pistol armor lost human anatomy');
+// The requested back-art removal is the sole difference from this baseline.
+// Only the old worker omits that cosmetic layer; the current painter is real.
+const bareBaseline=process.argv.includes('--bare-baseline');
+if(bareBaseline){const attire=ctx.drawFallenAttire;ctx.drawFallenAttire=(g,id,...a)=>{if(id.eType!=='ARMORED')attire(g,id,...a);};}
 let trace=[],recording=false,depth=0;
 for(const n of ['push','pop','translate','rotate','scale','fill','stroke','noFill','noStroke','strokeWeight','ellipse','rect','arc','line','quad','triangle','beginShape','vertex','curveVertex','endShape','image']){
  const fn=ctx[n];ctx[n]=(...args)=>{if(recording){if(n==='push')depth++;if(n==='pop')assert(--depth>=0,'unbalanced hybrid painter');
@@ -20,6 +24,7 @@ for(const n of ['push','pop','translate','rotate','scale','fill','stroke','noFil
 }
 ctx.__hybridTarget={...ctx};
 function paint(code){trace=[];depth=0;const before=seed;recording=true;probe(code);recording=false;
+ if(bareBaseline&&code.startsWith('c.show')&&P('c.dT===7')){for(let i=trace.length-1;i>0;i--){const [n,a]=trace[i];if(n==='ellipse'&&a[0]===0&&a[1]===0&&Math.abs(a[2]-48.6)<1e-9&&Math.abs(a[3]-100.8)<1e-9){assert.equal(trace[i-1][0],'fill');trace.splice(i-1,2);}}}
  assert.equal(depth,0);assert.equal(seed,before,'hybrid drawing consumed randomness');return trace;}
 function snapshot(label){
  assert(P('!c.rag&&!c.fall&&!c.spray&&!c.headSpatter'),'hybrid acquired directional limbs, head roll or clothing spray');
@@ -61,9 +66,9 @@ if(process.argv.includes('--snapshot'))process.stdout.write(JSON.stringify(rows)
 else{
  if(process.env.ARMORED_LEGACY_GAME){
   assert(fs.existsSync(process.env.ARMORED_LEGACY_GAME));
-  const old=JSON.parse(execFileSync(process.execPath,[__filename,'--snapshot'],{env:{...process.env,GAME_JS:process.env.ARMORED_LEGACY_GAME},maxBuffer:4*1024*1024}));
-  assert.deepStrictEqual(rows,old,'red-orb hybrid state, corpse/stun painting or blood effects changed from its old deaths');
-  console.log(`Legacy hybrid comparison passed: ${rows.length} complete state/painting snapshots match the pre-update version.`);
+  const old=JSON.parse(execFileSync(process.execPath,[__filename,'--snapshot','--bare-baseline'],{env:{...process.env,GAME_JS:process.env.ARMORED_LEGACY_GAME},maxBuffer:4*1024*1024}));
+  assert.equal(rows.length,old.length);for(let i=0;i<rows.length;i++)assert.deepStrictEqual(rows[i],old[i],`red-orb hybrid changed at ${rows[i].label}`);
+  console.log(`Legacy hybrid comparison passed: ${rows.length} complete state/painting snapshots match the pre-update version with its requested back-art removal.`);
  }
  console.log(`Red-orb hybrid checks passed: all 16 death forms, original anatomy/collapse on live and stamped targets, ${kills} actual body/head killshots and exclusion from the humanoid punch rig. NMO pistol armor retains the shared rig.`);
 }

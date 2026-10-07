@@ -420,7 +420,7 @@ console.log('\n== it all draws ==');
   probe('viewLeft = -1e6; viewRight = 1e6; viewTop = -1e6; viewBottom = 1e6;');
   let err = null, segs = 0;
   try {
-    for (const dT of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]) {
+    for (const dT of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]) {
       for (const eT of ['NORMAL', 'FEMALE_PISTOL', 'ARMORED_STANDARD', 'ROBOT', 'BUG']) {
         probe(`corpses = [];
                corpses.push(new Corpse(0, 0, 0.3, 0.3, color(1), color(1), ${dT}, 0.2, [],
@@ -430,7 +430,7 @@ console.log('\n== it all draws ==');
       }
     }
   } catch (e) { err = e.message; }
-  ok('every death type and body draws mid-fall and at rest', err === null, err || '16 types x 5 bodies');
+  ok('every death type and body draws mid-fall and at rest', err === null, err || '18 types x 5 bodies');
 
   // A jointed limb is two segments plus a hand. Count what ragLimb lays down.
   const real = ctx.ellipse;
@@ -459,7 +459,7 @@ console.log('\n== a body presses itself into the ground ==');
 
   // Drop a body of each kind in view and run. Every one has to retire.
   let stuck = [];
-  for (const dT of [0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15]) {
+  for (const dT of [0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17]) {
     probe(`corpses = []; player.x = 0; player.y = 0;
            corpses.push(new Corpse(0, 0, 0.3, 0.3, color(1), color(1), ${dT}, 0.2, [], null,
                                    0.7, "NORMAL", 21, 27));`);
@@ -467,7 +467,7 @@ console.log('\n== a body presses itself into the ground ==');
     if (P('corpses.length')) stuck.push(dT);
   }
   ok('every death type retires into the ground layer', stuck.length === 0,
-     stuck.length ? 'still live: dT ' + stuck.join(',') : '14 death types');
+     stuck.length ? 'still live: dT ' + stuck.join(',') : '16 death types');
 
   // And one that dies where nobody is looking. It used to sit in the live list
   // until the player happened to wander back past it, which over a long biome

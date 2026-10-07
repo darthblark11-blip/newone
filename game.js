@@ -211,7 +211,7 @@ let playerRespawnTimer = 0, prevGamepadButtons = [];
 let hpGhost = 100, hpGhostHold = 0, hpPrev = 100;
 let shGhost = 100, shGhostHold = 0, shPrev = 100;
 const HP_GHOST_HOLD = 20;
-let headshotCounter = 0, bodyOverkillCounter = 0, lightningCounter = 0; 
+let headshotCounter = 0, bodyOverkillCounter = 0, lightningCounter = 0, swordKillCounter = 0;
 
 // Muzzle velocities, in world units per frame. Two numbers rather than a
 // per-weapon field on purpose: what a round travels at is a readability rule
@@ -7509,6 +7509,7 @@ function storyBeatDone(name) {
 }
 
 function resetStoryProgress() {
+    swordKillCounter = 0;
     window.storyBeats = {};
     window.resources = { WOOD: 0, METAL: 0, STONE: 0 };
     window.meleeToolSel = "NONE";
@@ -9905,6 +9906,7 @@ function retireCorpsesToBloodBank() {
   for (const c of corpses) {
     if (c.isStatic) continue;
     finishFigureFall(c);
+    finishSwordParts(c);
     if(c.fatalSpray)c.fatalSpray.left=0;
     c.poolAge=BLOOD_POOL_FRAMES;
     c.sep = corpseSepMax(c.dT);
@@ -10484,8 +10486,9 @@ function updateOrbs() {
 }
 
 class Shockwave {
-    constructor(x, y, a) { 
+    constructor(x, y, a, sword = false) {
         this.x = x; this.y = y; this.a = a; 
+        this.sword = sword;
         this.life = 10; 
         this.vx = cos(a) * 15; this.vy = sin(a) * 15; 
         this.hitList = []; 
@@ -10517,6 +10520,9 @@ class Shockwave {
                     e.dead = true; 
                     if (e.eType === "SAUCER" || e.eType === "SAUCER_RED") { 
                         triggerExplosion(e.x, e.y, 160); 
+                    } else if (this.sword && ragHumanoid(e.eType, e.bodyW)) {
+                        emit(e.x, e.y, 60, bCol, "GORE"); spawnSplatter(e.x, e.y, "BLOOD", bCol);
+                        corpses.push(swordKillCorpse(e, this.a));
                     } else if (e.eType === "AERIAL" || e.eType === "AERIAL_PISTOL") {
                         emit(e.x, e.y, 40, color(255, 100, 0), "EXPLOSION"); sfx.explosion(e.x, e.y);
                         spawnSplatter(e.x, e.y, "BLOOD", color(90, 0, 0));
@@ -10581,7 +10587,7 @@ function manageChunkMemory() {
 
 
 
-const CORPSE_GIB_DEATHS = [2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15];
+const CORPSE_GIB_DEATHS = [2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
 
 // --- ROBOT DEATH ---------------------------------------------------------
 // A machine does not bleed, does not gib and does not leave meat. Every death
@@ -11132,7 +11138,7 @@ function drawFallenJetpack(g,pistol=false) {
 // Outfit details ride the existing torso transform, underneath wounds and
 // sleeves. Normalized dimensions also fit stunned bodies and separated torsos.
 function drawFallenAttire(g,id,TL,TW,back,progress=1,half=0) {
-  if(!id)return;
+  if(!id||id.eType==='ARMORED')return; // The red-orb hybrid keeps its original bare oval body.
   const t=id.eType,shirt=id.shirtCol||color(220,200,20),p=Math.max(0,Math.min(1,progress));
   const nmo=(t==='NORMAL'||t==='NM0_ROOKIE'||t==='NM0_ROOKIE_F')&&!id.isPlayer&&!id.isCharred;
   g.push();g.scale(TL/30,TW/20);g.noStroke();
@@ -11152,8 +11158,8 @@ function drawFallenAttire(g,id,TL,TW,back,progress=1,half=0) {
       g.fill(238,239,232);g.ellipse(0,0,28,18);g.stroke(154,166,161);g.strokeWeight(.7);
       g.line(-12,0,10,0);g.line(-8,-6,-8,6);g.line(8,-5,8,5);g.noStroke();
       g.fill(211,219,211);g.rect(-9,-4,3,8,1);g.fill(108,146,126);g.rect(7,-2,3,4,1);
-    }else if(((id.isPlayer||id.isMilitary)&&id.explosiveArmor)||t==='MILITARY_NEUTRAL'||t==='NM0_GREY_FATIGUE'||t==='NM0_CITY_GUARD'||t==='ARMORED_STANDARD'||t==='ARMORED'){
-      const heavy=t==='ARMORED'||t==='ARMORED_STANDARD';
+    }else if(((id.isPlayer||id.isMilitary)&&id.explosiveArmor)||t==='MILITARY_NEUTRAL'||t==='NM0_GREY_FATIGUE'||t==='NM0_CITY_GUARD'||t==='ARMORED_STANDARD'){
+      const heavy=t==='ARMORED_STANDARD';
       g.fill(heavy?color(51,57,64):color(red(shirt)*.52,green(shirt)*.52,blue(shirt)*.52));
       g.rect(-9,-7,20,14,3);g.fill(heavy?color(109,118,125):color(red(shirt)*.85,green(shirt)*.85,blue(shirt)*.85));
       g.rect(-6,-5,13,10,2);g.stroke(39,47,49);g.strokeWeight(.8);
@@ -11417,7 +11423,7 @@ function retargetHeadHitSpray(c,hit,b) {
 function drawFatalWound(c,r) {
   // These piece painters had no bullet decals. Keep selected holes visible on
   // its surviving piece, using exactly the stream's origin.
-  if(!c.fatalSpray||![5,10,11,12,13,14,15].includes(c.dT))return;
+  if(!c.fatalSpray||c.sword||![5,10,11,12,13,14,15].includes(c.dT))return;
   if(['BUG','SNAIL','ALIEN_GATOR'].includes(c.eT)&&![12,13,14].includes(c.dT))return;
   r.push();r.noStroke();
   for(const w of c.fatalSpray.wounds){
@@ -11432,11 +11438,12 @@ function advanceFatalSpray(c) {
   // A local sequence keeps this added effect from rerolling existing gore,
   // limb or overkill randomness. The pooled particle shares the blood painter.
   const col=c.eT==='BUG'||c.eT==='SNAIL'||c.eT==='SNAIL_HYBRID'?color(200,230,40):color(90,0,0);
-  for(let i=0;i<s.wounds.length;i++){
-    const w=s.wounds[i];
+  const sites=s.cuts||s.wounds;
+  for(let i=0;i<sites.length;i++){
+    const w=sites[i];
     s.seed=(Math.imul(s.seed,1664525)+1013904223)>>>0;
-    const u=s.seed/4294967296,p=fatalWoundPoint(c,w);
-    const a=(s.wounds.length>1?p.frameAngle:p.angle)+s.directions[i]+(u-.5)*(s.wounds.length>1?.4:.65);
+    const u=s.seed/4294967296,p=s.cuts?swordCutPoint(c,w):fatalWoundPoint(c,w);
+    const a=s.cuts?p.angle+(u-.5)*.55:(s.wounds.length>1?p.frameAngle:p.angle)+s.directions[i]+(u-.5)*(s.wounds.length>1?.4:.65);
     const speed=(2.8+u*1.8)*(.55+.45*s.left/FATAL_SPRAY_FRAMES);
     particles.push(newParticle(p.x,p.y,col,'WOUND_BLOOD',Math.cos(a)*speed,Math.sin(a)*speed));
   }
@@ -11493,8 +11500,88 @@ function drawFallLimb(r,rig,rg,i,f,shirt,pants,skin,boot,faceDown=false) {
     arm?(skin||color(235,180,140)):boot,arm?rig.hand*(faceDown?.94:1):rig.foot);
 }
 
+// Successful humanoid sword kills share one rotation, independent of bullets.
+// 16: head off; 13: waist split; 17: diagonal split. Other uses of 13 stay legacy.
+function swordKillCorpse(e,a) {
+  const dT=[16,13,17][swordKillCounter];swordKillCounter=(swordKillCounter+1)%3;
+  return new Corpse(e.x,e.y,e.moveAngle,e.aimAngle,e.shirtCol,e.pantsCol,dT,a,
+    e.decals,e.currentWeapon,a,e.eType,e.bodyW,e.bodyH,e,true);
+}
+function buildSwordDeath(c) {
+  const diagonal=c.dT===17,n=diagonal?Math.SQRT1_2:1,ny=diagonal?Math.SQRT1_2:0;
+  c.sword={age:0,done:false,normal:{x:n,y:ny},parts:[
+    {side:-1,x:0,y:0,rot:0,vx:c.dT===16?-.08:-n*1.5,vy:-ny*1.5,vr:c.dT===16?0:-.009},
+    {side:1,x:0,y:0,rot:0,vx:c.dT===16?1.8:n*1.5,vy:c.dT===16?-.35:ny*1.5,vr:c.dT===16?.025:.009}
+  ]};
+  // Reuse the complete standard painter, including real limbs, uniforms,
+  // armor, wounds and hair. Each half clips that same body in its own frame.
+  const body=Object.create(c);body.x=body.y=0;body.dT=0;body.sword=null;body.swordHeadless=c.dT===16;
+  c.sword.body=body;
+  const cuts=[];
+  for(let part=0;part<2;part++)for(const along of c.dT===16?[0]:[-.6,0,.6])cuts.push({part,along});
+  c.fatalSpray={left:FATAL_SPRAY_FRAMES,cuts,seed:(frameCount^Math.imul(Math.round(c.x),73856093)^Math.imul(Math.round(c.y),19349663))>>>0};
+}
+function stepSwordParts(c) {
+  const s=c.sword;if(s.done)return;
+  for(const p of s.parts){p.x+=p.vx;p.y+=p.vy;p.rot+=p.vr;p.vx*=.9;p.vy*=.9;p.vr*=.9;}
+  if(++s.age>=RAG_FRAMES){s.done=true;for(const p of s.parts)p.vx=p.vy=p.vr=0;}
+}
+function finishSwordParts(c) {if(c.sword)while(!c.sword.done)stepSwordParts(c);}
+function swordCutPlane(c) {
+  const rig=projectFallRig(c.bW,c.bH,c.fP),n=c.sword.normal,tx=-n.y,ty=n.x;
+  const headScale=lerp(1/RAG_SCALE,1,c.fP),x=c.dT===16?rig.headX-4.2*headScale:c.dT===13?-rig.TL*.18:0;
+  let lo,hi;
+  if(c.dT===16){lo=-3.6*headScale;hi=-lo;}
+  else{const rx=rig.TL*.5,ry=rig.TW*.5,A=tx*tx/(rx*rx)+ty*ty/(ry*ry),B=2*x*tx/(rx*rx),C=x*x/(rx*rx)-1;
+    const root=Math.sqrt(Math.max(0,B*B-4*A*C));lo=(-B-root)/(2*A);hi=(-B+root)/(2*A);}
+  return {rig,x,y:0,nx:n.x,ny:n.y,tx,ty,lo,hi,headScale};
+}
+function swordPartPivot(c,part,plane) {return c.dT===16?{x:part?plane.rig.headX:0,y:0}:{x:plane.x,y:plane.y};}
+function swordCutPoint(c,site) {
+  const plane=swordCutPlane(c),p=c.sword.parts[site.part],pivot=swordPartPivot(c,site.part,plane);
+  const along=(plane.lo+plane.hi)*.5+site.along*(plane.hi-plane.lo)*.5;
+  const x=plane.x+plane.tx*along-pivot.x,y=plane.y+plane.ty*along-pivot.y,cr=Math.cos(p.rot),sr=Math.sin(p.rot);
+  const lx=pivot.x+p.x+cr*x-sr*y,ly=pivot.y+p.y+sr*x+cr*y,yaw=figureFallYaw(c.fall,c.rag),ca=Math.cos(yaw),sa=Math.sin(yaw);
+  return {x:c.x+(ca*lx-sa*ly)*RAG_SCALE,y:c.y+(sa*lx+ca*ly)*RAG_SCALE,
+    angle:yaw+p.rot+Math.atan2(plane.ny,plane.nx)+(p.side>0?PI:0)};
+}
+function drawSwordCutEdge(r,c,part,plane) {
+  r.stroke(69,0,0);r.strokeWeight(3);r.line(plane.x+plane.tx*plane.lo,plane.ty*plane.lo,plane.x+plane.tx*plane.hi,plane.ty*plane.hi);
+  r.stroke(156,18,24);r.strokeWeight(1.4);r.line(plane.x+plane.tx*plane.lo,plane.ty*plane.lo,plane.x+plane.tx*plane.hi,plane.ty*plane.hi);r.noStroke();
+  r.fill(90,0,0);for(const site of c.fatalSpray.cuts){if(site.part!==part)continue;
+    const along=(plane.lo+plane.hi)*.5+site.along*(plane.hi-plane.lo)*.5;r.ellipse(plane.x+plane.tx*along,plane.ty*along,2.4,2.4);}
+}
+function drawSwordCorpse(r,c) {
+  const plane=swordCutPlane(c),yaw=figureFallYaw(c.fall,c.rag),dc=r.drawingContext;
+  r.push();r.translate(c.x,c.y);r.rotate(yaw);r.scale(RAG_SCALE);
+  for(let i=0;i<2;i++){
+    const p=c.sword.parts[i],pivot=swordPartPivot(c,i,plane);
+    r.push();r.translate(pivot.x+p.x,pivot.y+p.y);r.rotate(p.rot);r.translate(-pivot.x,-pivot.y);
+    if(c.dT===16&&i===1){
+      r.push();r.translate(plane.rig.headX,0);r.scale(plane.headScale);
+      if(dc){dc.save();dc.beginPath();dc.rect(-4.2,-200,204.2,400);dc.clip();}
+      r.push();r.rotate(figureHeadTurn(c.fall,c.fP));
+      const hw=headwearOf(c.id);drawFallenHead(r,c.id,c.fall,c.fP,!headwearFalls(hw));
+      for(const d of c.dec){if(d.isHead){r.fill(...(d.col||[90,0,0,220]));r.ellipse(d.x,d.y,d.sz,d.sz);}}r.pop();
+      if(dc)dc.restore();
+      if(c.eT==='ARMORED_STANDARD'){r.push();r.translate(15,10);r.rotate(HALF_PI);r.fill(20);r.arc(0,0,15,15,0,PI,CHORD);r.pop();}
+      if(hw&&headwearFalls(hw)&&c.hatOff){r.push();r.translate(c.hatOff.x,c.hatOff.y);r.rotate(c.hatOff.r);drawHeadwear(r,c.id,hw);r.pop();}r.pop();
+    }else{
+      if(dc&&c.dT!==16){
+        dc.save();dc.beginPath();const E=200;
+        dc.moveTo(plane.x-plane.tx*E,-plane.ty*E);dc.lineTo(plane.x+plane.tx*E,plane.ty*E);
+        dc.lineTo(plane.x+plane.tx*E+p.side*plane.nx*E,plane.ty*E+p.side*plane.ny*E);
+        dc.lineTo(plane.x-plane.tx*E+p.side*plane.nx*E,-plane.ty*E+p.side*plane.ny*E);dc.closePath();dc.clip();
+      }
+      r.scale(1/RAG_SCALE);r.rotate(-yaw);c.sword.body.paint(r);r.rotate(yaw);r.scale(RAG_SCALE);
+      if(dc&&c.dT!==16)dc.restore();
+    }
+    drawSwordCutEdge(r,c,i,plane);r.pop();
+  }r.pop();
+}
+
 class Corpse {
-  constructor(x, y, mA, aA, sC, pC, dT, hA, dec, cW, bA, eT, bW, bH, src) {
+  constructor(x, y, mA, aA, sC, pC, dT, hA, dec, cW, bA, eT, bW, bH, src, sword = false) {
     // Frozen at the moment of death, because a corpse cannot read anything off
     // the character it came from -- that object is already gone. Without it a
     // body has no way to keep the hair or the hat the person was wearing, which
@@ -11510,8 +11597,11 @@ class Corpse {
     // The six death sites all route through robotDeathBurst() now, but this is
     // the guard that makes a seventh one impossible to get wrong.
     if (eT === "ROBOT" && CORPSE_GIB_DEATHS.indexOf(dT) !== -1) dT = 0;
+    sword=ragHumanoid(eT,bW)&&(sword||dT===16||dT===17);
+    if(sword){const motion=figureMotion(src);src={...src,bodyW:bW,bodyH:bH,
+      fallHit:{frame:frameCount,kind:'SWORD',angle:bA,force:3,mx:motion.x,my:motion.y}};}
     this.sC = sC; this.pC = pC; this.dT = dT; this.hA = hA; this.bA = bA; this.dec = dec; this.cW = cW; this.bW = bW; this.bH = bH;
-    this.fatalSpray = buildFatalSpray(src,eT);
+    this.fatalSpray = sword?null:buildFatalSpray(src,eT);
     this.bT = 120; this.fP = 0; this.sep = 0; this.bits = []; this.stopMotionTimer = 156;
     // Only the charred deaths ever set this (one site, in the fire code), and
     // it was left undefined on every other body. `undefined <= 0` is FALSE, so
@@ -11534,7 +11624,7 @@ class Corpse {
     this.isIntactBody = CORPSE_GIB_DEATHS.indexOf(dT) === -1;
     // Only the deaths that leave a body lying down get a settle. 3/5/10/11/13/
     // 14/15 come apart into pieces and draw their own thing; 12 flies off.
-    this.rag = [0, 1, 2, 4, 6, 7, 8, 9].indexOf(dT) !== -1 ? ragBuild(eT, bW, bA, aA) : null;
+    this.rag = sword||[0, 1, 2, 4, 6, 7, 8, 9].indexOf(dT) !== -1 ? ragBuild(eT, bW, bA, aA) : null;
     this.fall = this.rag&&!legacyOverkillFall(dT,src&&src.fallHit) ? buildFigureFall(src,bA,3,false,aA) : null;
     this.backFacing=dT===7||(this.fall?this.fall.faceDown:Math.cos((mA||0)-(aA||0))>=0);
     if (this.fall) {
@@ -11551,11 +11641,12 @@ class Corpse {
             this.fall.hold=woundHold(this.rag,projectFallRig(bW,bH,1),hit.wound);
     }
     // Clothes retain the original collar/chest stain; jets stay at the head.
-    this.spray = (this.rag && CORPSE_HEADSHOT_DEATHS.indexOf(dT) !== -1)
+    this.spray = (this.rag && (CORPSE_HEADSHOT_DEATHS.indexOf(dT) !== -1||(sword&&dT===16)))
         ? bloodSpray(this.fall?projectFallRig(bW,bH,1):ragRig(bW,bH),Math.sin((bA||0)-(aA||0))) : null;
     this.headSpatter=this.spray?headBloodSpatter(this.spray,this.fall?projectFallRig(bW,bH,1):ragRig(bW,bH),
         this.fatalSpray&&this.fatalSpray.wound.isHead?this.fatalSpray.wound:null):null;
-    this.bloodTimer = (dT === 5 || dT === 7 || dT === 8 || dT === 9 || dT === 10 || dT === 11 || dT === 13 || dT === 14) ? 180 : 0; 
+    this.bloodTimer = !sword&&(dT === 5 || dT === 7 || dT === 8 || dT === 9 || dT === 10 || dT === 11 || dT === 13 || dT === 14) ? 180 : 0;
+    if(sword)buildSwordDeath(this);
 
     if (dT === 14) { this.splitA = bA; this.lH = { x: 0, y: 0, vx: cos(this.splitA - HALF_PI) * 2, vy: sin(this.splitA - HALF_PI) * 2 }; this.rH = { x: 0, y: 0, vx: cos(this.splitA + HALF_PI) * 2, vy: sin(this.splitA + HALF_PI) * 2 }; }
 
@@ -11580,6 +11671,7 @@ class Corpse {
   }
 
   update() { 
+    if(this.sword)stepSwordParts(this);
     if(this.dT===7)this.poolAge=Math.min(BLOOD_POOL_FRAMES,this.poolAge+1);
     if (this.fall) { stepFigureFall(this.fall,this,this.rag);this.fP=figureFallProgress(this.fall); }
     else if (this.fP < 1) this.fP += 0.15;
@@ -11702,6 +11794,7 @@ class Corpse {
 
   paint(r = window) {
   r.noStroke();
+  if(this.sword){drawSwordCorpse(r,this);return;}
   if (this.dT === 14) {
       r.push(); r.translate(this.x, this.y); 
       r.push(); r.translate(this.lH.x, this.lH.y); r.rotate(this.splitA); r.fill(this.sC); r.arc(0, 0, this.bW, this.bH, HALF_PI, PI + HALF_PI, CHORD); drawFallenAttire(r,this.id,this.bW,this.bH,this.backFacing,1,-1); r.fill(220, 200, 200); r.ellipse(-6, -this.bH*0.2, 5, 10); r.fill(200, 50, 100); r.ellipse(-8, this.bH*0.1, 7, 12); r.fill(90, 0, 0); r.rect(-3, -this.bH/2, 3, this.bH); r.pop();
@@ -11959,7 +12052,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       } else {
           r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4);
           r.fill(90, 0, 0, a); r.ellipse(lX, -4, 20, 28);
-          r.fill(this.sC);r.ellipse(0,0,TL,TW);drawFallenAttire(r,this.id,TL,TW,true);
+          if(this.eT!=='ARMORED'){r.fill(this.sC);r.ellipse(0,0,TL,TW);drawFallenAttire(r,this.id,TL,TW,true);}
       }
       r.pop(); r.pop(); return;
   }
@@ -11985,6 +12078,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       if (RG) { ragContour(r, a); if(this.fall){if(underArm!==0)drawFallLimb(r,RP,RG,0,f,this.sC,this.pC,sK); if(underArm!==1)drawFallLimb(r,RP,RG,1,f,this.sC,this.pC,sK);}else{ragLimb(r,  RP.shX, -RP.shY, -(HALF_PI + RG.limbs[0].a), -RG.limbs[0].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand); ragLimb(r,  RP.shX,  RP.shY,   HALF_PI + RG.limbs[1].a,   RG.limbs[1].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand);} } else { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(slX, armLY, 16, 8); r.fill(sK); r.ellipse(hX, armLY, 8, 8); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(rslX, armRY, 25, 8); r.fill(sK); r.ellipse(rhX, armRY, 8, 8); }
       if (this.eT === "AERIAL" || this.eT === "AERIAL_PISTOL") { r.fill(80, a); r.rect(-18, -12, 12, 24, 3); } 
       if (this.eT !== "ARMORED" && this.eT !== "MOLOTOV" && this.eT !== "AERIAL" && !(this.id&&this.id.isUnarmed)) { r.push(); r.translate(20 - 10 * f, 8 + 15 * f); r.rotate(f * PI / 2); if (this.cW === WEAPONS.SMG || this.cW === WEAPONS.DUAL_SMG) { r.fill(40); r.rect(31, 12, 24, 8, 2); r.rect(35, 20, 6, 12); } else if (this.cW === WEAPONS.ASSAULT_RIFLE) { r.fill(40); r.rect(5, 4, 42, 4, 1); r.fill(139, 69, 19); r.rect(15, 3, 12, 6, 1); r.rect(0, 3, 8, 6, 1); } else if (this.cW === WEAPONS.SHOTGUN) { r.fill(30); r.rect(5, 4, 40, 5, 1); r.fill(15); r.rect(20, 3, 14, 7, 1); r.fill(50); r.rect(5, 3, 12, 7, 2); } else if (this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { r.fill(50, 70, 50); r.rect(5, 4, 45, 6, 2); r.fill(30); r.rect(20, 2, 10, 10, 1); } else { r.fill(40); r.rect(15, 5, 16, 6, 2); } r.pop(); if (this.cW === WEAPONS.DUAL_SMG) { r.push(); r.translate(20 - 10 * f, -14 - 15 * f); r.rotate(-f * PI / 2); r.fill(40); r.rect(15, -7, 24, 8, 2); r.rect(19, -19, 6, 12); r.pop(); } } else if (this.eType === "MOLOTOV") { r.push(); r.translate(20 - 10 * f, 8 + 15 * f); r.rotate(f * PI / 2); r.fill(30, 120, 30); r.rect(0, -8, 8, 16, 2); r.pop(); } else if (this.eType === "ARMORED") { r.push(); r.translate(30 - 10 * f, 25 + 15 * f); r.rotate(f * PI / 2); r.fill(30); r.rect(0, -10, 50, 20, 4); r.pop(); }
+      if(this.swordHeadless){r.pop();r.pop();return;}
       if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(0, 0, this.bW + 15 * f, 20); if (RG) ragContour(r, a); } r.translate(this.fall?RP.headX:(RG?18:20)*f,0); if(this.fall)r.scale(lerp(1/RAG_SCALE,1,f)); r.push(); r.rotate(figureHeadTurn(this.fall,f)); const hK=fallenHeadColor(this.id,this.fall,f,sK); if (this.dT === 4) { r.fill(90, 0, 0); r.ellipse(0, 0, 14, 14); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-figureHeadTurn(this.fall,f)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 1) { r.fill(hK); r.arc(0, 0, 11, 11, this.hA + PI / 4, this.hA + TWO_PI - PI / 4, PIE); r.fill(90, 0, 0); r.arc(0, 0, 8, 8, this.hA - PI / 4, this.hA + PI / 4, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-figureHeadTurn(this.fall,f)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 6) { r.push(); r.rotate(this.hA); r.fill(90, 0, 0); r.ellipse(0, 0, 10, 10); let spread = min(this.sep * 0.4, 8); r.fill(hK); r.arc(0, -spread, 11, 11, PI, TWO_PI, CHORD); r.arc(0, spread, 11, 11, 0, PI, CHORD); r.pop(); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-figureHeadTurn(this.fall,f)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 8) { r.push(); r.rotate(this.hA); r.fill(hK); r.arc(0, 0, 11, 11, 0, PI + HALF_PI, PIE); r.fill(90, 0, 0); r.arc(0, 0, 11, 11, PI + HALF_PI, TWO_PI, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-figureHeadTurn(this.fall,f)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } r.pop(); } else if (this.dT === 9) { let nX = 10 + 5 * this.fP; r.fill(90, 0, 0); r.ellipse(nX, 0, 12, 12); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-figureHeadTurn(this.fall,f)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else { r.fill(hK); r.ellipse(0, 0, 11, 11); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-figureHeadTurn(this.fall,f)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } r.noStroke();
       // The hair, and whatever was on the head. The identity was frozen at the
       // moment of death (figureIdentity), so this body keeps what the person
@@ -12067,11 +12161,12 @@ function corpseSepMax(dT) {
     return 0;
 }
 function corpseSettled(c) {
+    if(c.sword&&!c.sword.done)return false;
     if (c.dT === 12 && !c.exploded) return false;                 // still in the air
     if (c.fP < 1 || (c.fall&&!c.fall.done)) return false;           // falling / contact recoil
     if (c.rag && !c.rag.done) return false;                       // still settling
     if (c.bloodTimer > 0 || c.smokeTimer > 0 || (c.fatalSpray&&c.fatalSpray.left>0)) return false;
-    if (c.sep < corpseSepMax(c.dT)) return false;                 // halves still parting
+    if (!c.sword&&c.sep < corpseSepMax(c.dT)) return false;        // legacy halves still parting
     if (CORPSE_SPURT_DEATHS.indexOf(c.dT) !== -1 && c.bT > 0) return false;
     if (CORPSE_MOVING_BITS.indexOf(c.dT) !== -1 && c.stopMotionTimer > 0) return false;
     return true;
@@ -12104,6 +12199,7 @@ function updateCorpses() {
               if (c.bT > 0) c.bT--;
               if (c.bloodTimer > 0) c.bloodTimer--;
               if (c.fatalSpray&&c.fatalSpray.left>0) c.fatalSpray.left--;
+              if(c.sword)stepSwordParts(c);
               c.poolAge=BLOOD_POOL_FRAMES;
               if (c.smokeTimer > 0) c.smokeTimer--;
               if (c.stopMotionTimer > 0) c.stopMotionTimer--;
@@ -13550,7 +13646,7 @@ this.skeletonTimer = 0;
       
       if (this.meleePhase === 4 && this.meleeTimer === 15) { 
           screenShake = 20; 
-          shockwaves.push(new Shockwave(this.x, this.y, this.aimAngle)); 
+          shockwaves.push(new Shockwave(this.x, this.y, this.aimAngle, meleeTool()==="SWORD"));
       }
              else if (this.meleePhase !== 4 && this.meleeTimer === 10) { 
           screenShake = 12; 
@@ -13621,7 +13717,9 @@ this.skeletonTimer = 0;
                               robotDeathBurst(e, atan2(e.y - this.y, e.x - this.x),
                                               !!(this.isPlayer || this.isFriendly), ROBOT_MELEE_KB);
                           }
-                          else { sfx.meleeKill(e.x, e.y); emit(e.x, e.y, 60, bCol, "GORE"); spawnSplatter(e.x, e.y, "BLOOD", bCol); corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 3, 0, e.decals, e.currentWeapon, this.aimAngle, e.eType, e.bodyW, e.bodyH, e)); }
+                          else { sfx.meleeKill(e.x, e.y); emit(e.x, e.y, 60, bCol, "GORE"); spawnSplatter(e.x, e.y, "BLOOD", bCol);
+                            corpses.push(meleeTool()==="SWORD"&&ragHumanoid(e.eType,e.bodyW)?swordKillCorpse(e,this.aimAngle):
+                              new Corpse(e.x,e.y,e.moveAngle,e.aimAngle,e.shirtCol,e.pantsCol,3,0,e.decals,e.currentWeapon,this.aimAngle,e.eType,e.bodyW,e.bodyH,e)); }
                           
                           processKill(e.x, e.y, false, e.eType, e.isFriendly); 
                       } 
@@ -19479,7 +19577,7 @@ function saveGame() {
         ninjaSuitUnlocked, explosiveArmorUnlocked, chemistSuitUnlocked, ninjaOwned: window.ninjaOwned, armorOwned: window.armorOwned, chemistOwned: window.chemistOwned,
         grenadesUnlocked, pGrenadeAmmo, pFlaskAmmo,
         popTotal, popUnassigned, popFarming, popMilitary, popScience, popArchitecture,
-        journalRead, tabletPickedUp, swordPickedUp,
+        journalRead, tabletPickedUp, swordPickedUp, swordKillCounter,
         towersDefeated: window.towersDefeated,
         // Every overworld fortress the player has met, in every sector: what is
         // left of its gate, its masts and its garrison, and whether it is
@@ -19787,6 +19885,7 @@ function loadGame() {
         window.archBarrierReady = false;
 
         journalRead = state.journalRead; tabletPickedUp = state.tabletPickedUp; swordPickedUp = state.swordPickedUp;
+        swordKillCounter=[0,1,2].includes(state.swordKillCounter)?state.swordKillCounter:0;
         darchonCallCompleted = state.darchonCallCompleted;
 window.militaryToBring = state.militaryToBring || 0;
         // townPhase / townTimer / objectiveTimer / the post-ambush pair are

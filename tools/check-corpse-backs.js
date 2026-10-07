@@ -30,6 +30,11 @@ function fixture(type='NORMAL',back=true,death=0,player=false,a=-Math.PI/2){
  for(let i=0;i<60;i++){frameCount++;c.update();}`);
 }
 function paint(code='c.show();'){reset();const before=seed;probe(code);assert.equal(stack.length,0,'unbalanced outfit transform');assert.equal(seed,before,'outfit drawing consumed global RNG');}
+// The red-orb hybrid opts out of every added back-detail variant.
+for(const back of [false,true])for(const half of [-1,0,1])for(const charred of [false,true]){
+ paint(`drawFallenAttire(window,{eType:'ARMORED',isCharred:${charred},shirtCol:color(100)},105,45,${back},1,${half});`);
+ assert.equal(draws.length,0,'red-orb hybrid received back detailing');assert.equal(badges.length,0);
+}
 // Bald identities stay skin coloured even if a hair colour was assigned alone.
 for(const id of [{eType:'NM0_ROOKIE',hairStyle:3,hairCol:[30,20,10]},{eType:'NORMAL'},{eType:'NORMAL',isPlayer:true},{eType:'NORMAL',hairCol:[30,20,10]},{eType:'CITY_CITIZEN_M',hairStyle:6}]){
  probe(`window.id={...${JSON.stringify(id)},skinCol:color(176,121,83)};if(Array.isArray(id.hairCol))id.hairCol=color(...id.hairCol);`);
