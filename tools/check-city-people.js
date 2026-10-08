@@ -71,7 +71,10 @@ probe(`player.x=72600;player.y=48600;enemiesList=[];biomeState={};authoredChunks
 let site;
 for(let cy=40;cy<60&&!site;cy++)for(let cx=50;cx<70;cx++)if(!P(`cityHasCanal(1,${cy})`)){site={cx,cy};break;}
 const {cx,cy}=site;
-probe(`player.x=${cx*1200+600};player.y=${cy*1200+600};mgr.chunks.set("${cx},${cy}",{solid:[]});for(let i=0;i<4;i++){frameCount+=21;refreshCityPeople(mgr,${cx},${cy});}`);
+probe(`player.x=${cx*1200+600};player.y=${cy*1200+600};zoom=2;
+  camX=player.x-width/zoom/2;camY=player.y-height/zoom/2;
+  viewLeft=camX;viewRight=camX+width/zoom;viewTop=camY;viewBottom=camY+height/zoom;
+  mgr.chunks.set("${cx},${cy}",{solid:[]});for(let i=0;i<4;i++){frameCount+=21;refreshCityPeople(mgr,${cx},${cy});}`);
 assert.equal(P('enemiesList.filter(e=>e.isCityCivilian).length'),6);assert.equal(P('enemiesList.filter(e=>e.isCityPatrol).length'),4);
 assert(P('getBiomeState(1).destroyed!==undefined&&getBiomeState(1).discoveredAnchors!==undefined'));
 assert(P('enemiesList.every(e=>!e.isPopulation&&!e.isMilitary)'));
@@ -94,6 +97,6 @@ assert(P('person.stunPose.a===0&&person.stunPose.facing===PI&&person.stunPose.im
 // Fallen people must also stop casting a standing-height light-rig shadow.
 ctx.__material=mkG();const heightColors=[];let mat;
 ctx.__material.fill=(...a)=>{mat=a;};ctx.__material.ellipse=(...a)=>heightColors.push({mat,a});
-probe('GLRig.hgt=__material;GLRig.hw=600;activeBuildings=[];buildings=[];decor=[];allies=[];enemiesList=[];player.stunTimer=100;startPunchStun(player,0);player.stunPose.age=70;player.x=0;player.y=0;glRigPaintHeight();');
+probe('GLRig.hgt=__material;GLRig.hw=600;activeBuildings=[];buildings=[];decor=[];allies=[];enemiesList=[];player.stunTimer=100;startPunchStun(player,0);player.stunPose.age=70;player.x=0;player.y=0;camX=-width/zoom/2;camY=-height/zoom/2;viewLeft=camX;viewRight=camX+width/zoom;viewTop=camY;viewBottom=camY+height/zoom;glRigPaintHeight();');
 assert(heightColors.some(p=>Math.abs(p.mat[0]-2/P('GLRIG_HEIGHT_MAX')*255)<1e-9&&p.a[2]>40),'stunned height remains standing');
 console.log('City people passed: appearance coverage, local gunfire, panic gait, harmless AI, first-punch stun, fall/recovery, 180-frame guard, patrol formation/posts, residency and serialized casualties.');

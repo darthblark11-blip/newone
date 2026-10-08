@@ -12488,6 +12488,25 @@ function cityRoute(cx,cy,d) {
   if(d<2748)return {x:x+1058-(d-1832),y:y+1058,a:PI};
   return {x:x+142,y:y+1058-(d-2748),a:-HALF_PI};
 }
+function cityCivilianAllowed(x,y,pad=15) {
+  if(currentLevel!==1)return true;
+  // The story enclosure includes the outer faces of both curtain walls and
+  // Great Gates, not just sealedSector's walkable interior. Arcade keeps its
+  // inner-city residents. Breaching a gate never makes it civilian territory.
+  if(isStoryMode&&x>=-4700-pad&&x<=5900+pad&&y>=-4600-pad&&y<=5800+pad)return false;
+  const clearance=180+pad;
+  if(Math.abs(x-600)<=4800+clearance&&
+     (Math.abs(y+4200)<=400+clearance||Math.abs(y-5400)<=400+clearance))return false;
+  const fort=outpostFortDef(1);
+  if(fort&&Math.abs(x-fort.x)<=FORT_HALF_W+FORT_GATE_H/2+clearance&&
+           Math.abs(y-fort.y)<=FORT_HALF_H+FORT_GATE_H/2+clearance)return false;
+  return true;
+}
+function cityPersonOffscreen(x,y) {
+  // draw() publishes the camera's actual view, including aim pan, zoom and
+  // shake, before the streamer runs. Leave room for the whole actor to enter.
+  return !inView(x,y,100);
+}
 function cityMove(e,x,y,speed) {
   const d=Math.hypot(x-e.x,y-e.y);let a=Math.atan2(y-e.y,x-e.x);
   a=steerAvoid(e,a,speed,(x,y)=>e.checkCol(x,y));const m=e.attemptMove(Math.cos(a)*Math.min(speed,d),Math.sin(a)*Math.min(speed,d));
@@ -12522,14 +12541,14 @@ function bankCityPerson(e) {
     panic:e.panicTimer||0,px:e.panicX,py:e.panicY,d:e.cityDistance};
 }
 function refreshCityPeople(mgr,pcx,pcy) {
-  if(!mgr||mgr.biome!==1||!player||!doTick||isStoryMode||frameCount-cityPeopleFrame<20)return;
+  if(!mgr||mgr.biome!==1||!player||!doTick||frameCount-cityPeopleFrame<20)return;
   cityPeopleFrame=frameCount;let civ=0,guard=0;
   for(let i=enemiesList.length-1;i>=0;i--){const e=enemiesList[i];if(!e.cityPersonKey)continue;
     bankCityPerson(e);if(Math.hypot(e.x-player.x,e.y-player.y)>3000){enemiesList.splice(i,1);continue;}
     if(e.hp>0&&!e.dead){if(e.isCityCivilian)civ++;else guard++;}
   }
   const b=getBiomeState(1),table=b.cityPeople||(b.cityPeople={});let made=0;
-  for(let ring=0;ring<=1&&made<4;ring++)for(let cy=pcy-ring;cy<=pcy+ring&&made<4;cy++)for(let cx=pcx-ring;cx<=pcx+ring&&made<4;cx++){
+  for(let ring=0;ring<=CHUNK_LOAD_R&&made<4;ring++)for(let cy=pcy-ring;cy<=pcy+ring&&made<4;cy++)for(let cx=pcx-ring;cx<=pcx+ring&&made<4;cx++){
     if(Math.max(Math.abs(cx-pcx),Math.abs(cy-pcy))!==ring)continue;
     const key=cx+","+cy,ch=mgr.chunks.get(key),authored=!!(authoredChunks&&authoredChunks.has(key));
     if((!ch&&!authored)||cityHasCanal(1,cy)||(ch&&ch.solid.some(s=>s.isGovFortress)))continue;
@@ -12537,16 +12556,22 @@ function refreshCityPeople(mgr,pcx,pcy) {
     const formation={distance:Math.abs(Math.imul(cx,73856093)^Math.imul(cy,19349663))%3664,frame:-1};
     for(let n=0;n<10&&made<4;n++){
       const isCiv=n<6,k=key+",people:"+n,old=table[k];
-      if((isCiv?civ>=42:guard>=12)||(!isCiv&&(authored||liberated||nm0AmbushActive))||old&&old.dead||enemiesList.some(e=>e.cityPersonKey===k))continue;
+      if((isCiv?civ>=42:guard>=12)||(!isCiv&&(isStoryMode||authored||liberated||nm0AmbushActive))||old&&old.dead||enemiesList.some(e=>e.cityPersonKey===k))continue;
       const seed=(Math.imul(cx+999,73856093)^Math.imul(cy+999,19349663)^Math.imul(n+1,83492791))>>>0;
       const d=isCiv?n*577:formation.distance-(n-6)*38,p=cityRoute(cx,cy,d);
-      const e=new Character(old?old.x:p.x,old?old.y:p.y,false,isCiv?CITY_CIVILIANS[n%2]:"NM0_CITY_GUARD");
+      const post=!isCiv&&n>=8?cityRoute(cx,cy,(n-8)*1832+420):null;
+      const point=old||post||p;
+      // The outer ring includes corners beyond the retention radius. Do not
+      // spend the spawn budget rebuilding somebody the next refresh evicts.
+      if(Math.hypot(point.x-player.x,point.y-player.y)>3000)continue;
+      if(!cityPersonOffscreen(point.x,point.y)||(isCiv&&!cityCivilianAllowed(point.x,point.y)))continue;
+      const e=new Character(point.x,point.y,false,isCiv?CITY_CIVILIANS[n%2]:"NM0_CITY_GUARD");
       if(isCiv)cityAppearance(e,seed);
       e.cityPersonKey=k;e.cityCx=cx;e.cityCy=cy;e.cityDistance=old&&old.d!==undefined?old.d:d;
       if(e.checkCol(e.x,e.y))continue;
       if(!isCiv){const other=enemiesList.find(g=>g.isCityPatrol&&g.cityCx===cx&&g.cityCy===cy&&g.cityFormation);
         e.cityFormation=other?other.cityFormation:formation;e.citySlot=n-6;
-        if(n>=8){const post=cityRoute(cx,cy,(n-8)*1832+420);e.cityPost=post;if(!old){e.x=post.x;e.y=post.y;}e.aimAngle=post.a;}}
+        if(post){e.cityPost=post;e.aimAngle=post.a;}}
       if(old){e.hp=old.hp;e.panicTimer=old.panic||0;e.panicX=old.px;e.panicY=old.py;
         if(old.stun>0){
           if(old.stunFacing!==undefined&&old.stunFacing!==null)e.aimAngle=old.stunFacing;
@@ -13081,6 +13106,7 @@ this.skeletonTimer = 0;
     
       checkCol(nx, ny) {
     if (this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL" || this.eType === "SAUCER" || this.eType === "SAUCER_RED") return false; 
+    if(this.isCityCivilian&&!cityCivilianAllowed(nx,ny))return true;
     if (this.ignoreBldgTimer > 0) return false; 
     
     let r = (this.eType === "ARMORED" || this.eType === "ALIEN_GATOR" || this.eType === "SNAIL_HYBRID") ? 28 : (this.eType === "BUG" ? 10 : (this.eType === "SNAIL" ? 15 : 15));
@@ -35705,6 +35731,11 @@ function startAtLevel(lvl, isLoading = false) {
   }
 
   legacyStartAtLevel(lvl, isLoading);
+
+  // Initial residency still uses the authored-core view, before travel or a
+  // saved position finishes placing the player. Let draw() publish the actual
+  // camera before ambient residents can enter that first view.
+  cityPeopleFrame=frameCount;
 
   // The Travel Menu reads currentBiome for its sector names and its north/south
   // destinations, so it has to track the current sector whether that sector is
