@@ -12653,6 +12653,7 @@ function pickHead(len) {
 // Ambient city residents are independent of the story recruitment ledger.
 const CITY_CIVILIANS = ["CITY_CITIZEN_M", "CITY_CITIZEN_F"];
 const CITY_SKIN = [[103,66,47],[176,121,83],[239,199,168]];
+const CITY_NM0_CLEARANCE = 7000; // HUD distances use 10 world units per metre.
 let cityNoise = [], cityPeopleFrame = -99;
 function cityAppearance(e, seed) {
   let n = seed >>> 0; const pick = a => { n=(n+0x6D2B79F5)|0;let t=Math.imul(n^(n>>>15),1|n);t^=t+Math.imul(t^(t>>>7),61|t);return a[Math.floor(((t^(t>>>14))>>>0)/4294967296*a.length)]; };
@@ -12693,13 +12694,12 @@ function cityRoute(cx,cy,d) {
 }
 function cityCivilianAllowed(x,y,pad=15) {
   if(currentLevel!==1)return true;
-  // The story enclosure includes the outer faces of both curtain walls and
-  // Great Gates, not just sealedSector's walkable interior. Arcade keeps its
-  // inner-city residents. Breaching a gate never makes it civilian territory.
-  if(isStoryMode&&x>=-4700-pad&&x<=5900+pad&&y>=-4600-pad&&y<=5800+pad)return false;
-  const clearance=180+pad;
-  if(Math.abs(x-600)<=4800+clearance&&
-     (Math.abs(y+4200)<=400+clearance||Math.abs(y-5400)<=400+clearance))return false;
+  // Keep the whole main compound, including the outer curtain-wall and gate
+  // faces, 700 metres from ambient residents in story and arcade alike.
+  // Open doors and captured fortresses retain the civilian exclusion.
+  const clearance=CITY_NM0_CLEARANCE+pad;
+  if(x>=-4700-clearance&&x<=5900+clearance&&
+     y>=-4600-clearance&&y<=5800+clearance)return false;
   const fort=outpostFortDef(1);
   if(fort&&Math.abs(x-fort.x)<=FORT_HALF_W+FORT_GATE_H/2+clearance&&
            Math.abs(y-fort.y)<=FORT_HALF_H+FORT_GATE_H/2+clearance)return false;
@@ -12747,9 +12747,18 @@ function refreshCityPeople(mgr,pcx,pcy) {
   if(!mgr||mgr.biome!==1||!player||!doTick||frameCount-cityPeopleFrame<20)return;
   cityPeopleFrame=frameCount;let civ=0,guard=0;
   for(let i=enemiesList.length-1;i>=0;i--){const e=enemiesList[i];if(!e.cityPersonKey)continue;
-    bankCityPerson(e);if(Math.hypot(e.x-player.x,e.y-player.y)>3000){enemiesList.splice(i,1);continue;}
+    bankCityPerson(e);
+    const dx=e.x-player.x,dy=e.y-player.y;
+    if(dx*dx+dy*dy>3000*3000 || (e.isCityCivilian&&e.hp>0&&!e.dead&&
+       (nm0AmbushActive||!cityCivilianAllowed(e.x,e.y)))){enemiesList.splice(i,1);continue;}
     if(e.hp>0&&!e.dead){if(e.isCityCivilian)civ++;else guard++;}
   }
+  // Ambient residents wait in their saved records throughout the scripted
+  // battle. No candidate searches, civilian AI or bullet targets are needed.
+  if(nm0AmbushActive)return;
+  // The retention circle lies entirely inside a forbidden compound buffer.
+  // Skip its civilian slots before routes and duplicate-key scans are built.
+  const civiliansNearby=cityCivilianAllowed(player.x,player.y,-3000);
   const b=getBiomeState(1),table=b.cityPeople||(b.cityPeople={});let made=0;
   for(let ring=0;ring<=CHUNK_LOAD_R&&made<4;ring++)for(let cy=pcy-ring;cy<=pcy+ring&&made<4;cy++)for(let cx=pcx-ring;cx<=pcx+ring&&made<4;cx++){
     if(Math.max(Math.abs(cx-pcx),Math.abs(cy-pcy))!==ring)continue;
@@ -12758,7 +12767,8 @@ function refreshCityPeople(mgr,pcx,pcy) {
     const liberated=townsData[1]&&townsData[1].established;
     const formation={distance:Math.abs(Math.imul(cx,73856093)^Math.imul(cy,19349663))%3664,frame:-1};
     for(let n=0;n<10&&made<4;n++){
-      const isCiv=n<6,k=key+",people:"+n,old=table[k];
+      const isCiv=n<6;if(isCiv&&!civiliansNearby)continue;
+      const k=key+",people:"+n,old=table[k];
       if((isCiv?civ>=42:guard>=12)||(!isCiv&&(isStoryMode||authored||liberated||nm0AmbushActive))||old&&old.dead||enemiesList.some(e=>e.cityPersonKey===k))continue;
       const seed=(Math.imul(cx+999,73856093)^Math.imul(cy+999,19349663)^Math.imul(n+1,83492791))>>>0;
       const d=isCiv?n*577:formation.distance-(n-6)*38,p=cityRoute(cx,cy,d);
@@ -12782,6 +12792,8 @@ function refreshCityPeople(mgr,pcx,pcy) {
           startPunchStun(e,old.stunA===undefined||old.stunA===null?e.aimAngle:old.stunA);
           e.stunTimer=old.stun;e.stunPose.age=old.stunAge;
           if(e.stunPose.age>=e.stunPose.duration+16){e.stunPose.done=true;e.stunPose.impulse=0;while(!e.stunPose.rag.done)ragStep(e.stunPose.rag);}
+          // Rebuilding a saved pose is not a new gunfire or injury event.
+          e.panicTimer=old.panic||0;e.panicX=old.px;e.panicY=old.py;
           bankCityPerson(e);
         }}
       enemiesList.push(e);if(isCiv)civ++;else guard++;made++;
@@ -16636,6 +16648,13 @@ function updateEntities() {
       for (let n = 0; n < enemiesList.length; n++) {
           const e = enemiesList[n];
           if (!e) continue;
+          // Run before body separation and AI, including while the population
+          // refresh is cooling down. An old nearby resident must never enter
+          // forceNudge's collision search for a newly forbidden 700m buffer.
+          if (currentLevel===1 && e.isCityCivilian && e.cityPersonKey && e.hp>0 && !e.dead &&
+              (nm0AmbushActive || !cityCivilianAllowed(e.x,e.y))) {
+              bankCityPerson(e);enemiesList.splice(n--,1);continue;
+          }
           if (e.isFriendly && !e.isCityCivilian) e.allySlot = e.dead ? 0 : allyN++;
           if (e.hp <= 0 || e.dead) continue;
           if (e.eType === "AERIAL" || e.eType === "AERIAL_PISTOL" ||

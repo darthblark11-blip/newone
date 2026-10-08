@@ -2,6 +2,7 @@ const assert=require('assert');
 const {ctx,probe,mkG}=require('./harness');
 const P=s=>probe('('+s+')');
 probe(`isStoryMode=false;townsData={};startAtLevel(1);started=true;doTick=true;
+  currentLevel=2; // Test animation/punch behavior outside Level 1's fortress buffer.
   activeBuildings=[];buildings=[];barrels=[];activeParkingCars=[];invalidateColIndex();enemiesList=[];setMeleeTool("NONE");
   leftStick={active:false,dx:0,dy:0,base:{x:0,y:0}};
   rightStick={active:false,dx:0,dy:0,dist:0,base:{x:0,y:0}};
@@ -66,7 +67,7 @@ probe('player.x=0;player.y=0;player.aimAngle=0;player.moveAngle=0;player.isMovin
 assert.equal(boots.length,2);assert(boots.some(x=>x>5)&&boots.some(x=>x<-5),'boxing feet do not form left lead / right rear');assert.equal(stack.length,0);
 for(const name in originals)ctx[name]=originals[name];
 // Deterministic residents, patrol pair and posts, bounded and outside story roster.
-probe(`player.x=72600;player.y=48600;enemiesList=[];biomeState={};authoredChunks=null;authoredCore=null;authoredMask=null;cityPeopleFrame=-99;
+probe(`currentLevel=1;player.x=72600;player.y=48600;enemiesList=[];biomeState={};authoredChunks=null;authoredCore=null;authoredMask=null;cityPeopleFrame=-99;
   window.mgr={biome:1,chunks:new Map()};`);
 let site;
 for(let cy=40;cy<60&&!site;cy++)for(let cx=50;cx<70;cx++)if(!P(`cityHasCanal(1,${cy})`)){site={cx,cy};break;}

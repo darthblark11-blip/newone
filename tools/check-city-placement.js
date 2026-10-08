@@ -1,4 +1,4 @@
-// Residents must respect story geography and enter the streamed world unseen.
+// Residents stay 700 HUD metres from NM-0 strongholds and enter the world unseen.
 // Run with: node tools/check-city-placement.js
 const assert=require('assert');
 const {probe}=require('./harness');
@@ -36,19 +36,47 @@ function onlyResident(cx,cy,n,record) {
 reset(true);
 for(const [x,y] of [[0,0],[-4700,600],[5900,600],[600,-4600],[600,5800]])
   ok(!P(`cityCivilianAllowed(${x},${y})`),`story enclosure admits civilian at ${x},${y}`);
-for(const [x,y] of [[-5000,600],[6200,600],[600,-5000],[600,6200]])
-  ok(P(`cityCivilianAllowed(${x},${y})`),`outside story city incorrectly excluded at ${x},${y}`);
+for(const [x,y] of [[-12000,600],[17000,600],[600,-12000],[600,20000]])
+  ok(P(`cityCivilianAllowed(${x},${y})`),`distant story city incorrectly excluded at ${x},${y}`);
 probe('isStoryMode=false;');
-ok(P('cityCivilianAllowed(0,0)'),'arcade inner city must remain inhabited');
+ok(!P('cityCivilianAllowed(0,0)'),'arcade inner city ignored the 700-metre gate buffer');
 
-// The two Great Gates and the relay compound stay off limits after liberation.
-const forbidden=[[600,-4200],[600,5400],[7200,10800],[7200,9500],[8700,10800]];
+// The main fortress and relay compound stay off limits after liberation.
+const forbidden=[[600,-4200],[600,5400],[7200,10800],[7200,9500],[8700,10800],
+  [-5000,600],[6200,600],[600,-5000],[600,6600],[9600,10800]];
 for(const story of [false,true]) {
   probe(`isStoryMode=${story};window.northGateBreached=true;window.northGateBreachedStatus=true;
     window.southGateBreachedStatus=true;outpostFortState(1).breached=true;outpostFortState(1).captured=true;`);
   for(const [x,y] of forbidden)
     ok(!P(`cityCivilianAllowed(${x},${y})`),`open/captured fortress admits civilian in ${story?'story':'arcade'} at ${x},${y}`);
 }
+// HUD distances use ten world units per metre. These independent fixtures
+// cover the 7,000-unit clearance from both fortresses' outer wall faces,
+// plus the default 15-unit actor margin. A boundary tangent remains blocked.
+const bufferEdges=[
+  {name:'north slab top',x:600,y:-11615,dx:0,dy:-1},
+  {name:'main curtain wall west',x:-11715,y:-4200,dx:-1,dy:0},
+  {name:'main curtain wall east',x:12915,y:-4200,dx:1,dy:0},
+  {name:'south slab bottom',x:-6000,y:12815,dx:0,dy:1},
+  {name:'relay west wall',x:-1325,y:18000,dx:-1,dy:0},
+  {name:'relay east wall',x:15725,y:10800,dx:1,dy:0},
+  {name:'relay north wall',x:14700,y:2475,dx:0,dy:-1},
+  {name:'relay south wall',x:7200,y:19125,dx:0,dy:1}
+];
+for(const story of [false,true]) {
+  probe(`isStoryMode=${story};`);
+  for(const {name,x,y,dx,dy} of bufferEdges) {
+    ok(!P(`cityCivilianAllowed(${x-dx*.001},${y-dy*.001})`),`${name} admitted a civilian just inside its buffer`);
+    ok(!P(`cityCivilianAllowed(${x},${y})`),`${name} admitted a tangent civilian`);
+    ok(P(`cityCivilianAllowed(${x+dx*.001},${y+dy*.001})`),`${name} excluded a civilian just beyond its buffer`);
+  }
+}
+ok(!P('cityCivilianAllowed(12800,-11500)'),'main fortress corner escaped the curtain-wall buffer');
+ok(!P('cityCivilianAllowed(12900,-4200,0)'),'700-metre gate distance omitted the boundary');
+ok(P('cityCivilianAllowed(12900.001,-4200,0)'),'explicit zero actor margin changed the gate clearance');
+ok(!P('cityCivilianAllowed(12900.001,-4200)'),'default actor margin was lost');
+ok(!P('cityCivilianAllowed(15710,10800,0)'),'700-metre relay distance omitted the outer wall face');
+ok(P('cityCivilianAllowed(15710.001,10800,0)'),'relay clearance measured from its centreline');
 probe('currentLevel=2;');
 ok(P('cityCivilianAllowed(0,0)'),'Level 1 restrictions leaked into another level');
 
@@ -56,9 +84,11 @@ ok(P('cityCivilianAllowed(0,0)'),'Level 1 restrictions leaked into another level
 reset(true);loadChunk(0,0);camera(600,600);refresh(0,0);
 ok(P('enemiesList.length===0'),'story opening enclosure populated');
 reset(false);loadChunk(0,0);camera(600,600);refresh(0,0);
-ok(P('enemiesList.filter(e=>e.isCityCivilian).length===6'),'arcade inner city lost its civilians');
+ok(P('!enemiesList.some(e=>e.isCityCivilian)'),'arcade inner city populated inside the gate buffer');
 reset(true);loadChunk(0,5);camera(600,6600);refresh(0,5);
-ok(P('enemiesList.filter(e=>e.isCityCivilian).length===6'),'story civilians absent outside the south gate');
+ok(P('!enemiesList.some(e=>e.isCityCivilian)'),'story civilians populated just outside the south gate');
+reset(true);loadChunk(-12,0);camera(-13800,600);refresh(-12,0);
+ok(P('enemiesList.filter(e=>e.isCityCivilian).length===6'),'distant story blocks lost their civilians');
 ok(P('enemiesList.every(e=>e.isCityCivilian&&!e.isPopulation)'),'story created extra ambient military guards');
 
 // A wholly visible chunk remains empty; zooming in provides safe hidden points.
@@ -77,11 +107,75 @@ camera(60600,49800,2,800);refresh(50,41);
 ok(P('enemiesList.length===1&&enemiesList[0].cityPersonKey==="50,41,people:0"&&enemiesList[0].hp===61&&enemiesList[0].panicTimer===45'),'saved off-screen resident lost its state');
 
 // Old records do not bypass the new geography rules, even when out of view.
-for(const [story,x,y] of [[true,600,600],[false,600,5400],[false,7200,10800]]) {
+for(const [story,x,y] of [[true,600,600],[false,600,5400],[false,7200,10800],
+  [true,-5000,600],[false,600,6600],[false,9600,10800]]) {
   reset(story);loadChunk(0,5);
   probe(`player.x=${x+1000};player.y=${y};`);camera(x+1000,y);
   onlyResident(0,5,0,{x,y,hp:100,dead:false,stun:0,d:0});refresh(0,5);
   ok(P('enemiesList.length===0'),`saved resident spawned in restricted area ${x},${y}`);
+}
+
+// An ambush releases existing ambient civilians and stops candidate searching.
+// Saved injuries, panic, stun pose and deaths must survive that suspension.
+reset(true);loadChunk(50,41);camera(60600,49800);refresh(50,41);
+probe(`window.resident=enemiesList[0];window.residentKey=resident.cityPersonKey;
+  resident.aimAngle=PI;rememberFigureMotion(resident,0,0);startPunchStun(resident,0);
+  for(let i=0;i<60;i++)advanceStun(resident);
+  resident.hp=61;resident.panicTimer=45;resident.panicX=60400;resident.panicY=49800;
+  window.savedAge=resident.stunPose.age;window.savedTimer=resident.stunTimer;
+  window.deadResident=enemiesList[1];window.deadKey=deadResident.cityPersonKey;
+  deadResident.hp=0;deadResident.dead=true;
+  window.recruit=new Character(61000,49900,false,"FARMER_MALE");recruit.isPopulation=true;
+  window.military=new Character(61100,49900,false,"NM0_CITY_GUARD");military.isFriendly=true;military.isMilitary=true;
+  enemiesList.push(recruit,military);nm0AmbushActive=true;
+  window.realCityRoute=cityRoute;window.routeCalls=0;
+  cityRoute=(...args)=>{routeCalls++;return realCityRoute(...args);};`);
+refresh(50,41,1);
+ok(P('!enemiesList.some(e=>e.isCityCivilian&&e.cityPersonKey&&e.hp>0&&!e.dead)'),'ambush retained a living ambient civilian');
+ok(P('routeCalls===0'),'ambush searched candidate sidewalk routes');
+ok(P('enemiesList.includes(recruit)&&enemiesList.includes(military)'),'ambush removal affected recruits or military');
+ok(P('getBiomeState(1).cityPeople[residentKey].hp===61&&getBiomeState(1).cityPeople[residentKey].panic===45&&getBiomeState(1).cityPeople[residentKey].px===60400&&getBiomeState(1).cityPeople[residentKey].py===49800'), 'ambush banking lost injury or panic state');
+ok(P('getBiomeState(1).cityPeople[residentKey].stun===savedTimer&&getBiomeState(1).cityPeople[residentKey].stunAge===savedAge&&getBiomeState(1).cityPeople[residentKey].stunFacing===PI'),'ambush banking lost the stun pose');
+ok(P('getBiomeState(1).cityPeople[deadKey].dead'),'ambush banking forgot a dead resident');
+refresh(50,41,3);
+ok(P('routeCalls===0&&!enemiesList.some(e=>e.cityPersonKey&&e.hp>0&&!e.dead)'),'active ambush resumed ambient spawning');
+probe(`cityRoute=realCityRoute;nm0AmbushActive=false;enemiesList=enemiesList.filter(e=>!e.cityPersonKey);
+  window.savedResident=getBiomeState(1).cityPeople[residentKey];
+  window.table=getBiomeState(1).cityPeople;
+  for(let n=0;n<10;n++)if("50,41,people:"+n!==residentKey&&"50,41,people:"+n!==deadKey)table["50,41,people:"+n]={dead:true};`);
+const resumeX=P('savedResident.x'),resumeY=P('savedResident.y');
+camera(resumeX,resumeY);refresh(50,41,1);
+ok(P('!enemiesList.some(e=>e.cityPersonKey===residentKey)'),'post-ambush resident restored into the visible view');
+ok(P('savedResident.hp===61&&savedResident.stunAge===savedAge'),'visible post-ambush defer changed saved state');
+camera(resumeX,resumeY,2,1000);refresh(50,41,1);
+ok(P('enemiesList.some(e=>e.cityPersonKey===residentKey&&e.hp===61&&e.panicTimer===45&&e.panicX===60400&&e.panicY===49800&&e.stunTimer===savedTimer&&e.stunPose.age===savedAge&&e.stunPose.facing===PI)'), 'offscreen post-ambush restoration lost resident state');
+ok(P('!enemiesList.some(e=>e.cityPersonKey===deadKey)'),'dead resident returned after an ambush');
+
+// The normal frame loop removes old saved/live residents before separation or
+// forceNudge, including on frames where the 20-frame population refresh waits.
+for(const ambush of [false,true]) {
+  reset(false);loadChunk(50,41);
+  const x=ambush?60600:600,y=ambush?49800:6600;
+  camera(x,y);
+  probe(`player.x=${x};player.y=${y};cityPeopleFrame=frameCount;
+    nm0AmbushActive=${ambush};
+    window.oldResident=new Character(${x+10},${y},false,"CITY_CITIZEN_M");cityAppearance(oldResident,555);
+    oldResident.cityPersonKey="50,41,people:0";oldResident.hp=73;oldResident.panicTimer=19;
+    oldResident.updateEnemy=()=>{throw Error("restricted civilian AI ran");};
+    oldResident.checkCol=()=>{throw Error("restricted civilian physics ran");};
+    window.guard=new Character(${x+100},${y},false,"NM0_CITY_GUARD");guard.cityPersonKey="50,41,people:6";
+    window.recruit=new Character(${x+200},${y},false,"FARMER_MALE");recruit.isPopulation=true;
+    window.military=new Character(${x+300},${y},false,"NM0_CITY_GUARD");military.isFriendly=true;military.isMilitary=true;
+    for(const e of [guard,recruit,military])e.updateEnemy=()=>{};
+    enemiesList=[oldResident,guard,recruit,military];
+    window.maintenanceNames=["checkAmbushCleared","checkFarmSwarmAlive","maintainHostiles","cullDepartedBands","sweepForeignHostiles","maintainOutpostGarrison","maintainOutpostMuster","checkOutpostCaptured"];
+    window.realMaintenance=maintenanceNames.map(name=>window[name]);
+    for(const name of maintenanceNames)window[name]=()=>{};
+    updateEntities();
+    for(let i=0;i<maintenanceNames.length;i++)window[maintenanceNames[i]]=realMaintenance[i];`);
+  ok(P('!enemiesList.includes(oldResident)&&!_pushActors.includes(oldResident)'),`${ambush?'ambush':'fortress buffer'} civilian entered physics/AI inside refresh cooldown`);
+  ok(P('getBiomeState(1).cityPeople["50,41,people:0"].hp===73&&getBiomeState(1).cityPeople["50,41,people:0"].panic===19'), 'immediate civilian pruning lost banked state');
+  ok(P('enemiesList.includes(guard)&&enemiesList.includes(recruit)&&enemiesList.includes(military)'), 'immediate civilian pruning removed guards/recruits/military');
 }
 
 // Fixed guards must be checked at their post, not their temporary route point.
@@ -135,9 +229,9 @@ for(const [z,panX,panY,shake] of [[.45,0,0,0],[.66,200,-100,12],[1.4,-500,300,0]
 }
 
 // The shared collision gate covers wander, panic, recoil and temporary clipping.
-const edges=[{story:true,x:-4716,y:600,dx:1,dy:0,cx:-4,cy:0},
-  {story:false,x:600,y:5996,dx:0,dy:-1,cx:0,cy:4},
-  {story:false,x:8906,y:10800,dx:-1,dy:0,cx:6,cy:9}];
+const edges=[{story:true,x:600,y:-11616,dx:0,dy:1,cx:0,cy:-10},
+  {story:false,x:-11716,y:-4200,dx:1,dy:0,cx:-10,cy:-4},
+  {story:false,x:15726,y:10800,dx:-1,dy:0,cx:12,cy:9}];
 for(const edge of edges)for(const mode of ['WANDER','FLEE','STUNNED']) {
   reset(edge.story);camera(edge.x,edge.y);
   probe(`window.c=new Character(${edge.x},${edge.y},false,"CITY_CITIZEN_M");cityAppearance(c,777);
@@ -149,4 +243,4 @@ for(const edge of edges)for(const mode of ['WANDER','FLEE','STUNNED']) {
   probe(`window.allLegal=true;for(let i=0;i<80;i++){frameCount++;${mode==='STUNNED'?'advanceStun(c);':'updateCityCivilian(c);'}if(!cityCivilianAllowed(c.x,c.y))allLegal=false;}`);
   ok(P('allLegal'),`${mode.toLowerCase()} crossed a civilian boundary at ${edge.x},${edge.y}`);
 }
-console.log(`City placement passed: ${checks} checks for story/arcade geography, open fortresses, off-screen residents/posts, saved state, camera zoom/pan/shake and wander/panic/stun movement.`);
+console.log(`City placement passed: ${checks} checks for 700-metre fortress buffers, story/arcade geography, open fortresses, off-screen residents/posts, saved state, camera zoom/pan/shake and wander/panic/stun movement.`);

@@ -134,7 +134,7 @@ probe(`window.towersDefeated=true;buildings=[];activeBuildings=[];parkingCars=[]
   player.x=600;player.y=600;zoom=2;viewLeft=500;viewRight=700;viewTop=500;viewBottom=700;
   biomeState={};cityPeopleFrame=-99;
   for(let tick=0;tick<4;tick++){frameCount+=30;refreshCityPeople(ownedMgr,0,0);}`);
-ok(P('enemiesList.length===6&&enemiesList.every(e=>e.isCityCivilian)'), 'repeated arcade refreshes keep civilians but never add guards to captured blocks');
+ok(P('enemiesList.length===0'), 'repeated arcade refreshes keep captured blocks clear of guards and ambient civilians');
 probe(`enemiesList=[];getBiomeState(1).cityPeople={};
   for(let n=0;n<6;n++)getBiomeState(1).cityPeople['0,0,people:'+n]={dead:true};
   frameCount+=30;refreshCityPeople(ownedMgr,0,0);`);
