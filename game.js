@@ -2976,6 +2976,11 @@ function massDepth(b) { return b.y + (b.h || 0) / 2; }
 // Every character draw goes through here. Flyers have no ground contact to
 // compare with a building's base, so hold them for the pass above the roofs.
 // Grounded characters retain the depth sort and the legacy interior order.
+function isAirborneEnemy(e) {
+  return !!e && !e.isPlayer && !e.dead && e.hp > 0 &&
+    (e.eType === 'AERIAL' || e.eType === 'AERIAL_PISTOL' || e.eType === 'SAUCER' || e.eType === 'SAUCER_RED');
+}
+
 function actorShow(c) {
   if (isAirborneEnemy(c)) { _airborneActors.push(c); return; }
   if (_depthOn) { _depthActors.push(c); return; }
@@ -12873,315 +12878,6 @@ function drawStunnedFigure(e) {
 }
 
 
-function isAirborneEnemy(e) {
-    return !!e && !e.isPlayer && !e.dead && e.hp > 0 &&
-        (e.eType === 'AERIAL' || e.eType === 'AERIAL_PISTOL' || e.eType === 'SAUCER' || e.eType === 'SAUCER_RED');
-}
-
-// Shared by firing and the flyer AI's check for a return-fire lane.
-// Both callers only read these offsets. Reuse immutable tuples rather than
-// allocating one for every station candidate and every individual shot.
-const CHARACTER_MUZZLES = Object.freeze({
-    normal:Object.freeze({x:31,y:8,leftX:59,leftY:-17}),
-    long:Object.freeze({x:47,y:6,leftX:59,leftY:-17}),
-    smg:Object.freeze({x:38,y:11,leftX:38,leftY:-11}),
-    alien:Object.freeze({x:100,y:19,leftX:59,leftY:-17}),
-    alienSmg:Object.freeze({x:100,y:19,leftX:38,leftY:-11}),
-    aerial:Object.freeze({x:51,y:16,leftX:59,leftY:-17}),
-    aerialSmg:Object.freeze({x:51,y:16,leftX:38,leftY:-11})
-});
-function characterMuzzleOffsets(e) {
-    const smg=e.currentWeapon===WEAPONS.SMG || e.currentWeapon===WEAPONS.DUAL_SMG;
-    if (e.eType==='ALIEN_GATOR' || e.eType==='SNAIL_HYBRID') return smg?CHARACTER_MUZZLES.alienSmg:CHARACTER_MUZZLES.alien;
-    if (e.eType==='AERIAL_PISTOL') return smg?CHARACTER_MUZZLES.aerialSmg:CHARACTER_MUZZLES.aerial;
-    if (smg) return CHARACTER_MUZZLES.smg;
-    if (e.currentWeapon===WEAPONS.ASSAULT_RIFLE || e.currentWeapon===WEAPONS.SHOTGUN || e.currentWeapon===WEAPONS.ROCKET_LAUNCHER) {
-        return CHARACTER_MUZZLES.long;
-    }
-    return CHARACTER_MUZZLES.normal;
-}
-// Use the solids that stop bullets, including gate wings. Flyers can cross
-// these footprints, but their combat stations need room for return fire.
-function airborneBuildingBlocks(b) {
-    if (!b.w || !b.h || b.isRiver || b.isDeck) return false;
-    if (currentLevel === 4 && b.isPalm) return false;
-    if (currentLevel === 6 && (b.isAlienPlant || b.isEnergyPole)) return false;
-    if ((currentLevel === 1 || currentLevel === 2) && b.isGrassLot) return false;
-    return true;
-}
-// The flight planner probes many possible stations, often beyond the camera's
-// active-solid ring. Index the full world and keep the original exact collision
-// predicates below; this only removes distant objects from each probe.
-const AIRBORNE_CELL = 256;
-const _airborneBuildingGrid = new Map(), _airborneCarGrid = new Map();
-const _airborneBuildingEntries = [], _airborneCarEntries = [];
-const _airborneBuildingBig = [], _airborneCarBig = [];
-const _airborneBuckets = [], _airborneQueryEntries = [];
-const _airborneBuildingScratch = [], _airborneCarScratch = [];
-let _airborneBuildingSource = null, _airborneCarSource = null;
-let _airborneCheckedFrame = -1, _airborneBucketCount = 0, _airborneQueryStamp = 0;
-
-function invalidateAirborneIndex() {
-    _airborneBuildingSource = null;
-    _airborneCarSource = null;
-    _airborneCheckedFrame = -1;
-}
-function airborneGeometryChanged(source, entries, cars) {
-    for (let i=0;i<source.length;i++) {
-        const b=source[i],entry=entries[i];
-        if (entry.b!==b || entry.x!==b.x || entry.y!==b.y ||
-            (!cars && (entry.w!==b.w || entry.h!==b.h))) return true;
-    }
-    return false;
-}
-function buildAirborneGeometry(source, entries, grid, big, cars) {
-    entries.length=source.length;grid.clear();big.length=0;
-    for (let i=0;i<source.length;i++) {
-        const b=source[i],entry=entries[i]||(entries[i]={});
-        entry.b=b;entry.index=i;entry.x=b.x;entry.y=b.y;entry.w=b.w;entry.h=b.h;entry.stamp=0;
-        const hw=cars?25:b.w/2,hh=cars?45:b.h/2;
-        entry.left=b.x-hw;entry.right=b.x+hw;entry.top=b.y-hh;entry.bottom=b.y+hh;
-        // Degenerate/non-finite authored data retains the old predicate's
-        // behavior by taking the always-tested path, rather than entering an
-        // unbounded cell loop. Great Gates and long walls use this path too.
-        entry.irregular=!Number.isFinite(entry.left)||!Number.isFinite(entry.right)||
-            !Number.isFinite(entry.top)||!Number.isFinite(entry.bottom)||hw<0||hh<0;
-        const x0=Math.floor(entry.left/AIRBORNE_CELL),x1=Math.floor(entry.right/AIRBORNE_CELL);
-        const y0=Math.floor(entry.top/AIRBORNE_CELL),y1=Math.floor(entry.bottom/AIRBORNE_CELL);
-        if (entry.irregular || (x1-x0+1)*(y1-y0+1)>16) {big.push(entry);continue;}
-        for (let x=x0;x<=x1;x++) for (let y=y0;y<=y1;y++) {
-            const key=cellKey(x,y);let bucket=grid.get(key);
-            if (!bucket) {
-                bucket=_airborneBuckets[_airborneBucketCount]||(_airborneBuckets[_airborneBucketCount]=[]);
-                _airborneBucketCount++;bucket.length=0;grid.set(key,bucket);
-            }
-            bucket.push(entry);
-        }
-    }
-}
-function ensureAirborneIndex() {
-    let changed=_airborneBuildingSource!==buildings || _airborneCarSource!==parkingCars ||
-        _airborneBuildingEntries.length!==buildings.length || _airborneCarEntries.length!==parkingCars.length;
-    if (!changed && _airborneCheckedFrame!==frameCount)
-        changed=airborneGeometryChanged(buildings,_airborneBuildingEntries,false)||
-            airborneGeometryChanged(parkingCars,_airborneCarEntries,true);
-    if (changed) {
-        _airborneBucketCount=0;
-        buildAirborneGeometry(buildings,_airborneBuildingEntries,_airborneBuildingGrid,_airborneBuildingBig,false);
-        buildAirborneGeometry(parkingCars,_airborneCarEntries,_airborneCarGrid,_airborneCarBig,true);
-        _airborneBuildingSource=buildings;_airborneCarSource=parkingCars;
-    }
-    _airborneCheckedFrame=frameCount;
-}
-function airborneGeometryCandidates(source, grid, big, minX, minY, maxX, maxY, out, ordered) {
-    if (!Number.isFinite(minX)||!Number.isFinite(minY)||!Number.isFinite(maxX)||!Number.isFinite(maxY)||
-        minX>maxX||minY>maxY) return source;
-    // The broad phase must be conservative even when subtraction/addition at
-    // an exact roof edge rounds differently from the original abs-distance
-    // predicate. A few floating-point ulps only admit extra exact tests.
-    const slack=Number.EPSILON*Math.max(1,Math.abs(minX),Math.abs(minY),Math.abs(maxX),Math.abs(maxY))*8;
-    minX-=slack;minY-=slack;maxX+=slack;maxY+=slack;
-    const x0=Math.floor(minX/AIRBORNE_CELL),x1=Math.floor(maxX/AIRBORNE_CELL);
-    const y0=Math.floor(minY/AIRBORNE_CELL),y1=Math.floor(maxY/AIRBORNE_CELL);
-    // Exceptionally long shots are cheaper to scan once than to visit a vast
-    // mostly-empty rectangle of grid cells. This is still the exact old scan.
-    if ((x1-x0+1)*(y1-y0+1)>128) return source;
-    const stamp=++_airborneQueryStamp;
-    _airborneQueryEntries.length=0;
-    for (let x=x0;x<=x1;x++) for (let y=y0;y<=y1;y++) {
-        const bucket=grid.get(cellKey(x,y));if (!bucket) continue;
-        for (let i=0;i<bucket.length;i++) {
-            const entry=bucket[i];
-            if (entry.stamp===stamp) continue;
-            entry.stamp=stamp;
-            if (entry.right<minX||entry.left>maxX||entry.bottom<minY||entry.top>maxY) continue;
-            _airborneQueryEntries.push(entry);
-        }
-    }
-    for (let i=0;i<big.length;i++) {
-        const entry=big[i];
-        if (!entry.irregular && (entry.right<minX||entry.left>maxX||entry.bottom<minY||entry.top>maxY)) continue;
-        _airborneQueryEntries.push(entry);
-    }
-    if (ordered) _airborneQueryEntries.sort((a,b)=>a.index-b.index);
-    out.length=_airborneQueryEntries.length;
-    for (let i=0;i<out.length;i++) out[i]=_airborneQueryEntries[i].b;
-    return out;
-}
-// Default results are scratch buffers. A caller making nested geometry probes
-// can provide its own reused output buffer, or copy before iterating.
-function airborneBuildingCandidates(minX,minY,maxX,maxY,ordered=false,out=_airborneBuildingScratch) {
-    ensureAirborneIndex();
-    return airborneGeometryCandidates(buildings,_airborneBuildingGrid,_airborneBuildingBig,
-        minX,minY,maxX,maxY,out,ordered);
-}
-function airborneCarCandidates(minX,minY,maxX,maxY) {
-    ensureAirborneIndex();
-    return airborneGeometryCandidates(parkingCars,_airborneCarGrid,_airborneCarBig,
-        minX,minY,maxX,maxY,_airborneCarScratch,false);
-}
-function airbornePositionOpen(x, y, pad = 60) {
-    const candidates=airborneBuildingCandidates(x-pad,y-pad,x+pad,y+pad);
-    for (const b of candidates) {
-        if (!airborneBuildingBlocks(b)) continue;
-        if (Math.abs(x-b.x) >= b.w/2+pad || Math.abs(y-b.y) >= b.h/2+pad) continue;
-        if (b.isGovFortress && gateIsOpen(b) && Math.abs(x-b.x)+pad < GATE_DOOR_HALF) continue;
-        return false;
-    }
-    const cars=airborneCarCandidates(x-pad,y-pad,x+pad,y+pad);
-    for (const c of cars) if (Math.abs(x-c.x)<25+pad && Math.abs(y-c.y)<45+pad) return false;
-    return true;
-}
-function airborneLineHitsRect(x1, y1, x2, y2, left, top, right, bottom) {
-    const dx=x2-x1,dy=y2-y1;
-    if (!dx && (x1<=left || x1>=right)) return false;
-    if (!dy && (y1<=top || y1>=bottom)) return false;
-    const ax=dx?(left-x1)/dx:-Infinity,bx=dx?(right-x1)/dx:Infinity;
-    const ay=dy?(top-y1)/dy:-Infinity,by=dy?(bottom-y1)/dy:Infinity;
-    return Math.max(0,Math.min(ax,bx),Math.min(ay,by)) < Math.min(1,Math.max(ax,bx),Math.max(ay,by));
-}
-function airborneClearShot(x1, y1, x2, y2) {
-    const minX=Math.min(x1,x2),maxX=Math.max(x1,x2),minY=Math.min(y1,y2),maxY=Math.max(y1,y2);
-    const candidates=airborneBuildingCandidates(minX,minY,maxX,maxY);
-    for (const b of candidates) {
-        const left=b.x-b.w/2,top=b.y-b.h/2,right=b.x+b.w/2,bottom=b.y+b.h/2;
-        if (right<minX || left>maxX || bottom<minY || top>maxY || !airborneBuildingBlocks(b)) continue;
-        if (b.isGovFortress && gateIsOpen(b)) {
-            if (airborneLineHitsRect(x1,y1,x2,y2,left,top,b.x-GATE_DOOR_HALF,bottom) ||
-                airborneLineHitsRect(x1,y1,x2,y2,b.x+GATE_DOOR_HALF,top,right,bottom)) return false;
-        } else if (airborneLineHitsRect(x1,y1,x2,y2,left,top,right,bottom)) return false;
-    }
-    const cars=airborneCarCandidates(minX,minY,maxX,maxY);
-    for (const c of cars) if (airborneLineHitsRect(x1,y1,x2,y2,c.x-25,c.y-45,c.x+25,c.y+45)) return false;
-    return true;
-}
-let airborneBobTarget=null,airborneBobMoving,airborneBobWalkCycle,airborneBobValue=0;
-function airborneReturnFireClear(target, x, y) {
-    if (!airborneClearShot(target.x,target.y,x,y)) return false;
-    const angle=Math.atan2(y-target.y,x-target.x),c=Math.cos(angle),s=Math.sin(angle);
-    // A station search tests many lanes from the same pose. Validate the
-    // exact bob inputs on every call, including changes within one frame.
-    if (airborneBobTarget!==target || airborneBobMoving!==target.isMoving || airborneBobWalkCycle!==target.walkCycle) {
-        airborneBobTarget=target;airborneBobMoving=target.isMoving;airborneBobWalkCycle=target.walkCycle;
-        airborneBobValue=target.isMoving?Math.abs(Math.sin(target.walkCycle))*2:0;
-    }
-    const offsets=characterMuzzleOffsets(target),bob=airborneBobValue;
-    if (!airborneClearShot(target.x+c*(offsets.x+bob)-s*offsets.y,target.y+s*(offsets.x+bob)+c*offsets.y,
-        x-s*offsets.y,y+c*offsets.y)) return false;
-    return target.currentWeapon!==WEAPONS.DUAL_SMG || airborneClearShot(
-        target.x+c*(offsets.leftX+bob)-s*offsets.leftY,target.y+s*(offsets.leftX+bob)+c*offsets.leftY,
-        x-s*offsets.leftY,y+c*offsets.leftY);
-}
-const airborneEscapeBuildings=[];
-function chooseAirborneStation(e, target, range) {
-    let found=false,bestX=0,bestY=0,score=Infinity;
-    const heading=Math.atan2(e.y-target.y,e.x-target.x);
-    // Favor the nearest reachable side of the target. Crossing a roof is
-    // allowed; stopping above it or behind another bullet blocker is not.
-    for (let r=0;r<5;r++) {
-        const radius=r===0?range:r===1?range*0.65:r===2?range+100:r===3?range+180:100;
-        for (let n=0;n<24;n++) {
-            const angle=heading+n*Math.PI/12;
-            const x=target.x+Math.cos(angle)*radius,y=target.y+Math.sin(angle)*radius;
-            const cost=(x-e.x)**2+(y-e.y)**2;
-            if (cost>=score || !airbornePositionOpen(x,y) || !airborneReturnFireClear(target,x,y)) continue;
-            found=true;bestX=x;bestY=y;score=cost;
-        }
-    }
-    if (found) return {x:bestX,y:bestY,clearLane:true};
-    // A target temporarily inside a solid cannot offer a firing lane. Leave
-    // the roof by its nearest open edge instead of circling above its center.
-    const escapeBuildings=airborneBuildingCandidates(e.x-60,e.y-60,e.x+60,e.y+60,true,airborneEscapeBuildings);
-    for (const b of escapeBuildings) {
-        if (!airborneBuildingBlocks(b) || Math.abs(e.x-b.x)>b.w/2+60 || Math.abs(e.y-b.y)>b.h/2+60) continue;
-        const left=b.x-b.w/2-80,right=b.x+b.w/2+80,top=b.y-b.h/2-80,bottom=b.y+b.h/2+80;
-        for (let n=0;n<8;n++) {
-            const x=n===0||n===4||n===6?left:n===1||n===5||n===7?right:e.x;
-            const y=n===2||n===4||n===5?top:n===3||n===6||n===7?bottom:e.y;
-            const cost=(x-e.x)**2+(y-e.y)**2;
-            if (cost<score && airbornePositionOpen(x,y)) {found=true;bestX=x;bestY=y;score=cost;}
-        }
-    }
-    return found?{x:bestX,y:bestY}:null;
-}
-function updateAirborneCombat(e, target, spd) {
-    const redSaucer=e.eType==='SAUCER_RED',pistol=e.eType==='AERIAL_PISTOL';
-    const range=redSaucer?350:(pistol?280:250),speed=(redSaucer?3.5:2.45)*spd;
-    const distance=Math.hypot(target.x-e.x,target.y-e.y),angle=Math.atan2(target.y-e.y,target.x-e.x);
-    const initialX=e.x,initialY=e.y;
-    const open=airbornePositionOpen(e.x,e.y),clear=open&&airborneReturnFireClear(target,e.x,e.y);
-    e.airborneStationTimer=Math.max(0,(e.airborneStationTimer||0)-1);
-    let station=e.airborneStation;
-    let stationDistance=station?Math.hypot(station.x-e.x,station.y-e.y):0;
-    if (station && (station.target!==target || Math.hypot(target.x-station.targetX,target.y-station.targetY)>60 || stationDistance<18 ||
-        !airbornePositionOpen(station.x,station.y) || (station.clearLane&&!airborneReturnFireClear(target,station.x,station.y)))) {station=null;e.airborneStationTimer=0;}
-    if (e.airborneStationTarget!==target || Math.hypot(target.x-e.airborneTargetX,target.y-e.airborneTargetY)>60)
-        e.airborneStationTimer=0;
-    if ((!open || !clear) && e.airborneStationTimer===0) {
-        const point=chooseAirborneStation(e,target,range);
-        station=point;
-        if (station) {
-            station.target=target;station.targetX=target.x;station.targetY=target.y;
-            stationDistance=Math.hypot(station.x-e.x,station.y-e.y);
-        }
-        e.airborneStationTimer=30;
-        e.airborneStationTarget=target;e.airborneTargetX=target.x;e.airborneTargetY=target.y;
-    }
-    let vx=0,vy=0;
-    if (station) {
-        const d=stationDistance,step=Math.min(speed,d);
-        vx=(station.x-e.x)/Math.max(1,d)*step;vy=(station.y-e.y)/Math.max(1,d)*step;
-    } else if (clear) {
-        const approach=Math.max(-speed,Math.min(speed,(distance-range)*0.02));
-        vx=Math.cos(angle)*approach;vy=Math.sin(angle)*approach;
-        if (redSaucer) {vx+=Math.cos(angle+Math.PI/2*e.strafeDir)*speed;vy+=Math.sin(angle+Math.PI/2*e.strafeDir)*speed;}
-        const magnitude=Math.hypot(vx,vy);
-        if (magnitude>speed) {vx=vx/magnitude*speed;vy=vy/magnitude*speed;}
-        if (!airbornePositionOpen(e.x+vx*12,e.y+vy*12) || !airborneReturnFireClear(target,e.x+vx*12,e.y+vy*12)) {
-            const point=chooseAirborneStation(e,target,range);
-            if (point) {
-                station=point;station.target=target;station.targetX=target.x;station.targetY=target.y;
-                const d=Math.hypot(point.x-e.x,point.y-e.y),step=Math.min(speed,d);
-                vx=(point.x-e.x)/Math.max(1,d)*step;vy=(point.y-e.y)/Math.max(1,d)*step;
-            } else {vx=0;vy=0;}
-        }
-    } else {
-        // No clear station yet (for example overlapping roofs): keep crossing
-        // rather than settling at the usual attack radius above the obstacle.
-        const escape=e.moveAngle===undefined?angle:e.moveAngle;
-        vx=Math.cos(escape)*speed;vy=Math.sin(escape)*speed;
-    }
-    e.airborneStation=station;
-    e.x+=vx;e.y+=vy;e.aimAngle=angle;
-    e.isMoving=Math.hypot(vx,vy)>0.01;
-    if (e.isMoving) {e.moveAngle=Math.atan2(vy,vx);e.walkCycle+=0.2*spd;}
-    e.armDrag=lerp(e.armDrag,e.isMoving?1:0,0.15);
-    // Inbound shots use the same solid collision as outbound shots. Attack
-    // only from a clear station, after movement, including against allies.
-    // During attack cooldown there is no firing-state change to gate. Keep
-    // the earlier navigation checks, but omit this redundant final query.
-    if (redSaucer) {
-        if (!(e.burstCooldown>0) && !(distance<600 && e.fireTimer<=0)) return;
-    } else if (pistol) {
-        if (!(distance<400 && e.fireTimer<=0 && e.ammo>0 && e.reloadTimer<=0)) return;
-    } else if (!(distance<500 && e.fireTimer<=0)) return;
-    if (target!==e && e.x===initialX && e.y===initialY) {
-        if (!open || !clear) return;
-    } else if (!airbornePositionOpen(e.x,e.y) || !airborneReturnFireClear(target,e.x,e.y)) return;
-    if (redSaucer) {
-        if (e.burstCooldown>0) e.burstCooldown--;
-        else if (distance<600 && e.fireTimer<=0) {
-            e.fire(angle);e.burstsFired++;
-            if (e.burstsFired>=3) {e.burstCooldown=156;e.burstsFired=0;} else e.fireTimer=30;
-        }
-    } else if (pistol) {
-        if (distance<400 && e.fireTimer<=0 && e.ammo>0 && e.reloadTimer<=0) e.fire(angle);
-    } else if (distance<500 && e.fireTimer<=0) {
-        grenades.push(new Grenade(e.x,e.y,target.x,target.y,e.eType==='SAUCER'));
-        sfx.throwG();e.fireTimer=160;
-    }
-}
-
 class Character {
   constructor(x, y, isP, eT = "NORMAL") {
     this.isFriendly = false;
@@ -13711,10 +13407,6 @@ this.skeletonTimer = 0;
   }
 
  attemptMove(vx, vy) {
-    if (isAirborneEnemy(this)) {
-        this.x+=vx;this.y+=vy;this.isSliding=false;
-        return {x:vx,y:vy};
-    }
     // Steering memory: which hand they favour going round things, the heading
     // they are currently committed to, and how long that commitment has left.
     if (this.avoidSide === undefined) {
@@ -14745,11 +14437,6 @@ if (this.eType === "COW") {
 
     if(this.isCityPatrol&&this.state==="PATROL"){updateCityPatrol(this);return;}
 
-    if (isAirborneEnemy(this) && (this.state==='CHASE' || !airbornePositionOpen(this.x,this.y))) {
-        updateAirborneCombat(this,trg,spd);
-        return;
-    }
-
     // ---- ROBOT ---------------------------------------------------------
     // Its own loop rather than a branch inside CHASE: the machine has exactly
     // two modes and neither of them is the human patrol-and-strafe. Placed
@@ -15014,6 +14701,26 @@ if (this.eType === "COW") {
             }
         }
 
+        else if (this.eType === "SAUCER" || this.eType === "SAUCER_RED" || this.eType === "AERIAL") {
+           if (this.eType === "SAUCER" || this.eType === "AERIAL") {
+               if (canSee && dToP < 500 && this.fireTimer <= 0) { grenades.push(new Grenade(this.x, this.y, trg.x, trg.y, this.eType==="SAUCER")); sfx.throwG(); this.fireTimer = 160; }
+               if (distToTarget > 250 || (!canSee && distToTarget > 20)) { let vx = cos(iA) * 2.45 * spd, vy = sin(iA) * 2.45 * spd; this.x += vx; this.y += vy; aDx = vx; aDy = vy; }
+           } else if (this.eType === "SAUCER_RED") {
+               if (canSee && dToP < 600) {
+                   if (this.burstCooldown > 0) { this.burstCooldown--; } else if (this.fireTimer <= 0) { this.fire(iA); this.burstsFired++; if (this.burstsFired >= 3) { this.burstCooldown = 156; this.burstsFired = 0; } else { this.fireTimer = 30; } }
+               }
+               if (canSee || distToTarget > 20) {
+                   if (!canSee) {
+                       let vx = cos(iA) * 3.5 * spd, vy = sin(iA) * 3.5 * spd; this.x += vx; this.y += vy; aDx = vx; aDy = vy;
+                   } else {
+                       let distErr = dToP - 350, approachX = cos(iA) * distErr * 0.02, approachY = sin(iA) * distErr * 0.02, strafeX = cos(iA + (PI / 2) * this.strafeDir) * 3.5, strafeY = sin(iA + (PI / 2) * this.strafeDir) * 3.5;
+                       let vx = (approachX + strafeX) * spd, vy = (approachY + strafeY) * spd, maxSpd = 3.5 * spd, mag = dist(0, 0, vx, vy); if (mag > maxSpd) { vx = (vx / mag) * maxSpd; vy = (vy / mag) * maxSpd; }
+                       this.x += vx; this.y += vy; aDx = vx; aDy = vy;
+                       if (frameCount % 120 === 0 && random() < 0.3) this.strafeDir *= -1;
+                   }
+               }
+           }
+        }
         else if (this.eType === "MOLOTOV") { 
             if (canSee && dToP < 500 && this.fireTimer <= 0) { grenades.push(new Molotov(this.x, this.y, trg.x, trg.y)); sfx.throwG(); this.fireTimer = 180; } 
             if (distToTarget > 300 || (!canSee && distToTarget > 20)) { let vx = cos(iA) * 2.45 * spd, vy = sin(iA) * 2.45 * spd; let m = this.attemptMove(vx, vy); aDx = m.x; aDy = m.y; } 
@@ -15107,8 +14814,9 @@ if (this.eType === "COW") {
     if (this.isPlayer) this.isArmed = true;
     let aH = ((this.isPlayer || this.isFriendly) && headAimToggle) ? "HEAD" : "BODY", cd = (this.isPlayer || this.isFriendly) ? this.currentWeapon.fireCooldown : (this.currentWeapon.enemyCooldown || 48), bob = this.isMoving ? abs(sin(this.walkCycle)) * 2 : 0;
     let cost = this.currentWeapon === WEAPONS.DUAL_SMG ? 2 : 1;
-    const muzzleOffsets=characterMuzzleOffsets(this);
-    let bLX=muzzleOffsets.x,bLY=muzzleOffsets.y,bLX_L=muzzleOffsets.leftX,bLY_L=muzzleOffsets.leftY;
+    let bLX = 31, bLY = 8, bLX_L = 59, bLY_L = -17;
+    if (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { bLX = 47; bLY = 6; } else if (this.currentWeapon === WEAPONS.SMG || this.currentWeapon === WEAPONS.DUAL_SMG) { bLX = 38; bLY = 11; bLX_L = 38; bLY_L = -11; }
+    if (this.eType === "ALIEN_GATOR" || this.eType === "SNAIL_HYBRID") { bLX = 100; bLY = 19; } if (this.eType === "AERIAL_PISTOL") { bLX = 51; bLY = 16; }
     
     let tX = this.x + cos(this.aimAngle) * (bLX + bob) - sin(this.aimAngle) * bLY, tY = this.y + sin(this.aimAngle) * (bLX + bob) + cos(this.aimAngle) * bLY;
     
@@ -21209,8 +20917,6 @@ function republishPlayerStructures() {
     }
     for (let i = buildings.length - 1; i >= 0; i--) if (buildings[i].isPlayerBuilt) buildings.splice(i, 1);
     for (const b of playerStructures) buildings.push(b);
-    // Replacement can leave the solid count unchanged within this frame.
-    invalidateAirborneIndex();
     lastActiveUpdate = 0;
     activeBuildings = [];
     if (typeof updateActiveWorld === 'function') updateActiveWorld();
@@ -28938,7 +28644,6 @@ class ChunkManager {
     }
     buildings   = solids;
     parkingCars = cars;
-    invalidateAirborneIndex();
 
     // Recull immediately rather than blanking the array and hoping something
     // refills it later in the frame.
@@ -36024,7 +35729,6 @@ function clearGateApproach() {
     activeBuildings = activeBuildings.filter(b => liveBuildings.has(b));
     activeParkingCars = activeParkingCars.filter(c => liveCars.has(c));
     invalidateColIndex();
-    invalidateAirborneIndex();
   }
 }
 
@@ -36172,7 +35876,6 @@ function placePlayerAtAnchor(biome, type) {
 
 // -- Map generation ---------------------------------------------------------
 function generateMap() {
-  invalidateAirborneIndex();
   civicTerraceSites.clear();
   const hybrid = hasAuthoredCore(currentLevel);
 
