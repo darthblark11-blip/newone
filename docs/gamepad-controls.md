@@ -34,6 +34,13 @@ repeat its action. Grenade/flask/cannon holds merge with touchscreen input
 and feed the existing cooking/charging and release mechanics. A missing
 controller clears button history so reconnection can detect a new press.
 
+A connected controller hides the touch action buttons (reload, melee, dash,
+headshot aim, grenade or chemist abilities) and both joystick circles, even
+when the controller is idle. Touching the screen cannot reveal them while
+the controller remains connected. The health, ammo, score and objective HUD
+stay visible. Disconnecting restores the touch controls when using touch
+input; keyboard/mouse use keeps its existing joystick visibility behavior.
+
 Verification uses a simulated standard-layout pad through the real touch,
 gamepad, desktop and player update paths:
 
@@ -45,3 +52,5 @@ It checks actual dash, grenade/flask creation, cannon discharge, melee and
 reload; first/held/released buttons, cooldown and unlock gates, bidirectional
 gun/taser cycling, owned melee tools, unmapped down, reserved L1, simultaneous
 shoulders, touchscreen coexistence, axes/deadzone and disconnection/reconnect.
+It also captures the actual HUD labels and circles to verify hiding on idle
+detection, during pauses and after touch events, then restoration on disconnect.

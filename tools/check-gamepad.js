@@ -18,7 +18,7 @@ function reset() {
     'rightStick={active:false,dx:0,dy:0,dist:0,base:{x:1080,y:680}};',
     'window.isDesktop=false;window.showOnScreenControls=true;',
     'isStoryMode=false;headAimToggle=false;lastToggleTime=lastWeaponSwapTime=0;',
-    'prevGamepadButtons=[];meleeInputHeld=cannonInputHeld=grenadeInputHeld=false;',
+    'prevGamepadButtons=[];gamepadWasConnected=false;meleeInputHeld=cannonInputHeld=grenadeInputHeld=false;',
     'jetpackUnlocked=true;jetpackDoubleDash=false;meleeUnlocked=true;meleeComboUnlocked=false;',
     'window.meleeFinisherUnlocked=false;ninjaSuitUnlocked=explosiveArmorUnlocked=chemistSuitUnlocked=false;',
     'grenadesUnlocked=true;isCooking=false;cookTime=0;pGrenadeAmmo=3;pFlaskAmmo=2;pGrenadeTimer=pFlaskTimer=0;',
@@ -215,6 +215,59 @@ check('Short or absent pads do not throw or keep stale button history', () => {
   pad = { axes: [0, 0], buttons: [{ pressed: false }] }; poll();
   assert.equal(P('prevGamepadButtons.length'), 1);
   frame(null); assert.equal(P('prevGamepadButtons.length'), 0);
+});
+
+// Capture the actual HUD drawing, so hidden labels without hidden button
+// circles (or vice versa) cannot pass. Status text remains useful on a pad.
+function hud() {
+  const labels=[],circles=[];
+  const text=ctx.text,ellipse=ctx.ellipse;
+  ctx.text=(s,...args)=>{labels.push(String(s));text(s,...args);};
+  ctx.ellipse=(...args)=>{circles.push(args);ellipse(...args);};
+  try { probe('drawUI();drawJoysticks();'); }
+  finally { ctx.text=text;ctx.ellipse=ellipse; }
+  return {labels,circles};
+}
+function noTouchHud(seen) {
+  assert(!seen.labels.some(s=>/^(RELOAD|RECHARGE|MELEE|DASH|GRENADE|FLASK|CANNON|HEADSHOT|MODE)(\n|$)/.test(s)));
+  assert(!seen.circles.some(([x,y])=>x>=1095&&y>=360&&y<=500),'touch button circle still drawn');
+  assert(!seen.circles.some(([x,y,w])=>w===120&&y===680&&(x===120||x===1080)),'joystick circle still drawn');
+  assert(seen.labels.some(s=>s.startsWith('SCORE: ')),'controller hid the status HUD');
+}
+check('Idle connected controller hides touch buttons and joysticks without an input', () => {
+  frame([]);assert(P('!window.showOnScreenControls'));
+  noTouchHud(hud());
+});
+check('Rendering hides controls before polling and during a paused frame', () => {
+  pad={axes:[0,0,0,0],buttons:Array.from({length:17},()=>({pressed:false}))};
+  probe('isPaused=true;window.showOnScreenControls=true;');
+  noTouchHud(hud());probe('isPaused=false;');
+});
+check('Chemist flask and cannon touch buttons also disappear on a controller', () => {
+  probe('chemistSuitUnlocked=true;');frame([]);noTouchHud(hud());
+});
+check('Disconnect restores touchscreen HUD and joysticks', () => {
+  frame([]);frame(null);
+  assert(P('window.showOnScreenControls'));
+  const seen=hud();
+  for(const s of ['RELOAD','MELEE','DASH'])assert(seen.labels.includes(s),'missing touch '+s);
+  assert(seen.labels.some(s=>s.startsWith('GRENADE\n')));
+  assert.equal(seen.circles.filter(([x,y,w])=>w===120&&y===680&&(x===120||x===1080)).length,2);
+});
+check('Touch events cannot reveal the HUD while a controller is connected', () => {
+  frame([]);probe('isPaused=true;pauseMenuState="MAIN";touchStarted();');
+  assert(P('!window.showOnScreenControls'));noTouchHud(hud());probe('isPaused=false;');
+});
+check('Disconnected pad slots leave touchscreen HUD visible', () => {
+  pad={connected:false,axes:[0,0,0,0],buttons:[]};poll();
+  assert.equal(P('connectedGamepad()'),null);
+  assert(hud().labels.includes('MELEE'));
+});
+check('Axes-only controller also restores touch controls on disconnect', () => {
+  pad={connected:true,axes:[0,0,0,0],buttons:[]};poll();
+  assert(P('!window.showOnScreenControls'));noTouchHud(hud());
+  frame(null);assert(P('window.showOnScreenControls'));
+  assert(hud().labels.includes('MELEE'));
 });
 
 console.log('\n' + checks + ' gamepad checks passed: Backbone bindings, real dash/throw/cannon/melee/reload, press/hold/release, cycles, ownership, touch coexistence and reconnect.');

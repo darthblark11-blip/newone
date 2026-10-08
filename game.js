@@ -203,6 +203,7 @@ const ROBOT_OIL_AT     = 100;   // chassis HP at which it starts leaking
 const OIL_COL          = [18, 16, 15];
 const SPARK_COL        = [255, 214, 140];
 let playerRespawnTimer = 0, prevGamepadButtons = [];
+let gamepadWasConnected=false;
 // The health bar's chip-damage trail: how much the bar SHOWED before the last
 // hit, how long to hold it there, and what it read last frame. A bar that
 // simply follows hp tells you that you were hit; holding the old value for a
@@ -7440,7 +7441,7 @@ function updateHealthPacks() {
     
     if (player && player.hp > 0 && dist(player.x, player.y, hpk.x, hpk.y) < 30) {
       if (player.hp < 100) {
-        player.hp = 100;
+        player.restoreHealth(100 - player.hp);
         sfx.charge(); 
         streakMsgText = "HEALTH RESTORED!";
         streakMsgTimer = 90;
@@ -13023,6 +13024,17 @@ this.skeletonTimer = 0;
       if (this.moveAngle === undefined) this.moveAngle = random(TWO_PI);
   }
 
+  restoreHealth(amount) {
+    if (amount <= 0 || this.hp <= 0 || this.dead) return 0;
+    const restored = min(amount, max(0, this.maxHp - this.hp));
+    if (restored > 0) {
+      this.hp += restored;
+      // Body wounds heal with HP. The energy shield can refill independently.
+      if (this.isPlayer) this.decals.length = 0;
+    }
+    return restored;
+  }
+
       takeDamage(amount, source = null) {
     if(unarmedCivilian(this))scareCivilian(this,source?source.x:player?player.x:this.x,source?source.y:player?player.y:this.y);
     if(this.isCityPatrol&&this.hp>80)amount*=.55;
@@ -13447,10 +13459,6 @@ this.skeletonTimer = 0;
    this.forceNudge();
 	  if (this.shieldFlashTimer > 0) this.shieldFlashTimer--; if (this.shieldBurstTimer > 0) this.shieldBurstTimer--;
     if (this.shieldRechargeTimer > 0) { this.shieldRechargeTimer--; } else if (this.shield < 100) { this.shield = min(100, this.shield + 25 / 60); }
-    // Holes are a property of being unprotected, so they last exactly as long
-    // as that does. The moment the shield has anything in it -- the same moment
-    // takeDamage starts blocking again -- they come off.
-    if (this.isPlayer && this.shield > 0 && this.decals.length) this.decals.length = 0;
     if (this.dashWindow > 0) { this.dashWindow--; if (this.dashWindow <= 0) this.dashCount = 0; }
     
     if (this.meleeCharge === undefined) this.meleeCharge = 0;
@@ -16927,8 +16935,8 @@ function updateBullets() {
                 // A machine does not bleed. Its bullet holes are burnt metal.
                 if (t.eType === "ROBOT") dCol = [16, 15, 14, 230]; 
                 // A round the shield stopped never reached him, so it leaves no
-                // hole. Holes belong to the health bar: they start when the
-                // shield is gone and last only as long as it stays gone.
+                // hole. Holes belong to the health bar and remain until HP
+                // is restored, even after the shield recharges.
                 if (!(t.isPlayer && dRes.blocked)) {
                   t.decals.push({ x: lX, y: lY, sz: random(4, 7), col: dCol, isHead: b.tH === "HEAD",
                     isBulletHole:true,shotA:b.a-t.aimAngle });
@@ -18190,6 +18198,8 @@ function drawUI() {
 
   updateAndDrawFloatingScores();
 
+  // These are touch action buttons; controller players keep the status HUD.
+  if(!connectedGamepad()) {
   let bY = rightStick.base.y - 80, rbX = width - 35, rbY = bY - 170; 
   let isTaser = player && player.currentWeapon === WEAPONS.TASER;
   
@@ -18245,6 +18255,7 @@ function drawUI() {
 
   let tbX = width - 35, tbY = bY - 100; stroke(0, 255, 0); strokeWeight(2); noFill(); ellipse(tbX, tbY, 40, 40); line(tbX - 20, tbY, tbX + 20, tbY); line(tbX, tbY - 20, tbX, tbY + 20); if (headAimToggle) { fill(255, 0, 0); noStroke(); ellipse(tbX, tbY, 16, 16); fill(255, 0, 0); textAlign(RIGHT, CENTER); textSize(12); text("HEADSHOT", tbX - 30, tbY - 8); text("MODE", tbX - 30, tbY + 8); }
   if (jetpackUnlocked) { let dbX = tbX - 70, dbY = tbY; fill(50, 200); stroke(0, 200, 255); strokeWeight(2); if (player && player.dashCooldown > 0) fill(50, 100, 150, 200); ellipse(dbX, dbY, 50, 50); fill(255); noStroke(); textAlign(CENTER, CENTER); text(player && player.dashCooldown > 0 ? "..." : "DASH", dbX, dbY); }
+  }
   if (streakMsgTimer > 0) { push(); fill(255, 200, 0, map(streakMsgTimer, 0, 120, 0, 255)); textAlign(CENTER, CENTER); textSize(40); text(streakMsgText, width / 2, height / 4); pop(); streakMsgTimer--; }
 
   if ((currentLevel === 1 || currentLevel === 2) && isStoryMode && player && player.hp > 0 && (currentLevel === 2 || journalRead)) {
@@ -18340,8 +18351,22 @@ function drawUI() {
 
 
 
+function connectedGamepad() {
+  if(typeof navigator==='undefined'||typeof navigator.getGamepads!=='function')return null;
+  const pads=navigator.getGamepads();
+  for(let i=0;i<pads.length;i++)if(pads[i]&&pads[i].connected!==false)return pads[i];
+  return null;
+}
 function handleGamepad() {
-  let pads = navigator.getGamepads(), pad = null; for (let i = 0; i < pads.length; i++) if (pads[i]) { pad = pads[i]; break; } if (!pad) { prevGamepadButtons = []; return; }
+  const pad=connectedGamepad();
+  if(!pad) {
+    if(gamepadWasConnected&&!window.isDesktop)window.showOnScreenControls=true;
+    gamepadWasConnected=false;
+    prevGamepadButtons=[];return;
+  }
+  // Detection alone hides the touch HUD, even with both sticks at rest.
+  gamepadWasConnected=true;
+  window.showOnScreenControls=false;
   
   let lx = pad.axes[0], ly = pad.axes[1], ld = dist(0, 0, lx, ly); 
   if (ld > 0.2) { leftStick.active = true; leftStick.dx = lx; leftStick.dy = ly; window.showOnScreenControls = false; window.isDesktop = false; } else if (!touches.length && !window.isDesktop) leftStick.active = false;
@@ -18475,6 +18500,7 @@ function handleTouches() {
 
 
 function drawJoysticks() {
+  if(connectedGamepad())return;
   noFill(); stroke(255, 50); ellipse(leftStick.base.x, leftStick.base.y, 120); ellipse(rightStick.base.x, rightStick.base.y, 120);
 }
 
@@ -18630,7 +18656,7 @@ function drawUpgradeMenu() {
 
 
 function touchStarted() {
-  window.showOnScreenControls = true;
+  window.showOnScreenControls = !connectedGamepad();
   window.isDesktop = false;
   if (!sfx.ctx) sfx.init();
 
@@ -20321,7 +20347,7 @@ function checkLevelUps() {
     let req2 = 50; 
     if (window.farmLvl === 1 && window.farmXP >= req2) { 
         window.farmLvl = 2; streakMsgText = "FARMING LEVEL 2!"; streakMsgTimer = 120; sfx.charge(); 
-        if (player) { player.maxHp = 125; player.hp += 25; }
+        if (player) { player.maxHp = 125; player.restoreHealth(25); }
         for (let e of enemiesList) if (e.isFriendly) { e.maxHp = (e.maxHp || 300) + 25; e.hp += 25; }
     }
     if (window.milLvl === 1 && window.milXP >= req2) { 
