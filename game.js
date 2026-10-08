@@ -2942,6 +2942,7 @@ function drawBuildingShadows() {
 let _depthActors = [];      // reused; actors queued by actorShow() this frame
 let _depthMasses = [];      // reused; visible masses, sorted by base y
 let _depthOn = false;
+let _airborneActors = [];   // live flyers are above roofs, not ground contacts
 
 // Live decor that STANDS, as opposed to lying on the ground.
 //
@@ -2972,11 +2973,23 @@ function actorDepth(c) { return c.y; }
 // with a building's middle in front of its far wall.
 function massDepth(b) { return b.y + (b.h || 0) / 2; }
 
-// Every character draw goes through here. Outside a biome it is a straight
-// call, so nothing about the legacy levels changes.
+// Every character draw goes through here. Flyers have no ground contact to
+// compare with a building's base, so hold them for the pass above the roofs.
+// Grounded characters retain the depth sort and the legacy interior order.
 function actorShow(c) {
+  if (isAirborneEnemy(c)) { _airborneActors.push(c); return; }
   if (_depthOn) { _depthActors.push(c); return; }
   c.show();
+}
+
+function drawAirborneActors() {
+  _airborneActors.sort((a, b) => a.y - b.y);
+  try {
+    for (let i = 0; i < _airborneActors.length; i++) _airborneActors[i].show();
+  } finally {
+    // A failed painter must not leave an old aircraft queued next frame.
+    _airborneActors.length = 0;
+  }
 }
 
 // One run of the sorted array. A run can hold both ordinary masses and biome
@@ -5806,6 +5819,7 @@ viewBottom = camY + height / zoom + shakePad;
   // it throws, the frame loses its picture and keeps its controls -- see
   // A FRAME THAT FAILS MUST NOT TAKE THE CONTROLS WITH IT, above.
   const _sceneDepth = frameStackDepth();
+  _airborneActors.length = 0;
   try {
 
   push(); scale(zoom); translate(-camX, -camY);
@@ -5913,10 +5927,9 @@ viewBottom = camY + height / zoom + shakePad;
       if (dToDad > 40) { let ang = atan2(dadEntity.y - player.y, dadEntity.x - player.x); player.isMoving = true; player.walkCycle += 0.2; player.moveAngle = ang; player.aimAngle = ang; let dx = cos(ang) * 4; let dy = sin(ang) * 4; if (!player.checkCol(player.x + dx, player.y)) player.x += dx; if (!player.checkCol(player.x, player.y + dy)) player.y += dy; } else { player.isMoving = false; prologuePhase = 4;  }
   }
 
-   // From here to drawDepthSorted() every character draw is QUEUED rather than
-   // painted, so the masses can be interleaved with them by depth. Outside a
-   // biome the flag stays down and actorShow() paints immediately, exactly as
-   // this line used to.
+   // Ground actors are queued here so the masses can interleave with them by
+   // depth. Outside biomes they retain the immediate legacy draw. Aircraft use
+   // their own queue in either case and paint after the roofs and vehicles.
    _depthOn = depthSortActive();
    if (player.hp > 0) { if (!isWin && doTick) player.updatePlayer(); actorShow(player); } else if (!isWin && !isDead) { playerRespawnTimer--; if (playerRespawnTimer <= 0) { isDead = true; } }
   updateEntities(); 
@@ -5996,6 +6009,10 @@ viewBottom = camY + height / zoom + shakePad;
     let b = barrels[i]; if (inView(b.x, b.y, 50)) { fill(200, 30, 30); stroke(100, 0, 0); strokeWeight(2); ellipse(b.x, b.y, 24, 24); fill(40); noStroke(); ellipse(b.x, b.y, 16, 16); fill(255, 70); noStroke(); ellipse(b.x - 4, b.y - 4, 8, 8); }
     if (b.hp <= 0) { triggerExplosion(b.x, b.y, 160); barrels.splice(i, 1); }
   }
+
+  // Roofs, standing props and parked vehicles occlude ground actors. Aircraft
+  // cross above them, while bullets, muzzle flashes and smoke remain in front.
+  drawAirborneActors();
 
   if (typeof updateFires === 'function') updateFires();
   updateBullets(); updateGrenades(); if (typeof updatePlayerGrenades === 'function') updatePlayerGrenades(); if (typeof updatePlayerFlasks === 'function') updatePlayerFlasks(); updateParticles(); if (typeof updateLightnings === 'function') updateLightnings(); updateOrbs(); if (typeof updateShockwaves === 'function') updateShockwaves();
@@ -12856,6 +12873,163 @@ function drawStunnedFigure(e) {
 }
 
 
+function isAirborneEnemy(e) {
+    return !!e && !e.isPlayer && !e.dead && e.hp > 0 &&
+        (e.eType === 'AERIAL' || e.eType === 'AERIAL_PISTOL' || e.eType === 'SAUCER' || e.eType === 'SAUCER_RED');
+}
+
+// Shared by firing and the flyer AI's check for a return-fire lane.
+function characterMuzzleOffsets(e) {
+    const offsets={x:31,y:8,leftX:59,leftY:-17};
+    if (e.currentWeapon===WEAPONS.ASSAULT_RIFLE || e.currentWeapon===WEAPONS.SHOTGUN || e.currentWeapon===WEAPONS.ROCKET_LAUNCHER) {
+        offsets.x=47;offsets.y=6;
+    } else if (e.currentWeapon===WEAPONS.SMG || e.currentWeapon===WEAPONS.DUAL_SMG) {
+        offsets.x=offsets.leftX=38;offsets.y=11;offsets.leftY=-11;
+    }
+    if (e.eType==='ALIEN_GATOR' || e.eType==='SNAIL_HYBRID') {offsets.x=100;offsets.y=19;}
+    if (e.eType==='AERIAL_PISTOL') {offsets.x=51;offsets.y=16;}
+    return offsets;
+}
+// Use the solids that stop bullets, including gate wings. Flyers can cross
+// these footprints, but their combat stations need room for return fire.
+function airborneBuildingBlocks(b) {
+    if (!b.w || !b.h || b.isRiver || b.isDeck) return false;
+    if (currentLevel === 4 && b.isPalm) return false;
+    if (currentLevel === 6 && (b.isAlienPlant || b.isEnergyPole)) return false;
+    if ((currentLevel === 1 || currentLevel === 2) && b.isGrassLot) return false;
+    return true;
+}
+function airbornePositionOpen(x, y, pad = 60) {
+    for (const b of buildings) {
+        if (!airborneBuildingBlocks(b)) continue;
+        if (Math.abs(x-b.x) >= b.w/2+pad || Math.abs(y-b.y) >= b.h/2+pad) continue;
+        if (b.isGovFortress && gateIsOpen(b) && Math.abs(x-b.x)+pad < GATE_DOOR_HALF) continue;
+        return false;
+    }
+    return !parkingCars.some(c => Math.abs(x-c.x) < 25+pad && Math.abs(y-c.y) < 45+pad);
+}
+function airborneLineHitsRect(x1, y1, x2, y2, left, top, right, bottom) {
+    const dx=x2-x1,dy=y2-y1;
+    if (!dx && (x1<=left || x1>=right)) return false;
+    if (!dy && (y1<=top || y1>=bottom)) return false;
+    const ax=dx?(left-x1)/dx:-Infinity,bx=dx?(right-x1)/dx:Infinity;
+    const ay=dy?(top-y1)/dy:-Infinity,by=dy?(bottom-y1)/dy:Infinity;
+    return Math.max(0,Math.min(ax,bx),Math.min(ay,by)) < Math.min(1,Math.max(ax,bx),Math.max(ay,by));
+}
+function airborneClearShot(x1, y1, x2, y2) {
+    const minX=Math.min(x1,x2),maxX=Math.max(x1,x2),minY=Math.min(y1,y2),maxY=Math.max(y1,y2);
+    for (const b of buildings) {
+        const left=b.x-b.w/2,top=b.y-b.h/2,right=b.x+b.w/2,bottom=b.y+b.h/2;
+        if (right<minX || left>maxX || bottom<minY || top>maxY || !airborneBuildingBlocks(b)) continue;
+        if (b.isGovFortress && gateIsOpen(b)) {
+            if (airborneLineHitsRect(x1,y1,x2,y2,left,top,b.x-GATE_DOOR_HALF,bottom) ||
+                airborneLineHitsRect(x1,y1,x2,y2,b.x+GATE_DOOR_HALF,top,right,bottom)) return false;
+        } else if (airborneLineHitsRect(x1,y1,x2,y2,left,top,right,bottom)) return false;
+    }
+    return !parkingCars.some(c => airborneLineHitsRect(x1,y1,x2,y2,c.x-25,c.y-45,c.x+25,c.y+45));
+}
+function airborneReturnFireClear(target, x, y) {
+    if (!airborneClearShot(target.x,target.y,x,y)) return false;
+    const angle=Math.atan2(y-target.y,x-target.x),c=Math.cos(angle),s=Math.sin(angle);
+    const offsets=characterMuzzleOffsets(target),bob=target.isMoving?Math.abs(Math.sin(target.walkCycle))*2:0;
+    const clearMuzzle=(forward,side)=>airborneClearShot(
+        target.x+c*(forward+bob)-s*side,target.y+s*(forward+bob)+c*side,x-s*side,y+c*side);
+    return clearMuzzle(offsets.x,offsets.y) &&
+        (target.currentWeapon!==WEAPONS.DUAL_SMG || clearMuzzle(offsets.leftX,offsets.leftY));
+}
+function chooseAirborneStation(e, target, range) {
+    let best=null,score=Infinity;
+    const heading=Math.atan2(e.y-target.y,e.x-target.x);
+    // Favor the nearest reachable side of the target. Crossing a roof is
+    // allowed; stopping above it or behind another bullet blocker is not.
+    for (const radius of [range,range*0.65,range+100,range+180,100]) {
+        for (let n=0;n<24;n++) {
+            const angle=heading+n*Math.PI/12;
+            const x=target.x+Math.cos(angle)*radius,y=target.y+Math.sin(angle)*radius;
+            const cost=(x-e.x)**2+(y-e.y)**2;
+            if (cost>=score || !airbornePositionOpen(x,y) || !airborneReturnFireClear(target,x,y)) continue;
+            best={x,y,clearLane:true};score=cost;
+        }
+    }
+    if (best) return best;
+    // A target temporarily inside a solid cannot offer a firing lane. Leave
+    // the roof by its nearest open edge instead of circling above its center.
+    for (const b of buildings) {
+        if (!airborneBuildingBlocks(b) || Math.abs(e.x-b.x)>b.w/2+60 || Math.abs(e.y-b.y)>b.h/2+60) continue;
+        const left=b.x-b.w/2-80,right=b.x+b.w/2+80,top=b.y-b.h/2-80,bottom=b.y+b.h/2+80;
+        const points=[{x:left,y:e.y},{x:right,y:e.y},{x:e.x,y:top},{x:e.x,y:bottom},
+            {x:left,y:top},{x:right,y:top},{x:left,y:bottom},{x:right,y:bottom}];
+        for (const point of points) {
+            const cost=(point.x-e.x)**2+(point.y-e.y)**2;
+            if (cost<score && airbornePositionOpen(point.x,point.y)) {best=point;score=cost;}
+        }
+    }
+    return best;
+}
+function updateAirborneCombat(e, target, spd) {
+    const redSaucer=e.eType==='SAUCER_RED',pistol=e.eType==='AERIAL_PISTOL';
+    const range=redSaucer?350:(pistol?280:250),speed=(redSaucer?3.5:2.45)*spd;
+    const distance=Math.hypot(target.x-e.x,target.y-e.y),angle=Math.atan2(target.y-e.y,target.x-e.x);
+    const open=airbornePositionOpen(e.x,e.y),clear=open&&airborneReturnFireClear(target,e.x,e.y);
+    e.airborneStationTimer=Math.max(0,(e.airborneStationTimer||0)-1);
+    let station=e.airborneStation;
+    if (station && (station.target!==target || Math.hypot(target.x-station.targetX,target.y-station.targetY)>60 ||
+        !airbornePositionOpen(station.x,station.y) || (station.clearLane&&!airborneReturnFireClear(target,station.x,station.y)) ||
+        Math.hypot(station.x-e.x,station.y-e.y)<18)) {station=null;e.airborneStationTimer=0;}
+    if (e.airborneStationTarget!==target || Math.hypot(target.x-e.airborneTargetX,target.y-e.airborneTargetY)>60)
+        e.airborneStationTimer=0;
+    if ((!open || !clear) && e.airborneStationTimer===0) {
+        const point=chooseAirborneStation(e,target,range);
+        station=point?{...point,target,targetX:target.x,targetY:target.y}:null;
+        e.airborneStationTimer=30;
+        e.airborneStationTarget=target;e.airborneTargetX=target.x;e.airborneTargetY=target.y;
+    }
+    let vx=0,vy=0;
+    if (station) {
+        const d=Math.hypot(station.x-e.x,station.y-e.y),step=Math.min(speed,d);
+        vx=(station.x-e.x)/Math.max(1,d)*step;vy=(station.y-e.y)/Math.max(1,d)*step;
+    } else if (clear) {
+        const approach=Math.max(-speed,Math.min(speed,(distance-range)*0.02));
+        vx=Math.cos(angle)*approach;vy=Math.sin(angle)*approach;
+        if (redSaucer) {vx+=Math.cos(angle+Math.PI/2*e.strafeDir)*speed;vy+=Math.sin(angle+Math.PI/2*e.strafeDir)*speed;}
+        const magnitude=Math.hypot(vx,vy);
+        if (magnitude>speed) {vx=vx/magnitude*speed;vy=vy/magnitude*speed;}
+        if (!airbornePositionOpen(e.x+vx*12,e.y+vy*12) || !airborneReturnFireClear(target,e.x+vx*12,e.y+vy*12)) {
+            const point=chooseAirborneStation(e,target,range);
+            if (point) {
+                station={...point,target,targetX:target.x,targetY:target.y};
+                const d=Math.hypot(point.x-e.x,point.y-e.y),step=Math.min(speed,d);
+                vx=(point.x-e.x)/Math.max(1,d)*step;vy=(point.y-e.y)/Math.max(1,d)*step;
+            } else {vx=0;vy=0;}
+        }
+    } else {
+        // No clear station yet (for example overlapping roofs): keep crossing
+        // rather than settling at the usual attack radius above the obstacle.
+        const escape=e.moveAngle===undefined?angle:e.moveAngle;
+        vx=Math.cos(escape)*speed;vy=Math.sin(escape)*speed;
+    }
+    e.airborneStation=station;
+    e.x+=vx;e.y+=vy;e.aimAngle=angle;
+    e.isMoving=Math.hypot(vx,vy)>0.01;
+    if (e.isMoving) {e.moveAngle=Math.atan2(vy,vx);e.walkCycle+=0.2*spd;}
+    e.armDrag=lerp(e.armDrag,e.isMoving?1:0,0.15);
+    // Inbound shots use the same solid collision as outbound shots. Attack
+    // only from a clear station, after movement, including against allies.
+    if (!airbornePositionOpen(e.x,e.y) || !airborneReturnFireClear(target,e.x,e.y)) return;
+    if (redSaucer) {
+        if (e.burstCooldown>0) e.burstCooldown--;
+        else if (distance<600 && e.fireTimer<=0) {
+            e.fire(angle);e.burstsFired++;
+            if (e.burstsFired>=3) {e.burstCooldown=156;e.burstsFired=0;} else e.fireTimer=30;
+        }
+    } else if (pistol) {
+        if (distance<400 && e.fireTimer<=0 && e.ammo>0 && e.reloadTimer<=0) e.fire(angle);
+    } else if (distance<500 && e.fireTimer<=0) {
+        grenades.push(new Grenade(e.x,e.y,target.x,target.y,e.eType==='SAUCER'));
+        sfx.throwG();e.fireTimer=160;
+    }
+}
+
 class Character {
   constructor(x, y, isP, eT = "NORMAL") {
     this.isFriendly = false;
@@ -13385,6 +13559,10 @@ this.skeletonTimer = 0;
   }
 
  attemptMove(vx, vy) {
+    if (isAirborneEnemy(this)) {
+        this.x+=vx;this.y+=vy;this.isSliding=false;
+        return {x:vx,y:vy};
+    }
     // Steering memory: which hand they favour going round things, the heading
     // they are currently committed to, and how long that commitment has left.
     if (this.avoidSide === undefined) {
@@ -14415,6 +14593,11 @@ if (this.eType === "COW") {
 
     if(this.isCityPatrol&&this.state==="PATROL"){updateCityPatrol(this);return;}
 
+    if (isAirborneEnemy(this) && (this.state==='CHASE' || !airbornePositionOpen(this.x,this.y))) {
+        updateAirborneCombat(this,trg,spd);
+        return;
+    }
+
     // ---- ROBOT ---------------------------------------------------------
     // Its own loop rather than a branch inside CHASE: the machine has exactly
     // two modes and neither of them is the human patrol-and-strafe. Placed
@@ -14679,26 +14862,6 @@ if (this.eType === "COW") {
             }
         }
 
-        else if (this.eType === "SAUCER" || this.eType === "SAUCER_RED" || this.eType === "AERIAL") {
-           if (this.eType === "SAUCER" || this.eType === "AERIAL") {
-               if (canSee && dToP < 500 && this.fireTimer <= 0) { grenades.push(new Grenade(this.x, this.y, trg.x, trg.y, this.eType==="SAUCER")); sfx.throwG(); this.fireTimer = 160; }
-               if (distToTarget > 250 || (!canSee && distToTarget > 20)) { let vx = cos(iA) * 2.45 * spd, vy = sin(iA) * 2.45 * spd; this.x += vx; this.y += vy; aDx = vx; aDy = vy; }
-           } else if (this.eType === "SAUCER_RED") {
-               if (canSee && dToP < 600) {
-                   if (this.burstCooldown > 0) { this.burstCooldown--; } else if (this.fireTimer <= 0) { this.fire(iA); this.burstsFired++; if (this.burstsFired >= 3) { this.burstCooldown = 156; this.burstsFired = 0; } else { this.fireTimer = 30; } }
-               }
-               if (canSee || distToTarget > 20) {
-                   if (!canSee) {
-                       let vx = cos(iA) * 3.5 * spd, vy = sin(iA) * 3.5 * spd; this.x += vx; this.y += vy; aDx = vx; aDy = vy;
-                   } else {
-                       let distErr = dToP - 350, approachX = cos(iA) * distErr * 0.02, approachY = sin(iA) * distErr * 0.02, strafeX = cos(iA + (PI / 2) * this.strafeDir) * 3.5, strafeY = sin(iA + (PI / 2) * this.strafeDir) * 3.5;
-                       let vx = (approachX + strafeX) * spd, vy = (approachY + strafeY) * spd, maxSpd = 3.5 * spd, mag = dist(0, 0, vx, vy); if (mag > maxSpd) { vx = (vx / mag) * maxSpd; vy = (vy / mag) * maxSpd; }
-                       this.x += vx; this.y += vy; aDx = vx; aDy = vy;
-                       if (frameCount % 120 === 0 && random() < 0.3) this.strafeDir *= -1; 
-                   }
-               }
-           }
-        }
         else if (this.eType === "MOLOTOV") { 
             if (canSee && dToP < 500 && this.fireTimer <= 0) { grenades.push(new Molotov(this.x, this.y, trg.x, trg.y)); sfx.throwG(); this.fireTimer = 180; } 
             if (distToTarget > 300 || (!canSee && distToTarget > 20)) { let vx = cos(iA) * 2.45 * spd, vy = sin(iA) * 2.45 * spd; let m = this.attemptMove(vx, vy); aDx = m.x; aDy = m.y; } 
@@ -14792,9 +14955,8 @@ if (this.eType === "COW") {
     if (this.isPlayer) this.isArmed = true;
     let aH = ((this.isPlayer || this.isFriendly) && headAimToggle) ? "HEAD" : "BODY", cd = (this.isPlayer || this.isFriendly) ? this.currentWeapon.fireCooldown : (this.currentWeapon.enemyCooldown || 48), bob = this.isMoving ? abs(sin(this.walkCycle)) * 2 : 0;
     let cost = this.currentWeapon === WEAPONS.DUAL_SMG ? 2 : 1;
-    let bLX = 31, bLY = 8, bLX_L = 59, bLY_L = -17;
-    if (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { bLX = 47; bLY = 6; } else if (this.currentWeapon === WEAPONS.SMG || this.currentWeapon === WEAPONS.DUAL_SMG) { bLX = 38; bLY = 11; bLX_L = 38; bLY_L = -11; }
-    if (this.eType === "ALIEN_GATOR" || this.eType === "SNAIL_HYBRID") { bLX = 100; bLY = 19; } if (this.eType === "AERIAL_PISTOL") { bLX = 51; bLY = 16; }
+    const muzzleOffsets=characterMuzzleOffsets(this);
+    let bLX=muzzleOffsets.x,bLY=muzzleOffsets.y,bLX_L=muzzleOffsets.leftX,bLY_L=muzzleOffsets.leftY;
     
     let tX = this.x + cos(this.aimAngle) * (bLX + bob) - sin(this.aimAngle) * bLY, tY = this.y + sin(this.aimAngle) * (bLX + bob) + cos(this.aimAngle) * bLY;
     
@@ -18137,6 +18299,12 @@ Particle.prototype.show = function() {
         // Big, slow puffs get a soft falloff instead of a hard-edged disc, so a
         // cloud reads as one mass rather than a pile of circles.
         softBlob(this.x, this.y, this.sz * 1.35, this.sz * 1.35, c[0], c[1], c[2], this.a);
+    } else if (this.t === "SPARK") {
+        // Armor hits use these small ovals. Share the smoke's continuous radial
+        // falloff, with a compact bright core so a softened impact still reads
+        // clearly in a firefight. Both passes reuse the same cached gradient.
+        softBlob(this.x, this.y, this.sz * 1.8, this.sz * 1.8, c[0], c[1], c[2], this.a);
+        softBlob(this.x, this.y, this.sz * 0.8, this.sz * 0.8, c[0], c[1], c[2], this.a);
     } else {
         fill(c[0], c[1], c[2], this.a);
         ellipse(this.x, this.y, this.sz, this.sz);
