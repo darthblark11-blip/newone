@@ -132,8 +132,8 @@ const trip = (label, dest) => {
   ok(label + ': the pending assignment is consumed',
      P('window.militaryToBringM') === 0 && P('window.militaryToBringF') === 0);
   probe('window.travelArrival = "NORTH"; startAtLevel(3);');
-  ok(label + ': it is not re-created on the next hop',
-     P('enemiesList.filter(e => e.isMilitary && e.isFriendly).length') === 0);
+  ok(label + ': surviving soldiers travel onward exactly once',
+     P('enemiesList.filter(e => e.isMilitary && e.isFriendly).length') === 56);
 };
 trip('into a story arena', 'authored');
 trip('into a streamed biome', 'streamed');

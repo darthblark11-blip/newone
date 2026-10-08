@@ -1318,7 +1318,7 @@ if (isStoryMode) {
         
         for (let i = 0; i < 20; i++) {
             // Spawn enemies ONLY in the main hall so they don't get stuck inside the room
-            let e = new Character(random(-400, 400), random(-600, 1000), false, "ARMORED_STANDARD");
+            let e = newHostileCharacter(random(-400, 400), random(-600, 1000), "ARMORED_STANDARD");
             e.currentWeapon = WEAPONS.PISTOL;
             enemiesList.push(e);
         }
@@ -1341,10 +1341,10 @@ if (isStoryMode) {
             let dummySouth = {x: 600, y: 4880, w: 300, h: 50, isWall: true, isGrassLot: false};
             buildings.push(dummyNorth, dummySouth);
 
-            let nG1 = new Character(400, -3680, false, "ARMORED_STANDARD"); nG1.targetBuilding = dummyNorth;
-            let nG2 = new Character(800, -3680, false, "ARMORED_STANDARD"); nG2.targetBuilding = dummyNorth;
-            let sG1 = new Character(400, 4880, false, "ARMORED_STANDARD"); sG1.targetBuilding = dummySouth;
-            let sG2 = new Character(800, 4880, false, "ARMORED_STANDARD"); sG2.targetBuilding = dummySouth;
+            let nG1 = newHostileCharacter(400, -3680, "ARMORED_STANDARD"); nG1.targetBuilding = dummyNorth;
+            let nG2 = newHostileCharacter(800, -3680, "ARMORED_STANDARD"); nG2.targetBuilding = dummyNorth;
+            let sG1 = newHostileCharacter(400, 4880, "ARMORED_STANDARD"); sG1.targetBuilding = dummySouth;
+            let sG2 = newHostileCharacter(800, 4880, "ARMORED_STANDARD"); sG2.targetBuilding = dummySouth;
             enemiesList.push(nG1, nG2, sG1, sG2);
         }
         
@@ -1457,47 +1457,7 @@ if (isStoryMode) {
             for (let i = 0; i < TARGET_ENEMY_COUNT; i++) spawnSingleEnemy();
         }
 
-                if (window.militaryToBringM > 0 || window.militaryToBringF > 0) {
-            let spawnCountM = window.militaryToBringM || 0;
-            let spawnCountF = window.militaryToBringF || 0;
-
-            // The escort is a DETACHMENT, not an emigration. These soldiers
-            // stay on their home sector's military roll for as long as they are
-            // away, so travelling moves nobody between ledgers and the global
-            // population does not change because the player did. They show up
-            // in the allies bar because they are standing next to you, which is
-            // all that bar has ever meant.
-            window.militaryToBring = spawnCountM + spawnCountF;
-            window.escortWasF = spawnCountF;
-            // Consumed here. Left standing, the same escort was re-created from
-            // scratch on every subsequent level entry -- travel twice and the
-            // fifty-six became a hundred and twelve.
-            window.militaryToBringM = 0;
-            window.militaryToBringF = 0;
-
-            for (let i = 0; i < spawnCountM + spawnCountF; i++) {
-                let isFemale = i >= spawnCountM; // Spawns exact male count, then switches to female
-                let type = isFemale ? "FEMALE_PISTOL" : "NORMAL";
-                
-                let ax = player.x + random(-100, 100);
-                let ay = player.y + random(50, 150);
-                let a = new Character(ax, ay, false, type);
-                a.isFriendly = true;
-                a.isMilitary = true; 
-                a.hp = 300;
-                a.baseState = "FOLLOW";
-                
-                if (typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked) {
-                    a.currentWeapon = WEAPONS.ASSAULT_RIFLE; 
-                    a.shirtCol = color(60, 100, 40); 
-                    a.pantsCol = color(139, 115, 85);
-                } else {
-                    a.shirtCol = color(100, 100, 200); 
-                }
-                
-                enemiesList.push(a);
-            }
-        }
+        spawnPendingMilitary();
 
             
 
@@ -6260,18 +6220,19 @@ viewBottom = camY + height / zoom + shakePad;
           
       } 
        else if (townPhase === 7) {
+          clearGateApproach();
           let spawnY = (currentLevel === 1) ? 4950 : 1800;
           let aerY = (currentLevel === 1) ? 4900 : 1750;
           let spawnX1 = 600;  
           let spawnX2 = -200; 
           
-          for(let i=0; i<42; i++) enemiesList.push(new Character(spawnX1 + random(-250, 250), spawnY + random(-50, 50), false, "ARMORED_STANDARD"));
-          for(let i=0; i<4; i++) enemiesList.push(new Character(spawnX1 + random(-100, 100), spawnY + random(-50, 50), false, "ARMORED"));
-          for(let i=0; i<4; i++) enemiesList.push(new Character(spawnX1 + random(-300, 300), aerY, false, "AERIAL"));
+          for(let i=0; i<42; i++) enemiesList.push(newHostileCharacter(spawnX1 + random(-250, 250), spawnY + random(-50, 50), "ARMORED_STANDARD"));
+          for(let i=0; i<4; i++) enemiesList.push(newHostileCharacter(spawnX1 + random(-100, 100), spawnY + random(-50, 50), "ARMORED"));
+          for(let i=0; i<4; i++) enemiesList.push(newHostileCharacter(spawnX1 + random(-300, 300), aerY, "AERIAL"));
 
-                   for(let i=0; i<42; i++) enemiesList.push(new Character(spawnX2 + random(-250, 250), spawnY + random(-50, 50), false, "ARMORED_STANDARD"));
-          for(let i=0; i<4; i++) enemiesList.push(new Character(spawnX2 + random(-100, 100), spawnY + random(-50, 50), false, "ARMORED"));
-          for(let i=0; i<4; i++) enemiesList.push(new Character(spawnX2 + random(-300, 300), aerY, false, "AERIAL"));
+                   for(let i=0; i<42; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-250, 250), spawnY + random(-50, 50), "ARMORED_STANDARD"));
+          for(let i=0; i<4; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-100, 100), spawnY + random(-50, 50), "ARMORED"));
+          for(let i=0; i<4; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-300, 300), aerY, "AERIAL"));
 
           // Tag the 100 enemies we just spawned!
           for(let i = enemiesList.length - 100; i < enemiesList.length; i++) {
@@ -6517,19 +6478,19 @@ viewBottom = camY + height / zoom + shakePad;
 
           // Male UI Layer
           fill(100, 150, 255); textSize(18); textAlign(CENTER, CENTER); text("♂", width/2 - 60, d.y + 30);
-          fill(d.cM > 0 ? color(200, 50, 50) : color(80)); rect(width/2 - 45, d.y + 15, 25, 30, 4); fill(255); text("-", width/2 - 32, d.y + 30);
+          fill((d.cM > (d.id===1?militaryAssignedAway(POP_POOL,'M'):0)) ? color(200, 50, 50) : color(80)); rect(width/2 - 45, d.y + 15, 25, 30, 4); fill(255); text("-", width/2 - 32, d.y + 30);
           fill(255); textSize(16); text(d.cM, width/2 - 5, d.y + 30);
           fill(window.popUnassignedM > 0 ? color(50, 200, 50) : color(80)); rect(width/2 + 10, d.y + 15, 25, 30, 4); fill(255); text("+", width/2 + 22, d.y + 30);
 
           // Female UI Layer
           fill(255, 105, 180); textSize(18); text("♀", width/2 + 60, d.y + 30);
-          fill(d.cF > 0 ? color(200, 50, 50) : color(80)); rect(width/2 + 75, d.y + 15, 25, 30, 4); fill(255); text("-", width/2 + 87, d.y + 30);
+          fill((d.cF > (d.id===1?militaryAssignedAway(POP_POOL,'F'):0)) ? color(200, 50, 50) : color(80)); rect(width/2 + 75, d.y + 15, 25, 30, 4); fill(255); text("-", width/2 + 87, d.y + 30);
           fill(255); textSize(16); text(d.cF, width/2 + 115, d.y + 30);
           fill(window.popUnassignedF > 0 ? color(50, 200, 50) : color(80)); rect(width/2 + 130, d.y + 15, 25, 30, 4); fill(255); text("+", width/2 + 142, d.y + 30);
 
           // Apply rapid-fire clicks
           if (triggerAction) {
-              if (mx > width/2 - 45 && mx < width/2 - 20 && my > d.y + 15 && my < d.y + 45 && d.cM > 0) {
+              if (mx > width/2 - 45 && mx < width/2 - 20 && my > d.y + 15 && my < d.y + 45 && (d.cM > (d.id===1?militaryAssignedAway(POP_POOL,'M'):0))) {
                   if (d.id===0) window.popFarmingM--; if (d.id===1) window.popMilitaryM--; if (d.id===2) window.popScienceM--; if (d.id===3) window.popArchitectureM--;
                   window.popUnassignedM++; sfx.hitArmor();
               }
@@ -6537,7 +6498,7 @@ viewBottom = camY + height / zoom + shakePad;
                   if (d.id===0) window.popFarmingM++; if (d.id===1) window.popMilitaryM++; if (d.id===2) window.popScienceM++; if (d.id===3) window.popArchitectureM++;
                   window.popUnassignedM--; sfx.reload();
               }
-              if (mx > width/2 + 75 && mx < width/2 + 100 && my > d.y + 15 && my < d.y + 45 && d.cF > 0) {
+              if (mx > width/2 + 75 && mx < width/2 + 100 && my > d.y + 15 && my < d.y + 45 && (d.cF > (d.id===1?militaryAssignedAway(POP_POOL,'F'):0))) {
                   if (d.id===0) window.popFarmingF--; if (d.id===1) window.popMilitaryF--; if (d.id===2) window.popScienceF--; if (d.id===3) window.popArchitectureF--;
                   window.popUnassignedF++; sfx.hitArmor();
               }
@@ -6556,6 +6517,7 @@ viewBottom = camY + height / zoom + shakePad;
       popArchitecture = window.popArchitectureM + window.popArchitectureF;
       popUnassigned = window.popUnassignedM + window.popUnassignedF;
 
+      drawMilitaryDeploymentButton();
       let isEst = typeof townsData !== 'undefined' && townsData[viewingTownId] && townsData[viewingTownId].established;
       // A sector can complete its arc with nobody left to hand over -- the
       // player shot all eighty, or it never had a roster. There is nothing to
@@ -6627,7 +6589,8 @@ viewBottom = camY + height / zoom + shakePad;
           textSize(20); fill(200); text(`HEADING: ${travelDirection}`, width/2, 140);
           text("SQUAD DEPLOYMENT", width/2, 200);
           textSize(14); fill(150); 
-          text(`AVAILABLE MILITARY: ♂ ${window.popMilitaryM}   ♀ ${window.popMilitaryF}`, width/2, 230);
+          const _travelMilitary=travelMilitaryAvailable();
+          text(`AVAILABLE MILITARY: ♂ ${_travelMilitary.male}   ♀ ${_travelMilitary.female}`, width/2, 230);
 
           // HOLD TO SPEED-ASSIGN, exactly as the Directive's columns do -- same
           // helper, same cadence. Marching thirty soldiers out used to be thirty
@@ -6644,9 +6607,9 @@ viewBottom = camY + height / zoom + shakePad;
               const _tx = _tp.x, _ty = _tp.y;
               const hit = (x0, y0) => _tx > x0 && _tx < x0 + 25 && _ty > y0 && _ty < y0 + 30;
               if (hit(width/2 - 120, 270) && window.militaryToBringM > 0)                    { window.militaryToBringM--; sfx.hitArmor(); }
-              if (hit(width/2 + 110, 270) && window.militaryToBringM < window.popMilitaryM)   { window.militaryToBringM++; sfx.reload(); }
+              if (hit(width/2 + 110, 270) && window.militaryToBringM < _travelMilitary.male)   { window.militaryToBringM++; sfx.reload(); }
               if (hit(width/2 - 120, 330) && window.militaryToBringF > 0)                    { window.militaryToBringF--; sfx.hitArmor(); }
-              if (hit(width/2 + 110, 330) && window.militaryToBringF < window.popMilitaryF)   { window.militaryToBringF++; sfx.reload(); }
+              if (hit(width/2 + 110, 330) && window.militaryToBringF < _travelMilitary.female)   { window.militaryToBringF++; sfx.reload(); }
           }
 
           // MALE ROW
@@ -6654,14 +6617,14 @@ viewBottom = camY + height / zoom + shakePad;
           fill(100, 150, 255); noStroke(); textSize(18); text("♂ BRING MALES", width/2 - 40, 285);
           fill(255); textSize(24); text(window.militaryToBringM, width/2 + 80, 285);
           fill(window.militaryToBringM > 0 ? color(200, 50, 50) : color(80)); rect(width/2 - 120, 270, 25, 30, 4); fill(255); textSize(16); text("-", width/2 - 107, 285);
-          fill(window.militaryToBringM < window.popMilitaryM ? color(50, 200, 50) : color(80)); rect(width/2 + 110, 270, 25, 30, 4); fill(255); text("+", width/2 + 122, 285);
+          fill(window.militaryToBringM < _travelMilitary.male ? color(50, 200, 50) : color(80)); rect(width/2 + 110, 270, 25, 30, 4); fill(255); text("+", width/2 + 122, 285);
 
           // FEMALE ROW
           fill(40); stroke(200); strokeWeight(2); rect(width/2 - 150, 320, 300, 50, 8);
           fill(255, 105, 180); noStroke(); textSize(18); text("♀ BRING FEMALES", width/2 - 30, 345);
           fill(255); textSize(24); text(window.militaryToBringF, width/2 + 80, 345);
           fill(window.militaryToBringF > 0 ? color(200, 50, 50) : color(80)); rect(width/2 - 120, 330, 25, 30, 4); fill(255); textSize(16); text("-", width/2 - 107, 345);
-          fill(window.militaryToBringF < window.popMilitaryF ? color(50, 200, 50) : color(80)); rect(width/2 + 110, 330, 25, 30, 4); fill(255); text("+", width/2 + 122, 345);
+          fill(window.militaryToBringF < _travelMilitary.female ? color(50, 200, 50) : color(80)); rect(width/2 + 110, 330, 25, 30, 4); fill(255); text("+", width/2 + 122, 345);
 
           fill(50, 200, 50); stroke(255); rect(width/2 - 120, height - 90, 240, 50, 8);
           fill(0); noStroke(); textSize(18); text("DEPART", width/2, height - 65);
@@ -6944,19 +6907,19 @@ if (swordPickedUp || window.pickaxeOwned) {
 
           // Male UI Layer
           fill(100, 150, 255); textSize(18); textAlign(CENTER, CENTER); text("♂", width/2 - 60, d.y + 30);
-          fill(d.cM > 0 ? color(200, 50, 50) : color(80)); rect(width/2 - 45, d.y + 15, 25, 30, 4); fill(255); text("-", width/2 - 32, d.y + 30);
+          fill((d.cM > (d.id===1?militaryAssignedAway(POP_POOL,'M'):0)) ? color(200, 50, 50) : color(80)); rect(width/2 - 45, d.y + 15, 25, 30, 4); fill(255); text("-", width/2 - 32, d.y + 30);
           fill(255); textSize(16); text(d.cM, width/2 - 5, d.y + 30);
           fill(window.popUnassignedM > 0 ? color(50, 200, 50) : color(80)); rect(width/2 + 10, d.y + 15, 25, 30, 4); fill(255); text("+", width/2 + 22, d.y + 30);
 
           // Female UI Layer
           fill(255, 105, 180); textSize(18); text("♀", width/2 + 60, d.y + 30);
-          fill(d.cF > 0 ? color(200, 50, 50) : color(80)); rect(width/2 + 75, d.y + 15, 25, 30, 4); fill(255); text("-", width/2 + 87, d.y + 30);
+          fill((d.cF > (d.id===1?militaryAssignedAway(POP_POOL,'F'):0)) ? color(200, 50, 50) : color(80)); rect(width/2 + 75, d.y + 15, 25, 30, 4); fill(255); text("-", width/2 + 87, d.y + 30);
           fill(255); textSize(16); text(d.cF, width/2 + 115, d.y + 30);
           fill(window.popUnassignedF > 0 ? color(50, 200, 50) : color(80)); rect(width/2 + 130, d.y + 15, 25, 30, 4); fill(255); text("+", width/2 + 142, d.y + 30);
 
           // Apply rapid-fire clicks
           if (triggerAction) {
-              if (mx > width/2 - 45 && mx < width/2 - 20 && my > d.y + 15 && my < d.y + 45 && d.cM > 0) {
+              if (mx > width/2 - 45 && mx < width/2 - 20 && my > d.y + 15 && my < d.y + 45 && (d.cM > (d.id===1?militaryAssignedAway(POP_POOL,'M'):0))) {
                   if (d.id===0) window.popFarmingM--; if (d.id===1) window.popMilitaryM--; if (d.id===2) window.popScienceM--; if (d.id===3) window.popArchitectureM--;
                   window.popUnassignedM++; sfx.hitArmor();
               }
@@ -6964,7 +6927,7 @@ if (swordPickedUp || window.pickaxeOwned) {
                   if (d.id===0) window.popFarmingM++; if (d.id===1) window.popMilitaryM++; if (d.id===2) window.popScienceM++; if (d.id===3) window.popArchitectureM++;
                   window.popUnassignedM--; sfx.reload();
               }
-              if (mx > width/2 + 75 && mx < width/2 + 100 && my > d.y + 15 && my < d.y + 45 && d.cF > 0) {
+              if (mx > width/2 + 75 && mx < width/2 + 100 && my > d.y + 15 && my < d.y + 45 && (d.cF > (d.id===1?militaryAssignedAway(POP_POOL,'F'):0))) {
                   if (d.id===0) window.popFarmingF--; if (d.id===1) window.popMilitaryF--; if (d.id===2) window.popScienceF--; if (d.id===3) window.popArchitectureF--;
                   window.popUnassignedF++; sfx.hitArmor();
               }
@@ -6983,6 +6946,7 @@ if (swordPickedUp || window.pickaxeOwned) {
       popArchitecture = window.popArchitectureM + window.popArchitectureF;
       popUnassigned = window.popUnassignedM + window.popUnassignedF;
 
+      drawMilitaryDeploymentButton();
       let isEst = typeof townsData !== 'undefined' && townsData[viewingTownId] && townsData[viewingTownId].established;
       const nothingToAssign = (popTotal === 0);
       let btnText = nothingToAssign ? "CONTINUE"
@@ -7012,6 +6976,9 @@ if (swordPickedUp || window.pickaxeOwned) {
       // had already dealt with, so the Directive closed and the ledger kept
       // whatever it had before. Gone -- the click path owns the click.
             }
+      else if (pauseMenuState === "MILITARY_BRING") {
+          drawMilitaryDeploymentMenu();
+      }
       else if (pauseMenuState === "GARRISON") {
           drawGarrisonMenu();
       }
@@ -7534,6 +7501,7 @@ function resetStoryProgress() {
     window.postAmbushCutscenePlayed = false;
     window.towersDefeated = false;
     window.militaryToBring = 0; window.militaryToBringM = 0; window.militaryToBringF = 0;
+    window.pendingEscortRoster = []; window.restoringEscortRoster = false;
     townsData = {};
     globalPopulation = 0;
     viewingTownId = 1;
@@ -7606,6 +7574,7 @@ function seedDebugStoryProgress(level) {
 
     // Point the live roster at the last town you settled.
     window.militaryToBring = 0; window.militaryToBringM = 0; window.militaryToBringF = 0;
+    window.pendingEscortRoster = []; window.restoringEscortRoster = false;
     if (cleared >= 1) {
         viewingTownId = cleared;
         loadTownData(cleared);
@@ -7727,7 +7696,8 @@ function openSectorDirective(level) {
     // An already-settled town skips straight to the map; a fresh one has to be
     // assigned and established first.
     if (townsData[id].established) {
-        if (typeof loadTownData === 'function') loadTownData(id);
+        invalidateDirectiveBuffer();
+        loadLedgerIntoWindow(POP_POOL);
         inWorldBuildingMenu = false;
         inOverworldView = true;
     } else {
@@ -8033,12 +8003,108 @@ function postCitizen(dept, sex, fromId, toId) {
     const key = "pop" + dept + sex;
     const a = sectorLedger(fromId), b = sectorLedger(toId);
     if (a === b || (Number(a[key]) || 0) <= 0) return false;
+    // Soldiers on a combat detachment still occupy their home department.
+    // Posting one elsewhere while they are away would give their casualty
+    // record a different home from the ledger that now holds them.
+    if (dept === 'Military' && a[key] <= militaryAssignedAway(fromId, sex)) return false;
     a[key]--; b[key]++;
     a.popTotal = sectorPopSum(a);
     b.popTotal = sectorPopSum(b);
     invalidateDirectiveBuffer();
     globalPopulation = globalPopulationCount();
     return true;
+}
+
+// Department residents live at a secured fortress. This is a visual view of
+// the ledgers; making or rebuilding it never creates another population.
+function deployDirectivePopulation() {
+    townCitizens=[];
+    let index=0;
+    const sources=[{home:POP_POOL,data:poolLedger()}];
+    if(currentLevel>=1&&currentLevel<=7)sources.push({home:currentLevel,data:sectorLedger(currentLevel)});
+    for(const source of sources)for(const dept of POP_DEPTS)for(const sex of ['M','F']) {
+        let count=Math.max(0,Math.floor(Number(source.data['pop'+dept+sex])||0));
+        if(dept==='Military')count=Math.max(0,count-militaryAssignedAway(source.home,sex));
+        for(let n=0;n<count;n++) {
+            const point=getOwnedFortressSpawnPoint(index++);
+            if(!point)continue;
+            const resident=new Citizen(point.x,point.y,dept.toUpperCase(),sex==='F'?'FEMALE':'MALE');
+            resident.fortressHome=point.fortress;
+            townCitizens.push(resident);
+        }
+    }
+    return townCitizens.length;
+}
+
+let militarySelectionM=0,militarySelectionF=0,militaryMenuFromWorld=false;
+function drawMilitaryDeploymentButton() {
+    fill(40,70,90);stroke(70,180,230);strokeWeight(2);
+    rect(width/2-120,height-136,240,34,6);
+    fill(180,230,255);noStroke();textAlign(CENTER,CENTER);textSize(15);
+    text('MILITARY TO BRING',width/2,height-119);
+}
+function openMilitaryDeploymentMenu() {
+    storeWindowIntoLedger(POP_POOL);
+    militaryMenuFromWorld=inWorldBuildingMenu;
+    militarySelectionM=militarySelectionF=0;
+    inWorldBuildingMenu=false;isPaused=true;pauseMenuState='MILITARY_BRING';
+    sfx.charge();
+}
+function drawMilitaryDeploymentMenu() {
+    const available=militaryDeploymentAvailable();
+    militarySelectionM=Math.min(militarySelectionM,available.male);
+    militarySelectionF=Math.min(militarySelectionF,available.female);
+    fill(255);textAlign(CENTER,CENTER);textFont('sans-serif');textSize(28);
+    text('MILITARY TO BRING',width/2,50);
+    fill(190);textSize(14);
+    text('Deploy soldiers from the Military department as an active squad.',width/2,88);
+    const fortress=nearestOwnedFortress(currentLevel);
+    text(fortress?'MUSTER AT '+fortress.name:'Capture a fortress in this sector to deploy a squad.',width/2,120);
+    text('ACTIVE MILITARY: '+(countEscort(false)+countEscort(true)),width/2,158);
+    const pointer=uiPointer();
+    const step=holdRepeat('military-bring',pointer.down);
+    for(let row=0;row<2;row++) {
+        const female=row===1,y=220+row*74,limit=female?available.female:available.male;
+        let selected=female?militarySelectionF:militarySelectionM;
+        if(step&&pointer.y>y+14&&pointer.y<y+46) {
+            if(pointer.x>width/2-126&&pointer.x<width/2-94)selected=Math.max(0,selected-1);
+            if(pointer.x>width/2+94&&pointer.x<width/2+126)selected=Math.min(limit,selected+1);
+        }
+        if(female)militarySelectionF=selected;else militarySelectionM=selected;
+        fill(30);stroke(100);strokeWeight(1);rect(width/2-160,y,320,60,8);
+        noStroke();fill(female?color(255,105,180):color(100,150,255));textSize(15);
+        text((female?'FEMALES':'MALES')+' AVAILABLE: '+limit,width/2,y+12);
+        fill(selected>0?color(180,60,50):color(70));rect(width/2-126,y+14,32,32,4);
+        fill(selected<limit?color(50,180,70):color(70));rect(width/2+94,y+14,32,32,4);
+        fill(255);textSize(22);text('-',width/2-110,y+30);text('+',width/2+110,y+30);
+        text(selected,width/2,y+36);
+    }
+    const ready=available.canDeploy&&(militarySelectionM+militarySelectionF)>0;
+    fill(ready?color(50,200,80):color(80));stroke(255);strokeWeight(2);
+    rect(width/2-120,height-90,240,50,8);
+    fill(ready?0:180);noStroke();textSize(18);text('DEPLOY',width/2,height-65);
+    fill(40);stroke(150);rect(width/2-80,height-34,160,28,6);
+    fill(220);noStroke();textSize(14);text('BACK',width/2,height-20);
+}
+function handleMilitaryDeploymentClicks(mx,my) {
+    if(mx>width/2-80&&mx<width/2+80&&my>height-34&&my<height-6) {
+        militarySelectionM=militarySelectionF=0;
+        invalidateDirectiveBuffer();
+        if(militaryMenuFromWorld){isPaused=false;inWorldBuildingMenu=true;}
+        else pauseMenuState='GOV_DIRECTIVE';
+        sfx.charge();return true;
+    }
+    if(mx>width/2-120&&mx<width/2+120&&my>height-90&&my<height-40) {
+        const result=deployActiveMilitary(militarySelectionM,militarySelectionF);
+        if(result.total>0) {
+            militarySelectionM=militarySelectionF=0;
+            deployDirectivePopulation();
+            isPaused=false;inWorldBuildingMenu=false;inOverworldView=true;pauseMenuState='MAIN';
+            window.lastPauseTime=millis();sfx.charge();
+        }
+        return true;
+    }
+    return false;
 }
 
 // --- the garrison screen ---------------------------------------------------
@@ -8162,15 +8228,128 @@ function garrisonSectors() {
 // between ledgers and the global count does not move when the player does.
 // Dying is the one thing that does change it, and it is deducted as an integer
 // at the moment it happens rather than inferred later from who is missing.
-function escortCasualty() {
-    const home = window.escortHome;
+function escortCasualty(victim = null) {
+    if (victim && victim.escortDeathCounted) return;
+    const home = victim && victim.escortHome !== undefined ? victim.escortHome : window.escortHome;
     if (!home) return;
     const t = sectorLedger(home);
-    if (t.popMilitaryF > 0 && (window.escortWasF || 0) > 0) { t.popMilitaryF--; window.escortWasF--; }
-    else if (t.popMilitaryM > 0) t.popMilitaryM--;
-    else if (t.popMilitaryF > 0) t.popMilitaryF--;
+    const sex = victim ? militarySex(victim) : ((window.escortWasF || 0) > 0 ? 'F' : 'M');
+    const key = 'popMilitary' + sex;
+    if (t[key] > 0) t[key]--;
+    if (victim) victim.escortDeathCounted = true;
+    if (sex === 'F') window.escortWasF = Math.max(0, (window.escortWasF || 0) - 1);
     t.popTotal = sectorPopSum(t);
     globalPopulation = globalPopulationCount();
+    invalidateDirectiveBuffer();
+}
+
+// Combat troops remain on their department's ledger while following the
+// player. The map is only a view of that detachment, never another grant.
+function militaryCount(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+}
+function militarySex(e) {
+    return e.escortSex === 'F' || (e.escortSex !== 'M' && String(e.eType || '').indexOf('FEMALE') !== -1) ? 'F' : 'M';
+}
+function militaryAssignedAway(home = POP_POOL, sex = 'M', includePending = true) {
+    let n = 0;
+    for (const e of enemiesList) {
+        if (!e || !e.isFriendly || !e.isMilitary || e.dead || e.hp <= 0) continue;
+        const source = e.escortHome !== undefined ? e.escortHome : (window.escortHome || POP_POOL);
+        if (String(source) === String(home) && militarySex(e) === sex) n++;
+    }
+    if (!includePending) return n;
+    for (const e of window.pendingEscortRoster || []) {
+        if (String(e.home) === String(home) && e.sex === sex) n++;
+    }
+    if (String(window.escortHome || POP_POOL) === String(home))
+        n += militaryCount(window['militaryToBring' + sex]);
+    return n;
+}
+function militaryDeploymentAvailable() {
+    const home = POP_POOL, t = sectorLedger(home);
+    const male = Math.max(0, t.popMilitaryM - militaryAssignedAway(home, 'M'));
+    const female = Math.max(0, t.popMilitaryF - militaryAssignedAway(home, 'F'));
+    const canDeploy = !!player && typeof nearestOwnedFortress === 'function' && !!nearestOwnedFortress(currentLevel);
+    return { home, male, female, total: male + female, canDeploy };
+}
+// The travel counters are a selection, so exclude them when displaying how
+// many more soldiers may accompany troops who are already active.
+function travelMilitaryAvailable() {
+    const home = POP_POOL, t = sectorLedger(home);
+    const male = Math.max(0, t.popMilitaryM - militaryAssignedAway(home, 'M', false));
+    const female = Math.max(0, t.popMilitaryF - militaryAssignedAway(home, 'F', false));
+    return { home, male, female, total: male + female };
+}
+function queueMilitaryDeparture() {
+    const available = travelMilitaryAvailable();
+    window.escortHome = available.home;
+    window.militaryToBringM = Math.min(militaryCount(window.militaryToBringM), available.male);
+    window.militaryToBringF = Math.min(militaryCount(window.militaryToBringF), available.female);
+    return available;
+}
+function spawnEscortSoldier(point, sex, home, record = null) {
+    const a = new Character(point.x, point.y, false, sex === 'F' ? 'FEMALE_PISTOL' : 'NORMAL');
+    a.isFriendly = true;
+    a.isMilitary = true;
+    a.escortHome = home;
+    a.escortSex = sex;
+    a.isFortressMilitary = !!(record && record.fortressMilitary);
+    a.maxHp = record && Number.isFinite(record.maxHp) ? Math.max(300, record.maxHp) : 300;
+    a.hp = record && Number.isFinite(record.hp) ? Math.max(1, Math.min(a.maxHp, record.hp)) : a.maxHp;
+    a.baseState = 'FOLLOW';
+    if (explosiveArmorUnlocked) {
+        a.currentWeapon = WEAPONS.ASSAULT_RIFLE;
+        a.shirtCol = color(60, 100, 40);
+        a.pantsCol = color(139, 115, 85);
+    } else a.shirtCol = color(100, 100, 200);
+    enemiesList.push(a);
+    return a;
+}
+function syncActiveMilitaryCount() {
+    window.militaryToBring = countEscort(false) + countEscort(true);
+    window.escortWasF = countEscort(true);
+}
+function deployActiveMilitary(males, females) {
+    const available = militaryDeploymentAvailable();
+    const result = { male: 0, female: 0, total: 0 };
+    if (!available.canDeploy || typeof getOwnedFortressSpawnPoint !== 'function') return result;
+    for (const sex of ['M', 'F']) {
+        const count = Math.min(militaryCount(sex === 'M' ? males : females), sex === 'M' ? available.male : available.female);
+        for (let i = 0; i < count; i++) {
+            const point = getOwnedFortressSpawnPoint(result.total, currentLevel, true);
+            if (!point) break;
+            spawnEscortSoldier(point, sex, available.home, { fortressMilitary: true });
+            result[sex === 'M' ? 'male' : 'female']++;
+            result.total++;
+        }
+    }
+    syncActiveMilitaryCount();
+    return result;
+}
+function liveMilitaryRoster() {
+    return enemiesList.filter(e => e && e.isFriendly && e.isMilitary && !e.dead && e.hp > 0).map(e => ({
+        home: e.escortHome !== undefined ? e.escortHome : (window.escortHome || POP_POOL),
+        sex: militarySex(e), hp: e.hp, maxHp: e.maxHp, x: e.x, y: e.y, fortressMilitary: !!e.isFortressMilitary
+    }));
+}
+function spawnPendingMilitary() {
+    const roster = Array.isArray(window.pendingEscortRoster) ? window.pendingEscortRoster.slice() : [];
+    const home = window.escortHome || POP_POOL;
+    const males = militaryCount(window.militaryToBringM), females = militaryCount(window.militaryToBringF);
+    for (let i = 0; i < males + females; i++) roster.push({ home, sex: i < males ? 'M' : 'F' });
+    window.pendingEscortRoster = [];
+    window.militaryToBringM = 0;
+    window.militaryToBringF = 0;
+    for (const record of roster) {
+        let point = { x: player.x + random(-100, 100), y: player.y + random(50, 150) };
+        if (window.restoringEscortRoster && record.fortressMilitary && Number.isFinite(record.x) && Number.isFinite(record.y))
+            point = { x: record.x, y: record.y };
+        spawnEscortSoldier(point, record.sex === 'F' ? 'F' : 'M', record.home || home, record);
+    }
+    window.restoringEscortRoster = false;
+    syncActiveMilitaryCount();
 }
 
 // Opens a sector's Directive without disturbing what is already assigned.
@@ -8250,7 +8429,7 @@ function legacyGetSafeSpawn(away) {
     rx = random(-bndX, bndX);
     ry = random(-bndY, bndY);
 
-    let hit = !insideSector(rx, ry);
+    let hit = !insideSector(rx, ry) || (away && insideOwnedFortress(currentLevel, rx, ry, 60));
     
     // 3. Keep enemies from spawning directly on the player's head
     if (away && player && player.hp > 0 && dist(rx, ry, player.x, player.y) < 500) hit = true;
@@ -8283,7 +8462,8 @@ function legacyGetSafeSpawn(away) {
   }
   
   // Fallback: If 1000 random spots fail, drop them slightly off-screen from the player
-  return safe ? { x: rx, y: ry } : { x: player ? player.x + 600 : 0, y: player ? player.y + 600 : 0 };
+  const fallback = { x: player ? player.x + 600 : 0, y: player ? player.y + 600 : 0 };
+  return safe ? { x: rx, y: ry } : (away ? hostileSpawnPoint(fallback.x, fallback.y) : fallback);
 }
 
 function triggerGateAmbush(fortressY, isNorthGate = false) {
@@ -8327,19 +8507,19 @@ function triggerGateAmbush(fortressY, isNorthGate = false) {
     let gateAerY = spawnY < 0 ? spawnY + 100 : spawnY - 100;
 
     // --- BATCH 1: EAST ---
-    for(let i=0; i<21; i++) enemiesList.push(new Character(spawnX1 + random(-250, 250), spawnY + random(-50, 50), false, "ARMORED_STANDARD"));
-    for(let i=0; i<2; i++) enemiesList.push(new Character(spawnX1 + random(-100, 100), spawnY + random(-50, 50), false, "ARMORED"));
-    for(let i=0; i<2; i++) enemiesList.push(new Character(spawnX1 + random(-300, 300), gateAerY, false, "AERIAL"));
+    for(let i=0; i<21; i++) enemiesList.push(newHostileCharacter(spawnX1 + random(-250, 250), spawnY + random(-50, 50), "ARMORED_STANDARD"));
+    for(let i=0; i<2; i++) enemiesList.push(newHostileCharacter(spawnX1 + random(-100, 100), spawnY + random(-50, 50), "ARMORED"));
+    for(let i=0; i<2; i++) enemiesList.push(newHostileCharacter(spawnX1 + random(-300, 300), gateAerY, "AERIAL"));
 
     // --- BATCH 2: WEST ---
-    for(let i=0; i<21; i++) enemiesList.push(new Character(spawnX2 + random(-250, 250), spawnY + random(-50, 50), false, "ARMORED_STANDARD"));
-    for(let i=0; i<2; i++) enemiesList.push(new Character(spawnX2 + random(-100, 100), spawnY + random(-50, 50), false, "ARMORED"));
-    for(let i=0; i<2; i++) enemiesList.push(new Character(spawnX2 + random(-300, 300), gateAerY, false, "AERIAL"));
+    for(let i=0; i<21; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-250, 250), spawnY + random(-50, 50), "ARMORED_STANDARD"));
+    for(let i=0; i<2; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-100, 100), spawnY + random(-50, 50), "ARMORED"));
+    for(let i=0; i<2; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-300, 300), gateAerY, "AERIAL"));
 
         // --- BATCH 2: WEST ---
-    for(let i=0; i<21; i++) enemiesList.push(new Character(spawnX2 + random(-250, 250), spawnY + random(-50, 50), false, "ARMORED_STANDARD"));
-    for(let i=0; i<2; i++) enemiesList.push(new Character(spawnX2 + random(-100, 100), spawnY + random(-50, 50), false, "ARMORED"));
-    for(let i=0; i<2; i++) enemiesList.push(new Character(spawnX2 + random(-300, 300), gateAerY, false, "AERIAL"));
+    for(let i=0; i<21; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-250, 250), spawnY + random(-50, 50), "ARMORED_STANDARD"));
+    for(let i=0; i<2; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-100, 100), spawnY + random(-50, 50), "ARMORED"));
+    for(let i=0; i<2; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-300, 300), gateAerY, "AERIAL"));
     
     for(let e of enemiesList) { if(!e.isFriendly && e.hp > 0 && !e.dead) { e.state = "CHASE"; e.loseSightTimer = 999; } }
 
@@ -8538,7 +8718,7 @@ function getOuterSpawn(tries) {
   for (let i = 0; i < n; i++) {
     const eS = getSafeSpawn(true);
     if (!eS) continue;
-    if (inAuthoredSector(eS.x, eS.y, 500)) continue;
+    if (inAuthoredSector(eS.x, eS.y, 500) || insideOwnedFortress(currentLevel, eS.x, eS.y, 60)) continue;
     // Not in a town either -- but deliberately NOT the full outerRegionUncached
     // test. That one also rejects the whole 3x3 chunk neighbourhood around
     // every checkpoint, and at 21% checkpoint density it refused so much ground
@@ -8590,7 +8770,7 @@ function spawnSingleEnemy() {
       const eS = getOuterSpawn();
       if (!eS) return;
       const t = LIBERATED_SPAWN[currentLevel][floor(random(LIBERATED_SPAWN[currentLevel].length))];
-      enemiesList.push(new Character(eS.x, eS.y, false, t));
+      enemiesList.push(newHostileCharacter(eS.x, eS.y, t));
       return;
   }
 
@@ -8635,12 +8815,12 @@ function spawnSingleEnemy() {
     const t = overworldPick(currentLevel, r);
     if (t === "BANDIT") {
       // Lone riders between the posses -- a scout, a straggler.
-      const b = new Character(oS.x, oS.y, false, "BANDIT");
+      const b = newHostileCharacter(oS.x, oS.y, "BANDIT");
       if (random() > 0.35) b.mountUp();
       enemiesList.push(b);
       return;
     }
-    enemiesList.push(new Character(oS.x, oS.y, false, t));
+    enemiesList.push(newHostileCharacter(oS.x, oS.y, t));
     return;
   }
 
@@ -8651,14 +8831,14 @@ if (bugCount < 10) {
     for (let i = 0; i < bugsToSpawn; i++) {
         // Use pre-calculated baseEnemyCount instead of a heavy .filter() scan
         if (baseEnemyCount < TARGET_ENEMY_COUNT) {
-            enemiesList.push(new Character(eS.x + random(-40, 40), eS.y + random(-40, 40), false, "BUG"));
+            enemiesList.push(newHostileCharacter(eS.x + random(-40, 40), eS.y + random(-40, 40), "BUG"));
         }
     }
     return;
 }
 
       if (currentLevel >= 5 && snailCount < 5) {
-          enemiesList.push(new Character(eS.x, eS.y, false, "SNAIL"));
+          enemiesList.push(newHostileCharacter(eS.x, eS.y, "SNAIL"));
           return;
       }
   }
@@ -8677,7 +8857,7 @@ if (bugCount < 10) {
       else if (r > 0.7) type = "AERIAL";
       else if (r > 0.3) {
           if (bugCount <= 10) {
-              for (let i = 0; i < 3; i++) enemiesList.push(new Character(eS.x + random(-40, 40), eS.y + random(-40, 40), false, "BUG"));
+              for (let i = 0; i < 3; i++) enemiesList.push(newHostileCharacter(eS.x + random(-40, 40), eS.y + random(-40, 40), "BUG"));
               return;
           } else type = "NORMAL";
       } else type = "NORMAL";
@@ -8703,14 +8883,14 @@ if (bugCount < 10) {
          if (bugCount < 15) {
     for (let i = 0; i < 3; i++) {
         if (baseEnemyCount < TARGET_ENEMY_COUNT) {
-            enemiesList.push(new Character(eS.x + random(-40, 40), eS.y + random(-40, 40), false, "BUG"));
+            enemiesList.push(newHostileCharacter(eS.x + random(-40, 40), eS.y + random(-40, 40), "BUG"));
         }
     }
     return;
 }if (bugCount < 15) {
     for (let i = 0; i < 3; i++) {
         if (baseEnemyCount < TARGET_ENEMY_COUNT) {
-            enemiesList.push(new Character(eS.x + random(-40, 40), eS.y + random(-40, 40), false, "BUG"));
+            enemiesList.push(newHostileCharacter(eS.x + random(-40, 40), eS.y + random(-40, 40), "BUG"));
         }
     }
     return;
@@ -8751,14 +8931,14 @@ if (bugCount < 10) {
       !OVERWORLD_SET[currentLevel].has(type)) {
       type = overworldPick(currentLevel, random());
       if (type === "BANDIT") {
-          const b = new Character(eS.x, eS.y, false, "BANDIT");
+          const b = newHostileCharacter(eS.x, eS.y, "BANDIT");
           if (random() > 0.35) b.mountUp();
           enemiesList.push(b);
           return;
       }
   }
 
-  enemiesList.push(new Character(eS.x, eS.y, false, type));
+  enemiesList.push(newHostileCharacter(eS.x, eS.y, type));
 }
 
 // ---------------------------------------------------------------------------
@@ -8924,7 +9104,7 @@ function spawnAmbushReinforcement() {
     if (currentLevel === 4) {
         let sX = random() > 0.5 ? player.x - 1200 : player.x + 1200;
         let sY = player.y + random(-800, 800);
-        let e = new Character(sX, sY, false, "NM0_GREY_FATIGUE");
+        let e = newHostileCharacter(sX, sY, "NM0_GREY_FATIGUE");
         e.state = "CHASE"; e.loseSightTimer = 999; e.isAmbush = true;
         enemiesList.push(e);
         return;
@@ -8961,7 +9141,7 @@ function spawnAmbushReinforcement() {
     if (r > 0.9) { type = "AERIAL"; sY = aerY; }
     else if (r > 0.8) { type = "ARMORED"; }
     
-        let e = new Character(sX + random(-jitter, jitter), sY, false, type);
+        let e = newHostileCharacter(sX + random(-jitter, jitter), sY, type);
     e.state = "CHASE";
     e.loseSightTimer = 999;
     e.isAmbush = true; 
@@ -12565,7 +12745,8 @@ function refreshCityPeople(mgr,pcx,pcy) {
       // The outer ring includes corners beyond the retention radius. Do not
       // spend the spawn budget rebuilding somebody the next refresh evicts.
       if(Math.hypot(point.x-player.x,point.y-player.y)>3000)continue;
-      if(!cityPersonOffscreen(point.x,point.y)||(isCiv&&!cityCivilianAllowed(point.x,point.y)))continue;
+      if(!cityPersonOffscreen(point.x,point.y)||(isCiv&&!cityCivilianAllowed(point.x,point.y))||
+         (!isCiv&&insideOwnedFortress(1,point.x,point.y,60)))continue;
       const e=new Character(point.x,point.y,false,isCiv?CITY_CIVILIANS[n%2]:"NM0_CITY_GUARD");
       if(isCiv)cityAppearance(e,seed);
       e.cityPersonKey=k;e.cityCx=cx;e.cityCy=cy;e.cityDistance=old&&old.d!==undefined?old.d:d;
@@ -16265,7 +16446,7 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
     // A soldier the player marched here from somewhere else. They belong to the
     // sector that raised them, so that is the ledger the loss comes off.
     if (deadGuy && deadGuy.isMilitary && deadGuy.isFriendly &&
-        typeof escortCasualty === 'function') escortCasualty();
+        typeof escortCasualty === 'function') escortCasualty(deadGuy);
     // One of the fort's own. Counted here, as it happens, for the same reason
     // the sector's roster is: walking away and coming back must re-form the
     // ones the player spared and no more.
@@ -16325,7 +16506,7 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
         // away rewrote Stick City's Directive; and on a record that had no
         // legacy `popMilitary` field it wrote `Math.max(0, undefined - 1)`,
         // which is NaN, into the save.
-        if (window.militaryToBring && window.militaryToBring > 0) window.militaryToBring--;
+        if (deadGuy && deadGuy.isMilitary) syncActiveMilitaryCount();
         if (x !== undefined && y !== undefined) floatingScores.push({ y: 100, text: "ALLY LOST!", life: 90, maxLife: 90 });
         return; 
     }
@@ -16546,7 +16727,7 @@ function updateEntities() {
           // cost of a plain sqrt it did not need either.
           let cullDist = ((nm0AmbushActive || currentLevel === 4) && !e.isFriendly) ? 6000 : 1450;
           const cdx = player.x - e.x, cdy = player.y - e.y;
-          if (cdx * cdx + cdy * cdy < cullDist * cullDist) {
+          if ((e.isFriendly && e.isMilitary) || cdx * cdx + cdy * cdy < cullDist * cullDist) {
               e.updateEnemy();
           }
       }
@@ -16649,7 +16830,7 @@ function maintainBanditPosse(hostiles) {
   for (let i = 0; i < n; i++) {
     const sx = ox + cos(a + HALF_PI) * (i - (n - 1) / 2) * 95;
     const sy = oy + sin(a + HALF_PI) * (i - (n - 1) / 2) * 95;
-    if (inAuthoredSector(sx, sy, 500)) continue;
+    if (inAuthoredSector(sx, sy, 500) || (hostile && insideOwnedFortress(currentLevel, sx, sy, 60))) continue;
     const b = new Character(sx, sy, false, "BANDIT");
     b.mountUp();
     b.bandGroup = group;
@@ -17085,7 +17266,7 @@ function updateBullets() {
                         let dmg = b.w === WEAPONS.SHOTGUN ? 25 : (b.w === WEAPONS.ROCKET_LAUNCHER ? 350 : (b.isRedLaser || b.isPinkLaser ? 30 : (b.isAlienLaser ? 25 : (b.w.bodyDmg || 20))));
                         bldg.hp -= dmg;
                         if (bldg.hp <= 0) { sfx.explosion(bldg.x, bldg.y); screenShake = 30; emit(bldg.x, bldg.y, 100, color(200, 230, 40), "GORE"); spawnSplatter(bldg.x, bldg.y, "BLOOD", color(200, 230, 40)); spawnSplatter(bldg.x, bldg.y, "SCORCH"); let bIdx = buildings.indexOf(bldg); if (bIdx > -1) buildings.splice(bIdx, 1); } 
-                        else { emit(b.x, b.y, 5, color(255, 20, 147), "BLOOD"); let swarmBug = new Character(bldg.x - 20, bldg.y - 20, false, "BUG"); swarmBug.ignoreBldgTimer = 180; enemiesList.push(swarmBug); sfx.hitBody(); }
+                        else { emit(b.x, b.y, 5, color(255, 20, 147), "BLOOD"); let swarmBug = newHostileCharacter(bldg.x - 20, bldg.y - 20, "BUG"); swarmBug.ignoreBldgTimer = 180; enemiesList.push(swarmBug); sfx.hitBody(); }
                         if (b.w === WEAPONS.ROCKET_LAUNCHER) triggerRocketExplosion(b.x, b.y, b.isP); 
                     } else if (bldg.isTower && bldg.hp > 0 && b.isP) {
                         let dmg = b.w === WEAPONS.SHOTGUN ? 25 : (b.w === WEAPONS.ROCKET_LAUNCHER ? 350 : (b.w.bodyDmg || 20));
@@ -17212,6 +17393,11 @@ class Citizen {
                 this.state = "WANDER";
                 this.tx = this.x + random(-300, 300);
                 this.ty = this.y + random(-300, 300);
+                if(this.fortressHome) {
+                    const f=this.fortressHome;
+                    this.tx=constrain(this.tx,f.innerX0+30,f.innerX1-30);
+                    this.ty=constrain(this.ty,f.innerY0+30,f.innerY1-30);
+                }
                 this.timer = dist(this.x, this.y, this.tx, this.ty) / this.speed + 60;
             } else {
                 this.state = "IDLE";
@@ -17331,6 +17517,10 @@ class Citizen {
     // player put up is not an obstacle to the crew putting it up. A FINISHED
     // structure blocks them like any other building.
     citizenBlocked(x, y) {
+        if(this.fortressHome&&!this.buildSite) {
+            const f=this.fortressHome;
+            if(x<f.innerX0+15||x>f.innerX1-15||y<f.innerY0+15||y>f.innerY1-15)return true;
+        }
         if (!inView(this.x, this.y, 320)) return false;
         const r = 13;
         for (const b of colNear(x, y)) {
@@ -17414,6 +17604,11 @@ class Citizen {
                     this.y += sin(angle) * (overlap * 0.5);
                 }
             }
+        }
+        if(this.fortressHome&&!this.buildSite) {
+            const f=this.fortressHome;
+            this.x=constrain(this.x,f.innerX0+15,f.innerX1-15);
+            this.y=constrain(this.y,f.innerY0+15,f.innerY1-15);
         }
     }
 
@@ -18777,6 +18972,7 @@ function touchStarted() {
                           travelDirection = null;
                           window.militaryToBringM = 0;
                           window.militaryToBringF = 0;
+                          window.escortHome = POP_POOL;
                           window.lastPauseTime = millis();
                           sfx.charge();
                           return false;
@@ -18891,6 +19087,7 @@ else if (mx > width/2 - 120 && mx < width/2 + 120 && my > height/2 - 110 && my <
               if (my > height / 2 + 150 && my < height / 2 + 190) { pauseMenuState = "SQUAD"; return false; }
           }
       } else if (pauseMenuState === "GOV_DIRECTIVE") {
+          if(mx>width/2-120&&mx<width/2+120&&my>height-136&&my<height-102){openMilitaryDeploymentMenu();return false;}
           // Out, without committing anything. The Directive is an edit buffer
           // over the ledger, so backing out simply reloads it.
           if (mx > width/2 - 160 && mx < width/2 - 10 && my > height - 34 && my < height - 6) {
@@ -18917,23 +19114,8 @@ else if (mx > width/2 - 120 && mx < width/2 + 120 && my > height/2 - 110 && my <
                   return false;
               }
               if (popUnassigned === 0) { 
-                  // RE-POPULATE: Clear old ones
-                  townCitizens = []; 
-                  
-                  // Spawn specific genders per department!
-                  for (let i = 0; i < window.popFarmingM; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "FARMING", "MALE"));
-                  for (let i = 0; i < window.popFarmingF; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "FARMING", "FEMALE"));
-                  
-                  for (let i = 0; i < window.popMilitaryM; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "MILITARY", "MALE"));
-                  for (let i = 0; i < window.popMilitaryF; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "MILITARY", "FEMALE"));
-                  
-                  for (let i = 0; i < window.popScienceM; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "SCIENCE", "MALE"));
-                  for (let i = 0; i < window.popScienceF; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "SCIENCE", "FEMALE"));
-                  
-                  for (let i = 0; i < window.popArchitectureM; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "ARCHITECTURE", "MALE"));
-                  for (let i = 0; i < window.popArchitectureF; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "ARCHITECTURE", "FEMALE"));
-
                   storeWindowIntoLedger(POP_POOL);
+                  deployDirectivePopulation();
                   sectorLedger(viewingTownId).established = true;
                   
                   if (inWorldBuildingMenu) {
@@ -18951,6 +19133,10 @@ else if (mx > width/2 - 120 && mx < width/2 + 120 && my > height/2 - 110 && my <
 }
 
       
+      else if (pauseMenuState === "MILITARY_BRING") {
+          handleMilitaryDeploymentClicks(mx,my);
+          return false;
+      }
       else if (pauseMenuState === "GARRISON") {
           handleGarrisonClicks(mx, my);
           return false;
@@ -19076,6 +19262,7 @@ else if (typeof inPostAmbushCutscene !== 'undefined' && inPostAmbushCutscene) {
 // 3. GOV DIRECTIVE MENU -> OVERWORLD (Merged)
 // ==========================================
 else if (typeof inWorldBuildingMenu !== 'undefined' && inWorldBuildingMenu) {
+    if(mx>width/2-120&&mx<width/2+120&&my>height-136&&my<height-102){openMilitaryDeploymentMenu();return false;}
     if (mx > width/2 - 160 && mx < width/2 - 10 && my > height - 34 && my < height - 6) {
         invalidateDirectiveBuffer(); loadLedgerIntoWindow(POP_POOL);
         inWorldBuildingMenu = false; inOverworldView = true;
@@ -19109,18 +19296,7 @@ else if (typeof inWorldBuildingMenu !== 'undefined' && inWorldBuildingMenu) {
             sectorLedger(targetId).established = true;
             
             // B. Physically spawn the gender-accurate citizens
-            townCitizens = []; 
-            for (let i = 0; i < window.popFarmingM; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "FARMING", "MALE"));
-            for (let i = 0; i < window.popFarmingF; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "FARMING", "FEMALE"));
-            
-            for (let i = 0; i < window.popMilitaryM; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "MILITARY", "MALE"));
-            for (let i = 0; i < window.popMilitaryF; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "MILITARY", "FEMALE"));
-            
-            for (let i = 0; i < window.popScienceM; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "SCIENCE", "MALE"));
-            for (let i = 0; i < window.popScienceF; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "SCIENCE", "FEMALE"));
-            
-            for (let i = 0; i < window.popArchitectureM; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "ARCHITECTURE", "MALE"));
-            for (let i = 0; i < window.popArchitectureF; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "ARCHITECTURE", "FEMALE"));
+            deployDirectivePopulation();
 
             inOverworldView = true; 
             if (typeof sfx !== 'undefined' && sfx.charge) sfx.charge();
@@ -19137,8 +19313,9 @@ else if (typeof inOverworldView !== 'undefined' && inOverworldView) {
         let tx = width/2 - 150 + (t-1)*300;
         let ty = height/2;
         if (dist(mx, my, tx, ty) < 45) {
-            if (typeof saveTownData === 'function') saveTownData(viewingTownId);
-            if (typeof loadTownData === 'function') loadTownData(t);
+            viewingTownId=t;
+            invalidateDirectiveBuffer();
+            loadLedgerIntoWindow(POP_POOL);
             inOverworldView = false;
             inWorldBuildingMenu = true;
             if (typeof sfx !== 'undefined' && sfx.charge) sfx.charge();
@@ -19174,8 +19351,7 @@ else if (inTravelMenu) {
               // Whose soldiers these are. They stay on this sector's military
               // roll while they are away, and any of them that do not come back
               // come off it -- see escortCasualty().
-              window.escortHome = viewingTownId || currentLevel;
-              window.escortWasF = window.militaryToBringF || 0;
+              queueMilitaryDeparture();
               startExtraction(travelDirection);
               travelDirection = null;
           }
@@ -19234,8 +19410,9 @@ if (inOverworldView) {
         let tx = width/2 - 150 + (t-1)*300;
         let ty = height/2;
         if (dist(mx, my, tx, ty) < 45) {
-            saveTownData(viewingTownId);
-            loadTownData(t);
+            viewingTownId=t;
+            invalidateDirectiveBuffer();
+            loadLedgerIntoWindow(POP_POOL);
             inOverworldView = false;
             inWorldBuildingMenu = true;
             sfx.charge();
@@ -19272,8 +19449,7 @@ if (inTravelMenu) {
               // Whose soldiers these are. They stay on this sector's military
               // roll while they are away, and any of them that do not come back
               // come off it -- see escortCasualty().
-              window.escortHome = viewingTownId || currentLevel;
-              window.escortWasF = window.militaryToBringF || 0;
+              queueMilitaryDeparture();
               startExtraction(travelDirection);
               travelDirection = null;
           }
@@ -19647,7 +19823,7 @@ function countEscort(female) {
   if (typeof enemiesList === 'undefined') return 0;
   for (const e of enemiesList) {
     if (!e || !e.isFriendly || !e.isMilitary || e.hp <= 0 || e.dead) continue;
-    const isF = String(e.eType || "").toUpperCase().indexOf("FEMALE") !== -1;
+    const isF = militarySex(e) === 'F';
     if (isF === !!female) n++;
   }
   return n;
@@ -19767,6 +19943,9 @@ function saveGame() {
         // re-spawned on load, which is the same path a normal arrival takes.
         militaryToBringM: (window.militaryToBringM || 0) + countEscort(false),
         militaryToBringF: (window.militaryToBringF || 0) + countEscort(true),
+        escortRoster: liveMilitaryRoster().concat(window.pendingEscortRoster || []),
+        militaryPendingM: militaryCount(window.militaryToBringM),
+        militaryPendingF: militaryCount(window.militaryToBringF),
 
         // --- NEW FOR TOWN PERSISTENCE ---
         townsData: typeof townsData !== 'undefined' ? townsData : null,
@@ -19806,7 +19985,13 @@ function loadGame() {
         // townsData. They have to be in place before the map is generated,
         // otherwise every save reloads into the wrong world.
         if (state.townsData) townsData = state.townsData;
-        consolidateLegacyIntoPool();
+        const consolidatedMilitary = consolidateLegacyIntoPool();
+        if (consolidatedMilitary > 0) {
+            // A legacy sector roster was just folded into the travelling army.
+            // Its detachment records must follow the same paperwork move.
+            state.escortHome = POP_POOL;
+            if (Array.isArray(state.escortRoster)) for (const soldier of state.escortRoster) soldier.home = POP_POOL;
+        }
         window.escortHome = state.escortHome || null;
         window.escortWasF = state.escortWasF || 0;
         if (state.viewingTownId) viewingTownId = state.viewingTownId;
@@ -19838,8 +20023,10 @@ function loadGame() {
         // normal arrival. Restored after startAtLevel (which is where it used
         // to be) the soldiers never landed, and the counts then sat there
         // waiting to conjure a second escort at the next level entry.
-        window.militaryToBringM = state.militaryToBringM || 0;
-        window.militaryToBringF = state.militaryToBringF || 0;
+        window.pendingEscortRoster = Array.isArray(state.escortRoster) ? state.escortRoster : [];
+        window.restoringEscortRoster = Array.isArray(state.escortRoster);
+        window.militaryToBringM = Array.isArray(state.escortRoster) ? militaryCount(state.militaryPendingM) : militaryCount(state.militaryToBringM);
+        window.militaryToBringF = Array.isArray(state.escortRoster) ? militaryCount(state.militaryPendingF) : militaryCount(state.militaryToBringF);
 
         startAtLevel(state.currentLevel, true); // true = skip hard reset
 
@@ -19935,7 +20122,7 @@ function loadGame() {
         // popArchitecture are DERIVED from the ledger and are recomputed by
         // loadLedgerIntoWindow(). Restoring them from the save put a stale copy
         // of some other sector's numbers in front of the record.
-        loadLedgerIntoWindow(state.viewingTownId || currentLevel);
+        loadLedgerIntoWindow(POP_POOL);
         statVit = state.statVit || 1; statMen = state.statMen || 1; statPhy = state.statPhy || 1; statObe = state.statObe || 1; statInt = state.statInt || 1;
         
         if (state.biomeState) biomeState = state.biomeState;
@@ -19972,7 +20159,7 @@ function loadGame() {
         journalRead = state.journalRead; tabletPickedUp = state.tabletPickedUp; swordPickedUp = state.swordPickedUp;
         swordKillCounter=[0,1,2].includes(state.swordKillCounter)?state.swordKillCounter:0;
         darchonCallCompleted = state.darchonCallCompleted;
-window.militaryToBring = state.militaryToBring || 0;
+        syncActiveMilitaryCount();
         // townPhase / townTimer / objectiveTimer / the post-ambush pair are
         // restored with the rest of the cutscene block above.
         inWorldBuildingMenu = state.inWorldBuildingMenu || false; inOverworldView = state.inOverworldView || false;
@@ -20102,19 +20289,19 @@ window.militaryToBring = state.militaryToBring || 0;
                 
                 for(let i=0; i<remainingStandard; i++) {
                     let sX = random() > 0.5 ? 600 : -200;
-                    let c = new Character(sX + random(-250, 250), spawnY + random(-50, 50), false, "ARMORED_STANDARD");
+                    let c = newHostileCharacter(sX + random(-250, 250), spawnY + random(-50, 50), "ARMORED_STANDARD");
                     c.isAmbush = true;
                     enemiesList.push(c);
                 }
                 for(let i=0; i<remainingArmored; i++) {
                     let sX = random() > 0.5 ? 600 : -200;
-                    let c = new Character(sX + random(-100, 100), spawnY + random(-50, 50), false, "ARMORED");
+                    let c = newHostileCharacter(sX + random(-100, 100), spawnY + random(-50, 50), "ARMORED");
                     c.isAmbush = true;
                     enemiesList.push(c);
                 }
                 for(let i=0; i<remainingAerial; i++) {
                     let sX = random() > 0.5 ? 600 : -200;
-                    let c = new Character(sX + random(-300, 300), aerY, false, "AERIAL");
+                    let c = newHostileCharacter(sX + random(-300, 300), aerY, "AERIAL");
                     c.isAmbush = true;
                     enemiesList.push(c);
                 }
@@ -20150,18 +20337,15 @@ window.militaryToBring = state.militaryToBring || 0;
                     inOverworldView = false;
                 }
 
-                // Repopulate the visual civilian sprites
-                townCitizens = [];
-                for (let i = 0; i < popFarming; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "FARMING"));
-                for (let i = 0; i < popMilitary; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "MILITARY"));
-                for (let i = 0; i < popScience; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "SCIENCE"));
-                for (let i = 0; i < popArchitecture; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "ARCHITECTURE"));
-            }
+                }
         }
         // Unconditionally, and last: the block above sits inside
         // `if (window.towersDefeated)` and wipes every hostile on the field, so
         // a fort's muster has to be re-formed after it and outside it.
         restoreFortMuster();
+        // Outpost-only captures in later sectors do not set the main-city
+        // towers flag. Their deployed residents still belong to the ledger.
+        deployDirectivePopulation();
         // A cutscene speaker is an object reference into enemiesList, and the
         // entity list is not saved. Re-cast from whoever is actually standing
         // in the yard, and close the scene if the fort has nobody left to say
@@ -20199,6 +20383,23 @@ function restoreFortMuster() {
     const def = (typeof outpostFortDef === 'function') ? outpostFortDef(currentLevel) : null;
     if (!def) return;
     const st = outpostFortState(currentLevel);
+
+    // Secured yards do not recreate an old enemy muster on reload. The save
+    // keeps counters rather than bodies; with the reinforcement order canceled,
+    // the remaining unsaved combatants cannot hold this captured fort hostage.
+    if (st.captured && st.musterOn) {
+        st.musterOn = false; st.musterDone = true;
+        st.musterLeft = 0; st.musterWaves = 0;
+        const ownFight = window.ambushKind !== 'TOWER' && (!window.ambushFort ||
+            (window.ambushFort.x === def.x && window.ambushFort.y === def.y));
+        if (ownFight) {
+            nm0AmbushActive = false; nm0AmbushKills = 0;
+            window.ambushSpawnsRemaining = 0;
+            window.fortMusterJustCleared = true;
+            window.nm0AmbushCleared = true;
+        }
+        return;
+    }
 
     // A save written before the fort kept its own record. Its muster fields
     // default to "the fight was won", which is right for a quiet fort and wrong
@@ -20335,7 +20536,7 @@ function spawnFarmBug() {
     let sX = isWest ? -1200 + random(-100, 100) : -1000 + random(-100, 100);
     let sY = isWest ? random(-150, 150) : -800 + random(-100, 100);
 
-    let b = new Character(sX, sY, false, "BUG");
+    let b = newHostileCharacter(sX, sY, "BUG");
     b.state = "CHASE"; 
     b.loseSightTimer = 3000;
     enemiesList.push(b);
@@ -21071,7 +21272,7 @@ function updateProductionMeters() {
 
         // Multiplied by 0.001 to dramatically slow down the leveling speed
         let fRate = (pF * (1 + Math.min(5, Math.floor(pF / 10)) * 0.1)) * 0.001;
-        let milActive = Math.max(0, pM - ((Number(window.militaryToBringM) || 0) + (Number(window.militaryToBringF) || 0)));
+        let milActive = Math.max(0, pM - militaryAssignedAway(POP_POOL,'M') - militaryAssignedAway(POP_POOL,'F'));
         let mRate = (milActive * (1 + Math.min(5, Math.floor(milActive / 10)) * 0.1)) * 0.001;
         let sRate = (pS * (1 + Math.min(5, Math.floor(pS / 10)) * 0.1)) * 0.001;
         let aRate = (pA * (1 + Math.min(5, Math.floor(pA / 10)) * 0.1)) * 0.001;
@@ -21096,7 +21297,7 @@ function triggerLvl4Ambush() {
     for(let i = 0; i < 50; i++) {
         let sX = random() > 0.5 ? -1500 : 1500; 
         let sY = player.y + random(-1000, 1000);
-        let e = new Character(sX, sY, false, "NM0_GREY_FATIGUE");
+        let e = newHostileCharacter(sX, sY, "NM0_GREY_FATIGUE");
         e.state = "CHASE"; 
         e.loseSightTimer = 2500;
         e.isAmbush = true;
@@ -22974,6 +23175,110 @@ function insideFortYard(biome, x, y, pad) {
   return Math.abs(x - def.x) < FORT_HALF_W + p && Math.abs(y - def.y) < FORT_HALF_H + p;
 }
 
+// Ownership belongs to the saved capture record, never merely to an open door.
+// Stick City's giant starting compound is a fortress too: dropping its grid
+// captures it before the Directive is assigned. Establishing a Directive can
+// happen at the relay fort, so that flag alone says nothing about these gates.
+function startingFortressOwned(biome = currentLevel) {
+  if (biome !== 1) return false;
+  const town = typeof townsData !== 'undefined' && townsData && townsData[biome];
+  if ((town && town.towersDown) || (currentLevel === 1 && window.towersDefeated)) return true;
+  if (!town || !town.established) return false;
+  // Older completed runs may predate towersDown. Their main-sector award or
+  // named liberation beat proves which fort was taken; an eradicated original
+  // roster also proves the main compound was cleared on the other route.
+  const seeded = Number(town.popSeeded) || 0;
+  return !!(town.popAmbushCleared || (window.storyBeats && window.storyBeats.L1_POSTAMBUSH) ||
+    (seeded > 0 && Number(town.popKilled) >= seeded));
+}
+
+function ownedFortresses(biome = currentLevel) {
+  const forts = [];
+  if (startingFortressOwned(biome)) {
+    forts.push({ id: 'SECTOR', biome: 1, name: 'STICK CITY FORTRESS', x: 600, y: 600,
+      x0: -4700, y0: -4600, x1: 5900, y1: 5800,
+      innerX0: -4200, innerY0: -3800, innerX1: 5400, innerY1: 5000 });
+  }
+  const def = outpostFortDef(biome);
+  const st = window.outpostForts && window.outpostForts[biome];
+  if (def && st && st.captured) {
+    const wall = FORT_GATE_H / 2;
+    forts.push({ id: 'OUTPOST', biome, name: def.name, x: def.x, y: def.y,
+      x0: def.x - FORT_HALF_W - wall, y0: def.y - FORT_HALF_H - wall,
+      x1: def.x + FORT_HALF_W + wall, y1: def.y + FORT_HALF_H + wall,
+      innerX0: def.x - FORT_HALF_W + wall, innerY0: def.y - FORT_HALF_H + wall,
+      innerX1: def.x + FORT_HALF_W - wall, innerY1: def.y + FORT_HALF_H - wall });
+  }
+  return forts;
+}
+
+function insideOwnedFortress(biome, x, y, pad = 0) {
+  return ownedFortresses(biome).some(f => x >= f.x0 - pad && x <= f.x1 + pad &&
+    y >= f.y0 - pad && y <= f.y1 + pad);
+}
+
+function nearestOwnedFortress(biome = currentLevel, x = player ? player.x : 0, y = player ? player.y : 0) {
+  const forts = ownedFortresses(biome);
+  forts.sort((a, b) => (a.x - x) ** 2 + (a.y - y) ** 2 - (b.x - x) ** 2 - (b.y - y) ** 2);
+  return forts[0] || null;
+}
+
+// Shared by population deployment and the Directive's military detachment.
+// Walk the whole interior rather than reusing the player's immediate vicinity.
+function getOwnedFortressSpawnPoint(index = 0, biome = currentLevel, nearPlayer = false) {
+  const fortress = nearestOwnedFortress(biome);
+  if (!fortress) return null;
+  const x0 = fortress.innerX0 + 90, y0 = fortress.innerY0 + 90;
+  const w = fortress.innerX1 - 90 - x0, h = fortress.innerY1 - 90 - y0;
+  const n = Math.max(0, Number(index) || 0);
+  const centerX = player ? Math.max(x0, Math.min(x0 + w, player.x)) : fortress.x;
+  const centerY = player ? Math.max(y0, Math.min(y0 + h, player.y)) : fortress.y;
+  for (let attempt = 0; attempt < 240; attempt++) {
+    const station = n + attempt;
+    const radius = 180 + (station % 8) * 40 + (Math.floor(station / 8) % 16) * 35;
+    const angle = station * 2.399963229728653;
+    const x = nearPlayer ? Math.max(x0, Math.min(x0 + w, centerX + Math.cos(angle) * radius)) :
+      x0 + ((0.5 + station * 0.618033988749895) % 1) * w;
+    const y = nearPlayer ? Math.max(y0, Math.min(y0 + h, centerY + Math.sin(angle) * radius)) :
+      y0 + ((0.58 + station * 0.414213562373095) % 1) * h;
+    if (player && (x - player.x) ** 2 + (y - player.y) ** 2 < 160 * 160) continue;
+    let blocked = false;
+    for (const b of buildings) {
+      if (b.noClip || b.isPalm || b.isAlienPlant || b.isEnergyPole || (b.isGrassLot && !b.isPond)) continue;
+      if (Math.abs(x - b.x) < (b.w || 0) / 2 + 34 && Math.abs(y - b.y) < (b.h || 0) / 2 + 34) {
+        blocked = true; break;
+      }
+    }
+    if (blocked) continue;
+    if (parkingCars.some(c => Math.abs(x - c.x) < 59 && Math.abs(y - c.y) < 79)) continue;
+    if (barrels.some(b => (x - b.x) ** 2 + (y - b.y) ** 2 < 50 * 50)) continue;
+    if (enemiesList.some(e => e && !e.dead && e.hp > 0 && (x - e.x) ** 2 + (y - e.y) ** 2 < 55 * 55)) continue;
+    if (typeof townCitizens !== 'undefined' && townCitizens.some(c => c && !c.dead &&
+        (x - c.x) ** 2 + (y - c.y) ** 2 < 55 * 55)) continue;
+    return { x, y, fortress };
+  }
+  return null;
+}
+
+// Story ambushes still have to be fought after the grid falls. They assemble
+// outside the captured gates instead of materialising in the player's yard.
+function hostileSpawnPoint(x, y, biome = currentLevel) {
+  for (const f of ownedFortresses(biome)) {
+    if (x < f.x0 - 60 || x > f.x1 + 60 || y < f.y0 - 60 || y > f.y1 + 60) continue;
+    x = Math.max(f.x - 230, Math.min(f.x + 230, x));
+    // Stick City's north gate is the HQ interaction, never a walkable road.
+    // Its defense musters use the open south approach even if the event that
+    // called them was a breach at the north wall.
+    y = f.id !== 'SECTOR' && y < f.y ? f.y0 - 140 : f.y1 + 140;
+  }
+  return { x, y };
+}
+
+function newHostileCharacter(x, y, type) {
+  const point = hostileSpawnPoint(x, y);
+  return new Character(point.x, point.y, false, type);
+}
+
 // ---------------------------------------------------------------------------
 // THE GARRISON
 //
@@ -23064,8 +23369,15 @@ function checkOutpostCaptured() {
   // gate shut. Switch it off here and the sector's gate slams for as long as
   // the last of the muster is still shooting. Let the fight end where every
   // other fight ends: checkAmbushCleared().
+  const canceledWaves = Math.min(st.musterLeft, Math.max(0, st.musterWaves));
+  st.musterLeft = Math.max(0, st.musterLeft - canceledWaves);
+  st.musterTotal = Math.max(st.musterLeft, st.musterTotal - canceledWaves);
   st.musterWaves = 0;
-  window.ambushSpawnsRemaining = 0;
+  if (st.musterOn && window.ambushFort && window.ambushFort.x === def.x && window.ambushFort.y === def.y) {
+    nm0AmbushKills = Math.max(0, nm0AmbushKills - canceledWaves);
+    window.ambushKillsTotal = Math.max(nm0AmbushKills, (window.ambushKillsTotal || 0) - canceledWaves);
+    window.ambushSpawnsRemaining = Math.max(0, (window.ambushSpawnsRemaining || 0) - canceledWaves);
+  }
   const got = recruitOutpostGarrison();
   st.garrison = 0;
   // They join the Directive the same way the sector's survivors do: as integers
@@ -23201,7 +23513,7 @@ function fortWavePoint(def, aerial) {
 function triggerOutpostAmbush(def) {
   if (!def) return;
   const st = outpostFortState(currentBiome);
-  if (st.musterOn) return;                 // already running
+  if (st.captured || st.musterOn || st.musterDone) return;
   st.breached = true;
   st.gateHp = 0;
   // Both gates. The breach is the compound's, not one wall's -- and the north
@@ -23321,7 +23633,7 @@ function spawnFortWave() {
   const def = activeFortMuster(currentBiome);
   if (!def || !started || isDead || isWin) return false;
   const st = outpostFortState(currentBiome);
-  if (!(st.musterWaves > 0)) return false;
+  if (st.captured || !(st.musterWaves > 0)) return false;
   st.musterWaves--;
   window.ambushSpawnsRemaining = st.musterWaves;
 
@@ -23352,6 +23664,7 @@ function conscriptIntoMuster(e) {
   if (e.isPopulation || e.isOutpostGarrison) return false;   // the ones you are asked to spare
   const fort = activeFortMuster(currentBiome);
   if (!nm0AmbushActive || !fort) return false;
+  if (outpostFortState(currentBiome).captured) return false;
   const R2 = FORT_MUSTER_R * FORT_MUSTER_R;
   const fx = e.x - fort.x, fy = e.y - fort.y;
   if (fx * fx + fy * fy <= R2) {
@@ -28022,6 +28335,7 @@ function refreshPopulation(mgr, pcx, pcy) {
           if (live + list.length >= POP_BUDGET) break;
           const r = roster[n];
           const c = new Character(r.x, r.y, false, r.type);
+          if (!c.isFriendly && insideOwnedFortress(mgr.biome, c.x, c.y, 60)) continue;
           if (c.eType !== "COW" && c.eType !== "HORSE") c.state = "PATROL";
           if (r.route) { c.routeA = r.home; c.routeB = r.route; c.routeLeg = 0; }
           if (r.post)  { c.postX = r.post.x; c.postY = r.post.y; c.postR = 300; }
@@ -35283,6 +35597,9 @@ function gateIsOpen(b) {
   // Stick City's north wall remains the HQ interaction rather than a road.
   if (currentLevel === 1 && b.y > 0 && window.southGateBreachedStatus) return true;
   if (currentLevel === 2 && (b.y > 0 ? window.undercitySouthBreached : window.undercityNorthBreached)) return true;
+  // The liberated compound must remain reachable while the story's remaining
+  // NM-0 waves assemble outside it. North still belongs to the HQ interaction.
+  if (currentLevel === 1 && b.y > 0 && startingFortressOwned(1)) return true;
   // Unshot doors released by the transmission grid keep the tower-clear beat.
   if (nm0AmbushActive && !activeFortMuster(currentBiome)) return false;
   if (!window.nm0AmbushClearedStatus) return false;
@@ -35713,7 +36030,7 @@ function getSafeSpawn(away) {
     const r = minR + Math.random() * (maxR - minR);
     const rx = cx2 + Math.cos(a) * r;
     const ry = cy2 + Math.sin(a) * r;
-    if (!insideSector(rx, ry)) continue;
+    if (!insideSector(rx, ry) || (away && insideOwnedFortress(currentLevel, rx, ry, 60))) continue;
     // Never drop a random hostile into a settlement whose story arc is still
     // running, even when the player is standing just outside it.
     if (away && isStoryMode && hasAuthoredCore(currentLevel) && !storyArcCleared(currentLevel) &&
@@ -35740,14 +36057,21 @@ function getSafeSpawn(away) {
     const mx = (sealedSector.x0 + sealedSector.x1) / 2;
     const my = (sealedSector.y0 + sealedSector.y1) / 2;
     const a2 = Math.atan2(my - cy2, mx - cx2);
-    return { x: cx2 + Math.cos(a2) * 700, y: cy2 + Math.sin(a2) * 700 };
+    const fallback = { x: cx2 + Math.cos(a2) * 700, y: cy2 + Math.sin(a2) * 700 };
+    return away ? hostileSpawnPoint(fallback.x, fallback.y) : fallback;
   }
-  return { x: cx2 + 700, y: cy2 + 700 };
+  return away ? hostileSpawnPoint(cx2 + 700, cy2 + 700) : { x: cx2 + 700, y: cy2 + 700 };
 }
 
 // -- Level entry ------------------------------------------------------------
 function startAtLevel(lvl, isLoading = false) {
   const arrive = window.travelArrival;
+  // A real journey carries survivors once. The pending selection contains
+  // additional soldiers, while the roster retains every survivor's home and
+  // sex so a later casualty reaches the original department.
+  if (arrive && !isLoading) {
+    window.pendingEscortRoster = (window.pendingEscortRoster || []).concat(liveMilitaryRoster());
+  }
   if (isBiomeLevel(lvl) && arrive) {
     window.__biomeAnchorPending = arrivalAnchor(arrive);
   } else if (isBiomeLevel(lvl)) {
@@ -35826,6 +36150,7 @@ function startAtLevel(lvl, isLoading = false) {
     let formed = 0;
     for (const e of enemiesList) {
       if (!e || !e.isMilitary || !e.isFriendly) continue;
+      if (isLoading && e.isFortressMilitary) continue;
       const dx = e.x - player.x, dy = e.y - player.y;
       if (dx * dx + dy * dy < 700 * 700) continue;
       const a = (formed * 2.399) % TWO_PI;
