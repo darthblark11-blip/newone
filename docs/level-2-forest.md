@@ -75,6 +75,8 @@ material beds and needle clusters live on an independent 420-unit world grid;
 every overlapping texture paints the same features in world order. Riverbanks
 and stones likewise use world-space samples. All ground work happens during
 baking, without changing saved solids or adding actor updates.
+Baked small props reserve their complete silhouette inside the owner texture,
+so enlarged shrubs and logs cannot be cut off at a chunk edge.
 
 Army roads, river volumes, crossings, fortresses, authored solids and travel
 aprons take precedence over vegetation. Newly placed crowns reserve their full

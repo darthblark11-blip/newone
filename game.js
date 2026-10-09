@@ -24468,6 +24468,10 @@ function appendWoodlandForest(biome, cx, cy, solid, decor, decorBake, nearAnchor
   const ground = { FERN: 1, WEED: 1, GRASS: 1, LOG: 1, STUMP: 1,
                    MUSHROOM: 1, PEBBLE: 1, REED: 1, ASH: 1, HEATHER: 1 };
   const radius = d => forestPropRadius(d) || 12 * (d.s || 1);
+  // Baked silhouettes belong to one texture. Keep their complete footprint
+  // inside it, including the larger replacement shrubs and fallen timber.
+  const bakeFits = (d, r) => d.x - r >= ox && d.x + r <= ox + CHUNK_W &&
+    d.y - r >= oy && d.y + r <= oy + CHUNK_W;
   const reserved = (d, r, pad) => groundReserved(biome, cx, cy, d.x, d.y, r * 2, r * 2, pad || 0);
   const roadReserved = (d, r) => {
     if (woodHasTrunk(biome, cx) && crossesNS(y => woodTrailX(biome, cx, y), d.x, d.y, r, r, ROAD_HALF.WOODLAND)) return true;
@@ -24515,7 +24519,7 @@ function appendWoodlandForest(biome, cx, cy, solid, decor, decorBake, nearAnchor
     const reach = radius(d);
     // Existing bank reeds can stand in water. Their whole clump still gives
     // roads, arrivals, checkpoint approaches and authored buildings room.
-    if (nearAnchor(d.x, d.y, 560 + reach) || checkpointEdge(d.x, d.y, reach) ||
+    if (!bakeFits(d, reach) || nearAnchor(d.x, d.y, 560 + reach) || checkpointEdge(d.x, d.y, reach) ||
         roadReserved(d, reach) || hitsAuthored(d.x, d.y, reach * 2, reach * 2, 8)) decorBake.splice(i, 1);
   }
   for (const s of solid) {
@@ -24567,6 +24571,7 @@ function appendWoodlandForest(biome, cx, cy, solid, decor, decorBake, nearAnchor
     const d = { t, x, y, s: rngRange(rng, 0.75, 1.50), r: rng() * TWO_PI, c: rng(),
                 forestSpecies: t === "WEED" ? "BUSH" : t, forestRegion: reg, forestTier: "underbrush" };
     const reach = radius(d);
+    if (!bakeFits(d, reach)) continue;
     if (nearAnchor(x, y, 560 + reach) || checkpointEdge(x, y, reach)) continue;
     if (reserved(d, reach, 8) || hitsAuthored(x, y, reach * 2, reach * 2, 8)) continue;
     if (!solidsClearAt(solid, x, y, reach * 2, reach * 2, 4)) continue;

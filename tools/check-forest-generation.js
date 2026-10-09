@@ -51,6 +51,11 @@ for (let x = -8; x <= 8; x++) for (let y = -8; y <= 8; y++) {
   }
   for (const d of ch.decorBake) if (d.forestTier === 'underbrush') {
     assert(!P(`CLUTTER_ANIMATED[${JSON.stringify(d.t)}]`), 'bulk understory must remain baked');
+    ctx.__forestD = d;
+    const reach = P('forestPropRadius(window.__forestD)') || 12 * (d.s || 1);
+    assert(d.x - reach >= x * 1200 && d.x + reach <= (x + 1) * 1200 &&
+      d.y - reach >= y * 1200 && d.y + reach <= (y + 1) * 1200,
+      'baked forest silhouette was clipped by its owner texture');
     baked++;
   }
   ctx.__forestBaked = ch.decorBake;
