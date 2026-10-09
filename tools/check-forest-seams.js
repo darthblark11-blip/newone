@@ -1,4 +1,4 @@
-// Real Canvas regression: woodland washes must cross chunk texture borders.
+// Real Canvas regression: natural forest materials must cross texture borders.
 // VIS_DEPS/VIS_CHROME/VIS_P5 override the external browser dependencies.
 const assert = require('assert');
 const fs = require('fs');
@@ -7,15 +7,13 @@ const deps = process.env.VIS_DEPS || '/workspace/onboarding-newone';
 const { chromium } = require(path.join(deps, 'node_modules/playwright'));
 const p5 = process.env.VIS_P5 || path.join(deps, 'node_modules/p5/lib/p5.min.js');
 const game = process.env.GAME_JS || path.join(__dirname, '..', 'game.js');
-
 (async () => {
   const browser = await chromium.launch({
     executablePath: process.env.VIS_CHROME || '/usr/bin/chromium',
     headless: true, args: ['--no-sandbox']
   });
   try {
-    const page = await browser.newPage();
-    const faults = [];
+    const page = await browser.newPage(), faults = [];
     page.on('pageerror', error => faults.push(error.message));
     await page.setContent('<script>' + fs.readFileSync(p5, 'utf8') + '</script><script>' +
       fs.readFileSync(game, 'utf8') + '</script><script>' +
@@ -25,89 +23,102 @@ const game = process.env.GAME_JS || path.join(__dirname, '..', 'game.js');
       'window.draw=function(){};</script>');
     await page.waitForFunction(() => window.__done);
     const results = await page.evaluate(() => {
-      const sink = WOODLAND_PATCH_SINK;
-      const scenes = [[0, -4], [6, -5], [-2, 9], [20, -28], [0, 4]];
-      // Recorded from the pre-seam woodland recipe, with real p5 noise. The
-      // numbers after the wash pass determine every subsequent ground detail.
-      const continuation = [
-        [0.649516316363588, 0.6403247222770005],
-        [0.6122028273530304, 0.02343723294325173],
-        [0.22817827365361154, 0.7556802607141435],
-        [0.02738531050272286, 0.5562940537929535],
-        [0.11278853798285127, 0.33398875454440713]
-      ];
+      const scenes = [[0,-4],[6,-5],[-2,9],[20,-28],[0,4]];
       const size = CHUNK_TEX, ratio = size / CHUNK_W;
-      const prepare = (w, h, ox, oy) => {
-        const g = createGraphics(w, h); g.pixelDensity(1);
-        g.background(74, 111, 63); g.noStroke();
-        g.scale(ratio); g.translate(-ox, -oy);
-        return g;
+      const prepare = (w,h,ox,oy) => {
+        const g=createGraphics(w,h);g.pixelDensity(1);g.background(74,111,63);
+        g.noStroke();g.scale(ratio);g.translate(-ox,-oy);return g;
       };
-      const read = g => g.drawingContext.getImageData(0, 0, g.width, g.height).data;
-      return scenes.map(([cx, cy], scene) => {
-        const ox = cx * CHUNK_W, oy = cy * CHUNK_W;
-        const reference = prepare(size * 2, size * 2, ox, oy);
-        // One continuous canvas has no clipping boundary at the centre. It
-        // paints all world features in their canonical seed order.
-        for (let x = cx - 1; x <= cx + 2; x++) for (let y = cy - 1; y <= cy + 2; y++) {
-          if (layoutFor(2, x, y) !== 'WOODLAND') continue;
-          woodlandGroundPatches(null, 2, x * CHUNK_W, y * CHUNK_W,
-            makeRng(chunkHash(2, x, y, 7)), WOOD_PAL,
-            (...args) => softStamp(reference, ...args));
-        }
-        const expected = read(reference);
-        const tiles = [[0, 0], [1, 0], [0, 1], [1, 1]];
-        let maxDifference = 0, sharedError = 0, oldError = 0, samples = 0;
-        let next = null;
-        for (const [dx, dy] of tiles) {
-          const x = cx + dx, y = cy + dy;
-          const g = prepare(size, size, x * CHUNK_W, y * CHUNK_W);
-          const local = prepare(size, size, x * CHUNK_W, y * CHUNK_W);
-          // Suppress owner-only tiny rock plates/glints to isolate the broad
-          // wash system. softStamp uses the real transformed Canvas context.
-          const broadTarget = Object.assign({drawingContext: g.drawingContext}, sink);
-          const rng = makeRng(chunkHash(2, x, y, 7));
-          bakeSharedWoodlandPatches(broadTarget, 2, x, y, rng, WOOD_PAL);
-          if (!dx && !dy) next = [rng(), rng()];
-          woodlandGroundPatches(null, 2, x * CHUNK_W, y * CHUNK_W,
-            makeRng(chunkHash(2, x, y, 7)), WOOD_PAL,
-            (...args) => softStamp(local, ...args));
-          const actual = read(g), old = read(local);
-          for (let py = 0; py < size; py++) for (let px = 0; px < size; px++) {
-            // Check both sides of the horizontal/vertical internal seam,
-            // including their intersection, rather than just mean edge tones.
-            if (Math.abs(dx * size + px - size) > 16 &&
-                Math.abs(dy * size + py - size) > 16) continue;
-            const a = 4 * (py * size + px);
-            const b = 4 * ((dy * size + py) * size * 2 + dx * size + px);
-            for (let channel = 0; channel < 3; channel++) {
-              const difference = Math.abs(actual[a + channel] - expected[b + channel]);
-              maxDifference = Math.max(maxDifference, difference);
-              sharedError += difference;
-              oldError += Math.abs(old[a + channel] - expected[b + channel]);
-              samples++;
+      const read=g=>g.drawingContext.getImageData(0,0,g.width,g.height).data;
+      const materials = scenes.map(([cx,cy])=>{
+        const ox=cx*CHUNK_W,oy=cy*CHUNK_W;
+        const reference=prepare(size*2,size*2,ox,oy);
+        // A single canvas provides the reference without an internal clip.
+        bakeWoodlandFloorArea(reference,2,ox,oy,ox+CHUNK_W*2,oy+CHUNK_W*2);
+        const expected=read(reference);
+        let maxDifference=0,sharedError=0,clippedError=0,samples=0;
+        let minFeatureCount=Infinity,maxFeatureCount=0;
+        for(const [dx,dy] of [[0,0],[1,0],[0,1],[1,1]]){
+          const x=cx+dx,y=cy+dy;
+          const g=prepare(size,size,x*CHUNK_W,y*CHUNK_W);
+          const clipped=prepare(size,size,x*CHUNK_W,y*CHUNK_W);
+          bakeSharedWoodlandPatches(g,2,x,y);
+          // A deliberately broken owner-only renderer omits neighbour cells.
+          // This verifies that the fixture actually notices border clipping.
+          const cell=WOODLAND_FLOOR_CELL;
+          for(let ix=Math.ceil(x*CHUNK_W/cell);ix<Math.floor((x+1)*CHUNK_W/cell);ix++)
+            for(let iy=Math.ceil(y*CHUNK_W/cell);iy<Math.floor((y+1)*CHUNK_W/cell);iy++)
+              woodlandGroundPatches(clipped,2,ix,iy);
+          const count=(Math.floor(((x+1)*CHUNK_W+WOODLAND_FLOOR_REACH)/cell)-
+            Math.floor((x*CHUNK_W-WOODLAND_FLOOR_REACH)/cell)+1)*
+            (Math.floor(((y+1)*CHUNK_W+WOODLAND_FLOOR_REACH)/cell)-
+            Math.floor((y*CHUNK_W-WOODLAND_FLOOR_REACH)/cell)+1);
+          minFeatureCount=Math.min(minFeatureCount,count);maxFeatureCount=Math.max(maxFeatureCount,count);
+          const actual=read(g),broken=read(clipped);
+          for(let py=0;py<size;py++)for(let px=0;px<size;px++){
+            if(Math.abs(dx*size+px-size)>16&&Math.abs(dy*size+py-size)>16)continue;
+            const a=4*(py*size+px),b=4*((dy*size+py)*size*2+dx*size+px);
+            for(let channel=0;channel<3;channel++){
+              const difference=Math.abs(actual[a+channel]-expected[b+channel]);
+              maxDifference=Math.max(maxDifference,difference);sharedError+=difference;
+              clippedError+=Math.abs(broken[a+channel]-expected[b+channel]);samples++;
             }
           }
-          g.remove(); local.remove();
+          g.remove();clipped.remove();
         }
         reference.remove();
-        return {cx, cy, next, continuation: continuation[scene], maxDifference,
-          sharedError: sharedError / samples, oldError: oldError / samples, samples};
+        return {cx,cy,maxDifference,sharedError:sharedError/samples,
+          clippedError:clippedError/samples,minFeatureCount,maxFeatureCount,samples};
       });
+      const rivers=[];
+      for(const [cx,cy] of [[0,4],[-2,9]]) {
+        const ox=cx*CHUNK_W,oy=cy*CHUNK_W;
+        const centre=x=>woodRiverY(2,cy,x),half=x=>woodRiverHalf(2,cy,x);
+        const ford={x:ox+CHUNK_W,y:centre(ox+CHUNK_W)};
+        const paint=(g,x,span)=>{
+          bakeWoodlandWatercourse(g,2,cy,x,centre,half,span);
+          bakeWoodlandRiverBanks(g,2,cy,x,centre,half,span);
+          bakeWoodlandFord(g,ford,centre,half);
+        };
+        const reference=prepare(size*2,size,ox,oy);paint(reference,ox,CHUNK_W*2);
+        const expected=read(reference);
+        let maxDifference=0,sharedError=0,samples=0;
+        for(let dx=0;dx<2;dx++) {
+          const g=prepare(size,size,ox+dx*CHUNK_W,oy);paint(g,ox+dx*CHUNK_W,CHUNK_W);
+          const actual=read(g);
+          for(let py=0;py<size;py++)for(let px=0;px<size;px++) {
+            if(Math.abs(dx*size+px-size)>16)continue;
+            const a=4*(py*size+px),b=4*(py*size*2+dx*size+px);
+            for(let channel=0;channel<3;channel++) {
+              const diff=Math.abs(actual[a+channel]-expected[b+channel]);
+              maxDifference=Math.max(maxDifference,diff);sharedError+=diff;samples++;
+            }
+          }
+          g.remove();
+        }
+        reference.remove();rivers.push({cx,cy,maxDifference,sharedError:sharedError/samples,samples});
+      }
+      const dry=prepare(size,size,0,0),before=Array.from(read(dry));
+      bakeWoodlandWatercourse(dry,2,0,0,x=>CHUNK_W*0.5,()=>0);
+      bakeWoodlandRiverBanks(dry,2,0,0,x=>CHUNK_W*0.5,()=>0);
+      const after=read(dry),taperedDry=before.every((value,i)=>value===after[i]);dry.remove();
+      return {materials,rivers,taperedDry};
     });
-    assert.deepEqual(faults, [], 'forest bake raised browser errors');
-    for (const result of results) {
-      assert.deepEqual(result.next, result.continuation,
-        `woodland wash replay changed RNG continuation at ${result.cx},${result.cy}`);
-      // Canvas rasterization can round a translated gradient by one RGB step.
-      assert(result.maxDifference <= 1 && result.sharedError < 0.02,
-        `shared woodland wash differs from seamless reference: ${JSON.stringify(result)}`);
-      assert(result.oldError > 0.5 && result.sharedError < result.oldError * 0.05,
-        `regression fixture did not detect the original clipped washes: ${JSON.stringify(result)}`);
+    assert.deepEqual(faults,[],'forest material bake raised browser errors');
+    assert(results.taperedDry,'closed channel taper painted water over dry authored ground');
+    for(const result of results.materials){
+      assert(result.maxDifference<=3&&result.sharedError<0.02,
+        `forest floor differs from continuous reference: ${JSON.stringify(result)}`);
+      assert(result.maxFeatureCount<=25,'world feature replay exceeded the bake budget');
     }
-    console.log('Forest ground seams passed: ' + results.length +
-      ' world patches; unchanged RNG continuation; continuous Canvas reference matches.');
-    console.log(JSON.stringify(results.map(({cx, cy, maxDifference, sharedError, oldError}) =>
-      ({cx, cy, maxDifference, sharedError, oldError}))));
+    for(const result of results.rivers){
+      assert(result.maxDifference<=4&&result.sharedError<0.02,
+        `river/ford material differs across chunk seam: ${JSON.stringify(result)}`);
+    }
+    assert(results.materials.reduce((n,r)=>n+r.clippedError,0)>0.15,
+      'seam fixtures did not detect omitted neighbouring material cells');
+    console.log('Forest material seams passed: '+results.materials.length+
+      ' floor patches, '+results.rivers.length+' river/ford patches; bounded bake work; continuous Canvas reference matches.');
+    console.log(JSON.stringify(results));
   } finally { await browser.close(); }
-})().catch(error => { console.error(error); process.exitCode = 1; });
+})().catch(error=>{console.error(error);process.exitCode=1;});

@@ -22477,30 +22477,31 @@ const RG_CANOPY = {
 // Small plants are static chunk albedo, so forest density adds no actor/AI work.
 const FOREST_REGIONS = {
   TIMBER: { name: "Ancient Canopy", canopy: 1.0, midstory: 0.70, underbrush: 1.0,
-    ground: [74, 132, 73], shade: [25, 62, 67], foliage: [50, 153, 99], highlight: [166, 223, 102] },
+    ground: [78, 108, 62], shade: [32, 64, 55], foliage: [60, 122, 72], highlight: [154, 181, 101] },
   MARSH: { name: "Mossy Riverbed", canopy: 0.65, midstory: 0.85, underbrush: 1.0,
-    ground: [67, 152, 104], shade: [25, 73, 84], foliage: [77, 178, 112], highlight: [197, 231, 121] },
+    ground: [68, 113, 77], shade: [29, 64, 57], foliage: [68, 136, 91], highlight: [153, 185, 109] },
   BURN: { name: "Burnt / Dead", canopy: 0.40, midstory: 0.15, underbrush: 0.40,
-    ground: [119, 99, 127], shade: [59, 48, 83], foliage: [185, 114, 69], highlight: [248, 177, 98] },
+    ground: [102, 91, 72], shade: [45, 49, 39], foliage: [138, 114, 67], highlight: [191, 157, 99] },
   HEATH: { name: "Alpine Ridge", canopy: 0.35, midstory: 0.30, underbrush: 0.45,
-    ground: [130, 148, 150], shade: [59, 80, 110], foliage: [83, 149, 124], highlight: [219, 229, 175] }
+    ground: [119, 131, 124], shade: [63, 81, 72], foliage: [77, 130, 94], highlight: [161, 188, 135] }
 };
 const FOREST_PROPS = {
-  DOUGLAS_FIR: { canopyMass: [66, 86, 64], trunkWidth: 13, outline: 2.5, tier: "canopy", collision: [34, 34] },
-  WESTERN_CEDAR: { canopyMass: [60, 100, 72], trunkWidth: 15, outline: 2.6, tier: "canopy", collision: [34, 34] },
-  SITKA_SPRUCE: { canopyMass: [62, 78, 60], trunkWidth: 12, outline: 2.4, tier: "canopy", collision: [34, 34] },
-  RED_ALDER: { canopyMass: [44, 92, 76], trunkWidth: 11, outline: 2.4, tier: "canopy", collision: [34, 34] },
-  LODGEPOLE_PINE: { canopyMass: [52, 62, 48], trunkWidth: 10, outline: 2.3, tier: "canopy", collision: [34, 34] },
-  CHARRED_SNAG: { canopyMass: [58, 40, 34], trunkWidth: 11, outline: 2.4, tier: "canopy", collision: [34, 34] },
-  BUSH: { width: 44, depth: 36, rise: 13, outline: 2, tier: "midstory", collision: null },
-  FERN: { width: 50, depth: 50, rise: 9, outline: 1.6, tier: "underbrush", collision: null },
-  LOG: { width: 54, depth: 20, rise: 12, outline: 2, tier: "underbrush", collision: null },
-  STUMP: { width: 30, depth: 26, rise: 13, outline: 2, tier: "underbrush", collision: null },
-  MUSHROOM: { width: 22, depth: 22, rise: 9, outline: 1.4, tier: "underbrush", collision: null },
-  PEBBLE: { width: 22, depth: 17, rise: 7, outline: 1.5, tier: "underbrush", collision: null },
-  REED: { width: 48, depth: 48, rise: 18, outline: 1.5, tier: "underbrush", collision: null },
-  ASH: { width: 30, depth: 22, rise: 2, outline: 1.4, tier: "underbrush", collision: null },
-  BOULDER: { width: 100, depth: 80, rise: 16, outline: 2.6, tier: "landform", collision: "solid" }
+  DOUGLAS_FIR: { canopyMass: [34, 86, 64], trunkWidth: 11, outline: 1.8, tier: "canopy", collision: [34, 34] },
+  WESTERN_CEDAR: { canopyMass: [36, 100, 72], trunkWidth: 13, outline: 1.9, tier: "canopy", collision: [34, 34] },
+  SITKA_SPRUCE: { canopyMass: [32, 78, 60], trunkWidth: 10, outline: 1.8, tier: "canopy", collision: [34, 34] },
+  RED_ALDER: { canopyMass: [28, 92, 76], trunkWidth: 10, outline: 1.7, tier: "canopy", collision: [34, 34] },
+  LODGEPOLE_PINE: { canopyMass: [30, 62, 48], trunkWidth: 9, outline: 1.7, tier: "canopy", collision: [34, 34] },
+  CHARRED_SNAG: { canopyMass: [30, 40, 34], trunkWidth: 10, outline: 1.6, tier: "canopy", collision: [34, 34] },
+  BUSH: { width: 64, depth: 54, rise: 12, outline: 1.5, tier: "midstory", collision: null },
+  FERN: { width: 58, depth: 58, rise: 9, outline: 0.9, tier: "underbrush", collision: null },
+  LOG: { width: 64, depth: 32, rise: 12, outline: 1.5, tier: "underbrush", collision: null },
+  STUMP: { width: 36, depth: 34, rise: 13, outline: 1.5, tier: "underbrush", collision: null },
+  MUSHROOM: { width: 28, depth: 28, rise: 9, outline: 0.9, tier: "underbrush", collision: null },
+  PEBBLE: { width: 32, depth: 32, rise: 7, outline: 1.0, tier: "underbrush", collision: null },
+  REED: { width: 48, depth: 48, rise: 18, outline: 1.0, tier: "underbrush", collision: null },
+  GRASS: { width: 40, depth: 40, rise: 7, outline: 1.0, tier: "underbrush", collision: null },
+  ASH: { width: 34, depth: 30, rise: 2, outline: 0, tier: "underbrush", collision: null },
+  BOULDER: { width: 100, depth: 80, rise: 16, outline: 2.0, tier: "landform", collision: "solid" }
 };
 function forestPropProfile(d) { return d && FOREST_PROPS[d.forestSpecies] || null; }
 function forestCanopyMass(d) {
@@ -22728,8 +22729,8 @@ const CR_GROWTH = {
 // fine mottling and ZONE_TINT, and anything past about +/-30 stops reading as
 // ground and starts reading as a stain.
 const REGION_TINT = {
-  WOODLAND: { MEADOW: [0, 0, 0],      TIMBER: [-8, -7, 7],   MARSH: [-13, 15, 20],
-              HEATH:  [45, 24, 52],  BURN:   [32, -29, 48],  FARM: [8, 4, -8] },
+  WOODLAND: { MEADOW: [0, 0, 0],      TIMBER: [0, 0, 0],      MARSH: [-9, 14, 9],
+              HEATH:  [26, 17, 24],  BURN:   [-15, -22, -7], FARM: [8, 4, -8] },
   JUNGLE:   { CANOPY: [-15, -7, -6],  SWAMP:  [-19, -11, -2],
               CLEARING: [26, 14, -8], BAMBOO: [9, 14, -7],    CORDON: [12, 10, 6] },
   // A third of the others: this palette is a hundred points brighter than any
@@ -22745,7 +22746,7 @@ const REGION_TINT = {
 const ZONE_TINT = {
   // Grass runs from dry and yellowed on the high ground to deep wet green in
   // the hollows.
-  WOODLAND:   [ 24,  12, -16],
+  WOODLAND:   [ 12,  10,  -4],
   // Cities do not change colour, they change how dirty they are: soot and
   // brick dust against rain-washed concrete.
   CITY:       [ 24,  17,   8],
@@ -26354,10 +26355,38 @@ const CLUTTER_ANIMATED = {
 // the same grid the blocks were laid on; outside it there is no city at all,
 // just the country between one Directive post and the next.
 const WOOD_PAL = {
-  base: [78, 135, 83], alt: [94, 155, 91], dark: [44, 80, 65],
-  accent: [158, 190, 102], road: [140, 114, 77], mark: [215, 186, 123],
-  walk: [158, 180, 113], grass: [86, 149, 87]
+  base: [105, 98, 62], alt: [65, 112, 67], dark: [34, 64, 57],
+  accent: [143, 157, 91], road: [143, 120, 80], mark: [93, 74, 48],
+  walk: [134, 135, 103], grass: [71, 123, 74]
 };
+
+// Forest ground is soil carrying living moss, rather than a lawn with a
+// different tint. These materials are resolved on the world-space lattice;
+// adjacent texture buffers therefore interpolate the same boundary colours.
+const WOODLAND_FLOOR = {
+  TIMBER: { soil: [98, 103, 65], moss: [65, 122, 71], shade: [34, 64, 57],
+    litter: [147, 117, 65], stone: [111, 126, 117] },
+  MARSH: { soil: [70, 97, 70], moss: [66, 128, 84], shade: [31, 69, 62],
+    litter: [131, 145, 89], stone: [109, 136, 129] },
+  HEATH: { soil: [134, 139, 123], moss: [92, 124, 84], shade: [78, 99, 95],
+    litter: [152, 145, 103], stone: [143, 152, 147] },
+  BURN: { soil: [107, 95, 73], moss: [80, 89, 68], shade: [50, 58, 54],
+    litter: [155, 129, 94], stone: [117, 119, 104] }
+};
+function woodlandFloorColour(region, growth, roughness, exposure) {
+  const p = WOODLAND_FLOOR[region] || WOODLAND_FLOOR.TIMBER;
+  // Broad damp hollows grow moss; dry rises reveal warm mineral soil. Burnt
+  // ground retains a little regrowth without a purple full-screen wash.
+  let moss = smooth01((growth - 0.31) / 0.27);
+  if (region === RG_HEATH) moss *= 0.48;
+  if (region === RG_BURN) moss *= 0.26;
+  const shade = Math.max(0, (roughness - 0.43) * 0.55);
+  const sun = (exposure - 0.5) * 12;
+  return p.soil.map((v, i) => {
+    const material = v + (p.moss[i] - v) * moss;
+    return material + (p.shade[i] - material) * shade + sun * (i === 2 ? 0.5 : 1);
+  });
+}
 function layoutFor(biome, cx, cy) {
   const def = BIOMES[biome];
   if (!def) return "CITY";
@@ -26642,7 +26671,9 @@ function bakeChunkTerrainAt(biome, cx, cy, staticDecor) {
       latC[k] = bnoise(biome, wx, wy, 0.017);
       if (latD) latD[k] = bnoise(biome, wx + 3700, wy - 2900, 0.00021);
       if (latR) {
-        const t = rt[regionAt(biome, wx, wy, lay)] || null;
+        const t = lay === "WOODLAND"
+          ? woodlandFloorColour(woodRegion(biome, wx, wy), latA[k], latB[k], latD[k])
+          : rt[regionAt(biome, wx, wy, lay)] || null;
         latR[k]  = t ? t[0] : 0;
         latG[k]  = t ? t[1] : 0;
         latBl[k] = t ? t[2] : 0;
@@ -26702,36 +26733,47 @@ function bakeChunkTerrainAt(biome, cx, cy, staticDecor) {
       const nB = sample(latB, x, y);
       const nC = sample(latC, x, y);
 
-      // Material ramp lookup. The blend depends on nothing but nA, so it does
-      // not belong inside a 40 000-iteration loop — see rampR/G/B above.
-      let ri = (nA * RAMP) | 0;
-      if (ri < 0) ri = 0; else if (ri > RAMP) ri = RAMP;
-      let r  = rampR[ri];
-      let gg = rampG[ri];
-      let b  = rampB[ri];
+      let r, gg, b;
+      if (lay === "WOODLAND") {
+        // A quiet material surface under the silhouettes, with restrained
+        // mineral grain. The vector pass adds coherent moss beds and litter;
+        // no blurred oval wash is needed to invent ground variation.
+        const grain = (nC - 0.5) * 9;
+        r = sample(latR, x, y) + grain;
+        gg = sample(latG, x, y) + grain;
+        b = sample(latBl, x, y) + grain * 0.7;
+      } else {
+        // Material ramp lookup. The blend depends on nothing but nA, so it does
+        // not belong inside a 40 000-iteration loop — see rampR/G/B above.
+        let ri = (nA * RAMP) | 0;
+        if (ri < 0) ri = 0; else if (ri > RAMP) ri = RAMP;
+        r  = rampR[ri];
+        gg = rampG[ri];
+        b  = rampB[ri];
 
-      // Mid-frequency mottling — patches of wear, moisture, growth
-      const mid = (nB - 0.5) * 34;
-      r += mid; gg += mid; b += mid * 0.7;
+        // Mid-frequency mottling — patches of wear, moisture, growth
+        const mid = (nB - 0.5) * 34;
+        r += mid; gg += mid; b += mid * 0.7;
 
-      // Fine grain
-      const fine = (nC - 0.5) * 22;
-      r += fine; gg += fine; b += fine;
+        // Fine grain
+        const fine = (nC - 0.5) * 22;
+        r += fine; gg += fine; b += fine;
 
-      // Tonal zone -- see ZONE_TINT. Three multiply-adds, and it is the
-      // difference between a sector that looks like one texture tiled forever
-      // and one that looks like country you are walking across.
-      if (latD) {
-        const nD = sample(latD, x, y) - 0.5;
-        r += nD * tz[0]; gg += nD * tz[1]; b += nD * tz[2];
-      }
+        // Tonal zone -- see ZONE_TINT. Three multiply-adds, and it is the
+        // difference between a sector that looks like one texture tiled forever
+        // and one that looks like country you are walking across.
+        if (latD) {
+          const nD = sample(latD, x, y) - 0.5;
+          r += nD * tz[0]; gg += nD * tz[1]; b += nD * tz[2];
+        }
 
-      // Region tone. Bilinear between lattice points, so a boundary between two
-      // sub-biomes arrives as a gradient a couple of hundred units wide instead
-      // of as an edge -- and because it is sampled in world space there is no
-      // chunk seam for it to fall on.
-      if (latR) {
-        r += sample(latR, x, y); gg += sample(latG, x, y); b += sample(latBl, x, y);
+        // Region tone. Bilinear between lattice points, so a boundary between two
+        // sub-biomes arrives as a gradient a couple of hundred units wide instead
+        // of as an edge -- and because it is sampled in world space there is no
+        // chunk seam for it to fall on.
+        if (latR) {
+          r += sample(latR, x, y); gg += sample(latG, x, y); b += sample(latBl, x, y);
+        }
       }
 
       // Ordered dither — ±3 levels, keyed to the pixel's lattice position
@@ -27074,117 +27116,199 @@ function bakePool(g, p) {
   }
 }
 
-// Broad woodland washes are world features, even when their centres belong
-// to one chunk. Replaying adjacent seeds paints their complete footprint on
-// both sides of a texture boundary. The owner consumes its original RNG;
-// roads, water and the small details afterwards keep their old sequence.
-const WOODLAND_PATCH_SINK = {
-  noFill() {}, stroke() {}, strokeWeight() {}, ellipse() {}, noStroke() {},
-  fill() {}, beginShape() {}, vertex() {}, endShape() {}
-};
-function woodlandGroundPatches(g, biome, ox, oy, rng, p, stamp) {
-  // Replays consume the same random arguments for local plates and glints but
-  // only export broad washes. Those small ground details remain owner drawn.
-  g = g || WOODLAND_PATCH_SINK;
-  // Meadow and shade. The base pass has already laid the grass; this is the
-  // structure on top of it -- where the canopy darkens the floor, where the
-  // ground opens out, and the track running through.
-  const canopy = bnoise(biome, ox, oy, 0.00055);
-
-  // Pools of shade under the standing timber, and lighter meadow where it
-  // thins. Radial and edge-free so neither reads as a painted patch.
-  const nShade = 5 + Math.round(canopy * 9);
-  for (let i = 0; i < nShade; i++) {
-    const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
-    if (bnoise(biome, rx, ry, 0.0026) < 0.42) continue;
-    stamp(rx, ry, 180 + rng() * 260, 150 + rng() * 220, [16, 30, 14], 16 + rng() * 20);
+// Natural material beds are independent world features. A 420-unit lattice
+// bounds their density and the bake repeats every overlapping cell in stable
+// world order. Texture borders clip the same feature, never its identity.
+const WOODLAND_FLOOR_CELL = 420;
+const WOODLAND_FLOOR_REACH = 220;
+function woodlandFloorContour(g, x, y, w, h, phase, scale, col, alpha) {
+  // Long, torn moss/needle beds follow a local ground grain. A radial outline
+  // looks like a pond stamped onto a lawn, even with more vertices.
+  const points = [[-1,-0.10],[-0.82,-0.49],[-0.56,-0.33],[-0.30,-0.66],
+    [0.02,-0.42],[0.25,-0.59],[0.59,-0.30],[0.82,-0.24],[1,0.07],
+    [0.68,0.35],[0.44,0.27],[0.18,0.61],[-0.09,0.43],[-0.43,0.59],[-0.74,0.28]];
+  const ca = Math.cos(phase * 0.22), sa = Math.sin(phase * 0.22);
+  g.fill(col[0], col[1], col[2], alpha); g.noStroke(); g.beginShape();
+  for (let k = 0; k < points.length; k++) {
+    const px = points[k][0] * w * scale;
+    const py = points[k][1] * h * scale * (0.85 + Math.sin(k * 1.7 + phase) * 0.15);
+    g.vertex(x + px * ca - py * sa, y + px * sa + py * ca);
   }
-  for (let i = 0; i < 7; i++) {
-    const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
-    stamp(rx, ry, 220 + rng() * 300, 180 + rng() * 260,
-              [p.accent[0], p.accent[1], p.accent[2]], 14 + rng() * 16);
-  }
+  g.endShape(CLOSE);
+}
+function woodlandGroundPatches(g, biome, cellX, cellY) {
+  const rng = makeRng(chunkHash(biome, cellX, cellY, 83017));
+  const x = (cellX + 0.15 + rng() * 0.7) * WOODLAND_FLOOR_CELL;
+  const y = (cellY + 0.15 + rng() * 0.7) * WOODLAND_FLOOR_CELL;
+  if (layoutFor(biome, Math.floor(x / CHUNK_W), Math.floor(y / CHUNK_W)) !== "WOODLAND") return;
+  const region = woodRegion(biome, x, y), p = WOODLAND_FLOOR[region];
+  const phase = rng() * TWO_PI, w = 58 + rng() * 105, h = 28 + rng() * 48;
+  const moss = rng() < (region === RG_BURN ? 0.12 : region === RG_HEATH ? 0.28 : 0.70);
+  const stone = !moss && region === RG_HEATH;
+  const col = moss ? p.moss : stone ? p.stone : p.litter;
+  // A shallow dark lip and a broken bright edge make the moss read as a
+  // living material on soil. They are quiet enough to stay behind units.
+  woodlandFloorContour(g, x + 2, y + 3, w, h, phase, 1.025, p.shade, 18);
+  woodlandFloorContour(g, x, y, w, h, phase, 1, col, moss ? 76 : stone ? 60 : 58);
+  woodlandFloorContour(g, x - 2, y - 3, w, h, phase, 0.71, col, 22);
 
-  // --- Regional ground --------------------------------------------------
-  // Every pass here asks the region at its OWN sample point rather than at
-  // the chunk's corner. A boundary therefore comes out as one kind of
-  // ground thinning while another thickens, over a couple of hundred units,
-  // instead of a straight line down a chunk edge. It is the same rule the
-  // generator uses for where a tree is allowed to stand, applied to paint.
-  const regAtB = (x, y) => woodRegion(biome, x, y);
-  let sawFarm = false;
-  for (let i = 0; i < 16; i++) {
-    const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
-    switch (regAtB(rx, ry)) {
-      case RG_TIMBER:
-        // Closed canopy: deep shade, and the rust-brown of needle litter
-        // where the light does reach.
-        stamp(rx, ry, 170 + rng() * 230, 140 + rng() * 190, [25, 62, 67], 24 + rng() * 24);
-        if (rng() > 0.58) stamp(rx, ry, 90 + rng() * 120, 70 + rng() * 95, [155, 126, 64], 22 + rng() * 20);
-        break;
-      case RG_MARSH:
-        // Waterlogged ground, and the shine off standing water in it.
-        stamp(rx, ry, 200 + rng() * 270, 150 + rng() * 210, [59, 139, 98], 32 + rng() * 30);
-        if (rng() > 0.42) {
-          stamp(rx, ry, 70 + rng() * 120, 50 + rng() * 85, [38, 74, 78], 64 + rng() * 52);
-          g.noFill(); g.stroke(198, 226, 226, 42); g.strokeWeight(1.6);
-          g.ellipse(rx, ry, 40 + rng() * 54, 26 + rng() * 34);
-          g.noStroke();
-        }
-        break;
-      case RG_HEATH:
-        // Thin soil: gravel, and bedrock coming through in plates.
-        stamp(rx, ry, 150 + rng() * 210, 120 + rng() * 165, [140, 155, 171], 26 + rng() * 24);
-        if (rng() > 0.52) {
-          const pr = 26 + rng() * 44;
-          g.fill(119, 140, 162, 130 + rng() * 60);
-          g.beginShape();
-          for (let k = 0; k < 7; k++) {
-            const a = (k / 7) * TWO_PI;
-            const rr = pr * (0.7 + 0.42 * Math.abs(Math.sin(k * 2.3 + rx * 0.01)));
-            g.vertex(rx + Math.cos(a) * rr, ry + Math.sin(a) * rr * 0.78);
-          }
-          g.endShape(CLOSE);
-          g.fill(206, 219, 222, 70);
-          g.ellipse(rx - LIGHT_DX * pr * 0.2, ry - LIGHT_DY * pr * 0.2, pr * 0.9, pr * 0.62);
-        }
-        break;
-      case RG_BURN:
-        // Fire ground: black earth with ash blown across it.
-        stamp(rx, ry, 180 + rng() * 250, 140 + rng() * 200, [62, 42, 81], 44 + rng() * 38);
-        if (rng() > 0.48) stamp(rx, ry, 80 + rng() * 130, 60 + rng() * 95, [183, 133, 92], 26 + rng() * 24);
-        break;
-      case RG_FARM:
-        sawFarm = true;
-        stamp(rx, ry, 160 + rng() * 220, 130 + rng() * 170, [122, 98, 62], 24 + rng() * 22);
-        break;
-      default:
-        break;
+  // Small needle clusters follow the bed instead of speckling the entire map.
+  // Burnt sites get ash flecks and granite gets hairline mineral seams. No
+  // flowers, stars or isolated geometric glyphs are part of this ground pass.
+  const pieces = moss ? 12 : stone ? 6 : 25;
+  for (let n = 0; n < pieces; n++) {
+    const a = rng() * TWO_PI, radius = Math.sqrt(rng()) * 0.92;
+    const px = x + Math.cos(a) * w * radius, py = y + Math.sin(a) * h * radius;
+    const bearing = phase * 0.24 + (rng() - 0.5) * 0.85;
+    const len = stone ? 11 + rng() * 21 : 4 + rng() * 7;
+    g.stroke(p.shade[0], p.shade[1], p.shade[2], stone ? 45 : 48); g.strokeWeight(stone ? 1.8 : 1.5);
+    g.line(px, py, px + Math.cos(bearing) * len, py + Math.sin(bearing) * len);
+    if (!stone) {
+      g.stroke(p.litter[0] + 12, p.litter[1] + 10, p.litter[2] + 6, moss ? 42 : 78);
+      g.line(px - 1.5, py - 1.5, px + Math.cos(bearing) * len - 1.5, py + Math.sin(bearing) * len - 1.5);
     }
   }
-
-  return sawFarm;
+  g.noStroke();
+}
+function bakeWoodlandFloorArea(g, biome, x0, y0, x1, y1) {
+  const reach = WOODLAND_FLOOR_REACH, cell = WOODLAND_FLOOR_CELL;
+  const xa = Math.floor((x0 - reach) / cell), xb = Math.floor((x1 + reach) / cell);
+  const ya = Math.floor((y0 - reach) / cell), yb = Math.floor((y1 + reach) / cell);
+  for (let x = xa; x <= xb; x++) for (let y = ya; y <= yb; y++)
+    woodlandGroundPatches(g, biome, x, y);
+}
+function bakeSharedWoodlandPatches(g, biome, cx, cy) {
+  const ox = cx * CHUNK_W, oy = cy * CHUNK_W;
+  bakeWoodlandFloorArea(g, biome, ox, oy, ox + CHUNK_W, oy + CHUNK_W);
 }
 
-function bakeSharedWoodlandPatches(g, biome, cx, cy, rng, p) {
-  const ox = cx * CHUNK_W, oy = cy * CHUNK_W;
-  const stamp = (x, y, w, h, col, alpha) => {
-    if (x + w * 0.5 < ox || x - w * 0.5 > ox + CHUNK_W ||
-        y + h * 0.5 < oy || y - h * 0.5 > oy + CHUNK_W) return;
-    softStamp(g, x, y, w, h, col, alpha);
+function bakeWoodlandBankStone(g, x, y, size, phase, col) {
+  const ca = Math.cos(phase), sa = Math.sin(phase);
+  const shape = [[-0.8,-0.2],[-0.45,-0.58],[0.43,-0.5],[0.78,0.05],[0.25,0.48],[-0.56,0.38]];
+  const path = (scale, dx, dy) => {
+    g.beginShape();
+    for (const p of shape) {
+      const px = p[0] * size * scale, py = p[1] * size * scale;
+      g.vertex(x + dx + px * ca - py * sa, y + dy + px * sa + py * ca);
+    }
+    g.endShape(CLOSE);
   };
-  let sawFarm = false;
-  // Stable world order matters where translucent features overlap. Shared
-  // seeds occur in the same order in each neighbouring texture.
-  for (let ix = cx - 1; ix <= cx + 1; ix++) for (let iy = cy - 1; iy <= cy + 1; iy++) {
-    if (layoutFor(biome, ix, iy) !== "WOODLAND") continue;
-    const owner = ix === cx && iy === cy;
-    const sourceRng = owner ? rng : makeRng(chunkHash(biome, ix, iy, 7));
-    const farm = woodlandGroundPatches(owner ? g : null, biome,
-      ix * CHUNK_W, iy * CHUNK_W, sourceRng, p, stamp);
-    if (owner) sawFarm = farm;
+  g.noStroke(); g.fill(34, 68, 60, 54); path(1.08, 1.5, 2);
+  g.fill(col[0], col[1], col[2], 175); path(1, 0, 0);
+  g.fill(col[0] + 33, col[1] + 32, col[2] + 24, 115); path(0.55, -1.5, -1.5);
+}
+function bakeWoodlandRiverBanks(g, biome, cy, ox, centreAt, halfAt, span = CHUNK_W) {
+  // Pebbly shelves follow the real world-space channel; neighbouring chunks
+  // replay the same stones. All detail is ground paint, never new collision.
+  const cell = 72;
+  for (let ix = Math.floor((ox - 24) / cell); ix <= Math.ceil((ox + span + 24) / cell); ix++) {
+    const rng = makeRng(chunkHash(biome, ix, cy, 83329));
+    for (const side of [-1, 1]) {
+      const x = ix * cell + rng() * 48, half = halfAt(x);
+      if (half < 8) continue;
+      const y = centreAt(x) + side * half * (1.04 + rng() * 0.18);
+      const col = rng() > 0.48 ? [133, 151, 128] : [100, 130, 126];
+      bakeWoodlandBankStone(g, x, y, 7 + rng() * 10, rng() * TWO_PI, col);
+    }
   }
-  return sawFarm;
+}
+function bakeWoodlandWatercourse(g, biome, cy, ox, centreAt, halfAt, span = CHUNK_W) {
+  const points = [];
+  // World-anchored shoreline samples meet exactly across texture borders.
+  for (let x = ox - 80; x <= ox + span + 80; x += 40) {
+    const half = halfAt(x), mid = centreAt(x);
+    const rough = (bnoise(biome, x + 7170, cy * CHUNK_W, 0.012) - 0.5) * 16 * Math.min(1, half / 24);
+    points.push({x, mid, half, rough});
+  }
+  const ribbon = (width, edge, col, alpha) => {
+    g.fill(col[0], col[1], col[2], alpha);g.noStroke();g.beginShape();
+    for (const p of points) g.vertex(p.x, p.mid - Math.max(0,p.half*width+p.rough*edge));
+    for (let i=points.length-1;i>=0;i--) {
+      const p=points[i];g.vertex(p.x,p.mid+Math.max(0,p.half*width-p.rough*edge*0.8));
+    }
+    g.endShape(CLOSE);
+  };
+  // Mineral shelf, a dark damp lip, shallow turquoise water and the channel.
+  // Low-contrast hard shapes match the city's material faces; no stacked
+  // feathered ovals or high-contrast contour bands sit above the ground.
+  ribbon(1.26,1,[106,129,100],94);
+  ribbon(1.10,1,[49,92,77],116);
+  ribbon(1.02,0.72,[80,146,129],225);
+  ribbon(0.86,0.84,[50,127,127],175);
+  ribbon(0.61,1.12,[27,90,112],142);
+  ribbon(0.29,0.60,[24,83,105],65);
+  g.noFill();g.strokeWeight(1.8);
+  // Each short current stroke has its own world-cell seed, so painting an
+  // adjacent terrain buffer does not restart the water's texture.
+  for (let ix=Math.floor((ox-60)/160);ix<=Math.ceil((ox+span+60)/160);ix++) {
+    const rng=makeRng(chunkHash(biome,ix,cy,83557));
+    for(let i=0;i<2;i++) {
+      const x=ix*160+rng()*100,off=(rng()-0.5)*0.9,len=24+rng()*69;
+      if (halfAt(x) < 8 || halfAt(x + len) < 8) continue;
+      g.stroke(169,215,204,24+rng()*24);g.beginShape();
+      for(let k=0;k<4;k++) {
+        const px=x+len*k/3;
+        g.vertex(px,centreAt(px)+halfAt(px)*off+Math.sin(k*1.2+i)*2);
+      }
+      g.endShape();
+    }
+  }
+  g.noStroke();
+}
+function bakeWoodlandFord(g, cross, centreAt, halfAt) {
+  // The gravel bed is visible THROUGH the water. One world-space linear
+  // wash fades toward the ordinary river without striped colour slices or
+  // a leaf-shaped polygon pasted across its surface.
+  const ctx=g.drawingContext, x0=cross.x-180, x1=cross.x+180;
+  ctx.save();
+  const wash=ctx.createLinearGradient(x0,0,x1,0);
+  wash.addColorStop(0,"rgba(174,193,143,0)");
+  wash.addColorStop(0.5,"rgba(174,193,143,0.32)");
+  wash.addColorStop(1,"rgba(174,193,143,0)");
+  ctx.fillStyle=wash;ctx.beginPath();
+  for(let x=x0;x<=x1;x+=20) {
+    const y=centreAt(x)-halfAt(x)*0.98;
+    if(x===x0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  }
+  for(let x=x1;x>=x0;x-=20)ctx.lineTo(x,centreAt(x)+halfAt(x)*0.98);
+  ctx.closePath();ctx.fill();ctx.restore();
+  for(let i=0;i<13;i++) {
+    const x=cross.x+Math.sin(i*2.39+cross.y)*118;
+    const y=centreAt(x)+Math.cos(i*1.83+cross.x)*halfAt(x)*0.83;
+    bakeWoodlandBankStone(g,x,y,4+(i%4)*2,i*1.8,[129,166,135]);
+  }
+}
+function bakeWoodlandPool(g, p) {
+  const rx = p.w / 2, ry = p.h / 2;
+  const edgeAt = a => 1 + 0.17 * Math.sin(a * 3 + p.k * 21) + 0.09 * Math.sin(a * 5 - p.k * 13);
+  const ring = (scale, col, alpha) => {
+    g.fill(col[0], col[1], col[2], alpha); g.noStroke(); g.beginShape();
+    for (let i = 0; i < 24; i++) {
+      const a = i / 24 * TWO_PI, e = edgeAt(a) * scale;
+      g.vertex(p.x + Math.cos(a) * rx * e, p.y + Math.sin(a) * ry * e);
+    }
+    g.endShape(CLOSE);
+  };
+  ring(1.16, [65, 104, 74], 95);
+  ring(1.08, [118, 136, 95], 155);
+  ring(1, [61, 143, 128], 210);
+  ring(0.79, [30, 104, 111], 225);
+  ring(0.51, [25, 72, 87], 220);
+  // Reflections lie on the surface; curved streaks carry the same direction
+  // as the stream, without an oval highlight pasted over the water.
+  g.noFill(); g.stroke(171, 222, 203, 66); g.strokeWeight(2.2);
+  for (let i = 0; i < 5; i++) {
+    const y = p.y + (i - 2) * ry * 0.24;
+    const x = p.x - rx * 0.45 + Math.sin(p.k * 13 + i * 1.6) * rx * 0.19;
+    const len = rx * (0.26 + Math.sin(i + 2) * 0.05);
+    g.beginShape();g.vertex(x,y);g.vertex(x+len*0.5,y-2);g.vertex(x+len,y-1);g.endShape();
+  }
+  g.noStroke();
+  for (let i = 0; i < 9; i++) {
+    const a = p.k * 37 + i * 2.4, e = edgeAt(a) * 1.04;
+    bakeWoodlandBankStone(g, p.x + Math.cos(a) * rx * e,
+      p.y + Math.sin(a) * ry * e, 5 + (i % 3) * 3, a, [134, 151, 127]);
+  }
 }
 
 function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, layout) {
@@ -27855,61 +27979,14 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
     }
 
     case "WOODLAND": {
-      const regAtB = (x, y) => woodRegion(biome, x, y);
-      const sawFarm = bakeSharedWoodlandPatches(g, biome, cx, cy, rng, p);
+      bakeSharedWoodlandPatches(g, biome, cx, cy);
 
       // Marsh pools. Painted with the ground rather than drawn over it -- see
       // bakePool(). woodPools() hands the generator the identical list, so the
       // water you can see and the water you can wade are the same water.
       {
         const bPools = woodPools(biome, cx, cy);
-        if (bPools) for (const bp of bPools) bakePool(g, bp);
-      }
-
-      // Ploughed ground. The bearing comes off a very slow world field, so a
-      // field does not change direction halfway across a seam, and each short
-      // run is gated on the region at its own midpoint so the furrows simply
-      // stop where the farmland does.
-      if (sawFarm || regAtB(ox + 600, oy + 600) === RG_FARM) {
-        const bear = (bnoise(biome, ox * 0.2 + 1700, oy * 0.2 - 900, 0.00009) - 0.5) * 1.5;
-        const ca = Math.cos(bear), sa = Math.sin(bear);
-        // Spacing and segment length are held well apart. This is the most
-        // expensive pass in either sector's bake -- every segment costs a
-        // region lookup, which is three noise samples -- and at a 34-unit
-        // spacing with 110-unit segments it alone tripled the worst-case chunk.
-        g.strokeWeight(5);
-        g.stroke(96, 74, 44, 62);
-        const SPAN = CHUNK_W * 0.8;
-        for (let l = -SPAN; l < SPAN; l += 48) {
-          const px6 = ox + 600 - sa * l, py6 = oy + 600 + ca * l;
-          for (let q = -3; q < 3; q++) {
-            const t0 = q * 300, t1 = t0 + 300;
-            const mx = px6 + ca * (t0 + 150), my = py6 + sa * (t0 + 150);
-            if (mx < ox - 150 || mx > ox + CHUNK_W + 150 || my < oy - 150 || my > oy + CHUNK_W + 150) continue;
-            if (regAtB(mx, my) !== RG_FARM) continue;
-            g.line(px6 + ca * t0, py6 + sa * t0, px6 + ca * t1, py6 + sa * t1);
-          }
-        }
-        g.noStroke();
-      }
-
-      // Wind grain. Every open sward gets a set of faint strokes on one bearing,
-      // and that bearing is a function of world position only -- so the whole
-      // sector's grass lies the same way and the ground reads as a surface with
-      // a direction in it rather than as noise.
-      {
-        const wa = (bnoise(biome, 4400, 8800, 0.00004) - 0.5) * 2.4 + 0.6;
-        const cw = Math.cos(wa), sw = Math.sin(wa);
-        g.strokeWeight(2.2);
-        for (let i = 0; i < 24; i++) {
-          const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
-          const rg2 = regAtB(rx, ry);
-          if (rg2 === RG_MARSH || rg2 === RG_BURN || rg2 === RG_HEATH) continue;
-          const ln = 22 + rng() * 46;
-          g.stroke(212, 226, 168, 16 + rng() * 20);
-          g.line(rx, ry, rx + cw * ln, ry + sw * ln);
-        }
-        g.noStroke();
+        if (bPools) for (const bp of bPools) bakeWoodlandPool(g, bp);
       }
 
       // --- The road network -------------------------------------------------
@@ -27941,7 +28018,7 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
         // The through road: two ruts worn through turf, not a graded
         // carriageway. Tapered to nothing where it runs into authored ground.
         bakeRibbon(g, trackAtW, yAtW, S0w, S1w, 96, 46,
-                   [110, 128, 78], [118, 100, 72], 10, 42,
+                   [78, 107, 69], [143, 120, 80], 10, 42,
                    (wy) => coreTaperY(cx, cy, wy));
         RUT(p.mark, 120);
         for (const side of [-24, 24]) {
@@ -27960,7 +28037,7 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
         // player can navigate needs its through routes to read differently from
         // its cross-country connections at a glance.
         bakeRibbonH(g, linkAtW, xAtL, 0, SNl, 78, 37,
-                    [110, 128, 78], [118, 100, 72], 9, 40,
+                    [78, 107, 69], [143, 120, 80], 9, 40,
                     (wx) => coreTaperX(cx, cy, wx));
         RUT(p.mark, 110);
         for (const side of [-20, 20]) {
@@ -27986,23 +28063,22 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
         const spurW = (wx) => (1 - smooth01((spurT(wx) - 0.5) / 0.5)) * 0.85 + 0.15;
         const SNs = 14;
         bakeRibbonH(g, spurC, (s) => spurB.x0 + (s / SNs) * sdx, 0, SNs, 62, 30,
-                    [110, 128, 78], [116, 100, 74], 8, 38, spurW, 3);
+                    [78, 107, 69], [143, 120, 80], 8, 38, spurW, 3);
       }
 
       // --- The river --------------------------------------------------------
       if (hasRiverB) {
         const midAtR  = (wx) => woodRiverY(biome, cy, wx);
         const halfAtR = (wx) => woodRiverHalf(biome, cy, wx) * coreTaperX(cx, cy, wx);
-        bakeWatercourse(g, midAtR, halfAtR, ox, oy,
-                        [96, 88, 60], [88, 122, 106], [36, 62, 70], 208, rng);
+        bakeWoodlandWatercourse(g, biome, cy, ox, midAtR, halfAtR);
+        bakeWoodlandRiverBanks(g, biome, cy, ox, midAtR, halfAtR);
 
         if (crossB && crossB.ford) {
           // A ford is where the channel runs wide and shallow over gravel. Pale
           // bed showing through the water is the whole read: you can see the
           // bottom, so you know you can walk it.
           const fh = halfAtR(crossB.x);
-          softStamp(g, crossB.x, crossB.y, 300, fh * 2.5, [186, 178, 148], 120);
-          softStamp(g, crossB.x, crossB.y, 210, fh * 1.7, [206, 200, 172], 96);
+          bakeWoodlandFord(g, crossB, midAtR, halfAtR);
           g.noFill(); g.stroke(232, 240, 236, 46); g.strokeWeight(2);
           for (let i = 0; i < 7; i++) {
             const fy = crossB.y + (i - 3) * fh * 0.3;
@@ -28014,29 +28090,10 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
           // bridge lands on something rather than floating over the bank.
           const ah = halfAtR(crossB.x);
           for (const side of [-1, 1]) {
-            softStamp(g, crossB.x, crossB.y + side * (ah + 74), 200, 150, [104, 92, 66], 118);
+            woodlandFloorContour(g, crossB.x, crossB.y + side * (ah + 74),
+              110, 145, 0.1, 1, [124, 109, 73], 112);
           }
         }
-      }
-
-      // Fallen leaf litter off the roads and out of the water, and the odd bare
-      // patch of earth.
-      const offTrack = (x, y) => {
-        if (hasTrunkB && Math.abs(x - trackAtW(y)) < 80) return false;
-        if (hasLinkB  && Math.abs(y - linkAtW(x)) < 70) return false;
-        if (hasRiverB && Math.abs(y - woodRiverY(biome, cy, x)) < woodRiverHalf(biome, cy, x) * 1.4) return false;
-        return true;
-      };
-      for (let i = 0; i < 26; i++) {
-        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
-        if (!offTrack(rx, ry)) continue;
-        g.fill(126, 108, 62, 26 + rng() * 34);
-        g.ellipse(rx, ry, 16 + rng() * 42, 12 + rng() * 30);
-      }
-      for (let i = 0; i < 4; i++) {
-        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
-        if (!offTrack(rx, ry)) continue;
-        softStamp(g, rx, ry, 90 + rng() * 130, 70 + rng() * 100, [104, 86, 58], 26 + rng() * 22);
       }
 
       // A cleared apron under a Directive post, so the compound is not sitting
@@ -28054,7 +28111,7 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
             const SNa = 12;
             bakeRibbonH(g, (wx) => (oy + 330) + (oy + 80 - (oy + 330)) * at01(wx),
                         (s) => ax0 + (s / SNa) * adx, 0, SNa, 58, 28,
-                        [110, 128, 78], [116, 100, 74], 8, 38,
+                        [78, 107, 69], [143, 120, 80], 8, 38,
                         (wx) => 0.35 + 0.65 * (1 - at01(wx)), 3);
           }
         }
@@ -30955,72 +31012,226 @@ function forestContactShadow(g, w, h, len, alpha, density) {
   path.endShape(CLOSE);
 }
 
-// Small changes in the perimeter give a broken branch edge without a regular
-// wheel of spokes. The highlight follows the SUN in world space; phase only
-// varies the outline, so neighbouring rotated trees still share one light.
-function forestCrownPath(g, rx, ry, phase, seed, cedar, alder) {
+// Canopy plans belong to the world. The camera only translates their raised
+// volumes; seeded branch headings never turn to face the viewer. One connected
+// crown supports unequal bough fans instead of repeated concentric silhouettes.
+function forestTreeCrown(g, rx, ry, seed, species, points) {
   const path = forestPolygonPainter(g);
-  const n = alder ? 13 : 20;
+  if (points && forestTreeStaticPolygon(g, path, points)) return;
+  const alder = species === "RED_ALDER", cedar = species === "WESTERN_CEDAR";
+  const n = alder ? 24 : 32;
+  const phase = seed * 2.3;
   path.beginShape();
-  for (let i = 0; i < n; i++) {
+  if (points) {
+    for (let i = 0; i < points.length; i += 2) path.vertex(points[i], points[i + 1]);
+  } else for (let i = 0; i < n; i++) {
     const a = i * TWO_PI / n;
-    const tooth = alder ? 0.94 : (i % 2 ? 0.84 : 0.94);
-    const wobble = 1 + 0.04 * Math.sin(i * 2.17 + seed * 11 + phase);
-    const lean = cedar ? 0.02 * Math.cos(a * 3 + phase) : 0;
-    path.vertex(Math.cos(a) * rx * tooth * wobble,
-             Math.sin(a) * ry * (tooth + lean) * wobble);
-  }
-  path.endShape(CLOSE);
-}
-
-function forestEvergreenTier(g, rx, ry, ax, ay, seed, cedar) {
-  const path = forestPolygonPainter(g);
-  // A cone's tip follows the projected height. Stepped bough edges rather
-  // than radial triangles distinguish a standing evergreen from a star or a
-  // pile of round plates. Every normalized point stays inside radius one.
-  const px = -ay, py = ax;
-  path.beginShape(); path.vertex(ax * rx, ay * ry);
-  for (let side = -1; side <= 1; side += 2) {
-    if (side > 0) {
-      path.vertex(-ax * rx * 0.38, -ay * ry * 0.38);
-    }
-    for (let k = 0; k < 6; k++) {
-      const j = side < 0 ? k : 5 - k;
-      const f = j === 0 ? 0.57 : j === 1 ? 0.51 : j === 2 ? 0.23 : j === 3 ? 0.15 : j === 4 ? -0.15 : -0.30;
-      const spread = j === 0 ? 0.35 : j === 1 ? 0.20 : j === 2 ? 0.66 : j === 3 ? 0.48 : j === 4 ? 0.94 : 0.57;
-      const variation = 0.94 + 0.04 * Math.sin(seed * 13 + j * 2.8 + side);
-      const forward = cedar && j % 2 === 0 ? f + 0.035 : f;
-      path.vertex((ax * forward + px * spread * side * variation) * rx,
-               (ay * forward + py * spread * side * variation) * ry);
-    }
-  }
-  path.endShape(CLOSE);
-}
-
-function forestEvergreenFacet(g, rx, ry, ax, ay) {
-  const path = forestPolygonPainter(g);
-  const px = -ay, py = ax;
-  const side = -(LIGHT_DX * px + LIGHT_DY * py) >= 0 ? 1 : -1;
-  path.beginShape(); path.vertex(ax * rx * 0.90, ay * ry * 0.90);
-  path.vertex((ax * 0.22 + px * 0.53 * side) * rx, (ay * 0.22 + py * 0.53 * side) * ry);
-  path.vertex((-ax * 0.15 + px * 0.78 * side) * rx, (-ay * 0.15 + py * 0.78 * side) * ry);
-  path.vertex((-ax * 0.28 + px * 0.43 * side) * rx, (-ay * 0.28 + py * 0.43 * side) * ry);
-  path.vertex(-ax * rx * 0.32, -ay * ry * 0.32);
-  path.vertex(ax * rx * 0.05, ay * ry * 0.05);
-  path.endShape(CLOSE);
-}
-
-function forestCrownFacet(g, rx, ry, seed) {
-  const path = forestPolygonPainter(g);
-  const sun = Math.atan2(-LIGHT_DY, -LIGHT_DX);
-  path.beginShape();
-  path.vertex(-LIGHT_DX * rx * 0.06, -LIGHT_DY * ry * 0.06);
-  for (let i = 0; i <= 7; i++) {
-    const a = sun - 1.15 + i * 2.30 / 7;
-    const r = 0.78 + 0.07 * Math.sin(i * 2.4 + seed * 9);
+    const r = 0.77 + 0.10 * Math.sin(a * 3 + phase) +
+      0.055 * Math.sin(a * (alder ? 6 : cedar ? 9 : 11) - phase * 1.7);
     path.vertex(Math.cos(a) * rx * r, Math.sin(a) * ry * r);
   }
   path.endShape(CLOSE);
+}
+
+// A tapered, irregular bough fan, rather than a smaller outline of the whole
+// tree. Its direction belongs to the seeded branch plan in world space.
+const _FOREST_BOUGH_EDGE = [
+  -.69,0, -.49,-.27, -.30,-.18, -.26,-.43, -.04,-.28,
+  .06,-.46, .26,-.25, .40,-.36, .59,-.17, .73,-.22,
+  .96,0, .76,.17, .60,.12, .46,.33, .27,.22, .13,.43,
+  -.06,.28, -.23,.40, -.34,.19, -.52,.24
+];
+function forestTreeBough(g, rx, ry, angle, seed, alder, points) {
+  const path = forestPolygonPainter(g);
+  if (points && forestTreeStaticPolygon(g, path, points)) return;
+  const ca = Math.cos(angle), sa = Math.sin(angle);
+  path.beginShape();
+  if (points) {
+    for (let i = 0; i < points.length; i += 2) path.vertex(points[i], points[i + 1]);
+  } else if (alder) {
+    for (let i = 0; i < 14; i++) {
+      const a = i * TWO_PI / 14;
+      const r = .85 + .10 * Math.sin(a * 3 + seed * 8);
+      const x = Math.cos(a) * r, y = Math.sin(a) * r * .65;
+      path.vertex((ca * x - sa * y) * rx, (sa * x + ca * y) * ry);
+    }
+  } else for (let i = 0; i < _FOREST_BOUGH_EDGE.length; i += 2) {
+    const x = _FOREST_BOUGH_EDGE[i], y = _FOREST_BOUGH_EDGE[i + 1] * 1.48;
+    path.vertex((ca * x - sa * y) * rx, (sa * x + ca * y) * ry);
+  }
+  path.endShape(CLOSE);
+}
+
+const _FOREST_BRANCH_PLAN = [
+  -.16,-.25,-2.18,.53,.39,
+   .18,-.20,-.59,.56,.43,
+  -.25, .09, 2.80,.57,.47,
+   .19, .20, .53,.61,.52,
+  -.03, .02,-1.26,.51,.68
+];
+function forestTreeBoughFacet(g, rx, ry, angle, alder, seed, faces) {
+  const path = forestPolygonPainter(g);
+  const ca = Math.cos(angle), sa = Math.sin(angle);
+  const side = LIGHT_DX * sa - LIGHT_DY * ca >= 0 ? 1 : -1;
+  if (faces && forestTreeStaticPolygon(g, path, side < 0 ? faces[0] : faces[1])) return;
+  path.beginShape();
+  if (faces) {
+    const points = side < 0 ? faces[0] : faces[1];
+    for (let i = 0; i < points.length; i += 2) path.vertex(points[i], points[i + 1]);
+    path.endShape(CLOSE);
+    return;
+  }
+  path.vertex(-ca * rx * .65, -sa * ry * .65);
+  if (alder) {
+    for (let i = 0; i <= 6; i++) {
+      const a = side * i * PI / 6;
+      const r = .85 + .10 * Math.sin(a * 3 + seed * 8);
+      const x = Math.cos(a) * r, y = Math.sin(a) * r * .65;
+      path.vertex((ca * x - sa * y) * rx, (sa * x + ca * y) * ry);
+    }
+  } else if (side < 0) {
+    for (let i = 2; i <= 20; i += 2) {
+      const x = _FOREST_BOUGH_EDGE[i], y = _FOREST_BOUGH_EDGE[i + 1] * 1.48;
+      path.vertex((ca * x - sa * y) * rx, (sa * x + ca * y) * ry);
+    }
+  } else {
+    for (let i = _FOREST_BOUGH_EDGE.length - 2; i >= 20; i -= 2) {
+      const x = _FOREST_BOUGH_EDGE[i], y = _FOREST_BOUGH_EDGE[i + 1] * 1.48;
+      path.vertex((ca * x - sa * y) * rx, (sa * x + ca * y) * ry);
+    }
+  }
+  path.vertex(ca * rx * .96, sa * ry * .96);
+  path.endShape(CLOSE);
+}
+
+// Static tree coordinates belong to their streamed decor record. Retiring a
+// chunk releases its plans through the WeakMap; camera and sun changes never
+// rebuild them. Keep the original arithmetic order for identical edge pixels.
+const _forestTreePlans = new WeakMap();
+const _forestTreePaths = new WeakMap();
+function forestTreeStaticPolygon(g, painter, points) {
+  if (typeof Path2D !== 'function' || typeof p5 === 'undefined' || painter === g) return false;
+  const inst = g === window ? p5.instance : g, renderer = inst && inst._renderer;
+  // A proxy painter records the actual vertices during moving-camera QA.
+  // Retain that route, along with all the version/renderer/accessibility guards.
+  if (!renderer || painter !== _forestPolygonPainters.get(renderer)) return false;
+  let polygon = _forestTreePaths.get(points);
+  if (!polygon) {
+    polygon = new Path2D(); polygon.moveTo(points[0], points[1]);
+    for (let i = 2; i < points.length; i += 2) polygon.lineTo(points[i], points[i + 1]);
+    polygon.lineTo(points[0], points[1]); polygon.lineTo(points[0], points[1]);
+    polygon.closePath(); _forestTreePaths.set(points, polygon);
+  }
+  const context = renderer.drawingContext;
+  if (renderer._doFill) context.fill(polygon);
+  if (renderer._doStroke) context.stroke(polygon);
+  return true;
+}
+
+function forestTreePlan(d, rx, ry, seed, species, rot) {
+  let plan = _forestTreePlans.get(d);
+  if (plan && plan.rx === rx && plan.ry === ry && plan.seed === seed &&
+      plan.species === species && plan.rot === rot) return plan;
+  const alder = species === "RED_ALDER", cedar = species === "WESTERN_CEDAR";
+  const n = alder ? 24 : 32, phase = seed * 2.3;
+  const crown = new Float64Array(n * 2);
+  for (let i = 0; i < n; i++) {
+    const a = i * TWO_PI / n;
+    const r = .77 + .10 * Math.sin(a * 3 + phase) +
+      .055 * Math.sin(a * (alder ? 6 : cedar ? 9 : 11) - phase * 1.7);
+    crown[i * 2] = Math.cos(a) * rx * r;
+    crown[i * 2 + 1] = Math.sin(a) * ry * r;
+  }
+  const branchPhase = rot + seed * 1.3, ca = Math.cos(branchPhase), sa = Math.sin(branchPhase);
+  const branches = [];
+  for (let i = 0; i < _FOREST_BRANCH_PLAN.length; i += 5) {
+    const x = _FOREST_BRANCH_PLAN[i], y = _FOREST_BRANCH_PLAN[i + 1];
+    const angle = branchPhase + _FOREST_BRANCH_PLAN[i + 2];
+    const size = _FOREST_BRANCH_PLAN[i + 3], brx = rx * size, bry = ry * size;
+    const bc = Math.cos(angle), bs = Math.sin(angle), branchSeed = seed + i;
+    const points = new Float64Array(alder ? 28 : _FOREST_BOUGH_EDGE.length);
+    if (alder) {
+      for (let j = 0; j < 14; j++) {
+        const a = j * TWO_PI / 14, r = .85 + .10 * Math.sin(a * 3 + branchSeed * 8);
+        const bx = Math.cos(a) * r, by = Math.sin(a) * r * .65;
+        points[j * 2] = (bc * bx - bs * by) * brx;
+        points[j * 2 + 1] = (bs * bx + bc * by) * bry;
+      }
+    } else for (let j = 0; j < _FOREST_BOUGH_EDGE.length; j += 2) {
+      const bx = _FOREST_BOUGH_EDGE[j], by = _FOREST_BOUGH_EDGE[j + 1] * 1.48;
+      points[j] = (bc * bx - bs * by) * brx;
+      points[j + 1] = (bs * bx + bc * by) * bry;
+    }
+    const faces = [];
+    for (const side of [-1, 1]) {
+      const face = [-bc * brx * .65, -bs * bry * .65];
+      if (alder) {
+        for (let j = 0; j <= 6; j++) {
+          const a = side * j * PI / 6, r = .85 + .10 * Math.sin(a * 3 + branchSeed * 8);
+          const bx = Math.cos(a) * r, by = Math.sin(a) * r * .65;
+          face.push((bc * bx - bs * by) * brx, (bs * bx + bc * by) * bry);
+        }
+      } else if (side < 0) {
+        for (let j = 2; j <= 20; j += 2) face.push(points[j], points[j + 1]);
+      } else {
+        for (let j = _FOREST_BOUGH_EDGE.length - 2; j >= 20; j -= 2)
+          face.push(points[j], points[j + 1]);
+      }
+      face.push(bc * brx * .96, bs * bry * .96);
+      faces.push(new Float64Array(face));
+    }
+    const lines = new Float64Array(12);
+    lines[0] = -bc * rx * size * .39; lines[1] = -bs * ry * size * .39;
+    lines[2] = bc * rx * size * .56; lines[3] = bs * ry * size * .56;
+    for (let j = 0; j < 2; j++) {
+      const q = .12 + j * .22, k = 4 + j * 4;
+      lines[k] = bc * rx * size * q; lines[k + 1] = bs * ry * size * q;
+      lines[k + 2] = (bc * (q + .15) - bs * .22) * rx * size;
+      lines[k + 3] = (bs * (q + .15) + bc * .22) * ry * size;
+    }
+    branches.push({ angle, size, height: _FOREST_BRANCH_PLAN[i + 4], points, faces, lines,
+      x: (ca * x - sa * y) * rx, y: (sa * x + ca * y) * ry });
+  }
+  plan = { rx, ry, seed, species, rot, crown, branches };
+  _forestTreePlans.set(d, plan);
+  return plan;
+}
+
+// Side facets use p5's verified Renderer2D.quad directly, without the public
+// API's argument array and per-face Color objects. The renderer still owns its
+// fill cache and the exact quad path. Alternate color modes keep ordinary p5.
+const _forestTreeSideColours = Object.create(null);
+function forestTreeRgbStyle(r, g, b) {
+  const red = Math.round(Math.max(0, Math.min(1, r / 255)) * 255);
+  const green = Math.round(Math.max(0, Math.min(1, g / 255)) * 255);
+  const blue = Math.round(Math.max(0, Math.min(1, b / 255)) * 255);
+  return '#' + red.toString(16).padStart(2, '0') + green.toString(16).padStart(2, '0') +
+    blue.toString(16).padStart(2, '0');
+}
+function forestTreeSideStyle(g, path, species, n, cr, cg, cb, hr, hg, hb) {
+  if (path === g) return null;
+  const inst = g === window ? p5.instance : g;
+  const maxes = inst._colorMaxes && inst._colorMaxes.rgb;
+  if (inst._colorMode !== "rgb" || !maxes || maxes[0] !== 255 || maxes[1] !== 255 ||
+      maxes[2] !== 255 || maxes[3] !== 255) return null;
+  let ramp = _forestTreeSideColours[species];
+  if (!ramp || ramp.dx !== LIGHT_DX || ramp.dy !== LIGHT_DY) {
+    const colours = new Array(n);
+    for (let i = 1; i <= n; i++) {
+      const a = (i % n) * TWO_PI / n;
+      const light = .61 + .11 * Math.max(0, -LIGHT_DX * Math.cos(a) - LIGHT_DY * Math.sin(a));
+      colours[i - 1] = forestTreeRgbStyle(cr * light, cg * light, cb * light);
+    }
+    ramp = { dx: LIGHT_DX, dy: LIGHT_DY, colours,
+      low: forestTreeRgbStyle(cr * .59, cg * .60, cb * .60),
+      top: forestTreeRgbStyle(cr * .96, cg * .96, cb * .96),
+      bough: forestTreeRgbStyle(cr * 1.04, cg * 1.02, cb),
+      facet: forestTreeRgbStyle(hr * .76, hg * .86, hb * .84),
+      vein: forestTreeRgbStyle(cr * .60, cg * .76, cb * .70) };
+    _forestTreeSideColours[species] = ramp;
+  }
+  return { renderer: inst._renderer, colours: ramp.colours,
+    low: ramp.low, top: ramp.top, bough: ramp.bough, facet: ramp.facet, vein: ramp.vein };
 }
 
 function paintForestClutter(g, d, t) {
@@ -31050,261 +31261,372 @@ function paintForestClutter(g, d, t) {
       lx = _leanTmp[0]; ly = _leanTmp[1];
     }
     const tw = (fp.trunkWidth || 9) * s;
-    const ink = (fp.outline || 2.4) * s;
-    const axisLen = Math.hypot(lx / Math.max(rx, 1), ly / Math.max(ry, 1));
-    const ax = axisLen > 0.01 ? lx / Math.max(rx, 1) / axisLen : 0;
-    const ay = axisLen > 0.01 ? ly / Math.max(ry, 1) / axisLen : 1;
+    const ink = (fp.outline || 1.8) * s;
     if (species === "CHARRED_SNAG") {
-      // Bare broken timber casts branches, never a canopy-sized dark disc.
       if (sd > 0.025) {
-        g.stroke(13, 29, 29, 76 * sd); g.strokeWeight(3.4 * s);
+        g.stroke(24, 33, 27, 48 * sd); g.strokeWeight(3 * s);
         g.line(0, 0, LIGHT_DX * cm[0] * s * 0.65 * sl,
                      LIGHT_DY * cm[0] * s * 0.65 * sl);
-        for (let i = 0; i < 5; i++) {
-          const a = rot + i * 2.17, f = 0.32 + i * 0.11;
+        for (let i = 0; i < 4; i++) {
+          const a = rot + i * 2.17, f = 0.30 + i * 0.15;
           const bx = LIGHT_DX * cm[0] * s * f * sl, by = LIGHT_DY * cm[0] * s * f * sl;
-          g.line(bx, by, bx + Math.cos(a) * rx * 0.75, by + Math.sin(a) * ry * 0.75);
+          g.line(bx, by, bx + Math.cos(a) * rx * 0.60, by + Math.sin(a) * ry * 0.60);
         }
       }
-    } else {
-      forestContactShadow(g, rx * 1.60, ry * 1.48, cm[0] * s * 0.44 * sl, 66, sd);
-    }
-    // A buttressed foot and tapered bark connect the displaced crown to the
-    // collision trunk. Broad bark planes survive both zoom and cel shading.
-    g.stroke(22, 37, 34); g.strokeWeight(ink * 0.72);
-    g.fill(burnt ? 45 : 99, burnt ? 42 : 62, burnt ? 39 : 39);
+    } else forestContactShadow(g, rx * 1.46, ry * 1.42, cm[0] * s * 0.56 * sl, 44, sd);
+
+    // Bark is a short rooted volume, continuous with the raised crown. The
+    // lower foliage covers its upper end instead of sitting on an exposed pole.
+    g.stroke(31, 42, 30); g.strokeWeight(ink * 0.7);
+    g.fill(burnt ? 53 : 97, burnt ? 49 : 68, burnt ? 40 : 43);
     path.beginShape();
-    path.vertex(-tw * 0.78, tw * 0.48); path.vertex(-tw * 0.45, -tw * 0.16);
-    path.vertex(lx - tw * 0.26, ly - tw * 0.28);
-    path.vertex(lx + tw * 0.25, ly - tw * 0.12);
-    path.vertex(tw * 0.45, -tw * 0.16); path.vertex(tw * 0.78, tw * 0.48);
+    path.vertex(-tw * 0.80, tw * 0.42); path.vertex(-tw * 0.38, -tw * 0.28);
+    path.vertex(lx - tw * 0.25, ly - tw * 0.18);
+    path.vertex(lx + tw * 0.24, ly - tw * 0.18);
+    path.vertex(tw * 0.38, -tw * 0.28); path.vertex(tw * 0.78, tw * 0.42);
     path.endShape(CLOSE);
-    g.noStroke(); g.fill(burnt ? 95 : 180, burnt ? 82 : 119, burnt ? 68 : 65);
+    g.noStroke(); g.fill(burnt ? 106 : 151, burnt ? 94 : 111, burnt ? 72 : 69);
     const edge = LIGHT_DX < 0 ? 1 : -1;
-    g.quad(tw * 0.48 * edge, -tw * 0.2, tw * 0.14 * edge, -tw * 0.16,
-           lx + tw * 0.05 * edge, ly - tw * 0.21, lx + tw * 0.22 * edge, ly - tw * 0.15);
+    g.quad(tw * 0.36 * edge, -tw * 0.18, tw * 0.07 * edge, -tw * 0.14,
+           lx + tw * 0.04 * edge, ly - tw * 0.18, lx + tw * 0.19 * edge, ly - tw * 0.17);
     if (species === "CHARRED_SNAG") {
       for (let i = 0; i < 5; i++) {
         const a = rot + i * 2.17 + Math.sin(seed * 7 + i) * 0.15;
-        const f = 0.30 + i * 0.12;
+        const f = 0.25 + i * 0.15;
         const bx = lx * f, by = ly * f;
-        const ex = bx + Math.cos(a) * rx * (0.65 + i % 2 * 0.20);
-        const ey = by + Math.sin(a) * ry * (0.65 + i % 2 * 0.20);
-        g.stroke(24, 36, 35); g.strokeWeight((4.7 - i * 0.4) * s);
+        const ex = bx + Math.cos(a) * rx * (0.50 + i % 2 * 0.18);
+        const ey = by + Math.sin(a) * ry * (0.50 + i % 2 * 0.18);
+        g.stroke(36, 42, 32); g.strokeWeight((4.0 - i * 0.4) * s);
         g.line(bx, by, ex, ey);
-        g.stroke(106, 94, 71); g.strokeWeight(1.3 * s);
+        g.stroke(118, 103, 74); g.strokeWeight(1.0 * s);
         g.line(bx - LIGHT_DX * s, by - LIGHT_DY * s, ex - LIGHT_DX * s, ey - LIGHT_DY * s);
-        g.stroke(27, 38, 36); g.strokeWeight(2.3 * s);
-        g.line(ex, ey, ex + Math.cos(a + 0.7) * rx * 0.22, ey + Math.sin(a + 0.7) * ry * 0.22);
+        g.stroke(39, 45, 34); g.strokeWeight(1.8 * s);
+        g.line(ex, ey, ex + Math.cos(a + 0.7) * rx * 0.18, ey + Math.sin(a + 0.7) * ry * 0.18);
       }
-      g.noStroke(); g.fill(182, 137, 77);
-      g.triangle(lx - tw * 0.24, ly - tw * 0.23, lx + tw * 0.19, ly - tw * 0.14,
-                 lx + tw * 0.04, ly + tw * 0.11);
+      g.noStroke(); g.fill(159, 129, 84);
+      g.ellipse(lx, ly - tw * 0.12, tw * 0.5, tw * 0.32);
       g.pop(); return true;
     }
-    const cedar = species === "WESTERN_CEDAR", alder = species === "RED_ALDER";
+
+    const alder = species === "RED_ALDER", cedar = species === "WESTERN_CEDAR";
     const spruce = species === "SITKA_SPRUCE", lodge = species === "LODGEPOLE_PINE";
-    let cr = cedar ? 65 : alder ? 94 : spruce ? 38 : lodge ? 63 : 40;
-    let cg = cedar ? 137 : alder ? 156 : spruce ? 126 : lodge ? 131 : 137;
-    let cb = cedar ? 77 : alder ? 75 : spruce ? 120 : lodge ? 107 : 99;
-    cr = cr * 0.76 + habitat.foliage[0] * 0.24;
-    cg = cg * 0.76 + habitat.foliage[1] * 0.24;
-    cb = cb * 0.76 + habitat.foliage[2] * 0.24;
-    const hr = (alder ? 183 : cedar ? 161 : spruce ? 116 : 124) * 0.56 + habitat.highlight[0] * 0.44;
-    const hg = (alder ? 211 : cedar ? 201 : spruce ? 195 : 203) * 0.56 + habitat.highlight[1] * 0.44;
-    const hb = (alder ? 101 : cedar ? 95 : spruce ? 163 : 126) * 0.56 + habitat.highlight[2] * 0.44;
-    if (!alder) {
-      // The foliage is one solid cone, not three hats at the end of a rod.
-      // A broad lower crown joins the leader across their projected heights;
-      // the smaller whorls below cut bough bands into this continuous body.
-      // All lateral points are inside the shared crown radius, so the visual
-      // crown still fits the generator's road clearance and shadow profile.
-      const px = -ay, py = ax;
-      const bx = lx * 0.45, by = ly * 0.45;
-      const tipx = lx + ax * rx * 0.44, tipy = ly + ay * ry * 0.44;
-      g.stroke(17, 45, 44); g.strokeWeight(ink);
-      g.fill(cr * 0.45 + habitat.shade[0] * 0.42,
-             cg * 0.45 + habitat.shade[1] * 0.42, cb * 0.45 + habitat.shade[2] * 0.42);
-      path.beginShape();
-      path.vertex(bx - ax * rx * 0.38, by - ay * ry * 0.38);
-      path.vertex(bx + (-ax * 0.30 - px * 0.57) * rx, by + (-ay * 0.30 - py * 0.57) * ry);
-      path.vertex(bx + (-ax * 0.15 - px * 0.91) * rx, by + (-ay * 0.15 - py * 0.91) * ry);
-      path.vertex(tipx, tipy);
-      path.vertex(bx + (-ax * 0.15 + px * 0.91) * rx, by + (-ay * 0.15 + py * 0.91) * ry);
-      path.vertex(bx + (-ax * 0.30 + px * 0.57) * rx, by + (-ay * 0.30 + py * 0.57) * ry);
-      path.endShape(CLOSE);
-      const side = -(LIGHT_DX * px + LIGHT_DY * py) >= 0 ? 1 : -1;
-      g.noStroke(); g.fill(cr * 0.82, cg * 0.86, cb * 0.82);
-      g.triangle(bx - ax * rx * 0.27, by - ay * ry * 0.27,
-                 bx + (-ax * 0.14 + px * side * 0.84) * rx,
-                 by + (-ay * 0.14 + py * side * 0.84) * ry, tipx, tipy);
+    const cr = alder ? 87 : cedar ? 64 : spruce ? 47 : lodge ? 66 : 48;
+    const cg = alder ? 132 : cedar ? 114 : spruce ? 118 : lodge ? 121 : 119;
+    const cb = alder ? 62 : cedar ? 62 : spruce ? 95 : lodge ? 86 : 73;
+    const hr = alder ? 149 : cedar ? 132 : spruce ? 116 : 128;
+    const hg = alder ? 168 : cedar ? 155 : spruce ? 163 : 161;
+    const hb = alder ? 88 : cedar ? 78 : spruce ? 119 : 91;
+    // One connected crown volume: shaded bough edges join a lower footprint
+    // to its raised top face. The top is filled, with no inner contour rings.
+    const low = .12, high = .40, n = alder ? 24 : 32;
+    const plan = forestTreePlan(d, rx, ry, seed, species, rot);
+    const sideStyle = forestTreeSideStyle(g, path, species, n, cr, cg, cb, hr, hg, hb);
+    const nativeGroups = sideStyle && path === _forestPolygonPainters.get(sideStyle.renderer);
+    if (nativeGroups) {
+      const renderer = sideStyle.renderer, context = renderer.drawingContext;
+      const strokeBefore = renderer._doStroke;
+      context.save(); context.translate(lx * low, ly * low);
+      context.strokeStyle = '#1b3123'; context.lineWidth = ink; context.fillStyle = sideStyle.low;
+      renderer._doStroke = true;
+      forestTreeCrown(g, rx, ry, seed, species, plan.crown);
+      renderer._doStroke = strokeBefore; context.restore();
+    } else {
+      g.push(); g.translate(lx * low, ly * low);
+      g.stroke(27, 49, 35); g.strokeWeight(ink);
+      g.fill(cr * .59, cg * .60, cb * .60);
+      forestTreeCrown(g, rx, ry, seed, species, plan.crown);
+      g.pop();
     }
-    const tiers = alder ? 2 : 3;
-    for (let i = 0; i < tiers; i++) {
-      // Low boughs start halfway up the stem. A short rear plane retains a
-      // root gap at the centred tilt; broad whorls cover the long edge lean.
-      const f = alder ? 0.78 + i * 0.22 : i === 0 ? 0.45 : i === 1 ? 0.72 : 1;
-      const size = alder ? 1 - i * 0.36 : 1 - i * 0.28;
-      const tx = lx * f, ty = ly * f;
-      const depth = ry * size * (alder ? 0.76 : 1);
-      g.push(); g.translate(tx, ty);
-      g.stroke(17, 45, 44); g.strokeWeight(ink);
-      g.fill(cr * 0.24 + habitat.shade[0] * 0.70,
-             cg * 0.24 + habitat.shade[1] * 0.70, cb * 0.24 + habitat.shade[2] * 0.70);
-      if (alder) forestCrownPath(g, rx * size, depth, rot + i, seed + i * 0.18, cedar, true);
-      else forestEvergreenTier(g, rx * size, depth, ax, ay, seed + i * 0.18, cedar);
-      g.noStroke(); g.fill(cr, cg + i * 8, cb);
-      if (alder) forestCrownPath(g, rx * size * 0.87, depth * 0.86, rot + i, seed + i * 0.18, cedar, true);
-      else forestEvergreenTier(g, rx * size * 0.88, depth * 0.88, ax, ay, seed + i * 0.18, cedar);
-      g.fill(hr, hg, hb);
-      if (alder) forestCrownFacet(g, rx * size, depth, seed + i * 0.18);
-      else forestEvergreenFacet(g, rx * size, depth, ax, ay);
-      // A few broken sprays give needles scale without a costly needle field.
-      g.stroke(cr * 0.60, cg * 0.72, cb * 0.68); g.strokeWeight(1.6 * s);
-      for (let j = 0; j < 3; j++) {
-        const a = rot + j * 2.15 + i * 0.41;
-        g.line(Math.cos(a) * rx * size * 0.35, Math.sin(a) * depth * 0.35,
-               Math.cos(a + 0.17) * rx * size * 0.68, Math.sin(a + 0.17) * depth * 0.68);
+    g.noStroke();
+    let px = 0, py = 0;
+    for (let i = 0; i <= n; i++) {
+      const j = (i % n) * 2;
+      const x = plan.crown[j], y = plan.crown[j + 1];
+      if (i) {
+        if (sideStyle) {
+          const renderer = sideStyle.renderer;
+          renderer._setFill(sideStyle.colours[i - 1]);
+          renderer.quad(px + lx * low, py + ly * low, x + lx * low, y + ly * low,
+            x + lx * high, y + ly * high, px + lx * high, py + ly * high);
+        } else {
+          const a = (i % n) * TWO_PI / n;
+          const light = .61 + .11 * Math.max(0, -LIGHT_DX * Math.cos(a) - LIGHT_DY * Math.sin(a));
+          g.fill(cr * light, cg * light, cb * light);
+          g.quad(px + lx * low, py + ly * low, x + lx * low, y + ly * low,
+            x + lx * high, y + ly * high, px + lx * high, py + ly * high);
+        }
       }
-      if (alpine && i < 2) {
-        // Broken snow cornices leave most needles showing and distinguish a
-        // ridge tree from the wet lowland species, without a white disc.
-        g.noStroke(); g.fill(207, 231, 217);
-        g.quad(-rx * size * 0.51, -depth * 0.30, -rx * size * 0.10, -depth * 0.47,
-               rx * size * 0.23, -depth * 0.26, -rx * size * 0.18, -depth * 0.22);
+      px = x; py = y;
+    }
+    if (nativeGroups) {
+      const context = sideStyle.renderer.drawingContext;
+      context.save(); context.translate(lx * high, ly * high); context.fillStyle = sideStyle.top;
+      forestTreeCrown(g, rx, ry, seed, species, plan.crown);
+      context.restore();
+    } else {
+      g.push(); g.translate(lx * high, ly * high);
+      g.fill(cr * .96, cg * .96, cb * .96);
+      forestTreeCrown(g, rx, ry, seed, species, plan.crown);
+      g.pop();
+    }
+    for (let i = 0; i < _FOREST_BRANCH_PLAN.length; i += 5) {
+      const branch = plan.branches[i / 5];
+      const a = branch.angle, size = branch.size, f = branch.height;
+      if (nativeGroups) {
+        // These groups change only local Canvas styles. The parent p5 renderer
+        // already has fill on/stroke off, so its state and caches stay intact.
+        const context = sideStyle.renderer.drawingContext;
+        context.save(); context.translate(branch.x + lx * f, branch.y + ly * f);
+        context.fillStyle = sideStyle.bough;
+        forestTreeBough(g, rx * size, ry * size, a, seed + i, alder, branch.points);
+        context.fillStyle = sideStyle.facet;
+        forestTreeBoughFacet(g, rx * size, ry * size, a, alder, seed + i, branch.faces);
+        if (!alder && rx > 12) {
+          context.strokeStyle = sideStyle.vein; context.lineWidth = .6 * s;
+          for (let j = 0; j < branch.lines.length; j += 4) {
+            context.beginPath(); context.moveTo(branch.lines[j], branch.lines[j + 1]);
+            context.lineTo(branch.lines[j + 2], branch.lines[j + 3]); context.stroke();
+          }
+        }
+        context.restore();
+        continue;
+      }
+      g.push(); g.translate(branch.x + lx * f, branch.y + ly * f);
+      g.noStroke(); g.fill(cr * 1.04, cg * 1.02, cb * 1.0);
+      forestTreeBough(g, rx * size, ry * size, a, seed + i, alder, branch.points);
+      // The sun-facing half is one material plane, not a smaller canopy ring.
+      g.fill(hr * .76, hg * .86, hb * .84);
+      forestTreeBoughFacet(g, rx * size, ry * size, a, alder, seed + i, branch.faces);
+      if (!alder && rx > 12) {
+        const ax = Math.cos(a), ay = Math.sin(a);
+        g.stroke(cr * .60, cg * .76, cb * .70); g.strokeWeight(.6 * s);
+        g.line(-ax * rx * size * .39, -ay * ry * size * .39,
+                ax * rx * size * .56, ay * ry * size * .56);
+        for (let j = 0; j < 2; j++) {
+          const q = .12 + j * .22;
+          g.line(ax * rx * size * q, ay * ry * size * q,
+            (ax * (q + .15) - ay * .22) * rx * size,
+            (ay * (q + .15) + ax * .22) * ry * size);
+        }
       }
       g.pop();
     }
     g.pop(); return true;
   }
 
-  // Ground pieces stay broad enough for a 3.125-world-unit terrain texel.
-  // Their outlines and colour bands carry the read; tiny stipple would vanish.
+  // Small forest-floor volumes are baked once into chunk albedo.
   switch (species) {
     case "BUSH": {
-      forestContactShadow(g, 34 * s, 23 * s, 5 * sl, 50, sd);
-      for (let i = 0; i < 5; i++) {
-        const a = rot + i * 2.4, px = Math.cos(a) * 9 * s, py = Math.sin(a) * 6 * s;
-        g.push(); g.translate(px, py); g.stroke(22, 55, 45); g.strokeWeight(2.4 * s);
-        g.fill(30 + habitat.foliage[0] * 0.38, 60 + habitat.foliage[1] * 0.40,
-               30 + habitat.foliage[2] * 0.32);
-        forestCrownPath(g, (10 + i % 2 * 2) * s, 8 * s, rot, seed + i, true, true);
-        g.noStroke(); g.fill(habitat.highlight[0] * 0.82, habitat.highlight[1] * 0.86, habitat.highlight[2] * 0.80);
-        forestCrownFacet(g, 11 * s, 8 * s, seed + i);
+      forestContactShadow(g, 38 * s, 22 * s, 3 * sl, 34, sd);
+      g.rotate(rot);
+      const upx = Math.sin(rot) * fp.rise * MASS_TILT * s;
+      const upy = Math.cos(rot) * fp.rise * MASS_TILT * s;
+      // A salal clump has a continuous soft perimeter, not five outlined discs.
+      g.stroke(32, 55, 43); g.strokeWeight(1.5 * s); g.fill(36, 79, 53);
+      path.beginShape();
+      for (let i = 0; i < 24; i++) {
+        const a = i * TWO_PI / 24;
+        const r = 0.85 + 0.12 * Math.sin(a * 3 + seed * 6) + 0.045 * Math.sin(a * 5 - seed * 3);
+        path.vertex(Math.cos(a) * 25 * s * r, Math.sin(a) * 16 * s * r);
+      }
+      path.endShape(CLOSE);
+      g.translate(upx, upy);
+      g.fill(wet ? 59 : 63, wet ? 120 : 110, wet ? 76 : 66);
+      path.beginShape();
+      for (let i = 0; i < 24; i++) {
+        const a = i * TWO_PI / 24;
+        const r = 0.85 + 0.12 * Math.sin(a * 3 + seed * 6) + 0.045 * Math.sin(a * 5 - seed * 3);
+        path.vertex(Math.cos(a) * 25 * s * r, Math.sin(a) * 16 * s * r);
+      }
+      path.endShape(CLOSE);
+      // Broad overlapping leaf sprays keep the lower crown visible as shade.
+      for (let i = 0; i < 6; i++) {
+        const px = (-10 + (i * 8 + seed * 7) % 20) * s;
+        const py = (-5 + (i * 6 + seed * 4) % 10) * s;
+        const a = -0.8 + i * 0.47 + seed * 0.7;
+        g.push(); g.translate(px, py); g.rotate(a); g.noStroke();
+        const lit = -(ldx * Math.cos(a) + ldy * Math.sin(a));
+        g.fill(91 + Math.max(0, lit) * 37, 143 + Math.max(0, lit) * 29, 82 + Math.max(0, lit) * 22);
+        g.ellipse(0, 0, 17 * s, 10 * s);
+        g.fill(153, 177, 106, 130); g.ellipse(-3.5 * s, -s, 8 * s, 2.5 * s);
         g.pop();
       }
-      if (seed > 0.55) { g.fill(223, 107, 82); g.noStroke(); g.ellipse(5 * s, -3 * s, 4 * s, 4 * s); }
       break;
     }
     case "FERN": {
-      forestContactShadow(g, 29 * s, 18 * s, 4 * sl, 40, sd);
+      forestContactShadow(g, 28 * s, 16 * s, 2 * sl, 28, sd);
       g.rotate(rot);
-      for (let i = 0; i < 5; i++) {
-        const a = i * 1.38 + Math.sin(seed * 8 + i) * 0.2;
-        const length = (15 + (i * 7 + seed * 11) % 10) * s;
-        g.push(); g.rotate(a); g.noStroke(); g.fill(25, 78, 53);
+      // A sword fern opens in an uneven fan. Each frond has a bowed spine and
+      // tapering paired leaflets; there is no evenly spaced radial star.
+      for (let i = 0; i < 6; i++) {
+        const a = [-2.82, -2.23, -1.76, -1.15, -0.48, 0.62][i] + seed * 0.23;
+        const len = (i === 5 ? 11 : 18 + (i * 5 + seed * 6) % 7) * s;
+        const ca = Math.cos(a), sa = Math.sin(a), bend = (i % 2 ? -3.5 : 3) * s;
+        const x = t => ca * len * t - sa * bend * Math.sin(t * PI);
+        const y = t => sa * len * t + ca * bend * Math.sin(t * PI);
+        const lit = Math.max(0, -(ca * ldx + sa * ldy));
+        g.stroke(31, 66, 43); g.strokeWeight(0.9 * s);
+        g.fill(54 + lit * 25, 104 + lit * 34, 59 + lit * 17);
         path.beginShape(); path.vertex(0, 0);
-        for (let j = 1; j <= 6; j++) {
-          const x = j * length / 7, w = Math.sin(j * PI / 7) * 4.5 * s;
-          path.vertex(x - 2 * s, -w); path.vertex(x + 1.5 * s, -w * 0.48);
+        for (let j = 1; j < 10; j++) {
+          const t0 = j / 10, w = Math.sin(t0 * PI) * 3.9 * s;
+          path.vertex(x(t0) - sa * w, y(t0) + ca * w);
+          path.vertex(x(t0 + 0.025) - sa * w * 0.39, y(t0 + 0.025) + ca * w * 0.39);
         }
-        path.vertex(length, 0);
-        for (let j = 6; j >= 1; j--) {
-          const x = j * length / 7, w = Math.sin(j * PI / 7) * 4.5 * s;
-          path.vertex(x + 1.5 * s, w * 0.48); path.vertex(x - 2 * s, w);
+        path.vertex(x(1), y(1));
+        for (let j = 9; j > 0; j--) {
+          const t0 = j / 10, w = Math.sin(t0 * PI) * 3.9 * s;
+          path.vertex(x(t0 + 0.025) + sa * w * 0.39, y(t0 + 0.025) - ca * w * 0.39);
+          path.vertex(x(t0) + sa * w, y(t0) - ca * w);
         }
         path.endShape(CLOSE);
-        const lit = -(Math.cos(a) * ldx + Math.sin(a) * ldy);
-        g.fill(56 + habitat.foliage[0] * 0.40 + lit * 24,
-               92 + habitat.foliage[1] * 0.42 + lit * 20,
-               42 + habitat.foliage[2] * 0.32 + lit * 10);
-        g.triangle(0, 0, length, 0, length * 0.39, -3.2 * s);
-        g.stroke(181, 205, 104); g.strokeWeight(1.5 * s); g.line(0, 0, length * 0.86, 0);
-        g.pop();
+        g.noFill(); g.stroke(149, 177, 104); g.strokeWeight(1.1 * s);
+        g.bezier(0, 0, x(0.3), y(0.3), x(0.7), y(0.7), x(1), y(1));
       }
+      g.noStroke(); g.fill(43, 80, 47); g.ellipse(0, 0, 6 * s, 5 * s);
       break;
     }
     case "LOG": {
-      forestContactShadow(g, 47 * s, 13 * s, 5 * sl, 63, sd);
-      g.rotate(rot); g.stroke(30, 43, 35); g.strokeWeight(2 * s);
-      g.fill(burnt ? 59 : 105, burnt ? 54 : 66, burnt ? 44 : 39);
-      g.quad(-22 * s, -6 * s, 20 * s, -5 * s, 22 * s, 6 * s, -20 * s, 7 * s);
-      g.noStroke(); g.fill(burnt ? 97 : 172, burnt ? 85 : 111, burnt ? 65 : 59);
-      const litY = -ldy * 3 * s;
-      g.quad(-20 * s, litY - 2 * s, 19 * s, litY - 2 * s, 20 * s, litY + s, -19 * s, litY + s);
-      g.stroke(57, 46, 30); g.strokeWeight(1.3 * s); g.line(-18 * s, 3 * s, 18 * s, 2 * s);
-      g.fill(218, 170, 99); g.stroke(48, 43, 31); g.strokeWeight(2.4 * s);
-      g.ellipse(-21 * s, 0, 9 * s, 12 * s);
-      g.noFill(); g.stroke(150, 100, 55); g.strokeWeight(1.3 * s); g.ellipse(-21 * s, 0, 4 * s, 7 * s);
+      forestContactShadow(g, 47 * s, 12 * s, 3 * sl, 43, sd);
+      g.rotate(rot);
+      const ux = Math.sin(rot) * fp.rise * MASS_TILT * s;
+      const uy = Math.cos(rot) * fp.rise * MASS_TILT * s;
+      g.stroke(43, 47, 36); g.strokeWeight(1.5 * s);
+      g.fill(burnt ? 58 : 85, burnt ? 56 : 59, burnt ? 48 : 39);
+      // The lower bark rim remains at the ground; the cylinder body rises
+      // toward its broad top and both cut ends share that same extrusion.
+      g.quad(-23 * s, -5 * s, 21 * s, -4 * s,
+             21 * s + ux, 5 * s + uy, -23 * s + ux, 6 * s + uy);
+      g.fill(burnt ? 94 : 142, burnt ? 85 : 98, burnt ? 66 : 62);
+      path.beginShape(); path.vertex(-23 * s + ux, -5 * s + uy);
+      path.vertex(-8 * s + ux, -6 * s + uy); path.vertex(7 * s + ux, -4.5 * s + uy);
+      path.vertex(21 * s + ux, -4 * s + uy); path.vertex(23 * s + ux, 0.5 * s + uy);
+      path.vertex(21 * s + ux, 5 * s + uy); path.vertex(2 * s + ux, 5.5 * s + uy);
+      path.vertex(-11 * s + ux, 7 * s + uy); path.vertex(-23 * s + ux, 6 * s + uy);
+      path.endShape(CLOSE);
+      g.noStroke(); g.fill(burnt ? 122 : 181, burnt ? 108 : 133, burnt ? 77 : 83);
+      g.quad(-18 * s + ux, -3 * s + uy, 15 * s + ux, -2 * s + uy,
+             17 * s + ux, 0.5 * s + uy, -18 * s + ux, 0.2 * s + uy);
+      g.stroke(70, 58, 40); g.strokeWeight(1.1 * s);
+      g.line(-15 * s + ux, 3 * s + uy, 4 * s + ux, 2 * s + uy);
+      g.line(-8 * s + ux, -3 * s + uy, 17 * s + ux, -1.6 * s + uy);
+      g.fill(burnt ? 151 : 207, burnt ? 132 : 166, burnt ? 96 : 109);
+      g.stroke(56, 47, 35); g.strokeWeight(1.4 * s);
+      g.ellipse(-23 * s + ux, 0.5 * s + uy, 6 * s, 11 * s);
+      g.ellipse(21 * s + ux, 0.5 * s + uy, 4 * s, 9 * s);
+      g.noFill(); g.stroke(145, 105, 62); g.strokeWeight(1.0 * s);
+      g.ellipse(-23 * s + ux, 0.5 * s + uy, 2.8 * s, 6 * s);
+      g.stroke(77, 62, 42); g.line(-23 * s + ux, 0.5 * s + uy, -23.7 * s + ux, -3 * s + uy);
       if (!burnt) {
-        g.noStroke(); g.fill(87, 147, 65);
-        g.quad(-7 * s, -6 * s, 8 * s, -5 * s, 13 * s, -2 * s, -4 * s, -2 * s);
-        g.fill(151, 188, 81); g.triangle(-7 * s, -6 * s, 4 * s, -5 * s, -2 * s, -3 * s);
+        g.noStroke(); g.fill(85, 129, 57);
+        path.beginShape(); path.vertex(-10 * s + ux, -5 * s + uy);
+        path.vertex(-1 * s + ux, -4.5 * s + uy); path.vertex(8 * s + ux, -3 * s + uy);
+        path.vertex(3 * s + ux, 0.5 * s + uy); path.vertex(-5 * s + ux, 0 * s + uy);
+        path.endShape(CLOSE);
+        g.fill(141, 169, 80); g.ellipse(-4 * s + ux, -3 * s + uy, 10 * s, 2.5 * s);
       }
       break;
     }
     case "STUMP": {
-      forestContactShadow(g, 26 * s, 19 * s, 5 * sl, 56, sd);
-      g.rotate(rot); g.stroke(35, 44, 31); g.strokeWeight(2.3 * s);
-      g.fill(burnt ? 62 : 111, burnt ? 56 : 73, burnt ? 44 : 41);
-      path.beginShape();
-      for (let i = 0; i < 10; i++) {
-        const a = i * TWO_PI / 10 + seed * 2, r = i % 2 ? 9 : 14;
-        path.vertex(Math.cos(a) * r * s, Math.sin(a) * r * s * 0.72);
+      forestContactShadow(g, 24 * s, 16 * s, 3 * sl, 40, sd);
+      const uy = fp.rise * MASS_TILT * s;
+      g.stroke(43, 47, 35); g.strokeWeight(1.5 * s);
+      g.fill(burnt ? 64 : 100, burnt ? 59 : 67, burnt ? 46 : 40);
+      // The broad root flare remains on the floor. Swept bark faces reach the
+      // smaller sawn crown, exactly the volume used by the city's round props.
+      const baseX = [-13, -8, 1, 10, 14, 10, 2, -11];
+      const baseY = [-3, -7, -9, -7, 0, 6, 7, 5];
+      path.beginShape(); for (let i = 0; i < 8; i++) path.vertex(baseX[i] * s, baseY[i] * s); path.endShape(CLOSE);
+      for (let i = 0; i < 8; i++) {
+        const j = (i + 1) % 8, a0 = i * TWO_PI / 8 - PI * 0.83, a1 = j * TWO_PI / 8 - PI * 0.83;
+        g.fill(burnt ? 77 + i % 3 * 13 : 101 + i % 3 * 21,
+               burnt ? 67 + i % 3 * 9 : 70 + i % 3 * 14,
+               burnt ? 49 + i % 3 * 5 : 44 + i % 3 * 8);
+        g.quad(baseX[i] * s, baseY[i] * s, baseX[j] * s, baseY[j] * s,
+               Math.cos(a1) * 9.5 * s, Math.sin(a1) * 7.5 * s + uy,
+               Math.cos(a0) * 9.5 * s, Math.sin(a0) * 7.5 * s + uy);
       }
-      path.endShape(CLOSE);
-      g.fill(burnt ? 136 : 223, burnt ? 117 : 175, burnt ? 78 : 105);
-      g.ellipse(-ldx * 2 * s, -ldy * 2 * s, 18 * s, 14 * s);
-      g.noFill(); g.stroke(149, 103, 57); g.strokeWeight(1.25 * s);
-      g.ellipse(-ldx * 2 * s, -ldy * 2 * s, 11 * s, 8 * s);
-      g.ellipse(-ldx * 2 * s, -ldy * 2 * s, 5 * s, 3.5 * s);
-      g.stroke(72, 58, 35); g.strokeWeight(1.6 * s); g.line(0, 0, 6 * s, 3 * s);
-      if (wet) { g.noStroke(); g.fill(114, 162, 70); g.ellipse(-9 * s, 4 * s, 9 * s, 5 * s); }
+      g.fill(burnt ? 147 : 213, burnt ? 128 : 174, burnt ? 90 : 113);
+      g.stroke(57, 53, 36); g.strokeWeight(1.4 * s);
+      g.ellipse(0, uy, 19 * s, 15 * s);
+      g.noFill(); g.stroke(157, 116, 67); g.strokeWeight(1.0 * s);
+      g.ellipse(0.6 * s, uy, 12 * s, 9 * s);
+      g.ellipse(s, uy + 0.6 * s, 5 * s, 3.7 * s);
+      g.stroke(102, 78, 48); g.line(-8 * s, uy - 2 * s, -2 * s, uy - 0.4 * s);
+      if (wet) { g.noStroke(); g.fill(103, 144, 63); g.ellipse(-10 * s, -2 * s, 7 * s, 4 * s); }
       break;
     }
     case "MUSHROOM": {
-      forestContactShadow(g, 21 * s, 10 * s, 2 * sl, 38, sd);
+      forestContactShadow(g, 17 * s, 9 * s, 1.4 * sl, 25, sd);
+      // Warm woodland shelf caps, deliberately quieter than collectible icons.
       for (let i = 0; i < 3; i++) {
-        const a = rot + i * 2.31, px = Math.cos(a) * 6 * s, py = Math.sin(a) * 4 * s;
-        const r = (3.5 + i % 2 * 1.5) * s;
-        g.stroke(69, 60, 39); g.strokeWeight(1.5 * s); g.fill(238, 221, 163);
-        g.quad(px - s, py, px + s, py, px + 1.3 * s, py + 4 * s, px - 1.3 * s, py + 4 * s);
-        g.fill(i === 1 ? 230 : 189, i === 1 ? 153 : 77, i === 1 ? 58 : 56);
-        g.ellipse(px, py - 1.5 * s, r * 2, r * 1.45);
-        g.noStroke(); g.fill(255, 220, 150);
-        g.ellipse(px - LIGHT_DX * r * 0.35, py - 1.5 * s - LIGHT_DY * r * 0.35, r * 0.65, r * 0.45);
+        const px = (i === 0 ? -5 : i === 1 ? 3 : 7) * s;
+        const py = (i === 0 ? 2 : i === 1 ? -3 : 5) * s;
+        const r = (i === 1 ? 3.7 : 2.7) * s, top = (i === 1 ? 4.5 : 3) * s;
+        g.stroke(82, 75, 49); g.strokeWeight(0.9 * s); g.fill(212, 196, 152);
+        g.line(px, py, px, py + top);
+        g.noStroke(); g.fill(130, 95, 61); g.ellipse(px, py + top - s, r * 2, r * 1.2);
+        g.fill(188, 144, 88); g.ellipse(px, py + top, r * 2, r * 1.15);
+        g.fill(226, 196, 133); g.ellipse(px - LIGHT_DX * r * 0.3, py + top - LIGHT_DY * r * 0.25, r, r * 0.55);
       }
       break;
     }
     case "PEBBLE": {
-      forestContactShadow(g, 13 * s, 9 * s, 2 * sl, 42, sd);
-      g.rotate(rot); g.stroke(40, 63, 63); g.strokeWeight(1.5 * s); g.fill(96, 126, 125);
-      path.beginShape();
+      forestContactShadow(g, 16 * s, 10 * s, 1.5 * sl, 30, sd);
+      g.rotate(rot);
+      const ux = Math.sin(rot) * fp.rise * MASS_TILT * s;
+      const uy = Math.cos(rot) * fp.rise * MASS_TILT * s;
+      const bx = [-8, -3, 6, 8, 1, -7], by = [-3, -6, -4, 2, 6, 3];
+      g.stroke(55, 67, 60); g.strokeWeight(0.8 * s); g.fill(91, 103, 96);
+      path.beginShape(); for (let i = 0; i < 6; i++) path.vertex(bx[i] * s, by[i] * s); path.endShape(CLOSE);
       for (let i = 0; i < 6; i++) {
-        const a = i * TWO_PI / 6, r = (5.1 + Math.sin(seed * 7 + i * 2.3)) * s;
-        path.vertex(Math.cos(a) * r, Math.sin(a) * r * 0.72);
+        const j = (i + 1) % 6;
+        let nx = by[j] - by[i], ny = bx[i] - bx[j];
+        const n = Math.hypot(nx, ny) || 1; nx /= n; ny /= n;
+        const light = Math.max(0, -(nx * ldx + ny * ldy));
+        g.fill(78 + light * 33, 92 + light * 31, 83 + light * 25);
+        g.quad(bx[i] * s, by[i] * s, bx[j] * s, by[j] * s,
+               bx[j] * s * 0.83 + ux, by[j] * s * 0.83 + uy,
+               bx[i] * s * 0.83 + ux, by[i] * s * 0.83 + uy);
       }
-      path.endShape(CLOSE); g.noStroke(); g.fill(173, 195, 174);
-      g.triangle(-ldx * 5 * s, -ldy * 3 * s, -3 * s, -2 * s, 3 * s, -s);
+      // The complete top is split into joined mineral planes; no concentric
+      // bright polygon or white sparkle turns these into scattered map badges.
+      g.noStroke();
+      for (let i = 0; i < 6; i++) {
+        const j = (i + 1) % 6, k = i === 0 || i === 1 ? 1.11 : i === 4 ? 0.81 : 0.98;
+        g.fill(163 * k, 174 * k, 153 * k);
+        g.triangle(bx[i] * s * 0.83 + ux, by[i] * s * 0.83 + uy,
+                   bx[j] * s * 0.83 + ux, by[j] * s * 0.83 + uy, -s + ux, -s + uy);
+      }
+      g.fill(113, 126, 109); g.triangle(7 * s, 4 * s, 10 * s, 2 * s, 11 * s, 6 * s);
       break;
     }
-    case "REED": {
-      forestContactShadow(g, 19 * s, 9 * s, 3 * sl, 30, sd);
+    case "REED":
+    case "GRASS": {
+      const reeds = species === "REED", length = (reeds ? 18 : 13) * s;
+      forestContactShadow(g, 19 * s, 9 * s, 1.8 * sl, 22, sd);
       g.rotate(rot);
-      for (let i = 0; i < 5; i++) {
-        const a = -1.2 + i * 0.51, len = (13 + (i * 7 + seed * 8) % 9) * s;
-        g.push(); g.rotate(a); g.noStroke(); g.fill(48, 110, 70);
-        g.triangle(-2 * s, 0, len, -2 * s, 2 * s, 2.3 * s);
-        g.fill(150, 181, 91); g.triangle(0, 0, len, -2 * s, len * 0.48, -1.2 * s);
-        g.pop();
+      // An asymmetric tuft of curved blades replaces flat triangle pinwheels.
+      for (let i = 0; i < (reeds ? 6 : 5); i++) {
+        const ex = (-13 + i * (reeds ? 4.7 : 5.2)) * s;
+        const ey = -(0.60 + (i * 3 + seed * 5) % 5 * 0.08) * length;
+        const bx = (i % 2 ? 1.5 : -1) * s;
+        g.noFill(); g.stroke(48, 84, 48); g.strokeWeight((reeds ? 2.4 : 2) * s);
+        g.bezier(bx, 3 * s, bx - 2 * s, -length * 0.36, ex * 0.70, ey * 0.94, ex, ey);
+        g.stroke(116 + i % 2 * 14, 147 + i % 2 * 13, 76); g.strokeWeight(1 * s);
+        g.bezier(bx, 2.5 * s, bx - s, -length * 0.36, ex * 0.70, ey * 0.94, ex, ey);
+        if (reeds && i % 3 === 1) {
+          g.stroke(132, 99, 58); g.strokeWeight(3.0 * s);
+          g.line(ex * 0.97, ey * 0.88, ex, ey);
+        }
       }
       break;
     }
     case "ASH": {
-      g.rotate(rot); g.noStroke(); g.fill(42, 48, 40, 165);
-      g.quad(-16 * s, -5 * s, 8 * s, -9 * s, 17 * s, 5 * s, -7 * s, 8 * s);
-      g.fill(152, 152, 121, 130); g.triangle(-12 * s, -3 * s, 9 * s, -5 * s, 3 * s, 5 * s);
-      g.fill(32, 37, 34); g.quad(-7 * s, 0, 3 * s, -2 * s, 7 * s, s, -4 * s, 3 * s);
+      g.rotate(rot); g.noStroke(); g.fill(55, 61, 51, 115);
+      g.ellipse(-4 * s, s, 20 * s, 9 * s); g.ellipse(6 * s, -2 * s, 14 * s, 7 * s);
+      g.fill(121, 124, 105, 100); g.ellipse(-2 * s, -s, 16 * s, 4 * s);
+      g.fill(43, 48, 40); g.quad(-6 * s, -s, s, -2 * s, 5 * s, s, -3 * s, 2 * s);
       break;
     }
     default: g.pop(); return false;
@@ -31319,50 +31641,71 @@ function paintForestBoulder(g, b, leanX, leanY) {
   const seed = b.tint || 0, phase = b.angle || 0;
   const w = b.w || 70, h = b.h || 60;
   const sd = typeof glRigOwnsSunShadows === 'function' && glRigOwnsSunShadows() ? 0 : shadowDensity();
-  // drawBiomeProps already translated to the leaned top. Compensating here
-  // keeps the shadow under its ground footprint, then the rock art rides above.
+  // The caller is at the leaned top. The base rim and shadow are brought back
+  // to the root, and actual stone faces join them to the raised crown. A bevel
+  // is geometry: there is no dark octagon with a smaller badge painted in it.
   g.push(); g.translate(b.x - leanX, b.y - leanY);
-  forestContactShadow(g, w * 0.88, h * 0.69, 17 * shadowLengthScale(), 74, sd);
+  forestContactShadow(g, w * 0.75, h * 0.58, 13 * shadowLengthScale(), 48, sd);
   g.pop(); g.push(); g.translate(b.x, b.y);
-  g.stroke(27, 49, 48); g.strokeWeight(3.1);
-  const cr = burnt ? 71 : alpine ? 117 : 86;
-  const cg = burnt ? 77 : alpine ? 137 : 118;
-  const cb = burnt ? 68 : alpine ? 143 : 122;
-  g.fill(cr * 0.69, cg * 0.70, cb * 0.72);
-  path.beginShape();
-  for (let i = 0; i < 7; i++) {
-    const a = i * TWO_PI / 7 + phase;
-    const r = 0.43 + Math.sin(i * 2.37 + seed * 9) * 0.065;
-    path.vertex(Math.cos(a) * w * r, Math.sin(a) * h * r);
+  const outline = [-0.43, -0.10, -0.29, -0.38, 0.10, -0.43, 0.37, -0.22,
+                    0.44, 0.12, 0.21, 0.38, -0.18, 0.42, -0.43, 0.20];
+  const ca = Math.cos(phase), sa = Math.sin(phase);
+  const px = [], py = [], tx = [], ty = [];
+  for (let i = 0; i < 8; i++) {
+    const a = outline[i * 2], z = outline[i * 2 + 1];
+    const vary = 0.93 + Math.sin(seed * 9 + i * 2.7) * 0.025;
+    px[i] = (a * ca - z * sa) * w * vary;
+    py[i] = (a * sa + z * ca) * h * vary;
+    tx[i] = px[i] * 0.79; ty[i] = py[i] * 0.79;
   }
-  path.endShape(CLOSE);
-  g.noStroke(); g.fill(cr + 26, cg + 26, cb + 18);
+  const cr = burnt ? 107 : alpine ? 144 : 137;
+  const cg = burnt ? 104 : alpine ? 152 : 149;
+  const cb = burnt ? 89 : alpine ? 149 : 134;
+  g.stroke(43, 55, 49); g.strokeWeight(2.0); g.fill(cr * 0.57, cg * 0.58, cb * 0.58);
   path.beginShape();
-  for (let i = 0; i < 7; i++) {
-    const a = i * TWO_PI / 7 + phase;
-    const r = (0.43 + Math.sin(i * 2.37 + seed * 9) * 0.065) * 0.80;
-    path.vertex(Math.cos(a) * w * r - LIGHT_DX * w * 0.06,
-             Math.sin(a) * h * r - LIGHT_DY * h * 0.06);
-  }
+  for (let i = 0; i < 8; i++) path.vertex(px[i] - leanX, py[i] - leanY);
   path.endShape(CLOSE);
-  g.fill(burnt ? 157 : alpine ? 215 : 191, burnt ? 151 : alpine ? 229 : 212,
-         burnt ? 117 : alpine ? 216 : 187);
-  forestCrownFacet(g, w * 0.40, h * 0.39, seed);
-  // A chisel edge and one crack divide the rock into readable stone planes.
-  g.stroke(cr * 0.57, cg * 0.57, cb * 0.59); g.strokeWeight(1.8);
-  g.line(w * 0.05, h * 0.04, w * 0.29, h * 0.23);
-  g.line(w * 0.05, h * 0.04, -w * 0.13, h * 0.31);
+  // Every exposed edge shades from its outward world normal, just like a city
+  // wall; camera movement changes visible faces rather than spinning the rock.
+  for (let i = 0; i < 8; i++) {
+    const j = (i + 1) % 8;
+    let nx = py[j] - py[i], ny = px[i] - px[j];
+    const n = Math.hypot(nx, ny) || 1; nx /= n; ny /= n;
+    const light = Math.max(0, -(nx * LIGHT_DX + ny * LIGHT_DY));
+    const k = 0.51 + light * 0.24;
+    g.fill(cr * k + 4, cg * k + 5, cb * k + 5);
+    g.quad(px[i] - leanX, py[i] - leanY, px[j] - leanX, py[j] - leanY,
+           tx[j], ty[j], tx[i], ty[i]);
+  }
+  // Asymmetric granite planes meet at one ridge. They fill the complete top
+  // and share edges, so the mass reads as fractured rock instead of rings.
+  const ridgeX = -LIGHT_DX * w * 0.065 - w * 0.035;
+  const ridgeY = -LIGHT_DY * h * 0.060 + h * 0.015;
+  g.noStroke();
+  for (let i = 0; i < 8; i++) {
+    const j = (i + 1) % 8;
+    let nx = ty[j] - ty[i], ny = tx[i] - tx[j];
+    const n = Math.hypot(nx, ny) || 1; nx /= n; ny /= n;
+    const light = -(nx * LIGHT_DX + ny * LIGHT_DY);
+    const k = light > 0.35 ? 1.31 : light < -0.35 ? 0.83 : 1.06;
+    g.fill(Math.min(218, cr * k), Math.min(225, cg * k), Math.min(207, cb * k));
+    g.triangle(tx[i], ty[i], tx[j], ty[j], ridgeX, ridgeY);
+  }
+  g.noFill(); g.stroke(43, 55, 49); g.strokeWeight(2.0);
+  path.beginShape(); for (let i = 0; i < 8; i++) path.vertex(tx[i], ty[i]); path.endShape(CLOSE);
+  g.stroke(cr * 0.55, cg * 0.59, cb * 0.55, 150); g.strokeWeight(1.2);
+  g.line(ridgeX, ridgeY, tx[5] * 0.92, ty[5] * 0.92);
+  g.line(ridgeX * 0.80, ridgeY * 0.80, tx[2] * 0.72, ty[2] * 0.72);
   if (!burnt) {
-    const mx = LIGHT_DX * w * 0.17, my = LIGHT_DY * h * 0.18;
-    g.noStroke(); g.fill(alpine ? 147 : 74, alpine ? 171 : 130, alpine ? 141 : 71);
-    path.beginShape();
-    path.vertex(mx - w * 0.13, my - h * 0.05); path.vertex(mx - w * 0.04, my - h * 0.10);
-    path.vertex(mx + w * 0.13, my - h * 0.05); path.vertex(mx + w * 0.15, my + h * 0.06);
-    path.vertex(mx + w * 0.02, my + h * 0.11); path.vertex(mx - w * 0.15, my + h * 0.04);
+    // Moss sits on one shoulder and spills down a stone edge, not a central
+    // green decal. Alpine stone gets a small dry lichen patch instead.
+    const mx = tx[6] * 0.68, my = ty[6] * 0.68;
+    g.noStroke(); g.fill(alpine ? 137 : wet ? 76 : 89, alpine ? 156 : wet ? 130 : 126, alpine ? 110 : 61);
+    path.beginShape(); path.vertex(mx - w * 0.07, my - h * 0.04);
+    path.vertex(mx + w * 0.08, my - h * 0.05); path.vertex(mx + w * 0.12, my + h * 0.02);
+    path.vertex(mx + w * 0.04, my + h * 0.07); path.vertex(mx - w * 0.08, my + h * 0.04);
     path.endShape(CLOSE);
-    g.fill(wet ? 151 : 165, wet ? 188 : 193, wet ? 88 : 108);
-    g.triangle(mx - w * 0.10, my - h * 0.04, mx + w * 0.08, my - h * 0.03,
-               mx - w * 0.02, my + h * 0.04);
+    g.fill(151, 172, 100); g.ellipse(mx - w * 0.01, my - h * 0.015, w * 0.11, h * 0.035);
   }
   g.pop();
 }

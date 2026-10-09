@@ -503,6 +503,15 @@ solids. Standing crowns share profiles with the rig and use projected visibility
 bounds; bulk underbrush stays baked. Harvesting removes both the resident solid
 and its crown, including when a destroyed chunk is regenerated.
 
+Forest crown outlines and seeded bough headings stay fixed in world space.
+Only their raised layers translate through `massLean()`, as city roofs do.
+The canopy underside joins the top with filled side faces; keep its rise in
+proportion to the city's projection. `tools/check-forest-camera.js` guards the
+orientation and continuous projection, and `tools/visual-forest-pan.js` captures
+the real moving-camera result. Review that motion before changing the art.
+Woodland floor materials, moss/needle beds and riverbank stones are baked from
+world-space samples; their seam checks use a continuous Canvas reference.
+
 The historical template resolves six regions off three slow world-space fields — `MEADOW · TIMBER · MARSH ·
 HEATH · BURN · FARM` — at roughly a three-chunk patch size. Measured coverage: meadow
 35%, timber 21%, marsh 16%, burn 11%, farm 10%, heath 7%.

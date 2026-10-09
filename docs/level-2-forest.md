@@ -6,6 +6,11 @@ passes are the next stages described below; they are not enabled by this change.
 The Undercity's authored story streets, curtain wall, fortresses and story beats
 remain the sector's core. This art pipeline applies to the **forest overworld**.
 
+The corrective art pass follows the established city projection: fixed world
+geometry, anchored ground contact and raised faces that translate with the
+camera. Trees never turn their silhouettes toward the camera's lean vector.
+Ground materials and forest props are authored specifically for this pass.
+
 ## 1. Architectural overview and data structures
 
 The game uses p5 Canvas 2D with a deferred WebGL lighting rig, not a polygon-mesh
@@ -40,11 +45,11 @@ the lighting height field. Renderers do not change generation metadata.
 
 | Existing prop | Conversion | Collision / anchor |
 | --- | --- | --- |
-| `TREE`, `PINE` | Douglas fir, western redcedar, Sitka spruce, red alder and lodgepole pine; angular canopy tiers, tapered bark, buttress roots | Fixed root; established 34×34 trunks and harvest girth retained |
+| `TREE`, `PINE` | Douglas fir, western redcedar, Sitka spruce, red alder and lodgepole pine; fixed asymmetric branch masses, connected canopy sides and rooted bark | Fixed root; established 34×34 trunks and harvest girth retained |
 | `SNAG` | Bent charred trunks with broken limbs and warm exposed timber | Root; existing tree lifecycle |
 | `BOULDER` | Fractured granite with strong side/top facets, lichen and moss | Existing solid AABB; no rotated collision mismatch |
 | `WEED` / bush | Layered salal-like shrub clumps | Ground anchored; decorative, no army obstruction |
-| `FERN`, `REED` | Broad angular sword-fern fronds and raised wetland stems | Ground anchored; static terrain bake |
+| `FERN`, `REED`, `GRASS` | Bowed sword-fern fronds, curved wetland stems and grouped grass blades | Ground anchored; static terrain bake |
 | `LOG`, `STUMP` | Bark sides, exposed end grain, moss crowns, root flares | Small decorative pieces baked; existing large deadfall/wood piles retain solids |
 | `MUSHROOM`, `PEBBLE`, `ASH` | Raised caps, faceted chips and graphic char debris | Baked ground detail |
 
@@ -52,10 +57,10 @@ The four primary habitats are world-space clusters, not one roll per chunk:
 
 | Habitat | Structure | Palette |
 | --- | --- | --- |
-| Ancient Canopy (`TIMBER`) | Douglas fir / cedar canopy, young conifers, bushes, sword ferns and mushrooms | Emerald / teal shadow / lime highlight / ochre bark |
-| Mossy Riverbed (`MARSH`) | Spruce / alder, lush ferns, reeds, mossy logs; follows real streams and legacy wetland pools | Jade / turquoise / citron / cool bark |
-| Burnt / Dead (`BURN`) | Broken char snags, exposed ground, sparse regrowth | Plum / charcoal / burnt orange / amber |
-| Alpine Ridge (`HEATH`) | Slender lodgepole pines, granite, sparse low plants | Slate blue / silver / sage / pale gold |
+| Ancient Canopy (`TIMBER`) | Douglas fir / cedar canopy, young conifers, bushes, sword ferns and mushrooms | Emerald / warm needle litter / teal shade / ochre bark |
+| Mossy Riverbed (`MARSH`) | Spruce / alder, lush ferns, reeds, mossy logs; follows real streams and wetland pools | Jade / turquoise shallows / mineral banks / sage |
+| Burnt / Dead (`BURN`) | Broken char snags, exposed ground, sparse regrowth | Charcoal / warm ash / ochre / muted regrowth |
+| Alpine Ridge (`HEATH`) | Slender lodgepole pines, granite, sparse low plants | Granite grey / silver / sage / pale gold |
 
 **Save compatibility:** `woodLegacyRegion()` retains the historical six-region
 placement template and random stream. Existing solids keep their numeric
@@ -65,10 +70,11 @@ namespaced keys, so adding underbrush cannot change a saved building or tree's
 identity. Existing worked clearings, settlements, pools, crossings and logging
 destinations stay functional within the four forest habitats.
 
-Broad ground washes replay deterministic world-space footprints into every
-overlapping chunk texture in the same order. Shade, moss and burn color no
-longer stop at a chunk border. This happens during terrain baking; the owner
-chunk's random stream still advances exactly once before roads and water.
+The woodland base uses a dedicated soil/moss material lattice. Small torn
+material beds and needle clusters live on an independent 420-unit world grid;
+every overlapping texture paints the same features in world order. Riverbanks
+and stones likewise use world-space samples. All ground work happens during
+baking, without changing saved solids or adding actor updates.
 
 Army roads, river volumes, crossings, fortresses, authored solids and travel
 aprons take precedence over vegetation. Newly placed crowns reserve their full
@@ -91,25 +97,29 @@ band(d) = shadow if d < 0.28
 ```
 
 This describes the artistic ramp; the Canvas implementation paints silhouette,
-base face and sun-facing highlight as separate polygons. Saturated teal/plum
-shadows retain color rather than multiplying every surface down to black. Tiny
-specular wedges use pale lime or warm cream. They mark edges, not the entire
+base face and sun-facing highlight as separate polygons. Teal/umber recesses
+retain color rather than multiplying every surface down to black. Small
+highlights use sage, cream or warm timber. They mark edges, not the entire
 canopy. Each habitat palette is authored at midday; the existing day/night pass
 then darkens it normally.
 
 ### Geometry and ink
 
-- Evergreen whorls are asymmetric stepped silhouettes, not radial stars.
+- Evergreen foliage uses irregular branch masses with unequal placement and
+  height; the outline belongs to a continuous canopy volume.
 - Trunks taper and bend; roots flare at the actual collision anchor.
-- Rocks have large broken planes and skewed tops. Visible solids keep their
+- Rocks connect a ground rim to a lifted top through shaded planes. Visible solids keep their
   existing footprint, so the outline does not promise walkable ground inside a
   rock.
 - Thick exterior ink and lighter interior facet boundaries establish scale.
   Fine bark hatches and mushroom marks are deliberately sparse. Baked marks
   must span roughly 3–6 world units to survive the 384px / 1200-unit chunk bake.
-- Crown tiers use partial `massLean()` at increasing heights; ground-contact
+- Crown geometry stays fixed in world axes. Branch masses use partial
+  `massLean()` at increasing heights; ground-contact
   depth sorting still uses the root. Canopy height/material stamps use the same
   species dimensions. Visibility bounds include the projected crown.
+- Tree rise is proportioned to the game's city projection (28–36 units before
+  girth scaling), avoiding long exposed stems and excessive edge displacement.
 - Contact shadows start on the ground before the canopy is translated. The
   fallback sun pass fades them normally; the advanced rig owns canopy shadows
   when enabled. Never paint two sun shadows for one tree.
@@ -121,9 +131,14 @@ automatic lighting reduction and optimized combat paths remain in use.
 
 For verified p5 1.9.4 and 1.11.11 Canvas renderers, closed forest polygons use a
 cached native path emitter instead of allocating p5 vertex records. The
-closing edges, fill and stroke calls are pixel-identical to p5. Unsupported
-versions/renderers, clipping and accessible output retain the normal p5 path.
-This changes drawing overhead rather than the artwork or vegetation density.
+closing edges, fill and stroke calls are pixel-identical to p5. Fixed crown and
+bough coordinates and closed `Path2D` objects use weak caches, so retiring a
+chunk releases its plans. Side colors share a species/sun ramp; verified RGB
+renderers use the existing native quad and fill cache, plus scoped Canvas
+styles for boughs and vein lines. Other color modes retain p5 color handling.
+Unsupported versions/renderers, clipping and accessible output retain the
+normal p5 path. Cross-source RGBA comparisons check that these optimizations
+preserve the reviewed artwork.
 
 ## 3. Step-by-step execution plan
 
@@ -244,18 +259,27 @@ node --check game.js
 node tools/check-forest-generation.js
 node tools/check-forest-render.js
 node tools/check-forest-lifecycle.js
+node tools/check-forest-camera.js
 node tools/check-generation.js
 node tools/check-lighting.js
 node tools/check-depth.js
 ```
 
-`tools/check-forest-seams.js` compares neighboring chunk washes to a continuous
-real Canvas reference and verifies the historical RNG continuation. Set
+`tools/check-forest-seams.js` compares neighboring material beds and river/ford
+detail to a continuous real Canvas reference, including closed-channel taper. Set
 `VIS_DEPS`, `VIS_CHROME` and optionally `VIS_P5` to your external Playwright,
 Chromium and p5 locations; no browser package is added to the game repository.
 `tools/check-forest-polygons.js` verifies exact RGBA equality between the native
 emitter and p5 across species, targets, zooms, camera/sun angles and shadow
 owners, plus renderer/version/accessibility fallback behavior.
+`tools/check-forest-art-parity.js` accepts `FOREST_REFERENCE_JS` and compares
+the current painter with a reviewed source, including cold/warm caches,
+same-object geometry edits, alternate color modes and missing `Path2D`.
+`tools/check-forest-camera.js` compares actual layer-local crown vertices across
+camera positions while checking continuous height translation. The previous
+camera-oriented tree painter fails this regression. `tools/visual-forest-pan.js`
+captures the real p5 world with a player for scale and saves a video, frame
+viewer and exact source snapshot outside the checkout.
 
 Browser review includes dense canopy, all four habitats, river crossings,
 night and rainy golden-hour scenes. Paired sustained battles exercise both

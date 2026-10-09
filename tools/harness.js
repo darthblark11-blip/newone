@@ -84,7 +84,7 @@ function mkG(){
     push(){},pop(){},translate(){},scale(){},rotate(){},
     fill(){calls.fill++;sig(arguments);},stroke(){calls.stroke++;sig(arguments);},
     noFill(){},noStroke(){},strokeWeight(){},
-    rect(){sig(arguments);},ellipse(){sig(arguments);},line(){sig(arguments);},
+    rect(){sig(arguments);},ellipse(){sig(arguments);},line(){sig(arguments);},bezier(){sig(arguments);},
     arc(){sig(arguments);},quad(){sig(arguments);},triangle(){sig(arguments);},text(){},
     image(){calls.img++;sig(arguments);},
     beginShape(){calls.shape++;},vertex(){sig(arguments);},endShape(){},curveVertex(){sig(arguments);},

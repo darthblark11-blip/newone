@@ -86,6 +86,6 @@ ok(P('_standDecor.length===1 && _standDecor[0]===__edge'),
   'projected crown edge survives live decor culling');
 probe('__ellipses=[];glRigPaintHeight();');
 ok(P('__ellipses.length===1'), 'the same edge crown survives lighting culling');
-ok(P('forestPropCullPad(__edge)>=forestPropRadius(__edge)+66*1.9*(MASS_LEAN+MASS_TILT)'),
+ok(P('forestPropCullPad(__edge)>=forestPropRadius(__edge)+FOREST_PROPS.DOUGLAS_FIR.canopyMass[0]*1.9*(MASS_LEAN+MASS_TILT)'),
   'visibility padding covers crown radius plus maximum projected height');
 console.log(`${checks}/${checks} forest rendering checks passed.`);
