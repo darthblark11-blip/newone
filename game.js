@@ -49,10 +49,11 @@ function buildSpatialBuckets(list, cellSize, getX, getY) {
     return buckets;
 }
 
-function querySpatialBuckets(buckets, x, y, cellSize, radius, radiusSq, include = null) {
+function querySpatialBuckets(buckets, x, y, cellSize, radius, radiusSq, include = null, out = null) {
     const cx = Math.floor(x / cellSize);
     const cy = Math.floor(y / cellSize);
-    const out = [];
+    out = out || [];
+    out.length = 0;
     const r = Math.ceil(radius / cellSize) + 1;
     for (let ox = -r; ox <= r; ox++) {
         for (let oy = -r; oy <= r; oy++) {
@@ -5237,6 +5238,114 @@ const EMPTY_LIST = [];
 // Anything that splices activeBuildings out from under the index calls this.
 function invalidateColIndex() { colGrid = null; colBig = null; }
 
+// Full-world sight tests and the small props omitted from colGrid share a
+// broad phase. Entries and cell arrays are reused; live collision predicates
+// still decide the answer. Original array order is retained for projectile
+// hits, where the first matching prop matters.
+const CROWD_SOLID_CELL = 256;
+function newCrowdSolidIndex(kind) {
+  return { kind, source: null, frame: -1, grid: new Map(), pool: [], used: 0,
+           entries: [], big: [], candidates: [], stamp: 0 };
+}
+const _crowdBarrels = newCrowdSolidIndex(0), _crowdCars = newCrowdSolidIndex(1);
+const _crowdLOS = newCrowdSolidIndex(2);
+const _crowdColBarrels = [], _crowdColCars = [], _crowdLOSCandidates = [];
+function invalidateCrowdSolids() {
+  clearCrowdSolidIndex(_crowdBarrels);
+  clearCrowdSolidIndex(_crowdCars);
+  clearCrowdSolidIndex(_crowdLOS);
+}
+function clearCrowdSolidIndex(index) {
+  index.source = null; index.grid.clear(); index.big.length = 0;
+  for (let i = 0; i < index.entries.length; i++) index.entries[i].b = null;
+  for (let i = 0; i < index.used; i++) index.pool[i].length = 0;
+  index.used = 0;
+}
+function rebuildCrowdSolidIndex(index, source) {
+  const previousUsed = index.used;
+  index.grid.clear(); index.big.length = 0; index.used = 0;
+  const entries = index.entries;
+  for (let i = 0; i < source.length; i++) {
+    const b = source[i];
+    let e = entries[i];
+    if (!e) e = entries[i] = { b: null, i: 0, x: 0, y: 0, w: 0, h: 0, stamp: 0 };
+    const w = index.kind === 0 ? 24 : index.kind === 1 ? 50 : b.w;
+    const h = index.kind === 0 ? 24 : index.kind === 1 ? 90 : b.h;
+    e.b = b; e.i = i; e.x = b.x; e.y = b.y; e.w = w; e.h = h;
+    const x0 = Math.floor((b.x - w / 2) / CROWD_SOLID_CELL);
+    const x1 = Math.floor((b.x + w / 2) / CROWD_SOLID_CELL);
+    const y0 = Math.floor((b.y - h / 2) / CROWD_SOLID_CELL);
+    const y1 = Math.floor((b.y + h / 2) / CROWD_SOLID_CELL);
+    if (!Number.isSafeInteger(x0) || !Number.isSafeInteger(x1) ||
+        !Number.isSafeInteger(y0) || !Number.isSafeInteger(y1) || w < 0 || h < 0 ||
+        (x1 - x0 + 1) * (y1 - y0 + 1) > 16) {
+      index.big.push(e); continue;
+    }
+    for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
+      const key = cellKey(x, y);
+      let cell = index.grid.get(key);
+      if (!cell) {
+        cell = index.pool[index.used];
+        if (!cell) cell = index.pool[index.used] = [];
+        index.used++; cell.length = 0; index.grid.set(key, cell);
+      }
+      cell.push(e);
+    }
+  }
+  for (let i = index.used; i < previousUsed; i++) index.pool[i].length = 0;
+  entries.length = source.length;
+  index.source = source; index.frame = frameCount;
+}
+function ensureCrowdSolidIndex(index, source) {
+  if (index.source !== source || index.entries.length !== source.length) {
+    rebuildCrowdSolidIndex(index, source); return;
+  }
+  if (index.frame === frameCount) return;
+  index.frame = frameCount;
+  for (let i = 0; i < source.length; i++) {
+    const b = source[i], e = index.entries[i];
+    if (e.b !== b || e.x !== b.x || e.y !== b.y ||
+        (index.kind === 2 && (e.w !== b.w || e.h !== b.h))) {
+      rebuildCrowdSolidIndex(index, source); return;
+    }
+  }
+}
+function crowdSolidCandidates(index, source, minX, minY, maxX, maxY, out, ordered) {
+  // Twelve authored barrels cost less to scan than to query a grid. The
+  // index pays for itself only as streamed props and battle loads grow.
+  if (source.length <= 16) return source;
+  const x0 = Math.floor(minX / CROWD_SOLID_CELL), x1 = Math.floor(maxX / CROWD_SOLID_CELL);
+  const y0 = Math.floor(minY / CROWD_SOLID_CELL), y1 = Math.floor(maxY / CROWD_SOLID_CELL);
+  if (!Number.isSafeInteger(x0) || !Number.isSafeInteger(x1) ||
+      !Number.isSafeInteger(y0) || !Number.isSafeInteger(y1) ||
+      (x1 - x0 + 1) * (y1 - y0 + 1) > 128) return source;
+  ensureCrowdSolidIndex(index, source);
+  const candidates = index.candidates;
+  candidates.length = 0;
+  const stamp = ++index.stamp;
+  for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
+    const cell = index.grid.get(cellKey(x, y));
+    if (!cell) continue;
+    for (let i = 0; i < cell.length; i++) {
+      const e = cell[i];
+      if (e.stamp === stamp) continue;
+      e.stamp = stamp; candidates.push(e);
+    }
+  }
+  for (let i = 0; i < index.big.length; i++) candidates.push(index.big[i]);
+  if (ordered && candidates.length > 1) candidates.sort(crowdSolidOrder);
+  out.length = 0;
+  for (let i = 0; i < candidates.length; i++) out.push(candidates[i].b);
+  return out;
+}
+function crowdSolidOrder(a, b) { return a.i - b.i; }
+function crowdNearbyBarrels(x, y, pad, out) {
+  return crowdSolidCandidates(_crowdBarrels, barrels, x-pad, y-pad, x+pad, y+pad, out, true);
+}
+function crowdNearbyCars(x, y, pad, out) {
+  return crowdSolidCandidates(_crowdCars, activeParkingCars, x-pad, y-pad, x+pad, y+pad, out, true);
+}
+
 function updateActiveWorld() {
     // THROTTLE: Only generate this array once every 10 frames to save massive CPU/Battery
     if (frameCount - lastActiveUpdate < 10 && activeBuildings.length > 0) return;
@@ -9525,8 +9634,10 @@ function hasLOS(x1, y1, x2, y2) {
   const lvl12 = currentLevel === 1 || currentLevel === 2;
   const relB = _losRel;
   relB.length = 0;
-  for (let i = 0; i < buildings.length; i++) {
-      const b = buildings[i];
+  const sightSolids = buildings.length <= 16 ? buildings :
+      crowdSolidCandidates(_crowdLOS, buildings, minX, minY, maxX, maxY, _crowdLOSCandidates, false);
+  for (let i = 0; i < sightSolids.length; i++) {
+      const b = sightSolids[i];
       // Written as the negation of the original conjunction rather than as
       // four de Morgan'd compares: a record with no w or h gives NaN, and NaN
       // fails every comparison, so only this form keeps such a record excluded
@@ -10566,19 +10677,60 @@ function spawnOrb(x, y, isPurple = false, isPink = false) {
     return o.init(x, y, isPurple, isPink);
 }
 
+// Keep reusable slots in ascending index order. This preserves the original
+// first-inactive selection (and therefore projectile draw/hit order) without
+// scanning every live round for each shot in a crowded firefight.
+const _bulletFreeSlots = [];
+let _bulletSlotSource = null, _bulletSlotCount = -1;
+function queueBulletSlot(b) {
+    if (b._slotSource!==bullets || bullets[b._slotIndex]!==b || b._slotQueued) return;
+    b._slotQueued=true;
+    let i=_bulletFreeSlots.length;
+    _bulletFreeSlots.push(b._slotIndex);
+    while(i>0) {
+        const p=(i-1)>>1;
+        if(_bulletFreeSlots[p]<=b._slotIndex)break;
+        _bulletFreeSlots[i]=_bulletFreeSlots[p];i=p;
+    }
+    _bulletFreeSlots[i]=b._slotIndex;
+}
+function takeBulletSlot() {
+    if(_bulletSlotSource!==bullets || _bulletSlotCount!==bullets.length) {
+        _bulletFreeSlots.length=0;_bulletSlotSource=bullets;_bulletSlotCount=bullets.length;
+        for(let i=0;i<bullets.length;i++) {
+            const b=bullets[i];b._slotSource=bullets;b._slotIndex=i;b._slotQueued=false;
+            if(!b.active)queueBulletSlot(b);
+        }
+    }
+    while(_bulletFreeSlots.length) {
+        const index=_bulletFreeSlots[0],last=_bulletFreeSlots.pop();
+        if(_bulletFreeSlots.length) {
+            let i=0;
+            while(i*2+1<_bulletFreeSlots.length) {
+                let child=i*2+1;
+                if(child+1<_bulletFreeSlots.length&&_bulletFreeSlots[child+1]<_bulletFreeSlots[child])child++;
+                if(_bulletFreeSlots[child]>=last)break;
+                _bulletFreeSlots[i]=_bulletFreeSlots[child];i=child;
+            }
+            _bulletFreeSlots[i]=last;
+        }
+        const b=bullets[index];
+        if(!b)continue;
+        b._slotQueued=false;
+        if(!b.active)return b;
+    }
+    return null;
+}
 function spawnBullet(x, y, a, iP, tH, w, shooter = null) {
     civilianNoise(x,y);
     if (iP) totalShotsFired++; // Tracks player shots
     
-    for (let i = 0; i < bullets.length; i++) {
-        if (!bullets[i].active) {
-            let b = bullets[i].init(x, y, a, iP, tH, w);
-            b.shooter = shooter;
-            return b;
-        }
-    }
+    const reused=takeBulletSlot();
+    if(reused){reused.init(x,y,a,iP,tH,w);reused.shooter=shooter;return reused;}
     let b = new Bullet();
     bullets.push(b);
+    b._slotSource=bullets;b._slotIndex=bullets.length-1;b._slotQueued=false;
+    _bulletSlotCount=bullets.length;
     b.init(x, y, a, iP, tH, w);
     b.shooter = shooter;
     return b;
@@ -12535,11 +12687,13 @@ const AVOID_MARK   = 240;   // how often "am I actually getting anywhere?" is as
 // the entity's own speed could have covered -- see the projection in steerAvoid
 const AVOID_PANIC  = 150;   // frames spent backing out once the answer is no
 
+function avoidHeadingOpen(ent, a, reach, blocked) {
+    return !blocked(ent.x + Math.cos(a) * reach, ent.y + Math.sin(a) * reach);
+}
 function steerAvoid(ent, ang, speed, blocked) {
     // Look further than one step, so the turn starts before they are against
     // the thing rather than after they have already ground into it.
     const reach = Math.max(16, speed * 2.6);
-    const open = (a) => !blocked(ent.x + Math.cos(a) * reach, ent.y + Math.sin(a) * reach);
 
     // Are they actually getting anywhere? Asked every call, not only when
     // blocked -- which is the whole point. A purely reactive steerer has one
@@ -12564,7 +12718,6 @@ function steerAvoid(ent, ang, speed, blocked) {
     // seconds is longer than any detour a single obstacle can cause, and a
     // concave trap still scores zero across it.
     const want = speed * AVOID_MARK * 0.15;
-    const along = (m) => (ent.x - m.x) * Math.cos(m.ang) + (ent.y - m.y) * Math.sin(m.ang);
     if (ent.avoidPanic > 0) {
         // The check is NOT run while backing out. Backing out means heading
         // away from the goal, which scores as no progress, which re-arms the
@@ -12572,18 +12725,20 @@ function steerAvoid(ent, ang, speed, blocked) {
         // for the rest of the level. It is a fixed stretch and then it is over.
         if (--ent.avoidPanic === 0) ent.avoidMark = { x: ent.x, y: ent.y, t: frameCount, ang: ang };
     } else if (!ent.avoidMark || frameCount - ent.avoidMark.t > AVOID_MARK) {
-        if (ent.avoidMark && along(ent.avoidMark) < want) ent.avoidPanic = AVOID_PANIC;
+        const m = ent.avoidMark;
+        if (m && (ent.x - m.x) * Math.cos(m.ang) + (ent.y - m.y) * Math.sin(m.ang) < want)
+            ent.avoidPanic = AVOID_PANIC;
         ent.avoidMark = { x: ent.x, y: ent.y, t: frameCount, ang: ang };
     }
     const backingOut = ent.avoidPanic > 0;
 
     if (ent.avoidHold > 0) {
         ent.avoidHold--;
-        if (open(ent.avoidAngle)) return ent.avoidAngle;   // committed, still clear
+        if (avoidHeadingOpen(ent, ent.avoidAngle, reach, blocked)) return ent.avoidAngle;
     }
     // While backing out the direct heading is precisely the one that has been
     // failing, so it is not offered.
-    if (!backingOut && open(ang)) { ent.avoidHold = 0; return ang; }
+    if (!backingOut && avoidHeadingOpen(ent, ang, reach, blocked)) { ent.avoidHold = 0; return ang; }
 
     // The preferred side is exhausted across every offset BEFORE the other side
     // is tried at all, and this ordering is the whole thing.
@@ -12600,11 +12755,13 @@ function steerAvoid(ent, ang, speed, blocked) {
     // the same hand until it clears the end. Backing out reverses the offsets
     // so the widest -- nearly the way they came -- is tried first.
     if (!ent.avoidSide) ent.avoidSide = random() > 0.5 ? 1 : -1;
-    for (const s of [ent.avoidSide, -ent.avoidSide]) {
+    const firstSide = ent.avoidSide;
+    for (let side = 0; side < 2; side++) {
+        const s = side === 0 ? firstSide : -firstSide;
         for (let k = 0; k < AVOID_FAN.length; k++) {
             const i = backingOut ? AVOID_FAN.length - 1 - k : k;
             const a = ang + AVOID_FAN[i] * s;
-            if (open(a)) {
+            if (avoidHeadingOpen(ent, a, reach, blocked)) {
                 ent.avoidSide = s; ent.avoidAngle = a;
                 ent.avoidHold = backingOut ? AVOID_HOLD * 2 : AVOID_HOLD;
                 return a;
@@ -13348,6 +13505,14 @@ this.skeletonTimer = 0;
     const near = colNear(nx, ny);
     for (let i = 0; i < near.length; i++) {
         const b = near[i];
+        // Cell candidates and the long fortress walls still include solids
+        // far from this probe. Reject their bounds before the type/gate work.
+        // The U-shaped barrier extends 15 units past its authored rectangle.
+        const hw = b.isUBarrier ? Math.abs(b.w / 2) : b.w / 2;
+        const hh = b.isUBarrier ? Math.abs(b.h / 2) : b.h / 2;
+        const extra = b.isUBarrier ? 15 : 0;
+        if (!(nx + r > b.x - hw - extra && nx - r < b.x + hw + extra &&
+              ny + r > b.y - hh - extra && ny - r < b.y + hh + extra)) continue;
         if (b.isCropField || b.isMarket) continue;
         if (lvl4 && b.isPalm) continue;
         if (lvl6 && (b.isAlienPlant || b.isEnergyPole)) continue;
@@ -13364,20 +13529,23 @@ this.skeletonTimer = 0;
        continue;
         }
 
-        if (nx + r > b.x - b.w / 2 && nx - r < b.x + b.w / 2 && ny + r > b.y - b.h / 2 && ny - r < b.y + b.h / 2) return true; 
+        return true;
    
     } 
     
     
     // FIX: Restored the missing loop body and closing bracket
-    for (let ci = 0; ci < activeParkingCars.length; ci++) {
-        const c = activeParkingCars[ci];
+    const nearCars = activeParkingCars.length <= 16 ? activeParkingCars :
+        crowdNearbyCars(nx, ny, r, _crowdColCars);
+    for (let ci = 0; ci < nearCars.length; ci++) {
+        const c = nearCars[ci];
         if (nx + r > c.x - 25 && nx - r < c.x + 25 && ny + r > c.y - 45 && ny - r < c.y + 45) return true;
     }
     
     const bR = r + 12, bR2 = bR * bR;
-    for (let i = 0; i < barrels.length; i++) {
-        const b = barrels[i];
+    const nearBarrels = barrels.length <= 16 ? barrels : crowdNearbyBarrels(nx, ny, r, _crowdColBarrels);
+    for (let i = 0; i < nearBarrels.length; i++) {
+        const b = nearBarrels[i];
         // Box first: two compares and no multiply reject almost every barrel,
         // and only the survivors pay for the squared distance. p5's dist() is
         // Math.hypot, which guards against overflow at ranges this game never
@@ -14873,6 +15041,9 @@ if (this.eType === "COW") {
 
 
   show() {
+    const paint=figurePainter();
+    const fill=paint?paint.fill:window.fill,ellipse=paint?paint.ellipse:window.ellipse;
+    const stroke=paint?paint.stroke:window.stroke,rect=paint?paint.rect:window.rect;
     push(); translate(this.x, this.y);
     // Figures are deliberately NOT run through the mass projection. It was
     // tried -- a riser capsule swept from the feet up to a leaned body -- and
@@ -15167,7 +15338,7 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
     // GAIT: one throttle, and each of these reads it on its own curve, so a
     // walk lengthening into a run has nothing in it that switches.
     const GP = gaitPose(this.isMoving ? this.gait : 0);
-    const boxing=boxerPose(this);
+    const boxing=this.isPlayer?boxerPose(this):_figureNoBoxing;
     let lS = this.isMoving ? sin(this.walkCycle) * 12 * GP.swing : 0,
         bob = this.isMoving ? abs(sin(this.walkCycle)) * 2 * GP.bob + GP.lean : 0;
     if (this.mounted) { lS *= 0.35; bob *= 0.4; }
@@ -15305,7 +15476,7 @@ if (this.isPlayer) {
             // used -- wide enough that the two thighs do not merge at the
             // midline, which is the other half of reading as two legs.
             const sx = -10+lS*sgn+RGl.thighW*.5, cy=sgn*-6;
-            push();translate(sx,cy);
+            drawingContext.save();drawingContext.translate(sx,cy);
             ellipse(th*.5,0,th+wHip*.55,wHip);
             ellipse(th*.92+sh*.5,0,sh+wKnee*.80,wKnee);
             fill(bootC[0], bootC[1], bootC[2]);
@@ -15316,7 +15487,7 @@ if (this.isPlayer) {
             // sits past the ankle rather than centred on it, for the reason
             // ragLimb gives: a circle on the joint buries half of itself in the
             // shin and adds only its radius to the leg.
-            ellipse(th*.92+sh+RGl.foot*.34,0,RGl.foot,wAnkle);pop();
+            ellipse(th*.92+sh+RGl.foot*.34,0,RGl.foot,wAnkle);drawingContext.restore();
             fill(this.pantsCol);
           }
           noStroke();
@@ -15992,7 +16163,7 @@ if (this.isPlayer) {
       fill(this.shirtCol); ellipse(0, 0, this.bodyW, this.bodyH);
     }
 
-    if(['NORMAL','NM0_ROOKIE','NM0_ROOKIE_F'].includes(this.eType)&&!this.isPlayer){push();translate(this.bodyW*.22,this.bodyH*.22);drawNmoInsignia(window,true);pop();}
+    if(['NORMAL','NM0_ROOKIE','NM0_ROOKIE_F'].includes(this.eType)&&!this.isPlayer){push();translate(this.bodyW*.22,this.bodyH*.22);drawNmoInsignia(paint?paint.api:window,true);pop();}
 
     // Male Farmer Overalls
     if (this.eType === "FARMER_MALE") {
@@ -16120,7 +16291,6 @@ if (this.isPlayer) {
     if (BIOME_ACTIVE) figureContour();
     
     let lAY = this.eType === "ARMORED" ? -30 : -14, rAY = this.eType === "ARMORED" ? 30 : 11;
-    let a = 255; let f = this.fP || 0; let sK = this.isCharred ? color(50, 40, 40, a) : (this.skinCol||color(235,180,140,a));
 
     let isNeutralFarmer = unarmedCivilian(this)||(this.isNeutral&&TOWNSFOLK.indexOf(this.eType)!==-1);
 
@@ -16375,7 +16545,7 @@ if (this.isPlayer) {
         // --- head, hair and headwear ---
     // One description, shared with the corpse and with the overkill pieces, so
     // that a body keeps what the person was wearing. See drawFigureHead().
-    drawFigureHead(window, this, hX, hY, true, this.isMoving ? sin(frameCount * 0.3) * 15 : 0);
+    drawFigureHead(paint?paint.api:window, this, hX, hY, true, this.isMoving ? sin(frameCount * 0.3) * 15 : 0);
 
 
     // The head is a dome, whichever of the twenty variants above drew it --
@@ -16616,6 +16786,27 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
 // is not a lot on its own; it is a lot sixty times a second forever, and it is
 // the shape of thing the collector pauses for at the worst possible moment.
 const _pushActors = [], _pushAerials = [];
+const _pushBuckets = new Map(), _pushBucketPool = [];
+let _pushBucketUsed = 0;
+function buildPushBuckets(actors) {
+  _pushBuckets.clear();
+  let used = 0;
+  for (let i = 0; i < actors.length; i++) {
+    const a = actors[i];
+    if (!a || a.hp <= 0 || a.dead) continue;
+    const key = cellKey(Math.floor(a.x / SPATIAL_CELL_SIZE), Math.floor(a.y / SPATIAL_CELL_SIZE));
+    let cell = _pushBuckets.get(key);
+    if (!cell) {
+      cell = _pushBucketPool[used];
+      if (!cell) cell = _pushBucketPool[used] = [];
+      used++; cell.length = 0; _pushBuckets.set(key, cell);
+    }
+    cell.push(a);
+  }
+  for (let i = used; i < _pushBucketUsed; i++) _pushBucketPool[i].length = 0;
+  _pushBucketUsed = used;
+  return _pushBuckets;
+}
 
 function updateEntities() {
   if (comboTimer > 0) { comboTimer--; if (comboTimer <= 0) consecutiveKills = 0; }
@@ -16667,7 +16858,13 @@ function updateEntities() {
       // actors.indexOf() calls inside a triple-nested loop -- O(n) work per
       // candidate pair, which is fine at a dozen actors and quadratic misery at
       // a hundred.
-      for (let n = 0; n < actors.length; n++) actors[n]._pushIdx = n;
+      for (let n = 0; n < actors.length; n++) {
+          const a = actors[n];
+          a._pushIdx = n;
+          a._pushRadius = a.isPlayer ? 18 :
+              (a.eType === "ARMORED" || a.eType === "ALIEN_GATOR" || a.eType === "SNAIL_HYBRID" ? 40 :
+              (a.eType === "BUG" ? 12 : 20));
+      }
 
       // One index per frame, not two. `actors` is already filtered to
       // hp > 0 && !dead a few lines above, and buildSpatialBuckets filters on
@@ -16676,7 +16873,7 @@ function updateEntities() {
       // `|| spatialGrid[...]` fallback below could never fire. The grid was an
       // object, an array per occupied cell and a push per actor, allocated
       // every frame to answer a lookup that never reached it.
-      const actorBuckets = buildSpatialBuckets(actors, SPATIAL_CELL_SIZE, a => a.x, a => a.y);
+      const actorBuckets = buildPushBuckets(actors);
 
       for (let i = 0; i < actors.length; i++) {
           let A = actors[i];
@@ -16685,6 +16882,7 @@ function updateEntities() {
 
           let cx = Math.floor(A.x / SPATIAL_CELL_SIZE);
           let cy = Math.floor(A.y / SPATIAL_CELL_SIZE);
+          const radA = A._pushRadius;
 
           for (let ox = -1; ox <= 1; ox++) {
               for (let oy = -1; oy <= 1; oy++) {
@@ -16696,8 +16894,7 @@ function updateEntities() {
                           if (player && player.dashTimer > 0 && B.isPlayer) continue;
                           if (B.ignoreBldgTimer > 0) continue;
 
-                          let radA = A.isPlayer ? 18 : (A.eType === "ARMORED" || A.eType === "ALIEN_GATOR" || A.eType === "SNAIL_HYBRID" ? 40 : (A.eType === "BUG" ? 12 : 20));
-                          let radB = B.isPlayer ? 18 : (B.eType === "ARMORED" || B.eType === "ALIEN_GATOR" || B.eType === "SNAIL_HYBRID" ? 40 : (B.eType === "BUG" ? 12 : 20));
+                          const radB = B._pushRadius;
                           let minDist = radA + radB;
                           
                           // The sqrt is inside the test, not before it. The
@@ -16715,14 +16912,15 @@ function updateEntities() {
                               
                               let overlapA = (!moveA) ? 0 : (moveB ? (minDist - d) * 0.55 : (minDist - d));
                               let overlapB = (!moveB) ? 0 : (moveA ? (minDist - d) * 0.55 : (minDist - d));
+                              const pushX = cos(pA), pushY = sin(pA);
                               
                               if (moveA) {
-                                  let nxA = A.x + cos(pA) * overlapA, nyA = A.y + sin(pA) * overlapA;
+                                  let nxA = A.x + pushX * overlapA, nyA = A.y + pushY * overlapA;
                                   if (!A.checkCol(nxA, A.y)) A.x = nxA;
                                   if (!A.checkCol(A.x, nyA)) A.y = nyA;
                               }
                               if (moveB) {
-                                  let nxB = B.x - cos(pA) * overlapB, nyB = B.y - sin(pA) * overlapB;
+                                  let nxB = B.x - pushX * overlapB, nyB = B.y - pushY * overlapB;
                                   if (!B.checkCol(nxB, B.y)) B.x = nxB;
                                   if (!B.checkCol(B.x, nyB)) B.y = nyB;
                               }
@@ -16996,11 +17194,28 @@ function checkAmbushCleared() {
 }
 
 
+const _projectilePlayerTargets=[],_projectileEnemyTargets=[],_projectileNearby=[];
+const _projectileBarrels=[],_projectileCars=[];
+const _projectilePlayerGrid=new Map(),_projectileEnemyGrid=new Map();
+const _projectilePlayerBucketPool=[],_projectileEnemyBucketPool=[];
+function projectileBuckets(list,grid,pool) {
+    grid.clear();let used=0;
+    for(let i=0;i<list.length;i++) {
+        const t=list[i];if(!t||t.hp<=0||t.dead)continue;
+        const key=cellKey(Math.floor(t.x/SPATIAL_CELL_SIZE),Math.floor(t.y/SPATIAL_CELL_SIZE));
+        let bucket=grid.get(key);
+        if(!bucket){bucket=pool[used]||(pool[used]=[]);used++;bucket.length=0;grid.set(key,bucket);}
+        bucket.push(t);
+    }
+    // Release references held in buckets that a smaller battle no longer uses.
+    for(let i=used;i<pool.length;i++)pool[i].length=0;
+    return grid;
+}
 function updateBullets() {
   const CULL_PAD = 400; 
 
-  const playerTgs = [];
-  const enemyTgs = [player];
+  const playerTgs = _projectilePlayerTargets,enemyTgs = _projectileEnemyTargets;
+  playerTgs.length=0;enemyTgs.length=0;enemyTgs.push(player);
   for (let i = 0; i < enemiesList.length; i++) {
       let e = enemiesList[i];
       if (!e || e.hp <= 0 || e.dead) continue;
@@ -17008,8 +17223,8 @@ function updateBullets() {
       if (e.isCityCivilian || (e.isFriendly && !e.isNeutral)) enemyTgs.push(e);
   }
 
-  const playerBuckets = buildSpatialBuckets(playerTgs, SPATIAL_CELL_SIZE, t => t.x, t => t.y);
-  const enemyBuckets = buildSpatialBuckets(enemyTgs, SPATIAL_CELL_SIZE, t => t.x, t => t.y);
+  const playerBuckets = projectileBuckets(playerTgs,_projectilePlayerGrid,_projectilePlayerBucketPool);
+  const enemyBuckets = projectileBuckets(enemyTgs,_projectileEnemyGrid,_projectileEnemyBucketPool);
 
   for (let i = bullets.length - 1; i >= 0; i--) {
     let b = bullets[i]; 
@@ -17027,27 +17242,28 @@ function updateBullets() {
     
     if (doTick && b.active) {
         let hB = false;
-        for (let j = 0; j < barrels.length; j++) {
-            if (Math.abs(b.x - barrels[j].x) > 30 || Math.abs(b.y - barrels[j].y) > 30) continue; 
-            if (b.isP && b.tH !== "HEAD" && dist(b.x, b.y, barrels[j].x, barrels[j].y) < 15) { 
+        const nearbyBarrels=barrels.length<=16?barrels:crowdNearbyBarrels(b.x,b.y,18,_projectileBarrels);
+        for (let j = 0; j < nearbyBarrels.length; j++) {
+            const barrel=nearbyBarrels[j];
+            if (Math.abs(b.x - barrel.x) > 30 || Math.abs(b.y - barrel.y) > 30) continue;
+            if (b.isP && b.tH !== "HEAD" && dist(b.x, b.y, barrel.x, barrel.y) < 15) {
                 hB = true; totalShotsHit++; 
-                if (b.w === WEAPONS.SHOTGUN) barrels[j].hp -= 25; 
-                else if (b.isRedLaser || b.isPinkLaser) barrels[j].hp -= 30; 
-                else if (b.isAlienLaser) barrels[j].hp -= 25; 
-                else barrels[j].hp -= b.w.bodyDmg; 
+                if (b.w === WEAPONS.SHOTGUN) barrel.hp -= 25;
+                else if (b.isRedLaser || b.isPinkLaser) barrel.hp -= 30;
+                else if (b.isAlienLaser) barrel.hp -= 25;
+                else barrel.hp -= b.w.bodyDmg;
                 
                 b.l = 0; emit(b.x, b.y, 3, color(255, 100, 0), "FLASH"); break; 
             }
         }
         if (hB) { if (b.w === WEAPONS.ROCKET_LAUNCHER) { triggerRocketExplosion(b.x, b.y, b.isP); } b.active = false; continue; }
 
-        let tgs = b.isP ? playerTgs : enemyTgs;
         const targetBuckets = b.isP ? playerBuckets : enemyBuckets;
-        const localTargets = querySpatialBuckets(targetBuckets, b.x, b.y, SPATIAL_CELL_SIZE, 60, 3600);
+        const localTargets = querySpatialBuckets(targetBuckets, b.x, b.y, SPATIAL_CELL_SIZE, 60, 3600,null,_projectileNearby);
 
         for (let t of localTargets) {
           if (!t || t.hp <= 0 || t.dead) continue;
-          if (tgs.indexOf(t) === -1) continue;
+          // The bucket was built from this exact target list above.
           
           if (t.eType === "COW" && b.shooter && !b.shooter.isPlayer) continue;
           if (b.tH === "HEAD" && (t.eType === "BUG" || t.eType === "SNAIL")) continue;
@@ -17352,7 +17568,8 @@ function updateBullets() {
             if (hitBarrier) continue;
 
             if (!hitSomething) {
-                for (let c of activeParkingCars) {
+                const nearbyCars=activeParkingCars.length<=16?activeParkingCars:crowdNearbyCars(b.x,b.y,0,_projectileCars);
+                for (let c of nearbyCars) {
                     let cw = 50, ch = 90; 
                     if (Math.abs(b.x - c.x) > cw || Math.abs(b.y - c.y) > ch) continue;
 
@@ -17886,6 +18103,11 @@ class Citizen {
 
 class Bullet {
   constructor() { this.active = false; }
+  get active() { return this._active; }
+  set active(value) {
+      this._active=value;
+      if(!value)queueBulletSlot(this);
+  }
   
   init(x, y, a, iP, tH, w) { 
     this.active = true;
@@ -17927,7 +18149,8 @@ class Bullet {
     this.sz = (this.isAlienLaser || this.isRedLaser || this.isPinkLaser || this.isOrangeBeam) ? 12 : (this.isRocket ? 16 : 6); 
     this.col = this.isAlienLaser ? color(255, 20, 147) : (this.isRedLaser ? color(255, 50, 50) : (this.isPinkLaser ? color(255, 105, 180) : (this.isOrangeBeam ? color(255, 146, 40) : color(255, 200, 0)))); 
     
-    this.history = []; 
+    if(!this.history){this.history=[];this._historyPoints=[];}
+    this.history.length=0;this._historyNext=0;
     return this;
   }
 
@@ -17938,8 +18161,11 @@ class Bullet {
   update() { 
       if (!this.active) return;
       if (!this.isAllyProjectile()) {
-          this.history.push({x: this.x, y: this.y});
           let maxLen = this.isRocket ? 15 : (this.isAlienLaser || this.isRedLaser || this.isPinkLaser || this.isOrangeBeam ? 8 : 5);
+          const n=this._historyNext;
+          const point=this._historyPoints[n]||(this._historyPoints[n]={x:0,y:0});
+          point.x=this.x;point.y=this.y;this.history.push(point);
+          this._historyNext=(n+1)%maxLen;
           if (this.history.length > maxLen) this.history.shift();
       }
 
@@ -18114,6 +18340,27 @@ class Bullet {
 // then holds it is a leak wearing a different hat.
 const PARTICLE_POOL_MAX = 900;
 const _particlePool = [];
+// The particle objects are pooled, but fill(r,g,b,a) and stroke(r,g,b,a)
+// still construct a p5.Color and its channel arrays every time they draw.
+// Particle opacity advances through a small set of integer values. Reuse
+// those immutable paints too, with a bounded cache for unusually varied FX.
+const PARTICLE_PAINT_MAX = 1024;
+const _particlePaintCache = new Map();
+function particlePaint(c, opacity) {
+    // The arithmetic harness has no p5.Color. Keep its ordinary painter path.
+    if (typeof p5 === 'undefined') return null;
+    const a = Math.max(0, Math.min(255, opacity));
+    if ((a | 0) !== a) return null;
+    const key = ((c[0] << 16) | (c[1] << 8) | c[2]) * 256 + a;
+    let paint = _particlePaintCache.get(key);
+    if (!paint) {
+        paint = color(c[0], c[1], c[2], a);
+        if (_particlePaintCache.size >= PARTICLE_PAINT_MAX)
+            _particlePaintCache.delete(_particlePaintCache.keys().next().value);
+        _particlePaintCache.set(key, paint);
+    }
+    return paint;
+}
 function newParticle(x, y, c, t, dX, dY) {
     if (_particlePool.length) {
         const p = _particlePool.pop();
@@ -18168,11 +18415,14 @@ Particle.prototype.show = function() {
         // Drawn along its own velocity, so a shower of them reads as directional
         // spray rather than as a cloud of dots.
         const m = Math.hypot(this.vx, this.vy) || 1;
-        stroke(c[0], c[1], c[2], this.a); strokeWeight(this.sz * 0.6);
+        const paint = particlePaint(c, this.a);
+        if (paint) stroke(paint); else stroke(c[0], c[1], c[2], this.a);
+        strokeWeight(this.sz * 0.6);
         line(this.x, this.y, this.x - (this.vx / m) * this.sz * 3.2, this.y - (this.vy / m) * this.sz * 3.2);
         noStroke();
     } else if (this.t === "BONE" || this.t === "CHIP") {
-        fill(c[0], c[1], c[2], this.a);
+        const paint = particlePaint(c, this.a);
+        if (paint) fill(paint); else fill(c[0], c[1], c[2], this.a);
         rect(this.x, this.y, this.sz, this.sz);
     } else if (this.t === "SMOKE" || this.t === "EXPLOSION") {
         // Big, slow puffs get a soft falloff instead of a hard-edged disc, so a
@@ -18185,7 +18435,8 @@ Particle.prototype.show = function() {
         softBlob(this.x, this.y, this.sz * 1.8, this.sz * 1.8, c[0], c[1], c[2], this.a);
         softBlob(this.x, this.y, this.sz * 0.8, this.sz * 0.8, c[0], c[1], c[2], this.a);
     } else {
-        fill(c[0], c[1], c[2], this.a);
+        const paint = particlePaint(c, this.a);
+        if (paint) fill(paint); else fill(c[0], c[1], c[2], this.a);
         ellipse(this.x, this.y, this.sz, this.sz);
     }
 }
@@ -18204,11 +18455,13 @@ Particle.prototype.show = function() {
 // copyWithin then slides that run down to the front.
 function updateParticles() {
     let w = particles.length;
+    const left = viewLeft - 50, right = viewRight + 50;
+    const top = viewTop - 50, bottom = viewBottom + 50;
     for (let i = particles.length - 1; i >= 0; i--) {
         const p = particles[i];
         if (doTick) p.update();
-        if (inView(p.x, p.y, 50)) p.show();
-        if (p.a > 0) particles[--w] = p;
+        if (p.x >= left && p.x <= right && p.y >= top && p.y <= bottom) p.show();
+        if (p.a > 0) { if (--w !== i) particles[w] = p; }
         else if (_particlePool.length < PARTICLE_POOL_MAX) _particlePool.push(p);
     }
     if (w > 0) { particles.copyWithin(0, w); particles.length -= w; }
@@ -29301,6 +29554,108 @@ const VOL_STEPS  = 4;
 // keeps it there while they turn -- which is also the only reason a figure
 // walking a circle reads as turning rather than as spinning art.
 const _figLit = [LIGHT_DX, LIGHT_DY];
+// Character drawing reuses exact p5 color strings and the same Canvas ellipse
+// arithmetic. This avoids a p5.Color and ellipse bounding-box object per part.
+// Only the default 2D painter uses this path; alternate modes and accessible
+// outputs retain p5's normal implementation.
+const _figureNoBoxing={active:false};
+let _figurePainter = null;
+function figurePainter() {
+  const inst = typeof p5 !== 'undefined' ? p5.instance : null;
+  const renderer = inst && inst._renderer;
+  if (!renderer || renderer.isP3D || renderer._clipping ||
+      renderer._ellipseMode !== CENTER ||
+      (inst._accessibleOutputs && (inst._accessibleOutputs.grid || inst._accessibleOutputs.text))) return null;
+  if (!_figurePainter || _figurePainter.renderer !== renderer) {
+    const numeric = new Map(), objects = new WeakMap();
+    const context = renderer.drawingContext;
+    const nativeShapes=p5.VERSION==='1.11.11';
+    const ellipseArgs=[0,0,0,0],rectArgs=[0,0,0,0,undefined,undefined,undefined,undefined];
+    // p5 1.9.x uses arcTo for rounded rectangles and does not close ellipse
+    // paths. Unknown versions keep their own renderer primitives; only the
+    // pixel-tested 1.11.11 paths are duplicated below.
+    function paintString(args) {
+      const r=args[0];let css;
+      if(args.length===1 && r instanceof p5.Color) {
+        const level=r.levels,alpha=r._array[3];let cached=objects.get(r);
+        if(!cached || cached.r!==level[0] || cached.g!==level[1] || cached.b!==level[2] || cached.a!==alpha) {
+          cached={r:level[0],g:level[1],b:level[2],a:alpha,css:r.toString()};objects.set(r,cached);
+        }
+        return cached.css;
+      }
+      if(typeof r!=='number')return inst.color.apply(inst,args).toString();
+      const key=args.length+'|'+r+'|'+args[1]+'|'+args[2]+'|'+args[3];
+      css=numeric.get(key);
+      if(css===undefined) {
+        css=inst.color.apply(inst,args).toString();
+        if(numeric.size>=1024)numeric.delete(numeric.keys().next().value);
+        numeric.set(key,css);
+      }
+      return css;
+    }
+    _figurePainter = {
+      renderer, numeric, mode: null, maxes: [0,0,0,0],
+      fill(r,g,b,a) {
+        renderer._fillSet=true;renderer._doFill=true;renderer._setFill(paintString(arguments));
+      },
+      stroke(r,g,b,a) {
+        renderer._strokeSet=true;renderer._doStroke=true;renderer._setStroke(paintString(arguments));
+      },
+      rect(x,y,w,h,tl,tr,br,bl) {
+        if(!renderer._doFill&&!renderer._doStroke)return;
+        if(renderer._rectMode!==CORNER||renderer._clipping)return inst.rect.apply(inst,arguments);
+        if(renderer._doFill&&!renderer._doStroke&&renderer._getFill()==='rgba(0,0,0,0)')return;
+        if(!renderer._doFill&&renderer._doStroke&&renderer._getStroke()==='rgba(0,0,0,0)')return;
+        if(h===undefined)h=w;
+        if(!nativeShapes) {
+          rectArgs[0]=x;rectArgs[1]=y;rectArgs[2]=w;rectArgs[3]=h;
+          rectArgs[4]=tl;rectArgs[5]=tr;rectArgs[6]=br;rectArgs[7]=bl;
+          return renderer.rect(rectArgs);
+        }
+        context.beginPath();
+        if(tl===undefined)context.rect(x,y,w,h);
+        else {
+          if(tr===undefined)tr=tl;if(br===undefined)br=tr;if(bl===undefined)bl=br;
+          const hw=Math.abs(w)/2,hh=Math.abs(h)/2;
+          tl=Math.min(tl,hw,hh);tr=Math.min(tr,hw,hh);br=Math.min(br,hw,hh);bl=Math.min(bl,hw,hh);
+          context.roundRect(x,y,w,h,[tl,tr,br,bl]);
+        }
+        if(renderer._doFill)context.fill();if(renderer._doStroke)context.stroke();
+      },
+      ellipse(x,y,w,h) {
+        if (!renderer._doFill && !renderer._doStroke) return;
+        if (renderer._ellipseMode !== CENTER || renderer._clipping) {
+          return inst.ellipse.apply(inst,arguments);
+        }
+        if (renderer._doFill && !renderer._doStroke && renderer._getFill() === 'rgba(0,0,0,0)') return;
+        if (!renderer._doFill && renderer._doStroke && renderer._getStroke() === 'rgba(0,0,0,0)') return;
+        if(h===undefined)h=w;
+        if(!nativeShapes) {
+          if(w<0||h<0)return inst.ellipse.apply(inst,arguments);
+          ellipseArgs[0]=x-w*.5;ellipseArgs[1]=y-h*.5;
+          ellipseArgs[2]=w;ellipseArgs[3]=h;
+          return renderer.ellipse(ellipseArgs);
+        }
+        w=Math.abs(w);h=Math.abs(h);
+        // Keep p5's subtract/add evaluation order, including subpixel rounding.
+        const rx=w/2,ry=h/2,cx=(x-w*.5)+w/2,cy=(y-h*.5)+h/2;
+        context.beginPath();context.ellipse(cx,cy,rx,ry,0,0,2*Math.PI);context.closePath();
+        if(renderer._doFill)context.fill();if(renderer._doStroke)context.stroke();
+      }
+    };
+    _figurePainter.api=Object.create(window);
+    Object.assign(_figurePainter.api,{fill:_figurePainter.fill,stroke:_figurePainter.stroke,
+      ellipse:_figurePainter.ellipse,rect:_figurePainter.rect});
+  }
+  const painter = _figurePainter, maxes = inst._colorMaxes[inst._colorMode];
+  if (painter.mode !== inst._colorMode || painter.maxes[0] !== maxes[0] ||
+      painter.maxes[1] !== maxes[1] || painter.maxes[2] !== maxes[2] || painter.maxes[3] !== maxes[3]) {
+    painter.numeric.clear();painter.mode=inst._colorMode;
+    for(let i=0;i<4;i++)painter.maxes[i]=maxes[i];
+  }
+  return painter;
+}
+
 function figureLight(ang) {
   const c = Math.cos(ang), s = Math.sin(ang);
   _figLit[0] =  LIGHT_DX * c + LIGHT_DY * s;
@@ -29312,6 +29667,9 @@ function figureLight(ang) {
 // little parts where a full contour would swallow them. `lx`/`ly` are the light
 // in the caller's frame -- omit them only where the caller is unrotated.
 function volShade(x, y, w, h, cr, cg, cb, k, lx, ly) {
+  const paint=figurePainter();
+  const fill=paint?paint.fill:window.fill,ellipse=paint?paint.ellipse:window.ellipse;
+  const stroke=paint?paint.stroke:window.stroke;
   k = k === undefined ? 1 : k;
   if (lx === undefined) { lx = LIGHT_DX; ly = LIGHT_DY; }
   const lw = Math.max(0.9, Math.min(2.4, Math.min(w, h) * VOL_LINE)) * k;
@@ -29878,6 +30236,8 @@ function figureRig(bW, bH) {
 // inherits a contour, and the silhouette closes for free. That is the single
 // biggest thing separating a figure from the ground it stands on.
 function figureContour() {
+  const paint=figurePainter();
+  const stroke=paint?paint.stroke:window.stroke;
   stroke(22, 19, 24, 168);
   strokeWeight(1.15);
 }
@@ -34026,6 +34386,7 @@ const GLRig = {
   fast: 0,
   resize: false,      // a tier change is pending; applied at the TOP of a frame
   lights: [],
+  boundTex: [],       // reset every frame; the rig owns these units during it
   failure: ''
 };
 
@@ -34374,6 +34735,7 @@ function glRigProgram(gl, fs, tag) {
     return null;
   }
   p._u = {};
+  p._samplerUnits = {};
   const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
   for (let i = 0; i < n; i++) {
     const nm = gl.getActiveUniform(p, i).name.replace(/\[0\]$/, '');
@@ -34384,6 +34746,7 @@ function glRigProgram(gl, fs, tag) {
 
 function glRigTexture(gl, w, h, filter) {
   const t = gl.createTexture();
+  t._w = w; t._h = h;
   gl.bindTexture(gl.TEXTURE_2D, t);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
   const f = filter || gl.LINEAR;
@@ -34392,6 +34755,19 @@ function glRigTexture(gl, w, h, filter) {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   return t;
+}
+
+// Canvas uploads update already allocated storage. Replacing storage on every
+// frame can make the driver discard/rebuild it even though neither canvas changed
+// size. Keep the resize path for density/window/tier changes and context restore.
+function glRigUploadCanvas(gl, tex, canvas) {
+  const w = canvas.width, h = canvas.height;
+  if (tex._w !== w || tex._h !== h) {
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+    tex._w = w; tex._h = h;
+  } else {
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+  }
 }
 
 function glRigTarget(gl, w, h, filter) {
@@ -34740,12 +35116,22 @@ function glRigDraw(gl, prog, rect) {
 function glRigBindTex(gl, prog, name, unit, tex) {
   const loc = prog._u[name];
   if (loc === undefined) return;
-  gl.activeTexture(gl.TEXTURE0 + unit);
-  gl.bindTexture(gl.TEXTURE_2D, tex);
-  gl.uniform1i(loc, unit);
+  // All passes use the same texture on each unit. Bind once per frame instead
+  // of repeating three driver calls for every sampler of every local light.
+  const bound = GLRig.boundTex;
+  if (bound[unit] !== tex) {
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    bound[unit] = tex;
+  }
+  if (prog._samplerUnits[name] !== unit) {
+    gl.uniform1i(loc, unit);
+    prog._samplerUnits[name] = unit;
+  }
 }
 
 const GLRIG_FULL = [-1, -1, 1, 1];
+const GLRIG_LIGHT_RECT = [0, 0, 0, 0];
 
 // The shared emitter list, clamped to however many shadow-casting lights the
 // rig can afford. Both rigs read the same gather so they cannot disagree about
@@ -34874,14 +35260,16 @@ function glRigFrame() {
     gl.disable(gl.SCISSOR_TEST);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    GLRig.boundTex.length = 0;
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, GLRig.tex.diffuse);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, GLRig.host);
+    glRigUploadCanvas(gl, GLRig.tex.diffuse, GLRig.host);
+    GLRig.boundTex[0] = GLRig.tex.diffuse;
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, GLRig.tex.height);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE,
-                  GLRig.hgt.canvas || GLRig.hgt.elt);
+    glRigUploadCanvas(gl, GLRig.tex.height, GLRig.hgt.canvas || GLRig.hgt.elt);
+    GLRig.boundTex[1] = GLRig.tex.height;
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
 
     // --- scene terms --------------------------------------------------------
@@ -34940,10 +35328,10 @@ function glRigFrame() {
     gl.uniform1f(p._u.uPenumbra, 0.10 + 0.55 * skyDiffusion());
     // Direction TOWARD the sun. LIGHT_DX/DY point the way shadows fall, and the
     // shading frame has y up, so x negates and y does not.
-    const L = [-LIGHT_DX, LIGHT_DY, slope];
-    const Lm = Math.hypot(L[0], L[1], L[2]) || 1;
-    const Lz = L[2] / Lm;                       // N.L on flat, unoccluded ground
-    gl.uniform3f(p._u.uSunDir, L[0] / Lm, L[1] / Lm, Lz);
+    const Lx = -LIGHT_DX, Ly = LIGHT_DY;
+    const Lm = Math.hypot(Lx, Ly, slope) || 1;
+    const Lz = slope / Lm;                       // N.L on flat, unoccluded ground
+    gl.uniform3f(p._u.uSunDir, Lx / Lm, Ly / Lm, Lz);
 
     // THE RIG MUST BE A NO-OP ON FLAT, UNLIT, UNOCCLUDED GROUND.
     //
@@ -35024,7 +35412,9 @@ function glRigFrame() {
       gl.uniform1f(p._u.uRMin, Math.min(0.4, (Lg.rMin || 0) / Lg.r));
       const y0 = (i / GLRIG_LIGHTS) * 2 - 1;
       const y1 = ((i + 1) / GLRIG_LIGHTS) * 2 - 1;
-      glRigDraw(gl, p, [-1, y0, 1, y1]);
+      GLRIG_LIGHT_RECT[0] = -1; GLRIG_LIGHT_RECT[1] = y0;
+      GLRIG_LIGHT_RECT[2] = 1; GLRIG_LIGHT_RECT[3] = y1;
+      glRigDraw(gl, p, GLRIG_LIGHT_RECT);
 
       // 3c. Composite, additively, inside a scissor box the size of the light.
       //     This is the pass that would otherwise evaluate every fragment on
@@ -35073,8 +35463,11 @@ function glRigFrame() {
       }
       // The quad is already the light's box, so the scissor is belt and braces
       // against a partially covered tile rather than the cull itself.
-      glRigDraw(gl, p, [lu * 2 - 1 - ru * 2, lv * 2 - 1 - rv * 2,
-                        lu * 2 - 1 + ru * 2, lv * 2 - 1 + rv * 2]);
+      GLRIG_LIGHT_RECT[0] = lu * 2 - 1 - ru * 2;
+      GLRIG_LIGHT_RECT[1] = lv * 2 - 1 - rv * 2;
+      GLRIG_LIGHT_RECT[2] = lu * 2 - 1 + ru * 2;
+      GLRIG_LIGHT_RECT[3] = lv * 2 - 1 + rv * 2;
+      glRigDraw(gl, p, GLRIG_LIGHT_RECT);
 
       gl.disable(gl.SCISSOR_TEST);
       gl.disable(gl.BLEND);
@@ -36112,6 +36505,7 @@ function getSafeSpawn(away) {
 
 // -- Level entry ------------------------------------------------------------
 function startAtLevel(lvl, isLoading = false) {
+  invalidateCrowdSolids();
   const arrive = window.travelArrival;
   // A real journey carries survivors once. The pending selection contains
   // additional soldiers, while the roster retains every survivor's home and
