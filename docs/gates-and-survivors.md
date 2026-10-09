@@ -24,10 +24,19 @@ sector's completion or an overworld fort's muster cannot award a pending city
 roster. Zero survivors is a completed zero award; reopening or loading never
 duplicates it. Existing army assignments and already-awarded saves are retained.
 
+At 20% or less of an NM-0 ambush's forces remaining, a red arrow beside the
+player points to the nearest living combatant that counts toward that ambush.
+The threshold uses that fight's total, including merged ambushes and fortress
+reinforcements. Civilians, allies, neutral units, unrelated enemies and bodies
+that cannot drain the counter are excluded. The arrow follows camera movement
+and stays the same size across zoom levels; it disappears during menus,
+cutscenes, death and after the fight ends.
+
 Run from the repository root:
 
 ```sh
 node tools/check-gate-survivors.js
+node tools/check-ambush-cleanup-arrow.js
 node tools/check-population.js
 node tools/check-fortress.js
 node tools/check-saveload.js

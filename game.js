@@ -7612,6 +7612,7 @@ function storyBeatDone(name) {
 function resetStoryProgress() {
     swordKillCounter = 0;
     window.storyBeats = {};
+    biomeState = {}; // A new campaign owes each sector its first arrival again.
     window.resources = { WOOD: 0, METAL: 0, STONE: 0 };
     window.meleeToolSel = "NONE";
     window.swordEquipped = false;
@@ -12810,7 +12811,7 @@ function pickHead(len) {
 // Ambient city residents are independent of the story recruitment ledger.
 const CITY_CIVILIANS = ["CITY_CITIZEN_M", "CITY_CITIZEN_F"];
 const CITY_SKIN = [[103,66,47],[176,121,83],[239,199,168]];
-const CITY_NM0_CLEARANCE = 7000; // HUD distances use 10 world units per metre.
+const CITY_NM0_CLEARANCE = 3000; // HUD distances use 10 world units per metre.
 let cityNoise = [], cityPeopleFrame = -99;
 function cityAppearance(e, seed) {
   let n = seed >>> 0; const pick = a => { n=(n+0x6D2B79F5)|0;let t=Math.imul(n^(n>>>15),1|n);t^=t+Math.imul(t^(t>>>7),61|t);return a[Math.floor(((t^(t>>>14))>>>0)/4294967296*a.length)]; };
@@ -12852,7 +12853,7 @@ function cityRoute(cx,cy,d) {
 function cityCivilianAllowed(x,y,pad=15) {
   if(currentLevel!==1)return true;
   // Keep the whole main compound, including the outer curtain-wall and gate
-  // faces, 700 metres from ambient residents in story and arcade alike.
+  // faces, 300 metres from ambient residents in story and arcade alike.
   // Open doors and captured fortresses retain the civilian exclusion.
   const clearance=CITY_NM0_CLEARANCE+pad;
   if(x>=-4700-clearance&&x<=5900+clearance&&
@@ -13046,6 +13047,10 @@ function drawStunnedFigure(e) {
   translate(rg?rig.headX:lerp(12/RAG_SCALE,18,f),0);scale(lerp(1/RAG_SCALE,1,f));rotate(figureHeadTurn(p,f));drawFallenHead(window,figureIdentity(e),p,f);pop();
 }
 
+
+// Every squad command shares one base pace; mounted/type and terrain factors
+// still apply in the existing movement path.
+const ALLY_COMMAND_SPEED = 4.0;
 
 class Character {
   constructor(x, y, isP, eT = "NORMAL") {
@@ -14474,7 +14479,7 @@ if (this.eType === "COW") {
                 this.aimAngle = angToTarget;
                 if (distToTarget > 200) { moveTargetX = trg.x; moveTargetY = trg.y; shouldMove = true; }
             } else {
-                let moveSpeed = 2.0 * spd;
+                let moveSpeed = ALLY_COMMAND_SPEED * spd;
                 let vx = 0, vy = 0;
                 if (this.searchDir === "NORTH") vy = -moveSpeed;
                 if (this.searchDir === "SOUTH") vy = moveSpeed;
@@ -14521,8 +14526,8 @@ if (this.eType === "COW") {
 
         if (shouldMove) {
             let mAng = atan2(moveTargetY - this.y, moveTargetX - this.x);
-            let vx = cos(mAng) * 2.45 * spd;
-            let vy = sin(mAng) * 2.45 * spd;
+            let vx = cos(mAng) * ALLY_COMMAND_SPEED * spd;
+            let vy = sin(mAng) * ALLY_COMMAND_SPEED * spd;
             let m = this.attemptMove(vx, vy); aDx = m.x; aDy = m.y;
         }
 
@@ -18469,6 +18474,58 @@ function updateParticles() {
     if (w > 0) { particles.copyWithin(0, w); particles.length -= w; }
 }
 
+// Counter membership, not just hostility: the field can also contain the
+// sector's people, the fort's garrison and unrelated wildlife. A fort's tick
+// tags loose combatants when it conscripts them, so its rookies and machines
+// are found by the same rule as the scripted waves. Keep the exact nearest
+// search allocation-free; it only runs for the last fifth of an active fight.
+function nearestNM0AmbushEnemy() {
+  let nearest = null, nearestD2 = Infinity;
+  for (let i = 0; i < enemiesList.length; i++) {
+    const e = enemiesList[i];
+    if (!e || !e.isAmbush || !(e.hp > 0) || e.dead || e.isPlayer ||
+        e.isFriendly || e.isNeutral || e.isPopulation || e.isOutpostGarrison ||
+        e.cityPersonKey || unarmedCivilian(e)) continue;
+    // These processKill branches return before the NM-0 counter is drained,
+    // even if a broad fort conscription sweep has tagged the body.
+    if (e.eType === "BUG" || e.eType === "DAD" || e.eType === "MILITARY_NEUTRAL" ||
+        CITY_CIVILIANS.indexOf(e.eType) !== -1) continue;
+    const dx = e.x - player.x, dy = e.y - player.y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < nearestD2) { nearest = e; nearestD2 = d2; }
+  }
+  return nearest;
+}
+
+function drawNM0AmbushCleanupArrow(ambushRatio) {
+  // The ratio is the HUD's own remaining / initial muster total, including
+  // merged gate fights and the fort's changing conscription budget.
+  if (!nm0AmbushActive || !(ambushRatio <= 0.2) || nm0AmbushKills <= 0 ||
+      !started || !player || !(player.hp > 0) || player.dead ||
+      isDead || isWin || isPaused || killcamMode ||
+      inStoryIntro || inStoryRoom || inTownCutscene || inFortCutscene ||
+      inFarmCutscene || inFarmPostCutscene || inPostAmbushCutscene ||
+      inLvl4Cutscene || inDarchonCall || inWorldBuildingMenu || inTravelMenu ||
+      inUpgradeMenu || window.inNM0SecretOverlay) return;
+  const e = nearestNM0AmbushEnemy();
+  if (!e) return;
+  const dx = e.x - player.x, dy = e.y - player.y;
+  const distance = Math.sqrt(dx * dx + dy * dy);
+  if (!(distance > 0)) return;   // a coincident body has no direction to point
+
+  // drawUI is outside the camera transform. Anchor beside the player's actual
+  // projected position, so camera easing/panning does not change the bearing.
+  // Keep the marker legible at every zoom and stop its tip at a nearby target.
+  const radius = Math.min(64, distance * zoom);
+  push();
+  translate((player.x - camX) * zoom + dx / distance * radius,
+            (player.y - camY) * zoom + dy / distance * radius);
+  rotate(Math.atan2(dy, dx));
+  fill(255, 50, 50, 240); stroke(20); strokeWeight(2);
+  triangle(0, 0, -18, -9, -18, 9);
+  pop();
+}
+
 function drawUI() {
   // If the scene guard caught something, say so. It repeats every frame while
   // it lasts, so this stays up until it stops -- which is right: the picture is
@@ -18584,6 +18641,7 @@ function drawUI() {
       // like anything but nearly finished.
       let ambushTotal = window.ambushKillsTotal || 300;
       let ambushRatio = max(0, nm0AmbushKills) / ambushTotal; 
+      drawNM0AmbushCleanupArrow(ambushRatio);
       
       fill(50, 200); noStroke(); 
       rect(20, 80, 200, 5, 2); 
@@ -36281,6 +36339,142 @@ function placePlayerAtAnchor(biome, type) {
   if (typeof emit === 'function') emit(px2, py2, 26, color(70, 210, 255), "SPARK");
 }
 
+// A return journey may use ground the player owns; otherwise it needs the same
+// 100 metres the HUD reports (10 world units per metre) from EVERY live enemy.
+// This runs once behind the travel fade, after the initial roster and player
+// construction exist. Neither enemies nor their battle counters are changed.
+function safeReturnTravelPoint(biome, x, y) {
+  if (!player) return null;
+  const hostiles = enemiesList.filter(e => e && !e.isPlayer && !e.isFriendly && !e.isNeutral &&
+    !e.dead && e.hp > 0 && e.eType !== 'COW' && e.eType !== 'HORSE' && !unarmedCivilian(e));
+  const occupants = enemiesList.filter(e => e && !e.dead && e.hp > 0)
+    .concat(typeof townCitizens !== 'undefined' ? townCitizens.filter(e => e && !e.dead) : []);
+  const chunks = new Map(), collisionMaps = new Map();
+  const storyBounds = isStoryMode && !storyArcCleared(biome) ? sealedSector : null;
+  const inBounds = (px2, py2) => !storyBounds || (px2 > storyBounds.x0 + 40 &&
+    px2 < storyBounds.x1 - 40 && py2 > storyBounds.y0 + 40 && py2 < storyBounds.y1 - 40);
+
+  // checkCol is the movement authority, including open gates and U barriers.
+  // Its usual inputs are camera-culled, so supply the full map plus nearby
+  // deterministic chunks when testing a distant fort or a fallback point.
+  const clearPoint = (px2, py2, owned, keepInStory = true) => {
+    if (!owned && keepInStory && !inBounds(px2, py2)) return false;
+    const clearance = owned ? 55 : 1000;
+    for (const e of hostiles) {
+      if ((px2 - e.x) ** 2 + (py2 - e.y) ** 2 < clearance * clearance) return false;
+    }
+    if (occupants.some(e => (px2 - e.x) ** 2 + (py2 - e.y) ** 2 < 55 * 55)) return false;
+    const cx = Math.floor(px2 / CHUNK_W), cy = Math.floor(py2 / CHUNK_W);
+    const mapKey = BIOME_ACTIVE && chunkMgr ? ChunkManager.keyOf(cx, cy) : 'MAP';
+    let map = collisionMaps.get(mapKey);
+    if (!map) {
+      const solids = buildings.slice(), cars = parkingCars.slice();
+      if (BIOME_ACTIVE && chunkMgr) {
+        for (let j = cy - 1; j <= cy + 1; j++) for (let i = cx - 1; i <= cx + 1; i++) {
+          const key = ChunkManager.keyOf(i, j);
+          let ch = chunks.get(key);
+          if (!ch) {
+            ch = chunkMgr.chunks.get(key) || generateChunkContent(biome, i, j);
+            chunks.set(key, ch);
+          }
+          solids.push(...ch.solid); cars.push(...ch.cars);
+        }
+      }
+      map = { solids, cars, grid: null, big: null };
+      collisionMaps.set(mapKey, map);
+    }
+    const oldBuildings = activeBuildings, oldCars = activeParkingCars;
+    const oldGrid = colGrid, oldBig = colBig, oldIgnore = player.ignoreBldgTimer;
+    activeBuildings = map.solids; activeParkingCars = map.cars;
+    colGrid = map.grid; colBig = map.big; player.ignoreBldgTimer = 0;
+    if (!colGrid) {
+      buildColIndex(); map.grid = colGrid; map.big = colBig;
+    }
+    try { return !player.checkCol(px2, py2); }
+    finally {
+      activeBuildings = oldBuildings; activeParkingCars = oldCars;
+      colGrid = oldGrid; colBig = oldBig; player.ignoreBldgTimer = oldIgnore;
+    }
+  };
+
+  // Completed player sites own their immediate working apron too. An unfinished
+  // hoarding, an established ledger alone, or a breached hostile door does not.
+  const areas = ownedFortresses(biome).map(f => ({ x0: f.innerX0 + 55,
+    y0: f.innerY0 + 55, x1: f.innerX1 - 55, y1: f.innerY1 - 55, fortress: f }));
+  for (const s of buildSites) if (s.level === biome && s.done) {
+    areas.push({ x0: s.x - s.w / 2 - 140, y0: s.y - s.h / 2 - 140,
+      x1: s.x + s.w / 2 + 140, y1: s.y + s.h / 2 + 140, site: s });
+  }
+  for (const area of areas) {
+    area.x = Math.max(area.x0, Math.min(area.x1, x));
+    area.y = Math.max(area.y0, Math.min(area.y1, y));
+  }
+  areas.sort((a, b) => (a.x - x) ** 2 + (a.y - y) ** 2 - (b.x - x) ** 2 - (b.y - y) ** 2);
+  for (const area of areas) {
+    if (clearPoint(area.x, area.y, true)) return { x: area.x, y: area.y, area };
+    // Sample the finite interior once. A blocked Stick City compound otherwise
+    // wastes most of a radial sweep retesting points outside its rectangle.
+    const candidates = [];
+    for (let py2 = area.y0; py2 <= area.y1; py2 += 80) {
+      for (let px2 = area.x0; px2 <= area.x1; px2 += 80) candidates.push({ x: px2, y: py2 });
+    }
+    candidates.sort((a, b) => (a.x - x) ** 2 + (a.y - y) ** 2 - (b.x - x) ** 2 - (b.y - y) ** 2);
+    for (const p of candidates) if (clearPoint(p.x, p.y, true)) return { x: p.x, y: p.y, area };
+  }
+
+  // Search nearest-first rather than exhausting a random sampler and accepting
+  // its unchecked last point. The limit reaches past all currently live enemies
+  // and solids; the endless world's deterministic chunks still get checked.
+  let maxR = 4000;
+  for (const e of hostiles) maxR = Math.max(maxR, Math.hypot(e.x - x, e.y - y) + 1100);
+  for (const e of occupants) maxR = Math.max(maxR, Math.hypot(e.x - x, e.y - y) + 100);
+  for (const c of parkingCars) maxR = Math.max(maxR, Math.hypot(c.x - x, c.y - y) + 150);
+  for (const b of barrels) maxR = Math.max(maxR, Math.hypot(b.x - x, b.y - y) + 100);
+  for (const b of buildings) maxR = Math.max(maxR,
+    Math.hypot(b.x - x, b.y - y) + Math.hypot(b.w || 0, b.h || 0) / 2 + 1100);
+  const search = keepInStory => {
+    const limit = keepInStory && storyBounds ?
+      Math.hypot(storyBounds.x1 - storyBounds.x0, storyBounds.y1 - storyBounds.y0) : maxR + CHUNK_W * 2;
+    for (let radius = 0; radius <= limit; radius += 100) {
+      const steps = radius ? Math.max(16, Math.ceil(TWO_PI * radius / 100)) : 1;
+      for (let step = 0; step < steps; step++) {
+        const a = TWO_PI * step / steps;
+        const px2 = x + Math.cos(a) * radius, py2 = y + Math.sin(a) * radius;
+        if (clearPoint(px2, py2, false, keepInStory)) return { x: px2, y: py2 };
+      }
+    }
+    return null;
+  };
+  const point = search(true);
+  if (point) return point;
+  // Prefer the story's ground, but a fully occupied enclosure must not force
+  // an unsafe return. Real journeys leave through an open gate or an owned
+  // outpost; this exterior fallback changes neither gates nor story flags.
+  if (storyBounds) return search(false);
+  return null;
+}
+
+function placePlayerForReturnTravel(biome) {
+  if (!player) return false;
+  const point = safeReturnTravelPoint(biome, player.x, player.y);
+  if (!point) return false;
+  player.x = point.x; player.y = point.y;
+  camX = point.x - (width / 2) / zoom;
+  camY = point.y - (height / 2) / zoom;
+  const halfW = width / zoom / 2, halfH = height / zoom / 2;
+  viewLeft = point.x - halfW; viewRight = point.x + halfW;
+  viewTop = point.y - halfH; viewBottom = point.y + halfH;
+  if (chunkMgr) {
+    // Publish geometry without a second population tick introducing a new
+    // hostile after the safety check or releasing any existing enemy roster.
+    chunkMgr.lastKey = null;
+    chunkMgr.refreshResidency(Math.floor(point.x / CHUNK_W), Math.floor(point.y / CHUNK_W));
+    chunkMgr.rebuildWorldArrays(); chunkMgr.dirty = false;
+    chunkMgr.warmUp((CHUNK_LOAD_R * 2 + 1) ** 2);
+  }
+  return true;
+}
+
 // ###########################################################################
 //  ENGINE HOOKS
 //  Each of these replaces a legacy function. The legacy body is preserved
@@ -36508,7 +36702,10 @@ function getSafeSpawn(away) {
 // -- Level entry ------------------------------------------------------------
 function startAtLevel(lvl, isLoading = false) {
   invalidateCrowdSolids();
-  const arrive = window.travelArrival;
+  const arrive = isLoading ? null : window.travelArrival;
+  // generateMap marks this visit before the player exists. Snapshot it before
+  // rebuilding so a sector's first story arrival never becomes a return trip.
+  const returnTravel = !!arrive && lvl >= 1 && lvl <= 7 && !!getBiomeState(lvl).visited;
   // A real journey carries survivors once. The pending selection contains
   // additional soldiers, while the roster retains every survivor's home and
   // sex so a later casualty reaches the original department.
@@ -36580,6 +36777,12 @@ function startAtLevel(lvl, isLoading = false) {
     chunkMgr.update(player.x, player.y);
   }
 
+  // Construction must be present before arrival collision checks, and the
+  // escort must form around the final arrival rather than its old anchor.
+  buildGhost = null;
+  if (typeof republishPlayerStructures === 'function') republishPlayerStructures();
+  if (returnTravel) placePlayerForReturnTravel(lvl);
+
   // The escort marches in with the player, wherever the player actually ended
   // up. legacyStartAtLevel() places them relative to where the player was when
   // it ran, and both arrival paths above can move the player AFTER that:
@@ -36604,12 +36807,6 @@ function startAtLevel(lvl, isLoading = false) {
       formed++;
     }
   }
-
-  // The sector's construction, back into a world that has just been rebuilt
-  // from scratch. Last, for the same reason the escort re-forms last: every
-  // path into this function regenerates buildings[] at some point along it.
-  buildGhost = null;
-  if (typeof republishPlayerStructures === 'function') republishPlayerStructures();
 
   window.travelArrival = null;
   window.__biomeAnchorPending = null;

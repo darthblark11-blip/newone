@@ -1,4 +1,4 @@
-// Residents stay 700 HUD metres from NM-0 strongholds and enter the world unseen.
+// Residents stay 300 HUD metres from NM-0 strongholds and enter the world unseen.
 // Run with: node tools/check-city-placement.js
 const assert=require('assert');
 const {probe}=require('./harness');
@@ -39,7 +39,7 @@ for(const [x,y] of [[0,0],[-4700,600],[5900,600],[600,-4600],[600,5800]])
 for(const [x,y] of [[-12000,600],[17000,600],[600,-12000],[600,20000]])
   ok(P(`cityCivilianAllowed(${x},${y})`),`distant story city incorrectly excluded at ${x},${y}`);
 probe('isStoryMode=false;');
-ok(!P('cityCivilianAllowed(0,0)'),'arcade inner city ignored the 700-metre gate buffer');
+ok(!P('cityCivilianAllowed(0,0)'),'arcade inner city ignored the 300-metre gate buffer');
 
 // The main fortress and relay compound stay off limits after liberation.
 const forbidden=[[600,-4200],[600,5400],[7200,10800],[7200,9500],[8700,10800],
@@ -51,17 +51,17 @@ for(const story of [false,true]) {
     ok(!P(`cityCivilianAllowed(${x},${y})`),`open/captured fortress admits civilian in ${story?'story':'arcade'} at ${x},${y}`);
 }
 // HUD distances use ten world units per metre. These independent fixtures
-// cover the 7,000-unit clearance from both fortresses' outer wall faces,
+// cover the 3,000-unit clearance from both fortresses' outer wall faces,
 // plus the default 15-unit actor margin. A boundary tangent remains blocked.
 const bufferEdges=[
-  {name:'north slab top',x:600,y:-11615,dx:0,dy:-1},
-  {name:'main curtain wall west',x:-11715,y:-4200,dx:-1,dy:0},
-  {name:'main curtain wall east',x:12915,y:-4200,dx:1,dy:0},
-  {name:'south slab bottom',x:-6000,y:12815,dx:0,dy:1},
-  {name:'relay west wall',x:-1325,y:18000,dx:-1,dy:0},
-  {name:'relay east wall',x:15725,y:10800,dx:1,dy:0},
-  {name:'relay north wall',x:14700,y:2475,dx:0,dy:-1},
-  {name:'relay south wall',x:7200,y:19125,dx:0,dy:1}
+  {name:'north slab top',x:600,y:-7615,dx:0,dy:-1},
+  {name:'main curtain wall west',x:-7715,y:-4200,dx:-1,dy:0},
+  {name:'main curtain wall east',x:8915,y:-4200,dx:1,dy:0},
+  {name:'south slab bottom',x:-6000,y:8815,dx:0,dy:1},
+  {name:'relay west wall',x:2675,y:14000,dx:-1,dy:0},
+  {name:'relay east wall',x:11725,y:10800,dx:1,dy:0},
+  {name:'relay north wall',x:11000,y:6475,dx:0,dy:-1},
+  {name:'relay south wall',x:7200,y:15125,dx:0,dy:1}
 ];
 for(const story of [false,true]) {
   probe(`isStoryMode=${story};`);
@@ -71,12 +71,13 @@ for(const story of [false,true]) {
     ok(P(`cityCivilianAllowed(${x+dx*.001},${y+dy*.001})`),`${name} excluded a civilian just beyond its buffer`);
   }
 }
-ok(!P('cityCivilianAllowed(12800,-11500)'),'main fortress corner escaped the curtain-wall buffer');
-ok(!P('cityCivilianAllowed(12900,-4200,0)'),'700-metre gate distance omitted the boundary');
-ok(P('cityCivilianAllowed(12900.001,-4200,0)'),'explicit zero actor margin changed the gate clearance');
-ok(!P('cityCivilianAllowed(12900.001,-4200)'),'default actor margin was lost');
-ok(!P('cityCivilianAllowed(15710,10800,0)'),'700-metre relay distance omitted the outer wall face');
-ok(P('cityCivilianAllowed(15710.001,10800,0)'),'relay clearance measured from its centreline');
+ok(!P('cityCivilianAllowed(8800,-7500)'),'main fortress corner escaped the curtain-wall buffer');
+ok(!P('cityCivilianAllowed(8900,-4200,0)'),'300-metre gate distance omitted the boundary');
+ok(P('cityCivilianAllowed(8900.001,-4200,0)'),'explicit zero actor margin changed the gate clearance');
+ok(!P('cityCivilianAllowed(8900.001,-4200)'),'default actor margin was lost');
+ok(!P('cityCivilianAllowed(11710,10800,0)'),'300-metre relay distance omitted the outer wall face');
+ok(P('cityCivilianAllowed(11710.001,10800,0)'),'relay clearance measured from its centreline');
+ok(P('cityCivilianAllowed(600,-9000)'),'former 700-metre restriction still excludes a block beyond 300 metres');
 probe('currentLevel=2;');
 ok(P('cityCivilianAllowed(0,0)'),'Level 1 restrictions leaked into another level');
 
@@ -90,6 +91,9 @@ ok(P('!enemiesList.some(e=>e.isCityCivilian)'),'story civilians populated just o
 reset(true);loadChunk(-12,0);camera(-13800,600);refresh(-12,0);
 ok(P('enemiesList.filter(e=>e.isCityCivilian).length===6'),'distant story blocks lost their civilians');
 ok(P('enemiesList.every(e=>e.isCityCivilian&&!e.isPopulation)'),'story created extra ambient military guards');
+reset(true);loadChunk(0,-8);camera(600,-9000);refresh(0,-8);
+ok(P('enemiesList.filter(e=>e.isCityCivilian).length===6'),'civilian blocks between the former and current fortress buffers failed to populate');
+ok(P('enemiesList.every(e=>cityCivilianAllowed(e.x,e.y)&&!inView(e.x,e.y,100))'),'closer civilians bypassed the 300-metre or off-screen spawn rule');
 
 // A wholly visible chunk remains empty; zooming in provides safe hidden points.
 reset(false);loadChunk(50,41);camera(60600,49800,.66);refresh(50,41);
@@ -229,9 +233,9 @@ for(const [z,panX,panY,shake] of [[.45,0,0,0],[.66,200,-100,12],[1.4,-500,300,0]
 }
 
 // The shared collision gate covers wander, panic, recoil and temporary clipping.
-const edges=[{story:true,x:600,y:-11616,dx:0,dy:1,cx:0,cy:-10},
-  {story:false,x:-11716,y:-4200,dx:1,dy:0,cx:-10,cy:-4},
-  {story:false,x:15726,y:10800,dx:-1,dy:0,cx:12,cy:9}];
+const edges=[{story:true,x:600,y:-7616,dx:0,dy:1,cx:0,cy:-7},
+  {story:false,x:-7716,y:-4200,dx:1,dy:0,cx:-7,cy:-4},
+  {story:false,x:11726,y:10800,dx:-1,dy:0,cx:9,cy:9}];
 for(const edge of edges)for(const mode of ['WANDER','FLEE','STUNNED']) {
   reset(edge.story);camera(edge.x,edge.y);
   probe(`window.c=new Character(${edge.x},${edge.y},false,"CITY_CITIZEN_M");cityAppearance(c,777);
@@ -243,4 +247,4 @@ for(const edge of edges)for(const mode of ['WANDER','FLEE','STUNNED']) {
   probe(`window.allLegal=true;for(let i=0;i<80;i++){frameCount++;${mode==='STUNNED'?'advanceStun(c);':'updateCityCivilian(c);'}if(!cityCivilianAllowed(c.x,c.y))allLegal=false;}`);
   ok(P('allLegal'),`${mode.toLowerCase()} crossed a civilian boundary at ${edge.x},${edge.y}`);
 }
-console.log(`City placement passed: ${checks} checks for 700-metre fortress buffers, story/arcade geography, open fortresses, off-screen residents/posts, saved state, camera zoom/pan/shake and wander/panic/stun movement.`);
+console.log(`City placement passed: ${checks} checks for 300-metre fortress buffers, story/arcade geography, open fortresses, off-screen residents/posts, saved state, camera zoom/pan/shake and wander/panic/stun movement.`);

@@ -34,12 +34,30 @@ victim's exact home department and gender once. Save/load preserves active
 detachments, and travel carries existing active troops together with newly
 selected escorts without conjuring a second copy.
 
+FOLLOW, HOLD, SEARCH and SPREAD share a base movement speed of 4.0 world units
+per update, including pursuit during those commands and return to a held post.
+Existing type, mount and terrain multipliers still apply. Allies stop at their
+usual formation/combat distance, and HOLD remains stationary at its post.
+Neutral and unarmed civilians retain their existing walking speeds.
+
+Travel back to a previously visited sector prefers the nearest usable captured
+fortress or completed player construction area. Without usable owned ground,
+arrival searches for a collision-safe point at least 100 HUD metres (1,000
+world units) from every live hostile. It tries the story enclosure first and
+can use exterior ground when that enclosure has no safe point. Enemy rosters,
+gates and battle counters are preserved. The camera and arriving escorts use
+the final landing point. First visits retain their authored story arrivals;
+loading retains saved player coordinates. Visit memory persists in saves and
+resets when starting a new campaign.
+
 Run the focused interaction and accounting checks from the repository root:
 
 ```sh
 node tools/check-directive-military-menu.js
 node tools/check-owned-fortress.js
 node tools/check-military-deployment.js
+node tools/check-ally-command-speed.js
+node tools/check-return-travel.js
 node tools/check-fortress.js
 node tools/check-population.js
 node tools/check-saveload.js
