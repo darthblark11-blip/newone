@@ -19,6 +19,10 @@ for (const type of ['ARMORED','ARMORED_STANDARD','SAUCER','SAUCER_RED','SNAIL_HY
   check(type+' actual hit still damages armor', hit.hp === 880);
   if (type === 'ROBOT') {
     check('robot metal streaks retain their existing emission', hit.particles.length === 9 && hit.particles.every(p=>p.t === 'FLECK'));
+  } else if (type === 'ARMORED' || type === 'ARMORED_STANDARD') {
+    const smoke = hit.particles.filter(p=>p.t === 'BLOOD_SMOKE');
+    check(type+' body impacts emit blood smoke and keep five debris chips', smoke.length === 10 && hit.particles.filter(p=>p.t === 'CHIP').length === 5 && !hit.particles.some(p=>p.t === 'SPARK'));
+    check(type+' blood smoke remains compact and short lived', smoke.every(p=>p.c.join(',') === '90,0,0' && p.sz >= 5 && p.sz <= 12 && p.l >= 10 && p.l <= 20));
   } else {
     const sparks = hit.particles.filter(p=>p.t === 'SPARK');
     check(type+' still emits ten sparks and five debris chips', sparks.length === 10 && hit.particles.filter(p=>p.t === 'CHIP').length === 5);

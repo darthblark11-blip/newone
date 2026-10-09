@@ -92,7 +92,7 @@ try {
       updateBullets();
       trace.push({bullets:bulletSnapshot(),hp:enemiesList.map(e=>[e.hp,e.x,e.y,e.decals]),
         player:[player.hp,player.shieldHP,player.decals],barrels:barrels.map(q=>q.hp),
-        particles:particles.map(q=>[q.x,q.y,q.vx,q.vy,q.life,q.sz,q.type]),
+        particles:particles.map(q=>[q.x,q.y,q.vx,q.vy,q.l,q.a,q.sz,q.t,q.c.levels]),
         shots:totalShotsFired,hits:totalShotsHit});`);
   }
   equal('trace', '120 crowded collision frames preserve damage, order, effects and random draws');

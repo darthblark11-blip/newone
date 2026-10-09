@@ -14681,12 +14681,6 @@ if (this.eType === "COW") {
             this.aimAngle = aR;
             this.isMoving = false;
             this.chargeTimer--;
-            if (frameCount % 4 === 0) {
-                const t01 = 1 - this.chargeTimer / ROBOT_CHARGE;
-                const mx = this.x + cos(aR) * 34 - sin(aR) * 13;
-                const my = this.y + sin(aR) * 34 + cos(aR) * 13;
-                emit(mx, my, 1, color(255, 150 + t01 * 90, 60), "FLECK");
-            }
             if (this.chargeTimer <= 0) { this.burstLeft = ROBOT_BURST; this.burstGap = 0; }
             return;
         }
@@ -17394,7 +17388,14 @@ function updateBullets() {
                         emit(b.x, b.y, bleed, color(OIL_COL[0], OIL_COL[1], OIL_COL[2]), "OIL", b.vx * 0.4, b.vy * 0.4);
                     }
                 } 
-                else if (wA) { sfx.hitArmor(); emit(b.x, b.y, 10, color(255, 150, 0), "SPARK"); emit(b.x, b.y, 5, color(100), "CHIP"); } 
+                else if (wA) {
+                    sfx.hitArmor();
+                    if (t.eType === "ARMORED" || t.eType === "ARMORED_STANDARD") {
+                        if (b.tH === "HEAD") emit(b.x, b.y, 9, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK", b.vx, b.vy);
+                        else emit(b.x, b.y, 10, bCol, "BLOOD_SMOKE", b.vx, b.vy);
+                    } else emit(b.x, b.y, 10, color(255, 150, 0), "SPARK");
+                    emit(b.x, b.y, 5, color(100), "CHIP");
+                }
                 else { 
                     // Sparks in the shield's own colour while it holds; the break
                     // keeps its blue, which is the one moment the two should not
@@ -18387,7 +18388,7 @@ Particle.prototype.init = function(x, y, c, t, dX = 0, dY = 0) {
     // it reads as struck metal instead of as a small fire.
     if (t === "FLECK") this.sz = random(1.4, 3.2);
     else if (t === "OIL") this.sz = random(3, 7);
-    else if (t === "FLASH" || t === "MUZZLE" || t === "THRUST" || t === "SPARK") this.sz = random(5, 12);
+    else if (t === "FLASH" || t === "MUZZLE" || t === "THRUST" || t === "SPARK" || t === "BLOOD_SMOKE") this.sz = random(5, 12);
     else if (t === "GORE" || t === "CHIP") this.sz = random(4, 10);
     else if (t === "BONE") this.sz = random(2, 5);
     else if (t === "EXPLOSION") this.sz = random(10, 25);
@@ -18396,6 +18397,7 @@ Particle.prototype.init = function(x, y, c, t, dX = 0, dY = 0) {
 
     if (t === "FLASH" || t === "MUZZLE") { this.vx = dX + random(-1, 1); this.vy = dY + random(-1, 1); this.l = t === "MUZZLE" ? 4 : random(10, 20); } 
     else if (t === "SPARK") { this.vx = dX + random(-5, 5); this.vy = dY + random(-5, 5); this.l = random(10, 20); } 
+    else if (t === "BLOOD_SMOKE") { this.vx = dX * 0.15 + random(-1.5, 1.5); this.vy = dY * 0.15 + random(-1.5, 1.5); this.l = random(10, 20); }
     else if (t === "FLECK") { this.vx = dX * 0.35 + random(-7, 7); this.vy = dY * 0.35 + random(-7, 7); this.l = random(6, 16); } 
     else if (t === "OIL")   { this.vx = dX * 0.18 + random(-3.4, 3.4); this.vy = dY * 0.18 + random(-3.4, 3.4); this.l = random(14, 30); } 
     else if (t === "CHIP") { this.vx = random(-3, 3); this.vy = random(-3, 3); this.l = random(20, 50); } 
@@ -18407,7 +18409,7 @@ Particle.prototype.init = function(x, y, c, t, dX = 0, dY = 0) {
     else { this.vx = random(-4, 4); this.vy = random(-4, 4); this.l = random(10, 20); }
 };
 
-Particle.prototype.update = function() { this.x += this.vx; this.y += this.vy; if (this.t !== "FLASH" && this.t !== "SMOKE") { this.vx *= (this.t === "FLECK" ? 0.9 : 0.85); this.vy *= (this.t === "FLECK" ? 0.9 : 0.85); } if (--this.l <= 0) { if (this.t === "FLASH" || this.t === "MUZZLE" || this.t === "THRUST" || this.t === "EXPLOSION" || this.t === "SPARK" || this.t === "FLECK") this.a -= 60; else this.a -= 15; } }
+Particle.prototype.update = function() { this.x += this.vx; this.y += this.vy; if (this.t !== "FLASH" && this.t !== "SMOKE") { this.vx *= (this.t === "FLECK" ? 0.9 : 0.85); this.vy *= (this.t === "FLECK" ? 0.9 : 0.85); } if (--this.l <= 0) { if (this.t === "FLASH" || this.t === "MUZZLE" || this.t === "THRUST" || this.t === "EXPLOSION" || this.t === "SPARK" || this.t === "FLECK" || this.t === "BLOOD_SMOKE") this.a -= 60; else this.a -= 15; } }
 Particle.prototype.show = function() {
     const c = this.c.levels;
     noStroke();
@@ -18424,7 +18426,7 @@ Particle.prototype.show = function() {
         const paint = particlePaint(c, this.a);
         if (paint) fill(paint); else fill(c[0], c[1], c[2], this.a);
         rect(this.x, this.y, this.sz, this.sz);
-    } else if (this.t === "SMOKE" || this.t === "EXPLOSION") {
+    } else if (this.t === "SMOKE" || this.t === "EXPLOSION" || this.t === "BLOOD_SMOKE") {
         // Big, slow puffs get a soft falloff instead of a hard-edged disc, so a
         // cloud reads as one mass rather than a pile of circles.
         softBlob(this.x, this.y, this.sz * 1.35, this.sz * 1.35, c[0], c[1], c[2], this.a);
