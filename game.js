@@ -7482,11 +7482,45 @@ function harvestProfile(b) {
   return b.__hv;
 }
 
+function treeDecorMatchesTrunk(d, b) {
+  if (!d || !b || !(d.t === "TREE" || d.t === "PINE" || d.t === "SNAG")) return false;
+  if (d.forestTrunkKey && b.chunkKey) return d.forestTrunkKey === b.chunkKey;
+  return Math.abs(d.x - b.x) < 6 && Math.abs(d.y - b.y) < 6;
+}
+
+// Reconcile crowns while the generated trunks still carry their stable keys.
+// A saved removal must affect the visual tree as well as its collision solid.
+function removeDestroyedTreeDecor(biome, solid, decor) {
+  const destroyed = getBiomeState(biome).destroyed;
+  const felled = solid.filter(b => b.isTreeTrunk && destroyed[b.chunkKey]);
+  if (!felled.length) return;
+  for (let i = decor.length - 1; i >= 0; i--) {
+    const d = decor[i];
+    if (felled.some(b => treeDecorMatchesTrunk(d, b))) decor.splice(i, 1);
+  }
+}
+
+// buildings[] is a published view of resident chunk solids. Remove the source
+// record too, so loading a neighbour cannot publish a harvested prop again.
+function removeResidentHarvestable(b) {
+  if (!chunkMgr) return;
+  for (const ch of chunkMgr.chunks.values()) {
+    for (let i = ch.solid.length - 1; i >= 0; i--) {
+      const s = ch.solid[i];
+      if (s === b || (b.chunkKey && s.chunkKey === b.chunkKey)) ch.solid.splice(i, 1);
+    }
+    if (!b.isTreeTrunk) continue;
+    for (let i = ch.decor.length - 1; i >= 0; i--) {
+      if (treeDecorMatchesTrunk(ch.decor[i], b)) ch.decor.splice(i, 1);
+    }
+  }
+}
+
 // One entry point, so a pick, a rifle round and a rocket all take the same path
 // into a harvestable and the drop can only happen once.
 function damageHarvestable(b, amount) {
   const hv = harvestProfile(b);
-  if (!hv || amount <= 0) return false;
+  if (!hv || hv.hp <= 0 || amount <= 0) return false;
   hv.hp -= amount;
   b.hitFlash = 4;
   const c = RESOURCE_DEF[hv.kind];
@@ -7497,17 +7531,7 @@ function damageHarvestable(b, amount) {
   emit(b.x, b.y, 16, color(c.lit[0], c.lit[1], c.lit[2]), "DUST");
   if (sfx && sfx.hitArmor) sfx.hitArmor();
 
-  // A felled tree loses its canopy too, or the wood walks off and the crown
-  // stays hanging in the air.
-  if (b.isTreeTrunk && chunkMgr) {
-    for (const ch of chunkMgr.chunks.values()) {
-      for (let i = ch.decor.length - 1; i >= 0; i--) {
-        const d = ch.decor[i];
-        if ((d.t === "TREE" || d.t === "PINE" || d.t === "SNAG") &&
-            Math.abs(d.x - b.x) < 6 && Math.abs(d.y - b.y) < 6) ch.decor.splice(i, 1);
-      }
-    }
-  }
+  removeResidentHarvestable(b);
   // Remembered, so it does not grow back when the chunk reloads. Chunk solids
   // carry the key the generator will strip them by; authored ones are handled
   // by syncAuthoredRemovals() picking up the removal from buildings[].
@@ -21123,17 +21147,12 @@ function clearBuildLot(x, y, w, h) {
         if (!buildClearable(o)) continue;
         if (Math.abs(x - o.x) > (w + (o.w || 0)) / 2 || Math.abs(y - o.y) > (h + (o.h || 0)) / 2) continue;
         const hv = harvestProfile(o);
-        if (hv) { won[hv.kind] = (won[hv.kind] || 0) + hv.yield; addResource(hv.kind, hv.yield); }
-        // A felled tree loses its canopy, same as one taken down with a pick.
-        if (o.isTreeTrunk && typeof chunkMgr !== 'undefined' && chunkMgr) {
-            for (const ch of chunkMgr.chunks.values()) {
-                for (let d = ch.decor.length - 1; d >= 0; d--) {
-                    const dc = ch.decor[d];
-                    if ((dc.t === "TREE" || dc.t === "PINE" || dc.t === "SNAG") &&
-                        Math.abs(dc.x - o.x) < 6 && Math.abs(dc.y - o.y) < 6) ch.decor.splice(d, 1);
-                }
-            }
+        if (hv) {
+            won[hv.kind] = (won[hv.kind] || 0) + hv.yield;
+            addResource(hv.kind, hv.yield);
+            hv.hp = 0;
         }
+        removeResidentHarvestable(o);
         if (o.chunkKey && typeof markPropDestroyed === 'function' && BIOME_ACTIVE) {
             markPropDestroyed(currentBiome, o.chunkKey);
         }
@@ -22405,7 +22424,7 @@ const RG_FARM   = "FARM";     // ploughed strips, hedgerows, a steading
 // region ever became a place -- you were always in a transition. These give a
 // patch a few chunks across, so walking out of the timber into open meadow is
 // something that happens on the way somewhere rather than constantly.
-function woodRegion(biome, wx, wy) {
+function woodLegacyRegion(biome, wx, wy) {
   const brn = bnoise(biome, wx + 2600, wy - 7100, 0.000065);
   if (brn > 0.71) return RG_BURN;
   const wet = bnoise(biome, wx + 9100, wy + 4300, 0.000085);
@@ -22415,6 +22434,26 @@ function woodRegion(biome, wx, wy) {
   if (tim < 0.375 && wet < 0.47) return RG_HEATH;
   if (wet > 0.545 && tim < 0.50) return RG_FARM;
   return RG_MEADOW;
+}
+
+// The saved woodland layout remains the six-region template above. Its RNG
+// branches and solid indices are save identities, so the forest's four visible
+// habitats are a separate world-space question rather than a new layout roll.
+function woodRegion(biome, wx, wy) {
+  const legacy = woodLegacyRegion(biome, wx, wy);
+  if (bnoise(biome, wx + 2600, wy - 7100, 0.000065) > 0.63) return RG_BURN;
+  // A bank follows the actual river, including the adjacent row at a seam.
+  // It does not depend on whether either chunk has been generated yet.
+  const cx = Math.floor(wx / CHUNK_W), cy = Math.floor(wy / CHUNK_W);
+  for (let row = cy - 1; row <= cy + 1; row++) {
+    if (!woodHasRiver(biome, row)) continue;
+    if (coreTaperX(cx, row, wx) < 0.6) continue;
+    const bank = woodRiverHalf(biome, row, wx) * 1.35 + 180;
+    if (Math.abs(wy - woodRiverY(biome, row, wx)) < bank) return RG_MARSH;
+  }
+  if (legacy === RG_MARSH) return RG_MARSH;
+  if (legacy === RG_HEATH) return RG_HEATH;
+  return RG_TIMBER;
 }
 
 // How much standing timber each region will accept, as a multiplier on the
@@ -22431,6 +22470,56 @@ const RG_TREES = {
 const RG_CANOPY = {
   MEADOW: 0.22, TIMBER: -0.55, MARSH: -0.18, HEATH: 0.46, BURN: 0.0, FARM: 0.30
 };
+
+// Level 2's PNW art contract. World coordinates are the ROOT/ground contact,
+// never the crown centre. Collision and harvest identity stay on the solid;
+// the larger visible crown belongs to decor and is depth-sorted by that root.
+// Small plants are static chunk albedo, so forest density adds no actor/AI work.
+const FOREST_REGIONS = {
+  TIMBER: { name: "Ancient Canopy", canopy: 1.0, midstory: 0.70, underbrush: 1.0,
+    ground: [74, 132, 73], shade: [25, 62, 67], foliage: [50, 153, 99], highlight: [166, 223, 102] },
+  MARSH: { name: "Mossy Riverbed", canopy: 0.65, midstory: 0.85, underbrush: 1.0,
+    ground: [67, 152, 104], shade: [25, 73, 84], foliage: [77, 178, 112], highlight: [197, 231, 121] },
+  BURN: { name: "Burnt / Dead", canopy: 0.40, midstory: 0.15, underbrush: 0.40,
+    ground: [119, 99, 127], shade: [59, 48, 83], foliage: [185, 114, 69], highlight: [248, 177, 98] },
+  HEATH: { name: "Alpine Ridge", canopy: 0.35, midstory: 0.30, underbrush: 0.45,
+    ground: [130, 148, 150], shade: [59, 80, 110], foliage: [83, 149, 124], highlight: [219, 229, 175] }
+};
+const FOREST_PROPS = {
+  DOUGLAS_FIR: { canopyMass: [66, 86, 64], trunkWidth: 13, outline: 2.5, tier: "canopy", collision: [34, 34] },
+  WESTERN_CEDAR: { canopyMass: [60, 100, 72], trunkWidth: 15, outline: 2.6, tier: "canopy", collision: [34, 34] },
+  SITKA_SPRUCE: { canopyMass: [62, 78, 60], trunkWidth: 12, outline: 2.4, tier: "canopy", collision: [34, 34] },
+  RED_ALDER: { canopyMass: [44, 92, 76], trunkWidth: 11, outline: 2.4, tier: "canopy", collision: [34, 34] },
+  LODGEPOLE_PINE: { canopyMass: [52, 62, 48], trunkWidth: 10, outline: 2.3, tier: "canopy", collision: [34, 34] },
+  CHARRED_SNAG: { canopyMass: [58, 40, 34], trunkWidth: 11, outline: 2.4, tier: "canopy", collision: [34, 34] },
+  BUSH: { width: 44, depth: 36, rise: 13, outline: 2, tier: "midstory", collision: null },
+  FERN: { width: 50, depth: 50, rise: 9, outline: 1.6, tier: "underbrush", collision: null },
+  LOG: { width: 54, depth: 20, rise: 12, outline: 2, tier: "underbrush", collision: null },
+  STUMP: { width: 30, depth: 26, rise: 13, outline: 2, tier: "underbrush", collision: null },
+  MUSHROOM: { width: 22, depth: 22, rise: 9, outline: 1.4, tier: "underbrush", collision: null },
+  PEBBLE: { width: 22, depth: 17, rise: 7, outline: 1.5, tier: "underbrush", collision: null },
+  REED: { width: 48, depth: 48, rise: 18, outline: 1.5, tier: "underbrush", collision: null },
+  ASH: { width: 30, depth: 22, rise: 2, outline: 1.4, tier: "underbrush", collision: null },
+  BOULDER: { width: 100, depth: 80, rise: 16, outline: 2.6, tier: "landform", collision: "solid" }
+};
+function forestPropProfile(d) { return d && FOREST_PROPS[d.forestSpecies] || null; }
+function forestCanopyMass(d) {
+  const p = forestPropProfile(d);
+  return p && p.canopyMass || CANOPY_MASS[d.t] || null;
+}
+function forestPropRadius(d) {
+  const p = forestPropProfile(d);
+  if (!p) return 0;
+  const m = p.canopyMass;
+  if (p.collision === "solid") return Math.max(d.w || p.width, d.h || p.depth) * 0.5;
+  return Math.max(m ? m[1] : p.width, m ? m[2] : p.depth) * 0.5 *
+    (d.s || 1) * (m && d.forestCrownScale !== undefined ? d.forestCrownScale : 1);
+}
+function forestPropCullPad(d) {
+  const p = forestPropProfile(d);
+  return p && p.canopyMass ? Math.max(120, forestPropRadius(d) +
+    p.canopyMass[0] * (d.s || 1) * (MASS_LEAN + MASS_TILT) + 12) : 120;
+}
 
 // ###########################################################################
 //  SUB-BIOMES OF THE OUTER SECTORS
@@ -22639,8 +22728,8 @@ const CR_GROWTH = {
 // fine mottling and ZONE_TINT, and anything past about +/-30 stops reading as
 // ground and starts reading as a stain.
 const REGION_TINT = {
-  WOODLAND: { MEADOW: [0, 0, 0],      TIMBER: [-14, -6, -8],  MARSH: [-10, -6, 4],
-              HEATH:  [10, 6, -4],    BURN:   [-16, -14, -12], FARM: [8, 4, -8] },
+  WOODLAND: { MEADOW: [0, 0, 0],      TIMBER: [-8, -7, 7],   MARSH: [-13, 15, 20],
+              HEATH:  [45, 24, 52],  BURN:   [32, -29, 48],  FARM: [8, 4, -8] },
   JUNGLE:   { CANOPY: [-15, -7, -6],  SWAMP:  [-19, -11, -2],
               CLEARING: [26, 14, -8], BAMBOO: [9, 14, -7],    CORDON: [12, 10, 6] },
   // A third of the others: this palette is a hundred points brighter than any
@@ -22656,7 +22745,7 @@ const REGION_TINT = {
 const ZONE_TINT = {
   // Grass runs from dry and yellowed on the high ground to deep wet green in
   // the hollows.
-  WOODLAND:   [ 58,  18, -32],
+  WOODLAND:   [ 24,  12, -16],
   // Cities do not change colour, they change how dirty they are: soot and
   // brick dust against rain-washed concrete.
   CITY:       [ 24,  17,   8],
@@ -22691,7 +22780,7 @@ const ZONE_TINT = {
 // ---------------------------------------------------------------------------
 function woodPools(biome, cx, cy) {
   const ox = cx * CHUNK_W, oy = cy * CHUNK_W;
-  if (woodRegion(biome, ox + 600, oy + 600) !== RG_MARSH) return null;
+  if (woodLegacyRegion(biome, ox + 600, oy + 600) !== RG_MARSH) return null;
   const rng = makeRng(chunkHash(biome, cx, cy, 7717));
   const out = [];
   // The travel anchors are the one place in the sector the player is guaranteed
@@ -22708,7 +22797,7 @@ function woodPools(biome, cx, cy) {
     const k = rng();
     // Asked at the pool's own centre, not the chunk's, so the water thins out
     // toward the edge of the wet ground rather than stopping on a chunk line.
-    if (woodRegion(biome, x, y) !== RG_MARSH) continue;
+    if (woodLegacyRegion(biome, x, y) !== RG_MARSH) continue;
     if (coreTaperX(cx, cy, x) < 0.6 || coreTaperY(cx, cy, y) < 0.6) continue;
     let clash = false;
     if (anch) {
@@ -24327,7 +24416,7 @@ function appendBiomeFieldSite(biome, cx, cy, solid, cars) {
   for (let attempt = 0; attempt < 14; attempt++) {
     const x = cx * CHUNK_W + rngRange(rng, 270, 930);
     const y = cy * CHUNK_W + rngRange(rng, 230, 970);
-    const region = regionAt(biome, x, y, lay);
+    const region = lay === "WOODLAND" ? woodLegacyRegion(biome, x, y) : regionAt(biome, x, y, lay);
     const kit = lay === "FRONTIER" ? ["SITEHUT", "MATERIALS", "WRECK"] : {
       MEADOW: ["CABIN", "LOGPILE", "SIGNPOST"],
       HEATH: ["RUINWALL", "CAIRN", "MONOLITH"],
@@ -24354,6 +24443,133 @@ function appendBiomeFieldSite(biome, cx, cy, solid, cars) {
                    fieldSite: region || lay });
     }
     return;
+  }
+}
+
+function woodForestSpecies(region, roll, tier) {
+  if (region === RG_BURN) return "CHARRED_SNAG";
+  if (region === RG_HEATH) return roll < 0.82 ? "LODGEPOLE_PINE" : "DOUGLAS_FIR";
+  if (region === RG_MARSH) {
+    if (roll < (tier === "midstory" ? 0.65 : 0.34)) return "RED_ALDER";
+    return roll < 0.76 ? "SITKA_SPRUCE" : "WESTERN_CEDAR";
+  }
+  if (tier === "midstory" && roll < 0.18) return "RED_ALDER";
+  return roll < 0.46 ? "DOUGLAS_FIR" : roll < 0.82 ? "WESTERN_CEDAR" : "SITKA_SPRUCE";
+}
+
+// Dressing follows numeric key assignment and never consumes the template RNG
+// or changes a saved collider. New stems have independent namespaced identities.
+function appendWoodlandForest(biome, cx, cy, solid, decor, decorBake, nearAnchor) {
+  if (biome !== 2 || layoutFor(biome, cx, cy) !== "WOODLAND") return;
+  const ox = cx * CHUNK_W, oy = cy * CHUNK_W;
+  const rng = makeRng(chunkHash(biome, cx, cy, 73091));
+  const standing = { TREE: 1, PINE: 1, SNAG: 1 };
+  const ground = { FERN: 1, WEED: 1, GRASS: 1, LOG: 1, STUMP: 1,
+                   MUSHROOM: 1, PEBBLE: 1, REED: 1, ASH: 1, HEATHER: 1 };
+  const radius = d => forestPropRadius(d) || 12 * (d.s || 1);
+  const reserved = (d, r, pad) => groundReserved(biome, cx, cy, d.x, d.y, r * 2, r * 2, pad || 0);
+  const roadReserved = (d, r) => {
+    if (woodHasTrunk(biome, cx) && crossesNS(y => woodTrailX(biome, cx, y), d.x, d.y, r, r, ROAD_HALF.WOODLAND)) return true;
+    if (woodHasLink(biome, cy) && crossesEW(x => woodLinkY(biome, cy, x), () => ROAD_HALF.WOODLAND, d.x, d.y, r, r)) return true;
+    const sp = woodSpur(biome, cx, cy);
+    return !!sp && segHitsRect(sp.x0, sp.y0,
+      sp.x0 + (sp.x1 - sp.x0) * 0.82, sp.y0 + (sp.y1 - sp.y0) * 0.82,
+      d.x, d.y, r + SPUR_HALF, r + SPUR_HALF);
+  };
+  const checkpointEdge = (x, y, r) => {
+    for (const [ix, iy] of [[cx, cy], [cx + 1, cy], [cx, cy + 1], [cx + 1, cy + 1]]) {
+      if (cityIsCheckpoint(biome, ix, iy) &&
+          Math.abs(x - ix * CHUNK_W) < 470 + r && Math.abs(y - iy * CHUNK_W) < 470 + r) return true;
+    }
+    return false;
+  };
+  for (const d of decor) {
+    if (!standing[d.t]) continue;
+    const trunk = solid.find(s => s.isTreeTrunk && Math.abs(s.x - d.x) < 1 && Math.abs(s.y - d.y) < 1);
+    if (!trunk) continue;
+    const reg = woodRegion(biome, d.x, d.y);
+    d.forestRegion = reg;
+    d.forestTier = "canopy";
+    d.forestSpecies = woodForestSpecies(reg, d.c || 0, d.forestTier);
+    d.t = d.forestSpecies === "CHARRED_SNAG" ? "SNAG" : d.forestSpecies === "RED_ALDER" ? "TREE" : "PINE";
+    d.forestTrunkKey = trunk.chunkKey;
+    // The saved stem keeps its original girth/yield. Only the spreading crown
+    // tapers at carriageways; its shared mass also drives shadows and material.
+    d.forestCrownScale = 1;
+    for (let n = 0; n < 7 && (reserved(d, radius(d), 4) ||
+         hitsAuthored(d.x, d.y, radius(d) * 2, radius(d) * 2, 24)); n++) d.forestCrownScale *= 0.78;
+    trunk.forestRegion = reg;
+    trunk.forestTier = d.forestTier;
+    trunk.forestSpecies = d.forestSpecies;
+  }
+  for (const list of [decor, decorBake]) for (const d of list) {
+    if (!ground[d.t]) continue;
+    d.forestRegion = woodRegion(biome, d.x, d.y);
+    d.forestTier = "underbrush";
+    d.forestSpecies = d.t === "WEED" || d.t === "HEATHER" ? "BUSH" : d.t;
+  }
+  for (let i = decorBake.length - 1; i >= 0; i--) {
+    const d = decorBake[i];
+    if (!d.forestSpecies) continue;
+    const reach = radius(d);
+    // Existing bank reeds can stand in water. Their whole clump still gives
+    // roads, arrivals, checkpoint approaches and authored buildings room.
+    if (nearAnchor(d.x, d.y, 560 + reach) || checkpointEdge(d.x, d.y, reach) ||
+        roadReserved(d, reach) || hitsAuthored(d.x, d.y, reach * 2, reach * 2, 8)) decorBake.splice(i, 1);
+  }
+  for (const s of solid) {
+    if (s.propType !== "BOULDER" && !s.isRock) continue;
+    s.forestRegion = woodRegion(biome, s.x, s.y);
+    s.forestSpecies = "BOULDER";
+    s.forestTier = "ground";
+  }
+
+  let added = 0;
+  for (let i = 0; i < 45 && added < 10; i++) {
+    const x = ox + rngRange(rng, 85, CHUNK_W - 85), y = oy + rngRange(rng, 85, CHUNK_W - 85);
+    const reg = woodRegion(biome, x, y);
+    const habitat = FOREST_REGIONS[reg];
+    const density = 0.2 * habitat.canopy + 0.8 * habitat.midstory;
+    if (rng() > density || bnoise(biome, x + 613, y - 927, 0.0026) < 0.36) continue;
+    const tier = rng() < 0.22 ? "canopy" : "midstory";
+    const species = woodForestSpecies(reg, rng(), tier);
+    const scale = rngRange(rng, tier === "canopy" ? 1.30 : 0.65, tier === "canopy" ? 1.90 : 1.0);
+    const d = { t: species === "CHARRED_SNAG" ? "SNAG" : species === "RED_ALDER" ? "TREE" : "PINE",
+                x, y, s: scale, r: rng() * TWO_PI, c: rng(), k: RG_CANOPY[reg] || 0,
+                forestSpecies: species, forestRegion: reg, forestTier: tier,
+                forestTrunkKey: cx + "," + cy + ",forest:tree:" + i };
+    const reach = radius(d);
+    if (nearAnchor(x, y, 560 + reach) || checkpointEdge(x, y, reach)) continue;
+    if (reserved(d, reach, 18) || hitsAuthored(x, y, reach * 2, reach * 2, 24)) continue;
+    if (!solidsClearAt(solid, x, y, reach * 2, reach * 2, 24)) continue;
+    const width = tier === "canopy" ? 34 : 24;
+    solid.push({ x, y, w: width, h: width, isTreeTrunk: true, girth: scale,
+                 forestSpecies: species, forestRegion: reg, forestTier: tier,
+                 chunkKey: d.forestTrunkKey });
+    decor.push(d);
+    added++;
+  }
+
+  // Bulk density is baked. World-space copse noise carries ground clusters
+  // through seams; all foliage footprints leave the through routes readable.
+  for (let i = 0; i < 100; i++) {
+    const x = ox + rngRange(rng, 28, CHUNK_W - 28), y = oy + rngRange(rng, 28, CHUNK_W - 28);
+    const reg = woodRegion(biome, x, y);
+    const clump = bnoise(biome, x - 337, y + 619, 0.0032);
+    if (clump < (reg === RG_TIMBER || reg === RG_MARSH ? 0.36 : 0.53)) continue;
+    if (rng() > FOREST_REGIONS[reg].underbrush) continue;
+    const roll = rng();
+    const t = reg === RG_BURN ? (roll < 0.52 ? "ASH" : roll < 0.76 ? "STUMP" : "PEBBLE") :
+              reg === RG_HEATH ? (roll < 0.56 ? "PEBBLE" : roll < 0.83 ? "WEED" : "GRASS") :
+              reg === RG_MARSH ? (roll < 0.36 ? "FERN" : roll < 0.63 ? "REED" : roll < 0.85 ? "WEED" : "MUSHROOM") :
+              (roll < 0.52 ? "FERN" : roll < 0.80 ? "WEED" : roll < 0.93 ? "MUSHROOM" : "LOG");
+    const d = { t, x, y, s: rngRange(rng, 0.75, 1.50), r: rng() * TWO_PI, c: rng(),
+                forestSpecies: t === "WEED" ? "BUSH" : t, forestRegion: reg, forestTier: "underbrush" };
+    const reach = radius(d);
+    if (nearAnchor(x, y, 560 + reach) || checkpointEdge(x, y, reach)) continue;
+    if (reserved(d, reach, 8) || hitsAuthored(x, y, reach * 2, reach * 2, 8)) continue;
+    if (!solidsClearAt(solid, x, y, reach * 2, reach * 2, 4)) continue;
+    decorBake.push(d);
   }
 }
 
@@ -25039,7 +25255,7 @@ function generateChunkContent(biome, cx, cy) {
       // block of them afterwards never gets it. Run the other way round the
       // farmland produced no field, no hedge and no steading anywhere in eight
       // hundred chunks -- the region existed and had nothing in it.
-      const midReg = woodRegion(biome, ox + 600, oy + 600);
+      const midReg = woodLegacyRegion(biome, ox + 600, oy + 600);
       const regionFirst = solid.length;
 
       if (midReg === RG_HEATH) {
@@ -25186,7 +25402,7 @@ function generateChunkContent(biome, cx, cy) {
         const spot = lat.take(56, 56);
         if (!spot) break;
         if (nearAnchor(spot.x, spot.y, 420)) continue;
-        const reg = woodRegion(biome, spot.x, spot.y);
+        const reg = woodLegacyRegion(biome, spot.x, spot.y);
         if (rng() > (RG_TREES[reg] || 0.3)) continue;
         // Local gaps inside a stand -- glades, blowdown, thin soil.
         if (bnoise(biome, spot.x, spot.y, 0.0026) < (reg === RG_TIMBER ? 0.30 : 0.42)) continue;
@@ -26048,6 +26264,9 @@ function generateChunkContent(biome, cx, cy) {
   const districtBlock = solid.some(b => b.cityArchitecture !== undefined);
   for (let i = 0; i < solid.length; i++) solid[i].chunkKey = cx + "," + cy + "," + (districtBlock ? "district:" : solid[i].isCivic ? "civic:" : "") + i;
 
+  appendWoodlandForest(biome, cx, cy, solid, decor, decorBake, nearAnchor);
+  removeDestroyedTreeDecor(biome, solid, decor);
+
   // Strip anything the player already destroyed on a previous visit
   for (let i = solid.length - 1; i >= 0; i--) {
     if (state.destroyed[solid[i].chunkKey]) solid.splice(i, 1);
@@ -26093,16 +26312,23 @@ function generateChunkContent(biome, cx, cy) {
   // 9600 wide and reach four chunks past the block grid — still get right of
   // way. Anything the streamer put on top of one is dropped so the wall keeps
   // a clear approach on both sides.
-  if (authoredMask) {
-    return {
+  const content = authoredMask ? {
       solid:     solid.filter(s => !hitsAuthored(s.x, s.y, s.w || 0, s.h || 0, 24)),
       decor:     decor.filter(d => !hitsAuthored(d.x, d.y, 90, 90, 0)),
       decorBake: decorBake.filter(d => !hitsAuthored(d.x, d.y, 90, 90, 0)),
       cars:      cars.filter(c => !hitsAuthored(c.x, c.y, c.w || 90, c.h || 50, 24))
-    };
+    } : { solid, decor, decorBake, cars };
+  if (biome === 2 && layoutFor(biome, cx, cy) === "WOODLAND") {
+    // Checkpoints, water, forts and authored ground have the last word over
+    // the template. A crown must follow its exact surviving stem through all
+    // of those filters, including saved removals handled above.
+    const stems = new Set(content.solid.filter(s => s.isTreeTrunk).map(s => s.chunkKey));
+    for (let i = content.decor.length - 1; i >= 0; i--) {
+      const d = content.decor[i];
+      if (d.forestTrunkKey && !stems.has(d.forestTrunkKey)) content.decor.splice(i, 1);
+    }
   }
-
-  return { solid, decor, decorBake, cars };
+  return content;
 }
 
 // Props drawn live rather than stamped into the chunk terrain buffer, either
@@ -26128,9 +26354,9 @@ const CLUTTER_ANIMATED = {
 // the same grid the blocks were laid on; outside it there is no city at all,
 // just the country between one Directive post and the next.
 const WOOD_PAL = {
-  base: [88, 118, 63], alt: [107, 134, 76], dark: [52, 76, 43],
-  accent: [132, 156, 90], road: [124, 106, 76], mark: [188, 170, 122],
-  walk: [142, 162, 106], grass: [94, 126, 68]
+  base: [78, 135, 83], alt: [94, 155, 91], dark: [44, 80, 65],
+  accent: [158, 190, 102], road: [140, 114, 77], mark: [215, 186, 123],
+  walk: [158, 180, 113], grass: [86, 149, 87]
 };
 function layoutFor(biome, cx, cy) {
   const def = BIOMES[biome];
@@ -26149,10 +26375,8 @@ function pickClutterType(def, rng, layout, region) {
   const r = rng();
   switch (layout || def.layout) {
     case "WOODLAND":
-      // The ground cover is the fastest read a sub-biome has. A player crossing
-      // out of timber into heath sees the litter change under their feet
-      // several strides before the tree line thins out, and that is what makes
-      // the boundary feel like somewhere rather than like a threshold.
+      // The four forest habitats carry distinct forest-floor rotations. The
+      // one random draw is preserved so saved layout slots never shift.
       switch (region) {
         case RG_TIMBER:
           if (r > 0.82) return "LOG";
@@ -26177,13 +26401,8 @@ function pickClutterType(def, rng, layout, region) {
           if (r > 0.40) return "STUMP";
           if (r > 0.22) return "PEBBLE";
           return "CRACK";
-        case RG_FARM:
-          if (r > 0.80) return "PEBBLE";
-          if (r > 0.62) return "WEED";
-          if (r > 0.40) return "FLOWER";
-          return "GRASS";
       }
-      // Meadow, and the default for anything that has not named a region.
+      // Generic forest-floor rotation for callers with no habitat.
       if (r > 0.88) return "LOG";
       if (r > 0.82) return "STUMP";
       if (r > 0.76) return "MUSHROOM";
@@ -26855,6 +27074,119 @@ function bakePool(g, p) {
   }
 }
 
+// Broad woodland washes are world features, even when their centres belong
+// to one chunk. Replaying adjacent seeds paints their complete footprint on
+// both sides of a texture boundary. The owner consumes its original RNG;
+// roads, water and the small details afterwards keep their old sequence.
+const WOODLAND_PATCH_SINK = {
+  noFill() {}, stroke() {}, strokeWeight() {}, ellipse() {}, noStroke() {},
+  fill() {}, beginShape() {}, vertex() {}, endShape() {}
+};
+function woodlandGroundPatches(g, biome, ox, oy, rng, p, stamp) {
+  // Replays consume the same random arguments for local plates and glints but
+  // only export broad washes. Those small ground details remain owner drawn.
+  g = g || WOODLAND_PATCH_SINK;
+  // Meadow and shade. The base pass has already laid the grass; this is the
+  // structure on top of it -- where the canopy darkens the floor, where the
+  // ground opens out, and the track running through.
+  const canopy = bnoise(biome, ox, oy, 0.00055);
+
+  // Pools of shade under the standing timber, and lighter meadow where it
+  // thins. Radial and edge-free so neither reads as a painted patch.
+  const nShade = 5 + Math.round(canopy * 9);
+  for (let i = 0; i < nShade; i++) {
+    const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+    if (bnoise(biome, rx, ry, 0.0026) < 0.42) continue;
+    stamp(rx, ry, 180 + rng() * 260, 150 + rng() * 220, [16, 30, 14], 16 + rng() * 20);
+  }
+  for (let i = 0; i < 7; i++) {
+    const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+    stamp(rx, ry, 220 + rng() * 300, 180 + rng() * 260,
+              [p.accent[0], p.accent[1], p.accent[2]], 14 + rng() * 16);
+  }
+
+  // --- Regional ground --------------------------------------------------
+  // Every pass here asks the region at its OWN sample point rather than at
+  // the chunk's corner. A boundary therefore comes out as one kind of
+  // ground thinning while another thickens, over a couple of hundred units,
+  // instead of a straight line down a chunk edge. It is the same rule the
+  // generator uses for where a tree is allowed to stand, applied to paint.
+  const regAtB = (x, y) => woodRegion(biome, x, y);
+  let sawFarm = false;
+  for (let i = 0; i < 16; i++) {
+    const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
+    switch (regAtB(rx, ry)) {
+      case RG_TIMBER:
+        // Closed canopy: deep shade, and the rust-brown of needle litter
+        // where the light does reach.
+        stamp(rx, ry, 170 + rng() * 230, 140 + rng() * 190, [25, 62, 67], 24 + rng() * 24);
+        if (rng() > 0.58) stamp(rx, ry, 90 + rng() * 120, 70 + rng() * 95, [155, 126, 64], 22 + rng() * 20);
+        break;
+      case RG_MARSH:
+        // Waterlogged ground, and the shine off standing water in it.
+        stamp(rx, ry, 200 + rng() * 270, 150 + rng() * 210, [59, 139, 98], 32 + rng() * 30);
+        if (rng() > 0.42) {
+          stamp(rx, ry, 70 + rng() * 120, 50 + rng() * 85, [38, 74, 78], 64 + rng() * 52);
+          g.noFill(); g.stroke(198, 226, 226, 42); g.strokeWeight(1.6);
+          g.ellipse(rx, ry, 40 + rng() * 54, 26 + rng() * 34);
+          g.noStroke();
+        }
+        break;
+      case RG_HEATH:
+        // Thin soil: gravel, and bedrock coming through in plates.
+        stamp(rx, ry, 150 + rng() * 210, 120 + rng() * 165, [140, 155, 171], 26 + rng() * 24);
+        if (rng() > 0.52) {
+          const pr = 26 + rng() * 44;
+          g.fill(119, 140, 162, 130 + rng() * 60);
+          g.beginShape();
+          for (let k = 0; k < 7; k++) {
+            const a = (k / 7) * TWO_PI;
+            const rr = pr * (0.7 + 0.42 * Math.abs(Math.sin(k * 2.3 + rx * 0.01)));
+            g.vertex(rx + Math.cos(a) * rr, ry + Math.sin(a) * rr * 0.78);
+          }
+          g.endShape(CLOSE);
+          g.fill(206, 219, 222, 70);
+          g.ellipse(rx - LIGHT_DX * pr * 0.2, ry - LIGHT_DY * pr * 0.2, pr * 0.9, pr * 0.62);
+        }
+        break;
+      case RG_BURN:
+        // Fire ground: black earth with ash blown across it.
+        stamp(rx, ry, 180 + rng() * 250, 140 + rng() * 200, [62, 42, 81], 44 + rng() * 38);
+        if (rng() > 0.48) stamp(rx, ry, 80 + rng() * 130, 60 + rng() * 95, [183, 133, 92], 26 + rng() * 24);
+        break;
+      case RG_FARM:
+        sawFarm = true;
+        stamp(rx, ry, 160 + rng() * 220, 130 + rng() * 170, [122, 98, 62], 24 + rng() * 22);
+        break;
+      default:
+        break;
+    }
+  }
+
+  return sawFarm;
+}
+
+function bakeSharedWoodlandPatches(g, biome, cx, cy, rng, p) {
+  const ox = cx * CHUNK_W, oy = cy * CHUNK_W;
+  const stamp = (x, y, w, h, col, alpha) => {
+    if (x + w * 0.5 < ox || x - w * 0.5 > ox + CHUNK_W ||
+        y + h * 0.5 < oy || y - h * 0.5 > oy + CHUNK_W) return;
+    softStamp(g, x, y, w, h, col, alpha);
+  };
+  let sawFarm = false;
+  // Stable world order matters where translucent features overlap. Shared
+  // seeds occur in the same order in each neighbouring texture.
+  for (let ix = cx - 1; ix <= cx + 1; ix++) for (let iy = cy - 1; iy <= cy + 1; iy++) {
+    if (layoutFor(biome, ix, iy) !== "WOODLAND") continue;
+    const owner = ix === cx && iy === cy;
+    const sourceRng = owner ? rng : makeRng(chunkHash(biome, ix, iy, 7));
+    const farm = woodlandGroundPatches(owner ? g : null, biome,
+      ix * CHUNK_W, iy * CHUNK_W, sourceRng, p, stamp);
+    if (owner) sawFarm = farm;
+  }
+  return sawFarm;
+}
+
 function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, layout) {
   const p = pal || def.pal;
   g.noStroke();
@@ -27523,82 +27855,8 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
     }
 
     case "WOODLAND": {
-      // Meadow and shade. The base pass has already laid the grass; this is the
-      // structure on top of it -- where the canopy darkens the floor, where the
-      // ground opens out, and the track running through.
-      const canopy = bnoise(biome, ox, oy, 0.00055);
-
-      // Pools of shade under the standing timber, and lighter meadow where it
-      // thins. Radial and edge-free so neither reads as a painted patch.
-      const nShade = 5 + Math.round(canopy * 9);
-      for (let i = 0; i < nShade; i++) {
-        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
-        if (bnoise(biome, rx, ry, 0.0026) < 0.42) continue;
-        softStamp(g, rx, ry, 180 + rng() * 260, 150 + rng() * 220, [16, 30, 14], 16 + rng() * 20);
-      }
-      for (let i = 0; i < 7; i++) {
-        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
-        softStamp(g, rx, ry, 220 + rng() * 300, 180 + rng() * 260,
-                  [p.accent[0], p.accent[1], p.accent[2]], 14 + rng() * 16);
-      }
-
-      // --- Regional ground --------------------------------------------------
-      // Every pass here asks the region at its OWN sample point rather than at
-      // the chunk's corner. A boundary therefore comes out as one kind of
-      // ground thinning while another thickens, over a couple of hundred units,
-      // instead of a straight line down a chunk edge. It is the same rule the
-      // generator uses for where a tree is allowed to stand, applied to paint.
       const regAtB = (x, y) => woodRegion(biome, x, y);
-      let sawFarm = false;
-      for (let i = 0; i < 16; i++) {
-        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
-        switch (regAtB(rx, ry)) {
-          case RG_TIMBER:
-            // Closed canopy: deep shade, and the rust-brown of needle litter
-            // where the light does reach.
-            softStamp(g, rx, ry, 170 + rng() * 230, 140 + rng() * 190, [20, 33, 17], 24 + rng() * 24);
-            if (rng() > 0.58) softStamp(g, rx, ry, 90 + rng() * 120, 70 + rng() * 95, [88, 64, 38], 22 + rng() * 20);
-            break;
-          case RG_MARSH:
-            // Waterlogged ground, and the shine off standing water in it.
-            softStamp(g, rx, ry, 200 + rng() * 270, 150 + rng() * 210, [44, 62, 52], 32 + rng() * 30);
-            if (rng() > 0.42) {
-              softStamp(g, rx, ry, 70 + rng() * 120, 50 + rng() * 85, [38, 74, 78], 64 + rng() * 52);
-              g.noFill(); g.stroke(198, 226, 226, 42); g.strokeWeight(1.6);
-              g.ellipse(rx, ry, 40 + rng() * 54, 26 + rng() * 34);
-              g.noStroke();
-            }
-            break;
-          case RG_HEATH:
-            // Thin soil: gravel, and bedrock coming through in plates.
-            softStamp(g, rx, ry, 150 + rng() * 210, 120 + rng() * 165, [130, 122, 98], 26 + rng() * 24);
-            if (rng() > 0.52) {
-              const pr = 26 + rng() * 44;
-              g.fill(118, 116, 104, 130 + rng() * 60);
-              g.beginShape();
-              for (let k = 0; k < 7; k++) {
-                const a = (k / 7) * TWO_PI;
-                const rr = pr * (0.7 + 0.42 * Math.abs(Math.sin(k * 2.3 + rx * 0.01)));
-                g.vertex(rx + Math.cos(a) * rr, ry + Math.sin(a) * rr * 0.78);
-              }
-              g.endShape(CLOSE);
-              g.fill(150, 148, 134, 70);
-              g.ellipse(rx - LIGHT_DX * pr * 0.2, ry - LIGHT_DY * pr * 0.2, pr * 0.9, pr * 0.62);
-            }
-            break;
-          case RG_BURN:
-            // Fire ground: black earth with ash blown across it.
-            softStamp(g, rx, ry, 180 + rng() * 250, 140 + rng() * 200, [25, 21, 19], 44 + rng() * 38);
-            if (rng() > 0.48) softStamp(g, rx, ry, 80 + rng() * 130, 60 + rng() * 95, [168, 162, 154], 26 + rng() * 24);
-            break;
-          case RG_FARM:
-            sawFarm = true;
-            softStamp(g, rx, ry, 160 + rng() * 220, 130 + rng() * 170, [122, 98, 62], 24 + rng() * 22);
-            break;
-          default:
-            break;
-        }
-      }
+      const sawFarm = bakeSharedWoodlandPatches(g, biome, cx, cy, rng, p);
 
       // Marsh pools. Painted with the ground rather than drawn over it -- see
       // bakePool(). woodPools() hands the generator the identical list, so the
@@ -29041,15 +29299,17 @@ class ChunkManager {
     if (stand) _standDecor.length = 0;
     for (const ch of this.chunks.values()) {
       const wx = ch.cx * CHUNK_W, wy = ch.cy * CHUNK_W;
-      if (wx > viewRight + 200 || wx + CHUNK_W < viewLeft - 200) continue;
-      if (wy > viewBottom + 200 || wy + CHUNK_W < viewTop - 200) continue;
+      const chunkPad = this.biome === 2 ? 400 : 200;
+      if (wx > viewRight + chunkPad || wx + CHUNK_W < viewLeft - chunkPad) continue;
+      if (wy > viewBottom + chunkPad || wy + CHUNK_W < viewTop - chunkPad) continue;
       // Cull generously. A tree canopy reaches ~78 units at full scale, so the
       // old +/-60 margin clipped props whose centre had just left the view
       // while their crown was still on screen -- they blinked out at the
       // border instead of sliding off it.
       for (const d of ch.decor) {
-        if (d.x < viewLeft - 120 || d.x > viewRight + 120)  continue;
-        if (d.y < viewTop - 120  || d.y > viewBottom + 120) continue;
+        const pad = d.forestSpecies ? forestPropCullPad(d) : 120;
+        if (d.x < viewLeft - pad || d.x > viewRight + pad)  continue;
+        if (d.y < viewTop - pad  || d.y > viewBottom + pad) continue;
         // A tree is handed to the depth sort instead, so the player passes
         // behind its crown rather than standing on it. Outside a sorted level
         // there is nothing to hand it to, so it paints here as it always did.
@@ -30634,7 +30894,481 @@ function drawBiomeShadows() {
 // (baked once) or drawn live for the handful of props that animate. In p5's
 // global mode every drawing function is a property of `window`, so passing
 // `window` as the target draws to the main canvas.
+// The PNW art keeps the same harvestable trunks and decor type names, but its
+// silhouettes are species-specific. Everything below is bounded vector work:
+// crowns stay live, small forest-floor pieces use this same painter in the bake.
+// A shadow belongs to the roots, BEFORE the camera lean; the sun never decides
+// where the crown moves. The GL rig owns canopy shadows when it is active.
+// Closed forest polygons use the same Canvas calls as p5's 2D renderer.
+// This avoids allocating a p5 vertex record for every needle/bough edge. Other
+// versions, alternate renderers and accessible output keep p5's own path.
+const _forestPolygonPainters = new WeakMap();
+function forestPolygonPainter(g) {
+  const inst = typeof window !== 'undefined' && g === window && typeof p5 !== 'undefined' ? p5.instance : g;
+  const renderer = inst && inst._renderer;
+  if (typeof p5 === 'undefined' || (p5.VERSION !== '1.9.4' && p5.VERSION !== '1.11.11') ||
+      typeof p5.Renderer2D !== 'function' || !renderer || !(renderer instanceof p5.Renderer2D) || renderer.isP3D || renderer._clipping ||
+      (inst._accessibleOutputs && (inst._accessibleOutputs.grid || inst._accessibleOutputs.text))) return g;
+  let path = _forestPolygonPainters.get(renderer);
+  if (!path) {
+    const context = renderer.drawingContext;
+    path = {
+      empty: true, x: 0, y: 0,
+      beginShape() { this.empty = true; context.beginPath(); },
+      vertex(x, y) {
+        if (this.empty) { this.empty = false; this.x = x; this.y = y; context.moveTo(x, y); }
+        else context.lineTo(x, y);
+      },
+      endShape(mode) {
+        if (this.empty || (!renderer._doFill && !renderer._doStroke)) return;
+        if (mode === CLOSE) {
+          // Both p5 versions append the first vertex in the instance and
+          // renderer. Keep both closing edges for identical stroke pixels.
+          context.lineTo(this.x, this.y); context.lineTo(this.x, this.y); context.closePath();
+        }
+        if (renderer._doFill) context.fill();
+        if (renderer._doStroke) context.stroke();
+        if (p5.VERSION === '1.11.11') context.closePath();
+      }
+    };
+    _forestPolygonPainters.set(renderer, path);
+  }
+  return path;
+}
+
+function forestContactShadow(g, w, h, len, alpha, density) {
+  const path = forestPolygonPainter(g);
+  const a = alpha * density;
+  if (a < 1.5) return;
+  const dx = LIGHT_DX * len, dy = LIGHT_DY * len;
+  const phase = Math.atan2(dy, dx);
+  g.noStroke(); g.fill(14, 35, 36, a);
+  path.beginShape();
+  for (let i = 0; i <= 8; i++) {
+    const a0 = phase + HALF_PI + i * PI / 8;
+    path.vertex(Math.cos(a0) * w * 0.5, Math.sin(a0) * h * 0.5);
+  }
+  for (let i = 0; i <= 8; i++) {
+    const a0 = phase - HALF_PI + i * PI / 8;
+    path.vertex(dx + Math.cos(a0) * w * 0.5, dy + Math.sin(a0) * h * 0.5);
+  }
+  path.endShape(CLOSE);
+}
+
+// Small changes in the perimeter give a broken branch edge without a regular
+// wheel of spokes. The highlight follows the SUN in world space; phase only
+// varies the outline, so neighbouring rotated trees still share one light.
+function forestCrownPath(g, rx, ry, phase, seed, cedar, alder) {
+  const path = forestPolygonPainter(g);
+  const n = alder ? 13 : 20;
+  path.beginShape();
+  for (let i = 0; i < n; i++) {
+    const a = i * TWO_PI / n;
+    const tooth = alder ? 0.94 : (i % 2 ? 0.84 : 0.94);
+    const wobble = 1 + 0.04 * Math.sin(i * 2.17 + seed * 11 + phase);
+    const lean = cedar ? 0.02 * Math.cos(a * 3 + phase) : 0;
+    path.vertex(Math.cos(a) * rx * tooth * wobble,
+             Math.sin(a) * ry * (tooth + lean) * wobble);
+  }
+  path.endShape(CLOSE);
+}
+
+function forestEvergreenTier(g, rx, ry, ax, ay, seed, cedar) {
+  const path = forestPolygonPainter(g);
+  // A cone's tip follows the projected height. Stepped bough edges rather
+  // than radial triangles distinguish a standing evergreen from a star or a
+  // pile of round plates. Every normalized point stays inside radius one.
+  const px = -ay, py = ax;
+  path.beginShape(); path.vertex(ax * rx, ay * ry);
+  for (let side = -1; side <= 1; side += 2) {
+    if (side > 0) {
+      path.vertex(-ax * rx * 0.38, -ay * ry * 0.38);
+    }
+    for (let k = 0; k < 6; k++) {
+      const j = side < 0 ? k : 5 - k;
+      const f = j === 0 ? 0.57 : j === 1 ? 0.51 : j === 2 ? 0.23 : j === 3 ? 0.15 : j === 4 ? -0.15 : -0.30;
+      const spread = j === 0 ? 0.35 : j === 1 ? 0.20 : j === 2 ? 0.66 : j === 3 ? 0.48 : j === 4 ? 0.94 : 0.57;
+      const variation = 0.94 + 0.04 * Math.sin(seed * 13 + j * 2.8 + side);
+      const forward = cedar && j % 2 === 0 ? f + 0.035 : f;
+      path.vertex((ax * forward + px * spread * side * variation) * rx,
+               (ay * forward + py * spread * side * variation) * ry);
+    }
+  }
+  path.endShape(CLOSE);
+}
+
+function forestEvergreenFacet(g, rx, ry, ax, ay) {
+  const path = forestPolygonPainter(g);
+  const px = -ay, py = ax;
+  const side = -(LIGHT_DX * px + LIGHT_DY * py) >= 0 ? 1 : -1;
+  path.beginShape(); path.vertex(ax * rx * 0.90, ay * ry * 0.90);
+  path.vertex((ax * 0.22 + px * 0.53 * side) * rx, (ay * 0.22 + py * 0.53 * side) * ry);
+  path.vertex((-ax * 0.15 + px * 0.78 * side) * rx, (-ay * 0.15 + py * 0.78 * side) * ry);
+  path.vertex((-ax * 0.28 + px * 0.43 * side) * rx, (-ay * 0.28 + py * 0.43 * side) * ry);
+  path.vertex(-ax * rx * 0.32, -ay * ry * 0.32);
+  path.vertex(ax * rx * 0.05, ay * ry * 0.05);
+  path.endShape(CLOSE);
+}
+
+function forestCrownFacet(g, rx, ry, seed) {
+  const path = forestPolygonPainter(g);
+  const sun = Math.atan2(-LIGHT_DY, -LIGHT_DX);
+  path.beginShape();
+  path.vertex(-LIGHT_DX * rx * 0.06, -LIGHT_DY * ry * 0.06);
+  for (let i = 0; i <= 7; i++) {
+    const a = sun - 1.15 + i * 2.30 / 7;
+    const r = 0.78 + 0.07 * Math.sin(i * 2.4 + seed * 9);
+    path.vertex(Math.cos(a) * rx * r, Math.sin(a) * ry * r);
+  }
+  path.endShape(CLOSE);
+}
+
+function paintForestClutter(g, d, t) {
+  const path = forestPolygonPainter(g);
+  const fp = forestPropProfile(d);
+  if (!fp) return false;
+  const s = d.s || 1, seed = d.c || 0, rot = d.r || 0;
+  const species = d.forestSpecies;
+  const habitat = FOREST_REGIONS[d.forestRegion] || FOREST_REGIONS.TIMBER;
+  const wet = d.forestRegion === "MARSH", alpine = d.forestRegion === "HEATH";
+  const burnt = d.forestRegion === "BURN" || species === "CHARRED_SNAG";
+  const live = typeof window !== 'undefined' && g === window && BIOME_ACTIVE;
+  const cm = forestCanopyMass(d);
+  const ownsShadow = live && cm && typeof glRigOwnsSunShadows === 'function' && glRigOwnsSunShadows();
+  const sd = ownsShadow ? 0 : live ? shadowDensity() : 1;
+  const sl = live ? shadowLengthScale() : 1;
+  const cl = Math.cos(-rot), sn = Math.sin(-rot);
+  const ldx = LIGHT_DX * cl - LIGHT_DY * sn, ldy = LIGHT_DX * sn + LIGHT_DY * cl;
+  g.push(); g.translate(d.x, d.y);
+
+  if (cm) {
+    const crownScale = d.forestCrownScale === undefined ? 1 : d.forestCrownScale;
+    const rx = cm[1] * s * crownScale * 0.5, ry = cm[2] * s * crownScale * 0.5;
+    let lx = 0, ly = 0;
+    if (live) {
+      massLean(d.x, d.y, cm[0] * s, _leanTmp);
+      lx = _leanTmp[0]; ly = _leanTmp[1];
+    }
+    const tw = (fp.trunkWidth || 9) * s;
+    const ink = (fp.outline || 2.4) * s;
+    const axisLen = Math.hypot(lx / Math.max(rx, 1), ly / Math.max(ry, 1));
+    const ax = axisLen > 0.01 ? lx / Math.max(rx, 1) / axisLen : 0;
+    const ay = axisLen > 0.01 ? ly / Math.max(ry, 1) / axisLen : 1;
+    if (species === "CHARRED_SNAG") {
+      // Bare broken timber casts branches, never a canopy-sized dark disc.
+      if (sd > 0.025) {
+        g.stroke(13, 29, 29, 76 * sd); g.strokeWeight(3.4 * s);
+        g.line(0, 0, LIGHT_DX * cm[0] * s * 0.65 * sl,
+                     LIGHT_DY * cm[0] * s * 0.65 * sl);
+        for (let i = 0; i < 5; i++) {
+          const a = rot + i * 2.17, f = 0.32 + i * 0.11;
+          const bx = LIGHT_DX * cm[0] * s * f * sl, by = LIGHT_DY * cm[0] * s * f * sl;
+          g.line(bx, by, bx + Math.cos(a) * rx * 0.75, by + Math.sin(a) * ry * 0.75);
+        }
+      }
+    } else {
+      forestContactShadow(g, rx * 1.60, ry * 1.48, cm[0] * s * 0.44 * sl, 66, sd);
+    }
+    // A buttressed foot and tapered bark connect the displaced crown to the
+    // collision trunk. Broad bark planes survive both zoom and cel shading.
+    g.stroke(22, 37, 34); g.strokeWeight(ink * 0.72);
+    g.fill(burnt ? 45 : 99, burnt ? 42 : 62, burnt ? 39 : 39);
+    path.beginShape();
+    path.vertex(-tw * 0.78, tw * 0.48); path.vertex(-tw * 0.45, -tw * 0.16);
+    path.vertex(lx - tw * 0.26, ly - tw * 0.28);
+    path.vertex(lx + tw * 0.25, ly - tw * 0.12);
+    path.vertex(tw * 0.45, -tw * 0.16); path.vertex(tw * 0.78, tw * 0.48);
+    path.endShape(CLOSE);
+    g.noStroke(); g.fill(burnt ? 95 : 180, burnt ? 82 : 119, burnt ? 68 : 65);
+    const edge = LIGHT_DX < 0 ? 1 : -1;
+    g.quad(tw * 0.48 * edge, -tw * 0.2, tw * 0.14 * edge, -tw * 0.16,
+           lx + tw * 0.05 * edge, ly - tw * 0.21, lx + tw * 0.22 * edge, ly - tw * 0.15);
+    if (species === "CHARRED_SNAG") {
+      for (let i = 0; i < 5; i++) {
+        const a = rot + i * 2.17 + Math.sin(seed * 7 + i) * 0.15;
+        const f = 0.30 + i * 0.12;
+        const bx = lx * f, by = ly * f;
+        const ex = bx + Math.cos(a) * rx * (0.65 + i % 2 * 0.20);
+        const ey = by + Math.sin(a) * ry * (0.65 + i % 2 * 0.20);
+        g.stroke(24, 36, 35); g.strokeWeight((4.7 - i * 0.4) * s);
+        g.line(bx, by, ex, ey);
+        g.stroke(106, 94, 71); g.strokeWeight(1.3 * s);
+        g.line(bx - LIGHT_DX * s, by - LIGHT_DY * s, ex - LIGHT_DX * s, ey - LIGHT_DY * s);
+        g.stroke(27, 38, 36); g.strokeWeight(2.3 * s);
+        g.line(ex, ey, ex + Math.cos(a + 0.7) * rx * 0.22, ey + Math.sin(a + 0.7) * ry * 0.22);
+      }
+      g.noStroke(); g.fill(182, 137, 77);
+      g.triangle(lx - tw * 0.24, ly - tw * 0.23, lx + tw * 0.19, ly - tw * 0.14,
+                 lx + tw * 0.04, ly + tw * 0.11);
+      g.pop(); return true;
+    }
+    const cedar = species === "WESTERN_CEDAR", alder = species === "RED_ALDER";
+    const spruce = species === "SITKA_SPRUCE", lodge = species === "LODGEPOLE_PINE";
+    let cr = cedar ? 65 : alder ? 94 : spruce ? 38 : lodge ? 63 : 40;
+    let cg = cedar ? 137 : alder ? 156 : spruce ? 126 : lodge ? 131 : 137;
+    let cb = cedar ? 77 : alder ? 75 : spruce ? 120 : lodge ? 107 : 99;
+    cr = cr * 0.76 + habitat.foliage[0] * 0.24;
+    cg = cg * 0.76 + habitat.foliage[1] * 0.24;
+    cb = cb * 0.76 + habitat.foliage[2] * 0.24;
+    const hr = (alder ? 183 : cedar ? 161 : spruce ? 116 : 124) * 0.56 + habitat.highlight[0] * 0.44;
+    const hg = (alder ? 211 : cedar ? 201 : spruce ? 195 : 203) * 0.56 + habitat.highlight[1] * 0.44;
+    const hb = (alder ? 101 : cedar ? 95 : spruce ? 163 : 126) * 0.56 + habitat.highlight[2] * 0.44;
+    if (!alder) {
+      // The foliage is one solid cone, not three hats at the end of a rod.
+      // A broad lower crown joins the leader across their projected heights;
+      // the smaller whorls below cut bough bands into this continuous body.
+      // All lateral points are inside the shared crown radius, so the visual
+      // crown still fits the generator's road clearance and shadow profile.
+      const px = -ay, py = ax;
+      const bx = lx * 0.45, by = ly * 0.45;
+      const tipx = lx + ax * rx * 0.44, tipy = ly + ay * ry * 0.44;
+      g.stroke(17, 45, 44); g.strokeWeight(ink);
+      g.fill(cr * 0.45 + habitat.shade[0] * 0.42,
+             cg * 0.45 + habitat.shade[1] * 0.42, cb * 0.45 + habitat.shade[2] * 0.42);
+      path.beginShape();
+      path.vertex(bx - ax * rx * 0.38, by - ay * ry * 0.38);
+      path.vertex(bx + (-ax * 0.30 - px * 0.57) * rx, by + (-ay * 0.30 - py * 0.57) * ry);
+      path.vertex(bx + (-ax * 0.15 - px * 0.91) * rx, by + (-ay * 0.15 - py * 0.91) * ry);
+      path.vertex(tipx, tipy);
+      path.vertex(bx + (-ax * 0.15 + px * 0.91) * rx, by + (-ay * 0.15 + py * 0.91) * ry);
+      path.vertex(bx + (-ax * 0.30 + px * 0.57) * rx, by + (-ay * 0.30 + py * 0.57) * ry);
+      path.endShape(CLOSE);
+      const side = -(LIGHT_DX * px + LIGHT_DY * py) >= 0 ? 1 : -1;
+      g.noStroke(); g.fill(cr * 0.82, cg * 0.86, cb * 0.82);
+      g.triangle(bx - ax * rx * 0.27, by - ay * ry * 0.27,
+                 bx + (-ax * 0.14 + px * side * 0.84) * rx,
+                 by + (-ay * 0.14 + py * side * 0.84) * ry, tipx, tipy);
+    }
+    const tiers = alder ? 2 : 3;
+    for (let i = 0; i < tiers; i++) {
+      // Low boughs start halfway up the stem. A short rear plane retains a
+      // root gap at the centred tilt; broad whorls cover the long edge lean.
+      const f = alder ? 0.78 + i * 0.22 : i === 0 ? 0.45 : i === 1 ? 0.72 : 1;
+      const size = alder ? 1 - i * 0.36 : 1 - i * 0.28;
+      const tx = lx * f, ty = ly * f;
+      const depth = ry * size * (alder ? 0.76 : 1);
+      g.push(); g.translate(tx, ty);
+      g.stroke(17, 45, 44); g.strokeWeight(ink);
+      g.fill(cr * 0.24 + habitat.shade[0] * 0.70,
+             cg * 0.24 + habitat.shade[1] * 0.70, cb * 0.24 + habitat.shade[2] * 0.70);
+      if (alder) forestCrownPath(g, rx * size, depth, rot + i, seed + i * 0.18, cedar, true);
+      else forestEvergreenTier(g, rx * size, depth, ax, ay, seed + i * 0.18, cedar);
+      g.noStroke(); g.fill(cr, cg + i * 8, cb);
+      if (alder) forestCrownPath(g, rx * size * 0.87, depth * 0.86, rot + i, seed + i * 0.18, cedar, true);
+      else forestEvergreenTier(g, rx * size * 0.88, depth * 0.88, ax, ay, seed + i * 0.18, cedar);
+      g.fill(hr, hg, hb);
+      if (alder) forestCrownFacet(g, rx * size, depth, seed + i * 0.18);
+      else forestEvergreenFacet(g, rx * size, depth, ax, ay);
+      // A few broken sprays give needles scale without a costly needle field.
+      g.stroke(cr * 0.60, cg * 0.72, cb * 0.68); g.strokeWeight(1.6 * s);
+      for (let j = 0; j < 3; j++) {
+        const a = rot + j * 2.15 + i * 0.41;
+        g.line(Math.cos(a) * rx * size * 0.35, Math.sin(a) * depth * 0.35,
+               Math.cos(a + 0.17) * rx * size * 0.68, Math.sin(a + 0.17) * depth * 0.68);
+      }
+      if (alpine && i < 2) {
+        // Broken snow cornices leave most needles showing and distinguish a
+        // ridge tree from the wet lowland species, without a white disc.
+        g.noStroke(); g.fill(207, 231, 217);
+        g.quad(-rx * size * 0.51, -depth * 0.30, -rx * size * 0.10, -depth * 0.47,
+               rx * size * 0.23, -depth * 0.26, -rx * size * 0.18, -depth * 0.22);
+      }
+      g.pop();
+    }
+    g.pop(); return true;
+  }
+
+  // Ground pieces stay broad enough for a 3.125-world-unit terrain texel.
+  // Their outlines and colour bands carry the read; tiny stipple would vanish.
+  switch (species) {
+    case "BUSH": {
+      forestContactShadow(g, 34 * s, 23 * s, 5 * sl, 50, sd);
+      for (let i = 0; i < 5; i++) {
+        const a = rot + i * 2.4, px = Math.cos(a) * 9 * s, py = Math.sin(a) * 6 * s;
+        g.push(); g.translate(px, py); g.stroke(22, 55, 45); g.strokeWeight(2.4 * s);
+        g.fill(30 + habitat.foliage[0] * 0.38, 60 + habitat.foliage[1] * 0.40,
+               30 + habitat.foliage[2] * 0.32);
+        forestCrownPath(g, (10 + i % 2 * 2) * s, 8 * s, rot, seed + i, true, true);
+        g.noStroke(); g.fill(habitat.highlight[0] * 0.82, habitat.highlight[1] * 0.86, habitat.highlight[2] * 0.80);
+        forestCrownFacet(g, 11 * s, 8 * s, seed + i);
+        g.pop();
+      }
+      if (seed > 0.55) { g.fill(223, 107, 82); g.noStroke(); g.ellipse(5 * s, -3 * s, 4 * s, 4 * s); }
+      break;
+    }
+    case "FERN": {
+      forestContactShadow(g, 29 * s, 18 * s, 4 * sl, 40, sd);
+      g.rotate(rot);
+      for (let i = 0; i < 5; i++) {
+        const a = i * 1.38 + Math.sin(seed * 8 + i) * 0.2;
+        const length = (15 + (i * 7 + seed * 11) % 10) * s;
+        g.push(); g.rotate(a); g.noStroke(); g.fill(25, 78, 53);
+        path.beginShape(); path.vertex(0, 0);
+        for (let j = 1; j <= 6; j++) {
+          const x = j * length / 7, w = Math.sin(j * PI / 7) * 4.5 * s;
+          path.vertex(x - 2 * s, -w); path.vertex(x + 1.5 * s, -w * 0.48);
+        }
+        path.vertex(length, 0);
+        for (let j = 6; j >= 1; j--) {
+          const x = j * length / 7, w = Math.sin(j * PI / 7) * 4.5 * s;
+          path.vertex(x + 1.5 * s, w * 0.48); path.vertex(x - 2 * s, w);
+        }
+        path.endShape(CLOSE);
+        const lit = -(Math.cos(a) * ldx + Math.sin(a) * ldy);
+        g.fill(56 + habitat.foliage[0] * 0.40 + lit * 24,
+               92 + habitat.foliage[1] * 0.42 + lit * 20,
+               42 + habitat.foliage[2] * 0.32 + lit * 10);
+        g.triangle(0, 0, length, 0, length * 0.39, -3.2 * s);
+        g.stroke(181, 205, 104); g.strokeWeight(1.5 * s); g.line(0, 0, length * 0.86, 0);
+        g.pop();
+      }
+      break;
+    }
+    case "LOG": {
+      forestContactShadow(g, 47 * s, 13 * s, 5 * sl, 63, sd);
+      g.rotate(rot); g.stroke(30, 43, 35); g.strokeWeight(2 * s);
+      g.fill(burnt ? 59 : 105, burnt ? 54 : 66, burnt ? 44 : 39);
+      g.quad(-22 * s, -6 * s, 20 * s, -5 * s, 22 * s, 6 * s, -20 * s, 7 * s);
+      g.noStroke(); g.fill(burnt ? 97 : 172, burnt ? 85 : 111, burnt ? 65 : 59);
+      const litY = -ldy * 3 * s;
+      g.quad(-20 * s, litY - 2 * s, 19 * s, litY - 2 * s, 20 * s, litY + s, -19 * s, litY + s);
+      g.stroke(57, 46, 30); g.strokeWeight(1.3 * s); g.line(-18 * s, 3 * s, 18 * s, 2 * s);
+      g.fill(218, 170, 99); g.stroke(48, 43, 31); g.strokeWeight(2.4 * s);
+      g.ellipse(-21 * s, 0, 9 * s, 12 * s);
+      g.noFill(); g.stroke(150, 100, 55); g.strokeWeight(1.3 * s); g.ellipse(-21 * s, 0, 4 * s, 7 * s);
+      if (!burnt) {
+        g.noStroke(); g.fill(87, 147, 65);
+        g.quad(-7 * s, -6 * s, 8 * s, -5 * s, 13 * s, -2 * s, -4 * s, -2 * s);
+        g.fill(151, 188, 81); g.triangle(-7 * s, -6 * s, 4 * s, -5 * s, -2 * s, -3 * s);
+      }
+      break;
+    }
+    case "STUMP": {
+      forestContactShadow(g, 26 * s, 19 * s, 5 * sl, 56, sd);
+      g.rotate(rot); g.stroke(35, 44, 31); g.strokeWeight(2.3 * s);
+      g.fill(burnt ? 62 : 111, burnt ? 56 : 73, burnt ? 44 : 41);
+      path.beginShape();
+      for (let i = 0; i < 10; i++) {
+        const a = i * TWO_PI / 10 + seed * 2, r = i % 2 ? 9 : 14;
+        path.vertex(Math.cos(a) * r * s, Math.sin(a) * r * s * 0.72);
+      }
+      path.endShape(CLOSE);
+      g.fill(burnt ? 136 : 223, burnt ? 117 : 175, burnt ? 78 : 105);
+      g.ellipse(-ldx * 2 * s, -ldy * 2 * s, 18 * s, 14 * s);
+      g.noFill(); g.stroke(149, 103, 57); g.strokeWeight(1.25 * s);
+      g.ellipse(-ldx * 2 * s, -ldy * 2 * s, 11 * s, 8 * s);
+      g.ellipse(-ldx * 2 * s, -ldy * 2 * s, 5 * s, 3.5 * s);
+      g.stroke(72, 58, 35); g.strokeWeight(1.6 * s); g.line(0, 0, 6 * s, 3 * s);
+      if (wet) { g.noStroke(); g.fill(114, 162, 70); g.ellipse(-9 * s, 4 * s, 9 * s, 5 * s); }
+      break;
+    }
+    case "MUSHROOM": {
+      forestContactShadow(g, 21 * s, 10 * s, 2 * sl, 38, sd);
+      for (let i = 0; i < 3; i++) {
+        const a = rot + i * 2.31, px = Math.cos(a) * 6 * s, py = Math.sin(a) * 4 * s;
+        const r = (3.5 + i % 2 * 1.5) * s;
+        g.stroke(69, 60, 39); g.strokeWeight(1.5 * s); g.fill(238, 221, 163);
+        g.quad(px - s, py, px + s, py, px + 1.3 * s, py + 4 * s, px - 1.3 * s, py + 4 * s);
+        g.fill(i === 1 ? 230 : 189, i === 1 ? 153 : 77, i === 1 ? 58 : 56);
+        g.ellipse(px, py - 1.5 * s, r * 2, r * 1.45);
+        g.noStroke(); g.fill(255, 220, 150);
+        g.ellipse(px - LIGHT_DX * r * 0.35, py - 1.5 * s - LIGHT_DY * r * 0.35, r * 0.65, r * 0.45);
+      }
+      break;
+    }
+    case "PEBBLE": {
+      forestContactShadow(g, 13 * s, 9 * s, 2 * sl, 42, sd);
+      g.rotate(rot); g.stroke(40, 63, 63); g.strokeWeight(1.5 * s); g.fill(96, 126, 125);
+      path.beginShape();
+      for (let i = 0; i < 6; i++) {
+        const a = i * TWO_PI / 6, r = (5.1 + Math.sin(seed * 7 + i * 2.3)) * s;
+        path.vertex(Math.cos(a) * r, Math.sin(a) * r * 0.72);
+      }
+      path.endShape(CLOSE); g.noStroke(); g.fill(173, 195, 174);
+      g.triangle(-ldx * 5 * s, -ldy * 3 * s, -3 * s, -2 * s, 3 * s, -s);
+      break;
+    }
+    case "REED": {
+      forestContactShadow(g, 19 * s, 9 * s, 3 * sl, 30, sd);
+      g.rotate(rot);
+      for (let i = 0; i < 5; i++) {
+        const a = -1.2 + i * 0.51, len = (13 + (i * 7 + seed * 8) % 9) * s;
+        g.push(); g.rotate(a); g.noStroke(); g.fill(48, 110, 70);
+        g.triangle(-2 * s, 0, len, -2 * s, 2 * s, 2.3 * s);
+        g.fill(150, 181, 91); g.triangle(0, 0, len, -2 * s, len * 0.48, -1.2 * s);
+        g.pop();
+      }
+      break;
+    }
+    case "ASH": {
+      g.rotate(rot); g.noStroke(); g.fill(42, 48, 40, 165);
+      g.quad(-16 * s, -5 * s, 8 * s, -9 * s, 17 * s, 5 * s, -7 * s, 8 * s);
+      g.fill(152, 152, 121, 130); g.triangle(-12 * s, -3 * s, 9 * s, -5 * s, 3 * s, 5 * s);
+      g.fill(32, 37, 34); g.quad(-7 * s, 0, 3 * s, -2 * s, 7 * s, s, -4 * s, 3 * s);
+      break;
+    }
+    default: g.pop(); return false;
+  }
+  g.pop(); return true;
+}
+
+function paintForestBoulder(g, b, leanX, leanY) {
+  const path = forestPolygonPainter(g);
+  const wet = b.forestRegion === "MARSH", alpine = b.forestRegion === "HEATH";
+  const burnt = b.forestRegion === "BURN";
+  const seed = b.tint || 0, phase = b.angle || 0;
+  const w = b.w || 70, h = b.h || 60;
+  const sd = typeof glRigOwnsSunShadows === 'function' && glRigOwnsSunShadows() ? 0 : shadowDensity();
+  // drawBiomeProps already translated to the leaned top. Compensating here
+  // keeps the shadow under its ground footprint, then the rock art rides above.
+  g.push(); g.translate(b.x - leanX, b.y - leanY);
+  forestContactShadow(g, w * 0.88, h * 0.69, 17 * shadowLengthScale(), 74, sd);
+  g.pop(); g.push(); g.translate(b.x, b.y);
+  g.stroke(27, 49, 48); g.strokeWeight(3.1);
+  const cr = burnt ? 71 : alpine ? 117 : 86;
+  const cg = burnt ? 77 : alpine ? 137 : 118;
+  const cb = burnt ? 68 : alpine ? 143 : 122;
+  g.fill(cr * 0.69, cg * 0.70, cb * 0.72);
+  path.beginShape();
+  for (let i = 0; i < 7; i++) {
+    const a = i * TWO_PI / 7 + phase;
+    const r = 0.43 + Math.sin(i * 2.37 + seed * 9) * 0.065;
+    path.vertex(Math.cos(a) * w * r, Math.sin(a) * h * r);
+  }
+  path.endShape(CLOSE);
+  g.noStroke(); g.fill(cr + 26, cg + 26, cb + 18);
+  path.beginShape();
+  for (let i = 0; i < 7; i++) {
+    const a = i * TWO_PI / 7 + phase;
+    const r = (0.43 + Math.sin(i * 2.37 + seed * 9) * 0.065) * 0.80;
+    path.vertex(Math.cos(a) * w * r - LIGHT_DX * w * 0.06,
+             Math.sin(a) * h * r - LIGHT_DY * h * 0.06);
+  }
+  path.endShape(CLOSE);
+  g.fill(burnt ? 157 : alpine ? 215 : 191, burnt ? 151 : alpine ? 229 : 212,
+         burnt ? 117 : alpine ? 216 : 187);
+  forestCrownFacet(g, w * 0.40, h * 0.39, seed);
+  // A chisel edge and one crack divide the rock into readable stone planes.
+  g.stroke(cr * 0.57, cg * 0.57, cb * 0.59); g.strokeWeight(1.8);
+  g.line(w * 0.05, h * 0.04, w * 0.29, h * 0.23);
+  g.line(w * 0.05, h * 0.04, -w * 0.13, h * 0.31);
+  if (!burnt) {
+    const mx = LIGHT_DX * w * 0.17, my = LIGHT_DY * h * 0.18;
+    g.noStroke(); g.fill(alpine ? 147 : 74, alpine ? 171 : 130, alpine ? 141 : 71);
+    path.beginShape();
+    path.vertex(mx - w * 0.13, my - h * 0.05); path.vertex(mx - w * 0.04, my - h * 0.10);
+    path.vertex(mx + w * 0.13, my - h * 0.05); path.vertex(mx + w * 0.15, my + h * 0.06);
+    path.vertex(mx + w * 0.02, my + h * 0.11); path.vertex(mx - w * 0.15, my + h * 0.04);
+    path.endShape(CLOSE);
+    g.fill(wet ? 151 : 165, wet ? 188 : 193, wet ? 88 : 108);
+    g.triangle(mx - w * 0.10, my - h * 0.04, mx + w * 0.08, my - h * 0.03,
+               mx - w * 0.02, my + h * 0.04);
+  }
+  g.pop();
+}
+
 function paintClutter(g, d, t) {
+  if (d.forestSpecies && paintForestClutter(g, d, t)) return;
   const s = d.s;
   g.push();
   g.translate(d.x, d.y);
@@ -32120,6 +32854,10 @@ function drawBiomeProps(list, i0, i1) {
       }
 
       case "BOULDER": {
+        if (b.forestSpecies === "BOULDER") {
+          paintForestBoulder(window, b, _plx, _ply);
+          break;
+        }
         // The rotate() is gone, and that was a real fault rather than a tidy
         // up. rotate() carries LIGHT_DX/DY round with it and every highlight
         // below is written in world space, so a field of boulders each had its
@@ -35131,16 +35869,19 @@ function glRigPaintHeight() {
   if (typeof chunkMgr !== 'undefined' && chunkMgr && chunkMgr.chunks) {
     for (const ch of chunkMgr.chunks.values()) {
       const cwx = ch.cx * CHUNK_W, cwy = ch.cy * CHUNK_W;
-      if (cwx > viewRight + 200 || cwx + CHUNK_W < viewLeft - 200) continue;
-      if (cwy > viewBottom + 200 || cwy + CHUNK_W < viewTop - 200) continue;
+      const chunkPad = chunkMgr.biome === 2 ? 400 : 200;
+      if (cwx > viewRight + chunkPad || cwx + CHUNK_W < viewLeft - chunkPad) continue;
+      if (cwy > viewBottom + chunkPad || cwy + CHUNK_W < viewTop - chunkPad) continue;
       for (const dc of ch.decor) {
-        const cp = CANOPY_MASS[dc.t];
+        const cp = dc.forestSpecies ? forestCanopyMass(dc) : CANOPY_MASS[dc.t];
         if (!cp) continue;
-        if (dc.x < viewLeft - 120 || dc.x > viewRight + 120) continue;
-        if (dc.y < viewTop - 120  || dc.y > viewBottom + 120) continue;
+        const pad = dc.forestSpecies ? forestPropCullPad(dc) : 120;
+        if (dc.x < viewLeft - pad || dc.x > viewRight + pad) continue;
+        if (dc.y < viewTop - pad  || dc.y > viewBottom + pad) continue;
         const cs = dc.s || 1;
+        const crown = dc.forestCrownScale === undefined ? 1 : dc.forestCrownScale;
         glRigMat(g, cp[0] * cs + groundElev(dc.x, dc.y), 0.05, 0);
-        g.ellipse(dc.x, dc.y, cp[1] * cs, cp[2] * cs);
+        g.ellipse(dc.x, dc.y, cp[1] * cs * crown, cp[2] * cs * crown);
       }
     }
   }

@@ -33,7 +33,7 @@ denser, more readable world for both the legacy (hand-authored) maps and the
 procedurally streamed biomes. The systems below are all already implemented and
 working. The job is to *extend* them, not rebuild them.
 
-All five open layouts now carry sub-biomes: the woodland's six (Sector 2) and five
+All five open layouts now carry sub-biomes: the woodland's four (Sector 2) and five
 each for the jungle, tundra, violet waste and crystal flats. The remaining thin ground
 is the **frontier** (Sector 3), which has an authored core and a relief system but no
 region layer, and the **city layouts**, whose variety comes from `cityZoneAt()` rather
@@ -491,8 +491,19 @@ region branch and the spur head sweep every solid they created back into the lat
 
 ### Sub-biomes (Sector 2's woodland)
 
-A biome is one palette and one layout; a landscape is not. `woodRegion(biome, wx, wy)`
-resolves six regions off three slow world-space fields — `MEADOW · TIMBER · MARSH ·
+Level 2's forest now has four primary habitats: **Ancient Canopy (`TIMBER`), Mossy
+Riverbed (`MARSH`), Burnt / Dead (`BURN`) and Alpine Ridge (`HEATH`)**. See
+[the forest architecture and art guide](docs/level-2-forest.md) for the Phase 1–2
+implementation, species metadata, forest-only painters, placement budgets and
+Phase 3–4 wildlife/lighting design. `woodRegion()` asks the four-habitat question;
+`woodLegacyRegion()` keeps the old layout template below so saved destruction
+keys retain their identities. New forest additions have independent random
+streams and namespaced keys. Never use an art/ecology change to renumber saved
+solids. Standing crowns share profiles with the rig and use projected visibility
+bounds; bulk underbrush stays baked. Harvesting removes both the resident solid
+and its crown, including when a destroyed chunk is regenerated.
+
+The historical template resolves six regions off three slow world-space fields — `MEADOW · TIMBER · MARSH ·
 HEATH · BURN · FARM` — at roughly a three-chunk patch size. Measured coverage: meadow
 35%, timber 21%, marsh 16%, burn 11%, farm 10%, heath 7%.
 
@@ -625,7 +636,7 @@ reach the centreline.
 | # | Name | Layout | Weather | Character |
 |---|---|---|---|---|
 | 1 | Stick City | `CITY` | ACID_RAIN | Grid megablock, always authored core; canal and tram rows |
-| 2 | The Undercity | `WOODLAND` | ACID_RAIN | Dark; `CITY_DENSE` inside the curtain wall, road network, rivers and six sub-biomes outside |
+| 2 | The Undercity | `WOODLAND` | ACID_RAIN | `CITY_DENSE` inside the curtain wall; bright PNW forest, connected routes/rivers and four habitats outside |
 | 3 | Dry Gulch | `FRONTIER` | DUST | Agrarian belt, ghost town, mine bench relief |
 | 4 | The Green Line | `JUNGLE` | FOG | Overgrown military cordon; five sub-biomes |
 | 5 | The White Silence | `TUNDRA` | SNOW | Sparse, `clutterDensity: 0.35`; five sub-biomes |
