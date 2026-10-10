@@ -432,13 +432,21 @@ console.log('\n== it all draws ==');
   } catch (e) { err = e.message; }
   ok('every death type and body draws mid-fall and at rest', err === null, err || '18 types x 5 bodies');
 
-  // A jointed limb is two segments plus a hand. Count what ragLimb lays down.
-  const real = ctx.ellipse;
-  let n = 0;
-  ctx.ellipse = () => { n++; };
+  // A garment bends through one joined contour, with the palm beyond the
+  // wrist. Observe the actual painter inputs to retain both bone lengths.
+  const realLimb = ctx.figureCelLimb, realOval = ctx.figureCelOval;
+  let limbs = [], tips = [];
+  ctx.figureCelLimb = (...a) => { limbs.push(a.slice(1, 10)); realLimb(...a); };
+  ctx.figureCelOval = (...a) => { tips.push(a.slice(1, 5)); realOval(...a); };
   probe(`(function () { ragLimb(window, 0, 0, 0.2, 0.4, 14, 12, 8, 7, color(1), color(2), 8); })();`);
-  ctx.ellipse = real;
-  ok('a limb is upper arm, forearm and hand', n === 3, n + ' pieces');
+  ctx.figureCelLimb = realLimb; ctx.figureCelOval = realOval;
+  const limb = limbs[0], tip = tips[0];
+  ok('a limb keeps both bones in one cloth contour and its hand beyond the wrist',
+     limbs.length === 1 && tips.length === 1 && limb[0] === 0 && limb[1] === 0 &&
+     limb[2] === 14 && limb[3] === 0 && Math.abs(limb[4] - 14 - Math.cos(.4) * 12) < 1e-9 &&
+     Math.abs(limb[5] - Math.sin(.4) * 12) < 1e-9 && limb[6] === 8 && limb[8] === 7 &&
+     tip[0] === 14.4 && tip[1] === 0 && tip[2] === 8 && tip[3] === 8 * .86,
+     limbs.length + ' connected limb, ' + tips.length + ' palm');
 }
 
 console.log('\n== a body presses itself into the ground ==');
@@ -601,8 +609,12 @@ console.log('== a body keeps what the person was wearing ==');
   // figureRig()/ragRig() already follow -- if these two ever stop reading the
   // same function, the corpse silently becomes a different person again.
   const src = require('fs').readFileSync(__dirname + '/../game.js', 'utf8');
+  const realHead=ctx.drawFigureHead, liveHeads=[];
+  ctx.drawFigureHead=function(g,id,x,y){liveHeads.push({g,id,x,y});return realHead.apply(this,arguments);};
+  try{probe('rightStick={active:false};leftStick={active:false};player.isArmed=false;player.show();');}finally{ctx.drawFigureHead=realHead;}
   ok('the living figure draws its head from the shared description',
-     /drawFigureHead\(window, this, hX, hY/.test(src), 'Character.show calls it');
+     liveHeads.length===1&&liveHeads[0].id===P('player')&&Number.isFinite(liveHeads[0].x+liveHeads[0].y)&&
+     typeof liveHeads[0].g.ellipse==='function', 'Character.show calls the shared painter');
   ok('and the corpse reads the same hair and the same headwear',
      /drawFigureHair\(r, this\.id/.test(src) && /drawHeadwear\(r, this\.id, hw\)/.test(src),
      'no second copy of the art');

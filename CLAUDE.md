@@ -1501,80 +1501,57 @@ which is what the sun actually sees.
 
 ### Figure volume
 
-A figure gets its third dimension from **shading**, never from the projection.
-`volShade(x, y, w, h, r, g, b, k, lx, ly)` is the one function, and it draws three terms
-in this order:
+Figures use curved **cel surfaces** in every level, including the closed interiors.
+`figureCelOval(g,x,y,w,h,c,k,lx,ly)` keeps the original outer ellipse and paints
+three tones: the material, a curved shadow plane and a broad lit plane. Only the
+silhouette takes ink. The tone paths stay inside it; no nested highlight rings,
+per-part mass extrusion, tall risers, new 3D renderer or texture buffers are needed.
+`volShade`/`volShadeCol` remain compatible entry points. Colors accept either
+p5.Color or an RGB(A) array, and all planes retain their material's alpha.
 
-1. a **contour**, applied as the fill's own stroke so it hugs the silhouette exactly.
-   This is the single biggest read — a stroked silhouette is why a figure sits in a scene
-   instead of floating over it;
-2. a **terminator**, one weak crescent on the far side. Strong, it reads as a stain lying
-   on the shirt rather than as the surface turning;
-3. the **lit side**, as `VOL_STEPS` nested ellipses each pushed a little further against
-   the sun at low alpha. A single inset highlight is a second disc sitting on the first
-   and the join between them is a visible ring; four shrinking ones accumulate into a
-   gradient, which is the only way a flat-fill renderer gets one.
+`figureCelLimb(g,sx,sy,ex,ey,hx,hy,w0,w1,w2,c)` wraps the existing two-bone rig
+in **one continuous tapered outline**. Its curves share a tangent at the elbow or
+knee, and the light bands follow the same surface without joint rings. Widths
+are full widths, narrowing from shoulder/hip through joint to wrist/ankle.
+Fully collapsed bones merge into the remaining visible surface. Shading blends
+continuously as a limb turns across the scene light. Palms, soles, cuffs and
+separate materials remain separate forms, at the existing grip and foot points.
 
-All three offset along the light, so a figure is lit from the same place as every wall
-and roof — but see below: it has to be the light **in the figure's own frame**.
+`figureCelLight(g)` brings the scene's shadow-direction vector into the current
+Canvas frame, including nested turns, torso compression, mirrored arms and
+corpse Graphics buffers. Callers supplying an explicit vector must counter-rotate
+it themselves (`figureLight`); copy scratch vector components before another
+helper reuses them. Highlights face away from that shadow-direction vector.
+`figureCelArc` clips the same tones to half-shells such as hair, helmets and coat
+panels, preserving their original silhouette.
 
-**A leg has to narrow all the way down, or it is a sausage.** Drawn with a full round cap
-at each joint, the thigh, the shin and the boot all came out at about the same width and
-overlapped into one uniform lozenge — no knee, no ankle, and a 9.6-wide dome at the hip
-that on the trailing leg of a stride is a balloon hanging off the back of the figure. It
-takes the same two things the arm needed: a real taper (hip 9.6, knee 7.4, ankle 5.9) and
-a trimmed cap at the top, where the pelvis is under the torso anyway.
+The player, combat crowd, city residents, working citizens and intact fallen
+figures share the surfaces. Citizen hauling, hammering and loading replace the
+walking arms so a work pose has only two palms. Coat hems have shallow cloth
+folds. Armor and robot panels use inset face bevels; creatures keep their own
+silhouettes, gait, damage overlays and shadow ownership. The chemist still has
+only the grey left cannon hand when inactive. Suit colors are applied before
+legs are painted, so the first visible pose already matches its uniform.
 
-**Anything worn on the body has to be measured off the DRAWN torso, not the collision
-box.** The jetpack sat at fixed offsets from `bodyW`, so narrowing the torso left it
-floating clear of the spine with ground showing between. Measured off
-`bodyW * TORSO_DEPTH` it stays put whatever the depth becomes.
+`TORSO_DEPTH` (0.84) compresses the drawn torso and attire only. `bodyW`/`bodyH`,
+collision, the shared corpse rig, projectile/charge origins and the deferred
+height field retain their existing scale. Packs remain attached to the **drawn**
+back edge. Limb bones, gait clocks, throws, reload timers and fall physics remain
+the source of poses; the surface painter does not advance any of them.
 
-**A torso is drawn narrower than it collides.** `bodyW` is the front-to-back axis and
-`bodyH` is across the shoulders, so a standard figure is 21 deep by 27 wide — near enough
-a circle, and a circle from above is the flat oval blob. A real person is about 45cm
-across by 25cm deep. `TORSO_DEPTH` (0.84) squashes the drawn depth and stops short of the
-true 0.55, because a figure this small still has to read as a body rather than a plank.
-It is one transform rather than twenty edits: every rect, arc and strap of attire is
-positioned against `bodyW` and compresses with it, so a coat still fits the body it is
-on. The limbs sit outside it and keep their own proportions, and `bodyW`/`bodyH`
-themselves are untouched — collision, the corpse rig, the contact shadow and the rig's
-height field all still measure the same person.
+Models are small and crowds run on phones. Reuse scratch geometry and palettes,
+avoid a p5.Color per tone, and keep the optimized figurePainter ellipse/fill path.
+Curved paths use the pixel-verified native Canvas backend on p5 1.11.11, with
+p5 fallbacks for other versions/renderers and accessibility. Rounded RGB channels
+let turning limb tones reuse cached palette strings.
+The surface light is not a second cast shadow: preserve the scene's existing
+shadow ownership, depth sort and overlays.
 
-**The sun has to be counter-rotated in, or it turns with the model.** Every body in this
-file is drawn inside `rotate(aimAngle)`, and `rotate()` carries `LIGHT_DX/DY` round with
-it — the same trap the prop shadows have. Written in world space the highlight sat on a
-figure's own left shoulder whichever way they were pointing, so a squad facing four ways
-had four suns and none of them agreed with the buildings behind. `figureLight(ang)`
-rotates the world vector by `-ang` and every body call site passes the result. The
-property is a round trip — bring the light in, rotate it back out by the same angle, get
-`LIGHT_DX/DY` — and `check-depth.js` asserts it at 24 facings rather than at the axes,
-because the axis cases pass under a sign error.
-
-**The animals go through it too, and they were the worst without it** — the cow at 55
-across and `ALIEN_GATOR` at 63 × 81 are the widest bodies in the game, so the flattest as
-a bare fill. The horse is the exception that keeps its own art: it is already composed
-out of hindquarters, ribcage and two flank bands rather than one oval, so it takes the
-contour and has its **flanks** driven by `figureLight` instead — lit band on the sun's
-side, shaded band on the far one. Pinned above the backbone, which is what they were, a
-horse walking a circle carried its highlight round with it.
-
-**The contour is canvas STATE, not a per-part call.** A person is a couple of dozen
-ellipses — sleeves, hands, boots, packs, hats — spread over a dozen pose branches, and
-stroking each at its own call site means touching every branch and missing the next one
-somebody adds. `figureContour()` is set once before the body goes down and `volShade()`
-hands it back on the way out, so everything drawn after inherits it. The two places that
-must switch it back on explicitly are the ones that legitimately clear it: the blood
-decals (stains take no contour) and the `limb()` rig, which runs before the torso.
-
-**Figures are deliberately NOT leaned, and the attempt is worth remembering.** A riser
-capsule swept from the feet to a leaned body was built, rendered, shipped and reverted on
-sight: parallax sells height as a **ratio** of displacement to size, and a figure a
-couple of dozen pixels across is too small to have one — the riser read as a dark blob
-stuck to the model, worst on the wide animals. A figure's third dimension comes from the
-two systems that already carry it: the deferred rig marching a real cast shadow off its
-height ellipse, and the depth sort walking it in front of and behind the masses. Do not
-reintroduce a drawn side on anything smaller than a crate.
+Run `node tools/check-figure-volume.js` for surface containment, smooth joint
+tangents, alpha, world-light direction, turn continuity and live action states.
+The character, handgun, left-action, depth, civilian, corpse, fall and render
+checks cover the shared rig and gameplay. Review both native-size and enlarged
+browser poses; headless geometry cannot establish whether the comic art reads well.
 
 ### The living figure is the same build as its own corpse
 
@@ -1600,9 +1577,9 @@ figure a different build:
   (`STAND_FORE_ARM` 0.65). The **boot** takes no foreshortening at all: a foot is the one
   part of a standing body lying flat to this camera.
 
-Both limbs use `ragLimb()`'s shape language — each segment an ellipse `length + its own
-width` long, so the caps round the joints off either end and the two overlap into one
-taper instead of butting at the elbow.
+Both limbs use the shared rig's shape language, now wrapped by `figureCelLimb()`
+as a continuous tapered surface rather than individually outlined ellipse caps.
+The light bands and curved silhouette pass smoothly through the elbow or knee.
 
 **Fit the segments to the hand, never the other way round.** The hand is worked out once
 per side and the limb is then drawn to reach it. Deriving the two independently — which
@@ -3445,6 +3422,7 @@ node tools/check-cutscene.js       # scripted placement stays inside the sector
 node tools/check-resources.js      # harvestables, drops, the melee tool, persistence
 node tools/check-robot.js          # a machine dies like a machine, on all six paths
 node tools/check-character.js      # the arm rig, the gait bands, and carrying a weapon
+node tools/check-figure-volume.js  # cel surfaces, smooth joints, light, alpha and poses
 node tools/check-handguns.js       # solid sidearms, slide motion and staged reloads
 node tools/check-left-actions.js   # throws and chemist cannon without gun aim
 node tools/check-build.js          # blueprints, placement, build rate, the crew

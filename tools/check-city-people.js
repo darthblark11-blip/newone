@@ -35,12 +35,17 @@ const x=P('victim.x');probe('for(let i=0;i<20;i++){frameCount++;victim.updateEne
 assert(P('stunFall(victim)>.4&&stunFall(victim)<1'));probe('for(let i=0;i<30;i++){frameCount++;victim.updateEnemy();}');assert(P('stunFall(victim)>.85'));
 const fallAge=P('victim.stunPose.age');probe('startPunchStun(victim,0);');assert.equal(P('victim.stunPose.age'),fallAge);
 // Two-bone drawing stays finite and the recovery is gradual, not a snap.
-const oldEllipse=ctx.ellipse;let geometry=[];
-ctx.ellipse=(...a)=>{assert(a.every(Number.isFinite),'non-finite character geometry');geometry.push(a);};
+const oldGeometry={ellipse:ctx.ellipse,vertex:ctx.vertex,bezierVertex:ctx.bezierVertex};let geometry=[];
+for(const name of Object.keys(oldGeometry))ctx[name]=(...a)=>{
+  assert(a.every(Number.isFinite),'non-finite character '+name+' geometry');geometry.push({name,a});
+};
 for(const age of [0,6,15,28,38,60,150]){
+  const before=geometry.length;
   probe(`victim.stunPose.age=${age};victim.stunTimer=100;victim.show();`);
+  assert(geometry.length>before,'fallen character emitted no geometry at age '+age);
 }
-probe('victim.stunTimer=16;victim.show();');assert(P('stunFall(victim)<=.5'));assert(geometry.length>100);
+probe('victim.stunTimer=16;victim.show();');assert(P('stunFall(victim)<=.5'));
+assert(geometry.length>100&&geometry.some(p=>p.name==='bezierVertex'),'fallen figure is missing its curved surfaces');
 probe('victim.stunTimer=1;victim.updateEnemy();');assert.equal(P('victim.state'),'FLEE');assert(P('victim.isNeutral&&victim.hp===100'));
 // Three seconds after the completed punch; firing or a melee tool cancels guard.
 probe('player.meleeTimer=0;player.boxingHold=180;player.isArmed=false;');
@@ -51,7 +56,7 @@ probe('player.boxingHold=180;player.isArmed=true;');assert(!P('boxerPose(player)
 probe('player.isArmed=false;swordPickedUp=true;setMeleeTool("SWORD");');assert(!P('boxerPose(player).active'));
 probe('setMeleeTool("NONE");player.meleeTimer=10;player.punchDuration=20;player.meleePhase=1;player.show();');
 assert(P('Math.abs(boxerPose(player).hip+.12)<Math.abs(boxerPose(player).torso+.17)'));
-ctx.ellipse=oldEllipse;
+Object.assign(ctx,oldGeometry);
 // Measure rendered boot positions through the full p5 transform stack. The
 // lead and rear feet must actually straddle the torso along the aim direction.
 let matrix=[1,0,0,1,0,0],stack=[],boots=[];const originals={};

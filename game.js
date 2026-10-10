@@ -2295,6 +2295,39 @@ function dgGable(aw, ah, col, colHi, inset) {
 // `ang` is the horse's own facing. Both call sites draw inside rotate(), so the
 // sun has to be brought into that frame -- see figureLight(). Omitting it lights
 // the horse from straight ahead, which is only right for an unrotated caller.
+// Reused RGB arrays keep the little animal and machine surfaces allocation-free.
+// Organic forms share the figure painter's curved cel planes; mechanical forms
+// use an inset bevel within their existing outline rather than a tall riser.
+const _entityCel = {
+  bug: [70,90,50], dark: [30,33,37], snail: [20,100,20],
+  shell: [50,80,40], white: [245,245,245],
+  pink: [255,170,170], horn: [210,190,150], gator: [30,180,30],
+  blue: [173,216,230], steelLight: [88,95,104],
+  sensor: [84,90,98], socket: [46,40,36],
+  saucer: [100,106,116], saucerRed: [154,65,70], purple: [150,50,200],
+  red: [255,50,50]
+};
+const _robotCelHull = [[20,0],[4,-16],[-13,-12],[-13,12],[4,16]];
+const _robotCelInset = [[15,0],[3,-11],[-8,-8],[-8,8],[3,11]];
+function entityCelPlate(g, points, c, lx, ly, sx, sy, inset) {
+  const r=Array.isArray(c)?c[0]:red(c), b=Array.isArray(c)?c[2]:blue(c);
+  const gr=Array.isArray(c)?c[1]:green(c), f=1-(inset === undefined ? .12 : inset);
+  g.fill(r*.98,gr*.98,b); g.stroke(r*.24,gr*.24,b*.27,225); g.strokeWeight(.85);
+  g.beginShape(); for(const p of points) g.vertex(p[0],p[1]); g.endShape(CLOSE);
+  g.noStroke();
+  for(let i=0;i<points.length;i++) {
+    const a=points[i], n=points[(i+1)%points.length];
+    const dx=n[0]-a[0],dy=n[1]-a[1],len=Math.hypot(dx,dy);
+    const nx=-dy/len,ny=dx/len;
+    // A thin near-facing bevel exposes a side plane. The far rim stays the
+    // top's value, so there is no dark ring printed around the whole chassis.
+    const shade=nx*sx+ny*sy>0 ? .60+Math.max(0,-nx*lx-ny*ly)*.29 : .97;
+    g.fill(r*shade,gr*shade,b*shade);
+    g.quad(a[0],a[1],n[0],n[1],n[0]*f,n[1]*f,a[0]*f,a[1]*f);
+  }
+  g.noStroke();
+}
+
 function drawHorseArt(coat, mane, walk, moving, gallop, sock, ang) {
   const amp = gallop ? 9 : 3.6;
   const sw = moving ? sin(walk) * amp : 0;
@@ -2302,7 +2335,8 @@ function drawHorseArt(coat, mane, walk, moving, gallop, sock, ang) {
   const heave = moving ? abs(sin(walk)) * (gallop ? 2.6 : 0.9) : 0;
   const cr = red(coat), cg = green(coat), cb = blue(coat);
   const dark = (f) => fill(cr * f, cg * f, cb * f);
-  const L = figureLight(ang || 0);
+  const L = figureLight(ang || 0), lx=L[0],ly=L[1];
+  const paint=figurePainter(), g=paint?paint.api:window;
 
   push();
   translate(heave * 0.4, 0);
@@ -2328,29 +2362,24 @@ function drawHorseArt(coat, mane, walk, moving, gallop, sock, ang) {
   quad(0, -3, 0, 3, -15, 6, -13, -5);
   pop();
 
-  // Barrel: quarters, ribcage, then the two flanks, so it is not one flat oval.
-  //
-  // The flanks follow the SUN, not the spine. Pinned above the backbone -- which
-  // is what they were -- a horse walking a circle carried its own highlight
-  // round with it and had a private sun that agreed with nothing else in the
-  // scene. Offset by the light, its lit side stays west while it turns, and
-  // when the sun is end-on the bands slide fore and aft onto the shoulder and
-  // the rump instead, which is where the light would actually catch it.
-  dark(0.86); ellipse(-13, 0, 34, 30);                          // hindquarters
-  fill(cr, cg, cb); ellipse(4, 0, 46, 27);                      // ribcage
-  dark(1.14); ellipse(6 - L[0] * 5, -L[1] * 9, 30, 12);         // lit flank
-  dark(0.68); ellipse(2 + L[0] * 5,  L[1] * 9, 34, 9);          // shaded flank
+  // One continuous barrel keeps the old quarters/ribcage extents without the
+  // two complete contours meeting as a black joint across the horse's back.
+  figureCelOval(g,-1.5,0,57,30,coat,.85,lx,ly);
 
   // Neck and head, nodding on half the leg beat.
   push();
   translate(22, 0);
   rotate(moving ? sin(walk * 0.5) * (gallop ? 0.22 : 0.08) : 0);
-  fill(cr, cg, cb); quad(-4, -8, 12, -5, 12, 5, -4, 8);            // neck
+  noStroke();
+  fill(cr*.83, cg*.83, cb*.85); quad(-4, -8, 12, -5, 12, 5, -4, 8); // neck underside
+  fill(cr*1.03,cg*1.03,cb*1.03); quad(-3,-6,12,-4,12,3,-3,5);      // rounded neck top
   fill(red(mane), green(mane), blue(mane));
   quad(-4, -8, 12, -5, 12, -2, -4, -4);                            // mane along the crest
-  dark(1.06); ellipse(16, 0, 18, 12);                              // head
+  figureCelOval(g,16,0,18,12,coat,.7);                             // head, light follows nod
+  noStroke();
   if (sock) { fill(226, 220, 208); ellipse(20, 0, 7, 5); }         // blaze
-  dark(0.4); ellipse(23, 0, 7, 7);                                 // muzzle
+  figureCelOval(g,23,0,7,7,mane,.45);                              // muzzle
+  noStroke();
   fill(18); ellipse(24, -1.6, 1.8, 1.8); ellipse(24, 1.6, 1.8, 1.8);
   fill(20); ellipse(13, -3.6, 2.6, 2.6); ellipse(13, 3.6, 2.6, 2.6); // eyes
   dark(0.5); triangle(9, -6, 12, -4, 8, -2); triangle(9, 6, 12, 4, 8, 2); // ears
@@ -11219,10 +11248,12 @@ function ragStep(rg) {
 // of the difference (0.145 of standing height against 0.108).
 function ragLimb(r, ox, oy, ang, bend, l1, l2, w1, w2, col, tip, tipSz) {
     r.push(); r.translate(ox, oy); r.rotate(ang);
-    r.fill(col); r.ellipse(l1 * 0.5, 0, l1 + w1, w1);
+    // The same garment passes through the elbow/knee. Shade a single contour
+    // rather than outlining two overlapping ellipses across that joint.
+    figureCelLimb(r, 0, 0, l1, 0, l1 + Math.cos(bend) * l2,
+      Math.sin(bend) * l2, w1, (w1 + w2) * .5, w2, col);
     r.translate(l1, 0); r.rotate(bend);
-    r.ellipse(l2 * 0.5, 0, l2 + w2, w2);
-    if (tip) { r.fill(tip); r.ellipse(l2 + tipSz * 0.30, 0, tipSz, tipSz * 0.86); }
+    if (tip) figureCelOval(r, l2 + tipSz * 0.30, 0, tipSz, tipSz * 0.86, tip);
     r.pop();
 }
 
@@ -11401,79 +11432,99 @@ function headwearFalls(kind) { return !!kind && kind !== 'HOOD'; }
 
 // Drawn at the origin: the caller has already translated to the head, or to
 // wherever the thing has come to rest.
+const _headCelColor={
+  helmetRim:[37,48,48],cityHelmet:[108,127,118],military:[40,80,40],
+  greyHelmet:[170,175,180],tanHelmet:[190,170,130],hood:[15,15,19],hoodLight:[240,240,240],
+  copRim:[34,32,40],capBrim:[64,56,44],bonnetFront:[214,204,184],
+  strawBrim:[210,180,70],strawCrown:[190,160,50],skin:[235,180,140],banditSkin:[214,168,132]
+};
+// Half-shells share the round cel mass but keep their original arc silhouette.
+// Clipping the colour planes rather than outlining a second inset arc keeps
+// the cap/skin join smooth. No new projection or anatomy is introduced here.
+function figureCelArc(g,x,y,w,h,c,a0,a1,k=.7) {
+  const dc=g.drawingContext;
+  g.push();g.noStroke();g.fill(c);g.arc(x,y,w,h,a0,a1,CHORD);
+  if(dc&&dc.ellipse&&dc.clip) {
+    dc.save();dc.beginPath();dc.ellipse(x,y,w*.5,h*.5,0,a0,a1);dc.closePath();dc.clip();
+    figureCelOval(g,x,y,w,h,c,k);
+    dc.restore();
+  }
+  g.pop();
+}
 function drawHeadwear(g, id, kind) {
   if (!kind) return;
   if(kind==='NM0_HELMET'){
-    g.fill(37,48,48);g.ellipse(-1,0,15,16);g.fill(108,127,118);g.ellipse(-2,-1,12,12);
-    g.fill(50,80,84);g.rect(2,-5,4,10,2);g.fill(145,206,206);g.rect(3,-4,1,6);g.fill(224,188,69);g.rect(-6,-1,3,2);return;
+    figureCelOval(g,-1,0,15,16,_headCelColor.helmetRim,.8);
+    figureCelOval(g,-2,-1,12,12,_headCelColor.cityHelmet,.65);
+    g.noStroke();g.fill(50,80,84);g.rect(2,-5,4,10,2);
+    g.fill(145,206,206);g.rect(3,-4,1,6);g.fill(224,188,69);g.rect(-6,-1,3,2);return;
   }
   if (kind === 'VISOR') {
-    g.push(); g.rotate(-HALF_PI); g.fill(40, 80, 40); g.arc(0, -1, 14, 14, PI, TWO_PI); g.pop();
+    g.push();g.rotate(-HALF_PI);figureCelArc(g,0,-1,14,14,_headCelColor.military,PI,TWO_PI,.7);g.pop();
     g.push(); g.rotate(radians(33)); g.fill(80, 50, 20); g.rect(4, -1, 8, 3); g.fill(255, 100, 0); g.ellipse(12, 0.5, 2, 2); g.pop();
     return;
   }
   if (kind === 'HELMET') {
     g.push(); g.rotate(-HALF_PI);
-    if (id.isMilitary) g.fill(40, 80, 40);                       // player's green
-    else if (id.eType === "NM0_GREY_FATIGUE") g.fill(170, 175, 180);
-    else g.fill(190, 170, 130);                                  // neutral tan
-    g.stroke(0); g.strokeWeight(1.5);
-    g.arc(0, -1, 14, 14, PI, TWO_PI, CHORD);
+    const c=id.isMilitary?_headCelColor.military:id.eType==="NM0_GREY_FATIGUE"?_headCelColor.greyHelmet:_headCelColor.tanHelmet;
+    figureCelArc(g,0,-1,14,14,c,PI,TWO_PI,.8);
+    // The small brow lip belongs to the shell, rather than a ring on its crown.
+    g.stroke(c[0]*.45,c[1]*.45,c[2]*.48);g.strokeWeight(.7);g.noFill();
+    g.arc(0,-1,13.4,13.4,PI+.12,TWO_PI-.12,OPEN);
     g.pop(); g.noStroke();
     return;
   }
   if (kind === 'HOOD') {
-    g.fill(15); g.ellipse(0, 0, 12, 12); g.fill(240); g.arc(0, 0, 12, 12, -HALF_PI, HALF_PI);
-    g.fill(235, 180, 140); g.rect(1, -3, 3, 6, 1);
+    figureCelOval(g,0,0,12,12,_headCelColor.hood,.65);
+    figureCelArc(g,0,0,12,12,_headCelColor.hoodLight,-HALF_PI,HALF_PI,.6);
+    g.noStroke();g.fill(id.skinCol||color(235,180,140));g.rect(1,-3,3,6,1);
     g.fill(0); g.ellipse(2, -.5, 1.5, 1.5); g.ellipse(2, 1.5, 1.5, 1.5);
     return;
   }
   if (kind === 'BANDIT_HAT') {
     const bh = id.hatCol || color(34, 30, 30);
-    g.fill(red(bh) * 0.7, green(bh) * 0.7, blue(bh) * 0.7); g.ellipse(0, 0, 27, 25);
-    g.fill(bh); g.ellipse(0, 0, 21, 19);
-    g.fill(red(bh) * 1.5 + 10, green(bh) * 1.5 + 10, blue(bh) * 1.5 + 10);
-    g.ellipse(-1, 0, 14, 12);
-    g.fill(96, 26, 24); g.rect(-7, -1.4, 14, 2.8);
+    // Brim and raised crown are separate masses; each has one broad light plane.
+    figureCelOval(g,0,0,27,25,[red(bh)*.7,green(bh)*.7,blue(bh)*.7],.72);
+    figureCelOval(g,-.5,0,21,19,bh,.72);
+    g.noStroke();g.fill(96,26,24);g.rect(-7,-1.4,14,2.8,1);
+    g.stroke(red(bh)*.48,green(bh)*.48,blue(bh)*.5);g.strokeWeight(.65);
+    g.line(-5,-2.8,4,-2.8);g.noStroke();
     return;
   }
   if (kind === 'STETSON') {
     const hc = id.hatCol || color(96, 72, 46);
-    // Wide oval brim, then the crown, then a crease down it and a hatband
-    // where the two meet. From above that silhouette is the whole hat.
     const bw = id.eType === "COWGIRL" ? 25 : 28;
-    g.fill(red(hc) * 0.82, green(hc) * 0.82, blue(hc) * 0.82);
-    g.ellipse(0, 0, bw, bw * 0.93);
-    g.fill(hc); g.ellipse(0, 0, bw - 5, bw * 0.93 - 5);
-    g.fill(red(hc) * 1.18 + 12, green(hc) * 1.18 + 12, blue(hc) * 1.18 + 12);
-    g.ellipse(-1, 0, bw - 13, bw * 0.93 - 12);
-    g.fill(42, 30, 20); g.rect(-((bw - 13) / 2), -1.4, bw - 13, 2.8);
-    g.stroke(red(hc) * 0.6, green(hc) * 0.6, blue(hc) * 0.6); g.strokeWeight(1.2);
-    g.line(-((bw - 15) / 2), 0, (bw - 15) / 2, 0);
+    figureCelOval(g,0,0,bw,bw*.93,[red(hc)*.82,green(hc)*.82,blue(hc)*.82],.75);
+    figureCelOval(g,-.5,0,bw-5,bw*.93-5,hc,.72);
+    // A curved crease and narrow band read as a crown without concentric discs.
+    g.noStroke();g.fill(42,30,20);g.rect(-((bw-13)/2),-1.4,bw-13,2.8,1);
+    g.stroke(red(hc)*.6,green(hc)*.6,blue(hc)*.6);g.strokeWeight(.8);g.noFill();
+    g.arc(-1,0,bw-13,bw*.93-12,PI+.35,TWO_PI-.35,OPEN);
     g.noStroke();
     return;
   }
   if (kind === 'COP_HAT') {
-    g.fill(34, 32, 40); g.ellipse(0, 0, 26, 24);
-    g.fill(id.hatCol || color(46, 44, 52)); g.ellipse(0, 0, 17, 16);
-    g.fill(210, 188, 104); g.rect(-4, -1.4, 8, 2.8);
+    figureCelOval(g,0,0,26,24,_headCelColor.copRim,.75);
+    figureCelOval(g,0,0,17,16,id.hatCol||color(46,44,52),.68);
+    g.noStroke();g.fill(210,188,104);g.rect(-4,-1.4,8,2.8,1);
+    g.fill(244,221,144);g.rect(-3.3,-1.4,6.6,.6);
     return;
   }
   if (kind === 'FLAT_CAP') {
-    g.fill(id.hatCol || color(84, 74, 58)); g.ellipse(0, 0, 15, 14);
-    g.fill(64, 56, 44); g.arc(0, 0, 19, 14, -0.9, 0.9, CHORD);
+    figureCelOval(g,0,0,15,14,id.hatCol||color(84,74,58),.65);
+    figureCelArc(g,0,0,19,14,_headCelColor.capBrim,-.9,.9,.6);
     return;
   }
   if (kind === 'BONNET') {
-    g.fill(id.bonnetCol || color(228, 220, 204));
-    g.arc(-1, 0, 21, 19, HALF_PI, PI + HALF_PI, CHORD);
-    g.fill(214, 204, 184); g.arc(2, 0, 13, 17, -HALF_PI, HALF_PI, CHORD);
-    g.fill(178, 152, 168); g.rect(-2, 7.5, 7, 2, 1);
+    figureCelArc(g,-1,0,21,19,id.bonnetCol||color(228,220,204),HALF_PI,PI+HALF_PI,.7);
+    figureCelArc(g,2,0,13,17,_headCelColor.bonnetFront,-HALF_PI,HALF_PI,.6);
+    g.noStroke();g.fill(178,152,168);g.rect(-2,7.5,7,2,1);
     return;
   }
   if (kind === 'STRAW') {
-    g.fill(210, 180, 70); g.ellipse(0, 0, 24, 24);
-    g.fill(190, 160, 50); g.ellipse(0, 0, 14, 14);
+    figureCelOval(g,0,0,24,24,_headCelColor.strawBrim,.75);
+    figureCelOval(g,0,0,14,14,_headCelColor.strawCrown,.65);
+    g.stroke(145,113,36);g.strokeWeight(.6);g.line(-4,-1,4,-1);g.noStroke();
     return;
   }
 }
@@ -11481,9 +11532,8 @@ function drawHeadwear(g, id, kind) {
 // Skin, hair and whatever is worn over them. `sway` is the braid's swing, in
 // degrees -- the living figure passes its walk cycle, a corpse passes nothing.
 function drawFigureHead(g, id, hX, hY, wear = true, sway = 0) {
-  const eT = id.eType;
-  g.fill(id.skinCol||(eT==="BANDIT"?color(214,168,132):color(235,180,140)));
-  g.ellipse(hX, hY, 11, 11);
+  const eT = id.eType,skin=id.skinCol||(eT==="BANDIT"?_headCelColor.banditSkin:_headCelColor.skin);
+  figureCelOval(g,hX,hY,11,11,skin,.65);
   drawFigureHair(g, id, hX, hY, sway);
   if (wear) { const k = headwearOf(id); if (k) { g.push(); g.translate(hX, hY); drawHeadwear(g, id, k); g.pop(); } }
 }
@@ -11495,39 +11545,37 @@ function drawFigureHair(g, id, hX, hY, sway = 0) {
   const eT = id.eType;
   if(eT==='NM0_ROOKIE')return; // Blue male pistol regulars are bald.
   if(id.hairStyle!==undefined){
-    const c=id.hairCol||color(32,27,26),style=id.hairStyle;g.fill(c);
-    if(style===2){for(let i=0;i<7;i++){const a=HALF_PI+i*.48;g.ellipse(hX+Math.cos(a)*4,hY+Math.sin(a)*4,5,5);}}
-    else if(style===6){g.arc(hX,hY,12,12,HALF_PI,PI+HALF_PI);g.fill(id.skinCol||color(239,199,168));g.ellipse(hX-1,hY,6,6);}
-    else{g.arc(hX-1,hY,13,13,HALF_PI-.2,PI+HALF_PI+.2);}
-    if(style===1){g.stroke(red(c)*1.35+20,green(c)*1.35+20,blue(c)*1.35+20);g.strokeWeight(.8);g.line(hX-3,hY-4,hX+1,hY-2);g.noStroke();}
-    if(style===3){g.push();g.translate(hX-5,hY);g.rotate(radians(sway*.7));g.fill(c);g.ellipse(-6,0,13,6);g.pop();}
-    if(style===4){g.fill(c);g.ellipse(hX-7,hY,8,8);}
-    if(style===5){g.fill(c);g.ellipse(hX-4,hY-5,8,6);g.ellipse(hX-4,hY+5,8,6);}
+    const c=id.hairCol||color(32,27,26),style=id.hairStyle;
+    if(style===2){for(let i=0;i<7;i++){const a=HALF_PI+i*.48;figureCelOval(g,hX+Math.cos(a)*4,hY+Math.sin(a)*4,5,5,c,.32);}}
+    else if(style===6){
+      figureCelArc(g,hX,hY,12,12,c,HALF_PI,PI+HALF_PI,.55);
+      // A receding crown exposes the same skin surface, not a second outlined
+      // button placed on top of the hair.
+      const skin=id.skinCol||color(239,199,168),dc=g.drawingContext;
+      g.push();g.noStroke();g.fill(skin);g.ellipse(hX-1,hY,6,6);
+      if(dc&&dc.ellipse&&dc.clip){dc.save();dc.beginPath();dc.ellipse(hX-1,hY,3,3,0,0,TWO_PI);dc.clip();figureCelOval(g,hX,hY,11,11,skin,.65);dc.restore();}
+      g.pop();
+    }
+    else{figureCelArc(g,hX-1,hY,13,13,c,HALF_PI-.2,PI+HALF_PI+.2,.65);}
+    if(style===1){g.stroke(red(c)*1.35+20,green(c)*1.35+20,blue(c)*1.35+20);g.strokeWeight(.7);g.line(hX-3,hY-4,hX+1,hY-2);g.noStroke();}
+    if(style===3){g.push();g.translate(hX-5,hY);g.rotate(radians(sway*.7));figureCelOval(g,-6,0,13,6,c,.48);g.pop();}
+    if(style===4){figureCelOval(g,hX-7,hY,8,8,c,.48);}
+    if(style===5){figureCelOval(g,hX-4,hY-5,8,6,c,.45);figureCelOval(g,hX-4,hY+5,8,6,c,.45);}
     return;
   }
-  if (eT === "FEMALE_PISTOL") {
-    g.fill(15); g.arc(hX, hY, 12, 12, HALF_PI, PI + HALF_PI);
-    g.push(); g.translate(hX - 5, hY); g.rotate(radians(sway)); g.ellipse(-6, 0, 12, 6); g.pop();
-  } else if (eT === "NM0_ROOKIE_F") {
-    g.fill(64, 46, 32); g.arc(hX, hY, 12, 12, HALF_PI, PI + HALF_PI);
-    g.push(); g.translate(hX - 5, hY); g.rotate(radians(sway)); g.ellipse(-6, 0, 12, 6); g.pop();
-    g.fill(id.shirtCol || color(60, 90, 170)); g.ellipse(hX - 6.5, hY, 5, 7);
+  if (eT === "FEMALE_PISTOL" || eT === "NM0_ROOKIE_F" || eT === "FARMER_FEMALE") {
+    const c=eT==="FEMALE_PISTOL"?color(15):eT==="NM0_ROOKIE_F"?color(64,46,32):id.hairCol||color(150,80,40);
+    figureCelArc(g,hX,hY,12,12,c,HALF_PI,PI+HALF_PI,.6);
+    g.push();g.translate(hX-5,hY);g.rotate(radians(sway));figureCelOval(g,-6,0,12,6,c,.48);g.pop();
+    if(eT==="NM0_ROOKIE_F"){g.fill(id.shirtCol||color(60,90,170));g.ellipse(hX-6.5,hY,5,7);}
   } else if (eT === "COWGIRL") {
-    g.push(); g.translate(hX - 5, hY); g.rotate(radians(sway));
-    g.fill(id.hairCol || color(122, 74, 38)); g.ellipse(-7, 0, 13, 6); g.pop();
+    g.push();g.translate(hX-5,hY);g.rotate(radians(sway));figureCelOval(g,-7,0,13,6,id.hairCol||color(122,74,38),.48);g.pop();
   } else if (eT === "VILLAGER_FEMALE") {
-    g.fill(id.hairCol || color(122, 74, 38)); g.arc(hX, hY, 12, 12, HALF_PI, PI + HALF_PI);
-  } else if (eT === "FARMER_FEMALE") {
-    g.fill(id.hairCol || color(150, 80, 40)); g.arc(hX, hY, 12, 12, HALF_PI, PI + HALF_PI);
-    g.push(); g.translate(hX - 5, hY); g.rotate(radians(sway)); g.ellipse(-6, 0, 12, 6); g.pop();
+    figureCelArc(g,hX,hY,12,12,id.hairCol||color(122,74,38),HALF_PI,PI+HALF_PI,.6);
   } else if (eT === "BANDIT") {
-    // The bandana is over the face, not on top of the head, so it is part of
-    // him rather than part of the hat -- it does not come off with it.
-    g.push(); g.translate(hX, hY);
-    g.fill(id.kerchiefCol || color(124, 40, 36)); g.arc(0, 0, 12, 12, -HALF_PI, HALF_PI);
-    g.pop();
+    // The kerchief stays on the face when the hat falls off.
+    figureCelArc(g,hX,hY,12,12,id.kerchiefCol||color(124,40,36),-HALF_PI,HALF_PI,.55);
   }
-
 }
 
 // Everything a head needs to be drawn again later, frozen at the moment of
@@ -11774,7 +11822,7 @@ function drawFallenHeadwear(g,id,kind,back) {
 }
 function drawFallenHead(g,id,p,f,wear=true) {
   const skin=id.skinCol||color(235,180,140);
-  g.fill(fallenHeadColor(id,p,f,skin));g.ellipse(0,0,11,11);
+  figureCelOval(g,0,0,11,11,fallenHeadColor(id,p,f,skin),.65);
   drawFigureHair(g,id,0,0,0);drawFallenFace(g,p,f);
   const hw=headwearOf(id);if(wear&&hw)drawFallenHeadwear(g,id,hw,p&&p.faceDown&&f>.5);
 }
@@ -11902,11 +11950,15 @@ function woundHold(rg,rig,w) {
   L.bMax=2.65;L.rest=a;L.restB=bend;
   return {arm:i,x:w.x,y:w.y};
 }
-function drawFallBone(r,x,y,nx,ny,width,col,tip,tipSz) {
+function drawFallBone(r,x,y,nx,ny,width,col,tip,tipSz,join) {
   const dx=nx-x,dy=ny-y,len=Math.hypot(dx,dy);
-  r.push();r.translate(x,y);r.rotate(Math.atan2(dy,dx));r.fill(col);
-  r.ellipse(len*.5,0,len+width,width);
-  if(tip){r.fill(tip);r.ellipse(len+tipSz*.30,0,tipSz,tipSz*.86);}r.pop();
+  // Keep both bone observations and their exact geometry available to the
+  // fall painters, while the same cloth gets one silhouette around its hinge.
+  if(join)figureCelLimb(r,x,y,nx,ny,join.x,join.y,width,(width+join.width)*.5,join.width,col);
+  r.push();r.translate(x,y);r.rotate(Math.atan2(dy,dx));
+  if(join===undefined)figureCelOval(r,len*.5,0,len+width,width,col);
+  if(tip)figureCelOval(r,len+tipSz*.30,0,tipSz,tipSz*.86,tip);
+  r.pop();
 }
 function drawFallLimb(r,rig,rg,i,f,shirt,pants,skin,boot,faceDown=false) {
   const L=rg.limbs[i],arm=i<2,s=i%2?1:-1;
@@ -11922,9 +11974,11 @@ function drawFallLimb(r,rig,rg,i,f,shirt,pants,skin,boot,faceDown=false) {
   const l2=arm?rig.fore*(faceDown?.82:1):ragShin(rig,knee*f)*(1-.20*Math.sin(f*PI));
   const ex=ox+Math.cos(ang)*l1*projection,ey=oy+Math.sin(ang)*l1;
   const hx=ex+Math.cos(ang+bend)*l2*projection,hy=ey+Math.sin(ang+bend)*l2;
-  drawFallBone(r,ox,oy,ex,ey,arm?rig.upperW*(faceDown?.92:1):rig.thighW,arm?shirt:pants);
-  drawFallBone(r,ex,ey,hx,hy,arm?rig.foreW*(faceDown?.92:1):rig.shinW,arm?shirt:pants,
-    arm?(skin||color(235,180,140)):boot,arm?rig.hand*(faceDown?.94:1):rig.foot);
+  const w1=arm?rig.upperW*(faceDown?.92:1):rig.thighW;
+  const w2=arm?rig.foreW*(faceDown?.92:1):rig.shinW;
+  drawFallBone(r,ox,oy,ex,ey,w1,arm?shirt:pants,undefined,undefined,{x:hx,y:hy,width:w2});
+  drawFallBone(r,ex,ey,hx,hy,w2,arm?shirt:pants,
+    arm?(skin||color(235,180,140)):boot,arm?rig.hand*(faceDown?.94:1):rig.foot,false);
 }
 
 // Successful humanoid sword kills share one rotation, independent of bullets.
@@ -12463,7 +12517,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
           r.noStroke();r.fill(90,0,0,a*.85*pool);r.ellipse(-4,0,(TL+14*f)*spread,TW*1.5*spread);
           ragContour(r, a);
           r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a);
-          r.ellipse(0, 0, TL, TW); r.ellipse(TL * 0.30, 0, TL * 0.42, TW * 1.06);
+          figureCelOval(r, 0, 0, TL, TW, this.sC);
           drawFallenAttire(r,this.id,TL,TW,true,1);
           r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } }
           // Back of the head: no face, they are looking at the ground.
@@ -12492,7 +12546,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.fill(sK); r.ellipse(0, -5, 11, 11); r.noStroke(); for (let d of this.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.pop(); 
   } 
   else { 
-      r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.fall?figureFallYaw(this.fall,this.rag):this.aA); const RG = this.rag; if (RG) { if(!this.fall)r.rotate(RG.ang); r.scale(RAG_SCALE); } if (RG) ragContour(r, a); else r.noStroke(); const RP = this.fall?projectFallRig(this.bW,this.bH,f):ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW; r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -10 : -10, lY2 = this.bW === 105 ? 15 : 2; r.push(); if (RG) { const bootC = color(this.pC.levels[0] * 0.55, this.pC.levels[1] * 0.55, this.pC.levels[2] * 0.55, a); if(this.fall){drawFallLimb(r,RP,RG,2,f,this.sC,this.pC,sK,bootC); drawFallLimb(r,RP,RG,3,f,this.sC,this.pC,sK,bootC);}else{ragLimb(r, RP.hipX, -RP.hipY, PI + RG.limbs[2].a, -ragKnee(RG.limbs[2]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[2])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot); ragLimb(r, RP.hipX,  RP.hipY, PI - RG.limbs[3].a,  ragKnee(RG.limbs[3]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[3])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot);} } else { r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4); } if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(lX, -4, 12, 16); } r.pop(); const underArm=this.fall&&this.fall.faceDown&&this.fall.hold&&f>.45?this.fall.hold.arm:-1; if(underArm>=0){ragContour(r,a);drawFallLimb(r,RP,RG,underArm,f,this.sC,this.pC,sK);} if (RG) ragContour(r, a); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); if (RG) { r.ellipse(0, 0, TL, TW); r.ellipse(TL * 0.30, 0, TL * 0.42, TW * 1.06); } else r.ellipse(0, 0, this.bW + 15 * f, this.bH);
+      r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.fall?figureFallYaw(this.fall,this.rag):this.aA); const RG = this.rag; if (RG) { if(!this.fall)r.rotate(RG.ang); r.scale(RAG_SCALE); } if (RG) ragContour(r, a); else r.noStroke(); const RP = this.fall?projectFallRig(this.bW,this.bH,f):ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW; r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -10 : -10, lY2 = this.bW === 105 ? 15 : 2; r.push(); if (RG) { const bootC = color(this.pC.levels[0] * 0.55, this.pC.levels[1] * 0.55, this.pC.levels[2] * 0.55, a); if(this.fall){drawFallLimb(r,RP,RG,2,f,this.sC,this.pC,sK,bootC); drawFallLimb(r,RP,RG,3,f,this.sC,this.pC,sK,bootC);}else{ragLimb(r, RP.hipX, -RP.hipY, PI + RG.limbs[2].a, -ragKnee(RG.limbs[2]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[2])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot); ragLimb(r, RP.hipX,  RP.hipY, PI - RG.limbs[3].a,  ragKnee(RG.limbs[3]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[3])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot);} } else { r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4); } if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(lX, -4, 12, 16); } r.pop(); const underArm=this.fall&&this.fall.faceDown&&this.fall.hold&&f>.45?this.fall.hold.arm:-1; if(underArm>=0){ragContour(r,a);drawFallLimb(r,RP,RG,underArm,f,this.sC,this.pC,sK);} if (RG) ragContour(r, a); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); if (RG) { figureCelOval(r, 0, 0, TL, TW, this.sC); } else r.ellipse(0, 0, this.bW + 15 * f, this.bH);
       if (this.eT === "ARMORED_STANDARD") { r.fill(100); if (RG) r.rect(-TL * 0.26, -TW * 0.46, TL * 0.58, TW * 0.92, 4); else r.rect(-10, -12, 20, 24, 4); }
       if (this.eT === "FEMALE_PISTOL" && !(this.backFacing&&(!this.fall||f>.5))) { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(4, -6, 12, 10); r.ellipse(4, 6, 12, 10); }
       drawFallenAttire(r,this.id,RG?TL:this.bW+15*f,RG?TW:this.bH,this.backFacing,this.fall?f:1);
@@ -12506,7 +12560,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       if (this.eT === "AERIAL" || this.eT === "AERIAL_PISTOL") { r.fill(80, a); r.rect(-18, -12, 12, 24, 3); } 
       if (this.eT !== "ARMORED" && this.eT !== "MOLOTOV" && this.eT !== "AERIAL" && !(this.id&&this.id.isUnarmed)) { r.push(); r.translate(20 - 10 * f, 8 + 15 * f); r.rotate(f * PI / 2); if (this.cW === WEAPONS.SMG || this.cW === WEAPONS.DUAL_SMG) { r.fill(40); r.rect(31, 12, 24, 8, 2); r.rect(35, 20, 6, 12); } else if (this.cW === WEAPONS.ASSAULT_RIFLE) { r.fill(40); r.rect(5, 4, 42, 4, 1); r.fill(139, 69, 19); r.rect(15, 3, 12, 6, 1); r.rect(0, 3, 8, 6, 1); } else if (this.cW === WEAPONS.SHOTGUN) { r.fill(30); r.rect(5, 4, 40, 5, 1); r.fill(15); r.rect(20, 3, 14, 7, 1); r.fill(50); r.rect(5, 3, 12, 7, 2); } else if (this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { r.fill(50, 70, 50); r.rect(5, 4, 45, 6, 2); r.fill(30); r.rect(20, 2, 10, 10, 1); } else { r.fill(40); r.rect(15, 5, 16, 6, 2); } r.pop(); if (this.cW === WEAPONS.DUAL_SMG) { r.push(); r.translate(20 - 10 * f, -14 - 15 * f); r.rotate(-f * PI / 2); r.fill(40); r.rect(15, -7, 24, 8, 2); r.rect(19, -19, 6, 12); r.pop(); } } else if (this.eType === "MOLOTOV") { r.push(); r.translate(20 - 10 * f, 8 + 15 * f); r.rotate(f * PI / 2); r.fill(30, 120, 30); r.rect(0, -8, 8, 16, 2); r.pop(); } else if (this.eType === "ARMORED") { r.push(); r.translate(30 - 10 * f, 25 + 15 * f); r.rotate(f * PI / 2); r.fill(30); r.rect(0, -10, 50, 20, 4); r.pop(); }
       if(this.swordHeadless){r.pop();r.pop();return;}
-      if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(0, 0, this.bW + 15 * f, 20); if (RG) ragContour(r, a); } r.translate(this.fall?RP.headX:(RG?18:20)*f,0); if(this.fall)r.scale(lerp(1/RAG_SCALE,1,f)); r.push(); r.rotate(figureHeadTurn(this.fall,f)); const hK=fallenHeadColor(this.id,this.fall,f,sK); if (this.dT === 4) { r.fill(90, 0, 0); r.ellipse(0, 0, 14, 14); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-figureHeadTurn(this.fall,f)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 1) { r.fill(hK); r.arc(0, 0, 11, 11, this.hA + PI / 4, this.hA + TWO_PI - PI / 4, PIE); r.fill(90, 0, 0); r.arc(0, 0, 8, 8, this.hA - PI / 4, this.hA + PI / 4, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-figureHeadTurn(this.fall,f)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 6) { r.push(); r.rotate(this.hA); r.fill(90, 0, 0); r.ellipse(0, 0, 10, 10); let spread = min(this.sep * 0.4, 8); r.fill(hK); r.arc(0, -spread, 11, 11, PI, TWO_PI, CHORD); r.arc(0, spread, 11, 11, 0, PI, CHORD); r.pop(); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-figureHeadTurn(this.fall,f)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 8) { r.push(); r.rotate(this.hA); r.fill(hK); r.arc(0, 0, 11, 11, 0, PI + HALF_PI, PIE); r.fill(90, 0, 0); r.arc(0, 0, 11, 11, PI + HALF_PI, TWO_PI, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-figureHeadTurn(this.fall,f)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } r.pop(); } else if (this.dT === 9) { let nX = 10 + 5 * this.fP; r.fill(90, 0, 0); r.ellipse(nX, 0, 12, 12); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-figureHeadTurn(this.fall,f)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else { r.fill(hK); r.ellipse(0, 0, 11, 11); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-figureHeadTurn(this.fall,f)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } r.noStroke();
+      if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(0, 0, this.bW + 15 * f, 20); if (RG) ragContour(r, a); } r.translate(this.fall?RP.headX:(RG?18:20)*f,0); if(this.fall)r.scale(lerp(1/RAG_SCALE,1,f)); r.push(); r.rotate(figureHeadTurn(this.fall,f)); const hK=fallenHeadColor(this.id,this.fall,f,sK); if (this.dT === 4) { r.fill(90, 0, 0); r.ellipse(0, 0, 14, 14); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-figureHeadTurn(this.fall,f)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 1) { r.fill(hK); r.arc(0, 0, 11, 11, this.hA + PI / 4, this.hA + TWO_PI - PI / 4, PIE); r.fill(90, 0, 0); r.arc(0, 0, 8, 8, this.hA - PI / 4, this.hA + PI / 4, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-figureHeadTurn(this.fall,f)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 6) { r.push(); r.rotate(this.hA); r.fill(90, 0, 0); r.ellipse(0, 0, 10, 10); let spread = min(this.sep * 0.4, 8); r.fill(hK); r.arc(0, -spread, 11, 11, PI, TWO_PI, CHORD); r.arc(0, spread, 11, 11, 0, PI, CHORD); r.pop(); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-figureHeadTurn(this.fall,f)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 8) { r.push(); r.rotate(this.hA); r.fill(hK); r.arc(0, 0, 11, 11, 0, PI + HALF_PI, PIE); r.fill(90, 0, 0); r.arc(0, 0, 11, 11, PI + HALF_PI, TWO_PI, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-figureHeadTurn(this.fall,f)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } r.pop(); } else if (this.dT === 9) { let nX = 10 + 5 * this.fP; r.fill(90, 0, 0); r.ellipse(nX, 0, 12, 12); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-figureHeadTurn(this.fall,f)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else { figureCelOval(r,0,0,11,11,hK,.65); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-figureHeadTurn(this.fall,f)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } r.noStroke();
       // The hair, and whatever was on the head. The identity was frozen at the
       // moment of death (figureIdentity), so this body keeps what the person
       // was wearing instead of coming to rest as a bare skin dome. Anything
@@ -13049,21 +13103,25 @@ function drawBoxingLegs(e,b,rig) {
     if(BIOME_ACTIVE)figureContour();else noStroke();
     // The knee, ankle and sole remain separate. A shorter, planted stance
     // becomes a wider punch only while the lead steps or the rear heel pivots.
-    drawFallBone(window,ox,oy,kx,ky,rig.thighW,e.pantsCol);
-    drawFallBone(window,kx,ky,ax,ay,rig.shinW*.80,e.pantsCol);
+    drawFallBone(window,ox,oy,kx,ky,rig.thighW,e.pantsCol,undefined,undefined,{x:ax,y:ay,width:rig.shinW*.80});
+    drawFallBone(window,kx,ky,ax,ay,rig.shinW*.80,e.pantsCol,undefined,undefined,false);
     push();translate(foot.x,foot.y-foot.lift);rotate(foot.heading);fill(boot);
-    ellipse(0,0,rig.foot,rig.shinW*.80);pop();
+    figureCelOval(window,0,0,rig.foot,rig.shinW*.80,boot);pop();
   }
 }
 function drawBoxingArms(e,b) {
   const rig=figureRig(e.bodyW,e.bodyH),skin=e.skinCol||color(235,180,140);
+  const paint=figurePainter(),g=paint?paint.api:window;
   for(const s of [-1,1]){
     const sy=s*rig.shY,reach=b.extension*((s===-1&&e.meleePhase!==2)||(s===1&&e.meleePhase===2)?1:0);
     const hx=9+reach*22,hy=s*(8-reach*2),dx=hx,dy=hy-sy,l1=rig.upper*.75,l2=rig.fore*.85;
     const d=Math.max(.1,Math.min(Math.hypot(dx,dy),l1+l2-.01)),a=Math.atan2(dy,dx)+s*Math.acos(Math.max(-1,Math.min(1,(l1*l1+d*d-l2*l2)/(2*l1*d))));
     const ex=Math.cos(a)*l1,ey=sy+Math.sin(a)*l1;
-    push();translate(0,sy);rotate(a);fill(e.shirtCol);ellipse(l1*.5,0,l1+6,7);pop();
-    push();translate(ex,ey);rotate(Math.atan2(hy-ey,hx-ex));fill(skin);ellipse(l2*.5,0,l2+5,6);ellipse(l2+2,0,8,8);fill(red(skin)*1.1,green(skin)*1.1,blue(skin)*1.1);ellipse(l2+3,-1.2,4,3);pop();
+    // The sleeve and exposed forearm meet under a soft cuff, never two rings.
+    const fx=ex+(hx-ex)*.22,fy=ey+(hy-ey)*.22;
+    figureCelLimb(g,0,sy,ex,ey,fx,fy,7,6.3,6,e.shirtCol);
+    figureCelLimb(g,ex,ey,(ex+hx)*.5,(ey+hy)*.5,hx,hy,5.7,5.4,5,skin);
+    figureCelOval(g,hx+2*Math.cos(a),hy+2*Math.sin(a),8,8,skin,.8);
   }
 }
 function startPunchStun(e,angle) {
@@ -13098,8 +13156,7 @@ function drawStunnedFigure(e) {
   const skin=e.skinCol||color(235,180,140),boot=color(red(e.pantsCol)*.55,green(e.pantsCol)*.55,blue(e.pantsCol)*.55);
   ragContour(window,255);
   if(rg){for(let i=2;i<4;i++)drawFallLimb(window,rig,rg,i,f,e.shirtCol,e.pantsCol,skin,boot);}
-  if(BIOME_ACTIVE){const light=figureLight(p?p.a:e.aimAngle);volShadeCol(0,0,rig.TL,rig.TW,e.shirtCol,1,light[0],light[1]);}
-  else{fill(e.shirtCol);ellipse(0,0,rig.TL,rig.TW);}
+  figureCelOval(window,0,0,rig.TL,rig.TW,e.shirtCol);
   drawFallenAttire(window,figureIdentity(e),rig.TL,rig.TW,p&&p.faceDown,f);
   if(rg){for(let i=0;i<2;i++)drawFallLimb(window,rig,rg,i,f,e.shirtCol,e.pantsCol,skin,boot);}
   translate(rg?rig.headX:lerp(12/RAG_SCALE,18,f),0);scale(lerp(1/RAG_SCALE,1,f));rotate(figureHeadTurn(p,f));drawFallenHead(window,figureIdentity(e),p,f);pop();
@@ -15192,9 +15249,54 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
         pop();
     }
 
-    if (this.eType === "SAUCER" || this.eType === "SAUCER_RED") { push(); rotate(this.aimAngle); fill(100); stroke(this.eType === "SAUCER_RED" ? color(200, 50, 50) : 150); strokeWeight(4); ellipse(0, 0, 80, 80); fill(this.eType === "SAUCER_RED" ? color(255, 50, 50) : color(150, 50, 200)); noStroke(); ellipse(0, 0, 40, 40); fill(80); rect(10, -35, 40, 16, 4); rect(10, 19, 40, 16, 4); if(this.eType === "SAUCER_RED") { fill(200, 20, 20); rect(40, -28, 15, 6); rect(40, 22, 15, 6); } pop(); pop(); return; }
-    if (this.eType === "BUG") { rotate(this.aimAngle); fill(70, 90, 50); ellipse(0, 0, this.bodyW, this.bodyH); fill(30); ellipse(8, 0, 10, 10); stroke(30); strokeWeight(2); line(-5, 0, -12, 12 + sin(frameCount * 0.5) * 5); line(-5, 0, -12, -12 - sin(frameCount * 0.5) * 5); line(5, 0, 12, 12 + cos(frameCount * 0.5) * 5); line(5, 0, 12, -12 - cos(frameCount * 0.5) * 5); noStroke(); for (let d of this.decals) { if (d.col) fill(d.col[0], d.col[1], d.col[2], d.col[3]); else fill(200, 230, 40, 220); ellipse(d.x, d.y, d.sz, d.sz); } pop(); return; }
-    if (this.eType === "SNAIL") { rotate(this.aimAngle); fill(20, 100, 20); ellipse(0, 0, this.bodyW + 10 + sin(frameCount*0.1)*5, this.bodyH); fill(50, 80, 40); ellipse(-5, 0, 24, 20); fill(30, 60, 20); ellipse(-5, 0, 16, 12); fill(30); ellipse(this.bodyW/2, -6, 8, 8); ellipse(this.bodyW/2, 6, 8, 8); stroke(20, 100, 20); strokeWeight(2); line(10, -4, this.bodyW/2, -6); line(10, 4, this.bodyW/2, 6); noStroke(); for (let d of this.decals) { if (d.col) fill(d.col[0], d.col[1], d.col[2], d.col[3]); else fill(20, 100, 20, 220); ellipse(d.x, d.y, d.sz, d.sz); } pop(); return; }
+    if (this.eType === "SAUCER" || this.eType === "SAUCER_RED") {
+        push(); rotate(this.aimAngle);
+        const g=paint?paint.api:window, redHull=this.eType==="SAUCER_RED";
+        figureCelOval(g,0,0,80,80,redHull?_entityCel.saucerRed:_entityCel.saucer,1);
+        // A canopy rises from the shell; its contact rim is a surface join,
+        // rather than the heavy outline of a second whole disc.
+        fill(35,32,46,110); noStroke(); ellipse(0,1.5,44,42);
+        figureCelOval(g,0,0,40,40,redHull?_entityCel.red:_entityCel.purple,.75);
+        fill(49,53,62); rect(10,-35,40,16,4); rect(10,19,40,16,4);
+        fill(105,112,124); rect(12,-33,36,5,2); rect(12,21,36,5,2);
+        fill(26,29,35); rect(45,-31,5,8,1); rect(45,23,5,8,1);
+        if(redHull) { fill(200,20,20); rect(40,-28,15,6); rect(40,22,15,6); }
+        pop(); pop(); return;
+    }
+    if (this.eType === "BUG") {
+        rotate(this.aimAngle);
+        // Thin legs disappear under the shell so no black lines cut across
+        // its domed back while the opposite pairs paddle through their gait.
+        stroke(30); strokeWeight(2);
+        line(-5,0,-12,12+sin(frameCount*.5)*5); line(-5,0,-12,-12-sin(frameCount*.5)*5);
+        line(5,0,12,12+cos(frameCount*.5)*5); line(5,0,12,-12-cos(frameCount*.5)*5);
+        const g=paint?paint.api:window;
+        figureCelOval(g,0,0,this.bodyW,this.bodyH,_entityCel.bug,.7);
+        stroke(37,49,31,135); strokeWeight(.7); line(-this.bodyW*.34,0,3,0); noStroke();
+        figureCelOval(g,8,0,10,10,_entityCel.dark,.5);
+        noStroke(); for(let d of this.decals) {
+            if(d.col) fill(d.col[0],d.col[1],d.col[2],d.col[3]); else fill(200,230,40,220);
+            ellipse(d.x,d.y,d.sz,d.sz);
+        }
+        pop(); return;
+    }
+    if (this.eType === "SNAIL") {
+        rotate(this.aimAngle); const g=paint?paint.api:window;
+        figureCelOval(g,0,0,this.bodyW+10+sin(frameCount*.1)*5,this.bodyH,_entityCel.snail,.7);
+        figureCelOval(g,-5,0,24,20,_entityCel.shell,.8);
+        // The spiral is ink on the curved shell, not another solid disc.
+        noFill(); stroke(30,60,20,170); strokeWeight(1.15);
+        arc(-5,0,15,12,-HALF_PI,PI+HALF_PI); arc(-4,0,7,6,0,PI+HALF_PI);
+        stroke(20,100,20); strokeWeight(2);
+        line(10,-4,this.bodyW/2,-6); line(10,4,this.bodyW/2,6);
+        figureCelOval(g,this.bodyW/2,-6,8,8,_entityCel.dark,.45);
+        figureCelOval(g,this.bodyW/2,6,8,8,_entityCel.dark,.45);
+        noStroke(); for(let d of this.decals) {
+            if(d.col) fill(d.col[0],d.col[1],d.col[2],d.col[3]); else fill(20,100,20,220);
+            ellipse(d.x,d.y,d.sz,d.sz);
+        }
+        pop(); return;
+    }
     // --- NEW: RENDER COW MODEL ---
     if (this.eType === "HORSE") {
         // A horse carrying somebody is drawn by its rider, so the rider always
@@ -15211,6 +15313,7 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
 
     if (this.eType === "COW") {
         push(); rotate(this.aimAngle);
+        const g=paint?paint.api:window;
         
         let swing = this.isMoving ? sin(this.walkCycle) * 6 : 0;
         let bob = this.isMoving ? abs(sin(this.walkCycle)) * 1.5 : 0;
@@ -15228,16 +15331,11 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
         line(-this.bodyW/2, 0, -this.bodyW/2 - 12 + (swing * 0.5), 0);
         noStroke();
 
-        // Main Body (White). The widest animal in the game, so the flattest
-        // without it -- and the one the volume treatment was asked for first.
+        // Hide and head use the same broad curved planes as a person. Spots
+        // remain paint within the hide, with no separate contour around them.
         if (this.hitFlash > 0) { this.hitFlash--; fill(255); ellipse(0, 0, this.bodyW, this.bodyH); }
-        else if (BIOME_ACTIVE) {
-            const _vl = figureLight(this.aimAngle);
-            volShade(0, 0, this.bodyW, this.bodyH, 245, 245, 245, 1, _vl[0], _vl[1]);
-            // A marking lies IN the hide, so it takes no contour of its own --
-            // the same rule the blood decals follow.
-            noStroke();
-        } else { fill(245); ellipse(0, 0, this.bodyW, this.bodyH); }
+        else figureCelOval(g,0,0,this.bodyW,this.bodyH,_entityCel.white,1);
+        noStroke();
 
         // Random Spots
         for (let d of this.decals) {
@@ -15248,23 +15346,23 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
         // Head setup
         push();
         translate(this.bodyW/2 + 4, 0);
-        // ...but the head is a mass again, so the contour comes back on.
-        if (BIOME_ACTIVE) figureContour();
         let headBob = this.isMoving ? sin(this.walkCycle * 0.5) * 0.15 : 0;
         rotate(headBob); // Head sways slightly as it walks
 
         // Head Base
-        fill(245); ellipse(0, 0, 18, 16);
+        figureCelOval(g,0,0,18,16,_entityCel.white,.7);
         
         // Snout (Pinkish)
-        fill(255, 170, 170); ellipse(7, 0, 10, 12);
+        figureCelOval(g,7,0,10,12,_entityCel.pink,.55);
         
         // Eyes
         fill(15); ellipse(2, -5, 3, 3); ellipse(2, 5, 3, 3);
         
         // Ears & Horns
-        fill(245); ellipse(-3, -8, 6, 4); ellipse(-3, 8, 6, 4);
-        fill(210, 190, 150); ellipse(-5, -6, 3, 6); ellipse(-5, 6, 3, 6);
+        figureCelOval(g,-3,-8,6,4,_entityCel.white,.35);
+        figureCelOval(g,-3,8,6,4,_entityCel.white,.35);
+        figureCelOval(g,-5,-6,3,6,_entityCel.horn,.35);
+        figureCelOval(g,-5,6,3,6,_entityCel.horn,.35);
         
         pop(); // 1. Close head translate
         pop(); // 2. Close cow body rotation
@@ -15275,6 +15373,8 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
     if (this.eType === "ROBOT") {
         push();
         rotate(this.aimAngle);
+        const g=paint?paint.api:window, L=figureLight(this.aimAngle);
+        const lx=L[0],ly=L[1], S=figureSouth(this.aimAngle),sx=S[0],sy=S[1];
         const gait = this.isMoving ? sin(this.walkCycle) : 0;
         const step = gait * (this.enraged ? 13 : 9);
         const bob  = this.isMoving ? abs(sin(this.walkCycle)) * (this.enraged ? 2.4 : 1.4) : 0;
@@ -15296,14 +15396,8 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
         // Torso: a wedge, apex forward and down. The whole point of the
         // silhouette is that it is NOT the human oval -- from above it reads as
         // a chevron pointing where it is going.
-        fill(flash ? color(255) : this.shirtCol);
-        beginShape();
-        vertex(20, 0); vertex(4, -16); vertex(-13, -12); vertex(-13, 12); vertex(4, 16);
-        endShape(CLOSE);
-        fill(flash ? color(255) : color(96, 103, 111));
-        beginShape();
-        vertex(15, 0); vertex(3, -11); vertex(-8, -8); vertex(-8, 8); vertex(3, 11);
-        endShape(CLOSE);
+        entityCelPlate(g,_robotCelHull,flash?_entityCel.white:this.shirtCol,lx,ly,sx,sy,.14);
+        entityCelPlate(g,_robotCelInset,flash?_entityCel.white:_entityCel.steelLight,lx,ly,sx,sy,.1);
         // Chest vent and a core that glows with the charge
         fill(38, 42, 47);
         rect(-5, -6, 11, 12, 2);
@@ -15316,6 +15410,7 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
         fill(70, 76, 84);
         rect(2, -21 - gait * 2, 9, 8, 2);
         fill(52, 57, 63); rect(9, -21 - gait * 2, 6, 8, 2);
+        fill(106,113,122); rect(3,-20-gait*2,10,2,1);
 
         // Right arm: the cannon. Barrel, sleeve, and a muzzle ring that opens up
         // as the charge builds.
@@ -15323,6 +15418,8 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
         rect(0, 12 + gait * 2, 12, 10, 2);
         fill(88, 95, 104); rect(11, 13 + gait * 2, 20, 8, 2);
         fill(52, 57, 63);  rect(27, 12.5 + gait * 2, 8, 9, 2);
+        fill(124,131,143); rect(12,14+gait*2,18,2,1);
+        fill(25,28,33); rect(32,14+gait*2,3,6,1);
         fill(this.trimCol || color(255, 146, 40));
         rect(20, 14.5 + gait * 2, 3.5, 5, 1);
 
@@ -15346,14 +15443,13 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
         // glance from across the street.
         if (!this.enraged) {
             const hurt = 1 - Math.max(0, this.headHP) / ROBOT_HEAD_HP;
-            fill(flash ? color(255) : color(84, 90, 98));
-            ellipse(6, 0, 15, 14);
+            figureCelOval(g,6,0,15,14,flash?_entityCel.white:_entityCel.sensor,.65,lx,ly);
             fill(28, 31, 35); ellipse(9, 0, 10, 9);
             fill(255, 60 + heat * 120, 30, 190);
             rect(10, -3.4, 3.4, 6.8, 1);
             if (hurt > 0.45) { fill(20, 18, 17, 190); ellipse(4 - hurt * 2, hurt * 3, 5, 4); }
         } else {
-            fill(46, 40, 36); ellipse(6, 0, 13, 12);
+            figureCelOval(g,6,0,13,12,_entityCel.socket,.55,lx,ly);
             fill(16, 15, 14); ellipse(6, 0, 8, 7);
             // Live wiring, and the fuse light going faster the closer it gets.
             stroke(120, 126, 134); strokeWeight(1.2);
@@ -15375,17 +15471,37 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
         return;
     }
 
-    if (this.eType === "SNAIL_HYBRID") { 
-        push(); rotate(this.aimAngle); let bob = this.isMoving ? sin(this.walkCycle)*5 : 0; translate(bob, 0); 
-        fill(173, 216, 230); ellipse(0, 0, this.bodyW * 0.7, this.bodyH * 0.7); 
-        if (!this.enraged) { fill(20, 100, 20); ellipse(15, 0, 40, 20); fill(50); rect(20, 10, 40, 15); fill(255, 105, 180); rect(55, 12, 10, 10); } 
-        else { fill(20, 100, 20); ellipse(25, -14, 35, 12); ellipse(25, 14, 35, 12); }
-        fill(20, 100, 20); ellipse(0, 0, 30, 30); 
-        if (!this.enraged) { fill(0); noStroke(); ellipse(12, 0, 8, 4); } 
-        else { fill(255); stroke(0); strokeWeight(1); rect(9, -6, 6, 12, 1); line(9, 0, 15, 0); line(12, -6, 12, 6); }
-        if (this.leftEye > 0) { stroke(20, 100, 20); strokeWeight(4); line(0, -10, 15, -35); fill(255); noStroke(); ellipse(15, -35, 25, 25); fill(0); ellipse(18, -35, 8, 8); } 
-        if (this.rightEye > 0) { stroke(20, 100, 20); strokeWeight(4); line(0, 10, 15, 35); fill(255); noStroke(); ellipse(15, 35, 25, 25); fill(0); ellipse(18, 35, 8, 8); } 
-        pop(); pop(); return; 
+    if (this.eType === "SNAIL_HYBRID") {
+        push(); rotate(this.aimAngle);
+        const g=paint?paint.api:window, bob=this.isMoving?sin(this.walkCycle)*5:0;
+        translate(bob,0);
+        figureCelOval(g,0,0,this.bodyW*.7,this.bodyH*.7,_entityCel.blue,1);
+        if(!this.enraged) {
+            figureCelOval(g,15,0,40,20,_entityCel.snail,.8);
+            noStroke(); fill(50); rect(20,10,40,15);
+            fill(95,99,108); rect(21,11,38,4); fill(30); rect(58,14,2,9);
+            fill(255,105,180); rect(55,12,10,10);
+        } else {
+            figureCelOval(g,25,-14,35,12,_entityCel.snail,.65);
+            figureCelOval(g,25,14,35,12,_entityCel.snail,.65);
+        }
+        figureCelOval(g,0,0,30,30,_entityCel.snail,.8);
+        if(!this.enraged) { fill(0); noStroke(); ellipse(12,0,8,4); }
+        else {
+            fill(255); stroke(0); strokeWeight(1); rect(9,-6,6,12,1);
+            line(9,0,15,0); line(12,-6,12,6);
+        }
+        if(this.leftEye>0) {
+            figureCelLimb(g,0,-10,7.5,-22.5,15,-35,4,4,4,_entityCel.snail);
+            figureCelOval(g,15,-35,25,25,_entityCel.white,.7);
+            fill(0); noStroke(); ellipse(18,-35,8,8);
+        }
+        if(this.rightEye>0) {
+            figureCelLimb(g,0,10,7.5,22.5,15,35,4,4,4,_entityCel.snail);
+            figureCelOval(g,15,35,25,25,_entityCel.white,.7);
+            fill(0); noStroke(); ellipse(18,35,8,8);
+        }
+        pop(); pop(); return;
     }
 
     // A rider draws his own mount, under himself and before anything else he
@@ -15417,17 +15533,29 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
     if (this.mounted) { lS *= 0.35; bob *= 0.4; }
     if (this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL") { bob += sin(frameCount * 0.1) * 15; lS = 0; }
     if (this.reloadTimer > 0) { let rP = 1 - (this.reloadTimer / 90); push(); noFill(); stroke(0, 200, 255, 150); strokeWeight(4); arc(0, 0, 50, 50, -PI / 2, -PI / 2 + (rP * TWO_PI)); pop(); if (!oneHandWeapon(this.currentWeapon)) bob += sin(frameCount * 0.5) * 3; }
-    if (this.eType === "ALIEN_GATOR") { 
-        push(); rotate(this.moveAngle); fill(this.pantsCol); if (BIOME_ACTIVE) figureContour(); else noStroke(); rect(-30 + lS*3, -30, 54, 24, 12); rect(-30 - lS*3, 6, 54, 24, 12); pop();
-        push(); rotate(this.aimAngle); translate(bob*3, 0);
-        // 63 x 81 -- the widest body in the game, so the flattest as a bare
-        // fill, and the one the volume treatment was asked for first. Every
-        // limb and plate after it inherits the contour volShade leaves set.
-        if (BIOME_ACTIVE) { const _vl = figureLight(this.aimAngle); volShadeCol(0, 0, this.bodyW, this.bodyH, this.shirtCol, 1, _vl[0], _vl[1]); }
-        else { fill(this.shirtCol); noStroke(); ellipse(0, 0, this.bodyW, this.bodyH); }
-        fill(30, 180, 30); ellipse(20, -42, 48, 24); ellipse(40, -42, 24, 24); fill(30, 180, 30); ellipse(45, 33, 75, 24); ellipse(75, 33, 30, 30);
-        fill(40); rect(50, 8, 45, 12, 2); fill(20); rect(90, 6, 10, 16); fill(30, 180, 30); ellipse(0, 0, 33, 33); rect(0, -15, 60, 30, 10); fill(0); ellipse(20, -10, 5, 5); ellipse(20, 10, 5, 5); noStroke(); 
-        for (let d of this.decals) { if (d.col) fill(d.col[0], d.col[1], d.col[2], d.col[3]); else fill(90, 0, 0, 220); ellipse(d.x, d.y, d.sz, d.sz); } pop(); pop(); return; 
+    if (this.eType === "ALIEN_GATOR") {
+        const g=paint?paint.api:window;
+        push(); rotate(this.moveAngle);
+        figureCelOval(g,-3+lS*3,-18,54,24,this.pantsCol,.7);
+        figureCelOval(g,-3-lS*3,18,54,24,this.pantsCol,.7);
+        pop();
+        push(); rotate(this.aimAngle); translate(bob*3,0);
+        figureCelOval(g,0,0,this.bodyW,this.bodyH,this.shirtCol,1);
+        // Continuous arm surfaces avoid complete elbow rings at this scale.
+        figureCelLimb(g,8,-42,24,-42,40,-42,24,24,20,_entityCel.gator);
+        figureCelOval(g,40,-42,24,24,_entityCel.gator,.45);
+        figureCelLimb(g,18,33,46,33,75,33,24,24,24,_entityCel.gator);
+        figureCelOval(g,75,33,30,30,_entityCel.gator,.45);
+        noStroke(); fill(40); rect(50,8,45,12,2); fill(88,93,103); rect(52,9,42,3,1);
+        fill(20); rect(90,6,10,16);
+        figureCelOval(g,22,0,77,33,_entityCel.gator,.8);
+        noStroke(); fill(0); ellipse(20,-10,5,5); ellipse(20,10,5,5);
+        fill(15,101,20); ellipse(53,-6,3,4); ellipse(53,6,3,4);
+        noStroke(); for(let d of this.decals) {
+            if(d.col) fill(d.col[0],d.col[1],d.col[2],d.col[3]); else fill(90,0,0,220);
+            ellipse(d.x,d.y,d.sz,d.sz);
+        }
+        pop(); pop(); return;
     }
 // 1. AUTO-STATE TRANSITION MANAGER
 // ==========================================
@@ -15446,70 +15574,17 @@ if (this.isPlayer) {
     
 
 
-     let angleDiff = abs((this.moveAngle - this.aimAngle + PI * 3) % TWO_PI - PI);
-    let isMovingBackward = this.isMoving && angleDiff > HALF_PI;
-    let isChemist = this.isPlayer && typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked;
+    const isChemist=this.isPlayer&&chemistSuitUnlocked;
 
 
-            if (isChemist) {
-        let sway = this.isMoving ? sin(frameCount * 0.2) * 0.2 : sin(frameCount * 0.05) * 0.05;
-        let localTail = this.isMoving ? (this.moveAngle - this.aimAngle) : 0;
-        
-        // --- 1. ALWAYS DRAW LAB COAT TAIL ---
-        push(); 
-        rotate(this.aimAngle); 
-        translate(bob, 0); 
-        rotate(localTail + sway + HALF_PI); 
-        fill(240); stroke(200); strokeWeight(1);
-        beginShape(); 
-        vertex(5, 0); vertex(10, 2); vertex(16, 25); vertex(8, 28); 
-        vertex(-8, 28); vertex(-16, 25); vertex(-10, 2); vertex(-5, 0); 
-        endShape(CLOSE); 
-        pop();
-        
-        // --- 2. ALWAYS CALCULATE TORSO TWIST & DRAW MAIN BODY ---
-        let torsoTwist = 0;
-
-        if (this.meleeTimer > 0 && !this.isArmed) {
-            let p = 1 - (this.meleeTimer / 20); 
-            let pp = sin(p * PI);
-            
-            if (this.meleePhase === 1 || this.meleePhase === 3) {
-                torsoTwist = radians(70) * pp; 
-            } 
-            else if (this.meleePhase === 2 || this.meleePhase === 4) {
-                torsoTwist = radians(-70) * pp; 
-            }
-        }
-
-        push();
-        rotate(this.aimAngle + torsoTwist); 
-        
-        // ---> [YOUR EXISTING BODY ELLIPSE/RECT DRAWING CODE GOES HERE] <---
-        
-        pop();
-
-        // --- 3. ONLY DRAW LEGS IF MOVING BACKWARD ---
-        if (isMovingBackward) {
-            let isBoxerStance = !this.isArmed && this.meleeTimer > 0;
-            let isBigBody = (this.bodyW >= 100);
-            let lW = isBigBody ? 40 : 18, lX = isBigBody ? -30 : -10;
-            let lY1 = isBigBody ? -10 : -10, lY2 = isBigBody ? 15 : 2;
-            
-            if (isBoxerStance) { lY1 -= 8; lY2 += 8; lX += 4; }
-            let swing = typeof lS !== 'undefined' ? lS : 0;
-
-            push(); 
-            rotate(this.moveAngle);
-            noStroke(); 
-            fill(this.pantsCol);
-            rect(lX + swing, lY1, lW, 8, 4); 
-            rect(lX - swing, lY2, lW, 8, 4);
-            pop();
-        }
-    } else {
-        // ... (Keep your standard non-chemist fallback here)
-
+    if ((this.isPlayer || this.isMilitary) && explosiveArmorUnlocked) {
+        this.shirtCol=color(60,100,40);this.pantsCol=color(139,115,85);
+    } else if (isChemist) {
+        this.shirtCol=color(255);this.pantsCol=color(15);
+    } else if (this.isPlayer && ninjaSuitUnlocked) {
+        this.shirtCol=color(20);this.pantsCol=color(15);
+    }
+    {
         push(); rotate(boxing.active?this.aimAngle+boxing.hip:this.moveAngle); noStroke(); fill(this.pantsCol);
         if (this.bodyW === 105) {
           // ARMORED's 105-wide slab keeps its own legs; the rig is shaped like
@@ -15550,9 +15625,8 @@ if (this.isPlayer) {
             // midline, which is the other half of reading as two legs.
             const sx = -10+lS*sgn+RGl.thighW*.5, cy=sgn*-6;
             drawingContext.save();drawingContext.translate(sx,cy);
-            ellipse(th*.5,0,th+wHip*.55,wHip);
-            ellipse(th*.92+sh*.5,0,sh+wKnee*.80,wKnee);
-            fill(bootC[0], bootC[1], bootC[2]);
+            const g=paint?paint.api:window;
+            figureCelLimb(g,0,0,th*.92,0,th*.92+sh,0,wHip,wKnee,wAnkle,this.pantsCol);
             // The boot takes the rig's length UNFORESHORTENED, because a foot
             // is the one part of a standing body that lies flat to this camera
             // -- the leg above it is pointing away and loses more than half its
@@ -15560,11 +15634,27 @@ if (this.isPlayer) {
             // sits past the ankle rather than centred on it, for the reason
             // ragLimb gives: a circle on the joint buries half of itself in the
             // shin and adds only its radius to the leg.
-            ellipse(th*.92+sh+RGl.foot*.34,0,RGl.foot,wAnkle);drawingContext.restore();
+            figureCelOval(g,th*.92+sh+RGl.foot*.34,0,RGl.foot,wAnkle,bootC,.8);drawingContext.restore();
             fill(this.pantsCol);
           }
           noStroke();
         }
+        pop();
+    }
+    if (isChemist) {
+        const sway=this.isMoving?sin(frameCount*.2)*.2:sin(frameCount*.05)*.05;
+        const tail=this.isMoving?this.moveAngle-this.aimAngle:0;
+        push();rotate(this.aimAngle);translate(bob,0);rotate(tail+sway+HALF_PI);
+        const g=paint?paint.api:window;
+        // Cloth follows a curved hem instead of a rigid polygon at the hips.
+        g.stroke(140,146,151,185);g.strokeWeight(.8);g.fill(240,242,243);
+        g.beginShape();g.vertex(-5,0);g.bezierVertex(-11,5,-12,17,-15,25);
+        g.bezierVertex(-9,29,9,29,15,25);g.bezierVertex(12,17,11,5,5,0);g.endShape(CLOSE);
+        g.noStroke();g.fill(205,211,220);
+        g.beginShape();g.vertex(-5,2);g.bezierVertex(-7,11,-5,23,-8,27);
+        g.vertex(-14,25);g.bezierVertex(-11,16,-10,7,-5,2);g.endShape(CLOSE);
+        g.fill(255,255,250);g.beginShape();g.vertex(3,2);
+        g.bezierVertex(8,7,8,18,10,27);g.vertex(3,28);g.bezierVertex(5,17,4,8,3,2);g.endShape(CLOSE);
         pop();
     }
     // Carrying rather than presenting: the player is armed but not aiming, so
@@ -16070,30 +16160,13 @@ if (this.isPlayer) {
                 s.ex = ep[0]; s.ey = ep[1];
             }
 
-            // One segment, in ragLimb()'s shape language: length + its own
-            // width, so the caps round the joints off either end and the two
-            // overlap into a taper rather than butting at the elbow.
-            const seg = (x0, y0, x1, y1, w) => {
-                const dx = x1 - x0, dy = y1 - y0, L = Math.hypot(dx, dy);
-                push(); translate(x0, y0); rotate(atan2(dy, dx));
-                ellipse(L * 0.5, 0, L + w, w);
-                pop();
-            };
-            // The sleeve goes down a shade under the torso. Same garment, but an
-            // arm lying over a chest of exactly the same value has nothing but
-            // its contour to separate it, and at twenty pixels that is not
-            // enough: the limb disappears into the body and a run reads as a
-            // torso with two hands orbiting it. A few per cent is all it takes,
-            // and it is what a real arm does anyway -- it is turned away from
-            // the sky the chest is facing.
+            // One cloth surface around the same fitted bones. Only its outer
+            // silhouette takes ink; the light plane flows through the elbow.
             const _sc = this.shirtCol;
-            const armR = red(_sc) * 0.87, armG = green(_sc) * 0.87,
-                  armB = blue(_sc) * 0.90;
+            const armCol = [red(_sc)*.94,green(_sc)*.94,blue(_sc)*.96];
             const limb = (s) => {
-                if (BIOME_ACTIVE) figureContour();
-                fill(armR, armG, armB);
-                seg(0, s.sy, s.ex, s.ey, RG.upperW);
-                seg(s.ex, s.ey, s.hx, s.hy, RG.foreW);
+                figureCelLimb(paint?paint.api:window,0,s.sy,s.ex,s.ey,s.hx,s.hy,
+                    RG.upperW,(RG.upperW+RG.foreW)*.5,RG.foreW*.84,armCol);
             };
 
             armPass = (front) => {
@@ -16119,9 +16192,9 @@ if (this.isPlayer) {
 
                     if (!s.right && this.isPlayer && isChemist) {
                         // The grey hand IS the cannon, not a separate device.
-                        fill(180, 180, 190); ellipse(h.x, h.y, RG.hand, RG.hand);
+                        figureCelOval(paint?paint.api:window,h.x,h.y,RG.hand,RG.hand,[180,180,190],.8);
                     } else {
-                        fill(skin); ellipse(h.x, h.y, RG.hand, RG.hand);
+                        figureCelOval(paint?paint.api:window,h.x,h.y,RG.hand,RG.hand,skin,.8);
                     }
 
                     if (holdsTool) {
@@ -16233,15 +16306,11 @@ if (this.isPlayer) {
       this.hitFlash--;
       fill(255); ellipse(0, 0, this.bodyW, this.bodyH);
       if (BIOME_ACTIVE) figureContour();
-    } else if (BIOME_ACTIVE) {
-      // A shoulder, not a disc. See FIGURE VOLUME. volShade() leaves the
-      // contour set, so every sleeve, hand and boot drawn after this inherits
-      // it without its own call site knowing. The light is brought into the
-      // figure's own facing -- this whole block is inside rotate(aimAngle).
-      const _vl = figureLight(this.aimAngle);
-      volShadeCol(0, 0, this.bodyW, this.bodyH, this.shirtCol, 1, _vl[0], _vl[1]);
     } else {
-      fill(this.shirtCol); ellipse(0, 0, this.bodyW, this.bodyH);
+      // Curved side/chest planes retain the comic palette in every room.
+      // Include the gait twist: the sun stays fixed while the shoulders turn.
+      const _vl = figureLight(this.aimAngle+(boxing.active?boxing.torso:_tw));
+      volShadeCol(0,0,this.bodyW,this.bodyH,this.shirtCol,1,_vl[0],_vl[1]);
     }
 
     if(['NORMAL','NM0_ROOKIE','NM0_ROOKIE_F'].includes(this.eType)&&!this.isPlayer){push();translate(this.bodyW*.22,this.bodyH*.22);drawNmoInsignia(paint?paint.api:window,true);pop();}
@@ -16336,10 +16405,9 @@ if (this.isPlayer) {
     if (this.eType === "FEMALE_PISTOL" || this.eType === "FARMER_FEMALE" ||
         this.eType === "COWGIRL" || this.eType === "VILLAGER_FEMALE") {
         if (this.hitFlash > 0) fill(255); else fill(this.shirtCol);
-        stroke(this.eType === "FARMER_FEMALE" ? 200 : 0); // Light crease for white dress
-        strokeWeight(1.5); 
-        ellipse(4, -5, 11, 9); 
-        ellipse(4, 5, 11, 9);  
+        const g=paint?paint.api:window,cloth=this.hitFlash>0?[255,255,255]:this.shirtCol;
+        figureCelOval(g,4,-5,11,9,cloth,.45);
+        figureCelOval(g,4,5,11,9,cloth,.45);
         
         stroke(200, 150, 120, 100); 
         strokeWeight(1); 
@@ -16348,8 +16416,9 @@ if (this.isPlayer) {
     }
 
     if ((this.isPlayer && typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) || this.eType === "ALIEN_GATOR") {
-        if (this.eType === "ALIEN_GATOR") fill(30, 130, 30); else fill(240); 
-        noStroke(); arc(-5, 0, 14, 26, HALF_PI, PI+HALF_PI, CHORD); arc(5, 0, 14, 26, -HALF_PI, HALF_PI, CHORD);
+        const g=paint?paint.api:window,c=this.eType==="ALIEN_GATOR"?[30,130,30]:[240,242,243];
+        figureCelArc(g,-5,0,14,26,c,HALF_PI,PI+HALF_PI,.85);
+        figureCelArc(g,5,0,14,26,c,-HALF_PI,HALF_PI,.85);
     }
 
     if(this.isCityPatrol){fill(43,57,57);rect(-8,-11,16,22,3);fill(129,147,139);rect(-6,-9,11,8,2);
@@ -16359,9 +16428,11 @@ if (this.isPlayer) {
       if(this.clothingStyle===2){fill(229,224,202);rect(-2,-9,3,18,1);}
       if(this.clothingStyle===3){noFill();stroke(236,218,184,135);strokeWeight(1.2);line(-6,-5,6,-5);line(-6,3,6,3);}
     }
-    if (this.eType === "ARMORED_STANDARD") { 
-        if (this.hitFlash > 0) fill(255); else fill(100); 
-        rect(-10, -12, 20, 24, 4); 
+    if (this.eType === "ARMORED_STANDARD") {
+        const g=paint?paint.api:window,ang=this.aimAngle+(boxing.active?boxing.torso:_tw);
+        const L=figureLight(ang),S=figureSouth(ang);
+        entityCelPlate(g,_figureChestPlate,this.hitFlash>0?_entityCel.white:_figureChestSteel,L[0],L[1],S[0],S[1],.18);
+        noStroke();fill(176,181,190);rect(-5,-8,10,1.2,1);fill(65,71,81);rect(-5,7,10,1.2,1);
     }
     if (this.isPlayer && ninjaSuitUnlocked) { fill(100, 0, 200); rect(-this.bodyW/2, -4, this.bodyW, 8, 2); } 
  
@@ -16481,29 +16552,23 @@ if (this.isPlayer) {
         else if (this.reloadTimer > 0) {
             let rP = 1 - (this.reloadTimer / 90);
             if (this.isPlayer && oneHandWeapon(this.currentWeapon)) { /* drawn together with the right arm below */ }
-            else { let clipX = 2 + sin(rP * PI) * 10, clipY = 10; fill(this.shirtCol); ellipse(0, clipY - 3, 16, 8); fill(235, 180, 140); ellipse(clipX, clipY, 8, 8); }
+            else { const clipX=2+sin(rP*PI)*10;reloadArm(this,0,-this.bodyH*.425,clipX,10,false); }
         } 
-        else if (this.isArmed || !this.isPlayer) { 
-            let shoulderX = lerp(0, -5, this.armDrag), shoulderY = lerp(lAY, lAY + 3, this.armDrag);
-            if (this.currentWeapon === WEAPONS.BOW) {
-                push(); translate(shoulderX,shoulderY); rotate(0.50);
-                fill(this.shirtCol); ellipse(13,0,27,8);
-                fill(235,180,140); ellipse(25,0,8,8); pop();
-            } else if (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) {
-                push(); translate(shoulderX, shoulderY); rotate(0.52); fill(this.shirtCol); ellipse(16, 0, 32, 8); 
-                if (this.isPlayer && typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) fill(180, 180, 190); else fill(235, 180, 140);
-                ellipse(32, 0, 8, 8); pop();
-            } else if (this.currentWeapon === WEAPONS.DUAL_SMG) {
-                fill(this.shirtCol); ellipse(15, shoulderY, 25, 8); 
-                if (this.isPlayer && typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) fill(180, 180, 190); else fill(235, 180, 140);
-                ellipse(25, shoulderY, 8, 8); 
-            } else { 
-                let handX = lerp(8, -12, this.armDrag); fill(this.shirtCol); ellipse(shoulderX, shoulderY, 16, 8); 
-                if (this.isPlayer && typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) fill(180, 180, 190); else fill(235, 180, 140);
-                ellipse(handX, shoulderY, 8, 8); 
-            }
+        else if (this.isArmed || !this.isPlayer) {
+            const shoulderX=lerp(0,-5,this.armDrag),shoulderY=lerp(lAY,lAY+3,this.armDrag);
+            const rg=figureRig(this.bodyW,this.bodyH),g=paint?paint.api:window;
+            let hx=lerp(8,-12,this.armDrag),hy=shoulderY;
+            if (this.currentWeapon===WEAPONS.BOW) {
+                hx=shoulderX+cos(.50)*25;hy=shoulderY+sin(.50)*25;
+            } else if (weaponHands(this.currentWeapon)===2) {
+                hx=shoulderX+cos(.52)*32;hy=shoulderY+sin(.52)*32;
+            } else if (this.currentWeapon===WEAPONS.DUAL_SMG) hx=25;
+            figureCelLimb(g,shoulderX,shoulderY,(shoulderX+hx)*.5-2,(shoulderY+hy)*.5-1,hx,hy,
+                rg.upperW,(rg.upperW+rg.foreW)*.5,rg.foreW*.84,this.shirtCol);
+            const skin=this.isPlayer&&chemistSuitUnlocked?[180,180,190]:(this.skinCol||[235,180,140]);
+            figureCelOval(g,hx,hy,8,8,skin,.8);
         }
-                
+
                 // --- WEAPON & RIGHT ARM RENDERING LOGIC ---
         // THE FIX 3: ONLY run this if Armed or an Enemy. Removes the duplicate unarmed drawings.
                // --- WEAPON & RIGHT ARM RENDERING LOGIC ---
@@ -16520,10 +16585,11 @@ if (this.isPlayer) {
             if (this.currentWeapon === WEAPONS.SMG || this.currentWeapon === WEAPONS.DUAL_SMG) { rHandX = 22; rSleeveX = 12; }
             else if (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { rHandX = 8; rSleeveX = -1; }
             
-            fill(this.shirtCol);
-            ellipse(rSleeveX, rArmY, 25, 8); // Paints the sleeve on the canvas first
-            fill(skinC);
-            ellipse(rHandX, rArmY, 8, 8);    // Paints the hand on the canvas next
+            const rg=figureRig(this.bodyW,this.bodyH),g=paint?paint.api:window;
+            // The wrist/grip stays pinned to the existing muzzle offsets.
+            figureCelLimb(g,rSleeveX-9,rArmY,rSleeveX+3,rArmY+1,rHandX,rArmY,
+                rg.upperW,(rg.upperW+rg.foreW)*.5,rg.foreW*.84,this.shirtCol);
+            figureCelOval(g,rHandX,rArmY,8,8,skinC,.8);
 
             // 2. DRAW WEAPONS SECOND
             // This paints the guns on top of the newly drawn hand
@@ -16624,24 +16690,6 @@ if (this.isPlayer) {
     // that a body keeps what the person was wearing. See drawFigureHead().
     drawFigureHead(paint?paint.api:window, this, hX, hY, true, this.isMoving ? sin(frameCount * 0.3) * 15 : 0);
 
-
-    // The head is a dome, whichever of the twenty variants above drew it --
-    // bare, helmeted, hatted or haired. Rather than shade each one, the volume
-    // goes on top as a contour and a lit cap sampled from what is already
-    // there: one call, and a helmet rounds off exactly like a scalp.
-    if (BIOME_ACTIVE) {
-      noFill();
-      stroke(20, 18, 22, 130); strokeWeight(1.1);
-      ellipse(hX, hY, 11.8, 11.8);
-      noStroke();
-      fill(0, 0, 0, 34);
-      ellipse(hX + LIGHT_DX * 2.2, hY + LIGHT_DY * 2.2, 9.6, 9.6);
-      for (let i = 1; i <= 3; i++) {
-        const t = i / 3;
-        fill(255, 252, 244, 34);
-        ellipse(hX - LIGHT_DX * 3.0 * t, hY - LIGHT_DY * 3.0 * t, 9 * (1 - t * 0.5), 9 * (1 - t * 0.5));
-      }
-    }
 
     if ((this.eType === "ARMORED" && this.hp > 300) || (this.eType === "ARMORED_STANDARD" && this.hp > 50)) { fill(20); push(); translate(hX, hY); rotate(HALF_PI); arc(0, 0, 15, 15, 0, PI, CHORD); pop(); } 
     noStroke(); for (let d of this.decals) { if (d.isHead) { if (d.col) fill(d.col[0], d.col[1], d.col[2], d.col[3]); else fill(90, 0, 0, 220); ellipse(d.x + hX, d.y + hY, d.sz, d.sz); } }
@@ -18083,17 +18131,28 @@ class Citizen {
         let swing = isMoving ? sin(this.walkCycle) : 0;
         let bob = isMoving ? abs(sin(this.walkCycle)) * 2 : 0;
         
+        const rig = figureRig(this.bodyW, this.bodyH);
+        const bothHands = (this.state === "TO_MASON" || this.state === "HANDOFF" ||
+                           this.state === "PLACING") && !!this.carrying;
+        const reaching = (this.state === "LOADING");
         noStroke(); fill(this.pantsCol);
-        let lW = (this.gender === "FEMALE") ? 14 : 18;
-        let lX = (this.gender === "FEMALE") ? -7 : -10;
-        let lY1 = -10, lY2 = 2; 
+        const lW = (this.gender === "FEMALE") ? 14 : 18;
+        const lX = (this.gender === "FEMALE") ? -7 : -10;
 
         // Legs / Dress Base
         if (isFarmer && this.gender === "FEMALE") {
-            rect(lX - 2, -10, lW + 4, 18, 4); // Dress Base
+            figureCelOval(window, lX + lW * .5, -1, lW + 4, 18, this.pantsCol);
         } else {
-            rect(lX + swing * 12, lY1, lW, 8, 4); 
-            rect(lX - swing * 12, lY2, lW, 8, 4); 
+            const th = rig.thigh * STAND_FORE_LEG, sh = rig.shin * STAND_FORE_LEG;
+            const boot = [red(this.pantsCol) * .55, green(this.pantsCol) * .55, blue(this.pantsCol) * .55];
+            for (const side of [-1, 1]) {
+                const sx = lX + swing * 12 * -side + rig.thighW * .5;
+                const cy = side * 6, ex = sx + th * .92, hx = ex + sh;
+                figureCelLimb(window, sx, cy, ex, cy, hx, cy,
+                    rig.thighW, rig.shinW, rig.shinW * .80, this.pantsCol);
+                figureCelOval(window, hx + rig.foot * .34, cy,
+                    rig.foot, rig.shinW * .80, boot);
+            }
         }
         
         translate(bob, 0);
@@ -18107,15 +18166,22 @@ class Citizen {
         let rHandX = rArmSwing * 14;
         let rShoulderX = rArmSwing * 4;
 
-        // Back hands
-        fill(this.skinCol);
-        if (lArmSwing <= 0.2) ellipse(lHandX, armLY, 8, 8);
-        if (rArmSwing <= 0.2) ellipse(rHandX, armRY, 8, 8);
-        // Sleeves
-        if (BIOME_ACTIVE) figureContour();
-        fill(this.shirtCol); 
-        ellipse(lShoulderX, armLY, 16, 9);
-        ellipse(rShoulderX, armRY, 16, 9);
+        const drawArm = (sx, sy, ex, ey, hx, hy) => {
+            figureCelLimb(window, sx, sy, ex, ey, hx, hy,
+                rig.upperW, rig.foreW, rig.foreW * .86, this.shirtCol);
+            figureCelOval(window, hx, hy, 8, 8, this.skinCol);
+        };
+        const walkingArm = (side) => {
+            const sy = side < 0 ? armLY : armRY;
+            const hx = side < 0 ? lHandX : rHandX;
+            const shoulder = side < 0 ? lShoulderX : rShoulderX;
+            drawArm(0, sy * .84, (shoulder + hx) * .5, sy + side * 1.3, hx, sy);
+        };
+        // The whole trailing arm sits under the torso, and the leading one
+        // passes over it. Work poses replace those arms rather than adding a
+        // second sleeve/hand on top of a walking arm.
+        if (!bothHands && !reaching && lArmSwing <= .2) walkingArm(-1);
+        if (!bothHands && !reaching && !isBuilding && rArmSwing <= .2) walkingArm(1);
 
         // --- NEW: Lab Coat Tails for Science ---
         if (this.role === "SCIENCE") {
@@ -18124,6 +18190,15 @@ class Citizen {
             rotate(sway + HALF_PI); 
             fill(240); stroke(200); strokeWeight(1);
             beginShape(); vertex(5, 0); vertex(10, 2); vertex(16, 25); vertex(8, 28); vertex(-8, 28); vertex(-16, 25); vertex(-10, 2); vertex(-5, 0); endShape(CLOSE); 
+            // Broad folds inside the coat carry the same scene light as its
+            // torso. No extra outline separates the fabric at the shoulders.
+            const light = figureCelLight(window), side = light[0] < 0 ? -1 : 1;
+            noStroke(); fill(213, 220, 218);
+            beginShape(); vertex(side * 5, 0); vertex(side * 10, 2); vertex(side * 16, 25);
+            vertex(side * 8, 28); vertex(side * 6, 21); endShape(CLOSE);
+            fill(249, 250, 247);
+            beginShape(); vertex(-side * 5, 0); vertex(-side * 10, 2); vertex(-side * 13, 24);
+            vertex(-side * 8, 27); vertex(-side * 6, 19); endShape(CLOSE);
             pop();
         }
 
@@ -18133,11 +18208,7 @@ class Citizen {
         // TORSO_DEPTH, or a townsperson is visibly rounder than the soldier
         // beside them. See FIGURE VOLUME.
         push(); scale(TORSO_DEPTH, 1);
-        if (BIOME_ACTIVE) {
-            const _vl = figureLight(rot);
-            volShadeCol(0, 0, this.bodyW, this.bodyH, this.shirtCol, 1, _vl[0], _vl[1]);
-        }
-        else ellipse(0, 0, this.bodyW, this.bodyH);
+        figureCelOval(window, 0, 0, this.bodyW, this.bodyH, this.shirtCol);
 
         
         // Farmer Male Overalls
@@ -18150,11 +18221,8 @@ class Citizen {
 
         // Female Features (Breasts & Cleavage Cutout)
         if (this.gender === "FEMALE") {
-            fill(this.shirtCol);
-            stroke(isFarmer ? 200 : 0); 
-            strokeWeight(1.5); 
-            ellipse(4, -5, 11, 9); 
-            ellipse(4, 5, 11, 9);  
+            figureCelOval(window, 4, -5, 11, 9, this.shirtCol, .75);
+            figureCelOval(window, 4, 5, 11, 9, this.shirtCol, .75);
             
             stroke(200, 150, 120, 100); 
             strokeWeight(1); 
@@ -18162,42 +18230,27 @@ class Citizen {
             noStroke();
 
             if (isFarmer) {
-                fill(this.skinCol);
-                ellipse(0, -6, 10, 12);
+                figureCelOval(window, 0, -6, 10, 12, this.skinCol);
             }
         }
 
         pop();   // the torso squash ends here; a head is a head, not an oval
 
-        // Head
-        fill(this.skinCol);
-        ellipse(0, 0, 11, 11);
-
-        // Hair and Helmets
-        if (this.role === "MILITARY" && hasArmor) {
-            push(); rotate(-HALF_PI);
-            fill(40, 80, 40); stroke(0); strokeWeight(1.5);
-            arc(0, -1, 14, 14, PI, TWO_PI, CHORD);
-            pop();
-            noStroke();
-        } else if (isFarmer && this.gender === "MALE") {
-            fill(210, 180, 70); ellipse(0, 0, 24, 24); 
-            fill(190, 160, 50); ellipse(0, 0, 14, 14); 
-        } else if (this.gender === "FEMALE") {
-            fill(isFarmer ? color(150, 80, 40) : color(15));
-            arc(0, 0, 12, 12, HALF_PI, PI + HALF_PI);
-            push(); translate(-5, 0); rotate(radians(isMoving ? sin(frameCount * 0.3) * 15 : 0)); ellipse(-6, 0, 12, 6); pop();
-        }
+        // Share the dimensional skin, braid, straw hat and helmet painters
+        // with combatants, retaining each citizen's role and hair colors.
+        const identity = this.figureId || (this.figureId = {});
+        identity.skinCol = this.skinCol;
+        identity.isMilitary = this.role === "MILITARY";
+        identity.explosiveArmor = hasArmor;
+        identity.eType = isFarmer ? (this.gender === "FEMALE" ? "FARMER_FEMALE" : "FARMER_MALE") :
+            this.gender === "FEMALE" ? "FEMALE_PISTOL" : "CITIZEN";
+        drawFigureHead(window, identity, 0, 0, true, isMoving ? sin(frameCount * .3) * 15 : 0);
 
         // Front hands. Suppressed whenever both hands are on something: a load
         // out of the container, a block being carried, a block going into the
         // wall. Those poses draw their own arms below.
-        const bothHands = (this.state === "TO_MASON" || this.state === "HANDOFF" ||
-                           this.state === "PLACING") && !!this.carrying;
-        const reaching = (this.state === "LOADING");
-        fill(this.skinCol);
-        if (!bothHands && !reaching && lArmSwing > 0.2) ellipse(lHandX, armLY, 8, 8);
-        if (!bothHands && !reaching && !isBuilding && rArmSwing > 0.2) ellipse(rHandX, armRY, 8, 8);
+        if (!bothHands && !reaching && lArmSwing > .2) walkingArm(-1);
+        if (!bothHands && !reaching && !isBuilding && rArmSwing > .2) walkingArm(1);
 
         // The hammer. Top-down a swing has no rise to show, so it reads as
         // reach: the arm drives forward and the head rolls over the wrist on
@@ -18205,9 +18258,8 @@ class Citizen {
         if (isBuilding) {
             const sw = sin(this.hammer || 0);              // -1 back, +1 struck
             const drive = 13 + sw * 7;
+            drawArm(0, armRY * .84, drive * .5, armRY, drive, armRY - sw * 1.5);
             push(); translate(drive, armRY - sw * 1.5);
-            fill(this.shirtCol); ellipse(-5, 0, 15, 8);    // forearm following it out
-            fill(this.skinCol); ellipse(0, 0, 8, 8);       // fist
             rotate(-0.75 + sw * 1.25);
             fill(122, 92, 56); rect(0, -2.2, 21, 4.4, 1);  // haft
             fill(70, 74, 80); rect(19, -6.5, 10, 13, 2);   // head
@@ -18221,10 +18273,8 @@ class Citizen {
         if (reaching) {
             const dig = 15 + sin(frameCount * 0.16 + this.x) * 4;
             for (const sy of [armLY, armRY]) {
-                push(); translate(0, sy); rotate(atan2(-sy, dig) * 0.55);
-                fill(this.shirtCol); ellipse(dig * 0.45, 0, dig + 10, 8.4);
-                fill(this.skinCol); ellipse(dig, 0, 8, 8);
-                pop();
+                const a = atan2(-sy, dig) * .55, hx = cos(a) * dig, hy = sy + sin(a) * dig;
+                drawArm(0, sy * .84, hx * .5, sy + (hy - sy) * .45, hx, hy);
             }
         }
 
@@ -18242,16 +18292,16 @@ class Citizen {
                 lift = sin(Math.min(1, p * 1.4) * PI) * 2;
             }
             for (const sy of [armLY, armRY]) {
-                push(); translate(0, sy); rotate(atan2(-sy * 0.55, out));
-                fill(this.shirtCol); ellipse(out * 0.45, 0, out + 9, 8.4);
-                pop();
+                const hy = lift + (sy < 0 ? -10.5 : 10.5), hx = out - 2;
+                figureCelLimb(window, 0, sy * .84, hx * .52, (sy + hy) * .5,
+                    hx, hy, rig.upperW, rig.foreW, rig.foreW * .86, this.shirtCol);
             }
             push(); translate(out, lift);
             fill(c.edge[0], c.edge[1], c.edge[2]); rect(-8, -9, 16, 18, 2);
             fill(c.col[0], c.col[1], c.col[2]);    rect(-6.5, -7.5, 13, 15, 1.5);
             fill(c.lit[0], c.lit[1], c.lit[2]);    rect(-6.5, -7.5, 13, 4.5, 1);
-            fill(this.skinCol);
-            ellipse(-2, -10.5, 8, 8); ellipse(-2, 10.5, 8, 8);            // hands on it
+            figureCelOval(window, -2, -10.5, 8, 8, this.skinCol);
+            figureCelOval(window, -2, 10.5, 8, 8, this.skinCol);
             pop();
         }
 
@@ -30106,17 +30156,11 @@ const WALL_SIDE = [70, 75, 80];     // isGiantBarrier -- the panelled curtain
 //  displacement to size, and at twenty pixels across there is no ratio to sell
 //  (that was the riser, and it read as a blob glued to the model).
 //
-//  What does survive at this size is shading, and only three terms of it:
+//  At this scale, a single inked silhouette and three curved cel tones sell
+//  volume. The material, shadow and light planes fill the same rounded mass;
+//  continuous tapered sleeves and trousers carry them through the joints.
 //
-//    1. a CONTOUR, so the figure separates from whatever is behind it. This is
-//       the single biggest read -- a stroked silhouette is why a hand-drawn
-//       character sits in a scene and an unstroked one floats over it;
-//    2. a LIT CAP, an inset ellipse pushed toward the sun. On a sphere the
-//       highlight is not centred, and putting it off-centre is the whole
-//       difference between a ball and a circle;
-//    3. a TERMINATOR, the crescent of shade where the surface turns away.
-//
-//  All three are offset along LIGHT_DX/DY, so every figure in the world is lit
+//  The planes follow LIGHT_DX/DY, so every figure in the world is lit
 //  from the same place as every wall and every roof -- but see figureLight():
 //  a figure is drawn inside its own facing, and the light has to be brought
 //  into that frame or it turns with the model.
@@ -30136,13 +30180,6 @@ const WALL_SIDE = [70, 75, 80];     // isGiantBarrier -- the panelled curtain
 // field all still measure the same person -- and every piece of attire, which
 // is positioned against bodyW, compresses along with the body it is worn on.
 const TORSO_DEPTH = 0.84;
-
-// How far the highlight rides off centre, as a fraction of the blob's radius.
-const VOL_CAP    = 0.30;
-// Contour weight relative to the blob's smaller axis, and its floor/ceiling.
-const VOL_LINE   = 0.085;
-// Steps in the lit gradient. Four is the fewest that shows no banding.
-const VOL_STEPS  = 4;
 
 // The sun, expressed in a figure's OWN rotated frame.
 //
@@ -30264,52 +30301,152 @@ function figureLight(ang) {
   return _figLit;
 }
 
+// A model's shade planes use the scene light in its own frame, including
+// nested wrist/head turns and Graphics corpse buffers. No part is displaced
+// away from its rig: volume comes from the curved surfaces inside its outline.
+const _figureChestPlate = [[-8,-12],[8,-12],[10,-10],[10,10],[8,12],[-8,12],[-10,10],[-10,-10]];
+const _figureChestSteel = [100,104,112];
+const _figureCelLight = [0, 1];
+function figureCelLight(g) {
+  const dc = g.drawingContext;
+  let lx = LIGHT_DX, ly = LIGHT_DY;
+  if (dc && typeof dc.getTransform === 'function') {
+    const m = dc.getTransform(), det = m.a * m.d - m.b * m.c;
+    if (Math.abs(det) > 1e-8) {
+      lx = (m.d * LIGHT_DX - m.c * LIGHT_DY) / det;
+      ly = (m.a * LIGHT_DY - m.b * LIGHT_DX) / det;
+    }
+  }
+  const len = Math.hypot(lx, ly) || 1;
+  _figureCelLight[0] = lx / len; _figureCelLight[1] = ly / len;
+  return _figureCelLight;
+}
+
+// Half an elliptical surface bounded by a curved terminator. Both curves
+// share their endpoints, so there are no inset rings or strokes inside a form.
+// Canvas paths avoid p5's per-vertex arrays in dense crowds. Other renderers,
+// clipping/accessibility modes and the headless harness retain the p5 path.
+function figureCelContext(g) {
+  const inst=typeof p5!=='undefined'?p5.instance:null;
+  const r=g._renderer||(inst&&inst._renderer),dc=g.drawingContext;
+  return r&&typeof p5!=='undefined'&&p5.VERSION==='1.11.11'&&!r.isP3D&&!r._clipping&&dc&&typeof dc.getTransform==='function'&&
+    !(inst&&inst._accessibleOutputs&&(inst._accessibleOutputs.grid||inst._accessibleOutputs.text))?dc:null;
+}
+function figureCelPathStart(g,dc,x,y) {
+  if(dc){dc.beginPath();dc.lineTo(x,y);}else{g.beginShape();g.vertex(x,y);}
+}
+function figureCelPathCurve(g,dc,x1,y1,x2,y2,x,y) {
+  if(dc)dc.bezierCurveTo(x1,y1,x2,y2,x,y);else g.bezierVertex(x1,y1,x2,y2,x,y);
+}
+function figureCelPathEnd(g,dc,ink,x,y) {
+  if(dc){
+    // p5 1.11.11 appends the first vertex in both endShape and Renderer2D.
+    // Keep those closing segments too: they affect antialiasing at the seam.
+    dc.lineTo(x,y);dc.lineTo(x,y);dc.closePath();dc.fill();if(ink)dc.stroke();
+  }else g.endShape(CLOSE);
+}
+function figureCelCrescent(g, x, y, rx, ry, ux, uy, reach) {
+  const dc=figureCelContext(g);
+  const vx = -uy, vy = ux, q = 0.55228475;
+  figureCelPathStart(g,dc,x + vx * rx,y + vy * ry);
+  figureCelPathCurve(g,dc,x + (vx + ux*q)*rx, y + (vy + uy*q)*ry,
+    x + (ux + vx*q)*rx, y + (uy + vy*q)*ry, x + ux*rx, y + uy*ry);
+  figureCelPathCurve(g,dc,x + (ux - vx*q)*rx, y + (uy - vy*q)*ry,
+    x + (-vx + ux*q)*rx, y + (-vy + uy*q)*ry, x - vx*rx, y - vy*ry);
+  figureCelPathCurve(g,dc,x + (ux*reach-vx*.68)*rx, y + (uy*reach-vy*.68)*ry,
+    x + (ux*reach+vx*.68)*rx, y + (uy*reach+vy*.68)*ry, x + vx*rx, y + vy*ry);
+  figureCelPathEnd(g,dc,false,x + vx * rx,y + vy * ry);
+}
+
+function figureCelOval(g, x, y, w, h, c, k = 1, lx, ly) {
+  if (!(w > 0 && h > 0)) return;
+  const v = c.levels || c, r = v[0], gr = v[1], b = v[2], a = v[3] === undefined ? 255 : v[3];
+  if (lx === undefined) { const L = figureCelLight(g); lx = L[0]; ly = L[1]; }
+  const len = Math.hypot(lx, ly) || 1; lx /= len; ly /= len;
+  g.stroke(r*.25+5, gr*.25+4, b*.27+7, a*.82);
+  g.strokeWeight(Math.max(.65, Math.min(1.45, Math.min(w,h)*.095))*k);
+  g.fill(r, gr, b, a); g.ellipse(x, y, w, h); g.noStroke();
+  const shade = .22*k, lit = .18*k;
+  g.fill(r*(1-shade)+3*k, gr*(1-shade)+3*k, b*(1-shade)+7*k, a);
+  figureCelCrescent(g,x,y,w*.5,h*.5,lx,ly,.92);
+  g.fill(r+(255-r)*lit, gr+(255-gr)*lit, b+(246-b)*lit, a);
+  figureCelCrescent(g,x,y,w*.5,h*.5,-lx,-ly,.30);
+  g.stroke(22,19,24,168); g.strokeWeight(1.15);
+}
+
+// A sleeve/trouser leg is ONE tapered surface around two bones. At the elbow
+// the averaged normal joins the two curves; it never outlines one cap on top
+// of another. The same path carries its light band through the bend.
+const _figureCelLimbPoints = new Float64Array(18);
+function figureCelRibbon(g, p, lo, hi, cap, ink) {
+  const dc=figureCelContext(g);
+  const sx=p[0],sy=p[1],ex=p[2],ey=p[3],hx=p[4],hy=p[5];
+  const ax=p[6],ay=p[7],bx=p[8],by=p[9],cx=p[10],cy=p[11];
+  const tx=p[12],ty=p[13],ux=p[14],uy=p[15];
+  figureCelPathStart(g,dc,sx+ax*lo,sy+ay*lo);
+  figureCelPathCurve(g,dc,sx+ax*lo+(ex-sx)*.38,sy+ay*lo+(ey-sy)*.38,
+    ex+bx*lo-(hx-sx)*.12,ey+by*lo-(hy-sy)*.12,ex+bx*lo,ey+by*lo);
+  figureCelPathCurve(g,dc,ex+bx*lo+(hx-sx)*.12,ey+by*lo+(hy-sy)*.12,
+    hx+cx*lo-(hx-ex)*.38,hy+cy*lo-(hy-ey)*.38,hx+cx*lo,hy+cy*lo);
+  figureCelPathCurve(g,dc,hx+cx*lo+ux*cap,hy+cy*lo+uy*cap,
+    hx+cx*hi+ux*cap,hy+cy*hi+uy*cap,hx+cx*hi,hy+cy*hi);
+  figureCelPathCurve(g,dc,hx+cx*hi-(hx-ex)*.38,hy+cy*hi-(hy-ey)*.38,
+    ex+bx*hi+(hx-sx)*.12,ey+by*hi+(hy-sy)*.12,ex+bx*hi,ey+by*hi);
+  figureCelPathCurve(g,dc,ex+bx*hi-(hx-sx)*.12,ey+by*hi-(hy-sy)*.12,
+    sx+ax*hi+(ex-sx)*.38,sy+ay*hi+(ey-sy)*.38,sx+ax*hi,sy+ay*hi);
+  figureCelPathCurve(g,dc,sx+ax*hi-tx*cap,sy+ay*hi-ty*cap,
+    sx+ax*lo-tx*cap,sy+ay*lo-ty*cap,sx+ax*lo,sy+ay*lo);
+  figureCelPathEnd(g,dc,ink,sx+ax*lo,sy+ay*lo);
+}
+function figureCelLimb(g, sx, sy, ex, ey, hx, hy, w0, w1, w2, c) {
+  const v=c.levels||c,r=v[0],gr=v[1],b=v[2],a=v[3]===undefined?255:v[3];
+  let tx=ex-sx,ty=ey-sy,ux=hx-ex,uy=hy-ey;
+  const tl=Math.hypot(tx,ty),ul=Math.hypot(ux,uy);
+  if(tl+ul<.1){figureCelOval(g,sx,sy,w0,w0,c,.8);return;}
+  // A fully foreshortened bone has no visible elbow. Merge its cross-section
+  // into the remaining surface so the shade cannot fold outside the outline.
+  if(tl<.01||ul<.01){
+    ex=(sx+hx)*.5;ey=(sy+hy)*.5;w1=(w0+w2)*.5;
+    tx=ex-sx;ty=ey-sy;ux=hx-ex;uy=hy-ey;
+  }
+  const tlen=Math.hypot(tx,ty)||1,ulen=Math.hypot(ux,uy)||1;
+  tx/=tlen;ty/=tlen;ux/=ulen;uy/=ulen;
+  let mx=-ty-uy,my=tx+ux;const ml=Math.hypot(mx,my);
+  if(ml<.1){mx=-ty;my=tx;}else{mx/=ml;my/=ml;}
+  const p=_figureCelLimbPoints;
+  p[0]=sx;p[1]=sy;p[2]=ex;p[3]=ey;p[4]=hx;p[5]=hy;
+  p[6]=-ty*w0*.5;p[7]=tx*w0*.5;p[8]=mx*w1*.5;p[9]=my*w1*.5;
+  p[10]=-uy*w2*.5;p[11]=ux*w2*.5;p[12]=tx;p[13]=ty;p[14]=ux;p[15]=uy;
+  g.stroke(r*.25+5,gr*.25+4,b*.27+7,a*.82);g.strokeWeight(.85);
+  g.fill(r,gr,b,a);figureCelRibbon(g,p,-1,1,Math.min(w0,w2)*.42,true);g.noStroke();
+  const L=figureCelLight(g),side=(-ty*L[0]+tx*L[1])+(-uy*L[0]+ux*L[1]);
+  // A broad, shallow plane continues around the joint without a knee ring.
+  const sign=side<0?-1:1,amount=Math.min(1,Math.abs(side)*.5);
+  // Whole color channels are visually continuous at this scale and let the
+  // painter reuse palette strings instead of allocating a Color at every turn.
+  g.fill(Math.round(r+(3-r*.22)*amount),Math.round(gr+(3-gr*.22)*amount),Math.round(b+(7-b*.22)*amount),a);
+  figureCelRibbon(g,p,sign*.42,sign,.0);
+  g.fill(Math.round(r+(255-r)*.16*amount),Math.round(gr+(255-gr)*.16*amount),Math.round(b+(246-b)*.16*amount),a);
+  figureCelRibbon(g,p,-sign*.84,-sign*.16,.0);
+  g.stroke(22,19,24,168);g.strokeWeight(1.15);
+}
+
 // One rounded mass. `k` scales the whole effect: 1 for a torso, less for the
 // little parts where a full contour would swallow them. `lx`/`ly` are the light
-// in the caller's frame -- omit them only where the caller is unrotated.
+// in the caller's frame; omit them to read it from the current Canvas transform.
 function volShade(x, y, w, h, cr, cg, cb, k, lx, ly) {
-  const paint=figurePainter();
-  const fill=paint?paint.fill:window.fill,ellipse=paint?paint.ellipse:window.ellipse;
-  const stroke=paint?paint.stroke:window.stroke;
-  k = k === undefined ? 1 : k;
-  if (lx === undefined) { lx = LIGHT_DX; ly = LIGHT_DY; }
-  const lw = Math.max(0.9, Math.min(2.4, Math.min(w, h) * VOL_LINE)) * k;
-
-  // 1. Contour. Drawn as the fill's own stroke so it hugs the silhouette
-  //    exactly -- a separate ring would show seams where the two disagree.
-  stroke(cr * 0.26, cg * 0.26, cb * 0.30, 205);
-  strokeWeight(lw);
-  fill(cr, cg, cb);
-  ellipse(x, y, w, h);
-  noStroke();
-
-  // 2. Terminator: one soft crescent on the far side, kept weak. A strong one
-  //    reads as a stain lying on the shirt rather than as the surface turning.
-  fill(cr * 0.70, cg * 0.70, cb * 0.74, 96);
-  ellipse(x + lx * w * 0.19 * k, y + ly * h * 0.19 * k, w * 0.93, h * 0.93);
-
-  // 3. The lit side, as NESTED STEPS rather than one cap.
-  //
-  //    A single inset highlight is a second disc sitting on the first, and at
-  //    this size the join between them is a visible ring. Four shrinking
-  //    ellipses, each pushed a little further against the sun at a low alpha,
-  //    accumulate into something with no edge in it -- a gradient, drawn with
-  //    the only tool a flat-fill renderer has.
-  for (let i = 1; i <= VOL_STEPS; i++) {
-    const t = i / VOL_STEPS;
-    const sz = 1 - t * 0.58;
-    const off = t * VOL_CAP;
-    fill(cr + (255 - cr) * t * 0.30, cg + (255 - cg) * t * 0.30,
-         cb + (255 - cb) * t * 0.26, 64);
-    ellipse(x - lx * w * off * k, y - ly * h * off * k, w * sz, h * sz);
-  }
-  // Hand the contour back to whatever draws next -- see figureContour().
+  const paint=figurePainter(),g=paint?paint.api:window;
+  _figureCelRGB[0]=cr;_figureCelRGB[1]=cg;_figureCelRGB[2]=cb;
+  figureCelOval(g,x,y,w,h,_figureCelRGB,k,lx,ly);
   figureContour();
 }
+const _figureCelRGB = [0,0,0];
 
 // The same, taking a p5 colour.
 function volShadeCol(x, y, w, h, c, k, lx, ly) {
-  volShade(x, y, w, h, red(c), green(c), blue(c), k, lx, ly);
+  const paint=figurePainter();
+  figureCelOval(paint?paint.api:window,x,y,w,h,c,k,lx,ly);
+  figureContour();
 }
 
 // The LIVING figure's limb proportions, taken from the corpse rig.
@@ -30968,18 +31105,11 @@ function oneHandWeapon(w) {
   return w === WEAPONS.PISTOL || w === WEAPONS.SMG || w === WEAPONS.DUAL_SMG;
 }
 function reloadArm(c, sx, sy, hx, hy, right) {
-  const RG=figureRig(c.bodyW,c.bodyH);
-  const ex=sx+(hx-sx)*0.40-2.5, ey=sy+(hy-sy)*0.40+(right?2.5:-2.5);
-  fill(red(c.shirtCol)*0.87,green(c.shirtCol)*0.87,blue(c.shirtCol)*0.90);
-  if(BIOME_ACTIVE) figureContour();
-  for(const part of [[sx,sy,ex,ey,RG.upperW],[ex,ey,hx,hy,RG.foreW]]) {
-    const dx=part[2]-part[0],dy=part[3]-part[1],len=Math.hypot(dx,dy);
-    push();translate(part[0],part[1]);rotate(Math.atan2(dy,dx));
-    ellipse(len*0.5,0,len+part[4],part[4]);pop();
-  }
-  if(!right && c.isPlayer && typeof chemistSuitUnlocked!=='undefined' && chemistSuitUnlocked) fill(180,180,190);
-  else fill(235,180,140);
-  ellipse(hx,hy,RG.hand,RG.hand);
+  const RG=figureRig(c.bodyW,c.bodyH),paint=figurePainter(),g=paint?paint.api:window;
+  const ex=sx+(hx-sx)*.40-2.5,ey=sy+(hy-sy)*.40+(right?2.5:-2.5);
+  figureCelLimb(g,sx,sy,ex,ey,hx,hy,RG.upperW,(RG.upperW+RG.foreW)*.5,RG.foreW*.84,c.shirtCol);
+  const skin=!right&&c.isPlayer&&chemistSuitUnlocked?[180,180,190]:(c.skinCol||[235,180,140]);
+  figureCelOval(g,hx,hy,RG.hand,RG.hand,skin,.8);
 }
 function drawOneHandReload(c) {
   const p=Math.max(0,Math.min(1,1-c.reloadTimer/90));
@@ -31106,21 +31236,9 @@ function drawLeftHandAction(c, action, untwist) {
   const P = leftActionPose(c, action), R = figureRig(c.bodyW, c.bodyH);
   const chemist = typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked;
   push(); rotate(untwist || 0);
-  const limb = (x0, y0, x1, y1, w) => {
-    const dx = x1 - x0, dy = y1 - y0, L = Math.hypot(dx, dy);
-    push(); translate(x0, y0); rotate(atan2(dy, dx));
-    if (BIOME_ACTIVE) figureContour();
-    fill(red(c.shirtCol) * 0.87, green(c.shirtCol) * 0.87, blue(c.shirtCol) * 0.90);
-    ellipse(L * 0.5, 0, L + w, w);
-    noStroke(); fill(255, 255, 250, 35); ellipse(L * 0.5, -w * 0.16, L + w * 0.35, w * 0.32);
-    pop();
-  };
-  limb(P.sx, P.sy, P.ex, P.ey, R.upperW);
-  limb(P.ex, P.ey, P.hx, P.hy, R.foreW);
-  if (BIOME_ACTIVE) figureContour();
-  if (chemist) fill(180, 180, 190); else fill(235, 180, 140);
-  ellipse(P.hx, P.hy, P.hand, P.hand);
-  noStroke(); fill(255, 255, 255, 65); ellipse(P.hx - 1, P.hy - 1.5, P.hand * 0.56, P.hand * 0.35);
+  const paint=figurePainter(),g=paint?paint.api:window;
+  figureCelLimb(g,P.sx,P.sy,P.ex,P.ey,P.hx,P.hy,R.upperW,(R.upperW+R.foreW)*.5,R.foreW*.84,c.shirtCol);
+  figureCelOval(g,P.hx,P.hy,P.hand,P.hand,chemist?[180,180,190]:(c.skinCol||[235,180,140]),.8);
   if (action === 1 && typeof isCooking !== 'undefined' && isCooking) {
     push(); translate(P.hx, P.hy);
     if (chemist) {

@@ -34,7 +34,7 @@ probe('e.fallHit.fatal=false;c=new Corpse(0,0,0,0,e.shirtCol,e.pantsCol,0,0,e.de
 assert.equal(P('c.fatalSpray'),null,'nonfatal same-frame wound became a fatal spray');
 
 // Track the actual painter's transforms and fill, including graphics targets.
-let m=[1,0,0,1,0,0],fill=null,stack=[],marks=[],heads=[];
+let m=[1,0,0,1,0,0],fill=null,stack=[],marks=[],heads=[],headBase=null;
 const originals={};
 for(const n of ['push','pop','translate','rotate','scale','fill','ellipse','drawFigureHair'])originals[n]=ctx[n];
 function mul(u){const t=m;m=[t[0]*u[0]+t[2]*u[1],t[1]*u[0]+t[3]*u[1],t[0]*u[2]+t[2]*u[3],t[1]*u[2]+t[3]*u[3],t[0]*u[4]+t[2]*u[5]+t[4],t[1]*u[4]+t[3]*u[5]+t[5]];}
@@ -45,9 +45,12 @@ ctx.rotate=a=>{mul([Math.cos(a),Math.sin(a),-Math.sin(a),Math.cos(a),0,0]);origi
 ctx.scale=(x,y=x)=>{mul([x,0,0,y,0,0]);originals.scale(x,y);};
 ctx.fill=(...a)=>{fill=a[0]&&a[0].levels?[...a[0].levels]:a;originals.fill(...a);};
 ctx.ellipse=(x,y,w,h)=>{assert([x,y,w,h].every(Number.isFinite));
+ // Shading leaves its highlight color as current painter state. Identity is
+ // the base material actually painted onto the head, not that later state.
+ if(w===11&&h===11)headBase=fill&&[...fill];
  if(fill&&fill.join(',')==='91,1,2,223')marks.push({x:m[0]*x+m[2]*y+m[4],y:m[1]*x+m[3]*y+m[5]});originals.ellipse(x,y,w,h);};
-ctx.drawFigureHair=(g,id,x,y,sway)=>{heads.push({axis:[m[0],m[1]],fill});originals.drawFigureHair(g,id,x,y,sway);};
-function resetPaint(){m=[1,0,0,1,0,0];fill=null;stack=[];marks=[];heads=[];}
+ctx.drawFigureHair=(g,id,x,y,sway)=>{heads.push({axis:[m[0],m[1]],fill:headBase});originals.drawFigureHair(g,id,x,y,sway);};
+function resetPaint(){m=[1,0,0,1,0,0];fill=null;stack=[];marks=[];heads=[];headBase=null;}
 function fixture(type,kind='BODY',age=0,eType='NORMAL',a=.7,facing=-.8,wound=true,stationary=false){
  seed=9181;
  probe(`frameCount=1000;particles=[];window.e=new Character(0,0,false,'${eType}');e.aimAngle=${facing};e.moveAngle=${a};e.isMoving=true;
