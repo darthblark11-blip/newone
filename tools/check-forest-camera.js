@@ -82,10 +82,12 @@ const species = P('Object.keys(FOREST_PROPS).filter(s=>FOREST_PROPS[s].canopyMas
 // axis flips 180 degrees when x passes through zero, despite smooth translation.
 const flipY = -P('MASS_TILT/MASS_LEAN');
 const positions = [[-.02,flipY],[0,flipY],[.02,flipY],[-.65,-.4],[.65,.4],[0,0]];
-for (const name of species) for (const scale of [.65,1,1.9]) for (const crown of [.3,1]) {
+for (const style of ['NEEDLE','COMIC']) for (const name of species)
+  for (const scale of [.65,1,1.9]) for (const crown of [.3,1]) {
   const d = {t:name==='RED_ALDER'?'TREE':name==='CHARRED_SNAG'?'SNAG':'PINE',
     x:300,y:600,s:scale,r:.47,c:.61,forestSpecies:name,
-    forestRegion:'TIMBER',forestCrownScale:crown};
+    forestRegion:'TIMBER',forestHabitat:style==='COMIC'?'VIBRANT':'TIMBER',
+    forestCanopyStyle:style,forestCrownScale:crown};
   const frames = positions.map(([nx,ny]) => P(`forestCameraPaint(${JSON.stringify(d)},${nx},${ny})`));
   const first = frames[0];
   ok(name==='CHARRED_SNAG'||first.helpers.length>0, `${name}: actual foliage helper was exercised`);

@@ -494,8 +494,11 @@ region branch and the spur head sweep every solid they created back into the lat
 Level 2's forest now has four primary habitats: **Ancient Canopy (`TIMBER`), Mossy
 Riverbed (`MARSH`), Burnt / Dead (`BURN`) and Alpine Ridge (`HEATH`)**. See
 [the forest architecture and art guide](docs/level-2-forest.md) for the Phase 1–2
-implementation, species metadata, forest-only painters, placement budgets and
-Phase 3–4 wildlife/lighting design. `woodRegion()` asks the four-habitat question;
+implementation, species metadata, forest-only painters, placement budgets,
+wildlife and hunting contracts, and planned atmosphere work.
+`forestHabitatAt()` overlays Sunlit Cedar Grove (`VIBRANT`), Elk Meadow (`MEADOW`)
+and Woodland Edge (`EDGE`) after placement; it never consumes placement RNG.
+`woodRegion()` asks the four-habitat question;
 `woodLegacyRegion()` keeps the old layout template below so saved destruction
 keys retain their identities. New forest additions have independent random
 streams and namespaced keys. Never use an art/ecology change to renumber saved
@@ -511,6 +514,18 @@ orientation and continuous projection, and `tools/visual-forest-pan.js` captures
 the real moving-camera result. Review that motion before changing the art.
 Woodland floor materials, moss/needle beds and riverbank stones are baked from
 world-space samples; their seam checks use a continuous Canvas reference.
+
+Forest shadows paint on the floor; roots interleave with ground actors, then
+raised crowns cover those actors, followed by aircraft and airborne wildlife.
+The height field uses tapered crown contours, not a full-height ellipse.
+`forestWildlife` stays separate from military actors and objective counters:
+39 species, at most 48 animals, an independent encounter RNG and pooled hit grid.
+Wildlife collision probes are staggered, while cached movement advances each
+frame. Keep crossfire, hunting hits and inventory out of army recruitment and
+ambush bookkeeping. Cedar Hollow grants the finite-ammunition bow; collection
+and dialogue use F, gamepad A or the visible touch prompt. Quest, quiver,
+inventory and encounter luck persist; live animals and carcasses do not.
+Use the hunting browser check for the full acquire/kill/collect/return/save loop.
 
 The historical template resolves six regions off three slow world-space fields — `MEADOW · TIMBER · MARSH ·
 HEATH · BURN · FARM` — at roughly a three-chunk patch size. Measured coverage: meadow

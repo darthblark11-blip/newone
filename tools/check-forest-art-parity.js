@@ -93,6 +93,15 @@ const hash = source => crypto.createHash('sha256').update(source).digest('hex');
                 forestCrownScale: crown, w: 110 * scale, h: 95 * scale };
               compare(d, target, { name, scale, crown, scenario: i }); cases++;
             }
+        // Newly sculpted crowns and every habitat palette retain the same
+        // exact native/fallback contract as the saved needle-tree styles.
+        for (const name of Object.keys(FOREST_PROPS).filter(k => FOREST_PROPS[k].canopyMass))
+          for (const habitat of Object.keys(FOREST_REGIONS)) for (const target of ['live', 'bake']) {
+            const d = { t: name === 'CHARRED_SNAG' ? 'SNAG' : 'PINE', x:192, y:120,
+              s:1.3, r:.73, c:.27, forestSpecies:name, forestRegion:'TIMBER',
+              forestHabitat:habitat, forestCanopyStyle:'COMIC', forestCrownScale:.8 };
+            compare(d, target, {name, habitat, style:'COMIC'}); cases++;
+          }
         camX = camY = 0; zoom = .8; LIGHT_DX = -.7; LIGHT_DY = .7;
         density = length = 1; owned = true;
         function planFor(d) {
@@ -109,7 +118,8 @@ const hash = source => crypto.createHash('sha256').update(source).digest('hex');
           let previous = planFor(d);
           for (const change of [{ s: .65 }, { c: .18 }, { r: -1.5 }, { forestCrownScale: .3 },
             { forestSpecies: 'WESTERN_CEDAR' }, { forestSpecies: 'RED_ALDER' },
-            { forestSpecies: 'SITKA_SPRUCE' }, { forestSpecies: 'LODGEPOLE_PINE' }, { s: 1.9 }]) {
+            { forestSpecies: 'SITKA_SPRUCE' }, { forestSpecies: 'LODGEPOLE_PINE' }, { s: 1.9 },
+            { forestCanopyStyle:'COMIC' }, { forestCanopyStyle:'NEEDLE' }]) {
             Object.assign(d, change); compare(d, target, { invalidation: change });
             const current = planFor(d); cacheInvalidations++;
             if (current === previous) failures.push({ target, stalePlan: change });
@@ -139,9 +149,9 @@ const hash = source => crypto.createHash('sha256').update(source).digest('hex');
       await page.close();
       assert.deepStrictEqual(errors, [], 'browser errors');
       assert.deepStrictEqual(result.failures, [], 'forest optimization changed RGBA pixels or violated a cache guard');
-      assert.strictEqual(result.cacheInvalidations, 18);
+      assert.strictEqual(result.cacheInvalidations, 22);
       assert.strictEqual(result.colourFallbacks, 6);
-      console.log(`${result.comparisons}/${result.comparisons} exact reference comparisons, 18 cache invalidations and 6 color-mode fallbacks passed with p5 ${result.version}.`);
+      console.log(`${result.comparisons}/${result.comparisons} exact reference comparisons, 22 cache invalidations and 6 color-mode fallbacks passed with p5 ${result.version}.`);
     }
   } finally {
     await browser.close();

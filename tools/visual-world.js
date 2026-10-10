@@ -22,9 +22,11 @@ const SP = process.env.VIS_DEPS ||
   '/tmp/claude-0/-home-user-newone/8482112a-c646-5134-bd53-0f1ebb34fae6/scratchpad';
 const CHROME = process.env.VIS_CHROME || '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 const { chromium } = require(path.join(SP, 'node_modules/playwright'));
-const P5 = path.join(SP, 'node_modules/p5/lib/p5.min.js');
+const P5 = process.env.VIS_P5 || path.join(SP, 'node_modules/p5/lib/p5.min.js');
 const GAME = process.env.GAME_JS || path.join(__dirname, '..', 'game.js');
-const OUT = path.join(__dirname, 'out');
+const GAME_SOURCE = fs.readFileSync(GAME, 'utf8');
+const GAME_HASH = require('crypto').createHash('sha256').update(GAME_SOURCE).digest('hex');
+const OUT = process.env.VIS_OUT || path.join(__dirname, 'out');
 fs.mkdirSync(OUT, { recursive: true });
 
 const BIOME = +(process.argv[2] || 4);
@@ -47,6 +49,8 @@ const CIVIC = process.argv.includes('civic');
 const DISTRICT = +(process.argv.find(a => /^district=/.test(a)) || 'district=-1').split('=')[1];
 const RAIN = process.argv.includes('rain');
 const PEOPLE = process.argv.includes('people');
+const ACTORS = process.argv.includes('actors');
+const ADVANCED = process.argv.includes('advanced');
 // `hour=N` puts the world clock at that hour. The sun travels now, so which
 // hour a screenshot was taken at is a property of the picture -- a shadow
 // sweeping the wrong way is invisible in any single frame.
@@ -57,7 +61,7 @@ const W = +(process.env.VW_W || 900), H = +(process.env.VW_H || 1400);
 const page = `<!doctype html><meta charset=utf8>
 <style>html,body{margin:0;background:#111}</style>
 <script>${fs.readFileSync(P5, 'utf8')}</script>
-<script>${fs.readFileSync(GAME, 'utf8')}</script>
+<script>${GAME_SOURCE}</script>
 <script>
 window.preload = function () {};
 window.loadImage = function () { return { width: 1, height: 1 }; };
@@ -100,7 +104,8 @@ window.setup = function () {
     }
     if(!found)window.__errs.push('No city district found');
   }
-  if (${PEOPLE}) {
+  rightStick = { active: false };
+  if (${PEOPLE || ACTORS || ADVANCED}) {
     player=new Character(window.__wx,window.__wy,true);doTick=true;enemiesList=[];
   }
   // refreshPopulation() wants a player and a budget. Neither is what this tool
@@ -123,11 +128,28 @@ window.setup = function () {
     } catch (e) { window.__errs.push('stream: ' + e.message); }
   }
   activeBuildings = buildings;invalidateColIndex();
+  if(${ACTORS}&&chunkMgr){
+    const trees=[];
+    for(const ch of chunkMgr.chunks.values())for(const d of ch.decor||[])
+      if(d.forestSpecies&&d.forestSpecies!=='CHARRED_SNAG'&&inView(d.x,d.y,0))trees.push(d);
+    trees.sort((a,b)=>Math.hypot(a.x-window.__wx,a.y-window.__wy)-Math.hypot(b.x-window.__wx,b.y-window.__wy));
+    if(trees.length){const tree=trees[0];
+      player.x=tree.x+5;player.y=tree.y+12;player.isArmed=true;
+      for(const [dx,dy,type]of[[95,35,'ARMORED_STANDARD'],[-105,-60,'NORMAL'],[160,-120,'AERIAL_PISTOL']]){
+        const e=new Character(tree.x+dx,tree.y+dy,false,type);e.aimAngle=.7;e.isArmed=true;enemiesList.push(e);
+      }
+    }else window.__errs.push('No visible rooted forest tree for actor depth staging');
+  }
   if(${PEOPLE}&&chunkMgr){
     const pcx=Math.floor(window.__wx/CHUNK_W),pcy=Math.floor(window.__wy/CHUNK_W);
     for(let i=0;i<20;i++){frameCount+=21;refreshCityPeople(chunkMgr,pcx,pcy);}
     for(const e of enemiesList){e.isMoving=!e.cityPost;e.gait=e.isCityCivilian?.25:.3;e.walkCycle=e.x*.03;}
     console.log('City people: '+enemiesList.filter(e=>e.isCityCivilian).length+' civilians / '+enemiesList.filter(e=>e.isCityPatrol).length+' guards');
+  }
+  if(${ADVANCED}){
+    glRigWatchdog=function(){};glRigClock=function(){};
+    if(!glRigInit())window.__errs.push('Advanced lighting initialization: '+GLRig.failure);
+    GLRig.on=true;GLRig.tier=0;GLRig.lightTier=0;GLRig.resize=true;
   }
   redraw();
 };
@@ -145,13 +167,16 @@ window.draw = function () {
   if (chunkMgr) step('decor', () => chunkMgr.drawDecor());
   step('decks',   () => drawBiomeDecks());
   ${process.env.VW_NOSHADOW ? '' : "step('shadows', () => drawBuildingShadows());"}
-  if (${PEOPLE}) step('people',()=>{for(const e of enemiesList)if(inView(e.x,e.y,90))actorShow(e);});
+  if (${PEOPLE || ACTORS}) step('people',()=>{for(const e of enemiesList)if(inView(e.x,e.y,90))actorShow(e);});
+  if (${ACTORS}) step('player',()=>actorShow(player));
   // This draws every visible mass and every queued tree in one
   // sorted pass -- which is exactly what the game does between characters.
   step('sorted',  () => drawDepthSorted());
+  step('airborne',() => drawAirborneActors());
   if (${NIGHT}) step('fixtures', () => drawNightLights());
   pop();
-  if (${NIGHT}) step('lightpass', () => drawLightPass());
+  if (${ADVANCED}) step('advanced',()=>{if(!glRigFrame())throw Error('Advanced lighting did not composite: '+GLRig.failure);});
+  else if (${NIGHT}) step('lightpass', () => drawLightPass());
   if (${LABELS}) {
     push(); scale(zoom); translate(-camX, -camY);
     textAlign(CENTER, CENTER); textSize(11 / zoom);
@@ -184,7 +209,7 @@ window.draw = function () {
 
 (async () => {
   const browser = await chromium.launch({ executablePath: CHROME,
-    args: ['--no-sandbox', '--disable-gpu'] });
+    args: ['--no-sandbox', '--disable-gpu', '--enable-unsafe-swiftshader'] });
   const p = await browser.newPage({ viewport: { width: W, height: H } });
   const bad = [];
   p.on('pageerror', e => bad.push('page: ' + e.message));
@@ -200,7 +225,11 @@ window.draw = function () {
   const errs = await p.evaluate('window.__errs || []');
   const position = await p.evaluate('({x:window.__wx,y:window.__wy})');
   if (CIVIC) console.log('Civic terrace at ' + position.x + ', ' + position.y);
-  const file = path.join(OUT, `world-b${BIOME}${CIVIC ? '-civic' : ''}${PEOPLE ? '-people' : ''}${DISTRICT >= 0 ? '-district'+DISTRICT : ''}${RAIN ? '-rain' : ''}${LEGACY ? '-legacy' : ''}-h${HOUR}-${WX}_${WY}.png`);
+  const rig=await p.evaluate('({on:GLRig.on,ok:GLRig.ok,tier:GLRig.tier,lightTier:GLRig.lightTier,failure:GLRig.failure})');
+  const file = path.join(OUT, `world-b${BIOME}${CIVIC ? '-civic' : ''}${PEOPLE ? '-people' : ''}${ACTORS ? '-actors' : ''}${ADVANCED ? '-advanced' : ''}${DISTRICT >= 0 ? '-district'+DISTRICT : ''}${RAIN ? '-rain' : ''}${LEGACY ? '-legacy' : ''}-h${HOUR}-${WX}_${WY}.png`);
+  const snapshot=path.join(OUT,'game-'+GAME_HASH+'.js');
+  fs.writeFileSync(snapshot,GAME_SOURCE);
+  fs.writeFileSync(file.replace(/\.png$/,'.json'),JSON.stringify({game:GAME,gameSnapshot:snapshot,gameHash:GAME_HASH,p5:P5,position,zoom:ZOOM,hour:HOUR,rig,errors:errs.concat(bad)},null,2));
   try { await p.locator('#defaultCanvas0').screenshot({ path: file, timeout: 15000 }); }
   catch (e) {
     console.log('  screenshot failed: ' + e.message.split('\n')[0]);

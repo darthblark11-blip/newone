@@ -41,7 +41,8 @@ const game = fs.readFileSync(process.env.GAME_JS || path.join(__dirname, '..', '
           { camera:[140,-200], sun:[-.2,-.95], zoom:1.35, density:.1, length:.8, owned:false },
           { camera:[90,90], sun:[.5,.8], zoom:.66, density:1, length:1.3, owned:true }
         ];
-        for (const name of Object.keys(FOREST_PROPS)) for (const scale of [.65, 1, 1.9])
+        for (const style of ['NEEDLE','COMIC']) for (const name of Object.keys(FOREST_PROPS))
+          for (const scale of [.65, 1, 1.9])
           for (const crown of FOREST_PROPS[name].canopyMass ? [.3, 1] : [1])
             for (const target of ['live', 'bake']) for (let scenario = 0; scenario < scenarios.length; scenario++) {
               const sc = scenarios[scenario];
@@ -51,6 +52,8 @@ const game = fs.readFileSync(process.env.GAME_JS || path.join(__dirname, '..', '
               const d = { t:name==='RED_ALDER' ? 'TREE' : name==='CHARRED_SNAG' ? 'SNAG' :
                 FOREST_PROPS[name].canopyMass ? 'PINE' : name, x:192, y:120, s:scale,
                 r:.47+scenario*.7, c:.61, forestSpecies:name, forestRegion:habitats[scenario],
+                forestHabitat:style==='COMIC'?['VIBRANT','VIBRANT','MEADOW','EDGE'][scenario]:habitats[scenario],
+                forestCanopyStyle:style==='COMIC'&&scenario<2?'COMIC':'NEEDLE',
                 forestCrownScale:crown, w:110*scale, h:95*scale };
               const g = target === 'live' ? window : buffer;
               function paint(native) {

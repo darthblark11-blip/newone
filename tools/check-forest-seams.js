@@ -36,13 +36,20 @@ const game = process.env.GAME_JS || path.join(__dirname, '..', 'game.js');
         // A single canvas provides the reference without an internal clip.
         bakeWoodlandFloorArea(reference,2,ox,oy,ox+CHUNK_W*2,oy+CHUNK_W*2);
         const expected=read(reference);
-        let maxDifference=0,sharedError=0,clippedError=0,samples=0;
+        let maxDifference=0,maxInteriorDifference=0,maxGuardedDifference=0;
+        let sharedError=0,clippedError=0,samples=0;
         let minFeatureCount=Infinity,maxFeatureCount=0;
         for(const [dx,dy] of [[0,0],[1,0],[0,1],[1,1]]){
           const x=cx+dx,y=cy+dy;
           const g=prepare(size,size,x*CHUNK_W,y*CHUNK_W);
           const clipped=prepare(size,size,x*CHUNK_W,y*CHUNK_W);
+          // Chromium clips a stroke's antialias coverage slightly differently
+          // in the first/last two texels of a standalone Canvas. A two-texel
+          // guard band proves that any extra error is Canvas clipping, rather
+          // than a missing or differently positioned neighbouring feature.
+          const padded=prepare(size+4,size+4,x*CHUNK_W-2/ratio,y*CHUNK_W-2/ratio);
           bakeSharedWoodlandPatches(g,2,x,y);
+          bakeSharedWoodlandPatches(padded,2,x,y);
           // A deliberately broken owner-only renderer omits neighbour cells.
           // This verifies that the fixture actually notices border clipping.
           const cell=WOODLAND_FLOOR_CELL;
@@ -55,19 +62,24 @@ const game = process.env.GAME_JS || path.join(__dirname, '..', 'game.js');
             Math.floor((y*CHUNK_W-WOODLAND_FLOOR_REACH)/cell)+1);
           minFeatureCount=Math.min(minFeatureCount,count);maxFeatureCount=Math.max(maxFeatureCount,count);
           const actual=read(g),broken=read(clipped);
+          const guarded=padded.drawingContext.getImageData(2,2,size,size).data;
           for(let py=0;py<size;py++)for(let px=0;px<size;px++){
             if(Math.abs(dx*size+px-size)>16&&Math.abs(dy*size+py-size)>16)continue;
             const a=4*(py*size+px),b=4*((dy*size+py)*size*2+dx*size+px);
             for(let channel=0;channel<3;channel++){
               const difference=Math.abs(actual[a+channel]-expected[b+channel]);
               maxDifference=Math.max(maxDifference,difference);sharedError+=difference;
+              if(px>=2&&py>=2&&px<size-2&&py<size-2)
+                maxInteriorDifference=Math.max(maxInteriorDifference,difference);
+              maxGuardedDifference=Math.max(maxGuardedDifference,
+                Math.abs(guarded[a+channel]-expected[b+channel]));
               clippedError+=Math.abs(broken[a+channel]-expected[b+channel]);samples++;
             }
           }
-          g.remove();clipped.remove();
+          g.remove();clipped.remove();padded.remove();
         }
         reference.remove();
-        return {cx,cy,maxDifference,sharedError:sharedError/samples,
+        return {cx,cy,maxDifference,maxInteriorDifference,maxGuardedDifference,sharedError:sharedError/samples,
           clippedError:clippedError/samples,minFeatureCount,maxFeatureCount,samples};
       });
       const rivers=[];
@@ -107,7 +119,8 @@ const game = process.env.GAME_JS || path.join(__dirname, '..', 'game.js');
     assert.deepEqual(faults,[],'forest material bake raised browser errors');
     assert(results.taperedDry,'closed channel taper painted water over dry authored ground');
     for(const result of results.materials){
-      assert(result.maxDifference<=3&&result.sharedError<0.02,
+      assert(result.maxDifference<=4&&result.maxInteriorDifference<=3&&
+        result.maxGuardedDifference<=3&&result.sharedError<0.02,
         `forest floor differs from continuous reference: ${JSON.stringify(result)}`);
       assert(result.maxFeatureCount<=25,'world feature replay exceeded the bake budget');
     }
