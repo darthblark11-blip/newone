@@ -3223,6 +3223,30 @@ those arm positions.
 
 ---
 
+### Solid one-handed firearms and independent off-hand actions
+
+Pistols and SMGs share `drawHandGunSolid()` in both carry and aimed poses.
+`handGunProjection()` rotates model-space cuboids by elevation and wrist roll;
+`handGunBox()` draws their visible top, side and end faces with cel shading.
+The pistol grip heel is the visible portion below the palm, not a full handle
+laid alongside it. `weaponKick` runs for six simulation frames after `fire()`;
+the pistol slide and SMG charging handle move independently of the fixed barrel.
+`drawOneHandReload()` uses the existing ninety-frame timer for magazine withdrawal,
+belt reach, insertion and slide/bolt release. Dual SMGs reload sequentially.
+
+`leftHandAction()` selects throwing or the chemist cannon independently of
+`playerAiming()`. The walking rig skips only the occupied left arm and draws its
+action in front; the right hand keeps its carry pose. Both hands carry their own
+SMG through all gait phases when the off hand is free. `supportAimAngle()` reads
+the current sticks at release, and `leftActionMuzzle()` keeps the cannon charge
+core and lightning origin together. The idle chemist off hand is grey, with no
+separate instrument. An occupied off hand suppresses its SMG shot and ammunition
+cost as well as its mesh and muzzle flash.
+
+`tools/check-handguns.js` traces rendered solids and native fire/reload timers.
+`tools/check-left-actions.js` covers actions across gaits and equipment states,
+including cannon geometry/projectile alignment without gun aim.
+
 ## How a robot dies
 
 `ROBOT` is the only non-organic hostile that fights on foot, and every death site in the
@@ -3406,6 +3430,8 @@ node tools/check-cutscene.js       # scripted placement stays inside the sector
 node tools/check-resources.js      # harvestables, drops, the melee tool, persistence
 node tools/check-robot.js          # a machine dies like a machine, on all six paths
 node tools/check-character.js      # the arm rig, the gait bands, and carrying a weapon
+node tools/check-handguns.js       # solid sidearms, slide motion and staged reloads
+node tools/check-left-actions.js   # throws and chemist cannon without gun aim
 node tools/check-build.js          # blueprints, placement, build rate, the crew
 node tools/check-ballistics.js     # hostile rounds are always slower than the player's
 node tools/check-menu.js           # travel lives in the pause menu, and nowhere else

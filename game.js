@@ -13308,7 +13308,7 @@ this.punchHitCount = 0;
     this.dead = false; this.aimAngle = 0; this.moveAngle = 0; this.lastMoveAngle = 0; if (!this.currentWeapon) this.currentWeapon = WEAPONS.PISTOL; this.fireTimer = 0; this.reloadTimer = 0; this.orbChargeTimer = 0; 
     this.dashTimer = 0; this.dashCooldown = 0; this.dashCount = 0; this.dashWindow = 0; this.meleeTimer = 0; this.meleeCooldown = 0; this.meleePhase = 0; this.meleeComboTimer = 0; this.isBackhand = false; this.meleeQueued = false;
     this.throwAnimTimer = 0; this.cannonAmmo = 4; this.cannonCooldown = 0; this.cannonFireDelay = 0; this.cannonCharge = 0;
-    this.muzzleFlash = 0; this.decals = []; this.isMoving = false; this.walkCycle = 0; this.gait = 0; this.armDrag = 0; this.lastHitFrame = 0; this.frameDamage = 0; this.shieldFlashTimer = 0; this.shieldBurstTimer = 0;
+    this.muzzleFlash = 0; this.weaponKick = 0; this.decals = []; this.isMoving = false; this.walkCycle = 0; this.gait = 0; this.armDrag = 0; this.lastHitFrame = 0; this.frameDamage = 0; this.shieldFlashTimer = 0; this.shieldBurstTimer = 0;
        this.weaponAmmo = { 
         "PISTOL": WEAPONS.PISTOL.maxAmmo, 
         "MACHINE GUN": WEAPONS.SMG.maxAmmo, 
@@ -13887,7 +13887,7 @@ this.skeletonTimer = 0;
             if (!meleeInputHeld || cookTime <= 0) {
                 isCooking = false; pFlaskAmmo--; 
                 if (pFlaskAmmo <= 0 && pFlaskTimer <= 0) pFlaskTimer = 600; 
-                playerFlasks.push(new PlayerFlask(this.x, this.y, this.aimAngle, cookTime));
+                playerFlasks.push(new PlayerFlask(this.x, this.y, supportAimAngle(this), cookTime));
                 sfx.throwG(); this.throwAnimTimer = 15;
             }
         }
@@ -13896,19 +13896,18 @@ this.skeletonTimer = 0;
         if (this.cannonCooldown > 0) this.cannonCooldown--;
         if (this.cannonFireDelay > 0) this.cannonFireDelay--;
         
-        if (typeof cannonInputHeld !== 'undefined' && cannonInputHeld && this.cannonCooldown <= 0 && this.cannonFireDelay <= 0 && this.cannonAmmo > 0) {
+        if (typeof cannonInputHeld !== 'undefined' && cannonInputHeld && !isCooking && this.throwAnimTimer <= 0 && this.cannonCooldown <= 0 && this.cannonFireDelay <= 0 && this.cannonAmmo > 0) {
             this.cannonCharge++; 
-        } else if ((typeof cannonInputHeld === 'undefined' || !cannonInputHeld) && this.cannonCharge > 0) {
+        } else if ((typeof cannonInputHeld === 'undefined' || !cannonInputHeld) && !isCooking && this.throwAnimTimer <= 0 && this.cannonCharge > 0) {
             let dmg = 50, dryMax = 1;
             if (this.cannonCharge >= 120) { dmg = 350; dryMax = 3; } 
             else if (this.cannonCharge >= 80) { dmg = 150; dryMax = 2; } 
             
-            let range = 300, arc = 0.4, pA = this.aimAngle;
+            let range = 300, arc = 0.4, pA = supportAimAngle(this);
             let candidates = enemiesList.filter(e => e.hp > 0 && !e.dead && dist(this.x, this.y, e.x, e.y) < range && abs((atan2(e.y - this.y, e.x - this.x) - pA + PI*3) % TWO_PI - PI) < arc);
             
-            let startX = this.x + cos(pA)*32 - sin(pA)*-19;
-            let startY = this.y + sin(pA)*32 + cos(pA)*-19;
-            let shockPts = [{x: startX, y: startY}];
+            const muzzle = leftActionMuzzle(this, pA);
+            let shockPts = [{x: muzzle.x, y: muzzle.y}];
             
             if (candidates.length > 0) {
                 candidates.sort((a,b) => dist(this.x, this.y, a.x, a.y) - dist(this.x, this.y, b.x, b.y));
@@ -13954,7 +13953,7 @@ this.skeletonTimer = 0;
                         let bCol = (t.eType === "BUG" || t.eType === "SNAIL" || t.eType === "SNAIL_HYBRID") ? color(200, 230, 40) : color(90, 0, 0);
                         
                         if (t.eType === "ROBOT") {
-                            robotDeathBurst(t, this.aimAngle, true);
+                            robotDeathBurst(t, pA, true);
                         } else {
                         if (dT === 5) {
                             emit(t.x, t.y, 40, color(255, 150, 0), "EXPLOSION"); sfx.explosion(t.x, t.y);
@@ -13963,7 +13962,7 @@ this.skeletonTimer = 0;
                         emit(t.x, t.y, 60, bCol, "GORE");
                         spawnSplatter(t.x, t.y, "BLOOD", bCol);
 
-                        let c = new Corpse(t.x, t.y, t.moveAngle, t.aimAngle, color(40), color(20), dT, this.aimAngle, t.decals, t.currentWeapon, this.aimAngle, t.eType, t.bodyW, t.bodyH, t);
+                        let c = new Corpse(t.x, t.y, t.moveAngle, t.aimAngle, color(40), color(20), dT, pA, t.decals, t.currentWeapon, pA, t.eType, t.bodyW, t.bodyH, t);
                         c.smokeTimer = 198; c.isCharred = true; c.bloodTimer = 198;
                         corpses.push(c);
                         }
@@ -13997,7 +13996,7 @@ this.skeletonTimer = 0;
             if (!grenadeInputHeld || cookTime <= 0) {
                 isCooking = false; pGrenadeAmmo--; 
                 if (typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked && pGrenadeAmmo <= 0 && pGrenadeTimer <= 0) pGrenadeTimer = 600;
-                playerGrenades.push(new PlayerGrenade(this.x, this.y, this.aimAngle, cookTime));
+                playerGrenades.push(new PlayerGrenade(this.x, this.y, supportAimAngle(this), cookTime));
                 sfx.throwG(); this.throwAnimTimer = 15; 
             }
         }
@@ -14205,7 +14204,8 @@ this.skeletonTimer = 0;
         else if (leftStick.active && this.isMoving && this.dashTimer <= 0) this.aimAngle = this.moveAngle;
     }
 
-    if (this.fireTimer > 0) this.fireTimer--; if (this.muzzleFlash > 0) this.muzzleFlash--; 
+    if (this.fireTimer > 0) this.fireTimer--; if (this.muzzleFlash > 0) this.muzzleFlash--;
+    if (this.weaponKick > 0) this.weaponKick--;
         if (this.reloadTimer > 0 && --this.reloadTimer <= 0) { 
         let mult = ((this.isPlayer || this.isFriendly) && window.milLvl >= 2) ? 2 : 1;
         this.ammo = this.currentWeapon.maxAmmo * mult; 
@@ -14393,7 +14393,8 @@ if (this.eType === "COW") {
     if (this.wetTimer > 0) { this.wetTimer--; if (frameCount % 15 === 0) emit(this.x + random(-10, 10), this.y + random(-10, 10), 1, color(100, 150, 255), "BLOOD"); }
 
     if (this.fireTimer > 0) this.fireTimer--; 
-    if (this.muzzleFlash > 0) this.muzzleFlash--; 
+    if (this.muzzleFlash > 0) this.muzzleFlash--;
+    if (this.weaponKick > 0) this.weaponKick--;
         if (this.reloadTimer > 0 && --this.reloadTimer <= 0) { 
         let mult = ((this.isPlayer || this.isFriendly) && window.milLvl >= 2) ? 2 : 1;
         this.ammo = this.currentWeapon.maxAmmo * mult; 
@@ -15016,7 +15017,9 @@ if (this.eType === "COW") {
     if(unarmedCivilian(this))return;
     if (this.isPlayer) this.isArmed = true;
     let aH = ((this.isPlayer || this.isFriendly) && headAimToggle) ? "HEAD" : "BODY", cd = (this.isPlayer || this.isFriendly) ? this.currentWeapon.fireCooldown : (this.currentWeapon.enemyCooldown || 48), bob = this.isMoving ? abs(sin(this.walkCycle)) * 2 : 0;
-    let cost = this.currentWeapon === WEAPONS.DUAL_SMG ? 2 : 1;
+    // The off hand cannot fire an SMG while it is throwing or using the cannon.
+    const dualLeftReady = this.currentWeapon === WEAPONS.DUAL_SMG && !leftHandAction(this);
+    let cost = dualLeftReady ? 2 : 1;
     let bLX = 31, bLY = 8, bLX_L = 59, bLY_L = -17;
     if (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { bLX = 47; bLY = 6; } else if (this.currentWeapon === WEAPONS.SMG || this.currentWeapon === WEAPONS.DUAL_SMG) { bLX = 38; bLY = 11; bLX_L = 38; bLY_L = -11; }
     if (this.eType === "ALIEN_GATOR" || this.eType === "SNAIL_HYBRID") { bLX = 100; bLY = 19; } if (this.eType === "AERIAL_PISTOL") { bLX = 51; bLY = 16; }
@@ -15033,13 +15036,14 @@ if (this.eType === "COW") {
         let tX_L = this.x + cos(this.aimAngle) * (bLX_L + bob) - sin(this.aimAngle) * bLY_L, tY_L = this.y + sin(this.aimAngle) * (bLX_L + bob) + cos(this.aimAngle) * bLY_L;
         let iP = this.isPlayer || this.isFriendly;
         spawnBullet(tX, tY, sA + random(-this.currentWeapon.spread, this.currentWeapon.spread), iP, aH, this.currentWeapon, this);
-        spawnBullet(tX_L, tY_L, sA + random(-this.currentWeapon.spread, this.currentWeapon.spread), iP, aH, this.currentWeapon, this);
+        if (dualLeftReady) spawnBullet(tX_L, tY_L, sA + random(-this.currentWeapon.spread, this.currentWeapon.spread), iP, aH, this.currentWeapon, this);
         sfx.shoot(this.currentWeapon, tX, tY); 
         
         // EXCLUSIVE PLAYER SHAKE
         if (this.isPlayer) screenShake = 3; 
         
-        emit(tX, tY, 3, color(255, 200, 0), "MUZZLE", cos(sA) * 5, sin(sA) * 5); emit(tX_L, tY_L, 3, color(255, 200, 0), "MUZZLE", cos(sA) * 5, sin(sA) * 5); 
+        emit(tX, tY, 3, color(255, 200, 0), "MUZZLE", cos(sA) * 5, sin(sA) * 5);
+        if (dualLeftReady) emit(tX_L, tY_L, 3, color(255, 200, 0), "MUZZLE", cos(sA) * 5, sin(sA) * 5);
     } else if (this.currentWeapon === WEAPONS.SHOTGUN) { 
         let s = [-0.1275, -0.0425, 0.0425, 0.1275]; for (let i = 0; i < 4; i++) spawnBullet(tX, tY, sA + s[i], this.isPlayer || this.isFriendly, aH, this.currentWeapon, this); 
         sfx.shotgun(tX, tY); 
@@ -15057,7 +15061,7 @@ if (this.eType === "COW") {
         
         emit(tX, tY, 3, color(255, 200, 0), "MUZZLE", cos(sA) * 5, sin(sA) * 5); 
     }
-    this.ammo = Math.max(0, this.ammo - cost); if (this.eType !== "SAUCER_RED" && this.eType !== "ALIEN_GATOR") this.fireTimer = cd; this.muzzleFlash = 3; 
+    this.ammo = Math.max(0, this.ammo - cost); if (this.eType !== "SAUCER_RED" && this.eType !== "ALIEN_GATOR") this.fireTimer = cd; this.muzzleFlash = 3; this.weaponKick = 6;
     if (this.ammo <= 0) { if (this.isPlayer || this.isFriendly) { this.triggerReload(); } else { this.reloadTimer = 90; } }
   }
 
@@ -15366,7 +15370,7 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
         bob = this.isMoving ? abs(sin(this.walkCycle)) * 2 * GP.bob + GP.lean : 0;
     if (this.mounted) { lS *= 0.35; bob *= 0.4; }
     if (this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL") { bob += sin(frameCount * 0.1) * 15; lS = 0; }
-    if (this.reloadTimer > 0) { let rP = 1 - (this.reloadTimer / 90); push(); noFill(); stroke(0, 200, 255, 150); strokeWeight(4); arc(0, 0, 50, 50, -PI / 2, -PI / 2 + (rP * TWO_PI)); pop(); bob += sin(frameCount * 0.5) * 3; }
+    if (this.reloadTimer > 0) { let rP = 1 - (this.reloadTimer / 90); push(); noFill(); stroke(0, 200, 255, 150); strokeWeight(4); arc(0, 0, 50, 50, -PI / 2, -PI / 2 + (rP * TWO_PI)); pop(); if (!oneHandWeapon(this.currentWeapon)) bob += sin(frameCount * 0.5) * 3; }
     if (this.eType === "ALIEN_GATOR") { 
         push(); rotate(this.moveAngle); fill(this.pantsCol); if (BIOME_ACTIVE) figureContour(); else noStroke(); rect(-30 + lS*3, -30, 54, 24, 12); rect(-30 - lS*3, 6, 54, 24, 12); pop();
         push(); rotate(this.aimAngle); translate(bob*3, 0);
@@ -15595,6 +15599,9 @@ if (this.isPlayer) {
     // (hiding a hand between a front and a back threshold) deleted the sword
     // twice a stride and left an idle player empty-handed.
     let armPass = null;
+    // Off-hand actions belong to the walking rig as well as the aimed rig.
+    // They do not raise the right-hand gun or replace the rest of the stride.
+    const leftAction = leftHandAction(this);
     {
         const isTownsfolk = unarmedCivilian(this)||(this.isNeutral&&TOWNSFOLK.indexOf(this.eType)!==-1);
         const isEmptyHanded = this.isPlayer&&!this.isArmed&&this.meleeTimer<=0&&!boxing.active;
@@ -15731,7 +15738,7 @@ if (this.isPlayer) {
                 // it -- while the forward half stays short, because a weapon
                 // thrown out in front is a presentation, not a carry. Damped
                 // both ways it read as the gun being held rather than swung.
-                const held = (carrying === 1 && s.right);
+                const held = carrying === 1 && (s.right || this.currentWeapon === WEAPONS.DUAL_SMG);
                 const sw = held ? (s.sw > 0 ? s.sw * 0.55
                                             : s.sw * (0.55 + 0.75 * GP.band / 3))
                                 : s.sw;
@@ -15992,7 +15999,7 @@ if (this.isPlayer) {
                 // joint between them has to be further aft still. Left on the
                 // generic lead it trailed the hand by less than half and the
                 // arm read as being held out rather than swung through.
-                if (carrying === 1 && s.right && s.hx < 0) {
+                if (carrying === 1 && (s.right || this.currentWeapon === WEAPONS.DUAL_SMG) && s.hx < 0) {
                     ep[0] = Math.min(ep[0], s.hx * (0.62 + 0.28 * GP.band / 3));
                 }
                 // Except when the arm is reaching ACROSS the chest for a long
@@ -16046,24 +16053,26 @@ if (this.isPlayer) {
                 // Both limbs go under the torso -- that is what sinks the
                 // shoulder into the body instead of parking a blob on it. Only
                 // the hands are sorted front to back.
-                if (!front) for (const s of sides) limb(s);
+                if (!front) for (const s of sides) {
+                    if (!s.right && leftAction) continue;
+                    limb(s);
+                }
                 for (const s of sides) {
+                    if (!s.right && leftAction) continue;
                     // A held tool always rides the front pass: it is the thing
                     // the player is looking at, and half a pickaxe swallowed by
                     // a torso is worse than one drawn a layer too high. Both
                     // hands on a carried long gun ride it for the same reason.
                     const holdsTool = !!(s.right && armedMelee);
-                    const holdsGun = !!(s.right && carrying === 1);
+                    const holdsGun = carrying === 1 && (s.right || this.currentWeapon === WEAPONS.DUAL_SMG);
                     const isFront = (holdsTool || holdsGun || carrying === 2)
                                     ? true : s.sw > 0.2;
                     if (isFront !== front) continue;
                     const h = { x: s.hx, y: s.hy };
 
                     if (!s.right && this.isPlayer && isChemist) {
-                        push(); translate(h.x, h.y); rotate(s.sw * 0.22);
-                        fill(80); rect(-4, -4, 16, 8, 2);
-                        fill(0, 255, 200); ellipse(12, 0, 6, 8);
-                        pop();
+                        // The grey hand IS the cannon, not a separate device.
+                        fill(180, 180, 190); ellipse(h.x, h.y, RG.hand, RG.hand);
                     } else {
                         fill(skin); ellipse(h.x, h.y, RG.hand, RG.hand);
                     }
@@ -16138,7 +16147,8 @@ if (this.isPlayer) {
                         const _wa = this.aimAngle + _tw + gAng;
                         const gl = figureLight(_wa);
                         carryHandGun(this.currentWeapon, el, gl,
-                                     figureSouth(_wa));
+                                     figureSouth(_wa),
+                                     s.sgn * (0.10 + _ph * (0.06 + GP.band * 0.025)));
                         pop();
                     }
                 }
@@ -16154,6 +16164,7 @@ if (this.isPlayer) {
                                  figureSouth(_wa));
                     pop();
                 }
+                if (front && leftAction) drawLeftHandAction(this, leftAction, -_tw);
             };
             armPass(false);
         }
@@ -16417,44 +16428,17 @@ if (this.isPlayer) {
                 }
             }
         }
+        else if (leftAction) {
+            drawLeftHandAction(this, leftAction, -_tw);
+        }
         else if (this.reloadTimer > 0) {
             let rP = 1 - (this.reloadTimer / 90);
-            if (this.isPlayer && this.currentWeapon === WEAPONS.DUAL_SMG) { fill(this.shirtCol); ellipse(15, -11, 25, 8); fill(235, 180, 140); ellipse(25, -11, 8, 8); fill(40); rect(16, -15, 24, 8, 2); rect(20, -23, 6, 12); } 
+            if (this.isPlayer && oneHandWeapon(this.currentWeapon)) { /* drawn together with the right arm below */ }
             else { let clipX = 2 + sin(rP * PI) * 10, clipY = 10; fill(this.shirtCol); ellipse(0, clipY - 3, 16, 8); fill(235, 180, 140); ellipse(clipX, clipY, 8, 8); }
         } 
         else if (this.isArmed || !this.isPlayer) { 
             let shoulderX = lerp(0, -5, this.armDrag), shoulderY = lerp(lAY, lAY + 3, this.armDrag);
-            let isAimingCannon = this.isPlayer && typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked && ((typeof cannonInputHeld !== 'undefined' && cannonInputHeld) || this.cannonCharge > 0 || this.cannonFireDelay > 35);
-            let isThrowing = this.isPlayer && (typeof isCooking !== 'undefined' && (isCooking || this.throwAnimTimer > 0));
-
-            if (isThrowing) {
-                push(); translate(shoulderX, shoulderY); 
-                let armAngle = isCooking ? PI * 0.8 : -PI * 0.1;
-                let elbowAngle = isCooking ? HALF_PI : 0;
-                rotate(armAngle);
-                fill(this.shirtCol); ellipse(6, 0, 14, 8); 
-                translate(10, 0); rotate(elbowAngle); fill(this.shirtCol); ellipse(4, 0, 12, 8); 
-                if (this.isPlayer && typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) fill(180, 180, 190); else fill(235, 180, 140);
-                ellipse(10, 0, 8, 8); 
-                if (isCooking) { 
-                    if (typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) { 
-                        fill(150, 200, 255, 200); stroke(200); strokeWeight(1); beginShape(); vertex(9, 4); vertex(15, 4); vertex(13, -2); vertex(11, -2); endShape(CLOSE); fill(200); rect(11, -4, 2, 2); noStroke(); 
-                    } else { fill(40, 120, 40); ellipse(12, 0, 8, 10); }
-                } 
-                pop();
-            } else if (isAimingCannon) { 
-                push(); translate(shoulderX, shoulderY); rotate(-0.15); fill(240); ellipse(16, 0, 24, 10); fill(180, 180, 190); ellipse(26, 0, 9, 9); 
-                if (this.cannonCharge > 0 || (typeof cannonInputHeld !== 'undefined' && cannonInputHeld)) {
-                    let cSz = 8 + min(20, this.cannonCharge / 10); 
-                    fill(255, 255, 0, 150 + sin(frameCount)*100); ellipse(32, 0, cSz, cSz); fill(255); ellipse(32, 0, cSz/2, cSz/2); 
-                    if (frameCount % 3 === 0) {
-                        let sX = this.x + cos(this.aimAngle)*32 - sin(this.aimAngle)*-19;
-                        let sY = this.y + sin(this.aimAngle)*32 + cos(this.aimAngle)*-19;
-                        emit(sX, sY, 1, color(255, 255, 0), "SPARK");
-                    }
-                }
-                pop();
-            } else if (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { 
+            if (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) {
                 push(); translate(shoulderX, shoulderY); rotate(0.52); fill(this.shirtCol); ellipse(16, 0, 32, 8); 
                 if (this.isPlayer && typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) fill(180, 180, 190); else fill(235, 180, 140);
                 ellipse(32, 0, 8, 8); pop();
@@ -16474,12 +16458,15 @@ if (this.isPlayer) {
                // --- WEAPON & RIGHT ARM RENDERING LOGIC ---
         // THE FIX 3: ONLY run this if Armed or an Enemy. Removes the duplicate unarmed drawings.
         if (!carryMode && this.meleeTimer <= 0 && (this.isArmed || !this.isPlayer)) {
-            let skinC = (typeof chemistSuitUnlocked === 'undefined' && chemistSuitUnlocked) ? color(180, 180, 190) : (this.skinCol||color(235,180,140));
+            if (this.isPlayer && oneHandWeapon(this.currentWeapon) && this.reloadTimer > 0) {
+                drawOneHandReload(this);
+            } else {
+            let skinC = this.skinCol || color(235, 180, 140);
             
             // 1. DRAW RIGHT ARM & HAND FIRST
             // This ensures the arm is painted under the gun
-            let rArmY = rAY, rHandX = 15, rSleeveX = 5;
-            if (this.currentWeapon === WEAPONS.SMG || this.currentWeapon === WEAPONS.DUAL_SMG) { rHandX = 25; rSleeveX = 15; } 
+            let rArmY = this.currentWeapon === WEAPONS.PISTOL ? 8 : rAY, rHandX = this.currentWeapon === WEAPONS.PISTOL ? 16 : 15, rSleeveX = 5;
+            if (this.currentWeapon === WEAPONS.SMG || this.currentWeapon === WEAPONS.DUAL_SMG) { rHandX = 22; rSleeveX = 12; }
             else if (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { rHandX = 8; rSleeveX = -1; }
             
             fill(this.shirtCol);
@@ -16495,7 +16482,15 @@ if (this.isPlayer) {
             else if (this.eType !== "AERIAL" && this.eType !== "AERIAL_PISTOL" && !this.isUnarmed) { 
                 let isThrowing = this.isPlayer && (typeof isCooking !== 'undefined' && (isCooking || this.throwAnimTimer > 0));
 
-                if (this.currentWeapon === WEAPONS.SMG || this.currentWeapon === WEAPONS.DUAL_SMG) { fill(40); rect(16, 7, 24, 8, 2); rect(20, 15, 6, 12); } 
+                if (oneHandWeapon(this.currentWeapon)) {
+                    const kick = handGunKick(this.weaponKick);
+                    const gx = this.currentWeapon === WEAPONS.PISTOL ? 16 : 22;
+                    const gy = this.currentWeapon === WEAPONS.PISTOL ? 8 : 11;
+                    push(); translate(gx, gy);
+                    const _wa = this.aimAngle + _tw;
+                    carryHandGun(this.currentWeapon, kick*0.10, figureLight(_wa), figureSouth(_wa), kick*0.035, this.weaponKick);
+                    pop();
+                }
                 else if (this.currentWeapon === WEAPONS.ASSAULT_RIFLE) { fill(40); rect(5, 4, 42, 4, 1); fill(139, 69, 19); rect(15, 3, 12, 6, 1); rect(0, 3, 8, 6, 1); } 
                 else if (this.currentWeapon === WEAPONS.SHOTGUN) { fill(30); rect(5, 4, 40, 5, 1); fill(15); rect(20, 3, 14, 7, 1); fill(50); rect(5, 3, 12, 7, 2); } 
                 else if (this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { fill(50, 70, 50); rect(5, 4, 45, 6, 2); fill(30); rect(20, 2, 10, 10, 1); } 
@@ -16525,12 +16520,17 @@ if (this.isPlayer) {
                 }
                 else { fill(40); rect(15, 5, 16, 6, 2); } 
                 
-                if (this.currentWeapon === WEAPONS.DUAL_SMG && !isThrowing) {
-                    fill(40); rect(16, -15, 24, 8, 2); rect(20, -23, 6, 12);
+                if (this.currentWeapon === WEAPONS.DUAL_SMG && leftHandAction(this) === 0) {
+                    const kick = handGunKick(this.weaponKick);
+                    push(); translate(22, -11);
+                    const _wa = this.aimAngle + _tw;
+                    carryHandGun(this.currentWeapon, kick*0.10, figureLight(_wa), figureSouth(_wa), -kick*0.035, this.weaponKick);
+                    pop();
                 }
             } 
             else if (this.eType === "AERIAL_PISTOL") { 
                 fill(40); rect(35, 13, 16, 6, 2); 
+            }
             }
         }
 
@@ -16542,7 +16542,7 @@ if (this.isPlayer) {
     if (this.muzzleFlash > 0 && this.reloadTimer <= 0) { 
         push(); translate(bLX, bLY); fill(255, 200, 0, 200); noStroke(); beginShape(); vertex(0, -3); vertex(15 + random(10), -8); vertex(20 + random(15), 0); vertex(15 + random(10), 8); vertex(0, 3); endShape(CLOSE); pop(); 
         let isThrowing = this.isPlayer && (typeof isCooking !== 'undefined' && (isCooking || this.throwAnimTimer > 0));
-        if (this.currentWeapon === WEAPONS.DUAL_SMG && !isThrowing) { push(); translate(bLX_L, bLY_L); fill(255, 200, 0, 200); noStroke(); beginShape(); vertex(0, -3); vertex(15 + random(10), -8); vertex(20 + random(15), 0); vertex(15 + random(10), 8); vertex(0, 3); endShape(CLOSE); pop(); }
+        if (this.currentWeapon === WEAPONS.DUAL_SMG && leftHandAction(this) === 0) { push(); translate(bLX_L, bLY_L); fill(255, 200, 0, 200); noStroke(); beginShape(); vertex(0, -3); vertex(15 + random(10), -8); vertex(20 + random(15), 0); vertex(15 + random(10), 8); vertex(0, 3); endShape(CLOSE); pop(); }
     }
     
     }
@@ -30537,9 +30537,123 @@ function carryLongGun(w, el, L, S) {
 // A sidearm, drawn about its GRIP at the origin with the muzzle out along +x,
 // because that is where the hand holding it is -- and because that is the point
 // the foreshortening pivots about.
-function carryHandGun(w, el, L, S) {
+// A one-handed weapon is a small solid, not a tapered silhouette. Pitch and
+// wrist roll rotate ALL three axes before the camera projects them. In
+// particular, a receiver still has an end and a side when its top turns away;
+// scaling a plan drawing made those moments look like folding paper.
+function handGunProjection(el, roll, L, S) {
+  const ce = Math.cos(el), se = Math.sin(el);
+  const cr = Math.cos(roll), sr = Math.sin(roll);
+  S = S || _figSth; L = L || _figLit;
+  const sx = S[0] * GUN_TILT * GUN_AXIAL, sy = S[1] * GUN_TILT;
+  const axes = [[ce, 0, se], [-se * sr, cr, ce * sr], [-se * cr, -sr, ce * cr]];
+  // View and illumination in model space. Face selection and face colour
+  // follow the same rotation as the vertices; highlights cannot orbit a gun.
+  const view = axes.map(a => a[2] - sx * a[0] - sy * a[1]);
+  const light = axes.map(a => a[2] * 0.85 - a[0] * L[0] * 0.45 - a[1] * L[1] * 0.45);
+  return {
+    axes, view, light,
+    point(x, y, z, out) {
+      const wx = ce * x - se * sr * y - se * cr * z;
+      const wy = cr * y - sr * z;
+      const wz = se * x + ce * sr * y + ce * cr * z;
+      out = out || [0, 0];
+      out[0] = wx + sx * wz; out[1] = wy + sy * wz;
+      return out;
+    }
+  };
+}
+
+function handGunFace(P, a, b, c, d, axis, sign, r, g, bl) {
+  const n = P.light[axis] * sign;
+  // Three cel values, with a small continuous term so rotating through the
+  // light does not snap a face between unrelated colours.
+  const shade = 0.62 + Math.max(0, n) * 0.42;
+  const alpha = P.alpha === undefined ? 1 : P.alpha;
+  fill(r * shade, g * shade, bl * shade, 255 * alpha);
+  stroke(r * 0.26, g * 0.26, bl * 0.28, 235 * alpha); strokeWeight(0.65);
+  quad(a[0], a[1], b[0], b[1], c[0], c[1], d[0], d[1]);
+}
+// Vertex scratch is shared across sequential draw calls. Visible crowds can
+// carry dozens of sidearms; allocating eight points for every little box was
+// avoidable per-frame garbage on phones.
+const _handGunVerts = Array.from({length:8}, () => [0,0]);
+const _handGunLineA = [0,0], _handGunLineB = [0,0];
+function handGunBox(P, x0, x1, y0, y1, z0, z1, r, g, b) {
+  const v = _handGunVerts;
+  P.point(x0,y0,z0,v[0]); P.point(x1,y0,z0,v[1]);
+  P.point(x1,y1,z0,v[2]); P.point(x0,y1,z0,v[3]);
+  P.point(x0,y0,z1,v[4]); P.point(x1,y0,z1,v[5]);
+  P.point(x1,y1,z1,v[6]); P.point(x0,y1,z1,v[7]);
+  // Orthographic faces meet along edges; the three facing the camera never
+  // overlap. Drawing only them keeps the outline and avoids hidden-face ink.
+  if (P.view[0] < 0) handGunFace(P,v[0],v[3],v[7],v[4],0,-1,r,g,b);
+  else handGunFace(P,v[1],v[5],v[6],v[2],0,1,r,g,b);
+  if (P.view[1] < 0) handGunFace(P,v[0],v[4],v[5],v[1],1,-1,r,g,b);
+  else handGunFace(P,v[3],v[2],v[6],v[7],1,1,r,g,b);
+  if (P.view[2] < 0) handGunFace(P,v[0],v[1],v[2],v[3],2,-1,r,g,b);
+  else handGunFace(P,v[4],v[7],v[6],v[5],2,1,r,g,b);
+}
+function handGunDetail(P, x0, y0, z0, x1, y1, z1, r, g, b, weight) {
+  const a=P.point(x0,y0,z0,_handGunLineA), c=P.point(x1,y1,z1,_handGunLineB);
+  stroke(r,g,b); strokeWeight(weight || 0.6); line(a[0],a[1],c[0],c[1]); noStroke();
+}
+
+// The slide comes back sharply and settles over six simulation frames. It
+// shares the shot timer with the wrist kick, not the random muzzle-flash art.
+function handGunKick(timer) {
+  const t = Math.max(0, Math.min(1, (timer || 0) / 6));
+  return t * t * (3 - 2 * t);
+}
+function drawHandGunSolid(w, el, L, S, roll, kick, magOut, slideOpen) {
+  const P = handGunProjection(el, roll || 0, L, S);
+  const smg = w === WEAPONS.SMG || w === WEAPONS.DUAL_SMG;
+  const mag = Math.max(0, Math.min(1, magOut || 0));
+  const bolt = Math.max(handGunKick(kick), slideOpen || 0);
+  // Low pieces first: the palm surrounds the grip underneath the receiver.
+  // Magazines withdraw along their real vertical axis instead of sliding a
+  // rectangle sideways off the muzzle.
+  handGunBox(P, smg ? -7 : -0.3, smg ? -3 : 3, -2.0, 2.0, smg ? -6.0 : -2.1, -0.8, 30,33,38);
+  // Transfer visibility smoothly to the loose magazine in the support hand.
+  // Removing the whole mesh at a threshold made it blink out mid-removal.
+  P.alpha = 1 - reloadEase(mag, 0.35, 1);
+  handGunBox(P, smg ? -4 : 0.3, smg ? 0.5 : 2.4, -1.7, 1.7,
+             (smg ? -12 : -2.3) - mag * 8, -2 - mag * 8, 38,42,48);
+  P.alpha = 1;
+  if (smg) {
+    handGunBox(P, -9, 12, -3.7, 3.7, -0.8, 3.5, 62,67,75); // receiver
+    handGunBox(P, 11.5, 16, -2.2, 2.2, 0.2, 2.8, 43,47,53); // barrel
+    handGunBox(P, -4, 5, -2.0, 2.0, 3.5, 4.1, 81,87,98);    // top rail
+    // Charging handle reciprocates along the receiver; the barrel is fixed.
+    handGunBox(P, 5 - bolt*2.8, 7 - bolt*2.8, 3.7, 4.5, 1.5, 2.6, 132,139,150);
+    handGunBox(P, 13.4, 14.5, -0.65, 0.65, 2.8, 4.0, 103,111,124);
+    for (let i=0;i<3;i++) handGunDetail(P, 7+i*1.5,-2.4,3.55,7+i*1.5,2.4,3.55,27,30,35,0.65);
+    handGunDetail(P,-7,-2.9,3.55,2,-2.9,3.55,153,164,181,0.75);
+  } else {
+    handGunBox(P, -2, 12.5, -2.8, 2.8, -0.8, 0.9, 40,44,51); // fixed frame
+    handGunBox(P, 1, 15, -1.8, 1.8, 0.9, 2.9, 115,124,137);  // fixed barrel
+    handGunBox(P, -2 - bolt*3.3, 15 - bolt*3.3, -2.8, 2.8, 1.2, 4.3, 73,80,91);
+    // Ejection port and rear serrations travel WITH the slide.
+    handGunBox(P, 5-bolt*3.3,8.5-bolt*3.3,-1.25,1.25,4.31,4.4,24,28,34);
+    for(let i=0;i<3;i++) handGunDetail(P,-0.8+i*1.1-bolt*3.3,-2.2,4.35,
+                                   -0.8+i*1.1-bolt*3.3,2.2,4.35,37,42,50,0.65);
+    handGunBox(P, 12.1-bolt*3.3,13.2-bolt*3.3,-0.6,0.6,4.3,5.1,148,160,180);
+    handGunDetail(P,1-bolt*3.3,-2.5,4.35,11-bolt*3.3,-2.5,4.35,161,176,196,0.8);
+  }
+  // The crown/bore retains the signed elevation cue. The solid receiver,
+  // barrel and grip carry volume even when the muzzle points away from us.
+  const muzzle = smg ? 16 : 15;
+  gunMuzzle(gunProj(el,L,S), muzzle, 0, smg ? 4.4 : 4.0, 82,90,104);
+  noStroke();
+}
+
+function carryHandGun(w, el, L, S, roll, kick, magOut, slideOpen) {
   el = el === undefined ? 0 : el;
   L = L || _figLit;
+  if (w === WEAPONS.PISTOL || w === WEAPONS.SMG || w === WEAPONS.DUAL_SMG) {
+    drawHandGunSolid(w, el, L, S, roll, kick, magOut, slideOpen);
+    return;
+  }
   const P = gunProj(el, L, S);
   const seg = function (x0, x1, y, h, br, bg, bb, lift) {
     gunPiece(P, x0, x1, y, h, br, bg, bb, lift);
@@ -30575,6 +30689,84 @@ function carryHandGun(w, el, L, S) {
   noStroke();
 }
 
+// Reloads use the existing ninety-frame gameplay timer. Each magazine has a
+// removal, a trip to the belt, an insertion and a rack/bolt release; dual guns
+// take turns so both cannot teleport fresh magazines into place together.
+function reloadEase(p, a, b) {
+  const t = Math.max(0, Math.min(1, (p-a)/(b-a)));
+  return t*t*(3-2*t);
+}
+function handGunReloadPhase(p) {
+  return {
+    out: reloadEase(p,0.12,0.28) * (1-reloadEase(p,0.54,0.72)),
+    rack: reloadEase(p,0.76,0.83) * (1-reloadEase(p,0.86,0.96)),
+    belt: reloadEase(p,0.28,0.43) * (1-reloadEase(p,0.46,0.62))
+  };
+}
+function oneHandWeapon(w) {
+  return w === WEAPONS.PISTOL || w === WEAPONS.SMG || w === WEAPONS.DUAL_SMG;
+}
+function reloadArm(c, sx, sy, hx, hy, right) {
+  const RG=figureRig(c.bodyW,c.bodyH);
+  const ex=sx+(hx-sx)*0.40-2.5, ey=sy+(hy-sy)*0.40+(right?2.5:-2.5);
+  fill(red(c.shirtCol)*0.87,green(c.shirtCol)*0.87,blue(c.shirtCol)*0.90);
+  if(BIOME_ACTIVE) figureContour();
+  for(const part of [[sx,sy,ex,ey,RG.upperW],[ex,ey,hx,hy,RG.foreW]]) {
+    const dx=part[2]-part[0],dy=part[3]-part[1],len=Math.hypot(dx,dy);
+    push();translate(part[0],part[1]);rotate(Math.atan2(dy,dx));
+    ellipse(len*0.5,0,len+part[4],part[4]);pop();
+  }
+  if(!right && c.isPlayer && typeof chemistSuitUnlocked!=='undefined' && chemistSuitUnlocked) fill(180,180,190);
+  else fill(235,180,140);
+  ellipse(hx,hy,RG.hand,RG.hand);
+}
+function drawOneHandReload(c) {
+  const p=Math.max(0,Math.min(1,1-c.reloadTimer/90));
+  const dual=c.currentWeapon===WEAPONS.DUAL_SMG;
+  const leftBusy=leftHandAction(c)!==0;
+  const rPhase=handGunReloadPhase(dual?Math.min(1,p*2):p);
+  const lPhase=handGunReloadPhase(Math.max(0,p*2-1));
+  const arc=Math.sin(p*Math.PI), el=-0.62*arc;
+  const gx=(c.currentWeapon===WEAPONS.PISTOL?16:22)-3*arc, gy=c.currentWeapon===WEAPONS.PISTOL?8:11;
+  const roll=0.18*arc, ang=-0.10*arc;
+  reloadArm(c,0,c.bodyH*0.425,gx,gy,true);
+  if(!leftBusy) {
+    if(dual) reloadArm(c,0,-c.bodyH*0.425,gx,-gy,false);
+    else {
+      const belt=rPhase.belt;
+      const hx=gx-3-(gx+2)*belt-rPhase.rack*3;
+      const hy=gy-2-(gy+8)*belt-rPhase.rack*2;
+      reloadArm(c,0,-c.bodyH*0.425,hx,hy,false);
+      if(rPhase.out>0.12 && rPhase.rack<0.01) {
+        push();translate(hx,hy);
+        const P=handGunProjection(-0.35,0.35,figureLight(c.aimAngle),figureSouth(c.aimAngle));
+        P.alpha=reloadEase(rPhase.out,0.12,0.70);
+        handGunBox(P,-2,3,-1.8,1.8,-5,1,43,48,56);
+        handGunBox(P,-1.5,2.5,-1.3,1.3,1,1.7,174,137,68);
+        pop();
+      }
+    }
+  }
+  for(const side of dual&&!leftBusy?[1,-1]:[1]) {
+    const phase=side===1?rPhase:lPhase;
+    push();translate(gx,gy*side);rotate(ang*side);
+    const heading=c.aimAngle+ang*side;
+    const slide=c.currentWeapon===WEAPONS.PISTOL ? Math.max(phase.rack,1-reloadEase(p,0.86,0.96)) : phase.rack;
+    carryHandGun(c.currentWeapon,el,figureLight(heading),figureSouth(heading),roll*side,0,phase.out,slide);
+    // A discarded magazine falls clear on the strong side. It is purely art,
+    // keyed to the reload timer so pausing never advances it or spawns items.
+    const sp=dual?(side===1?p*2:p*2-1):p;
+    if(sp>0.28 && sp<0.50) {
+      const fall=(sp-0.28)/0.22;
+      const P=handGunProjection(-0.4-fall,0.4+fall,figureLight(heading),figureSouth(heading));
+      P.alpha=reloadEase(sp,0.28,0.32)*(1-reloadEase(sp,0.44,0.50));
+      push();translate(-2-fall*4,side*(5+fall*5));
+      handGunBox(P,-2,2,-1.6,1.6,-5,0,32,35,42);pop();
+    }
+    pop();
+  }
+}
+
 // Presenting the weapon, as opposed to carrying it. The right stick is the aim
 // stick, so holding it IS aiming; a shot in the last few frames and a reload
 // both keep the gun up, because dropping to a carry between rounds would make
@@ -30582,8 +30774,7 @@ function carryHandGun(w, el, L, S) {
 function aimIntent(c) {
   if (typeof rightStick === 'undefined') return true;
   return !!rightStick.active || c.muzzleFlash > 0 || c.reloadTimer > 0 ||
-         c.meleeTimer > 0 || (typeof isCooking !== 'undefined' && isCooking) ||
-         c.throwAnimTimer > 0 || c.dashTimer > 0;
+         c.meleeTimer > 0 || c.dashTimer > 0;
 }
 
 // How long the gun stays up after the aim stick lets go. Two jobs: a thumb
@@ -30595,6 +30786,109 @@ const AIM_HOLD = 14;
 function playerAiming(c) {
   if (!c.isPlayer) return true;         // everyone else presents; see CARRY.
   return (c.aimHold || 0) > 0;
+}
+
+// One off hand, one action. These states do not imply that the right-hand gun
+// is aimed, and a held cannon button during its cooldown is just a grey hand.
+function leftHandAction(c) {
+  if (!c.isPlayer) return 0;
+  if ((typeof isCooking !== 'undefined' && isCooking) || c.throwAnimTimer > 0) return 1;
+  if (typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked &&
+      (c.cannonCharge > 0 || c.cannonFireDelay > 35 ||
+       (typeof cannonInputHeld !== 'undefined' && cannonInputHeld &&
+        c.cannonCooldown <= 0 && c.cannonFireDelay <= 0 && c.cannonAmmo > 0))) return 2;
+  return 0;
+}
+
+// Support actions run before movement/aim updates, so read this frame's stick
+// direction at release instead of firing toward the previous frame's heading.
+function supportAimAngle(c) {
+  if (typeof rightStick !== 'undefined' && rightStick && rightStick.active &&
+      Math.hypot(rightStick.dx, rightStick.dy) > 0.001) return atan2(rightStick.dy, rightStick.dx);
+  if (typeof leftStick !== 'undefined' && leftStick && leftStick.active &&
+      c.dashTimer <= 0 && Math.hypot(leftStick.dx, leftStick.dy) > 0.001) return atan2(leftStick.dy, leftStick.dx);
+  return c.aimAngle;
+}
+
+// Shared by the aimed and walking poses. Bone lengths come from the same rig
+// as the walking arm; winding up, releasing and recoiling change its joints.
+function leftActionPose(c, action) {
+  const R = figureRig(c.bodyW, c.bodyH), sy = -c.bodyH * 0.425;
+  const U = R.upper * 0.97, F = R.fore * 0.97;
+  if (action === 1) {
+    let t = (typeof isCooking !== 'undefined' && isCooking) ? 0 :
+            Math.min(1, Math.max(0, (15 - c.throwAnimTimer) / 8));
+    t = t * t * (3 - 2 * t);
+    const a = lerp(PI * 0.80, -PI * 0.08, t), b = lerp(PI * 1.30, PI * 0.02, t);
+    const ex = cos(a) * U, ey = sy + sin(a) * U;
+    return { sx: 0, sy, ex, ey, hx: ex + cos(b) * F, hy: ey + sin(b) * F, hand: R.hand };
+  }
+  const recoil = c.cannonCharge > 0 ? 0 : Math.max(0, (c.cannonFireDelay - 35) / 13);
+  return { sx: 0, sy, ex: U - recoil * 1.1, ey: sy - 0.6,
+           hx: U + F - recoil * 2.6, hy: sy - 1.7, hand: R.hand };
+}
+
+// The grey hand's charge core and the lightning's first point share one origin.
+function leftActionMuzzle(c, angle) {
+  const P = leftActionPose(c, 2), GP = gaitPose(c.isMoving ? c.gait : 0);
+  let bob = c.isMoving ? abs(sin(c.walkCycle)) * 2 * GP.bob + GP.lean : 0;
+  if (c.mounted) bob *= 0.4;
+  if (c.reloadTimer > 0 && !oneHandWeapon(c.currentWeapon)) bob += sin(frameCount * 0.5) * 3;
+  const tw = c.isMoving && !(c.isArmed && c.meleeTimer <= 0 && playerAiming(c))
+           ? sin(c.walkCycle) * GP.twist : 0;
+  const x = P.hx + P.hand * 0.48, y = P.hy;
+  return { x: c.x + cos(angle) * x - sin(angle) * y + cos(angle + tw) * bob,
+           y: c.y + sin(angle) * x + cos(angle) * y + sin(angle + tw) * bob };
+}
+
+function drawLeftHandAction(c, action, untwist) {
+  const P = leftActionPose(c, action), R = figureRig(c.bodyW, c.bodyH);
+  const chemist = typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked;
+  push(); rotate(untwist || 0);
+  const limb = (x0, y0, x1, y1, w) => {
+    const dx = x1 - x0, dy = y1 - y0, L = Math.hypot(dx, dy);
+    push(); translate(x0, y0); rotate(atan2(dy, dx));
+    if (BIOME_ACTIVE) figureContour();
+    fill(red(c.shirtCol) * 0.87, green(c.shirtCol) * 0.87, blue(c.shirtCol) * 0.90);
+    ellipse(L * 0.5, 0, L + w, w);
+    noStroke(); fill(255, 255, 250, 35); ellipse(L * 0.5, -w * 0.16, L + w * 0.35, w * 0.32);
+    pop();
+  };
+  limb(P.sx, P.sy, P.ex, P.ey, R.upperW);
+  limb(P.ex, P.ey, P.hx, P.hy, R.foreW);
+  if (BIOME_ACTIVE) figureContour();
+  if (chemist) fill(180, 180, 190); else fill(235, 180, 140);
+  ellipse(P.hx, P.hy, P.hand, P.hand);
+  noStroke(); fill(255, 255, 255, 65); ellipse(P.hx - 1, P.hy - 1.5, P.hand * 0.56, P.hand * 0.35);
+  if (action === 1 && typeof isCooking !== 'undefined' && isCooking) {
+    push(); translate(P.hx, P.hy);
+    if (chemist) {
+      stroke(80, 110, 135); strokeWeight(0.8); fill(150, 210, 255, 220);
+      beginShape(); vertex(-3, 3); vertex(3, 3); vertex(1.4, -2); vertex(-1.4, -2); endShape(CLOSE);
+      fill(225); rect(-1.4, -4, 2.8, 2, 0.5); noStroke(); fill(230, 250, 255, 175); rect(-1.8, 0, 1, 2);
+    } else {
+      stroke(22, 50, 25); strokeWeight(0.8); fill(40, 120, 40); ellipse(0, 0, 7, 9);
+      noStroke(); fill(135, 160, 120); rect(-1.5, -5, 3, 2, 0.5); fill(125, 185, 100); ellipse(-1.5, -1.2, 2, 4);
+    }
+    pop();
+  } else if (action === 2) {
+    const x = P.hx + P.hand * 0.48, y = P.hy;
+    const charging = c.cannonCharge > 0;
+    const discharge = !charging ? Math.max(0, (c.cannonFireDelay - 35) / 13) : 0;
+    const size = charging ? 7 + Math.min(15, c.cannonCharge * 0.10) : 11 * discharge;
+    noStroke(); fill(255, 238, 50, 85); ellipse(x, y, size * 1.65, size * 1.65);
+    fill(255, 247, 85, 210); ellipse(x, y, size, size); fill(255, 255, 245); ellipse(x, y, size * 0.42, size * 0.42);
+    stroke(255, 248, 120, 230); strokeWeight(1.1);
+    for (let i = 0; i < 3; i++) {
+      const a = frameCount * 0.27 + i * TWO_PI / 3, r = size * 0.48;
+      line(x + cos(a) * r, y + sin(a) * r, x + cos(a + 0.3) * (r + 3), y + sin(a + 0.3) * (r + 3));
+    }
+    if (charging && frameCount % 3 === 0) {
+      const M = leftActionMuzzle(c, c.aimAngle);
+      emit(M.x, M.y, 1, color(255, 255, 0), "SPARK");
+    }
+  }
+  pop();
 }
 const STAND_FORE_ARM = 0.65;
 let _figRigCache = null, _figRigKey = '';

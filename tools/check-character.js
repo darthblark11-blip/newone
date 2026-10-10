@@ -112,11 +112,11 @@ console.log('\n== townsfolk ==');
 // character's own frame — hand centres, sleeve segment lengths, and the angle
 // any carried weapon was drawn at. Everything below needs the transform, not
 // the arguments, because every limb is drawn inside its own translate+rotate.
-function poseOf(setup) {
+function poseOf(setup, barrelOnly = false) {
   probe(setup);
   const px = P('player.x'), py = P('player.y');
   const real = {};
-  for (const k of ['ellipse', 'rect', 'quad', 'push', 'pop', 'translate', 'rotate', 'scale']) {
+  for (const k of ['ellipse', 'rect', 'quad', 'push', 'pop', 'translate', 'rotate', 'scale', 'handGunBox']) {
     real[k] = ctx[k];
   }
   // Start at the character's own origin, so everything below is in the frame
@@ -168,9 +168,20 @@ function poseOf(setup) {
   // butt and the muzzle. Identifying it by a literal width, or as "the longest
   // rect", both stopped working the moment the art began projecting itself.
   const frames = new Map();
+  // A solid pistol's magazine, heel and sights are separate volumes. Their
+  // combined point cloud is not its barrel axis. For tilt/length checks trace
+  // the fixed barrel's rendered faces; silhouette/position checks retain the
+  // complete gun, including its grip.
+  let inBarrel = false;
+  ctx.handGunBox = function (P, x0, x1, y0, y1, z0, z1, r, g, b) {
+    const previous = inBarrel;
+    inBarrel = x0 === 1 && x1 === 15 && r === 115;
+    try { return real.handGunBox(P, x0, x1, y0, y1, z0, z1, r, g, b); }
+    finally { inBarrel = previous; }
+  };
   ctx.quad = function () {
     n++;
-    if (torsoAt < 0) return;
+    if (torsoAt < 0 || (barrelOnly && !inBarrel)) return;
     const key = m.c.toFixed(6) + ',' + m.s.toFixed(6) + ',' +
                 m.x.toFixed(4) + ',' + m.y.toFixed(4);
     let f = frames.get(key);
@@ -617,7 +628,7 @@ console.log('\n== turning must not distort the carry more than moving does ==');
     for (let i = 0; i < 24; i++) {
       const p = poseOf(`player.isMoving = true; player.gait = 1;
                         player.walkCycle = ${(i / 24) * 4 * Math.PI};
-                        player.aimAngle = 0; player.moveAngle = 0;`);
+                        player.aimAngle = 0; player.moveAngle = 0;`, w === 'PISTOL');
       for (const g of p.guns) {
         plo = Math.min(plo, g.len); phi = Math.max(phi, g.len);
       }
@@ -629,7 +640,7 @@ console.log('\n== turning must not distort the carry more than moving does ==');
         const A = (h * Math.PI) / 4;
         const p = poseOf(`player.isMoving = true; player.gait = ${gait};
                           player.walkCycle = 1.7;
-                          player.aimAngle = ${A}; player.moveAngle = ${A};`);
+                          player.aimAngle = ${A}; player.moveAngle = ${A};`, w === 'PISTOL');
         for (const g of p.guns) {
           lo = Math.min(lo, g.len); hi = Math.max(hi, g.len);
           let d = g.ang; while (d > Math.PI) d -= 2 * Math.PI;
@@ -791,7 +802,7 @@ console.log('\n== a carried weapon sits ON the man, not off his side ==');
   probe(`player.currentWeapon = WEAPONS.PISTOL; player.gait = 1;`);
   let lo = Infinity, hi = -Infinity;
   for (let i = 0; i < 24; i++) {
-    const p = poseOf(`player.isMoving = true; player.walkCycle = ${(i * Math.PI) / 12};`);
+    const p = poseOf(`player.isMoving = true; player.walkCycle = ${(i * Math.PI) / 12};`, true);
     for (const gun of p.guns) {
       const L = Math.hypot(gun.b[0] - gun.a[0], gun.b[1] - gun.a[1]);
       lo = Math.min(lo, L); hi = Math.max(hi, L);
