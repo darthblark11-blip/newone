@@ -1509,6 +1509,15 @@ per-part mass extrusion, tall risers, new 3D renderer or texture buffers are nee
 `volShade`/`volShadeCol` remain compatible entry points. Colors accept either
 p5.Color or an RGB(A) array, and all planes retain their material's alpha.
 
+Live player, military and other humanoid silhouettes use a selective black ink
+profile (`figureComicInkFor`). Paint their unfilled contour **after** the shade
+planes so the lighting cannot cover the inner half of the line. Armor rims,
+lapels and short fabric folds take ink; elbow and knee surfaces stay continuous.
+`Character.show` scopes `_figureComicInk` with `try/finally`. Female pistol art,
+corpses, nonlethal falls and organic creature art retain the default profile.
+Use p5 push/pop in live ink leg transforms: a raw Canvas restore alone leaves
+p5's stroke cache stale and can substitute a previous UI color for black.
+
 `figureCelLimb(g,sx,sy,ex,ey,hx,hy,w0,w1,w2,c)` wraps the existing two-bone rig
 in **one continuous tapered outline**. Its curves share a tangent at the elbow or
 knee, and the light bands follow the same surface without joint rings. Widths
@@ -3210,8 +3219,10 @@ the same build as its own corpse**. The hand size is *read* from `figureRig()` r
 written down: as a literal it went stale the first time the figure was re-proportioned and
 turned the whole file into eight failures that said nothing about the rig.
 
-Armed poses are deliberately untouched: the muzzle offsets (`bLX/bLY`) are tuned against
-those arm positions.
+Presented firearm poses keep the native muzzle offsets (`bLX/bLY`). Rifle and
+shotgun wrists now follow their shared solid model, including its recoil and pump;
+their drawn crown, flash and aim line compensate for torso bob to stay on the
+existing projectile origin.
 
 ---
 
@@ -3238,6 +3249,20 @@ cost as well as its mesh and muzzle flash.
 `tools/check-handguns.js` traces rendered solids and native fire/reload timers.
 `tools/check-left-actions.js` covers actions across gaits and equipment states,
 including cannon geometry/projectile alignment without gun aim.
+
+Rifle and shotgun carry and aimed poses share `drawLongGunSolid`, using the same
+rigid projection and visible cuboid faces as the sidearms. Steel, walnut, stocks,
+receivers and magazine details therefore stay the same weapon as it is raised.
+`aimedLongGunPose` anchors the crown to the native muzzle position and supplies
+the two grip positions. `weaponKick` drives muzzle rise and the rifle's charging
+handle; `longGunPump` uses the existing firing cooldown for the shotgun's
+eighteen-frame fore-end cycle and support hand motion. Rendering never advances
+these timers or changes ammunition, fire rate or ballistics.
+
+Run `tools/check-comic-ink.js` for selective contours and protected painter scopes;
+`COMIC_BASELINE=/path/to/game.js` also compares female pistol/corpse traces.
+`tools/check-longguns.js` checks live projected parts, native recoil/pump timers,
+both grips and visual/projectile muzzle registration.
 
 ## How a robot dies
 
@@ -3423,6 +3448,8 @@ node tools/check-resources.js      # harvestables, drops, the melee tool, persis
 node tools/check-robot.js          # a machine dies like a machine, on all six paths
 node tools/check-character.js      # the arm rig, the gait bands, and carrying a weapon
 node tools/check-figure-volume.js  # cel surfaces, smooth joints, light, alpha and poses
+node tools/check-comic-ink.js      # selective black ink and protected soft/fallen art
+node tools/check-longguns.js       # shared carry/aim solids, recoil, pump and shot origins
 node tools/check-handguns.js       # solid sidearms, slide motion and staged reloads
 node tools/check-left-actions.js   # throws and chemist cannon without gun aim
 node tools/check-build.js          # blueprints, placement, build rate, the crew

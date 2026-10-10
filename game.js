@@ -2325,6 +2325,10 @@ function entityCelPlate(g, points, c, lx, ly, sx, sy, inset) {
     g.fill(r*shade,gr*shade,b*shade);
     g.quad(a[0],a[1],n[0],n[1],n[0]*f,n[1]*f,a[0]*f,a[1]*f);
   }
+  if(_figureComicInk){
+    g.noFill();g.stroke(0,0,0);g.strokeWeight(1.1);
+    g.beginShape();for(const p of points)g.vertex(p[0],p[1]);g.endShape(CLOSE);
+  }
   g.noStroke();
 }
 
@@ -15171,6 +15175,9 @@ if (this.eType === "COW") {
 
 
   show() {
+    const previousInk=_figureComicInk;
+    _figureComicInk=figureComicInkFor(this);
+    try {
     const paint=figurePainter();
     const fill=paint?paint.fill:window.fill,ellipse=paint?paint.ellipse:window.ellipse;
     const stroke=paint?paint.stroke:window.stroke,rect=paint?paint.rect:window.rect;
@@ -15624,7 +15631,11 @@ if (this.isPlayer) {
             // used -- wide enough that the two thighs do not merge at the
             // midline, which is the other half of reading as two legs.
             const sx = -10+lS*sgn+RGl.thighW*.5, cy=sgn*-6;
-            drawingContext.save();drawingContext.translate(sx,cy);
+            // p5 must save its paint cache along with Canvas state: restoring
+            // only the context can leave a repeated black stroke cached while
+            // the actual Canvas stroke has reverted to a UI/effect color.
+            if(_figureComicInk){push();translate(sx,cy);}
+            else {drawingContext.save();drawingContext.translate(sx,cy);}
             const g=paint?paint.api:window;
             figureCelLimb(g,0,0,th*.92,0,th*.92+sh,0,wHip,wKnee,wAnkle,this.pantsCol);
             // The boot takes the rig's length UNFORESHORTENED, because a foot
@@ -15634,7 +15645,8 @@ if (this.isPlayer) {
             // sits past the ankle rather than centred on it, for the reason
             // ragLimb gives: a circle on the joint buries half of itself in the
             // shin and adds only its radius to the leg.
-            figureCelOval(g,th*.92+sh+RGl.foot*.34,0,RGl.foot,wAnkle,bootC,.8);drawingContext.restore();
+            figureCelOval(g,th*.92+sh+RGl.foot*.34,0,RGl.foot,wAnkle,bootC,.8);
+            if(_figureComicInk)pop();else drawingContext.restore();
             fill(this.pantsCol);
           }
           noStroke();
@@ -15689,6 +15701,11 @@ if (this.isPlayer) {
     }
 
     if (this.eType === "AERIAL_PISTOL") { bLX = 51; bLY = 16; }
+    if (!carryMode && (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN)) {
+        // Gait lean belongs to the torso. Native rounds use the original
+        // two-unit bob, so keep the crown/flash on that firing line as it runs.
+        bLX += (this.isMoving ? abs(sin(this.walkCycle))*2 : 0)-bob;
+    }
 
     if (this.isPlayer && rightStick.active && this.reloadTimer <= 0 && this.meleeTimer <= 0) { 
         stroke(255, 0, 0, rightStick.dist > 0.75 ? 200 : 50); strokeWeight(2); line(bLX, bLY, 800, bLY); 
@@ -16436,6 +16453,7 @@ if (this.isPlayer) {
     }
     if (this.isPlayer && ninjaSuitUnlocked) { fill(100, 0, 200); rect(-this.bodyW/2, -4, this.bodyW, 8, 2); } 
  
+    if(_figureComicInk)drawFigureComicSeams(paint?paint.api:window,this);
     noStroke(); for (let d of this.decals) { if (!d.isHead) { if (d.col) fill(d.col[0], d.col[1], d.col[2], d.col[3]); else fill(90, 0, 0, 220); ellipse(d.x, d.y, d.sz, d.sz); } }
     if (_tsq) pop();
     // Blood decals are stains ON the shirt and take no contour; everything
@@ -16443,6 +16461,9 @@ if (this.isPlayer) {
     if (BIOME_ACTIVE) figureContour();
     
     let lAY = this.eType === "ARMORED" ? -30 : -14, rAY = this.eType === "ARMORED" ? 30 : 11;
+    const longGunPose = !carryMode && this.meleeTimer<=0 && (this.isArmed || !this.isPlayer) &&
+        (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN)
+        ? aimedLongGunPose(this, _tw, bob) : null;
 
     let isNeutralFarmer = unarmedCivilian(this)||(this.isNeutral&&TOWNSFOLK.indexOf(this.eType)!==-1);
 
@@ -16560,6 +16581,8 @@ if (this.isPlayer) {
             let hx=lerp(8,-12,this.armDrag),hy=shoulderY;
             if (this.currentWeapon===WEAPONS.BOW) {
                 hx=shoulderX+cos(.50)*25;hy=shoulderY+sin(.50)*25;
+            } else if (longGunPose) {
+                hx=longGunPose.fore[0];hy=longGunPose.fore[1];
             } else if (weaponHands(this.currentWeapon)===2) {
                 hx=shoulderX+cos(.52)*32;hy=shoulderY+sin(.52)*32;
             } else if (this.currentWeapon===WEAPONS.DUAL_SMG) hx=25;
@@ -16584,10 +16607,12 @@ if (this.isPlayer) {
             let rArmY = this.currentWeapon === WEAPONS.PISTOL ? 8 : rAY, rHandX = this.currentWeapon === WEAPONS.PISTOL ? 16 : 15, rSleeveX = 5;
             if (this.currentWeapon === WEAPONS.SMG || this.currentWeapon === WEAPONS.DUAL_SMG) { rHandX = 22; rSleeveX = 12; }
             else if (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { rHandX = 8; rSleeveX = -1; }
+            const rShoulderY=rArmY;
+            if (longGunPose) { rHandX=longGunPose.rear[0];rArmY=longGunPose.rear[1]; }
             
             const rg=figureRig(this.bodyW,this.bodyH),g=paint?paint.api:window;
             // The wrist/grip stays pinned to the existing muzzle offsets.
-            figureCelLimb(g,rSleeveX-9,rArmY,rSleeveX+3,rArmY+1,rHandX,rArmY,
+            figureCelLimb(g,rSleeveX-9,rShoulderY,rSleeveX+3,(rShoulderY+rArmY)*.5+1,rHandX,rArmY,
                 rg.upperW,(rg.upperW+rg.foreW)*.5,rg.foreW*.84,this.shirtCol);
             figureCelOval(g,rHandX,rArmY,8,8,skinC,.8);
 
@@ -16611,8 +16636,11 @@ if (this.isPlayer) {
                 else if (this.currentWeapon === WEAPONS.BOW) {
                     push(); translate(24,0); drawHuntingBow(this.ammo > 0); pop();
                 }
-                else if (this.currentWeapon === WEAPONS.ASSAULT_RIFLE) { fill(40); rect(5, 4, 42, 4, 1); fill(139, 69, 19); rect(15, 3, 12, 6, 1); rect(0, 3, 8, 6, 1); } 
-                else if (this.currentWeapon === WEAPONS.SHOTGUN) { fill(30); rect(5, 4, 40, 5, 1); fill(15); rect(20, 3, 14, 7, 1); fill(50); rect(5, 3, 12, 7, 2); } 
+                else if (longGunPose) {
+                    push();translate(longGunPose.x,longGunPose.y);
+                    drawLongGunSolid(this.currentWeapon,longGunPose.P,longGunPose.kick,longGunPose.pump);
+                    pop();
+                }
                 else if (this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { fill(50, 70, 50); rect(5, 4, 45, 6, 2); fill(30); rect(20, 2, 10, 10, 1); } 
                 // Silver magnum: walnut grip, fluted cylinder, long bright
                 // barrel with a bead sight. Without a case here it fell through
@@ -16727,7 +16755,8 @@ if (this.isPlayer) {
         noStroke();
     }
 
-    pop(); 
+    pop();
+    } finally { _figureComicInk=previousInk; }
 }
 }
 
@@ -30306,6 +30335,33 @@ function figureLight(ang) {
 // away from its rig: volume comes from the curved surfaces inside its outline.
 const _figureChestPlate = [[-8,-12],[8,-12],[10,-10],[10,10],[8,12],[-8,12],[-10,10],[-10,-10]];
 const _figureChestSteel = [100,104,112];
+// Strong ink belongs to the live costume/silhouette, not every interior joint.
+// Scope it to one Character.show call; corpse stamps and the approved female
+// pistol art keep their existing painter exactly, even after an early return.
+let _figureComicInk = 0;
+function figureComicInkFor(c) {
+  if(c.dead||c.hp<=0||c.stunTimer>0||c.skeletonTimer>0||c.eType==='FEMALE_PISTOL')return 0;
+  if(c.eType==='ROBOT'||c.eType==='ARMORED'||c.eType==='ARMORED_STANDARD')return 2;
+  return c.isPlayer||ragHumanoid(c.eType,c.bodyW)?1:0;
+}
+function figureCelContour(g) {
+  if(_figureComicInk){g.stroke(0,0,0,255);g.strokeWeight(_figureComicInk===2?1.2:1.1);}
+  else {g.stroke(22,19,24,168);g.strokeWeight(1.15);}
+}
+function drawFigureComicSeams(g,c) {
+  // Lapels and shoulder folds describe actual fabric. Leave the elbow/knee
+  // surface uninterrupted and keep tiny skin forms free of interior ink.
+  g.push();g.noFill();g.stroke(0,0,0,230);g.strokeWeight(.7);
+  if(c.isPlayer&&chemistSuitUnlocked){
+    g.line(6,-10,2,-5);g.line(2,-5,6,-1);
+    g.line(6,10,2,5);g.line(2,5,6,1);
+    g.line(-3,-6,-3,6);
+  }else if(c.eType!=='ARMORED_STANDARD'&&c.eType!=='ARMORED'){
+    g.bezier(5,-6,8,-4,8,4,5,6);
+    g.line(-5,-9,-2,-7);g.line(-5,9,-2,7);
+  }
+  g.pop();
+}
 const _figureCelLight = [0, 1];
 function figureCelLight(g) {
   const dc = g.drawingContext;
@@ -30338,11 +30394,11 @@ function figureCelPathStart(g,dc,x,y) {
 function figureCelPathCurve(g,dc,x1,y1,x2,y2,x,y) {
   if(dc)dc.bezierCurveTo(x1,y1,x2,y2,x,y);else g.bezierVertex(x1,y1,x2,y2,x,y);
 }
-function figureCelPathEnd(g,dc,ink,x,y) {
+function figureCelPathEnd(g,dc,ink,x,y,filled=true) {
   if(dc){
     // p5 1.11.11 appends the first vertex in both endShape and Renderer2D.
     // Keep those closing segments too: they affect antialiasing at the seam.
-    dc.lineTo(x,y);dc.lineTo(x,y);dc.closePath();dc.fill();if(ink)dc.stroke();
+    dc.lineTo(x,y);dc.lineTo(x,y);dc.closePath();if(filled)dc.fill();if(ink)dc.stroke();
   }else g.endShape(CLOSE);
 }
 function figureCelCrescent(g, x, y, rx, ry, ux, uy, reach) {
@@ -30363,22 +30419,31 @@ function figureCelOval(g, x, y, w, h, c, k = 1, lx, ly) {
   const v = c.levels || c, r = v[0], gr = v[1], b = v[2], a = v[3] === undefined ? 255 : v[3];
   if (lx === undefined) { const L = figureCelLight(g); lx = L[0]; ly = L[1]; }
   const len = Math.hypot(lx, ly) || 1; lx /= len; ly /= len;
-  g.stroke(r*.25+5, gr*.25+4, b*.27+7, a*.82);
-  g.strokeWeight(Math.max(.65, Math.min(1.45, Math.min(w,h)*.095))*k);
+  if(_figureComicInk)g.noStroke();
+  else {
+    g.stroke(r*.25+5, gr*.25+4, b*.27+7, a*.82);
+    g.strokeWeight(Math.max(.65, Math.min(1.45, Math.min(w,h)*.095))*k);
+  }
   g.fill(r, gr, b, a); g.ellipse(x, y, w, h); g.noStroke();
   const shade = .22*k, lit = .18*k;
   g.fill(r*(1-shade)+3*k, gr*(1-shade)+3*k, b*(1-shade)+7*k, a);
   figureCelCrescent(g,x,y,w*.5,h*.5,lx,ly,.92);
   g.fill(r+(255-r)*lit, gr+(255-gr)*lit, b+(246-b)*lit, a);
   figureCelCrescent(g,x,y,w*.5,h*.5,-lx,-ly,.30);
-  g.stroke(22,19,24,168); g.strokeWeight(1.15);
+  if(_figureComicInk){
+    g.noFill();g.stroke(0,0,0,a);
+    g.strokeWeight(Math.max(.7,Math.min(_figureComicInk===2?1.4:1.3,Math.min(w,h)*.105)*k));
+    g.ellipse(x,y,w,h);
+    g.fill(r+(255-r)*lit,gr+(255-gr)*lit,b+(246-b)*lit,a);
+  }
+  figureCelContour(g);
 }
 
 // A sleeve/trouser leg is ONE tapered surface around two bones. At the elbow
 // the averaged normal joins the two curves; it never outlines one cap on top
 // of another. The same path carries its light band through the bend.
 const _figureCelLimbPoints = new Float64Array(18);
-function figureCelRibbon(g, p, lo, hi, cap, ink) {
+function figureCelRibbon(g, p, lo, hi, cap, ink, filled=true) {
   const dc=figureCelContext(g);
   const sx=p[0],sy=p[1],ex=p[2],ey=p[3],hx=p[4],hy=p[5];
   const ax=p[6],ay=p[7],bx=p[8],by=p[9],cx=p[10],cy=p[11];
@@ -30396,7 +30461,7 @@ function figureCelRibbon(g, p, lo, hi, cap, ink) {
     sx+ax*hi+(ex-sx)*.38,sy+ay*hi+(ey-sy)*.38,sx+ax*hi,sy+ay*hi);
   figureCelPathCurve(g,dc,sx+ax*hi-tx*cap,sy+ay*hi-ty*cap,
     sx+ax*lo-tx*cap,sy+ay*lo-ty*cap,sx+ax*lo,sy+ay*lo);
-  figureCelPathEnd(g,dc,ink,sx+ax*lo,sy+ay*lo);
+  figureCelPathEnd(g,dc,ink,sx+ax*lo,sy+ay*lo,filled);
 }
 function figureCelLimb(g, sx, sy, ex, ey, hx, hy, w0, w1, w2, c) {
   const v=c.levels||c,r=v[0],gr=v[1],b=v[2],a=v[3]===undefined?255:v[3];
@@ -30417,8 +30482,9 @@ function figureCelLimb(g, sx, sy, ex, ey, hx, hy, w0, w1, w2, c) {
   p[0]=sx;p[1]=sy;p[2]=ex;p[3]=ey;p[4]=hx;p[5]=hy;
   p[6]=-ty*w0*.5;p[7]=tx*w0*.5;p[8]=mx*w1*.5;p[9]=my*w1*.5;
   p[10]=-uy*w2*.5;p[11]=ux*w2*.5;p[12]=tx;p[13]=ty;p[14]=ux;p[15]=uy;
-  g.stroke(r*.25+5,gr*.25+4,b*.27+7,a*.82);g.strokeWeight(.85);
-  g.fill(r,gr,b,a);figureCelRibbon(g,p,-1,1,Math.min(w0,w2)*.42,true);g.noStroke();
+  if(_figureComicInk)g.noStroke();
+  else {g.stroke(r*.25+5,gr*.25+4,b*.27+7,a*.82);g.strokeWeight(.85);}
+  g.fill(r,gr,b,a);figureCelRibbon(g,p,-1,1,Math.min(w0,w2)*.42,!_figureComicInk);g.noStroke();
   const L=figureCelLight(g),side=(-ty*L[0]+tx*L[1])+(-uy*L[0]+ux*L[1]);
   // A broad, shallow plane continues around the joint without a knee ring.
   const sign=side<0?-1:1,amount=Math.min(1,Math.abs(side)*.5);
@@ -30428,7 +30494,12 @@ function figureCelLimb(g, sx, sy, ex, ey, hx, hy, w0, w1, w2, c) {
   figureCelRibbon(g,p,sign*.42,sign,.0);
   g.fill(Math.round(r+(255-r)*.16*amount),Math.round(gr+(255-gr)*.16*amount),Math.round(b+(246-b)*.16*amount),a);
   figureCelRibbon(g,p,-sign*.84,-sign*.16,.0);
-  g.stroke(22,19,24,168);g.strokeWeight(1.15);
+  if(_figureComicInk){
+    g.noFill();g.stroke(0,0,0,a);g.strokeWeight(_figureComicInk===2?1.15:1.05);
+    figureCelRibbon(g,p,-1,1,Math.min(w0,w2)*.42,true,false);
+    g.fill(Math.round(r+(255-r)*.16*amount),Math.round(gr+(255-gr)*.16*amount),Math.round(b+(246-b)*.16*amount),a);
+  }
+  figureCelContour(g);
 }
 
 // One rounded mass. `k` scales the whole effect: 1 for a torso, less for the
@@ -30663,13 +30734,10 @@ function drawHuntingBow(arrow = true, elevation = 0) {
   pop();
 }
 
-// The guns as CARRIED, drawn about their own GRIP so the carry pose can put
-// them anywhere and swing them. Deliberately not shared with the presented art
-// in Character.show(): that is laid out around the muzzle offsets the bullets
-// are fired from (bLX/bLY) and cannot be moved without walking the rounds off
-// the barrel. The MATERIALS are shared, though -- every colour below is read
-// off the aimed drawing of the same weapon, because a rifle that is black with
-// walnut furniture when it is up must not turn blue-grey when it comes down.
+// Weapons are authored about their own GRIP so a carry can swing them freely.
+// Pistols, SMGs, rifles and shotguns share solid geometry between their carry
+// and aimed poses. The aimed long-gun wrapper pins the projected muzzle to the
+// native bullet origin rather than maintaining a second, flattened drawing.
 //
 // A CARRIED WEAPON IS DRAWN THROUGH A PROJECTION, NOT SQUASHED.
 //
@@ -30891,6 +30959,10 @@ function carryLongGun(w, el, L, S) {
   el = el === undefined ? 0 : el;
   if (w === WEAPONS.BOW) { drawHuntingBow(false,el); return; }
   L = L || _figLit;
+  if (w === WEAPONS.ASSAULT_RIFLE || w === WEAPONS.SHOTGUN) {
+    drawLongGunSolid(w,handGunProjection(el,.035,L,S),0,0);
+    return;
+  }
   const P = gunProj(el, L, S);
   const seg = function (x0, x1, y, h, br, bg, bb, lift) {
     gunPiece(P, x0, x1, y, h, br, bg, bb, lift);
@@ -30906,12 +30978,7 @@ function carryLongGun(w, el, L, S) {
   // colours and the order the pieces stack in all carry over -- a rifle that is
   // black with two blocks of walnut on it when it is up has to be the same
   // rifle when it comes down.
-  if (w === WEAPONS.SHOTGUN) {
-    seg(-8, 3, -3.5, 7, 50, 50, 50, 0.26);             // stock
-    seg(-3, 37, -2.5, 5, 30, 30, 30, 0.30);            // barrels
-    seg(5, 19, -3.5, 7, 15, 15, 15, 0.24);             // receiver
-    gunMuzzle(P, 37, 0, 5, 30, 30, 30);
-  } else if (w === WEAPONS.ROCKET_LAUNCHER) {
+  if (w === WEAPONS.ROCKET_LAUNCHER) {
     seg(-5, 42, -3, 6, 50, 70, 50, 0.24);              // tube
     seg(9, 19, -5, 10, 30, 30, 30, 0.22);              // sight block
     gunMuzzle(P, 42, 0, 6, 50, 70, 50);
@@ -30922,12 +30989,6 @@ function carryLongGun(w, el, L, S) {
     seg(15, 37, 0, 3.4, 48, 50, 56, 0.24);             // lower barrel
     seg(13, 15.5, -3.4, 6.8, 150, 120, 70, 0.20);      // breech face
     gunMuzzle(P, 37, -1.7, 3.4, 58, 60, 66);
-  } else {                                              // rifle
-    seg(-8, 0, -3, 6, 139, 69, 19, 0.24);              // walnut stock
-    seg(-3, 39, -2, 4, 40, 40, 40, 0.32);              // black barrel
-    seg(7, 19, -3, 6, 139, 69, 19, 0.22);              // walnut handguard
-    seg(2, 7, 1.4, 7.5, 34, 34, 34, 0.18);             // magazine
-    gunMuzzle(P, 39, 0, 4, 40, 40, 40);
   }
   noStroke();
 }
@@ -30995,6 +31056,87 @@ function handGunBox(P, x0, x1, y0, y1, z0, z1, r, g, b) {
 function handGunDetail(P, x0, y0, z0, x1, y1, z1, r, g, b, weight) {
   const a=P.point(x0,y0,z0,_handGunLineA), c=P.point(x1,y1,z1,_handGunLineB);
   stroke(r,g,b); strokeWeight(weight || 0.6); line(a[0],a[1],c[0],c[1]); noStroke();
+}
+
+// Pump after the shot, not during its flash. This reads the native cooldown:
+// player/friendly shots count down from 20, enemy shots from 60. Both get the
+// same eighteen-frame mechanical cycle, independent of their firing cadence.
+function longGunPump(c) {
+  if (c.currentWeapon!==WEAPONS.SHOTGUN || c.fireTimer<=0 || c.reloadTimer>0) return 0;
+  const cd=c.isPlayer||c.isFriendly?c.currentWeapon.fireCooldown:(c.currentWeapon.enemyCooldown||48);
+  const age=cd-c.fireTimer;
+  return reloadEase(age,4,10)*(1-reloadEase(age,10,18));
+}
+
+// Aiming uses the same solid as a carry, rotated up into the shoulder. The
+// muzzle is the anchor: pitch/roll recoil moves the receiver and wrists while
+// the front crown stays exactly at the existing flash and projectile origin.
+// The support hand follows the fore-end as the shotgun pumps back and forward.
+function aimedLongGunPose(c, twist, bodyBob) {
+  const kick=c.reloadTimer>0?0:handGunKick(c.weaponKick),pump=longGunPump(c);
+  const wa=c.aimAngle+(twist||0),shotgun=c.currentWeapon===WEAPONS.SHOTGUN;
+  const P=handGunProjection(.018+kick*(shotgun ? .13 : .09),.035+kick*.07,
+                            figureLight(wa),figureSouth(wa));
+  const nativeBob=c.isMoving?Math.abs(Math.sin(c.walkCycle))*2:0;
+  const muzzle=P.point(shotgun?37:39,0,0),x=47+nativeBob-(bodyBob||0)-muzzle[0],y=6-muzzle[1];
+  const fore=P.point(18.5-pump*6,0,0);
+  return {P,x,y,kick,pump,rear:[x,y],fore:[x+fore[0],y+fore[1]]};
+}
+
+const _longGunBoreVerts=Array.from({length:4},()=>[0,0]);
+function longGunMuzzle(P,muzzle,r,g,b) {
+  // A shallow steel collar has real end and side planes; the dark bore appears
+  // only when the camera sees the front face. It fades into that face instead
+  // of popping between two muzzle drawings as the carry crosses level.
+  handGunBox(P,muzzle-.95,muzzle,-1.9,1.9,-1.9,1.9,r,g,b);
+  const alpha=Math.min(1,Math.max(0,P.view[0]*4));
+  if(alpha>.01) {
+    const v=_longGunBoreVerts;
+    P.point(muzzle+.015,-.87,-.87,v[0]);P.point(muzzle+.015,.87,-.87,v[1]);
+    P.point(muzzle+.015,.87,.87,v[2]);P.point(muzzle+.015,-.87,.87,v[3]);
+    noStroke();fill(9,11,15,255*alpha);
+    quad(v[0][0],v[0][1],v[1][0],v[1][1],v[2][0],v[2][1],v[3][0],v[3][1]);
+  }
+}
+
+// The rifle keeps its black steel and walnut furniture; the shotgun keeps its
+// three-grey silhouette. Stocks, receivers, barrels and magazines are solids
+// with inked material boundaries and flat cel values, in BOTH carry and aim.
+// The grip is at (0,0,0), with the magazine/grip underneath the receiver.
+function drawLongGunSolid(w,P,kick,pump) {
+  kick=kick||0;pump=pump||0;
+  if(w===WEAPONS.SHOTGUN) {
+    handGunBox(P,-1,3,-1.8,1.8,-5.2,-.7,31,35,41);              // grip
+    handGunBox(P,9,34,1.0,2.8,-1.4,.9,30,34,40);               // magazine tube
+    handGunBox(P,-8,3,-3.3,3.3,-.7,2.5,50,50,50);              // stock
+    handGunBox(P,-8,-7.1,-3.5,3.5,-.9,2.7,23,26,31);           // butt pad
+    handGunBox(P,10,36.05,-1.65,1.65,-1.65,1.65,45,49,57);      // fixed barrel
+    handGunBox(P,-2,13,-3.3,3.3,-.7,2.85,49,54,63);             // receiver
+    handGunBox(P,14-pump*6,25-pump*6,-3.2,3.2,-.7,2.6,23,26,31);// sliding pump
+    for(let i=0;i<3;i++) handGunDetail(P,16+i*3-pump*6,-2.8,2.65,
+                                      16+i*3-pump*6,2.8,2.65,8,10,14,.7);
+    handGunBox(P,4.8,10.8,-1.0,1.2,2.87,2.98,13,16,21);       // ejection recess
+    handGunBox(P,7-pump*3,10-pump*3,-.75,.95,3.0,3.12,122,133,149);
+    handGunBox(P,33.5,34.7,-.55,.55,1.7,3.25,122,132,148);     // front bead
+    handGunDetail(P,-6,-2.75,2.55,1,-2.75,2.55,101,110,123,.65);
+    longGunMuzzle(P,37,94,104,120);
+  } else {
+    handGunBox(P,-1,2.5,-1.6,1.6,-5.1,-.5,37,39,43);           // pistol grip
+    handGunBox(P,2,6.2,-1.55,1.55,-10.5,-.7,34,38,44);          // magazine
+    handGunBox(P,-8,0,-3.1,3.1,-.7,2.65,139,69,19);             // walnut stock
+    handGunBox(P,-8,-7.1,-3.25,3.25,-.9,2.85,29,31,36);         // butt pad
+    handGunBox(P,7,38.05,-1.65,1.65,-1.65,1.65,48,53,62);       // fixed barrel
+    handGunBox(P,-3,8,-3.1,3.1,-.75,3.1,48,53,61);              // receiver
+    handGunBox(P,7,22.5,-3.0,3.0,-.7,2.55,139,69,19);           // walnut handguard
+    handGunBox(P,-1,6.8,-.65,.65,3.12,3.8,111,122,140);         // rear sight/rail
+    handGunBox(P,2,6,-1.0,1.2,3.12,3.22,12,15,20);             // ejection port
+    handGunBox(P,4.8-kick*3,6.5-kick*3,3.1,4.1,.25,1.6,122,133,149);
+    handGunBox(P,34.5,35.8,-.55,.55,1.7,3.45,117,128,147);     // front sight
+    handGunDetail(P,9,-2.7,2.6,21,-2.7,2.6,193,117,47,.65);
+    handGunDetail(P,-6,-2.65,2.7,-1,-2.65,2.7,190,110,43,.6);
+    longGunMuzzle(P,39,94,104,120);
+  }
+  noStroke();
 }
 
 // The slide comes back sharply and settles over six simulation frames. It
@@ -31292,9 +31434,7 @@ function figureRig(bW, bH) {
 // biggest thing separating a figure from the ground it stands on.
 function figureContour() {
   const paint=figurePainter();
-  const stroke=paint?paint.stroke:window.stroke;
-  stroke(22, 19, 24, 168);
-  strokeWeight(1.15);
+  figureCelContour(paint?paint.api:window);
 }
 
 // Shadow colour. Never pure black: outdoor shade is lit by the sky above it,

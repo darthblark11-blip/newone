@@ -59,15 +59,17 @@ assert(P('Math.abs(boxerPose(player).hip+.12)<Math.abs(boxerPose(player).torso+.
 Object.assign(ctx,oldGeometry);
 // Measure rendered boot positions through the full p5 transform stack. The
 // lead and rear feet must actually straddle the torso along the aim direction.
-let matrix=[1,0,0,1,0,0],stack=[],boots=[];const originals={};
+let matrix=[1,0,0,1,0,0],stack=[],boots=[],filled=true;const originals={};
 const mul=(u)=>{const t=matrix;matrix=[t[0]*u[0]+t[2]*u[1],t[1]*u[0]+t[3]*u[1],t[0]*u[2]+t[2]*u[3],t[1]*u[2]+t[3]*u[3],t[0]*u[4]+t[2]*u[5]+t[4],t[1]*u[4]+t[3]*u[5]+t[5]];};
-for(const name of ['push','pop','translate','rotate','scale','ellipse'])originals[name]=ctx[name];
-ctx.push=()=>{stack.push([...matrix]);originals.push();};ctx.pop=()=>{matrix=stack.pop();originals.pop();};
+for(const name of ['push','pop','translate','rotate','scale','ellipse','fill','noFill'])originals[name]=ctx[name];
+ctx.push=()=>{stack.push({matrix:[...matrix],filled});originals.push();};ctx.pop=()=>{const s=stack.pop();matrix=s.matrix;filled=s.filled;originals.pop();};
+ctx.fill=(...a)=>{filled=true;originals.fill(...a);};ctx.noFill=()=>{filled=false;originals.noFill();};
 ctx.translate=(x,y)=>{mul([1,0,0,1,x,y]);originals.translate(x,y);};
 ctx.rotate=a=>{mul([Math.cos(a),Math.sin(a),-Math.sin(a),Math.cos(a),0,0]);originals.rotate(a);};
 ctx.scale=(x,y=x)=>{mul([x,0,0,y,0,0]);originals.scale(x,y);};
 const rig=P('figureRig(player.bodyW,player.bodyH)');
-ctx.ellipse=(x,y,w,h)=>{if(Math.abs(w-rig.foot)<1e-9&&Math.abs(h-rig.shinW*.8)<1e-9)boots.push(matrix[0]*x+matrix[2]*y+matrix[4]);originals.ellipse(x,y,w,h);};
+// The final ink stroke repeats the silhouette; it is still the same two boots.
+ctx.ellipse=(x,y,w,h)=>{if(filled&&Math.abs(w-rig.foot)<1e-9&&Math.abs(h-rig.shinW*.8)<1e-9)boots.push(matrix[0]*x+matrix[2]*y+matrix[4]);originals.ellipse(x,y,w,h);};
 probe('player.x=0;player.y=0;player.aimAngle=0;player.moveAngle=0;player.isMoving=false;player.meleeTimer=0;player.boxingHold=180;player.show();');
 assert.equal(boots.length,2);assert(boots.some(x=>x>5)&&boots.some(x=>x<-5),'boxing feet do not form left lead / right rear');assert.equal(stack.length,0);
 for(const name in originals)ctx[name]=originals[name];

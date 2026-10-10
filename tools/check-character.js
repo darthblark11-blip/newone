@@ -38,14 +38,17 @@ probe(`isStoryMode = false; townsData = {}; startAtLevel(2); started = true; doT
 const BODY_W = P('player.bodyW'), BODY_H = P('player.bodyH');
 const HAND = P(`figureRig(${BODY_W}, ${BODY_H}).hand`);
 
-// Record every ellipse, in order, while one character draws itself.
+// Record filled masses in order, not the pure outline pass over the same hand.
 function trace(setup, target) {
-  const real = ctx.ellipse;
+  const real={};for(const k of ['ellipse','fill','noFill','push','pop'])real[k]=ctx[k];
   const seq = [];
-  ctx.ellipse = (x, y, w, h) => { seq.push([w, h]); };
-  probe(setup);
-  probe(target + '.show();');
-  ctx.ellipse = real;
+  let filled=true;const stack=[];
+  ctx.fill=(...a)=>{filled=true;return real.fill(...a);};
+  ctx.noFill=()=>{filled=false;return real.noFill();};
+  ctx.push=()=>{stack.push(filled);return real.push();};
+  ctx.pop=()=>{filled=stack.length?stack.pop():true;return real.pop();};
+  ctx.ellipse = (x, y, w, h) => { if(filled)seq.push([w, h]); };
+  try {probe(setup);probe(target + '.show();');}finally{Object.assign(ctx,real);}
   const torso = seq.findIndex((e) => e[0] === BODY_W && e[1] === BODY_H);
   const hands = [];
   seq.forEach((e, i) => { if (e[0] === HAND && e[1] === HAND) hands.push(i); });
@@ -116,7 +119,7 @@ function poseOf(setup, barrelOnly = false) {
   probe(setup);
   const px = P('player.x'), py = P('player.y');
   const real = {};
-  for (const k of ['ellipse', 'rect', 'quad', 'push', 'pop', 'translate', 'rotate', 'scale', 'handGunBox', 'figureCelLimb']) {
+  for (const k of ['ellipse', 'rect', 'quad', 'push', 'pop', 'translate', 'rotate', 'scale', 'fill', 'noFill', 'handGunBox', 'longGunMuzzle', 'figureCelLimb']) {
     real[k] = ctx[k];
   }
   // Start at the character's own origin, so everything below is in the frame
@@ -125,9 +128,10 @@ function poseOf(setup, barrelOnly = false) {
   // carried weapon's depression — both of which are scale(k, 1) applied right
   // before the thing they squash, so carrying it as a scalar is exact here and
   // leaves the rotation clean to read angles off.
-  let m = { x: -px, y: -py, c: 1, s: 0, k: 1 };
+  let m = { x: -px, y: -py, c: 1, s: 0, k: 1, filled: true };
   const stack = [];
   const hands = [], segs = [];
+  let muzzle = null;
   // The torso's own angle. A weapon held against the body turns WITH the body,
   // and the shoulders counter-rotate on purpose — measuring a gun against the
   // world would score that deliberate twist as wobble.
@@ -141,7 +145,10 @@ function poseOf(setup, barrelOnly = false) {
     m.c = nc; m.s = ns;
   };
   ctx.scale = (a, b) => { m.k *= a; };
+  ctx.fill=(...a)=>{m.filled=true;return real.fill(...a);};
+  ctx.noFill=()=>{m.filled=false;return real.noFill();};
   ctx.ellipse = (x, y, w, h) => {
+    if(!m.filled)return;
     x *= m.k;
     const wx = m.x + x * m.c - y * m.s, wy = m.y + x * m.s + y * m.c;
     n++;
@@ -193,6 +200,11 @@ function poseOf(setup, barrelOnly = false) {
     inBarrel = x0 === 1 && x1 === 15 && r === 115;
     try { return real.handGunBox(P, x0, x1, y0, y1, z0, z1, r, g, b); }
     finally { inBarrel = previous; }
+  };
+  ctx.longGunMuzzle = function (P, x) {
+    const p=P.point(x,0,0);
+    muzzle=[m.x+p[0]*m.k*m.c-p[1]*m.s,m.y+p[0]*m.k*m.s+p[1]*m.c];
+    return real.longGunMuzzle.apply(this,arguments);
   };
   ctx.quad = function () {
     n++;
@@ -282,7 +294,7 @@ function poseOf(setup, barrelOnly = false) {
       lo: 0, hi: _dl
     };
   }
-  return { hands, segs, guns: best ? [best] : [], torsoAt, torsoXY, bodyAng };
+  return { hands, segs, guns: best ? [best] : [], torsoAt, torsoXY, bodyAng, muzzle };
 }
 const RIGW = { u: P(`figureRig(${BODY_W}, ${BODY_H}).upperW`),
                f: P(`figureRig(${BODY_W}, ${BODY_H}).foreW`) };
@@ -583,8 +595,10 @@ console.log('\n== the sprint sweep: a rifle at port goes SIDE to SIDE ==');
     for (let i = 0; i < Math.ceil((4 * Math.PI) / cad) + 2; i++) {
       const p = poseOf(`player.isMoving = true; player.gait = 1;
                         player.walkCycle = ${i * cad};`);
-      pts.push(p.guns.length ? [p.guns[0].b[0] - p.torsoXY[0],
-                                p.guns[0].b[1] - p.torsoXY[1]] : null);
+      // Track the rendered crown center. A solid's camera-facing box side
+      // changes at an edge-on angle; this changes vertex multiplicity in a
+      // PCA cloud even though the physical barrel and silhouette stay smooth.
+      pts.push(p.muzzle ? [p.muzzle[0]-p.torsoXY[0],p.muzzle[1]-p.torsoXY[1]] : null);
     }
     let step = 0, jerk = 0;
     for (let i = 1; i < pts.length; i++) {
