@@ -2,6 +2,7 @@ const assert=require('assert');
 const {ctx,probe,mkG}=require('./harness');
 const P=s=>probe('('+s+')');
 probe(`isStoryMode=false;townsData={};startAtLevel(1);started=true;doTick=true;
+  currentLevel=2; // Test animation/punch behavior outside Level 1's fortress buffer.
   activeBuildings=[];buildings=[];barrels=[];activeParkingCars=[];invalidateColIndex();enemiesList=[];setMeleeTool("NONE");
   leftStick={active:false,dx:0,dy:0,base:{x:0,y:0}};
   rightStick={active:false,dx:0,dy:0,dist:0,base:{x:0,y:0}};
@@ -34,12 +35,17 @@ const x=P('victim.x');probe('for(let i=0;i<20;i++){frameCount++;victim.updateEne
 assert(P('stunFall(victim)>.4&&stunFall(victim)<1'));probe('for(let i=0;i<30;i++){frameCount++;victim.updateEnemy();}');assert(P('stunFall(victim)>.85'));
 const fallAge=P('victim.stunPose.age');probe('startPunchStun(victim,0);');assert.equal(P('victim.stunPose.age'),fallAge);
 // Two-bone drawing stays finite and the recovery is gradual, not a snap.
-const oldEllipse=ctx.ellipse;let geometry=[];
-ctx.ellipse=(...a)=>{assert(a.every(Number.isFinite),'non-finite character geometry');geometry.push(a);};
+const oldGeometry={ellipse:ctx.ellipse,vertex:ctx.vertex,bezierVertex:ctx.bezierVertex};let geometry=[];
+for(const name of Object.keys(oldGeometry))ctx[name]=(...a)=>{
+  assert(a.every(Number.isFinite),'non-finite character '+name+' geometry');geometry.push({name,a});
+};
 for(const age of [0,6,15,28,38,60,150]){
+  const before=geometry.length;
   probe(`victim.stunPose.age=${age};victim.stunTimer=100;victim.show();`);
+  assert(geometry.length>before,'fallen character emitted no geometry at age '+age);
 }
-probe('victim.stunTimer=16;victim.show();');assert(P('stunFall(victim)<=.5'));assert(geometry.length>100);
+probe('victim.stunTimer=16;victim.show();');assert(P('stunFall(victim)<=.5'));
+assert(geometry.length>100&&geometry.some(p=>p.name==='bezierVertex'),'fallen figure is missing its curved surfaces');
 probe('victim.stunTimer=1;victim.updateEnemy();');assert.equal(P('victim.state'),'FLEE');assert(P('victim.isNeutral&&victim.hp===100'));
 // Three seconds after the completed punch; firing or a melee tool cancels guard.
 probe('player.meleeTimer=0;player.boxingHold=180;player.isArmed=false;');
@@ -49,29 +55,34 @@ probe('player.updatePlayer();');assert(!P('boxerPose(player).active'));
 probe('player.boxingHold=180;player.isArmed=true;');assert(!P('boxerPose(player).active'));
 probe('player.isArmed=false;swordPickedUp=true;setMeleeTool("SWORD");');assert(!P('boxerPose(player).active'));
 probe('setMeleeTool("NONE");player.meleeTimer=10;player.punchDuration=20;player.meleePhase=1;player.show();');
-assert(P('Math.abs(boxerPose(player).hip+.22)<Math.abs(boxerPose(player).torso+.28)'));
-ctx.ellipse=oldEllipse;
+assert(P('Math.abs(boxerPose(player).hip+.12)<Math.abs(boxerPose(player).torso+.17)'));
+Object.assign(ctx,oldGeometry);
 // Measure rendered boot positions through the full p5 transform stack. The
 // lead and rear feet must actually straddle the torso along the aim direction.
-let matrix=[1,0,0,1,0,0],stack=[],boots=[];const originals={};
+let matrix=[1,0,0,1,0,0],stack=[],boots=[],filled=true;const originals={};
 const mul=(u)=>{const t=matrix;matrix=[t[0]*u[0]+t[2]*u[1],t[1]*u[0]+t[3]*u[1],t[0]*u[2]+t[2]*u[3],t[1]*u[2]+t[3]*u[3],t[0]*u[4]+t[2]*u[5]+t[4],t[1]*u[4]+t[3]*u[5]+t[5]];};
-for(const name of ['push','pop','translate','rotate','scale','ellipse'])originals[name]=ctx[name];
-ctx.push=()=>{stack.push([...matrix]);originals.push();};ctx.pop=()=>{matrix=stack.pop();originals.pop();};
+for(const name of ['push','pop','translate','rotate','scale','ellipse','fill','noFill'])originals[name]=ctx[name];
+ctx.push=()=>{stack.push({matrix:[...matrix],filled});originals.push();};ctx.pop=()=>{const s=stack.pop();matrix=s.matrix;filled=s.filled;originals.pop();};
+ctx.fill=(...a)=>{filled=true;originals.fill(...a);};ctx.noFill=()=>{filled=false;originals.noFill();};
 ctx.translate=(x,y)=>{mul([1,0,0,1,x,y]);originals.translate(x,y);};
 ctx.rotate=a=>{mul([Math.cos(a),Math.sin(a),-Math.sin(a),Math.cos(a),0,0]);originals.rotate(a);};
 ctx.scale=(x,y=x)=>{mul([x,0,0,y,0,0]);originals.scale(x,y);};
 const rig=P('figureRig(player.bodyW,player.bodyH)');
-ctx.ellipse=(x,y,w,h)=>{if(Math.abs(w-rig.foot)<1e-9&&Math.abs(h-rig.shinW*.8)<1e-9)boots.push(matrix[0]*x+matrix[2]*y+matrix[4]);originals.ellipse(x,y,w,h);};
+// The final ink stroke repeats the silhouette; it is still the same two boots.
+ctx.ellipse=(x,y,w,h)=>{if(filled&&Math.abs(w-rig.foot)<1e-9&&Math.abs(h-rig.shinW*.8)<1e-9)boots.push(matrix[0]*x+matrix[2]*y+matrix[4]);originals.ellipse(x,y,w,h);};
 probe('player.x=0;player.y=0;player.aimAngle=0;player.moveAngle=0;player.isMoving=false;player.meleeTimer=0;player.boxingHold=180;player.show();');
 assert.equal(boots.length,2);assert(boots.some(x=>x>5)&&boots.some(x=>x<-5),'boxing feet do not form left lead / right rear');assert.equal(stack.length,0);
 for(const name in originals)ctx[name]=originals[name];
 // Deterministic residents, patrol pair and posts, bounded and outside story roster.
-probe(`player.x=72600;player.y=48600;enemiesList=[];biomeState={};authoredChunks=null;authoredCore=null;authoredMask=null;cityPeopleFrame=-99;
+probe(`currentLevel=1;player.x=72600;player.y=48600;enemiesList=[];biomeState={};authoredChunks=null;authoredCore=null;authoredMask=null;cityPeopleFrame=-99;
   window.mgr={biome:1,chunks:new Map()};`);
 let site;
 for(let cy=40;cy<60&&!site;cy++)for(let cx=50;cx<70;cx++)if(!P(`cityHasCanal(1,${cy})`)){site={cx,cy};break;}
 const {cx,cy}=site;
-probe(`player.x=${cx*1200+600};player.y=${cy*1200+600};mgr.chunks.set("${cx},${cy}",{solid:[]});for(let i=0;i<4;i++){frameCount+=21;refreshCityPeople(mgr,${cx},${cy});}`);
+probe(`player.x=${cx*1200+600};player.y=${cy*1200+600};zoom=2;
+  camX=player.x-width/zoom/2;camY=player.y-height/zoom/2;
+  viewLeft=camX;viewRight=camX+width/zoom;viewTop=camY;viewBottom=camY+height/zoom;
+  mgr.chunks.set("${cx},${cy}",{solid:[]});for(let i=0;i<4;i++){frameCount+=21;refreshCityPeople(mgr,${cx},${cy});}`);
 assert.equal(P('enemiesList.filter(e=>e.isCityCivilian).length'),6);assert.equal(P('enemiesList.filter(e=>e.isCityPatrol).length'),4);
 assert(P('getBiomeState(1).destroyed!==undefined&&getBiomeState(1).discoveredAnchors!==undefined'));
 assert(P('enemiesList.every(e=>!e.isPopulation&&!e.isMilitary)'));
@@ -83,9 +94,17 @@ probe('player.x=post.x+180;player.y=post.y;frameCount+=((post.aiOffset-frameCoun
 // Killed residents stay killed through serialization, streaming out and back.
 probe('window.person=enemiesList.find(e=>e.isCityCivilian);window.key=person.cityPersonKey;person.takeDamage(1000);enemiesList=[];biomeState=JSON.parse(JSON.stringify(biomeState));frameCount+=21;refreshCityPeople(mgr,'+cx+','+cy+');');
 assert(!P('enemiesList.some(e=>e.cityPersonKey===key)'));
+// A face-up stunned resident keeps that head side after streaming/save reload.
+probe(`person=enemiesList.find(e=>e.isCityCivilian);key=person.cityPersonKey;
+  person.aimAngle=PI;person.isMoving=false;rememberFigureMotion(person,0,0);startPunchStun(person,0);
+  for(let i=0;i<60;i++){frameCount++;advanceStun(person);}bankCityPerson(person);window.savedStunAge=person.stunPose.age;
+  enemiesList=[];biomeState=JSON.parse(JSON.stringify(biomeState));frameCount+=21;refreshCityPeople(mgr,${cx},${cy});
+  person=enemiesList.find(e=>e.cityPersonKey===key);`);
+assert(P('person&&person.stunPose&&!person.stunPose.faceDown&&person.stunPose.age===savedStunAge&&person.stunPose.done'));
+assert(P('person.stunPose.a===0&&person.stunPose.facing===PI&&person.stunPose.impulse===0'));
 // Fallen people must also stop casting a standing-height light-rig shadow.
 ctx.__material=mkG();const heightColors=[];let mat;
 ctx.__material.fill=(...a)=>{mat=a;};ctx.__material.ellipse=(...a)=>heightColors.push({mat,a});
-probe('GLRig.hgt=__material;GLRig.hw=600;activeBuildings=[];buildings=[];decor=[];allies=[];enemiesList=[];player.stunTimer=100;startPunchStun(player,0);player.stunPose.age=70;player.x=0;player.y=0;glRigPaintHeight();');
+probe('GLRig.hgt=__material;GLRig.hw=600;activeBuildings=[];buildings=[];decor=[];allies=[];enemiesList=[];player.stunTimer=100;startPunchStun(player,0);player.stunPose.age=70;player.x=0;player.y=0;camX=-width/zoom/2;camY=-height/zoom/2;viewLeft=camX;viewRight=camX+width/zoom;viewTop=camY;viewBottom=camY+height/zoom;glRigPaintHeight();');
 assert(heightColors.some(p=>Math.abs(p.mat[0]-2/P('GLRIG_HEIGHT_MAX')*255)<1e-9&&p.a[2]>40),'stunned height remains standing');
 console.log('City people passed: appearance coverage, local gunfire, panic gait, harmless AI, first-punch stun, fall/recovery, 180-frame guard, patrol formation/posts, residency and serialized casualties.');

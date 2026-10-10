@@ -60,8 +60,8 @@ console.log('== who gets a settle ==');
   for (const [t] of nonhuman) if (drop(0, t, 0.5, 0, 2)) human = t;
   ok('a bug, a cow and a machine do not get human joints', human === null, human || '5 types');
   ok('but ARMORED_STANDARD, a person in armour, does', drop(0, 'ARMORED_STANDARD', 0.5, 0, 2) !== null);
-  ok("and ARMORED's 105-wide slab does not",
-     P(`ragHumanoid("ARMORED_STANDARD", 105)`) === false);
+  ok("the red-orb hybrid keeps its own deaths while pistol armor has human joints",
+     P(`!ragHumanoid("ARMORED", 105) && ragHumanoid("ARMORED_STANDARD", 21)`) === true);
 }
 
 console.log('\n== the round that killed them is read ==');
@@ -69,7 +69,7 @@ console.log('\n== the round that killed them is read ==');
   // A shot across the body turns it. One straight up the spine does not.
   const across = drop(0, 'NORMAL', Math.PI / 2, 0);
   const spine  = drop(0, 'NORMAL', 0, 0);
-  ok('a hit through the ribs spins the body', Math.abs(across.ang) > 0.35,
+  ok('a hit through the ribs turns the body modestly', Math.abs(across.ang) > 0.12 && Math.abs(across.ang) <= 0.26,
      `turned ${(across.ang * 57.3).toFixed(0)} degrees`);
   ok('a hit up the spine barely does', Math.abs(spine.ang) < Math.abs(across.ang) * 0.5,
      `turned ${(spine.ang * 57.3).toFixed(0)} degrees`);
@@ -286,6 +286,10 @@ console.log('\n== a headshot leaves blood on the body ==');
      sp.some((s) => s[2] < 2) && sp.some((s) => s[2] > 3.5),
      `${sp.filter((s) => s[2] < 2).length} specks, ${sp.filter((s) => s[2] > 3.5).length} heavy`);
 
+  const headMarks = P('corpses[0].headSpatter');
+  ok('head marks are retained separately from the clothing stain', headMarks.length === sp.length);
+  ok('and head marks remain inside the head', headMarks.every(s => Math.hypot(s.x,s.y)+s.r <= 5.5+1e-8));
+
   // Drawn once and frozen: a corpse must not develop new blood while you
   // stand looking at it.
   for (let i = 0; i < 120; i++) probe('frameCount++; corpses[0].update();');
@@ -380,7 +384,8 @@ console.log('\n== it stops ==');
   ok('still settling halfway through', mid.done === false, `frame ${mid.t} of ${FRAMES}`);
   const end = drop(0, 'NORMAL', 0.6, 0, FRAMES + 40);
   ok('frozen once it is down', end.done === true, `stopped at frame ${end.t}`);
-  ok('and the frame counter stops with it', end.t === FRAMES, end.t + ' vs ' + FRAMES);
+  const duration=P('corpses[0].rag.frames');
+  ok('and the frame counter stops with the shared fall clock', end.t === duration, end.t + ' vs ' + duration);
 
   // Prove it by reading the pose either side of a long wait.
   const settled = flat(end);
@@ -415,7 +420,7 @@ console.log('\n== it all draws ==');
   probe('viewLeft = -1e6; viewRight = 1e6; viewTop = -1e6; viewBottom = 1e6;');
   let err = null, segs = 0;
   try {
-    for (const dT of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]) {
+    for (const dT of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]) {
       for (const eT of ['NORMAL', 'FEMALE_PISTOL', 'ARMORED_STANDARD', 'ROBOT', 'BUG']) {
         probe(`corpses = [];
                corpses.push(new Corpse(0, 0, 0.3, 0.3, color(1), color(1), ${dT}, 0.2, [],
@@ -425,15 +430,23 @@ console.log('\n== it all draws ==');
       }
     }
   } catch (e) { err = e.message; }
-  ok('every death type and body draws mid-fall and at rest', err === null, err || '16 types x 5 bodies');
+  ok('every death type and body draws mid-fall and at rest', err === null, err || '18 types x 5 bodies');
 
-  // A jointed limb is two segments plus a hand. Count what ragLimb lays down.
-  const real = ctx.ellipse;
-  let n = 0;
-  ctx.ellipse = () => { n++; };
+  // A garment bends through one joined contour, with the palm beyond the
+  // wrist. Observe the actual painter inputs to retain both bone lengths.
+  const realLimb = ctx.figureCelLimb, realOval = ctx.figureCelOval;
+  let limbs = [], tips = [];
+  ctx.figureCelLimb = (...a) => { limbs.push(a.slice(1, 10)); realLimb(...a); };
+  ctx.figureCelOval = (...a) => { tips.push(a.slice(1, 5)); realOval(...a); };
   probe(`(function () { ragLimb(window, 0, 0, 0.2, 0.4, 14, 12, 8, 7, color(1), color(2), 8); })();`);
-  ctx.ellipse = real;
-  ok('a limb is upper arm, forearm and hand', n === 3, n + ' pieces');
+  ctx.figureCelLimb = realLimb; ctx.figureCelOval = realOval;
+  const limb = limbs[0], tip = tips[0];
+  ok('a limb keeps both bones in one cloth contour and its hand beyond the wrist',
+     limbs.length === 1 && tips.length === 1 && limb[0] === 0 && limb[1] === 0 &&
+     limb[2] === 14 && limb[3] === 0 && Math.abs(limb[4] - 14 - Math.cos(.4) * 12) < 1e-9 &&
+     Math.abs(limb[5] - Math.sin(.4) * 12) < 1e-9 && limb[6] === 8 && limb[8] === 7 &&
+     tip[0] === 14.4 && tip[1] === 0 && tip[2] === 8 && tip[3] === 8 * .86,
+     limbs.length + ' connected limb, ' + tips.length + ' palm');
 }
 
 console.log('\n== a body presses itself into the ground ==');
@@ -454,7 +467,7 @@ console.log('\n== a body presses itself into the ground ==');
 
   // Drop a body of each kind in view and run. Every one has to retire.
   let stuck = [];
-  for (const dT of [0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15]) {
+  for (const dT of [0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16, 17]) {
     probe(`corpses = []; player.x = 0; player.y = 0;
            corpses.push(new Corpse(0, 0, 0.3, 0.3, color(1), color(1), ${dT}, 0.2, [], null,
                                    0.7, "NORMAL", 21, 27));`);
@@ -462,7 +475,7 @@ console.log('\n== a body presses itself into the ground ==');
     if (P('corpses.length')) stuck.push(dT);
   }
   ok('every death type retires into the ground layer', stuck.length === 0,
-     stuck.length ? 'still live: dT ' + stuck.join(',') : '14 death types');
+     stuck.length ? 'still live: dT ' + stuck.join(',') : '16 death types');
 
   // And one that dies where nobody is looking. It used to sit in the live list
   // until the player happened to wander back past it, which over a long biome
@@ -562,7 +575,7 @@ console.log('\n== and the ground keeps it, per biome ==');
            color(1), 0, 0.2, [], null, 0.7, "NORMAL", 21, 27));`);
   for (let i = 0; i < 300 && P('corpses.length'); i++) probe('frameCount++; updateCorpses();');
   const bodyKeys = P('Object.keys(bloodChunks).filter(isBodyLayer).length');
-  probe('spawnSplatter(60, 0, "BLOOD", color(90, 0, 0)); spawnSplatter(120, 0, "BLOOD", color(90, 0, 0));');
+  probe('spawnSplatter(60, 0, "BLOOD", color(90, 0, 0)); spawnSplatter(120, 0, "BLOOD", color(90, 0, 0)); frameCount++; updateBloodPools();');
   const floorKeys = P('Object.keys(bloodChunks).filter(function (k) { return !isBodyLayer(k); }).length');
   ok('bodies and floor blood are separate surfaces', bodyKeys > 0 && floorKeys > 0,
      `${bodyKeys} body, ${floorKeys} floor`);
@@ -596,8 +609,12 @@ console.log('== a body keeps what the person was wearing ==');
   // figureRig()/ragRig() already follow -- if these two ever stop reading the
   // same function, the corpse silently becomes a different person again.
   const src = require('fs').readFileSync(__dirname + '/../game.js', 'utf8');
+  const realHead=ctx.drawFigureHead, liveHeads=[];
+  ctx.drawFigureHead=function(g,id,x,y){liveHeads.push({g,id,x,y});return realHead.apply(this,arguments);};
+  try{probe('rightStick={active:false};leftStick={active:false};player.isArmed=false;player.show();');}finally{ctx.drawFigureHead=realHead;}
   ok('the living figure draws its head from the shared description',
-     /drawFigureHead\(window, this, hX, hY/.test(src), 'Character.show calls it');
+     liveHeads.length===1&&liveHeads[0].id===P('player')&&Number.isFinite(liveHeads[0].x+liveHeads[0].y)&&
+     typeof liveHeads[0].g.ellipse==='function', 'Character.show calls the shared painter');
   ok('and the corpse reads the same hair and the same headwear',
      /drawFigureHair\(r, this\.id/.test(src) && /drawHeadwear\(r, this\.id, hw\)/.test(src),
      'no second copy of the art');

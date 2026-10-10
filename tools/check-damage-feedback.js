@@ -55,24 +55,87 @@ console.log('== bullet holes belong to the health bar, not the shield ==');
   ok('a round the shield stopped leaves no hole', /!\(t\.isPlayer && dRes\.blocked\)/.test(push),
      'the push is guarded');
   ok('a round that gets through still does', /t\.decals\.push\(\{ x: lX/.test(src), 'unchanged otherwise');
-  // Behavioural: the holes come off again when the shield does come back.
-  const cleared = probe(`(function () {
+  // Recharge restores armor, not the wounded body.
+  const recharged = probe(`(function () {
+    player.hp = 80; player.decals.length = 0;
     player.decals.push({ x: 0, y: 0, sz: 5, col: [90, 0, 0, 220], isHead: false });
+    player.decals.push({ x: 0, y: 0, sz: 5, col: [90, 0, 0, 220], isHead: true });
     player.shield = 0; player.shieldRechargeTimer = 0;
     const before = player.decals.length;
     for (let i = 0; i < 6; i++) player.updatePlayer();  // recharge ticks past zero
-    return { before, after: player.decals.length, shield: player.shield };
+    const afterFirstRecharge = player.decals.length;
+    for (let i = 0; i < 250; i++) player.updatePlayer();
+    return { before, afterFirstRecharge, after: player.decals.length, shield: player.shield, hp: player.hp };
   })()`);
-  ok('and they come off once the shield has anything in it',
-     cleared.before === 1 && cleared.after === 0 && cleared.shield > 0,
-     `shield back to ${cleared.shield.toFixed(2)}`);
+  ok('head and body wounds survive the start of shield regeneration',
+     recharged.before === 2 && recharged.afterFirstRecharge === 2,
+     'both wounds remain');
+  ok('wounds survive a completely restored shield while HP stays damaged',
+     recharged.after === 2 && recharged.shield === 100 && recharged.hp === 80,
+     `shield ${recharged.shield}, hp ${recharged.hp}`);
   ok('holes survive while the shield stays down', probe(`(function () {
+    player.decals.length = 0;
     player.decals.push({ x: 0, y: 0, sz: 5, col: [90, 0, 0, 220], isHead: false });
     player.shield = 0; player.shieldRechargeTimer = 600;
     for (let i = 0; i < 10; i++) player.updatePlayer();
     const n = player.decals.length; player.decals.length = 0; player.shieldRechargeTimer = 0;
     return n;
   })()`) === 1, 'unprotected means marked');
+}
+
+console.log('== only restoring health heals player wounds ==');
+{
+  const pickup = probe(`(function () {
+    player.hp = 65; player.maxHp = 100; player.shield = 100; player.dead = false;
+    player.decals = [{ isHead: false }, { isHead: true }];
+    healthPacks = [{ x: player.x, y: player.y }];
+    updateHealthPacks();
+    return { hp: player.hp, shield: player.shield, wounds: player.decals.length, packs: healthPacks.length };
+  })()`);
+  ok('a health pack removes both head and body wounds immediately',
+     pickup.hp === 100 && pickup.wounds === 0 && pickup.packs === 0);
+  ok('healing leaves the shield alone', pickup.shield === 100);
+
+  const full = probe(`(function () {
+    player.hp = 100; player.decals = [{ isHead: false }];
+    healthPacks = [{ x: player.x, y: player.y }];
+    updateHealthPacks();
+    const out = { hp: player.hp, wounds: player.decals.length, packs: healthPacks.length };
+    healthPacks = [];
+    return out;
+  })()`);
+  ok('a pack at full HP does not remove wounds or get consumed',
+     full.hp === 100 && full.wounds === 1 && full.packs === 1);
+
+  const partial = probe(`(function () {
+    player.hp = 60; player.shield = 0; player.decals = [{ isHead: false }];
+    const restored = player.restoreHealth(10);
+    return { restored, hp: player.hp, shield: player.shield, wounds: player.decals.length };
+  })()`);
+  ok('partial HP restoration also heals wounds with no shield regeneration',
+     partial.restored === 10 && partial.hp === 70 && partial.shield === 0 && partial.wounds === 0);
+
+  const noop = probe(`(function () {
+    player.hp = 100; player.decals = [{ isHead: false }];
+    const atMax = player.restoreHealth(25);
+    player.hp = 70;
+    const zero = player.restoreHealth(0), negative = player.restoreHealth(-10);
+    return { atMax, zero, negative, hp: player.hp, wounds: player.decals.length };
+  })()`);
+  ok('restoration that adds no HP does not clear wounds or damage the player',
+     noop.atMax === 0 && noop.zero === 0 && noop.negative === 0 && noop.hp === 70 && noop.wounds === 1);
+
+  const upgrade = probe(`(function () {
+    window.farmLvl = 1; window.farmXP = 50;
+    player.maxHp = 100; player.hp = 75; player.decals = [{ isHead: false }];
+    checkLevelUps();
+    const out = { hp: player.hp, maxHp: player.maxHp, wounds: player.decals.length };
+    window.farmLvl = 1; window.farmXP = 0;
+    player.maxHp = 100;
+    return out;
+  })()`);
+  ok('the farm upgrade clears wounds when its HP bonus heals the player',
+     upgrade.hp === 100 && upgrade.maxHp === 125 && upgrade.wounds === 0);
 }
 
 console.log('== blood is the read that the shield is gone ==');

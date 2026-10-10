@@ -38,14 +38,17 @@ probe(`isStoryMode = false; townsData = {}; startAtLevel(2); started = true; doT
 const BODY_W = P('player.bodyW'), BODY_H = P('player.bodyH');
 const HAND = P(`figureRig(${BODY_W}, ${BODY_H}).hand`);
 
-// Record every ellipse, in order, while one character draws itself.
+// Record filled masses in order, not the pure outline pass over the same hand.
 function trace(setup, target) {
-  const real = ctx.ellipse;
+  const real={};for(const k of ['ellipse','fill','noFill','push','pop'])real[k]=ctx[k];
   const seq = [];
-  ctx.ellipse = (x, y, w, h) => { seq.push([w, h]); };
-  probe(setup);
-  probe(target + '.show();');
-  ctx.ellipse = real;
+  let filled=true;const stack=[];
+  ctx.fill=(...a)=>{filled=true;return real.fill(...a);};
+  ctx.noFill=()=>{filled=false;return real.noFill();};
+  ctx.push=()=>{stack.push(filled);return real.push();};
+  ctx.pop=()=>{filled=stack.length?stack.pop():true;return real.pop();};
+  ctx.ellipse = (x, y, w, h) => { if(filled)seq.push([w, h]); };
+  try {probe(setup);probe(target + '.show();');}finally{Object.assign(ctx,real);}
   const torso = seq.findIndex((e) => e[0] === BODY_W && e[1] === BODY_H);
   const hands = [];
   seq.forEach((e, i) => { if (e[0] === HAND && e[1] === HAND) hands.push(i); });
@@ -112,11 +115,11 @@ console.log('\n== townsfolk ==');
 // character's own frame — hand centres, sleeve segment lengths, and the angle
 // any carried weapon was drawn at. Everything below needs the transform, not
 // the arguments, because every limb is drawn inside its own translate+rotate.
-function poseOf(setup) {
+function poseOf(setup, barrelOnly = false) {
   probe(setup);
   const px = P('player.x'), py = P('player.y');
   const real = {};
-  for (const k of ['ellipse', 'rect', 'quad', 'push', 'pop', 'translate', 'rotate', 'scale']) {
+  for (const k of ['ellipse', 'rect', 'quad', 'push', 'pop', 'translate', 'rotate', 'scale', 'fill', 'noFill', 'handGunBox', 'longGunMuzzle', 'figureCelLimb']) {
     real[k] = ctx[k];
   }
   // Start at the character's own origin, so everything below is in the frame
@@ -125,9 +128,10 @@ function poseOf(setup) {
   // carried weapon's depression — both of which are scale(k, 1) applied right
   // before the thing they squash, so carrying it as a scalar is exact here and
   // leaves the rotation clean to read angles off.
-  let m = { x: -px, y: -py, c: 1, s: 0, k: 1 };
+  let m = { x: -px, y: -py, c: 1, s: 0, k: 1, filled: true };
   const stack = [];
   const hands = [], segs = [];
+  let muzzle = null;
   // The torso's own angle. A weapon held against the body turns WITH the body,
   // and the shoulders counter-rotate on purpose — measuring a gun against the
   // world would score that deliberate twist as wobble.
@@ -141,7 +145,10 @@ function poseOf(setup) {
     m.c = nc; m.s = ns;
   };
   ctx.scale = (a, b) => { m.k *= a; };
+  ctx.fill=(...a)=>{m.filled=true;return real.fill(...a);};
+  ctx.noFill=()=>{m.filled=false;return real.noFill();};
   ctx.ellipse = (x, y, w, h) => {
+    if(!m.filled)return;
     x *= m.k;
     const wx = m.x + x * m.c - y * m.s, wy = m.y + x * m.s + y * m.c;
     n++;
@@ -159,6 +166,21 @@ function poseOf(setup) {
                   a: [m.x, m.y], b: [m.x + L * m.c, m.y + L * m.s] });
     }
   };
+  // A sleeve is now one continuous curved mesh across the elbow. Keep the
+  // bone checks on the centreline submitted to that actual rendered mesh;
+  // check-figure-volume.js samples its emitted paths, caps and shading too.
+  if (typeof real.figureCelLimb === 'function') {
+    ctx.figureCelLimb = function (g, sx, sy, ex, ey, hx, hy, w0, w1, w2) {
+      if (Math.abs(w0 - RIGW.u) < 1e-6 && Math.abs(w2 - RIGW.f * .84) < 1e-6) {
+        const toFrame = (x, y) => [m.x + x * m.k * m.c - y * m.s,
+                                  m.y + x * m.k * m.s + y * m.c];
+        const s = toFrame(sx, sy), e = toFrame(ex, ey), h = toFrame(hx, hy);
+        segs.push({w: RIGW.u, len: Math.hypot(ex - sx, ey - sy), a: s, b: e});
+        segs.push({w: RIGW.f, len: Math.hypot(hx - ex, hy - ey), a: e, b: h});
+      }
+      return real.figureCelLimb.apply(this, arguments);
+    };
+  }
   ctx.rect = (x, y, w, h) => { n++; };
   // A carried weapon is a run of QUADS now — the pieces taper with the
   // perspective, which a rect cannot do — and every one of them is drawn in the
@@ -168,9 +190,25 @@ function poseOf(setup) {
   // butt and the muzzle. Identifying it by a literal width, or as "the longest
   // rect", both stopped working the moment the art began projecting itself.
   const frames = new Map();
+  // A solid pistol's magazine, heel and sights are separate volumes. Their
+  // combined point cloud is not its barrel axis. For tilt/length checks trace
+  // the fixed barrel's rendered faces; silhouette/position checks retain the
+  // complete gun, including its grip.
+  let inBarrel = false;
+  ctx.handGunBox = function (P, x0, x1, y0, y1, z0, z1, r, g, b) {
+    const previous = inBarrel;
+    inBarrel = x0 === 1 && x1 === 15 && r === 115;
+    try { return real.handGunBox(P, x0, x1, y0, y1, z0, z1, r, g, b); }
+    finally { inBarrel = previous; }
+  };
+  ctx.longGunMuzzle = function (P, x) {
+    const p=P.point(x,0,0);
+    muzzle=[m.x+p[0]*m.k*m.c-p[1]*m.s,m.y+p[0]*m.k*m.s+p[1]*m.c];
+    return real.longGunMuzzle.apply(this,arguments);
+  };
   ctx.quad = function () {
     n++;
-    if (torsoAt < 0) return;
+    if (torsoAt < 0 || (barrelOnly && !inBarrel)) return;
     const key = m.c.toFixed(6) + ',' + m.s.toFixed(6) + ',' +
                 m.x.toFixed(4) + ',' + m.y.toFixed(4);
     let f = frames.get(key);
@@ -256,7 +294,7 @@ function poseOf(setup) {
       lo: 0, hi: _dl
     };
   }
-  return { hands, segs, guns: best ? [best] : [], torsoAt, torsoXY, bodyAng };
+  return { hands, segs, guns: best ? [best] : [], torsoAt, torsoXY, bodyAng, muzzle };
 }
 const RIGW = { u: P(`figureRig(${BODY_W}, ${BODY_H}).upperW`),
                f: P(`figureRig(${BODY_W}, ${BODY_H}).foreW`) };
@@ -290,12 +328,13 @@ console.log('\n== relaxed arms: the hands stay on the body, not out on stalks ==
   // units out on a seven-unit bone — the forearm then runs all the way back and
   // the arm crosses itself through the chest. Every drawn segment has to stay
   // inside the bone it represents.
-  let longest = 0, at = '';
+  let longest = 0, at = '', segmentsSeen = 0;
   for (const g of [0.15, 0.34, 0.5, 0.66, 1.0]) {
     for (let i = 0; i < 24; i++) {
       const p = poseOf(`player.isMoving = true; player.gait = ${g};
                         player.walkCycle = ${(i * Math.PI) / 12};`);
       for (const s of p.segs) {
+        segmentsSeen++;
         const bone = Math.abs(s.w - RIGW.u) < 1e-6
           ? P(`figureRig(${BODY_W}, ${BODY_H}).upper`)
           : P(`figureRig(${BODY_W}, ${BODY_H}).fore`);
@@ -305,7 +344,7 @@ console.log('\n== relaxed arms: the hands stay on the body, not out on stalks ==
     }
   }
   ok('and no segment is ever drawn longer than the bone it is',
-     longest <= 1.001, `longest ${(longest * 100).toFixed(0)}% of its bone — ${at}`);
+     segmentsSeen > 0 && longest <= 1.001, `longest ${(longest * 100).toFixed(0)}% of its bone — ${at}`);
 }
 
 console.log('\n== a carried gun is held, not waved about ==');
@@ -556,8 +595,10 @@ console.log('\n== the sprint sweep: a rifle at port goes SIDE to SIDE ==');
     for (let i = 0; i < Math.ceil((4 * Math.PI) / cad) + 2; i++) {
       const p = poseOf(`player.isMoving = true; player.gait = 1;
                         player.walkCycle = ${i * cad};`);
-      pts.push(p.guns.length ? [p.guns[0].b[0] - p.torsoXY[0],
-                                p.guns[0].b[1] - p.torsoXY[1]] : null);
+      // Track the rendered crown center. A solid's camera-facing box side
+      // changes at an edge-on angle; this changes vertex multiplicity in a
+      // PCA cloud even though the physical barrel and silhouette stay smooth.
+      pts.push(p.muzzle ? [p.muzzle[0]-p.torsoXY[0],p.muzzle[1]-p.torsoXY[1]] : null);
     }
     let step = 0, jerk = 0;
     for (let i = 1; i < pts.length; i++) {
@@ -617,7 +658,7 @@ console.log('\n== turning must not distort the carry more than moving does ==');
     for (let i = 0; i < 24; i++) {
       const p = poseOf(`player.isMoving = true; player.gait = 1;
                         player.walkCycle = ${(i / 24) * 4 * Math.PI};
-                        player.aimAngle = 0; player.moveAngle = 0;`);
+                        player.aimAngle = 0; player.moveAngle = 0;`, w === 'PISTOL');
       for (const g of p.guns) {
         plo = Math.min(plo, g.len); phi = Math.max(phi, g.len);
       }
@@ -629,7 +670,7 @@ console.log('\n== turning must not distort the carry more than moving does ==');
         const A = (h * Math.PI) / 4;
         const p = poseOf(`player.isMoving = true; player.gait = ${gait};
                           player.walkCycle = 1.7;
-                          player.aimAngle = ${A}; player.moveAngle = ${A};`);
+                          player.aimAngle = ${A}; player.moveAngle = ${A};`, w === 'PISTOL');
         for (const g of p.guns) {
           lo = Math.min(lo, g.len); hi = Math.max(hi, g.len);
           let d = g.ang; while (d > Math.PI) d -= 2 * Math.PI;
@@ -791,7 +832,7 @@ console.log('\n== a carried weapon sits ON the man, not off his side ==');
   probe(`player.currentWeapon = WEAPONS.PISTOL; player.gait = 1;`);
   let lo = Infinity, hi = -Infinity;
   for (let i = 0; i < 24; i++) {
-    const p = poseOf(`player.isMoving = true; player.walkCycle = ${(i * Math.PI) / 12};`);
+    const p = poseOf(`player.isMoving = true; player.walkCycle = ${(i * Math.PI) / 12};`, true);
     for (const gun of p.guns) {
       const L = Math.hypot(gun.b[0] - gun.a[0], gun.b[1] - gun.a[1]);
       lo = Math.min(lo, L); hi = Math.max(hi, L);
@@ -899,10 +940,19 @@ console.log('\n== one thing in the hand at a time ==');
 {
   const swordVerts = () => {
     let n = 0;
-    const real = ctx.vertex;
-    ctx.vertex = () => { n++; };
-    probe('player.show();');
-    ctx.vertex = real;
+    let figureDepth = 0;
+    const real = {vertex: ctx.vertex, figureCelOval: ctx.figureCelOval, figureCelLimb: ctx.figureCelLimb};
+    ctx.vertex = () => { if (!figureDepth) n++; };
+    // Count tool geometry, not the shaded model's unrelated curved paths.
+    for (const key of ['figureCelOval', 'figureCelLimb']) if (typeof real[key] === 'function') {
+      ctx[key] = function () {
+        figureDepth++;
+        try { return real[key].apply(this, arguments); }
+        finally { figureDepth--; }
+      };
+    }
+    try { probe('player.show();'); }
+    finally { Object.assign(ctx, real); }
     return n;
   };
   probe(`swordPickedUp = true; window.swordEquipped = true; setMeleeTool("SWORD");
@@ -956,19 +1006,21 @@ console.log('\n== a living figure is the same build as its own corpse ==');
   // whatever atan2 makes of it. Fitting the segments TO the hand is the fix,
   // and the property is that nothing draws past the hand but a joint cap.
   //
-  // Measured by tracking the transform: limbs are drawn inside their own
-  // translate+rotate, so an ellipse's far tip has to be brought back into the
-  // character's frame before it can be compared with anything.
+  // Measure the emitted sleeve end-cap curve through the full pose transform.
+  // Geometry tests separately cover the connected surface and shade paths.
   const fore = fig.foreW;
-  let over = 0, overAt = null;
+  let over = 0, overAt = null, tipsSeen = 0;
   for (let i = 0; i < 16; i++) {
     const ph = (i * Math.PI) / 8;
-    // Replay the rig's own arithmetic is NOT what this does — it reads the
-    // ellipses the game actually emitted and where the transform put them.
+    // Read emitted geometry, including the actual cubic wrist cap. The old
+    // ellipse path remains supported so this check can inspect a baseline.
     const st = [{ x: 0, y: 0, c: 1, s: 0 }];
     const stack = [];
-    const real = { e: ctx.ellipse, p: ctx.push, o: ctx.pop, t: ctx.translate, r: ctx.rotate };
+    const real = { e: ctx.ellipse, p: ctx.push, o: ctx.pop, t: ctx.translate, r: ctx.rotate,
+      limb: ctx.figureCelLimb, begin: ctx.beginShape, vertex: ctx.vertex, bezier: ctx.bezierVertex };
     const tips = [], hands = [];
+    let armMesh = false, pathIndex = 0, curveIndex = 0, lastPoint = null;
+    const world = (x,y) => { const m=st[0];return [m.x+x*m.c-y*m.s,m.y+x*m.s+y*m.c]; };
     ctx.push = () => { stack.push(Object.assign({}, st[0])); };
     ctx.pop = () => { if (stack.length) st[0] = stack.pop(); };
     ctx.translate = (x, y) => {
@@ -989,11 +1041,36 @@ console.log('\n== a living figure is the same build as its own corpse ==');
         tips.push([wx + (w / 2) * m.c, wy + (w / 2) * m.s]);
       }
     };
+    if(typeof real.limb==='function')ctx.figureCelLimb=function(g,sx,sy,ex,ey,hx,hy,w0,w1,w2){
+      const saved=[armMesh,pathIndex,curveIndex,lastPoint];
+      armMesh=Math.abs(w0-fig.upperW)<1e-6&&Math.abs(w2-fore*.84)<1e-6;
+      pathIndex=0;curveIndex=0;lastPoint=null;
+      try{return real.limb.apply(this,arguments);}
+      finally{[armMesh,pathIndex,curveIndex,lastPoint]=saved;}
+    };
+    ctx.beginShape=function(){if(armMesh){pathIndex++;curveIndex=0;lastPoint=null;}return real.begin.apply(this,arguments);};
+    ctx.vertex=function(x,y){if(armMesh)lastPoint=world(x,y);return real.vertex.apply(this,arguments);};
+    ctx.bezierVertex=function(x1,y1,x2,y2,x,y){
+      if(armMesh){
+        const a=lastPoint,b=world(x1,y1),c=world(x2,y2),d=world(x,y);curveIndex++;
+        // The third cubic of the outer sleeve closes the wrist, not the
+        // elbow. Sample the visible cap itself rather than deriving a tip.
+        if(pathIndex===1&&curveIndex===3&&a)for(let j=0;j<=24;j++){
+          const t=j/24,u=1-t;
+          tips.push([u*u*u*a[0]+3*u*u*t*b[0]+3*u*t*t*c[0]+t*t*t*d[0],
+                     u*u*u*a[1]+3*u*u*t*b[1]+3*u*t*t*c[1]+t*t*t*d[1]]);
+        }
+        lastPoint=d;
+      }
+      return real.bezier.apply(this,arguments);
+    };
     probe(`player.isArmed = false; setMeleeTool("NONE");
            player.isMoving = true; player.walkCycle = ${ph};`);
     probe('player.show();');
     Object.assign(ctx, { ellipse: real.e, push: real.p, pop: real.o,
-                         translate: real.t, rotate: real.r });
+                         translate: real.t, rotate: real.r, figureCelLimb: real.limb,
+                         beginShape: real.begin, vertex: real.vertex, bezierVertex: real.bezier });
+    tipsSeen+=tips.length;
     for (const t of tips) {
       // Distance from this sleeve's tip to the NEAREST hand. A tip is allowed
       // to sit one cap radius past its hand and no further.
@@ -1003,9 +1080,9 @@ console.log('\n== a living figure is the same build as its own corpse ==');
     }
   }
   ok('and no sleeve is ever drawn past its own hand',
-     over <= fore * 0.60 + 1e-6,
+     tipsSeen>0 && over <= fore * 0.60 + 1e-6,
      `worst tip ${over.toFixed(2)} from the hand, cap allows ${(fore * 0.60).toFixed(2)}` +
-     (overAt === null ? '' : ` (frame ${overAt})`));
+     (overAt === null ? '' : ` (frame ${overAt})`) + `; ${tipsSeen} cap points traced`);
 }
 
 console.log('\n== the gait: one throttle, three bands, no seam ==');

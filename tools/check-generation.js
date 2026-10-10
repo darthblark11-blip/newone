@@ -145,7 +145,7 @@ ok('found canal rows to test', canalTested > 0);
 // ---------------------------------------------------------------------------
 console.log('\n== sub-biomes ==');
 const REGIONS = {
-  WOODLAND: [2, 'woodRegion',    ['MEADOW','TIMBER','MARSH','HEATH','BURN','FARM']],
+  WOODLAND: [2, 'woodRegion',    ['TIMBER','MARSH','HEATH','BURN']],
   JUNGLE:   [4, 'jungleRegion',  ['CANOPY','SWAMP','CLEARING','BAMBOO','CORDON']],
   TUNDRA:   [5, 'tundraRegion',  ['SNOWFIELD','ICEFIELD','TAIGA','MORAINE','FELLFIELD']],
   ALIEN:    [6, 'alienRegion',   ['MYCELIA','CRATER','HIVE','FLESH','ASHFALL']],
@@ -415,7 +415,7 @@ probe('authoredCore = null; authoredChunks = null; authoredMask = null; biomeSta
   let chunks = 0, wet = 0, marsh = 0, total = 0, mismatch = 0, tooNear = 0, overlap = 0;
   for (let cx = -12; cx <= 12; cx++) for (let cy = -12; cy <= 12; cy++) {
     chunks++;
-    if (P(`woodRegion(2, ${cx * 1200 + 600}, ${cy * 1200 + 600})`) === 'MARSH') marsh++;
+    if (P(`woodLegacyRegion(2, ${cx * 1200 + 600}, ${cy * 1200 + 600})`) === 'MARSH') marsh++;
     const list = P(`woodPools(2, ${cx}, ${cy})`) || [];
     const built = P(`generateChunkContent(2, ${cx}, ${cy})`).solid.filter(s => s.isMarshPool);
     if (built.length !== list.length) mismatch++;

@@ -49,10 +49,11 @@ function buildSpatialBuckets(list, cellSize, getX, getY) {
     return buckets;
 }
 
-function querySpatialBuckets(buckets, x, y, cellSize, radius, radiusSq, include = null) {
+function querySpatialBuckets(buckets, x, y, cellSize, radius, radiusSq, include = null, out = null) {
     const cx = Math.floor(x / cellSize);
     const cy = Math.floor(y / cellSize);
-    const out = [];
+    out = out || [];
+    out.length = 0;
     const r = Math.ceil(radius / cellSize) + 1;
     for (let ox = -r; ox <= r; ox++) {
         for (let oy = -r; oy <= r; oy++) {
@@ -203,6 +204,7 @@ const ROBOT_OIL_AT     = 100;   // chassis HP at which it starts leaking
 const OIL_COL          = [18, 16, 15];
 const SPARK_COL        = [255, 214, 140];
 let playerRespawnTimer = 0, prevGamepadButtons = [];
+let gamepadWasConnected=false;
 // The health bar's chip-damage trail: how much the bar SHOWED before the last
 // hit, how long to hold it there, and what it read last frame. A bar that
 // simply follows hp tells you that you were hit; holding the old value for a
@@ -211,7 +213,7 @@ let playerRespawnTimer = 0, prevGamepadButtons = [];
 let hpGhost = 100, hpGhostHold = 0, hpPrev = 100;
 let shGhost = 100, shGhostHold = 0, shPrev = 100;
 const HP_GHOST_HOLD = 20;
-let headshotCounter = 0, bodyOverkillCounter = 0, lightningCounter = 0; 
+let headshotCounter = 0, bodyOverkillCounter = 0, lightningCounter = 0, swordKillCounter = 0;
 
 // Muzzle velocities, in world units per frame. Two numbers rather than a
 // per-weapon field on purpose: what a round travels at is a readability rule
@@ -227,6 +229,8 @@ const WEAPONS = {
   SHOTGUN: { name: "SHOTGUN", fireCooldown: 20, enemyCooldown: 60, maxAmmo: 8, bodyDmg: 25, headDmg: 50, spread: 0.1275, pellets: 4 },
   ROCKET_LAUNCHER: { name: "ROCKET LAUNCHER", fireCooldown: 45, enemyCooldown: 60, maxAmmo: 4, bodyDmg: 350, headDmg: 350, spread: 0, pellets: 1 },
   TASER: { name: "TASER", fireCooldown: 90, enemyCooldown: 60, maxAmmo: 4, bodyDmg: 0, headDmg: 0, spread: 0, pellets: 1 },
+  // The quiver is finite ammunition, not a magazine that reload can recreate.
+  BOW: { name: "BOW", fireCooldown: 38, enemyCooldown: 70, maxAmmo: 24, bodyDmg: 55, headDmg: 120, spread: 0, pellets: 1 },
   // Silver magnum. Six shots, one every 0.88 s -- 53 frames at the 60 fps the
   // rest of the cooldowns in this table are written against. Hits far harder
   // than anything else per shot and reloads far more often, which is the whole
@@ -959,6 +963,11 @@ const sfx = {
   // fire time, as level, pan, and the top end the air has taken off.
   shoot(weapon, x, y) {
     if (!this.ctx) return;
+    if (weapon === WEAPONS.BOW) {
+      this.burst('impact', 0.065, 0.09, 1700, 'bandpass', 500, x, y, 0.4);
+      this.tone(190, 'triangle', 0.075, 0.07, 85, x, y, 0.4);
+      return;
+    }
     const p = this.profile(weapon);
     // A few percent either way, on a recording as much as on a render: barrel
     // to barrel, and shot to shot down one barrel, no two reports are quite
@@ -1137,6 +1146,9 @@ function setup() {
       
       if (e.key.toLowerCase() === 'r') {
           if (player.reloadTimer <= 0 && player.ammo < player.currentWeapon.maxAmmo) player.triggerReload();
+      }
+      if (e.key.toLowerCase() === 'v' && !e.repeat && !isPaused) {
+          cyclePlayerWeapon(e.shiftKey ? -1 : 1);
       }
       
       // FIX: Moved the 'q' input out of the 'r' input bracket!
@@ -1317,7 +1329,7 @@ if (isStoryMode) {
         
         for (let i = 0; i < 20; i++) {
             // Spawn enemies ONLY in the main hall so they don't get stuck inside the room
-            let e = new Character(random(-400, 400), random(-600, 1000), false, "ARMORED_STANDARD");
+            let e = newHostileCharacter(random(-400, 400), random(-600, 1000), "ARMORED_STANDARD");
             e.currentWeapon = WEAPONS.PISTOL;
             enemiesList.push(e);
         }
@@ -1340,10 +1352,10 @@ if (isStoryMode) {
             let dummySouth = {x: 600, y: 4880, w: 300, h: 50, isWall: true, isGrassLot: false};
             buildings.push(dummyNorth, dummySouth);
 
-            let nG1 = new Character(400, -3680, false, "ARMORED_STANDARD"); nG1.targetBuilding = dummyNorth;
-            let nG2 = new Character(800, -3680, false, "ARMORED_STANDARD"); nG2.targetBuilding = dummyNorth;
-            let sG1 = new Character(400, 4880, false, "ARMORED_STANDARD"); sG1.targetBuilding = dummySouth;
-            let sG2 = new Character(800, 4880, false, "ARMORED_STANDARD"); sG2.targetBuilding = dummySouth;
+            let nG1 = newHostileCharacter(400, -3680, "ARMORED_STANDARD"); nG1.targetBuilding = dummyNorth;
+            let nG2 = newHostileCharacter(800, -3680, "ARMORED_STANDARD"); nG2.targetBuilding = dummyNorth;
+            let sG1 = newHostileCharacter(400, 4880, "ARMORED_STANDARD"); sG1.targetBuilding = dummySouth;
+            let sG2 = newHostileCharacter(800, 4880, "ARMORED_STANDARD"); sG2.targetBuilding = dummySouth;
             enemiesList.push(nG1, nG2, sG1, sG2);
         }
         
@@ -1456,47 +1468,7 @@ if (isStoryMode) {
             for (let i = 0; i < TARGET_ENEMY_COUNT; i++) spawnSingleEnemy();
         }
 
-                if (window.militaryToBringM > 0 || window.militaryToBringF > 0) {
-            let spawnCountM = window.militaryToBringM || 0;
-            let spawnCountF = window.militaryToBringF || 0;
-
-            // The escort is a DETACHMENT, not an emigration. These soldiers
-            // stay on their home sector's military roll for as long as they are
-            // away, so travelling moves nobody between ledgers and the global
-            // population does not change because the player did. They show up
-            // in the allies bar because they are standing next to you, which is
-            // all that bar has ever meant.
-            window.militaryToBring = spawnCountM + spawnCountF;
-            window.escortWasF = spawnCountF;
-            // Consumed here. Left standing, the same escort was re-created from
-            // scratch on every subsequent level entry -- travel twice and the
-            // fifty-six became a hundred and twelve.
-            window.militaryToBringM = 0;
-            window.militaryToBringF = 0;
-
-            for (let i = 0; i < spawnCountM + spawnCountF; i++) {
-                let isFemale = i >= spawnCountM; // Spawns exact male count, then switches to female
-                let type = isFemale ? "FEMALE_PISTOL" : "NORMAL";
-                
-                let ax = player.x + random(-100, 100);
-                let ay = player.y + random(50, 150);
-                let a = new Character(ax, ay, false, type);
-                a.isFriendly = true;
-                a.isMilitary = true; 
-                a.hp = 300;
-                a.baseState = "FOLLOW";
-                
-                if (typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked) {
-                    a.currentWeapon = WEAPONS.ASSAULT_RIFLE; 
-                    a.shirtCol = color(60, 100, 40); 
-                    a.pantsCol = color(139, 115, 85);
-                } else {
-                    a.shirtCol = color(100, 100, 200); 
-                }
-                
-                enemiesList.push(a);
-            }
-        }
+        spawnPendingMilitary();
 
             
 
@@ -2323,6 +2295,43 @@ function dgGable(aw, ah, col, colHi, inset) {
 // `ang` is the horse's own facing. Both call sites draw inside rotate(), so the
 // sun has to be brought into that frame -- see figureLight(). Omitting it lights
 // the horse from straight ahead, which is only right for an unrotated caller.
+// Reused RGB arrays keep the little animal and machine surfaces allocation-free.
+// Organic forms share the figure painter's curved cel planes; mechanical forms
+// use an inset bevel within their existing outline rather than a tall riser.
+const _entityCel = {
+  bug: [70,90,50], dark: [30,33,37], snail: [20,100,20],
+  shell: [50,80,40], white: [245,245,245],
+  pink: [255,170,170], horn: [210,190,150], gator: [30,180,30],
+  blue: [173,216,230], steelLight: [88,95,104],
+  sensor: [84,90,98], socket: [46,40,36],
+  saucer: [100,106,116], saucerRed: [154,65,70], purple: [150,50,200],
+  red: [255,50,50]
+};
+const _robotCelHull = [[20,0],[4,-16],[-13,-12],[-13,12],[4,16]];
+const _robotCelInset = [[15,0],[3,-11],[-8,-8],[-8,8],[3,11]];
+function entityCelPlate(g, points, c, lx, ly, sx, sy, inset) {
+  const r=Array.isArray(c)?c[0]:red(c), b=Array.isArray(c)?c[2]:blue(c);
+  const gr=Array.isArray(c)?c[1]:green(c), f=1-(inset === undefined ? .12 : inset);
+  g.fill(r*.98,gr*.98,b); g.stroke(r*.24,gr*.24,b*.27,225); g.strokeWeight(.85);
+  g.beginShape(); for(const p of points) g.vertex(p[0],p[1]); g.endShape(CLOSE);
+  g.noStroke();
+  for(let i=0;i<points.length;i++) {
+    const a=points[i], n=points[(i+1)%points.length];
+    const dx=n[0]-a[0],dy=n[1]-a[1],len=Math.hypot(dx,dy);
+    const nx=-dy/len,ny=dx/len;
+    // A thin near-facing bevel exposes a side plane. The far rim stays the
+    // top's value, so there is no dark ring printed around the whole chassis.
+    const shade=nx*sx+ny*sy>0 ? .60+Math.max(0,-nx*lx-ny*ly)*.29 : .97;
+    g.fill(r*shade,gr*shade,b*shade);
+    g.quad(a[0],a[1],n[0],n[1],n[0]*f,n[1]*f,a[0]*f,a[1]*f);
+  }
+  if(_figureComicInk){
+    g.noFill();g.stroke(0,0,0);g.strokeWeight(1.1);
+    g.beginShape();for(const p of points)g.vertex(p[0],p[1]);g.endShape(CLOSE);
+  }
+  g.noStroke();
+}
+
 function drawHorseArt(coat, mane, walk, moving, gallop, sock, ang) {
   const amp = gallop ? 9 : 3.6;
   const sw = moving ? sin(walk) * amp : 0;
@@ -2330,7 +2339,8 @@ function drawHorseArt(coat, mane, walk, moving, gallop, sock, ang) {
   const heave = moving ? abs(sin(walk)) * (gallop ? 2.6 : 0.9) : 0;
   const cr = red(coat), cg = green(coat), cb = blue(coat);
   const dark = (f) => fill(cr * f, cg * f, cb * f);
-  const L = figureLight(ang || 0);
+  const L = figureLight(ang || 0), lx=L[0],ly=L[1];
+  const paint=figurePainter(), g=paint?paint.api:window;
 
   push();
   translate(heave * 0.4, 0);
@@ -2356,29 +2366,24 @@ function drawHorseArt(coat, mane, walk, moving, gallop, sock, ang) {
   quad(0, -3, 0, 3, -15, 6, -13, -5);
   pop();
 
-  // Barrel: quarters, ribcage, then the two flanks, so it is not one flat oval.
-  //
-  // The flanks follow the SUN, not the spine. Pinned above the backbone -- which
-  // is what they were -- a horse walking a circle carried its own highlight
-  // round with it and had a private sun that agreed with nothing else in the
-  // scene. Offset by the light, its lit side stays west while it turns, and
-  // when the sun is end-on the bands slide fore and aft onto the shoulder and
-  // the rump instead, which is where the light would actually catch it.
-  dark(0.86); ellipse(-13, 0, 34, 30);                          // hindquarters
-  fill(cr, cg, cb); ellipse(4, 0, 46, 27);                      // ribcage
-  dark(1.14); ellipse(6 - L[0] * 5, -L[1] * 9, 30, 12);         // lit flank
-  dark(0.68); ellipse(2 + L[0] * 5,  L[1] * 9, 34, 9);          // shaded flank
+  // One continuous barrel keeps the old quarters/ribcage extents without the
+  // two complete contours meeting as a black joint across the horse's back.
+  figureCelOval(g,-1.5,0,57,30,coat,.85,lx,ly);
 
   // Neck and head, nodding on half the leg beat.
   push();
   translate(22, 0);
   rotate(moving ? sin(walk * 0.5) * (gallop ? 0.22 : 0.08) : 0);
-  fill(cr, cg, cb); quad(-4, -8, 12, -5, 12, 5, -4, 8);            // neck
+  noStroke();
+  fill(cr*.83, cg*.83, cb*.85); quad(-4, -8, 12, -5, 12, 5, -4, 8); // neck underside
+  fill(cr*1.03,cg*1.03,cb*1.03); quad(-3,-6,12,-4,12,3,-3,5);      // rounded neck top
   fill(red(mane), green(mane), blue(mane));
   quad(-4, -8, 12, -5, 12, -2, -4, -4);                            // mane along the crest
-  dark(1.06); ellipse(16, 0, 18, 12);                              // head
+  figureCelOval(g,16,0,18,12,coat,.7);                             // head, light follows nod
+  noStroke();
   if (sock) { fill(226, 220, 208); ellipse(20, 0, 7, 5); }         // blaze
-  dark(0.4); ellipse(23, 0, 7, 7);                                 // muzzle
+  figureCelOval(g,23,0,7,7,mane,.45);                              // muzzle
+  noStroke();
   fill(18); ellipse(24, -1.6, 1.8, 1.8); ellipse(24, 1.6, 1.8, 1.8);
   fill(20); ellipse(13, -3.6, 2.6, 2.6); ellipse(13, 3.6, 2.6, 2.6); // eyes
   dark(0.5); triangle(9, -6, 12, -4, 8, -2); triangle(9, 6, 12, 4, 8, 2); // ears
@@ -2981,6 +2986,8 @@ function drawBuildingShadows() {
 let _depthActors = [];      // reused; actors queued by actorShow() this frame
 let _depthMasses = [];      // reused; visible masses, sorted by base y
 let _depthOn = false;
+let _airborneActors = [];   // live flyers are above roofs, not ground contacts
+let _forestCrowns = [];    // reused; raised foliage above the ground actor pass
 
 // Live decor that STANDS, as opposed to lying on the ground.
 //
@@ -3011,11 +3018,28 @@ function actorDepth(c) { return c.y; }
 // with a building's middle in front of its far wall.
 function massDepth(b) { return b.y + (b.h || 0) / 2; }
 
-// Every character draw goes through here. Outside a biome it is a straight
-// call, so nothing about the legacy levels changes.
+// Every character draw goes through here. Flyers have no ground contact to
+// compare with a building's base, so hold them for the pass above the roofs.
+// Grounded characters retain the depth sort and the legacy interior order.
+function isAirborneEnemy(e) {
+  return !!e && !e.isPlayer && !e.dead && e.hp > 0 &&
+    (e.eType === 'AERIAL' || e.eType === 'AERIAL_PISTOL' || e.eType === 'SAUCER' || e.eType === 'SAUCER_RED');
+}
+
 function actorShow(c) {
+  if (isAirborneEnemy(c)) { _airborneActors.push(c); return; }
   if (_depthOn) { _depthActors.push(c); return; }
   c.show();
+}
+
+function drawAirborneActors() {
+  _airborneActors.sort((a, b) => a.y - b.y);
+  try {
+    for (let i = 0; i < _airborneActors.length; i++) _airborneActors[i].show();
+  } finally {
+    // A failed painter must not leave an old aircraft queued next frame.
+    _airborneActors.length = 0;
+  }
 }
 
 // One run of the sorted array. A run can hold both ordinary masses and biome
@@ -3032,13 +3056,22 @@ function massRunKind(b) {
   if (DECOR_STANDING[b.t]) return 2;
   return b.isBiomeProp ? 1 : 0;
 }
+function forestRaisedCrown(d) {
+  return !!d.forestSpecies && d.forestSpecies !== 'CHARRED_SNAG' && !!forestCanopyMass(d);
+}
 function drawMassRun(arr, i0, i1) {
   let s = i0;
   while (s < i1) {
     const kind = massRunKind(arr[s]);
     let e = s + 1;
     while (e < i1 && massRunKind(arr[e]) === kind) e++;
-    if (kind === 2)      for (let k = s; k < e; k++) paintClutter(window, arr[k], frameCount);
+    if (kind === 2) for (let k = s; k < e; k++) {
+      const d = arr[k];
+      if (forestRaisedCrown(d)) {
+        paintForestClutter(window, d, frameCount, 'root');
+        _forestCrowns.push(d);
+      } else paintClutter(window, d, frameCount);
+    }
     else if (kind === 1) drawBiomeProps(arr, s, e);
     else                 drawBuildings(arr, s, e);
     s = e;
@@ -3048,6 +3081,7 @@ function drawMassRun(arr, i0, i1) {
 function drawDepthSorted() {
   const masses = _depthMasses;
   masses.length = 0;
+  _forestCrowns.length = 0;
   for (let i = 0; i < activeBuildings.length; i++) {
     const b = activeBuildings[i];
     // The same cull both draw functions apply. Doing it once here keeps the
@@ -3067,6 +3101,12 @@ function drawDepthSorted() {
   _standDecor.length = 0;
   masses.sort((p, q) => p._depthKey - q._depthKey);
 
+  // Cast shade belongs to the floor. Keep it below actors, then depth-sort
+  // rooted bark with feet while the raised foliage waits for the upper pass.
+  for (let i = 0; i < masses.length; i++) {
+    if (forestRaisedCrown(masses[i])) paintForestClutter(window, masses[i], frameCount, 'shadow');
+  }
+
   const actors = _depthActors;
   for (let i = 0; i < actors.length; i++) actors[i]._depthKey = actors[i].y;
   actors.sort((p, q) => p._depthKey - q._depthKey);
@@ -3080,6 +3120,13 @@ function drawDepthSorted() {
     actors[ai].show();
   }
   if (mi < masses.length) drawMassRun(masses, mi, masses.length);
+
+  // Walking south of a trunk must not put a person on top of its branches.
+  // Crowns retain their stable tree order and live aircraft paint later.
+  for (let i = 0; i < _forestCrowns.length; i++) {
+    paintForestClutter(window, _forestCrowns[i], frameCount, 'crown');
+  }
+  _forestCrowns.length = 0;
 
   actors.length = 0;
   _depthOn = false;
@@ -3185,6 +3232,7 @@ function drawBuildings(list, i0, i1) {
     // canopy in the decor list is what you actually see; without this the
     // generic building branch drew a dark box under every tree in the wood.
     if (b.isTreeTrunk) continue;
+    if (b.forestHuntingLodge) { paintForestHuntingLodge(window, b); continue; }
     if (BIOME_ACTIVE && b.isGrassLot && !b.isPond && !b.isParkingLot) continue;
     if ((currentLevel === 1 || currentLevel === 2) && b.isGrassLot && !b.isPond && !b.isParkingLot) continue;
     if (b.isParkingCar) continue; 
@@ -5258,6 +5306,114 @@ const EMPTY_LIST = [];
 // Anything that splices activeBuildings out from under the index calls this.
 function invalidateColIndex() { colGrid = null; colBig = null; }
 
+// Full-world sight tests and the small props omitted from colGrid share a
+// broad phase. Entries and cell arrays are reused; live collision predicates
+// still decide the answer. Original array order is retained for projectile
+// hits, where the first matching prop matters.
+const CROWD_SOLID_CELL = 256;
+function newCrowdSolidIndex(kind) {
+  return { kind, source: null, frame: -1, grid: new Map(), pool: [], used: 0,
+           entries: [], big: [], candidates: [], stamp: 0 };
+}
+const _crowdBarrels = newCrowdSolidIndex(0), _crowdCars = newCrowdSolidIndex(1);
+const _crowdLOS = newCrowdSolidIndex(2);
+const _crowdColBarrels = [], _crowdColCars = [], _crowdLOSCandidates = [];
+function invalidateCrowdSolids() {
+  clearCrowdSolidIndex(_crowdBarrels);
+  clearCrowdSolidIndex(_crowdCars);
+  clearCrowdSolidIndex(_crowdLOS);
+}
+function clearCrowdSolidIndex(index) {
+  index.source = null; index.grid.clear(); index.big.length = 0;
+  for (let i = 0; i < index.entries.length; i++) index.entries[i].b = null;
+  for (let i = 0; i < index.used; i++) index.pool[i].length = 0;
+  index.used = 0;
+}
+function rebuildCrowdSolidIndex(index, source) {
+  const previousUsed = index.used;
+  index.grid.clear(); index.big.length = 0; index.used = 0;
+  const entries = index.entries;
+  for (let i = 0; i < source.length; i++) {
+    const b = source[i];
+    let e = entries[i];
+    if (!e) e = entries[i] = { b: null, i: 0, x: 0, y: 0, w: 0, h: 0, stamp: 0 };
+    const w = index.kind === 0 ? 24 : index.kind === 1 ? 50 : b.w;
+    const h = index.kind === 0 ? 24 : index.kind === 1 ? 90 : b.h;
+    e.b = b; e.i = i; e.x = b.x; e.y = b.y; e.w = w; e.h = h;
+    const x0 = Math.floor((b.x - w / 2) / CROWD_SOLID_CELL);
+    const x1 = Math.floor((b.x + w / 2) / CROWD_SOLID_CELL);
+    const y0 = Math.floor((b.y - h / 2) / CROWD_SOLID_CELL);
+    const y1 = Math.floor((b.y + h / 2) / CROWD_SOLID_CELL);
+    if (!Number.isSafeInteger(x0) || !Number.isSafeInteger(x1) ||
+        !Number.isSafeInteger(y0) || !Number.isSafeInteger(y1) || w < 0 || h < 0 ||
+        (x1 - x0 + 1) * (y1 - y0 + 1) > 16) {
+      index.big.push(e); continue;
+    }
+    for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
+      const key = cellKey(x, y);
+      let cell = index.grid.get(key);
+      if (!cell) {
+        cell = index.pool[index.used];
+        if (!cell) cell = index.pool[index.used] = [];
+        index.used++; cell.length = 0; index.grid.set(key, cell);
+      }
+      cell.push(e);
+    }
+  }
+  for (let i = index.used; i < previousUsed; i++) index.pool[i].length = 0;
+  entries.length = source.length;
+  index.source = source; index.frame = frameCount;
+}
+function ensureCrowdSolidIndex(index, source) {
+  if (index.source !== source || index.entries.length !== source.length) {
+    rebuildCrowdSolidIndex(index, source); return;
+  }
+  if (index.frame === frameCount) return;
+  index.frame = frameCount;
+  for (let i = 0; i < source.length; i++) {
+    const b = source[i], e = index.entries[i];
+    if (e.b !== b || e.x !== b.x || e.y !== b.y ||
+        (index.kind === 2 && (e.w !== b.w || e.h !== b.h))) {
+      rebuildCrowdSolidIndex(index, source); return;
+    }
+  }
+}
+function crowdSolidCandidates(index, source, minX, minY, maxX, maxY, out, ordered) {
+  // Twelve authored barrels cost less to scan than to query a grid. The
+  // index pays for itself only as streamed props and battle loads grow.
+  if (source.length <= 16) return source;
+  const x0 = Math.floor(minX / CROWD_SOLID_CELL), x1 = Math.floor(maxX / CROWD_SOLID_CELL);
+  const y0 = Math.floor(minY / CROWD_SOLID_CELL), y1 = Math.floor(maxY / CROWD_SOLID_CELL);
+  if (!Number.isSafeInteger(x0) || !Number.isSafeInteger(x1) ||
+      !Number.isSafeInteger(y0) || !Number.isSafeInteger(y1) ||
+      (x1 - x0 + 1) * (y1 - y0 + 1) > 128) return source;
+  ensureCrowdSolidIndex(index, source);
+  const candidates = index.candidates;
+  candidates.length = 0;
+  const stamp = ++index.stamp;
+  for (let x = x0; x <= x1; x++) for (let y = y0; y <= y1; y++) {
+    const cell = index.grid.get(cellKey(x, y));
+    if (!cell) continue;
+    for (let i = 0; i < cell.length; i++) {
+      const e = cell[i];
+      if (e.stamp === stamp) continue;
+      e.stamp = stamp; candidates.push(e);
+    }
+  }
+  for (let i = 0; i < index.big.length; i++) candidates.push(index.big[i]);
+  if (ordered && candidates.length > 1) candidates.sort(crowdSolidOrder);
+  out.length = 0;
+  for (let i = 0; i < candidates.length; i++) out.push(candidates[i].b);
+  return out;
+}
+function crowdSolidOrder(a, b) { return a.i - b.i; }
+function crowdNearbyBarrels(x, y, pad, out) {
+  return crowdSolidCandidates(_crowdBarrels, barrels, x-pad, y-pad, x+pad, y+pad, out, true);
+}
+function crowdNearbyCars(x, y, pad, out) {
+  return crowdSolidCandidates(_crowdCars, activeParkingCars, x-pad, y-pad, x+pad, y+pad, out, true);
+}
+
 function updateActiveWorld() {
     // THROTTLE: Only generate this array once every 10 frames to save massive CPU/Battery
     if (frameCount - lastActiveUpdate < 10 && activeBuildings.length > 0) return;
@@ -5612,13 +5768,15 @@ function draw() {
             
 
             } else if (window.nm0AmbushCleared) {
+        // Also handles a save made at the final kill before the story beat.
+        finishSectorRecruitment();
         // CLEAR AMBUSH FLAGS
         window.nm0AmbushCleared = false;
         nm0AmbushActive = false;
         window.nm0AmbushClearedStatus = true;
         // Towers down and the muster beaten opens the south gate on its own.
         if (typeof recordSouthGateBreached === 'function') recordSouthGateBreached(currentLevel);
-        // The breach becomes a road at exactly this moment.
+        // Tower-only openings are ready now; physical breaches already opened.
         if (typeof clearGateApproach === 'function') clearGateApproach();
 
         // Which ambush just ended decides which beat this is. Read it out and
@@ -5843,6 +6001,7 @@ viewBottom = camY + height / zoom + shakePad;
   // it throws, the frame loses its picture and keeps its controls -- see
   // A FRAME THAT FAILS MUST NOT TAKE THE CONTROLS WITH IT, above.
   const _sceneDepth = frameStackDepth();
+  _airborneActors.length = 0;
   try {
 
   push(); scale(zoom); translate(-camX, -camY);
@@ -5869,6 +6028,7 @@ viewBottom = camY + height / zoom + shakePad;
   // handrails stay in the late pass, so the far rail still passes in front of
   // whoever is crossing.
   if (BIOME_ACTIVE) drawBiomeDecks();
+  updateBloodPools();
   drawBloodChunks();
 
   if (typeof updateSludges === 'function') updateSludges();
@@ -5949,10 +6109,9 @@ viewBottom = camY + height / zoom + shakePad;
       if (dToDad > 40) { let ang = atan2(dadEntity.y - player.y, dadEntity.x - player.x); player.isMoving = true; player.walkCycle += 0.2; player.moveAngle = ang; player.aimAngle = ang; let dx = cos(ang) * 4; let dy = sin(ang) * 4; if (!player.checkCol(player.x + dx, player.y)) player.x += dx; if (!player.checkCol(player.x, player.y + dy)) player.y += dy; } else { player.isMoving = false; prologuePhase = 4;  }
   }
 
-   // From here to drawDepthSorted() every character draw is QUEUED rather than
-   // painted, so the masses can be interleaved with them by depth. Outside a
-   // biome the flag stays down and actorShow() paints immediately, exactly as
-   // this line used to.
+   // Ground actors are queued here so the masses can interleave with them by
+   // depth. Outside biomes they retain the immediate legacy draw. Aircraft use
+   // their own queue in either case and paint after the roofs and vehicles.
    _depthOn = depthSortActive();
    if (player.hp > 0) { if (!isWin && doTick) player.updatePlayer(); actorShow(player); } else if (!isWin && !isDead) { playerRespawnTimer--; if (playerRespawnTimer <= 0) { isDead = true; } }
   updateEntities(); 
@@ -5972,6 +6131,15 @@ viewBottom = camY + height / zoom + shakePad;
           if (doTick) c.update();
           actorShow(c);
       }
+  }
+
+  // Wildlife stays outside the military population and objective counters.
+  // Tick outside the forest too so travel drops ephemeral actors, not loot.
+  if (doTick && !isWin) updateForestWildlife();
+  if (BIOME_ACTIVE && currentBiome === 2) {
+    if (doTick && !isWin) updateForestHuntingActivity();
+    drawForestHuntingSettlement();
+    drawForestWildlifeAnimals();
   }
   
   if (typeof drawBuildingShadows === 'function') drawBuildingShadows();
@@ -6032,6 +6200,11 @@ viewBottom = camY + height / zoom + shakePad;
     let b = barrels[i]; if (inView(b.x, b.y, 50)) { fill(200, 30, 30); stroke(100, 0, 0); strokeWeight(2); ellipse(b.x, b.y, 24, 24); fill(40); noStroke(); ellipse(b.x, b.y, 16, 16); fill(255, 70); noStroke(); ellipse(b.x - 4, b.y - 4, 8, 8); }
     if (b.hp <= 0) { triggerExplosion(b.x, b.y, 160); barrels.splice(i, 1); }
   }
+
+  // Roofs, standing props and parked vehicles occlude ground actors. Aircraft
+  // cross above them, while bullets, muzzle flashes and smoke remain in front.
+  drawAirborneActors();
+  if (BIOME_ACTIVE && currentBiome === 2) drawForestWildlifeAirborne();
 
   if (typeof updateFires === 'function') updateFires();
   updateBullets(); updateGrenades(); if (typeof updatePlayerGrenades === 'function') updatePlayerGrenades(); if (typeof updatePlayerFlasks === 'function') updatePlayerFlasks(); updateParticles(); if (typeof updateLightnings === 'function') updateLightnings(); updateOrbs(); if (typeof updateShockwaves === 'function') updateShockwaves();
@@ -6256,18 +6429,19 @@ viewBottom = camY + height / zoom + shakePad;
           
       } 
        else if (townPhase === 7) {
+          clearGateApproach();
           let spawnY = (currentLevel === 1) ? 4950 : 1800;
           let aerY = (currentLevel === 1) ? 4900 : 1750;
           let spawnX1 = 600;  
           let spawnX2 = -200; 
           
-          for(let i=0; i<42; i++) enemiesList.push(new Character(spawnX1 + random(-250, 250), spawnY + random(-50, 50), false, "ARMORED_STANDARD"));
-          for(let i=0; i<4; i++) enemiesList.push(new Character(spawnX1 + random(-100, 100), spawnY + random(-50, 50), false, "ARMORED"));
-          for(let i=0; i<4; i++) enemiesList.push(new Character(spawnX1 + random(-300, 300), aerY, false, "AERIAL"));
+          for(let i=0; i<42; i++) enemiesList.push(newHostileCharacter(spawnX1 + random(-250, 250), spawnY + random(-50, 50), "ARMORED_STANDARD"));
+          for(let i=0; i<4; i++) enemiesList.push(newHostileCharacter(spawnX1 + random(-100, 100), spawnY + random(-50, 50), "ARMORED"));
+          for(let i=0; i<4; i++) enemiesList.push(newHostileCharacter(spawnX1 + random(-300, 300), aerY, "AERIAL"));
 
-                   for(let i=0; i<42; i++) enemiesList.push(new Character(spawnX2 + random(-250, 250), spawnY + random(-50, 50), false, "ARMORED_STANDARD"));
-          for(let i=0; i<4; i++) enemiesList.push(new Character(spawnX2 + random(-100, 100), spawnY + random(-50, 50), false, "ARMORED"));
-          for(let i=0; i<4; i++) enemiesList.push(new Character(spawnX2 + random(-300, 300), aerY, false, "AERIAL"));
+                   for(let i=0; i<42; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-250, 250), spawnY + random(-50, 50), "ARMORED_STANDARD"));
+          for(let i=0; i<4; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-100, 100), spawnY + random(-50, 50), "ARMORED"));
+          for(let i=0; i<4; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-300, 300), aerY, "AERIAL"));
 
           // Tag the 100 enemies we just spawned!
           for(let i = enemiesList.length - 100; i < enemiesList.length; i++) {
@@ -6400,6 +6574,7 @@ viewBottom = camY + height / zoom + shakePad;
   if (!isDead && !isWin && !killcamMode && !inCutscene && prologuePhase !== 7 && upstairsPhase === 0 && !window.inNM0SecretOverlay) {
       if (currentLevel !== 0 || (inUpstairsRoom && dist(player.x, player.y, 150, 0) >= 80 && dist(player.x, player.y, 0, -200) >= 120 && dist(player.x, player.y, 0, 250) >= 80)) drawUI();
       else if (!inUpstairsRoom && dist(player.x, player.y, -400, 0) >= 80) drawUI();
+      if (BIOME_ACTIVE && currentBiome === 2) drawForestHuntingHud();
       
       // --- MOUNT / DISMOUNT BUTTON ---
       if (player.mounted) drawPromptBtn("DISMOUNT");
@@ -6513,19 +6688,19 @@ viewBottom = camY + height / zoom + shakePad;
 
           // Male UI Layer
           fill(100, 150, 255); textSize(18); textAlign(CENTER, CENTER); text("♂", width/2 - 60, d.y + 30);
-          fill(d.cM > 0 ? color(200, 50, 50) : color(80)); rect(width/2 - 45, d.y + 15, 25, 30, 4); fill(255); text("-", width/2 - 32, d.y + 30);
+          fill((d.cM > (d.id===1?militaryAssignedAway(POP_POOL,'M'):0)) ? color(200, 50, 50) : color(80)); rect(width/2 - 45, d.y + 15, 25, 30, 4); fill(255); text("-", width/2 - 32, d.y + 30);
           fill(255); textSize(16); text(d.cM, width/2 - 5, d.y + 30);
           fill(window.popUnassignedM > 0 ? color(50, 200, 50) : color(80)); rect(width/2 + 10, d.y + 15, 25, 30, 4); fill(255); text("+", width/2 + 22, d.y + 30);
 
           // Female UI Layer
           fill(255, 105, 180); textSize(18); text("♀", width/2 + 60, d.y + 30);
-          fill(d.cF > 0 ? color(200, 50, 50) : color(80)); rect(width/2 + 75, d.y + 15, 25, 30, 4); fill(255); text("-", width/2 + 87, d.y + 30);
+          fill((d.cF > (d.id===1?militaryAssignedAway(POP_POOL,'F'):0)) ? color(200, 50, 50) : color(80)); rect(width/2 + 75, d.y + 15, 25, 30, 4); fill(255); text("-", width/2 + 87, d.y + 30);
           fill(255); textSize(16); text(d.cF, width/2 + 115, d.y + 30);
           fill(window.popUnassignedF > 0 ? color(50, 200, 50) : color(80)); rect(width/2 + 130, d.y + 15, 25, 30, 4); fill(255); text("+", width/2 + 142, d.y + 30);
 
           // Apply rapid-fire clicks
           if (triggerAction) {
-              if (mx > width/2 - 45 && mx < width/2 - 20 && my > d.y + 15 && my < d.y + 45 && d.cM > 0) {
+              if (mx > width/2 - 45 && mx < width/2 - 20 && my > d.y + 15 && my < d.y + 45 && (d.cM > (d.id===1?militaryAssignedAway(POP_POOL,'M'):0))) {
                   if (d.id===0) window.popFarmingM--; if (d.id===1) window.popMilitaryM--; if (d.id===2) window.popScienceM--; if (d.id===3) window.popArchitectureM--;
                   window.popUnassignedM++; sfx.hitArmor();
               }
@@ -6533,7 +6708,7 @@ viewBottom = camY + height / zoom + shakePad;
                   if (d.id===0) window.popFarmingM++; if (d.id===1) window.popMilitaryM++; if (d.id===2) window.popScienceM++; if (d.id===3) window.popArchitectureM++;
                   window.popUnassignedM--; sfx.reload();
               }
-              if (mx > width/2 + 75 && mx < width/2 + 100 && my > d.y + 15 && my < d.y + 45 && d.cF > 0) {
+              if (mx > width/2 + 75 && mx < width/2 + 100 && my > d.y + 15 && my < d.y + 45 && (d.cF > (d.id===1?militaryAssignedAway(POP_POOL,'F'):0))) {
                   if (d.id===0) window.popFarmingF--; if (d.id===1) window.popMilitaryF--; if (d.id===2) window.popScienceF--; if (d.id===3) window.popArchitectureF--;
                   window.popUnassignedF++; sfx.hitArmor();
               }
@@ -6552,6 +6727,7 @@ viewBottom = camY + height / zoom + shakePad;
       popArchitecture = window.popArchitectureM + window.popArchitectureF;
       popUnassigned = window.popUnassignedM + window.popUnassignedF;
 
+      drawMilitaryDeploymentButton();
       let isEst = typeof townsData !== 'undefined' && townsData[viewingTownId] && townsData[viewingTownId].established;
       // A sector can complete its arc with nobody left to hand over -- the
       // player shot all eighty, or it never had a roster. There is nothing to
@@ -6623,7 +6799,8 @@ viewBottom = camY + height / zoom + shakePad;
           textSize(20); fill(200); text(`HEADING: ${travelDirection}`, width/2, 140);
           text("SQUAD DEPLOYMENT", width/2, 200);
           textSize(14); fill(150); 
-          text(`AVAILABLE MILITARY: ♂ ${window.popMilitaryM}   ♀ ${window.popMilitaryF}`, width/2, 230);
+          const _travelMilitary=travelMilitaryAvailable();
+          text(`AVAILABLE MILITARY: ♂ ${_travelMilitary.male}   ♀ ${_travelMilitary.female}`, width/2, 230);
 
           // HOLD TO SPEED-ASSIGN, exactly as the Directive's columns do -- same
           // helper, same cadence. Marching thirty soldiers out used to be thirty
@@ -6640,9 +6817,9 @@ viewBottom = camY + height / zoom + shakePad;
               const _tx = _tp.x, _ty = _tp.y;
               const hit = (x0, y0) => _tx > x0 && _tx < x0 + 25 && _ty > y0 && _ty < y0 + 30;
               if (hit(width/2 - 120, 270) && window.militaryToBringM > 0)                    { window.militaryToBringM--; sfx.hitArmor(); }
-              if (hit(width/2 + 110, 270) && window.militaryToBringM < window.popMilitaryM)   { window.militaryToBringM++; sfx.reload(); }
+              if (hit(width/2 + 110, 270) && window.militaryToBringM < _travelMilitary.male)   { window.militaryToBringM++; sfx.reload(); }
               if (hit(width/2 - 120, 330) && window.militaryToBringF > 0)                    { window.militaryToBringF--; sfx.hitArmor(); }
-              if (hit(width/2 + 110, 330) && window.militaryToBringF < window.popMilitaryF)   { window.militaryToBringF++; sfx.reload(); }
+              if (hit(width/2 + 110, 330) && window.militaryToBringF < _travelMilitary.female)   { window.militaryToBringF++; sfx.reload(); }
           }
 
           // MALE ROW
@@ -6650,14 +6827,14 @@ viewBottom = camY + height / zoom + shakePad;
           fill(100, 150, 255); noStroke(); textSize(18); text("♂ BRING MALES", width/2 - 40, 285);
           fill(255); textSize(24); text(window.militaryToBringM, width/2 + 80, 285);
           fill(window.militaryToBringM > 0 ? color(200, 50, 50) : color(80)); rect(width/2 - 120, 270, 25, 30, 4); fill(255); textSize(16); text("-", width/2 - 107, 285);
-          fill(window.militaryToBringM < window.popMilitaryM ? color(50, 200, 50) : color(80)); rect(width/2 + 110, 270, 25, 30, 4); fill(255); text("+", width/2 + 122, 285);
+          fill(window.militaryToBringM < _travelMilitary.male ? color(50, 200, 50) : color(80)); rect(width/2 + 110, 270, 25, 30, 4); fill(255); text("+", width/2 + 122, 285);
 
           // FEMALE ROW
           fill(40); stroke(200); strokeWeight(2); rect(width/2 - 150, 320, 300, 50, 8);
           fill(255, 105, 180); noStroke(); textSize(18); text("♀ BRING FEMALES", width/2 - 30, 345);
           fill(255); textSize(24); text(window.militaryToBringF, width/2 + 80, 345);
           fill(window.militaryToBringF > 0 ? color(200, 50, 50) : color(80)); rect(width/2 - 120, 330, 25, 30, 4); fill(255); textSize(16); text("-", width/2 - 107, 345);
-          fill(window.militaryToBringF < window.popMilitaryF ? color(50, 200, 50) : color(80)); rect(width/2 + 110, 330, 25, 30, 4); fill(255); text("+", width/2 + 122, 345);
+          fill(window.militaryToBringF < _travelMilitary.female ? color(50, 200, 50) : color(80)); rect(width/2 + 110, 330, 25, 30, 4); fill(255); text("+", width/2 + 122, 345);
 
           fill(50, 200, 50); stroke(255); rect(width/2 - 120, height - 90, 240, 50, 8);
           fill(0); noStroke(); textSize(18); text("DEPART", width/2, height - 65);
@@ -6940,19 +7117,19 @@ if (swordPickedUp || window.pickaxeOwned) {
 
           // Male UI Layer
           fill(100, 150, 255); textSize(18); textAlign(CENTER, CENTER); text("♂", width/2 - 60, d.y + 30);
-          fill(d.cM > 0 ? color(200, 50, 50) : color(80)); rect(width/2 - 45, d.y + 15, 25, 30, 4); fill(255); text("-", width/2 - 32, d.y + 30);
+          fill((d.cM > (d.id===1?militaryAssignedAway(POP_POOL,'M'):0)) ? color(200, 50, 50) : color(80)); rect(width/2 - 45, d.y + 15, 25, 30, 4); fill(255); text("-", width/2 - 32, d.y + 30);
           fill(255); textSize(16); text(d.cM, width/2 - 5, d.y + 30);
           fill(window.popUnassignedM > 0 ? color(50, 200, 50) : color(80)); rect(width/2 + 10, d.y + 15, 25, 30, 4); fill(255); text("+", width/2 + 22, d.y + 30);
 
           // Female UI Layer
           fill(255, 105, 180); textSize(18); text("♀", width/2 + 60, d.y + 30);
-          fill(d.cF > 0 ? color(200, 50, 50) : color(80)); rect(width/2 + 75, d.y + 15, 25, 30, 4); fill(255); text("-", width/2 + 87, d.y + 30);
+          fill((d.cF > (d.id===1?militaryAssignedAway(POP_POOL,'F'):0)) ? color(200, 50, 50) : color(80)); rect(width/2 + 75, d.y + 15, 25, 30, 4); fill(255); text("-", width/2 + 87, d.y + 30);
           fill(255); textSize(16); text(d.cF, width/2 + 115, d.y + 30);
           fill(window.popUnassignedF > 0 ? color(50, 200, 50) : color(80)); rect(width/2 + 130, d.y + 15, 25, 30, 4); fill(255); text("+", width/2 + 142, d.y + 30);
 
           // Apply rapid-fire clicks
           if (triggerAction) {
-              if (mx > width/2 - 45 && mx < width/2 - 20 && my > d.y + 15 && my < d.y + 45 && d.cM > 0) {
+              if (mx > width/2 - 45 && mx < width/2 - 20 && my > d.y + 15 && my < d.y + 45 && (d.cM > (d.id===1?militaryAssignedAway(POP_POOL,'M'):0))) {
                   if (d.id===0) window.popFarmingM--; if (d.id===1) window.popMilitaryM--; if (d.id===2) window.popScienceM--; if (d.id===3) window.popArchitectureM--;
                   window.popUnassignedM++; sfx.hitArmor();
               }
@@ -6960,7 +7137,7 @@ if (swordPickedUp || window.pickaxeOwned) {
                   if (d.id===0) window.popFarmingM++; if (d.id===1) window.popMilitaryM++; if (d.id===2) window.popScienceM++; if (d.id===3) window.popArchitectureM++;
                   window.popUnassignedM--; sfx.reload();
               }
-              if (mx > width/2 + 75 && mx < width/2 + 100 && my > d.y + 15 && my < d.y + 45 && d.cF > 0) {
+              if (mx > width/2 + 75 && mx < width/2 + 100 && my > d.y + 15 && my < d.y + 45 && (d.cF > (d.id===1?militaryAssignedAway(POP_POOL,'F'):0))) {
                   if (d.id===0) window.popFarmingF--; if (d.id===1) window.popMilitaryF--; if (d.id===2) window.popScienceF--; if (d.id===3) window.popArchitectureF--;
                   window.popUnassignedF++; sfx.hitArmor();
               }
@@ -6979,6 +7156,7 @@ if (swordPickedUp || window.pickaxeOwned) {
       popArchitecture = window.popArchitectureM + window.popArchitectureF;
       popUnassigned = window.popUnassignedM + window.popUnassignedF;
 
+      drawMilitaryDeploymentButton();
       let isEst = typeof townsData !== 'undefined' && townsData[viewingTownId] && townsData[viewingTownId].established;
       const nothingToAssign = (popTotal === 0);
       let btnText = nothingToAssign ? "CONTINUE"
@@ -7008,6 +7186,9 @@ if (swordPickedUp || window.pickaxeOwned) {
       // had already dealt with, so the Directive closed and the ledger kept
       // whatever it had before. Gone -- the click path owns the click.
             }
+      else if (pauseMenuState === "MILITARY_BRING") {
+          drawMilitaryDeploymentMenu();
+      }
       else if (pauseMenuState === "GARRISON") {
           drawGarrisonMenu();
       }
@@ -7023,39 +7204,16 @@ if (swordPickedUp || window.pickaxeOwned) {
           drawBtn(height/2 + 100, "BACK");
       } 
       else if (pauseMenuState === "INVENTORY") {
-          // Materials on hand. One row per resource with the same swatch the
-          // pickup uses, so what you walked over and what you own read as the
-          // same thing.
-          fill(210, 180, 110); textSize(30); text("INVENTORY", width/2, height/2 - 150);
-          let iy = height/2 - 88;
-          for (const k of RESOURCE_KINDS) {
-              const c = RESOURCE_DEF[k];
-              noStroke(); fill(20, 22, 26); rect(width/2 - 150, iy - 16, 300, 34, 6);
-              fill(c.col[0], c.col[1], c.col[2]);
-              stroke(c.edge[0], c.edge[1], c.edge[2]); strokeWeight(2);
-              rect(width/2 - 138, iy - 9, 20, 20, 4);
-              noStroke(); fill(c.lit[0], c.lit[1], c.lit[2], 170);
-              rect(width/2 - 138, iy - 9, 20, 6, 3);
-              fill(225); textAlign(LEFT, CENTER); textSize(17);
-              text(c.label, width/2 - 104, iy + 1);
-              fill(255, 210, 120); textAlign(RIGHT, CENTER); textSize(20);
-              text(resourceCount(k), width/2 + 136, iy + 1);
-              textAlign(CENTER, CENTER);
-              iy += 46;
-          }
-          fill(130); textSize(13);
-          text(window.pickaxeOwned ? "Equip the PICKAXE from the pause menu to mine faster."
-                                   : "Find a pickaxe to harvest properly.",
-               width/2, iy + 10);
-          drawBtn(height/2 + 120, "BACK");
+          drawForestHuntInventory();
       } 
       else if (pauseMenuState === "AUGMENTS") {
           fill(0, 200, 100); textSize(30); text("SUIT AUGMENTS", width/2, height/2 - 150); fill(255); textSize(18); text("🛡️ SHIELD - Level 1", width/2, height/2 - 80); text("⚡ RECHARGEABLE - Level 1", width/2, height/2 - 40); drawBtn(height/2 + 120, "BACK");
       } 
       else if (pauseMenuState === "WEAPONS") {
           fill(255, 100, 0); textSize(30); text("WEAPONS", width/2, height/2 - 150); fill(255); textSize(18); let wY = height/2 - 80, wList = ["PISTOL"];
+          if (player && player.flags && player.flags.bowUnlocked) wList.push("BOW");
           if (smgUnlocked) wList.push("MACHINE GUN"); if (dualSmgUnlocked) wList.push("DUAL SMGS"); if (arUnlocked) wList.push("ASSAULT RIFLE"); if (shotgunUnlocked) wList.push("SHOTGUN"); if (rocketLauncherUnlocked) wList.push("ROCKET LAUNCHER");
-          for (let w of wList) { text(`🔫 ${w} - Level 1`, width/2, wY); wY += 30; } drawBtn(height/2 + 120, "BACK");
+          for (let w of wList) { text(w === "BOW" ? `🏹 BOW · ${player.weaponAmmo.BOW || 0} ARROWS` : `🔫 ${w} - Level 1`, width/2, wY); wY += 30; } drawBtn(height/2 + 120, "BACK");
       } 
       else if (pauseMenuState === "JOURNAL") {
           fill(200, 150, 255); textSize(30); text("JOURNAL", width/2, height/2 - 180); fill(255); textSize(16); textLeading(22);
@@ -7380,11 +7538,45 @@ function harvestProfile(b) {
   return b.__hv;
 }
 
+function treeDecorMatchesTrunk(d, b) {
+  if (!d || !b || !(d.t === "TREE" || d.t === "PINE" || d.t === "SNAG")) return false;
+  if (d.forestTrunkKey && b.chunkKey) return d.forestTrunkKey === b.chunkKey;
+  return Math.abs(d.x - b.x) < 6 && Math.abs(d.y - b.y) < 6;
+}
+
+// Reconcile crowns while the generated trunks still carry their stable keys.
+// A saved removal must affect the visual tree as well as its collision solid.
+function removeDestroyedTreeDecor(biome, solid, decor) {
+  const destroyed = getBiomeState(biome).destroyed;
+  const felled = solid.filter(b => b.isTreeTrunk && destroyed[b.chunkKey]);
+  if (!felled.length) return;
+  for (let i = decor.length - 1; i >= 0; i--) {
+    const d = decor[i];
+    if (felled.some(b => treeDecorMatchesTrunk(d, b))) decor.splice(i, 1);
+  }
+}
+
+// buildings[] is a published view of resident chunk solids. Remove the source
+// record too, so loading a neighbour cannot publish a harvested prop again.
+function removeResidentHarvestable(b) {
+  if (!chunkMgr) return;
+  for (const ch of chunkMgr.chunks.values()) {
+    for (let i = ch.solid.length - 1; i >= 0; i--) {
+      const s = ch.solid[i];
+      if (s === b || (b.chunkKey && s.chunkKey === b.chunkKey)) ch.solid.splice(i, 1);
+    }
+    if (!b.isTreeTrunk) continue;
+    for (let i = ch.decor.length - 1; i >= 0; i--) {
+      if (treeDecorMatchesTrunk(ch.decor[i], b)) ch.decor.splice(i, 1);
+    }
+  }
+}
+
 // One entry point, so a pick, a rifle round and a rocket all take the same path
 // into a harvestable and the drop can only happen once.
 function damageHarvestable(b, amount) {
   const hv = harvestProfile(b);
-  if (!hv || amount <= 0) return false;
+  if (!hv || hv.hp <= 0 || amount <= 0) return false;
   hv.hp -= amount;
   b.hitFlash = 4;
   const c = RESOURCE_DEF[hv.kind];
@@ -7395,17 +7587,7 @@ function damageHarvestable(b, amount) {
   emit(b.x, b.y, 16, color(c.lit[0], c.lit[1], c.lit[2]), "DUST");
   if (sfx && sfx.hitArmor) sfx.hitArmor();
 
-  // A felled tree loses its canopy too, or the wood walks off and the crown
-  // stays hanging in the air.
-  if (b.isTreeTrunk && chunkMgr) {
-    for (const ch of chunkMgr.chunks.values()) {
-      for (let i = ch.decor.length - 1; i >= 0; i--) {
-        const d = ch.decor[i];
-        if ((d.t === "TREE" || d.t === "PINE" || d.t === "SNAG") &&
-            Math.abs(d.x - b.x) < 6 && Math.abs(d.y - b.y) < 6) ch.decor.splice(i, 1);
-      }
-    }
-  }
+  removeResidentHarvestable(b);
   // Remembered, so it does not grow back when the chunk reloads. Chunk solids
   // carry the key the generator will strip them by; authored ones are handled
   // by syncAuthoredRemovals() picking up the removal from buildings[].
@@ -7437,7 +7619,7 @@ function updateHealthPacks() {
     
     if (player && player.hp > 0 && dist(player.x, player.y, hpk.x, hpk.y) < 30) {
       if (player.hp < 100) {
-        player.hp = 100;
+        player.restoreHealth(100 - player.hp);
         sfx.charge(); 
         streakMsgText = "HEALTH RESTORED!";
         streakMsgTimer = 90;
@@ -7508,7 +7690,11 @@ function storyBeatDone(name) {
 }
 
 function resetStoryProgress() {
+    swordKillCounter = 0;
+    resetForestHuntingActivity();
+    resetForestWildlife();
     window.storyBeats = {};
+    biomeState = {}; // A new campaign owes each sector its first arrival again.
     window.resources = { WOOD: 0, METAL: 0, STONE: 0 };
     window.meleeToolSel = "NONE";
     window.swordEquipped = false;
@@ -7529,6 +7715,7 @@ function resetStoryProgress() {
     window.postAmbushCutscenePlayed = false;
     window.towersDefeated = false;
     window.militaryToBring = 0; window.militaryToBringM = 0; window.militaryToBringF = 0;
+    window.pendingEscortRoster = []; window.restoringEscortRoster = false;
     townsData = {};
     globalPopulation = 0;
     viewingTownId = 1;
@@ -7601,6 +7788,7 @@ function seedDebugStoryProgress(level) {
 
     // Point the live roster at the last town you settled.
     window.militaryToBring = 0; window.militaryToBringM = 0; window.militaryToBringF = 0;
+    window.pendingEscortRoster = []; window.restoringEscortRoster = false;
     if (cleared >= 1) {
         viewingTownId = cleared;
         loadTownData(cleared);
@@ -7646,12 +7834,9 @@ function sectorTowersAreDown(level) {
   return !!(t && t.towersDown);
 }
 
-// The towers are the sector's leash. With them down, everyone still standing in
-// it who is a person rather than a machine stops being NM-0's and starts being
-// Stick City's -- which is the whole point of the savior route, and until now it
-// only happened for whoever was left alive at the moment an ambush was cleared.
-// A sector with no ambush in it -- the Undercity, whose objective is the towers
-// themselves -- never converted anybody.
+// The towers are the sector's leash. Dropping them frees its living conscripts
+// to fight alongside the player. The final award waits for the ambush to clear
+// and includes only the members of that captured roster who survived.
 //
 // Armour does not defect. ARMORED and ARMORED_STANDARD are hardware; the pistol
 // regulars and the incendiary crews are conscripts.
@@ -7664,8 +7849,7 @@ function recruitSectorSurvivors() {
     // residents streamed in from the chunk population layer and any wanderer
     // that drifted into the arena are all the right TYPE to recruit, and none of
     // them are people the player spared -- counting them handed out citizens
-    // nobody earned and broke the one promise the mechanic makes, which is that
-    // the number you get is the number you did not shoot.
+    // nobody earned. Only the original roster's survivors can join the army.
     if (!e.isPopulation) continue;
     if (RECRUITABLE.indexOf(e.eType) === -1) continue;
     e.isFriendly = true;
@@ -7685,14 +7869,24 @@ function recruitSectorSurvivors() {
     const keep = list.filter(e => !e.isRecruit);
     if (keep.length !== list.length) chunkPop.set(k, keep);
   }
-  // The bodies that changed sides are `n`. What the player is OWED is the
-  // ledger's arithmetic -- seeded minus killed -- and the two are allowed to
-  // disagree, because a resident who wandered out of the chunk the player was
-  // standing in is still one of the eighty. The grant is latched, so this is
-  // safe to call again on a re-entry or a reload.
-  const owed = grantSectorSurvivors(currentLevel);
+  // Changing sides is the capture, not the award. Their deaths still count
+  // during the ambush; the surviving roster joins the pool when it is clear.
+  return { total: sectorSurvivorCount(currentLevel), female: f, converted: n };
+}
+
+function finishSectorRecruitment() {
+  if (!isStoryMode || (currentLevel !== 1 && currentLevel !== 2) ||
+      !window.nm0AmbushCleared || !sectorTowersAreDown(currentLevel) || window.ambushFort ||
+      window.fortMusterJustCleared || activeFortMuster(currentBiome)) return 0;
+  const t = sectorLedger(currentLevel);
+  if (t.popGranted) return 0;
+  // Per-sector and saved: an earlier gate fight, or another sector's ambush,
+  // must not award this roster before its own liberation fight is finished.
+  t.popAmbushCleared = true;
+  recruitSectorSurvivors();
+  const joined = grantSectorSurvivors(currentLevel);
   loadLedgerIntoWindow(POP_POOL);
-  return { total: owed, female: f, converted: n };
+  return joined;
 }
 
 function markSectorTowersDown(level) {
@@ -7716,7 +7910,8 @@ function openSectorDirective(level) {
     // An already-settled town skips straight to the map; a fresh one has to be
     // assigned and established first.
     if (townsData[id].established) {
-        if (typeof loadTownData === 'function') loadTownData(id);
+        invalidateDirectiveBuffer();
+        loadLedgerIntoWindow(POP_POOL);
         inWorldBuildingMenu = false;
         inOverworldView = true;
     } else {
@@ -7834,7 +8029,7 @@ function sectorLedger(id) {
     t.popUnassignedM = Number(t.popUnassignedM) || 0;
     t.popUnassignedF = Number(t.popUnassignedF) || 0;
     t.popSeeded  = Number(t.popSeeded)  || 0;   // how many were put on the ground
-    t.popKilled  = Number(t.popKilled)  || 0;   // how many of them the player shot
+    t.popKilled  = Number(t.popKilled)  || 0;   // roster deaths before the final award
     migrateLegacyLedger(id, t);
     t.popTotal   = sectorPopSum(t);
     return t;
@@ -7964,8 +8159,8 @@ function storeWindowIntoLedger(id) {
 // What the sector owes the player when its arc completes.
 //
 // For Stick City and the Undercity this is pure arithmetic -- eighty seeded
-// minus the ones they shot before the towers came down -- and that is the whole
-// point of the mechanic. Counting the bodies still standing could never be
+// minus deaths before liberation AND deaths among the freed allies during the
+// ambush. Counting the bodies still standing could never be
 // right: the roster is spawned, streamed, culled and rebuilt, so the answer
 // changed depending on where the player was standing when the towers fell.
 // The stun baton and the taser exist so that "all eighty" is reachable, and it
@@ -7987,6 +8182,7 @@ function sectorSurvivorCount(level) {
 function grantSectorSurvivors(level) {
     const t = sectorLedger(level);
     if (t.popGranted) return 0;
+    if (t.popSeeded > 0 && !t.popAmbushCleared) return 0;
     const n = sectorSurvivorCount(level);
     // A sector that counts its allies off the ground can be asked before they
     // have finished changing sides -- the tan outpost flips the whole cordon
@@ -8021,12 +8217,108 @@ function postCitizen(dept, sex, fromId, toId) {
     const key = "pop" + dept + sex;
     const a = sectorLedger(fromId), b = sectorLedger(toId);
     if (a === b || (Number(a[key]) || 0) <= 0) return false;
+    // Soldiers on a combat detachment still occupy their home department.
+    // Posting one elsewhere while they are away would give their casualty
+    // record a different home from the ledger that now holds them.
+    if (dept === 'Military' && a[key] <= militaryAssignedAway(fromId, sex)) return false;
     a[key]--; b[key]++;
     a.popTotal = sectorPopSum(a);
     b.popTotal = sectorPopSum(b);
     invalidateDirectiveBuffer();
     globalPopulation = globalPopulationCount();
     return true;
+}
+
+// Department residents live at a secured fortress. This is a visual view of
+// the ledgers; making or rebuilding it never creates another population.
+function deployDirectivePopulation() {
+    townCitizens=[];
+    let index=0;
+    const sources=[{home:POP_POOL,data:poolLedger()}];
+    if(currentLevel>=1&&currentLevel<=7)sources.push({home:currentLevel,data:sectorLedger(currentLevel)});
+    for(const source of sources)for(const dept of POP_DEPTS)for(const sex of ['M','F']) {
+        let count=Math.max(0,Math.floor(Number(source.data['pop'+dept+sex])||0));
+        if(dept==='Military')count=Math.max(0,count-militaryAssignedAway(source.home,sex));
+        for(let n=0;n<count;n++) {
+            const point=getOwnedFortressSpawnPoint(index++);
+            if(!point)continue;
+            const resident=new Citizen(point.x,point.y,dept.toUpperCase(),sex==='F'?'FEMALE':'MALE');
+            resident.fortressHome=point.fortress;
+            townCitizens.push(resident);
+        }
+    }
+    return townCitizens.length;
+}
+
+let militarySelectionM=0,militarySelectionF=0,militaryMenuFromWorld=false;
+function drawMilitaryDeploymentButton() {
+    fill(40,70,90);stroke(70,180,230);strokeWeight(2);
+    rect(width/2-120,height-136,240,34,6);
+    fill(180,230,255);noStroke();textAlign(CENTER,CENTER);textSize(15);
+    text('MILITARY TO BRING',width/2,height-119);
+}
+function openMilitaryDeploymentMenu() {
+    storeWindowIntoLedger(POP_POOL);
+    militaryMenuFromWorld=inWorldBuildingMenu;
+    militarySelectionM=militarySelectionF=0;
+    inWorldBuildingMenu=false;isPaused=true;pauseMenuState='MILITARY_BRING';
+    sfx.charge();
+}
+function drawMilitaryDeploymentMenu() {
+    const available=militaryDeploymentAvailable();
+    militarySelectionM=Math.min(militarySelectionM,available.male);
+    militarySelectionF=Math.min(militarySelectionF,available.female);
+    fill(255);textAlign(CENTER,CENTER);textFont('sans-serif');textSize(28);
+    text('MILITARY TO BRING',width/2,50);
+    fill(190);textSize(14);
+    text('Deploy soldiers from the Military department as an active squad.',width/2,88);
+    const fortress=nearestOwnedFortress(currentLevel);
+    text(fortress?'MUSTER AT '+fortress.name:'Capture a fortress in this sector to deploy a squad.',width/2,120);
+    text('ACTIVE MILITARY: '+(countEscort(false)+countEscort(true)),width/2,158);
+    const pointer=uiPointer();
+    const step=holdRepeat('military-bring',pointer.down);
+    for(let row=0;row<2;row++) {
+        const female=row===1,y=220+row*74,limit=female?available.female:available.male;
+        let selected=female?militarySelectionF:militarySelectionM;
+        if(step&&pointer.y>y+14&&pointer.y<y+46) {
+            if(pointer.x>width/2-126&&pointer.x<width/2-94)selected=Math.max(0,selected-1);
+            if(pointer.x>width/2+94&&pointer.x<width/2+126)selected=Math.min(limit,selected+1);
+        }
+        if(female)militarySelectionF=selected;else militarySelectionM=selected;
+        fill(30);stroke(100);strokeWeight(1);rect(width/2-160,y,320,60,8);
+        noStroke();fill(female?color(255,105,180):color(100,150,255));textSize(15);
+        text((female?'FEMALES':'MALES')+' AVAILABLE: '+limit,width/2,y+12);
+        fill(selected>0?color(180,60,50):color(70));rect(width/2-126,y+14,32,32,4);
+        fill(selected<limit?color(50,180,70):color(70));rect(width/2+94,y+14,32,32,4);
+        fill(255);textSize(22);text('-',width/2-110,y+30);text('+',width/2+110,y+30);
+        text(selected,width/2,y+36);
+    }
+    const ready=available.canDeploy&&(militarySelectionM+militarySelectionF)>0;
+    fill(ready?color(50,200,80):color(80));stroke(255);strokeWeight(2);
+    rect(width/2-120,height-90,240,50,8);
+    fill(ready?0:180);noStroke();textSize(18);text('DEPLOY',width/2,height-65);
+    fill(40);stroke(150);rect(width/2-80,height-34,160,28,6);
+    fill(220);noStroke();textSize(14);text('BACK',width/2,height-20);
+}
+function handleMilitaryDeploymentClicks(mx,my) {
+    if(mx>width/2-80&&mx<width/2+80&&my>height-34&&my<height-6) {
+        militarySelectionM=militarySelectionF=0;
+        invalidateDirectiveBuffer();
+        if(militaryMenuFromWorld){isPaused=false;inWorldBuildingMenu=true;}
+        else pauseMenuState='GOV_DIRECTIVE';
+        sfx.charge();return true;
+    }
+    if(mx>width/2-120&&mx<width/2+120&&my>height-90&&my<height-40) {
+        const result=deployActiveMilitary(militarySelectionM,militarySelectionF);
+        if(result.total>0) {
+            militarySelectionM=militarySelectionF=0;
+            deployDirectivePopulation();
+            isPaused=false;inWorldBuildingMenu=false;inOverworldView=true;pauseMenuState='MAIN';
+            window.lastPauseTime=millis();sfx.charge();
+        }
+        return true;
+    }
+    return false;
 }
 
 // --- the garrison screen ---------------------------------------------------
@@ -8150,15 +8442,128 @@ function garrisonSectors() {
 // between ledgers and the global count does not move when the player does.
 // Dying is the one thing that does change it, and it is deducted as an integer
 // at the moment it happens rather than inferred later from who is missing.
-function escortCasualty() {
-    const home = window.escortHome;
+function escortCasualty(victim = null) {
+    if (victim && victim.escortDeathCounted) return;
+    const home = victim && victim.escortHome !== undefined ? victim.escortHome : window.escortHome;
     if (!home) return;
     const t = sectorLedger(home);
-    if (t.popMilitaryF > 0 && (window.escortWasF || 0) > 0) { t.popMilitaryF--; window.escortWasF--; }
-    else if (t.popMilitaryM > 0) t.popMilitaryM--;
-    else if (t.popMilitaryF > 0) t.popMilitaryF--;
+    const sex = victim ? militarySex(victim) : ((window.escortWasF || 0) > 0 ? 'F' : 'M');
+    const key = 'popMilitary' + sex;
+    if (t[key] > 0) t[key]--;
+    if (victim) victim.escortDeathCounted = true;
+    if (sex === 'F') window.escortWasF = Math.max(0, (window.escortWasF || 0) - 1);
     t.popTotal = sectorPopSum(t);
     globalPopulation = globalPopulationCount();
+    invalidateDirectiveBuffer();
+}
+
+// Combat troops remain on their department's ledger while following the
+// player. The map is only a view of that detachment, never another grant.
+function militaryCount(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : 0;
+}
+function militarySex(e) {
+    return e.escortSex === 'F' || (e.escortSex !== 'M' && String(e.eType || '').indexOf('FEMALE') !== -1) ? 'F' : 'M';
+}
+function militaryAssignedAway(home = POP_POOL, sex = 'M', includePending = true) {
+    let n = 0;
+    for (const e of enemiesList) {
+        if (!e || !e.isFriendly || !e.isMilitary || e.dead || e.hp <= 0) continue;
+        const source = e.escortHome !== undefined ? e.escortHome : (window.escortHome || POP_POOL);
+        if (String(source) === String(home) && militarySex(e) === sex) n++;
+    }
+    if (!includePending) return n;
+    for (const e of window.pendingEscortRoster || []) {
+        if (String(e.home) === String(home) && e.sex === sex) n++;
+    }
+    if (String(window.escortHome || POP_POOL) === String(home))
+        n += militaryCount(window['militaryToBring' + sex]);
+    return n;
+}
+function militaryDeploymentAvailable() {
+    const home = POP_POOL, t = sectorLedger(home);
+    const male = Math.max(0, t.popMilitaryM - militaryAssignedAway(home, 'M'));
+    const female = Math.max(0, t.popMilitaryF - militaryAssignedAway(home, 'F'));
+    const canDeploy = !!player && typeof nearestOwnedFortress === 'function' && !!nearestOwnedFortress(currentLevel);
+    return { home, male, female, total: male + female, canDeploy };
+}
+// The travel counters are a selection, so exclude them when displaying how
+// many more soldiers may accompany troops who are already active.
+function travelMilitaryAvailable() {
+    const home = POP_POOL, t = sectorLedger(home);
+    const male = Math.max(0, t.popMilitaryM - militaryAssignedAway(home, 'M', false));
+    const female = Math.max(0, t.popMilitaryF - militaryAssignedAway(home, 'F', false));
+    return { home, male, female, total: male + female };
+}
+function queueMilitaryDeparture() {
+    const available = travelMilitaryAvailable();
+    window.escortHome = available.home;
+    window.militaryToBringM = Math.min(militaryCount(window.militaryToBringM), available.male);
+    window.militaryToBringF = Math.min(militaryCount(window.militaryToBringF), available.female);
+    return available;
+}
+function spawnEscortSoldier(point, sex, home, record = null) {
+    const a = new Character(point.x, point.y, false, sex === 'F' ? 'FEMALE_PISTOL' : 'NORMAL');
+    a.isFriendly = true;
+    a.isMilitary = true;
+    a.escortHome = home;
+    a.escortSex = sex;
+    a.isFortressMilitary = !!(record && record.fortressMilitary);
+    a.maxHp = record && Number.isFinite(record.maxHp) ? Math.max(300, record.maxHp) : 300;
+    a.hp = record && Number.isFinite(record.hp) ? Math.max(1, Math.min(a.maxHp, record.hp)) : a.maxHp;
+    a.baseState = 'FOLLOW';
+    if (explosiveArmorUnlocked) {
+        a.currentWeapon = WEAPONS.ASSAULT_RIFLE;
+        a.shirtCol = color(60, 100, 40);
+        a.pantsCol = color(139, 115, 85);
+    } else a.shirtCol = color(100, 100, 200);
+    enemiesList.push(a);
+    return a;
+}
+function syncActiveMilitaryCount() {
+    window.militaryToBring = countEscort(false) + countEscort(true);
+    window.escortWasF = countEscort(true);
+}
+function deployActiveMilitary(males, females) {
+    const available = militaryDeploymentAvailable();
+    const result = { male: 0, female: 0, total: 0 };
+    if (!available.canDeploy || typeof getOwnedFortressSpawnPoint !== 'function') return result;
+    for (const sex of ['M', 'F']) {
+        const count = Math.min(militaryCount(sex === 'M' ? males : females), sex === 'M' ? available.male : available.female);
+        for (let i = 0; i < count; i++) {
+            const point = getOwnedFortressSpawnPoint(result.total, currentLevel, true);
+            if (!point) break;
+            spawnEscortSoldier(point, sex, available.home, { fortressMilitary: true });
+            result[sex === 'M' ? 'male' : 'female']++;
+            result.total++;
+        }
+    }
+    syncActiveMilitaryCount();
+    return result;
+}
+function liveMilitaryRoster() {
+    return enemiesList.filter(e => e && e.isFriendly && e.isMilitary && !e.dead && e.hp > 0).map(e => ({
+        home: e.escortHome !== undefined ? e.escortHome : (window.escortHome || POP_POOL),
+        sex: militarySex(e), hp: e.hp, maxHp: e.maxHp, x: e.x, y: e.y, fortressMilitary: !!e.isFortressMilitary
+    }));
+}
+function spawnPendingMilitary() {
+    const roster = Array.isArray(window.pendingEscortRoster) ? window.pendingEscortRoster.slice() : [];
+    const home = window.escortHome || POP_POOL;
+    const males = militaryCount(window.militaryToBringM), females = militaryCount(window.militaryToBringF);
+    for (let i = 0; i < males + females; i++) roster.push({ home, sex: i < males ? 'M' : 'F' });
+    window.pendingEscortRoster = [];
+    window.militaryToBringM = 0;
+    window.militaryToBringF = 0;
+    for (const record of roster) {
+        let point = { x: player.x + random(-100, 100), y: player.y + random(50, 150) };
+        if (window.restoringEscortRoster && record.fortressMilitary && Number.isFinite(record.x) && Number.isFinite(record.y))
+            point = { x: record.x, y: record.y };
+        spawnEscortSoldier(point, record.sex === 'F' ? 'F' : 'M', record.home || home, record);
+    }
+    window.restoringEscortRoster = false;
+    syncActiveMilitaryCount();
 }
 
 // Opens a sector's Directive without disturbing what is already assigned.
@@ -8238,7 +8643,7 @@ function legacyGetSafeSpawn(away) {
     rx = random(-bndX, bndX);
     ry = random(-bndY, bndY);
 
-    let hit = !insideSector(rx, ry);
+    let hit = !insideSector(rx, ry) || (away && insideOwnedFortress(currentLevel, rx, ry, 60));
     
     // 3. Keep enemies from spawning directly on the player's head
     if (away && player && player.hp > 0 && dist(rx, ry, player.x, player.y) < 500) hit = true;
@@ -8271,7 +8676,8 @@ function legacyGetSafeSpawn(away) {
   }
   
   // Fallback: If 1000 random spots fail, drop them slightly off-screen from the player
-  return safe ? { x: rx, y: ry } : { x: player ? player.x + 600 : 0, y: player ? player.y + 600 : 0 };
+  const fallback = { x: player ? player.x + 600 : 0, y: player ? player.y + 600 : 0 };
+  return safe ? { x: rx, y: ry } : (away ? hostileSpawnPoint(fallback.x, fallback.y) : fallback);
 }
 
 function triggerGateAmbush(fortressY, isNorthGate = false) {
@@ -8287,13 +8693,8 @@ function triggerGateAmbush(fortressY, isNorthGate = false) {
     // and travel out of the sector. The Undercity's wall is a different wall in a
     // different sector and keeps its own record, or blowing it open would mark
     // Stick City's Great Gate down without a shot being fired there.
-    if (currentLevel === 2) {
-        if (isNorthGate) window.undercityNorthBreached = true;
-        else window.undercitySouthBreached = true;
-    } else {
-        if (isNorthGate) window.northGateBreachedStatus = true;
-        else window.southGateBreachedStatus = true;
-    }
+    recordSectorGateBreach(isNorthGate);
+    clearGateApproach();
 
     // MERGE ACTIVE AMBUSHES (Scenario 4)
     if (nm0AmbushActive) {
@@ -8320,19 +8721,19 @@ function triggerGateAmbush(fortressY, isNorthGate = false) {
     let gateAerY = spawnY < 0 ? spawnY + 100 : spawnY - 100;
 
     // --- BATCH 1: EAST ---
-    for(let i=0; i<21; i++) enemiesList.push(new Character(spawnX1 + random(-250, 250), spawnY + random(-50, 50), false, "ARMORED_STANDARD"));
-    for(let i=0; i<2; i++) enemiesList.push(new Character(spawnX1 + random(-100, 100), spawnY + random(-50, 50), false, "ARMORED"));
-    for(let i=0; i<2; i++) enemiesList.push(new Character(spawnX1 + random(-300, 300), gateAerY, false, "AERIAL"));
+    for(let i=0; i<21; i++) enemiesList.push(newHostileCharacter(spawnX1 + random(-250, 250), spawnY + random(-50, 50), "ARMORED_STANDARD"));
+    for(let i=0; i<2; i++) enemiesList.push(newHostileCharacter(spawnX1 + random(-100, 100), spawnY + random(-50, 50), "ARMORED"));
+    for(let i=0; i<2; i++) enemiesList.push(newHostileCharacter(spawnX1 + random(-300, 300), gateAerY, "AERIAL"));
 
     // --- BATCH 2: WEST ---
-    for(let i=0; i<21; i++) enemiesList.push(new Character(spawnX2 + random(-250, 250), spawnY + random(-50, 50), false, "ARMORED_STANDARD"));
-    for(let i=0; i<2; i++) enemiesList.push(new Character(spawnX2 + random(-100, 100), spawnY + random(-50, 50), false, "ARMORED"));
-    for(let i=0; i<2; i++) enemiesList.push(new Character(spawnX2 + random(-300, 300), gateAerY, false, "AERIAL"));
+    for(let i=0; i<21; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-250, 250), spawnY + random(-50, 50), "ARMORED_STANDARD"));
+    for(let i=0; i<2; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-100, 100), spawnY + random(-50, 50), "ARMORED"));
+    for(let i=0; i<2; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-300, 300), gateAerY, "AERIAL"));
 
         // --- BATCH 2: WEST ---
-    for(let i=0; i<21; i++) enemiesList.push(new Character(spawnX2 + random(-250, 250), spawnY + random(-50, 50), false, "ARMORED_STANDARD"));
-    for(let i=0; i<2; i++) enemiesList.push(new Character(spawnX2 + random(-100, 100), spawnY + random(-50, 50), false, "ARMORED"));
-    for(let i=0; i<2; i++) enemiesList.push(new Character(spawnX2 + random(-300, 300), gateAerY, false, "AERIAL"));
+    for(let i=0; i<21; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-250, 250), spawnY + random(-50, 50), "ARMORED_STANDARD"));
+    for(let i=0; i<2; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-100, 100), spawnY + random(-50, 50), "ARMORED"));
+    for(let i=0; i<2; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-300, 300), gateAerY, "AERIAL"));
     
     for(let e of enemiesList) { if(!e.isFriendly && e.hp > 0 && !e.dead) { e.state = "CHASE"; e.loseSightTimer = 999; } }
 
@@ -8344,7 +8745,7 @@ function triggerGateAmbush(fortressY, isNorthGate = false) {
 
     // If Savior Route, wake up the town allies
     if (window.towersDefeated) {
-        let candidates = enemiesList.filter(e => e.eType === "NORMAL" || e.eType === "BUG" || e.eType === "SNAIL" || e.eType === "MOLOTOV");
+        let candidates = enemiesList.filter(e => e.isRecruit && e.isFriendly && !e.dead && e.hp > 0);
         for(let e of candidates) { 
             // Waking them up changes whose side they are on, not how many
             // people the sector has. globalPopulation is the sum of the
@@ -8531,7 +8932,7 @@ function getOuterSpawn(tries) {
   for (let i = 0; i < n; i++) {
     const eS = getSafeSpawn(true);
     if (!eS) continue;
-    if (inAuthoredSector(eS.x, eS.y, 500)) continue;
+    if (inAuthoredSector(eS.x, eS.y, 500) || insideOwnedFortress(currentLevel, eS.x, eS.y, 60)) continue;
     // Not in a town either -- but deliberately NOT the full outerRegionUncached
     // test. That one also rejects the whole 3x3 chunk neighbourhood around
     // every checkpoint, and at 21% checkpoint density it refused so much ground
@@ -8583,7 +8984,7 @@ function spawnSingleEnemy() {
       const eS = getOuterSpawn();
       if (!eS) return;
       const t = LIBERATED_SPAWN[currentLevel][floor(random(LIBERATED_SPAWN[currentLevel].length))];
-      enemiesList.push(new Character(eS.x, eS.y, false, t));
+      enemiesList.push(newHostileCharacter(eS.x, eS.y, t));
       return;
   }
 
@@ -8628,12 +9029,12 @@ function spawnSingleEnemy() {
     const t = overworldPick(currentLevel, r);
     if (t === "BANDIT") {
       // Lone riders between the posses -- a scout, a straggler.
-      const b = new Character(oS.x, oS.y, false, "BANDIT");
+      const b = newHostileCharacter(oS.x, oS.y, "BANDIT");
       if (random() > 0.35) b.mountUp();
       enemiesList.push(b);
       return;
     }
-    enemiesList.push(new Character(oS.x, oS.y, false, t));
+    enemiesList.push(newHostileCharacter(oS.x, oS.y, t));
     return;
   }
 
@@ -8644,14 +9045,14 @@ if (bugCount < 10) {
     for (let i = 0; i < bugsToSpawn; i++) {
         // Use pre-calculated baseEnemyCount instead of a heavy .filter() scan
         if (baseEnemyCount < TARGET_ENEMY_COUNT) {
-            enemiesList.push(new Character(eS.x + random(-40, 40), eS.y + random(-40, 40), false, "BUG"));
+            enemiesList.push(newHostileCharacter(eS.x + random(-40, 40), eS.y + random(-40, 40), "BUG"));
         }
     }
     return;
 }
 
       if (currentLevel >= 5 && snailCount < 5) {
-          enemiesList.push(new Character(eS.x, eS.y, false, "SNAIL"));
+          enemiesList.push(newHostileCharacter(eS.x, eS.y, "SNAIL"));
           return;
       }
   }
@@ -8670,7 +9071,7 @@ if (bugCount < 10) {
       else if (r > 0.7) type = "AERIAL";
       else if (r > 0.3) {
           if (bugCount <= 10) {
-              for (let i = 0; i < 3; i++) enemiesList.push(new Character(eS.x + random(-40, 40), eS.y + random(-40, 40), false, "BUG"));
+              for (let i = 0; i < 3; i++) enemiesList.push(newHostileCharacter(eS.x + random(-40, 40), eS.y + random(-40, 40), "BUG"));
               return;
           } else type = "NORMAL";
       } else type = "NORMAL";
@@ -8696,14 +9097,14 @@ if (bugCount < 10) {
          if (bugCount < 15) {
     for (let i = 0; i < 3; i++) {
         if (baseEnemyCount < TARGET_ENEMY_COUNT) {
-            enemiesList.push(new Character(eS.x + random(-40, 40), eS.y + random(-40, 40), false, "BUG"));
+            enemiesList.push(newHostileCharacter(eS.x + random(-40, 40), eS.y + random(-40, 40), "BUG"));
         }
     }
     return;
 }if (bugCount < 15) {
     for (let i = 0; i < 3; i++) {
         if (baseEnemyCount < TARGET_ENEMY_COUNT) {
-            enemiesList.push(new Character(eS.x + random(-40, 40), eS.y + random(-40, 40), false, "BUG"));
+            enemiesList.push(newHostileCharacter(eS.x + random(-40, 40), eS.y + random(-40, 40), "BUG"));
         }
     }
     return;
@@ -8744,14 +9145,14 @@ if (bugCount < 10) {
       !OVERWORLD_SET[currentLevel].has(type)) {
       type = overworldPick(currentLevel, random());
       if (type === "BANDIT") {
-          const b = new Character(eS.x, eS.y, false, "BANDIT");
+          const b = newHostileCharacter(eS.x, eS.y, "BANDIT");
           if (random() > 0.35) b.mountUp();
           enemiesList.push(b);
           return;
       }
   }
 
-  enemiesList.push(new Character(eS.x, eS.y, false, type));
+  enemiesList.push(newHostileCharacter(eS.x, eS.y, type));
 }
 
 // ---------------------------------------------------------------------------
@@ -8819,6 +9220,8 @@ function sectorPopType(level, r) {
 
 function seedSectorPopulation(level, count) {
   if (!player) return 0;
+  const ledger = sectorLedger(level);
+  if (ledger.popSeeded > 0) count = Math.min(count, Math.max(0, ledger.popSeeded - ledger.popKilled));
 
   // The blocks they live around. Anything that is a mass with a footprint big
   // enough to stand beside -- not a lot, not a kerbside fitting, and not one of
@@ -8915,7 +9318,7 @@ function spawnAmbushReinforcement() {
     if (currentLevel === 4) {
         let sX = random() > 0.5 ? player.x - 1200 : player.x + 1200;
         let sY = player.y + random(-800, 800);
-        let e = new Character(sX, sY, false, "NM0_GREY_FATIGUE");
+        let e = newHostileCharacter(sX, sY, "NM0_GREY_FATIGUE");
         e.state = "CHASE"; e.loseSightTimer = 999; e.isAmbush = true;
         enemiesList.push(e);
         return;
@@ -8952,7 +9355,7 @@ function spawnAmbushReinforcement() {
     if (r > 0.9) { type = "AERIAL"; sY = aerY; }
     else if (r > 0.8) { type = "ARMORED"; }
     
-        let e = new Character(sX + random(-jitter, jitter), sY, false, type);
+        let e = newHostileCharacter(sX + random(-jitter, jitter), sY, type);
     e.state = "CHASE";
     e.loseSightTimer = 999;
     e.isAmbush = true; 
@@ -8965,6 +9368,8 @@ function spawnAmbushReinforcement() {
 
 function triggerExplosion(ex, ey, rad, isMolotov = false, sourceIsPlayer = true) {
   sfx.explosion(ex, ey); 
+  if (typeof notifyForestWildlifeExplosion === 'function')
+      notifyForestWildlifeExplosion(ex,ey,rad,350,sourceIsPlayer?player:null,++_huntShotSequence);
   screenShake = rad > 160 ? 40 : 30; 
   spawnSplatter(ex, ey, "SCORCH");
   emit(ex, ey, 40, color(255, random(100, 200), 0), "EXPLOSION"); 
@@ -8972,6 +9377,7 @@ function triggerExplosion(ex, ey, rad, isMolotov = false, sourceIsPlayer = true)
   if (isMolotov) fires.push(new FireZone(ex, ey, rad));
   
   let explodingCars = [];
+  let gateBreached = false;
   
   // --- 1. DESTRUCTIBLE BUILDINGS & CARS ---
   for (let i = buildings.length - 1; i >= 0; i--) {
@@ -8998,12 +9404,18 @@ function triggerExplosion(ex, ey, rad, isMolotov = false, sourceIsPlayer = true)
                       const fdef = outpostFortDef(currentBiome);
                       setTimeout(() => { if (started) triggerOutpostAmbush(fdef); }, 2000);
                   }
-                  else if (typeof triggerGateAmbush === 'function') setTimeout(() => { if (started) triggerGateAmbush(fY, isNorth); }, 2000);
+                  else if (typeof triggerGateAmbush === 'function') {
+                      recordSectorGateBreach(isNorth);
+                      gateBreached = true;
+                      setTimeout(() => { if (started) triggerGateAmbush(fY, isNorth); }, 2000);
+                  }
               }
           }
 
       }
 }
+
+  if (gateBreached) clearGateApproach();
 
   for (let i = parkingCars.length - 1; i >= 0; i--) {
       let c = parkingCars[i];
@@ -9062,7 +9474,7 @@ function triggerExplosion(ex, ey, rad, isMolotov = false, sourceIsPlayer = true)
               spawnSplatter(e.x, e.y, "BLOOD", bCol);
           }
 
-          processKill(e.x, e.y, false, e.eType, e.isFriendly);
+          processKill(e.x, e.y, false, e.eType, e.isFriendly, e);
           
           enemiesList.splice(i, 1); 
           if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100);
@@ -9080,6 +9492,8 @@ function triggerExplosion(ex, ey, rad, isMolotov = false, sourceIsPlayer = true)
 }
 function triggerRocketExplosion(ex, ey, sourceIsPlayer, directHitTarget = null) {
   sfx.explosion(ex, ey); 
+  if (typeof notifyForestWildlifeExplosion === 'function')
+      notifyForestWildlifeExplosion(ex,ey,140,350,sourceIsPlayer?player:null,++_huntShotSequence);
   screenShake = 30; 
   spawnSplatter(ex, ey, "SCORCH");
   emit(ex, ey, 40, color(255, 150, 0), "EXPLOSION"); 
@@ -9159,7 +9573,7 @@ function triggerRocketExplosion(ex, ey, sourceIsPlayer, directHitTarget = null) 
                   spawnSplatter(e.x, e.y, "BLOOD", bCol);
               }
 
-              processKill(e.x, e.y, false, e.eType, e.isFriendly);
+              processKill(e.x, e.y, false, e.eType, e.isFriendly, e);
               enemiesList.splice(i, 1); 
               if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100);
           } else if (e.hp > 0) {
@@ -9307,8 +9721,10 @@ function hasLOS(x1, y1, x2, y2) {
   const lvl12 = currentLevel === 1 || currentLevel === 2;
   const relB = _losRel;
   relB.length = 0;
-  for (let i = 0; i < buildings.length; i++) {
-      const b = buildings[i];
+  const sightSolids = buildings.length <= 16 ? buildings :
+      crowdSolidCandidates(_crowdLOS, buildings, minX, minY, maxX, maxY, _crowdLOSCandidates, false);
+  for (let i = 0; i < sightSolids.length; i++) {
+      const b = sightSolids[i];
       // Written as the negation of the original conjunction rather than as
       // four de Morgan'd compares: a record with no w or h gives NaN, and NaN
       // fails every comparison, so only this form keeps such a record excluded
@@ -9867,16 +10283,19 @@ let bloodSurfaces = 0;
 // the biome you have not been back to.
 let bloodBanks = {};
 let bloodBankId = null;
+let bloodPools = [];
+const BLOOD_POOL_FRAMES = 90;
 
 function useBloodBank(id) {
   const key = String(id);
   if (bloodBankId === key) return;
-  if (bloodBankId !== null) bloodBanks[bloodBankId] = { chunks: bloodChunks, use: bloodChunkUse };
+  if (bloodBankId !== null) bloodBanks[bloodBankId] = { chunks: bloodChunks, use: bloodChunkUse, pools: bloodPools };
   bloodBankId = key;
   let bank = bloodBanks[key];
-  if (!bank) { bank = { chunks: {}, use: {} }; bloodBanks[key] = bank; }
+  if (!bank) { bank = { chunks: {}, use: {}, pools: [] }; bloodBanks[key] = bank; }
   bloodChunks = bank.chunks;
   bloodChunkUse = bank.use;
+  bloodPools = bank.pools;
 }
 
 // Everything, everywhere. Only a genuine restart wants this.
@@ -9887,6 +10306,7 @@ function wipeAllBloodBanks() {
   }
   bloodBanks = {}; bloodBankId = null;
   bloodChunks = {}; bloodChunkUse = {};
+  bloodPools = [];
   bloodBytes = 0; bloodSurfaces = 0;
   for (const pg of bloodSurfacePool) pg.remove();
   bloodSurfacePool.length = 0;
@@ -9899,7 +10319,10 @@ function wipeAllBloodBanks() {
 function retireCorpsesToBloodBank() {
   for (const c of corpses) {
     if (c.isStatic) continue;
-    c.fP = 1;
+    finishFigureFall(c);
+    finishSwordParts(c);
+    if(c.fatalSpray)c.fatalSpray.left=0;
+    c.poolAge=BLOOD_POOL_FRAMES;
     c.sep = corpseSepMax(c.dT);
     if (c.rag) while (!c.rag.done) ragStep(c.rag);
     stampCorpse(c);
@@ -10038,13 +10461,7 @@ function spawnSplatter(x, y, t = "HIDDEN", col = null) {
     // 1. Define how far the blood/scorch reaches
     let maxSpread = (t === "SCORCH") ? 100 : 70; 
 
-    // 2. Find every chunk this splatter touches (usually 1, sometimes 2 or 4 if on a corner)
-    let minCX = Math.floor((x - maxSpread) / CHUNK_SIZE);
-    let maxCX = Math.floor((x + maxSpread) / CHUNK_SIZE);
-    let minCY = Math.floor((y - maxSpread) / CHUNK_SIZE);
-    let maxCY = Math.floor((y + maxSpread) / CHUNK_SIZE);
-
-    // 3. Pre-calculate the blobs so they align perfectly across the seam of multiple chunks
+    // Roll the same final pattern once; gradual deposition never rerolls it.
     let blobs = [];
     let blobCount = (t === "SCORCH") ? floor(random(12, 20)) : floor(random(8, 16));
     
@@ -10056,7 +10473,33 @@ function spawnSplatter(x, y, t = "HIDDEN", col = null) {
         }
     }
 
-    // 4. Stamp the exact same pattern onto every chunk it overlaps
+    if(t!=="SCORCH"){
+        blobs.sort((a,b)=>a.ox*a.ox+a.oy*a.oy-b.ox*b.ox-b.oy*b.oy);
+        for(let i=0;i<blobs.length;i++){
+            blobs[i].delay=Math.floor(i*(BLOOD_POOL_FRAMES-24)/Math.max(1,blobs.length-1));
+            blobs[i].stage=0;
+        }
+        bloodPools.push({x,y,col:col||color(90,0,0,220),blobs,age:0});
+    }else stampGroundBlobs(x,y,blobs,color(15,15,15,220),maxSpread);
+}
+
+function updateBloodPools() {
+    if(!doTick)return;
+    for(let i=bloodPools.length-1;i>=0;i--){
+        const pool=bloodPools[i],brushes=[];pool.age++;
+        for(const b of pool.blobs){
+            const stage=Math.max(0,Math.min(4,Math.ceil((pool.age-b.delay)/6)));
+            if(stage>b.stage){b.stage=stage;brushes.push({ox:b.ox,oy:b.oy,sz:b.sz*stage/4});}
+        }
+        if(brushes.length)stampGroundBlobs(pool.x,pool.y,brushes,pool.col,70);
+        if(pool.age>=BLOOD_POOL_FRAMES)bloodPools.splice(i,1);
+    }
+}
+
+function stampGroundBlobs(x,y,blobs,col,maxSpread) {
+    const minCX=Math.floor((x-maxSpread)/CHUNK_SIZE),maxCX=Math.floor((x+maxSpread)/CHUNK_SIZE);
+    const minCY=Math.floor((y-maxSpread)/CHUNK_SIZE),maxCY=Math.floor((y+maxSpread)/CHUNK_SIZE);
+    // The same stage crosses each chunk seam, always on the floor layer.
     for (let cx = minCX; cx <= maxCX; cx++) {
         for (let cy = minCY; cy <= maxCY; cy++) {
             let key = bloodKey(cx, cy, false);      // the floor
@@ -10067,8 +10510,7 @@ function spawnSplatter(x, y, t = "HIDDEN", col = null) {
                                              relX + maxSpread, relY + maxSpread);
             const pg = e.pg;
 
-            if (t === "SCORCH") pg.fill(15, 15, 15, 220);
-            else pg.fill(col || color(90, 0, 0, 220));
+            pg.fill(col);
 
             for (let b of blobs) {
                 pg.ellipse(relX - e.bx + b.ox, relY - e.by + b.oy, b.sz);
@@ -10198,7 +10640,7 @@ class PlayerGrenade {
                                 spawnSplatter(e.x, e.y, "BLOOD", color(90, 0, 0));
                                 corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 11, a, e.decals, e.currentWeapon, a, e.eType, e.bodyW, e.bodyH, e));
                             }
-                            processKill(e.x, e.y, false, e.eType, e.isFriendly);
+                            processKill(e.x, e.y, false, e.eType, e.isFriendly, e);
                             enemiesList.splice(i, 1); 
                             if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100);
                         } else {
@@ -10322,21 +10764,67 @@ function spawnOrb(x, y, isPurple = false, isPink = false) {
     return o.init(x, y, isPurple, isPink);
 }
 
-function spawnBullet(x, y, a, iP, tH, w, shooter = null) {
-    civilianNoise(x,y);
-    if (iP) totalShotsFired++; // Tracks player shots
-    
-    for (let i = 0; i < bullets.length; i++) {
-        if (!bullets[i].active) {
-            let b = bullets[i].init(x, y, a, iP, tH, w);
-            b.shooter = shooter;
-            return b;
+// Keep reusable slots in ascending index order. This preserves the original
+// first-inactive selection (and therefore projectile draw/hit order) without
+// scanning every live round for each shot in a crowded firefight.
+const _bulletFreeSlots = [];
+let _bulletSlotSource = null, _bulletSlotCount = -1;
+function queueBulletSlot(b) {
+    if (b._slotSource!==bullets || bullets[b._slotIndex]!==b || b._slotQueued) return;
+    b._slotQueued=true;
+    let i=_bulletFreeSlots.length;
+    _bulletFreeSlots.push(b._slotIndex);
+    while(i>0) {
+        const p=(i-1)>>1;
+        if(_bulletFreeSlots[p]<=b._slotIndex)break;
+        _bulletFreeSlots[i]=_bulletFreeSlots[p];i=p;
+    }
+    _bulletFreeSlots[i]=b._slotIndex;
+}
+function takeBulletSlot() {
+    if(_bulletSlotSource!==bullets || _bulletSlotCount!==bullets.length) {
+        _bulletFreeSlots.length=0;_bulletSlotSource=bullets;_bulletSlotCount=bullets.length;
+        for(let i=0;i<bullets.length;i++) {
+            const b=bullets[i];b._slotSource=bullets;b._slotIndex=i;b._slotQueued=false;
+            if(!b.active)queueBulletSlot(b);
         }
     }
+    while(_bulletFreeSlots.length) {
+        const index=_bulletFreeSlots[0],last=_bulletFreeSlots.pop();
+        if(_bulletFreeSlots.length) {
+            let i=0;
+            while(i*2+1<_bulletFreeSlots.length) {
+                let child=i*2+1;
+                if(child+1<_bulletFreeSlots.length&&_bulletFreeSlots[child+1]<_bulletFreeSlots[child])child++;
+                if(_bulletFreeSlots[child]>=last)break;
+                _bulletFreeSlots[i]=_bulletFreeSlots[child];i=child;
+            }
+            _bulletFreeSlots[i]=last;
+        }
+        const b=bullets[index];
+        if(!b)continue;
+        b._slotQueued=false;
+        if(!b.active)return b;
+    }
+    return null;
+}
+let _huntShotSequence = 0;
+function spawnBullet(x, y, a, iP, tH, w, shooter = null, shotId = null) {
+    if (w !== WEAPONS.BOW) civilianNoise(x,y);
+    if (shotId === null && w !== WEAPONS.BOW && typeof notifyForestWildlifeThreat === 'function')
+        notifyForestWildlifeThreat(x,y,w === WEAPONS.TASER ? 100 : 560);
+    if (iP) totalShotsFired++; // Tracks player shots
+
+    const huntShotId = shotId === null ? ++_huntShotSequence : shotId;
+    const reused=takeBulletSlot();
+    if(reused){reused.init(x,y,a,iP,tH,w);reused.shooter=shooter;reused.shotId=huntShotId;return reused;}
     let b = new Bullet();
     bullets.push(b);
+    b._slotSource=bullets;b._slotIndex=bullets.length-1;b._slotQueued=false;
+    _bulletSlotCount=bullets.length;
     b.init(x, y, a, iP, tH, w);
     b.shooter = shooter;
+    b.shotId = huntShotId;
     return b;
 }
 
@@ -10458,8 +10946,9 @@ function updateOrbs() {
 }
 
 class Shockwave {
-    constructor(x, y, a) { 
+    constructor(x, y, a, sword = false) {
         this.x = x; this.y = y; this.a = a; 
+        this.sword = sword;
         this.life = 10; 
         this.vx = cos(a) * 15; this.vy = sin(a) * 15; 
         this.hitList = []; 
@@ -10491,6 +10980,9 @@ class Shockwave {
                     e.dead = true; 
                     if (e.eType === "SAUCER" || e.eType === "SAUCER_RED") { 
                         triggerExplosion(e.x, e.y, 160); 
+                    } else if (this.sword && ragHumanoid(e.eType, e.bodyW)) {
+                        emit(e.x, e.y, 60, bCol, "GORE"); spawnSplatter(e.x, e.y, "BLOOD", bCol);
+                        corpses.push(swordKillCorpse(e, this.a));
                     } else if (e.eType === "AERIAL" || e.eType === "AERIAL_PISTOL") {
                         emit(e.x, e.y, 40, color(255, 100, 0), "EXPLOSION"); sfx.explosion(e.x, e.y);
                         spawnSplatter(e.x, e.y, "BLOOD", color(90, 0, 0));
@@ -10505,7 +10997,7 @@ class Shockwave {
                         emit(e.x, e.y, 60, bCol, "GORE"); spawnSplatter(e.x, e.y, "BLOOD", bCol); 
                         corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 14, this.a, e.decals, e.currentWeapon, this.a, e.eType, e.bodyW, e.bodyH, e)); 
                     } 
-                    processKill(e.x, e.y, false, e.eType, e.isFriendly); 
+                    processKill(e.x, e.y, false, e.eType, e.isFriendly, e);
                 }
             }
         }
@@ -10555,7 +11047,7 @@ function manageChunkMemory() {
 
 
 
-const CORPSE_GIB_DEATHS = [2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15];
+const CORPSE_GIB_DEATHS = [2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
 
 // --- ROBOT DEATH ---------------------------------------------------------
 // A machine does not bleed, does not gib and does not leave meat. Every death
@@ -10630,11 +11122,11 @@ const CORPSE_STACK_CELL  = 72;
 // not), a per-limb rest pose drawn once at death, and each limb's own lag
 // behind the torso.
 const RAG_FRAMES = 34;
-// Everything here either is not a person or is not shaped like one: the beasts,
-// the vehicles, the machine, and ARMORED's 105-wide slab of a body.
+// Humanoids use the shared rig. ARMORED is the large red-orb robot/human
+// hybrid; its oval body keeps the original deaths, unlike ARMORED_STANDARD.
 const RAG_NONHUMAN = ["BUG", "SNAIL", "SNAIL_HYBRID", "COW", "HORSE", "ALIEN_GATOR",
                       "SAUCER", "SAUCER_RED", "ROBOT", "ARMORED"];
-function ragHumanoid(eT, bW) { return RAG_NONHUMAN.indexOf(eT) === -1 && bW !== 105; }
+function ragHumanoid(eT, bW) { return RAG_NONHUMAN.indexOf(eT) === -1; }
 
 // Rest poses come out of a small set of ARCHETYPES rather than out of four
 // independent uniforms, because four uniforms give you variety that all looks
@@ -10731,14 +11223,15 @@ function ragStep(rg) {
     rg.t++;
     rg.spin *= 0.88;
     rg.ang += rg.spin;
+    if(rg.turnLimit)rg.ang=Math.max(-rg.turnLimit,Math.min(rg.turnLimit,rg.ang));
     for (let i = 0; i < 4; i++) {
         const L = rg.limbs[i];
         // Damped spring to the rest pose, with the torso's spin dragging the
         // limb behind it -- which is the whole reason an arm trails a body that
         // is still turning instead of arriving already folded.
-        L.va += (L.rest - L.a) * 0.10 - L.va * 0.26 + rg.spin * L.lag * 0.5;
+        L.va += (L.rest - L.a) * (rg.spring || 0.10) - L.va * 0.26 + rg.spin * L.lag * 0.5;
         L.a += L.va;
-        L.vb += (L.restB - L.b) * 0.13 - L.vb * 0.30 + rg.spin * L.lag * 0.7;
+        L.vb += (L.restB - L.b) * (rg.spring || 0.13) - L.vb * 0.30 + rg.spin * L.lag * 0.7;
         L.b += L.vb;
         // The limits, applied to the state rather than only to the target: a
         // hard enough shove would otherwise carry a limb straight through them
@@ -10746,7 +11239,7 @@ function ragStep(rg) {
         if (L.a < L.lo) { L.a = L.lo; L.va = 0; } else if (L.a > L.hi) { L.a = L.hi; L.va = 0; }
         if (L.b < 0) { L.b = 0; L.vb = 0; } else if (L.b > L.bMax) { L.b = L.bMax; L.vb = 0; }
     }
-    if (rg.t >= RAG_FRAMES) rg.done = true;
+    if (rg.t >= (rg.frames || RAG_FRAMES)) rg.done = true;
 }
 
 // One two-bone limb: upper segment out from the joint, lower from the elbow or
@@ -10759,10 +11252,12 @@ function ragStep(rg) {
 // of the difference (0.145 of standing height against 0.108).
 function ragLimb(r, ox, oy, ang, bend, l1, l2, w1, w2, col, tip, tipSz) {
     r.push(); r.translate(ox, oy); r.rotate(ang);
-    r.fill(col); r.ellipse(l1 * 0.5, 0, l1 + w1, w1);
+    // The same garment passes through the elbow/knee. Shade a single contour
+    // rather than outlining two overlapping ellipses across that joint.
+    figureCelLimb(r, 0, 0, l1, 0, l1 + Math.cos(bend) * l2,
+      Math.sin(bend) * l2, w1, (w1 + w2) * .5, w2, col);
     r.translate(l1, 0); r.rotate(bend);
-    r.ellipse(l2 * 0.5, 0, l2 + w2, w2);
-    if (tip) { r.fill(tip); r.ellipse(l2 + tipSz * 0.30, 0, tipSz, tipSz * 0.86); }
+    if (tip) figureCelOval(r, l2 + tipSz * 0.30, 0, tipSz, tipSz * 0.86, tip);
     r.pop();
 }
 
@@ -10811,13 +11306,8 @@ function ragKnee(L) { return Math.max(0, Math.min(L.b, L.a + (L.room || 0))); }
 // differently shaped one.
 const RAG_SCALE = 0.80;
 
-// --- what a headshot leaves on the body -----------------------------------
-//
-// Every death that takes the head off already throws a pool onto the GROUND
-// around it. None of it landed on the person it came out of, so a body with
-// no head above the collar had a clean shirt. This is the part that falls back
-// on them: a fan over the collar and chest, heaviest at the neck and thinning
-// down the ribs, leaning the way the round left.
+// --- what a headshot leaves on the clothes --------------------------------
+// The neck-to-chest stain is separate from the airborne head-wound spray.
 //
 // Drawn once in the constructor and then never touched, like the rest pose --
 // a corpse must not develop new blood while you stand looking at it.
@@ -10842,6 +11332,17 @@ function bloodSpray(rig, lean) {
         out.push({ x: collar - t * rig.TL * 0.82,
                    y: random(-rig.TW * 0.60, rig.TW * 0.60) + lean * rig.TW * 0.3,
                    r: 0.9 + random(1.7), a: 120 + random(90) });
+    }
+    return out;
+}
+function headBloodSpatter(stain,rig,wound) {
+    // Keep the recent head marks too, derived without additional random draws.
+    const out=stain.map(s=>({...s})),collar=rig.shX+rig.TL*.16;
+    for(const s of out){
+        s.x=(wound?wound.x:0)+(s.x-collar)*.22;
+        s.y=(wound?wound.y:0)+s.y*.22;s.r*=.42;
+        const d=Math.hypot(s.x,s.y),edge=5.5-s.r;
+        if(d>edge){s.x*=edge/d;s.y*=edge/d;}
     }
     return out;
 }
@@ -10916,10 +11417,12 @@ function headwearOf(id) {
   if (!id) return null;
   const eT = id.eType;
   if(eT==="NM0_CITY_GUARD")return "NM0_HELMET";
-  if (id.isPlayer && typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked) return 'VISOR';
+  const armor=id.explosiveArmor!==undefined?id.explosiveArmor:explosiveArmorUnlocked;
+  const ninja=id.ninjaSuit!==undefined?id.ninjaSuit:ninjaSuitUnlocked;
+  if (id.isPlayer && armor) return 'VISOR';
   if (eT === "MILITARY_NEUTRAL" || eT === "NM0_GREY_FATIGUE" ||
-      (id.isMilitary && typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked)) return 'HELMET';
-  if (id.isPlayer && typeof ninjaSuitUnlocked !== 'undefined' && ninjaSuitUnlocked) return 'HOOD';
+      (id.isMilitary && armor)) return 'HELMET';
+  if (id.isPlayer && ninja) return 'HOOD';
   if (eT === "BANDIT") return 'BANDIT_HAT';
   if (eT === "COWBOY" || eT === "COWGIRL") return 'STETSON';
   if (eT === "LOCAL_COP") return 'COP_HAT';
@@ -10933,79 +11436,99 @@ function headwearFalls(kind) { return !!kind && kind !== 'HOOD'; }
 
 // Drawn at the origin: the caller has already translated to the head, or to
 // wherever the thing has come to rest.
+const _headCelColor={
+  helmetRim:[37,48,48],cityHelmet:[108,127,118],military:[40,80,40],
+  greyHelmet:[170,175,180],tanHelmet:[190,170,130],hood:[15,15,19],hoodLight:[240,240,240],
+  copRim:[34,32,40],capBrim:[64,56,44],bonnetFront:[214,204,184],
+  strawBrim:[210,180,70],strawCrown:[190,160,50],skin:[235,180,140],banditSkin:[214,168,132]
+};
+// Half-shells share the round cel mass but keep their original arc silhouette.
+// Clipping the colour planes rather than outlining a second inset arc keeps
+// the cap/skin join smooth. No new projection or anatomy is introduced here.
+function figureCelArc(g,x,y,w,h,c,a0,a1,k=.7) {
+  const dc=g.drawingContext;
+  g.push();g.noStroke();g.fill(c);g.arc(x,y,w,h,a0,a1,CHORD);
+  if(dc&&dc.ellipse&&dc.clip) {
+    dc.save();dc.beginPath();dc.ellipse(x,y,w*.5,h*.5,0,a0,a1);dc.closePath();dc.clip();
+    figureCelOval(g,x,y,w,h,c,k);
+    dc.restore();
+  }
+  g.pop();
+}
 function drawHeadwear(g, id, kind) {
   if (!kind) return;
   if(kind==='NM0_HELMET'){
-    g.fill(37,48,48);g.ellipse(-1,0,15,16);g.fill(108,127,118);g.ellipse(-2,-1,12,12);
-    g.fill(50,80,84);g.rect(2,-5,4,10,2);g.fill(145,206,206);g.rect(3,-4,1,6);g.fill(224,188,69);g.rect(-6,-1,3,2);return;
+    figureCelOval(g,-1,0,15,16,_headCelColor.helmetRim,.8);
+    figureCelOval(g,-2,-1,12,12,_headCelColor.cityHelmet,.65);
+    g.noStroke();g.fill(50,80,84);g.rect(2,-5,4,10,2);
+    g.fill(145,206,206);g.rect(3,-4,1,6);g.fill(224,188,69);g.rect(-6,-1,3,2);return;
   }
   if (kind === 'VISOR') {
-    g.push(); g.rotate(-HALF_PI); g.fill(40, 80, 40); g.arc(0, -1, 14, 14, PI, TWO_PI); g.pop();
+    g.push();g.rotate(-HALF_PI);figureCelArc(g,0,-1,14,14,_headCelColor.military,PI,TWO_PI,.7);g.pop();
     g.push(); g.rotate(radians(33)); g.fill(80, 50, 20); g.rect(4, -1, 8, 3); g.fill(255, 100, 0); g.ellipse(12, 0.5, 2, 2); g.pop();
     return;
   }
   if (kind === 'HELMET') {
     g.push(); g.rotate(-HALF_PI);
-    if (id.isMilitary) g.fill(40, 80, 40);                       // player's green
-    else if (id.eType === "NM0_GREY_FATIGUE") g.fill(170, 175, 180);
-    else g.fill(190, 170, 130);                                  // neutral tan
-    g.stroke(0); g.strokeWeight(1.5);
-    g.arc(0, -1, 14, 14, PI, TWO_PI, CHORD);
+    const c=id.isMilitary?_headCelColor.military:id.eType==="NM0_GREY_FATIGUE"?_headCelColor.greyHelmet:_headCelColor.tanHelmet;
+    figureCelArc(g,0,-1,14,14,c,PI,TWO_PI,.8);
+    // The small brow lip belongs to the shell, rather than a ring on its crown.
+    g.stroke(c[0]*.45,c[1]*.45,c[2]*.48);g.strokeWeight(.7);g.noFill();
+    g.arc(0,-1,13.4,13.4,PI+.12,TWO_PI-.12,OPEN);
     g.pop(); g.noStroke();
     return;
   }
   if (kind === 'HOOD') {
-    g.fill(15); g.ellipse(0, 0, 12, 12); g.fill(240); g.arc(0, 0, 12, 12, -HALF_PI, HALF_PI);
-    g.fill(235, 180, 140); g.rect(1, -3, 3, 6, 1);
+    figureCelOval(g,0,0,12,12,_headCelColor.hood,.65);
+    figureCelArc(g,0,0,12,12,_headCelColor.hoodLight,-HALF_PI,HALF_PI,.6);
+    g.noStroke();g.fill(id.skinCol||color(235,180,140));g.rect(1,-3,3,6,1);
     g.fill(0); g.ellipse(2, -.5, 1.5, 1.5); g.ellipse(2, 1.5, 1.5, 1.5);
     return;
   }
   if (kind === 'BANDIT_HAT') {
     const bh = id.hatCol || color(34, 30, 30);
-    g.fill(red(bh) * 0.7, green(bh) * 0.7, blue(bh) * 0.7); g.ellipse(0, 0, 27, 25);
-    g.fill(bh); g.ellipse(0, 0, 21, 19);
-    g.fill(red(bh) * 1.5 + 10, green(bh) * 1.5 + 10, blue(bh) * 1.5 + 10);
-    g.ellipse(-1, 0, 14, 12);
-    g.fill(96, 26, 24); g.rect(-7, -1.4, 14, 2.8);
+    // Brim and raised crown are separate masses; each has one broad light plane.
+    figureCelOval(g,0,0,27,25,[red(bh)*.7,green(bh)*.7,blue(bh)*.7],.72);
+    figureCelOval(g,-.5,0,21,19,bh,.72);
+    g.noStroke();g.fill(96,26,24);g.rect(-7,-1.4,14,2.8,1);
+    g.stroke(red(bh)*.48,green(bh)*.48,blue(bh)*.5);g.strokeWeight(.65);
+    g.line(-5,-2.8,4,-2.8);g.noStroke();
     return;
   }
   if (kind === 'STETSON') {
     const hc = id.hatCol || color(96, 72, 46);
-    // Wide oval brim, then the crown, then a crease down it and a hatband
-    // where the two meet. From above that silhouette is the whole hat.
     const bw = id.eType === "COWGIRL" ? 25 : 28;
-    g.fill(red(hc) * 0.82, green(hc) * 0.82, blue(hc) * 0.82);
-    g.ellipse(0, 0, bw, bw * 0.93);
-    g.fill(hc); g.ellipse(0, 0, bw - 5, bw * 0.93 - 5);
-    g.fill(red(hc) * 1.18 + 12, green(hc) * 1.18 + 12, blue(hc) * 1.18 + 12);
-    g.ellipse(-1, 0, bw - 13, bw * 0.93 - 12);
-    g.fill(42, 30, 20); g.rect(-((bw - 13) / 2), -1.4, bw - 13, 2.8);
-    g.stroke(red(hc) * 0.6, green(hc) * 0.6, blue(hc) * 0.6); g.strokeWeight(1.2);
-    g.line(-((bw - 15) / 2), 0, (bw - 15) / 2, 0);
+    figureCelOval(g,0,0,bw,bw*.93,[red(hc)*.82,green(hc)*.82,blue(hc)*.82],.75);
+    figureCelOval(g,-.5,0,bw-5,bw*.93-5,hc,.72);
+    // A curved crease and narrow band read as a crown without concentric discs.
+    g.noStroke();g.fill(42,30,20);g.rect(-((bw-13)/2),-1.4,bw-13,2.8,1);
+    g.stroke(red(hc)*.6,green(hc)*.6,blue(hc)*.6);g.strokeWeight(.8);g.noFill();
+    g.arc(-1,0,bw-13,bw*.93-12,PI+.35,TWO_PI-.35,OPEN);
     g.noStroke();
     return;
   }
   if (kind === 'COP_HAT') {
-    g.fill(34, 32, 40); g.ellipse(0, 0, 26, 24);
-    g.fill(id.hatCol || color(46, 44, 52)); g.ellipse(0, 0, 17, 16);
-    g.fill(210, 188, 104); g.rect(-4, -1.4, 8, 2.8);
+    figureCelOval(g,0,0,26,24,_headCelColor.copRim,.75);
+    figureCelOval(g,0,0,17,16,id.hatCol||color(46,44,52),.68);
+    g.noStroke();g.fill(210,188,104);g.rect(-4,-1.4,8,2.8,1);
+    g.fill(244,221,144);g.rect(-3.3,-1.4,6.6,.6);
     return;
   }
   if (kind === 'FLAT_CAP') {
-    g.fill(id.hatCol || color(84, 74, 58)); g.ellipse(0, 0, 15, 14);
-    g.fill(64, 56, 44); g.arc(0, 0, 19, 14, -0.9, 0.9, CHORD);
+    figureCelOval(g,0,0,15,14,id.hatCol||color(84,74,58),.65);
+    figureCelArc(g,0,0,19,14,_headCelColor.capBrim,-.9,.9,.6);
     return;
   }
   if (kind === 'BONNET') {
-    g.fill(id.bonnetCol || color(228, 220, 204));
-    g.arc(-1, 0, 21, 19, HALF_PI, PI + HALF_PI, CHORD);
-    g.fill(214, 204, 184); g.arc(2, 0, 13, 17, -HALF_PI, HALF_PI, CHORD);
-    g.fill(178, 152, 168); g.rect(-2, 7.5, 7, 2, 1);
+    figureCelArc(g,-1,0,21,19,id.bonnetCol||color(228,220,204),HALF_PI,PI+HALF_PI,.7);
+    figureCelArc(g,2,0,13,17,_headCelColor.bonnetFront,-HALF_PI,HALF_PI,.6);
+    g.noStroke();g.fill(178,152,168);g.rect(-2,7.5,7,2,1);
     return;
   }
   if (kind === 'STRAW') {
-    g.fill(210, 180, 70); g.ellipse(0, 0, 24, 24);
-    g.fill(190, 160, 50); g.ellipse(0, 0, 14, 14);
+    figureCelOval(g,0,0,24,24,_headCelColor.strawBrim,.75);
+    figureCelOval(g,0,0,14,14,_headCelColor.strawCrown,.65);
+    g.stroke(145,113,36);g.strokeWeight(.6);g.line(-4,-1,4,-1);g.noStroke();
     return;
   }
 }
@@ -11013,9 +11536,8 @@ function drawHeadwear(g, id, kind) {
 // Skin, hair and whatever is worn over them. `sway` is the braid's swing, in
 // degrees -- the living figure passes its walk cycle, a corpse passes nothing.
 function drawFigureHead(g, id, hX, hY, wear = true, sway = 0) {
-  const eT = id.eType;
-  g.fill(id.skinCol||(eT==="BANDIT"?color(214,168,132):color(235,180,140)));
-  g.ellipse(hX, hY, 11, 11);
+  const eT = id.eType,skin=id.skinCol||(eT==="BANDIT"?_headCelColor.banditSkin:_headCelColor.skin);
+  figureCelOval(g,hX,hY,11,11,skin,.65);
   drawFigureHair(g, id, hX, hY, sway);
   if (wear) { const k = headwearOf(id); if (k) { g.push(); g.translate(hX, hY); drawHeadwear(g, id, k); g.pop(); } }
 }
@@ -11025,56 +11547,526 @@ function drawFigureHead(g, id, hX, hY, wear = true, sway = 0) {
 function drawFigureHair(g, id, hX, hY, sway = 0) {
   if (!id) return;
   const eT = id.eType;
+  if(eT==='NM0_ROOKIE')return; // Blue male pistol regulars are bald.
   if(id.hairStyle!==undefined){
-    const c=id.hairCol||color(32,27,26),style=id.hairStyle;g.fill(c);
-    if(style===2){for(let i=0;i<7;i++){const a=HALF_PI+i*.48;g.ellipse(hX+Math.cos(a)*4,hY+Math.sin(a)*4,5,5);}}
-    else if(style===6){g.arc(hX,hY,12,12,HALF_PI,PI+HALF_PI);g.fill(id.skinCol||color(239,199,168));g.ellipse(hX-1,hY,6,6);}
-    else{g.arc(hX-1,hY,13,13,HALF_PI-.2,PI+HALF_PI+.2);}
-    if(style===1){g.stroke(red(c)*1.35+20,green(c)*1.35+20,blue(c)*1.35+20);g.strokeWeight(.8);g.line(hX-3,hY-4,hX+1,hY-2);g.noStroke();}
-    if(style===3){g.push();g.translate(hX-5,hY);g.rotate(radians(sway*.7));g.fill(c);g.ellipse(-6,0,13,6);g.pop();}
-    if(style===4){g.fill(c);g.ellipse(hX-7,hY,8,8);}
-    if(style===5){g.fill(c);g.ellipse(hX-4,hY-5,8,6);g.ellipse(hX-4,hY+5,8,6);}
+    const c=id.hairCol||color(32,27,26),style=id.hairStyle;
+    if(style===2){for(let i=0;i<7;i++){const a=HALF_PI+i*.48;figureCelOval(g,hX+Math.cos(a)*4,hY+Math.sin(a)*4,5,5,c,.32);}}
+    else if(style===6){
+      figureCelArc(g,hX,hY,12,12,c,HALF_PI,PI+HALF_PI,.55);
+      // A receding crown exposes the same skin surface, not a second outlined
+      // button placed on top of the hair.
+      const skin=id.skinCol||color(239,199,168),dc=g.drawingContext;
+      g.push();g.noStroke();g.fill(skin);g.ellipse(hX-1,hY,6,6);
+      if(dc&&dc.ellipse&&dc.clip){dc.save();dc.beginPath();dc.ellipse(hX-1,hY,3,3,0,0,TWO_PI);dc.clip();figureCelOval(g,hX,hY,11,11,skin,.65);dc.restore();}
+      g.pop();
+    }
+    else{figureCelArc(g,hX-1,hY,13,13,c,HALF_PI-.2,PI+HALF_PI+.2,.65);}
+    if(style===1){g.stroke(red(c)*1.35+20,green(c)*1.35+20,blue(c)*1.35+20);g.strokeWeight(.7);g.line(hX-3,hY-4,hX+1,hY-2);g.noStroke();}
+    if(style===3){g.push();g.translate(hX-5,hY);g.rotate(radians(sway*.7));figureCelOval(g,-6,0,13,6,c,.48);g.pop();}
+    if(style===4){figureCelOval(g,hX-7,hY,8,8,c,.48);}
+    if(style===5){figureCelOval(g,hX-4,hY-5,8,6,c,.45);figureCelOval(g,hX-4,hY+5,8,6,c,.45);}
     return;
   }
-  if (eT === "FEMALE_PISTOL") {
-    g.fill(15); g.arc(hX, hY, 12, 12, HALF_PI, PI + HALF_PI);
-    g.push(); g.translate(hX - 5, hY); g.rotate(radians(sway)); g.ellipse(-6, 0, 12, 6); g.pop();
-  } else if (eT === "NM0_ROOKIE_F") {
-    g.fill(64, 46, 32); g.arc(hX, hY, 12, 12, HALF_PI, PI + HALF_PI);
-    g.push(); g.translate(hX - 5, hY); g.rotate(radians(sway)); g.ellipse(-6, 0, 12, 6); g.pop();
-    g.fill(id.shirtCol || color(60, 90, 170)); g.ellipse(hX - 6.5, hY, 5, 7);
-  } else if (eT === "NM0_ROOKIE") {
-    g.fill(58, 44, 32); g.arc(hX, hY, 11.5, 11.5, PI + 0.5, TWO_PI - 0.5);
-    g.fill(id.shirtCol || color(60, 90, 170)); g.ellipse(hX - 6.5, hY, 5, 7);
+  if (eT === "FEMALE_PISTOL" || eT === "NM0_ROOKIE_F" || eT === "FARMER_FEMALE") {
+    const c=eT==="FEMALE_PISTOL"?color(15):eT==="NM0_ROOKIE_F"?color(64,46,32):id.hairCol||color(150,80,40);
+    figureCelArc(g,hX,hY,12,12,c,HALF_PI,PI+HALF_PI,.6);
+    g.push();g.translate(hX-5,hY);g.rotate(radians(sway));figureCelOval(g,-6,0,12,6,c,.48);g.pop();
+    if(eT==="NM0_ROOKIE_F"){g.fill(id.shirtCol||color(60,90,170));g.ellipse(hX-6.5,hY,5,7);}
   } else if (eT === "COWGIRL") {
-    g.push(); g.translate(hX - 5, hY); g.rotate(radians(sway));
-    g.fill(id.hairCol || color(122, 74, 38)); g.ellipse(-7, 0, 13, 6); g.pop();
+    g.push();g.translate(hX-5,hY);g.rotate(radians(sway));figureCelOval(g,-7,0,13,6,id.hairCol||color(122,74,38),.48);g.pop();
   } else if (eT === "VILLAGER_FEMALE") {
-    g.fill(id.hairCol || color(122, 74, 38)); g.arc(hX, hY, 12, 12, HALF_PI, PI + HALF_PI);
-  } else if (eT === "FARMER_FEMALE") {
-    g.fill(id.hairCol || color(150, 80, 40)); g.arc(hX, hY, 12, 12, HALF_PI, PI + HALF_PI);
-    g.push(); g.translate(hX - 5, hY); g.rotate(radians(sway)); g.ellipse(-6, 0, 12, 6); g.pop();
+    figureCelArc(g,hX,hY,12,12,id.hairCol||color(122,74,38),HALF_PI,PI+HALF_PI,.6);
   } else if (eT === "BANDIT") {
-    // The bandana is over the face, not on top of the head, so it is part of
-    // him rather than part of the hat -- it does not come off with it.
-    g.push(); g.translate(hX, hY);
-    g.fill(id.kerchiefCol || color(124, 40, 36)); g.arc(0, 0, 12, 12, -HALF_PI, HALF_PI);
-    g.pop();
+    // The kerchief stays on the face when the hat falls off.
+    figureCelArc(g,hX,hY,12,12,id.kerchiefCol||color(124,40,36),-HALF_PI,HALF_PI,.55);
   }
-
 }
 
 // Everything a head needs to be drawn again later, frozen at the moment of
 // death. A corpse cannot read it off the character: the character is gone.
 function figureIdentity(c) {
   if (!c) return null;
-  return { eType: c.eType, isPlayer: !!c.isPlayer, isMilitary: !!c.isMilitary,
-           hairCol:c.hairCol,hairStyle:c.hairStyle,skinCol:c.skinCol,hatCol:c.hatCol,kerchiefCol:c.kerchiefCol,
-           bonnetCol: c.bonnetCol, shirtCol: c.shirtCol };
+  return { eType: c.eType, isPlayer: !!c.isPlayer, isMilitary: !!c.isMilitary, isUnarmed: !!c.isUnarmed,
+           hairCol:c.hairCol,hairStyle:c.hairStyle,skinCol:c.skinCol||(c.eType==='SNAIL_HYBRID'?color(20,100,20):undefined),hatCol:c.hatCol,kerchiefCol:c.kerchiefCol,
+           bonnetCol:c.bonnetCol,shirtCol:c.shirtCol,pantsCol:c.pantsCol,vestCol:c.vestCol,
+           isCityCivilian:!!c.isCityCivilian,clothingStyle:c.clothingStyle,maneCol:c.maneCol,isCharred:!!c.isCharred,
+           ninjaSuit:!!(c.isPlayer&&ninjaSuitUnlocked),chemistSuit:!!(c.isPlayer&&chemistSuitUnlocked),
+           explosiveArmor:!!((c.isPlayer||c.isMilitary)&&explosiveArmorUnlocked),
+           jetpack:!!(c.isPlayer&&jetpackUnlocked) };
+}
+
+// The positive X end is the collar; positive Y is the wearer's right.
+// Vector lettering stays legible on both the main canvas and corpse stamps.
+function drawNmoInsignia(g,small=false) {
+  g.push();g.stroke(184,190,198);g.strokeWeight(.55);g.fill(30,78,178);g.ellipse(0,0,small?3.5:11.5,small?3.5:11.5);g.noStroke();
+  if(small){g.fill(184,190,198);g.rect(-.8,-.35,1.6,.7,.2);}
+  else{
+    g.rotate(HALF_PI);g.noFill();g.stroke(184,190,198);g.strokeWeight(.65);
+    g.line(-4,-1.7,-4,1.7);g.line(-4,-1.7,-1.9,1.7);g.line(-1.9,1.7,-1.9,-1.7);
+    g.line(-.9,1.7,-.9,-1.7);g.line(-.9,-1.7,.1,.3);g.line(.1,.3,1.1,-1.7);g.line(1.1,-1.7,1.1,1.7);
+    g.ellipse(3,0,2.2,3.4);
+  }g.pop();
+}
+
+function drawFallenJetpack(g,pistol=false) {
+  g.fill(43,49,55);g.rect(-8,-7,18,14,3);g.fill(113,122,129);g.rect(-6,-4,14,8,2);
+  g.fill(55,62,70);for(let x=-4;x<7;x+=2.5)g.rect(x,-3,1,6,.3);
+  g.fill(pistol?color(129,180,97):color(213,140,63));g.rect(-7,-7,14,2,1);g.rect(-7,5,14,2,1);
+}
+
+// Outfit details ride the existing torso transform, underneath wounds and
+// sleeves. Normalized dimensions also fit stunned bodies and separated torsos.
+function drawFallenAttire(g,id,TL,TW,back,progress=1,half=0) {
+  if(!id||id.eType==='ARMORED')return; // The red-orb hybrid keeps its original bare oval body.
+  const t=id.eType,shirt=id.shirtCol||color(220,200,20),p=Math.max(0,Math.min(1,progress));
+  const nmo=(t==='NORMAL'||t==='NM0_ROOKIE'||t==='NM0_ROOKIE_F')&&!id.isPlayer&&!id.isCharred;
+  g.push();g.scale(TL/30,TW/20);g.noStroke();
+  const dc=g.drawingContext,alpha=dc?dc.globalAlpha:1;
+  if(dc&&half){dc.save();dc.beginPath();dc.rect(half<0?-30:0,-20,30,40);dc.clip();}
+  if(nmo&&(!back||p<1)){
+    if(dc)dc.globalAlpha=alpha*(back?1-p:1);
+    g.push();g.translate(7,4.5);drawNmoInsignia(g,true);g.pop();
+  }
+  if(back&&p>0){
+    if(dc)dc.globalAlpha=alpha*p;
+    g.stroke(red(shirt)*.55,green(shirt)*.55,blue(shirt)*.55);g.strokeWeight(.65);
+    g.line(-10,0,9,0);g.line(7,-6,7,6);g.line(-10,-4,-10,4);g.noStroke();
+    if(id.isCharred){
+      g.stroke(52,48,45);g.strokeWeight(.7);g.line(-8,-3,8,3);g.line(-8,3,8,-3);g.noStroke();
+    }else if(id.isPlayer&&id.chemistSuit){
+      g.fill(238,239,232);g.ellipse(0,0,28,18);g.stroke(154,166,161);g.strokeWeight(.7);
+      g.line(-12,0,10,0);g.line(-8,-6,-8,6);g.line(8,-5,8,5);g.noStroke();
+      g.fill(211,219,211);g.rect(-9,-4,3,8,1);g.fill(108,146,126);g.rect(7,-2,3,4,1);
+    }else if(((id.isPlayer||id.isMilitary)&&id.explosiveArmor)||t==='MILITARY_NEUTRAL'||t==='NM0_GREY_FATIGUE'||t==='NM0_CITY_GUARD'||t==='ARMORED_STANDARD'){
+      const heavy=t==='ARMORED_STANDARD';
+      g.fill(heavy?color(51,57,64):color(red(shirt)*.52,green(shirt)*.52,blue(shirt)*.52));
+      g.rect(-9,-7,20,14,3);g.fill(heavy?color(109,118,125):color(red(shirt)*.85,green(shirt)*.85,blue(shirt)*.85));
+      g.rect(-6,-5,13,10,2);g.stroke(39,47,49);g.strokeWeight(.8);
+      for(let x=-4;x<=5;x+=3)g.line(x,-4,x,4);g.noStroke();
+      g.fill(45,51,48);g.rect(8,-7,3,14,1);g.rect(-9,-7,3,14,1);
+      g.fill(170,174,158);for(const x of [-7.5,9.5])for(const y of [-5,5])g.ellipse(x,y,1.3,1.3);
+      if(t==='NM0_CITY_GUARD'){g.fill(224,188,69);g.rect(1,-3,2,6,.5);}
+      if(t==='NM0_GREY_FATIGUE'){g.fill(49,91,166);g.rect(8,-3,2,6,.5);}
+    }else if(id.isPlayer&&id.ninjaSuit){
+      g.stroke(77,69,95);g.strokeWeight(.85);g.line(-8,-5,9,5);g.line(-8,5,9,-5);g.noStroke();
+      g.fill(100,0,200);g.rect(-10,-6,3,12,1);g.fill(148,102,206);g.rect(-10,-2,3,4,.5);
+    }else if(t==='AERIAL'||t==='AERIAL_PISTOL'){
+      drawFallenJetpack(g,t==='AERIAL_PISTOL');
+    }else if(t==='FARMER_MALE'||t==='VILLAGER_MALE'||t==='CITY_CITIZEN_M'&&id.clothingStyle===2){
+      const straps=t==='FARMER_MALE'?(id.pantsCol||color(40,100,200)):color(87,72,55);
+      if(t==='FARMER_MALE'){g.fill(straps);g.rect(-10,-6,15,12,2);}
+      g.stroke(straps);g.strokeWeight(2);g.line(-7,-5,10,5);g.line(-7,5,10,-5);g.noStroke();
+      g.fill(174,166,129);g.ellipse(8,-4.5,1.5,1.5);g.ellipse(8,4.5,1.5,1.5);
+      g.stroke(117,133,141);g.strokeWeight(.6);g.line(-8,-4,-3,-4);g.line(-8,4,-3,4);g.noStroke();
+    }else if(t==='FARMER_FEMALE'||t==='VILLAGER_FEMALE'){
+      g.stroke(226,222,207);g.strokeWeight(1.7);g.line(10,-5,-7,5);g.line(10,5,-7,-5);g.line(-7,-6,-7,6);g.noStroke();
+      g.fill(239,233,217);g.triangle(-7,0,-9,-4,-5,-3);g.triangle(-7,0,-9,4,-5,3);
+      g.fill(166,155,142);g.ellipse(-7,0,1.8,1.8);
+    }else if(t==='COWBOY'||t==='COWGIRL'||t==='BANDIT'){
+      const vest=id.vestCol||(t==='BANDIT'?color(58,48,44):color(88,62,40));
+      g.fill(vest);g.ellipse(0,0,27,17);g.stroke(red(vest)*.6,green(vest)*.6,blue(vest)*.6);g.strokeWeight(.8);
+      g.line(8,-6,8,6);g.line(-11,0,8,0);g.line(-5,-6,-5,6);g.noStroke();
+      g.fill(58,42,30);g.rect(-10,-6,3,12,1);g.fill(111,85,56);g.rect(-8,4,6,3,1);
+      g.fill(id.kerchiefCol||color(168,54,46));g.triangle(11,-3,11,3,6,0);
+      if(t==='BANDIT'){g.fill(43,36,34);g.rect(-11,-5,4,4,1);g.rect(-11,1,4,4,1);}
+      else{g.stroke(184,156,110);g.strokeWeight(.55);g.line(1,-3,5,0);g.line(5,0,1,3);g.noStroke();}
+    }else if(t==='LOCAL_COP'){
+      g.fill(55,58,70);g.rect(-11,-6,20,12,2);g.stroke(89,94,109);g.strokeWeight(.8);
+      g.line(-10,-1,8,-1);g.line(-10,1,8,1);g.line(7,-5,7,5);g.noStroke();
+      g.fill(56,40,28);g.rect(-8,-6,3,12,1);g.rect(-8,4,7,3,1);g.fill(191,167,86);g.rect(8,-4,2,8,.5);
+    }else if(t==='MOLOTOV'){
+      g.stroke(79,56,36);g.strokeWeight(2);g.line(-9,-6,9,6);g.noStroke();
+      g.fill(33,88,50);g.rect(-5,-5,8,3,1);g.rect(-5,1,8,3,1);g.fill(180,151,103);g.rect(2,-4.5,2,2,.5);g.rect(2,1.5,2,2,.5);
+    }else if(t==='SIA'){
+      g.stroke(120,123,174);g.strokeWeight(.75);g.line(5,-6,8,0);g.line(8,0,5,6);g.line(-7,-4,3,-4);g.line(-7,4,3,4);g.noStroke();
+      g.fill(38,39,76);g.rect(-10,-5,3,10,1);
+    }else if(t==='DAD'){
+      g.stroke(127,155,104);g.strokeWeight(.7);g.line(8,-5,5,0);g.line(5,0,8,5);g.line(-7,-4,3,-4);g.line(-7,4,3,4);g.noStroke();
+      g.fill(85,101,60);g.rect(-4,2,4,3,.6);
+    }else if(t==='NM0_ROOKIE'||t==='NM0_ROOKIE_F'){
+      g.fill(184,190,198);g.rect(8,-5,1,10,.3);
+    }else if(t==='CITY_CITIZEN_M'||t==='CITY_CITIZEN_F'){
+      if(id.clothingStyle===1){g.fill(red(shirt)*.75,green(shirt)*.75,blue(shirt)*.75);g.rect(-8,-6,17,12,2);g.stroke(202,194,169);g.strokeWeight(.6);g.line(6,-5,6,5);g.line(-6,0,6,0);g.noStroke();}
+      else if(id.clothingStyle===2){g.stroke(229,224,202);g.strokeWeight(1.6);g.line(10,-5,-8,5);g.line(10,5,-8,-5);g.noStroke();}
+      else if(id.clothingStyle===3){g.stroke(236,218,184,150);g.strokeWeight(.9);for(const x of [-7,-2,3,8])g.line(x,-5,x,5);g.noStroke();}
+    }else if(t==='FEMALE_PISTOL'){
+      g.stroke(red(shirt)*.68,green(shirt)*.68,blue(shirt)*.68);g.strokeWeight(.8);g.line(-6,-5,-3,0);g.line(-3,0,-6,5);g.line(6,-5,9,0);g.line(9,0,6,5);g.noStroke();
+      g.fill(175,179,194);g.rect(7,-2,2,4,.6);
+    }else if(t==='BUG'){
+      g.stroke(25,44,24);g.strokeWeight(1);g.line(-11,0,9,0);for(const x of [-6,0,6])g.line(x,-6,x,6);g.noStroke();
+    }else if(t==='SNAIL'||t==='SNAIL_HYBRID'){
+      g.fill(t==='SNAIL'?color(73,95,53):color(120,151,161));g.ellipse(-4,0,19,17);
+      g.noFill();g.stroke(t==='SNAIL'?color(38,57,33):color(63,99,106));g.strokeWeight(.9);g.beginShape();
+      for(let i=0;i<=32;i++){const a=i*.4,r=7*(1-i/35);g.vertex(-4+Math.cos(a)*r,Math.sin(a)*r);}g.endShape();g.noStroke();
+    }else if(t==='ALIEN_GATOR'){
+      g.fill(48,86,49);for(let x=-10;x<=10;x+=5){g.triangle(x-2,-2,x+2,-2,x,2);g.ellipse(x,-5,3,2);g.ellipse(x,5,3,2);}
+      g.stroke(66,72,63);g.strokeWeight(1);g.line(8,-7,8,7);g.noStroke();
+    }else if(t==='HORSE'){
+      g.stroke(id.maneCol||color(red(shirt)*.55,green(shirt)*.55,blue(shirt)*.55));g.strokeWeight(2);
+      g.line(-10,0,12,0);for(let x=0;x<12;x+=3)g.line(x,-1,x+2,2);g.noStroke();
+    }else if(t==='COW'){
+      g.stroke(175,171,159,160);g.strokeWeight(.65);g.line(-11,0,10,0);g.line(-6,-5,-3,0);g.line(-6,5,-3,0);g.noStroke();
+    }else if(t==='ROBOT'||t==='SAUCER'||t==='SAUCER_RED'){
+      g.fill(41,48,54);g.rect(-9,-6,17,12,2);g.fill(99,108,117);g.rect(-7,-4,13,8,1);
+      g.stroke(38,44,49);g.strokeWeight(.8);for(let x=-5;x<=4;x+=3)g.line(x,-3,x,3);g.noStroke();
+      g.fill(t==='SAUCER_RED'?color(214,58,46):color(225,155,52));g.rect(-7,-5,13,1,.3);
+    }
+    if(nmo)drawNmoInsignia(g);
+    if(id.jetpack&&!id.isCharred)drawFallenJetpack(g);
+  }
+  if(dc){dc.globalAlpha=alpha;if(half)dc.restore();}g.pop();
+}
+
+// The fall is a frozen motion event, not another AI state. Voluntary movement
+// is sampled at the ends of the actor updates, so bullet knockback cannot
+// replace a runner's direction. A planted actor instead takes the shot's force.
+function rememberFigureMotion(e,dx,dy) {
+  if(e.stunTimer>0||dx*dx+dy*dy>900){dx=0;dy=0;}
+  e.motionX=dx;e.motionY=dy;e.motionFrame=frameCount;
+}
+function figureMotion(e) {
+  if(!e||e.stunTimer>0)return {x:0,y:0};
+  if(e.motionFrame!==undefined&&frameCount-e.motionFrame>=0&&frameCount-e.motionFrame<=3)
+    return {x:e.motionX||0,y:e.motionY||0};
+  const speed=e.isMoving?Math.min(6,(e.gait||.25)*GAIT_FULL):0;
+  return {x:Math.cos(e.moveAngle||0)*speed,y:Math.sin(e.moveAngle||0)*speed};
+}
+function weaponFallForce(w) {
+  return w===WEAPONS.SHOTGUN?6:w===WEAPONS.ASSAULT_RIFLE?4.5:w===WEAPONS.PISTOL?3:2;
+}
+function buildFigureFall(src,angle,force,stun,facing) {
+  const hit=!stun&&src&&src.fallHit&&src.fallHit.frame===frameCount?src.fallHit:null;
+  const m=hit?{x:hit.mx,y:hit.my}:figureMotion(src),speed=Math.hypot(m.x,m.y);
+  if(hit){angle=hit.angle;force=hit.force;}
+  // Bullet angle is its travel direction: a stopped victim falls away from
+  // the shooter. Align that collapse at impact rather than yawing through it.
+  const moving=speed>.18,a=moving?Math.atan2(m.y,m.x):((stun||hit)?(angle||0):(facing||0));
+  const wound=hit&&hit.kind==="BODY"&&hit.wound;
+  const p={age:0,a,facing:facing||0,yawFrom:hit&&!moving?a:(facing||0),mx:m.x,my:m.y,moving,force,stun:!!stun,
+    duration:stun?40:7,
+    impulse:stun?4.8:Math.min(3.5,speed*.45+force*.35),
+    lean:wound?Math.max(-1,Math.min(1,wound.y/((src.bodyH||27)*.4))):0,
+    contacted:false,done:false};
+  // A fatal shot at somebody already down continues their current fall.
+  if(src&&src.stunPose&&src.stunTimer>0){const old=src.stunPose;
+    p.a=old.a;p.facing=old.facing;p.yawFrom=old.yawFrom===undefined?old.facing:old.yawFrom;p.age=Math.min(p.duration,old.age/old.duration*p.duration);p.impulse=old.impulse*.25;}
+  // Forward/backward belongs to this fall, not to north/south on the map.
+  p.faceDown=Math.cos(p.a-p.facing)>=0;
+  return p;
+}
+function prepareFallRag(rg,p) {
+  rg.spin*=.28;rg.frames=Math.max(RAG_FRAMES,p.duration+16);rg.turnLimit=.26;
+  if(p.lean){const side=p.lean<0?0:1;
+    rg.limbs[side].rest=Math.min(rg.limbs[side].hi,rg.limbs[side].rest+.3*Math.abs(p.lean));
+    rg.limbs[side].restB=Math.min(rg.limbs[side].bMax,rg.limbs[side].restB+.35*Math.abs(p.lean));}
+}
+function figureFallProgress(p) {
+  // Corpse collapse keeps its original 0.15-per-frame timing. Only a punch
+  // stun uses the longer buckle and ground-contact recoil.
+  if(!p.stun)return Math.min(1,p.age*.15);
+  const t=Math.max(0,Math.min(1,(p.age-4)/(p.duration-4)));
+  const f=t*t*(3-2*t);
+  const contact=p.age>p.duration&&p.age<p.duration+16?Math.sin((p.age-p.duration)/16*PI)*.035:0;
+  return Math.max(0,f-contact);
+}
+function figureFallYaw(p,rg,f=figureFallProgress(p)) {
+  const start=p.yawFrom===undefined?p.facing:p.yawFrom;
+  const turn=Math.atan2(Math.sin(p.a-start),Math.cos(p.a-start));
+  return start+turn*f+(rg?rg.ang:0)*f+p.lean*Math.sin(f*PI)*.10;
+}
+function stepFigureFall(p,e,rg) {
+  if(p.done)return;
+  p.age++;
+  if(p.impulse>.015){const dx=Math.cos(p.a)*p.impulse,dy=Math.sin(p.a)*p.impulse;
+    if(!Character.prototype.checkCol.call(e,e.x+dx,e.y))e.x+=dx;
+    if(!Character.prototype.checkCol.call(e,e.x,e.y+dy))e.y+=dy;
+    p.impulse*=.86;}
+  if(!p.contacted&&p.age>=p.duration){p.contacted=true;
+    if(rg&&!rg.done)for(let i=0;i<4;i++){rg.limbs[i].vb+=i<2?.08:.04;}}
+  if(p.age>=Math.max(RAG_FRAMES,p.duration+16)){p.done=true;p.impulse=0;}
+}
+function finishFigureFall(c) {
+  if(c.fall)while(!c.fall.done){stepFigureFall(c.fall,c,c.rag);ragStep(c.rag);}
+  c.fP=1;
+}
+// Shotgun/dual-SMG overkill keeps its original rotation, limb projection and
+// separation. Feeding it through the directional rig rotates the two halves
+// independently of the old gore animation.
+function legacyOverkillFall(dT,hit) {
+  return dT===2||dT===4||dT===7||
+    (CORPSE_GIB_DEATHS.indexOf(dT)!==-1&&hit&&hit.frame===frameCount&&
+      (hit.weapon===WEAPONS.SHOTGUN||hit.weapon===WEAPONS.DUAL_SMG));
+}
+function figureHeadTurn(p,f) {
+  return p&&!p.faceDown?PI*f:0;
+}
+function fallenHeadColor(id,p,f,skin) {
+  if(!p||!p.faceDown)return skin;
+  if(id.eType==='NM0_ROOKIE')return skin;
+  // Hair colour alone is not hair: bald actors and a receding crown keep skin.
+  let hair=null;
+  if(id.hairStyle!==undefined&&id.hairStyle!==6)hair=id.hairCol||color(32,27,26);
+  else if(id.eType==='FEMALE_PISTOL')hair=color(15);
+  else if(id.eType==='NM0_ROOKIE_F')hair=color(64,46,32);
+  else if(id.eType==='VILLAGER_FEMALE'||id.eType==='FARMER_FEMALE')hair=id.hairCol||color(122,74,38);
+  if(!hair)return skin;
+  const t=Math.max(0,Math.min(1,f));
+  return color(lerp(red(skin),red(hair),t),lerp(green(skin),green(hair),t),lerp(blue(skin),blue(hair),t));
+}
+function drawFallenFace(g,p,f) {
+  if(!p||p.faceDown||f<=.45)return;
+  // Closed eyes and a small nose distinguish the exposed face at game scale.
+  g.stroke(70,47,37,Math.min(1,(f-.45)/.55)*190);g.strokeWeight(.7);
+  g.line(1.7,-2.2,2.4,-1.1);g.line(1.7,2.2,2.4,1.1);g.noStroke();
+  g.fill(177,116,86,Math.min(1,(f-.45)/.55)*180);g.ellipse(4,0,1.8,2.3);
+}
+function drawFallenHeadwear(g,id,kind,back) {
+  if(kind==='HOOD'&&back){g.fill(15);g.ellipse(0,0,12,12);g.stroke(52,47,63);g.strokeWeight(.6);g.line(-4,0,4,0);g.noStroke();}
+  else drawHeadwear(g,id,kind);
+}
+function drawFallenHead(g,id,p,f,wear=true) {
+  const skin=id.skinCol||color(235,180,140);
+  figureCelOval(g,0,0,11,11,fallenHeadColor(id,p,f,skin),.65);
+  drawFigureHair(g,id,0,0,0);drawFallenFace(g,p,f);
+  const hw=headwearOf(id);if(wear&&hw)drawFallenHeadwear(g,id,hw,p&&p.faceDown&&f>.5);
+}
+
+const FATAL_SPRAY_FRAMES = 210; // 3.5 seconds on the game's 60 Hz simulation clock.
+function buildFatalSpray(src,eT) {
+  const hit=src&&src.fallHit;
+  if(eT==="ROBOT"||!hit||hit.frame!==frameCount||!hit.fatal||!hit.wound)return null;
+  const w=hit.wound,count=[WEAPONS.SHOTGUN,WEAPONS.ASSAULT_RIFLE,WEAPONS.SMG,WEAPONS.DUAL_SMG].includes(hit.weapon)?3:1;
+  const holes=(src.decals||[]).filter(d=>d.isBulletHole||d===w);
+  if(holes[holes.length-1]!==w)holes.push(w);
+  const wounds=holes.slice(-count).map(d=>({...d,col:d.col&&d.col.slice()}));
+  let seed=(Math.imul(Math.round(hit.x||0),73856093)^Math.imul(Math.round(hit.y||0),19349663)^frameCount)>>>0;
+  const pick=()=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;return seed/4294967296;};
+  // Randomize separate sectors once, so three jets never share one cone.
+  const turn=wounds.length>1?pick()*TWO_PI:0;
+  const directions=wounds.map((d,i)=>wounds.length>1?
+    turn+i*TWO_PI/wounds.length+(pick()-.5)*.65:0);
+  return {left:FATAL_SPRAY_FRAMES,wound:wounds[wounds.length-1],wounds,
+    angle:hit.angle-(src.aimAngle||0),seed,directions};
+}
+// Use the same local decal coordinates and transforms as Corpse.paint(). A
+// fatal spot remains attached when the torso separates or a piece is moving.
+function fatalWoundPoint(c,w=c.fatalSpray.wound) {
+  const s=c.fatalSpray,f=c.fP,rg=c.rag;
+  let x=c.x,y=c.y,a=c.aA,lx=w.x,ly=w.y,scale=1,turn=0;
+  const piece=(c.overkillBits||c.aerialBits||c.bits||[]).find(b=>b.type===(c.dT===5?(w.isHead?'skull':'ribcage'):'torso'));
+  if([12,13,14].includes(c.dT)){
+    if(c.dT===13){
+      x+=Math.cos(a)*Math.min(c.sep,50);y+=Math.sin(a)*Math.min(c.sep,50);
+      if(w.isHead)ly-=c.bH*.4;else{lx=w.y;ly=-w.x*.7;turn=-HALF_PI;}
+    }else if(c.dT===14){const b=w.x<0?c.lH:c.rH;x+=b.x;y+=b.y;a=c.splitA;
+    }else{a-=PI;if(w.isHead)lx+=12;}
+  }else if(['BUG','SNAIL'].includes(c.eT)||(['COW','HORSE'].includes(c.eT)&&c.dT!==5)){
+    // These painters put every decal directly in their animal body frame.
+  }else if(c.eT==="ALIEN_GATOR"){
+    a=c.mA;
+    if(c.dT===2||c.dT===4){x+=Math.cos(c.bA+PI)*c.sep;y+=Math.sin(c.bA+PI)*c.sep;}
+    if(w.isHead)lx+=20*f;
+  }else if(c.dT===5||c.dT===10||c.dT===11||c.dT===15){
+    if(piece){x+=piece.x;y+=piece.y;a=piece.rot;}
+    if(w.isHead){if(c.dT!==5)ly-=c.bH*.4;}
+    else{lx=w.y;ly=-w.x*.7;turn=-HALF_PI;}
+  }else if(c.dT===3){a=c.mA;ly-=c.sep*1.8;
+  }else if(c.dT===7){a=c.mA+(rg?rg.ang*.6:0);scale=rg?RAG_SCALE:1;
+    if(w.isHead&&rg)lx+=ragRig(c.bW,c.bH).TL*.5+5+4*f;
+  }else{
+    if(c.dT===2||c.dT===4){x+=Math.cos(c.bA)*c.sep;y+=Math.sin(c.bA)*c.sep;}
+    a=c.fall?figureFallYaw(c.fall,rg):c.aA+(rg?rg.ang:0);scale=rg?RAG_SCALE:1;
+    if(w.isHead){
+      const hs=c.fall?lerp(1/RAG_SCALE,1,f):1,ht=figureHeadTurn(c.fall,f);
+      const hx=c.fall?projectFallRig(c.bW,c.bH,f).headX:(rg?18:20)*f;
+      lx=hx+(Math.cos(ht)*w.x-Math.sin(ht)*w.y)*hs;
+      ly=(Math.sin(ht)*w.x+Math.cos(ht)*w.y)*hs;turn=ht;
+    }
+  }
+  const ca=Math.cos(a),sa=Math.sin(a);
+  return {x:x+(ca*lx-sa*ly)*scale,y:y+(sa*lx+ca*ly)*scale,
+    angle:a+turn+(w.shotA===undefined?(s?s.angle:0):w.shotA),frameAngle:a,scale};
+}
+function headWoundPoint(c) {
+  const w=c.fatalSpray&&c.fatalSpray.wound;
+  return fatalWoundPoint(c,w&&w.isHead?w:{x:0,y:0,isHead:true,shotA:c.hA||0});
+}
+function retargetHeadHitSpray(c,hit,b) {
+  if(hit.kind!=="HEAD"||!c.fatalSpray)return;
+  const p=headWoundPoint(c);
+  for(let i=hit.particleStart;i<particles.length;i++){
+    const q=particles[i];
+    if((q.t==="BLOOD"||q.t==="GORE"||q.t==="BONE")&&q.x===b.x&&q.y===b.y){q.x=p.x;q.y=p.y;}
+  }
+}
+function drawFatalWound(c,r) {
+  // These piece painters had no bullet decals. Keep selected holes visible on
+  // its surviving piece, using exactly the stream's origin.
+  if(!c.fatalSpray||c.sword||![5,10,11,12,13,14,15].includes(c.dT))return;
+  if(['BUG','SNAIL','ALIEN_GATOR'].includes(c.eT)&&![12,13,14].includes(c.dT))return;
+  r.push();r.noStroke();
+  for(const w of c.fatalSpray.wounds){
+    const p=fatalWoundPoint(c,w),col=w.col||[90,0,0,220];
+    r.fill(...col);r.ellipse(p.x,p.y,w.sz*p.scale,w.sz*p.scale);
+  }r.pop();
+}
+function advanceFatalSpray(c) {
+  const s=c.fatalSpray;if(!s||s.left<=0)return;
+  const age=FATAL_SPRAY_FRAMES-s.left;s.left--;
+  if(age%2!==0)return;
+  // A local sequence keeps this added effect from rerolling existing gore,
+  // limb or overkill randomness. The pooled particle shares the blood painter.
+  const col=c.eT==='BUG'||c.eT==='SNAIL'||c.eT==='SNAIL_HYBRID'?color(200,230,40):color(90,0,0);
+  const sites=s.cuts||s.wounds;
+  for(let i=0;i<sites.length;i++){
+    const w=sites[i];
+    s.seed=(Math.imul(s.seed,1664525)+1013904223)>>>0;
+    const u=s.seed/4294967296,p=s.cuts?swordCutPoint(c,w):fatalWoundPoint(c,w);
+    const a=s.cuts?p.angle+(u-.5)*.55:(s.wounds.length>1?p.frameAngle:p.angle)+s.directions[i]+(u-.5)*(s.wounds.length>1?.4:.65);
+    const speed=(2.8+u*1.8)*(.55+.45*s.left/FATAL_SPRAY_FRAMES);
+    particles.push(newParticle(p.x,p.y,col,'WOUND_BLOOD',Math.cos(a)*speed,Math.sin(a)*speed));
+  }
+}
+function projectFallRig(bW,bH,f) {
+  const r=ragRig(bW,bH);
+  r.headX=lerp(12/RAG_SCALE,Math.max(18,r.TL*.5+3.5),f);
+  // Scale sleeves with the chest: narrow figures should not inherit a
+  // stocky upper arm. Keep a small taper into the forearm and palm.
+  r.upperW=lerp(r.upperW,Math.min(r.upperW*.72,r.TW*.36),f);
+  r.foreW=lerp(r.foreW,Math.min(r.foreW*.78,r.TW*.32),f);
+  r.hand=lerp(r.hand,Math.min(r.hand*.80,r.TW*.42),f);
+  r.TL=lerp(bW*TORSO_DEPTH/RAG_SCALE,r.TL,f);r.TW=lerp(bH/RAG_SCALE,r.TW,f);
+  r.shX=lerp(0,r.shX,f);r.shY=lerp(bH*.44/RAG_SCALE,r.shY,f);
+  r.hipX=lerp(-6/RAG_SCALE,r.hipX,f);r.hipY=lerp(6/RAG_SCALE,r.hipY,f);
+  return r;
+}
+function woundHold(rg,rig,w) {
+  const i=w.y<0?0:1,s=i===0?-1:1,ox=rig.shX,oy=s*rig.shY;
+  const dx=w.x-ox,dy=w.y-oy,d=Math.hypot(dx,dy);
+  if(d<.1)return null;
+  // The hand extends past the wrist. Stop the wrist short of the decal so
+  // that the palm, rather than the elbow, actually covers the wound.
+  const reach=Math.max(.1,d-rig.hand*.30),l1=rig.upper,l2=rig.fore;
+  const shoulder=Math.atan2(dy,dx)-s*Math.acos(Math.max(-1,Math.min(1,(l1*l1+reach*reach-l2*l2)/(2*l1*reach))));
+  const bend=Math.acos(Math.max(-1,Math.min(1,(reach*reach-l1*l1-l2*l2)/(2*l1*l2))));
+  const angle=(shoulder+PI*3)%TWO_PI-PI,a=s*angle-HALF_PI,L=rg.limbs[i];
+  if(a<L.lo||a>L.hi||bend>2.65||reach>l1+l2)return null;
+  L.bMax=2.65;L.rest=a;L.restB=bend;
+  return {arm:i,x:w.x,y:w.y};
+}
+function drawFallBone(r,x,y,nx,ny,width,col,tip,tipSz,join) {
+  const dx=nx-x,dy=ny-y,len=Math.hypot(dx,dy);
+  // Keep both bone observations and their exact geometry available to the
+  // fall painters, while the same cloth gets one silhouette around its hinge.
+  if(join)figureCelLimb(r,x,y,nx,ny,join.x,join.y,width,(width+join.width)*.5,join.width,col);
+  r.push();r.translate(x,y);r.rotate(Math.atan2(dy,dx));
+  if(join===undefined)figureCelOval(r,len*.5,0,len+width,width,col);
+  if(tip)figureCelOval(r,len+tipSz*.30,0,tipSz,tipSz*.86,tip);
+  r.pop();
+}
+function drawFallLimb(r,rig,rg,i,f,shirt,pants,skin,boot,faceDown=false) {
+  const L=rg.limbs[i],arm=i<2,s=i%2?1:-1;
+  const ox=arm?rig.shX:rig.hipX,oy=s*(arm?rig.shY:rig.hipY);
+  const knee=ragKnee(L)*(faceDown?.7:1),limbA=arm?s*(HALF_PI+(faceDown?L.a*.35-.5:L.a)):PI-s*L.a*(faceDown?.7:1)*f;
+  const ang=arm?s*PI+((limbA-s*PI+PI*3)%TWO_PI-PI)*f:limbA;
+  const bend=s*(arm?(faceDown?1.2:L.b):knee)*f;
+  // Signed longitudinal projection lets a knee buckle underneath the pelvis
+  // before the heel extends onto the floor. Joint widths never collapse and
+  // neither hip sweeps through an impossible half-circle.
+  const projection=arm?lerp(STAND_FORE_ARM,1,f):lerp(-STAND_FORE_LEG,1,f);
+  const l1=arm?rig.upper*(faceDown?.75:1):rig.thigh;
+  const l2=arm?rig.fore*(faceDown?.82:1):ragShin(rig,knee*f)*(1-.20*Math.sin(f*PI));
+  const ex=ox+Math.cos(ang)*l1*projection,ey=oy+Math.sin(ang)*l1;
+  const hx=ex+Math.cos(ang+bend)*l2*projection,hy=ey+Math.sin(ang+bend)*l2;
+  const w1=arm?rig.upperW*(faceDown?.92:1):rig.thighW;
+  const w2=arm?rig.foreW*(faceDown?.92:1):rig.shinW;
+  drawFallBone(r,ox,oy,ex,ey,w1,arm?shirt:pants,undefined,undefined,{x:hx,y:hy,width:w2});
+  drawFallBone(r,ex,ey,hx,hy,w2,arm?shirt:pants,
+    arm?(skin||color(235,180,140)):boot,arm?rig.hand*(faceDown?.94:1):rig.foot,false);
+}
+
+// Successful humanoid sword kills share one rotation, independent of bullets.
+// 16: head off; 13: waist split; 17: diagonal split. Other uses of 13 stay legacy.
+function swordKillCorpse(e,a) {
+  const dT=[16,13,17][swordKillCounter];swordKillCounter=(swordKillCounter+1)%3;
+  return new Corpse(e.x,e.y,e.moveAngle,e.aimAngle,e.shirtCol,e.pantsCol,dT,a,
+    e.decals,e.currentWeapon,a,e.eType,e.bodyW,e.bodyH,e,true);
+}
+function buildSwordDeath(c) {
+  const diagonal=c.dT===17,n=diagonal?Math.SQRT1_2:1,ny=diagonal?Math.SQRT1_2:0;
+  c.sword={age:0,done:false,normal:{x:n,y:ny},parts:[
+    {side:-1,x:0,y:0,rot:0,vx:c.dT===16?-.08:-n*1.5,vy:-ny*1.5,vr:c.dT===16?0:-.009},
+    {side:1,x:0,y:0,rot:0,vx:c.dT===16?1.8:n*1.5,vy:c.dT===16?-.35:ny*1.5,vr:c.dT===16?.025:.009}
+  ]};
+  // Reuse the complete standard painter, including real limbs, uniforms,
+  // armor, wounds and hair. Each half clips that same body in its own frame.
+  const body=Object.create(c);body.x=body.y=0;body.dT=0;body.sword=null;body.swordHeadless=c.dT===16;
+  c.sword.body=body;
+  const cuts=[];
+  for(let part=0;part<2;part++)for(const along of c.dT===16?[0]:[-.6,0,.6])cuts.push({part,along});
+  c.fatalSpray={left:FATAL_SPRAY_FRAMES,cuts,seed:(frameCount^Math.imul(Math.round(c.x),73856093)^Math.imul(Math.round(c.y),19349663))>>>0};
+}
+function stepSwordParts(c) {
+  const s=c.sword;if(s.done)return;
+  for(const p of s.parts){p.x+=p.vx;p.y+=p.vy;p.rot+=p.vr;p.vx*=.9;p.vy*=.9;p.vr*=.9;}
+  if(++s.age>=RAG_FRAMES){s.done=true;for(const p of s.parts)p.vx=p.vy=p.vr=0;}
+}
+function finishSwordParts(c) {if(c.sword)while(!c.sword.done)stepSwordParts(c);}
+function swordCutPlane(c) {
+  const rig=projectFallRig(c.bW,c.bH,c.fP),n=c.sword.normal,tx=-n.y,ty=n.x;
+  const headScale=lerp(1/RAG_SCALE,1,c.fP),x=c.dT===16?rig.headX-4.2*headScale:c.dT===13?-rig.TL*.18:0;
+  let lo,hi;
+  if(c.dT===16){lo=-3.6*headScale;hi=-lo;}
+  else{const rx=rig.TL*.5,ry=rig.TW*.5,A=tx*tx/(rx*rx)+ty*ty/(ry*ry),B=2*x*tx/(rx*rx),C=x*x/(rx*rx)-1;
+    const root=Math.sqrt(Math.max(0,B*B-4*A*C));lo=(-B-root)/(2*A);hi=(-B+root)/(2*A);}
+  return {rig,x,y:0,nx:n.x,ny:n.y,tx,ty,lo,hi,headScale};
+}
+function swordPartPivot(c,part,plane) {return c.dT===16?{x:part?plane.rig.headX:0,y:0}:{x:plane.x,y:plane.y};}
+function swordCutPoint(c,site) {
+  const plane=swordCutPlane(c),p=c.sword.parts[site.part],pivot=swordPartPivot(c,site.part,plane);
+  const along=(plane.lo+plane.hi)*.5+site.along*(plane.hi-plane.lo)*.5;
+  const x=plane.x+plane.tx*along-pivot.x,y=plane.y+plane.ty*along-pivot.y,cr=Math.cos(p.rot),sr=Math.sin(p.rot);
+  const lx=pivot.x+p.x+cr*x-sr*y,ly=pivot.y+p.y+sr*x+cr*y,yaw=figureFallYaw(c.fall,c.rag),ca=Math.cos(yaw),sa=Math.sin(yaw);
+  return {x:c.x+(ca*lx-sa*ly)*RAG_SCALE,y:c.y+(sa*lx+ca*ly)*RAG_SCALE,
+    angle:yaw+p.rot+Math.atan2(plane.ny,plane.nx)+(p.side>0?PI:0)};
+}
+function drawSwordCutEdge(r,c,part,plane) {
+  r.stroke(69,0,0);r.strokeWeight(3);r.line(plane.x+plane.tx*plane.lo,plane.ty*plane.lo,plane.x+plane.tx*plane.hi,plane.ty*plane.hi);
+  r.stroke(156,18,24);r.strokeWeight(1.4);r.line(plane.x+plane.tx*plane.lo,plane.ty*plane.lo,plane.x+plane.tx*plane.hi,plane.ty*plane.hi);r.noStroke();
+  r.fill(90,0,0);for(const site of c.fatalSpray.cuts){if(site.part!==part)continue;
+    const along=(plane.lo+plane.hi)*.5+site.along*(plane.hi-plane.lo)*.5;r.ellipse(plane.x+plane.tx*along,plane.ty*along,2.4,2.4);}
+}
+function drawSwordCorpse(r,c) {
+  const plane=swordCutPlane(c),yaw=figureFallYaw(c.fall,c.rag),dc=r.drawingContext;
+  r.push();r.translate(c.x,c.y);r.rotate(yaw);r.scale(RAG_SCALE);
+  for(let i=0;i<2;i++){
+    const p=c.sword.parts[i],pivot=swordPartPivot(c,i,plane);
+    r.push();r.translate(pivot.x+p.x,pivot.y+p.y);r.rotate(p.rot);r.translate(-pivot.x,-pivot.y);
+    if(c.dT===16&&i===1){
+      r.push();r.translate(plane.rig.headX,0);r.scale(plane.headScale);
+      if(dc){dc.save();dc.beginPath();dc.rect(-4.2,-200,204.2,400);dc.clip();}
+      r.push();r.rotate(figureHeadTurn(c.fall,c.fP));
+      const hw=headwearOf(c.id);drawFallenHead(r,c.id,c.fall,c.fP,!headwearFalls(hw));
+      for(const d of c.dec){if(d.isHead){r.fill(...(d.col||[90,0,0,220]));r.ellipse(d.x,d.y,d.sz,d.sz);}}r.pop();
+      if(dc)dc.restore();
+      if(c.eT==='ARMORED_STANDARD'){r.push();r.translate(15,10);r.rotate(HALF_PI);r.fill(20);r.arc(0,0,15,15,0,PI,CHORD);r.pop();}
+      if(hw&&headwearFalls(hw)&&c.hatOff){r.push();r.translate(c.hatOff.x,c.hatOff.y);r.rotate(c.hatOff.r);drawHeadwear(r,c.id,hw);r.pop();}r.pop();
+    }else{
+      if(dc&&c.dT!==16){
+        dc.save();dc.beginPath();const E=200;
+        dc.moveTo(plane.x-plane.tx*E,-plane.ty*E);dc.lineTo(plane.x+plane.tx*E,plane.ty*E);
+        dc.lineTo(plane.x+plane.tx*E+p.side*plane.nx*E,plane.ty*E+p.side*plane.ny*E);
+        dc.lineTo(plane.x-plane.tx*E+p.side*plane.nx*E,-plane.ty*E+p.side*plane.ny*E);dc.closePath();dc.clip();
+      }
+      r.scale(1/RAG_SCALE);r.rotate(-yaw);c.sword.body.paint(r);r.rotate(yaw);r.scale(RAG_SCALE);
+      if(dc&&c.dT!==16)dc.restore();
+    }
+    drawSwordCutEdge(r,c,i,plane);r.pop();
+  }r.pop();
 }
 
 class Corpse {
-  constructor(x, y, mA, aA, sC, pC, dT, hA, dec, cW, bA, eT, bW, bH, src) {
+  constructor(x, y, mA, aA, sC, pC, dT, hA, dec, cW, bA, eT, bW, bH, src, sword = false) {
     // Frozen at the moment of death, because a corpse cannot read anything off
     // the character it came from -- that object is already gone. Without it a
     // body has no way to keep the hair or the hat the person was wearing, which
@@ -11090,7 +12082,11 @@ class Corpse {
     // The six death sites all route through robotDeathBurst() now, but this is
     // the guard that makes a seventh one impossible to get wrong.
     if (eT === "ROBOT" && CORPSE_GIB_DEATHS.indexOf(dT) !== -1) dT = 0;
+    sword=ragHumanoid(eT,bW)&&(sword||dT===16||dT===17);
+    if(sword){const motion=figureMotion(src);src={...src,bodyW:bW,bodyH:bH,
+      fallHit:{frame:frameCount,kind:'SWORD',angle:bA,force:3,mx:motion.x,my:motion.y}};}
     this.sC = sC; this.pC = pC; this.dT = dT; this.hA = hA; this.bA = bA; this.dec = dec; this.cW = cW; this.bW = bW; this.bH = bH;
+    this.fatalSpray = sword?null:buildFatalSpray(src,eT);
     this.bT = 120; this.fP = 0; this.sep = 0; this.bits = []; this.stopMotionTimer = 156;
     // Only the charred deaths ever set this (one site, in the fire code), and
     // it was left undefined on every other body. `undefined <= 0` is FALSE, so
@@ -11100,6 +12096,7 @@ class Corpse {
     // 1,189 ellipses a frame, forever.
     this.smokeTimer = 0;
     this.bornAt = frameCount;
+    this.poolAge = 0;
     // Is this a body lying on the ground, or is it wreckage?
     //
     // Everything in GIB_DEATHS comes apart: 2/3/4/6/8 separate along `sep`,
@@ -11112,12 +12109,29 @@ class Corpse {
     this.isIntactBody = CORPSE_GIB_DEATHS.indexOf(dT) === -1;
     // Only the deaths that leave a body lying down get a settle. 3/5/10/11/13/
     // 14/15 come apart into pieces and draw their own thing; 12 flies off.
-    this.rag = [0, 1, 2, 4, 6, 7, 8, 9].indexOf(dT) !== -1 ? ragBuild(eT, bW, bA, aA) : null;
-    // Blood down the front, but only off a head wound and only on something
-    // that has blood in it -- a machine is handled six other ways.
-    this.spray = (this.rag && CORPSE_HEADSHOT_DEATHS.indexOf(dT) !== -1)
-        ? bloodSpray(ragRig(bW, bH), Math.sin((bA || 0) - (aA || 0))) : null;
-    this.bloodTimer = (dT === 5 || dT === 7 || dT === 8 || dT === 9 || dT === 10 || dT === 11 || dT === 13 || dT === 14) ? 180 : 0; 
+    this.rag = sword||[0, 1, 2, 4, 6, 7, 8, 9].indexOf(dT) !== -1 ? ragBuild(eT, bW, bA, aA) : null;
+    this.fall = this.rag&&!legacyOverkillFall(dT,src&&src.fallHit) ? buildFigureFall(src,bA,3,false,aA) : null;
+    this.backFacing=dT===7||(this.fall?this.fall.faceDown:Math.cos((mA||0)-(aA||0))>=0);
+    if (this.fall) {
+        this.fP=figureFallProgress(this.fall);
+        prepareFallRag(this.rag,this.fall);
+        if(src&&src.stunPose&&src.stunPose.rag&&src.stunTimer>0){
+            this.rag.ang=src.stunPose.rag.ang;
+            for(let i=0;i<4;i++){this.rag.limbs[i].a=src.stunPose.rag.limbs[i].a;this.rag.limbs[i].b=src.stunPose.rag.limbs[i].b;}
+        }
+        // Ordinary bullet deaths may hold the actual wound. Headshots, fire,
+        // dismemberment and every existing overkill type retain their own art.
+        const hit=src&&src.fallHit;
+        if (dT===0&&hit&&hit.frame===frameCount&&hit.kind==="BODY"&&hit.wound&&random()<.58)
+            this.fall.hold=woundHold(this.rag,projectFallRig(bW,bH,1),hit.wound);
+    }
+    // Clothes retain the original collar/chest stain; jets stay at the head.
+    this.spray = (this.rag && (CORPSE_HEADSHOT_DEATHS.indexOf(dT) !== -1||(sword&&dT===16)))
+        ? bloodSpray(this.fall?projectFallRig(bW,bH,1):ragRig(bW,bH),Math.sin((bA||0)-(aA||0))) : null;
+    this.headSpatter=this.spray?headBloodSpatter(this.spray,this.fall?projectFallRig(bW,bH,1):ragRig(bW,bH),
+        this.fatalSpray&&this.fatalSpray.wound.isHead?this.fatalSpray.wound:null):null;
+    this.bloodTimer = !sword&&(dT === 5 || dT === 7 || dT === 8 || dT === 9 || dT === 10 || dT === 11 || dT === 13 || dT === 14) ? 180 : 0;
+    if(sword)buildSwordDeath(this);
 
     if (dT === 14) { this.splitA = bA; this.lH = { x: 0, y: 0, vx: cos(this.splitA - HALF_PI) * 2, vy: sin(this.splitA - HALF_PI) * 2 }; this.rH = { x: 0, y: 0, vx: cos(this.splitA + HALF_PI) * 2, vy: sin(this.splitA + HALF_PI) * 2 }; }
 
@@ -11136,13 +12150,16 @@ class Corpse {
     } else if (this.dT === 12) {
         this.kamikazeTimer = 126; let fA = this.aA - PI; this.vx = cos(fA) * 3.66; this.vy = sin(fA) * 3.66; this.exploded = false;
         } else if (dT === 15) {
-        this.sC = color(40); this.pC = color(20); 
+        this.sC = color(40); this.pC = color(20); this.id.isCharred=true;
         this.overkillBits = [ { type: 'torso', x: 0, y: 0, vx: cos(this.bA)*6 + random(-2,2), vy: sin(this.bA)*6 + random(-2,2), rot: this.aA, vr: random(-0.2, 0.2) }, { type: 'lArm', x: 0, y: 0, vx: cos(this.bA - PI/3)*7 + random(-2,2), vy: sin(this.bA - PI/3)*7 + random(-2,2), rot: this.aA, vr: random(-0.4, 0.4) }, { type: 'rArm', x: 0, y: 0, vx: cos(this.bA + PI/3)*7 + random(-2,2), vy: sin(this.bA + PI/3)*7 + random(-2,2), rot: this.aA, vr: random(-0.4, 0.4) } ];
 	}
   }
 
   update() { 
-    if (this.fP < 1) this.fP += 0.15;
+    if(this.sword)stepSwordParts(this);
+    if(this.dT===7)this.poolAge=Math.min(BLOOD_POOL_FRAMES,this.poolAge+1);
+    if (this.fall) { stepFigureFall(this.fall,this,this.rag);this.fP=figureFallProgress(this.fall); }
+    else if (this.fP < 1) this.fP += 0.15;
     ragStep(this.rag);
     // The settle clock, ticked in ONE place for every body. It used to be
     // decremented inside three death-type branches (10/15, the bits deaths and
@@ -11196,7 +12213,7 @@ class Corpse {
     if (this.dT === 12 && !this.exploded) {
         if (this.kamikazeTimer > 0) {
             this.kamikazeTimer--; this.x += this.vx; this.y += this.vy;
-            let neckX = this.x + cos(this.aA - PI) * 12, neckY = this.y + sin(this.aA - PI) * 12;
+            const neck=headWoundPoint(this);let neckX=neck.x,neckY=neck.y;
             let thrustX = this.x - cos(this.aA - PI) * 20, thrustY = this.y - sin(this.aA - PI) * 20;
             let trailX = -cos(this.aA - PI) * 3, trailY = -sin(this.aA - PI) * 3;
             if (this.kamikazeTimer % 4 === 0) { emit(thrustX, thrustY, 1, color(200), "SMOKE", trailX, trailY); emit(thrustX, thrustY, 1, color(255, 150, 0), "SPARK", trailX, trailY); }
@@ -11225,10 +12242,8 @@ class Corpse {
         if (this.bloodTimer % 15 === 0) { spawnSplatter(this.x + random(-25, 25), this.y + random(-25, 25), "BLOOD", bCol); }
     }
     if ((this.dT === 8 || this.dT === 9) && this.bloodTimer > 0) {
-        this.bloodTimer--; let fVal = this.dT === 9 ? (10 + 5 * this.fP) : 20 * this.fP; 
-        let headX = this.x + cos(this.aA) * fVal, headY = this.y + sin(this.aA) * fVal;
-        if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { headX = this.x; headY = this.y; }
-        if (this.bloodTimer % 2 === 0) { let sA = this.bA + random(-0.6, 0.6); emit(headX, headY, 1, bCol, "BLOOD", cos(sA) * random(2, 6), sin(sA) * random(2, 6)); }
+        this.bloodTimer--; const head=headWoundPoint(this);let headX=head.x,headY=head.y;
+        if (this.bloodTimer % 2 === 0) { let sA = head.angle + random(-0.6, 0.6); emit(headX, headY, 1, bCol, "BLOOD", cos(sA) * random(2, 6), sin(sA) * random(2, 6)); }
         if (this.bloodTimer % 20 === 0) { spawnSplatter(headX + random(-15, 15), headY + random(-15, 15), "BLOOD", bCol); }
     }
     if (this.dT === 5 || this.dT === 9) { 
@@ -11245,37 +12260,44 @@ class Corpse {
     }
     if ((this.dT === 2 || this.dT === 3 || this.dT === 4 || this.dT === 6 || this.dT === 8) && this.sep < 35) this.sep += 2.5; 
     if (this.bT > 0 && --this.bT % 2 === 0) { 
-        if (this.dT === 1) { let sA = this.aA + this.hA + random(-0.2, 0.2); emit(this.x + cos(this.aA) * (20 * this.fP), this.y + sin(this.aA) * (20 * this.fP), 1, bCol, "BLOOD", cos(sA) * 6, sin(sA) * 6); } 
-        else if (this.dT === 4) { let sA = this.aA + PI + random(-0.4, 0.4); emit(this.x + cos(this.aA) * (15 * this.fP), this.y + sin(this.aA) * (15 * this.fP), 1, bCol, "BLOOD", cos(sA) * 6, sin(sA) * 6); } 
+        if (this.dT === 1) { const head=headWoundPoint(this);let sA=head.angle+random(-0.2,0.2);emit(head.x,head.y,1,bCol,"BLOOD",cos(sA)*6,sin(sA)*6); }
+        else if (this.dT === 4) { const head=headWoundPoint(this);let sA=head.angle+random(-0.4,0.4);emit(head.x,head.y,1,bCol,"BLOOD",cos(sA)*6,sin(sA)*6); }
         else if (this.dT === 2 || this.dT === 3) { let lSA = this.mA - PI / 2 + random(-0.5, 0.5); emit(this.x, this.y, 1, bCol, "BLOOD", cos(lSA) * 4, sin(lSA) * 4); let tSA = this.bA + random(-0.3, 0.3); emit(this.x + cos(this.bA) * this.sep, this.y + sin(this.bA) * this.sep, 1, bCol, "BLOOD", cos(tSA) * 5, sin(tSA) * 5); } 
-        else if (this.dT === 6) { let sA = this.hA + PI + random(-0.4, 0.4); let headX = this.x + cos(this.aA) * (20 * this.fP), headY = this.y + sin(this.aA) * (20 * this.fP); emit(headX, headY, 1, bCol, "BLOOD", cos(sA) * 6, sin(sA) * 6); } 
+        else if (this.dT === 6) { const head=headWoundPoint(this);let sA=head.angle+random(-0.4,0.4);emit(head.x,head.y,1,bCol,"BLOOD",cos(sA)*6,sin(sA)*6); }
     } 
     if (this.dT === 14) {
         if (this.stopMotionTimer > 0) { this.lH.x += this.lH.vx; this.lH.y += this.lH.vy; this.rH.x += this.rH.vx; this.rH.y += this.rH.vy; this.lH.vx *= 0.9; this.lH.vy *= 0.9; this.rH.vx *= 0.9; this.rH.vy *= 0.9; }
         if (this.bloodTimer > 0) { this.bloodTimer--; if (this.bloodTimer % 3 === 0) { emit(this.x + this.lH.x, this.y + this.lH.y, 2, bCol, "BLOOD"); emit(this.x + this.rH.x, this.y + this.rH.y, 2, bCol, "BLOOD"); } if (this.bloodTimer % 15 === 0) { spawnSplatter(this.x + this.lH.x, this.y + this.lH.y, "BLOOD", bCol); spawnSplatter(this.x + this.rH.x, this.y + this.rH.y, "BLOOD", bCol); } }
     }
+    advanceFatalSpray(this);
   }
     
   show(r = window) {
+    this.paint(r);
+    drawFatalWound(this,r);
+  }
+
+  paint(r = window) {
   r.noStroke();
+  if(this.sword){drawSwordCorpse(r,this);return;}
   if (this.dT === 14) {
       r.push(); r.translate(this.x, this.y); 
-      r.push(); r.translate(this.lH.x, this.lH.y); r.rotate(this.splitA); r.fill(this.sC); r.arc(0, 0, this.bW, this.bH, HALF_PI, PI + HALF_PI, CHORD); r.fill(220, 200, 200); r.ellipse(-6, -this.bH*0.2, 5, 10); r.fill(200, 50, 100); r.ellipse(-8, this.bH*0.1, 7, 12); r.fill(90, 0, 0); r.rect(-3, -this.bH/2, 3, this.bH); r.pop();
-      r.push(); r.translate(this.rH.x, this.rH.y); r.rotate(this.splitA); r.fill(this.sC); r.arc(0, 0, this.bW, this.bH, -HALF_PI, HALF_PI, CHORD); r.fill(220, 200, 200); r.ellipse(6, -this.bH*0.2, 5, 10); r.fill(200, 50, 100); r.ellipse(8, this.bH*0.1, 7, 12); r.fill(90, 0, 0); r.rect(0, -this.bH/2, 3, this.bH); r.pop();
+      r.push(); r.translate(this.lH.x, this.lH.y); r.rotate(this.splitA); r.fill(this.sC); r.arc(0, 0, this.bW, this.bH, HALF_PI, PI + HALF_PI, CHORD); drawFallenAttire(r,this.id,this.bW,this.bH,this.backFacing,1,-1); r.fill(220, 200, 200); r.ellipse(-6, -this.bH*0.2, 5, 10); r.fill(200, 50, 100); r.ellipse(-8, this.bH*0.1, 7, 12); r.fill(90, 0, 0); r.rect(-3, -this.bH/2, 3, this.bH); r.pop();
+      r.push(); r.translate(this.rH.x, this.rH.y); r.rotate(this.splitA); r.fill(this.sC); r.arc(0, 0, this.bW, this.bH, -HALF_PI, HALF_PI, CHORD); drawFallenAttire(r,this.id,this.bW,this.bH,this.backFacing,1,1); r.fill(220, 200, 200); r.ellipse(6, -this.bH*0.2, 5, 10); r.fill(200, 50, 100); r.ellipse(8, this.bH*0.1, 7, 12); r.fill(90, 0, 0); r.rect(0, -this.bH/2, 3, this.bH); r.pop();
       r.pop(); return;
   }
 
   if (this.dT === 13) { 
       r.push(); r.translate(this.x, this.y); let a = 255; r.rotate(this.aA); let spread = min(this.sep, 50);
       r.push(); r.translate(-spread, 0); r.fill(this.pC); r.rect(-10, -10, 18, 8, 4); r.rect(-10, 2, 18, 8, 4); r.fill(90, 0, 0); r.ellipse(0, -4, 18, 22); r.pop();
-      r.push(); r.translate(spread, 0); r.fill(this.sC); r.ellipse(0, 0, this.bW, this.bH * 0.7); r.fill(90, 0, 0); r.ellipse(0, 10, this.bW * 0.8, 12); r.fill(235, 180, 140); r.ellipse(0, -this.bH * 0.4, 11, 11); r.pop();
+      r.push(); r.translate(spread, 0); r.fill(this.sC); r.ellipse(0, 0, this.bW, this.bH * 0.7); r.push();r.rotate(-HALF_PI);drawFallenAttire(r,this.id,this.bH*.7,this.bW,this.backFacing);r.pop(); r.fill(90, 0, 0); r.ellipse(0, 10, this.bW * 0.8, 12); r.fill(235, 180, 140); r.ellipse(0, -this.bH * 0.4, 11, 11); r.pop();
       r.pop(); return;
   }
   if (this.dT === 11) {
       r.push(); r.translate(this.x, this.y);
       for (let b of this.aerialBits) {
           r.push(); r.translate(b.x, b.y); r.rotate(b.rot);
-          if (b.type === 'torso') { r.fill(this.sC); r.ellipse(0, 0, this.bW, this.bH * 0.7); r.fill(80); r.rect(-6, -6, 12, 12, 2); r.fill(90, 0, 0); r.ellipse(0, this.bH * 0.35, 18, 10); } 
+          if (b.type === 'torso') { r.fill(this.sC); r.ellipse(0, 0, this.bW, this.bH * 0.7); r.fill(80); r.rect(-6, -6, 12, 12, 2); r.push();r.rotate(-HALF_PI);drawFallenAttire(r,this.id,this.bH*.7,this.bW,true);r.pop(); r.fill(90, 0, 0); r.ellipse(0, this.bH * 0.35, 18, 10); }
           else if (b.type === 'lArm' || b.type === 'rArm') { r.fill(this.sC); r.ellipse(0, 0, 16, 8); r.fill(235, 180, 140); r.ellipse(8, 0, 8, 8); r.fill(90, 0, 0); r.ellipse(-6, 0, 8, 8); } 
           else if (b.type === 'legs') { r.fill(this.pC); r.rect(-10, -10, 18, 8, 4); r.rect(-10, 2, 18, 8, 4); r.fill(90, 0, 0); r.ellipse(-10, -1, 10, 16); }
           r.pop();
@@ -11285,10 +12307,10 @@ class Corpse {
       if (this.exploded) return;
       r.push(); r.translate(this.x, this.y); r.rotate(this.aA - PI); r.fill(this.pC); r.rect(-25, -10, 18, 8, 4); r.rect(-25, 2, 18, 8, 4);
       r.fill(this.sC); r.ellipse(-5, -14, 16, 8); r.ellipse(-5, 14, 16, 8); r.fill(235, 180, 140); r.ellipse(-10, -14, 8, 8); r.ellipse(-10, 14, 8, 8);
-      r.fill(this.sC); r.ellipse(0, 0, this.bW, this.bH); r.fill(80); r.rect(-18, -12, 12, 24, 3); r.fill(255, 100, 0); r.rect(-20, -8, 4, 16); r.fill(90, 0, 0); r.ellipse(12, 0, 12, 12); r.pop(); return;
+      r.fill(this.sC); r.ellipse(0, 0, this.bW, this.bH); drawFallenAttire(r,this.id,this.bW,this.bH,this.backFacing); r.fill(80); r.rect(-18, -12, 12, 24, 3); r.fill(255, 100, 0); r.rect(-20, -8, 4, 16); r.fill(90, 0, 0); r.ellipse(12, 0, 12, 12); r.pop(); return;
   }
-  if (this.eT === "BUG") { r.push(); r.translate(this.x, this.y); r.rotate(this.aA); r.fill(50, 80, 40); r.ellipse(0, 0, 20, 14); r.fill(30); r.ellipse(8, 0, 10, 10); r.stroke(30); r.strokeWeight(2); r.line(-5, 0, -12, 12); r.line(-5, 0, -12, -12); r.line(5, 0, 12, 12); r.line(5, 0, 12, -12); r.noStroke(); for (let d of this.dec) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(200, 230, 40, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } r.pop(); return; }
-  if (this.eT === "SNAIL") { r.push(); r.translate(this.x, this.y); r.rotate(this.aA); r.fill(20, 100, 20); r.ellipse(0, 0, this.bW, this.bH); r.fill(50, 80, 40); r.ellipse(-5, 0, 24, 20); r.noStroke(); for (let d of this.dec) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(50, 200, 50, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } r.pop(); return; }
+  if (this.eT === "BUG") { r.push(); r.translate(this.x, this.y); r.rotate(this.aA); r.fill(50, 80, 40); r.ellipse(0, 0, 20, 14); drawFallenAttire(r,this.id,20,14,true); r.fill(30); r.ellipse(8, 0, 10, 10); r.stroke(30); r.strokeWeight(2); r.line(-5, 0, -12, 12); r.line(-5, 0, -12, -12); r.line(5, 0, 12, 12); r.line(5, 0, 12, -12); r.noStroke(); for (let d of this.dec) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(200, 230, 40, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } r.pop(); return; }
+  if (this.eT === "SNAIL") { r.push(); r.translate(this.x, this.y); r.rotate(this.aA); r.fill(20, 100, 20); r.ellipse(0, 0, this.bW, this.bH); r.fill(50, 80, 40); r.ellipse(-5, 0, 24, 20); drawFallenAttire(r,this.id,this.bW,this.bH,true); r.noStroke(); for (let d of this.dec) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(50, 200, 50, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } r.pop(); return; }
 if (this.eT === "ROBOT") {
       r.push(); r.translate(this.x, this.y); r.rotate(this.aA);
       r.noStroke();
@@ -11307,6 +12329,7 @@ if (this.eT === "ROBOT") {
       r.beginShape();
       r.vertex(11, 2); r.vertex(1, -9); r.vertex(-8, -6); r.vertex(-7, 8); r.vertex(2, 10);
       r.endShape(r.CLOSE);
+      drawFallenAttire(r,this.id,24,22,true);
       // Cannon arm, still attached, muzzle dark.
       r.fill(70, 76, 84); r.rect(6, 11, 19, 7, 2);
       r.fill(40, 44, 49); r.rect(22, 10.5, 7, 8, 2);
@@ -11353,6 +12376,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
           
           const hide = this.eT === "HORSE" && this.sC ? this.sC : color(245);
           r.fill(hide); r.ellipse(0, 0, this.bW, this.bH);
+          drawFallenAttire(r,this.id,this.bW,this.bH,true);
           
           for (let d of this.dec) {
               if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]);
@@ -11397,12 +12421,19 @@ if (this.eT === "COW" || this.eT === "HORSE") {
     if (this.dT === 7) {
         r.push(); r.translate(this.x, this.y); let a = 255, f = this.fP; r.push(); r.rotate(this.mA); r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); r.noStroke();
         r.push(); r.translate(-3 - 30 * f, -18 - 10 * f); r.rotate(-f * 0.5); r.rect(-37, -12, 74, 24, 12); r.pop(); r.push(); r.translate(-3 - 30 * f, 18 + 10 * f); r.rotate(f * 0.5); r.rect(-37, -12, 74, 24, 12); r.pop();  
-        r.fill(90, 0, 0, a); r.ellipse(-15, -12, 35, 45); r.pop(); r.pop(); return;
+        const pool=Math.min(1,this.poolAge/BLOOD_POOL_FRAMES),spread=Math.sqrt(pool);
+        r.fill(90,0,0,a*pool);r.ellipse(-15,-12,35*spread,45*spread);
+        r.fill(this.sC);r.ellipse(0,0,this.bW+15*f,this.bH);drawFallenAttire(r,this.id,this.bW+15*f,this.bH,true);
+        for(const d of this.dec){if(!d.isHead){r.fill(...(d.col||[90,0,0,220]));r.ellipse(d.x,d.y,d.sz,d.sz);}}
+        r.push();r.translate(20*f,0);r.fill(30,180,30);r.ellipse(0,0,33,33);r.rect(0,-15,60,30,10);
+        r.fill(40,126,41);for(let x=4;x<45;x+=10)r.triangle(x,-3,x+5,0,x,3);
+        for(const d of this.dec){if(d.isHead){r.fill(...(d.col||[90,0,0,220]));r.ellipse(d.x,d.y,d.sz,d.sz);}}
+        r.pop();r.pop();r.pop();return;
     }
     r.push(); r.translate(this.x, this.y); let a = 255, f = this.fP; r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.mA); if (this.dT === 2) r.rotate(PI); r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); r.noStroke();
     r.push(); r.translate(-3 - 30 * f, -18 - 10 * f); r.rotate(-f * 0.5); r.rect(-37, -12, 74, 24, 12); r.pop(); r.push(); r.translate(-3 - 30 * f, 18 + 10 * f); r.rotate(f * 0.5); r.rect(-37, -12, 74, 24, 12); r.pop();  
     if (this.dT === 2 || this.dT === 4) { r.fill(90, 0, 0, a); r.ellipse(-15, -12, 20, 30); } r.pop();
-    r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA + PI) * this.sep, sin(this.bA + PI) * this.sep); r.rotate(this.mA); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(0, 0, this.bW + 15 * f, this.bH); if (this.dT === 3) { r.fill(90, 0, 0); r.rect(-this.bW/2, -5, this.bW, 10); } r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } }
+    r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA + PI) * this.sep, sin(this.bA + PI) * this.sep); r.rotate(this.mA); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(0, 0, this.bW + 15 * f, this.bH); drawFallenAttire(r,this.id,this.bW+15*f,this.bH,true); if (this.dT === 3) { r.fill(90, 0, 0); r.rect(-this.bW/2, -5, this.bW, 10); } r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } }
     let slX = lerp(20, 10, f), armLY = lerp(-42, -45, f); r.fill(30, 180, 30, a); r.ellipse(slX, armLY, 48, 24); r.ellipse(slX+20, armLY, 24, 24); let rslX = lerp(45, 30, f), armRY = lerp(33, 36, f); r.fill(30, 180, 30, a); r.ellipse(rslX, armRY, 75, 24); r.ellipse(rslX+30, armRY, 30, 30); 
     r.push(); r.translate(40 - 10*f, 8 + 15*f); r.rotate(f * PI/2); r.fill(40); r.rect(15, 5, 45, 12, 2); r.fill(20); r.rect(55, 3, 10, 16); r.pop(); if (this.dT === 2 || this.dT === 4) { r.fill(90, 0, 0, a); r.ellipse(0, 0, this.bW + 15*f, 25); } r.translate(20 * f, 0);
     if (this.dT === 4 || this.dT === 9) { r.fill(90, 0, 0); r.ellipse(0, 0, 20, 20); } else if (this.dT === 1) { r.push(); r.fill(30, 180, 30); r.ellipse(0, 0, 33, 33); r.rect(0, -15, 60, 30, 10); r.fill(0); r.ellipse(20, -10, 5, 5); r.ellipse(20, 10, 5, 5); r.fill(90, 0, 0); r.arc(0, 0, 20, 20, PI-PI/4, PI+PI/4, PIE); r.pop(); } else if (this.dT === 8) { r.push(); r.fill(30, 180, 30); r.ellipse(0, 0, 33, 33); r.rect(0, -15, 60, 30, 10); r.fill(0); r.ellipse(20, -10, 5, 5); r.ellipse(20, 10, 5, 5); r.fill(90, 0, 0); r.arc(0, 0, 35, 35, PI, PI + HALF_PI, PIE); r.pop(); } else { r.fill(30, 180, 30); r.ellipse(0, 0, 33, 33); r.rect(0, -15, 60, 30, 10); r.fill(0); r.ellipse(20, -10, 5, 5); r.ellipse(20, 10, 5, 5); }
@@ -11414,6 +12445,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
           r.push(); r.translate(ob.x, ob.y); r.rotate(ob.rot);
           if (ob.type === 'torso') {
             r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(0, 0, this.bW, this.bH * 0.7);
+            r.push();r.rotate(-HALF_PI);drawFallenAttire(r,this.id,this.bH*.7,this.bW,this.backFacing);r.pop();
             r.fill(90, 0, 0); r.ellipse(0, this.bH * 0.35, this.bW * 0.8, 12);
             r.fill(235, 180, 140, a); r.ellipse(0, -this.bH * 0.4, 11, 11);
             // The head still on this piece is still the head of whoever this
@@ -11485,43 +12517,54 @@ if (this.eT === "COW" || this.eT === "HORSE") {
           // Torso over the top of them, and the pool spreading out from under.
           // The pool is on the FLOOR, so it takes no contour -- an outlined
           // pool of blood reads as an object lying beside the body.
-          r.noStroke(); r.fill(90, 0, 0, a * 0.85); r.ellipse(-4, 0, TL + 14 * f, TW * 1.5);
+          const pool=Math.min(1,this.poolAge/BLOOD_POOL_FRAMES),spread=Math.sqrt(pool);
+          r.noStroke();r.fill(90,0,0,a*.85*pool);r.ellipse(-4,0,(TL+14*f)*spread,TW*1.5*spread);
           ragContour(r, a);
           r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a);
-          r.ellipse(0, 0, TL, TW); r.ellipse(TL * 0.30, 0, TL * 0.42, TW * 1.06);
+          figureCelOval(r, 0, 0, TL, TW, this.sC);
+          drawFallenAttire(r,this.id,TL,TW,true,1);
           r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } }
           // Back of the head: no face, they are looking at the ground.
           ragContour(r, a);
-          r.fill(this.hairCol || color(52, 40, 30)); r.ellipse(TL * 0.5 + 5 + 4 * f, 0, 11, 11);
+          r.push();r.translate(TL*.5+5+4*f,0);
+          drawFallenHead(r,this.id,{faceDown:true},f,false);
+          const hw=headwearOf(this.id);
+          if(hw&&!headwearFalls(hw))drawFallenHeadwear(r,this.id,hw,true);
+          else if(hw&&this.hatOff){r.push();r.translate(this.hatOff.x,this.hatOff.y);r.rotate(this.hatOff.r);drawHeadwear(r,this.id,hw);r.pop();}
+          r.noStroke();
+          for(const d of this.dec){if(d.isHead){if(d.col)r.fill(...d.col);else r.fill(90,0,0,220);r.ellipse(d.x,d.y,d.sz,d.sz);}}
+          r.pop();
       } else {
           r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4);
           r.fill(90, 0, 0, a); r.ellipse(lX, -4, 20, 28);
+          if(this.eT!=='ARMORED'){r.fill(this.sC);r.ellipse(0,0,TL,TW);drawFallenAttire(r,this.id,TL,TW,true);}
       }
       r.pop(); r.pop(); return;
   }
 
   r.push(); r.translate(this.x, this.y); let a = 255, f = this.fP, sK = (this.id.skinCol||color(235,180,140,a));
   if (this.dT === 3) { 
-      let off = this.sep; r.push(); r.rotate(this.mA); r.noStroke(); r.fill(this.pC); r.rect(-10,-10+off,18,8,4); r.rect(-10,2+off,18,8,4); r.fill(this.sC); r.ellipse(0,off,this.bW,this.bH/2); r.fill(90, 0, 0); r.ellipse(0, -off, this.bW, 10); r.translate(0, -off*1.8); r.ellipse(0, 0, this.bW, this.bH/2); 
+      let off = this.sep; r.push(); r.rotate(this.mA); r.noStroke(); r.fill(this.pC); r.rect(-10,-10+off,18,8,4); r.rect(-10,2+off,18,8,4); r.fill(this.sC); r.ellipse(0,off,this.bW,this.bH/2); r.fill(90, 0, 0); r.ellipse(0, -off, this.bW, 10); r.translate(0, -off*1.8); r.ellipse(0, 0, this.bW, this.bH/2); drawFallenAttire(r,this.id,this.bW,this.bH/2,this.backFacing);
       if (this.eT === "ARMORED_STANDARD") { r.fill(100); r.rect(-10, -6, 20, 12, 4); } 
-      if (this.eT === "FEMALE_PISTOL") { r.fill(this.sC); r.ellipse(4, -6, 12, 10); r.ellipse(4, 6, 12, 10); }
+      if (this.eT === "FEMALE_PISTOL"&&!this.backFacing) { r.fill(this.sC); r.ellipse(4, -6, 12, 10); r.ellipse(4, 6, 12, 10); }
       r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.fill(sK); r.ellipse(0, -5, 11, 11); r.noStroke(); for (let d of this.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.pop(); 
   } 
   else { 
-      r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.aA); const RG = this.rag; if (RG) { r.rotate(RG.ang); r.scale(RAG_SCALE); } if (RG) ragContour(r, a); else r.noStroke(); const RP = ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW; r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -10 : -10, lY2 = this.bW === 105 ? 15 : 2; r.push(); if (RG) { const bootC = color(this.pC.levels[0] * 0.55, this.pC.levels[1] * 0.55, this.pC.levels[2] * 0.55, a); ragLimb(r, RP.hipX, -RP.hipY, PI + RG.limbs[2].a, -ragKnee(RG.limbs[2]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[2])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot); ragLimb(r, RP.hipX,  RP.hipY, PI - RG.limbs[3].a,  ragKnee(RG.limbs[3]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[3])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot); } else { r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4); } if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(lX, -4, 12, 16); } r.pop(); if (RG) ragContour(r, a); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); if (RG) { r.ellipse(0, 0, TL, TW); r.ellipse(TL * 0.30, 0, TL * 0.42, TW * 1.06); } else r.ellipse(0, 0, this.bW + 15 * f, this.bH);
-      if (this.eT === "ARMORED_STANDARD") { r.fill(100); if (RG) r.rect(-TL * 0.26, -TW * 0.46, TL * 0.58, TW * 0.92, 4); else r.rect(-10, -12, 20, 24, 4); } 
-      if (this.eT === "FEMALE_PISTOL") { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(4, -6, 12, 10); r.ellipse(4, 6, 12, 10); } 
+      r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.fall?figureFallYaw(this.fall,this.rag):this.aA); const RG = this.rag; if (RG) { if(!this.fall)r.rotate(RG.ang); r.scale(RAG_SCALE); } if (RG) ragContour(r, a); else r.noStroke(); const RP = this.fall?projectFallRig(this.bW,this.bH,f):ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW; r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -10 : -10, lY2 = this.bW === 105 ? 15 : 2; r.push(); if (RG) { const bootC = color(this.pC.levels[0] * 0.55, this.pC.levels[1] * 0.55, this.pC.levels[2] * 0.55, a); if(this.fall){drawFallLimb(r,RP,RG,2,f,this.sC,this.pC,sK,bootC); drawFallLimb(r,RP,RG,3,f,this.sC,this.pC,sK,bootC);}else{ragLimb(r, RP.hipX, -RP.hipY, PI + RG.limbs[2].a, -ragKnee(RG.limbs[2]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[2])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot); ragLimb(r, RP.hipX,  RP.hipY, PI - RG.limbs[3].a,  ragKnee(RG.limbs[3]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[3])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot);} } else { r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4); } if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(lX, -4, 12, 16); } r.pop(); const underArm=this.fall&&this.fall.faceDown&&this.fall.hold&&f>.45?this.fall.hold.arm:-1; if(underArm>=0){ragContour(r,a);drawFallLimb(r,RP,RG,underArm,f,this.sC,this.pC,sK);} if (RG) ragContour(r, a); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); if (RG) { figureCelOval(r, 0, 0, TL, TW, this.sC); } else r.ellipse(0, 0, this.bW + 15 * f, this.bH);
+      if (this.eT === "ARMORED_STANDARD") { r.fill(100); if (RG) r.rect(-TL * 0.26, -TW * 0.46, TL * 0.58, TW * 0.92, 4); else r.rect(-10, -12, 20, 24, 4); }
+      if (this.eT === "FEMALE_PISTOL" && !(this.backFacing&&(!this.fall||f>.5))) { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(4, -6, 12, 10); r.ellipse(4, 6, 12, 10); }
+      drawFallenAttire(r,this.id,RG?TL:this.bW+15*f,RG?TW:this.bH,this.backFacing,this.fall?f:1);
       r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } } 
-      // Head-wound spray, over the shirt but under the sleeves, so an arm laid
-      // across the chest still passes in front of it.
-      if (this.spray) { for (let sp of this.spray) { r.fill(96, 6, 6, sp.a * (a / 255)); r.ellipse(sp.x, sp.y, sp.r * 2, sp.r * 1.74); } } 
+      // Blood from the head coats the collar and shirt, under the sleeves.
+      if(this.spray){for(const sp of this.spray){r.fill(96,6,6,sp.a*(a/255));r.ellipse(sp.x,sp.y,sp.r*2,sp.r*1.74);}}
       let lAY = this.eT === "ARMORED" ? -30 : -14, rAY = this.eT === "ARMORED" ? 30 : 11, slX = lerp(-5, 0, f), hX = lerp(-12, 12, f), armLY = lerp(lAY, lAY + 3, f), rslX = lerp(15, 0, f), rhX = lerp(25, 12, f), armRY = lerp(rAY, rAY + 3, f); 
-      // Decals and spray are stains and cleared the stroke; the arms are limbs
+      // Decals are stains and cleared the stroke; the arms are limbs
       // and take it back, the same handover the living figure does.
-      if (RG) { ragContour(r, a); ragLimb(r,  RP.shX, -RP.shY, -(HALF_PI + RG.limbs[0].a), -RG.limbs[0].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand); ragLimb(r,  RP.shX,  RP.shY,   HALF_PI + RG.limbs[1].a,   RG.limbs[1].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand); } else { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(slX, armLY, 16, 8); r.fill(sK); r.ellipse(hX, armLY, 8, 8); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(rslX, armRY, 25, 8); r.fill(sK); r.ellipse(rhX, armRY, 8, 8); } 
+      if (RG) { ragContour(r, a); if(this.fall){if(underArm!==0)drawFallLimb(r,RP,RG,0,f,this.sC,this.pC,sK); if(underArm!==1)drawFallLimb(r,RP,RG,1,f,this.sC,this.pC,sK);}else{ragLimb(r,  RP.shX, -RP.shY, -(HALF_PI + RG.limbs[0].a), -RG.limbs[0].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand); ragLimb(r,  RP.shX,  RP.shY,   HALF_PI + RG.limbs[1].a,   RG.limbs[1].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand);} } else { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(slX, armLY, 16, 8); r.fill(sK); r.ellipse(hX, armLY, 8, 8); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(rslX, armRY, 25, 8); r.fill(sK); r.ellipse(rhX, armRY, 8, 8); }
       if (this.eT === "AERIAL" || this.eT === "AERIAL_PISTOL") { r.fill(80, a); r.rect(-18, -12, 12, 24, 3); } 
-      if (this.eT !== "ARMORED" && this.eT !== "MOLOTOV" && this.eT !== "AERIAL") { r.push(); r.translate(20 - 10 * f, 8 + 15 * f); r.rotate(f * PI / 2); if (this.cW === WEAPONS.SMG || this.cW === WEAPONS.DUAL_SMG) { r.fill(40); r.rect(31, 12, 24, 8, 2); r.rect(35, 20, 6, 12); } else if (this.cW === WEAPONS.ASSAULT_RIFLE) { r.fill(40); r.rect(5, 4, 42, 4, 1); r.fill(139, 69, 19); r.rect(15, 3, 12, 6, 1); r.rect(0, 3, 8, 6, 1); } else if (this.cW === WEAPONS.SHOTGUN) { r.fill(30); r.rect(5, 4, 40, 5, 1); r.fill(15); r.rect(20, 3, 14, 7, 1); r.fill(50); r.rect(5, 3, 12, 7, 2); } else if (this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { r.fill(50, 70, 50); r.rect(5, 4, 45, 6, 2); r.fill(30); r.rect(20, 2, 10, 10, 1); } else { r.fill(40); r.rect(15, 5, 16, 6, 2); } r.pop(); if (this.cW === WEAPONS.DUAL_SMG) { r.push(); r.translate(20 - 10 * f, -14 - 15 * f); r.rotate(-f * PI / 2); r.fill(40); r.rect(15, -7, 24, 8, 2); r.rect(19, -19, 6, 12); r.pop(); } } else if (this.eType === "MOLOTOV") { r.push(); r.translate(20 - 10 * f, 8 + 15 * f); r.rotate(f * PI / 2); r.fill(30, 120, 30); r.rect(0, -8, 8, 16, 2); r.pop(); } else if (this.eType === "ARMORED") { r.push(); r.translate(30 - 10 * f, 25 + 15 * f); r.rotate(f * PI / 2); r.fill(30); r.rect(0, -10, 50, 20, 4); r.pop(); } 
-      if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(0, 0, this.bW + 15 * f, 20); if (RG) ragContour(r, a); } r.translate((RG ? 18 : 20) * f, 0); if (this.dT === 4) { r.fill(90, 0, 0); r.ellipse(0, 0, 14, 14); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 1) { r.fill(sK); r.arc(0, 0, 11, 11, this.hA + PI / 4, this.hA + TWO_PI - PI / 4, PIE); r.fill(90, 0, 0); r.arc(0, 0, 8, 8, this.hA - PI / 4, this.hA + PI / 4, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 6) { r.push(); r.rotate(this.hA); r.fill(90, 0, 0); r.ellipse(0, 0, 10, 10); let spread = min(this.sep * 0.4, 8); r.fill(sK); r.arc(0, -spread, 11, 11, PI, TWO_PI, CHORD); r.arc(0, spread, 11, 11, 0, PI, CHORD); r.pop(); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 8) { r.push(); r.rotate(this.hA); r.fill(sK); r.arc(0, 0, 11, 11, 0, PI + HALF_PI, PIE); r.fill(90, 0, 0); r.arc(0, 0, 11, 11, PI + HALF_PI, TWO_PI, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } r.pop(); } else if (this.dT === 9) { let nX = 10 + 5 * this.fP; r.fill(90, 0, 0); r.ellipse(nX, 0, 12, 12); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else { r.fill(sK); r.ellipse(0, 0, 11, 11); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } r.noStroke();
+      if (this.eT !== "ARMORED" && this.eT !== "MOLOTOV" && this.eT !== "AERIAL" && !(this.id&&this.id.isUnarmed)) { r.push(); r.translate(20 - 10 * f, 8 + 15 * f); r.rotate(f * PI / 2); if (this.cW === WEAPONS.SMG || this.cW === WEAPONS.DUAL_SMG) { r.fill(40); r.rect(31, 12, 24, 8, 2); r.rect(35, 20, 6, 12); } else if (this.cW === WEAPONS.ASSAULT_RIFLE) { r.fill(40); r.rect(5, 4, 42, 4, 1); r.fill(139, 69, 19); r.rect(15, 3, 12, 6, 1); r.rect(0, 3, 8, 6, 1); } else if (this.cW === WEAPONS.SHOTGUN) { r.fill(30); r.rect(5, 4, 40, 5, 1); r.fill(15); r.rect(20, 3, 14, 7, 1); r.fill(50); r.rect(5, 3, 12, 7, 2); } else if (this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { r.fill(50, 70, 50); r.rect(5, 4, 45, 6, 2); r.fill(30); r.rect(20, 2, 10, 10, 1); } else { r.fill(40); r.rect(15, 5, 16, 6, 2); } r.pop(); if (this.cW === WEAPONS.DUAL_SMG) { r.push(); r.translate(20 - 10 * f, -14 - 15 * f); r.rotate(-f * PI / 2); r.fill(40); r.rect(15, -7, 24, 8, 2); r.rect(19, -19, 6, 12); r.pop(); } } else if (this.eType === "MOLOTOV") { r.push(); r.translate(20 - 10 * f, 8 + 15 * f); r.rotate(f * PI / 2); r.fill(30, 120, 30); r.rect(0, -8, 8, 16, 2); r.pop(); } else if (this.eType === "ARMORED") { r.push(); r.translate(30 - 10 * f, 25 + 15 * f); r.rotate(f * PI / 2); r.fill(30); r.rect(0, -10, 50, 20, 4); r.pop(); }
+      if(this.swordHeadless){r.pop();r.pop();return;}
+      if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(0, 0, this.bW + 15 * f, 20); if (RG) ragContour(r, a); } r.translate(this.fall?RP.headX:(RG?18:20)*f,0); if(this.fall)r.scale(lerp(1/RAG_SCALE,1,f)); r.push(); r.rotate(figureHeadTurn(this.fall,f)); const hK=fallenHeadColor(this.id,this.fall,f,sK); if (this.dT === 4) { r.fill(90, 0, 0); r.ellipse(0, 0, 14, 14); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-figureHeadTurn(this.fall,f)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 1) { r.fill(hK); r.arc(0, 0, 11, 11, this.hA + PI / 4, this.hA + TWO_PI - PI / 4, PIE); r.fill(90, 0, 0); r.arc(0, 0, 8, 8, this.hA - PI / 4, this.hA + PI / 4, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-figureHeadTurn(this.fall,f)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 6) { r.push(); r.rotate(this.hA); r.fill(90, 0, 0); r.ellipse(0, 0, 10, 10); let spread = min(this.sep * 0.4, 8); r.fill(hK); r.arc(0, -spread, 11, 11, PI, TWO_PI, CHORD); r.arc(0, spread, 11, 11, 0, PI, CHORD); r.pop(); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-figureHeadTurn(this.fall,f)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 8) { r.push(); r.rotate(this.hA); r.fill(hK); r.arc(0, 0, 11, 11, 0, PI + HALF_PI, PIE); r.fill(90, 0, 0); r.arc(0, 0, 11, 11, PI + HALF_PI, TWO_PI, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-figureHeadTurn(this.fall,f)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } r.pop(); } else if (this.dT === 9) { let nX = 10 + 5 * this.fP; r.fill(90, 0, 0); r.ellipse(nX, 0, 12, 12); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-figureHeadTurn(this.fall,f)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else { figureCelOval(r,0,0,11,11,hK,.65); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-figureHeadTurn(this.fall,f)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } r.noStroke();
       // The hair, and whatever was on the head. The identity was frozen at the
       // moment of death (figureIdentity), so this body keeps what the person
       // was wearing instead of coming to rest as a bare skin dome. Anything
@@ -11531,16 +12574,18 @@ if (this.eT === "COW" || this.eT === "HORSE") {
         r.push();
         if (r.drawingContext) r.drawingContext.globalAlpha = Math.max(0, Math.min(1, a / 255));
         drawFigureHair(r, this.id, 0, 0, 0);
+        if(this.dT===0)drawFallenFace(r,this.fall,f);
         const hw = headwearOf(this.id);
-        if (hw && !headwearFalls(hw)) drawHeadwear(r, this.id, hw);
+        if (hw && !headwearFalls(hw)) drawFallenHeadwear(r,this.id,hw,this.backFacing&&f>.5);
         else if (hw && this.hatOff) {
-          r.push(); r.translate(this.hatOff.x, this.hatOff.y); r.rotate(this.hatOff.r);
+          r.push(); r.rotate(-figureHeadTurn(this.fall,f)); r.translate(this.hatOff.x, this.hatOff.y); r.rotate(this.hatOff.r);
           drawHeadwear(r, this.id, hw); r.pop();
         }
         if (r.drawingContext) r.drawingContext.globalAlpha = 1;
         r.pop();
       }
-      for (let d of this.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.pop(); } r.pop();
+      if(this.headSpatter){r.noStroke();for(const sp of this.headSpatter){r.fill(96,6,6,sp.a*(a/255));r.ellipse(sp.x,sp.y,sp.r*2,sp.r*1.74);}}
+      for (let d of this.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.pop(); r.pop(); } r.pop();
 }
 }
 
@@ -11601,11 +12646,12 @@ function corpseSepMax(dT) {
     return 0;
 }
 function corpseSettled(c) {
+    if(c.sword&&!c.sword.done)return false;
     if (c.dT === 12 && !c.exploded) return false;                 // still in the air
-    if (c.fP < 1) return false;                                   // still falling
+    if (c.fP < 1 || (c.fall&&!c.fall.done)) return false;           // falling / contact recoil
     if (c.rag && !c.rag.done) return false;                       // still settling
-    if (c.bloodTimer > 0 || c.smokeTimer > 0) return false;       // bleeding or burning
-    if (c.sep < corpseSepMax(c.dT)) return false;                 // halves still parting
+    if (c.bloodTimer > 0 || c.smokeTimer > 0 || (c.fatalSpray&&c.fatalSpray.left>0)) return false;
+    if (!c.sword&&c.sep < corpseSepMax(c.dT)) return false;        // legacy halves still parting
     if (CORPSE_SPURT_DEATHS.indexOf(c.dT) !== -1 && c.bT > 0) return false;
     if (CORPSE_MOVING_BITS.indexOf(c.dT) !== -1 && c.stopMotionTimer > 0) return false;
     return true;
@@ -11633,9 +12679,13 @@ function updateCorpses() {
               // fast-forwarded to where it would have ended up -- the settle is
               // deterministic and freezes after RAG_FRAMES anyway -- so what
               // gets stamped is the same body you would have seen land.
-              c.fP = 1;
+              if (c.fall&&!c.fall.done) stepFigureFall(c.fall,c,c.rag);
+              c.fP = c.fall ? figureFallProgress(c.fall) : 1;
               if (c.bT > 0) c.bT--;
               if (c.bloodTimer > 0) c.bloodTimer--;
+              if (c.fatalSpray&&c.fatalSpray.left>0) c.fatalSpray.left--;
+              if(c.sword)stepSwordParts(c);
+              c.poolAge=BLOOD_POOL_FRAMES;
               if (c.smokeTimer > 0) c.smokeTimer--;
               if (c.stopMotionTimer > 0) c.stopMotionTimer--;
               if (c.rag && !c.rag.done) ragStep(c.rag);
@@ -11682,7 +12732,7 @@ function cullCorpseStacks() {
   const cells = new Map();
   for (let i = 0; i < corpses.length; i++) {
       const c = corpses[i];
-      if (!c.isIntactBody) continue;
+      if (!c.isIntactBody || (c.fatalSpray&&c.fatalSpray.left>0)) continue;
       const k = Math.floor(c.x / CORPSE_STACK_CELL) + ',' + Math.floor(c.y / CORPSE_STACK_CELL);
       let list = cells.get(k);
       if (!list) { list = []; cells.set(k, list); }
@@ -11754,11 +12804,13 @@ const AVOID_MARK   = 240;   // how often "am I actually getting anywhere?" is as
 // the entity's own speed could have covered -- see the projection in steerAvoid
 const AVOID_PANIC  = 150;   // frames spent backing out once the answer is no
 
+function avoidHeadingOpen(ent, a, reach, blocked) {
+    return !blocked(ent.x + Math.cos(a) * reach, ent.y + Math.sin(a) * reach);
+}
 function steerAvoid(ent, ang, speed, blocked) {
     // Look further than one step, so the turn starts before they are against
     // the thing rather than after they have already ground into it.
     const reach = Math.max(16, speed * 2.6);
-    const open = (a) => !blocked(ent.x + Math.cos(a) * reach, ent.y + Math.sin(a) * reach);
 
     // Are they actually getting anywhere? Asked every call, not only when
     // blocked -- which is the whole point. A purely reactive steerer has one
@@ -11783,7 +12835,6 @@ function steerAvoid(ent, ang, speed, blocked) {
     // seconds is longer than any detour a single obstacle can cause, and a
     // concave trap still scores zero across it.
     const want = speed * AVOID_MARK * 0.15;
-    const along = (m) => (ent.x - m.x) * Math.cos(m.ang) + (ent.y - m.y) * Math.sin(m.ang);
     if (ent.avoidPanic > 0) {
         // The check is NOT run while backing out. Backing out means heading
         // away from the goal, which scores as no progress, which re-arms the
@@ -11791,18 +12842,20 @@ function steerAvoid(ent, ang, speed, blocked) {
         // for the rest of the level. It is a fixed stretch and then it is over.
         if (--ent.avoidPanic === 0) ent.avoidMark = { x: ent.x, y: ent.y, t: frameCount, ang: ang };
     } else if (!ent.avoidMark || frameCount - ent.avoidMark.t > AVOID_MARK) {
-        if (ent.avoidMark && along(ent.avoidMark) < want) ent.avoidPanic = AVOID_PANIC;
+        const m = ent.avoidMark;
+        if (m && (ent.x - m.x) * Math.cos(m.ang) + (ent.y - m.y) * Math.sin(m.ang) < want)
+            ent.avoidPanic = AVOID_PANIC;
         ent.avoidMark = { x: ent.x, y: ent.y, t: frameCount, ang: ang };
     }
     const backingOut = ent.avoidPanic > 0;
 
     if (ent.avoidHold > 0) {
         ent.avoidHold--;
-        if (open(ent.avoidAngle)) return ent.avoidAngle;   // committed, still clear
+        if (avoidHeadingOpen(ent, ent.avoidAngle, reach, blocked)) return ent.avoidAngle;
     }
     // While backing out the direct heading is precisely the one that has been
     // failing, so it is not offered.
-    if (!backingOut && open(ang)) { ent.avoidHold = 0; return ang; }
+    if (!backingOut && avoidHeadingOpen(ent, ang, reach, blocked)) { ent.avoidHold = 0; return ang; }
 
     // The preferred side is exhausted across every offset BEFORE the other side
     // is tried at all, and this ordering is the whole thing.
@@ -11819,11 +12872,13 @@ function steerAvoid(ent, ang, speed, blocked) {
     // the same hand until it clears the end. Backing out reverses the offsets
     // so the widest -- nearly the way they came -- is tried first.
     if (!ent.avoidSide) ent.avoidSide = random() > 0.5 ? 1 : -1;
-    for (const s of [ent.avoidSide, -ent.avoidSide]) {
+    const firstSide = ent.avoidSide;
+    for (let side = 0; side < 2; side++) {
+        const s = side === 0 ? firstSide : -firstSide;
         for (let k = 0; k < AVOID_FAN.length; k++) {
             const i = backingOut ? AVOID_FAN.length - 1 - k : k;
             const a = ang + AVOID_FAN[i] * s;
-            if (open(a)) {
+            if (avoidHeadingOpen(ent, a, reach, blocked)) {
                 ent.avoidSide = s; ent.avoidAngle = a;
                 ent.avoidHold = backingOut ? AVOID_HOLD * 2 : AVOID_HOLD;
                 return a;
@@ -11872,6 +12927,7 @@ function pickHead(len) {
 // Ambient city residents are independent of the story recruitment ledger.
 const CITY_CIVILIANS = ["CITY_CITIZEN_M", "CITY_CITIZEN_F"];
 const CITY_SKIN = [[103,66,47],[176,121,83],[239,199,168]];
+const CITY_NM0_CLEARANCE = 3000; // HUD distances use 10 world units per metre.
 let cityNoise = [], cityPeopleFrame = -99;
 function cityAppearance(e, seed) {
   let n = seed >>> 0; const pick = a => { n=(n+0x6D2B79F5)|0;let t=Math.imul(n^(n>>>15),1|n);t^=t+Math.imul(t^(t>>>7),61|t);return a[Math.floor(((t^(t>>>14))>>>0)/4294967296*a.length)]; };
@@ -11910,6 +12966,24 @@ function cityRoute(cx,cy,d) {
   if(d<2748)return {x:x+1058-(d-1832),y:y+1058,a:PI};
   return {x:x+142,y:y+1058-(d-2748),a:-HALF_PI};
 }
+function cityCivilianAllowed(x,y,pad=15) {
+  if(currentLevel!==1)return true;
+  // Keep the whole main compound, including the outer curtain-wall and gate
+  // faces, 300 metres from ambient residents in story and arcade alike.
+  // Open doors and captured fortresses retain the civilian exclusion.
+  const clearance=CITY_NM0_CLEARANCE+pad;
+  if(x>=-4700-clearance&&x<=5900+clearance&&
+     y>=-4600-clearance&&y<=5800+clearance)return false;
+  const fort=outpostFortDef(1);
+  if(fort&&Math.abs(x-fort.x)<=FORT_HALF_W+FORT_GATE_H/2+clearance&&
+           Math.abs(y-fort.y)<=FORT_HALF_H+FORT_GATE_H/2+clearance)return false;
+  return true;
+}
+function cityPersonOffscreen(x,y) {
+  // draw() publishes the camera's actual view, including aim pan, zoom and
+  // shake, before the streamer runs. Leave room for the whole actor to enter.
+  return !inView(x,y,100);
+}
 function cityMove(e,x,y,speed) {
   const d=Math.hypot(x-e.x,y-e.y);let a=Math.atan2(y-e.y,x-e.x);
   a=steerAvoid(e,a,speed,(x,y)=>e.checkCol(x,y));const m=e.attemptMove(Math.cos(a)*Math.min(speed,d),Math.sin(a)*Math.min(speed,d));
@@ -11940,36 +13014,62 @@ function bankCityPerson(e) {
   if(!e.cityPersonKey)return;
   const b=getBiomeState(1);const table=b.cityPeople||(b.cityPeople={});
   table[e.cityPersonKey]={x:e.x,y:e.y,hp:e.hp,dead:e.dead||e.hp<=0,stun:e.stunTimer,
-    stunAge:e.stunPose?e.stunPose.age:0,panic:e.panicTimer||0,px:e.panicX,py:e.panicY,d:e.cityDistance};
+    stunAge:e.stunPose?e.stunPose.age:0,stunA:e.stunPose&&e.stunPose.a,stunFacing:e.stunPose&&e.stunPose.facing,
+    panic:e.panicTimer||0,px:e.panicX,py:e.panicY,d:e.cityDistance};
 }
 function refreshCityPeople(mgr,pcx,pcy) {
-  if(!mgr||mgr.biome!==1||!player||!doTick||isStoryMode||frameCount-cityPeopleFrame<20)return;
+  if(!mgr||mgr.biome!==1||!player||!doTick||frameCount-cityPeopleFrame<20)return;
   cityPeopleFrame=frameCount;let civ=0,guard=0;
   for(let i=enemiesList.length-1;i>=0;i--){const e=enemiesList[i];if(!e.cityPersonKey)continue;
-    bankCityPerson(e);if(Math.hypot(e.x-player.x,e.y-player.y)>3000){enemiesList.splice(i,1);continue;}
+    bankCityPerson(e);
+    const dx=e.x-player.x,dy=e.y-player.y;
+    if(dx*dx+dy*dy>3000*3000 || (e.isCityCivilian&&e.hp>0&&!e.dead&&
+       (nm0AmbushActive||!cityCivilianAllowed(e.x,e.y)))){enemiesList.splice(i,1);continue;}
     if(e.hp>0&&!e.dead){if(e.isCityCivilian)civ++;else guard++;}
   }
+  // Ambient residents wait in their saved records throughout the scripted
+  // battle. No candidate searches, civilian AI or bullet targets are needed.
+  if(nm0AmbushActive)return;
+  // The retention circle lies entirely inside a forbidden compound buffer.
+  // Skip its civilian slots before routes and duplicate-key scans are built.
+  const civiliansNearby=cityCivilianAllowed(player.x,player.y,-3000);
   const b=getBiomeState(1),table=b.cityPeople||(b.cityPeople={});let made=0;
-  for(let ring=0;ring<=1&&made<4;ring++)for(let cy=pcy-ring;cy<=pcy+ring&&made<4;cy++)for(let cx=pcx-ring;cx<=pcx+ring&&made<4;cx++){
+  for(let ring=0;ring<=CHUNK_LOAD_R&&made<4;ring++)for(let cy=pcy-ring;cy<=pcy+ring&&made<4;cy++)for(let cx=pcx-ring;cx<=pcx+ring&&made<4;cx++){
     if(Math.max(Math.abs(cx-pcx),Math.abs(cy-pcy))!==ring)continue;
     const key=cx+","+cy,ch=mgr.chunks.get(key),authored=!!(authoredChunks&&authoredChunks.has(key));
     if((!ch&&!authored)||cityHasCanal(1,cy)||(ch&&ch.solid.some(s=>s.isGovFortress)))continue;
     const liberated=townsData[1]&&townsData[1].established;
     const formation={distance:Math.abs(Math.imul(cx,73856093)^Math.imul(cy,19349663))%3664,frame:-1};
     for(let n=0;n<10&&made<4;n++){
-      const isCiv=n<6,k=key+",people:"+n,old=table[k];
-      if((isCiv?civ>=42:guard>=12)||(!isCiv&&(authored||liberated||nm0AmbushActive))||old&&old.dead||enemiesList.some(e=>e.cityPersonKey===k))continue;
+      const isCiv=n<6;if(isCiv&&!civiliansNearby)continue;
+      const k=key+",people:"+n,old=table[k];
+      if((isCiv?civ>=42:guard>=12)||(!isCiv&&(isStoryMode||authored||liberated||nm0AmbushActive))||old&&old.dead||enemiesList.some(e=>e.cityPersonKey===k))continue;
       const seed=(Math.imul(cx+999,73856093)^Math.imul(cy+999,19349663)^Math.imul(n+1,83492791))>>>0;
       const d=isCiv?n*577:formation.distance-(n-6)*38,p=cityRoute(cx,cy,d);
-      const e=new Character(old?old.x:p.x,old?old.y:p.y,false,isCiv?CITY_CIVILIANS[n%2]:"NM0_CITY_GUARD");
+      const post=!isCiv&&n>=8?cityRoute(cx,cy,(n-8)*1832+420):null;
+      const point=old||post||p;
+      // The outer ring includes corners beyond the retention radius. Do not
+      // spend the spawn budget rebuilding somebody the next refresh evicts.
+      if(Math.hypot(point.x-player.x,point.y-player.y)>3000)continue;
+      if(!cityPersonOffscreen(point.x,point.y)||(isCiv&&!cityCivilianAllowed(point.x,point.y))||
+         (!isCiv&&insideOwnedFortress(1,point.x,point.y,60)))continue;
+      const e=new Character(point.x,point.y,false,isCiv?CITY_CIVILIANS[n%2]:"NM0_CITY_GUARD");
       if(isCiv)cityAppearance(e,seed);
       e.cityPersonKey=k;e.cityCx=cx;e.cityCy=cy;e.cityDistance=old&&old.d!==undefined?old.d:d;
       if(e.checkCol(e.x,e.y))continue;
       if(!isCiv){const other=enemiesList.find(g=>g.isCityPatrol&&g.cityCx===cx&&g.cityCy===cy&&g.cityFormation);
         e.cityFormation=other?other.cityFormation:formation;e.citySlot=n-6;
-        if(n>=8){const post=cityRoute(cx,cy,(n-8)*1832+420);e.cityPost=post;if(!old){e.x=post.x;e.y=post.y;}e.aimAngle=post.a;}}
+        if(post){e.cityPost=post;e.aimAngle=post.a;}}
       if(old){e.hp=old.hp;e.panicTimer=old.panic||0;e.panicX=old.px;e.panicY=old.py;
-        if(old.stun>0){startPunchStun(e,e.aimAngle);e.stunTimer=old.stun;e.stunPose.age=old.stunAge;}}
+        if(old.stun>0){
+          if(old.stunFacing!==undefined&&old.stunFacing!==null)e.aimAngle=old.stunFacing;
+          startPunchStun(e,old.stunA===undefined||old.stunA===null?e.aimAngle:old.stunA);
+          e.stunTimer=old.stun;e.stunPose.age=old.stunAge;
+          if(e.stunPose.age>=e.stunPose.duration+16){e.stunPose.done=true;e.stunPose.impulse=0;while(!e.stunPose.rag.done)ragStep(e.stunPose.rag);}
+          // Rebuilding a saved pose is not a new gunfire or injury event.
+          e.panicTimer=old.panic||0;e.panicX=old.px;e.panicY=old.py;
+          bankCityPerson(e);
+        }}
       enemiesList.push(e);if(isCiv)civ++;else guard++;made++;
     }
   }
@@ -11977,67 +13077,99 @@ function refreshCityPeople(mgr,pcx,pcy) {
 function boxerPose(e) {
   const active=e.isPlayer&&!e.isArmed&&!rightStick.active&&e.muzzleFlash<=0&&meleeTool()==="NONE"&&(e.meleeTimer>0||e.boxingHold>0)&&!e.mounted;
   const p=e.meleeTimer>0?1-e.meleeTimer/(e.punchDuration||20):0,s=Math.sin(Math.max(0,Math.min(1,p))*PI);
-  const twist=s*(e.meleePhase===2?-.88:e.meleePhase===3?.96:.58);
-  return {active,hip:-.22+twist*.38,torso:-.28+twist,extension:s};
+  const twist=s*(e.meleePhase===2?-.72:e.meleePhase===3?.80:.48);
+  return {active,hip:-.12+twist*.44,torso:-.17+twist,extension:s};
+}
+function boxingFeet(e,b) {
+  const moving=e.isMoving?Math.min(.8,e.gait||.3):0,angle=e.moveAngle-e.aimAngle-b.hip;
+  const dx=Math.cos(angle),dy=Math.sin(angle),stride=moving*5;
+  return [0,1].map(i=>{
+    const phase=((e.walkCycle/(TWO_PI)+i*.5)%1+1)%1;
+    const swing=phase>.62?(phase-.62)/.38:0;
+    const travel=phase<=.62?1-2*phase/.62:-Math.cos(swing*PI);
+    const step=travel*stride,lift=Math.sin(swing*PI)*moving*2.4;
+    const cross=e.meleePhase===2,punch=b.extension;
+    return {x:(i===0?6.8:-6.8)+dx*step+(i===0?(cross?.6:2.6):-.5)*punch,
+      y:(i===0?-6.3:6.3)+dy*step*.55,
+      lift:lift+(i===1&&cross?1.3*punch:0),
+      heading:(i===0?-.04:.12)+(i===1?b.hip+.12:0)*.8};
+  });
+}
+function drawBoxingLegs(e,b,rig) {
+  const feet=boxingFeet(e,b),l1=rig.thigh*STAND_FORE_LEG,l2=rig.shin*STAND_FORE_LEG;
+  const boot=color(red(e.pantsCol)*.55,green(e.pantsCol)*.55,blue(e.pantsCol)*.55);
+  for(let i=0;i<2;i++){
+    const s=i===0?-1:1,foot=feet[i],ox=-3,oy=s*4.6;
+    const ax=foot.x-Math.cos(foot.heading)*rig.foot*.34,ay=foot.y-Math.sin(foot.heading)*rig.foot*.34-foot.lift;
+    const dx=ax-ox,dy=ay-oy,d=Math.max(.1,Math.min(Math.hypot(dx,dy),l1+l2-.01));
+    const a=Math.atan2(dy,dx)+s*Math.acos(Math.max(-1,Math.min(1,(l1*l1+d*d-l2*l2)/(2*l1*d))));
+    const kx=ox+Math.cos(a)*l1,ky=oy+Math.sin(a)*l1;
+    if(BIOME_ACTIVE)figureContour();else noStroke();
+    // The knee, ankle and sole remain separate. A shorter, planted stance
+    // becomes a wider punch only while the lead steps or the rear heel pivots.
+    drawFallBone(window,ox,oy,kx,ky,rig.thighW,e.pantsCol,undefined,undefined,{x:ax,y:ay,width:rig.shinW*.80});
+    drawFallBone(window,kx,ky,ax,ay,rig.shinW*.80,e.pantsCol,undefined,undefined,false);
+    push();translate(foot.x,foot.y-foot.lift);rotate(foot.heading);fill(boot);
+    figureCelOval(window,0,0,rig.foot,rig.shinW*.80,boot);pop();
+  }
 }
 function drawBoxingArms(e,b) {
   const rig=figureRig(e.bodyW,e.bodyH),skin=e.skinCol||color(235,180,140);
+  const paint=figurePainter(),g=paint?paint.api:window;
   for(const s of [-1,1]){
     const sy=s*rig.shY,reach=b.extension*((s===-1&&e.meleePhase!==2)||(s===1&&e.meleePhase===2)?1:0);
     const hx=9+reach*22,hy=s*(8-reach*2),dx=hx,dy=hy-sy,l1=rig.upper*.75,l2=rig.fore*.85;
     const d=Math.max(.1,Math.min(Math.hypot(dx,dy),l1+l2-.01)),a=Math.atan2(dy,dx)+s*Math.acos(Math.max(-1,Math.min(1,(l1*l1+d*d-l2*l2)/(2*l1*d))));
     const ex=Math.cos(a)*l1,ey=sy+Math.sin(a)*l1;
-    push();translate(0,sy);rotate(a);fill(e.shirtCol);ellipse(l1*.5,0,l1+6,7);pop();
-    push();translate(ex,ey);rotate(Math.atan2(hy-ey,hx-ex));fill(skin);ellipse(l2*.5,0,l2+5,6);ellipse(l2+2,0,8,8);fill(red(skin)*1.1,green(skin)*1.1,blue(skin)*1.1);ellipse(l2+3,-1.2,4,3);pop();
+    // The sleeve and exposed forearm meet under a soft cuff, never two rings.
+    const fx=ex+(hx-ex)*.22,fy=ey+(hy-ey)*.22;
+    figureCelLimb(g,0,sy,ex,ey,fx,fy,7,6.3,6,e.shirtCol);
+    figureCelLimb(g,ex,ey,(ex+hx)*.5,(ey+hy)*.5,hx,hy,5.7,5.4,5,skin);
+    figureCelOval(g,hx+2*Math.cos(a),hy+2*Math.sin(a),8,8,skin,.8);
   }
 }
 function startPunchStun(e,angle) {
   const duration=unarmedCivilian(e)?240:1500;
+  // Read locomotion before panic or STUNNED changes the actor's state.
+  const fall=buildFigureFall(e,angle,6,true,e.aimAngle);
   scareCivilianIfNeeded(e,angle);
-  if(e.stunPose&&e.stunTimer>0){e.stunTimer=Math.max(e.stunTimer,duration);e.stunPose.rag.spin+=.13;e.state="STUNNED";bankCityPerson(e);return;}
+  if(e.stunPose&&e.stunTimer>0){e.stunTimer=Math.max(e.stunTimer,duration);e.state="STUNNED";bankCityPerson(e);return;}
   const r=ragBuild(e.eType,e.bodyW,angle,e.aimAngle);
   if(!r){e.stunTimer=duration;e.state="STUNNED";e.isMoving=false;return;}
-  r.spin+=.23;for(let i=0;i<4;i++){r.limbs[i].va=(i%2?-.18:.18);r.limbs[i].vb=i<2?.22:.13;}
-  e.stunPose={age:0,impulse:4.8,a:angle,rag:r};e.stunTimer=duration;e.state="STUNNED";e.isMoving=false;bankCityPerson(e);
+  prepareFallRag(r,fall);r.spring=.065;r.frames=fall.duration+16;
+  for(let i=0;i<4;i++){r.limbs[i].va=(i%2?-.13:.13);r.limbs[i].vb=i<2?.20:.12;}
+  fall.rag=r;e.stunPose=fall;e.stunTimer=duration;e.state="STUNNED";e.isMoving=false;bankCityPerson(e);
 }
 function scareCivilianIfNeeded(e,angle){if(unarmedCivilian(e))scareCivilian(e,e.x-Math.cos(angle)*50,e.y-Math.sin(angle)*50);}
 function advanceStun(e) {
-  if(!e.stunPose){const r=ragBuild(e.eType,e.bodyW,e.aimAngle,e.aimAngle);if(r)e.stunPose={age:40,impulse:0,a:e.aimAngle,rag:r};}
-  const p=e.stunPose;if(p){p.age++;ragStep(p.rag);
-    if(p.age<24){const vx=Math.cos(p.a)*p.impulse,vy=Math.sin(p.a)*p.impulse;
-      if(!e.checkCol(e.x+vx,e.y))e.x+=vx;if(!e.checkCol(e.x,e.y+vy))e.y+=vy;p.impulse*=.86;}}
+  if(!e.stunPose){const r=ragBuild(e.eType,e.bodyW,e.aimAngle,e.aimAngle);
+    if(r){const p=buildFigureFall(e,e.aimAngle,0,true,e.aimAngle);p.age=p.duration+16;p.done=true;p.impulse=0;prepareFallRag(r,p);while(!r.done)ragStep(r);p.rag=r;e.stunPose=p;}}
+  const p=e.stunPose;if(p){stepFigureFall(p,e,p.rag);ragStep(p.rag);}
   e.stunTimer--;if(e.skeletonTimer>0)e.skeletonTimer--;e.isMoving=false;
   if(e.stunTimer<=0&&e.hp>0){e.state=unarmedCivilian(e)?"FLEE":"CHASE";e.stunPose=null;}
 }
 function stunFall(e) {
   if(!e.stunPose)return e.stunTimer>0?1:0;
-  const age=e.stunPose.age,t=Math.min(1,age/38),fall=t*t*(3-2*t);
-  const rebound=age>27&&age<62?Math.sin((age-27)/35*PI)*.055:0;
   const rise=e.stunTimer<32?Math.max(0,e.stunTimer/32):1;
-  return Math.max(0,(fall-rebound)*rise);
+  return figureFallProgress(e.stunPose)*rise;
 }
 function drawStunnedFigure(e) {
-  const f=stunFall(e),p=e.stunPose,r=p&&p.rag,rig=figureRig(e.bodyW,e.bodyH);
+  const f=stunFall(e),p=e.stunPose,rg=p&&p.rag,rig=projectFallRig(e.bodyW,e.bodyH,f);
   if (!charShadowOwned(e.eType)) {charShadowFill(55);ellipse(charShadowX(12*(1-f)),charShadowY(12*(1-f)),20+f*24,21+f*12);}
-  push();rotate(e.aimAngle+(r?r.ang:0)*f);scale(1,.85+.15*(1-f));
+  push();rotate(p?figureFallYaw(p,rg,f):e.aimAngle);scale(RAG_SCALE);
   const skin=e.skinCol||color(235,180,140),boot=color(red(e.pantsCol)*.55,green(e.pantsCol)*.55,blue(e.pantsCol)*.55);
-  if(BIOME_ACTIVE)figureContour();else noStroke();
-  for(let i=0;i<4;i++){const arm=i<2,L=r?r.limbs[i]:{a:.1,b:.2},s=i%2?-1:1;
-    const ox=arm?lerp(0,rig.shX,f):lerp(-6,rig.hipX,f),oy=s*(arm?rig.shY:lerp(6,rig.hipY,f));
-    // The knee passes under the body as it buckles. Signed foreshortening
-    // changes the projected direction while the hip keeps its legal splay;
-    // sweeping a straight leg through a half-circle would dislocate the hip.
-    const projection=lerp(-STAND_FORE_LEG,1,f),legScale=Math.max(.015,Math.abs(projection));
-    const a=arm?PI+s*L.a*f:(projection<0?s*L.a*f:PI-s*L.a*f),b=arm?-s*L.b*f:s*ragKnee(L)*f;
-    const lengthScale=arm?lerp(STAND_FORE_ARM,1,f):legScale;
-    ragLimb(window,ox,oy,a,b,(arm?rig.upper:rig.thigh)*lengthScale,(arm?rig.fore:ragShin(rig,ragKnee(L)*f))*lengthScale,arm?rig.upperW:rig.thighW,arm?rig.foreW:rig.shinW,arm?e.shirtCol:e.pantsCol,arm?skin:boot,arm?rig.hand:rig.foot);
-  }
-  const depth=lerp(e.bodyW*TORSO_DEPTH,rig.TL,f),span=lerp(e.bodyH,rig.TW,f);
-  if(BIOME_ACTIVE){const light=figureLight(e.aimAngle);volShadeCol(0,0,depth,span,e.shirtCol,1,light[0],light[1]);}
-  else{fill(e.shirtCol);ellipse(0,0,depth,span);}
-  drawFigureHead(window,figureIdentity(e),lerp(12,rig.shX+8,f),0,true,0);pop();
+  ragContour(window,255);
+  if(rg){for(let i=2;i<4;i++)drawFallLimb(window,rig,rg,i,f,e.shirtCol,e.pantsCol,skin,boot);}
+  figureCelOval(window,0,0,rig.TL,rig.TW,e.shirtCol);
+  drawFallenAttire(window,figureIdentity(e),rig.TL,rig.TW,p&&p.faceDown,f);
+  if(rg){for(let i=0;i<2;i++)drawFallLimb(window,rig,rg,i,f,e.shirtCol,e.pantsCol,skin,boot);}
+  translate(rg?rig.headX:lerp(12/RAG_SCALE,18,f),0);scale(lerp(1/RAG_SCALE,1,f));rotate(figureHeadTurn(p,f));drawFallenHead(window,figureIdentity(e),p,f);pop();
 }
 
+
+// Every squad command shares one base pace; mounted/type and terrain factors
+// still apply in the existing movement path.
+const ALLY_COMMAND_SPEED = 4.0;
 
 class Character {
   constructor(x, y, isP, eT = "NORMAL") {
@@ -12271,7 +13403,7 @@ this.punchHitCount = 0;
     this.dead = false; this.aimAngle = 0; this.moveAngle = 0; this.lastMoveAngle = 0; if (!this.currentWeapon) this.currentWeapon = WEAPONS.PISTOL; this.fireTimer = 0; this.reloadTimer = 0; this.orbChargeTimer = 0; 
     this.dashTimer = 0; this.dashCooldown = 0; this.dashCount = 0; this.dashWindow = 0; this.meleeTimer = 0; this.meleeCooldown = 0; this.meleePhase = 0; this.meleeComboTimer = 0; this.isBackhand = false; this.meleeQueued = false;
     this.throwAnimTimer = 0; this.cannonAmmo = 4; this.cannonCooldown = 0; this.cannonFireDelay = 0; this.cannonCharge = 0;
-    this.muzzleFlash = 0; this.decals = []; this.isMoving = false; this.walkCycle = 0; this.gait = 0; this.armDrag = 0; this.lastHitFrame = 0; this.frameDamage = 0; this.shieldFlashTimer = 0; this.shieldBurstTimer = 0;
+    this.muzzleFlash = 0; this.weaponKick = 0; this.decals = []; this.isMoving = false; this.walkCycle = 0; this.gait = 0; this.armDrag = 0; this.lastHitFrame = 0; this.frameDamage = 0; this.shieldFlashTimer = 0; this.shieldBurstTimer = 0;
        this.weaponAmmo = { 
         "PISTOL": WEAPONS.PISTOL.maxAmmo, 
         "MACHINE GUN": WEAPONS.SMG.maxAmmo, 
@@ -12280,6 +13412,7 @@ this.punchHitCount = 0;
         "SHOTGUN": WEAPONS.SHOTGUN.maxAmmo, 
         "ROCKET LAUNCHER": WEAPONS.ROCKET_LAUNCHER.maxAmmo,
         "TASER": WEAPONS.TASER.maxAmmo, // <--- ADDED TASER
+        "BOW": 0,
         "REVOLVER": WEAPONS.REVOLVER.maxAmmo,
         "COACH GUN": WEAPONS.COACH_GUN.maxAmmo
     };
@@ -12292,6 +13425,7 @@ this.punchHitCount = 0;
         "SHOTGUN": 0, 
         "ROCKET LAUNCHER": 0,
         "TASER": Infinity, // <--- ADDED TASER
+        "BOW": 0,
         // Townsfolk reload from their own belt loops forever; the player never
         // picks these up, so a spare-mag count would never be read.
         "REVOLVER": Infinity,
@@ -12388,6 +13522,17 @@ this.skeletonTimer = 0;
       if (this.moveAngle === undefined) this.moveAngle = random(TWO_PI);
   }
 
+  restoreHealth(amount) {
+    if (amount <= 0 || this.hp <= 0 || this.dead) return 0;
+    const restored = min(amount, max(0, this.maxHp - this.hp));
+    if (restored > 0) {
+      this.hp += restored;
+      // Body wounds heal with HP. The energy shield can refill independently.
+      if (this.isPlayer) this.decals.length = 0;
+    }
+    return restored;
+  }
+
       takeDamage(amount, source = null) {
     if(unarmedCivilian(this))scareCivilian(this,source?source.x:player?player.x:this.x,source?source.y:player?player.y:this.y);
     if(this.isCityPatrol&&this.hp>80)amount*=.55;
@@ -12471,6 +13616,7 @@ this.skeletonTimer = 0;
     
       checkCol(nx, ny) {
     if (this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL" || this.eType === "SAUCER" || this.eType === "SAUCER_RED") return false; 
+    if(this.isCityCivilian&&!cityCivilianAllowed(nx,ny))return true;
     if (this.ignoreBldgTimer > 0) return false; 
     
     let r = (this.eType === "ARMORED" || this.eType === "ALIEN_GATOR" || this.eType === "SNAIL_HYBRID") ? 28 : (this.eType === "BUG" ? 10 : (this.eType === "SNAIL" ? 15 : 15));
@@ -12485,6 +13631,14 @@ this.skeletonTimer = 0;
     const near = colNear(nx, ny);
     for (let i = 0; i < near.length; i++) {
         const b = near[i];
+        // Cell candidates and the long fortress walls still include solids
+        // far from this probe. Reject their bounds before the type/gate work.
+        // The U-shaped barrier extends 15 units past its authored rectangle.
+        const hw = b.isUBarrier ? Math.abs(b.w / 2) : b.w / 2;
+        const hh = b.isUBarrier ? Math.abs(b.h / 2) : b.h / 2;
+        const extra = b.isUBarrier ? 15 : 0;
+        if (!(nx + r > b.x - hw - extra && nx - r < b.x + hw + extra &&
+              ny + r > b.y - hh - extra && ny - r < b.y + hh + extra)) continue;
         if (b.isCropField || b.isMarket) continue;
         if (lvl4 && b.isPalm) continue;
         if (lvl6 && (b.isAlienPlant || b.isEnergyPole)) continue;
@@ -12501,20 +13655,23 @@ this.skeletonTimer = 0;
        continue;
         }
 
-        if (nx + r > b.x - b.w / 2 && nx - r < b.x + b.w / 2 && ny + r > b.y - b.h / 2 && ny - r < b.y + b.h / 2) return true; 
+        return true;
    
     } 
     
     
     // FIX: Restored the missing loop body and closing bracket
-    for (let ci = 0; ci < activeParkingCars.length; ci++) {
-        const c = activeParkingCars[ci];
+    const nearCars = activeParkingCars.length <= 16 ? activeParkingCars :
+        crowdNearbyCars(nx, ny, r, _crowdColCars);
+    for (let ci = 0; ci < nearCars.length; ci++) {
+        const c = nearCars[ci];
         if (nx + r > c.x - 25 && nx - r < c.x + 25 && ny + r > c.y - 45 && ny - r < c.y + 45) return true;
     }
     
     const bR = r + 12, bR2 = bR * bR;
-    for (let i = 0; i < barrels.length; i++) {
-        const b = barrels[i];
+    const nearBarrels = barrels.length <= 16 ? barrels : crowdNearbyBarrels(nx, ny, r, _crowdColBarrels);
+    for (let i = 0; i < nearBarrels.length; i++) {
+        const b = nearBarrels[i];
         // Box first: two compares and no multiply reject almost every barrel,
         // and only the survivors pay for the squared distance. p5's dist() is
         // Math.hypot, which guards against overflow at ranges this game never
@@ -12632,6 +13789,7 @@ this.skeletonTimer = 0;
     removeCurrentWeapon() {
       let aW = [WEAPONS.PISTOL]; 
       if (taserUnlocked) aW.push(WEAPONS.TASER);
+      if (this.flags && this.flags.bowUnlocked) aW.push(WEAPONS.BOW);
       if (dualSmgUnlocked && (this.mags["DUAL SMGS"] > 0 || this.weaponAmmo["DUAL SMGS"] > 0)) aW.push(WEAPONS.DUAL_SMG);
       else if (smgUnlocked && (this.mags["MACHINE GUN"] > 0 || this.weaponAmmo["MACHINE GUN"] > 0)) aW.push(WEAPONS.SMG); 
       if (arUnlocked && (this.mags["ASSAULT RIFLE"] > 0 || this.weaponAmmo["ASSAULT RIFLE"] > 0)) aW.push(WEAPONS.ASSAULT_RIFLE);
@@ -12642,6 +13800,7 @@ this.skeletonTimer = 0;
 
 
     triggerReload() {
+      if (this.currentWeapon === WEAPONS.BOW) return;
       if (this.currentWeapon === WEAPONS.PISTOL || this.currentWeapon === WEAPONS.TASER) { 
           this.ammo = 0; 
           // Pistol = 90 frames (1.5s), Taser = 420 frames (7s)
@@ -12806,13 +13965,11 @@ this.skeletonTimer = 0;
   }
 
   updatePlayer() {
+    const motionX=this.x,motionY=this.y;
+    try {
    this.forceNudge();
 	  if (this.shieldFlashTimer > 0) this.shieldFlashTimer--; if (this.shieldBurstTimer > 0) this.shieldBurstTimer--;
     if (this.shieldRechargeTimer > 0) { this.shieldRechargeTimer--; } else if (this.shield < 100) { this.shield = min(100, this.shield + 25 / 60); }
-    // Holes are a property of being unprotected, so they last exactly as long
-    // as that does. The moment the shield has anything in it -- the same moment
-    // takeDamage starts blocking again -- they come off.
-    if (this.isPlayer && this.shield > 0 && this.decals.length) this.decals.length = 0;
     if (this.dashWindow > 0) { this.dashWindow--; if (this.dashWindow <= 0) this.dashCount = 0; }
     
     if (this.meleeCharge === undefined) this.meleeCharge = 0;
@@ -12829,7 +13986,7 @@ this.skeletonTimer = 0;
             if (!meleeInputHeld || cookTime <= 0) {
                 isCooking = false; pFlaskAmmo--; 
                 if (pFlaskAmmo <= 0 && pFlaskTimer <= 0) pFlaskTimer = 600; 
-                playerFlasks.push(new PlayerFlask(this.x, this.y, this.aimAngle, cookTime));
+                playerFlasks.push(new PlayerFlask(this.x, this.y, supportAimAngle(this), cookTime));
                 sfx.throwG(); this.throwAnimTimer = 15;
             }
         }
@@ -12838,19 +13995,18 @@ this.skeletonTimer = 0;
         if (this.cannonCooldown > 0) this.cannonCooldown--;
         if (this.cannonFireDelay > 0) this.cannonFireDelay--;
         
-        if (typeof cannonInputHeld !== 'undefined' && cannonInputHeld && this.cannonCooldown <= 0 && this.cannonFireDelay <= 0 && this.cannonAmmo > 0) {
+        if (typeof cannonInputHeld !== 'undefined' && cannonInputHeld && !isCooking && this.throwAnimTimer <= 0 && this.cannonCooldown <= 0 && this.cannonFireDelay <= 0 && this.cannonAmmo > 0) {
             this.cannonCharge++; 
-        } else if ((typeof cannonInputHeld === 'undefined' || !cannonInputHeld) && this.cannonCharge > 0) {
+        } else if ((typeof cannonInputHeld === 'undefined' || !cannonInputHeld) && !isCooking && this.throwAnimTimer <= 0 && this.cannonCharge > 0) {
             let dmg = 50, dryMax = 1;
             if (this.cannonCharge >= 120) { dmg = 350; dryMax = 3; } 
             else if (this.cannonCharge >= 80) { dmg = 150; dryMax = 2; } 
             
-            let range = 300, arc = 0.4, pA = this.aimAngle;
+            let range = 300, arc = 0.4, pA = supportAimAngle(this);
             let candidates = enemiesList.filter(e => e.hp > 0 && !e.dead && dist(this.x, this.y, e.x, e.y) < range && abs((atan2(e.y - this.y, e.x - this.x) - pA + PI*3) % TWO_PI - PI) < arc);
             
-            let startX = this.x + cos(pA)*32 - sin(pA)*-19;
-            let startY = this.y + sin(pA)*32 + cos(pA)*-19;
-            let shockPts = [{x: startX, y: startY}];
+            const muzzle = leftActionMuzzle(this, pA);
+            let shockPts = [{x: muzzle.x, y: muzzle.y}];
             
             if (candidates.length > 0) {
                 candidates.sort((a,b) => dist(this.x, this.y, a.x, a.y) - dist(this.x, this.y, b.x, b.y));
@@ -12896,7 +14052,7 @@ this.skeletonTimer = 0;
                         let bCol = (t.eType === "BUG" || t.eType === "SNAIL" || t.eType === "SNAIL_HYBRID") ? color(200, 230, 40) : color(90, 0, 0);
                         
                         if (t.eType === "ROBOT") {
-                            robotDeathBurst(t, this.aimAngle, true);
+                            robotDeathBurst(t, pA, true);
                         } else {
                         if (dT === 5) {
                             emit(t.x, t.y, 40, color(255, 150, 0), "EXPLOSION"); sfx.explosion(t.x, t.y);
@@ -12905,12 +14061,12 @@ this.skeletonTimer = 0;
                         emit(t.x, t.y, 60, bCol, "GORE");
                         spawnSplatter(t.x, t.y, "BLOOD", bCol);
 
-                        let c = new Corpse(t.x, t.y, t.moveAngle, t.aimAngle, color(40), color(20), dT, this.aimAngle, t.decals, t.currentWeapon, this.aimAngle, t.eType, t.bodyW, t.bodyH, t);
+                        let c = new Corpse(t.x, t.y, t.moveAngle, t.aimAngle, color(40), color(20), dT, pA, t.decals, t.currentWeapon, pA, t.eType, t.bodyW, t.bodyH, t);
                         c.smokeTimer = 198; c.isCharred = true; c.bloodTimer = 198;
                         corpses.push(c);
                         }
 
-                        processKill(t.x, t.y, false, t.eType, t.isFriendly);
+                        processKill(t.x, t.y, false, t.eType, t.isFriendly, t);
                         
                         let idx = enemiesList.indexOf(t);
                         if (idx > -1) enemiesList.splice(idx, 1);
@@ -12939,7 +14095,7 @@ this.skeletonTimer = 0;
             if (!grenadeInputHeld || cookTime <= 0) {
                 isCooking = false; pGrenadeAmmo--; 
                 if (typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked && pGrenadeAmmo <= 0 && pGrenadeTimer <= 0) pGrenadeTimer = 600;
-                playerGrenades.push(new PlayerGrenade(this.x, this.y, this.aimAngle, cookTime));
+                playerGrenades.push(new PlayerGrenade(this.x, this.y, supportAimAngle(this), cookTime));
                 sfx.throwG(); this.throwAnimTimer = 15; 
             }
         }
@@ -13000,7 +14156,7 @@ this.skeletonTimer = 0;
                         // just goes up where it landed.
                         else if (e.eType === "ROBOT") { robotDeathBurst(e, ang, true); }
                         else { emit(e.x, e.y, 40, bCol, "GORE"); spawnSplatter(e.x, e.y, "BLOOD", bCol); corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 3, 0, e.decals, e.currentWeapon, ang, e.eType, e.bodyW, e.bodyH, e)); }
-                        processKill(e.x, e.y, false, e.eType, e.isFriendly);
+                        processKill(e.x, e.y, false, e.eType, e.isFriendly, e);
                     }
                 }
             }
@@ -13047,7 +14203,7 @@ this.skeletonTimer = 0;
       
       if (this.meleePhase === 4 && this.meleeTimer === 15) { 
           screenShake = 20; 
-          shockwaves.push(new Shockwave(this.x, this.y, this.aimAngle)); 
+          shockwaves.push(new Shockwave(this.x, this.y, this.aimAngle, meleeTool()==="SWORD"));
       }
              else if (this.meleePhase !== 4 && this.meleeTimer === 10) { 
           screenShake = 12; 
@@ -13118,9 +14274,11 @@ this.skeletonTimer = 0;
                               robotDeathBurst(e, atan2(e.y - this.y, e.x - this.x),
                                               !!(this.isPlayer || this.isFriendly), ROBOT_MELEE_KB);
                           }
-                          else { sfx.meleeKill(e.x, e.y); emit(e.x, e.y, 60, bCol, "GORE"); spawnSplatter(e.x, e.y, "BLOOD", bCol); corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 3, 0, e.decals, e.currentWeapon, this.aimAngle, e.eType, e.bodyW, e.bodyH, e)); }
+                          else { sfx.meleeKill(e.x, e.y); emit(e.x, e.y, 60, bCol, "GORE"); spawnSplatter(e.x, e.y, "BLOOD", bCol);
+                            corpses.push(meleeTool()==="SWORD"&&ragHumanoid(e.eType,e.bodyW)?swordKillCorpse(e,this.aimAngle):
+                              new Corpse(e.x,e.y,e.moveAngle,e.aimAngle,e.shirtCol,e.pantsCol,3,0,e.decals,e.currentWeapon,this.aimAngle,e.eType,e.bodyW,e.bodyH,e)); }
                           
-                          processKill(e.x, e.y, false, e.eType, e.isFriendly); 
+                          processKill(e.x, e.y, false, e.eType, e.isFriendly, e);
                       } 
                   } 
               } 
@@ -13145,7 +14303,8 @@ this.skeletonTimer = 0;
         else if (leftStick.active && this.isMoving && this.dashTimer <= 0) this.aimAngle = this.moveAngle;
     }
 
-    if (this.fireTimer > 0) this.fireTimer--; if (this.muzzleFlash > 0) this.muzzleFlash--; 
+    if (this.fireTimer > 0) this.fireTimer--; if (this.muzzleFlash > 0) this.muzzleFlash--;
+    if (this.weaponKick > 0) this.weaponKick--;
         if (this.reloadTimer > 0 && --this.reloadTimer <= 0) { 
         let mult = ((this.isPlayer || this.isFriendly) && window.milLvl >= 2) ? 2 : 1;
         this.ammo = this.currentWeapon.maxAmmo * mult; 
@@ -13155,9 +14314,12 @@ this.skeletonTimer = 0;
     if (rightStick.active && this.reloadTimer <= 0 && this.meleeTimer <= 0 && this.dashTimer <= 0 && !isCooking && this.throwAnimTimer <= 0 && rightStick.dist > 0.75 && this.fireTimer <= 0 && this.ammo > 0) {
         this.fire(this.aimAngle);
     }
+    } finally { rememberFigureMotion(this,this.x-motionX,this.y-motionY); }
   }
 
     updateEnemy() {
+    const motionX=this.x,motionY=this.y;
+    try {
     if (this.eType === "DAD" || (currentLevel === 0 && prologuePhase === 1 && this.eType === "SIA")) return; 
     // NEW: Freeze the farmer during the cutscene
     if (typeof inFarmCutscene !== 'undefined' && inFarmCutscene && this === farmSpeaker) return;
@@ -13330,7 +14492,8 @@ if (this.eType === "COW") {
     if (this.wetTimer > 0) { this.wetTimer--; if (frameCount % 15 === 0) emit(this.x + random(-10, 10), this.y + random(-10, 10), 1, color(100, 150, 255), "BLOOD"); }
 
     if (this.fireTimer > 0) this.fireTimer--; 
-    if (this.muzzleFlash > 0) this.muzzleFlash--; 
+    if (this.muzzleFlash > 0) this.muzzleFlash--;
+    if (this.weaponKick > 0) this.weaponKick--;
         if (this.reloadTimer > 0 && --this.reloadTimer <= 0) { 
         let mult = ((this.isPlayer || this.isFriendly) && window.milLvl >= 2) ? 2 : 1;
         this.ammo = this.currentWeapon.maxAmmo * mult; 
@@ -13440,7 +14603,7 @@ if (this.eType === "COW") {
                 this.aimAngle = angToTarget;
                 if (distToTarget > 200) { moveTargetX = trg.x; moveTargetY = trg.y; shouldMove = true; }
             } else {
-                let moveSpeed = 2.0 * spd;
+                let moveSpeed = ALLY_COMMAND_SPEED * spd;
                 let vx = 0, vy = 0;
                 if (this.searchDir === "NORTH") vy = -moveSpeed;
                 if (this.searchDir === "SOUTH") vy = moveSpeed;
@@ -13487,8 +14650,8 @@ if (this.eType === "COW") {
 
         if (shouldMove) {
             let mAng = atan2(moveTargetY - this.y, moveTargetX - this.x);
-            let vx = cos(mAng) * 2.45 * spd;
-            let vy = sin(mAng) * 2.45 * spd;
+            let vx = cos(mAng) * ALLY_COMMAND_SPEED * spd;
+            let vy = sin(mAng) * ALLY_COMMAND_SPEED * spd;
             let m = this.attemptMove(vx, vy); aDx = m.x; aDy = m.y;
         }
 
@@ -13647,12 +14810,6 @@ if (this.eType === "COW") {
             this.aimAngle = aR;
             this.isMoving = false;
             this.chargeTimer--;
-            if (frameCount % 4 === 0) {
-                const t01 = 1 - this.chargeTimer / ROBOT_CHARGE;
-                const mx = this.x + cos(aR) * 34 - sin(aR) * 13;
-                const my = this.y + sin(aR) * 34 + cos(aR) * 13;
-                emit(mx, my, 1, color(255, 150 + t01 * 90, 60), "FLECK");
-            }
             if (this.chargeTimer <= 0) { this.burstLeft = ROBOT_BURST; this.burstGap = 0; }
             return;
         }
@@ -13862,7 +15019,7 @@ if (this.eType === "COW") {
                        let distErr = dToP - 350, approachX = cos(iA) * distErr * 0.02, approachY = sin(iA) * distErr * 0.02, strafeX = cos(iA + (PI / 2) * this.strafeDir) * 3.5, strafeY = sin(iA + (PI / 2) * this.strafeDir) * 3.5;
                        let vx = (approachX + strafeX) * spd, vy = (approachY + strafeY) * spd, maxSpd = 3.5 * spd, mag = dist(0, 0, vx, vy); if (mag > maxSpd) { vx = (vx / mag) * maxSpd; vy = (vy / mag) * maxSpd; }
                        this.x += vx; this.y += vy; aDx = vx; aDy = vy;
-                       if (frameCount % 120 === 0 && random() < 0.3) this.strafeDir *= -1; 
+                       if (frameCount % 120 === 0 && random() < 0.3) this.strafeDir *= -1;
                    }
                }
            }
@@ -13946,6 +15103,7 @@ if (this.eType === "COW") {
     } 
     
     this.armDrag = lerp(this.armDrag, this.isMoving ? 1 : 0, 0.15);
+    } finally { rememberFigureMotion(this,this.x-motionX,this.y-motionY); }
 } 
 
 
@@ -13956,42 +15114,53 @@ if (this.eType === "COW") {
 
         fire(sA) {
     if(unarmedCivilian(this))return;
+    if (this.currentWeapon === WEAPONS.BOW && this.ammo <= 0) return;
     if (this.isPlayer) this.isArmed = true;
+    const huntShotId = ++_huntShotSequence;
     let aH = ((this.isPlayer || this.isFriendly) && headAimToggle) ? "HEAD" : "BODY", cd = (this.isPlayer || this.isFriendly) ? this.currentWeapon.fireCooldown : (this.currentWeapon.enemyCooldown || 48), bob = this.isMoving ? abs(sin(this.walkCycle)) * 2 : 0;
-    let cost = this.currentWeapon === WEAPONS.DUAL_SMG ? 2 : 1;
+    // The off hand cannot fire an SMG while it is throwing or using the cannon.
+    const dualLeftReady = this.currentWeapon === WEAPONS.DUAL_SMG && !leftHandAction(this);
+    let cost = dualLeftReady ? 2 : 1;
     let bLX = 31, bLY = 8, bLX_L = 59, bLY_L = -17;
     if (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { bLX = 47; bLY = 6; } else if (this.currentWeapon === WEAPONS.SMG || this.currentWeapon === WEAPONS.DUAL_SMG) { bLX = 38; bLY = 11; bLX_L = 38; bLY_L = -11; }
+    else if (this.currentWeapon === WEAPONS.BOW) { bLX = 38; bLY = 0; }
     if (this.eType === "ALIEN_GATOR" || this.eType === "SNAIL_HYBRID") { bLX = 100; bLY = 19; } if (this.eType === "AERIAL_PISTOL") { bLX = 51; bLY = 16; }
     
     let tX = this.x + cos(this.aimAngle) * (bLX + bob) - sin(this.aimAngle) * bLY, tY = this.y + sin(this.aimAngle) * (bLX + bob) + cos(this.aimAngle) * bLY;
+    if (this.currentWeapon !== WEAPONS.BOW && typeof notifyForestWildlifeThreat === 'function')
+        notifyForestWildlifeThreat(tX,tY,this.currentWeapon === WEAPONS.TASER ? 100 : 560);
     
     if (this.eType === "ALIEN_GATOR") { spawnOrb(tX, tY, false, true); sfx.shoot("ALIEN_LASER", tX, tY); this.fireTimer = 90; } 
     else if (this.eType === "SAUCER_RED") {
         let tX_R = this.x + cos(this.aimAngle) * 45 - sin(this.aimAngle) * 25, tY_R = this.y + sin(this.aimAngle) * 45 + cos(this.aimAngle) * 25;
         let tX_L = this.x + cos(this.aimAngle) * 45 - sin(this.aimAngle) * -25, tY_L = this.y + sin(this.aimAngle) * 45 + cos(this.aimAngle) * -25;
-        spawnBullet(tX_R, tY_R, sA + random(-0.1, 0.1), false, "BODY", "RED_LASER", this); 
-        spawnBullet(tX_L, tY_L, sA + random(-0.1, 0.1), false, "BODY", "RED_LASER", this); sfx.shoot("RED_LASER", tX_R, tY_R);
+        spawnBullet(tX_R, tY_R, sA + random(-0.1, 0.1), false, "BODY", "RED_LASER", this, huntShotId);
+        spawnBullet(tX_L, tY_L, sA + random(-0.1, 0.1), false, "BODY", "RED_LASER", this, huntShotId); sfx.shoot("RED_LASER", tX_R, tY_R);
     } else if (this.currentWeapon === WEAPONS.DUAL_SMG) {
         let tX_L = this.x + cos(this.aimAngle) * (bLX_L + bob) - sin(this.aimAngle) * bLY_L, tY_L = this.y + sin(this.aimAngle) * (bLX_L + bob) + cos(this.aimAngle) * bLY_L;
         let iP = this.isPlayer || this.isFriendly;
-        spawnBullet(tX, tY, sA + random(-this.currentWeapon.spread, this.currentWeapon.spread), iP, aH, this.currentWeapon, this);
-        spawnBullet(tX_L, tY_L, sA + random(-this.currentWeapon.spread, this.currentWeapon.spread), iP, aH, this.currentWeapon, this);
+        spawnBullet(tX, tY, sA + random(-this.currentWeapon.spread, this.currentWeapon.spread), iP, aH, this.currentWeapon, this, huntShotId);
+        if (dualLeftReady) spawnBullet(tX_L, tY_L, sA + random(-this.currentWeapon.spread, this.currentWeapon.spread), iP, aH, this.currentWeapon, this, huntShotId);
         sfx.shoot(this.currentWeapon, tX, tY); 
         
         // EXCLUSIVE PLAYER SHAKE
         if (this.isPlayer) screenShake = 3; 
         
-        emit(tX, tY, 3, color(255, 200, 0), "MUZZLE", cos(sA) * 5, sin(sA) * 5); emit(tX_L, tY_L, 3, color(255, 200, 0), "MUZZLE", cos(sA) * 5, sin(sA) * 5); 
+        emit(tX, tY, 3, color(255, 200, 0), "MUZZLE", cos(sA) * 5, sin(sA) * 5);
+        if (dualLeftReady) emit(tX_L, tY_L, 3, color(255, 200, 0), "MUZZLE", cos(sA) * 5, sin(sA) * 5);
     } else if (this.currentWeapon === WEAPONS.SHOTGUN) { 
-        let s = [-0.1275, -0.0425, 0.0425, 0.1275]; for (let i = 0; i < 4; i++) spawnBullet(tX, tY, sA + s[i], this.isPlayer || this.isFriendly, aH, this.currentWeapon, this); 
+        let s = [-0.1275, -0.0425, 0.0425, 0.1275]; for (let i = 0; i < 4; i++) spawnBullet(tX, tY, sA + s[i], this.isPlayer || this.isFriendly, aH, this.currentWeapon, this, huntShotId);
         sfx.shotgun(tX, tY); 
         
         // EXCLUSIVE PLAYER SHAKE
         if (this.isPlayer) screenShake = 8; 
         
         emit(tX, tY, 6, color(255, 200, 0), "MUZZLE", cos(sA) * 8, sin(sA) * 8); 
+    } else if (this.currentWeapon === WEAPONS.BOW) {
+        spawnBullet(tX,tY,sA,this.isPlayer || this.isFriendly,aH,this.currentWeapon,this,huntShotId);
+        sfx.shoot(this.currentWeapon,tX,tY);
     } else { 
-        spawnBullet(tX, tY, sA + random(-this.currentWeapon.spread, this.currentWeapon.spread), this.isPlayer || this.isFriendly, aH, this.currentWeapon, this); 
+        spawnBullet(tX, tY, sA + random(-this.currentWeapon.spread, this.currentWeapon.spread), this.isPlayer || this.isFriendly, aH, this.currentWeapon, this, huntShotId);
         sfx.shoot(this.currentWeapon, tX, tY); 
         
         // EXCLUSIVE PLAYER SHAKE
@@ -13999,13 +15168,19 @@ if (this.eType === "COW") {
         
         emit(tX, tY, 3, color(255, 200, 0), "MUZZLE", cos(sA) * 5, sin(sA) * 5); 
     }
-    this.ammo = Math.max(0, this.ammo - cost); if (this.eType !== "SAUCER_RED" && this.eType !== "ALIEN_GATOR") this.fireTimer = cd; this.muzzleFlash = 3; 
+    this.ammo = Math.max(0, this.ammo - cost); if (this.eType !== "SAUCER_RED" && this.eType !== "ALIEN_GATOR") this.fireTimer = cd; this.muzzleFlash = this.currentWeapon === WEAPONS.BOW ? 0 : 3; this.weaponKick = this.currentWeapon === WEAPONS.BOW ? 0 : 6;
     if (this.ammo <= 0) { if (this.isPlayer || this.isFriendly) { this.triggerReload(); } else { this.reloadTimer = 90; } }
   }
 
 
 
   show() {
+    const previousInk=_figureComicInk;
+    _figureComicInk=figureComicInkFor(this);
+    try {
+    const paint=figurePainter();
+    const fill=paint?paint.fill:window.fill,ellipse=paint?paint.ellipse:window.ellipse;
+    const stroke=paint?paint.stroke:window.stroke,rect=paint?paint.rect:window.rect;
     push(); translate(this.x, this.y);
     // Figures are deliberately NOT run through the mass projection. It was
     // tried -- a riser capsule swept from the feet up to a leaned body -- and
@@ -14081,9 +15256,54 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
         pop();
     }
 
-    if (this.eType === "SAUCER" || this.eType === "SAUCER_RED") { push(); rotate(this.aimAngle); fill(100); stroke(this.eType === "SAUCER_RED" ? color(200, 50, 50) : 150); strokeWeight(4); ellipse(0, 0, 80, 80); fill(this.eType === "SAUCER_RED" ? color(255, 50, 50) : color(150, 50, 200)); noStroke(); ellipse(0, 0, 40, 40); fill(80); rect(10, -35, 40, 16, 4); rect(10, 19, 40, 16, 4); if(this.eType === "SAUCER_RED") { fill(200, 20, 20); rect(40, -28, 15, 6); rect(40, 22, 15, 6); } pop(); pop(); return; }
-    if (this.eType === "BUG") { rotate(this.aimAngle); fill(70, 90, 50); ellipse(0, 0, this.bodyW, this.bodyH); fill(30); ellipse(8, 0, 10, 10); stroke(30); strokeWeight(2); line(-5, 0, -12, 12 + sin(frameCount * 0.5) * 5); line(-5, 0, -12, -12 - sin(frameCount * 0.5) * 5); line(5, 0, 12, 12 + cos(frameCount * 0.5) * 5); line(5, 0, 12, -12 - cos(frameCount * 0.5) * 5); noStroke(); for (let d of this.decals) { if (d.col) fill(d.col[0], d.col[1], d.col[2], d.col[3]); else fill(200, 230, 40, 220); ellipse(d.x, d.y, d.sz, d.sz); } pop(); return; }
-    if (this.eType === "SNAIL") { rotate(this.aimAngle); fill(20, 100, 20); ellipse(0, 0, this.bodyW + 10 + sin(frameCount*0.1)*5, this.bodyH); fill(50, 80, 40); ellipse(-5, 0, 24, 20); fill(30, 60, 20); ellipse(-5, 0, 16, 12); fill(30); ellipse(this.bodyW/2, -6, 8, 8); ellipse(this.bodyW/2, 6, 8, 8); stroke(20, 100, 20); strokeWeight(2); line(10, -4, this.bodyW/2, -6); line(10, 4, this.bodyW/2, 6); noStroke(); for (let d of this.decals) { if (d.col) fill(d.col[0], d.col[1], d.col[2], d.col[3]); else fill(20, 100, 20, 220); ellipse(d.x, d.y, d.sz, d.sz); } pop(); return; }
+    if (this.eType === "SAUCER" || this.eType === "SAUCER_RED") {
+        push(); rotate(this.aimAngle);
+        const g=paint?paint.api:window, redHull=this.eType==="SAUCER_RED";
+        figureCelOval(g,0,0,80,80,redHull?_entityCel.saucerRed:_entityCel.saucer,1);
+        // A canopy rises from the shell; its contact rim is a surface join,
+        // rather than the heavy outline of a second whole disc.
+        fill(35,32,46,110); noStroke(); ellipse(0,1.5,44,42);
+        figureCelOval(g,0,0,40,40,redHull?_entityCel.red:_entityCel.purple,.75);
+        fill(49,53,62); rect(10,-35,40,16,4); rect(10,19,40,16,4);
+        fill(105,112,124); rect(12,-33,36,5,2); rect(12,21,36,5,2);
+        fill(26,29,35); rect(45,-31,5,8,1); rect(45,23,5,8,1);
+        if(redHull) { fill(200,20,20); rect(40,-28,15,6); rect(40,22,15,6); }
+        pop(); pop(); return;
+    }
+    if (this.eType === "BUG") {
+        rotate(this.aimAngle);
+        // Thin legs disappear under the shell so no black lines cut across
+        // its domed back while the opposite pairs paddle through their gait.
+        stroke(30); strokeWeight(2);
+        line(-5,0,-12,12+sin(frameCount*.5)*5); line(-5,0,-12,-12-sin(frameCount*.5)*5);
+        line(5,0,12,12+cos(frameCount*.5)*5); line(5,0,12,-12-cos(frameCount*.5)*5);
+        const g=paint?paint.api:window;
+        figureCelOval(g,0,0,this.bodyW,this.bodyH,_entityCel.bug,.7);
+        stroke(37,49,31,135); strokeWeight(.7); line(-this.bodyW*.34,0,3,0); noStroke();
+        figureCelOval(g,8,0,10,10,_entityCel.dark,.5);
+        noStroke(); for(let d of this.decals) {
+            if(d.col) fill(d.col[0],d.col[1],d.col[2],d.col[3]); else fill(200,230,40,220);
+            ellipse(d.x,d.y,d.sz,d.sz);
+        }
+        pop(); return;
+    }
+    if (this.eType === "SNAIL") {
+        rotate(this.aimAngle); const g=paint?paint.api:window;
+        figureCelOval(g,0,0,this.bodyW+10+sin(frameCount*.1)*5,this.bodyH,_entityCel.snail,.7);
+        figureCelOval(g,-5,0,24,20,_entityCel.shell,.8);
+        // The spiral is ink on the curved shell, not another solid disc.
+        noFill(); stroke(30,60,20,170); strokeWeight(1.15);
+        arc(-5,0,15,12,-HALF_PI,PI+HALF_PI); arc(-4,0,7,6,0,PI+HALF_PI);
+        stroke(20,100,20); strokeWeight(2);
+        line(10,-4,this.bodyW/2,-6); line(10,4,this.bodyW/2,6);
+        figureCelOval(g,this.bodyW/2,-6,8,8,_entityCel.dark,.45);
+        figureCelOval(g,this.bodyW/2,6,8,8,_entityCel.dark,.45);
+        noStroke(); for(let d of this.decals) {
+            if(d.col) fill(d.col[0],d.col[1],d.col[2],d.col[3]); else fill(20,100,20,220);
+            ellipse(d.x,d.y,d.sz,d.sz);
+        }
+        pop(); return;
+    }
     // --- NEW: RENDER COW MODEL ---
     if (this.eType === "HORSE") {
         // A horse carrying somebody is drawn by its rider, so the rider always
@@ -14100,6 +15320,7 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
 
     if (this.eType === "COW") {
         push(); rotate(this.aimAngle);
+        const g=paint?paint.api:window;
         
         let swing = this.isMoving ? sin(this.walkCycle) * 6 : 0;
         let bob = this.isMoving ? abs(sin(this.walkCycle)) * 1.5 : 0;
@@ -14117,16 +15338,11 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
         line(-this.bodyW/2, 0, -this.bodyW/2 - 12 + (swing * 0.5), 0);
         noStroke();
 
-        // Main Body (White). The widest animal in the game, so the flattest
-        // without it -- and the one the volume treatment was asked for first.
+        // Hide and head use the same broad curved planes as a person. Spots
+        // remain paint within the hide, with no separate contour around them.
         if (this.hitFlash > 0) { this.hitFlash--; fill(255); ellipse(0, 0, this.bodyW, this.bodyH); }
-        else if (BIOME_ACTIVE) {
-            const _vl = figureLight(this.aimAngle);
-            volShade(0, 0, this.bodyW, this.bodyH, 245, 245, 245, 1, _vl[0], _vl[1]);
-            // A marking lies IN the hide, so it takes no contour of its own --
-            // the same rule the blood decals follow.
-            noStroke();
-        } else { fill(245); ellipse(0, 0, this.bodyW, this.bodyH); }
+        else figureCelOval(g,0,0,this.bodyW,this.bodyH,_entityCel.white,1);
+        noStroke();
 
         // Random Spots
         for (let d of this.decals) {
@@ -14137,23 +15353,23 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
         // Head setup
         push();
         translate(this.bodyW/2 + 4, 0);
-        // ...but the head is a mass again, so the contour comes back on.
-        if (BIOME_ACTIVE) figureContour();
         let headBob = this.isMoving ? sin(this.walkCycle * 0.5) * 0.15 : 0;
         rotate(headBob); // Head sways slightly as it walks
 
         // Head Base
-        fill(245); ellipse(0, 0, 18, 16);
+        figureCelOval(g,0,0,18,16,_entityCel.white,.7);
         
         // Snout (Pinkish)
-        fill(255, 170, 170); ellipse(7, 0, 10, 12);
+        figureCelOval(g,7,0,10,12,_entityCel.pink,.55);
         
         // Eyes
         fill(15); ellipse(2, -5, 3, 3); ellipse(2, 5, 3, 3);
         
         // Ears & Horns
-        fill(245); ellipse(-3, -8, 6, 4); ellipse(-3, 8, 6, 4);
-        fill(210, 190, 150); ellipse(-5, -6, 3, 6); ellipse(-5, 6, 3, 6);
+        figureCelOval(g,-3,-8,6,4,_entityCel.white,.35);
+        figureCelOval(g,-3,8,6,4,_entityCel.white,.35);
+        figureCelOval(g,-5,-6,3,6,_entityCel.horn,.35);
+        figureCelOval(g,-5,6,3,6,_entityCel.horn,.35);
         
         pop(); // 1. Close head translate
         pop(); // 2. Close cow body rotation
@@ -14164,6 +15380,8 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
     if (this.eType === "ROBOT") {
         push();
         rotate(this.aimAngle);
+        const g=paint?paint.api:window, L=figureLight(this.aimAngle);
+        const lx=L[0],ly=L[1], S=figureSouth(this.aimAngle),sx=S[0],sy=S[1];
         const gait = this.isMoving ? sin(this.walkCycle) : 0;
         const step = gait * (this.enraged ? 13 : 9);
         const bob  = this.isMoving ? abs(sin(this.walkCycle)) * (this.enraged ? 2.4 : 1.4) : 0;
@@ -14185,14 +15403,8 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
         // Torso: a wedge, apex forward and down. The whole point of the
         // silhouette is that it is NOT the human oval -- from above it reads as
         // a chevron pointing where it is going.
-        fill(flash ? color(255) : this.shirtCol);
-        beginShape();
-        vertex(20, 0); vertex(4, -16); vertex(-13, -12); vertex(-13, 12); vertex(4, 16);
-        endShape(CLOSE);
-        fill(flash ? color(255) : color(96, 103, 111));
-        beginShape();
-        vertex(15, 0); vertex(3, -11); vertex(-8, -8); vertex(-8, 8); vertex(3, 11);
-        endShape(CLOSE);
+        entityCelPlate(g,_robotCelHull,flash?_entityCel.white:this.shirtCol,lx,ly,sx,sy,.14);
+        entityCelPlate(g,_robotCelInset,flash?_entityCel.white:_entityCel.steelLight,lx,ly,sx,sy,.1);
         // Chest vent and a core that glows with the charge
         fill(38, 42, 47);
         rect(-5, -6, 11, 12, 2);
@@ -14205,6 +15417,7 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
         fill(70, 76, 84);
         rect(2, -21 - gait * 2, 9, 8, 2);
         fill(52, 57, 63); rect(9, -21 - gait * 2, 6, 8, 2);
+        fill(106,113,122); rect(3,-20-gait*2,10,2,1);
 
         // Right arm: the cannon. Barrel, sleeve, and a muzzle ring that opens up
         // as the charge builds.
@@ -14212,6 +15425,8 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
         rect(0, 12 + gait * 2, 12, 10, 2);
         fill(88, 95, 104); rect(11, 13 + gait * 2, 20, 8, 2);
         fill(52, 57, 63);  rect(27, 12.5 + gait * 2, 8, 9, 2);
+        fill(124,131,143); rect(12,14+gait*2,18,2,1);
+        fill(25,28,33); rect(32,14+gait*2,3,6,1);
         fill(this.trimCol || color(255, 146, 40));
         rect(20, 14.5 + gait * 2, 3.5, 5, 1);
 
@@ -14235,14 +15450,13 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
         // glance from across the street.
         if (!this.enraged) {
             const hurt = 1 - Math.max(0, this.headHP) / ROBOT_HEAD_HP;
-            fill(flash ? color(255) : color(84, 90, 98));
-            ellipse(6, 0, 15, 14);
+            figureCelOval(g,6,0,15,14,flash?_entityCel.white:_entityCel.sensor,.65,lx,ly);
             fill(28, 31, 35); ellipse(9, 0, 10, 9);
             fill(255, 60 + heat * 120, 30, 190);
             rect(10, -3.4, 3.4, 6.8, 1);
             if (hurt > 0.45) { fill(20, 18, 17, 190); ellipse(4 - hurt * 2, hurt * 3, 5, 4); }
         } else {
-            fill(46, 40, 36); ellipse(6, 0, 13, 12);
+            figureCelOval(g,6,0,13,12,_entityCel.socket,.55,lx,ly);
             fill(16, 15, 14); ellipse(6, 0, 8, 7);
             // Live wiring, and the fuse light going faster the closer it gets.
             stroke(120, 126, 134); strokeWeight(1.2);
@@ -14264,17 +15478,37 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
         return;
     }
 
-    if (this.eType === "SNAIL_HYBRID") { 
-        push(); rotate(this.aimAngle); let bob = this.isMoving ? sin(this.walkCycle)*5 : 0; translate(bob, 0); 
-        fill(173, 216, 230); ellipse(0, 0, this.bodyW * 0.7, this.bodyH * 0.7); 
-        if (!this.enraged) { fill(20, 100, 20); ellipse(15, 0, 40, 20); fill(50); rect(20, 10, 40, 15); fill(255, 105, 180); rect(55, 12, 10, 10); } 
-        else { fill(20, 100, 20); ellipse(25, -14, 35, 12); ellipse(25, 14, 35, 12); }
-        fill(20, 100, 20); ellipse(0, 0, 30, 30); 
-        if (!this.enraged) { fill(0); noStroke(); ellipse(12, 0, 8, 4); } 
-        else { fill(255); stroke(0); strokeWeight(1); rect(9, -6, 6, 12, 1); line(9, 0, 15, 0); line(12, -6, 12, 6); }
-        if (this.leftEye > 0) { stroke(20, 100, 20); strokeWeight(4); line(0, -10, 15, -35); fill(255); noStroke(); ellipse(15, -35, 25, 25); fill(0); ellipse(18, -35, 8, 8); } 
-        if (this.rightEye > 0) { stroke(20, 100, 20); strokeWeight(4); line(0, 10, 15, 35); fill(255); noStroke(); ellipse(15, 35, 25, 25); fill(0); ellipse(18, 35, 8, 8); } 
-        pop(); pop(); return; 
+    if (this.eType === "SNAIL_HYBRID") {
+        push(); rotate(this.aimAngle);
+        const g=paint?paint.api:window, bob=this.isMoving?sin(this.walkCycle)*5:0;
+        translate(bob,0);
+        figureCelOval(g,0,0,this.bodyW*.7,this.bodyH*.7,_entityCel.blue,1);
+        if(!this.enraged) {
+            figureCelOval(g,15,0,40,20,_entityCel.snail,.8);
+            noStroke(); fill(50); rect(20,10,40,15);
+            fill(95,99,108); rect(21,11,38,4); fill(30); rect(58,14,2,9);
+            fill(255,105,180); rect(55,12,10,10);
+        } else {
+            figureCelOval(g,25,-14,35,12,_entityCel.snail,.65);
+            figureCelOval(g,25,14,35,12,_entityCel.snail,.65);
+        }
+        figureCelOval(g,0,0,30,30,_entityCel.snail,.8);
+        if(!this.enraged) { fill(0); noStroke(); ellipse(12,0,8,4); }
+        else {
+            fill(255); stroke(0); strokeWeight(1); rect(9,-6,6,12,1);
+            line(9,0,15,0); line(12,-6,12,6);
+        }
+        if(this.leftEye>0) {
+            figureCelLimb(g,0,-10,7.5,-22.5,15,-35,4,4,4,_entityCel.snail);
+            figureCelOval(g,15,-35,25,25,_entityCel.white,.7);
+            fill(0); noStroke(); ellipse(18,-35,8,8);
+        }
+        if(this.rightEye>0) {
+            figureCelLimb(g,0,10,7.5,22.5,15,35,4,4,4,_entityCel.snail);
+            figureCelOval(g,15,35,25,25,_entityCel.white,.7);
+            fill(0); noStroke(); ellipse(18,35,8,8);
+        }
+        pop(); pop(); return;
     }
 
     // A rider draws his own mount, under himself and before anything else he
@@ -14300,23 +15534,35 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
     // GAIT: one throttle, and each of these reads it on its own curve, so a
     // walk lengthening into a run has nothing in it that switches.
     const GP = gaitPose(this.isMoving ? this.gait : 0);
-    const boxing=boxerPose(this);
+    const boxing=this.isPlayer?boxerPose(this):_figureNoBoxing;
     let lS = this.isMoving ? sin(this.walkCycle) * 12 * GP.swing : 0,
         bob = this.isMoving ? abs(sin(this.walkCycle)) * 2 * GP.bob + GP.lean : 0;
     if (this.mounted) { lS *= 0.35; bob *= 0.4; }
     if (this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL") { bob += sin(frameCount * 0.1) * 15; lS = 0; }
-    if (this.reloadTimer > 0) { let rP = 1 - (this.reloadTimer / 90); push(); noFill(); stroke(0, 200, 255, 150); strokeWeight(4); arc(0, 0, 50, 50, -PI / 2, -PI / 2 + (rP * TWO_PI)); pop(); bob += sin(frameCount * 0.5) * 3; }
-    if (this.eType === "ALIEN_GATOR") { 
-        push(); rotate(this.moveAngle); fill(this.pantsCol); if (BIOME_ACTIVE) figureContour(); else noStroke(); rect(-30 + lS*3, -30, 54, 24, 12); rect(-30 - lS*3, 6, 54, 24, 12); pop();
-        push(); rotate(this.aimAngle); translate(bob*3, 0);
-        // 63 x 81 -- the widest body in the game, so the flattest as a bare
-        // fill, and the one the volume treatment was asked for first. Every
-        // limb and plate after it inherits the contour volShade leaves set.
-        if (BIOME_ACTIVE) { const _vl = figureLight(this.aimAngle); volShadeCol(0, 0, this.bodyW, this.bodyH, this.shirtCol, 1, _vl[0], _vl[1]); }
-        else { fill(this.shirtCol); noStroke(); ellipse(0, 0, this.bodyW, this.bodyH); }
-        fill(30, 180, 30); ellipse(20, -42, 48, 24); ellipse(40, -42, 24, 24); fill(30, 180, 30); ellipse(45, 33, 75, 24); ellipse(75, 33, 30, 30);
-        fill(40); rect(50, 8, 45, 12, 2); fill(20); rect(90, 6, 10, 16); fill(30, 180, 30); ellipse(0, 0, 33, 33); rect(0, -15, 60, 30, 10); fill(0); ellipse(20, -10, 5, 5); ellipse(20, 10, 5, 5); noStroke(); 
-        for (let d of this.decals) { if (d.col) fill(d.col[0], d.col[1], d.col[2], d.col[3]); else fill(90, 0, 0, 220); ellipse(d.x, d.y, d.sz, d.sz); } pop(); pop(); return; 
+    if (this.reloadTimer > 0) { let rP = 1 - (this.reloadTimer / 90); push(); noFill(); stroke(0, 200, 255, 150); strokeWeight(4); arc(0, 0, 50, 50, -PI / 2, -PI / 2 + (rP * TWO_PI)); pop(); if (!oneHandWeapon(this.currentWeapon)) bob += sin(frameCount * 0.5) * 3; }
+    if (this.eType === "ALIEN_GATOR") {
+        const g=paint?paint.api:window;
+        push(); rotate(this.moveAngle);
+        figureCelOval(g,-3+lS*3,-18,54,24,this.pantsCol,.7);
+        figureCelOval(g,-3-lS*3,18,54,24,this.pantsCol,.7);
+        pop();
+        push(); rotate(this.aimAngle); translate(bob*3,0);
+        figureCelOval(g,0,0,this.bodyW,this.bodyH,this.shirtCol,1);
+        // Continuous arm surfaces avoid complete elbow rings at this scale.
+        figureCelLimb(g,8,-42,24,-42,40,-42,24,24,20,_entityCel.gator);
+        figureCelOval(g,40,-42,24,24,_entityCel.gator,.45);
+        figureCelLimb(g,18,33,46,33,75,33,24,24,24,_entityCel.gator);
+        figureCelOval(g,75,33,30,30,_entityCel.gator,.45);
+        noStroke(); fill(40); rect(50,8,45,12,2); fill(88,93,103); rect(52,9,42,3,1);
+        fill(20); rect(90,6,10,16);
+        figureCelOval(g,22,0,77,33,_entityCel.gator,.8);
+        noStroke(); fill(0); ellipse(20,-10,5,5); ellipse(20,10,5,5);
+        fill(15,101,20); ellipse(53,-6,3,4); ellipse(53,6,3,4);
+        noStroke(); for(let d of this.decals) {
+            if(d.col) fill(d.col[0],d.col[1],d.col[2],d.col[3]); else fill(90,0,0,220);
+            ellipse(d.x,d.y,d.sz,d.sz);
+        }
+        pop(); pop(); return;
     }
 // 1. AUTO-STATE TRANSITION MANAGER
 // ==========================================
@@ -14335,70 +15581,17 @@ if (this.isPlayer) {
     
 
 
-     let angleDiff = abs((this.moveAngle - this.aimAngle + PI * 3) % TWO_PI - PI);
-    let isMovingBackward = this.isMoving && angleDiff > HALF_PI;
-    let isChemist = this.isPlayer && typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked;
+    const isChemist=this.isPlayer&&chemistSuitUnlocked;
 
 
-            if (isChemist) {
-        let sway = this.isMoving ? sin(frameCount * 0.2) * 0.2 : sin(frameCount * 0.05) * 0.05;
-        let localTail = this.isMoving ? (this.moveAngle - this.aimAngle) : 0;
-        
-        // --- 1. ALWAYS DRAW LAB COAT TAIL ---
-        push(); 
-        rotate(this.aimAngle); 
-        translate(bob, 0); 
-        rotate(localTail + sway + HALF_PI); 
-        fill(240); stroke(200); strokeWeight(1);
-        beginShape(); 
-        vertex(5, 0); vertex(10, 2); vertex(16, 25); vertex(8, 28); 
-        vertex(-8, 28); vertex(-16, 25); vertex(-10, 2); vertex(-5, 0); 
-        endShape(CLOSE); 
-        pop();
-        
-        // --- 2. ALWAYS CALCULATE TORSO TWIST & DRAW MAIN BODY ---
-        let torsoTwist = 0;
-
-        if (this.meleeTimer > 0 && !this.isArmed) {
-            let p = 1 - (this.meleeTimer / 20); 
-            let pp = sin(p * PI);
-            
-            if (this.meleePhase === 1 || this.meleePhase === 3) {
-                torsoTwist = radians(70) * pp; 
-            } 
-            else if (this.meleePhase === 2 || this.meleePhase === 4) {
-                torsoTwist = radians(-70) * pp; 
-            }
-        }
-
-        push();
-        rotate(this.aimAngle + torsoTwist); 
-        
-        // ---> [YOUR EXISTING BODY ELLIPSE/RECT DRAWING CODE GOES HERE] <---
-        
-        pop();
-
-        // --- 3. ONLY DRAW LEGS IF MOVING BACKWARD ---
-        if (isMovingBackward) {
-            let isBoxerStance = !this.isArmed && this.meleeTimer > 0;
-            let isBigBody = (this.bodyW >= 100);
-            let lW = isBigBody ? 40 : 18, lX = isBigBody ? -30 : -10;
-            let lY1 = isBigBody ? -10 : -10, lY2 = isBigBody ? 15 : 2;
-            
-            if (isBoxerStance) { lY1 -= 8; lY2 += 8; lX += 4; }
-            let swing = typeof lS !== 'undefined' ? lS : 0;
-
-            push(); 
-            rotate(this.moveAngle);
-            noStroke(); 
-            fill(this.pantsCol);
-            rect(lX + swing, lY1, lW, 8, 4); 
-            rect(lX - swing, lY2, lW, 8, 4);
-            pop();
-        }
-    } else {
-        // ... (Keep your standard non-chemist fallback here)
-
+    if ((this.isPlayer || this.isMilitary) && explosiveArmorUnlocked) {
+        this.shirtCol=color(60,100,40);this.pantsCol=color(139,115,85);
+    } else if (isChemist) {
+        this.shirtCol=color(255);this.pantsCol=color(15);
+    } else if (this.isPlayer && ninjaSuitUnlocked) {
+        this.shirtCol=color(20);this.pantsCol=color(15);
+    }
+    {
         push(); rotate(boxing.active?this.aimAngle+boxing.hip:this.moveAngle); noStroke(); fill(this.pantsCol);
         if (this.bodyW === 105) {
           // ARMORED's 105-wide slab keeps its own legs; the rig is shaped like
@@ -14432,15 +15625,19 @@ if (this.isPlayer) {
           // 9.6, knee 7.4, ankle 5.9) and a trimmed cap at the top, where the
           // pelvis is under the torso anyway and nothing needs rounding off.
           const wHip = RGl.thighW, wKnee = RGl.shinW, wAnkle = RGl.shinW * 0.80;
-          for (const sgn of [1, -1]) {
+          if(boxing.active)drawBoxingLegs(this,boxing,RGl);
+          else for (const sgn of [1, -1]) {
             // Hips either side of the axis at the spacing the old pair of rects
             // used -- wide enough that the two thighs do not merge at the
             // midline, which is the other half of reading as two legs.
-            const sx = boxing.active?(sgn===1?-2:-6):-10+lS*sgn+RGl.thighW*.5, cy=sgn*-6;
-            push();translate(sx,cy);if(boxing.active&&sgn===-1)rotate(PI);
-            ellipse(th*.5,0,th+wHip*.55,wHip);
-            ellipse(th*.92+sh*.5,0,sh+wKnee*.80,wKnee);
-            fill(bootC[0], bootC[1], bootC[2]);
+            const sx = -10+lS*sgn+RGl.thighW*.5, cy=sgn*-6;
+            // p5 must save its paint cache along with Canvas state: restoring
+            // only the context can leave a repeated black stroke cached while
+            // the actual Canvas stroke has reverted to a UI/effect color.
+            if(_figureComicInk){push();translate(sx,cy);}
+            else {drawingContext.save();drawingContext.translate(sx,cy);}
+            const g=paint?paint.api:window;
+            figureCelLimb(g,0,0,th*.92,0,th*.92+sh,0,wHip,wKnee,wAnkle,this.pantsCol);
             // The boot takes the rig's length UNFORESHORTENED, because a foot
             // is the one part of a standing body that lies flat to this camera
             // -- the leg above it is pointing away and loses more than half its
@@ -14448,11 +15645,28 @@ if (this.isPlayer) {
             // sits past the ankle rather than centred on it, for the reason
             // ragLimb gives: a circle on the joint buries half of itself in the
             // shin and adds only its radius to the leg.
-            ellipse(th*.92+sh+RGl.foot*.34,0,RGl.foot,wAnkle);pop();
+            figureCelOval(g,th*.92+sh+RGl.foot*.34,0,RGl.foot,wAnkle,bootC,.8);
+            if(_figureComicInk)pop();else drawingContext.restore();
             fill(this.pantsCol);
           }
           noStroke();
         }
+        pop();
+    }
+    if (isChemist) {
+        const sway=this.isMoving?sin(frameCount*.2)*.2:sin(frameCount*.05)*.05;
+        const tail=this.isMoving?this.moveAngle-this.aimAngle:0;
+        push();rotate(this.aimAngle);translate(bob,0);rotate(tail+sway+HALF_PI);
+        const g=paint?paint.api:window;
+        // Cloth follows a curved hem instead of a rigid polygon at the hips.
+        g.stroke(140,146,151,185);g.strokeWeight(.8);g.fill(240,242,243);
+        g.beginShape();g.vertex(-5,0);g.bezierVertex(-11,5,-12,17,-15,25);
+        g.bezierVertex(-9,29,9,29,15,25);g.bezierVertex(12,17,11,5,5,0);g.endShape(CLOSE);
+        g.noStroke();g.fill(205,211,220);
+        g.beginShape();g.vertex(-5,2);g.bezierVertex(-7,11,-5,23,-8,27);
+        g.vertex(-14,25);g.bezierVertex(-11,16,-10,7,-5,2);g.endShape(CLOSE);
+        g.fill(255,255,250);g.beginShape();g.vertex(3,2);
+        g.bezierVertex(8,7,8,18,10,27);g.vertex(3,28);g.bezierVertex(5,17,4,8,3,2);g.endShape(CLOSE);
         pop();
     }
     // Carrying rather than presenting: the player is armed but not aiming, so
@@ -14478,6 +15692,7 @@ if (this.isPlayer) {
     let bLX = 31, bLY = 8, bLX_L = 59, bLY_L = -17;
     if (this.isArmed && this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { bLX = 47; bLY = 6; } 
     else if (this.currentWeapon === WEAPONS.SMG || this.currentWeapon === WEAPONS.DUAL_SMG) { bLX = 38; bLY = 11; bLX_L = 38; bLY_L = -11; }
+    else if (this.currentWeapon === WEAPONS.BOW) { bLX = 38; bLY = 0; }
     else if (this.isArmed && !carryMode && this.currentWeapon === WEAPONS.TASER) {
         // The presented taser. On a carry it is drawn in the hand instead --
         // left here it would be a second one floating at the hip.
@@ -14486,6 +15701,11 @@ if (this.isPlayer) {
     }
 
     if (this.eType === "AERIAL_PISTOL") { bLX = 51; bLY = 16; }
+    if (!carryMode && (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN)) {
+        // Gait lean belongs to the torso. Native rounds use the original
+        // two-unit bob, so keep the crown/flash on that firing line as it runs.
+        bLX += (this.isMoving ? abs(sin(this.walkCycle))*2 : 0)-bob;
+    }
 
     if (this.isPlayer && rightStick.active && this.reloadTimer <= 0 && this.meleeTimer <= 0) { 
         stroke(255, 0, 0, rightStick.dist > 0.75 ? 200 : 50); strokeWeight(2); line(bLX, bLY, 800, bLY); 
@@ -14533,6 +15753,9 @@ if (this.isPlayer) {
     // (hiding a hand between a front and a back threshold) deleted the sword
     // twice a stride and left an idle player empty-handed.
     let armPass = null;
+    // Off-hand actions belong to the walking rig as well as the aimed rig.
+    // They do not raise the right-hand gun or replace the rest of the stride.
+    const leftAction = leftHandAction(this);
     {
         const isTownsfolk = unarmedCivilian(this)||(this.isNeutral&&TOWNSFOLK.indexOf(this.eType)!==-1);
         const isEmptyHanded = this.isPlayer&&!this.isArmed&&this.meleeTimer<=0&&!boxing.active;
@@ -14669,7 +15892,7 @@ if (this.isPlayer) {
                 // it -- while the forward half stays short, because a weapon
                 // thrown out in front is a presentation, not a carry. Damped
                 // both ways it read as the gun being held rather than swung.
-                const held = (carrying === 1 && s.right);
+                const held = carrying === 1 && (s.right || this.currentWeapon === WEAPONS.DUAL_SMG);
                 const sw = held ? (s.sw > 0 ? s.sw * 0.55
                                             : s.sw * (0.55 + 0.75 * GP.band / 3))
                                 : s.sw;
@@ -14930,7 +16153,7 @@ if (this.isPlayer) {
                 // joint between them has to be further aft still. Left on the
                 // generic lead it trailed the hand by less than half and the
                 // arm read as being held out rather than swung through.
-                if (carrying === 1 && s.right && s.hx < 0) {
+                if (carrying === 1 && (s.right || this.currentWeapon === WEAPONS.DUAL_SMG) && s.hx < 0) {
                     ep[0] = Math.min(ep[0], s.hx * (0.62 + 0.28 * GP.band / 3));
                 }
                 // Except when the arm is reaching ACROSS the chest for a long
@@ -14954,56 +16177,41 @@ if (this.isPlayer) {
                 s.ex = ep[0]; s.ey = ep[1];
             }
 
-            // One segment, in ragLimb()'s shape language: length + its own
-            // width, so the caps round the joints off either end and the two
-            // overlap into a taper rather than butting at the elbow.
-            const seg = (x0, y0, x1, y1, w) => {
-                const dx = x1 - x0, dy = y1 - y0, L = Math.hypot(dx, dy);
-                push(); translate(x0, y0); rotate(atan2(dy, dx));
-                ellipse(L * 0.5, 0, L + w, w);
-                pop();
-            };
-            // The sleeve goes down a shade under the torso. Same garment, but an
-            // arm lying over a chest of exactly the same value has nothing but
-            // its contour to separate it, and at twenty pixels that is not
-            // enough: the limb disappears into the body and a run reads as a
-            // torso with two hands orbiting it. A few per cent is all it takes,
-            // and it is what a real arm does anyway -- it is turned away from
-            // the sky the chest is facing.
+            // One cloth surface around the same fitted bones. Only its outer
+            // silhouette takes ink; the light plane flows through the elbow.
             const _sc = this.shirtCol;
-            const armR = red(_sc) * 0.87, armG = green(_sc) * 0.87,
-                  armB = blue(_sc) * 0.90;
+            const armCol = [red(_sc)*.94,green(_sc)*.94,blue(_sc)*.96];
             const limb = (s) => {
-                if (BIOME_ACTIVE) figureContour();
-                fill(armR, armG, armB);
-                seg(0, s.sy, s.ex, s.ey, RG.upperW);
-                seg(s.ex, s.ey, s.hx, s.hy, RG.foreW);
+                figureCelLimb(paint?paint.api:window,0,s.sy,s.ex,s.ey,s.hx,s.hy,
+                    RG.upperW,(RG.upperW+RG.foreW)*.5,RG.foreW*.84,armCol);
             };
 
             armPass = (front) => {
                 // Both limbs go under the torso -- that is what sinks the
                 // shoulder into the body instead of parking a blob on it. Only
                 // the hands are sorted front to back.
-                if (!front) for (const s of sides) limb(s);
+                if (!front) for (const s of sides) {
+                    if (!s.right && leftAction) continue;
+                    limb(s);
+                }
                 for (const s of sides) {
+                    if (!s.right && leftAction) continue;
                     // A held tool always rides the front pass: it is the thing
                     // the player is looking at, and half a pickaxe swallowed by
                     // a torso is worse than one drawn a layer too high. Both
                     // hands on a carried long gun ride it for the same reason.
                     const holdsTool = !!(s.right && armedMelee);
-                    const holdsGun = !!(s.right && carrying === 1);
+                    const holdsGun = carrying === 1 && (s.right || this.currentWeapon === WEAPONS.DUAL_SMG);
                     const isFront = (holdsTool || holdsGun || carrying === 2)
                                     ? true : s.sw > 0.2;
                     if (isFront !== front) continue;
                     const h = { x: s.hx, y: s.hy };
 
                     if (!s.right && this.isPlayer && isChemist) {
-                        push(); translate(h.x, h.y); rotate(s.sw * 0.22);
-                        fill(80); rect(-4, -4, 16, 8, 2);
-                        fill(0, 255, 200); ellipse(12, 0, 6, 8);
-                        pop();
+                        // The grey hand IS the cannon, not a separate device.
+                        figureCelOval(paint?paint.api:window,h.x,h.y,RG.hand,RG.hand,[180,180,190],.8);
                     } else {
-                        fill(skin); ellipse(h.x, h.y, RG.hand, RG.hand);
+                        figureCelOval(paint?paint.api:window,h.x,h.y,RG.hand,RG.hand,skin,.8);
                     }
 
                     if (holdsTool) {
@@ -15076,7 +16284,8 @@ if (this.isPlayer) {
                         const _wa = this.aimAngle + _tw + gAng;
                         const gl = figureLight(_wa);
                         carryHandGun(this.currentWeapon, el, gl,
-                                     figureSouth(_wa));
+                                     figureSouth(_wa),
+                                     s.sgn * (0.10 + _ph * (0.06 + GP.band * 0.025)));
                         pop();
                     }
                 }
@@ -15092,6 +16301,7 @@ if (this.isPlayer) {
                                  figureSouth(_wa));
                     pop();
                 }
+                if (front && leftAction) drawLeftHandAction(this, leftAction, -_tw);
             };
             armPass(false);
         }
@@ -15113,16 +16323,14 @@ if (this.isPlayer) {
       this.hitFlash--;
       fill(255); ellipse(0, 0, this.bodyW, this.bodyH);
       if (BIOME_ACTIVE) figureContour();
-    } else if (BIOME_ACTIVE) {
-      // A shoulder, not a disc. See FIGURE VOLUME. volShade() leaves the
-      // contour set, so every sleeve, hand and boot drawn after this inherits
-      // it without its own call site knowing. The light is brought into the
-      // figure's own facing -- this whole block is inside rotate(aimAngle).
-      const _vl = figureLight(this.aimAngle);
-      volShadeCol(0, 0, this.bodyW, this.bodyH, this.shirtCol, 1, _vl[0], _vl[1]);
     } else {
-      fill(this.shirtCol); ellipse(0, 0, this.bodyW, this.bodyH);
+      // Curved side/chest planes retain the comic palette in every room.
+      // Include the gait twist: the sun stays fixed while the shoulders turn.
+      const _vl = figureLight(this.aimAngle+(boxing.active?boxing.torso:_tw));
+      volShadeCol(0,0,this.bodyW,this.bodyH,this.shirtCol,1,_vl[0],_vl[1]);
     }
+
+    if(['NORMAL','NM0_ROOKIE','NM0_ROOKIE_F'].includes(this.eType)&&!this.isPlayer){push();translate(this.bodyW*.22,this.bodyH*.22);drawNmoInsignia(paint?paint.api:window,true);pop();}
 
     // Male Farmer Overalls
     if (this.eType === "FARMER_MALE") {
@@ -15214,10 +16422,9 @@ if (this.isPlayer) {
     if (this.eType === "FEMALE_PISTOL" || this.eType === "FARMER_FEMALE" ||
         this.eType === "COWGIRL" || this.eType === "VILLAGER_FEMALE") {
         if (this.hitFlash > 0) fill(255); else fill(this.shirtCol);
-        stroke(this.eType === "FARMER_FEMALE" ? 200 : 0); // Light crease for white dress
-        strokeWeight(1.5); 
-        ellipse(4, -5, 11, 9); 
-        ellipse(4, 5, 11, 9);  
+        const g=paint?paint.api:window,cloth=this.hitFlash>0?[255,255,255]:this.shirtCol;
+        figureCelOval(g,4,-5,11,9,cloth,.45);
+        figureCelOval(g,4,5,11,9,cloth,.45);
         
         stroke(200, 150, 120, 100); 
         strokeWeight(1); 
@@ -15226,8 +16433,9 @@ if (this.isPlayer) {
     }
 
     if ((this.isPlayer && typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) || this.eType === "ALIEN_GATOR") {
-        if (this.eType === "ALIEN_GATOR") fill(30, 130, 30); else fill(240); 
-        noStroke(); arc(-5, 0, 14, 26, HALF_PI, PI+HALF_PI, CHORD); arc(5, 0, 14, 26, -HALF_PI, HALF_PI, CHORD);
+        const g=paint?paint.api:window,c=this.eType==="ALIEN_GATOR"?[30,130,30]:[240,242,243];
+        figureCelArc(g,-5,0,14,26,c,HALF_PI,PI+HALF_PI,.85);
+        figureCelArc(g,5,0,14,26,c,-HALF_PI,HALF_PI,.85);
     }
 
     if(this.isCityPatrol){fill(43,57,57);rect(-8,-11,16,22,3);fill(129,147,139);rect(-6,-9,11,8,2);
@@ -15237,12 +16445,15 @@ if (this.isPlayer) {
       if(this.clothingStyle===2){fill(229,224,202);rect(-2,-9,3,18,1);}
       if(this.clothingStyle===3){noFill();stroke(236,218,184,135);strokeWeight(1.2);line(-6,-5,6,-5);line(-6,3,6,3);}
     }
-    if (this.eType === "ARMORED_STANDARD") { 
-        if (this.hitFlash > 0) fill(255); else fill(100); 
-        rect(-10, -12, 20, 24, 4); 
+    if (this.eType === "ARMORED_STANDARD") {
+        const g=paint?paint.api:window,ang=this.aimAngle+(boxing.active?boxing.torso:_tw);
+        const L=figureLight(ang),S=figureSouth(ang);
+        entityCelPlate(g,_figureChestPlate,this.hitFlash>0?_entityCel.white:_figureChestSteel,L[0],L[1],S[0],S[1],.18);
+        noStroke();fill(176,181,190);rect(-5,-8,10,1.2,1);fill(65,71,81);rect(-5,7,10,1.2,1);
     }
     if (this.isPlayer && ninjaSuitUnlocked) { fill(100, 0, 200); rect(-this.bodyW/2, -4, this.bodyW, 8, 2); } 
  
+    if(_figureComicInk)drawFigureComicSeams(paint?paint.api:window,this);
     noStroke(); for (let d of this.decals) { if (!d.isHead) { if (d.col) fill(d.col[0], d.col[1], d.col[2], d.col[3]); else fill(90, 0, 0, 220); ellipse(d.x, d.y, d.sz, d.sz); } }
     if (_tsq) pop();
     // Blood decals are stains ON the shirt and take no contour; everything
@@ -15250,7 +16461,9 @@ if (this.isPlayer) {
     if (BIOME_ACTIVE) figureContour();
     
     let lAY = this.eType === "ARMORED" ? -30 : -14, rAY = this.eType === "ARMORED" ? 30 : 11;
-    let a = 255; let f = this.fP || 0; let sK = this.isCharred ? color(50, 40, 40, a) : (this.skinCol||color(235,180,140,a));
+    const longGunPose = !carryMode && this.meleeTimer<=0 && (this.isArmed || !this.isPlayer) &&
+        (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN)
+        ? aimedLongGunPose(this, _tw, bob) : null;
 
     let isNeutralFarmer = unarmedCivilian(this)||(this.isNeutral&&TOWNSFOLK.indexOf(this.eType)!==-1);
 
@@ -15354,75 +16567,54 @@ if (this.isPlayer) {
                 }
             }
         }
+        else if (leftAction) {
+            drawLeftHandAction(this, leftAction, -_tw);
+        }
         else if (this.reloadTimer > 0) {
             let rP = 1 - (this.reloadTimer / 90);
-            if (this.isPlayer && this.currentWeapon === WEAPONS.DUAL_SMG) { fill(this.shirtCol); ellipse(15, -11, 25, 8); fill(235, 180, 140); ellipse(25, -11, 8, 8); fill(40); rect(16, -15, 24, 8, 2); rect(20, -23, 6, 12); } 
-            else { let clipX = 2 + sin(rP * PI) * 10, clipY = 10; fill(this.shirtCol); ellipse(0, clipY - 3, 16, 8); fill(235, 180, 140); ellipse(clipX, clipY, 8, 8); }
+            if (this.isPlayer && oneHandWeapon(this.currentWeapon)) { /* drawn together with the right arm below */ }
+            else { const clipX=2+sin(rP*PI)*10;reloadArm(this,0,-this.bodyH*.425,clipX,10,false); }
         } 
-        else if (this.isArmed || !this.isPlayer) { 
-            let shoulderX = lerp(0, -5, this.armDrag), shoulderY = lerp(lAY, lAY + 3, this.armDrag);
-            let isAimingCannon = this.isPlayer && typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked && ((typeof cannonInputHeld !== 'undefined' && cannonInputHeld) || this.cannonCharge > 0 || this.cannonFireDelay > 35);
-            let isThrowing = this.isPlayer && (typeof isCooking !== 'undefined' && (isCooking || this.throwAnimTimer > 0));
-
-            if (isThrowing) {
-                push(); translate(shoulderX, shoulderY); 
-                let armAngle = isCooking ? PI * 0.8 : -PI * 0.1;
-                let elbowAngle = isCooking ? HALF_PI : 0;
-                rotate(armAngle);
-                fill(this.shirtCol); ellipse(6, 0, 14, 8); 
-                translate(10, 0); rotate(elbowAngle); fill(this.shirtCol); ellipse(4, 0, 12, 8); 
-                if (this.isPlayer && typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) fill(180, 180, 190); else fill(235, 180, 140);
-                ellipse(10, 0, 8, 8); 
-                if (isCooking) { 
-                    if (typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) { 
-                        fill(150, 200, 255, 200); stroke(200); strokeWeight(1); beginShape(); vertex(9, 4); vertex(15, 4); vertex(13, -2); vertex(11, -2); endShape(CLOSE); fill(200); rect(11, -4, 2, 2); noStroke(); 
-                    } else { fill(40, 120, 40); ellipse(12, 0, 8, 10); }
-                } 
-                pop();
-            } else if (isAimingCannon) { 
-                push(); translate(shoulderX, shoulderY); rotate(-0.15); fill(240); ellipse(16, 0, 24, 10); fill(180, 180, 190); ellipse(26, 0, 9, 9); 
-                if (this.cannonCharge > 0 || (typeof cannonInputHeld !== 'undefined' && cannonInputHeld)) {
-                    let cSz = 8 + min(20, this.cannonCharge / 10); 
-                    fill(255, 255, 0, 150 + sin(frameCount)*100); ellipse(32, 0, cSz, cSz); fill(255); ellipse(32, 0, cSz/2, cSz/2); 
-                    if (frameCount % 3 === 0) {
-                        let sX = this.x + cos(this.aimAngle)*32 - sin(this.aimAngle)*-19;
-                        let sY = this.y + sin(this.aimAngle)*32 + cos(this.aimAngle)*-19;
-                        emit(sX, sY, 1, color(255, 255, 0), "SPARK");
-                    }
-                }
-                pop();
-            } else if (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { 
-                push(); translate(shoulderX, shoulderY); rotate(0.52); fill(this.shirtCol); ellipse(16, 0, 32, 8); 
-                if (this.isPlayer && typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) fill(180, 180, 190); else fill(235, 180, 140);
-                ellipse(32, 0, 8, 8); pop();
-            } else if (this.currentWeapon === WEAPONS.DUAL_SMG) {
-                fill(this.shirtCol); ellipse(15, shoulderY, 25, 8); 
-                if (this.isPlayer && typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) fill(180, 180, 190); else fill(235, 180, 140);
-                ellipse(25, shoulderY, 8, 8); 
-            } else { 
-                let handX = lerp(8, -12, this.armDrag); fill(this.shirtCol); ellipse(shoulderX, shoulderY, 16, 8); 
-                if (this.isPlayer && typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) fill(180, 180, 190); else fill(235, 180, 140);
-                ellipse(handX, shoulderY, 8, 8); 
-            }
+        else if (this.isArmed || !this.isPlayer) {
+            const shoulderX=lerp(0,-5,this.armDrag),shoulderY=lerp(lAY,lAY+3,this.armDrag);
+            const rg=figureRig(this.bodyW,this.bodyH),g=paint?paint.api:window;
+            let hx=lerp(8,-12,this.armDrag),hy=shoulderY;
+            if (this.currentWeapon===WEAPONS.BOW) {
+                hx=shoulderX+cos(.50)*25;hy=shoulderY+sin(.50)*25;
+            } else if (longGunPose) {
+                hx=longGunPose.fore[0];hy=longGunPose.fore[1];
+            } else if (weaponHands(this.currentWeapon)===2) {
+                hx=shoulderX+cos(.52)*32;hy=shoulderY+sin(.52)*32;
+            } else if (this.currentWeapon===WEAPONS.DUAL_SMG) hx=25;
+            figureCelLimb(g,shoulderX,shoulderY,(shoulderX+hx)*.5-2,(shoulderY+hy)*.5-1,hx,hy,
+                rg.upperW,(rg.upperW+rg.foreW)*.5,rg.foreW*.84,this.shirtCol);
+            const skin=this.isPlayer&&chemistSuitUnlocked?[180,180,190]:(this.skinCol||[235,180,140]);
+            figureCelOval(g,hx,hy,8,8,skin,.8);
         }
-                
+
                 // --- WEAPON & RIGHT ARM RENDERING LOGIC ---
         // THE FIX 3: ONLY run this if Armed or an Enemy. Removes the duplicate unarmed drawings.
                // --- WEAPON & RIGHT ARM RENDERING LOGIC ---
         // THE FIX 3: ONLY run this if Armed or an Enemy. Removes the duplicate unarmed drawings.
         if (!carryMode && this.meleeTimer <= 0 && (this.isArmed || !this.isPlayer)) {
-            let skinC = (typeof chemistSuitUnlocked === 'undefined' && chemistSuitUnlocked) ? color(180, 180, 190) : (this.skinCol||color(235,180,140));
+            if (this.isPlayer && oneHandWeapon(this.currentWeapon) && this.reloadTimer > 0) {
+                drawOneHandReload(this);
+            } else {
+            let skinC = this.skinCol || color(235, 180, 140);
             
             // 1. DRAW RIGHT ARM & HAND FIRST
             // This ensures the arm is painted under the gun
-            let rArmY = rAY, rHandX = 15, rSleeveX = 5;
-            if (this.currentWeapon === WEAPONS.SMG || this.currentWeapon === WEAPONS.DUAL_SMG) { rHandX = 25; rSleeveX = 15; } 
+            let rArmY = this.currentWeapon === WEAPONS.PISTOL ? 8 : rAY, rHandX = this.currentWeapon === WEAPONS.PISTOL ? 16 : 15, rSleeveX = 5;
+            if (this.currentWeapon === WEAPONS.SMG || this.currentWeapon === WEAPONS.DUAL_SMG) { rHandX = 22; rSleeveX = 12; }
             else if (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { rHandX = 8; rSleeveX = -1; }
+            const rShoulderY=rArmY;
+            if (longGunPose) { rHandX=longGunPose.rear[0];rArmY=longGunPose.rear[1]; }
             
-            fill(this.shirtCol);
-            ellipse(rSleeveX, rArmY, 25, 8); // Paints the sleeve on the canvas first
-            fill(skinC);
-            ellipse(rHandX, rArmY, 8, 8);    // Paints the hand on the canvas next
+            const rg=figureRig(this.bodyW,this.bodyH),g=paint?paint.api:window;
+            // The wrist/grip stays pinned to the existing muzzle offsets.
+            figureCelLimb(g,rSleeveX-9,rShoulderY,rSleeveX+3,(rShoulderY+rArmY)*.5+1,rHandX,rArmY,
+                rg.upperW,(rg.upperW+rg.foreW)*.5,rg.foreW*.84,this.shirtCol);
+            figureCelOval(g,rHandX,rArmY,8,8,skinC,.8);
 
             // 2. DRAW WEAPONS SECOND
             // This paints the guns on top of the newly drawn hand
@@ -15432,9 +16624,23 @@ if (this.isPlayer) {
             else if (this.eType !== "AERIAL" && this.eType !== "AERIAL_PISTOL" && !this.isUnarmed) { 
                 let isThrowing = this.isPlayer && (typeof isCooking !== 'undefined' && (isCooking || this.throwAnimTimer > 0));
 
-                if (this.currentWeapon === WEAPONS.SMG || this.currentWeapon === WEAPONS.DUAL_SMG) { fill(40); rect(16, 7, 24, 8, 2); rect(20, 15, 6, 12); } 
-                else if (this.currentWeapon === WEAPONS.ASSAULT_RIFLE) { fill(40); rect(5, 4, 42, 4, 1); fill(139, 69, 19); rect(15, 3, 12, 6, 1); rect(0, 3, 8, 6, 1); } 
-                else if (this.currentWeapon === WEAPONS.SHOTGUN) { fill(30); rect(5, 4, 40, 5, 1); fill(15); rect(20, 3, 14, 7, 1); fill(50); rect(5, 3, 12, 7, 2); } 
+                if (oneHandWeapon(this.currentWeapon)) {
+                    const kick = handGunKick(this.weaponKick);
+                    const gx = this.currentWeapon === WEAPONS.PISTOL ? 16 : 22;
+                    const gy = this.currentWeapon === WEAPONS.PISTOL ? 8 : 11;
+                    push(); translate(gx, gy);
+                    const _wa = this.aimAngle + _tw;
+                    carryHandGun(this.currentWeapon, kick*0.10, figureLight(_wa), figureSouth(_wa), kick*0.035, this.weaponKick);
+                    pop();
+                }
+                else if (this.currentWeapon === WEAPONS.BOW) {
+                    push(); translate(24,0); drawHuntingBow(this.ammo > 0); pop();
+                }
+                else if (longGunPose) {
+                    push();translate(longGunPose.x,longGunPose.y);
+                    drawLongGunSolid(this.currentWeapon,longGunPose.P,longGunPose.kick,longGunPose.pump);
+                    pop();
+                }
                 else if (this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { fill(50, 70, 50); rect(5, 4, 45, 6, 2); fill(30); rect(20, 2, 10, 10, 1); } 
                 // Silver magnum: walnut grip, fluted cylinder, long bright
                 // barrel with a bead sight. Without a case here it fell through
@@ -15462,12 +16668,17 @@ if (this.isPlayer) {
                 }
                 else { fill(40); rect(15, 5, 16, 6, 2); } 
                 
-                if (this.currentWeapon === WEAPONS.DUAL_SMG && !isThrowing) {
-                    fill(40); rect(16, -15, 24, 8, 2); rect(20, -23, 6, 12);
+                if (this.currentWeapon === WEAPONS.DUAL_SMG && leftHandAction(this) === 0) {
+                    const kick = handGunKick(this.weaponKick);
+                    push(); translate(22, -11);
+                    const _wa = this.aimAngle + _tw;
+                    carryHandGun(this.currentWeapon, kick*0.10, figureLight(_wa), figureSouth(_wa), -kick*0.035, this.weaponKick);
+                    pop();
                 }
             } 
             else if (this.eType === "AERIAL_PISTOL") { 
                 fill(40); rect(35, 13, 16, 6, 2); 
+            }
             }
         }
 
@@ -15479,7 +16690,7 @@ if (this.isPlayer) {
     if (this.muzzleFlash > 0 && this.reloadTimer <= 0) { 
         push(); translate(bLX, bLY); fill(255, 200, 0, 200); noStroke(); beginShape(); vertex(0, -3); vertex(15 + random(10), -8); vertex(20 + random(15), 0); vertex(15 + random(10), 8); vertex(0, 3); endShape(CLOSE); pop(); 
         let isThrowing = this.isPlayer && (typeof isCooking !== 'undefined' && (isCooking || this.throwAnimTimer > 0));
-        if (this.currentWeapon === WEAPONS.DUAL_SMG && !isThrowing) { push(); translate(bLX_L, bLY_L); fill(255, 200, 0, 200); noStroke(); beginShape(); vertex(0, -3); vertex(15 + random(10), -8); vertex(20 + random(15), 0); vertex(15 + random(10), 8); vertex(0, 3); endShape(CLOSE); pop(); }
+        if (this.currentWeapon === WEAPONS.DUAL_SMG && leftHandAction(this) === 0) { push(); translate(bLX_L, bLY_L); fill(255, 200, 0, 200); noStroke(); beginShape(); vertex(0, -3); vertex(15 + random(10), -8); vertex(20 + random(15), 0); vertex(15 + random(10), 8); vertex(0, 3); endShape(CLOSE); pop(); }
     }
     
     }
@@ -15505,26 +16716,8 @@ if (this.isPlayer) {
         // --- head, hair and headwear ---
     // One description, shared with the corpse and with the overkill pieces, so
     // that a body keeps what the person was wearing. See drawFigureHead().
-    drawFigureHead(window, this, hX, hY, true, this.isMoving ? sin(frameCount * 0.3) * 15 : 0);
+    drawFigureHead(paint?paint.api:window, this, hX, hY, true, this.isMoving ? sin(frameCount * 0.3) * 15 : 0);
 
-
-    // The head is a dome, whichever of the twenty variants above drew it --
-    // bare, helmeted, hatted or haired. Rather than shade each one, the volume
-    // goes on top as a contour and a lit cap sampled from what is already
-    // there: one call, and a helmet rounds off exactly like a scalp.
-    if (BIOME_ACTIVE) {
-      noFill();
-      stroke(20, 18, 22, 130); strokeWeight(1.1);
-      ellipse(hX, hY, 11.8, 11.8);
-      noStroke();
-      fill(0, 0, 0, 34);
-      ellipse(hX + LIGHT_DX * 2.2, hY + LIGHT_DY * 2.2, 9.6, 9.6);
-      for (let i = 1; i <= 3; i++) {
-        const t = i / 3;
-        fill(255, 252, 244, 34);
-        ellipse(hX - LIGHT_DX * 3.0 * t, hY - LIGHT_DY * 3.0 * t, 9 * (1 - t * 0.5), 9 * (1 - t * 0.5));
-      }
-    }
 
     if ((this.eType === "ARMORED" && this.hp > 300) || (this.eType === "ARMORED_STANDARD" && this.hp > 50)) { fill(20); push(); translate(hX, hY); rotate(HALF_PI); arc(0, 0, 15, 15, 0, PI, CHORD); pop(); } 
     noStroke(); for (let d of this.decals) { if (d.isHead) { if (d.col) fill(d.col[0], d.col[1], d.col[2], d.col[3]); else fill(90, 0, 0, 220); ellipse(d.x + hX, d.y + hY, d.sz, d.sz); } }
@@ -15562,7 +16755,8 @@ if (this.isPlayer) {
         noStroke();
     }
 
-    pop(); 
+    pop();
+    } finally { _figureComicInk=previousInk; }
 }
 }
 
@@ -15583,11 +16777,11 @@ function updateAndDrawFloatingScores() {
 }
 
 
-function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = false) {
+function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = false, victim = null) {
     if(CITY_CIVILIANS.indexOf(eType)!==-1)return;
     
-    // NEW: Find the exact enemy that just died using the coordinates we already have!
-    let deadGuy = enemiesList.find(e => e.x === x && e.y === y && e.dead);
+    // Use the actual victim: several falling bodies can share the same spot.
+    let deadGuy = victim || enemiesList.find(e => e.x === x && e.y === y && e.dead);
     // A fort muster conscripts on a tick, and a body that spawned and died
     // inside one tick period would slip through it untagged -- which drains
     // nothing and calls no wave. Ask once more here, on the body itself, and
@@ -15595,19 +16789,22 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
     if (deadGuy && !deadGuy.isAmbush && typeof conscriptIntoMuster === 'function') conscriptIntoMuster(deadGuy);
     let isAmbushKill = deadGuy ? deadGuy.isAmbush : false;
 
-    // One of the sector's own, shot before the towers came down. This is the
-    // ONLY thing that reduces what the player inherits, and it is counted here,
+    // A member of the sector's roster, including a freed ally lost in the
+    // ambush. This reduces what the player inherits and is counted here,
     // as it happens, rather than inferred later from who is still standing --
     // a headcount cannot tell "spared" from "wandered off" or "not streamed in
     // right now", which is why the number used to move on its own.
-    if (deadGuy && deadGuy.isPopulation && !deadGuy.isFriendly) {
+    if (deadGuy && deadGuy.isPopulation && !deadGuy.populationDeathCounted) {
         const t = sectorLedger(currentLevel);
-        if (!t.popGranted) t.popKilled++;
+        if (!t.popGranted) {
+            t.popKilled = Math.min(t.popSeeded, t.popKilled + 1);
+            deadGuy.populationDeathCounted = true;
+        }
     }
     // A soldier the player marched here from somewhere else. They belong to the
     // sector that raised them, so that is the ledger the loss comes off.
     if (deadGuy && deadGuy.isMilitary && deadGuy.isFriendly &&
-        typeof escortCasualty === 'function') escortCasualty();
+        typeof escortCasualty === 'function') escortCasualty(deadGuy);
     // One of the fort's own. Counted here, as it happens, for the same reason
     // the sector's roster is: walking away and coming back must re-form the
     // ones the player spared and no more.
@@ -15667,7 +16864,7 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
         // away rewrote Stick City's Directive; and on a record that had no
         // legacy `popMilitary` field it wrote `Math.max(0, undefined - 1)`,
         // which is NaN, into the save.
-        if (window.militaryToBring && window.militaryToBring > 0) window.militaryToBring--;
+        if (deadGuy && deadGuy.isMilitary) syncActiveMilitaryCount();
         if (x !== undefined && y !== undefined) floatingScores.push({ y: 100, text: "ALLY LOST!", life: 90, maxLife: 90 });
         return; 
     }
@@ -15699,7 +16896,8 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
         
         if (nm0AmbushKills <= 0 && !isWin && !killcamMode) { 
             killcamMode = true; killcamTarget = { x: x !== undefined ? x : player.x, y: y !== undefined ? y : player.y }; 
-            killcamTimer = 150; window.nm0AmbushCleared = true; 
+            killcamTimer = 150; window.nm0AmbushCleared = true;
+            finishSectorRecruitment();
         }
         return; // Exits so the ambush kill DOES NOT count toward the Stick City population
     }
@@ -15742,6 +16940,27 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
 // is not a lot on its own; it is a lot sixty times a second forever, and it is
 // the shape of thing the collector pauses for at the worst possible moment.
 const _pushActors = [], _pushAerials = [];
+const _pushBuckets = new Map(), _pushBucketPool = [];
+let _pushBucketUsed = 0;
+function buildPushBuckets(actors) {
+  _pushBuckets.clear();
+  let used = 0;
+  for (let i = 0; i < actors.length; i++) {
+    const a = actors[i];
+    if (!a || a.hp <= 0 || a.dead) continue;
+    const key = cellKey(Math.floor(a.x / SPATIAL_CELL_SIZE), Math.floor(a.y / SPATIAL_CELL_SIZE));
+    let cell = _pushBuckets.get(key);
+    if (!cell) {
+      cell = _pushBucketPool[used];
+      if (!cell) cell = _pushBucketPool[used] = [];
+      used++; cell.length = 0; _pushBuckets.set(key, cell);
+    }
+    cell.push(a);
+  }
+  for (let i = used; i < _pushBucketUsed; i++) _pushBucketPool[i].length = 0;
+  _pushBucketUsed = used;
+  return _pushBuckets;
+}
 
 function updateEntities() {
   if (comboTimer > 0) { comboTimer--; if (comboTimer <= 0) consecutiveKills = 0; }
@@ -15774,6 +16993,13 @@ function updateEntities() {
       for (let n = 0; n < enemiesList.length; n++) {
           const e = enemiesList[n];
           if (!e) continue;
+          // Run before body separation and AI, including while the population
+          // refresh is cooling down. An old nearby resident must never enter
+          // forceNudge's collision search for a newly forbidden 700m buffer.
+          if (currentLevel===1 && e.isCityCivilian && e.cityPersonKey && e.hp>0 && !e.dead &&
+              (nm0AmbushActive || !cityCivilianAllowed(e.x,e.y))) {
+              bankCityPerson(e);enemiesList.splice(n--,1);continue;
+          }
           if (e.isFriendly && !e.isCityCivilian) e.allySlot = e.dead ? 0 : allyN++;
           if (e.hp <= 0 || e.dead) continue;
           if (e.eType === "AERIAL" || e.eType === "AERIAL_PISTOL" ||
@@ -15786,7 +17012,13 @@ function updateEntities() {
       // actors.indexOf() calls inside a triple-nested loop -- O(n) work per
       // candidate pair, which is fine at a dozen actors and quadratic misery at
       // a hundred.
-      for (let n = 0; n < actors.length; n++) actors[n]._pushIdx = n;
+      for (let n = 0; n < actors.length; n++) {
+          const a = actors[n];
+          a._pushIdx = n;
+          a._pushRadius = a.isPlayer ? 18 :
+              (a.eType === "ARMORED" || a.eType === "ALIEN_GATOR" || a.eType === "SNAIL_HYBRID" ? 40 :
+              (a.eType === "BUG" ? 12 : 20));
+      }
 
       // One index per frame, not two. `actors` is already filtered to
       // hp > 0 && !dead a few lines above, and buildSpatialBuckets filters on
@@ -15795,7 +17027,7 @@ function updateEntities() {
       // `|| spatialGrid[...]` fallback below could never fire. The grid was an
       // object, an array per occupied cell and a push per actor, allocated
       // every frame to answer a lookup that never reached it.
-      const actorBuckets = buildSpatialBuckets(actors, SPATIAL_CELL_SIZE, a => a.x, a => a.y);
+      const actorBuckets = buildPushBuckets(actors);
 
       for (let i = 0; i < actors.length; i++) {
           let A = actors[i];
@@ -15804,6 +17036,7 @@ function updateEntities() {
 
           let cx = Math.floor(A.x / SPATIAL_CELL_SIZE);
           let cy = Math.floor(A.y / SPATIAL_CELL_SIZE);
+          const radA = A._pushRadius;
 
           for (let ox = -1; ox <= 1; ox++) {
               for (let oy = -1; oy <= 1; oy++) {
@@ -15815,8 +17048,7 @@ function updateEntities() {
                           if (player && player.dashTimer > 0 && B.isPlayer) continue;
                           if (B.ignoreBldgTimer > 0) continue;
 
-                          let radA = A.isPlayer ? 18 : (A.eType === "ARMORED" || A.eType === "ALIEN_GATOR" || A.eType === "SNAIL_HYBRID" ? 40 : (A.eType === "BUG" ? 12 : 20));
-                          let radB = B.isPlayer ? 18 : (B.eType === "ARMORED" || B.eType === "ALIEN_GATOR" || B.eType === "SNAIL_HYBRID" ? 40 : (B.eType === "BUG" ? 12 : 20));
+                          const radB = B._pushRadius;
                           let minDist = radA + radB;
                           
                           // The sqrt is inside the test, not before it. The
@@ -15834,14 +17066,15 @@ function updateEntities() {
                               
                               let overlapA = (!moveA) ? 0 : (moveB ? (minDist - d) * 0.55 : (minDist - d));
                               let overlapB = (!moveB) ? 0 : (moveA ? (minDist - d) * 0.55 : (minDist - d));
+                              const pushX = cos(pA), pushY = sin(pA);
                               
                               if (moveA) {
-                                  let nxA = A.x + cos(pA) * overlapA, nyA = A.y + sin(pA) * overlapA;
+                                  let nxA = A.x + pushX * overlapA, nyA = A.y + pushY * overlapA;
                                   if (!A.checkCol(nxA, A.y)) A.x = nxA;
                                   if (!A.checkCol(A.x, nyA)) A.y = nyA;
                               }
                               if (moveB) {
-                                  let nxB = B.x - cos(pA) * overlapB, nyB = B.y - sin(pA) * overlapB;
+                                  let nxB = B.x - pushX * overlapB, nyB = B.y - pushY * overlapB;
                                   if (!B.checkCol(nxB, B.y)) B.x = nxB;
                                   if (!B.checkCol(B.x, nyB)) B.y = nyB;
                               }
@@ -15887,14 +17120,14 @@ function updateEntities() {
           // cost of a plain sqrt it did not need either.
           let cullDist = ((nm0AmbushActive || currentLevel === 4) && !e.isFriendly) ? 6000 : 1450;
           const cdx = player.x - e.x, cdy = player.y - e.y;
-          if (cdx * cdx + cdy * cdy < cullDist * cullDist) {
+          if ((e.isFriendly && e.isMilitary) || cdx * cdx + cdy * cdy < cullDist * cullDist) {
               e.updateEnemy();
           }
       }
 
       
       if (inView(e.x, e.y, 150)) actorShow(e);
-      if (e.hp <= 0 && !e.dead) { e.dead = true; processKill(e.x, e.y, false, e.eType, e.isFriendly); enemiesList.splice(i, 1); if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100); }
+      if (e.hp <= 0 && !e.dead) { e.dead = true; processKill(e.x, e.y, false, e.eType, e.isFriendly, e); enemiesList.splice(i, 1); if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100); }
   }
 
   checkAmbushCleared();
@@ -15990,7 +17223,7 @@ function maintainBanditPosse(hostiles) {
   for (let i = 0; i < n; i++) {
     const sx = ox + cos(a + HALF_PI) * (i - (n - 1) / 2) * 95;
     const sy = oy + sin(a + HALF_PI) * (i - (n - 1) / 2) * 95;
-    if (inAuthoredSector(sx, sy, 500)) continue;
+    if (inAuthoredSector(sx, sy, 500) || (hostile && insideOwnedFortress(currentLevel, sx, sy, 60))) continue;
     const b = new Character(sx, sy, false, "BANDIT");
     b.mountUp();
     b.bandGroup = group;
@@ -16105,6 +17338,7 @@ function checkAmbushCleared() {
   }
   window.ambushFort = null;              // the muster is over; stop conscripting
   window.nm0AmbushCleared = true;        // routes through the killcam into the story loop
+  finishSectorRecruitment();
   streakMsgText = "AMBUSH CLEARED!";
   streakMsgTimer = 180;
 
@@ -16114,11 +17348,84 @@ function checkAmbushCleared() {
 }
 
 
+const _projectilePlayerTargets=[],_projectileEnemyTargets=[],_projectileNearby=[];
+const _projectileBarrels=[],_projectileCars=[];
+const _projectilePlayerGrid=new Map(),_projectileEnemyGrid=new Map();
+const _projectilePlayerBucketPool=[],_projectileEnemyBucketPool=[];
+function projectileBuckets(list,grid,pool) {
+    grid.clear();let used=0;
+    for(let i=0;i<list.length;i++) {
+        const t=list[i];if(!t||t.hp<=0||t.dead)continue;
+        const key=cellKey(Math.floor(t.x/SPATIAL_CELL_SIZE),Math.floor(t.y/SPATIAL_CELL_SIZE));
+        let bucket=grid.get(key);
+        if(!bucket){bucket=pool[used]||(pool[used]=[]);used++;bucket.length=0;grid.set(key,bucket);}
+        bucket.push(t);
+    }
+    // Release references held in buckets that a smaller battle no longer uses.
+    for(let i=used;i<pool.length;i++)pool[i].length=0;
+    return grid;
+}
+// Extra cover checks run only when a projectile segment actually meets an
+// animal. Ordinary battles keep the same target broad phase and hit order.
+function forestShotRectTime(b,x0,y0,x1,y1) {
+    const px=b.prevX,py=b.prevY,dx=b.x-px,dy=b.y-py;
+    let lo=0,hi=1;
+    if(Math.abs(dx)<1e-9) {if(px<x0||px>x1)return Infinity;}
+    else {const a=(x0-px)/dx,c=(x1-px)/dx;lo=Math.max(lo,Math.min(a,c));hi=Math.min(hi,Math.max(a,c));}
+    if(Math.abs(dy)<1e-9) {if(py<y0||py>y1)return Infinity;}
+    else {const a=(y0-py)/dy,c=(y1-py)/dy;lo=Math.max(lo,Math.min(a,c));hi=Math.min(hi,Math.max(a,c));}
+    return lo<=hi?lo:Infinity;
+}
+function forestShotCircleTime(b,x,y,r) {
+    const dx=b.x-b.prevX,dy=b.y-b.prevY,px=b.prevX-x,py=b.prevY-y;
+    const aa=dx*dx+dy*dy,cc=px*px+py*py-r*r;
+    if(cc<=0)return 0;
+    if(aa<1e-9)return Infinity;
+    const bb=px*dx+py*dy,disc=bb*bb-aa*cc;
+    if(disc<0)return Infinity;
+    const t=(-bb-Math.sqrt(disc))/aa;
+    return t>=0&&t<=1?t:Infinity;
+}
+const _forestShotCover={t:Infinity,kind:null};
+const _forestShotTargets=[];
+function forestShotCover(b,targets,nearbyBarrels,targetBuckets=null) {
+    const out=_forestShotCover;out.t=Infinity;out.kind=null;
+    const consider=(t,kind)=>{if(t<out.t){out.t=t;out.kind=kind;}};
+    // A large actor can intersect the beginning of this segment while its
+    // root lies outside the ordinary endpoint query. Expand only the hunting
+    // cover query, leaving battle target selection and ordering unchanged.
+    const radius=40+Math.hypot(b.x-b.prevX,b.y-b.prevY)*.5;
+    const coverTargets=targetBuckets?querySpatialBuckets(targetBuckets,(b.x+b.prevX)*.5,
+        (b.y+b.prevY)*.5,SPATIAL_CELL_SIZE,radius,radius*radius,null,_forestShotTargets):targets;
+    for(const actor of coverTargets) {
+        if(!actor||actor.hp<=0||actor.dead)continue;
+        if(actor.eType==='COW'&&b.shooter&&!b.shooter.isPlayer)continue;
+        if(b.tH==='HEAD'&&(actor.eType==='BUG'||actor.eType==='SNAIL'))continue;
+        const large=actor.eType==='ARMORED'||actor.eType==='ALIEN_GATOR'||actor.eType==='SAUCER'||actor.eType==='SAUCER_RED'||actor.eType==='SNAIL_HYBRID';
+        const r=b.tH==='HEAD'?(large?(actor.eType==='SNAIL_HYBRID'?35:15):6):(large?40:(actor.eType==='BUG'?10:actor.eType==='SNAIL'?15:12));
+        consider(forestShotCircleTime(b,actor.x,actor.y,r),'ACTOR');
+    }
+    if(b.isP&&b.tH!=='HEAD')for(const barrel of nearbyBarrels)
+        consider(forestShotCircleTime(b,barrel.x,barrel.y,15),'BARREL');
+    for(let endpoint=0;endpoint<2;endpoint++) {
+        const near=colNear(endpoint?b.x:b.prevX,endpoint?b.y:b.prevY);
+        for(const solid of near) {
+            if(solid.isRiver||solid.isDeck||((currentLevel===1||currentLevel===2)&&solid.isGrassLot))continue;
+            const t=forestShotRectTime(b,solid.x-solid.w*.5,solid.y-solid.h*.5,solid.x+solid.w*.5,solid.y+solid.h*.5);
+            if(t===Infinity)continue;
+            if(solid.isGovFortress&&inOpenGateway(solid,b.prevX+(b.x-b.prevX)*t))continue;
+            consider(t,'SOLID');
+        }
+    }
+    const cars=activeParkingCars.length<=16?activeParkingCars:crowdNearbyCars(b.x,b.y,40,_projectileCars);
+    for(const car of cars)consider(forestShotRectTime(b,car.x-25,car.y-45,car.x+25,car.y+45),'CAR');
+    return out;
+}
 function updateBullets() {
   const CULL_PAD = 400; 
 
-  const playerTgs = [];
-  const enemyTgs = [player];
+  const playerTgs = _projectilePlayerTargets,enemyTgs = _projectileEnemyTargets;
+  playerTgs.length=0;enemyTgs.length=0;enemyTgs.push(player);
   for (let i = 0; i < enemiesList.length; i++) {
       let e = enemiesList[i];
       if (!e || e.hp <= 0 || e.dead) continue;
@@ -16126,8 +17433,8 @@ function updateBullets() {
       if (e.isCityCivilian || (e.isFriendly && !e.isNeutral)) enemyTgs.push(e);
   }
 
-  const playerBuckets = buildSpatialBuckets(playerTgs, SPATIAL_CELL_SIZE, t => t.x, t => t.y);
-  const enemyBuckets = buildSpatialBuckets(enemyTgs, SPATIAL_CELL_SIZE, t => t.x, t => t.y);
+  const playerBuckets = projectileBuckets(playerTgs,_projectilePlayerGrid,_projectilePlayerBucketPool);
+  const enemyBuckets = projectileBuckets(enemyTgs,_projectileEnemyGrid,_projectileEnemyBucketPool);
 
   for (let i = bullets.length - 1; i >= 0; i--) {
     let b = bullets[i]; 
@@ -16145,27 +17452,54 @@ function updateBullets() {
     
     if (doTick && b.active) {
         let hB = false;
-        for (let j = 0; j < barrels.length; j++) {
-            if (Math.abs(b.x - barrels[j].x) > 30 || Math.abs(b.y - barrels[j].y) > 30) continue; 
-            if (b.isP && b.tH !== "HEAD" && dist(b.x, b.y, barrels[j].x, barrels[j].y) < 15) { 
+        const nearbyBarrels=barrels.length<=16?barrels:crowdNearbyBarrels(b.x,b.y,18,_projectileBarrels);
+        const targetBuckets = b.isP ? playerBuckets : enemyBuckets;
+        const localTargets = querySpatialBuckets(targetBuckets, b.x, b.y, SPATIAL_CELL_SIZE, 60, 3600,null,_projectileNearby);
+        if(currentBiome===2&&!b.retracting&&!b.tetheredTarget&&typeof forestWildlifeHitTest==='function') {
+            const wildlifeHit=forestWildlifeHitTest(b);
+            if(wildlifeHit) {
+                const cover=forestShotCover(b,localTargets,nearbyBarrels,targetBuckets);
+                if(cover.t>wildlifeHit.t) {
+                    const dx=b.x-b.prevX,dy=b.y-b.prevY;
+                    b.x=b.prevX+dx*wildlifeHit.t;b.y=b.prevY+dy*wildlifeHit.t;
+                    if(b.isRocket) {
+                        triggerRocketExplosion(b.x,b.y,b.isP);
+                    } else {
+                        const damage=b.isOrangeBeam?ROBOT_BEAM_DMG:(b.isRedLaser||b.isPinkLaser?30:(b.isAlienLaser?25:(wildlifeHit.head?b.w.headDmg:b.w.bodyDmg)));
+                        applyForestWildlifeHit(wildlifeHit.animal,{weapon:b.w,head:wildlifeHit.head,shotId:b.shotId,owner:b.shooter,damage:damage||0});
+                    }
+                    if(b.isP&&!b.isTaser)totalShotsHit++;
+                    if(b.isTaser){b.retracting=true;continue;}
+                    else {b.l=0;b.active=false;continue;}
+                } else if(cover.kind) {
+                    // Let the ordinary impact path consume the shot at cover;
+                    // crossed trunks, barrels, cars and actors must intercept
+                    // it before an animal farther along this same segment.
+                    const t=Math.min(1,cover.t+0.002);
+                    b.x=b.prevX+(b.x-b.prevX)*t;b.y=b.prevY+(b.y-b.prevY)*t;
+                    if(cover.kind==='ACTOR')querySpatialBuckets(targetBuckets,b.x,b.y,
+                        SPATIAL_CELL_SIZE,60,3600,null,_projectileNearby);
+                }
+            }
+        }
+        for (let j = 0; j < nearbyBarrels.length; j++) {
+            const barrel=nearbyBarrels[j];
+            if (Math.abs(b.x - barrel.x) > 30 || Math.abs(b.y - barrel.y) > 30) continue;
+            if (b.isP && b.tH !== "HEAD" && dist(b.x, b.y, barrel.x, barrel.y) < 15) {
                 hB = true; totalShotsHit++; 
-                if (b.w === WEAPONS.SHOTGUN) barrels[j].hp -= 25; 
-                else if (b.isRedLaser || b.isPinkLaser) barrels[j].hp -= 30; 
-                else if (b.isAlienLaser) barrels[j].hp -= 25; 
-                else barrels[j].hp -= b.w.bodyDmg; 
+                if (b.w === WEAPONS.SHOTGUN) barrel.hp -= 25;
+                else if (b.isRedLaser || b.isPinkLaser) barrel.hp -= 30;
+                else if (b.isAlienLaser) barrel.hp -= 25;
+                else barrel.hp -= b.w.bodyDmg;
                 
                 b.l = 0; emit(b.x, b.y, 3, color(255, 100, 0), "FLASH"); break; 
             }
         }
         if (hB) { if (b.w === WEAPONS.ROCKET_LAUNCHER) { triggerRocketExplosion(b.x, b.y, b.isP); } b.active = false; continue; }
 
-        let tgs = b.isP ? playerTgs : enemyTgs;
-        const targetBuckets = b.isP ? playerBuckets : enemyBuckets;
-        const localTargets = querySpatialBuckets(targetBuckets, b.x, b.y, SPATIAL_CELL_SIZE, 60, 3600);
-
         for (let t of localTargets) {
           if (!t || t.hp <= 0 || t.dead) continue;
-          if (tgs.indexOf(t) === -1) continue;
+          // The bucket was built from this exact target list above.
           
           if (t.eType === "COW" && b.shooter && !b.shooter.isPlayer) continue;
           if (b.tH === "HEAD" && (t.eType === "BUG" || t.eType === "SNAIL")) continue;
@@ -16221,7 +17555,12 @@ function updateBullets() {
 
                 if (t.lastHitFrame !== frameCount) { t.lastHitFrame = frameCount; t.frameDamage = 0; } 
                 t.frameDamage += dmg; 
+                // Freeze voluntary movement and the point of entry BEFORE knockback.
+                // The animation reads this; damage and death selection stay below.
+                const fallMotion=figureMotion(t),fallHit={frame:frameCount,kind:b.tH,weapon:b.w,angle:b.a,
+                    force:weaponFallForce(b.w),mx:fallMotion.x,my:fallMotion.y,x:t.x,y:t.y,wound:null};
                 let dRes = robotHeadAbsorbed ? { blocked: false, broken: false } : t.takeDamage(dmg,b.shooter);
+                if (!dRes.blocked) t.fallHit=fallHit;
                 b.l = 0; 
 
                 if (robotHeadKill) {
@@ -16261,7 +17600,7 @@ function updateBullets() {
                 let bCol = (t.eType === "BUG" || t.eType === "SNAIL" || t.eType === "SNAIL_HYBRID") ? color(200, 230, 40) : color(90, 0, 0); 
                 if (t.eType === "SNAIL_HYBRID" && b.tH === "HEAD") bCol = color(0, 100, 0); 
                 
-                let dx = b.x - t.x, dy = b.y - t.y; let rotX = dx * cos(-t.aimAngle) - dy * sin(-t.aimAngle); let rotY = dx * sin(-t.aimAngle) + dy * cos(-t.aimAngle);
+                let dx = b.x - fallHit.x, dy = b.y - fallHit.y; let rotX = dx * cos(-t.aimAngle) - dy * sin(-t.aimAngle); let rotY = dx * sin(-t.aimAngle) + dy * cos(-t.aimAngle);
                 let bobOffset = t.isMoving ? abs(sin(t.walkCycle)) * 2 : 0; if (t.eType === "AERIAL" || t.eType === "AERIAL_PISTOL") bobOffset += sin(frameCount * 0.1) * 15;
                 let lX = rotX - bobOffset, lY = rotY; let rw = (b.tH === "HEAD" ? 5.5 : t.bodyW / 2) * 0.85; let rh = (b.tH === "HEAD" ? 5.5 : t.bodyH / 2) * 0.85;
                 let distSq = (lX * lX) / (rw * rw) + (lY * lY) / (rh * rh); if (distSq > 1) { let scale = 1 / Math.sqrt(distSq); lX *= scale; lY *= scale; }
@@ -16270,11 +17609,16 @@ function updateBullets() {
                 // A machine does not bleed. Its bullet holes are burnt metal.
                 if (t.eType === "ROBOT") dCol = [16, 15, 14, 230]; 
                 // A round the shield stopped never reached him, so it leaves no
-                // hole. Holes belong to the health bar: they start when the
-                // shield is gone and last only as long as it stays gone.
-                if (!(t.isPlayer && dRes.blocked))
-                  t.decals.push({ x: lX, y: lY, sz: random(4, 7), col: dCol, isHead: b.tH === "HEAD" });
+                // hole. Holes belong to the health bar and remain until HP
+                // is restored, even after the shield recharges.
+                if (!(t.isPlayer && dRes.blocked)) {
+                  t.decals.push({ x: lX, y: lY, sz: random(4, 7), col: dCol, isHead: b.tH === "HEAD",
+                    isBulletHole:true,shotA:b.a-t.aimAngle });
+                  fallHit.wound=t.decals[t.decals.length-1];
+                  fallHit.fatal=t.hp<=0;
+                }
                 
+                fallHit.particleStart=particles.length;
                 if (t.eType === "ROBOT") {
                     // Sparks the whole way down; oil once the chassis is opened
                     // up past ROBOT_OIL_AT, and more of it the worse it gets.
@@ -16286,7 +17630,14 @@ function updateBullets() {
                         emit(b.x, b.y, bleed, color(OIL_COL[0], OIL_COL[1], OIL_COL[2]), "OIL", b.vx * 0.4, b.vy * 0.4);
                     }
                 } 
-                else if (wA) { sfx.hitArmor(); emit(b.x, b.y, 10, color(255, 150, 0), "SPARK"); emit(b.x, b.y, 5, color(100), "CHIP"); } 
+                else if (wA) {
+                    sfx.hitArmor();
+                    if (t.eType === "ARMORED" || t.eType === "ARMORED_STANDARD") {
+                        if (b.tH === "HEAD") emit(b.x, b.y, 9, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK", b.vx, b.vy);
+                        else emit(b.x, b.y, 10, bCol, "BLOOD_SMOKE", b.vx, b.vy);
+                    } else emit(b.x, b.y, 10, color(255, 150, 0), "SPARK");
+                    emit(b.x, b.y, 5, color(100), "CHIP");
+                }
                 else { 
                     // Sparks in the shield's own colour while it holds; the break
                     // keeps its blue, which is the one moment the two should not
@@ -16318,7 +17669,7 @@ function updateBullets() {
                         corpses.push(new Corpse(t.x, t.y, t.moveAngle, t.aimAngle, t.shirtCol, t.pantsCol,
                                                 t.enraged ? 1 : 0, hA, t.decals, t.currentWeapon, b.a,
                                                 "ROBOT", t.bodyW, t.bodyH, t));
-                        processKill(t.x, t.y, b.tH === "HEAD", t.eType, t.isFriendly);
+                        processKill(t.x, t.y, b.tH === "HEAD", t.eType, t.isFriendly, t);
                         // `i` here is the BULLET index -- the target loop is a
                         // for-of with no index of its own -- so the body has to
                         // be found rather than assumed.
@@ -16332,6 +17683,7 @@ function updateBullets() {
                     else if (t.eType === "AERIAL" || t.eType === "AERIAL_PISTOL") {
                         if (b.tH === "HEAD") { dT = 12; } else { let choices = [11, 5, 10]; dT = choices[floor(random(3))]; }
                         corpses.push(new Corpse(t.x, t.y, t.moveAngle, t.aimAngle, t.shirtCol, t.pantsCol, dT, hA, t.decals, t.currentWeapon, b.a, t.eType, t.bodyW, t.bodyH, t));
+                        retargetHeadHitSpray(corpses[corpses.length-1],fallHit,b);
                         if (dT === 11) { spawnSplatter(t.x, t.y, "BLOOD", color(90, 0, 0)); } 
                         else if (dT === 5 || dT === 10) { emit(t.x, t.y, 40, color(255, 100, 0), "EXPLOSION"); sfx.explosion(t.x, t.y); spawnSplatter(t.x, t.y, "BLOOD", color(90, 0, 0)); spawnSplatter(t.x, t.y, "SCORCH"); if (dT === 10) { emit(b.x, b.y, 30, color(220, 200, 200), "BONE", b.vx, b.vy); emit(t.x, t.y, 120, color(90, 0, 0), "GORE"); } }
                     } else { 
@@ -16360,11 +17712,13 @@ function updateBullets() {
                         } else { dT = 0; emit(t.x, t.y, 40, bCol, "GORE"); } 
                         
                         corpses.push(new Corpse(t.x, t.y, t.moveAngle, t.aimAngle, t.shirtCol, t.pantsCol, dT, hA, t.decals, t.currentWeapon, b.a, t.eType, t.bodyW, t.bodyH, t)); 
-                        spawnSplatter(t.x, t.y, "BLOOD", bCol); 
+                        retargetHeadHitSpray(corpses[corpses.length-1],fallHit,b);
+                        const pool=b.tH==="HEAD"?headWoundPoint(corpses[corpses.length-1]):t;
+                        spawnSplatter(pool.x,pool.y,"BLOOD",bCol);
                     } 
                     if (t.isPlayer) { playerRespawnTimer = 90; } else { 
                         let isHeadshot = (b.tH === "HEAD" && t.eType !== "BUG" && t.eType !== "SNAIL" && t.eType !== "SNAIL_HYBRID");
-                        processKill(t.x, t.y, isHeadshot, t.eType, t.isFriendly); 
+                        processKill(t.x, t.y, isHeadshot, t.eType, t.isFriendly, t);
                         let eI = enemiesList.indexOf(t); if (eI > -1) enemiesList.splice(eI, 1); 
                         if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100); 
                     } 
@@ -16412,7 +17766,7 @@ function updateBullets() {
                         let dmg = b.w === WEAPONS.SHOTGUN ? 25 : (b.w === WEAPONS.ROCKET_LAUNCHER ? 350 : (b.isRedLaser || b.isPinkLaser ? 30 : (b.isAlienLaser ? 25 : (b.w.bodyDmg || 20))));
                         bldg.hp -= dmg;
                         if (bldg.hp <= 0) { sfx.explosion(bldg.x, bldg.y); screenShake = 30; emit(bldg.x, bldg.y, 100, color(200, 230, 40), "GORE"); spawnSplatter(bldg.x, bldg.y, "BLOOD", color(200, 230, 40)); spawnSplatter(bldg.x, bldg.y, "SCORCH"); let bIdx = buildings.indexOf(bldg); if (bIdx > -1) buildings.splice(bIdx, 1); } 
-                        else { emit(b.x, b.y, 5, color(255, 20, 147), "BLOOD"); let swarmBug = new Character(bldg.x - 20, bldg.y - 20, false, "BUG"); swarmBug.ignoreBldgTimer = 180; enemiesList.push(swarmBug); sfx.hitBody(); }
+                        else { emit(b.x, b.y, 5, color(255, 20, 147), "BLOOD"); let swarmBug = newHostileCharacter(bldg.x - 20, bldg.y - 20, "BUG"); swarmBug.ignoreBldgTimer = 180; enemiesList.push(swarmBug); sfx.hitBody(); }
                         if (b.w === WEAPONS.ROCKET_LAUNCHER) triggerRocketExplosion(b.x, b.y, b.isP); 
                     } else if (bldg.isTower && bldg.hp > 0 && b.isP) {
                         let dmg = b.w === WEAPONS.SHOTGUN ? 25 : (b.w === WEAPONS.ROCKET_LAUNCHER ? 350 : (b.w.bodyDmg || 20));
@@ -16457,7 +17811,8 @@ function updateBullets() {
             if (hitBarrier) continue;
 
             if (!hitSomething) {
-                for (let c of activeParkingCars) {
+                const nearbyCars=activeParkingCars.length<=16?activeParkingCars:crowdNearbyCars(b.x,b.y,0,_projectileCars);
+                for (let c of nearbyCars) {
                     let cw = 50, ch = 90; 
                     if (Math.abs(b.x - c.x) > cw || Math.abs(b.y - c.y) > ch) continue;
 
@@ -16539,6 +17894,11 @@ class Citizen {
                 this.state = "WANDER";
                 this.tx = this.x + random(-300, 300);
                 this.ty = this.y + random(-300, 300);
+                if(this.fortressHome) {
+                    const f=this.fortressHome;
+                    this.tx=constrain(this.tx,f.innerX0+30,f.innerX1-30);
+                    this.ty=constrain(this.ty,f.innerY0+30,f.innerY1-30);
+                }
                 this.timer = dist(this.x, this.y, this.tx, this.ty) / this.speed + 60;
             } else {
                 this.state = "IDLE";
@@ -16658,6 +18018,10 @@ class Citizen {
     // player put up is not an obstacle to the crew putting it up. A FINISHED
     // structure blocks them like any other building.
     citizenBlocked(x, y) {
+        if(this.fortressHome&&!this.buildSite) {
+            const f=this.fortressHome;
+            if(x<f.innerX0+15||x>f.innerX1-15||y<f.innerY0+15||y>f.innerY1-15)return true;
+        }
         if (!inView(this.x, this.y, 320)) return false;
         const r = 13;
         for (const b of colNear(x, y)) {
@@ -16742,6 +18106,11 @@ class Citizen {
                 }
             }
         }
+        if(this.fortressHome&&!this.buildSite) {
+            const f=this.fortressHome;
+            this.x=constrain(this.x,f.innerX0+15,f.innerX1-15);
+            this.y=constrain(this.y,f.innerY0+15,f.innerY1-15);
+        }
     }
 
     show() {
@@ -16791,17 +18160,28 @@ class Citizen {
         let swing = isMoving ? sin(this.walkCycle) : 0;
         let bob = isMoving ? abs(sin(this.walkCycle)) * 2 : 0;
         
+        const rig = figureRig(this.bodyW, this.bodyH);
+        const bothHands = (this.state === "TO_MASON" || this.state === "HANDOFF" ||
+                           this.state === "PLACING") && !!this.carrying;
+        const reaching = (this.state === "LOADING");
         noStroke(); fill(this.pantsCol);
-        let lW = (this.gender === "FEMALE") ? 14 : 18;
-        let lX = (this.gender === "FEMALE") ? -7 : -10;
-        let lY1 = -10, lY2 = 2; 
+        const lW = (this.gender === "FEMALE") ? 14 : 18;
+        const lX = (this.gender === "FEMALE") ? -7 : -10;
 
         // Legs / Dress Base
         if (isFarmer && this.gender === "FEMALE") {
-            rect(lX - 2, -10, lW + 4, 18, 4); // Dress Base
+            figureCelOval(window, lX + lW * .5, -1, lW + 4, 18, this.pantsCol);
         } else {
-            rect(lX + swing * 12, lY1, lW, 8, 4); 
-            rect(lX - swing * 12, lY2, lW, 8, 4); 
+            const th = rig.thigh * STAND_FORE_LEG, sh = rig.shin * STAND_FORE_LEG;
+            const boot = [red(this.pantsCol) * .55, green(this.pantsCol) * .55, blue(this.pantsCol) * .55];
+            for (const side of [-1, 1]) {
+                const sx = lX + swing * 12 * -side + rig.thighW * .5;
+                const cy = side * 6, ex = sx + th * .92, hx = ex + sh;
+                figureCelLimb(window, sx, cy, ex, cy, hx, cy,
+                    rig.thighW, rig.shinW, rig.shinW * .80, this.pantsCol);
+                figureCelOval(window, hx + rig.foot * .34, cy,
+                    rig.foot, rig.shinW * .80, boot);
+            }
         }
         
         translate(bob, 0);
@@ -16815,15 +18195,22 @@ class Citizen {
         let rHandX = rArmSwing * 14;
         let rShoulderX = rArmSwing * 4;
 
-        // Back hands
-        fill(this.skinCol);
-        if (lArmSwing <= 0.2) ellipse(lHandX, armLY, 8, 8);
-        if (rArmSwing <= 0.2) ellipse(rHandX, armRY, 8, 8);
-        // Sleeves
-        if (BIOME_ACTIVE) figureContour();
-        fill(this.shirtCol); 
-        ellipse(lShoulderX, armLY, 16, 9);
-        ellipse(rShoulderX, armRY, 16, 9);
+        const drawArm = (sx, sy, ex, ey, hx, hy) => {
+            figureCelLimb(window, sx, sy, ex, ey, hx, hy,
+                rig.upperW, rig.foreW, rig.foreW * .86, this.shirtCol);
+            figureCelOval(window, hx, hy, 8, 8, this.skinCol);
+        };
+        const walkingArm = (side) => {
+            const sy = side < 0 ? armLY : armRY;
+            const hx = side < 0 ? lHandX : rHandX;
+            const shoulder = side < 0 ? lShoulderX : rShoulderX;
+            drawArm(0, sy * .84, (shoulder + hx) * .5, sy + side * 1.3, hx, sy);
+        };
+        // The whole trailing arm sits under the torso, and the leading one
+        // passes over it. Work poses replace those arms rather than adding a
+        // second sleeve/hand on top of a walking arm.
+        if (!bothHands && !reaching && lArmSwing <= .2) walkingArm(-1);
+        if (!bothHands && !reaching && !isBuilding && rArmSwing <= .2) walkingArm(1);
 
         // --- NEW: Lab Coat Tails for Science ---
         if (this.role === "SCIENCE") {
@@ -16832,6 +18219,15 @@ class Citizen {
             rotate(sway + HALF_PI); 
             fill(240); stroke(200); strokeWeight(1);
             beginShape(); vertex(5, 0); vertex(10, 2); vertex(16, 25); vertex(8, 28); vertex(-8, 28); vertex(-16, 25); vertex(-10, 2); vertex(-5, 0); endShape(CLOSE); 
+            // Broad folds inside the coat carry the same scene light as its
+            // torso. No extra outline separates the fabric at the shoulders.
+            const light = figureCelLight(window), side = light[0] < 0 ? -1 : 1;
+            noStroke(); fill(213, 220, 218);
+            beginShape(); vertex(side * 5, 0); vertex(side * 10, 2); vertex(side * 16, 25);
+            vertex(side * 8, 28); vertex(side * 6, 21); endShape(CLOSE);
+            fill(249, 250, 247);
+            beginShape(); vertex(-side * 5, 0); vertex(-side * 10, 2); vertex(-side * 13, 24);
+            vertex(-side * 8, 27); vertex(-side * 6, 19); endShape(CLOSE);
             pop();
         }
 
@@ -16841,11 +18237,7 @@ class Citizen {
         // TORSO_DEPTH, or a townsperson is visibly rounder than the soldier
         // beside them. See FIGURE VOLUME.
         push(); scale(TORSO_DEPTH, 1);
-        if (BIOME_ACTIVE) {
-            const _vl = figureLight(rot);
-            volShadeCol(0, 0, this.bodyW, this.bodyH, this.shirtCol, 1, _vl[0], _vl[1]);
-        }
-        else ellipse(0, 0, this.bodyW, this.bodyH);
+        figureCelOval(window, 0, 0, this.bodyW, this.bodyH, this.shirtCol);
 
         
         // Farmer Male Overalls
@@ -16858,11 +18250,8 @@ class Citizen {
 
         // Female Features (Breasts & Cleavage Cutout)
         if (this.gender === "FEMALE") {
-            fill(this.shirtCol);
-            stroke(isFarmer ? 200 : 0); 
-            strokeWeight(1.5); 
-            ellipse(4, -5, 11, 9); 
-            ellipse(4, 5, 11, 9);  
+            figureCelOval(window, 4, -5, 11, 9, this.shirtCol, .75);
+            figureCelOval(window, 4, 5, 11, 9, this.shirtCol, .75);
             
             stroke(200, 150, 120, 100); 
             strokeWeight(1); 
@@ -16870,42 +18259,27 @@ class Citizen {
             noStroke();
 
             if (isFarmer) {
-                fill(this.skinCol);
-                ellipse(0, -6, 10, 12);
+                figureCelOval(window, 0, -6, 10, 12, this.skinCol);
             }
         }
 
         pop();   // the torso squash ends here; a head is a head, not an oval
 
-        // Head
-        fill(this.skinCol);
-        ellipse(0, 0, 11, 11);
-
-        // Hair and Helmets
-        if (this.role === "MILITARY" && hasArmor) {
-            push(); rotate(-HALF_PI);
-            fill(40, 80, 40); stroke(0); strokeWeight(1.5);
-            arc(0, -1, 14, 14, PI, TWO_PI, CHORD);
-            pop();
-            noStroke();
-        } else if (isFarmer && this.gender === "MALE") {
-            fill(210, 180, 70); ellipse(0, 0, 24, 24); 
-            fill(190, 160, 50); ellipse(0, 0, 14, 14); 
-        } else if (this.gender === "FEMALE") {
-            fill(isFarmer ? color(150, 80, 40) : color(15));
-            arc(0, 0, 12, 12, HALF_PI, PI + HALF_PI);
-            push(); translate(-5, 0); rotate(radians(isMoving ? sin(frameCount * 0.3) * 15 : 0)); ellipse(-6, 0, 12, 6); pop();
-        }
+        // Share the dimensional skin, braid, straw hat and helmet painters
+        // with combatants, retaining each citizen's role and hair colors.
+        const identity = this.figureId || (this.figureId = {});
+        identity.skinCol = this.skinCol;
+        identity.isMilitary = this.role === "MILITARY";
+        identity.explosiveArmor = hasArmor;
+        identity.eType = isFarmer ? (this.gender === "FEMALE" ? "FARMER_FEMALE" : "FARMER_MALE") :
+            this.gender === "FEMALE" ? "FEMALE_PISTOL" : "CITIZEN";
+        drawFigureHead(window, identity, 0, 0, true, isMoving ? sin(frameCount * .3) * 15 : 0);
 
         // Front hands. Suppressed whenever both hands are on something: a load
         // out of the container, a block being carried, a block going into the
         // wall. Those poses draw their own arms below.
-        const bothHands = (this.state === "TO_MASON" || this.state === "HANDOFF" ||
-                           this.state === "PLACING") && !!this.carrying;
-        const reaching = (this.state === "LOADING");
-        fill(this.skinCol);
-        if (!bothHands && !reaching && lArmSwing > 0.2) ellipse(lHandX, armLY, 8, 8);
-        if (!bothHands && !reaching && !isBuilding && rArmSwing > 0.2) ellipse(rHandX, armRY, 8, 8);
+        if (!bothHands && !reaching && lArmSwing > .2) walkingArm(-1);
+        if (!bothHands && !reaching && !isBuilding && rArmSwing > .2) walkingArm(1);
 
         // The hammer. Top-down a swing has no rise to show, so it reads as
         // reach: the arm drives forward and the head rolls over the wrist on
@@ -16913,9 +18287,8 @@ class Citizen {
         if (isBuilding) {
             const sw = sin(this.hammer || 0);              // -1 back, +1 struck
             const drive = 13 + sw * 7;
+            drawArm(0, armRY * .84, drive * .5, armRY, drive, armRY - sw * 1.5);
             push(); translate(drive, armRY - sw * 1.5);
-            fill(this.shirtCol); ellipse(-5, 0, 15, 8);    // forearm following it out
-            fill(this.skinCol); ellipse(0, 0, 8, 8);       // fist
             rotate(-0.75 + sw * 1.25);
             fill(122, 92, 56); rect(0, -2.2, 21, 4.4, 1);  // haft
             fill(70, 74, 80); rect(19, -6.5, 10, 13, 2);   // head
@@ -16929,10 +18302,8 @@ class Citizen {
         if (reaching) {
             const dig = 15 + sin(frameCount * 0.16 + this.x) * 4;
             for (const sy of [armLY, armRY]) {
-                push(); translate(0, sy); rotate(atan2(-sy, dig) * 0.55);
-                fill(this.shirtCol); ellipse(dig * 0.45, 0, dig + 10, 8.4);
-                fill(this.skinCol); ellipse(dig, 0, 8, 8);
-                pop();
+                const a = atan2(-sy, dig) * .55, hx = cos(a) * dig, hy = sy + sin(a) * dig;
+                drawArm(0, sy * .84, hx * .5, sy + (hy - sy) * .45, hx, hy);
             }
         }
 
@@ -16950,16 +18321,16 @@ class Citizen {
                 lift = sin(Math.min(1, p * 1.4) * PI) * 2;
             }
             for (const sy of [armLY, armRY]) {
-                push(); translate(0, sy); rotate(atan2(-sy * 0.55, out));
-                fill(this.shirtCol); ellipse(out * 0.45, 0, out + 9, 8.4);
-                pop();
+                const hy = lift + (sy < 0 ? -10.5 : 10.5), hx = out - 2;
+                figureCelLimb(window, 0, sy * .84, hx * .52, (sy + hy) * .5,
+                    hx, hy, rig.upperW, rig.foreW, rig.foreW * .86, this.shirtCol);
             }
             push(); translate(out, lift);
             fill(c.edge[0], c.edge[1], c.edge[2]); rect(-8, -9, 16, 18, 2);
             fill(c.col[0], c.col[1], c.col[2]);    rect(-6.5, -7.5, 13, 15, 1.5);
             fill(c.lit[0], c.lit[1], c.lit[2]);    rect(-6.5, -7.5, 13, 4.5, 1);
-            fill(this.skinCol);
-            ellipse(-2, -10.5, 8, 8); ellipse(-2, 10.5, 8, 8);            // hands on it
+            figureCelOval(window, -2, -10.5, 8, 8, this.skinCol);
+            figureCelOval(window, -2, 10.5, 8, 8, this.skinCol);
             pop();
         }
 
@@ -16977,10 +18348,17 @@ class Citizen {
 
 class Bullet {
   constructor() { this.active = false; }
+  get active() { return this._active; }
+  set active(value) {
+      this._active=value;
+      if(!value)queueBulletSlot(this);
+  }
   
   init(x, y, a, iP, tH, w) { 
     this.active = true;
     this.x = x; this.y = y; this.startX = x; this.startY = y; this.isP = iP; this.tH = tH; this.w = w; this.a = a; 
+    this.prevX = x; this.prevY = y; this.shotId = 0;
+    this.isArrow = w === WEAPONS.BOW;
     this.isAlienLaser = (w === "ALIEN_LASER"); this.isRedLaser = (w === "RED_LASER"); this.isPinkLaser = (w === "PINK_LASER"); this.isOrangeBeam = (w === "ORANGE_BEAM"); this.isRocket = (w === WEAPONS.ROCKET_LAUNCHER); this.isTaser = (w === WEAPONS.TASER);
     
     // NEW TASER VARIABLES
@@ -17011,14 +18389,16 @@ class Bullet {
     else if (!iP) { s = ENEMY_BULLET_SPEED; }
     else if (w === WEAPONS.PISTOL || w === WEAPONS.SHOTGUN || w === WEAPONS.ASSAULT_RIFLE) { s = PLAYER_BULLET_SPEED; }
     if (this.isTaser) s = 20;
+    if (this.isArrow) s = 28;
 
     this.vx = cos(a) * s; this.vy = sin(a) * s; 
-    this.l = w === WEAPONS.SHOTGUN ? 30 : 120; 
+    this.l = this.isArrow ? 90 : (w === WEAPONS.SHOTGUN ? 30 : 120);
     
     this.sz = (this.isAlienLaser || this.isRedLaser || this.isPinkLaser || this.isOrangeBeam) ? 12 : (this.isRocket ? 16 : 6); 
     this.col = this.isAlienLaser ? color(255, 20, 147) : (this.isRedLaser ? color(255, 50, 50) : (this.isPinkLaser ? color(255, 105, 180) : (this.isOrangeBeam ? color(255, 146, 40) : color(255, 200, 0)))); 
     
-    this.history = []; 
+    if(!this.history){this.history=[];this._historyPoints=[];}
+    this.history.length=0;this._historyNext=0;
     return this;
   }
 
@@ -17028,9 +18408,13 @@ class Bullet {
 
   update() { 
       if (!this.active) return;
-      if (!this.isAllyProjectile()) {
-          this.history.push({x: this.x, y: this.y});
+      this.prevX = this.x; this.prevY = this.y;
+      if (!this.isAllyProjectile() && !this.isArrow) {
           let maxLen = this.isRocket ? 15 : (this.isAlienLaser || this.isRedLaser || this.isPinkLaser || this.isOrangeBeam ? 8 : 5);
+          const n=this._historyNext;
+          const point=this._historyPoints[n]||(this._historyPoints[n]={x:0,y:0});
+          point.x=this.x;point.y=this.y;this.history.push(point);
+          this._historyNext=(n+1)%maxLen;
           if (this.history.length > maxLen) this.history.shift();
       }
 
@@ -17062,6 +18446,14 @@ class Bullet {
 
   show() { 
       if (!this.active) return;
+      if (this.isArrow) {
+          push(); translate(this.x,this.y); rotate(this.a);
+          stroke(27,36,31); strokeWeight(3.4); line(-23,0,1,0);
+          stroke(189,147,80); strokeWeight(1.8); line(-23,0,1,0);
+          noStroke(); fill(192,215,211); triangle(5,0,-1,-2.7,-1,2.7);
+          fill(240,232,204); triangle(-17,-1,-24,-4,-23,0); triangle(-17,1,-24,4,-23,0);
+          pop(); return;
+      }
 
       // ==========================================
       // TASER RENDERING
@@ -17205,6 +18597,27 @@ class Bullet {
 // then holds it is a leak wearing a different hat.
 const PARTICLE_POOL_MAX = 900;
 const _particlePool = [];
+// The particle objects are pooled, but fill(r,g,b,a) and stroke(r,g,b,a)
+// still construct a p5.Color and its channel arrays every time they draw.
+// Particle opacity advances through a small set of integer values. Reuse
+// those immutable paints too, with a bounded cache for unusually varied FX.
+const PARTICLE_PAINT_MAX = 1024;
+const _particlePaintCache = new Map();
+function particlePaint(c, opacity) {
+    // The arithmetic harness has no p5.Color. Keep its ordinary painter path.
+    if (typeof p5 === 'undefined') return null;
+    const a = Math.max(0, Math.min(255, opacity));
+    if ((a | 0) !== a) return null;
+    const key = ((c[0] << 16) | (c[1] << 8) | c[2]) * 256 + a;
+    let paint = _particlePaintCache.get(key);
+    if (!paint) {
+        paint = color(c[0], c[1], c[2], a);
+        if (_particlePaintCache.size >= PARTICLE_PAINT_MAX)
+            _particlePaintCache.delete(_particlePaintCache.keys().next().value);
+        _particlePaintCache.set(key, paint);
+    }
+    return paint;
+}
 function newParticle(x, y, c, t, dX, dY) {
     if (_particlePool.length) {
         const p = _particlePool.pop();
@@ -17220,6 +18633,9 @@ function Particle(x, y, c, t, dX = 0, dY = 0) {
 
 Particle.prototype.init = function(x, y, c, t, dX = 0, dY = 0) {
     this.x = x; this.y = y; this.c = c; this.t = t; this.a = 255;
+    // Fatal-wound droplets receive their cone velocity from their own emitter.
+    // Avoid global random draws so existing overkill animation stays identical.
+    if(t === "WOUND_BLOOD") { this.sz=2.8;this.vx=dX;this.vy=dY;this.l=16;return; }
     // Size is rolled ONCE here. It used to be re-rolled inside show() every
     // frame, so every particle strobed between its extremes at 60Hz — smoke
     // swinging 20px to 40px and back. Dash and melee spawn THRUST, SPARK, GORE
@@ -17228,7 +18644,7 @@ Particle.prototype.init = function(x, y, c, t, dX = 0, dY = 0) {
     // it reads as struck metal instead of as a small fire.
     if (t === "FLECK") this.sz = random(1.4, 3.2);
     else if (t === "OIL") this.sz = random(3, 7);
-    else if (t === "FLASH" || t === "MUZZLE" || t === "THRUST" || t === "SPARK") this.sz = random(5, 12);
+    else if (t === "FLASH" || t === "MUZZLE" || t === "THRUST" || t === "SPARK" || t === "BLOOD_SMOKE") this.sz = random(5, 12);
     else if (t === "GORE" || t === "CHIP") this.sz = random(4, 10);
     else if (t === "BONE") this.sz = random(2, 5);
     else if (t === "EXPLOSION") this.sz = random(10, 25);
@@ -17237,6 +18653,7 @@ Particle.prototype.init = function(x, y, c, t, dX = 0, dY = 0) {
 
     if (t === "FLASH" || t === "MUZZLE") { this.vx = dX + random(-1, 1); this.vy = dY + random(-1, 1); this.l = t === "MUZZLE" ? 4 : random(10, 20); } 
     else if (t === "SPARK") { this.vx = dX + random(-5, 5); this.vy = dY + random(-5, 5); this.l = random(10, 20); } 
+    else if (t === "BLOOD_SMOKE") { this.vx = dX * 0.15 + random(-1.5, 1.5); this.vy = dY * 0.15 + random(-1.5, 1.5); this.l = random(10, 20); }
     else if (t === "FLECK") { this.vx = dX * 0.35 + random(-7, 7); this.vy = dY * 0.35 + random(-7, 7); this.l = random(6, 16); } 
     else if (t === "OIL")   { this.vx = dX * 0.18 + random(-3.4, 3.4); this.vy = dY * 0.18 + random(-3.4, 3.4); this.l = random(14, 30); } 
     else if (t === "CHIP") { this.vx = random(-3, 3); this.vy = random(-3, 3); this.l = random(20, 50); } 
@@ -17248,7 +18665,7 @@ Particle.prototype.init = function(x, y, c, t, dX = 0, dY = 0) {
     else { this.vx = random(-4, 4); this.vy = random(-4, 4); this.l = random(10, 20); }
 };
 
-Particle.prototype.update = function() { this.x += this.vx; this.y += this.vy; if (this.t !== "FLASH" && this.t !== "SMOKE") { this.vx *= (this.t === "FLECK" ? 0.9 : 0.85); this.vy *= (this.t === "FLECK" ? 0.9 : 0.85); } if (--this.l <= 0) { if (this.t === "FLASH" || this.t === "MUZZLE" || this.t === "THRUST" || this.t === "EXPLOSION" || this.t === "SPARK" || this.t === "FLECK") this.a -= 60; else this.a -= 15; } }
+Particle.prototype.update = function() { this.x += this.vx; this.y += this.vy; if (this.t !== "FLASH" && this.t !== "SMOKE") { this.vx *= (this.t === "FLECK" ? 0.9 : 0.85); this.vy *= (this.t === "FLECK" ? 0.9 : 0.85); } if (--this.l <= 0) { if (this.t === "FLASH" || this.t === "MUZZLE" || this.t === "THRUST" || this.t === "EXPLOSION" || this.t === "SPARK" || this.t === "FLECK" || this.t === "BLOOD_SMOKE") this.a -= 60; else this.a -= 15; } }
 Particle.prototype.show = function() {
     const c = this.c.levels;
     noStroke();
@@ -17256,18 +18673,28 @@ Particle.prototype.show = function() {
         // Drawn along its own velocity, so a shower of them reads as directional
         // spray rather than as a cloud of dots.
         const m = Math.hypot(this.vx, this.vy) || 1;
-        stroke(c[0], c[1], c[2], this.a); strokeWeight(this.sz * 0.6);
+        const paint = particlePaint(c, this.a);
+        if (paint) stroke(paint); else stroke(c[0], c[1], c[2], this.a);
+        strokeWeight(this.sz * 0.6);
         line(this.x, this.y, this.x - (this.vx / m) * this.sz * 3.2, this.y - (this.vy / m) * this.sz * 3.2);
         noStroke();
     } else if (this.t === "BONE" || this.t === "CHIP") {
-        fill(c[0], c[1], c[2], this.a);
+        const paint = particlePaint(c, this.a);
+        if (paint) fill(paint); else fill(c[0], c[1], c[2], this.a);
         rect(this.x, this.y, this.sz, this.sz);
-    } else if (this.t === "SMOKE" || this.t === "EXPLOSION") {
+    } else if (this.t === "SMOKE" || this.t === "EXPLOSION" || this.t === "BLOOD_SMOKE") {
         // Big, slow puffs get a soft falloff instead of a hard-edged disc, so a
         // cloud reads as one mass rather than a pile of circles.
         softBlob(this.x, this.y, this.sz * 1.35, this.sz * 1.35, c[0], c[1], c[2], this.a);
+    } else if (this.t === "SPARK") {
+        // Armor hits use these small ovals. Share the smoke's continuous radial
+        // falloff, with a compact bright core so a softened impact still reads
+        // clearly in a firefight. Both passes reuse the same cached gradient.
+        softBlob(this.x, this.y, this.sz * 1.8, this.sz * 1.8, c[0], c[1], c[2], this.a);
+        softBlob(this.x, this.y, this.sz * 0.8, this.sz * 0.8, c[0], c[1], c[2], this.a);
     } else {
-        fill(c[0], c[1], c[2], this.a);
+        const paint = particlePaint(c, this.a);
+        if (paint) fill(paint); else fill(c[0], c[1], c[2], this.a);
         ellipse(this.x, this.y, this.sz, this.sz);
     }
 }
@@ -17286,14 +18713,68 @@ Particle.prototype.show = function() {
 // copyWithin then slides that run down to the front.
 function updateParticles() {
     let w = particles.length;
+    const left = viewLeft - 50, right = viewRight + 50;
+    const top = viewTop - 50, bottom = viewBottom + 50;
     for (let i = particles.length - 1; i >= 0; i--) {
         const p = particles[i];
         if (doTick) p.update();
-        if (inView(p.x, p.y, 50)) p.show();
-        if (p.a > 0) particles[--w] = p;
+        if (p.x >= left && p.x <= right && p.y >= top && p.y <= bottom) p.show();
+        if (p.a > 0) { if (--w !== i) particles[w] = p; }
         else if (_particlePool.length < PARTICLE_POOL_MAX) _particlePool.push(p);
     }
     if (w > 0) { particles.copyWithin(0, w); particles.length -= w; }
+}
+
+// Counter membership, not just hostility: the field can also contain the
+// sector's people, the fort's garrison and unrelated wildlife. A fort's tick
+// tags loose combatants when it conscripts them, so its rookies and machines
+// are found by the same rule as the scripted waves. Keep the exact nearest
+// search allocation-free; it only runs for the last fifth of an active fight.
+function nearestNM0AmbushEnemy() {
+  let nearest = null, nearestD2 = Infinity;
+  for (let i = 0; i < enemiesList.length; i++) {
+    const e = enemiesList[i];
+    if (!e || !e.isAmbush || !(e.hp > 0) || e.dead || e.isPlayer ||
+        e.isFriendly || e.isNeutral || e.isPopulation || e.isOutpostGarrison ||
+        e.cityPersonKey || unarmedCivilian(e)) continue;
+    // These processKill branches return before the NM-0 counter is drained,
+    // even if a broad fort conscription sweep has tagged the body.
+    if (e.eType === "BUG" || e.eType === "DAD" || e.eType === "MILITARY_NEUTRAL" ||
+        CITY_CIVILIANS.indexOf(e.eType) !== -1) continue;
+    const dx = e.x - player.x, dy = e.y - player.y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < nearestD2) { nearest = e; nearestD2 = d2; }
+  }
+  return nearest;
+}
+
+function drawNM0AmbushCleanupArrow(ambushRatio) {
+  // The ratio is the HUD's own remaining / initial muster total, including
+  // merged gate fights and the fort's changing conscription budget.
+  if (!nm0AmbushActive || !(ambushRatio <= 0.2) || nm0AmbushKills <= 0 ||
+      !started || !player || !(player.hp > 0) || player.dead ||
+      isDead || isWin || isPaused || killcamMode ||
+      inStoryIntro || inStoryRoom || inTownCutscene || inFortCutscene ||
+      inFarmCutscene || inFarmPostCutscene || inPostAmbushCutscene ||
+      inLvl4Cutscene || inDarchonCall || inWorldBuildingMenu || inTravelMenu ||
+      inUpgradeMenu || window.inNM0SecretOverlay) return;
+  const e = nearestNM0AmbushEnemy();
+  if (!e) return;
+  const dx = e.x - player.x, dy = e.y - player.y;
+  const distance = Math.sqrt(dx * dx + dy * dy);
+  if (!(distance > 0)) return;   // a coincident body has no direction to point
+
+  // drawUI is outside the camera transform. Anchor beside the player's actual
+  // projected position, so camera easing/panning does not change the bearing.
+  // Keep the marker legible at every zoom and stop its tip at a nearby target.
+  const radius = Math.min(64, distance * zoom);
+  push();
+  translate((player.x - camX) * zoom + dx / distance * radius,
+            (player.y - camY) * zoom + dy / distance * radius);
+  rotate(Math.atan2(dy, dx));
+  fill(255, 50, 50, 240); stroke(20); strokeWeight(2);
+  triangle(0, 0, -18, -9, -18, 9);
+  pop();
 }
 
 function drawUI() {
@@ -17411,6 +18892,7 @@ function drawUI() {
       // like anything but nearly finished.
       let ambushTotal = window.ambushKillsTotal || 300;
       let ambushRatio = max(0, nm0AmbushKills) / ambushTotal; 
+      drawNM0AmbushCleanupArrow(ambushRatio);
       
       fill(50, 200); noStroke(); 
       rect(20, 80, 200, 5, 2); 
@@ -17484,6 +18966,8 @@ function drawUI() {
       fill(255, 255, 0); stroke(10); strokeWeight(1); 
       rect(28, 66, 18, 8, 2); 
       fill(20); noStroke(); rect(32, 74, 6, 8); 
+  } else if (player && player.currentWeapon === WEAPONS.BOW) {
+      push(); translate(46,75); scale(0.68); drawHuntingBow(true); pop();
   } else {  
       rect(35, 65, 16, 6, 2); 
       rect(35, 71, 6, 10); 
@@ -17495,6 +18979,8 @@ function drawUI() {
   
   if (player && player.currentWeapon === WEAPONS.TASER) {
       text(pR > 0 ? "RECHARGING" : `${pA} / ∞`, 90, 75); 
+  } else if (player && player.currentWeapon === WEAPONS.BOW) {
+      text(`${pA} ARROWS`,90,75);
   } else {
       let mags = player ? player.mags[player.currentWeapon.name] : Infinity;
       let reserveAmmo = mags === Infinity ? "∞" : mags * pM;
@@ -17522,9 +19008,13 @@ function drawUI() {
 
   updateAndDrawFloatingScores();
 
+  // These are touch action buttons; controller players keep the status HUD.
+  if(!connectedGamepad()) {
   let bY = rightStick.base.y - 80, rbX = width - 35, rbY = bY - 170; 
   let isTaser = player && player.currentWeapon === WEAPONS.TASER;
+  let isBow = player && player.currentWeapon === WEAPONS.BOW;
   
+  if (!isBow) {
   fill(50, 200); stroke(100); strokeWeight(2); 
   if (pR > 0) fill(100, 50, 50, 200); 
   ellipse(rbX, rbY, 50, 50); 
@@ -17532,6 +19022,8 @@ function drawUI() {
   
   if (isTaser) text(pR > 0 ? "..." : "RECHARGE", rbX, rbY);
   else text(pR > 0 ? "..." : "RELOAD", rbX, rbY);
+  }
+  textAlign(CENTER, CENTER); textSize(11);
 
   if (typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) {
       let cbX = rbX, cbY = rbY - 70; 
@@ -17577,6 +19069,7 @@ function drawUI() {
 
   let tbX = width - 35, tbY = bY - 100; stroke(0, 255, 0); strokeWeight(2); noFill(); ellipse(tbX, tbY, 40, 40); line(tbX - 20, tbY, tbX + 20, tbY); line(tbX, tbY - 20, tbX, tbY + 20); if (headAimToggle) { fill(255, 0, 0); noStroke(); ellipse(tbX, tbY, 16, 16); fill(255, 0, 0); textAlign(RIGHT, CENTER); textSize(12); text("HEADSHOT", tbX - 30, tbY - 8); text("MODE", tbX - 30, tbY + 8); }
   if (jetpackUnlocked) { let dbX = tbX - 70, dbY = tbY; fill(50, 200); stroke(0, 200, 255); strokeWeight(2); if (player && player.dashCooldown > 0) fill(50, 100, 150, 200); ellipse(dbX, dbY, 50, 50); fill(255); noStroke(); textAlign(CENTER, CENTER); text(player && player.dashCooldown > 0 ? "..." : "DASH", dbX, dbY); }
+  }
   if (streakMsgTimer > 0) { push(); fill(255, 200, 0, map(streakMsgTimer, 0, 120, 0, 255)); textAlign(CENTER, CENTER); textSize(40); text(streakMsgText, width / 2, height / 4); pop(); streakMsgTimer--; }
 
   if ((currentLevel === 1 || currentLevel === 2) && isStoryMode && player && player.hp > 0 && (currentLevel === 2 || journalRead)) {
@@ -17672,8 +19165,22 @@ function drawUI() {
 
 
 
+function connectedGamepad() {
+  if(typeof navigator==='undefined'||typeof navigator.getGamepads!=='function')return null;
+  const pads=navigator.getGamepads();
+  for(let i=0;i<pads.length;i++)if(pads[i]&&pads[i].connected!==false)return pads[i];
+  return null;
+}
 function handleGamepad() {
-  let pads = navigator.getGamepads(), pad = null; for (let i = 0; i < pads.length; i++) if (pads[i]) { pad = pads[i]; break; } if (!pad) return;
+  const pad=connectedGamepad();
+  if(!pad) {
+    if(gamepadWasConnected&&!window.isDesktop)window.showOnScreenControls=true;
+    gamepadWasConnected=false;
+    prevGamepadButtons=[];return;
+  }
+  // Detection alone hides the touch HUD, even with both sticks at rest.
+  gamepadWasConnected=true;
+  window.showOnScreenControls=false;
   
   let lx = pad.axes[0], ly = pad.axes[1], ld = dist(0, 0, lx, ly); 
   if (ld > 0.2) { leftStick.active = true; leftStick.dx = lx; leftStick.dy = ly; window.showOnScreenControls = false; window.isDesktop = false; } else if (!touches.length && !window.isDesktop) leftStick.active = false;
@@ -17681,25 +19188,42 @@ function handleGamepad() {
   let rx = pad.axes[2], ry = pad.axes[3], rd = dist(0, 0, rx, ry); 
   if (rd > 0.2) { rightStick.active = true; rightStick.dx = rx; rightStick.dy = ry; rightStick.dist = rd; window.showOnScreenControls = false; window.isDesktop = false; } else if (!touches.length && !window.isDesktop) rightStick.active = false;
   
-  let btn = (i) => pad.buttons[i] && pad.buttons[i].pressed, jP = (i) => btn(i) && !prevGamepadButtons[i];
-  let anyBtn = false; for (let i = 0; i < pad.buttons.length; i++) { prevGamepadButtons[i] = btn(i); if (btn(i)) anyBtn = true; }
+  // Backbone One uses the standard browser button layout. Keep the previous
+  // frame until all edge-triggered actions have read it.
+  let btn = (i) => !!pad.buttons[i]?.pressed, jP = (i) => btn(i) && !prevGamepadButtons[i];
+  let anyBtn = false; for (let i = 0; i < pad.buttons.length; i++) { if (btn(i)) anyBtn = true; }
   if (anyBtn) { window.showOnScreenControls = false; window.isDesktop = false; }
   
-  if (jP(0) && (smgUnlocked || shotgunUnlocked || arUnlocked || rocketLauncherUnlocked) && millis() - lastWeaponSwapTime > 300 && player) { 
+  if ((jP(14) || jP(15)) && !(jP(14) && jP(15)) && millis() - lastWeaponSwapTime > 300 && player) {
       let aW = [WEAPONS.PISTOL]; 
+      if (isStoryMode) aW.push(WEAPONS.TASER);
+      if (player.flags && player.flags.bowUnlocked) aW.push(WEAPONS.BOW);
       if (dualSmgUnlocked) aW.push(WEAPONS.DUAL_SMG); else if (smgUnlocked) aW.push(WEAPONS.SMG); 
       if (arUnlocked) aW.push(WEAPONS.ASSAULT_RIFLE); if (shotgunUnlocked) aW.push(WEAPONS.SHOTGUN); if (rocketLauncherUnlocked) aW.push(WEAPONS.ROCKET_LAUNCHER); 
-      let nI = (aW.indexOf(player.currentWeapon) + 1) % aW.length; player.currentWeapon = aW[nI]; player.reloadTimer = 0; lastWeaponSwapTime = millis(); 
+      if (aW.length > 1) {
+          let nI = aW.indexOf(player.currentWeapon);
+          nI = nI < 0 ? (jP(14) ? aW.length - 1 : 0) : (nI + (jP(14) ? -1 : 1) + aW.length) % aW.length;
+          player.currentWeapon = aW[nI]; player.reloadTimer = 0; lastWeaponSwapTime = millis();
+      }
   }
+  if (jP(12) && player) cycleMeleeTool(); // D-pad up only; down stays unmapped.
   if (jP(2) && player && player.reloadTimer <= 0 && player.ammo < player.currentWeapon.maxAmmo) { player.triggerReload(); }
-  if ((pad.buttons[3]?.pressed || pad.buttons[5]?.pressed) && meleeUnlocked) meleeInputHeld = true;   
-  
-  // --- NEW: Controller Support for Grenades ---
-  grenadeInputHeld = (pad.buttons[4]?.pressed || pad.buttons[6]?.pressed) ? true : false;
 
-  if ((jP(3) || jP(5)) && meleeUnlocked && player && player.dashTimer <= 0 && !chemistSuitUnlocked) { player.activateMelee(); }
-  if (jP(1) && millis() - lastToggleTime > 300) { headAimToggle = !headAimToggle; lastToggleTime = millis(); }
-  if ((jP(4) || jP(6)) && jetpackUnlocked && player && player.dashCooldown <= 0 && player.dashTimer <= 0 && player.meleeTimer <= 0) { player.activateDash(); }
+  // L2 holds/cooks the suit's throwable; L1 holds the chemist cannon charge.
+  // Merge with touch input, which clears these held flags at the frame's start.
+  if (chemistSuitUnlocked) {
+      if (btn(6)) meleeInputHeld = true; // Chemist flasks use the existing melee input.
+      if (btn(4)) cannonInputHeld = true; // Suit ability slot; future ninja parry goes here.
+  } else {
+      if ((btn(3) || btn(5)) && meleeUnlocked) meleeInputHeld = true;
+      if (btn(6)) grenadeInputHeld = true;
+  }
+  if (jP(11) && millis() - lastToggleTime > 300) { headAimToggle = !headAimToggle; lastToggleTime = millis(); }
+  if (jP(0) && BIOME_ACTIVE && currentBiome === 2) interactForestHuntingActivity();
+  if (jP(10) && jetpackUnlocked && player && player.dashCooldown <= 0 && player.dashTimer <= 0 && player.meleeTimer <= 0) { player.activateDash(); }
+
+  prevGamepadButtons.length = pad.buttons.length;
+  for (let i = 0; i < pad.buttons.length; i++) prevGamepadButtons[i] = btn(i);
 }
 
 
@@ -17740,10 +19264,11 @@ function handleTouches() {
         if (meleeUnlocked && dist(tx, ty, width - 105, bY - 170) < 45) currentMeleeTouch = true; 
     }
 
-    if (dist(tx, ty, 50, 65) < 40 && (smgUnlocked || shotgunUnlocked || arUnlocked || rocketLauncherUnlocked)) { 
+    if (dist(tx, ty, 50, 65) < 40 && (smgUnlocked || shotgunUnlocked || arUnlocked || rocketLauncherUnlocked || (player && player.flags && player.flags.bowUnlocked))) {
         if (millis() - lastWeaponSwapTime > 300 && player) { 
             let aW = [WEAPONS.PISTOL]; 
 			if (isStoryMode) aW.push(WEAPONS.TASER);
+            if (player.flags && player.flags.bowUnlocked) aW.push(WEAPONS.BOW);
             if (dualSmgUnlocked) aW.push(WEAPONS.DUAL_SMG); else if (smgUnlocked) aW.push(WEAPONS.SMG); 
             if (arUnlocked) aW.push(WEAPONS.ASSAULT_RIFLE); if (shotgunUnlocked) aW.push(WEAPONS.SHOTGUN); if (rocketLauncherUnlocked) aW.push(WEAPONS.ROCKET_LAUNCHER); 
             player.currentWeapon = aW[(aW.indexOf(player.currentWeapon) + 1) % aW.length]; player.reloadTimer = 0; lastWeaponSwapTime = millis(); 
@@ -17792,6 +19317,7 @@ function handleTouches() {
 
 
 function drawJoysticks() {
+  if(connectedGamepad())return;
   noFill(); stroke(255, 50); ellipse(leftStick.base.x, leftStick.base.y, 120); ellipse(rightStick.base.x, rightStick.base.y, 120);
 }
 
@@ -17947,13 +19473,15 @@ function drawUpgradeMenu() {
 
 
 function touchStarted() {
-  window.showOnScreenControls = true;
+  window.showOnScreenControls = !connectedGamepad();
   window.isDesktop = false;
   if (!sfx.ctx) sfx.init();
 
   // Define mx and my FIRST
   let mx = touches.length > 0 ? touches[touches.length - 1].x : mouseX;
   let my = touches.length > 0 ? touches[touches.length - 1].y : mouseY;
+
+  if (handleForestHuntingTap(mx, my)) return false;
 
   // Placement owns the screen while it is up: PLACE and CANCEL are checked
   // before anything else so a tap near the sticks cannot fire a weapon through
@@ -18068,6 +19596,7 @@ function touchStarted() {
                           travelDirection = null;
                           window.militaryToBringM = 0;
                           window.militaryToBringF = 0;
+                          window.escortHome = POP_POOL;
                           window.lastPauseTime = millis();
                           sfx.charge();
                           return false;
@@ -18182,6 +19711,7 @@ else if (mx > width/2 - 120 && mx < width/2 + 120 && my > height/2 - 110 && my <
               if (my > height / 2 + 150 && my < height / 2 + 190) { pauseMenuState = "SQUAD"; return false; }
           }
       } else if (pauseMenuState === "GOV_DIRECTIVE") {
+          if(mx>width/2-120&&mx<width/2+120&&my>height-136&&my<height-102){openMilitaryDeploymentMenu();return false;}
           // Out, without committing anything. The Directive is an edit buffer
           // over the ledger, so backing out simply reloads it.
           if (mx > width/2 - 160 && mx < width/2 - 10 && my > height - 34 && my < height - 6) {
@@ -18208,23 +19738,8 @@ else if (mx > width/2 - 120 && mx < width/2 + 120 && my > height/2 - 110 && my <
                   return false;
               }
               if (popUnassigned === 0) { 
-                  // RE-POPULATE: Clear old ones
-                  townCitizens = []; 
-                  
-                  // Spawn specific genders per department!
-                  for (let i = 0; i < window.popFarmingM; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "FARMING", "MALE"));
-                  for (let i = 0; i < window.popFarmingF; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "FARMING", "FEMALE"));
-                  
-                  for (let i = 0; i < window.popMilitaryM; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "MILITARY", "MALE"));
-                  for (let i = 0; i < window.popMilitaryF; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "MILITARY", "FEMALE"));
-                  
-                  for (let i = 0; i < window.popScienceM; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "SCIENCE", "MALE"));
-                  for (let i = 0; i < window.popScienceF; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "SCIENCE", "FEMALE"));
-                  
-                  for (let i = 0; i < window.popArchitectureM; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "ARCHITECTURE", "MALE"));
-                  for (let i = 0; i < window.popArchitectureF; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "ARCHITECTURE", "FEMALE"));
-
                   storeWindowIntoLedger(POP_POOL);
+                  deployDirectivePopulation();
                   sectorLedger(viewingTownId).established = true;
                   
                   if (inWorldBuildingMenu) {
@@ -18242,6 +19757,10 @@ else if (mx > width/2 - 120 && mx < width/2 + 120 && my > height/2 - 110 && my <
 }
 
       
+      else if (pauseMenuState === "MILITARY_BRING") {
+          handleMilitaryDeploymentClicks(mx,my);
+          return false;
+      }
       else if (pauseMenuState === "GARRISON") {
           handleGarrisonClicks(mx, my);
           return false;
@@ -18264,6 +19783,8 @@ else if (mx > width/2 - 120 && mx < width/2 + 120 && my > height/2 - 110 && my <
               if (my > height/2 + 50 && my < height/2 + 90) { journalRead = true; pauseMenuState = "JOURNAL"; return false; }
               if (my > height/2 + 100 && my < height/2 + 140) { pauseMenuState = "MAIN"; return false; } 
           }
+      } else if (pauseMenuState === "INVENTORY") {
+          return handleForestHuntInventoryTap(mx, my);
       } else { 
           // For AUGMENTS, WEAPONS, JOURNAL (Fallback "BACK" button logic)
           if (mx > btnX && mx < btnX + btnW && my > height/2 + 120 && my < height/2 + 165) { pauseMenuState = "TABLET"; return false; }
@@ -18367,6 +19888,7 @@ else if (typeof inPostAmbushCutscene !== 'undefined' && inPostAmbushCutscene) {
 // 3. GOV DIRECTIVE MENU -> OVERWORLD (Merged)
 // ==========================================
 else if (typeof inWorldBuildingMenu !== 'undefined' && inWorldBuildingMenu) {
+    if(mx>width/2-120&&mx<width/2+120&&my>height-136&&my<height-102){openMilitaryDeploymentMenu();return false;}
     if (mx > width/2 - 160 && mx < width/2 - 10 && my > height - 34 && my < height - 6) {
         invalidateDirectiveBuffer(); loadLedgerIntoWindow(POP_POOL);
         inWorldBuildingMenu = false; inOverworldView = true;
@@ -18400,18 +19922,7 @@ else if (typeof inWorldBuildingMenu !== 'undefined' && inWorldBuildingMenu) {
             sectorLedger(targetId).established = true;
             
             // B. Physically spawn the gender-accurate citizens
-            townCitizens = []; 
-            for (let i = 0; i < window.popFarmingM; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "FARMING", "MALE"));
-            for (let i = 0; i < window.popFarmingF; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "FARMING", "FEMALE"));
-            
-            for (let i = 0; i < window.popMilitaryM; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "MILITARY", "MALE"));
-            for (let i = 0; i < window.popMilitaryF; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "MILITARY", "FEMALE"));
-            
-            for (let i = 0; i < window.popScienceM; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "SCIENCE", "MALE"));
-            for (let i = 0; i < window.popScienceF; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "SCIENCE", "FEMALE"));
-            
-            for (let i = 0; i < window.popArchitectureM; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "ARCHITECTURE", "MALE"));
-            for (let i = 0; i < window.popArchitectureF; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "ARCHITECTURE", "FEMALE"));
+            deployDirectivePopulation();
 
             inOverworldView = true; 
             if (typeof sfx !== 'undefined' && sfx.charge) sfx.charge();
@@ -18428,8 +19939,9 @@ else if (typeof inOverworldView !== 'undefined' && inOverworldView) {
         let tx = width/2 - 150 + (t-1)*300;
         let ty = height/2;
         if (dist(mx, my, tx, ty) < 45) {
-            if (typeof saveTownData === 'function') saveTownData(viewingTownId);
-            if (typeof loadTownData === 'function') loadTownData(t);
+            viewingTownId=t;
+            invalidateDirectiveBuffer();
+            loadLedgerIntoWindow(POP_POOL);
             inOverworldView = false;
             inWorldBuildingMenu = true;
             if (typeof sfx !== 'undefined' && sfx.charge) sfx.charge();
@@ -18465,8 +19977,7 @@ else if (inTravelMenu) {
               // Whose soldiers these are. They stay on this sector's military
               // roll while they are away, and any of them that do not come back
               // come off it -- see escortCasualty().
-              window.escortHome = viewingTownId || currentLevel;
-              window.escortWasF = window.militaryToBringF || 0;
+              queueMilitaryDeparture();
               startExtraction(travelDirection);
               travelDirection = null;
           }
@@ -18525,8 +20036,9 @@ if (inOverworldView) {
         let tx = width/2 - 150 + (t-1)*300;
         let ty = height/2;
         if (dist(mx, my, tx, ty) < 45) {
-            saveTownData(viewingTownId);
-            loadTownData(t);
+            viewingTownId=t;
+            invalidateDirectiveBuffer();
+            loadLedgerIntoWindow(POP_POOL);
             inOverworldView = false;
             inWorldBuildingMenu = true;
             sfx.charge();
@@ -18563,8 +20075,7 @@ if (inTravelMenu) {
               // Whose soldiers these are. They stay on this sector's military
               // roll while they are away, and any of them that do not come back
               // come off it -- see escortCasualty().
-              window.escortHome = viewingTownId || currentLevel;
-              window.escortWasF = window.militaryToBringF || 0;
+              queueMilitaryDeparture();
               startExtraction(travelDirection);
               travelDirection = null;
           }
@@ -18794,6 +20305,11 @@ function handleDesktop() {
   }
   window.__rideKeyWas = rDown;
 
+  const huntDown = keyIsDown(70); // F: interact/collect; E remains melee.
+  if (huntDown && !window.__huntKeyWas && BIOME_ACTIVE && currentBiome === 2)
+      interactForestHuntingActivity();
+  window.__huntKeyWas = huntDown;
+
 
   if (window.isDesktop) {
       let worldMouseX = (mouseX / zoom) + camX;
@@ -18938,7 +20454,7 @@ function countEscort(female) {
   if (typeof enemiesList === 'undefined') return 0;
   for (const e of enemiesList) {
     if (!e || !e.isFriendly || !e.isMilitary || e.hp <= 0 || e.dead) continue;
-    const isF = String(e.eType || "").toUpperCase().indexOf("FEMALE") !== -1;
+    const isF = militarySex(e) === 'F';
     if (isF === !!female) n++;
   }
   return n;
@@ -18953,7 +20469,7 @@ function saveGame() {
         ninjaSuitUnlocked, explosiveArmorUnlocked, chemistSuitUnlocked, ninjaOwned: window.ninjaOwned, armorOwned: window.armorOwned, chemistOwned: window.chemistOwned,
         grenadesUnlocked, pGrenadeAmmo, pFlaskAmmo,
         popTotal, popUnassigned, popFarming, popMilitary, popScience, popArchitecture,
-        journalRead, tabletPickedUp, swordPickedUp,
+        journalRead, tabletPickedUp, swordPickedUp, swordKillCounter,
         towersDefeated: window.towersDefeated,
         // Every overworld fortress the player has met, in every sector: what is
         // left of its gate, its masts and its garrison, and whether it is
@@ -18997,6 +20513,8 @@ function saveGame() {
 
         // --- RESOURCES ---
         resources: window.resources || { WOOD: 0, METAL: 0, STONE: 0 },
+        forestHunting: serializeForestHuntingActivity(),
+        forestWildlife: serializeForestWildlife(),
         pickaxeOwned: !!window.pickaxeOwned,
         meleeToolSel: window.meleeToolSel || "NONE",
         swordEquipped: window.swordEquipped !== false,
@@ -19058,11 +20576,14 @@ function saveGame() {
         // re-spawned on load, which is the same path a normal arrival takes.
         militaryToBringM: (window.militaryToBringM || 0) + countEscort(false),
         militaryToBringF: (window.militaryToBringF || 0) + countEscort(true),
+        escortRoster: liveMilitaryRoster().concat(window.pendingEscortRoster || []),
+        militaryPendingM: militaryCount(window.militaryToBringM),
+        militaryPendingF: militaryCount(window.militaryToBringF),
 
         // --- NEW FOR TOWN PERSISTENCE ---
         townsData: typeof townsData !== 'undefined' ? townsData : null,
         // The ledger itself rides along inside townsData (popSeeded, popKilled,
-        // popGranted are plain fields on it). These two are the escort's
+        // popAmbushCleared and popGranted are plain fields). These two are the escort's
         // paperwork and live on window, so they have to be named.
         escortHome: window.escortHome || null,
         escortWasF: window.escortWasF || 0,
@@ -19097,7 +20618,13 @@ function loadGame() {
         // townsData. They have to be in place before the map is generated,
         // otherwise every save reloads into the wrong world.
         if (state.townsData) townsData = state.townsData;
-        consolidateLegacyIntoPool();
+        const consolidatedMilitary = consolidateLegacyIntoPool();
+        if (consolidatedMilitary > 0) {
+            // A legacy sector roster was just folded into the travelling army.
+            // Its detachment records must follow the same paperwork move.
+            state.escortHome = POP_POOL;
+            if (Array.isArray(state.escortRoster)) for (const soldier of state.escortRoster) soldier.home = POP_POOL;
+        }
         window.escortHome = state.escortHome || null;
         window.escortWasF = state.escortWasF || 0;
         if (state.viewingTownId) viewingTownId = state.viewingTownId;
@@ -19123,14 +20650,21 @@ function loadGame() {
         // Restored BEFORE startAtLevel(), because the ChunkManager builds the
         // fortress's solids out of this record the moment the level is made.
         window.outpostForts = state.outpostForts || {};
+        // The settlement is world geometry, so its saved site must exist
+        // before the chunk manager builds Level 2. Loading must not capture
+        // the quiver from the character that is about to be replaced.
+        restoreForestHuntingActivity(state.forestHunting);
+        restoreForestWildlife(state.forestWildlife);
 
         // The escort has to be pending BEFORE the level is built, because
         // legacyStartAtLevel() is what spawns it -- exactly as it does on a
         // normal arrival. Restored after startAtLevel (which is where it used
         // to be) the soldiers never landed, and the counts then sat there
         // waiting to conjure a second escort at the next level entry.
-        window.militaryToBringM = state.militaryToBringM || 0;
-        window.militaryToBringF = state.militaryToBringF || 0;
+        window.pendingEscortRoster = Array.isArray(state.escortRoster) ? state.escortRoster : [];
+        window.restoringEscortRoster = Array.isArray(state.escortRoster);
+        window.militaryToBringM = Array.isArray(state.escortRoster) ? militaryCount(state.militaryPendingM) : militaryCount(state.militaryToBringM);
+        window.militaryToBringF = Array.isArray(state.escortRoster) ? militaryCount(state.militaryPendingF) : militaryCount(state.militaryToBringF);
 
         startAtLevel(state.currentLevel, true); // true = skip hard reset
 
@@ -19226,7 +20760,7 @@ function loadGame() {
         // popArchitecture are DERIVED from the ledger and are recomputed by
         // loadLedgerIntoWindow(). Restoring them from the save put a stale copy
         // of some other sector's numbers in front of the record.
-        loadLedgerIntoWindow(state.viewingTownId || currentLevel);
+        loadLedgerIntoWindow(POP_POOL);
         statVit = state.statVit || 1; statMen = state.statMen || 1; statPhy = state.statPhy || 1; statObe = state.statObe || 1; statInt = state.statInt || 1;
         
         if (state.biomeState) biomeState = state.biomeState;
@@ -19261,8 +20795,9 @@ function loadGame() {
         window.archBarrierReady = false;
 
         journalRead = state.journalRead; tabletPickedUp = state.tabletPickedUp; swordPickedUp = state.swordPickedUp;
+        swordKillCounter=[0,1,2].includes(state.swordKillCounter)?state.swordKillCounter:0;
         darchonCallCompleted = state.darchonCallCompleted;
-window.militaryToBring = state.militaryToBring || 0;
+        syncActiveMilitaryCount();
         // townPhase / townTimer / objectiveTimer / the post-ambush pair are
         // restored with the rest of the cutscene block above.
         inWorldBuildingMenu = state.inWorldBuildingMenu || false; inOverworldView = state.inOverworldView || false;
@@ -19323,6 +20858,7 @@ window.militaryToBring = state.militaryToBring || 0;
         else if (dualSmgUnlocked) player.currentWeapon = WEAPONS.DUAL_SMG;
         else if (smgUnlocked) player.currentWeapon = WEAPONS.SMG;
         else player.currentWeapon = WEAPONS.PISTOL;
+        applyForestHuntingBow();
         
                        // 1. If towers are defeated, physically delete them from the spawned map
         if (window.towersDefeated) {
@@ -19337,9 +20873,13 @@ window.militaryToBring = state.militaryToBring || 0;
             let isTownEst = townsData && townsData[currentLevel] && townsData[currentLevel].established;
             let survivorCount = 0;
             
-            // ONLY SPAWN SURVIVORS IF THE TOWN ISN'T ESTABLISHED YET
-            if (!isTownEst) {
-                survivorCount = Math.min(80, window.nm0AmbushCleared ? popTotal : Math.max(0, MAX_KILLS - totalKills));
+            // The saved roster includes losses AFTER conversion. Neither the
+            // kill score nor the existing army says how many recruits survived.
+            const sectorRoster = (currentLevel === 1 || currentLevel === 2) &&
+                                 sectorLedger(currentLevel).popSeeded > 0;
+            if (!isTownEst || (sectorRoster && !sectorLedger(currentLevel).popGranted)) {
+                survivorCount = sectorRoster ? sectorSurvivorCount(currentLevel) :
+                    Math.min(80, window.nm0AmbushCleared ? popTotal : Math.max(0, MAX_KILLS - totalKills));
             }
             
             // RE-SPAWN THE EXACT NUMBER OF ALLIES
@@ -19351,6 +20891,8 @@ window.militaryToBring = state.militaryToBring || 0;
                     let a = new Character(ax, ay, false, allyType);
                     
                     a.isFriendly = true;
+                    a.isPopulation = sectorRoster;
+                    a.isRecruit = sectorRoster;
                     a.hp = 300;
                     a.state = nm0AmbushActive ? "CHASE" : "IDLE";
                     
@@ -19386,19 +20928,19 @@ window.militaryToBring = state.militaryToBring || 0;
                 
                 for(let i=0; i<remainingStandard; i++) {
                     let sX = random() > 0.5 ? 600 : -200;
-                    let c = new Character(sX + random(-250, 250), spawnY + random(-50, 50), false, "ARMORED_STANDARD");
+                    let c = newHostileCharacter(sX + random(-250, 250), spawnY + random(-50, 50), "ARMORED_STANDARD");
                     c.isAmbush = true;
                     enemiesList.push(c);
                 }
                 for(let i=0; i<remainingArmored; i++) {
                     let sX = random() > 0.5 ? 600 : -200;
-                    let c = new Character(sX + random(-100, 100), spawnY + random(-50, 50), false, "ARMORED");
+                    let c = newHostileCharacter(sX + random(-100, 100), spawnY + random(-50, 50), "ARMORED");
                     c.isAmbush = true;
                     enemiesList.push(c);
                 }
                 for(let i=0; i<remainingAerial; i++) {
                     let sX = random() > 0.5 ? 600 : -200;
-                    let c = new Character(sX + random(-300, 300), aerY, false, "AERIAL");
+                    let c = newHostileCharacter(sX + random(-300, 300), aerY, "AERIAL");
                     c.isAmbush = true;
                     enemiesList.push(c);
                 }
@@ -19434,18 +20976,15 @@ window.militaryToBring = state.militaryToBring || 0;
                     inOverworldView = false;
                 }
 
-                // Repopulate the visual civilian sprites
-                townCitizens = [];
-                for (let i = 0; i < popFarming; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "FARMING"));
-                for (let i = 0; i < popMilitary; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "MILITARY"));
-                for (let i = 0; i < popScience; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "SCIENCE"));
-                for (let i = 0; i < popArchitecture; i++) townCitizens.push(new Citizen(player.x + random(-400, 400), player.y + random(-400, 400), "ARCHITECTURE"));
-            }
+                }
         }
         // Unconditionally, and last: the block above sits inside
         // `if (window.towersDefeated)` and wipes every hostile on the field, so
         // a fort's muster has to be re-formed after it and outside it.
         restoreFortMuster();
+        // Outpost-only captures in later sectors do not set the main-city
+        // towers flag. Their deployed residents still belong to the ledger.
+        deployDirectivePopulation();
         // A cutscene speaker is an object reference into enemiesList, and the
         // entity list is not saved. Re-cast from whoever is actually standing
         // in the yard, and close the scene if the fort has nobody left to say
@@ -19483,6 +21022,23 @@ function restoreFortMuster() {
     const def = (typeof outpostFortDef === 'function') ? outpostFortDef(currentLevel) : null;
     if (!def) return;
     const st = outpostFortState(currentLevel);
+
+    // Secured yards do not recreate an old enemy muster on reload. The save
+    // keeps counters rather than bodies; with the reinforcement order canceled,
+    // the remaining unsaved combatants cannot hold this captured fort hostage.
+    if (st.captured && st.musterOn) {
+        st.musterOn = false; st.musterDone = true;
+        st.musterLeft = 0; st.musterWaves = 0;
+        const ownFight = window.ambushKind !== 'TOWER' && (!window.ambushFort ||
+            (window.ambushFort.x === def.x && window.ambushFort.y === def.y));
+        if (ownFight) {
+            nm0AmbushActive = false; nm0AmbushKills = 0;
+            window.ambushSpawnsRemaining = 0;
+            window.fortMusterJustCleared = true;
+            window.nm0AmbushCleared = true;
+        }
+        return;
+    }
 
     // A save written before the fort kept its own record. Its muster fields
     // default to "the fight was won", which is right for a quiet fort and wrong
@@ -19619,7 +21175,7 @@ function spawnFarmBug() {
     let sX = isWest ? -1200 + random(-100, 100) : -1000 + random(-100, 100);
     let sY = isWest ? random(-150, 150) : -800 + random(-100, 100);
 
-    let b = new Character(sX, sY, false, "BUG");
+    let b = newHostileCharacter(sX, sY, "BUG");
     b.state = "CHASE"; 
     b.loseSightTimer = 3000;
     enemiesList.push(b);
@@ -19631,7 +21187,7 @@ function checkLevelUps() {
     let req2 = 50; 
     if (window.farmLvl === 1 && window.farmXP >= req2) { 
         window.farmLvl = 2; streakMsgText = "FARMING LEVEL 2!"; streakMsgTimer = 120; sfx.charge(); 
-        if (player) { player.maxHp = 125; player.hp += 25; }
+        if (player) { player.maxHp = 125; player.restoreHealth(25); }
         for (let e of enemiesList) if (e.isFriendly) { e.maxHp = (e.maxHp || 300) + 25; e.hp += 25; }
     }
     if (window.milLvl === 1 && window.milXP >= req2) { 
@@ -19846,17 +21402,12 @@ function clearBuildLot(x, y, w, h) {
         if (!buildClearable(o)) continue;
         if (Math.abs(x - o.x) > (w + (o.w || 0)) / 2 || Math.abs(y - o.y) > (h + (o.h || 0)) / 2) continue;
         const hv = harvestProfile(o);
-        if (hv) { won[hv.kind] = (won[hv.kind] || 0) + hv.yield; addResource(hv.kind, hv.yield); }
-        // A felled tree loses its canopy, same as one taken down with a pick.
-        if (o.isTreeTrunk && typeof chunkMgr !== 'undefined' && chunkMgr) {
-            for (const ch of chunkMgr.chunks.values()) {
-                for (let d = ch.decor.length - 1; d >= 0; d--) {
-                    const dc = ch.decor[d];
-                    if ((dc.t === "TREE" || dc.t === "PINE" || dc.t === "SNAG") &&
-                        Math.abs(dc.x - o.x) < 6 && Math.abs(dc.y - o.y) < 6) ch.decor.splice(d, 1);
-                }
-            }
+        if (hv) {
+            won[hv.kind] = (won[hv.kind] || 0) + hv.yield;
+            addResource(hv.kind, hv.yield);
+            hv.hp = 0;
         }
+        removeResidentHarvestable(o);
         if (o.chunkKey && typeof markPropDestroyed === 'function' && BIOME_ACTIVE) {
             markPropDestroyed(currentBiome, o.chunkKey);
         }
@@ -20355,7 +21906,7 @@ function updateProductionMeters() {
 
         // Multiplied by 0.001 to dramatically slow down the leveling speed
         let fRate = (pF * (1 + Math.min(5, Math.floor(pF / 10)) * 0.1)) * 0.001;
-        let milActive = Math.max(0, pM - ((Number(window.militaryToBringM) || 0) + (Number(window.militaryToBringF) || 0)));
+        let milActive = Math.max(0, pM - militaryAssignedAway(POP_POOL,'M') - militaryAssignedAway(POP_POOL,'F'));
         let mRate = (milActive * (1 + Math.min(5, Math.floor(milActive / 10)) * 0.1)) * 0.001;
         let sRate = (pS * (1 + Math.min(5, Math.floor(pS / 10)) * 0.1)) * 0.001;
         let aRate = (pA * (1 + Math.min(5, Math.floor(pA / 10)) * 0.1)) * 0.001;
@@ -20380,7 +21931,7 @@ function triggerLvl4Ambush() {
     for(let i = 0; i < 50; i++) {
         let sX = random() > 0.5 ? -1500 : 1500; 
         let sY = player.y + random(-1000, 1000);
-        let e = new Character(sX, sY, false, "NM0_GREY_FATIGUE");
+        let e = newHostileCharacter(sX, sY, "NM0_GREY_FATIGUE");
         e.state = "CHASE"; 
         e.loseSightTimer = 2500;
         e.isAmbush = true;
@@ -20763,7 +22314,7 @@ function adoptLateAuthoredSolids() {
   const known = new Set(authoredSolids);
   let added = false;
   for (const b of buildings) {
-    if (b.isBiomeProp || b.isChunkSolid || b.isLandmark || known.has(b)) continue;
+    if (b.isBiomeProp || b.isChunkSolid || b.isLandmark || b.isForestHuntingLandmark || known.has(b)) continue;
     b.isAuthored = true;
     authoredSolids.push(b);
     added = true;
@@ -21128,7 +22679,7 @@ const RG_FARM   = "FARM";     // ploughed strips, hedgerows, a steading
 // region ever became a place -- you were always in a transition. These give a
 // patch a few chunks across, so walking out of the timber into open meadow is
 // something that happens on the way somewhere rather than constantly.
-function woodRegion(biome, wx, wy) {
+function woodLegacyRegion(biome, wx, wy) {
   const brn = bnoise(biome, wx + 2600, wy - 7100, 0.000065);
   if (brn > 0.71) return RG_BURN;
   const wet = bnoise(biome, wx + 9100, wy + 4300, 0.000085);
@@ -21138,6 +22689,50 @@ function woodRegion(biome, wx, wy) {
   if (tim < 0.375 && wet < 0.47) return RG_HEATH;
   if (wet > 0.545 && tim < 0.50) return RG_FARM;
   return RG_MEADOW;
+}
+
+// The saved woodland layout remains the six-region template above. Its RNG
+// branches and solid indices are save identities, so the forest's four visible
+// habitats are a separate world-space question rather than a new layout roll.
+function woodRegion(biome, wx, wy) {
+  const legacy = woodLegacyRegion(biome, wx, wy);
+  if (bnoise(biome, wx + 2600, wy - 7100, 0.000065) > 0.63) return RG_BURN;
+  // A bank follows the actual river, including the adjacent row at a seam.
+  // It does not depend on whether either chunk has been generated yet.
+  const cx = Math.floor(wx / CHUNK_W), cy = Math.floor(wy / CHUNK_W);
+  for (let row = cy - 1; row <= cy + 1; row++) {
+    if (!woodHasRiver(biome, row)) continue;
+    if (coreTaperX(cx, row, wx) < 0.6) continue;
+    const bank = woodRiverHalf(biome, row, wx) * 1.35 + 180;
+    if (Math.abs(wy - woodRiverY(biome, row, wx)) < bank) return RG_MARSH;
+  }
+  if (legacy === RG_MARSH) return RG_MARSH;
+  if (legacy === RG_HEATH) return RG_HEATH;
+  return RG_TIMBER;
+}
+
+// Ecology/art can evolve without rerolling the four-region saved forest.
+// These broad world-space glades never add collision or consume layout RNG.
+// Rivers, burn sites and alpine ridges retain their existing priority.
+function forestHabitatAt(wx, wy, biome = 2) {
+  const region = woodRegion(biome, wx, wy);
+  if (region !== RG_TIMBER) return region;
+  const grove = bnoise(biome, wx - 11800, wy + 26700, 0.000087);
+  if (grove > 0.61) return "VIBRANT";
+  const opening = bnoise(biome, wx + 18200, wy - 9300, 0.000115);
+  const legacy = woodLegacyRegion(biome, wx, wy);
+  if (legacy === RG_MEADOW && opening < 0.50) return "MEADOW";
+  if (legacy === RG_FARM || opening < 0.425) return "EDGE";
+  return RG_TIMBER;
+}
+
+function forestDressHabitat(d, biome = 2) {
+  d.forestHabitat = forestHabitatAt(d.x, d.y, biome);
+  // A grove of broad, sculpted comic crowns, with fixed seeded branches.
+  // Its trunk, collision, harvest species and projection stay unchanged.
+  if (d.forestHabitat === "VIBRANT" && FOREST_PROPS[d.forestSpecies].canopyMass &&
+      d.forestSpecies !== "CHARRED_SNAG")
+    d.forestCanopyStyle = "COMIC";
 }
 
 // How much standing timber each region will accept, as a multiplier on the
@@ -21154,6 +22749,63 @@ const RG_TREES = {
 const RG_CANOPY = {
   MEADOW: 0.22, TIMBER: -0.55, MARSH: -0.18, HEATH: 0.46, BURN: 0.0, FARM: 0.30
 };
+
+// Level 2's PNW art contract. World coordinates are the ROOT/ground contact,
+// never the crown centre. Collision and harvest identity stay on the solid;
+// the larger visible crown belongs to decor and is depth-sorted by that root.
+// Small plants are static chunk albedo, so forest density adds no actor/AI work.
+const FOREST_REGIONS = {
+  TIMBER: { name: "Ancient Canopy", canopy: 1.0, midstory: 0.70, underbrush: 1.0,
+    ground: [78, 108, 62], shade: [32, 64, 55], foliage: [60, 122, 72], highlight: [154, 181, 101] },
+  MARSH: { name: "Mossy Riverbed", canopy: 0.65, midstory: 0.85, underbrush: 1.0,
+    ground: [68, 113, 77], shade: [29, 64, 57], foliage: [68, 136, 91], highlight: [153, 185, 109] },
+  BURN: { name: "Burnt / Dead", canopy: 0.40, midstory: 0.15, underbrush: 0.40,
+    ground: [102, 91, 72], shade: [45, 49, 39], foliage: [138, 114, 67], highlight: [191, 157, 99] },
+  HEATH: { name: "Alpine Ridge", canopy: 0.35, midstory: 0.30, underbrush: 0.45,
+    ground: [119, 131, 124], shade: [63, 81, 72], foliage: [77, 130, 94], highlight: [161, 188, 135] },
+  VIBRANT: { name: "Sunlit Cedar Grove", canopy: 1.0, midstory: 0.70, underbrush: 1.0,
+    ground: [119, 139, 66], shade: [41, 84, 58], foliage: [87, 155, 67], highlight: [198, 211, 106] },
+  MEADOW: { name: "Elk Meadow", canopy: 1.0, midstory: 0.70, underbrush: 1.0,
+    ground: [129, 132, 76], shade: [66, 88, 51], foliage: [112, 148, 68], highlight: [185, 198, 111] },
+  EDGE: { name: "Woodland Edge", canopy: 1.0, midstory: 0.70, underbrush: 1.0,
+    ground: [112, 116, 73], shade: [52, 79, 51], foliage: [98, 132, 63], highlight: [175, 183, 102] }
+};
+const FOREST_PROPS = {
+  DOUGLAS_FIR: { canopyMass: [34, 86, 64], trunkWidth: 11, outline: 1.8, tier: "canopy", collision: [34, 34] },
+  WESTERN_CEDAR: { canopyMass: [36, 100, 72], trunkWidth: 13, outline: 1.9, tier: "canopy", collision: [34, 34] },
+  SITKA_SPRUCE: { canopyMass: [32, 78, 60], trunkWidth: 10, outline: 1.8, tier: "canopy", collision: [34, 34] },
+  RED_ALDER: { canopyMass: [28, 92, 76], trunkWidth: 10, outline: 1.7, tier: "canopy", collision: [34, 34] },
+  LODGEPOLE_PINE: { canopyMass: [30, 62, 48], trunkWidth: 9, outline: 1.7, tier: "canopy", collision: [34, 34] },
+  CHARRED_SNAG: { canopyMass: [30, 40, 34], trunkWidth: 10, outline: 1.6, tier: "canopy", collision: [34, 34] },
+  BUSH: { width: 64, depth: 54, rise: 12, outline: 1.5, tier: "midstory", collision: null },
+  FERN: { width: 58, depth: 58, rise: 9, outline: 0.9, tier: "underbrush", collision: null },
+  LOG: { width: 64, depth: 32, rise: 12, outline: 1.5, tier: "underbrush", collision: null },
+  STUMP: { width: 36, depth: 34, rise: 13, outline: 1.5, tier: "underbrush", collision: null },
+  MUSHROOM: { width: 28, depth: 28, rise: 9, outline: 0.9, tier: "underbrush", collision: null },
+  PEBBLE: { width: 32, depth: 32, rise: 7, outline: 1.0, tier: "underbrush", collision: null },
+  REED: { width: 48, depth: 48, rise: 18, outline: 1.0, tier: "underbrush", collision: null },
+  GRASS: { width: 40, depth: 40, rise: 7, outline: 1.0, tier: "underbrush", collision: null },
+  ASH: { width: 34, depth: 30, rise: 2, outline: 0, tier: "underbrush", collision: null },
+  BOULDER: { width: 100, depth: 80, rise: 16, outline: 2.0, tier: "landform", collision: "solid" }
+};
+function forestPropProfile(d) { return d && FOREST_PROPS[d.forestSpecies] || null; }
+function forestCanopyMass(d) {
+  const p = forestPropProfile(d);
+  return p && p.canopyMass || CANOPY_MASS[d.t] || null;
+}
+function forestPropRadius(d) {
+  const p = forestPropProfile(d);
+  if (!p) return 0;
+  const m = p.canopyMass;
+  if (p.collision === "solid") return Math.max(d.w || p.width, d.h || p.depth) * 0.5;
+  return Math.max(m ? m[1] : p.width, m ? m[2] : p.depth) * 0.5 *
+    (d.s || 1) * (m && d.forestCrownScale !== undefined ? d.forestCrownScale : 1);
+}
+function forestPropCullPad(d) {
+  const p = forestPropProfile(d);
+  return p && p.canopyMass ? Math.max(120, forestPropRadius(d) +
+    p.canopyMass[0] * (d.s || 1) * (MASS_LEAN + MASS_TILT) + 12) : 120;
+}
 
 // ###########################################################################
 //  SUB-BIOMES OF THE OUTER SECTORS
@@ -21362,8 +23014,8 @@ const CR_GROWTH = {
 // fine mottling and ZONE_TINT, and anything past about +/-30 stops reading as
 // ground and starts reading as a stain.
 const REGION_TINT = {
-  WOODLAND: { MEADOW: [0, 0, 0],      TIMBER: [-14, -6, -8],  MARSH: [-10, -6, 4],
-              HEATH:  [10, 6, -4],    BURN:   [-16, -14, -12], FARM: [8, 4, -8] },
+  WOODLAND: { MEADOW: [0, 0, 0],      TIMBER: [0, 0, 0],      MARSH: [-9, 14, 9],
+              HEATH:  [26, 17, 24],  BURN:   [-15, -22, -7], FARM: [8, 4, -8] },
   JUNGLE:   { CANOPY: [-15, -7, -6],  SWAMP:  [-19, -11, -2],
               CLEARING: [26, 14, -8], BAMBOO: [9, 14, -7],    CORDON: [12, 10, 6] },
   // A third of the others: this palette is a hundred points brighter than any
@@ -21379,7 +23031,7 @@ const REGION_TINT = {
 const ZONE_TINT = {
   // Grass runs from dry and yellowed on the high ground to deep wet green in
   // the hollows.
-  WOODLAND:   [ 58,  18, -32],
+  WOODLAND:   [ 12,  10,  -4],
   // Cities do not change colour, they change how dirty they are: soot and
   // brick dust against rain-washed concrete.
   CITY:       [ 24,  17,   8],
@@ -21414,7 +23066,7 @@ const ZONE_TINT = {
 // ---------------------------------------------------------------------------
 function woodPools(biome, cx, cy) {
   const ox = cx * CHUNK_W, oy = cy * CHUNK_W;
-  if (woodRegion(biome, ox + 600, oy + 600) !== RG_MARSH) return null;
+  if (woodLegacyRegion(biome, ox + 600, oy + 600) !== RG_MARSH) return null;
   const rng = makeRng(chunkHash(biome, cx, cy, 7717));
   const out = [];
   // The travel anchors are the one place in the sector the player is guaranteed
@@ -21431,7 +23083,7 @@ function woodPools(biome, cx, cy) {
     const k = rng();
     // Asked at the pool's own centre, not the chunk's, so the water thins out
     // toward the edge of the wet ground rather than stopping on a chunk line.
-    if (woodRegion(biome, x, y) !== RG_MARSH) continue;
+    if (woodLegacyRegion(biome, x, y) !== RG_MARSH) continue;
     if (coreTaperX(cx, cy, x) < 0.6 || coreTaperY(cx, cy, y) < 0.6) continue;
     let clash = false;
     if (anch) {
@@ -22258,6 +23910,110 @@ function insideFortYard(biome, x, y, pad) {
   return Math.abs(x - def.x) < FORT_HALF_W + p && Math.abs(y - def.y) < FORT_HALF_H + p;
 }
 
+// Ownership belongs to the saved capture record, never merely to an open door.
+// Stick City's giant starting compound is a fortress too: dropping its grid
+// captures it before the Directive is assigned. Establishing a Directive can
+// happen at the relay fort, so that flag alone says nothing about these gates.
+function startingFortressOwned(biome = currentLevel) {
+  if (biome !== 1) return false;
+  const town = typeof townsData !== 'undefined' && townsData && townsData[biome];
+  if ((town && town.towersDown) || (currentLevel === 1 && window.towersDefeated)) return true;
+  if (!town || !town.established) return false;
+  // Older completed runs may predate towersDown. Their main-sector award or
+  // named liberation beat proves which fort was taken; an eradicated original
+  // roster also proves the main compound was cleared on the other route.
+  const seeded = Number(town.popSeeded) || 0;
+  return !!(town.popAmbushCleared || (window.storyBeats && window.storyBeats.L1_POSTAMBUSH) ||
+    (seeded > 0 && Number(town.popKilled) >= seeded));
+}
+
+function ownedFortresses(biome = currentLevel) {
+  const forts = [];
+  if (startingFortressOwned(biome)) {
+    forts.push({ id: 'SECTOR', biome: 1, name: 'STICK CITY FORTRESS', x: 600, y: 600,
+      x0: -4700, y0: -4600, x1: 5900, y1: 5800,
+      innerX0: -4200, innerY0: -3800, innerX1: 5400, innerY1: 5000 });
+  }
+  const def = outpostFortDef(biome);
+  const st = window.outpostForts && window.outpostForts[biome];
+  if (def && st && st.captured) {
+    const wall = FORT_GATE_H / 2;
+    forts.push({ id: 'OUTPOST', biome, name: def.name, x: def.x, y: def.y,
+      x0: def.x - FORT_HALF_W - wall, y0: def.y - FORT_HALF_H - wall,
+      x1: def.x + FORT_HALF_W + wall, y1: def.y + FORT_HALF_H + wall,
+      innerX0: def.x - FORT_HALF_W + wall, innerY0: def.y - FORT_HALF_H + wall,
+      innerX1: def.x + FORT_HALF_W - wall, innerY1: def.y + FORT_HALF_H - wall });
+  }
+  return forts;
+}
+
+function insideOwnedFortress(biome, x, y, pad = 0) {
+  return ownedFortresses(biome).some(f => x >= f.x0 - pad && x <= f.x1 + pad &&
+    y >= f.y0 - pad && y <= f.y1 + pad);
+}
+
+function nearestOwnedFortress(biome = currentLevel, x = player ? player.x : 0, y = player ? player.y : 0) {
+  const forts = ownedFortresses(biome);
+  forts.sort((a, b) => (a.x - x) ** 2 + (a.y - y) ** 2 - (b.x - x) ** 2 - (b.y - y) ** 2);
+  return forts[0] || null;
+}
+
+// Shared by population deployment and the Directive's military detachment.
+// Walk the whole interior rather than reusing the player's immediate vicinity.
+function getOwnedFortressSpawnPoint(index = 0, biome = currentLevel, nearPlayer = false) {
+  const fortress = nearestOwnedFortress(biome);
+  if (!fortress) return null;
+  const x0 = fortress.innerX0 + 90, y0 = fortress.innerY0 + 90;
+  const w = fortress.innerX1 - 90 - x0, h = fortress.innerY1 - 90 - y0;
+  const n = Math.max(0, Number(index) || 0);
+  const centerX = player ? Math.max(x0, Math.min(x0 + w, player.x)) : fortress.x;
+  const centerY = player ? Math.max(y0, Math.min(y0 + h, player.y)) : fortress.y;
+  for (let attempt = 0; attempt < 240; attempt++) {
+    const station = n + attempt;
+    const radius = 180 + (station % 8) * 40 + (Math.floor(station / 8) % 16) * 35;
+    const angle = station * 2.399963229728653;
+    const x = nearPlayer ? Math.max(x0, Math.min(x0 + w, centerX + Math.cos(angle) * radius)) :
+      x0 + ((0.5 + station * 0.618033988749895) % 1) * w;
+    const y = nearPlayer ? Math.max(y0, Math.min(y0 + h, centerY + Math.sin(angle) * radius)) :
+      y0 + ((0.58 + station * 0.414213562373095) % 1) * h;
+    if (player && (x - player.x) ** 2 + (y - player.y) ** 2 < 160 * 160) continue;
+    let blocked = false;
+    for (const b of buildings) {
+      if (b.noClip || b.isPalm || b.isAlienPlant || b.isEnergyPole || (b.isGrassLot && !b.isPond)) continue;
+      if (Math.abs(x - b.x) < (b.w || 0) / 2 + 34 && Math.abs(y - b.y) < (b.h || 0) / 2 + 34) {
+        blocked = true; break;
+      }
+    }
+    if (blocked) continue;
+    if (parkingCars.some(c => Math.abs(x - c.x) < 59 && Math.abs(y - c.y) < 79)) continue;
+    if (barrels.some(b => (x - b.x) ** 2 + (y - b.y) ** 2 < 50 * 50)) continue;
+    if (enemiesList.some(e => e && !e.dead && e.hp > 0 && (x - e.x) ** 2 + (y - e.y) ** 2 < 55 * 55)) continue;
+    if (typeof townCitizens !== 'undefined' && townCitizens.some(c => c && !c.dead &&
+        (x - c.x) ** 2 + (y - c.y) ** 2 < 55 * 55)) continue;
+    return { x, y, fortress };
+  }
+  return null;
+}
+
+// Story ambushes still have to be fought after the grid falls. They assemble
+// outside the captured gates instead of materialising in the player's yard.
+function hostileSpawnPoint(x, y, biome = currentLevel) {
+  for (const f of ownedFortresses(biome)) {
+    if (x < f.x0 - 60 || x > f.x1 + 60 || y < f.y0 - 60 || y > f.y1 + 60) continue;
+    x = Math.max(f.x - 230, Math.min(f.x + 230, x));
+    // Stick City's north gate is the HQ interaction, never a walkable road.
+    // Its defense musters use the open south approach even if the event that
+    // called them was a breach at the north wall.
+    y = f.id !== 'SECTOR' && y < f.y ? f.y0 - 140 : f.y1 + 140;
+  }
+  return { x, y };
+}
+
+function newHostileCharacter(x, y, type) {
+  const point = hostileSpawnPoint(x, y);
+  return new Character(point.x, point.y, false, type);
+}
+
 // ---------------------------------------------------------------------------
 // THE GARRISON
 //
@@ -22348,8 +24104,15 @@ function checkOutpostCaptured() {
   // gate shut. Switch it off here and the sector's gate slams for as long as
   // the last of the muster is still shooting. Let the fight end where every
   // other fight ends: checkAmbushCleared().
+  const canceledWaves = Math.min(st.musterLeft, Math.max(0, st.musterWaves));
+  st.musterLeft = Math.max(0, st.musterLeft - canceledWaves);
+  st.musterTotal = Math.max(st.musterLeft, st.musterTotal - canceledWaves);
   st.musterWaves = 0;
-  window.ambushSpawnsRemaining = 0;
+  if (st.musterOn && window.ambushFort && window.ambushFort.x === def.x && window.ambushFort.y === def.y) {
+    nm0AmbushKills = Math.max(0, nm0AmbushKills - canceledWaves);
+    window.ambushKillsTotal = Math.max(nm0AmbushKills, (window.ambushKillsTotal || 0) - canceledWaves);
+    window.ambushSpawnsRemaining = Math.max(0, (window.ambushSpawnsRemaining || 0) - canceledWaves);
+  }
   const got = recruitOutpostGarrison();
   st.garrison = 0;
   // They join the Directive the same way the sector's survivors do: as integers
@@ -22485,7 +24248,7 @@ function fortWavePoint(def, aerial) {
 function triggerOutpostAmbush(def) {
   if (!def) return;
   const st = outpostFortState(currentBiome);
-  if (st.musterOn) return;                 // already running
+  if (st.captured || st.musterOn || st.musterDone) return;
   st.breached = true;
   st.gateHp = 0;
   // Both gates. The breach is the compound's, not one wall's -- and the north
@@ -22605,7 +24368,7 @@ function spawnFortWave() {
   const def = activeFortMuster(currentBiome);
   if (!def || !started || isDead || isWin) return false;
   const st = outpostFortState(currentBiome);
-  if (!(st.musterWaves > 0)) return false;
+  if (st.captured || !(st.musterWaves > 0)) return false;
   st.musterWaves--;
   window.ambushSpawnsRemaining = st.musterWaves;
 
@@ -22636,6 +24399,7 @@ function conscriptIntoMuster(e) {
   if (e.isPopulation || e.isOutpostGarrison) return false;   // the ones you are asked to spare
   const fort = activeFortMuster(currentBiome);
   if (!nm0AmbushActive || !fort) return false;
+  if (outpostFortState(currentBiome).captured) return false;
   const R2 = FORT_MUSTER_R * FORT_MUSTER_R;
   const fx = e.x - fort.x, fy = e.y - fort.y;
   if (fx * fx + fy * fy <= R2) {
@@ -22938,7 +24702,7 @@ function appendBiomeFieldSite(biome, cx, cy, solid, cars) {
   for (let attempt = 0; attempt < 14; attempt++) {
     const x = cx * CHUNK_W + rngRange(rng, 270, 930);
     const y = cy * CHUNK_W + rngRange(rng, 230, 970);
-    const region = regionAt(biome, x, y, lay);
+    const region = lay === "WOODLAND" ? woodLegacyRegion(biome, x, y) : regionAt(biome, x, y, lay);
     const kit = lay === "FRONTIER" ? ["SITEHUT", "MATERIALS", "WRECK"] : {
       MEADOW: ["CABIN", "LOGPILE", "SIGNPOST"],
       HEATH: ["RUINWALL", "CAIRN", "MONOLITH"],
@@ -22966,6 +24730,143 @@ function appendBiomeFieldSite(biome, cx, cy, solid, cars) {
     }
     return;
   }
+}
+
+function woodForestSpecies(region, roll, tier) {
+  if (region === RG_BURN) return "CHARRED_SNAG";
+  if (region === RG_HEATH) return roll < 0.82 ? "LODGEPOLE_PINE" : "DOUGLAS_FIR";
+  if (region === RG_MARSH) {
+    if (roll < (tier === "midstory" ? 0.65 : 0.34)) return "RED_ALDER";
+    return roll < 0.76 ? "SITKA_SPRUCE" : "WESTERN_CEDAR";
+  }
+  if (tier === "midstory" && roll < 0.18) return "RED_ALDER";
+  return roll < 0.46 ? "DOUGLAS_FIR" : roll < 0.82 ? "WESTERN_CEDAR" : "SITKA_SPRUCE";
+}
+
+// Dressing follows numeric key assignment and never consumes the template RNG
+// or changes a saved collider. New stems have independent namespaced identities.
+function appendWoodlandForest(biome, cx, cy, solid, decor, decorBake, nearAnchor) {
+  if (biome !== 2 || layoutFor(biome, cx, cy) !== "WOODLAND") return;
+  const ox = cx * CHUNK_W, oy = cy * CHUNK_W;
+  const rng = makeRng(chunkHash(biome, cx, cy, 73091));
+  const standing = { TREE: 1, PINE: 1, SNAG: 1 };
+  const ground = { FERN: 1, WEED: 1, GRASS: 1, LOG: 1, STUMP: 1,
+                   MUSHROOM: 1, PEBBLE: 1, REED: 1, ASH: 1, HEATHER: 1 };
+  const radius = d => forestPropRadius(d) || 12 * (d.s || 1);
+  // Baked silhouettes belong to one texture. Keep their complete footprint
+  // inside it, including the larger replacement shrubs and fallen timber.
+  const bakeFits = (d, r) => d.x - r >= ox && d.x + r <= ox + CHUNK_W &&
+    d.y - r >= oy && d.y + r <= oy + CHUNK_W;
+  const reserved = (d, r, pad) => groundReserved(biome, cx, cy, d.x, d.y, r * 2, r * 2, pad || 0);
+  const roadReserved = (d, r) => {
+    if (woodHasTrunk(biome, cx) && crossesNS(y => woodTrailX(biome, cx, y), d.x, d.y, r, r, ROAD_HALF.WOODLAND)) return true;
+    if (woodHasLink(biome, cy) && crossesEW(x => woodLinkY(biome, cy, x), () => ROAD_HALF.WOODLAND, d.x, d.y, r, r)) return true;
+    const sp = woodSpur(biome, cx, cy);
+    return !!sp && segHitsRect(sp.x0, sp.y0,
+      sp.x0 + (sp.x1 - sp.x0) * 0.82, sp.y0 + (sp.y1 - sp.y0) * 0.82,
+      d.x, d.y, r + SPUR_HALF, r + SPUR_HALF);
+  };
+  const checkpointEdge = (x, y, r) => {
+    for (const [ix, iy] of [[cx, cy], [cx + 1, cy], [cx, cy + 1], [cx + 1, cy + 1]]) {
+      if (cityIsCheckpoint(biome, ix, iy) &&
+          Math.abs(x - ix * CHUNK_W) < 470 + r && Math.abs(y - iy * CHUNK_W) < 470 + r) return true;
+    }
+    return false;
+  };
+  for (const d of decor) {
+    if (!standing[d.t]) continue;
+    const trunk = solid.find(s => s.isTreeTrunk && Math.abs(s.x - d.x) < 1 && Math.abs(s.y - d.y) < 1);
+    if (!trunk) continue;
+    const reg = woodRegion(biome, d.x, d.y);
+    d.forestRegion = reg;
+    d.forestTier = "canopy";
+    d.forestSpecies = woodForestSpecies(reg, d.c || 0, d.forestTier);
+    d.t = d.forestSpecies === "CHARRED_SNAG" ? "SNAG" : d.forestSpecies === "RED_ALDER" ? "TREE" : "PINE";
+    d.forestTrunkKey = trunk.chunkKey;
+    // The saved stem keeps its original girth/yield. Only the spreading crown
+    // tapers at carriageways; its shared mass also drives shadows and material.
+    d.forestCrownScale = 1;
+    for (let n = 0; n < 7 && (reserved(d, radius(d), 4) ||
+         hitsAuthored(d.x, d.y, radius(d) * 2, radius(d) * 2, 24)); n++) d.forestCrownScale *= 0.78;
+    trunk.forestRegion = reg;
+    trunk.forestTier = d.forestTier;
+    trunk.forestSpecies = d.forestSpecies;
+  }
+  for (const list of [decor, decorBake]) for (const d of list) {
+    if (!ground[d.t]) continue;
+    d.forestRegion = woodRegion(biome, d.x, d.y);
+    d.forestTier = "underbrush";
+    d.forestSpecies = d.t === "WEED" || d.t === "HEATHER" ? "BUSH" : d.t;
+  }
+  for (let i = decorBake.length - 1; i >= 0; i--) {
+    const d = decorBake[i];
+    if (!d.forestSpecies) continue;
+    const reach = radius(d);
+    // Existing bank reeds can stand in water. Their whole clump still gives
+    // roads, arrivals, checkpoint approaches and authored buildings room.
+    if (!bakeFits(d, reach) || nearAnchor(d.x, d.y, 560 + reach) || checkpointEdge(d.x, d.y, reach) ||
+        roadReserved(d, reach) || hitsAuthored(d.x, d.y, reach * 2, reach * 2, 8)) decorBake.splice(i, 1);
+  }
+  for (const s of solid) {
+    if (s.propType !== "BOULDER" && !s.isRock) continue;
+    s.forestRegion = woodRegion(biome, s.x, s.y);
+    s.forestSpecies = "BOULDER";
+    s.forestTier = "ground";
+  }
+
+  let added = 0;
+  for (let i = 0; i < 45 && added < 10; i++) {
+    const x = ox + rngRange(rng, 85, CHUNK_W - 85), y = oy + rngRange(rng, 85, CHUNK_W - 85);
+    const reg = woodRegion(biome, x, y);
+    const habitat = FOREST_REGIONS[reg];
+    const density = 0.2 * habitat.canopy + 0.8 * habitat.midstory;
+    if (rng() > density || bnoise(biome, x + 613, y - 927, 0.0026) < 0.36) continue;
+    const tier = rng() < 0.22 ? "canopy" : "midstory";
+    const species = woodForestSpecies(reg, rng(), tier);
+    const scale = rngRange(rng, tier === "canopy" ? 1.30 : 0.65, tier === "canopy" ? 1.90 : 1.0);
+    const d = { t: species === "CHARRED_SNAG" ? "SNAG" : species === "RED_ALDER" ? "TREE" : "PINE",
+                x, y, s: scale, r: rng() * TWO_PI, c: rng(), k: RG_CANOPY[reg] || 0,
+                forestSpecies: species, forestRegion: reg, forestTier: tier,
+                forestTrunkKey: cx + "," + cy + ",forest:tree:" + i };
+    const reach = radius(d);
+    if (nearAnchor(x, y, 560 + reach) || checkpointEdge(x, y, reach)) continue;
+    if (reserved(d, reach, 18) || hitsAuthored(x, y, reach * 2, reach * 2, 24)) continue;
+    if (!solidsClearAt(solid, x, y, reach * 2, reach * 2, 24)) continue;
+    const width = tier === "canopy" ? 34 : 24;
+    solid.push({ x, y, w: width, h: width, isTreeTrunk: true, girth: scale,
+                 forestSpecies: species, forestRegion: reg, forestTier: tier,
+                 chunkKey: d.forestTrunkKey });
+    decor.push(d);
+    added++;
+  }
+
+  // Bulk density is baked. World-space copse noise carries ground clusters
+  // through seams; all foliage footprints leave the through routes readable.
+  for (let i = 0; i < 100; i++) {
+    const x = ox + rngRange(rng, 28, CHUNK_W - 28), y = oy + rngRange(rng, 28, CHUNK_W - 28);
+    const reg = woodRegion(biome, x, y);
+    const clump = bnoise(biome, x - 337, y + 619, 0.0032);
+    if (clump < (reg === RG_TIMBER || reg === RG_MARSH ? 0.36 : 0.53)) continue;
+    if (rng() > FOREST_REGIONS[reg].underbrush) continue;
+    const roll = rng();
+    const t = reg === RG_BURN ? (roll < 0.52 ? "ASH" : roll < 0.76 ? "STUMP" : "PEBBLE") :
+              reg === RG_HEATH ? (roll < 0.56 ? "PEBBLE" : roll < 0.83 ? "WEED" : "GRASS") :
+              reg === RG_MARSH ? (roll < 0.36 ? "FERN" : roll < 0.63 ? "REED" : roll < 0.85 ? "WEED" : "MUSHROOM") :
+              (roll < 0.52 ? "FERN" : roll < 0.80 ? "WEED" : roll < 0.93 ? "MUSHROOM" : "LOG");
+    const d = { t, x, y, s: rngRange(rng, 0.75, 1.50), r: rng() * TWO_PI, c: rng(),
+                forestSpecies: t === "WEED" ? "BUSH" : t, forestRegion: reg, forestTier: "underbrush" };
+    const reach = radius(d);
+    if (!bakeFits(d, reach)) continue;
+    if (nearAnchor(x, y, 560 + reach) || checkpointEdge(x, y, reach)) continue;
+    if (reserved(d, reach, 8) || hitsAuthored(x, y, reach * 2, reach * 2, 8)) continue;
+    if (!solidsClearAt(solid, x, y, reach * 2, reach * 2, 4)) continue;
+    decorBake.push(d);
+  }
+
+  // Apply visual habitats after every acceptance/radius test. This keeps both
+  // historical and namespaced stems in precisely their saved positions.
+  for (const list of [decor, decorBake, solid]) for (const d of list)
+    if (d.forestSpecies) forestDressHabitat(d, biome);
 }
 
 function generateChunkContent(biome, cx, cy) {
@@ -23650,7 +25551,7 @@ function generateChunkContent(biome, cx, cy) {
       // block of them afterwards never gets it. Run the other way round the
       // farmland produced no field, no hedge and no steading anywhere in eight
       // hundred chunks -- the region existed and had nothing in it.
-      const midReg = woodRegion(biome, ox + 600, oy + 600);
+      const midReg = woodLegacyRegion(biome, ox + 600, oy + 600);
       const regionFirst = solid.length;
 
       if (midReg === RG_HEATH) {
@@ -23797,7 +25698,7 @@ function generateChunkContent(biome, cx, cy) {
         const spot = lat.take(56, 56);
         if (!spot) break;
         if (nearAnchor(spot.x, spot.y, 420)) continue;
-        const reg = woodRegion(biome, spot.x, spot.y);
+        const reg = woodLegacyRegion(biome, spot.x, spot.y);
         if (rng() > (RG_TREES[reg] || 0.3)) continue;
         // Local gaps inside a stand -- glades, blowdown, thin soil.
         if (bnoise(biome, spot.x, spot.y, 0.0026) < (reg === RG_TIMBER ? 0.30 : 0.42)) continue;
@@ -24659,6 +26560,9 @@ function generateChunkContent(biome, cx, cy) {
   const districtBlock = solid.some(b => b.cityArchitecture !== undefined);
   for (let i = 0; i < solid.length; i++) solid[i].chunkKey = cx + "," + cy + "," + (districtBlock ? "district:" : solid[i].isCivic ? "civic:" : "") + i;
 
+  appendWoodlandForest(biome, cx, cy, solid, decor, decorBake, nearAnchor);
+  removeDestroyedTreeDecor(biome, solid, decor);
+
   // Strip anything the player already destroyed on a previous visit
   for (let i = solid.length - 1; i >= 0; i--) {
     if (state.destroyed[solid[i].chunkKey]) solid.splice(i, 1);
@@ -24704,16 +26608,23 @@ function generateChunkContent(biome, cx, cy) {
   // 9600 wide and reach four chunks past the block grid — still get right of
   // way. Anything the streamer put on top of one is dropped so the wall keeps
   // a clear approach on both sides.
-  if (authoredMask) {
-    return {
+  const content = authoredMask ? {
       solid:     solid.filter(s => !hitsAuthored(s.x, s.y, s.w || 0, s.h || 0, 24)),
       decor:     decor.filter(d => !hitsAuthored(d.x, d.y, 90, 90, 0)),
       decorBake: decorBake.filter(d => !hitsAuthored(d.x, d.y, 90, 90, 0)),
       cars:      cars.filter(c => !hitsAuthored(c.x, c.y, c.w || 90, c.h || 50, 24))
-    };
+    } : { solid, decor, decorBake, cars };
+  if (biome === 2 && layoutFor(biome, cx, cy) === "WOODLAND") {
+    // Checkpoints, water, forts and authored ground have the last word over
+    // the template. A crown must follow its exact surviving stem through all
+    // of those filters, including saved removals handled above.
+    const stems = new Set(content.solid.filter(s => s.isTreeTrunk).map(s => s.chunkKey));
+    for (let i = content.decor.length - 1; i >= 0; i--) {
+      const d = content.decor[i];
+      if (d.forestTrunkKey && !stems.has(d.forestTrunkKey)) content.decor.splice(i, 1);
+    }
   }
-
-  return { solid, decor, decorBake, cars };
+  return content;
 }
 
 // Props drawn live rather than stamped into the chunk terrain buffer, either
@@ -24739,10 +26650,46 @@ const CLUTTER_ANIMATED = {
 // the same grid the blocks were laid on; outside it there is no city at all,
 // just the country between one Directive post and the next.
 const WOOD_PAL = {
-  base: [88, 118, 63], alt: [107, 134, 76], dark: [52, 76, 43],
-  accent: [132, 156, 90], road: [124, 106, 76], mark: [188, 170, 122],
-  walk: [142, 162, 106], grass: [94, 126, 68]
+  base: [105, 98, 62], alt: [65, 112, 67], dark: [34, 64, 57],
+  accent: [143, 157, 91], road: [143, 120, 80], mark: [93, 74, 48],
+  walk: [134, 135, 103], grass: [71, 123, 74]
 };
+
+// Forest ground is soil carrying living moss, rather than a lawn with a
+// different tint. These materials are resolved on the world-space lattice;
+// adjacent texture buffers therefore interpolate the same boundary colours.
+const WOODLAND_FLOOR = {
+  TIMBER: { soil: [98, 103, 65], moss: [65, 122, 71], shade: [34, 64, 57],
+    litter: [147, 117, 65], stone: [111, 126, 117] },
+  MARSH: { soil: [70, 97, 70], moss: [66, 128, 84], shade: [31, 69, 62],
+    litter: [131, 145, 89], stone: [109, 136, 129] },
+  HEATH: { soil: [134, 139, 123], moss: [92, 124, 84], shade: [78, 99, 95],
+    litter: [152, 145, 103], stone: [143, 152, 147] },
+  BURN: { soil: [107, 95, 73], moss: [80, 89, 68], shade: [50, 58, 54],
+    litter: [155, 129, 94], stone: [117, 119, 104] },
+  VIBRANT: { soil: [127, 133, 69], moss: [92, 153, 73], shade: [49, 90, 58],
+    litter: [185, 167, 92], stone: [131, 149, 116] },
+  MEADOW: { soil: [143, 140, 83], moss: [115, 141, 68], shade: [69, 95, 55],
+    litter: [194, 177, 110], stone: [142, 143, 116] },
+  EDGE: { soil: [119, 119, 80], moss: [99, 132, 71], shade: [58, 84, 50],
+    litter: [166, 148, 83], stone: [126, 136, 111] }
+};
+function woodlandFloorColour(region, growth, roughness, exposure) {
+  const p = WOODLAND_FLOOR[region] || WOODLAND_FLOOR.TIMBER;
+  // Broad damp hollows grow moss; dry rises reveal warm mineral soil. Burnt
+  // ground retains a little regrowth without a purple full-screen wash.
+  let moss = smooth01((growth - 0.31) / 0.27);
+  if (region === RG_HEATH) moss *= 0.48;
+  if (region === RG_BURN) moss *= 0.26;
+  if (region === "MEADOW") moss *= 0.40;
+  if (region === "EDGE") moss *= 0.62;
+  const shade = Math.max(0, (roughness - 0.43) * 0.55);
+  const sun = (exposure - 0.5) * 12;
+  return p.soil.map((v, i) => {
+    const material = v + (p.moss[i] - v) * moss;
+    return material + (p.shade[i] - material) * shade + sun * (i === 2 ? 0.5 : 1);
+  });
+}
 function layoutFor(biome, cx, cy) {
   const def = BIOMES[biome];
   if (!def) return "CITY";
@@ -24760,10 +26707,8 @@ function pickClutterType(def, rng, layout, region) {
   const r = rng();
   switch (layout || def.layout) {
     case "WOODLAND":
-      // The ground cover is the fastest read a sub-biome has. A player crossing
-      // out of timber into heath sees the litter change under their feet
-      // several strides before the tree line thins out, and that is what makes
-      // the boundary feel like somewhere rather than like a threshold.
+      // The four forest habitats carry distinct forest-floor rotations. The
+      // one random draw is preserved so saved layout slots never shift.
       switch (region) {
         case RG_TIMBER:
           if (r > 0.82) return "LOG";
@@ -24788,13 +26733,8 @@ function pickClutterType(def, rng, layout, region) {
           if (r > 0.40) return "STUMP";
           if (r > 0.22) return "PEBBLE";
           return "CRACK";
-        case RG_FARM:
-          if (r > 0.80) return "PEBBLE";
-          if (r > 0.62) return "WEED";
-          if (r > 0.40) return "FLOWER";
-          return "GRASS";
       }
-      // Meadow, and the default for anything that has not named a region.
+      // Generic forest-floor rotation for callers with no habitat.
       if (r > 0.88) return "LOG";
       if (r > 0.82) return "STUMP";
       if (r > 0.76) return "MUSHROOM";
@@ -25034,7 +26974,9 @@ function bakeChunkTerrainAt(biome, cx, cy, staticDecor) {
       latC[k] = bnoise(biome, wx, wy, 0.017);
       if (latD) latD[k] = bnoise(biome, wx + 3700, wy - 2900, 0.00021);
       if (latR) {
-        const t = rt[regionAt(biome, wx, wy, lay)] || null;
+        const t = lay === "WOODLAND"
+          ? woodlandFloorColour(forestHabitatAt(wx, wy, biome), latA[k], latB[k], latD[k])
+          : rt[regionAt(biome, wx, wy, lay)] || null;
         latR[k]  = t ? t[0] : 0;
         latG[k]  = t ? t[1] : 0;
         latBl[k] = t ? t[2] : 0;
@@ -25094,36 +27036,47 @@ function bakeChunkTerrainAt(biome, cx, cy, staticDecor) {
       const nB = sample(latB, x, y);
       const nC = sample(latC, x, y);
 
-      // Material ramp lookup. The blend depends on nothing but nA, so it does
-      // not belong inside a 40 000-iteration loop — see rampR/G/B above.
-      let ri = (nA * RAMP) | 0;
-      if (ri < 0) ri = 0; else if (ri > RAMP) ri = RAMP;
-      let r  = rampR[ri];
-      let gg = rampG[ri];
-      let b  = rampB[ri];
+      let r, gg, b;
+      if (lay === "WOODLAND") {
+        // A quiet material surface under the silhouettes, with restrained
+        // mineral grain. The vector pass adds coherent moss beds and litter;
+        // no blurred oval wash is needed to invent ground variation.
+        const grain = (nC - 0.5) * 9;
+        r = sample(latR, x, y) + grain;
+        gg = sample(latG, x, y) + grain;
+        b = sample(latBl, x, y) + grain * 0.7;
+      } else {
+        // Material ramp lookup. The blend depends on nothing but nA, so it does
+        // not belong inside a 40 000-iteration loop — see rampR/G/B above.
+        let ri = (nA * RAMP) | 0;
+        if (ri < 0) ri = 0; else if (ri > RAMP) ri = RAMP;
+        r  = rampR[ri];
+        gg = rampG[ri];
+        b  = rampB[ri];
 
-      // Mid-frequency mottling — patches of wear, moisture, growth
-      const mid = (nB - 0.5) * 34;
-      r += mid; gg += mid; b += mid * 0.7;
+        // Mid-frequency mottling — patches of wear, moisture, growth
+        const mid = (nB - 0.5) * 34;
+        r += mid; gg += mid; b += mid * 0.7;
 
-      // Fine grain
-      const fine = (nC - 0.5) * 22;
-      r += fine; gg += fine; b += fine;
+        // Fine grain
+        const fine = (nC - 0.5) * 22;
+        r += fine; gg += fine; b += fine;
 
-      // Tonal zone -- see ZONE_TINT. Three multiply-adds, and it is the
-      // difference between a sector that looks like one texture tiled forever
-      // and one that looks like country you are walking across.
-      if (latD) {
-        const nD = sample(latD, x, y) - 0.5;
-        r += nD * tz[0]; gg += nD * tz[1]; b += nD * tz[2];
-      }
+        // Tonal zone -- see ZONE_TINT. Three multiply-adds, and it is the
+        // difference between a sector that looks like one texture tiled forever
+        // and one that looks like country you are walking across.
+        if (latD) {
+          const nD = sample(latD, x, y) - 0.5;
+          r += nD * tz[0]; gg += nD * tz[1]; b += nD * tz[2];
+        }
 
-      // Region tone. Bilinear between lattice points, so a boundary between two
-      // sub-biomes arrives as a gradient a couple of hundred units wide instead
-      // of as an edge -- and because it is sampled in world space there is no
-      // chunk seam for it to fall on.
-      if (latR) {
-        r += sample(latR, x, y); gg += sample(latG, x, y); b += sample(latBl, x, y);
+        // Region tone. Bilinear between lattice points, so a boundary between two
+        // sub-biomes arrives as a gradient a couple of hundred units wide instead
+        // of as an edge -- and because it is sampled in world space there is no
+        // chunk seam for it to fall on.
+        if (latR) {
+          r += sample(latR, x, y); gg += sample(latG, x, y); b += sample(latBl, x, y);
+        }
       }
 
       // Ordered dither — ±3 levels, keyed to the pixel's lattice position
@@ -25463,6 +27416,200 @@ function bakePool(g, p) {
     const e = edgeAt(a) * 0.86;
     g.fill(64, 92, 58, 120);
     g.ellipse(p.x + Math.cos(a) * rx * e, p.y + Math.sin(a) * ry * e, rx * 0.34, ry * 0.28);
+  }
+}
+
+// Natural material beds are independent world features. A 420-unit lattice
+// bounds their density and the bake repeats every overlapping cell in stable
+// world order. Texture borders clip the same feature, never its identity.
+const WOODLAND_FLOOR_CELL = 420;
+const WOODLAND_FLOOR_REACH = 220;
+function woodlandFloorContour(g, x, y, w, h, phase, scale, col, alpha) {
+  // Long, torn moss/needle beds follow a local ground grain. A radial outline
+  // looks like a pond stamped onto a lawn, even with more vertices.
+  const points = [[-1,-0.10],[-0.82,-0.49],[-0.56,-0.33],[-0.30,-0.66],
+    [0.02,-0.42],[0.25,-0.59],[0.59,-0.30],[0.82,-0.24],[1,0.07],
+    [0.68,0.35],[0.44,0.27],[0.18,0.61],[-0.09,0.43],[-0.43,0.59],[-0.74,0.28]];
+  const ca = Math.cos(phase * 0.22), sa = Math.sin(phase * 0.22);
+  g.fill(col[0], col[1], col[2], alpha); g.noStroke(); g.beginShape();
+  for (let k = 0; k < points.length; k++) {
+    const px = points[k][0] * w * scale;
+    const py = points[k][1] * h * scale * (0.85 + Math.sin(k * 1.7 + phase) * 0.15);
+    g.vertex(x + px * ca - py * sa, y + px * sa + py * ca);
+  }
+  g.endShape(CLOSE);
+}
+function woodlandGroundPatches(g, biome, cellX, cellY) {
+  const rng = makeRng(chunkHash(biome, cellX, cellY, 83017));
+  const x = (cellX + 0.15 + rng() * 0.7) * WOODLAND_FLOOR_CELL;
+  const y = (cellY + 0.15 + rng() * 0.7) * WOODLAND_FLOOR_CELL;
+  if (layoutFor(biome, Math.floor(x / CHUNK_W), Math.floor(y / CHUNK_W)) !== "WOODLAND") return;
+  const region = forestHabitatAt(x, y, biome), p = WOODLAND_FLOOR[region];
+  const phase = rng() * TWO_PI, w = 58 + rng() * 105, h = 28 + rng() * 48;
+  const moss = rng() < (region === RG_BURN ? 0.12 : region === RG_HEATH ? 0.28 :
+    region === "MEADOW" ? 0.24 : region === "EDGE" ? 0.40 : 0.70);
+  const stone = !moss && region === RG_HEATH;
+  const col = moss ? p.moss : stone ? p.stone : p.litter;
+  // One quiet material face avoids doubled outlines where beds overlap. The
+  // needle/mineral grain below supplies texture without nested silhouettes.
+  woodlandFloorContour(g, x, y, w, h, phase, 1, col, moss ? 58 : stone ? 47 : 45);
+
+  // Small needle clusters follow the bed instead of speckling the entire map.
+  // Burnt sites get ash flecks and granite gets hairline mineral seams. No
+  // flowers, stars or isolated geometric glyphs are part of this ground pass.
+  const pieces = moss ? 12 : stone ? 6 : 25;
+  for (let n = 0; n < pieces; n++) {
+    const a = rng() * TWO_PI, radius = Math.sqrt(rng()) * 0.92;
+    const px = x + Math.cos(a) * w * radius, py = y + Math.sin(a) * h * radius;
+    const bearing = phase * 0.24 + (rng() - 0.5) * 0.85;
+    const len = stone ? 11 + rng() * 21 : 4 + rng() * 7;
+    g.stroke(p.shade[0], p.shade[1], p.shade[2], stone ? 45 : 48); g.strokeWeight(stone ? 1.8 : 1.5);
+    g.line(px, py, px + Math.cos(bearing) * len, py + Math.sin(bearing) * len);
+    if (!stone) {
+      g.stroke(p.litter[0] + 12, p.litter[1] + 10, p.litter[2] + 6, moss ? 42 : 78);
+      g.line(px - 1.5, py - 1.5, px + Math.cos(bearing) * len - 1.5, py + Math.sin(bearing) * len - 1.5);
+    }
+  }
+  g.noStroke();
+}
+function bakeWoodlandFloorArea(g, biome, x0, y0, x1, y1) {
+  const reach = WOODLAND_FLOOR_REACH, cell = WOODLAND_FLOOR_CELL;
+  const xa = Math.floor((x0 - reach) / cell), xb = Math.floor((x1 + reach) / cell);
+  const ya = Math.floor((y0 - reach) / cell), yb = Math.floor((y1 + reach) / cell);
+  for (let x = xa; x <= xb; x++) for (let y = ya; y <= yb; y++)
+    woodlandGroundPatches(g, biome, x, y);
+}
+function bakeSharedWoodlandPatches(g, biome, cx, cy) {
+  const ox = cx * CHUNK_W, oy = cy * CHUNK_W;
+  bakeWoodlandFloorArea(g, biome, ox, oy, ox + CHUNK_W, oy + CHUNK_W);
+}
+
+function bakeWoodlandBankStone(g, x, y, size, phase, col) {
+  const ca = Math.cos(phase), sa = Math.sin(phase);
+  const shape = [[-0.8,-0.2],[-0.45,-0.58],[0.43,-0.5],[0.78,0.05],[0.25,0.48],[-0.56,0.38]];
+  const path = (scale, dx, dy) => {
+    g.beginShape();
+    for (const p of shape) {
+      const px = p[0] * size * scale, py = p[1] * size * scale;
+      g.vertex(x + dx + px * ca - py * sa, y + dy + px * sa + py * ca);
+    }
+    g.endShape(CLOSE);
+  };
+  g.noStroke(); g.fill(34, 68, 60, 54); path(1.08, 1.5, 2);
+  g.fill(col[0], col[1], col[2], 175); path(1, 0, 0);
+  g.fill(col[0] + 33, col[1] + 32, col[2] + 24, 115); path(0.55, -1.5, -1.5);
+}
+function bakeWoodlandRiverBanks(g, biome, cy, ox, centreAt, halfAt, span = CHUNK_W) {
+  // Pebbly shelves follow the real world-space channel; neighbouring chunks
+  // replay the same stones. All detail is ground paint, never new collision.
+  const cell = 72;
+  for (let ix = Math.floor((ox - 24) / cell); ix <= Math.ceil((ox + span + 24) / cell); ix++) {
+    const rng = makeRng(chunkHash(biome, ix, cy, 83329));
+    for (const side of [-1, 1]) {
+      const x = ix * cell + rng() * 48, half = halfAt(x);
+      if (half < 8) continue;
+      const y = centreAt(x) + side * half * (1.04 + rng() * 0.18);
+      const col = rng() > 0.48 ? [133, 151, 128] : [100, 130, 126];
+      bakeWoodlandBankStone(g, x, y, 7 + rng() * 10, rng() * TWO_PI, col);
+    }
+  }
+}
+function bakeWoodlandWatercourse(g, biome, cy, ox, centreAt, halfAt, span = CHUNK_W) {
+  const points = [];
+  // World-anchored shoreline samples meet exactly across texture borders.
+  for (let x = ox - 80; x <= ox + span + 80; x += 40) {
+    const half = halfAt(x), mid = centreAt(x);
+    const rough = (bnoise(biome, x + 7170, cy * CHUNK_W, 0.012) - 0.5) * 16 * Math.min(1, half / 24);
+    points.push({x, mid, half, rough});
+  }
+  const ribbon = (width, edge, col, alpha) => {
+    g.fill(col[0], col[1], col[2], alpha);g.noStroke();g.beginShape();
+    for (const p of points) g.vertex(p.x, p.mid - Math.max(0,p.half*width+p.rough*edge));
+    for (let i=points.length-1;i>=0;i--) {
+      const p=points[i];g.vertex(p.x,p.mid+Math.max(0,p.half*width-p.rough*edge*0.8));
+    }
+    g.endShape(CLOSE);
+  };
+  // Mineral shelf, a dark damp lip, shallow turquoise water and the channel.
+  // Low-contrast hard shapes match the city's material faces; no stacked
+  // feathered ovals or high-contrast contour bands sit above the ground.
+  ribbon(1.26,1,[106,129,100],94);
+  ribbon(1.10,1,[49,92,77],116);
+  ribbon(1.02,0.72,[80,146,129],225);
+  ribbon(0.86,0.84,[50,127,127],175);
+  ribbon(0.61,1.12,[27,90,112],142);
+  ribbon(0.29,0.60,[24,83,105],65);
+  g.noFill();g.strokeWeight(1.8);
+  // Each short current stroke has its own world-cell seed, so painting an
+  // adjacent terrain buffer does not restart the water's texture.
+  for (let ix=Math.floor((ox-60)/160);ix<=Math.ceil((ox+span+60)/160);ix++) {
+    const rng=makeRng(chunkHash(biome,ix,cy,83557));
+    for(let i=0;i<2;i++) {
+      const x=ix*160+rng()*100,off=(rng()-0.5)*0.9,len=24+rng()*69;
+      if (halfAt(x) < 8 || halfAt(x + len) < 8) continue;
+      g.stroke(169,215,204,24+rng()*24);g.beginShape();
+      for(let k=0;k<4;k++) {
+        const px=x+len*k/3;
+        g.vertex(px,centreAt(px)+halfAt(px)*off+Math.sin(k*1.2+i)*2);
+      }
+      g.endShape();
+    }
+  }
+  g.noStroke();
+}
+function bakeWoodlandFord(g, cross, centreAt, halfAt) {
+  // The gravel bed is visible THROUGH the water. One world-space linear
+  // wash fades toward the ordinary river without striped colour slices or
+  // a leaf-shaped polygon pasted across its surface.
+  const ctx=g.drawingContext, x0=cross.x-180, x1=cross.x+180;
+  ctx.save();
+  const wash=ctx.createLinearGradient(x0,0,x1,0);
+  wash.addColorStop(0,"rgba(174,193,143,0)");
+  wash.addColorStop(0.5,"rgba(174,193,143,0.32)");
+  wash.addColorStop(1,"rgba(174,193,143,0)");
+  ctx.fillStyle=wash;ctx.beginPath();
+  for(let x=x0;x<=x1;x+=20) {
+    const y=centreAt(x)-halfAt(x)*0.98;
+    if(x===x0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  }
+  for(let x=x1;x>=x0;x-=20)ctx.lineTo(x,centreAt(x)+halfAt(x)*0.98);
+  ctx.closePath();ctx.fill();ctx.restore();
+  for(let i=0;i<13;i++) {
+    const x=cross.x+Math.sin(i*2.39+cross.y)*118;
+    const y=centreAt(x)+Math.cos(i*1.83+cross.x)*halfAt(x)*0.83;
+    bakeWoodlandBankStone(g,x,y,4+(i%4)*2,i*1.8,[129,166,135]);
+  }
+}
+function bakeWoodlandPool(g, p) {
+  const rx = p.w / 2, ry = p.h / 2;
+  const edgeAt = a => 1 + 0.17 * Math.sin(a * 3 + p.k * 21) + 0.09 * Math.sin(a * 5 - p.k * 13);
+  const ring = (scale, col, alpha) => {
+    g.fill(col[0], col[1], col[2], alpha); g.noStroke(); g.beginShape();
+    for (let i = 0; i < 24; i++) {
+      const a = i / 24 * TWO_PI, e = edgeAt(a) * scale;
+      g.vertex(p.x + Math.cos(a) * rx * e, p.y + Math.sin(a) * ry * e);
+    }
+    g.endShape(CLOSE);
+  };
+  ring(1.16, [65, 104, 74], 95);
+  ring(1.08, [118, 136, 95], 155);
+  ring(1, [61, 143, 128], 210);
+  ring(0.79, [30, 104, 111], 225);
+  ring(0.51, [25, 72, 87], 220);
+  // Reflections lie on the surface; curved streaks carry the same direction
+  // as the stream, without an oval highlight pasted over the water.
+  g.noFill(); g.stroke(171, 222, 203, 66); g.strokeWeight(2.2);
+  for (let i = 0; i < 5; i++) {
+    const y = p.y + (i - 2) * ry * 0.24;
+    const x = p.x - rx * 0.45 + Math.sin(p.k * 13 + i * 1.6) * rx * 0.19;
+    const len = rx * (0.26 + Math.sin(i + 2) * 0.05);
+    g.beginShape();g.vertex(x,y);g.vertex(x+len*0.5,y-2);g.vertex(x+len,y-1);g.endShape();
+  }
+  g.noStroke();
+  for (let i = 0; i < 9; i++) {
+    const a = p.k * 37 + i * 2.4, e = edgeAt(a) * 1.04;
+    bakeWoodlandBankStone(g, p.x + Math.cos(a) * rx * e,
+      p.y + Math.sin(a) * ry * e, 5 + (i % 3) * 3, a, [134, 151, 127]);
   }
 }
 
@@ -26134,135 +28281,14 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
     }
 
     case "WOODLAND": {
-      // Meadow and shade. The base pass has already laid the grass; this is the
-      // structure on top of it -- where the canopy darkens the floor, where the
-      // ground opens out, and the track running through.
-      const canopy = bnoise(biome, ox, oy, 0.00055);
-
-      // Pools of shade under the standing timber, and lighter meadow where it
-      // thins. Radial and edge-free so neither reads as a painted patch.
-      const nShade = 5 + Math.round(canopy * 9);
-      for (let i = 0; i < nShade; i++) {
-        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
-        if (bnoise(biome, rx, ry, 0.0026) < 0.42) continue;
-        softStamp(g, rx, ry, 180 + rng() * 260, 150 + rng() * 220, [16, 30, 14], 16 + rng() * 20);
-      }
-      for (let i = 0; i < 7; i++) {
-        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
-        softStamp(g, rx, ry, 220 + rng() * 300, 180 + rng() * 260,
-                  [p.accent[0], p.accent[1], p.accent[2]], 14 + rng() * 16);
-      }
-
-      // --- Regional ground --------------------------------------------------
-      // Every pass here asks the region at its OWN sample point rather than at
-      // the chunk's corner. A boundary therefore comes out as one kind of
-      // ground thinning while another thickens, over a couple of hundred units,
-      // instead of a straight line down a chunk edge. It is the same rule the
-      // generator uses for where a tree is allowed to stand, applied to paint.
-      const regAtB = (x, y) => woodRegion(biome, x, y);
-      let sawFarm = false;
-      for (let i = 0; i < 16; i++) {
-        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
-        switch (regAtB(rx, ry)) {
-          case RG_TIMBER:
-            // Closed canopy: deep shade, and the rust-brown of needle litter
-            // where the light does reach.
-            softStamp(g, rx, ry, 170 + rng() * 230, 140 + rng() * 190, [20, 33, 17], 24 + rng() * 24);
-            if (rng() > 0.58) softStamp(g, rx, ry, 90 + rng() * 120, 70 + rng() * 95, [88, 64, 38], 22 + rng() * 20);
-            break;
-          case RG_MARSH:
-            // Waterlogged ground, and the shine off standing water in it.
-            softStamp(g, rx, ry, 200 + rng() * 270, 150 + rng() * 210, [44, 62, 52], 32 + rng() * 30);
-            if (rng() > 0.42) {
-              softStamp(g, rx, ry, 70 + rng() * 120, 50 + rng() * 85, [38, 74, 78], 64 + rng() * 52);
-              g.noFill(); g.stroke(198, 226, 226, 42); g.strokeWeight(1.6);
-              g.ellipse(rx, ry, 40 + rng() * 54, 26 + rng() * 34);
-              g.noStroke();
-            }
-            break;
-          case RG_HEATH:
-            // Thin soil: gravel, and bedrock coming through in plates.
-            softStamp(g, rx, ry, 150 + rng() * 210, 120 + rng() * 165, [130, 122, 98], 26 + rng() * 24);
-            if (rng() > 0.52) {
-              const pr = 26 + rng() * 44;
-              g.fill(118, 116, 104, 130 + rng() * 60);
-              g.beginShape();
-              for (let k = 0; k < 7; k++) {
-                const a = (k / 7) * TWO_PI;
-                const rr = pr * (0.7 + 0.42 * Math.abs(Math.sin(k * 2.3 + rx * 0.01)));
-                g.vertex(rx + Math.cos(a) * rr, ry + Math.sin(a) * rr * 0.78);
-              }
-              g.endShape(CLOSE);
-              g.fill(150, 148, 134, 70);
-              g.ellipse(rx - LIGHT_DX * pr * 0.2, ry - LIGHT_DY * pr * 0.2, pr * 0.9, pr * 0.62);
-            }
-            break;
-          case RG_BURN:
-            // Fire ground: black earth with ash blown across it.
-            softStamp(g, rx, ry, 180 + rng() * 250, 140 + rng() * 200, [25, 21, 19], 44 + rng() * 38);
-            if (rng() > 0.48) softStamp(g, rx, ry, 80 + rng() * 130, 60 + rng() * 95, [168, 162, 154], 26 + rng() * 24);
-            break;
-          case RG_FARM:
-            sawFarm = true;
-            softStamp(g, rx, ry, 160 + rng() * 220, 130 + rng() * 170, [122, 98, 62], 24 + rng() * 22);
-            break;
-          default:
-            break;
-        }
-      }
+      bakeSharedWoodlandPatches(g, biome, cx, cy);
 
       // Marsh pools. Painted with the ground rather than drawn over it -- see
       // bakePool(). woodPools() hands the generator the identical list, so the
       // water you can see and the water you can wade are the same water.
       {
         const bPools = woodPools(biome, cx, cy);
-        if (bPools) for (const bp of bPools) bakePool(g, bp);
-      }
-
-      // Ploughed ground. The bearing comes off a very slow world field, so a
-      // field does not change direction halfway across a seam, and each short
-      // run is gated on the region at its own midpoint so the furrows simply
-      // stop where the farmland does.
-      if (sawFarm || regAtB(ox + 600, oy + 600) === RG_FARM) {
-        const bear = (bnoise(biome, ox * 0.2 + 1700, oy * 0.2 - 900, 0.00009) - 0.5) * 1.5;
-        const ca = Math.cos(bear), sa = Math.sin(bear);
-        // Spacing and segment length are held well apart. This is the most
-        // expensive pass in either sector's bake -- every segment costs a
-        // region lookup, which is three noise samples -- and at a 34-unit
-        // spacing with 110-unit segments it alone tripled the worst-case chunk.
-        g.strokeWeight(5);
-        g.stroke(96, 74, 44, 62);
-        const SPAN = CHUNK_W * 0.8;
-        for (let l = -SPAN; l < SPAN; l += 48) {
-          const px6 = ox + 600 - sa * l, py6 = oy + 600 + ca * l;
-          for (let q = -3; q < 3; q++) {
-            const t0 = q * 300, t1 = t0 + 300;
-            const mx = px6 + ca * (t0 + 150), my = py6 + sa * (t0 + 150);
-            if (mx < ox - 150 || mx > ox + CHUNK_W + 150 || my < oy - 150 || my > oy + CHUNK_W + 150) continue;
-            if (regAtB(mx, my) !== RG_FARM) continue;
-            g.line(px6 + ca * t0, py6 + sa * t0, px6 + ca * t1, py6 + sa * t1);
-          }
-        }
-        g.noStroke();
-      }
-
-      // Wind grain. Every open sward gets a set of faint strokes on one bearing,
-      // and that bearing is a function of world position only -- so the whole
-      // sector's grass lies the same way and the ground reads as a surface with
-      // a direction in it rather than as noise.
-      {
-        const wa = (bnoise(biome, 4400, 8800, 0.00004) - 0.5) * 2.4 + 0.6;
-        const cw = Math.cos(wa), sw = Math.sin(wa);
-        g.strokeWeight(2.2);
-        for (let i = 0; i < 24; i++) {
-          const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
-          const rg2 = regAtB(rx, ry);
-          if (rg2 === RG_MARSH || rg2 === RG_BURN || rg2 === RG_HEATH) continue;
-          const ln = 22 + rng() * 46;
-          g.stroke(212, 226, 168, 16 + rng() * 20);
-          g.line(rx, ry, rx + cw * ln, ry + sw * ln);
-        }
-        g.noStroke();
+        if (bPools) for (const bp of bPools) bakeWoodlandPool(g, bp);
       }
 
       // --- The road network -------------------------------------------------
@@ -26294,7 +28320,7 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
         // The through road: two ruts worn through turf, not a graded
         // carriageway. Tapered to nothing where it runs into authored ground.
         bakeRibbon(g, trackAtW, yAtW, S0w, S1w, 96, 46,
-                   [110, 128, 78], [118, 100, 72], 10, 42,
+                   [78, 107, 69], [143, 120, 80], 10, 42,
                    (wy) => coreTaperY(cx, cy, wy));
         RUT(p.mark, 120);
         for (const side of [-24, 24]) {
@@ -26313,7 +28339,7 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
         // player can navigate needs its through routes to read differently from
         // its cross-country connections at a glance.
         bakeRibbonH(g, linkAtW, xAtL, 0, SNl, 78, 37,
-                    [110, 128, 78], [118, 100, 72], 9, 40,
+                    [78, 107, 69], [143, 120, 80], 9, 40,
                     (wx) => coreTaperX(cx, cy, wx));
         RUT(p.mark, 110);
         for (const side of [-20, 20]) {
@@ -26339,23 +28365,22 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
         const spurW = (wx) => (1 - smooth01((spurT(wx) - 0.5) / 0.5)) * 0.85 + 0.15;
         const SNs = 14;
         bakeRibbonH(g, spurC, (s) => spurB.x0 + (s / SNs) * sdx, 0, SNs, 62, 30,
-                    [110, 128, 78], [116, 100, 74], 8, 38, spurW, 3);
+                    [78, 107, 69], [143, 120, 80], 8, 38, spurW, 3);
       }
 
       // --- The river --------------------------------------------------------
       if (hasRiverB) {
         const midAtR  = (wx) => woodRiverY(biome, cy, wx);
         const halfAtR = (wx) => woodRiverHalf(biome, cy, wx) * coreTaperX(cx, cy, wx);
-        bakeWatercourse(g, midAtR, halfAtR, ox, oy,
-                        [96, 88, 60], [88, 122, 106], [36, 62, 70], 208, rng);
+        bakeWoodlandWatercourse(g, biome, cy, ox, midAtR, halfAtR);
+        bakeWoodlandRiverBanks(g, biome, cy, ox, midAtR, halfAtR);
 
         if (crossB && crossB.ford) {
           // A ford is where the channel runs wide and shallow over gravel. Pale
           // bed showing through the water is the whole read: you can see the
           // bottom, so you know you can walk it.
           const fh = halfAtR(crossB.x);
-          softStamp(g, crossB.x, crossB.y, 300, fh * 2.5, [186, 178, 148], 120);
-          softStamp(g, crossB.x, crossB.y, 210, fh * 1.7, [206, 200, 172], 96);
+          bakeWoodlandFord(g, crossB, midAtR, halfAtR);
           g.noFill(); g.stroke(232, 240, 236, 46); g.strokeWeight(2);
           for (let i = 0; i < 7; i++) {
             const fy = crossB.y + (i - 3) * fh * 0.3;
@@ -26367,29 +28392,10 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
           // bridge lands on something rather than floating over the bank.
           const ah = halfAtR(crossB.x);
           for (const side of [-1, 1]) {
-            softStamp(g, crossB.x, crossB.y + side * (ah + 74), 200, 150, [104, 92, 66], 118);
+            woodlandFloorContour(g, crossB.x, crossB.y + side * (ah + 74),
+              110, 145, 0.1, 1, [124, 109, 73], 112);
           }
         }
-      }
-
-      // Fallen leaf litter off the roads and out of the water, and the odd bare
-      // patch of earth.
-      const offTrack = (x, y) => {
-        if (hasTrunkB && Math.abs(x - trackAtW(y)) < 80) return false;
-        if (hasLinkB  && Math.abs(y - linkAtW(x)) < 70) return false;
-        if (hasRiverB && Math.abs(y - woodRiverY(biome, cy, x)) < woodRiverHalf(biome, cy, x) * 1.4) return false;
-        return true;
-      };
-      for (let i = 0; i < 26; i++) {
-        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
-        if (!offTrack(rx, ry)) continue;
-        g.fill(126, 108, 62, 26 + rng() * 34);
-        g.ellipse(rx, ry, 16 + rng() * 42, 12 + rng() * 30);
-      }
-      for (let i = 0; i < 4; i++) {
-        const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
-        if (!offTrack(rx, ry)) continue;
-        softStamp(g, rx, ry, 90 + rng() * 130, 70 + rng() * 100, [104, 86, 58], 26 + rng() * 22);
       }
 
       // A cleared apron under a Directive post, so the compound is not sitting
@@ -26407,7 +28413,7 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
             const SNa = 12;
             bakeRibbonH(g, (wx) => (oy + 330) + (oy + 80 - (oy + 330)) * at01(wx),
                         (s) => ax0 + (s / SNa) * adx, 0, SNa, 58, 28,
-                        [110, 128, 78], [116, 100, 74], 8, 38,
+                        [78, 107, 69], [143, 120, 80], 8, 38,
                         (wx) => 0.35 + 0.65 * (1 - at01(wx)), 3);
           }
         }
@@ -27306,6 +29312,7 @@ function refreshPopulation(mgr, pcx, pcy) {
           if (live + list.length >= POP_BUDGET) break;
           const r = roster[n];
           const c = new Character(r.x, r.y, false, r.type);
+          if (!c.isFriendly && insideOwnedFortress(mgr.biome, c.x, c.y, 60)) continue;
           if (c.eType !== "COW" && c.eType !== "HORSE") c.state = "PATROL";
           if (r.route) { c.routeA = r.home; c.routeB = r.route; c.routeLeg = 0; }
           if (r.post)  { c.postX = r.post.x; c.postY = r.post.y; c.postR = 300; }
@@ -27584,6 +29591,7 @@ class ChunkManager {
     if (typeof playerStructures !== 'undefined') {
       for (let i = 0; i < playerStructures.length; i++) solids.push(playerStructures[i]);
     }
+    for (const lodge of forestHuntingStructures()) if (!solids.includes(lodge)) solids.push(lodge);
     buildings   = solids;
     parkingCars = cars;
 
@@ -27651,15 +29659,17 @@ class ChunkManager {
     if (stand) _standDecor.length = 0;
     for (const ch of this.chunks.values()) {
       const wx = ch.cx * CHUNK_W, wy = ch.cy * CHUNK_W;
-      if (wx > viewRight + 200 || wx + CHUNK_W < viewLeft - 200) continue;
-      if (wy > viewBottom + 200 || wy + CHUNK_W < viewTop - 200) continue;
+      const chunkPad = this.biome === 2 ? 400 : 200;
+      if (wx > viewRight + chunkPad || wx + CHUNK_W < viewLeft - chunkPad) continue;
+      if (wy > viewBottom + chunkPad || wy + CHUNK_W < viewTop - chunkPad) continue;
       // Cull generously. A tree canopy reaches ~78 units at full scale, so the
       // old +/-60 margin clipped props whose centre had just left the view
       // while their crown was still on screen -- they blinked out at the
       // border instead of sliding off it.
       for (const d of ch.decor) {
-        if (d.x < viewLeft - 120 || d.x > viewRight + 120)  continue;
-        if (d.y < viewTop - 120  || d.y > viewBottom + 120) continue;
+        const pad = d.forestSpecies ? forestPropCullPad(d) : 120;
+        if (d.x < viewLeft - pad || d.x > viewRight + pad)  continue;
+        if (d.y < viewTop - pad  || d.y > viewBottom + pad) continue;
         // A tree is handed to the depth sort instead, so the player passes
         // behind its crown rather than standing on it. Outside a sorted level
         // there is nothing to hand it to, so it paints here as it always did.
@@ -28175,17 +30185,11 @@ const WALL_SIDE = [70, 75, 80];     // isGiantBarrier -- the panelled curtain
 //  displacement to size, and at twenty pixels across there is no ratio to sell
 //  (that was the riser, and it read as a blob glued to the model).
 //
-//  What does survive at this size is shading, and only three terms of it:
+//  At this scale, a single inked silhouette and three curved cel tones sell
+//  volume. The material, shadow and light planes fill the same rounded mass;
+//  continuous tapered sleeves and trousers carry them through the joints.
 //
-//    1. a CONTOUR, so the figure separates from whatever is behind it. This is
-//       the single biggest read -- a stroked silhouette is why a hand-drawn
-//       character sits in a scene and an unstroked one floats over it;
-//    2. a LIT CAP, an inset ellipse pushed toward the sun. On a sphere the
-//       highlight is not centred, and putting it off-centre is the whole
-//       difference between a ball and a circle;
-//    3. a TERMINATOR, the crescent of shade where the surface turns away.
-//
-//  All three are offset along LIGHT_DX/DY, so every figure in the world is lit
+//  The planes follow LIGHT_DX/DY, so every figure in the world is lit
 //  from the same place as every wall and every roof -- but see figureLight():
 //  a figure is drawn inside its own facing, and the light has to be brought
 //  into that frame or it turns with the model.
@@ -28206,13 +30210,6 @@ const WALL_SIDE = [70, 75, 80];     // isGiantBarrier -- the panelled curtain
 // is positioned against bodyW, compresses along with the body it is worn on.
 const TORSO_DEPTH = 0.84;
 
-// How far the highlight rides off centre, as a fraction of the blob's radius.
-const VOL_CAP    = 0.30;
-// Contour weight relative to the blob's smaller axis, and its floor/ceiling.
-const VOL_LINE   = 0.085;
-// Steps in the lit gradient. Four is the fewest that shows no banding.
-const VOL_STEPS  = 4;
-
 // The sun, expressed in a figure's OWN rotated frame.
 //
 // Every body, head and limb in this file is drawn inside rotate(aimAngle), and
@@ -28224,6 +30221,108 @@ const VOL_STEPS  = 4;
 // keeps it there while they turn -- which is also the only reason a figure
 // walking a circle reads as turning rather than as spinning art.
 const _figLit = [LIGHT_DX, LIGHT_DY];
+// Character drawing reuses exact p5 color strings and the same Canvas ellipse
+// arithmetic. This avoids a p5.Color and ellipse bounding-box object per part.
+// Only the default 2D painter uses this path; alternate modes and accessible
+// outputs retain p5's normal implementation.
+const _figureNoBoxing={active:false};
+let _figurePainter = null;
+function figurePainter() {
+  const inst = typeof p5 !== 'undefined' ? p5.instance : null;
+  const renderer = inst && inst._renderer;
+  if (!renderer || renderer.isP3D || renderer._clipping ||
+      renderer._ellipseMode !== CENTER ||
+      (inst._accessibleOutputs && (inst._accessibleOutputs.grid || inst._accessibleOutputs.text))) return null;
+  if (!_figurePainter || _figurePainter.renderer !== renderer) {
+    const numeric = new Map(), objects = new WeakMap();
+    const context = renderer.drawingContext;
+    const nativeShapes=p5.VERSION==='1.11.11';
+    const ellipseArgs=[0,0,0,0],rectArgs=[0,0,0,0,undefined,undefined,undefined,undefined];
+    // p5 1.9.x uses arcTo for rounded rectangles and does not close ellipse
+    // paths. Unknown versions keep their own renderer primitives; only the
+    // pixel-tested 1.11.11 paths are duplicated below.
+    function paintString(args) {
+      const r=args[0];let css;
+      if(args.length===1 && r instanceof p5.Color) {
+        const level=r.levels,alpha=r._array[3];let cached=objects.get(r);
+        if(!cached || cached.r!==level[0] || cached.g!==level[1] || cached.b!==level[2] || cached.a!==alpha) {
+          cached={r:level[0],g:level[1],b:level[2],a:alpha,css:r.toString()};objects.set(r,cached);
+        }
+        return cached.css;
+      }
+      if(typeof r!=='number')return inst.color.apply(inst,args).toString();
+      const key=args.length+'|'+r+'|'+args[1]+'|'+args[2]+'|'+args[3];
+      css=numeric.get(key);
+      if(css===undefined) {
+        css=inst.color.apply(inst,args).toString();
+        if(numeric.size>=1024)numeric.delete(numeric.keys().next().value);
+        numeric.set(key,css);
+      }
+      return css;
+    }
+    _figurePainter = {
+      renderer, numeric, mode: null, maxes: [0,0,0,0],
+      fill(r,g,b,a) {
+        renderer._fillSet=true;renderer._doFill=true;renderer._setFill(paintString(arguments));
+      },
+      stroke(r,g,b,a) {
+        renderer._strokeSet=true;renderer._doStroke=true;renderer._setStroke(paintString(arguments));
+      },
+      rect(x,y,w,h,tl,tr,br,bl) {
+        if(!renderer._doFill&&!renderer._doStroke)return;
+        if(renderer._rectMode!==CORNER||renderer._clipping)return inst.rect.apply(inst,arguments);
+        if(renderer._doFill&&!renderer._doStroke&&renderer._getFill()==='rgba(0,0,0,0)')return;
+        if(!renderer._doFill&&renderer._doStroke&&renderer._getStroke()==='rgba(0,0,0,0)')return;
+        if(h===undefined)h=w;
+        if(!nativeShapes) {
+          rectArgs[0]=x;rectArgs[1]=y;rectArgs[2]=w;rectArgs[3]=h;
+          rectArgs[4]=tl;rectArgs[5]=tr;rectArgs[6]=br;rectArgs[7]=bl;
+          return renderer.rect(rectArgs);
+        }
+        context.beginPath();
+        if(tl===undefined)context.rect(x,y,w,h);
+        else {
+          if(tr===undefined)tr=tl;if(br===undefined)br=tr;if(bl===undefined)bl=br;
+          const hw=Math.abs(w)/2,hh=Math.abs(h)/2;
+          tl=Math.min(tl,hw,hh);tr=Math.min(tr,hw,hh);br=Math.min(br,hw,hh);bl=Math.min(bl,hw,hh);
+          context.roundRect(x,y,w,h,[tl,tr,br,bl]);
+        }
+        if(renderer._doFill)context.fill();if(renderer._doStroke)context.stroke();
+      },
+      ellipse(x,y,w,h) {
+        if (!renderer._doFill && !renderer._doStroke) return;
+        if (renderer._ellipseMode !== CENTER || renderer._clipping) {
+          return inst.ellipse.apply(inst,arguments);
+        }
+        if (renderer._doFill && !renderer._doStroke && renderer._getFill() === 'rgba(0,0,0,0)') return;
+        if (!renderer._doFill && renderer._doStroke && renderer._getStroke() === 'rgba(0,0,0,0)') return;
+        if(h===undefined)h=w;
+        if(!nativeShapes) {
+          if(w<0||h<0)return inst.ellipse.apply(inst,arguments);
+          ellipseArgs[0]=x-w*.5;ellipseArgs[1]=y-h*.5;
+          ellipseArgs[2]=w;ellipseArgs[3]=h;
+          return renderer.ellipse(ellipseArgs);
+        }
+        w=Math.abs(w);h=Math.abs(h);
+        // Keep p5's subtract/add evaluation order, including subpixel rounding.
+        const rx=w/2,ry=h/2,cx=(x-w*.5)+w/2,cy=(y-h*.5)+h/2;
+        context.beginPath();context.ellipse(cx,cy,rx,ry,0,0,2*Math.PI);context.closePath();
+        if(renderer._doFill)context.fill();if(renderer._doStroke)context.stroke();
+      }
+    };
+    _figurePainter.api=Object.create(window);
+    Object.assign(_figurePainter.api,{fill:_figurePainter.fill,stroke:_figurePainter.stroke,
+      ellipse:_figurePainter.ellipse,rect:_figurePainter.rect});
+  }
+  const painter = _figurePainter, maxes = inst._colorMaxes[inst._colorMode];
+  if (painter.mode !== inst._colorMode || painter.maxes[0] !== maxes[0] ||
+      painter.maxes[1] !== maxes[1] || painter.maxes[2] !== maxes[2] || painter.maxes[3] !== maxes[3]) {
+    painter.numeric.clear();painter.mode=inst._colorMode;
+    for(let i=0;i<4;i++)painter.maxes[i]=maxes[i];
+  }
+  return painter;
+}
+
 function figureLight(ang) {
   const c = Math.cos(ang), s = Math.sin(ang);
   _figLit[0] =  LIGHT_DX * c + LIGHT_DY * s;
@@ -28231,49 +30330,194 @@ function figureLight(ang) {
   return _figLit;
 }
 
+// A model's shade planes use the scene light in its own frame, including
+// nested wrist/head turns and Graphics corpse buffers. No part is displaced
+// away from its rig: volume comes from the curved surfaces inside its outline.
+const _figureChestPlate = [[-8,-12],[8,-12],[10,-10],[10,10],[8,12],[-8,12],[-10,10],[-10,-10]];
+const _figureChestSteel = [100,104,112];
+// Strong ink belongs to the live costume/silhouette, not every interior joint.
+// Scope it to one Character.show call; corpse stamps and the approved female
+// pistol art keep their existing painter exactly, even after an early return.
+let _figureComicInk = 0;
+function figureComicInkFor(c) {
+  if(c.dead||c.hp<=0||c.stunTimer>0||c.skeletonTimer>0||c.eType==='FEMALE_PISTOL')return 0;
+  if(c.eType==='ROBOT'||c.eType==='ARMORED'||c.eType==='ARMORED_STANDARD')return 2;
+  return c.isPlayer||ragHumanoid(c.eType,c.bodyW)?1:0;
+}
+function figureCelContour(g) {
+  if(_figureComicInk){g.stroke(0,0,0,255);g.strokeWeight(_figureComicInk===2?1.2:1.1);}
+  else {g.stroke(22,19,24,168);g.strokeWeight(1.15);}
+}
+function drawFigureComicSeams(g,c) {
+  // Lapels and shoulder folds describe actual fabric. Leave the elbow/knee
+  // surface uninterrupted and keep tiny skin forms free of interior ink.
+  g.push();g.noFill();g.stroke(0,0,0,230);g.strokeWeight(.7);
+  if(c.isPlayer&&chemistSuitUnlocked){
+    g.line(6,-10,2,-5);g.line(2,-5,6,-1);
+    g.line(6,10,2,5);g.line(2,5,6,1);
+    g.line(-3,-6,-3,6);
+  }else if(c.eType!=='ARMORED_STANDARD'&&c.eType!=='ARMORED'){
+    g.bezier(5,-6,8,-4,8,4,5,6);
+    g.line(-5,-9,-2,-7);g.line(-5,9,-2,7);
+  }
+  g.pop();
+}
+const _figureCelLight = [0, 1];
+function figureCelLight(g) {
+  const dc = g.drawingContext;
+  let lx = LIGHT_DX, ly = LIGHT_DY;
+  if (dc && typeof dc.getTransform === 'function') {
+    const m = dc.getTransform(), det = m.a * m.d - m.b * m.c;
+    if (Math.abs(det) > 1e-8) {
+      lx = (m.d * LIGHT_DX - m.c * LIGHT_DY) / det;
+      ly = (m.a * LIGHT_DY - m.b * LIGHT_DX) / det;
+    }
+  }
+  const len = Math.hypot(lx, ly) || 1;
+  _figureCelLight[0] = lx / len; _figureCelLight[1] = ly / len;
+  return _figureCelLight;
+}
+
+// Half an elliptical surface bounded by a curved terminator. Both curves
+// share their endpoints, so there are no inset rings or strokes inside a form.
+// Canvas paths avoid p5's per-vertex arrays in dense crowds. Other renderers,
+// clipping/accessibility modes and the headless harness retain the p5 path.
+function figureCelContext(g) {
+  const inst=typeof p5!=='undefined'?p5.instance:null;
+  const r=g._renderer||(inst&&inst._renderer),dc=g.drawingContext;
+  return r&&typeof p5!=='undefined'&&p5.VERSION==='1.11.11'&&!r.isP3D&&!r._clipping&&dc&&typeof dc.getTransform==='function'&&
+    !(inst&&inst._accessibleOutputs&&(inst._accessibleOutputs.grid||inst._accessibleOutputs.text))?dc:null;
+}
+function figureCelPathStart(g,dc,x,y) {
+  if(dc){dc.beginPath();dc.lineTo(x,y);}else{g.beginShape();g.vertex(x,y);}
+}
+function figureCelPathCurve(g,dc,x1,y1,x2,y2,x,y) {
+  if(dc)dc.bezierCurveTo(x1,y1,x2,y2,x,y);else g.bezierVertex(x1,y1,x2,y2,x,y);
+}
+function figureCelPathEnd(g,dc,ink,x,y,filled=true) {
+  if(dc){
+    // p5 1.11.11 appends the first vertex in both endShape and Renderer2D.
+    // Keep those closing segments too: they affect antialiasing at the seam.
+    dc.lineTo(x,y);dc.lineTo(x,y);dc.closePath();if(filled)dc.fill();if(ink)dc.stroke();
+  }else g.endShape(CLOSE);
+}
+function figureCelCrescent(g, x, y, rx, ry, ux, uy, reach) {
+  const dc=figureCelContext(g);
+  const vx = -uy, vy = ux, q = 0.55228475;
+  figureCelPathStart(g,dc,x + vx * rx,y + vy * ry);
+  figureCelPathCurve(g,dc,x + (vx + ux*q)*rx, y + (vy + uy*q)*ry,
+    x + (ux + vx*q)*rx, y + (uy + vy*q)*ry, x + ux*rx, y + uy*ry);
+  figureCelPathCurve(g,dc,x + (ux - vx*q)*rx, y + (uy - vy*q)*ry,
+    x + (-vx + ux*q)*rx, y + (-vy + uy*q)*ry, x - vx*rx, y - vy*ry);
+  figureCelPathCurve(g,dc,x + (ux*reach-vx*.68)*rx, y + (uy*reach-vy*.68)*ry,
+    x + (ux*reach+vx*.68)*rx, y + (uy*reach+vy*.68)*ry, x + vx*rx, y + vy*ry);
+  figureCelPathEnd(g,dc,false,x + vx * rx,y + vy * ry);
+}
+
+function figureCelOval(g, x, y, w, h, c, k = 1, lx, ly) {
+  if (!(w > 0 && h > 0)) return;
+  const v = c.levels || c, r = v[0], gr = v[1], b = v[2], a = v[3] === undefined ? 255 : v[3];
+  if (lx === undefined) { const L = figureCelLight(g); lx = L[0]; ly = L[1]; }
+  const len = Math.hypot(lx, ly) || 1; lx /= len; ly /= len;
+  if(_figureComicInk)g.noStroke();
+  else {
+    g.stroke(r*.25+5, gr*.25+4, b*.27+7, a*.82);
+    g.strokeWeight(Math.max(.65, Math.min(1.45, Math.min(w,h)*.095))*k);
+  }
+  g.fill(r, gr, b, a); g.ellipse(x, y, w, h); g.noStroke();
+  const shade = .22*k, lit = .18*k;
+  g.fill(r*(1-shade)+3*k, gr*(1-shade)+3*k, b*(1-shade)+7*k, a);
+  figureCelCrescent(g,x,y,w*.5,h*.5,lx,ly,.92);
+  g.fill(r+(255-r)*lit, gr+(255-gr)*lit, b+(246-b)*lit, a);
+  figureCelCrescent(g,x,y,w*.5,h*.5,-lx,-ly,.30);
+  if(_figureComicInk){
+    g.noFill();g.stroke(0,0,0,a);
+    g.strokeWeight(Math.max(.7,Math.min(_figureComicInk===2?1.4:1.3,Math.min(w,h)*.105)*k));
+    g.ellipse(x,y,w,h);
+    g.fill(r+(255-r)*lit,gr+(255-gr)*lit,b+(246-b)*lit,a);
+  }
+  figureCelContour(g);
+}
+
+// A sleeve/trouser leg is ONE tapered surface around two bones. At the elbow
+// the averaged normal joins the two curves; it never outlines one cap on top
+// of another. The same path carries its light band through the bend.
+const _figureCelLimbPoints = new Float64Array(18);
+function figureCelRibbon(g, p, lo, hi, cap, ink, filled=true) {
+  const dc=figureCelContext(g);
+  const sx=p[0],sy=p[1],ex=p[2],ey=p[3],hx=p[4],hy=p[5];
+  const ax=p[6],ay=p[7],bx=p[8],by=p[9],cx=p[10],cy=p[11];
+  const tx=p[12],ty=p[13],ux=p[14],uy=p[15];
+  figureCelPathStart(g,dc,sx+ax*lo,sy+ay*lo);
+  figureCelPathCurve(g,dc,sx+ax*lo+(ex-sx)*.38,sy+ay*lo+(ey-sy)*.38,
+    ex+bx*lo-(hx-sx)*.12,ey+by*lo-(hy-sy)*.12,ex+bx*lo,ey+by*lo);
+  figureCelPathCurve(g,dc,ex+bx*lo+(hx-sx)*.12,ey+by*lo+(hy-sy)*.12,
+    hx+cx*lo-(hx-ex)*.38,hy+cy*lo-(hy-ey)*.38,hx+cx*lo,hy+cy*lo);
+  figureCelPathCurve(g,dc,hx+cx*lo+ux*cap,hy+cy*lo+uy*cap,
+    hx+cx*hi+ux*cap,hy+cy*hi+uy*cap,hx+cx*hi,hy+cy*hi);
+  figureCelPathCurve(g,dc,hx+cx*hi-(hx-ex)*.38,hy+cy*hi-(hy-ey)*.38,
+    ex+bx*hi+(hx-sx)*.12,ey+by*hi+(hy-sy)*.12,ex+bx*hi,ey+by*hi);
+  figureCelPathCurve(g,dc,ex+bx*hi-(hx-sx)*.12,ey+by*hi-(hy-sy)*.12,
+    sx+ax*hi+(ex-sx)*.38,sy+ay*hi+(ey-sy)*.38,sx+ax*hi,sy+ay*hi);
+  figureCelPathCurve(g,dc,sx+ax*hi-tx*cap,sy+ay*hi-ty*cap,
+    sx+ax*lo-tx*cap,sy+ay*lo-ty*cap,sx+ax*lo,sy+ay*lo);
+  figureCelPathEnd(g,dc,ink,sx+ax*lo,sy+ay*lo,filled);
+}
+function figureCelLimb(g, sx, sy, ex, ey, hx, hy, w0, w1, w2, c) {
+  const v=c.levels||c,r=v[0],gr=v[1],b=v[2],a=v[3]===undefined?255:v[3];
+  let tx=ex-sx,ty=ey-sy,ux=hx-ex,uy=hy-ey;
+  const tl=Math.hypot(tx,ty),ul=Math.hypot(ux,uy);
+  if(tl+ul<.1){figureCelOval(g,sx,sy,w0,w0,c,.8);return;}
+  // A fully foreshortened bone has no visible elbow. Merge its cross-section
+  // into the remaining surface so the shade cannot fold outside the outline.
+  if(tl<.01||ul<.01){
+    ex=(sx+hx)*.5;ey=(sy+hy)*.5;w1=(w0+w2)*.5;
+    tx=ex-sx;ty=ey-sy;ux=hx-ex;uy=hy-ey;
+  }
+  const tlen=Math.hypot(tx,ty)||1,ulen=Math.hypot(ux,uy)||1;
+  tx/=tlen;ty/=tlen;ux/=ulen;uy/=ulen;
+  let mx=-ty-uy,my=tx+ux;const ml=Math.hypot(mx,my);
+  if(ml<.1){mx=-ty;my=tx;}else{mx/=ml;my/=ml;}
+  const p=_figureCelLimbPoints;
+  p[0]=sx;p[1]=sy;p[2]=ex;p[3]=ey;p[4]=hx;p[5]=hy;
+  p[6]=-ty*w0*.5;p[7]=tx*w0*.5;p[8]=mx*w1*.5;p[9]=my*w1*.5;
+  p[10]=-uy*w2*.5;p[11]=ux*w2*.5;p[12]=tx;p[13]=ty;p[14]=ux;p[15]=uy;
+  if(_figureComicInk)g.noStroke();
+  else {g.stroke(r*.25+5,gr*.25+4,b*.27+7,a*.82);g.strokeWeight(.85);}
+  g.fill(r,gr,b,a);figureCelRibbon(g,p,-1,1,Math.min(w0,w2)*.42,!_figureComicInk);g.noStroke();
+  const L=figureCelLight(g),side=(-ty*L[0]+tx*L[1])+(-uy*L[0]+ux*L[1]);
+  // A broad, shallow plane continues around the joint without a knee ring.
+  const sign=side<0?-1:1,amount=Math.min(1,Math.abs(side)*.5);
+  // Whole color channels are visually continuous at this scale and let the
+  // painter reuse palette strings instead of allocating a Color at every turn.
+  g.fill(Math.round(r+(3-r*.22)*amount),Math.round(gr+(3-gr*.22)*amount),Math.round(b+(7-b*.22)*amount),a);
+  figureCelRibbon(g,p,sign*.42,sign,.0);
+  g.fill(Math.round(r+(255-r)*.16*amount),Math.round(gr+(255-gr)*.16*amount),Math.round(b+(246-b)*.16*amount),a);
+  figureCelRibbon(g,p,-sign*.84,-sign*.16,.0);
+  if(_figureComicInk){
+    g.noFill();g.stroke(0,0,0,a);g.strokeWeight(_figureComicInk===2?1.15:1.05);
+    figureCelRibbon(g,p,-1,1,Math.min(w0,w2)*.42,true,false);
+    g.fill(Math.round(r+(255-r)*.16*amount),Math.round(gr+(255-gr)*.16*amount),Math.round(b+(246-b)*.16*amount),a);
+  }
+  figureCelContour(g);
+}
+
 // One rounded mass. `k` scales the whole effect: 1 for a torso, less for the
 // little parts where a full contour would swallow them. `lx`/`ly` are the light
-// in the caller's frame -- omit them only where the caller is unrotated.
+// in the caller's frame; omit them to read it from the current Canvas transform.
 function volShade(x, y, w, h, cr, cg, cb, k, lx, ly) {
-  k = k === undefined ? 1 : k;
-  if (lx === undefined) { lx = LIGHT_DX; ly = LIGHT_DY; }
-  const lw = Math.max(0.9, Math.min(2.4, Math.min(w, h) * VOL_LINE)) * k;
-
-  // 1. Contour. Drawn as the fill's own stroke so it hugs the silhouette
-  //    exactly -- a separate ring would show seams where the two disagree.
-  stroke(cr * 0.26, cg * 0.26, cb * 0.30, 205);
-  strokeWeight(lw);
-  fill(cr, cg, cb);
-  ellipse(x, y, w, h);
-  noStroke();
-
-  // 2. Terminator: one soft crescent on the far side, kept weak. A strong one
-  //    reads as a stain lying on the shirt rather than as the surface turning.
-  fill(cr * 0.70, cg * 0.70, cb * 0.74, 96);
-  ellipse(x + lx * w * 0.19 * k, y + ly * h * 0.19 * k, w * 0.93, h * 0.93);
-
-  // 3. The lit side, as NESTED STEPS rather than one cap.
-  //
-  //    A single inset highlight is a second disc sitting on the first, and at
-  //    this size the join between them is a visible ring. Four shrinking
-  //    ellipses, each pushed a little further against the sun at a low alpha,
-  //    accumulate into something with no edge in it -- a gradient, drawn with
-  //    the only tool a flat-fill renderer has.
-  for (let i = 1; i <= VOL_STEPS; i++) {
-    const t = i / VOL_STEPS;
-    const sz = 1 - t * 0.58;
-    const off = t * VOL_CAP;
-    fill(cr + (255 - cr) * t * 0.30, cg + (255 - cg) * t * 0.30,
-         cb + (255 - cb) * t * 0.26, 64);
-    ellipse(x - lx * w * off * k, y - ly * h * off * k, w * sz, h * sz);
-  }
-  // Hand the contour back to whatever draws next -- see figureContour().
+  const paint=figurePainter(),g=paint?paint.api:window;
+  _figureCelRGB[0]=cr;_figureCelRGB[1]=cg;_figureCelRGB[2]=cb;
+  figureCelOval(g,x,y,w,h,_figureCelRGB,k,lx,ly);
   figureContour();
 }
+const _figureCelRGB = [0,0,0];
 
 // The same, taking a p5 colour.
 function volShadeCol(x, y, w, h, c, k, lx, ly) {
-  volShade(x, y, w, h, red(c), green(c), blue(c), k, lx, ly);
+  const paint=figurePainter();
+  figureCelOval(paint?paint.api:window,x,y,w,h,c,k,lx,ly);
+  figureContour();
 }
 
 // The LIVING figure's limb proportions, taken from the corpse rig.
@@ -28445,17 +30689,55 @@ function longGunElevation(band, phase) {
 function weaponHands(w) {
   if (!w) return 0;
   if (w === WEAPONS.ASSAULT_RIFLE || w === WEAPONS.SHOTGUN ||
-      w === WEAPONS.ROCKET_LAUNCHER || w === WEAPONS.COACH_GUN) return 2;
+      w === WEAPONS.ROCKET_LAUNCHER || w === WEAPONS.COACH_GUN || w === WEAPONS.BOW) return 2;
   return 1;
 }
 
-// The guns as CARRIED, drawn about their own GRIP so the carry pose can put
-// them anywhere and swing them. Deliberately not shared with the presented art
-// in Character.show(): that is laid out around the muzzle offsets the bullets
-// are fired from (bLX/bLY) and cannot be moved without walking the rounds off
-// the barrel. The MATERIALS are shared, though -- every colour below is read
-// off the aimed drawing of the same weapon, because a rifle that is black with
-// walnut furniture when it is up must not turn blue-grey when it comes down.
+function cyclePlayerWeapon(direction = 1) {
+  if (!player) return false;
+  const weapons = [WEAPONS.PISTOL];
+  if (isStoryMode) weapons.push(WEAPONS.TASER);
+  if (player.flags && player.flags.bowUnlocked) weapons.push(WEAPONS.BOW);
+  if (dualSmgUnlocked) weapons.push(WEAPONS.DUAL_SMG);
+  else if (smgUnlocked) weapons.push(WEAPONS.SMG);
+  if (arUnlocked) weapons.push(WEAPONS.ASSAULT_RIFLE);
+  if (shotgunUnlocked) weapons.push(WEAPONS.SHOTGUN);
+  if (rocketLauncherUnlocked) weapons.push(WEAPONS.ROCKET_LAUNCHER);
+  const old = weapons.indexOf(player.currentWeapon);
+  player.currentWeapon = weapons[(old + direction + weapons.length) % weapons.length];
+  player.reloadTimer = 0; lastWeaponSwapTime = millis();
+  return true;
+}
+
+// Swept cedar limbs, a taut string and a steel-tipped shaft. Authored around
+// the grip, so the carried and drawn bow keep the same shape at every heading.
+function drawHuntingBow(arrow = true, elevation = 0) {
+  push();
+  const squash = Math.max(0.72,Math.cos(elevation));
+  scale(squash,1);
+  noFill(); stroke(24,31,29); strokeWeight(5.2);
+  bezier(11,-20,-3,-14,-3,-5,0,0);
+  bezier(0,0,-3,5,-3,14,11,20);
+  stroke(177,127,64); strokeWeight(3.1);
+  bezier(11,-20,-3,-14,-3,-5,0,0);
+  bezier(0,0,-3,5,-3,14,11,20);
+  stroke(243,205,126); strokeWeight(1);
+  bezier(10,-19,0,-12,-1,-5,0,0);
+  stroke(224,223,194); strokeWeight(1.1);
+  line(11,-20,arrow ? -10 : 7,0); line(arrow ? -10 : 7,0,11,20);
+  noStroke(); fill(54,66,48); rect(-2,-4,5,8,1);
+  if (arrow) {
+    stroke(121,79,42); strokeWeight(2); line(-13,0,12,0);
+    noStroke(); fill(181,202,198); triangle(14,0,10,-2.6,10,2.6);
+    fill(237,229,196); triangle(-12,-1,-17,-4,-16,0); triangle(-12,1,-17,4,-16,0);
+  }
+  pop();
+}
+
+// Weapons are authored about their own GRIP so a carry can swing them freely.
+// Pistols, SMGs, rifles and shotguns share solid geometry between their carry
+// and aimed poses. The aimed long-gun wrapper pins the projected muzzle to the
+// native bullet origin rather than maintaining a second, flattened drawing.
 //
 // A CARRIED WEAPON IS DRAWN THROUGH A PROJECTION, NOT SQUASHED.
 //
@@ -28675,7 +30957,12 @@ function gunMuzzle(P, x, y, h, br, bg, bb) {
 // sight block, the coach gun is walnut under two blued barrels.
 function carryLongGun(w, el, L, S) {
   el = el === undefined ? 0 : el;
+  if (w === WEAPONS.BOW) { drawHuntingBow(false,el); return; }
   L = L || _figLit;
+  if (w === WEAPONS.ASSAULT_RIFLE || w === WEAPONS.SHOTGUN) {
+    drawLongGunSolid(w,handGunProjection(el,.035,L,S),0,0);
+    return;
+  }
   const P = gunProj(el, L, S);
   const seg = function (x0, x1, y, h, br, bg, bb, lift) {
     gunPiece(P, x0, x1, y, h, br, bg, bb, lift);
@@ -28691,12 +30978,7 @@ function carryLongGun(w, el, L, S) {
   // colours and the order the pieces stack in all carry over -- a rifle that is
   // black with two blocks of walnut on it when it is up has to be the same
   // rifle when it comes down.
-  if (w === WEAPONS.SHOTGUN) {
-    seg(-8, 3, -3.5, 7, 50, 50, 50, 0.26);             // stock
-    seg(-3, 37, -2.5, 5, 30, 30, 30, 0.30);            // barrels
-    seg(5, 19, -3.5, 7, 15, 15, 15, 0.24);             // receiver
-    gunMuzzle(P, 37, 0, 5, 30, 30, 30);
-  } else if (w === WEAPONS.ROCKET_LAUNCHER) {
+  if (w === WEAPONS.ROCKET_LAUNCHER) {
     seg(-5, 42, -3, 6, 50, 70, 50, 0.24);              // tube
     seg(9, 19, -5, 10, 30, 30, 30, 0.22);              // sight block
     gunMuzzle(P, 42, 0, 6, 50, 70, 50);
@@ -28707,12 +30989,6 @@ function carryLongGun(w, el, L, S) {
     seg(15, 37, 0, 3.4, 48, 50, 56, 0.24);             // lower barrel
     seg(13, 15.5, -3.4, 6.8, 150, 120, 70, 0.20);      // breech face
     gunMuzzle(P, 37, -1.7, 3.4, 58, 60, 66);
-  } else {                                              // rifle
-    seg(-8, 0, -3, 6, 139, 69, 19, 0.24);              // walnut stock
-    seg(-3, 39, -2, 4, 40, 40, 40, 0.32);              // black barrel
-    seg(7, 19, -3, 6, 139, 69, 19, 0.22);              // walnut handguard
-    seg(2, 7, 1.4, 7.5, 34, 34, 34, 0.18);             // magazine
-    gunMuzzle(P, 39, 0, 4, 40, 40, 40);
   }
   noStroke();
 }
@@ -28720,9 +30996,204 @@ function carryLongGun(w, el, L, S) {
 // A sidearm, drawn about its GRIP at the origin with the muzzle out along +x,
 // because that is where the hand holding it is -- and because that is the point
 // the foreshortening pivots about.
-function carryHandGun(w, el, L, S) {
+// A one-handed weapon is a small solid, not a tapered silhouette. Pitch and
+// wrist roll rotate ALL three axes before the camera projects them. In
+// particular, a receiver still has an end and a side when its top turns away;
+// scaling a plan drawing made those moments look like folding paper.
+function handGunProjection(el, roll, L, S) {
+  const ce = Math.cos(el), se = Math.sin(el);
+  const cr = Math.cos(roll), sr = Math.sin(roll);
+  S = S || _figSth; L = L || _figLit;
+  const sx = S[0] * GUN_TILT * GUN_AXIAL, sy = S[1] * GUN_TILT;
+  const axes = [[ce, 0, se], [-se * sr, cr, ce * sr], [-se * cr, -sr, ce * cr]];
+  // View and illumination in model space. Face selection and face colour
+  // follow the same rotation as the vertices; highlights cannot orbit a gun.
+  const view = axes.map(a => a[2] - sx * a[0] - sy * a[1]);
+  const light = axes.map(a => a[2] * 0.85 - a[0] * L[0] * 0.45 - a[1] * L[1] * 0.45);
+  return {
+    axes, view, light,
+    point(x, y, z, out) {
+      const wx = ce * x - se * sr * y - se * cr * z;
+      const wy = cr * y - sr * z;
+      const wz = se * x + ce * sr * y + ce * cr * z;
+      out = out || [0, 0];
+      out[0] = wx + sx * wz; out[1] = wy + sy * wz;
+      return out;
+    }
+  };
+}
+
+function handGunFace(P, a, b, c, d, axis, sign, r, g, bl) {
+  const n = P.light[axis] * sign;
+  // Three cel values, with a small continuous term so rotating through the
+  // light does not snap a face between unrelated colours.
+  const shade = 0.62 + Math.max(0, n) * 0.42;
+  const alpha = P.alpha === undefined ? 1 : P.alpha;
+  fill(r * shade, g * shade, bl * shade, 255 * alpha);
+  stroke(r * 0.26, g * 0.26, bl * 0.28, 235 * alpha); strokeWeight(0.65);
+  quad(a[0], a[1], b[0], b[1], c[0], c[1], d[0], d[1]);
+}
+// Vertex scratch is shared across sequential draw calls. Visible crowds can
+// carry dozens of sidearms; allocating eight points for every little box was
+// avoidable per-frame garbage on phones.
+const _handGunVerts = Array.from({length:8}, () => [0,0]);
+const _handGunLineA = [0,0], _handGunLineB = [0,0];
+function handGunBox(P, x0, x1, y0, y1, z0, z1, r, g, b) {
+  const v = _handGunVerts;
+  P.point(x0,y0,z0,v[0]); P.point(x1,y0,z0,v[1]);
+  P.point(x1,y1,z0,v[2]); P.point(x0,y1,z0,v[3]);
+  P.point(x0,y0,z1,v[4]); P.point(x1,y0,z1,v[5]);
+  P.point(x1,y1,z1,v[6]); P.point(x0,y1,z1,v[7]);
+  // Orthographic faces meet along edges; the three facing the camera never
+  // overlap. Drawing only them keeps the outline and avoids hidden-face ink.
+  if (P.view[0] < 0) handGunFace(P,v[0],v[3],v[7],v[4],0,-1,r,g,b);
+  else handGunFace(P,v[1],v[5],v[6],v[2],0,1,r,g,b);
+  if (P.view[1] < 0) handGunFace(P,v[0],v[4],v[5],v[1],1,-1,r,g,b);
+  else handGunFace(P,v[3],v[2],v[6],v[7],1,1,r,g,b);
+  if (P.view[2] < 0) handGunFace(P,v[0],v[1],v[2],v[3],2,-1,r,g,b);
+  else handGunFace(P,v[4],v[7],v[6],v[5],2,1,r,g,b);
+}
+function handGunDetail(P, x0, y0, z0, x1, y1, z1, r, g, b, weight) {
+  const a=P.point(x0,y0,z0,_handGunLineA), c=P.point(x1,y1,z1,_handGunLineB);
+  stroke(r,g,b); strokeWeight(weight || 0.6); line(a[0],a[1],c[0],c[1]); noStroke();
+}
+
+// Pump after the shot, not during its flash. This reads the native cooldown:
+// player/friendly shots count down from 20, enemy shots from 60. Both get the
+// same eighteen-frame mechanical cycle, independent of their firing cadence.
+function longGunPump(c) {
+  if (c.currentWeapon!==WEAPONS.SHOTGUN || c.fireTimer<=0 || c.reloadTimer>0) return 0;
+  const cd=c.isPlayer||c.isFriendly?c.currentWeapon.fireCooldown:(c.currentWeapon.enemyCooldown||48);
+  const age=cd-c.fireTimer;
+  return reloadEase(age,4,10)*(1-reloadEase(age,10,18));
+}
+
+// Aiming uses the same solid as a carry, rotated up into the shoulder. The
+// muzzle is the anchor: pitch/roll recoil moves the receiver and wrists while
+// the front crown stays exactly at the existing flash and projectile origin.
+// The support hand follows the fore-end as the shotgun pumps back and forward.
+function aimedLongGunPose(c, twist, bodyBob) {
+  const kick=c.reloadTimer>0?0:handGunKick(c.weaponKick),pump=longGunPump(c);
+  const wa=c.aimAngle+(twist||0),shotgun=c.currentWeapon===WEAPONS.SHOTGUN;
+  const P=handGunProjection(.018+kick*(shotgun ? .13 : .09),.035+kick*.07,
+                            figureLight(wa),figureSouth(wa));
+  const nativeBob=c.isMoving?Math.abs(Math.sin(c.walkCycle))*2:0;
+  const muzzle=P.point(shotgun?37:39,0,0),x=47+nativeBob-(bodyBob||0)-muzzle[0],y=6-muzzle[1];
+  const fore=P.point(18.5-pump*6,0,0);
+  return {P,x,y,kick,pump,rear:[x,y],fore:[x+fore[0],y+fore[1]]};
+}
+
+const _longGunBoreVerts=Array.from({length:4},()=>[0,0]);
+function longGunMuzzle(P,muzzle,r,g,b) {
+  // A shallow steel collar has real end and side planes; the dark bore appears
+  // only when the camera sees the front face. It fades into that face instead
+  // of popping between two muzzle drawings as the carry crosses level.
+  handGunBox(P,muzzle-.95,muzzle,-1.9,1.9,-1.9,1.9,r,g,b);
+  const alpha=Math.min(1,Math.max(0,P.view[0]*4));
+  if(alpha>.01) {
+    const v=_longGunBoreVerts;
+    P.point(muzzle+.015,-.87,-.87,v[0]);P.point(muzzle+.015,.87,-.87,v[1]);
+    P.point(muzzle+.015,.87,.87,v[2]);P.point(muzzle+.015,-.87,.87,v[3]);
+    noStroke();fill(9,11,15,255*alpha);
+    quad(v[0][0],v[0][1],v[1][0],v[1][1],v[2][0],v[2][1],v[3][0],v[3][1]);
+  }
+}
+
+// The rifle keeps its black steel and walnut furniture; the shotgun keeps its
+// three-grey silhouette. Stocks, receivers, barrels and magazines are solids
+// with inked material boundaries and flat cel values, in BOTH carry and aim.
+// The grip is at (0,0,0), with the magazine/grip underneath the receiver.
+function drawLongGunSolid(w,P,kick,pump) {
+  kick=kick||0;pump=pump||0;
+  if(w===WEAPONS.SHOTGUN) {
+    handGunBox(P,-1,3,-1.8,1.8,-5.2,-.7,31,35,41);              // grip
+    handGunBox(P,9,34,1.0,2.8,-1.4,.9,30,34,40);               // magazine tube
+    handGunBox(P,-8,3,-3.3,3.3,-.7,2.5,50,50,50);              // stock
+    handGunBox(P,-8,-7.1,-3.5,3.5,-.9,2.7,23,26,31);           // butt pad
+    handGunBox(P,10,36.05,-1.65,1.65,-1.65,1.65,45,49,57);      // fixed barrel
+    handGunBox(P,-2,13,-3.3,3.3,-.7,2.85,49,54,63);             // receiver
+    handGunBox(P,14-pump*6,25-pump*6,-3.2,3.2,-.7,2.6,23,26,31);// sliding pump
+    for(let i=0;i<3;i++) handGunDetail(P,16+i*3-pump*6,-2.8,2.65,
+                                      16+i*3-pump*6,2.8,2.65,8,10,14,.7);
+    handGunBox(P,4.8,10.8,-1.0,1.2,2.87,2.98,13,16,21);       // ejection recess
+    handGunBox(P,7-pump*3,10-pump*3,-.75,.95,3.0,3.12,122,133,149);
+    handGunBox(P,33.5,34.7,-.55,.55,1.7,3.25,122,132,148);     // front bead
+    handGunDetail(P,-6,-2.75,2.55,1,-2.75,2.55,101,110,123,.65);
+    longGunMuzzle(P,37,94,104,120);
+  } else {
+    handGunBox(P,-1,2.5,-1.6,1.6,-5.1,-.5,37,39,43);           // pistol grip
+    handGunBox(P,2,6.2,-1.55,1.55,-10.5,-.7,34,38,44);          // magazine
+    handGunBox(P,-8,0,-3.1,3.1,-.7,2.65,139,69,19);             // walnut stock
+    handGunBox(P,-8,-7.1,-3.25,3.25,-.9,2.85,29,31,36);         // butt pad
+    handGunBox(P,7,38.05,-1.65,1.65,-1.65,1.65,48,53,62);       // fixed barrel
+    handGunBox(P,-3,8,-3.1,3.1,-.75,3.1,48,53,61);              // receiver
+    handGunBox(P,7,22.5,-3.0,3.0,-.7,2.55,139,69,19);           // walnut handguard
+    handGunBox(P,-1,6.8,-.65,.65,3.12,3.8,111,122,140);         // rear sight/rail
+    handGunBox(P,2,6,-1.0,1.2,3.12,3.22,12,15,20);             // ejection port
+    handGunBox(P,4.8-kick*3,6.5-kick*3,3.1,4.1,.25,1.6,122,133,149);
+    handGunBox(P,34.5,35.8,-.55,.55,1.7,3.45,117,128,147);     // front sight
+    handGunDetail(P,9,-2.7,2.6,21,-2.7,2.6,193,117,47,.65);
+    handGunDetail(P,-6,-2.65,2.7,-1,-2.65,2.7,190,110,43,.6);
+    longGunMuzzle(P,39,94,104,120);
+  }
+  noStroke();
+}
+
+// The slide comes back sharply and settles over six simulation frames. It
+// shares the shot timer with the wrist kick, not the random muzzle-flash art.
+function handGunKick(timer) {
+  const t = Math.max(0, Math.min(1, (timer || 0) / 6));
+  return t * t * (3 - 2 * t);
+}
+function drawHandGunSolid(w, el, L, S, roll, kick, magOut, slideOpen) {
+  const P = handGunProjection(el, roll || 0, L, S);
+  const smg = w === WEAPONS.SMG || w === WEAPONS.DUAL_SMG;
+  const mag = Math.max(0, Math.min(1, magOut || 0));
+  const bolt = Math.max(handGunKick(kick), slideOpen || 0);
+  // Low pieces first: the palm surrounds the grip underneath the receiver.
+  // Magazines withdraw along their real vertical axis instead of sliding a
+  // rectangle sideways off the muzzle.
+  handGunBox(P, smg ? -7 : -0.3, smg ? -3 : 3, -2.0, 2.0, smg ? -6.0 : -2.1, -0.8, 30,33,38);
+  // Transfer visibility smoothly to the loose magazine in the support hand.
+  // Removing the whole mesh at a threshold made it blink out mid-removal.
+  P.alpha = 1 - reloadEase(mag, 0.35, 1);
+  handGunBox(P, smg ? -4 : 0.3, smg ? 0.5 : 2.4, -1.7, 1.7,
+             (smg ? -12 : -2.3) - mag * 8, -2 - mag * 8, 38,42,48);
+  P.alpha = 1;
+  if (smg) {
+    handGunBox(P, -9, 12, -3.7, 3.7, -0.8, 3.5, 62,67,75); // receiver
+    handGunBox(P, 11.5, 16, -2.2, 2.2, 0.2, 2.8, 43,47,53); // barrel
+    handGunBox(P, -4, 5, -2.0, 2.0, 3.5, 4.1, 81,87,98);    // top rail
+    // Charging handle reciprocates along the receiver; the barrel is fixed.
+    handGunBox(P, 5 - bolt*2.8, 7 - bolt*2.8, 3.7, 4.5, 1.5, 2.6, 132,139,150);
+    handGunBox(P, 13.4, 14.5, -0.65, 0.65, 2.8, 4.0, 103,111,124);
+    for (let i=0;i<3;i++) handGunDetail(P, 7+i*1.5,-2.4,3.55,7+i*1.5,2.4,3.55,27,30,35,0.65);
+    handGunDetail(P,-7,-2.9,3.55,2,-2.9,3.55,153,164,181,0.75);
+  } else {
+    handGunBox(P, -2, 12.5, -2.8, 2.8, -0.8, 0.9, 40,44,51); // fixed frame
+    handGunBox(P, 1, 15, -1.8, 1.8, 0.9, 2.9, 115,124,137);  // fixed barrel
+    handGunBox(P, -2 - bolt*3.3, 15 - bolt*3.3, -2.8, 2.8, 1.2, 4.3, 73,80,91);
+    // Ejection port and rear serrations travel WITH the slide.
+    handGunBox(P, 5-bolt*3.3,8.5-bolt*3.3,-1.25,1.25,4.31,4.4,24,28,34);
+    for(let i=0;i<3;i++) handGunDetail(P,-0.8+i*1.1-bolt*3.3,-2.2,4.35,
+                                   -0.8+i*1.1-bolt*3.3,2.2,4.35,37,42,50,0.65);
+    handGunBox(P, 12.1-bolt*3.3,13.2-bolt*3.3,-0.6,0.6,4.3,5.1,148,160,180);
+    handGunDetail(P,1-bolt*3.3,-2.5,4.35,11-bolt*3.3,-2.5,4.35,161,176,196,0.8);
+  }
+  // The crown/bore retains the signed elevation cue. The solid receiver,
+  // barrel and grip carry volume even when the muzzle points away from us.
+  const muzzle = smg ? 16 : 15;
+  gunMuzzle(gunProj(el,L,S), muzzle, 0, smg ? 4.4 : 4.0, 82,90,104);
+  noStroke();
+}
+
+function carryHandGun(w, el, L, S, roll, kick, magOut, slideOpen) {
   el = el === undefined ? 0 : el;
   L = L || _figLit;
+  if (w === WEAPONS.PISTOL || w === WEAPONS.SMG || w === WEAPONS.DUAL_SMG) {
+    drawHandGunSolid(w, el, L, S, roll, kick, magOut, slideOpen);
+    return;
+  }
   const P = gunProj(el, L, S);
   const seg = function (x0, x1, y, h, br, bg, bb, lift) {
     gunPiece(P, x0, x1, y, h, br, bg, bb, lift);
@@ -28758,6 +31229,77 @@ function carryHandGun(w, el, L, S) {
   noStroke();
 }
 
+// Reloads use the existing ninety-frame gameplay timer. Each magazine has a
+// removal, a trip to the belt, an insertion and a rack/bolt release; dual guns
+// take turns so both cannot teleport fresh magazines into place together.
+function reloadEase(p, a, b) {
+  const t = Math.max(0, Math.min(1, (p-a)/(b-a)));
+  return t*t*(3-2*t);
+}
+function handGunReloadPhase(p) {
+  return {
+    out: reloadEase(p,0.12,0.28) * (1-reloadEase(p,0.54,0.72)),
+    rack: reloadEase(p,0.76,0.83) * (1-reloadEase(p,0.86,0.96)),
+    belt: reloadEase(p,0.28,0.43) * (1-reloadEase(p,0.46,0.62))
+  };
+}
+function oneHandWeapon(w) {
+  return w === WEAPONS.PISTOL || w === WEAPONS.SMG || w === WEAPONS.DUAL_SMG;
+}
+function reloadArm(c, sx, sy, hx, hy, right) {
+  const RG=figureRig(c.bodyW,c.bodyH),paint=figurePainter(),g=paint?paint.api:window;
+  const ex=sx+(hx-sx)*.40-2.5,ey=sy+(hy-sy)*.40+(right?2.5:-2.5);
+  figureCelLimb(g,sx,sy,ex,ey,hx,hy,RG.upperW,(RG.upperW+RG.foreW)*.5,RG.foreW*.84,c.shirtCol);
+  const skin=!right&&c.isPlayer&&chemistSuitUnlocked?[180,180,190]:(c.skinCol||[235,180,140]);
+  figureCelOval(g,hx,hy,RG.hand,RG.hand,skin,.8);
+}
+function drawOneHandReload(c) {
+  const p=Math.max(0,Math.min(1,1-c.reloadTimer/90));
+  const dual=c.currentWeapon===WEAPONS.DUAL_SMG;
+  const leftBusy=leftHandAction(c)!==0;
+  const rPhase=handGunReloadPhase(dual?Math.min(1,p*2):p);
+  const lPhase=handGunReloadPhase(Math.max(0,p*2-1));
+  const arc=Math.sin(p*Math.PI), el=-0.62*arc;
+  const gx=(c.currentWeapon===WEAPONS.PISTOL?16:22)-3*arc, gy=c.currentWeapon===WEAPONS.PISTOL?8:11;
+  const roll=0.18*arc, ang=-0.10*arc;
+  reloadArm(c,0,c.bodyH*0.425,gx,gy,true);
+  if(!leftBusy) {
+    if(dual) reloadArm(c,0,-c.bodyH*0.425,gx,-gy,false);
+    else {
+      const belt=rPhase.belt;
+      const hx=gx-3-(gx+2)*belt-rPhase.rack*3;
+      const hy=gy-2-(gy+8)*belt-rPhase.rack*2;
+      reloadArm(c,0,-c.bodyH*0.425,hx,hy,false);
+      if(rPhase.out>0.12 && rPhase.rack<0.01) {
+        push();translate(hx,hy);
+        const P=handGunProjection(-0.35,0.35,figureLight(c.aimAngle),figureSouth(c.aimAngle));
+        P.alpha=reloadEase(rPhase.out,0.12,0.70);
+        handGunBox(P,-2,3,-1.8,1.8,-5,1,43,48,56);
+        handGunBox(P,-1.5,2.5,-1.3,1.3,1,1.7,174,137,68);
+        pop();
+      }
+    }
+  }
+  for(const side of dual&&!leftBusy?[1,-1]:[1]) {
+    const phase=side===1?rPhase:lPhase;
+    push();translate(gx,gy*side);rotate(ang*side);
+    const heading=c.aimAngle+ang*side;
+    const slide=c.currentWeapon===WEAPONS.PISTOL ? Math.max(phase.rack,1-reloadEase(p,0.86,0.96)) : phase.rack;
+    carryHandGun(c.currentWeapon,el,figureLight(heading),figureSouth(heading),roll*side,0,phase.out,slide);
+    // A discarded magazine falls clear on the strong side. It is purely art,
+    // keyed to the reload timer so pausing never advances it or spawns items.
+    const sp=dual?(side===1?p*2:p*2-1):p;
+    if(sp>0.28 && sp<0.50) {
+      const fall=(sp-0.28)/0.22;
+      const P=handGunProjection(-0.4-fall,0.4+fall,figureLight(heading),figureSouth(heading));
+      P.alpha=reloadEase(sp,0.28,0.32)*(1-reloadEase(sp,0.44,0.50));
+      push();translate(-2-fall*4,side*(5+fall*5));
+      handGunBox(P,-2,2,-1.6,1.6,-5,0,32,35,42);pop();
+    }
+    pop();
+  }
+}
+
 // Presenting the weapon, as opposed to carrying it. The right stick is the aim
 // stick, so holding it IS aiming; a shot in the last few frames and a reload
 // both keep the gun up, because dropping to a carry between rounds would make
@@ -28765,8 +31307,7 @@ function carryHandGun(w, el, L, S) {
 function aimIntent(c) {
   if (typeof rightStick === 'undefined') return true;
   return !!rightStick.active || c.muzzleFlash > 0 || c.reloadTimer > 0 ||
-         c.meleeTimer > 0 || (typeof isCooking !== 'undefined' && isCooking) ||
-         c.throwAnimTimer > 0 || c.dashTimer > 0;
+         c.meleeTimer > 0 || c.dashTimer > 0;
 }
 
 // How long the gun stays up after the aim stick lets go. Two jobs: a thumb
@@ -28778,6 +31319,97 @@ const AIM_HOLD = 14;
 function playerAiming(c) {
   if (!c.isPlayer) return true;         // everyone else presents; see CARRY.
   return (c.aimHold || 0) > 0;
+}
+
+// One off hand, one action. These states do not imply that the right-hand gun
+// is aimed, and a held cannon button during its cooldown is just a grey hand.
+function leftHandAction(c) {
+  if (!c.isPlayer) return 0;
+  if ((typeof isCooking !== 'undefined' && isCooking) || c.throwAnimTimer > 0) return 1;
+  if (typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked &&
+      (c.cannonCharge > 0 || c.cannonFireDelay > 35 ||
+       (typeof cannonInputHeld !== 'undefined' && cannonInputHeld &&
+        c.cannonCooldown <= 0 && c.cannonFireDelay <= 0 && c.cannonAmmo > 0))) return 2;
+  return 0;
+}
+
+// Support actions run before movement/aim updates, so read this frame's stick
+// direction at release instead of firing toward the previous frame's heading.
+function supportAimAngle(c) {
+  if (typeof rightStick !== 'undefined' && rightStick && rightStick.active &&
+      Math.hypot(rightStick.dx, rightStick.dy) > 0.001) return atan2(rightStick.dy, rightStick.dx);
+  if (typeof leftStick !== 'undefined' && leftStick && leftStick.active &&
+      c.dashTimer <= 0 && Math.hypot(leftStick.dx, leftStick.dy) > 0.001) return atan2(leftStick.dy, leftStick.dx);
+  return c.aimAngle;
+}
+
+// Shared by the aimed and walking poses. Bone lengths come from the same rig
+// as the walking arm; winding up, releasing and recoiling change its joints.
+function leftActionPose(c, action) {
+  const R = figureRig(c.bodyW, c.bodyH), sy = -c.bodyH * 0.425;
+  const U = R.upper * 0.97, F = R.fore * 0.97;
+  if (action === 1) {
+    let t = (typeof isCooking !== 'undefined' && isCooking) ? 0 :
+            Math.min(1, Math.max(0, (15 - c.throwAnimTimer) / 8));
+    t = t * t * (3 - 2 * t);
+    const a = lerp(PI * 0.80, -PI * 0.08, t), b = lerp(PI * 1.30, PI * 0.02, t);
+    const ex = cos(a) * U, ey = sy + sin(a) * U;
+    return { sx: 0, sy, ex, ey, hx: ex + cos(b) * F, hy: ey + sin(b) * F, hand: R.hand };
+  }
+  const recoil = c.cannonCharge > 0 ? 0 : Math.max(0, (c.cannonFireDelay - 35) / 13);
+  return { sx: 0, sy, ex: U - recoil * 1.1, ey: sy - 0.6,
+           hx: U + F - recoil * 2.6, hy: sy - 1.7, hand: R.hand };
+}
+
+// The grey hand's charge core and the lightning's first point share one origin.
+function leftActionMuzzle(c, angle) {
+  const P = leftActionPose(c, 2), GP = gaitPose(c.isMoving ? c.gait : 0);
+  let bob = c.isMoving ? abs(sin(c.walkCycle)) * 2 * GP.bob + GP.lean : 0;
+  if (c.mounted) bob *= 0.4;
+  if (c.reloadTimer > 0 && !oneHandWeapon(c.currentWeapon)) bob += sin(frameCount * 0.5) * 3;
+  const tw = c.isMoving && !(c.isArmed && c.meleeTimer <= 0 && playerAiming(c))
+           ? sin(c.walkCycle) * GP.twist : 0;
+  const x = P.hx + P.hand * 0.48, y = P.hy;
+  return { x: c.x + cos(angle) * x - sin(angle) * y + cos(angle + tw) * bob,
+           y: c.y + sin(angle) * x + cos(angle) * y + sin(angle + tw) * bob };
+}
+
+function drawLeftHandAction(c, action, untwist) {
+  const P = leftActionPose(c, action), R = figureRig(c.bodyW, c.bodyH);
+  const chemist = typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked;
+  push(); rotate(untwist || 0);
+  const paint=figurePainter(),g=paint?paint.api:window;
+  figureCelLimb(g,P.sx,P.sy,P.ex,P.ey,P.hx,P.hy,R.upperW,(R.upperW+R.foreW)*.5,R.foreW*.84,c.shirtCol);
+  figureCelOval(g,P.hx,P.hy,P.hand,P.hand,chemist?[180,180,190]:(c.skinCol||[235,180,140]),.8);
+  if (action === 1 && typeof isCooking !== 'undefined' && isCooking) {
+    push(); translate(P.hx, P.hy);
+    if (chemist) {
+      stroke(80, 110, 135); strokeWeight(0.8); fill(150, 210, 255, 220);
+      beginShape(); vertex(-3, 3); vertex(3, 3); vertex(1.4, -2); vertex(-1.4, -2); endShape(CLOSE);
+      fill(225); rect(-1.4, -4, 2.8, 2, 0.5); noStroke(); fill(230, 250, 255, 175); rect(-1.8, 0, 1, 2);
+    } else {
+      stroke(22, 50, 25); strokeWeight(0.8); fill(40, 120, 40); ellipse(0, 0, 7, 9);
+      noStroke(); fill(135, 160, 120); rect(-1.5, -5, 3, 2, 0.5); fill(125, 185, 100); ellipse(-1.5, -1.2, 2, 4);
+    }
+    pop();
+  } else if (action === 2) {
+    const x = P.hx + P.hand * 0.48, y = P.hy;
+    const charging = c.cannonCharge > 0;
+    const discharge = !charging ? Math.max(0, (c.cannonFireDelay - 35) / 13) : 0;
+    const size = charging ? 7 + Math.min(15, c.cannonCharge * 0.10) : 11 * discharge;
+    noStroke(); fill(255, 238, 50, 85); ellipse(x, y, size * 1.65, size * 1.65);
+    fill(255, 247, 85, 210); ellipse(x, y, size, size); fill(255, 255, 245); ellipse(x, y, size * 0.42, size * 0.42);
+    stroke(255, 248, 120, 230); strokeWeight(1.1);
+    for (let i = 0; i < 3; i++) {
+      const a = frameCount * 0.27 + i * TWO_PI / 3, r = size * 0.48;
+      line(x + cos(a) * r, y + sin(a) * r, x + cos(a + 0.3) * (r + 3), y + sin(a + 0.3) * (r + 3));
+    }
+    if (charging && frameCount % 3 === 0) {
+      const M = leftActionMuzzle(c, c.aimAngle);
+      emit(M.x, M.y, 1, color(255, 255, 0), "SPARK");
+    }
+  }
+  pop();
 }
 const STAND_FORE_ARM = 0.65;
 let _figRigCache = null, _figRigKey = '';
@@ -28801,8 +31433,8 @@ function figureRig(bW, bH) {
 // inherits a contour, and the silhouette closes for free. That is the single
 // biggest thing separating a figure from the ground it stands on.
 function figureContour() {
-  stroke(22, 19, 24, 168);
-  strokeWeight(1.15);
+  const paint=figurePainter();
+  figureCelContour(paint?paint.api:window);
 }
 
 // Shadow colour. Never pure black: outdoor shade is lit by the sky above it,
@@ -29137,7 +31769,818 @@ function drawBiomeShadows() {
 // (baked once) or drawn live for the handful of props that animate. In p5's
 // global mode every drawing function is a property of `window`, so passing
 // `window` as the target draws to the main canvas.
+// The PNW art keeps the same harvestable trunks and decor type names, but its
+// silhouettes are species-specific. Everything below is bounded vector work:
+// crowns stay live, small forest-floor pieces use this same painter in the bake.
+// A shadow belongs to the roots, BEFORE the camera lean; the sun never decides
+// where the crown moves. The GL rig owns canopy shadows when it is active.
+// Closed forest polygons use the same Canvas calls as p5's 2D renderer.
+// This avoids allocating a p5 vertex record for every needle/bough edge. Other
+// versions, alternate renderers and accessible output keep p5's own path.
+const _forestPolygonPainters = new WeakMap();
+function forestPolygonPainter(g) {
+  const inst = typeof window !== 'undefined' && g === window && typeof p5 !== 'undefined' ? p5.instance : g;
+  const renderer = inst && inst._renderer;
+  if (typeof p5 === 'undefined' || (p5.VERSION !== '1.9.4' && p5.VERSION !== '1.11.11') ||
+      typeof p5.Renderer2D !== 'function' || !renderer || !(renderer instanceof p5.Renderer2D) || renderer.isP3D || renderer._clipping ||
+      (inst._accessibleOutputs && (inst._accessibleOutputs.grid || inst._accessibleOutputs.text))) return g;
+  let path = _forestPolygonPainters.get(renderer);
+  if (!path) {
+    const context = renderer.drawingContext;
+    path = {
+      empty: true, x: 0, y: 0,
+      beginShape() { this.empty = true; this.curve = false; context.beginPath(); },
+      beginCurveShape() { this.empty = true; this.curve = true; context.beginPath(); },
+      vertex(x, y) {
+        if (this.empty) {
+          this.empty = false; this.x = x; this.y = y;
+          // p5's Bezier path starts with lineTo on an empty path; its polygon
+          // path starts with moveTo. Canvas rasterizes their closure slightly
+          // differently, so retain the verified operation for each shape.
+          if (this.curve) context.lineTo(x, y); else context.moveTo(x, y);
+        }
+        else context.lineTo(x, y);
+      },
+      bezierVertex(x1, y1, x2, y2, x3, y3) {
+        context.bezierCurveTo(x1, y1, x2, y2, x3, y3);
+      },
+      endShape(mode) {
+        if (this.empty || (!renderer._doFill && !renderer._doStroke)) return;
+        if (mode === CLOSE) {
+          // Both p5 versions append the first vertex in the instance and
+          // renderer. Keep both closing edges for identical stroke pixels.
+          context.lineTo(this.x, this.y); context.lineTo(this.x, this.y); context.closePath();
+        }
+        if (renderer._doFill) context.fill();
+        if (renderer._doStroke) context.stroke();
+        if (p5.VERSION === '1.11.11') context.closePath();
+      }
+    };
+    _forestPolygonPainters.set(renderer, path);
+  }
+  return path;
+}
+
+function forestContactShadow(g, w, h, len, alpha, density) {
+  const path = forestPolygonPainter(g);
+  const a = alpha * density;
+  if (a < 1.5) return;
+  const dx = LIGHT_DX * len, dy = LIGHT_DY * len;
+  // True tangent endcaps, including narrow ellipses. Four cubic arcs replace
+  // the old visibly faceted 18-vertex capsule without a blur or new texture.
+  const phase = Math.atan2(dy * w, dx * h), tangent = phase + HALF_PI;
+  const bands = w >= 55 ? 3 : 1, curve = 0.5522847498307936;
+  g.noStroke();
+  for (let band = 0; band < bands; band++) {
+    const size = bands === 1 ? 1 : band === 0 ? 1.10 : band === 1 ? 1.04 : 1;
+    const opacity = bands === 1 ? 1 : band === 0 ? .16 : band === 1 ? .28 : .56;
+    const rx = w * size * .5, ry = h * size * .5;
+    g.fill(14, 35, 36, a * opacity);
+    if (path.beginCurveShape) path.beginCurveShape(); else path.beginShape();
+    path.vertex(Math.cos(tangent) * rx, Math.sin(tangent) * ry);
+    for (let cap = 0; cap < 2; cap++) {
+      const ox = cap ? dx : 0, oy = cap ? dy : 0;
+      const start = tangent + cap * PI;
+      if (cap) path.vertex(ox + Math.cos(start) * rx, oy + Math.sin(start) * ry);
+      for (let arc = 0; arc < 2; arc++) {
+        const a0 = start + arc * HALF_PI, a1 = a0 + HALF_PI;
+        const x0 = Math.cos(a0) * rx, y0 = Math.sin(a0) * ry;
+        const x1 = Math.cos(a1) * rx, y1 = Math.sin(a1) * ry;
+        path.bezierVertex(ox + x0 - Math.sin(a0) * rx * curve, oy + y0 + Math.cos(a0) * ry * curve,
+          ox + x1 + Math.sin(a1) * rx * curve, oy + y1 - Math.cos(a1) * ry * curve, ox + x1, oy + y1);
+      }
+    }
+    path.endShape(CLOSE);
+  }
+}
+
+// Canopy plans belong to the world. The camera only translates their raised
+// volumes; seeded branch headings never turn to face the viewer. One connected
+// crown supports unequal bough fans instead of repeated concentric silhouettes.
+function forestTreeCrown(g, rx, ry, seed, species, points) {
+  const path = forestPolygonPainter(g);
+  if (points && forestTreeStaticPolygon(g, path, points)) return;
+  const alder = species === "RED_ALDER", cedar = species === "WESTERN_CEDAR";
+  const n = alder ? 24 : 32;
+  const phase = seed * 2.3;
+  path.beginShape();
+  if (points) {
+    for (let i = 0; i < points.length; i += 2) path.vertex(points[i], points[i + 1]);
+  } else for (let i = 0; i < n; i++) {
+    const a = i * TWO_PI / n;
+    const r = 0.77 + 0.10 * Math.sin(a * 3 + phase) +
+      0.055 * Math.sin(a * (alder ? 6 : cedar ? 9 : 11) - phase * 1.7);
+    path.vertex(Math.cos(a) * rx * r, Math.sin(a) * ry * r);
+  }
+  path.endShape(CLOSE);
+}
+
+// A tapered, irregular bough fan, rather than a smaller outline of the whole
+// tree. Its direction belongs to the seeded branch plan in world space.
+const _FOREST_BOUGH_EDGE = [
+  -.69,0, -.49,-.27, -.30,-.18, -.26,-.43, -.04,-.28,
+  .06,-.46, .26,-.25, .40,-.36, .59,-.17, .73,-.22,
+  .96,0, .76,.17, .60,.12, .46,.33, .27,.22, .13,.43,
+  -.06,.28, -.23,.40, -.34,.19, -.52,.24
+];
+function forestTreeBough(g, rx, ry, angle, seed, alder, points) {
+  const path = forestPolygonPainter(g);
+  if (points && forestTreeStaticPolygon(g, path, points)) return;
+  const ca = Math.cos(angle), sa = Math.sin(angle);
+  path.beginShape();
+  if (points) {
+    for (let i = 0; i < points.length; i += 2) path.vertex(points[i], points[i + 1]);
+  } else if (alder) {
+    for (let i = 0; i < 14; i++) {
+      const a = i * TWO_PI / 14;
+      const r = .85 + .10 * Math.sin(a * 3 + seed * 8);
+      const x = Math.cos(a) * r, y = Math.sin(a) * r * .65;
+      path.vertex((ca * x - sa * y) * rx, (sa * x + ca * y) * ry);
+    }
+  } else for (let i = 0; i < _FOREST_BOUGH_EDGE.length; i += 2) {
+    const x = _FOREST_BOUGH_EDGE[i], y = _FOREST_BOUGH_EDGE[i + 1] * 1.48;
+    path.vertex((ca * x - sa * y) * rx, (sa * x + ca * y) * ry);
+  }
+  path.endShape(CLOSE);
+}
+
+const _FOREST_BRANCH_PLAN = [
+  -.16,-.25,-2.18,.53,.39,
+   .18,-.20,-.59,.56,.43,
+  -.25, .09, 2.80,.57,.47,
+   .19, .20, .53,.61,.52,
+  -.03, .02,-1.26,.51,.68
+];
+function forestTreeBoughFacet(g, rx, ry, angle, alder, seed, faces) {
+  const path = forestPolygonPainter(g);
+  const ca = Math.cos(angle), sa = Math.sin(angle);
+  const side = LIGHT_DX * sa - LIGHT_DY * ca >= 0 ? 1 : -1;
+  if (faces && forestTreeStaticPolygon(g, path, side < 0 ? faces[0] : faces[1])) return;
+  path.beginShape();
+  if (faces) {
+    const points = side < 0 ? faces[0] : faces[1];
+    for (let i = 0; i < points.length; i += 2) path.vertex(points[i], points[i + 1]);
+    path.endShape(CLOSE);
+    return;
+  }
+  path.vertex(-ca * rx * .65, -sa * ry * .65);
+  if (alder) {
+    for (let i = 0; i <= 6; i++) {
+      const a = side * i * PI / 6;
+      const r = .85 + .10 * Math.sin(a * 3 + seed * 8);
+      const x = Math.cos(a) * r, y = Math.sin(a) * r * .65;
+      path.vertex((ca * x - sa * y) * rx, (sa * x + ca * y) * ry);
+    }
+  } else if (side < 0) {
+    for (let i = 2; i <= 20; i += 2) {
+      const x = _FOREST_BOUGH_EDGE[i], y = _FOREST_BOUGH_EDGE[i + 1] * 1.48;
+      path.vertex((ca * x - sa * y) * rx, (sa * x + ca * y) * ry);
+    }
+  } else {
+    for (let i = _FOREST_BOUGH_EDGE.length - 2; i >= 20; i -= 2) {
+      const x = _FOREST_BOUGH_EDGE[i], y = _FOREST_BOUGH_EDGE[i + 1] * 1.48;
+      path.vertex((ca * x - sa * y) * rx, (sa * x + ca * y) * ry);
+    }
+  }
+  path.vertex(ca * rx * .96, sa * ry * .96);
+  path.endShape(CLOSE);
+}
+
+// Static tree coordinates belong to their streamed decor record. Retiring a
+// chunk releases its plans through the WeakMap; camera and sun changes never
+// rebuild them. Keep the original arithmetic order for identical edge pixels.
+const _forestTreePlans = new WeakMap();
+const _forestTreePaths = new WeakMap();
+function forestTreeStaticPolygon(g, painter, points) {
+  if (typeof Path2D !== 'function' || typeof p5 === 'undefined' || painter === g) return false;
+  const inst = g === window ? p5.instance : g, renderer = inst && inst._renderer;
+  // A proxy painter records the actual vertices during moving-camera QA.
+  // Retain that route, along with all the version/renderer/accessibility guards.
+  if (!renderer || painter !== _forestPolygonPainters.get(renderer)) return false;
+  let polygon = _forestTreePaths.get(points);
+  if (!polygon) {
+    polygon = new Path2D(); polygon.moveTo(points[0], points[1]);
+    for (let i = 2; i < points.length; i += 2) polygon.lineTo(points[i], points[i + 1]);
+    polygon.lineTo(points[0], points[1]); polygon.lineTo(points[0], points[1]);
+    polygon.closePath(); _forestTreePaths.set(points, polygon);
+  }
+  const context = renderer.drawingContext;
+  if (renderer._doFill) context.fill(polygon);
+  if (renderer._doStroke) context.stroke(polygon);
+  return true;
+}
+
+function forestTreePlan(d, rx, ry, seed, species, rot) {
+  let plan = _forestTreePlans.get(d);
+  const style = d.forestCanopyStyle || "NEEDLE";
+  if (plan && plan.rx === rx && plan.ry === ry && plan.seed === seed &&
+      plan.species === species && plan.rot === rot && plan.style === style) return plan;
+  const comic = style === "COMIC";
+  const alder = species === "RED_ALDER" || comic, cedar = species === "WESTERN_CEDAR";
+  const n = alder ? 24 : 32, phase = seed * 2.3;
+  const crown = new Float64Array(n * 2);
+  for (let i = 0; i < n; i++) {
+    const a = i * TWO_PI / n;
+    const r = comic ? .79 + .10 * Math.sin(a * 4 + phase) + .045 * Math.sin(a * 8 - phase * 1.7) :
+      .77 + .10 * Math.sin(a * 3 + phase) +
+      .055 * Math.sin(a * (alder ? 6 : cedar ? 9 : 11) - phase * 1.7);
+    crown[i * 2] = Math.cos(a) * rx * r;
+    crown[i * 2 + 1] = Math.sin(a) * ry * r;
+  }
+  const branchPhase = rot + seed * 1.3, ca = Math.cos(branchPhase), sa = Math.sin(branchPhase);
+  const branches = [];
+  for (let i = 0; i < _FOREST_BRANCH_PLAN.length; i += 5) {
+    const x = _FOREST_BRANCH_PLAN[i], y = _FOREST_BRANCH_PLAN[i + 1];
+    const angle = branchPhase + _FOREST_BRANCH_PLAN[i + 2];
+    const size = _FOREST_BRANCH_PLAN[i + 3], brx = rx * size, bry = ry * size;
+    const bc = Math.cos(angle), bs = Math.sin(angle), branchSeed = seed + i;
+    const points = new Float64Array(alder ? 28 : _FOREST_BOUGH_EDGE.length);
+    if (alder) {
+      for (let j = 0; j < 14; j++) {
+        const a = j * TWO_PI / 14, r = .85 + .10 * Math.sin(a * 3 + branchSeed * 8);
+        const bx = Math.cos(a) * r, by = Math.sin(a) * r * .65;
+        points[j * 2] = (bc * bx - bs * by) * brx;
+        points[j * 2 + 1] = (bs * bx + bc * by) * bry;
+      }
+    } else for (let j = 0; j < _FOREST_BOUGH_EDGE.length; j += 2) {
+      const bx = _FOREST_BOUGH_EDGE[j], by = _FOREST_BOUGH_EDGE[j + 1] * 1.48;
+      points[j] = (bc * bx - bs * by) * brx;
+      points[j + 1] = (bs * bx + bc * by) * bry;
+    }
+    const faces = [];
+    for (const side of [-1, 1]) {
+      const face = [-bc * brx * .65, -bs * bry * .65];
+      if (alder) {
+        for (let j = 0; j <= 6; j++) {
+          const a = side * j * PI / 6, r = .85 + .10 * Math.sin(a * 3 + branchSeed * 8);
+          const bx = Math.cos(a) * r, by = Math.sin(a) * r * .65;
+          face.push((bc * bx - bs * by) * brx, (bs * bx + bc * by) * bry);
+        }
+      } else if (side < 0) {
+        for (let j = 2; j <= 20; j += 2) face.push(points[j], points[j + 1]);
+      } else {
+        for (let j = _FOREST_BOUGH_EDGE.length - 2; j >= 20; j -= 2)
+          face.push(points[j], points[j + 1]);
+      }
+      face.push(bc * brx * .96, bs * bry * .96);
+      faces.push(new Float64Array(face));
+    }
+    const lines = new Float64Array(12);
+    lines[0] = -bc * rx * size * .39; lines[1] = -bs * ry * size * .39;
+    lines[2] = bc * rx * size * .56; lines[3] = bs * ry * size * .56;
+    for (let j = 0; j < 2; j++) {
+      const q = .12 + j * .22, k = 4 + j * 4;
+      lines[k] = bc * rx * size * q; lines[k + 1] = bs * ry * size * q;
+      lines[k + 2] = (bc * (q + .15) - bs * .22) * rx * size;
+      lines[k + 3] = (bs * (q + .15) + bc * .22) * ry * size;
+    }
+    branches.push({ angle, size, height: _FOREST_BRANCH_PLAN[i + 4], points, faces, lines,
+      x: (ca * x - sa * y) * rx, y: (sa * x + ca * y) * ry });
+  }
+  plan = { rx, ry, seed, species, rot, style, crown, branches };
+  _forestTreePlans.set(d, plan);
+  return plan;
+}
+
+// Side facets use p5's verified Renderer2D.quad directly, without the public
+// API's argument array and per-face Color objects. The renderer still owns its
+// fill cache and the exact quad path. Alternate color modes keep ordinary p5.
+const _forestTreeSideColours = Object.create(null);
+const _forestTreePalettes = Object.create(null);
+function forestTreePalette(species, habitat) {
+  const key = species + ':' + (habitat || RG_TIMBER);
+  if (_forestTreePalettes[key]) return _forestTreePalettes[key];
+  const alder = species === "RED_ALDER", cedar = species === "WESTERN_CEDAR";
+  const spruce = species === "SITKA_SPRUCE", lodge = species === "LODGEPOLE_PINE";
+  const base = [alder ? 87 : cedar ? 64 : spruce ? 47 : lodge ? 66 : 48,
+    alder ? 132 : cedar ? 114 : spruce ? 118 : lodge ? 121 : 119,
+    alder ? 62 : cedar ? 62 : spruce ? 95 : lodge ? 86 : 73,
+    alder ? 149 : cedar ? 132 : spruce ? 116 : 128,
+    alder ? 168 : cedar ? 155 : spruce ? 163 : 161,
+    alder ? 88 : cedar ? 78 : spruce ? 119 : 91];
+  const shift = habitat === "VIBRANT" ? [33,35,-5,38,40,14] :
+    habitat === "MEADOW" ? [24,19,-4,24,25,8] :
+    habitat === "EDGE" ? [15,12,-4,16,18,5] :
+    habitat === RG_MARSH ? [-2,8,6,0,10,12] :
+    habitat === RG_HEATH ? [10,6,13,13,12,17] : null;
+  if (shift) for (let i = 0; i < 6; i++) base[i] += shift[i];
+  return _forestTreePalettes[key] = base;
+}
+function forestTreeRgbStyle(r, g, b) {
+  const red = Math.round(Math.max(0, Math.min(1, r / 255)) * 255);
+  const green = Math.round(Math.max(0, Math.min(1, g / 255)) * 255);
+  const blue = Math.round(Math.max(0, Math.min(1, b / 255)) * 255);
+  return '#' + red.toString(16).padStart(2, '0') + green.toString(16).padStart(2, '0') +
+    blue.toString(16).padStart(2, '0');
+}
+function forestTreeSideStyle(g, path, species, n, cr, cg, cb, hr, hg, hb) {
+  if (path === g) return null;
+  const inst = g === window ? p5.instance : g;
+  const maxes = inst._colorMaxes && inst._colorMaxes.rgb;
+  if (inst._colorMode !== "rgb" || !maxes || maxes[0] !== 255 || maxes[1] !== 255 ||
+      maxes[2] !== 255 || maxes[3] !== 255) return null;
+  const key = species + ':' + n + ':' + cr + ':' + cg + ':' + cb + ':' + hr + ':' + hg + ':' + hb;
+  let ramp = _forestTreeSideColours[key];
+  if (!ramp || ramp.dx !== LIGHT_DX || ramp.dy !== LIGHT_DY) {
+    const colours = new Array(n);
+    for (let i = 1; i <= n; i++) {
+      const a = (i % n) * TWO_PI / n;
+      const light = .61 + .11 * Math.max(0, -LIGHT_DX * Math.cos(a) - LIGHT_DY * Math.sin(a));
+      colours[i - 1] = forestTreeRgbStyle(cr * light, cg * light, cb * light);
+    }
+    ramp = { dx: LIGHT_DX, dy: LIGHT_DY, colours,
+      low: forestTreeRgbStyle(cr * .59, cg * .60, cb * .60),
+      top: forestTreeRgbStyle(cr * .96, cg * .96, cb * .96),
+      bough: forestTreeRgbStyle(cr * 1.04, cg * 1.02, cb),
+      facet: forestTreeRgbStyle(hr * .76, hg * .86, hb * .84),
+      vein: forestTreeRgbStyle(cr * .60, cg * .76, cb * .70) };
+    _forestTreeSideColours[key] = ramp;
+  }
+  return { renderer: inst._renderer, colours: ramp.colours,
+    low: ramp.low, top: ramp.top, bough: ramp.bough, facet: ramp.facet, vein: ramp.vein };
+}
+
+function paintForestClutter(g, d, t, phase) {
+  const path = forestPolygonPainter(g);
+  const fp = forestPropProfile(d);
+  if (!fp) return false;
+  const s = d.s || 1, seed = d.c || 0, rot = d.r || 0;
+  const species = d.forestSpecies;
+  const habitatKey = d.forestHabitat || d.forestRegion;
+  const habitat = FOREST_REGIONS[habitatKey] || FOREST_REGIONS.TIMBER;
+  const wet = d.forestRegion === "MARSH", alpine = d.forestRegion === "HEATH";
+  const burnt = d.forestRegion === "BURN" || species === "CHARRED_SNAG";
+  const live = typeof window !== 'undefined' && g === window && BIOME_ACTIVE;
+  const cm = forestCanopyMass(d);
+  const ownsShadow = live && cm && typeof glRigOwnsSunShadows === 'function' && glRigOwnsSunShadows();
+  const sd = ownsShadow ? 0 : live ? shadowDensity() : 1;
+  const sl = live ? shadowLengthScale() : 1;
+  const cl = Math.cos(-rot), sn = Math.sin(-rot);
+  const ldx = LIGHT_DX * cl - LIGHT_DY * sn, ldy = LIGHT_DX * sn + LIGHT_DY * cl;
+  g.push(); g.translate(d.x, d.y);
+
+  if (cm) {
+    const crownScale = d.forestCrownScale === undefined ? 1 : d.forestCrownScale;
+    const rx = cm[1] * s * crownScale * 0.5, ry = cm[2] * s * crownScale * 0.5;
+    let lx = 0, ly = 0;
+    if (live) {
+      massLean(d.x, d.y, cm[0] * s, _leanTmp);
+      lx = _leanTmp[0]; ly = _leanTmp[1];
+    }
+    const tw = (fp.trunkWidth || 9) * s;
+    const ink = (fp.outline || 1.8) * s;
+    if (phase !== 'root' && phase !== 'crown') {
+    if (species === "CHARRED_SNAG") {
+      if (sd > 0.025) {
+        g.stroke(24, 33, 27, 48 * sd); g.strokeWeight(3 * s);
+        g.line(0, 0, LIGHT_DX * cm[0] * s * 0.65 * sl,
+                     LIGHT_DY * cm[0] * s * 0.65 * sl);
+        for (let i = 0; i < 4; i++) {
+          const a = rot + i * 2.17, f = 0.30 + i * 0.15;
+          const bx = LIGHT_DX * cm[0] * s * f * sl, by = LIGHT_DY * cm[0] * s * f * sl;
+          g.line(bx, by, bx + Math.cos(a) * rx * 0.60, by + Math.sin(a) * ry * 0.60);
+        }
+      }
+    } else forestContactShadow(g, rx * 1.46, ry * 1.42, cm[0] * s * 0.56 * sl, 44, sd);
+    }
+    if (phase === 'shadow') { g.pop(); return true; }
+
+    // Bark is a short rooted volume, continuous with the raised crown. The
+    // lower foliage covers its upper end instead of sitting on an exposed pole.
+    if (phase !== 'crown') {
+    g.stroke(31, 42, 30); g.strokeWeight(ink * 0.7);
+    g.fill(burnt ? 53 : 97, burnt ? 49 : 68, burnt ? 40 : 43);
+    path.beginShape();
+    path.vertex(-tw * 0.80, tw * 0.42); path.vertex(-tw * 0.38, -tw * 0.28);
+    path.vertex(lx - tw * 0.25, ly - tw * 0.18);
+    path.vertex(lx + tw * 0.24, ly - tw * 0.18);
+    path.vertex(tw * 0.38, -tw * 0.28); path.vertex(tw * 0.78, tw * 0.42);
+    path.endShape(CLOSE);
+    g.noStroke(); g.fill(burnt ? 106 : 151, burnt ? 94 : 111, burnt ? 72 : 69);
+    const edge = LIGHT_DX < 0 ? 1 : -1;
+    g.quad(tw * 0.36 * edge, -tw * 0.18, tw * 0.07 * edge, -tw * 0.14,
+           lx + tw * 0.04 * edge, ly - tw * 0.18, lx + tw * 0.19 * edge, ly - tw * 0.17);
+    if (species === "CHARRED_SNAG") {
+      for (let i = 0; i < 5; i++) {
+        const a = rot + i * 2.17 + Math.sin(seed * 7 + i) * 0.15;
+        const f = 0.25 + i * 0.15;
+        const bx = lx * f, by = ly * f;
+        const ex = bx + Math.cos(a) * rx * (0.50 + i % 2 * 0.18);
+        const ey = by + Math.sin(a) * ry * (0.50 + i % 2 * 0.18);
+        g.stroke(36, 42, 32); g.strokeWeight((4.0 - i * 0.4) * s);
+        g.line(bx, by, ex, ey);
+        g.stroke(118, 103, 74); g.strokeWeight(1.0 * s);
+        g.line(bx - LIGHT_DX * s, by - LIGHT_DY * s, ex - LIGHT_DX * s, ey - LIGHT_DY * s);
+        g.stroke(39, 45, 34); g.strokeWeight(1.8 * s);
+        g.line(ex, ey, ex + Math.cos(a + 0.7) * rx * 0.18, ey + Math.sin(a + 0.7) * ry * 0.18);
+      }
+      g.noStroke(); g.fill(159, 129, 84);
+      g.ellipse(lx, ly - tw * 0.12, tw * 0.5, tw * 0.32);
+      g.pop(); return true;
+    }
+    }
+    if (phase === 'root') { g.pop(); return true; }
+
+    const alder = species === "RED_ALDER" || d.forestCanopyStyle === "COMIC";
+    const palette = forestTreePalette(species, habitatKey);
+    const cr = palette[0], cg = palette[1], cb = palette[2];
+    const hr = palette[3], hg = palette[4], hb = palette[5];
+    // One connected crown volume: shaded bough edges join a lower footprint
+    // to its raised top face. The top is filled, with no inner contour rings.
+    const low = .12, high = .40, n = alder ? 24 : 32;
+    const plan = forestTreePlan(d, rx, ry, seed, species, rot);
+    const sideStyle = forestTreeSideStyle(g, path, species, n, cr, cg, cb, hr, hg, hb);
+    const nativeGroups = sideStyle && path === _forestPolygonPainters.get(sideStyle.renderer);
+    if (nativeGroups) {
+      const renderer = sideStyle.renderer, context = renderer.drawingContext;
+      const strokeBefore = renderer._doStroke;
+      context.save(); context.translate(lx * low, ly * low);
+      context.strokeStyle = '#1b3123'; context.lineWidth = ink; context.fillStyle = sideStyle.low;
+      renderer._doStroke = true;
+      forestTreeCrown(g, rx, ry, seed, species, plan.crown);
+      renderer._doStroke = strokeBefore; context.restore();
+    } else {
+      g.push(); g.translate(lx * low, ly * low);
+      g.stroke(27, 49, 35); g.strokeWeight(ink);
+      g.fill(cr * .59, cg * .60, cb * .60);
+      forestTreeCrown(g, rx, ry, seed, species, plan.crown);
+      g.pop();
+    }
+    g.noStroke();
+    let px = 0, py = 0;
+    for (let i = 0; i <= n; i++) {
+      const j = (i % n) * 2;
+      const x = plan.crown[j], y = plan.crown[j + 1];
+      if (i) {
+        if (sideStyle) {
+          const renderer = sideStyle.renderer;
+          renderer._setFill(sideStyle.colours[i - 1]);
+          renderer.quad(px + lx * low, py + ly * low, x + lx * low, y + ly * low,
+            x + lx * high, y + ly * high, px + lx * high, py + ly * high);
+        } else {
+          const a = (i % n) * TWO_PI / n;
+          const light = .61 + .11 * Math.max(0, -LIGHT_DX * Math.cos(a) - LIGHT_DY * Math.sin(a));
+          g.fill(cr * light, cg * light, cb * light);
+          g.quad(px + lx * low, py + ly * low, x + lx * low, y + ly * low,
+            x + lx * high, y + ly * high, px + lx * high, py + ly * high);
+        }
+      }
+      px = x; py = y;
+    }
+    if (nativeGroups) {
+      const context = sideStyle.renderer.drawingContext;
+      context.save(); context.translate(lx * high, ly * high); context.fillStyle = sideStyle.top;
+      forestTreeCrown(g, rx, ry, seed, species, plan.crown);
+      context.restore();
+    } else {
+      g.push(); g.translate(lx * high, ly * high);
+      g.fill(cr * .96, cg * .96, cb * .96);
+      forestTreeCrown(g, rx, ry, seed, species, plan.crown);
+      g.pop();
+    }
+    for (let i = 0; i < _FOREST_BRANCH_PLAN.length; i += 5) {
+      const branch = plan.branches[i / 5];
+      const a = branch.angle, size = branch.size, f = branch.height;
+      if (nativeGroups) {
+        // These groups change only local Canvas styles. The parent p5 renderer
+        // already has fill on/stroke off, so its state and caches stay intact.
+        const context = sideStyle.renderer.drawingContext;
+        context.save(); context.translate(branch.x + lx * f, branch.y + ly * f);
+        context.fillStyle = sideStyle.bough;
+        forestTreeBough(g, rx * size, ry * size, a, seed + i, alder, branch.points);
+        context.fillStyle = sideStyle.facet;
+        forestTreeBoughFacet(g, rx * size, ry * size, a, alder, seed + i, branch.faces);
+        if (!alder && rx > 12) {
+          context.strokeStyle = sideStyle.vein; context.lineWidth = .6 * s;
+          for (let j = 0; j < branch.lines.length; j += 4) {
+            context.beginPath(); context.moveTo(branch.lines[j], branch.lines[j + 1]);
+            context.lineTo(branch.lines[j + 2], branch.lines[j + 3]); context.stroke();
+          }
+        }
+        context.restore();
+        continue;
+      }
+      g.push(); g.translate(branch.x + lx * f, branch.y + ly * f);
+      g.noStroke(); g.fill(cr * 1.04, cg * 1.02, cb * 1.0);
+      forestTreeBough(g, rx * size, ry * size, a, seed + i, alder, branch.points);
+      // The sun-facing half is one material plane, not a smaller canopy ring.
+      g.fill(hr * .76, hg * .86, hb * .84);
+      forestTreeBoughFacet(g, rx * size, ry * size, a, alder, seed + i, branch.faces);
+      if (!alder && rx > 12) {
+        const ax = Math.cos(a), ay = Math.sin(a);
+        g.stroke(cr * .60, cg * .76, cb * .70); g.strokeWeight(.6 * s);
+        g.line(-ax * rx * size * .39, -ay * ry * size * .39,
+                ax * rx * size * .56, ay * ry * size * .56);
+        for (let j = 0; j < 2; j++) {
+          const q = .12 + j * .22;
+          g.line(ax * rx * size * q, ay * ry * size * q,
+            (ax * (q + .15) - ay * .22) * rx * size,
+            (ay * (q + .15) + ax * .22) * ry * size);
+        }
+      }
+      g.pop();
+    }
+    g.pop(); return true;
+  }
+
+  // Small forest-floor volumes are baked once into chunk albedo.
+  switch (species) {
+    case "BUSH": {
+      forestContactShadow(g, 38 * s, 22 * s, 3 * sl, 34, sd);
+      g.rotate(rot);
+      const upx = Math.sin(rot) * fp.rise * MASS_TILT * s;
+      const upy = Math.cos(rot) * fp.rise * MASS_TILT * s;
+      // A salal clump has a continuous soft perimeter, not five outlined discs.
+      g.stroke(32, 55, 43); g.strokeWeight(1.5 * s); g.fill(36, 79, 53);
+      path.beginShape();
+      for (let i = 0; i < 24; i++) {
+        const a = i * TWO_PI / 24;
+        const r = 0.85 + 0.12 * Math.sin(a * 3 + seed * 6) + 0.045 * Math.sin(a * 5 - seed * 3);
+        path.vertex(Math.cos(a) * 25 * s * r, Math.sin(a) * 16 * s * r);
+      }
+      path.endShape(CLOSE);
+      g.translate(upx, upy);
+      g.fill(wet ? 59 : 63, wet ? 120 : 110, wet ? 76 : 66);
+      path.beginShape();
+      for (let i = 0; i < 24; i++) {
+        const a = i * TWO_PI / 24;
+        const r = 0.85 + 0.12 * Math.sin(a * 3 + seed * 6) + 0.045 * Math.sin(a * 5 - seed * 3);
+        path.vertex(Math.cos(a) * 25 * s * r, Math.sin(a) * 16 * s * r);
+      }
+      path.endShape(CLOSE);
+      // Broad overlapping leaf sprays keep the lower crown visible as shade.
+      for (let i = 0; i < 6; i++) {
+        const px = (-10 + (i * 8 + seed * 7) % 20) * s;
+        const py = (-5 + (i * 6 + seed * 4) % 10) * s;
+        const a = -0.8 + i * 0.47 + seed * 0.7;
+        g.push(); g.translate(px, py); g.rotate(a); g.noStroke();
+        const lit = -(ldx * Math.cos(a) + ldy * Math.sin(a));
+        g.fill(91 + Math.max(0, lit) * 37, 143 + Math.max(0, lit) * 29, 82 + Math.max(0, lit) * 22);
+        g.ellipse(0, 0, 17 * s, 10 * s);
+        g.fill(153, 177, 106, 130); g.ellipse(-3.5 * s, -s, 8 * s, 2.5 * s);
+        g.pop();
+      }
+      break;
+    }
+    case "FERN": {
+      forestContactShadow(g, 28 * s, 16 * s, 2 * sl, 28, sd);
+      g.rotate(rot);
+      // A sword fern opens in an uneven fan. Each frond has a bowed spine and
+      // tapering paired leaflets; there is no evenly spaced radial star.
+      for (let i = 0; i < 6; i++) {
+        const a = [-2.82, -2.23, -1.76, -1.15, -0.48, 0.62][i] + seed * 0.23;
+        const len = (i === 5 ? 11 : 18 + (i * 5 + seed * 6) % 7) * s;
+        const ca = Math.cos(a), sa = Math.sin(a), bend = (i % 2 ? -3.5 : 3) * s;
+        const x = t => ca * len * t - sa * bend * Math.sin(t * PI);
+        const y = t => sa * len * t + ca * bend * Math.sin(t * PI);
+        const lit = Math.max(0, -(ca * ldx + sa * ldy));
+        g.stroke(31, 66, 43); g.strokeWeight(0.9 * s);
+        g.fill(54 + lit * 25, 104 + lit * 34, 59 + lit * 17);
+        path.beginShape(); path.vertex(0, 0);
+        for (let j = 1; j < 10; j++) {
+          const t0 = j / 10, w = Math.sin(t0 * PI) * 3.9 * s;
+          path.vertex(x(t0) - sa * w, y(t0) + ca * w);
+          path.vertex(x(t0 + 0.025) - sa * w * 0.39, y(t0 + 0.025) + ca * w * 0.39);
+        }
+        path.vertex(x(1), y(1));
+        for (let j = 9; j > 0; j--) {
+          const t0 = j / 10, w = Math.sin(t0 * PI) * 3.9 * s;
+          path.vertex(x(t0 + 0.025) + sa * w * 0.39, y(t0 + 0.025) - ca * w * 0.39);
+          path.vertex(x(t0) + sa * w, y(t0) - ca * w);
+        }
+        path.endShape(CLOSE);
+        g.noFill(); g.stroke(149, 177, 104); g.strokeWeight(1.1 * s);
+        g.bezier(0, 0, x(0.3), y(0.3), x(0.7), y(0.7), x(1), y(1));
+      }
+      g.noStroke(); g.fill(43, 80, 47); g.ellipse(0, 0, 6 * s, 5 * s);
+      break;
+    }
+    case "LOG": {
+      forestContactShadow(g, 47 * s, 12 * s, 3 * sl, 43, sd);
+      g.rotate(rot);
+      const ux = Math.sin(rot) * fp.rise * MASS_TILT * s;
+      const uy = Math.cos(rot) * fp.rise * MASS_TILT * s;
+      g.stroke(43, 47, 36); g.strokeWeight(1.5 * s);
+      g.fill(burnt ? 58 : 85, burnt ? 56 : 59, burnt ? 48 : 39);
+      // The lower bark rim remains at the ground; the cylinder body rises
+      // toward its broad top and both cut ends share that same extrusion.
+      g.quad(-23 * s, -5 * s, 21 * s, -4 * s,
+             21 * s + ux, 5 * s + uy, -23 * s + ux, 6 * s + uy);
+      g.fill(burnt ? 94 : 142, burnt ? 85 : 98, burnt ? 66 : 62);
+      path.beginShape(); path.vertex(-23 * s + ux, -5 * s + uy);
+      path.vertex(-8 * s + ux, -6 * s + uy); path.vertex(7 * s + ux, -4.5 * s + uy);
+      path.vertex(21 * s + ux, -4 * s + uy); path.vertex(23 * s + ux, 0.5 * s + uy);
+      path.vertex(21 * s + ux, 5 * s + uy); path.vertex(2 * s + ux, 5.5 * s + uy);
+      path.vertex(-11 * s + ux, 7 * s + uy); path.vertex(-23 * s + ux, 6 * s + uy);
+      path.endShape(CLOSE);
+      g.noStroke(); g.fill(burnt ? 122 : 181, burnt ? 108 : 133, burnt ? 77 : 83);
+      g.quad(-18 * s + ux, -3 * s + uy, 15 * s + ux, -2 * s + uy,
+             17 * s + ux, 0.5 * s + uy, -18 * s + ux, 0.2 * s + uy);
+      g.stroke(70, 58, 40); g.strokeWeight(1.1 * s);
+      g.line(-15 * s + ux, 3 * s + uy, 4 * s + ux, 2 * s + uy);
+      g.line(-8 * s + ux, -3 * s + uy, 17 * s + ux, -1.6 * s + uy);
+      g.fill(burnt ? 151 : 207, burnt ? 132 : 166, burnt ? 96 : 109);
+      g.stroke(56, 47, 35); g.strokeWeight(1.4 * s);
+      g.ellipse(-23 * s + ux, 0.5 * s + uy, 6 * s, 11 * s);
+      g.ellipse(21 * s + ux, 0.5 * s + uy, 4 * s, 9 * s);
+      g.noFill(); g.stroke(145, 105, 62); g.strokeWeight(1.0 * s);
+      g.ellipse(-23 * s + ux, 0.5 * s + uy, 2.8 * s, 6 * s);
+      g.stroke(77, 62, 42); g.line(-23 * s + ux, 0.5 * s + uy, -23.7 * s + ux, -3 * s + uy);
+      if (!burnt) {
+        g.noStroke(); g.fill(85, 129, 57);
+        path.beginShape(); path.vertex(-10 * s + ux, -5 * s + uy);
+        path.vertex(-1 * s + ux, -4.5 * s + uy); path.vertex(8 * s + ux, -3 * s + uy);
+        path.vertex(3 * s + ux, 0.5 * s + uy); path.vertex(-5 * s + ux, 0 * s + uy);
+        path.endShape(CLOSE);
+        g.fill(141, 169, 80); g.ellipse(-4 * s + ux, -3 * s + uy, 10 * s, 2.5 * s);
+      }
+      break;
+    }
+    case "STUMP": {
+      forestContactShadow(g, 24 * s, 16 * s, 3 * sl, 40, sd);
+      const uy = fp.rise * MASS_TILT * s;
+      g.stroke(43, 47, 35); g.strokeWeight(1.5 * s);
+      g.fill(burnt ? 64 : 100, burnt ? 59 : 67, burnt ? 46 : 40);
+      // The broad root flare remains on the floor. Swept bark faces reach the
+      // smaller sawn crown, exactly the volume used by the city's round props.
+      const baseX = [-13, -8, 1, 10, 14, 10, 2, -11];
+      const baseY = [-3, -7, -9, -7, 0, 6, 7, 5];
+      path.beginShape(); for (let i = 0; i < 8; i++) path.vertex(baseX[i] * s, baseY[i] * s); path.endShape(CLOSE);
+      for (let i = 0; i < 8; i++) {
+        const j = (i + 1) % 8, a0 = i * TWO_PI / 8 - PI * 0.83, a1 = j * TWO_PI / 8 - PI * 0.83;
+        g.fill(burnt ? 77 + i % 3 * 13 : 101 + i % 3 * 21,
+               burnt ? 67 + i % 3 * 9 : 70 + i % 3 * 14,
+               burnt ? 49 + i % 3 * 5 : 44 + i % 3 * 8);
+        g.quad(baseX[i] * s, baseY[i] * s, baseX[j] * s, baseY[j] * s,
+               Math.cos(a1) * 9.5 * s, Math.sin(a1) * 7.5 * s + uy,
+               Math.cos(a0) * 9.5 * s, Math.sin(a0) * 7.5 * s + uy);
+      }
+      g.fill(burnt ? 147 : 213, burnt ? 128 : 174, burnt ? 90 : 113);
+      g.stroke(57, 53, 36); g.strokeWeight(1.4 * s);
+      g.ellipse(0, uy, 19 * s, 15 * s);
+      g.noFill(); g.stroke(157, 116, 67); g.strokeWeight(1.0 * s);
+      g.ellipse(0.6 * s, uy, 12 * s, 9 * s);
+      g.ellipse(s, uy + 0.6 * s, 5 * s, 3.7 * s);
+      g.stroke(102, 78, 48); g.line(-8 * s, uy - 2 * s, -2 * s, uy - 0.4 * s);
+      if (wet) { g.noStroke(); g.fill(103, 144, 63); g.ellipse(-10 * s, -2 * s, 7 * s, 4 * s); }
+      break;
+    }
+    case "MUSHROOM": {
+      forestContactShadow(g, 17 * s, 9 * s, 1.4 * sl, 25, sd);
+      // Warm woodland shelf caps, deliberately quieter than collectible icons.
+      for (let i = 0; i < 3; i++) {
+        const px = (i === 0 ? -5 : i === 1 ? 3 : 7) * s;
+        const py = (i === 0 ? 2 : i === 1 ? -3 : 5) * s;
+        const r = (i === 1 ? 3.7 : 2.7) * s, top = (i === 1 ? 4.5 : 3) * s;
+        g.stroke(82, 75, 49); g.strokeWeight(0.9 * s); g.fill(212, 196, 152);
+        g.line(px, py, px, py + top);
+        g.noStroke(); g.fill(130, 95, 61); g.ellipse(px, py + top - s, r * 2, r * 1.2);
+        g.fill(188, 144, 88); g.ellipse(px, py + top, r * 2, r * 1.15);
+        g.fill(226, 196, 133); g.ellipse(px - LIGHT_DX * r * 0.3, py + top - LIGHT_DY * r * 0.25, r, r * 0.55);
+      }
+      break;
+    }
+    case "PEBBLE": {
+      forestContactShadow(g, 16 * s, 10 * s, 1.5 * sl, 30, sd);
+      g.rotate(rot);
+      const ux = Math.sin(rot) * fp.rise * MASS_TILT * s;
+      const uy = Math.cos(rot) * fp.rise * MASS_TILT * s;
+      const bx = [-8, -3, 6, 8, 1, -7], by = [-3, -6, -4, 2, 6, 3];
+      g.stroke(55, 67, 60); g.strokeWeight(0.8 * s); g.fill(91, 103, 96);
+      path.beginShape(); for (let i = 0; i < 6; i++) path.vertex(bx[i] * s, by[i] * s); path.endShape(CLOSE);
+      for (let i = 0; i < 6; i++) {
+        const j = (i + 1) % 6;
+        let nx = by[j] - by[i], ny = bx[i] - bx[j];
+        const n = Math.hypot(nx, ny) || 1; nx /= n; ny /= n;
+        const light = Math.max(0, -(nx * ldx + ny * ldy));
+        g.fill(78 + light * 33, 92 + light * 31, 83 + light * 25);
+        g.quad(bx[i] * s, by[i] * s, bx[j] * s, by[j] * s,
+               bx[j] * s * 0.83 + ux, by[j] * s * 0.83 + uy,
+               bx[i] * s * 0.83 + ux, by[i] * s * 0.83 + uy);
+      }
+      // The complete top is split into joined mineral planes; no concentric
+      // bright polygon or white sparkle turns these into scattered map badges.
+      g.noStroke();
+      for (let i = 0; i < 6; i++) {
+        const j = (i + 1) % 6, k = i === 0 || i === 1 ? 1.11 : i === 4 ? 0.81 : 0.98;
+        g.fill(163 * k, 174 * k, 153 * k);
+        g.triangle(bx[i] * s * 0.83 + ux, by[i] * s * 0.83 + uy,
+                   bx[j] * s * 0.83 + ux, by[j] * s * 0.83 + uy, -s + ux, -s + uy);
+      }
+      g.fill(113, 126, 109); g.triangle(7 * s, 4 * s, 10 * s, 2 * s, 11 * s, 6 * s);
+      break;
+    }
+    case "REED":
+    case "GRASS": {
+      const reeds = species === "REED", length = (reeds ? 18 : 13) * s;
+      forestContactShadow(g, 19 * s, 9 * s, 1.8 * sl, 22, sd);
+      g.rotate(rot);
+      // An asymmetric tuft of curved blades replaces flat triangle pinwheels.
+      for (let i = 0; i < (reeds ? 6 : 5); i++) {
+        const ex = (-13 + i * (reeds ? 4.7 : 5.2)) * s;
+        const ey = -(0.60 + (i * 3 + seed * 5) % 5 * 0.08) * length;
+        const bx = (i % 2 ? 1.5 : -1) * s;
+        g.noFill(); g.stroke(48, 84, 48); g.strokeWeight((reeds ? 2.4 : 2) * s);
+        g.bezier(bx, 3 * s, bx - 2 * s, -length * 0.36, ex * 0.70, ey * 0.94, ex, ey);
+        g.stroke(116 + i % 2 * 14, 147 + i % 2 * 13, 76); g.strokeWeight(1 * s);
+        g.bezier(bx, 2.5 * s, bx - s, -length * 0.36, ex * 0.70, ey * 0.94, ex, ey);
+        if (reeds && i % 3 === 1) {
+          g.stroke(132, 99, 58); g.strokeWeight(3.0 * s);
+          g.line(ex * 0.97, ey * 0.88, ex, ey);
+        }
+      }
+      break;
+    }
+    case "ASH": {
+      g.rotate(rot); g.noStroke(); g.fill(55, 61, 51, 115);
+      g.ellipse(-4 * s, s, 20 * s, 9 * s); g.ellipse(6 * s, -2 * s, 14 * s, 7 * s);
+      g.fill(121, 124, 105, 100); g.ellipse(-2 * s, -s, 16 * s, 4 * s);
+      g.fill(43, 48, 40); g.quad(-6 * s, -s, s, -2 * s, 5 * s, s, -3 * s, 2 * s);
+      break;
+    }
+    default: g.pop(); return false;
+  }
+  g.pop(); return true;
+}
+
+function paintForestBoulder(g, b, leanX, leanY) {
+  const path = forestPolygonPainter(g);
+  const wet = b.forestRegion === "MARSH", alpine = b.forestRegion === "HEATH";
+  const burnt = b.forestRegion === "BURN";
+  const seed = b.tint || 0, phase = b.angle || 0;
+  const w = b.w || 70, h = b.h || 60;
+  const sd = typeof glRigOwnsSunShadows === 'function' && glRigOwnsSunShadows() ? 0 : shadowDensity();
+  // The caller is at the leaned top. The base rim and shadow are brought back
+  // to the root, and actual stone faces join them to the raised crown. A bevel
+  // is geometry: there is no dark octagon with a smaller badge painted in it.
+  g.push(); g.translate(b.x - leanX, b.y - leanY);
+  forestContactShadow(g, w * 0.75, h * 0.58, 13 * shadowLengthScale(), 48, sd);
+  g.pop(); g.push(); g.translate(b.x, b.y);
+  const outline = [-0.43, -0.10, -0.29, -0.38, 0.10, -0.43, 0.37, -0.22,
+                    0.44, 0.12, 0.21, 0.38, -0.18, 0.42, -0.43, 0.20];
+  const ca = Math.cos(phase), sa = Math.sin(phase);
+  const px = [], py = [], tx = [], ty = [];
+  for (let i = 0; i < 8; i++) {
+    const a = outline[i * 2], z = outline[i * 2 + 1];
+    const vary = 0.93 + Math.sin(seed * 9 + i * 2.7) * 0.025;
+    px[i] = (a * ca - z * sa) * w * vary;
+    py[i] = (a * sa + z * ca) * h * vary;
+    tx[i] = px[i] * 0.79; ty[i] = py[i] * 0.79;
+  }
+  const cr = burnt ? 107 : alpine ? 144 : 137;
+  const cg = burnt ? 104 : alpine ? 152 : 149;
+  const cb = burnt ? 89 : alpine ? 149 : 134;
+  g.stroke(43, 55, 49); g.strokeWeight(2.0); g.fill(cr * 0.57, cg * 0.58, cb * 0.58);
+  path.beginShape();
+  for (let i = 0; i < 8; i++) path.vertex(px[i] - leanX, py[i] - leanY);
+  path.endShape(CLOSE);
+  // Every exposed edge shades from its outward world normal, just like a city
+  // wall; camera movement changes visible faces rather than spinning the rock.
+  for (let i = 0; i < 8; i++) {
+    const j = (i + 1) % 8;
+    let nx = py[j] - py[i], ny = px[i] - px[j];
+    const n = Math.hypot(nx, ny) || 1; nx /= n; ny /= n;
+    const light = Math.max(0, -(nx * LIGHT_DX + ny * LIGHT_DY));
+    const k = 0.51 + light * 0.24;
+    g.fill(cr * k + 4, cg * k + 5, cb * k + 5);
+    g.quad(px[i] - leanX, py[i] - leanY, px[j] - leanX, py[j] - leanY,
+           tx[j], ty[j], tx[i], ty[i]);
+  }
+  // Asymmetric granite planes meet at one ridge. They fill the complete top
+  // and share edges, so the mass reads as fractured rock instead of rings.
+  const ridgeX = -LIGHT_DX * w * 0.065 - w * 0.035;
+  const ridgeY = -LIGHT_DY * h * 0.060 + h * 0.015;
+  g.noStroke();
+  for (let i = 0; i < 8; i++) {
+    const j = (i + 1) % 8;
+    let nx = ty[j] - ty[i], ny = tx[i] - tx[j];
+    const n = Math.hypot(nx, ny) || 1; nx /= n; ny /= n;
+    const light = -(nx * LIGHT_DX + ny * LIGHT_DY);
+    const k = light > 0.35 ? 1.31 : light < -0.35 ? 0.83 : 1.06;
+    g.fill(Math.min(218, cr * k), Math.min(225, cg * k), Math.min(207, cb * k));
+    g.triangle(tx[i], ty[i], tx[j], ty[j], ridgeX, ridgeY);
+  }
+  g.noFill(); g.stroke(43, 55, 49); g.strokeWeight(2.0);
+  path.beginShape(); for (let i = 0; i < 8; i++) path.vertex(tx[i], ty[i]); path.endShape(CLOSE);
+  g.stroke(cr * 0.55, cg * 0.59, cb * 0.55, 150); g.strokeWeight(1.2);
+  g.line(ridgeX, ridgeY, tx[5] * 0.92, ty[5] * 0.92);
+  g.line(ridgeX * 0.80, ridgeY * 0.80, tx[2] * 0.72, ty[2] * 0.72);
+  if (!burnt) {
+    // Moss sits on one shoulder and spills down a stone edge, not a central
+    // green decal. Alpine stone gets a small dry lichen patch instead.
+    const mx = tx[6] * 0.68, my = ty[6] * 0.68;
+    g.noStroke(); g.fill(alpine ? 137 : wet ? 76 : 89, alpine ? 156 : wet ? 130 : 126, alpine ? 110 : 61);
+    path.beginShape(); path.vertex(mx - w * 0.07, my - h * 0.04);
+    path.vertex(mx + w * 0.08, my - h * 0.05); path.vertex(mx + w * 0.12, my + h * 0.02);
+    path.vertex(mx + w * 0.04, my + h * 0.07); path.vertex(mx - w * 0.08, my + h * 0.04);
+    path.endShape(CLOSE);
+    g.fill(151, 172, 100); g.ellipse(mx - w * 0.01, my - h * 0.015, w * 0.11, h * 0.035);
+  }
+  g.pop();
+}
+
 function paintClutter(g, d, t) {
+  if (d.forestSpecies && paintForestClutter(g, d, t)) return;
   const s = d.s;
   g.push();
   g.translate(d.x, d.y);
@@ -30623,6 +34066,10 @@ function drawBiomeProps(list, i0, i1) {
       }
 
       case "BOULDER": {
+        if (b.forestSpecies === "BOULDER") {
+          paintForestBoulder(window, b, _plx, _ply);
+          break;
+        }
         // The rotate() is gone, and that was a real fault rather than a tidy
         // up. rotate() carries LIGHT_DX/DY round with it and every highlight
         // below is written in world space, so a field of boulders each had its
@@ -32949,6 +36396,7 @@ const GLRig = {
   fast: 0,
   resize: false,      // a tier change is pending; applied at the TOP of a frame
   lights: [],
+  boundTex: [],       // reset every frame; the rig owns these units during it
   failure: ''
 };
 
@@ -33297,6 +36745,7 @@ function glRigProgram(gl, fs, tag) {
     return null;
   }
   p._u = {};
+  p._samplerUnits = {};
   const n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS);
   for (let i = 0; i < n; i++) {
     const nm = gl.getActiveUniform(p, i).name.replace(/\[0\]$/, '');
@@ -33307,6 +36756,7 @@ function glRigProgram(gl, fs, tag) {
 
 function glRigTexture(gl, w, h, filter) {
   const t = gl.createTexture();
+  t._w = w; t._h = h;
   gl.bindTexture(gl.TEXTURE_2D, t);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
   const f = filter || gl.LINEAR;
@@ -33315,6 +36765,19 @@ function glRigTexture(gl, w, h, filter) {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
   return t;
+}
+
+// Canvas uploads update already allocated storage. Replacing storage on every
+// frame can make the driver discard/rebuild it even though neither canvas changed
+// size. Keep the resize path for density/window/tier changes and context restore.
+function glRigUploadCanvas(gl, tex, canvas) {
+  const w = canvas.width, h = canvas.height;
+  if (tex._w !== w || tex._h !== h) {
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+    tex._w = w; tex._h = h;
+  } else {
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, gl.RGBA, gl.UNSIGNED_BYTE, canvas);
+  }
 }
 
 function glRigTarget(gl, w, h, filter) {
@@ -33523,6 +36986,40 @@ function glRigMat(g, hWorld, gloss, turns) {
   g.fill(r, gloss * 255, ((turns % 1) + 1) % 1 * 255, 255);
 }
 
+const _glForestCanopies = []; // bounded by visible streamed crowns, reused
+function glRigForestCanopyHeight(g, d, cp) {
+  const s = d.s || 1, crown = d.forestCrownScale === undefined ? 1 : d.forestCrownScale;
+  const elevation = groundElev(d.x, d.y), rise = cp[0] * s;
+  g.push(); g.translate(d.x, d.y);
+  if (d.forestSpecies === 'CHARRED_SNAG') {
+    // A snag is a trunk and bare branches, never a solid circular pillar.
+    const height = Math.min(255, (rise + elevation) / GLRIG_HEIGHT_MAX * 255);
+    g.stroke(height, 12.75, 0, 255); g.strokeWeight(Math.max(3, 5 * s));
+    g.line(-3 * s, 0, 3 * s, 0);
+    for (let i = 0; i < 4; i++) {
+      const angle = (d.r || 0) + i * 2.17;
+      g.strokeWeight((2.4 - i * .25) * s);
+      g.line(0, 0, Math.cos(angle) * cp[1] * s * crown * .24,
+        Math.sin(angle) * cp[2] * s * crown * .24);
+    }
+  } else {
+    const rx = cp[1] * s * crown * .5, ry = cp[2] * s * crown * .5;
+    const plan = forestTreePlan(d, rx, ry, d.c || 0, d.forestSpecies, d.r || 0, d.forestCanopyStyle);
+    // The outer foliage is thinner than its centre. Three crown contours
+    // taper the height at its edge instead of extruding a full-height oval.
+    // They reuse the art's cached world outline and add no shader samples.
+    for (let band = 0; band < 3; band++) {
+      const radius = band === 0 ? 1 : band === 1 ? .83 : .62;
+      const height = band === 0 ? .46 : band === 1 ? .76 : 1;
+      glRigMat(g, elevation + rise * height, .05, 0);
+      g.scale(radius);
+      forestTreeCrown(g, rx, ry, d.c || 0, d.forestSpecies, plan.crown);
+      g.scale(1 / radius);
+    }
+  }
+  g.pop();
+}
+
 // Draws the scene's height field. This is the only new per-frame scene pass the
 // rig adds, and it is deliberately not art: flat fills over the same lists
 // drawBiomeShadows() already walks, at half rig resolution, with no per-type
@@ -33532,6 +37029,7 @@ function glRigPaintHeight() {
   const g = GLRig.hgt;
   const k = GLRig.hw / width;          // css px -> height buffer px
   const wet = (typeof isRaining !== 'undefined' && isRaining) ? 1 : 0;
+  _glForestCanopies.length = 0;
 
   g.clear();
   g.push();
@@ -33618,16 +37116,23 @@ function glRigPaintHeight() {
   if (typeof chunkMgr !== 'undefined' && chunkMgr && chunkMgr.chunks) {
     for (const ch of chunkMgr.chunks.values()) {
       const cwx = ch.cx * CHUNK_W, cwy = ch.cy * CHUNK_W;
-      if (cwx > viewRight + 200 || cwx + CHUNK_W < viewLeft - 200) continue;
-      if (cwy > viewBottom + 200 || cwy + CHUNK_W < viewTop - 200) continue;
+      const chunkPad = chunkMgr.biome === 2 ? 400 : 200;
+      if (cwx > viewRight + chunkPad || cwx + CHUNK_W < viewLeft - chunkPad) continue;
+      if (cwy > viewBottom + chunkPad || cwy + CHUNK_W < viewTop - chunkPad) continue;
       for (const dc of ch.decor) {
-        const cp = CANOPY_MASS[dc.t];
+        const cp = dc.forestSpecies ? forestCanopyMass(dc) : CANOPY_MASS[dc.t];
         if (!cp) continue;
-        if (dc.x < viewLeft - 120 || dc.x > viewRight + 120) continue;
-        if (dc.y < viewTop - 120  || dc.y > viewBottom + 120) continue;
+        const pad = dc.forestSpecies ? forestPropCullPad(dc) : 120;
+        if (dc.x < viewLeft - pad || dc.x > viewRight + pad) continue;
+        if (dc.y < viewTop - pad  || dc.y > viewBottom + pad) continue;
         const cs = dc.s || 1;
+        const crown = dc.forestCrownScale === undefined ? 1 : dc.forestCrownScale;
+        if (dc.forestSpecies) {
+          _glForestCanopies.push(dc);
+          continue;
+        }
         glRigMat(g, cp[0] * cs + groundElev(dc.x, dc.y), 0.05, 0);
-        g.ellipse(dc.x, dc.y, cp[1] * cs, cp[2] * cs);
+        g.ellipse(dc.x, dc.y, cp[1] * cs * crown, cp[2] * cs * crown);
       }
     }
   }
@@ -33650,6 +37155,14 @@ function glRigPaintHeight() {
   for (const e of enemiesList) one(e);
   if (typeof allies !== 'undefined' && allies) for (const a of allies) one(a);
 
+  // Forest foliage paints above ground actors in both the art and the height
+  // field. A person underneath cannot punch a low-height hole in a canopy.
+  for (let i = 0; i < _glForestCanopies.length; i++) {
+    const d = _glForestCanopies[i];
+    glRigForestCanopyHeight(g, d, forestCanopyMass(d));
+  }
+  _glForestCanopies.length = 0;
+
   g.pop();
 }
 
@@ -33663,12 +37176,22 @@ function glRigDraw(gl, prog, rect) {
 function glRigBindTex(gl, prog, name, unit, tex) {
   const loc = prog._u[name];
   if (loc === undefined) return;
-  gl.activeTexture(gl.TEXTURE0 + unit);
-  gl.bindTexture(gl.TEXTURE_2D, tex);
-  gl.uniform1i(loc, unit);
+  // All passes use the same texture on each unit. Bind once per frame instead
+  // of repeating three driver calls for every sampler of every local light.
+  const bound = GLRig.boundTex;
+  if (bound[unit] !== tex) {
+    gl.activeTexture(gl.TEXTURE0 + unit);
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    bound[unit] = tex;
+  }
+  if (prog._samplerUnits[name] !== unit) {
+    gl.uniform1i(loc, unit);
+    prog._samplerUnits[name] = unit;
+  }
 }
 
 const GLRIG_FULL = [-1, -1, 1, 1];
+const GLRIG_LIGHT_RECT = [0, 0, 0, 0];
 
 // The shared emitter list, clamped to however many shadow-casting lights the
 // rig can afford. Both rigs read the same gather so they cannot disagree about
@@ -33797,14 +37320,16 @@ function glRigFrame() {
     gl.disable(gl.SCISSOR_TEST);
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    GLRig.boundTex.length = 0;
 
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, GLRig.tex.diffuse);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, GLRig.host);
+    glRigUploadCanvas(gl, GLRig.tex.diffuse, GLRig.host);
+    GLRig.boundTex[0] = GLRig.tex.diffuse;
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, GLRig.tex.height);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE,
-                  GLRig.hgt.canvas || GLRig.hgt.elt);
+    glRigUploadCanvas(gl, GLRig.tex.height, GLRig.hgt.canvas || GLRig.hgt.elt);
+    GLRig.boundTex[1] = GLRig.tex.height;
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
 
     // --- scene terms --------------------------------------------------------
@@ -33863,10 +37388,10 @@ function glRigFrame() {
     gl.uniform1f(p._u.uPenumbra, 0.10 + 0.55 * skyDiffusion());
     // Direction TOWARD the sun. LIGHT_DX/DY point the way shadows fall, and the
     // shading frame has y up, so x negates and y does not.
-    const L = [-LIGHT_DX, LIGHT_DY, slope];
-    const Lm = Math.hypot(L[0], L[1], L[2]) || 1;
-    const Lz = L[2] / Lm;                       // N.L on flat, unoccluded ground
-    gl.uniform3f(p._u.uSunDir, L[0] / Lm, L[1] / Lm, Lz);
+    const Lx = -LIGHT_DX, Ly = LIGHT_DY;
+    const Lm = Math.hypot(Lx, Ly, slope) || 1;
+    const Lz = slope / Lm;                       // N.L on flat, unoccluded ground
+    gl.uniform3f(p._u.uSunDir, Lx / Lm, Ly / Lm, Lz);
 
     // THE RIG MUST BE A NO-OP ON FLAT, UNLIT, UNOCCLUDED GROUND.
     //
@@ -33947,7 +37472,9 @@ function glRigFrame() {
       gl.uniform1f(p._u.uRMin, Math.min(0.4, (Lg.rMin || 0) / Lg.r));
       const y0 = (i / GLRIG_LIGHTS) * 2 - 1;
       const y1 = ((i + 1) / GLRIG_LIGHTS) * 2 - 1;
-      glRigDraw(gl, p, [-1, y0, 1, y1]);
+      GLRIG_LIGHT_RECT[0] = -1; GLRIG_LIGHT_RECT[1] = y0;
+      GLRIG_LIGHT_RECT[2] = 1; GLRIG_LIGHT_RECT[3] = y1;
+      glRigDraw(gl, p, GLRIG_LIGHT_RECT);
 
       // 3c. Composite, additively, inside a scissor box the size of the light.
       //     This is the pass that would otherwise evaluate every fragment on
@@ -33996,8 +37523,11 @@ function glRigFrame() {
       }
       // The quad is already the light's box, so the scissor is belt and braces
       // against a partially covered tile rather than the cull itself.
-      glRigDraw(gl, p, [lu * 2 - 1 - ru * 2, lv * 2 - 1 - rv * 2,
-                        lu * 2 - 1 + ru * 2, lv * 2 - 1 + rv * 2]);
+      GLRIG_LIGHT_RECT[0] = lu * 2 - 1 - ru * 2;
+      GLRIG_LIGHT_RECT[1] = lv * 2 - 1 - rv * 2;
+      GLRIG_LIGHT_RECT[2] = lu * 2 - 1 + ru * 2;
+      GLRIG_LIGHT_RECT[3] = lv * 2 - 1 + rv * 2;
+      glRigDraw(gl, p, GLRIG_LIGHT_RECT);
 
       gl.disable(gl.SCISSOR_TEST);
       gl.disable(gl.BLEND);
@@ -34463,6 +37993,7 @@ function updateWorldClock() {
 
   worldClockDtMs = dt;
   worldTimeMs = (worldTimeMs + dt) % DAY_MS;
+  tickForestHuntingSupply(dt);
 
   // One weather roll per in-game hour — 24 chances a day, which is what makes
   // the per-biome numbers read the way they are written: the Green Line at 15%
@@ -34558,27 +38089,19 @@ const GATE_DOOR_HALF = 300;      // matches the doorway the art draws
 
 function gateIsOpen(b) {
   if (!b || !b.isGovFortress) return false;
-  // The overworld fort's door answers to its own record, not to Stick City's
-  // arc flags -- but on the same terms: breached, and the muster beaten.
+  // An overworld fort answers to its own record.
   if (b.isOutpostGate) {
-    // AND IT OPENS THE MOMENT IT IS BLOWN, not when the muster is beaten.
-    //
-    // Stick City's gates wait, and they are right to: that gate is the way OUT
-    // of the sector, and holding it shut until the field is clear is what stops
-    // the player walking away from the fight. An overworld fort is the other
-    // way round -- the hole is the way IN, the fight is on the other side of
-    // it, and a player who has just spent a rocket on the door should be able
-    // to walk through it. Left on the sector's rule, the charge went off and
-    // the doorway stayed solid.
     const st = outpostFortState(currentBiome);
     return !!(st.captured || st.breached);
   }
-  // While the muster is still on the field the breach is not yet a road -- but
-  // only THIS SECTOR'S muster. An overworld fort's muster is a fight five
-  // chunks out in the country with nothing to do with the city's gate, and
-  // holding the door on it slammed a gate the player had already paid a rocket
-  // for -- on a reload too, since nm0AmbushActive is saved and the entity list
-  // is not. A gate that has been opened stays open.
+  // A destroyed door opens immediately, including during an active ambush.
+  // Stick City's north wall remains the HQ interaction rather than a road.
+  if (currentLevel === 1 && b.y > 0 && window.southGateBreachedStatus) return true;
+  if (currentLevel === 2 && (b.y > 0 ? window.undercitySouthBreached : window.undercityNorthBreached)) return true;
+  // The liberated compound must remain reachable while the story's remaining
+  // NM-0 waves assemble outside it. North still belongs to the HQ interaction.
+  if (currentLevel === 1 && b.y > 0 && startingFortressOwned(1)) return true;
+  // Unshot doors released by the transmission grid keep the tower-clear beat.
   if (nm0AmbushActive && !activeFortMuster(currentBiome)) return false;
   if (!window.nm0AmbushClearedStatus) return false;
 
@@ -34602,6 +38125,17 @@ function gateIsOpen(b) {
     return b.y > 0 ? !!window.undercitySouthBreached : !!window.undercityNorthBreached;
   }
   return false;
+}
+
+// Record destruction at the blast, before the delayed garrison starts arriving.
+function recordSectorGateBreach(isNorthGate) {
+  if (currentLevel === 2) {
+    if (isNorthGate) window.undercityNorthBreached = true;
+    else window.undercitySouthBreached = true;
+  } else if (currentLevel === 1) {
+    if (isNorthGate) window.northGateBreachedStatus = true;
+    else window.southGateBreachedStatus = true;
+  }
 }
 
 // Write the breach down as if the player had blown it. Called when a muster is
@@ -34633,11 +38167,13 @@ function inOpenGateway(b, x) {
 // no way through it. Once the gate opens they have no job left and they come out.
 //
 // Idempotent, and recorded on the gate itself: it is called at level entry and
-// again when the muster is beaten, and the second call is free.
+// again at a breach or a tower ambush clear, and repeated calls are free.
 function clearGateApproach() {
+  let opened = false;
   for (const g of buildings) {
     if (!g.isGovFortress || g.__approachCleared || !gateIsOpen(g)) continue;
     g.__approachCleared = true;
+    opened = true;
     const y0 = g.y - g.h / 2 - 260, y1 = g.y + g.h / 2 + 260;
     const inDoor = (x, y) => Math.abs(x - g.x) <= GATE_DOOR_HALF + 80 && y >= y0 && y <= y1;
     for (let i = buildings.length - 1; i >= 0; i--) {
@@ -34655,8 +38191,17 @@ function clearGateApproach() {
       if (inDoor(barrels[i].x, barrels[i].y)) barrels.splice(i, 1);
     }
     for (let i = parkingCars.length - 1; i >= 0; i--) {
-      if (inDoor(parkingCars[i].x, parkingCars[i].y)) parkingCars.splice(i, 1);
+      if (inDoor(parkingCars[i].x, parkingCars[i].y)) {
+        parkingCars.splice(i, 1);
+      }
     }
+  }
+  // Collision and drawing caches otherwise retain the rubble for ten frames.
+  if (opened) {
+    const liveBuildings = new Set(buildings), liveCars = new Set(parkingCars);
+    activeBuildings = activeBuildings.filter(b => liveBuildings.has(b));
+    activeParkingCars = activeParkingCars.filter(c => liveCars.has(c));
+    invalidateColIndex();
   }
 }
 
@@ -34793,6 +38338,569 @@ function placePlayerAtAnchor(biome, type) {
   getBiomeState(biome).discoveredAnchors[type] = true;
 
   if (typeof emit === 'function') emit(px2, py2, 26, color(70, 210, 255), "SPARK");
+}
+
+// A return journey may use ground the player owns; otherwise it needs the same
+// 100 metres the HUD reports (10 world units per metre) from EVERY live enemy.
+// This runs once behind the travel fade, after the initial roster and player
+// construction exist. Neither enemies nor their battle counters are changed.
+function safeReturnTravelPoint(biome, x, y) {
+  if (!player) return null;
+  const hostiles = enemiesList.filter(e => e && !e.isPlayer && !e.isFriendly && !e.isNeutral &&
+    !e.dead && e.hp > 0 && e.eType !== 'COW' && e.eType !== 'HORSE' && !unarmedCivilian(e));
+  const occupants = enemiesList.filter(e => e && !e.dead && e.hp > 0)
+    .concat(typeof townCitizens !== 'undefined' ? townCitizens.filter(e => e && !e.dead) : []);
+  const chunks = new Map(), collisionMaps = new Map();
+  const storyBounds = isStoryMode && !storyArcCleared(biome) ? sealedSector : null;
+  const inBounds = (px2, py2) => !storyBounds || (px2 > storyBounds.x0 + 40 &&
+    px2 < storyBounds.x1 - 40 && py2 > storyBounds.y0 + 40 && py2 < storyBounds.y1 - 40);
+
+  // checkCol is the movement authority, including open gates and U barriers.
+  // Its usual inputs are camera-culled, so supply the full map plus nearby
+  // deterministic chunks when testing a distant fort or a fallback point.
+  const clearPoint = (px2, py2, owned, keepInStory = true) => {
+    if (!owned && keepInStory && !inBounds(px2, py2)) return false;
+    const clearance = owned ? 55 : 1000;
+    for (const e of hostiles) {
+      if ((px2 - e.x) ** 2 + (py2 - e.y) ** 2 < clearance * clearance) return false;
+    }
+    if (occupants.some(e => (px2 - e.x) ** 2 + (py2 - e.y) ** 2 < 55 * 55)) return false;
+    const cx = Math.floor(px2 / CHUNK_W), cy = Math.floor(py2 / CHUNK_W);
+    const mapKey = BIOME_ACTIVE && chunkMgr ? ChunkManager.keyOf(cx, cy) : 'MAP';
+    let map = collisionMaps.get(mapKey);
+    if (!map) {
+      const solids = buildings.slice(), cars = parkingCars.slice();
+      if (BIOME_ACTIVE && chunkMgr) {
+        for (let j = cy - 1; j <= cy + 1; j++) for (let i = cx - 1; i <= cx + 1; i++) {
+          const key = ChunkManager.keyOf(i, j);
+          let ch = chunks.get(key);
+          if (!ch) {
+            ch = chunkMgr.chunks.get(key) || generateChunkContent(biome, i, j);
+            chunks.set(key, ch);
+          }
+          solids.push(...ch.solid); cars.push(...ch.cars);
+        }
+      }
+      map = { solids, cars, grid: null, big: null };
+      collisionMaps.set(mapKey, map);
+    }
+    const oldBuildings = activeBuildings, oldCars = activeParkingCars;
+    const oldGrid = colGrid, oldBig = colBig, oldIgnore = player.ignoreBldgTimer;
+    activeBuildings = map.solids; activeParkingCars = map.cars;
+    colGrid = map.grid; colBig = map.big; player.ignoreBldgTimer = 0;
+    if (!colGrid) {
+      buildColIndex(); map.grid = colGrid; map.big = colBig;
+    }
+    try { return !player.checkCol(px2, py2); }
+    finally {
+      activeBuildings = oldBuildings; activeParkingCars = oldCars;
+      colGrid = oldGrid; colBig = oldBig; player.ignoreBldgTimer = oldIgnore;
+    }
+  };
+
+  // Completed player sites own their immediate working apron too. An unfinished
+  // hoarding, an established ledger alone, or a breached hostile door does not.
+  const areas = ownedFortresses(biome).map(f => ({ x0: f.innerX0 + 55,
+    y0: f.innerY0 + 55, x1: f.innerX1 - 55, y1: f.innerY1 - 55, fortress: f }));
+  for (const s of buildSites) if (s.level === biome && s.done) {
+    areas.push({ x0: s.x - s.w / 2 - 140, y0: s.y - s.h / 2 - 140,
+      x1: s.x + s.w / 2 + 140, y1: s.y + s.h / 2 + 140, site: s });
+  }
+  for (const area of areas) {
+    area.x = Math.max(area.x0, Math.min(area.x1, x));
+    area.y = Math.max(area.y0, Math.min(area.y1, y));
+  }
+  areas.sort((a, b) => (a.x - x) ** 2 + (a.y - y) ** 2 - (b.x - x) ** 2 - (b.y - y) ** 2);
+  for (const area of areas) {
+    if (clearPoint(area.x, area.y, true)) return { x: area.x, y: area.y, area };
+    // Sample the finite interior once. A blocked Stick City compound otherwise
+    // wastes most of a radial sweep retesting points outside its rectangle.
+    const candidates = [];
+    for (let py2 = area.y0; py2 <= area.y1; py2 += 80) {
+      for (let px2 = area.x0; px2 <= area.x1; px2 += 80) candidates.push({ x: px2, y: py2 });
+    }
+    candidates.sort((a, b) => (a.x - x) ** 2 + (a.y - y) ** 2 - (b.x - x) ** 2 - (b.y - y) ** 2);
+    for (const p of candidates) if (clearPoint(p.x, p.y, true)) return { x: p.x, y: p.y, area };
+  }
+
+  // Search nearest-first rather than exhausting a random sampler and accepting
+  // its unchecked last point. The limit reaches past all currently live enemies
+  // and solids; the endless world's deterministic chunks still get checked.
+  let maxR = 4000;
+  for (const e of hostiles) maxR = Math.max(maxR, Math.hypot(e.x - x, e.y - y) + 1100);
+  for (const e of occupants) maxR = Math.max(maxR, Math.hypot(e.x - x, e.y - y) + 100);
+  for (const c of parkingCars) maxR = Math.max(maxR, Math.hypot(c.x - x, c.y - y) + 150);
+  for (const b of barrels) maxR = Math.max(maxR, Math.hypot(b.x - x, b.y - y) + 100);
+  for (const b of buildings) maxR = Math.max(maxR,
+    Math.hypot(b.x - x, b.y - y) + Math.hypot(b.w || 0, b.h || 0) / 2 + 1100);
+  const search = keepInStory => {
+    const limit = keepInStory && storyBounds ?
+      Math.hypot(storyBounds.x1 - storyBounds.x0, storyBounds.y1 - storyBounds.y0) : maxR + CHUNK_W * 2;
+    for (let radius = 0; radius <= limit; radius += 100) {
+      const steps = radius ? Math.max(16, Math.ceil(TWO_PI * radius / 100)) : 1;
+      for (let step = 0; step < steps; step++) {
+        const a = TWO_PI * step / steps;
+        const px2 = x + Math.cos(a) * radius, py2 = y + Math.sin(a) * radius;
+        if (clearPoint(px2, py2, false, keepInStory)) return { x: px2, y: py2 };
+      }
+    }
+    return null;
+  };
+  const point = search(true);
+  if (point) return point;
+  // Prefer the story's ground, but a fully occupied enclosure must not force
+  // an unsafe return. Real journeys leave through an open gate or an owned
+  // outpost; this exterior fallback changes neither gates nor story flags.
+  if (storyBounds) return search(false);
+  return null;
+}
+
+function placePlayerForReturnTravel(biome) {
+  if (!player) return false;
+  const point = safeReturnTravelPoint(biome, player.x, player.y);
+  if (!point) return false;
+  player.x = point.x; player.y = point.y;
+  camX = point.x - (width / 2) / zoom;
+  camY = point.y - (height / 2) / zoom;
+  const halfW = width / zoom / 2, halfH = height / zoom / 2;
+  viewLeft = point.x - halfW; viewRight = point.x + halfW;
+  viewTop = point.y - halfH; viewBottom = point.y + halfH;
+  if (chunkMgr) {
+    // Publish geometry without a second population tick introducing a new
+    // hostile after the safety check or releasing any existing enemy roster.
+    chunkMgr.lastKey = null;
+    chunkMgr.refreshResidency(Math.floor(point.x / CHUNK_W), Math.floor(point.y / CHUNK_W));
+    chunkMgr.rebuildWorldArrays(); chunkMgr.dirty = false;
+    chunkMgr.warmUp((CHUNK_LOAD_R * 2 + 1) ** 2);
+  }
+  return true;
+}
+
+// ===== FOREST HUNTING SETTLEMENT =====
+// Cedar Hollow is a fictional forest-stewardship community. Its small cedar
+// lodges sit on verified clear ground beside the woodland road network. These
+// are permanent landmarks, never entries in a chunk's destruction-key sequence.
+let forestHuntInventory = [];
+let forestHuntingQuest = { stage: 'UNMET', rewardGranted: false, bowAmmo: 0,
+  resupplyRemainingMs: 0, site: null };
+let _forestHuntingStructures = null, _forestHuntingSteward = null;
+let _forestHuntingPrompt = null, _forestHuntingToast = '', _forestHuntingToastTicks = 0;
+let _forestHuntingInventoryPage = 0;
+const FOREST_HUNT_CONDITIONS = ['PERFECT', 'GOOD', 'FAIR', 'BAD'];
+
+function forestHuntingSite() {
+  if (forestHuntingQuest.site) return forestHuntingQuest.site;
+  // Only queried once per campaign. Query generated geometry without baking or
+  // adopting chunks: a hunter must never clear or renumber an existing tree.
+  const content = new Map();
+  const nearby = (x, y) => {
+    const out = [];
+    const cx = Math.floor(x / CHUNK_W), cy = Math.floor(y / CHUNK_W);
+    for (let yy = cy - 1; yy <= cy + 1; yy++) for (let xx = cx - 1; xx <= cx + 1; xx++) {
+      const key = xx + ',' + yy;
+      if (!content.has(key)) content.set(key, generateChunkContent(2, xx, yy));
+      for (const b of content.get(key).solid) out.push(b);
+    }
+    return out;
+  };
+  let chosen = null, fallback = null;
+  // Search starts just beyond the Undercity's southern story gate. It is the
+  // same search in arcade and story; the chosen coordinates survive travel.
+  for (let cy = 3; cy <= 6 && !chosen; cy++) for (let cx = 0; cx <= 2 && !chosen; cx++) {
+    if (!woodHasTrunk(2, cx)) continue;
+    for (let yi = 0; yi < 6 && !chosen; yi++) {
+      const y = cy * CHUNK_W + 240 + yi * 130;
+      const roadX = woodTrailX(2, cx, y);
+      for (const offset of [-230, 230, -120, 120]) {
+        const x = roadX + offset;
+        if (hitsAuthored(x, y, 420, 350, 90)) continue;
+        const reg = woodRegion(2, x, y);
+        if (reg === 'MARSH') continue;
+        const solids = nearby(x, y);
+        if (!solidsClearAt(solids, x, y, 360, 300, 22)) continue;
+        const f = OUTPOST_FORT[2];
+        if (Math.hypot(x - f.x, y - f.y) < 1800) continue;
+        const p = { x, y, r: 235, stewardX: x, stewardY: y + 55 };
+        if (!fallback) fallback = p;
+        if (reg !== 'BURN') { chosen = p; break; }
+      }
+    }
+  }
+  // A second small-footprint search is only needed in an unusually dense
+  // procedural field. It still tests every actual lodge and the approach.
+  if (!chosen) chosen = fallback;
+  if (!chosen) {
+    for (let cy = 4; cy <= 9 && !chosen; cy++) for (let cx = 0; cx <= 3 && !chosen; cx++) {
+      if (!woodHasTrunk(2, cx)) continue;
+      for (let yi = 0; yi < 8 && !chosen; yi++) {
+        const y = cy * CHUNK_W + 180 + yi * 120, x = woodTrailX(2, cx, y);
+        const solids = nearby(x, y);
+        if (!solidsClearAt(solids, x, y - 12, 330, 290, 12) ||
+            hitsAuthored(x, y, 340, 280, 90) || woodRegion(2, x, y) === 'MARSH') continue;
+        chosen = { x, y, r: 235, stewardX: x, stewardY: y + 55 };
+      }
+    }
+  }
+  // Decline to build into a solid instead of publishing an inaccessible shop.
+  if (!chosen) return null;
+  forestHuntingQuest.site = chosen;
+  return chosen;
+}
+
+function forestHuntingStructures() {
+  if (currentLevel !== 2 || !BIOME_ACTIVE) return [];
+  const s = forestHuntingSite();
+  if (!s) return [];
+  if (!_forestHuntingStructures) {
+    _forestHuntingStructures = [
+      { x: s.x - 101, y: s.y - 63, w: 86, h: 66 },
+      { x: s.x + 99, y: s.y - 63, w: 86, h: 66 },
+      { x: s.x, y: s.y - 112, w: 102, h: 70 }
+    ].map((b, i) => Object.assign(b, { forestHuntingLodge: true, isBlockBuilding: true, _rise: 28,
+      hp: Infinity, maxHp: Infinity, isLandmark: true, isForestHuntingLandmark: true, tint: i * .19 }));
+  }
+  return _forestHuntingStructures;
+}
+
+function paintForestHuntingLodge(g, b) {
+  const lean = [0, 0]; massLean(b.x, b.y, b._rise, lean);
+  const w = b.w / 2, h = b.h / 2, lx = lean[0], ly = lean[1];
+  g.push(); g.translate(b.x, b.y); g.stroke(43, 50, 40); g.strokeWeight(1.8);
+  // Real joined wall planes: the cedar roof follows the same translation-only
+  // camera projection as the city roofs, never the sun direction.
+  const corners = [[-w, -h], [w, -h], [w, h], [-w, h]];
+  for (let i = 0; i < 4; i++) {
+    const a = corners[i], c = corners[(i + 1) % 4];
+    const k = .82 + .17 * (i === 2 ? -LIGHT_DY : i === 1 ? -LIGHT_DX : .3);
+    g.fill(157 * k, 103 * k, 63 * k);
+    g.quad(a[0], a[1], c[0], c[1], c[0] + lx, c[1] + ly, a[0] + lx, a[1] + ly);
+  }
+  // A pitched roof has a fixed world-space ridge and two generous planes.
+  g.fill(137, 94, 57); g.quad(-w - 5 + lx, -h - 5 + ly, w + 5 + lx, -h - 5 + ly,
+    w + 5 + lx, ly, -w - 5 + lx, ly);
+  g.fill(194, 145, 83); g.quad(-w - 5 + lx, ly, w + 5 + lx, ly,
+    w + 5 + lx, h + 5 + ly, -w - 5 + lx, h + 5 + ly);
+  g.stroke(112, 80, 47); g.strokeWeight(.75);
+  for (let x = -w + 6; x < w; x += 12) {
+    g.line(x + lx, -h - 4 + ly, x + lx, h + 4 + ly);
+  }
+  g.stroke(239, 194, 119); g.strokeWeight(2); g.line(-w - 5 + lx, ly, w + 5 + lx, ly);
+  // Door, porch and warm window belong to the rooted south-facing facade.
+  g.stroke(44, 46, 34); g.strokeWeight(1.4); g.fill(68, 66, 45);
+  g.quad(-8, h, 8, h, 8 + lx * .40, h + ly * .40, -8 + lx * .40, h + ly * .40);
+  g.fill(236, 200, 113); g.quad(w - 27 + lx * .40, h + ly * .40,
+    w - 15 + lx * .40, h + ly * .40, w - 15 + lx * .71, h + ly * .71,
+    w - 27 + lx * .71, h + ly * .71);
+  g.fill(188, 138, 84); g.rect(-18, h + 2, 36, 9, 2);
+  g.pop();
+}
+
+function forestHuntingContext() {
+  return !!player && started && !isDead && !isWin && currentLevel === 2 && BIOME_ACTIVE &&
+    !isPaused && !killcamMode && !inTownCutscene && !inFortCutscene && !inPostAmbushCutscene &&
+    !inWorldBuildingMenu && !inOverworldView && !inTravelMenu && !inStoryIntro && !inDarchonCall;
+}
+
+function forestHuntingNotify(message) {
+  _forestHuntingToast = message; _forestHuntingToastTicks = 300;
+}
+
+function addForestHuntHarvest(harvest) {
+  if (!harvest || !WILDLIFE_SPECIES[harvest.species] ||
+      !FOREST_HUNT_CONDITIONS.includes(harvest.condition) ||
+      !['DEAD', 'STUNNED'].includes(harvest.state)) return false;
+  let row = forestHuntInventory.find(i => i.species === harvest.species &&
+    i.condition === harvest.condition && i.state === harvest.state);
+  if (!row) {
+    row = { species: harvest.species, condition: harvest.condition,
+      state: harvest.state, count: 0, arrowPerfectCount: 0 };
+    forestHuntInventory.push(row);
+  }
+  if (row.count >= 9999) return false;
+  row.count++;
+  if (harvest.method === 'BOW_HEAD' && harvest.condition === 'PERFECT' && harvest.state === 'DEAD') {
+    row.arrowPerfectCount++;
+    if (forestHuntingQuest.stage === 'HUNT') forestHuntingQuest.stage = 'RETURN';
+  }
+  forestHuntingNotify(harvest.condition + ' — ' +
+    (harvest.condition === 'BAD' ? WILDLIFE_SPECIES[harvest.species].name.toUpperCase() + ' SCRAPS' :
+      harvest.state + ' ' + WILDLIFE_SPECIES[harvest.species].name.toUpperCase()) + '\nAdded to tablet inventory');
+  return true;
+}
+
+function forestHuntingHarvestLabel(row) {
+  const species = WILDLIFE_SPECIES[row.species];
+  const name = species ? species.name.toUpperCase() : 'ANIMAL';
+  return row.condition === 'BAD' ? name + ' SCRAPS' : row.state + ' ' + name;
+}
+
+function captureForestHuntingTravelBow() {
+  if (player && player.flags && player.flags.bowUnlocked) {
+    forestHuntingQuest.bowAmmo = Math.max(0, Math.min(24, Math.floor(Number(player.weaponAmmo.BOW) || 0)));
+  }
+}
+
+function applyForestHuntingBow() {
+  if (!player || forestHuntingQuest.stage === 'UNMET') return;
+  if (!player.flags) player.flags = {};
+  player.flags.bowUnlocked = true;
+  player.weaponAmmo.BOW = forestHuntingQuest.bowAmmo;
+  player.mags.BOW = 0;
+}
+
+function forestHuntingGrantBow() {
+  if (!player || forestHuntingQuest.stage !== 'UNMET') return false;
+  forestHuntingQuest.stage = 'HUNT'; forestHuntingQuest.bowAmmo = 24;
+  forestHuntingQuest.resupplyRemainingMs = DAY_MS / 4;
+  applyForestHuntingBow(); player.currentWeapon = WEAPONS.BOW; player.reloadTimer = 0;
+  forestHuntingNotify('CEDAR HOLLOW: A careful hunt leaves little waste.\nBow + 24 arrows received. Aim for the head; collect one perfect arrow harvest.');
+  return true;
+}
+
+function forestHuntingCompleteLesson() {
+  if (forestHuntingQuest.stage !== 'RETURN' || forestHuntingQuest.rewardGranted) return false;
+  const specimen = forestHuntInventory.find(i => i.state === 'DEAD' &&
+    i.condition === 'PERFECT' && i.arrowPerfectCount > 0 && i.count > 0);
+  if (!specimen) { forestHuntingQuest.stage = 'HUNT'; return false; }
+  specimen.count--; specimen.arrowPerfectCount--;
+  forestHuntInventory = forestHuntInventory.filter(i => i.count > 0);
+  forestHuntingQuest.stage = 'COMPLETE'; forestHuntingQuest.rewardGranted = true;
+  forestHuntingQuest.bowAmmo = 24; forestHuntingQuest.resupplyRemainingMs = DAY_MS / 4;
+  applyForestHuntingBow(); addResource('WOOD', 60); addResource('STONE', 20);
+  forestHuntingNotify('CEDAR HOLLOW: Thank you for bringing it back intact.\nCareful Hunt complete: +60 wood, +20 stone, quiver refilled.');
+  return true;
+}
+
+function tickForestHuntingSupply(dt) {
+  if (forestHuntingQuest.resupplyRemainingMs > 0)
+    forestHuntingQuest.resupplyRemainingMs = Math.max(0,
+      forestHuntingQuest.resupplyRemainingMs - Math.max(0, dt || 0));
+}
+
+function updateForestHuntingActivity(advanceTime = true) {
+  if (advanceTime && doTick && forestHuntingContext()) {
+    if (_forestHuntingToastTicks > 0) _forestHuntingToastTicks--;
+  }
+  _forestHuntingPrompt = null;
+  if (!forestHuntingContext()) return;
+  let nearest = null, best = 78 * 78;
+  for (const animal of forestWildlife) {
+    if (!animal || animal.harvested || !['DEAD', 'STUNNED'].includes(animal.state)) continue;
+    const ds = (animal.x - player.x) ** 2 + (animal.y - player.y) ** 2;
+    if (ds < best) { nearest = animal; best = ds; }
+  }
+  if (nearest) { _forestHuntingPrompt = { kind: 'HARVEST', animal: nearest }; return; }
+  const s = forestHuntingSite();
+  if (s && Math.hypot(player.x - s.stewardX, player.y - s.stewardY) < 105)
+    _forestHuntingPrompt = { kind: 'STEWARDS' };
+}
+
+function interactForestHuntingActivity() {
+  if (!forestHuntingContext()) return false;
+  updateForestHuntingActivity(false);
+  if (!_forestHuntingPrompt) return false;
+  if (_forestHuntingPrompt.kind === 'HARVEST') {
+    const harvest = wildlifeHarvest(_forestHuntingPrompt.animal);
+    if (harvest) addForestHuntHarvest(harvest);
+    _forestHuntingPrompt = null;
+    return !!harvest;
+  }
+  if (forestHuntingQuest.stage === 'UNMET') forestHuntingGrantBow();
+  else if (forestHuntingQuest.stage === 'RETURN') forestHuntingCompleteLesson();
+  else if (forestHuntingQuest.resupplyRemainingMs <= 0 && player.weaponAmmo.BOW < 24) {
+    forestHuntingQuest.bowAmmo = 24; forestHuntingQuest.resupplyRemainingMs = DAY_MS / 4;
+    applyForestHuntingBow();
+    forestHuntingNotify('CEDAR HOLLOW: Your quiver is ready.\n24 arrows. Return after six in-game hours for another supply.');
+  } else if (forestHuntingQuest.stage === 'HUNT')
+    forestHuntingNotify('Careful Hunt: switch to BOW and aim for the head.\nCollect a PERFECT arrow harvest, then bring it back to Cedar Hollow.');
+  else forestHuntingNotify('CEDAR HOLLOW: The forest has more to teach.\nYour hunting inventory is on Dad\'s tablet. Supplies renew after six in-game hours.');
+  return true;
+}
+
+function handleForestHuntingTap(mx, my) {
+  if (!forestHuntingContext()) return false;
+  updateForestHuntingActivity(false);
+  return !!_forestHuntingPrompt && mx > width / 2 - 100 && mx < width / 2 + 100 &&
+    my > height - 125 && my < height - 75 && interactForestHuntingActivity();
+}
+
+function drawForestHuntingSteward() {
+  const s = forestHuntingSite(); if (!s || !inView(s.stewardX, s.stewardY, 70)) return;
+  if (!_forestHuntingSteward) _forestHuntingSteward = { x: s.stewardX, y: s.stewardY,
+    isFriendly: true, isNeutral: true, hp: 100, show() {
+      const lean = [0, 0]; massLean(this.x, this.y, 10, lean);
+      push(); translate(this.x, this.y);
+      noStroke(); fill(23, 40, 29, 55); ellipse(3, 6, 29, 17);
+      stroke(35, 42, 36); strokeWeight(2.5); fill(58, 70, 57);
+      ellipse(-6, 7, 8, 12); ellipse(6, 7, 8, 12);
+      fill(54, 111, 86); quad(-12, -3, 12, -3, 10 + lean[0], -12 + lean[1], -10 + lean[0], -12 + lean[1]);
+      fill(81, 137, 103); ellipse(lean[0], -8 + lean[1], 24, 19);
+      fill(159, 111, 76); ellipse(lean[0], -13 + lean[1], 15, 15);
+      noStroke(); fill(45, 41, 36); arc(lean[0], -14 + lean[1], 15, 15, PI, TWO_PI);
+      fill(226, 183, 106); rect(-3 + lean[0], -7 + lean[1], 6, 3, 1);
+      pop();
+    } };
+  actorShow(_forestHuntingSteward);
+}
+
+function drawForestHuntingSettlement() {
+  if (!player || currentLevel !== 2 || !BIOME_ACTIVE) return;
+  const s = forestHuntingSite(); if (!s || !inView(s.x, s.y, 360)) return;
+  push(); translate(s.x, s.y); noStroke();
+  // Narrow connected plank walks and a gravel courtyard replace a broad
+  // painted ground oval. All seams and planks are fixed in world space.
+  fill(123, 121, 86, 210); quad(-145, -96, 145, -96, 158, 103, -155, 103);
+  fill(164, 125, 78); rect(-125, -44, 250, 35, 3); rect(-22, -105, 44, 205, 3);
+  stroke(89, 83, 53); strokeWeight(.75);
+  for (let x = -120; x < 125; x += 11) line(x, -43, x, -10);
+  for (let y = -101; y < 101; y += 11) line(-20, y, 20, y);
+  noStroke(); fill(74, 124, 63); rect(-145, 74, 100, 21, 8); rect(45, 73, 95, 21, 8);
+  fill(148, 110, 68); rect(-155, 36, 44, 32, 3); rect(111, 36, 44, 32, 3);
+  fill(50, 107, 66); ellipse(-133, 39, 28, 13); ellipse(133, 39, 28, 13);
+  stroke(61, 74, 52); strokeWeight(2); fill(210, 173, 105); rect(-82, 102, 164, 27, 3);
+  noStroke(); fill(39, 55, 42); textAlign(CENTER, CENTER); textSize(12); text('CEDAR HOLLOW', 0, 115);
+  pop(); drawForestHuntingSteward();
+}
+
+function drawForestHuntingHud() {
+  if (!forestHuntingContext()) return;
+  const s = forestHuntingSite(); if (!s) return;
+  push(); textFont('sans-serif'); textAlign(CENTER, CENTER);
+  if (forestHuntingQuest.stage !== 'COMPLETE') {
+    const label = forestHuntingQuest.stage === 'UNMET' ? 'CEDAR HOLLOW · BOW LESSON' :
+      forestHuntingQuest.stage === 'RETURN' ? 'RETURN YOUR PERFECT HARVEST' : 'CAREFUL HUNT · ARROW HEADSHOT';
+    const distance = Math.round(Math.hypot(player.x - s.x, player.y - s.y) / 10);
+    noStroke(); fill(20, 35, 28, 205); rect(width / 2 - 174, 75, 348, 40, 7);
+    fill(226, 203, 142); textSize(11); text(label, width / 2, 88);
+    fill(174, 218, 176); textSize(11); text('FOREST STEWARDS · ' + distance + 'm', width / 2, 103);
+    // Screen-edge guidance remains visible beyond the settlement's own chunks.
+    const dx = s.x - player.x, dy = s.y - player.y, a = Math.atan2(dy, dx);
+    if (Math.hypot(dx, dy) > 220) {
+      const ex = Math.cos(a), ey = Math.sin(a);
+      const reach = Math.min((width / 2 - 35) / Math.max(.001, Math.abs(ex)),
+        (height / 2 - 140) / Math.max(.001, Math.abs(ey)));
+      const ax = width / 2 + ex * Math.max(20, reach), ay = height / 2 + ey * Math.max(20, reach);
+      translate(ax, ay); rotate(a); stroke(28, 47, 34); strokeWeight(2); fill(154, 232, 135);
+      triangle(12, 0, -8, -7, -8, 7); rotate(-a); translate(-ax, -ay);
+    }
+  }
+  if (_forestHuntingPrompt) {
+    const action = _forestHuntingPrompt.kind === 'HARVEST' ?
+      (_forestHuntingPrompt.animal.state === 'STUNNED' ? 'COLLECT STUNNED' : 'COLLECT HARVEST') :
+      forestHuntingQuest.stage === 'RETURN' ? 'RETURN HARVEST' : 'TALK TO STEWARD';
+    stroke(79, 147, 76); strokeWeight(2); fill(187, 227, 151);
+    rect(width / 2 - 100, height - 125, 200, 50, 8);
+    noStroke(); fill(23, 43, 29); textSize(13); text(action, width / 2, height - 108);
+    textSize(10); text(connectedGamepad() ? '[ A ]' : window.isDesktop ? '[ F ]' : 'TAP', width / 2, height - 89);
+  }
+  if (_forestHuntingToastTicks > 0) {
+    const tw = Math.min(width - 36, 670); noStroke(); fill(17, 34, 24, 224);
+    rect(width / 2 - tw / 2, height - 204, tw, 64, 8);
+    fill(224, 238, 202); textSize(Math.min(13, (width - 40) / 47));
+    textLeading(19); text(_forestHuntingToast, width / 2, height - 173);
+  }
+  pop();
+}
+
+function drawForestHuntInventory() {
+  const panelW = Math.min(640, width - 36), x = width / 2 - panelW / 2;
+  const rowsPerPage = Math.max(1, Math.floor((height - 300) / 53));
+  const pages = Math.max(1, Math.ceil(forestHuntInventory.length / rowsPerPage));
+  _forestHuntingInventoryPage = Math.min(_forestHuntingInventoryPage, pages - 1);
+  fill(214, 190, 119); textSize(28); text('INVENTORY', width / 2, 54);
+  const cardW = (panelW - 16) / 3;
+  for (let i = 0; i < RESOURCE_KINDS.length; i++) {
+    const k = RESOURCE_KINDS[i], c = RESOURCE_DEF[k], cx = x + i * (cardW + 8);
+    noStroke(); fill(25, 33, 30); rect(cx, 79, cardW, 43, 6);
+    fill(c.col[0], c.col[1], c.col[2]); textSize(12); text(k, cx + cardW / 2, 91);
+    fill(231, 218, 177); textSize(17); text(resourceCount(k), cx + cardW / 2, 109);
+  }
+  fill(176, 215, 157); textSize(13);
+  text('HUNTING HARVESTS' + (forestHuntingQuest.stage === 'UNMET' ? '' :
+    ' · ARROWS ' + (player && player.flags && player.flags.bowUnlocked ? player.weaponAmmo.BOW : forestHuntingQuest.bowAmmo) + '/24'), width / 2, 143);
+  fill(166, 176, 167); textSize(11);
+  const questText = forestHuntingQuest.stage === 'UNMET' ? 'Visit Cedar Hollow in the Level 2 forest to learn the bow.' :
+    forestHuntingQuest.stage === 'HUNT' ? 'Careful Hunt: collect a PERFECT arrow headshot harvest.' :
+    forestHuntingQuest.stage === 'RETURN' ? 'Careful Hunt: return to the Cedar Hollow steward.' : 'Careful Hunt complete · bow unlocked';
+  text(questText, width / 2, 163);
+  if (!forestHuntInventory.length) { fill(159); textSize(14); text('No harvests collected yet.', width / 2, 218); }
+  const colors = { PERFECT: [151, 227, 140], GOOD: [222, 212, 132], FAIR: [224, 172, 107], BAD: [191, 124, 112] };
+  for (let n = 0; n < rowsPerPage; n++) {
+    const row = forestHuntInventory[_forestHuntingInventoryPage * rowsPerPage + n]; if (!row) break;
+    const y = 184 + n * 53, col = colors[row.condition];
+    noStroke(); fill(30, 38, 34); rect(x, y, panelW, 47, 6);
+    textAlign(LEFT, CENTER); fill(230); textSize(Math.min(13, panelW / 35));
+    text(forestHuntingHarvestLabel(row), x + 12, y + 14);
+    fill(col[0], col[1], col[2]); textSize(11); text(row.condition + ' CONDITION', x + 12, y + 33);
+    textAlign(RIGHT, CENTER); fill(223, 209, 154); textSize(18); text('×' + row.count, x + panelW - 12, y + 23);
+  }
+  textAlign(CENTER, CENTER); fill(166); textSize(11);
+  text('Taser: perfect stun · arrow headshot: perfect · 4+ gun hits: scraps', width / 2, height - 123);
+  if (pages > 1) {
+    fill(35, 53, 41); stroke(94, 142, 91); strokeWeight(1);
+    rect(width / 2 - 150, height - 106, 80, 32, 5); rect(width / 2 + 70, height - 106, 80, 32, 5);
+    noStroke(); fill(204); textSize(12); text('PREV', width / 2 - 110, height - 90);
+    text('NEXT', width / 2 + 110, height - 90); text((_forestHuntingInventoryPage + 1) + '/' + pages, width / 2, height - 90);
+  }
+  fill(40); stroke(255, 200, 0); strokeWeight(2);
+  rect(width / 2 - 120, height - 62, 240, 40, 8);
+  fill(255); noStroke(); textSize(16); text('BACK', width / 2, height - 42);
+}
+
+function handleForestHuntInventoryTap(mx, my) {
+  const rows = Math.max(1, Math.floor((height - 300) / 53));
+  const pages = Math.max(1, Math.ceil(forestHuntInventory.length / rows));
+  if (my > height - 106 && my < height - 74 && pages > 1) {
+    if (mx > width / 2 - 150 && mx < width / 2 - 70) _forestHuntingInventoryPage = Math.max(0, _forestHuntingInventoryPage - 1);
+    if (mx > width / 2 + 70 && mx < width / 2 + 150) _forestHuntingInventoryPage = Math.min(pages - 1, _forestHuntingInventoryPage + 1);
+  }
+  if (mx > width / 2 - 125 && mx < width / 2 + 125 && my > height - 62 && my < height - 17) pauseMenuState = 'TABLET';
+  return false;
+}
+
+function serializeForestHuntingActivity() {
+  captureForestHuntingTravelBow();
+  return { version: 1, inventory: forestHuntInventory.map(i => Object.assign({}, i)),
+    quest: Object.assign({}, forestHuntingQuest, { site: forestHuntingQuest.site && Object.assign({}, forestHuntingQuest.site) }) };
+}
+
+function restoreForestHuntingActivity(snapshot) {
+  resetForestHuntingActivity();
+  if (!snapshot || typeof snapshot !== 'object') return;
+  const q = snapshot.quest || {}, stages = ['UNMET', 'HUNT', 'RETURN', 'COMPLETE'];
+  forestHuntingQuest.stage = stages.includes(q.stage) ? q.stage : 'UNMET';
+  forestHuntingQuest.rewardGranted = forestHuntingQuest.stage === 'COMPLETE';
+  forestHuntingQuest.bowAmmo = Math.max(0, Math.min(24, Math.floor(Number(q.bowAmmo) || 0)));
+  forestHuntingQuest.resupplyRemainingMs = Math.max(0, Math.min(DAY_MS / 4, Number(q.resupplyRemainingMs) || 0));
+  const s = q.site;
+  if (s && Number.isFinite(s.x) && Number.isFinite(s.y) && s.x > -1200 && s.x < 12000 && s.y > 3600 && s.y < 14000)
+    forestHuntingQuest.site = { x: s.x, y: s.y, r: 235, stewardX: s.x, stewardY: s.y + 55 };
+  const merged = new Map();
+  if (Array.isArray(snapshot.inventory)) for (const i of snapshot.inventory.slice(0, 800)) {
+    if (!i || !WILDLIFE_SPECIES[i.species] || !FOREST_HUNT_CONDITIONS.includes(i.condition) ||
+        !['DEAD', 'STUNNED'].includes(i.state)) continue;
+    const count = Math.max(0, Math.min(9999, Math.floor(Number(i.count) || 0))); if (!count) continue;
+    const key = i.species + ':' + i.condition + ':' + i.state;
+    let row = merged.get(key);
+    if (!row) { row = { species: i.species, condition: i.condition, state: i.state, count: 0, arrowPerfectCount: 0 }; merged.set(key, row); }
+    row.count = Math.min(9999, row.count + count);
+    if (i.condition === 'PERFECT' && i.state === 'DEAD')
+      row.arrowPerfectCount = Math.min(row.count, row.arrowPerfectCount + Math.max(0, Math.floor(Number(i.arrowPerfectCount) || 0)));
+  }
+  forestHuntInventory = Array.from(merged.values());
+  if (forestHuntingQuest.stage === 'RETURN' && !forestHuntInventory.some(i => i.arrowPerfectCount > 0)) forestHuntingQuest.stage = 'HUNT';
+  applyForestHuntingBow();
+}
+
+function resetForestHuntingActivity() {
+  forestHuntInventory = [];
+  forestHuntingQuest = { stage: 'UNMET', rewardGranted: false, bowAmmo: 0,
+    resupplyRemainingMs: 0, site: null };
+  _forestHuntingStructures = null; _forestHuntingSteward = null;
+  _forestHuntingPrompt = null; _forestHuntingToast = ''; _forestHuntingToastTicks = 0;
+  _forestHuntingInventoryPage = 0;
+  if (player && player.flags) player.flags.bowUnlocked = false;
+  if (player && player.weaponAmmo) player.weaponAmmo.BOW = 0;
 }
 
 // ###########################################################################
@@ -34986,7 +39094,7 @@ function getSafeSpawn(away) {
     const r = minR + Math.random() * (maxR - minR);
     const rx = cx2 + Math.cos(a) * r;
     const ry = cy2 + Math.sin(a) * r;
-    if (!insideSector(rx, ry)) continue;
+    if (!insideSector(rx, ry) || (away && insideOwnedFortress(currentLevel, rx, ry, 60))) continue;
     // Never drop a random hostile into a settlement whose story arc is still
     // running, even when the player is standing just outside it.
     if (away && isStoryMode && hasAuthoredCore(currentLevel) && !storyArcCleared(currentLevel) &&
@@ -35013,14 +39121,26 @@ function getSafeSpawn(away) {
     const mx = (sealedSector.x0 + sealedSector.x1) / 2;
     const my = (sealedSector.y0 + sealedSector.y1) / 2;
     const a2 = Math.atan2(my - cy2, mx - cx2);
-    return { x: cx2 + Math.cos(a2) * 700, y: cy2 + Math.sin(a2) * 700 };
+    const fallback = { x: cx2 + Math.cos(a2) * 700, y: cy2 + Math.sin(a2) * 700 };
+    return away ? hostileSpawnPoint(fallback.x, fallback.y) : fallback;
   }
-  return { x: cx2 + 700, y: cy2 + 700 };
+  return away ? hostileSpawnPoint(cx2 + 700, cy2 + 700) : { x: cx2 + 700, y: cy2 + 700 };
 }
 
 // -- Level entry ------------------------------------------------------------
 function startAtLevel(lvl, isLoading = false) {
-  const arrive = window.travelArrival;
+  invalidateCrowdSolids();
+  if (!isLoading) captureForestHuntingTravelBow();
+  const arrive = isLoading ? null : window.travelArrival;
+  // generateMap marks this visit before the player exists. Snapshot it before
+  // rebuilding so a sector's first story arrival never becomes a return trip.
+  const returnTravel = !!arrive && lvl >= 1 && lvl <= 7 && !!getBiomeState(lvl).visited;
+  // A real journey carries survivors once. The pending selection contains
+  // additional soldiers, while the roster retains every survivor's home and
+  // sex so a later casualty reaches the original department.
+  if (arrive && !isLoading) {
+    window.pendingEscortRoster = (window.pendingEscortRoster || []).concat(liveMilitaryRoster());
+  }
   if (isBiomeLevel(lvl) && arrive) {
     window.__biomeAnchorPending = arrivalAnchor(arrive);
   } else if (isBiomeLevel(lvl)) {
@@ -35030,6 +39150,12 @@ function startAtLevel(lvl, isLoading = false) {
   }
 
   legacyStartAtLevel(lvl, isLoading);
+  applyForestHuntingBow();
+
+  // Initial residency still uses the authored-core view, before travel or a
+  // saved position finishes placing the player. Let draw() publish the actual
+  // camera before ambient residents can enter that first view.
+  cityPeopleFrame=frameCount;
 
   // The Travel Menu reads currentBiome for its sector names and its north/south
   // destinations, so it has to track the current sector whether that sector is
@@ -35081,6 +39207,12 @@ function startAtLevel(lvl, isLoading = false) {
     chunkMgr.update(player.x, player.y);
   }
 
+  // Construction must be present before arrival collision checks, and the
+  // escort must form around the final arrival rather than its old anchor.
+  buildGhost = null;
+  if (typeof republishPlayerStructures === 'function') republishPlayerStructures();
+  if (returnTravel) placePlayerForReturnTravel(lvl);
+
   // The escort marches in with the player, wherever the player actually ended
   // up. legacyStartAtLevel() places them relative to where the player was when
   // it ran, and both arrival paths above can move the player AFTER that:
@@ -35094,6 +39226,7 @@ function startAtLevel(lvl, isLoading = false) {
     let formed = 0;
     for (const e of enemiesList) {
       if (!e || !e.isMilitary || !e.isFriendly) continue;
+      if (isLoading && e.isFortressMilitary) continue;
       const dx = e.x - player.x, dy = e.y - player.y;
       if (dx * dx + dy * dy < 700 * 700) continue;
       const a = (formed * 2.399) % TWO_PI;
@@ -35104,12 +39237,6 @@ function startAtLevel(lvl, isLoading = false) {
       formed++;
     }
   }
-
-  // The sector's construction, back into a world that has just been rebuilt
-  // from scratch. Last, for the same reason the escort re-forms last: every
-  // path into this function regenerates buildings[] at some point along it.
-  buildGhost = null;
-  if (typeof republishPlayerStructures === 'function') republishPlayerStructures();
 
   window.travelArrival = null;
   window.__biomeAnchorPending = null;
@@ -35163,6 +39290,7 @@ function restoreAuthoredStoryState(lvl) {
     for (let i = buildings.length - 1; i >= 0; i--) {
       if (buildings[i].isTower) buildings.splice(i, 1);
     }
+    recruitSectorSurvivors();
   }
 
   // A breached Great Gate stays breached — this is what keeps the "ENTER NM-0
@@ -35339,3 +39467,741 @@ sfx.SAMPLES = {
   // Grenades and rockets, and everything else that goes off with them.
   boom:    { gain: 0.505, data: 'SUQzBAAAAAAAIlRTU0UAAAAOAAADTGF2ZjYxLjEuMTAwAAAAAAAAAAAAAAD/+1DAAAAAAAAAAAAAAAAAAAAAAABJbmZvAAAADwAAAFYAAEcEAAUICw4RFBcXGh0gIyYpKSwvMjQ3Ojo9QENGSUxMT1JVWFteXmFkZmlsb29ydXh7foGEhIeKjZCTlpaYm56hpKenqq2ws7a5uby/wsXIy8vN0NPW2dzc3+Ll6Ovu7vH09/r9/wAAAABMYXZjNjEuMy4AAAAAAAAAAAAAAAAkBcQAAAAAAABHBJWLGlkAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//tQxAAACnyDKrQTAAFzDXK3MGACDUAHzG42QALBd//97iP/ER4iMe70wBgNNjAQIQPAAAQcmDhaZgDCwIGAfHn4gcQicH8EHQxB8Plw+oEDlb/wfPxBLn1BgDvKBgSBj8+XeIAQdLg/s9rtpbrZZJI5JLIJJRTQ4j8Fyx6L7tvRDVDLKli5dhy5dnEiJSaHMBYBz88RBvAVvLOn/HrkRELreD4HExI815YjLh8dKPvDoIGWHMKBKjb+blaG0K0flVuGBOpCQf7vQZWBAAgCCP/7UsQFAAvEtX08lIABdhIvsPYMfAEEZOYDYXPr3RYkISYNAyTo1FUSpyGigVjAVExlEicToG4blV/l7CcIfw3+oxlf125u5m5twucJKyTqbnDhZChZqwTDz0gnhKaFm0mDUzQO9Pt7d4Kj2ubO1A0woSuNUQlYIlYJT8XQByKC0dGx2rSKq/G66UU32s+ghRkBkKLINiQi6u5shvpm3qAwNAYPCIwXDYeIsuJVBwvJIHmRdJL1Uv2tf29XqOALeoyOz5GyQIUAEuIkKACwCAIK//tSxAUAC3B3bYwkaUF+k24ysGAAgLbCkLm7LNjUPPAMsgSIRMh0PPeuLHFpzWVdKQUHZR6gJGM69Xio1Y6DpsNBwIIFBGXCZl5xNUgLDjBJy/nVPANslSu5bVjNrw03Pdx7/5FJIAAiMgCCNZlOhCzdJFZMTkz1wfTSSxBkSoohM1Cdmg6W2n8MloQ8KuR80n31njxkQrp7V1/r551HS4MXKTg2DbUIQInvSBDBRRhIu8nqjniwaIEHr77KP3wWUDl4xXt1KgClWpWBAJKKCgz/+1LEBQALyJ13OYMAAXUMrreekACrQQSR3CzjSYrbuw9Fo9PZ5bkO7sRQ5D2ySEkw6GdCKIizCeUX4y7q6TwiyLJbnlmeG8dkf7SEbVqFUxgWItQO3oi4bDAb3eo2KjnSB//9W3UkUtqAbtmSBBBSToFoBdGy5lUmTzNBfVMi5Z5D0C8S55lFGCFviO4X6p2Vaa2R+3dJZ9dE3OiJkPC5d4IbgMRAw52blDCHDjZt8w159Wpe8J4u2rU5Pqc9L5d9s2qqBkEqADR4ZVNCSiiVT//7UsQFAAt8OX3mJMahgBCtpYSY4MXBUYAzZD0fAIGkAws4dBLABM0itZJJjTAYFAQCAWF7wqXBt7XMLwSXaksGLgTJC4OFzoYQ/e1p8yp11kVW5TANdGYu+UsZ44GANkGpsHoetlwE6gAAAQ2Y05DkqlaQ7aqzQAdFg2KVQ8OCdQnGWcZJvLRLEKUtWqjOLzA1GjNg+BbRETjzctlWSMgwOeIoQPEgu0EWDnj3PQh4eIip62cS0nHENFAu4UqT+WTgZFCEVycAg2MiEAAAEgCI//tSxAUAi2ync8eYbIF4Ey8w9hjINARxaWxwn0Vh7RMr6lVVSSN0LXFmpVtItYypwKI+sLRAbh0KYZwZI7OnkOEV6owhEdsiHUHRgdFDcwIi0u5khWtx4eoAplwwsQaf/6d6q+LS4F2+TJCsG/MOpsDDGGI42gWGkcjMUWHChwWQ6ZBHTue6+LvNXm/dxy0MsvfKXn41z7AkHUmiSJkfb+Sme5ZnJ3VptZcf9KhdQmC8TgADBpykd3idefFSanzql6XpsUoTxyWIkkApSHYgEoL/+1LEBgALrG+DphhuAUgWL3D2DDBDsmn5aW0bV3sYHBfEBWACQHc5keyswSHxgYQ1RkJYOIIGIxoCUfFd7b1lSDkQ/YRmDajrnPueVU/YR0XEEGjRwWEhALiciGz8Gm1IWU7Na2UAC2yEgAECJOTkJyIoK5AMkMkkhgcTOIpSkB6BBUjtZQ52uLGeQ2c0gig8GFkIle5J+WuREx8nChvfIUHwEbUJfaIghQxaHY5376OQ/S89+h39VQ27JYUggNj/XCJN8qExWThgFIFjA0qGEf/7UsQMAApoZ32HpMNBSBuwvMGKIJkIgFSM3tt3EmqChsM1yc+N9lnc0BlAKKBoDDovgGkwszlo9ilZFdNRh0y56GN7F4lt/3ssU6w8rfkbxN1hIdDFBJSS4+A6HIpDcOypAIYHrRnQ/C7jhDidZtjIfxA6AocZVX/yjrG173NoV7e/9laqLYzUPZ2R2ero3FTe2PqS77MqLXLu70Lxg7d7OhUJXW1EAAElOC7pc6VnaiQovmlDHVEM3CYmtOhDI4gzQTViiwSBVwDKF0Bw0SDi//tSxBcACnw/f6e8YYFQi+/0ww2IxA2G0PJhkLpIGpNhmmtlXYTd31EPJrRnQH0adyRzXKOiWrQFqtQrc9bAAJJTlGoqAkeFAij+pLSoqGKAQh+IIjQiEVumGGrspR3fS6WJuEZCRwyKkwmCMgWJoI5ATao2QWzDI3lsgivFbVDkntBPsDzxaDALiCfv2+kIRhEAAACcUGyIgyOoR/JVDBYrK0BmA+QKZAo5BEJyjicWgd6aoT2ZbfuPRmzkt/J1Xmqv0YCwNmwUkxIKnElLn73/+1LEIQAKiIt3h7DBQU4NLzT3mCgVNivda4ZO7Vbf/tqNAMn2DFICS3eIAIACTg5gWqJH1DSKhdP0qdTcvvXQMFBKYHJy7z07M139vU8NSo1GMfby0rhELnj6BrTbljjammRUWRwswS022bsq/1tWl6Equ2eYdP1b0kEa6QAAAEVAUQjhfjrP1abjkRqPRDplVdRBEEKgO2osKfTtxGlznDOVBn6LuLIoezhDCAOsPBYBuEqxSMaq01SPake8MuJiYWnDfaU+n0f/XGetYSmjqP/7UsQrAApMd3dHmG0BTxVvtPSIeIIBBLl2KAui5EKw8BLILGQq5cTEODqEuygWt6taiiDFhmNzyur33qrORnhS2N2ZPTK8gUw/jN9UdYqlEPyBEc68k9ocNGm8uwQN1pOJPL/NKgE5rUACSCAqAclgVXiEUBEExk2oPWHxcNNMoluvZIRAJ5UOhMy0JrDqSgHSwBFBcqgMh6HBhMQtGij0PTOjVIkLdlH92TW0866yklUW4TMpnk+WB/1AAFsNVQtIpZwSNgMGgsKROeRAKphq//tSxDWACmAvfaYlJOFBk26k9Iy42PF7GLqakdowCx0ARQx7FwOIOmejbhFMnw87rSy9gqY8GA+5Zxq4TY5vFXgZrInaqJt0R6959bEVW6pQgkkpxPBG1EoRoMC0FNgnaLQwXrHiwVqro73fdayY8hTqbcyI+Rl6sZHmcxotjj6EAcJNe04LOCJZjVqXuHtd4xx4V1I4g9NMbK01UdHVpDy+QAABOUjBcyVrCLVBlo4uJgSWaRCQuBCxlVWwyaV3abWJka/FDrSCZVDxVkJilTL/+1LEQYAKOH2BR7Bj0TILb2j0jOD4Jk6jV7CgmYxTkWdjwaOkC12uwW7P9rF/z3sVDZqaQAAIJUqlF4B0YiMZnRXEsmlQsAYoJoKRTtPMpAvS9NC7QCEBY4aeKCzUHAUEEoittJNUXcw+aaNfSlX3t+6ML8zJ3vt9NumhThn+8CABLPEDF9RQDwLmhBNTQqnxuqPjIjjsocI7I8J6IFOGowS6fBUwc5cFEDk4L16Kfql7I7LO6cr+7W0smHWjgkZYaGLS5CprRakexEVSM+5/of/7UsRQAAnQPXmnsMEBShKt1YYYcKsRFyIgAAAJSgzTLLxCR6oVKlUKLT7Ej2Z8wsmowkyOZltUjFRQtXeiWNxTlGg0EXXgZsGo7Va8y2L6BABzdjaA/IO6Fvr9ufk1dOPlKaUNFNugRKQhJtLiAWG4ewIwSJBRMjU2SJEZXegP1rNiGFc4+TGBcPClq2CbrHoYa6+LAKjdJXFS+2/IgsqnJQX8TBUtp8fO4cUmtb/irewt/5FFI2EAAApOUdenoHouQwTaDoSFhLOrlResLfIl//tSxF2AijhfeaeYbIE3EO2Bhhh5bLQKCjN64hOOYRIjARNtIEJMifQi375eV65xPplnhlE1LYEhqFIkJlejptoX9nc7RubPz3ZNfQCIBCLgHCodCljgI5eJ4en4pSqkp2cqjUSTheTCUWVi8upJAbvi1rQhHM+tk61shRAVHhloYUDaCANgyJAXSHBgCJ3p4x3m6NxQa+YdXW9adnoVTldjJABaTm4KmgHxQCycGwdEBQJROMywfiQxKQyLo6U5TcQ6oh+cJERWqHhJ5DBZITH/+1LEa4CKTKtzTDBhwUeNbqj2GHiucew6DAmFYx2cUtqkpOJZqKvNqPiBDflxwsA9X63gR2nr40muMpgEAEpTGosCQ5BoFQjHATAk4PuBIyFESaZFkUEg0sGwOMF3Aq4qZDaRgEErw8YDDxdpsslx9DuWw4ykMptlQ2LjREDRY8sA/ytfd8Nnou/6QC3ORVVj2vWtJFEpzDEKEUNg4iJo0EBWbHpIPEzC4vnWMrTXdF0pCW1gMwg4IBwPgaOWEgqAkAYQlKSI82DQu0YrQ9CXDP/7UsR3AAqocX2mGGyBXAYvdMSYmGORhIXJbhTQsjyNYl/rk1snVb8enpaK5NKmECUm5SSCPFtMozi8FvKB6bTeqWTLSfR5PgIx6TpGv38AZZypsas4+xw0URU00tRdUaQPRzORzx6Etntl1EWc37GsUKaHg+TDDGXa6ZpXpkr1pTEBgPShz6UJS2wokBSW7oUJGeB4PDmHyfpoK1nPlnQ08kLMvBDDAyjCafU7lakpjEpC65ZkieklODIh17wvQt3tN+HwIiCQ0XGlgfFHanaT//tSxH6ACuRTf6ewYeFynO908wncCFMM1k1gEyRvYSVslXdzQaPAqs+8kp7194XSA5REQAAU3JxwjEMZOLo6EWeSLLefLBELDIi0tpayBkJRaBZ6BHJB8OXul0qI81jGt97OsgbSl+3rHSdjihwFD5nGlwoOCw0paaYQ20KcL6VqXv2+tfTD1M6PAJJLefquZm6QEEptwDIhA+eow9H0AhWbKo7yHp6ZWM1DawSw5GUGknLWyRSMycfplTr+U9ldCmmgkct0dWKn1xKZ1N69jsL/+1LEgoAMfKt7p5huwYCSrvT0mRDGNE0sH31hkWS2dW9lTdN4tuXLkKRinuASrPukC5M6qYAAHLbQfANQk499FAZEsbFoRCufjoyPMXHZYorghYrbthyE700vTBVaGZgRt9Vc8tfqVLtk31sy15385FFCMOiZqwkfFEgaMQ0tXb/7nMqS40QCwRPiDXKNZ1qVMgABSv0B2lB4GaTA8edyAHfBtsG10JqAYBdeTaMgQClpweMOMzzdjpLXbGU1Z08hsdQZJJP2gIClLFCQgZJXGv/7UsR+gAvgy39GGFDRdRhu6PYMeDihOoyaMuygozul7GWVaKfr7f/6wqrUAKcluBokFNuAfagP0yjfsxr4FaFDaERRcwhMGol2GakGjaB6aSSMYk9yvhwRIlKElSkJ1co59RN+P5sehCdtiSIvocLkiAGOhNhpC7XNr2bbrS6ljWXJLoTZa5DUKi/vqBVWxADADx6WhDEZdCjNzBcCRfoIzh2rDbqJpxFZKpRlVSMszNAQdS0ucF6JfJuHs6iCpOxgsgZFCTwka1ng0aiZkuzQ//tSxH4ACohxbMwkyUF/l67o9I1Ya5XXZSi4a4Xfa2nI9Cbt2KC6QZdAABBcmU2JkD5USELJAlAiSkTJvCQqBQVJjZOUJHlzKSI8VRUm5ZA2zJm7rbWpIKgwaWwAONlDoieCjkspQnQ1KCYVXb1Os3tfQhKUMu//uFtj09NrKCYEAAABTlAZEVnSl7k0DhWoo8L4xJIERqiUTSR5ISPV1/MNvXbrGUKoyVhVuyE9bZKQoOl1Q9TUXGT62LJufBM4h47FEgRJgsNW+2hHeBIIJ/3/+1LEgYALKKGBJhhusV8LremHpCCu3pdTSzsyJBSbcqOMcOc8I54qxLHO5HchyruwIYqbmiDiJ3drBFTZLDJbX/6UTWNNDYTw3nEX0IeMBh6wqBGBsyYOAPM9zHChaKZh34seNve6rRz5TnsVBV95Z+kWaFAAAcXUkagUgr0TDApi03BgZgTJKZi/7heiQvaOOxDBUMqbqZHaRDrWrzMGpEmaf9Ei5FqXhQtCpEfTDAqEnOCYke7So/iH+t7DgWfHCxdt6zrUoqDSVvWwyYFgsP/7UsSHAArUeW9MJGtBYZJvqPMN0gt3lxQwz2yiPQDBs3GXnE5gjRFjTZNAYI11EoQcMQkWYGJI8j9FsQFRuob6kCwVexw7elL3gAUmhQUqhqTRefaiuqv/51c6p6qWro9LbvXVBgoAAAly8BIBSkvP6MXoyRGnR1LzKYXG45uHUgaIUASjGQmnSSdA/pYdt5b5B0U7Lds9a5Z1uTUGgqztoh3paYBgdjlKMWCqL5Uw7SuZy9FE5Snp5z9DRVpAABKTkDEiixFiLgoQoLogCMNl//tSxI2Ai5CNeyewY/FGju4phI0oSk9JRdo8wxsKtz26pF613olzppWrn6WmbeSNqNJD2RMzPvD/1IcNgJ81cmlDLXIqeGYokt9xF1kKKpXQ5Gi6mv/SMjKcRKAS2LAqj0UKiNdWnQOXiXEHzy2yQrrUnrF25rDts/tvEm8zSDUWVC7reiSoZG86ryWt2BSA8FicG1AgifAjgQa1hYI/ptdygZpX26taqDuxn9ASUbTRABBKMIAtpJdpZjR9tKtDgoGxEhRl1j5MWCIgZBJqlI7/+1LElAAK6HlxR7DGwVqVLuj2DLpNKwcOnAwkTGEiMOj2E2tNHkqQeGkcXS+UDYXBm97NgYMYITxcV//o5SWJmjbWyCjFx0rVKu9UAFNy0vSwcJNS6Pi0eJA0kcny2rx1h75IbXt71NYjeZiBEBD0BUNpJtHBUyI7WBjbrIi+AgMVjjTDtbqNyioAma2ivrIJJQ+E6LXZUVfWOPdf0hWzK79wZCy1fsTJAMBrJ48kwdz5Q8DRShkEwYULHGHbgDbRgQSTyfDtutochcapYu0yTP/7UsSbAAq8qYGHsKfxXQpwdPSM5gwQIlC0+hYum12mcOPEjuBRJoSbhnRFEafRs7B3KVuiDWoKaECC3bvxhTN3VWM/imDyv67UZNiZEFzIGbKxDjxTQgMdZ7pEdB0v1XuoszjJIYxBizHOYWAijFYaVjmUrrSjIY7NVLTy3Z7IlEeZdH3q2q7X0qiFeb/TtlRv5l5EbmfUSZ6dgBCd14BWjB15G7NIjLUQjMAk8WFdDeRlc1XIMca495IeOHVgqpDXcDjaGEDV6u1RUNCZQIma//tSxKIAipw9fUe9hNFSDK4plgx46AYUaXEwjC52i950+IDUNOozSwtOhZRZK3cz/9ND56Vn63z+RgAgIyCCZJduHRYM8Mka0y4IRJCQqpAPD5cqDuMYnjk4XapggOZhiYDUumQflY9WrdqTAAIYbZieFS1p9bDH5T8Y0GpTOa1HfqJPDsJjGfObeqjUeibso1ge29o3VKAqqwn6kYC7FKfzkQ5BlxQ2qJPRcAogKFDCxIri6tarVCAIiOJExLvmF1DHbZVKrs22UcQ6B8iEDgb/+1LEqwAMjWVxTCRJgWmNrY2GIPCaPa7PPFiYJlABeZeRGz1xgqSqU5z7fftRd/b7lwC40wAQVNtuDKVeC0ShQBAOwMDSB/yIWCWdk4Bp/bzOAcDUKpUwii8ePAhZeh08jbju0R+IxnoSVQX2/4s6MBgIno0FQYF3HSZ9oLPJntLQMwffoeTZuVdru2wxpJGOkaJKTst4KiNGEQ1l0ZoJWHEvj+gFYQgTJpwvnIkAvE26ijFkMr4KYyvoRo7AxJInFNh2NFirnKQOYNFQaHJQgP/7UsSpgAtcrXGsMGXBZBKu5PSNloz4y1RyMcH6TjDArXH/1o/dOcNeTDLvLgUWQBBTuvBSS56gTcgpQAULJ+OI+2PV5mgwIMKhUqnWLVi01VYIHTgrFEEAeIDHPUoMIFDynDnJLqNuj0PGHFKEAbbWxxEUQ/OOQBv//rUaMefW97Qq7RKiAAIEAAJy4cEYJzG4UJJBZCdnbAUJPH50oy7g8RgLyGik07MWDn4GZAxBe9NRAGRUDAM+lAqLAgUYfeXWKFpxaTGgiYXWdtOtMT6h//tSxK2AC5ilbaywYcFoj660ww3c5YPm07Yt//4roqdykcvEFRVpVABJBMFCTEoa+9MIkrbNKf4QEIEhsVicTFjSwrREAfaRPlRE8nFHQx6eRb6MiYKQERJFsNlz7WAw7B1wqAMWGEEg/n3/ekSOS2pFNjhC9nxJA6UYifEuziIGQEawKIAyBBTckodqHlCiLjAeHzlDRowpiORQUSogH0D7ee4O0cgEN7B7CfNDyNbQh5VSSjU4p4RjEljZdxZp03Nk6FEREbiwiW6wSgq2HUf/+1LEsAALDFFrTDEjAWwKbbWHmDASzFpJb/S//v7D9OsWrlAJpsRksRDk+lUqdE5oWZFShR1niwqdRhAEmTRm7vMvWcs1GwZIAJ3vXdz9IGDB8FyYODGCoYQE3igKKcfYAgMkNVlGPLHs02m/0pyhzy+3T7a3++3KDSyCAqtFErkmWwxTTQ4602cS2mXGAXtJ7XuaRmjndcnkEl9zgsDNlKaSeiRTifoA1w0BL15GpDAyLC5NASeSSfFFMXGODlhJZd0jDBSNdL1LPNpBDYkzKv/7UsS0AAv0k3dMJGlxYZHu6PYMeitfyf+mcQGVEAKTbcGIzF6YksQUVpSsPI4mWhPcsNnBWbxxtNSXuyN0KTEKWnW38Sqx+mfBDikVRg0CA8vch8iFATNJHVM7aOAUO66CndUninnLiocPSEl+XNkiwjk1rTTkm23G8tDQP9CS+hKBALgcMgm0JRkivpr41LEgwmlCC5RHD2woqB8MnxhQEjTTjlwoJ0LrC4uxywRImBgRKE6B6GquaBaWWZ9ivujXWdf/53WqAAgABJ3a8LGZ//tSxLYACwR1eyeYbvF2ke8k8w3mtfeUHhgfjJkdyaO5k8flKkbiHrZYmB+gwTJVIKG5XJMtklyzo4QnGqNOPNDtkuLi2xRUDpVU1R81EJrYQfrLGk/t+Mo1VZxFXbtFSkQBVXKgah/G5DRyqQhURHy2xEojM6q+ZYUKkton+aY3EvJvQQgAy1SLIpDEBod5WdMnK80fSOs5cSq34H/FS0u+9NZy8pRll//r/o/DBqyoNO0an0UAFy28TEQEd5jkNRJypImSFvEkuDSemu3q1an/+1LEuQAKzH9zR7Bl0VcML7T0jLTlndrBDzyCrMK2lUMkXuYTSGC5dQ9BSh94BGSl8Nc9gxFrbpMxe9ZGxkC776inkPNBU8VJRM/P8QkAQCAALdttNcYpEWvtNgOGX50zt3aOKz8Di3FIFAx4yrxDDEbTVhb0KZp+2q7ofMyI4waDDtixRU6SUFpQjXU2ruG+rMt7J79EvS9tvqXu+pUAAxsAAFzW7g+rkSFxLwlSnSzs+EIV6qaybIWp4I0QEijshu1SqDe1as8PgaWPuLB4Gv/7UsTAgApob3FMMGPBWa8u5PCO/jHWeY3EAMsEhYiiFSZi7Ra/mEey2KU09aV29k5aS+3KEAIAByaWnsiplkXIV9dk+P4hRkoBQphDScoxtfBdCPFIqJEYLk0ycrSXrtprw+KlkBFgiA9hE6bWbQ773OcogEBxeoL+7If9JNNN659mq7t5bSoEAATUcgAkIAKYF70+m9nn1QFyeNKrlapaYKl4SwuGazz4uFId26Fc+x1fHhF11Rjp3tvDbC1Nmlo81DzbHg3e822u+wPqcYY///tSxMmACpBfbmeYcIE/D+2pgw2gJWdmqtC3XzZ5X/V9noAMttvBg1ySeB5E/SvIwBRsEGigJPAVGXIRdNyMpq6sTslBMLTYzv3ty7+FNDgYiQsUiojADIuidoMrcd/9znq6P6/f8FHNb8zLCsKNkgEZCBTcccEcGglO/J4b6ZShusRltzaeS7UDxO0TCTdW4IdyQxE7oQltG4l/Et7hnPmY22OAShKQYswKmpt503BsWnGm03zLbYKsMqIMj0AKQaWzteW0YCr1YpVfTQ8IuWX/+1LE1QAKYE1vrDzBgUWLLV2HmDC4ycSAtI5OlmoCFQ6IKsXbOoDlALsyx+5BEo5J5VGJ6ceikj0ptW8pLdu71MaIohxiUw4lNylokgRKRnJxzj5xzkGvFJmrvxi3KHwu2n2lM4X6ojHf/TSujPQi/vX59fyPdqP7/OV0bu3COuoVqmhv5cbp5GArhYOBseIYuMlpaNjEjQHq28xJkVdQQs3p3hGdWU1kpJp6o1pcf+KSZhkjhAp5/HDxGTLhgXOrhMZX/R/bmP8Nla9LliyWH//7UsTggQrQf2bsMMsBNg+tzYSM6G8oAnJZccNDGSUGka2IQm5omtLXeyB+aFv9FgdEIMrB8YJTlqowSPxKtwWVV1iGrTls0C74XKK0cHPqxDMmpnzODY7osrOtS/t5DDNmWVuev+2+lk1/RyV/Jox17VbI3K7fVjQnglK5YvUAuSSU5IGBo6r0JQJkj1GOUaxO2Qmy7XNWpPMzx4rGAwgeTF5qFU44xrKW5/3KQdVAYXLMFgOCjDxA4H3MVd8hdvZb7PVH/+ryIXfaplURO8sg//tSxOyAC8B3b0w8waG5M2zNkYroAuj9SYZbmTIsuo0x1isOAVEoRhYYFUmsE5MPbvcZssnK6rOqb384MwqB2kXZgtlXFlq57XJAkNRzBKRjw21TxcVNnUixRmli3BkMli2cROe6lLLymc584BkmV0KsLCfiVSoERhEsgKSJKA/LTmFRJQNrKdKJK9X3GxIGB4RCIfLZEsLsygeIU1pOrujlWYmhE73IwUgNmEBzjhJCkEuMzFC/iFWL/xJTwRMJte1Kws02Uc5T1gfUeP7KhJ7/+1LE5AAKPJV7J7Bj8Z4vbI2UibCIxVUjLSOsOcvWRDwa+Vbbam2stHYQ5A68mUVRCItCEHgtrMTfR+ImmSDhYMTJMQQNZUm5dIJPjpma/ashwvIlTP/ZzUcXDwPlMTHp+LOExMOPLDUqEXbrbten5XqCejO//v6qAAIAAtuOQxPsRDFdwcwwWFs+eRIl+IgVWio3MF5KHfBUnMFjFEPP7n09r5IkVwqWLVTnCyFxHYgdBx+H1nIrkR334V95lKXtb3/pp+CCRZWiaEz+lCoUAv/7UsTlAkokc2ZsvGOBiBOsXZYM+LmsMaRq3Mmes+3qw6ECgAJcttwEiUfZmgNa7A8002Quo0+9i68plNX4rUrfSyn7YoSAZHDAIxlLlle04Xv46JdlLKKeBnL4s04IFy/3bl2ud//kq1PvI3SvepHg9bsI1QEagB/6zCEis7afRRhyk+QwuTWcpckapULen2vNVGFnfLu1RN3IM9r0ZRYSvWjmRGrT8GNpe8yJ5T4TRfB9KGnmd3Ol6IQvUE4uRgd8uFQU6WRYXvLtSmxYsZXW//tSxOkADLzDaawkaWFeka61gw2k4qIA3soQU+QAAJAFSuS1qI0pmzE3GTgZKj0xVeYDArEQCC8/JSpyxwbLY2r2UWw8SMVCSKdzGd2COvYzlDuaxoS5HZeWVXKlDfVideiGdLUYvWrkS+qWItGb17+Wujf9/R1ehr/o7t83RoN6VSEjf/ZtShE9SzXRaYvxOkJjuxELIwktFu78S1fiQpBQjq7uVjB2drLHK7p6pMxR+Q0QwSGQAXD6jdwreceDbb74WUwY5a0igAN5qLvLQF3/+1LE6AAMjOdhTTBpgUssrSmAinhreze+cy9svocovQDX3nw0W9pw5RG9brjNHAOBwKA7OzMDgHjgw10URASJZ5xAyvZ2bG3XUSBcqaDimDAmlLmris1PmJEbxZspIWYxXF3UdSN1aqL0a6qpXlu4trUC+rNqsyUlGxlDOSAJjGmHfL/K+Q5Mnaa+qcsok79v/Q6zAhWC00gwqDqRZPT+XZL8khM/XZrx7vXaT1YWCg8wIFA6IRo2NLngaBYiw4dtorGtMFUQylo2p0nQoOH5df/7UsTqAAyI12csPGPhkDJsqYYJIAu0JPVW5/yIRdgQt0LYCnZZIdqa609GJIUpsj8HgCANg1BIkLjtlDI4eGJWEhKYGTJX6Fpuw5o75mSkhZZtVQjDWXuy5roLKoNtSaFE3PFgkM7JwuNpIV6ckT9n2Czr85dnOzi6Av+zhdfAIglCegvAhOXI5iLSyX8bvyVw4xSJhIGmhM5wrLCcli6ES6V5vTya+J3ZzXOXMDnAbEL0GhwqKgqYOBxJ2pN6SByHNqxV90gSW+k6kuxXVs31//tSxOOAC0yDaMwwZyFEimwJlhjgUlZGkBLpth+SBSQAJy+2YHsLNirJ6JyGkNIbhEnbgJwrVPHJ/G79yXSj+9QXEfMXwyFuwbiw1axeHtNmyQz1ayHapblhMHBH351v0tzzE/J67+qo2dqvW7bI+6eS6t/sZuqK/XtoM3OpaVX5VRVqk4m5Nv9eDj2U53VSi4FmzAG5mUzJcpohLjD73IFaaGIi7l4G1GhMVIyrTyIj8vXz/Z8/r7T2vz7fu8PEu0oROjTcNK+SDkYNch1/7Lv/+1LE64INdIdaTODBwWAS7KmWDLBmVDy3yU7WiOJgxy2OBCjOC+OYZibAotAn1kUXJpLeVyRQ54meYoRTLANEb1tQwqcepVjlm3RNFArW8g3m3BB5JcZpRR82txtR0uLipA+4awRnxQYFGXFKx8MjHG85qdJrtiuo5Dinyago4Q8mDBRcb+jNqNsbiQ62WNvysdXcDkQPGAQE6oKmCHioQtwNUJVsULSxiN3BMCzq5vNfezLQofiFPDYRaL2hNoAPvWx4fWfMT6XsFaxBVmq2E//7UsTngAwAdVxMJE8BjLDs6ZGKabHdvuylmUz8glaXDAAMFKUTSLMaC2zNZYu+yvSLvKhiYqEAgOEZpx5JfhaRAGiGrGlMtFzolFwVNA4QUJgyDL97zYDU7aSFHXPFRamyEiL0yj1Xonk9Crv9cC0dU6yqNcHqAWqjDiPAI0ywEeMJE0IJBQlKlRkrrSl7S3ngVWKnFYdCABDQpFbwOOEjC6NZl7Lm0ljscykFG//TVcK5sMeFSdamtGCwdJBMMXrrGOP2KteyCaDhslJn8Lww//tSxOOACwzNdawwY6GOEiwM8w3oLIvH3vIH157LcpEzlOqCabTcbksjThRxCfmg2G4lWk/DJU6MGCNAMIkCBMplm6aqKiPHeivF2T6Rmd9R1Y1IoJaDT1B3FhwiAqQkqfjxhovG2Hmv/b0vErEJywbKRP3lXL4cW4rm6W0RJuaRybb2zimJtQmE/M1HlzCgnHJJWtGaEWkUC2F6CwKkdU0mM5jOeCoaJhpoUKDkVtYkDUR9QGJkA8s4faYc+tmrP0pLx7mveh1P/o6rbSs6tOf/+1LE44ALYJNnLKRpIVYK7OmEmOQOjwauonEBQSqqAiz6tNS9RcTRcNrTA5O+j9scnYcBB4Qaj60fJlC6DIX1j+VaTQilzTFmXEVbIKzDkGzK4qD4WoY5KNiBAVNpMz5h4/KLUcvk9XmCC30d7Pu6qCFrRGoEFKJo0sVBQBBBwQW3Q6mBCPy/D1LwTpUqS1jMPMzd4FATXEYVJFVG4HSAgOReggnchT0wZWwZFPr5Rvp3PnTRPOFXyNM/6n6ISGIo8gkmkAAch2ink4DNt6IXef/7UMTpAA0If1hMpG8BZZAv9PMNXkJf5z/nzxdIBqYBSyyWEOA76pValspJsxbm777UA5oEhWwaHQUsK5INHNS86+IbLJ17nYxBLdj9/E2rJettRdQRC5ZBmOQRitwwKEgD7k1BJBRZ2m00kn1C5lB2R06+12jwKhzX1QEZInCpIaWXJTmR5UFixKlaDbwqKyyOvLx8MisS0spD6gMdVpmkb8wYetAxGYcszRS1shS/5Gzy4ikTg7POpOhAXHBVhwmhgqWm1Op3Qufv0qi2uir/+1LE5YAKwE9zp7BnIXWQKwmmDdhoIBp+84LERinFEJKgiASjbTJ0IXpypZl1F9qkrCJMVSs6ynbrLS3gVjBRAnDAn27SBwkCQNhmI3iwmKGCrhciwuIqxObMO0rm5sczta+htjk9aU/9vsv6+hDpJQW6c2fRbI4cZqTEkIkGyEeUDH5YSqsnVE65EDM8F5ynHUmLCeRJxCLevsdf/etdpbZuXBsCsh1Vz1PYqF2tRzy2SetGYqHnU+r/1ZEsrpZiU97oV3ROstp07b/6b7fm8P/7UsTpgAx0zVptJG7BdhBsaYSZEGU71jC0PSbsqAW402e1qWhWKUgGONMEAk61YJKBsMYQOkoqJQsG9SmS0T6nUPlMXI8uu/D2AC1NmjSrJGBOlyI16/GUKyzkdIVZ5e4zlUPWPTGiuiwEKnPfpn36zWxgNyE/z0R6udz/rQSU4m0m42kmDIEF8RyqSyOiWEoCZIZLDaRZx9AkEjF2+3PGvDbSBqRd7QCoaE3Hih4kFAK1aWYxCbY46yLIX+dTvHgZTZAanse9K1Ob9Ti36NIF//tSxOaADCyVXGwkbQE8iCwdh5igIMauidgiBpJkwwQIbOGJnSQzfmROJNPM4rVVST4BTAzD4zVH+FpQc2UuJCb2URvcysXKmaaxAqFaoNHdASR3cWuIQMSs4b1IGoB5jLdvJrnsgbQixPciZKeINjqJGFi5U0IyJwiRsQ0vWRkkaUAGUan1cuWtJf6XtvfdZlcuturNxmPqE8+7maIXOJAeLbajW39quNht2e5XfVt0DuiuilK5XKrO2jPkqrXzm2uVW2RNv+77dF530oj/tf3/+1LE7AMNFWdWTTBNQYCXaw2GDTD6I3/v/290dlfhdYabcccbkY3rini1GWoEw4wU6rduSicGWWyevD28q45GHhqaqsy7mxhR3FVuqta/Mzrb0T1IRJLNaUgcUUTatr932P8H7Kn0ev08i7WlimICRNy1FvqzjB8s4raRDKqgetGhyy6DFlrtaZrDcUbhPwCsbEZ1Y0GF4ykz0bVzf2p7L1KLAHBYwaIpHKaQhRlANOEVSUBEPhA/OPOVL1pS+xhxBjN8olcKjSIqztGvC53iBv/7UsTlgAo8T3eksMFxn5HqSaYN4Cn4yWJuJTjbVFwktFyl0U3PWBTVLlsPgNx3hwdOPwNfBByQBCLDooKIpH0T66UWZ6+k51CqjP8qLnZ7/XdrQ7Lu2hmj90bMtdK5boaei3b6tqX8+Z+r0767WvQn9n7WPyBimUzn/dyp5KHBFxEqAJdVGW1pMfeQMjaO7VYFEYL1wSjgbsrCWPnn5zlXANgKkZGQBAVS0prNQISge+xlTJIFAoueA5ABJIl0CdEXUYcLFBQcOA6Dz0Pwv2N7//tSxOaATAWbZUwYT2FJl++08woWvH36bLur3fZ0iNX9JvtZKGozoKgoI4cCwQiYPITujQUiw2hGpwWoDJ3qacy9KMTyUieFadsYeec9xl6yGcEY68ZbpNnypy1X1V15kU5RQWY+AQdPh90BKSMFEJuX6aOeYvqGNdVnIouDnK9c5QU3GxDe21boyXSqI/KTS4ZczYrBMAMBxckOjg+QnJGKKtC6kVmmLdR9JPtBIuQQXEw40sXBlT1rrCFBCkpIHjDdMd9xP6k3f//RaWtnHnb/+1LE6wMMYF1YTeEhgaCy6w2TCfgu6tVoNXWZ6oPPzqUcQiKKoQ3EZlbYCZUmFGWhNOBOKawYl9LpetV2uMv0erZ22bscDOe32MQGOMAYPjgqH0sdIm66ErchAlcPQ4aToYKCAYoKrfwA6TYrZ/FHpnPFDL72uVKIBAEnJZIYOskMxoMZpOKXo0JJMPdEdi4CQEGj80KqZOWLDVML6b8npbZzKGDVPW71Yi2N9lymBIAgYKw0IgVg2xRxa5UFZgYSUOEpmkTQIrLHELPii64YUP/7UsTjAArke2VMsGVhjhYtKZYYNOCzzinVh8tIfpqcgrUdSoBrXEX5pBphgycYGAg5lgrTBRTgOPIFNIDedwMjIOmReoNlpmS2V10nVjEMYtJzzbKEZX2iPtl+0ww5xVLVVnlpEj0BgW0nCZNhE9H6kDtVvpNN6LbFv9URNLICA3ascAyMSkGYqDMoVuLlD6A0S7IhFPjEgFxphrhIWOo6e06ksmtBaINiUaPJvvCrhpdzhYWRiwlM0HDzQ29W7aVpUbqgyAx1zSKyMaiTUAOn//tSxOODClRRXG0xKAGBjGrJrDAga7kTAoh3pE7+zowVoQgBlXrTLWAUhwxBSSnEIVpOUCnDlT6QcnSuYJE2wPmadhZgCB2ODB9QqGrTKaXwqAxDMFXIHJGnKyyVHxV3fjjS4MvcS63uEbms0HOcsv/E+p7zjJCE2EIhAgCW22lD4gUk/i5QMCnOzSHIGZtYcCLvVL6Z6rcTv2ps4NUmWkhDjZKLIVDQ3+UMvKbPjMhqil6VyJJT1tTslnbox2RXU9zOSZFfS/Q2VtO+lk3RCWz/+1LE6AEM6HVa7TDIwWmRqomWDZi/WTYmX+qim+dyVZ1BcU0tzZbZLwBUSsz0JLnU8IRBTTgohV4tyIIoeiaQh+UtOyt3s+JSlZ7dAROfshTS20RlRTtsSqO7Mltr/117t+0tPz/9Euq3bpRL2I5jVq1Wq3/qVqk/Cf6KAQCk3FID+Ci6Z6AAAil0J0LicJioHwCBwWFR+ZHgnGDxk4cq1kVpy9Ub+42JYyqKYcyKpW2RLewidKQRA0WrH2CgmIptQ3cxBN5Y5+21LORMBYoQi//7UsTlAgsYTVzMsMcheA6qibeMuLC4hExZ+ciXvLk1sKTQbblkkktljcL3MtjPJcZCW0nFajWovqRMQURBxhMiNsGgbdF9pwtU97rofKLSs8qrXn2q28qdETuuxqvKxjPZptSaHtinCUit6vlslZ3QRf2l7P9PpdFU1QlbZJRBIUSFuwUlKRIF9QSA+qKSl84Joki0niHEVDE3lMoa3hBz8UZngxoJqDmbHrdrwwfF7JkTz2IEWnM0Ok3VIVnBbcKQekakrvvRSG5ERxU0vTuZ//tSxOeADJFpXUyYUSFkL6zo8wmsDi9iypjOkChmHcTGBUuqScbRTB4HCPSg02hWz5bWRFQySro8kAEUTATGto3avZylKspBWuU0+FiJAnFigfOpBRCwYl1oBYswPw5OvxGiJDEABVxLVxtanIIvaxog0UOpxBn5R9sprYoAJDbjch1L+mkEBKAIyYLTPGWHydJ/B0IsTIuL5LEvJsZKtRCHIiabbgTUYKiqOlYUd7HjhIbMzRp49FHBoffNtSaeSEiVIJWKf0N6L6RfXfijSgT/+1LE5oAMVItU7TBpgV4bb7TzCbbKlxGZ3cn9P5bWZAFNUqWxpw4OHfYYvtdbLgrJY/pBzJrK4mmaM/cPXWwaA85KaAKMkEPEM28nNN7LQ1Q7vg4x6uFMNJONx9oaYc2O3us3Pj2o1vShfA7UN9jXvt0en40hSSJs2v1K5OYRkTTsRgWFRLAhofFlNK0MLCvIcjUjOTtIdrdWxrIVqbwUcXMohKlzjif77QGRMonQQHBZhoAHijGAEgZADVHC5d7mj6B44nLk75tSjq+9AQTclP/7UsTnAAxIvVhssGrBbIpt6ReYLuTddDF3dQXeJnHDXA7ttZQCgekyd1XET2UvdtT7WAQPT0mMEUtJlDoE4myaKoeKbs26C1PntRF7/1vuteGVqLAyHBIl08KN2TrKUD1n7j4TamE0Os/be3/2RZPdsK5Z5OoBORuQ4JMMTJC/qahKTooGQ8OiAzCAgKwb+tNUtZ5CWYyeu7kvfqzC5kEceFBiDHpq25/n/OZMp5MS5ssXGTagQMqUQHWPYFDgwtE4TgNF4945iAEuMQtpDFhd//tSxOYAC9h/VO28ZYFVEmwplgysM4wVEBhDkRcBP2SId6Qke8sQI0qV+rjpwi4LEdNSUmXa7IqJ/mA8Jnkx8YrkN3WQRR+rs+YSudLuriGhjRGWGbu4CZ8kD7SClBkYXsEMGBCChgeberUGHIIDgQPABylOJLD+/Y76by9b5OV/6RWa5r/VxDDIZjAG8aKrOBHIlduaJampOSqxiZYjJCniO2pSDnTrWFqhK5RQ5FtOlYsKfhfp0IR5euhaHP48S85Ev+t7o1q99vvvu/arfvL/+1LE6gIM7IdUbTBswVOPK52GGRD9favL0eCZH6N+gYR5UAB0S7rY3AfIgKWF2GCcyOOElBOVxAHQ5sRIDIKFimzlZQumlMMncscBggDgUJhpQqEQ8BDZUJjSjjBwTi1NbBRT0J2ACUCfl3Pc1lXKKZI2N4z3/91NASjSTNdWBgow5ZJoVFIkswLaPqGFigsz9hLU00E8Uf1osPcGDWLokzwHhp4ZUfZMeXpCiCcXWBMAGkHrWRDrSEWyisE3c8zLEk9ODzDA9W5ZFxmlTYkgEP/7UsTpgA2EgVBt4MWBb4/sKZYM5MJYjXvjBQwffW9ROUyfrZkzmTIEKoq62OwjeTVcV0lPO0ppDoEoxcTB1vvLo2SfLdtoko7kZGeojQpKsudTKUFQHRbPJlIszrt7aV7sWjm8u/a3REf/26fbejdWa4IDE8s0z/0UfygAABFyGXb2THCBrDtKehtWmhWIB+OJ8Rl5SIpyblcqmCtNCd4cqBKMJ3ffMRUYN49JIUg2dIJuXnHI6RXvVMXlCisc8McFnGNTgZw5dfI89C48nOZM//tSxOOAC5GPaSeMU7FYiavo9iDcbhhIurz+sFNTUhvQBQCABBjTZMPCHVG6xeQSAl/00ENxGJgFeXqhcIxLTMNMr6LCoAkM5jiGtzmiyWEBk7Khs465wKlh3selBLFTIRgQuBZIYO5RXpUitU56hD3SdD53ESjr4sHaCclktGyAA4JMhLHBg4T0POECe5hfv9hJJl1JCgIZIETHy0kGOwXDbz0Io30t2It9Sdj5TcSEppaxBUlJ5oNER8dAfuxVoINX2FdBYmSKARROni2Slnj/+1LE6AANUKVMbSRwgVGm7CmUiPSuU1slRGps9gwsI2mAwcl0DTQRFJkxd8DEXMbgUD24NWfRlMZd59YBaS1utLY9TSy9hEJyX01jCWWM+5Ulam2AhwyKrkzsRnAMBHAQL9s0p/pTrfrLlqjtr+9DrHLsaZuYub5c/S/82TUb1Ud0KgIJf1ZkwxhgJVgFhMuXswhRubXK/6wjAAGUZc4HWHo22WsSsNsCwKBQbeOg48VicDwhDMeGkCTWkLJPlMYsVeZwIdOYo96+wSCzGmO1yP/7UsTmgAxAuWGtMGWhYgxrKaYM5LEpMSbOjW/OyCwFXJIjP1i8ZjAoqQCxsMNiEM+qijLUsFzP/Lm/ikGPGXEwebIicMyd22my2yax1OML01r/ma4odB6hIUgdImKri9yh64AFwK9l54KDYiW0atA99iaIgl8ag3OStZ7rZ/9RygHK25BxB0MCiodzLEm+/rKWcLYpV0nZqLocQicoWvmCZfWG8FRgBKTLY2ZuRSvQWbaxEZWDZcCqQUaLNsSNzClXdqpxiJ+q04URuM3IZTnJ//tSxOcDC0iHVGwYbsGlMelJoIsxPxLxW6l3UEN2yWUPKLgILxIfqXNcRJtliIyxV6Ys4pmVwyMGoLaw09BJSlpSYjc1osxtJ6g8G2pCJVgnMCBixK1gcBDuTHgQPCw8apQ9yaRzzp0ZZvqOsXFCmNadNaf95bcp0hUAgKciTZ20gsAKgELg0ayIEh9IlRJpNdQeeiPO4/VqRV37hdLLcY33cCgoBQkEufAXDPVFVTfLX035Jh2CUydkTO/u1qHvU/LZlV0pZtV2R0/I/Rrznu7/+1LE4wMK+DtYzOEhIYcQ6g2kjdh1bNbcrjSLcv2SGU7JHKAc20pfdZMDIusjKkGgOvjoTw/C9QJichnBZJarrA6FX15b3iNxhyX1PX2X9a2Rnp6VvMjufp2LteEbhO9VPLuaHkMxRu3g+esIZ8g5tol0eXrqgezJqlKiCiVJElAD4WOxBmzAC6BahMhrzvPu97mMgjqpkdKMi2CvkjTCzrAwLTUDU6Iy1pV2JYQ5seblenLkbFa7f7m9N4UzECWhahzmJxjJcCyd1Lh7na2Hwv/7UsTkAgrUhVJsMGrBdwtqnawkKC+Ty89yCJCsVcIjJugABN5xS/7S3DiGYNOxX7NJhgHjRdH8BJeL5uXx4OWWG28agrKREQI20/fWhlHn75qCo56w0LXBgViF4mGEwce4DRItDMc2qTvXeICbOfRJkH3P0o/8u4u99QRqAAk0yxttwNJAQpaRaYXB5IBpNNmSSGoRDT68mmg83BREJNtYOyJa0PeIiiPXJzyjwXCwTAwlBRI86lNEkMkMoScwXKqicgWD0+IYRZQmnPHQpoQi//tSxOeADLU9VO0MU2FjEGwphhikOQ/CTdX5YHXhrkQVcCEJKo5d/9bzqBLhtKqqz3HwdqBgOxUjXElDLhyxy7EFuIq2kwxxK4UUypVwhw3SUeADB9M9HTEQpvnyqMpaFVxKKDlfAu9VbL6WWLY650jL/+TWOgErG2zcbTcAzEmjKkDKnwwwgWo4nu1J04bak0By4YafDgxM2GEY+m/uVIZLzemlgzFX657Tr5rqhm/mfKIAYlDKxIQqLqzrrmV3aMB540xfOl1Sb4fReIIq8zX/+1LE5gAMIL1WbCRsoWkOrHWGDLQ5r1ejL1uWDALuXBbBKpLpB8MToABQGkS4CZo/mpXIBZF5ylPW3zU8VocfnM5oQZ6oJ6uhTWBoLWw5uFVA7wTHDT7EVISctAbjThXKuqUXXcx4F3YrwKfkF3K+ZYWjbjIqyIz1F0rVArq5y/+28P8u1ajXm6vrAMCS+B20pnopo5JOX5HSVvlW6au4hSwHRzNGDHaRlSZ7qjGrPKRx69qT86Z8Ym1Xsz3Z3V/p6Z+uZ4VtGoyaa/p2fpn9H//7UsTmAAwUV1lMvMNhUIvstYYMrNm/R2MSqaW/bdoR7ZcFNxJQ6GsqFWQIboPFtFYFAzCALgVEUnlAsjYQQ+JEKdv6RgsCTzJ097KilCQoeDwcnignD4bQNvYeciI1lG2oGJ/6L11dd+yh6f+moWJmE6F1VoUFRpIsL9GWmKGIoChqUyIpalFelYQ7YZgwRDsLjAsYVGios9sS70OGXMKhqA68poQ6VJKgdArx3xZUiBR8A7VWWsJhEa440UCL0vC02Qbx1j7cNKkJ3ts7t1WT//tSxOmADDyLTm0kbsF9D2pZpg0sZJMU4huNJwNGCETQDXWDE0BSA1Vxdp2liNnDUBi4fERyYuD64ySY8VMdQwRcdGJWaTgck6x17Vhp8OdBi3CNiX2pfOIzxJz0NoEqOVvXGLLz6ppcsVCDSuEw4pytp0hACFMyCgBAAUm3f9Y8GgwIogRsWQzkyjGVD0ZMzLzUsXVr1rgRAMU6KVBZjg5W3JSJcnOeHlOCTNBqjnaq0GYoJBkKOUXjXguXJsgvZdNvLitgsQEClSyEdHyPlTX/+1LE5oAMQZNhTAxTYU4KKc2mGRh5+XunAzPVvFngfDu223O+WTgV08K84KdtrEnYgps5TTL79xHdIA0gt8NUycNl+5zWigf7k9LDPs7cF6jWvGQWxWvWkNcSYhqa0NF5IutrYlKbRUk8cZFB12tieXz59e2V4CJrYeYET6gWKpoAEIoqKTbSTBSFvlBnnT2S/BQiHg6lUyLmn44e4vOUFYY4pA+70qpjUuvA+RWwYfUkckeWgkxoeXdy1S11aei5MWOmMs9NDV2rrToyDdb5Bf/7UsTpgwvQg1BssGrhf5HqTZYNXJ0zxxRKFgQZUjRcOkRBx5gJMRJQosCXAPAWHLrLolB6TYg0HFIwP7J2VXUKVzdrQEvZhwzKh2JVUobqihA7qCAslS7uzoyXb1vtrTRafmnO/nR/3Sz0evzunBIruMO45nVSfMZ6t5Mhn6t1MbyPHY7lAAKxMkW32lx9U093x4LIWjOI7LL3NQgiVIxsVqNLS5Kv1iJ+ry6httaWvun1TExN3/kRiNIxVmMpTTLjaf/kZ9+fhgDXcMcpb+vA//tSxOgADCyTXay8YeGIkqqdownw/bveLBWUT//d7GqwsfAAUkjqd39uoe1bpRhfqArx6iqOs5SVx1EXBPsSnms9VrIsk5yh4FjkP3uChYCkyogFFPNB8ekQqcbDYjLDCkRLm0jZVlanpTQ9JG4BdaLIdwrNAY1pgf//8VUAAFgZb9djipVvmAJhAoxZkv2BgMVTRukUJwRHZoqC8zYudnDN3iocnMD53HGrV1HqqRiWjMUc5fJCsF59xhNzoVEBoIOFmvWt0oB24UVWxjGc+fv/+1LE5AAKvFNdrLDE4asyKh2mCTWcTPmllSRvcI1Cr0XPbW4hP+XBvqzF2Jh0NUQh4kGxoopqm5czyiVxlJU/0i4vEoiWcKYTDmqihJjgnYuVcSBBW608ZXQ8i9rUEVj1rWo2mbrdVyplorcuaejqsKNxWtarHLqI9tCOkVUBoXUpbpLgHqvRF9IROh42GRFa76gRxgHng0VPUTo1EXZSq0nHYKRAYO+/MkZMtuzDirIrCAgcxL0jk1CUCEUxq0EKtFajmYvLWim8uqmmObnqJP/7UsThgAsQx12sJGmhaAmrtYegPJZoPiBQVNcUoYAETBT0sbgu6GQaVIOGnCIEqveBh6+nDoWWz3Y5SSxEGDGhaNFqbUWaEI+NeSV6uKQ/rM2lwbbKPnRVTUCjwmu8Skh0208LsKh2wSGxcPOQ5GhTBsrxjc7tET7OuxmxrNVCFCmrbIweRZVBRJUXQaRqljAgVB0UJFA7LybFxEgHyjabDWbo1rJvs0fBJIKBocjEgWPNBQc06FA00Ip5Y6SsDbiMqVbaxITdcsAlW1IUKQVA//tSxOYCDMiDUU0waUFZCyoJl4zkupT9QFMAa3eHUqBeoyVjn8P94gJDhX9U7MY8FKvg8agpIH4eQSA8fgJCmhVBqp2trZrp0urjS41g0BREhAaEscoGgaeGg6VAX4a2xKCrpUNIZ//qDv/t/+xMQU1FMy4xMDCqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqoAsgNQ1ZhiMwP/+1LE5YALjHVXTKRpIYUPaimsGDSBUxYiTa4HPBgcDQCjBGSI2GwKmFRQWEhr1C7Ha/4sK////rFRbFhcVcZFv/1C4jd//ioo2kxBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqv/7UsTkgAqMWUjssMbhVookibywKKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//tSxMCDx7Ak3mzhIKAAADSAAAAEqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqo=' }
 };
+
+// ===== FOREST WILDLIFE ART =====
+// Wildlife shares the forest's fixed world plane. Heading turns with an animal's
+// movement; camera parallax only translates its raised surfaces. A small native
+// Canvas painter avoids allocating a p5 shape/colour stack for every herd leg.
+const _wildlifeArtStyles = new WeakMap();
+const _wildlifeArtActors = new WeakMap();
+const _wildlifeArtPainters = new WeakMap();
+const _wildlifeBirdDrawQueue = [];
+const _wildlifeArtLean = [0, 0];
+const _WILDLIFE_BODY_PLANS = {
+  deer: [[-.95,-.27],[-.70,-.48],[.42,-.43],[.76,-.23],[.82,.20],[.38,.43],[-.70,.47],[-1,.22]],
+  bear: [[-.95,-.38],[-.53,-.65],[.46,-.63],[.83,-.36],[.91,.16],[.63,.50],[-.58,.56],[-1,.23]],
+  canine: [[-.96,-.27],[-.68,-.45],[.50,-.38],[.77,-.17],[.71,.24],[.23,.40],[-.74,.42],[-1,.12]],
+  feline: [[-1,-.26],[-.72,-.45],[.44,-.40],[.78,-.16],[.76,.25],[.26,.42],[-.72,.40],[-1,.12]],
+  mustelid: [[-1.14,-.20],[-.80,-.36],[.56,-.30],[.85,-.13],[.76,.23],[.20,.36],[-.86,.34],[-1.15,.10]],
+  sheep: [[-.98,-.33],[-.58,-.59],[.43,-.55],[.76,-.29],[.85,.16],[.56,.49],[-.52,.58],[-1,.25]],
+  rodent: [[-.82,-.30],[-.50,-.49],[.39,-.44],[.65,-.17],[.67,.22],[.37,.43],[-.55,.46],[-.86,.17]],
+  rabbit: [[-.89,-.32],[-.51,-.53],[.40,-.42],[.64,-.16],[.60,.26],[.24,.48],[-.58,.49],[-.9,.16]],
+  beaver: [[-1.08,-.36],[-.56,-.58],[.49,-.50],[.82,-.24],[.78,.31],[.32,.54],[-.75,.53],[-1.12,.22]],
+  bird: [[-.70,-.25],[-.39,-.44],[.40,-.31],[.63,-.10],[.52,.24],[.15,.38],[-.55,.33]],
+  raptor: [[-.81,-.27],[-.49,-.43],[.34,-.37],[.68,-.09],[.50,.27],[.03,.43],[-.65,.35]],
+  owl: [[-.69,-.36],[-.28,-.58],[.40,-.46],[.62,-.14],[.58,.31],[.02,.53],[-.56,.42]],
+  turtle: [[-.81,-.38],[-.37,-.61],[.37,-.55],[.65,-.22],[.66,.25],[.29,.57],[-.42,.60],[-.85,.23]]
+};
+function wildlifeArtStyle(spec) {
+  let style = _wildlifeArtStyles.get(spec);
+  if (style) return style;
+  const rgb = spec.color || [145, 111, 76];
+  const shade = (k, add) => '#' + rgb.map(v => Math.max(0, Math.min(255,
+    Math.round(v * k + (add || 0)))).toString(16).padStart(2, '0')).join('');
+  style = { base: shade(1), light: shade(1.12, 10), shade: shade(.69, 3),
+    dark: shade(.47, 4), outline: '#202f2b', cream: '#d8c8a0',
+    ink: '#172725', pale: '#ece6cd' };
+  _wildlifeArtStyles.set(spec, style);
+  return style;
+}
+// All points are authored in a fixed, heading-relative ground plane. Lift is a
+// fraction of massLean: no camera-dependent silhouette rotation or axis flips.
+function wildlifeArtPainter(ctx, a, spec) {
+  const r = a.bodyR || spec.size || 10, c = Math.cos(a.angle || 0), s = Math.sin(a.angle || 0);
+  const prone = a.state === 'DEAD' || a.state === 'STUNNED';
+  const rise = (spec.rise || r * .70) * (prone ? .27 : 1);
+  massLean(a.x, a.y, rise + (a.airborne && !prone ? r * 1.3 : 0), _wildlifeArtLean);
+  const lx = _wildlifeArtLean[0], ly = _wildlifeArtLean[1];
+  const style = wildlifeArtStyle(spec);
+  // Scope the native styles without touching p5's cached fill/stroke flags.
+  ctx.save(); ctx.translate(a.x, a.y);
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.lineWidth = Math.max(.85, Math.min(1.8, r * .075));
+  let cached = _wildlifeArtPainters.get(a);
+  if (cached) {
+    cached.ctx=ctx; cached.r=r; cached.c=c; cached.s=s; cached.lx=lx; cached.ly=ly;
+    cached.style=style; cached.prone=prone; cached.angle=a.angle||0;
+    return cached;
+  }
+  const p = {
+    ctx, r, c, s, lx, ly, style, prone, angle:a.angle||0,
+    x(x,y,z) { return (x*this.c-y*this.s)*this.r+this.lx*(z||0); },
+    y(x,y,z) { return (x*this.s+y*this.c)*this.r+this.ly*(z||0); },
+    polygon(points, z, colour, outline, ox, oy) {
+      const ctx=this.ctx,c=this.c,s=this.s,r=this.r,lx=this.lx,ly=this.ly;
+      ctx.beginPath();
+      for (let i=0;i<points.length;i++) {
+        const x=points[i][0]+(ox||0), y=points[i][1]+(oy||0);
+        const px=(x*c-y*s)*r+lx*(z||0), py=(x*s+y*c)*r+ly*(z||0);
+        if(i)ctx.lineTo(px,py);else ctx.moveTo(px,py);
+      }
+      ctx.closePath();
+      if(colour){ctx.fillStyle=colour;ctx.fill();}
+      if(outline!==false){ctx.strokeStyle=outline||this.style.outline;ctx.stroke();}
+    },
+    ellipse(x,y,w,h,z,colour,outline) {
+      const ctx=this.ctx,r=this.r;
+      ctx.beginPath();ctx.ellipse(this.x(x,y,z),this.y(x,y,z),w*r*.5,h*r*.5,this.angle,0,Math.PI*2);
+      if(colour){ctx.fillStyle=colour;ctx.fill();}
+      if(outline!==false){ctx.strokeStyle=outline||this.style.outline;ctx.stroke();}
+    },
+    line(x0,y0,z0,x1,y1,z1,colour,width) {
+      const ctx=this.ctx;
+      ctx.beginPath();ctx.moveTo(this.x(x0,y0,z0),this.y(x0,y0,z0));
+      ctx.lineTo(this.x(x1,y1,z1),this.y(x1,y1,z1));ctx.strokeStyle=colour||this.style.outline;
+      const old=ctx.lineWidth;if(width)ctx.lineWidth=width;ctx.stroke();ctx.lineWidth=old;
+    },
+    curve(x0,y0,x1,y1,x2,y2,x3,y3,z,colour,width) {
+      const ctx=this.ctx;
+      ctx.beginPath();ctx.moveTo(this.x(x0,y0,z),this.y(x0,y0,z));
+      ctx.bezierCurveTo(this.x(x1,y1,z),this.y(x1,y1,z),this.x(x2,y2,z),this.y(x2,y2,z),this.x(x3,y3,z),this.y(x3,y3,z));
+      ctx.strokeStyle=colour||this.style.outline;const old=ctx.lineWidth;
+      if(width)ctx.lineWidth=width;ctx.stroke();ctx.lineWidth=old;
+    },
+    body(points) {
+      const ctx=this.ctx,c=this.c,s=this.s,lx=this.lx,ly=this.ly,style=this.style;
+      const z0=.42,z1=1;
+      // The exposed side is chosen in world space against the translation.
+      // Its colour uses the same fixed sun direction as the forest/actor rig.
+      for(let i=0;i<points.length;i++) {
+        const v=points[i],w=points[(i+1)%points.length],dx=(w[0]-v[0])*c-(w[1]-v[1])*s,dy=(w[0]-v[0])*s+(w[1]-v[1])*c;
+        if(dy*lx-dx*ly>=0)continue;
+        const normal=Math.hypot(dx,dy)||1,lit=-(dy*LIGHT_DX-dx*LIGHT_DY)/normal;
+        ctx.beginPath();ctx.moveTo(this.x(v[0],v[1],z0),this.y(v[0],v[1],z0));
+        ctx.lineTo(this.x(w[0],w[1],z0),this.y(w[0],w[1],z0));
+        ctx.lineTo(this.x(w[0],w[1],z1),this.y(w[0],w[1],z1));
+        ctx.lineTo(this.x(v[0],v[1],z1),this.y(v[0],v[1],z1));ctx.closePath();
+        ctx.fillStyle=lit>.25?style.shade:style.dark;ctx.fill();ctx.strokeStyle=style.outline;ctx.stroke();
+      }
+      this.polygon(points,1,style.base);
+      // One broad highlight and one bevel provide readable depth at phone zoom.
+      this.polygon([[-.62,-.22],[.33,-.22],[.59,-.08],[.05,.05],[-.66,.02]],1,style.light,false);
+      this.line(-.58,.34,1,.34,.30,1,style.shade);
+    }
+  };
+  _wildlifeArtPainters.set(a,p);
+  return p;
+}
+function wildlifeArtLegs(p,a,spec) {
+  const moving=!p.prone&&(a.state==='FLEE'||a.state==='TERRITORIAL'||Math.hypot(a.vx||0,a.vy||0)>.2);
+  const stride=moving?Math.sin((a.phase||0)+(a.clock||0)*.012)*.16:0;
+  const small=spec.family==='rodent'||spec.family==='rabbit'||spec.family==='beaver'||spec.family==='mustelid';
+  const feet=[[-.62,-.36],[.43,-.31],[-.65,.35],[.45,.32]];
+  for(let i=0;i<feet.length;i++) {
+    const foot=feet[i],sx=foot[0]+(i%2?-stride:stride),sy=foot[1]+(p.prone?(i<2?-.14:.14):0);
+    const knee=small?.48:.68;
+    p.line(sx,sy,0,foot[0],foot[1],knee,p.style.dark,Math.max(1.8,p.r*(small?.13:.12)));
+    p.line(sx-.08,sy,0,sx+.08,sy,0,p.style.ink,Math.max(1.3,p.r*.09));
+  }
+}
+function wildlifeArtEyes(p,a,hx,hy,z,wide) {
+  const dead=a.state==='DEAD',stunned=a.state==='STUNNED';
+  for(const side of [-1,1]) {
+    const y=hy+side*(wide||.19);
+    if(dead){p.line(hx-.045,y-.045,z,hx+.045,y+.045,z,p.style.ink);p.line(hx-.045,y+.045,z,hx+.045,y-.045,z,p.style.ink);}
+    else if(stunned)p.line(hx-.07,y,z,hx+.06,y,z,p.style.ink);
+    else p.ellipse(hx,y,.085,.085,z,p.style.ink,false);
+  }
+}
+function wildlifeArtAntlers(p,a,hx,hy,z) {
+  if(a.species!=='ELK'&&a.species!=='MOOSE'&&a.species!=='MULE_DEER'&&a.species!=='WHITE_TAILED_DEER')return;
+  // Not every member of a herd carries antlers; stable IDs also show does.
+  if((a.id||0)%5===1)return;
+  for(const side of [-1,1]) {
+    if(a.species==='MOOSE') {
+      p.polygon([[hx-.11,hy+side*.15],[hx-.45,hy+side*.63],[hx-.13,hy+side*.85],[hx+.03,hy+side*.69],[hx+.23,hy+side*.77],[hx+.35,hy+side*.56],[hx+.18,hy+side*.39]],z+.08,'#bca87a');
+      p.line(hx-.14,hy+side*.26,z+.09,hx+.08,hy+side*.67,z+.09,'#867855');
+    } else {
+      const span=a.species==='ELK'?.96:.66;
+      p.curve(hx-.02,hy+side*.12,hx-.54,hy+side*.40,hx-.63,hy+side*span,hx-.19,hy+side*span,z+.07,'#c4ae7a',Math.max(1.1,p.r*.075));
+      for(let i=0;i<3;i++)p.line(hx-.26-i*.11,hy+side*(.34+i*.14),z+.09,hx+.01-i*.08,hy+side*(.44+i*.16),z+.09,'#c4ae7a',Math.max(1,p.r*.055));
+    }
+  }
+}
+function wildlifeArtMammal(p,a,spec) {
+  const species=a.species, family=spec.family, plan=_WILDLIFE_BODY_PLANS[family]||_WILDLIFE_BODY_PLANS.rodent;
+  const hx=spec.headForward===undefined?1.15:spec.headForward/(spec.size||p.r),hy=(spec.headSide||0)/(spec.size||p.r);
+  const z=family==='deer'||family==='sheep'?1.06:1;
+  // Tail silhouettes sit behind the raised body. Each species has a recognisable
+  // outline rather than a differently coloured copy of the same tiny oval.
+  if(species==='BEAVER'){
+    p.polygon([[-.80,-.18],[-1.71,-.39],[-1.95,-.16],[-1.90,.22],[-1.61,.40],[-.87,.19]],.12,'#514735');
+    p.line(-1.34,-.25,.14,-1.74,.20,.14,'#8b7753');p.line(-1.66,-.27,.14,-1.39,.27,.14,'#8b7753');
+  }else if(species==='VIRGINIA_OPOSSUM')p.curve(-.7,0,-1.5,.17,-1.86,-.56,-2.05,-.26,.35,'#be9189',p.r*.13);
+  else if(species==='EASTERN_GRAY_SQUIRREL'){
+    p.curve(-.77,0,-1.71,-.93,-2.23,-.48,-1.13,-.44,.75,p.style.outline,p.r*.47);
+    p.curve(-.77,0,-1.71,-.93,-2.23,-.48,-1.13,-.44,.75,p.style.light,p.r*.32);
+  }else if(family==='canine'||species==='RACCOON'){
+    const fox=species==='RED_FOX';
+    p.polygon([[-.69,-.18],[-1.37,-.28],[-1.83,-.11],[-1.70,.17],[-1.19,.27],[-.70,.14]],.53,p.style.base);
+    if(fox)p.polygon([[-1.42,-.24],[-1.83,-.11],[-1.70,.17],[-1.42,.21]],.54,p.style.pale);
+    if(species==='RACCOON')for(let i=0;i<3;i++)p.line(-1.04-i*.22,-.20,.54,-1.03-i*.22,.20,.54,p.style.dark,p.r*.12);
+  }else if(family==='feline'){
+    if(species==='CANADA_LYNX')p.line(-.70,0,.60,-1.08,.15,.65,p.style.dark,p.r*.15);
+    else{p.curve(-.77,0,-1.52,.18,-1.65,-.79,-2,-.74,.68,p.style.outline,p.r*.16);p.curve(-.77,0,-1.52,.18,-1.65,-.79,-2,-.74,.68,p.style.base,p.r*.10);}
+  }else if(family==='rabbit')p.ellipse(-.88,0,.30,.34,.55,p.style.pale);
+  else if(family==='deer')p.polygon([[-.82,-.13],[-1.15,-.09],[-1.10,.15],[-.83,.17]],.62,p.style.cream);
+  else if(family==='mustelid')p.polygon([[-.85,-.13],[-1.42,-.17],[-1.48,.10],[-.92,.15]],.53,p.style.dark);
+  wildlifeArtLegs(p,a,spec);p.body(plan);
+  if(family==='bear'){
+    p.ellipse(.33,-.08,1,.88,1.05,p.style.base);p.ellipse(.35,-.23,.51,.36,1.07,p.style.light,false);
+    if(species==='GRIZZLY_BEAR')p.polygon([[.02,-.39],[.25,-.64],[.57,-.55],[.70,-.25]],1.05,p.style.light);
+  }else if(family==='deer')p.polygon([[.48,-.24],[hx-.14,hy-.27],[hx+.08,hy],[hx-.17,hy+.28],[.53,.23]],1.02,p.style.base);
+  if(species==='WOLVERINE')p.polygon([[-.85,-.26],[-.47,-.39],[.46,-.24],[.64,-.06],[.20,-.14],[-.52,-.15]],1.015,p.style.cream,false);
+  if(species==='CHIPMUNK')for(const side of [-1,1]){p.line(-.64,side*.21,1.03,.49,side*.16,1.03,p.style.cream,p.r*.105);p.line(-.62,side*.34,1.03,.39,side*.30,1.03,p.style.dark,p.r*.08);}
+  if(species==='YELLOW_BELLIED_MARMOT')p.polygon([[-.52,.24],[.41,.20],[.51,.33],[-.36,.44]],1.02,'#c7b16d',false);
+  const muzzle=family==='canine'||family==='deer'?.48:family==='bear'?.49:.37;
+  const headWidth=family==='bear'?.64:family==='sheep'?.57:.52;
+  p.ellipse(hx,hy,muzzle,headWidth,z,p.style.base);
+  const snout=family==='canine'||family==='deer'||species==='VIRGINIA_OPOSSUM'?.25:.13;
+  const faceColour=family==='bear'||species==='VIRGINIA_OPOSSUM'?p.style.cream:p.style.light;
+  p.polygon([[hx+.05,hy-.19],[hx+snout+.13,hy-.12],[hx+snout+.16,hy+.10],[hx+.03,hy+.20]],z+.02,faceColour);
+  p.ellipse(hx+snout+.10,hy,.13,.15,z+.025,p.style.ink,false);
+  for(const side of [-1,1]) {
+    if(family==='rabbit')p.polygon([[hx-.14,hy+side*.14],[hx-.48,hy+side*.67],[hx-.22,hy+side*.72],[hx+.01,hy+side*.25]],z+.025,p.style.base);
+    else if(family==='canine'||family==='feline'){
+      p.polygon([[hx-.22,hy+side*.16],[hx-.19,hy+side*.43],[hx+.02,hy+side*.26]],z+.035,p.style.base);
+      if(species==='CANADA_LYNX')p.line(hx-.18,hy+side*.41,z+.035,hx-.21,hy+side*.52,z+.04,p.style.ink);
+    }else if(family==='deer')p.polygon([[hx-.14,hy+side*.15],[hx-.32,hy+side*.45],[hx+.13,hy+side*.35]],z+.015,p.style.base);
+    else p.ellipse(hx-.16,hy+side*.23,.21,.23,z+.02,p.style.base);
+  }
+  if(species==='RACCOON')p.polygon([[hx-.06,hy-.26],[hx+.17,hy-.20],[hx+.13,hy+.23],[hx-.06,hy+.26]],z+.025,'#3b4541',false);
+  if(species==='BIGHORN_SHEEP')for(const side of [-1,1]){
+    p.curve(hx-.09,hy+side*.21,hx-.79,hy+side*.64,hx-.72,hy+side*.02,hx-.30,hy+side*.28,z+.07,'#d5c698',p.r*.19);
+    p.curve(hx-.11,hy+side*.21,hx-.66,hy+side*.49,hx-.64,hy+side*.10,hx-.32,hy+side*.28,z+.075,'#96865f',p.r*.07);
+  }
+  wildlifeArtAntlers(p,a,hx,hy,z);wildlifeArtEyes(p,a,hx+.09,hy,z+.055,.165);
+}
+function wildlifeArtBird(p,a,spec) {
+  const id=a.species, grounded=!a.airborne||p.prone, hx=(spec.headForward||spec.size*.82)/(spec.size||p.r);
+  const owl=spec.family==='owl',raptor=spec.family==='raptor';
+  const wingPhase=Number.isFinite(a.wingPhase)?a.wingPhase:(a.phase||0);
+  const wing=grounded?.52:1.13+Math.sin(wingPhase)*.27;
+  const tail=id==='WILD_TURKEY'?.93:.70;
+  if(id==='WILD_TURKEY')p.polygon([[-.55,-.16],[-1.38,-.73],[-1.59,-.47],[-1.73,-.15],[-1.70,.22],[-1.46,.59],[-1.25,.75],[-.49,.16]],.66,'#75624b');
+  else p.polygon([[-.44,-.16],[-tail,-.26],[-tail-.25,-.04],[-tail-.15,.23],[-.40,.16]],.86,id==='RED_TAILED_HAWK'?'#c77d52':p.style.shade);
+  if(grounded)for(const side of [-1,1]){p.line(-.02,side*.25,.52,-.13,side*.37,0,'#b39855',Math.max(1,p.r*.1));p.line(-.13,side*.37,0,.13,side*.44,0,'#b39855');}
+  for(const side of [-1,1]){
+    const span=side*wing;
+    p.polygon([[-.39,side*.12],[-.78,span*.94],[-.22,span*1.40],[.33,span*1.24],[.50,side*.24]],.92,p.style.shade);
+    p.polygon([[-.45,side*.21],[-.45,span*.94],[.12,span*1.15],[.41,side*.23]],.95,p.style.light,false);
+    if(raptor||owl)for(let i=0;i<3;i++)p.line(-.38+i*.21,span*.70,.955,-.45+i*.21,span*1.06,.955,p.style.dark);
+    if(id==='CLARKS_NUTCRACKER')p.polygon([[-.70,span*.87],[-.20,span*1.3],[.06,span*1.21],[-.17,span*.62]],.96,'#ece4ce',false);
+  }
+  p.body(_WILDLIFE_BODY_PLANS[spec.family]||_WILDLIFE_BODY_PLANS.bird);
+  let face=p.style.base;
+  if(id==='BALD_EAGLE')face='#eee9d2';
+  if(id==='THRUSH')p.ellipse(.08,0,.72,.48,1.03,'#ddc79d',false);
+  p.ellipse(hx,0,owl?.70:.46,owl?.75:.47,1.04,face);
+  if(owl){
+    for(const side of [-1,1]){p.ellipse(hx+.035,side*.17,.26,.30,1.06,p.style.cream);p.ellipse(hx+.07,side*.17,.12,.12,1.075,'#d6bc64',false);}
+    if(id==='BARRED_OWL')for(let i=0;i<3;i++)p.line(-.31+i*.22,-.19,1.025,-.27+i*.22,.23,1.025,p.style.dark);
+  }else if(id==='PEREGRINE_FALCON')for(const side of [-1,1])p.line(hx+.01,side*.10,1.055,hx-.13,side*.25,1.055,p.style.ink,p.r*.11);
+  if(id==='STELLERS_JAY'||id==='JAY')p.polygon([[hx-.12,-.17],[hx-.39,-.26],[hx-.27,.03],[hx-.02,.09]],1.07,id==='STELLERS_JAY'?'#283a49':p.style.light);
+  if(id==='PILEATED_WOODPECKER')p.polygon([[hx-.12,-.16],[hx-.45,-.20],[hx-.27,.03],[hx+.06,.05]],1.08,'#dc4d42');
+  if(id==='WILD_TURKEY'){p.ellipse(hx,0,.35,.35,1.055,'#759cbb');p.line(hx+.11,0,1.07,hx+.20,.20,1.07,'#bf5551',p.r*.13);}
+  const beak=id==='PILEATED_WOODPECKER'||id==='CLARKS_NUTCRACKER'?.35:raptor?.26:.21;
+  p.polygon([[hx+.15,-.09],[hx+beak+.18,0],[hx+.15,.09]],1.06,raptor||owl?'#d4b661':'#aaa879');
+  wildlifeArtEyes(p,a,hx+.065,0,1.08,owl?.17:.115);
+}
+function wildlifeArtReptile(p,a,spec) {
+  const hx=(spec.headForward||spec.size*.90)/(spec.size||p.r),id=a.species;
+  if(spec.family==='snake'){
+    const bend=p.prone?.22:.40+Math.sin(a.phase||0)*.04;
+    p.curve(-1.47,-.14,-.92,-bend,-.80,bend,.11,.06,.46,p.style.outline,p.r*.35);
+    p.curve(-1.47,-.14,-.92,-bend,-.80,bend,.11,.06,.46,p.style.base,p.r*.25);
+    p.curve(.02,.08,.41,-.23,.60,-.18,hx,0,.51,p.style.outline,p.r*.31);
+    p.curve(.02,.08,.41,-.23,.60,-.18,hx,0,.51,p.style.light,p.r*.21);
+    for(let i=0;i<4;i++)p.line(-1.08+i*.36,-.07,.53,-1.0+i*.36,.07,.53,p.style.dark,p.r*.11);
+    p.polygon([[hx-.19,-.13],[hx+.14,-.10],[hx+.23,0],[hx+.11,.12],[hx-.19,.13]],.58,p.style.base);
+    if(id==='TIMBER_RATTLESNAKE')for(let i=0;i<3;i++)p.ellipse(-1.37-i*.12,-.14,.16,.19,.49,'#cdb781');
+    wildlifeArtEyes(p,a,hx+.05,0,.62,.10);
+  }else if(spec.family==='turtle'){
+    for(const side of [-1,1])for(const fore of [-.49,.39])p.polygon([[fore-.1,side*.30],[fore+.20,side*.57],[fore+.03,side*.69],[fore-.21,side*.50]],.17,'#a4995d');
+    p.body(_WILDLIFE_BODY_PLANS.turtle);
+    p.polygon([[-.42,-.28],[.18,-.32],[.44,-.02],[.19,.28],[-.35,.30],[-.57,0]],1.02,p.style.light);
+    p.line(-.37,-.27,1.04,-.29,.26,1.04,p.style.shade);p.line(.16,-.28,1.04,.10,.27,1.04,p.style.shade);
+    p.ellipse(hx,0,.40,.37,.45,'#afa364');wildlifeArtEyes(p,a,hx+.07,0,.49,.105);
+    p.polygon([[-.68,-.05],[-1.12,0],[-.69,.11]],.15,'#a4995d');
+  }else{
+    for(const side of [-1,1])for(const fore of [-.48,.43]){p.line(fore,side*.10,.38,fore-.21,side*.48,.08,p.style.base,p.r*.19);p.line(fore-.21,side*.48,.08,fore+.04,side*.55,.06,p.style.light,p.r*.12);}
+    p.curve(-.57,0,-1.14,.16,-1.47,-.38,-1.69,-.13,.22,p.style.outline,p.r*.24);
+    p.curve(-.57,0,-1.14,.16,-1.47,-.38,-1.69,-.13,.22,p.style.base,p.r*.15);
+    p.ellipse(-.04,0,1.55,.42,.42,p.style.base);
+    p.line(-.63,0,.46,.61,0,.46,'#d8a260',p.r*.10);
+    p.ellipse(hx,0,.43,.35,.49,p.style.base);wildlifeArtEyes(p,a,hx+.08,0,.53,.11);
+  }
+}
+function paintWildlifeAnimal(a) {
+  if(!a||a.harvested||typeof WILDLIFE_SPECIES==='undefined')return;
+  const spec=WILDLIFE_SPECIES[a.species];if(!spec)return;
+  const ctx=typeof drawingContext!=='undefined'?drawingContext:null;
+  if(!ctx||!ctx.ellipse||!ctx.bezierCurveTo)return;
+  const p=wildlifeArtPainter(ctx,a,spec);
+  try {
+    // Small, antialiased root contact. Flying birds use a lighter shadow rather
+    // than a large rigid disc that competes with tree shadows in daylight.
+    const alpha=a.airborne&&!p.prone?.065:.13;
+    p.ellipse(-.08,.08,1.65,.86,0,'rgba(18,39,31,'+alpha+')',false);
+    if(spec.family==='bird'||spec.family==='raptor'||spec.family==='owl')wildlifeArtBird(p,a,spec);
+    else if(spec.family==='snake'||spec.family==='turtle'||spec.family==='amphibian')wildlifeArtReptile(p,a,spec);
+    else wildlifeArtMammal(p,a,spec);
+  } finally {ctx.restore();}
+}
+function drawForestWildlifeAnimals() {
+  _wildlifeBirdDrawQueue.length=0;
+  if(typeof forestWildlife==='undefined'||currentLevel!==2)return;
+  for(let i=0;i<forestWildlife.length;i++){
+    const animal=forestWildlife[i];
+    if(animal.harvested||!inView(animal.x,animal.y,(animal.bodyR||12)*3+35))continue;
+    if(animal.airborne&&animal.state!=='DEAD'&&animal.state!=='STUNNED'){
+      _wildlifeBirdDrawQueue.push(animal);continue;
+    }
+    let actor=_wildlifeArtActors.get(animal);
+    if(!actor){actor={x:animal.x,y:animal.y,show(){paintWildlifeAnimal(animal);}};_wildlifeArtActors.set(animal,actor);}
+    actor.x=animal.x;actor.y=animal.y;actorShow(actor);
+  }
+}
+function drawForestWildlifeAirborne() {
+  _wildlifeBirdDrawQueue.sort((a,b)=>a.y-b.y);
+  try{for(let i=0;i<_wildlifeBirdDrawQueue.length;i++)paintWildlifeAnimal(_wildlifeBirdDrawQueue[i]);}
+  finally{_wildlifeBirdDrawQueue.length=0;}
+}
+
+// ===== FOREST WILDLIFE CORE =====
+// Wildlife is deliberately separate from Character/enemiesList. It never fills
+// a military objective, attracts allied auto-aim, or adds another enemy AI pass.
+// One encounter roll every three seconds and a capped, four-frame movement pass
+// keep the forest alive without multiplying the cost of a large army battle.
+const WILDLIFE_MAX_ACTORS = 48;
+const WILDLIFE_CELL = 128;
+const WILDLIFE_SPECIES = Object.create(null);
+function wildlifeSpecies(id, name, family, habitats, rarity, size, speed, hp, color, traits) {
+  WILDLIFE_SPECIES[id] = { id, name, family, habitats: habitats.split(' '), rarity,
+    size, speed, hp, color, traits: (traits || '').split(' ').filter(Boolean),
+    headForward: size * (family === 'bird' || family === 'raptor' || family === 'owl' ? 0.82 : 1.15),
+    headSide: 0, headR: Math.max(2.8, size * 0.40),
+    rise: family === 'bird' || family === 'raptor' || family === 'owl' ? 8 : size * 0.65 };
+}
+wildlifeSpecies('GRIZZLY_BEAR', 'Grizzly bear', 'bear', 'TIMBER HEATH MEADOW', 4, 23, 1.55, 170, [130, 89, 58], 'predator hump');
+wildlifeSpecies('BLACK_BEAR', 'Black bear', 'bear', 'TIMBER VIBRANT MARSH EDGE', 3, 19, 1.65, 130, [52, 53, 47], 'predator');
+wildlifeSpecies('GRAY_WOLF', 'Gray wolf', 'canine', 'TIMBER HEATH BURN', 3, 13, 2.25, 65, [141, 147, 139], 'predator pack');
+wildlifeSpecies('MOOSE', 'Moose', 'deer', 'MARSH TIMBER', 3, 22, 1.55, 140, [96, 72, 49], 'antlers palmate');
+wildlifeSpecies('MOUNTAIN_LION', 'Mountain lion', 'feline', 'HEATH TIMBER EDGE', 4, 15, 2.35, 85, [176, 142, 82], 'predator longtail');
+wildlifeSpecies('CANADA_LYNX', 'Canada lynx', 'feline', 'TIMBER HEATH', 4, 10, 1.95, 45, [163, 156, 127], 'predator tufted shorttail');
+wildlifeSpecies('WOLVERINE', 'Wolverine', 'mustelid', 'HEATH TIMBER BURN', 4, 11, 1.65, 65, [103, 80, 54], 'predator stripe');
+wildlifeSpecies('BIGHORN_SHEEP', 'Bighorn sheep', 'sheep', 'HEATH', 2, 15, 1.75, 85, [164, 144, 114], 'horns herd');
+wildlifeSpecies('ELK', 'Elk', 'deer', 'MEADOW VIBRANT TIMBER', 2, 18, 1.95, 90, [175, 129, 71], 'antlers herd');
+wildlifeSpecies('MULE_DEER', 'Mule deer', 'deer', 'MEADOW HEATH EDGE VIBRANT', 1, 14, 2.10, 65, [162, 132, 93], 'antlers herd ears');
+wildlifeSpecies('YELLOW_BELLIED_MARMOT', 'Yellow-bellied marmot', 'rodent', 'HEATH', 2, 7, 1.30, 28, [164, 130, 77], 'goldbelly');
+wildlifeSpecies('PIKA', 'Pika', 'rodent', 'HEATH', 3, 5, 1.55, 18, [179, 168, 139], 'roundears');
+wildlifeSpecies('CLARKS_NUTCRACKER', "Clark's nutcracker", 'bird', 'HEATH TIMBER', 2, 6, 2.40, 20, [155, 161, 157], 'blackwings');
+wildlifeSpecies('STELLERS_JAY', "Steller's jay", 'bird', 'TIMBER VIBRANT', 2, 6, 2.60, 20, [51, 106, 183], 'crest');
+wildlifeSpecies('PEREGRINE_FALCON', 'Peregrine falcon', 'raptor', 'HEATH MEADOW', 4, 9, 3.40, 32, [86, 115, 135], 'mask');
+wildlifeSpecies('DUSKY_GROUSE', 'Dusky grouse', 'bird', 'TIMBER HEATH', 2, 8, 1.10, 32, [109, 101, 88], 'ground fan');
+wildlifeSpecies('WILD_TURKEY', 'Wild turkey', 'bird', 'TIMBER MEADOW EDGE', 1, 11, 1.35, 42, [137, 93, 62], 'ground fan redhead');
+wildlifeSpecies('BARRED_OWL', 'Barred owl', 'owl', 'TIMBER MARSH', 3, 9, 2.50, 30, [137, 121, 91], 'bars nocturnal');
+wildlifeSpecies('RED_SHOULDERED_HAWK', 'Red-shouldered hawk', 'raptor', 'MARSH EDGE TIMBER', 3, 9, 2.80, 30, [165, 105, 65], 'redshoulders');
+wildlifeSpecies('PILEATED_WOODPECKER', 'Pileated woodpecker', 'bird', 'TIMBER VIBRANT', 3, 7, 2.50, 22, [44, 49, 44], 'redcrest');
+wildlifeSpecies('BALD_EAGLE', 'Bald eagle', 'raptor', 'MARSH HEATH', 4, 12, 2.85, 45, [82, 63, 44], 'whitehead');
+wildlifeSpecies('RED_TAILED_HAWK', 'Red-tailed hawk', 'raptor', 'MEADOW EDGE HEATH', 3, 10, 2.90, 35, [135, 96, 65], 'redtail');
+wildlifeSpecies('WARBLER', 'Warbler', 'bird', 'VIBRANT MARSH EDGE', 1, 4.5, 2.40, 12, [208, 190, 72], 'songbird');
+wildlifeSpecies('THRUSH', 'Thrush', 'bird', 'TIMBER VIBRANT EDGE', 1, 5.5, 2.20, 16, [156, 112, 74], 'songbird spotted');
+wildlifeSpecies('JAY', 'Jay', 'bird', 'VIBRANT EDGE MEADOW', 1, 6, 2.40, 20, [83, 144, 184], 'songbird crest');
+wildlifeSpecies('TIMBER_RATTLESNAKE', 'Timber rattlesnake', 'snake', 'HEATH BURN EDGE', 3, 7, 0.70, 22, [133, 112, 61], 'predator rattle');
+wildlifeSpecies('COPPERHEAD', 'Copperhead', 'snake', 'TIMBER EDGE BURN', 3, 6, 0.75, 20, [174, 113, 68], 'predator bands');
+wildlifeSpecies('EASTERN_BOX_TURTLE', 'Eastern box turtle', 'turtle', 'MARSH TIMBER EDGE', 2, 6, 0.38, 30, [151, 143, 61], 'shell');
+wildlifeSpecies('WOODLAND_SALAMANDER', 'Woodland salamander', 'amphibian', 'MARSH TIMBER', 2, 4.5, 0.60, 12, [84, 106, 75], 'spots');
+wildlifeSpecies('WHITE_TAILED_DEER', 'White-tailed deer', 'deer', 'MEADOW EDGE TIMBER VIBRANT', 1, 14, 2.15, 60, [183, 141, 86], 'antlers herd whitetail');
+wildlifeSpecies('RACCOON', 'Raccoon', 'rodent', 'EDGE MARSH TIMBER', 1, 8, 1.25, 35, [126, 128, 113], 'mask rings nocturnal');
+wildlifeSpecies('VIRGINIA_OPOSSUM', 'Virginia opossum', 'rodent', 'EDGE MARSH TIMBER', 2, 8, 0.90, 30, [165, 164, 152], 'whiteface pinktail nocturnal');
+wildlifeSpecies('RED_FOX', 'Red fox', 'canine', 'EDGE MEADOW VIBRANT', 2, 10, 2.05, 40, [202, 112, 51], 'predator whitetail');
+wildlifeSpecies('COYOTE', 'Coyote', 'canine', 'EDGE MEADOW BURN', 2, 12, 2.00, 55, [164, 146, 104], 'predator');
+wildlifeSpecies('EASTERN_GRAY_SQUIRREL', 'Eastern gray squirrel', 'rodent', 'TIMBER VIBRANT EDGE', 1, 5, 1.80, 16, [151, 154, 141], 'bushtail');
+wildlifeSpecies('CHIPMUNK', 'Chipmunk', 'rodent', 'TIMBER VIBRANT HEATH', 1, 4.5, 1.75, 14, [174, 129, 77], 'stripe');
+wildlifeSpecies('GROUNDHOG', 'Groundhog', 'rodent', 'MEADOW EDGE', 1, 8, 1.00, 32, [145, 118, 78], 'stocky');
+wildlifeSpecies('EASTERN_COTTONTAIL', 'Eastern cottontail', 'rabbit', 'MEADOW EDGE VIBRANT', 1, 6, 2.00, 22, [165, 137, 105], 'ears whitetail');
+wildlifeSpecies('BEAVER', 'Beaver', 'beaver', 'MARSH', 2, 10, 1.00, 45, [126, 91, 56], 'paddletail aquatic');
+const WILDLIFE_SPECIES_IDS = Object.keys(WILDLIFE_SPECIES);
+const forestWildlife = [];
+const _wildlifeGrid = new Map(), _wildlifeBucketPool = [];
+const _wildlifeThreatCandidates = [];
+let _wildlifeGridDirty = true, _wildlifeGridCount = -1;
+let _wildlifeLedger = { seed: 0x5ad763f1, nextId: 1, encounters: 0, rareMisses: 0 };
+let _wildlifeClock = 0, _wildlifeSpawnClock = 0, _wildlifeLastThreat = -1000;
+let _wildlifeLastBiome = 0;
+function wildlifeRandom() {
+  let s = _wildlifeLedger.seed >>> 0;
+  s ^= s << 13; s ^= s >>> 17; s ^= s << 5;
+  _wildlifeLedger.seed = (s >>> 0) || 1;
+  return _wildlifeLedger.seed / 4294967296;
+}
+function wildlifeHasTrait(s, trait) { return s.traits.indexOf(trait) !== -1; }
+function wildlifeHabitat(x, y) {
+  return typeof forestHabitatAt === 'function' ? forestHabitatAt(x, y) : woodRegion(2, x, y);
+}
+function wildlifePickSpecies(habitat, roll) {
+  const forceRare = _wildlifeLedger.rareMisses >= 18;
+  let total = 0;
+  for (let i = 0; i < WILDLIFE_SPECIES_IDS.length; i++) {
+    const s = WILDLIFE_SPECIES[WILDLIFE_SPECIES_IDS[i]];
+    if (s.habitats.indexOf(habitat) === -1 || (forceRare && s.rarity < 3)) continue;
+    total += s.rarity === 1 ? 22 : s.rarity === 2 ? 12 : s.rarity === 3 ? 4 : 1.3;
+  }
+  if (!total) return null;
+  let n = (roll === undefined ? wildlifeRandom() : Math.max(0, Math.min(0.999999, roll))) * total;
+  for (let i = 0; i < WILDLIFE_SPECIES_IDS.length; i++) {
+    const s = WILDLIFE_SPECIES[WILDLIFE_SPECIES_IDS[i]];
+    if (s.habitats.indexOf(habitat) === -1 || (forceRare && s.rarity < 3)) continue;
+    n -= s.rarity === 1 ? 22 : s.rarity === 2 ? 12 : s.rarity === 3 ? 4 : 1.3;
+    if (n < 0) return s;
+  }
+  return null;
+}
+function wildlifeRecordEncounter(s) {
+  _wildlifeLedger.encounters++;
+  _wildlifeLedger.rareMisses = s.rarity >= 3 ? 0 : Math.min(18, _wildlifeLedger.rareMisses + 1);
+}
+function wildlifeHeadPoint(a) {
+  const s = WILDLIFE_SPECIES[a.species];
+  const f = s.headForward * (a.bodyR / s.size), side = s.headSide;
+  return { x: a.x + Math.cos(a.angle) * f - Math.sin(a.angle) * side,
+    y: a.y + Math.sin(a.angle) * f + Math.cos(a.angle) * side, r: a.headR };
+}
+function wildlifeSpawnAnimal(species, x, y, herd) {
+  const s = WILDLIFE_SPECIES[species];
+  if (!s || !Number.isFinite(x) || !Number.isFinite(y) || forestWildlife.length >= WILDLIFE_MAX_ACTORS) return null;
+  const scale = 0.88 + wildlifeRandom() * 0.22;
+  const bird = s.family === 'bird' || s.family === 'raptor' || s.family === 'owl';
+  const a = { id: _wildlifeLedger.nextId++, species, x, y, angle: wildlifeRandom() * Math.PI * 2,
+    state: 'GRAZE', hp: s.hp, maxHp: s.hp, bodyR: s.size * scale, headR: s.headR * scale,
+    clock: 0, phase: wildlifeRandom() * Math.PI * 2, vx: 0, vy: 0, alarm: 0,
+    airborne: bird && !wildlifeHasTrait(s, 'ground'), wingPhase: wildlifeRandom() * Math.PI * 2,
+    ttl: 0, harvested: false, dead: false, herd: herd || null,
+    herdX: herd ? x - herd.x : 0, herdY: herd ? y - herd.y : 0,
+    homeX: x, homeY: y, goalX: x, goalY: y, thinkAt: _wildlifeClock + 20 + wildlifeRandom() * 100,
+    threatX: x, threatY: y, aggressor: null, attackAt: 0, hitFlash: 0,
+    shots: 0, headshots: 0, shotIds: [], condition: null, method: null };
+  forestWildlife.push(a); _wildlifeGridDirty = true;
+  return a;
+}
+function wildlifeSolidBlocks(b, a) {
+  if (!b || b.isCropField || b.isGrassLot || b.isStreetLight || b.isMushroom) return false;
+  if ((b.isGate || b.isOutpostGate) && typeof gateIsOpen === 'function' && gateIsOpen(b)) return false;
+  if (b.isFence && b.hp !== undefined && b.hp <= 0) return false;
+  if (b.isPond || b.isRiver || b.isCanal || b.propType === 'RIVER' || b.propType === 'CANAL') {
+    return !wildlifeHasTrait(WILDLIFE_SPECIES[a.species], 'aquatic');
+  }
+  return !a.airborne;
+}
+function wildlifeCanStand(a, x, y) {
+  if (insideFortYard(2, x, y, 160)) return false;
+  const near = colNear(x, y), r = Math.min(28, a.bodyR);
+  for (let i = 0; i < near.length; i++) {
+    const b = near[i];
+    if (wildlifeSolidBlocks(b, a) && Math.abs(x - b.x) < (b.w || 0) / 2 + r &&
+        Math.abs(y - b.y) < (b.h || 0) / 2 + r) return false;
+  }
+  return true;
+}
+function wildlifeSpawnAllowed(s, x, y) {
+  const r = s.size + 18;
+  if (inView(x, y, r + 100) || insideFortYard(2, x, y, 460)) return false;
+  const cx = Math.floor(x / CHUNK_W), cy = Math.floor(y / CHUNK_W);
+  if (layoutFor(2, cx, cy) !== 'WOODLAND') return false;
+  if (chunkMgr && chunkMgr.chunks && !chunkMgr.chunks.has(cx + ',' + cy)) return false;
+  if (groundReserved(2, cx, cy, x, y, r * 2, r * 2, 24) || hitsAuthored(x, y, r * 2, r * 2, 80)) return false;
+  if (typeof forestHuntingSite === 'function') {
+    const h = forestHuntingSite();
+    if (h && Math.hypot(x - h.x, y - h.y) < (h.r || 250) + r + 80) return false;
+  }
+  const probe = { species: s.id, bodyR: s.size, airborne: false };
+  return wildlifeCanStand(probe, x, y);
+}
+function wildlifeSpawnEncounter() {
+  if (!player || forestWildlife.length >= WILDLIFE_MAX_ACTORS - 4) return 0;
+  const cx = (viewLeft + viewRight) / 2, cy = (viewTop + viewBottom) / 2;
+  const halfW = Math.max(250, (viewRight - viewLeft) / 2), halfH = Math.max(180, (viewBottom - viewTop) / 2);
+  // Probes use the actual camera rectangle, including pan/zoom. A member of a
+  // herd is also rejected individually; the herd cannot pop across the edge.
+  for (let tries = 0; tries < 12; tries++) {
+    const side = (wildlifeRandom() * 4) | 0, spread = wildlifeRandom() * 2 - 1;
+    const gap = 260 + wildlifeRandom() * 340;
+    const x = cx + (side < 2 ? (side ? -1 : 1) * (halfW + gap) : spread * (halfW + 100));
+    const y = cy + (side >= 2 ? (side === 2 ? 1 : -1) * (halfH + gap) : spread * (halfH + 100));
+    const habitat = wildlifeHabitat(x, y), s = wildlifePickSpecies(habitat);
+    if (!s || !wildlifeSpawnAllowed(s, x, y)) continue;
+    let count = 1;
+    if (wildlifeHasTrait(s, 'herd')) count = s.family === 'deer' ? 18 + ((wildlifeRandom() * 9) | 0) : 5 + ((wildlifeRandom() * 5) | 0);
+    else if (wildlifeHasTrait(s, 'pack')) count = 3 + ((wildlifeRandom() * 3) | 0);
+    else if (s.family === 'bird' && s.rarity <= 2) count = 2 + ((wildlifeRandom() * 4) | 0);
+    count = Math.min(count, WILDLIFE_MAX_ACTORS - forestWildlife.length);
+    const herd = count > 1 ? { x, y, threatX: x, threatY: y, alarmUntil: 0, thinkAt: _wildlifeClock + 180 } : null;
+    let placed = 0;
+    for (let member = 0; member < count; member++) {
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const a = wildlifeRandom() * Math.PI * 2, reach = member === 0 ? 0 : 45 + Math.sqrt(member) * 32 + wildlifeRandom() * 45;
+        const mx = x + Math.cos(a) * reach, my = y + Math.sin(a) * reach;
+        if (s.habitats.indexOf(wildlifeHabitat(mx, my)) === -1 || !wildlifeSpawnAllowed(s, mx, my)) continue;
+        let clear = true;
+        for (let i = 0; i < forestWildlife.length; i++) {
+          const p = forestWildlife[i], d = p.bodyR + s.size + 15;
+          if ((p.x - mx) * (p.x - mx) + (p.y - my) * (p.y - my) < d * d) { clear = false; break; }
+        }
+        if (!clear) continue;
+        wildlifeSpawnAnimal(s.id, mx, my, herd); placed++; break;
+      }
+    }
+    if (placed) { wildlifeRecordEncounter(s); return placed; }
+  }
+  return 0;
+}
+function wildlifeRebuildGrid() {
+  if (!_wildlifeGridDirty && _wildlifeGridCount === forestWildlife.length) return;
+  _wildlifeGrid.clear();
+  let used = 0;
+  for (let i = 0; i < forestWildlife.length; i++) {
+    const a = forestWildlife[i];
+    if (a.harvested || a.dead || a.state === 'STUNNED') continue;
+    const k = cellKey(Math.floor(a.x / WILDLIFE_CELL), Math.floor(a.y / WILDLIFE_CELL));
+    let bucket = _wildlifeGrid.get(k);
+    if (!bucket) { bucket = _wildlifeBucketPool[used] || (_wildlifeBucketPool[used] = []); used++; bucket.length = 0; _wildlifeGrid.set(k, bucket); }
+    bucket.push(a);
+  }
+  for (let i = used; i < _wildlifeBucketPool.length; i++) _wildlifeBucketPool[i].length = 0;
+  _wildlifeGridCount = forestWildlife.length; _wildlifeGridDirty = false;
+}
+function wildlifeBrain(a) {
+  const s = WILDLIFE_SPECIES[a.species], h = a.herd;
+  if (h && h.alarmUntil > _wildlifeClock && a.state === 'GRAZE') {
+    a.state = 'ALARM'; a.alarm = 540; a.threatX = h.threatX; a.threatY = h.threatY;
+  }
+  if (a.state === 'ALARM') {
+    a.state = 'FLEE'; a.alarm = Math.max(a.alarm, 420);
+  }
+  if (a.state === 'TERRITORIAL') {
+    if (a.aggressor === player && player && player.hp > 0 && Math.hypot(a.x - player.x, a.y - player.y) < 380) {
+      a.goalX = player.x; a.goalY = player.y;
+    } else { a.aggressor = null; a.state = 'FLEE'; a.alarm = 360; }
+  }
+  if (a.state === 'FLEE') {
+    const ang = Math.atan2(a.y - a.threatY, a.x - a.threatX);
+    a.goalX = a.x + Math.cos(ang) * 330; a.goalY = a.y + Math.sin(ang) * 330;
+    if (a.alarm <= 0) { a.state = 'GRAZE'; a.homeX = a.x; a.homeY = a.y; }
+  }
+  if (a.state === 'GRAZE') {
+    if (h) {
+      if (h.thinkAt <= _wildlifeClock) {
+        h.x += (wildlifeRandom() - 0.5) * 200; h.y += (wildlifeRandom() - 0.5) * 200;
+        h.thinkAt = _wildlifeClock + 240 + wildlifeRandom() * 300;
+      }
+      a.goalX = h.x + a.herdX; a.goalY = h.y + a.herdY;
+    } else {
+      a.goalX = a.homeX + (wildlifeRandom() - 0.5) * (a.airborne ? 500 : 200);
+      a.goalY = a.homeY + (wildlifeRandom() - 0.5) * (a.airborne ? 500 : 200);
+    }
+    // Grazers notice a nearby moving soldier without searching the army list.
+    if (player && player.hp > 0 && Math.hypot(a.x - player.x, a.y - player.y) < (a.airborne ? 85 : 105)) {
+      a.state = 'ALARM'; a.alarm = 300; a.threatX = player.x; a.threatY = player.y;
+    }
+  }
+  a.thinkAt = _wildlifeClock + (a.state === 'GRAZE' ? 100 + wildlifeRandom() * 110 : 24);
+}
+function updateForestWildlife(dt) {
+  dt = Math.max(0, Math.min(3, Number.isFinite(dt) ? dt : 1));
+  if (!BIOME_ACTIVE || currentBiome !== 2 || !player) {
+    if (_wildlifeLastBiome === 2 || forestWildlife.length) { forestWildlife.length = 0; _wildlifeGridDirty = true; _wildlifeSpawnClock = 0; }
+    _wildlifeLastBiome = currentBiome; return;
+  }
+  if (!dt || !doTick || isPaused || isDead || isWin || killcamMode ||
+      (typeof inCutscene !== 'undefined' && inCutscene) || inStoryIntro ||
+      inOverworldView || inTravelMenu ||
+      inDarchonCall || inTownCutscene || inFarmCutscene || inFarmPostCutscene ||
+      inPostAmbushCutscene || inFortCutscene || inWorldBuildingMenu || player.hp <= 0) return;
+  _wildlifeLastBiome = 2; _wildlifeClock += dt;
+  _wildlifeSpawnClock -= dt;
+  if (_wildlifeSpawnClock <= 0) { wildlifeSpawnEncounter(); _wildlifeSpawnClock = 180; }
+  const far = Math.max(2800, Math.hypot(viewRight - viewLeft, viewBottom - viewTop) + 1900), far2 = far * far;
+  for (let i = forestWildlife.length - 1; i >= 0; i--) {
+    const a = forestWildlife[i]; a.clock += dt;
+    if (a.harvested || ((!inView(a.x, a.y, 260)) && (a.x-player.x)*(a.x-player.x)+(a.y-player.y)*(a.y-player.y) > far2)) {
+      forestWildlife.splice(i, 1); _wildlifeGridDirty = true; continue;
+    }
+    if (a.hitFlash > 0) a.hitFlash = Math.max(0, a.hitFlash - dt);
+    if (a.dead || a.state === 'STUNNED') {
+      a.ttl -= dt;
+      if (a.ttl <= 0) { forestWildlife.splice(i, 1); _wildlifeGridDirty = true; }
+      continue;
+    }
+    a.alarm = Math.max(0, a.alarm - dt);
+    if (a.thinkAt <= _wildlifeClock) wildlifeBrain(a);
+    // Stagger local collision probes over four frames, then advance cached
+    // clear velocities every frame so grazing and wingbeats stay smooth.
+    // These local probes never iterate the army roster or the complete map.
+    const s = WILDLIFE_SPECIES[a.species];
+    if (((Math.floor(_wildlifeClock) + a.id) & 3) === 0) {
+      const dx = a.goalX - a.x, dy = a.goalY - a.y, len = Math.hypot(dx, dy);
+      const speed = s.speed * (a.state === 'GRAZE' ? (a.airborne ? 0.85 : 0.30) : 1.65);
+      a.vx = len > 10 ? dx / len * speed : 0; a.vy = len > 10 ? dy / len * speed : 0;
+      const nx = a.x + a.vx * 4 * dt, ny = a.y + a.vy * 4 * dt;
+      if (a.vx || a.vy) {
+        if (!wildlifeCanStand(a, nx, ny)) {
+          if (wildlifeCanStand(a, nx, a.y)) a.vy = 0;
+          else if (wildlifeCanStand(a, a.x, ny)) a.vx = 0;
+          else {
+            a.goalX = a.x + (wildlifeRandom() - 0.5) * 180; a.goalY = a.y + (wildlifeRandom() - 0.5) * 180;
+            a.vx = a.vy = 0; a.thinkAt = _wildlifeClock + 40;
+          }
+        }
+        if (a.vx || a.vy) a.angle = Math.atan2(a.vy, a.vx);
+      }
+    }
+    if (a.vx || a.vy) {
+      a.x += a.vx * dt; a.y += a.vy * dt;
+      a.phase += Math.hypot(a.vx, a.vy) * 0.24 * dt;
+      _wildlifeGridDirty = true;
+    }
+    a.wingPhase += dt * 0.48;
+    if (a.state === 'TERRITORIAL' && a.aggressor === player && player.hp > 0 && _wildlifeClock >= a.attackAt &&
+        Math.hypot(a.x - player.x, a.y - player.y) < a.bodyR + 24) {
+      if (typeof player.takeDamage === 'function') player.takeDamage(s.family === 'bear' ? 18 : s.family === 'snake' ? 6 : 10, a);
+      a.attackAt = _wildlifeClock + 75;
+    }
+  }
+  wildlifeRebuildGrid();
+}
+function notifyForestWildlifeThreat(x, y, r) {
+  if (!forestWildlife.length || currentBiome !== 2 || !Number.isFinite(x) || !Number.isFinite(y)) return;
+  // A machine-gun battle sends many shots in the same frame. One bounded
+  // threat query per eight ticks is enough for the animals to hear the fight.
+  if (_wildlifeClock - _wildlifeLastThreat < 8) return;
+  _wildlifeLastThreat = _wildlifeClock; wildlifeRebuildGrid();
+  const range = Math.max(60, Math.min(700, Number.isFinite(r) ? r : 460));
+  const out = _wildlifeThreatCandidates; out.length = 0;
+  const x0 = Math.floor((x-range)/WILDLIFE_CELL), x1 = Math.floor((x+range)/WILDLIFE_CELL);
+  const y0 = Math.floor((y-range)/WILDLIFE_CELL), y1 = Math.floor((y+range)/WILDLIFE_CELL);
+  for (let ix=x0; ix<=x1; ix++) for (let iy=y0; iy<=y1; iy++) {
+    const cell = _wildlifeGrid.get(cellKey(ix, iy)); if (!cell) continue;
+    for (let i=0; i<cell.length; i++) {
+      const a=cell[i];
+      if ((a.x-x)*(a.x-x)+(a.y-y)*(a.y-y)>range*range) continue;
+      a.threatX=x; a.threatY=y; a.alarm=540;
+      if (a.state!=='TERRITORIAL') a.state='ALARM';
+      a.thinkAt=Math.min(a.thinkAt,_wildlifeClock+18);
+      if(a.herd){a.herd.threatX=x;a.herd.threatY=y;a.herd.alarmUntil=_wildlifeClock+540;}
+    }
+  }
+}
+function wildlifeSegmentCircle(x0,y0,x1,y1,cx,cy,r) {
+  const dx=x1-x0,dy=y1-y0,px=x0-cx,py=y0-cy;
+  const c=px*px+py*py-r*r;
+  if(c<=0)return 0;
+  const aa=dx*dx+dy*dy;if(aa<=1e-12)return Infinity;
+  const bb=px*dx+py*dy,disc=bb*bb-aa*c;if(disc<0)return Infinity;
+  const t=(-bb-Math.sqrt(disc))/aa;
+  return t>=0&&t<=1?t:Infinity;
+}
+function forestWildlifeHitTest(b) {
+  if (!b || !forestWildlife.length || currentBiome!==2 || b.retracting || b.tetheredTarget) return null;
+  wildlifeRebuildGrid();
+  const x1=b.x,y1=b.y,x0=Number.isFinite(b.prevX)?b.prevX:b.x-(b.vx||0),y0=Number.isFinite(b.prevY)?b.prevY:b.y-(b.vy||0);
+  if(!Number.isFinite(x0)||!Number.isFinite(y0)||!Number.isFinite(x1)||!Number.isFinite(y1))return null;
+  const pad=40,ix0=Math.floor((Math.min(x0,x1)-pad)/WILDLIFE_CELL),ix1=Math.floor((Math.max(x0,x1)+pad)/WILDLIFE_CELL);
+  const iy0=Math.floor((Math.min(y0,y1)-pad)/WILDLIFE_CELL),iy1=Math.floor((Math.max(y0,y1)+pad)/WILDLIFE_CELL);
+  if((ix1-ix0+1)*(iy1-iy0+1)>64)return null;
+  let best=null,bestT=Infinity;
+  for(let ix=ix0;ix<=ix1;ix++)for(let iy=iy0;iy<=iy1;iy++){
+    const cell=_wildlifeGrid.get(cellKey(ix,iy));if(!cell)continue;
+    for(let i=0;i<cell.length;i++){
+      const a=cell[i];if(a.harvested||a.dead||a.state==='STUNNED')continue;
+      const head=b.tH==='HEAD';let t;
+      if(head){
+        const s=WILDLIFE_SPECIES[a.species],f=s.headForward*a.bodyR/s.size,c=Math.cos(a.angle),sn=Math.sin(a.angle);
+        const hx=a.x+c*f-sn*s.headSide,hy=a.y+sn*f+c*s.headSide;
+        // The engine's HEAD mode aims at the character root. Keep that same
+        // small target here, while also accepting the actual drawn animal head.
+        t=Math.min(wildlifeSegmentCircle(x0,y0,x1,y1,hx,hy,a.headR+1.5),wildlifeSegmentCircle(x0,y0,x1,y1,a.x,a.y,a.headR));
+      }else{
+        const c=Math.cos(a.angle),sn=Math.sin(a.angle),rx=a.bodyR*1.35+2,ry=a.bodyR*0.78+2;
+        const q0x=((x0-a.x)*c+(y0-a.y)*sn)/rx,q0y=(-(x0-a.x)*sn+(y0-a.y)*c)/ry;
+        const q1x=((x1-a.x)*c+(y1-a.y)*sn)/rx,q1y=(-(x1-a.x)*sn+(y1-a.y)*c)/ry;
+        t=wildlifeSegmentCircle(q0x,q0y,q1x,q1y,0,0,1);
+      }
+      if(t<bestT){bestT=t;best={animal:a,head,t};}
+    }
+  }
+  return best;
+}
+function wildlifeWeaponKind(w) {
+  const name=String(w&&w.name||w||'').toUpperCase();
+  if(w===WEAPONS.TASER||name.indexOf('TASER')!==-1)return 'TASER';
+  if((WEAPONS.BOW&&w===WEAPONS.BOW)||name.indexOf('BOW')!==-1||name==='ARROW')return 'BOW';
+  if(w===WEAPONS.ROCKET_LAUNCHER||name.indexOf('ROCKET')!==-1||name.indexOf('EXPLOS')!==-1)return 'EXPLOSIVE';
+  return 'GUN';
+}
+function applyForestWildlifeHit(a, hit) {
+  if(!a||!hit||a.harvested||a.dead||a.state==='STUNNED')return {hit:false};
+  const kind=wildlifeWeaponKind(hit.weapon),s=WILDLIFE_SPECIES[a.species];
+  if(kind==='TASER'){
+    a.state='STUNNED';a.vx=a.vy=0;a.condition='PERFECT';a.method='TASER';a.ttl=18000;a.hitFlash=12;
+    _wildlifeGridDirty=true;return {hit:true,killed:false,stunned:true,condition:a.condition};
+  }
+  const sid=hit.shotId===undefined||hit.shotId===null?'wildlife:'+(_wildlifeLedger.nextId++):String(hit.shotId);
+  if(a.shotIds.indexOf(sid)===-1){a.shotIds.push(sid);a.shots++;if(hit.head)a.headshots++;}
+  // Keep a bounded history: condition is already ruined after four shots, so
+  // later trigger IDs need no allocation or retention.
+  if(a.shotIds.length>8)a.shotIds.shift();
+  let damage=Number.isFinite(hit.damage)?Math.max(0,hit.damage):30;
+  if(kind==='BOW'&&hit.head)damage=a.hp;
+  a.hp=Math.max(0,a.hp-damage);a.hitFlash=8;
+  a.threatX=hit.owner&&Number.isFinite(hit.owner.x)?hit.owner.x:a.x-Math.cos(a.angle)*60;
+  a.threatY=hit.owner&&Number.isFinite(hit.owner.y)?hit.owner.y:a.y-Math.sin(a.angle)*60;
+  a.alarm=600;a.thinkAt=_wildlifeClock;
+  if(a.hp<=0){
+    a.dead=true;a.state='DEAD';a.vx=a.vy=0;a.ttl=18000;
+    a.method=kind==='BOW'&&hit.head?'BOW_HEAD':kind;
+    a.condition=a.method==='BOW_HEAD'?'PERFECT':kind==='EXPLOSIVE'||a.shots>=4?'BAD':a.shots===1&&a.headshots===1?'GOOD':'FAIR';
+    _wildlifeGridDirty=true;
+    return {hit:true,killed:true,stunned:false,condition:a.condition};
+  }
+  // Crossfire from another army scatters wildlife; it must not blame the
+  // player. Only the player who injured a predator can provoke retaliation.
+  a.aggressor=hit.owner===player?player:null;
+  a.state=wildlifeHasTrait(s,'predator')&&!a.airborne&&a.aggressor?'TERRITORIAL':'ALARM';
+  if(a.herd){a.herd.threatX=a.threatX;a.herd.threatY=a.threatY;a.herd.alarmUntil=_wildlifeClock+600;}
+  return {hit:true,killed:false,stunned:false,condition:null};
+}
+function notifyForestWildlifeExplosion(x,y,r,damage,owner,shotId) {
+  if(currentBiome!==2||!forestWildlife.length)return;
+  const range=Math.max(0,Math.min(900,r||0));
+  for(let i=0;i<forestWildlife.length;i++){
+    const a=forestWildlife[i];if(a.dead||a.harvested||a.state==='STUNNED')continue;
+    const d=Math.hypot(a.x-x,a.y-y);if(d>range+a.bodyR)continue;
+    applyForestWildlifeHit(a,{weapon:'EXPLOSIVE',head:false,shotId,owner,damage:(damage||80)*Math.max(0.2,1-d/Math.max(1,range))});
+  }
+  notifyForestWildlifeThreat(x,y,Math.max(450,range));
+}
+function wildlifeHarvest(a) {
+  if(!a||a.harvested||(!a.dead&&a.state!=='STUNNED')||!a.condition)return null;
+  if(!player||Math.hypot(player.x-a.x,player.y-a.y)>90+a.bodyR)return null;
+  a.harvested=true;_wildlifeGridDirty=true;
+  return {species:a.species,name:WILDLIFE_SPECIES[a.species].name,condition:a.condition,
+    state:a.state==='STUNNED'?'STUNNED':'DEAD',method:a.method,count:1};
+}
+function serializeForestWildlife() {
+  return {version:1,seed:_wildlifeLedger.seed>>>0,nextId:_wildlifeLedger.nextId,
+    encounters:_wildlifeLedger.encounters,rareMisses:_wildlifeLedger.rareMisses};
+}
+function resetForestWildlife() {
+  forestWildlife.length=0;_wildlifeGrid.clear();for(let i=0;i<_wildlifeBucketPool.length;i++)_wildlifeBucketPool[i].length=0;
+  _wildlifeLedger={seed:0x5ad763f1,nextId:1,encounters:0,rareMisses:0};
+  _wildlifeClock=0;_wildlifeSpawnClock=0;_wildlifeLastThreat=-1000;_wildlifeLastBiome=0;
+  _wildlifeGridDirty=true;_wildlifeGridCount=-1;
+}
+function restoreForestWildlife(data) {
+  resetForestWildlife();if(!data||typeof data!=='object')return;
+  _wildlifeLedger.seed=(Number.isFinite(data.seed)?data.seed>>>0:0x5ad763f1)||1;
+  _wildlifeLedger.nextId=Number.isFinite(data.nextId)?Math.max(1,Math.min(Number.MAX_SAFE_INTEGER-10000,Math.floor(data.nextId))):1;
+  _wildlifeLedger.encounters=Number.isFinite(data.encounters)?Math.max(0,Math.min(1e9,Math.floor(data.encounters))):0;
+  _wildlifeLedger.rareMisses=Number.isFinite(data.rareMisses)?Math.max(0,Math.min(18,Math.floor(data.rareMisses))):0;
+}
+// ===== END FOREST WILDLIFE CORE =====
