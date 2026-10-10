@@ -1509,14 +1509,11 @@ per-part mass extrusion, tall risers, new 3D renderer or texture buffers are nee
 `volShade`/`volShadeCol` remain compatible entry points. Colors accept either
 p5.Color or an RGB(A) array, and all planes retain their material's alpha.
 
-Live player, military and other humanoid silhouettes use a selective black ink
-profile (`figureComicInkFor`). Paint their unfilled contour **after** the shade
-planes so the lighting cannot cover the inner half of the line. Armor rims,
-lapels and short fabric folds take ink; elbow and knee surfaces stay continuous.
-`Character.show` scopes `_figureComicInk` with `try/finally`. Female pistol art,
-corpses, nonlethal falls and organic creature art retain the default profile.
-Use p5 push/pop in live ink leg transforms: a raw Canvas restore alone leaves
-p5's stroke cache stale and can substitute a previous UI color for black.
+Character bodies, skin and limbs retain the softer material contours from the
+curved 3D model update. Do not add a global black ink pass or costume seam pass.
+Army helmets are the deliberate exception: `drawArmyHelmet` and the integral
+armored head shield use dark shell and brow edges to separate the headwear from
+the skin while keeping the shell's curved cel planes.
 
 `figureCelLimb(g,sx,sy,ex,ey,hx,hy,w0,w1,w2,c)` wraps the existing two-bone rig
 in **one continuous tapered outline**. Its curves share a tangent at the elbow or
@@ -3119,7 +3116,7 @@ a sliver into a circle as the barrel dips. That last one is the only cue that re
 depression directly: a bore you are looking down is a hole, one you are looking across is
 an edge.
 
-**The weapon goes on top of the hands.** From a bird's eye a hand is *under* the thing it
+**A firearm goes on top of the hands.** From a bird's eye a hand is *under* the thing it
 grips — you see the top of the weapon and the fingers beneath it. Drawn first, the long
 gun had two skin discs sitting on its receiver.
 
@@ -3224,6 +3221,21 @@ shotgun wrists now follow their shared solid model, including its recoil and pum
 their drawn crown, flash and aim line compensate for torso bob to stay on the
 existing projectile origin.
 
+`drawAimedTwoHandSleeve` tucks the raised weapon's elbow and sinks its shoulder
+root into the torso while leaving its wrist on the grip. This applies to aiming;
+the two-handed walking carry stays on the existing rig. The pistol's free arm
+keeps a restrained stride beside the ribs, with throws, cannon actions and
+reloads taking precedence.
+
+Sword and pickaxe art use the same rigid projection as the firearms. Paint the
+grip and pommel first, then the cel shaded palm, then the guard and faceted blade
+or pick head beyond the fingers. `swordCarryPose` keeps the running wrist
+controlled; the melee clock drives the swing, short trail and return to the
+carry pose. Combat and harvest hit windows stay unchanged. A held aim input
+during a punch can bypass the boxing guard: `drawComboPunchArms` retains the
+original fist positions while using continuous cel sleeves instead of the old
+flat ovals.
+
 ---
 
 ### Solid one-handed firearms and independent off-hand actions
@@ -3259,8 +3271,8 @@ handle; `longGunPump` uses the existing firing cooldown for the shotgun's
 eighteen-frame fore-end cycle and support hand motion. Rendering never advances
 these timers or changes ammunition, fire rate or ballistics.
 
-Run `tools/check-comic-ink.js` for selective contours and protected painter scopes;
-`COMIC_BASELINE=/path/to/game.js` also compares female pistol/corpse traces.
+Run `tools/check-soft-helmets.js` for soft surfaces and distinct military shells;
+`SOFT_BASELINE=/path/to/pre-ink/game.js` also compares protected painter traces.
 `tools/check-longguns.js` checks live projected parts, native recoil/pump timers,
 both grips and visual/projectile muzzle registration.
 
@@ -3448,7 +3460,9 @@ node tools/check-resources.js      # harvestables, drops, the melee tool, persis
 node tools/check-robot.js          # a machine dies like a machine, on all six paths
 node tools/check-character.js      # the arm rig, the gait bands, and carrying a weapon
 node tools/check-figure-volume.js  # cel surfaces, smooth joints, light, alpha and poses
-node tools/check-comic-ink.js      # selective black ink and protected soft/fallen art
+node tools/check-soft-helmets.js   # soft figure surfaces and distinct army helmets
+node tools/check-sword-animation.js # sword grip layers, controlled carry and native swings
+node tools/check-punch-surfaces.js # aim-held punch surfaces and preserved fist positions
 node tools/check-longguns.js       # shared carry/aim solids, recoil, pump and shot origins
 node tools/check-handguns.js       # solid sidearms, slide motion and staged reloads
 node tools/check-left-actions.js   # throws and chemist cannon without gun aim

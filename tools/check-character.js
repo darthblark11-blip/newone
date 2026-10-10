@@ -130,7 +130,7 @@ function poseOf(setup, barrelOnly = false) {
   // leaves the rotation clean to read angles off.
   let m = { x: -px, y: -py, c: 1, s: 0, k: 1, filled: true };
   const stack = [];
-  const hands = [], segs = [];
+  const hands = [], segs = [], palms = [];
   let muzzle = null;
   // The torso's own angle. A weapon held against the body turns WITH the body,
   // and the shoulders counter-rotate on purpose — measuring a gun against the
@@ -151,6 +151,7 @@ function poseOf(setup, barrelOnly = false) {
     if(!m.filled)return;
     x *= m.k;
     const wx = m.x + x * m.c - y * m.s, wy = m.y + x * m.s + y * m.c;
+    if(w===8&&h===8)palms.push([wx,wy]);
     n++;
     if (w === BODY_W && h === BODY_H) {
       bodyAng = Math.atan2(m.s, m.c); torsoAt = n; torsoXY = [wx, wy];
@@ -294,7 +295,7 @@ function poseOf(setup, barrelOnly = false) {
       lo: 0, hi: _dl
     };
   }
-  return { hands, segs, guns: best ? [best] : [], torsoAt, torsoXY, bodyAng, muzzle };
+  return { hands, palms, segs, guns: best ? [best] : [], torsoAt, torsoXY, bodyAng, muzzle };
 }
 const RIGW = { u: P(`figureRig(${BODY_W}, ${BODY_H}).upperW`),
                f: P(`figureRig(${BODY_W}, ${BODY_H}).foreW`) };
@@ -1245,6 +1246,67 @@ console.log('\n== carrying a weapon, as opposed to presenting one ==');
        `worst hand ${off.toFixed(2)} off the axis, ${past.toFixed(2)} past either end` +
        (at ? ` — ${at}` : ''));
   }
+}
+
+console.log('\n== the free left arm in a pistol sprint ==');
+{
+  probe(`player.isArmed=true;player.currentWeapon=WEAPONS.PISTOL;player.meleeTimer=0;
+         player.reloadTimer=0;player.muzzleFlash=0;player.throwAnimTimer=0;player.dashTimer=0;
+         swordPickedUp=false;setMeleeTool("NONE");chemistSuitUnlocked=false;
+         rightStick.active=false;player.aimHold=0;`);
+  const localHand=(p,h)=>{
+    const dx=h[0]-p.torsoXY[0],dy=h[1]-p.torsoXY[1],c=Math.cos(p.bodyAng),s=Math.sin(p.bodyAng);
+    return [dx*c+dy*s,-dx*s+dy*c];
+  };
+  const freeHand=p=>p.hands.map(h=>localHand(p,h)).find(h=>h[1]<0);
+  let missing=null,innermost=-Infinity,longest=0;
+  for(const heading of [0,Math.PI/2,Math.PI,-Math.PI/2])for(let n=0;n<64;n++){
+    const p=poseOf(`player.aimAngle=${heading};player.moveAngle=${heading};player.isMoving=true;
+                    player.gait=1;player.walkCycle=${n*Math.PI/32};`),h=freeHand(p);
+    if(p.hands.length!==2||!h||!h.every(Number.isFinite))missing={heading,n,hands:p.hands};
+    if(h)innermost=Math.max(innermost,h[1]);
+    for(const seg of p.segs){
+      const bone=Math.abs(seg.w-RIGW.u)<1e-6?P(`figureRig(${BODY_W},${BODY_H}).upper`):P(`figureRig(${BODY_W},${BODY_H}).fore`);
+      longest=Math.max(longest,seg.len/bone);
+    }
+  }
+  ok('a pistol sprint retains two finite hands through every heading and stride',!missing,missing?JSON.stringify(missing):'256 poses');
+  ok('the free hand stays beside the ribs instead of crossing the face',innermost<-BODY_H*.18,`innermost lateral position ${innermost.toFixed(3)}`);
+  ok('both fitted arms stay within their actual bone lengths',longest<=1.001,`longest ${(longest*100).toFixed(2)}%`);
+  let jump=0;
+  for(const heading of [0,Math.PI/2,Math.PI,-Math.PI/2])for(let n=0;n<32;n++){
+    const phase=n*Math.PI/16;
+    const a=freeHand(poseOf(`player.aimAngle=${heading};player.moveAngle=${heading};player.gait=.6499;player.walkCycle=${phase};`));
+    const b=freeHand(poseOf('player.gait=.6501;'));
+    jump=Math.max(jump,Math.hypot(a[0]-b[0],a[1]-b[1]));
+  }
+  ok('the free-arm run refinement enters smoothly at the jog/run boundary',jump<.02,`largest hand step ${jump.toFixed(5)}`);
+  probe('rightStick.active=true;player.aimHold=AIM_HOLD;player.armDrag=1;');
+  const freeAimedHand=p=>p.palms.map(h=>localHand(p,h)).find(h=>h[1]<0);
+  let aimedBad=null,minX=Infinity,maxX=-Infinity,aimedStep=0;
+  for(const heading of [0,Math.PI/2,Math.PI,-Math.PI/2])for(let n=0;n<64;n++){
+    const phase=n*Math.PI/32,p=poseOf(`player.aimAngle=${heading};player.moveAngle=${heading};
+                    player.gait=1;player.walkCycle=${phase};`),h=freeAimedHand(p);
+    const right=p.palms.map(q=>localHand(p,q)).find(q=>q[1]>0);
+    if(p.palms.length!==2||!h||!right||h[1]>=-BODY_H*.18||!h.every(Number.isFinite)||
+       Math.hypot(right[0]-16,right[1]-8)>1e-7)aimedBad={heading,n,hand:h,right};
+    if(h){minX=Math.min(minX,h[0]);maxX=Math.max(maxX,h[0]);}
+    const before=freeAimedHand(poseOf(`player.walkCycle=${phase-.001};`));
+    const after=freeAimedHand(poseOf(`player.walkCycle=${phase+.001};`));
+    aimedStep=Math.max(aimedStep,Math.hypot(before[0]-after[0],before[1]-after[1]));
+  }
+  ok('aimed pistol running keeps the free hand beside the ribs and the right wrist on its exact grip',!aimedBad,aimedBad?JSON.stringify(aimedBad):'256 poses');
+  ok('the aimed free arm has a visible forward/back counter-stride',minX<-4&&maxX>5&&maxX-minX>12,`${minX.toFixed(3)}..${maxX.toFixed(3)}`);
+  ok('the aimed free-arm stride remains continuous at its turning points',aimedStep<.03,`largest phase crossing ${aimedStep.toFixed(5)}`);
+  let aimedEntry=0;
+  for(let n=0;n<32;n++){
+    const a=freeAimedHand(poseOf(`player.gait=.6499;player.walkCycle=${n*Math.PI/16};`));
+    const b=freeAimedHand(poseOf('player.gait=.6501;'));
+    aimedEntry=Math.max(aimedEntry,Math.hypot(a[0]-b[0],a[1]-b[1]));
+  }
+  ok('aimed free-arm motion also enters smoothly at the jog/run boundary',aimedEntry<.03,`largest hand step ${aimedEntry.toFixed(5)}`);
+  probe('rightStick.active=false;player.aimHold=0;');
+  probe('player.aimAngle=0;player.moveAngle=0;');
 }
 
 console.log('\n== the gun comes up instantly and goes down deliberately ==');

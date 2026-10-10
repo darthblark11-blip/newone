@@ -30,9 +30,10 @@ function prepare(weapon,heading=0){
 
 function trace(source){
   const saved={};
-  for(const k of ['push','pop','translate','rotate','scale','quad','line','fill','stroke','beginShape','drawLongGunSolid','handGunBox','longGunMuzzle','figureCelOval'])saved[k]=ctx[k];
+  for(const k of ['push','pop','translate','rotate','scale','quad','line','fill','stroke','beginShape','drawLongGunSolid','handGunBox','longGunMuzzle','figureCelOval','figureCelLimb'])saved[k]=ctx[k];
   let m=[1,0,0,1,0,0],activeGun=null,activeBox=null,laserStroke=false,flashFill=false;
-  const stack=[],guns=[],palms=[],lasers=[],flashes=[];
+  const stack=[],guns=[],palms=[],lasers=[],flashes=[],arms=[];
+  const armWidth=P('figureRig(player.bodyW,player.bodyH).upperW');
   const point=(x,y)=>[m[0]*x+m[2]*y+m[4],m[1]*x+m[3]*y+m[5]];
   ctx.push=()=>stack.push(m.slice());
   ctx.pop=()=>{if(stack.length)m=stack.pop();};
@@ -66,9 +67,12 @@ function trace(source){
     if(w===8&&h===8)palms.push(point(x,y));
     return saved.figureCelOval(...arguments);
   };
-  const oldInk=P('_figureComicInk');
+  ctx.figureCelLimb=function(g,sx,sy,ex,ey,hx,hy,w0){
+    if(w0===armWidth)arms.push({local:[sx,sy,ex,ey,hx,hy],shoulder:point(sx,sy),elbow:point(ex,ey),wrist:point(hx,hy)});
+    return saved.figureCelLimb(...arguments);
+  };
   try{probe(source);}finally{Object.assign(ctx,saved);}
-  return {guns,palms,lasers,flashes,balanced:stack.length===0&&P('_figureComicInk')===oldInk};
+  return {guns,palms,lasers,flashes,arms,balanced:stack.length===0};
 }
 const part=(gun,rgb,predicate=()=>true)=>gun.boxes.find(b=>b.rgb.every((v,i)=>v===rgb[i])&&predicate(b));
 const centre=box=>{const ps=box.quads.flat();return [ps.reduce((n,p)=>n+p[0],0)/ps.length,ps.reduce((n,p)=>n+p[1],0)/ps.length];};
@@ -94,6 +98,43 @@ for(const [weapon,count]of [['ASSAULT_RIFLE',1],['SHOTGUN',4]]){
   }
   ok(`${weapon}: native ammo/cooldown and gun/flash/laser/projectile registration survive four headings and all gaits`,!failure,failure&&JSON.stringify(failure));
   ok(`${weapon}: both actual palms sit on their projected grip points while aiming/firing`,!gripFailure,gripFailure&&JSON.stringify(gripFailure));
+}
+
+console.log('\n== raised two-handed arm surfaces ==');
+for(const weapon of ['ASSAULT_RIFLE','SHOTGUN','BOW','ROCKET_LAUNCHER','COACH_GUN']){
+  let bad=null,poses=0;
+  for(const heading of [0,Math.PI/2,Math.PI,-Math.PI/2])for(const gait of [0,.2,.5,1])for(const phase of [0,Math.PI/2,Math.PI,3*Math.PI/2]){
+    prepare(weapon,heading);
+    probe(`player.isMoving=${gait>0};player.gait=${gait};player.walkCycle=${phase};`);
+    const r=trace('player.show();'),[bw,bh]=P('[player.bodyW,player.bodyH]');poses++;
+    if(!r.balanced||r.arms.length!==2||r.palms.length!==2)bad={heading,gait,phase,reason:'missing/duplicate arms'};
+    for(const a of r.arms){
+      const [sx,sy,ex,ey,hx,hy]=a.local,u=[ex-sx,ey-sy],f=[hx-ex,hy-ey];
+      const fold=Math.abs(u[0]*f[1]-u[1]*f[0])/(Math.hypot(...u)*Math.hypot(...f));
+      if(!a.local.every(Number.isFinite)||(2*sx/bw)**2+(2*sy/bh)**2>=1||Math.abs(ey)>bh*.5||
+         fold<.15||!r.palms.some(p=>distance(p,a.wrist)<1e-7))bad={heading,gait,phase,reason:'shoulder/fold/wrist',arm:a.local,fold};
+    }
+  }
+  ok(`${weapon}: raised arms have embedded shoulders, tucked elbows and exact palm contact at all headings/gaits`,!bad,bad?JSON.stringify(bad):`${poses} real poses`);
+}
+for(const [weapon,expected]of [['BOW',[[24,0],[14,0]]],['ROCKET_LAUNCHER',[[32,7],[8,11]]],['COACH_GUN',[[26,7],[15,11]]]]){
+  prepare(weapon);const r=trace('player.show();');
+  const contacts=r.arms.map(a=>a.local.slice(4));
+  ok(`${weapon}: support and strong wrists meet the drawn grip/string/fore-end`,expected.every(p=>contacts.some(h=>distance(p,h)<1e-8)),JSON.stringify(contacts));
+}
+prepare('BOW');probe('player.ammo=0;');
+ok('empty bow lets the strong hand follow the relaxed string while support stays on its grip',
+   trace('player.show();').arms.some(a=>distance(a.local.slice(4),[31,0])<1e-8));
+
+for(const weapon of ['ASSAULT_RIFLE','SHOTGUN']){
+  let worst=0;
+  for(const heading of [0,Math.PI/2,Math.PI,-Math.PI/2])for(const gait of [.2,.5,1])for(let n=0;n<32;n++){
+    const phase=n*Math.PI/16;prepare(weapon,heading);
+    const before=trace(`player.isMoving=true;player.gait=${gait};player.walkCycle=${phase-.001};player.show();`).arms;
+    const after=trace(`player.walkCycle=${phase+.001};player.show();`).arms;
+    for(let k=0;k<before.length;k++)for(const part of ['shoulder','elbow','wrist'])worst=Math.max(worst,distance(before[k][part],after[k][part]));
+  }
+  ok(`${weapon}: gait bob passes smoothly through aimed shoulders, elbows and wrists`,worst<.05,`largest phase crossing ${worst.toFixed(5)}`);
 }
 
 console.log('\n== one solid model in carry and aim ==');

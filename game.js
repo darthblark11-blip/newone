@@ -2325,10 +2325,6 @@ function entityCelPlate(g, points, c, lx, ly, sx, sy, inset) {
     g.fill(r*shade,gr*shade,b*shade);
     g.quad(a[0],a[1],n[0],n[1],n[0]*f,n[1]*f,a[0]*f,a[1]*f);
   }
-  if(_figureComicInk){
-    g.noFill();g.stroke(0,0,0);g.strokeWeight(1.1);
-    g.beginShape();for(const p of points)g.vertex(p[0],p[1]);g.endShape(CLOSE);
-  }
   g.noStroke();
 }
 
@@ -11437,7 +11433,7 @@ function headwearFalls(kind) { return !!kind && kind !== 'HOOD'; }
 // Drawn at the origin: the caller has already translated to the head, or to
 // wherever the thing has come to rest.
 const _headCelColor={
-  helmetRim:[37,48,48],cityHelmet:[108,127,118],military:[40,80,40],
+  helmetRim:[37,48,48],cityHelmet:[108,127,118],military:[40,80,40],armoredHelmet:[43,49,58],
   greyHelmet:[170,175,180],tanHelmet:[190,170,130],hood:[15,15,19],hoodLight:[240,240,240],
   copRim:[34,32,40],capBrim:[64,56,44],bonnetFront:[214,204,184],
   strawBrim:[210,180,70],strawCrown:[190,160,50],skin:[235,180,140],banditSkin:[214,168,132]
@@ -11461,20 +11457,19 @@ function drawHeadwear(g, id, kind) {
     figureCelOval(g,-1,0,15,16,_headCelColor.helmetRim,.8);
     figureCelOval(g,-2,-1,12,12,_headCelColor.cityHelmet,.65);
     g.noStroke();g.fill(50,80,84);g.rect(2,-5,4,10,2);
-    g.fill(145,206,206);g.rect(3,-4,1,6);g.fill(224,188,69);g.rect(-6,-1,3,2);return;
+    g.fill(145,206,206);g.rect(3,-4,1,6);g.fill(224,188,69);g.rect(-6,-1,3,2);
+    g.noFill();g.stroke(12,15,16,240);g.strokeWeight(.9);g.ellipse(-1,0,15,16);
+    g.strokeWeight(.8);g.line(2,-5,2,5);g.noStroke();return;
   }
   if (kind === 'VISOR') {
-    g.push();g.rotate(-HALF_PI);figureCelArc(g,0,-1,14,14,_headCelColor.military,PI,TWO_PI,.7);g.pop();
+    g.push();g.rotate(-HALF_PI);drawArmyHelmet(g,_headCelColor.military,.7);g.pop();
     g.push(); g.rotate(radians(33)); g.fill(80, 50, 20); g.rect(4, -1, 8, 3); g.fill(255, 100, 0); g.ellipse(12, 0.5, 2, 2); g.pop();
     return;
   }
   if (kind === 'HELMET') {
     g.push(); g.rotate(-HALF_PI);
     const c=id.isMilitary?_headCelColor.military:id.eType==="NM0_GREY_FATIGUE"?_headCelColor.greyHelmet:_headCelColor.tanHelmet;
-    figureCelArc(g,0,-1,14,14,c,PI,TWO_PI,.8);
-    // The small brow lip belongs to the shell, rather than a ring on its crown.
-    g.stroke(c[0]*.45,c[1]*.45,c[2]*.48);g.strokeWeight(.7);g.noFill();
-    g.arc(0,-1,13.4,13.4,PI+.12,TWO_PI-.12,OPEN);
+    drawArmyHelmet(g,c,.8);
     g.pop(); g.noStroke();
     return;
   }
@@ -11531,6 +11526,29 @@ function drawHeadwear(g, id, kind) {
     g.stroke(145,113,36);g.strokeWeight(.6);g.line(-4,-1,4,-1);g.noStroke();
     return;
   }
+}
+
+// Equipment needs a readable shell/skin boundary even while the anatomy keeps
+// its soft, material-colored contours. Reuse this on worn and fallen helmets;
+// the unfilled edge and brow seam follow the existing half-shell exactly.
+function drawArmyHelmet(g,c,k) {
+  figureCelArc(g,0,-1,14,14,c,PI,TWO_PI,k);
+  g.noFill();g.stroke(12,15,16,240);g.strokeWeight(.9);
+  g.arc(0,-1,14,14,PI,TWO_PI,OPEN);
+  g.strokeWeight(1.05);
+  g.bezier(-6.7,-1,-3.3,-.3,3.3,-.3,6.7,-1);
+  g.noStroke();
+}
+
+// The heavy guard's integral face shell uses the same three-plane treatment;
+// only its metal perimeter and brow take ink, leaving the head underneath soft.
+function drawArmoredHelmet(g) {
+  figureCelArc(g,0,0,15,15,_headCelColor.armoredHelmet,0,PI,.8);
+  g.noFill();g.stroke(11,15,20,245);g.strokeWeight(.95);
+  g.arc(0,0,15,15,0,PI,OPEN);g.line(-7,0,7,0);
+  g.stroke(105,116,130,205);g.strokeWeight(.65);
+  g.bezier(-5.5,1,-2.5,1.5,2.5,1.5,5.5,1);
+  g.noStroke();
 }
 
 // Skin, hair and whatever is worn over them. `sway` is the braid's swing, in
@@ -13126,6 +13144,33 @@ function drawBoxingArms(e,b) {
     figureCelLimb(g,0,sy,ex,ey,fx,fy,7,6.3,6,e.shirtCol);
     figureCelLimb(g,ex,ey,(ex+hx)*.5,(ey+hy)*.5,hx,hy,5.7,5.4,5,skin);
     figureCelOval(g,hx+2*Math.cos(a),hy+2*Math.sin(a),8,8,skin,.8);
+  }
+}
+// A held aim input can interrupt the boxing guard during an active combo.
+// Keep those same punch arcs and fist positions, with the same curved sleeve
+// surface as the other player poses rather than falling back to flat ovals.
+function drawComboPunchArms(c,leftY,rightY) {
+  const p=1-c.meleeTimer/20,extension=sin(p*PI);
+  const twist=radians(c.meleePhase===2||c.meleePhase===4?-70:70)*extension;
+  const paint=figurePainter(),g=paint?paint.api:window;
+  const skin=c.skinCol||[235,180,140];
+  for(const right of [false,true]){
+    const sy=right?rightY:leftY;
+    const hook=right?c.meleePhase===4:c.meleePhase===3;
+    push();translate(0,sy);
+    if(hook){
+      rotate(-twist+(right?-1:1)*radians(20)*extension);
+      const elbow=14*extension,angle=(right?-1:1)*HALF_PI*extension;
+      const hx=elbow+cos(angle)*12*extension,hy=sin(angle)*12*extension;
+      figureCelLimb(g,0,0,elbow,0,hx,hy,8,7,6,c.shirtCol);
+      figureCelOval(g,hx,hy,8,8,skin,.8);
+    }else{
+      const active=c.meleePhase===(right?2:1);
+      const hx=active?(right?24:20)*extension:0,hy=active&&right?-4*extension:0;
+      figureCelLimb(g,0,0,hx*.5,hy*.5,hx,hy,8,7,6,c.shirtCol);
+      figureCelOval(g,hx,hy,8,8,skin,.8);
+    }
+    pop();
   }
 }
 function startPunchStun(e,angle) {
@@ -15175,9 +15220,6 @@ if (this.eType === "COW") {
 
 
   show() {
-    const previousInk=_figureComicInk;
-    _figureComicInk=figureComicInkFor(this);
-    try {
     const paint=figurePainter();
     const fill=paint?paint.fill:window.fill,ellipse=paint?paint.ellipse:window.ellipse;
     const stroke=paint?paint.stroke:window.stroke,rect=paint?paint.rect:window.rect;
@@ -15631,11 +15673,7 @@ if (this.isPlayer) {
             // used -- wide enough that the two thighs do not merge at the
             // midline, which is the other half of reading as two legs.
             const sx = -10+lS*sgn+RGl.thighW*.5, cy=sgn*-6;
-            // p5 must save its paint cache along with Canvas state: restoring
-            // only the context can leave a repeated black stroke cached while
-            // the actual Canvas stroke has reverted to a UI/effect color.
-            if(_figureComicInk){push();translate(sx,cy);}
-            else {drawingContext.save();drawingContext.translate(sx,cy);}
+            drawingContext.save();drawingContext.translate(sx,cy);
             const g=paint?paint.api:window;
             figureCelLimb(g,0,0,th*.92,0,th*.92+sh,0,wHip,wKnee,wAnkle,this.pantsCol);
             // The boot takes the rig's length UNFORESHORTENED, because a foot
@@ -15646,7 +15684,7 @@ if (this.isPlayer) {
             // ragLimb gives: a circle on the joint buries half of itself in the
             // shin and adds only its radius to the leg.
             figureCelOval(g,th*.92+sh+RGl.foot*.34,0,RGl.foot,wAnkle,bootC,.8);
-            if(_figureComicInk)pop();else drawingContext.restore();
+            drawingContext.restore();
             fill(this.pantsCol);
           }
           noStroke();
@@ -15900,6 +15938,23 @@ if (this.isPlayer) {
                 const f = sw > 0 ? sw : 0, b = sw < 0 ? -sw : 0;
                 s.hy = s.sgn * (HY - f * IN + b * OUT + (held ? 1.4 : 0))
                        + rest * 0.4;
+                if (this.isPlayer && carrying === 1 && !s.right &&
+                    this.currentWeapon === WEAPONS.PISTOL && !leftAction) {
+                    // The free hand runs beside the ribs, rather than sweeping
+                    // into the face as far as an empty-handed sprint. Ease this
+                    // in over the run band; the pistol and slower gaits keep
+                    // their existing stride and the arms stay in opposition.
+                    const freeRun = Math.max(0, GP.band - 2);
+                    s.hx -= s.sw * R * .12 * freeRun;
+                    s.hy += s.sgn * (f * IN * .4 - b * OUT * .35) * freeRun;
+                }
+                if (armedMelee && s.right) {
+                    // A blade is controlled at the wrist. Let the free arm
+                    // drive the stride while the sword stays clear of the hip
+                    // instead of sharing its full, flailing running arc.
+                    s.swordPose = swordCarryPose(this, GP, rest);
+                    s.hx = s.swordPose.hx; s.hy = s.swordPose.hy;
+                }
             }
 
             // The long gun stays ACROSS THE CHEST at every pace, both hands on
@@ -16156,6 +16211,14 @@ if (this.isPlayer) {
                 if (carrying === 1 && (s.right || this.currentWeapon === WEAPONS.DUAL_SMG) && s.hx < 0) {
                     ep[0] = Math.min(ep[0], s.hx * (0.62 + 0.28 * GP.band / 3));
                 }
+                if (this.isPlayer && carrying === 1 && !s.right &&
+                    this.currentWeapon === WEAPONS.PISTOL && !leftAction) {
+                    const freeRun = Math.max(0, GP.band - 2);
+                    // Let the elbow travel aft with the free hand, while its
+                    // lateral fold settles closer to the shoulder.
+                    if (s.hx < 0) ep[0] += (Math.min(ep[0], s.hx * .63) - ep[0]) * freeRun;
+                    ep[1] -= s.sgn * .9 * freeRun;
+                }
                 // Except when the arm is reaching ACROSS the chest for a long
                 // gun's handguard. An arm doing that tucks its elbow in and
                 // down; kept out at the shoulder the sleeve pokes past the
@@ -16207,6 +16270,18 @@ if (this.isPlayer) {
                     if (isFront !== front) continue;
                     const h = { x: s.hx, y: s.hy };
 
+                    let swordProjection = null;
+                    if (holdsTool) {
+                        const sword = s.swordPose;
+                        const wa = this.aimAngle + _tw + sword.angle;
+                        swordProjection = handGunProjection(sword.elevation, sword.roll,
+                                                            figureLight(wa), figureSouth(wa));
+                        push(); translate(h.x, h.y); rotate(sword.angle);
+                        if (usingPick) drawPickGrip(swordProjection);
+                        else drawSwordGrip(swordProjection);
+                        pop();
+                    }
+
                     if (!s.right && this.isPlayer && isChemist) {
                         // The grey hand IS the cannon, not a separate device.
                         figureCelOval(paint?paint.api:window,h.x,h.y,RG.hand,RG.hand,[180,180,190],.8);
@@ -16218,22 +16293,9 @@ if (this.isPlayer) {
                         // Carried rather than presented: outboard of the hip so
                         // the haft never crosses the torso, trailing as the arm
                         // goes back and levelling as it comes forward.
-                        push(); translate(h.x, h.y);
-                        rotate(0.30 - s.sw * 0.26 + rest * 0.05);
-                        if (usingPick) {
-                            fill(122, 92, 56); rect(0, -2.5, 40, 5, 2);   // haft
-                            pickHead(40);
-                        } else {
-                            fill(90, 60, 30); rect(-9, -2.6, 10, 5.2, 2);  // grip
-                            fill(150, 120, 40); ellipse(-9, 0, 6, 6);      // pommel
-                            fill(180, 150, 40); rect(-1, -6, 4, 12, 1);    // guard
-                            fill(120);
-                            beginShape();                                  // tapered blade
-                            vertex(3, -3.2); vertex(38, -2.6); vertex(46, 0);
-                            vertex(38, 2.6); vertex(3, 3.2);
-                            endShape(CLOSE);
-                            fill(198, 202, 210, 200); rect(4, -1.2, 32, 1.6, 1);  // fuller
-                        }
+                        push(); translate(h.x, h.y); rotate(s.swordPose.angle);
+                        if (usingPick) drawPickHeadSolid(swordProjection);
+                        else drawSwordBlade(swordProjection);
                         pop();
                     }
 
@@ -16453,7 +16515,6 @@ if (this.isPlayer) {
     }
     if (this.isPlayer && ninjaSuitUnlocked) { fill(100, 0, 200); rect(-this.bodyW/2, -4, this.bodyW, 8, 2); } 
  
-    if(_figureComicInk)drawFigureComicSeams(paint?paint.api:window,this);
     noStroke(); for (let d of this.decals) { if (!d.isHead) { if (d.col) fill(d.col[0], d.col[1], d.col[2], d.col[3]); else fill(90, 0, 0, 220); ellipse(d.x, d.y, d.sz, d.sz); } }
     if (_tsq) pop();
     // Blood decals are stains ON the shirt and take no contour; everything
@@ -16508,62 +16569,13 @@ if (this.isPlayer) {
                 if (armPass) armPass(true);
 
             } else {
-                // --- SWORD VS PUNCH COMBO ---
-                // (Keep all your existing combo logic exactly the same below here)
-
-                // --- SWORD VS PUNCH COMBO ---
+                // Both tools use the same fitted swing arms and recover to
+                // their carry. Only the mesh and the trail material differ.
                 if (armedMelee) {
-                    if (this.meleePhase === 4) {
-                        let p = 1 - (this.meleeTimer / 30); let sA = PI - (PI * p * 1.25);
-                        push(); rotate(sA); fill(this.shirtCol); ellipse(15, -10, 16, 8); fill(235, 180, 140); ellipse(25, -10, 8, 8);
-                        if (usingPick) { push(); translate(25, -10); fill(122, 92, 56); rect(0, -3, 52, 6, 2); pickHead(52); pop(); }
-                        else { fill(200); rect(25, -12, 60, 6, 2); }
-                        pop(); 
-                        
-                        push(); noFill(); stroke(255, 100, 0, 255 * (1 - p)); strokeWeight(8); line(15, 0, 15 + (p * 60), 0); pop();
-                    } else {
-                        let p = 1 - (this.meleeTimer / 20); let sA = PI / 2 - (PI * p); if (this.isBackhand) sA = -PI / 2 + (PI * p); 
-                        push(); rotate(sA); if (this.isBackhand) scale(1, -1); fill(this.shirtCol); ellipse(15, -10, 16, 8); fill(235, 180, 140); ellipse(25, -10, 8, 8);
-                        if (usingPick) { push(); translate(25, -10); fill(122, 92, 56); rect(0, -2.5, 40, 5, 2); pickHead(40); pop(); }
-                        else { fill(200); rect(25, -12, 45, 4, 2); }
-                        pop(); 
-                        
-                        // A pick throws dust off its arc, not a blade glint.
-                        push(); noFill();
-                        if (usingPick) stroke(180, 168, 140, 210 * (1 - p)); else stroke(255, 150, 0, 255 * (1 - p));
-                        strokeWeight(6); 
-                        if (this.isBackhand) { arc(0, 0, 90, 90, -PI/2, -PI/2 + (PI * p)); } 
-                        else { arc(0, 0, 90, 90, PI/2 - (PI * p), PI/2); }
-                        pop(); 
-                    }
+                    drawSwordSwing(this, GP, leftAction, _tw, usingPick);
                 } else {
                     // --- 4-PUNCH COMBO ARMS ---
-                    let p = 1 - (this.meleeTimer / 20); 
-                    let pp = sin(p * PI);
-
-                    let tTwist = 0;
-                    if (this.meleePhase === 1 || this.meleePhase === 3) tTwist = radians(70) * pp;
-                    else if (this.meleePhase === 2 || this.meleePhase === 4) tTwist = radians(-70) * pp;
-
-                    push();
-                    if (this.meleePhase === 3) {
-                        translate(0, lSy); rotate(-tTwist + radians(20) * pp); fill(this.shirtCol); ellipse(7 * pp, 0, 14 * pp + 2, 8); translate(14 * pp, 0); rotate(radians(90) * pp); ellipse(6 * pp, 0, 12 * pp + 2, 8); fill(235, 180, 140); ellipse(12 * pp, 0, 8, 8); 
-                    } else {
-                        let lFx = 0, lFy = lSy; if (this.meleePhase === 1) { lFx = 20 * pp; lFy = lSy; }
-                        let dx = lFx - 0, dy = lFy - lSy; let d = sqrt(dx*dx + dy*dy); let ang = atan2(dy, dx);
-                        translate(0, lSy); rotate(ang); fill(this.shirtCol); ellipse(d/2, 0, d + 4, 8); fill(235, 180, 140); ellipse(d, 0, 8, 8);       
-                    }
-                    pop();
-
-                    push();
-                    if (this.meleePhase === 4) {
-                        translate(0, rSy); rotate(-tTwist - radians(20) * pp); fill(this.shirtCol); ellipse(7 * pp, 0, 14 * pp + 2, 8); translate(14 * pp, 0); rotate(radians(-90) * pp); ellipse(6 * pp, 0, 12 * pp + 2, 8); fill(235, 180, 140); ellipse(12 * pp, 0, 8, 8);
-                    } else {
-                        let rFx = 0, rFy = rSy; if (this.meleePhase === 2) { rFx = 24 * pp; rFy = rSy - (4 * pp); }
-                        let dx = rFx - 0, dy = rFy - rSy; let d = sqrt(dx*dx + dy*dy); let ang = atan2(dy, dx);
-                        translate(0, rSy); rotate(ang); fill(this.shirtCol); ellipse(d/2, 0, d + 4, 8); fill(235, 180, 140); ellipse(d, 0, 8, 8);
-                    }
-                    pop();
+                    drawComboPunchArms(this,lSy,rSy);
                 }
             }
         }
@@ -16576,18 +16588,35 @@ if (this.isPlayer) {
             else { const clipX=2+sin(rP*PI)*10;reloadArm(this,0,-this.bodyH*.425,clipX,10,false); }
         } 
         else if (this.isArmed || !this.isPlayer) {
-            const shoulderX=lerp(0,-5,this.armDrag),shoulderY=lerp(lAY,lAY+3,this.armDrag);
+            let shoulderX=lerp(0,-5,this.armDrag),shoulderY=lerp(lAY,lAY+3,this.armDrag);
             const rg=figureRig(this.bodyW,this.bodyH),g=paint?paint.api:window;
             let hx=lerp(8,-12,this.armDrag),hy=shoulderY;
             if (this.currentWeapon===WEAPONS.BOW) {
                 hx=shoulderX+cos(.50)*25;hy=shoulderY+sin(.50)*25;
+                if(this.isPlayer){hx=24;hy=0;}
             } else if (longGunPose) {
                 hx=longGunPose.fore[0];hy=longGunPose.fore[1];
             } else if (weaponHands(this.currentWeapon)===2) {
                 hx=shoulderX+cos(.52)*32;hy=shoulderY+sin(.52)*32;
+                if(this.isPlayer){hx=this.currentWeapon===WEAPONS.ROCKET_LAUNCHER?32:26;hy=7;}
             } else if (this.currentWeapon===WEAPONS.DUAL_SMG) hx=25;
-            figureCelLimb(g,shoulderX,shoulderY,(shoulderX+hx)*.5-2,(shoulderY+hy)*.5-1,hx,hy,
-                rg.upperW,(rg.upperW+rg.foreW)*.5,rg.foreW*.84,this.shirtCol);
+            let ex=(shoulderX+hx)*.5-2,ey=(shoulderY+hy)*.5-1;
+            if(this.isPlayer&&this.currentWeapon===WEAPONS.PISTOL&&this.isMoving&&GP.band>2){
+                // The right wrist keeps its firing line while the empty left
+                // hand takes a smaller counter-stride beside the ribs. The
+                // existing throw/cannon/reload branches own this hand first.
+                const freeRun=Math.max(0,GP.band-2),sw=-sin(this.walkCycle)*GP.swing;
+                const reach=(rg.upper+rg.fore)*STAND_FORE_ARM;
+                const tx=1.5+sw*reach*(.44+.13*GP.band)*.62;
+                const ty=-(this.bodyH*.49-GP.bend*2-Math.max(0,sw)*GP.bend*3+Math.max(0,-sw)*.8);
+                const te=tx<0?tx*.63:(tx+1.5)*.42-GP.bend;
+                shoulderX=lerp(shoulderX,-1.5,freeRun);shoulderY=lerp(shoulderY,-this.bodyH*.425,freeRun);
+                hx=lerp(hx,tx,freeRun);hy=lerp(hy,ty,freeRun);
+                ex=lerp(ex,te,freeRun);ey=lerp(ey,-this.bodyH*.425-.6,freeRun);
+            }
+            if(this.isPlayer&&weaponHands(this.currentWeapon)===2)drawAimedTwoHandSleeve(this,g,hx,hy,false);
+            else figureCelLimb(g,shoulderX,shoulderY,ex,ey,hx,hy,
+                     rg.upperW,(rg.upperW+rg.foreW)*.5,rg.foreW*.84,this.shirtCol);
             const skin=this.isPlayer&&chemistSuitUnlocked?[180,180,190]:(this.skinCol||[235,180,140]);
             figureCelOval(g,hx,hy,8,8,skin,.8);
         }
@@ -16609,11 +16638,13 @@ if (this.isPlayer) {
             else if (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { rHandX = 8; rSleeveX = -1; }
             const rShoulderY=rArmY;
             if (longGunPose) { rHandX=longGunPose.rear[0];rArmY=longGunPose.rear[1]; }
+            else if(this.isPlayer&&this.currentWeapon===WEAPONS.BOW){rHandX=this.ammo>0?14:31;rArmY=0;}
             
             const rg=figureRig(this.bodyW,this.bodyH),g=paint?paint.api:window;
             // The wrist/grip stays pinned to the existing muzzle offsets.
-            figureCelLimb(g,rSleeveX-9,rShoulderY,rSleeveX+3,(rShoulderY+rArmY)*.5+1,rHandX,rArmY,
-                rg.upperW,(rg.upperW+rg.foreW)*.5,rg.foreW*.84,this.shirtCol);
+            if(this.isPlayer&&weaponHands(this.currentWeapon)===2)drawAimedTwoHandSleeve(this,g,rHandX,rArmY,true);
+            else figureCelLimb(g,rSleeveX-9,rShoulderY,rSleeveX+3,(rShoulderY+rArmY)*.5+1,rHandX,rArmY,
+                     rg.upperW,(rg.upperW+rg.foreW)*.5,rg.foreW*.84,this.shirtCol);
             figureCelOval(g,rHandX,rArmY,8,8,skinC,.8);
 
             // 2. DRAW WEAPONS SECOND
@@ -16719,7 +16750,7 @@ if (this.isPlayer) {
     drawFigureHead(paint?paint.api:window, this, hX, hY, true, this.isMoving ? sin(frameCount * 0.3) * 15 : 0);
 
 
-    if ((this.eType === "ARMORED" && this.hp > 300) || (this.eType === "ARMORED_STANDARD" && this.hp > 50)) { fill(20); push(); translate(hX, hY); rotate(HALF_PI); arc(0, 0, 15, 15, 0, PI, CHORD); pop(); } 
+    if ((this.eType === "ARMORED" && this.hp > 300) || (this.eType === "ARMORED_STANDARD" && this.hp > 50)) { push(); translate(hX, hY); rotate(HALF_PI); drawArmoredHelmet(paint?paint.api:window); pop(); }
     noStroke(); for (let d of this.decals) { if (d.isHead) { if (d.col) fill(d.col[0], d.col[1], d.col[2], d.col[3]); else fill(90, 0, 0, 220); ellipse(d.x + hX, d.y + hY, d.sz, d.sz); } }
     
     if (inTownCutscene && this.isFriendly && townPhase === 1) {
@@ -16756,7 +16787,6 @@ if (this.isPlayer) {
     }
 
     pop();
-    } finally { _figureComicInk=previousInk; }
 }
 }
 
@@ -30335,33 +30365,6 @@ function figureLight(ang) {
 // away from its rig: volume comes from the curved surfaces inside its outline.
 const _figureChestPlate = [[-8,-12],[8,-12],[10,-10],[10,10],[8,12],[-8,12],[-10,10],[-10,-10]];
 const _figureChestSteel = [100,104,112];
-// Strong ink belongs to the live costume/silhouette, not every interior joint.
-// Scope it to one Character.show call; corpse stamps and the approved female
-// pistol art keep their existing painter exactly, even after an early return.
-let _figureComicInk = 0;
-function figureComicInkFor(c) {
-  if(c.dead||c.hp<=0||c.stunTimer>0||c.skeletonTimer>0||c.eType==='FEMALE_PISTOL')return 0;
-  if(c.eType==='ROBOT'||c.eType==='ARMORED'||c.eType==='ARMORED_STANDARD')return 2;
-  return c.isPlayer||ragHumanoid(c.eType,c.bodyW)?1:0;
-}
-function figureCelContour(g) {
-  if(_figureComicInk){g.stroke(0,0,0,255);g.strokeWeight(_figureComicInk===2?1.2:1.1);}
-  else {g.stroke(22,19,24,168);g.strokeWeight(1.15);}
-}
-function drawFigureComicSeams(g,c) {
-  // Lapels and shoulder folds describe actual fabric. Leave the elbow/knee
-  // surface uninterrupted and keep tiny skin forms free of interior ink.
-  g.push();g.noFill();g.stroke(0,0,0,230);g.strokeWeight(.7);
-  if(c.isPlayer&&chemistSuitUnlocked){
-    g.line(6,-10,2,-5);g.line(2,-5,6,-1);
-    g.line(6,10,2,5);g.line(2,5,6,1);
-    g.line(-3,-6,-3,6);
-  }else if(c.eType!=='ARMORED_STANDARD'&&c.eType!=='ARMORED'){
-    g.bezier(5,-6,8,-4,8,4,5,6);
-    g.line(-5,-9,-2,-7);g.line(-5,9,-2,7);
-  }
-  g.pop();
-}
 const _figureCelLight = [0, 1];
 function figureCelLight(g) {
   const dc = g.drawingContext;
@@ -30394,11 +30397,11 @@ function figureCelPathStart(g,dc,x,y) {
 function figureCelPathCurve(g,dc,x1,y1,x2,y2,x,y) {
   if(dc)dc.bezierCurveTo(x1,y1,x2,y2,x,y);else g.bezierVertex(x1,y1,x2,y2,x,y);
 }
-function figureCelPathEnd(g,dc,ink,x,y,filled=true) {
+function figureCelPathEnd(g,dc,ink,x,y) {
   if(dc){
     // p5 1.11.11 appends the first vertex in both endShape and Renderer2D.
     // Keep those closing segments too: they affect antialiasing at the seam.
-    dc.lineTo(x,y);dc.lineTo(x,y);dc.closePath();if(filled)dc.fill();if(ink)dc.stroke();
+    dc.lineTo(x,y);dc.lineTo(x,y);dc.closePath();dc.fill();if(ink)dc.stroke();
   }else g.endShape(CLOSE);
 }
 function figureCelCrescent(g, x, y, rx, ry, ux, uy, reach) {
@@ -30419,31 +30422,22 @@ function figureCelOval(g, x, y, w, h, c, k = 1, lx, ly) {
   const v = c.levels || c, r = v[0], gr = v[1], b = v[2], a = v[3] === undefined ? 255 : v[3];
   if (lx === undefined) { const L = figureCelLight(g); lx = L[0]; ly = L[1]; }
   const len = Math.hypot(lx, ly) || 1; lx /= len; ly /= len;
-  if(_figureComicInk)g.noStroke();
-  else {
-    g.stroke(r*.25+5, gr*.25+4, b*.27+7, a*.82);
-    g.strokeWeight(Math.max(.65, Math.min(1.45, Math.min(w,h)*.095))*k);
-  }
+  g.stroke(r*.25+5, gr*.25+4, b*.27+7, a*.82);
+  g.strokeWeight(Math.max(.65, Math.min(1.45, Math.min(w,h)*.095))*k);
   g.fill(r, gr, b, a); g.ellipse(x, y, w, h); g.noStroke();
   const shade = .22*k, lit = .18*k;
   g.fill(r*(1-shade)+3*k, gr*(1-shade)+3*k, b*(1-shade)+7*k, a);
   figureCelCrescent(g,x,y,w*.5,h*.5,lx,ly,.92);
   g.fill(r+(255-r)*lit, gr+(255-gr)*lit, b+(246-b)*lit, a);
   figureCelCrescent(g,x,y,w*.5,h*.5,-lx,-ly,.30);
-  if(_figureComicInk){
-    g.noFill();g.stroke(0,0,0,a);
-    g.strokeWeight(Math.max(.7,Math.min(_figureComicInk===2?1.4:1.3,Math.min(w,h)*.105)*k));
-    g.ellipse(x,y,w,h);
-    g.fill(r+(255-r)*lit,gr+(255-gr)*lit,b+(246-b)*lit,a);
-  }
-  figureCelContour(g);
+  g.stroke(22,19,24,168); g.strokeWeight(1.15);
 }
 
 // A sleeve/trouser leg is ONE tapered surface around two bones. At the elbow
 // the averaged normal joins the two curves; it never outlines one cap on top
 // of another. The same path carries its light band through the bend.
 const _figureCelLimbPoints = new Float64Array(18);
-function figureCelRibbon(g, p, lo, hi, cap, ink, filled=true) {
+function figureCelRibbon(g, p, lo, hi, cap, ink) {
   const dc=figureCelContext(g);
   const sx=p[0],sy=p[1],ex=p[2],ey=p[3],hx=p[4],hy=p[5];
   const ax=p[6],ay=p[7],bx=p[8],by=p[9],cx=p[10],cy=p[11];
@@ -30461,7 +30455,7 @@ function figureCelRibbon(g, p, lo, hi, cap, ink, filled=true) {
     sx+ax*hi+(ex-sx)*.38,sy+ay*hi+(ey-sy)*.38,sx+ax*hi,sy+ay*hi);
   figureCelPathCurve(g,dc,sx+ax*hi-tx*cap,sy+ay*hi-ty*cap,
     sx+ax*lo-tx*cap,sy+ay*lo-ty*cap,sx+ax*lo,sy+ay*lo);
-  figureCelPathEnd(g,dc,ink,sx+ax*lo,sy+ay*lo,filled);
+  figureCelPathEnd(g,dc,ink,sx+ax*lo,sy+ay*lo);
 }
 function figureCelLimb(g, sx, sy, ex, ey, hx, hy, w0, w1, w2, c) {
   const v=c.levels||c,r=v[0],gr=v[1],b=v[2],a=v[3]===undefined?255:v[3];
@@ -30482,9 +30476,8 @@ function figureCelLimb(g, sx, sy, ex, ey, hx, hy, w0, w1, w2, c) {
   p[0]=sx;p[1]=sy;p[2]=ex;p[3]=ey;p[4]=hx;p[5]=hy;
   p[6]=-ty*w0*.5;p[7]=tx*w0*.5;p[8]=mx*w1*.5;p[9]=my*w1*.5;
   p[10]=-uy*w2*.5;p[11]=ux*w2*.5;p[12]=tx;p[13]=ty;p[14]=ux;p[15]=uy;
-  if(_figureComicInk)g.noStroke();
-  else {g.stroke(r*.25+5,gr*.25+4,b*.27+7,a*.82);g.strokeWeight(.85);}
-  g.fill(r,gr,b,a);figureCelRibbon(g,p,-1,1,Math.min(w0,w2)*.42,!_figureComicInk);g.noStroke();
+  g.stroke(r*.25+5,gr*.25+4,b*.27+7,a*.82);g.strokeWeight(.85);
+  g.fill(r,gr,b,a);figureCelRibbon(g,p,-1,1,Math.min(w0,w2)*.42,true);g.noStroke();
   const L=figureCelLight(g),side=(-ty*L[0]+tx*L[1])+(-uy*L[0]+ux*L[1]);
   // A broad, shallow plane continues around the joint without a knee ring.
   const sign=side<0?-1:1,amount=Math.min(1,Math.abs(side)*.5);
@@ -30494,12 +30487,7 @@ function figureCelLimb(g, sx, sy, ex, ey, hx, hy, w0, w1, w2, c) {
   figureCelRibbon(g,p,sign*.42,sign,.0);
   g.fill(Math.round(r+(255-r)*.16*amount),Math.round(gr+(255-gr)*.16*amount),Math.round(b+(246-b)*.16*amount),a);
   figureCelRibbon(g,p,-sign*.84,-sign*.16,.0);
-  if(_figureComicInk){
-    g.noFill();g.stroke(0,0,0,a);g.strokeWeight(_figureComicInk===2?1.15:1.05);
-    figureCelRibbon(g,p,-1,1,Math.min(w0,w2)*.42,true,false);
-    g.fill(Math.round(r+(255-r)*.16*amount),Math.round(gr+(255-gr)*.16*amount),Math.round(b+(246-b)*.16*amount),a);
-  }
-  figureCelContour(g);
+  g.stroke(22,19,24,168);g.strokeWeight(1.15);
 }
 
 // One rounded mass. `k` scales the whole effect: 1 for a torso, less for the
@@ -30707,6 +30695,161 @@ function cyclePlayerWeapon(direction = 1) {
   player.currentWeapon = weapons[(old + direction + weapons.length) % weapons.length];
   player.reloadTimer = 0; lastWeaponSwapTime = millis();
   return true;
+}
+
+// The sword shares the firearm camera: rigid steel facets, a little blade
+// thickness and a grip at the origin. Its hilt is painted BEFORE the fist;
+// the guard and blade start beyond the fingers and are painted afterwards.
+// That order shows a hand wrapped over a handle rather than lying beneath it.
+function swordCarryPose(c, GP, rest) {
+  const beat=c.isMoving?Math.sin(c.walkCycle):0;
+  const sw=beat*GP.swing,reach=(figureRig(c.bodyW,c.bodyH).upper+figureRig(c.bodyW,c.bodyH).fore)*STAND_FORE_ARM;
+  return {hx:1.1+GP.bend*2.4+sw*reach*(.17+.035*GP.band),
+          hy:c.bodyH*.49-GP.bend*1.1-Math.max(0,sw)*GP.bend*1.6+(rest||0)*.3,
+          angle:.22+beat*(.025+.015*GP.band)+(rest||0)*.025,
+          elevation:-.76+GP.band*.105+beat*(.055+.026*GP.band),
+          roll:.12+beat*.035};
+}
+
+function drawSwordGrip(P) {
+  handGunBox(P,-6.5,6.3,-2.15,2.15,-1.75,1.75,91,61,36);
+  handGunBox(P,-9.3,-6.5,-2.8,2.8,-2.15,2.15,171,133,57);
+  // A small brass heel and two leather wraps remain visible beside the palm.
+  handGunDetail(P,-5,-1.8,1.8,-5,1.8,1.8,130,93,53,.55);
+  handGunDetail(P,5,-1.8,1.8,5,1.8,1.8,130,93,53,.55);
+  noStroke();
+}
+
+const _swordFacePoints=Array.from({length:5},()=>[0,0]);
+function swordBladeFacet(P,side,top) {
+  const ny=side*.35,nz=top*.94;
+  if(P.view[1]*ny+P.view[2]*nz<=0)return;
+  const v=_swordFacePoints;
+  P.point(9.4,side*3.1,0,v[0]);P.point(38,side*2.4,0,v[1]);
+  P.point(46,0,0,v[2]);P.point(38,0,top*1.05,v[3]);P.point(9.4,0,top*1.05,v[4]);
+  const shade=.66+Math.max(0,P.light[1]*ny+P.light[2]*nz)*.38;
+  fill(190*shade,201*shade,216*shade);
+  stroke(70,83,99,155);strokeWeight(.45);
+  beginShape();for(let i=0;i<5;i++)vertex(v[i][0],v[i][1]);endShape(CLOSE);
+}
+function drawSwordBlade(P) {
+  handGunBox(P,6.7,9.3,-6.2,6.2,-1.6,1.6,180,146,65);
+  // The diamond section has two broad steel planes meeting at a ridge. The
+  // same mesh is used at rest, while running and through every combo phase.
+  for(const top of [-1,1])for(const side of [-1,1])swordBladeFacet(P,side,top);
+  handGunDetail(P,11,0,1.08,37,0,1.08,217,230,242,.65);
+  noStroke();
+}
+
+function drawPickGrip(P) {
+  // The original wooden shaft extends through the hand. Its near end is
+  // visible behind the fingers; the palm covers the middle of the handle.
+  handGunBox(P,-8,40,-2.3,2.3,-1.8,1.8,122,92,56);
+  handGunDetail(P,6,-1.6,1.85,35,-1.6,1.85,169,127,78,.65);
+  noStroke();
+}
+const _pickSpikeOutline=[[3,-3],[3.6,-9.5],[1.2,-15],[-6,-19],[-4.6,-14.5],[-2.4,-9.5],[-3,-3]];
+const _pickSpikeEdge=[[3.6,-9.5],[1.2,-15],[-6,-19],[-4,-13.6],[.4,-8.6]];
+const _pickSpikePoints=Array.from({length:7},()=>[0,0]);
+const _pickSpikeLower=Array.from({length:7},()=>[0,0]);
+function drawPickHeadSolid(P) {
+  // Keep the pick's existing opposed, backward-curving spikes and eye. A
+  // shallow extrusion makes that same familiar outline hold up while tilted.
+  for(const side of [-1,1]) {
+    const top=P.view[2]>=0?1:-1,v=_pickSpikePoints,b=_pickSpikeLower;
+    for(let i=0;i<7;i++) {
+      const q=_pickSpikeOutline[i];
+      P.point(40+q[0],q[1]*side,top*1.25,v[i]);
+      P.point(40+q[0],q[1]*side,-top*1.25,b[i]);
+    }
+    let area=0;for(let i=0;i<7;i++) {const a=_pickSpikeOutline[i],z=_pickSpikeOutline[(i+1)%7];area+=a[0]*z[1]*side-z[0]*a[1]*side;}
+    for(let i=0;i<7;i++) {
+      const j=(i+1)%7,a=_pickSpikeOutline[i],z=_pickSpikeOutline[j],sign=area>0?1:-1;
+      let nx=(z[1]-a[1])*side*sign,ny=-(z[0]-a[0])*sign;
+      const length=Math.hypot(nx,ny);nx/=length;ny/=length;
+      if(P.view[0]*nx+P.view[1]*ny<=0)continue;
+      const shade=.6+Math.max(0,P.light[0]*nx+P.light[1]*ny)*.4;
+      fill(66*shade,70*shade,76*shade);stroke(26,31,39,190);strokeWeight(.5);
+      quad(v[i][0],v[i][1],v[j][0],v[j][1],b[j][0],b[j][1],b[i][0],b[i][1]);
+    }
+    const shade=.68+Math.max(0,P.light[2]*top)*.35;
+    fill(82*shade,88*shade,98*shade);stroke(33,40,48,180);strokeWeight(.5);
+    beginShape();for(let i=0;i<7;i++)vertex(v[i][0],v[i][1]);endShape(CLOSE);
+    noStroke();fill(150*shade,156*shade,166*shade);beginShape();
+    for(let i=0;i<5;i++) {const q=_pickSpikeEdge[i];P.point(40+q[0],q[1]*side,top*1.27,v[i]);vertex(v[i][0],v[i][1]);}
+    endShape(CLOSE);
+  }
+  handGunBox(P,35.5,44.5,-4.5,4.5,-2.2,2.2,150,156,166);
+  noStroke();
+}
+
+function swordFitArm(c,hx,hy,right) {
+  const R=figureRig(c.bodyW,c.bodyH),sy=c.bodyH*.425*(right?1:-1);
+  const U=R.upper*.94,F=R.fore*.94,max=(U+F)*.98;
+  const d=Math.hypot(hx,hy-sy);
+  if(d>max){hx*=max/d;hy=sy+(hy-sy)*max/d;}
+  let ex=hx*.42-1.2,ey=sy+(right?1.8:-1.8);
+  for(let i=0;i<6;i++) {
+    let dx=ex,dy=ey-sy,len=Math.hypot(dx,dy);
+    if(len>U){ex=dx*U/len;ey=sy+dy*U/len;}
+    dx=ex-hx;dy=ey-hy;len=Math.hypot(dx,dy);
+    if(len>F){ex=hx+dx*F/len;ey=hy+dy*F/len;}
+  }
+  return {sx:0,sy,ex,ey,hx,hy};
+}
+
+function swordSwingPose(c,GP,progress) {
+  const duration=c.meleePhase===4?30:20;
+  const p=Math.max(0,Math.min(1,progress===undefined?1-c.meleeTimer/duration:progress));
+  const eased=p*p*(3-2*p),finisher=c.meleePhase===4;
+  const sweep=(.5-eased)*Math.PI*(finisher?1.3:1)*(c.isBackhand?-1:1);
+  const wind=reloadEase(p,0,.18),recovery=reloadEase(p,.73,1),active=wind*(1-recovery);
+  const rest=c.isMoving?0:Math.sin(frameCount*.045+c.x*.01),carry=swordCarryPose(c,GP,rest);
+  const hx=8+(finisher?12:10)*Math.cos(sweep),hy=c.bodyH*.425-3+7*Math.sin(sweep);
+  const freeSwing=c.isMoving?-Math.sin(c.walkCycle)*GP.swing:0,R=figureRig(c.bodyW,c.bodyH);
+  const freeX=-1.5+GP.bend*3+freeSwing*(R.upper+R.fore)*STAND_FORE_ARM*(.44+.13*GP.band);
+  const freeY=-(c.bodyH*.49-GP.bend*2-Math.max(0,freeSwing)*GP.bend*5.6+
+                Math.max(0,-freeSwing)*(1.1+GP.bend*.6))+rest*.4;
+  return {p,active,angle:carry.angle+(sweep-carry.angle)*active,
+          elevation:carry.elevation+(.06-carry.elevation)*active,
+          roll:carry.roll+((c.isBackhand?-.21:.21)-carry.roll)*active,
+          right:swordFitArm(c,carry.hx+(hx-carry.hx)*active,carry.hy+(hy-carry.hy)*active,true),
+          left:swordFitArm(c,freeX+(7-freeX)*active,freeY+(-c.bodyH*.425+4-freeY)*active,false)};
+}
+
+function drawSwordSwing(c,GP,leftAction,twist,usingPick) {
+  const pose=swordSwingPose(c,GP),R=figureRig(c.bodyW,c.bodyH),paint=figurePainter(),g=paint?paint.api:window;
+  // A short projected trail follows the actual blade tip through the strike;
+  // it is keyed to the melee clock and fades before the wrist recovers.
+  if(pose.p>.1&&pose.p<.88) {
+    const alpha=150*pose.active;
+    push();noFill();
+    if(usingPick)stroke(180,168,140,alpha);else stroke(255,173,83,alpha);
+    strokeWeight(3.4);beginShape();
+    for(let i=0;i<7;i++) {
+      const prior=swordSwingPose(c,GP,Math.max(0,pose.p-.14+i*.14/6));
+      const wa=c.aimAngle+(twist||0)+prior.angle;
+      const P=handGunProjection(prior.elevation,prior.roll,figureLight(wa),figureSouth(wa));
+      const tip=P.point(usingPick?40:46,0,0),co=Math.cos(prior.angle),si=Math.sin(prior.angle);
+      vertex(prior.right.hx+tip[0]*co-tip[1]*si,prior.right.hy+tip[0]*si+tip[1]*co);
+    }
+    endShape();pop();
+  }
+  const sc=c.shirtCol,cloth=[red(sc)*.94,green(sc)*.94,blue(sc)*.96];
+  for(const arm of leftAction?[pose.right]:[pose.left,pose.right]) {
+    figureCelLimb(g,arm.sx,arm.sy,arm.ex,arm.ey,arm.hx,arm.hy,
+                  R.upperW,(R.upperW+R.foreW)*.5,R.foreW*.84,cloth);
+  }
+  if(!leftAction)figureCelOval(g,pose.left.hx,pose.left.hy,R.hand,R.hand,
+                    c.isPlayer&&chemistSuitUnlocked?[180,180,190]:(c.skinCol||[235,180,140]),.8);
+  const wa=c.aimAngle+(twist||0)+pose.angle;
+  const P=handGunProjection(pose.elevation,pose.roll,figureLight(wa),figureSouth(wa));
+  push();translate(pose.right.hx,pose.right.hy);rotate(pose.angle);
+  if(usingPick)drawPickGrip(P);else drawSwordGrip(P);pop();
+  figureCelOval(g,pose.right.hx,pose.right.hy,R.hand,R.hand,c.skinCol||[235,180,140],.8);
+  push();translate(pose.right.hx,pose.right.hy);rotate(pose.angle);
+  if(usingPick)drawPickHeadSolid(P);else drawSwordBlade(P);pop();
+  if(leftAction)drawLeftHandAction(c,leftAction,-(twist||0));
 }
 
 // Swept cedar limbs, a taut string and a steel-tipped shaft. Authored around
@@ -31083,6 +31226,20 @@ function aimedLongGunPose(c, twist, bodyBob) {
   return {P,x,y,kick,pump,rear:[x,y],fore:[x+fore[0],y+fore[1]]};
 }
 
+// A raised weapon keeps its wrists on the authored grips while the elbows
+// fold below them. In this view the support shoulder is on the forward chest
+// plane and the strong elbow is beside the ribs; a midpoint between shoulder
+// and hand made the support sleeve a broad, almost straight wing instead.
+// Carrying still uses the walking rig, including its existing two-hand sweep.
+function drawAimedTwoHandSleeve(c,g,hx,hy,right) {
+  const rg=figureRig(c.bodyW,c.bodyH);
+  const sx=c.bodyW*(right?-.08:.20),sy=c.bodyH*(right?.35:-.36);
+  const ex=right?sx-1.8+(hx-sx)*.15:sx+(hx-sx)*.46;
+  const ey=right?c.bodyH*.44:sy+(hy-sy)*.16;
+  figureCelLimb(g,sx,sy,ex,ey,hx,hy,rg.upperW,(rg.upperW+rg.foreW)*.5,
+                rg.foreW*.84,c.shirtCol);
+}
+
 const _longGunBoreVerts=Array.from({length:4},()=>[0,0]);
 function longGunMuzzle(P,muzzle,r,g,b) {
   // A shallow steel collar has real end and side planes; the dark bore appears
@@ -31434,7 +31591,7 @@ function figureRig(bW, bH) {
 // biggest thing separating a figure from the ground it stands on.
 function figureContour() {
   const paint=figurePainter();
-  figureCelContour(paint?paint.api:window);
+  (paint?paint.stroke:window.stroke)(22,19,24,168);strokeWeight(1.15);
 }
 
 // Shadow colour. Never pure black: outdoor shade is lit by the sky above it,
