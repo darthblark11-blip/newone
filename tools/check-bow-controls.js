@@ -80,4 +80,24 @@ for(let heading=0;heading<8;heading++){
 }
 run('drawHuntingBow=bowOldDraw;');
 check('weaponHands(WEAPONS.BOW)===2','Carried bow uses the existing two-hand pose');
+// A drawn bow bends forward at the grip; tips and pulled string sit behind it.
+// Keep the arrow pointed along the weapon's +X firing axis in both poses.
+const bowCurves=[], bowLines=[], bowTriangles=[];
+const oldBezier=ctx.bezier, oldLine=ctx.line, oldTriangle=ctx.triangle;
+ctx.bezier=(...v)=>bowCurves.push(v);ctx.line=(...v)=>bowLines.push(v);
+ctx.triangle=(...v)=>bowTriangles.push(v);
+try {
+  run('drawHuntingBow(true);');
+  assert(bowCurves[0][0]<0 && bowCurves[0][6]===0 && bowCurves[1][6]<0,
+    'Both bow limb tips remain behind the grip');checks++;
+  assert(bowLines[0][2]<bowLines[0][0] && bowLines[1][0]<bowLines[1][2],
+    'Drawn string pulls toward the archer behind both limb tips');checks++;
+  assert(bowTriangles[0][0]>0 && bowTriangles[0][0]>bowTriangles[0][2] &&
+    bowTriangles.slice(1).every(v=>v[0]<0&&v[2]<0&&v[4]<0),
+    'Arrowhead points forward and fletching stays behind the string');checks++;
+  bowCurves.length=bowLines.length=bowTriangles.length=0;
+  run('drawHuntingBow(false);');
+  assert(bowLines.every(v=>v[0]===v[2]&&v[0]<0)&&!bowTriangles.length,
+    'Carried empty bow has a straight rear string and no arrow');checks++;
+} finally {ctx.bezier=oldBezier;ctx.line=oldLine;ctx.triangle=oldTriangle;}
 console.log(`${checks}/${checks} bow controls and heading checks passed.`);

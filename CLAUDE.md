@@ -530,6 +530,12 @@ ambush bookkeeping. Cedar Hollow grants the finite-ammunition bow; collection
 and dialogue use F, gamepad A or the visible touch prompt. Quest, quiver,
 inventory and encounter luck persist; live animals and carcasses do not.
 Use the hunting browser check for the full acquire/kill/collect/return/save loop.
+Wildlife size also determines anatomical head targets, oriented body/solid
+bounds and herd spacing. Hits keep bounded local wounds; blood effects reuse
+the particle pool and blood bank without consuming world/combat RNG. Directional
+death types settle under the canopy; falling birds stay above it until grounded.
+Taser stuns remain bloodless. The objective card expires after a brief fade,
+leaving its marker; do not restore a permanent center-screen hunting banner.
 
 The historical template resolves six regions off three slow world-space fields — `MEADOW · TIMBER · MARSH ·
 HEATH · BURN · FARM` — at roughly a three-chunk patch size. Measured coverage: meadow

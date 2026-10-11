@@ -18,7 +18,7 @@ probe(`
   viewLeft=14400;viewRight=15600;viewTop=6200;viewBottom=7000;
   chunkMgr=new ChunkManager(2);chunkMgr.refreshResidency(12,5);
   chunkMgr.rebuildWorldArrays();buildColIndex();
-  restoreForestWildlife({seed:354});
+  restoreForestWildlife({seed:2656});
   var wildlifeArtHerdSize=wildlifeSpawnEncounter();
 `);
 ok(`wildlifeArtHerdSize>=20&&forestWildlife.every(a=>a.species==='ELK')`,
@@ -85,6 +85,30 @@ probe(`
 ok(`__wildlifeArtEvents.indexOf('ELK')<__wildlifeArtEvents.indexOf('tree:crown')&&__wildlifeArtEvents.indexOf('BALD_EAGLE')>__wildlifeArtEvents.indexOf('tree:crown')`,
   'Ground animals stand under crowns and living flying birds pass above them');
 ok(`!_wildlifeBirdDrawQueue.length&&!_depthActors.length&&!_forestCrowns.length`, 'Wildlife depth queues close every frame');
+probe(`
+  __wildlifeArtEvents=[];applyForestWildlifeHit(forestWildlife[1],{weapon:'TASER'});
+  _standDecor=[{t:'PINE',x:0,y:0,forestSpecies:'DOUGLAS_FIR'}];
+  _depthOn=true;drawForestWildlifeAnimals();drawDepthSorted();drawForestWildlifeAirborne();
+`);
+ok(`forestWildlife[1].state==='STUNNED'&&!forestWildlife[1].dead&&!forestWildlife[1].fall&&
+  __wildlifeArtEvents.indexOf('BALD_EAGLE')<__wildlifeArtEvents.indexOf('tree:crown')`,
+  'A nonlethally stunned flying bird uses the grounded pose beneath crowns');
+probe(`
+  __wildlifeArtEvents=[];forestWildlife[1].state='DEAD';
+  forestWildlife[1].fall={progress:.4,drop:.4,grounded:false};
+  _standDecor=[{t:'PINE',x:0,y:0,forestSpecies:'DOUGLAS_FIR'}];
+  _depthOn=true;drawForestWildlifeAnimals();drawDepthSorted();drawForestWildlifeAirborne();
+`);
+ok(`__wildlifeArtEvents.indexOf('BALD_EAGLE')>__wildlifeArtEvents.indexOf('tree:crown')`,
+  'A falling flying bird remains above the crowns until reaching the ground');
+probe(`
+  __wildlifeArtEvents=[];forestWildlife[1].fall={progress:1,drop:1,grounded:true};
+  forestWildlife[1].airborne=false;
+  _standDecor=[{t:'PINE',x:0,y:0,forestSpecies:'DOUGLAS_FIR'}];
+  _depthOn=true;drawForestWildlifeAnimals();drawDepthSorted();drawForestWildlifeAirborne();
+`);
+ok(`__wildlifeArtEvents.indexOf('BALD_EAGLE')<__wildlifeArtEvents.indexOf('tree:crown')`,
+  'The settled bird corpse uses ground depth beneath crowns');
 
 const deps = process.env.VIS_DEPS || '/workspace/onboarding-newone';
 const { chromium } = require(path.join(deps, 'node_modules/playwright'));
@@ -103,7 +127,7 @@ const source = fs.readFileSync(process.env.GAME_JS || path.join(__dirname, '..',
       await page.waitForFunction(()=>window.__ready);
       const result=await page.evaluate(()=>{
         currentBiome=currentLevel=2;BIOME_ACTIVE=true;zoom=1;LIGHT_DX=.6;LIGHT_DY=.8;
-        const failures=[];let comparisons=0,styleChecks=0,poseChecks=0;
+        const failures=[];let comparisons=0,styleChecks=0,poseChecks=0,feedbackChecks=0;
         function snapshot(a) {
           clear();fill(191,37,101);stroke(71,169,223);strokeWeight(3.25);
           const ctx=drawingContext, transform=ctx.getTransform();
@@ -119,11 +143,34 @@ const source = fs.readFileSync(process.env.GAME_JS || path.join(__dirname, '..',
           const a={id:i+2,species,x:0,y:0,bodyR:s.size,angle:0,state:'GRAZE',phase:2.3,clock:0,wingPhase:0,airborne:!s.traits.includes('ground')&&['bird','raptor','owl'].includes(s.family)};
           for(let angle=0;angle<8;angle++)for(const state of ['GRAZE','FLEE','STUNNED','DEAD']){
             a.angle=angle*Math.PI/4;a.state=state;a.clock=angle*137;a.bodyR=s.size*(angle%2?.9:1.1);a.wingPhase=angle*.37;
+            a.decals=[{x:-.28,y:.17,size:.17,head:false},{x:s.headForward/s.size,y:0,size:.12,head:true}];
+            a.deathType=angle%2?'HEADSHOT':'BODY_COLLAPSE';a.fallTilt=angle%2?-1:1;
+            a.fall=state==='DEAD'||state==='STUNNED'?{progress:angle/7,drop:angle/7,grounded:angle===7}:null;
             camX=-128+Math.cos(a.angle)*95;camY=-128+Math.sin(a.angle)*95;
             const metadata=JSON.stringify(a),actual=snapshot(a),fresh=snapshot({...a});
             let ink=0,diff=0;for(let n=0;n<actual.length;n++){if(actual[n]!==fresh[n])diff++;if(n%4===3&&actual[n])ink++;}
             comparisons++;if(diff||!ink||metadata!==JSON.stringify(a))failures.push({species,angle,state,diff,ink,metadataMutated:metadata!==JSON.stringify(a)});
           }
+          a.state='GRAZE';a.fall=null;a.decals=[];
+          const healthy=snapshot(a);a.decals=[{x:.14,y:0,size:.22,head:false}];
+          const wounded=snapshot(a);
+          if(!healthy.some((v,n)=>v!==wounded[n]))failures.push({species,woundInvisible:true});
+          feedbackChecks++;
+          a.state='DEAD';a.fallTilt=-1;a.fall={progress:1,drop:1,grounded:true};
+          const intact=snapshot(a);
+          for(const deathType of ['SHOTGUN','OVERKILL','EXPLOSIVE','BIRD_DROP']){
+            a.deathType=deathType;
+            for(const progress of [0,.5,1]){
+              a.fall.progress=a.fall.drop=progress;
+              const metadata=JSON.stringify(a),actual=snapshot(a),fresh=snapshot({...a});
+              if(actual.some((v,n)=>v!==fresh[n])||metadata!==JSON.stringify(a))failures.push({species,deathType,progress,staleFall:true});
+              comparisons++;
+            }
+          }
+          a.deathType='EXPLOSIVE';a.fall.progress=a.fall.drop=1;
+          const destroyed=snapshot(a);
+          if(!intact.some((v,n)=>v!==destroyed[n]))failures.push({species,scrapsInvisible:true});
+          feedbackChecks++;
           // The same object changes species as well as heading and pose.
           a.species=WILDLIFE_SPECIES_IDS[(i+1)%WILDLIFE_SPECIES_IDS.length];a.bodyR=WILDLIFE_SPECIES[a.species].size;
           const actual=snapshot(a),fresh=snapshot({...a});
@@ -136,11 +183,11 @@ const source = fs.readFileSync(process.env.GAME_JS || path.join(__dirname, '..',
         const zero=snapshot(a);a.wingPhase=1e-8;const next=snapshot(a);
         let changes=0;for(let n=0;n<zero.length;n++)if(zero[n]!==next[n])changes++;
         if(changes>8)failures.push({wingPhaseZeroDiscontinuity:changes});
-        return {p5:p5.VERSION,comparisons,styleChecks,poseChecks,failures};
+        return {p5:p5.VERSION,comparisons,styleChecks,poseChecks,feedbackChecks,failures};
       });
       assert.deepStrictEqual(errors,[],'No wildlife Canvas runtime errors');
       assert.deepStrictEqual(result.failures,[],'Cached wildlife must paint the same pixels as fresh state and restore native styles');
-      console.log(`${result.comparisons} cached/fresh heading and pose comparisons, ${result.poseChecks} species changes and ${result.styleChecks} style scopes passed with p5 ${result.p5}.`);
+      console.log(`${result.comparisons} cached/fresh heading and pose comparisons, ${result.poseChecks} species changes, ${result.feedbackChecks} visible damage/corpse checks and ${result.styleChecks} style scopes passed with p5 ${result.p5}.`);
       await page.close();
     }
     console.log(`Wildlife ecology and depth: ${behaviorChecks} checks passed.`);

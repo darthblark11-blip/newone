@@ -17898,7 +17898,8 @@ function updateBullets() {
                         triggerRocketExplosion(b.x,b.y,b.isP);
                     } else {
                         const damage=b.isOrangeBeam?ROBOT_BEAM_DMG:(b.isRedLaser||b.isPinkLaser?30:(b.isAlienLaser?25:(wildlifeHit.head?b.w.headDmg:b.w.bodyDmg)));
-                        applyForestWildlifeHit(wildlifeHit.animal,{weapon:b.w,head:wildlifeHit.head,shotId:b.shotId,owner:b.shooter,damage:damage||0});
+                        applyForestWildlifeHit(wildlifeHit.animal,{weapon:b.w,head:wildlifeHit.head,shotId:b.shotId,owner:b.shooter,
+                            x:b.x,y:b.y,angle:b.a,damage:damage||0});
                     }
                     if(b.isP&&!b.isTaser)totalShotsHit++;
                     if(b.isTaser){b.retracting=true;continue;}
@@ -31743,20 +31744,20 @@ function drawHuntingBow(arrow = true, elevation = 0) {
   const squash = Math.max(0.72,Math.cos(elevation));
   scale(squash,1);
   noFill(); stroke(24,31,29); strokeWeight(5.2);
-  bezier(11,-20,-3,-14,-3,-5,0,0);
-  bezier(0,0,-3,5,-3,14,11,20);
+  bezier(-11,-20,3,-14,3,-5,0,0);
+  bezier(0,0,3,5,3,14,-11,20);
   stroke(177,127,64); strokeWeight(3.1);
-  bezier(11,-20,-3,-14,-3,-5,0,0);
-  bezier(0,0,-3,5,-3,14,11,20);
+  bezier(-11,-20,3,-14,3,-5,0,0);
+  bezier(0,0,3,5,3,14,-11,20);
   stroke(243,205,126); strokeWeight(1);
-  bezier(10,-19,0,-12,-1,-5,0,0);
+  bezier(-10,-19,0,-12,1,-5,0,0);
   stroke(224,223,194); strokeWeight(1.1);
-  line(11,-20,arrow ? -10 : 7,0); line(arrow ? -10 : 7,0,11,20);
+  line(-11,-20,arrow ? -20 : -11,0); line(arrow ? -20 : -11,0,-11,20);
   noStroke(); fill(54,66,48); rect(-2,-4,5,8,1);
   if (arrow) {
-    stroke(121,79,42); strokeWeight(2); line(-13,0,12,0);
+    stroke(121,79,42); strokeWeight(2); line(-23,0,12,0);
     noStroke(); fill(181,202,198); triangle(14,0,10,-2.6,10,2.6);
-    fill(237,229,196); triangle(-12,-1,-17,-4,-16,0); triangle(-12,1,-17,4,-16,0);
+    fill(237,229,196); triangle(-22,-1,-27,-4,-26,0); triangle(-22,1,-27,4,-26,0);
   }
   pop();
 }
@@ -40685,6 +40686,10 @@ let forestHuntingQuest = { stage: 'UNMET', rewardGranted: false, bowAmmo: 0,
 let _forestHuntingStructures = null, _forestHuntingSteward = null;
 let _forestHuntingPrompt = null, _forestHuntingToast = '', _forestHuntingToastTicks = 0;
 let _forestHuntingInventoryPage = 0;
+// Notices are presentation state, not quest state: neither saves nor repeated
+// HUD paints may keep a large objective panel over the action indefinitely.
+let _forestHuntingObjectiveStage = null, _forestHuntingObjectiveAgeMs = Infinity;
+let _forestHuntingObjectiveBiome = null, _forestHuntingNoticeFrame = -1;
 const FOREST_HUNT_CONDITIONS = ['PERFECT', 'GOOD', 'FAIR', 'BAD'];
 
 function forestHuntingSite() {
@@ -40797,7 +40802,30 @@ function paintForestHuntingLodge(g, b) {
 function forestHuntingContext() {
   return !!player && started && !isDead && !isWin && currentLevel === 2 && BIOME_ACTIVE &&
     !isPaused && !killcamMode && !inTownCutscene && !inFortCutscene && !inPostAmbushCutscene &&
+    !inFarmCutscene && !inFarmPostCutscene && !(typeof inCutscene !== 'undefined' && inCutscene) &&
     !inWorldBuildingMenu && !inOverworldView && !inTravelMenu && !inStoryIntro && !inDarchonCall;
+}
+
+function forestHuntingNoticeOpacity(ageMs, holdMs = 3500) {
+  if (!(ageMs >= 0) || !Number.isFinite(ageMs)) return 0;
+  if (ageMs < 350) return ageMs / 350;
+  return Math.max(0, Math.min(1, (350 + holdMs + 800 - ageMs) / 800));
+}
+
+function syncForestHuntingObjectiveNotice() {
+  if (_forestHuntingObjectiveStage === forestHuntingQuest.stage) return;
+  _forestHuntingObjectiveStage = forestHuntingQuest.stage;
+  _forestHuntingObjectiveAgeMs = forestHuntingQuest.stage === 'COMPLETE' ? Infinity : 0;
+}
+
+function forestHuntingObjectiveCard() {
+  // Leave the health/ammo block and clock clear. A narrow portrait canvas has
+  // no top-middle gap, so its short notice sits below the existing HUD instead.
+  const wide = width >= 700, portrait = height >= width;
+  const w = Math.min(288, Math.max(120, wide ? width - 480 : portrait ? width - 24 : width - 244));
+  const x = wide || portrait ? (width - w) / 2 : width - w - 12;
+  const y = wide ? 18 : portrait ? 156 : 88;
+  return { x, y, w, h: 38 };
 }
 
 function forestHuntingNotify(message) {
@@ -40871,17 +40899,30 @@ function forestHuntingCompleteLesson() {
 }
 
 function tickForestHuntingSupply(dt) {
+  // This hook runs in every sector, allowing the next forest entry to announce
+  // the current step once. Pausing or a cutscene within this sector does not.
+  if (_forestHuntingObjectiveBiome !== currentLevel) {
+    _forestHuntingObjectiveBiome = currentLevel;
+    _forestHuntingObjectiveStage = null;
+    _forestHuntingObjectiveAgeMs = Infinity;
+  }
   if (forestHuntingQuest.resupplyRemainingMs > 0)
     forestHuntingQuest.resupplyRemainingMs = Math.max(0,
       forestHuntingQuest.resupplyRemainingMs - Math.max(0, dt || 0));
 }
 
 function updateForestHuntingActivity(advanceTime = true) {
-  if (advanceTime && doTick && forestHuntingContext()) {
-    if (_forestHuntingToastTicks > 0) _forestHuntingToastTicks--;
-  }
   _forestHuntingPrompt = null;
   if (!forestHuntingContext()) return;
+  syncForestHuntingObjectiveNotice();
+  if (advanceTime && doTick && _forestHuntingNoticeFrame !== frameCount) {
+    _forestHuntingNoticeFrame = frameCount;
+    // Real elapsed frame time keeps fades consistent at 30 and 60 FPS. Clamp
+    // tab-resume gaps; the first resumed frame cannot consume a whole notice.
+    const ms = typeof deltaTime === 'number' && deltaTime > 0 ? Math.min(100, deltaTime) : 16;
+    if (Number.isFinite(_forestHuntingObjectiveAgeMs)) _forestHuntingObjectiveAgeMs += ms;
+    if (_forestHuntingToastTicks > 0) _forestHuntingToastTicks = Math.max(0, _forestHuntingToastTicks - ms * .06);
+  }
   let nearest = null, best = 78 * 78;
   for (const animal of forestWildlife) {
     if (!animal || animal.harvested || !['DEAD', 'STUNNED'].includes(animal.state)) continue;
@@ -40965,19 +41006,26 @@ function drawForestHuntingHud() {
   if (!forestHuntingContext()) return;
   const s = forestHuntingSite(); if (!s) return;
   push(); textFont('sans-serif'); textAlign(CENTER, CENTER);
+  syncForestHuntingObjectiveNotice();
   if (forestHuntingQuest.stage !== 'COMPLETE') {
     const label = forestHuntingQuest.stage === 'UNMET' ? 'CEDAR HOLLOW · BOW LESSON' :
       forestHuntingQuest.stage === 'RETURN' ? 'RETURN YOUR PERFECT HARVEST' : 'CAREFUL HUNT · ARROW HEADSHOT';
     const distance = Math.round(Math.hypot(player.x - s.x, player.y - s.y) / 10);
-    noStroke(); fill(20, 35, 28, 205); rect(width / 2 - 174, 75, 348, 40, 7);
-    fill(226, 203, 142); textSize(11); text(label, width / 2, 88);
-    fill(174, 218, 176); textSize(11); text('FOREST STEWARDS · ' + distance + 'm', width / 2, 103);
+    const opacity = forestHuntingNoticeOpacity(_forestHuntingObjectiveAgeMs);
+    if (opacity > 0) {
+      const card = forestHuntingObjectiveCard(), tx = card.x + card.w / 2;
+      noStroke(); fill(20, 35, 28, 205 * opacity); rect(card.x, card.y, card.w, card.h, 6);
+      fill(226, 203, 142, 255 * opacity); textSize(Math.min(10, card.w / 28));
+      text(label, tx, card.y + 12);
+      fill(174, 218, 176, 255 * opacity); textSize(10);
+      text('FOREST STEWARDS · ' + distance + 'm', tx, card.y + 27);
+    }
     // Screen-edge guidance remains visible beyond the settlement's own chunks.
     const dx = s.x - player.x, dy = s.y - player.y, a = Math.atan2(dy, dx);
     if (Math.hypot(dx, dy) > 220) {
       const ex = Math.cos(a), ey = Math.sin(a);
-      const reach = Math.min((width / 2 - 35) / Math.max(.001, Math.abs(ex)),
-        (height / 2 - 140) / Math.max(.001, Math.abs(ey)));
+      const reach = Math.min((width / 2 - 24) / Math.max(.001, Math.abs(ex)),
+        (height / 2 - Math.min(140, height * .30)) / Math.max(.001, Math.abs(ey)));
       const ax = width / 2 + ex * Math.max(20, reach), ay = height / 2 + ey * Math.max(20, reach);
       translate(ax, ay); rotate(a); stroke(28, 47, 34); strokeWeight(2); fill(154, 232, 135);
       triangle(12, 0, -8, -7, -8, 7); rotate(-a); translate(-ax, -ay);
@@ -40993,10 +41041,12 @@ function drawForestHuntingHud() {
     textSize(10); text(connectedGamepad() ? '[ A ]' : window.isDesktop ? '[ F ]' : 'TAP', width / 2, height - 89);
   }
   if (_forestHuntingToastTicks > 0) {
-    const tw = Math.min(width - 36, 670); noStroke(); fill(17, 34, 24, 224);
-    rect(width / 2 - tw / 2, height - 204, tw, 64, 8);
-    fill(224, 238, 202); textSize(Math.min(13, (width - 40) / 47));
-    textLeading(19); text(_forestHuntingToast, width / 2, height - 173);
+    const opacity = forestHuntingNoticeOpacity((300 - _forestHuntingToastTicks) / .06, 3850);
+    const tw = Math.min(width - 24, 400), th = Math.min(90, Math.max(58, height * .16));
+    const tx = (width - tw) / 2, ty = height - (_forestHuntingPrompt ? 135 : 72) - th;
+    noStroke(); fill(17, 34, 24, 224 * opacity); rect(tx, ty, tw, th, 7);
+    fill(224, 238, 202, 255 * opacity); textSize(11); textLeading(14); textAlign(LEFT, TOP);
+    text(_forestHuntingToast, tx + 12, ty + 9, tw - 24, th - 18);
   }
   pop();
 }
@@ -41098,6 +41148,8 @@ function resetForestHuntingActivity() {
   _forestHuntingStructures = null; _forestHuntingSteward = null;
   _forestHuntingPrompt = null; _forestHuntingToast = ''; _forestHuntingToastTicks = 0;
   _forestHuntingInventoryPage = 0;
+  _forestHuntingObjectiveStage = null; _forestHuntingObjectiveAgeMs = Infinity;
+  _forestHuntingObjectiveBiome = null; _forestHuntingNoticeFrame = -1;
   if (player && player.flags) player.flags.bowUnlocked = false;
   if (player && player.weaponAmmo) player.weaponAmmo.BOW = 0;
 }
@@ -41684,6 +41736,7 @@ const _wildlifeArtActors = new WeakMap();
 const _wildlifeArtPainters = new WeakMap();
 const _wildlifeBirdDrawQueue = [];
 const _wildlifeArtLean = [0, 0];
+const _WILDLIFE_WOUND_PLAN = [[-1,-.18],[-.46,-.69],[.04,-.37],[.58,-.53],[1,.02],[.39,.58],[-.09,.36],[-.65,.54]];
 const _WILDLIFE_BODY_PLANS = {
   deer: [[-.95,-.27],[-.70,-.48],[.42,-.43],[.76,-.23],[.82,.20],[.38,.43],[-.70,.47],[-1,.22]],
   bear: [[-.95,-.38],[-.53,-.65],[.46,-.63],[.83,-.36],[.91,.16],[.63,.50],[-.58,.56],[-1,.23]],
@@ -41716,28 +41769,36 @@ function wildlifeArtStyle(spec) {
 function wildlifeArtPainter(ctx, a, spec) {
   const r = a.bodyR || spec.size || 10, c = Math.cos(a.angle || 0), s = Math.sin(a.angle || 0);
   const prone = a.state === 'DEAD' || a.state === 'STUNNED';
-  const rise = (spec.rise || r * .70) * (prone ? .27 : 1);
-  massLean(a.x, a.y, rise + (a.airborne && !prone ? r * 1.3 : 0), _wildlifeArtLean);
+  const fall = prone ? Math.max(0,Math.min(1,a.fall ? a.fall.progress : 1)) : 0;
+  const tilt = a.fallTilt < 0 ? -1 : 1;
+  const headDx = fall*(a.deathType==='HEADSHOT'?-.31:a.deathType==='EXPLOSIVE'?-.23:-.11);
+  const headDy = fall*tilt*(a.deathType==='HEADSHOT'?.48:a.deathType==='EXPLOSIVE'?.43:a.deathType==='SHOTGUN'?.30:.19);
+  const drop = a.fall ? Math.max(0,Math.min(1,a.fall.drop || 0)) : prone ? 1 : 0;
+  const rise = (spec.rise || r * .70) * r / (spec.size || r) * (1-fall*.76);
+  massLean(a.x, a.y, rise + (a.airborne ? r * 1.3 * (1-drop) : 0), _wildlifeArtLean);
   const lx = _wildlifeArtLean[0], ly = _wildlifeArtLean[1];
   const style = wildlifeArtStyle(spec);
   // Scope the native styles without touching p5's cached fill/stroke flags.
   ctx.save(); ctx.translate(a.x, a.y);
-  ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.lineWidth = Math.max(.85, Math.min(1.8, r * .075));
+  ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.lineWidth = Math.max(1.05, Math.min(2.45, r * .085));
   let cached = _wildlifeArtPainters.get(a);
   if (cached) {
     cached.ctx=ctx; cached.r=r; cached.c=c; cached.s=s; cached.lx=lx; cached.ly=ly;
     cached.style=style; cached.prone=prone; cached.angle=a.angle||0;
+    cached.fall=fall;cached.tilt=tilt;
+    cached.headDx=headDx;cached.headDy=headDy;
     return cached;
   }
   const p = {
     ctx, r, c, s, lx, ly, style, prone, angle:a.angle||0,
+    fall,tilt,headDx,headDy,
     x(x,y,z) { return (x*this.c-y*this.s)*this.r+this.lx*(z||0); },
     y(x,y,z) { return (x*this.s+y*this.c)*this.r+this.ly*(z||0); },
-    polygon(points, z, colour, outline, ox, oy) {
+    polygon(points, z, colour, outline, ox, oy, size) {
       const ctx=this.ctx,c=this.c,s=this.s,r=this.r,lx=this.lx,ly=this.ly;
       ctx.beginPath();
       for (let i=0;i<points.length;i++) {
-        const x=points[i][0]+(ox||0), y=points[i][1]+(oy||0);
+        const x=points[i][0]*(size===undefined?1:size)+(ox||0), y=points[i][1]*(size===undefined?1:size)+(oy||0);
         const px=(x*c-y*s)*r+lx*(z||0), py=(x*s+y*c)*r+ly*(z||0);
         if(i)ctx.lineTo(px,py);else ctx.moveTo(px,py);
       }
@@ -41794,10 +41855,20 @@ function wildlifeArtLegs(p,a,spec) {
   const small=spec.family==='rodent'||spec.family==='rabbit'||spec.family==='beaver'||spec.family==='mustelid';
   const feet=[[-.62,-.36],[.43,-.31],[-.65,.35],[.45,.32]];
   for(let i=0;i<feet.length;i++) {
-    const foot=feet[i],sx=foot[0]+(i%2?-stride:stride),sy=foot[1]+(p.prone?(i<2?-.14:.14):0);
+    const foot=feet[i],sx=foot[0]+(i%2?-stride:stride),sy=foot[1]*(spec.family==='bear'?2.05:1.75);
     const knee=small?.48:.68;
-    p.line(sx,sy,0,foot[0],foot[1],knee,p.style.dark,Math.max(1.8,p.r*(small?.13:.12)));
-    p.line(sx-.08,sy,0,sx+.08,sy,0,p.style.ink,Math.max(1.3,p.r*.09));
+    if(p.fall>0){
+      const near=(foot[1]>0)===(p.tilt>0),splay=a.deathType==='EXPLOSIVE'?1.65:a.deathType==='SHOTGUN'?1.35:1;
+      const side=p.tilt*(near?.49:.23)*p.fall*splay;
+      const jointX=foot[0]-.18*p.fall,jointY=foot[1]+side;
+      const footX=foot[0]+(i%2?-.36:.15)*p.fall,footY=foot[1]+side*.65;
+      p.line(foot[0],foot[1],knee,jointX,jointY,.08,p.style.dark,Math.max(1.8,p.r*(small?.13:.12)));
+      p.line(jointX,jointY,.08,footX,footY,.035,p.style.base,Math.max(1.7,p.r*(small?.12:.10)));
+      p.line(footX-.07,footY,.04,footX+.08,footY,.04,p.style.ink,Math.max(1.3,p.r*.09));
+    }else{
+      p.line(sx,sy,0,foot[0],foot[1],knee,p.style.dark,Math.max(1.8,p.r*(small?.13:.12)));
+      p.line(sx-.08,sy,0,sx+.08,sy,0,p.style.ink,Math.max(1.3,p.r*.09));
+    }
   }
 }
 function wildlifeArtEyes(p,a,hx,hy,z,wide) {
@@ -41826,7 +41897,7 @@ function wildlifeArtAntlers(p,a,hx,hy,z) {
 }
 function wildlifeArtMammal(p,a,spec) {
   const species=a.species, family=spec.family, plan=_WILDLIFE_BODY_PLANS[family]||_WILDLIFE_BODY_PLANS.rodent;
-  const hx=spec.headForward===undefined?1.15:spec.headForward/(spec.size||p.r),hy=(spec.headSide||0)/(spec.size||p.r);
+  const hx=(spec.headForward===undefined?1.15:spec.headForward/(spec.size||p.r))+p.headDx,hy=(spec.headSide||0)/(spec.size||p.r)+p.headDy;
   const z=family==='deer'||family==='sheep'?1.06:1;
   // Tail silhouettes sit behind the raised body. Each species has a recognisable
   // outline rather than a differently coloured copy of the same tiny oval.
@@ -41879,16 +41950,16 @@ function wildlifeArtMammal(p,a,spec) {
   wildlifeArtAntlers(p,a,hx,hy,z);wildlifeArtEyes(p,a,hx+.09,hy,z+.055,.165);
 }
 function wildlifeArtBird(p,a,spec) {
-  const id=a.species, grounded=!a.airborne||p.prone, hx=(spec.headForward||spec.size*.82)/(spec.size||p.r);
+  const id=a.species, grounded=!a.airborne||p.prone, hx=(spec.headForward||spec.size*.82)/(spec.size||p.r)+p.headDx;
   const owl=spec.family==='owl',raptor=spec.family==='raptor';
   const wingPhase=Number.isFinite(a.wingPhase)?a.wingPhase:(a.phase||0);
-  const wing=grounded?.52:1.13+Math.sin(wingPhase)*.27;
+  const wing=grounded?(a.state==='DEAD'?.54+p.fall*.25:.52):1.13+Math.sin(wingPhase)*.27;
   const tail=id==='WILD_TURKEY'?.93:.70;
   if(id==='WILD_TURKEY')p.polygon([[-.55,-.16],[-1.38,-.73],[-1.59,-.47],[-1.73,-.15],[-1.70,.22],[-1.46,.59],[-1.25,.75],[-.49,.16]],.66,'#75624b');
   else p.polygon([[-.44,-.16],[-tail,-.26],[-tail-.25,-.04],[-tail-.15,.23],[-.40,.16]],.86,id==='RED_TAILED_HAWK'?'#c77d52':p.style.shade);
   if(grounded)for(const side of [-1,1]){p.line(-.02,side*.25,.52,-.13,side*.37,0,'#b39855',Math.max(1,p.r*.1));p.line(-.13,side*.37,0,.13,side*.44,0,'#b39855');}
   for(const side of [-1,1]){
-    const span=side*wing;
+    const span=side*wing*(a.state==='DEAD'?(side===p.tilt?1.13:.72):1);
     p.polygon([[-.39,side*.12],[-.78,span*.94],[-.22,span*1.40],[.33,span*1.24],[.50,side*.24]],.92,p.style.shade);
     p.polygon([[-.45,side*.21],[-.45,span*.94],[.12,span*1.15],[.41,side*.23]],.95,p.style.light,false);
     if(raptor||owl)for(let i=0;i<3;i++)p.line(-.38+i*.21,span*.70,.955,-.45+i*.21,span*1.06,.955,p.style.dark);
@@ -41910,6 +41981,37 @@ function wildlifeArtBird(p,a,spec) {
   p.polygon([[hx+.15,-.09],[hx+beak+.18,0],[hx+.15,.09]],1.06,raptor||owl?'#d4b661':'#aaa879');
   wildlifeArtEyes(p,a,hx+.065,0,1.08,owl?.17:.115);
 }
+// Wounds are authored in the animal's facing plane, so they stay on fur,
+// feathers or the shell through movement and a fixed-heading directional fall.
+// Only the hit event emits particles; these bounded marks are persistent paint.
+function wildlifeArtWounds(p,a,spec) {
+  const marks=a.decals;if(!marks||!marks.length)return;
+  const bird=spec.family==='bird'||spec.family==='raptor'||spec.family==='owl';
+  const low=spec.family==='snake'||spec.family==='amphibian',reptile=low||spec.family==='turtle';
+  for(let i=Math.max(0,marks.length-8);i<marks.length;i++){
+    const d=marks[i];if(!d||!Number.isFinite(d.x)||!Number.isFinite(d.y))continue;
+    const size=Math.max(.075,Math.min(.36,Number.isFinite(d.size)?d.size:.15));
+    const x=d.x+(d.head&&!reptile?p.headDx:0),y=d.y+(d.head&&!bird&&!reptile?p.headDy:0);
+    const z=low?.61:d.head?(bird?1.10:1.12):1.045;
+    p.polygon(_WILDLIFE_WOUND_PLAN,z,'#691b20',false,x,y,size);
+    p.polygon(_WILDLIFE_WOUND_PLAN,z+.005,'#af3037',false,x-size*.17,y-size*.07,size*.60);
+    p.line(x-size*.46,y+size*.14,z+.009,x+size*.31,y-size*.16,z+.009,'#df6152',Math.max(.8,p.r*size*.12));
+  }
+}
+function wildlifeArtCorpseDamage(p,a,spec) {
+  if(a.state!=='DEAD'||!p.fall)return;
+  if(a.deathType!=='SHOTGUN'&&a.deathType!=='OVERKILL'&&a.deathType!=='EXPLOSIVE')return;
+  const severe=a.deathType==='EXPLOSIVE',overkill=a.deathType==='OVERKILL',size=(severe?.40:overkill?.34:.28)*p.fall;
+  p.polygon(_WILDLIFE_WOUND_PLAN,1.055,'#501f24',false,.22,p.tilt*.13,size);
+  p.polygon(_WILDLIFE_WOUND_PLAN,1.061,'#9e3033',false,.29,p.tilt*.16,size*.69);
+  if(overkill)p.polygon(_WILDLIFE_WOUND_PLAN,1.055,'#792329',false,-.37,-p.tilt*.15,size*.59);
+  // A torn cut and pale splinters distinguish destroyed scraps from an intact
+  // side-lying animal; the silhouette, species colours and head remain legible.
+  for(let i=0;i<(severe?3:2);i++){
+    const x=.08+i*.12,y=p.tilt*(.02+i*.08);
+    p.line(x-.035,y,1.065,x+.065,y+p.tilt*.12,1.066,'#d4b1a0',Math.max(.8,p.r*.025));
+  }
+}
 function wildlifeArtReptile(p,a,spec) {
   const hx=(spec.headForward||spec.size*.90)/(spec.size||p.r),id=a.species;
   if(spec.family==='snake'){
@@ -41923,14 +42025,17 @@ function wildlifeArtReptile(p,a,spec) {
     if(id==='TIMBER_RATTLESNAKE')for(let i=0;i<3;i++)p.ellipse(-1.37-i*.12,-.14,.16,.19,.49,'#cdb781');
     wildlifeArtEyes(p,a,hx+.05,0,.62,.10);
   }else if(spec.family==='turtle'){
-    for(const side of [-1,1])for(const fore of [-.49,.39])p.polygon([[fore-.1,side*.30],[fore+.20,side*.57],[fore+.03,side*.69],[fore-.21,side*.50]],.17,'#a4995d');
+    for(const side of [-1,1])for(const fore of [-.49,.39]){
+      const fold=p.fall*.18;
+      p.polygon([[fore-.1,side*.30],[fore+.20-fold,side*(.57-fold)],[fore+.03-fold,side*(.69-fold)],[fore-.21,side*.50]],.17,'#a4995d');
+    }
     p.body(_WILDLIFE_BODY_PLANS.turtle);
     p.polygon([[-.42,-.28],[.18,-.32],[.44,-.02],[.19,.28],[-.35,.30],[-.57,0]],1.02,p.style.light);
     p.line(-.37,-.27,1.04,-.29,.26,1.04,p.style.shade);p.line(.16,-.28,1.04,.10,.27,1.04,p.style.shade);
     p.ellipse(hx,0,.40,.37,.45,'#afa364');wildlifeArtEyes(p,a,hx+.07,0,.49,.105);
     p.polygon([[-.68,-.05],[-1.12,0],[-.69,.11]],.15,'#a4995d');
   }else{
-    for(const side of [-1,1])for(const fore of [-.48,.43]){p.line(fore,side*.10,.38,fore-.21,side*.48,.08,p.style.base,p.r*.19);p.line(fore-.21,side*.48,.08,fore+.04,side*.55,.06,p.style.light,p.r*.12);}
+    for(const side of [-1,1])for(const fore of [-.48,.43]){const fold=p.fall*.18;p.line(fore,side*.10,.38,fore-.21-fold,side*.48,.08,p.style.base,p.r*.19);p.line(fore-.21-fold,side*.48,.08,fore+.04-fold,side*(.55-fold),.06,p.style.light,p.r*.12);}
     p.curve(-.57,0,-1.14,.16,-1.47,-.38,-1.69,-.13,.22,p.style.outline,p.r*.24);
     p.curve(-.57,0,-1.14,.16,-1.47,-.38,-1.69,-.13,.22,p.style.base,p.r*.15);
     p.ellipse(-.04,0,1.55,.42,.42,p.style.base);
@@ -41947,11 +42052,12 @@ function paintWildlifeAnimal(a) {
   try {
     // Small, antialiased root contact. Flying birds use a lighter shadow rather
     // than a large rigid disc that competes with tree shadows in daylight.
-    const alpha=a.airborne&&!p.prone?.065:.13;
+    const alpha=a.airborne?.065:.13;
     p.ellipse(-.08,.08,1.65,.86,0,'rgba(18,39,31,'+alpha+')',false);
     if(spec.family==='bird'||spec.family==='raptor'||spec.family==='owl')wildlifeArtBird(p,a,spec);
     else if(spec.family==='snake'||spec.family==='turtle'||spec.family==='amphibian')wildlifeArtReptile(p,a,spec);
     else wildlifeArtMammal(p,a,spec);
+    wildlifeArtWounds(p,a,spec);wildlifeArtCorpseDamage(p,a,spec);
   } finally {ctx.restore();}
 }
 function drawForestWildlifeAnimals() {
@@ -41960,7 +42066,7 @@ function drawForestWildlifeAnimals() {
   for(let i=0;i<forestWildlife.length;i++){
     const animal=forestWildlife[i];
     if(animal.harvested||!inView(animal.x,animal.y,(animal.bodyR||12)*3+35))continue;
-    if(animal.airborne&&animal.state!=='DEAD'&&animal.state!=='STUNNED'){
+    if(animal.airborne&&animal.state!=='STUNNED'&&(!animal.fall||!animal.fall.grounded)){
       _wildlifeBirdDrawQueue.push(animal);continue;
     }
     let actor=_wildlifeArtActors.get(animal);
@@ -41989,45 +42095,47 @@ function wildlifeSpecies(id, name, family, habitats, rarity, size, speed, hp, co
     headSide: 0, headR: Math.max(2.8, size * 0.40),
     rise: family === 'bird' || family === 'raptor' || family === 'owl' ? 8 : size * 0.65 };
 }
-wildlifeSpecies('GRIZZLY_BEAR', 'Grizzly bear', 'bear', 'TIMBER HEATH MEADOW', 4, 23, 1.55, 170, [130, 89, 58], 'predator hump');
-wildlifeSpecies('BLACK_BEAR', 'Black bear', 'bear', 'TIMBER VIBRANT MARSH EDGE', 3, 19, 1.65, 130, [52, 53, 47], 'predator');
-wildlifeSpecies('GRAY_WOLF', 'Gray wolf', 'canine', 'TIMBER HEATH BURN', 3, 13, 2.25, 65, [141, 147, 139], 'predator pack');
-wildlifeSpecies('MOOSE', 'Moose', 'deer', 'MARSH TIMBER', 3, 22, 1.55, 140, [96, 72, 49], 'antlers palmate');
-wildlifeSpecies('MOUNTAIN_LION', 'Mountain lion', 'feline', 'HEATH TIMBER EDGE', 4, 15, 2.35, 85, [176, 142, 82], 'predator longtail');
-wildlifeSpecies('CANADA_LYNX', 'Canada lynx', 'feline', 'TIMBER HEATH', 4, 10, 1.95, 45, [163, 156, 127], 'predator tufted shorttail');
-wildlifeSpecies('WOLVERINE', 'Wolverine', 'mustelid', 'HEATH TIMBER BURN', 4, 11, 1.65, 65, [103, 80, 54], 'predator stripe');
-wildlifeSpecies('BIGHORN_SHEEP', 'Bighorn sheep', 'sheep', 'HEATH', 2, 15, 1.75, 85, [164, 144, 114], 'horns herd');
-wildlifeSpecies('ELK', 'Elk', 'deer', 'MEADOW VIBRANT TIMBER', 2, 18, 1.95, 90, [175, 129, 71], 'antlers herd');
-wildlifeSpecies('MULE_DEER', 'Mule deer', 'deer', 'MEADOW HEATH EDGE VIBRANT', 1, 14, 2.10, 65, [162, 132, 93], 'antlers herd ears');
-wildlifeSpecies('YELLOW_BELLIED_MARMOT', 'Yellow-bellied marmot', 'rodent', 'HEATH', 2, 7, 1.30, 28, [164, 130, 77], 'goldbelly');
-wildlifeSpecies('PIKA', 'Pika', 'rodent', 'HEATH', 3, 5, 1.55, 18, [179, 168, 139], 'roundears');
-wildlifeSpecies('CLARKS_NUTCRACKER', "Clark's nutcracker", 'bird', 'HEATH TIMBER', 2, 6, 2.40, 20, [155, 161, 157], 'blackwings');
-wildlifeSpecies('STELLERS_JAY', "Steller's jay", 'bird', 'TIMBER VIBRANT', 2, 6, 2.60, 20, [51, 106, 183], 'crest');
-wildlifeSpecies('PEREGRINE_FALCON', 'Peregrine falcon', 'raptor', 'HEATH MEADOW', 4, 9, 3.40, 32, [86, 115, 135], 'mask');
-wildlifeSpecies('DUSKY_GROUSE', 'Dusky grouse', 'bird', 'TIMBER HEATH', 2, 8, 1.10, 32, [109, 101, 88], 'ground fan');
-wildlifeSpecies('WILD_TURKEY', 'Wild turkey', 'bird', 'TIMBER MEADOW EDGE', 1, 11, 1.35, 42, [137, 93, 62], 'ground fan redhead');
-wildlifeSpecies('BARRED_OWL', 'Barred owl', 'owl', 'TIMBER MARSH', 3, 9, 2.50, 30, [137, 121, 91], 'bars nocturnal');
-wildlifeSpecies('RED_SHOULDERED_HAWK', 'Red-shouldered hawk', 'raptor', 'MARSH EDGE TIMBER', 3, 9, 2.80, 30, [165, 105, 65], 'redshoulders');
-wildlifeSpecies('PILEATED_WOODPECKER', 'Pileated woodpecker', 'bird', 'TIMBER VIBRANT', 3, 7, 2.50, 22, [44, 49, 44], 'redcrest');
-wildlifeSpecies('BALD_EAGLE', 'Bald eagle', 'raptor', 'MARSH HEATH', 4, 12, 2.85, 45, [82, 63, 44], 'whitehead');
-wildlifeSpecies('RED_TAILED_HAWK', 'Red-tailed hawk', 'raptor', 'MEADOW EDGE HEATH', 3, 10, 2.90, 35, [135, 96, 65], 'redtail');
-wildlifeSpecies('WARBLER', 'Warbler', 'bird', 'VIBRANT MARSH EDGE', 1, 4.5, 2.40, 12, [208, 190, 72], 'songbird');
-wildlifeSpecies('THRUSH', 'Thrush', 'bird', 'TIMBER VIBRANT EDGE', 1, 5.5, 2.20, 16, [156, 112, 74], 'songbird spotted');
-wildlifeSpecies('JAY', 'Jay', 'bird', 'VIBRANT EDGE MEADOW', 1, 6, 2.40, 20, [83, 144, 184], 'songbird crest');
-wildlifeSpecies('TIMBER_RATTLESNAKE', 'Timber rattlesnake', 'snake', 'HEATH BURN EDGE', 3, 7, 0.70, 22, [133, 112, 61], 'predator rattle');
-wildlifeSpecies('COPPERHEAD', 'Copperhead', 'snake', 'TIMBER EDGE BURN', 3, 6, 0.75, 20, [174, 113, 68], 'predator bands');
-wildlifeSpecies('EASTERN_BOX_TURTLE', 'Eastern box turtle', 'turtle', 'MARSH TIMBER EDGE', 2, 6, 0.38, 30, [151, 143, 61], 'shell');
-wildlifeSpecies('WOODLAND_SALAMANDER', 'Woodland salamander', 'amphibian', 'MARSH TIMBER', 2, 4.5, 0.60, 12, [84, 106, 75], 'spots');
-wildlifeSpecies('WHITE_TAILED_DEER', 'White-tailed deer', 'deer', 'MEADOW EDGE TIMBER VIBRANT', 1, 14, 2.15, 60, [183, 141, 86], 'antlers herd whitetail');
-wildlifeSpecies('RACCOON', 'Raccoon', 'rodent', 'EDGE MARSH TIMBER', 1, 8, 1.25, 35, [126, 128, 113], 'mask rings nocturnal');
-wildlifeSpecies('VIRGINIA_OPOSSUM', 'Virginia opossum', 'rodent', 'EDGE MARSH TIMBER', 2, 8, 0.90, 30, [165, 164, 152], 'whiteface pinktail nocturnal');
-wildlifeSpecies('RED_FOX', 'Red fox', 'canine', 'EDGE MEADOW VIBRANT', 2, 10, 2.05, 40, [202, 112, 51], 'predator whitetail');
-wildlifeSpecies('COYOTE', 'Coyote', 'canine', 'EDGE MEADOW BURN', 2, 12, 2.00, 55, [164, 146, 104], 'predator');
-wildlifeSpecies('EASTERN_GRAY_SQUIRREL', 'Eastern gray squirrel', 'rodent', 'TIMBER VIBRANT EDGE', 1, 5, 1.80, 16, [151, 154, 141], 'bushtail');
-wildlifeSpecies('CHIPMUNK', 'Chipmunk', 'rodent', 'TIMBER VIBRANT HEATH', 1, 4.5, 1.75, 14, [174, 129, 77], 'stripe');
-wildlifeSpecies('GROUNDHOG', 'Groundhog', 'rodent', 'MEADOW EDGE', 1, 8, 1.00, 32, [145, 118, 78], 'stocky');
-wildlifeSpecies('EASTERN_COTTONTAIL', 'Eastern cottontail', 'rabbit', 'MEADOW EDGE VIBRANT', 1, 6, 2.00, 22, [165, 137, 105], 'ears whitetail');
-wildlifeSpecies('BEAVER', 'Beaver', 'beaver', 'MARSH', 2, 10, 1.00, 45, [126, 91, 56], 'paddletail aquatic');
+// Body radius is a world-space art AND collision measure. Large mammals have
+// human-relative bulk; even small fauna remain legible at mobile camera zoom.
+wildlifeSpecies('GRIZZLY_BEAR', 'Grizzly bear', 'bear', 'TIMBER HEATH MEADOW', 4, 45, 1.55, 170, [130, 89, 58], 'predator hump');
+wildlifeSpecies('BLACK_BEAR', 'Black bear', 'bear', 'TIMBER VIBRANT MARSH EDGE', 3, 38, 1.65, 130, [52, 53, 47], 'predator');
+wildlifeSpecies('GRAY_WOLF', 'Gray wolf', 'canine', 'TIMBER HEATH BURN', 3, 26, 2.25, 65, [141, 147, 139], 'predator pack');
+wildlifeSpecies('MOOSE', 'Moose', 'deer', 'MARSH TIMBER', 3, 44, 1.55, 140, [96, 72, 49], 'antlers palmate');
+wildlifeSpecies('MOUNTAIN_LION', 'Mountain lion', 'feline', 'HEATH TIMBER EDGE', 4, 30, 2.35, 85, [176, 142, 82], 'predator longtail');
+wildlifeSpecies('CANADA_LYNX', 'Canada lynx', 'feline', 'TIMBER HEATH', 4, 20, 1.95, 45, [163, 156, 127], 'predator tufted shorttail');
+wildlifeSpecies('WOLVERINE', 'Wolverine', 'mustelid', 'HEATH TIMBER BURN', 4, 22, 1.65, 65, [103, 80, 54], 'predator stripe');
+wildlifeSpecies('BIGHORN_SHEEP', 'Bighorn sheep', 'sheep', 'HEATH', 2, 30, 1.75, 85, [164, 144, 114], 'horns herd');
+wildlifeSpecies('ELK', 'Elk', 'deer', 'MEADOW VIBRANT TIMBER', 2, 36, 1.95, 90, [175, 129, 71], 'antlers herd');
+wildlifeSpecies('MULE_DEER', 'Mule deer', 'deer', 'MEADOW HEATH EDGE VIBRANT', 1, 28, 2.10, 65, [162, 132, 93], 'antlers herd ears');
+wildlifeSpecies('YELLOW_BELLIED_MARMOT', 'Yellow-bellied marmot', 'rodent', 'HEATH', 2, 11, 1.30, 28, [164, 130, 77], 'goldbelly');
+wildlifeSpecies('PIKA', 'Pika', 'rodent', 'HEATH', 3, 8, 1.55, 18, [179, 168, 139], 'roundears');
+wildlifeSpecies('CLARKS_NUTCRACKER', "Clark's nutcracker", 'bird', 'HEATH TIMBER', 2, 9, 2.40, 20, [155, 161, 157], 'blackwings');
+wildlifeSpecies('STELLERS_JAY', "Steller's jay", 'bird', 'TIMBER VIBRANT', 2, 9, 2.60, 20, [51, 106, 183], 'crest');
+wildlifeSpecies('PEREGRINE_FALCON', 'Peregrine falcon', 'raptor', 'HEATH MEADOW', 4, 13, 3.40, 32, [86, 115, 135], 'mask');
+wildlifeSpecies('DUSKY_GROUSE', 'Dusky grouse', 'bird', 'TIMBER HEATH', 2, 12, 1.10, 32, [109, 101, 88], 'ground fan');
+wildlifeSpecies('WILD_TURKEY', 'Wild turkey', 'bird', 'TIMBER MEADOW EDGE', 1, 16, 1.35, 42, [137, 93, 62], 'ground fan redhead');
+wildlifeSpecies('BARRED_OWL', 'Barred owl', 'owl', 'TIMBER MARSH', 3, 13, 2.50, 30, [137, 121, 91], 'bars nocturnal');
+wildlifeSpecies('RED_SHOULDERED_HAWK', 'Red-shouldered hawk', 'raptor', 'MARSH EDGE TIMBER', 3, 13, 2.80, 30, [165, 105, 65], 'redshoulders');
+wildlifeSpecies('PILEATED_WOODPECKER', 'Pileated woodpecker', 'bird', 'TIMBER VIBRANT', 3, 10, 2.50, 22, [44, 49, 44], 'redcrest');
+wildlifeSpecies('BALD_EAGLE', 'Bald eagle', 'raptor', 'MARSH HEATH', 4, 18, 2.85, 45, [82, 63, 44], 'whitehead');
+wildlifeSpecies('RED_TAILED_HAWK', 'Red-tailed hawk', 'raptor', 'MEADOW EDGE HEATH', 3, 15, 2.90, 35, [135, 96, 65], 'redtail');
+wildlifeSpecies('WARBLER', 'Warbler', 'bird', 'VIBRANT MARSH EDGE', 1, 7, 2.40, 12, [208, 190, 72], 'songbird');
+wildlifeSpecies('THRUSH', 'Thrush', 'bird', 'TIMBER VIBRANT EDGE', 1, 8, 2.20, 16, [156, 112, 74], 'songbird spotted');
+wildlifeSpecies('JAY', 'Jay', 'bird', 'VIBRANT EDGE MEADOW', 1, 9, 2.40, 20, [83, 144, 184], 'songbird crest');
+wildlifeSpecies('TIMBER_RATTLESNAKE', 'Timber rattlesnake', 'snake', 'HEATH BURN EDGE', 3, 10, 0.70, 22, [133, 112, 61], 'predator rattle');
+wildlifeSpecies('COPPERHEAD', 'Copperhead', 'snake', 'TIMBER EDGE BURN', 3, 9, 0.75, 20, [174, 113, 68], 'predator bands');
+wildlifeSpecies('EASTERN_BOX_TURTLE', 'Eastern box turtle', 'turtle', 'MARSH TIMBER EDGE', 2, 9, 0.38, 30, [151, 143, 61], 'shell');
+wildlifeSpecies('WOODLAND_SALAMANDER', 'Woodland salamander', 'amphibian', 'MARSH TIMBER', 2, 7, 0.60, 12, [84, 106, 75], 'spots');
+wildlifeSpecies('WHITE_TAILED_DEER', 'White-tailed deer', 'deer', 'MEADOW EDGE TIMBER VIBRANT', 1, 28, 2.15, 60, [183, 141, 86], 'antlers herd whitetail');
+wildlifeSpecies('RACCOON', 'Raccoon', 'rodent', 'EDGE MARSH TIMBER', 1, 12, 1.25, 35, [126, 128, 113], 'mask rings nocturnal');
+wildlifeSpecies('VIRGINIA_OPOSSUM', 'Virginia opossum', 'rodent', 'EDGE MARSH TIMBER', 2, 12, 0.90, 30, [165, 164, 152], 'whiteface pinktail nocturnal');
+wildlifeSpecies('RED_FOX', 'Red fox', 'canine', 'EDGE MEADOW VIBRANT', 2, 20, 2.05, 40, [202, 112, 51], 'predator whitetail');
+wildlifeSpecies('COYOTE', 'Coyote', 'canine', 'EDGE MEADOW BURN', 2, 24, 2.00, 55, [164, 146, 104], 'predator');
+wildlifeSpecies('EASTERN_GRAY_SQUIRREL', 'Eastern gray squirrel', 'rodent', 'TIMBER VIBRANT EDGE', 1, 8, 1.80, 16, [151, 154, 141], 'bushtail');
+wildlifeSpecies('CHIPMUNK', 'Chipmunk', 'rodent', 'TIMBER VIBRANT HEATH', 1, 7, 1.75, 14, [174, 129, 77], 'stripe');
+wildlifeSpecies('GROUNDHOG', 'Groundhog', 'rodent', 'MEADOW EDGE', 1, 12, 1.00, 32, [145, 118, 78], 'stocky');
+wildlifeSpecies('EASTERN_COTTONTAIL', 'Eastern cottontail', 'rabbit', 'MEADOW EDGE VIBRANT', 1, 9, 2.00, 22, [165, 137, 105], 'ears whitetail');
+wildlifeSpecies('BEAVER', 'Beaver', 'beaver', 'MARSH', 2, 20, 1.00, 45, [126, 91, 56], 'paddletail aquatic');
 const WILDLIFE_SPECIES_IDS = Object.keys(WILDLIFE_SPECIES);
 const forestWildlife = [];
 const _wildlifeGrid = new Map(), _wildlifeBucketPool = [];
@@ -42087,7 +42195,8 @@ function wildlifeSpawnAnimal(species, x, y, herd) {
     herdX: herd ? x - herd.x : 0, herdY: herd ? y - herd.y : 0,
     homeX: x, homeY: y, goalX: x, goalY: y, thinkAt: _wildlifeClock + 20 + wildlifeRandom() * 100,
     threatX: x, threatY: y, aggressor: null, attackAt: 0, hitFlash: 0,
-    shots: 0, headshots: 0, shotIds: [], condition: null, method: null };
+    shots: 0, headshots: 0, shotIds: [], condition: null, method: null,
+    decals: [], deathType: null, fall: null, fallTilt: 1 };
   forestWildlife.push(a); _wildlifeGridDirty = true;
   return a;
 }
@@ -42100,18 +42209,36 @@ function wildlifeSolidBlocks(b, a) {
   }
   return !a.airborne;
 }
-function wildlifeCanStand(a, x, y) {
-  if (insideFortYard(2, x, y, 160)) return false;
-  const near = colNear(x, y), r = Math.min(28, a.bodyR);
+function wildlifeBodyBlocked(near, a, x, y, rx, ry) {
+  if (!near) return false;
   for (let i = 0; i < near.length; i++) {
     const b = near[i];
-    if (wildlifeSolidBlocks(b, a) && Math.abs(x - b.x) < (b.w || 0) / 2 + r &&
-        Math.abs(y - b.y) < (b.h || 0) / 2 + r) return false;
+    if (wildlifeSolidBlocks(b, a) && Math.abs(x - b.x) < (b.w || 0) / 2 + rx &&
+        Math.abs(y - b.y) < (b.h || 0) / 2 + ry) return true;
+  }
+  return false;
+}
+function wildlifeCanStand(a, x, y) {
+  if (insideFortYard(2, x, y, 160)) return false;
+  const r = Math.max(4, a.bodyR);
+  const c = Number.isFinite(a.angle) ? Math.cos(a.angle) : 0, sn = Number.isFinite(a.angle) ? Math.sin(a.angle) : 0;
+  const rx = Number.isFinite(a.angle) ? r * Math.hypot(1.35 * c, 0.78 * sn) + 2 : r * 1.35 + 2;
+  const ry = Number.isFinite(a.angle) ? r * Math.hypot(1.35 * sn, 0.78 * c) + 2 : r * 1.35 + 2;
+  if (!colGrid) return !wildlifeBodyBlocked(activeBuildings, a, x, y, rx, ry);
+  // The army index pads solids by COL_PAD. Large mammals extend beyond that
+  // margin, so query only their excess reach: at most four cells for current
+  // species, without changing military probes or allocating candidate arrays.
+  if (wildlifeBodyBlocked(colBig, a, x, y, rx, ry)) return false;
+  const extraX = Math.max(0, rx - COL_PAD), extraY = Math.max(0, ry - COL_PAD);
+  const x0 = Math.floor((x - extraX) / COL_CELL), x1 = Math.floor((x + extraX) / COL_CELL);
+  const y0 = Math.floor((y - extraY) / COL_CELL), y1 = Math.floor((y + extraY) / COL_CELL);
+  for (let cx = x0; cx <= x1; cx++) for (let cy = y0; cy <= y1; cy++) {
+    if (wildlifeBodyBlocked(colGrid.get(cellKey(cx, cy)), a, x, y, rx, ry)) return false;
   }
   return true;
 }
 function wildlifeSpawnAllowed(s, x, y) {
-  const r = s.size + 18;
+  const r = s.size * 1.10 * 1.35 + 18;
   if (inView(x, y, r + 100) || insideFortYard(2, x, y, 460)) return false;
   const cx = Math.floor(x / CHUNK_W), cy = Math.floor(y / CHUNK_W);
   if (layoutFor(2, cx, cy) !== 'WOODLAND') return false;
@@ -42121,7 +42248,7 @@ function wildlifeSpawnAllowed(s, x, y) {
     const h = forestHuntingSite();
     if (h && Math.hypot(x - h.x, y - h.y) < (h.r || 250) + r + 80) return false;
   }
-  const probe = { species: s.id, bodyR: s.size, airborne: false };
+  const probe = { species: s.id, bodyR: s.size * 1.10, airborne: false };
   return wildlifeCanStand(probe, x, y);
 }
 function wildlifeSpawnEncounter() {
@@ -42146,12 +42273,13 @@ function wildlifeSpawnEncounter() {
     let placed = 0;
     for (let member = 0; member < count; member++) {
       for (let attempt = 0; attempt < 4; attempt++) {
-        const a = wildlifeRandom() * Math.PI * 2, reach = member === 0 ? 0 : 45 + Math.sqrt(member) * 32 + wildlifeRandom() * 45;
+        const spacing = Math.max(45, s.size * 2.35);
+        const a = wildlifeRandom() * Math.PI * 2, reach = member === 0 ? 0 : spacing + Math.sqrt(member) * spacing * 0.72 + wildlifeRandom() * spacing;
         const mx = x + Math.cos(a) * reach, my = y + Math.sin(a) * reach;
         if (s.habitats.indexOf(wildlifeHabitat(mx, my)) === -1 || !wildlifeSpawnAllowed(s, mx, my)) continue;
         let clear = true;
         for (let i = 0; i < forestWildlife.length; i++) {
-          const p = forestWildlife[i], d = p.bodyR + s.size + 15;
+          const p = forestWildlife[i], d = (p.bodyR + s.size * 1.1) * 1.35 + 15;
           if ((p.x - mx) * (p.x - mx) + (p.y - my) * (p.y - my) < d * d) { clear = false; break; }
         }
         if (!clear) continue;
@@ -42235,6 +42363,7 @@ function updateForestWildlife(dt) {
     }
     if (a.hitFlash > 0) a.hitFlash = Math.max(0, a.hitFlash - dt);
     if (a.dead || a.state === 'STUNNED') {
+      if (a.dead && a.fall && a.fall.progress < 1) wildlifeUpdateFall(a, dt);
       a.ttl -= dt;
       if (a.ttl <= 0) { forestWildlife.splice(i, 1); _wildlifeGridDirty = true; }
       continue;
@@ -42251,15 +42380,31 @@ function updateForestWildlife(dt) {
       a.vx = len > 10 ? dx / len * speed : 0; a.vy = len > 10 ? dy / len * speed : 0;
       const nx = a.x + a.vx * 4 * dt, ny = a.y + a.vy * 4 * dt;
       if (a.vx || a.vy) {
-        if (!wildlifeCanStand(a, nx, ny)) {
-          if (wildlifeCanStand(a, nx, a.y)) a.vy = 0;
-          else if (wildlifeCanStand(a, a.x, ny)) a.vx = 0;
-          else {
+        const previousAngle = a.angle;
+        a.angle = Math.atan2(a.vy, a.vx);
+        // Turning changes a large animal's footprint. Clear the intended
+        // orientation at its current root as well as the predicted step;
+        // otherwise it can rotate through a wall before moving even one tick.
+        if (!wildlifeCanStand(a, a.x, a.y) || !wildlifeCanStand(a, nx, ny)) {
+          let sliding = false;
+          if (a.vx) {
+            a.angle = Math.atan2(0, a.vx);
+            if (wildlifeCanStand(a, a.x, a.y) && wildlifeCanStand(a, nx, a.y)) {
+              a.vy = 0; sliding = true;
+            }
+          }
+          if (!sliding && a.vy) {
+            a.angle = Math.atan2(a.vy, 0);
+            if (wildlifeCanStand(a, a.x, a.y) && wildlifeCanStand(a, a.x, ny)) {
+              a.vx = 0; sliding = true;
+            }
+          }
+          if (!sliding) {
+            a.angle = previousAngle;
             a.goalX = a.x + (wildlifeRandom() - 0.5) * 180; a.goalY = a.y + (wildlifeRandom() - 0.5) * 180;
             a.vx = a.vy = 0; a.thinkAt = _wildlifeClock + 40;
           }
         }
-        if (a.vx || a.vy) a.angle = Math.atan2(a.vy, a.vx);
       }
     }
     if (a.vx || a.vy) {
@@ -42312,7 +42457,7 @@ function forestWildlifeHitTest(b) {
   wildlifeRebuildGrid();
   const x1=b.x,y1=b.y,x0=Number.isFinite(b.prevX)?b.prevX:b.x-(b.vx||0),y0=Number.isFinite(b.prevY)?b.prevY:b.y-(b.vy||0);
   if(!Number.isFinite(x0)||!Number.isFinite(y0)||!Number.isFinite(x1)||!Number.isFinite(y1))return null;
-  const pad=40,ix0=Math.floor((Math.min(x0,x1)-pad)/WILDLIFE_CELL),ix1=Math.floor((Math.max(x0,x1)+pad)/WILDLIFE_CELL);
+  const pad=82,ix0=Math.floor((Math.min(x0,x1)-pad)/WILDLIFE_CELL),ix1=Math.floor((Math.max(x0,x1)+pad)/WILDLIFE_CELL);
   const iy0=Math.floor((Math.min(y0,y1)-pad)/WILDLIFE_CELL),iy1=Math.floor((Math.max(y0,y1)+pad)/WILDLIFE_CELL);
   if((ix1-ix0+1)*(iy1-iy0+1)>64)return null;
   let best=null,bestT=Infinity;
@@ -42345,6 +42490,137 @@ function wildlifeWeaponKind(w) {
   if(w===WEAPONS.ROCKET_LAUNCHER||name.indexOf('ROCKET')!==-1||name.indexOf('EXPLOS')!==-1)return 'EXPLOSIVE';
   return 'GUN';
 }
+let _wildlifeBloodPaint = null, _wildlifeBloodSmokePaint = null;
+let _wildlifeEffectTick = -1, _wildlifeEffectCount = 0;
+function wildlifeImpactAngle(a, hit) {
+  if (Number.isFinite(hit.angle)) return hit.angle;
+  if (hit.owner && Number.isFinite(hit.owner.x) && Number.isFinite(hit.owner.y))
+    return Math.atan2(a.y - hit.owner.y, a.x - hit.owner.x);
+  return a.angle;
+}
+function wildlifeImpactPoint(a, hit) {
+  const p = hit.head ? wildlifeHeadPoint(a) : a;
+  return { x: Number.isFinite(hit.x) ? hit.x : p.x,
+    y: Number.isFinite(hit.y) ? hit.y : p.y };
+}
+function wildlifeRecordWound(a, hit, point) {
+  const c = Math.cos(a.angle), sn = Math.sin(a.angle), r = Math.max(1, a.bodyR);
+  let x = ((point.x - a.x) * c + (point.y - a.y) * sn) / r;
+  let y = (-(point.x - a.x) * sn + (point.y - a.y) * c) / r;
+  // HEAD aim also accepts the engine's actor-root target. In that case the
+  // wound still belongs on the visible anatomical head, not on its stomach.
+  if (hit.head) {
+    const s = WILDLIFE_SPECIES[a.species], hx = s.headForward / s.size;
+    if (Math.hypot(x - hx, y) > a.headR / r + 0.12) { x = hx; y = 0; }
+  } else { x = Math.max(-1.30, Math.min(1.30, x)); y = Math.max(-0.72, Math.min(0.72, y)); }
+  if (a.decals.length === 8) a.decals.shift();
+  a.decals.push({ x, y, size: hit.head ? 0.15 : 0.19, head: !!hit.head });
+}
+function wildlifeBloodImpact(a, hit, point, killed) {
+  if (!_wildlifeBloodPaint) {
+    _wildlifeBloodPaint = color(111, 9, 16);
+    _wildlifeBloodSmokePaint = color(145, 18, 24);
+  }
+  // Cosmetic randomness belongs to this one hit, never p5/world/ecology RNG.
+  let seed = (Math.imul(a.id, 0x9e3779b9) ^ Math.imul(a.shots + a.decals.length, 0x85ebca6b) ^ Math.floor(_wildlifeClock * 16)) >>> 0;
+  const rnd = () => { seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5; return (seed >>> 0) / 4294967296; };
+  const angle = wildlifeImpactAngle(a, hit), c = Math.cos(angle), sn = Math.sin(angle);
+  if (_wildlifeEffectTick !== _wildlifeClock) { _wildlifeEffectTick = _wildlifeClock; _wildlifeEffectCount = 0; }
+  const count = Math.min(killed ? 8 : 5, 32 - _wildlifeEffectCount, Math.max(0, 900 - particles.length));
+  for (let i = 0; i < count; i++) {
+    const spread = (rnd() - 0.5) * 1.4, speed = 1.8 + rnd() * (killed ? 4 : 2.4);
+    const vx = Math.cos(angle + spread) * speed, vy = Math.sin(angle + spread) * speed;
+    // This init path has no random calls; override its visual type afterwards
+    // to share the existing smooth blood-smoke painter and particle pool.
+    const smoke = i < 2;
+    const p = newParticle(point.x, point.y, smoke ? _wildlifeBloodSmokePaint : _wildlifeBloodPaint, 'WOUND_BLOOD', vx, vy);
+    p.t = smoke ? 'BLOOD_SMOKE' : 'BLOOD';
+    p.sz = smoke ? 7 + rnd() * 5 : 2.5 + rnd() * 2.5;
+    p.vx = smoke ? vx * 0.30 : vx; p.vy = smoke ? vy * 0.30 : vy;
+    p.l = smoke ? 12 : 16; particles.push(p); _wildlifeEffectCount++;
+  }
+  // A few small, directional droplets bake into the same budgeted floor bank
+  // as army blood. No temporary graphics or growing per-frame decal lists.
+  const blobs = [];
+  for (let i = 0; i < 3; i++) {
+    const reach = 3 + rnd() * Math.min(24, a.bodyR * 0.75), side = (rnd() - 0.5) * 12;
+    blobs.push({ ox: c * reach - sn * side, oy: sn * reach + c * side, sz: 3 + rnd() * 5 });
+  }
+  stampGroundBlobs(point.x, point.y, blobs, _wildlifeBloodPaint, 32);
+}
+function wildlifeBeginFall(a, hit, kind, damage, previousHp) {
+  const incoming = wildlifeImpactAngle(a, hit), airborne = a.airborne;
+  const weapon = String(hit.weapon && hit.weapon.name || hit.weapon || '').toUpperCase();
+  a.deathType = airborne ? 'BIRD_DROP' : kind === 'EXPLOSIVE' ? 'EXPLOSIVE' :
+    weapon.indexOf('SHOTGUN') !== -1 ? 'SHOTGUN' : hit.head ? 'HEADSHOT' :
+    damage > Math.max(a.maxHp * 1.2, previousHp + 60) ? 'OVERKILL' : 'BODY_COLLAPSE';
+  const heavy = a.deathType === 'EXPLOSIVE' || a.deathType === 'OVERKILL' || a.deathType === 'SHOTGUN';
+  const impulse = kind === 'BOW' ? 0.7 : heavy ? 5.2 : hit.head ? 2.6 : 1.6;
+  a.vx = a.vx * 0.70 + Math.cos(incoming) * impulse;
+  a.vy = a.vy * 0.70 + Math.sin(incoming) * impulse;
+  a.fallTilt = Math.sin(incoming - a.angle) < 0 ? -1 : 1;
+  a.fall = { age: 0, duration: airborne ? 38 : heavy ? 34 : hit.head ? 24 : 30,
+    progress: 0, angle: a.angle, impactAngle: incoming, impulse,
+    grounded: !airborne, drop: airborne ? 0 : 1, poolStamped: false };
+  if (airborne) {
+    // A bird can be over a trunk when shot. Choose a nearby clear landing once,
+    // while it is still aloft, rather than settling inside an obstacle.
+    a.airborne = false;
+    if (!wildlifeCanStand(a, a.x, a.y)) {
+      let landing = null;
+      for (let ring = 1; ring <= 4 && !landing; ring++) for (let side = 0; side < 8; side++) {
+        const dir = incoming + side * Math.PI / 4, distance = (a.bodyR * 1.35 + 22) * ring;
+        const x = a.x + Math.cos(dir) * distance, y = a.y + Math.sin(dir) * distance;
+        if (wildlifeCanStand(a, x, y)) { landing = { x, y }; break; }
+      }
+      if (landing) {
+        a.fall.startX = a.x; a.fall.startY = a.y;
+        a.fall.landingX = landing.x; a.fall.landingY = landing.y;
+      }
+    }
+    a.airborne = true;
+  }
+}
+function wildlifeSettleBlood(a) {
+  if (a.fall.poolStamped) return;
+  a.fall.poolStamped = true;
+  const scale = Math.min(1.7, Math.max(0.45, a.bodyR / 28)), blobs = [];
+  // Deterministic connected lobes grow once through the existing floor-bank
+  // depositor. Corpse TTL removes the animal only; the bank retains its blood.
+  const c = Math.cos(a.fall.impactAngle), sn = Math.sin(a.fall.impactAngle);
+  for (let i = 0; i < 5; i++) {
+    const reach = i * 4 * scale, side = (i & 1 ? 1 : -1) * 3 * scale;
+    blobs.push({ ox: c * reach - sn * side, oy: sn * reach + c * side,
+      sz: (18 - i * 1.6) * scale, delay: i * 8, stage: 0 });
+  }
+  if (bloodPools.length < 64) bloodPools.push({ x: a.x, y: a.y, col: _wildlifeBloodPaint, blobs, age: 0 });
+  else stampGroundBlobs(a.x, a.y, blobs, _wildlifeBloodPaint, 55);
+}
+function wildlifeUpdateFall(a, dt) {
+  const f = a.fall;
+  f.age = Math.min(f.duration, f.age + dt); f.progress = f.age / f.duration;
+  f.drop = f.grounded ? 1 : Math.min(1, f.progress * f.progress * 1.35);
+  if (Number.isFinite(f.landingX)) {
+    const ease = 1 - Math.pow(1 - f.progress, 2);
+    a.x = f.startX + (f.landingX - f.startX) * ease;
+    a.y = f.startY + (f.landingY - f.startY) * ease;
+  } else {
+    const nx = a.x + a.vx * dt, ny = a.y + a.vy * dt;
+    // Corpses use the existing local index too. Keep heading fixed while the
+    // impact and running momentum slide along clear ground, never through walls.
+    const airborne = a.airborne; a.airborne = false;
+    const canX = !a.vx || wildlifeCanStand(a, nx, a.y);
+    const canY = !a.vy || wildlifeCanStand(a, canX ? nx : a.x, ny);
+    a.airborne = airborne;
+    if (canX) a.x = nx; else a.vx = 0;
+    if (canY) a.y = ny; else a.vy = 0;
+  }
+  const drag = Math.pow(0.84, dt); a.vx *= drag; a.vy *= drag;
+  if (f.progress >= 1) {
+    f.drop = 1; f.grounded = true; a.airborne = false; a.vx = a.vy = 0;
+    wildlifeSettleBlood(a);
+  }
+}
 function applyForestWildlifeHit(a, hit) {
   if(!a||!hit||a.harvested||a.dead||a.state==='STUNNED')return {hit:false};
   const kind=wildlifeWeaponKind(hit.weapon),s=WILDLIFE_SPECIES[a.species];
@@ -42359,12 +42635,15 @@ function applyForestWildlifeHit(a, hit) {
   if(a.shotIds.length>8)a.shotIds.shift();
   let damage=Number.isFinite(hit.damage)?Math.max(0,hit.damage):30;
   if(kind==='BOW'&&hit.head)damage=a.hp;
+  const previousHp = a.hp, point = wildlifeImpactPoint(a, hit);
   a.hp=Math.max(0,a.hp-damage);a.hitFlash=8;
+  if (damage > 0) { wildlifeRecordWound(a, hit, point); wildlifeBloodImpact(a, hit, point, a.hp <= 0); }
   a.threatX=hit.owner&&Number.isFinite(hit.owner.x)?hit.owner.x:a.x-Math.cos(a.angle)*60;
   a.threatY=hit.owner&&Number.isFinite(hit.owner.y)?hit.owner.y:a.y-Math.sin(a.angle)*60;
   a.alarm=600;a.thinkAt=_wildlifeClock;
   if(a.hp<=0){
-    a.dead=true;a.state='DEAD';a.vx=a.vy=0;a.ttl=18000;
+    a.dead=true;a.state='DEAD';a.ttl=18000;
+    wildlifeBeginFall(a, hit, kind, damage, previousHp);
     a.method=kind==='BOW'&&hit.head?'BOW_HEAD':kind;
     a.condition=a.method==='BOW_HEAD'?'PERFECT':kind==='EXPLOSIVE'||a.shots>=4?'BAD':a.shots===1&&a.headshots===1?'GOOD':'FAIR';
     _wildlifeGridDirty=true;
@@ -42383,13 +42662,16 @@ function notifyForestWildlifeExplosion(x,y,r,damage,owner,shotId) {
   for(let i=0;i<forestWildlife.length;i++){
     const a=forestWildlife[i];if(a.dead||a.harvested||a.state==='STUNNED')continue;
     const d=Math.hypot(a.x-x,a.y-y);if(d>range+a.bodyR)continue;
-    applyForestWildlifeHit(a,{weapon:'EXPLOSIVE',head:false,shotId,owner,damage:(damage||80)*Math.max(0.2,1-d/Math.max(1,range))});
+    applyForestWildlifeHit(a,{weapon:'EXPLOSIVE',head:false,shotId,owner,
+      angle:Math.atan2(a.y-y,a.x-x),x:a.x,y:a.y,
+      damage:(damage||80)*Math.max(0.2,1-d/Math.max(1,range))});
   }
   notifyForestWildlifeThreat(x,y,Math.max(450,range));
 }
 function wildlifeHarvest(a) {
   if(!a||a.harvested||(!a.dead&&a.state!=='STUNNED')||!a.condition)return null;
   if(!player||Math.hypot(player.x-a.x,player.y-a.y)>90+a.bodyR)return null;
+  if(a.dead&&a.fall&&!a.fall.poolStamped)wildlifeSettleBlood(a);
   a.harvested=true;_wildlifeGridDirty=true;
   return {species:a.species,name:WILDLIFE_SPECIES[a.species].name,condition:a.condition,
     state:a.state==='STUNNED'?'STUNNED':'DEAD',method:a.method,count:1};
@@ -42402,6 +42684,7 @@ function resetForestWildlife() {
   forestWildlife.length=0;_wildlifeGrid.clear();for(let i=0;i<_wildlifeBucketPool.length;i++)_wildlifeBucketPool[i].length=0;
   _wildlifeLedger={seed:0x5ad763f1,nextId:1,encounters:0,rareMisses:0};
   _wildlifeClock=0;_wildlifeSpawnClock=0;_wildlifeLastThreat=-1000;_wildlifeLastBiome=0;
+  _wildlifeEffectTick=-1;_wildlifeEffectCount=0;
   _wildlifeGridDirty=true;_wildlifeGridCount=-1;
 }
 function restoreForestWildlife(data) {
