@@ -19,7 +19,9 @@ function reset() {
     player=new Character(-2000,-2000,true);player.hp=100000;player.shieldHP=100000;
     totalShotsFired=0;totalShotsHit=0;totalKills=0;`);
 }
-function target(species='ELK',x=36,y=0) {
+// Keep the enlarged elk's leading body edge behind x=14 cover while still
+// intersecting the first 28-unit arrow segment. The shooter starts outside it.
+function target(species='ELK',x=70,y=0) {
   run(`window.huntTarget=wildlifeSpawnAnimal('${species}',${x},${y});
     huntTarget.angle=0;huntTarget.bodyR=WILDLIFE_SPECIES.${species}.size;
     huntTarget.headR=WILDLIFE_SPECIES.${species}.headR;`);

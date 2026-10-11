@@ -224,11 +224,15 @@ helpers above describe the stages and are not additional runtime APIs.
 health, movement speeds, palettes and silhouette traits. `forestWildlife` is a
 separate runtime population capped at 48 animals, including 18–26-member herd
 encounter targets (actual placement can be smaller on crowded terrain).
+Large mammals use roughly twice their original dimensions, measured against
+the player's body; smaller fauna retain their relative size while becoming
+readable at mobile zoom. Art, anatomical head targets, oriented body hit bounds,
+solid clearance, spawn reservations and herd spacing share those dimensions.
 
 ```js
 const animal = {
   id: 1, species: "ELK", x: 0, y: 0, angle: 0,
-  state: "GRAZE", hp: 90, bodyR: 18, headR: 7.2,
+  state: "GRAZE", hp: 90, bodyR: 36, headR: 14.4,
   shots: 0, headshots: 0, condition: null, harvested: false
 };
 // Existing pooled bullets publish one shotId per trigger, shared by pellets.
@@ -236,7 +240,8 @@ const hit = forestWildlifeHitTest(bullet);
 if (hit && coverIsFartherAway) {
   applyForestWildlifeHit(hit.animal, {
     weapon: bullet.w, head: hit.head, shotId: bullet.shotId,
-    owner: bullet.shooter, damage: weaponDamage
+    owner: bullet.shooter, damage: weaponDamage,
+    x: bullet.x, y: bullet.y, angle: bullet.a
   });
 }
 ```
@@ -256,6 +261,16 @@ flee, herd alarms propagate through their shared record, and player-wounded
 predators can defend themselves. Menus/cutscenes freeze simulation. Travel discards
 ephemeral wildlife; saves retain encounter luck and collected inventory.
 
+Hits retain up to eight body-local wound decals, including anatomical head
+wounds. Bounded blood droplets and smoke reuse the existing particle pool;
+floor splashes and growing corpse pools use the existing blood bank. Cosmetic
+variation uses an isolated hit seed, preserving combat and encounter RNG.
+Taser stuns remain bloodless. Directional death types distinguish body collapse,
+headshot, shotgun, overkill, explosion and a falling bird. A short fall preserves
+impact and running momentum, respects nearby solids and settles without corpse
+spin. Legs fold and the head drops while existing wounds stay attached. Wildlife
+corpses remain collectable without joining the military corpse/objective lists.
+
 | Method | Specimen condition |
 | --- | --- |
 | One lethal gun headshot | GOOD |
@@ -271,8 +286,12 @@ species, condition and DEAD/STUNNED state. Shotgun pellets share a trigger ID.
 
 **Cedar Hollow** is a fictional Indigenous-inspired stewardship community with
 cedar lodges and plank walks on a verified clearing outside the story enclosure.
-A HUD marker guides the player there. Talking grants a bow and 24 arrows once;
-collecting a perfect arrow headshot specimen advances the lesson to RETURN.
+A HUD marker guides the player there. The compact objective card fades in over
+350 ms, holds for 3.5 seconds, then
+fades out over 800 ms, leaving only its guidance marker. Quest changes and
+sector returns announce once; pauses freeze the transient notification timer.
+Talking grants a bow and 24 arrows once; collecting a perfect arrow headshot
+specimen advances the lesson to RETURN.
 Returning it grants 60 wood, 20 stone and a quiver refill once. Supplies renew
 six in-game hours later. Bow selection joins touch weapon cycling, gamepad D-pad
 and desktop **V / Shift+V**. Reloading cannot manufacture arrows.
@@ -294,7 +313,9 @@ node tools/check-forest-camera.js
 node tools/check-forest-habitats.js
 node tools/check-forest-depth.js
 node tools/check-wildlife-core.js
+node tools/check-wildlife-hit-death.js
 node tools/check-forest-hunting.js
+node tools/check-forest-hunting-hud.js
 node tools/check-hunting-ballistics.js
 node tools/check-bow-controls.js
 node tools/check-generation.js
@@ -310,8 +331,15 @@ Chromium and p5 locations; no browser package is added to the game repository.
 bow acquisition, a pooled-arrow kill, collection, inventory, return/reward and
 save restoration. `tools/check-wildlife-art.js` compares cached and fresh Canvas
 rendering for every species, heading and pose, plus actual herd movement and
-depth ordering. `tools/visual-forest-angles.js` reviews the player, strafing,
+depth ordering. `tools/check-wildlife-gameplay-scene.js` checks real pistol wounds,
+blood particles, persistent decals, arrow headshots, directional falls and the
+objective card expiring while its marker remains in the full rendered scene.
+`tools/visual-wildlife-feedback.js` captures human-relative scale and corpse poses
+at normal game zoom. `tools/visual-forest-angles.js` reviews the player, strafing,
 infantry, robots and heavy units at eight bearings and checks tree phase parity.
+`tools/check-bow-render.js` checks the posed arrow tip against the real projectile
+at eight headings and renders aimed/carry poses. The bow grip bends forward;
+limb tips and string sit toward the archer while the arrow points along +X.
 `tools/check-forest-polygons.js` verifies exact RGBA equality between the native
 emitter and p5 across species, targets, zooms, camera/sun angles and shadow
 owners, plus renderer/version/accessibility fallback behavior.

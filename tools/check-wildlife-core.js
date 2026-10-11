@@ -85,8 +85,10 @@ const armyCount=run(`enemiesList.length`);
 check(`enemiesList.length===${armyCount}`, 'Wildlife does not join the military list');
 // A moving animal sees the shared solid index, not a per-animal full-world scan.
 run(`resetForestWildlife();var wildlifeQAMover=wildlifeSpawnAnimal('ELK',15000,6600);wildlifeQAMover.goalX=15200;wildlifeQAMover.goalY=6600;wildlifeQAMover.thinkAt=1e9;wildlifeQAMover.state='FLEE';wildlifeQAMover.alarm=1e9;activeBuildings=[{x:15100,y:6600,w:40,h:200}];buildColIndex();_wildlifeSpawnClock=1e9;`);
-run(`for(let i=0;i<120;i++)updateForestWildlife(1);`);
-check(`wildlifeQAMover.x<15100-20-wildlifeQAMover.bodyR`, 'Movement does not walk through a solid wall');
+// Steering may route around this finite wall. Check the complete footprint
+// throughout the path instead of requiring the final root to remain west.
+run(`var wildlifeQAWallClear=true;for(let i=0;i<120;i++){updateForestWildlife(1);wildlifeQAWallClear=wildlifeQAWallClear&&wildlifeCanStand(wildlifeQAMover,wildlifeQAMover.x,wildlifeQAMover.y);}`);
+check(`wildlifeQAWallClear`, 'Every movement step keeps the full oriented body outside the solid wall');
 run(`activeBuildings=[];colGrid=null;wildlifeQAMover.goalX=wildlifeQAMover.x+500;wildlifeQAMover.thinkAt=1e9;var wildlifeQAFrozen=wildlifeQAMover.x;isPaused=true;updateForestWildlife(1);isPaused=false;`);
 check(`wildlifeQAMover.x===wildlifeQAFrozen`, 'Pause freezes wildlife');
 for(const flag of ['inCutscene','inDarchonCall','inTownCutscene','inFarmCutscene','inFarmPostCutscene','inPostAmbushCutscene','inFortCutscene','inWorldBuildingMenu','killcamMode','isDead','isWin']){
