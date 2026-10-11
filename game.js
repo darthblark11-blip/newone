@@ -87,6 +87,8 @@ let meleeComboUnlocked = false;
 let taserUnlocked = false
 let rocketLauncherUnlocked = false; 
 let ninjaSuitUnlocked = false; // <--- NEW NINJA SUIT
+let revolverUnlocked = false, cowboyCostumeOwned = false, cowboySuitEquipped = false;
+let _frontierEquipmentRestore = null;
 let explosiveArmorUnlocked = false, playerGrenades = [], pGrenadeAmmo = 4, pGrenadeTimer = 0, isCooking = false, cookTime = 0;
 let chemistSuitUnlocked = false, playerFlasks = [], pFlaskAmmo = 2, pFlaskTimer = 0, waterPuddles = [];
 let inUpgradeMenu = false;
@@ -1540,6 +1542,18 @@ function getCityZone(bX, bY) {
     return "RESIDENTIAL";
 }
 
+// Interaction points sit on the dirt outside the collision footprints. Keep
+// missions and map geometry on one plan rather than chasing painted doors.
+const FRONTIER_TOWN_LANDMARKS = {
+  saloon: { x: 940, y: -1730, w: 350, h: 235, doorX: 1156, doorY: -1730,
+            door: { x: 1156, y: -1730 } },
+  sheriff: { x: 1602, y: -2000, w: 225, h: 170 },
+  board: { x: 1450, y: -2110 },
+  duel: { x: 1300, y: -1140 },
+  bounds: { x0: -450, y0: -4800, x1: 3600, y1: 300 }
+};
+function frontierTownLandmarks() { return FRONTIER_TOWN_LANDMARKS; }
+
 function legacyGenerateMap() {
   buildings = [];
   parkingCars = [];
@@ -1898,7 +1912,6 @@ function legacyGenerateMap() {
       for (let t of trailerParkCoords) {
           buildings.push({ x: t.x, y: t.y, w: t.w, h: t.h, isTrailer: true });
       }
-/// --- WESTERN TOWN (North of Trailer Park) ---
       // --- WESTERN TOWN (North of Trailer Park) ---
       // ###################################################################
       //  DRY GULCH
@@ -1907,8 +1920,10 @@ function legacyGenerateMap() {
       //  to south, Front Street cutting east to west, a plaza where they meet,
       //  and the trades that cannot sit on a high street -- livery, corrals,
       //  smithy yard, depot, mine head, boot hill -- pushed out to the edges
-      //  where they belong. Roughly 2500 by 3400 units against the old 800 by
-      //  1200, with twenty-nine named premises instead of ten.
+      //  where they belong. The boom-town extension adds Market Street, Mesa
+      //  Street and a curved railway avenue: sixty-nine named premises over
+      //  roughly 4050 by 5100 units, with a large enterable saloon and civic,
+      //  retail and industrial districts around the original crossroads.
       //
       //  LAYOUT. This is the plan the town was laid out to, unchanged: two
       //  columns flanking Main Street at MAIN_X +/- 290, Front Street crossing
@@ -1929,7 +1944,7 @@ function legacyGenerateMap() {
       //  premises turned east simply has a 140-long frontage and 210 of depth
       //  behind it, which is the shape of a real storefront anyway.
       //
-      //  ARCHETYPE. `arch` picks one of nine silhouettes -- see
+      //  ARCHETYPE. `arch` picks one of sixteen silhouettes -- see
       //  drawWesternBuilding(). Chosen by what the premises does, the way a real
       //  frontier street got its variety: a bank could afford dressed stone, a
       //  livery was board and batten, an assay clerk worked out of mud brick, a
@@ -1951,8 +1966,8 @@ function legacyGenerateMap() {
           { x: WEST_COL + 10, y: -2280, w: 190, h: 130, sign: "TELEGRAPH",     f: "E", arch: "FALSE_FRONT" },
           { x: EAST_COL,      y: -2280, w: 200, h: 130, sign: "ASSAY OFFICE",  f: "W", arch: "STONE", accent: "teal" },
           { x: WEST_COL,      y: -2000, w: 200, h: 135, sign: "GENERAL STORE", f: "E", arch: "FALSE_FRONT", accent: "teal" },
-          { x: EAST_COL - 10, y: -2000, w: 180, h: 135, sign: "SHERIFF",       f: "W", arch: "STONE", accent: "red" },
-          { x: WEST_COL + 5,  y: -1730, w: 230, h: 145, sign: "SALOON",        f: "E", arch: "TWO_STOREY", accent: "teal" },
+          { x: 1602,         y: -2000, w: 225, h: 170, sign: "SHERIFF",       f: "W", arch: "SHERIFF", accent: "red" },
+          { x: 940,          y: -1730, w: 350, h: 235, sign: "COPPER SPUR SALOON", f: "E", arch: "SALOON", accent: "teal" },
           { x: EAST_COL,      y: -1730, w: 195, h: 130, sign: "BANK",          f: "W", arch: "STONE", accent: "red" },
           { x: WEST_COL,      y: -1470, w: 175, h: 125, sign: "DOCTOR",        f: "E", arch: "FALSE_FRONT", accent: "red" },
           { x: EAST_COL + 5,  y: -1470, w: 200, h: 125, sign: "BLACKSMITH",    f: "W", arch: "BARN" },
@@ -1986,7 +2001,60 @@ function legacyGenerateMap() {
           // carriageway painted under it and the ruts running through the shaft
           // collar. Moved west onto its own bench at the head of the street,
           // which is where a mine head belongs -- above the town, not in it.
-          { x: MAIN_X - 520, y: -2900, w: 260, h: 160, sign: "MINE HEAD",         f: "S", arch: "HEADFRAME" }
+          { x: MAIN_X - 520, y: -2900, w: 260, h: 160, sign: "MINE HEAD",         f: "S", arch: "HEADFRAME" },
+
+          // The boom town continues north of the original crossroads. Three
+          // districts have their own street fronts and skyline: Market Row,
+          // the civic square, and the railway/ore yards east of Mesa Street.
+          // Main remains a clear 360-unit carriageway from church to court.
+          { x: 970,  y: -3160, w: 290, h: 180, sign: "GRAND HOTEL",       f: "E", arch: "ARCADE", accent: "red" },
+          { x: 1615, y: -3160, w: 245, h: 170, sign: "DROVERS EXCHANGE",  f: "W", arch: "FALSE_FRONT", accent: "teal" },
+          { x: 990,  y: -3890, w: 250, h: 185, sign: "OPERA HOUSE",       f: "E", arch: "ARCADE", accent: "teal" },
+          { x: 1610, y: -3890, w: 240, h: 160, sign: "SAVINGS & LOAN",    f: "W", arch: "STONE", accent: "red" },
+          { x: 970,  y: -4640, w: 290, h: 175, sign: "COUNTY COURT",      f: "E", arch: "COURTHOUSE" },
+          { x: 1610, y: -4640, w: 240, h: 170, sign: "SURVEYORS HALL",    f: "W", arch: "ADOBE", accent: "teal" },
+
+          // Market Street shopfronts face each other across the road. Gaps at
+          // x1300 and x2900 are measured crossroads, never fenced entrances.
+          { x: -200, y: -3620, w: 260, h: 155, sign: "SADDLER & TACK",    f: "S", arch: "WORKSHOP" },
+          { x: 200,  y: -3620, w: 250, h: 145, sign: "APOTHECARY",        f: "S", arch: "FALSE_FRONT", accent: "teal" },
+          { x: 600,  y: -3620, w: 255, h: 155, sign: "BAKERY",            f: "S", arch: "CABIN", accent: "red" },
+          { x: 2050, y: -3620, w: 270, h: 150, sign: "BOOTMAKER",         f: "S", arch: "FALSE_FRONT" },
+          { x: 2470, y: -3620, w: 260, h: 150, sign: "GOLDEN CROWN HOTEL",f: "S", arch: "TWO_STOREY", accent: "red" },
+          { x: 3260, y: -3620, w: 340, h: 180, sign: "RAILWAY STATION",   f: "S", arch: "RAIL_DEPOT", accent: "teal" },
+          { x: -200, y: -3180, w: 250, h: 155, sign: "CARRIAGE WORKS",    f: "N", arch: "WORKSHOP", accent: "red" },
+          { x: 210,  y: -3180, w: 245, h: 140, sign: "GLASS & CHINA",     f: "N", arch: "FALSE_FRONT" },
+          { x: 560,  y: -3180, w: 220, h: 145, sign: "PHOTOGRAPHER",      f: "N", arch: "CABIN", accent: "teal" },
+          { x: 2050, y: -3180, w: 275, h: 160, sign: "MINERS SUPPLY",     f: "N", arch: "BARN", accent: "red" },
+          { x: 2470, y: -3180, w: 260, h: 150, sign: "MONEY ORDERS",      f: "N", arch: "STONE" },
+          { x: 3260, y: -3180, w: 340, h: 175, sign: "PACIFIC FREIGHT",   f: "N", arch: "WAREHOUSE", accent: "teal" },
+
+          // Mesa Street and the civic district, above the market.
+          { x: -190, y: -4540, w: 265, h: 160, sign: "WATER COMPANY",     f: "S", arch: "WORKSHOP", accent: "teal" },
+          { x: 235,  y: -4540, w: 255, h: 170, sign: "CATTLE MENS HALL",   f: "S", arch: "ARCADE" },
+          { x: 630,  y: -4540, w: 245, h: 145, sign: "POST OFFICE",       f: "S", arch: "STONE", accent: "red" },
+          { x: 2050, y: -4540, w: 270, h: 170, sign: "TERRITORIAL RECORDS",f: "S", arch: "ADOBE" },
+          { x: 2470, y: -4540, w: 265, h: 160, sign: "DRY GULCH GAZETTE", f: "S", arch: "FALSE_FRONT", accent: "teal" },
+          { x: 3260, y: -4540, w: 335, h: 180, sign: "ORE & COAL DEPOT",  f: "S", arch: "WAREHOUSE", accent: "red" },
+          { x: -190, y: -4100, w: 260, h: 160, sign: "STEAM LAUNDRY",     f: "N", arch: "WORKSHOP" },
+          { x: 235,  y: -4100, w: 255, h: 155, sign: "MUSIC & BOOKS",      f: "N", arch: "FALSE_FRONT", accent: "teal" },
+          { x: 630,  y: -4100, w: 245, h: 160, sign: "BOARDING HOUSE",     f: "N", arch: "TWO_STOREY", accent: "red" },
+          { x: 2050, y: -4100, w: 275, h: 155, sign: "CONFECTIONER",      f: "N", arch: "ARCADE", accent: "red" },
+          { x: 2470, y: -4100, w: 260, h: 155, sign: "TERRITORY MUSEUM",   f: "N", arch: "ADOBE", accent: "teal" },
+          { x: 3260, y: -4100, w: 320, h: 175, sign: "ENGINE HOUSE",       f: "N", arch: "WORKSHOP" },
+
+          // A second commercial frontage and the drovers' quarter. These
+          // extend Front Street east instead of filling its carriageway.
+          { x: 2810, y: -1350, w: 270, h: 145, sign: "TRADING POST",      f: "S", arch: "ARCADE", accent: "teal" },
+          { x: 3290, y: -1350, w: 290, h: 160, sign: "WAGON MASTERS",     f: "S", arch: "WORKSHOP", accent: "red" },
+          { x: 2810, y: -910,  w: 275, h: 145, sign: "TRAILS END INN",     f: "N", arch: "TWO_STOREY" },
+          { x: 3290, y: -910,  w: 295, h: 155, sign: "STAGECOACH OFFICE", f: "N", arch: "RAIL_DEPOT", accent: "red" },
+          { x: 3350, y: -2420, w: 350, h: 195, sign: "SAWMILL",           f: "W", arch: "WORKSHOP" },
+          { x: 3350, y: -1910, w: 340, h: 185, sign: "FOUNDRY",           f: "W", arch: "WAREHOUSE", accent: "red" },
+          { x: 3350, y: -430,  w: 340, h: 180, sign: "DROVERS REST",       f: "W", arch: "ARCADE", accent: "teal" },
+          { x: 3350, y: -80,   w: 325, h: 175, sign: "TRAIL OUTFITTERS",  f: "W", arch: "FALSE_FRONT", accent: "red" },
+          { x: -190, y: -2710, w: 260, h: 160, sign: "COOPER & BARRELS",   f: "E", arch: "WORKSHOP" },
+          { x: 235,  y: -2710, w: 255, h: 145, sign: "RANCHERS MERCANTILE",f: "S", arch: "FALSE_FRONT", accent: "teal" }
       ];
       for (let t of westernBuildings) {
           buildings.push({ x: t.x, y: t.y, w: t.w, h: t.h, isWesternBldg: true,
@@ -1994,7 +2062,11 @@ function legacyGenerateMap() {
                            hasBell: t.hasBell,
                            isChurch: t.arch === "CHAPEL" && !t.hasBell,
                            isLivery: t.arch === "BARN",
-                           facing: t.f });
+                           facing: t.f,
+                           isFrontierSaloon: t.arch === "SALOON",
+                           isFrontierSheriff: t.arch === "SHERIFF",
+                           _rise: t.arch === "SALOON" ? 34 : t.arch === "COURTHOUSE" ? 32 :
+                                  t.arch === "ARCADE" || t.arch === "RAIL_DEPOT" ? 29 : undefined });
       }
 
       // -- Street furniture -------------------------------------------------
@@ -2015,16 +2087,16 @@ function legacyGenerateMap() {
           { x: WEST_COL + 130, y: -1880, w: 38, h: 38, isCrateProp: true },
           { x: EAST_COL + 130, y: -655,  w: 44, h: 44, isCrateProp: true },
           { x: MAIN_X - 700,  y: FRONT_Y - 120, w: 44, h: 44, isCrateProp: true },
-          { x: MAIN_X + 950,  y: FRONT_Y + 150, w: 44, h: 44, isCrateProp: true },
+          { x: MAIN_X + 990,  y: FRONT_Y + 150, w: 44, h: 44, isCrateProp: true },
           // Hay by the stable, the freight barn and the mill
           { x: EAST_COL + 170, y: -100, w: 60, h: 46, isHayBale: true },
           { x: EAST_COL + 170, y: -30,  w: 60, h: 46, isHayBale: true },
           { x: MAIN_X + 1150,  y: -320, w: 60, h: 46, isHayBale: true },
           { x: MAIN_X - 1080,  y: -1790, w: 60, h: 46, isHayBale: true },
           // Wagons: one at the depot, one at the freight barn, one broken down
-          { x: WEST_COL + 150, y: -370, w: 96, h: 54, isWagonProp: true },
-          { x: MAIN_X + 1010,  y: -430, w: 96, h: 54, isWagonProp: true },
-          { x: MAIN_X - 980,   y: -1000, w: 96, h: 54, isWagonProp: true },
+          { x: WEST_COL + 138, y: -330, w: 96, h: 54, isWagonProp: true },
+          { x: MAIN_X + 965,   y: -430, w: 96, h: 54, isWagonProp: true },
+          { x: MAIN_X - 1040,  y: -960, w: 96, h: 54, isWagonProp: true },
           // The town well on the plaza's western apron, off both carriageways,
           // and a second one out by the corrals
           { x: MAIN_X - 430, y: FRONT_Y - 320, w: 58, h: 58, isWell: true },
@@ -2038,7 +2110,25 @@ function legacyGenerateMap() {
           { x: MAIN_X - 1360, y: -800,  w: 42, h: 42, isCactusProp: true },
           { x: MAIN_X + 1420, y: -60,   w: 46, h: 46, isCactusProp: true },
           { x: MAIN_X - 800,  y: -3080, w: 44, h: 44, isCactusProp: true },
-          { x: MAIN_X + 340,  y: -3120, w: 40, h: 40, isCactusProp: true }
+          { x: MAIN_X + 500,  y: -3020, w: 40, h: 40, isCactusProp: true },
+          // Freight stacked behind the new station, industrial water, and
+          // court-square furniture stay off the street centre lines.
+          { x: 3450, y: -3750, w: 96, h: 54, isWagonProp: true },
+          { x: 3430, y: -3050, w: 60, h: 46, isHayBale: true },
+          { x: 3370, y: -3060, w: 42, h: 42, isCrateProp: true },
+          { x: 3540, y: -4080, w: 44, h: 44, isCrateProp: true },
+          { x: 3350, y: -2610, w: 72, h: 72, isWaterTower: true },
+          { x: 3560, y: -2430, w: 42, h: 42, isCrateProp: true },
+          { x: 3560, y: -2350, w: 38, h: 38, isCrateProp: true },
+          { x: 3530, y: -1790, w: 96, h: 54, isWagonProp: true },
+          { x: 1810, y: -3870, w: 58, h: 58, isWell: true },
+          { x: 900, y: -4440, w: 74, h: 30, isCrateProp: true },
+          { x: 1710, y: -4470, w: 74, h: 30, isCrateProp: true },
+          { x: 660, y: -4790, w: 48, h: 48, isCactusProp: true },
+          { x: 1820, y: -4780, w: 46, h: 46, isCactusProp: true },
+          { x: -370, y: -3880, w: 72, h: 72, isWaterTower: true },
+          { x: 20, y: -3900, w: 60, h: 46, isHayBale: true },
+          { x: -360, y: -2820, w: 96, h: 54, isWagonProp: true }
       ];
       for (let t of townProps) buildings.push(t);
 
@@ -2077,8 +2167,8 @@ function legacyGenerateMap() {
           }
       };
       pen(MAIN_X + 900, -160, 460, 380);
-      pen(MAIN_X + 900, -1500, 420, 340);
-      pen(MAIN_X - 950, -1500, 400, 320);
+      pen(MAIN_X + 950, -1670, 420, 280);
+      pen(-260, -1510, 400, 320);
 
       // The old town perimeter is gone.
       //
@@ -2105,8 +2195,11 @@ function legacyGenerateMap() {
 
       // Dusty ground speckles (generated once so they don't shimmer every frame)
       window.westernDust = [];
-      for (let i = 0; i < 220; i++) {
-          window.westernDust.push({ x: random(830, 1770), y: random(-2160, -660), sz: random(4, 11) });
+      const dustRand = makeRng(chunkHash(3, 0, 0, 0x4455));
+      for (let i = 0; i < 460; i++) {
+          // Separate seeded stream makes the new detail stable without
+          // consuming the campaign's spawn/loot random sequence.
+          window.westernDust.push({ x: -420 + dustRand() * 4020, y: -4800 + dustRand() * 5060, sz: 4 + dustRand() * 7 });
       }
       
   } else {
@@ -2273,7 +2366,7 @@ function dgGable(aw, ah, col, colHi, inset) {
 
 // ---------------------------------------------------------------------------
 // WESTERN BUILDING ARCHETYPES
-// Nine silhouettes instead of one. A frontier high street was built out of
+// Sixteen silhouettes instead of one. A frontier high street was built out of
 // whatever the trade could afford -- cut timber, mud brick, dressed stone,
 // canvas -- and that is where the variety in a real one comes from, so the
 // archetype is chosen by what the premises does, not at random.
@@ -2411,6 +2504,203 @@ function drawWesternBuilding(b) {
   rotate(dgFaceAngle(facing));
 
   switch (arch) {
+
+    case "SALOON": {
+      dgBoardwalk(aw, ah, true);
+      dgF(DG.woodLo); noStroke(); rect(-aw / 2 - 4, -ah / 2 - 4, aw + 8, ah + 8, 3);
+      dgF(DG.sandLo); rect(-aw / 2, -ah / 2, aw, ah, 3);
+      // Four hip-roof planes and a raised clerestory make the long bar read
+      // as a substantial room rather than an enlarged flat storefront.
+      const x0=-aw/2+8,x1=aw/2-8,y0=-ah/2+8,y1=ah/2-64;
+      const rx=aw*.21,ry=(y0+y1)*.5;
+      dgF([189,94,68]); quad(x0,y0,x1,y0,rx,ry-12,-rx,ry-12);
+      dgF(DG.red); quad(x0,y1,x1,y1,rx,ry+12,-rx,ry+12);
+      dgF(DG.redLo); quad(x0,y0,-rx,ry-12,-rx,ry+12,x0,y1);
+      dgF([205,112,78]); quad(x1,y0,rx,ry-12,rx,ry+12,x1,y1);
+      dgF(DG.woodLo); rect(-rx-3,ry-16,rx*2+6,35,2);
+      dgF(DG.tealLo); rect(-rx,ry-13,rx*2,29,2);
+      dgF(DG.glassHi,140); rect(-rx+5,ry-9,rx*2-10,7);
+      dgS(DG.redLo,1,125);
+      for(let yy=y0+12;yy<y1;yy+=16)line(x0+4,yy,x1-4,yy);
+      noStroke();
+      for(const sx of [-1,1]) {
+        dgF(DG.stoneLo); rect(sx*(aw*.32)-11,y0+18,22,25,2);
+        dgF(DG.stoneHi); rect(sx*(aw*.32)-8,y0+15,16,9,1);
+        dgF(DG.ink,190); rect(sx*(aw*.32)-5,y0+17,10,5);
+      }
+      const fy=dgFacadeBand(aw,ah,62,DG.wood,DG.sandHi);
+      for(const wx of [-aw/2+18,-13,aw/2-44])dgWindow(wx,fy+8,26,19,accent);
+      // Balcony posts overlap the wall bands; they do not slice black seams
+      // through the shaded timber behind them.
+      dgF(accent); rect(-aw/2-9,fy+32,aw+18,6,1);
+      dgS(DG.woodLo,2,190);
+      for(let px=-aw/2+4;px<aw/2;px+=17)line(px,fy+23,px,fy+34);
+      for(const px of [-aw/2+6,-aw*.22,aw*.22,aw/2-6]){
+        dgS(DG.woodLo,5,220);line(px,fy+34,px,ah/2+24);
+        dgS(DG.woodHi,1.5,190);line(px-1,fy+34,px-1,ah/2+22);
+      }
+      noStroke();
+      dgF(DG.ink); rect(-24,fy+39,48,23,3);
+      dgF(accent); rect(-22,fy+47,20,13,2);rect(2,fy+47,20,13,2);
+      dgF(DG.woodHi);rect(-24,fy+60,48,3);
+      dgWindow(-aw/2+23,fy+42,29,15,null);
+      dgWindow(aw/2-52,fy+42,29,15,null);
+      dgSignPlate(aw,ah,accent);
+      // Two warm lanterns on either side of the swinging entrance.
+      for(const px of [-34,34]){
+        dgF(DG.iron);rect(px-4,ah/2+3,8,12,1);
+        fill(239,183,83,180);rect(px-2.5,ah/2+5,5,7,1);
+      }
+      break;
+    }
+
+    case "SHERIFF": {
+      dgF(DG.stoneLo);noStroke();rect(-aw/2-4,-ah/2-4,aw+8,ah+8,2);
+      dgF(DG.stoneHi);rect(-aw/2,-ah/2,aw,ah,2);
+      dgF(DG.adobeLo);rect(-aw/2+9,-ah/2+9,aw-18,ah-45,2);
+      dgF(DG.adobeHi);rect(-aw/2+13,-ah/2+13,aw-26,ah-54,1);
+      // Cell-block skylights and thick walls distinguish the law office from
+      // the bank next door without changing its collision footprint.
+      for(const px of [-aw*.26,aw*.26]){
+        dgF(DG.ink);rect(px-19,-ah*.2,38,22,1);
+        dgF(DG.iron);rect(px-16,-ah*.2+3,32,16);
+        dgS(DG.stoneHi,2);
+        for(let k=0;k<4;k++)line(px-12+k*8,-ah*.2+3,px-12+k*8,-ah*.2+19);
+        noStroke();
+      }
+      const sy=dgFacadeBand(aw,ah,32,DG.stone,DG.stoneHi);
+      dgDoor(-16,sy+6,32,24,accent);
+      dgWindow(-aw/2+17,sy+8,24,17,null);dgWindow(aw/2-41,sy+8,24,17,null);
+      dgF(DG.woodLo);rect(-aw/2+4,sy,8,32);rect(aw/2-12,sy,8,32);
+      dgSignPlate(aw,ah,accent);
+      const by=-ah/2+24;
+      dgF([206,173,94]);beginShape();
+      for(let k=0;k<12;k++){const a=k*Math.PI/6-Math.PI/2,r=k%2?7:15;vertex(Math.cos(a)*r,by+Math.sin(a)*r);}
+      endShape(CLOSE);dgF(DG.woodLo);ellipse(0,by,6,6);
+      break;
+    }
+
+    case "COURTHOUSE": {
+      dgBoardwalk(aw,ah,true);
+      dgF(DG.stoneLo);noStroke();rect(-aw/2-5,-ah/2-5,aw+10,ah+10,2);
+      dgF(DG.stoneHi);rect(-aw/2,-ah/2,aw,ah,2);
+      dgGable(aw-16,ah-44,[111,118,118],[148,159,157],0);
+      const fy=dgFacadeBand(aw,ah,44,DG.sandLo,DG.sandHi);
+      dgDoor(-18,fy+12,36,30,DG.woodLo);
+      for(const wx of [-aw/2+20,aw/2-44])dgWindow(wx,fy+14,24,22,null);
+      for(const px of [-aw/2+8,-aw*.22,aw*.22,aw/2-13]){
+        dgF(DG.stoneLo);rect(px-2,fy+4,10,39);
+        dgF(DG.sandHi);rect(px,fy+4,6,39);rect(px-3,fy+2,12,6);rect(px-3,fy+36,12,7);
+      }
+      // A raised octagonal cupola: shaded drum, faceted cap, small clock.
+      fill(0,0,0,48);ellipse(4,-ah*.18+6,55,48);
+      dgF(DG.stoneLo);rect(-20,-ah*.18-20,40,39,4);
+      dgF(DG.stoneHi);rect(-17,-ah*.18-21,34,30,3);
+      dgF([78,96,96]);quad(-25,-ah*.18-2,0,-ah*.18-29,25,-ah*.18-2,0,-ah*.18+21);
+      dgF([147,171,165]);triangle(-25,-ah*.18-2,0,-ah*.18-29,0,-ah*.18-2);
+      dgF(DG.sign);ellipse(0,-ah*.18+8,16,16);
+      dgS(DG.ink,1.4);line(0,-ah*.18+8,0,-ah*.18+3);line(0,-ah*.18+8,4,-ah*.18+10);noStroke();
+      dgSignPlate(aw,ah,DG.woodLo);
+      break;
+    }
+
+    case "ARCADE": {
+      dgBoardwalk(aw,ah,true);
+      dgF(DG.woodLo);noStroke();rect(-aw/2-4,-ah/2-4,aw+8,ah+8,2);
+      dgF(DG.adobe);rect(-aw/2,-ah/2,aw,ah,2);
+      // A mansard roof wraps a small upper deck. The four slopes keep the
+      // opera house and grand hotel distinct from an ordinary gable roof.
+      const x0=-aw/2+6,x1=aw/2-6,y0=-ah/2+6,y1=ah/2-46;
+      dgF(DG.tealLo);quad(x0,y0,x1,y0,x1-17,y0+21,x0+17,y0+21);
+      dgF(DG.teal);quad(x0,y1,x1,y1,x1-17,y1-19,x0+17,y1-19);
+      dgF([82,139,132]);quad(x1,y0,x1,y1,x1-17,y1-19,x1-17,y0+21);
+      dgF([46,96,91]);quad(x0,y0,x0,y1,x0+17,y1-19,x0+17,y0+21);
+      dgF(DG.shingleHi);rect(x0+17,y0+21,aw-46,y1-y0-40,2);
+      dgS(DG.shingle,1,140);
+      for(let yy=y0+28;yy<y1-21;yy+=12)line(x0+20,yy,x1-20,yy);
+      noStroke();
+      const fy=dgFacadeBand(aw,ah,46,DG.sandLo,DG.sandHi);
+      for(let px=-aw/2+16;px<aw/2-12;px+=42){
+        dgF(DG.woodLo);rect(px,fy+9,30,24,3);
+        dgF(accent);rect(px+3,fy+12,24,19,3);
+        dgF(DG.sandHi);rect(px-3,fy+8,5,37);rect(px+29,fy+8,5,37);
+      }
+      dgDoor(-15,fy+23,30,21,DG.woodLo);
+      dgF(accent);rect(-aw/2-8,fy+35,aw+16,5,1);
+      dgSignPlate(aw,ah,accent);
+      break;
+    }
+
+    case "WORKSHOP": {
+      dgF(DG.woodLo);noStroke();rect(-aw/2-4,-ah/2-4,aw+8,ah+8,2);
+      // Three sawtooth bays carry bright roof glazing on one plane and worn
+      // timber on the other; a brick stack belongs to the industrial yard.
+      const bays=3,bw=(aw-12)/bays,y0=-ah/2+5,y1=ah/2-32;
+      for(let k=0;k<bays;k++){
+        const x=-aw/2+6+k*bw;
+        dgF(k%2?DG.shingle:DG.wood);quad(x,y0,x+bw*.68,y0,x+bw*.68,y1,x,y1);
+        dgF(DG.glass);quad(x+bw*.68,y0,x+bw-2,y0,x+bw-2,y1,x+bw*.68,y1);
+        dgF(DG.glassHi,125);rect(x+bw*.72,y0+3,bw*.09,y1-y0-6);
+        dgS(DG.woodLo,1.2,165);
+        for(let yy=y0+18;yy<y1;yy+=22)line(x+3,yy,x+bw-3,yy);
+        noStroke();
+      }
+      const fy=dgFacadeBand(aw,ah,30,DG.wood,DG.woodHi);
+      dgF(DG.woodLo);rect(-aw*.27,fy+5,aw*.54,24,2);
+      dgF(DG.sandLo);rect(-aw*.25,fy+8,aw*.23,20);rect(aw*.02,fy+8,aw*.23,20);
+      dgS(DG.iron,3);line(-aw*.32,fy+3,aw*.32,fy+3);noStroke();
+      dgF(DG.redLo);rect(-aw/2+12,-ah/2+17,21,27,1);
+      dgF(DG.stoneHi);rect(-aw/2+10,-ah/2+14,25,8,1);
+      dgF(DG.ink);rect(-aw/2+15,-ah/2+16,15,4);
+      dgSignPlate(aw,ah,accent);
+      break;
+    }
+
+    case "RAIL_DEPOT": {
+      dgBoardwalk(aw,ah,true);
+      dgF(DG.woodLo);noStroke();rect(-aw/2-5,-ah/2-5,aw+10,ah+10,2);
+      dgGable(aw,ah-34,DG.teal,[97,152,143],0);
+      dgS(DG.tealLo,1,150);
+      for(let px=-aw/2+15;px<aw/2-5;px+=16)line(px,-ah/2+3,px,ah/2-36);
+      noStroke();
+      const fy=dgFacadeBand(aw,ah,34,DG.sandLo,DG.sandHi);
+      for(let px=-aw/2+15;px<aw/2-24;px+=47)dgWindow(px,fy+7,28,22,null);
+      dgDoor(-18,fy+5,36,27,accent);
+      dgF(DG.tealLo);rect(-aw/2-16,ah/2-7,aw+32,18,2);
+      dgF(DG.teal);rect(-aw/2-16,ah/2-7,aw+32,5,2);
+      dgS(DG.woodLo,4);
+      for(let px=-aw/2-8;px<aw/2+12;px+=54)line(px,ah/2+10,px,ah/2+24);
+      noStroke();
+      dgF(DG.woodLo);rect(-24,-ah*.2-20,48,37,2);
+      dgF(DG.sandHi);rect(-21,-ah*.2-19,42,28,2);
+      dgF(DG.tealLo);quad(-27,-ah*.2-19,0,-ah*.2-35,27,-ah*.2-19,0,-ah*.2-13);
+      dgF(DG.sign);ellipse(0,-ah*.2-3,17,17);
+      dgS(DG.ink,1.5);line(0,-ah*.2-3,0,-ah*.2-9);line(0,-ah*.2-3,5,-ah*.2-1);noStroke();
+      dgSignPlate(aw,ah,accent);
+      break;
+    }
+
+    case "WAREHOUSE": {
+      dgF(DG.woodLo);noStroke();rect(-aw/2-4,-ah/2-4,aw+8,ah+8,2);
+      dgGable(aw,ah-30,DG.shingle,[153,125,92],0);
+      dgS(DG.woodLo,1.3,155);
+      for(let px=-aw/2+16;px<aw/2-5;px+=20)line(px,-ah/2+3,px,ah/2-33);
+      noStroke();
+      for(const px of [-aw*.29,aw*.29]){
+        dgF(DG.iron);rect(px-20,-ah*.15-11,40,24,2);
+        dgF(DG.glass);rect(px-16,-ah*.15-8,32,17,1);
+        dgF(DG.glassHi,125);rect(px-14,-ah*.15-6,10,13);
+      }
+      const fy=dgFacadeBand(aw,ah,30,DG.wood,DG.woodHi);
+      for(const px of [-aw*.25,aw*.25]){
+        dgF(DG.woodLo);rect(px-22,fy+4,44,26,1);
+        dgF(accent);rect(px-19,fy+7,38,22);
+        dgS(DG.woodLo,2,160);line(px-17,fy+8,px+17,fy+28);noStroke();
+      }
+      dgF(DG.iron);rect(-aw/2+5,fy+2,aw-10,3);
+      dgSignPlate(aw,ah,accent);
+      break;
+    }
 
     // -- Cut-timber storefront with a false front and an awning -------------
     case "FALSE_FRONT": {
@@ -2764,6 +3054,9 @@ function smooth01(t) { return t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t); }
 function groundElev(x, y) {
   const zs = elevZones();
   let h = civicGroundHeight(x, y);
+  // A gulch lowers the shared ground field; figures, movement and the light
+  // rig read this same value, including when Dry Gulch's story is settled.
+  if (BIOME_ACTIVE && currentBiome === 3) h += frontierCanyonHeight(x, y);
   if (!zs) return h;
   for (let i = 0; i < zs.length; i++) {
     const z = zs[i];
@@ -2779,7 +3072,7 @@ function groundElev(x, y) {
 
 // Render scale for a figure standing at (x, y). Height reads as proximity.
 function elevRenderScale(x, y) {
-  if (!elevZones() && (!BIOME_ACTIVE || currentBiome !== 1)) return 1;
+  if (!elevZones() && (!BIOME_ACTIVE || (currentBiome !== 1 && currentBiome !== 3))) return 1;
   const s = 1 + groundElev(x, y) * ELEV_SCALE;
   return s < ELEV_SCALE_LO ? ELEV_SCALE_LO : s > ELEV_SCALE_HI ? ELEV_SCALE_HI : s;
 }
@@ -2788,7 +3081,7 @@ function elevRenderScale(x, y) {
 // Climbing costs, descending pays a little of it back, and the range is kept
 // narrow -- this is meant to be felt, not fought.
 function elevSpeedFactor(x, y, vx, vy) {
-  if (!elevZones() && (!BIOME_ACTIVE || currentBiome !== 1)) return 1;
+  if (!elevZones() && (!BIOME_ACTIVE || (currentBiome !== 1 && currentBiome !== 3))) return 1;
   const m = Math.hypot(vx, vy);
   if (m < 0.01) return 1;
   const step = 26 / m;
@@ -3229,6 +3522,7 @@ function drawBuildings(list, i0, i1) {
     // generic building branch drew a dark box under every tree in the wood.
     if (b.isTreeTrunk) continue;
     if (b.forestHuntingLodge) { paintForestHuntingLodge(window, b); continue; }
+    if (b.isFrontierBountyStructure) { paintFrontierBountyStructure(window, b); continue; }
     if (BIOME_ACTIVE && b.isGrassLot && !b.isPond && !b.isParkingLot) continue;
     if ((currentLevel === 1 || currentLevel === 2) && b.isGrassLot && !b.isPond && !b.isParkingLot) continue;
     if (b.isParkingCar) continue; 
@@ -5583,6 +5877,14 @@ function draw() {
     return;
   }
 
+  // Interior activities have their own bounded scene and controls. Keep them
+  // ahead of campaign objectives, outdoor AI and chunk residency updates.
+  if (frontierSaloonIsInside()) {
+    updateFrontierSaloonActivity();
+    drawFrontierSaloonScene();
+    return;
+  }
+
   // TOWER DESTROYED WIN CONDITION TRIGGER
   // One shot. The old guard was `!towersDefeated`, and that flag is not set until
   // an ambush is cleared or the sector is won -- on a sector whose objective IS
@@ -6138,6 +6440,13 @@ viewBottom = camY + height / zoom + shakePad;
     drawForestHuntingSettlement();
     drawForestWildlifeAnimals();
   }
+  if (BIOME_ACTIVE && currentBiome === 3) {
+    if (doTick && !isWin) {
+      updateFrontierSaloonActivity();
+      updateFrontierBounties();
+    }
+    drawFrontierBountyWorld();
+  }
   
   if (typeof drawBuildingShadows === 'function') drawBuildingShadows();
   if (_depthOn) {
@@ -6572,6 +6881,10 @@ viewBottom = camY + height / zoom + shakePad;
       if (currentLevel !== 0 || (inUpstairsRoom && dist(player.x, player.y, 150, 0) >= 80 && dist(player.x, player.y, 0, -200) >= 120 && dist(player.x, player.y, 0, 250) >= 80)) drawUI();
       else if (!inUpstairsRoom && dist(player.x, player.y, -400, 0) >= 80) drawUI();
       if (BIOME_ACTIVE && currentBiome === 2) drawForestHuntingHud();
+      if (BIOME_ACTIVE && currentBiome === 3) {
+        drawFrontierSaloonHud();
+        drawFrontierBountyHud();
+      }
       
       // --- MOUNT / DISMOUNT BUTTON ---
       if (player.mounted) drawPromptBtn("DISMOUNT");
@@ -7209,6 +7522,7 @@ if (swordPickedUp || window.pickaxeOwned) {
       else if (pauseMenuState === "WEAPONS") {
           fill(255, 100, 0); textSize(30); text("WEAPONS", width/2, height/2 - 150); fill(255); textSize(18); let wY = height/2 - 80, wList = ["PISTOL"];
           if (player && player.flags && player.flags.bowUnlocked) wList.push("BOW");
+          if (revolverUnlocked) wList.push("REVOLVER");
           if (smgUnlocked) wList.push("MACHINE GUN"); if (dualSmgUnlocked) wList.push("DUAL SMGS"); if (arUnlocked) wList.push("ASSAULT RIFLE"); if (shotgunUnlocked) wList.push("SHOTGUN"); if (rocketLauncherUnlocked) wList.push("ROCKET LAUNCHER");
           for (let w of wList) { text(w === "BOW" ? `🏹 BOW · ${player.weaponAmmo.BOW || 0} ARROWS` : `🔫 ${w} - Level 1`, width/2, wY); wY += 30; } drawBtn(height/2 + 120, "BACK");
       } 
@@ -7690,6 +8004,9 @@ function resetStoryProgress() {
     swordKillCounter = 0;
     resetForestHuntingActivity();
     resetForestWildlife();
+    resetFrontierSaloonActivity();
+    resetFrontierBounties();
+    resetFrontierEquipment();
     window.storyBeats = {};
     biomeState = {}; // A new campaign owes each sector its first arrival again.
     window.resources = { WOOD: 0, METAL: 0, STONE: 0 };
@@ -8871,7 +9188,7 @@ function nativeToOverworld(e) {
   if (e.isFriendly) return true;                  // civilians, allies, neutral garrisons
   // isAmbush marks a scripted spawn placed at fixed map coordinates. The
   // distance cull already refuses to touch them and neither does this.
-  if (e.isAmbush || e.routeA || e.isMilitary || e.bandGroup) return true;
+  if (e.isAmbush || e.routeA || e.isMilitary || e.bandGroup || e.frontierBountyId) return true;
   // The sector's own forces are never foreign to it. This is deliberately NOT
   // the same list as the overworld table: the table says what may SPAWN on the
   // open road, this says what is allowed to exist in the sector at all. Stick
@@ -9916,6 +10233,22 @@ function drawBuildingPads() {
 // skipBase: draw only the level's ground *features*, not its full-map base
 // fill. Used by drawAuthoredGroundOverlay() to lay authored ground detail over
 // streamed chunk terrain in a hybrid sector.
+function drawFrontierTownWayfinder(x,y,upper,lower) {
+  if(!inView(x,y,100))return;
+  push();translate(x,y);noStroke();
+  fill(50,35,24,45);quad(-4,5,4,5,22,24,15,25);
+  dgF(DG.woodLo);rect(-3,-26,6,48,1);
+  dgF(DG.woodHi);rect(-2,-25,2,47);
+  for(let i=0;i<2;i++){
+    const yy=-22+i*23;
+    dgF(DG.woodLo);quad(-60,yy,49,yy,61,yy+9,49,yy+18,-60,yy+18);
+    dgF(DG.sign);quad(-57,yy+2,48,yy+2,57,yy+9,48,yy+15,-57,yy+15);
+    dgF(DG.ink);textAlign(CENTER,CENTER);textFont('sans-serif');textSize(9);
+    text(i===0?upper:lower,-3,yy+9);
+  }
+  pop();
+}
+
 function legacyDrawGround(skipBase) {
     if (currentLevel === 0) {
       if (!inUpstairsRoom) { fill(40, 45, 50); } else { fill(210, 180, 140); }
@@ -10057,7 +10390,7 @@ function legacyDrawGround(skipBase) {
       }
 // --- WESTERN TOWN GROUND ---
       // Bounded region, so cull it as a whole rather than per-primitive.
-      if (typeof inView !== 'function' || inView(1300, -1500, 2400)) {
+      if (typeof inView !== 'function' || inView(1500, -2400, 4000)) {
       noStroke();
       // Feathered so the town's packed earth fades into the surrounding desert
       // rather than ending on a straight line. These used to be flat slabs,
@@ -10079,27 +10412,36 @@ function legacyDrawGround(skipBase) {
       // chunk texture -- so it buried the baked Main Street completely and the
       // carriageway came out as flat sand between two rows of shops. It is a
       // warm tint on the settlement now, not a lid over it.
-      softRect(60, -3260, 2400, 3560, 206, 179, 138, 64, 170, 6, 10);
+      softRect(-420, -4890, 4050, 5190, 206, 179, 138, 52, 200, 6, 10);
       softBlob(1300, -1140, 430, 410, 215, 189, 145, 54);                     // plaza
+      softBlob(1300,-3400,420,365,215,189,145,40);
+      softBlob(1300,-4320,440,360,215,189,145,40);
 
       // Continuous boardwalk down both kerbs, joining up the planking each
       // storefront draws for itself so the walk runs unbroken past the alleys.
       // Laid on the kerb line the columns front onto -- 1130 and 1490 -- rather
       // than as the 270-wide slab it used to be, which ran under the buildings.
       const bwW = 1130, bwE = 1490;
-      fill(150, 115, 75); noStroke();
-      rect(bwW - 30, -2700, 34, 1420); rect(bwW - 30, -980, 34, 900);
-      rect(bwE - 4, -2700, 34, 1420);  rect(bwE - 4, -980, 34, 900);
-      stroke(112, 84, 52, 160); strokeWeight(1);
-      for (let py = -2695; py < -80; py += 15) {
-          if (py > -1280 && py < -980) continue;      // the plaza breaks the walk
-          line(bwW - 30, py, bwW + 4, py);
-          line(bwE - 4, py, bwE + 30, py);
+      const walkRuns=[[-4760,-4480],[-4160,-3560],[-3240,-1280],[-980,-80]];
+      for(const run of walkRuns){
+        fill(150,115,75);noStroke();
+        rect(bwW-30,run[0],34,run[1]-run[0]);rect(bwE-4,run[0],34,run[1]-run[0]);
+        stroke(112,84,52,160);strokeWeight(1);
+        for(let py=run[0]+5;py<run[1];py+=15){line(bwW-30,py,bwW+4,py);line(bwE-4,py,bwE+30,py);}
+        noStroke();fill(0,0,0,34);
+        rect(bwW,run[0],5,run[1]-run[0]);rect(bwE-8,run[0],5,run[1]-run[0]);
       }
-      noStroke();
-      fill(0, 0, 0, 34);
-      rect(bwW, -2700, 5, 1420); rect(bwW, -980, 5, 900);
-      rect(bwE - 8, -2700, 5, 1420); rect(bwE - 8, -980, 5, 900);
+      // Planked walks connect the northern shops across their own frontage,
+      // breaking for Main Street and the railway avenue.
+      for(const streetY of [-3400,-4320])for(const side of [-1,1]){
+        const yy=streetY+side*138-16;
+        for(const run of [[-355,970],[1770,2720],[3110,3450]]){
+          fill(157,121,80);noStroke();rect(run[0],yy,run[1]-run[0],32);
+          stroke(113,84,54,145);strokeWeight(1);
+          for(let xx=run[0]+5;xx<run[1];xx+=16)line(xx,yy,xx,yy+32);
+          noStroke();fill(0,0,0,30);rect(run[0],yy+30,run[1]-run[0],3);
+        }
+      }
 
       // Dusty speckle texture (pre-generated, stays still frame to frame)
       if (window.westernDust) {
@@ -10120,6 +10462,16 @@ function legacyDrawGround(skipBase) {
       rect(1230, -25, 140, 34, 3);
       fill(30); noStroke(); textAlign(CENTER, CENTER); textSize(14); textFont('sans-serif');
       text("DRY GULCH", 1300, -8);
+      drawFrontierTownWayfinder(1520,40,"SALOON  ↑","SHERIFF  ↑");
+      drawFrontierTownWayfinder(1520,-1130,"COPPER SPUR  ↑","BOUNTIES  ↑");
+      drawFrontierTownWayfinder(1460,-3400,"COUNTY COURT  ↑","SALOON  ↓");
+      drawFrontierTownWayfinder(3060,-1130,"MAIN STREET  ←","CANYON TRAIL  →");
+      const saloon=frontierTownLandmarks().saloon;
+      if(inView(saloon.doorX,saloon.doorY,100)){
+        push();translate(saloon.doorX,saloon.doorY);rotate(-Math.PI/2);
+        dgF(DG.woodLo,180);rect(-31,-7,62,14,2);
+        dgF(DG.sign);textAlign(CENTER,CENTER);textSize(8);text("ENTER SALOON",0,0);pop();
+      }
       }
   } else {
     // LEVEL 4 & 5 GENERIC FLOOR
@@ -11420,6 +11772,7 @@ function headwearOf(id) {
   if (eT === "MILITARY_NEUTRAL" || eT === "NM0_GREY_FATIGUE" ||
       (id.isMilitary && armor)) return 'HELMET';
   if (id.isPlayer && ninja) return 'HOOD';
+  if (id.isPlayer && (id.cowboySuit !== undefined ? id.cowboySuit : cowboySuitEquipped)) return 'FRONTIER_STETSON';
   if (eT === "BANDIT") return 'BANDIT_HAT';
   if (eT === "COWBOY" || eT === "COWGIRL") return 'STETSON';
   if (eT === "LOCAL_COP") return 'COP_HAT';
@@ -11454,6 +11807,19 @@ function figureCelArc(g,x,y,w,h,c,a0,a1,k=.7) {
 }
 function drawHeadwear(g, id, kind) {
   if (!kind) return;
+  if(kind==='FRONTIER_STETSON') {
+    // A lifted crown, turned brim and crown crease retain the soft comic
+    // material contours while separating the hat from the face underneath.
+    figureCelOval(g,0,0,29,26,[94,62,37],.72);
+    figureCelOval(g,-1,-1,26,22,[155,112,66],.7);
+    figureCelOval(g,-2,-2,20,15,[187,142,88],.76);
+    g.noFill();g.stroke(108,70,43);g.strokeWeight(1.2);
+    g.bezier(-9,-3,-4,-.5,1,-.5,6,-3);g.noStroke();
+    g.fill(68,44,29);g.rect(-9,2,16,2.4,1);
+    g.fill(225,190,96);g.rect(3,1.8,2.4,2.8,.6);
+    g.stroke(216,172,109);g.strokeWeight(.8);g.noFill();
+    g.bezier(-11,-9,-4,-11,4,-10,10,-6);g.noStroke();return;
+  }
   if(kind==='NM0_HELMET'){
     figureCelOval(g,-1,0,15,16,_headCelColor.helmetRim,.8);
     figureCelOval(g,-2,-1,12,12,_headCelColor.cityHelmet,.65);
@@ -11610,6 +11976,7 @@ function figureIdentity(c) {
            bonnetCol:c.bonnetCol,shirtCol:c.shirtCol,pantsCol:c.pantsCol,vestCol:c.vestCol,
            isCityCivilian:!!c.isCityCivilian,clothingStyle:c.clothingStyle,maneCol:c.maneCol,isCharred:!!c.isCharred,
            ninjaSuit:!!(c.isPlayer&&ninjaSuitUnlocked),chemistSuit:!!(c.isPlayer&&chemistSuitUnlocked),
+           cowboySuit:!!(c.isPlayer&&cowboySuitEquipped),
            explosiveArmor:!!((c.isPlayer||c.isMilitary)&&explosiveArmorUnlocked),
            jetpack:!!(c.isPlayer&&jetpackUnlocked) };
 }
@@ -11633,6 +12000,28 @@ function drawFallenJetpack(g,pistol=false) {
   g.fill(pistol?color(129,180,97):color(213,140,63));g.rect(-7,-7,14,2,1);g.rect(-7,5,14,2,1);
 }
 
+// The same vest, kerchief and gunbelt are stamped onto fallen bodies. Details
+// follow the torso rather than changing the player's silhouette or joints.
+function drawCowboyAttire(g,TL,TW,back=false) {
+  g.push();g.scale(TL/30,TW/20);g.noStroke();
+  figureCelOval(g,-1,0,27,18,[109,69,43],.85);
+  figureCelOval(g,-2,-3,24,11,[148,97,55],.56);
+  g.fill(219,196,146);g.beginShape();
+  g.vertex(12,-3);g.bezierVertex(5,-4,1,-3,-4,-2);
+  g.vertex(-4,2);g.bezierVertex(1,3,5,4,12,3);g.endShape(CLOSE);
+  g.stroke(184,132,77);g.strokeWeight(.65);
+  g.bezier(-8,-7,-1,-7,6,-6,10,-4);g.bezier(-8,7,-1,7,6,6,10,4);g.noStroke();
+  g.fill(68,43,29);g.rect(-11,-8,3.7,16,1.2);
+  g.fill(107,69,38);g.rect(-12,3.4,6,5,1.3);g.fill(182,127,66);g.rect(-11,4,1,3.6,.4);
+  g.fill(207,168,81);g.rect(-11.3,-2.3,4.2,4.6,.7);g.fill(122,89,42);g.rect(-10.6,-1.5,2.7,3,.5);
+  for(let y=-5;y<=1;y+=2){g.fill(184,148,78);g.rect(-7.2,y,1.1,1.6,.3);}
+  g.fill(156,46,39);g.triangle(12,-5,12,5,5,0);
+  g.fill(209,68,49);g.triangle(12,-4,12,1,7,0);
+  g.fill(111,33,31);g.ellipse(11,0,3,3);
+  if(back){g.stroke(95,58,37);g.strokeWeight(.7);g.line(-6,-5,-6,5);g.noStroke();}
+  g.pop();
+}
+
 // Outfit details ride the existing torso transform, underneath wounds and
 // sleeves. Normalized dimensions also fit stunned bodies and separated torsos.
 function drawFallenAttire(g,id,TL,TW,back,progress=1,half=0) {
@@ -11640,6 +12029,7 @@ function drawFallenAttire(g,id,TL,TW,back,progress=1,half=0) {
   const t=id.eType,shirt=id.shirtCol||color(220,200,20),p=Math.max(0,Math.min(1,progress));
   const nmo=(t==='NORMAL'||t==='NM0_ROOKIE'||t==='NM0_ROOKIE_F')&&!id.isPlayer&&!id.isCharred;
   g.push();g.scale(TL/30,TW/20);g.noStroke();
+  if(id.isPlayer&&id.cowboySuit)drawCowboyAttire(g,30,20,back);
   const dc=g.drawingContext,alpha=dc?dc.globalAlpha:1;
   if(dc&&half){dc.save();dc.beginPath();dc.rect(half<0?-30:0,-20,30,40);dc.clip();}
   if(nmo&&(!back||p<1)){
@@ -13573,9 +13963,9 @@ this.punchHitCount = 0;
         "ROCKET LAUNCHER": 0,
         "TASER": Infinity, // <--- ADDED TASER
         "BOW": 0,
-        // Townsfolk reload from their own belt loops forever; the player never
-        // picks these up, so a spare-mag count would never be read.
-        "REVOLVER": Infinity,
+        // Townsfolk reload from belt loops; a purchased player revolver uses
+        // finite six-round speed loaders from the upgrade shop.
+        "REVOLVER": isP ? 0 : Infinity,
         "COACH GUN": Infinity
     };
 
@@ -13763,6 +14153,8 @@ this.skeletonTimer = 0;
     
       checkCol(nx, ny) {
     if (this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL" || this.eType === "SAUCER" || this.eType === "SAUCER_RED") return false; 
+    if (BIOME_ACTIVE && currentBiome === 3 &&
+        frontierCanyonBlocksMove(this.x, this.y, nx, ny, 15)) return true;
     if(this.isCityCivilian&&!cityCivilianAllowed(nx,ny))return true;
     if (this.ignoreBldgTimer > 0) return false; 
     
@@ -13936,7 +14328,8 @@ this.skeletonTimer = 0;
 
 
     removeCurrentWeapon() {
-      let aW = [WEAPONS.PISTOL]; 
+      let aW = [WEAPONS.PISTOL];
+      if (revolverUnlocked && (this.mags.REVOLVER>0 || this.weaponAmmo.REVOLVER>0)) aW.push(WEAPONS.REVOLVER);
       if (taserUnlocked) aW.push(WEAPONS.TASER);
       if (this.flags && this.flags.bowUnlocked) aW.push(WEAPONS.BOW);
       if (dualSmgUnlocked && (this.mags["DUAL SMGS"] > 0 || this.weaponAmmo["DUAL SMGS"] > 0)) aW.push(WEAPONS.DUAL_SMG);
@@ -15274,6 +15667,7 @@ if (this.eType === "COW") {
     let cost = dualLeftReady ? 2 : 1;
     let bLX = 31, bLY = 8, bLX_L = 59, bLY_L = -17;
     if (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { bLX = 47; bLY = 6; } else if (this.currentWeapon === WEAPONS.SMG || this.currentWeapon === WEAPONS.DUAL_SMG) { bLX = 38; bLY = 11; bLX_L = 38; bLY_L = -11; }
+    else if (this.currentWeapon === WEAPONS.REVOLVER) { bLX = 47; bLY = 11; }
     else if (this.currentWeapon === WEAPONS.BOW) { bLX = 47 - 9 * (bowShot ? Math.max(0, Math.min(1, bowShot.tension)) : 1); bLY = 0; }
     if (this.eType === "ALIEN_GATOR" || this.eType === "SNAIL_HYBRID") { bLX = 100; bLY = 19; } if (this.eType === "AERIAL_PISTOL") { bLX = 51; bLY = 16; }
     
@@ -15747,6 +16141,8 @@ if (this.isPlayer) {
         this.shirtCol=color(255);this.pantsCol=color(15);
     } else if (this.isPlayer && ninjaSuitUnlocked) {
         this.shirtCol=color(20);this.pantsCol=color(15);
+    } else if (this.isPlayer && cowboySuitEquipped) {
+        this.shirtCol=color(219,196,146);this.pantsCol=color(61,93,118);
     }
     {
         push(); rotate(boxing.active?this.aimAngle+boxing.hip:this.moveAngle); noStroke(); fill(this.pantsCol);
@@ -15851,6 +16247,7 @@ if (this.isPlayer) {
     let bLX = 31, bLY = 8, bLX_L = 59, bLY_L = -17;
     if (this.isArmed && this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { bLX = 47; bLY = 6; } 
     else if (this.currentWeapon === WEAPONS.SMG || this.currentWeapon === WEAPONS.DUAL_SMG) { bLX = 38; bLY = 11; bLX_L = 38; bLY_L = -11; }
+    else if (this.currentWeapon === WEAPONS.REVOLVER) { bLX = 47; bLY = 11; }
     else if (this.currentWeapon === WEAPONS.BOW) { bLX = 47-9*bowTension; bLY = 0; }
     else if (this.isArmed && !carryMode && this.currentWeapon === WEAPONS.TASER) {
         // The presented taser. On a carry it is drawn in the hand instead --
@@ -15905,6 +16302,7 @@ if (this.isPlayer) {
     if ((this.isPlayer || this.isMilitary) && typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked) { this.shirtCol = color(60, 100, 40); this.pantsCol = color(139, 115, 85); }
     else if (this.isPlayer && typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) { this.shirtCol = color(255); this.pantsCol = color(15); } 
     else if (this.isPlayer && ninjaSuitUnlocked) { this.shirtCol = color(20); this.pantsCol = color(15); }
+    else if (this.isPlayer && cowboySuitEquipped) { this.shirtCol=color(219,196,146);this.pantsCol=color(61,93,118); }
 
     // --- ARMS FOR ANYONE NOT HOLDING A GUN --------------------------------
     // Two passes around the torso: the sleeves and the trailing hand go down
@@ -16530,6 +16928,7 @@ if (this.isPlayer) {
     }
 
     // --- DRY GULCH ATTIRE ---------------------------------------------
+    if(this.isPlayer&&cowboySuitEquipped)drawCowboyAttire(paint?paint.api:window,this.bodyW,this.bodyH);
     if (this.eType === "BANDIT") {
         // Long duster over the shoulders, gunbelt, and a second holster. Same
         // cut as a drover's rig, darker and with more of it.
@@ -16939,6 +17338,9 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
     
     // Use the actual victim: several falling bodies can share the same spot.
     let deadGuy = victim || enemiesList.find(e => e.x === x && e.y === y && e.dead);
+    // Sheriff contracts keep their own roster. Side missions must not satisfy
+    // the sector's campaign kill counter or create ambush reinforcements.
+    if (frontierBountyOnKill(deadGuy)) return;
     // A fort muster conscripts on a tick, and a body that spawned and died
     // inside one tick period would slip through it untagged -- which drains
     // nothing and calls no wave. Ask once more here, on the body itself, and
@@ -19365,7 +19767,8 @@ function handleGamepad() {
   if (anyBtn) { window.showOnScreenControls = false; window.isDesktop = false; }
   
   if ((jP(14) || jP(15)) && !(jP(14) && jP(15)) && millis() - lastWeaponSwapTime > 300 && player) {
-      let aW = [WEAPONS.PISTOL]; 
+      let aW = [WEAPONS.PISTOL];
+      if (revolverUnlocked) aW.push(WEAPONS.REVOLVER);
       if (isStoryMode) aW.push(WEAPONS.TASER);
       if (player.flags && player.flags.bowUnlocked) aW.push(WEAPONS.BOW);
       if (dualSmgUnlocked) aW.push(WEAPONS.DUAL_SMG); else if (smgUnlocked) aW.push(WEAPONS.SMG); 
@@ -19391,6 +19794,7 @@ function handleGamepad() {
   if (jP(11) && player && player.currentWeapon === WEAPONS.BOW) rightStick.bowReleaseRequested = true;
   else if (jP(11) && millis() - lastToggleTime > 300) { headAimToggle = !headAimToggle; lastToggleTime = millis(); }
   if (jP(0) && BIOME_ACTIVE && currentBiome === 2) interactForestHuntingActivity();
+  if (jP(0) && BIOME_ACTIVE && currentBiome === 3) interactFrontierActivity();
   if (jP(10) && jetpackUnlocked && player && player.dashCooldown <= 0 && player.dashTimer <= 0 && player.meleeTimer <= 0) { player.activateDash(); }
 
   prevGamepadButtons.length = pad.buttons.length;
@@ -19416,7 +19820,13 @@ function handleTouches() {
   
   if (window.lastPauseTime === undefined) window.lastPauseTime = 0;
 
+  if (window.__frontierConsumedTouches) {
+    const heldIds = new Set(touches.map(t => t.id));
+    for (const id of window.__frontierConsumedTouches)
+      if (!heldIds.has(id)) window.__frontierConsumedTouches.delete(id);
+  }
   for (let i = 0; i < touches.length; i++) {
+    if (window.__frontierConsumedTouches && window.__frontierConsumedTouches.has(touches[i].id)) continue;
     let tx = touches[i].x, ty = touches[i].y;
     
     if (tx > width - 100 && ty < 100) {
@@ -19435,9 +19845,10 @@ function handleTouches() {
         if (meleeUnlocked && dist(tx, ty, width - 105, bY - 170) < 45) currentMeleeTouch = true; 
     }
 
-    if (dist(tx, ty, 50, 65) < 40 && (smgUnlocked || shotgunUnlocked || arUnlocked || rocketLauncherUnlocked || (player && player.flags && player.flags.bowUnlocked))) {
+    if (dist(tx, ty, 50, 65) < 40 && (revolverUnlocked || smgUnlocked || dualSmgUnlocked || shotgunUnlocked || arUnlocked || rocketLauncherUnlocked || (player && player.flags && player.flags.bowUnlocked))) {
         if (millis() - lastWeaponSwapTime > 300 && player) { 
-            let aW = [WEAPONS.PISTOL]; 
+            let aW = [WEAPONS.PISTOL];
+      if (revolverUnlocked) aW.push(WEAPONS.REVOLVER);
 			if (isStoryMode) aW.push(WEAPONS.TASER);
             if (player.flags && player.flags.bowUnlocked) aW.push(WEAPONS.BOW);
             if (dualSmgUnlocked) aW.push(WEAPONS.DUAL_SMG); else if (smgUnlocked) aW.push(WEAPONS.SMG); 
@@ -19494,154 +19905,136 @@ function drawJoysticks() {
 
 
 
-function handleShopClicks(mx, my) {
-    let cols = 2, boxW = 96, boxH = 39, spacingX = 110, spacingY = 48;
-    let startX = width/2 - (spacingX / 2), startY = height/2 - (spacingY * 2.5); 
-    let ninjaPrice = window.ninjaOwned ? 0 : 200, armorPrice = window.armorOwned ? 0 : 200, chemistPrice = window.chemistOwned ? 0 : 200;
-    let totalItems = meleeComboUnlocked ? 14 : 13; 
-    
-    for (let i = 0; i < totalItems; i++) {
-        let c = i % cols, r = floor(i / cols), bx = startX + c * spacingX, by = startY + r * spacingY;
-        if (mx > bx - boxW/2 && mx < bx + boxW/2 && my > by - boxH/2 && my < by + boxH/2) {
-            
-            // --- NEW REFILL & EQUIP LOGIC (Indices 0 to 3) ---
-            if (i === 0 && score >= 50) { score -= 50; smgUnlocked = true; player.currentWeapon = WEAPONS.SMG; player.mags["MACHINE GUN"] = 3; player.weaponAmmo["MACHINE GUN"] = WEAPONS.SMG.maxAmmo; sfx.reload(); }
-            if (i === 1 && score >= 50) { score -= 50; dualSmgUnlocked = true; player.currentWeapon = WEAPONS.DUAL_SMG; player.mags["DUAL SMGS"] = 3; player.weaponAmmo["DUAL SMGS"] = WEAPONS.DUAL_SMG.maxAmmo; sfx.reload(); }
-            if (i === 2 && score >= 50) { score -= 50; arUnlocked = true; player.currentWeapon = WEAPONS.ASSAULT_RIFLE; player.mags["ASSAULT RIFLE"] = 3; player.weaponAmmo["ASSAULT RIFLE"] = WEAPONS.ASSAULT_RIFLE.maxAmmo; sfx.reload(); }
-            if (i === 3 && score >= 50) { score -= 50; shotgunUnlocked = true; player.currentWeapon = WEAPONS.SHOTGUN; player.mags["SHOTGUN"] = 3; player.weaponAmmo["SHOTGUN"] = WEAPONS.SHOTGUN.maxAmmo; sfx.reload(); }
-            
-            // --- STANDARD UNLOCK LOGIC ---
-            if (i === 6 && !jetpackFireExplosion && score >= 1000) { score -= 1000; jetpackFireExplosion = true; sfx.charge(); }
-            if (i === 7 && !jetpackDoubleDash && score >= 1000) { score -= 1000; jetpackDoubleDash = true; sfx.charge(); }
-            if (i === 8 && !meleeComboUnlocked && score >= 200 && !explosiveArmorUnlocked && !chemistSuitUnlocked) { score -= 200; meleeComboUnlocked = true; sfx.charge(); }
-            if (i === 9 && score >= 1000) { 
-                score -= 1000; 
-                rocketLauncherUnlocked = true; 
-                player.currentWeapon = WEAPONS.ROCKET_LAUNCHER; 
-                player.mags["ROCKET LAUNCHER"] = 6; 
-                player.weaponAmmo["ROCKET LAUNCHER"] = WEAPONS.ROCKET_LAUNCHER.maxAmmo; 
-                sfx.reload(); 
-            }
-            let nextIdx = 10;
-            if (meleeComboUnlocked) { 
-                if (i === nextIdx && !window.meleeFinisherUnlocked && score >= 200 && !explosiveArmorUnlocked && !chemistSuitUnlocked) { score -= 200; window.meleeFinisherUnlocked = true; sfx.charge(); } 
-                nextIdx++; 
-            }
-            if (i === nextIdx && !ninjaSuitUnlocked && score >= ninjaPrice) { score -= ninjaPrice; ninjaSuitUnlocked = true; explosiveArmorUnlocked = false; chemistSuitUnlocked = false; isCooking = false; playerGrenades = []; playerFlasks = []; window.ninjaOwned = true; sfx.charge(); } nextIdx++;
-            if (i === nextIdx && !explosiveArmorUnlocked && score >= armorPrice) { score -= armorPrice; explosiveArmorUnlocked = true; ninjaSuitUnlocked = false; chemistSuitUnlocked = false; isCooking = false; pGrenadeAmmo = 4; pGrenadeTimer = 0; playerFlasks = []; window.armorOwned = true; sfx.charge(); } nextIdx++;
-            if (i === nextIdx && !chemistSuitUnlocked && score >= chemistPrice) { score -= chemistPrice; chemistSuitUnlocked = true; ninjaSuitUnlocked = false; explosiveArmorUnlocked = false; isCooking = false; pFlaskAmmo = 2; pFlaskTimer = 0; playerGrenades = []; window.chemistOwned = true; sfx.charge(); } 
-        }
-    }
-}
-
-
-// ==========================================
-// RESTORED: STANDARD EXPLOSION
-// ==========================================
-
-// ==========================================
-// RESTORED: MOBILE UPGRADE MENU
-// ==========================================
-// ==========================================
-// RESTORED: MOBILE UPGRADE MENU
-// ==========================================
-function drawUpgradeMenu() {
-    fill(0, 230); rect(0, 0, width, height); 
-    
-    fill(255); textAlign(CENTER, CENTER); textSize(32); textFont('sans-serif'); 
-    text("UPGRADES", width/2, 50);
-
-    fill(255, 200, 0); textSize(20); 
-    text("AVAILABLE SCORE: " + score, width/2, 85);
-
-    let ninjaPrice = window.ninjaOwned ? 0 : 200;
-    let armorPrice = window.armorOwned ? 0 : 200;
-    let chemistPrice = window.chemistOwned ? 0 : 200;
-	
-    let items = [
-        {name: "SMG", state: false, price: 50, isAmmoRefill: true},
-        {name: "DUAL SMGS", state: false, price: 50, isAmmoRefill: true},
-        {name: "ASSAULT RIFLE", state: false, price: 50, isAmmoRefill: true},
-        {name: "SHOTGUN", state: false, price: 50, isAmmoRefill: true},
-        {name: "JETPACK", state: jetpackUnlocked, price: 0},
-        {name: "MELEE", state: meleeUnlocked, price: 0},
-        {name: "FIRE DASH", state: jetpackFireExplosion, price: 1000},
-        {name: "DOUBLE DASH", state: jetpackDoubleDash, price: 1000},
-        {name: "COMBO MELEE", state: meleeComboUnlocked, price: 200, disabled: explosiveArmorUnlocked}, 
-        {name: "ROCKET LAUNCHER", state: false, price: 1000, isAmmoRefill: true} 
+// Shop descriptors are shared by drawing and input: adding a weapon or reward
+// cannot shift an unrelated purchase onto the same touch target.
+function upgradeShopItems() {
+    const blocked = explosiveArmorUnlocked || chemistSuitUnlocked;
+    const items = [
+        {id:'SMG',name:'SMG',price:50,weapon:WEAPONS.SMG},
+        {id:'DUAL',name:'DUAL SMGS',price:50,weapon:WEAPONS.DUAL_SMG},
+        {id:'RIFLE',name:'ASSAULT RIFLE',price:50,weapon:WEAPONS.ASSAULT_RIFLE},
+        {id:'SHOTGUN',name:'SHOTGUN',price:50,weapon:WEAPONS.SHOTGUN},
+        {id:'REVOLVER',name:'REVOLVER',price:100,weapon:WEAPONS.REVOLVER},
+        {id:'JETPACK',name:'JETPACK',price:0,state:jetpackUnlocked},
+        {id:'MELEE',name:'MELEE',price:0,state:meleeUnlocked},
+        {id:'FIRE_DASH',name:'FIRE DASH',price:1000,state:jetpackFireExplosion},
+        {id:'DOUBLE_DASH',name:'DOUBLE DASH',price:1000,state:jetpackDoubleDash},
+        {id:'COMBO',name:'COMBO MELEE',price:200,state:meleeComboUnlocked,disabled:blocked},
+        {id:'ROCKET',name:'ROCKET LAUNCHER',price:1000,weapon:WEAPONS.ROCKET_LAUNCHER}
     ];
-    
-    if (meleeComboUnlocked) {
-        window.meleeFinisherUnlocked = window.meleeFinisherUnlocked || false;
-        items.push({name: "MELEE FINISHER", state: window.meleeFinisherUnlocked, price: 200, disabled: explosiveArmorUnlocked});
+    if (meleeComboUnlocked) items.push({id:'FINISHER',name:'MELEE FINISHER',price:200,state:!!window.meleeFinisherUnlocked,disabled:blocked});
+    items.push({id:'NINJA',name:'NINJA SUIT',price:window.ninjaOwned?0:200,state:ninjaSuitUnlocked,suit:true});
+    items.push({id:'ARMOR',name:'EXPLOSIVE ARMOR',price:window.armorOwned?0:200,state:explosiveArmorUnlocked,suit:true});
+    items.push({id:'CHEMIST',name:'CHEMIST SUIT',price:window.chemistOwned?0:200,state:chemistSuitUnlocked,suit:true});
+    items.push({id:'COWBOY',name:'COWBOY COSTUME',price:0,state:cowboySuitEquipped,suit:true,disabled:!cowboyCostumeOwned,lockedLabel:'WIN QUICK DRAW'});
+    return items;
+}
+function upgradeShopLayout(count) {
+    const cols=width>=680?4:width>=500?3:2, rows=Math.ceil(count/cols);
+    const top=height>480?122:106, bottom=Math.max(top+rows*25,height-88);
+    const spacingY=Math.min(64,(bottom-top)/rows), spacingX=Math.min(166,(width-28)/cols);
+    const boxW=spacingX-10,boxH=Math.min(54,spacingY-7);
+    const startX=width/2-(cols-1)*spacingX/2;
+    const startY=top+(bottom-top-(rows-1)*spacingY)/2;
+    return {cols,boxW,boxH,spacingX,spacingY,startX,startY};
+}
+function equipPlayerSuit(kind) {
+    ninjaSuitUnlocked=kind==='NINJA'; explosiveArmorUnlocked=kind==='ARMOR';
+    chemistSuitUnlocked=kind==='CHEMIST'; cowboySuitEquipped=kind==='COWBOY';
+    isCooking=false; playerGrenades=[]; playerFlasks=[];
+    if(kind==='NINJA')window.ninjaOwned=true;
+    if(kind==='ARMOR'){window.armorOwned=true;pGrenadeAmmo=4;pGrenadeTimer=0;}
+    if(kind==='CHEMIST'){window.chemistOwned=true;pFlaskAmmo=2;pFlaskTimer=0;}
+    if(player&&cowboySuitEquipped){player.shirtCol=color(219,196,146);player.pantsCol=color(61,93,118);}
+}
+function purchaseUpgrade(item) {
+    if(!player||!item||item.disabled||item.state||score<item.price)return false;
+    if(item.weapon) {
+        score-=item.price;
+        const flags={SMG:'smg',DUAL:'dual',RIFLE:'rifle',SHOTGUN:'shotgun',REVOLVER:'revolver',ROCKET:'rocket'};
+        const f=flags[item.id];
+        if(f==='smg')smgUnlocked=true;if(f==='dual')dualSmgUnlocked=true;
+        if(f==='rifle')arUnlocked=true;if(f==='shotgun')shotgunUnlocked=true;
+        if(f==='revolver')revolverUnlocked=true;if(f==='rocket')rocketLauncherUnlocked=true;
+        player.currentWeapon=item.weapon;player.reloadTimer=0;
+        player.mags[item.weapon.name]=item.id==='ROCKET'?6:3;
+        player.weaponAmmo[item.weapon.name]=item.weapon.maxAmmo;sfx.reload();return true;
     }
-    
-    items.push({name: "NINJA SUIT", state: ninjaSuitUnlocked, price: ninjaPrice});
-    items.push({name: "EXPLOSIVE ARMOR", state: explosiveArmorUnlocked, price: armorPrice}); 
-    items.push({name: "CHEMIST SUIT", state: chemistSuitUnlocked, price: chemistPrice});
-	
-    // --- MOBILE SIZING: 40% SMALLER & RAISED ---
-    let cols = 2; 
-    let boxW = 96, boxH = 39; 
-    let spacingX = 110, spacingY = 48; 
-    let startX = width/2 - (spacingX / 2); 
-    let startY = height/2 - (spacingY * 2.5); 
-
-    for (let i = 0; i < items.length; i++) {
-        let c = i % cols; 
-        let r = floor(i / cols);
-        let bx = startX + c * spacingX;
-        let by = startY + r * spacingY;
-
-        let isAffordable = !items[i].state && items[i].price > 0 && score >= items[i].price && !items[i].disabled;
-        let isEquip = !items[i].state && items[i].price === 0 && (items[i].name === "NINJA SUIT" || items[i].name === "EXPLOSIVE ARMOR" || items[i].name === "CHEMIST SUIT");
-
-        // --- UPDATED OUTLINE COLOR LOGIC ---
-        if (items[i].isAmmoRefill) {
-            if (score >= items[i].price) { fill(40); stroke(255, 200, 0); } else { fill(40); stroke(100); }
-        } else if (items[i].state) { fill(40); stroke(50, 255, 50); } 
-        else if (items[i].disabled) { fill(40); stroke(150, 50, 50); } 
-        else if (isAffordable || isEquip) { fill(40); stroke(255, 200, 0); } 
-        else { fill(40); stroke(100); }
-        
-        strokeWeight(2);
-        rect(bx - boxW/2, by - boxH/2, boxW, boxH, 8);
-
-        fill(255); noStroke(); textSize(9); 
-        text(items[i].name, bx, by - 8);
-        
-        textSize(8);
-        
-        // --- UPDATED TEXT LABEL LOGIC ---
-        if (items[i].isAmmoRefill) {
-            if (score >= items[i].price) { fill(255, 200, 0); text("REFILL & EQUIP: 50", bx, by + 8); } 
-            else { fill(255, 100, 100); text("COST: 50", bx, by + 8); }
-        } else if (items[i].state) {
-            fill(50, 255, 50); 
-            if (items[i].name === "NINJA SUIT" || items[i].name === "EXPLOSIVE ARMOR" || items[i].name === "CHEMIST SUIT") text("EQUIPPED", bx, by + 8);
-            else text("UNLOCKED", bx, by + 8);
-        } else if (items[i].disabled) {
-            fill(255, 50, 50); text("NEEDS NINJA", bx, by + 8);
-        } else if (isEquip) {
-            fill(255, 200, 0); text("EQUIP (FREE)", bx, by + 8);
-        } else if (items[i].price > 0) {
-            if (score >= items[i].price) { fill(255, 200, 0); text("BUY: " + items[i].price, bx, by + 8); } 
-            else { fill(255, 100, 100); text("COST: " + items[i].price, bx, by + 8); }
-        } else {
-            fill(150); text("FIND IN WORLD", bx, by + 8);
-        }
+    if(item.suit){score-=item.price;equipPlayerSuit(item.id);sfx.charge();return true;}
+    if(item.price<=0)return false;
+    score-=item.price;
+    if(item.id==='FIRE_DASH')jetpackFireExplosion=true;
+    if(item.id==='DOUBLE_DASH')jetpackDoubleDash=true;
+    if(item.id==='COMBO')meleeComboUnlocked=true;
+    if(item.id==='FINISHER')window.meleeFinisherUnlocked=true;
+    sfx.charge();return true;
+}
+function handleShopClicks(mx,my) {
+    const items=upgradeShopItems(),L=upgradeShopLayout(items.length);
+    for(let i=0;i<items.length;i++) {
+        const bx=L.startX+(i%L.cols)*L.spacingX,by=L.startY+Math.floor(i/L.cols)*L.spacingY;
+        if(Math.abs(mx-bx)<L.boxW/2&&Math.abs(my-by)<L.boxH/2)return purchaseUpgrade(items[i]);
     }
-
-
-
-    // Now safely back inside the function!
-    fill(50, 200, 50); stroke(255); strokeWeight(2);
-    rect(width/2 - 125, height - 70, 250, 50, 8);
-    fill(0); noStroke(); textSize(18);
-        text(isPaused ? "RESUME GAME" : "START NEXT LEVEL", width/2, height - 45);
+    return false;
+}
+function drawUpgradeMenu() {
+    fill(0,230);rect(0,0,width,height);
+    fill(255);textAlign(CENTER,CENTER);textSize(height>480?32:26);textFont('sans-serif');
+    text('UPGRADES',width/2,46);fill(255,200,0);textSize(18);text('AVAILABLE SCORE: '+score,width/2,80);
+    const items=upgradeShopItems(),L=upgradeShopLayout(items.length);
+    for(let i=0;i<items.length;i++) {
+        const item=items[i],bx=L.startX+(i%L.cols)*L.spacingX,by=L.startY+Math.floor(i/L.cols)*L.spacingY;
+        const available=!item.disabled&&!item.state&&(score>=item.price)&&(item.price>0||item.suit);
+        fill(40);if(item.state)stroke(50,255,50);else if(item.disabled)stroke(135,65,55);
+        else if(available)stroke(255,200,0);else stroke(100);
+        strokeWeight(2);rect(bx-L.boxW/2,by-L.boxH/2,L.boxW,L.boxH,7);
+        noStroke();fill(255);textSize(Math.min(11,L.boxW/12,L.boxH/3));text(item.name,bx,by-L.boxH*.19);
+        textSize(Math.min(10,L.boxW/15,L.boxH/3));
+        let label;
+        if(item.state){fill(50,255,50);label=item.suit?'EQUIPPED':'UNLOCKED';}
+        else if(item.disabled){fill(229,145,111);label=item.lockedLabel||'REMOVE HEAVY SUIT';}
+        else if(item.weapon){fill(score>=item.price?color(255,200,0):color(255,100,100));label='REFILL & EQUIP: '+item.price;}
+        else if(item.suit&&item.price===0){fill(255,200,0);label='EQUIP (FREE)';}
+        else if(item.price>0){fill(score>=item.price?color(255,200,0):color(255,100,100));label=(score>=item.price?'BUY: ':'COST: ')+item.price;}
+        else{fill(150);label='FIND IN WORLD';}
+        text(label,bx,by+L.boxH*.19);
+    }
+    fill(50,200,50);stroke(255);strokeWeight(2);rect(width/2-125,height-70,250,50,8);
+    fill(0);noStroke();textSize(18);text(isPaused?'RESUME GAME':'START NEXT LEVEL',width/2,height-45);
 }
 
-
+// A duel awards ownership immediately. Equipping stays an explicit, free shop
+// choice and does not consume score or overwrite a currently worn suit.
+function awardCowboyCostume() {
+    if(cowboyCostumeOwned)return false;
+    cowboyCostumeOwned=true;return true;
+}
+function serializeFrontierEquipment(c=player) {
+    return {revolverUnlocked:!!revolverUnlocked,cowboyOwned:!!cowboyCostumeOwned,cowboyEquipped:!!cowboySuitEquipped,
+        revolverAmmo:c&&c.weaponAmmo?c.weaponAmmo.REVOLVER:0,revolverReserve:c&&c.mags?c.mags.REVOLVER:0};
+}
+function restoreFrontierEquipment(raw) {
+    raw=raw&&typeof raw==='object'?raw:{};
+    revolverUnlocked=raw.revolverUnlocked===true;cowboyCostumeOwned=raw.cowboyOwned===true;
+    cowboySuitEquipped=cowboyCostumeOwned&&raw.cowboyEquipped===true;
+    const amount=(v,max,fallback)=>typeof v==='number'&&Number.isFinite(v)?Math.max(0,Math.min(max,Math.floor(v))):fallback;
+    _frontierEquipmentRestore=revolverUnlocked?{ammo:amount(raw.revolverAmmo,6,6),reserve:amount(raw.revolverReserve,99,3)}:null;
+    if(cowboySuitEquipped){ninjaSuitUnlocked=false;explosiveArmorUnlocked=false;chemistSuitUnlocked=false;}
+}
+function resetFrontierEquipment() {
+    revolverUnlocked=false;cowboyCostumeOwned=false;cowboySuitEquipped=false;
+    _frontierEquipmentRestore=null;
+}
+function applyFrontierEquipment(c,refill=false) {
+    if(!c||!c.isPlayer)return;
+    if(revolverUnlocked&&(refill||_frontierEquipmentRestore||!c._frontierEquipmentApplied)) {
+        const saved=!refill&&_frontierEquipmentRestore;
+        c.weaponAmmo.REVOLVER=saved?saved.ammo:WEAPONS.REVOLVER.maxAmmo;c.mags.REVOLVER=saved?saved.reserve:3;
+        _frontierEquipmentRestore=null;
+    }
+    c._frontierEquipmentApplied=true;
+    if(cowboySuitEquipped){c.shirtCol=color(219,196,146);c.pantsCol=color(61,93,118);}
+}
 
 function touchStarted() {
   window.showOnScreenControls = !connectedGamepad();
@@ -19652,7 +20045,18 @@ function touchStarted() {
   let mx = touches.length > 0 ? touches[touches.length - 1].x : mouseX;
   let my = touches.length > 0 ? touches[touches.length - 1].y : mouseY;
 
+  // Local saloon controls own every tap while an indoor activity is active.
+  // Outside, an interaction finger remains consumed until it lifts, so holding
+  // a mission button cannot become right-stick gunfire on the following frame.
+  if (frontierSaloonIsInside()) { handleFrontierSaloonTap(mx, my); return false; }
   if (handleForestHuntingTap(mx, my)) return false;
+  if (handleFrontierSaloonTap(mx, my) || handleFrontierBountyTap(mx, my)) {
+    if (touches.length) {
+      if (!window.__frontierConsumedTouches) window.__frontierConsumedTouches = new Set();
+      window.__frontierConsumedTouches.add(touches[touches.length - 1].id);
+    }
+    return false;
+  }
 
   // Placement owns the screen while it is up: PLACE and CANCEL are checked
   // before anything else so a tap near the sticks cannot fire a weapon through
@@ -20479,6 +20883,8 @@ function handleDesktop() {
   const huntDown = keyIsDown(70); // F: interact/collect; E remains melee.
   if (huntDown && !window.__huntKeyWas && BIOME_ACTIVE && currentBiome === 2)
       interactForestHuntingActivity();
+  if (huntDown && !window.__huntKeyWas && BIOME_ACTIVE && currentBiome === 3)
+      interactFrontierActivity();
   window.__huntKeyWas = huntDown;
 
 
@@ -20497,6 +20903,10 @@ function handleDesktop() {
           rightStick.dist = (mouseIsPressed && mouseButton === LEFT) ? 1.0 : 0.0;
       }
   }
+}
+
+function interactFrontierActivity() {
+  return interactFrontierSaloonActivity() || interactFrontierBountyBoard();
 }
 
 function mousePressed() {
@@ -20633,6 +21043,7 @@ function countEscort(female) {
 
 function saveGame() {
     for(const e of enemiesList)bankCityPerson(e);
+    const frontierExterior = frontierSaloonSavePlayer();
     let state = {
         currentLevel, isStoryMode, score, totalKills,
         smgUnlocked, dualSmgUnlocked, shotgunUnlocked, arUnlocked, rocketLauncherUnlocked, taserUnlocked,
@@ -20679,15 +21090,19 @@ function saveGame() {
         militaryToBring: window.militaryToBring,
         playerHp: player ? player.hp : 100,
         playerShield: player ? player.shield : 100,
-        playerX: player ? player.x : null,
-        playerY: player ? player.y : null,
+        playerX: frontierExterior ? frontierExterior.x : (player ? player.x : null),
+        playerY: frontierExterior ? frontierExterior.y : (player ? player.y : null),
 
         // --- RESOURCES ---
         resources: window.resources || { WOOD: 0, METAL: 0, STONE: 0 },
         forestHunting: serializeForestHuntingActivity(),
         forestWildlife: serializeForestWildlife(),
+        frontierSaloon: serializeFrontierSaloonActivity(),
+        frontierBounties: serializeFrontierBounties(),
+        frontierEquipment: serializeFrontierEquipment(),
+        frontierWeapon: (frontierExterior ? frontierExterior.currentWeapon : (player && player.currentWeapon)) === WEAPONS.REVOLVER ? 'REVOLVER' : null,
         pickaxeOwned: !!window.pickaxeOwned,
-        meleeToolSel: window.meleeToolSel || "NONE",
+        meleeToolSel: frontierExterior ? frontierExterior.meleeToolSel : (window.meleeToolSel || "NONE"),
         swordEquipped: window.swordEquipped !== false,
 
         // --- CONSTRUCTION ---
@@ -20826,6 +21241,10 @@ function loadGame() {
         // the quiver from the character that is about to be replaced.
         restoreForestHuntingActivity(state.forestHunting);
         restoreForestWildlife(state.forestWildlife);
+        // Permanent quest sites and contract deltas must precede map generation.
+        restoreFrontierSaloonActivity(state.frontierSaloon);
+        restoreFrontierBounties(state.frontierBounties);
+        restoreFrontierEquipment(state.frontierEquipment);
 
         // The escort has to be pending BEFORE the level is built, because
         // legacyStartAtLevel() is what spawns it -- exactly as it does on a
@@ -20924,6 +21343,9 @@ function loadGame() {
         jetpackDoubleDash = state.jetpackDoubleDash; meleeComboUnlocked = state.meleeComboUnlocked; window.meleeFinisherUnlocked = state.meleeFinisherUnlocked;
         ninjaSuitUnlocked = state.ninjaSuitUnlocked; explosiveArmorUnlocked = state.explosiveArmorUnlocked; chemistSuitUnlocked = state.chemistSuitUnlocked; 
         window.ninjaOwned = state.ninjaOwned; window.armorOwned = state.armorOwned; window.chemistOwned = state.chemistOwned;
+        // The cowboy's exclusive outfit is restored after legacy suit fields.
+        restoreFrontierEquipment(state.frontierEquipment);
+        if (frontierSaloonProgress.duelWon) awardCowboyCostume();
         
         grenadesUnlocked = state.grenadesUnlocked; pGrenadeAmmo = state.pGrenadeAmmo; pFlaskAmmo = state.pFlaskAmmo;
         
@@ -21030,6 +21452,8 @@ function loadGame() {
         else if (smgUnlocked) player.currentWeapon = WEAPONS.SMG;
         else player.currentWeapon = WEAPONS.PISTOL;
         applyForestHuntingBow();
+        applyFrontierEquipment(player);
+        if (state.frontierWeapon === 'REVOLVER' && revolverUnlocked) player.currentWeapon = WEAPONS.REVOLVER;
         
                        // 1. If towers are defeated, physically delete them from the spawned map
         if (window.towersDefeated) {
@@ -21367,7 +21791,7 @@ function checkLevelUps() {
     }
     if (window.sciLvl === 1 && window.sciXP >= req2) { 
         window.sciLvl = 2; streakMsgText = "SCIENCE LEVEL 2!"; streakMsgTimer = 120; 
-        chemistSuitUnlocked = true; window.chemistOwned = true; sfx.charge(); 
+        equipPlayerSuit('CHEMIST'); window.chemistOwned = true; sfx.charge();
     }
     if (window.archLvl === 1 && window.archXP >= req2) { 
         window.archLvl = 2; streakMsgText = "ARCHITECTURE LEVEL 2!"; streakMsgTimer = 120; 
@@ -22331,6 +22755,9 @@ function storyArcCleared(l) {
 // and lane markings therefore line up across the seam with nothing to fudge.
 function hasAuthoredCore(l) {
   if (l < 1 || l > 4) return false;
+  // Dry Gulch is a permanent starting town surrounded by streamed country.
+  // Its saloon and sheriff remain after settlement, travel and arcade entry.
+  if (l === 3) return true;
   if (isAuthoredSector(l)) return true;          // Stick City always
   return !storyArcCleared(l);                    // 2-4 until their arc is done
 }
@@ -22612,10 +23039,14 @@ const DG_ROADS = {
     // Widths are set by the gap the two building columns actually leave:
     // 1130..1490 on Main Street and -1285..-975 on Front Street. The verge
     // lands on the boardwalks and the shoulder feathers out from there.
-    spine: { x: 1300, y0: -3100, y1: 220, edgeHalf: 168, coreHalf: 84 },
+    spine: { x: 1300, y0: -4900, y1: 220, edgeHalf: 168, coreHalf: 84 },
     cross: [
-      { y: -1140, x0: 120, x1: 2520, edgeHalf: 142, coreHalf: 72 }     // Front Street
+      { y: -1140, x0: 120, x1: 3650, edgeHalf: 142, coreHalf: 72 },    // Front Street
+      { y: -3400, x0: -420, x1: 3600, edgeHalf: 142, coreHalf: 72 },   // Market Street
+      { y: -4320, x0: -420, x1: 3600, edgeHalf: 142, coreHalf: 72 }    // Mesa Street
     ],
+    sideRoad: { x: 2830, xEnd: 3045, bendY0: -2850, bendY1: -2570,
+                y0: -4770, y1: 230, edgeHalf: 90, coreHalf: 48 },
     // The track keeps out of these entirely, spine column included. Just the
     // trailer park: it sits astride the line the road would take south out of
     // town, and a track that fades into the flats at the edge of a settlement is
@@ -22627,6 +23058,10 @@ const DG_ROADS = {
 };
 function authoredRoadPlan() {
   return authoredCore ? (DG_ROADS[currentLevel] || null) : null;
+}
+function frontierTownSideRoadX(wy, c) {
+  const t = constrain((wy - c.bendY0) / (c.bendY1 - c.bendY0), 0, 1);
+  return c.x + (c.xEnd - c.x) * (t * t * (3 - 2 * t));
 }
 // 1 on the spine, easing to 0 over RAMP either side of its run.
 function dgSpineWeight(s, wy) {
@@ -23673,6 +24108,491 @@ function drawCivicTerrace(b) {
   pop();
 }
 
+// FRONTIER CANYONS. These are world-space ribbons, not per-chunk stamps. The
+// same contour owns their rock faces, walkable floor, ramps, bridge decks and
+// ground-height field. Chunk boundaries never select a new bend or elevation.
+const FRONTIER_CANYON_STEP = 48;
+function frontierCanyonFracture(axis, u, index, salt) {
+  const knot = 156, cell = Math.floor(u / knot), t = (u - cell * knot) / knot;
+  const row = index + (axis === 'Y' ? 900 : 0);
+  const a = (chunkHash(3, cell, row, salt) & 1023) / 511.5 - 1;
+  const b = (chunkHash(3, cell + 1, row, salt) & 1023) / 511.5 - 1;
+  return a + (b - a) * t;
+}
+function frontierCanyonCenter(axis, u, index) {
+  index = index || 0;
+  return (axis === 'Y' ? 5200 + index * 9200 : 3550 + index * 7200) +
+    Math.sin(u * (axis === 'Y' ? .0007 : .0006) + index * 1.87) * 220 +
+    Math.sin(u * .00171 + index * .91) * 54 + frontierCanyonFracture(axis, u, index, 216) * 18;
+}
+function frontierCanyonProtectedFade(x, y) {
+  let f = 1;
+  if (authoredCore) {
+    const c = authoredCore;
+    const x0 = c.rx0 === undefined ? c.x0 : c.rx0, x1 = c.rx1 === undefined ? c.x1 : c.rx1;
+    const y0 = c.ry0 === undefined ? c.y0 : c.ry0, y1 = c.ry1 === undefined ? c.y1 : c.ry1;
+    const dx = Math.max(x0 - x, 0, x - x1);
+    const dy = Math.max(y0 - y, 0, y - y1);
+    f = smooth01(Math.hypot(dx, dy) / 540);
+  }
+  const fort = outpostFortDef(3);
+  if (fort) {
+    const dx = Math.max(Math.abs(x - fort.x) - FORT_HALF_W - 520, 0);
+    const dy = Math.max(Math.abs(y - fort.y) - FORT_HALF_H - 520, 0);
+    f = Math.min(f, smooth01(Math.hypot(dx, dy) / 420));
+  }
+  return f;
+}
+function frontierCanyonProfile(axis, u, index) {
+  const center = frontierCanyonCenter(axis, u, index);
+  let floorHalf = 286 + Math.sin(u * .00043 + index * 1.6) * 34 +
+    frontierCanyonFracture(axis, u, index, 217) * 22;
+  // The canyon camp is a broad natural amphitheatre. Widening the floor,
+  // rather than flattening a rectangle on the rim, leaves every camp gate at
+  // the canyon's actual level and keeps its approach free of a hidden cliff.
+  if (typeof frontierBountySites === 'function') {
+    for (const site of frontierBountySites()) {
+      const su = axis === 'Y' ? site.y : site.x;
+      const sv = axis === 'Y' ? site.x : site.y;
+      const offset = Math.abs(sv - frontierCanyonCenter(axis, su, index));
+      if (offset > 980) continue;
+      const reach = (axis === 'Y' ? site.h : site.w) * .5 + 700;
+      const weight = smooth01(Math.max(0, 1 - Math.abs(u - su) / reach));
+      const wanted = offset + (axis === 'Y' ? site.w : site.h) * .5 + 110;
+      floorHalf += Math.max(0, wanted - floorHalf) * weight;
+    }
+  }
+  const x = axis === 'Y' ? center : u, y = axis === 'Y' ? u : center;
+  const depth = (132 + Math.sin(u * .00028 + index) * 14) * frontierCanyonProtectedFade(x, y);
+  let rampU = 1800 + Math.round((u - 1800) / 2400) * 2400;
+  const bridgeU = 600 + Math.round((u - 600) / 2400) * 2400;
+  let bridgeClear = true;
+  if (typeof frontierBountySites === 'function') {
+    for (const site of frontierBountySites()) {
+      const su = axis === 'Y' ? site.y : site.x, sv = axis === 'Y' ? site.x : site.y;
+      const along = (axis === 'Y' ? site.h : site.w) * .5;
+      const across = (axis === 'Y' ? site.w : site.h) * .5;
+      if (Math.abs(sv - frontierCanyonCenter(axis, su, index)) > floorHalf + across + 222) continue;
+      // An elevated deck through a bounty courtyard would divide its ground
+      // into two unconnected floors. Put crossings outside the entire camp.
+      if (Math.abs(bridgeU - su) < along + 190) bridgeClear = false;
+      if (Math.abs(rampU - su) < along + 100) rampU = su + along + 320;
+    }
+  }
+  const ramp = smooth01(Math.max(0, Math.min(1, (250 - Math.abs(u - rampU)) / 150)));
+  const bridge = bridgeClear ? smooth01(Math.max(0, Math.min(1, (100 - Math.abs(u - bridgeU)) / 24))) : 0;
+  return { axis, index, u, center, floorHalf, outerHalf: floorHalf + 222,
+    depth, ramp, rampU, bridge, bridgeU };
+}
+function frontierCanyonSample(axis, x, y, index) {
+  const u = axis === 'Y' ? y : x, v = axis === 'Y' ? x : y;
+  const p = frontierCanyonProfile(axis, u, index);
+  p.v = v; p.distance = Math.abs(v - p.center);
+  if (p.depth < .01 || p.distance >= p.outerHalf) { p.height = 0; return p; }
+  const normal = 1 - smooth01((p.distance - p.floorHalf) / 222);
+  // Switchback ramps take the full width of the bank instead of asking the
+  // player to walk straight through the abrupt strata wall.
+  const rampFloor = 1 - smooth01(p.distance / p.outerHalf);
+  const lowered = p.depth * (normal * (1 - p.ramp) + rampFloor * p.ramp);
+  p.height = -lowered * (1 - p.bridge) * frontierCanyonProtectedFade(x, y);
+  return p;
+}
+function frontierCanyonAt(x, y) {
+  const row = Math.round((y - 3550) / 7200);
+  const col = Math.round((x - 5200) / 9200);
+  const a = frontierCanyonSample('X', x, y, row);
+  const b = frontierCanyonSample('Y', x, y, col);
+  if (a.depth < 1 || a.distance >= a.outerHalf) {
+    return b.depth >= 1 && b.distance < b.outerHalf ? b : null;
+  }
+  if (b.depth < 1 || b.distance >= b.outerHalf) return a;
+  return a.height < b.height ? a : b;
+}
+function frontierCanyonHeight(x, y) {
+  const a = frontierCanyonSample('X', x, y, Math.round((y - 3550) / 7200));
+  const b = frontierCanyonSample('Y', x, y, Math.round((x - 5200) / 9200));
+  // A bridge is at rim height even where two gulches meet underneath it.
+  if ((a.depth > 1 && a.distance < a.outerHalf && a.bridge > .999) ||
+      (b.depth > 1 && b.distance < b.outerHalf && b.bridge > .999)) return 0;
+  return Math.min(a.height, b.height);
+}
+function frontierCanyonBlocksMove(x, y, nx, ny, radius) {
+  const dx = nx - x, dy = ny - y, step = Math.hypot(dx, dy);
+  if (step < .0001) return false;
+  // Probe one body-width ahead, so a four-unit walking step cannot inch up a
+  // 140-unit rock face. Along the floor/ramp this same probe stays gentle.
+  const reach = Math.max(step, (radius || 15) * 1.6, 26);
+  const h0 = frontierCanyonHeight(x, y);
+  const h1 = frontierCanyonHeight(x + dx / step * reach, y + dy / step * reach);
+  return Math.abs(h1 - h0) > 14;
+}
+function frontierCanyonSpawnSafe(x, y) {
+  if (!BIOME_ACTIVE || currentBiome !== 3) return true;
+  // A zero-step collision probe cannot reject a newly spawned body on a rock
+  // face. Require a full body-width of gentle ground in every direction so
+  // native bandits and townspeople enter on a floor, crossing or open rim.
+  const z = frontierCanyonHeight(x, y), reach = 26;
+  for (const direction of [[1,0],[-1,0],[0,1],[0,-1]]) {
+    if (Math.abs(frontierCanyonHeight(x+direction[0]*reach,y+direction[1]*reach)-z)>14) return false;
+  }
+  return true;
+}
+function frontierCanyonReserved(x, y, w, h, pad) {
+  const hw = (w || 0) / 2 + (pad || 0), hh = (h || 0) / 2 + (pad || 0);
+  // Sample the entire footprint, including the axis crossed by the canyon;
+  // testing just a building's centre misses a store standing on the scarp.
+  const nx = Math.max(1, Math.ceil(hw * 2 / 160));
+  const ny = Math.max(1, Math.ceil(hh * 2 / 160));
+  for (let j = 0; j <= ny; j++) for (let i = 0; i <= nx; i++) {
+    if (frontierCanyonAt(x - hw + hw * 2 * i / nx, y - hh + hh * 2 * j / ny)) return true;
+  }
+  return false;
+}
+function filterFrontierCanyonContent(biome, content) {
+  if (biome !== 3) return;
+  for (const list of [content.solid, content.decor, content.decorBake, content.cars]) {
+    for (let i = list.length - 1; i >= 0; i--) {
+      const p = list[i];
+      if (frontierCanyonReserved(p.x, p.y, p.w || 45, p.h || 45, 20)) list.splice(i, 1);
+    }
+  }
+}
+function frontierCanyonPoint(axis, u, v) { return axis === 'Y' ? [v, u] : [u, v]; }
+let _frontierCanyonPlanes = null;
+function frontierCanyonPlaneColor(style) {
+  if (typeof style !== 'string') return { key: 'stub', rgb: [0,0,0], alpha: 1 };
+  if (/^#[\da-f]{6}$/i.test(style)) {
+    const n = parseInt(style.slice(1), 16);
+    return { key: style, rgb: [(n>>>16)&255,(n>>>8)&255,n&255], alpha: 1 };
+  }
+  const match = style.match(/^rgba?\(([^)]+)\)$/);
+  if (match) {
+    const c = match[1].split(',').map(Number), rgb = c.slice(0,3);
+    const key = '#' + rgb.map(v=>Math.round(v).toString(16).padStart(2,'0')).join('');
+    return { key, rgb, alpha: c.length > 3 ? c[3] : 1 };
+  }
+  return { key: style, rgb: [0,0,0], alpha: 1 };
+}
+function flushFrontierCanyonPlanes(g, planes) {
+  const dc = g.drawingContext, chains = [];
+  for (const p of planes) {
+    const color = frontierCanyonPlaneColor(p.style);
+    let chain = chains.find(c=>c.axis===p.axis && c.key===color.key &&
+      Math.abs(c.end-p.u0)<.001 && Math.abs(c.a[c.a.length-1][1]-p.a0)<.001 &&
+      Math.abs(c.b[c.b.length-1][1]-p.b0)<.001);
+    if (!chain) {
+      chain={axis:p.axis,key:color.key,rgb:color.rgb,start:p.u0,end:p.u1,
+        a:[[p.u0,p.a0],[p.u1,p.a1]],b:[[p.u0,p.b0],[p.u1,p.b1]],
+        alpha:[[p.u0,color.alpha],[p.u1,color.alpha]],lastAlpha:color.alpha};
+      chains.push(chain);
+    } else {
+      // Adjacent cells share one alpha at their join. A continuous gradient
+      // supplies the fades; there is no internal polygon edge to antialias.
+      chain.alpha[chain.alpha.length-1][1]=(chain.lastAlpha+color.alpha)*.5;
+      chain.alpha.push([p.u1,color.alpha]);chain.lastAlpha=color.alpha;
+      chain.a.push([p.u1,p.a1]);chain.b.push([p.u1,p.b1]);chain.end=p.u1;
+    }
+  }
+  dc.save();
+  try {
+    for (const c of chains) {
+      const rgba = alpha=>'rgba('+c.rgb.join(',')+','+Math.max(0,Math.min(1,alpha))+')';
+      if (c.alpha.every(p=>Math.abs(p[1]-c.alpha[0][1])<.0001)) dc.fillStyle=rgba(c.alpha[0][1]);
+      else {
+        const gradient=c.axis==='Y'?dc.createLinearGradient(0,c.start,0,c.end):dc.createLinearGradient(c.start,0,c.end,0);
+        for(const p of c.alpha)gradient.addColorStop(Math.max(0,Math.min(1,(p[0]-c.start)/(c.end-c.start))),rgba(p[1]));
+        dc.fillStyle=gradient;
+      }
+      dc.beginPath();let first=true;
+      for(const p of c.a.concat(c.b.slice().reverse())){
+        const q=frontierCanyonPoint(c.axis,p[0],p[1]);
+        if(first){dc.moveTo(q[0],q[1]);first=false;}else dc.lineTo(q[0],q[1]);
+      }
+      dc.closePath();dc.fill();
+    }
+  } finally { dc.restore(); }
+}
+function frontierCanyonQuad(g, axis, u0, u1, a0, a1, b0, b1) {
+  if (_frontierCanyonPlanes) {
+    _frontierCanyonPlanes.push({axis,u0,u1,a0,a1,b0,b1,style:g.drawingContext.fillStyle});
+    return;
+  }
+  // Canvas antialiasing leaves a hairline of the pale underlying terrain
+  // between abutting opaque rock/floor planes. Overlap those planes by one
+  // baked texel, extrapolating both edges so the contour remains aligned.
+  // Transparent wash and shadow layers retain their exact bounds: overlapping
+  // their alpha would replace the light seam with a repeated dark stripe.
+  const style = g.drawingContext && g.drawingContext.fillStyle;
+  const rgba = typeof style === 'string' && style.match(/^rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\)$/);
+  const opaque = !rgba || Number(rgba[1]) >= .999;
+  if (opaque && u1 > u0) {
+    const join = CHUNK_W / CHUNK_TEX, t = join / (u1 - u0);
+    const da = (a1 - a0) * t, db = (b1 - b0) * t;
+    u0 -= join; u1 += join; a0 -= da; a1 += da; b0 -= db; b1 += db;
+  }
+  const a = frontierCanyonPoint(axis, u0, a0), b = frontierCanyonPoint(axis, u1, a1);
+  const c = frontierCanyonPoint(axis, u1, b1), d = frontierCanyonPoint(axis, u0, b0);
+  g.quad(a[0], a[1], b[0], b[1], c[0], c[1], d[0], d[1]);
+}
+function bakeFrontierCanyonGeology(g, axis, index, lo, hi) {
+  const step = 156;
+  const start = Math.floor((lo - 220) / step) * step;
+  const polygon = points => {
+    g.beginShape();
+    for (const point of points) {
+      const xy = frontierCanyonPoint(axis, point[0], point[1]);
+      g.vertex(xy[0], xy[1]);
+    }
+    g.endShape(CLOSE);
+  };
+  for (let u = start; u < hi + 220; u += step) {
+    const key = chunkHash(3, Math.floor(u / step), index + (axis === 'Y' ? 900 : 0), 213);
+    const p = frontierCanyonProfile(axis, u, index);
+    if (p.depth < 2) continue;
+    const r0 = (key & 255) / 255, r1 = ((key >>> 8) & 255) / 255;
+    const r2 = ((key >>> 16) & 255) / 255;
+    for (const side of [-1, 1]) {
+      const nx = axis === 'Y' ? side : 0, ny = axis === 'Y' ? 0 : side;
+      const lit = Math.max(0, -(nx * LIGHT_DX + ny * LIGHT_DY));
+      const width = 76 + r0 * 80, length = 104 + r1 * 124;
+      const us = [u-18,u+length*.22,u+length*.69,u+length,u+length*.76,u+length*.12];
+      const offsets = [88,82,96,119,119+width,101+width];
+      const tops = us.map((su,i)=>{
+        const q=frontierCanyonProfile(axis,su,index);
+        return [su,q.center+side*(q.floorHalf+offsets[i])];
+      });
+      const visibility = 1 - frontierCanyonProfile(axis,u+length*.5,index).ramp;
+      if (visibility > .1 && p.bridge < .05) {
+        // The broad polygon is a fractured sandstone plate. Its bevel sits
+        // farther down the bank and the lip catches the sun, producing actual
+        // joined surfaces within the collision-owned scarp band.
+        g.fill(58,42,33,100*visibility);
+        polygon(tops.map(([su,sv])=>[su+10,sv-side*12]));
+        g.fill(151+lit*32+r2*16,94+lit*25+r2*8,57+lit*20,230*visibility);
+        polygon(tops);
+        g.fill(221+lit*20,163+lit*31,97+lit*30,170*visibility);
+        polygon([tops[2],tops[3],[tops[3][0]-5,tops[3][1]-side*7],[tops[2][0],tops[2][1]-side*7]]);
+        // A triangular shade plane breaks the plate into a readable solid.
+        g.fill(82,54,39,90*visibility);
+        polygon([tops[0],tops[1],tops[5]]);
+        g.stroke(61,44,35,105*visibility);g.strokeWeight(2.2);
+        const crack0=frontierCanyonPoint(axis,u+length*.46,p.center+side*(p.floorHalf+110));
+        const crack1=frontierCanyonPoint(axis,u+length*.55,p.center+side*(p.floorHalf+153));
+        g.line(crack0[0],crack0[1],crack1[0],crack1[1]);g.noStroke();
+      }
+      // Low fans of fallen angular stone meet the foot of the wall. They stay
+      // shallow on the walkable floor rather than masquerading as solid rocks.
+      if (r0 > .30 && visibility > .4 && p.bridge < .05) {
+        const q=frontierCanyonProfile(axis,u+52,index), toe=q.center+side*q.floorHalf;
+        g.fill(113,83,58,85);
+        polygon([[u-26,toe+side*6],[u+38,toe-side*(37+r1*35)],[u+123,toe-side*14],[u+135,toe+side*13]]);
+        for(let k=0;k<9;k++){
+          const su=u-2+k*13, off=18+(k%3)*11+r2*8;
+          const sq=frontierCanyonProfile(axis,su,index), sv=sq.center+side*(sq.floorHalf-off);
+          const size=5+(k%4)*3;
+          g.fill(77,61,45,100);
+          polygon([[su-size,sv+4],[su,sv-size*.52],[su+size,sv+2],[su+2,sv+size*.55]]);
+          g.fill(194+lit*22,145+lit*19,89+lit*14);
+          polygon([[su-size,sv],[su,sv-size*.52],[su+size*.55,sv-1],[su,sv+size*.25]]);
+        }
+      }
+    }
+    // Scattered floor gravel follows the wash. World-space hashes give small
+    // facets and cracks close enough to read on a phone without a repeating
+    // chunk stamp or any live-frame geology cost.
+    for(let k=0;k<7;k++){
+      const su=u+k*22, q=frontierCanyonProfile(axis,su,index);
+      const offset=((r0+k*.37)%1-.5)*q.floorHalf*1.5;
+      if(q.bridge>.02)continue;
+      const sv=q.center+offset, size=3+(k%3)*2;
+      g.fill(85,65,47,105);
+      polygon([[su-size,sv+3],[su,sv-size],[su+size+2,sv+2],[su+1,sv+size*.65]]);
+      g.fill(198,155,99,185);
+      polygon([[su-size,sv],[su,sv-size],[su+size,sv],[su,sv+2]]);
+      if(k%3===0){
+        g.stroke(107,79,52,100);g.strokeWeight(1.6);
+        const a=frontierCanyonPoint(axis,su+10,sv+11),b=frontierCanyonPoint(axis,su+24,sv+6),c=frontierCanyonPoint(axis,su+31,sv+14);
+        g.line(a[0],a[1],b[0],b[1]);g.line(b[0],b[1],c[0],c[1]);g.noStroke();
+      }
+    }
+  }
+}
+function bakeFrontierCanyonStrip(g, axis, index, ox, oy) {
+  const lo = axis === 'Y' ? oy : ox, hi = lo + CHUNK_W;
+  const start = Math.floor((lo - 96) / FRONTIER_CANYON_STEP) * FRONTIER_CANYON_STEP;
+  g.noStroke();
+  const previousPlanes = _frontierCanyonPlanes;
+  _frontierCanyonPlanes = [];
+  try {
+  for (let u = start; u < hi + 96; u += FRONTIER_CANYON_STEP) {
+    const p = frontierCanyonProfile(axis, u, index);
+    const q = frontierCanyonProfile(axis, u + FRONTIER_CANYON_STEP, index);
+    if (Math.max(p.depth, q.depth) < 1) continue;
+    const mid = axis === 'Y' ? ox + CHUNK_W / 2 : oy + CHUNK_W / 2;
+    if (Math.abs((p.center + q.center) * .5 - mid) > CHUNK_W / 2 + Math.max(p.outerHalf, q.outerHalf) + 50) continue;
+    const alpha = Math.min(255, Math.max(p.depth, q.depth) * 4);
+    // Loose rim gravel, then the darker sand floor. These are filled planes,
+    // with the wall's strata joining them, rather than an elevation stain.
+    g.fill(178, 126, 79, alpha);
+    frontierCanyonQuad(g, axis, u, u + FRONTIER_CANYON_STEP,
+      p.center - p.outerHalf - 18, q.center - q.outerHalf - 18,
+      p.center + p.outerHalf + 18, q.center + q.outerHalf + 18);
+    g.fill(165, 116, 74, alpha);
+    frontierCanyonQuad(g, axis, u, u + FRONTIER_CANYON_STEP,
+      p.center - p.floorHalf, q.center - q.floorHalf,
+      p.center + p.floorHalf, q.center + q.floorHalf);
+    // A narrow dry wash meanders along the bottom and provides a readable
+    // route, leaving the wide floor available to bandit camps and footwork.
+    const wash0 = p.center + Math.sin(u * .0023 + index) * 80;
+    const wash1 = q.center + Math.sin((u + FRONTIER_CANYON_STEP) * .0023 + index) * 80;
+    g.fill(128, 99, 73, alpha * .42);
+    frontierCanyonQuad(g, axis, u, u + FRONTIER_CANYON_STEP, wash0 - 55, wash1 - 55, wash0 + 55, wash1 + 55);
+    for (const side of [-1, 1]) {
+      const nx = axis === 'Y' ? side : 0, ny = axis === 'Y' ? 0 : side;
+      const lit = Math.max(0, -(nx * LIGHT_DX + ny * LIGHT_DY));
+      const cut = 1 - (p.ramp + q.ramp) * .5;
+      // Six broad sandstone courses carry the height. Each colour comes from
+      // the face normal, so the sun-facing bank stays warm and the opposite
+      // face stays red-brown as the player travels around it.
+      for (let k = 0; k < 6; k++) {
+        const inner = k / 6, outer = (k + 1) / 6;
+        const warm = k % 2 ? 14 : -5;
+        g.fill(102 + lit * 52 + k * 8 + warm,
+          66 + lit * 34 + k * 7 + warm * .45,
+          49 + lit * 19 + k * 4, alpha);
+        frontierCanyonQuad(g, axis, u, u + FRONTIER_CANYON_STEP,
+          p.center + side * (p.floorHalf + inner * 222), q.center + side * (q.floorHalf + inner * 222),
+          p.center + side * (p.floorHalf + outer * 222), q.center + side * (q.floorHalf + outer * 222));
+        if (cut > .08) {
+          g.fill(55, 42, 35, alpha * .30 * cut);
+          frontierCanyonQuad(g, axis, u, u + FRONTIER_CANYON_STEP,
+            p.center + side * (p.floorHalf + inner * 222), q.center + side * (q.floorHalf + inner * 222),
+            p.center + side * (p.floorHalf + inner * 222 + 4), q.center + side * (q.floorHalf + inner * 222 + 4));
+        }
+      }
+      // Cut-bank contact shade roots the sheer wall at the floor. The bright
+      // top lip is physically separated from it by the filled rock faces.
+      g.fill(53, 42, 34, alpha * .42 * cut);
+      frontierCanyonQuad(g, axis, u, u + FRONTIER_CANYON_STEP,
+        p.center + side * (p.floorHalf - 28), q.center + side * (q.floorHalf - 28),
+        p.center + side * (p.floorHalf + 8), q.center + side * (q.floorHalf + 8));
+      g.fill(243, 192, 122, alpha * (.35 + .48 * lit) * cut);
+      frontierCanyonQuad(g, axis, u, u + FRONTIER_CANYON_STEP,
+        p.center + side * (p.outerHalf - 9), q.center + side * (q.outerHalf - 9),
+        p.center + side * (p.outerHalf + 3), q.center + side * (q.outerHalf + 3));
+      if (p.ramp > .02 || q.ramp > .02) {
+        // Ramp art follows the exact same width/ease as the height field.
+        g.fill(199, 155, 101, alpha * Math.max(p.ramp, q.ramp));
+        frontierCanyonQuad(g, axis, u, u + FRONTIER_CANYON_STEP,
+          p.center, q.center, p.center + side * p.outerHalf, q.center + side * q.outerHalf);
+        g.fill(101, 78, 56, 55 * Math.max(p.ramp, q.ramp));
+        for (const rut of [-22, 22]) frontierCanyonQuad(g, axis, u, u + FRONTIER_CANYON_STEP,
+          p.center + side * (p.floorHalf * .54 + rut), q.center + side * (q.floorHalf * .54 + rut),
+          p.center + side * (p.floorHalf * .54 + rut + 5), q.center + side * (q.floorHalf * .54 + rut + 5));
+      }
+    }
+  }
+  }
+  finally {
+    const planes = _frontierCanyonPlanes;
+    _frontierCanyonPlanes = previousPlanes;
+    flushFrontierCanyonPlanes(g, planes);
+  }
+  bakeFrontierCanyonGeology(g, axis, index, lo, hi);
+  // Bridges are deterministic landmarks and surfaces, with their footing at
+  // both rims. Their plank/rail geometry is baked; no static draw calls accrue
+  // as the world grows and no invisible collision box is placed on the deck.
+  const first = Math.floor((lo - 600) / 2400), last = Math.ceil((hi - 600) / 2400);
+  for (let n = first; n <= last; n++) {
+    const u = 600 + n * 2400, p = frontierCanyonProfile(axis, u, index);
+    if (p.depth < 1 || p.bridge < .999 || u < lo - 160 || u > hi + 160) continue;
+    const center = frontierCanyonPoint(axis, u, p.center);
+    if (center[0] < ox - p.outerHalf - 200 || center[0] > ox + CHUNK_W + p.outerHalf + 200 ||
+        center[1] < oy - p.outerHalf - 200 || center[1] > oy + CHUNK_W + p.outerHalf + 200) continue;
+    g.push(); g.translate(center[0], center[1]); if (axis === 'Y') g.rotate(Math.PI / 2);
+    g.fill(46, 38, 33, 85); g.rect(-90 + LIGHT_DX * 26, -p.outerHalf + LIGHT_DY * 26, 180, p.outerHalf * 2);
+    g.fill(60, 46, 34); g.rect(-86, -p.outerHalf - 22, 172, p.outerHalf * 2 + 44);
+    for (let v = -p.outerHalf - 20; v < p.outerHalf + 20; v += 25) {
+      g.fill(137 + (Math.floor(v / 25) % 3) * 8, 98, 58); g.rect(-80, v, 160, 22);
+      g.fill(208, 165, 100, 140); g.rect(-79, v + 1, 158, 3);
+      g.fill(40, 35, 29); g.ellipse(-66, v + 9, 3, 3); g.ellipse(66, v + 9, 3, 3);
+    }
+    for (const side of [-1, 1]) {
+      g.fill(49, 38, 28); g.rect(side < 0 ? -94 : 84, -p.outerHalf - 26, 10, p.outerHalf * 2 + 52);
+      g.fill(192, 145, 85); g.rect(side < 0 ? -92 : 86, -p.outerHalf - 24, 3, p.outerHalf * 2 + 48);
+      for (let v = -p.outerHalf; v <= p.outerHalf; v += 145) {
+        g.fill(47, 39, 31); g.rect(side * 90 - 8, v - 8, 16, 16);
+        g.fill(214, 174, 108); g.rect(side * 90 - 5, v - 5, 10, 10);
+      }
+    }
+    g.pop();
+  }
+}
+function bakeFrontierCanyons(g, biome, ox, oy) {
+  if (biome !== 3) return;
+  const row0 = Math.floor((oy - 3550 - 1800) / 7200), row1 = Math.ceil((oy + CHUNK_W - 3550 + 1800) / 7200);
+  const col0 = Math.floor((ox - 5200 - 1800) / 9200), col1 = Math.ceil((ox + CHUNK_W - 5200 + 1800) / 9200);
+  for (let n = row0; n <= row1; n++) bakeFrontierCanyonStrip(g, 'X', n, ox, oy);
+  for (let n = col0; n <= col1; n++) bakeFrontierCanyonStrip(g, 'Y', n, ox, oy);
+}
+function paintFrontierCanyonHeightfield(g) {
+  paintFrontierCanyonHeight(g, viewLeft, viewTop,
+    viewRight - viewLeft, viewBottom - viewTop, glRigMat);
+}
+function paintFrontierCanyonHeight(g, x0, y0, w, h, material) {
+  // Shared world-aligned corner samples form continuous height planes. A
+  // constant height per cell creates artificial vertical steps that the sun
+  // mistakes for dozens of little cliffs on an otherwise smooth canyon bank.
+  const s = FRONTIER_CANYON_STEP;
+  const pixelWorld = GLRig.hw > 0 && zoom > 0 ? width / (GLRig.hw * zoom) : 1;
+  const join = Math.max(2, pixelWorld * 2);
+  const left = Math.floor(x0 / s) * s, top = Math.floor(y0 / s) * s;
+  const cols = Math.ceil((x0 + w - left) / s) + 1;
+  const rows = Math.ceil((y0 + h - top) / s) + 1;
+  const needed = cols * rows;
+  if (!GLRig.frontierHeights || GLRig.frontierHeights.length < needed)
+    GLRig.frontierHeights = new Float32Array(Math.max(16384, needed));
+  const heights = GLRig.frontierHeights;
+  for (let j = 0; j < rows; j++) for (let i = 0; i < cols; i++)
+    heights[j * cols + i] = frontierCanyonHeight(left + i * s, top + j * s);
+  const ctx = g.drawingContext;
+  ctx.save();
+  for (let j = 0; j < rows - 1; j++) {
+    const y = top + j * s;
+    for (let i = 0; i < cols - 1; i++) {
+      const x = left + i * s, n = j * cols + i;
+      const a = heights[n], b = heights[n + 1], c = heights[n + cols], d = heights[n + cols + 1];
+      if (Math.min(a, b, c, d) >= -.05) continue;
+      paintFrontierHeightTriangle(ctx, x, y, a, x + s, y, b, x, y + s, c, join / s);
+      paintFrontierHeightTriangle(ctx, x + s, y + s, d, x, y + s, c, x + s, y, b, join / s);
+    }
+  }
+  ctx.restore();
+}
+function paintFrontierHeightTriangle(ctx, ax, ay, az, bx, by, bz, cx, cy, cz, overlap) {
+  const det = (bx - ax) * (cy - ay) - (cx - ax) * (by - ay);
+  const gx = ((bz - az) * (cy - ay) - (cz - az) * (by - ay)) / det;
+  const gy = ((bx - ax) * (cz - az) - (cx - ax) * (bz - az)) / det;
+  const lo = Math.min(az, bz, cz), hi = Math.max(az, bz, cz), norm = gx * gx + gy * gy;
+  if (hi - lo < .001 || norm < 1e-12) {
+    ctx.fillStyle = 'rgb(' + glRigHeightByte(az) + ',8.925,0)';
+  } else {
+    const ox = ax - gx * (az - lo) / norm, oy = ay - gy * (az - lo) / norm;
+    const gradient = ctx.createLinearGradient(ox, oy, ox + gx * (hi - lo) / norm, oy + gy * (hi - lo) / norm);
+    gradient.addColorStop(0, 'rgb(' + glRigHeightByte(lo) + ',8.925,0)');
+    gradient.addColorStop(1, 'rgb(' + glRigHeightByte(hi) + ',8.925,0)');
+    ctx.fillStyle = gradient;
+  }
+  // Opaque overlap covers fractional raster edges without exposing the rim's
+  // background byte. The gradient extends the same plane across that join.
+  const mx = (ax + bx + cx) / 3, my = (ay + by + cy) / 3, scale = 1 + overlap;
+  ctx.beginPath();
+  ctx.moveTo(mx + (ax - mx) * scale, my + (ay - my) * scale);
+  ctx.lineTo(mx + (bx - mx) * scale, my + (by - my) * scale);
+  ctx.lineTo(mx + (cx - mx) * scale, my + (cy - my) * scale);
+  ctx.closePath(); ctx.fill();
+}
+
 // A frontier chunk grows a town where the settlement field runs high. Both the
 // generator and the terrain bake ask this, so the main street is painted under
 // the storefronts that line it.
@@ -24177,6 +25097,21 @@ function hostileSpawnPoint(x, y, biome = currentLevel) {
     // called them was a breach at the north wall.
     y = f.id !== 'SECTOR' && y < f.y ? f.y0 - 140 : f.y1 + 140;
   }
+  if (biome === 3 && !frontierCanyonSpawnSafe(x, y)) {
+    // Scripted reinforcements and small swarm offsets also pass here. Move
+    // them off a steep bank onto nearby floor/rim without moving into a wall.
+    const startX = x, startY = y;
+    search: for (let radius = 32; radius <= 384; radius += 32) {
+      for (let spoke = 0; spoke < 16; spoke++) {
+        const angle = spoke * Math.PI / 8;
+        const px = startX + Math.cos(angle) * radius, py = startY + Math.sin(angle) * radius;
+        if (!frontierCanyonSpawnSafe(px, py)) continue;
+        if (buildings.some(b => !b.noClip && !b.isPalm && !b.isGrassLot &&
+            Math.abs(px - b.x) < (b.w || 0) / 2 + 28 && Math.abs(py - b.y) < (b.h || 0) / 2 + 28)) continue;
+        x = px; y = py; break search;
+      }
+    }
+  }
   return { x, y };
 }
 
@@ -24565,7 +25500,7 @@ function spawnFortWave() {
 // The arithmetic stays closed both ways: a body joining the muster is one more
 // body to kill AND one more the bar was always going to have to count.
 function conscriptIntoMuster(e) {
-  if (!e || e.isAmbush || e.isFriendly) return false;
+  if (!e || e.isAmbush || e.isFriendly || e.frontierBountyId) return false;
   if (e.cityPersonKey) return false; // city patrols keep their own resident record
   if (e.isPopulation || e.isOutpostGarrison) return false;   // the ones you are asked to spare
   const fort = activeFortMuster(currentBiome);
@@ -24795,7 +25730,8 @@ function groundReserved(biome, cx, cy, x, y, w, h, pad) {
              crossesEW((sx) => cityCanalY(biome, cy, sx),
                        (sx) => cityCanalHalf(biome, cy, sx) * 1.15, x, y, hw, hh);
     case "FRONTIER":
-      return crossesNS((sy) => frontierTrailX(biome, cx, sy), x, y, hw, hh, ROAD_HALF.FRONTIER);
+      return frontierCanyonReserved(x, y, w, h, p) ||
+        crossesNS((sy) => frontierTrailX(biome, cx, sy), x, y, hw, hh, ROAD_HALF.FRONTIER);
     case "JUNGLE":
       return crossesNS((sy) => jungleTrailX(biome, cx, sy), x, y, hw, hh, ROAD_HALF.JUNGLE);
     case "CRYSTAL": {
@@ -26795,6 +27731,8 @@ function generateChunkContent(biome, cx, cy) {
       if (d.forestTrunkKey && !stems.has(d.forestTrunkKey)) content.decor.splice(i, 1);
     }
   }
+  filterFrontierCanyonContent(biome, content);
+  filterFrontierBountyContent(biome, content);
   return content;
 }
 
@@ -27285,6 +28223,9 @@ function bakeChunkTerrainAt(biome, cx, cy, staticDecor) {
   if (staticDecor) {
     for (let i = 0; i < staticDecor.length; i++) paintClutter(g, staticDecor[i], 0);
   }
+  // Canyon geology owns its entire footprint, including road crossings.
+  // Baked after litter: brush and old town ruts cannot float on a cliff face.
+  bakeFrontierCanyons(g, biome, ox, oy);
   // Hardstanding belongs to every fortress, including those over wet biomes.
   // Last in the bake: neither river paint nor tree litter can cover the yard.
   bakeCivicTerrace(g, biome, cx, cy);
@@ -28374,6 +29315,24 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
           }
           g.noStroke();
         }
+        const c=plan.sideRoad;
+        if(c && oy+CHUNK_W>=c.y0-160 && oy<=c.y1+160 &&
+           ox+CHUNK_W>=Math.min(c.x,c.xEnd)-250 && ox<=Math.max(c.x,c.xEnd)+250) {
+          const sideAt=(wy)=>frontierTownSideRoadX(wy,c);
+          const sideWidth=(wy)=>Math.max(0,Math.min(1,(wy-c.y0)/120,(c.y1-wy)/120));
+          bakeRibbon(g,sideAt,yAt,S0,S1,c.edgeHalf,c.coreHalf,
+                     [202,176,136],[130,104,72],12,44,sideWidth);
+          const ry0=Math.max(oy,c.y0+16),ry1=Math.min(oy+CHUNK_W,c.y1-16);
+          if(ry1>ry0){
+            g.stroke(p.mark[0],p.mark[1],p.mark[2],140);g.strokeWeight(5);g.noFill();
+            for(const side of [-28,28]){
+              g.beginShape();
+              for(let i=0;i<=24;i++){const yy=ry0+(ry1-ry0)*i/24;g.vertex(sideAt(yy)+side,yy);}
+              g.endShape();
+            }
+            g.noStroke();
+          }
+        }
       }
 
       // --- Relief -----------------------------------------------------------
@@ -28416,6 +29375,8 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
           for (const c of plan.cross) {
             if (x > c.x0 - 40 && x < c.x1 + 40 && Math.abs(y - c.y) < c.edgeHalf * 0.8) return false;
           }
+          const c=plan.sideRoad;
+          if(c && y>c.y0 && y<c.y1 && Math.abs(x-frontierTownSideRoadX(y,c))<c.edgeHalf*.9)return false;
         }
         return true;
       };
@@ -29274,9 +30235,10 @@ function popReleasable(list) {
 
 // Rejection sampler against the chunk's own solids. A resident standing inside
 // a wall is worse than one missing, so a failed placement is simply dropped.
-function popPlace(rng, solids, x0, x1, y0, y1) {
+function popPlace(rng, solids, x0, x1, y0, y1, biome = currentBiome) {
   for (let a = 0; a < 20; a++) {
     const x = x0 + rng() * (x1 - x0), y = y0 + rng() * (y1 - y0);
+    if (biome === 3 && !frontierCanyonSpawnSafe(x, y)) continue;
     let hit = false;
     for (let i = 0; i < solids.length; i++) {
       const s = solids[i];
@@ -29300,7 +30262,7 @@ function settlementRoster(biome, cx, cy, solids) {
   const out = [];
   const add = (types, n, x0, x1, y0, y1) => {
     for (let i = 0; i < n; i++) {
-      const p = popPlace(rng, solids, x0, x1, y0, y1);
+      const p = popPlace(rng, solids, x0, x1, y0, y1, biome);
       if (p) out.push({ type: types[(rng() * types.length) | 0], x: p.x, y: p.y });
     }
   };
@@ -29357,7 +30319,7 @@ function settlementRoster(biome, cx, cy, solids) {
       const route = nextCheckpoint(biome, cx, cy);
       const n = rngInt(rng, 3, 7);
       for (let i = 0; i < n; i++) {
-        const pt = popPlace(rng, solids, ox - 260, ox + 260, oy - 260, oy + 260);
+        const pt = popPlace(rng, solids, ox - 260, ox + 260, oy - 260, oy + 260, biome);
         if (!pt) continue;
         // Who mans a post depends on whether the sector's grid is still up.
         //
@@ -29763,6 +30725,7 @@ class ChunkManager {
       for (let i = 0; i < playerStructures.length; i++) solids.push(playerStructures[i]);
     }
     for (const lodge of forestHuntingStructures()) if (!solids.includes(lodge)) solids.push(lodge);
+    for (const outpost of frontierBountyStructures()) if (!solids.includes(outpost)) solids.push(outpost);
     buildings   = solids;
     parkingCars = cars;
 
@@ -30825,6 +31788,7 @@ function weaponHands(w) {
 function cyclePlayerWeapon(direction = 1) {
   if (!player) return false;
   const weapons = [WEAPONS.PISTOL];
+  if (revolverUnlocked) weapons.push(WEAPONS.REVOLVER);
   if (isStoryMode) weapons.push(WEAPONS.TASER);
   if (player.flags && player.flags.bowUnlocked) weapons.push(WEAPONS.BOW);
   if (dualSmgUnlocked) weapons.push(WEAPONS.DUAL_SMG);
@@ -31517,6 +32481,9 @@ function drawHandGunSolid(w, el, L, S, roll, kick, magOut, slideOpen) {
 function carryHandGun(w, el, L, S, roll, kick, magOut, slideOpen) {
   el = el === undefined ? 0 : el;
   L = L || _figLit;
+  if(w===WEAPONS.REVOLVER) {
+    drawRevolverSolid(el,roll||0,L,S,kick||0,magOut||0);return;
+  }
   if (w === WEAPONS.PISTOL || w === WEAPONS.SMG || w === WEAPONS.DUAL_SMG) {
     drawHandGunSolid(w, el, L, S, roll, kick, magOut, slideOpen);
     return;
@@ -31571,7 +32538,72 @@ function handGunReloadPhase(p) {
   };
 }
 function oneHandWeapon(w) {
-  return w === WEAPONS.PISTOL || w === WEAPONS.SMG || w === WEAPONS.DUAL_SMG;
+  return w === WEAPONS.PISTOL || w === WEAPONS.SMG || w === WEAPONS.DUAL_SMG || w === WEAPONS.REVOLVER;
+}
+
+// The magnum shares the firearm projection: a walnut grip and silver frame
+// wrap around a rotating cylinder. A reload swings that cylinder out on its
+// crane, ejects cases, seats a six-round loader and closes it again.
+function drawRevolverSolid(el,roll,L,S,kick,open) {
+  const P=handGunProjection(el,roll,L,S),turn=handGunKick(kick)*PI/3;
+  handGunBox(P,-2,3,-2,2,-3.8,-.4,95,58,33);
+  handGunDetail(P,-1,-1.8,-1.1,2,-1.8,-1.1,176,116,64,.7);
+  handGunBox(P,-1,12,-2.2,2.2,-.7,1.4,155,165,178);
+  handGunBox(P,10,25,-1.7,1.7,.6,3.2,194,205,220);
+  handGunBox(P,10,24.5,-1.2,1.2,3.2,3.8,226,234,241);
+  handGunBox(P,22.2,23.4,-.5,.5,3.8,5,164,176,192);
+  handGunBox(P,-1.4,.8,-.65,.65,1.5,3.8-turn*.6,102,115,132);
+  if(open>.01)handGunBox(P,3.4,7,-open*7,0,-.5,.5,129,144,160);
+  const cy=-open*7,cz=2.2,N=8,rad=3.2;
+  const ring=[];
+  for(let i=0;i<N;i++) {
+    const a=i*TWO_PI/N+turn,y=cy+Math.cos(a)*rad,z=cz+Math.sin(a)*rad;
+    ring.push({y,z,a:P.point(3.2,y,z),b:P.point(9.4,y,z)});
+  }
+  for(let i=0;i<N;i++) {
+    const a=ring[i],b=ring[(i+1)%N],angle=(i+.5)*TWO_PI/N+turn;
+    const ny=Math.cos(angle),nz=Math.sin(angle);
+    if(P.view[1]*ny+P.view[2]*nz<=0)continue;
+    const shade=.62+.42*Math.max(0,P.light[1]*ny+P.light[2]*nz);
+    fill(169*shade,180*shade,197*shade);stroke(68,77,91);strokeWeight(.5);
+    quad(a.a[0],a.a[1],a.b[0],a.b[1],b.b[0],b.b[1],b.a[0],b.a[1]);
+    handGunDetail(P,4.2,cy+ny*(rad+.03),cz+nz*(rad+.03),8.3,cy+ny*(rad+.03),cz+nz*(rad+.03),85,98,117,.8);
+  }
+  const endX=P.view[0]>=0?9.4:3.2;
+  fill(134,146,163);stroke(68,77,91);strokeWeight(.55);beginShape();
+  for(const v of ring){const q=P.point(endX,v.y,v.z);vertex(q[0],q[1]);}endShape(CLOSE);noStroke();
+  if(open>.05) {
+    for(let i=0;i<6;i++) {
+      const a=i*PI/3,q=P.point(endX,cy+Math.cos(a)*2,cz+Math.sin(a)*2);
+      fill(80,66,39);ellipse(q[0],q[1],1.2,1.2);fill(204,166,86);ellipse(q[0],q[1],.6,.6);
+    }
+  }
+  longGunMuzzle(P,25,139,153,173);noStroke();
+}
+
+function drawRevolverReload(c) {
+  const p=Math.max(0,Math.min(1,1-c.reloadTimer/90)),arc=Math.sin(p*PI);
+  const opened=reloadEase(p,.08,.22)*(1-reloadEase(p,.76,.92)),gx=18-arc*2,gy=9;
+  const ang=-.18*arc,heading=c.aimAngle+ang,el=-.3*arc;
+  reloadArm(c,0,c.bodyH*.425,gx,gy,true);
+  if(leftHandAction(c)===0) {
+    const reach=reloadEase(p,.4,.6)*(1-reloadEase(p,.68,.84));
+    reloadArm(c,0,-c.bodyH*.425,gx-2+reach*5,gy-9,false);
+    if(p>.38&&p<.68) {
+      push();translate(gx-2+reach*5,gy-9);rotate(ang);
+      const P=handGunProjection(el,.35,figureLight(heading),figureSouth(heading));
+      handGunBox(P,-2.1,2.1,-2.1,2.1,-.6,1,49,53,62);
+      for(let i=0;i<6;i++){const a=i*PI/3;handGunBox(P,-1.2,2.1,Math.cos(a)*2-.35,Math.cos(a)*2+.35,Math.sin(a)*2+.4,Math.sin(a)*2+1.1,193,151,70);}
+      pop();
+    }
+  }
+  push();translate(gx,gy);rotate(ang);
+  drawRevolverSolid(el,.25*arc,figureLight(heading),figureSouth(heading),0,opened);
+  if(p>.22&&p<.43) {
+    const f=(p-.22)/.21,P=handGunProjection(-.3,.2,figureLight(heading),figureSouth(heading));
+    for(let i=0;i<6;i++){const a=i*PI/3;handGunBox(P,1-f*8,3-f*8,-7+Math.cos(a)*2-f*3,-6.4+Math.cos(a)*2-f*3,Math.sin(a)*2-f*5,Math.sin(a)*2+.8-f*5,188,145,67);}
+  }
+  pop();
 }
 function reloadArm(c, sx, sy, hx, hy, right) {
   const RG=figureRig(c.bodyW,c.bodyH),paint=figurePainter(),g=paint?paint.api:window;
@@ -31581,6 +32613,7 @@ function reloadArm(c, sx, sy, hx, hy, right) {
   figureCelOval(g,hx,hy,RG.hand,RG.hand,skin,.8);
 }
 function drawOneHandReload(c) {
+  if(c.currentWeapon===WEAPONS.REVOLVER){drawRevolverReload(c);return;}
   const p=Math.max(0,Math.min(1,1-c.reloadTimer/90));
   const dual=c.currentWeapon===WEAPONS.DUAL_SMG;
   const leftBusy=leftHandAction(c)!==0;
@@ -36871,15 +37904,16 @@ uniform vec2  uLightUV;
 uniform vec2  uSpanUV;
 uniform float uHeightMax;
 uniform float uLightZ;
+uniform float uGroundZ;
 out vec4 oCol;
 
 void main() {
   vec2 p = uLightUV + (vUV * 2.0 - 1.0) * uSpanUV;
-  float h = 0.0;
+  float h = uGroundZ;
   if (p.x >= 0.0 && p.y >= 0.0 && p.x <= 1.0 && p.y <= 1.0) {
     h = texture(uHgt, p).r * uHeightMax;
   }
-  oCol = vec4(clamp(h / max(uLightZ, 1.0), 0.0, 1.0), 0.0, 0.0, 1.0);
+  oCol = vec4(clamp((h - uGroundZ) / max(uLightZ - uGroundZ, 1.0), 0.0, 1.0), 0.0, 0.0, 1.0);
 }`;
 
 // Pass 4b -- polar reduction. One row of the atlas per light. x is the angle,
@@ -37309,8 +38343,23 @@ function glRigSetNormalAtlas(src, mix) {
 //   G  gloss -- how much Blinn-Phong specular the surface takes
 //   B  facing as turns, for the tangent-space rotation in the normal pass
 //   A  coverage: 1 where geometry stands, 0 on bare ground
+// Canyon floors, desert rims and roofs share one scene-relative lighting
+// height. The remaining biomes keep their existing encoding and range.
+function glRigHeightOrigin() { return BIOME_ACTIVE && currentBiome === 3 ? -160 : 0; }
+function glRigHeightRange() { return GLRIG_HEIGHT_MAX - glRigHeightOrigin(); }
+function glRigHeightByte(hWorld) {
+  const shifted = hWorld - glRigHeightOrigin(), range = glRigHeightRange();
+  return shifted <= 0 ? 0 : shifted >= range ? 255 : shifted / range * 255;
+}
+function glRigEmitterGround(e) {
+  return BIOME_ACTIVE && currentBiome === 3 ? groundElev(e.x, e.y) : 0;
+}
+function glRigEmitterHeight(e, ground) {
+  // Civic lamps already carry their ground height in sceneEmitters().
+  return e.z + (e.b && e.b.isCivic ? 0 : ground) - glRigHeightOrigin();
+}
 function glRigMat(g, hWorld, gloss, turns) {
-  const r = hWorld <= 0 ? 0 : (hWorld >= GLRIG_HEIGHT_MAX ? 255 : (hWorld / GLRIG_HEIGHT_MAX) * 255);
+  const r = glRigHeightByte(hWorld);
   g.fill(r, gloss * 255, ((turns % 1) + 1) % 1 * 255, 255);
 }
 
@@ -37321,7 +38370,7 @@ function glRigForestCanopyHeight(g, d, cp) {
   g.push(); g.translate(d.x, d.y);
   if (d.forestSpecies === 'CHARRED_SNAG') {
     // A snag is a trunk and bare branches, never a solid circular pillar.
-    const height = Math.min(255, (rise + elevation) / GLRIG_HEIGHT_MAX * 255);
+    const height = glRigHeightByte(rise + elevation);
     g.stroke(height, 12.75, 0, 255); g.strokeWeight(Math.max(3, 5 * s));
     g.line(-3 * s, 0, 3 * s, 0);
     for (let i = 0; i < 4; i++) {
@@ -37360,10 +38409,14 @@ function glRigPaintHeight() {
   _glForestCanopies.length = 0;
 
   g.clear();
+  if (glRigHeightOrigin() < 0) g.background(glRigHeightByte(0), 0, 0, 255);
   g.push();
   g.noStroke();
   g.scale(k * zoom);
   g.translate(-camX, -camY);
+
+  if (BIOME_ACTIVE && currentBiome === 3 && typeof paintFrontierCanyonHeightfield === 'function')
+    paintFrontierCanyonHeightfield(g);
 
   // 1. Ground relief. Concentric insets reproduce groundElev()'s feather, so
   //    the bench the player walks up shades and self-shadows as one surface
@@ -37408,18 +38461,18 @@ function glRigPaintHeight() {
     // Water is below the ground, not above it, and it is the glossiest thing in
     // the scene -- this is what puts a lamp's reflection on the canal.
     if (b.isRiver || b.isWater || b.isPond) {
-      glRigMat(g, 0, 0.95, 0);
+      glRigMat(g, BIOME_ACTIVE && currentBiome === 3 ? groundElev(b.x, b.y) : 0, 0.95, 0);
       g.rect(b.x - w / 2, b.y - h / 2, w, h);
       continue;
     }
     // Surfaces: walkable, so no mass, but they still take a highlight.
     if (b.isDeck || b.isParkingLot || b.isCropField || b.isGrassLot) {
-      glRigMat(g, 1.5, 0.10 + 0.35 * wet, 0);
+      glRigMat(g, 1.5 + (BIOME_ACTIVE && currentBiome === 3 ? groundElev(b.x, b.y) : 0), 0.10 + 0.35 * wet, 0);
       g.rect(b.x - w / 2, b.y - h / 2, w, h);
       continue;
     }
     if (b.isStreetLight) {
-      glRigMat(g, 46 + (b.isCivic ? groundElev(b.x, b.y) : 0), 0.35, 0);
+      glRigMat(g, 46 + (b.isCivic || BIOME_ACTIVE && currentBiome === 3 ? groundElev(b.x, b.y) : 0), 0.35, 0);
       g.rect(b.x - 4, b.y - 4, 8, 8);
       continue;
     }
@@ -37674,7 +38727,8 @@ function glRigFrame() {
     // resolution, so this converts its gradient back into something with the
     // slope the world actually has, then leans on it a little -- an overhead
     // camera sees almost no shading otherwise.
-    const relief = 5.5;
+    const heightRange = glRigHeightRange();
+    const relief = 5.5 * heightRange / GLRIG_HEIGHT_MAX;
 
     // The march has to agree with the rest of the scene about how long a shadow
     // is. shadowLengthScale() is what every drawn shadow in the game is built
@@ -37708,7 +38762,7 @@ function glRigFrame() {
     glRigBindTex(gl, p, 'uNrm', 3, GLRig.fbo.normal.tex);
     gl.uniform2f(p._u.uMarchUV, marchU, marchV);
     gl.uniform1f(p._u.uSlope, slope);
-    gl.uniform1f(p._u.uHeightMax, GLRIG_HEIGHT_MAX);
+    gl.uniform1f(p._u.uHeightMax, heightRange);
     // First step just clears the caster's own texel; the growth factor then
     // reaches ~14x that in GLRIG_SUN_STEPS.
     gl.uniform1f(p._u.uStep0, 3.5);
@@ -37768,6 +38822,9 @@ function glRigFrame() {
     for (let i = 0; i < lights.length; i++) {
       const Lg = lights[i];
       if (!(Lg.p > 0.004)) continue;
+      const emitterGround = glRigEmitterGround(Lg);
+      const emitterHeight = glRigEmitterHeight(Lg, emitterGround);
+      const encodedGround = emitterGround - glRigHeightOrigin();
 
       // Screen uv of the emitter. uv y runs up, screen y runs down.
       const sxp = (Lg.x - camX) * zoom;
@@ -37787,8 +38844,9 @@ function glRigFrame() {
       glRigBindTex(gl, p, 'uHgt', 1, GLRig.tex.height);
       gl.uniform2f(p._u.uLightUV, lu, lv);
       gl.uniform2f(p._u.uSpanUV, ru, rv);
-      gl.uniform1f(p._u.uHeightMax, GLRIG_HEIGHT_MAX);
-      gl.uniform1f(p._u.uLightZ, Lg.z);
+      gl.uniform1f(p._u.uHeightMax, heightRange);
+      gl.uniform1f(p._u.uLightZ, emitterHeight);
+      gl.uniform1f(p._u.uGroundZ, encodedGround);
       glRigDraw(gl, p, GLRIG_FULL);
 
       // 3b. Polar reduction into this light's row of the 1D atlas.
@@ -37829,8 +38887,8 @@ function glRigFrame() {
       gl.uniform2f(p._u.uUVToWorld, uvW, uvH);
       gl.uniform3f(p._u.uCol, Lg.c[0], Lg.c[1], Lg.c[2]);
       gl.uniform1f(p._u.uPower, Lg.p * (0.35 + 0.85 * night));
-      gl.uniform1f(p._u.uLightZ, Lg.z);
-      gl.uniform1f(p._u.uHeightMax, GLRIG_HEIGHT_MAX);
+      gl.uniform1f(p._u.uLightZ, emitterHeight);
+      gl.uniform1f(p._u.uHeightMax, heightRange);
       gl.uniform1f(p._u.uRow, (i + 0.5) / GLRIG_LIGHTS);
       gl.uniform1f(p._u.uSoft, Lg.soft);
       gl.uniform1f(p._u.uSpec, 1.15);
@@ -38804,6 +39862,1070 @@ function placePlayerForReturnTravel(biome) {
   return true;
 }
 
+// ===== DRY GULCH SHERIFF BOUNTIES =====
+// Contracts own their actors and landmarks, rather than borrowing the ambient
+// desert roster. Each numbered gang member has a persistent casualty record;
+// chunk eviction, travel and loading cannot erase a kill or mint another reward.
+const FRONTIER_BOUNTY_DEFS = [
+  { id: 'RED_MESA', title: 'RED MESA RAIDERS', captain: 'Scarlet Jack',
+    place: 'Red Mesa Redoubt', kind: 'ADOBE', x: 5400, y: -3600, w: 840, h: 780, count: 5, reward: 125 },
+  { id: 'DUST_RAIL', title: 'DUST RAIL GANG', captain: 'Iron Ada',
+    place: 'Abandoned Dust Rail Depot', kind: 'DEPOT', x: 5400, y: 1800, w: 840, h: 780, count: 6, reward: 175 },
+  { id: 'COYOTE_MINE', title: 'COYOTE CREEK OUTLAWS', captain: 'Coyote Cole',
+    place: 'Coyote Creek Mine Camp', kind: 'MINE', x: -3600, y: -3200, w: 840, h: 780, count: 7, reward: 225 }
+];
+let frontierBounties = { activeId: null, contracts: {} };
+let _frontierBountyStructures = null, _frontierBountyActors = new Map();
+let _frontierBountyPrompt = null, _frontierBountyToast = '', _frontierBountyToastTicks = 0;
+
+function frontierBountySites() { return FRONTIER_BOUNTY_DEFS; }
+
+function frontierBountyRecord(def) {
+  if (!frontierBounties.contracts[def.id]) frontierBounties.contracts[def.id] = {
+    stage: 'AVAILABLE', rewardGranted: false, killed: [], survivors: {}
+  };
+  return frontierBounties.contracts[def.id];
+}
+
+function frontierBountyBoard() {
+  const landmarks = typeof frontierTownLandmarks === 'function' ? frontierTownLandmarks() : null;
+  const b = landmarks && landmarks.board;
+  return { x: b && Number.isFinite(b.x) ? b.x : 1450,
+    y: b && Number.isFinite(b.y) ? b.y : -2110 };
+}
+
+function frontierBountyReserved(biome, x, y, w, h, pad) {
+  if (biome !== 3) return false;
+  const hw = (w || 0) / 2 + (pad || 0), hh = (h || 0) / 2 + (pad || 0);
+  return FRONTIER_BOUNTY_DEFS.some(d => Math.abs(x - d.x) < d.w / 2 + hw &&
+    Math.abs(y - d.y) < d.h / 2 + hh);
+}
+
+function filterFrontierBountyContent(biome, content) {
+  if (biome !== 3) return content;
+  // Called after numeric destruction keys have been assigned. The mission's
+  // courtyard takes precedence over generated cabins and crop-field fences;
+  // distant chunks keep precisely their old seeds, keys and silhouettes.
+  for (const key of ['solid', 'cars', 'decor', 'decorBake']) {
+    const rows = content[key] || [];
+    for (let i = rows.length - 1; i >= 0; i--) {
+      const b = rows[i], r = key === 'decor' || key === 'decorBake' ? 45 * (b.s || 1) : 0;
+      if (frontierBountyReserved(biome, b.x, b.y, b.w || r * 2, b.h || r * 2, 8)) rows.splice(i, 1);
+    }
+  }
+  return content;
+}
+
+function frontierBountyStructures() {
+  if (currentLevel !== 3 || !BIOME_ACTIVE) return [];
+  if (_frontierBountyStructures) return _frontierBountyStructures;
+  const all = [];
+  const put = (d, dx, dy, w, h, kind, rise) => all.push({ x: d.x + dx, y: d.y + dy,
+    w, h, frontierBountyId: d.id, frontierBountyKind: kind, isFrontierBountyStructure: true,
+    isLandmark: true, isBlockBuilding: true, _rise: rise, hp: Infinity, maxHp: Infinity });
+  for (const d of FRONTIER_BOUNTY_DEFS) {
+    if (d.kind === 'ADOBE') {
+      put(d, 0, -215, 230, 135, 'ADOBE_KEEP', 45);
+      put(d, -260, -95, 125, 160, 'ADOBE_HUT', 32);
+      put(d, 260, -95, 125, 160, 'ADOBE_HUT', 32);
+      put(d, -312, 105, 24, 210, 'ADOBE_WALL', 22);
+      put(d, 312, 105, 24, 210, 'ADOBE_WALL', 22);
+      put(d, -195, 240, 235, 22, 'ADOBE_WALL', 22);
+      put(d, 195, 240, 235, 22, 'ADOBE_WALL', 22);
+    } else if (d.kind === 'DEPOT') {
+      put(d, 0, -205, 300, 140, 'DEPOT', 42);
+      put(d, -275, -65, 95, 105, 'WATER_TANK', 55);
+      put(d, 260, -70, 130, 125, 'FREIGHT', 28);
+      put(d, -300, 120, 24, 190, 'TIMBER_WALL', 22);
+      put(d, 300, 120, 24, 190, 'TIMBER_WALL', 22);
+      put(d, -190, 240, 215, 24, 'TIMBER_WALL', 22);
+      put(d, 190, 240, 215, 24, 'TIMBER_WALL', 22);
+    } else {
+      put(d, 0, -205, 155, 145, 'MINEHEAD', 58);
+      put(d, -245, -100, 145, 125, 'CABIN', 36);
+      put(d, 245, -100, 155, 115, 'CANVAS', 27);
+      put(d, -285, 145, 65, 65, 'LOOKOUT', 45);
+      put(d, 285, 145, 65, 65, 'LOOKOUT', 45);
+      put(d, -195, 245, 205, 24, 'TIMBER_WALL', 22);
+      put(d, 195, 245, 205, 24, 'TIMBER_WALL', 22);
+    }
+  }
+  _frontierBountyStructures = all;
+  return all;
+}
+
+function paintFrontierBountyStructure(g, b) {
+  const lean = [0, 0]; massLean(b.x, b.y, b._rise, lean);
+  const x0 = -b.w / 2, x1 = b.w / 2, y0 = -b.h / 2, y1 = b.h / 2;
+  const kind = b.frontierBountyKind, adobe = kind.indexOf('ADOBE') === 0;
+  const pal = adobe ? [[201, 139, 87], [147, 88, 60], [232, 170, 106]] :
+    kind === 'CANVAS' ? [[203, 181, 129], [128, 105, 74], [231, 210, 155]] :
+    [[132, 104, 75], [75, 61, 51], [172, 137, 94]];
+  g.push(); g.translate(b.x, b.y); g.stroke(45, 36, 30); g.strokeWeight(1.8);
+  g.fill(...pal[1]);
+  g.quad(x0, y0, x1, y0, x1 + lean[0], y0 + lean[1], x0 + lean[0], y0 + lean[1]);
+  g.quad(x0, y0, x0, y1, x0 + lean[0], y1 + lean[1], x0 + lean[0], y0 + lean[1]);
+  g.fill(...pal[0]);
+  g.quad(x0, y1, x1, y1, x1 + lean[0], y1 + lean[1], x0 + lean[0], y1 + lean[1]);
+  g.quad(x1, y0, x1, y1, x1 + lean[0], y1 + lean[1], x1 + lean[0], y0 + lean[1]);
+  g.translate(lean[0], lean[1]); g.fill(...pal[2]); g.rect(x0, y0, b.w, b.h, adobe ? 5 : 1);
+  if (kind === 'ADOBE_WALL' || kind === 'TIMBER_WALL') {
+    g.stroke(adobe ? 167 : 78, adobe ? 105 : 63, adobe ? 69 : 50); g.strokeWeight(1);
+    if (b.w > b.h) for (let x = x0 + 14; x < x1; x += adobe ? 30 : 12) g.line(x, y0, x, y1);
+    else for (let y = y0 + 14; y < y1; y += adobe ? 30 : 12) g.line(x0, y, x1, y);
+    g.noStroke(); g.fill(63, 47, 34, 85); g.rect(x0 + 3, y0 + 3, b.w - 6, 5);
+  } else if (kind === 'WATER_TANK') {
+    g.fill(63, 59, 54); g.rect(-31, -30, 62, 60, 5); g.fill(159, 132, 95);
+    g.ellipse(0, 0, b.w - 9, b.h - 18); g.noFill(); g.stroke(55, 57, 54); g.strokeWeight(4);
+    g.ellipse(0, 0, b.w - 23, b.h - 35); g.line(-24, 0, 24, 0);
+    g.stroke(193, 172, 122); g.strokeWeight(2); g.line(-16, -24, -16, 24);
+  } else if (kind === 'MINEHEAD' || kind === 'LOOKOUT') {
+    g.fill(36, 32, 29); g.rect(x0 + 14, y0 + 13, b.w - 28, b.h - 26, 4);
+    g.stroke(170, 129, 86); g.strokeWeight(kind === 'MINEHEAD' ? 8 : 5);
+    g.line(x0 + 12, y0 + 12, x1 - 12, y1 - 12); g.line(x1 - 12, y0 + 12, x0 + 12, y1 - 12);
+    g.line(x0 + 12, 0, x1 - 12, 0); g.line(0, y0 + 12, 0, y1 - 12);
+    g.noStroke(); g.fill(193, 150, 99); g.rect(-b.w * .34, -12, b.w * .68, 24, 2);
+    if (kind === 'MINEHEAD') { g.fill(50, 48, 43); g.ellipse(0, 0, 43, 43); g.fill(145, 140, 119); g.ellipse(0, 0, 18, 18); }
+  } else {
+    g.fill(adobe ? 171 : 111, adobe ? 104 : 85, adobe ? 67 : 62);
+    if (adobe) g.rect(x0 + 10, y0 + 10, b.w - 20, b.h - 20, 4);
+    else {
+      g.quad(x0 + 6, y0 + 6, x1 - 6, y0 + 6, x1 - 6, 0, x0 + 6, 0);
+      g.fill(...pal[2]); g.quad(x0 + 6, 0, x1 - 6, 0, x1 - 6, y1 - 6, x0 + 6, y1 - 6);
+      g.stroke(77, 61, 47); g.strokeWeight(1);
+      for (let x = x0 + 15; x < x1 - 8; x += kind === 'CANVAS' ? 23 : 17) g.line(x, y0 + 7, x, y1 - 7);
+    }
+    g.noStroke(); g.fill(42, 35, 31); g.rect(-20, y1 - 20, 40, 16, 2);
+    g.fill(223, 178, 107); g.rect(-17, y1 - 17, 34, 5, 1);
+    if (kind === 'DEPOT' || kind === 'ADOBE_KEEP') {
+      g.fill(54, 39, 29); g.rect(-b.w * .35, y1 - 31, b.w * .7, 19, 2);
+      g.fill(236, 207, 150); g.textAlign(CENTER, CENTER); g.textSize(10);
+      g.text(kind === 'DEPOT' ? 'DUST RAIL · FREIGHT' : 'RED MESA', 0, y1 - 21);
+    }
+    g.fill(adobe ? 218 : 157, adobe ? 159 : 119, adobe ? 105 : 83); g.rect(x0 + 10, y0 + 10, 15, 21, 1);
+    g.fill(67, 48, 35); g.rect(x0 + 13, y0 + 13, 9, 14, 1);
+  }
+  g.pop();
+}
+
+function frontierBountyContext() {
+  return !!player && started && currentLevel === 3 && BIOME_ACTIVE && !isDead && !isWin &&
+    !isPaused && !killcamMode && !inTownCutscene && !inFarmCutscene && !inFarmPostCutscene &&
+    !inFortCutscene && !inPostAmbushCutscene && !inWorldBuildingMenu && !inOverworldView &&
+    !inTravelMenu && !inStoryIntro && !inDarchonCall &&
+    !(typeof frontierSaloonIsInside === 'function' && frontierSaloonIsInside());
+}
+
+function frontierBountyNotify(message) {
+  _frontierBountyToast = message; _frontierBountyToastTicks = 300;
+}
+
+function frontierBountySpawnPoint(def, slot) {
+  const marks = [[0, -25], [-135, 10], [135, 10], [-150, 125], [150, 125], [-70, 175], [70, 175]];
+  return { x: def.x + marks[slot][0], y: def.y + marks[slot][1] };
+}
+
+function captureFrontierBountyActors() {
+  for (const [key, actor] of _frontierBountyActors) {
+    const def = FRONTIER_BOUNTY_DEFS.find(d => d.id === actor.frontierBountyId);
+    if (!def || actor.dead || actor.hp <= 0) continue;
+    const q = frontierBountyRecord(def), slot = actor.frontierBountySlot;
+    if (q.stage !== 'ACTIVE' || q.killed.includes(slot)) continue;
+    q.survivors[slot] = { hp: Math.min(actor.maxHp, actor.hp), x: actor.x, y: actor.y };
+  }
+}
+
+function releaseFrontierBountyActors() {
+  captureFrontierBountyActors();
+  for (const actor of _frontierBountyActors.values()) {
+    const i = enemiesList.indexOf(actor); if (i >= 0) enemiesList.splice(i, 1);
+  }
+  _frontierBountyActors.clear();
+}
+
+function updateFrontierBounties(advanceTime = true) {
+  _frontierBountyPrompt = null;
+  if (currentLevel !== 3 || !BIOME_ACTIVE) { releaseFrontierBountyActors(); return; }
+  if (!frontierBountyContext()) return;
+  if (advanceTime && doTick) {
+    if (_frontierBountyToastTicks > 0) _frontierBountyToastTicks--;
+    captureFrontierBountyActors();
+    const def = FRONTIER_BOUNTY_DEFS.find(d => d.id === frontierBounties.activeId);
+    if (def && frontierBountyRecord(def).stage === 'ACTIVE') {
+      const q = frontierBountyRecord(def), close = Math.hypot(player.x - def.x, player.y - def.y) < 1700;
+      if (!close && Math.hypot(player.x - def.x, player.y - def.y) > 2600) releaseFrontierBountyActors();
+      if (close) for (let slot = 0; slot < def.count; slot++) {
+        if (q.killed.includes(slot)) continue;
+        const key = def.id + ':' + slot, old = _frontierBountyActors.get(key);
+        if (old && !old.dead && old.hp > 0 && enemiesList.includes(old)) continue;
+        // Never interpret an engine cull as a casualty. Re-form this particular
+        // survivor with his saved wounds; only processKill can strike a poster.
+        const saved = q.survivors[slot], p = saved || frontierBountySpawnPoint(def, slot);
+        const e = new Character(p.x, p.y, false, 'BANDIT');
+        e.frontierBountyId = def.id; e.frontierBountySlot = slot;
+        e.isFriendly = false; e.isNeutral = false; e.state = 'PATROL';
+        e.postX = def.x; e.postY = def.y + 30; e.postR = 215;
+        e.hp = e.maxHp = slot === 0 ? 220 : 130;
+        if (saved) e.hp = Math.max(1, Math.min(e.maxHp, saved.hp));
+        if (slot === 0) {
+          e.hatCol = color(116, 38, 31); e.kerchiefCol = color(205, 160, 91);
+          e.frontierBountyName = def.captain;
+        }
+        if (slot === 2 || slot === 5) e.currentWeapon = WEAPONS.COACH_GUN;
+        // A surviving pursuer can have wandered into later geometry during a
+        // previous visit. The permanent courtyard has verified fallback marks.
+        if (e.checkCol(e.x, e.y)) { const home = frontierBountySpawnPoint(def, slot); e.x = home.x; e.y = home.y; }
+        _frontierBountyActors.set(key, e); enemiesList.push(e);
+      }
+      // Native post patrols return before the ordinary vision branch. Give
+      // these outpost sentries their alert here, then let the native chase,
+      // cover, firing, reload and projectile code run the actual gunfight.
+      for (const e of _frontierBountyActors.values()) {
+        const distance = Math.hypot(e.x - player.x, e.y - player.y);
+        if (!e.dead && e.hp > 0 && distance < 620 && hasLOS(e.x, e.y, player.x, player.y)) {
+          e.state = 'CHASE'; e.loseSightTimer = 3500;
+          e.lastKnownX = player.x; e.lastKnownY = player.y;
+          e.cachedTargetDist = distance; e.cachedCanSee = true;
+          e.cachedTargetAngle = atan2(player.y - e.y, player.x - e.x);
+        }
+      }
+    }
+  }
+  const board = frontierBountyBoard();
+  if (Math.hypot(player.x - (board.x - 40), player.y - board.y) < 105)
+    _frontierBountyPrompt = { kind: 'BOARD' };
+}
+
+function frontierBountyOnKill(victim) {
+  if (!victim || !victim.frontierBountyId) return false;
+  const def = FRONTIER_BOUNTY_DEFS.find(d => d.id === victim.frontierBountyId);
+  if (!def) return true;
+  const q = frontierBountyRecord(def), slot = victim.frontierBountySlot;
+  if (currentLevel !== 3 || q.stage !== 'ACTIVE' || frontierBounties.activeId !== def.id ||
+      !Number.isInteger(slot) || slot < 0 || slot >= def.count || q.killed.includes(slot) ||
+      (!victim.dead && victim.hp > 0)) return true;
+  q.killed.push(slot); q.killed.sort((a, b) => a - b); delete q.survivors[slot];
+  _frontierBountyActors.delete(def.id + ':' + slot);
+  score += 5;
+  if (q.killed.length === def.count) {
+    q.stage = 'READY';
+    frontierBountyNotify(def.place.toUpperCase() + ' CLEARED\nReturn to the sheriff board for +' + def.reward + ' score.');
+  } else frontierBountyNotify(def.title + ' · ' + q.killed.length + '/' + def.count + ' outlaws defeated');
+  return true;
+}
+
+function interactFrontierBountyBoard() {
+  if (!frontierBountyContext()) return false;
+  updateFrontierBounties(false); if (!_frontierBountyPrompt) return false;
+  const active = FRONTIER_BOUNTY_DEFS.find(d => d.id === frontierBounties.activeId);
+  if (active) {
+    const q = frontierBountyRecord(active);
+    if (q.stage === 'READY' && !q.rewardGranted) {
+      q.stage = 'COMPLETE'; q.rewardGranted = true; frontierBounties.activeId = null;
+      releaseFrontierBountyActors(); score += active.reward;
+      frontierBountyNotify('SHERIFF: ' + active.title + ' settled.\n+' + active.reward + ' score · Next wanted poster is ready.');
+    } else frontierBountyNotify(active.captain + ' and the gang are at ' + active.place + '.\nFollow the bounty marker; defeat all ' + active.count + ' outlaws.');
+    return true;
+  }
+  const next = FRONTIER_BOUNTY_DEFS.find(d => frontierBountyRecord(d).stage === 'AVAILABLE');
+  if (!next) { frontierBountyNotify('SHERIFF: All three gangs are gone.\nDry Gulch thanks you. Every bounty has been paid.'); return true; }
+  frontierBounties.activeId = next.id; frontierBountyRecord(next).stage = 'ACTIVE';
+  frontierBountyNotify('WANTED: ' + next.captain.toUpperCase() + '\nClear ' + next.place + ' · Return for +' + next.reward + ' score.');
+  return true;
+}
+
+function handleFrontierBountyTap(mx, my) {
+  if (!frontierBountyContext()) return false;
+  updateFrontierBounties(false);
+  return !!_frontierBountyPrompt && mx > width / 2 - 115 && mx < width / 2 + 115 &&
+    my > height - 125 && my < height - 75 && interactFrontierBountyBoard();
+}
+
+function drawFrontierBountyWorld() {
+  if (currentLevel !== 3 || !BIOME_ACTIVE ||
+      (typeof frontierSaloonIsInside === 'function' && frontierSaloonIsInside())) return;
+  const board = frontierBountyBoard();
+  if (inView(board.x, board.y, 150)) {
+    const lean = [0, 0]; massLean(board.x, board.y, 29, lean);
+    push(); translate(board.x, board.y); stroke(43, 32, 24); strokeWeight(2);
+    fill(79, 53, 34); quad(-72, 4, -65, 4, -65 + lean[0], -28 + lean[1], -72 + lean[0], -28 + lean[1]);
+    quad(65, 4, 72, 4, 72 + lean[0], -28 + lean[1], 65 + lean[0], -28 + lean[1]);
+    translate(lean[0], lean[1]); fill(120, 81, 49); rect(-82, -47, 164, 66, 3);
+    noStroke(); fill(236, 206, 144); textAlign(CENTER, CENTER); textSize(10); text('SHERIFF · WANTED', 0, -36);
+    for (let i = 0; i < FRONTIER_BOUNTY_DEFS.length; i++) {
+      const d = FRONTIER_BOUNTY_DEFS[i], q = frontierBountyRecord(d), x = -65 + i * 45;
+      fill(q.stage === 'COMPLETE' ? 165 : 225, q.stage === 'COMPLETE' ? 168 : 200, q.stage === 'COMPLETE' ? 133 : 145);
+      rect(x, -22, 40, 35, 1); fill(78, 48, 31); ellipse(x + 20, -10, 10, 8); rect(x + 10, -15, 20, 4, 1);
+      textSize(7); text(q.stage === 'COMPLETE' ? 'PAID' : q.stage === 'READY' ? 'CLAIM' : d.reward + ' SCORE', x + 20, 7);
+      if (q.stage === 'ACTIVE') { noFill(); stroke(191, 65, 40); strokeWeight(2); rect(x - 1, -23, 42, 37, 1); noStroke(); }
+    }
+    pop();
+  }
+  for (const d of FRONTIER_BOUNTY_DEFS) if (inView(d.x, d.y, 650)) {
+    push(); translate(d.x, d.y); noStroke(); fill(146, 111, 77, 165); rect(-340, -290, 680, 560, 10);
+    fill(185, 143, 93, 120); rect(-64, 215, 128, 174, 2);
+    stroke(100, 77, 56, 150); strokeWeight(2);
+    if (d.kind === 'DEPOT') for (let x = -310; x < 320; x += 24) { line(x, 25, x, 95); }
+    if (d.kind === 'DEPOT') { stroke(61, 59, 52); strokeWeight(5); line(-320, 38, 320, 38); line(-320, 82, 320, 82); }
+    stroke(78, 57, 36); strokeWeight(2); fill(177, 136, 83); rect(-145, 285, 290, 33, 3);
+    noStroke(); fill(39, 32, 27); textAlign(CENTER, CENTER); textSize(11); text(d.place.toUpperCase(), 0, 302);
+    const q = frontierBountyRecord(d);
+    if (q.stage === 'COMPLETE' || q.stage === 'READY') { fill(201, 210, 152); textSize(12); text('OUTPOST CLEARED', 0, 337); }
+    pop();
+  }
+}
+
+function drawFrontierBountyHud() {
+  if (!frontierBountyContext()) return;
+  const active = FRONTIER_BOUNTY_DEFS.find(d => d.id === frontierBounties.activeId);
+  const pending = FRONTIER_BOUNTY_DEFS.find(d => frontierBountyRecord(d).stage === 'AVAILABLE');
+  push(); textFont('sans-serif'); textAlign(CENTER, CENTER); noStroke();
+  if (active || pending) {
+    const q = active ? frontierBountyRecord(active) : null;
+    const target = !active || q.stage === 'READY' ? frontierBountyBoard() : active;
+    const distance = Math.round(Math.hypot(player.x - target.x, player.y - target.y) / 10);
+    const bw = Math.min(348, width - 24);
+    fill(42, 30, 23, 220); rect(width / 2 - bw / 2, 75, bw, 43, 6);
+    fill(246, 204, 128); textSize(11);
+    text(!active ? 'DRY GULCH · SHERIFF BOUNTIES' : q.stage === 'READY' ? 'BOUNTY CLEARED · RETURN TO SHERIFF' : active.title + ' · ' + q.killed.length + '/' + active.count, width / 2, 88);
+    fill(231, 215, 177); textSize(10); text(distance + ' m · ' + (!active ? 'WANTED BOARD · OLD WEST TOWN' : q.stage === 'READY' ? 'CLAIM +' + active.reward + ' SCORE' : active.place.toUpperCase()), width / 2, 105);
+    const a = atan2(target.y - player.y, target.x - player.x);
+    push(); translate(width / 2 - bw / 2 + 12, 96); rotate(a); fill(242, 181, 74); triangle(7, 0, -5, -4, -5, 4); pop();
+  }
+  if (_frontierBountyPrompt) {
+    const q = active && frontierBountyRecord(active);
+    const label = q && q.stage === 'READY' ? 'CLAIM +' + active.reward + ' SCORE' : active ? 'READ WANTED POSTER' :
+      FRONTIER_BOUNTY_DEFS.some(d => frontierBountyRecord(d).stage === 'AVAILABLE') ? 'ACCEPT SHERIFF BOUNTY' : 'SHERIFF · ALL BOUNTIES PAID';
+    fill(58, 40, 26, 235); stroke(232, 186, 100); strokeWeight(2); rect(width / 2 - 115, height - 125, 230, 50, 7);
+    noStroke(); fill(255, 225, 163); textSize(11); text(label, width / 2, height - 106);
+    fill(204, 188, 151); textSize(9); text('TAP · F · GAMEPAD A', width / 2, height - 88);
+  }
+  if (_frontierBountyToastTicks > 0) {
+    const bw = Math.min(370, width - 24); fill(38, 27, 21, 235); rect(width / 2 - bw / 2, 130, bw, 64, 7);
+    fill(249, 219, 161); textSize(11); textLeading(17); text(_frontierBountyToast, width / 2, 161);
+  }
+  pop();
+}
+
+function serializeFrontierBounties() {
+  captureFrontierBountyActors();
+  const contracts = {};
+  for (const d of FRONTIER_BOUNTY_DEFS) {
+    const q = frontierBountyRecord(d);
+    contracts[d.id] = { stage: q.stage, rewardGranted: q.rewardGranted,
+      killed: q.killed.slice(), survivors: Object.assign({}, q.survivors) };
+  }
+  return { version: 1, activeId: frontierBounties.activeId, contracts };
+}
+
+function restoreFrontierBounties(snapshot) {
+  resetFrontierBounties(); if (!snapshot || typeof snapshot !== 'object') return;
+  const contracts = snapshot.contracts || {};
+  for (const d of FRONTIER_BOUNTY_DEFS) {
+    const src = contracts[d.id] || {}, q = frontierBountyRecord(d);
+    if (src.stage === 'COMPLETE' || src.rewardGranted === true) {
+      q.stage = 'COMPLETE'; q.rewardGranted = true; q.killed = Array.from({ length: d.count }, (_, i) => i); continue;
+    }
+    q.killed = Array.from(new Set(Array.isArray(src.killed) ? src.killed.filter(i => Number.isInteger(i) && i >= 0 && i < d.count) : [])).sort((a, b) => a - b);
+    if (snapshot.activeId === d.id && ['ACTIVE', 'READY'].includes(src.stage)) {
+      frontierBounties.activeId = d.id; q.stage = q.killed.length === d.count ? 'READY' : 'ACTIVE';
+      for (let slot = 0; slot < d.count; slot++) {
+        const p = src.survivors && src.survivors[slot];
+        if (!p || q.killed.includes(slot) || !Number.isFinite(p.hp) || p.hp <= 0) continue;
+        const home = frontierBountySpawnPoint(d, slot);
+        q.survivors[slot] = { hp: Math.min(slot === 0 ? 220 : 130, p.hp),
+          x: Number.isFinite(p.x) && Math.abs(p.x - d.x) < 2600 ? p.x : home.x,
+          y: Number.isFinite(p.y) && Math.abs(p.y - d.y) < 2600 ? p.y : home.y };
+      }
+    } else q.killed = [];
+  }
+}
+
+function resetFrontierBounties() {
+  releaseFrontierBountyActors(); frontierBounties = { activeId: null, contracts: {} };
+  _frontierBountyStructures = null; _frontierBountyPrompt = null;
+  _frontierBountyToast = ''; _frontierBountyToastTicks = 0;
+}
+
+// ===== DRY GULCH: SALOON AND QUICK DRAW =====
+// These activities own an isolated scene. Local patrons and nonlethal fighters
+// never enter enemiesList, processKill(), the neutral-town cascade or chunk AI.
+// Saves deliberately resume on the exterior doorstep, with campaign equipment.
+let frontierSaloonProgress = { brawlCleared: false, duelWon: false, duelAttempts: 0 };
+let _frontierSaloonSession = null, _frontierSaloonPrompt = null;
+let _frontierSaloonToast = '', _frontierSaloonToastMs = 0;
+const FRONTIER_SALOON_ROOM = { left: -410, right: 410, top: -310, bottom: 310 };
+
+function frontierSaloonIsInside() { return !!_frontierSaloonSession; }
+function frontierSaloonContext() {
+  return !!player && started && player.hp > 0 && !isDead && !isWin && currentLevel === 3 && BIOME_ACTIVE &&
+    !killcamMode && !inTownCutscene && !inFarmCutscene && !inFarmPostCutscene && !inFortCutscene &&
+    !inPostAmbushCutscene && !inWorldBuildingMenu && !inOverworldView && !inTravelMenu &&
+    !inStoryIntro && !inDarchonCall;
+}
+function frontierSaloonSites() {
+  const t = typeof frontierTownLandmarks === 'function' ? frontierTownLandmarks() : null;
+  return { door: t && t.saloon ? { x: t.saloon.doorX, y: t.saloon.doorY } : { x: 1156, y: -1730 },
+    duel: t && t.duel ? t.duel : { x: 1300, y: -1140 } };
+}
+function frontierSaloonNotify(message) { _frontierSaloonToast = message; _frontierSaloonToastMs = 4200; }
+function frontierSaloonFurniture() {
+  return [
+    { kind: 'BAR', x: 0, y: -195, w: 530, h: 66, rise: 27 },
+    { kind: 'TABLE', x: -235, y: -30, w: 104, h: 82, rise: 17 },
+    { kind: 'TABLE', x: 235, y: -30, w: 104, h: 82, rise: 17 },
+    { kind: 'TABLE', x: -235, y: 165, w: 104, h: 82, rise: 17 },
+    { kind: 'TABLE', x: 235, y: 165, w: 104, h: 82, rise: 17 },
+    { kind: 'PIANO', x: -348, y: -220, w: 82, h: 106, rise: 26 },
+    { kind: 'STAIRS', x: 348, y: -205, w: 88, h: 135, rise: 18 }
+  ];
+}
+function frontierSaloonBlocked(x, y, radius = 16) {
+  const r = FRONTIER_SALOON_ROOM;
+  if (x < r.left + radius || x > r.right - radius || y < r.top + radius || y > r.bottom - radius) return true;
+  for (const b of frontierSaloonFurniture())
+    if (x > b.x - b.w / 2 - radius && x < b.x + b.w / 2 + radius &&
+        y > b.y - b.h / 2 - radius && y < b.y + b.h / 2 + radius) return true;
+  return false;
+}
+function frontierSaloonMove(actor, dx, dy) {
+  const x = actor.x, y = actor.y;
+  if (!frontierSaloonBlocked(actor.x + dx, actor.y)) actor.x += dx;
+  if (!frontierSaloonBlocked(actor.x, actor.y + dy)) actor.y += dy;
+  actor.isMoving = Math.hypot(actor.x - x, actor.y - y) > .02;
+  if (actor.isMoving) { actor.moveAngle = Math.atan2(actor.y - y, actor.x - x); actor.lastMoveAngle = actor.moveAngle; }
+  actor.gait = lerp(actor.gait || 0, actor.isMoving ? Math.min(1, Math.hypot(dx, dy) / 3.5) : 0, .18);
+  if (actor.isMoving) actor.walkCycle += gaitPose(actor.gait).cadence;
+  actor.armDrag = lerp(actor.armDrag || 0, actor.isMoving ? 1 : 0, .15);
+  rememberFigureMotion(actor, actor.x - x, actor.y - y);
+}
+function frontierSaloonPerson(x, y, kind, name) {
+  const c = new Character(x, y, false, kind);
+  c.isFriendly = true; c.isNeutral = false; c.isUnarmed = true; c.isArmed = false;
+  c.state = 'IDLE'; c.name = name; c.hp = c.maxHp = 100; c.aimAngle = HALF_PI;
+  c.saloonPunchMs = 0; c.saloonWindupMs = 0; c.saloonHit = false;
+  return c;
+}
+function frontierSaloonCreatePeople() {
+  return [frontierSaloonPerson(0, -266, 'VILLAGER_MALE', 'MAE · BARKEEP'),
+    frontierSaloonPerson(-235, -102, 'COWGIRL', 'PATRON'),
+    frontierSaloonPerson(309, -28, 'COWBOY', 'PATRON'),
+    frontierSaloonPerson(-315, 165, 'VILLAGER_MALE', 'PATRON'),
+    frontierSaloonPerson(235, 237, 'VILLAGER_FEMALE', 'PATRON')];
+}
+function enterFrontierSaloon(mode = 'SALOON') {
+  if (!frontierSaloonContext() || isPaused || _frontierSaloonSession) return false;
+  const save = { x: player.x, y: player.y, aimAngle: player.aimAngle, moveAngle: player.moveAngle,
+    currentWeapon: player.currentWeapon, isArmed: player.isArmed, isUnarmed: player.isUnarmed,
+    mounted: !!player.mounted, meleeTool: meleeTool(), swordEquipped: window.swordEquipped,
+    meleeToolSel: window.meleeToolSel, zoom, camX, camY };
+  _frontierSaloonSession = { mode: 'SALOON', save, patrons: frontierSaloonCreatePeople(), fighters: [],
+    brawl: 'IDLE', grit: 100, punchMs: 0, punchHit: false, punchChain: 0, hitMs: 0,
+    menu: false, menuChoice: frontierSaloonProgress.brawlCleared ? 'DUEL' : 'BRAWL',
+    pause: false, keys: {}, fireWas: true, padWas: [], duel: null, elapsedMs: 0 };
+  // Entering on a held F/A consumes that edge in the exterior. Seed the room
+  // input history from the same physical buttons, so its first frame cannot
+  // reinterpret the held entry press as another interaction at the exit.
+  for (const code of [27, 80, 70, 49, 50]) _frontierSaloonSession.keys[code] = keyIsDown(code);
+  const entryPad = connectedGamepad();
+  if (entryPad) _frontierSaloonSession.padWas = entryPad.buttons.map(b => !!b.pressed);
+  player.x = 0; player.y = 242; player.mounted = false; player.isArmed = false; player.isUnarmed = true;
+  player.currentWeapon = WEAPONS.PISTOL; player.reloadTimer = 0; player.meleeTimer = 0;
+  player.muzzleFlash = 0; player.weaponKick = 0; player.throwAnimTimer = 0; player.cannonCharge = 0;
+  player.dashTimer = 0; player.boxingHold = 0; setMeleeTool('NONE');
+  leftStick.active = false; rightStick.active = false; meleeInputHeld = false; cannonInputHeld = false;
+  _frontierSaloonPrompt = null;
+  if (mode === 'DUEL') startFrontierQuickDraw();
+  else frontierSaloonNotify('THE COPPER SPUR\nTalk to Mae at the counter for a fistfight or quick draw.');
+  return true;
+}
+function frontierSaloonSavePlayer() {
+  if (!_frontierSaloonSession) return null;
+  const s = _frontierSaloonSession.save;
+  return { x: s.x, y: s.y, aimAngle: s.aimAngle, moveAngle: s.moveAngle, currentWeapon: s.currentWeapon,
+    isArmed: s.isArmed, mounted: s.mounted, meleeTool: s.meleeTool, swordEquipped: s.swordEquipped,
+    meleeToolSel: s.meleeToolSel };
+}
+function exitFrontierSaloon() {
+  const s = _frontierSaloonSession;
+  if (!s) return false;
+  if (player) {
+    Object.assign(player, { x: s.save.x, y: s.save.y, aimAngle: s.save.aimAngle, moveAngle: s.save.moveAngle,
+      currentWeapon: s.save.currentWeapon, isArmed: s.save.isArmed, isUnarmed: s.save.isUnarmed,
+      mounted: s.save.mounted, meleeTimer: 0, meleeCooldown: 0, boxingHold: 0, muzzleFlash: 0,
+      weaponKick: 0, reloadTimer: 0, isMoving: false, gait: 0 });
+    window.swordEquipped = s.save.swordEquipped; window.meleeToolSel = s.save.meleeToolSel;
+  }
+  zoom = s.save.zoom; camX = s.save.camX; camY = s.save.camY;
+  _frontierSaloonSession = null; _frontierSaloonPrompt = null; isPaused = false;
+  leftStick.active = false; rightStick.active = false; leftStick.dx = leftStick.dy = 0;
+  rightStick.dx = rightStick.dy = rightStick.dist = 0; meleeInputHeld = cannonInputHeld = grenadeInputHeld = false;
+  return true;
+}
+function startFrontierSaloonBrawl() {
+  const s = _frontierSaloonSession; if (!s || s.mode !== 'SALOON') return false;
+  s.menu = false; s.brawl = 'ACTIVE'; s.grit = 100; s.punchMs = 0; s.punchHit = false;
+  s.fighters = [frontierSaloonPerson(-115, 2, 'COWBOY', 'BUCK'),
+    frontierSaloonPerson(128, 10, 'COWBOY', 'RED'), frontierSaloonPerson(20, -100, 'BANDIT', 'SHORTY')];
+  s.fighters.forEach((c, i) => { c.hp = c.maxHp = 72 + i * 12; c.saloonPunchMs = 600 + i * 270; });
+  player.x = 0; player.y = 160; player.isArmed = false; player.boxingHold = 180;
+  frontierSaloonNotify('BARROOM PEACEMAKER\nKnock out three troublemakers. Fists only; keep moving.');
+  return true;
+}
+function frontierSaloonPunch() {
+  const s = _frontierSaloonSession;
+  if (!s || isPaused || s.mode !== 'SALOON' || s.brawl !== 'ACTIVE' || s.punchMs > 0) return false;
+  const opponents = s.fighters.filter(c => !c.knockedOut && Math.hypot(c.x - player.x, c.y - player.y) < 92)
+    .sort((a, b) => Math.hypot(a.x - player.x, a.y - player.y) - Math.hypot(b.x - player.x, b.y - player.y));
+  if (opponents[0]) player.aimAngle = Math.atan2(opponents[0].y - player.y, opponents[0].x - player.x);
+  s.punchMs = 340; s.punchHit = false; s.punchChain = s.punchChain % 3 + 1;
+  player.meleePhase = s.punchChain; player.meleeTimer = 20; player.punchDuration = 20;
+  player.boxingHold = 180; player.isArmed = false;
+  sfx.slash(player.x, player.y);
+  return true;
+}
+function frontierSaloonKnockOut(c, angle) {
+  c.knockedOut = true; c.hp = 0; c.isMoving = false; c.saloonWindupMs = 0; c.meleeTimer = 0;
+  // Reuse the nonlethal directional fall, but advance its pose locally below:
+  // advanceStun/stepFigureFall deliberately use exterior collision and AI.
+  startPunchStun(c, angle); if (c.stunPose) c.stunPose.impulse = 0;
+  c.stunTimer = 99999; sfx.hitBody();
+}
+function startFrontierQuickDraw() {
+  const s = _frontierSaloonSession; if (!s) return false;
+  s.mode = 'DUEL'; s.menu = false; s.fighters = []; s.brawl = 'IDLE';
+  frontierSaloonProgress.duelAttempts = Math.min(9999, frontierSaloonProgress.duelAttempts + 1);
+  // An unpredictable hold cannot be learned as a countdown. The green cue,
+  // sound and opposing draw all begin on the same simulation update.
+  s.duel = { phase: 'WAIT', remainingMs: 1900 + Math.random() * 2600, reactionMs: 0,
+    deadlineMs: isHardMode ? 520 : 700, result: '', resultMs: 0, shotMs: 0 };
+  s.opponent = frontierSaloonPerson(190, 0, 'COWBOY', 'ELIAS "QUICKHAND" REED');
+  s.opponent.currentWeapon = WEAPONS.REVOLVER; s.opponent.isUnarmed = false; s.opponent.isNeutral = true;
+  s.opponent.aimAngle = PI; player.x = -190; player.y = 0; player.aimAngle = 0; player.moveAngle = 0;
+  player.currentWeapon = WEAPONS.REVOLVER; player.isArmed = true; player.isUnarmed = false;
+  player.meleeTimer = 0; player.boxingHold = 0; player.isMoving = false;
+  s.fireWas = true;
+  frontierSaloonNotify('QUICK DRAW\nWait for DRAW. Early shots lose. Tap FIRE, Space or RT.');
+  return true;
+}
+function finishFrontierQuickDraw(won, reason) {
+  const s = _frontierSaloonSession; if (!s || !s.duel || s.duel.phase === 'RESULT') return false;
+  const d = s.duel; d.phase = 'RESULT'; d.result = reason; d.won = won; d.resultMs = 0;
+  if (won) {
+    const first = !frontierSaloonProgress.duelWon;
+    frontierSaloonProgress.duelWon = true;
+    if (typeof awardCowboyCostume === 'function') awardCowboyCostume();
+    if (first) score += 120;
+    frontierSaloonKnockOut(s.opponent, 0);
+    frontierSaloonNotify(first ? 'QUICK DRAW WON · +120 SCORE\nCowboy costume awarded! Equip it free in the shop.' :
+      'QUICK DRAW WON\nYour cowboy costume is already waiting in the shop.');
+  } else {
+    player.hp = Math.max(1, player.hp - 12);
+    frontierSaloonNotify(reason === 'FALSE START' ? 'TOO EARLY\nWait for the green DRAW cue. Try again.' :
+      'QUICKHAND DREW FIRST\nYou lost 12 health. Try again when ready.');
+  }
+  return true;
+}
+function frontierSaloonFire() {
+  const s = _frontierSaloonSession; if (!s || isPaused) return false;
+  if (s.mode !== 'DUEL') return frontierSaloonPunch();
+  const d = s.duel; if (!d || d.phase === 'RESULT') return false;
+  if (d.phase === 'WAIT') { finishFrontierQuickDraw(false, 'FALSE START'); return true; }
+  d.shotMs = 180; player.muzzleFlash = 3; player.weaponKick = 8;
+  sfx.shoot(WEAPONS.REVOLVER, player.x, player.y);
+  return finishFrontierQuickDraw(d.reactionMs <= d.deadlineMs, d.reactionMs <= d.deadlineMs ? 'YOU DREW FIRST' : 'TOO SLOW');
+}
+function frontierSaloonAction(action) {
+  const s = _frontierSaloonSession; if (!s) return false;
+  if (action === 'EXIT') return exitFrontierSaloon();
+  if (action === 'BRAWL') return startFrontierSaloonBrawl();
+  if (action === 'DUEL' || action === 'RETRY') return startFrontierQuickDraw();
+  if (action === 'BACK') {
+    s.mode = 'SALOON'; s.duel = null; s.menu = false; s.brawl = 'IDLE'; s.fighters = [];
+    player.x = 0; player.y = 120; player.currentWeapon = WEAPONS.PISTOL; player.isArmed = false;
+    player.isUnarmed = true; player.muzzleFlash = player.weaponKick = player.boxingHold = 0;
+    return true;
+  }
+  return false;
+}
+function interactFrontierSaloonActivity() {
+  if (!frontierSaloonContext() || isPaused) return false;
+  const s = _frontierSaloonSession;
+  if (s) {
+    if (s.mode === 'DUEL') return s.duel.phase === 'RESULT' ? startFrontierQuickDraw() : frontierSaloonFire();
+    if (s.menu) return frontierSaloonAction(s.menuChoice);
+    if (Math.hypot(player.x, player.y - 284) < 84) return exitFrontierSaloon();
+    if (s.brawl !== 'ACTIVE' && Math.hypot(player.x, player.y + 130) < 104) {
+      s.menu = true; s.menuChoice = frontierSaloonProgress.brawlCleared ? 'DUEL' : 'BRAWL'; return true;
+    }
+    if (s.brawl === 'ACTIVE') return frontierSaloonPunch();
+    return false;
+  }
+  updateFrontierSaloonActivity(false);
+  if (!_frontierSaloonPrompt) return false;
+  return enterFrontierSaloon(_frontierSaloonPrompt.kind === 'DUEL' ? 'DUEL' : 'SALOON');
+}
+function frontierSaloonInput(advanceTime) {
+  const s = _frontierSaloonSession; if (!s || !advanceTime) return;
+  const keyEdge = code => { const down = keyIsDown(code), was = s.keys[code]; s.keys[code] = down; return down && !was; };
+  if (keyEdge(27) || keyEdge(80)) isPaused = !isPaused;
+  const interact = keyEdge(70), one = keyEdge(49), two = keyEdge(50);
+  let dx = (keyIsDown(68) ? 1 : 0) - (keyIsDown(65) ? 1 : 0),
+    dy = (keyIsDown(83) ? 1 : 0) - (keyIsDown(87) ? 1 : 0);
+  let fire = keyIsDown(32) || keyIsDown(69), choiceChange = 0;
+  const pad = connectedGamepad();
+  if (pad) {
+    const btn = i => !!(pad.buttons[i] && pad.buttons[i].pressed), edge = i => btn(i) && !s.padWas[i];
+    if (Math.hypot(pad.axes[0] || 0, pad.axes[1] || 0) > .2) { dx = pad.axes[0]; dy = pad.axes[1]; }
+    fire = fire || btn(7) || btn(2) || btn(3);
+    if (edge(0) && !isPaused) interactFrontierSaloonActivity();
+    if (edge(1)) { if (isPaused) isPaused = false; else if (s.menu) s.menu = false; else frontierSaloonAction(s.mode === 'DUEL' ? 'BACK' : 'EXIT'); }
+    if (edge(9)) isPaused = !isPaused;
+    if (edge(14) || edge(15)) choiceChange = 1;
+    s.padWas = pad.buttons.map(b => !!b.pressed);
+  } else s.padWas = [];
+  const bx = 72, by = height - 108;
+  for (const t of touches) {
+    if (t.x < width * .48 && t.y > height - 190) {
+      dx = constrain((t.x - bx) / 56, -1, 1); dy = constrain((t.y - by) / 56, -1, 1);
+    }
+    if (s.mode === 'SALOON' && !s.menu && Math.hypot(t.x - (width - 72), t.y - by) < 55) fire = true;
+  }
+  if (window.isDesktop && mouseIsPressed && mouseButton === LEFT && mouseY > 80 && mouseY < height - 215 && !s.menu) fire = true;
+  if (isPaused) { s.fireWas = fire; return; }
+  if (s.menu) {
+    if (one) frontierSaloonAction('BRAWL'); else if (two) frontierSaloonAction('DUEL');
+    else if (choiceChange) s.menuChoice = s.menuChoice === 'BRAWL' ? 'DUEL' : 'BRAWL';
+  }
+  if (interact) interactFrontierSaloonActivity();
+  if (s.mode === 'DUEL') { if (fire && !s.fireWas) frontierSaloonFire(); }
+  else if (fire) frontierSaloonPunch();
+  s.fireWas = fire;
+  if (!_frontierSaloonSession || s.menu || s.mode === 'DUEL') return;
+  const mag = Math.hypot(dx, dy); if (mag > 1) { dx /= mag; dy /= mag; }
+  const step = Math.min(2, Math.max(0, deltaTime || 16.67) / 16.67);
+  frontierSaloonMove(player, dx * 3.7 * step, dy * 3.7 * step);
+  if (player.isMoving && s.punchMs <= 0) player.aimAngle = player.moveAngle;
+}
+function updateFrontierSaloonActivity(advanceTime = true) {
+  _frontierSaloonPrompt = null;
+  if (!frontierSaloonContext()) return;
+  const dt = advanceTime && !isPaused ? Math.min(100, Math.max(0, deltaTime || 16.67)) : 0;
+  if (dt > 0) _frontierSaloonToastMs = Math.max(0, _frontierSaloonToastMs - dt);
+  const s = _frontierSaloonSession;
+  if (!s) {
+    if (isPaused) return;
+    const sites = frontierSaloonSites();
+    if (Math.hypot(player.x - sites.door.x, player.y - sites.door.y) < 90) _frontierSaloonPrompt = { kind: 'SALOON' };
+    else if (Math.hypot(player.x - sites.duel.x, player.y - sites.duel.y) < 105) _frontierSaloonPrompt = { kind: 'DUEL' };
+    return;
+  }
+  frontierSaloonInput(advanceTime);
+  if (!_frontierSaloonSession || isPaused || dt <= 0) return;
+  s.elapsedMs += dt;
+  player.muzzleFlash = Math.max(0, player.muzzleFlash - dt / 16.67);
+  player.weaponKick = Math.max(0, player.weaponKick - dt / 16.67);
+  s.hitMs = Math.max(0, s.hitMs - dt);
+  if (s.mode === 'DUEL') {
+    const d = s.duel;
+    if (d.phase === 'WAIT') {
+      d.remainingMs -= dt;
+      if (d.remainingMs <= 0) { d.phase = 'DRAW'; d.reactionMs = 0; sfx.charge(); }
+    } else if (d.phase === 'DRAW') {
+      d.reactionMs += dt;
+      if (d.reactionMs > d.deadlineMs) {
+        s.opponent.isNeutral = false; s.opponent.isArmed = true; s.opponent.muzzleFlash = 3;
+        sfx.shoot(WEAPONS.REVOLVER, s.opponent.x, s.opponent.y); finishFrontierQuickDraw(false, 'TOO SLOW');
+      }
+    } else d.resultMs += dt;
+    if (s.opponent.knockedOut && s.opponent.stunPose && !s.opponent.stunPose.done) {
+      s.opponent.stunPose.age += dt / 16.67;
+      if (s.opponent.stunPose.age > s.opponent.stunPose.duration + 16) s.opponent.stunPose.done = true;
+      if (s.opponent.stunPose.rag) ragStep(s.opponent.stunPose.rag);
+    }
+    d.shotMs = Math.max(0, d.shotMs - dt);
+    s.opponent.muzzleFlash = Math.max(0, s.opponent.muzzleFlash - dt / 16.67);
+    return;
+  }
+  const before = s.punchMs; s.punchMs = Math.max(0, before - dt);
+  player.meleeTimer = Math.max(0, 20 * (1 - (340 - s.punchMs) / 340));
+  if (s.brawl === 'ACTIVE') player.boxingHold = 180;
+  else player.boxingHold = Math.max(0, player.boxingHold - dt / 16.67);
+  if (before > 180 && s.punchMs <= 180 && !s.punchHit && s.brawl === 'ACTIVE') {
+    s.punchHit = true;
+    let target = null, best = 78;
+    for (const c of s.fighters) {
+      const d = Math.hypot(c.x - player.x, c.y - player.y), a = Math.atan2(c.y - player.y, c.x - player.x);
+      if (!c.knockedOut && d < best && Math.abs(Math.atan2(Math.sin(a - player.aimAngle), Math.cos(a - player.aimAngle))) < 1.2) { best = d; target = c; }
+    }
+    if (target) {
+      target.hp -= s.punchChain === 3 ? 40 : 30; target.hitFlash = 5; target.saloonWindupMs = 0;
+      target.saloonPunchMs = Math.max(target.saloonPunchMs, 360);
+      frontierSaloonMove(target, Math.cos(player.aimAngle) * 12, Math.sin(player.aimAngle) * 12);
+      sfx.hitBody();
+      if (target.hp <= 0) frontierSaloonKnockOut(target, player.aimAngle);
+    }
+  }
+  for (const c of s.fighters) {
+    c.hitFlash = Math.max(0, (c.hitFlash || 0) - dt / 16.67);
+    if (c.knockedOut) {
+      if (c.stunPose && !c.stunPose.done) {
+        c.stunPose.age += dt / 16.67;
+        if (c.stunPose.age > c.stunPose.duration + 16) c.stunPose.done = true;
+        if (c.stunPose.rag) ragStep(c.stunPose.rag);
+      }
+      continue;
+    }
+    if (s.brawl !== 'ACTIVE') continue;
+    const d = Math.hypot(player.x - c.x, player.y - c.y), a = Math.atan2(player.y - c.y, player.x - c.x);
+    c.aimAngle = a; c.saloonPunchMs = Math.max(0, c.saloonPunchMs - dt);
+    if (c.saloonWindupMs > 0) {
+      const prior = c.saloonWindupMs; c.saloonWindupMs = Math.max(0, prior - dt);
+      c.meleeTimer = Math.max(0, 20 * c.saloonWindupMs / 420);
+      if (prior > 155 && c.saloonWindupMs <= 155 && d < 64) {
+        s.grit = Math.max(0, s.grit - 14); s.hitMs = 190; sfx.hitBody();
+        frontierSaloonMove(player, Math.cos(a) * 11, Math.sin(a) * 11);
+      }
+      c.isMoving = false;
+    } else if (d < 55 && c.saloonPunchMs <= 0) {
+      c.saloonWindupMs = 420; c.saloonPunchMs = 1150; c.meleePhase = c.meleePhase === 2 ? 1 : 2;
+    } else if (d > 45) {
+      const pace = dt / 16.67 * 1.65;
+      // Offset the approach around tables and other fighters instead of
+      // letting three opponents sit on exactly the same contact point.
+      let steer = a;
+      if (frontierSaloonBlocked(c.x + Math.cos(a) * 22, c.y + Math.sin(a) * 22)) steer += c.name === 'RED' ? 1.15 : -1.15;
+      for (const other of s.fighters) if (other !== c && !other.knockedOut && Math.hypot(c.x - other.x, c.y - other.y) < 34)
+        steer += c.x < other.x ? -.40 : .40;
+      frontierSaloonMove(c, Math.cos(steer) * pace, Math.sin(steer) * pace);
+    } else { c.isMoving = false; c.gait *= .82; }
+  }
+  if (s.brawl === 'ACTIVE' && s.grit <= 0) {
+    s.brawl = 'LOST'; s.fighters = []; player.hp = Math.max(1, player.hp - 12);
+    player.x = 0; player.y = 240; player.meleeTimer = 0; s.punchMs = 0;
+    frontierSaloonNotify('KNOCKED OUT · -12 HEALTH\nMae broke up the fight. Return to the counter to retry.');
+  } else if (s.brawl === 'ACTIVE' && s.fighters.every(c => c.knockedOut)) {
+    s.brawl = 'WON';
+    if (!frontierSaloonProgress.brawlCleared) { frontierSaloonProgress.brawlCleared = true; score += 75;
+      frontierSaloonNotify('BARROOM PEACEMAKER COMPLETE · +75 SCORE\nMae: Drinks stay on the tables. Try your luck at quick draw.'); }
+    else frontierSaloonNotify('BARROOM PEACEMAKER\nAll three troublemakers are down.');
+  }
+}
+function frontierSaloonButtons() {
+  const s = _frontierSaloonSession;
+  if (!s) return _frontierSaloonPrompt ? [{ action: 'INTERACT', x: width / 2 - 100, y: height - 125, w: 200, h: 50,
+    label: _frontierSaloonPrompt.kind === 'SALOON' ? 'ENTER COPPER SPUR' : 'CHALLENGE QUICKHAND' }] : [];
+  if (isPaused) return [
+    { action: 'RESUME', label: 'RESUME', x: width / 2 - 115, y: height / 2 - 65, w: 230, h: 46 },
+    { action: 'SAVE', label: 'SAVE GAME', x: width / 2 - 115, y: height / 2 - 9, w: 230, h: 46 },
+    { action: 'SHOP', label: 'LEAVE & OPEN SHOP', x: width / 2 - 115, y: height / 2 + 47, w: 230, h: 46 }];
+  if (s.menu) return [
+    { action: 'BRAWL', label: '1 · BARROOM PEACEMAKER', x: width / 2 - 140, y: height / 2 - 45, w: 280, h: 54 },
+    { action: 'DUEL', label: '2 · QUICK DRAW DUEL', x: width / 2 - 140, y: height / 2 + 23, w: 280, h: 54 },
+    { action: 'CLOSE', label: 'BACK', x: width / 2 - 90, y: height / 2 + 91, w: 180, h: 42 }];
+  if (s.mode === 'DUEL') return s.duel.phase === 'RESULT' ? [
+    { action: 'RETRY', label: 'REMATCH', x: width / 2 - 145, y: height - 184, w: 140, h: 54 },
+    { action: 'BACK', label: 'BACK TO SALOON', x: width / 2 + 5, y: height - 184, w: 140, h: 54 },
+    { action: 'EXIT', label: 'LEAVE', x: width / 2 - 90, y: height - 110, w: 180, h: 42 }] : [
+    { action: 'FIRE', label: s.duel.phase === 'DRAW' ? 'DRAW · FIRE!' : 'WAIT · HOLD YOUR FIRE',
+      x: width / 2 - 140, y: height - 170, w: 280, h: 70 }];
+  const buttons = [{ action: 'EXIT', label: 'LEAVE SALOON', x: width / 2 - 88, y: height - 48, w: 176, h: 36 }];
+  if (s.brawl !== 'ACTIVE' && Math.hypot(player.x, player.y + 130) < 104)
+    buttons.push({ action: 'INTERACT', label: 'TALK TO MAE', x: width / 2 - 100, y: height - 250, w: 200, h: 48 });
+  return buttons;
+}
+function handleFrontierSaloonTap(mx, my) {
+  if (!frontierSaloonContext()) return false;
+  updateFrontierSaloonActivity(false);
+  const s = _frontierSaloonSession;
+  if (s && mx > width - 68 && my < 64) { isPaused = !isPaused; return true; }
+  for (const b of frontierSaloonButtons()) if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) {
+    if (b.action === 'INTERACT') interactFrontierSaloonActivity();
+    else if (b.action === 'FIRE') frontierSaloonFire();
+    else if (b.action === 'RESUME') isPaused = false;
+    else if (b.action === 'SAVE') { saveGame(); frontierSaloonNotify('GAME SAVED\nYou will resume outside the Copper Spur.'); }
+    else if (b.action === 'SHOP') { exitFrontierSaloon(); isPaused = true; pauseMenuState = 'SHOP'; }
+    else if (b.action === 'CLOSE') s.menu = false;
+    else frontierSaloonAction(b.action);
+    return true;
+  }
+  if (s && !isPaused && s.mode === 'SALOON' && !s.menu && Math.hypot(mx - (width - 72), my - (height - 108)) < 55) {
+    frontierSaloonPunch(); return true;
+  }
+  return !!s && (isPaused || s.menu || s.mode === 'DUEL');
+}
+
+// The interior is a cut-away room: rooted furniture, joined riser planes,
+// planked floors, an upstairs gallery and warm light pools, all drawn in the
+// same curved cel-material language as the revised characters.
+function paintFrontierSaloonSolid(b) {
+  const x = b.x - b.w / 2, y = b.y - b.h / 2, z = b.rise;
+  push(); noStroke(); fill(22, 14, 10, 80); rect(x + 9, y + 10, b.w + 4, b.h + 6, 7);
+  stroke(44, 27, 19); strokeWeight(1.7);
+  fill(79, 46, 28); quad(x, y, x + b.w, y, x + b.w, y - z, x, y - z);
+  fill(112, 68, 39); quad(x + b.w, y, x + b.w, y + b.h, x + b.w, y + b.h - z, x + b.w, y - z);
+  fill(118, 71, 40); quad(x, y + b.h, x + b.w, y + b.h, x + b.w, y + b.h - z, x, y + b.h - z);
+  fill(b.kind === 'BAR' ? color(196, 140, 75) : color(151, 101, 55));
+  rect(x, y - z, b.w, b.h, b.kind === 'TABLE' ? 18 : 4);
+  noStroke(); fill(231, 180, 107, 100); rect(x + 5, y - z + 4, b.w - 10, 6, 3);
+  stroke(86, 50, 29, 130); strokeWeight(.9);
+  for (let lx = x + 18; lx < x + b.w; lx += b.kind === 'BAR' ? 26 : 22) line(lx, y - z + 6, lx, y + b.h - z - 5);
+  if (b.kind === 'BAR') {
+    for (let lx = -220; lx <= 220; lx += 73) {
+      noStroke(); fill(35, 18, 10, 70); ellipse(lx + 6, -128, 24, 18);
+      stroke(44, 26, 18); fill(142, 81, 45); ellipse(lx, -138, 24, 22);
+      fill(196, 129, 65); ellipse(lx, -145, 24, 18);
+      fill(211, 176, 113); rect(lx - 13, y - z + 22, 18, 11, 3);
+      fill(102, 150, 153); ellipse(lx - 4, y - z + 25, 8, 7);
+    }
+  } else if (b.kind === 'TABLE') {
+    stroke(45, 28, 19); fill(80, 48, 28);
+    for (const sx of [-1, 1]) { ellipse(b.x + sx * 70, b.y - 9, 24, 22); fill(178, 115, 63); ellipse(b.x + sx * 70, b.y - 16, 24, 17); fill(80, 48, 28); }
+    noStroke(); fill(225, 204, 158); rect(b.x - 20, b.y - z - 6, 22, 14, 2);
+    fill(169, 55, 38); rect(b.x - 17, b.y - z - 3, 7, 8, 1); fill(231, 183, 89); ellipse(b.x + 22, b.y - z, 11, 9);
+    fill(50, 85, 54); rect(b.x + 15, b.y - z - 22, 8, 14, 2); fill(98, 141, 82); rect(b.x + 17, b.y - z - 26, 4, 6, 1);
+  } else if (b.kind === 'PIANO') {
+    noStroke(); fill(37, 28, 24); rect(x + 7, y - z + 8, b.w - 14, 57, 4);
+    for (let ky = y - z + 10; ky < y - z + 65; ky += 7) { fill(235, 222, 194); rect(x + 11, ky, 45, 5); fill(23, 21, 21); rect(x + 11, ky, 26, 2); }
+    fill(231, 199, 147); textSize(8); textAlign(CENTER, CENTER); text('BELL & SONS', b.x, y + b.h - z - 17);
+  } else if (b.kind === 'STAIRS') {
+    for (let sy = y - z; sy < y + b.h - z; sy += 15) { stroke(50, 30, 21); strokeWeight(2); line(x + 8, sy, x + b.w - 8, sy); stroke(211, 153, 89); strokeWeight(1); line(x + 8, sy + 3, x + b.w - 8, sy + 3); }
+  }
+  pop();
+}
+function paintFrontierSaloonRoom() {
+  push(); noStroke(); fill(26, 18, 17); rect(-460, -386, 920, 755, 16);
+  fill(115, 70, 42); rect(-410, -310, 820, 620);
+  for (let y = -310, row = 0; y < 310; y += 23, row++) {
+    fill(row % 3 === 0 ? color(134, 85, 47) : row % 3 === 1 ? color(123, 76, 43) : color(108, 66, 40)); rect(-410, y, 820, 22);
+    stroke(74, 44, 29, 130); strokeWeight(.8); line(-410, y + 22, 410, y + 22);
+    for (let x = -410 + (row % 2) * 115; x < 410; x += 230) {
+      line(x, y, x, y + 22); noStroke(); fill(47, 32, 26, 90); ellipse(x + 5, y + 5, 1.8, 1.8); ellipse(x + 5, y + 17, 1.8, 1.8); stroke(74, 44, 29, 130);
+    }
+  }
+  // Rear wall and upper gallery are raised against the rooted room footprint.
+  stroke(37, 25, 20); strokeWeight(2); fill(99, 51, 35); quad(-410, -310, 410, -310, 410, -368, -410, -368);
+  fill(137, 87, 51); rect(-410, -368, 820, 18, 3);
+  fill(92, 57, 34); rect(-398, -343, 796, 29, 3);
+  stroke(219, 153, 83); strokeWeight(3); line(-398, -324, 398, -324);
+  stroke(55, 34, 24); strokeWeight(4); for (let x = -390; x <= 390; x += 32) line(x, -343, x, -309);
+  for (const x of [-277, -138, 138, 277]) {
+    fill(52, 31, 23); stroke(217, 151, 82); strokeWeight(1.5); rect(x - 30, -367, 60, 25, 2);
+    noStroke(); fill(151, 88, 49); rect(x - 24, -363, 48, 17, 1); fill(232, 186, 108); ellipse(x + 17, -355, 3, 3);
+  }
+  fill(71, 37, 27); stroke(43, 29, 23); strokeWeight(2); rect(-98, -360, 196, 38, 3);
+  noStroke(); fill(239, 200, 133); textFont('serif'); textAlign(CENTER, CENTER); textSize(20); text('COPPER SPUR', 0, -341);
+  // Bottle shelves stay behind the counter and do not affect movement.
+  stroke(58, 35, 24); strokeWeight(4); line(-270, -285, 270, -285); line(-270, -252, 270, -252);
+  for (let i = 0; i < 22; i++) {
+    const x = -255 + i * 24; noStroke(); fill(i % 3 === 0 ? color(42, 98, 81) : i % 3 === 1 ? color(130, 76, 41) : color(65, 97, 131));
+    rect(x, -283 - (i % 2) * 31, 8, 18, 2); rect(x + 2, -289 - (i % 2) * 31, 4, 8, 1); fill(225, 198, 139); rect(x + 1, -276 - (i % 2) * 31, 6, 6, 1);
+  }
+  // Tall side windows reveal the hot outdoor light through dusty glass.
+  for (const sx of [-1, 1]) for (const y of [-120, 90]) {
+    const x = sx * 405; noStroke(); fill(33, 23, 19); rect(x - 6, y - 47, 12, 94, 3);
+    fill(239, 191, 101); rect(x - 4, y - 42, 8, 84, 2); fill(239, 193, 103, 25); ellipse(x - sx * 90, y + 15, 190, 116);
+    stroke(81, 49, 29); strokeWeight(3); line(x - 5, y, x + 5, y);
+  }
+  for (const x of [-155, 155]) {
+    noStroke(); fill(245, 176, 70, 18); ellipse(x, 80, 160, 145); fill(246, 193, 90, 13); ellipse(x, 80, 240, 220);
+  }
+  noStroke(); fill(181, 123, 66); rect(-54, 290, 108, 20, 2);
+  fill(88, 43, 26); rect(-48, 300, 40, 7, 2); rect(8, 300, 40, 7, 2);
+  fill(240, 211, 150); textSize(12); text('MAIN STREET', 0, 286);
+  pop();
+}
+function paintFrontierSaloonBrawler(c) {
+  push(); translate(c.x, c.y); noStroke(); fill(16, 12, 10, 60); ellipse(6, 10, 29, 22);
+  if (c.knockedOut) { drawStunnedFigure(c); pop(); return; }
+  const p = c.saloonWindupMs > 0 ? 1 - c.saloonWindupMs / 420 : 0;
+  const ext = Math.sin(Math.max(0, Math.min(1, p)) * PI), twist = ext * (c.meleePhase === 2 ? -.65 : .6);
+  const boxing = { active: true, hip: -.12 + twist * .44, torso: -.17 + twist, extension: ext };
+  push(); rotate(c.aimAngle + boxing.hip); drawBoxingLegs(c, boxing, figureRig(c.bodyW, c.bodyH)); pop();
+  push(); rotate(c.aimAngle + boxing.torso); drawBoxingArms(c, boxing);
+  figureCelOval(window, 0, 0, c.bodyW * TORSO_DEPTH, c.bodyH, c.hitFlash > 0 ? color(242, 217, 160) : c.shirtCol, 1);
+  noStroke(); fill(c.vestCol || color(88, 62, 40)); rect(-6, -10, 5, 20, 2); rect(4, -10, 4, 20, 2);
+  drawFigureHead(window, c, 0, 0); pop();
+  if (c.saloonWindupMs > 155) { noFill(); stroke(246, 151, 76, 210); strokeWeight(2); arc(0, 0, 68, 68, c.aimAngle - .65, c.aimAngle + .65); }
+  if (c.hp < c.maxHp) { noStroke(); fill(28, 20, 15, 190); rect(-23, -34, 46, 4, 2); fill(227, 165, 76); rect(-23, -34, 46 * c.hp / c.maxHp, 4, 2); }
+  pop();
+}
+function drawFrontierSaloonInterior() {
+  const s = _frontierSaloonSession; if (!s || s.mode !== 'SALOON') return;
+  background(24, 17, 16);
+  // This is a large, explorable room, so keep the figures readable and follow
+  // them across it. Fitting the whole saloon into a portrait phone shrank a
+  // punch and a carefully shaded hand to only a few pixels.
+  const scaleRoom = Math.max(1.35, Math.min(1.75, width / 540));
+  const halfX = width / (2 * scaleRoom), halfY = Math.max(100, (height - 280) / (2 * scaleRoom));
+  const maxX = Math.max(0, 410 - halfX + 18), maxY = Math.max(0, 310 - halfY + 12);
+  const cx = constrain(player.x, -maxX, maxX), cy = constrain(player.y - 48, -maxY, maxY);
+  push(); translate(width / 2, height / 2 - 35); scale(scaleRoom); translate(-cx, -cy);
+  paintFrontierSaloonRoom();
+  const layers = frontierSaloonFurniture().map(b => ({ y: b.y + b.h / 2, draw: () => paintFrontierSaloonSolid(b) }));
+  for (const c of s.patrons) layers.push({ y: c.y, draw: () => { c.show(); } });
+  for (const c of s.fighters) layers.push({ y: c.y, draw: () => paintFrontierSaloonBrawler(c) });
+  layers.push({ y: player.y, draw: () => {
+    const active = rightStick.active; rightStick.active = false;
+    try { noStroke(); fill(12, 10, 9, 70); ellipse(player.x + 6, player.y + 10, 28, 22); player.show(); }
+    finally { rightStick.active = active; }
+  } });
+  layers.sort((a, b) => a.y - b.y); layers.forEach(l => l.draw());
+  // Near wall deliberately has an open doorway, and a low cutaway edge so
+  // neither a fighter nor the exit disappears beneath a full-height facade.
+  stroke(44, 29, 22); strokeWeight(2); fill(109, 59, 37);
+  quad(-410, 310, -54, 310, -54, 295, -410, 295); quad(54, 310, 410, 310, 410, 295, 54, 295);
+  pop();
+}
+function paintFrontierQuickDrawPerson(c, opposing) {
+  if (c.knockedOut) { push(); translate(c.x, c.y); drawStunnedFigure(c); pop(); return; }
+  const d = _frontierSaloonSession.duel;
+  const fired = d.phase === 'RESULT' && (opposing ? !d.won && d.result !== 'FALSE START' : d.won);
+  const draw = fired ? 1 : d.phase === 'DRAW' ? Math.min(1, d.reactionMs / (opposing ? d.deadlineMs : 280)) : 0;
+  const rig = figureRig(c.bodyW, c.bodyH), skin = c.skinCol || color(235, 180, 140);
+  push(); translate(c.x, c.y); rotate(c.aimAngle);
+  drawBoxingLegs(c, { active: true, hip: 0, torso: 0, extension: 0 }, rig);
+  // A ready hand beside the leather holster becomes a raised forearm before
+  // the shot. The shared cylinder/barrel mesh keeps the gun's volume visible
+  // through the full draw, including its first downward tilt at the hip.
+  const hx = 3 + 22 * draw, hy = 17 - 8 * draw, ex = -4 + 14 * draw, ey = 21 - 8 * draw;
+  figureCelLimb(window, 0, -13, -7, -19, -1, -18, 7, 6.5, 5.8, c.shirtCol);
+  figureCelOval(window, -1, -18, 7.5, 7.5, skin, .65);
+  figureCelLimb(window, 0, 13, ex, ey, ex + (hx - ex) * .20, ey + (hy - ey) * .20, 7, 6.5, 6, c.shirtCol);
+  figureCelLimb(window, ex, ey, (ex + hx) / 2, (ey + hy) / 2, hx, hy, 5.7, 5.2, 5, skin);
+  figureCelOval(window, 0, 0, c.bodyW * TORSO_DEPTH, c.bodyH, c.shirtCol, 1);
+  if (opposing || (typeof cowboySuitEquipped !== 'undefined' && cowboySuitEquipped)) {
+    noStroke(); fill(c.vestCol || color(88, 62, 40)); rect(-7, -10, 6, 20, 2); rect(3, -10, 6, 20, 2);
+    fill(c.kerchiefCol || color(162, 54, 44)); triangle(10, -4, 10, 4, 4, 0);
+  }
+  noStroke(); fill(76, 43, 24); rect(-3, 12, 12, 11, 3); fill(119, 76, 37); rect(-1, 12, 8, 3, 1);
+  push(); translate(hx, hy); rotate(.26 * (1 - draw));
+  drawRevolverSolid(-1.12 + draw * 1.20, .15 * (1 - draw), figureLight(c.aimAngle), figureSouth(c.aimAngle), c.weaponKick, 0);
+  figureCelOval(window, 0, 0, 8, 8, skin, .7); pop();
+  drawFigureHead(window, c, 0, 0);
+  if (c.muzzleFlash > 0 && fired) {
+    noStroke(); fill(255, 221, 121, 225); beginShape(); vertex(hx + 25, hy - 3); vertex(hx + 42, hy - 9);
+    vertex(hx + 38, hy); vertex(hx + 48, hy + 5); vertex(hx + 24, hy + 4); endShape(CLOSE);
+  }
+  pop();
+}
+function drawFrontierQuickDrawScene() {
+  const s = _frontierSaloonSession; if (!s || s.mode !== 'DUEL') return;
+  background(206, 158, 94);
+  const k = Math.max(1.15, Math.min(1.7, (width - 30) / 310));
+  push(); translate(width / 2, height / 2 - 24); scale(k);
+  noStroke(); fill(190, 137, 76); rect(-430, -320, 860, 640);
+  fill(217, 174, 109); rect(-430, -106, 860, 220);
+  stroke(157, 112, 63, 150); strokeWeight(1); for (let i = 0; i < 36; i++) { const x = ((i * 97) % 800) - 400, y = ((i * 83) % 170) - 82; line(x, y, x + 13, y - 2); }
+  // Joined boardwalks and false-front storefronts frame the duel lane.
+  for (const sy of [-1, 1]) {
+    const y = sy * 145; noStroke(); fill(100, 64, 36); rect(-410, y - 20, 820, 48, 3);
+    fill(176, 124, 67); rect(-410, y - 30, 820, 45, 3);
+    stroke(80, 48, 27); strokeWeight(1); for (let x = -400; x < 400; x += 22) line(x, y - 30, x, y + 15);
+  }
+  for (const x of [-250, 0, 250]) {
+    const b = { kind: 'BAR', x, y: -227, w: 204, h: 112, rise: 29 };
+    paintFrontierSaloonSolid(b); noStroke(); fill(106, 52, 34); rect(x - 93, -293, 186, 27, 3);
+    fill(233, 203, 142); textSize(16); textFont('serif'); textAlign(CENTER, CENTER);
+    text(x === 0 ? 'COPPER SPUR' : x < 0 ? 'GENERAL STORE' : 'DRY GULCH BANK', x, -280);
+  }
+  // The duel is a close, fixed stage. Keep both figures in a portrait display
+  // without reducing their hands/guns to the old paper-small silhouettes.
+  push(); scale(.64, 1);
+  noStroke(); fill(28, 22, 17, 65); ellipse(player.x + 10, 13, 37, 21); ellipse(s.opponent.x + 10, 13, 37, 21);
+  // Counter-scale only the models: street distance is compressed, body shapes
+  // and their rigid revolver geometry retain the same proportions.
+  for (const entry of [[player, false], [s.opponent, true]]) {
+    const c = entry[0]; push(); translate(c.x, c.y); scale(1 / .64, 1); translate(-c.x, -c.y);
+    paintFrontierQuickDrawPerson(c, entry[1]); pop();
+  }
+  if (s.duel.shotMs > 0) {
+    stroke(255, 221, 116, 230 * s.duel.shotMs / 180); strokeWeight(2.6); line(player.x + 37, 8, s.opponent.x - 20, 2);
+    noStroke(); fill(255, 239, 172); ellipse(s.opponent.x - 10, 0, 12, 12);
+  }
+  pop();
+  pop();
+}
+function drawFrontierSaloonHud() {
+  if (!frontierSaloonContext()) return;
+  const s = _frontierSaloonSession;
+  push(); textAlign(CENTER, CENTER); textFont('sans-serif');
+  if (s) {
+    noStroke(); fill(26, 18, 14, 223); rect(8, 8, width - 16, 76, 8);
+    fill(239, 203, 141); textSize(Math.min(19, width / 22));
+    text(s.mode === 'DUEL' ? 'DRY GULCH · QUICK DRAW' : 'THE COPPER SPUR SALOON', width / 2, 29);
+    fill(219, 188, 145); textSize(12);
+    text(s.mode === 'DUEL' ? 'Elias “Quickhand” Reed · no countdown' :
+      s.brawl === 'ACTIVE' ? 'BARROOM PEACEMAKER · ' + s.fighters.filter(c => c.knockedOut).length + '/3 DOWN' :
+      'Talk at the counter · fistfights and duels', width / 2, 51);
+    fill(174, 156, 133); textSize(11);
+    text('HEALTH ' + Math.ceil(player.hp) + '   SCORE ' + score, width / 2, 69);
+    fill(87, 60, 37); rect(width - 61, 12, 45, 31, 5); fill(243, 218, 179);
+    rect(width - 45, 20, 5, 15, 1); rect(width - 35, 20, 5, 15, 1);
+    if (s.mode === 'SALOON') {
+      if (s.brawl === 'ACTIVE') {
+        noStroke(); fill(39, 27, 19, 210); rect(width / 2 - 112, 98, 224, 27, 5);
+        fill(216, 149, 73); rect(width / 2 - 109, 101, 218 * s.grit / 100, 21, 4);
+        fill(252, 227, 176); textSize(12); text('GRIT ' + s.grit + '/100', width / 2, 112);
+      }
+      if (!connectedGamepad()) {
+        noFill(); stroke(226, 195, 146, 100); strokeWeight(2); ellipse(72, height - 108, 112, 112);
+        fill(190, 132, 70, 52); ellipse(72, height - 108, 55, 55);
+        fill(80, 45, 28, 210); stroke(231, 164, 86); ellipse(width - 72, height - 108, 104, 104);
+        fill(246, 214, 166); noStroke(); textSize(15); text('PUNCH', width - 72, height - 112); textSize(11); text('E / SPACE', width - 72, height - 94);
+      }
+      if (window.isDesktop || connectedGamepad()) { fill(220, 198, 163); textSize(11); text(connectedGamepad() ? 'MOVE · left stick   PUNCH · X / RT   TALK · A' : 'WASD move · E / Space punch · F talk', width / 2, height - 204); }
+    } else {
+      const d = s.duel, colorCue = d.phase === 'DRAW' ? color(191, 237, 108) : d.phase === 'RESULT' && d.won ? color(243, 202, 121) : color(242, 143, 99);
+      noStroke(); fill(28, 21, 16, 235); rect(width / 2 - Math.min(165, width / 2 - 12), 105, Math.min(330, width - 24), 93, 10);
+      fill(colorCue); textSize(d.phase === 'DRAW' ? 44 : 29);
+      text(d.phase === 'RESULT' ? (d.won ? 'YOU WIN' : d.result) : d.phase, width / 2, 139);
+      fill(235, 208, 163); textSize(12);
+      text(d.phase === 'RESULT' ? d.won ? Math.round(d.reactionMs) + ' ms · costume in shop' : 'Try again. Watch for the green cue.' :
+        d.phase === 'DRAW' ? 'FIRE NOW · TAP / SPACE / RT' : 'Keep your hand still until DRAW.', width / 2, 178);
+    }
+    if (s.hitMs > 0) { noFill(); stroke(205, 73, 34, s.hitMs); strokeWeight(9); rect(5, 5, width - 10, height - 10, 12); }
+    if (s.menu) { noStroke(); fill(17, 13, 10, 232); rect(10, height / 2 - 129, width - 20, 290, 12);
+      fill(242, 208, 151); textSize(19); text('MAE’S SIDE MISSIONS', width / 2, height / 2 - 105);
+      fill(202, 178, 139); textSize(11); text('Brawl: +75 score · Duel: cowboy costume +120', width / 2, height / 2 - 75); }
+    if (isPaused) { noStroke(); fill(12, 9, 8, 224); rect(0, 0, width, height); fill(244, 211, 159); textSize(26); text('PAUSED', width / 2, height / 2 - 108); }
+  }
+  for (const b of frontierSaloonButtons()) {
+    const selected = s && s.menu && s.menuChoice === b.action, fireCue = s && s.mode === 'DUEL' && s.duel.phase === 'DRAW' && b.action === 'FIRE';
+    stroke(fireCue ? color(156, 229, 96) : selected ? color(253, 203, 108) : color(186, 128, 69)); strokeWeight(selected || fireCue ? 3 : 1.6);
+    fill(fireCue ? color(137, 192, 75) : color(72, 43, 26, 240)); rect(b.x, b.y, b.w, b.h, 8);
+    noStroke(); fill(fireCue ? color(25, 44, 17) : color(245, 215, 166)); textSize(Math.min(13, b.w / 19)); text(b.label, b.x + b.w / 2, b.y + b.h / 2);
+  }
+  if (!isPaused && _frontierSaloonToastMs > 0) {
+    const tw = Math.min(width - 28, 620); noStroke(); fill(28, 18, 12, 229);
+    const ty = s && s.mode === 'DUEL' ? height - 300 : s ? 138 : height - 340;
+    rect(width / 2 - tw / 2, ty, tw, 65, 8); fill(239, 216, 173); textLeading(18);
+    textSize(Math.min(12, (width - 35) / 42)); text(_frontierSaloonToast, width / 2, ty + 33);
+  }
+  pop();
+}
+function drawFrontierSaloonScene() {
+  if (!_frontierSaloonSession) return;
+  if (_frontierSaloonSession.mode === 'DUEL') drawFrontierQuickDrawScene(); else drawFrontierSaloonInterior();
+  drawFrontierSaloonHud();
+}
+function serializeFrontierSaloonActivity() {
+  return { version: 1, brawlCleared: frontierSaloonProgress.brawlCleared,
+    duelWon: frontierSaloonProgress.duelWon, duelAttempts: frontierSaloonProgress.duelAttempts };
+}
+function restoreFrontierSaloonActivity(snapshot) {
+  exitFrontierSaloon(); resetFrontierSaloonActivity();
+  if (!snapshot || typeof snapshot !== 'object') return;
+  frontierSaloonProgress.brawlCleared = snapshot.brawlCleared === true;
+  frontierSaloonProgress.duelWon = snapshot.duelWon === true;
+  frontierSaloonProgress.duelAttempts = Math.max(0, Math.min(9999, Math.floor(Number(snapshot.duelAttempts) || 0)));
+  if (frontierSaloonProgress.duelWon && typeof awardCowboyCostume === 'function') awardCowboyCostume();
+}
+function resetFrontierSaloonActivity() {
+  exitFrontierSaloon(); frontierSaloonProgress = { brawlCleared: false, duelWon: false, duelAttempts: 0 };
+  _frontierSaloonToast = ''; _frontierSaloonToastMs = 0; _frontierSaloonPrompt = null;
+}
+
 // ===== FOREST HUNTING SETTLEMENT =====
 // Cedar Hollow is a fictional forest-stewardship community. Its small cedar
 // lodges sit on verified clear ground beside the woodland road network. These
@@ -39477,6 +41599,7 @@ function getSafeSpawn(away) {
     const rx = cx2 + Math.cos(a) * r;
     const ry = cy2 + Math.sin(a) * r;
     if (!insideSector(rx, ry) || (away && insideOwnedFortress(currentLevel, rx, ry, 60))) continue;
+    if (currentBiome === 3 && !frontierCanyonSpawnSafe(rx, ry)) continue;
     // Never drop a random hostile into a settlement whose story arc is still
     // running, even when the player is standing just outside it.
     if (away && isStoryMode && hasAuthoredCore(currentLevel) && !storyArcCleared(currentLevel) &&
@@ -39511,6 +41634,10 @@ function getSafeSpawn(away) {
 
 // -- Level entry ------------------------------------------------------------
 function startAtLevel(lvl, isLoading = false) {
+  exitFrontierSaloon();
+  releaseFrontierBountyActors();
+  const frontierTravelEquipment = !isLoading && player && revolverUnlocked ? serializeFrontierEquipment() : null;
+  const frontierTravelRevolver = !!frontierTravelEquipment && player.currentWeapon === WEAPONS.REVOLVER;
   invalidateCrowdSolids();
   if (!isLoading) captureForestHuntingTravelBow();
   const arrive = isLoading ? null : window.travelArrival;
@@ -39533,6 +41660,9 @@ function startAtLevel(lvl, isLoading = false) {
 
   legacyStartAtLevel(lvl, isLoading);
   applyForestHuntingBow();
+  if (frontierTravelEquipment) restoreFrontierEquipment(frontierTravelEquipment);
+  applyFrontierEquipment(player);
+  if (frontierTravelRevolver) player.currentWeapon = WEAPONS.REVOLVER;
 
   // Initial residency still uses the authored-core view, before travel or a
   // saved position finishes placing the player. Let draw() publish the actual
