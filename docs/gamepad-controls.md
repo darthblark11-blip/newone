@@ -48,7 +48,7 @@ For example, pull left to shoot right. Draw smoothly toward full travel: the
 stick distance moves the string, while the speed and steadiness of the pull
 determine arrow power. A sudden full-stick jab fires a short, weak dud; holding
 that jab cannot build power afterward. The small quiver readout shows tension,
-DUD/UNSTEADY/READY and release feedback.
+DUD/SMOOTH/READY and release feedback.
 
 Release by letting the stick return to its deadzone, reaching its full end stop,
 or clicking R3 while drawing. Each draw fires once. Recenter after an end-stop

@@ -112,6 +112,22 @@ reset();draw();pad=null;run('rightStick.active=false;rightStick.dist=0;handleGam
 check('bullets.length===0&&player.ammo===24&&player.bowDrawState.tension===0',
   'Controller disconnection cancels instead of masquerading as a release');
 
+function touchFrame(amount) {
+  ctx.touches=amount ? [{x:1120-60*amount,y:690}] : [];
+  run('handleTouches();handleGamepad();');tick(0);
+}
+reset();pad=null;touchFrame(0);touchFrame(0);
+for(let i=1;i<=54;i++)touchFrame(.92*i/54);
+check('bullets.length===0&&player.bowDrawState.source===\'TOUCH\'&&player.bowDrawState.power>.99&&Math.abs(player.aimAngle)<1e-8',
+  'Actual touch coordinates draw smoothly and aim opposite their travel');
+touchFrame(0);
+check('bullets.length===1&&bullets[0].arrowPower>.99&&player.ammo===23',
+  'Lifting the real joystick touch releases one earned arrow');
+reset();pad=null;touchFrame(0);touchFrame(0);touchFrame(1);
+for(let i=0;i<90;i++)touchFrame(1);
+check('bullets.length===1&&bullets[0].arrowDud&&player.ammo===23',
+  'A touchscreen end-stop jab also fires one dud and remains latched');
+
 reset();pad=null;run('window.isDesktop=true;rightStick.active=true;rightStick.dx=1;rightStick.dy=0;rightStick.dist=0;');tick(0);tick(0);
 run('rightStick.dist=1;');for(let i=0;i<50;i++)tick(1);
 check('bullets.length===0&&player.bowDrawState.tension===1&&player.bowDrawState.quality>.99&&player.aimAngle===0',
