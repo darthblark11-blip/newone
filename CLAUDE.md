@@ -1685,7 +1685,9 @@ ramps and rim-height bridges; `frontierCanyonBlocksMove()` prevents climbing
 steep banks. Reservation/filter passes keep generated solids off those routes
 without changing other chunks' destruction keys. The lighting heightfield uses
 a signed scene origin in biome 3 so lowered floors, actors and lamps retain
-their actual relative heights.
+their actual relative heights. Cached canyon planes join into continuous
+contours; the lighting painter interpolates shared corner samples. Keep both
+paths continuous so antialiased tile edges cannot become paint or shadow grids.
 
 Note the design intent in the comments: **boot hill is laid across the south end of
 Main Street on purpose**, so the size change happens on the route everyone walks.

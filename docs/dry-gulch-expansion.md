@@ -4,7 +4,9 @@ Level 3 keeps its authored farm and western town in story mode, arcade mode and
 after settlement. Streamed farmland and desert continue beyond the town, with
 world-space canyon bends, layered rock faces, descending ramps and timber
 crossings. Terrain height, movement and the signed lighting heightfield use the
-same canyon geometry.
+same canyon geometry. Rock and wash planes join into continuous cached
+contours, and lighting interpolates shared corner heights, keeping the terrain
+free of repeated paint or shadow seams.
 
 The town has 69 named premises across Main Street, Front Street, Market Street,
 the mesa district and the railway avenue. The Copper Spur is a larger saloon
@@ -70,3 +72,22 @@ node tools/check-frontier-integration.js
 
 The existing forest mission, save/load, return travel, population, render,
 depth and lighting suites also cover the shared engine seams.
+
+Chromium playtesting at a 390 × 844 viewport with device pixel ratio 3 verified
+the real touch joystick, bartender interaction, a complete three-opponent bar
+fight, early and successful duel shots, costume equipment, revolver purchase
+and bounty acceptance. All captured frames balanced their drawing state and
+reported no game errors. Native walking checks reached all three outposts
+through generated solids and canyon collision. The lighting check sampled the
+actual canyon height buffer across floor pixels, with no false rim-height gaps;
+day and night WebGL passes also verified floor, rim and roof light occlusion.
+
+## Captured previews
+
+![Expanded western town](previews/dry-gulch-town.png)
+
+![Layered canyon, rock faces and timber crossing](previews/dry-gulch-canyon.png)
+
+![Copper Spur fistfight on a portrait mobile screen](previews/dry-gulch-saloon.png)
+
+![Quick draw victory and immediate costume award](previews/dry-gulch-duel.png)

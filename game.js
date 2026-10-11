@@ -24118,7 +24118,78 @@ function filterFrontierCanyonContent(biome, content) {
   }
 }
 function frontierCanyonPoint(axis, u, v) { return axis === 'Y' ? [v, u] : [u, v]; }
+let _frontierCanyonPlanes = null;
+function frontierCanyonPlaneColor(style) {
+  if (typeof style !== 'string') return { key: 'stub', rgb: [0,0,0], alpha: 1 };
+  if (/^#[\da-f]{6}$/i.test(style)) {
+    const n = parseInt(style.slice(1), 16);
+    return { key: style, rgb: [(n>>>16)&255,(n>>>8)&255,n&255], alpha: 1 };
+  }
+  const match = style.match(/^rgba?\(([^)]+)\)$/);
+  if (match) {
+    const c = match[1].split(',').map(Number), rgb = c.slice(0,3);
+    const key = '#' + rgb.map(v=>Math.round(v).toString(16).padStart(2,'0')).join('');
+    return { key, rgb, alpha: c.length > 3 ? c[3] : 1 };
+  }
+  return { key: style, rgb: [0,0,0], alpha: 1 };
+}
+function flushFrontierCanyonPlanes(g, planes) {
+  const dc = g.drawingContext, chains = [];
+  for (const p of planes) {
+    const color = frontierCanyonPlaneColor(p.style);
+    let chain = chains.find(c=>c.axis===p.axis && c.key===color.key &&
+      Math.abs(c.end-p.u0)<.001 && Math.abs(c.a[c.a.length-1][1]-p.a0)<.001 &&
+      Math.abs(c.b[c.b.length-1][1]-p.b0)<.001);
+    if (!chain) {
+      chain={axis:p.axis,key:color.key,rgb:color.rgb,start:p.u0,end:p.u1,
+        a:[[p.u0,p.a0],[p.u1,p.a1]],b:[[p.u0,p.b0],[p.u1,p.b1]],
+        alpha:[[p.u0,color.alpha],[p.u1,color.alpha]],lastAlpha:color.alpha};
+      chains.push(chain);
+    } else {
+      // Adjacent cells share one alpha at their join. A continuous gradient
+      // supplies the fades; there is no internal polygon edge to antialias.
+      chain.alpha[chain.alpha.length-1][1]=(chain.lastAlpha+color.alpha)*.5;
+      chain.alpha.push([p.u1,color.alpha]);chain.lastAlpha=color.alpha;
+      chain.a.push([p.u1,p.a1]);chain.b.push([p.u1,p.b1]);chain.end=p.u1;
+    }
+  }
+  dc.save();
+  try {
+    for (const c of chains) {
+      const rgba = alpha=>'rgba('+c.rgb.join(',')+','+Math.max(0,Math.min(1,alpha))+')';
+      if (c.alpha.every(p=>Math.abs(p[1]-c.alpha[0][1])<.0001)) dc.fillStyle=rgba(c.alpha[0][1]);
+      else {
+        const gradient=c.axis==='Y'?dc.createLinearGradient(0,c.start,0,c.end):dc.createLinearGradient(c.start,0,c.end,0);
+        for(const p of c.alpha)gradient.addColorStop(Math.max(0,Math.min(1,(p[0]-c.start)/(c.end-c.start))),rgba(p[1]));
+        dc.fillStyle=gradient;
+      }
+      dc.beginPath();let first=true;
+      for(const p of c.a.concat(c.b.slice().reverse())){
+        const q=frontierCanyonPoint(c.axis,p[0],p[1]);
+        if(first){dc.moveTo(q[0],q[1]);first=false;}else dc.lineTo(q[0],q[1]);
+      }
+      dc.closePath();dc.fill();
+    }
+  } finally { dc.restore(); }
+}
 function frontierCanyonQuad(g, axis, u0, u1, a0, a1, b0, b1) {
+  if (_frontierCanyonPlanes) {
+    _frontierCanyonPlanes.push({axis,u0,u1,a0,a1,b0,b1,style:g.drawingContext.fillStyle});
+    return;
+  }
+  // Canvas antialiasing leaves a hairline of the pale underlying terrain
+  // between abutting opaque rock/floor planes. Overlap those planes by one
+  // baked texel, extrapolating both edges so the contour remains aligned.
+  // Transparent wash and shadow layers retain their exact bounds: overlapping
+  // their alpha would replace the light seam with a repeated dark stripe.
+  const style = g.drawingContext && g.drawingContext.fillStyle;
+  const rgba = typeof style === 'string' && style.match(/^rgba\([^,]+,[^,]+,[^,]+,\s*([\d.]+)\)$/);
+  const opaque = !rgba || Number(rgba[1]) >= .999;
+  if (opaque && u1 > u0) {
+    const join = CHUNK_W / CHUNK_TEX, t = join / (u1 - u0);
+    const da = (a1 - a0) * t, db = (b1 - b0) * t;
+    u0 -= join; u1 += join; a0 -= da; a1 += da; b0 -= db; b1 += db;
+  }
   const a = frontierCanyonPoint(axis, u0, a0), b = frontierCanyonPoint(axis, u1, a1);
   const c = frontierCanyonPoint(axis, u1, b1), d = frontierCanyonPoint(axis, u0, b0);
   g.quad(a[0], a[1], b[0], b[1], c[0], c[1], d[0], d[1]);
@@ -24210,6 +24281,9 @@ function bakeFrontierCanyonStrip(g, axis, index, ox, oy) {
   const lo = axis === 'Y' ? oy : ox, hi = lo + CHUNK_W;
   const start = Math.floor((lo - 96) / FRONTIER_CANYON_STEP) * FRONTIER_CANYON_STEP;
   g.noStroke();
+  const previousPlanes = _frontierCanyonPlanes;
+  _frontierCanyonPlanes = [];
+  try {
   for (let u = start; u < hi + 96; u += FRONTIER_CANYON_STEP) {
     const p = frontierCanyonProfile(axis, u, index);
     const q = frontierCanyonProfile(axis, u + FRONTIER_CANYON_STEP, index);
@@ -24277,6 +24351,12 @@ function bakeFrontierCanyonStrip(g, axis, index, ox, oy) {
           p.center + side * (p.floorHalf * .54 + rut + 5), q.center + side * (q.floorHalf * .54 + rut + 5));
       }
     }
+  }
+  }
+  finally {
+    const planes = _frontierCanyonPlanes;
+    _frontierCanyonPlanes = previousPlanes;
+    flushFrontierCanyonPlanes(g, planes);
   }
   bakeFrontierCanyonGeology(g, axis, index, lo, hi);
   // Bridges are deterministic landmarks and surfaces, with their footing at
