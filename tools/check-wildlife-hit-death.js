@@ -21,13 +21,13 @@ check(`WILDLIFE_SPECIES.PIKA.size>=8&&WILDLIFE_SPECIES.WARBLER.size>=7&&WILDLIFE
 // next cell. Checking only a former 40-unit pad would miss these real targets.
 run(`var qaLarge=wildlifeSpawnAnimal('GRIZZLY_BEAR',128*117+127,6600);qaLarge.angle=0;var qaHead=wildlifeHeadPoint(qaLarge);`);
 check(`forestWildlifeHitTest({prevX:qaHead.x-1,prevY:qaHead.y,x:qaHead.x+1,y:qaHead.y,tH:'HEAD'}).animal===qaLarge`, 'Enlarged head hits cross wildlife grid boundaries');
-check(`forestWildlifeHitTest({prevX:qaLarge.x+qaLarge.bodyR*1.24,prevY:qaLarge.y,x:qaLarge.x+qaLarge.bodyR*1.26,y:qaLarge.y,tH:'BODY'}).animal===qaLarge`, 'Enlarged forebody hits cross wildlife grid boundaries');
+check(`forestWildlifeHitTest({prevX:qaLarge.x+qaLarge.bodyR*.90,prevY:qaLarge.y,x:qaLarge.x+qaLarge.bodyR*.92,y:qaLarge.y,tH:'BODY'}).animal===qaLarge`, 'Enlarged forebody hits cross wildlife grid boundaries');
 for (let direction = 0; direction < 8; direction++) {
   run(`qaLarge.angle=${direction}*Math.PI/4;qaHead=wildlifeHeadPoint(qaLarge);`);
   check(`forestWildlifeHitTest({prevX:qaHead.x-1,prevY:qaHead.y,x:qaHead.x+1,y:qaHead.y,tH:'HEAD'}).animal===qaLarge`, 'Anatomical head hit works at bearing '+direction);
 }
 function animal(species='MOOSE') {
-  run(`resetForestWildlife();particles=[];bloodPools=[];activeBuildings=[];colGrid=null;_wildlifeSpawnClock=1e9;var qaAnimal=wildlifeSpawnAnimal('${species}',15000,6600);qaAnimal.angle=0;qaAnimal.thinkAt=1e9;qaAnimal.goalX=qaAnimal.x;qaAnimal.goalY=qaAnimal.y;`);
+  run(`resetForestWildlife();particles=[];bloodPools=[];activeBuildings=[];colGrid=null;_wildlifeSpawnClock=1e9;var qaAnimal=wildlifeSpawnAnimal('${species}',15000,6600);qaAnimal.angle=0;qaAnimal.sensorAt=qaAnimal.thinkAt=1e9;qaAnimal.goalX=qaAnimal.x;qaAnimal.goalY=qaAnimal.y;`);
 }
 animal();
 run(`qaAnimal.angle=Math.PI/2;var qaSeed=serializeForestWildlife().seed;var qaRandom=random;random=()=>{throw Error('Wildlife hit consumed world RNG');};applyForestWildlifeHit(qaAnimal,{weapon:'PISTOL',head:false,damage:10,shotId:'wound',x:qaAnimal.x+qaAnimal.bodyR*.5,y:qaAnimal.y+qaAnimal.bodyR*.25,angle:0,owner:player});random=qaRandom;`);

@@ -58,7 +58,7 @@ run(`resetForestWildlife();enemiesList=[];activeBuildings=[];activeParkingCars=[
   colGrid=null;barrels=[];bullets=[];
   var huntAnimal=wildlifeSpawnAnimal('ELK',huntSite.x+150,huntSite.y+150);huntAnimal.angle=0;
   var huntHead=wildlifeHeadPoint(huntAnimal);
-  spawnBullet(huntHead.x-40,huntHead.y,0,true,'HEAD',WEAPONS.BOW,player);
+  spawnBullet(huntHead.x+40,huntHead.y,PI,true,'BODY',WEAPONS.BOW,player);
   updateBullets();updateBullets();`);
 check(`huntAnimal.dead && huntAnimal.condition==='PERFECT' && huntAnimal.method==='BOW_HEAD'`,
   'Actual arrow projectile yields an instant perfect headshot harvest');

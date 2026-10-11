@@ -69,6 +69,24 @@ window.__animalState=function(){const a=window.__elk;return {id:a.id,hp:a.hp,max
  angle:a.angle,fall:a.fall&&{...a.fall},deathType:a.deathType,
  x:a.x,y:a.y,particles:particles.filter(p=>p.t==='BLOOD'||p.t==='BLOOD_SMOKE').map(p=>({type:p.t,x:p.x,y:p.y})),
  bloodChunks:Object.keys(bloodChunks).length,bloodPools:bloodPools.length};};
+window.__bowFrame=function(amount,angle){
+ window.isDesktop=false;
+ rightStick.active=amount>0;rightStick.dist=amount;
+ rightStick.dx=-Math.cos(angle)*amount;rightStick.dy=-Math.sin(angle)*amount;
+ leftStick.active=false;return window.__frame(1000/60);
+};
+window.__drawBow=function(angle){
+ player.currentWeapon=WEAPONS.BOW;player.fireTimer=0;window.__bowFrame(0,angle);
+ const arrows=player.weaponAmmo.BOW;
+ for(let i=0;i<54;i++)window.__bowFrame(.12+.80*i/53,angle);
+ return {arrowsBefore:arrows,arrowsDuring:player.weaponAmmo.BOW,aimAngle:player.aimAngle,
+  tension:bowDrawAmount(player),quality:player.bowDrawState.quality,phase:player.bowDrawState.phase};
+};
+window.__walkFrame=function(dx,dy){
+ window.isDesktop=false;rightStick.active=false;rightStick.dist=0;
+ leftStick.active=!!(dx||dy);leftStick.dx=dx;leftStick.dy=dy;
+ return window.__frame(1000/60);
+};
 `;
 const html = '<!doctype html><style>html,body{margin:0;background:#17251b}</style><script>' +
   '(function(){const m={};Object.defineProperty(window,"localStorage",{value:{getItem:k=>m[k]||null,setItem:(k,v)=>m[k]=String(v),removeItem:k=>delete m[k]}});})();' +
@@ -113,7 +131,8 @@ const html = '<!doctype html><style>html,body{margin:0;background:#17251b}</styl
     // production hit so the evidence retains its transient blood particles.
     const wounded = await page.evaluate(() => {
       player.currentWeapon=WEAPONS.PISTOL;player.mags.PISTOL=17;player.weaponAmmo.PISTOL=100;
-      headAimToggle=false;player.aimAngle=0;player.fireTimer=0;player.fire(0);
+      // Shooting from behind meets torso first even with HEAD mode enabled.
+      headAimToggle=true;player.aimAngle=0;player.fireTimer=0;player.fire(0);
       for(let i=0;i<30&&!window.__hits.length;i++)window.__frame(16.6667);
       return window.__animalState();
     });
@@ -127,19 +146,44 @@ const html = '<!doctype html><style>html,body{margin:0;background:#17251b}</styl
     assert.equal(persistent.decals.length, 1); assert.equal(persistent.dead, false);
     assert.deepEqual(persistent.decals, wounded.decals);
     await page.screenshot({ path: path.join(out, 'living-elk-persistent-wound.png') });
-    // The wounded animal is fleeing normally. Aim a real arrow at its current
-    // root using the game's HEAD mode rather than calling the hit helper.
+    // Return this effects fixture to the verified clear approach after its
+    // natural flight response, then freeze it. Separate
+    // cases below exercise live fear/aggression. Face it toward the shooter so
+    // the anatomical head is exposed: BODY mode must still allow a real face
+    // hit. The bow is drawn using production analog input and fired on release.
+    const draw = await page.evaluate(approach => {
+      const a=window.__elk;a.x=approach.animal.x;a.y=approach.animal.y;_wildlifeGridDirty=true;
+      a.angle=Math.PI;a.vx=a.vy=0;a.goalX=a.x;a.goalY=a.y;
+      a.thinkAt=a.sensorAt=1e9;a.state='GRAZE';a.alarm=0;
+      headAimToggle=false;const head=wildlifeHeadPoint(a);
+      window.__arrowAngle=Math.atan2(head.y-player.y,head.x-player.x);
+      return window.__drawBow(window.__arrowAngle);
+    }, approach);
+    assert.equal(draw.arrowsDuring, draw.arrowsBefore, 'Holding the string cannot auto-fire');
+    assert.ok(draw.tension>=.8&&draw.quality>=.7);
+    await page.screenshot({ path: path.join(out, 'smooth-bow-draw-ready.png') });
     const lethal = await page.evaluate(() => {
-      const a=window.__elk;player.currentWeapon=WEAPONS.BOW;headAimToggle=true;player.fireTimer=0;
-      const angle=Math.atan2(a.y-player.y,a.x-player.x);player.aimAngle=angle;player.fire(angle);
-      for(let i=0;i<30&&!a.dead;i++)window.__frame(16.6667);
+      const a=window.__elk;window.__bowFrame(0,window.__arrowAngle);
+      const arrow=bullets.find(b=>b.w===WEAPONS.BOW);
+      window.__arrowRelease=arrow&&{power:arrow.arrowPower,dud:arrow.arrowDud,speed:Math.hypot(arrow.vx,arrow.vy)};
+      for(let i=0;i<30&&!a.dead;i++)window.__bowFrame(0,window.__arrowAngle);
       return window.__animalState();
     });
+    fs.writeFileSync(path.join(out,'arrow-impact-state.json'),JSON.stringify(await page.evaluate(()=>({
+      angle:window.__arrowAngle,aimAngle:player.aimAngle,release:window.__arrowRelease,hits:window.__hits,
+      animal:window.__animalState(),head:wildlifeHeadPoint(window.__elk),
+      bullets:bullets.map(b=>({x:b.x,y:b.y,vx:b.vx,vy:b.vy,weapon:b.w&&b.w.name,power:b.arrowPower,dud:b.arrowDud})),
+      cover:forestShotCover({prevX:player.x+38,prevY:player.y,x:window.__elk.x,y:window.__elk.y,w:WEAPONS.BOW},[],[])
+    })),null,2));
     assert.equal(lethal.dead, true); assert.equal(lethal.condition, 'PERFECT');
     assert.equal(lethal.method, 'BOW_HEAD'); assert.equal(lethal.deathType, 'HEADSHOT');
     assert.equal(lethal.decals.length, 2); assert.ok(lethal.fall.progress < 1);
     const impacts = await page.evaluate(() => window.__hits);
     assert.equal(impacts.length, 2);
+    assert.equal(impacts[0].head, false, 'HEAD toggle cannot convert a rump hit into a headshot');
+    assert.equal(impacts[1].head, true, 'BODY toggle cannot suppress a clean anatomical face hit');
+    const release = await page.evaluate(() => window.__arrowRelease);
+    assert.ok(release.power>=.55&&!release.dud);
     assert.ok(impacts.every(h => [h.x, h.y, h.angle].every(Number.isFinite)), 'Real pooled impacts supply contact position and incoming angle');
     await page.screenshot({ path: path.join(out, 'arrow-headshot-fall-start.png') });
     const settled = await page.evaluate(() => {for(let i=0;i<45;i++)window.__frame(16.6667);return window.__animalState();});
@@ -147,11 +191,102 @@ const html = '<!doctype html><style>html,body{margin:0;background:#17251b}</styl
     assert.equal(settled.fall.angle, lethal.fall.angle); assert.equal(settled.angle, lethal.angle);
     assert.equal(settled.decals.length, 2); assert.ok(settled.bloodChunks > 0);
     await page.screenshot({ path: path.join(out, 'settled-carcass-wounds-baked-blood.png') });
+    // Snap to the endstop: an unprepared string produces one short, weak
+    // arrow, then stays latched even while the stick is held fully deflected.
+    const abrupt = await page.evaluate(() => {
+      resetForestWildlife();_wildlifeSpawnClock=1e9;bullets.length=0;
+      const s=forestHuntingSite();window.__place(s.x,s.y+135);
+      const a=wildlifeSpawnAnimal('ELK',player.x+205,player.y);a.angle=Math.PI;
+      a.thinkAt=a.sensorAt=1e9;a.goalX=a.x;a.goalY=a.y;window.__elk=a;
+      const h=wildlifeHeadPoint(a),angle=Math.atan2(h.y-player.y,h.x-player.x);
+      player.currentWeapon=WEAPONS.BOW;player.fireTimer=0;window.__bowFrame(0,angle);
+      const before=player.weaponAmmo.BOW;window.__bowFrame(1,angle);
+      const b=bullets.find(b=>b.w===WEAPONS.BOW);
+      const arrow=b&&{power:b.arrowPower,dud:b.arrowDud,speed:Math.hypot(b.vx,b.vy)};
+      for(let i=0;i<36;i++)window.__bowFrame(1,angle);
+      window.__endstopAngle=angle;
+      return {before,after:player.weaponAmmo.BOW,arrow,phase:player.bowDrawState.phase,hp:a.hp,maxHp:a.maxHp,dead:a.dead};
+    });
+    assert.equal(abrupt.after,abrupt.before-1,'A held endstop cannot auto-fire a quiver');
+    assert.ok(abrupt.arrow.dud&&abrupt.arrow.power<=.08&&abrupt.arrow.speed<7);
+    assert.equal(abrupt.phase,'LATCHED'); assert.equal(abrupt.dead,false); assert.equal(abrupt.hp,abrupt.maxHp);
+    await page.screenshot({ path: path.join(out, 'abrupt-bow-dud-reset-required.png') });
+    const endstop = await page.evaluate(() => {
+      const angle=window.__endstopAngle,draw=window.__drawBow(angle);
+      window.__bowFrame(1,angle);const b=bullets.find(b=>b.w===WEAPONS.BOW);
+      const arrow=b&&{power:b.arrowPower,dud:b.arrowDud,speed:Math.hypot(b.vx,b.vy)};
+      for(let i=0;i<36;i++)window.__bowFrame(1,angle);
+      return {draw,arrow,after:player.weaponAmmo.BOW,phase:player.bowDrawState.phase,animal:window.__animalState()};
+    });
+    assert.equal(endstop.after,endstop.draw.arrowsBefore-1);
+    assert.ok(!endstop.arrow.dud&&endstop.arrow.power>=.55);
+    assert.equal(endstop.phase,'LATCHED'); assert.equal(endstop.animal.dead,true);
+    assert.equal(endstop.animal.condition,'PERFECT'); assert.equal(endstop.animal.method,'BOW_HEAD');
+    await page.screenshot({ path: path.join(out, 'controlled-draw-endstop-release.png') });
+    const collision = await page.evaluate(() => {
+      resetForestWildlife();_wildlifeSpawnClock=1e9;bullets.length=0;rightStick.active=false;rightStick.dist=0;
+      const s=forestHuntingSite();window.__place(s.x,s.y+135);player.currentWeapon=WEAPONS.PISTOL;
+      const start={x:player.x,y:player.y},a=wildlifeSpawnAnimal('ELK',player.x+110,player.y);
+      a.angle=0;a.thinkAt=a.sensorAt=1e9;a.goalX=a.x;a.goalY=a.y;
+      for(let i=0;i<80;i++)window.__walkFrame(1,0);
+      const blocked={x:player.x,y:player.y,metric:wildlifeBodyMetric(a,player.x,player.y,wildlifeActorRadius(player))};
+      for(let i=0;i<35;i++)window.__walkFrame(0,1);
+      for(let i=0;i<90;i++)window.__walkFrame(1,0);
+      leftStick.active=false;
+      return {start,blocked,passed:{x:player.x,y:player.y},animal:{x:a.x,y:a.y,r:a.bodyR}};
+    });
+    fs.writeFileSync(path.join(out,'collision-state.json'),JSON.stringify(collision,null,2));
+    assert.ok(collision.blocked.x>collision.start.x+10,'The real walking input reaches the animal');
+    assert.ok(collision.blocked.x<collision.animal.x&&collision.blocked.metric>=1,'A large animal stops player penetration');
+    assert.ok(collision.passed.x>collision.animal.x+20,'Walking around the animal remains possible');
+    await page.screenshot({ path: path.join(out, 'large-animal-collision-walk-around.png') });
+    const fear = await page.evaluate(() => {
+      const s=forestHuntingSite(),rows=[];
+      for(const species of ['MULE_DEER','BLACK_BEAR']){
+        resetForestWildlife();_wildlifeSpawnClock=1e9;window.__place(s.x,s.y+135);
+        const a=wildlifeSpawnAnimal(species,player.x+205,player.y);a.angle=0;
+        a.goalX=a.x;a.goalY=a.y;a.thinkAt=1e9;
+        const initial=Math.hypot(a.x-player.x,a.y-player.y);
+        for(let i=0;i<24;i++)window.__frame(1000/60);
+        rows.push({species,initial,distance:Math.hypot(a.x-player.x,a.y-player.y),state:a.state,aggressor:!!a.aggressor});
+      }
+      return rows;
+    });
+    assert.ok(fear.every(a=>a.state==='FLEE'&&!a.aggressor),'Timid grazers and black bears flee human proximity');
+    assert.ok(fear.every(a=>a.distance>a.initial+15),'Flight starts before the human can walk into the animal');
+    await page.screenshot({ path: path.join(out, 'shy-black-bear-human-flight.png') });
+    const warning = await page.evaluate(() => {
+      resetForestWildlife();_wildlifeSpawnClock=1e9;const s=forestHuntingSite();window.__place(s.x,s.y+135);
+      const a=wildlifeSpawnAnimal('GRIZZLY_BEAR',player.x+115,player.y);a.angle=Math.PI;
+      a.goalX=a.x;a.goalY=a.y;window.__grizzly=a;player.shield=100;
+      const health=player.hp,armor=player.shield;
+      for(let i=0;i<16;i++)window.__frame(1000/60);
+      return {state:a.state,intrusion:a.intrusion,aggressor:!!a.aggressor,hp:player.hp,armor:player.shield,healthBefore:health,armorBefore:armor};
+    });
+    assert.equal(warning.state,'WARNING');assert.equal(warning.aggressor,false);
+    assert.equal(warning.hp,warning.healthBefore);assert.equal(warning.armor,warning.armorBefore);
+    await page.screenshot({ path: path.join(out, 'grizzly-personal-space-warning.png') });
+    const aggression = await page.evaluate(() => {
+      for(let i=0;i<95;i++)window.__frame(1000/60);
+      const a=window.__grizzly;return {state:a.state,intrusion:a.intrusion,aggressor:a.aggressor===player,
+        hp:player.hp,armor:player.shield,distance:Math.hypot(a.x-player.x,a.y-player.y)};
+    });
+    assert.equal(aggression.state,'TERRITORIAL');assert.equal(aggression.aggressor,true);
+    assert.ok(aggression.hp<warning.hp||aggression.armor<warning.armor,'Lingering in grizzly space can cause a real melee hit');
+    await page.screenshot({ path: path.join(out, 'grizzly-lingering-player-charge.png') });
+    const retreat = await page.evaluate(() => {
+      const a=window.__grizzly;window.__place(a.x-500,a.y);
+      for(let i=0;i<24;i++)window.__frame(1000/60);
+      return {state:a.state,aggressor:!!a.aggressor,retreatUntil:a.retreatUntil,clock:_wildlifeClock};
+    });
+    assert.equal(retreat.state,'FLEE');assert.equal(retreat.aggressor,false);assert.ok(retreat.retreatUntil>retreat.clock);
+    await page.screenshot({ path: path.join(out, 'grizzly-disengages-after-player-retreat.png') });
     const faults = await page.evaluate(() => window.__faults);
     assert.deepEqual(errors, []); assert.deepEqual(faults, []);
     const report = { p5: await page.evaluate(() => window.p5.VERSION), sourceSha256: crypto.createHash('sha256').update(source).digest('hex'),
-      initial, approach, wounded, persistent, lethal, impacts, settled, notice, expired, errors, faults };
+      initial, approach, wounded, persistent, draw, release, lethal, impacts, settled, abrupt, endstop, collision, fear,
+      warning, aggression, retreat, notice, expired, errors, faults };
     fs.writeFileSync(path.join(out, 'report.json'), JSON.stringify(report, null, 2));
-    console.log('Wildlife real gameplay scene: enlarged elk, pistol wound/smoke, persistent decal, real arrow headshot, directional fall/baked blood and transient HUD passed (p5 ' + report.p5 + ').');
+    console.log('Wildlife real gameplay scene: anatomical toggle-independent impacts, wounds/blood/death, inverted smooth draw/release, abrupt dud/endstop latch and transient HUD passed (p5 ' + report.p5 + ').');
   } finally { await browser.close(); }
 })().catch(e => { console.error(e.stack); process.exitCode = 1; });

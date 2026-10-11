@@ -5531,6 +5531,7 @@ function noteFrameFault(where, err) {
 }
 
 function draw() {
+  tickPlayerBowLifecycle(player);
   if (!started) {
     background(15); fill(255); textAlign(CENTER, CENTER); textSize(32); textFont('sans-serif'); text("STICK WORLD REVOLUTION", width / 2, height / 2 - 140);
     
@@ -13216,6 +13217,107 @@ function drawStunnedFigure(e) {
 // still apply in the existing movement path.
 const ALLY_COMMAND_SPEED = 4.0;
 
+// Bow gestures are transient input state. They never enter saves or consume
+// world/ecology randomness. A held end stop can release only once, until the
+// stick returns to its deadzone; a pause or device swap cancels without firing.
+const BOW_DRAW_DEADZONE = 0.20;
+function bowDrawAmount(c) {
+  return c && c.bowDrawState ? Math.max(0, Math.min(1, c.bowDrawState.tension || 0)) : 1;
+}
+function playerBowAimAngle(c) {
+  if (rightStick && rightStick.active && Math.hypot(rightStick.dx, rightStick.dy) > .001) {
+    const a = Math.atan2(rightStick.dy, rightStick.dx);
+    return window.isDesktop ? a : Math.atan2(-rightStick.dy, -rightStick.dx);
+  }
+  return c.bowDrawState && c.bowDrawState.phase === 'DRAW' ? c.bowDrawState.angle : c.aimAngle;
+}
+function bowDrawPower(tension, quality, dud = false) {
+  const energy = Math.min(1, Math.pow(Math.max(0, tension) / .90, 2)) *
+    Math.pow(Math.max(0, Math.min(1, quality)), 1.25);
+  return dud ? Math.min(.08, energy * .15) : energy;
+}
+function playerBowCanDraw(c) {
+  return !!c && c.isPlayer && c.currentWeapon === WEAPONS.BOW && c.ammo > 0 && c.hp > 0 &&
+    started && doTick && !isPaused && !isDead && !isWin && !killcamMode &&
+    !(typeof inCutscene !== 'undefined' && inCutscene) && !inStoryIntro && !inTownCutscene && !inFortCutscene && !inPostAmbushCutscene &&
+    !inFarmCutscene && !inFarmPostCutscene && !inDarchonCall && !inWorldBuildingMenu &&
+    !inOverworldView && !inTravelMenu && c.meleeTimer <= 0 && c.dashTimer <= 0 &&
+    c.reloadTimer <= 0 && !isCooking && c.throwAnimTimer <= 0;
+}
+function cancelPlayerBowDraw(c) {
+  const s = c && c.bowDrawState;
+  if (!s) return;
+  s.phase = 'LATCHED'; s.tension = s.earned = s.quality = s.power = 0;
+  s.dud = false; s.feedbackMs = 0; s.lastOutcome = null;
+  if (rightStick) rightStick.bowReleaseRequested = false;
+}
+function tickPlayerBowLifecycle(c) {
+  if (c && c.bowDrawState && (c.bowDrawState.level !== currentLevel || !playerBowCanDraw(c)))
+    cancelPlayerBowDraw(c);
+}
+function updatePlayerBowDraw(c) {
+  if (!c.bowDrawState) c.bowDrawState = { phase:'IDLE', tension:0, earned:0, quality:0, power:0,
+    dud:false, angle:c.aimAngle, source:null, level:currentLevel, feedbackMs:0, lastOutcome:null };
+  const s = c.bowDrawState;
+  const ms = typeof deltaTime === 'number' && deltaTime > 0 ? Math.min(100, deltaTime) : 1000 / 60;
+  s.feedbackMs = Math.max(0, s.feedbackMs - ms);
+  if (!playerBowCanDraw(c)) { cancelPlayerBowDraw(c); return; }
+  const source = window.isDesktop ? 'MOUSE' : connectedGamepad() ? 'GAMEPAD' : 'TOUCH';
+  const releasePressed = !!rightStick.bowReleaseRequested;
+  rightStick.bowReleaseRequested = false;
+  const magnitude = rightStick.active ? Math.max(0, Math.min(1,
+    Number.isFinite(rightStick.dist) ? rightStick.dist : Math.hypot(rightStick.dx, rightStick.dy))) : 0;
+  if (s.level !== currentLevel || (s.source && s.source !== source)) {
+    cancelPlayerBowDraw(c); s.source = source; s.level = currentLevel; return;
+  }
+  s.source = source;
+  const neutral = source === 'MOUSE' ? magnitude === 0 : magnitude <= BOW_DRAW_DEADZONE;
+  if (s.phase === 'LATCHED') {
+    if (neutral) s.phase = 'IDLE';
+    return;
+  }
+  if (neutral) {
+    if (s.phase === 'DRAW') releasePlayerBowDraw(c);
+    return;
+  }
+  const first = s.phase !== 'DRAW', previousTension = s.tension, previousAngle = s.angle;
+  if (first) { s.phase = 'DRAW'; s.earned = 0; }
+  s.angle = playerBowAimAngle(c); c.aimAngle = s.angle;
+  // A mouse has no analog travel: holding draws gradually, releasing fires.
+  // Touch/gamepad tension follows actual travel, never a smoothing filter
+  // that would turn a sudden full-stick jab into a perfect pull afterwards.
+  const tension = source === 'MOUSE' ? Math.min(1, previousTension + ms * .00125) :
+    (magnitude - BOW_DRAW_DEADZONE) / (1 - BOW_DRAW_DEADZONE);
+  const rise = tension - previousTension;
+  if (rise > 0) s.earned += Math.min(rise, ms * .0022);
+  else if (previousTension > 0) s.earned *= tension / previousTension;
+  if (!first) {
+    const turn = Math.abs(Math.atan2(Math.sin(s.angle - previousAngle), Math.cos(s.angle - previousAngle)));
+    const excessTurn = Math.max(0, turn - .12 - ms * .004);
+    if (excessTurn > 0) s.earned *= Math.max(.2, 1 - excessTurn);
+  }
+  s.tension = Math.max(0, Math.min(1, tension));
+  s.earned = Math.max(0, Math.min(s.tension, s.earned));
+  s.quality = s.tension > 0 ? s.earned / s.tension : 0;
+  s.dud = s.quality < .35 || s.tension < .20;
+  s.power = bowDrawPower(s.tension, s.quality, s.dud);
+  if (releasePressed || (source !== 'MOUSE' && magnitude >= .985)) releasePlayerBowDraw(c);
+}
+function releasePlayerBowDraw(c) {
+  const s = c.bowDrawState;
+  if (!s || s.phase !== 'DRAW') return;
+  const shot = { tension:s.tension, quality:s.quality, dud:s.dud, power:s.power };
+  const ammo = c.ammo;
+  if (playerBowCanDraw(c) && c.fireTimer <= 0 && s.tension > .005) {
+    c.aimAngle = s.angle; c.fire(s.angle, shot);
+  }
+  s.phase = 'LATCHED'; s.tension = s.earned = s.quality = s.power = 0; s.dud = false;
+  if (c.ammo < ammo) {
+    s.feedbackMs = 1000;
+    s.lastOutcome = shot.dud ? 'DUD' : shot.power >= .75 ? 'PERFECT' : 'WEAK';
+  }
+}
+
 class Character {
   constructor(x, y, isP, eT = "NORMAL") {
     this.isFriendly = false;
@@ -13665,6 +13767,8 @@ this.skeletonTimer = 0;
     if (this.ignoreBldgTimer > 0) return false; 
     
     let r = (this.eType === "ARMORED" || this.eType === "ALIEN_GATOR" || this.eType === "SNAIL_HYBRID") ? 28 : (this.eType === "BUG" ? 10 : (this.eType === "SNAIL" ? 15 : 15));
+
+    if (currentBiome === 2 && forestWildlife.length && wildlifeActorBlocked(this, nx, ny, r)) return true;
 
     // Indexed rather than for-of: this is the most-called loop in the game --
     // every moving body probes it twice per axis per frame -- and the iterator
@@ -14344,8 +14448,9 @@ this.skeletonTimer = 0;
     this.armDrag = lerp(this.armDrag, this.isMoving ? 1 : 0, 0.15); 
     
     if (this.meleeTimer <= 0) {
-        if (rightStick.active) this.aimAngle = atan2(rightStick.dy, rightStick.dx); 
-        else if (leftStick.active && this.isMoving && this.dashTimer <= 0) this.aimAngle = this.moveAngle;
+        if (rightStick.active) this.aimAngle = this.currentWeapon === WEAPONS.BOW ? playerBowAimAngle(this) : atan2(rightStick.dy, rightStick.dx);
+        else if (leftStick.active && this.isMoving && this.dashTimer <= 0 &&
+            !(this.currentWeapon === WEAPONS.BOW && this.bowDrawState && this.bowDrawState.phase === 'DRAW')) this.aimAngle = this.moveAngle;
     }
 
     if (this.fireTimer > 0) this.fireTimer--; if (this.muzzleFlash > 0) this.muzzleFlash--;
@@ -14356,7 +14461,8 @@ this.skeletonTimer = 0;
     }
  
     
-    if (rightStick.active && this.reloadTimer <= 0 && this.meleeTimer <= 0 && this.dashTimer <= 0 && !isCooking && this.throwAnimTimer <= 0 && rightStick.dist > 0.75 && this.fireTimer <= 0 && this.ammo > 0) {
+    if (this.currentWeapon === WEAPONS.BOW) updatePlayerBowDraw(this);
+    else if (rightStick.active && this.reloadTimer <= 0 && this.meleeTimer <= 0 && this.dashTimer <= 0 && !isCooking && this.throwAnimTimer <= 0 && rightStick.dist > 0.75 && this.fireTimer <= 0 && this.ammo > 0) {
         this.fire(this.aimAngle);
     }
     } finally { rememberFigureMotion(this,this.x-motionX,this.y-motionY); }
@@ -15157,7 +15263,7 @@ if (this.eType === "COW") {
 
 
 
-        fire(sA) {
+        fire(sA, bowShot = null) {
     if(unarmedCivilian(this))return;
     if (this.currentWeapon === WEAPONS.BOW && this.ammo <= 0) return;
     if (this.isPlayer) this.isArmed = true;
@@ -15168,7 +15274,7 @@ if (this.eType === "COW") {
     let cost = dualLeftReady ? 2 : 1;
     let bLX = 31, bLY = 8, bLX_L = 59, bLY_L = -17;
     if (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { bLX = 47; bLY = 6; } else if (this.currentWeapon === WEAPONS.SMG || this.currentWeapon === WEAPONS.DUAL_SMG) { bLX = 38; bLY = 11; bLX_L = 38; bLY_L = -11; }
-    else if (this.currentWeapon === WEAPONS.BOW) { bLX = 38; bLY = 0; }
+    else if (this.currentWeapon === WEAPONS.BOW) { bLX = 47 - 9 * (bowShot ? Math.max(0, Math.min(1, bowShot.tension)) : 1); bLY = 0; }
     if (this.eType === "ALIEN_GATOR" || this.eType === "SNAIL_HYBRID") { bLX = 100; bLY = 19; } if (this.eType === "AERIAL_PISTOL") { bLX = 51; bLY = 16; }
     
     let tX = this.x + cos(this.aimAngle) * (bLX + bob) - sin(this.aimAngle) * bLY, tY = this.y + sin(this.aimAngle) * (bLX + bob) + cos(this.aimAngle) * bLY;
@@ -15202,7 +15308,16 @@ if (this.eType === "COW") {
         
         emit(tX, tY, 6, color(255, 200, 0), "MUZZLE", cos(sA) * 8, sin(sA) * 8); 
     } else if (this.currentWeapon === WEAPONS.BOW) {
-        spawnBullet(tX,tY,sA,this.isPlayer || this.isFriendly,aH,this.currentWeapon,this,huntShotId);
+        const arrow = spawnBullet(tX,tY,sA,this.isPlayer || this.isFriendly,aH,this.currentWeapon,this,huntShotId);
+        if (bowShot) {
+            arrow.arrowPower = Number.isFinite(bowShot.power) ? Math.max(0, Math.min(1, bowShot.power)) :
+                bowDrawPower(bowShot.tension, bowShot.quality, bowShot.dud);
+            arrow.arrowDud = !!bowShot.dud;
+            arrow.arrowSpeed = 4 + arrow.arrowPower * 30;
+            arrow.arrowRange = 25 + arrow.arrowPower * 1175;
+            arrow.vx = Math.cos(sA) * arrow.arrowSpeed; arrow.vy = Math.sin(sA) * arrow.arrowSpeed;
+            arrow.l = Math.ceil(arrow.arrowRange / arrow.arrowSpeed) + 1;
+        }
         sfx.shoot(this.currentWeapon,tX,tY);
     } else { 
         spawnBullet(tX, tY, sA + random(-this.currentWeapon.spread, this.currentWeapon.spread), this.isPlayer || this.isFriendly, aH, this.currentWeapon, this, huntShotId);
@@ -15714,6 +15829,12 @@ if (this.isPlayer) {
     // weapon itself, all of which are laid out around a gun that is up.
     const carryMode = (this.isPlayer && this.isArmed && this.meleeTimer <= 0 &&
                        !playerAiming(this)) ? weaponHands(this.currentWeapon) : 0;
+    const bowTension = this.currentWeapon === WEAPONS.BOW && typeof bowDrawAmount === 'function'
+        ? bowDrawAmount(this) : 1;
+    // The draw hand follows the string while the grip remains in the support
+    // hand. Counter the torso's gait lean so the arrow stays on its firing line.
+    const bowPoseOffset = this.currentWeapon === WEAPONS.BOW && !carryMode
+        ? (this.isMoving ? abs(sin(this.walkCycle))*2 : 0)-bob : 0;
 
     // The shoulders counter-rotate against the hips -- which are drawn in the
     // block above at moveAngle and do NOT turn with this. That opposition is
@@ -15730,7 +15851,7 @@ if (this.isPlayer) {
     let bLX = 31, bLY = 8, bLX_L = 59, bLY_L = -17;
     if (this.isArmed && this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { bLX = 47; bLY = 6; } 
     else if (this.currentWeapon === WEAPONS.SMG || this.currentWeapon === WEAPONS.DUAL_SMG) { bLX = 38; bLY = 11; bLX_L = 38; bLY_L = -11; }
-    else if (this.currentWeapon === WEAPONS.BOW) { bLX = 38; bLY = 0; }
+    else if (this.currentWeapon === WEAPONS.BOW) { bLX = 47-9*bowTension; bLY = 0; }
     else if (this.isArmed && !carryMode && this.currentWeapon === WEAPONS.TASER) {
         // The presented taser. On a carry it is drawn in the hand instead --
         // left here it would be a second one floating at the hip.
@@ -15739,14 +15860,20 @@ if (this.isPlayer) {
     }
 
     if (this.eType === "AERIAL_PISTOL") { bLX = 51; bLY = 16; }
-    if (!carryMode && (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN)) {
+    if (!carryMode && (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.BOW)) {
         // Gait lean belongs to the torso. Native rounds use the original
         // two-unit bob, so keep the crown/flash on that firing line as it runs.
         bLX += (this.isMoving ? abs(sin(this.walkCycle))*2 : 0)-bob;
     }
 
     if (this.isPlayer && rightStick.active && this.reloadTimer <= 0 && this.meleeTimer <= 0) { 
-        stroke(255, 0, 0, rightStick.dist > 0.75 ? 200 : 50); strokeWeight(2); line(bLX, bLY, 800, bLY); 
+        if (this.currentWeapon === WEAPONS.BOW) {
+            const q=this.bowDrawState ? this.bowDrawState.quality : 1;
+            if(q>=.85&&bowTension>=.82&&bowDrawPower(bowTension,q,this.bowDrawState && this.bowDrawState.dud)>=.75)
+                stroke(169,231,132,105);
+            else stroke(228,184,104,65);
+        } else stroke(255, 0, 0, rightStick.dist > 0.75 ? 200 : 50);
+        strokeWeight(2); line(bLX, bLY, 800, bLY);
         if (this.currentWeapon === WEAPONS.DUAL_SMG) line(bLX_L, bLY_L, 800, bLY_L);
     }
     
@@ -16593,7 +16720,7 @@ if (this.isPlayer) {
             let hx=lerp(8,-12,this.armDrag),hy=shoulderY;
             if (this.currentWeapon===WEAPONS.BOW) {
                 hx=shoulderX+cos(.50)*25;hy=shoulderY+sin(.50)*25;
-                if(this.isPlayer){hx=24;hy=0;}
+                if(this.isPlayer){hx=24+bowPoseOffset;hy=0;}
             } else if (longGunPose) {
                 hx=longGunPose.fore[0];hy=longGunPose.fore[1];
             } else if (weaponHands(this.currentWeapon)===2) {
@@ -16638,7 +16765,7 @@ if (this.isPlayer) {
             else if (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { rHandX = 8; rSleeveX = -1; }
             const rShoulderY=rArmY;
             if (longGunPose) { rHandX=longGunPose.rear[0];rArmY=longGunPose.rear[1]; }
-            else if(this.isPlayer&&this.currentWeapon===WEAPONS.BOW){rHandX=this.ammo>0?14:31;rArmY=0;}
+            else if(this.isPlayer&&this.currentWeapon===WEAPONS.BOW){rHandX=(this.ammo>0?13-9*bowTension:13)+bowPoseOffset;rArmY=0;}
             
             const rg=figureRig(this.bodyW,this.bodyH),g=paint?paint.api:window;
             // The wrist/grip stays pinned to the existing muzzle offsets.
@@ -16665,7 +16792,7 @@ if (this.isPlayer) {
                     pop();
                 }
                 else if (this.currentWeapon === WEAPONS.BOW) {
-                    push(); translate(24,0); drawHuntingBow(this.ammo > 0); pop();
+                    push(); translate(24+bowPoseOffset,0); drawHuntingBow(this.ammo > 0,0,bowTension); pop();
                 }
                 else if (longGunPose) {
                     push();translate(longGunPose.x,longGunPose.y);
@@ -17497,7 +17624,8 @@ function updateBullets() {
                     } else {
                         const damage=b.isOrangeBeam?ROBOT_BEAM_DMG:(b.isRedLaser||b.isPinkLaser?30:(b.isAlienLaser?25:(wildlifeHit.head?b.w.headDmg:b.w.bodyDmg)));
                         applyForestWildlifeHit(wildlifeHit.animal,{weapon:b.w,head:wildlifeHit.head,shotId:b.shotId,owner:b.shooter,
-                            x:b.x,y:b.y,angle:b.a,damage:damage||0});
+                            x:b.x,y:b.y,angle:b.a,arrowPower:b.arrowPower,arrowDud:b.arrowDud,
+                            damage:(damage||0)*(b.isArrow?b.arrowPower:1)});
                     }
                     if(b.isP&&!b.isTaser)totalShotsHit++;
                     if(b.isTaser){b.retracting=true;continue;}
@@ -17521,7 +17649,7 @@ function updateBullets() {
                 if (b.w === WEAPONS.SHOTGUN) barrel.hp -= 25;
                 else if (b.isRedLaser || b.isPinkLaser) barrel.hp -= 30;
                 else if (b.isAlienLaser) barrel.hp -= 25;
-                else barrel.hp -= b.w.bodyDmg;
+                else barrel.hp -= b.w.bodyDmg * (b.isArrow ? b.arrowPower : 1);
                 
                 b.l = 0; emit(b.x, b.y, 3, color(255, 100, 0), "FLASH"); break; 
             }
@@ -17563,6 +17691,7 @@ function updateBullets() {
                 if (b.w === WEAPONS.ROCKET_LAUNCHER) { b.l = 0; triggerRocketExplosion(b.x, b.y, b.isP, t); continue; }
                 
                 let dmg = b.isOrangeBeam ? ROBOT_BEAM_DMG : (b.isRedLaser ? 30 : (b.isPinkLaser ? 30 : (b.isAlienLaser ? 25 : (b.w === WEAPONS.SHOTGUN ? (b.tH === "HEAD" ? 50 : 25) : (b.tH === "HEAD" ? b.w.headDmg : b.w.bodyDmg))))); 
+                if (b.isArrow) dmg *= b.arrowPower;
                 
                 if (t.eType === "SNAIL_HYBRID" && b.tH === "HEAD") {
                     t.hybridHeadHP -= dmg;
@@ -17790,17 +17919,19 @@ function updateBullets() {
                     // is the right tool, not that it is the only one.
                     if (b.isP && typeof damageHarvestable === 'function' && harvestProfile(bldg)) {
                         const wd = (b.w && b.w.bodyDmg) ? b.w.bodyDmg : 20;
-                        damageHarvestable(bldg, Math.max(4, wd * 0.34));
+                        damageHarvestable(bldg, Math.max(4, wd * 0.34) * (b.isArrow ? b.arrowPower : 1));
                     }
                     if (bldg.isPinkPlanet && b.isP) {
                         bldg.flashTimer = 4; if (bldg.hp === undefined) bldg.hp = 750; 
                         let dmg = b.w === WEAPONS.SHOTGUN ? 25 : (b.w === WEAPONS.ROCKET_LAUNCHER ? 350 : (b.isRedLaser || b.isPinkLaser ? 30 : (b.isAlienLaser ? 25 : (b.w.bodyDmg || 20))));
+                        if (b.isArrow) dmg *= b.arrowPower;
                         bldg.hp -= dmg;
                         if (bldg.hp <= 0) { sfx.explosion(bldg.x, bldg.y); screenShake = 30; emit(bldg.x, bldg.y, 100, color(200, 230, 40), "GORE"); spawnSplatter(bldg.x, bldg.y, "BLOOD", color(200, 230, 40)); spawnSplatter(bldg.x, bldg.y, "SCORCH"); let bIdx = buildings.indexOf(bldg); if (bIdx > -1) buildings.splice(bIdx, 1); } 
                         else { emit(b.x, b.y, 5, color(255, 20, 147), "BLOOD"); let swarmBug = newHostileCharacter(bldg.x - 20, bldg.y - 20, "BUG"); swarmBug.ignoreBldgTimer = 180; enemiesList.push(swarmBug); sfx.hitBody(); }
                         if (b.w === WEAPONS.ROCKET_LAUNCHER) triggerRocketExplosion(b.x, b.y, b.isP); 
                     } else if (bldg.isTower && bldg.hp > 0 && b.isP) {
                         let dmg = b.w === WEAPONS.SHOTGUN ? 25 : (b.w === WEAPONS.ROCKET_LAUNCHER ? 350 : (b.w.bodyDmg || 20));
+                        if (b.isArrow) dmg *= b.arrowPower;
                         bldg.hp -= dmg; bldg.hitFlash = 4; emit(b.x, b.y, 5, color(255, 100, 0), "SPARK");
                         if (bldg.hp <= 0) { triggerExplosion(bldg.x, bldg.y, 200, false, true); screenShake = 60; }
                     } else if (b.w === WEAPONS.ROCKET_LAUNCHER) {
@@ -18390,6 +18521,8 @@ class Bullet {
     this.x = x; this.y = y; this.startX = x; this.startY = y; this.isP = iP; this.tH = tH; this.w = w; this.a = a; 
     this.prevX = x; this.prevY = y; this.shotId = 0;
     this.isArrow = w === WEAPONS.BOW;
+    this.arrowPower = 1; this.arrowDud = false; this.arrowSpeed = 28;
+    this.arrowRange = 2520; this.arrowTravel = 0;
     this.isAlienLaser = (w === "ALIEN_LASER"); this.isRedLaser = (w === "RED_LASER"); this.isPinkLaser = (w === "PINK_LASER"); this.isOrangeBeam = (w === "ORANGE_BEAM"); this.isRocket = (w === WEAPONS.ROCKET_LAUNCHER); this.isTaser = (w === WEAPONS.TASER);
     
     // NEW TASER VARIABLES
@@ -18470,6 +18603,11 @@ class Bullet {
               // 15m max range (approx 300px), then retract
               if (dist(this.startX, this.startY, this.x, this.y) > 300) this.retracting = true;
           }
+      } else if (this.isArrow) {
+          const step = Math.min(this.arrowSpeed, Math.max(0, this.arrowRange - this.arrowTravel));
+          if (step <= 0) { this.l = 0; this.active = false; return; }
+          this.x += this.vx * step / this.arrowSpeed; this.y += this.vy * step / this.arrowSpeed;
+          this.arrowTravel += step; this.l--;
       } else {
           this.x += this.vx; this.y += this.vy; this.l--;
       }
@@ -18998,7 +19136,7 @@ function drawUI() {
       rect(28, 66, 18, 8, 2); 
       fill(20); noStroke(); rect(32, 74, 6, 8); 
   } else if (player && player.currentWeapon === WEAPONS.BOW) {
-      push(); translate(46,75); scale(0.68); drawHuntingBow(true); pop();
+      push(); translate(46,75); scale(0.68); drawHuntingBow(player.ammo>0,0,bowDrawAmount(player)); pop();
   } else {  
       rect(35, 65, 16, 6, 2); 
       rect(35, 71, 6, 10); 
@@ -19012,6 +19150,7 @@ function drawUI() {
       text(pR > 0 ? "RECHARGING" : `${pA} / ∞`, 90, 75); 
   } else if (player && player.currentWeapon === WEAPONS.BOW) {
       text(`${pA} ARROWS`,90,75);
+      drawBowDrawHud(player,90,97);
   } else {
       let mags = player ? player.mags[player.currentWeapon.name] : Infinity;
       let reserveAmmo = mags === Infinity ? "∞" : mags * pM;
@@ -19249,7 +19388,8 @@ function handleGamepad() {
       if ((btn(3) || btn(5)) && meleeUnlocked) meleeInputHeld = true;
       if (btn(6)) grenadeInputHeld = true;
   }
-  if (jP(11) && millis() - lastToggleTime > 300) { headAimToggle = !headAimToggle; lastToggleTime = millis(); }
+  if (jP(11) && player && player.currentWeapon === WEAPONS.BOW) rightStick.bowReleaseRequested = true;
+  else if (jP(11) && millis() - lastToggleTime > 300) { headAimToggle = !headAimToggle; lastToggleTime = millis(); }
   if (jP(0) && BIOME_ACTIVE && currentBiome === 2) interactForestHuntingActivity();
   if (jP(10) && jetpackUnlocked && player && player.dashCooldown <= 0 && player.dashTimer <= 0 && player.meleeTimer <= 0) { player.activateDash(); }
 
@@ -30855,9 +30995,11 @@ function drawSwordSwing(c,GP,leftAction,twist,usingPick) {
 
 // Swept cedar limbs, a taut string and a steel-tipped shaft. Authored around
 // the grip, so the carried and drawn bow keep the same shape at every heading.
-function drawHuntingBow(arrow = true, elevation = 0) {
+function drawHuntingBow(arrow = true, elevation = 0, tension = 1) {
   push();
   const squash = Math.max(0.72,Math.cos(elevation));
+  const pull = arrow ? Math.max(0,Math.min(1,tension)) : 0;
+  const nock = -11-9*pull;
   scale(squash,1);
   noFill(); stroke(24,31,29); strokeWeight(5.2);
   bezier(-11,-20,3,-14,3,-5,0,0);
@@ -30868,14 +31010,37 @@ function drawHuntingBow(arrow = true, elevation = 0) {
   stroke(243,205,126); strokeWeight(1);
   bezier(-10,-19,0,-12,1,-5,0,0);
   stroke(224,223,194); strokeWeight(1.1);
-  line(-11,-20,arrow ? -20 : -11,0); line(arrow ? -20 : -11,0,-11,20);
+  line(-11,-20,nock,0); line(nock,0,-11,20);
   noStroke(); fill(54,66,48); rect(-2,-4,5,8,1);
   if (arrow) {
-    stroke(121,79,42); strokeWeight(2); line(-23,0,12,0);
-    noStroke(); fill(181,202,198); triangle(14,0,10,-2.6,10,2.6);
-    fill(237,229,196); triangle(-22,-1,-27,-4,-26,0); triangle(-22,1,-27,4,-26,0);
+    stroke(121,79,42); strokeWeight(2); line(-14-9*pull,0,21-9*pull,0);
+    noStroke(); fill(181,202,198); triangle(23-9*pull,0,19-9*pull,-2.6,19-9*pull,2.6);
+    fill(237,229,196); triangle(-13-9*pull,-1,-18-9*pull,-4,-17-9*pull,0);
+    triangle(-13-9*pull,1,-18-9*pull,4,-17-9*pull,0);
   }
   pop();
+}
+
+// A small readout beside the quiver mirrors the real string tension. Rendering
+// never advances a draw, spends an arrow or extends the release notice.
+function drawBowDrawHud(c,x,y) {
+  const s=c && c.bowDrawState;
+  const tension=s ? Math.max(0,Math.min(1,s.tension||0)) : 0;
+  const quality=s ? Math.max(0,Math.min(1,s.quality||0)) : 0;
+  const ready=s && !s.dud && tension>=.82 && quality>=.85 && bowDrawPower(tension,quality,s.dud)>=.75;
+  let label='PULL BACK · RELEASE',ink=[222,185,111];
+  if(!c || c.ammo<=0)label='QUIVER EMPTY';
+  else if(s && s.phase==='DRAW') {
+    label='DRAW '+Math.round(tension*100)+'% · '+(s.dud?'DUD':ready?'READY':quality>=.7?'SMOOTH':'UNSTEADY');
+    if(s.dud)ink=[241,138,120];else if(ready)ink=[163,224,139];
+  } else if(s && s.feedbackMs>0) {
+    label=s.lastOutcome==='PERFECT'?'PERFECT RELEASE':s.lastOutcome==='DUD'?'DUD ARROW':'WEAK RELEASE';
+    ink=s.lastOutcome==='PERFECT'?[163,224,139]:s.lastOutcome==='DUD'?[241,138,120]:ink;
+  } else if(s && s.phase==='LATCHED')label='EASE OFF TO RESET';
+  push();noStroke();fill(26,40,31,210);rect(x,y,126,5,2);
+  fill(...ink);if(tension>0)rect(x,y,126*tension,5,2);
+  textAlign(LEFT,TOP);textFont('sans-serif');textStyle(NORMAL);textSize(9);
+  text(label,x,y+8);pop();
 }
 
 // Weapons are authored about their own GRIP so a carry can swing them freely.
@@ -31235,7 +31400,11 @@ function aimedLongGunPose(c, twist, bodyBob) {
 function drawAimedTwoHandSleeve(c,g,hx,hy,right) {
   const rg=figureRig(c.bodyW,c.bodyH);
   const sx=c.bodyW*(right?-.08:.20),sy=c.bodyH*(right?.35:-.36);
-  const ex=right?sx-1.8+(hx-sx)*.15:sx+(hx-sx)*.46;
+  // A drawing wrist comes back beside the face. Keep its elbow behind the
+  // shoulder rather than letting the rifle's fore-end fit fold into itself.
+  const ex=right && c.currentWeapon===WEAPONS.BOW
+      ? sx-3.4-Math.max(0,13-hx)*.09
+      : right?sx-1.8+(hx-sx)*.15:sx+(hx-sx)*.46;
   const ey=right?c.bodyH*.44:sy+(hy-sy)*.16;
   figureCelLimb(g,sx,sy,ex,ey,hx,hy,rg.upperW,(rg.upperW+rg.foreW)*.5,
                 rg.foreW*.84,c.shirtCol);
@@ -31494,6 +31663,7 @@ function leftHandAction(c) {
 // Support actions run before movement/aim updates, so read this frame's stick
 // direction at release instead of firing toward the previous frame's heading.
 function supportAimAngle(c) {
+  if (c.currentWeapon === WEAPONS.BOW) return playerBowAimAngle(c);
   if (typeof rightStick !== 'undefined' && rightStick && rightStick.active &&
       Math.hypot(rightStick.dx, rightStick.dy) > 0.001) return atan2(rightStick.dy, rightStick.dx);
   if (typeof leftStick !== 'undefined' && leftStick && leftStick.active &&
@@ -38782,7 +38952,8 @@ function forestHuntingObjectiveCard() {
   const wide = width >= 700, portrait = height >= width;
   const w = Math.min(288, Math.max(120, wide ? width - 480 : portrait ? width - 24 : width - 244));
   const x = wide || portrait ? (width - w) / 2 : width - w - 12;
-  const y = wide ? 18 : portrait ? 156 : 88;
+  const bowAmbush = player && player.currentWeapon === WEAPONS.BOW && nm0AmbushActive;
+  const y = wide ? 18 : portrait ? (bowAmbush ? 181 : 156) : 88;
   return { x, y, w, h: 38 };
 }
 
@@ -38838,7 +39009,9 @@ function forestHuntingGrantBow() {
   forestHuntingQuest.stage = 'HUNT'; forestHuntingQuest.bowAmmo = 24;
   forestHuntingQuest.resupplyRemainingMs = DAY_MS / 4;
   applyForestHuntingBow(); player.currentWeapon = WEAPONS.BOW; player.reloadTimer = 0;
-  forestHuntingNotify('CEDAR HOLLOW: A careful hunt leaves little waste.\nBow + 24 arrows received. Aim for the head; collect one perfect arrow harvest.');
+  const lesson = window.isDesktop ? 'Hold to draw; release to shoot.' :
+    'Pull stick away from target smoothly; release.';
+  forestHuntingNotify('Bow + 24 arrows received. ' + lesson + '\nBring back one perfect arrow headshot harvest.');
   return true;
 }
 
@@ -40042,7 +40215,9 @@ function wildlifeSpecies(id, name, family, habitats, rarity, size, speed, hp, co
   WILDLIFE_SPECIES[id] = { id, name, family, habitats: habitats.split(' '), rarity,
     size, speed, hp, color, traits: (traits || '').split(' ').filter(Boolean),
     headForward: size * (family === 'bird' || family === 'raptor' || family === 'owl' ? 0.82 : 1.15),
-    headSide: 0, headR: Math.max(2.8, size * 0.40),
+    headSide: 0, headR: Math.max(1.6, size * (family === 'bear' ? 0.32 : family === 'sheep' ? 0.285 :
+      family === 'owl' ? 0.35 : family === 'turtle' || family === 'snake' ? 0.20 :
+      family === 'amphibian' ? 0.215 : family === 'bird' || family === 'raptor' ? 0.235 : 0.26)),
     rise: family === 'bird' || family === 'raptor' || family === 'owl' ? 8 : size * 0.65 };
 }
 // Body radius is a world-space art AND collision measure. Large mammals have
@@ -40086,11 +40261,46 @@ wildlifeSpecies('CHIPMUNK', 'Chipmunk', 'rodent', 'TIMBER VIBRANT HEATH', 1, 7, 
 wildlifeSpecies('GROUNDHOG', 'Groundhog', 'rodent', 'MEADOW EDGE', 1, 12, 1.00, 32, [145, 118, 78], 'stocky');
 wildlifeSpecies('EASTERN_COTTONTAIL', 'Eastern cottontail', 'rabbit', 'MEADOW EDGE VIBRANT', 1, 9, 2.00, 22, [165, 137, 105], 'ears whitetail');
 wildlifeSpecies('BEAVER', 'Beaver', 'beaver', 'MARSH', 2, 20, 1.00, 45, [126, 91, 56], 'paddletail aquatic');
+// Detection distances are measured from the animal's ground root. Timid
+// grazers flee well before a human can reach their body; a defensive animal
+// warns about close intrusion, rather than treating every predator as hostile.
+const WILDLIFE_REACTIONS = Object.create(null);
+function wildlifeReaction(ids, alert, flee, sprint, territory, warn, retaliation) {
+  const profile = { alert, flee, sprint, territory: territory || 0,
+    warn: warn || 0, retaliation: !!retaliation };
+  for (const id of ids.split(' ')) WILDLIFE_REACTIONS[id] = profile;
+}
+wildlifeReaction('GRIZZLY_BEAR', 250, 0, 4.25, 150, 65, true);
+wildlifeReaction('MOOSE', 260, 0, 4.15, 145, 70, true);
+wildlifeReaction('WOLVERINE', 190, 0, 3.50, 95, 55, true);
+wildlifeReaction('BLACK_BEAR', 285, 230, 4.10, 0, 0, true);
+wildlifeReaction('GRAY_WOLF', 320, 250, 3.50, 0, 0, true);
+wildlifeReaction('MOUNTAIN_LION', 280, 210, 3.25, 0, 0, true);
+wildlifeReaction('ELK MULE_DEER WHITE_TAILED_DEER', 380, 310, 3.90);
+wildlifeReaction('BIGHORN_SHEEP', 350, 280, 4.20);
+wildlifeReaction('RED_FOX COYOTE CANADA_LYNX', 300, 235, 3.60);
+wildlifeReaction('BEAVER RACCOON VIRGINIA_OPOSSUM GROUNDHOG', 205, 150, 3.80);
+wildlifeReaction('EASTERN_COTTONTAIL', 280, 215, 3.80);
+wildlifeReaction('PIKA YELLOW_BELLIED_MARMOT EASTERN_GRAY_SQUIRREL CHIPMUNK', 235, 170, 3.30);
+wildlifeReaction('TIMBER_RATTLESNAKE COPPERHEAD', 105, 0, 2.40, 65, 45, true);
+const WILDLIFE_BIRD_REACTION = { alert: 260, flee: 185, sprint: 2.2, territory: 0, warn: 0, retaliation: false };
+const WILDLIFE_SHY_REACTION = { alert: 160, flee: 100, sprint: 2.8, territory: 0, warn: 0, retaliation: false };
+function wildlifeReactionFor(a) {
+  const s = WILDLIFE_SPECIES[a.species];
+  return WILDLIFE_REACTIONS[a.species] ||
+    (s.family === 'bird' || s.family === 'raptor' || s.family === 'owl' ? WILDLIFE_BIRD_REACTION : WILDLIFE_SHY_REACTION);
+}
 const WILDLIFE_SPECIES_IDS = Object.keys(WILDLIFE_SPECIES);
 const forestWildlife = [];
 const _wildlifeGrid = new Map(), _wildlifeBucketPool = [];
 const _wildlifeThreatCandidates = [];
 let _wildlifeGridDirty = true, _wildlifeGridCount = -1;
+// Contact broad phase is derived during the same existing grid rebuild.
+// Its envelope covers every body heading, so rotation never makes it stale.
+let _wildlifeContactCount = 0;
+let _wildlifeContactMinX = Infinity, _wildlifeContactMinY = Infinity;
+let _wildlifeContactMaxX = -Infinity, _wildlifeContactMaxY = -Infinity;
+
 let _wildlifeLedger = { seed: 0x5ad763f1, nextId: 1, encounters: 0, rareMisses: 0 };
 let _wildlifeClock = 0, _wildlifeSpawnClock = 0, _wildlifeLastThreat = -1000;
 let _wildlifeLastBiome = 0;
@@ -40128,7 +40338,7 @@ function wildlifeRecordEncounter(s) {
 }
 function wildlifeHeadPoint(a) {
   const s = WILDLIFE_SPECIES[a.species];
-  const f = s.headForward * (a.bodyR / s.size), side = s.headSide;
+  const f = s.headForward * (a.bodyR / s.size), side = s.headSide * (a.bodyR / s.size);
   return { x: a.x + Math.cos(a.angle) * f - Math.sin(a.angle) * side,
     y: a.y + Math.sin(a.angle) * f + Math.cos(a.angle) * side, r: a.headR };
 }
@@ -40145,8 +40355,12 @@ function wildlifeSpawnAnimal(species, x, y, herd) {
     herdX: herd ? x - herd.x : 0, herdY: herd ? y - herd.y : 0,
     homeX: x, homeY: y, goalX: x, goalY: y, thinkAt: _wildlifeClock + 20 + wildlifeRandom() * 100,
     threatX: x, threatY: y, aggressor: null, attackAt: 0, hitFlash: 0,
+    sensorAt: _wildlifeClock + (_wildlifeLedger.nextId & 7), sensedAt: _wildlifeClock,
+    intrusion: 0, intruder: null, retreatUntil: 0, chaseUntil: 0,
+    seenHumanX: x, seenHumanY: y, seenHuman: null,
     shots: 0, headshots: 0, shotIds: [], condition: null, method: null,
     decals: [], deathType: null, fall: null, fallTilt: 1 };
+  a.contactAngle = a.angle;
   forestWildlife.push(a); _wildlifeGridDirty = true;
   return a;
 }
@@ -40159,6 +40373,193 @@ function wildlifeSolidBlocks(b, a) {
   }
   return !a.airborne;
 }
+function wildlifeGroundActor(actor) {
+  return actor && actor.hp > 0 && !actor.dead && (actor.ignoreBldgTimer || 0) <= 0 &&
+    actor.eType !== 'AERIAL' && actor.eType !== 'AERIAL_PISTOL' &&
+    actor.eType !== 'SAUCER' && actor.eType !== 'SAUCER_RED';
+}
+function wildlifeActorRadius(actor) {
+  return actor.eType === 'ARMORED' || actor.eType === 'ALIEN_GATOR' || actor.eType === 'SNAIL_HYBRID' ? 28 :
+    actor.eType === 'BUG' ? 10 : 15;
+}
+function wildlifeSolidAnimal(a) {
+  return a && !a.dead && !a.harvested && a.state !== 'STUNNED' && !a.airborne &&
+    WILDLIFE_SPECIES[a.species].size >= 24;
+}
+function wildlifeBodyMetric(a, x, y, r, angle = a.angle) {
+  const c = Math.cos(angle), sn = Math.sin(angle), dx = x - a.x, dy = y - a.y;
+  const rx = a.bodyR * 1.35 + 2 + r, ry = a.bodyR * 0.78 + 2 + r;
+  const lx = (dx * c + dy * sn) / rx, ly = (-dx * sn + dy * c) / ry;
+  return lx * lx + ly * ly;
+}
+function wildlifeBodySweep(a, x0, y0, x1, y1, r) {
+  const c = Math.cos(a.angle), sn = Math.sin(a.angle), rx = a.bodyR * 1.35 + 2 + r, ry = a.bodyR * 0.78 + 2 + r;
+  const sx = x0 - a.x, sy = y0 - a.y, ex = x1 - a.x, ey = y1 - a.y;
+  const px = (sx * c + sy * sn) / rx, py = (-sx * sn + sy * c) / ry;
+  const qx = (ex * c + ey * sn) / rx, qy = (-ex * sn + ey * c) / ry;
+  const start = px * px + py * py, end = qx * qx + qy * qy;
+  // An old save/teleport can begin overlapped. Allow steps that leave the body,
+  // never deeper penetration; forceNudge's stationary probe still sees it.
+  if (start < 1) return end <= start + 1e-8;
+  if (end < 1) return true;
+  const dx = qx - px, dy = qy - py, len2 = dx * dx + dy * dy;
+  if (!len2) return false;
+  const t = Math.max(0, Math.min(1, -(px * dx + py * dy) / len2));
+  const cx = px + dx * t, cy = py + dy * t;
+  return cx * cx + cy * cy < 1;
+}
+function wildlifeActorBlocked(actor, nx, ny, r) {
+  if (currentBiome !== 2 || !forestWildlife.length || !actor || actor.dead || actor.hp <= 0) return false;
+  wildlifeRebuildGrid();
+  if (!_wildlifeContactCount) return false;
+  // Walking/dashing probes are swept; long forceNudge and travel probes test
+  // their destination. This bounds a probe to at most sixteen wildlife cells.
+  const stepX = nx - actor.x, stepY = ny - actor.y, sweep = stepX * stepX + stepY * stepY <= 64 * 64;
+  const x0 = sweep ? actor.x : nx, y0 = sweep ? actor.y : ny, pad = 82 + r;
+  // Most army probes are nowhere near a live large animal. Reject the whole
+  // swept footprint before touching any buckets; birds/small fauna cost none.
+  if (Math.max(x0, nx) + r < _wildlifeContactMinX || Math.min(x0, nx) - r > _wildlifeContactMaxX ||
+      Math.max(y0, ny) + r < _wildlifeContactMinY || Math.min(y0, ny) - r > _wildlifeContactMaxY) return false;
+  const cx0 = Math.floor((Math.min(x0, nx) - pad) / WILDLIFE_CELL), cx1 = Math.floor((Math.max(x0, nx) + pad) / WILDLIFE_CELL);
+  const cy0 = Math.floor((Math.min(y0, ny) - pad) / WILDLIFE_CELL), cy1 = Math.floor((Math.max(y0, ny) + pad) / WILDLIFE_CELL);
+  for (let cx = cx0; cx <= cx1; cx++) for (let cy = cy0; cy <= cy1; cy++) {
+    const bucket = _wildlifeGrid.get(cellKey(cx, cy)); if (!bucket) continue;
+    for (let i = 0; i < bucket.length; i++) {
+      const a = bucket[i]; if (!wildlifeSolidAnimal(a)) continue;
+      if (Math.abs(nx - a.x) > pad + Math.abs(stepX) || Math.abs(ny - a.y) > pad + Math.abs(stepY)) continue;
+      if (sweep ? wildlifeBodySweep(a, x0, y0, nx, ny, r) : wildlifeBodyMetric(a, nx, ny, r) < 1) return true;
+    }
+  }
+  return false;
+}
+function wildlifeHumanContact(a, actor, dx, dy) {
+  const r = wildlifeActorRadius(actor);
+  if (a.placement) {
+    const px = actor.x - a.x, py = actor.y - a.y, reach = a.bodyR * 1.35 + 2 + r;
+    return px * px + py * py < reach * reach;
+  }
+  // A turn may widen the body toward a person before the root moves. Reject
+  // that new penetration while still allowing escape from a preexisting overlap.
+  if (a.contactAngle !== undefined && a.contactAngle !== a.angle &&
+      wildlifeBodyMetric(a, actor.x, actor.y, r) < 1 &&
+      wildlifeBodyMetric(a, actor.x, actor.y, r, a.contactAngle) >= 1) return true;
+  return !!(dx || dy) && wildlifeBodySweep(a, actor.x, actor.y, actor.x - dx, actor.y - dy, r);
+}
+function wildlifeHumanBlocks(a, x, y) {
+  if (!wildlifeSolidAnimal(a)) return false;
+  // Reverse the human's sweep: the living animal moving over a human has the
+  // same relative footprint as that human moving into the animal. Do not
+  // involve dead bodies, small critters or aircraft in ground navigation.
+  const dx = x - a.x, dy = y - a.y;
+  if (wildlifeGroundActor(player) && wildlifeHumanContact(a, player, dx, dy)) return true;
+  if (!_pushBuckets.size) return false;
+  const pad = 82 + 28, x0 = Math.floor((x - pad) / SPATIAL_CELL_SIZE), x1 = Math.floor((x + pad) / SPATIAL_CELL_SIZE);
+  const y0 = Math.floor((y - pad) / SPATIAL_CELL_SIZE), y1 = Math.floor((y + pad) / SPATIAL_CELL_SIZE);
+  for (let cx = x0; cx <= x1; cx++) for (let cy = y0; cy <= y1; cy++) {
+    const bucket = _pushBuckets.get(cellKey(cx, cy)); if (!bucket) continue;
+    for (let i = 0; i < bucket.length; i++) {
+      const actor = bucket[i]; if (actor === player || !wildlifeGroundActor(actor)) continue;
+      if (Math.abs(actor.x - x) > pad || Math.abs(actor.y - y) > pad) continue;
+      if (wildlifeHumanContact(a, actor, dx, dy)) return true;
+    }
+  }
+  return false;
+}
+function wildlifeHuman(actor) {
+  return wildlifeGroundActor(actor) && (actor === player || actor.isPlayer || actor.isFriendly || actor.isCityCivilian ||
+    actor.eType === 'NORMAL' || actor.eType === 'ARMORED' || actor.eType === 'MILITARY_NEUTRAL' ||
+    actor.eType === 'POLICE' || actor.eType === 'NM0');
+}
+function wildlifeStartFlight(a, human, delay) {
+  if (human) { a.threatX = human.x; a.threatY = human.y; }
+  a.aggressor = null; a.intruder = null; a.intrusion = 0;
+  a.state = delay ? 'ALARM' : 'FLEE'; a.alarm = Math.max(a.alarm, 360);
+  a.retreatUntil = Math.max(a.retreatUntil, _wildlifeClock + 240);
+  a.thinkAt = _wildlifeClock;
+  if (a.herd) {
+    a.herd.threatX = a.threatX; a.herd.threatY = a.threatY;
+    a.herd.alarmUntil = _wildlifeClock + 420;
+  }
+}
+function wildlifeRespondToInjury(a, owner) {
+  const profile = wildlifeReactionFor(a);
+  // A timid predator flees humans normally; cornering or actually injuring a
+  // large defensive animal can provoke it. Army crossfire never blames player.
+  const identified = owner === player && player && player.hp > 0;
+  const close = identified && (a.x - player.x) * (a.x - player.x) + (a.y - player.y) * (a.y - player.y) < 360 * 360;
+  if (profile.retaliation && close) {
+    a.aggressor = player; a.state = 'TERRITORIAL'; a.chaseUntil = _wildlifeClock + 240;
+    a.intrusion = profile.warn || 60; a.intruder = player;
+  } else wildlifeStartFlight(a, owner && Number.isFinite(owner.x) ? owner : null, true);
+}
+function wildlifeSenseHumans(a) {
+  const profile = wildlifeReactionFor(a), elapsed = Math.max(1, Math.min(12, _wildlifeClock - a.sensedAt));
+  a.sensedAt = _wildlifeClock; a.sensorAt = _wildlifeClock + 8;
+  let nearest = null, nearest2 = profile.alert * 1.25 * profile.alert * 1.25;
+  if (wildlifeHuman(player)) {
+    const dx = player.x - a.x, dy = player.y - a.y, d2 = dx * dx + dy * dy;
+    if (d2 < nearest2) { nearest = player; nearest2 = d2; }
+  }
+  // Reuse the army's already-built local push grid, checking at most 24 local
+  // humans on a staggered sensor tick. Player visibility is always checked.
+  const reach = profile.alert * 1.25, x0 = Math.floor((a.x - reach) / SPATIAL_CELL_SIZE), x1 = Math.floor((a.x + reach) / SPATIAL_CELL_SIZE);
+  const y0 = Math.floor((a.y - reach) / SPATIAL_CELL_SIZE), y1 = Math.floor((a.y + reach) / SPATIAL_CELL_SIZE);
+  let examined = 0;
+  const centerX = Math.floor(a.x / SPATIAL_CELL_SIZE), centerY = Math.floor(a.y / SPATIAL_CELL_SIZE);
+  const rings = Math.max(centerX - x0, x1 - centerX, centerY - y0, y1 - centerY);
+  // Spend the fixed candidate budget on close cells first. A crowded far
+  // corner must not hide a soldier standing directly beside the animal.
+  humanCells: for (let ring = 0; ring <= rings; ring++) {
+    for (let ox = -ring; ox <= ring; ox++) for (let oy = -ring; oy <= ring; oy++) {
+      if (ring && Math.abs(ox) !== ring && Math.abs(oy) !== ring) continue;
+      const cx = centerX + ox, cy = centerY + oy;
+      if (cx < x0 || cx > x1 || cy < y0 || cy > y1) continue;
+      const bucket = _pushBuckets.get(cellKey(cx, cy)); if (!bucket) continue;
+      for (let i = 0; i < bucket.length; i++) {
+        const actor = bucket[i]; if (++examined > 24) break humanCells;
+        if (actor === player || !wildlifeHuman(actor)) continue;
+        const dx = actor.x - a.x, dy = actor.y - a.y, d2 = dx * dx + dy * dy;
+        if (d2 < nearest2) { nearest = actor; nearest2 = d2; }
+      }
+    }
+  }
+  const moving = nearest && (nearest.isMoving || nearest.dashTimer > 0 ||
+    (nearest === a.seenHuman && (nearest.x - a.seenHumanX) * (nearest.x - a.seenHumanX) + (nearest.y - a.seenHumanY) * (nearest.y - a.seenHumanY) > 4));
+  const alert = profile.alert * (moving ? 1.25 : 1), flee = profile.flee * (moving ? 1.25 : 1);
+  if (nearest) { a.seenHuman = nearest; a.seenHumanX = nearest.x; a.seenHumanY = nearest.y; }
+  if (a.state === 'TERRITORIAL') return;
+  if (!nearest || nearest2 > alert * alert) {
+    a.intrusion = Math.max(0, a.intrusion - elapsed * 2);
+    if (a.state === 'WARNING' && !a.intrusion) { a.state = 'GRAZE'; a.intruder = null; a.thinkAt = _wildlifeClock; }
+    return;
+  }
+  if (profile.territory && nearest === player && _wildlifeClock >= a.retreatUntil) {
+    const space = profile.territory;
+    if (nearest2 < space * space) {
+      a.intrusion = Math.min(profile.warn + 8, (a.intruder === nearest ? a.intrusion : 0) + elapsed);
+      a.intruder = nearest; a.threatX = nearest.x; a.threatY = nearest.y;
+      a.state = 'WARNING'; a.goalX = a.x; a.goalY = a.y; a.vx = a.vy = 0;
+      a.thinkAt = _wildlifeClock;
+      if (a.intrusion >= profile.warn) {
+        a.aggressor = nearest; a.state = 'TERRITORIAL'; a.chaseUntil = _wildlifeClock + 180; a.thinkAt = _wildlifeClock;
+      }
+      return;
+    }
+    a.intrusion = Math.max(0, a.intrusion - elapsed * 2);
+    if (a.state === 'WARNING' && nearest2 > space * space * 1.44) {
+      a.state = 'GRAZE'; a.intruder = null; a.intrusion = 0; a.thinkAt = _wildlifeClock;
+    }
+    return;
+  }
+  // A flock/herd reacts before the player arrives at the collision footprint.
+  // Quiet, stationary humans can watch from farther away; footsteps and a
+  // dash enlarge the alarm and flight radii without rolling combat RNG.
+  if (a.state !== 'FLEE' && a.state !== 'WARNING' && (nearest2 < flee * flee || moving || a.state === 'GRAZE'))
+    wildlifeStartFlight(a, nearest, nearest2 >= flee * flee && !moving);
+  else if (a.state === 'FLEE' && nearest2 < flee * flee) {
+    a.threatX = nearest.x; a.threatY = nearest.y; a.alarm = Math.max(a.alarm, 300);
+  }
+}
 function wildlifeBodyBlocked(near, a, x, y, rx, ry) {
   if (!near) return false;
   for (let i = 0; i < near.length; i++) {
@@ -40169,7 +40570,7 @@ function wildlifeBodyBlocked(near, a, x, y, rx, ry) {
   return false;
 }
 function wildlifeCanStand(a, x, y) {
-  if (insideFortYard(2, x, y, 160)) return false;
+  if (insideFortYard(2, x, y, 160) || wildlifeHumanBlocks(a, x, y)) return false;
   const r = Math.max(4, a.bodyR);
   const c = Number.isFinite(a.angle) ? Math.cos(a.angle) : 0, sn = Number.isFinite(a.angle) ? Math.sin(a.angle) : 0;
   const rx = Number.isFinite(a.angle) ? r * Math.hypot(1.35 * c, 0.78 * sn) + 2 : r * 1.35 + 2;
@@ -40198,7 +40599,7 @@ function wildlifeSpawnAllowed(s, x, y) {
     const h = forestHuntingSite();
     if (h && Math.hypot(x - h.x, y - h.y) < (h.r || 250) + r + 80) return false;
   }
-  const probe = { species: s.id, bodyR: s.size * 1.10, airborne: false };
+  const probe = { species: s.id, bodyR: s.size * 1.10, airborne: false, placement: true };
   return wildlifeCanStand(probe, x, y);
 }
 function wildlifeSpawnEncounter() {
@@ -40243,10 +40644,21 @@ function wildlifeSpawnEncounter() {
 function wildlifeRebuildGrid() {
   if (!_wildlifeGridDirty && _wildlifeGridCount === forestWildlife.length) return;
   _wildlifeGrid.clear();
+  _wildlifeContactCount = 0;
+  _wildlifeContactMinX = _wildlifeContactMinY = Infinity;
+  _wildlifeContactMaxX = _wildlifeContactMaxY = -Infinity;
   let used = 0;
   for (let i = 0; i < forestWildlife.length; i++) {
     const a = forestWildlife[i];
     if (a.harvested || a.dead || a.state === 'STUNNED') continue;
+    if (wildlifeSolidAnimal(a)) {
+      _wildlifeContactCount++;
+      const reach = a.bodyR * 1.35 + 2;
+      _wildlifeContactMinX = Math.min(_wildlifeContactMinX, a.x - reach);
+      _wildlifeContactMinY = Math.min(_wildlifeContactMinY, a.y - reach);
+      _wildlifeContactMaxX = Math.max(_wildlifeContactMaxX, a.x + reach);
+      _wildlifeContactMaxY = Math.max(_wildlifeContactMaxY, a.y + reach);
+    }
     const k = cellKey(Math.floor(a.x / WILDLIFE_CELL), Math.floor(a.y / WILDLIFE_CELL));
     let bucket = _wildlifeGrid.get(k);
     if (!bucket) { bucket = _wildlifeBucketPool[used] || (_wildlifeBucketPool[used] = []); used++; bucket.length = 0; _wildlifeGrid.set(k, bucket); }
@@ -40264,14 +40676,34 @@ function wildlifeBrain(a) {
     a.state = 'FLEE'; a.alarm = Math.max(a.alarm, 420);
   }
   if (a.state === 'TERRITORIAL') {
-    if (a.aggressor === player && player && player.hp > 0 && Math.hypot(a.x - player.x, a.y - player.y) < 380) {
+    const dx = player ? player.x - a.x : 0, dy = player ? player.y - a.y : 0;
+    const homeX = a.x - a.homeX, homeY = a.y - a.homeY;
+    // Defensive charges end when the human retreats, the animal has moved
+    // too far from home, or a brief pursuit ends. Retreat cannot instantly
+    // trigger another warning/charge on the next sensor tick.
+    if (a.aggressor === player && player && player.hp > 0 &&
+        dx * dx + dy * dy < 390 * 390 && homeX * homeX + homeY * homeY < 460 * 460 &&
+        _wildlifeClock < a.chaseUntil) {
       a.goalX = player.x; a.goalY = player.y;
-    } else { a.aggressor = null; a.state = 'FLEE'; a.alarm = 360; }
+    } else wildlifeStartFlight(a, a.aggressor, false);
+  }
+  if (a.state === 'WARNING') {
+    a.goalX = a.x; a.goalY = a.y; a.vx = a.vy = 0;
+    const previousAngle = a.angle; a.contactAngle = previousAngle;
+    a.angle = Math.atan2(a.threatY - a.y, a.threatX - a.x);
+    if (!wildlifeCanStand(a, a.x, a.y)) a.angle = previousAngle;
+    a.contactAngle = a.angle;
   }
   if (a.state === 'FLEE') {
-    const ang = Math.atan2(a.y - a.threatY, a.x - a.threatX);
-    a.goalX = a.x + Math.cos(ang) * 330; a.goalY = a.y + Math.sin(ang) * 330;
-    if (a.alarm <= 0) { a.state = 'GRAZE'; a.homeX = a.x; a.homeY = a.y; }
+    let dx = a.x - a.threatX, dy = a.y - a.threatY;
+    // Exact overlaps have no bearing; use the existing heading, never a
+    // new random roll or a fixed direction that would align the whole herd.
+    if (dx * dx + dy * dy < 1) { dx = Math.cos(a.angle); dy = Math.sin(a.angle); }
+    const len = Math.hypot(dx, dy);
+    a.goalX = a.x + dx / len * 420; a.goalY = a.y + dy / len * 420;
+    if (a.alarm <= 0 && _wildlifeClock >= a.retreatUntil) {
+      a.state = 'GRAZE'; a.homeX = a.x; a.homeY = a.y; a.intrusion = 0;
+    }
   }
   if (a.state === 'GRAZE') {
     if (h) {
@@ -40284,12 +40716,8 @@ function wildlifeBrain(a) {
       a.goalX = a.homeX + (wildlifeRandom() - 0.5) * (a.airborne ? 500 : 200);
       a.goalY = a.homeY + (wildlifeRandom() - 0.5) * (a.airborne ? 500 : 200);
     }
-    // Grazers notice a nearby moving soldier without searching the army list.
-    if (player && player.hp > 0 && Math.hypot(a.x - player.x, a.y - player.y) < (a.airborne ? 85 : 105)) {
-      a.state = 'ALARM'; a.alarm = 300; a.threatX = player.x; a.threatY = player.y;
-    }
   }
-  a.thinkAt = _wildlifeClock + (a.state === 'GRAZE' ? 100 + wildlifeRandom() * 110 : 24);
+  a.thinkAt = _wildlifeClock + (a.state === 'GRAZE' ? 100 + wildlifeRandom() * 110 : 16);
 }
 function updateForestWildlife(dt) {
   dt = Math.max(0, Math.min(3, Number.isFinite(dt) ? dt : 1));
@@ -40319,6 +40747,7 @@ function updateForestWildlife(dt) {
       continue;
     }
     a.alarm = Math.max(0, a.alarm - dt);
+    if (a.sensorAt <= _wildlifeClock) wildlifeSenseHumans(a);
     if (a.thinkAt <= _wildlifeClock) wildlifeBrain(a);
     // Stagger local collision probes over four frames, then advance cached
     // clear velocities every frame so grazing and wingbeats stay smooth.
@@ -40326,18 +40755,30 @@ function updateForestWildlife(dt) {
     const s = WILDLIFE_SPECIES[a.species];
     if (((Math.floor(_wildlifeClock) + a.id) & 3) === 0) {
       const dx = a.goalX - a.x, dy = a.goalY - a.y, len = Math.hypot(dx, dy);
-      const speed = s.speed * (a.state === 'GRAZE' ? (a.airborne ? 0.85 : 0.30) : 1.65);
+      const profile = wildlifeReactionFor(a);
+      const speed = s.speed * (a.state === 'WARNING' ? 0 : a.state === 'GRAZE' ? (a.airborne ? 0.85 : 0.30) :
+        a.state === 'TERRITORIAL' ? Math.min(4.2, profile.sprint) : profile.sprint);
       a.vx = len > 10 ? dx / len * speed : 0; a.vy = len > 10 ? dy / len * speed : 0;
       const nx = a.x + a.vx * 4 * dt, ny = a.y + a.vy * 4 * dt;
       if (a.vx || a.vy) {
-        const previousAngle = a.angle;
+        const previousAngle = a.angle; a.contactAngle = previousAngle;
         a.angle = Math.atan2(a.vy, a.vx);
         // Turning changes a large animal's footprint. Clear the intended
         // orientation at its current root as well as the predicted step;
         // otherwise it can rotate through a wall before moving even one tick.
         if (!wildlifeCanStand(a, a.x, a.y) || !wildlifeCanStand(a, nx, ny)) {
           let sliding = false;
-          if (a.vx) {
+          // Ease a charge into contact instead of stopping one whole cached
+          // four-frame step short of the body and randomly changing course.
+          if (a.state === 'TERRITORIAL') {
+            for (let step = 0; step < 3; step++) {
+              a.vx *= 0.5; a.vy *= 0.5;
+              if (wildlifeCanStand(a, a.x, a.y) && wildlifeCanStand(a, a.x + a.vx * 4 * dt, a.y + a.vy * 4 * dt)) {
+                sliding = true; break;
+              }
+            }
+          }
+          if (!sliding && a.vx) {
             a.angle = Math.atan2(0, a.vx);
             if (wildlifeCanStand(a, a.x, a.y) && wildlifeCanStand(a, nx, a.y)) {
               a.vy = 0; sliding = true;
@@ -40357,6 +40798,7 @@ function updateForestWildlife(dt) {
         }
       }
     }
+    a.contactAngle = a.angle;
     if (a.vx || a.vy) {
       a.x += a.vx * dt; a.y += a.vy * dt;
       a.phase += Math.hypot(a.vx, a.vy) * 0.24 * dt;
@@ -40364,7 +40806,7 @@ function updateForestWildlife(dt) {
     }
     a.wingPhase += dt * 0.48;
     if (a.state === 'TERRITORIAL' && a.aggressor === player && player.hp > 0 && _wildlifeClock >= a.attackAt &&
-        Math.hypot(a.x - player.x, a.y - player.y) < a.bodyR + 24) {
+        wildlifeBodyMetric(a, player.x, player.y, wildlifeActorRadius(player) + 24) < 1) {
       if (typeof player.takeDamage === 'function') player.takeDamage(s.family === 'bear' ? 18 : s.family === 'snake' ? 6 : 10, a);
       a.attackAt = _wildlifeClock + 75;
     }
@@ -40402,6 +40844,15 @@ function wildlifeSegmentCircle(x0,y0,x1,y1,cx,cy,r) {
   const t=(-bb-Math.sqrt(disc))/aa;
   return t>=0&&t<=1?t:Infinity;
 }
+// Projectile anatomy follows the raised torso's authored silhouette, while
+// movement keeps its larger ground footprint. Ears, antlers, tails and wing
+// feathers do not grant a headshot. The fixed facing plane is camera independent.
+const _WILDLIFE_SHOT_BODY = {
+  deer:[1,.48],bear:[1,.65],canine:[1,.45],feline:[1,.45],
+  mustelid:[1.15,.36],sheep:[1,.59],rodent:[.86,.49],rabbit:[.90,.53],
+  beaver:[1.12,.58],bird:[.70,.44],raptor:[.81,.43],owl:[.69,.58],
+  snake:[.85,.20],turtle:[.85,.61],amphibian:[.78,.21]
+};
 function forestWildlifeHitTest(b) {
   if (!b || !forestWildlife.length || currentBiome!==2 || b.retracting || b.tetheredTarget) return null;
   wildlifeRebuildGrid();
@@ -40415,19 +40866,19 @@ function forestWildlifeHitTest(b) {
     const cell=_wildlifeGrid.get(cellKey(ix,iy));if(!cell)continue;
     for(let i=0;i<cell.length;i++){
       const a=cell[i];if(a.harvested||a.dead||a.state==='STUNNED')continue;
-      const head=b.tH==='HEAD';let t;
-      if(head){
-        const s=WILDLIFE_SPECIES[a.species],f=s.headForward*a.bodyR/s.size,c=Math.cos(a.angle),sn=Math.sin(a.angle);
-        const hx=a.x+c*f-sn*s.headSide,hy=a.y+sn*f+c*s.headSide;
-        // The engine's HEAD mode aims at the character root. Keep that same
-        // small target here, while also accepting the actual drawn animal head.
-        t=Math.min(wildlifeSegmentCircle(x0,y0,x1,y1,hx,hy,a.headR+1.5),wildlifeSegmentCircle(x0,y0,x1,y1,a.x,a.y,a.headR));
-      }else{
-        const c=Math.cos(a.angle),sn=Math.sin(a.angle),rx=a.bodyR*1.35+2,ry=a.bodyR*0.78+2;
-        const q0x=((x0-a.x)*c+(y0-a.y)*sn)/rx,q0y=(-(x0-a.x)*sn+(y0-a.y)*c)/ry;
-        const q1x=((x1-a.x)*c+(y1-a.y)*sn)/rx,q1y=(-(x1-a.x)*sn+(y1-a.y)*c)/ry;
-        t=wildlifeSegmentCircle(q0x,q0y,q1x,q1y,0,0,1);
-      }
+      const s=WILDLIFE_SPECIES[a.species],c=Math.cos(a.angle),sn=Math.sin(a.angle);
+      const shape=_WILDLIFE_SHOT_BODY[s.family]||_WILDLIFE_SHOT_BODY.rodent;
+      const rx=a.bodyR*shape[0]+1,ry=a.bodyR*shape[1]+1;
+      const q0x=((x0-a.x)*c+(y0-a.y)*sn)/rx,q0y=(-(x0-a.x)*sn+(y0-a.y)*c)/ry;
+      const q1x=((x1-a.x)*c+(y1-a.y)*sn)/rx,q1y=(-(x1-a.x)*sn+(y1-a.y)*c)/ry;
+      const bodyT=wildlifeSegmentCircle(q0x,q0y,q1x,q1y,0,0,1);
+      const f=s.headForward*a.bodyR/s.size,side=s.headSide*a.bodyR/s.size;
+      const hx=a.x+c*f-sn*side,hy=a.y+sn*f+c*side;
+      const headT=wildlifeSegmentCircle(x0,y0,x1,y1,hx,hy,a.headR+1);
+      // Both modes test the same two surfaces. A shot through the rump hits
+      // flesh first even with HEAD selected; a clean face hit is a headshot
+      // even with BODY selected. A round starting in both shapes hits torso.
+      const head=headT<bodyT,t=head?headT:bodyT;
       if(t<bestT){bestT=t;best={animal:a,head,t};}
     }
   }
@@ -40584,7 +41035,9 @@ function applyForestWildlifeHit(a, hit) {
   // later trigger IDs need no allocation or retention.
   if(a.shotIds.length>8)a.shotIds.shift();
   let damage=Number.isFinite(hit.damage)?Math.max(0,hit.damage):30;
-  if(kind==='BOW'&&hit.head)damage=a.hp;
+  const cleanBowHead=kind==='BOW'&&hit.head&&!hit.arrowDud&&
+    (!Number.isFinite(hit.arrowPower)||hit.arrowPower>=0.55);
+  if(cleanBowHead)damage=a.hp;
   const previousHp = a.hp, point = wildlifeImpactPoint(a, hit);
   a.hp=Math.max(0,a.hp-damage);a.hitFlash=8;
   if (damage > 0) { wildlifeRecordWound(a, hit, point); wildlifeBloodImpact(a, hit, point, a.hp <= 0); }
@@ -40594,15 +41047,14 @@ function applyForestWildlifeHit(a, hit) {
   if(a.hp<=0){
     a.dead=true;a.state='DEAD';a.ttl=18000;
     wildlifeBeginFall(a, hit, kind, damage, previousHp);
-    a.method=kind==='BOW'&&hit.head?'BOW_HEAD':kind;
+    a.method=cleanBowHead?'BOW_HEAD':kind;
     a.condition=a.method==='BOW_HEAD'?'PERFECT':kind==='EXPLOSIVE'||a.shots>=4?'BAD':a.shots===1&&a.headshots===1?'GOOD':'FAIR';
     _wildlifeGridDirty=true;
     return {hit:true,killed:true,stunned:false,condition:a.condition};
   }
   // Crossfire from another army scatters wildlife; it must not blame the
   // player. Only the player who injured a predator can provoke retaliation.
-  a.aggressor=hit.owner===player?player:null;
-  a.state=wildlifeHasTrait(s,'predator')&&!a.airborne&&a.aggressor?'TERRITORIAL':'ALARM';
+  wildlifeRespondToInjury(a, hit.owner);
   if(a.herd){a.herd.threatX=a.threatX;a.herd.threatY=a.threatY;a.herd.alarmUntil=_wildlifeClock+600;}
   return {hit:true,killed:false,stunned:false,condition:null};
 }
@@ -40635,7 +41087,9 @@ function resetForestWildlife() {
   _wildlifeLedger={seed:0x5ad763f1,nextId:1,encounters:0,rareMisses:0};
   _wildlifeClock=0;_wildlifeSpawnClock=0;_wildlifeLastThreat=-1000;_wildlifeLastBiome=0;
   _wildlifeEffectTick=-1;_wildlifeEffectCount=0;
-  _wildlifeGridDirty=true;_wildlifeGridCount=-1;
+  _wildlifeGridDirty=true;_wildlifeGridCount=-1;_wildlifeContactCount=0;
+  _wildlifeContactMinX=_wildlifeContactMinY=Infinity;
+  _wildlifeContactMaxX=_wildlifeContactMaxY=-Infinity;
 }
 function restoreForestWildlife(data) {
   resetForestWildlife();if(!data||typeof data!=='object')return;
