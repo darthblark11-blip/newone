@@ -33,11 +33,13 @@ denser, more readable world for both the legacy (hand-authored) maps and the
 procedurally streamed biomes. The systems below are all already implemented and
 working. The job is to *extend* them, not rebuild them.
 
-All five open layouts now carry sub-biomes: the woodland's four (Sector 2) and five
-each for the jungle, tundra, violet waste and crystal flats. The remaining thin ground
-is the **frontier** (Sector 3), which has an authored core and a relief system but no
-region layer, and the **city layouts**, whose variety comes from `cityZoneAt()` rather
-than from a landscape.
+The woodland (Sector 2), jungle, tundra, violet waste and crystal flats carry
+sub-biomes. The frontier (Sector 3) now keeps a permanent 69-premise western town
+surrounded by streamed farmland and layered canyons. Its enterable Copper Spur
+saloon, quick draw duel and sheriff bounties have saved progression independent
+of the campaign. See [Dry Gulch expansion](docs/dry-gulch-expansion.md) for
+controls, rewards, terrain rules and focused checks. City variety comes from
+`cityZoneAt()` rather than from a landscape.
 
 ## The gameplay loop this world serves
 
@@ -64,14 +66,16 @@ builders runs:
 |---|---|---|
 | Level 0 (prologue house), Level 8 (NM-0 HQ) | `legacyGenerateMap()` only | Closed rooms, no streaming, `BIOME_ACTIVE = false` |
 | Sector 1 (Stick City) — always | **Hybrid**: `legacyGenerateMap()` core + streamed chunks outward | `AUTHORED_SECTORS = [1]` |
-| Sectors 2–4 while their story arc runs | **Hybrid** | `hasAuthoredCore()` → `!storyArcCleared()` |
-| Sectors 2–4 after arc cleared, Sectors 5–7 | **Fully streamed** | `isBiomeLevel()` |
+| Sector 3 in all modes, including after settlement | **Hybrid** | Permanent Dry Gulch town and farm; streamed country outside |
+| Sectors 2 and 4 while their story arc runs | **Hybrid** | `hasAuthoredCore()` → `!storyArcCleared()` |
+| Sectors 2 and 4 after arc cleared, Sectors 5–7 | **Fully streamed** | `isBiomeLevel()` |
 
 The gate functions are at ~13309–13362: `isAuthoredSector`, `storyArcCleared`,
 `hasAuthoredCore`, `isBiomeLevel`, `isStreamedLevel`. An arc is cleared once the
 sector's town is `established` (Level 1 additionally needs the south Great Gate
-breached). **After that, re-entering the sector drops you into the generated world
-instead of the scripted arena** — this is intentional and load-bearing.
+breached). Sectors 2 and 4 then re-enter the generated world. Sector 3 retains
+its authored town and farm after its story beats end, while the countryside
+continues streaming outside the core.
 
 ### The authored core
 
@@ -661,7 +665,7 @@ reach the centreline.
 |---|---|---|---|---|
 | 1 | Stick City | `CITY` | ACID_RAIN | Grid megablock, always authored core; canal and tram rows |
 | 2 | The Undercity | `WOODLAND` | ACID_RAIN | `CITY_DENSE` inside the curtain wall; bright PNW forest, connected routes/rivers and four habitats outside |
-| 3 | Dry Gulch | `FRONTIER` | DUST | Agrarian belt, ghost town, mine bench relief |
+| 3 | Dry Gulch | `FRONTIER` | DUST | Farmland, permanent western town, layered canyons and bandit outposts |
 | 4 | The Green Line | `JUNGLE` | FOG | Overgrown military cordon; five sub-biomes |
 | 5 | The White Silence | `TUNDRA` | SNOW | Sparse, `clutterDensity: 0.35`; five sub-biomes |
 | 6 | The Violet Waste | `ALIEN` | SPORES | Bioluminescent; five sub-biomes |
@@ -1668,8 +1672,14 @@ the rest from their own normal.
 `ELEV_ZONES` (~1827) — currently only Sector 3 (mine bench, boot hill, stock bench,
 hotel/bank steps). Each zone has `x, y, w, h, f` (feather), `z` (height), `treads`.
 `groundElev`, `elevRenderScale` (things get bigger as they rise),
-`elevSpeedFactor` (slopes cost movement), `bakeElevation`. Relief belongs to the
-authored sector only — `elevZones()` returns null once the arc is cleared.
+`elevSpeedFactor` (slopes cost movement), `bakeElevation`. Authored relief remains
+with Dry Gulch's permanent core. The canyon ribbons extend that same ground
+field into negative heights outside town: `frontierCanyonHeight()` owns floors,
+ramps and rim-height bridges; `frontierCanyonBlocksMove()` prevents climbing
+steep banks. Reservation/filter passes keep generated solids off those routes
+without changing other chunks' destruction keys. The lighting heightfield uses
+a signed scene origin in biome 3 so lowered floors, actors and lamps retain
+their actual relative heights.
 
 Note the design intent in the comments: **boot hill is laid across the south end of
 Main Street on purpose**, so the size change happens on the route everyone walks.
@@ -3455,6 +3465,14 @@ node tools/check-generation.js     # determinism, seams, crossings, overlaps, ba
 node tools/check-render.js         # live draw path at four times of day, hybrid core
 node tools/check-population.js     # the Sector 1/2 story roster and what it converts to
 node tools/check-saveload.js       # save/load round trip
+node tools/check-frontier-town.js # permanent town, architecture and entrances
+node tools/check-frontier-canyons.js # shared canyon geometry, crossings and native spawn safety
+node tools/check-frontier-saloon.js # fists, quick draw, local scene and rewards
+node tools/check-frontier-bounties.js # native combat, contract saves and claims
+node tools/check-frontier-routes.js # replay all three canyon/outpost walks
+node tools/check-frontier-equipment.js # revolver price/ammo and awarded costume
+node tools/check-frontier-lighting.js # negative canyon floors and light heights
+node tools/check-frontier-integration.js # native input, persistence and scene isolation
 node tools/check-cutscene.js       # scripted placement stays inside the sector
 node tools/check-resources.js      # harvestables, drops, the melee tool, persistence
 node tools/check-robot.js          # a machine dies like a machine, on all six paths
