@@ -28,7 +28,7 @@ probe('near.panicTimer=1;near.updateEnemy();near.updateEnemy();');assert.equal(P
 probe('window.normal=new Character(400,300,false,"FARMER_MALE");enemiesList=[near,far,normal];far.takeDamage(1,{x:1900,y:0});');
 assert(P('far.panicX===1900&&far.state==="FLEE"&&far.isNeutral&&normal.isNeutral'));
 // Land a real first punch, without calling the stun helper directly.
-probe('window.victim=new Character(45,0,false,"CITY_CITIZEN_F");enemiesList=[victim];player.meleePhase=0;player.meleeCooldown=0;player.meleeTimer=0;player.meleeComboTimer=0;player.activateMelee(true);for(let i=0;i<10;i++){frameCount++;player.updatePlayer();}');
+probe('window.victim=new Character(45,0,false,"CITY_CITIZEN_F");enemiesList=[victim];player.meleePhase=0;player.meleeCooldown=0;player.meleeTimer=0;player.meleeComboTimer=0;player.activateMelee(true);for(let i=0;i<16;i++){frameCount++;player.updatePlayer();}');
 assert.equal(P('victim.state'),'STUNNED');assert.equal(P('victim.stunTimer'),240);assert.equal(P('victim.hp'),100);
 assert(P('victim.stunPose.impulse>4&&player.boxingHold===180'));
 const x=P('victim.x');probe('for(let i=0;i<20;i++){frameCount++;victim.updateEnemy();}');assert(P('victim.x>'+x));
@@ -47,8 +47,9 @@ for(const age of [0,6,15,28,38,60,150]){
 probe('victim.stunTimer=16;victim.show();');assert(P('stunFall(victim)<=.5'));
 assert(geometry.length>100&&geometry.some(p=>p.name==='bezierVertex'),'fallen figure is missing its curved surfaces');
 probe('victim.stunTimer=1;victim.updateEnemy();');assert.equal(P('victim.state'),'FLEE');assert(P('victim.isNeutral&&victim.hp===100'));
-// Three seconds after the completed punch; firing or a melee tool cancels guard.
-probe('player.meleeTimer=0;player.boxingHold=180;player.isArmed=false;');
+// Legacy saved/preview poses retain their timed guard and equipment precedence.
+// The live southpaw stance is covered through native controls in boxing-world.
+probe('boxingExit(player);finishWorldBoxing(player);player.meleeTimer=0;player.boxingHold=180;player.isArmed=false;');
 assert(P('boxerPose(player).active'));
 probe('for(let i=0;i<179;i++){frameCount++;player.updatePlayer();}');assert(P('boxerPose(player).active'));
 probe('player.updatePlayer();');assert(!P('boxerPose(player).active'));

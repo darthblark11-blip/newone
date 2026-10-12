@@ -15,6 +15,8 @@ function place(code){run(code);run(`viewLeft=player.x-600;viewRight=player.x+600
  lastActiveUpdate=-100;chunkMgr.lastKey=null;chunkMgr.update(player.x,player.y);chunkMgr.warmUp(30);chunkMgr.rebuildWorldArrays();updateActiveWorld();`);}
 function tap(x,y,id=91){ctx.mouseX=x;ctx.mouseY=y;ctx.touches=[{x,y,id}];run('touchStarted();');}
 function release(){ctx.touches=[];run('handleTouches();');}
+function roomTick(n=1){for(let i=0;i<n;i++){now+=16.67;ctx.deltaTime=16.67;run('updateFrontierSaloonActivity();');}}
+function roomTap(action){const b=run(`frontierSaloonButtons().find(b=>b.action===${JSON.stringify(action)})`);assert.ok(b,'Visible room action '+action);tap(b.x+b.w/2,b.y+b.h/2);release();}
 function keyF(){keys.add(70);run('handleDesktop();');keys.delete(70);run('handleDesktop();');run('window.isDesktop=false;rightStick.active=false;');}
 function shopTap(id){const point=run(`(()=>{const a=upgradeShopItems(),i=a.findIndex(x=>x.id===${JSON.stringify(id)}),L=upgradeShopLayout(a.length);
  return {x:L.startX+i%L.cols*L.spacingX,y:L.startY+Math.floor(i/L.cols)*L.spacingY};})()`);tap(point.x,point.y);release();}
@@ -23,7 +25,7 @@ check('authoredCore && buildings.filter(b=>b.isWesternBldg).length>=60','Arcade 
 place('player.x=frontierTownLandmarks().saloon.door.x;player.y=frontierTownLandmarks().saloon.door.y;');
 check('!player.checkCol(player.x,player.y)','The saloon entrance stands outside all collision footprints');
 keys.add(70);run('handleDesktop();');
-check('frontierSaloonIsInside() && player.x===0 && player.y===242','Native F input enters the actual saloon');
+check('frontierSaloonIsInside() && player.x===FRONTIER_SALOON_ROOM.entry.x && player.y===FRONTIER_SALOON_ROOM.entry.y','Native F input enters the larger saloon');
 run('updateFrontierSaloonActivity();');
 check('frontierSaloonIsInside()','Holding entry F does not immediately leave the room');
 keys.delete(70);run('updateFrontierSaloonActivity();');
@@ -72,15 +74,24 @@ shopTap('COWBOY');check('!cowboyCostumeOwned && !cowboySuitEquipped','The cowboy
 play();place('player.x=frontierTownLandmarks().duel.x;player.y=frontierTownLandmarks().duel.y;');
 tap(ctx.width/2,ctx.height-100);release();
 check('frontierSaloonIsInside() && _frontierSaloonSession.mode==="DUEL" && _frontierSaloonSession.duel.phase==="WAIT"','The plaza prompt starts the western quick draw');
-tap(ctx.width/2,ctx.height-135);release();
+roomTap('FIRE');
 check('_frontierSaloonSession.duel.phase==="RESULT" && !_frontierSaloonSession.duel.won && !cowboyCostumeOwned','Firing before DRAW loses without granting the costume');
 run('startFrontierQuickDraw();_frontierSaloonSession.duel.remainingMs=1;updateFrontierSaloonActivity();');
 check('_frontierSaloonSession.duel.phase==="DRAW"','The actual activity timer reveals the draw cue');
-const duelScore=run('score');tap(ctx.width/2,ctx.height-135);release();
+const duelScore=run('score');roomTap('FIRE');
+check('_frontierSaloonSession.duel.phase==="DRAW" && _frontierSaloonSession.duel.projectiles.length===1 && !cowboyCostumeOwned',
+ 'A native FIRE tap launches a finite projectile before it can award a duel victory');
+roomTick(15);
 check('_frontierSaloonSession.duel.won && cowboyCostumeOwned && frontierSaloonProgress.duelWon','A timely native FIRE tap immediately awards cowboy ownership');
+check('_frontierSaloonSession.duel.opponentCorpse instanceof Corpse && _frontierSaloonSession.opponent.dead && !_frontierSaloonSession.opponent.knockedOut && frontierSaloonProgress.duelTier===1',
+ 'The impact creates a local native gun death and advances the saved challenger tier');
 assert.equal(run('score'),duelScore+120,'The first duel victory awards its score exactly once');checks++;
 run('startFrontierQuickDraw();_frontierSaloonSession.duel.remainingMs=1;updateFrontierSaloonActivity();');
-tap(ctx.width/2,ctx.height-135);release();assert.equal(run('score'),duelScore+120,'Rematches cannot duplicate the first victory payout');checks++;
+roomTap('FIRE');assert.equal(run('score'),duelScore+120,'Rematches cannot duplicate the first victory payout');checks++;
+roomTick(18);
+check('_frontierSaloonSession.duel.won && frontierSaloonProgress.duelTier===2 && _frontierSaloonSession.duel.distance>380 && _frontierSaloonSession.duel.deadlineMs<700',
+ 'The next challenger stands farther away, draws faster and advances only after an actual impact');
+assert.equal(run('score'),duelScore+120,'A second confirmed impact cannot duplicate the duel payout');checks++;
 run('exitFrontierSaloon();isPaused=true;pauseMenuState="SHOP";');shopTap('COWBOY');
 check('cowboySuitEquipped && !ninjaSuitUnlocked && !explosiveArmorUnlocked && !chemistSuitUnlocked','Won cowboy attire equips freely and occupies one suit slot');
 // An interior save stores the exterior entrance and completed activities. A
@@ -95,7 +106,7 @@ run('loadGame();');play();
 check('!frontierSaloonIsInside() && player.x===1156 && player.y===-1730 && authoredCore','Loading an interior save resumes outside the still-present saloon');
 check('cowboyCostumeOwned && cowboySuitEquipped && revolverUnlocked && player.currentWeapon===WEAPONS.REVOLVER && player.weaponAmmo.REVOLVER===4 && player.mags.REVOLVER===2',
  'Reload restores won attire and the exact equipped revolver ammunition');
-check('frontierBounties.activeId===contract.id && frontierBountyRecord(contract).killed.length===1 && frontierSaloonProgress.duelWon',
+check('frontierBounties.activeId===contract.id && frontierBountyRecord(contract).killed.length===1 && frontierSaloonProgress.duelWon && frontierSaloonProgress.duelTier===2',
  'Reload restores the partial accepted bounty and completed duel together');
 const exactSave=slot,earnedSave=JSON.parse(slot);delete earnedSave.frontierEquipment;slot=JSON.stringify(earnedSave);
 run('loadGame();');play();
@@ -104,7 +115,7 @@ check('frontierSaloonProgress.duelWon && cowboyCostumeOwned && !revolverUnlocked
 assert.equal(run('score'),earnedSave.score,'Recovering earned costume ownership never repeats the duel score reward');checks++;
 slot=exactSave;run('loadGame();');play();
 run('window.travelArrival="SOUTH";startAtLevel(4);window.travelArrival="NORTH";startAtLevel(3);');play();
-check('authoredCore && cowboyCostumeOwned && cowboySuitEquipped && revolverUnlocked && player.currentWeapon===WEAPONS.REVOLVER && player.weaponAmmo.REVOLVER===4 && player.mags.REVOLVER===2 && frontierBountyRecord(contract).killed.length===1',
+check('authoredCore && cowboyCostumeOwned && cowboySuitEquipped && revolverUnlocked && player.currentWeapon===WEAPONS.REVOLVER && player.weaponAmmo.REVOLVER===4 && player.mags.REVOLVER===2 && frontierBountyRecord(contract).killed.length===1 && frontierSaloonProgress.duelTier===2',
  'Return travel retains the western town, clothing, equipped revolver, exact ammunition and partial bounty');
 run('isStoryMode=true;townsData[3]={established:true};startAtLevel(3);');play();
 check('storyArcCleared(3) && authoredCore && buildings.filter(b=>b.isWesternBldg).length>=60','Settling the story sector retains every permanent town mission');

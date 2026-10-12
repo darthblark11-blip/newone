@@ -14,7 +14,12 @@ New civilians and ambient city guards only appear outside the camera's current v
 
 ## Punching and stun
 
-The player holds an orthodox guard for 180 simulation frames after a completed punch: left foot forward, right foot rear, bladed hips, chin-side hands and separate hip/shoulder drive. Jab, cross and left-hook motion share the current combo timing. Aiming a firearm or equipping a melee tool takes precedence over the guard.
+The live player stance now uses shared southpaw boxing: right foot forward,
+left rear power hand, nearest-target lock, four explicit punches, directional
+guard/parry and upper-body sways. Visible joints and contact geometry come from
+one solver. Selecting a melee tool or returning to the equipped firearm leaves
+the stance. Old saved/preview poses retain their 180-frame guard fallback. See
+[Boxing and quick draw](boxing-and-duels.md) for controls and verification.
 
 One fist hit immediately stuns an unarmed civilian without reducing health. The new nonlethal reaction applies a collision-checked recoil, then a roughly 38-frame knee buckle and side roll, a small rebound, and a joint-limited damped settle. The four-second civilian stun ends with 32 frames of gradual recovery; the civilian then flees and remains neutral. Another punch extends the stun without popping the fallen body upright. Existing hostile four-hit stun duration and electrical skeleton flash are retained.
 

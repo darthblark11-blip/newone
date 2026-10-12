@@ -39,14 +39,20 @@ Outside, approach a saloon door, Quickhand or the wanted board and use the
 displayed touch button, **F**, or gamepad **A**. A finger held on an interaction
 button is consumed until release so it cannot become gunfire.
 
-Inside, use the left touch stick or **WASD** to move. The punch button,
-**E/Space**, or gamepad **X/RT** throws punches. Talk to Mae to choose the brawl
-or duel; desktop **1/2** selects the activity. Fistfights use a separate GRIT
-meter and nonlethal directional knockouts.
+Inside, use the left touch stick or **WASD** to move. Talk to Mae to choose the
+brawl or duel; desktop **1/2** selects the activity. Fistfights use shared
+southpaw boxing with four head/body punches, directional guards, timed parries
+and left/right sways. GRIT and directional knockouts remain nonlethal. The
+1400 × 980 room retains its close camera and has a clear fighting floor.
 
-For quick draw, wait for the green **DRAW** cue, then tap FIRE, press **Space**
-or use **RT**. Shooting before the cue loses; the opponent fires if the reaction
-window expires. Rematches do not duplicate the first-victory reward.
+For quick draw, the right stick aims below roughly 70% travel and fires when
+pushed farther. Wait for the green **DRAW** cue and hit the opponent. Aiming
+early is safe; an early shot loses and a badly aimed round can miss. Victories
+advance saved challenges with farther, quicker opponents. Native death effects
+stay inside the duel; rematches preserve the first-victory reward.
+
+See [Boxing and quick draw](boxing-and-duels.md) for the complete control map,
+guard sectors, contact geometry and progression rules.
 
 The saloon's pause controls provide resume, save and leave-to-shop actions.
 Saving inside preserves quest progress and exterior equipment and resumes at
@@ -68,6 +74,9 @@ node tools/check-frontier-bounties.js
 node tools/check-frontier-saloon.js
 node tools/check-frontier-routes.js
 node tools/check-frontier-integration.js
+node tools/check-boxing-combat.js
+node tools/check-boxing-render.js
+node tools/check-boxing-world.js
 ```
 
 The existing forest mission, save/load, return travel, population, render,

@@ -41,6 +41,12 @@ of the campaign. See [Dry Gulch expansion](docs/dry-gulch-expansion.md) for
 controls, rewards, terrain rules and focused checks. City variety comes from
 `cityZoneAt()` rather than from a landscape.
 
+Player fists and the Copper Spur brawl share the southpaw `BOXING` solver:
+canonical head/body/joint geometry also drives `paintBoxingFigure()`. Keep
+guards, parry timing, sways and hit contact on that shared geometry. Quick draw
+owns local aimed bullets/native corpse visuals and saved farther/faster tiers.
+See [Boxing and quick draw](docs/boxing-and-duels.md) for the control contract.
+
 ## The gameplay loop this world serves
 
 1. **Story mode / cutscene** opens each level (biome).
@@ -3481,6 +3487,9 @@ node tools/check-frontier-routes.js # replay all three canyon/outpost walks
 node tools/check-frontier-equipment.js # revolver price/ammo and awarded costume
 node tools/check-frontier-lighting.js # negative canyon floors and light heights
 node tools/check-frontier-integration.js # native input, persistence and scene isolation
+node tools/check-boxing-combat.js # swept fists, directional guards and fair attack turns
+node tools/check-boxing-render.js # rendered joints and hurt/contact geometry agree
+node tools/check-boxing-world.js # native entry/exit, equipment, terrain and quest input
 node tools/check-cutscene.js       # scripted placement stays inside the sector
 node tools/check-resources.js      # harvestables, drops, the melee tool, persistence
 node tools/check-robot.js          # a machine dies like a machine, on all six paths
