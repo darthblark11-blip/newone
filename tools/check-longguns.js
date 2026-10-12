@@ -117,14 +117,14 @@ for(const weapon of ['ASSAULT_RIFLE','SHOTGUN','BOW','ROCKET_LAUNCHER','COACH_GU
   }
   ok(`${weapon}: raised arms have embedded shoulders, tucked elbows and exact palm contact at all headings/gaits`,!bad,bad?JSON.stringify(bad):`${poses} real poses`);
 }
-for(const [weapon,expected]of [['BOW',[[24,0],[14,0]]],['ROCKET_LAUNCHER',[[32,7],[8,11]]],['COACH_GUN',[[26,7],[15,11]]]]){
+for(const [weapon,expected]of [['BOW',[[24,0],[4,0]]],['ROCKET_LAUNCHER',[[32,7],[8,11]]],['COACH_GUN',[[26,7],[15,11]]]]){
   prepare(weapon);const r=trace('player.show();');
   const contacts=r.arms.map(a=>a.local.slice(4));
   ok(`${weapon}: support and strong wrists meet the drawn grip/string/fore-end`,expected.every(p=>contacts.some(h=>distance(p,h)<1e-8)),JSON.stringify(contacts));
 }
 prepare('BOW');probe('player.ammo=0;');
 ok('empty bow lets the strong hand follow the relaxed string while support stays on its grip',
-   trace('player.show();').arms.some(a=>distance(a.local.slice(4),[31,0])<1e-8));
+   trace('player.show();').arms.some(a=>distance(a.local.slice(4),[13,0])<1e-8));
 
 for(const weapon of ['ASSAULT_RIFLE','SHOTGUN']){
   let worst=0;

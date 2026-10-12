@@ -61,8 +61,10 @@ animal();hit('PISTOL',true,100,'one');run(`wildlifeQAAnimal.x+=1000;`);
 check(`wildlifeHarvest(wildlifeQAAnimal)===null&&!wildlifeQAAnimal.harvested`, 'A distant corpse cannot be collected remotely');
 animal();hit('EXPLOSIVE',false,200,'boom');
 check(`wildlifeQAAnimal.condition==='BAD'`, 'Explosive kills yield scraps');
-animal('RED_FOX');hit('PISTOL',false,10,'hurt');
-check(`wildlifeQAAnimal.state==='TERRITORIAL'&&!wildlifeQAAnimal.dead`, 'Injured predators react defensively to crossfire');
+animal('GRIZZLY_BEAR');hit('PISTOL',false,10,'hurt');
+check(`wildlifeQAAnimal.state==='TERRITORIAL'&&!wildlifeQAAnimal.dead`, 'A player-wounded grizzly reacts defensively at close range');
+animal('RED_FOX');hit('PISTOL',false,10,'hurt');run(`wildlifeBrain(wildlifeQAAnimal);`);
+check(`wildlifeQAAnimal.state==='FLEE'&&!wildlifeQAAnimal.dead&&!wildlifeQAAnimal.aggressor`, 'An injured timid fox flees rather than attacking a human');
 animal('MULE_DEER');hit('PISTOL',false,10,'hurt');
 run(`wildlifeBrain(wildlifeQAAnimal);`);
 check(`wildlifeQAAnimal.state==='FLEE'&&!wildlifeQAAnimal.dead`, 'Injured herd herbivores flee');
@@ -76,7 +78,7 @@ run(`resetForestWildlife();var wildlifeQAFar=wildlifeSpawnAnimal('ELK',15100,660
 check(`forestWildlifeHitTest({prevX:15000,prevY:6600,x:15150,y:6600,tH:'BODY'}).animal===wildlifeQANear`, 'Fast segments hit the nearest animal, independent of array order');
 check(`forestWildlifeHitTest({prevX:15000,prevY:6640,x:15150,y:6640,tH:'BODY'})===null`, 'A segment outside all animal bounds misses');
 run(`var wildlifeQAHead=wildlifeHeadPoint(wildlifeQAFar);`);
-check(`forestWildlifeHitTest({prevX:wildlifeQAHead.x-10,prevY:wildlifeQAHead.y,x:wildlifeQAHead.x+10,y:wildlifeQAHead.y,tH:'HEAD'}).head`, 'HEAD aim can hit the drawn head');
+check(`forestWildlifeHitTest({prevX:wildlifeQAHead.x+wildlifeQAHead.r+10,prevY:wildlifeQAHead.y,x:wildlifeQAHead.x,y:wildlifeQAHead.y,tH:'BODY'}).head`, 'A clean exposed face hit reaches the anatomical head in BODY mode');
 run(`applyForestWildlifeHit(wildlifeQANear,{weapon:'TASER',head:false,shotId:'stun',damage:0});`);
 check(`forestWildlifeHitTest({prevX:15000,prevY:6600,x:15150,y:6600,tH:'BODY'}).animal===wildlifeQAFar`, 'Stunned animals leave the projectile hit grid');
 run(`resetForestWildlife();for(let i=0;i<60;i++)wildlifeSpawnAnimal('ELK',15000+i*50,6600);`);
@@ -84,18 +86,18 @@ check(`forestWildlife.length===WILDLIFE_MAX_ACTORS`, 'Dense herds cannot exceed 
 const armyCount=run(`enemiesList.length`);
 check(`enemiesList.length===${armyCount}`, 'Wildlife does not join the military list');
 // A moving animal sees the shared solid index, not a per-animal full-world scan.
-run(`resetForestWildlife();var wildlifeQAMover=wildlifeSpawnAnimal('ELK',15000,6600);wildlifeQAMover.goalX=15200;wildlifeQAMover.goalY=6600;wildlifeQAMover.thinkAt=1e9;wildlifeQAMover.state='FLEE';wildlifeQAMover.alarm=1e9;activeBuildings=[{x:15100,y:6600,w:40,h:200}];buildColIndex();_wildlifeSpawnClock=1e9;`);
+run(`resetForestWildlife();var wildlifeQAMover=wildlifeSpawnAnimal('ELK',15000,6600);wildlifeQAMover.goalX=15200;wildlifeQAMover.goalY=6600;wildlifeQAMover.sensorAt=wildlifeQAMover.thinkAt=1e9;wildlifeQAMover.state='FLEE';wildlifeQAMover.alarm=1e9;activeBuildings=[{x:15100,y:6600,w:40,h:200}];buildColIndex();_wildlifeSpawnClock=1e9;`);
 // Steering may route around this finite wall. Check the complete footprint
 // throughout the path instead of requiring the final root to remain west.
 run(`var wildlifeQAWallClear=true;for(let i=0;i<120;i++){updateForestWildlife(1);wildlifeQAWallClear=wildlifeQAWallClear&&wildlifeCanStand(wildlifeQAMover,wildlifeQAMover.x,wildlifeQAMover.y);}`);
 check(`wildlifeQAWallClear`, 'Every movement step keeps the full oriented body outside the solid wall');
-run(`activeBuildings=[];colGrid=null;wildlifeQAMover.goalX=wildlifeQAMover.x+500;wildlifeQAMover.thinkAt=1e9;var wildlifeQAFrozen=wildlifeQAMover.x;isPaused=true;updateForestWildlife(1);isPaused=false;`);
+run(`activeBuildings=[];colGrid=null;wildlifeQAMover.goalX=wildlifeQAMover.x+500;wildlifeQAMover.sensorAt=wildlifeQAMover.thinkAt=1e9;var wildlifeQAFrozen=wildlifeQAMover.x;isPaused=true;updateForestWildlife(1);isPaused=false;`);
 check(`wildlifeQAMover.x===wildlifeQAFrozen`, 'Pause freezes wildlife');
 for(const flag of ['inCutscene','inDarchonCall','inTownCutscene','inFarmCutscene','inFarmPostCutscene','inPostAmbushCutscene','inFortCutscene','inWorldBuildingMenu','killcamMode','isDead','isWin']){
  run(`${flag}=true;updateForestWildlife(1);${flag}=false;`);
  check(`wildlifeQAMover.x===wildlifeQAFrozen`, flag+' freezes wildlife');
 }
-run(`resetForestWildlife();activeBuildings=[];colGrid=null;_wildlifeSpawnClock=1e9;wildlifeQAMover=wildlifeSpawnAnimal('ELK',15000,6600);wildlifeQAMover.goalX=15500;wildlifeQAMover.goalY=6600;wildlifeQAMover.state='FLEE';wildlifeQAMover.alarm=1e9;wildlifeQAMover.thinkAt=1e9;var wildlifeQAMoves=[];for(let i=0;i<20;i++){var x=wildlifeQAMover.x;updateForestWildlife(1);wildlifeQAMoves.push(wildlifeQAMover.x-x);}`);
+run(`resetForestWildlife();activeBuildings=[];colGrid=null;_wildlifeSpawnClock=1e9;wildlifeQAMover=wildlifeSpawnAnimal('ELK',15000,6600);wildlifeQAMover.goalX=15500;wildlifeQAMover.goalY=6600;wildlifeQAMover.state='FLEE';wildlifeQAMover.alarm=1e9;wildlifeQAMover.sensorAt=wildlifeQAMover.thinkAt=1e9;var wildlifeQAMoves=[];for(let i=0;i<20;i++){var x=wildlifeQAMover.x;updateForestWildlife(1);wildlifeQAMoves.push(wildlifeQAMover.x-x);}`);
 check(`wildlifeQAMoves.slice(4).every(x=>x>0)`, 'Cached collision probes still permit smooth motion every frame');
 // Actual procedural rules, not a mocked predicate, gate off-screen encounters.
 run(`resetForestWildlife();activeBuildings=[];colGrid=null;chunkMgr=null;var wildlifeQASpawned=0;for(let i=0;i<12;i++)wildlifeQASpawned+=wildlifeSpawnEncounter();`);

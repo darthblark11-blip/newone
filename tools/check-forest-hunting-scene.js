@@ -32,6 +32,11 @@ window.__initHunt=function(){
   viewLeft=camX;viewRight=camX+width/zoom;viewTop=camY;viewBottom=camY+height/zoom;
   chunkMgr.update(x,y);chunkMgr.warmUp(120);chunkMgr.rebuildWorldArrays();activeBuildings=buildings;invalidateColIndex();};
  window.__place(s.stewardX,s.stewardY+38);_wildlifeSpawnClock=1e9;redraw();
+ window.__bowFrame=function(amount,angle){
+  rightStick.active=amount>0;rightStick.dist=amount;
+  rightStick.dx=-Math.cos(angle)*amount;rightStick.dy=-Math.sin(angle)*amount;
+  leftStick.active=false;deltaTime=1000/60;redraw();
+ };
  return {site:s,lodges:activeBuildings.filter(b=>b.forestHuntingLodge).length,stage:forestHuntingQuest.stage};
 };
 `;
@@ -58,14 +63,26 @@ const html='<!doctype html><style>html,body{margin:0;background:#17251b}</style>
    const s=forestHuntingSite();window.__place(s.x,s.y+135);
    // A stationary elk on verified courtyard approach. We use the real weapon
    // muzzle, pooled Bullet, segment collision and real scene; never call hit().
-   const a=wildlifeSpawnAnimal('ELK',player.x+205,player.y);a.angle=0;a.thinkAt=1e9;
+   const a=wildlifeSpawnAnimal('ELK',player.x+205,player.y);a.angle=Math.PI;a.thinkAt=1e9;a.sensorAt=1e9;
    a.goalX=a.x;a.goalY=a.y;window.__huntElk=a;
-   player.aimAngle=0;headAimToggle=true;player.fireTimer=0;player.fire(0);
-   rightStick.active=false;leftStick.active=false;window.isDesktop=false;
-   for(let i=0;i<12;i++)redraw();
-   return {dead:a.dead,condition:a.condition,method:a.method,shots:a.shots,arrows:player.weaponAmmo.BOW};
+   const head=wildlifeHeadPoint(a),angle=Math.atan2(head.y-player.y,head.x-player.x);
+   // Pull opposite the intended arrow line, then let go. HEAD mode does not
+   // grant this hit: the real pooled arrow meets the exposed face first.
+   headAimToggle=false;player.fireTimer=0;window.isDesktop=false;
+   window.__bowFrame(0,angle);
+   for(let i=0;i<54;i++)window.__bowFrame(.12+.80*i/53,angle);
+   const drawing={arrows:player.weaponAmmo.BOW,tension:bowDrawAmount(player),quality:player.bowDrawState.quality};
+   window.__bowFrame(0,angle);
+   const arrow=bullets.find(b=>b.w===WEAPONS.BOW);
+   const release=arrow&&{power:arrow.arrowPower,dud:arrow.arrowDud,speed:Math.hypot(arrow.vx,arrow.vy)};
+   for(let i=0;i<18&&!a.dead;i++)window.__bowFrame(0,angle);
+   return {dead:a.dead,condition:a.condition,method:a.method,shots:a.shots,arrows:player.weaponAmmo.BOW,drawing,release};
   });
-  assert.deepEqual(shot,{dead:true,condition:'PERFECT',method:'BOW_HEAD',shots:1,arrows:23});
+  assert.deepEqual({dead:shot.dead,condition:shot.condition,method:shot.method,shots:shot.shots,arrows:shot.arrows},
+   {dead:true,condition:'PERFECT',method:'BOW_HEAD',shots:1,arrows:23});
+  assert.equal(shot.drawing.arrows,24,'Drawing does not spend an arrow or auto-fire');
+  assert.ok(shot.drawing.tension>=.8&&shot.drawing.quality>=.7);
+  assert.ok(shot.release.power>=.55&&!shot.release.dud,'A controlled release supplies a clean hunting arrow');
   await page.evaluate(()=>{window.__place(window.__huntElk.x,window.__huntElk.y+45);redraw();});
   await page.screenshot({path:path.join(out,'harvest-prompt.png')});
   await interact();

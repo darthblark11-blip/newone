@@ -160,9 +160,14 @@ check('Chemist L1 charges/releases the actual cannon without throwing a flask or
   assert.equal(P('lightnings.length'), 1);
   assert(P('playerFlasks.length===0&&playerGrenades.length===0&&player.dashTimer===0'));
 });
-check('Chemist L1 and L2 can be held together and release their own abilities', () => {
+check('Chemist L1 and L2 share input while the throw animation delays cannon charge', () => {
   probe('chemistSuitUnlocked=true;');
   frame([4, 6], { tick: true }); frame([4, 6], { tick: true });
+  assert(P('isCooking&&cannonInputHeld&&meleeInputHeld&&!grenadeInputHeld&&player.cannonCharge===0'));
+  frame([4], { tick: true });
+  assert(P('playerFlasks.length===1&&lightnings.length===0&&player.throwAnimTimer>0'));
+  for (let i = 0; i < 18; i++) frame([4], { tick: true });
+  assert(P('player.cannonCharge>0'));
   frame([], { tick: true });
   assert.equal(P('playerFlasks.length'), 1); assert.equal(P('lightnings.length'), 1);
   assert.equal(P('playerGrenades.length'), 0);

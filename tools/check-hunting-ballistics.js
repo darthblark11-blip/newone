@@ -21,7 +21,7 @@ function reset() {
 }
 // Keep the enlarged elk's leading body edge behind x=14 cover while still
 // intersecting the first 28-unit arrow segment. The shooter starts outside it.
-function target(species='ELK',x=70,y=0) {
+function target(species='ELK',x=55,y=0) {
   run(`window.huntTarget=wildlifeSpawnAnimal('${species}',${x},${y});
     huntTarget.angle=0;huntTarget.bodyR=WILDLIFE_SPECIES.${species}.size;
     huntTarget.headR=WILDLIFE_SPECIES.${species}.headR;`);
@@ -38,10 +38,32 @@ check(`!huntBullet.active&&huntBullet.l===0&&totalShotsHit===1`,
 for(let heading=0;heading<8;heading++) {
   reset();target('GRIZZLY_BEAR',100,100);
   run(`huntTarget.angle=${heading}*PI/4;window.huntHead=wildlifeHeadPoint(huntTarget);
-    window.huntBullet=spawnBullet(huntHead.x-20,huntHead.y,0,true,'HEAD',WEAPONS.BOW,player);
+    window.huntBullet=spawnBullet(huntHead.x+Math.cos(huntTarget.angle)*22,
+      huntHead.y+Math.sin(huntTarget.angle)*22,huntTarget.angle+PI,true,'BODY',WEAPONS.BOW,player);
     updateBullets();`);
   check(`huntTarget.dead&&huntTarget.condition==='PERFECT'&&huntTarget.method==='BOW_HEAD'`,
-    'Drawn head receives the instant PERFECT arrow kill at heading '+heading);
+    'An arrow from the face receives a PERFECT anatomical headshot even in BODY mode at heading '+heading);
+}
+for(const aim of ['HEAD','BODY']) {
+  reset();target();shoot('BOW',aim);
+  check(`huntTarget.hp===huntTarget.maxHp-WEAPONS.BOW.bodyDmg&&huntTarget.headshots===0`,
+    aim+' mode cannot shoot through the torso to grant an arrow headshot');
+}
+for(const side of [true,false]) {
+  reset();target('GRIZZLY_BEAR',100,100);
+  run(`huntTarget.angle=PI;window.huntHead=wildlifeHeadPoint(huntTarget);
+    window.huntBullet=spawnBullet(huntHead.x-22,huntHead.y,0,${side},'BODY',WEAPONS.PISTOL,
+      ${side?'player':'{x:0,y:100,isPlayer:false}'});updateBullets();`);
+  check(`huntTarget.hp===huntTarget.maxHp-WEAPONS.PISTOL.headDmg&&huntTarget.headshots===1`,
+    (side?'Player/ally':'Enemy')+' bullets classify an exposed head in BODY mode');
+}
+for(const fields of ['arrowDud=true;huntBullet.arrowPower=1','arrowDud=false;huntBullet.arrowPower=.2']) {
+  reset();target('GRIZZLY_BEAR',100,100);
+  run(`huntTarget.angle=PI;window.huntHead=wildlifeHeadPoint(huntTarget);
+    window.huntBullet=spawnBullet(huntHead.x-22,huntHead.y,0,true,'BODY',WEAPONS.BOW,player);
+    huntBullet.${fields};updateBullets();`);
+  check(`!huntTarget.dead&&huntTarget.hp<huntTarget.maxHp&&huntTarget.headshots===1&&huntTarget.method!=='BOW_HEAD'`,
+    'A real pooled arrow forwards '+fields+' and cannot grant an instant perfect headshot');
 }
 reset();target('ELK',20);shoot('TASER');
 check(`huntTarget.state==='STUNNED'&&!huntTarget.dead&&huntTarget.hp===huntTarget.maxHp&&huntTarget.condition==='PERFECT'`,
@@ -66,9 +88,18 @@ run(`activeBuildings=[{x:10,y:0,w:2,h:80}];buildColIndex();`);shoot();
 check(`huntTarget.hp===huntTarget.maxHp&&!huntBullet.active&&huntBullet.x<12`,
   'A thin trunk between frame endpoints intercepts the arrow before wildlife');
 reset();target();
+run(`activeBuildings=[{x:10,y:0,w:2,h:80}];buildColIndex();`);shoot('BOW','HEAD');
+check(`huntTarget.hp===huntTarget.maxHp&&!huntBullet.active&&huntBullet.x<12`,
+  'HEAD selection still cannot shoot an animal through a thin trunk');
+reset();target();
 run(`barrels=[{x:10,y:0,hp:200}];`);shoot();
 check(`huntTarget.hp===huntTarget.maxHp&&barrels[0].hp===200-WEAPONS.BOW.bodyDmg&&!huntBullet.active`,
   'A crossed explosive barrel is struck before the animal behind it');
+reset();target();
+run(`barrels=[{x:10,y:0,hp:200}];huntBullet=spawnBullet(0,0,0,true,'BODY',WEAPONS.BOW,player,'weak-barrel');
+  huntBullet.arrowPower=.2;updateBullets();`);
+check(`huntTarget.hp===huntTarget.maxHp&&barrels[0].hp===200-WEAPONS.BOW.bodyDmg*.2&&!huntBullet.active`,
+  'A weak arrow hitting cover applies its reduced impact power to the barrel');
 reset();target();
 run(`activeParkingCars=[{x:-5,y:0}];parkingCars=activeParkingCars.slice();`);shoot();
 check(`huntTarget.hp===huntTarget.maxHp&&!huntBullet.active`,
@@ -123,10 +154,11 @@ check(`huntTarget.hp===huntTarget.maxHp`, 'Explosion damage respects its bounded
 // shortened lifetime, old shooter, old trigger ID, or leftover taser state.
 reset();shoot();
 run(`window.huntRetired=huntBullet;huntBullet.active=false;
-  window.huntOldShot=huntBullet.shotId;
+  window.huntOldShot=huntBullet.shotId;huntBullet.arrowPower=.2;huntBullet.arrowDud=true;
   window.huntReused=spawnBullet(500,500,PI/4,false,'BODY',WEAPONS.PISTOL,{tag:'hostile'});`);
 check(`huntRetired===huntReused&&!huntReused.isArrow&&!huntReused.isTaser&&
   huntReused.l===120&&!huntReused.retracting&&!huntReused.tetheredTarget&&
+  huntReused.arrowPower===1&&huntReused.arrowDud===false&&
   huntReused.shotId!==huntOldShot&&huntReused.shooter.tag==='hostile'`,
   'Arrow pool reuse completely restores normal bullet identity');
 reset();shoot();

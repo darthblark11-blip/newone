@@ -226,13 +226,18 @@ separate runtime population capped at 48 animals, including 18–26-member herd
 encounter targets (actual placement can be smaller on crowded terrain).
 Large mammals use roughly twice their original dimensions, measured against
 the player's body; smaller fauna retain their relative size while becoming
-readable at mobile zoom. Art, anatomical head targets, oriented body hit bounds,
-solid clearance, spawn reservations and herd spacing share those dimensions.
+readable at mobile zoom. Art, anatomical head targets, solid clearance, spawn reservations and herd
+spacing share those dimensions. Shooting uses tighter, family-specific torso
+ellipses and head circles; movement uses the larger oriented ground footprint.
+Live grounded animals whose species size is at least 24 block the player and
+army actors, and also stop before moving or turning into them. Walking and dash
+probes sweep that footprint; an existing overlap still permits moving outward.
+Small fauna, airborne birds, stunned animals and carcasses do not block routes.
 
 ```js
 const animal = {
   id: 1, species: "ELK", x: 0, y: 0, angle: 0,
-  state: "GRAZE", hp: 90, bodyR: 36, headR: 14.4,
+  state: "GRAZE", hp: 90, bodyR: 36, headR: 9.36,
   shots: 0, headshots: 0, condition: null, harvested: false
 };
 // Existing pooled bullets publish one shotId per trigger, shared by pellets.
@@ -240,7 +245,9 @@ const hit = forestWildlifeHitTest(bullet);
 if (hit && coverIsFartherAway) {
   applyForestWildlifeHit(hit.animal, {
     weapon: bullet.w, head: hit.head, shotId: bullet.shotId,
-    owner: bullet.shooter, damage: weaponDamage,
+    owner: bullet.shooter,
+    damage: weaponDamage * (bullet.isArrow ? bullet.arrowPower : 1),
+    arrowPower: bullet.arrowPower, arrowDud: bullet.arrowDud,
     x: bullet.x, y: bullet.y, angle: bullet.a
   });
 }
@@ -248,7 +255,13 @@ if (hit && coverIsFartherAway) {
 
 The cover predicate above summarizes the implemented nearest segment checks in
 `forestShotCover()`. Walls, trunks, vehicles, barrels and nearer combatants block
-animal hits. Animals never enter military targeting, recruitment or ambush totals.
+animal hits. Each candidate animal tests both its facing-relative torso ellipse
+and its actual head circle, with at most one world unit of ink tolerance. The
+first intersection wins, independently of the army HEAD/BODY toggle: a rear
+shot hits the torso first, while an exposed face can take a headshot in BODY
+mode. A projectile starting inside both shapes counts as a body hit. Targets
+stay anchored in world space; camera parallax cannot move their collision bounds.
+Animals never enter military targeting, recruitment or ambush totals.
 An independent xorshift RNG weights common/uncommon/rare/very-rare species and
 forces a habitat-compatible rare encounter after 18 successful common encounters.
 Encounter placement checks each herd member against the actual camera rectangle,
@@ -256,10 +269,20 @@ loaded chunks, solids, roads, crossings, authored geometry and fortress yards.
 
 The manager rolls an encounter every 180 simulation ticks. Collision probes are
 staggered over four frames; cached velocities move each frame. A pooled 128-unit
-spatial grid services projectile and throttled noise queries. Grazers alarm and
-flee, herd alarms propagate through their shared record, and player-wounded
-predators can defend themselves. Menus/cutscenes freeze simulation. Travel discards
-ephemeral wildlife; saves retain encounter luck and collected inventory.
+spatial grid services projectile, ground-contact and throttled noise queries.
+Human sensing runs every eight ticks, reusing local army buckets with a fixed
+24-candidate budget plus the player. Species have separate alarm, flight,
+sprint and defensive-space profiles. Deer and elk alarm/flee well before a human
+reaches their body; footsteps and dashing enlarge detection distances. Foxes,
+coyotes and lynx stay timid, while black bears, wolves and cougars normally flee
+but can retaliate when directly injured by the nearby player. Grizzlies, moose
+and wolverines stop and face an intruder during WARNING, then make a brief
+defensive charge if the player remains too close. Retreat, a short pursuit limit
+or distance from home ends the charge; retreat cooldown prevents an immediate
+repeat. Enemy/ally crossfire triggers flight without blaming the player. Herd
+alarms propagate through their shared record. Menus/cutscenes freeze simulation.
+Travel discards ephemeral wildlife; saves retain encounter luck and collected
+inventory.
 
 Hits retain up to eight body-local wound decals, including anatomical head
 wounds. Bounded blood droplets and smoke reuse the existing particle pool;
@@ -277,7 +300,8 @@ corpses remain collectable without joining the military corpse/objective lists.
 | Two or three gun hits/headshots, or a gun body kill within three hits | FAIR |
 | Four or more distinct gun shots, or explosives | BAD animal scraps |
 | Taser | PERFECT, nonlethal STUNNED animal |
-| Arrow headshot | Instant kill, PERFECT DEAD animal |
+| Clean arrow headshot, power at least 0.55 | Instant kill, PERFECT DEAD animal |
+| Weak/dud arrow headshot | Scaled ordinary damage; GOOD/FAIR/BAD by shot history, never the PERFECT override |
 | Arrow body kill | FAIR unless damage history already warrants scraps |
 
 Collection is explicit: approach a carcass/stunned animal and tap the visible
@@ -296,6 +320,27 @@ Returning it grants 60 wood, 20 stone and a quiver refill once. Supplies renew
 six in-game hours later. Bow selection joins touch weapon cycling, gamepad D-pad
 and desktop **V / Shift+V**. Reloading cannot manufacture arrows.
 
+The bow has its own draw/release controls. Analog aim points opposite the stick
+pull: pull left to shoot right. A 0.20 deadzone maps remaining stick travel to
+string tension `t` from 0 to 1. Smooth travel earns draw quality `q`; each frame
+can earn at most `2.2 × elapsedSeconds` tension, and abrupt direction changes
+reduce that quality. Holding a sudden jab cannot repair it. Arrow power follows
+`min(1, (t / 0.90)^2) × q^1.25`. A dud (quality below 0.35 or tension below 0.20)
+has power capped at 0.08 and receives a further energy reduction. Damage scales
+with power; velocity is `4 + 30 × power` world units per tick and nominal range
+is `25 + 1175 × power` world units. Full power gives speed 34 and range 1200;
+duds travel a short distance with little damage. Neither weak nor dud arrows
+receive the instant/PERFECT headshot override.
+
+Let the stick return to neutral, reach its full end stop (magnitude 0.985), or
+click R3 to release. Recenter before the next draw after an end-stop/R3 release.
+Other weapons keep their existing stick firing and R3 headshot-toggle behavior.
+Touch uses the same reversed analog gesture. Mouse aiming stays direct: hold the
+primary button to draw over time, release to fire. Bow-string travel, the drawing
+hand and the loaded arrow follow tension, and a compact HUD shows draw quality.
+Menus, pause, cutscenes, travel, weapon changes and device changes cancel an
+unfinished draw without firing; gesture state is never saved.
+
 The settlement has independent permanent landmark solids, not generated tree
 keys. Quest, inventory, finite quiver and resupply timer survive save/load and
 sector travel. Older saves initialize the activity as unstarted.
@@ -313,11 +358,16 @@ node tools/check-forest-camera.js
 node tools/check-forest-habitats.js
 node tools/check-forest-depth.js
 node tools/check-wildlife-core.js
+node tools/check-wildlife-interaction.js
+node tools/check-wildlife-anatomy.js
 node tools/check-wildlife-hit-death.js
 node tools/check-forest-hunting.js
 node tools/check-forest-hunting-hud.js
 node tools/check-hunting-ballistics.js
 node tools/check-bow-controls.js
+node tools/check-bow-draw.js
+node tools/check-bow-draw-art.js
+node tools/check-gamepad.js
 node tools/check-generation.js
 node tools/check-lighting.js
 node tools/check-depth.js
@@ -338,7 +388,12 @@ objective card expiring while its marker remains in the full rendered scene.
 at normal game zoom. `tools/visual-forest-angles.js` reviews the player, strafing,
 infantry, robots and heavy units at eight bearings and checks tree phase parity.
 `tools/check-bow-render.js` checks the posed arrow tip against the real projectile
-at eight headings and renders aimed/carry poses. The bow grip bends forward;
+at eight headings and renders aimed/carry poses. `tools/check-bow-draw-render.js`
+checks grip/string wrist contact and projectile-tip agreement across draw
+amounts, eight headings and standing/running poses. Run these with the same
+`VIS_DEPS`, `VIS_CHROME` and `VIS_P5` browser setup. The interaction and anatomy
+checks cover swept body contact, species reactions, human warning/retreat,
+first head/body intersection, grazing misses and weak-arrow quality. The bow grip bends forward;
 limb tips and string sit toward the archer while the arrow points along +X.
 `tools/check-forest-polygons.js` verifies exact RGBA equality between the native
 emitter and p5 across species, targets, zooms, camera/sun angles and shadow

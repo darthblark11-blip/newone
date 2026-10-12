@@ -536,12 +536,34 @@ ambush bookkeeping. Cedar Hollow grants the finite-ammunition bow; collection
 and dialogue use F, gamepad A or the visible touch prompt. Quest, quiver,
 inventory and encounter luck persist; live animals and carcasses do not.
 Use the hunting browser check for the full acquire/kill/collect/return/save loop.
-Wildlife size also determines anatomical head targets, oriented body/solid
-bounds and herd spacing. Hits keep bounded local wounds; blood effects reuse
-the particle pool and blood bank without consuming world/combat RNG. Directional
-death types settle under the canopy; falling birds stay above it until grounded.
-Taser stuns remain bloodless. The objective card expires after a brief fade,
-leaving its marker; do not restore a permanent center-screen hunting banner.
+Wildlife size determines solid clearance and herd spacing. Live grounded large
+animals (species size >=24) have swept physical contact with the player/army;
+small fauna, airborne birds, stunned animals and carcasses do not block routes.
+Species-specific human sensing makes deer/elk and timid predators flee early;
+grizzlies/moose warn before a short defensive charge, which ends on retreat or
+the pursuit/home leash. Identified player injury can provoke defensive species;
+army crossfire must never make them blame the player. Keep sensing/contact on
+bounded local grids and preserve outward escape from preexisting overlap.
+Shooting uses tighter family torso ellipses and anatomical head circles (elk
+headR=9.36 at bodyR=36). The first geometric surface wins regardless of HEAD/BODY
+mode; no root-head shortcut, decorative head targets or camera-dependent bounds.
+Nearer cover still intercepts. Hits keep bounded local wounds; blood effects
+reuse the particle pool and blood bank without consuming world/combat RNG.
+Directional death types settle under the canopy; falling birds stay above it
+until grounded. Taser stuns remain bloodless. The objective card expires after
+a brief fade, leaving its marker; do not restore a permanent center-screen banner.
+
+The bow aims opposite an analog stick pull. Travel sets string tension; gradual,
+steady travel earns power. Release at neutral, the full end stop or R3, then
+recenter to rearm. A sudden full-stick jab stays a short, weak dud. Mouse aiming
+is direct with timed hold/release. Full-power arrows have speed 34 and nominal
+range 1200; damage, speed and range scale with earned power. Weak/dud arrows
+cannot claim the instant PERFECT hunting-headshot override. Other weapons retain
+R3 headshot toggling. Draw state is transient, canceled by menus/travel/weapon or
+device changes, never saved. `check-wildlife-interaction.js`,
+`check-wildlife-anatomy.js` and `check-hunting-ballistics.js` guard these contracts;
+`check-bow-draw.js` checks input/lifecycle and `check-bow-draw-art.js` plus
+`check-bow-draw-render.js` check the string/hand/arrow geometry.
 
 The historical template resolves six regions off three slow world-space fields — `MEADOW · TIMBER · MARSH ·
 HEATH · BURN · FARM` — at roughly a three-chunk patch size. Measured coverage: meadow
