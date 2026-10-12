@@ -23,11 +23,15 @@ the stance. Old saved/preview poses retain their 180-frame guard fallback. See
 
 One fist hit immediately stuns an unarmed civilian without reducing health. The new nonlethal reaction applies a collision-checked recoil, then a roughly 38-frame knee buckle and side roll, a small rebound, and a joint-limited damped settle. The four-second civilian stun ends with 32 frames of gradual recovery; the civilian then flees and remains neutral. Another punch extends the stun without popping the fallen body upright. Existing hostile four-hit stun duration and electrical skeleton flash are retained.
 
-The new ground animation replaces the static placeholder and spinning stars. Skin, hair and clothing colors survive the fall. The light rig lowers and widens the actor's height footprint with the collapse, while its fallback shadow follows the same ownership rules. The existing lethal corpse fall timing is outside this change.
+The shared `startKnockoutPhysics()` / `stepKnockoutPhysics()` fall also serves the player and saloon opponents. A 120 Hz fixed simulation blends the hit impulse with sampled movement, gives the torso a small lift and at most two floor contacts, and drives bounded shoulder, elbow, hip and knee springs before freezing in under one second. Hooks impart directional torque; body blows keep the collapse lower. Fixed bone lengths and the native cel rig preserve connected limbs. Appearance is captured at impact, including player suit colors and headwear. The saloon supplies its own collision-checked absolute-position mover and contact callback, so local falls create no exterior particles or lethal corpses. Native civilian/hostile timers, health, neutrality and the 32-frame recovery stay unchanged; streamed residents resume their banked fall age without replaying the shove.
+
+Skin, hair and clothing colors survive the fall. The light rig lowers and widens the actor's height footprint with the collapse, while its fallback shadow follows the same ownership rules. Existing lethal corpse fall timing is outside this change.
 
 ## Verification and previews
 
 `node tools/check-city-people.js` exercises appearance coverage, local gunfire, player-gait panic, harmless AI, attacker-relative flight, a real first-punch hit, nonlethal fall/recovery, repeated blows, guard duration and tool/firearm precedence, formation/posts, combat engagement, residency, serialized deaths and falling material height.
+
+`node tools/check-knockout-physics.js` checks physical travel and lift, contact bounds, fixed-step frame-rate agreement, wall sliding, finite constrained joints, frozen bodies, saved mid-fall continuation, unchanged native recovery, local effect isolation and actual player costume rendering.
 
 `node tools/check-city-placement.js` checks the 300-metre fortress buffers, exact boundary tangents and actor margins, newly eligible blocks between the former and current buffers, story and arcade placement, breached/captured exclusions, off-screen spawning and restoration, old saved residents in restricted areas, immediate removal between population refreshes, suspended candidate searching during ambushes, preserved injured/stunned/dead records, visible deferred and off-screen restoration after ambushes, and wander/panic/stun movement at the forbidden boundaries.
 

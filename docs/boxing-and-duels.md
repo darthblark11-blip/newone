@@ -95,6 +95,25 @@ Knocked-out fighters use the ground pass beneath standing characters and
 furniture, preserving their nonlethal falls and clothing. Outdoor nonlethal
 bodies follow the same rule, including in the closed interiors.
 
+The saloon's information panels and notices hold for 3.5 seconds, then fade
+smoothly over 400 ms. A new bout, downed opponent or duel cue briefly reveals
+the changed status; ordinary damage and guard input do not keep the panels
+on screen. Pause freezes the fade, while mission menus and usable controls
+stay visible. Leave Saloon appears only at the actual doorway outside a bar
+fight or player knockout; duel results return to the saloon first. The pause
+menu retains its deliberate leave-and-open-shop action.
+
+Running out of GRIT stops the fight and knocks the actual player down where
+the final punch lands. Player and enemy knockouts share a fixed 120 Hz physics
+rig: punch direction and footwork drive the shove, hooks add rotation, and
+constrained limbs follow the fall, floor bounce and settle. The player remains
+down for at least 2.2 seconds before a 32-frame get-up, then can return to Mae
+to retry. Opponents stop attacking during this sequence. The existing 12-health
+nonfatal penalty applies once when the knockout begins; pausing freezes physics,
+and saving or leaving for the shop restores the exterior equipment and position
+without carrying a local ragdoll into the campaign. Floor-contact dust stays
+inside the activity.
+
 ## Quick draw
 
 The right stick aims below roughly **70%** travel and fires when pushed farther.
@@ -127,6 +146,9 @@ node tools/check-boxing-gamepad-refinements.js
 node tools/check-boxing-ground-order.js
 node tools/check-boxing-body-postures.js
 node tools/check-frontier-saloon.js
+node tools/check-saloon-quiet-hud.js
+node tools/check-knockout-physics.js
+node tools/check-frontier-player-knockout.js
 node tools/check-frontier-integration.js
 ```
 
@@ -150,7 +172,19 @@ release and earned counters, actual fist and guard contact, and canonical
 rendering through 63 poses. Real browser review includes 48 player/enemy poses
 and all four physical BODY holds and releases in portrait and landscape.
 
+Knockout review uses real enemy punch contacts to lose two bouts at 390 × 844
+and 940 × 390 with DPR 3. Both complete the fall, floor settle, pause/save,
+get-up, retry and pause-to-shop sequence without rewriting GRIT or teleporting
+fighters after the bout begins. The final source produces no browser errors
+or frame faults. A native outdoor civilian punch also exercises the same rig
+through its 933 ms settle. The quiet HUD capture is taken after four seconds;
+usable touch controls remain, while a connected controller leaves just pause.
+
 ## Captured previews
+
+![Saloon combat after the information panels fade](previews/saloon-quiet-hud.png)
+
+![The actual player falling, settling and recovering through shared knockout physics](previews/player-knockout-physics.png)
 
 ![Southpaw punches, guards, sways and costumes through the native figure renderer](previews/southpaw-boxing-poses.png)
 

@@ -14001,6 +14001,7 @@ function boxingUpdate(actor,dt,opponents,moveFn,onHit) {
         for(const opponent of opponents||[]){
           if(opponent===actor)continue;
           const event=boxingResolvePunch(actor,opponent,world,moveFn,onHit);if(event)events.push(event);
+          if(!boxingActive(actor))return events;
           if(b.punch!==punch)break;
         }
         if(b.punch!==punch)break;
@@ -14045,6 +14046,7 @@ function boxingUpdateOpponents(playerActor,opponents,dt,moveFn,onHit) {
       }else actor.isMoving=false;
     }else actor.isMoving=false;
     events.push(...boxingUpdate(actor,delta,[playerActor],moveFn,onHit));
+    if(!boxingActive(playerActor))return events;
   }
   boxingSeparateActors([playerActor,...live],moveFn);
   const leases=live.filter(a=>a._boxing.punch).length,maxLeases=live.length>=4?2:1;
@@ -14279,23 +14281,134 @@ function drawComboPunchArms(c,leftY,rightY) {
     pop();
   }
 }
-function startPunchStun(e,angle) {
+// Nonlethal knockouts have their own short physics event. The corpse rig still
+// owns the fixed bone lengths and joint limits; only these rare melee falls
+// integrate airtime, a little floor rebound and constrained angular springs.
+// A fixed step makes touch and gamepad falls identical across frame rates.
+const KNOCKOUT_PHYSICS = Object.freeze({
+  STEP_MS: 1000 / 120, FRAME_MS: 1000 / 60, GRAVITY: 360,
+  AIR_DRAG: 4.5, FLOOR_DRAG: 8.5, RESTITUTION: .18, MAX_CONTACTS: 2,
+  MAX_HEIGHT: 26, TURN_LIMIT: .64, ROLL_LIMIT: .30
+});
+function knockoutAppearance(e) {
+  const id=figureIdentity(e);
+  if(id&&e.isPlayer){
+    if(id.explosiveArmor){id.shirtCol=color(60,100,40);id.pantsCol=color(139,115,85);}
+    else if(id.chemistSuit){id.shirtCol=color(255);id.pantsCol=color(15);}
+    else if(id.ninjaSuit){id.shirtCol=color(20);id.pantsCol=color(15);}
+    else if(id.cowboySuit){id.shirtCol=color(219,196,146);id.pantsCol=color(61,93,118);}
+  }
+  return id;
+}
+function startKnockoutPhysics(e,angle,impact={},context='WORLD') {
+  if(!e||!Number.isFinite(e.x)||!Number.isFinite(e.y))return null;
+  impact=impact&&typeof impact==='object'?impact:{};
+  angle=Number.isFinite(angle)?angle:(Number.isFinite(e.aimAngle)?e.aimAngle:0);
+  const kind=typeof impact.kind==='string'?impact.kind:'LEFT_STRAIGHT';
+  const side=kind.indexOf('RIGHT')===0?1:-1,hook=kind.indexOf('HOOK')!==-1,body=impact.level==='BODY';
+  const damage=Number.isFinite(impact.damage)?Math.max(0,impact.damage):25;
+  const force=Math.max(3,Math.min(9,Number.isFinite(impact.force)?impact.force:4+damage*.08+(hook?1:0)));
+  const p=buildFigureFall(e,angle,force,true,e.aimAngle),r=ragBuild(e.eType,e.bodyW,angle,e.aimAngle);
+  if(!r)return null;
+  prepareFallRag(r,p);
+  p.duration=body?43:40;p.impulse=4.8;p.rag=r;p.identity=knockoutAppearance(e);
+  const vx=Math.cos(angle)*(180+force*19)+p.mx*18,vy=Math.sin(angle)*(180+force*19)+p.my*18;
+  p.a=Math.atan2(vy,vx);p.faceDown=Math.cos(p.a-p.facing)>=0;
+  const cross=Math.sin(angle-p.facing),rollKick=hook?side*.9:cross*.65;
+  r.turnLimit=KNOCKOUT_PHYSICS.TURN_LIMIT;r.frames=p.duration+16;r.spring=.065;
+  r.spin=cross*.026+(hook?side*.045:side*.009);
+  for(let i=0;i<4;i++){
+    const L=r.limbs[i];L.va=(i%2?-.12:.12)*(hook?1.35:1);L.vb=i<2?.19:.14;
+    if(body&&i<2){L.restB=Math.min(L.bMax,L.restB+.45);L.rest=Math.min(L.hi,L.rest+.2);}
+    if(i>=2){L.restB=Math.min(L.bMax,L.restB+.18);L.room=Math.max(L.room,.13);}
+  }
+  p.knockout={context,kind,level:body?'BODY':'HEAD',force,side,hook,ageMs:0,accumulatorMs:0,
+    vx,vy,height:0,heightVelocity:0,launchVelocity:(body?65:80)+force*(body?3:5),
+    launchMs:body?70:50,launched:false,contacts:0,roll:0,rollVelocity:rollKick,
+    rollRest:hook?side*.055:cross*.025,settled:false,maxDurationMs:r.frames*KNOCKOUT_PHYSICS.FRAME_MS};
+  e.stunPose=p;return p;
+}
+function knockoutMove(e,nx,ny) {
+  if(!Character.prototype.checkCol.call(e,nx,e.y))e.x=nx;
+  if(!Character.prototype.checkCol.call(e,e.x,ny))e.y=ny;
+}
+function finishKnockoutPhysics(p) {
+  const k=p.knockout,r=p.rag;
+  k.settled=true;k.vx=k.vy=k.height=k.heightVelocity=k.rollVelocity=k.accumulatorMs=0;
+  p.done=true;p.impulse=0;p.contacted=true;
+  if(r){r.done=true;r.spin=0;for(const L of r.limbs)L.va=L.vb=0;}
+}
+function stepKnockoutPhysics(e,dtMs,moveFn=knockoutMove,onContact) {
+  const p=e&&e.stunPose,k=p&&p.knockout,r=p&&p.rag;
+  if(!k||!r||k.settled||!Number.isFinite(dtMs)||dtMs<=0)return;
+  if(p.done){finishKnockoutPhysics(p);return;}
+  // Native resident saves store fall age, not transient velocities. Rebuild
+  // an interrupted pose to that clock without moving its already-banked XY
+  // or replaying sounds/effects, then continue only the remaining shove.
+  if(Number.isFinite(p.age)&&Math.abs(p.age-k.ageMs/KNOCKOUT_PHYSICS.FRAME_MS)>.05){
+    const savedMs=Math.max(0,Math.min(k.maxDurationMs,p.age*KNOCKOUT_PHYSICS.FRAME_MS));
+    p.age=k.ageMs/KNOCKOUT_PHYSICS.FRAME_MS;
+    if(savedMs>k.ageMs){
+      const x=e.x,y=e.y;k.accumulatorMs=0;
+      stepKnockoutPhysics(e,savedMs-k.ageMs,(actor,nx,ny)=>{actor.x=nx;actor.y=ny;});
+      e.x=x;e.y=y;if(k.settled)return;
+    }
+  }
+  k.accumulatorMs+=Math.min(1000,dtMs);
+  const step=KNOCKOUT_PHYSICS.STEP_MS,dt=step/1000,h=step/KNOCKOUT_PHYSICS.FRAME_MS;
+  while(k.accumulatorMs+1e-7>=step&&!k.settled){
+    k.accumulatorMs=Math.max(0,k.accumulatorMs-step);k.ageMs+=step;
+    p.age=k.ageMs/KNOCKOUT_PHYSICS.FRAME_MS;r.t=p.age;
+    const x=e.x,y=e.y,nx=x+k.vx*dt,ny=y+k.vy*dt;
+    if(Number.isFinite(nx)&&Number.isFinite(ny))moveFn(e,nx,ny);
+    // A wall absorbs almost all of the shove. Only its blocked velocity axis
+    // rebounds, so the body can still slide along a counter without entering it.
+    if(Math.abs(e.x-nx)>.05)k.vx*=-.12;
+    if(Math.abs(e.y-ny)>.05)k.vy*=-.12;
+    const drag=Math.exp(-(k.contacts?KNOCKOUT_PHYSICS.FLOOR_DRAG:KNOCKOUT_PHYSICS.AIR_DRAG)*dt);
+    k.vx*=drag;k.vy*=drag;p.impulse=Math.hypot(k.vx,k.vy)/60;
+    if(!k.launched&&k.ageMs>=k.launchMs){k.launched=true;k.heightVelocity=k.launchVelocity;}
+    if(k.launched&&(!k.contacts||k.height>0||k.heightVelocity>0)){
+      k.heightVelocity-=KNOCKOUT_PHYSICS.GRAVITY*dt;
+      k.height=Math.min(KNOCKOUT_PHYSICS.MAX_HEIGHT,k.height+k.heightVelocity*dt);
+      if(k.height<=0&&k.heightVelocity<0){
+        const impulse=-k.heightVelocity;k.height=0;k.contacts++;p.contacted=true;
+        k.heightVelocity=k.contacts<KNOCKOUT_PHYSICS.MAX_CONTACTS&&impulse>20?impulse*KNOCKOUT_PHYSICS.RESTITUTION:0;
+        k.rollVelocity+=k.side*(k.hook?.42:.20);
+        for(let i=0;i<4;i++){const L=r.limbs[i];L.va+=(i%2?-.06:.06);L.vb+=i<2?.10:.07;}
+        if(typeof onContact==='function')onContact({actor:e,point:{x:e.x,y:e.y},impulse,contact:k.contacts,context:k.context});
+      }
+    }
+    k.rollVelocity+=((k.rollRest-k.roll)*26-k.rollVelocity*7)*dt;
+    k.roll=Math.max(-KNOCKOUT_PHYSICS.ROLL_LIMIT,Math.min(KNOCKOUT_PHYSICS.ROLL_LIMIT,k.roll+k.rollVelocity*dt));
+    r.spin*=Math.exp(-5.2*dt);r.ang=Math.max(-r.turnLimit,Math.min(r.turnLimit,r.ang+r.spin*h));
+    for(const L of r.limbs){
+      L.va+=((L.rest-L.a)*.072-L.va*.27+r.spin*L.lag*.5)*h;L.a+=L.va*h;
+      L.vb+=((L.restB-L.b)*.095-L.vb*.30+r.spin*L.lag*.7)*h;L.b+=L.vb*h;
+      if(L.a<L.lo){L.a=L.lo;L.va=0;}else if(L.a>L.hi){L.a=L.hi;L.va=0;}
+      if(L.b<0){L.b=0;L.vb=0;}else if(L.b>L.bMax){L.b=L.bMax;L.vb=0;}
+    }
+    if(k.ageMs+1e-7>=k.maxDurationMs)finishKnockoutPhysics(p);
+  }
+}
+function knockoutWorldContact(event) {
+  if(event.context!=='WORLD'||event.contact!==1)return;
+  emit(event.point.x,event.point.y,4,color(196,168,121),'DUST');sfx.hitBody();
+}
+function startPunchStun(e,angle,impact={}) {
   const duration=unarmedCivilian(e)?240:1500;
   // Read locomotion before panic or STUNNED changes the actor's state.
-  const fall=buildFigureFall(e,angle,6,true,e.aimAngle);
+  if(e.stunPose&&e.stunTimer>0){scareCivilianIfNeeded(e,angle);e.stunTimer=Math.max(e.stunTimer,duration);e.state="STUNNED";bankCityPerson(e);return;}
+  startKnockoutPhysics(e,angle,impact);
   scareCivilianIfNeeded(e,angle);
-  if(e.stunPose&&e.stunTimer>0){e.stunTimer=Math.max(e.stunTimer,duration);e.state="STUNNED";bankCityPerson(e);return;}
-  const r=ragBuild(e.eType,e.bodyW,angle,e.aimAngle);
-  if(!r){e.stunTimer=duration;e.state="STUNNED";e.isMoving=false;return;}
-  prepareFallRag(r,fall);r.spring=.065;r.frames=fall.duration+16;
-  for(let i=0;i<4;i++){r.limbs[i].va=(i%2?-.13:.13);r.limbs[i].vb=i<2?.20:.12;}
-  fall.rag=r;e.stunPose=fall;e.stunTimer=duration;e.state="STUNNED";e.isMoving=false;bankCityPerson(e);
+  e.stunTimer=duration;e.state="STUNNED";e.isMoving=false;bankCityPerson(e);
 }
 function scareCivilianIfNeeded(e,angle){if(unarmedCivilian(e))scareCivilian(e,e.x-Math.cos(angle)*50,e.y-Math.sin(angle)*50);}
 function advanceStun(e) {
   if(!e.stunPose){const r=ragBuild(e.eType,e.bodyW,e.aimAngle,e.aimAngle);
     if(r){const p=buildFigureFall(e,e.aimAngle,0,true,e.aimAngle);p.age=p.duration+16;p.done=true;p.impulse=0;prepareFallRag(r,p);while(!r.done)ragStep(r);p.rag=r;e.stunPose=p;}}
-  const p=e.stunPose;if(p){stepFigureFall(p,e,p.rag);ragStep(p.rag);}
+  const p=e.stunPose;if(p){if(p.knockout)stepKnockoutPhysics(e,KNOCKOUT_PHYSICS.FRAME_MS,knockoutMove,knockoutWorldContact);
+    else{stepFigureFall(p,e,p.rag);ragStep(p.rag);}}
   e.stunTimer--;if(e.skeletonTimer>0)e.skeletonTimer--;e.isMoving=false;
   if(e.stunTimer<=0&&e.hp>0){e.state=unarmedCivilian(e)?"FLEE":"CHASE";e.stunPose=null;}
 }
@@ -14306,15 +14419,17 @@ function stunFall(e) {
 }
 function drawStunnedFigure(e) {
   const f=stunFall(e),p=e.stunPose,rg=p&&p.rag,rig=projectFallRig(e.bodyW,e.bodyH,f);
-  if (!charShadowOwned(e.eType)) {charShadowFill(55);ellipse(charShadowX(12*(1-f)),charShadowY(12*(1-f)),20+f*24,21+f*12);}
-  push();rotate(p?figureFallYaw(p,rg,f):e.aimAngle);scale(RAG_SCALE);
-  const skin=e.skinCol||color(235,180,140),boot=color(red(e.pantsCol)*.55,green(e.pantsCol)*.55,blue(e.pantsCol)*.55);
+  const k=p&&p.knockout,air=k&&!p.done?k.height:0,roll=k?k.roll*f:0,id=p&&p.identity||figureIdentity(e);
+  const shirt=id.shirtCol||e.shirtCol,pants=id.pantsCol||e.pantsCol;
+  if (!charShadowOwned(e.eType)) {charShadowFill(55-air*.8);ellipse(charShadowX(12*(1-f)),charShadowY(12*(1-f)),20+f*24+air*.25,21+f*12+air*.15);}
+  push();translate(0,-air);rotate((p?figureFallYaw(p,rg,f):e.aimAngle)+roll*.35);scale(RAG_SCALE,RAG_SCALE*(1-Math.abs(roll)*.3));
+  const skin=id.skinCol||e.skinCol||color(235,180,140),boot=color(red(pants)*.55,green(pants)*.55,blue(pants)*.55);
   ragContour(window,255);
-  if(rg){for(let i=2;i<4;i++)drawFallLimb(window,rig,rg,i,f,e.shirtCol,e.pantsCol,skin,boot);}
-  figureCelOval(window,0,0,rig.TL,rig.TW,e.shirtCol);
-  drawFallenAttire(window,figureIdentity(e),rig.TL,rig.TW,p&&p.faceDown,f);
-  if(rg){for(let i=0;i<2;i++)drawFallLimb(window,rig,rg,i,f,e.shirtCol,e.pantsCol,skin,boot);}
-  translate(rg?rig.headX:lerp(12/RAG_SCALE,18,f),0);scale(lerp(1/RAG_SCALE,1,f));rotate(figureHeadTurn(p,f));drawFallenHead(window,figureIdentity(e),p,f);pop();
+  if(rg){for(let i=2;i<4;i++)drawFallLimb(window,rig,rg,i,f,shirt,pants,skin,boot,!!(k&&p.faceDown));}
+  figureCelOval(window,0,0,rig.TL,rig.TW,shirt);
+  drawFallenAttire(window,id,rig.TL,rig.TW,p&&p.faceDown,f);
+  if(rg){for(let i=0;i<2;i++)drawFallLimb(window,rig,rg,i,f,shirt,pants,skin,boot,!!(k&&p.faceDown));}
+  translate(rg?rig.headX:lerp(12/RAG_SCALE,18,f),0);scale(lerp(1/RAG_SCALE,1,f));rotate(figureHeadTurn(p,f));drawFallenHead(window,id,p,f);pop();
 }
 
 
@@ -18402,7 +18517,7 @@ function worldBoxingHit(event) {
   defender.punchHitCount = (defender.punchHitCount || 0) + 1;
   if (unarmedCivilian(defender) || defender.punchHitCount >= 4) {
     boxingExit(defender); defender._boxingWorldManaged = false;
-    startPunchStun(defender, attacker.aimAngle); defender.punchHitCount = 0; sfx.charge();
+    startPunchStun(defender, attacker.aimAngle, event); defender.punchHitCount = 0; sfx.charge();
   }
 }
 function updateWorldBoxingPlayer(actor) {
@@ -20946,7 +21061,7 @@ function boxingReadInput(actor, contextState = null) {
   else if (state.padWasConnected) { if (!window.isDesktop) window.showOnScreenControls = true; state.padWasConnected = false; }
   state.lastInput = result; return result;
 }
-function drawBoxingControls(actor = player, contextState = null) {
+function drawBoxingControls(actor = player, contextState = null, hintAlpha = 1) {
   if (!actor || !boxingActive(actor)) return;
   const state = boxingInputState(contextState || boxingNativeInputState(actor)), layout = boxingControlLayout();
   // Physical controls need no tutorial overlay, even before the first poll.
@@ -20961,6 +21076,8 @@ function drawBoxingControls(actor = player, contextState = null) {
     fill(184, 198, 207); textSize(7.2); text('EXIT STANCE', exit.x, exit.y + 10);
   }
   if (!mobile) {
+    if (hintAlpha <= 0) { pop(); return; }
+    drawingContext.globalAlpha *= hintAlpha;
     const legendBottom = state.isWorld ? height - 16 : height - 72;
     noStroke(); fill(20, 22, 25, 190); rect(width / 2 - Math.min(320, width / 2 - 12), legendBottom - 42, Math.min(640, width - 24), 42, 7);
     fill(235, 221, 181); textSize(width < 600 ? 10 : 12);
@@ -20997,10 +21114,14 @@ function drawBoxingControls(actor = player, contextState = null) {
   const input = state.lastInput || {};
   drawPad(layout.leftStick, 'FOOTWORK', input.moveX || 0, input.moveY || 0, false);
   drawPad(layout.rightStick, 'GUARD', input.guardX || 0, input.guardY || 0, true);
-  noStroke(); fill(235, 217, 174); textSize(9);
-  const hintX = (layout.buttons[0].x + layout.buttons[1].x) / 2;
-  text('TAP HEAD', hintX, layout.bounds.top - 25);
-  text('HOLD → RELEASE BODY', hintX, layout.bounds.top - 13);
+  if (hintAlpha > 0) {
+    push(); drawingContext.globalAlpha *= hintAlpha;
+    noStroke(); fill(235, 217, 174); textSize(9);
+    const hintX = (layout.buttons[0].x + layout.buttons[1].x) / 2;
+    text('TAP HEAD', hintX, layout.bounds.top - 25);
+    text('HOLD → RELEASE BODY', hintX, layout.bounds.top - 13);
+    pop();
+  }
   pop();
 }
 function handleGamepad() {
@@ -41521,6 +41642,7 @@ function resetFrontierBounties() {
 let frontierSaloonProgress = { brawlCleared: false, duelWon: false, duelAttempts: 0, duelTier: 0 };
 let _frontierSaloonSession = null, _frontierSaloonPrompt = null;
 let _frontierSaloonToast = '', _frontierSaloonToastMs = 0;
+const FRONTIER_SALOON_HUD = Object.freeze({ holdMs: 3500, fadeMs: 400 });
 const FRONTIER_SALOON_ROOM = { left: -700, right: 700, top: -490, bottom: 490,
   door: { x: 0, y: 465 }, entry: { x: 0, y: 425 }, counter: { x: -90, y: -272 },
   fight: { x: 180, y: 120 } };
@@ -41537,7 +41659,27 @@ function frontierSaloonSites() {
   return { door: t && t.saloon ? { x: t.saloon.doorX, y: t.saloon.doorY } : { x: 1156, y: -1730 },
     duel: t && t.duel ? t.duel : { x: 1300, y: -1140 } };
 }
-function frontierSaloonNotify(message) { _frontierSaloonToast = message; _frontierSaloonToastMs = 4200; }
+function frontierSaloonNotify(message) {
+  _frontierSaloonToast = message;
+  _frontierSaloonToastMs = FRONTIER_SALOON_HUD.holdMs + FRONTIER_SALOON_HUD.fadeMs;
+}
+function frontierSaloonHudFade(ageMs) {
+  const t = constrain((ageMs - FRONTIER_SALOON_HUD.holdMs) / FRONTIER_SALOON_HUD.fadeMs, 0, 1);
+  return 1 - t * t * (3 - 2 * t);
+}
+function frontierSaloonHudAlpha(s) {
+  if (!s) return 1;
+  // Contacts, GRIT loss, moving thumbs and the reaction timer never refresh
+  // the overlays. Only a new activity, a downed boxer or a duel cue does.
+  const d = s.duel, key = [s.mode, s.brawl, s.fighters.filter(c => c.knockedOut).length,
+    d && d.tier, d && d.phase, d && d.result, score].join('|');
+  if (!s.hud || s.hud.key !== key) s.hud = { key, shownAtMs: s.elapsedMs || 0 };
+  return frontierSaloonHudFade((s.elapsedMs || 0) - s.hud.shownAtMs);
+}
+function frontierSaloonHudLayer(alpha, paint) {
+  if (alpha <= 0) return;
+  push(); drawingContext.globalAlpha *= alpha; paint(); pop();
+}
 function frontierSaloonFurniture() {
   return [
     { kind: 'BAR', x: -90, y: -350, w: 920, h: 78, rise: 27 },
@@ -41554,6 +41696,11 @@ function frontierSaloonFurniture() {
 function frontierSaloonNearCounter() {
   const p = FRONTIER_SALOON_ROOM.counter;
   return Math.hypot(player.x - p.x, player.y - p.y) < 128;
+}
+function frontierSaloonCanLeave() {
+  const s = _frontierSaloonSession, door = FRONTIER_SALOON_ROOM.door;
+  return !!s && s.mode === 'SALOON' && s.brawl !== 'ACTIVE' && s.brawl !== 'KNOCKOUT' &&
+    Math.hypot(player.x - door.x, player.y - door.y) < 84;
 }
 function frontierSaloonBlocked(x, y, radius = 16) {
   const r = FRONTIER_SALOON_ROOM;
@@ -41594,10 +41741,12 @@ function enterFrontierSaloon(mode = 'SALOON') {
   const save = { x: player.x, y: player.y, aimAngle: player.aimAngle, moveAngle: player.moveAngle,
     currentWeapon: player.currentWeapon, isArmed: player.isArmed, isUnarmed: player.isUnarmed,
     mounted: !!player.mounted, meleeTool: meleeTool(), swordEquipped: window.swordEquipped,
-    meleeToolSel: window.meleeToolSel, zoom, camX, camY };
+    meleeToolSel: window.meleeToolSel, zoom, camX, camY,
+    stunTimer: player.stunTimer, stunPose: player.stunPose, skeletonTimer: player.skeletonTimer,
+    knockedOut: player.knockedOut, state: player.state };
   boxingExit(player);
   _frontierSaloonSession = { mode: 'SALOON', save, patrons: frontierSaloonCreatePeople(), fighters: [],
-    brawl: 'IDLE', grit: 100, boxingInput: {}, boxingEffects: [], camera: null, hitMs: 0,
+    brawl: 'IDLE', grit: 100, boxingInput: {}, boxingEffects: [], knockoutEffects: [], camera: null, hitMs: 0,
     menu: false, menuChoice: frontierSaloonProgress.brawlCleared ? 'DUEL' : 'BRAWL',
     pause: false, keys: {}, fireWas: true, padWas: [], duel: null, elapsedMs: 0 };
   // Entering on a held F/A consumes that edge in the exterior. Seed the room
@@ -41612,6 +41761,7 @@ function enterFrontierSaloon(mode = 'SALOON') {
   player.currentWeapon = WEAPONS.PISTOL; player.reloadTimer = 0; player.meleeTimer = 0;
   player.muzzleFlash = 0; player.weaponKick = 0; player.throwAnimTimer = 0; player.cannonCharge = 0;
   player.dashTimer = 0; player.boxingHold = 0; setMeleeTool('NONE');
+  player.stunTimer = player.skeletonTimer = 0; player.stunPose = null; player.knockedOut = false;
   leftStick.active = false; rightStick.active = false; meleeInputHeld = false; cannonInputHeld = false;
   _frontierSaloonPrompt = null;
   if (mode === 'DUEL') startFrontierQuickDraw();
@@ -41630,11 +41780,14 @@ function exitFrontierSaloon() {
   if (!s) return false;
   s.boxingEffects.length = 0;
   boxingLeaveInput(player, s.boxingInput); boxingExit(player); s.fighters.forEach(boxingExit);
+  frontierSaloonClearPlayerKnockout(s);
   if (player) {
     Object.assign(player, { x: s.save.x, y: s.save.y, aimAngle: s.save.aimAngle, moveAngle: s.save.moveAngle,
       currentWeapon: s.save.currentWeapon, isArmed: s.save.isArmed, isUnarmed: s.save.isUnarmed,
       mounted: s.save.mounted, meleeTimer: 0, meleeCooldown: 0, boxingHold: 0, muzzleFlash: 0,
-      weaponKick: 0, reloadTimer: 0, isMoving: false, gait: 0 });
+      weaponKick: 0, reloadTimer: 0, isMoving: false, gait: 0,
+      stunTimer: s.save.stunTimer, stunPose: s.save.stunPose, skeletonTimer: s.save.skeletonTimer,
+      knockedOut: s.save.knockedOut, state: s.save.state });
     window.swordEquipped = s.save.swordEquipped; window.meleeToolSel = s.save.meleeToolSel;
   }
   zoom = s.save.zoom; camX = s.save.camX; camY = s.save.camY;
@@ -41644,7 +41797,8 @@ function exitFrontierSaloon() {
   return true;
 }
 function startFrontierSaloonBrawl() {
-  const s = _frontierSaloonSession; if (!s || s.mode !== 'SALOON') return false;
+  const s = _frontierSaloonSession; if (!s || s.mode !== 'SALOON' || s.brawl === 'KNOCKOUT') return false;
+  frontierSaloonClearPlayerKnockout(s); s.knockoutEffects.length = 0;
   boxingLeaveInput(player, s.boxingInput); boxingExit(player); s.fighters.forEach(boxingExit);
   s.menu = false; s.brawl = 'ACTIVE'; s.grit = 100; s.boxingInput = {}; s.boxingEffects.length = 0; s.hitMs = 0;
   s.fighters = [frontierSaloonPerson(90, 40, 'COWBOY', 'BUCK'),
@@ -41677,22 +41831,77 @@ function frontierSaloonBoxingHit(event) {
   if (target === player) {
     s.grit = Math.max(0, s.grit - Math.max(7, Math.round(event.damage * .75)));
     s.hitMs = 190;
+    s.lastPlayerImpact = { kind: event.kind, level: event.level, damage: event.damage, angle: event.attacker.aimAngle };
+    if (s.grit <= 0) frontierSaloonBeginPlayerKnockout(s.lastPlayerImpact);
   } else if (s.fighters.includes(target) && !target.knockedOut) {
     target.hp = Math.max(0, target.hp - event.damage); target.hitFlash = 5;
-    if (target.hp <= 0) frontierSaloonKnockOut(target, event.attacker.aimAngle);
+    if (target.hp <= 0) frontierSaloonKnockOut(target, event.attacker.aimAngle, event);
   }
   sfx.hitBody();
 }
-function frontierSaloonKnockOut(c, angle) {
+function frontierSaloonKnockOut(c, angle, impact = {}) {
   boxingExit(c);
+  // Local knockout physics never touches exterior collision, panic or saves.
+  // Sample the last step before STUNNED/knockedOut suppresses locomotion.
+  startKnockoutPhysics(c, angle, impact, 'SALOON');
   c.knockedOut = true; c.hp = 0; c.isMoving = false; c.meleeTimer = 0;
-  // Reuse the nonlethal directional fall, but advance its pose locally below:
-  // advanceStun/stepFigureFall deliberately use exterior collision and AI.
-  startPunchStun(c, angle); if (c.stunPose) c.stunPose.impulse = 0;
   c.stunTimer = 99999; sfx.hitBody();
 }
+function frontierSaloonClearPlayerKnockout(s = _frontierSaloonSession) {
+  if (!s || !s.playerKnockout) return;
+  player.stunPose = null; player.stunTimer = player.skeletonTimer = 0;
+  player.knockedOut = false; player.state = 'IDLE'; player.isMoving = false; player.gait = 0;
+  s.playerKnockout = null;
+}
+function frontierSaloonBeginPlayerKnockout(impact = {}) {
+  const s = _frontierSaloonSession;
+  if (!s || s.mode !== 'SALOON' || s.brawl !== 'ACTIVE') return false;
+  boxingLeaveInput(player, s.boxingInput); boxingExit(player); s.boxingInput = {};
+  s.fighters.forEach(c => { boxingExit(c); c.isMoving = false; c.meleeTimer = 0; });
+  s.brawl = 'KNOCKOUT'; s.menu = false;
+  s.playerKnockout = { ageMs: 0, recovering: false, recoveryFrames: 32, impact, penaltyApplied: true };
+  startKnockoutPhysics(player, impact.angle, impact, 'SALOON');
+  // Commit the nonfatal penalty before any pause/save/shop action can leave.
+  player.hp = Math.max(1, player.hp - 12); player.knockedOut = true;
+  player.stunTimer = 99999; player.skeletonTimer = 0; player.state = 'STUNNED';
+  player.reloadTimer = player.meleeTimer = player.meleeCooldown = player.boxingHold = 0;
+  player.dashTimer = player.throwAnimTimer = player.cannonCharge = 0;
+  player.isMoving = false; player.gait = 0; cancelPlayerBowDraw(player);
+  leftStick.active = rightStick.active = false;
+  leftStick.dx = leftStick.dy = rightStick.dx = rightStick.dy = rightStick.dist = 0;
+  meleeInputHeld = cannonInputHeld = grenadeInputHeld = false;
+  frontierSaloonNotify('KNOCKED OUT · -12 HEALTH\nMae is breaking up the fight. Catch your breath.');
+  return true;
+}
+function frontierSaloonKnockoutContact(event) {
+  const s = _frontierSaloonSession;
+  if (!s || event.context !== 'SALOON' || event.contact !== 1) return;
+  sfx.hitBody();
+  for (let i = 0; i < 6 && s.knockoutEffects.length < 36; i++)
+    s.knockoutEffects.push(newParticle(event.point.x, event.point.y, color(204, 162, 108), 'DUST'));
+}
+function frontierSaloonAdvancePlayerKnockout(s, dt) {
+  const k = s.playerKnockout; if (!k) return;
+  k.ageMs += dt;
+  if (!k.recovering) {
+    stepKnockoutPhysics(player, dt, frontierSaloonBoxingMove, frontierSaloonKnockoutContact);
+    const pose = player.stunPose;
+    if (k.ageMs >= 2200 && (!pose || (pose.knockout && pose.knockout.settled))) {
+      k.recovering = true; player.stunTimer = k.recoveryFrames;
+    }
+  } else {
+    k.recoveryFrames = Math.max(0, k.recoveryFrames - dt / KNOCKOUT_PHYSICS.FRAME_MS);
+    player.stunTimer = k.recoveryFrames;
+    if (k.recoveryFrames <= 0) {
+      frontierSaloonClearPlayerKnockout(s); s.brawl = 'LOST';
+      frontierSaloonNotify('BACK ON YOUR FEET\nReturn to Mae at the counter when you are ready to retry.');
+    }
+  }
+  player.isMoving = false; player.gait = 0;
+}
 function startFrontierQuickDraw() {
-  const s = _frontierSaloonSession; if (!s) return false;
+  const s = _frontierSaloonSession; if (!s || s.brawl === 'KNOCKOUT') return false;
+  frontierSaloonClearPlayerKnockout(s); s.knockoutEffects.length = 0;
   s.boxingEffects.length = 0;
   boxingLeaveInput(player, s.boxingInput); boxingExit(player); s.fighters.forEach(boxingExit); s.boxingInput = {};
   s.mode = 'DUEL'; s.menu = false; s.fighters = []; s.brawl = 'IDLE';
@@ -41873,7 +42082,8 @@ function frontierQuickDrawProjection() {
 }
 function frontierSaloonAction(action) {
   const s = _frontierSaloonSession; if (!s) return false;
-  if (action === 'EXIT') return exitFrontierSaloon();
+  if (action === 'SHOP' && isPaused) { exitFrontierSaloon(); isPaused = true; pauseMenuState = 'SHOP'; return true; }
+  if (action === 'EXIT') return frontierSaloonCanLeave() ? exitFrontierSaloon() : false;
   if (action === 'BRAWL') return startFrontierSaloonBrawl();
   if (action === 'DUEL' || action === 'RETRY') return startFrontierQuickDraw();
   if (action === 'BACK') {
@@ -41892,8 +42102,8 @@ function interactFrontierSaloonActivity() {
   if (s) {
     if (s.mode === 'DUEL') return s.duel.phase === 'RESULT' ? startFrontierQuickDraw() : frontierSaloonFire();
     if (s.menu) return frontierSaloonAction(s.menuChoice);
-    if (Math.hypot(player.x - FRONTIER_SALOON_ROOM.door.x, player.y - FRONTIER_SALOON_ROOM.door.y) < 84) return exitFrontierSaloon();
-    if (s.brawl !== 'ACTIVE' && frontierSaloonNearCounter()) {
+    if (frontierSaloonCanLeave()) return exitFrontierSaloon();
+    if (s.brawl !== 'ACTIVE' && s.brawl !== 'KNOCKOUT' && frontierSaloonNearCounter()) {
       s.menu = true; s.menuChoice = frontierSaloonProgress.brawlCleared ? 'DUEL' : 'BRAWL'; return true;
     }
     return false;
@@ -41921,6 +42131,14 @@ function frontierSaloonInput(advanceTime) {
     if (edge(14) || edge(15)) choiceChange = 1;
     s.padWas = pad.buttons.map(b => !!b.pressed);
   } else s.padWas = [];
+  // Pause keeps its normal edges; the falling/get-up sequence owns all other
+  // input until complete, including thumbs held down through the knockout.
+  if (s.brawl === 'KNOCKOUT') {
+    s.fireWas = fire; player.isMoving = false;
+    leftStick.active = rightStick.active = false;
+    leftStick.dx = leftStick.dy = rightStick.dx = rightStick.dy = rightStick.dist = 0;
+    return;
+  }
   const isBoxing = s.mode === 'SALOON' && s.brawl === 'ACTIVE';
   if (isBoxing) {
     s.boxingInput.disabled = isPaused || s.menu;
@@ -41966,6 +42184,11 @@ function updateFrontierSaloonActivity(advanceTime = true) {
   if (!_frontierSaloonSession || isPaused || dt <= 0) return;
   s.elapsedMs += dt;
   boxingAdvanceContactEffects(s.boxingEffects, dt);
+  s.knockoutEffectStep = (s.knockoutEffectStep || 0) + dt / KNOCKOUT_PHYSICS.FRAME_MS;
+  while (s.knockoutEffectStep >= 1) {
+    s.knockoutEffectStep--;
+    s.knockoutEffects.forEach(p => p.update()); s.knockoutEffects = s.knockoutEffects.filter(p => p.a > 0);
+  }
   player.muzzleFlash = Math.max(0, player.muzzleFlash - dt / 16.67);
   player.weaponKick = Math.max(0, player.weaponKick - dt / 16.67);
   s.hitMs = Math.max(0, s.hitMs - dt);
@@ -41994,20 +42217,14 @@ function updateFrontierSaloonActivity(advanceTime = true) {
   for (const c of s.fighters) {
     c.hitFlash = Math.max(0, (c.hitFlash || 0) - dt / 16.67);
     if (c.knockedOut) {
-      if (c.stunPose && !c.stunPose.done) {
-        c.stunPose.age += dt / 16.67;
-        if (c.stunPose.age > c.stunPose.duration + 16) c.stunPose.done = true;
-        if (c.stunPose.rag) ragStep(c.stunPose.rag);
-      }
+      stepKnockoutPhysics(c, dt, frontierSaloonBoxingMove, frontierSaloonKnockoutContact);
+      c.isMoving = false; c.gait = 0;
       continue;
     }
   }
-  if (s.brawl === 'ACTIVE' && s.grit <= 0) {
-    boxingExit(player); s.fighters.forEach(boxingExit); s.boxingInput = {};
-    s.brawl = 'LOST'; s.fighters = []; player.hp = Math.max(1, player.hp - 12);
-    player.x = FRONTIER_SALOON_ROOM.entry.x; player.y = FRONTIER_SALOON_ROOM.entry.y; player.meleeTimer = 0;
-    frontierSaloonNotify('KNOCKED OUT · -12 HEALTH\nMae broke up the fight. Return to the counter to retry.');
-  } else if (s.brawl === 'ACTIVE' && s.fighters.every(c => c.knockedOut)) {
+  if (s.brawl === 'ACTIVE' && s.grit <= 0) frontierSaloonBeginPlayerKnockout(s.lastPlayerImpact || {});
+  if (s.brawl === 'KNOCKOUT') frontierSaloonAdvancePlayerKnockout(s, dt);
+  else if (s.brawl === 'ACTIVE' && s.fighters.every(c => c.knockedOut)) {
     boxingExit(player); s.boxingInput = {};
     s.brawl = 'WON';
     if (!frontierSaloonProgress.brawlCleared) { frontierSaloonProgress.brawlCleared = true; score += 75;
@@ -42029,12 +42246,12 @@ function frontierSaloonButtons() {
     { action: 'CLOSE', label: 'BACK', x: width / 2 - 90, y: height / 2 + 91, w: 180, h: 42 }];
   if (s.mode === 'DUEL') return s.duel.phase === 'RESULT' ? [
     { action: 'RETRY', label: s.duel.won ? 'NEXT CHALLENGER' : 'REMATCH', x: width / 2 - 145, y: height - 184, w: 140, h: 54 },
-    { action: 'BACK', label: 'BACK TO SALOON', x: width / 2 + 5, y: height - 184, w: 140, h: 54 },
-    { action: 'EXIT', label: 'LEAVE', x: width / 2 - 90, y: height - 110, w: 180, h: 42 }] : [
+    { action: 'BACK', label: 'BACK TO SALOON', x: width / 2 + 5, y: height - 184, w: 140, h: 54 }] : [
     { action: 'FIRE', label: s.duel.phase === 'DRAW' ? 'DRAW · FIRE!' : 'WAIT · HOLD YOUR FIRE',
       x: width / 2 - 140, y: height - 238, w: 190, h: 50 }];
-  const buttons = [{ action: 'EXIT', label: 'LEAVE SALOON', x: width / 2 - 88, y: height - 48, w: 176, h: 36 }];
-  if (s.brawl !== 'ACTIVE' && frontierSaloonNearCounter())
+  const buttons = frontierSaloonCanLeave() ?
+    [{ action: 'EXIT', label: 'LEAVE SALOON', x: width / 2 - 88, y: height - 48, w: 176, h: 36 }] : [];
+  if (s.brawl !== 'ACTIVE' && s.brawl !== 'KNOCKOUT' && frontierSaloonNearCounter())
     buttons.push({ action: 'INTERACT', label: 'TALK TO MAE', x: width / 2 - 100, y: height - 250, w: 200, h: 48 });
   return buttons;
 }
@@ -42059,7 +42276,7 @@ function handleFrontierSaloonTap(mx, my) {
   }
   if (s && !isPaused && s.mode === 'SALOON' && !s.menu && s.brawl === 'ACTIVE')
     return boxingHandleTouch(mx, my, player, s.boxingInput);
-  return !!s && (isPaused || s.menu || s.mode === 'DUEL');
+  return !!s && (isPaused || s.menu || s.mode === 'DUEL' || s.brawl === 'KNOCKOUT');
 }
 
 // The interior is a cut-away room: rooted furniture, joined riser planes,
@@ -42148,6 +42365,7 @@ function paintFrontierSaloonRoom() {
   pop();
 }
 function paintFrontierSaloonBrawler(c) {
+  if (!c.knockedOut && !boxingActive(c)) { c.show(); return; }
   push(); translate(c.x, c.y); noStroke(); fill(16, 12, 10, 60); ellipse(6, 10, 29, 22);
   if (c.knockedOut) { drawStunnedFigure(c); pop(); return; }
   paintBoxingFigure(c);
@@ -42197,13 +42415,19 @@ function drawFrontierSaloonInterior() {
     if (isGroundBodyActor(c)) paintFrontierSaloonBrawler(c);
     else layers.push({ y: c.y, draw: () => paintFrontierSaloonBrawler(c) });
   }
-  layers.push({ y: player.y, draw: () => {
+  const paintPlayer = () => {
     const active = rightStick.active; rightStick.active = false;
-    try { noStroke(); fill(12, 10, 9, 70); ellipse(player.x + 6, player.y + 10, 28, 22); player.show(); }
+    try {
+      if (!isGroundBodyActor(player)) { noStroke(); fill(12, 10, 9, 70); ellipse(player.x + 6, player.y + 10, 28, 22); }
+      player.show();
+    }
     finally { rightStick.active = active; }
-  } });
+  };
+  if (isGroundBodyActor(player)) paintPlayer();
+  else layers.push({ y: player.y, draw: paintPlayer });
   layers.sort((a, b) => a.y - b.y); layers.forEach(l => l.draw());
   boxingDrawContactEffects(s.boxingEffects);
+  for (const p of s.knockoutEffects) p.show();
   // Near wall deliberately has an open doorway, and a low cutaway edge so
   // neither a fighter nor the exit disappears beneath a full-height facade.
   stroke(44, 29, 22); strokeWeight(2); fill(109, 59, 37);
@@ -42295,39 +42519,49 @@ function drawFrontierSaloonHud() {
   const s = _frontierSaloonSession;
   push(); textAlign(CENTER, CENTER); textFont('sans-serif');
   if (s) {
-    noStroke(); fill(26, 18, 14, 223); rect(8, 8, width - 16, 76, 8);
-    fill(239, 203, 141); textSize(Math.min(19, width / 22));
-    text(s.mode === 'DUEL' ? 'DRY GULCH · QUICK DRAW' : 'COPPER SPUR · SALOON', width / 2 - 22, 29);
-    fill(219, 188, 145); textSize(12);
-    text(s.mode === 'DUEL' ? 'ROUND ' + (s.duel.tier + 1) + ' · ' + s.duel.distance + ' DISTANCE · QUICKHAND REED' :
-      s.brawl === 'ACTIVE' ? 'BARROOM PEACEMAKER · ' + s.fighters.filter(c => c.knockedOut).length + '/3 DOWN' :
-      'Talk at the counter · fistfights and duels', width / 2, 51);
-    fill(174, 156, 133); textSize(11);
-    text('HEALTH ' + Math.ceil(player.hp) + '   SCORE ' + score, width / 2, 69);
+    const hudAlpha = frontierSaloonHudAlpha(s);
+    frontierSaloonHudLayer(hudAlpha, () => {
+      noStroke(); fill(26, 18, 14, 223); rect(8, 8, width - 16, 76, 8);
+      fill(239, 203, 141); textSize(Math.min(19, width / 22));
+      text(s.mode === 'DUEL' ? 'DRY GULCH · QUICK DRAW' : 'COPPER SPUR · SALOON', width / 2 - 22, 29);
+      fill(219, 188, 145); textSize(12);
+      text(s.mode === 'DUEL' ? 'ROUND ' + (s.duel.tier + 1) + ' · ' + s.duel.distance + ' DISTANCE · QUICKHAND REED' :
+        s.brawl === 'ACTIVE' ? 'BARROOM PEACEMAKER · ' + s.fighters.filter(c => c.knockedOut).length + '/3 DOWN' :
+        s.brawl === 'KNOCKOUT' ? 'KNOCKED OUT · CATCH YOUR BREATH' :
+        'Talk at the counter · fistfights and duels', width / 2, 51);
+      fill(174, 156, 133); textSize(11);
+      text('HEALTH ' + Math.ceil(player.hp) + '   SCORE ' + score, width / 2, 69);
+    });
+    // The pause control stays actionable after the informational header fades.
     fill(87, 60, 37); rect(width - 61, 12, 45, 31, 5); fill(243, 218, 179);
     rect(width - 45, 20, 5, 15, 1); rect(width - 35, 20, 5, 15, 1);
     if (s.mode === 'SALOON') {
       if (s.brawl === 'ACTIVE') {
-        noStroke(); fill(39, 27, 19, 210); rect(width / 2 - 112, 98, 224, 27, 5);
-        fill(216, 149, 73); rect(width / 2 - 109, 101, 218 * s.grit / 100, 21, 4);
-        fill(252, 227, 176); textSize(12); text('GRIT ' + s.grit + '/100', width / 2, 112);
+        frontierSaloonHudLayer(hudAlpha, () => {
+          noStroke(); fill(39, 27, 19, 210); rect(width / 2 - 112, 98, 224, 27, 5);
+          fill(216, 149, 73); rect(width / 2 - 109, 101, 218 * s.grit / 100, 21, 4);
+          fill(252, 227, 176); textSize(12); text('GRIT ' + s.grit + '/100', width / 2, 112);
+        });
       }
       if (s.brawl === 'ACTIVE' && !isPaused && !s.menu) {
-        drawBoxingControls(player, s.boxingInput);
-      } else if (!connectedGamepad()) {
+        drawBoxingControls(player, s.boxingInput, hudAlpha);
+      } else if (s.brawl !== 'KNOCKOUT' && !isPaused && !s.menu && !connectedGamepad()) {
         noFill(); stroke(226, 195, 146, 100); strokeWeight(2); ellipse(72, height - 108, 112, 112);
         fill(190, 132, 70, 52); ellipse(72, height - 108, 55, 55);
         fill(221, 188, 140); noStroke(); textSize(11); text('MOVE', 72, height - 108);
       }
-      if (s.brawl !== 'ACTIVE' && window.isDesktop && !connectedGamepad()) { fill(220, 198, 163); textSize(11); text('WASD move · F talk', width / 2, height - 204); }
+      if (s.brawl !== 'ACTIVE' && s.brawl !== 'KNOCKOUT' && window.isDesktop && !connectedGamepad())
+        frontierSaloonHudLayer(hudAlpha, () => { fill(220, 198, 163); textSize(11); text('WASD move · F talk', width / 2, height - 204); });
     } else {
       const d = s.duel, colorCue = d.phase === 'DRAW' ? color(191, 237, 108) : d.phase === 'RESULT' && d.won ? color(243, 202, 121) : color(242, 143, 99);
-      noStroke(); fill(28, 21, 16, 235); rect(width / 2 - Math.min(165, width / 2 - 12), 105, Math.min(330, width - 24), 93, 10);
-      fill(colorCue); textSize(d.phase === 'DRAW' ? 44 : 29);
-      text(d.phase === 'RESULT' ? (d.won ? 'YOU WIN' : d.result) : d.phase, width / 2, 139);
-      fill(235, 208, 163); textSize(12);
-      if (d.phase === 'RESULT' || !connectedGamepad()) text(d.phase === 'RESULT' ? d.won ? Math.round(d.shotReactionMs || 0) + ' ms · next challenger ready' : 'Try again. Watch for the green cue.' :
-        d.phase === 'DRAW' ? 'AIM · PUSH RIGHT STICK PAST 70% TO FIRE' : 'Aim gently. Stay inside the 70% ring.', width / 2, 178);
+      frontierSaloonHudLayer(hudAlpha, () => {
+        noStroke(); fill(28, 21, 16, 235); rect(width / 2 - Math.min(165, width / 2 - 12), 105, Math.min(330, width - 24), 93, 10);
+        fill(colorCue); textSize(d.phase === 'DRAW' ? 44 : 29);
+        text(d.phase === 'RESULT' ? (d.won ? 'YOU WIN' : d.result) : d.phase, width / 2, 139);
+        fill(235, 208, 163); textSize(12);
+        if (d.phase === 'RESULT' || !connectedGamepad()) text(d.phase === 'RESULT' ? d.won ? Math.round(d.shotReactionMs || 0) + ' ms · next challenger ready' : 'Try again. Watch for the green cue.' :
+          d.phase === 'DRAW' ? 'AIM · PUSH RIGHT STICK PAST 70% TO FIRE' : 'Aim gently. Stay inside the 70% ring.', width / 2, 178);
+      });
       if (d.phase !== 'RESULT' && !isPaused) {
         const c = frontierQuickDrawControls(), pad = connectedGamepad();
         if (!pad && (!window.isDesktop || window.showOnScreenControls)) {
@@ -42337,8 +42571,8 @@ function drawFrontierSaloonHud() {
           noStroke(); fill(241, 216, 170); textSize(10); text('AIM / FIRE', c.x, c.y + c.r + 15);
           fill(headAimToggle ? color(174, 72, 48) : color(58, 52, 42)); stroke(217, 182, 125); ellipse(c.headX, c.headY, 40, 40);
           noStroke(); fill(247, 220, 169); textSize(8); text(headAimToggle ? 'HEAD' : 'BODY', c.headX, c.headY);
-        } else if (!pad) { noStroke(); fill(231, 206, 159); textSize(11); text('MOUSE · AIM   SPACE / CLICK · FIRE', width / 2, height - 116); }
-        noStroke(); fill(229, 204, 156); textSize(11); text('DUEL ROUNDS ' + d.ammo + '/6', width / 2 - 52, height - 171);
+        } else if (!pad) frontierSaloonHudLayer(hudAlpha, () => { noStroke(); fill(231, 206, 159); textSize(11); text('MOUSE · AIM   SPACE / CLICK · FIRE', width / 2, height - 116); });
+        frontierSaloonHudLayer(hudAlpha, () => { noStroke(); fill(229, 204, 156); textSize(11); text('DUEL ROUNDS ' + d.ammo + '/6', width / 2 - 52, height - 171); });
       }
     }
     if (s.hitMs > 0) { noFill(); stroke(205, 73, 34, s.hitMs); strokeWeight(9); rect(5, 5, width - 10, height - 10, 12); }
@@ -42354,10 +42588,12 @@ function drawFrontierSaloonHud() {
     noStroke(); fill(fireCue ? color(25, 44, 17) : color(245, 215, 166)); textSize(Math.min(13, b.w / 19)); text(b.label, b.x + b.w / 2, b.y + b.h / 2);
   }
   if (!isPaused && _frontierSaloonToastMs > 0 && !(s && (s.brawl === 'ACTIVE' || s.mode === 'DUEL' && s.duel.phase === 'DRAW'))) {
-    const tw = Math.min(width - 28, 620); noStroke(); fill(28, 18, 12, 229);
-    const ty = s && s.mode === 'DUEL' ? height - 300 : s ? 138 : height - 340;
-    rect(width / 2 - tw / 2, ty, tw, 65, 8); fill(239, 216, 173); textLeading(18);
-    textSize(Math.min(12, (width - 35) / 42)); text(_frontierSaloonToast, width / 2, ty + 33);
+    frontierSaloonHudLayer(frontierSaloonHudFade(FRONTIER_SALOON_HUD.holdMs + FRONTIER_SALOON_HUD.fadeMs - _frontierSaloonToastMs), () => {
+      const tw = Math.min(width - 28, 620); noStroke(); fill(28, 18, 12, 229);
+      const ty = s && s.mode === 'DUEL' ? height - 300 : s ? 138 : height - 340;
+      rect(width / 2 - tw / 2, ty, tw, 65, 8); fill(239, 216, 173); textLeading(18);
+      textSize(Math.min(12, (width - 35) / 42)); text(_frontierSaloonToast, width / 2, ty + 33);
+    });
   }
   pop();
 }
