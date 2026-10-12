@@ -82,8 +82,8 @@ check(`(()=>{let [a,b]=boxingTestPair();boxingRequestDodge(a,1,1,0);boxingUpdate
 check(`(()=>{let [a,b]=boxingTestPair();boxingSetGuard(b,0,-1);b._boxing.guardMs=80;
   boxingRequestPunch(a,'LEFT_STRAIGHT');a._boxing.punch.elapsedMs=200;
   let point=boxingWorldPoint(b,{x:14,y:0,z:BOXING.HEAD_HEIGHT});
-  let hit=boxingResolvePunch(a,b,point);return hit.outcome==='PARRY'&&hit.stunMs===600&&a._boxing.stunMs===600&&a.x===-12&&b._boxing.parryFlashMs===150;})()`,
-  'A timed forearm intercept flashes, pushes back and begins exactly 600 ms of stun');
+  let hit=boxingResolvePunch(a,b,point);return hit.outcome==='PARRY'&&hit.stunMs===2600&&a._boxing.stunMs===2600&&a.x===-12&&b._boxing.parryFlashMs===150;})()`,
+  'A timed forearm intercept flashes, pushes back and begins exactly 2600 ms of stun');
 check(`(()=>{let [a,b]=boxingTestPair();boxingSetGuard(b,0,-1);boxingUpdate(b,180,[a]);
   boxingSetGuard(b,0,-1);let age=b._boxing.guardMs;boxingRequestPunch(a,'LEFT_STRAIGHT');
   let hit=boxingResolvePunch(a,b,boxingWorldPoint(b,{x:14,y:0,z:30}));
@@ -94,10 +94,10 @@ check(`(()=>{let [a,b]=boxingTestPair();boxingSetGuard(b,0,-1);boxingUpdate(b,30
   'Changing guard sector creates a fresh intentional parry timing edge');
 check(`(()=>{let [a,b]=boxingTestPair();boxingSetGuard(b,0,-1);boxingRequestPunch(a,'RIGHT_JAB');
   boxingResolvePunch(a,b,boxingWorldPoint(b,{x:14,y:0,z:30}));
-  boxingUpdate(a,500,[b]);boxingUpdate(a,99,[b]);let before=a._boxing.stunMs;
+  for(let i=0;i<5;i++)boxingUpdate(a,500,[b]);boxingUpdate(a,99,[b]);let before=a._boxing.stunMs;
   const blocked=boxingRequestPunch(a,'RIGHT_JAB');boxingUpdate(a,1,[b]);
   return before===1&&!blocked&&a._boxing.stunMs===0&&boxingRequestPunch(a,'RIGHT_JAB');})()`,
-  'Parry stun prevents the counterattack for 599 ms and releases it at 600 ms');
+  'Parry stun prevents the counterattack for 2599 ms and releases it at 2600 ms');
 check(`(()=>{let fine=boxingTestStrike('LEFT_HOOK','HEAD',null,0,Array(50).fill(10));
   let coarse=boxingTestStrike('LEFT_HOOK','HEAD',null,0,[250,250]);
   return fine.events.length===1&&coarse.events.length===1&&fine.events[0].damage===coarse.events[0].damage;})()`,

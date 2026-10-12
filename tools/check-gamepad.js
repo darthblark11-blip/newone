@@ -176,8 +176,8 @@ check('Chemist Y/R1 do not trigger flasks; other suits keep their melee bindings
   probe('chemistSuitUnlocked=true;'); frame([3, 5], { tick: true });
   assert(P('!isCooking&&!meleeInputHeld&&playerFlasks.length===0'));
   probe('chemistSuitUnlocked=false;'); press(5, { tick: true });
-  assert(P('boxingActive(player)&&!player._boxing.punch&&player._boxing.preparedPunch.kind==="LEFT_STRAIGHT"'));
-  frame([], { tick: true }); assert(P('player._boxing.punch.kind==="LEFT_STRAIGHT"&&player._boxing.punch.level==="HEAD"'));
+  assert(P('boxingActive(player)&&!player._boxing.punch&&player._boxing.preparedPunch.kind==="RIGHT_HOOK"'));
+  frame([], { tick: true }); assert(P('player._boxing.punch.kind==="RIGHT_HOOK"&&player._boxing.punch.level==="HEAD"'));
   reset(); press(3, { tick: true }); assert(P('boxingActive(player)&&!player._boxing.punch&&!player._boxing.dodge'));
   for (let i = 0; i < 14; i++) frame([3], { tick: true });
   assert(P('!player._boxing.punch&&player._boxing.preparedPunch.amount===1'));

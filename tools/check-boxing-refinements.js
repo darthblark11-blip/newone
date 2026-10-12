@@ -86,7 +86,7 @@ probe(`isStoryMode=false;resetStoryProgress();startAtLevel(3);isPaused=false;
   function refinementInputActor(){boxingExit(player);player.x=0;player.y=0;player.aimAngle=0;player.isMoving=false;
     boxingEnter(player,[],'SALOON');touches=[];mouseIsPressed=false;isPaused=false;window.__refinementKeys.clear();return {};}
 `);
-for(const [kind,keyCode,padButton] of [['LEFT_STRAIGHT',69,7],['RIGHT_JAB',82,6],['LEFT_HOOK',81,5],['RIGHT_HOOK',84,4]]) {
+for(const [kind,keyCode,padButton] of [['LEFT_STRAIGHT',69,6],['RIGHT_JAB',82,7],['LEFT_HOOK',81,4],['RIGHT_HOOK',84,5]]) {
   check(`(()=>{const state=refinementInputActor(),button=boxingControlLayout().buttons.find(b=>b.action==='${kind}');
     touches=[{id:17,x:button.x,y:button.y}];deltaTime=20;
     for(let i=0;i<14;i++)boxingReadInput(player,state);

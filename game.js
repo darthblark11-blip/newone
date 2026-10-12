@@ -3284,6 +3284,7 @@ function drawBuildingShadows() {
 let _depthActors = [];      // reused; actors queued by actorShow() this frame
 let _depthMasses = [];      // reused; visible masses, sorted by base y
 let _depthOn = false;
+let _legacyActorsQueued = false; // closed interiors keep their standing order
 let _airborneActors = [];   // live flyers are above roofs, not ground contacts
 let _forestCrowns = [];    // reused; raised foliage above the ground actor pass
 
@@ -3311,6 +3312,31 @@ function depthSortActive() { return BIOME_ACTIVE; }
 // their own shadow is not.
 function actorDepth(c) { return c.y; }
 
+// Nonlethal bodies lie on the floor, like corpses. A parry is a standing
+// boxing stun and deliberately remains in the ordinary standing actor pass.
+function isGroundBodyActor(c) {
+  return !!c && (!!c.knockedOut || (c.stunTimer > 0 && !(c.skeletonTimer > 0)));
+}
+function drawGroundBodyActors(actors) {
+  let standing = 0;
+  for (let i = 0; i < actors.length; i++) {
+    const c = actors[i];
+    if (isGroundBodyActor(c)) c.show();
+    else actors[standing++] = c;
+  }
+  actors.length = standing;
+}
+function drawLegacyActors() {
+  const actors = _depthActors;
+  try {
+    drawGroundBodyActors(actors);
+    for (const c of actors) c.show();
+  } finally {
+    actors.length = 0;
+    _legacyActorsQueued = false;
+  }
+}
+
 // A mass contacts the ground along the south edge of the rect it collides on,
 // so that is where it has to sort. Using the centre would put a character level
 // with a building's middle in front of its far wall.
@@ -3325,8 +3351,8 @@ function isAirborneEnemy(e) {
 }
 
 function actorShow(c) {
-  if (isAirborneEnemy(c)) { _airborneActors.push(c); return; }
-  if (_depthOn) { _depthActors.push(c); return; }
+  if (isAirborneEnemy(c) && !isGroundBodyActor(c)) { _airborneActors.push(c); return; }
+  if (_depthOn || _legacyActorsQueued) { _depthActors.push(c); return; }
   c.show();
 }
 
@@ -3406,6 +3432,7 @@ function drawDepthSorted() {
   }
 
   const actors = _depthActors;
+  drawGroundBodyActors(actors);
   for (let i = 0; i < actors.length; i++) actors[i]._depthKey = actors[i].y;
   actors.sort((p, q) => p._depthKey - q._depthKey);
 
@@ -6310,6 +6337,7 @@ viewBottom = camY + height / zoom + shakePad;
   // A FRAME THAT FAILS MUST NOT TAKE THE CONTROLS WITH IT, above.
   const _sceneDepth = frameStackDepth();
   _airborneActors.length = 0;
+  _depthActors.length = 0; _depthOn = _legacyActorsQueued = false;
   try {
 
   push(); scale(zoom); translate(-camX, -camY);
@@ -6418,9 +6446,10 @@ viewBottom = camY + height / zoom + shakePad;
   }
 
    // Ground actors are queued here so the masses can interleave with them by
-   // depth. Outside biomes they retain the immediate legacy draw. Aircraft use
-   // their own queue in either case and paint after the roofs and vehicles.
+   // depth. Closed interiors keep the standing actors' original order, with
+   // knocked-out bodies underneath them. Aircraft have their own upper pass.
    _depthOn = depthSortActive();
+   _legacyActorsQueued = !_depthOn;
    if (player.hp > 0) { if (!isWin && doTick) player.updatePlayer(); actorShow(player); } else if (!isWin && !isDead) { playerRespawnTimer--; if (playerRespawnTimer <= 0) { isDead = true; } }
   updateEntities(); 
 
@@ -6463,6 +6492,7 @@ viewBottom = camY + height / zoom + shakePad;
     // the ground. See the DEPTH SORTING block.
     drawDepthSorted();
   } else {
+    drawLegacyActors();
     drawBuildings();
     if (BIOME_ACTIVE) drawBiomeProps();
   }
@@ -13501,7 +13531,7 @@ function refreshCityPeople(mgr,pcx,pcy) {
 const BOXING = Object.freeze({
   LOCK_RANGE: 280, BODY_RADIUS: 17, FIST_RADIUS: 4.3, HEAD_RADIUS: 7.6,
   HEAD_HEIGHT: 30, BODY_HEIGHT: 17, GUARD_RADIUS: 4.7, GUARD_DEADZONE: .22,
-  PARRY_MS: 140, PARRY_STUN_MS: 600, PARRY_PUSH: 12, PARRY_FLASH_MS: 150,
+  PARRY_MS: 140, PARRY_STUN_MS: 2600, PARRY_PUSH: 12, PARRY_FLASH_MS: 150,
   DODGE_MS: 430, DODGE_COOLDOWN_MS: 490, SWAY_DISTANCE: 15,
   SIDESTEP_DISTANCE: 23, SUBSTEP_MS: 6, ENEMY_TELEGRAPH_MS: 180,
   ENEMY_ATTACK_GAP_MS: 290, ENEMY_REST_MS: 670, FIGHT_DISTANCE: 40.5, IDLE_EXIT_MS: 3000,
@@ -20527,6 +20557,13 @@ function connectedGamepad() {
 // began with until it lifts; moving the guard thumb across a punch button can
 // never fire that button, and a released punch cannot become gunfire.
 const BOXING_INPUT = Object.freeze({ bodyHoldMs: 180, stickDeadzone: .20 });
+const BOXING_PAD_PUNCHES = Object.freeze([
+  Object.freeze([6, 'LEFT_STRAIGHT']), Object.freeze([7, 'RIGHT_JAB']),
+  Object.freeze([4, 'LEFT_HOOK']), Object.freeze([5, 'RIGHT_HOOK'])
+]);
+function boxingEntryPadPunch(button) {
+  return button === 5 ? 'RIGHT_HOOK' : 'LEFT_STRAIGHT';
+}
 function boxingControlLayout(w = width, h = height) {
   const landscape = w > h * 1.3, r = landscape ? 22 : w < 350 ? 24 : 26;
   const x1 = landscape ? w - 238 : w - 108, x2 = landscape ? w - 172 : w - 43;
@@ -20577,11 +20614,11 @@ function boxingSeedEntryInput(actor = player, contextState = null) {
   for (const [id, down, punch] of [
     ['KEY_E', key(69), 'LEFT_STRAIGHT'], ['KEY_R', key(82), 'RIGHT_JAB'],
     ['KEY_Q', key(81), 'LEFT_HOOK'], ['KEY_RIGHT_HOOK', key(84) || key(90), 'RIGHT_HOOK'],
-    ...[[7, 'LEFT_STRAIGHT'], [6, 'RIGHT_JAB'], [5, 'LEFT_HOOK'], [4, 'RIGHT_HOOK']]
+    ...BOXING_PAD_PUNCHES
       .map(([i, punch]) => ['PAD_' + i, !!(pad && pad.buttons[i] && pad.buttons[i].pressed), punch])
   ]) if (down) state.held.set(id, { punch, startedMs: state.clockMs, consumed: true });
   for (const i of state.entryPads || []) if (pad && pad.buttons[i] && pad.buttons[i].pressed)
-    state.held.set('PAD_ENTRY_' + i, { punch: 'LEFT_STRAIGHT', startedMs: state.clockMs, consumed: true });
+    state.held.set('PAD_ENTRY_' + i, { punch: boxingEntryPadPunch(i), startedMs: state.clockMs, consumed: true });
   if (!window.__frontierConsumedTouches) window.__frontierConsumedTouches = new Set();
   const layout = boxingControlLayout(), meleeY = (rightStick.base && rightStick.base.y || height - 110) - 250;
   for (const t of touches) {
@@ -20595,7 +20632,8 @@ function boxingSeedPhysicalEntryInput(actor = player) {
   const state = boxingInputState(boxingNativeInputState(actor)), pad = connectedGamepad();
   const down = i => !!(pad && pad.buttons[i] && pad.buttons[i].pressed);
   // Native melee begins on E, Y/RB, or the old MELEE touch button. Keep that
-  // physical source through the HUD change; entry itself throws no punch.
+  // physical source through the HUD change; RB keeps its right-hand hook,
+  // Y aliases the left straight, and entry itself throws no punch.
   state.entryPads = [3, 5].filter(down);
   const meleeY = (rightStick.base && rightStick.base.y || height - 110) - 250;
   for (const t of touches) if (Math.hypot(t.x - (width - 105), t.y - meleeY) < 45) {
@@ -20777,8 +20815,8 @@ function boxingReadInput(actor, contextState = null) {
   if (edge('KEY_SWAY_LEFT', key(32) || key(16))) pressDodge(-1);
   if (edge('KEY_SWAY_RIGHT', key(72))) pressDodge(1);
   const entryPads = state.entryPads || [];
-  for (const i of entryPads) heldPunch('PAD_ENTRY_' + i, 'LEFT_STRAIGHT', pb(i));
-  for (const [i, punch] of [[7, 'LEFT_STRAIGHT'], [6, 'RIGHT_JAB'], [5, 'LEFT_HOOK'], [4, 'RIGHT_HOOK']])
+  for (const i of entryPads) heldPunch('PAD_ENTRY_' + i, boxingEntryPadPunch(i), pb(i));
+  for (const [i, punch] of BOXING_PAD_PUNCHES)
     if (!entryPads.includes(i)) heldPunch('PAD_' + i, punch, pb(i));
   if (edge('PAD_SWAY_LEFT', pb(2))) pressDodge(-1);
   if (!entryPads.includes(3) && edge('PAD_SWAY_RIGHT', pb(3))) pressDodge(1);
@@ -20796,7 +20834,10 @@ function boxingReadInput(actor, contextState = null) {
 function drawBoxingControls(actor = player, contextState = null) {
   if (!actor || !boxingActive(actor)) return;
   const state = boxingInputState(contextState || boxingNativeInputState(actor)), layout = boxingControlLayout();
-  const pad = connectedGamepad(), mobile = !pad && (!window.isDesktop || window.showOnScreenControls);
+  // Physical controls need no tutorial overlay, even before the first poll.
+  // B still exits the stance; scene pause and mission buttons remain separate.
+  if (connectedGamepad()) return;
+  const mobile = !window.isDesktop || window.showOnScreenControls;
   push(); textFont('sans-serif'); textAlign(CENTER, CENTER);
   if (state.isWorld) {
     const exit = layout.exitButton;
@@ -20808,9 +20849,9 @@ function drawBoxingControls(actor = player, contextState = null) {
     const legendBottom = state.isWorld ? height - 16 : height - 72;
     noStroke(); fill(20, 22, 25, 190); rect(width / 2 - Math.min(320, width / 2 - 12), legendBottom - 42, Math.min(640, width - 24), 42, 7);
     fill(235, 221, 181); textSize(width < 600 ? 10 : 12);
-    text(pad ? 'RT / LT · STRAIGHT / JAB     RB / LB · HOOKS     X / Y · SWAY' : 'E / R · STRAIGHT / JAB     Q / T · HOOKS     SPACE / H · SWAY', width / 2, legendBottom - 29);
+    text('E / R · STRAIGHT / JAB     Q / T · HOOKS     SPACE / H · SWAY', width / 2, legendBottom - 29);
     fill(184, 214, 229); textSize(width < 600 ? 9 : 11);
-    text(pad ? 'RIGHT STICK · GUARD     TAP HEAD · HOLD → RELEASE BODY' : 'ARROWS / IJKL · GUARD     TAP HEAD · HOLD → RELEASE BODY', width / 2, legendBottom - 13);
+    text('ARROWS / IJKL · GUARD     TAP HEAD · HOLD → RELEASE BODY', width / 2, legendBottom - 13);
     pop(); return;
   }
   const active = action => Array.from(state.touches.values()).some(t => t.role === 'BUTTON' && t.action === action);
@@ -42033,8 +42074,14 @@ function drawFrontierSaloonInterior() {
   push(); translate(camera.centerX, camera.centerY); scale(camera.scale); translate(-camera.x, -camera.y);
   paintFrontierSaloonRoom();
   const layers = frontierSaloonFurniture().map(b => ({ y: b.y + b.h / 2, draw: () => paintFrontierSaloonSolid(b) }));
-  for (const c of s.patrons) layers.push({ y: c.y, draw: () => { c.show(); } });
-  for (const c of s.fighters) layers.push({ y: c.y, draw: () => paintFrontierSaloonBrawler(c) });
+  for (const c of s.patrons) {
+    if (isGroundBodyActor(c)) c.show();
+    else layers.push({ y: c.y, draw: () => { c.show(); } });
+  }
+  for (const c of s.fighters) {
+    if (isGroundBodyActor(c)) paintFrontierSaloonBrawler(c);
+    else layers.push({ y: c.y, draw: () => paintFrontierSaloonBrawler(c) });
+  }
   layers.push({ y: player.y, draw: () => {
     const active = rightStick.active; rightStick.active = false;
     try { noStroke(); fill(12, 10, 9, 70); ellipse(player.x + 6, player.y + 10, 28, 22); player.show(); }
@@ -42157,14 +42204,14 @@ function drawFrontierSaloonHud() {
         fill(190, 132, 70, 52); ellipse(72, height - 108, 55, 55);
         fill(221, 188, 140); noStroke(); textSize(11); text('MOVE', 72, height - 108);
       }
-      if (s.brawl !== 'ACTIVE' && (window.isDesktop || connectedGamepad())) { fill(220, 198, 163); textSize(11); text(connectedGamepad() ? 'MOVE · left stick   TALK · A' : 'WASD move · F talk', width / 2, height - 204); }
+      if (s.brawl !== 'ACTIVE' && window.isDesktop && !connectedGamepad()) { fill(220, 198, 163); textSize(11); text('WASD move · F talk', width / 2, height - 204); }
     } else {
       const d = s.duel, colorCue = d.phase === 'DRAW' ? color(191, 237, 108) : d.phase === 'RESULT' && d.won ? color(243, 202, 121) : color(242, 143, 99);
       noStroke(); fill(28, 21, 16, 235); rect(width / 2 - Math.min(165, width / 2 - 12), 105, Math.min(330, width - 24), 93, 10);
       fill(colorCue); textSize(d.phase === 'DRAW' ? 44 : 29);
       text(d.phase === 'RESULT' ? (d.won ? 'YOU WIN' : d.result) : d.phase, width / 2, 139);
       fill(235, 208, 163); textSize(12);
-      text(d.phase === 'RESULT' ? d.won ? Math.round(d.shotReactionMs || 0) + ' ms · next challenger ready' : 'Try again. Watch for the green cue.' :
+      if (d.phase === 'RESULT' || !connectedGamepad()) text(d.phase === 'RESULT' ? d.won ? Math.round(d.shotReactionMs || 0) + ' ms · next challenger ready' : 'Try again. Watch for the green cue.' :
         d.phase === 'DRAW' ? 'AIM · PUSH RIGHT STICK PAST 70% TO FIRE' : 'Aim gently. Stay inside the 70% ring.', width / 2, 178);
       if (d.phase !== 'RESULT' && !isPaused) {
         const c = frontierQuickDrawControls(), pad = connectedGamepad();
@@ -42175,7 +42222,7 @@ function drawFrontierSaloonHud() {
           noStroke(); fill(241, 216, 170); textSize(10); text('AIM / FIRE', c.x, c.y + c.r + 15);
           fill(headAimToggle ? color(174, 72, 48) : color(58, 52, 42)); stroke(217, 182, 125); ellipse(c.headX, c.headY, 40, 40);
           noStroke(); fill(247, 220, 169); textSize(8); text(headAimToggle ? 'HEAD' : 'BODY', c.headX, c.headY);
-        } else { noStroke(); fill(231, 206, 159); textSize(11); text(pad ? 'RIGHT STICK · AIM <70% / FIRE >70%   RT · FIRE' : 'MOUSE · AIM   SPACE / CLICK · FIRE', width / 2, height - 116); }
+        } else if (!pad) { noStroke(); fill(231, 206, 159); textSize(11); text('MOUSE · AIM   SPACE / CLICK · FIRE', width / 2, height - 116); }
         noStroke(); fill(229, 204, 156); textSize(11); text('DUEL ROUNDS ' + d.ammo + '/6', width / 2 - 52, height - 171);
       }
     }

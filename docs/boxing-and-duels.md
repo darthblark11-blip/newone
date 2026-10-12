@@ -10,15 +10,19 @@ drag an extended fist onto somebody behind the player.
 
 | Action | Touch | Keyboard | Standard gamepad |
 | --- | --- | --- | --- |
-| Left straight | L STRAIGHT | E | RT |
-| Right jab | R JAB | R | LT |
-| Left hook | L HOOK | Q | RB |
-| Right hook | R HOOK | T | LB |
+| Left straight | L STRAIGHT | E | L2 / LT |
+| Right jab | R JAB | R | R2 / RT |
+| Left hook | L HOOK | Q | L1 / LB |
+| Right hook | R HOOK | T | R1 / RB |
 | Left upper-body sway | SWAY L | Space | X |
 | Right upper-body sway | SWAY R | H | Y |
 | Footwork | Left stick | WASD | Left stick |
 | Directional guard | Right stick | Arrow keys or IJKL | Right stick |
 | Return to equipped weapon outdoors | WEAPON icon | Tab | B |
+
+Connected gamepads hide the combat tutorial panel, touch controls and stance
+exit badge. B still exits outdoors, and the saloon's real scene actions remain
+available. Each shoulder controls its own hand, including R1's right-hook entry.
 
 Tap and release an attack for the head. Hold for at least 180 ms to lower the
 boxer's level and prepare a body shot, then release to throw it. Holding never
@@ -50,7 +54,7 @@ Guard directions are relative to the boxer, independent of their facing:
 | Left / right | Left / right outer ribs |
 
 Changing into the correct guard within 140 ms of contact parries the punch,
-flashes at the guard and knocks the attacker back into a **600 ms standing
+flashes at the guard and knocks the attacker back into a **2.6-second standing
 stun**. Holding the same direction keeps a block but does not refresh the parry
 window. An attacking arm opens its own guard; the other arm can still protect
 its selected area. Punches use the actual animated fist, forearm and head/body
@@ -75,6 +79,9 @@ and target anticipation are smoothed separately, so switching opponents does
 not snap the view. The bar fight
 uses separate GRIT and nonlethal directional knockouts; its first win still
 awards 75 score. Pause, save and leave-to-shop retain the outside equipment.
+Knocked-out fighters use the ground pass beneath standing characters and
+furniture, preserving their nonlethal falls and clothing. Outdoor nonlethal
+bodies follow the same rule, including in the closed interiors.
 
 ## Quick draw
 
@@ -104,6 +111,8 @@ node tools/check-boxing-render.js
 node tools/check-boxing-world.js
 node tools/check-boxing-refinements.js
 node tools/check-boxing-feedback.js
+node tools/check-boxing-gamepad-refinements.js
+node tools/check-boxing-ground-order.js
 node tools/check-frontier-saloon.js
 node tools/check-frontier-integration.js
 ```
@@ -119,6 +128,10 @@ bout produced nine combo hits and two parries without editing health or moving
 fighters by hand. Target switches moved the camera by at most 0.68 world units
 on the first frame. Separate native contact checks verify block sparks with
 zero damage, and outdoor entry preserves its original held finger until release.
+Controller review checks real forearm parry contact and stun expiry: attacks
+and sways stay disabled through 2599 ms and unlock at 2600 ms. Native saloon,
+biome and closed-room render checks put an overlapping knocked-out actor
+below the standing player and verify that each actor is painted once.
 
 ## Captured previews
 
@@ -131,5 +144,9 @@ zero damage, and outdoor entry preserves its original held finger until release.
 ![Compact sparks from a successful directional block](previews/boxing-block-sparks.png)
 
 ![A timed parry during the mobile bar fight](previews/dry-gulch-saloon.png)
+
+![Gamepad combat without the instruction panel covering fighters](previews/boxing-gamepad-clean.png)
+
+![A standing player drawn over the preserved nonlethal knockout model](previews/boxing-knockout-layering.png)
 
 ![Aimed quick draw victory using the native death animation](previews/dry-gulch-duel.png)

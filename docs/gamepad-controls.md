@@ -64,7 +64,8 @@ cancel an unfinished draw without firing. Draw state is transient and never
 saved.
 
 Boxing changes the combat bindings: the right stick guards eight directions,
-RT/LT throw the left straight/right jab, RB/LB throw hooks, and X/Y sway left
+L2/L1 throw the left straight/left hook, R2/R1 throw the right jab/right hook,
+and X/Y sway left
 or right. Tap and release a punch for the head; hold at least 180 ms to lower
 the stance, then release for the body. Press the opposite hand just after a
 landed hit for a timed combo. B returns to the
@@ -72,11 +73,19 @@ equipped weapon outdoors. Entering fists cancels an unfinished bow pull without
 firing or spending an arrow. Quick draw uses the right stick to aim below 70%
 travel and fire past it. See [Boxing and quick draw](boxing-and-duels.md).
 
+Connecting a controller also hides boxing tutorial overlays and the on-screen
+stance exit badge. B still leaves the outdoor stance; pause and saloon mission
+buttons remain available. Saloon and duel control hints disappear while a pad
+is connected, while GRIT, ammunition and duel cues remain visible. Native R1
+entry into unarmed boxing uses the same right hook as R1 during the fight;
+the Y entry alias keeps its left straight.
+
 Verification uses a simulated standard-layout pad through the real touch,
 gamepad, desktop and player update paths:
 
 ```sh
 node tools/check-gamepad.js
+node tools/check-boxing-gamepad-refinements.js
 node tools/check-bow-draw.js
 node tools/check-hunting-ballistics.js
 ```
@@ -87,6 +96,9 @@ gun/taser cycling, owned melee tools, unmapped down, reserved L1, simultaneous
 shoulders, touchscreen coexistence, axes/deadzone and disconnection/reconnect.
 It also captures the actual HUD labels and circles to verify hiding on idle
 detection, during pauses and after touch events, then restoration on disconnect.
+The boxing controller checks cover each anatomical hand on tap and body hold,
+pause and disconnect cancellation, native R1/Y entry, and actual hidden tutorial
+shapes and labels while keeping scene actions and gameplay state visible.
 
 `check-bow-draw.js` follows actual gamepad/touch/desktop and Character update
 paths through smooth draws, jab duds, neutral/end-stop/R3 releases, recentering,

@@ -51,6 +51,11 @@ Combo timing belongs to the initial press after actual landed contact, with
 one bounded alternating-hand continuation. Keep enemy telegraphs separate from
 the faster player timings. Saloon camera anticipation must remain damped across
 target changes; comic contact effects belong to resolved HIT/BLOCK/PARRY events.
+Parries apply 2600 ms of standing stun. Keep that separate from nonlethal
+knockouts: native fallen actors and saloon knockouts paint in the ground pass
+under standing characters, while their existing fall/recovery state stays live.
+Boxing shoulders match their hand: L2 straight/L1 hook on the left, R2 jab/R1
+hook on the right. Connected controllers hide combat instruction overlays.
 
 ## The gameplay loop this world serves
 
@@ -3519,6 +3524,8 @@ node tools/check-boxing-render.js # rendered joints and hurt/contact geometry ag
 node tools/check-boxing-world.js # native entry/exit, equipment, terrain and quest input
 node tools/check-boxing-refinements.js # press-timed combos, release-only body shots and weight transfer
 node tools/check-boxing-feedback.js # camera continuity and bounded contact effects
+node tools/check-boxing-gamepad-refinements.js # shoulder hands, held input and hidden controller hints
+node tools/check-boxing-ground-order.js # nonlethal bodies below standing actors in every scene
 node tools/check-cutscene.js       # scripted placement stays inside the sector
 node tools/check-resources.js      # harvestables, drops, the melee tool, persistence
 node tools/check-robot.js          # a machine dies like a machine, on all six paths
