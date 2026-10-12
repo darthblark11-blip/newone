@@ -46,6 +46,11 @@ canonical head/body/joint geometry also drives `paintBoxingFigure()`. Keep
 guards, parry timing, sways and hit contact on that shared geometry. Quick draw
 owns local aimed bullets/native corpse visuals and saved farther/faster tiers.
 See [Boxing and quick draw](docs/boxing-and-duels.md) for the control contract.
+Physical strikes fire on release: holds prepare a lowered body-shot stance.
+Combo timing belongs to the initial press after actual landed contact, with
+one bounded alternating-hand continuation. Keep enemy telegraphs separate from
+the faster player timings. Saloon camera anticipation must remain damped across
+target changes; comic contact effects belong to resolved HIT/BLOCK/PARRY events.
 
 ## The gameplay loop this world serves
 
@@ -3512,6 +3517,8 @@ node tools/check-frontier-integration.js # native input, persistence and scene i
 node tools/check-boxing-combat.js # swept fists, directional guards and fair attack turns
 node tools/check-boxing-render.js # rendered joints and hurt/contact geometry agree
 node tools/check-boxing-world.js # native entry/exit, equipment, terrain and quest input
+node tools/check-boxing-refinements.js # press-timed combos, release-only body shots and weight transfer
+node tools/check-boxing-feedback.js # camera continuity and bounded contact effects
 node tools/check-cutscene.js       # scripted placement stays inside the sector
 node tools/check-resources.js      # harvestables, drops, the melee tool, persistence
 node tools/check-robot.js          # a machine dies like a machine, on all six paths

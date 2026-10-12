@@ -41,9 +41,10 @@ function tap(x,y,id=77){ctx.touches=[{x,y,id}];ctx.mouseX=x;ctx.mouseY=y;probe('
 fresh();
 keys.add(69);probe('handleDesktop();');tick();
 check('boxingActive(player)&&!player.isArmed&&player.isUnarmed', 'Native held E enters the unarmed world stance');
-check('player._boxing.punch.kind==="LEFT_STRAIGHT"&&player._boxing.attackCount===1', 'Entry requests one shared straight rather than the legacy broad melee attack');
+check('!player._boxing.punch&&player._boxing.attackCount===0&&player._boxing.preparedPunch.kind==="LEFT_STRAIGHT"', 'Physical entry prepares its held straight without attacking');
 tick(32);keys.delete(69);tick();
-check('player._boxing.attackCount===1&&!player._boxing.punch', 'The entry key held through recovery and released cannot request a second punch');
+check('player._boxing.attackCount===1&&player._boxing.punch.level==="BODY"', 'A held entry key throws exactly one body straight on release');
+tick(20);
 keys.add(82);tick(2);keys.delete(82);tick();
 check('player._boxing.punch.kind==="RIGHT_JAB"&&player._boxing.punch.level==="HEAD"', 'A native R tap becomes a head jab');
 tick(25);keys.add(81);tick(13);keys.delete(81);tick();
@@ -57,10 +58,15 @@ check('Number.isFinite(player.x)&&Number.isFinite(player.y)&&player.hp===100&&pl
 
 fresh();keys.add(69);probe('handleDesktop();');tick();
 for(let i=0;i<225;i++){probe('handleTouches();handleGamepad();handleDesktop();');tick();}
-check('!boxingActive(player)&&player.isArmed&&player.meleeTimer===0', 'The physical E key held through idle expiry cannot automatically re-enter or punch');
+check('boxingActive(player)&&!player._boxing.punch&&player._boxing.attackCount===0&&player._boxing.preparedPunch.amount===1', 'A long physical entry hold keeps its body preparation without repeated punches');
 keys.delete(69);probe('handleTouches();handleDesktop();');tick();
+check('player._boxing.punch.level==="BODY"&&player._boxing.attackCount===1', 'Releasing a long entry hold performs one body strike');
+tick(220);
+check('!boxingActive(player)&&player.isArmed&&player.meleeTimer===0', 'The released entry stance expires safely after inactivity');
 keys.add(69);probe('handleDesktop();');tick();keys.clear();
-check('boxingActive(player)&&player._boxing.attackCount===1', 'Releasing E after idle expiry allows a deliberate fresh entry press');
+check('boxingActive(player)&&player._boxing.attackCount===0&&!player._boxing.punch', 'A fresh entry press after expiry prepares a deliberate new strike');
+tick();
+check('player._boxing.attackCount===1&&player._boxing.punch.level==="HEAD"', 'Releasing the fresh entry tap throws a head strike');
 
 fresh();probe(`var civilian=new Character(40.5,0,false,'FARMER_MALE');civilian.hp=100;
   var townWitness=new Character(100,0,false,'COWBOY');townWitness.isNeutral=true;townWitness.isFriendly=true;

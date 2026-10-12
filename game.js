@@ -1297,6 +1297,7 @@ if (isStoryMode) {
 	
     started = true; isDead = false; isWin = false; killStreak = 0; screenShake = 0;
     bullets = []; particles = []; splatters = []; corpses = []; enemiesList = []; barrels = []; orbs = []; grenades = []; fires = []; sludges = []; healthPacks = []; weaponDrops = []; resourceDrops = [];
+    _boxingWorldEffects.length = 0;
     grenadePickups = []; 
   
     generateMap(); 
@@ -6522,6 +6523,8 @@ viewBottom = camY + height / zoom + shakePad;
 
   if (typeof updateFires === 'function') updateFires();
   updateBullets(); updateGrenades(); if (typeof updatePlayerGrenades === 'function') updatePlayerGrenades(); if (typeof updatePlayerFlasks === 'function') updatePlayerFlasks(); updateParticles(); if (typeof updateLightnings === 'function') updateLightnings(); updateOrbs(); if (typeof updateShockwaves === 'function') updateShockwaves();
+  boxingAdvanceContactEffects(_boxingWorldEffects, doTick ? deltaTime : 0);
+  boxingDrawContactEffects(_boxingWorldEffects);
 
   // Weather particles live in world space so they parallax with the camera
   if (BIOME_ACTIVE) { drawNightLights(); if (weather) weather.drawWorld(); }
@@ -13501,13 +13504,14 @@ const BOXING = Object.freeze({
   PARRY_MS: 140, PARRY_STUN_MS: 600, PARRY_PUSH: 12, PARRY_FLASH_MS: 150,
   DODGE_MS: 430, DODGE_COOLDOWN_MS: 490, SWAY_DISTANCE: 15,
   SIDESTEP_DISTANCE: 23, SUBSTEP_MS: 6, ENEMY_TELEGRAPH_MS: 180,
-  ENEMY_ATTACK_GAP_MS: 290, ENEMY_REST_MS: 670, FIGHT_DISTANCE: 40.5, IDLE_EXIT_MS: 3000
+  ENEMY_ATTACK_GAP_MS: 290, ENEMY_REST_MS: 670, FIGHT_DISTANCE: 40.5, IDLE_EXIT_MS: 3000,
+  COMBO_WINDOW_MS: 120, COMBO_HOLD_MS: 420, COMBO_MAX: 4
 });
 const BOXING_PUNCHES = Object.freeze({
-  LEFT_STRAIGHT: Object.freeze({kind:'LEFT_STRAIGHT',side:-1,hook:false,windupMs:145,activeMs:100,recoveryMs:235,damage:25,reach:35}),
-  RIGHT_JAB: Object.freeze({kind:'RIGHT_JAB',side:1,hook:false,windupMs:95,activeMs:85,recoveryMs:180,damage:17,reach:33}),
-  LEFT_HOOK: Object.freeze({kind:'LEFT_HOOK',side:-1,hook:true,windupMs:180,activeMs:125,recoveryMs:255,damage:29,reach:34}),
-  RIGHT_HOOK: Object.freeze({kind:'RIGHT_HOOK',side:1,hook:true,windupMs:175,activeMs:125,recoveryMs:250,damage:27,reach:34})
+  LEFT_STRAIGHT: Object.freeze({kind:'LEFT_STRAIGHT',side:-1,hook:false,windupMs:70,activeMs:60,recoveryMs:145,enemyWindupMs:145,enemyActiveMs:100,enemyRecoveryMs:235,damage:25,reach:35}),
+  RIGHT_JAB: Object.freeze({kind:'RIGHT_JAB',side:1,hook:false,windupMs:45,activeMs:55,recoveryMs:115,enemyWindupMs:95,enemyActiveMs:85,enemyRecoveryMs:180,damage:17,reach:33}),
+  LEFT_HOOK: Object.freeze({kind:'LEFT_HOOK',side:-1,hook:true,windupMs:95,activeMs:80,recoveryMs:175,enemyWindupMs:180,enemyActiveMs:125,enemyRecoveryMs:255,damage:29,reach:34}),
+  RIGHT_HOOK: Object.freeze({kind:'RIGHT_HOOK',side:1,hook:true,windupMs:90,activeMs:80,recoveryMs:170,enemyWindupMs:175,enemyActiveMs:125,enemyRecoveryMs:250,damage:27,reach:34})
 });
 let _boxingActorSerial = 0;
 function boxingAlive(actor) {
@@ -13519,7 +13523,9 @@ function boxingEnter(actor,opponents,context='WORLD') {
   if(!boxingActive(actor))actor._boxing={active:true,id:++_boxingActorSerial,context,
     nowMs:0,idleMs:0,punch:null,dodge:null,guardSector:null,guardMs:99999,stunMs:0,
     cooldownMs:0,dodgeCooldownMs:0,parryFlashMs:0,hitFlashMs:0,target:null,
-    enemyRestMs:180+(_boxingActorSerial%3)*170,attackCount:0,director:null};
+    enemyRestMs:180+(_boxingActorSerial%3)*170,attackCount:0,director:null,
+    preparedPunch:null,queuedPunch:null,comboIntent:null,comboUntilMs:0,
+    lastLandedKind:null,lastLandedAttack:0,comboCount:0};
   actor._boxing.context=context;
   boxingTarget(actor,opponents||[]);
   return actor._boxing;
@@ -13556,17 +13562,65 @@ function boxingSetGuard(actor,dx,dy) {
   if(sector)b.idleMs=0;
   return sector;
 }
-function boxingRequestPunch(actor,kind,level='HEAD') {
-  if(!boxingActive(actor))return false;
-  const b=actor._boxing,d=BOXING_PUNCHES[typeof kind==='string'?kind:kind&&kind.kind];
-  if(!d||b.punch||b.stunMs>0||b.cooldownMs>0)return false;
-  b.punch={kind:d.kind,level:level==='BODY'?'BODY':'HEAD',elapsedMs:0,
-    windupMs:d.windupMs+(actor.isPlayer?0:BOXING.ENEMY_TELEGRAPH_MS),
-    activeMs:d.activeMs,recoveryMs:d.recoveryMs,hit:new Set(),
+function boxingCancelPunchPreparation(actor) {
+  if(!actor||!actor._boxing)return;
+  const b=actor._boxing;
+  b.preparedPunch=b.queuedPunch=b.comboIntent=null;
+  b.comboUntilMs=0;b.lastLandedKind=null;b.lastLandedAttack=0;b.comboCount=0;
+}
+function boxingReserveCombo(actor,kind) {
+  if(!boxingActive(actor)||!actor.isPlayer)return null;
+  const b=actor._boxing,d=BOXING_PUNCHES[kind],last=BOXING_PUNCHES[b.lastLandedKind];
+  if(b.comboIntent&&b.nowMs>b.comboIntent.expiresMs)b.comboIntent=null;
+  if(!d||!last||d.side===last.side||b.stunMs>0||b.cooldownMs>0||b.comboIntent||b.queuedPunch||
+    b.nowMs>b.comboUntilMs||!b.lastLandedAttack||b.punch&&(b.punch.comboUsed||b.punch.attackId!==b.lastLandedAttack))return null;
+  // Reserve the timing on PRESS, so preparing a body counter does not lose a
+  // well-timed input. A single bounded reservation cannot be refreshed by spam.
+  const intent={kind:d.kind,fromAttack:b.lastLandedAttack,comboIndex:Math.min(BOXING.COMBO_MAX,b.comboCount+1),
+    pressedMs:b.nowMs,expiresMs:b.nowMs+BOXING.COMBO_HOLD_MS};
+  b.comboIntent=intent;
+  if(b.punch)b.punch.comboUsed=true;
+  return intent;
+}
+function boxingStartPunch(actor,request) {
+  const b=actor._boxing,d=BOXING_PUNCHES[request.kind],comboIndex=request.comboIndex||1;
+  const playerPunch=!!actor.isPlayer,combo=playerPunch&&comboIndex>1;
+  // A continuation can face the current opponent, but never redirects a fist
+  // already travelling through its active contact arc.
+  if(b.target&&boxingAlive(b.target))actor.aimAngle=Math.atan2(b.target.y-actor.y,b.target.x-actor.x);
+  b.punch={kind:d.kind,level:request.level,elapsedMs:0,
+    windupMs:playerPunch?d.windupMs*(combo?.75:1):d.enemyWindupMs+BOXING.ENEMY_TELEGRAPH_MS,
+    activeMs:playerPunch?d.activeMs:d.enemyActiveMs,
+    recoveryMs:playerPunch?d.recoveryMs*(combo?.85:1):d.enemyRecoveryMs,
+    hit:new Set(),attackId:++b.attackCount,comboIndex,comboUsed:false,
+    damageScale:1+(comboIndex-1)*.08,preparedAmount:request.preparedAmount||0,
+    slipSide:request.slipSide||0,slipAmount:request.slipAmount||0,
     aimAngle:Number.isFinite(actor.aimAngle)?actor.aimAngle:0};
-  b.attackCount++;
+  b.comboIntent=null;b.comboUntilMs=0;b.lastLandedKind=null;b.lastLandedAttack=0;
+  b.comboCount=comboIndex;
   b.idleMs=0;
   return true;
+}
+function boxingRequestPunch(actor,kind,level='HEAD',options=null) {
+  if(!boxingActive(actor))return false;
+  const b=actor._boxing,d=BOXING_PUNCHES[typeof kind==='string'?kind:kind&&kind.kind];
+  if(!d||b.stunMs>0||b.cooldownMs>0||b.queuedPunch)return false;
+  const offered=options&&options.comboIntent;
+  const physicalInput=!!(options&&Object.prototype.hasOwnProperty.call(options,'comboIntent'));
+  const intent=physicalInput?offered:boxingReserveCombo(actor,d.kind);
+  const combo=!!(intent&&intent===b.comboIntent&&intent.kind===d.kind&&
+    intent.fromAttack===b.lastLandedAttack&&b.nowMs<=intent.expiresMs&&
+    (!b.punch||b.punch.attackId===intent.fromAttack));
+  if(offered&&offered===b.comboIntent&&!combo)b.comboIntent=null;
+  if(b.punch&&!combo)return false;
+  const dodgeAmount=boxingDodgeAmount(b.dodge),slip=actor.isPlayer&&d.side*dodgeAmount<-.1;
+  const request={kind:d.kind,level:level==='BODY'?'BODY':'HEAD',comboIndex:combo?intent.comboIndex:1,
+    preparedAmount:Math.max(0,Math.min(1,options&&options.preparedAmount||0)),
+    slipSide:slip?Math.sign(dodgeAmount):0,slipAmount:slip?Math.abs(dodgeAmount):0};
+  if(combo)b.comboIntent=null;
+  if(b.punch&&b.punch.elapsedMs<b.punch.windupMs+b.punch.activeMs){b.queuedPunch=request;b.idleMs=0;return true;}
+  b.punch=null;
+  return boxingStartPunch(actor,request);
 }
 function boxingRequestDodge(actor,side,moveX=0,moveY=0) {
   if(!boxingActive(actor))return false;
@@ -13618,43 +13672,91 @@ function boxingGuardArms(sector,shoulders) {
 }
 function boxingPose(actor) {
   const b=actor&&actor._boxing,active=boxingActive(actor),H=BOXING.HEAD_HEIGHT,B=BOXING.BODY_HEIGHT;
-  const sway=active?boxingDodgeAmount(b.dodge)*BOXING.SWAY_DISTANCE:0;
-  let extension=0,twist=0,phase='READY',progress=0;
+  let sway=active?boxingDodgeAmount(b.dodge)*BOXING.SWAY_DISTANCE:0;
+  let extension=0,twist=0,hipTwist=0,levelChange=0,phase='READY',progress=0;
   const p=active&&b.punch,d=p&&BOXING_PUNCHES[p.kind];
+  const prepared=active&&b.preparedPunch;
+  if(prepared&&prepared.level==='BODY')levelChange=boxingSmooth(prepared.amount||0);
   if(p){
-    if(p.elapsedMs<p.windupMs){phase='WINDUP';progress=p.elapsedMs/p.windupMs;twist=-d.side*.17*boxingSmooth(progress);}
-    else if(p.elapsedMs<p.windupMs+p.activeMs){phase='ACTIVE';progress=(p.elapsedMs-p.windupMs)/p.activeMs;extension=.15+.85*Math.sin(progress*Math.PI*.75);twist=-d.side*.38*extension;}
-    else{phase='RECOVERY';progress=(p.elapsedMs-p.windupMs-p.activeMs)/p.recoveryMs;extension=.75*(1-boxingSmooth(progress));twist=-d.side*.38*extension;}
+    if(p.elapsedMs<p.windupMs){
+      phase='WINDUP';progress=p.elapsedMs/Math.max(1,p.windupMs);
+      const load=boxingSmooth(progress);twist=d.side*(d.hook?.42:.20)*load;
+      hipTwist=d.side*(d.hook?.26:.12)*load;
+    }else if(p.elapsedMs<p.windupMs+p.activeMs){
+      phase='ACTIVE';progress=(p.elapsedMs-p.windupMs)/Math.max(1,p.activeMs);
+      // Load slowly, then drive through contact early. The rear hip leads the
+      // shoulder and a hook turns the whole rib cage instead of just its arm.
+      const drive=boxingSmooth(progress/.60);
+      extension=.12+.88*drive-.20*boxingSmooth((progress-.80)/.20);
+      twist=d.side*((d.hook?.42:.20)*(1-drive)-(d.hook?.91:.44)*drive);
+      hipTwist=d.side*((d.hook?.26:.12)*(1-drive)-(d.hook?.63:.29)*drive);
+    }else{
+      phase='RECOVERY';progress=(p.elapsedMs-p.windupMs-p.activeMs)/Math.max(1,p.recoveryMs);
+      const returnToGuard=1-boxingSmooth(progress);extension=.80*returnToGuard;
+      twist=-d.side*(d.hook?.91:.44)*returnToGuard;
+      hipTwist=-d.side*(d.hook?.63:.29)*returnToGuard;
+    }
+    if(p.level==='BODY'){
+      // Holding already drops the stance. An enemy's telegraph, or an unheld
+      // body request, sinks the knees before the fist leaves the guard.
+      const dip=phase==='WINDUP'?Math.max(p.preparedAmount||0,boxingSmooth(progress/.68)):
+        phase==='ACTIVE'?1:1-boxingSmooth(progress);
+      levelChange=Math.max(levelChange,dip);
+    }
+    if(p.slipSide&&p.slipAmount>0){
+      const carry=phase==='WINDUP'?1:phase==='ACTIVE'?1-boxingSmooth(progress)*.42:
+        .58*(1-boxingSmooth(progress));
+      const counterSway=p.slipSide*Math.min(1,p.slipAmount)*BOXING.SWAY_DISTANCE*carry;
+      // A slip counter remains visibly outside the incoming line until its
+      // driving shoulder unwinds. These are also its real head hurt-box joints.
+      if(Math.abs(counterSway)>Math.abs(sway)&&(!sway||Math.sign(counterSway)===Math.sign(sway)))sway=counterSway;
+    }
   }
   const stunLean=active&&b.stunMs>0?Math.sin(Math.min(1,b.stunMs/BOXING.PARRY_STUN_MS)*Math.PI)*3:0;
-  const torsoOffset={x:twist*.8-stunLean,y:sway*.35},body={x:torsoOffset.x,y:torsoOffset.y,rx:8,ry:11.5,angle:twist,z:B};
+  const reaction=active&&b.hitReaction,recoil=reaction?boxingSmooth((b.hitFlashMs||0)/120):0;
+  const reactionDef=reaction&&BOXING_PUNCHES[reaction.kind],hookRecoil=reactionDef&&reactionDef.hook?(reaction.side||0)*recoil:0;
+  twist+=hookRecoil*.12;
+  const driveWeight=extension*(d&&d.hook?1.5:2.3);
+  const torsoOffset={x:twist*.8+driveWeight-levelChange*2.4-stunLean-recoil*.85,y:sway*.35+hookRecoil*.45};
+  const body={x:torsoOffset.x,y:torsoOffset.y,rx:8+levelChange*.35,ry:11.5-levelChange*.9,angle:twist,z:B-levelChange*4};
   const shoulderCos=Math.cos(twist),shoulderSin=Math.sin(twist);
-  const shoulders=[boxingPoint(-2*shoulderCos+11*shoulderSin+torsoOffset.x,-2*shoulderSin-11*shoulderCos+torsoOffset.y,24),
-    boxingPoint(shoulderCos-11*shoulderSin+torsoOffset.x,shoulderSin+11*shoulderCos+torsoOffset.y,24)];
+  const shoulderHeight=24-levelChange*6;
+  const shoulders=[boxingPoint(-2*shoulderCos+11*shoulderSin+torsoOffset.x,-2*shoulderSin-11*shoulderCos+torsoOffset.y,shoulderHeight),
+    boxingPoint(shoulderCos-11*shoulderSin+torsoOffset.x,shoulderSin+11*shoulderCos+torsoOffset.y,shoulderHeight)];
   const guard=active&&b.stunMs<=0?b.guardSector:null;
   const arms=boxingGuardArms(guard,shoulders);
   // Resting forearms move with the ribs. Blocking joints retain their exact
   // facing coverage while a head slip changes the head's center independently.
-  for(const arm of arms){if(!arm.guard){arm.elbow.y+=torsoOffset.y;arm.fist.y+=torsoOffset.y;}}
+  for(const arm of arms){if(!arm.guard){
+    arm.elbow.x+=torsoOffset.x*.55;arm.fist.x+=torsoOffset.x*.30;
+    arm.elbow.y+=torsoOffset.y;arm.fist.y+=torsoOffset.y;
+    arm.elbow.z-=levelChange*5;arm.fist.z-=levelChange*7;
+  }}
   if(p){
     const i=d.side<0?0:1,z=p.level==='BODY'?B:H,s=d.side;
     let hx,hy;
     if(phase==='WINDUP'){
       const w=boxingSmooth(progress);hx=12-w*(d.hook?8:5);hy=s*(7+w*(d.hook?12:3));
     }else if(d.hook){
-      const u=phase==='ACTIVE'?progress:1;
+      const u=phase==='ACTIVE'?boxingSmooth(progress):1;
       // A hook enters on one side rather than sweeping the entire head twice.
       // Its bent elbow and fist trace the same quadratic arc in the renderer.
-      const v=1-u;hx=v*v*20+2*v*u*42+u*u*34;hy=s*(v*v*23+2*v*u*16-u*u*3);
+      const v=1-u;hx=v*v*4+2*v*u*42+u*u*34;hy=s*(v*v*19+2*v*u*16-u*u*3);
       if(phase==='RECOVERY'){const r=boxingSmooth(progress);hx=hx*(1-r)+12*r;hy=hy*(1-r)+s*7*r;}
     }else{
-      const u=phase==='ACTIVE'?boxingSmooth(progress):1-boxingSmooth(progress);
-      hx=12+(d.reach-12)*u;hy=s*(7*(1-u)+1.5*u);
+      const u=phase==='ACTIVE'?boxingSmooth(progress/.60):1-boxingSmooth(progress);
+      const start=phase==='ACTIVE'?7:12;
+      hx=start+(d.reach-start)*u;hy=s*((phase==='ACTIVE'?10:7)*(1-u)+1.5*u);
     }
     // The non-striking arm keeps its selected guard; a punching arm opens its
     // own guard. There is never an invisible shield over an extended fist.
     const shoulder=shoulders[i],elbow=boxingPoint(d.hook?(hx*.52):(hx*.44),s*(d.hook?16:11)+torsoOffset.y,z-3);
     arms[i]=boxingArm(s,shoulder,elbow,boxingPoint(hx,hy+torsoOffset.y,z),false);
+    arms[i].striking=true;arms[i].drive=extension;arms[i].hook=d.hook;arms[i].phase=phase;
+  }
+  for(const arm of arms){
+    arm.sx=arm.shoulder.x;arm.sy=arm.shoulder.y;arm.ex=arm.elbow.x;arm.ey=arm.elbow.y;
+    arm.hx=arm.fist.x;arm.hy=arm.fist.y;
   }
   arms.left=arms[0];arms.right=arms[1];
   const guardCapsules=arms.filter(a=>a.guard).map(a=>({a:a.elbow,b:a.fist,r:BOXING.GUARD_RADIUS,side:a.side}));
@@ -13669,8 +13771,18 @@ function boxingPose(actor) {
     feet[i].x+=stride*footDx;feet[i].y+=stride*footDy;
     feet[i].lift=Math.max(0,Math.cos(walk+i*Math.PI))*gait*1.2;
   }
-  return {active,hip:-.1+twist*.35,hips:-.1+twist*.35,torso:twist,torsoOffset,
-    extension,phase,progress,head:{x:1-Math.abs(sway)*.12-stunLean*1.25,y:sway,r:BOXING.HEAD_RADIUS,radius:BOXING.HEAD_RADIUS,z:H},
+  if(p){
+    const powerSide=d.side<0?0:1,pivot=feet[powerSide],drive=extension;
+    // The sole stays on the floor while the power heel turns. Only the small
+    // rear-foot adjustment accompanies a punch; a pure head sway stays planted.
+    pivot.heading+=hipTwist*.82;pivot.lift+=drive*(d.hook?1.4:1.0);
+    pivot.x+=drive*(powerSide===0?1.0:-.55);pivot.y+=drive*d.side*.65;
+    feet[1-powerSide].heading+=hipTwist*.15;
+  }
+  const hip=-.1+hipTwist,pelvis={x:-2.5+driveWeight*.42-levelChange*1.6,y:sway*.12,angle:hip};
+  return {active,hip,hips:hip,torso:twist,torsoOffset,pelvis,levelChange,
+    legCompression:levelChange*.80+Math.abs(sway)/BOXING.SWAY_DISTANCE*.20,
+    extension,phase,progress,head:{x:1+driveWeight*.55-levelChange*6-Math.abs(sway)*.12-stunLean*1.25-recoil*(reaction&&reaction.level==='HEAD'?1.8:.65),y:sway+hookRecoil*1.35,r:BOXING.HEAD_RADIUS,radius:BOXING.HEAD_RADIUS,z:H-levelChange*9},
     body,arms,leftArm:arms[0],rightArm:arms[1],guardCapsules,feet,dodge:sway/BOXING.SWAY_DISTANCE,
     guardSector:guard,punchKind:p&&p.kind,punchLevel:p&&p.level,
     stunMs:active?b.stunMs:0,parryFlash:active?b.parryFlashMs/BOXING.PARRY_FLASH_MS:0,
@@ -13728,30 +13840,43 @@ function boxingResolvePunch(attacker,defender,worldPoint,moveFn,onHit) {
   p.hit.add(defender);
   const db=defender._boxing;
   const outcome=guarded?(db&&db.guardMs<=BOXING.PARRY_MS?'PARRY':'BLOCK'):'HIT';
-  const event={attacker,defender,kind:p.kind,level:p.level,outcome,damage:outcome==='HIT'?d.damage:0,
+  const event={attacker,defender,kind:p.kind,level:p.level,outcome,damage:outcome==='HIT'?d.damage*(p.damageScale||1):0,
+    comboIndex:p.comboIndex||1,slipCounter:!!p.slipSide,
     point:{x:worldPoint.x,y:worldPoint.y,z:worldPoint.z},sector,stunMs:outcome==='PARRY'?BOXING.PARRY_STUN_MS:0};
   if(outcome==='PARRY'){
+    boxingCancelPunchPreparation(attacker);
     attacker._boxing.punch=null;attacker._boxing.stunMs=BOXING.PARRY_STUN_MS;
     attacker._boxing.cooldownMs=BOXING.PARRY_STUN_MS;
     db.parryFlashMs=BOXING.PARRY_FLASH_MS;
     const dx=attacker.x-defender.x,dy=attacker.y-defender.y,len=Math.hypot(dx,dy)||1;
     boxingTryMove(attacker,attacker.x+dx/len*BOXING.PARRY_PUSH,attacker.y+dy/len*BOXING.PARRY_PUSH,moveFn);
-  }else if(outcome==='HIT'&&db)db.hitFlashMs=120;
+  }else if(outcome==='HIT'){
+    if(db){db.hitFlashMs=120;db.hitReaction={kind:p.kind,level:p.level,side:d.side};}
+    // Only the first real landed contact opens this attack's timing window.
+    // Blocks, whiffs and additional targets cannot refresh the chain.
+    if(attacker.isPlayer&&!p.landedRecorded){
+      const b=attacker._boxing;p.landedRecorded=true;
+      b.comboUntilMs=b.nowMs+BOXING.COMBO_WINDOW_MS;
+      b.lastLandedKind=p.kind;b.lastLandedAttack=p.attackId;b.comboCount=p.comboIndex;
+    }
+  }
   if(onHit)onHit(event);
   return event;
 }
 function boxingUpdate(actor,dt,opponents,moveFn,onHit) {
   if(!boxingActive(actor))return [];
   const b=actor._boxing,events=[],total=Math.max(0,Math.min(500,Number(dt)||0));
+  if(b.stunMs>0)boxingCancelPunchPreparation(actor);
   boxingTarget(actor,opponents||[]);
   b.idleMs+=total;
-  if(actor.isPlayer&&b.context==='WORLD'&&b.idleMs>=BOXING.IDLE_EXIT_MS&&!b.punch&&!b.dodge&&
+  if(actor.isPlayer&&b.context==='WORLD'&&b.idleMs>=BOXING.IDLE_EXIT_MS&&!b.punch&&!b.dodge&&!b.preparedPunch&&
     (!b.target||Math.hypot(b.target.x-actor.x,b.target.y-actor.y)>160)){
     boxingExit(actor);return events;
   }
   let left=total;
   while(left>0){
     const step=Math.min(BOXING.SUBSTEP_MS,left);left-=step;b.nowMs+=step;
+    if(b.comboIntent&&b.nowMs>b.comboIntent.expiresMs)b.comboIntent=null;
     b.guardMs+=step;b.stunMs=Math.max(0,b.stunMs-step);b.cooldownMs=Math.max(0,b.cooldownMs-step);
     b.dodgeCooldownMs=Math.max(0,b.dodgeCooldownMs-step);b.parryFlashMs=Math.max(0,b.parryFlashMs-step);b.hitFlashMs=Math.max(0,b.hitFlashMs-step);
     if(b.dodge){
@@ -13781,7 +13906,9 @@ function boxingUpdate(actor,dt,opponents,moveFn,onHit) {
       }
       punch.elapsedMs=saved;
     }
-    if(b.punch===punch&&next>=end+punch.recoveryMs)b.punch=null;
+    if(b.punch===punch&&next>=end&&b.queuedPunch){
+      const request=b.queuedPunch;b.queuedPunch=null;b.punch=null;boxingStartPunch(actor,request);
+    }else if(b.punch===punch&&next>=end+punch.recoveryMs)b.punch=null;
   }
   return events;
 }
@@ -13827,7 +13954,8 @@ function boxingUpdateOpponents(playerActor,opponents,dt,moveFn,onHit) {
       const order=['RIGHT_JAB','LEFT_STRAIGHT','RIGHT_HOOK','LEFT_HOOK'];
       const kind=order[(index+b.attackCount)%order.length],level=(b.attackCount+index)%3===2?'BODY':'HEAD';
       if(boxingRequestPunch(actor,kind,level)){
-        b.enemyRestMs=BOXING.ENEMY_REST_MS+BOXING_PUNCHES[kind].windupMs+BOXING.ENEMY_TELEGRAPH_MS+BOXING_PUNCHES[kind].activeMs+BOXING_PUNCHES[kind].recoveryMs;
+        const punch=b.punch;
+        b.enemyRestMs=BOXING.ENEMY_REST_MS+punch.windupMs+punch.activeMs+punch.recoveryMs;
         director.turn=(index+1)%live.length;director.nextAttackMs=director.clock+BOXING.ENEMY_ATTACK_GAP_MS;
         break;
       }
@@ -13864,17 +13992,21 @@ function boxingFeet(e,b) {
   });
 }
 function drawBoxingLegs(e,b,rig) {
-  const feet=boxingFeet(e,b),l1=rig.thigh*STAND_FORE_LEG,l2=rig.shin*STAND_FORE_LEG;
+  const feet=boxingFeet(e,b),compression=b.legCompression||0;
+  const l1=rig.thigh*STAND_FORE_LEG*(1+compression*.12),l2=rig.shin*STAND_FORE_LEG*(1+compression*.12);
   const boot=color(red(e.pantsCol)*.55,green(e.pantsCol)*.55,blue(e.pantsCol)*.55);
   for(let i=0;i<2;i++){
-    const s=i===0?-1:1,foot=feet[i],ox=-3,oy=s*4.6;
+    const s=i===0?-1:1,foot=feet[i],pelvis=b.pelvis||{x:-3,y:0,angle:0};
+    const c=Math.cos(pelvis.angle||0),sn=Math.sin(pelvis.angle||0);
+    const ox=pelvis.x-sn*s*4.6,oy=pelvis.y+c*s*4.6;
     const ax=foot.x-Math.cos(foot.heading)*rig.foot*.34,ay=foot.y-Math.sin(foot.heading)*rig.foot*.34-foot.lift;
     const dx=ax-ox,dy=ay-oy,d=Math.max(.1,Math.min(Math.hypot(dx,dy),l1+l2-.01));
     const a=Math.atan2(dy,dx)+s*Math.acos(Math.max(-1,Math.min(1,(l1*l1+d*d-l2*l2)/(2*l1*d))));
     const kx=ox+Math.cos(a)*l1,ky=oy+Math.sin(a)*l1;
     if(BIOME_ACTIVE)figureContour();else noStroke();
-    // The knee, ankle and sole remain separate. A shorter, planted stance
-    // becomes a wider punch only while the lead steps or the rear heel pivots.
+    // The pelvis turns above planted boots. More bend at each knee reads as a
+    // level change; hip drive, a lifted power heel and a soft connected calf
+    // give the strike weight without skating the stance across the ground.
     drawFallBone(window,ox,oy,kx,ky,rig.thighW,e.pantsCol,undefined,undefined,{x:ax,y:ay,width:rig.shinW*.80});
     drawFallBone(window,kx,ky,ax,ay,rig.shinW*.80,e.pantsCol,undefined,undefined,false);
     push();translate(foot.x,foot.y-foot.lift);rotate(foot.heading);fill(boot);
@@ -13917,6 +14049,15 @@ function paintBoxingArm(g,e,arm,rig,skin,pass='ALL') {
   const a=Math.atan2(h.y-k.y,h.x-k.x),cx=Math.cos(a),cy=Math.sin(a);
   g.stroke(red(fistSkin)*.58,green(fistSkin)*.55,blue(fistSkin)*.54,160);g.strokeWeight(.55);
   for(const side of [-1,1])g.line(h.x+cx*2-cy*side*1.25,h.y+cy*2+cx*side*1.25,h.x+cx*.4-cy*side*1.25,h.y+cy*.4+cx*side*1.25);
+  if(arm.striking&&arm.phase==='ACTIVE'&&arm.drive>.40){
+    // Short comic motion ticks sit behind the driving forearm. They never add
+    // a second glove or shift its visible center away from actual contact.
+    g.stroke(244,219,172,135*(arm.drive-.25));g.strokeWeight(.70);
+    for(const side of [-1,1]){
+      const x=k.x-cy*side*4.5,y=k.y+cx*side*4.5;
+      g.line(x-cx*5,y-cy*5,x+cx*3,y+cy*3);
+    }
+  }
   g.noStroke();
 }
 
@@ -14955,7 +15096,9 @@ this.skeletonTimer = 0;
         boxingExit(this); finishWorldBoxing(this);
     }
     if (!boxingActive(this) && meleeInputHeld && !this.prevMeleeInputHeld && meleeUnlocked &&
-        !chemistSuitUnlocked && !this.mounted && meleeTool() === 'NONE') this.activateMelee(true);
+        !chemistSuitUnlocked && !this.mounted && meleeTool() === 'NONE') {
+      beginWorldBoxing(this); boxingSeedPhysicalEntryInput(this);
+    }
     if (boxingActive(this)) { updateWorldBoxingPlayer(this); return; }
     
     if (this.meleeCharge === undefined) this.meleeCharge = 0;
@@ -17974,6 +18117,80 @@ function buildPushBuckets(actors) {
 
 // Native fists share the saloon solver while preserving the world's harmless
 // civilian knockdowns and its existing four-hit hostile stun behavior.
+const BOXING_CONTACT_FX = Object.freeze({ maxCount: 48,
+  HIT: Object.freeze({ radius: 15, lifeMs: 240, rays: 9 }),
+  BLOCK: Object.freeze({ radius: 9, lifeMs: 210, rays: 6 }),
+  PARRY: Object.freeze({ radius: 23, lifeMs: 350, rays: 12 }) });
+const _boxingWorldEffects = [];
+let _boxingEffectSerial = 0;
+function boxingEmitContactEffect(event, store = _boxingWorldEffects) {
+  const def = event && BOXING_CONTACT_FX[event.outcome], p = event && event.point;
+  if (!def || !p || !Number.isFinite(p.x) || !Number.isFinite(p.y)) return null;
+  if (store.length >= BOXING_CONTACT_FX.maxCount) store.splice(0, store.length - BOXING_CONTACT_FX.maxCount + 1);
+  const effect = { x: p.x, y: p.y, outcome: event.outcome, ageMs: 0,
+    lifeMs: def.lifeMs, radius: def.radius, rays: def.rays,
+    angle: event.attacker && event.attacker.aimAngle || 0, seed: ++_boxingEffectSerial };
+  store.push(effect); return effect;
+}
+function boxingAdvanceContactEffects(store, dt) {
+  const step = Math.max(0, Math.min(100, Number(dt) || 0));
+  let n = 0;
+  for (const effect of store) {
+    effect.ageMs += step;
+    if (effect.ageMs < effect.lifeMs) store[n++] = effect;
+  }
+  store.length = n;
+}
+function boxingDrawContactEffects(store) {
+  for (const effect of store) {
+    const t = constrain(effect.ageMs / effect.lifeMs, 0, 1), fade = Math.pow(1 - t, .7),
+      popIn = .42 + .58 * Math.min(1, t * 9), r = effect.radius * popIn,
+      parry = effect.outcome === 'PARRY', block = effect.outcome === 'BLOCK';
+    push(); translate(effect.x, effect.y); rotate(effect.angle + effect.seed * .31);
+    // A hard ink rim, warm shaded lobes and white center give successful hits
+    // the same comic volume as the figures, rather than a soft smoke puff.
+    if (!block && t < .60) {
+      stroke(84, 51, 18, 215 * fade); strokeWeight(1.1); fill(255, 183, 35, 245 * fade);
+      beginShape();
+      for (let i = 0; i < effect.rays * 2; i++) {
+        const a = i * TWO_PI / (effect.rays * 2), tooth = i % 2 ? .38 : .82 + ((i + effect.seed) % 3) * .09;
+        vertex(Math.cos(a) * r * tooth, Math.sin(a) * r * tooth);
+      }
+      endShape(CLOSE); noStroke(); fill(255, 235, 83, 240 * fade);
+      beginShape();
+      for (let i = 0; i < 10; i++) {
+        const a = i * TWO_PI / 10, tooth = i % 2 ? .30 : .63;
+        vertex(Math.cos(a) * r * tooth, Math.sin(a) * r * tooth);
+      }
+      endShape(CLOSE); fill(255, 253, 223, 240 * fade); ellipse(0, 0, r * .43, r * .36);
+    }
+    if (parry || block) {
+      noFill(); stroke(parry ? 164 : 183, parry ? 246 : 223, 255, (parry ? 235 : 160) * fade);
+      strokeWeight(parry ? 1.6 : .95);
+      const ring = effect.radius * (.28 + t * 1.12); ellipse(0, 0, ring * 2, ring * 2);
+      if (parry) { stroke(255, 246, 163, 220 * fade); ellipse(0, 0, ring * 1.55, ring * 1.55); }
+      else {
+        noStroke(); fill(235, 252, 255, 240 * fade);
+        const k = r * .52; quad(-k, 0, 0, -k * 1.3, k, 0, 0, k * 1.3);
+      }
+    }
+    // Short angular rays and separately travelling chips make the contact
+    // readable even when fists and heads briefly cover the central burst.
+    for (let i = 0; i < effect.rays; i++) {
+      const a = i * TWO_PI / effect.rays + (effect.seed % 5) * .07,
+        jitter = ((i * 7 + effect.seed) % 5) * .055, start = effect.radius * (.65 + t * .85 + jitter),
+        end = start + effect.radius * (block ? .30 : .44) * (1 - t), ca = Math.cos(a), sa = Math.sin(a);
+      stroke(block ? 196 : parry ? 173 : 255, block ? 237 : parry ? 246 : 228, block || parry ? 255 : 84, 240 * fade);
+      strokeWeight(block ? 1.15 : 1.5); line(ca * start, sa * start, ca * end, sa * end);
+      if (i % 2 === 0) {
+        const chip = effect.radius * (.6 + t * 1.65 + jitter);
+        noStroke(); fill(block ? 226 : 255, block ? 249 : 219, block ? 255 : 86, 230 * fade);
+        ellipse(ca * chip, sa * chip, (parry ? 2.9 : 2.1) * fade, (parry ? 2.9 : 2.1) * fade);
+      }
+    }
+    pop();
+  }
+}
 function worldBoxingTargets(actor = player) {
   if (!actor) return [];
   return enemiesList.filter(e => e && e !== actor && e.hp > 0 && !e.dead && !e.knockedOut &&
@@ -18032,9 +18249,10 @@ function interactWorldBoxingActivity(mx = null, my = null) {
 }
 function worldBoxingHit(event) {
   const { attacker, defender, outcome } = event;
+  boxingEmitContactEffect(event);
   if (outcome !== 'HIT') { sfx.hitArmor(); return; }
   defender.hitFlash = 4; screenShake = Math.max(screenShake, 3);
-  sfx.hitBody(); emit(event.point.x, event.point.y, 6, color(209, 191, 159), 'DUST');
+  sfx.hitBody();
   if (defender.isPlayer) { defender.takeDamage(event.damage, attacker); return; }
   defender.punchHitCount = (defender.punchHitCount || 0) + 1;
   if (unarmedCivilian(defender) || defender.punchHitCount >= 4) {
@@ -20341,24 +20559,48 @@ function boxingLeaveInput(actor = player, contextState = null) {
   if (!window.__frontierConsumedTouches) window.__frontierConsumedTouches = new Set();
   for (const t of touches) window.__frontierConsumedTouches.add(t.id);
   const state = contextState || boxingNativeInputState(actor);
+  const entryPads = state.entryPads || [];
   state.touches = new Map(); state.held = new Map(); state.edges = new Set();
+  boxingCancelPunchPreparation(actor);
   boxingResetInput(actor);
+  // Held keyboard/pad attacks are consumed just like held fingers. Resuming a
+  // paused fight cannot turn the old hold into a fresh release attack.
+  boxingSeedEntryInput(actor, state);
+  if (state !== boxingNativeInputState(actor)) {
+    boxingNativeInputState(actor).entryPads = entryPads;
+    boxingSeedEntryInput(actor);
+  }
 }
-function boxingSeedEntryInput(actor = player) {
-  const state = boxingInputState(boxingNativeInputState(actor)), pad = connectedGamepad();
+function boxingSeedEntryInput(actor = player, contextState = null) {
+  const state = boxingInputState(contextState || boxingNativeInputState(actor)), pad = connectedGamepad();
   const key = code => typeof keyIsDown === 'function' && keyIsDown(code);
   for (const [id, down, punch] of [
     ['KEY_E', key(69), 'LEFT_STRAIGHT'], ['KEY_R', key(82), 'RIGHT_JAB'],
     ['KEY_Q', key(81), 'LEFT_HOOK'], ['KEY_RIGHT_HOOK', key(84) || key(90), 'RIGHT_HOOK'],
     ...[[7, 'LEFT_STRAIGHT'], [6, 'RIGHT_JAB'], [5, 'LEFT_HOOK'], [4, 'RIGHT_HOOK']]
       .map(([i, punch]) => ['PAD_' + i, !!(pad && pad.buttons[i] && pad.buttons[i].pressed), punch])
-  ]) if (down) state.held.set(id, { punch, startedMs: state.clockMs, bodyFired: true });
+  ]) if (down) state.held.set(id, { punch, startedMs: state.clockMs, consumed: true });
+  for (const i of state.entryPads || []) if (pad && pad.buttons[i] && pad.buttons[i].pressed)
+    state.held.set('PAD_ENTRY_' + i, { punch: 'LEFT_STRAIGHT', startedMs: state.clockMs, consumed: true });
   if (!window.__frontierConsumedTouches) window.__frontierConsumedTouches = new Set();
-  const layout = boxingControlLayout(), meleeY = rightStick.base.y - 250;
+  const layout = boxingControlLayout(), meleeY = (rightStick.base && rightStick.base.y || height - 110) - 250;
   for (const t of touches) {
     const oldMelee = Math.hypot(t.x - (width - 105), t.y - meleeY) < 45;
     const punch = layout.buttons.some(b => !b.action.startsWith('DODGE') && Math.hypot(t.x - b.x, t.y - b.y) <= b.r);
     if (oldMelee || punch) window.__frontierConsumedTouches.add(t.id);
+  }
+  return state;
+}
+function boxingSeedPhysicalEntryInput(actor = player) {
+  const state = boxingInputState(boxingNativeInputState(actor)), pad = connectedGamepad();
+  const down = i => !!(pad && pad.buttons[i] && pad.buttons[i].pressed);
+  // Native melee begins on E, Y/RB, or the old MELEE touch button. Keep that
+  // physical source through the HUD change; entry itself throws no punch.
+  state.entryPads = [3, 5].filter(down);
+  const meleeY = (rightStick.base && rightStick.base.y || height - 110) - 250;
+  for (const t of touches) if (Math.hypot(t.x - (width - 105), t.y - meleeY) < 45) {
+    state.touches.set(t.id, { id: t.id, role: 'BUTTON', action: 'LEFT_STRAIGHT', x: t.x, y: t.y,
+      startedMs: state.clockMs, consumed: false, began: true, comboIntent: null });
   }
   return state;
 }
@@ -20373,7 +20615,7 @@ function boxingInputState(state) {
 function boxingCaptureTouch(state, id, x, y, layout) {
   if (state.touches.has(id)) return state.touches.get(id);
   const owned = role => Array.from(state.touches.values()).some(t => t.role === role);
-  const captured = { id, role: 'IDLE', x, y, startedMs: state.clockMs, bodyFired: false };
+  const captured = { id, role: 'IDLE', x, y, startedMs: state.clockMs, consumed: false };
   if (window.__frontierConsumedTouches && window.__frontierConsumedTouches.has(id)) {
     state.touches.set(id, captured); return captured;
   }
@@ -20422,9 +20664,14 @@ function boxingReadInput(actor, contextState = null) {
   state.clockMs += Math.min(100, Math.max(0, deltaTime || 16.67));
   const layout = boxingControlLayout();
   const unit = (x, y) => { const mag = Math.hypot(x, y); return mag > 1 ? [x / mag, y / mag] : [x, y]; };
-  const pressPunch = (punch, level) => {
-    const accepted = boxingRequestPunch(actor, punch, level);
-    result.actions.push({ kind: 'PUNCH', punch, level, accepted });
+  const preparations = [];
+  actor._boxing.preparedPunch = null;
+  const pressPunch = (punch, level, held) => {
+    const accepted = boxingRequestPunch(actor, punch, level, {
+      comboIntent: held && held.comboIntent,
+      preparedAmount: level === 'BODY' ? 1 : 0
+    });
+    result.actions.push({ kind: 'PUNCH', punch, level, accepted, queued: accepted && !!actor._boxing.queuedPunch });
   };
   const pressDodge = side => {
     const accepted = boxingRequestDodge(actor, side, result.moveX, result.moveY);
@@ -20432,11 +20679,14 @@ function boxingReadInput(actor, contextState = null) {
   };
   const heldPunch = (id, punch, down) => {
     let h = state.held.get(id);
-    if (down && !h) { h = { punch, startedMs: state.clockMs, bodyFired: false }; state.held.set(id, h); }
-    if (down && h && !h.bodyFired && state.clockMs - h.startedMs >= BOXING_INPUT.bodyHoldMs) {
-      h.bodyFired = true; pressPunch(punch, 'BODY');
+    if (down && !h) {
+      h = { punch, startedMs: state.clockMs, consumed: false, comboIntent: boxingReserveCombo(actor, punch) };
+      state.held.set(id, h);
+    }
+    if (down && h && !h.consumed) {
+      preparations.push({ kind: punch, level: 'BODY', amount: Math.min(1, (state.clockMs - h.startedMs) / BOXING_INPUT.bodyHoldMs), startedMs: h.startedMs });
     } else if (!down && h) {
-      if (!h.bodyFired) pressPunch(punch, 'HEAD');
+      if (!h.consumed) pressPunch(punch, state.clockMs - h.startedMs >= BOXING_INPUT.bodyHoldMs ? 'BODY' : 'HEAD', h);
       state.held.delete(id);
     }
   };
@@ -20447,6 +20697,16 @@ function boxingReadInput(actor, contextState = null) {
   };
   const key = code => typeof keyIsDown === 'function' && keyIsDown(code);
   const pad = connectedGamepad(), pb = i => !!(pad && pad.buttons[i] && pad.buttons[i].pressed);
+  if (!pad && state.padWasConnected) {
+    // Losing a controller cancels its holds; disconnect is never a release
+    // command for a prepared body punch.
+    for (const [id, h] of state.held) if (id.startsWith('PAD_')) {
+      if (actor._boxing.comboIntent === h.comboIntent) actor._boxing.comboIntent = null;
+      state.held.delete(id);
+    }
+    for (const id of state.edges) if (id.startsWith('PAD_')) state.edges.delete(id);
+    state.entryPads = [];
+  }
   if (state.isWorld) {
     const interactKey = edge('INTERACT_KEY', key(70)), interactPad = edge('INTERACT_PAD', pb(0));
     result.interact = interactKey || interactPad;
@@ -20502,9 +20762,9 @@ function boxingReadInput(actor, contextState = null) {
       if (t.action.startsWith('DODGE')) {
         if (down && !t.fired) { t.fired = true; pressDodge(t.action === 'DODGE_LEFT' ? -1 : 1); }
       } else {
-        if (down && !t.bodyFired && state.clockMs - t.startedMs >= BOXING_INPUT.bodyHoldMs) {
-          t.bodyFired = true; pressPunch(t.action, 'BODY');
-        } else if (!down && !t.bodyFired) pressPunch(t.action, 'HEAD');
+        if (down && !t.began) { t.began = true; t.comboIntent = boxingReserveCombo(actor, t.action); }
+        if (down && !t.consumed) preparations.push({ kind: t.action, level: 'BODY', amount: Math.min(1, (state.clockMs - t.startedMs) / BOXING_INPUT.bodyHoldMs), startedMs: t.startedMs });
+        else if (!down && !t.consumed) pressPunch(t.action, state.clockMs - t.startedMs >= BOXING_INPUT.bodyHoldMs ? 'BODY' : 'HEAD', t);
       }
     } else if (t.role === 'PAUSE' && down && !t.fired) {
       t.fired = true; isPaused = true; pauseMenuState = 'MAIN';
@@ -20516,10 +20776,19 @@ function boxingReadInput(actor, contextState = null) {
   heldPunch('KEY_RIGHT_HOOK', 'RIGHT_HOOK', key(84) || key(90));
   if (edge('KEY_SWAY_LEFT', key(32) || key(16))) pressDodge(-1);
   if (edge('KEY_SWAY_RIGHT', key(72))) pressDodge(1);
+  const entryPads = state.entryPads || [];
+  for (const i of entryPads) heldPunch('PAD_ENTRY_' + i, 'LEFT_STRAIGHT', pb(i));
   for (const [i, punch] of [[7, 'LEFT_STRAIGHT'], [6, 'RIGHT_JAB'], [5, 'LEFT_HOOK'], [4, 'RIGHT_HOOK']])
-    heldPunch('PAD_' + i, punch, pb(i));
+    if (!entryPads.includes(i)) heldPunch('PAD_' + i, punch, pb(i));
   if (edge('PAD_SWAY_LEFT', pb(2))) pressDodge(-1);
-  if (edge('PAD_SWAY_RIGHT', pb(3))) pressDodge(1);
+  if (!entryPads.includes(3) && edge('PAD_SWAY_RIGHT', pb(3))) pressDodge(1);
+  state.entryPads = entryPads.filter(pb);
+  if (actor._boxing.stunMs <= 0 && preparations.length) {
+    // Multiple fingers may prepare different strikes. Releasing one leaves the
+    // other hold intact; the most advanced, then newest, preparation is drawn.
+    preparations.sort((a, b) => b.amount - a.amount || b.startedMs - a.startedMs);
+    actor._boxing.preparedPunch = preparations[0]; actor._boxing.idleMs = 0;
+  }
   if (pad) { window.showOnScreenControls = false; state.padWasConnected = true; }
   else if (state.padWasConnected) { if (!window.isDesktop) window.showOnScreenControls = true; state.padWasConnected = false; }
   state.lastInput = result; return result;
@@ -20541,17 +20810,23 @@ function drawBoxingControls(actor = player, contextState = null) {
     fill(235, 221, 181); textSize(width < 600 ? 10 : 12);
     text(pad ? 'RT / LT · STRAIGHT / JAB     RB / LB · HOOKS     X / Y · SWAY' : 'E / R · STRAIGHT / JAB     Q / T · HOOKS     SPACE / H · SWAY', width / 2, legendBottom - 29);
     fill(184, 214, 229); textSize(width < 600 ? 9 : 11);
-    text(pad ? 'RIGHT STICK · 8-WAY GUARD     TAP HEAD · HOLD BODY' : 'ARROWS / IJKL · 8-WAY GUARD     TAP HEAD · HOLD BODY', width / 2, legendBottom - 13);
+    text(pad ? 'RIGHT STICK · GUARD     TAP HEAD · HOLD → RELEASE BODY' : 'ARROWS / IJKL · GUARD     TAP HEAD · HOLD → RELEASE BODY', width / 2, legendBottom - 13);
     pop(); return;
   }
   const active = action => Array.from(state.touches.values()).some(t => t.role === 'BUTTON' && t.action === action);
   for (const b of layout.buttons) {
     const sway = b.action.startsWith('DODGE');
-    fill(active(b.action) ? color(89, 101, 111, 235) : color(27, 30, 35, 205));
+    const prep = actor._boxing.preparedPunch, preparing = prep && prep.kind === b.action;
+    const ready = preparing && prep.amount >= 1;
+    fill(ready ? color(132, 94, 37, 245) : active(b.action) ? color(89, 101, 111, 235) : color(27, 30, 35, 205));
     stroke(sway ? color(108, 205, 230) : color(226, 167, 89)); strokeWeight(1.6); ellipse(b.x, b.y, b.r * 2, b.r * 2);
+    if (preparing && prep.amount > 0) {
+      noFill(); stroke(255, 224, 119); strokeWeight(2.6);
+      arc(b.x, b.y, b.r * 2 - 7, b.r * 2 - 7, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * prep.amount);
+    }
     noStroke(); fill(248, 231, 194); textSize(b.action === 'LEFT_STRAIGHT' ? 8.2 : 9.3);
     text(b.label, b.x, b.y - 1);
-    fill(173, 190, 200); textSize(7.5); text(sway ? 'STEP + DIR' : 'HEAD / BODY', b.x, b.y + 12);
+    fill(ready ? color(255, 232, 159) : color(173, 190, 200)); textSize(7.5); text(sway ? 'STEP + DIR' : ready ? 'RELEASE BODY' : 'HEAD / BODY', b.x, b.y + 12);
   }
   const drawPad = (p, label, dx, dy, guard) => {
     stroke(guard ? color(126, 195, 224, 150) : color(229, 209, 173, 100)); strokeWeight(1.2);
@@ -20567,7 +20842,9 @@ function drawBoxingControls(actor = player, contextState = null) {
   drawPad(layout.leftStick, 'FOOTWORK', input.moveX || 0, input.moveY || 0, false);
   drawPad(layout.rightStick, 'GUARD', input.guardX || 0, input.guardY || 0, true);
   noStroke(); fill(235, 217, 174); textSize(9);
-  text('TAP HEAD · HOLD BODY', (layout.buttons[0].x + layout.buttons[1].x) / 2, layout.bounds.top - 13);
+  const hintX = (layout.buttons[0].x + layout.buttons[1].x) / 2;
+  text('TAP HEAD', hintX, layout.bounds.top - 25);
+  text('HOLD → RELEASE BODY', hintX, layout.bounds.top - 13);
   pop();
 }
 function handleGamepad() {
@@ -41164,7 +41441,7 @@ function enterFrontierSaloon(mode = 'SALOON') {
     meleeToolSel: window.meleeToolSel, zoom, camX, camY };
   boxingExit(player);
   _frontierSaloonSession = { mode: 'SALOON', save, patrons: frontierSaloonCreatePeople(), fighters: [],
-    brawl: 'IDLE', grit: 100, boxingInput: {}, hitMs: 0,
+    brawl: 'IDLE', grit: 100, boxingInput: {}, boxingEffects: [], camera: null, hitMs: 0,
     menu: false, menuChoice: frontierSaloonProgress.brawlCleared ? 'DUEL' : 'BRAWL',
     pause: false, keys: {}, fireWas: true, padWas: [], duel: null, elapsedMs: 0 };
   // Entering on a held F/A consumes that edge in the exterior. Seed the room
@@ -41174,6 +41451,7 @@ function enterFrontierSaloon(mode = 'SALOON') {
   const entryPad = connectedGamepad();
   if (entryPad) _frontierSaloonSession.padWas = entryPad.buttons.map(b => !!b.pressed);
   player.x = FRONTIER_SALOON_ROOM.entry.x; player.y = FRONTIER_SALOON_ROOM.entry.y;
+  _boxingWorldEffects.length = 0;
   player.mounted = false; player.isArmed = false; player.isUnarmed = true;
   player.currentWeapon = WEAPONS.PISTOL; player.reloadTimer = 0; player.meleeTimer = 0;
   player.muzzleFlash = 0; player.weaponKick = 0; player.throwAnimTimer = 0; player.cannonCharge = 0;
@@ -41194,6 +41472,7 @@ function frontierSaloonSavePlayer() {
 function exitFrontierSaloon() {
   const s = _frontierSaloonSession;
   if (!s) return false;
+  s.boxingEffects.length = 0;
   boxingLeaveInput(player, s.boxingInput); boxingExit(player); s.fighters.forEach(boxingExit);
   if (player) {
     Object.assign(player, { x: s.save.x, y: s.save.y, aimAngle: s.save.aimAngle, moveAngle: s.save.moveAngle,
@@ -41211,11 +41490,14 @@ function exitFrontierSaloon() {
 function startFrontierSaloonBrawl() {
   const s = _frontierSaloonSession; if (!s || s.mode !== 'SALOON') return false;
   boxingLeaveInput(player, s.boxingInput); boxingExit(player); s.fighters.forEach(boxingExit);
-  s.menu = false; s.brawl = 'ACTIVE'; s.grit = 100; s.boxingInput = {}; s.hitMs = 0;
+  s.menu = false; s.brawl = 'ACTIVE'; s.grit = 100; s.boxingInput = {}; s.boxingEffects.length = 0; s.hitMs = 0;
   s.fighters = [frontierSaloonPerson(90, 40, 'COWBOY', 'BUCK'),
     frontierSaloonPerson(290, 45, 'COWBOY', 'RED'), frontierSaloonPerson(180, -75, 'BANDIT', 'SHORTY')];
   s.fighters.forEach((c, i) => { c.hp = c.maxHp = 72 + i * 12; boxingEnter(c, [player], 'SALOON'); });
   player.x = FRONTIER_SALOON_ROOM.fight.x; player.y = FRONTIER_SALOON_ROOM.fight.y;
+  // The opening mark is a scene transition; target changes during the bout
+  // retain this same camera and its filtered anticipation.
+  s.camera = null;
   player.isArmed = false; player.boxingHold = 180;
   boxingEnter(player, s.fighters, 'SALOON');
   frontierSaloonNotify('BARROOM PEACEMAKER\nSlip punches, guard the angle and counter. Fists only.');
@@ -41232,7 +41514,9 @@ function frontierSaloonBoxingMove(actor, nx, ny) {
   return Math.hypot(actor.x - nx, actor.y - ny) < .01;
 }
 function frontierSaloonBoxingHit(event) {
-  const s = _frontierSaloonSession; if (!s || s.brawl !== 'ACTIVE' || event.outcome !== 'HIT') return;
+  const s = _frontierSaloonSession; if (!s || s.brawl !== 'ACTIVE') return;
+  boxingEmitContactEffect(event, s.boxingEffects);
+  if (event.outcome !== 'HIT') { sfx.hitArmor(); return; }
   const target = event.defender;
   if (target === player) {
     s.grit = Math.max(0, s.grit - Math.max(7, Math.round(event.damage * .75)));
@@ -41253,6 +41537,7 @@ function frontierSaloonKnockOut(c, angle) {
 }
 function startFrontierQuickDraw() {
   const s = _frontierSaloonSession; if (!s) return false;
+  s.boxingEffects.length = 0;
   boxingLeaveInput(player, s.boxingInput); boxingExit(player); s.fighters.forEach(boxingExit); s.boxingInput = {};
   s.mode = 'DUEL'; s.menu = false; s.fighters = []; s.brawl = 'IDLE';
   frontierSaloonProgress.duelAttempts = Math.min(9999, frontierSaloonProgress.duelAttempts + 1);
@@ -41524,6 +41809,7 @@ function updateFrontierSaloonActivity(advanceTime = true) {
   frontierSaloonInput(advanceTime);
   if (!_frontierSaloonSession || isPaused || dt <= 0) return;
   s.elapsedMs += dt;
+  boxingAdvanceContactEffects(s.boxingEffects, dt);
   player.muzzleFlash = Math.max(0, player.muzzleFlash - dt / 16.67);
   player.weaponKick = Math.max(0, player.weaponKick - dt / 16.67);
   s.hitMs = Math.max(0, s.hitMs - dt);
@@ -41712,23 +41998,39 @@ function paintFrontierSaloonBrawler(c) {
   if (c.hp < c.maxHp) { noStroke(); fill(28, 20, 15, 190); rect(-23, -34, 46, 4, 2); fill(227, 165, 76); rect(-23, -34, 46 * c.hp / c.maxHp, 4, 2); }
   pop();
 }
-function drawFrontierSaloonInterior() {
-  const s = _frontierSaloonSession; if (!s || s.mode !== 'SALOON') return;
-  background(24, 17, 16);
-  // This is a large, explorable room, so keep the figures readable and follow
-  // them across it. Fitting the whole saloon into a portrait phone shrank a
-  // punch and a carefully shaded hand to only a few pixels.
+function frontierSaloonCamera(s, dt = deltaTime) {
+  // Lock-on turns the boxer immediately, but never moves the camera directly.
+  // Filter the small look-ahead first, then follow the player's position with
+  // a second damped motion so even opposite-side target swaps remain gentle.
   const scaleRoom = Math.max(s.brawl === 'ACTIVE' && height < 650 ? 1.15 : 1.35, Math.min(1.75, width / 540));
   const halfX = width / (2 * scaleRoom), halfY = Math.max(100, (height - 280) / (2 * scaleRoom));
   const maxX = Math.max(0, FRONTIER_SALOON_ROOM.right - halfX + 18), maxY = Math.max(0, FRONTIER_SALOON_ROOM.bottom - halfY + 12);
-  const target = boxingActive(player) ? boxingTarget(player, s.fighters) : null;
-  const followX = target ? player.x + constrain((target.x - player.x) * .38, -halfX * .30, halfX * .30) : player.x;
-  const followY = target ? player.y + constrain((target.y - player.y) * .30, -halfY * .24, halfY * .24) : player.y;
-  const cx = constrain(followX, -maxX, maxX), cy = constrain(followY - 48, -maxY, maxY);
+  const target = boxingActive(player) && boxingAlive(player._boxing.target) ? player._boxing.target : null,
+    lookX = target ? constrain((target.x - player.x) * .22, -halfX * .16, halfX * .16) : 0,
+    lookY = target ? constrain((target.y - player.y) * .18, -halfY * .14, halfY * .14) : 0;
   const mobileFight = s.brawl === 'ACTIVE' && !connectedGamepad() && (!window.isDesktop || window.showOnScreenControls),
     centerX = mobileFight ? width * .34 : width / 2,
     centerY = mobileFight ? Math.max(185, Math.min(height * .43, height - 340)) : height / 2 - 35;
-  push(); translate(centerX, centerY); scale(scaleRoom); translate(-cx, -cy);
+  if (!s.camera) s.camera = { x: constrain(player.x, -maxX, maxX), y: constrain(player.y - 48, -maxY, maxY),
+    lookX: 0, lookY: 0, scale: scaleRoom, centerX, centerY };
+  const camera = s.camera, step = isPaused ? 0 : Math.max(0, Math.min(100, Number(dt) || 0)),
+    lookBlend = 1 - Math.exp(-step / 260), followBlend = 1 - Math.exp(-step / 145), frameBlend = 1 - Math.exp(-step / 180);
+  camera.lookX += (lookX - camera.lookX) * lookBlend; camera.lookY += (lookY - camera.lookY) * lookBlend;
+  const x = constrain(player.x + camera.lookX, -maxX, maxX), y = constrain(player.y + camera.lookY - 48, -maxY, maxY),
+    dx = (x - camera.x) * followBlend, dy = (y - camera.y) * followBlend,
+    distance = Math.hypot(dx, dy), limit = step * .42, travel = distance > limit && distance > 0 ? limit / distance : 1;
+  camera.x += dx * travel; camera.y += dy * travel;
+  camera.scale += (scaleRoom - camera.scale) * frameBlend;
+  camera.centerX += (centerX - camera.centerX) * frameBlend; camera.centerY += (centerY - camera.centerY) * frameBlend;
+  return camera;
+}
+function drawFrontierSaloonInterior() {
+  const s = _frontierSaloonSession; if (!s || s.mode !== 'SALOON') return;
+  background(24, 17, 16);
+  // Keep the figures large and the mobile attack controls clear while the
+  // smoothed camera follows the player through the explorable saloon.
+  const camera = frontierSaloonCamera(s);
+  push(); translate(camera.centerX, camera.centerY); scale(camera.scale); translate(-camera.x, -camera.y);
   paintFrontierSaloonRoom();
   const layers = frontierSaloonFurniture().map(b => ({ y: b.y + b.h / 2, draw: () => paintFrontierSaloonSolid(b) }));
   for (const c of s.patrons) layers.push({ y: c.y, draw: () => { c.show(); } });
@@ -41739,6 +42041,7 @@ function drawFrontierSaloonInterior() {
     finally { rightStick.active = active; }
   } });
   layers.sort((a, b) => a.y - b.y); layers.forEach(l => l.draw());
+  boxingDrawContactEffects(s.boxingEffects);
   // Near wall deliberately has an open doorway, and a low cutaway edge so
   // neither a fighter nor the exit disappears beneath a full-height facade.
   stroke(44, 29, 22); strokeWeight(2); fill(109, 59, 37);

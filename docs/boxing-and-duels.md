@@ -20,11 +20,24 @@ drag an extended fist onto somebody behind the player.
 | Directional guard | Right stick | Arrow keys or IJKL | Right stick |
 | Return to equipped weapon outdoors | WEAPON icon | Tab | B |
 
-Tap an attack for the head, or hold it for 180 ms for the body. A held attack
-fires once; release before the next punch. Both sways leave the feet planted
-unless a movement direction is held, which adds a collision-checked sidestep.
-Slipping the head leaves the body vulnerable, and the wrong sway can be caught
-by the opposite hook.
+Tap and release an attack for the head. Hold for at least 180 ms to lower the
+boxer's level and prepare a body shot, then release to throw it. Holding never
+automatically throws or repeats a punch. The outdoor fist button follows the
+same release rule when it first enters the stance.
+
+Player strikes have faster windup, contact and recovery. Press the opposite
+hand within 120 ms after a successful hit to chain a quicker, stronger follow-up.
+The timing is measured when the button is pressed, so a held body shot can
+also chain if released within 420 ms. Only one follow-up can be reserved for
+each landed strike. Misses, blocks, late presses and repeated same-hand attacks
+do not earn the combo bonus.
+
+Both sways leave the feet planted unless a movement direction is held, which
+adds a collision-checked sidestep. Throwing the opposite hand from a sway
+links the head slip into the counter's shoulder and hip turn. Slipping the
+head leaves the body vulnerable, and the wrong sway can be caught by the
+opposite hook. Hooks pivot the heel and hips; body punches lower the head,
+shoulders and bent knees before contact.
 
 Guard directions are relative to the boxer, independent of their facing:
 
@@ -43,6 +56,10 @@ window. An attacking arm opens its own guard; the other arm can still protect
 its selected area. Punches use the actual animated fist, forearm and head/body
 geometry, including terrain scale, rather than a broad damage radius.
 
+Real contact drives the comic effects: a layered yellow impact burst for a
+landed punch, smaller cool sparks for a block, and a larger contrasting burst
+and expanding ring for a parry. A missed punch produces no contact effect.
+
 Boxers have body collision and take staggered attack turns. Three opponents
 allow one attack at a time; a larger outdoor group can spend two separated
 attack turns. Windups, recovery, guard gaps and counterattacks remain active.
@@ -53,7 +70,9 @@ harmless civilian knockdowns and the existing four-hit hostile stun.
 
 The room is now 1400 × 980 world units, about 2.7 times its previous area, with
 a longer bar, six tables, gallery, piano, stairs and a clear fighting floor.
-The close camera keeps the player and locked opponent readable. The bar fight
+The close camera keeps the player and locked opponent readable. Player follow
+and target anticipation are smoothed separately, so switching opponents does
+not snap the view. The bar fight
 uses separate GRIT and nonlethal directional knockouts; its first win still
 awards 75 score. Pause, save and leave-to-shop retain the outside equipment.
 
@@ -83,6 +102,8 @@ Saving resumes outside with the challenge tier and exact weapon reserves.
 node tools/check-boxing-combat.js
 node tools/check-boxing-render.js
 node tools/check-boxing-world.js
+node tools/check-boxing-refinements.js
+node tools/check-boxing-feedback.js
 node tools/check-frontier-saloon.js
 node tools/check-frontier-integration.js
 ```
@@ -92,9 +113,22 @@ move/guard/punch fingers, complete mobile bar fights, timed parries, world
 stance entry/exit, aimed duel hits and misses, native death visuals and saved
 challenge progression.
 
+The refinement review also checks all four held BODY strikes at 390 × 844,
+320 × 568 and 800 × 390, with no attack before release. A complete touchscreen
+bout produced nine combo hits and two parries without editing health or moving
+fighters by hand. Target switches moved the camera by at most 0.68 world units
+on the first frame. Separate native contact checks verify block sparks with
+zero damage, and outdoor entry preserves its original held finger until release.
+
 ## Captured previews
 
 ![Southpaw punches, guards, sways and costumes through the native figure renderer](previews/southpaw-boxing-poses.png)
+
+![Body preparation, stronger hip turns, linked slip counters and footwork](previews/southpaw-boxing-motion.png)
+
+![A yellow burst at real fist contact during a touchscreen fight](previews/boxing-yellow-impact.png)
+
+![Compact sparks from a successful directional block](previews/boxing-block-sparks.png)
 
 ![A timed parry during the mobile bar fight](previews/dry-gulch-saloon.png)
 

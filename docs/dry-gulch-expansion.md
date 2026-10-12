@@ -44,6 +44,10 @@ brawl or duel; desktop **1/2** selects the activity. Fistfights use shared
 southpaw boxing with four head/body punches, directional guards, timed parries
 and left/right sways. GRIT and directional knockouts remain nonlethal. The
 1400 × 980 room retains its close camera and has a clear fighting floor.
+Target changes ease the camera instead of snapping it. Tap and release for
+head punches; hold to lower the stance, then release for the body. Well-timed
+alternating attacks after a landed hit earn quicker combos, with distinct
+yellow hit bursts, block sparks and larger parry flashes.
 
 For quick draw, the right stick aims below roughly 70% travel and fires when
 pushed farther. Wait for the green **DRAW** cue and hit the opponent. Aiming
