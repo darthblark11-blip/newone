@@ -41,7 +41,19 @@ adds a collision-checked sidestep. Throwing the opposite hand from a sway
 links the head slip into the counter's shoulder and hip turn. Slipping the
 head leaves the body vulnerable, and the wrong sway can be caught by the
 opposite hook. Hooks pivot the heel and hips; body punches lower the head,
-shoulders and bent knees before contact.
+shoulders and bent knees before contact while leaning forward toward the
+opponent. The exposed back has curved cel shade planes and a visible nape;
+hats tilt with the duck so their brims do not hide the new posture.
+
+| Body shot | Loading posture | Release |
+| --- | --- | --- |
+| Right jab | Duck forward and slightly left | Straight right body jab |
+| Right hook | Duck forward/right and load the torso to the right | Unwind the shoulders into the right body hook |
+| Rear left straight | Duck forward near the centerline | Straight left body punch |
+| Rear left hook | Duck forward/left and load the left shoulder and torso left | Unwind into the left body hook |
+
+Players and enemies share these forms. A held load continues smoothly through
+release, including a body counter prepared during a previous punch's recovery.
 
 Guard directions are relative to the boxer, independent of their facing:
 
@@ -113,6 +125,7 @@ node tools/check-boxing-refinements.js
 node tools/check-boxing-feedback.js
 node tools/check-boxing-gamepad-refinements.js
 node tools/check-boxing-ground-order.js
+node tools/check-boxing-body-postures.js
 node tools/check-frontier-saloon.js
 node tools/check-frontier-integration.js
 ```
@@ -132,12 +145,20 @@ Controller review checks real forearm parry contact and stun expiry: attacks
 and sways stay disabled through 2599 ms and unlock at 2600 ms. Native saloon,
 biome and closed-room render checks put an overlapping knocked-out actor
 below the standing player and verify that each actor is painted once.
+Body-posture checks cover all four forward/lateral loads, continuous held
+release and earned counters, actual fist and guard contact, and canonical
+rendering through 63 poses. Real browser review includes 48 player/enemy poses
+and all four physical BODY holds and releases in portrait and landscape.
 
 ## Captured previews
 
 ![Southpaw punches, guards, sways and costumes through the native figure renderer](previews/southpaw-boxing-poses.png)
 
 ![Body preparation, stronger hip turns, linked slip counters and footwork](previews/southpaw-boxing-motion.png)
+
+![Four forward-duck body-shot loads and contact poses from three directions](previews/body-shot-player-postures.png)
+
+![Enemy body-shot windup, strike and recovery with exposed back volume](previews/body-shot-enemy-postures.png)
 
 ![A yellow burst at real fist contact during a touchscreen fight](previews/boxing-yellow-impact.png)
 

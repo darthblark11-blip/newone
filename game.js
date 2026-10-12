@@ -11961,11 +11961,17 @@ function drawArmoredHelmet(g) {
 
 // Skin, hair and whatever is worn over them. `sway` is the braid's swing, in
 // degrees -- the living figure passes its walk cycle, a corpse passes nothing.
-function drawFigureHead(g, id, hX, hY, wear = true, sway = 0) {
+function drawFigureHead(g, id, hX, hY, wear = true, sway = 0, pitch = 0) {
   const eT = id.eType,skin=id.skinCol||(eT==="BANDIT"?_headCelColor.banditSkin:_headCelColor.skin);
   figureCelOval(g,hX,hY,11,11,skin,.65);
   drawFigureHair(g, id, hX, hY, sway);
-  if (wear) { const k = headwearOf(id); if (k) { g.push(); g.translate(hX, hY); drawHeadwear(g, id, k); g.pop(); } }
+  if (wear) { const k = headwearOf(id); if (k) {
+    g.push(); g.translate(hX, hY);
+    // A forward duck tilts the crown/brim toward the floor, revealing the
+    // upper back behind it. The native head center and skin stay on the rig.
+    if (pitch > 0) g.scale(Math.max(.76, 1 - pitch * .72), 1);
+    drawHeadwear(g, id, k); g.pop();
+  } }
 }
 
 // The hair alone. A corpse's head is already drawn by its death type, so it
@@ -13543,6 +13549,15 @@ const BOXING_PUNCHES = Object.freeze({
   LEFT_HOOK: Object.freeze({kind:'LEFT_HOOK',side:-1,hook:true,windupMs:95,activeMs:80,recoveryMs:175,enemyWindupMs:180,enemyActiveMs:125,enemyRecoveryMs:255,damage:29,reach:34}),
   RIGHT_HOOK: Object.freeze({kind:'RIGHT_HOOK',side:1,hook:true,windupMs:90,activeMs:80,recoveryMs:170,enemyWindupMs:175,enemyActiveMs:125,enemyRecoveryMs:250,damage:27,reach:34})
 });
+// A body shot folds forward from the hips rather than pulling the head away.
+// The four southpaw loads share these physical joints in holds, enemy tells and
+// released punches; the painter uses their pitch to reveal the rear cloth plane.
+const BOXING_BODY_SHOTS = Object.freeze({
+  RIGHT_JAB: Object.freeze({headForward:8.5,headSide:-2.8,torsoForward:3.0,torsoSide:-.55,loadAngle:.12,hipLoad:.07,pitch:.28}),
+  RIGHT_HOOK: Object.freeze({headForward:9.1,headSide:3.2,torsoForward:3.5,torsoSide:.70,loadAngle:.46,hipLoad:.27,pitch:.34}),
+  LEFT_STRAIGHT: Object.freeze({headForward:8.8,headSide:-.8,torsoForward:3.4,torsoSide:-.15,loadAngle:-.17,hipLoad:-.12,pitch:.31}),
+  LEFT_HOOK: Object.freeze({headForward:9.0,headSide:-3.2,torsoForward:3.4,torsoSide:-.65,loadAngle:-.46,hipLoad:-.28,pitch:.34})
+});
 let _boxingActorSerial = 0;
 function boxingAlive(actor) {
   return !!actor&&!actor.dead&&!actor.knockedOut&&(actor.hp===undefined||actor.hp>0);
@@ -13670,6 +13685,7 @@ function boxingDodgeAmount(d) {
   return d.side*(t<95?boxingSmooth(t/95):t<205?1:1-boxingSmooth((t-205)/225));
 }
 function boxingPoint(x,y,z) { return {x,y,z}; }
+function boxingBlendPoint(a,b,u) { return boxingPoint(a.x+(b.x-a.x)*u,a.y+(b.y-a.y)*u,a.z+(b.z-a.z)*u); }
 function boxingArm(side,shoulder,elbow,fist,guard=false) {
   return {side,shoulder,elbow,fist,guard,sx:shoulder.x,sy:shoulder.y,
     ex:elbow.x,ey:elbow.y,hx:fist.x,hy:fist.y};
@@ -13706,6 +13722,9 @@ function boxingPose(actor) {
   let extension=0,twist=0,hipTwist=0,levelChange=0,phase='READY',progress=0;
   const p=active&&b.punch,d=p&&BOXING_PUNCHES[p.kind];
   const prepared=active&&b.preparedPunch;
+  const bodyProfileKind=p&&p.level==='BODY'?p.kind:prepared&&prepared.level==='BODY'?prepared.kind:null;
+  const bodyProfile=BOXING_BODY_SHOTS[bodyProfileKind],bodyDef=bodyProfile&&BOXING_PUNCHES[bodyProfileKind];
+  let bodyLoadAmount=0,preparationBlend=0;
   if(prepared&&prepared.level==='BODY')levelChange=boxingSmooth(prepared.amount||0);
   if(p){
     if(p.elapsedMs<p.windupMs){
@@ -13717,7 +13736,7 @@ function boxingPose(actor) {
       // Load slowly, then drive through contact early. The rear hip leads the
       // shoulder and a hook turns the whole rib cage instead of just its arm.
       const drive=boxingSmooth(progress/.60);
-      extension=.12+.88*drive-.20*boxingSmooth((progress-.80)/.20);
+      extension=(p.level==='BODY'?drive:.12+.88*drive)-.20*boxingSmooth((progress-.80)/.20);
       twist=d.side*((d.hook?.42:.20)*(1-drive)-(d.hook?.91:.44)*drive);
       hipTwist=d.side*((d.hook?.26:.12)*(1-drive)-(d.hook?.63:.29)*drive);
     }else{
@@ -13732,6 +13751,17 @@ function boxingPose(actor) {
       const dip=phase==='WINDUP'?Math.max(p.preparedAmount||0,boxingSmooth(progress/.68)):
         phase==='ACTIVE'?1:1-boxingSmooth(progress);
       levelChange=Math.max(levelChange,dip);
+      // A held load is already complete when the button is released. Carry it
+      // through the windup instead of resetting the shoulder or the bent elbow.
+      bodyLoadAmount=phase==='WINDUP'?dip:phase==='ACTIVE'?1-boxingSmooth(progress/.60):0;
+      if(phase==='WINDUP'){
+        twist=bodyProfile.loadAngle*bodyLoadAmount;
+        hipTwist=bodyProfile.hipLoad*bodyLoadAmount;
+      }else if(phase==='ACTIVE'){
+        const drive=boxingSmooth(progress/.60);
+        twist=bodyProfile.loadAngle*(1-drive)-d.side*(d.hook?.91:.44)*drive;
+        hipTwist=bodyProfile.hipLoad*(1-drive)-d.side*(d.hook?.63:.29)*drive;
+      }
     }
     if(p.slipSide&&p.slipAmount>0){
       const carry=phase==='WINDUP'?1:phase==='ACTIVE'?1-boxingSmooth(progress)*.42:
@@ -13742,13 +13772,29 @@ function boxingPose(actor) {
       if(Math.abs(counterSway)>Math.abs(sway)&&(!sway||Math.sign(counterSway)===Math.sign(sway)))sway=counterSway;
     }
   }
+  if(bodyProfile&&!p){
+    bodyLoadAmount=levelChange;
+    twist=bodyProfile.loadAngle*bodyLoadAmount;
+    hipTwist=bodyProfile.hipLoad*bodyLoadAmount;
+  }else if(bodyProfile&&p.level==='HEAD'&&phase==='RECOVERY'){
+    // A timed body continuation can finish its hold while the previous hand is
+    // still returning. Let that recovery become the next load; active head
+    // contact keeps its committed shoulder and fist arc until it has finished.
+    preparationBlend=levelChange*boxingSmooth(progress/.20);
+    twist=twist*(1-preparationBlend)+bodyProfile.loadAngle*levelChange*preparationBlend;
+    hipTwist=hipTwist*(1-preparationBlend)+bodyProfile.hipLoad*levelChange*preparationBlend;
+    extension*=1-preparationBlend;
+    bodyLoadAmount=levelChange*preparationBlend;
+  }
   const stunLean=active&&b.stunMs>0?Math.sin(Math.min(1,b.stunMs/BOXING.PARRY_STUN_MS)*Math.PI)*3:0;
   const reaction=active&&b.hitReaction,recoil=reaction?boxingSmooth((b.hitFlashMs||0)/120):0;
   const reactionDef=reaction&&BOXING_PUNCHES[reaction.kind],hookRecoil=reactionDef&&reactionDef.hook?(reaction.side||0)*recoil:0;
   twist+=hookRecoil*.12;
   const driveWeight=extension*(d&&d.hook?1.5:2.3);
-  const torsoOffset={x:twist*.8+driveWeight-levelChange*2.4-stunLean-recoil*.85,y:sway*.35+hookRecoil*.45};
-  const body={x:torsoOffset.x,y:torsoOffset.y,rx:8+levelChange*.35,ry:11.5-levelChange*.9,angle:twist,z:B-levelChange*4};
+  const bodyLean={x:bodyProfile?bodyProfile.torsoForward*levelChange:0,y:bodyProfile?bodyProfile.torsoSide*levelChange:0};
+  const bodyPitch=bodyProfile?bodyProfile.pitch*levelChange:0,bodyLoad=bodyProfile?bodyProfile.loadAngle*bodyLoadAmount:0;
+  const torsoOffset={x:twist*.8+driveWeight+bodyLean.x-stunLean-recoil*.85,y:sway*.35+hookRecoil*.45+bodyLean.y};
+  const body={x:torsoOffset.x,y:torsoOffset.y,rx:8+levelChange*1.1,ry:11.5-levelChange*.9,angle:twist,z:B-levelChange*4};
   const shoulderCos=Math.cos(twist),shoulderSin=Math.sin(twist);
   const shoulderHeight=24-levelChange*6;
   const shoulders=[boxingPoint(-2*shoulderCos+11*shoulderSin+torsoOffset.x,-2*shoulderSin-11*shoulderCos+torsoOffset.y,shoulderHeight),
@@ -13766,7 +13812,7 @@ function boxingPose(actor) {
     const i=d.side<0?0:1,z=p.level==='BODY'?B:H,s=d.side;
     let hx,hy;
     if(phase==='WINDUP'){
-      const w=boxingSmooth(progress);hx=12-w*(d.hook?8:5);hy=s*(7+w*(d.hook?12:3));
+      const w=p.level==='BODY'?1:boxingSmooth(progress);hx=12-w*(d.hook?8:5);hy=s*(7+w*(d.hook?12:3));
     }else if(d.hook){
       const u=phase==='ACTIVE'?boxingSmooth(progress):1;
       // A hook enters on one side rather than sweeping the entire head twice.
@@ -13780,9 +13826,31 @@ function boxingPose(actor) {
     }
     // The non-striking arm keeps its selected guard; a punching arm opens its
     // own guard. There is never an invisible shield over an extended fist.
-    const shoulder=shoulders[i],elbow=boxingPoint(d.hook?(hx*.52):(hx*.44),s*(d.hook?16:11)+torsoOffset.y,z-3);
-    arms[i]=boxingArm(s,shoulder,elbow,boxingPoint(hx,hy+torsoOffset.y,z),false);
+    const shoulder=shoulders[i],rest=arms[i];
+    let elbow=boxingPoint(d.hook?(hx*.52):(hx*.44),s*(d.hook?16:11)+torsoOffset.y,z-3),fist=boxingPoint(hx,hy+torsoOffset.y,z);
+    if(p.level==='BODY'){
+      if(phase==='WINDUP'){
+        elbow=boxingBlendPoint(rest.elbow,elbow,levelChange);fist=boxingBlendPoint(rest.fist,fist,levelChange);
+      }else if(phase==='RECOVERY'){
+        // Restore the actual guard height with the rising body. Keeping a body
+        // fist at waist height until the last frame caused an abrupt hand pop.
+        const r=boxingSmooth(progress),endHx=d.hook?34:d.reach,endHy=d.hook?-s*3:s*1.5;
+        elbow=boxingBlendPoint(boxingPoint(endHx*(d.hook?.52:.44),s*(d.hook?16:11)+torsoOffset.y,B-3),rest.elbow,r);
+        fist=boxingBlendPoint(boxingPoint(endHx,endHy+torsoOffset.y,B),rest.fist,r);
+      }
+    }else if(preparationBlend){
+      elbow=boxingBlendPoint(elbow,rest.elbow,preparationBlend);
+      fist=boxingBlendPoint(fist,rest.fist,preparationBlend);
+    }
+    arms[i]=boxingArm(s,shoulder,elbow,fist,false);
     arms[i].striking=true;arms[i].drive=extension;arms[i].hook=d.hook;arms[i].phase=phase;
+  }
+  if(bodyProfile&&(!p||preparationBlend)){
+    const i=bodyDef.side<0?0:1,s=bodyDef.side,load=levelChange*(p?preparationBlend:1);
+    const rest=arms[i],hx=12-(bodyDef.hook?8:5),hy=s*(bodyDef.hook?19:10)+torsoOffset.y;
+    arms[i]=boxingArm(s,shoulders[i],boxingBlendPoint(rest.elbow,boxingPoint(hx*(bodyDef.hook?.52:.44),s*(bodyDef.hook?16:11)+torsoOffset.y,B-3),load),
+      boxingBlendPoint(rest.fist,boxingPoint(hx,hy,B),load),false);
+    arms[i].preparing=true;arms[i].hook=bodyDef.hook;
   }
   for(const arm of arms){
     arm.sx=arm.shoulder.x;arm.sy=arm.shoulder.y;arm.ex=arm.elbow.x;arm.ey=arm.elbow.y;
@@ -13801,18 +13869,21 @@ function boxingPose(actor) {
     feet[i].x+=stride*footDx;feet[i].y+=stride*footDy;
     feet[i].lift=Math.max(0,Math.cos(walk+i*Math.PI))*gait*1.2;
   }
-  if(p){
-    const powerSide=d.side<0?0:1,pivot=feet[powerSide],drive=extension;
+  const footLoads=p?[{def:d,weight:1-preparationBlend}]:bodyProfile?[{def:bodyDef,weight:1}]:[];
+  if(p&&preparationBlend)footLoads.push({def:bodyDef,weight:preparationBlend});
+  for(const footLoad of footLoads){
+    const footDef=footLoad.def,weight=footLoad.weight,powerSide=footDef.side<0?0:1,pivot=feet[powerSide],drive=extension*weight;
     // The sole stays on the floor while the power heel turns. Only the small
     // rear-foot adjustment accompanies a punch; a pure head sway stays planted.
-    pivot.heading+=hipTwist*.82;pivot.lift+=drive*(d.hook?1.4:1.0);
-    pivot.x+=drive*(powerSide===0?1.0:-.55);pivot.y+=drive*d.side*.65;
-    feet[1-powerSide].heading+=hipTwist*.15;
+    pivot.heading+=hipTwist*.82*weight;pivot.lift+=drive*(footDef.hook?1.4:1.0);
+    pivot.x+=drive*(powerSide===0?1.0:-.55);pivot.y+=drive*footDef.side*.65;
+    feet[1-powerSide].heading+=hipTwist*.15*weight;
   }
-  const hip=-.1+hipTwist,pelvis={x:-2.5+driveWeight*.42-levelChange*1.6,y:sway*.12,angle:hip};
+  const hip=-.1+hipTwist,pelvis={x:-2.5+driveWeight*.42-levelChange*.65,y:sway*.12+bodyLean.y*.15,angle:hip};
   return {active,hip,hips:hip,torso:twist,torsoOffset,pelvis,levelChange,
+    bodyLean,bodyLoad,bodyPitch,backReveal:bodyProfile?levelChange:0,bodyProfileKind,shoulders,
     legCompression:levelChange*.80+Math.abs(sway)/BOXING.SWAY_DISTANCE*.20,
-    extension,phase,progress,head:{x:1+driveWeight*.55-levelChange*6-Math.abs(sway)*.12-stunLean*1.25-recoil*(reaction&&reaction.level==='HEAD'?1.8:.65),y:sway+hookRecoil*1.35,r:BOXING.HEAD_RADIUS,radius:BOXING.HEAD_RADIUS,z:H-levelChange*9},
+    extension,phase,progress,head:{x:1+driveWeight*.55+(bodyProfile?bodyProfile.headForward*levelChange:0)-Math.abs(sway)*.12-stunLean*1.25-recoil*(reaction&&reaction.level==='HEAD'?1.8:.65),y:sway+hookRecoil*1.35+(bodyProfile?bodyProfile.headSide*levelChange:0),r:BOXING.HEAD_RADIUS,radius:BOXING.HEAD_RADIUS,z:H-levelChange*9},
     body,arms,leftArm:arms[0],rightArm:arms[1],guardCapsules,feet,dodge:sway/BOXING.SWAY_DISTANCE,
     guardSector:guard,punchKind:p&&p.kind,punchLevel:p&&p.level,
     stunMs:active?b.stunMs:0,parryFlash:active?b.parryFlashMs/BOXING.PARRY_FLASH_MS:0,
@@ -14091,10 +14162,52 @@ function paintBoxingArm(g,e,arm,rig,skin,pass='ALL') {
   g.noStroke();
 }
 
+// Pitched back surfaces stay inside the canonical torso's local ellipse.
+function paintBoxingBack(g, b) {
+  const reveal = Math.max(0, Math.min(1, b.backReveal || 0));
+  if (!reveal) return;
+  const rx = b.body.rx, ry = b.body.ry, pitch = Math.min(1, (b.bodyPitch || 0) / .30),
+    bend = Math.max(-.18, Math.min(.18, (b.bodyLoad || 0) * .35)),
+    light = figureCelLight(g), side = light[1] < 0 ? -1 : 1, dc = figureCelContext(g);
+  g.push(); g.noStroke();
+  // Broad curved shoulder-blade planes follow the pitched back inside the
+  // real torso ellipse. Transparent tones preserve vests, armor and cloth.
+  g.fill(19, 18, 25, Math.round((35 + 15 * pitch) * reveal));
+  figureCelPathStart(g, dc, -rx * .86, 0);
+  figureCelPathCurve(g, dc, -rx * .76, side * ry * .38, -rx * .34, side * ry * .74, rx * .24, side * ry * .72);
+  figureCelPathCurve(g, dc, rx * .53, side * ry * .64, rx * .66, side * ry * .42, rx * .58, side * ry * .18);
+  figureCelPathCurve(g, dc, rx * .08, side * ry * .30 + bend * ry, -rx * .48, side * ry * .25, -rx * .86, 0);
+  figureCelPathEnd(g, dc, false, -rx * .86, 0);
+  g.fill(255, 246, 216, Math.round((38 + 15 * pitch) * reveal));
+  figureCelPathStart(g, dc, -rx * .73, -side * ry * .08);
+  figureCelPathCurve(g, dc, -rx * .49, -side * ry * .50, rx * .03, -side * ry * .68, rx * .48, -side * ry * .49);
+  figureCelPathCurve(g, dc, rx * .57, -side * ry * .34, rx * .53, -side * ry * .20, rx * .40, -side * ry * .12);
+  figureCelPathCurve(g, dc, rx * .03, -side * ry * .32 + bend * ry, -rx * .36, -side * ry * .30, -rx * .73, -side * ry * .08);
+  figureCelPathEnd(g, dc, false, -rx * .73, -side * ry * .08);
+  // A filled fold gives the spine depth without adding a black seam or ring.
+  g.fill(27, 24, 31, Math.round(27 * reveal));
+  figureCelPathStart(g, dc, -rx * .75, bend * ry * .30);
+  figureCelPathCurve(g, dc, -rx * .26, bend * ry * .65 - .6, rx * .20, bend * ry - .6, rx * .50, bend * ry * .40);
+  figureCelPathCurve(g, dc, rx * .18, bend * ry + .25, -rx * .29, bend * ry * .65 + .25, -rx * .75, bend * ry * .30);
+  figureCelPathEnd(g, dc, false, -rx * .75, bend * ry * .30);
+  g.pop();
+}
+function paintBoxingNape(g, b, skin) {
+  if (!(b.backReveal > 0)) return;
+  const x = b.head.x, y = b.head.y, v = skin.levels || skin;
+  g.push(); g.noStroke();
+  g.fill(Math.round(v[0] * .90), Math.round(v[1] * .88), Math.round(v[2] * .87), Math.round(220 * b.backReveal));
+  const dc = figureCelContext(g);
+  figureCelPathStart(g, dc, x - 7.4, y - 2.0);
+  figureCelPathCurve(g, dc, x - 5.8, y - 2.9, x - 4.4, y - 2.6, x - 3.8, y - 1.7);
+  figureCelPathCurve(g, dc, x - 3.2, y, x - 4.3, y + 2.6, x - 6.2, y + 2.4);
+  figureCelPathCurve(g, dc, x - 7.4, y + 1.5, x - 7.8, y - .5, x - 7.4, y - 2.0);
+  figureCelPathEnd(g, dc, false, x - 7.4, y - 2.0);
+  g.pop();
+}
 // Called after translating to the actor. Outdoor Character.show and local
-// saloon fighters share this exact painter and combat geometry. The torso is
-// the only mass that turns inside the stance; joints and the head have already
-// been resolved by boxingPose, including the upper-body dodge displacement.
+// saloon fighters share this painter and combat geometry. The torso turns
+// inside the stance; joints and the head are already resolved by boxingPose.
 function paintBoxingFigure(e) {
   const b=boxerPose(e);
   if(!b.active||!Array.isArray(b.arms)||!b.head||!b.body)return false;
@@ -14119,9 +14232,11 @@ function paintBoxingFigure(e) {
   if(e.vestCol&&!id.cowboySuit){g.noStroke();g.fill(e.vestCol);g.rect(-6,-b.body.ry*.78,4.3,b.body.ry*1.56,1.2);g.rect(3,-b.body.ry*.78,4,b.body.ry*1.56,1.2);}
   if(id.chemistSuit){g.stroke(167,177,173);g.strokeWeight(.6);g.line(-5,0,5,0);g.noStroke();}
   if(id.ninjaSuit){g.noStroke();g.fill(100,0,200);g.rect(-b.body.rx,-3,b.body.rx*2,6,1.4);}
+  paintBoxingBack(g,b);
   pop();
-  drawFigureHead(g,e,b.head.x,b.head.y,true,e.isMoving?sin((e.walkCycle||0)*.5)*6:0);
-  if(e.eType==='ARMORED_STANDARD'&&e.hp>50){push();translate(b.head.x,b.head.y);rotate(HALF_PI);drawArmoredHelmet(g);pop();}
+  paintBoxingNape(g,b,skin);
+  drawFigureHead(g,e,b.head.x,b.head.y,true,e.isMoving?sin((e.walkCycle||0)*.5)*6:0,b.bodyPitch);
+  if(e.eType==='ARMORED_STANDARD'&&e.hp>50){push();translate(b.head.x,b.head.y);if(b.bodyPitch>0)scale(Math.max(.76,1-b.bodyPitch*.72),1);rotate(HALF_PI);drawArmoredHelmet(g);pop();}
   for(const arm of b.arms)paintBoxingArm(g,appearance,arm,rig,skin,'FOREARM');
   // Stains move with the mass they belong to instead of staying at the hips
   // while a slipping head/torso escapes the incoming punch.

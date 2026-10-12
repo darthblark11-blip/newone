@@ -56,6 +56,11 @@ knockouts: native fallen actors and saloon knockouts paint in the ground pass
 under standing characters, while their existing fall/recovery state stays live.
 Boxing shoulders match their hand: L2 straight/L1 hook on the left, R2 jab/R1
 hook on the right. Connected controllers hide combat instruction overlays.
+`BOXING_BODY_SHOTS` defines the four forward-duck body postures. Prepared
+holds, enemy telegraphs and active strikes share their canonical head, shoulder
+and fist points. Preserve the held load through release and head-punch recovery;
+the back shading and pitched headwear reveal the duck without shifting the
+head's render/contact center or the committed head-strike contact arc.
 
 ## The gameplay loop this world serves
 
@@ -3526,6 +3531,7 @@ node tools/check-boxing-refinements.js # press-timed combos, release-only body s
 node tools/check-boxing-feedback.js # camera continuity and bounded contact effects
 node tools/check-boxing-gamepad-refinements.js # shoulder hands, held input and hidden controller hints
 node tools/check-boxing-ground-order.js # nonlethal bodies below standing actors in every scene
+node tools/check-boxing-body-postures.js # forward ducks, hook loads, release continuity and guard contact
 node tools/check-cutscene.js       # scripted placement stays inside the sector
 node tools/check-resources.js      # harvestables, drops, the melee tool, persistence
 node tools/check-robot.js          # a machine dies like a machine, on all six paths

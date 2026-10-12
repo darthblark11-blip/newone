@@ -43,9 +43,16 @@ cases.push(['canyon floor slip',"player.x=frontierCanyonProfile('Y',-7200,0).cen
 for(const kind of ['LEFT_STRAIGHT','RIGHT_JAB','LEFT_HOOK','RIGHT_HOOK'])for(const phase of ['windup','contact','recovery']){
   cases.push([kind+' '+phase,`boxingRequestPunch(player,'${kind}');player._boxing.punch.elapsedMs=player._boxing.punch.windupMs${phase==='windup'?'*.8':phase==='contact'?'+player._boxing.punch.activeMs*.55':'+player._boxing.punch.activeMs+player._boxing.punch.recoveryMs*.3'};`]);
 }
+for(const kind of ['LEFT_STRAIGHT','RIGHT_JAB','LEFT_HOOK','RIGHT_HOOK']){
+  for(const amount of [.5,1])cases.push([kind+' body hold '+amount,`player._boxing.preparedPunch={kind:'${kind}',level:'BODY',amount:${amount}};`]);
+  for(const phase of ['windup','contact','recovery'])cases.push([kind+' body '+phase,
+    `boxingRequestPunch(player,'${kind}','BODY',{preparedAmount:1});player._boxing.punch.elapsedMs=player._boxing.punch.windupMs${phase==='windup'?'*.8':phase==='contact'?'+player._boxing.punch.activeMs*.55':'+player._boxing.punch.activeMs+player._boxing.punch.recoveryMs*.3'};`]);
+  for(const angle of [0,Math.PI/2,Math.PI,-Math.PI/2])cases.push([kind+' body facing '+angle,
+    `player.aimAngle=${angle};player._boxing.preparedPunch={kind:'${kind}',level:'BODY',amount:1};`]);
+}
 let allHead=true,allFists=true,allBodies=true,allForearms=true,balanced=true,finite=true,guardWithStick=true;
 for(const [label,setup] of cases){
-  probe(`player.x=1300;player.y=-1140;boxingExit(player);boxingEnter(player,[],'WORLD');player.isArmed=false;${setup}`);
+  probe(`player.x=1300;player.y=-1140;player.aimAngle=.63;boxingExit(player);boxingEnter(player,[],'WORLD');player.isArmed=false;${setup}`);
   const pose=P('boxingPose(player)'),head=P('boxingWorldPoint(player,boxingPose(player).head)'),body=P('boxingWorldPoint(player,boxingPose(player).body)');
   const fists=P('boxingPose(player).arms.map(a=>boxingWorldPoint(player,a.fist))');
   const r=trace('player.show();'),hands=r.ellipses.filter(q=>Math.abs(q.w-P('BOXING.FIST_RADIUS*2'))<1e-7&&q.w===q.h);

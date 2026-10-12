@@ -69,10 +69,10 @@ check(`(()=>{const[a,b]=refinementPair();boxingRequestDodge(a,1);a._boxing.dodge
 })()`, 'The slip counter links the driving opposite hand rather than rewarding every sway-punch pairing');
 check(`(()=>{const[a,b]=refinementPair();const before=boxingPose(a);
   a._boxing.preparedPunch={kind:'LEFT_STRAIGHT',level:'BODY',amount:1};const held=boxingPose(a);
-  return !a._boxing.punch&&held.head.z<before.head.z-5&&held.head.x<before.head.x-3&&held.body.z<before.body.z&&held.legCompression>.5;
+  return !a._boxing.punch&&held.head.z<before.head.z-5&&held.head.x>before.head.x+5&&held.body.z<before.body.z&&held.legCompression>.5;
 })()`, 'Body preparation visibly lowers the head, torso and knees before a fist starts travelling');
 check(`(()=>{const[a,b]=refinementPair();boxingRequestPunch(b,'RIGHT_HOOK','BODY');b._boxing.punch.elapsedMs=b._boxing.punch.windupMs*.7;
-  const pose=boxingPose(b);return pose.phase==='WINDUP'&&pose.levelChange>.95&&pose.head.z<23&&pose.head.x<0;
+  const pose=boxingPose(b);return pose.phase==='WINDUP'&&pose.levelChange>.95&&pose.head.z<23&&pose.head.x>6;
 })()`, 'Enemy body-shot telegraphs change level before the active strike');
 check(`(()=>{const[a,b]=refinementPair();boxingRequestPunch(a,'LEFT_HOOK');a._boxing.punch.elapsedMs=a._boxing.punch.windupMs+a._boxing.punch.activeMs*.6;
   const p=boxingPose(a);return Math.abs(p.torso)>.7&&Math.abs(p.hip)>.4&&p.feet[0].lift>1&&Math.abs(p.feet[0].heading-.12)>.3;
