@@ -91,3 +91,11 @@ Actual Chromium checks cover portrait and landscape touch layouts, simultaneous
 move/guard/punch fingers, complete mobile bar fights, timed parries, world
 stance entry/exit, aimed duel hits and misses, native death visuals and saved
 challenge progression.
+
+## Captured previews
+
+![Southpaw punches, guards, sways and costumes through the native figure renderer](previews/southpaw-boxing-poses.png)
+
+![A timed parry during the mobile bar fight](previews/dry-gulch-saloon.png)
+
+![Aimed quick draw victory using the native death animation](previews/dry-gulch-duel.png)

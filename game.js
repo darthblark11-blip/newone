@@ -14056,7 +14056,7 @@ function bowDrawPower(tension, quality, dud = false) {
   return dud ? Math.min(.08, energy * .15) : energy;
 }
 function playerBowCanDraw(c) {
-  return !!c && c.isPlayer && c.currentWeapon === WEAPONS.BOW && c.ammo > 0 && c.hp > 0 &&
+  return !!c && c.isPlayer && !boxingActive(c) && c.currentWeapon === WEAPONS.BOW && c.ammo > 0 && c.hp > 0 &&
     started && doTick && !isPaused && !isDead && !isWin && !killcamMode &&
     !(typeof inCutscene !== 'undefined' && inCutscene) && !inStoryIntro && !inTownCutscene && !inFortCutscene && !inPostAmbushCutscene &&
     !inFarmCutscene && !inFarmPostCutscene && !inDarchonCall && !inWorldBuildingMenu &&
@@ -17988,6 +17988,7 @@ function worldBoxingMove(actor, nx, ny) {
 }
 function beginWorldBoxing(actor) {
   if (!boxingActive(actor)) {
+    cancelPlayerBowDraw(actor);
     actor._boxingEquipment = { isArmed: actor.isArmed, isUnarmed: actor.isUnarmed };
     boxingEnter(actor, worldBoxingTargets(actor), 'WORLD');
     boxingResetInput(actor);
@@ -20322,6 +20323,7 @@ function boxingControlLayout(w = width, h = height) {
   ];
   const left = { x: 66, y: h - 107, r: 48 }, right = { x: w - 76, y: h - 107, r: 48 };
   return { buttons, leftStick: left, rightStick: right, landscape,
+    exitButton: { action: 'EXIT_BOXING', label: 'WEAPON', x: 66, y: h - 205, r: 25 },
     bounds: { top: rows[0] - r, bottom: h - 59, left: 18, right: w - 17 } };
 }
 function boxingNativeInputState(actor = player) {
@@ -20377,6 +20379,8 @@ function boxingCaptureTouch(state, id, x, y, layout) {
   }
   const button = layout.buttons.find(b => Math.hypot(x - b.x, y - b.y) <= b.r);
   if (button) { captured.role = 'BUTTON'; captured.action = button.action; }
+  else if (state.isWorld && Math.hypot(x - layout.exitButton.x, y - layout.exitButton.y) <= layout.exitButton.r)
+    captured.role = 'EXIT';
   else if (Math.hypot(x - layout.leftStick.x, y - layout.leftStick.y) <= layout.leftStick.r + 10 && !owned('MOVE'))
     captured.role = 'MOVE';
   else if (Math.hypot(x - layout.rightStick.x, y - layout.rightStick.y) <= layout.rightStick.r + 10 && !owned('GUARD'))
@@ -20391,7 +20395,7 @@ function boxingHandleTouch(mx, my, actor = player, contextState = null) {
   if (state.isWorld && mx > width - 80 && my < 90) {
     boxingLeaveInput(actor, state); isPaused = true; pauseMenuState = 'MAIN'; return true;
   }
-  if (state.isWorld && Math.hypot(mx - 50, my - 65) < 40) {
+  if (state.isWorld && Math.hypot(mx - layout.exitButton.x, my - layout.exitButton.y) <= layout.exitButton.r) {
     boxingLeaveInput(actor, state); boxingExit(actor); return true;
   }
   let t;
@@ -20460,6 +20464,9 @@ function boxingReadInput(actor, contextState = null) {
   for (const [id, t] of live) {
     const owned = boxingCaptureTouch(state, id, t.x, t.y, layout); owned.x = t.x; owned.y = t.y;
   }
+  if (Array.from(state.touches.values()).some(t => t.role === 'EXIT' && live.has(t.id))) {
+    boxingLeaveInput(actor, state); boxingExit(actor); result.exited = true; return result;
+  }
   // Resolve both sticks before any sway, so a simultaneous movement finger
   // supplies the sidestep direction even when its touch ID sorts after a button.
   for (const [id, t] of state.touches) if (live.has(id)) {
@@ -20523,9 +20530,10 @@ function drawBoxingControls(actor = player, contextState = null) {
   const pad = connectedGamepad(), mobile = !pad && (!window.isDesktop || window.showOnScreenControls);
   push(); textFont('sans-serif'); textAlign(CENTER, CENTER);
   if (state.isWorld) {
-    noFill(); stroke(228, 176, 99); strokeWeight(1.6); rect(17, 41, 68, 46, 7);
-    noStroke(); fill(27, 24, 21, 225); rect(17, 88, 68, 18, 4);
-    fill(244, 221, 178); textSize(9); text('WEAPON', 51, 97);
+    const exit = layout.exitButton;
+    fill(27, 30, 35, 220); stroke(218, 183, 122); strokeWeight(1.6); ellipse(exit.x, exit.y, exit.r * 2, exit.r * 2);
+    noStroke(); fill(244, 221, 178); textSize(8.8); text(exit.label, exit.x, exit.y - 3);
+    fill(184, 198, 207); textSize(7.2); text('EXIT STANCE', exit.x, exit.y + 10);
   }
   if (!mobile) {
     const legendBottom = state.isWorld ? height - 16 : height - 72;

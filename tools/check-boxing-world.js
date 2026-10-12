@@ -139,6 +139,24 @@ check('player.currentWeapon===WEAPONS.REVOLVER&&player.ammo===6&&player.mags.REV
 probe('player.fire(0);');
 check('bullets.length===1&&player.ammo===5', 'Native firearm use resumes after the explicit exit');
 
+// An earned analog bow pull is transient. Entering fists must cancel it before
+// the boxing reader turns that same stick into guard input or suppresses it.
+fresh();probe('player.flags=player.flags||{};player.flags.bowUnlocked=true;player.currentWeapon=WEAPONS.BOW;player.weaponAmmo.BOW=7;');
+const bowPad={connected:true,axes:[0,0,0,0],buttons:Array.from({length:17},()=>({pressed:false}))};
+ctx.navigator.getGamepads=()=>[bowPad];probe('handleGamepad();');tick();
+for(let i=1;i<=54;i++){bowPad.axes[2]=-.92*i/54;probe('handleGamepad();');tick();}
+check('player.bowDrawState.phase==="DRAW"&&player.bowDrawState.power>.99&&player.ammo===7&&bullets.length===0', 'A real native gamepad gesture earns a charged bow before entering fists');
+keys.add(69);probe('handleDesktop();');tick();keys.clear();
+check('boxingActive(player)&&!playerBowCanDraw(player)&&player.bowDrawState.tension===0&&player.bowDrawState.power===0', 'Native fist entry cancels the earned bow pull and disables draw eligibility');
+tick(20);keys.add(9);tick();keys.clear();bowPad.axes[2]=0;
+for(let i=0;i<20;i++){probe('handleTouches();handleGamepad();handleDesktop();');tick();}
+check('!boxingActive(player)&&player.currentWeapon===WEAPONS.BOW&&player.ammo===7&&bullets.length===0', 'Releasing the old bow stick after leaving fists cannot spawn an arrow or spend ammunition');
+probe('window.isDesktop=false;');
+for(let i=1;i<=54;i++){bowPad.axes[2]=-.92*i/54;probe('handleGamepad();');tick();}
+bowPad.axes[2]=0;probe('handleGamepad();');tick();
+check('bullets.length===1&&bullets[0].isArrow&&bullets[0].arrowPower>.99&&player.ammo===6', 'A deliberate fresh bow draw still fires normally after returning from fists');
+ctx.navigator.getGamepads=()=>[];
+
 fresh();probe(`swordPickedUp=true;setMeleeTool('SWORD');player.activateMelee(true);`);
 check('!boxingActive(player)&&player.meleeTimer===20&&meleeTool()==="SWORD"', 'An equipped sword retains its existing armed melee path');
 fresh();probe(`window.pickaxeOwned=true;setMeleeTool('PICKAXE');player.activateMelee(true);`);
@@ -152,7 +170,7 @@ fresh();probe(`buildings=activeBuildings=[{x:45,y:0,w:20,h:160,hp:100}];invalida
 keys.add(68);tick(12);keys.clear();
 check('player.x<=20&&!player.checkCol(player.x,player.y)&&Number.isFinite(player.x)', 'Native boxing footwork uses the real world building collision footprint');
 
-fresh();probe('player.activateMelee(true);player._boxing.punch=null;');
+fresh();probe('revolverUnlocked=true;player.currentWeapon=WEAPONS.REVOLVER;player.weaponAmmo.REVOLVER=4;player.mags.REVOLVER=2;player.activateMelee(true);player._boxing.punch=null;');
 const layout=probe('boxingControlLayout()');
 tap(layout.rightStick.x,layout.rightStick.y-35,31);tick();
 check('player._boxing.guardSector==="N"&&!rightStick.active&&rightStick.dist===0', 'Native mobile guard touch never becomes gun aim or firing');
@@ -161,12 +179,14 @@ check('!player._boxing.punch', 'A captured guard finger cannot become a punch by
 ctx.touches=[];tick();
 tap(layout.buttons[1].x,layout.buttons[1].y,32);tick(2);ctx.touches=[];tick();
 check('player._boxing.punch.kind==="RIGHT_HOOK"&&player._boxing.punch.level==="HEAD"', 'Native mobile punch taps request shared head contact');
-tap(layout.rightStick.x,layout.rightStick.y,33);tick();tap(50,65,33);
+tap(layout.rightStick.x,layout.rightStick.y,33);tick();tap(layout.exitButton.x,layout.exitButton.y,33);
 check('!boxingActive(player)&&window.__frontierConsumedTouches.has(33)', 'Explicit touch exit consumes its held finger');
 probe('handleTouches();');
 check('!rightStick.active&&!leftStick.active&&!meleeInputHeld&&!cannonInputHeld', 'The exit finger does not turn into native weapon or suit input');
 ctx.touches=[];probe('handleTouches();');
 check('!window.__frontierConsumedTouches.has(33)', 'Lifting the exit finger releases its consumed touch ID');
+tick();
+check('player.isArmed&&!player.isUnarmed&&player.currentWeapon===WEAPONS.REVOLVER&&player.weaponAmmo.REVOLVER===4&&player.mags.REVOLVER===2', 'The visible weapon exit restores the armed revolver without changing finite ammunition');
 
 // Re-register only the existing native DOM listener block in this VM. This
 // observes production event guards without substituting their implementation.

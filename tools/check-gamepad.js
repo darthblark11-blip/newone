@@ -176,8 +176,8 @@ check('Chemist Y/R1 do not trigger flasks; other suits keep their melee bindings
   probe('chemistSuitUnlocked=true;'); frame([3, 5], { tick: true });
   assert(P('!isCooking&&!meleeInputHeld&&playerFlasks.length===0'));
   probe('chemistSuitUnlocked=false;'); press(5, { tick: true });
-  assert(P('meleeInputHeld&&player.meleeTimer>0'));
-  reset(); press(3, { tick: true }); assert(P('meleeInputHeld&&player.meleeTimer>0'));
+  assert(P('boxingActive(player)&&player._boxing.punch.kind==="LEFT_STRAIGHT"'));
+  reset(); press(3, { tick: true }); assert(P('boxingActive(player)&&player._boxing.punch.kind==="LEFT_STRAIGHT"'));
 });
 check('L1 stays reserved for non-chemist suits', () => {
   for (const suit of ['ninjaSuitUnlocked=true', 'explosiveArmorUnlocked=true']) {

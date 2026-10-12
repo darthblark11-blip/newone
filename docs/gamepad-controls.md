@@ -63,6 +63,13 @@ to fire. Pause, menus, cutscenes, travel, weapon changes and input-device change
 cancel an unfinished draw without firing. Draw state is transient and never
 saved.
 
+Boxing changes the combat bindings: the right stick guards eight directions,
+RT/LT throw the left straight/right jab, RB/LB throw hooks, and X/Y sway left
+or right. Tap a punch for the head or hold it for the body. B returns to the
+equipped weapon outdoors. Entering fists cancels an unfinished bow pull without
+firing or spending an arrow. Quick draw uses the right stick to aim below 70%
+travel and fire past it. See [Boxing and quick draw](boxing-and-duels.md).
+
 Verification uses a simulated standard-layout pad through the real touch,
 gamepad, desktop and player update paths:
 
