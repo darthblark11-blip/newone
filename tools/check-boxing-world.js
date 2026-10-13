@@ -244,7 +244,11 @@ check('player.isArmed&&!player.isUnarmed&&player.currentWeapon===WEAPONS.REVOLVE
 townStance('player.x=frontierBountyBoard().x-40;player.y=frontierBountyBoard().y;');
 const pad={connected:true,axes:[0,0,0,0],buttons:Array.from({length:16},()=>({pressed:false}))};
 pad.buttons[0].pressed=true;ctx.navigator.getGamepads=()=>[pad];probe('handleGamepad();');tick();
-check('!boxingActive(player)&&frontierBounties.activeId===FRONTIER_BOUNTY_DEFS[0].id&&player.isArmed', 'Native gamepad A can accept the sheriff poster while leaving the world stance');
+check('boxingActive(player)&&!frontierBounties.activeId&&player._boxing.dodge.kind==="BACK"', 'Native gamepad A leans back without accepting a sheriff poster in the stance');
+pad.buttons[0].pressed=false;pad.buttons[12].pressed=true;tick();
+check('!boxingActive(player)&&player.isArmed', 'D-pad up restores the firearm before world interactions');
+pad.buttons[12].pressed=false;probe('handleGamepad();');pad.buttons[0].pressed=true;probe('handleGamepad();');
+check('frontierBounties.activeId===FRONTIER_BOUNTY_DEFS[0].id&&player.isArmed', 'A fresh gamepad A accepts the sheriff poster after leaving the stance');
 pad.buttons[0].pressed=false;ctx.navigator.getGamepads=()=>[];
 
 townStance('player.x=frontierSaloonSites().door.x;player.y=frontierSaloonSites().door.y;');

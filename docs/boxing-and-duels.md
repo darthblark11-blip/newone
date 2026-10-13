@@ -15,14 +15,19 @@ drag an extended fist onto somebody behind the player.
 | Left hook | L HOOK | Q | L1 / LB |
 | Right hook | R HOOK | T | R1 / RB |
 | Left upper-body sway | SWAY L | Space | X |
-| Right upper-body sway | SWAY R | H | Y |
+| Right upper-body sway | SWAY R | H | B |
+| Duck forward | DUCK | C | Y |
+| Lean back | LEAN BACK | V | A |
 | Footwork | Left stick | WASD | Left stick |
 | Directional guard | Right stick | Arrow keys or IJKL | Right stick |
-| Return to equipped weapon outdoors | WEAPON icon | Tab | B |
+| Leave boxing stance | WEAPON / STANCE icon | Tab | D-pad up |
 
 Connected gamepads hide the combat tutorial panel, touch controls and stance
-exit badge. B still exits outdoors, and the saloon's real scene actions remain
-available. Each shoulder controls its own hand, including R1's right-hook entry.
+exit badge. D-pad up exits the stance, restoring the equipped weapon outdoors.
+A is a lean-back slip while boxing; exit the stance before pressing A to talk
+or use a scene interaction. Each shoulder controls its own hand, including R1's
+right-hook entry. Outside boxing, ordinary A interactions and D-pad melee-tool
+cycling retain their existing controls.
 
 Tap and release an attack for the head. Hold for at least 180 ms to lower the
 boxer's level and prepare a body shot, then release to throw it. Holding never
@@ -36,11 +41,19 @@ also chain if released within 420 ms. Only one follow-up can be reserved for
 each landed strike. Misses, blocks, late presses and repeated same-hand attacks
 do not earn the combo bonus.
 
-Both sways leave the feet planted unless a movement direction is held, which
-adds a collision-checked sidestep. Throwing the opposite hand from a sway
-links the head slip into the counter's shoulder and hip turn. Slipping the
-head leaves the body vulnerable, and the wrong sway can be caught by the
-opposite hook. Hooks pivot the heel and hips; body punches lower the head,
+All four slips leave the feet planted unless movement is held. Left/right
+sways add a collision-checked sidestep in the held direction and move the head
+off a straight punch's centerline. Ducking folds the head forward and down;
+leaning back pulls the head and torso away. Timed forward/back slips can clear
+an incoming head hook within punching range, while body punches remain a threat.
+Forward movement adds a step into the duck; backward movement adds a retreat
+with the lean. These steps use the boxer's facing at the start of the slip and
+do not add forward/back travel when the held movement opposes the chosen slip.
+Throwing the opposite hand from a lateral sway links the head slip into the
+counter's shoulder and hip turn. Real animated hurt geometry determines a
+miss; dodging grants no blanket invulnerability. Forward ducks and backward
+leans carry smoothly into a counter punch as the head returns to guard.
+Hooks pivot the heel and hips; body punches lower the head,
 shoulders and bent knees before contact while leaning forward toward the
 opponent. The exposed back has curved cel shade planes and a visible nape;
 hats tilt with the duck so their brims do not hide the new posture.
@@ -103,6 +116,14 @@ stay visible. Leave Saloon appears only at the actual doorway outside a bar
 fight or player knockout; duel results return to the saloon first. The pause
 menu retains its deliberate leave-and-open-shop action.
 
+Leaving the stance during an active bar fight pauses the opponents' attack
+turns while preserving their health, positions and the player's GRIT. Move
+freely around the room and press A/F at Mae to interact. RAISE FISTS or a fresh
+shoulder/keyboard punch resumes the same bout; a held attack still throws only
+when released. Leaving the stance does not abandon the mission or expose a
+Leave Saloon button during the fight. Buttons held through entry, pause,
+reconnection or stance exit must lift before they can become new slip presses.
+
 Running out of GRIT stops the fight and knocks the actual player down where
 the final punch lands. Player and enemy knockouts share a fixed 120 Hz physics
 rig: punch direction and footwork drive the shove, hooks add rotation, and
@@ -143,6 +164,8 @@ node tools/check-boxing-world.js
 node tools/check-boxing-refinements.js
 node tools/check-boxing-feedback.js
 node tools/check-boxing-gamepad-refinements.js
+node tools/check-boxing-four-way-input.js
+node tools/check-boxing-longitudinal-slips.js
 node tools/check-boxing-ground-order.js
 node tools/check-boxing-body-postures.js
 node tools/check-frontier-saloon.js
@@ -180,7 +203,18 @@ or frame faults. A native outdoor civilian punch also exercises the same rig
 through its 933 ms settle. The quiet HUD capture is taken after four seconds;
 usable touch controls remain, while a connected controller leaves just pause.
 
+Four-way slip review adds 109 physical pose/contact checks and 78 input checks.
+Final Chromium runs at 390 × 844 and 940 × 390 with DPR 3 exercise real pad
+edges and touch gestures: both head hooks miss well-timed ducks and leans,
+early/late attempts and body shots still hit, and matching steps respect the
+bar collision. Stance exit preserves the bout and consumes held A/D-pad presses;
+fresh A interactions work after exit. Pause/reconnect checks preserve the
+existing shoulder punch-release behavior. Both layouts have no browser errors
+or frame faults, and the preview covers 24 rendered poses across three facings.
+
 ## Captured previews
+
+![Left/right slips, forward ducks and backward leans with planted and stepping feet](previews/four-way-boxing-slips.png)
 
 ![Saloon combat after the information panels fade](previews/saloon-quiet-hud.png)
 

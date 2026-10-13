@@ -64,21 +64,46 @@ cancel an unfinished draw without firing. Draw state is transient and never
 saved.
 
 Boxing changes the combat bindings: the right stick guards eight directions,
-L2/L1 throw the left straight/left hook, R2/R1 throw the right jab/right hook,
-and X/Y sway left
-or right. Tap and release a punch for the head; hold at least 180 ms to lower
+L2/L1 throw the left straight/left hook and R2/R1 throw the right jab/right hook.
+The four face buttons control head movement:
+
+| Boxing control | Action |
+| --- | --- |
+| X | Slip left |
+| Y | Duck forward |
+| B | Slip right |
+| A | Lean back |
+| D-pad up | Exit boxing stance |
+
+Left/right slips avoid the centerline of straight punches; timed ducks and
+leans can clear head hooks. A forward-held left stick steps into the duck,
+and a backward-held stick steps back with the lean. A stationary slip moves
+the upper body without translating the feet. The right stick keeps guarding.
+
+Tap and release a punch for the head; hold at least 180 ms to lower
 the stance, then release for the body. Press the opposite hand just after a
-landed hit for a timed combo. B returns to the
-equipped weapon outdoors. Entering fists cancels an unfinished bow pull without
+landed hit for a timed combo. D-pad up returns to the equipped weapon outdoors.
+A never talks or interacts during the stance: leave boxing before pressing A
+for those actions. The exit press is consumed, so holding D-pad up cannot
+immediately cycle melee tools. Entering fists cancels an unfinished bow pull without
 firing or spending an arrow. Quick draw uses the right stick to aim below 70%
 travel and fire past it. See [Boxing and quick draw](boxing-and-duels.md).
 
 Connecting a controller also hides boxing tutorial overlays and the on-screen
-stance exit badge. B still leaves the outdoor stance; pause and saloon mission
+stance exit badge. D-pad up still leaves the stance; pause and saloon mission
 buttons remain available. Saloon and duel control hints disappear while a pad
-is connected, while GRIT, ammunition and duel cues remain visible. Native R1
+is connected; GRIT, ammunition and duel cues still appear briefly under the
+saloon's 3.5-second text fade. Native R1
 entry into unarmed boxing uses the same right hook as R1 during the fight;
-the Y entry alias keeps its left straight.
+the held Y entry alias keeps its one left straight on release without also
+ducking. The next fresh Y press is a duck. Slips do not repeat on a held button;
+pause and reconnect consume buttons already held. B retains its usual back or
+resume action inside menus and becomes the right slip after that press lifts.
+
+In the saloon, leaving the stance preserves an active bout and freezes enemy
+attack turns. A can then talk to Mae. RAISE FISTS or a fresh shoulder punch
+resumes the same fighters and GRIT, without drawing the exterior gun indoors.
+Touch adds DUCK and LEAN BACK buttons; desktop C/V perform these two slips.
 
 Verification uses a simulated standard-layout pad through the real touch,
 gamepad, desktop and player update paths:
@@ -86,6 +111,8 @@ gamepad, desktop and player update paths:
 ```sh
 node tools/check-gamepad.js
 node tools/check-boxing-gamepad-refinements.js
+node tools/check-boxing-four-way-input.js
+node tools/check-boxing-longitudinal-slips.js
 node tools/check-bow-draw.js
 node tools/check-hunting-ballistics.js
 ```
@@ -99,6 +126,10 @@ detection, during pauses and after touch events, then restoration on disconnect.
 The boxing controller checks cover each anatomical hand on tap and body hold,
 pause and disconnect cancellation, native R1/Y entry, and actual hidden tutorial
 shapes and labels while keeping scene actions and gameplay state visible.
+The four-way input suite exercises every face button's first/held/released,
+paused and reconnected edges, stance exit and fresh A interactions, preserved
+saloon bouts and touch/shoulder reentry, plus non-overlapping mobile controls
+at 320 × 568, 390 × 844, 800 × 390 and 940 × 390.
 
 `check-bow-draw.js` follows actual gamepad/touch/desktop and Character update
 paths through smooth draws, jab duds, neutral/end-stop/R3 releases, recentering,

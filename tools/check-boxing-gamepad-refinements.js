@@ -85,7 +85,7 @@ check('An idle pad hides every boxing tutorial shape and label before polling',(
   probe('beginWorldBoxing(player);');connect();
   const seen=capture('drawBoxingControls(player);');
   assert.deepEqual(seen,{labels:[],circles:[],rectangles:[]});
-  pad.buttons[1].pressed=true;input();assert.equal(probe('boxingActive(player)'),false,'B must still exit');
+  pad.buttons[12].pressed=true;input();assert.equal(probe('boxingActive(player)'),false,'D-pad up exits the stance');
 });
 check('Controller disconnection restores mobile punches and desktop hints',()=>{
   probe('beginWorldBoxing(player);');connect();input();pad=null;input();
