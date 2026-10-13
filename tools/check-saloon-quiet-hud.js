@@ -6,7 +6,10 @@ let count = 0;
 const check = (code, label) => { assert.ok(probe(code), label); count++; };
 function capture() {
   const seen = [], original = ctx.text;
-  ctx.text = label => seen.push(String(label));
+  ctx.text = (label, x, y) => {
+    seen.push(String(label));
+    if (String(label).startsWith('GRIT ')) seen.gritPosition = {x, y};
+  };
   try { probe('drawFrontierSaloonHud();'); } finally { ctx.text = original; }
   return seen;
 }
@@ -28,6 +31,8 @@ check('!frontierSaloonCanLeave()&&!interactFrontierSaloonActivity()&&frontierSal
 check('!frontierSaloonAction("EXIT")', 'The gamepad leave path shares the same active-fight restriction');
 let seen = capture();
 assert(seen.some(t=>t.startsWith('GRIT '))&&seen.some(t=>t.startsWith('HEALTH ')));count++;
+assert(seen.gritPosition.x < ctx.width / 3 && seen.gritPosition.y === 29,
+  'GRIT shares the upper-left slot of the same fading information header');count++;
 probe('hudScene.elapsedMs+=3500;');
 check('frontierSaloonHudAlpha(hudScene)===1', 'Status panels remain fully readable for 3.5 seconds');
 probe('hudScene.elapsedMs+=200;');

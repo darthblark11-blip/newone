@@ -106,7 +106,8 @@ check('Saloon and duel hide controller instructions but keep state and real acti
   probe('startFrontierSaloonBrawl();');seen=capture('drawFrontierSaloonHud();');
   assert(seen.labels.some(s=>s.startsWith('GRIT ')));
   assert(!seen.labels.some(s=>/STRAIGHT|HOOKS|STICK · GUARD|HOLD → RELEASE BODY/.test(s)));
-  probe('startFrontierQuickDraw();');seen=capture('drawFrontierSaloonHud();');
+  assert.equal(probe('startFrontierQuickDraw();'),false,'A running gauntlet cannot switch to quick draw');
+  probe('exitFrontierSaloon();enterFrontierSaloon("DUEL");');seen=capture('drawFrontierSaloonHud();');
   assert(!seen.labels.some(s=>/STICK.*FIRE|Aim gently|70% ring|MOUSE · AIM/.test(s)));
   assert(seen.labels.some(s=>s.startsWith('DUEL ROUNDS ')));
   assert(seen.labels.includes(probe('_frontierSaloonSession.duel.phase')));

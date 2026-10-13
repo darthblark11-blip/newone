@@ -32,7 +32,7 @@ check('_frontierSaloonSession.brawl===\'KNOCKOUT\'&&_frontierSaloonSession.grit=
 check('koEvents.some(e=>e.outcome===\'HIT\'&&e.defender===\'PLAYER\')&&koEvents.filter(e=>e.defender===\'PLAYER\'&&e.outcome===\'HIT\').reduce((n,e)=>n+Math.max(7,Math.round(e.damage*.75)),0)>=100','Loss follows only actual enemy punch contacts');
 check('player.stunPose&&player.stunPose.knockout&&player.stunPose.rag&&!boxingActive(player)','Player enters the shared articulated physics fall');
 check('!player.dead&&!isDead&&!killcamMode&&player.hp===Math.max(1,koOutside.hp-12)','The getting-knocked-out animation applies the nonfatal penalty once without a campaign death');
-check('Math.hypot(player.x-FRONTIER_SALOON_ROOM.entry.x,player.y-FRONTIER_SALOON_ROOM.entry.y)>100&&_frontierSaloonSession.fighters.length===3','The player falls at the hit location and the opponents remain in the scene');
+check('Math.hypot(player.x-FRONTIER_SALOON_ROOM.entry.x,player.y-FRONTIER_SALOON_ROOM.entry.y)>100&&_frontierSaloonSession.fighters.length===1','The player falls at the hit location and the opening troublemaker remains in the scene');
 check('_frontierSaloonSession.fighters.every(c=>!boxingActive(c))','The referee stops further punches while the player falls');
 check('isGroundBodyActor(player)','The knocked-out player enters the corpse floor render pass');
 run(`var koDrawOrder=[],koPlayerShow=player.show,koBrawlerPaint=paintFrontierSaloonBrawler;
@@ -64,7 +64,7 @@ assert.ok(recoveryFrames<360,'Physics settles and the knockout eventually recove
 assert.ok(run('koBeforeRecoveryElapsed')+(recoveryFrames-1)*16.67>=2700,'Fall hold and native get-up stay visible for the complete sequence');checks++;
 check('_frontierSaloonSession.brawl===\'LOST\'&&player.hp===Math.max(1,koOutside.hp-12)','The full fall and get-up preserve the one nonfatal health penalty');
 check('!player.stunPose&&!player.knockedOut&&player.stunTimer===0&&!player.dead&&!isDead','Recovery clears every transient player knockout flag');
-check('Math.hypot(player.x-FRONTIER_SALOON_ROOM.entry.x,player.y-FRONTIER_SALOON_ROOM.entry.y)>100&&_frontierSaloonSession.fighters.length===3','The player recovers at the final floor position without teleporting or removing opponents');
+check('Math.hypot(player.x-FRONTIER_SALOON_ROOM.entry.x,player.y-FRONTIER_SALOON_ROOM.entry.y)>100&&_frontierSaloonSession.fighters.length===1','The player recovers at the final floor position without teleporting or removing the troublemaker');
 run('var koPenaltyHP=player.hp;');tick(180);
 check('player.hp===koPenaltyHP&&score===koOutside.score&&totalKills===koOutside.kills','Repeated result updates cannot duplicate the penalty or award kills/rewards');
 check('corpses.length===koOutside.corpses&&particles.length===koOutside.particles&&bullets.length===koOutside.bullets&&enemiesList.length===koOutside.enemies','Local physics and impacts do not leak into campaign arrays');

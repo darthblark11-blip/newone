@@ -101,20 +101,63 @@ The room is now 1400 × 980 world units, about 2.7 times its previous area, with
 a longer bar, six tables, gallery, piano, stairs and a clear fighting floor.
 The close camera keeps the player and locked opponent readable. Player follow
 and target anticipation are smoothed separately, so switching opponents does
-not snap the view. The bar fight
-uses separate GRIT and nonlethal directional knockouts; its first win still
-awards 75 score. Pause, save and leave-to-shop retain the outside equipment.
+not snap the view. Peacemaker now uses survival waves, separate GRIT and
+nonlethal directional knockouts. Clearing level 14 awards the first-completion
+75 score once; the run continues on the bridge. Pause, save and leave-to-shop
+retain the outside equipment.
 Knocked-out fighters use the ground pass beneath standing characters and
 furniture, preserving their nonlethal falls and clothing. Outdoor nonlethal
 bodies follow the same rule, including in the closed interiors.
 
-The saloon's information panels and notices hold for 3.5 seconds, then fade
+GRIT occupies the upper-left corner inside the information header. The
+saloon's information panels and notices hold for 3.5 seconds, then fade
 smoothly over 400 ms. A new bout, downed opponent or duel cue briefly reveals
 the changed status; ordinary damage and guard input do not keep the panels
 on screen. Pause freezes the fade, while mission menus and usable controls
 stay visible. Leave Saloon appears only at the actual doorway outside a bar
 fight or player knockout; duel results return to the saloon first. The pause
 menu retains its deliberate leave-and-open-shop action.
+
+### Peacemaker survival
+
+| Level | Fighters | Behavior | Arena |
+| --- | --- | --- | --- |
+| 1 | One rookie | Single punches | Saloon |
+| 2 | One brawler | Blocks and two-punch combinations | Saloon |
+| 3 | Two rookies | Single punches | Saloon |
+| 4 | Two brawlers | Blocks and two-punch combinations | Saloon |
+| 5 | Three brawlers | Blocks and two-punch combinations | Saloon |
+| 6 | Iron Jack | Blocks, head slips and three-punch combinations | Saloon |
+| 7 | One brawler and Big Hank | Tackle through the door, then skilled combat | Main Street |
+| 8 | Two brawlers and one ace | More attackers and faster turns | Main Street |
+| 9 | One brawler and two aces | More three-punch chains and slips | Main Street |
+| 10 | Two brawlers and two aces | Four attackers | Main Street |
+| 11 | One brawler and three aces | More skilled attackers | Main Street |
+| 12 | Two brawlers and three aces | Five attackers | Main Street |
+| 13 | One brawler and four aces | More skilled attackers | Main Street |
+| 14 | Six aces | Travelling reveal, then the bridge gauntlet | Canyon bridge |
+| 15+ | Six to eight aces | Bounded growth in health and pressure | Canyon bridge |
+
+Clearing a wave starts a 1.8-second breather and restores 12 GRIT, capped at
+100. Remaining GRIT carries into the next wave; campaign health does not heal.
+Opponent combinations hold a single attack turn through their follow-up gaps.
+Up to three attackers share one active turn; larger groups have two staggered
+turns. Guard reactions are delayed and use actual forearm geometry. Head slips,
+body openings, counter timing and parries remain physical, and a successful
+parry interrupts the enemy's chain for the full 2.6-second stun.
+
+After level 6, Big Hank charges and carries the player through the saloon door,
+with local wood debris, an articulated landing and get-up. After level 13, a
+travelling reveal moves the fight onto a timber crossing above layered canyon
+walls. Input is held during transitions; pause freezes their clocks. The stage
+boundaries also contain dodge steps and knockout physics. New attackers spawn
+in clear, separated positions even when the player finishes near a railing.
+At most twelve older knocked-out fighters remain in an arena's floor pass.
+
+Best completed level is saved. A loaded game resumes at the exterior campaign
+position with its original equipment; beginning a new gauntlet starts at level
+1. Switching to a duel cannot interrupt a running wave, breather or cinematic.
+Mae's menu resumes an active run, and the pause shop action can end it deliberately.
 
 Leaving the stance during an active bar fight pauses the opponents' attack
 turns while preserving their health, positions and the player's GRIT. Move
@@ -134,6 +177,11 @@ nonfatal penalty applies once when the knockout begins; pausing freezes physics,
 and saving or leaving for the shop restores the exterior equipment and position
 without carrying a local ragdoll into the campaign. Floor-contact dust stays
 inside the activity.
+
+Outside, the sheriff heading holds for three seconds and fades over 400 ms.
+The compact arrow/distance marker and usable wanted-board interaction remain.
+Changing a contract briefly reveals the updated heading; walking does not
+refresh its timer. Local activity notices are cleared when leaving the scene.
 
 ## Quick draw
 
@@ -172,6 +220,10 @@ node tools/check-frontier-saloon.js
 node tools/check-saloon-quiet-hud.js
 node tools/check-knockout-physics.js
 node tools/check-frontier-player-knockout.js
+node tools/check-frontier-gauntlet.js
+node tools/check-frontier-gauntlet-arenas.js
+node tools/check-boxing-gauntlet-ai.js
+node tools/check-frontier-hud-refinements.js
 node tools/check-frontier-integration.js
 ```
 
@@ -213,6 +265,12 @@ existing shoulder punch-release behavior. Both layouts have no browser errors
 or frame faults, and the preview covers 24 rendered poses across three facings.
 
 ## Captured previews
+
+![Level 7 outside the Copper Spur after the door tackle](previews/peacemaker-gauntlet-street.png)
+
+![Player and Big Hank spilling through the swinging doors](previews/peacemaker-gauntlet-tackle.png)
+
+![Level 14 on the raised canyon bridge](previews/peacemaker-gauntlet-bridge.png)
 
 ![Left/right slips, forward ducks and backward leans with planted and stepping feet](previews/four-way-boxing-slips.png)
 

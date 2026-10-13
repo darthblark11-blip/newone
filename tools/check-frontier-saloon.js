@@ -1,5 +1,6 @@
-// Run the real isolated scene controls, complete a three-opponent bout without
-// teleporting fighters or editing HP, and check aimed duel/save transitions.
+// Win the real opening gauntlet wave through native inputs, then supplement
+// that playthrough with explicit knockout fixtures for the 14-wave ladder.
+// Aimed duels, knockout recovery and campaign save transitions remain native.
 const assert = require('assert');
 const {ctx, probe} = require('./harness');
 let count = 0, now = 7000, stored = null;
@@ -39,7 +40,7 @@ check('player.y<FRONTIER_SALOON_ROOM.entry.y-20&&player.isMoving','The private m
 keys.add(87);tick(210);keys.clear();
 check('player.y>=-295&&player.y<-270&&frontierSaloonNearCounter()','The long counter is reachable along the open aisle and blocks further walking');
 button('INTERACT');check('_frontierSaloonSession.menu','Mae opens the activity menu');button('BRAWL');
-check('_frontierSaloonSession.brawl===\'ACTIVE\'&&_frontierSaloonSession.fighters.length===3&&boxingActive(player)','The mission starts three isolated boxers and the southpaw stance');
+check('_frontierSaloonSession.brawl===\'ACTIVE\'&&_frontierSaloonSession.fighters.length===1&&_frontierSaloonSession.gauntlet.wave===1&&boxingActive(player)','The gauntlet starts one isolated rookie and the southpaw stance');
 check('_frontierSaloonSession.fighters.every(c=>!c.isNeutral&&c.isUnarmed&&!enemiesList.includes(c)&&boxingActive(c))','Boxers cannot trigger the town hostility cascade');
 check('boxingTarget(player,_frontierSaloonSession.fighters)===_frontierSaloonSession.fighters[0]','Stance immediately faces and locks the nearest opponent');
 run(`var boxingEvents=[],boxingHitOriginal=frontierSaloonBoxingHit;
@@ -62,24 +63,34 @@ for(;frames<1800&&run('_frontierSaloonSession.brawl===\'ACTIVE\'');frames++){
  tick();
 }
 keys.clear();tick();
-assert.ok(frames<1800,'A full input-driven bout finishes without artificial health edits');count++;
-assert.equal(maxLeases,1,'Three opponents take staggered turns rather than all wind up together');count++;
+assert.ok(frames<1800,'An input-driven opening wave finishes without artificial health edits');count++;
+assert.equal(maxLeases,1,'The opening opponent uses one attack at a time');count++;
 assert.ok(minSeparation>=BOXING_RADIUS()-0.05,'Live fighters and the player do not overlap');count++;
 function BOXING_RADIUS(){return run('BOXING.BODY_RADIUS*2');}
-check('_frontierSaloonSession.brawl===\'WON\'&&frontierSaloonProgress.brawlCleared','Actual E/guard input wins Barroom Peacemaker');
-check('boxingEvents.some(e=>e.outcome===\'HIT\')&&boxingEvents.some(e=>e.outcome===\'PARRY\')','The full bout includes precise hits and timed parries');
+check('_frontierSaloonSession.brawl===\'INTERMISSION\'&&_frontierSaloonSession.gauntlet.wave===1&&!frontierSaloonProgress.brawlCleared','Actual E/guard input clears the first wave and starts a breather');
+check('boxingEvents.some(e=>e.outcome===\'HIT\')&&boxingEvents.some(e=>e.outcome===\'PARRY\')','The opening wave includes precise hits and timed parries');
 check('_frontierSaloonSession.fighters.every(c=>c.knockedOut&&c.stunPose&&!c.dead)','Bar knockouts use directional nonlethal falls');
-check('score===oldScore+75&&totalKills===oldKills&&!killcamMode&&!boxingActive(player)','Only the one-time mission reward is paid, and stance closes');
+check('score===oldScore&&totalKills===oldKills&&!killcamMode&&!boxingActive(player)','An opening-wave knockout awards no campaign kill or premature mission reward');
 run('drawFrontierSaloonScene();');count++;
-run(`var rewardScore=score;startFrontierSaloonBrawl();_frontierSaloonSession.fighters.forEach(c=>frontierSaloonKnockOut(c,0));`);tick();
-check('score===rewardScore','Repeated brawls cannot duplicate rewards');
-run('startFrontierSaloonBrawl();_frontierSaloonSession.grit=0;var hpBeforeKO=player.hp;');tick();
+// These are explicit lifecycle fixtures, not an input-driven 14-wave win.
+for(let wave=2;wave<=14;wave++){
+ let waiting=0;while(waiting++<420&&run('_frontierSaloonSession.brawl!==\'ACTIVE\''))tick();
+ assert.equal(run('_frontierSaloonSession.gauntlet.wave'),wave,'The next authored wave starts in order');
+ run('_frontierSaloonSession.fighters.forEach(c=>frontierSaloonKnockOut(c,0));');tick();
+}
+check('score===oldScore+75&&frontierSaloonProgress.brawlCleared&&frontierSaloonProgress.bestWave===14','Clearing the canyon milestone pays the one-time mission reward and saves its record');
+run('var rewardScore=score;exitFrontierSaloon();player.x=outsideX;player.y=outsideY;enterFrontierSaloon();startFrontierSaloonBrawl();');
+run('_frontierSaloonSession.fighters.forEach(c=>frontierSaloonKnockOut(c,0));');tick();
+check('score===rewardScore','A new run cannot repay an earned milestone reward on its opening wave');
+run('exitFrontierSaloon();player.x=outsideX;player.y=outsideY;enterFrontierSaloon();startFrontierSaloonBrawl();_frontierSaloonSession.grit=0;var hpBeforeKO=player.hp;');tick();
 check('_frontierSaloonSession.brawl===\'KNOCKOUT\'&&player.stunPose&&player.stunPose.knockout&&player.knockedOut&&player.hp===Math.max(1,hpBeforeKO-12)&&!boxingActive(player)','Losing begins an articulated nonfatal player fall and applies the penalty once');
-check('_frontierSaloonSession.fighters.length===3&&Math.hypot(player.x-FRONTIER_SALOON_ROOM.entry.x,player.y-FRONTIER_SALOON_ROOM.entry.y)>100','The knockout keeps the player and opponents at the fight location');
+check('_frontierSaloonSession.fighters.length===1&&Math.hypot(player.x-FRONTIER_SALOON_ROOM.entry.x,player.y-FRONTIER_SALOON_ROOM.entry.y)>100','The knockout keeps the player and opening opponent at the fight location');
 tick(169);
 check('_frontierSaloonSession.brawl===\'LOST\'&&!player.stunPose&&!player.knockedOut&&player.stunTimer===0&&player.hp===Math.max(1,hpBeforeKO-12)','The fall settles, completes its native get-up and leaves a clean retry state');
 check('Math.hypot(player.x-FRONTIER_SALOON_ROOM.entry.x,player.y-FRONTIER_SALOON_ROOM.entry.y)>100','Recovery does not teleport the player to the entrance');
-run('startFrontierSaloonBrawl();startFrontierQuickDraw();');
+run('startFrontierSaloonBrawl();');
+check('!startFrontierQuickDraw()&&_frontierSaloonSession.mode===\'SALOON\'&&_frontierSaloonSession.gauntlet.wave===1&&boxingActive(player)','An active survival run cannot be reset through a quick-draw shortcut');
+run('exitFrontierSaloon();player.x=outsideX;player.y=outsideY;enterFrontierSaloon();startFrontierQuickDraw();');
 check('!boxingActive(player)&&_frontierSaloonSession.mode===\'DUEL\'','A duel transition clears boxing guard, punch and input state');
 const pad=run('frontierQuickDrawControls()');
 ctx.touches=[{id:70,x:pad.x+pad.r*.5,y:pad.y}];tap(ctx.touches[0].x,ctx.touches[0].y);tick(10);ctx.touches=[];tick();

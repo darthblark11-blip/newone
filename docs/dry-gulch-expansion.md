@@ -17,7 +17,7 @@ Town doors, street signs and the sheriff's wanted board remain on return trips.
 
 | Activity | How to start | Reward |
 | --- | --- | --- |
-| Barroom Peacemaker | Enter the Copper Spur and talk to Mae at the counter | 75 score on first completion |
+| Barroom Peacemaker | Enter the Copper Spur and talk to Mae at the counter | 75 score on first level-14 clear; saved survival record |
 | Quick draw | Ask Mae or challenge Quickhand at the Front Street plaza | 120 score and immediate cowboy costume ownership on first victory |
 | Red Mesa Raiders | Accept the sheriff's first wanted poster | 125 score after clearing Red Mesa Redoubt and returning |
 | Dust Rail Gang | Accept the next wanted poster | 175 score after clearing the abandoned depot and returning |
@@ -42,12 +42,24 @@ button is consumed until release so it cannot become gunfire.
 Inside, use the left touch stick or **WASD** to move. Talk to Mae to choose the
 brawl or duel; desktop **1/2** selects the activity. Fistfights use shared
 southpaw boxing with four head/body punches, directional guards, timed parries
-and left/right sways. GRIT and directional knockouts remain nonlethal. The
+and four-way slips. GRIT and directional knockouts remain nonlethal. The
 1400 × 980 room retains its close camera and has a clear fighting floor.
 Target changes ease the camera instead of snapping it. Tap and release for
 head punches; hold to lower the stance, then release for the body. Well-timed
 alternating attacks after a landed hit earn quicker combos, with distinct
 yellow hit bursts, block sparks and larger parry flashes.
+
+Peacemaker is a survival gauntlet: the first six levels teach single opponents,
+blocking/two-punch brawlers, small groups and a great fighter with head movement
+and three-punch chains. Level 7 tackles the player through the Copper Spur's
+door onto Main Street. Attacker counts and skill increase until level 14 moves
+combat onto a canyon bridge, then survival continues there. GRIT carries between
+waves with a small breather recovery. Best completed level is saved; local
+fighters, cinematic debris and nonlethal falls stay separate from campaign AI.
+
+GRIT sits inside the fading header's upper-left corner. Outdoors, the sheriff
+heading fades after three seconds while its compact direction arrow and
+distance remain visible.
 
 For quick draw, the right stick aims below roughly 70% travel and fires when
 pushed farther. Wait for the green **DRAW** cue and hit the opponent. Aiming
@@ -76,6 +88,10 @@ node tools/check-frontier-equipment.js
 node tools/check-frontier-lighting.js
 node tools/check-frontier-bounties.js
 node tools/check-frontier-saloon.js
+node tools/check-frontier-gauntlet.js
+node tools/check-frontier-gauntlet-arenas.js
+node tools/check-boxing-gauntlet-ai.js
+node tools/check-frontier-hud-refinements.js
 node tools/check-frontier-routes.js
 node tools/check-frontier-integration.js
 node tools/check-boxing-combat.js
@@ -86,16 +102,26 @@ node tools/check-boxing-world.js
 The existing forest mission, save/load, return travel, population, render,
 depth and lighting suites also cover the shared engine seams.
 
-Chromium playtesting at a 390 × 844 viewport with device pixel ratio 3 verified
-the real touch joystick, bartender interaction, a complete three-opponent bar
-fight, early and successful duel shots, costume equipment, revolver purchase
-and bounty acceptance. All captured frames balanced their drawing state and
-reported no game errors. Native walking checks reached all three outposts
+Chromium checks at 390 × 844 and 940 × 390 with device pixel ratio 3 verify
+native-input opening-wave combat, brawler blocking/two-punch chains and ace
+three-punch chains/head movement. Later-wave progression fixtures exercise the
+door-tackle transition, bridge reveal, continuing survival, rail collision and
+pause/save/shop isolation. The final street framing also runs 240 native frames
+with actual AI contacts and a faded HUD. All captured frames balance their drawing
+state and report no game errors. Separate duel/equipment checks cover early and
+successful shots, costume equipment, revolver purchase and bounty acceptance.
+Native walking checks reached all three outposts
 through generated solids and canyon collision. The lighting check sampled the
 actual canyon height buffer across floor pixels, with no false rim-height gaps;
 day and night WebGL passes also verified floor, rim and roof light occlusion.
 
 ## Captured previews
+
+![Peacemaker level 7 outside the saloon](previews/peacemaker-gauntlet-street.png)
+
+![The tackle through the Copper Spur doors](previews/peacemaker-gauntlet-tackle.png)
+
+![Peacemaker level 14 above the canyon](previews/peacemaker-gauntlet-bridge.png)
 
 ![Expanded western town](previews/dry-gulch-town.png)
 
