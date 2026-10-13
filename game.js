@@ -3328,10 +3328,13 @@ function drawGroundBodyActors(actors) {
 }
 function drawLegacyActors() {
   const actors = _depthActors;
+  let previousBoxingPass = _boxingFigurePass;
   try {
     drawGroundBodyActors(actors);
-    for (const c of actors) c.show();
+    previousBoxingPass = boxingBeginFigurePass(actors);
+    for (const c of actors) { c.show(); boxingFlushFigureOverlays(c); }
   } finally {
+    _boxingFigurePass = previousBoxingPass;
     actors.length = 0;
     _legacyActorsQueued = false;
   }
@@ -3435,16 +3438,23 @@ function drawDepthSorted() {
   drawGroundBodyActors(actors);
   for (let i = 0; i < actors.length; i++) actors[i]._depthKey = actors[i].y;
   actors.sort((p, q) => p._depthKey - q._depthKey);
-
-  let mi = 0;
-  for (let ai = 0; ai < actors.length; ai++) {
-    const ad = actors[ai]._depthKey;
-    const start = mi;
-    while (mi < masses.length && masses[mi]._depthKey <= ad) mi++;
-    if (mi > start) drawMassRun(masses, start, mi);
-    actors[ai].show();
+  const previousBoxingPass = boxingBeginFigurePass(actors);
+  try {
+    let mi = 0;
+    for (let ai = 0; ai < actors.length; ai++) {
+      const ad = actors[ai]._depthKey;
+      const start = mi;
+      while (mi < masses.length && masses[mi]._depthKey <= ad) mi++;
+      if (mi > start) drawMassRun(masses, start, mi);
+      actors[ai].show();
+      boxingFlushFigureOverlays(actors[ai]);
+    }
+    if (mi < masses.length) drawMassRun(masses, mi, masses.length);
+  } finally {
+    _boxingFigurePass = previousBoxingPass;
+    actors.length = 0;
+    _depthOn = false;
   }
-  if (mi < masses.length) drawMassRun(masses, mi, masses.length);
 
   // Walking south of a trunk must not put a person on top of its branches.
   // Crowns retain their stable tree order and live aircraft paint later.
@@ -3452,9 +3462,6 @@ function drawDepthSorted() {
     paintForestClutter(window, _forestCrowns[i], frameCount, 'crown');
   }
   _forestCrowns.length = 0;
-
-  actors.length = 0;
-  _depthOn = false;
 }
 
 
@@ -11963,8 +11970,14 @@ function drawArmoredHelmet(g) {
 // degrees -- the living figure passes its walk cycle, a corpse passes nothing.
 function drawFigureHead(g, id, hX, hY, wear = true, sway = 0, pitch = 0) {
   const eT = id.eType,skin=id.skinCol||(eT==="BANDIT"?_headCelColor.banditSkin:_headCelColor.skin);
-  figureCelOval(g,hX,hY,11,11,skin,.65);
-  drawFigureHair(g, id, hX, hY, sway);
+  // Bow the skin and hair as well as the hat: a bald head must still read as
+  // tilted toward the floor. Foreshorten around the resolved head joint so
+  // duck contact never drifts from the visible head's center.
+  const bow=Math.max(0,Math.min(.6,pitch));
+  if(bow){g.push();g.translate(hX,hY);g.scale(1-bow*.30,1);}
+  figureCelOval(g,bow?0:hX,bow?0:hY,11,11,skin,.65);
+  drawFigureHair(g, id, bow?0:hX, bow?0:hY, sway);
+  if(bow)g.pop();
   if (wear) { const k = headwearOf(id); if (k) {
     g.push(); g.translate(hX, hY);
     // A forward duck tilts the crown/brim toward the floor, revealing the
@@ -13800,7 +13813,7 @@ function boxingGuardArms(sector,shoulders) {
   }
   return [left,right];
 }
-function boxingPose(actor) {
+function boxingPose(actor,trackStraight=true) {
   const b=actor&&actor._boxing,active=boxingActive(actor),H=BOXING.HEAD_HEIGHT,B=BOXING.BODY_HEIGHT;
   let sway=active?boxingDodgeAmount(b.dodge)*BOXING.SWAY_DISTANCE:0;
   let slipDepth=active?boxingDodgeDepth(b.dodge):0;
@@ -13880,17 +13893,22 @@ function boxingPose(actor) {
   const stunLean=active&&b.stunMs>0?Math.sin(Math.min(1,b.stunMs/BOXING.PARRY_STUN_MS)*Math.PI)*3:0;
   const reaction=active&&b.hitReaction,recoil=reaction?boxingSmooth((b.hitFlashMs||0)/120):0;
   const reactionDef=reaction&&BOXING_PUNCHES[reaction.kind],hookRecoil=reactionDef&&reactionDef.hook?(reaction.side||0)*recoil:0;
-  twist+=hookRecoil*.12;
+  const lateralSlip=sway/BOXING.SWAY_DISTANCE;
+  // Slipping moves diagonally into the pocket. The shoulders turn with the
+  // head: the lead right shoulder comes forward on an inside (left) slip,
+  // while the rear left shoulder leads the southpaw's outside (right) slip.
+  twist+=hookRecoil*.12+lateralSlip*.30;
+  hipTwist+=lateralSlip*.13;
   const driveWeight=extension*(d&&d.hook?1.5:2.3);
   const duck=Math.max(0,slipDepth),leanBack=Math.max(0,-slipDepth);
-  const bodyLean={x:(bodyProfile?bodyProfile.torsoForward*levelChange:0)+duck*4.2-leanBack*4.2,
+  const bodyLean={x:(bodyProfile?bodyProfile.torsoForward*levelChange:0)+duck*5.8-leanBack*4.2+Math.abs(lateralSlip)*1.8,
     y:bodyProfile?bodyProfile.torsoSide*levelChange:0};
-  const bodyPitch=Math.min(.46,(bodyProfile?bodyProfile.pitch*levelChange:0)+duck*.40)-leanBack*.24,
+  const bodyPitch=Math.min(.54,(bodyProfile?bodyProfile.pitch*levelChange:0)+duck*.50+Math.abs(lateralSlip)*.10)-leanBack*.24,
     bodyLoad=bodyProfile?bodyProfile.loadAngle*bodyLoadAmount:0;
   const torsoOffset={x:twist*.8+driveWeight+bodyLean.x-stunLean-recoil*.85,y:sway*.35+hookRecoil*.45+bodyLean.y};
-  const body={x:torsoOffset.x,y:torsoOffset.y,rx:8+levelChange*1.1+duck*.65,ry:11.5-levelChange*.9-duck*.7,angle:twist,z:B-Math.max(levelChange*4,duck*3)};
+  const body={x:torsoOffset.x,y:torsoOffset.y,rx:8+levelChange*1.1+duck*1.1,ry:11.5-levelChange*.9-duck*1.3,angle:twist,z:B-Math.max(levelChange*4,duck*7)};
   const shoulderCos=Math.cos(twist),shoulderSin=Math.sin(twist);
-  const shoulderHeight=24-Math.max(levelChange*6,duck*9)-leanBack*1.5;
+  const shoulderHeight=24-Math.max(levelChange*6,duck*12)-leanBack*1.5;
   const shoulders=[boxingPoint(-2*shoulderCos+11*shoulderSin+torsoOffset.x,-2*shoulderSin-11*shoulderCos+torsoOffset.y,shoulderHeight),
     boxingPoint(shoulderCos-11*shoulderSin+torsoOffset.x,shoulderSin+11*shoulderCos+torsoOffset.y,shoulderHeight)];
   const guard=active&&b.stunMs<=0?b.guardSector:null;
@@ -13937,6 +13955,25 @@ function boxingPose(actor) {
       elbow=boxingBlendPoint(elbow,rest.elbow,preparationBlend);
       fist=boxingBlendPoint(fist,rest.fist,preparationBlend);
     }
+    if(trackStraight&&p.level==='HEAD'&&!d.hook&&boxingActive(b.target)){
+      // A straight follows a forward-ducking head downward along its already
+      // committed line; a hook keeps its high sweeping arc. Lower the visible
+      // elbow and fist themselves instead of giving straights an invisible
+      // extra hit volume. Reach and lateral aim remain exactly unchanged.
+      // The untracked opponent pose prevents reciprocal punches recursing.
+      const targetPose=boxingPose(b.target,false);
+      if(targetPose.duck>0){
+        const target=boxingLocalPoint(actor,boxingWorldPoint(b.target,targetPose.head));
+        if(target.x>6&&target.x<=d.reach+BOXING.HEAD_RADIUS+BOXING.FIST_RADIUS&&Math.abs(target.y)<8.5&&target.z>H-23&&target.z<H){
+          const follow=phase==='WINDUP'?boxingSmooth(progress/.65):phase==='ACTIVE'?1:1-boxingSmooth(progress);
+          // A held body continuation already supplies its returning arm's
+          // lower guard. Hand that recovery to the body load without applying
+          // a second height drop to the same elbow and fist.
+          const drop=(H-target.z)*follow*(1-preparationBlend);
+          elbow.z-=drop*.80;fist.z-=drop;
+        }
+      }
+    }
     arms[i]=boxingArm(s,shoulder,elbow,fist,false);
     arms[i].striking=true;arms[i].drive=extension;arms[i].hook=d.hook;arms[i].phase=phase;
   }
@@ -13978,7 +14015,7 @@ function boxingPose(actor) {
   return {active,hip,hips:hip,torso:twist,torsoOffset,pelvis,levelChange,
     bodyLean,bodyLoad,bodyPitch,backReveal:Math.max(bodyProfile?levelChange:0,duck),bodyProfileKind,shoulders,
     legCompression:Math.max(levelChange*.80,duck*.95)+leanBack*.22+Math.abs(sway)/BOXING.SWAY_DISTANCE*.20,
-    extension,phase,progress,head:{x:1+driveWeight*.55+(bodyProfile?bodyProfile.headForward*levelChange:0)+duck*BOXING.DUCK_DISTANCE-leanBack*BOXING.LEAN_BACK_DISTANCE-Math.abs(sway)*.12-stunLean*1.25-recoil*(reaction&&reaction.level==='HEAD'?1.8:.65),y:sway+hookRecoil*1.35+(bodyProfile?bodyProfile.headSide*levelChange:0),r:BOXING.HEAD_RADIUS,radius:BOXING.HEAD_RADIUS,z:H-Math.max(levelChange*9,duck*BOXING.DUCK_HEIGHT)-leanBack*3},
+    extension,phase,progress,head:{x:1+driveWeight*.55+(bodyProfile?bodyProfile.headForward*levelChange:0)+duck*BOXING.DUCK_DISTANCE-leanBack*BOXING.LEAN_BACK_DISTANCE+Math.abs(sway)*.34-stunLean*1.25-recoil*(reaction&&reaction.level==='HEAD'?1.8:.65),y:sway+hookRecoil*1.35+(bodyProfile?bodyProfile.headSide*levelChange:0),r:BOXING.HEAD_RADIUS,radius:BOXING.HEAD_RADIUS,z:H-Math.max(levelChange*9,duck*BOXING.DUCK_HEIGHT)-leanBack*3},
     body,arms,leftArm:arms[0],rightArm:arms[1],guardCapsules,feet,dodge:sway/BOXING.SWAY_DISTANCE,
     slipDepth,duck,leanBack,dodgeKind:active&&b.dodge?b.dodge.kind:null,
     guardSector:guard,punchKind:p&&p.kind,punchLevel:p&&p.level,
@@ -14347,6 +14384,54 @@ function paintBoxingNape(g, b, skin) {
   figureCelPathEnd(g, dc, false, x - 7.4, y - 2.0);
   g.pop();
 }
+// A raised hook can cross a ducked fighter drawn later by ground depth. Defer
+// just that bare forearm until the lower fighter is painted, keeping boots,
+// sleeves, bodies and furniture in their ordinary depth order. A single fist
+// is painted at its canonical contact point, never a second overlay glove.
+let _boxingFigurePass = null;
+function boxingBeginFigurePass(actors) {
+  const previous = _boxingFigurePass;
+  _boxingFigurePass = actors.some(boxingActive) ?
+    { order: new Map(actors.map((actor, i) => [actor, i])), overlays: new Map() } : null;
+  return previous;
+}
+function boxingDeferRaisedHook(actor, pose, arm, appearance, rig, skin) {
+  const pass = _boxingFigurePass, target = actor._boxing && actor._boxing.target;
+  if (!pass || !target || !arm.striking || !arm.hook || !['ACTIVE', 'RECOVERY'].includes(arm.phase) ||
+      pose.punchLevel !== 'HEAD' || !boxingActive(target) ||
+      !pass.order.has(actor) || !pass.order.has(target) ||
+      pass.order.get(target) <= pass.order.get(actor)) return false;
+  const lower = boxingPose(target);
+  if (lower.duck < .35) return false;
+  const elbow = boxingWorldPoint(actor, arm.elbow), fist = boxingWorldPoint(actor, arm.fist),
+    head = boxingWorldPoint(target, lower.head), body = boxingWorldPoint(target, lower.body),
+    targetScale = boxingRenderScale(target);
+  if (Math.min(elbow.z, fist.z) <= head.z + lower.head.r * targetScale * .45) return false;
+  const a = { x: elbow.x, y: elbow.y, z: 0 }, b = { x: fist.x, y: fist.y, z: 0 };
+  const overlap = point => boxingSegmentDistance({ x: point.x, y: point.y, z: 0 }, a, b);
+  if (overlap(head) > (lower.head.r + rig.foreW * .4) * targetScale &&
+      overlap(body) > (Math.max(lower.body.rx, lower.body.ry) + rig.foreW * .4) * targetScale) return false;
+  const list = pass.overlays.get(target) || [];
+  list.push({ actor, arm, appearance, rig, skin });
+  pass.overlays.set(target, list);
+  return true;
+}
+function boxingFlushFigureOverlays(actor) {
+  const pass = _boxingFigurePass, list = pass && pass.overlays.get(actor);
+  if (!list) return;
+  pass.overlays.delete(actor);
+  const paint = figurePainter(), g = paint ? paint.api : window;
+  for (const entry of list) {
+    push();
+    try {
+      translate(entry.actor.x, entry.actor.y);
+      const scaleFactor = boxingRenderScale(entry.actor);
+      if (scaleFactor !== 1) scale(scaleFactor);
+      rotate(entry.actor.aimAngle);
+      paintBoxingArm(g, entry.appearance, entry.arm, entry.rig, entry.skin, 'FOREARM');
+    } finally { pop(); }
+  }
+}
 // Called after translating to the actor. Outdoor Character.show and local
 // saloon fighters share this painter and combat geometry. The torso turns
 // inside the stance; joints and the head are already resolved by boxingPose.
@@ -14379,7 +14464,8 @@ function paintBoxingFigure(e) {
   paintBoxingNape(g,b,skin);
   drawFigureHead(g,e,b.head.x,b.head.y,true,e.isMoving?sin((e.walkCycle||0)*.5)*6:0,b.bodyPitch);
   if(e.eType==='ARMORED_STANDARD'&&e.hp>50){push();translate(b.head.x,b.head.y);if(b.bodyPitch){scale(Math.max(.76,1-Math.abs(b.bodyPitch)*.72),1);if(b.bodyPitch<0)translate(b.bodyPitch*2.2,0);}rotate(HALF_PI);drawArmoredHelmet(g);pop();}
-  for(const arm of b.arms)paintBoxingArm(g,appearance,arm,rig,skin,'FOREARM');
+  for(const arm of b.arms)if(!boxingDeferRaisedHook(e,b,arm,appearance,rig,skin))
+    paintBoxingArm(g,appearance,arm,rig,skin,'FOREARM');
   // Stains move with the mass they belong to instead of staying at the hips
   // while a slipping head/torso escapes the incoming punch.
   if(e.decals)for(const d of e.decals){const p=d.isHead?b.head:b.body;g.noStroke();if(d.col)g.fill(...d.col);else g.fill(90,0,0,220);g.ellipse(d.x+p.x,d.y+p.y,d.sz,d.sz);}
@@ -41772,11 +41858,12 @@ function drawFrontierBountyHud() {
       fill(231, 215, 177); textSize(10);
       text(!active ? 'WANTED BOARD · OLD WEST TOWN' : q.stage === 'READY' ? 'CLAIM +' + active.reward + ' SCORE' : active.place.toUpperCase(), width / 2, 105);
     });
-    // The useful navigation marker survives the heading's three-second fade.
-    fill(42, 30, 23, 220); rect(width / 2 - 43, 122, 86, 23, 6);
-    fill(231, 215, 177); textSize(10); text(distance + ' m', width / 2 + 8, 134);
+    // Keep navigation at the northern edge, above the campaign health/score
+    // row. Its compact marker survives the heading's three-second fade.
+    fill(42, 30, 23, 220); rect(width / 2 - 43, 4, 86, 15, 5);
+    fill(231, 215, 177); textSize(10); text(distance + ' m', width / 2 + 8, 12);
     const a = atan2(target.y - player.y, target.x - player.x);
-    push(); translate(width / 2 - 28, 134); rotate(a); fill(242, 181, 74); triangle(7, 0, -5, -4, -5, 4); pop();
+    push(); translate(width / 2 - 28, 12); rotate(a); fill(242, 181, 74); triangle(7, 0, -5, -4, -5, 4); pop();
   }
   if (_frontierBountyPrompt) {
     const q = active && frontierBountyRecord(active);
@@ -43005,11 +43092,11 @@ function drawFrontierSaloonInterior() {
   }
   for (const c of patrons) {
     if (isGroundBodyActor(c)) c.show();
-    else layers.push({ y: c.y, draw: () => { c.show(); } });
+    else layers.push({ y: c.y, actor: c, draw: () => { c.show(); } });
   }
   for (const c of new Set([...(s.downFighters || []), ...s.fighters])) {
     if (isGroundBodyActor(c)) paintFrontierSaloonBrawler(c);
-    else layers.push({ y: c.y, draw: () => paintFrontierSaloonBrawler(c) });
+    else layers.push({ y: c.y, actor: c, draw: () => paintFrontierSaloonBrawler(c) });
   }
   const paintPlayer = () => {
     const active = rightStick.active; rightStick.active = false;
@@ -43021,9 +43108,13 @@ function drawFrontierSaloonInterior() {
   };
   if (!s.transition) {
     if (isGroundBodyActor(player)) paintPlayer();
-    else layers.push({ y: player.y, draw: paintPlayer });
+    else layers.push({ y: player.y, actor: player, draw: paintPlayer });
   }
-  layers.sort((a, b) => a.y - b.y); layers.forEach(l => l.draw());
+  layers.sort((a, b) => a.y - b.y);
+  const previousBoxingPass = boxingBeginFigurePass(layers.filter(l => l.actor).map(l => l.actor));
+  try {
+    for (const layer of layers) { layer.draw(); if (layer.actor) boxingFlushFigureOverlays(layer.actor); }
+  } finally { _boxingFigurePass = previousBoxingPass; }
   if (s.transition) paintFrontierSaloonTransition(s.transition);
   boxingDrawContactEffects(s.boxingEffects);
   for (const p of s.knockoutEffects) p.show();
@@ -43120,21 +43211,24 @@ function drawFrontierSaloonHud() {
   const s = _frontierSaloonSession;
   push(); textAlign(CENTER, CENTER); textFont('sans-serif');
   if (s) {
-    const hudAlpha = frontierSaloonHudAlpha(s);
+    const hudAlpha = frontierSaloonHudAlpha(s),
+      fightHud = s.mode === 'SALOON' && (s.gauntlet || ['ACTIVE', 'KNOCKOUT', 'INTERMISSION', 'TRANSITION'].includes(s.brawl)),
+      headerY = fightHud ? 46 : 8;
+    // GRIT is live combat health, so it remains visible independently of the
+    // fading identity/progress panel, including between waves and after a KO.
+    if (fightHud) {
+      const gritWidth = constrain(width * .35, 104, 160);
+      noStroke(); fill(54, 37, 23, 240); rect(8, 8, gritWidth, 28, 6);
+      fill(216, 149, 73); rect(10, 10, (gritWidth - 4) * constrain(s.grit / 100, 0, 1), 24, 5);
+      fill(252, 227, 176); textSize(11); text('GRIT ' + s.grit + '/100', 8 + gritWidth / 2, 22);
+    }
     frontierSaloonHudLayer(hudAlpha, () => {
-      noStroke(); fill(26, 18, 14, 223); rect(8, 8, width - 16, 76, 8);
-      const fightHud = s.mode === 'SALOON' && (s.gauntlet || ['ACTIVE', 'KNOCKOUT', 'INTERMISSION', 'TRANSITION'].includes(s.brawl)),
-        gritWidth = constrain((width - 28) * .25, 80, 150), titleLeft = fightHud ? 32 + gritWidth : 18,
-        titleRight = width - 72, titleWidth = titleRight - titleLeft,
+      noStroke(); fill(26, 18, 14, 223); rect(8, headerY, width - 16, 76, 8);
+      const titleLeft = 18, titleRight = fightHud ? width - 18 : width - 72, titleWidth = titleRight - titleLeft,
         title = width < 480 ? s.mode === 'DUEL' ? 'QUICK DRAW' : fightHud ? 'PEACEMAKER' : 'COPPER SPUR' :
           s.mode === 'DUEL' ? 'DRY GULCH · QUICK DRAW' : 'COPPER SPUR · SALOON';
-      if (fightHud) {
-        fill(54, 37, 23); rect(18, 18, gritWidth, 22, 4);
-        fill(216, 149, 73); rect(20, 20, (gritWidth - 4) * constrain(s.grit / 100, 0, 1), 18, 3);
-        fill(252, 227, 176); textSize(Math.min(11, gritWidth / 8)); text('GRIT ' + s.grit + '/100', 18 + gritWidth / 2, 29);
-      }
       fill(239, 203, 141); textSize(Math.min(19, titleWidth / Math.max(1, title.length * .58)));
-      text(title, (titleLeft + titleRight) / 2, 29);
+      text(title, (titleLeft + titleRight) / 2, headerY + 21);
       const g = s.gauntlet, alive = s.fighters.filter(c => !c.knockedOut).length,
         arena = s.arena === 'BRIDGE' ? 'CANYON BRIDGE' : s.arena === 'STREET' ? 'SALOON STREET' : 'SALOON',
         status = s.mode === 'DUEL' ? 'ROUND ' + (s.duel.tier + 1) + ' · ' + s.duel.distance + ' DISTANCE · QUICKHAND REED' :
@@ -43145,9 +43239,9 @@ function drawFrontierSaloonHud() {
           s.brawl === 'ACTIVE' ? 'BARROOM PEACEMAKER · ' + s.fighters.filter(c => c.knockedOut).length + '/3 DOWN' :
           'Talk at the counter · fistfights and duels';
       fill(219, 188, 145); textSize(Math.min(12, (width - 34) / (status.length * .57)));
-      text(status, width / 2, 51);
+      text(status, width / 2, headerY + 43);
       fill(174, 156, 133); textSize(11);
-      text('HEALTH ' + Math.ceil(player.hp) + '   SCORE ' + score, width / 2, 69);
+      text('HEALTH ' + Math.ceil(player.hp) + '   SCORE ' + score, width / 2, headerY + 61);
     });
     // The pause control stays actionable after the informational header fades.
     fill(87, 60, 37); rect(width - 61, 12, 45, 31, 5); fill(243, 218, 179);

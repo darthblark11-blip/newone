@@ -80,4 +80,14 @@ const chemist=trace('push();translate(player.x,player.y);paintBoxingFigure(playe
 ok('chemist keeps exactly one silver left cannon fist in boxing',chemist.ellipses.filter(q=>q.w===P('BOXING.FIST_RADIUS*2')&&Array.isArray(q.color)&&q.color[0]===180&&q.color[1]===180&&q.color[2]===190).length===1);
 probe(`chemistSuitUnlocked=false;boxingExit(player);`);
 ok('inactive stance delegates to the existing native character art',P('paintBoxingFigure(player)===false'));
+probe(`player.isMoving=false;boxingEnter(player,[],'WORLD');`);
+const readyHead=trace('player.show();').ellipses.find(q=>q.w===11&&q.h===11);
+probe(`boxingRequestDodge(player,'FORWARD');player._boxing.dodge.elapsedMs=150;`);
+const bowed=trace('player.show();'),bowedHead=bowed.ellipses.find(q=>q.w===11&&q.h===11),
+  bowedCenter=P('boxingWorldPoint(player,boxingPose(player).head)');
+ok('forward duck visibly foreshortens bare skin as well as headwear around the same head joint',
+  !!readyHead&&!!bowedHead&&bowedHead.scale<readyHead.scale*.9&&near(bowedHead.p,bowedCenter));
+ok('bowed head transforms leave both actual glove centers intact and the canvas balanced',
+  P('boxingPose(player).arms.map(a=>boxingWorldPoint(player,a.fist))').every(f=>
+    bowed.ellipses.some(q=>q.w===P('BOXING.FIST_RADIUS*2')&&near(q.p,f)))&&bowed.depth===0&&bowed.underflow===0);
 console.log('\n'+checks+' boxing render checks, '+fails+' failures');process.exitCode=fails?1:0;

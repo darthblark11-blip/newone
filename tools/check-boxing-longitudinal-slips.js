@@ -35,6 +35,11 @@ for(const slip of ['FORWARD','BACK']){
       return s.events.length===1&&s.events[0].outcome==='HIT';})()`,
       (start===0?'Early ':'Late ')+slip+' is caught by '+kind+' at facing '+angle.toFixed(2));
   }
+  if(slip==='FORWARD')for(const angle of [0,.63,Math.PI/2,Math.PI,-Math.PI/2])for(const kind of ['LEFT_STRAIGHT','RIGHT_JAB']){
+    for(const start of [150,250,300])check(`(()=>{const s=longitudinalIncoming('${kind}','FORWARD',${start},'HEAD',${angle});
+      return s.requested&&s.events.length===1&&s.events[0].outcome==='HIT'&&s.events[0].level==='HEAD';})()`,
+      kind+' follows a forward duck instead of missing like a hook at '+start+' ms / facing '+angle.toFixed(2));
+  }
   for(const kind of ['LEFT_STRAIGHT','RIGHT_JAB','LEFT_HOOK','RIGHT_HOOK']){
     check(`(()=>{const s=longitudinalIncoming('${kind}','${slip}',250,'BODY');
       return s.events.length===1&&s.events[0].outcome==='HIT'&&s.events[0].level==='BODY';})()`,
@@ -92,6 +97,71 @@ for(const slip of ['FORWARD','BACK']){
   for(const frameMs of [6,100/6,50,100])check(`(()=>{const s=longitudinalIncoming('RIGHT_HOOK','${slip}',250,'HEAD',.63,${frameMs});
     return s.events.length===0;})()`,
     'Timed '+slip+' preserves hook clearance at '+frameMs.toFixed(2)+' ms native frames');
+}
+for(const slip of ['LEFT','RIGHT'])for(const angle of [0,.63,Math.PI/2,Math.PI,-Math.PI/2]){
+  const side=slip==='LEFT'?-1:1;
+  check(`(()=>{const[,b]=longitudinalPair(${angle});const ready=boxingPose(b);
+    boxingRequestDodge(b,'${slip}');b._boxing.dodge.elapsedMs=150;const pose=boxingPose(b),
+      head=boxingWorldPoint(b,pose.head),center=boxingWorldPoint(b,ready.head),a=b.aimAngle,
+      dx=head.x-center.x,dy=head.y-center.y;
+    return dx*Math.cos(a)+dy*Math.sin(a)>4&&(-dx*Math.sin(a)+dy*Math.cos(a))*${side}>12&&
+      pose.torso*${side}>.2&&(pose.hip-ready.hip)*${side}>.08&&
+      pose.body.x>ready.body.x+1&&pose.head.z===ready.head.z&&JSON.stringify(pose.feet)===JSON.stringify(ready.feet)&&
+      ${side<0?'pose.shoulders[1].x>ready.shoulders[1].x+3&&pose.shoulders[0].x<ready.shoulders[0].x':
+        'pose.shoulders[0].x>ready.shoulders[0].x+3&&pose.shoulders[1].x<ready.shoulders[1].x'};
+    })()`, slip+' moves diagonally toward the opponent and turns the anatomical shoulders above planted feet at '+angle.toFixed(2));
+  check(`(()=>{const[,b]=longitudinalPair(${angle});boxingRequestDodge(b,'${slip}');b._boxing.dodge.elapsedMs=150;
+    const before=boxingPose(b);boxingRequestPunch(b,'${side<0?'RIGHT_JAB':'LEFT_STRAIGHT'}');b._boxing.dodge=null;
+    const after=boxingPose(b);return Math.hypot(after.head.x-before.head.x,after.head.y-before.head.y)<.01&&
+      Math.abs(after.torso-before.torso)<.01&&Math.hypot(after.body.x-before.body.x,after.body.y-before.body.y)<.01;})()`,
+    slip+' carries its diagonal head and turned shoulders into the opposite-hand counter without a posture snap');
+}
+for(const angle of [0,.63,Math.PI/2,Math.PI,-Math.PI/2])for(const kind of ['LEFT_STRAIGHT','RIGHT_JAB']){
+  check(`(()=>{const[a,b]=longitudinalPair(${angle});boxingRequestDodge(b,'FORWARD');b._boxing.dodge.elapsedMs=150;
+    boxingRequestPunch(a,'${kind}');const punch=a._boxing.punch;punch.elapsedMs=punch.windupMs+punch.activeMs*.55;
+    const attackPose=boxingPose(a),defensePose=boxingPose(b),arm=attackPose.arms.find(arm=>arm.striking),
+      world=boxingWorldPoint(a,arm.fist,punch.aimAngle);
+    return arm.fist.z<BOXING.HEAD_HEIGHT-15&&arm.elbow.z<BOXING.HEAD_HEIGHT-10&&
+      Math.abs(world.z-boxingWorldPoint(b,defensePose.head).z)<.01&&boxingHurtContact(b,world,'HEAD',defensePose);})()`,
+    kind+' visibly lowers its real elbow/fist to the forward-ducked head at facing '+angle.toFixed(2));
+  for(const escape of ['AWAY','SIDE'])check(`(()=>{const[a,b]=longitudinalPair(${angle});
+    boxingRequestPunch(a,'${kind}');boxingRequestDodge(b,'FORWARD');b._boxing.dodge.elapsedMs=150;
+    const c=Math.cos(${angle}),s=Math.sin(${angle});
+    ${escape==='AWAY'?'b.x+=c*40;b.y+=s*40;':'b.x-=s*35;b.y+=c*35;'}
+    a._boxing.punch.elapsedMs=a._boxing.punch.windupMs+a._boxing.punch.activeMs*.55;
+    const arm=boxingPose(a).arms.find(arm=>arm.striking),world=boxingWorldPoint(a,arm.fist,a._boxing.punch.aimAngle);
+    const events=boxingUpdate(a,300,[b]);return arm.fist.z===BOXING.HEAD_HEIGHT&&
+      !boxingHurtContact(b,world,'HEAD')&&events.length===0;})()`,
+    kind+' does not track a ducking opponent moving '+escape.toLowerCase()+' beyond its committed reach/line at '+angle.toFixed(2));
+}
+check(`(()=>{const[a,b]=longitudinalPair();boxingRequestDodge(a,'FORWARD');boxingRequestDodge(b,'FORWARD');
+  a._boxing.dodge.elapsedMs=b._boxing.dodge.elapsedMs=150;boxingRequestPunch(a,'RIGHT_JAB');boxingRequestPunch(b,'LEFT_STRAIGHT');
+  a._boxing.punch.elapsedMs=a._boxing.punch.windupMs+a._boxing.punch.activeMs*.55;
+  b._boxing.punch.elapsedMs=b._boxing.punch.windupMs+b._boxing.punch.activeMs*.55;
+  return [boxingPose(a),boxingPose(b)].every(p=>p.arms.every(arm=>[arm.fist.x,arm.fist.y,arm.fist.z,arm.elbow.z].every(Number.isFinite)));})()`,
+  'Reciprocal ducking straight counters resolve finite canonical joints without recursive target poses');
+for(const angle of [0,.63,Math.PI/2,Math.PI])for(const kind of ['LEFT_STRAIGHT','RIGHT_JAB','LEFT_HOOK','RIGHT_HOOK']){
+  check(`(()=>{const[a,b]=longitudinalPair(${angle});a.isPlayer=true;b.isPlayer=false;
+    boxingRequestPunch(a,'${kind}');boxingRequestDodge(b,'FORWARD');let events=[];
+    for(let t=0;t<450;t+=6){boxingUpdate(b,6,[a]);events.push(...boxingUpdate(a,6,[b]));}
+    return ${kind.includes('HOOK')?'events.length===0':"events.length===1&&events[0].outcome==='HIT'"};})()`,
+    'Player '+kind+' observes the same hook-only forward-duck rule against an enemy at facing '+angle.toFixed(2));
+}
+for(const frameMs of [100/6,50,100])for(const kind of ['LEFT_STRAIGHT','RIGHT_JAB']){
+  check(`(()=>{const s=longitudinalIncoming('${kind}','FORWARD',250,'HEAD',.63,${frameMs});
+    return s.events.length===1&&s.events[0].outcome==='HIT';})()`,
+    kind+' catches the forward duck at '+frameMs.toFixed(2)+' ms native frames');
+}
+for(const kind of ['LEFT_STRAIGHT','RIGHT_JAB'])for(const recovery of [.2,.5,.9]){
+  check(`(()=>{const[a,b]=longitudinalPair();a.isPlayer=true;b.isPlayer=false;
+    boxingRequestDodge(b,'FORWARD');b._boxing.dodge.elapsedMs=150;boxingRequestPunch(a,'${kind}');
+    const punch=a._boxing.punch;punch.elapsedMs=punch.windupMs+punch.activeMs+punch.recoveryMs*${recovery};
+    a._boxing.preparedPunch={kind:'${kind==='LEFT_STRAIGHT'?'RIGHT_JAB':'LEFT_STRAIGHT'}',level:'BODY',amount:1};
+    const pose=boxingPose(a),untracked=boxingPose(a,false),arm=pose.arms.find(arm=>arm.striking),
+      end=untracked.arms.find(arm=>arm.striking);
+    return pose.phase==='RECOVERY'&&pose.levelChange===1&&arm.fist.z>=BOXING.BODY_HEIGHT&&
+      Math.abs(arm.fist.z-end.fist.z)<.01&&Math.abs(arm.elbow.z-end.elbow.z)<.01;})()`,
+    kind+' hands its duck-tracking recovery to a held BODY continuation without lowering the glove twice at '+recovery);
 }
 check(`(()=>{const[,b]=longitudinalPair();boxingRequestDodge(b,'FORWARD');b._boxing.dodge.elapsedMs=150;
   const p=boxingPose(b),overhead=boxingWorldPoint(b,{x:p.head.x,y:p.head.y,z:BOXING.HEAD_HEIGHT});

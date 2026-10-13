@@ -43,9 +43,19 @@ do not earn the combo bonus.
 
 All four slips leave the feet planted unless movement is held. Left/right
 sways add a collision-checked sidestep in the held direction and move the head
-off a straight punch's centerline. Ducking folds the head forward and down;
-leaning back pulls the head and torso away. Timed forward/back slips can clear
-an incoming head hook within punching range, while body punches remain a threat.
+diagonally forward off a straight punch's centerline. Right slips move toward
+the opponent and the boxer's right; left slips move forward and left. Against
+an opponent north of the player, these read as northeast and northwest. The hips,
+torso and shoulders turn with the head, bringing the southpaw's rear left
+shoulder forward on a right slip and the lead right shoulder forward on a left
+slip. Ducking folds the head and shoulders down over bent knees, foreshortens
+the chest and exposes more of the pitched back. Leaning back pulls the head
+and torso away. A timed forward duck clears head hooks only: straight head
+punches lower their actual fist and elbow along the committed punch line to
+catch the ducked head. Their horizontal reach and aim stay fixed, so an
+opponent moving out of range or off the line still makes the punch miss.
+Timed backward leans can clear an incoming head hook within punching range,
+while body punches remain a threat in either posture.
 Forward movement adds a step into the duck; backward movement adds a retreat
 with the lean. These steps use the boxer's facing at the start of the slip and
 do not add forward/back travel when the held movement opposes the chosen slip.
@@ -57,6 +67,14 @@ Hooks pivot the heel and hips; body punches lower the head,
 shoulders and bent knees before contact while leaning forward toward the
 opponent. The exposed back has curved cel shade planes and a visible nape;
 hats tilt with the duck so their brims do not hide the new posture.
+Skin and hair also foreshorten with the forward pitch, so the duck remains
+visible on bare heads without moving the physical head joint.
+
+When an elevated head hook crosses a ducked boxer, its bare forearm and fist
+paint above the lowered head and back, including the beginning of recovery.
+The rest of the fighters and furniture retain their normal ground depth;
+knocked-out bodies stay underneath standing fighters. Each hand still paints
+once at the same contact point used by the combat solver.
 
 | Body shot | Loading posture | Release |
 | --- | --- | --- |
@@ -109,8 +127,9 @@ Knocked-out fighters use the ground pass beneath standing characters and
 furniture, preserving their nonlethal falls and clothing. Outdoor nonlethal
 bodies follow the same rule, including in the closed interiors.
 
-GRIT occupies the upper-left corner inside the information header. The
-saloon's information panels and notices hold for 3.5 seconds, then fade
+GRIT remains visible in its own upper-left combat bar, above and outside the
+information header, including between waves, during transitions and after a
+knockout. The saloon's information panels and notices hold for 3.5 seconds, then fade
 smoothly over 400 ms. A new bout, downed opponent or duel cue briefly reveals
 the changed status; ordinary damage and guard input do not keep the panels
 on screen. Pause freezes the fade, while mission menus and usable controls
@@ -253,9 +272,10 @@ get-up, retry and pause-to-shop sequence without rewriting GRIT or teleporting
 fighters after the bout begins. The final source produces no browser errors
 or frame faults. A native outdoor civilian punch also exercises the same rig
 through its 933 ms settle. The quiet HUD capture is taken after four seconds;
-usable touch controls remain, while a connected controller leaves just pause.
+usable touch controls remain, while a connected controller leaves pause and
+the persistent GRIT bar.
 
-Four-way slip review adds 109 physical pose/contact checks and 78 input checks.
+Four-way slip review adds 218 physical pose/contact checks and 78 input checks.
 Final Chromium runs at 390 × 844 and 940 × 390 with DPR 3 exercise real pad
 edges and touch gestures: both head hooks miss well-timed ducks and leans,
 early/late attempts and body shots still hit, and matching steps respect the
@@ -264,7 +284,20 @@ fresh A interactions work after exit. Pause/reconnect checks preserve the
 existing shoulder punch-release behavior. Both layouts have no browser errors
 or frame faults, and the preview covers 24 rendered poses across three facings.
 
+The anatomical-slip and persistent-GRIT refinement passes 1,030 checks across
+20 focused suites. Chromium review at 390 × 844, 320 × 568 and 940 × 390,
+all with DPR 3, verifies 28 native punch contacts: forward ducks clear both
+head hooks while both straights connect. Twelve live gamepad slips retain
+planted feet and turn the shoulders correctly; twelve moving-away/off-axis
+cases remain true misses. The GRIT bar and northern bounty marker survive
+their neighboring text fading naturally. Twenty-one fixed critical render
+poses verify hook-over-duck depth in both actor orders and the shared head/fist
+centers, with no browser errors or frame faults. These captures use desktop
+Chromium mobile viewports; they do not measure performance on a Galaxy device.
+
 ## Captured previews
+
+![Anatomical diagonal slips and head hooks passing above the lowered forward duck](previews/boxing-slip-anatomy.png)
 
 ![Level 7 outside the Copper Spur after the door tackle](previews/peacemaker-gauntlet-street.png)
 

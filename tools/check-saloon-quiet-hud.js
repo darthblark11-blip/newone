@@ -31,19 +31,20 @@ check('!frontierSaloonCanLeave()&&!interactFrontierSaloonActivity()&&frontierSal
 check('!frontierSaloonAction("EXIT")', 'The gamepad leave path shares the same active-fight restriction');
 let seen = capture();
 assert(seen.some(t=>t.startsWith('GRIT '))&&seen.some(t=>t.startsWith('HEALTH ')));count++;
-assert(seen.gritPosition.x < ctx.width / 3 && seen.gritPosition.y === 29,
-  'GRIT shares the upper-left slot of the same fading information header');count++;
+assert(seen.gritPosition.x < ctx.width / 3 && seen.gritPosition.y === 22,
+  'GRIT has its own upper-left bar outside the fading information header');count++;
 probe('hudScene.elapsedMs+=3500;');
 check('frontierSaloonHudAlpha(hudScene)===1', 'Status panels remain fully readable for 3.5 seconds');
 probe('hudScene.elapsedMs+=200;');
 check('Math.abs(frontierSaloonHudAlpha(hudScene)-.5)<.000001', 'The last 400 milliseconds smoothly fade rather than popping away');
 probe('hudScene.elapsedMs+=200;');
 seen = capture();
-assert(!seen.some(t=>/^HEALTH |^GRIT |^COPPER SPUR |^BARROOM PEACEMAKER /.test(t)));count++;
+assert(seen.includes('GRIT 100/100')&&!seen.some(t=>/^HEALTH |^COPPER SPUR |^BARROOM PEACEMAKER /.test(t)));count++;
 assert(!seen.includes('TAP HEAD')&&!seen.includes('HOLD → RELEASE BODY'));count++;
 assert(seen.includes('L STRAIGHT')&&seen.includes('R JAB')&&seen.includes('GUARD')&&seen.includes('FOOTWORK'));count++;
 probe('hudScene.grit=53;player.hp=Math.max(1,player.hp-3);hudScene.hitMs=160;player._boxing.guardSector="N";');
 check('frontierSaloonHudAlpha(hudScene)===0', 'Damage and changing guard do not keep the text panels permanently visible');
+assert(capture().includes('GRIT 53/100'),'Combat health updates immediately while the text panel remains faded');count++;
 probe('hudScene.fighters[0].knockedOut=true;');
 check('frontierSaloonHudAlpha(hudScene)===1', 'A downed opponent briefly reveals the new progress');
 probe('hudScene.elapsedMs+=3900;window.isDesktop=true;window.showOnScreenControls=false;');

@@ -57,9 +57,10 @@ combat onto a canyon bridge, then survival continues there. GRIT carries between
 waves with a small breather recovery. Best completed level is saved; local
 fighters, cinematic debris and nonlethal falls stay separate from campaign AI.
 
-GRIT sits inside the fading header's upper-left corner. Outdoors, the sheriff
-heading fades after three seconds while its compact direction arrow and
-distance remain visible.
+GRIT stays visible in its own upper-left bar outside the fading header. Outdoors,
+the sheriff heading fades after three seconds while its compact direction arrow
+and distance remain at the northern screen edge, above the campaign health and
+score row.
 
 For quick draw, the right stick aims below roughly 70% travel and fires when
 pushed farther. Wait for the green **DRAW** cue and hit the opponent. Aiming
