@@ -1,5 +1,5 @@
-// A hook above a duck must keep its one real fist above the lower fighter,
-// independent of ground depth. No draw-order shortcut applies to other shots.
+// A punch crossing a lateral slip, or hook above a forward duck, keeps its one
+// real fist above the slipping silhouette without changing physical contact.
 const assert = require('assert');
 const {ctx, probe} = require('./harness');
 let checks = 0;
@@ -41,10 +41,30 @@ for (const angle of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
       'Reverse actor depth already paints the elevated hook correctly without duplicating it');
   }
 }
-for (const [kind, level, dodge] of [['LEFT_STRAIGHT','HEAD','FORWARD'], ['RIGHT_HOOK','BODY','FORWARD'], ['LEFT_HOOK','HEAD','RIGHT'], ['RIGHT_HOOK','HEAD','BACK']]) {
+for (const [kind, level, dodge] of [['LEFT_STRAIGHT','HEAD','FORWARD'], ['RIGHT_HOOK','BODY','FORWARD'], ['LEFT_HOOK','BODY','RIGHT'], ['RIGHT_HOOK','HEAD','BACK']]) {
   probe(`setupDepthPair(0,'${kind}','${level}','${dodge}');`);
   check(`depthPaintEvents.indexOf('ATTACKER:${kind.startsWith('LEFT') ? -1 : 1}:FIST')<depthPaintEvents.indexOf('DEFENDER:HEAD')`,
     `${kind} ${level} against ${dodge} retains normal actor depth`);
+}
+for(const dodge of ['LEFT','RIGHT'])for(const angle of [0,.63,Math.PI/2,Math.PI,-Math.PI/2]){
+  for(const kind of ['LEFT_STRAIGHT','RIGHT_JAB','LEFT_HOOK','RIGHT_HOOK']){
+    const side=kind.startsWith('LEFT')?-1:1;
+    probe(`setupDepthPair(${angle},'${kind}','HEAD','${dodge}');`);
+    check(`depthPaintEvents.indexOf('ATTACKER:${side}:FIST')>depthPaintEvents.indexOf('DEFENDER:HEAD') &&
+      depthPaintEvents.filter(e=>e==='ATTACKER:${side}:FIST').length===1 && depthPaintEvents.length===6`,
+      `${kind} crosses above the ${dodge.toLowerCase()} slip's head/torso at facing ${angle}`);
+    if(!kind.includes('HOOK'))check(`!boxingHurtContact(depthDefender,
+      boxingWorldPoint(depthAttacker,boxingPose(depthAttacker).arms.find(a=>a.striking).fist),'HEAD')`,
+      'Drawing a straight above the slipped silhouette does not turn its physical miss into a hit');
+    probe(`depthPaintEvents=[];
+      depthAttacker._boxing.punch.elapsedMs=depthAttacker._boxing.punch.windupMs+depthAttacker._boxing.punch.activeMs+.1;
+      _legacyActorsQueued=true;actorShow(depthAttacker);actorShow(depthDefender);drawLegacyActors();`);
+    check(`depthPaintEvents.indexOf('ATTACKER:${side}:FIST')>depthPaintEvents.indexOf('DEFENDER:HEAD') && depthPaintEvents.length===6`,
+      'A returning punch keeps its crossing depth at the active/recovery boundary');
+    probe(`setupDepthPair(${angle},'${kind}','HEAD','${dodge}',true);`);
+    check(`depthPaintEvents.indexOf('ATTACKER:${side}:FIST')>depthPaintEvents.indexOf('DEFENDER:HEAD') && depthPaintEvents.length===6`,
+      'Opposite ground order paints the same crossing punch above the slip without a second glove');
+  }
 }
 for(const kind of ['LEFT_HOOK','RIGHT_HOOK']){
   probe(`setupDepthPair(0,'${kind}');depthPaintEvents=[];

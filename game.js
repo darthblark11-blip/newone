@@ -14384,8 +14384,8 @@ function paintBoxingNape(g, b, skin) {
   figureCelPathEnd(g, dc, false, x - 7.4, y - 2.0);
   g.pop();
 }
-// A raised hook can cross a ducked fighter drawn later by ground depth. Defer
-// just that bare forearm until the lower fighter is painted, keeping boots,
+// A punch can cross a slipping fighter drawn later by ground depth. Defer
+// just that bare forearm until the slipping fighter is painted, keeping boots,
 // sleeves, bodies and furniture in their ordinary depth order. A single fist
 // is painted at its canonical contact point, never a second overlay glove.
 let _boxingFigurePass = null;
@@ -14395,18 +14395,22 @@ function boxingBeginFigurePass(actors) {
     { order: new Map(actors.map((actor, i) => [actor, i])), overlays: new Map() } : null;
   return previous;
 }
-function boxingDeferRaisedHook(actor, pose, arm, appearance, rig, skin) {
+function boxingDeferSlipPunch(actor, pose, arm, appearance, rig, skin) {
   const pass = _boxingFigurePass, target = actor._boxing && actor._boxing.target;
-  if (!pass || !target || !arm.striking || !arm.hook || !['ACTIVE', 'RECOVERY'].includes(arm.phase) ||
+  if (!pass || !target || !arm.striking || !['ACTIVE', 'RECOVERY'].includes(arm.phase) ||
       pose.punchLevel !== 'HEAD' || !boxingActive(target) ||
       !pass.order.has(actor) || !pass.order.has(target) ||
       pass.order.get(target) <= pass.order.get(actor)) return false;
   const lower = boxingPose(target);
-  if (lower.duck < .35) return false;
+  const lateral = Math.abs(lower.dodge) >= .35, duck = arm.hook && lower.duck >= .35;
+  if (!lateral && !duck) return false;
   const elbow = boxingWorldPoint(actor, arm.elbow), fist = boxingWorldPoint(actor, arm.fist),
     head = boxingWorldPoint(target, lower.head), body = boxingWorldPoint(target, lower.body),
     targetScale = boxingRenderScale(target);
-  if (Math.min(elbow.z, fist.z) <= head.z + lower.head.r * targetScale * .45) return false;
+  // A lateral slip moves off the punch line at head height, above the ribs.
+  // Its crossing arm still belongs in front of that turned silhouette. A
+  // forward duck instead needs genuine vertical clearance beneath the hook.
+  if (!lateral && Math.min(elbow.z, fist.z) <= head.z + lower.head.r * targetScale * .45) return false;
   const a = { x: elbow.x, y: elbow.y, z: 0 }, b = { x: fist.x, y: fist.y, z: 0 };
   const overlap = point => boxingSegmentDistance({ x: point.x, y: point.y, z: 0 }, a, b);
   if (overlap(head) > (lower.head.r + rig.foreW * .4) * targetScale &&
@@ -14464,7 +14468,7 @@ function paintBoxingFigure(e) {
   paintBoxingNape(g,b,skin);
   drawFigureHead(g,e,b.head.x,b.head.y,true,e.isMoving?sin((e.walkCycle||0)*.5)*6:0,b.bodyPitch);
   if(e.eType==='ARMORED_STANDARD'&&e.hp>50){push();translate(b.head.x,b.head.y);if(b.bodyPitch){scale(Math.max(.76,1-Math.abs(b.bodyPitch)*.72),1);if(b.bodyPitch<0)translate(b.bodyPitch*2.2,0);}rotate(HALF_PI);drawArmoredHelmet(g);pop();}
-  for(const arm of b.arms)if(!boxingDeferRaisedHook(e,b,arm,appearance,rig,skin))
+  for(const arm of b.arms)if(!boxingDeferSlipPunch(e,b,arm,appearance,rig,skin))
     paintBoxingArm(g,appearance,arm,rig,skin,'FOREARM');
   // Stains move with the mass they belong to instead of staying at the hips
   // while a slipping head/torso escapes the incoming punch.
@@ -41929,6 +41933,7 @@ let frontierSaloonProgress = { brawlCleared: false, duelWon: false, duelAttempts
 let _frontierSaloonSession = null, _frontierSaloonPrompt = null;
 let _frontierSaloonToast = '', _frontierSaloonToastMs = 0;
 const FRONTIER_SALOON_HUD = Object.freeze({ holdMs: 3500, fadeMs: 400 });
+const FRONTIER_SALOON_ROUND_FINISH = Object.freeze({ holdMs: 2600, resultDelayMs: 2000 });
 const FRONTIER_SALOON_ROOM = { left: -700, right: 700, top: -490, bottom: 490,
   door: { x: 0, y: 465 }, entry: { x: 0, y: 425 }, counter: { x: -90, y: -272 },
   fight: { x: 180, y: 120 } };
@@ -41987,6 +41992,7 @@ function frontierSaloonStartWave(s, wave, movePlayer = false) {
   s.downFighters = [...(s.downFighters || []), ...previous].slice(-12);
   s.gauntlet.wave = spec.level; s.gauntlet.phase = 'FIGHT';
   s.gauntlet.nextWave = null; s.gauntlet.remainingMs = 0;
+  s.gauntlet.finishMs = 0; s.gauntlet.finishMessage = null;
   s.brawl = 'ACTIVE'; s.boxingInput = {}; s.boxingEffects.length = 0; s.hitMs = 0;
   const names = ['BUCK', 'RED', 'SHORTY', 'SILAS', 'RUTH', 'DUSTY', 'FLINT', 'JUNE'];
   const spawned = [];
@@ -42009,27 +42015,42 @@ function frontierSaloonStartWave(s, wave, movePlayer = false) {
 }
 function frontierSaloonClearWave(s) {
   if (s.brawl !== 'ACTIVE' || !s.gauntlet || !s.fighters.length || !s.fighters.every(c => c.knockedOut)) return false;
-  boxingLeaveInput(player, s.boxingInput); boxingExit(player); s.fighters.forEach(boxingExit);
-  s.boxingInput = {}; player.boxingHold = 0; player.isMoving = false; player.gait = 0;
+  // Consume held controls and queued follow-ups, but preserve the very punch
+  // that won the round. Its follow-through, slip and return to guard continue
+  // on the same boxing rig while the last opponent falls to the floor.
+  boxingLeaveInput(player, s.boxingInput); s.fighters.forEach(boxingExit);
+  if (player._boxing) { player._boxing.target = null; player._boxing.director = null; }
+  s.boxingInput = {}; player.boxingHold = 180; player.isMoving = false; player.gait = 0;
   const wave = s.gauntlet.wave;
   frontierSaloonProgress.bestWave = Math.max(frontierSaloonProgress.bestWave, wave);
   s.grit = Math.min(100, s.grit + 12);
-  s.brawl = 'INTERMISSION'; s.gauntlet.phase = 'BREAK';
-  s.gauntlet.nextWave = Math.min(9999, wave + 1); s.gauntlet.remainingMs = 1800;
+  s.brawl = 'INTERMISSION'; s.gauntlet.phase = 'SETTLE';
+  s.gauntlet.nextWave = Math.min(9999, wave + 1);
+  s.gauntlet.remainingMs = FRONTIER_SALOON_ROUND_FINISH.holdMs; s.gauntlet.finishMs = 0;
+  _frontierSaloonToastMs = 0;
   if (wave === 14 && !frontierSaloonProgress.brawlCleared) {
     frontierSaloonProgress.brawlCleared = true; score += 75;
-    frontierSaloonNotify('CANYON GAUNTLET CLEARED · +75 SCORE\nThe bridge survived. Keep going for a higher survival record.');
-  } else frontierSaloonNotify('LEVEL ' + wave + ' SURVIVED · +12 GRIT\nCatch your breath. Level ' + s.gauntlet.nextWave + ' is coming.');
+    s.gauntlet.finishMessage = 'CANYON GAUNTLET CLEARED · +75 SCORE\nThe bridge survived. Keep going for a higher survival record.';
+  } else s.gauntlet.finishMessage = 'LEVEL ' + wave + ' SURVIVED · +12 GRIT\nCatch your breath. Level ' + s.gauntlet.nextWave + ' is coming.';
   return true;
 }
 function frontierSaloonAdvanceGauntlet(s, dt) {
   if (!s.gauntlet) return;
   if (s.brawl === 'INTERMISSION') {
+    // No live targets, damage callbacks or input reads during this interval.
+    // The committed strike still completes its real active/recovery timing.
+    boxingUpdate(player, dt, [], frontierSaloonBoxingMove);
+    s.gauntlet.finishMs += dt;
+    if (s.gauntlet.finishMessage && s.gauntlet.finishMs >= FRONTIER_SALOON_ROUND_FINISH.resultDelayMs &&
+        !(player._boxing && player._boxing.punch)) {
+      frontierSaloonNotify(s.gauntlet.finishMessage);
+      s.gauntlet.finishMessage = null; s.gauntlet.phase = 'BREAK';
+    }
     s.gauntlet.remainingMs = Math.max(0, s.gauntlet.remainingMs - dt);
-    if (s.gauntlet.remainingMs > 0) return;
+    if (s.gauntlet.remainingMs > 0 || player._boxing && player._boxing.punch) return;
     const next = s.gauntlet.nextWave, arena = frontierSaloonWaveSpec(next).arena;
     if (arena !== s.arena) {
-      boxingLeaveInput(player, s.boxingInput); boxingExit(player); s.fighters.forEach(boxingExit);
+      boxingLeaveInput(player, s.boxingInput); s.fighters.forEach(boxingExit);
       s.boxingInput = {}; s.brawl = 'TRANSITION'; s.gauntlet.phase = 'TRANSITION';
       s.fighters = []; s.downFighters = []; s.boxingEffects.length = 0; s.knockoutEffects.length = 0;
       frontierSaloonBeginTransition(s, arena, next === 7 ? 'TACKLE' : 'BRIDGE');
@@ -43042,10 +43063,11 @@ function frontierSaloonCamera(s, dt = deltaTime) {
   // Lock-on turns the boxer immediately, but never moves the camera directly.
   // Filter the small look-ahead first, then follow the player's position with
   // a second damped motion so even opposite-side target swaps remain gentle.
+  const fightFraming = s.brawl === 'ACTIVE' || s.brawl === 'INTERMISSION';
   const shortBridge = s.arena === 'BRIDGE' && height < 650;
   const shortStreet = s.arena === 'STREET' && height < 650;
   const scaleRoom = shortBridge || shortStreet ? Math.max(.78, Math.min(1.02, height / 398)) :
-    Math.max(s.brawl === 'ACTIVE' && height < 650 ? 1.15 : 1.35, Math.min(1.75, width / 540));
+    Math.max(fightFraming && height < 650 ? 1.15 : 1.35, Math.min(1.75, width / 540));
   const halfX = width / (2 * scaleRoom), halfY = Math.max(100, (height - 280) / (2 * scaleRoom));
   const bounds = frontierSaloonArenaInfo(s.arena).bounds, midX = (bounds.left + bounds.right) / 2, midY = (bounds.top + bounds.bottom) / 2;
   const facadeMargin = s.arena === 'STREET' ? 120 : 0;
@@ -43054,7 +43076,7 @@ function frontierSaloonCamera(s, dt = deltaTime) {
   const target = boxingActive(player) && boxingAlive(player._boxing.target) ? player._boxing.target : null,
     lookX = target ? constrain((target.x - player.x) * .22, -halfX * .16, halfX * .16) : 0,
     lookY = target ? constrain((target.y - player.y) * .18, -halfY * .14, halfY * .14) : 0;
-  const mobileFight = s.brawl === 'ACTIVE' && !connectedGamepad() && (!window.isDesktop || window.showOnScreenControls),
+  const mobileFight = fightFraming && !connectedGamepad() && (!window.isDesktop || window.showOnScreenControls),
     centerX = mobileFight ? width * .34 : width / 2,
     centerY = mobileFight ? Math.max(185, Math.min(height * .43, height - 340)) : height / 2 - 35;
   const northBias = shortBridge ? 0 : shortStreet ? 100 : 48;
@@ -43212,6 +43234,7 @@ function drawFrontierSaloonHud() {
   push(); textAlign(CENTER, CENTER); textFont('sans-serif');
   if (s) {
     const hudAlpha = frontierSaloonHudAlpha(s),
+      settling = s.mode === 'SALOON' && s.brawl === 'INTERMISSION' && s.gauntlet && s.gauntlet.phase === 'SETTLE',
       fightHud = s.mode === 'SALOON' && (s.gauntlet || ['ACTIVE', 'KNOCKOUT', 'INTERMISSION', 'TRANSITION'].includes(s.brawl)),
       headerY = fightHud ? 46 : 8;
     // GRIT is live combat health, so it remains visible independently of the
@@ -43222,7 +43245,9 @@ function drawFrontierSaloonHud() {
       fill(216, 149, 73); rect(10, 10, (gritWidth - 4) * constrain(s.grit / 100, 0, 1), 24, 5);
       fill(252, 227, 176); textSize(11); text('GRIT ' + s.grit + '/100', 8 + gritWidth / 2, 22);
     }
-    frontierSaloonHudLayer(hudAlpha, () => {
+    // Let the final strike and fall play without a victory panel appearing
+    // over them. GRIT and pause remain live during this short settling beat.
+    frontierSaloonHudLayer(settling ? 0 : hudAlpha, () => {
       noStroke(); fill(26, 18, 14, 223); rect(8, headerY, width - 16, 76, 8);
       const titleLeft = 18, titleRight = fightHud ? width - 18 : width - 72, titleWidth = titleRight - titleLeft,
         title = width < 480 ? s.mode === 'DUEL' ? 'QUICK DRAW' : fightHud ? 'PEACEMAKER' : 'COPPER SPUR' :
@@ -43294,7 +43319,9 @@ function drawFrontierSaloonHud() {
     noStroke(); fill(fireCue ? color(25, 44, 17) : color(245, 215, 166)); textSize(Math.min(13, b.w / 19)); text(b.label, b.x + b.w / 2, b.y + b.h / 2);
   }
   if (!isPaused && _frontierSaloonToastMs > 0 && !(s &&
-      (s.brawl === 'ACTIVE' || s.brawl === 'TRANSITION' || s.mode === 'DUEL' && s.duel.phase === 'DRAW'))) {
+      (s.brawl === 'ACTIVE' || s.brawl === 'TRANSITION' ||
+       s.brawl === 'INTERMISSION' && s.gauntlet && s.gauntlet.phase === 'SETTLE' ||
+       s.mode === 'DUEL' && s.duel.phase === 'DRAW'))) {
     frontierSaloonHudLayer(frontierSaloonHudFade(FRONTIER_SALOON_HUD.holdMs + FRONTIER_SALOON_HUD.fadeMs - _frontierSaloonToastMs), () => {
       const tw = Math.min(width - 28, 620); noStroke(); fill(28, 18, 12, 229);
       const ty = s && s.mode === 'DUEL' ? height - 300 : s ? 138 : height - 340;

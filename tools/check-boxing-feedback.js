@@ -34,6 +34,23 @@ check('Math.hypot(feedback60.camera.x-feedback120.camera.x,feedback60.camera.y-f
 probe('var feedbackLockedX=feedback60.camera.x;player._boxing.target=null;frontierSaloonCamera(feedback60,1000/60);');
 check('Math.abs(feedback60.camera.x-feedbackLockedX)<1', 'Losing a target eases the anticipation away');
 
+for(const [width,height] of [[320,568],[390,844],[940,390]]){
+  ctx.width=width;ctx.height=height;
+  probe(`var finishCameraScene={brawl:'ACTIVE',camera:null};
+    var finishCamera=frontierSaloonCamera(finishCameraScene,0),
+      finishFraming={x:finishCamera.centerX,y:finishCamera.centerY,scale:finishCamera.scale};
+    finishCameraScene.brawl='INTERMISSION';frontierSaloonCamera(finishCameraScene,1000/60);`);
+  check('finishCamera.centerX===finishFraming.x&&finishCamera.centerY===finishFraming.y&&finishCamera.scale===finishFraming.scale',
+    'The final knockout keeps touch fight framing and zoom on its first finishing frame at '+width+'x'+height);
+  probe('for(let i=0;i<156;i++)frontierSaloonCamera(finishCameraScene,1000/60);');
+  check('finishCamera.centerX===finishFraming.x&&finishCamera.centerY===finishFraming.y&&finishCamera.scale===finishFraming.scale',
+    'The full post-knockout interval keeps the same composition while the punch and fall finish');
+  probe("finishCameraScene.brawl='ACTIVE';frontierSaloonCamera(finishCameraScene,1000/60);");
+  check('finishCamera.centerX===finishFraming.x&&finishCamera.centerY===finishFraming.y&&finishCamera.scale===finishFraming.scale',
+    'The next wave does not kick the camera into a different framing');
+}
+ctx.width=390;ctx.height=844;
+
 probe(`_boxingWorldEffects.length=0;var feedbackParticles=particles.length;
   var feedbackEvent={outcome:'HIT',point:{x:13.5,y:-7.25,z:30},attacker:player};
   var feedbackHit=boxingEmitContactEffect(feedbackEvent,feedbackScene.boxingEffects);

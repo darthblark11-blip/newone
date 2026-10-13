@@ -58,6 +58,15 @@ probe(`headerScene.brawl='ACTIVE';`);
 probe(`headerScene.gauntlet={wave:4,phase:'FIGHT'};headerScene.arena='SALOON';`);
 check('frontierSaloonHudAlpha(headerScene)===1','A fresh gauntlet level refreshes the informational header');
 assert(paint('drawFrontierSaloonHud();').texts.some(t=>/^LEVEL 4 · \d+\/\d+ STANDING · SALOON$/.test(t.label)),'The header reports the actual level and fighter count');checks++;
+probe(`headerScene.brawl='INTERMISSION';headerScene.gauntlet.phase='SETTLE';`);
+const finishing=paint('drawFrontierSaloonHud();');
+assert(finishing.texts.some(t=>t.label==='GRIT 37/100')&&!finishing.texts.some(t=>/CLEARED|PEACEMAKER|HEALTH |STANDING/.test(t.label)),
+  'The final punch and knockout settle without immediate information or victory text while GRIT stays visible');checks++;
+assert(finishing.rects.some(r=>r[0]===ctx.width-61&&r[1]===12&&r[2]===45),
+  'Pause remains actionable during the knockout settling beat');checks++;
+probe(`headerScene.gauntlet.phase='BREAK';`);
+assert(paint('drawFrontierSaloonHud();').texts.some(t=>t.label==='LEVEL 4 CLEARED · CATCH YOUR BREATH'),
+  'The victory status appears after the knockout settling beat completes');checks++;
 probe(`headerScene.elapsedMs+=3900;headerScene.arena='SALOON';headerScene.gauntlet.wave=6;headerScene.gauntlet.nextWave=7;headerScene.brawl='TRANSITION';`);
 check('frontierSaloonHudAlpha(headerScene)===1','A new arena and transition briefly reveal progress');
 assert(paint('drawFrontierSaloonHud();').texts.some(t=>t.label==='THROUGH THE SALOON DOORS'),'The saloon departure has its own transition label');checks++;

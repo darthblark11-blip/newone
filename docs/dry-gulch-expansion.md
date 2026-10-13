@@ -54,7 +54,9 @@ blocking/two-punch brawlers, small groups and a great fighter with head movement
 and three-punch chains. Level 7 tackles the player through the Copper Spur's
 door onto Main Street. Attacker counts and skill increase until level 14 moves
 combat onto a canyon bridge, then survival continues there. GRIT carries between
-waves with a small breather recovery. Best completed level is saved; local
+waves with a small breather recovery. A 2.6-second finishing interval lets the
+last punch recover and the knockout settle before the next attackers arrive;
+the player keeps the boxing model between waves. Best completed level is saved; local
 fighters, cinematic debris and nonlethal falls stay separate from campaign AI.
 
 GRIT stays visible in its own upper-left bar outside the fading header. Outdoors,

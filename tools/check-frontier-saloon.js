@@ -70,7 +70,7 @@ function BOXING_RADIUS(){return run('BOXING.BODY_RADIUS*2');}
 check('_frontierSaloonSession.brawl===\'INTERMISSION\'&&_frontierSaloonSession.gauntlet.wave===1&&!frontierSaloonProgress.brawlCleared','Actual E/guard input clears the first wave and starts a breather');
 check('boxingEvents.some(e=>e.outcome===\'HIT\')&&boxingEvents.some(e=>e.outcome===\'PARRY\')','The opening wave includes precise hits and timed parries');
 check('_frontierSaloonSession.fighters.every(c=>c.knockedOut&&c.stunPose&&!c.dead)','Bar knockouts use directional nonlethal falls');
-check('score===oldScore&&totalKills===oldKills&&!killcamMode&&!boxingActive(player)','An opening-wave knockout awards no campaign kill or premature mission reward');
+check('score===oldScore&&totalKills===oldKills&&!killcamMode&&boxingActive(player)','An opening-wave knockout keeps the boxing stance without a campaign kill or premature reward');
 run('drawFrontierSaloonScene();');count++;
 // These are explicit lifecycle fixtures, not an input-driven 14-wave win.
 for(let wave=2;wave<=14;wave++){

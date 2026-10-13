@@ -70,8 +70,9 @@ hats tilt with the duck so their brims do not hide the new posture.
 Skin and hair also foreshorten with the forward pitch, so the duck remains
 visible on bare heads without moving the physical head joint.
 
-When an elevated head hook crosses a ducked boxer, its bare forearm and fist
-paint above the lowered head and back, including the beginning of recovery.
+When a head punch crosses a left/right slip, its bare forearm and fist paint
+above the turned head and torso. Elevated hooks also paint above a forward
+duck's lowered head and back. Both keep that depth into the beginning of recovery.
 The rest of the fighters and furniture retain their normal ground depth;
 knocked-out bodies stay underneath standing fighters. Each hand still paints
 once at the same contact point used by the combat solver.
@@ -157,8 +158,14 @@ menu retains its deliberate leave-and-open-shop action.
 | 14 | Six aces | Travelling reveal, then the bridge gauntlet | Canyon bridge |
 | 15+ | Six to eight aces | Bounded growth in health and pressure | Canyon bridge |
 
-Clearing a wave starts a 1.8-second breather and restores 12 GRIT, capped at
-100. Remaining GRIT carries into the next wave; campaign health does not heal.
+Clearing a wave starts a 2.6-second finishing interval and restores 12 GRIT,
+capped at 100. The player's same boxing rig stays active: the winning punch
+completes its contact and recovery while the knocked-out fighter falls and
+settles. Result panels wait at least two seconds and until that punch finishes;
+GRIT and pause remain visible. Held attacks and queued combos are consumed
+during the interval. The next wave retains the stance, including across the
+street and bridge transitions. Remaining GRIT carries into the next wave;
+campaign health does not heal.
 Opponent combinations hold a single attack turn through their follow-up gaps.
 Up to three attackers share one active turn; larger groups have two staggered
 turns. Guard reactions are delayed and use actual forearm geometry. Head slips,
@@ -284,7 +291,7 @@ fresh A interactions work after exit. Pause/reconnect checks preserve the
 existing shoulder punch-release behavior. Both layouts have no browser errors
 or frame faults, and the preview covers 24 rendered poses across three facings.
 
-The anatomical-slip and persistent-GRIT refinement passes 1,030 checks across
+The anatomical-slip and persistent-GRIT refinement passed 1,030 checks across
 20 focused suites. Chromium review at 390 × 844, 320 × 568 and 940 × 390,
 all with DPR 3, verifies 28 native punch contacts: forward ducks clear both
 head hooks while both straights connect. Twelve live gamepad slips retain
@@ -295,7 +302,21 @@ poses verify hook-over-duck depth in both actor orders and the shared head/fist
 centers, with no browser errors or frame faults. These captures use desktop
 Chromium mobile viewports; they do not measure performance on a Galaxy device.
 
+Slip depth and round finishes expand coverage to 1,294 checks across 21 suites.
+Native controller trials at 390 × 844 and 940 × 390 verify 40 left/right slips
+against straights across five facings: crossing arms paint above the head and
+torso once, while the physical head strikes miss. Finishing-contact fixtures
+cover all four punches at both head and body height, preserving
+ACTIVE → RECOVERY → READY on the same boxing rig, articulated falls, delayed
+results and next-wave input. A native touch finish at 320 × 568 also retains
+the same camera center and zoom through the KO, break and next wave. Captures
+use directed low-health opponents to isolate the last contact; no knockout
+or wave-clear seam is called to make them finish. Chrome reports no errors or
+frame faults.
+
 ## Captured previews
+
+![Crossing punches above lateral slips and uninterrupted punch/knockout recovery between rounds](previews/boxing-slip-round-finish.png)
 
 ![Anatomical diagonal slips and head hooks passing above the lowered forward duck](previews/boxing-slip-anatomy.png)
 
