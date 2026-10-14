@@ -15,10 +15,11 @@ probe(`isStoryMode=false;townsData={};startAtLevel(3);started=true;doTick=false;
   function depthBoxer(name,x,y,angle){return {depthName:name,x,y,aimAngle:angle,hp:100,
     bodyW:18,bodyH:26,shirtCol:color(90,120,160),pantsCol:color(50,70,90),skinCol:color(230,175,135),
     decals:[],show(){push();translate(this.x,this.y);scale(boxingRenderScale(this));paintBoxingFigure(this);pop();}};}
-  function setupDepthPair(angle,kind='LEFT_HOOK',level='HEAD',dodge='FORWARD',reverse=false){
+  function setupDepthPair(angle,kind='LEFT_HOOK',level='HEAD',dodge='FORWARD',reverse=false,playerDefender=false){
     depthPaintEvents=[];
     window.depthAttacker=depthBoxer('ATTACKER',0,0,angle);
     window.depthDefender=depthBoxer('DEFENDER',42*Math.cos(angle),42*Math.sin(angle),angle+PI);
+    depthDefender.isPlayer=playerDefender;
     boxingEnter(depthAttacker,[depthDefender],'SALOON');boxingEnter(depthDefender,[depthAttacker],'SALOON');
     boxingRequestDodge(depthDefender,dodge);depthDefender._boxing.dodge.elapsedMs=150;
     boxingRequestPunch(depthAttacker,kind,level);
@@ -72,6 +73,33 @@ for(const kind of ['LEFT_HOOK','RIGHT_HOOK']){
     _legacyActorsQueued=true;actorShow(depthAttacker);actorShow(depthDefender);drawLegacyActors();`);
   check(`depthPaintEvents.indexOf('ATTACKER:${kind==='LEFT_HOOK'?-1:1}:FIST')>depthPaintEvents.indexOf('DEFENDER:HEAD') && depthPaintEvents.length===6`,
     'An elevated returning hook preserves its depth across the active/recovery boundary');
+}
+for(const dodge of ['LEFT','RIGHT','FORWARD','BACK'])for(const angle of [0,.63,Math.PI/2,Math.PI,-Math.PI/2]){
+  for(const level of ['HEAD','BODY'])for(const kind of ['LEFT_STRAIGHT','RIGHT_JAB','LEFT_HOOK','RIGHT_HOOK']){
+    const side=kind.startsWith('LEFT')?-1:1;
+    probe(`setupDepthPair(${angle},'${kind}','${level}','${dodge}',false,true);`);
+    check(`['DEFENDER:-1:FIST','DEFENDER:1:FIST'].every(e=>depthPaintEvents.indexOf(e)<depthPaintEvents.indexOf('DEFENDER:HEAD')) &&
+      depthPaintEvents.length===6`, 'Both player arms sit beneath the head during '+dodge+' against '+level+' '+kind);
+    check(`(()=>{const pose=boxingPose(depthDefender),a=boxingPose(depthAttacker).arms.find(a=>a.striking),
+      p=boxingWorldPoint(depthDefender,pose.head),body=boxingWorldPoint(depthDefender,pose.body),
+      elbow=boxingWorldPoint(depthAttacker,a.elbow),fist=boxingWorldPoint(depthAttacker,a.fist),
+      flat=p=>({...p,z:0}),rig=figureRig(depthAttacker.bodyW,depthAttacker.bodyH),
+      overlaps=boxingSegmentDistance(flat(p),flat(elbow),flat(fist))<=pose.head.r+rig.foreW*.4 ||
+        boxingSegmentDistance(flat(body),flat(elbow),flat(fist))<=Math.max(pose.body.rx,pose.body.ry)+rig.foreW*.4;
+      return !overlaps||depthPaintEvents.indexOf('ATTACKER:${side}:FIST')>depthPaintEvents.indexOf('DEFENDER:HEAD');})()`,
+      'A crossing enemy '+level+' '+kind+' remains above the player head/body during '+dodge);
+    check(`depthPaintEvents.filter(e=>e==='ATTACKER:${side}:FIST').length===1 && _boxingFigurePass===null &&
+      ['ATTACKER:-1:FIST','ATTACKER:1:FIST'].every(e=>depthPaintEvents.indexOf(e)>depthPaintEvents.indexOf('ATTACKER:HEAD'))`,
+      'Enemy arms stay above their own head, with one incoming fist and no stale deferred pass');
+  }
+}
+for(const dodge of ['LEFT','RIGHT','FORWARD','BACK'])for(const kind of ['LEFT_STRAIGHT','RIGHT_JAB','LEFT_HOOK','RIGHT_HOOK']){
+  if(dodge==='LEFT'&&kind.startsWith('LEFT')||dodge==='RIGHT'&&kind.startsWith('RIGHT'))continue;
+  probe(`setupDepthPair(0,'LEFT_HOOK','HEAD','${dodge}',false,true);
+    boxingRequestPunch(depthDefender,'${kind}');depthDefender._boxing.dodge=null;
+    depthPaintEvents=[];_legacyActorsQueued=true;actorShow(depthAttacker);actorShow(depthDefender);drawLegacyActors();`);
+  check(`['DEFENDER:-1:FIST','DEFENDER:1:FIST'].every(e=>depthPaintEvents.indexOf(e)<depthPaintEvents.indexOf('DEFENDER:HEAD')) && depthPaintEvents.length===6`,
+    'A carried '+dodge+' counter keeps the player head above both arms for '+kind);
 }
 // Verify actual furniture/actor interleaving, rather than a limb-only helper.
 probe(`setupDepthPair(PI/2);depthPaintEvents=[];

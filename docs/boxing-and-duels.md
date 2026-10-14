@@ -59,6 +59,18 @@ while body punches remain a threat in either posture.
 Forward movement adds a step into the duck; backward movement adds a retreat
 with the lean. These steps use the boxer's facing at the start of the slip and
 do not add forward/back travel when the held movement opposes the chosen slip.
+
+Press a different dodge direction as the head reaches its peak to link another
+movement directly from the current pose. A press during the first 95 ms queues
+one direction until the apex; during the apex hold, through 205 ms, it links
+immediately. The next segment blends the head, torso, shoulders and guard over
+95 ms, without first resetting the stance. Opposite lateral slips roll slightly
+forward and down across the centerline. Recovery stays committed; repeating or
+holding a direction cannot extend it. All twelve different-direction pairs work
+with the existing keyboard, touch and gamepad bindings. Linked head movement
+continues the original optional step and its timing rather than adding another
+full sidestep. Physical head/body contact still applies throughout the chain.
+
 Throwing the opposite hand from a lateral sway links the head slip into the
 counter's shoulder and hip turn. Real animated hurt geometry determines a
 miss; dodging grants no blanket invulnerability. Forward ducks and backward
@@ -70,9 +82,12 @@ hats tilt with the duck so their brims do not hide the new posture.
 Skin and hair also foreshorten with the forward pitch, so the duck remains
 visible on bare heads without moving the physical head joint.
 
-When a head punch crosses a left/right slip, its bare forearm and fist paint
-above the turned head and torso. Elevated hooks also paint above a forward
-duck's lowered head and back. Both keep that depth into the beginning of recovery.
+During every player dodge, including linked movements and carried counters,
+both of the player's own forearms and fists paint beneath the head and headwear.
+Crossing incoming enemy arms paint above that completed silhouette through
+contact and early recovery, including during a backward lean. Enemy arms retain
+their normal position above their own head. Head and body punches still use
+their real joints and hit tests; this layer change adds no extra hits or immunity.
 The rest of the fighters and furniture retain their normal ground depth;
 knocked-out bodies stay underneath standing fighters. Each hand still paints
 once at the same contact point used by the combat solver.
@@ -302,7 +317,7 @@ poses verify hook-over-duck depth in both actor orders and the shared head/fist
 centers, with no browser errors or frame faults. These captures use desktop
 Chromium mobile viewports; they do not measure performance on a Galaxy device.
 
-Slip depth and round finishes expand coverage to 1,294 checks across 21 suites.
+The slip-depth and round-finish review covered 1,294 checks across 21 suites.
 Native controller trials at 390 × 844 and 940 × 390 verify 40 left/right slips
 against straights across five facings: crossing arms paint above the head and
 torso once, while the physical head strikes miss. Finishing-contact fixtures
@@ -314,7 +329,22 @@ use directed low-health opponents to isolate the last contact; no knockout
 or wave-clear seam is called to make them finish. Chrome reports no errors or
 frame faults.
 
+Linked dodges and guard depth expand coverage to 2,568 checks across 23 suites,
+including 547 apex, continuity and physical contact checks, 235 native input
+checks and 672 production layer checks. Final Chrome review at the same three
+mobile viewport sizes verifies all twelve direction changes with native
+controller edges, continued multi-slip chains, real touch and keyboard links,
+and mixed-posture counters that still land. Incoming head/body contacts remain
+physical, and the player's own arms stay under their head at every sampled
+handoff while crossing enemy arms stay above. Parry, pause, controller handoff,
+stance exit, knockout and round finish discard pending links. Held buttons and
+simultaneous chords cannot create repeated chains. The 2.6-second finishing
+interval still preserves the same boxing rig. There are no browser errors or
+frame faults; the six-pose detail preview fully frames the figures.
+
 ## Captured previews
+
+![Own guard below the head, incoming punches above it, and continuous linked dodges](previews/boxing-dodge-chains.png)
 
 ![Crossing punches above lateral slips and uninterrupted punch/knockout recovery between rounds](previews/boxing-slip-round-finish.png)
 

@@ -13710,6 +13710,20 @@ function boxingStartPunch(actor,request) {
   // A continuation can face the current opponent, but never redirects a fist
   // already travelling through its active contact arc.
   if(b.target&&boxingAlive(b.target))actor.aimAngle=Math.atan2(b.target.y-actor.y,b.target.x-actor.x);
+  let slipAxes=request.slipAxes||null,slipSide=request.slipSide||0,slipKind=request.slipKind||null,
+    slipAmount=request.slipAmount||0,slipFadeStartMs=request.slipFadeStartMs,slipExpireMs=request.slipExpireMs;
+  if(slipAxes){
+    // A contact-timed continuation can wait for the previous active fist.
+    // Capture its real posture when the next strike starts, so an earlier
+    // queued duck cannot reappear after the linked dodge has already ended.
+    const lateral=boxingDodgeAmount(b.dodge),depth=boxingDodgeDepth(b.dodge),
+      outside=d.side*lateral<-.1,depthCounter=Math.abs(depth)>.1;
+    slipAxes=outside||depthCounter?{lateral,depth}:null;
+    slipSide=outside?Math.sign(lateral):0;slipKind=depthCounter?(depth>0?'FORWARD':'BACK'):null;
+    slipAmount=slipAxes?Math.max(Math.abs(lateral),Math.abs(depth)):0;
+    slipFadeStartMs=b.dodge&&b.dodge.linked?Math.max(0,205-b.dodge.elapsedMs):undefined;
+    slipExpireMs=b.dodge&&b.dodge.linked?BOXING.DODGE_MS-b.dodge.elapsedMs:undefined;
+  }
   b.punch={kind:d.kind,level:request.level,elapsedMs:0,
     windupMs:playerPunch?d.windupMs*(combo?.75:1):enemyChain&&comboIndex>1?
       Math.max(130,d.enemyWindupMs*.72+profile.followTellMs*(1-pressure*.12)):d.enemyWindupMs+BOXING.ENEMY_TELEGRAPH_MS,
@@ -13717,7 +13731,7 @@ function boxingStartPunch(actor,request) {
     recoveryMs:playerPunch?d.recoveryMs*(combo?.85:1):d.enemyRecoveryMs*(enemyChain?profile.recoveryScale:1),
     hit:new Set(),attackId:++b.attackCount,comboIndex,comboUsed:false,
     damageScale:playerPunch?1+(comboIndex-1)*.08:1,enemyChain,preparedAmount:request.preparedAmount||0,
-    slipSide:request.slipSide||0,slipKind:request.slipKind||null,slipAmount:request.slipAmount||0,
+    slipSide,slipKind,slipAmount,slipAxes,slipFadeStartMs,slipExpireMs,
     aimAngle:Number.isFinite(actor.aimAngle)?actor.aimAngle:0};
   b.comboIntent=null;b.comboUntilMs=0;b.lastLandedKind=null;b.lastLandedAttack=0;
   b.comboCount=comboIndex;
@@ -13741,7 +13755,10 @@ function boxingRequestPunch(actor,kind,level='HEAD',options=null) {
   const request={kind:d.kind,level:level==='BODY'?'BODY':'HEAD',comboIndex:combo?intent.comboIndex:1,
     preparedAmount:Math.max(0,Math.min(1,options&&options.preparedAmount||0)),
     slipSide:slip?Math.sign(dodgeAmount):0,slipKind:depthCounter?(dodgeDepth>0?'FORWARD':'BACK'):null,
-    slipAmount:slip?Math.abs(dodgeAmount):depthCounter?Math.abs(dodgeDepth):0};
+    slipAmount:slip||depthCounter?Math.max(Math.abs(dodgeAmount),Math.abs(dodgeDepth)):0,
+    slipAxes:slip||depthCounter?{lateral:dodgeAmount,depth:dodgeDepth}:null,
+    slipFadeStartMs:b.dodge&&b.dodge.linked?Math.max(0,205-b.dodge.elapsedMs):undefined,
+    slipExpireMs:b.dodge&&b.dodge.linked?BOXING.DODGE_MS-b.dodge.elapsedMs:undefined};
   if(!actor.isPlayer&&b.enemyCombo){request.enemyChain=true;request.comboIndex=b.enemyCombo.index+1;}
   if(combo)b.comboIntent=null;
   if(b.punch&&b.punch.elapsedMs<b.punch.windupMs+b.punch.activeMs){b.queuedPunch=request;b.idleMs=0;return true;}
@@ -13751,9 +13768,20 @@ function boxingRequestPunch(actor,kind,level='HEAD',options=null) {
 function boxingRequestDodge(actor,direction,moveX=0,moveY=0) {
   if(!boxingActive(actor))return false;
   const b=actor._boxing;
-  if(b.dodge||b.stunMs>0||b.dodgeCooldownMs>0)return false;
+  if(b.stunMs>0)return false;
   const kind=typeof direction==='string'?direction.toUpperCase():direction<0?'LEFT':'RIGHT';
   if(!['LEFT','RIGHT','FORWARD','BACK'].includes(kind))return false;
+  if(b.dodge){
+    const current=b.dodge;
+    // A fresh change of direction meets the current slip at its apex. One
+    // buffered choice is enough; repeated directions cannot extend a dodge.
+    // Recovery remains committed, and enemy tells retain their single slip.
+    if(!actor.isPlayer||current.kind===kind||current.pending||current.elapsedMs>205)return false;
+    if(current.elapsedMs<95)current.pending={kind};
+    else boxingLinkDodge(actor,kind);
+    b.idleMs=0;return true;
+  }
+  if(b.dodgeCooldownMs>0)return false;
   const len=Math.hypot(moveX,moveY),facing=Number.isFinite(actor.aimAngle)?actor.aimAngle:0;
   let stepX=len>0?moveX/len:0,stepY=len>0?moveY/len:0;
   if(kind==='FORWARD'||kind==='BACK'){
@@ -13770,16 +13798,43 @@ function boxingRequestDodge(actor,direction,moveX=0,moveY=0) {
   return true;
 }
 function boxingSmooth(v) { v=Math.max(0,Math.min(1,v));return v*v*(3-2*v); }
+function boxingCancelDodgeChain(actor) {
+  if(actor&&actor._boxing&&actor._boxing.dodge)actor._boxing.dodge.pending=null;
+}
+function boxingLinkDodge(actor,kind) {
+  const b=actor._boxing,previous=b.dodge;
+  const fromLateral=boxingDodgeAmount(previous),fromDepth=boxingDodgeDepth(previous);
+  b.dodge={kind,side:kind==='LEFT'?-1:kind==='RIGHT'?1:0,elapsedMs:0,
+    fromLateral,fromDepth,linked:true,
+    // A linked head movement preserves the step already in progress. It
+    // cannot restart a full sidestep every time another button is pressed.
+    moveX:previous.moveX,moveY:previous.moveY,stepDone:previous.stepDone,
+    stepOffsetMs:(previous.stepOffsetMs||0)+previous.elapsedMs,facing:previous.facing};
+  b.dodgeCooldownMs=BOXING.DODGE_COOLDOWN_MS;
+  if(b.punch)b.punch.slipCarryInterrupted=true;
+}
 function boxingDodgeBlend(d) {
   if(!d)return 0;
   const t=d.elapsedMs;
   return t<95?boxingSmooth(t/95):t<205?1:1-boxingSmooth((t-205)/225);
 }
 function boxingDodgeAmount(d) {
-  return d&&(d.kind==='FORWARD'||d.kind==='BACK')?0:d?d.side*boxingDodgeBlend(d):0;
+  if(!d)return 0;
+  const target=d.kind==='LEFT'?-1:d.kind==='RIGHT'?1:0;
+  return d.linked&&d.elapsedMs<95?
+    d.fromLateral+(target-d.fromLateral)*boxingSmooth(d.elapsedMs/95):target*boxingDodgeBlend(d);
 }
 function boxingDodgeDepth(d) {
-  return d&&d.kind==='FORWARD'?boxingDodgeBlend(d):d&&d.kind==='BACK'?-boxingDodgeBlend(d):0;
+  if(!d)return 0;
+  const target=d.kind==='FORWARD'?1:d.kind==='BACK'?-1:0;
+  if(d.linked&&d.elapsedMs<95){
+    const u=d.elapsedMs/95,toLateral=d.kind==='LEFT'?-1:d.kind==='RIGHT'?1:0;
+    // Roll slightly forward between the two outside lines. The head crosses
+    // center on bent knees instead of pausing upright between opposite slips.
+    const roll=d.fromLateral*toLateral<0?.30*Math.pow(Math.sin(Math.PI*u),2):0;
+    return d.fromDepth+(target-d.fromDepth)*boxingSmooth(u)+roll;
+  }
+  return target*boxingDodgeBlend(d);
 }
 function boxingPoint(x,y,z) { return {x,y,z}; }
 function boxingBlendPoint(a,b,u) { return boxingPoint(a.x+(b.x-a.x)*u,a.y+(b.y-a.y)*u,a.z+(b.z-a.z)*u); }
@@ -13861,18 +13916,23 @@ function boxingPose(actor,trackStraight=true) {
         hipTwist=bodyProfile.hipLoad*(1-drive)-d.side*(d.hook?.63:.29)*drive;
       }
     }
-    if(p.slipSide&&p.slipAmount>0){
-      const carry=phase==='WINDUP'?1:phase==='ACTIVE'?1-boxingSmooth(progress)*.42:
-        .58*(1-boxingSmooth(progress));
-      const counterSway=p.slipSide*Math.min(1,p.slipAmount)*BOXING.SWAY_DISTANCE*carry;
+    const counterAxes=p.slipAxes||{lateral:p.slipSide*Math.min(1,p.slipAmount||0),
+      depth:(p.slipKind==='FORWARD'?1:p.slipKind==='BACK'?-1:0)*Math.min(1,p.slipAmount||0)};
+    let carry=phase==='WINDUP'?1:phase==='ACTIVE'?1-boxingSmooth(progress)*.42:
+      .58*(1-boxingSmooth(progress));
+    if(Number.isFinite(p.slipExpireMs))carry=Math.min(carry,1-boxingSmooth(
+      (p.elapsedMs-p.slipFadeStartMs)/Math.max(1,p.slipExpireMs-p.slipFadeStartMs)));
+    // A live linked slip owns its joints throughout the transition. An older
+    // counter cannot pin the head on its old side as the new movement crosses.
+    const retainCounter=!p.slipCarryInterrupted&&!(b.dodge&&b.dodge.linked);
+    if(retainCounter&&counterAxes.lateral){
+      const counterSway=counterAxes.lateral*BOXING.SWAY_DISTANCE*carry;
       // A slip counter remains visibly outside the incoming line until its
       // driving shoulder unwinds. These are also its real head hurt-box joints.
       if(Math.abs(counterSway)>Math.abs(sway)&&(!sway||Math.sign(counterSway)===Math.sign(sway)))sway=counterSway;
     }
-    if((p.slipKind==='FORWARD'||p.slipKind==='BACK')&&p.slipAmount>0){
-      const carry=phase==='WINDUP'?1:phase==='ACTIVE'?1-boxingSmooth(progress)*.42:
-        .58*(1-boxingSmooth(progress));
-      const counterDepth=(p.slipKind==='FORWARD'?1:-1)*Math.min(1,p.slipAmount)*carry;
+    if(retainCounter&&counterAxes.depth){
+      const counterDepth=counterAxes.depth*carry;
       if(Math.abs(counterDepth)>Math.abs(slipDepth)&&(!slipDepth||Math.sign(counterDepth)===Math.sign(slipDepth)))slipDepth=counterDepth;
     }
   }
@@ -13990,9 +14050,10 @@ function boxingPose(actor,trackStraight=true) {
   }
   arms.left=arms[0];arms.right=arms[1];
   const guardCapsules=arms.filter(a=>a.guard).map(a=>({a:a.elbow,b:a.fist,r:BOXING.GUARD_RADIUS,side:a.side}));
-  const stepping=active&&b.dodge&&(b.dodge.moveX||b.dodge.moveY)&&b.dodge.elapsedMs<180;
-  const gait=actor&&actor.isMoving?Math.min(.65,actor.gait||.3):stepping?.55*Math.sin(b.dodge.elapsedMs/180*Math.PI):0;
-  const walk=(actor&&actor.walkCycle||0)+(stepping?b.dodge.elapsedMs/180*Math.PI:0);
+  const stepElapsed=active&&b.dodge?b.dodge.elapsedMs+(b.dodge.stepOffsetMs||0):0;
+  const stepping=active&&b.dodge&&(b.dodge.moveX||b.dodge.moveY)&&stepElapsed<180;
+  const gait=actor&&actor.isMoving?Math.min(.65,actor.gait||.3):stepping?.55*Math.sin(stepElapsed/180*Math.PI):0;
+  const walk=(actor&&actor.walkCycle||0)+(stepping?stepElapsed/180*Math.PI:0);
   const movementAngle=stepping?Math.atan2(b.dodge.moveY,b.dodge.moveX):actor&&Number.isFinite(actor.moveAngle)?actor.moveAngle:actor&&actor.aimAngle||0;
   const footAngle=movementAngle-(actor&&actor.aimAngle||0),footDx=Math.cos(footAngle),footDy=Math.sin(footAngle);
   const feet=[{side:-1,x:-7,y:-7,heading:.12,lift:0},{side:1,x:7,y:7,heading:-.08,lift:0}];
@@ -14081,6 +14142,7 @@ function boxingResolvePunch(attacker,defender,worldPoint,moveFn,onHit) {
     point:{x:worldPoint.x,y:worldPoint.y,z:worldPoint.z},sector,stunMs:outcome==='PARRY'?BOXING.PARRY_STUN_MS:0};
   if(outcome==='PARRY'){
     boxingCancelPunchPreparation(attacker);
+    boxingCancelDodgeChain(attacker);
     attacker._boxing.punch=null;attacker._boxing.stunMs=BOXING.PARRY_STUN_MS;
     attacker._boxing.cooldownMs=BOXING.PARRY_STUN_MS;
     db.parryFlashMs=BOXING.PARRY_FLASH_MS;
@@ -14101,11 +14163,13 @@ function boxingResolvePunch(attacker,defender,worldPoint,moveFn,onHit) {
 }
 function boxingUpdate(actor,dt,opponents,moveFn,onHit) {
   if(!boxingActive(actor)){
+    boxingCancelDodgeChain(actor);
     if(actor&&actor._boxing&&!actor.isPlayer){actor._boxing.enemyCombo=null;actor._boxing.punch=null;}
     return [];
   }
   const b=actor._boxing,events=[],total=Math.max(0,Math.min(500,Number(dt)||0));
   if(b.stunMs>0)boxingCancelPunchPreparation(actor);
+  if(b.stunMs>0)boxingCancelDodgeChain(actor);
   boxingTarget(actor,opponents||[]);
   b.idleMs+=total;
   if(actor.isPlayer&&b.context==='WORLD'&&b.idleMs>=BOXING.IDLE_EXIT_MS&&!b.punch&&!b.dodge&&!b.preparedPunch&&
@@ -14119,8 +14183,14 @@ function boxingUpdate(actor,dt,opponents,moveFn,onHit) {
     b.guardMs+=step;b.stunMs=Math.max(0,b.stunMs-step);b.cooldownMs=Math.max(0,b.cooldownMs-step);
     b.dodgeCooldownMs=Math.max(0,b.dodgeCooldownMs-step);b.parryFlashMs=Math.max(0,b.parryFlashMs-step);b.hitFlashMs=Math.max(0,b.hitFlashMs-step);
     if(b.dodge){
-      const dodge=b.dodge;dodge.elapsedMs+=step;
-      const desired=boxingSmooth(Math.min(1,dodge.elapsedMs/180))*BOXING.SIDESTEP_DISTANCE;
+      let dodge=b.dodge;dodge.elapsedMs+=step;
+      if(dodge.pending&&dodge.elapsedMs>=95){
+        const over=dodge.elapsedMs-95,kind=dodge.pending.kind;
+        dodge.elapsedMs=95;boxingLinkDodge(actor,kind);dodge=b.dodge;dodge.elapsedMs=over;
+        b.dodgeCooldownMs=Math.max(0,b.dodgeCooldownMs-over);
+      }
+      const stepElapsed=dodge.elapsedMs+(dodge.stepOffsetMs||0);
+      const desired=boxingSmooth(Math.min(1,stepElapsed/180))*BOXING.SIDESTEP_DISTANCE;
       const delta=desired-dodge.stepDone;dodge.stepDone=desired;
       if(delta>0&&(dodge.moveX||dodge.moveY))boxingTryMove(actor,actor.x+dodge.moveX*delta,actor.y+dodge.moveY*delta,moveFn);
       if(dodge.elapsedMs>=BOXING.DODGE_MS)b.dodge=null;
@@ -14398,19 +14468,21 @@ function boxingBeginFigurePass(actors) {
 function boxingDeferSlipPunch(actor, pose, arm, appearance, rig, skin) {
   const pass = _boxingFigurePass, target = actor._boxing && actor._boxing.target;
   if (!pass || !target || !arm.striking || !['ACTIVE', 'RECOVERY'].includes(arm.phase) ||
-      pose.punchLevel !== 'HEAD' || !boxingActive(target) ||
+      !boxingActive(target) ||
       !pass.order.has(actor) || !pass.order.has(target) ||
       pass.order.get(target) <= pass.order.get(actor)) return false;
   const lower = boxingPose(target);
+  const playerSlip = target.isPlayer && (target._boxing.dodge ||
+    Math.abs(lower.dodge) > .001 || Math.abs(lower.slipDepth) > .001);
   const lateral = Math.abs(lower.dodge) >= .35, duck = arm.hook && lower.duck >= .35;
-  if (!lateral && !duck) return false;
+  if (!playerSlip && (pose.punchLevel !== 'HEAD' || !lateral && !duck)) return false;
   const elbow = boxingWorldPoint(actor, arm.elbow), fist = boxingWorldPoint(actor, arm.fist),
     head = boxingWorldPoint(target, lower.head), body = boxingWorldPoint(target, lower.body),
     targetScale = boxingRenderScale(target);
   // A lateral slip moves off the punch line at head height, above the ribs.
   // Its crossing arm still belongs in front of that turned silhouette. A
   // forward duck instead needs genuine vertical clearance beneath the hook.
-  if (!lateral && Math.min(elbow.z, fist.z) <= head.z + lower.head.r * targetScale * .45) return false;
+  if (!playerSlip && !lateral && Math.min(elbow.z, fist.z) <= head.z + lower.head.r * targetScale * .45) return false;
   const a = { x: elbow.x, y: elbow.y, z: 0 }, b = { x: fist.x, y: fist.y, z: 0 };
   const overlap = point => boxingSegmentDistance({ x: point.x, y: point.y, z: 0 }, a, b);
   if (overlap(head) > (lower.head.r + rig.foreW * .4) * targetScale &&
@@ -14465,10 +14537,17 @@ function paintBoxingFigure(e) {
   if(id.ninjaSuit){g.noStroke();g.fill(100,0,200);g.rect(-b.body.rx,-3,b.body.rx*2,6,1.4);}
   paintBoxingBack(g,b);
   pop();
+  const ownArmsUnderHead=e.isPlayer&&(e._boxing&&e._boxing.dodge||
+    Math.abs(b.dodge)>.001||Math.abs(b.slipDepth)>.001);
+  // The player's tucked forearms belong beneath their moving head in every
+  // slip, including linked segments and slip counters. Incoming opponent
+  // arms keep their separate crossing pass above this completed silhouette.
+  if(ownArmsUnderHead)for(const arm of b.arms)
+    paintBoxingArm(g,appearance,arm,rig,skin,'FOREARM');
   paintBoxingNape(g,b,skin);
   drawFigureHead(g,e,b.head.x,b.head.y,true,e.isMoving?sin((e.walkCycle||0)*.5)*6:0,b.bodyPitch);
   if(e.eType==='ARMORED_STANDARD'&&e.hp>50){push();translate(b.head.x,b.head.y);if(b.bodyPitch){scale(Math.max(.76,1-Math.abs(b.bodyPitch)*.72),1);if(b.bodyPitch<0)translate(b.bodyPitch*2.2,0);}rotate(HALF_PI);drawArmoredHelmet(g);pop();}
-  for(const arm of b.arms)if(!boxingDeferSlipPunch(e,b,arm,appearance,rig,skin))
+  if(!ownArmsUnderHead)for(const arm of b.arms)if(!boxingDeferSlipPunch(e,b,arm,appearance,rig,skin))
     paintBoxingArm(g,appearance,arm,rig,skin,'FOREARM');
   // Stains move with the mass they belong to instead of staying at the hips
   // while a slipping head/torso escapes the incoming punch.
@@ -21049,6 +21128,7 @@ function boxingNativeInputState(actor = player) {
 }
 function boxingResetInput(actor = player) {
   if (!actor) return;
+  boxingCancelDodgeChain(actor);
   actor._boxingControls = { isWorld: true };
   leftStick.active = rightStick.active = false;
   leftStick.dx = leftStick.dy = rightStick.dx = rightStick.dy = rightStick.dist = 0;
@@ -21071,6 +21151,9 @@ function boxingLeaveInput(actor = player, contextState = null) {
   }
 }
 function boxingSeedEntryInput(actor = player, contextState = null) {
+  // Seeding also runs on scene-owned resume paths which never poll a disabled
+  // reader. Their previous buffered slip must not survive the control handoff.
+  boxingCancelDodgeChain(actor);
   const state = boxingInputState(contextState || boxingNativeInputState(actor)), pad = connectedGamepad();
   const key = code => typeof keyIsDown === 'function' && keyIsDown(code);
   for (const [id, down, punch] of [
@@ -21195,9 +21278,15 @@ function boxingReadInput(actor, contextState = null) {
     });
     result.actions.push({ kind: 'PUNCH', punch, level, accepted, queued: accepted && !!actor._boxing.queuedPunch });
   };
+  let dodgePressConsumed = false;
   const pressDodge = side => {
+    // A combo needs a second physical press on a later poll. Consume a chord's
+    // other fresh edges so holding several buttons cannot create an automatic
+    // link as the first slip reaches its apex.
+    if (dodgePressConsumed) { result.actions.push({ kind: 'DODGE', side, accepted: false, queued: false }); return; }
+    dodgePressConsumed = true;
     const accepted = boxingRequestDodge(actor, side, result.moveX, result.moveY);
-    result.actions.push({ kind: 'DODGE', side, accepted });
+    result.actions.push({ kind: 'DODGE', side, accepted, queued: accepted && !!actor._boxing.dodge.pending });
   };
   const heldPunch = (id, punch, down) => {
     let h = state.held.get(id);
@@ -21219,9 +21308,13 @@ function boxingReadInput(actor, contextState = null) {
   };
   const key = code => typeof keyIsDown === 'function' && keyIsDown(code);
   const pad = connectedGamepad(), pb = i => !!(pad && pad.buttons[i] && pad.buttons[i].pressed);
-  if (!pad && state.padWasConnected) {
+  const padIdentity = pad ? String(pad.index || 0) + ':' + String(pad.id || '') : null,
+    padChanged = !!(pad && state.padWasConnected && state.padIdentity !== undefined && state.padIdentity !== padIdentity);
+  if ((!pad && state.padWasConnected) || padChanged) {
     // Losing a controller cancels its holds; disconnect is never a release
-    // command for a prepared body punch.
+    // command for a prepared body punch. Changing controllers also consumes
+    // the new pad's held face buttons instead of replaying the old slip queue.
+    boxingCancelDodgeChain(actor);
     for (const [id, h] of state.held) if (id.startsWith('PAD_')) {
       if (actor._boxing.comboIntent === h.comboIntent) actor._boxing.comboIntent = null;
       state.held.delete(id);
@@ -21236,6 +21329,7 @@ function boxingReadInput(actor, contextState = null) {
     // and a deliberate release may throw the new short head preparation.
     boxingSeedDodgeEdges(state, pad); state.padDisconnected = false;
   }
+  state.padIdentity = padIdentity;
   if (state.isWorld) {
     result.interact = edge('INTERACT_KEY', key(70));
   }
@@ -21295,7 +21389,8 @@ function boxingReadInput(actor, contextState = null) {
         else if (!down && !t.consumed) pressPunch(t.action, state.clockMs - t.startedMs >= BOXING_INPUT.bodyHoldMs ? 'BODY' : 'HEAD', t);
       }
     } else if (t.role === 'PAUSE' && down && !t.fired) {
-      t.fired = true; isPaused = true; pauseMenuState = 'MAIN';
+      t.fired = true; boxingLeaveInput(actor, state); isPaused = true; pauseMenuState = 'MAIN';
+      result.paused = true; return result;
     }
     if (!down) state.touches.delete(id);
   }
@@ -21315,6 +21410,9 @@ function boxingReadInput(actor, contextState = null) {
   if (!entryPads.includes(3) && edge('PAD_DUCK', pb(3))) pressDodge('FORWARD');
   if (edge('PAD_LEAN_BACK', pb(0))) pressDodge('BACK');
   state.entryPads = entryPads.filter(pb);
+  // The entry alias skips duck polling while held. Its actual release must
+  // clear that seeded edge now, so the next fresh Y press can immediately duck.
+  if (entryPads.includes(3) && !pb(3)) state.edges.delete('PAD_DUCK');
   if (actor._boxing.stunMs <= 0 && preparations.length) {
     // Multiple fingers may prepare different strikes. Releasing one leaves the
     // other hold intact; the most advanced, then newest, preparation is drawn.
