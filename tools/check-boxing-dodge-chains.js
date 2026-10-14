@@ -72,9 +72,20 @@ for(const first of kinds){
     for(let i=0;i<20;i++)if(boxingRequestDodge(a,'${first}'))return false;
     return a._boxing.dodge===d&&d.elapsedMs===time&&a._boxing.dodgeCooldownMs===cooldown&&!d.pending;})()`,
     first+' repeat presses cannot extend its pose or cooldown');
-  check(`(()=>{const[a]=chainPair();boxingRequestDodge(a,'${first}');boxingUpdate(a,206,[]);
-    const d=a._boxing.dodge;return ${kinds.filter(k=>k!==first).map(k=>"!boxingRequestDodge(a,'"+k+"')").join('&&')}&&a._boxing.dodge===d&&!d.pending;})()`,
-    first+' recovery cannot be rewound to the apex by a late input');
+  for(const next of kinds.filter(k=>k!==first))for(const at of [206,300,429])for(const angle of [0,.63,Math.PI/2,Math.PI,-Math.PI/2]){
+    check(`(()=>{const[a]=chainPair(${angle});boxingRequestDodge(a,'${first}',Math.cos(a.aimAngle)*${first==='BACK'?-1:1},Math.sin(a.aimAngle)*${first==='BACK'?-1:1});
+      boxingUpdate(a,${at},[]);const before=boxingPose(a),position={x:a.x,y:a.y},
+        oldStep=a._boxing.dodge.stepDone;
+      if(!boxingRequestDodge(a,'${next}'))return false;
+      const current=a._boxing.dodge;
+      if(current.kind!=='${next}'||!current.linked||current.elapsedMs!==0||current.pending||
+        current.stepDone!==oldStep||a.x!==position.x||a.y!==position.y||chainPoseDelta(before,boxingPose(a))>1e-7)return false;
+      boxingUpdate(a,95,[]);
+      const expected=chainPair(${angle})[0];boxingRequestDodge(expected,'${next}');expected._boxing.dodge.elapsedMs=95;
+      return Math.hypot(boxingPose(a).head.x-boxingPose(expected).head.x,
+        boxingPose(a).head.y-boxingPose(expected).head.y,boxingPose(a).head.z-boxingPose(expected).head.z)<1e-7;})()`,
+      first+'→'+next+' accepts a late '+at+' ms recovery input from the actual pose, retaining the step and reaching its next dodge at '+angle.toFixed(2));
+  }
   check(`(()=>{const[,a]=chainPair();boxingRequestDodge(a,'${first}');boxingUpdate(a,40,[]);
     return ${kinds.filter(k=>k!==first).map(k=>"!boxingRequestDodge(a,'"+k+"')").join('&&')}&&!a._boxing.dodge.pending;})()`,
     first+' enemy dodge keeps its readable single direction');
@@ -150,4 +161,4 @@ check(`(()=>{const[a]=chainPair();boxingRequestDodge(a,'RIGHT');boxingUpdate(a,1
   if(chainPoseDelta(before,after)>1e-7)return false;
   boxingUpdate(a,47.5,[]);const middle=boxingPose(a);return Math.abs(middle.head.y)<1e-7&&middle.duck>.2;})()`,
   'An earlier counter never pins the head to the old side of the next linked roll');
-console.log('Boxing dodge chains: '+checks+' apex timing, anatomical continuity, physical contact, footwork, counter and lifecycle checks passed.');
+console.log('Boxing dodge chains: '+checks+' handoff timing, anatomical continuity, physical contact, footwork, counter and lifecycle checks passed.');

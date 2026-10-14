@@ -1,4 +1,5 @@
-// Physical fresh-edge routing for apex-linked slips. The same input reader and
+// Physical fresh-edge routing for linked slips, including recovery handoffs.
+// The same input reader and
 // update loop used by gameplay run here; no test directly installs a pending link.
 const assert = require('assert');
 const {ctx, probe} = require('./harness');
@@ -69,6 +70,66 @@ for (const source of ['KEY','TOUCH','PAD']) for (const first of kinds) for (cons
   check(Math.hypot(before.x-after.x,before.y-after.y,before.z-after.z)<1, source+' '+first+' → '+next+' starts from the previous head position');
   for (let i=0;i<32;i++) { read(); advance(20); }
   check(run('!player._boxing.dodge&&player._boxing.attackCount===0'), source+' holds do not repeat links or throw attacks');
+}
+
+// These are deliberate late button presses, not a buffered apex combo. Exercise
+// every direction pair through gameplay's actual input path, just after the
+// apex hold, halfway back to neutral, and immediately before the dodge ends.
+for (const source of ['KEY','TOUCH','PAD']) for (const elapsed of [206,300,429])
+  for (const first of kinds) for (const next of kinds.filter(k=>k!==first)) {
+    fresh(); if (source === 'PAD') connect();
+    press(source,first); read(); advance(elapsed);
+    const before = run('boxingPose(player).head');
+    press(source,next,2); const result = read();
+    const after = run('boxingPose(player).head');
+    const label = source+' '+first+' → '+next+' at '+elapsed+'ms';
+    check(result.actions.some(a=>a.kind==='DODGE'&&a.side===next&&a.accepted&&!a.queued), label+' accepts the fresh late press immediately');
+    check(run(`player._boxing.dodge.kind==='${next}'&&player._boxing.dodge.elapsedMs===0&&!player._boxing.dodge.pending`), label+' replaces the outgoing recovery with the requested movement');
+    check(Math.hypot(before.x-after.x,before.y-after.y,before.z-after.z)<1e-8, label+' begins at the currently drawn head position');
+    advance(95);
+    check(run(`player._boxing.dodge.kind==='${next}'`), label+' reaches its own apex without replaying the previous direction');
+    for (let i=0;i<32;i++) { read(); advance(20); }
+    check(run('!player._boxing.dodge&&player._boxing.attackCount===0'), label+' held source buttons cannot refresh movement or trigger a punch');
+    release(source,first); release(source,next,2); read();
+    check(run('!player._boxing.dodge&&player._boxing.attackCount===0'), label+' releasing the held buttons cannot replay either dodge');
+  }
+
+for (const source of ['KEY','TOUCH','PAD']) for (const kind of kinds) {
+  fresh(); if (source === 'PAD') connect();
+  press(source,kind); read(); advance(300);
+  release(source,kind); read(); press(source,kind);
+  const result = read();
+  check(result.actions.some(a=>a.kind==='DODGE'&&a.side===kind&&!a.accepted&&!a.queued), source+' '+kind+' fresh same-direction recovery press does not refresh the dodge');
+  check(run(`player._boxing.dodge.kind==='${kind}'&&player._boxing.dodge.elapsedMs===300&&!player._boxing.dodge.pending`), source+' '+kind+' recovery timing remains unchanged after a duplicate direction');
+  advance(130);
+  for (let i=0;i<8;i++) { read(); advance(20); }
+  check(run('!player._boxing.dodge&&player._boxing.attackCount===0'), source+' '+kind+' held duplicate input cannot restart after recovery');
+}
+
+// A late counter can hold a little more sway than the recovering dodge alone.
+// The next physical dodge must start from that resolved, visible pose too.
+for (const source of ['KEY','TOUCH','PAD']) {
+  fresh(); if (source === 'PAD') connect();
+  press(source,'RIGHT'); read(); advance(300);
+  if (source === 'KEY') keys.add(69);
+  else if (source === 'PAD') pad.buttons[6].pressed=true;
+  else {
+    const b=run("boxingControlLayout().buttons.find(b=>b.action==='LEFT_STRAIGHT')");
+    ctx.touches.push({id:3,x:b.x,y:b.y});
+  }
+  read();
+  if (source === 'KEY') keys.delete(69);
+  else if (source === 'PAD') pad.buttons[6].pressed=false;
+  else ctx.touches=ctx.touches.filter(t=>t.id!==3);
+  read(); advance(20);
+  check(run("player._boxing.punch&&player._boxing.punch.kind==='LEFT_STRAIGHT'&&player._boxing.punch.slipSide===1"), source+' late native counter preserves its opposite-hand slip linkage');
+  const before=run('boxingPose(player).head');
+  press(source,'FORWARD',2); const result=read(), after=run('boxingPose(player).head');
+  check(result.actions.some(a=>a.kind==='DODGE'&&a.side==='FORWARD'&&a.accepted&&!a.queued), source+' may duck immediately during the late slip counter');
+  check(Math.hypot(before.x-after.x,before.y-after.y,before.z-after.z)<1e-8, source+' late counter handoff preserves the resolved head position, including punch-carried sway');
+  check(run("player._boxing.punch.kind==='LEFT_STRAIGHT'&&player._boxing.attackCount===1&&!player._boxing.queuedPunch"), source+' dodge handoff does not cancel, duplicate or queue the counter punch');
+  for (let i=0;i<32;i++) { read(); advance(20); }
+  check(run('!player._boxing.dodge&&player._boxing.attackCount===1'), source+' held counter and dodge buttons cannot create another movement or punch');
 }
 
 for (const source of ['KEY','TOUCH','PAD']) {

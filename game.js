@@ -13773,10 +13773,10 @@ function boxingRequestDodge(actor,direction,moveX=0,moveY=0) {
   if(!['LEFT','RIGHT','FORWARD','BACK'].includes(kind))return false;
   if(b.dodge){
     const current=b.dodge;
-    // A fresh change of direction meets the current slip at its apex. One
-    // buffered choice is enough; repeated directions cannot extend a dodge.
-    // Recovery remains committed, and enemy tells retain their single slip.
-    if(!actor.isPlayer||current.kind===kind||current.pending||current.elapsedMs>205)return false;
+    // Early changes still meet the current slip at its apex. A later press
+    // can also change direction throughout recovery, from the reached pose.
+    // Repeated directions cannot extend a dodge; enemies keep their single tell.
+    if(!actor.isPlayer||current.kind===kind||current.pending)return false;
     if(current.elapsedMs<95)current.pending={kind};
     else boxingLinkDodge(actor,kind);
     b.idleMs=0;return true;
@@ -13803,7 +13803,9 @@ function boxingCancelDodgeChain(actor) {
 }
 function boxingLinkDodge(actor,kind) {
   const b=actor._boxing,previous=b.dodge;
-  const fromLateral=boxingDodgeAmount(previous),fromDepth=boxingDodgeDepth(previous);
+  // A counter can retain more of the slip than its recovering dodge alone.
+  // Sample the actual current joints before interrupting that retained carry.
+  const pose=boxingPose(actor,false),fromLateral=pose.dodge,fromDepth=pose.slipDepth;
   b.dodge={kind,side:kind==='LEFT'?-1:kind==='RIGHT'?1:0,elapsedMs:0,
     fromLateral,fromDepth,linked:true,
     // A linked head movement preserves the step already in progress. It

@@ -60,13 +60,15 @@ Forward movement adds a step into the duck; backward movement adds a retreat
 with the lean. These steps use the boxer's facing at the start of the slip and
 do not add forward/back travel when the held movement opposes the chosen slip.
 
-Press a different dodge direction as the head reaches its peak to link another
-movement directly from the current pose. A press during the first 95 ms queues
-one direction until the apex; during the apex hold, through 205 ms, it links
-immediately. The next segment blends the head, torso, shoulders and guard over
+Press a different dodge direction during the current animation to link another
+movement directly from the current pose, including while the head is returning
+to guard. An early press during the first 95 ms still queues one direction until
+the apex; any later press links immediately without an apex timing requirement.
+The next segment blends the head, torso, shoulders and guard over
 95 ms, without first resetting the stance. Opposite lateral slips roll slightly
-forward and down across the centerline. Recovery stays committed; repeating or
-holding a direction cannot extend it. All twelve different-direction pairs work
+forward and down across the centerline. The handoff samples the visible pose,
+including any sway retained by a counter punch. Repeating or holding a direction
+cannot extend it. All twelve different-direction pairs work
 with the existing keyboard, touch and gamepad bindings. Linked head movement
 continues the original optional step and its timing rather than adding another
 full sidestep. Physical head/body contact still applies throughout the chain.
@@ -329,7 +331,7 @@ use directed low-health opponents to isolate the last contact; no knockout
 or wave-clear seam is called to make them finish. Chrome reports no errors or
 frame faults.
 
-Linked dodges and guard depth expand coverage to 2,568 checks across 23 suites,
+The initial linked-dodge and guard-depth review covered 2,568 checks across 23 suites,
 including 547 apex, continuity and physical contact checks, 235 native input
 checks and 672 production layer checks. Final Chrome review at the same three
 mobile viewport sizes verifies all twelve direction changes with native
@@ -341,6 +343,15 @@ stance exit, knockout and round finish discard pending links. Held buttons and
 simultaneous chords cannot create repeated chains. The 2.6-second finishing
 interval still preserves the same boxing rig. There are no browser errors or
 frame faults; the six-pose detail preview fully frames the figures.
+
+Recovery handoffs expand the same suites to 3,443 checks. All twelve direction
+pairs accept late inputs at 206, 300 and 429 ms, including native keyboard,
+touch and gamepad presses. Handoffs preserve the full rendered pose even when
+a counter punch carries more head displacement than the underlying recovery.
+Chrome trials at 390 × 844 and 940 × 390 verify late direction changes,
+counter continuity, early apex buffering, physical contacts, layering and the
+unchanged 2.6-second round finish without browser errors or frame faults. Punch
+combo qualification, bonus and timing remain unchanged.
 
 ## Captured previews
 
