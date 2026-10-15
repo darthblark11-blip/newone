@@ -8,6 +8,11 @@ drag an extended fist onto somebody behind the player.
 
 ## Punches, defense and footwork
 
+**Pause → Settings → Gamepad Controls** offers independent Standard/Defensive
+boxing and Right Stick/R2 Trigger shooting preferences, saved on this device.
+Start pauses, Y opens Settings, A selects, the D-pad navigates, and B goes back.
+See [Gamepad controls](gamepad-controls.md) for both exact controller maps.
+
 | Action | Touch | Keyboard | Standard gamepad |
 | --- | --- | --- | --- |
 | Left straight | L STRAIGHT | E | L2 / LT |
@@ -24,10 +29,11 @@ drag an extended fist onto somebody behind the player.
 
 Connected gamepads hide the combat tutorial panel, touch controls and stance
 exit badge. D-pad up exits the stance, restoring the equipped weapon outdoors.
-A is a lean-back slip while boxing; exit the stance before pressing A to talk
-or use a scene interaction. Each shoulder controls its own hand, including R1's
-right-hook entry. Outside boxing, ordinary A interactions and D-pad melee-tool
-cycling retain their existing controls.
+A is a lean-back slip in Standard and a left hook in Defensive; exit the
+stance before pressing A to talk or use a scene interaction. In Standard each
+shoulder controls its own hand, including R1's right-hook entry. Outside boxing,
+ordinary A interactions and D-pad melee-tool cycling retain their existing
+controls.
 
 Tap and release an attack for the head. Hold for at least 180 ms to lower the
 boxer's level and prepare a body shot, then release to throw it. Holding never
@@ -205,7 +211,7 @@ Mae's menu resumes an active run, and the pause shop action can end it deliberat
 Leaving the stance during an active bar fight pauses the opponents' attack
 turns while preserving their health, positions and the player's GRIT. Move
 freely around the room and press A/F at Mae to interact. RAISE FISTS or a fresh
-shoulder/keyboard punch resumes the same bout; a held attack still throws only
+mapped controller/keyboard punch resumes the same bout; a held attack still throws only
 when released. Leaving the stance does not abandon the mission or expose a
 Leave Saloon button during the fight. Buttons held through entry, pause,
 reconnection or stance exit must lift before they can become new slip presses.
@@ -228,9 +234,10 @@ refresh its timer. Local activity notices are cleared when leaving the scene.
 
 ## Quick draw
 
-The right stick aims below roughly **70%** travel and fires when pushed farther.
-The visible gun and projectile follow that direction. Aiming while WAIT is
-safe; firing before DRAW loses. Desktop mouse aiming, Space/RT and the FIRE
+With **Right Stick** shooting, the right stick aims below roughly **70%**
+travel and fires when pushed farther. With **R2 Trigger** selected, the stick
+only aims and R2 fires. Touch keeps its original outer fire ring. The visible
+gun and projectile follow that direction. Aiming while WAIT is safe; firing before DRAW loses. Desktop mouse aiming, Space/RT and the FIRE
 button remain available. The target must actually be hit: a badly aimed round
 can miss, and victory waits for finite projectile contact.
 

@@ -18,6 +18,7 @@ function fresh() {
     leftStick={active:false,dx:0,dy:0,base:{x:66,y:height-107}};
     rightStick={active:false,dx:0,dy:0,dist:0,base:{x:width-76,y:height-107}};
     meleeInputHeld=cannonInputHeld=grenadeInputHeld=false;prevGamepadButtons=[];gamepadWasConnected=false;
+    pauseControlsInput.buttons=[];pauseControlsInput.keys=new Set();pauseControlsInput.pad=null;pauseControlsInput.screen='';
     window.isDesktop=false;window.showOnScreenControls=true;window.__frontierConsumedTouches=new Set();`);
 }
 function connect(buttons = []) {
@@ -25,7 +26,7 @@ function connect(buttons = []) {
   pad = { connected:true, axes:[0,0,0,0], buttons:Array.from({length:17},(_,i)=>({pressed:pressed.has(i),value:pressed.has(i)?1:0})) };
 }
 function world(frames = 1) { for (let i=0;i<frames;i++) run('updateWorldBoxingPlayer(player);'); }
-function room(frames = 1) { for (let i=0;i<frames;i++) run('updateFrontierSaloonActivity();'); }
+function room(frames = 1) { for (let i=0;i<frames;i++) run('handlePauseMenuInput();updateFrontierSaloonActivity();'); }
 function beginRoom() {
   run(`isStoryMode=false;townsData={};startAtLevel(3);started=true;isPaused=isDead=isWin=inCutscene=false;
     inStoryIntro=inTownCutscene=inFarmCutscene=inFarmPostCutscene=inFortCutscene=inPostAmbushCutscene=inDarchonCall=false;

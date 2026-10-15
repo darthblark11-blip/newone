@@ -8,7 +8,7 @@ ctx.localStorage={getItem(){return stored;},setItem(k,v){stored=v;},removeItem()
 const keys=new Set();ctx.keyIsDown=k=>keys.has(k);
 function run(s){return probe(s);}
 function check(s,label){assert.ok(run(s),label);checks++;}
-function tick(n=1){for(let i=0;i<n;i++){ctx.deltaTime=16.67;now+=16.67;run('updateFrontierSaloonActivity();');}}
+function tick(n=1){for(let i=0;i<n;i++){ctx.deltaTime=16.67;now+=16.67;run('handlePauseMenuInput();updateFrontierSaloonActivity();');}}
 function keyTap(code){keys.add(code);tick();keys.delete(code);tick();}
 run(`leftStick={active:false,dx:0,dy:0,base:{x:80,y:height-160}};
  rightStick={active:false,dx:0,dy:0,dist:0,base:{x:width-80,y:height-110}};
@@ -53,7 +53,7 @@ assert.equal(saved.playerX,run('koOutside.x'),'A mid-knockout save resumes at th
 assert.equal(saved.playerY,run('koOutside.y'),'A mid-knockout save preserves campaign Y');checks++;
 assert.equal(saved.meleeToolSel,'SWORD','A mid-knockout save preserves the campaign melee equipment');checks++;
 check('frontierSaloonSavePlayer().currentWeapon===koOutside.weapon','Save keeps the exterior gun despite local fists and the ragdoll');
-keyTap(80);
+keyTap(80);check('!isPaused','The shared pause handler resumes the same knockout before recovery');
 run('var koBeforeRecoveryElapsed=_frontierSaloonSession.playerKnockout.ageMs;');
 let recoveryFrames=0;
 while(recoveryFrames++<360&&run('_frontierSaloonSession.brawl===\'KNOCKOUT\'')){
