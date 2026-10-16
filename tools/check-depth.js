@@ -600,42 +600,52 @@ console.log('\n== the Great Gates and the curtain wall ==');
      probe('__depth') === 0 && probe('__minDepth') === 0, 'net ' + probe('__depth'));
 }
 
-console.log('\n== figures get volume from shading, not from displacement ==');
-// The projection cannot help at figure scale, so the three terms that DO
-// survive twenty pixels are used instead: a contour, a lit cap and a
-// terminator, all offset along the scene's one light vector.
-ok('volShade() exists and is driven by a light vector it is handed',
-   /function volShade\(x, y, w, h, cr, cg, cb, k, lx, ly\)/.test(src) &&
-   /lx = LIGHT_DX; ly = LIGHT_DY;/.test(src) &&
-   /lx \* w \* off \* k/.test(src) && /lx \* w \* 0\.19/.test(src));
-ok('the lit side is stepped, not a single inset cap',
-   /for \(let i = 1; i <= VOL_STEPS; i\+\+\)/.test(src) && /const VOL_STEPS/.test(src));
-ok('the contour is canvas STATE, so parts added later inherit it',
-   /function figureContour\(\)/.test(src) &&
-   /volShade[\s\S]{0,2400}?figureContour\(\);\n}/.test(src));
-const contourSites = (src.match(/figureContour\(\)/g) || []).length;
-ok('and it is switched on for the torso, the limbs and the citizens',
-   contourSites >= 5, contourSites + ' call sites');
-const bodySites = (src.match(/volShade(?:Col)?\(0, 0, this\.bodyW, this\.bodyH/g) || []).length;
-ok('every body -- player, enemy, citizen, gator, cow -- uses the one helper',
-   bodySites === 4, bodySites + ' call sites');
+console.log('\n== figures have curved cel planes inside their original silhouette ==');
+// Inspect emitted drawing operations rather than the old implementation's
+// transparent ellipse rings. A flat base, curved shade and curved highlight
+// should give volume without moving the rig or outlining an interior seam.
 {
-  // Every body call site must be behind a BIOME_ACTIVE guard (Levels 0 and 8
-  // are closed interiors composed against the flat look) and must be handed a
-  // counter-rotated light. Checked per site rather than as one big pattern, so
-  // a fifth animal added without either is a failure and not a silent pass.
-  const re = /volShade(?:Col)?\(0, 0, this\.bodyW/g;
-  let m, guarded = 0, lit = 0, total = 0;
-  while ((m = re.exec(src))) {
-    total++;
-    const before = src.slice(Math.max(0, m.index - 460), m.index);
-    if (/BIOME_ACTIVE/.test(before)) guarded++;
-    if (/figureLight\(/.test(before.slice(-200))) lit++;
-  }
-  ok('none of it runs outside a biome, so Levels 0 and 8 are untouched',
-     total === 4 && guarded === 4, guarded + '/' + total + ' guarded');
-  ok('and every one of them is handed the light in its own frame',
-     total === 4 && lit === 4, lit + '/' + total + ' counter-rotated');
+  const shapes=[], styles=[], g=Object.create(ctx);let current=null, rgba=null, outlined=false;
+  g.fill=(...a)=>{rgba=a;};g.stroke=()=>{outlined=true;};g.noStroke=()=>{outlined=false;};
+  g.strokeWeight=(w)=>{styles.push(w);};
+  g.ellipse=(...a)=>{shapes.push({kind:'ellipse',a,rgba,outlined});};
+  g.beginShape=()=>{current={kind:'path',a:[],rgba,outlined,curves:0};};
+  g.vertex=(...a)=>{current.a.push(...a);};
+  g.bezierVertex=(...a)=>{current.a.push(...a);current.curves++;};
+  g.endShape=()=>{shapes.push(current);current=null;};
+  ctx.__figureProbe=g;
+  probe('figureCelOval(__figureProbe,2,3,20,32,[100,120,140,255],1,1,0);');
+  ok('the rounded model emits a base and two shaded surfaces',shapes.length===3);
+  ok('both cel boundaries are curves with opaque, distinct tones',
+     shapes.slice(1).every(s=>s.kind==='path'&&s.curves===3&&s.rgba[3]===255)&&
+     new Set(shapes.map(s=>s.rgba.slice(0,3).join(','))).size===3);
+  ok('only the outside silhouette is outlined, so planes add no joint rings',
+     shapes[0].outlined&&shapes.slice(1).every(s=>!s.outlined));
+  ok('the base retains its exact position, size and finite drawing geometry',
+     JSON.stringify(shapes[0].a)==='[2,3,20,32]'&&shapes.every(s=>s.a.every(Number.isFinite))&&
+     styles.every(w=>Number.isFinite(w)&&w>0));
+  delete ctx.__figureProbe;
+}
+{
+  const original=ctx.figureCelOval, found=[];let expected=null;
+  ctx.figureCelOval=function(g,x,y,w,h){
+    if(expected&&x===0&&y===0&&w===expected.w&&h===expected.h)found.push(expected.key);
+    return original.apply(this,arguments);
+  };
+  try{
+    probe('rightStick={active:false};leftStick={active:false};doTick=false;chemistSuitUnlocked=false;explosiveArmorUnlocked=false;ninjaSuitUnlocked=false;');
+    for(const biome of [false,true])for(const [type,isPlayer] of [['NORMAL',true],['NORMAL',false],['CITY_CITIZEN_F',false],['ALIEN_GATOR',false],['COW',false]]){
+      probe(`BIOME_ACTIVE=${biome};window.__bodyModel=new Character(0,0,${isPlayer},${JSON.stringify(type)});__bodyModel.isMoving=false;__bodyModel.isArmed=false;__bodyModel.aimHold=0;`);
+      expected={key:biome+':'+type+':'+isPlayer,w:P('__bodyModel.bodyW'),h:P('__bodyModel.bodyH')};
+      probe('__bodyModel.show();');
+    }
+  }finally{ctx.figureCelOval=original;}
+  ok('player, enemies, citizens, gators and cows render through the shared surface helper',
+     found.length===10&&new Set(found).size===10,found.length+' real body draws');
+  ok('closed interiors receive the same dimensional model as outdoor scenes',
+     found.filter(k=>k.startsWith('false:')).length===5&&found.filter(k=>k.startsWith('true:')).length===5);
+  ok('the surface helper accepts both explicit and transform-derived scene light',
+     typeof ctx.figureCelLight==='function'&&typeof ctx.figureLight==='function');
 }
 
 // A figure is drawn INSIDE rotate(facing), and rotate() carries the light round

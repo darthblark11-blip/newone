@@ -444,7 +444,7 @@ console.log('\n== canopies cast, in every biome ==');
 // the height pass has to read the decor list, not the solids.
 ok('the height pass walks the live decor list', /for \(const dc of ch\.decor\)/.test(rig));
 ok('sized off CANOPY_MASS at the entry own scale',
-   /CANOPY_MASS\[dc\.t\]/.test(rig) && /cp\[1\] \* cs, cp\[2\] \* cs/.test(rig));
+   /CANOPY_MASS\[dc\.t\]/.test(rig) && /cp\[1\] \* cs \* crown, cp\[2\] \* cs \* crown/.test(rig));
 ok('the trunk stays a collision volume', /if \(b\.isTreeTrunk\) continue;/.test(rig));
 // A CANOPY_MASS key that no clutter type produces is a caster for a tree that
 // does not exist; one with no art in paintClutter is worse.
