@@ -26430,88 +26430,125 @@ function frontierCanyonQuad(g, axis, u0, u1, a0, a1, b0, b1) {
   const c = frontierCanyonPoint(axis, u1, b1), d = frontierCanyonPoint(axis, u0, b0);
   g.quad(a[0], a[1], b[0], b[1], c[0], c[1], d[0], d[1]);
 }
+// Bedding follows one world-space contour on both canyon axes. Keeping the
+// rim and toe fixed preserves the exact collision/height-owned bank footprint.
+function frontierCanyonBedding(axis,u,index,course) {
+  if(course<=0)return 0;if(course>=6)return 222;
+  return course*37+frontierCanyonFracture(axis,u+course*83,index,230+course)*10+
+    Math.sin(u*.0031+course*1.7+index)*4;
+}
+function frontierCanyonWash(axis,u,index,profile) {
+  const p=profile||frontierCanyonProfile(axis,u,index);
+  return {center:p.center+Math.sin(u*.0023+index)*80+
+    frontierCanyonFracture(axis,u,index,239)*16,
+    width:43+Math.sin(u*.0011+index*.7)*10+frontierCanyonFracture(axis,u,index,240)*5};
+}
 function bakeFrontierCanyonGeology(g, axis, index, lo, hi) {
-  const step = 156;
-  const start = Math.floor((lo - 220) / step) * step;
-  const polygon = points => {
-    g.beginShape();
-    for (const point of points) {
-      const xy = frontierCanyonPoint(axis, point[0], point[1]);
-      g.vertex(xy[0], xy[1]);
-    }
-    g.endShape(CLOSE);
+  const step=156,start=Math.floor((lo-260)/step)*step;
+  const polygon=points=>{
+    g.beginShape();for(const p of points){const q=frontierCanyonPoint(axis,p[0],p[1]);g.vertex(q[0],q[1]);}g.endShape(CLOSE);
   };
-  for (let u = start; u < hi + 220; u += step) {
-    const key = chunkHash(3, Math.floor(u / step), index + (axis === 'Y' ? 900 : 0), 213);
-    const p = frontierCanyonProfile(axis, u, index);
-    if (p.depth < 2) continue;
-    const r0 = (key & 255) / 255, r1 = ((key >>> 8) & 255) / 255;
-    const r2 = ((key >>> 16) & 255) / 255;
-    for (const side of [-1, 1]) {
-      const nx = axis === 'Y' ? side : 0, ny = axis === 'Y' ? 0 : side;
-      const lit = Math.max(0, -(nx * LIGHT_DX + ny * LIGHT_DY));
-      const width = 76 + r0 * 80, length = 104 + r1 * 124;
-      const us = [u-18,u+length*.22,u+length*.69,u+length,u+length*.76,u+length*.12];
-      const offsets = [88,82,96,119,119+width,101+width];
-      const tops = us.map((su,i)=>{
-        const q=frontierCanyonProfile(axis,su,index);
-        return [su,q.center+side*(q.floorHalf+offsets[i])];
-      });
-      const visibility = 1 - frontierCanyonProfile(axis,u+length*.5,index).ramp;
-      if (visibility > .1 && p.bridge < .05) {
-        // The broad polygon is a fractured sandstone plate. Its bevel sits
-        // farther down the bank and the lip catches the sun, producing actual
-        // joined surfaces within the collision-owned scarp band.
-        g.fill(58,42,33,100*visibility);
-        polygon(tops.map(([su,sv])=>[su+10,sv-side*12]));
-        g.fill(151+lit*32+r2*16,94+lit*25+r2*8,57+lit*20,230*visibility);
-        polygon(tops);
-        g.fill(221+lit*20,163+lit*31,97+lit*30,170*visibility);
-        polygon([tops[2],tops[3],[tops[3][0]-5,tops[3][1]-side*7],[tops[2][0],tops[2][1]-side*7]]);
-        // A triangular shade plane breaks the plate into a readable solid.
-        g.fill(82,54,39,90*visibility);
-        polygon([tops[0],tops[1],tops[5]]);
-        g.stroke(61,44,35,105*visibility);g.strokeWeight(2.2);
-        const crack0=frontierCanyonPoint(axis,u+length*.46,p.center+side*(p.floorHalf+110));
-        const crack1=frontierCanyonPoint(axis,u+length*.55,p.center+side*(p.floorHalf+153));
-        g.line(crack0[0],crack0[1],crack1[0],crack1[1]);g.noStroke();
+  const line=points=>{
+    g.beginShape();for(const p of points){const q=frontierCanyonPoint(axis,p[0],p[1]);g.vertex(q[0],q[1]);}g.endShape();
+  };
+  const rockPoint=(u,side,course,offset=0)=>{
+    const p=frontierCanyonProfile(axis,u,index);
+    return [u,p.center+side*(p.floorHalf+frontierCanyonBedding(axis,u,index,course)+offset)];
+  };
+  g.noStroke();
+  for(let u=start;u<hi+260;u+=step){
+    const row=index+(axis==='Y'?900:0),key=chunkHash(3,Math.floor(u/step),row,213),
+      r0=(key&255)/255,r1=((key>>>8)&255)/255,r2=((key>>>16)&255)/255,
+      p=frontierCanyonProfile(axis,u,index);
+    if(p.depth<2)continue;
+    for(const side of [-1,1]){
+      const nx=axis==='Y'?side:0,ny=axis==='Y'?0:side,
+        lit=Math.max(0,-(nx*LIGHT_DX+ny*LIGHT_DY)),
+        visibility=(1-frontierCanyonProfile(axis,u+60,index).ramp)*Math.min(1,p.depth/35);
+      if(visibility>.08&&p.bridge<.05){
+        // Short interlocking shelves replace the repeated giant triangular
+        // wedges. Each slab has a darker broken foot and a warm sunward lip.
+        for(let course=0;course<6;course++){
+          const cell=chunkHash(3,Math.floor(u/step),row+course*47+side*19,241),
+            n=(cell&255)/255,m=((cell>>>8)&255)/255,
+            a=u-64+n*98,b=a+64+m*146,
+            points=[rockPoint(a,side,course,4),rockPoint(a+(b-a)*.45,side,course,2),
+              rockPoint(b,side,course,5),rockPoint(b-8,side,course+1,-5),
+              rockPoint(a+12,side,course+1,-3)],
+            tone=(course%3-1)*7+n*11;
+          g.fill(61,42,34,52*visibility);
+          polygon([points[3],points[4],[points[4][0]+3,points[4][1]-side*4],
+            [points[3][0]-3,points[3][1]-side*4]]);
+          g.fill(137+lit*43+tone,83+lit*30+tone*.65,55+lit*17+tone*.35,132*visibility);
+          polygon(points);
+          g.fill(236+lit*10,169+lit*24,108+lit*20,90*visibility);
+          polygon([points[0],points[1],points[2],[points[2][0]-2,points[2][1]-side*3.5],
+            [points[1][0],points[1][1]-side*3.5],[points[0][0]+2,points[0][1]-side*3.5]]);
+          // Mineral seams stay inside their own course; occasional vertical
+          // fractures cross a few beds, like split sandstone rather than tiles.
+          g.stroke(84,54,42,90*visibility);g.strokeWeight(3);
+          line([rockPoint(a+13,side,course,.38*37),rockPoint(a+37,side,course,.41*37),
+            rockPoint(b-12,side,course,.34*37)]);
+          if((cell&7)<3){
+            g.stroke(68,46,37,155*visibility);g.strokeWeight(3.6);
+            line([rockPoint(a+27,side,course,5),rockPoint(a+34,side,course,.49*37),rockPoint(a+31,side,course+1,-4)]);
+            g.stroke(227,165,107,105*visibility);g.strokeWeight(2.5);
+            line([rockPoint(a+29,side,course,6),rockPoint(a+36,side,course,.49*37)]);
+          }
+          g.noStroke();
+          // A few larger chips catch light against the darker slab, avoiding
+          // screen-door speckle and giving close-up faces a mineral surface.
+          for(let chip=0;chip<2;chip++){
+            const su=a+17+chip*(b-a)*.42,
+              q=rockPoint(su,side,course,12+((cell>>>(chip*4))&7));
+            g.fill(230,170,112,(45+lit*40)*visibility);
+            polygon([[su-4,q[1]],[su+5,q[1]-side*1.4],[su+8,q[1]+side*2],[su-2,q[1]+side*2.8]]);
+          }
+        }
       }
-      // Low fans of fallen angular stone meet the foot of the wall. They stay
-      // shallow on the walkable floor rather than masquerading as solid rocks.
-      if (r0 > .30 && visibility > .4 && p.bridge < .05) {
-        const q=frontierCanyonProfile(axis,u+52,index), toe=q.center+side*q.floorHalf;
-        g.fill(113,83,58,85);
-        polygon([[u-26,toe+side*6],[u+38,toe-side*(37+r1*35)],[u+123,toe-side*14],[u+135,toe+side*13]]);
-        for(let k=0;k<9;k++){
-          const su=u-2+k*13, off=18+(k%3)*11+r2*8;
-          const sq=frontierCanyonProfile(axis,su,index), sv=sq.center+side*(sq.floorHalf-off);
-          const size=5+(k%4)*3;
-          g.fill(77,61,45,100);
-          polygon([[su-size,sv+4],[su,sv-size*.52],[su+size,sv+2],[su+2,sv+size*.55]]);
-          g.fill(194+lit*22,145+lit*19,89+lit*14);
-          polygon([[su-size,sv],[su,sv-size*.52],[su+size*.55,sv-1],[su,sv+size*.25]]);
+      // Talus uses angular stone faces embedded in dusty fan-shaped deposits.
+      // It is painted onto the walkable floor, never an invisible obstacle.
+      if(r0>.28&&visibility>.4&&p.bridge<.05){
+        const q=frontierCanyonProfile(axis,u+52,index),toe=q.center+side*q.floorHalf;
+        g.fill(114,83,59,70*visibility);
+        polygon([[u-26,toe+side*6],[u+38,toe-side*(29+r1*32)],[u+123,toe-side*14],[u+135,toe+side*10]]);
+        for(let k=0;k<7;k++){
+          const su=u-2+k*17,off=15+(k%3)*12+r2*8,sq=frontierCanyonProfile(axis,su,index),
+            sv=sq.center+side*(sq.floorHalf-off),size=5+(k%4)*3;
+          g.fill(75,57,43,120);polygon([[su-size,sv+4],[su,sv-size*.52],[su+size,sv+2],[su+2,sv+size*.55]]);
+          g.fill(195+lit*22,144+lit*19,92+lit*14);polygon([[su-size,sv],[su,sv-size*.52],[su+size*.55,sv-1],[su,sv+size*.25]]);
+          g.fill(133,91,57,185);polygon([[su,sv+size*.25],[su+size*.55,sv-1],[su+size,sv+2],[su+2,sv+size*.55]]);
         }
       }
     }
-    // Scattered floor gravel follows the wash. World-space hashes give small
-    // facets and cracks close enough to read on a phone without a repeating
-    // chunk stamp or any live-frame geology cost.
-    for(let k=0;k<7;k++){
-      const su=u+k*22, q=frontierCanyonProfile(axis,su,index);
-      const offset=((r0+k*.37)%1-.5)*q.floorHalf*1.5;
-      if(q.bridge>.02)continue;
-      const sv=q.center+offset, size=3+(k%3)*2;
-      g.fill(85,65,47,105);
-      polygon([[su-size,sv+3],[su,sv-size],[su+size+2,sv+2],[su+1,sv+size*.65]]);
-      g.fill(198,155,99,185);
-      polygon([[su-size,sv],[su,sv-size],[su+size,sv],[su,sv+2]]);
-      if(k%3===0){
-        g.stroke(107,79,52,100);g.strokeWeight(1.6);
-        const a=frontierCanyonPoint(axis,su+10,sv+11),b=frontierCanyonPoint(axis,su+24,sv+6),c=frontierCanyonPoint(axis,su+31,sv+14);
-        g.line(a[0],a[1],b[0],b[1]);g.line(b[0],b[1],c[0],c[1]);g.noStroke();
+    // Broad silt bars and wind-laid ribbons break up the bottom's old uniform
+    // lane. Their torn outlines follow the same meandering dry wash as below.
+    if(p.bridge<.02){
+      const wash=frontierCanyonWash(axis,u+48,index),
+        side=r0>.5?1:-1,off=side*(wash.width+34+r1*90),length=73+r2*69;
+      const bed=[[-18,-12],[length*.3,-18],[length,0],[length*.75,13],[length*.12,16]].map(([du,dv])=>{
+        const q=frontierCanyonWash(axis,u+du,index);return [u+du,q.center+off+dv];
+      });
+      g.fill(211,166,108,45);polygon(bed);
+      g.fill(116,86,59,35);polygon(bed.map(([su,sv])=>[su+4,sv+4]));
+      g.stroke(230,186,124,88);g.strokeWeight(3.2);
+      for(let ripple=0;ripple<3;ripple++){
+        const su=u+14+ripple*20,q=frontierCanyonWash(axis,su,index),sv=q.center+off;
+        line([[su-9,sv-6],[su,sv-2],[su+4,sv+7+ripple*2]]);
+      }
+      g.noStroke();
+      // Sparse gravel concentrates at the wash edges, with proper lit tops
+      // and darker side planes rather than identical dots across the floor.
+      for(let k=0;k<5;k++){
+        const su=u+12+k*27,q=frontierCanyonWash(axis,su,index),
+          sv=q.center+(k%2?1:-1)*(q.width+17+r1*39),size=3+(k%3)*2;
+        g.fill(88,65,46,95);polygon([[su-size,sv+3],[su,sv-size],[su+size+2,sv+2],[su+1,sv+size*.65]]);
+        g.fill(202,160,107,205);polygon([[su-size,sv],[su,sv-size],[su+size,sv],[su,sv+2]]);
+        g.fill(133,94,63,180);polygon([[su,sv+2],[su+size,sv],[su+size+2,sv+2],[su+1,sv+size*.65]]);
       }
     }
   }
+  g.noStroke();
 }
 function bakeFrontierCanyonStrip(g, axis, index, ox, oy) {
   const lo = axis === 'Y' ? oy : ox, hi = lo + CHUNK_W;
@@ -26533,16 +26570,20 @@ function bakeFrontierCanyonStrip(g, axis, index, ox, oy) {
     frontierCanyonQuad(g, axis, u, u + FRONTIER_CANYON_STEP,
       p.center - p.outerHalf - 18, q.center - q.outerHalf - 18,
       p.center + p.outerHalf + 18, q.center + q.outerHalf + 18);
-    g.fill(165, 116, 74, alpha);
+    g.fill(172, 124, 81, alpha);
     frontierCanyonQuad(g, axis, u, u + FRONTIER_CANYON_STEP,
       p.center - p.floorHalf, q.center - q.floorHalf,
       p.center + p.floorHalf, q.center + q.floorHalf);
     // A narrow dry wash meanders along the bottom and provides a readable
     // route, leaving the wide floor available to bandit camps and footwork.
-    const wash0 = p.center + Math.sin(u * .0023 + index) * 80;
-    const wash1 = q.center + Math.sin((u + FRONTIER_CANYON_STEP) * .0023 + index) * 80;
-    g.fill(128, 99, 73, alpha * .42);
-    frontierCanyonQuad(g, axis, u, u + FRONTIER_CANYON_STEP, wash0 - 55, wash1 - 55, wash0 + 55, wash1 + 55);
+    const wash0=frontierCanyonWash(axis,u,index,p),wash1=frontierCanyonWash(axis,u+FRONTIER_CANYON_STEP,index,q);
+    g.fill(113, 86, 63, alpha * .24);
+    frontierCanyonQuad(g,axis,u,u+FRONTIER_CANYON_STEP,
+      wash0.center-wash0.width, wash1.center-wash1.width, wash0.center+wash0.width, wash1.center+wash1.width);
+    g.fill(204, 160, 103, alpha * .42);
+    frontierCanyonQuad(g,axis,u,u+FRONTIER_CANYON_STEP,
+      wash0.center-wash0.width*.47, wash1.center-wash1.width*.47,
+      wash0.center+wash0.width*.43, wash1.center+wash1.width*.43);
     for (const side of [-1, 1]) {
       const nx = axis === 'Y' ? side : 0, ny = axis === 'Y' ? 0 : side;
       const lit = Math.max(0, -(nx * LIGHT_DX + ny * LIGHT_DY));
@@ -26551,19 +26592,20 @@ function bakeFrontierCanyonStrip(g, axis, index, ox, oy) {
       // the face normal, so the sun-facing bank stays warm and the opposite
       // face stays red-brown as the player travels around it.
       for (let k = 0; k < 6; k++) {
-        const inner = k / 6, outer = (k + 1) / 6;
-        const warm = k % 2 ? 14 : -5;
-        g.fill(102 + lit * 52 + k * 8 + warm,
-          66 + lit * 34 + k * 7 + warm * .45,
-          49 + lit * 19 + k * 4, alpha);
+        const inner0=frontierCanyonBedding(axis,u,index,k),inner1=frontierCanyonBedding(axis,u+FRONTIER_CANYON_STEP,index,k),
+          outer0=frontierCanyonBedding(axis,u,index,k+1),outer1=frontierCanyonBedding(axis,u+FRONTIER_CANYON_STEP,index,k+1);
+        const warm = k % 2 ? 9 : -4;
+        g.fill(106 + lit * 47 + k * 8 + warm,
+          65 + lit * 32 + k * 7 + warm * .45,
+          46 + lit * 21 + k * 4, alpha);
         frontierCanyonQuad(g, axis, u, u + FRONTIER_CANYON_STEP,
-          p.center + side * (p.floorHalf + inner * 222), q.center + side * (q.floorHalf + inner * 222),
-          p.center + side * (p.floorHalf + outer * 222), q.center + side * (q.floorHalf + outer * 222));
+          p.center + side * (p.floorHalf + inner0), q.center + side * (q.floorHalf + inner1),
+          p.center + side * (p.floorHalf + outer0), q.center + side * (q.floorHalf + outer1));
         if (cut > .08) {
           g.fill(55, 42, 35, alpha * .30 * cut);
           frontierCanyonQuad(g, axis, u, u + FRONTIER_CANYON_STEP,
-            p.center + side * (p.floorHalf + inner * 222), q.center + side * (q.floorHalf + inner * 222),
-            p.center + side * (p.floorHalf + inner * 222 + 4), q.center + side * (q.floorHalf + inner * 222 + 4));
+            p.center + side * (p.floorHalf + inner0), q.center + side * (q.floorHalf + inner1),
+            p.center + side * (p.floorHalf + inner0 + 3), q.center + side * (q.floorHalf + inner1 + 3));
         }
       }
       // Cut-bank contact shade roots the sheer wall at the floor. The bright
@@ -26606,19 +26648,28 @@ function bakeFrontierCanyonStrip(g, axis, index, ox, oy) {
     if (center[0] < ox - p.outerHalf - 200 || center[0] > ox + CHUNK_W + p.outerHalf + 200 ||
         center[1] < oy - p.outerHalf - 200 || center[1] > oy + CHUNK_W + p.outerHalf + 200) continue;
     g.push(); g.translate(center[0], center[1]); if (axis === 'Y') g.rotate(Math.PI / 2);
-    g.fill(46, 38, 33, 85); g.rect(-90 + LIGHT_DX * 26, -p.outerHalf + LIGHT_DY * 26, 180, p.outerHalf * 2);
+    const localLightX = axis === 'Y' ? LIGHT_DY : LIGHT_DX, localLightY = axis === 'Y' ? -LIGHT_DX : LIGHT_DY;
+    const woodSeed = chunkHash(3, n, index, axis === 'Y' ? 0x6279 : 0x6278);
+    g.fill(46, 38, 33, 85); g.rect(-90 + localLightX * 26, -p.outerHalf + localLightY * 26, 180, p.outerHalf * 2);
     g.fill(60, 46, 34); g.rect(-86, -p.outerHalf - 22, 172, p.outerHalf * 2 + 44);
-    for (let v = -p.outerHalf - 20; v < p.outerHalf + 20; v += 25) {
-      g.fill(137 + (Math.floor(v / 25) % 3) * 8, 98, 58); g.rect(-80, v, 160, 22);
-      g.fill(208, 165, 100, 140); g.rect(-79, v + 1, 158, 3);
-      g.fill(40, 35, 29); g.ellipse(-66, v + 9, 3, 3); g.ellipse(66, v + 9, 3, 3);
+    for (let v = -p.outerHalf - 20, board = 0; v < p.outerHalf + 20; v += 25, board++) {
+      paintFrontierBridgeBoard(g, -80, v, 160, 22, chunkHash(3, woodSeed & 0xffff, board, woodSeed >>> 16), false, true, 4.5);
     }
     for (const side of [-1, 1]) {
+      // Recessed edge stringer, rail and square-capped uprights keep their
+      // original footprint. Iron straps sit across, rather than along, grain.
+      g.fill(44, 34, 27, 100); g.rect(side < 0 ? -84 : 75, -p.outerHalf - 22, 9, p.outerHalf * 2 + 44);
       g.fill(49, 38, 28); g.rect(side < 0 ? -94 : 84, -p.outerHalf - 26, 10, p.outerHalf * 2 + 52);
-      g.fill(192, 145, 85); g.rect(side < 0 ? -92 : 86, -p.outerHalf - 24, 3, p.outerHalf * 2 + 48);
-      for (let v = -p.outerHalf; v <= p.outerHalf; v += 145) {
+      paintFrontierBridgeBoard(g, side < 0 ? -92 : 86, -p.outerHalf - 24, 6, p.outerHalf * 2 + 48,
+        chunkHash(3, woodSeed & 0xffff, side, 0x7261), true, false);
+      for (let v = -p.outerHalf, post = 0; v <= p.outerHalf; v += 145, post++) {
+        g.fill(40, 32, 26, 80); g.rect(side * 90 - 7 + localLightX * 6, v - 6 + localLightY * 6, 16, 19);
         g.fill(47, 39, 31); g.rect(side * 90 - 8, v - 8, 16, 16);
-        g.fill(214, 174, 108); g.rect(side * 90 - 5, v - 5, 10, 10);
+        g.fill(185, 142, 88); g.rect(side * 90 - 6, v - 6, 12, 12);
+        g.fill(225, 187, 121); g.rect(side * 90 - 6, v - 6, 11, 3);
+        g.stroke(111, 77, 47, 150); g.strokeWeight(.8); g.line(side * 90 - 3, v - 2, side * 90 + 3, v + 3); g.noStroke();
+        g.fill(55, 55, 48); g.rect(side * 90 - 8, v + 3, 16, 3);
+        g.fill(166, 158, 129); g.ellipse(side * 90, v + 4, 1.8, 1.8);
       }
     }
     g.pop();
@@ -30821,6 +30872,103 @@ function bakeWoodlandPool(g, p) {
   }
 }
 
+// Dry Gulch's loose sand, crust and scree are world features, not per-chunk
+// stamps. Every overlapping bake visits the same cells in the same order. The
+// generous reach includes the rotated bed and all of its stone shadows, so a
+// negative-coordinate seam clips a feature rather than changing its identity.
+const FRONTIER_GROUND_CELL = 460;
+const FRONTIER_GROUND_REACH = 290;
+function frontierGroundMaterial(ix, iy) {
+  const seed = chunkHash(3, ix, iy, 84271), rng = makeRng(seed);
+  const x = (ix + 0.14 + rng() * 0.72) * FRONTIER_GROUND_CELL;
+  const y = (iy + 0.14 + rng() * 0.72) * FRONTIER_GROUND_CELL;
+  const kind = rng();
+  return { x, y, seed, kind: kind < 0.44 ? 'SAND' : kind < 0.79 ? 'CRUST' : 'SCREE',
+    w: 144 + rng() * 92, h: 54 + rng() * 46, angle: -0.23 + rng() * 0.46 };
+}
+function frontierGroundPoint(f, x, y) {
+  const ca = Math.cos(f.angle), sa = Math.sin(f.angle);
+  return [f.x + x * ca - y * sa, f.y + x * sa + y * ca];
+}
+function frontierGroundShape(g, f, points, col, alpha) {
+  g.noStroke(); g.fill(col[0], col[1], col[2], alpha); g.beginShape();
+  for (const p of points) { const q = frontierGroundPoint(f, p[0], p[1]); g.vertex(q[0], q[1]); }
+  g.endShape(CLOSE);
+}
+function frontierGroundBed(g, f) {
+  const rng = makeRng(f.seed ^ 0x7148);
+  const edge = [[-1,-.05],[-.85,-.45],[-.55,-.37],[-.23,-.67],[.08,-.49],
+    [.38,-.62],[.68,-.31],[.89,-.35],[1,.03],[.78,.35],[.43,.29],
+    [.20,.58],[-.13,.42],[-.48,.58],[-.77,.28]];
+  const points = edge.map(p => [p[0] * f.w, p[1] * f.h]);
+  frontierGroundShape(g, f, points, f.kind === 'SAND' ? [205,163,111] :
+    f.kind === 'CRUST' ? [157,111,77] : [142,111,84], f.kind === 'SCREE' ? 27 : 42);
+
+  if (f.kind === 'SAND') {
+    // Broad, tapered wind ridges carry a bright crest and a shallow lee face.
+    // Several aligned ridges read as sand instead of isolated repeated arcs.
+    for (let band = 0; band < 3; band++) {
+      const y = (band - 1) * f.h * .29;
+      const reach = f.w * (.66 + rng() * .16), phase = rng() * 2;
+      const top = [], bottom = [];
+      for (let n = 0; n <= 8; n++) {
+        const t = n / 8, x = (t * 2 - 1) * reach;
+        const bend = Math.sin(t * Math.PI + phase) * f.h * .11;
+        const width = Math.sin(t * Math.PI) * (6 + band * 2);
+        top.push([x, y + bend - width * .25]);
+        bottom.unshift([x, y + bend + width]);
+      }
+      frontierGroundShape(g, f, top.concat(bottom), [134,100,69], 31);
+      frontierGroundShape(g, f, top.concat(top.slice().reverse().map(p => [p[0], p[1]-3.5])), [245,211,155], 67);
+    }
+  } else if (f.kind === 'CRUST') {
+    // Connected broken plate edges. They run across the dry bed and branch
+    // from actual junctions rather than radiating as little star-shaped marks.
+    for (let chain = 0; chain < 2; chain++) {
+      const pts = [];
+      for (let n = 0; n < 7; n++) pts.push([-f.w*.71+n*f.w*.23,
+        (chain ? .20 : -.21)*f.h+(rng()-.5)*f.h*.23]);
+      const drawCrack = (ps, lift, col, alpha, weight) => {
+        g.noFill(); g.stroke(col[0],col[1],col[2],alpha); g.strokeWeight(weight); g.beginShape();
+        for (const p of ps) { const q=frontierGroundPoint(f,p[0],p[1]+lift);g.vertex(q[0],q[1]); }
+        g.endShape();
+      };
+      drawCrack(pts,-2.5,[241,200,143],46,2.8);
+      drawCrack(pts,0,[105,77,56],62,2.1);
+      for (const junction of [2,4]) {
+        const p=pts[junction], sign=(chain?1:-1);
+        const branch=[p,[p[0]+11,p[1]+sign*f.h*.16],[p[0]+7,p[1]+sign*f.h*.33]];
+        drawCrack(branch,0,[105,77,56],52,1.8);
+      }
+    }
+    g.noStroke();
+  } else {
+    // Scree is grouped where the ground has weathered away. Flat cut planes,
+    // one contact shadow and a small sunlit bevel give each shard thickness.
+    for (let n=0;n<7;n++) {
+      const x=(rng()-.5)*f.w*1.43,y=(rng()-.5)*f.h*.78;
+      const r=7+rng()*11, h=r*(.43+rng()*.20);
+      const poly=[[x-r,y],[x-r*.53,y-h],[x+r*.46,y-h*.83],[x+r,y+h*.15],[x+r*.16,y+h],[x-r*.69,y+h*.61]];
+      frontierGroundShape(g,f,poly.map(p=>[p[0]+3,p[1]+4]),[75,57,42],48);
+      frontierGroundShape(g,f,poly,[165,132,94],174);
+      frontierGroundShape(g,f,[poly[0],poly[1],poly[2],[x+r*.12,y],[x-r*.41,y+h*.18]],[219,184,132],174);
+      frontierGroundShape(g,f,[[x+r*.12,y],poly[2],poly[3],poly[4]],[114,86,63],129);
+    }
+  }
+  g.noStroke();
+}
+function bakeFrontierGroundArea(g, biome, x0, y0, x1, y1) {
+  if (biome !== 3) return;
+  const c=FRONTIER_GROUND_CELL, reach=FRONTIER_GROUND_REACH;
+  for(let iy=Math.floor((y0-reach)/c);iy<=Math.floor((y1+reach)/c);iy++) {
+    for(let ix=Math.floor((x0-reach)/c);ix<=Math.floor((x1+reach)/c);ix++) {
+      const f=frontierGroundMaterial(ix,iy);
+      if(f.x+reach<x0 || f.x-reach>x1 || f.y+reach<y0 || f.y-reach>y1)continue;
+      frontierGroundBed(g,f);
+    }
+  }
+}
+
 function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, layout) {
   const p = pal || def.pal;
   g.noStroke();
@@ -31314,6 +31462,9 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
     }
 
     case "FRONTIER": {
+      // Material sits under roads, town hardstanding and elevation planes.
+      // All detail is baked once; no new live terrain draw calls are needed.
+      bakeFrontierGroundArea(g, biome, ox, oy, ox + CHUNK_W, oy + CHUNK_W);
       // --- Dirt track ------------------------------------------------------
       // The centreline is a pure function of the chunk COLUMN and world y, so
       // every chunk in a column computes the identical curve and the segments
@@ -31477,31 +31628,21 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
         return true;
       };
 
-      // Sand ripples — long, low-contrast arcs
-      g.stroke(p.dark[0], p.dark[1], p.dark[2], 30); g.strokeWeight(2.4); g.noFill();
+      // Preserve the established terrain RNG stream: the old isolated arcs
+      // and radiating cracks are now supplied by the world-cell material beds
+      // above. Reading their legacy sequence leaves every existing road and
+      // later seeded stamp stable when materials change.
       for (let i = 0; i < 44; i++) {
         const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
-        const w = 70 + rng() * 150;
+        rng();
         if (!offRoad(rx, ry)) continue;
-        g.arc(rx, ry, w, w * 0.32, PI * 0.15, PI * 0.85);
       }
-      g.noStroke();
-
-      // Dry cracked hardpan patches
       for (let i = 0; i < 5; i++) {
         const rx = ox + rng() * CHUNK_W, ry = oy + rng() * CHUNK_W;
         if (!offRoad(rx, ry)) continue;
-        g.stroke(p.dark[0], p.dark[1], p.dark[2], 58); g.strokeWeight(1.3); g.noFill();
         for (let k = 0; k < 7; k++) {
-          let a = rng() * TWO_PI, px2 = rx, py2 = ry;
-          g.beginShape();
-          for (let s = 0; s < 4; s++) {
-            g.vertex(px2, py2);
-            a += (rng() - 0.5) * 1.7;
-            px2 += Math.cos(a) * (14 + rng() * 22);
-            py2 += Math.sin(a) * (14 + rng() * 22);
-          }
-          g.endShape();
+          rng();
+          for (let s = 0; s < 4; s++) { rng(); rng(); rng(); }
         }
       }
       g.noStroke();
@@ -43454,15 +43595,80 @@ function paintFrontierSaloonStreet() {
   }
   pop();
 }
+// Bridge wood uses board-local fibres, not screen-space noise. The same board
+// is stamped identically into every overlapping chunk, including negative
+// landmarks; it never consumes the world's population or combat RNG.
+function paintFrontierBridgeBoard(g, x, y, w, h, seed, alongY = false, nails = true, ink = 1) {
+  const tone = (seed >>> 5) % 4, grey = (seed >>> 13) % 5 === 0;
+  const length = alongY ? h : w, cross = alongY ? w : h;
+  const point = (t, s) => alongY ? [x + s, y + t] : [x + t, y + s];
+  const segment = (t0, s0, t1, s1) => {
+    const a = point(t0, s0), b = point(t1, s1); g.line(a[0], a[1], b[0], b[1]);
+  };
+  g.noStroke(); g.fill(135 + tone * 7 - (grey ? 8 : 0), 96 + tone * 5 + (grey ? 4 : 0), 57 + tone * 4 + (grey ? 11 : 0));
+  g.rect(x, y, w, h, 1);
+  // Pale worn shoulders and the darker opposite edge give the planks a small
+  // bevel. The broad mid-tone stays quiet enough to read feet and fall poses.
+  g.fill(218, 174, 111, 150); g.rect(x + 1, y + 1, alongY ? 2 : w - 2, alongY ? h - 2 : 2);
+  g.fill(74, 50, 33, 110); g.rect(alongY ? x + w - 2 : x + 1, alongY ? y + 1 : y + h - 2, alongY ? 1 : w - 2, alongY ? h - 2 : 1);
+  g.stroke(89, 64, 43, grey ? 110 : (ink > 1 ? 155 : 130)); g.strokeWeight(.75 * ink);
+  for (let lane = 0; lane < 3; lane++) {
+    const shift = ((seed >>> (lane * 5)) & 7) / 7;
+    const s = cross * (.22 + lane * .25), middle = length * (.35 + shift * .3);
+    segment(length * .055, s, middle, s + (shift - .5) * 2.4);
+    segment(middle, s + (shift - .5) * 2.4, length * .95, s - .35);
+  }
+  // Occasional closed grain swirls and a split at one sawn end make the
+  // bridge read as old timber rather than repeating strips of colour.
+  if ((seed & 7) === 0) {
+    const t = length * (.28 + ((seed >>> 9) & 15) / 35), s = cross * .52, p = point(t, s);
+    g.noFill(); g.stroke(94, 63, 39, 175); g.strokeWeight(.9 * ink);
+    g.ellipse(p[0], p[1], alongY ? (ink > 1 ? 7 : 5) : (ink > 1 ? 16 : 12), alongY ? (ink > 1 ? 16 : 12) : (ink > 1 ? 7 : 5));
+    g.noStroke(); g.fill(72, 50, 34, 175); g.ellipse(p[0], p[1], alongY ? 1.8 : 4, alongY ? 4 : 1.8);
+  }
+  if ((seed >>> 3) % 5 === 0) {
+    g.stroke(64, 47, 34, 175); g.strokeWeight(.8 * ink);
+    segment(1, cross * .61, length * .09, cross * .57); segment(length * .09, cross * .57, length * .15, cross * .61);
+  }
+  if (nails) {
+    for (const t of [.085, .915]) {
+      const p = point(length * t, cross * .47);
+      g.noStroke(); g.fill(62, 48, 36, 125); g.ellipse(p[0] + .8, p[1] + .9, 4.8, 4.8);
+      g.fill(48, 47, 42); g.ellipse(p[0], p[1], 3, 3);
+      g.fill(171, 166, 139); g.rect(p[0] - .8, p[1] - .8, 1.2, 1.1);
+    }
+  }
+  g.noStroke();
+}
+let _frontierBridgeDeckTexture = null;
+function frontierSaloonBridgeDeckTexture() {
+  // One bounded static material bake: grain and fasteners should not add
+  // hundreds of immediate-mode strokes to every frame of a melee encounter.
+  // No sun colour is baked here; the existing scene lighting remains live.
+  if (_frontierBridgeDeckTexture) return _frontierBridgeDeckTexture;
+  const g = createGraphics(1276, 316); g.pixelDensity(1); g.clear(); g.translate(638, 158);
+  g.noStroke(); g.fill(55, 41, 30); g.rect(-638, -158, 1276, 316, 3);
+  for (let x = -630, n = 0; x < 630; x += 24, n++)
+    paintFrontierBridgeBoard(g, x, -154, 22, 308, chunkHash(3, n, 14, 0x646b), true);
+  _frontierBridgeDeckTexture = g;
+  return g;
+}
 function paintFrontierSaloonBridgeRail(side) {
   push(); noStroke(); const y = side * 159;
   fill(43, 34, 28, 110); rect(-630, y + 8, 1260, 11);
-  stroke(55, 43, 31); strokeWeight(8); line(-634, y - 16, 634, y - 16);
-  stroke(203, 154, 89); strokeWeight(3); line(-634, y - 18, 634, y - 18);
+  fill(48, 36, 26); rect(-638, y - 21, 1276, 10, 1);
+  paintFrontierBridgeBoard(window, -636, y - 20, 1272, 7, chunkHash(3, side, 14, 0x726c), false, false);
   for (let x = -616; x <= 616; x += 88) {
+    // A dark joint behind the rail and narrow side face preserve the square
+    // section; the lighter top cap carries sparse sawn end-grain marks.
     noStroke(); fill(77, 53, 35); rect(x - 5, y - 30, 11, 35, 2);
     fill(181, 129, 73); rect(x - 5, y - 32, 7, 33, 2);
+    stroke(112, 76, 44, 155); strokeWeight(.8); line(x - 2, y - 29, x - 1, y - 4); noStroke();
+    fill(43, 35, 27, 105); rect(x - 6, y - 20, 13, 7, 1);
+    fill(56, 55, 48); rect(x - 6, y - 9, 13, 5, 1);
+    fill(154, 148, 123); ellipse(x, y - 6.5, 2.1, 2.1);
     fill(224, 179, 107); rect(x - 6, y - 34, 12, 5, 1);
+    stroke(144, 105, 63, 150); strokeWeight(.7); line(x - 4, y - 33, x + 2, y - 31); line(x - 1, y - 33, x + 4, y - 31); noStroke();
   }
   pop();
 }
@@ -43496,18 +43702,16 @@ function paintFrontierSaloonBridge() {
   // surface from the wash beneath it, even on a narrow portrait phone view.
   fill(63, 44, 31); quad(-635, 154, 635, 154, 635, 181, -635, 181);
   fill(125, 82, 44); quad(-633, 157, 633, 157, 633, 168, -633, 168);
+  stroke(186, 132, 73, 170); strokeWeight(1); line(-629, 159, 630, 159);
+  stroke(83, 56, 36, 155); line(-629, 165, -70, 164); line(-30, 164, 630, 165); noStroke();
   for (let x = -440; x <= 440; x += 220) {
     stroke(57, 42, 31); strokeWeight(10); line(x - 56, 177, x + 14, 226); line(x + 55, 177, x + 14, 226);
     stroke(133, 92, 53); strokeWeight(3); line(x - 56, 174, x + 14, 223);
     noStroke(); fill(46, 35, 29, 90); ellipse(x + 25, 277, 125, 38);
+    fill(48, 48, 42); rect(x + 7, 157, 11, 23, 1);
+    fill(145, 141, 117); ellipse(x + 12.5, 162, 2.8, 2.8); ellipse(x + 12.5, 175, 2.8, 2.8);
   }
-  fill(55, 41, 30); rect(-638, -158, 1276, 316, 3);
-  for (let x = -630, n = 0; x < 630; x += 24, n++) {
-    fill(135 + n % 3 * 9, 96 + n % 3 * 6, 57 + n % 3 * 4); rect(x, -154, 22, 308, 2);
-    fill(212, 166, 101, 150); rect(x + 1, -152, 3, 304, 1);
-    fill(44, 35, 27); for (const y of [-130, 0, 130]) ellipse(x + 11, y, 3, 3);
-    stroke(92, 64, 40, 130); strokeWeight(.75); line(x + 16, -144, x + 16, 142); noStroke();
-  }
+  image(frontierSaloonBridgeDeckTexture(), -638, -158);
   // Abutments root both ends at rim height. The deck remains continuous and
   // its railings define the exact safe movement rectangle used by all actors.
   for (const side of [-1, 1]) {

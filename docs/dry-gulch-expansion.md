@@ -8,6 +8,27 @@ same canyon geometry. Rock and wash planes join into continuous cached
 contours, and lighting interpolates shared corner heights, keeping the terrain
 free of repeated paint or shadow seams.
 
+The canyon material pass adds uneven sandstone bedding, broken shelves,
+chipped sunlit lips, mineral seams and angular talus at the wall's foot. The
+floor carries meandering silt, gravel banks and wind-laid sand rather than one
+flat wash. Plateau sand ridges, dry crust fractures and grouped scree remain
+quiet enough to keep characters and routes legible.
+
+Timber crossings use individual warm and weathered boards with directional
+grain, occasional knots/splits, bevels, iron fasteners and capped rail posts.
+Grain weights account for the world terrain texture resolution. The Peacemaker
+bridge uses the same timber material, with its static deck cached once at
+1276 × 316 pixels and its rails retained in the actor depth passes.
+
+These details are baked from world coordinates, including negative chunks.
+Canyon floor/rim heights, ramp widths, bridge walking surfaces and settlement
+exclusions retain the existing geometry. Art does not consume the downstream
+terrain/population RNG. Other biomes keep their materials.
+
+![Layered sandstone, eroded wash and desert ground](previews/level3-canyon-materials.png)
+
+![Weathered canyon bridge timber and joinery](previews/level3-bridge-materials.png)
+
 The town has 69 named premises across Main Street, Front Street, Market Street,
 the mesa district and the railway avenue. The Copper Spur is a larger saloon
 with its own walkable interior, counter, patrons, tables, piano and gallery.
@@ -87,6 +108,9 @@ placement and terrain/light geometry:
 ```sh
 node tools/check-frontier-town.js
 node tools/check-frontier-canyons.js
+node tools/check-frontier-canyon-materials.js
+node tools/check-frontier-ground-materials.js
+node tools/check-frontier-bridge-materials.js
 node tools/check-frontier-equipment.js
 node tools/check-frontier-lighting.js
 node tools/check-frontier-bounties.js
@@ -133,3 +157,21 @@ day and night WebGL passes also verified floor, rim and roof light occlusion.
 ![Copper Spur fistfight on a portrait mobile screen](previews/dry-gulch-saloon.png)
 
 ![Quick draw victory and immediate costume award](previews/dry-gulch-duel.png)
+
+The material checks compare shared stone/ground feature geometry and timber
+identity across positive and negative chunk cuts, validate bounded contour
+thickness and feature reach, and exercise RNG independence and a reused bridge
+deck cache. Native browser review compares day/night canyon floors, rims,
+ramps, both bridge axes, close timber and stone, plateau material beds and the
+Peacemaker bridge. Signed terrain height and local-light occlusion are checked
+alongside the artwork; canvas count, resident chunks and world lighting target
+sizes are compared with the pre-material baseline.
+
+The reviewed material source passes the 23 selected terrain, lighting,
+frontier mission and control suites. Twenty native Chromium screenshots cover
+portrait/landscape material views; frame stacks remain balanced with no page,
+frame or GL errors. World canvas/chunk counts and lighting target dimensions
+match the baseline. The additional arena deck cache stays one 1276 × 316
+pixel-density-1 object across live frames, and ground re-bakes are identical
+after unrelated chunk generation. These are browser correctness/resource
+checks, not measured Galaxy S25 frame rates.
