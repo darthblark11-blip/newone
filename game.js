@@ -14762,15 +14762,28 @@ function drawComboPunchArms(c,leftY,rightY) {
     pop();
   }
 }
-// Nonlethal knockouts have their own short physics event. The corpse rig still
-// owns the fixed bone lengths and joint limits; only these rare melee falls
-// integrate airtime, a little floor rebound and constrained angular springs.
-// A fixed step makes touch and gamepad falls identical across frame rates.
-const KNOCKOUT_PHYSICS = Object.freeze({
-  STEP_MS: 1000 / 120, FRAME_MS: 1000 / 60, GRAVITY: 360,
-  AIR_DRAG: 4.5, FLOOR_DRAG: 8.5, RESTITUTION: .18, MAX_CONTACTS: 2,
-  MAX_HEIGHT: 26, TURN_LIMIT: .64, ROLL_LIMIT: .30
+// Peacemaker owns the lively ragdoll. Ordinary civilian/hostile knockdowns
+// retain their original frame-based fall below, as do lethal corpse physics.
+const SALOON_KNOCKOUT_PHYSICS = Object.freeze({
+  STEP_MS: 1000 / 120, FRAME_MS: 1000 / 60, GRAVITY: 390,
+  AIR_DRAG: 4.8, FLOOR_DRAG: 10, RESTITUTION: .12, MAX_CONTACTS: 2,
+  MAX_HEIGHT: 18, TURN_LIMIT: .78, ROLL_LIMIT: .36
 });
+const KNOCKOUT_PHYSICS = SALOON_KNOCKOUT_PHYSICS;
+const SALOON_KNOCKOUT_PROFILES = Object.freeze({
+  BACK_REEL: Object.freeze({frames:35,speed:158,lift:88,launchMs:45,turn:.08,roll:.07,buckle:.08,fold:0,
+    arms:[-.48,.18,.12,.55],legs:[.12,.08,.38,.48]}),
+  SIDE_SPILL: Object.freeze({frames:39,speed:126,lift:48,launchMs:175,turn:.22,roll:.25,buckle:.16,fold:.1,
+    arms:[-.55,.25,.62,1.55],legs:[.15,.10,.44,.78]}),
+  HOOK_TWIST: Object.freeze({frames:37,speed:146,lift:72,launchMs:55,turn:.57,roll:.19,buckle:.12,fold:.05,
+    arms:[-1.00,.65,.80,1.80],legs:[.10,.08,.54,.94]}),
+  KNEE_FOLD: Object.freeze({frames:43,speed:78,lift:28,launchMs:175,turn:.08,roll:.09,buckle:.22,fold:.8,
+    arms:[.40,1.55,.22,1.15],legs:[.38,.82,.46,.92]}),
+  FORWARD_FOLD: Object.freeze({frames:41,speed:98,lift:38,launchMs:130,turn:.12,roll:.13,buckle:.20,fold:1,
+    arms:[-.32,1.48,.28,.82],legs:[.28,.55,.48,.86]})
+});
+let saloonKnockoutSequence = 0;
+function saloonKnockoutContext(context) { return context === 'SALOON' || context === 'SALOON_CUTSCENE'; }
 function knockoutAppearance(e) {
   const id=figureIdentity(e);
   if(id&&e.isPlayer){
@@ -14781,37 +14794,54 @@ function knockoutAppearance(e) {
   }
   return id;
 }
-function startKnockoutPhysics(e,angle,impact={},context='WORLD') {
-  if(!e||!Number.isFinite(e.x)||!Number.isFinite(e.y))return null;
+function startSaloonKnockoutPhysics(e,angle,impact={},context='SALOON') {
+  if(!saloonKnockoutContext(context)||!e||!Number.isFinite(e.x)||!Number.isFinite(e.y))return null;
   impact=impact&&typeof impact==='object'?impact:{};
   angle=Number.isFinite(angle)?angle:(Number.isFinite(e.aimAngle)?e.aimAngle:0);
   const kind=typeof impact.kind==='string'?impact.kind:'LEFT_STRAIGHT';
   const side=kind.indexOf('RIGHT')===0?1:-1,hook=kind.indexOf('HOOK')!==-1,body=impact.level==='BODY';
   const damage=Number.isFinite(impact.damage)?Math.max(0,impact.damage):25;
   const force=Math.max(3,Math.min(9,Number.isFinite(impact.force)?impact.force:4+damage*.08+(hook?1:0)));
+  // Cycling eligible physical responses also varies repeated identical blows.
+  // This local sequence neither reads nor advances world/ecology randomness.
+  const serial=context==='SALOON_CUTSCENE'?0:saloonKnockoutSequence++,
+    choices=body?['KNEE_FOLD','FORWARD_FOLD','SIDE_SPILL']:
+      hook?['HOOK_TWIST','SIDE_SPILL','BACK_REEL']:['BACK_REEL','SIDE_SPILL','KNEE_FOLD'],
+    variant=context==='SALOON_CUTSCENE'?'SIDE_SPILL':choices[serial%choices.length],
+    profile=SALOON_KNOCKOUT_PROFILES[variant],energy=[.96,1.04,1,.92][serial%4],
+    mass=Math.max(.85,Math.min(1.2,(e.bodyW||21)*(e.bodyH||27)/567));
   const p=buildFigureFall(e,angle,force,true,e.aimAngle),r=ragBuild(e.eType,e.bodyW,angle,e.aimAngle);
   if(!r)return null;
   prepareFallRag(r,p);
-  p.duration=body?43:40;p.impulse=4.8;p.rag=r;p.identity=knockoutAppearance(e);
-  const vx=Math.cos(angle)*(180+force*19)+p.mx*18,vy=Math.sin(angle)*(180+force*19)+p.my*18;
-  p.a=Math.atan2(vy,vx);p.faceDown=Math.cos(p.a-p.facing)>=0;
-  const cross=Math.sin(angle-p.facing),rollKick=hook?side*.9:cross*.65;
-  r.turnLimit=KNOCKOUT_PHYSICS.TURN_LIMIT;r.frames=p.duration+16;r.spring=.065;
-  r.spin=cross*.026+(hook?side*.045:side*.009);
+  p.duration=profile.frames;p.rag=r;p.identity=knockoutAppearance(e);
+  const towards=Math.atan2(Math.sin(p.facing-angle),Math.cos(p.facing-angle)),
+    direction=angle+(variant==='FORWARD_FOLD'?towards:variant==='KNEE_FOLD'?towards*.65:
+      side*(variant==='SIDE_SPILL'?.30:hook?.14:0)),
+    speed=profile.speed*energy*(.85+force*.025)/mass,
+    vx=Math.cos(direction)*speed+p.mx*9,vy=Math.sin(direction)*speed+p.my*9;
+  p.a=Math.atan2(vy,vx);p.faceDown=Math.cos(p.a-p.facing)>=0;p.impulse=speed/60;
+  const cross=Math.sin(angle-p.facing),turn=side*profile.turn+cross*.12;
+  r.turnLimit=SALOON_KNOCKOUT_PHYSICS.TURN_LIMIT;r.frames=p.duration+16;r.spring=.065;
+  r.spin=turn*.12;
   for(let i=0;i<4;i++){
-    const L=r.limbs[i];L.va=(i%2?-.12:.12)*(hook?1.35:1);L.vb=i<2?.19:.14;
-    if(body&&i<2){L.restB=Math.min(L.bMax,L.restB+.45);L.rest=Math.min(L.hi,L.rest+.2);}
-    if(i>=2){L.restB=Math.min(L.bMax,L.restB+.18);L.room=Math.max(L.room,.13);}
+    const L=r.limbs[i],arm=i<2,which=(i%2===(side>0?1:0)?0:2),pose=arm?profile.arms:profile.legs;
+    L.rest=Math.max(L.lo,Math.min(L.hi,pose[which]));L.restB=Math.max(0,Math.min(L.bMax,pose[which+1]));
+    L.room=arm?0:.16;
+    // Hands release at different speeds; knees fold before the chest lands.
+    L.va=(i%2?-.055:.045)*(hook?1.25:1);L.vb=arm?.07:.10;
   }
-  p.knockout={context,kind,level:body?'BODY':'HEAD',force,side,hook,ageMs:0,accumulatorMs:0,
-    vx,vy,height:0,heightVelocity:0,launchVelocity:(body?65:80)+force*(body?3:5),
-    launchMs:body?70:50,launched:false,contacts:0,roll:0,rollVelocity:rollKick,
-    rollRest:hook?side*.055:cross*.025,settled:false,maxDurationMs:r.frames*KNOCKOUT_PHYSICS.FRAME_MS};
+  p.knockout={context,kind,level:body?'BODY':'HEAD',variant,profile,force,side,hook,ageMs:0,accumulatorMs:0,
+    vx,vy,height:0,heightVelocity:0,launchVelocity:profile.lift*energy*(body?.70:1),
+    launchMs:profile.launchMs,launched:false,contacts:0,roll:0,rollVelocity:side*profile.roll*2,
+    rollRest:side*profile.roll,turnRest:turn,settled:false,maxDurationMs:r.frames*SALOON_KNOCKOUT_PHYSICS.FRAME_MS};
   e.stunPose=p;return p;
 }
-function knockoutMove(e,nx,ny) {
-  if(!Character.prototype.checkCol.call(e,nx,e.y))e.x=nx;
-  if(!Character.prototype.checkCol.call(e,e.x,ny))e.y=ny;
+// Compatibility callers must opt into the activity; a world call always uses
+// the original knockdown, never the saloon's launch/roll/variant sequence.
+function startKnockoutPhysics(e,angle,impact={},context='WORLD') {
+  if(saloonKnockoutContext(context))return startSaloonKnockoutPhysics(e,angle,impact,context);
+  if(!e||!Number.isFinite(e.x)||!Number.isFinite(e.y))return null;
+  startPunchStun(e,Number.isFinite(angle)?angle:(e.aimAngle||0));return e.stunPose;
 }
 function finishKnockoutPhysics(p) {
   const k=p.knockout,r=p.rag;
@@ -14819,98 +14849,130 @@ function finishKnockoutPhysics(p) {
   p.done=true;p.impulse=0;p.contacted=true;
   if(r){r.done=true;r.spin=0;for(const L of r.limbs)L.va=L.vb=0;}
 }
-function stepKnockoutPhysics(e,dtMs,moveFn=knockoutMove,onContact) {
+function stepSaloonKnockoutPhysics(e,dtMs,moveFn=frontierSaloonBoxingMove,onContact) {
   const p=e&&e.stunPose,k=p&&p.knockout,r=p&&p.rag;
-  if(!k||!r||k.settled||!Number.isFinite(dtMs)||dtMs<=0)return;
+  if(!k||!saloonKnockoutContext(k.context)||!r||k.settled||!Number.isFinite(dtMs)||dtMs<=0)return;
   if(p.done){finishKnockoutPhysics(p);return;}
-  // Native resident saves store fall age, not transient velocities. Rebuild
-  // an interrupted pose to that clock without moving its already-banked XY
-  // or replaying sounds/effects, then continue only the remaining shove.
-  if(Number.isFinite(p.age)&&Math.abs(p.age-k.ageMs/KNOCKOUT_PHYSICS.FRAME_MS)>.05){
-    const savedMs=Math.max(0,Math.min(k.maxDurationMs,p.age*KNOCKOUT_PHYSICS.FRAME_MS));
-    p.age=k.ageMs/KNOCKOUT_PHYSICS.FRAME_MS;
-    if(savedMs>k.ageMs){
-      const x=e.x,y=e.y;k.accumulatorMs=0;
-      stepKnockoutPhysics(e,savedMs-k.ageMs,(actor,nx,ny)=>{actor.x=nx;actor.y=ny;});
-      e.x=x;e.y=y;if(k.settled)return;
-    }
-  }
   k.accumulatorMs+=Math.min(1000,dtMs);
-  const step=KNOCKOUT_PHYSICS.STEP_MS,dt=step/1000,h=step/KNOCKOUT_PHYSICS.FRAME_MS;
+  const C=SALOON_KNOCKOUT_PHYSICS,step=C.STEP_MS,dt=step/1000,h=step/C.FRAME_MS;
   while(k.accumulatorMs+1e-7>=step&&!k.settled){
     k.accumulatorMs=Math.max(0,k.accumulatorMs-step);k.ageMs+=step;
-    p.age=k.ageMs/KNOCKOUT_PHYSICS.FRAME_MS;r.t=p.age;
+    p.age=k.ageMs/C.FRAME_MS;r.t=p.age;
     const x=e.x,y=e.y,nx=x+k.vx*dt,ny=y+k.vy*dt;
     if(Number.isFinite(nx)&&Number.isFinite(ny))moveFn(e,nx,ny);
-    // A wall absorbs almost all of the shove. Only its blocked velocity axis
-    // rebounds, so the body can still slide along a counter without entering it.
-    if(Math.abs(e.x-nx)>.05)k.vx*=-.12;
-    if(Math.abs(e.y-ny)>.05)k.vy*=-.12;
-    const drag=Math.exp(-(k.contacts?KNOCKOUT_PHYSICS.FLOOR_DRAG:KNOCKOUT_PHYSICS.AIR_DRAG)*dt);
+    if(Math.abs(e.x-nx)>.05)k.vx*=-.08;
+    if(Math.abs(e.y-ny)>.05)k.vy*=-.08;
+    const drag=Math.exp(-(k.contacts?C.FLOOR_DRAG:C.AIR_DRAG)*dt);
     k.vx*=drag;k.vy*=drag;p.impulse=Math.hypot(k.vx,k.vy)/60;
     if(!k.launched&&k.ageMs>=k.launchMs){k.launched=true;k.heightVelocity=k.launchVelocity;}
     if(k.launched&&(!k.contacts||k.height>0||k.heightVelocity>0)){
-      k.heightVelocity-=KNOCKOUT_PHYSICS.GRAVITY*dt;
-      k.height=Math.min(KNOCKOUT_PHYSICS.MAX_HEIGHT,k.height+k.heightVelocity*dt);
+      k.heightVelocity-=C.GRAVITY*dt;
+      k.height=Math.min(C.MAX_HEIGHT,k.height+k.heightVelocity*dt);
       if(k.height<=0&&k.heightVelocity<0){
         const impulse=-k.heightVelocity;k.height=0;k.contacts++;p.contacted=true;
-        k.heightVelocity=k.contacts<KNOCKOUT_PHYSICS.MAX_CONTACTS&&impulse>20?impulse*KNOCKOUT_PHYSICS.RESTITUTION:0;
-        k.rollVelocity+=k.side*(k.hook?.42:.20);
-        for(let i=0;i<4;i++){const L=r.limbs[i];L.va+=(i%2?-.06:.06);L.vb+=i<2?.10:.07;}
+        k.heightVelocity=k.contacts<C.MAX_CONTACTS&&impulse>55?impulse*C.RESTITUTION:0;
+        k.rollVelocity+=k.side*k.profile.roll*.55;
+        for(let i=0;i<4;i++){const L=r.limbs[i];L.va+=(i%2?-.025:.025);L.vb+=i<2?.045:.025;}
         if(typeof onContact==='function')onContact({actor:e,point:{x:e.x,y:e.y},impulse,contact:k.contacts,context:k.context});
       }
     }
-    k.rollVelocity+=((k.rollRest-k.roll)*26-k.rollVelocity*7)*dt;
-    k.roll=Math.max(-KNOCKOUT_PHYSICS.ROLL_LIMIT,Math.min(KNOCKOUT_PHYSICS.ROLL_LIMIT,k.roll+k.rollVelocity*dt));
-    r.spin*=Math.exp(-5.2*dt);r.ang=Math.max(-r.turnLimit,Math.min(r.turnLimit,r.ang+r.spin*h));
-    for(const L of r.limbs){
-      L.va+=((L.rest-L.a)*.072-L.va*.27+r.spin*L.lag*.5)*h;L.a+=L.va*h;
-      L.vb+=((L.restB-L.b)*.095-L.vb*.30+r.spin*L.lag*.7)*h;L.b+=L.vb*h;
+    k.rollVelocity+=((k.rollRest-k.roll)*32-k.rollVelocity*10)*dt;
+    k.roll=Math.max(-C.ROLL_LIMIT,Math.min(C.ROLL_LIMIT,k.roll+k.rollVelocity*dt));
+    r.spin+=((k.turnRest-r.ang)*.055-r.spin*.30)*h;
+    r.ang=Math.max(-r.turnLimit,Math.min(r.turnLimit,r.ang+r.spin*h));
+    const progress=Math.min(1,k.ageMs/(p.duration*C.FRAME_MS));
+    for(let i=0;i<4;i++){
+      const L=r.limbs[i],arm=i<2,
+        release=arm?Math.max(.15,Math.min(1,(progress-(i%2?.12:.03))/.45)):1,
+        targetB=!arm?Math.min(L.bMax,L.restB+k.profile.buckle*Math.sin(Math.PI*progress)):L.restB;
+      L.va+=((L.rest-L.a)*.065*release-L.va*.32+r.spin*L.lag*.18)*h;L.a+=L.va*h;
+      L.vb+=((targetB-L.b)*.09-L.vb*.34+r.spin*L.lag*.18)*h;L.b+=L.vb*h;
       if(L.a<L.lo){L.a=L.lo;L.va=0;}else if(L.a>L.hi){L.a=L.hi;L.va=0;}
       if(L.b<0){L.b=0;L.vb=0;}else if(L.b>L.bMax){L.b=L.bMax;L.vb=0;}
     }
     if(k.ageMs+1e-7>=k.maxDurationMs)finishKnockoutPhysics(p);
   }
 }
-function knockoutWorldContact(event) {
-  if(event.context!=='WORLD'||event.contact!==1)return;
-  emit(event.point.x,event.point.y,4,color(196,168,121),'DUST');sfx.hitBody();
+function stepKnockoutPhysics(e,dtMs,moveFn=frontierSaloonBoxingMove,onContact) {
+  stepSaloonKnockoutPhysics(e,dtMs,moveFn,onContact);
 }
-function startPunchStun(e,angle,impact={}) {
+function saloonKnockoutProgress(p) {
+  const k=p.knockout,t=Math.max(0,Math.min(1,(p.age-2)/(p.duration-2)));
+  if(k.variant==='KNEE_FOLD'||k.variant==='FORWARD_FOLD')
+    return t<.35?.18*boxingSmooth(t/.35):.18+.82*boxingSmooth((t-.35)/.65);
+  return boxingSmooth(t);
+}
+function drawSaloonKnockoutLimb(g,rig,r,i,f,shirt,pants,skin,boot,faceDown) {
+  const L=r.limbs[i],arm=i<2,s=i%2?1:-1,knee=ragKnee(L)*(faceDown?.7:1),
+    limbA=arm?s*(HALF_PI+(faceDown?L.a*.35-.5:L.a)):PI-s*L.a*(faceDown?.7:1)*f,
+    ang=arm?s*PI+((limbA-s*PI+PI*3)%TWO_PI-PI)*f:limbA,
+    bend=s*(arm?(faceDown?.55+L.b*.55:L.b):knee)*f,
+    projection=arm?lerp(STAND_FORE_ARM,1,f):lerp(-STAND_FORE_LEG,1,f),
+    l1=arm?rig.upper*(faceDown?.75:1):rig.thigh,
+    l2=arm?rig.fore*(faceDown?.82:1):ragShin(rig,knee*f)*(1-.20*Math.sin(f*PI)),
+    ex=(arm?rig.shX:rig.hipX)+Math.cos(ang)*l1*projection,
+    ey=s*(arm?rig.shY:rig.hipY)+Math.sin(ang)*l1,
+    hx=ex+Math.cos(ang+bend)*l2*projection,hy=ey+Math.sin(ang+bend)*l2,
+    ox=arm?rig.shX:rig.hipX,oy=s*(arm?rig.shY:rig.hipY),
+    w1=arm?rig.upperW*(faceDown?.92:1):rig.thighW,w2=arm?rig.foreW*(faceDown?.92:1):rig.shinW;
+  drawFallBone(g,ox,oy,ex,ey,w1,arm?shirt:pants,undefined,undefined,{x:hx,y:hy,width:w2});
+  drawFallBone(g,ex,ey,hx,hy,w2,arm?shirt:pants,arm?skin:boot,arm?rig.hand*(faceDown?.94:1):rig.foot,false);
+}
+function drawSaloonKnockoutFigure(e) {
+  const p=e.stunPose,k=p.knockout,r=p.rag,
+    rise=e.stunTimer<32?Math.max(0,e.stunTimer/32):1,f=saloonKnockoutProgress(p)*rise,
+    rig=projectFallRig(e.bodyW,e.bodyH,f),air=!p.done?k.height*rise:0,roll=k.roll*f,
+    id=p.identity||figureIdentity(e),shirt=id.shirtCol||e.shirtCol,pants=id.pantsCol||e.pantsCol,
+    skin=id.skinCol||e.skinCol||color(235,180,140),boot=color(red(pants)*.55,green(pants)*.55,blue(pants)*.55),
+    bend=k.profile.fold*Math.sin(f*PI);
+  rig.TL*=1-bend*.10;rig.headX-=bend*2.4;
+  if(!charShadowOwned(e.eType)){charShadowFill(55-air*.8);ellipse(charShadowX(12*(1-f)),charShadowY(12*(1-f)),20+f*24+air*.25,21+f*12+air*.15);}
+  push();translate(0,-air);rotate(figureFallYaw(p,r,f)+roll*.35);scale(RAG_SCALE,RAG_SCALE*(1-Math.abs(roll)*.25));
+  ragContour(window,255);
+  const legF=Math.min(1,f+k.profile.buckle*Math.sin(f*PI));
+  for(let i=2;i<4;i++)drawSaloonKnockoutLimb(window,rig,r,i,legF,shirt,pants,skin,boot,p.faceDown);
+  figureCelOval(window,0,0,rig.TL,rig.TW,shirt);drawFallenAttire(window,id,rig.TL,rig.TW,p.faceDown,f);
+  for(let i=0;i<2;i++)drawSaloonKnockoutLimb(window,rig,r,i,f,shirt,pants,skin,boot,p.faceDown);
+  translate(rig.headX,0);scale(lerp(1/RAG_SCALE,1,f));rotate(figureHeadTurn(p,f));drawFallenHead(window,id,p,f);pop();
+}
+function startPunchStun(e,angle) {
   const duration=unarmedCivilian(e)?240:1500;
   // Read locomotion before panic or STUNNED changes the actor's state.
-  if(e.stunPose&&e.stunTimer>0){scareCivilianIfNeeded(e,angle);e.stunTimer=Math.max(e.stunTimer,duration);e.state="STUNNED";bankCityPerson(e);return;}
-  startKnockoutPhysics(e,angle,impact);
+  const fall=buildFigureFall(e,angle,6,true,e.aimAngle);
   scareCivilianIfNeeded(e,angle);
-  e.stunTimer=duration;e.state="STUNNED";e.isMoving=false;bankCityPerson(e);
+  if(e.stunPose&&e.stunTimer>0){e.stunTimer=Math.max(e.stunTimer,duration);e.state="STUNNED";bankCityPerson(e);return;}
+  const r=ragBuild(e.eType,e.bodyW,angle,e.aimAngle);
+  if(!r){e.stunTimer=duration;e.state="STUNNED";e.isMoving=false;return;}
+  prepareFallRag(r,fall);r.spring=.065;r.frames=fall.duration+16;
+  for(let i=0;i<4;i++){r.limbs[i].va=(i%2?-.13:.13);r.limbs[i].vb=i<2?.20:.12;}
+  fall.rag=r;e.stunPose=fall;e.stunTimer=duration;e.state="STUNNED";e.isMoving=false;bankCityPerson(e);
 }
 function scareCivilianIfNeeded(e,angle){if(unarmedCivilian(e))scareCivilian(e,e.x-Math.cos(angle)*50,e.y-Math.sin(angle)*50);}
 function advanceStun(e) {
   if(!e.stunPose){const r=ragBuild(e.eType,e.bodyW,e.aimAngle,e.aimAngle);
     if(r){const p=buildFigureFall(e,e.aimAngle,0,true,e.aimAngle);p.age=p.duration+16;p.done=true;p.impulse=0;prepareFallRag(r,p);while(!r.done)ragStep(r);p.rag=r;e.stunPose=p;}}
-  const p=e.stunPose;if(p){if(p.knockout)stepKnockoutPhysics(e,KNOCKOUT_PHYSICS.FRAME_MS,knockoutMove,knockoutWorldContact);
-    else{stepFigureFall(p,e,p.rag);ragStep(p.rag);}}
+  const p=e.stunPose;if(p){stepFigureFall(p,e,p.rag);ragStep(p.rag);}
   e.stunTimer--;if(e.skeletonTimer>0)e.skeletonTimer--;e.isMoving=false;
   if(e.stunTimer<=0&&e.hp>0){e.state=unarmedCivilian(e)?"FLEE":"CHASE";e.stunPose=null;}
 }
 function stunFall(e) {
   if(!e.stunPose)return e.stunTimer>0?1:0;
   const rise=e.stunTimer<32?Math.max(0,e.stunTimer/32):1;
-  return figureFallProgress(e.stunPose)*rise;
+  return (e.stunPose.knockout&&saloonKnockoutContext(e.stunPose.knockout.context)?
+    saloonKnockoutProgress(e.stunPose):figureFallProgress(e.stunPose))*rise;
 }
 function drawStunnedFigure(e) {
+  if(e.stunPose&&e.stunPose.knockout&&saloonKnockoutContext(e.stunPose.knockout.context))return drawSaloonKnockoutFigure(e);
   const f=stunFall(e),p=e.stunPose,rg=p&&p.rag,rig=projectFallRig(e.bodyW,e.bodyH,f);
-  const k=p&&p.knockout,air=k&&!p.done?k.height:0,roll=k?k.roll*f:0,id=p&&p.identity||figureIdentity(e);
-  const shirt=id.shirtCol||e.shirtCol,pants=id.pantsCol||e.pantsCol;
-  if (!charShadowOwned(e.eType)) {charShadowFill(55-air*.8);ellipse(charShadowX(12*(1-f)),charShadowY(12*(1-f)),20+f*24+air*.25,21+f*12+air*.15);}
-  push();translate(0,-air);rotate((p?figureFallYaw(p,rg,f):e.aimAngle)+roll*.35);scale(RAG_SCALE,RAG_SCALE*(1-Math.abs(roll)*.3));
-  const skin=id.skinCol||e.skinCol||color(235,180,140),boot=color(red(pants)*.55,green(pants)*.55,blue(pants)*.55);
+  if (!charShadowOwned(e.eType)) {charShadowFill(55);ellipse(charShadowX(12*(1-f)),charShadowY(12*(1-f)),20+f*24,21+f*12);}
+  push();rotate(p?figureFallYaw(p,rg,f):e.aimAngle);scale(RAG_SCALE);
+  const skin=e.skinCol||color(235,180,140),boot=color(red(e.pantsCol)*.55,green(e.pantsCol)*.55,blue(e.pantsCol)*.55);
   ragContour(window,255);
-  if(rg){for(let i=2;i<4;i++)drawFallLimb(window,rig,rg,i,f,shirt,pants,skin,boot,!!(k&&p.faceDown));}
-  figureCelOval(window,0,0,rig.TL,rig.TW,shirt);
-  drawFallenAttire(window,id,rig.TL,rig.TW,p&&p.faceDown,f);
-  if(rg){for(let i=0;i<2;i++)drawFallLimb(window,rig,rg,i,f,shirt,pants,skin,boot,!!(k&&p.faceDown));}
-  translate(rg?rig.headX:lerp(12/RAG_SCALE,18,f),0);scale(lerp(1/RAG_SCALE,1,f));rotate(figureHeadTurn(p,f));drawFallenHead(window,id,p,f);pop();
+  if(rg){for(let i=2;i<4;i++)drawFallLimb(window,rig,rg,i,f,e.shirtCol,e.pantsCol,skin,boot);}
+  figureCelOval(window,0,0,rig.TL,rig.TW,e.shirtCol);
+  drawFallenAttire(window,figureIdentity(e),rig.TL,rig.TW,p&&p.faceDown,f);
+  if(rg){for(let i=0;i<2;i++)drawFallLimb(window,rig,rg,i,f,e.shirtCol,e.pantsCol,skin,boot);}
+  translate(rg?rig.headX:lerp(12/RAG_SCALE,18,f),0);scale(lerp(1/RAG_SCALE,1,f));rotate(figureHeadTurn(p,f));drawFallenHead(window,figureIdentity(e),p,f);pop();
 }
 
 
@@ -42584,7 +42646,7 @@ function frontierSaloonAdvanceTransition(s, dt) {
         t.grappled = true;
         for (const c of [p, g]) {
           c.aimAngle = HALF_PI;
-          startKnockoutPhysics(c, HALF_PI, { kind: 'RIGHT_HOOK', damage: 19, level: 'BODY' }, 'SALOON_CUTSCENE');
+          startSaloonKnockoutPhysics(c, HALF_PI, { kind: 'RIGHT_HOOK', damage: 19, level: 'BODY' }, 'SALOON_CUTSCENE');
           c.stunTimer = 99999;
         }
       }
@@ -42604,7 +42666,7 @@ function frontierSaloonAdvanceTransition(s, dt) {
       }
       // The held grapple carries the fall into the door impact; its airborne
       // clock resumes at full speed outside instead of settling mid-carry.
-      for (const c of [p, g]) stepKnockoutPhysics(c, step * (age < 1700 ? .18 : 1), () => {});
+      for (const c of [p, g]) stepSaloonKnockoutPhysics(c, step * (age < 1700 ? .18 : 1), () => {});
       if (age > 2400) {
         p.stunTimer = Math.max(0, 32 * (1 - (age - 2400) / 700));
         g.stunTimer = Math.max(0, 32 * (1 - (age - 2500) / 700));
@@ -42763,7 +42825,7 @@ function frontierSaloonKnockOut(c, angle, impact = {}) {
   boxingExit(c);
   // Local knockout physics never touches exterior collision, panic or saves.
   // Sample the last step before STUNNED/knockedOut suppresses locomotion.
-  startKnockoutPhysics(c, angle, impact, 'SALOON');
+  startSaloonKnockoutPhysics(c, angle, impact, 'SALOON');
   c.knockedOut = true; c.hp = 0; c.isMoving = false; c.meleeTimer = 0;
   c.stunTimer = 99999; sfx.hitBody();
 }
@@ -42781,7 +42843,7 @@ function frontierSaloonBeginPlayerKnockout(impact = {}) {
   s.brawl = 'KNOCKOUT'; s.menu = false;
   if (s.gauntlet) s.gauntlet.phase = 'LOST';
   s.playerKnockout = { ageMs: 0, recovering: false, recoveryFrames: 32, impact, penaltyApplied: true };
-  startKnockoutPhysics(player, impact.angle, impact, 'SALOON');
+  startSaloonKnockoutPhysics(player, impact.angle, impact, 'SALOON');
   // Commit the nonfatal penalty before any pause/save/shop action can leave.
   player.hp = Math.max(1, player.hp - 12); player.knockedOut = true;
   player.stunTimer = 99999; player.skeletonTimer = 0; player.state = 'STUNNED';
@@ -42805,7 +42867,7 @@ function frontierSaloonAdvancePlayerKnockout(s, dt) {
   const k = s.playerKnockout; if (!k) return;
   k.ageMs += dt;
   if (!k.recovering) {
-    stepKnockoutPhysics(player, dt, frontierSaloonBoxingMove, frontierSaloonKnockoutContact);
+    stepSaloonKnockoutPhysics(player, dt, frontierSaloonBoxingMove, frontierSaloonKnockoutContact);
     const pose = player.stunPose;
     if (k.ageMs >= 2200 && (!pose || (pose.knockout && pose.knockout.settled))) {
       k.recovering = true; player.stunTimer = k.recoveryFrames;
@@ -42858,8 +42920,11 @@ function frontierQuickDrawDeath(actor, bullet) {
   const src = { ...actor, decals: [...(actor.decals || []), wound],
     fallHit: { frame: frameCount, kind: bullet.tH, weapon: WEAPONS.REVOLVER, angle: bullet.a,
       force: weaponFallForce(WEAPONS.REVOLVER), mx: 0, my: 0, x: actor.x, y: actor.y, wound, fatal: true } };
+  // Share the native revolver/pistol succession across rematches and outdoor
+  // headshots. Animation selection does not grant campaign kill/score credit.
+  const deathType = bullet.tH === 'HEAD' ? [1, 8, 9][headshotCounter++ % 3] : 0;
   const c = new Corpse(actor.x, actor.y, actor.moveAngle, actor.aimAngle, actor.shirtCol, actor.pantsCol,
-    bullet.tH === 'HEAD' ? 1 : 0, bullet.a - actor.aimAngle, src.decals, WEAPONS.REVOLVER,
+    deathType, bullet.a - actor.aimAngle, src.decals, WEAPONS.REVOLVER,
     bullet.a, actor.eType, actor.bodyW, actor.bodyH, src);
   d.corpses.push(c);
   if (actor === player) d.playerCorpse = c;
@@ -42927,6 +42992,20 @@ function frontierQuickDrawAdvance(dt) {
         c.fP = figureFallProgress(f);
       } else c.fP = Math.min(1, c.fP + .15);
       ragStep(c.rag); c.stopMotionTimer = Math.max(0, c.stopMotionTimer - 1);
+      // These native headshot variants also separate/scatter pieces. Advance
+      // them on the local duel clock; Corpse.update() would stain the town.
+      if (c.dT === 8) c.sep = Math.min(35, c.sep + 2.5);
+      if (c.dT === 9) for (const bit of c.bits) {
+        if (c.stopMotionTimer > 0) {
+          bit.x += bit.vx; bit.y += bit.vy; bit.vx *= .93; bit.vy *= .93; bit.rot += bit.vr;
+          if (frameCount % 3 === 0 && Math.abs(bit.vx) > 1 && bit.type === 'meat')
+            d.effects.push(newParticle(c.x + bit.x, c.y + bit.y, color(90, 0, 0), 'BLOOD'));
+        } else bit.vx = bit.vy = bit.vr = 0;
+      }
+      if ((c.dT === 8 || c.dT === 9) && c.bloodTimer > 0 && --c.bloodTimer % 2 === 0) {
+        const p = headWoundPoint(c), angle = p.angle + random(-.6, .6), speed = random(2, 6);
+        d.effects.push(newParticle(p.x, p.y, color(90, 0, 0), 'BLOOD', Math.cos(angle) * speed, Math.sin(angle) * speed));
+      }
       const outsideParticles = particles; particles = d.effects;
       try { advanceFatalSpray(c); } finally { particles = outsideParticles; }
       if (c.bT > 0 && --c.bT % 2 === 0 && c.dT === 1) {
@@ -43167,7 +43246,7 @@ function updateFrontierSaloonActivity(advanceTime = true) {
   for (const c of [...(s.downFighters || []), ...s.fighters]) {
     c.hitFlash = Math.max(0, (c.hitFlash || 0) - dt / 16.67);
     if (c.knockedOut) {
-      stepKnockoutPhysics(c, dt, frontierSaloonBoxingMove, frontierSaloonKnockoutContact);
+      stepSaloonKnockoutPhysics(c, dt, frontierSaloonBoxingMove, frontierSaloonKnockoutContact);
       c.isMoving = false; c.gait = 0;
       continue;
     }

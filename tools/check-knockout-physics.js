@@ -25,7 +25,7 @@ probe('var koPaused=JSON.stringify({x:ko.x,y:ko.y,p:ko.stunPose});stepKnockoutPh
 check('JSON.stringify({x:ko.x,y:ko.y,p:ko.stunPose})===koPaused', 'Zero elapsed time keeps paused physics exactly frozen');
 probe('stepKnockoutPhysics(ko,1000,koFreeMove,koContact);');
 check('ko.stunPose.done&&ko.stunPose.rag.done&&ko.stunPose.knockout.settled',
-  'A finite fall reaches the shared completed pose and freezes its ragdoll');
+  'A finite fall reaches the completed minigame pose and freezes its ragdoll');
 check('koContacts.length>0&&koContacts.length<=KNOCKOUT_PHYSICS.MAX_CONTACTS&&koContacts.every(e=>e.context==="SALOON"&&Number.isFinite(e.point.x)&&e.impulse>0)',
   'At most two real floor contacts expose local finite effect points');
 check('ko.stunPose.knockout.height===0&&ko.stunPose.impulse===0&&ko.stunPose.rag.limbs.every(L=>L.va===0&&L.vb===0)',
@@ -38,13 +38,14 @@ let seed=91;
 ctx.random=(a,b)=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;const n=seed/4294967296;
   if(Array.isArray(a))return a[Math.floor(n*a.length)];if(a===undefined)return n;
   return b===undefined?n*a:a+(b-a)*n;};
-seed=91;probe("var koFine=koActor();startKnockoutPhysics(koFine,.7,{kind:'LEFT_HOOK',level:'BODY'},'SALOON');");
-seed=91;probe("var koCoarse=koActor();startKnockoutPhysics(koCoarse,.7,{kind:'LEFT_HOOK',level:'BODY'},'SALOON');");
+seed=91;probe("saloonKnockoutSequence=0;var koFine=koActor();startKnockoutPhysics(koFine,.7,{kind:'LEFT_HOOK',level:'BODY'},'SALOON');");
+seed=91;probe("saloonKnockoutSequence=0;var koCoarse=koActor();startKnockoutPhysics(koCoarse,.7,{kind:'LEFT_HOOK',level:'BODY'},'SALOON');");
 probe('for(let i=0;i<60;i++)stepKnockoutPhysics(koFine,1000/60,koFreeMove);for(let i=0;i<10;i++)stepKnockoutPhysics(koCoarse,100,koFreeMove);');
 check('Math.hypot(koFine.x-koCoarse.x,koFine.y-koCoarse.y)<1e-8&&Math.abs(koFine.stunPose.rag.ang-koCoarse.stunPose.rag.ang)<1e-8&&koFine.stunPose.rag.limbs.every((L,i)=>Math.abs(L.a-koCoarse.stunPose.rag.limbs[i].a)<1e-8)',
   '60 Hz and coarse 100 ms updates produce identical physical falls');
 probe(`var koLimits=true,koFinite=true,koVariety=[],koPeaks=[];
- for(const kind of ['LEFT_STRAIGHT','RIGHT_JAB','LEFT_HOOK','RIGHT_HOOK'])for(const level of ['HEAD','BODY']){
+ for(const kind of ['LEFT_STRAIGHT','RIGHT_JAB','LEFT_HOOK','RIGHT_HOOK'])for(const level of ['HEAD','BODY'])for(let response=0;response<3;response++){
+   saloonKnockoutSequence=response;
    const a=koActor();startKnockoutPhysics(a,.48,{kind,level,damage:30},'SALOON');let peak=0;
    for(let i=0;i<130;i++){
      stepKnockoutPhysics(a,1000/120,koFreeMove);
@@ -53,14 +54,15 @@ probe(`var koLimits=true,koFinite=true,koVariety=[],koPeaks=[];
      koLimits=koLimits&&k.height>=0&&k.height<=KNOCKOUT_PHYSICS.MAX_HEIGHT&&Math.abs(k.roll)<=KNOCKOUT_PHYSICS.ROLL_LIMIT&&Math.abs(r.ang)<=KNOCKOUT_PHYSICS.TURN_LIMIT&&k.contacts<=2&&
        r.limbs.every(L=>L.a>=L.lo&&L.a<=L.hi&&L.b>=0&&L.b<=L.bMax&&ragKnee(L)>=0);
    }
-   koVariety.push({kind,level,yaw:a.stunPose.rag.ang,peak,settled:a.stunPose.knockout.settled});koPeaks.push(peak);
+   koVariety.push({kind,level,response,variant:a.stunPose.knockout.variant,fold:a.stunPose.knockout.profile.fold,
+     yaw:a.stunPose.rag.ang,peak,settled:a.stunPose.knockout.settled});koPeaks.push(peak);
  }`);
 check('koFinite&&koLimits&&koVariety.every(p=>p.settled)',
-  'Eight strike variants remain finite, obey every joint/height bound and finish');
-check('koVariety.find(p=>p.kind==="LEFT_HOOK"&&p.level==="HEAD").yaw<koVariety.find(p=>p.kind==="RIGHT_HOOK"&&p.level==="HEAD").yaw',
-  'Left and right hooks impart recognizably different torso torque');
-check('koVariety.filter(p=>p.level==="HEAD").every(p=>p.peak>koVariety.find(q=>q.kind===p.kind&&q.level==="BODY").peak)',
-  'Head knockouts lift more while body blows produce a lower folded collapse');
+  'All 24 strike/response combinations remain finite, obey every joint/height bound and finish');
+check('koVariety.filter(p=>p.kind==="LEFT_HOOK"&&p.level==="HEAD").every(p=>p.yaw<koVariety.find(q=>q.kind==="RIGHT_HOOK"&&q.level===p.level&&q.response===p.response).yaw)',
+  'Left and right hooks impart opposite torque for each of the three matching responses');
+check('new Set(koVariety.map(p=>p.variant)).size===5&&koVariety.filter(p=>p.level==="BODY").every(p=>p.peak<3&&p.fold>0)&&koVariety.some(p=>p.level==="HEAD"&&p.peak>5)',
+  'Five physical responses include low folded body-shot collapses and visibly higher head-shot reels');
 // Deliberately block one travel axis using the same absolute-move contract the
 // saloon uses. Nothing can tunnel through the wall; the free axis still slides.
 probe(`var koWall=koActor();startKnockoutPhysics(koWall,.7,{kind:'RIGHT_HOOK'},'SALOON');
@@ -68,15 +70,18 @@ probe(`var koWall=koActor();startKnockoutPhysics(koWall,.7,{kind:'RIGHT_HOOK'},'
  for(let i=0;i<120;i++)stepKnockoutPhysics(koWall,1000/120,koWallMove);`);
 check('koWall.x<=10&&koWall.y>15&&koWall.stunPose.knockout.settled&&Number.isFinite(koWall.x)',
   'A collision absorbs its blocked axis and allows bounded movement along the wall');
+// Exterior residents use the earlier directional buckle, independently of
+// the minigame solver above. Streamed poses continue via the native frame step.
 probe(`var koNative=koActor('CITY_CITIZEN_M');startPunchStun(koNative,0);
  var koNativeHp=koNative.hp;for(let i=0;i<10;i++)advanceStun(koNative);
  var koSavedAge=koNative.stunPose.age,koSavedX=koNative.x;
  var koRestored=koActor('CITY_CITIZEN_M',koSavedX);startPunchStun(koRestored,0);
- koRestored.stunPose.age=koSavedAge;var koRestoreContact=0;
- stepKnockoutPhysics(koRestored,1000/60,koFreeMove,()=>koRestoreContact++);`);
-check('Math.abs(koRestored.stunPose.age-koSavedAge-1)<1e-6&&koRestored.x>=koSavedX&&koRestored.x-koSavedX<4',
-  'A streamed mid-fall native resident continues its saved age without replaying the shove');
-check('koRestoreContact===0', 'Reconstructing the saved pose does not replay floor contact effects');
+ koRestored.stunPose.age=koSavedAge;advanceStun(koRestored);`);
+check('!koNative.stunPose.knockout&&!koRestored.stunPose.knockout&&koRestored.stunPose.age===koSavedAge+1&&koRestored.x>=koSavedX&&koRestored.x-koSavedX<=4.8+1e-9',
+  'A streamed native resident advances its legacy fall without minigame lift, roll or contact physics');
+probe('var koRestoreBefore=JSON.stringify({x:koRestored.x,y:koRestored.y,p:koRestored.stunPose});stepKnockoutPhysics(koRestored,1000/60,koFreeMove,()=>{throw new Error("Exterior floor contact leaked");});');
+check('JSON.stringify({x:koRestored.x,y:koRestored.y,p:koRestored.stunPose})===koRestoreBefore',
+  'The minigame step cannot advance an exterior civilian fall');
 check('koNative.stunTimer===230&&koNative.hp===koNativeHp&&koNative.isNeutral',
   'Native civilians retain their original 240-frame nonlethal timer, health and neutrality');
 probe('koNative.stunTimer=16;');
@@ -112,4 +117,4 @@ probe('for(let i=0;i<70;i++){stepKnockoutPhysics(koPlayer,1000/60,koFreeMove);dr
 Object.assign(ctx,originalGeometry);
 assert.ok(primitives>100,'Actual knockout painting emitted no cel figure geometry');checks++;
 probe('cowboySuitEquipped=koEquipment.cowboy;ninjaSuitUnlocked=koEquipment.ninja;chemistSuitUnlocked=koEquipment.chemist;explosiveArmorUnlocked=koEquipment.armor;player.stunTimer=0;player.stunPose=null;');
-console.log(`Knockout physics: ${checks} timing, collision, native recovery and rendering checks passed.`);
+console.log(`Knockout physics: ${checks} timing, collision, separated native recovery and rendering checks passed.`);

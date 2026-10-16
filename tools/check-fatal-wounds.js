@@ -97,22 +97,17 @@ for(const facing of [0,Math.PI/2,Math.PI,-Math.PI/2])for(const front of [true,fa
 for(const hairy of [false,true])for(const a of [0,Math.PI/2,Math.PI,-Math.PI/2])for(const backward of [false,true]){
  const facing=a+(backward?Math.PI:0);
  fixture(0,'BODY',0,'NORMAL',a,facing,false);probe(`e.hairStyle=${hairy?'0':'undefined'};e.stunTimer=0;startPunchStun(e,-.4);`);
- // Melee physics blends the punch impulse with the sampled runner momentum;
- // the exposed head side follows that actual trajectory, unlike bullet falls.
- const force=P('e.stunPose.knockout.force'),vx=Math.cos(-.4)*(180+force*19)+Math.cos(a)*4*18,
-   vy=Math.sin(-.4)*(180+force*19)+Math.sin(a)*4*18;
- const faceDown=Math.cos(Math.atan2(vy,vx)-facing)>=0;
- assert.equal(P('e.stunPose.faceDown'),faceDown);
+ assert.equal(P('e.stunPose.faceDown'),!backward);
  assert.equal(P('e.stunPose.duration'),40,'slow punch stun duration changed');
  probe('for(let i=0;i<20;i++){frameCount++;advanceStun(e);}');assert(P('stunFall(e)<.5'),'punch stun no longer falls slowly');
  probe('for(let i=0;i<40;i++){frameCount++;advanceStun(e);}');resetPaint();probe('drawStunnedFigure(e);');
  assert.equal(stack.length,0);assert.equal(heads.length,1);
- assert.deepStrictEqual(heads[0].fill,hairy&&faceDown?[51,34,22,255]:[235,180,140,255]);
- const yaw=P('figureFallYaw(e.stunPose,e.stunPose.rag)'),target=yaw+(faceDown?0:Math.PI);
+ assert.deepStrictEqual(heads[0].fill,hairy&&!backward?[51,34,22,255]:[235,180,140,255]);
+ const yaw=P('figureFallYaw(e.stunPose,e.stunPose.rag)'),target=yaw+(backward?Math.PI:0);
  assert(Math.cos(target)*heads[0].axis[0]+Math.sin(target)*heads[0].axis[1]>.79,'stun head rotation');
  probe('c=new Corpse(e.x,e.y,e.moveAngle,e.aimAngle,e.shirtCol,e.pantsCol,0,0,[],null,-.4,e.eType,e.bodyW,e.bodyH,e);');
- assert.equal(P('c.fall.faceDown'),faceDown,'death changed already down head side');
- resetPaint();probe('c.show();');assert.deepStrictEqual(heads[0].fill,hairy&&faceDown?[51,34,22,255]:[235,180,140,255]);
+ assert.equal(P('c.fall.faceDown'),!backward,'death changed already down head side');
+ resetPaint();probe('c.show();');assert.deepStrictEqual(heads[0].fill,hairy&&!backward?[51,34,22,255]:[235,180,140,255]);
 }
 for(const [n,fn] of Object.entries(originals))ctx[n]=fn;
 

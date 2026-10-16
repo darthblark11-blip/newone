@@ -21,9 +21,21 @@ one solver. Selecting a melee tool or returning to the equipped firearm leaves
 the stance. Old saved/preview poses retain their 180-frame guard fallback. See
 [Boxing and quick draw](boxing-and-duels.md) for controls and verification.
 
-One fist hit immediately stuns an unarmed civilian without reducing health. The new nonlethal reaction applies a collision-checked recoil, then a roughly 38-frame knee buckle and side roll, a small rebound, and a joint-limited damped settle. The four-second civilian stun ends with 32 frames of gradual recovery; the civilian then flees and remains neutral. Another punch extends the stun without popping the fallen body upright. Existing hostile four-hit stun duration and electrical skeleton flash are retained.
+One fist hit immediately stuns an unarmed civilian without reducing health.
+Civilian and outdoor hostile knockdowns use the earlier directional fall:
+locomotion determines travel while moving, a stationary victim falls with the
+hit, collision stops the recoil, and the 40-frame buckle settles through the
+original constrained limb springs. These world falls have no minigame launch,
+roll or bounce. Another punch extends the stun without restarting the pose.
+The civilian's four-second stun ends with 32 frames of gradual recovery, then
+neutral flight. Hostile stun duration and electrical skeleton flashes retain
+their earlier behavior.
 
-The shared `startKnockoutPhysics()` / `stepKnockoutPhysics()` fall also serves the player and saloon opponents. A 120 Hz fixed simulation blends the hit impulse with sampled movement, gives the torso a small lift and at most two floor contacts, and drives bounded shoulder, elbow, hip and knee springs before freezing in under one second. Hooks impart directional torque; body blows keep the collapse lower. Fixed bone lengths and the native cel rig preserve connected limbs. Appearance is captured at impact, including player suit colors and headwear. The saloon supplies its own collision-checked absolute-position mover and contact callback, so local falls create no exterior particles or lethal corpses. Native civilian/hostile timers, health, neutrality and the 32-frame recovery stay unchanged; streamed residents resume their banked fall age without replaying the shove.
+`startPunchStun()` / `advanceStun()` and the native stun painter are separate
+from Peacemaker's `startSaloonKnockoutPhysics()` /
+`stepSaloonKnockoutPhysics()` / `drawSaloonKnockoutFigure()`. Only the activity
+uses the five varied ragdoll responses. Residents streamed out mid-fall keep
+their banked age and continue through the original frame-based path.
 
 Skin, hair and clothing colors survive the fall. The light rig lowers and widens the actor's height footprint with the collapse, while its fallback shadow follows the same ownership rules. Existing lethal corpse fall timing is outside this change.
 
@@ -31,7 +43,16 @@ Skin, hair and clothing colors survive the fall. The light rig lowers and widens
 
 `node tools/check-city-people.js` exercises appearance coverage, local gunfire, player-gait panic, harmless AI, attacker-relative flight, a real first-punch hit, nonlethal fall/recovery, repeated blows, guard duration and tool/firearm precedence, formation/posts, combat engagement, residency, serialized deaths and falling material height.
 
-`node tools/check-knockout-physics.js` checks physical travel and lift, contact bounds, fixed-step frame-rate agreement, wall sliding, finite constrained joints, frozen bodies, saved mid-fall continuation, unchanged native recovery, local effect isolation and actual player costume rendering.
+`node tools/check-world-knockdown-legacy.js` compares six civilian/hostile
+scenarios at six fall ages against recorded `55cb435` trajectories, joint angles
+and actual paint signatures. It also checks real outdoor punches, repeated
+stuns, recovery, electrical falls, collision and banked-age continuation.
+
+`node tools/check-knockout-physics.js` and
+`node tools/check-saloon-ragdoll-variety.js` check separate minigame travel,
+lift, bounded contacts, five responses, identical repeated blows, fixed-step
+frame agreement, wall sliding, anatomy, settled bodies and player costumes.
+The minigame integrator cannot advance a world fall.
 
 `node tools/check-city-placement.js` checks the 300-metre fortress buffers, exact boundary tangents and actor margins, newly eligible blocks between the former and current buffers, story and arcade placement, breached/captured exclusions, off-screen spawning and restoration, old saved residents in restricted areas, immediate removal between population refreshes, suspended candidate searching during ambushes, preserved injured/stunned/dead records, visible deferred and off-screen restoration after ambushes, and wander/panic/stun movement at the forbidden boundaries.
 

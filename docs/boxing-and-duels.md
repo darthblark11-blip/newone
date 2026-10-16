@@ -217,15 +217,23 @@ Leave Saloon button during the fight. Buttons held through entry, pause,
 reconnection or stance exit must lift before they can become new slip presses.
 
 Running out of GRIT stops the fight and knocks the actual player down where
-the final punch lands. Player and enemy knockouts share a fixed 120 Hz physics
-rig: punch direction and footwork drive the shove, hooks add rotation, and
-constrained limbs follow the fall, floor bounce and settle. The player remains
+the final punch lands. Player and enemy knockouts use a dedicated 120 Hz
+Peacemaker ragdoll with five responses: back reel, side spill, hook twist,
+knee fold and forward fold. Repeated identical blows cycle eligible responses;
+body shots favor low forward folds, while hooks can twist or spill sideways.
+Asymmetric arms and knees follow constrained springs, knees can buckle before
+the torso, and short travel/lift settles into distinct floor poses. Paired
+bodies in the scripted doorway tackle use a fixed local response. Civilian and
+outdoor knockdowns retain their earlier directional fall and painter.
+The player remains
 down for at least 2.2 seconds before a 32-frame get-up, then can return to Mae
 to retry. Opponents stop attacking during this sequence. The existing 12-health
 nonfatal penalty applies once when the knockout begins; pausing freezes physics,
 and saving or leaving for the shop restores the exterior equipment and position
 without carrying a local ragdoll into the campaign. Floor-contact dust stays
 inside the activity.
+
+![Five Peacemaker-only knockout responses at four fall ages](previews/peacemaker-knockout-variety.png)
 
 Outside, the sheriff heading holds for three seconds and fades over 400 ms.
 The compact arrow/distance marker and usable wanted-board interaction remain.
@@ -237,8 +245,9 @@ refresh its timer. Local activity notices are cleared when leaving the scene.
 With **Right Stick** shooting, the right stick aims below roughly **70%**
 travel and fires when pushed farther. With **R2 Trigger** selected, the stick
 only aims and R2 fires. Touch keeps its original outer fire ring. The visible
-gun and projectile follow that direction. Aiming while WAIT is safe; firing before DRAW loses. Desktop mouse aiming, Space/RT and the FIRE
-button remain available. The target must actually be hit: a badly aimed round
+gun and projectile follow that direction. Aiming while WAIT is safe; firing
+before DRAW loses. Desktop mouse aiming, Space/RT and the FIRE button remain
+available. The target must actually be hit: a badly aimed round
 can miss, and victory waits for finite projectile contact.
 
 Each victory advances the saved challenge. The first duel starts at 380 world
@@ -248,8 +257,12 @@ The first win awards 120 score and immediate cowboy costume ownership; later
 wins advance the challenge without duplicating that reward.
 
 Hits use the game's native corpse, wound, fall and death effects inside the
-duel scene. A player defeat shows the same death animation through a local
-body, costs 12 outside health and keeps the minigame's rematch flow. Local
+duel scene. Headshot deaths advance the normal shared 1 → 8 → 9 animation
+sequence rather than always choosing the first variant. Both rival and player
+headshot deaths advance it once; body deaths, misses, false starts and rematches
+do not reset it. Separation and fragments animate on the duel's local clock,
+without adding campaign kills or exterior corpses/stains. A player defeat shows
+the same death animation through a local body, costs 12 outside health and keeps the minigame's rematch flow. Local
 actors, bullets and effects do not alter campaign kills or outside combat.
 Saving resumes outside with the challenge tier and exact weapon reserves.
 
@@ -269,6 +282,9 @@ node tools/check-boxing-body-postures.js
 node tools/check-frontier-saloon.js
 node tools/check-saloon-quiet-hud.js
 node tools/check-knockout-physics.js
+node tools/check-world-knockdown-legacy.js
+node tools/check-saloon-ragdoll-variety.js
+node tools/check-frontier-duel-death-sequence.js
 node tools/check-frontier-player-knockout.js
 node tools/check-frontier-gauntlet.js
 node tools/check-frontier-gauntlet-arenas.js
@@ -399,3 +415,12 @@ combo qualification, bonus and timing remain unchanged.
 ![A standing player drawn over the preserved nonlethal knockout model](previews/boxing-knockout-layering.png)
 
 ![Aimed quick draw victory using the native death animation](previews/dry-gulch-duel.png)
+
+The separated-knockout update passes 41 targeted regression suites, including
+historical world trajectories/painting, five local ragdoll responses, actual
+duel headshot succession and prior control/gauntlet/corpse checks. Chromium
+checks at 390 × 844 and 940 × 390 cover real civilian punches, player defeat,
+opponent knockouts, pause/get-up, floor layering and retained boxing poses.
+The final hook profile and five-profile preview also use the final source.
+`check-falls-and-footwork.js:116` retains an existing rest-stance spacing
+assertion failure, reproduced on unchanged baseline `c2f26d9`.
