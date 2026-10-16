@@ -34,6 +34,42 @@ the mesa district and the railway avenue. The Copper Spur is a larger saloon
 with its own walkable interior, counter, patrons, tables, piano and gallery.
 Town doors, street signs and the sheriff's wanted board remain on return trips.
 
+## Frontier destinations
+
+Three satellite towns extend the desert beyond Dry Gulch. Each has twelve
+named premises including homes, a working yard and a clear central street connected to
+the surrounding wagon trails.
+
+| Destination | Direction from Dry Gulch | Character |
+| --- | --- | --- |
+| Copper Wash | West | Mining township with a copper hoist, assay office, ore exchange and narrow-gauge sorting yard |
+| Sunspur | Northeast | Orchard settlement with an adobe mission, cantina, produce market, irrigation and vine trellises |
+| Mesa Relay | South | Stagecoach stop with a wheelwright, depot, hotel, freight warehouse and coach turnaround |
+
+Split Tooth Wash adds broken red sandstone banks west of town. Redrock Basin
+opens into a broad salt pan to the north, while Needle Gorge winds between
+pale rock spires to the east. Their six timber bridges, nine descending ramps
+and gently fading ends use the same terrain as native movement and lighting.
+Town foundations have flat aprons, and the existing bounty routes remain open.
+An arrival badge names each destination and fades completely after 3.5 seconds.
+
+Six civilian occupations add miners, ranch hands, traders, smiths, travelers
+and townspeople in sunbonnets. Hats, work harnesses, rope coils, leather aprons,
+satchels and bedrolls retain the cel shaded character style. Dry Gulch has
+twelve permanent workers, and each satellite town has a themed mix. Individual
+appearance, injuries, knockdowns and deaths persist through streaming and
+saving. These residents use ordinary civilian falls and remain separate from
+campaign survivor recruitment.
+
+Raised roofs and eaves now cover characters beneath their projected edges.
+The wooden entrance beam and Dry Gulch sign draw above ground-level actors;
+the stair treads remain below their feet. The lighting height mask follows the
+same order, preventing a hidden hat from shading through the sign.
+
+![Copper Wash mining township](previews/level3-copper-wash.png)
+
+![Dry Gulch entrance above the player](previews/level3-entrance-occlusion.png)
+
 ## Activities and rewards
 
 | Activity | How to start | Reward |
@@ -111,6 +147,12 @@ node tools/check-frontier-canyons.js
 node tools/check-frontier-canyon-materials.js
 node tools/check-frontier-ground-materials.js
 node tools/check-frontier-bridge-materials.js
+node tools/check-frontier-occlusion.js
+node tools/check-frontier-settlements.js
+node tools/check-frontier-settlement-routes.js
+node tools/check-frontier-canyon-expansion.js
+node tools/check-frontier-civilian-variety.js
+node tools/check-frontier-exploration-notices.js
 node tools/check-frontier-equipment.js
 node tools/check-frontier-lighting.js
 node tools/check-frontier-bounties.js
@@ -141,6 +183,14 @@ Native walking checks reached all three outposts
 through generated solids and canyon collision. The lighting check sampled the
 actual canyon height buffer across floor pixels, with no false rim-height gaps;
 day and night WebGL passes also verified floor, rim and roof light occlusion.
+
+The satellite expansion adds continuous native walks from the sheriff's street
+to all three town centers, all fifteen new bridge/ramp crossings and both ends
+of each finite canyon. Save checks cover resident identities and injuries,
+individual deaths and old numeric destruction records alongside new town keys.
+Final Chromium captures exercise all three towns and gulches, the entrance and
+roof draw order, and all six civilian occupations standing and knocked down.
+Portrait and landscape frames report balanced drawing state and no game errors.
 
 ## Captured previews
 

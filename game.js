@@ -1723,6 +1723,224 @@ const FRONTIER_TOWN_LANDMARKS = {
   bounds: { x0: -450, y0: -4800, x1: 3600, y1: 300 }
 };
 function frontierTownLandmarks() { return FRONTIER_TOWN_LANDMARKS; }
+// Arrival names appear briefly below the movement sticks. They do not add a
+// permanent objective box or compete with the sheriff's navigation marker.
+const FRONTIER_EXPLORATION_NOTICE = Object.freeze({ holdMs: 3000, fadeMs: 500 });
+const _frontierExplorationNotice = { id: null, label: '', detail: '', ageMs: Infinity, actor: null };
+function frontierExplorationLocaleAt(x,y) {
+  if(typeof frontierSettlementAt==='function'){
+    const town=frontierSettlementAt(x,y,0);
+    if(town)return {id:'TOWN:'+town.id,label:town.name,
+      detail:town.kind==='MINING'?'Mining township':town.kind==='ORCHARD'?'Orchard settlement':'Stagecoach stop'};
+  }
+  if(typeof frontierCanyonLandmarks==='function')for(const site of frontierCanyonLandmarks()){
+    const u=site.axis==='Y'?y:x,v=site.axis==='Y'?x:y;
+    if(u<site.u0+150||u>site.u1-150||Math.abs(v-site.center)>site.width+site.bend+550)continue;
+    const p=frontierCanyonProfile(site.axis,u,site.index);
+    if(p.depth>2&&Math.abs(v-p.center)<p.outerHalf+80)return {id:'CANYON:'+site.id,label:site.name,
+      detail:site.kind==='BASIN'?'Salt-pan basin':site.kind==='NEEDLES'?'Pinnacle gorge':'Sandstone wash'};
+  }
+  return null;
+}
+function updateFrontierExplorationNotice(dt=deltaTime) {
+  const state=_frontierExplorationNotice;
+  if(!started||!player||currentLevel!==3||!BIOME_ACTIVE||currentBiome!==3||frontierSaloonIsInside()){
+    state.id=null;state.ageMs=Infinity;state.actor=null;return;
+  }
+  if(state.actor!==player){state.id=null;state.ageMs=Infinity;state.actor=player;}
+  if(isPaused||!doTick||isDead||isWin||inTownCutscene||inFarmCutscene||inFarmPostCutscene||
+      inFortCutscene||inPostAmbushCutscene||inDarchonCall||inTravelMenu||inOverworldView)return;
+  const place=frontierExplorationLocaleAt(player.x,player.y);
+  if(!place){state.id=null;state.ageMs=Infinity;return;}
+  if(state.id!==place.id){state.id=place.id;state.label=place.label;state.detail=place.detail;state.ageMs=0;}
+  else if(Number.isFinite(dt)&&dt>0)state.ageMs+=Math.min(100,dt);
+}
+function frontierExplorationNoticeAlpha() {
+  const n=FRONTIER_EXPLORATION_NOTICE,age=_frontierExplorationNotice.ageMs;
+  return 1-smooth01((age-n.holdMs)/n.fadeMs);
+}
+function drawFrontierExplorationNotice() {
+  if(isPaused||!player||currentLevel!==3||!BIOME_ACTIVE||frontierSaloonIsInside())return;
+  const alpha=frontierExplorationNoticeAlpha();if(!(alpha>0))return;
+  const state=_frontierExplorationNotice,w=Math.min(320,width-24),y=height-52;
+  push();textFont('sans-serif');textAlign(CENTER,CENTER);noStroke();
+  fill(43,31,22,220*alpha);rect(width/2-w/2,y,w,40,6);
+  fill(245,215,160,255*alpha);textSize(Math.min(15,(w-18)/Math.max(1,state.label.length*.6)));
+  text(state.label.toUpperCase(),width/2,y+13);
+  fill(202,187,158,235*alpha);textSize(10);text(state.detail,width/2,y+29);pop();
+}
+
+// Satellite settlements are destinations, with one shared plan for their
+// streets, premises, population and canyon keep-outs. Nothing here consumes
+// the chunk RNG, so extending a town cannot reshuffle the surrounding desert.
+const FRONTIER_SETTLEMENT_SITES = Object.freeze([
+  Object.freeze({ id: 'COPPER_WASH', name: 'Copper Wash', kind: 'MINING',
+    x: -6000, y: 600, w: 2400, h: 1200, subtitle: 'COPPER CLAIMS & ASSAY WORKS' }),
+  Object.freeze({ id: 'SUNSPUR', name: 'Sunspur', kind: 'ORCHARD',
+    x: 8400, y: -6600, w: 2400, h: 1200, subtitle: 'ORCHARDS & MISSION MARKET' }),
+  Object.freeze({ id: 'MESA_RELAY', name: 'Mesa Relay', kind: 'COACH',
+    x: 1200, y: 6600, w: 2400, h: 1200, subtitle: 'OVERLAND COACH EXCHANGE' })
+]);
+const _frontierSettlementPlans = new Map();
+function frontierSettlementSites() { return FRONTIER_SETTLEMENT_SITES; }
+function frontierSettlementAt(x, y, margin = 0) {
+  return FRONTIER_SETTLEMENT_SITES.find(s => Math.abs(x-s.x) <= s.w/2+margin &&
+    Math.abs(y-s.y) <= s.h/2+margin) || null;
+}
+function frontierSettlementReserved(x, y, w = 0, h = 0, pad = 0) {
+  return FRONTIER_SETTLEMENT_SITES.some(s => Math.abs(x-s.x) < (s.w+w)/2+pad &&
+    Math.abs(y-s.y) < (s.h+h)/2+pad);
+}
+function frontierSettlementRoadReserved(x, y, w = 0, h = 0, pad = 0) {
+  return FRONTIER_SETTLEMENT_SITES.some(s => Math.abs(x-s.x) < s.w/2+220+w/2+pad &&
+    Math.abs(y-s.y) < 128+h/2+pad);
+}
+function frontierSettlementPlan(site) {
+  if (_frontierSettlementPlans.has(site.id)) return _frontierSettlementPlans.get(site.id);
+  const rows = {
+    MINING: [
+      ['STONE','CLAIM OFFICE'],['HEADFRAME','COPPER WASH HOIST'],['WORKSHOP','COPPER ASSAY'],['BARN','ORE EXCHANGE'],
+      ['CABIN','MINERS LODGE'],['TENT','TOOL & POWDER'],['FALSE_FRONT','CLAIM MERCANTILE'],['STONE','WASH INFIRMARY']
+    ],
+    ORCHARD: [
+      ['ADOBE','SUNSPUR CANTINA'],['CHAPEL','SUNSPUR MISSION'],['ADOBE','SEED COOPERATIVE'],['BARN','FRUIT PACKING'],
+      ['TENT','ORCHARD MARKET'],['ADOBE','PRESERVES & HONEY'],['CABIN','FARMERS REST'],['FALSE_FRONT','SUNSPUR POST']
+    ],
+    COACH: [
+      ['WORKSHOP','WHEELWRIGHT'],['RAIL_DEPOT','MESA COACH DEPOT'],['TWO_STOREY','RELAY HOTEL'],['WAREHOUSE','OVERLAND FREIGHT'],
+      ['BARN','RELAY LIVERY'],['FALSE_FRONT','TELEGRAPH EXCHANGE'],['STONE','TRAVELERS BANK'],['TENT','SADDLE & TACK']
+    ]
+  }[site.kind];
+  const all = [], xs = [-960,-240,240,960];
+  const put = (id, dx, dy, w, h, extra) => all.push(Object.freeze({
+    x: site.x+dx, y: site.y+dy, w, h, frontierSettlementId: site.id,
+    frontierSettlementPart: id, ...extra }));
+  for (let i=0;i<rows.length;i++) {
+    const row=i<4?-1:1, [arch,signText]=rows[i];
+    put('shop-'+i,xs[i%4],row*285,300,190,{ isWesternBldg:true,arch,signText,
+      facing:row<0?'S':'N',accent:site.kind==='ORCHARD'?'teal':site.kind==='COACH'?'red':null,
+      isLivery:arch==='BARN',hasBell:arch==='CHAPEL',
+      _rise:arch==='HEADFRAME'?43:arch==='TWO_STOREY'?35:arch==='RAIL_DEPOT'?29:undefined });
+  }
+  for (let i=0;i<4;i++) put('home-'+i,i%2?-960:960,i<2?-485:485,240,115,{
+    isWesternBldg:true,arch:site.kind==='ORCHARD'?'ADOBE':'CABIN',
+    signText:site.kind==='MINING'?'CLAIM COTTAGE':site.kind==='ORCHARD'?'ORCHARD HOME':'COACH CREW',
+    facing:i<2?'S':'N',accent:null });
+  put('well',0,220,48,48,{isWell:true});
+  if (site.kind==='COACH') {
+    put('relay-tank',0,-470,64,64,{isWaterTower:true});
+    for (let i=0;i<3;i++) put('coach-'+i,(i-1)*112,480,75,55,{isWagonProp:true,seed:i*.29});
+  } else if(site.kind==='MINING') {
+    put('mine-tank',0,480,64,64,{isWaterTower:true});
+    for(let i=0;i<3;i++) put('ore-crate-'+i,-86+i*86,-480,32,32,{isCrateProp:true,seed:i*.31});
+  } else {
+    put('produce-field',0,-485,770,150,{isCropField:true});
+    for(let i=0;i<3;i++) put('harvest-'+i,-90+i*90,480,45,45,{isHayBale:true,seed:i*.31});
+  }
+  const plan=Object.freeze(all); _frontierSettlementPlans.set(site.id,plan); return plan;
+}
+function filterFrontierSettlementContent(biome,cx,cy,content) {
+  if(biome!==3)return;
+  // Filter after legacy keys have been assigned. The replacement town owns
+  // only its footprint and approach street; neighbouring saved props retain
+  // exactly their previous identities, even when this chunk straddles a site.
+  for(const key of ['solid','cars','decor','decorBake']) {
+    const list=content[key];
+    for(let i=list.length-1;i>=0;i--) {
+      const p=list[i],r=key==='decor'||key==='decorBake'?45*(p.s||1):0;
+      if(frontierSettlementReserved(p.x,p.y,p.w||r*2,p.h||r*2,24)||
+         frontierSettlementRoadReserved(p.x,p.y,p.w||r*2,p.h||r*2,0))list.splice(i,1);
+    }
+  }
+  const destroyed=getBiomeState(biome).destroyed;
+  for(const site of FRONTIER_SETTLEMENT_SITES)for(const part of frontierSettlementPlan(site)) {
+    if(Math.floor(part.x/CHUNK_W)!==cx||Math.floor(part.y/CHUNK_W)!==cy)continue;
+    const chunkKey=cx+','+cy+',settlement:'+site.id+':'+part.frontierSettlementPart;
+    if(!destroyed[chunkKey])content.solid.push({...part,chunkKey});
+  }
+}
+function bakeFrontierSettlementArea(g,biome,ox,oy) {
+  if(biome!==3)return;
+  for(const site of frontierSettlementSites()) {
+    const x0=site.x-site.w/2,x1=site.x+site.w/2,y0=site.y-site.h/2,y1=site.y+site.h/2;
+    if(ox+CHUNK_W<x0-240||ox>x1+240||oy+CHUNK_W<y0||oy>y1)continue;
+    const mineral=site.kind==='MINING',orchard=site.kind==='ORCHARD';
+    const soil=mineral?[164,126,91]:orchard?[187,166,116]:[174,143,105];
+    g.push();g.noStroke();g.fill(...soil,72);
+    // Scalloped hardstanding has no texture boundary at a chunk edge: every
+    // buffer clips this identical world-space outline rather than inventing
+    // a new town-shaped rectangle inside its own coordinate system.
+    g.beginShape();
+    for(let i=0;i<=24;i++)g.vertex(x0+i*100,y0+20+Math.sin(i*2.3)*16);
+    for(let i=24;i>=0;i--)g.vertex(x0+i*100,y1-20+Math.sin(i*1.7)*16);
+    g.endShape(CLOSE);
+    for(const b of frontierSettlementPlan(site))if(b.isWesternBldg) {
+      g.fill(...soil,90);g.rect(b.x-b.w/2-19,b.y-b.h/2-15,b.w+38,b.h+30,7);
+      const facing=b.facing==='N'?-1:1,fy=b.y+facing*(b.h/2+20);
+      g.fill(105,81,59,75);g.rect(b.x-b.w/2-10,fy-6,b.w+20,12,2);
+    }
+    const sx0=Math.max(x0-220,ox-40),sx1=Math.min(x1+220,ox+CHUNK_W+40);
+    if(sx1>sx0)bakeStreet(g,sx0,sx1,site.y,150,94,
+      [201,175,132],mineral?[123,98,74]:orchard?[137,117,80]:[131,103,73],12,44,
+      sx0===x0-220,sx1===x1+220);
+    g.noFill();g.stroke(91,70,49,88);g.strokeWeight(4);
+    for(const off of [-34,34])g.line(x0-165,site.y+off,x1+165,site.y+off);
+    g.stroke(229,201,150,100);g.strokeWeight(1.4);
+    for(const off of [-38,-30,30,38])g.line(x0-150,site.y+off,x1+150,site.y+off);
+    g.noStroke();
+    if(mineral) {
+      // Ore sorting yard: a short narrow-gauge siding, weathered sleepers,
+      // tailings and blue-green mineral fragments beside the claim hoist.
+      for(let xx=-365;xx<=365;xx+=28){g.fill(108,78,55,140);g.rect(site.x+xx,site.y-535,8,82,2);}
+      g.stroke(73,70,62,195);g.strokeWeight(4);
+      for(const yy of [-516,-478])g.line(site.x-375,site.y+yy,site.x+375,site.y+yy);
+      g.stroke(216,192,148,155);g.strokeWeight(1.2);
+      for(const yy of [-517,-479])g.line(site.x-375,site.y+yy,site.x+375,site.y+yy);
+      g.noStroke();
+      for(let i=0;i<18;i++) {
+        const xx=site.x-310+i*35,yy=site.y+438+Math.sin(i*2.4)*19;
+        g.fill(105,76,56,100);g.ellipse(xx+3,yy+5,30,17);
+        g.fill(i%3?[169,119,75]:[94,135,115]);g.quad(xx-13,yy,xx-5,yy-10,xx+12,yy-4,xx+15,yy+6);
+        g.fill(213,165,105,155);g.triangle(xx-13,yy,xx-5,yy-10,xx+1,yy+1);
+      }
+    } else if(orchard) {
+      // Irrigation channels and trellised vines continue into the crop rows.
+      g.fill(119,107,72,125);g.rect(site.x-400,site.y-570,800,9,3);
+      g.fill(117,158,136,120);g.rect(site.x-396,site.y-568,792,3,2);
+      for(let xx=-390;xx<=390;xx+=78) {
+        g.stroke(125,99,62,100);g.strokeWeight(2);g.line(site.x+xx,site.y+415,site.x+xx,site.y+547);
+        g.noStroke();
+        for(let yy=430;yy<=535;yy+=35) {
+          g.fill(76,99,54,130);g.ellipse(site.x+xx+3,site.y+yy+4,29,20);
+          g.fill(125,143,70,190);g.ellipse(site.x+xx,site.y+yy,26,18);
+          g.fill(164,166,90,175);g.ellipse(site.x+xx-4,site.y+yy-3,13,8);
+          g.fill(189,108,61,210);g.ellipse(site.x+xx+6,site.y+yy,4,4);
+        }
+      }
+    } else {
+      // Turn-around court with parallel wheel scars and unloading bays. These
+      // remain ground marks, so the coaches themselves keep their depth.
+      g.noFill();g.stroke(113,84,60,70);g.strokeWeight(4);
+      for(const inset of [0,24])g.ellipse(site.x,site.y+470,650-inset,135-inset*.4);
+      for(const xx of [-160,0,160]) {
+        g.stroke(106,80,57,105);g.strokeWeight(2);
+        g.line(site.x+xx-43,site.y+397,site.x+xx-43,site.y+555);
+        g.line(site.x+xx+43,site.y+397,site.x+xx+43,site.y+555);
+      }
+      g.noStroke();
+    }
+    // Painted arrival boards are on the verge, clear of both travel lanes.
+    for(const side of [-1,1]) {
+      const sx=site.x+side*(site.w/2-95),sy=site.y+151;
+      g.fill(75,60,44,145);g.rect(sx-70,sy-3,144,43,3);
+      g.fill(218,192,144,215);g.rect(sx-72,sy-6,144,39,3);
+      g.fill(70,58,43,230);g.textAlign(CENTER,CENTER);g.textSize(13);
+      g.text(site.name.toUpperCase(),sx,sy+5);
+      g.textSize(6.5);g.text(site.subtitle,sx,sy+20);
+    }
+    g.pop();
+  }
+}
 
 function legacyGenerateMap() {
   buildings = [];
@@ -3504,7 +3722,71 @@ function drawLegacyActors() {
 // A mass contacts the ground along the south edge of the rect it collides on,
 // so that is where it has to sort. Using the centre would put a character level
 // with a building's middle in front of its far wall.
-function massDepth(b) { return b.y + (b.h || 0) / 2; }
+const _depthLean = [0, 0];
+function frontierRaisedBuilding(b) {
+  return BIOME_ACTIVE && currentBiome === 3 && !b.isBiomeProp &&
+    !!(b.isWesternBldg || b.isBarn || b.isHouse || b.isShanty || b.isTrailer ||
+       b.isBlockBuilding || b.isBuiltStructure);
+}
+function massDepth(b) {
+  const base = b.y + (b.h || 0) / 2;
+  if (!frontierRaisedBuilding(b)) return base;
+  // Frontier roofs are lifted away from the camera's principal point. Their
+  // south eave can extend past the collision edge, especially beside steps.
+  // Sorting only the foundation let a person paint on top of that raised
+  // overhang. Use the same projection as the painter; walkable decks and
+  // low street furniture still sort at their ordinary ground contact.
+  massLean(b.x, b.y, buildingRise(b), _depthLean);
+  clampLean(_depthLean, leanCapOf(b));
+  return base + Math.max(0, _depthLean[1]) + (b.isWesternBldg ? 6 : 0);
+}
+
+const _frontierEntrancePosts = [
+  { x: 1160, y: 60, w: 10, h: 0, isFrontierEntrancePost: true },
+  { x: 1440, y: 60, w: 10, h: 0, isFrontierEntrancePost: true }
+];
+function frontierTownEntranceVisible() {
+  return BIOME_ACTIVE && currentLevel === 3 && currentBiome === 3 &&
+    !!authoredCore && inView(1300, 10, 230);
+}
+function drawFrontierTownEntrancePost(b) {
+  push();
+  stroke(90, 62, 35); strokeWeight(10); line(b.x, b.y, b.x, -40);
+  stroke(170, 127, 76); strokeWeight(2); line(b.x - 2, b.y - 3, b.x - 2, -39);
+  pop();
+}
+function drawFrontierTownEntranceOverhead() {
+  if (!frontierTownEntranceVisible()) return;
+  push();
+  stroke(90, 62, 35); strokeWeight(14); line(1150, -40, 1450, -40);
+  stroke(169, 128, 79); strokeWeight(2); line(1152, -43, 1448, -43);
+  fill(210, 185, 145); stroke(90, 62, 35); strokeWeight(2);
+  rect(1230, -25, 140, 34, 3);
+  fill(30); noStroke(); textAlign(CENTER, CENTER); textSize(14); textFont('sans-serif');
+  text('DRY GULCH', 1300, -8);
+  pop();
+}
+
+function glRigFrontierRaisedHeight(g, wet) {
+  if (!BIOME_ACTIVE || currentBiome !== 3) return;
+  // Match the visible raised surfaces after stamping characters. Otherwise
+  // somebody underneath a roof/sign punches a low hole into its height map,
+  // leaving the silhouette of their hat shaded onto the timber above them.
+  for (const b of activeBuildings) {
+    if (!frontierRaisedBuilding(b) || !inView(b.x, b.y, Math.max(b.w || 0, b.h || 0) + 150)) continue;
+    const rise = buildingRise(b);
+    massLean(b.x, b.y, rise, _depthLean); clampLean(_depthLean, leanCapOf(b));
+    glRigMat(g, rise + groundElev(b.x, b.y), .12 + .30 * wet, b.angle || 0);
+    g.rect(b.x - b.w / 2 + _depthLean[0], b.y - b.h / 2 + _depthLean[1], b.w, b.h);
+  }
+  if (frontierTownEntranceVisible()) {
+    const base = groundElev(1300, 60);
+    glRigMat(g, base + 74, .12 + .20 * wet, 0);
+    g.rect(1143, -47, 314, 14);
+    glRigMat(g, base + 62, .12 + .20 * wet, 0);
+    g.rect(1229, -26, 142, 36);
+  }
+}
 
 // Every character draw goes through here. Flyers have no ground contact to
 // compare with a building's base, so hold them for the pass above the roofs.
@@ -3542,6 +3824,7 @@ function drawAirborneActors() {
 // a mark on them.
 function massRunKind(b) {
   if (DECOR_STANDING[b.t]) return 2;
+  if (b.isFrontierEntrancePost) return 3;
   return b.isBiomeProp ? 1 : 0;
 }
 function forestRaisedCrown(d) {
@@ -3560,6 +3843,7 @@ function drawMassRun(arr, i0, i1) {
         _forestCrowns.push(d);
       } else paintClutter(window, d, frameCount);
     }
+    else if (kind === 3) for (let k = s; k < e; k++) drawFrontierTownEntrancePost(arr[k]);
     else if (kind === 1) drawBiomeProps(arr, s, e);
     else                 drawBuildings(arr, s, e);
     s = e;
@@ -3576,8 +3860,14 @@ function drawDepthSorted() {
     // sort down to what is actually on screen, which is a fraction of the
     // 1500-unit ring activeBuildings holds.
     if (!inView(b.x, b.y, Math.max(b.w || 0, b.h || 0) + 150)) continue;
-    b._depthKey = b.y + (b.h || 0) / 2;
+    b._depthKey = massDepth(b);
     masses.push(b);
+  }
+  // The walk and the stair treads stay in the ground pass. These two posts
+  // stand beside the route; the beam and sign bridge over the route entirely.
+  if (frontierTownEntranceVisible()) for (const post of _frontierEntrancePosts) {
+    post._depthKey = massDepth(post);
+    masses.push(post);
   }
   // Standing decor, queued by drawDecor() earlier in the same frame. A tree's
   // ground contact is its trunk, which is its own origin -- the same point its
@@ -3623,6 +3913,9 @@ function drawDepthSorted() {
     paintForestClutter(window, _forestCrowns[i], frameCount, 'crown');
   }
   _forestCrowns.length = 0;
+  // A person crossing the entrance is underneath its timber lintel, even
+  // while climbing the authored stairs. Aircraft retain their later pass.
+  drawFrontierTownEntranceOverhead();
 }
 
 
@@ -6029,7 +6322,7 @@ function noteFrameFault(where, err) {
 }
 
 function draw() {
-  if (started) handlePauseMenuInput();
+  if (started) { handlePauseMenuInput(); updateFrontierExplorationNotice(); }
   tickPlayerBowLifecycle(player);
   if (!started) {
     background(15); fill(255); textAlign(CENTER, CENTER); textSize(32); textFont('sans-serif'); text("STICK WORLD REVOLUTION", width / 2, height / 2 - 140);
@@ -6237,8 +6530,8 @@ function draw() {
     // FIX 1: Explicitly check for Farmer types in case the 'isFriendly' flag dropped during the ambush
     window.allies = enemiesList.filter(e => 
         (e.isFriendly || e.eType === "FARMER_MALE" || e.eType === "FARMER_FEMALE") 
-        && e.hp > 0 
-        && !e.dead
+        && e.hp > 0
+        && !e.dead && !frontierCivilianType(e.eType)
     );
 
     // Fallback if none survived
@@ -6373,7 +6666,7 @@ function draw() {
             postAmbushPhase = 1;
 
             // Using window.allies makes it globally permanent so it survives into the next frames
-            window.allies = enemiesList.filter(e => e.isFriendly && e.hp > 0 && !e.dead);
+            window.allies = enemiesList.filter(e => e.isFriendly && e.hp > 0 && !e.dead && !frontierCivilianType(e.eType));
             // The cutscene needs bodies to speak; the LEDGER decides the number.
             grantSectorSurvivors(currentLevel);
             loadLedgerIntoWindow(currentLevel);
@@ -7094,6 +7387,7 @@ viewBottom = camY + height / zoom + shakePad;
       if (BIOME_ACTIVE && currentBiome === 3) {
         drawFrontierSaloonHud();
         drawFrontierBountyHud();
+        drawFrontierExplorationNotice();
       }
       
       // --- MOUNT / DISMOUNT BUTTON ---
@@ -8704,7 +8998,7 @@ function storeWindowIntoLedger(id) {
 function sectorSurvivorCount(level) {
     const t = sectorLedger(level);
     if (t.popSeeded > 0) return Math.max(0, t.popSeeded - t.popKilled);
-    return enemiesList.filter(e => e && e.isFriendly && e.hp > 0 && !e.dead && !e.isMilitary).length;
+    return enemiesList.filter(e => e && e.isFriendly && e.hp > 0 && !e.dead && !e.isMilitary && !frontierCivilianType(e.eType)).length;
 }
 
 // One grant per sector, ever. `popGranted` is the latch: re-entering a
@@ -8728,7 +9022,7 @@ function grantSectorSurvivors(level) {
     let f = 0;
     if (t.popSeeded > 0) f = (level === 2) ? n : 0;
     else {
-        const freed = enemiesList.filter(e => e && e.isFriendly && e.hp > 0 && !e.dead && !e.isMilitary);
+        const freed = enemiesList.filter(e => e && e.isFriendly && e.hp > 0 && !e.dead && !e.isMilitary && !frontierCivilianType(e.eType));
         const fem = freed.filter(e => String(e.eType || "").toUpperCase().indexOf("FEMALE") !== -1).length;
         f = Math.min(n, fem);
     }
@@ -10669,17 +10963,15 @@ function legacyDrawGround(skipBase) {
           }
       }
 
-      // Town entrance archway
-      stroke(90, 62, 35); strokeWeight(10); noFill();
-      line(1160, 60, 1160, -40);
-      line(1440, 60, 1440, -40);
-      strokeWeight(14);
-      line(1150, -40, 1450, -40);
-      noStroke();
-      fill(210, 185, 145); stroke(90, 62, 35); strokeWeight(2);
-      rect(1230, -25, 140, 34, 3);
-      fill(30); noStroke(); textAlign(CENTER, CENTER); textSize(14); textFont('sans-serif');
-      text("DRY GULCH", 1300, -8);
+      // Only the entrance's footings and cast shade lie on the ground. Its
+      // posts, overhead beam and sign are drawn with the raised world pass.
+      noStroke(); fill(58, 40, 26, 42);
+      for (const px of [1160, 1440]) {
+        quad(px - 5, 57, px + 5, 57, px + 5 + LIGHT_DX * 45, 57 + LIGHT_DY * 45,
+             px - 5 + LIGHT_DX * 45, 57 + LIGHT_DY * 45);
+        fill(104, 79, 53); rect(px - 7, 56, 14, 9, 2);
+        fill(58, 40, 26, 42);
+      }
       drawFrontierTownWayfinder(1520,40,"SALOON  ↑","SHERIFF  ↑");
       drawFrontierTownWayfinder(1520,-1130,"COPPER SPUR  ↑","BOUNTIES  ↑");
       drawFrontierTownWayfinder(1460,-3400,"COUNTY COURT  ↑","SALOON  ↓");
@@ -11984,6 +12276,12 @@ function headwearOf(id) {
   if (!id) return null;
   const eT = id.eType;
   if(eT==="NM0_CITY_GUARD")return "NM0_HELMET";
+  if(eT==='FRONTIER_PROSPECTOR')return 'MINER_CAP';
+  if(eT==='FRONTIER_RANCHHAND')return 'STRAW';
+  if(eT==='FRONTIER_TRADER')return 'TRADE_HAT';
+  if(eT==='FRONTIER_SMITH')return 'WORK_WRAP';
+  if(eT==='FRONTIER_TRAVELER')return 'TRAVEL_HAT';
+  if(eT==='FRONTIER_TOWNSWOMAN')return 'BONNET';
   const armor=id.explosiveArmor!==undefined?id.explosiveArmor:explosiveArmorUnlocked;
   const ninja=id.ninjaSuit!==undefined?id.ninjaSuit:ninjaSuitUnlocked;
   if (id.isPlayer && armor) return 'VISOR';
@@ -12025,6 +12323,24 @@ function figureCelArc(g,x,y,w,h,c,a0,a1,k=.7) {
 }
 function drawHeadwear(g, id, kind) {
   if (!kind) return;
+  if(kind==='MINER_CAP') {
+    figureCelOval(g,0,0,19,17,id.hatCol||[96,80,56],.72);
+    figureCelArc(g,2,0,22,16,[58,52,44],-.9,.9,.68);
+    g.fill(47,47,42);g.rect(3,-4,6,8,1.5);g.fill(182,161,95);g.ellipse(7,0,5,6);
+    g.fill(250,226,154);g.ellipse(8,-.5,2.5,3.5);g.noStroke();return;
+  }
+  if(kind==='TRADE_HAT'||kind==='TRAVEL_HAT') {
+    const c=id.hatCol||color(128,99,67),wide=kind==='TRAVEL_HAT';
+    figureCelOval(g,-1,0,wide?32:23,wide?26:21,[red(c)*.7,green(c)*.7,blue(c)*.7],.72);
+    figureCelOval(g,-1,-.5,wide?19:16,wide?18:15,c,.74);
+    g.fill(wide?color(58,74,62):color(73,43,30));g.rect(-7,1,12,2.4,1);
+    g.stroke(red(c)*1.35,green(c)*1.3,blue(c)*1.2);g.strokeWeight(.6);g.noFill();
+    g.arc(-1,-1,wide?24:19,wide?18:15,PI+.25,TWO_PI-.3,OPEN);g.noStroke();return;
+  }
+  if(kind==='WORK_WRAP') {
+    figureCelArc(g,-1,0,15,14,id.kerchiefCol||[130,53,42],HALF_PI-.25,PI+HALF_PI+.25,.7);
+    g.fill(86,38,31);g.triangle(-6,4,-12,7,-7,9);g.ellipse(-7,4,4,4);return;
+  }
   if(kind==='FRONTIER_STETSON') {
     // A lifted crown, turned brim and crown crease retain the soft comic
     // material contours while separating the hat from the face underneath.
@@ -12210,6 +12526,7 @@ function figureIdentity(c) {
            hairCol:c.hairCol,hairStyle:c.hairStyle,skinCol:c.skinCol||(c.eType==='SNAIL_HYBRID'?color(20,100,20):undefined),hatCol:c.hatCol,kerchiefCol:c.kerchiefCol,
            bonnetCol:c.bonnetCol,shirtCol:c.shirtCol,pantsCol:c.pantsCol,vestCol:c.vestCol,
            isCityCivilian:!!c.isCityCivilian,clothingStyle:c.clothingStyle,maneCol:c.maneCol,isCharred:!!c.isCharred,
+           frontierOccupation:c.frontierOccupation,frontierFemale:!!c.frontierFemale,
            ninjaSuit:!!(c.isPlayer&&ninjaSuitUnlocked),chemistSuit:!!(c.isPlayer&&chemistSuitUnlocked),
            cowboySuit:!!(c.isPlayer&&cowboySuitEquipped),
            explosiveArmor:!!((c.isPlayer||c.isMilitary)&&explosiveArmorUnlocked),
@@ -12358,6 +12675,7 @@ function drawFallenAttire(g,id,TL,TW,back,progress=1,half=0) {
     if(nmo)drawNmoInsignia(g);
     if(id.jetpack&&!id.isCharred)drawFallenJetpack(g);
   }
+  if(frontierCivilianType(t)&&!id.isCharred){if(dc)dc.globalAlpha=alpha;drawFrontierCivilianAttire(g,id,30,20,back&&p>.5);}
   if(dc){dc.globalAlpha=alpha;if(half)dc.restore();}g.pop();
 }
 
@@ -13414,7 +13732,112 @@ function updateLightnings() {
 // of Character.show(), which was rebuilding the array once per character per
 // frame.
 const TOWNSFOLK = ["FARMER_MALE", "FARMER_FEMALE", "COWBOY", "COWGIRL",
-                   "LOCAL_COP", "VILLAGER_MALE", "VILLAGER_FEMALE"];
+                   "LOCAL_COP", "VILLAGER_MALE", "VILLAGER_FEMALE",
+                   "FRONTIER_PROSPECTOR", "FRONTIER_RANCHHAND", "FRONTIER_TRADER",
+                   "FRONTIER_SMITH", "FRONTIER_TRAVELER", "FRONTIER_TOWNSWOMAN"];
+const FRONTIER_CIVILIAN_TYPES = Object.freeze([
+  'FRONTIER_PROSPECTOR','FRONTIER_RANCHHAND','FRONTIER_TRADER',
+  'FRONTIER_SMITH','FRONTIER_TRAVELER','FRONTIER_TOWNSWOMAN']);
+function frontierCivilianType(type) {return FRONTIER_CIVILIAN_TYPES.indexOf(type)!==-1;}
+function spawnFrontierTownWorkers() {
+  if(currentLevel!==3||!authoredCore)return;
+  // Public Main Street remains populated in arcade, first story arrival and
+  // liberated return visits; these workers are independent of campaign ledgers.
+  const workY=[-2920,-2720,-2100,-850,-3420,-3720];
+  FRONTIER_CIVILIAN_TYPES.forEach((type,i)=>{
+    for(let side=0;side<2;side++){
+      const key='DRY_GULCH:'+i+':'+side;
+      if(enemiesList.some(e=>e.frontierResidentKey===key))continue;
+      const c=new Character(1300+(side?62:-62),workY[i]+side*55,false,type);
+      if(restoreFrontierPerson(c,key,chunkHash(3,i,side,8301))&&!c.checkCol(c.x,c.y))enemiesList.push(c);
+    }
+  });
+}
+function frontierCivilianAppearance(e,seed) {
+  const rng=makeRng(seed>>>0),pick=a=>a[Math.floor(rng()*a.length)];
+  e.frontierOccupation=e.eType.slice(9);e.frontierSeed=seed>>>0;
+  e.frontierFemale=e.eType==='FRONTIER_TOWNSWOMAN'||rng()<.38;
+  e.isFriendly=true;e.isNeutral=true;e.isUnarmed=true;e.isArmed=false;e.isCoward=true;
+  e.currentWeapon=WEAPONS.PISTOL;e.hp=e.maxHp=90;
+  e.bodyW=e.frontierFemale?18:21;e.bodyH=e.frontierFemale?25:27;
+  e.skinCol=color(...pick([[110,72,49],[164,109,73],[209,159,115],[237,193,154]]));
+  e.hairCol=color(...pick([[45,32,25],[98,57,32],[165,108,56],[186,180,158]]));
+  e.hairStyle=e.frontierFemale?pick([3,4,5]):pick([0,1,2,6]);
+  const kit={
+    FRONTIER_PROSPECTOR:[[166,143,99],[83,76,60],[119,101,62]],
+    FRONTIER_RANCHHAND:[[161,99,69],[59,83,105],[178,149,86]],
+    FRONTIER_TRADER:[[208,186,139],[88,69,61],[128,82,48]],
+    FRONTIER_SMITH:[[99,115,119],[55,54,53],[103,60,43]],
+    FRONTIER_TRAVELER:[[137,151,124],[79,83,70],[136,117,81]],
+    FRONTIER_TOWNSWOMAN:[[146,112,138],[119,88,119],[232,216,185]]}[e.eType];
+  e.shirtCol=color(...kit[0]);e.pantsCol=color(...kit[1]);e.hatCol=color(...kit[2]);
+  e.vestCol=color(106,69,43);e.bonnetCol=color(232,216,185);e.kerchiefCol=color(...pick([[155,62,45],[54,88,106],[186,138,58]]));
+  e.frontierHomeX=e.x;e.frontierHomeY=e.y;e.cityDistance=seed%3664;e.cityPause=0;e.panicTimer=0;
+}
+// Forward is +X on both the standing rig and the flattened corpse. Each trade
+// keeps a physical silhouette: apron, rope, satchel, blanket or work harness.
+function drawFrontierCivilianAttire(g,id,TL,TW,back=false) {
+  const t=id.eType;if(!frontierCivilianType(t))return;
+  g.push();g.scale(TL/30,TW/20);g.noStroke();
+  const leather=[105,67,41],steel=[125,134,137];
+  if(t==='FRONTIER_PROSPECTOR') {
+    g.stroke(76,58,37);g.strokeWeight(2.4);g.line(-10,-6,10,5);g.line(-10,6,10,-5);g.noStroke();
+    figureCelOval(g,-5,8,9,7,leather,.7);g.fill(67,57,40);g.rect(-9,-8,14,2.2,1);
+    g.fill(164,145,100);g.rect(-7,-9,2,3,.5);g.rect(1,-9,2,3,.5);
+  } else if(t==='FRONTIER_RANCHHAND') {
+    g.fill(id.kerchiefCol||[155,62,45]);g.triangle(11,-5,11,5,3,0);
+    g.stroke(151,116,63);g.strokeWeight(1.3);g.noFill();
+    for(let i=0;i<3;i++)g.ellipse(-3,8,11-i*2,8-i*1.2);
+    g.line(-8,7,-10,12);g.noStroke();g.fill(66,49,33);g.rect(-10,-7,3,14,1);
+  } else if(t==='FRONTIER_TRADER') {
+    g.stroke(76,48,30);g.strokeWeight(2.5);g.line(9,-7,-7,8);g.noStroke();
+    figureCelOval(g,-6,9,13,9,leather,.75);g.fill(143,96,57);g.rect(-11,5,10,3,1);
+    g.fill(208,178,105);g.rect(-6.7,7,2,3,.5);
+    if(!back){g.fill(73,52,39);g.rect(6,-6,3,5,1);g.fill(214,197,146);g.rect(6.5,-5,2,2,.4);}
+  } else if(t==='FRONTIER_SMITH') {
+    // Thick leather catches broad planes; its split skirt extends past denim.
+    figureCelOval(g,-1,0,24,17,leather,.76);g.fill(78,48,30);g.rect(-12,-7,12,14,2);
+    g.stroke(163,112,69);g.strokeWeight(.7);g.line(-10,0,3,0);g.line(7,-6,7,6);g.noStroke();
+    g.fill(58,43,31);g.rect(-6,-9,3,18,1);g.fill(151,114,66);g.rect(-5,-3,2,6,.5);
+    g.fill(93,65,40);g.rect(-8,8,11,2,1);g.fill(steel);g.rect(-1,6,5,5,1);
+  } else if(t==='FRONTIER_TRAVELER') {
+    // Rolled canvas rests on the back; twin straps explain the attachment.
+    figureCelOval(g,-10,0,10,24,[126,139,105],.72);
+    g.stroke(62,73,55);g.strokeWeight(1.5);g.line(-13,-6,-7,-6);g.line(-13,6,-7,6);g.noStroke();
+    g.fill(id.kerchiefCol||[54,88,106]);g.triangle(11,-6,11,6,2,0);g.rect(3,-7,8,2,1);
+    g.stroke(100,75,45);g.strokeWeight(1.8);g.line(-8,-7,8,7);g.noStroke();
+  } else {
+    g.fill(220,204,178);g.triangle(10,-8,-10,-6,1,0);g.triangle(10,8,-10,6,1,0);
+    if(!back){g.fill(236,222,197);g.rect(-9,-5,12,10,2);g.fill(173,148,118);g.rect(-7,-3,5,6,1);}
+    g.stroke(187,163,126);g.strokeWeight(.7);g.line(-7,-6,8,0);g.line(-7,6,8,0);g.noStroke();
+    g.fill(104,79,67);for(const x of [3,6,9])g.ellipse(x,0,1.2,1.2);
+  }
+  g.pop();
+}
+function frontierResidentTable() {
+  const b=getBiomeState(3);return b.frontierResidents||(b.frontierResidents={});
+}
+function bankFrontierPerson(e) {
+  if(!e||!e.frontierResidentKey)return;
+  const table=frontierResidentTable();
+  table[e.frontierResidentKey]={x:e.x,y:e.y,hp:e.hp,dead:!!e.dead||e.hp<=0,seed:e.frontierSeed,
+    stun:e.stunTimer||0,stunAge:e.stunPose?e.stunPose.age:0,stunA:e.stunPose&&e.stunPose.a,
+    facing:e.aimAngle,panic:e.panicTimer||0,px:e.panicX,py:e.panicY,d:e.cityDistance||0};
+  const keys=Object.keys(table);if(keys.length>4800)delete table[keys[0]];
+}
+function restoreFrontierPerson(e,key,seed) {
+  const old=frontierResidentTable()[key];if(old&&old.dead)return false;
+  frontierCivilianAppearance(e,old&&Number.isFinite(old.seed)?old.seed:seed);
+  e.frontierResidentKey=key;
+  if(old){
+    if(Number.isFinite(old.x)&&Number.isFinite(old.y)&&!e.checkCol(old.x,old.y)&&frontierCanyonSpawnSafe(old.x,old.y)) {e.x=old.x;e.y=old.y;}
+    e.hp=Math.max(1,Math.min(e.maxHp,Number(old.hp)||e.maxHp));e.aimAngle=Number(old.facing)||0;e.cityDistance=old.d||0;
+    if(old.stun>0){startPunchStun(e,Number(old.stunA)||0);e.stunTimer=Math.min(1500,old.stun);
+      if(e.stunPose){e.stunPose.age=old.stunAge||0;if(e.stunPose.age>=e.stunPose.duration+16){e.stunPose.done=true;e.stunPose.impulse=0;while(!e.stunPose.rag.done)ragStep(e.stunPose.rag);}}}
+    e.panicTimer=old.panic||0;e.panicX=old.px;e.panicY=old.py;
+  }
+  return true;
+}
 
 // --- OBSTACLE STEERING -----------------------------------------------------
 // Everything that walks and is not the player goes through this.
@@ -13642,6 +14065,12 @@ function updateCityCivilian(e) {
     const a=Math.atan2(e.y-e.panicY,e.x-e.panicX);cityMove(e,e.x+Math.cos(a)*120,e.y+Math.sin(a)*120,4.5);return;
   }
   e.state="WANDER";e.isArmed=false;
+  if(frontierCivilianType(e.eType)){
+    e.cityDistance=(e.cityDistance||0)+.012;
+    const phase=e.cityDistance,homeX=e.frontierHomeX===undefined?e.x:e.frontierHomeX,homeY=e.frontierHomeY===undefined?e.y:e.frontierHomeY;
+    const tx=homeX+Math.sin(phase)*72,ty=homeY+Math.sin(phase*.63)*36;
+    cityMove(e,tx,ty,.72);return;
+  }
   if(e.cityPause>0){e.cityPause--;e.isMoving=false;e.gait=lerp(e.gait,0,.16);return;}
   const cx=e.cityCx===undefined?Math.floor(e.x/CHUNK_W):e.cityCx,cy=e.cityCy===undefined?Math.floor(e.y/CHUNK_W):e.cityCy;
   e.cityDistance=(e.cityDistance===undefined?((e.x-cx*CHUNK_W-142+3664)%3664):e.cityDistance)+1.15;
@@ -13655,6 +14084,7 @@ function updateCityPatrol(e) {
   const p=cityRoute(e.cityCx,e.cityCy,f.distance-(e.citySlot||0)*38);cityMove(e,p.x,p.y,1.15);
 }
 function bankCityPerson(e) {
+  bankFrontierPerson(e);
   if(!e.cityPersonKey)return;
   const b=getBiomeState(1);const table=b.cityPeople||(b.cityPeople={});
   table[e.cityPersonKey]={x:e.x,y:e.y,hp:e.hp,dead:e.dead||e.hp<=0,stun:e.stunTimer,
@@ -15352,6 +15782,7 @@ this.skeletonTimer = 0;
     if(CITY_CIVILIANS.indexOf(eT)!==-1)cityAppearance(this,Math.floor(x*31+y*17)>>>0);
     if(eT==="NM0_CITY_GUARD") {this.isCityPatrol=true;this.hp=this.maxHp=280;this.bodyW=24;this.bodyH=29;
       this.shirtCol=color(102,119,116);this.pantsCol=color(52,64,65);this.currentWeapon=WEAPONS.ASSAULT_RIFLE;}
+    if(frontierCivilianType(eT))frontierCivilianAppearance(this,Math.floor(x*31+y*17)>>>0);
     if(unarmedCivilian(this))this.isUnarmed=true;
   }
   get ammo() { return this.weaponAmmo[this.currentWeapon.name]; }
@@ -18398,6 +18829,8 @@ if (this.isPlayer) {
         arc(this.bodyW / 2 - 6, 0, 8, 12, HALF_PI, PI + HALF_PI, CHORD);
     }
 
+    if(frontierCivilianType(this.eType))drawFrontierCivilianAttire(paint?paint.api:window,this,this.bodyW,this.bodyH);
+
     // Female Farmer Cutout
     if (this.eType === "FARMER_FEMALE") {
         fill(235, 180, 140);
@@ -18733,6 +19166,7 @@ function updateAndDrawFloatingScores() {
 
 function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = false, victim = null) {
     if(CITY_CIVILIANS.indexOf(eType)!==-1)return;
+    if(frontierCivilianType(eType)){bankFrontierPerson(victim);return;}
     
     // Use the actual victim: several falling bodies can share the same spot.
     let deadGuy = victim || enemiesList.find(e => e.x === x && e.y === y && e.dead);
@@ -23498,7 +23932,7 @@ function loadGame() {
         // whoever is actually standing here, and if the sector has nobody left
         // to say the lines, close the scene rather than crash in it.
         if (inTownCutscene || inPostAmbushCutscene) {
-            const cast = enemiesList.filter(e => e && e.isFriendly && e.hp > 0 && !e.dead && !e.isMilitary);
+            const cast = enemiesList.filter(e => e && e.isFriendly && e.hp > 0 && !e.dead && !e.isMilitary && !frontierCivilianType(e.eType));
             cast.sort((a, b) => {
                 const ia = insideSector(a.x, a.y, 200) ? 0 : 1;
                 const ib = insideSector(b.x, b.y, 200) ? 0 : 1;
@@ -23681,6 +24115,7 @@ function loadGame() {
         // in the yard, and close the scene if the fort has nobody left to say
         // the lines -- a restored cutscene with a null speaker reads .x off it
         // on the very next frame.
+        spawnFrontierTownWorkers();
         if (inFortCutscene) {
             const _cast = enemiesList.filter(e => e && !e.dead && e.hp > 0 &&
                                              e.isFriendly && e.isOutpostGarrison);
@@ -23765,7 +24200,7 @@ function restoreFortMuster() {
     
 
 function issueSquadCommand(cmd, dir = "NORTH") {
-    let allies = enemiesList.filter(e => e.isFriendly && !e.dead);
+    let allies = enemiesList.filter(e => e.isFriendly && !e.dead && !frontierCivilianType(e.eType));
     
     for (let i = 0; i < allies.length; i++) {
         let ally = allies[i];
@@ -25198,7 +25633,13 @@ function frontierTrailFade(biome, cx, wy) {
   return Math.min(f, 1 - t * t * (3 - 2 * t));
 }
 function frontierTrailX(biome, cx, wy) {
-  const raw = trailCentreX(biome, cx, wy, 0, 600, 300);
+  let raw = trailCentreX(biome, cx, wy, 0, 600, 300);
+  if(biome===3)for(const site of frontierSettlementSites()) {
+    const x=cx*CHUNK_W+CHUNK_W/2;
+    if(Math.abs(x-site.x)>=site.w/2)continue;
+    const weight=1-smooth01((Math.abs(wy-site.y)-site.h/2)/500);
+    raw+=(x-raw)*weight;
+  }
   const plan = authoredRoadPlan();
   if (!plan) return raw;
   const s = plan.spine;
@@ -26208,6 +26649,30 @@ function drawCivicTerrace(b) {
 // same contour owns their rock faces, walkable floor, ramps, bridge decks and
 // ground-height field. Chunk boundaries never select a new bend or elevation.
 const FRONTIER_CANYON_STEP = 48;
+// Finite side gulches fill gaps between the long desert ribbons. Their index
+// and world-space plan are shared by the bake, height field and native movement.
+// Fractional indexes cannot replace any integer row in the endless ribbon grid.
+const FRONTIER_CANYON_LANDMARKS = Object.freeze([
+  {id:'SPLIT_TOOTH',name:'Split Tooth Wash',axis:'X',index:100.125,u0:-7600,u1:-1800,
+    center:1750,width:184,depth:104,bend:54,bridgeUs:[-6000,-2800],rampUs:[-6900,-4900,-2200],kind:'FORK'},
+  {id:'REDROCK_BASIN',name:'Redrock Basin',axis:'X',index:101.125,u0:-1000,u1:4600,
+    center:-6500,width:300,depth:164,bend:96,bridgeUs:[600,3000],rampUs:[-400,1800,4000],kind:'BASIN'},
+  {id:'NEEDLE_GORGE',name:'Needle Gorge',axis:'Y',index:102.125,u0:-4500,u1:1600,
+    center:8500,width:210,depth:144,bend:66,bridgeUs:[-3000,-600],rampUs:[-2700,-1800,700],kind:'NEEDLES'}
+]);
+function frontierCanyonLandmarks(){return FRONTIER_CANYON_LANDMARKS;}
+function frontierCanyonLandmark(axis,index){
+  const site=FRONTIER_CANYON_LANDMARKS[index-100.125];
+  return site&&site.axis===axis?site:null;
+}
+function frontierCanyonLandmarkNear(site,x,y,pad=0){
+  const u=site.axis==='Y'?y:x,v=site.axis==='Y'?x:y;
+  return u>=site.u0-pad&&u<=site.u1+pad&&Math.abs(v-site.center)<site.width+site.bend+550+pad;
+}
+function frontierCanyonNearest(values,u){
+  let best=values[0];for(let i=1;i<values.length;i++)if(Math.abs(values[i]-u)<Math.abs(best-u))best=values[i];
+  return best;
+}
 function frontierCanyonFracture(axis, u, index, salt) {
   const knot = 156, cell = Math.floor(u / knot), t = (u - cell * knot) / knot;
   const row = index + (axis === 'Y' ? 900 : 0);
@@ -26216,6 +26681,9 @@ function frontierCanyonFracture(axis, u, index, salt) {
   return a + (b - a) * t;
 }
 function frontierCanyonCenter(axis, u, index) {
+  const site=frontierCanyonLandmark(axis,index);
+  if(site)return site.center+Math.sin((u-site.u0)*.00105)*site.bend+
+    frontierCanyonFracture(axis,u,index,216)*14;
   index = index || 0;
   return (axis === 'Y' ? 5200 + index * 9200 : 3550 + index * 7200) +
     Math.sin(u * (axis === 'Y' ? .0007 : .0006) + index * 1.87) * 220 +
@@ -26231,6 +26699,13 @@ function frontierCanyonProtectedFade(x, y) {
     const dy = Math.max(y0 - y, 0, y - y1);
     f = smooth01(Math.hypot(dx, dy) / 540);
   }
+  // Settlements own a flat foundation and an eased apron, including their
+  // approach streets. A canyon may overlook a town without cutting its stores.
+  if(typeof frontierSettlementSites==='function')for(const site of frontierSettlementSites()){
+    const dx=Math.max(Math.abs(x-site.x)-site.w*.5-110,0),
+      dy=Math.max(Math.abs(y-site.y)-site.h*.5-110,0);
+    f=Math.min(f,smooth01(Math.hypot(dx,dy)/420));
+  }
   const fort = outpostFortDef(3);
   if (fort) {
     const dx = Math.max(Math.abs(x - fort.x) - FORT_HALF_W - 520, 0);
@@ -26240,9 +26715,14 @@ function frontierCanyonProtectedFade(x, y) {
   return f;
 }
 function frontierCanyonProfile(axis, u, index) {
+  const site=frontierCanyonLandmark(axis,index);
   const center = frontierCanyonCenter(axis, u, index);
-  let floorHalf = 286 + Math.sin(u * .00043 + index * 1.6) * 34 +
-    frontierCanyonFracture(axis, u, index, 217) * 22;
+  let floorHalf = site ? site.width+Math.sin(u*.0011+index)*24 :
+    286 + Math.sin(u * .00043 + index * 1.6) * 34 + frontierCanyonFracture(axis, u, index, 217) * 22;
+  // Redrock opens into an amphitheatre, Split Tooth pinches into alternating
+  // red banks, and Needle Gorge keeps a tight winding floor between spires.
+  if(site&&site.kind==='BASIN')floorHalf+=150*Math.pow(Math.sin(Math.PI*Math.max(0,Math.min(1,(u-site.u0)/(site.u1-site.u0)))),2);
+  if(site&&site.kind==='FORK')floorHalf+=46*(.5+.5*Math.sin(u*.0023));
   // The canyon camp is a broad natural amphitheatre. Widening the floor,
   // rather than flattening a rectangle on the rim, leaves every camp gate at
   // the canyon's actual level and keeps its approach free of a hidden cliff.
@@ -26259,9 +26739,10 @@ function frontierCanyonProfile(axis, u, index) {
     }
   }
   const x = axis === 'Y' ? center : u, y = axis === 'Y' ? u : center;
-  const depth = (132 + Math.sin(u * .00028 + index) * 14) * frontierCanyonProtectedFade(x, y);
-  let rampU = 1800 + Math.round((u - 1800) / 2400) * 2400;
-  const bridgeU = 600 + Math.round((u - 600) / 2400) * 2400;
+  const endFade=site?smooth01(Math.max(0,Math.min(1,Math.min(u-site.u0,site.u1-u)/560))):1;
+  const depth = (site?site.depth+Math.sin(u*.0008)*8:132 + Math.sin(u * .00028 + index) * 14) * endFade * frontierCanyonProtectedFade(x, y);
+  let rampU = site?frontierCanyonNearest(site.rampUs,u):1800 + Math.round((u - 1800) / 2400) * 2400;
+  const bridgeU = site?frontierCanyonNearest(site.bridgeUs,u):600 + Math.round((u - 600) / 2400) * 2400;
   let bridgeClear = true;
   if (typeof frontierBountySites === 'function') {
     for (const site of frontierBountySites()) {
@@ -26278,7 +26759,7 @@ function frontierCanyonProfile(axis, u, index) {
   const ramp = smooth01(Math.max(0, Math.min(1, (250 - Math.abs(u - rampU)) / 150)));
   const bridge = bridgeClear ? smooth01(Math.max(0, Math.min(1, (100 - Math.abs(u - bridgeU)) / 24))) : 0;
   return { axis, index, u, center, floorHalf, outerHalf: floorHalf + 222,
-    depth, ramp, rampU, bridge, bridgeU };
+    depth, ramp, rampU, bridge, bridgeU, landmark:site&&site.id };
 }
 function frontierCanyonSample(axis, x, y, index) {
   const u = axis === 'Y' ? y : x, v = axis === 'Y' ? x : y;
@@ -26294,23 +26775,27 @@ function frontierCanyonSample(axis, x, y, index) {
   return p;
 }
 function frontierCanyonAt(x, y) {
-  const row = Math.round((y - 3550) / 7200);
-  const col = Math.round((x - 5200) / 9200);
-  const a = frontierCanyonSample('X', x, y, row);
-  const b = frontierCanyonSample('Y', x, y, col);
-  if (a.depth < 1 || a.distance >= a.outerHalf) {
-    return b.depth >= 1 && b.distance < b.outerHalf ? b : null;
-  }
-  if (b.depth < 1 || b.distance >= b.outerHalf) return a;
-  return a.height < b.height ? a : b;
+  const row = Math.round((y - 3550) / 7200),col = Math.round((x - 5200) / 9200);
+  let best=null;
+  const take=p=>{if(p.depth>=1&&p.distance<p.outerHalf&&(!best||p.height<best.height))best=p;};
+  take(frontierCanyonSample('X',x,y,row));take(frontierCanyonSample('Y',x,y,col));
+  for(const site of FRONTIER_CANYON_LANDMARKS)if(frontierCanyonLandmarkNear(site,x,y))
+    take(frontierCanyonSample(site.axis,x,y,site.index));
+  return best;
 }
 function frontierCanyonHeight(x, y) {
   const a = frontierCanyonSample('X', x, y, Math.round((y - 3550) / 7200));
   const b = frontierCanyonSample('Y', x, y, Math.round((x - 5200) / 9200));
+  const onBridge=p=>p.depth>1&&p.distance<p.outerHalf&&p.bridge>.999;
   // A bridge is at rim height even where two gulches meet underneath it.
-  if ((a.depth > 1 && a.distance < a.outerHalf && a.bridge > .999) ||
-      (b.depth > 1 && b.distance < b.outerHalf && b.bridge > .999)) return 0;
-  return Math.min(a.height, b.height);
+  if(onBridge(a)||onBridge(b))return 0;
+  let height=Math.min(a.height,b.height);
+  for(const site of FRONTIER_CANYON_LANDMARKS)if(frontierCanyonLandmarkNear(site,x,y)){
+    const p=frontierCanyonSample(site.axis,x,y,site.index);
+    if(onBridge(p))return 0;
+    height=Math.min(height,p.height);
+  }
+  return height;
 }
 function frontierCanyonBlocksMove(x, y, nx, ny, radius) {
   const dx = nx - x, dy = ny - y, step = Math.hypot(dx, dy);
@@ -26641,8 +27126,9 @@ function bakeFrontierCanyonStrip(g, axis, index, ox, oy) {
   // both rims. Their plank/rail geometry is baked; no static draw calls accrue
   // as the world grows and no invisible collision box is placed on the deck.
   const first = Math.floor((lo - 600) / 2400), last = Math.ceil((hi - 600) / 2400);
-  for (let n = first; n <= last; n++) {
-    const u = 600 + n * 2400, p = frontierCanyonProfile(axis, u, index);
+  const site=frontierCanyonLandmark(axis,index),crossings=site?site.bridgeUs:Array.from({length:last-first+1},(_,i)=>600+(first+i)*2400);
+  for (const u of crossings) {
+    const n=site?site.bridgeUs.indexOf(u)+index*17:Math.round((u-600)/2400),p = frontierCanyonProfile(axis, u, index);
     if (p.depth < 1 || p.bridge < .999 || u < lo - 160 || u > hi + 160) continue;
     const center = frontierCanyonPoint(axis, u, p.center);
     if (center[0] < ox - p.outerHalf - 200 || center[0] > ox + CHUNK_W + p.outerHalf + 200 ||
@@ -26681,6 +27167,52 @@ function bakeFrontierCanyons(g, biome, ox, oy) {
   const col0 = Math.floor((ox - 5200 - 1800) / 9200), col1 = Math.ceil((ox + CHUNK_W - 5200 + 1800) / 9200);
   for (let n = row0; n <= row1; n++) bakeFrontierCanyonStrip(g, 'X', n, ox, oy);
   for (let n = col0; n <= col1; n++) bakeFrontierCanyonStrip(g, 'Y', n, ox, oy);
+  for(const site of FRONTIER_CANYON_LANDMARKS){
+    const cx=ox+CHUNK_W*.5,cy=oy+CHUNK_W*.5;
+    if(!frontierCanyonLandmarkNear(site,cx,cy,CHUNK_W*.5+100))continue;
+    bakeFrontierCanyonStrip(g,site.axis,site.index,ox,oy);
+    bakeFrontierCanyonLandmarkDetail(g,site,ox,oy);
+  }
+}
+function bakeFrontierCanyonLandmarkDetail(g,site,ox,oy){
+  // A few large, world-aligned geological motifs make each journey legible;
+  // these sit on the sampled floor and never add invisible collision boxes.
+  const u=site.kind==='BASIN'?1800:site.kind==='FORK'?-5600:-2300,
+    p=frontierCanyonProfile(site.axis,u,site.index),c=frontierCanyonPoint(site.axis,u,p.center);
+  if(c[0]<ox-480||c[0]>ox+CHUNK_W+480||c[1]<oy-480||c[1]>oy+CHUNK_W+480||p.depth<2)return;
+  g.push();g.translate(c[0],c[1]);if(site.axis==='Y')g.rotate(Math.PI/2);g.noStroke();
+  if(site.kind==='BASIN'){
+    // An ancient oxbow left a pale salt pan, crust rings and a central silt bar.
+    g.fill(137,107,80,110);g.ellipse(0,0,710,286);
+    g.fill(205,180,128);g.ellipse(-8,-5,650,248);
+    g.fill(229,210,161);g.ellipse(-28,-12,590,211);
+    g.fill(188,151,103);g.ellipse(-43,-7,468,144);
+    g.fill(207,177,123);g.ellipse(-43,-12,454,130);
+    g.stroke(127,103,74,100);g.strokeWeight(4);
+    for(let k=0;k<7;k++){const x=-210+k*67;g.line(x,-43+(k%3)*9,x+16,-13);g.line(x+16,-13,x+7,18);}
+    g.noStroke();
+  }else if(site.kind==='FORK'){
+    // A split red sandstone tooth and paired talus fans announce the wash.
+    for(const side of [-1,1]){
+      const y=side*(p.floorHalf-44);
+      g.fill(86,57,40,95);g.ellipse(13,y+8,178,72);
+      g.fill(148,85,52);g.quad(-82,y+6,-55,y-23,57,y-14,91,y+14);
+      g.fill(213,147,88);g.quad(-82,y+6,-55,y-23,-4,y-22,-13,y+7);
+      g.fill(198,123,71);g.quad(2,y+8,10,y-24,57,y-14,91,y+14);
+      g.stroke(83,49,35,185);g.strokeWeight(5);g.line(-5,y-23,-12,y+11);g.noStroke();
+    }
+  }else{
+    // The narrow gorge's pale stacked spires have sunlit caps and dark bases.
+    for(let i=0;i<6;i++){
+      const x=(i-2.5)*110,y=(i%2?1:-1)*(p.floorHalf-50),r=19+(i%3)*6;
+      g.fill(61,44,36,90);g.ellipse(x+14,y+13,r*3.4,r*1.8);
+      g.fill(128,78,49);g.quad(x-r,y+10,x-r*.7,y-r*.8,x+r*.6,y-r*.8,x+r,y+10);
+      g.fill(228,173,108);g.quad(x-r*.7,y-r*.8,x-r*.3,y-r*1.2,x+r*.5,y-r*.95,x+r*.6,y-r*.8);
+      g.fill(181,119,68);g.quad(x-r*.7,y-r*.8,x+r*.6,y-r*.8,x+r*.5,y-r*.2,x-r*.8,y-r*.2);
+      g.fill(239,195,128);g.ellipse(x-r*.1,y-r*.9,r*1.8,r*.55);
+    }
+  }
+  g.pop();
 }
 function paintFrontierCanyonHeightfield(g) {
   paintFrontierCanyonHeight(g, viewLeft, viewTop,
@@ -27877,7 +28409,8 @@ function groundReserved(biome, cx, cy, x, y, w, h, pad) {
              crossesEW((sx) => cityCanalY(biome, cy, sx),
                        (sx) => cityCanalHalf(biome, cy, sx) * 1.15, x, y, hw, hh);
     case "FRONTIER":
-      return frontierCanyonReserved(x, y, w, h, p) ||
+      return frontierSettlementRoadReserved(x, y, w, h, p) ||
+        frontierCanyonReserved(x, y, w, h, p) ||
         crossesNS((sy) => frontierTrailX(biome, cx, sy), x, y, hw, hh, ROAD_HALF.FRONTIER);
     case "JUNGLE":
       return crossesNS((sy) => jungleTrailX(biome, cx, sy), x, y, hw, hh, ROAD_HALF.JUNGLE);
@@ -29880,6 +30413,7 @@ function generateChunkContent(biome, cx, cy) {
   }
   filterFrontierCanyonContent(biome, content);
   filterFrontierBountyContent(biome, content);
+  filterFrontierSettlementContent(biome,cx,cy,content);
   return content;
 }
 
@@ -31592,7 +32126,8 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
       // the buildings sit on a kerb rather than beside an imaginary one.
       // Skipped over authored ground: the procedural street knows nothing about
       // the hand-placed town and would lay a second one across it.
-      if (frontierIsTown(biome, ox, oy) && !chunkInAuthoredCore(cx, cy)) {
+      if (frontierIsTown(biome, ox, oy) && !chunkInAuthoredCore(cx, cy) &&
+          !frontierSettlementAt(ox+CHUNK_W/2,oy+CHUNK_W/2)) {
         const my = frontierMainStreetY(biome, cy);
         // Painted exactly edge to edge, and into a neighbouring town chunk so a
         // row of them reads as one street. Any overlap here would be
@@ -31612,11 +32147,14 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
         g.noStroke();
       }
 
+      bakeFrontierSettlementArea(g,biome,ox,oy);
+
       // Off-road texture only. Undisturbed ground detail painted over the
       // carriageway is what made the trail read as a stain rather than a road.
       // The authored streets count as road too, and the trail's keep-clear
       // tracks its width so the high street stays swept.
       const offRoad = (x, y) => {
+        if(frontierSettlementAt(x,y)||frontierSettlementRoadReserved(x,y))return false;
         if (Math.abs(x - trackAt(y)) < 96 * Math.max(0.35, widthAt(y))) return false;
         if (plan) {
           for (const c of plan.cross) {
@@ -32450,8 +32988,9 @@ function resetPopulation() {
 function popRelease(k, list) {
   let alive = 0;
   for (const e of list) {
+    bankFrontierPerson(e);
     const idx = enemiesList.indexOf(e);
-    if (e.hp > 0 && !e.dead) alive++;
+    if (e.hp > 0 && !e.dead || e.frontierResidentKey) alive++;
     if (idx > -1) enemiesList.splice(idx, 1);
   }
   const lost = list.length - alive;
@@ -32506,12 +33045,20 @@ function settlementRoster(biome, cx, cy, solids) {
 
   switch (layoutFor(biome, cx, cy)) {
     case "FRONTIER": {
-      if (frontierIsTown(biome, ox, oy)) {
+      const site=typeof frontierSettlementAt==='function'?frontierSettlementAt(ox+CHUNK_W/2,oy+CHUNK_W/2):null;
+      if(site){
+        const mixes={MINING:['FRONTIER_PROSPECTOR','FRONTIER_PROSPECTOR','FRONTIER_SMITH','FRONTIER_TRADER','FRONTIER_TRAVELER','FRONTIER_TOWNSWOMAN'],
+          ORCHARD:['FRONTIER_RANCHHAND','FRONTIER_RANCHHAND','FRONTIER_TRADER','FRONTIER_TOWNSWOMAN','FRONTIER_TRAVELER','FRONTIER_SMITH'],
+          COACH:['FRONTIER_TRAVELER','FRONTIER_TRAVELER','FRONTIER_TRADER','FRONTIER_TOWNSWOMAN','FRONTIER_RANCHHAND','FRONTIER_PROSPECTOR']};
+        const mix=mixes[site.kind]||FRONTIER_CIVILIAN_TYPES;
+        for(let i=0;i<7;i++)add([mix[i%mix.length]],1,ox+100,ox+CHUNK_W-100,site.y-82,site.y+82);
+        add(['COWBOY','COWGIRL'],2,ox+160,ox+CHUNK_W-160,site.y-90,site.y+90);
+      }else if (frontierIsTown(biome, ox, oy)) {
         // A high street works the way Dry Gulch does: townsfolk on the street
         // where the shops are, drovers at the ends near the stock, the law on
         // its own beat.
         const my = frontierMainStreetY(biome, cy);
-        add(["VILLAGER_MALE", "VILLAGER_FEMALE"], rngInt(rng, 4, 8),
+        add(FRONTIER_CIVILIAN_TYPES, rngInt(rng, 4, 8),
             ox + 120, ox + CHUNK_W - 120, my - 96, my + 96);
         add(["COWBOY", "COWGIRL"], rngInt(rng, 2, 5),
             ox + 120, ox + CHUNK_W / 2, my - 300, my + 300);
@@ -32541,6 +33088,10 @@ function settlementRoster(biome, cx, cy, solids) {
               field.x - field.w / 2, field.x + field.w / 2,
               field.y - 360, field.y + 360);
         }
+      }
+      if(!out.length&&rng()<.22){
+        const ty=oy+CHUNK_W/2,tx=frontierTrailX(biome,cx,ty);
+        add(['FRONTIER_TRAVELER','FRONTIER_PROSPECTOR'],rngInt(rng,1,2),tx-65,tx+65,ty-85,ty+85);
       }
       break;
     }
@@ -32616,6 +33167,8 @@ function settlementRoster(biome, cx, cy, solids) {
       break;
     }
   }
+  if(biome===3)out.forEach((r,i)=>{if(frontierCivilianType(r.type)){
+    r.residentKey=cx+','+cy+':'+i;r.seed=chunkHash(3,cx,cy,8301+i*113);}});
   return out.length ? out : null;
 }
 
@@ -32682,6 +33235,7 @@ function refreshPopulation(mgr, pcx, pcy) {
           if (live + list.length >= POP_BUDGET) break;
           const r = roster[n];
           const c = new Character(r.x, r.y, false, r.type);
+          if(r.residentKey&&!restoreFrontierPerson(c,r.residentKey,r.seed))continue;
           if (!c.isFriendly && insideOwnedFortress(mgr.biome, c.x, c.y, 60)) continue;
           if (c.eType !== "COW" && c.eType !== "HORSE") c.state = "PATROL";
           if (r.route) { c.routeA = r.home; c.routeB = r.route; c.routeLeg = 0; }
@@ -40773,6 +41327,8 @@ function glRigPaintHeight() {
   for (const e of enemiesList) one(e);
   if (typeof allies !== 'undefined' && allies) for (const a of allies) one(a);
 
+  glRigFrontierRaisedHeight(g, wet);
+
   // Forest foliage paints above ground actors in both the art and the height
   // field. A person underneath cannot punch a low-height hole in a canopy.
   for (let i = 0; i < _glForestCanopies.length; i++) {
@@ -44746,6 +45302,7 @@ function getSafeSpawn(away) {
 
 // -- Level entry ------------------------------------------------------------
 function startAtLevel(lvl, isLoading = false) {
+  if(!isLoading&&lvl!==currentLevel)for(const e of enemiesList)bankFrontierPerson(e);
   exitFrontierSaloon();
   releaseFrontierBountyActors();
   const frontierTravelEquipment = !isLoading && player && revolverUnlocked ? serializeFrontierEquipment() : null;
@@ -44771,6 +45328,7 @@ function startAtLevel(lvl, isLoading = false) {
   }
 
   legacyStartAtLevel(lvl, isLoading);
+  spawnFrontierTownWorkers();
   applyForestHuntingBow();
   if (frontierTravelEquipment) restoreFrontierEquipment(frontierTravelEquipment);
   applyFrontierEquipment(player);
