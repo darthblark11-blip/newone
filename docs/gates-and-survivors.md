@@ -12,6 +12,21 @@ underground escape beneath either intact Great Gate. It unlocks overworld
 travel without damaging the gate, clearing an ambush, liberating the city or
 awarding surviving allies.
 
+Stick City starts with exactly 80 original pistol defenders (`NORMAL`); the
+Undercity starts with 80 original female pistol defenders (`FEMALE_PISTOL`).
+These finite rosters never refill. Four blue rookie patrols already stand
+outside each city on first arrival, and procedural checkpoints use the same
+male/female rookie types before and after tower collapse. Open-road rookies
+and robots have their own population limit; city defenders and checkpoint
+residents do not consume it. Rookie kills still earn score and advance kill
+animation sequences, but do not drain the city population bar, recruit new
+citizens, or hold the city's liberation fight open. A fort can explicitly
+conscript nearby rookies into its own muster.
+
+City-sector outpost forts also use blue rookies for their separate finite
+50-person garrisons. Their own masts, casualties and capture rewards remain
+independent of the city's towers and original 80 defenders.
+
 Tower collapse changes the surviving sector roster to friendly recruits.
 Those recruits join the army only when the NM-0 liberation ambush clears:
 
@@ -40,6 +55,9 @@ cutscenes, death and after the fight ends.
 Run from the repository root:
 
 ```sh
+node tools/check-overworld-rookie-spawning.js
+node tools/check-checkpoint-rookies.js
+node tools/check-rookie-campaign-isolation.js
 node tools/check-gate-survivors.js
 node tools/check-ambush-cleanup-arrow.js
 node tools/check-population.js

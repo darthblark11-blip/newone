@@ -1644,7 +1644,8 @@ if (isStoryMode) {
             // middle of one, so all eighty calls came back empty.
             seedPopLevel = lvl;
         } else {
-            for (let i = 0; i < TARGET_ENEMY_COUNT; i++) spawnSingleEnemy();
+            const initialCount = isStoryMode && lvl===3 ? FRONTIER_AMBIENT.seed : TARGET_ENEMY_COUNT;
+            for (let i = 0; i < initialCount; i++) spawnSingleEnemy(isStoryMode && lvl===3);
         }
 
         spawnPendingMilitary();
@@ -7508,7 +7509,7 @@ viewBottom = camY + height / zoom + shakePad;
           streakMsgTimer = 120;
           
           for (let e of enemiesList) { 
-              if (!e.isFriendly) { e.state = "CHASE"; e.loseSightTimer = 999; } 
+              if (!e.isFriendly && !independentCityRookie(e)) { e.state = "CHASE"; e.loseSightTimer = 999; }
           }
       }
 
@@ -9205,6 +9206,32 @@ function sectorTowersAreDown(level) {
 // Armour does not defect. ARMORED and ARMORED_STANDARD are hardware; the pistol
 // regulars and the incendiary crews are conscripts.
 const RECRUITABLE = ["NORMAL", "FEMALE_PISTOL", "MOLOTOV"];
+// Fresh NM-0 intake belongs to the country outside the city, independently of
+// the finite conscript roster and its gate/tower fights. A fort can explicitly
+// conscript a rookie into its own muster by setting isAmbush.
+function independentCityRookie(e) {
+  return !!(isStoryMode && (currentLevel === 1 || currentLevel === 2) && e &&
+    !e.isAmbush && !e.isPopulation &&
+    (e.eType === "NM0_ROOKIE" || e.eType === "NM0_ROOKIE_F"));
+}
+
+// The population bar describes the original eighty, rather than every kill on
+// the open road. Read the saved roster whenever available; older unseeded
+// records can still display the living tagged population without inventing it.
+function citySectorPopulationRatio(level = currentLevel) {
+  if (!isStoryMode || (level !== 1 && level !== 2)) return null;
+  const t = townsData && townsData[level];
+  const seeded = t && Number(t.popSeeded);
+  if (seeded > 0) {
+    const lost = Math.max(0, Number(t.popKilled) || 0);
+    return Math.max(0, Math.min(1, (seeded - lost) / seeded));
+  }
+  let living = 0;
+  for (const e of enemiesList)
+    if (e && e.isPopulation && e.hp > 0 && !e.dead) living++;
+  return Math.min(1, living / SECTOR_POP_SEED);
+}
+
 function recruitSectorSurvivors() {
   let n = 0, f = 0;
   for (const e of enemiesList) {
@@ -10099,7 +10126,7 @@ function triggerGateAmbush(fortressY, isNorthGate = false) {
     for(let i=0; i<2; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-100, 100), spawnY + random(-50, 50), "ARMORED"));
     for(let i=0; i<2; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-300, 300), gateAerY, "AERIAL"));
     
-    for(let e of enemiesList) { if(!e.isFriendly && e.hp > 0 && !e.dead) { e.state = "CHASE"; e.loseSightTimer = 999; } }
+    for(let e of enemiesList) { if(!e.isFriendly && !independentCityRookie(e) && e.hp > 0 && !e.dead) { e.state = "CHASE"; e.loseSightTimer = 999; } }
 
     // Tag the 50 enemies we just spawned!
     for(let i = enemiesList.length - 50; i < enemiesList.length; i++) {
@@ -10132,7 +10159,7 @@ function triggerGateAmbush(fortressY, isNorthGate = false) {
 //  sectors and from scripted fights: it is what is out there when the player is
 //  simply crossing country between one settlement and the next.
 //
-//    1, 2  Stick City / the Undercity -- NM-0 regulars, ground only. No aerial
+//    1, 2  Stick City / the Undercity -- blue NM-0 rookies and machines. No aerial
 //          units in the overworld: air support belongs to scripted set pieces,
 //          and a gunship drifting over an empty street is neither a patrol nor
 //          a landmark. They garrison checkpoints and walk the arterials between
@@ -10147,25 +10174,85 @@ function triggerGateAmbush(fortressY, isNorthGate = false) {
 //  5 to 8 keep their existing tables until they are worked on.
 // ###########################################################################
 const OVERWORLD = {
-  // NM-0 holds the open road in both city sectors with machines, not people.
-  // The pistol regulars are the sector's POPULATION -- they garrison it, and on
-  // the savior route they become the citizens you inherit -- so having them
-  // respawn forever on the overworld was working against the thing the sector
-  // is for. Robots do not defect and nobody mourns them.
-  1: [["ROBOT", 100]],
-  2: [["ROBOT", 100]],
+  // The city's finite pistol roster can become recruits. Open-road robots and
+  // blue rookies are a separate population from the outset, before either tower.
+  1: [["ROBOT", 2], ["NM0_ROOKIE", 1]],
+  2: [["ROBOT", 2], ["NM0_ROOKIE_F", 1]],
   3: [["BANDIT", 100]],
   4: [["NM0_GREY_FATIGUE", 68], ["ARMORED_STANDARD", 22], ["ARMORED", 10]]
 };
-// What a city sector spawns once its transmission grid is down and its people
-// have changed sides. Machines mostly -- they do not defect and nobody mourns
-// them -- with NM-0's own intake filling the posts back up. Deliberately holds
-// no recruitable type: after the towers, every human in the sector wearing that
-// uniform is one the player spared, and spawning more of them takes that back.
-const LIBERATED_SPAWN = {
-  1: ["ROBOT", "ROBOT", "NM0_ROOKIE"],
-  2: ["ROBOT", "ROBOT", "NM0_ROOKIE_F"]
-};
+// Blue intake belongs to the open world from the first arrival. The original
+// pistol defenders belong only to the sector's finite, recruitable city roster.
+const CITY_ROOKIE_PATROL_COUNT = 4;
+
+// Sample exterior streets directly: getSafeSpawn() is deliberately confined to
+// sealedSector while its gates are shut, so it cannot place an outside patrol.
+// Validate unstreamed chunks without changing the camera's chunk residency.
+function cityOverworldSpawnPoint(station = null) {
+  if (!player || (currentLevel !== 1 && currentLevel !== 2)) return null;
+  const cache = new Map();
+  const clear = (x,y) => {
+    if (inAuthoredSector(x,y,500) || insideOwnedFortress(currentLevel,x,y,60) || nearSettlement(x,y)) return false;
+    if (enemiesList.some(e => e && !e.dead && e.hp>0 && (e.x-x)**2+(e.y-y)**2<70*70)) return false;
+    const blocked = b => b && !b.noClip && !b.isPalm && !b.isAlienPlant && !b.isEnergyPole &&
+      !(b.isGrassLot && !b.isPond) && Math.abs(x-b.x)<(b.w||0)/2+38 && Math.abs(y-b.y)<(b.h||0)/2+38;
+    if (buildings.some(blocked) || authoredSolids.some(blocked)) return false;
+    const carBlocked = c => Math.abs(x-c.x)<(c.w||45)/2+38 && Math.abs(y-c.y)<(c.h||85)/2+38;
+    if (parkingCars.some(carBlocked)) return false;
+    for(let cy=Math.floor((y-38)/CHUNK_W);cy<=Math.floor((y+38)/CHUNK_W);cy++) {
+      for(let cx=Math.floor((x-38)/CHUNK_W);cx<=Math.floor((x+38)/CHUNK_W);cx++) {
+        const key=cx+','+cy;
+        if(!cache.has(key))cache.set(key,generateChunkContent(currentLevel,cx,cy));
+        const content=cache.get(key);
+        if(content.solid.some(blocked) || content.cars.some(carBlocked))return false;
+      }
+    }
+    return true;
+  };
+  for(let i=0;i<32;i++) {
+    let x,y;
+    if(station !== null && authoredCore) {
+      const c=authoredCore, side=station%4;
+      const x0=c.rx0===undefined?c.x0:c.rx0, x1=c.rx1===undefined?c.x1:c.rx1;
+      const y0=c.ry0===undefined?c.y0:c.ry0, y1=c.ry1===undefined?c.y1:c.ry1;
+      const along=(i%2 ? 1 : -1)*Math.ceil(i/2)*160;
+      x=Math.round((x0+x1)/2/CHUNK_W)*CHUNK_W;
+      y=Math.round((y0+y1)/2/CHUNK_W)*CHUNK_W;
+      if(side===0 || side===2) {
+        y=side===0?Math.floor((y0-1050)/CHUNK_W)*CHUNK_W:Math.ceil((y1+1050)/CHUNK_W)*CHUNK_W;
+        x+=along;
+      } else {
+        x=side===1?Math.ceil((x1+1050)/CHUNK_W)*CHUNK_W:Math.floor((x0-1050)/CHUNK_W)*CHUNK_W;
+        y+=along;
+      }
+    } else {
+      const angle=station === null?random(TWO_PI):(station*HALF_PI+i*0.39);
+      const radius=station === null?random(850,1600):1050+(i%4)*140;
+      x=player.x+cos(angle)*radius;y=player.y+sin(angle)*radius;
+    }
+    if(clear(x,y))return {x,y};
+  }
+  return null;
+}
+
+function cityOverworldRoamer(e) {
+  return e && !e.dead && e.hp>0 && !e.isFriendly && !e.isPopulation && !e.isAmbush &&
+    !e.isOutpostGarrison && !e.cityPersonKey && e.postX===undefined && !e.routeA && !e.routeB &&
+    (e.eType==='ROBOT' || e.eType==='NM0_ROOKIE' || e.eType==='NM0_ROOKIE_F');
+}
+
+function ensureCityRookiePatrols() {
+  if(!isStoryMode || !player || (currentLevel!==1 && currentLevel!==2))return;
+  const type=currentLevel===1?'NM0_ROOKIE':'NM0_ROOKIE_F';
+  for(let station=0;station<CITY_ROOKIE_PATROL_COUNT;station++) {
+    if(enemiesList.some(e => cityOverworldRoamer(e) && e.isExteriorPatrol && e.exteriorStation===station))continue;
+    const point=cityOverworldSpawnPoint(station);
+    if(!point)continue;
+    const e=new Character(point.x,point.y,false,type);
+    e.isOverworldRookie=true;e.isExteriorPatrol=true;e.exteriorStation=station;
+    enemiesList.push(e);
+  }
+}
 
 // What each sector's own army is, as distinct from what its open road spawns.
 // A garrison unit is left alone by the whitelist sweep wherever it is standing;
@@ -10310,47 +10397,40 @@ function getOuterSpawn(tries) {
   return null;
 }
 
-function spawnSingleEnemy() {
+function spawnSingleEnemy(seed = false) {
   // Do not spawn random hostiles if the town is liberated, ambush is active, or in specific story scenes!
  
   if (currentLevel === 0 || nm0AmbushActive) return;
-  // With the grid down the sector's own people are yours and NM-0 never sends
-  // more of them -- but it does keep sending machines down the road, and the
-  // posts fill back up with intake. Both of those come from elsewhere: the
-  // overworld table and the settlement roster. This function only ever spawns
-  // wanderers, and after the towers there are no HUMAN wanderers left to send.
+  // City intake is independent of the finite eighty defenders and of tower
+  // conversion. Never fall through to the old NORMAL/FEMALE_PISTOL ladder.
+  if(currentLevel===1 || currentLevel===2) {
+    if(!player || !inOuterRegion(player.x,player.y))return;
+    if(enemiesList.filter(cityOverworldRoamer).length>=TARGET_ENEMY_COUNT)return;
+    const point=cityOverworldSpawnPoint();
+    if(!point)return;
+    const type=overworldPick(currentLevel,random());
+    const e=new Character(point.x,point.y,false,type);
+    if(type==='NM0_ROOKIE' || type==='NM0_ROOKIE_F')e.isOverworldRookie=true;
+    enemiesList.push(e);
+    return;
+  }
+
+  // Story frontier travel has a small neutral roster, a quiet period between
+  // arrivals, and a finite visit budget shared with passing posses. Death
+  // callbacks pass through this guard too, so fights never call in replacements.
+  if(frontierAmbientStory()) {
+    if(!frontierAmbientMaySpawn(seed))return;
+    const point=getOuterSpawn();
+    if(!point)return;
+    const b=frontierAmbientCreated(newHostileCharacter(point.x,point.y,'BANDIT'),seed);
+    if(random()>0.35)b.mountUp();
+    enemiesList.push(b);
+    return;
+  }
+
   if (window.towersDefeated && !OVERWORLD_SET[currentLevel]) return;
   if (isStoryMode && sectorTowersAreDown(currentLevel) && !OVERWORLD_SET[currentLevel]) return;
-
-  // Random wanderers belong in the outer region and nowhere else. A town is held
-  // by its residents, an outpost by its garrison, an NM-0 facility by the story;
-  // none of them want a stranger materialising in the middle of them. This used
-  // to be a level-3 story special case, which left every other sector spawning
-  // hostiles inside its own settlements.
-  if (player && OVERWORLD[currentLevel] && !nm0AmbushActive && !inOuterRegion(player.x, player.y)) return;
-
-  // A liberated city sector never spawns another local.
-  //
-  // The two towers-down guards further up only bail for a sector with no
-  // overworld table at all; 1 and 2 have one, so they fell through on the
-  // assumption that inBiomeOverworld() would route them to the machine table.
-  // Anywhere that is not true -- the moment before BIOME_ACTIVE comes up, an
-  // ambush window -- the per-level ladder further down runs instead, and for
-  // Stick City that ladder hands out NORMAL. Yellow regulars kept walking into
-  // a sector whose yellow regulars the player had just freed, wearing the same
-  // shirt as the citizens standing next to them and shooting at them.
-  //
-  // What NM-0 actually has left to send is hardware and fresh intake, so that
-  // is what this sends: mostly machines, some rookies. Both are in
-  // SECTOR_GARRISON, so sweepForeignHostiles() leaves them where they land.
-  if ((currentLevel === 1 || currentLevel === 2) &&
-      (window.towersDefeated || sectorTowersAreDown(currentLevel))) {
-      const eS = getOuterSpawn();
-      if (!eS) return;
-      const t = LIBERATED_SPAWN[currentLevel][floor(random(LIBERATED_SPAWN[currentLevel].length))];
-      enemiesList.push(newHostileCharacter(eS.x, eS.y, t));
-      return;
-  }
+  if (player && OVERWORLD[currentLevel] && !inOuterRegion(player.x, player.y)) return;
 
   let baseEnemyCount = 0;
   let armoredCount = 0, bugCount = 0, molotovCount = 0, saucerCount = 0;
@@ -10421,16 +10501,7 @@ if (bugCount < 10) {
       }
   }
   
-  if (currentLevel === 1) {
-      if (r > 0.85) type = "ARMORED";
-      else type = "NORMAL";
-  }
-  else if (currentLevel === 2) {
-      if (r > 0.85) type = "ARMORED";
-      else if (r > 0.5) type = "AERIAL";
-      else type = isStoryMode ? "FEMALE_PISTOL" : "NORMAL";
-  }
-  else if (currentLevel === 3) {
+  if (currentLevel === 3) {
       if (r > 0.9) type = "ARMORED";
       else if (r > 0.7) type = "AERIAL";
       else if (r > 0.3) {
@@ -16201,11 +16272,9 @@ this.punchHitCount = 0;
     if (eT === "SAUCER" || eT === "SAUCER_RED") { this.hp = 750; this.bodyW = 80; this.bodyH = 80; if (eT === "SAUCER_RED") { this.burstsFired = 0; this.burstCooldown = 0; this.strafeDir = random() > 0.5 ? 1 : -1; } }
     if (eT === "SNAIL_HYBRID") { this.hp = 500; this.bodyW = 63; this.bodyH = 81; this.shirtCol = color(173, 216, 230); this.pantsCol = color(100, 150, 200); this.hybridHeadHP = 100; this.leftEye = 1; this.rightEye = 1; this.enraged = false; this.eyeBleedL = 0; this.eyeBleedR = 0; this.burstsFired = 0; this.burstCooldown = 0; this.strafeDir = random() > 0.5 ? 1 : -1; }
     // --- NM-0 ROOKIES ---------------------------------------------------
-    // Who NM-0 has left to man a checkpoint once a sector's own regulars have
-    // gone over. Fresh intake: blue fatigues, a pistol, and neither a helmet
-    // nor a plate carrier, which is the whole read -- a bare head on a body
-    // that has not earned armour yet. Stick City's are men, the Undercity's are
-    // women in a lighter blue.
+    // NM-0's independent overworld intake, present before the city's towers
+    // fall: blue fatigues, a pistol, and neither a helmet nor a plate carrier.
+    // Stick City's are men, the Undercity's women in a lighter blue.
     if (eT === "NM0_ROOKIE") {
         this.hp = 90;
         this.shirtCol = color(46, 84, 176);
@@ -16450,6 +16519,7 @@ this.skeletonTimer = 0;
        (!source || !shovelSameLayer(this,source)))return {blocked:true,broken:false};
     if(unarmedCivilian(this))scareCivilian(this,source?source.x:player?player.x:this.x,source?source.y:player?player.y:this.y);
     if(this.isCityPatrol&&this.hp>80)amount*=.55;
+    if(amount>0)frontierAmbientMarkCombat();
     let res = { blocked: false, broken: false };
     if (this.isPlayer && (killcamMode || isWin || inFarmPostCutscene || inFarmCutscene || inTownCutscene || inPostAmbushCutscene || inFortCutscene || inDarchonCall)) return res; 
 
@@ -16474,6 +16544,9 @@ this.skeletonTimer = 0;
             if (e.eType === "HORSE") { e.spook(140); continue; }
             if (unarmedCivilian(e)) {scareCivilian(e,this.x,this.y);continue;}
             if (e.bandGroup) continue;
+            // Separate frontier towns do not hear a victim on the far side of
+            // the map. Local witnesses can still answer a nearby shooting.
+            if(frontierAmbientStory() && (e.x-this.x)**2+(e.y-this.y)**2>1100*1100)continue;
             if (e.isNeutral && e.eType !== "COW") {
                 e.isNeutral = false;
                 e.isFriendly = false; // They are now hostile to the player
@@ -18112,6 +18185,7 @@ if (this.eType === "COW") {
     if(unarmedCivilian(this))return;
     if (this.currentWeapon === WEAPONS.BOW && this.ammo <= 0) return;
     if (this.isPlayer) this.isArmed = true;
+    frontierAmbientMarkCombat();
     const huntShotId = ++_huntShotSequence;
     let aH = ((this.isPlayer || this.isFriendly) && headAimToggle) ? "HEAD" : "BODY", cd = (this.isPlayer || this.isFriendly) ? this.currentWeapon.fireCooldown : (this.currentWeapon.enemyCooldown || 48), bob = this.isMoving ? abs(sin(this.walkCycle)) * 2 : 0;
     // The off hand cannot fire an SMG while it is throwing or using the cannon.
@@ -19804,6 +19878,7 @@ function updateAndDrawFloatingScores() {
 
 
 function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = false, victim = null) {
+    frontierAmbientMarkCombat();
     if(CITY_CIVILIANS.indexOf(eType)!==-1)return;
     if(frontierCivilianType(eType)){bankFrontierPerson(victim);return;}
     
@@ -19933,7 +20008,7 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
     }
     
     // --- STANDARD ARCADE / STORY KILL COUNTER ---
-    totalKills++; // This now properly drains the Stick City bar!
+    totalKills++; // Score and kill-animation progression include open-road encounters.
 
     
     if (x !== undefined && y !== undefined) {
@@ -20366,10 +20441,12 @@ function maintainHostiles() {
   if (!doTick || isDead || isWin || killcamMode || isPaused) return;
   if (frameCount % 45 !== 0) return;
   if (typeof TARGET_ENEMY_COUNT === 'undefined') return;
+  frontierAmbientTick();
+  if(currentLevel===1 || currentLevel===2) { spawnSingleEnemy(); return; }
   let hostiles = 0;
   for (let i = 0; i < enemiesList.length; i++) if (!enemiesList[i].isFriendly) hostiles++;
   if (currentLevel === 3) maintainBanditPosse(hostiles);
-  if (hostiles >= TARGET_ENEMY_COUNT) return;
+  if (!frontierAmbientStory() && hostiles >= TARGET_ENEMY_COUNT) return;
   spawnSingleEnemy();
 }
 
@@ -20389,6 +20466,73 @@ function maintainHostiles() {
 // with no interest in you unless you give them one. Shooting into a passing band
 // turns THAT band and nobody else -- they have no stake in a town's quarrel three
 // thousand units away, and the town has none in theirs.
+// Story travel has a small, independent ambient roster. Campaign waves,
+// sheriff gangs and town residents never consume this allowance. A finite
+// visit budget and an active-play quiet period stop death callbacks from
+// replacing each casualty while a gunfight is still happening.
+const FRONTIER_AMBIENT = Object.freeze({cap:10,seed:4,budget:16,quietFrames:1080,groupMax:3});
+let _frontierAmbient = {quiet:FRONTIER_AMBIENT.quietFrames,spawned:0,seeded:0};
+function frontierAmbientStory() { return isStoryMode && currentLevel === 3; }
+function resetFrontierAmbient() {
+  _frontierAmbient = {quiet:FRONTIER_AMBIENT.quietFrames,spawned:0,seeded:0};
+  banditRollTimer = 0;
+}
+function frontierAmbientActor(e) {
+  // BANDIT is also the old-save signature: those bodies predate the explicit
+  // ambient flag but must still count toward the small frontier population.
+  return !!e && e.eType === 'BANDIT' && !e.isPlayer && !e.isAmbush && !e.routeA &&
+    !e.isMilitary && !e.isPopulation && !e.isOutpostGarrison && !e.frontierBountyId;
+}
+function frontierAmbientCount() {
+  let n=0;
+  for(const e of enemiesList) if(frontierAmbientActor(e) && !e.dead && e.hp>0)n++;
+  return n;
+}
+function frontierAmbientMarkCombat() {
+  if(frontierAmbientStory())_frontierAmbient.quiet=FRONTIER_AMBIENT.quietFrames;
+}
+function frontierAmbientCombatActive() {
+  if(!player)return false;
+  if(player.muzzleFlash>0 || player.fireTimer>0 || player.meleeTimer>0)return true;
+  const near=(e,r)=>e && (e.x-player.x)**2+(e.y-player.y)**2<r*r;
+  for(const b of bullets)if(near(b,1800))return true;
+  for(const g of grenades)if(near(g,1800))return true;
+  for(const e of enemiesList)if(e && !e.dead && e.hp>0 && !e.isFriendly && !e.isNeutral && near(e,1800) &&
+      (e.muzzleFlash>0 || e.fireTimer>0 || e.loseSightTimer>0 || e.state==='CHASE' || e.state==='ATTACK'))return true;
+  return false;
+}
+function frontierAmbientTick() {
+  if(!frontierAmbientStory() || !doTick || isPaused || isDead || isWin || killcamMode ||
+      frontierSaloonIsInside())return;
+  _frontierAmbient.quiet=Math.max(0,_frontierAmbient.quiet-45);
+  if(frontierAmbientCombatActive())frontierAmbientMarkCombat();
+}
+function frontierAmbientMaySpawn(seed=false) {
+  if(!frontierAmbientStory())return true;
+  if(!player || !doTick || isPaused || isDead || isWin || killcamMode || nm0AmbushActive || farmAmbushActive ||
+      inStoryIntro || inStoryRoom || inTownCutscene || inFortCutscene || inFarmCutscene || inFarmPostCutscene ||
+      inPostAmbushCutscene || inDarchonCall || inWorldBuildingMenu || inOverworldView || inTravelMenu ||
+      inUpgradeMenu || frontierSaloonIsInside() || !inBiomeOverworld() ||
+      !inOuterRegion(player.x,player.y) || nearSettlement(player.x,player.y))return false;
+  if(frontierAmbientCombatActive()){frontierAmbientMarkCombat();return false;}
+  if(frontierAmbientCount()>=FRONTIER_AMBIENT.cap || _frontierAmbient.spawned>=FRONTIER_AMBIENT.budget)return false;
+  if(seed)return _frontierAmbient.seeded<FRONTIER_AMBIENT.seed;
+  return _frontierAmbient.quiet<=0;
+}
+function frontierAmbientCreated(e,seed=false) {
+  if(!frontierAmbientStory() || !e)return e;
+  e.isFrontierAmbient=true;
+  // Give even a lone traveller his own band. Hitting him provokes his group,
+  // rather than enlisting every neutral cowboy in the sector.
+  if(!e.bandGroup)e.bandGroup=++banditGroupSeq;
+  e.isNeutral=true;e.isFriendly=true;e.state='RIDE_BY';
+  if(!Number.isFinite(e.rideAngle))e.rideAngle=random(TWO_PI);
+  _frontierAmbient.spawned++;
+  if(seed)_frontierAmbient.seeded++;
+  _frontierAmbient.quiet=FRONTIER_AMBIENT.quietFrames;
+  return e;
+}
+
 const BANDIT_ROLL_FRAMES    = 480;   // one roll every eight seconds
 const BANDIT_ROLL_CHANCE    = 0.15;  // chance a roll produces a band
 const BANDIT_HOSTILE_CHANCE = 0.50;  // chance that band is coming for you
@@ -20421,15 +20565,18 @@ function nearSettlement(x, y, r) {
 
 function maintainBanditPosse(hostiles) {
   if (currentLevel !== 3 || !inBiomeOverworld()) { banditRollTimer = 0; return; }
+  const story=frontierAmbientStory();
   banditRollTimer += 45;                       // this runs on the 45-frame tick
   if (banditRollTimer < BANDIT_ROLL_FRAMES) return;
+  if(story && !frontierAmbientMaySpawn())return;
   banditRollTimer = 0;
   if (nearSettlement(player.x, player.y)) return;
-  if (hostiles > TARGET_ENEMY_COUNT * 0.6) return;
+  if (!story && hostiles > TARGET_ENEMY_COUNT * 0.6) return;
   if (random() > BANDIT_ROLL_CHANCE) return;
 
-  const hostile = random() < BANDIT_HOSTILE_CHANCE;
-  const n = floor(random(BANDIT_BAND_MIN, BANDIT_BAND_MAX + 1));
+  const hostile = !story && random() < BANDIT_HOSTILE_CHANCE;
+  const n = story ? Math.min(FRONTIER_AMBIENT.groupMax,FRONTIER_AMBIENT.cap-frontierAmbientCount(),
+    FRONTIER_AMBIENT.budget-_frontierAmbient.spawned) : floor(random(BANDIT_BAND_MIN, BANDIT_BAND_MAX + 1));
   const group = ++banditGroupSeq;
   const a = random(TWO_PI), r = 1500 + random(400);
   const ox = player.x + cos(a) * r, oy = player.y + sin(a) * r;
@@ -20439,7 +20586,9 @@ function maintainBanditPosse(hostiles) {
     const sx = ox + cos(a + HALF_PI) * (i - (n - 1) / 2) * 95;
     const sy = oy + sin(a + HALF_PI) * (i - (n - 1) / 2) * 95;
     if (inAuthoredSector(sx, sy, 500) || (hostile && insideOwnedFortress(currentLevel, sx, sy, 60))) continue;
+    if(story && (nearSettlement(sx,sy) || !frontierCanyonSpawnSafe(sx,sy)))continue;
     const b = new Character(sx, sy, false, "BANDIT");
+    if(story && b.checkCol(sx,sy))continue;
     b.mountUp();
     b.bandGroup = group;
     if (hostile) {
@@ -20455,6 +20604,7 @@ function maintainBanditPosse(hostiles) {
       b.rideAngle = heading + random(-0.08, 0.08);
       b.state = "RIDE_BY";
     }
+    if(story)frontierAmbientCreated(b);
     enemiesList.push(b);
   }
   // Anything with hooves in earshot leaves.
@@ -20528,6 +20678,9 @@ function checkAmbushCleared() {
     // of the mechanic and left the gate sealed for anyone who spared a soul.
     if(e.cityPersonKey)continue;
     if (e.isPopulation) continue;
+    // Exterior intake is not part of the city's fight. Explicit isAmbush
+    // membership still counts, including a rookie conscripted by a fort.
+    if (independentCityRookie(e)) continue;
     // Nor is the fort's own garrison. It is exactly the people the player is
     // being asked NOT to shoot -- dropping the masts is what turns them -- so
     // counting them here meant the muster could only be cleared by killing the
@@ -22083,7 +22236,9 @@ function drawUI() {
   if (currentLevel !== 8 && (!window.maxArmySize || liveArmyCount > window.maxArmySize)) {
       window.maxArmySize = Math.max(1, liveArmyCount);
   }
-  let popRatio = isArmyMode ? (max(0, liveArmyCount) / Math.max(1, window.maxArmySize)) : (max(0, MAX_KILLS - totalKills) / MAX_KILLS);
+  const cityPopulationRatio = isArmyMode ? null : citySectorPopulationRatio();
+  let popRatio = isArmyMode ? (max(0, liveArmyCount) / Math.max(1, window.maxArmySize)) :
+    cityPopulationRatio !== null ? cityPopulationRatio : (max(0, MAX_KILLS - totalKills) / MAX_KILLS);
 
   fill(50, 200); rect(20, 55, 200, 5, 2); 
   
@@ -24758,7 +24913,7 @@ function loadGame() {
                 }
                 
                 for (let e of enemiesList) { 
-                    if (!e.isFriendly) { e.state = "CHASE"; e.loseSightTimer = 3500; } 
+                    if (!e.isFriendly && !independentCityRookie(e)) { e.state = "CHASE"; e.loseSightTimer = 3500; }
                 }
             }
 
@@ -24819,6 +24974,9 @@ function loadGame() {
                 finishFortCapture();
             }
         }
+        // Re-form exterior rookie patrols after the towers-down load path has
+        // rebuilt the city roster and removed its old random combatants.
+        ensureCityRookiePatrols();
     }
 }
 
@@ -28121,8 +28279,8 @@ function buildAnchorStructures(biome) {
 //  The sequence is the sector's own, one scale down:
 //
 //    blow the gate FROM OUTSIDE -> the NM-0 muster comes out and the breach is
-//    written down -> beat the muster and the door is a road -> the yellow
-//    regulars are still in there -> drop the two towers inside and they change
+//    written down -> beat the muster and the door is a road -> the fort's
+//    garrison is still inside -> drop its two towers and the guards change
 //    sides, the same way the sector's own people do.
 //
 //  Three things make it work at all:
@@ -28170,7 +28328,7 @@ const FORT_TOWER_HP = 1600;
 // is being asked not to shoot, and dropping the two masts is what turns them.
 const FORT_MUSTER_TOTAL = 150;   // kills the bar asks for
 const FORT_MUSTER_SPAWN = 50;    // of them, standing in the yard when the door goes in
-const FORT_GARRISON     = 50;    // yellow regulars roaming the compound
+const FORT_GARRISON     = 50;    // finite local garrison roaming the compound
 const FORT_WAKE_R   = 2600;   // the garrison musters when the player gets this close
 
 function outpostFortDef(biome) {
@@ -28489,9 +28647,10 @@ function newHostileCharacter(x, y, type) {
 // ---------------------------------------------------------------------------
 // THE GARRISON
 //
-// Yellow regulars, standing in the yard. They are NOT the sector's roster --
-// isPopulation is Stick City's eighty and drives a different ledger -- so they
-// carry their own flag and their own conversion.
+// The fort's own finite garrison, standing in the yard. City-sector forts use
+// blue NM-0 rookies from the outset; other sectors retain their regulars. They
+// are NOT the sector's roster -- isPopulation is the city's eighty and drives
+// a different ledger -- so they carry their own flag and their own conversion.
 //
 // The count is a NUMBER on the fort, not a headcount of who happens to be
 // streamed in. Walking away lets cullDistantEnemies() recycle them, which is
@@ -28514,7 +28673,7 @@ function maintainOutpostGarrison() {
 
   // Placed on the fort's own stations rather than at random: the yard has a
   // command post and two masts in it, and a uniform draw put a third of them
-  // inside one or the other. Fifty regulars need the whole compound, so they
+  // inside one or the other. Fifty guards need the whole compound, so they
   // take the same grid the muster forms up on, walked from the far end -- the
   // muster owns the ground by the door.
   //
@@ -28522,11 +28681,12 @@ function maintainOutpostGarrison() {
   // pins them. They are not part of the muster (no isAmbush), they are exempt
   // from checkAmbushCleared(), and dropping the two masts is what turns them.
   const pts = fortMusterPoints(def, st.garrison);
+  const type = currentBiome === 1 ? "NM0_ROOKIE" : currentBiome === 2 ? "NM0_ROOKIE_F" : "NORMAL";
   let put = 0;
   for (let i = pts.length - 1; i >= 0 && live + put < st.garrison; i--) {
     const p = pts[i];
     if (!insideFortYard(currentBiome, p.x, p.y, -160)) continue;
-    const c = new Character(p.x, p.y, false, "NORMAL");
+    const c = new Character(p.x, p.y, false, type);
     if (c.checkCol(p.x, p.y)) continue;
     c.isOutpostGarrison = true;
     enemiesList.push(c);
@@ -28546,7 +28706,7 @@ function recruitOutpostGarrison() {
     e.hp         = 300;
     e.loseSightTimer = 0;
     n++;
-    if (String(e.eType).toUpperCase().indexOf("FEMALE") !== -1) f++;
+    if (e.eType === "NM0_ROOKIE_F" || String(e.eType).toUpperCase().indexOf("FEMALE") !== -1) f++;
   }
   return { total: n, female: f, male: n - f };
 }
@@ -28628,7 +28788,7 @@ function startFortCutscene(def) {
   if (nm0AmbushActive) { outpostFortState(currentBiome).cutscenePending = true; return false; }
   outpostFortState(currentBiome).cutscenePending = false;
 
-  // The speakers are the fort's OWN freed regulars, standing in its yard --
+  // The speakers are the fort's OWN freed garrison, standing in its yard --
   // not whoever happens to be nearest, which out here is as likely to be a
   // settlement resident or a checkpoint garrison a kilometre away.
   const cast = [];
@@ -33787,35 +33947,24 @@ function settlementRoster(biome, cx, cy, solids) {
     case "CITY":
     case "CITY_DENSE":
     case "WOODLAND": {
-      // A checkpoint is manned, and its garrison walks the arterial to the next
-      // one. Hostile, so they count against the wanderer budget the same way the
-      // loose patrols do -- clear a post and the sector gets quieter until you
-      // leave and come back.
+      // NM-0's blue intake mans overworld posts from the outset, independently
+      // of the finite pistol conscripts inside the gates. Capturing the city's
+      // towers never changes a checkpoint's faction or its resident roster.
       if (!cityIsCheckpoint(biome, cx, cy)) break;
-      const route = nextCheckpoint(biome, cx, cy);
       const n = rngInt(rng, 3, 7);
       for (let i = 0; i < n; i++) {
         const pt = popPlace(rng, solids, ox - 260, ox + 260, oy - 260, oy + 260, biome);
         if (!pt) continue;
-        // Who mans a post depends on whether the sector's grid is still up.
-        //
-        //   Towers standing -- the sector's own people. Stick City's men, the
-        //   Undercity's women. These are exactly the ones the towers set free,
-        //   which is why they garrison rather than roam.
-        //
-        //   Towers down -- they are yours now, so NM-0 has nobody left but the
-        //   intake: blue-fatigue rookies, no helmets, no plates. They hold the
-        //   post and nothing else; the road between posts is the machines'.
-        const down = sectorTowersAreDown(biome);
+        // Preserve the old male-post composition roll so existing checkpoint
+        // placement remains deterministic when regenerating saved chunks.
+        if (biome !== 2) rng();
         const rookie = biome === 2 ? "NM0_ROOKIE_F" : "NM0_ROOKIE";
-        const regular = biome === 2 ? "FEMALE_PISTOL" : (rng() > 0.78 ? "ARMORED_STANDARD" : "NORMAL");
-        out.push({ type: down ? rookie : regular,
+        out.push({ type: rookie,
                    x: pt.x, y: pt.y,
-                   // A rookie is leashed to the post he was given. He does not
-                   // walk the arterial -- that was the regulars' beat, and they
-                   // are not NM-0's any more.
-                   route: down ? null : route,
-                   post: down ? { x: ox, y: oy } : null,
+                   // The intake holds its own post; it never joins the finite
+                   // conscript ledger or the city's tower-liberation reward.
+                   route: null,
+                   post: { x: ox, y: oy },
                    home: { x: ox, y: oy } });
       }
       break;
@@ -46315,6 +46464,7 @@ function startAtLevel(lvl, isLoading = false) {
     window.__biomeAnchorPending = null;
   }
 
+  resetFrontierAmbient();
   legacyStartAtLevel(lvl, isLoading);
   ensureShovelPickup();
   spawnFrontierTownWorkers();
@@ -46409,6 +46559,7 @@ function startAtLevel(lvl, isLoading = false) {
     }
   }
 
+  ensureCityRookiePatrols();
   window.travelArrival = null;
   window.__biomeAnchorPending = null;
 }
@@ -46513,6 +46664,9 @@ function cullDistantEnemies() {
     // number left standing is exactly what the town-building system reads.
     if(e.cityPersonKey)continue;
     if (e.isPopulation) continue;
+    // Keep the four initial outside patrols alive while the player is still
+    // inside the large gated city. They are deliberately beyond the cull radius.
+    if(e.isExteriorPatrol && inAuthoredSector(player.x,player.y,900))continue;
     const dx = e.x - player.x, dy = e.y - player.y;
     if (dx * dx + dy * dy > limit * limit) enemiesList.splice(i, 1);
   }

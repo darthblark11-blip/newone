@@ -34,6 +34,25 @@ the mesa district and the railway avenue. The Copper Spur is a larger saloon
 with its own walkable interior, counter, patrons, tables, piano and gallery.
 Town doors, street signs and the sheriff's wanted board remain on return trips.
 
+## Story encounters
+
+Story-mode open country uses a separate ambient population of at most ten
+bandits, rather than keeping eighty attackers alive. Travellers and passing
+posses (up to three riders) begin neutral; provoking one group does not enlist
+another. Town retaliation is local to the shooting rather than spreading
+across the whole map.
+
+Ambient arrivals wait for eighteen seconds of quiet active play after combat
+and share a finite budget of sixteen travellers per visit. Arrival seeding is
+at most four and never occurs inside Dry Gulch or an occupied settlement.
+Gunfire, damage, active pursuers and deaths restart the quiet interval, so
+killing someone does not immediately summon a replacement. Campaign ambushes,
+sheriff bounties, saloon fights and their rewards keep their own rosters.
+Arcade population rules remain unchanged.
+
+Run `node tools/check-frontier-ambient-population.js` for the focused population
+and provocation checks.
+
 ## Frontier destinations
 
 Three satellite towns extend the desert beyond Dry Gulch. Each has twelve

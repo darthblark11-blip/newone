@@ -346,7 +346,7 @@ console.log('\n== the muster keeps being a fight ==');
      (P('nm0AmbushKills') - bar0) + ' on the bar, ' + (P('window.ambushKillsTotal') - tot0) + ' on the total');
 
   const waves0 = P('window.ambushSpawnsRemaining');
-  probe(`(() => { for (const e of enemiesList) if (e.eType === "NM0_ROOKIE" && !e.dead) {
+  probe(`(() => { for (const e of enemiesList) if (e.isAmbush && e.eType === "NM0_ROOKIE" && !e.dead) {
            e.hp = 0; e.dead = true; processKill(e.x, e.y, false, e.eType, false); return; } })()`);
   flushTimers();
   ok('so shooting one drains the bar AND calls the next wave in',
@@ -385,7 +385,7 @@ console.log('\n== the muster keeps being a fight ==');
            enemiesList.push(new Character(d.x, d.y + 900, false, "NM0_ROOKIE")); })()`);
   probe('frameCount = FORT_MUSTER_TICK * 4; maintainOutpostMuster();');
   const n0 = P('enemiesList.filter(e=>e.isAmbush && !e.dead).length');
-  probe(`(() => { for (const e of enemiesList) if (e.eType === "NM0_ROOKIE" && !e.dead) {
+  probe(`(() => { for (const e of enemiesList) if (e.isAmbush && e.eType === "NM0_ROOKIE" && !e.dead) {
            e.hp = 0; e.dead = true; processKill(e.x, e.y, false, e.eType, false); return; } })()`);
   flushTimers();
   const far2 = P(`(() => { const d = outpostFortDef(1); let m = 0;
@@ -412,10 +412,11 @@ console.log('\n== the muster keeps being a fight ==');
   // conscripts the body it is about to count, so the window closes.
   probe('for (const e of enemiesList) if (e.isAmbush) { e.dead=true; e.hp=0; } enemiesList = enemiesList.filter(e=>!e.dead);');
   probe(`(() => { const d = outpostFortDef(1);
-           enemiesList.push(new Character(d.x, d.y + FORT_HALF_H + 700, false, "NM0_ROOKIE")); })()`);
+           window.betweenTicksRookie = new Character(d.x, d.y + FORT_HALF_H + 700, false, "NM0_ROOKIE");
+           enemiesList.push(window.betweenTicksRookie); })()`);
   const tw = P('window.ambushSpawnsRemaining'), tt = P('window.ambushKillsTotal');
-  probe(`(() => { for (const e of enemiesList) if (e.eType === "NM0_ROOKIE" && !e.dead) {
-           e.hp = 0; e.dead = true; processKill(e.x, e.y, false, e.eType, false); return; } })()`);
+  probe(`(() => { const e=window.betweenTicksRookie;
+           e.hp=0; e.dead=true; processKill(e.x,e.y,false,e.eType,false,e); })()`);
   flushTimers();
   ok('a body that arrives and dies between two ticks still counts',
      P('window.ambushKillsTotal') === tt + 1 && P('window.ambushSpawnsRemaining') === tw - 1,
@@ -614,8 +615,10 @@ console.log('\n== the garrison ==');
 probe(`player.x = outpostFortDef(1).x; player.y = outpostFortDef(1).y + 300;
        frameCount = 30; doTick = true; maintainOutpostGarrison();`);
 const g0 = P('enemiesList.filter(e=>e.isOutpostGarrison).length');
-ok('fifty yellow regulars roam the compound', g0 === P('FORT_GARRISON') && g0 === 50,
+ok('fifty blue NM-0 rookies roam the compound', g0 === P('FORT_GARRISON') && g0 === 50,
    g0 + ' placed of ' + P('FORT_GARRISON'));
+ok('the overworld garrison cannot add more of the original gated pistol conscripts',
+   P('enemiesList.filter(e=>e.isOutpostGarrison).every(e=>e.eType==="NM0_ROOKIE")'));
 ok('all of them inside the walls',
    P('enemiesList.filter(e=>e.isOutpostGarrison && insideFortYard(1, e.x, e.y, 0)).length') === g0);
 ok('none of them standing in geometry',
