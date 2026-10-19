@@ -110,10 +110,12 @@ try {
  }
  probe(`rightStick.active=true;rightStick.dx=1;rightStick.dy=0;player.isArmed=true;player.meleeTimer=0;player.show();`);
  check(`!player.isArmed`, 'Aiming the dig direction keeps the shovel in hand instead of drawing a firearm');
- probe(`rightStick.active=false;player.meleeTimer=0;player.shovelDigTimer=180;player.shovelDigKind='DOWN';player.show();
-  var shovelDigPose=shovelCarryPose(player,gaitPose(.2),0),shovelRestPose=swordCarryPose(player,gaitPose(.2),0);`);
- check(`shovelDigPose.hx>shovelRestPose.hx+8&&shovelDigPose.elevation<-1.3`,
-  'Dig-down has its own visible reaching and downward-spade animation without a melee clock');
+ probe(`rightStick.active=false;player.meleeTimer=0;
+  player.shovelDigTimer=SHOVEL_DIG_ANIM.durationMs*(1-SHOVEL_DIG_ANIM.contact);player.shovelDigKind='DOWN';player.show();
+  var shovelDigContactPose=shovelDigPose(player,gaitPose(.2),0);`);
+ check(`shovelDigContactPose.blend===1&&shovelDigContactPose.elevation<-1.3&&
+  shovelDigContactPose.right.hx>shovelDigContactPose.left.hx+4`,
+  'Dig-down drives the blade into earth with both hands gripping the projected shaft');
 } finally {Object.assign(ctx,saved);}
 assert.ok(finite&&armFit&&paintCount>=poses,'All projected mesh points are finite and the shared arm rig stays fitted');checks+=5;
 console.log(`Shovel tool: ${checks} ownership, native impact, nonlethal, upgrade, structure and pose checks passed (${poses} live carry/swing poses).`);

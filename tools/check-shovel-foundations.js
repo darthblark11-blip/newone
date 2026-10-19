@@ -13,7 +13,7 @@ probe(`isStoryMode=false;resetStoryProgress();startAtLevel(1);started=true;doTic
   window.shovelOwned=true;setMeleeTool('SHOVEL');barrels=[];activeParkingCars=[];
   var foundationReset=(x=528,y=720,depth=0)=>{
     shovelExcavation={};player.x=x;player.y=y;player.shovelLevel=currentLevel;
-    player.shovelDepth=depth;player.shovelDepthTarget=depth;player.shovelCooldownMs=0;
+    player.shovelDepth=depth;player.shovelDepthTarget=depth;player.shovelCooldownMs=0;player.shovelDigTimer=0;player.meleeTimer=0;
     player._shovelCellKey=null;player.shovelClimbing=false;player.shovelGateCrossing=null;
     player.aimAngle=0;player.isDashing=false;player.dashTimer=0;player.ignoreBldgTimer=0;
     if(depth)shovelMakeCell(Math.floor(x/96),Math.floor(y/96),depth,true);

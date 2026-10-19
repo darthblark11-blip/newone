@@ -3701,7 +3701,7 @@ function actorDepth(c) { return c.y; }
 // Nonlethal bodies lie on the floor, like corpses. A parry is a standing
 // boxing stun and deliberately remains in the ordinary standing actor pass.
 function isGroundBodyActor(c) {
-  return !!c && (!!c.knockedOut || (c.stunTimer > 0 && !(c.skeletonTimer > 0)));
+  return !!c && (!!c.isCorpse || !!c.knockedOut || (c.stunTimer > 0 && !(c.skeletonTimer > 0)));
 }
 function drawGroundBodyActors(actors) {
   let standing = 0;
@@ -3804,7 +3804,7 @@ function isAirborneEnemy(e) {
 }
 
 function actorShow(c) {
-  if (shovelBelowGroundActor(c)) { _shovelBelowActor = c; return; }
+  if (shovelBelowGroundActor(c)) { if (!_shovelBelowActors.includes(c)) _shovelBelowActors.push(c); return; }
   if (isAirborneEnemy(c) && !isGroundBodyActor(c)) { _airborneActors.push(c); return; }
   if (_depthOn || _legacyActorsQueued) { _depthActors.push(c); return; }
   c.show();
@@ -3930,10 +3930,10 @@ function drawDepthSorted() {
 // Excavations use the terrain authority's grid. Paint only cells in the view,
 // never the saved world's entire tunnel network. Figures below the surface
 // have a separate cutaway pass, so an intact gate remains their ceiling.
-let _shovelBelowActor = null;
+const _shovelBelowActors = [];
 const _shovelVisibleCells = [];
 function shovelBelowGroundActor(c) {
-  return currentLevel >= 1 && currentLevel <= 7 && !!c && !!c.isPlayer && shovelPlayerDepth(c) > 0;
+  return currentLevel >= 1 && currentLevel <= 7 && !!c && shovelPlayerDepth(c) > 0;
 }
 function shovelRenderDepth(c) {
   const d = Number.isFinite(c && c.shovelVisualDepth) ? c.shovelVisualDepth : shovelPlayerDepth(c);
@@ -3981,25 +3981,49 @@ function shovelPitNeighbors(c, roofLayer = false, depth = 0) {
   };
   return [connected(0, -1), connected(1, 0), connected(0, 1), connected(-1, 0)];
 }
-function shovelPitFloorBounds(c, joins) {
-  const s = SHOVEL.cell, h = s / 2;
-  const inset = Math.min(31, 9 + Math.log2(1 + c.depth / SHOVEL.step) * 5);
-  return [c.x - h + (joins[3] ? 0 : inset), c.y - h + (joins[0] ? 0 : inset),
-    c.x + h - (joins[1] ? 0 : inset), c.y + h - (joins[2] ? 0 : inset)];
+// The logical mining grid stays roomy enough for movement; the visible lip
+// is a smaller, body-sized opening. Joined edges reach their shared seam.
+function shovelPitOpeningBounds(c, joins = shovelPitNeighbors(c)) {
+  const h = SHOVEL.cell / 2, lip = SHOVEL.cell * .375;
+  return [c.x - (joins[3] ? h : lip), c.y - (joins[0] ? h : lip),
+    c.x + (joins[1] ? h : lip), c.y + (joins[2] ? h : lip)];
+}
+function shovelPitFloorBounds(c, joins, depth = c.depth) {
+  const h = SHOVEL.cell / 2, scale = Math.max(SHOVEL.minScale, 1 / (1 + Math.max(0, depth) / 76));
+  const half = SHOVEL.cell * .375 * scale, drop = 18 * (1 - scale);
+  // Perspective narrows the floor with precisely the figure's depth ratio.
+  // A corridor still meets the next column at its shared grid edge.
+  return [c.x - (joins[3] ? h : half), c.y + (joins[0] ? -h : drop - half),
+    c.x + (joins[1] ? h : half), c.y + (joins[2] ? h : drop + half)];
+}
+function shovelActorProjection(e, cell = shovelCellAt(e.x, e.y)) {
+  const depth = shovelRenderDepth(e), scale = Math.max(SHOVEL.minScale, 1 / (1 + depth / 76));
+  if (!cell || depth <= 0) return { x: e.x, y: e.y, scale, depth };
+  const joins = shovelPitNeighbors(cell, !cell.open, depth);
+  const f = shovelPitFloorBounds(cell, joins, depth), h = SHOVEL.cell / 2;
+  const u = Math.max(0, Math.min(1, (e.x - cell.x + h) / SHOVEL.cell));
+  const v = Math.max(0, Math.min(1, (e.y - cell.y + h) / SHOVEL.cell));
+  const margin = SHOVEL.bodyRadius * scale;
+  const left = f[0] + (joins[3] ? 0 : margin), right = f[2] - (joins[1] ? 0 : margin);
+  const top = f[1] + (joins[0] ? 0 : margin), bottom = f[3] - (joins[2] ? 0 : margin);
+  const settle = Math.min(1, depth / SHOVEL.waist);
+  return { x: e.x + (left + (right - left) * u - e.x) * settle,
+    y: e.y + (top + (bottom - top) * v - e.y) * settle, scale, depth };
 }
 function drawShovelPitCell(c, roofLayer = false, layerDepth = 0) {
-  const h = SHOVEL.cell / 2, x = c.x - h, y = c.y - h, r = c.x + h, b = c.y + h;
-  const joins = shovelPitNeighbors(c, roofLayer, layerDepth), floor = shovelPitFloorBounds(c, joins);
+  const joins = shovelPitNeighbors(c, roofLayer, layerDepth);
+  const opening = shovelPitOpeningBounds(c, joins), x = opening[0], y = opening[1], r = opening[2], b = opening[3];
+  const floor = shovelPitFloorBounds(c, joins, roofLayer ? Math.min(c.depth, layerDepth) : c.depth);
   const dark = Math.min(.75, Math.log2(1 + c.depth / SHOVEL.step) * .11);
-  noStroke(); fill(32, 25, 20); rect(x, y, SHOVEL.cell, SHOVEL.cell);
+  noStroke(); fill(32, 25, 20); rect(x, y, r - x, b - y);
   fill(111 - dark * 53, 76 - dark * 39, 44 - dark * 19);
   rect(floor[0], floor[1], floor[2] - floor[0], floor[3] - floor[1]);
   if (!joins[0]) { fill(143, 100, 57); quad(x, y, r, y, floor[2], floor[1], floor[0], floor[1]); }
   if (!joins[3]) { fill(119, 79, 44); quad(x, y, floor[0], floor[1], floor[0], floor[3], x, b); }
   if (!joins[1]) { fill(64, 43, 30); quad(r, y, r, b, floor[2], floor[3], floor[2], floor[1]); }
   if (!joins[2]) { fill(49, 34, 25); quad(x, b, floor[0], floor[3], floor[2], floor[3], r, b); }
-  // Three bands compress with depth rather than adding an unbounded number
-  // of strata. Broken roots stay on exposed walls, never on joined cells.
+  // A fixed three strata gives depth without unbounded overdraw. Their
+  // convergence and the receding floor sell a shaft rather than a flat box.
   for (let i = 1; i <= 3; i++) {
     const t = i / 4;
     stroke(i === 2 ? color(174, 125, 72) : color(70, 47, 30)); strokeWeight(i === 2 ? 1.6 : 1);
@@ -4010,11 +4034,11 @@ function drawShovelPitCell(c, roofLayer = false, layerDepth = 0) {
   }
   stroke(176, 143, 86); strokeWeight(1.3);
   for (let i = 0; i < 3; i++) {
-    const a = 17 + i * 27;
-    if (!joins[0]) { line(x + a, y + 2, x + a + 3, y + 9); line(x + a + 3, y + 9, x + a + 1, y + 13); }
-    if (!joins[3]) line(x + 2, y + a, x + 9, y + a + 3);
+    const along = .18 + i * .3;
+    if (!joins[0]) { const px = x + (r - x) * along; line(px, y + 2, px + 3, y + 8); line(px + 3, y + 8, px + 1, y + 12); }
+    if (!joins[3]) { const py = y + (b - y) * along; line(x + 2, py, x + 8, py + 3); }
   }
-  stroke(29, 39, 24); strokeWeight(3);
+  stroke(29, 39, 24); strokeWeight(2.4);
   if (!joins[0]) line(x + 1, y + 1, r - 1, y + 1);
   if (!joins[3]) line(x + 1, y + 1, x + 1, b - 1);
   if (!joins[1]) line(r - 1, y + 1, r - 1, b - 1);
@@ -4024,69 +4048,97 @@ function drawShovelPitCell(c, roofLayer = false, layerDepth = 0) {
     if (!joins[0]) line(x + 3, y - 1, r - 3, y - 1);
     if (!joins[3]) line(x - 1, y + 3, x - 1, b - 3);
   }
-  // Sparse floor chips remain deterministic across saves and revisits.
   noStroke(); fill(171 - dark * 90, 126 - dark * 70, 73 - dark * 37);
+  const chip = Math.min(2, Math.max(.3, (floor[2] - floor[0]) / 24));
   for (let i = 0; i < 4; i++) {
     const px = floor[0] + (floor[2] - floor[0]) * (.18 + ((c.ix * 13 + c.iy * 7 + i * 3) & 7) * .085);
     const py = floor[1] + (floor[3] - floor[1]) * (.22 + i * .18);
-    triangle(px - 2, py, px + 3, py - 1, px + 1, py + 2);
+    triangle(px - chip, py, px + chip * 1.5, py - chip * .5, px + chip * .5, py + chip);
   }
 }
 function drawShovelExcavationGround() {
   const cells = shovelRenderCellsInView();
-  if (!cells.length) return;
-  push(); for (const c of cells) drawShovelPitCell(c); pop();
+  push();
+  try {
+    for (const c of cells) drawShovelPitCell(c);
+    if (typeof shovelDrawDigParticles === 'function') shovelDrawDigParticles(0);
+  } finally { pop(); }
 }
-function shovelClipCells(cells) {
-  const ctx = drawingContext, h = SHOVEL.cell / 2;
+function shovelClipCells(cells, roofLayer = false, layerDepth = 0) {
+  const ctx = drawingContext;
   ctx.beginPath();
-  for (const c of cells) ctx.rect(c.x - h, c.y - h, SHOVEL.cell, SHOVEL.cell);
+  for (const c of cells) {
+    const b = shovelPitOpeningBounds(c, shovelPitNeighbors(c, roofLayer, layerDepth));
+    ctx.rect(b[0], b[1], b[2] - b[0], b[3] - b[1]);
+  }
   ctx.clip();
 }
 function drawShovelPitForeground(c, roofLayer = false, layerDepth = 0) {
   const joins = shovelPitNeighbors(c, roofLayer, layerDepth);
   if (joins[2]) return;
-  const f = shovelPitFloorBounds(c, joins), h = SHOVEL.cell / 2;
+  const f = shovelPitFloorBounds(c, joins, roofLayer ? Math.min(c.depth, layerDepth) : c.depth);
+  const b = shovelPitOpeningBounds(c, joins);
   noStroke(); fill(49, 34, 25);
-  quad(c.x - h, c.y + h, f[0], f[3], f[2], f[3], c.x + h, c.y + h);
-  stroke(28, 33, 22); strokeWeight(3);
-  line(c.x - h, c.y + h - 1, c.x + h, c.y + h - 1);
+  quad(b[0], b[3], f[0], f[3], f[2], f[3], b[2], b[3]);
+  stroke(28, 33, 22); strokeWeight(2.4);
+  line(b[0], b[3] - 1, b[2], b[3] - 1);
+}
+function shovelTunnelCutawayBounds(e, projection = shovelActorProjection(e)) {
+  const s = projection.scale, w = 72 * s + 6, h = 66 * s + 6;
+  return [projection.x - w / 2, projection.y - h / 2, w, h];
 }
 function drawShovelUndergroundActor() {
-  const e = _shovelBelowActor; _shovelBelowActor = null;
-  if (!shovelBelowGroundActor(e)) return;
-  const cell = shovelCellAt(e.x, e.y), d = shovelPlayerDepth(e);
-  if (!cell) return;
-  const s = SHOVEL.cell, cells = [];
-  const roofed = !cell.open;
-  for (let y = -1; y <= 1; y++) for (let x = -1; x <= 1; x++) {
-    const n = shovelCellAt(cell.x + x * s, cell.y + y * s);
-    if (n && (roofed ? n.depth >= d && n.ceiling < d : n.open && n.depth > 0)) cells.push(n);
-  }
-  push(); const ctx = drawingContext; ctx.save();
+  const actors = _shovelBelowActors;
+  // The surface and underground layers use the same corpse-first rule.
+  actors.sort((a, b) => Number(!isGroundBodyActor(a)) - Number(!isGroundBodyActor(b)) ||
+    shovelPlayerDepth(b) - shovelPlayerDepth(a) || a.y - b.y);
   try {
-    if (roofed) {
-      // A local comic cutaway exposes the tunnel without removing the gate or
-      // pretending the player stands on its roof. The rest of the surface
-      // stays intact, and a hatched ceiling rim closes the near edge again.
-      ctx.beginPath(); ctx.rect(e.x - 64, e.y - 58, 128, 116); ctx.clip();
-      shovelClipCells(cells);
-      for (const c of cells) drawShovelPitCell(c, true, d);
-    } else shovelClipCells(cells);
-    push();
-    try { translate(0, Math.min(14, shovelRenderDepth(e) * .45)); e.show(); }
-    finally { pop(); }
-    for (const c of cells) drawShovelPitForeground(c, roofed, d);
-    if (roofed) {
-      noStroke(); fill(31, 25, 21, 220); rect(e.x - 64, e.y - 58, 128, 9); rect(e.x - 64, e.y + 47, 128, 11);
-      stroke(172, 135, 87); strokeWeight(1.3);
-      for (let x = e.x - 64; x < e.x + 64; x += 10) {
-        line(x, e.y - 57, x + 7, e.y - 50); line(x, e.y + 48, x + 7, e.y + 57);
+    for (const e of actors) {
+      if (!shovelBelowGroundActor(e)) continue;
+      const cell = shovelCellAt(e.x, e.y), d = shovelPlayerDepth(e);
+      if (!cell) continue;
+      const roofed = !cell.open;
+      // A local player cutaway can reveal company in the same tunnel; it is
+      // not an X-ray exposing unrelated people through intact ground.
+      if (roofed && !e.isPlayer && (!player || !shovelBelowGroundActor(player) ||
+          !shovelSameLayer(e, player) || Math.hypot(e.x - player.x, e.y - player.y) > SHOVEL.cell)) continue;
+      const s = SHOVEL.cell, cells = [], projection = shovelActorProjection(e, cell);
+      for (let y = -1; y <= 1; y++) for (let x = -1; x <= 1; x++) {
+        const n = shovelCellAt(cell.x + x * s, cell.y + y * s);
+        if (n && (roofed ? n.depth >= d && n.ceiling < d : n.open && n.depth > 0)) cells.push(n);
       }
-      stroke(23, 20, 17); strokeWeight(3);
-      line(e.x - 64, e.y - 49, e.x + 64, e.y - 49); line(e.x - 64, e.y + 47, e.x + 64, e.y + 47);
+      push(); const ctx = drawingContext; ctx.save();
+      try {
+        const cut = roofed ? shovelTunnelCutawayBounds(e, projection) : null;
+        if (cut) {
+          ctx.beginPath(); ctx.rect(cut[0], cut[1], cut[2], cut[3]); ctx.clip();
+          shovelClipCells(cells, true, d);
+          for (const c of cells) drawShovelPitCell(c, true, d);
+        } else shovelClipCells(cells);
+        push();
+        try {
+          translate(projection.x - e.x, projection.y - e.y);
+          if (typeof shovelDrawDigParticles === 'function') shovelDrawDigParticles(d, e);
+          e.show();
+        } finally { pop(); }
+        for (const c of cells) drawShovelPitForeground(c, roofed, d);
+        if (cut) {
+          const rim = Math.max(1.2, Math.min(5, cut[3] * .09));
+          noStroke(); fill(31, 25, 21, 220);
+          rect(cut[0], cut[1], cut[2], rim); rect(cut[0], cut[1] + cut[3] - rim, cut[2], rim);
+          stroke(172, 135, 87); strokeWeight(Math.max(.5, projection.scale));
+          const hatch = Math.max(2, 9 * projection.scale);
+          for (let x = cut[0]; x < cut[0] + cut[2] - hatch; x += hatch) {
+            line(x, cut[1], x + hatch * .65, cut[1] + rim);
+            line(x, cut[1] + cut[3] - rim, x + hatch * .65, cut[1] + cut[3]);
+          }
+          stroke(23, 20, 17); strokeWeight(Math.max(.7, 2 * projection.scale));
+          line(cut[0], cut[1] + rim, cut[0] + cut[2], cut[1] + rim);
+          line(cut[0], cut[1] + cut[3] - rim, cut[0] + cut[2], cut[1] + cut[3] - rim);
+        }
+      } finally { ctx.restore(); pop(); }
     }
-  } finally { ctx.restore(); pop(); }
+  } finally { actors.length = 0; }
 }
 
 // The legacy building flags that are MASSES, and the colour their extruded
@@ -6969,7 +7021,7 @@ viewBottom = camY + height / zoom + shakePad;
   // A FRAME THAT FAILS MUST NOT TAKE THE CONTROLS WITH IT, above.
   const _sceneDepth = frameStackDepth();
   _airborneActors.length = 0;
-  _shovelBelowActor = null;
+  _shovelBelowActors.length = 0;
   _depthActors.length = 0; _depthOn = _legacyActorsQueued = false;
   try {
 
@@ -7097,12 +7149,6 @@ viewBottom = camY + height / zoom + shakePad;
   // drawBuildings(). Two passes over the same casters composited their alpha
   // (82 -> ~146 effective), which is what turned every cast shadow into a hard
   // near-black slab reading as a second, overlapping building. One pass only.
-  if (inOverworldView) {
-      for (let c of townCitizens) {
-          if (doTick) c.update();
-          actorShow(c);
-      }
-  }
 
   // Wildlife stays outside the military population and objective counters.
   // Tick outside the forest too so travel drops ephemeral actors, not loot.
@@ -8420,7 +8466,7 @@ function resolveShovelSwing(c) {
 // A surface shaft is open; a horizontal tunnel retains the ground above it.
 // Positive depth runs down into the earth, so elevation keeps its own meaning.
 const SHOVEL = Object.freeze({cell:96,step:18,waist:18,underground:36,maxDepth:4096,
-  cooldownMs:320,minScale:.045,bodyRadius:14});
+  cooldownMs:440,minScale:.045,bodyRadius:14});
 const SHOVEL_GRASS_PATCHES = Object.freeze([
   Object.freeze({id:'HOME_GARDEN',x:480,y:672,w:192,h:96}),
   Object.freeze({id:'NORTH_VERGE',x:4992,y:-3456,w:288,h:288}),
@@ -8451,9 +8497,21 @@ function shovelCellKey(ix,iy,level=currentLevel) {return level+':'+ix+':'+iy;}
 function shovelCellAt(x,y,level=currentLevel) {
   return shovelExcavation[shovelCellKey(Math.floor(x/SHOVEL.cell),Math.floor(y/SHOVEL.cell),level)]||null;
 }
+// The same depth state belongs to every grounded body, including Citizen.
+// Keep the historical helper name for saved games and callers.
+const SHOVEL_AIRBORNE_TYPES=new Set(['AERIAL','AERIAL_PISTOL','SAUCER','SAUCER_RED']);
+function shovelActorCanFall(e) {
+  return !!e&&Number.isFinite(e.x)&&Number.isFinite(e.y)&&!SHOVEL_AIRBORNE_TYPES.has(e.eType);
+}
 function shovelPlayerDepth(e=player) {
-  return e&&e.isPlayer&&currentLevel>=1&&currentLevel<=7&&e.shovelLevel===currentLevel&&Number.isFinite(e.shovelDepth)?
+  return e&&!SHOVEL_AIRBORNE_TYPES.has(e.eType)&&currentLevel>=1&&currentLevel<=7&&e.shovelLevel===currentLevel&&Number.isFinite(e.shovelDepth)?
     Math.max(0,Math.min(SHOVEL.maxDepth,e.shovelDepth)):0;
+}
+function shovelSurfaceFallCell(e) {
+  const c=shovelCellAt(e.x,e.y);
+  if(!c||!c.open)return null;
+  const b=shovelPitOpeningBounds(c);
+  return e.x>=b[0]&&e.x<=b[2]&&e.y>=b[1]&&e.y<=b[3]?c:null;
 }
 function shovelRenderScale(e=player) {
   return Math.max(SHOVEL.minScale,1/(1+shovelPlayerDepth(e)/76));
@@ -8462,6 +8520,26 @@ function shovelSameLayer(a,b) {
   const ad=shovelPlayerDepth(a),bd=shovelPlayerDepth(b);
   if((ad>=SHOVEL.underground)!==(bd>=SHOVEL.underground))return false;
   return Math.abs(ad-bd)<=SHOVEL.waist+.01;
+}
+// Actor perception has a vertical layer as well as the existing surface LOS.
+// A fully buried actor cannot be seen through the ground, even by aircraft.
+function shovelActorsVisible(observer,target) {
+  if(!observer||!target)return false;
+  const a=shovelPlayerDepth(observer),b=shovelPlayerDepth(target);
+  if(a<SHOVEL.underground&&b<SHOVEL.underground)return true;
+  if(a<SHOVEL.underground||b<SHOVEL.underground||Math.abs(a-b)>SHOVEL.step)return false;
+  const dx=target.x-observer.x,dy=target.y-observer.y;
+  const steps=Math.max(1,Math.ceil(Math.hypot(dx,dy)/(SHOVEL.cell*.4)));
+  if(!Number.isFinite(steps)||steps>256)return false;
+  for(let i=0;i<=steps;i++){
+    const t=i/steps,d=a+(b-a)*t,c=shovelCellAt(observer.x+dx*t,observer.y+dy*t);
+    if(!c||c.depth+.5<d||(!c.open&&c.ceiling>d))return false;
+  }
+  return true;
+}
+function shovelActorLOS(observer,target) {
+  if(!shovelActorsVisible(observer,target))return false;
+  return shovelPlayerDepth(observer)>=SHOVEL.underground||hasLOS(observer.x,observer.y,target.x,target.y);
 }
 function shovelOverlapsRect(x,y,p,b) {
   return x+p>b.x-b.w/2&&x-p<b.x+b.w/2&&y+p>b.y-b.h/2&&y-p<b.y+b.h/2;
@@ -8528,6 +8606,7 @@ function shovelDig(kind) {
       inLvl4Cutscene||inDarchonCall||inTravelMenu||inOverworldView||inWorldBuildingMenu||inUpgradeMenu||
       frontierSaloonIsInside()||boxingActive(e))return false;
   kind=String(kind).toUpperCase();if(!['DOWN','FORWARD','UP'].includes(kind))return false;
+  if(e.meleeTimer>0)return false;
   if(e.mounted||e.isDashing||e.dashTimer>0)return shovelFeedback(e,'Dismount and stand still to dig.');
   if((e.shovelCooldownMs||0)>0)return false;
   if(e.shovelLevel!==currentLevel){e.shovelLevel=currentLevel;e.shovelDepth=0;e.shovelDepthTarget=0;}
@@ -8585,41 +8664,64 @@ function shovelDig(kind) {
   }
   if(changed) {
     e._shovelCellKey=shovelCellKey(ix,iy);e.shovelCooldownMs=SHOVEL.cooldownMs;
-    e.shovelDigTimer=360;e.shovelDigKind=kind;e.shovelNoticeMs=0;
+    shovelBeginDigAnimation(e,kind);e.shovelNoticeMs=0;
     if(typeof sfx!=='undefined'&&typeof sfx.punch==='function')sfx.punch(e.x,e.y);
   }
   return changed;
 }
 function shovelSyncPlayerCell(e) {
-  if(!e||!e.isPlayer||currentLevel<1||currentLevel>7)return;
+  if(!shovelActorCanFall(e)||currentLevel<1||currentLevel>7)return;
   const key=shovelCellKey(Math.floor(e.x/SHOVEL.cell),Math.floor(e.y/SHOVEL.cell));
   const cell=shovelCellAt(e.x,e.y),depth=shovelPlayerDepth(e);
   if(e._shovelCellKey!==key) {
-    // A roof is still ordinary ground to a person standing above the tunnel.
-    if(depth>.5||cell&&cell.open) {
-      e.shovelDepthTarget=cell?cell.depth:0;e.shovelClimbing=false;
-    } else e.shovelDepthTarget=0;
+    if(depth<.5)e.shovelClimbing=false;
+    if(depth>.5) {
+      // Native movement cannot leave a deep cavity. A story teleport or a
+      // removed excavation must release the old depth rather than burying a
+      // speaker beneath an unrelated piece of solid ground.
+      if(!cell&&depth>=SHOVEL.underground){e.shovelDepth=0;e.shovelDepthTarget=0;}
+      else e.shovelDepthTarget=cell?cell.depth:0;
+      e.shovelClimbing=false;
+    } else if(!e.shovelClimbing&&shovelSurfaceFallCell(e))e.shovelDepthTarget=cell.depth;
+    else if(!e.shovelDigTimer)e.shovelDepthTarget=0;
     e._shovelCellKey=key;
   }
+  // Crossing a narrow mouth can happen within the same logical grid square.
+  // A climb that has reached the rim stays there until the actor walks away.
+  if(depth<.5&&!e.shovelClimbing&&!(e.shovelDepthTarget>0)&&shovelSurfaceFallCell(e))
+    e.shovelDepthTarget=cell.depth;
+  if(depth>.5&&cell&&!e.shovelClimbing&&cell.depth>(e.shovelDepthTarget||0))
+    e.shovelDepthTarget=cell.depth;
 }
-function shovelUpdatePlayer(e,dtMs) {
-  if(!e||!e.isPlayer)return;
+function shovelUpdateActor(e,dtMs) {
+  if(!e)return;
   const dt=Math.max(0,Math.min(1000,Number.isFinite(dtMs)?dtMs:1000/60));
   e.shovelCooldownMs=Math.max(0,(e.shovelCooldownMs||0)-dt);
-  e.shovelDigTimer=Math.max(0,(e.shovelDigTimer||0)-dt);
+  const beforeDig=e.shovelDigTimer||0;
+  const drivingDown=e.isPlayer&&beforeDig>0&&e.shovelDigKind==='DOWN';
+  if(e.isPlayer)shovelUpdateDigAnimation(e,dt);
   e.shovelNoticeMs=Math.max(0,(e.shovelNoticeMs||0)-dt);
-  if(currentLevel<1||currentLevel>7) {e.shovelDepth=0;e.shovelDepthTarget=0;e.shovelLevel=currentLevel;e._shovelCellKey=null;return;}
-  if(e.shovelLevel!==currentLevel){e.shovelLevel=currentLevel;e.shovelDepth=0;e.shovelDepthTarget=0;e._shovelCellKey=null;}
+  if(currentLevel<1||currentLevel>7||!shovelActorCanFall(e)) {
+    e.shovelDepth=0;e.shovelDepthTarget=0;e.shovelLevel=currentLevel;e._shovelCellKey=null;return;
+  }
+  if(e.shovelLevel!==currentLevel){e.shovelLevel=currentLevel;e.shovelDepth=0;e.shovelDepthTarget=0;e._shovelCellKey=null;e.shovelClimbing=false;}
   shovelSyncPlayerCell(e);
   const from=shovelPlayerDepth(e),to=Math.max(0,Math.min(SHOVEL.maxDepth,e.shovelDepthTarget||0));
-  e.shovelDepth=from+(to-from)*(1-Math.exp(-dt/75));
+  // The feet remain planted through the lift: descent starts when the spade
+  // and dirt burst actually make contact, including across a long frame.
+  const wait=drivingDown&&to>from?Math.max(0,beforeDig-SHOVEL_DIG_ANIM.durationMs*(1-SHOVEL_DIG_ANIM.contact)):0;
+  const fallDt=Math.max(0,dt-Math.min(dt,wait));
+  e.shovelDepth=from+(to-from)*(1-Math.exp(-fallDt/(drivingDown?50:75)));
   if(Math.abs(e.shovelDepth-to)<.05)e.shovelDepth=to;
 }
+function shovelUpdatePlayer(e,dtMs) {shovelUpdateActor(e,dtMs);}
 // null leaves ordinary surface collision in charge. Underground movement is
 // confined to connected excavated space; walls are bypassed only below them.
 function shovelCollision(e,nx,ny) {
-  if(!e||!e.isPlayer||currentLevel<1||currentLevel>7)return null;
+  if(!shovelActorCanFall(e)||currentLevel<1||currentLevel>7)return null;
   const depth=shovelPlayerDepth(e);if(depth<.5)return null;
+  // A falling pedestrian cannot run across the mouth before reaching its floor.
+  if(!e.isPlayer&&(e.shovelDepthTarget||0)-depth>1)return true;
   const dx=nx-e.x,dy=ny-e.y,d=Math.hypot(dx,dy);
   if(d>SHOVEL.cell*4)return true;
   let surface=false;
@@ -12105,7 +12207,7 @@ function takeBulletSlot() {
 }
 let _huntShotSequence = 0;
 function spawnBullet(x, y, a, iP, tH, w, shooter = null, shotId = null) {
-    if (w !== WEAPONS.BOW) civilianNoise(x,y);
+    if (w !== WEAPONS.BOW) civilianNoise(x,y,620,shooter);
     if (shotId === null && w !== WEAPONS.BOW && typeof notifyForestWildlifeThreat === 'function')
         notifyForestWildlifeThreat(x,y,w === WEAPONS.TASER ? 100 : 560);
     if (iP) totalShotsFired++; // Tracks player shots
@@ -12195,14 +12297,19 @@ class Orb {
   update() {
     if (!this.active) return;
     this.life--; 
-    let ang = atan2(player.y - this.y, player.x - this.x); 
-    this.vx = lerp(this.vx, cos(ang) * this.maxSpd, 0.05); 
-    this.vy = lerp(this.vy, sin(ang) * this.maxSpd, 0.05); 
+    // A launched homing shot loses its target when earth hides him too.
+    // Coast on the existing trajectory until the player emerges again.
+    const seesPlayer = shovelActorsVisible(this, player);
+    if (seesPlayer) {
+      let ang = atan2(player.y - this.y, player.x - this.x);
+      this.vx = lerp(this.vx, cos(ang) * this.maxSpd, 0.05);
+      this.vy = lerp(this.vy, sin(ang) * this.maxSpd, 0.05);
+    }
     this.x += this.vx; 
     this.y += this.vy; 
     
     let hit = false; 
-    if (dist(this.x, this.y, player.x, player.y) < 30) hit = true;
+    if (seesPlayer && dist(this.x, this.y, player.x, player.y) < 30) hit = true;
     
     for (let b of activeBuildings) { 
         if (currentLevel === 4 && b.isPalm) continue; 
@@ -13473,7 +13580,16 @@ class Corpse {
     this.hatOff = headwearFalls(headwearOf(this.id))
       ? { x: cos(bA || 0) * (18 + Math.random() * 14), y: sin(bA || 0) * (18 + Math.random() * 14), r: Math.random() * TWO_PI }
       : null;
-    this.eT = eT; this.x = x; this.y = y; 
+    this.eT = eT; this.x = x; this.y = y;
+    this.isCorpse = true;
+    // Death retains the plane the person occupied, so a buried body never
+    // jumps back onto the lawn or stamps itself into the roof overhead.
+    const buriedDepth = shovelPlayerDepth(src);
+    if (buriedDepth > 0) {
+      this.shovelLevel = currentLevel; this.shovelDepth = buriedDepth;
+      this.shovelDepthTarget = Math.max(buriedDepth, src.shovelDepthTarget || 0);
+      this._shovelCellKey = src._shovelCellKey;
+    }
     if (eT === "ARMORED" || eT === "ARMORED_STANDARD" || eT === "ALIEN_GATOR") { this.mA = mA; this.aA = aA; } else { this.mA = mA + PI; this.aA = aA + PI; }
     // Last word on the overkill tables: a robot never comes apart into a torso
     // and two arms, never scatters a skull and a ribcage, and is never halved.
@@ -13671,8 +13787,13 @@ class Corpse {
   }
     
   show(r = window) {
-    this.paint(r);
-    drawFatalWound(this,r);
+    const depthScale = shovelRenderScale(this);
+    if (depthScale === 1) { this.paint(r); drawFatalWound(this,r); return; }
+    r.push();
+    try {
+      r.translate(this.x, this.y); r.scale(depthScale); r.translate(-this.x, -this.y);
+      this.paint(r); drawFatalWound(this,r);
+    } finally { r.pop(); }
   }
 
   paint(r = window) {
@@ -13988,6 +14109,9 @@ if (this.eT === "COW" || this.eT === "HORSE") {
 }
 
 function stampCorpse(c) {
+    // The ordinary blood bank is a surface texture. Keep a below-ground
+    // corpse in its clipped shaft pass instead of baking it above the hole.
+    if (shovelBelowGroundActor(c)) return;
     
     let maxSpread = Math.max(c.bW, c.bH) + 60; 
     
@@ -14059,6 +14183,7 @@ function updateCorpses() {
   // Pass 1: advance and retire. Backwards, because it splices.
   for (let i = corpses.length - 1; i >= 0; i--) {
       let c = corpses[i];
+      if (doTick) shovelUpdateActor(c, deltaTime);
 
       if (doTick && !c.isStatic) {
           // dT 12 is a body still flying at something with a charge on it. It
@@ -14092,9 +14217,11 @@ function updateCorpses() {
 
           if (corpseSettled(c)) {
               c.isStatic = true;
-              stampCorpse(c);         // Stamp it permanently to the ground chunk
-              corpses.splice(i, 1);   // Delete the object to save CPU & GPU
-              continue;               // Skip the rest of the loop
+              if (!shovelBelowGroundActor(c)) {
+                stampCorpse(c);         // Stamp it permanently to the ground chunk
+                corpses.splice(i, 1);   // Delete the object to save CPU & GPU
+                continue;               // Skip the rest of the loop
+              }
           }
       }
   }
@@ -14108,7 +14235,10 @@ function updateCorpses() {
   // dropped most recently is the one lying on the heap.
   for (let i = 0; i < corpses.length; i++) {
       const c = corpses[i];
-      if (inView(c.x, c.y, 150)) c.show();
+      if (inView(c.x, c.y, 150)) {
+        if (shovelBelowGroundActor(c)) actorShow(c);
+        else c.show();
+      }
   }
 
   if (doTick) cullCorpseStacks();
@@ -14130,7 +14260,7 @@ function cullCorpseStacks() {
   const cells = new Map();
   for (let i = 0; i < corpses.length; i++) {
       const c = corpses[i];
-      if (!c.isIntactBody || (c.fatalSpray&&c.fatalSpray.left>0)) continue;
+      if (shovelBelowGroundActor(c) || !c.isIntactBody || (c.fatalSpray&&c.fatalSpray.left>0)) continue;
       const k = Math.floor(c.x / CORPSE_STACK_CELL) + ',' + Math.floor(c.y / CORPSE_STACK_CELL);
       let list = cells.get(k);
       if (!list) { list = []; cells.set(k, list); }
@@ -14447,10 +14577,11 @@ function unarmedCivilian(e) {
   return !!e&&!e.isPlayer&&(e.isCityCivilian||e.eType==="FARMER_MALE"||e.eType==="FARMER_FEMALE"||
     (e.isUnarmed&&TOWNSFOLK.indexOf(e.eType)!==-1));
 }
-function civilianNoise(x,y,radius=620) {
+function civilianNoise(x,y,radius=620,source=null) {
   const last=cityNoise[cityNoise.length-1];
-  if(last&&last.t===frameCount&&Math.hypot(last.x-x,last.y-y)<80)return;
-  cityNoise.push({x,y,r:radius,t:frameCount});if(cityNoise.length>8)cityNoise.shift();
+  const sourceDepth=source?shovelPlayerDepth(source):0;
+  if(last&&last.t===frameCount&&Math.abs((last.depth||0)-sourceDepth)<1&&Math.hypot(last.x-x,last.y-y)<80)return;
+  cityNoise.push({x,y,r:radius,t:frameCount,depth:sourceDepth});if(cityNoise.length>8)cityNoise.shift();
 }
 function scareCivilian(e,x,y) {
   e.panicX=x;e.panicY=y;e.panicTimer=360;e.isNeutral=true;e.isFriendly=true;e.isArmed=false;
@@ -14459,6 +14590,8 @@ function scareCivilian(e,x,y) {
 function noticeCivilianNoise(e) {
   for(let i=cityNoise.length-1;i>=0;i--){const n=cityNoise[i];
     if(frameCount-n.t>18||n.t<=(e.cityHeard===undefined?-1:e.cityHeard))continue;
+    const d=shovelPlayerDepth(e),nd=n.depth||0;
+    if((d>=SHOVEL.underground)!==(nd>=SHOVEL.underground)||Math.abs(d-nd)>SHOVEL.step)continue;
     if(Math.hypot(e.x-n.x,e.y-n.y)<n.r){scareCivilian(e,n.x,n.y);e.cityHeard=n.t;break;}
   }
 }
@@ -16313,7 +16446,7 @@ this.skeletonTimer = 0;
 
       takeDamage(amount, source = null) {
     // Surface attacks cannot pass through an intact tunnel ceiling.
-    if(this.isPlayer && shovelPlayerDepth(this)>=SHOVEL.underground &&
+    if(shovelPlayerDepth(this)>=SHOVEL.underground &&
        (!source || !shovelSameLayer(this,source)))return {blocked:true,broken:false};
     if(unarmedCivilian(this))scareCivilian(this,source?source.x:player?player.x:this.x,source?source.y:player?player.y:this.y);
     if(this.isCityPatrol&&this.hp>80)amount*=.55;
@@ -16350,7 +16483,7 @@ this.skeletonTimer = 0;
                 e.loseSightTimer = 1200; // <--- NEW: Force 20 seconds of hard aggro
                 
                 // <--- NEW: Give them the player's exact location to swarm!
-                if (typeof player !== 'undefined' && player) {
+                if (typeof player !== 'undefined' && player && shovelActorsVisible(e,player)) {
                     e.lastKnownX = player.x; 
                     e.lastKnownY = player.y;
                 }
@@ -16474,7 +16607,7 @@ this.skeletonTimer = 0;
   }
   forceNudge() {
     // A tunnel wall is unexcavated soil, never an excuse to teleport laterally.
-    if(this.isPlayer&&shovelPlayerDepth(this)>.5)return;
+    if(shovelPlayerDepth(this)>.5||(this.shovelDepthTarget||0)>0)return;
     // Flying enemies don't collide with buildings, so they don't need to be nudged
     if (this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL" || this.eType === "SAUCER" || this.eType === "SAUCER_RED") return;
     
@@ -16502,6 +16635,8 @@ this.skeletonTimer = 0;
   }
 
  attemptMove(vx, vy) {
+    // Both feet stay braced during the short two-handed digging stroke.
+    if(this.isPlayer&&this.shovelDigTimer>0)return {x:0,y:0};
     const shovelMoveStartX=this.x,shovelMoveStartY=this.y;
     // Steering memory: which hand they favour going round things, the heading
     // they are currently committed to, and how long that commitment has left.
@@ -16570,9 +16705,9 @@ this.skeletonTimer = 0;
     // next, and a walker with no gait animates as though standing still.
     this.gait += (Math.min(1, dist(0, 0, finalDx, finalDy) / GAIT_FULL) - this.gait) * GAIT_EASE;
 
-    if(this.isPlayer&&(finalDx!==0||finalDy!==0)) {
+    if(finalDx!==0||finalDy!==0) {
       shovelSyncPlayerCell(this);
-      if(typeof checkShovelPassiveRoute==='function')checkShovelPassiveRoute(this,shovelMoveStartX,shovelMoveStartY);
+      if(this.isPlayer&&typeof checkShovelPassiveRoute==='function')checkShovelPassiveRoute(this,shovelMoveStartX,shovelMoveStartY);
     }
     return { x: finalDx, y: finalDy };
 }
@@ -16616,7 +16751,8 @@ this.skeletonTimer = 0;
   }
 
       activateMelee(isCentral = false) {
-      if (this.isPlayer && !isCentral) return; 
+      if (this.isPlayer && !isCentral) return;
+      if (this.isPlayer && this.shovelDigTimer>0) return;
       if (this.isPlayer && !this.mounted && meleeTool() === 'NONE') {
           beginWorldBoxing(this);
           boxingRequestPunch(this, 'LEFT_STRAIGHT');
@@ -17158,6 +17294,7 @@ this.skeletonTimer = 0;
   }
 
     updateEnemy() {
+    shovelUpdateActor(this,typeof deltaTime==='number'?deltaTime:1000/60);
     const motionX=this.x,motionY=this.y;
     try {
     if (this._boxingWorldManaged && boxingActive(this) && boxingActive(player)) return;
@@ -17259,8 +17396,11 @@ if (this.eType === "COW") {
     // here before the aiming and firing code is what makes them harmless
     // rather than simply bad shots.
     if (this.state === "FLEE") {
-        const away = atan2(this.y - (player ? player.y : this.y),
-                           this.x - (player ? player.x : this.x));
+        const seesThreat=player&&shovelActorLOS(this,player);
+        if(seesThreat){this.fleeThreatX=player.x;this.fleeThreatY=player.y;this.fleeLostTicks=0;}
+        else this.fleeLostTicks=(this.fleeLostTicks||0)+1;
+        const away = Number.isFinite(this.fleeThreatX) ?
+            atan2(this.y-this.fleeThreatY,this.x-this.fleeThreatX) : this.aimAngle;
         if (this.fleeBias === undefined) this.fleeBias = random(-0.5, 0.5);
         const a = away + this.fleeBias;
         this.moveAngle = a;
@@ -17271,7 +17411,7 @@ if (this.eType === "COW") {
         this.isMoving = (m.x !== 0 || m.y !== 0);
         if (this.isMoving) this.walkCycle += 0.35;
         // Far enough away and out of the fight: settle back into wandering.
-        if (player && dist(this.x, this.y, player.x, player.y) > 1600) {
+        if (this.fleeLostTicks>180 || (seesThreat && dist(this.x, this.y, player.x, player.y) > 1600)) {
             this.state = "WANDER";
         }
         return;
@@ -17342,6 +17482,7 @@ if (this.eType === "COW") {
  this.ammo = this.currentWeapon.maxAmmo; 
     if (this.biteCooldown > 0) this.biteCooldown--;
     if (this.ignoreBldgTimer > 0) this.ignoreBldgTimer--; 
+    if(this.orbChargeTimer>0&&!shovelActorsVisible(this,this.aggroTarget||this.leader||player))this.orbChargeTimer=0;
     if (this.orbChargeTimer > 0) { this.orbChargeTimer--; if (this.orbChargeTimer === 1) { spawnOrb(this.x + cos(this.aimAngle) * 50, this.y + sin(this.aimAngle) * 50); this.fireTimer = 100; } }
 
     // A man on a horse covers ground. This is the whole of what being mounted
@@ -17391,7 +17532,7 @@ if (this.eType === "COW") {
             let best = null, bestD2 = Infinity;
             for (let i = 0; i < enemiesList.length; i++) {
                 const e = enemiesList[i];
-                if (!e.isFriendly && !e.dead && e.hp > 0) {
+                if (!e.isFriendly && !e.dead && e.hp > 0 && shovelActorsVisible(this,e)) {
                     const ex = this.x - e.x, ey = this.y - e.y;
                     const d2 = ex * ex + ey * ey;
                     if (d2 < bestD2) { bestD2 = d2; best = e; }
@@ -17403,7 +17544,7 @@ if (this.eType === "COW") {
         // Revalidated EVERY frame, because a target can die between slices and
         // an ally holding a stale pointer keeps aiming at a corpse.
         let closeE = this.allyFoe;
-        if (closeE && (closeE.dead || closeE.hp <= 0 || closeE.isFriendly)) closeE = this.allyFoe = null;
+        if (closeE && (closeE.dead || closeE.hp <= 0 || closeE.isFriendly || !shovelActorsVisible(this,closeE))) closeE = this.allyFoe = null;
 
         let isFighting = false;
         let trg = player;
@@ -17470,18 +17611,21 @@ if (this.eType === "COW") {
                 let row = Math.floor(slot / rowWidth) + 1.2; 
                 let col = (slot % rowWidth) - Math.floor(rowWidth / 2); 
 
-                let spacing = 65; 
-                let backAng = player.aimAngle + PI; 
-                let sideAng = player.aimAngle + HALF_PI; 
-
-                let fX = player.x + (cos(backAng) * (row * spacing)) + (cos(sideAng) * (col * spacing));
-                let fY = player.y + (sin(backAng) * (row * spacing)) + (sin(sideAng) * (col * spacing));
+                // Wait by the last visible formation anchor instead of following
+                // the player's live position through an unseen tunnel.
+                if(shovelActorsVisible(this,player))this.allyFollowAnchor={x:player.x,y:player.y,a:player.aimAngle};
+                const anchor=this.allyFollowAnchor;
+                let spacing = anchor ? 65 : 0;
+                let backAng = (anchor ? anchor.a : this.aimAngle) + PI;
+                let sideAng = backAng - HALF_PI;
+                let fX = (anchor ? anchor.x : this.x) + (cos(backAng) * (row * spacing)) + (cos(sideAng) * (col * spacing));
+                let fY = (anchor ? anchor.y : this.y) + (sin(backAng) * (row * spacing)) + (sin(sideAng) * (col * spacing));
                 
                 if (dist(this.x, this.y, fX, fY) > 50) {
                     moveTargetX = fX; moveTargetY = fY; shouldMove = true;
                     this.aimAngle = atan2(moveTargetY - this.y, moveTargetX - this.x);
                 } else {
-                    let dAng = player.aimAngle - this.aimAngle;
+                    let dAng = (anchor ? anchor.a : this.aimAngle) - this.aimAngle;
                     while (dAng < -PI) dAng += TWO_PI;
                     while (dAng > PI) dAng -= TWO_PI;
                     this.aimAngle += dAng * 0.1;
@@ -17503,10 +17647,10 @@ if (this.eType === "COW") {
         // recomputed on the spot; that costs a sight test only on the frame the
         // target actually changes, which is rare.
         if (this.allySeeOf !== trg || this.allyTick === frameCount) {
-            this.allySee = hasLOS(this.x, this.y, trg.x, trg.y);
+            this.allySee = shovelActorLOS(this,trg);
             this.allySeeOf = trg;
         }
-        let canSee = this.allySee;
+        let canSee = this.allySee && shovelActorsVisible(this,trg);
         if (isFighting && canSee && distToTarget < 600 && this.fireTimer <= 0 && this.ammo > 0 && this.reloadTimer <= 0) {
             let sA = angToTarget;
             if (random() > 0.25 && distToTarget > 80) sA = angToTarget + atan2(random(30, 60) * (random() > 0.5 ? 1 : -1), distToTarget);
@@ -17533,8 +17677,14 @@ if (this.eType === "COW") {
         }
     }
 
+    // Ground occlusion is cheap and checked every frame; cached surface sight
+    // must not reveal a digger for another nine frames after he disappears.
+    const layerVisible=shovelActorsVisible(this,trg);
+    const sightChanged=this.cachedTargetActor!==trg||this.cachedShovelVisible!==layerVisible;
+    this.cachedTargetActor=trg;this.cachedShovelVisible=layerVisible;
+    if(!layerVisible){this.cachedCanSee=false;this.chargeTimer=0;this.burstLeft=0;this.orbChargeTimer=0;}
     // SKIP FRAME UPDATES: Only calculate expensive AI logic once every 10 frames
-    if (frameCount % 10 === this.aiOffset) {
+    if (frameCount % 10 === this.aiOffset || sightChanged) {
         
         // Decrement the timer here so it accurately counts down
         if (this.aggroTarget) {
@@ -17542,9 +17692,11 @@ if (this.eType === "COW") {
             if (this.aggroTimer <= 0) this.aggroTarget = null;
         }
 
-        this.cachedTargetDist = dist(this.x, this.y, trg.x, trg.y);
-        this.cachedCanSee = (this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL" || this.eType === "SAUCER" || this.eType === "SAUCER_RED") ? true : hasLOS(this.x, this.y, trg.x, trg.y);
-        this.cachedTargetAngle = atan2(trg.y - this.y, trg.x - this.x);
+        const tx=layerVisible?trg.x:(Number.isFinite(this.lastKnownX)?this.lastKnownX:this.x);
+        const ty=layerVisible?trg.y:(Number.isFinite(this.lastKnownY)?this.lastKnownY:this.y);
+        this.cachedTargetDist = layerVisible||Number.isFinite(this.lastKnownX)?dist(this.x,this.y,tx,ty):Infinity;
+        this.cachedCanSee = layerVisible && ((this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL" || this.eType === "SAUCER" || this.eType === "SAUCER_RED") || shovelActorLOS(this,trg));
+        this.cachedTargetAngle = Math.hypot(tx-this.x,ty-this.y)>.01?atan2(ty-this.y,tx-this.x):this.aimAngle;
 
         if (this.leader) {
             this.cachedTargetAngle += random(-0.4, 0.4); 
@@ -17555,7 +17707,7 @@ if (this.eType === "COW") {
             this.lastKnownY = trg.y;
         }
 
-        if (nm0AmbushActive && !this.isFriendly) {
+        if (nm0AmbushActive && !this.isFriendly && layerVisible) {
             this.lastKnownX = trg.x;
             this.lastKnownY = trg.y;
             this.loseSightTimer = 1200; // Permanently lock the timer
@@ -17663,7 +17815,8 @@ if (this.eType === "COW") {
         }
         // Otherwise close the distance, or sidestep if it is already close.
         let vxR, vyR;
-        if (dR > 380 || !canSee) { vxR = cos(aR) * 1.55; vyR = sin(aR) * 1.55; }
+        if(!canSee&&(!Number.isFinite(dR)||dR<20)){vxR=0;vyR=0;}
+        else if (dR > 380 || !canSee) { vxR = cos(aR) * 1.55; vyR = sin(aR) * 1.55; }
         else { vxR = cos(aR + HALF_PI * this.strafeDir) * 1.15; vyR = sin(aR + HALF_PI * this.strafeDir) * 1.15; }
         const mR = this.attemptMove(vxR, vyR);
         if (mR.x === 0 && mR.y === 0) this.strafeDir = -this.strafeDir;
@@ -17754,8 +17907,8 @@ if (this.eType === "COW") {
         } else { this.aimAngle += 0.05; }
     }
     else if (this.state === "CHASE") {
-        let targetX = (canSee || nm0AmbushActive) ? trg.x : (this.lastKnownX !== undefined ? this.lastKnownX : trg.x);
-        let targetY = (canSee || nm0AmbushActive) ? trg.y : (this.lastKnownY !== undefined ? this.lastKnownY : trg.y);
+        let targetX = (canSee || (nm0AmbushActive&&layerVisible)) ? trg.x : (Number.isFinite(this.lastKnownX) ? this.lastKnownX : this.x);
+        let targetY = (canSee || (nm0AmbushActive&&layerVisible)) ? trg.y : (Number.isFinite(this.lastKnownY) ? this.lastKnownY : this.y);
         let distToTarget = dist(this.x, this.y, targetX, targetY);
         
         iA = atan2(targetY - this.y, targetX - this.x); 
@@ -17771,7 +17924,7 @@ if (this.eType === "COW") {
                     let vx = cos(iA) * 3.5 * spd, vy = sin(iA) * 3.5 * spd; let m = this.attemptMove(vx, vy); aDx = m.x; aDy = m.y;
                 }
                 if (frameCount % 15 === 0) { spawnSplatter(this.x, this.y, "BLOOD", color(0, 100, 0)); emit(this.x, this.y, 3, color(0, 100, 0), "BLOOD"); }
-                if (dToP < 70 && trg.hp > 0 && !trg.dead) { trg.takeDamage(999); trg.dead = true; sfx.deathGrunt(); corpses.push(new Corpse(trg.x, trg.y, trg.moveAngle, trg.aimAngle, trg.shirtCol, trg.pantsCol, 13, 0, trg.decals, trg.currentWeapon, 0, "NORMAL", trg.bodyW, trg.bodyH, trg)); if(trg.isPlayer) playerRespawnTimer = 90; }
+                if (canSee && dToP < 70 && trg.hp > 0 && !trg.dead) { trg.takeDamage(999); trg.dead = true; sfx.deathGrunt(); corpses.push(new Corpse(trg.x, trg.y, trg.moveAngle, trg.aimAngle, trg.shirtCol, trg.pantsCol, 13, 0, trg.decals, trg.currentWeapon, 0, "NORMAL", trg.bodyW, trg.bodyH, trg)); if(trg.isPlayer) playerRespawnTimer = 90; }
             } else {
                 if (canSee && dToP < 600) {
                     if (this.burstCooldown > 0) { this.burstCooldown--; } 
@@ -17824,7 +17977,7 @@ if (this.eType === "COW") {
                     }
                 }
                                 // STANDARD BITE LOGIC (Only fires if not actively eating a fence)
-                if (!hitFence && distToTarget < 35 && this.biteCooldown <= 0) {  // <--- CHANGED dToP to distToTarget
+                if (!hitFence && canSee && distToTarget < 35 && this.biteCooldown <= 0) {  // <--- CHANGED dToP to distToTarget
                     let dRes = trg.takeDamage(5); 
                     if (dRes.blocked) { 
                         emit(trg.x, trg.y, dRes.broken ? 15 : 8, dRes.broken ? color(0, 200, 255) : color(255, 170, 40), "SPARK"); 
@@ -17954,7 +18107,7 @@ if (this.eType === "COW") {
 
 
         fire(sA, bowShot = null) {
-    if (this.isPlayer && (shovelToolEquipped() || shovelPlayerDepth(this)>=SHOVEL.underground)) return;
+    if (shovelPlayerDepth(this)>=SHOVEL.underground || this.isPlayer&&shovelToolEquipped()) return;
     if (boxingActive(this)) return;
     if(unarmedCivilian(this))return;
     if (this.currentWeapon === WEAPONS.BOW && this.ammo <= 0) return;
@@ -18045,7 +18198,7 @@ if (this.eType === "COW") {
     // bigger. This is the whole of the relief illusion as far as figures are
     // concerned -- it scales the shadow with the body, which is what keeps a
     // man on the mine bench from looking like a man floating over the flat.
-    const _ez = elevRenderScale(this.x, this.y) * (this.isPlayer ? shovelRenderScale(this) : 1);
+    const _ez = elevRenderScale(this.x, this.y) * shovelRenderScale(this);
     if (_ez !== 1) scale(_ez);
 // 1. Skeleton Flashing Animation (1.1 seconds)
 if (this.skeletonTimer > 0 && frameCount % 6 < 3) {
@@ -18390,8 +18543,11 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
     // walk lengthening into a run has nothing in it that switches.
     const GP = gaitPose(this.isMoving ? this.gait : 0);
     const boxing=this.isPlayer?boxerPose(this):_figureNoBoxing;
+    const shovelStroke=this.isPlayer&&meleeTool()==='SHOVEL'&&this.meleeTimer<=0
+        ? shovelDigPose(this,GP,0) : null;
     let lS = this.isMoving ? sin(this.walkCycle) * 12 * GP.swing : 0,
         bob = this.isMoving ? abs(sin(this.walkCycle)) * 2 * GP.bob + GP.lean : 0;
+    if(shovelStroke){lS*=1-shovelStroke.blend;bob+=shovelStroke.lean;}
     if (this.mounted) { lS *= 0.35; bob *= 0.4; }
     if (this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL") { bob += sin(frameCount * 0.1) * 15; lS = 0; }
     if (this.reloadTimer > 0) { let rP = 1 - (this.reloadTimer / 90); push(); noFill(); stroke(0, 200, 255, 150); strokeWeight(4); arc(0, 0, 50, 50, -PI / 2, -PI / 2 + (rP * TWO_PI)); pop(); if (!oneHandWeapon(this.currentWeapon)) bob += sin(frameCount * 0.5) * 3; }
@@ -18450,7 +18606,7 @@ if (this.isPlayer) {
         this.shirtCol=color(219,196,146);this.pantsCol=color(61,93,118);
     }
     {
-        push(); rotate(boxing.active?this.aimAngle+boxing.hip:this.moveAngle); noStroke(); fill(this.pantsCol);
+        push(); rotate(boxing.active?this.aimAngle+boxing.hip:shovelStroke?this.aimAngle+shovelStroke.hip:this.moveAngle); noStroke(); fill(this.pantsCol);
         if (this.bodyW === 105) {
           // ARMORED's 105-wide slab keeps its own legs; the rig is shaped like
           // a person and that is not one.
@@ -18484,6 +18640,7 @@ if (this.isPlayer) {
           // pelvis is under the torso anyway and nothing needs rounding off.
           const wHip = RGl.thighW, wKnee = RGl.shinW, wAnkle = RGl.shinW * 0.80;
           if(boxing.active)drawBoxingLegs(this,boxing,RGl);
+          else if(shovelStroke)drawShovelDigLegs(this,shovelStroke,RGl);
           else for (const sgn of [1, -1]) {
             // Hips either side of the axis at the spacing the old pair of rects
             // used -- wide enough that the two thighs do not merge at the
@@ -18545,7 +18702,8 @@ if (this.isPlayer) {
     // Suppressed whenever the weapon is up, because the muzzle offsets below
     // are measured in this frame -- twisting it would walk the rounds off the
     // line the aim laser is drawn on.
-    const _tw = (this.isMoving && !(this.isArmed && this.meleeTimer <= 0 && playerAiming(this)))
+    const _tw = shovelStroke ? shovelStroke.torso :
+                (this.isMoving && !(this.isArmed && this.meleeTimer <= 0 && playerAiming(this)))
                 ? sin(this.walkCycle) * GP.twist : 0;
     push(); rotate(this.aimAngle+(boxing.active?boxing.torso:_tw)); translate(bob,0);
 
@@ -19081,6 +19239,7 @@ if (this.isPlayer) {
             };
 
             armPass = (front) => {
+                if(usingShovel&&shovelStroke){drawShovelDigArms(this,shovelStroke,front);return;}
                 // Both limbs go under the torso -- that is what sinks the
                 // shoulder into the body instead of parking a blob on it. Only
                 // the hands are sorted front to back.
@@ -19913,7 +20072,7 @@ function worldBoxingTargets(actor = player) {
   if (!actor) return [];
   return enemiesList.filter(e => e && e !== actor && e.hp > 0 && !e.dead && !e.knockedOut &&
     !(e.stunTimer > 0) && (!e.isFriendly || e.isNeutral) && ragHumanoid(e.eType, e.bodyW) &&
-    Math.hypot(e.x - actor.x, e.y - actor.y) < BOXING.LOCK_RANGE);
+    Math.hypot(e.x - actor.x, e.y - actor.y) < BOXING.LOCK_RANGE && shovelActorsVisible(actor,e));
 }
 function worldBoxingMove(actor, nx, ny) {
   const ox = actor.x, oy = actor.y;
@@ -20035,7 +20194,7 @@ function updateEntities() {
       const PUSH_R = 1800, PUSH_R2 = PUSH_R * PUSH_R;
       const actors = _pushActors, aerials = _pushAerials;
       actors.length = 0; aerials.length = 0;
-      actors.push(player);
+      if(shovelPlayerDepth(player)<.5&&!(player.shovelDepthTarget>0))actors.push(player);
       // The escort's formation slots are stamped HERE, once for the whole
       // column, rather than each ally deriving its own. A slot is a property of
       // the roster and not of the man standing in it -- the same reason
@@ -20062,7 +20221,7 @@ function updateEntities() {
               e.eType === "SAUCER" || e.eType === "SAUCER_RED") { aerials.push(e); continue; }
           const dx0 = e.x - player.x, dy0 = e.y - player.y;
           if (dx0 * dx0 + dy0 * dy0 > PUSH_R2) continue;
-          actors.push(e);
+          if(shovelPlayerDepth(e)<.5&&!(e.shovelDepthTarget>0))actors.push(e);
       }
       // Cache each actor's slot. The pair test used to be two linear
       // actors.indexOf() calls inside a triple-nested loop -- O(n) work per
@@ -20286,7 +20445,7 @@ function maintainBanditPosse(hostiles) {
     if (hostile) {
       b.state = "CHASE";
       b.loseSightTimer = 3500;
-      b.lastKnownX = player.x; b.lastKnownY = player.y;
+      if(shovelActorsVisible(b,player)){b.lastKnownX = player.x; b.lastKnownY = player.y;}
     } else {
       // Passing through. Neutral means the player's bullets are the only thing
       // that can change their minds, and isFriendly keeps them out of the
@@ -20313,7 +20472,7 @@ function turnBandGroup(g) {
     e.isFriendly = false;
     e.state = "CHASE";
     e.loseSightTimer = 3500;
-    if (player) { e.lastKnownX = player.x; e.lastKnownY = player.y; }
+    if (player&&shovelActorsVisible(e,player)) { e.lastKnownX = player.x; e.lastKnownY = player.y; }
   }
 }
 
@@ -20931,6 +21090,7 @@ class Citizen {
     }
     
     update() {
+        shovelUpdateActor(this,typeof deltaTime==='number'?deltaTime:1000/60);
         // A build site is what the architecture department is FOR, so it takes
         // priority over the wander timer entirely: an architect within reach of
         // unfinished work walks to their slot on the hoarding and stays there
@@ -21079,6 +21239,7 @@ class Citizen {
     // player put up is not an obstacle to the crew putting it up. A FINISHED
     // structure blocks them like any other building.
     citizenBlocked(x, y) {
+        const buried=shovelCollision(this,x,y);if(buried!==null)return buried;
         if(this.fortressHome&&!this.buildSite) {
             const f=this.fortressHome;
             if(x<f.innerX0+15||x>f.innerX1-15||y<f.innerY0+15||y>f.innerY1-15)return true;
@@ -21121,15 +21282,17 @@ class Citizen {
         const nx = this.x + cos(ang) * spd, ny = this.y + sin(ang) * spd;
         if (!this.citizenBlocked(nx, this.y)) this.x = nx;
         if (!this.citizenBlocked(this.x, ny)) this.y = ny;
+        shovelSyncPlayerCell(this);
         this.walkCycle += 0.13;
         return false;
     }
 
     resolveCollisions() {
+        if(shovelPlayerDepth(this)>.5||(this.shovelDepthTarget||0)>0)return;
         let myRadius = 14; 
         let minDistSq = (myRadius * 2) * (myRadius * 2);
 
-        if (typeof player !== 'undefined' && player && player.hp > 0 && !player.dead) {
+        if (typeof player !== 'undefined' && player && player.hp > 0 && !player.dead&&shovelSameLayer(this,player)) {
             let dx = this.x - player.x;
             let dy = this.y - player.y;
             
@@ -21149,7 +21312,7 @@ class Citizen {
 
         if (typeof townCitizens !== 'undefined') {
             for (let other of townCitizens) {
-                if (other === this) continue; 
+                if (other === this||!shovelSameLayer(this,other)) continue;
                 
                 let dx = this.x - other.x;
                 let dy = this.y - other.y;
@@ -21209,6 +21372,8 @@ class Citizen {
 
         
         push(); translate(this.x, this.y);
+        const digScale = shovelRenderScale(this);
+        if (digScale !== 1) scale(digScale);
 
         let isBuilding = (this.state === "BUILDING");
         const WORK = ["TO_SITE", "BUILDING", "PLACING", "TO_TRUCK", "LOADING", "TO_MASON", "HANDOFF"];
@@ -35259,16 +35424,141 @@ function drawShovelItem(elevation=.12,roll=.15,worldAngle=0) {
   const P=handGunProjection(elevation,roll,figureLight(worldAngle),figureSouth(worldAngle));
   drawShovelGrip(P);drawShovelHeadSolid(P);
 }
+// Digging owns one brief stroke clock: load, drive into earth, lift, recover.
+// Both palms are derived from the rendered shaft projection, not hand-picked
+// screen points, so neither hand can lose the tool when it pitches or rolls.
+const SHOVEL_DIG_ANIM=Object.freeze({durationMs:440,contact:.43,maxParticles:96});
+let shovelDigParticles=[];
+function shovelDigProgress(c) {
+  return Math.max(0,Math.min(1,1-(c.shovelDigTimer||0)/SHOVEL_DIG_ANIM.durationMs));
+}
+function shovelDigPose(c,GP,rest,progress) {
+  if(progress===undefined&&(!(c.shovelDigTimer>0)||c.shovelDigKind==='UP'))return null;
+  const p=progress===undefined?shovelDigProgress(c):Math.max(0,Math.min(1,progress));
+  const down=c.shovelDigKind!=='FORWARD',carry=swordCarryPose(c,GP,rest);
+  const smooth=t=>{t=Math.max(0,Math.min(1,t));return t*t*(3-2*t);};
+  const blend=smooth(p/.14)*(1-smooth((p-.8)/.2));
+  const drive=smooth((p-.18)/.25),lift=smooth((p-.48)/.24);
+  const load=Math.sin(Math.PI*Math.max(0,Math.min(1,p/.44)));
+  const effort=drive*(1-lift);
+  const torso=blend*(-.25+drive*.36-lift*.13),hip=blend*(-.4+drive*.16);
+  const aim=Number.isFinite(c.aimAngle)?c.aimAngle:0;
+  const angle=carry.angle+(down?-.24+drive*.3-lift*.2:-.16+drive*.16-lift*.1-carry.angle)*blend;
+  const pitch=down?.42-drive*1.76+lift*1.05:.23-drive*.49+lift*.45;
+  const elevation=carry.elevation+(pitch-carry.elevation)*blend;
+  const roll=carry.roll+(.25+load*.13-lift*.22-carry.roll)*blend;
+  const toolScale=1-.22*blend,wa=aim+torso+angle;
+  const projection=handGunProjection(elevation,roll,figureLight(wa),figureSouth(wa));
+  const co=Math.cos(angle),si=Math.sin(angle);
+  const shaftPoint=x=>{const q=projection.point(x,0,0);return [toolScale*(co*q[0]-si*q[1]),toolScale*(si*q[0]+co*q[1])];};
+  const rg=figureRig(c.bodyW,c.bodyH),sy=c.bodyH*.425,max=(rg.upper+rg.fore)*.94*.98;
+  const rear=shaftPoint(-9),fore=shaftPoint(13*blend);
+  let ox=carry.hx+(4+effort*3.5-lift*2-carry.hx)*blend;
+  // A level forward push passes beside the cheek: carrying the rear grip
+  // through the head center hides the left fist completely from above.
+  let oy=carry.hy+(-3-effort*1.4+lift*2-(down?0:14)-carry.hy)*blend;
+  // Translate the rigid tool as a whole into both shoulders' reach. Clamping
+  // palms separately makes the shaft slide through the fists at some headings.
+  for(let i=0;i<10;i++)for(const [q,shoulder] of [[fore,sy],[rear,-sy]]) {
+    if(q===rear&&blend<.99)continue;
+    const dx=ox+q[0],dy=oy+q[1]-shoulder,d=Math.hypot(dx,dy);
+    if(d>max){const k=1-max/d;ox-=dx*k;oy-=dy*k;}
+  }
+  const right=swordFitArm(c,ox+fore[0],oy+fore[1],true);
+  const freeX=-1.5+GP.bend*3,freeY=-(c.bodyH*.49-GP.bend*2)+(rest||0)*.4;
+  const left=swordFitArm(c,freeX+(ox+rear[0]-freeX)*blend,freeY+(oy+rear[1]-freeY)*blend,false);
+  const tip=shaftPoint(55);
+  return {p,blend,drive,lift,load,effort,hip,torso,lean:blend*(1+effort*3.8),
+          angle,elevation,roll,toolScale,projection,ox,oy,right,left,tip:[ox+tip[0],oy+tip[1]]};
+}
 function shovelCarryPose(c,GP,rest) {
-  const pose=swordCarryPose(c,GP,rest);
-  if(!(c.shovelDigTimer>0))return pose;
-  const p=Math.max(0,Math.min(1,1-c.shovelDigTimer/360));
-  const strike=Math.sin(p*Math.PI),down=c.shovelDigKind==='DOWN';
-  pose.hx+=strike*10;pose.hy-=strike*5;
-  pose.angle-=strike*.32;
-  pose.elevation=pose.elevation+(down?-1.4-pose.elevation:.14-pose.elevation)*strike;
-  pose.roll+=strike*.22;
-  return pose;
+  const dig=shovelDigPose(c,GP,rest);
+  return dig?{hx:dig.right.hx,hy:dig.right.hy,angle:dig.angle,elevation:dig.elevation,roll:dig.roll}:
+    swordCarryPose(c,GP,rest);
+}
+function drawShovelDigLegs(c,pose,R) {
+  const g=figurePainter(),api=g?g.api:window,blend=pose.blend;
+  const th=R.thigh*STAND_FORE_LEG,sh=R.shin*STAND_FORE_LEG;
+  const boot=[red(c.pantsCol)*.55,green(c.pantsCol)*.55,blue(c.pantsCol)*.55];
+  for(const side of [-1,1]) {
+    const sx=-10+R.thighW*.5,sy=side*6;
+    const ex=sx+th*.8+side*blend*3-pose.effort*1.1;
+    const ey=sy+side*blend*2.4;
+    const hx=ex+sh*.8+side*blend*5-pose.effort*1.4;
+    const hy=ey+side*blend*1.5;
+    figureCelLimb(api,sx,sy,ex,ey,hx,hy,R.thighW,R.shinW,R.shinW*.8,c.pantsCol);
+    figureCelOval(api,hx+R.foot*.34,hy,R.foot,R.shinW*.8,boot,.8);
+  }
+}
+function drawShovelDigArms(c,pose,front) {
+  const paint=figurePainter(),g=paint?paint.api:window,R=figureRig(c.bodyW,c.bodyH);
+  const cloth=[red(c.shirtCol)*.94,green(c.shirtCol)*.94,blue(c.shirtCol)*.96];
+  if(!front) {
+    for(const arm of [pose.left,pose.right])figureCelLimb(g,arm.sx,arm.sy,arm.ex,arm.ey,arm.hx,arm.hy,
+      R.upperW,(R.upperW+R.foreW)*.5,R.foreW*.84,cloth);
+    return;
+  }
+  push();translate(pose.ox,pose.oy);rotate(pose.angle);scale(pose.toolScale);
+  drawShovelGrip(pose.projection);pop();
+  // The wood and D-grip go below both closed palms; the steel spade goes above.
+  for(const [arm,left] of [[pose.left,true],[pose.right,false]])
+    figureCelOval(g,arm.hx,arm.hy,R.hand,R.hand,
+      left&&c.isPlayer&&chemistSuitUnlocked?[180,180,190]:c.skinCol||[235,180,140],.8);
+  push();translate(pose.ox,pose.oy);rotate(pose.angle);scale(pose.toolScale);
+  drawShovelHeadSolid(pose.projection);pop();
+}
+function shovelBeginDigAnimation(e,kind) {
+  e.shovelDigTimer=SHOVEL_DIG_ANIM.durationMs;e.shovelDigKind=kind;e.shovelDigContactDone=false;
+}
+function shovelUpdateDigAnimation(e,dtMs) {
+  const dt=Math.max(0,Math.min(1000,Number.isFinite(dtMs)?dtMs:1000/60));
+  const before=e.shovelDigTimer||0;
+  e.shovelDigTimer=Math.max(0,before-dt);
+  const contactTime=SHOVEL_DIG_ANIM.durationMs*(1-SHOVEL_DIG_ANIM.contact);
+  if(before>contactTime&&e.shovelDigTimer<=contactTime&&!e.shovelDigContactDone) {
+    e.shovelDigContactDone=true;
+    if(e.shovelDigKind!=='UP')shovelEmitDigParticles(e);
+  }
+  // Simulation and expiry are independent of visibility and draw frequency.
+  for(let i=shovelDigParticles.length-1;i>=0;i--) {
+    const p=shovelDigParticles[i];p.ageMs+=dt;
+    if(p.ageMs>=p.lifeMs||p.level!==currentLevel){shovelDigParticles.splice(i,1);continue;}
+    const sec=dt/1000;p.x+=p.vx*sec;p.y+=p.vy*sec;p.z+=p.vz*sec;
+    p.vz-=(p.clod?175:16)*p.scale*sec;
+    if(p.z<0){p.z=0;p.vz=0;p.vx*=.7;p.vy*=.7;}
+  }
+}
+function shovelEmitDigParticles(e) {
+  if(!e||!Number.isFinite(e.x)||!Number.isFinite(e.y))return;
+  const GP=gaitPose(e.isMoving?e.gait:0),pose=shovelDigPose(e,GP,0,SHOVEL_DIG_ANIM.contact);
+  const depth=shovelPlayerDepth(e),scale=shovelRenderScale(e),a=(e.aimAngle||0)+pose.torso;
+  const co=Math.cos(a),si=Math.sin(a),tip=pose.tip;
+  const ox=(tip[0]+pose.lean)*co-tip[1]*si,oy=(tip[0]+pose.lean)*si+tip[1]*co;
+  // A few angular clods carry the strike; soft expanding dust supplies the body.
+  // Fixed total cap keeps held digging bounded even at pin-sized depths.
+  for(let i=0;i<18;i++) {
+    if(shovelDigParticles.length>=SHOVEL_DIG_ANIM.maxParticles)shovelDigParticles.shift();
+    const clod=i<8,fan=(i/17-.5)*2.2+(Math.random()-.5)*.22;
+    const speed=(clod?24:12)+Math.random()*(clod?30:14),side=a+Math.PI+fan;
+    shovelDigParticles.push({owner:e,level:currentLevel,depth,ageMs:0,lifeMs:clod?460:620,
+      x:e.x+ox*scale,y:e.y+oy*scale,z:(clod?1:2)*scale,
+      vx:Math.cos(side)*speed*scale,vy:Math.sin(side)*speed*scale,
+      vz:(clod?35+Math.random()*24:8+Math.random()*10)*scale,
+      size:(clod?1.1+Math.random()*1.6:3+Math.random()*3)*scale,clod,scale,
+      spin:(Math.random()-.5)*Math.PI});
+  }
+}
+function shovelDrawDigParticles(layerDepth=0,actor=null) {
+  for(const p of shovelDigParticles) {
+    if(actor?p.owner!==actor: p.depth>=.5)continue;
+    if(Math.abs(p.depth-layerDepth)>SHOVEL.waist+.1||p.level!==currentLevel)continue;
+    if(p.x<viewLeft-40||p.x>viewRight+40||p.y<viewTop-40||p.y>viewBottom+40)continue;
+    const t=Math.min(1,p.ageMs/p.lifeMs),alpha=(1-t)*(p.clod?240:105);
+    push();translate(p.x,p.y-p.z);noStroke();
+    if(p.clod){rotate(p.spin+t*3);fill(112,76,43,alpha);quad(-p.size,0,0,-p.size*.7,p.size,.2,0,p.size);}
+    else{fill(183,147,101,alpha);const size=p.size*(1+t*2.1);ellipse(0,0,size*1.4,size);}
+    pop();
+  }
 }
 
 function swordFitArm(c,hx,hy,right) {
@@ -43588,7 +43878,7 @@ function updateFrontierBounties(advanceTime = true) {
       // cover, firing, reload and projectile code run the actual gunfight.
       for (const e of _frontierBountyActors.values()) {
         const distance = Math.hypot(e.x - player.x, e.y - player.y);
-        if (!e.dead && e.hp > 0 && distance < 620 && hasLOS(e.x, e.y, player.x, player.y)) {
+        if (!e.dead && e.hp > 0 && distance < 620 && shovelActorLOS(e,player)) {
           e.state = 'CHASE'; e.loseSightTimer = 3500;
           e.lastKnownX = player.x; e.lastKnownY = player.y;
           e.cachedTargetDist = distance; e.cachedCanSee = true;
@@ -46932,6 +47222,7 @@ function wildlifeActorBlocked(actor, nx, ny, r) {
   return false;
 }
 function wildlifeHumanContact(a, actor, dx, dy) {
+  if(!shovelActorsVisible(a,actor))return false;
   const r = wildlifeActorRadius(actor);
   if (a.placement) {
     const px = actor.x - a.x, py = actor.y - a.y, reach = a.bodyR * 1.35 + 2 + r;
@@ -46970,7 +47261,7 @@ function wildlifeHuman(actor) {
     actor.eType === 'POLICE' || actor.eType === 'NM0');
 }
 function wildlifeStartFlight(a, human, delay) {
-  if (human) { a.threatX = human.x; a.threatY = human.y; }
+  if (human && shovelActorsVisible(a,human)) { a.threatX = human.x; a.threatY = human.y; }
   a.aggressor = null; a.intruder = null; a.intrusion = 0;
   a.state = delay ? 'ALARM' : 'FLEE'; a.alarm = Math.max(a.alarm, 360);
   a.retreatUntil = Math.max(a.retreatUntil, _wildlifeClock + 240);
@@ -46984,7 +47275,7 @@ function wildlifeRespondToInjury(a, owner) {
   const profile = wildlifeReactionFor(a);
   // A timid predator flees humans normally; cornering or actually injuring a
   // large defensive animal can provoke it. Army crossfire never blames player.
-  const identified = owner === player && player && player.hp > 0;
+  const identified = owner === player && player && player.hp > 0 && shovelActorsVisible(a,player);
   const close = identified && (a.x - player.x) * (a.x - player.x) + (a.y - player.y) * (a.y - player.y) < 360 * 360;
   if (profile.retaliation && close) {
     a.aggressor = player; a.state = 'TERRITORIAL'; a.chaseUntil = _wildlifeClock + 240;
@@ -46995,7 +47286,7 @@ function wildlifeSenseHumans(a) {
   const profile = wildlifeReactionFor(a), elapsed = Math.max(1, Math.min(12, _wildlifeClock - a.sensedAt));
   a.sensedAt = _wildlifeClock; a.sensorAt = _wildlifeClock + 8;
   let nearest = null, nearest2 = profile.alert * 1.25 * profile.alert * 1.25;
-  if (wildlifeHuman(player)) {
+  if (wildlifeHuman(player) && shovelActorsVisible(a,player)) {
     const dx = player.x - a.x, dy = player.y - a.y, d2 = dx * dx + dy * dy;
     if (d2 < nearest2) { nearest = player; nearest2 = d2; }
   }
@@ -47016,7 +47307,7 @@ function wildlifeSenseHumans(a) {
       const bucket = _pushBuckets.get(cellKey(cx, cy)); if (!bucket) continue;
       for (let i = 0; i < bucket.length; i++) {
         const actor = bucket[i]; if (++examined > 24) break humanCells;
-        if (actor === player || !wildlifeHuman(actor)) continue;
+        if (actor === player || !wildlifeHuman(actor) || !shovelActorsVisible(a,actor)) continue;
         const dx = actor.x - a.x, dy = actor.y - a.y, d2 = dx * dx + dy * dy;
         if (d2 < nearest2) { nearest = actor; nearest2 = d2; }
       }
@@ -47180,7 +47471,7 @@ function wildlifeBrain(a) {
     // Defensive charges end when the human retreats, the animal has moved
     // too far from home, or a brief pursuit ends. Retreat cannot instantly
     // trigger another warning/charge on the next sensor tick.
-    if (a.aggressor === player && player && player.hp > 0 &&
+    if (a.aggressor === player && player && player.hp > 0 && shovelActorsVisible(a,player) &&
         dx * dx + dy * dy < 390 * 390 && homeX * homeX + homeY * homeY < 460 * 460 &&
         _wildlifeClock < a.chaseUntil) {
       a.goalX = player.x; a.goalY = player.y;
@@ -47304,7 +47595,7 @@ function updateForestWildlife(dt) {
       _wildlifeGridDirty = true;
     }
     a.wingPhase += dt * 0.48;
-    if (a.state === 'TERRITORIAL' && a.aggressor === player && player.hp > 0 && _wildlifeClock >= a.attackAt &&
+    if (a.state === 'TERRITORIAL' && a.aggressor === player && player.hp > 0 && shovelActorsVisible(a,player) && _wildlifeClock >= a.attackAt &&
         wildlifeBodyMetric(a, player.x, player.y, wildlifeActorRadius(player) + 24) < 1) {
       if (typeof player.takeDamage === 'function') player.takeDamage(s.family === 'bear' ? 18 : s.family === 'snake' ? 6 : 10, a);
       a.attackAt = _wildlifeClock + 75;
@@ -47683,7 +47974,7 @@ function drawShovelStatus() {
 function resetShovelState() {
   window.shovelOwned=SHOVEL_DEBUG_OWNED;window.shovelDiscovered=false;
   window.passiveRouteUnlocked=false;window.passiveRouteExit=null;
-  shovelPickup=null;shovelExcavation={};shovelHelpMs=0;
+  shovelPickup=null;shovelExcavation={};shovelHelpMs=0;shovelDigParticles.length=0;
 }
 function serializeShovelState() {
   const p=player,active=!!(p&&p.shovelLevel===currentLevel);

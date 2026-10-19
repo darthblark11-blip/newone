@@ -80,7 +80,8 @@ run(`shovelExcavation={};player.x=528;player.y=720;player.shovelDepth=0;player.s
 check(`shovelDig('DOWN')&&shovelCellAt(528,720).depth===18&&player.shovelDepthTarget===18&&shovelPlayerDepth()===0`,
  'First dig opens one waist-deep square and begins a smooth fall');
 check(`!shovelDig('DOWN')`, 'Held dig input respects an action cooldown');
-run(`shovelUpdatePlayer(player,40);`);check(`shovelPlayerDepth()>0&&shovelPlayerDepth()<18`, 'The fall visibly interpolates depth');
+run(`shovelUpdatePlayer(player,40);`);check(`shovelPlayerDepth()===0`, 'The player stays braced through the digging windup');
+run(`shovelUpdatePlayer(player,165);`);check(`shovelPlayerDepth()>0&&shovelPlayerDepth()<18`, 'The fall visibly interpolates after the spade makes contact');
 check(`player.shovelDigTimer>0&&player.shovelDigKind==='DOWN'`, 'Digging has its own animation pose without a melee impact');
 run(`shovelSettle();`);check(`shovelPlayerDepth()===18&&shovelRenderScale(player)<1&&shovelRenderScale(player)>.6`, 'Waist depth reduces player size');
 check(`shovelDig('DOWN')`, 'A second dig deepens the player square');run(`shovelSettle();`);
