@@ -1,4 +1,4 @@
-// Walk real excavated cells beneath intact Great Gates. Passive travel is a
+// Walk real excavated cells beneath intact Great Gates or curtain walls. Travel is a
 // separate route, never a gate breach, tower victory, or recruitment grant.
 const assert = require('assert/strict');
 const {ctx, probe} = require('./harness');
@@ -81,6 +81,11 @@ unchanged('North escape');
 fresh('SOUTH', false);
 ok(walkTo(430)&&P('window.passiveRouteUnlocked'), 'Level 1 arcade play can discover the same passive tool route');
 
+fresh('SOUTH', true, 0);
+probe('player.x=passiveGate.x;passiveGate.hp=0;window.southGateBreachedStatus=true;buildColIndex();');
+ok(walkTo(430), 'A player can walk normally through the existing breached surface doorway');
+ok(P('!window.passiveRouteUnlocked&&!player.shovelGateCrossing'), 'Ordinary surface travel through a breach does not claim a player-dug passive escape');
+
 fresh('SOUTH', true, 18);
 walkTo(430);
 ok(P('!window.passiveRouteUnlocked&&!player.shovelGateCrossing'), 'Waist-deep excavation cannot pass as a fully underground gate escape');
@@ -90,6 +95,13 @@ probe(`var gapY=Math.floor(passiveGate.y/SHOVEL.cell);
   for(let ix=Math.floor(passiveX/SHOVEL.cell)-1;ix<=Math.floor(passiveX/SHOVEL.cell)+1;ix++)delete shovelExcavation['1:'+ix+':'+gapY];`);
 walkTo(430);
 ok(P('!window.passiveRouteUnlocked'), 'An unexcavated gap breaks the continuous passage');
+
+fresh();
+probe(`var lowRoofY=Math.floor(passiveGate.y/SHOVEL.cell);
+  for(let ix=Math.floor(passiveX/SHOVEL.cell)-1;ix<=Math.floor(passiveX/SHOVEL.cell)+1;ix++){
+    const c=shovelExcavation['1:'+ix+':'+lowRoofY];c.depth=72;c.ceiling=54;c.open=false;
+  }`);
+ok(!walkTo(430)&&P('!window.passiveRouteUnlocked'), 'A tunnel whose roof is below the current player level cannot complete a route');
 
 fresh();
 probe('var tunnelFromX=player.x,tunnelFromY=player.y;player.y=passiveGate.y+passiveSign*450;checkShovelPassiveRoute(player,tunnelFromX,tunnelFromY);');
@@ -102,8 +114,66 @@ ok(walkTo(-100), 'The interrupted-crossing fixture reaches the tunnel');
 probe('player.y+=120;player.attemptMove(0,6);');
 ok(P('!window.passiveRouteUnlocked&&!player.shovelGateCrossing'), 'A discontinuity during an existing crossing clears the cursor');
 
+// An ordinary tunnel can start in any lawn/open area and turn within a wall.
+// These paths are deliberately nowhere near the discoverable shovel patches.
+function boundaryPath(side) {
+  fresh();
+  const east=side==='EAST';
+  const start=east?5328:-4080, middle=east?5616:-4368, end=east?6000:-4752;
+  probe(`shovelExcavation={};
+    var passivePath=${JSON.stringify([[start,432],[middle,432],[middle,720],[end,720]])};
+    for(let i=1;i<passivePath.length;i++){
+      const a=passivePath[i-1],b=passivePath[i],n=Math.ceil(Math.hypot(b[0]-a[0],b[1]-a[1])/24);
+      for(let j=0;j<=n;j++){
+        const ix=Math.floor((a[0]+(b[0]-a[0])*j/n)/SHOVEL.cell),iy=Math.floor((a[1]+(b[1]-a[1])*j/n)/SHOVEL.cell);
+        for(let ox=-1;ox<=1;ox++)for(let oy=-1;oy<=1;oy++)shovelMakeCell(ix+ox,iy+oy,36,true,0);
+      }
+    }
+    player.x=${start};player.y=432;player.shovelGateCrossing=null;
+    player.shovelDepth=player.shovelDepthTarget=36;
+    var passivePathIndex=1;`);
+}
+function walkPathPoint() {
+  return P(`(() => {
+    const p=passivePath[passivePathIndex];if(!p)return false;
+    let ticks=0;
+    while(Math.hypot(p[0]-player.x,p[1]-player.y)>.01&&ticks++<400){
+      const vx=Math.max(-6,Math.min(6,p[0]-player.x)),vy=Math.max(-6,Math.min(6,p[1]-player.y));
+      const m=player.attemptMove(vx,vy);if(Math.hypot(m.x,m.y)<.001)return false;
+    }
+    if(Math.hypot(p[0]-player.x,p[1]-player.y)>.01)return false;
+    passivePathIndex++;return true;
+  })()`);
+}
+for(const side of ['WEST','EAST']){
+  boundaryPath(side);
+  ok(P('!SHOVEL_GRASS_PATCHES.some(p=>player.x>=p.x&&player.x<p.x+p.w&&player.y>=p.y&&player.y<p.y+p.h)'), side+': route starts away from every authored shovel lawn');
+  ok(walkPathPoint(), side+': native movement enters a curtain wall from arbitrary city ground');
+  ok(P('player.shovelGateCrossing&&player.shovelGateCrossing.route==="SECTOR"&&!window.passiveRouteUnlocked'), side+': walking under a side wall does not require a Great Gate slab');
+  ok(walkPathPoint(), side+': the passage can turn and run along the wall');
+  if(side==='WEST'){
+    probe('saveGame();loadGame();');
+    ok(P('player.shovelGateCrossing&&player.shovelGateCrossing.route==="SECTOR"'), 'A winding side-wall route resumes its city origin after save/load');
+  }
+  ok(walkPathPoint(), side+': the player natively reaches the countryside through their own bent passage');
+  ok(P('window.passiveRouteUnlocked&&window.passiveRouteExit.side==='+JSON.stringify(side)+'&&sectorOverworldAvailable()&&canTravel("SOUTH")'), side+': leaving the enclosing wall unlocks the overworld and normal travel');
+  unchanged(side+' escape');
+  probe('saveGame();window.passiveRouteUnlocked=false;window.passiveRouteExit=null;loadGame();');
+  ok(P('window.passiveRouteUnlocked&&window.passiveRouteExit.side==='+JSON.stringify(side)), side+': the exit direction persists without pretending to be a north/south gate');
+}
+
 fresh();
-probe('var nativeTunnelFrom=player.y;player.x=passiveGate.x+passiveGate.w/2+30;player.y=passiveGate.y-passiveGate.h/2-6;player.y+=12;checkShovelPassiveRoute(player,player.x,player.y-12);');
-ok(P('!window.passiveRouteUnlocked&&!player.shovelGateCrossing'), 'Going around a gate wing is not an underground crossing of its slab');
+ok(walkTo(-100), 'The legacy-save fixture reaches an intact gate tunnel');
+probe(`var legacyShovelSave=serializeShovelState();
+  legacyShovelSave.player.crossing={gateSide:'SOUTH',gateX:passiveGate.x,gateY:passiveGate.y,
+    gateW:passiveGate.w,gateH:passiveGate.h,lastX:player.x,lastY:player.y,walked:300};
+  player.shovelGateCrossing=null;restoreShovelPlayer(legacyShovelSave);`);
+ok(P('player.shovelGateCrossing&&player.shovelGateCrossing.route==="SECTOR"'), 'An existing legitimate gate-crossing save migrates to free-form route progress');
+ok(walkTo(430)&&P('window.passiveRouteUnlocked'), 'The migrated older tunnel save can finish its native escape');
+
+boundaryPath('WEST');
+probe(`player.x=-4752;player.y=720;player.shovelGateCrossing=null;
+  saveGame();loadGame();player.attemptMove(-6,0);`);
+ok(P('!window.passiveRouteUnlocked&&!player.shovelGateCrossing'), 'Loading beyond a curtain wall without a continuous city-origin tunnel does not award travel');
 
 console.log('Shovel passive route: '+checks+' native crossing, persistence, travel and isolation checks passed.');

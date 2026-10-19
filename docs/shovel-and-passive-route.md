@@ -33,10 +33,14 @@ Civilian falls remain separate from the saloon's boxing knockout physics.
 
 ## Excavation
 
-Surface excavation requires a whole square of grass. Roads, sidewalks,
-car parks, water, bridges and foundations reject it. Maintained lawns near the
-home and gate approaches provide clear entry points; lawns beyond the gates
-provide exits. Existing genuine grass lots in other streamed sectors also work.
+Excavation works throughout the mapped outdoor levels, including existing
+courtyard grass, dirt, streets and paths. Ground does not need a special grass
+record or belong to a marked route. Actual building foundations block the whole
+excavation square, at every depth. Furniture, landscaping, gates and boundary
+walls do not count as building foundations. The added home and gate lawns
+remain as optional discovery and entry points.
+
+![Existing west-side courtyard grass accepts digging](previews/shovel-west-courtyard.png)
 
 The first downward scoop makes a waist-deep square. Further scoops deepen the
 shaft, lowering and shrinking the player smoothly. At full underground depth,
@@ -47,36 +51,43 @@ world units to keep numeric behavior bounded.
 
 At ground level, a forward scoop opens only one adjacent waist-deep square.
 Repeated digging from outside cannot deepen it: enter the hole first. Below
-ground, forward digging opens adjacent soft earth at the player's current
-height and retains the roof above it, allowing tunnels beneath paved surfaces
-and gates. Movement checks the whole player footprint and the intervening
-excavated space, so unmined soil and disconnected holes remain solid.
+ground, forward digging opens adjacent earth at the player's current height
+and retains the roof above it, allowing player-chosen tunnels beneath paved
+surfaces, gates and boundary walls. Walls still block waist-deep movement:
+dig fully underground before passing underneath. Movement checks the whole
+player footprint and intervening excavated space, so unmined soil and
+disconnected holes remain solid.
 
 Climbing raises the player within the shaft without deleting its lower floor.
-Emerging requires grass overhead; climbing cannot pass through a gate or a
-concrete roof. Surface attacks cannot hit a fully underground player, and the
-shovel cannot hit opponents on a different level.
+Emerging works on open ground, including paved ground; move beyond a solid
+wall before climbing out. Building foundations remain protected underground.
+Surface attacks cannot hit a fully underground player, and the shovel cannot
+hit opponents on a different level.
 
 ## Passive route
 
-Walk a continuous, fully underground passage from the city side through an
-entire intact Great Gate and clear its outside edge. This records **PASSIVE
-ROUTE** and unlocks the pause menu's overworld and normal southward travel.
-The north gate can also reveal this route; the unmapped Sector 09 remains
-unavailable.
+Dig and walk your own fully underground passage out of Stick City's enclosure.
+Any north/south Great Gate or east/west curtain wall can be crossed, and the
+passage can start anywhere inside and turn freely. There is no prescribed
+entry lawn, tunnel corridor or exit patch. Once the player clears the outer
+wall, **PASSIVE ROUTE** unlocks the pause menu's overworld and normal southward
+travel. The unmapped Sector 09 remains unavailable.
 
-This route leaves gate health, transmission towers, enemy forces and population
+This check leaves gate health, transmission towers, enemy forces and population
 rewards unchanged. Stick City remains unliberated until its ordinary story is
-completed. Loading outside, teleporting, or standing in a shallow pit cannot
-award the route. A legitimate save partway beneath the gate can resume the
-crossing. Pickup location, ownership, tool selection, excavations, player depth,
-climbing height and passive-route progress survive saving and travel.
+completed. Loading outside, teleporting, standing in a shallow pit or crossing
+undug soil cannot award the route. A legitimate save partway through any tunnel
+can resume the continuous city-origin crossing, including saves made with the
+older Great Gate tracker. Pickup location, ownership, tool selection,
+excavations, player depth, climbing height and passive-route progress survive
+saving and travel.
 
 ## Checks
 
 ```sh
 node tools/check-shovel-tool.js
 node tools/check-shovel-terrain.js
+node tools/check-shovel-foundations.js
 node tools/check-shovel-render.js
 node tools/check-shovel-passive-route.js
 node tools/check-shovel-integration.js
@@ -84,7 +95,9 @@ node tools/check-shovel-integration.js
 
 These checks exercise native melee, dig actions, movement, input dispatch and
 the complete campaign save/load path. Browser review additionally uses real
-p5/WebGL at portrait and landscape phone sizes.
+p5/WebGL at portrait and landscape phone sizes, including touch digging on the
+existing west-side courtyard lawn, a player-created westward tunnel, intact
+gates, save/load, and actual passive travel to Level 2.
 
 ![Waist-deep grass excavation with shovel controls](previews/shovel-waist-pit.png)
 

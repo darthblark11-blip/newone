@@ -1,5 +1,5 @@
 // Exercise the excavation through the actual map, Character collision and
-// movement, including traversing an intact Great Gate below its foundation.
+// movement, including traversing an intact Great Gate below its wall.
 const assert=require('assert');
 const{probe}=require('./harness');let checks=0;
 function check(code,message){assert.ok(probe(code),message);checks++;}
@@ -57,14 +57,14 @@ check(`SHOVEL_GRASS_PATCHES.every(p=>{
  for(let y=p.y+48;y<p.y+p.h;y+=96)for(let x=p.x+48;x<p.x+p.w;x+=96)
   if(!shovelSurfaceCellSoft(Math.floor(x/96),Math.floor(y/96)))return false;return true;})`,
  'Every authored grass-square garden and gate verge is clear on the real city map');
-check(`shovelSurfaceSoftAt(528,720)&&!shovelSurfaceSoftAt(0,0)&&!shovelSurfaceSoftAt(1200,720)`,
- 'Grass is diggable while street asphalt and sidewalks remain hard');
-check(`!shovelSurfaceSoftAt(600,600)&&!shovelSurfaceSoftAt(5136,5400)`,
- 'House foundations and the intact Great Gate reject surface digging');
+check(`shovelSurfaceSoftAt(528,720)&&shovelSurfaceSoftAt(0,0)&&shovelSurfaceSoftAt(1200,720)`,
+ 'Grass, street asphalt and sidewalks all permit excavation without marked routes');
+check(`!shovelSurfaceSoftAt(600,600)&&shovelSurfaceSoftAt(5136,5400)&&!!shovelSurfaceWallAt(5136,5400)`,
+ 'House foundations block digging while the intact Great Gate permits tunneling beneath its wall');
 run(`var savedTerrainBuildings=buildings;buildings=[{x:528,y:720,w:96,h:96,isParkingLot:true,isGrassLot:true}];`);
-check(`!shovelSurfaceSoftAt(528,720)&&!shovelSurfaceCellSoft(5,7)`, 'Parking wins over the legacy grass flag');
+check(`shovelSurfaceSoftAt(528,720)&&shovelSurfaceCellSoft(5,7)`, 'Car parks do not become building foundations through their legacy grass flag');
 run(`buildings=[{x:528,y:720,w:96,h:96,isPond:true,isGrassLot:true,isWater:true}];`);
-check(`!shovelSurfaceSoftAt(528,720)&&!shovelSurfaceCellSoft(5,7)`, 'Water prevents a surface shaft');
+check(`shovelSurfaceSoftAt(528,720)&&shovelSurfaceCellSoft(5,7)`, 'Water surfaces do not add an excavation restriction beyond buildings');
 run(`buildings=[{x:517,y:709,w:4,h:4}];`);
 check(`!shovelSurfaceCellSoft(5,7)`, 'A foundation entirely between samples also prevents digging');
 run(`buildings=savedTerrainBuildings;`);
@@ -74,8 +74,9 @@ run(`setMeleeTool('SHOVEL');isPaused=true;`);check(`!shovelDig('DOWN')`, 'Pause 
 run(`isPaused=false;doTick=false;`);check(`!shovelDig('DOWN')`, 'A frozen simulation cannot excavate');
 run(`doTick=true;killcamMode=true;`);check(`!shovelDig('DOWN')`, 'Kill cameras reject excavation');
 run(`killcamMode=false;inTownCutscene=true;`);check(`!shovelDig('DOWN')`, 'Story cutscenes retain their normal action lock');
-run(`inTownCutscene=false;player.x=0;player.y=0;`);check(`!shovelDig('DOWN')&&Object.keys(shovelExcavation).length===0`, 'Asphalt cannot start a shaft');
-run(`player.x=528;player.y=720;`);
+run(`inTownCutscene=false;player.x=0;player.y=0;`);
+check(`shovelDig('DOWN')&&shovelCellAt(0,0).depth===18`, 'An unmarked paved street can start its own shaft');
+run(`shovelExcavation={};player.x=528;player.y=720;player.shovelDepth=0;player.shovelDepthTarget=0;player.shovelCooldownMs=0;player._shovelCellKey=null;`);
 check(`shovelDig('DOWN')&&shovelCellAt(528,720).depth===18&&player.shovelDepthTarget===18&&shovelPlayerDepth()===0`,
  'First dig opens one waist-deep square and begins a smooth fall');
 check(`!shovelDig('DOWN')`, 'Held dig input respects an action cooldown');
@@ -96,7 +97,7 @@ check(`player.x===624&&shovelPlayerDepth()===36`, 'Movement reaches the actual a
 check(`player.checkCol(624,790)&&player.checkCol(624,650)`, 'The full player footprint cannot pass through an undug side wall');
 run(`shovelMakeCell(8,7,36,false,18);`);
 check(`player.checkCol(816,720)`, 'A disconnected dug square does not allow crossing the unexcavated gap');
-check(`shovelDig('UP')`, 'Up digs through the roof when the surface is verified grass');run(`shovelSettle();`);
+check(`shovelDig('UP')`, 'Up opens a roof on clear ground');run(`shovelSettle();`);
 check(`shovelPlayerDepth()===18&&shovelCellAt(624,720).open&&shovelCellAt(624,720).ceiling===0`, 'Grass overhead becomes a safe climbable exit shaft');
 check(`shovelDig('UP')`, 'Another up action climbs to the surface');run(`shovelSettle();`);
 check(`shovelPlayerDepth()===0&&shovelCellAt(624,720).depth===36`, 'Climbing never fills or loses the original excavation');
@@ -132,11 +133,11 @@ run(`shovelDig('DOWN');shovelSettle();shovelDig('DOWN');shovelSettle();player.ai
 check(`shovelWalk(0,-14*96)`, 'The complete tunnel remains connected and can be walked back');run(`shovelSettle();`);
 check(`shovelDig('UP')`, 'The original grass shaft remains recoverable after the gate crossing');run(`shovelSettle();shovelDig('UP');shovelSettle();`);
 check(`shovelPlayerDepth()===0&&player.y===4560`, 'Recovery returns to the same original entry position');
-// Standing above an existing tunnel must not turn concrete into diggable grass.
+// A tunnel may pass below a wall, but cannot surface inside that solid wall.
 run(`player.x=5136;player.y=5040;player.shovelDepth=0;player.shovelDepthTarget=0;player._shovelCellKey=null;player.shovelCooldownMs=0;`);
-check(`!shovelDig('DOWN')&&!shovelCellAt(player.x,player.y).open`, 'A saved tunnel beneath concrete does not permit a new surface hole');
+check(`!shovelDig('DOWN')&&!shovelCellAt(player.x,player.y).open`, 'Standing inside an intact gate wall cannot open its saved tunnel roof');
 run(`player.shovelDepth=36;player.shovelDepthTarget=36;player.shovelLevel=1;player._shovelCellKey=shovelCellKey(Math.floor(player.x/96),Math.floor(player.y/96));`);
-check(`!shovelDig('UP')&&player.shovelDepthTarget===36`, 'Climbing cannot emerge through the gate or concrete');
+check(`!shovelDig('UP')&&player.shovelDepthTarget===36`, 'Climbing cannot emerge inside the intact gate wall');
 // The north route has the same complete underground-to-overworld recovery.
 run(`shovelExcavation={};player.x=5136;player.y=-3408;player.aimAngle=-Math.PI/2;
  player.shovelLevel=1;player.shovelDepth=0;player.shovelDepthTarget=0;player._shovelCellKey=null;player.shovelCooldownMs=0;
@@ -156,8 +157,8 @@ check(`shovelSameLayer(p0,p18)&&!shovelSameLayer(p0,p36)&&!shovelSameLayer(p18,p
  'Combat permits waist-level contact while fully underground is a separate layer');
 run(`var originalLevel=currentLevel;currentLevel=2;buildings=[{x:528,y:720,w:192,h:192,isGrassLot:true}];
  player.x=528;player.y=720;player.shovelLevel=2;player.shovelDepth=0;player.shovelDepthTarget=0;player.shovelCooldownMs=0;player._shovelCellKey=null;`);
-check(`shovelSurfaceCellSoft(5,7)&&shovelDig('DOWN')&&shovelCellAt(528,720,2).depth===18`, 'Genuine grass lots support the owned shovel in other mapped levels');
-check(`!shovelSurfaceSoftAt(5136,4560)`, 'Authored Level 1 lawns never leak into another biome');
+check(`shovelSurfaceCellSoft(5,7)&&shovelDig('DOWN')&&shovelCellAt(528,720,2).depth===18`, 'Grass lots support the owned shovel in other mapped levels');
+check(`shovelSurfaceSoftAt(5136,4560)`, 'Open ground in another biome works without a Level 1 lawn record');
 run(`shovelSettle();currentLevel=3;shovelUpdatePlayer(player,16);`);
 check(`shovelPlayerDepth()===0&&player.shovelDepthTarget===0&&shovelCellAt(528,720,2).depth===18`, 'Changing levels resets actor depth without deleting the previous excavation');
 console.log('Shovel terrain: '+checks+' checks passed.');

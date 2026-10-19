@@ -8429,7 +8429,7 @@ const SHOVEL_GRASS_PATCHES = Object.freeze([
   Object.freeze({id:'SOUTH_EXIT',x:4992,y:5856,w:288,h:288})
 ]);
 let shovelExcavation = {};
-// The lawns belong to the authored shovel route even where their verge lies
+// Keep the discoverable shovel lawns clear even where their verge lies
 // outside the city's chunk mask. Filter after assigning legacy destruction
 // keys so clearing these tiny areas never renumbers a neighbouring building.
 function filterShovelGrassContent(biome,content) {
@@ -8466,30 +8466,46 @@ function shovelSameLayer(a,b) {
 function shovelOverlapsRect(x,y,p,b) {
   return x+p>b.x-b.w/2&&x-p<b.x+b.w/2&&y+p>b.y-b.h/2&&y-p<b.y+b.h/2;
 }
-function shovelSurfaceSoftAt(x,y,level=currentLevel) {
-  if(level!==currentLevel||level<1||level>7||!Number.isFinite(x)||!Number.isFinite(y))return false;
-  let grass=level===1&&SHOVEL_GRASS_PATCHES.some(r=>x>=r.x&&x<=r.x+r.w&&y>=r.y&&y<=r.y+r.h);
-  const solids=buildings;
-  for(let i=0;i<solids.length;i++) {
-    const b=solids[i];if(!b||!shovelOverlapsRect(x,y,0,b))continue;
-    // Water, car parks and foundations take priority over a painted lawn.
-    if(b.isPond||b.isWater||b.isRiver||b.isParkingLot||b.isDeck)return false;
-    if(b.isGrassLot){grass=true;continue;}
-    if(b.noClip||b.isCropField||b.isMarket)continue;
-    return false;
+// Excavation follows actual architecture, not the terrain bake's paint records.
+// Courtyard turf, dirt, paving and scenery do not need an isGrassLot collider.
+const SHOVEL_FOUNDATION_FLAGS = Object.freeze(['isBlockBuilding','isHouse','isBarn','isTrailer',
+  'isShanty','isMarket','isGasStation','isLiquorStore','isApartment','isWesternBldg',
+  'isMall','isCasino','isTheater','isArena','isAlienBldg','isChip','isPyramid',
+  'isTower','isBuiltStructure','isBuildSite']);
+const SHOVEL_FOUNDATION_PROPS = new Set(['CABIN','SITEHUT','GUARDBOX','BUNKER',
+  'CIVICPAVILION','OUTPOST','KIOSK','WATCHTOWER']);
+function shovelIsFoundation(b) {
+  if(!b||b.noClip||b.isGovFortress||b.isGiantBarrier)return false;
+  if(SHOVEL_FOUNDATION_FLAGS.some(k=>b[k]))return true;
+  if(b.propType)return SHOVEL_FOUNDATION_PROPS.has(b.propType);
+  // Older plain roof records have no type flag. Metadata does not turn those
+  // into scenery; positive terrain/prop flags do (planters, trees, lots, etc.).
+  return !Object.keys(b).some(k=>k.startsWith('is')&&b[k]===true&&
+    !['isAuthored','isChunkSolid','isLandmark','isCivic','isOutpost','isAnchor','isPlayerBuilt'].includes(k));
+}
+function shovelFoundationAt(x,y,r=0) {
+  for(const b of buildings)
+    if(b&&shovelOverlapsRect(x,y,r,b)&&shovelIsFoundation(b))return b;
+  return null;
+}
+function shovelSurfaceWallAt(x,y,r=0) {
+  for(const b of buildings) {
+    if(!b||b.noClip||!shovelOverlapsRect(x,y,r,b))continue;
+    if(b.isGovFortress) {if(!inOpenGateway(b,x-r)||!inOpenGateway(b,x+r))return b;}
+    else if(b.isGiantBarrier||b.isWall||b.isHouseWall||b.isFence||b.isUBarrier||
+      ['BORDERWALL','BLASTWALL','CHECKPOINT','CIVICBALUSTRADE','REVETMENT',
+        'RUINWALL','HOARDING','FENCE'].includes(b.propType))return b;
   }
-  return grass;
+  return null;
+}
+function shovelSurfaceSoftAt(x,y,level=currentLevel) {
+  return level===currentLevel&&level>=1&&level<=7&&Number.isFinite(x)&&Number.isFinite(y)&&
+    !shovelFoundationAt(x,y);
 }
 function shovelSurfaceCellSoft(ix,iy,level=currentLevel) {
-  const x=(ix+.5)*SHOVEL.cell,y=(iy+.5)*SHOVEL.cell,r=SHOVEL.cell*.5-.1;
-  for(const [dx,dy]of[[0,0],[-r,-r],[r,-r],[-r,r],[r,r]])
-    if(!shovelSurfaceSoftAt(x+dx,y+dy,level))return false;
-  // A small foundation entirely between the samples must also prevent a shaft.
-  for(const b of buildings) {
-    if(!b||b.noClip||(b.isGrassLot&&!b.isPond&&!b.isParkingLot&&!b.isWater)||b.isCropField||b.isMarket)continue;
-    if(shovelOverlapsRect(x,y,r,b))return false;
-  }
-  return true;
+  if(level!==currentLevel||level<1||level>7||!Number.isInteger(ix)||!Number.isInteger(iy))return false;
+  // Test the entire square, including foundations lying between corner samples.
+  return !shovelFoundationAt((ix+.5)*SHOVEL.cell,(iy+.5)*SHOVEL.cell,SHOVEL.cell*.5-.1);
 }
 function shovelForwardCell(e=player) {
   const ix=Math.floor(e.x/SHOVEL.cell),iy=Math.floor(e.y/SHOVEL.cell);
@@ -8520,12 +8536,13 @@ function shovelDig(kind) {
   const ix=Math.floor(e.x/SHOVEL.cell),iy=Math.floor(e.y/SHOVEL.cell);
   let cell=shovelCellAt(e.x,e.y),changed=false;
   if(kind==='DOWN') {
+    if(!shovelSurfaceCellSoft(ix,iy))return shovelFeedback(e,'A building foundation blocks the shovel.');
+    if(depth<.5&&shovelSurfaceWallAt(e.x,e.y,SHOVEL.bodyRadius))
+      return shovelFeedback(e,'Dig beside the wall, then tunnel underneath.');
     if(cell&&!cell.open&&depth<.5) {
-      if(!shovelSurfaceCellSoft(ix,iy))return shovelFeedback(e,'The shovel only breaks grass.');
       cell.open=true;cell.ceiling=0;
     }
     if(!cell) {
-      if(!shovelSurfaceCellSoft(ix,iy))return shovelFeedback(e,'The shovel only breaks grass.');
       cell=shovelMakeCell(ix,iy,SHOVEL.waist,true);
     } else if(depth+.5>=cell.depth) {
       if(cell.depth>=SHOVEL.maxDepth)return shovelFeedback(e,'Bedrock. Dig sideways or climb out.');
@@ -8535,9 +8552,9 @@ function shovelDig(kind) {
     e.shovelClimbing=false;changed=true;
   } else if(kind==='FORWARD') {
     const next=shovelForwardCell(e),old=shovelCellAt(next.x,next.y);
+    if(!shovelSurfaceCellSoft(next.ix,next.iy))return shovelFeedback(e,'A building foundation blocks the shovel.');
     if(depth<SHOVEL.waist-.5) {
       if(old)return shovelFeedback(e,'Step into the hole before digging farther.');
-      if(!shovelSurfaceCellSoft(next.ix,next.iy))return shovelFeedback(e,'The shovel only breaks grass.');
       shovelMakeCell(next.ix,next.iy,SHOVEL.waist,true);changed=true;
     } else {
       if(!cell)return shovelFeedback(e,'Enter a dug shaft before tunneling.');
@@ -8551,8 +8568,6 @@ function shovelDig(kind) {
         old.ceiling=Math.min(old.ceiling,Math.max(0,floor-SHOVEL.waist));
         changed=true;
       } else if(floor<SHOVEL.underground) {
-        if(!shovelSurfaceCellSoft(next.ix,next.iy))
-          return shovelFeedback(e,'Dig down once more to tunnel under solid ground.');
         shovelMakeCell(next.ix,next.iy,SHOVEL.waist,true);changed=true;
       } else {
         shovelMakeCell(next.ix,next.iy,floor,false,floor-SHOVEL.waist);changed=true;
@@ -8561,8 +8576,9 @@ function shovelDig(kind) {
   } else {
     if(!cell||depth<.5)return shovelFeedback(e,'Already at ground level.');
     const next=Math.max(0,Math.round(target/SHOVEL.step)*SHOVEL.step-SHOVEL.step);
-    if(next<SHOVEL.underground&&!shovelSurfaceCellSoft(ix,iy))
-      return shovelFeedback(e,'Solid ground overhead. Tunnel back to grass.');
+    if(!shovelSurfaceCellSoft(ix,iy))return shovelFeedback(e,'A building foundation blocks the shovel.');
+    if(next<SHOVEL.underground&&shovelSurfaceWallAt(e.x,e.y,SHOVEL.bodyRadius))
+      return shovelFeedback(e,'A wall is overhead. Tunnel beyond its edge to climb out.');
     if(next<SHOVEL.underground){cell.open=true;cell.ceiling=0;}
     else cell.ceiling=Math.min(cell.ceiling,Math.max(0,next-SHOVEL.waist));
     e.shovelDepthTarget=next;e.shovelClimbing=true;changed=true;
@@ -8608,8 +8624,17 @@ function shovelCollision(e,nx,ny) {
   if(d>SHOVEL.cell*4)return true;
   let surface=false;
   const steps=Math.max(1,Math.ceil(d/10)),r=SHOVEL.bodyRadius;
+  const oldFoundation=shovelFoundationAt(e.x,e.y,r);
+  const shallow=depth<SHOVEL.underground-.5,oldWall=shallow?shovelSurfaceWallAt(e.x,e.y,r):null;
   for(let n=0;n<=steps;n++) {
     const x=e.x+dx*n/steps,y=e.y+dy*n/steps;
+    const foundation=shovelFoundationAt(x,y,r);
+    // An old save may already be beneath a structure. Let it back out, while
+    // preventing any new entry into that or a neighbouring foundation.
+    if(foundation&&foundation!==oldFoundation)return true;
+    // Waist-deep pits still leave the upper body in a surface wall's way.
+    const wall=shallow?shovelSurfaceWallAt(x,y,r):null;
+    if(wall&&wall!==oldWall)return true;
     for(const [ox,oy]of[[0,0],[-r,-r],[r,-r],[-r,r],[r,r]]) {
       const cell=shovelCellAt(x+ox,y+oy);
       if(!cell){if(depth<=SHOVEL.waist+.5){surface=true;continue;}return true;}
@@ -42835,14 +42860,35 @@ function overworldTownManageable(id) {
     sectorTowersAreDown(1) || (currentLevel === 1 && !!window.nm0AmbushClearedStatus);
 }
 
-// Award the route only after walking an excavated passage all the way from the
-// city face to the far side of an intact Great Gate. The cursor is plain data so
-// a save halfway through a tunnel can resume it, but discontinuous movement,
-// shallow cells and entering from the country cannot manufacture an escape.
+// Track an ordinary player-dug escape from anywhere inside Stick City's walls.
+// The outer bounds come from those walls and gates, not the discovery lawns or
+// an authored corridor. Retain the old save field name for existing tunnels.
+let shovelPassiveBoundsCache = null;
+function shovelPassiveSectorBounds() {
+  if (!sealedSector) return null;
+  if (shovelPassiveBoundsCache && shovelPassiveBoundsCache.sector === sealedSector)
+    return shovelPassiveBoundsCache.outer;
+  const outer = { x0: sealedSector.x0, x1: sealedSector.x1,
+    y0: sealedSector.y0, y1: sealedSector.y1 };
+  for (const b of buildings) {
+    if (!b || b.isOutpost || !(b.isGovFortress || b.isGiantBarrier)) continue;
+    const x0=b.x-b.w/2, x1=b.x+b.w/2, y0=b.y-b.h/2, y1=b.y+b.h/2;
+    const touchesSide = (Math.abs(x1-sealedSector.x0)<1 || Math.abs(x0-sealedSector.x1)<1) &&
+      y1>sealedSector.y0 && y0<sealedSector.y1;
+    const touchesEnd = (Math.abs(y1-sealedSector.y0)<1 || Math.abs(y0-sealedSector.y1)<1) &&
+      x1>sealedSector.x0 && x0<sealedSector.x1;
+    if (!touchesSide && !touchesEnd) continue;
+    outer.x0=Math.min(outer.x0,x0); outer.x1=Math.max(outer.x1,x1);
+    outer.y0=Math.min(outer.y0,y0); outer.y1=Math.max(outer.y1,y1);
+  }
+  shovelPassiveBoundsCache = { sector: sealedSector, outer };
+  return outer;
+}
+
 function checkShovelPassiveRoute(e, fromX, fromY) {
   if (!e || e !== player) return false;
   if (currentLevel !== 1 || currentBiome !== 1 ||
-      window.passiveRouteUnlocked || e.dead || e.hp <= 0) {
+      window.passiveRouteUnlocked || e.dead || e.hp <= 0 || !sealedSector) {
     e.shovelGateCrossing = null;
     return false;
   }
@@ -42856,36 +42902,26 @@ function checkShovelPassiveRoute(e, fromX, fromY) {
   }
   if (distance < 0.0001) return false;
   let crossing = e.shovelGateCrossing;
-  if (crossing && (!Number.isFinite(crossing.walked) || crossing.walked < 0 ||
+  if (crossing && (crossing.route !== 'SECTOR' || !Number.isFinite(crossing.walked) || crossing.walked < 0 ||
       !Number.isFinite(crossing.lastX) || !Number.isFinite(crossing.lastY) ||
       Math.hypot(crossing.lastX - fromX, crossing.lastY - fromY) > 0.1)) crossing = null;
-  const gates = sectorGates();
-  let gate = crossing && gates.find(g => g.x === crossing.gateX && g.y === crossing.gateY &&
-    g.w === crossing.gateW && g.h === crossing.gateH);
-  if (!gate) {
-    crossing = null;
-    gate = gates.find(g => {
-      if (g.hp <= 0 || gateIsOpen(g)) return false;
-      const sign = g.y > 0 ? 1 : -1, inner = -g.h / 2;
-      return sign * (fromY - g.y) <= inner && sign * (e.y - g.y) > inner &&
-        Math.abs(fromX - g.x) < g.w / 2 - 16 && Math.abs(e.x - g.x) < g.w / 2 - 16;
-    });
-    if (!gate) { e.shovelGateCrossing = null; return false; }
-    crossing = { gateSide: gate.y > 0 ? 'SOUTH' : 'NORTH', gateX: gate.x, gateY: gate.y,
-      gateW: gate.w, gateH: gate.h, lastX: fromX, lastY: fromY, walked: 0 };
+  if (!crossing) {
+    // Loading or being moved outside cannot invent the missing city-side walk.
+    if (fromX < sealedSector.x0 || fromX > sealedSector.x1 ||
+        fromY < sealedSector.y0 || fromY > sealedSector.y1) {
+      e.shovelGateCrossing = null;
+      return false;
+    }
+    crossing = { route: 'SECTOR', lastX: fromX, lastY: fromY, walked: 0 };
   }
-  const sign = gate.y > 0 ? 1 : -1, progress = sign * (e.y - gate.y), half = gate.h / 2;
-  if (gate.hp <= 0 || gateIsOpen(gate) || progress < -half - 0.1) {
-    e.shovelGateCrossing = null;
-    return false;
-  }
-  // Include both endpoints and every eight world units between them: neither a
-  // diagonal move nor a cell seam can bridge an unexcavated patch of ground.
+  // Include both endpoints and every eight world units: diagonal moves, bends
+  // and cell seams must still stay in the player's excavated underground space.
   const samples = Math.max(1, Math.ceil(distance / 8));
+  const depth = shovelPlayerDepth(e);
   for (let i = 0; i <= samples; i++) {
     const t = i / samples, x = fromX + dx * t, y = fromY + dy * t;
     const cell = shovelCellAt(x, y);
-    if (Math.abs(x - gate.x) >= gate.w / 2 - 12 || !cell || cell.depth < underground) {
+    if (!cell || cell.depth < underground || cell.depth + 0.1 < depth || cell.ceiling > depth + 0.1) {
       e.shovelGateCrossing = null;
       return false;
     }
@@ -42893,9 +42929,15 @@ function checkShovelPassiveRoute(e, fromX, fromY) {
   crossing.walked += distance;
   crossing.lastX = e.x; crossing.lastY = e.y;
   e.shovelGateCrossing = crossing;
-  if (progress < half + 16 || crossing.walked < gate.h) return false;
+  const outer = shovelPassiveSectorBounds(), clearance = (SHOVEL.bodyRadius || 14) + 2;
+  let side = null;
+  if (e.y < outer.y0-clearance) side = 'NORTH';
+  else if (e.y > outer.y1+clearance) side = 'SOUTH';
+  else if (e.x < outer.x0-clearance) side = 'WEST';
+  else if (e.x > outer.x1+clearance) side = 'EAST';
+  if (!side) return false;
   window.passiveRouteUnlocked = true;
-  window.passiveRouteExit = { level: 1, side: crossing.gateSide, x: e.x, y: e.y };
+  window.passiveRouteExit = { level: 1, side, x: e.x, y: e.y };
   e.shovelGateCrossing = null;
   objectiveTimer = 210;
   streakMsgText = 'PASSIVE ROUTE';
@@ -47633,7 +47675,7 @@ function drawShovelStatus() {
     fill(30,25,18,225*alpha);rect(width/2-w/2,height-49,w,37,5);
     fill(244,221,170,255*alpha);textAlign(CENTER,CENTER);textSize(10);
     text(notice || (connectedGamepad()?'R1/Y SWING · L2 DOWN · R2 AHEAD · B CLIMB':
-      window.isDesktop?'E SWING · C DOWN · F AHEAD · V CLIMB':'DIG ON GRASS · HOLD TO KEEP DIGGING'),width/2,height-31);
+      window.isDesktop?'E SWING · C DOWN · F AHEAD · V CLIMB':'HOLD TO DIG · BUILDING FOUNDATIONS BLOCK'),width/2,height-31);
   }
   pop();
   if(doTick && Number.isFinite(deltaTime))shovelHelpMs=Math.max(0,shovelHelpMs-Math.min(100,deltaTime));
@@ -47655,7 +47697,7 @@ function restoreShovelState(data) {
   window.shovelOwned=SHOVEL_DEBUG_OWNED||!!data.owned;
   window.shovelDiscovered=typeof data.discovered==='boolean'?data.discovered:!!data.owned&&!data.pickup;
   window.passiveRouteUnlocked=!!data.passive;
-  window.passiveRouteExit=data.passive&&data.exit&&['NORTH','SOUTH'].includes(data.exit.side)?{...data.exit}:null;
+  window.passiveRouteExit=data.passive&&data.exit&&['NORTH','SOUTH','EAST','WEST'].includes(data.exit.side)?{...data.exit}:null;
   const p=data.pickup;
   if(!window.shovelDiscovered&&p&&p.level===1&&Number.isFinite(p.x)&&Number.isFinite(p.y))shovelPickup={x:p.x,y:p.y,level:1};
   if(Array.isArray(data.cells))for(const c of data.cells.slice(0,32768)){
@@ -47677,8 +47719,10 @@ function restoreShovelPlayer(data) {
   player.shovelClimbing=!!state.climbing;
   player._shovelCellKey=c.level+':'+c.ix+':'+c.iy;
   const q=state.crossing;
-  if(currentLevel===1&&q&&['NORTH','SOUTH'].includes(q.gateSide)&&
-    ['gateX','gateY','gateW','gateH','lastX','lastY','walked'].every(k=>Number.isFinite(q[k]))&&
-    Math.hypot(q.lastX-player.x,q.lastY-player.y)<1)
-    player.shovelGateCrossing={...q};
+  const continuous=q&&['lastX','lastY','walked'].every(k=>Number.isFinite(q[k]))&&q.walked>=0&&
+    Math.hypot(q.lastX-player.x,q.lastY-player.y)<1;
+  const legacy=continuous&&['NORTH','SOUTH'].includes(q.gateSide)&&
+    ['gateX','gateY','gateW','gateH'].every(k=>Number.isFinite(q[k]));
+  if(currentLevel===1&&continuous&&(q.route==='SECTOR'||legacy))
+    player.shovelGateCrossing={route:'SECTOR',lastX:q.lastX,lastY:q.lastY,walked:q.walked};
 }
