@@ -7,6 +7,11 @@ parked cars and barrels are removed from the opening, including their cached
 collision entries. The wall wings still block movement and rounds. Stick
 City's north wall retains its NM-0 HQ interaction.
 
+The [shovel's passive route](shovel-and-passive-route.md) provides a separate
+underground escape beneath either intact Great Gate. It unlocks overworld
+travel without damaging the gate, clearing an ambush, liberating the city or
+awarding surviving allies.
+
 Tower collapse changes the surviving sector roster to friendly recruits.
 Those recruits join the army only when the NM-0 liberation ambush clears:
 

@@ -302,6 +302,9 @@ let travelDirection = null;
 let militaryToBring = 0;
 window.northGateBreached = false;
 window.southGateBreached = false;
+// A tunnel exit grants travel without liberating the city or damaging a gate.
+window.passiveRouteUnlocked = false;
+window.passiveRouteExit = null;
 window.militaryToBring = 0; // Carries over to level 2
 // --- RESOURCES ---
 // Materials the player harvests out of the world. Held on window so the town
@@ -311,6 +314,10 @@ window.resources = { WOOD: 0, METAL: 0, STONE: 0 };
 // start -- the resource system is unreachable without it. Set this false and
 // grant it somewhere to make it something the player has to find.
 window.pickaxeOwned = true;
+// Debug inventory grant is independent of discovering the ground item.
+const SHOVEL_DEBUG_OWNED = true;
+window.shovelOwned = SHOVEL_DEBUG_OWNED;
+window.shovelDiscovered = false;
 window.meleeToolSel = "NONE";
 
 let globalPopulation = 0;
@@ -3797,6 +3804,7 @@ function isAirborneEnemy(e) {
 }
 
 function actorShow(c) {
+  if (shovelBelowGroundActor(c)) { _shovelBelowActor = c; return; }
   if (isAirborneEnemy(c) && !isGroundBodyActor(c)) { _airborneActors.push(c); return; }
   if (_depthOn || _legacyActorsQueued) { _depthActors.push(c); return; }
   c.show();
@@ -3918,6 +3926,168 @@ function drawDepthSorted() {
   drawFrontierTownEntranceOverhead();
 }
 
+
+// Excavations use the terrain authority's grid. Paint only cells in the view,
+// never the saved world's entire tunnel network. Figures below the surface
+// have a separate cutaway pass, so an intact gate remains their ceiling.
+let _shovelBelowActor = null;
+const _shovelVisibleCells = [];
+function shovelBelowGroundActor(c) {
+  return currentLevel >= 1 && currentLevel <= 7 && !!c && !!c.isPlayer && shovelPlayerDepth(c) > 0;
+}
+function shovelRenderDepth(c) {
+  const d = Number.isFinite(c && c.shovelVisualDepth) ? c.shovelVisualDepth : shovelPlayerDepth(c);
+  return Math.max(0, d);
+}
+function shovelRenderCellsInView() {
+  const out = _shovelVisibleCells; out.length = 0;
+  if (currentLevel < 1 || currentLevel > 7) return out;
+  const s = SHOVEL.cell;
+  // Camera bounds, rather than world residency, keep this proportional to the
+  // image even when a save contains thousands of shafts far away.
+  const left = Math.floor((camX - s) / s), top = Math.floor((camY - s) / s);
+  const right = left + Math.min(100, Math.ceil(width / Math.max(.1, zoom) / s) + 3);
+  const bottom = top + Math.min(100, Math.ceil(height / Math.max(.1, zoom) / s) + 3);
+  for (let iy = top; iy <= bottom; iy++) for (let ix = left; ix <= right; ix++) {
+    const c = shovelCellAt((ix + .5) * s, (iy + .5) * s);
+    if (c && c.open && c.depth > 0) out.push(c);
+  }
+  return out;
+}
+function drawShovelGrassPatches() {
+  if (currentLevel !== 1 || !authoredCore) return;
+  push(); noStroke();
+  for (const p of SHOVEL_GRASS_PATCHES) {
+    if (!inView(p.x + p.w / 2, p.y + p.h / 2, Math.max(p.w, p.h))) continue;
+    fill(73, 111, 52); rect(p.x, p.y, p.w, p.h);
+    // Broad alternating blades give these verges the same comic planes as
+    // grass lots. Their geometry matches the actual diggable rectangles.
+    for (let y = p.y + 8; y < p.y + p.h; y += 24) {
+      for (let x = p.x + 9; x < p.x + p.w; x += 24) {
+        const n = ((x * 13 + y * 7) % 17 + 17) % 17;
+        stroke(n < 8 ? color(103, 139, 65) : color(53, 94, 43)); strokeWeight(1.8);
+        line(x, y + 4, x + 3, y - 3); line(x + 3, y - 3, x + 6, y + 2);
+      }
+    }
+    noStroke();
+  }
+  pop();
+}
+function shovelPitNeighbors(c, roofLayer = false, depth = 0) {
+  const s = SHOVEL.cell;
+  const connected = (dx, dy) => {
+    const n = shovelCellAt(c.x + dx * s, c.y + dy * s);
+    return !!n && (roofLayer ? n.depth >= depth && n.ceiling < depth : n.open && n.depth > 0);
+  };
+  return [connected(0, -1), connected(1, 0), connected(0, 1), connected(-1, 0)];
+}
+function shovelPitFloorBounds(c, joins) {
+  const s = SHOVEL.cell, h = s / 2;
+  const inset = Math.min(31, 9 + Math.log2(1 + c.depth / SHOVEL.step) * 5);
+  return [c.x - h + (joins[3] ? 0 : inset), c.y - h + (joins[0] ? 0 : inset),
+    c.x + h - (joins[1] ? 0 : inset), c.y + h - (joins[2] ? 0 : inset)];
+}
+function drawShovelPitCell(c, roofLayer = false, layerDepth = 0) {
+  const h = SHOVEL.cell / 2, x = c.x - h, y = c.y - h, r = c.x + h, b = c.y + h;
+  const joins = shovelPitNeighbors(c, roofLayer, layerDepth), floor = shovelPitFloorBounds(c, joins);
+  const dark = Math.min(.75, Math.log2(1 + c.depth / SHOVEL.step) * .11);
+  noStroke(); fill(32, 25, 20); rect(x, y, SHOVEL.cell, SHOVEL.cell);
+  fill(111 - dark * 53, 76 - dark * 39, 44 - dark * 19);
+  rect(floor[0], floor[1], floor[2] - floor[0], floor[3] - floor[1]);
+  if (!joins[0]) { fill(143, 100, 57); quad(x, y, r, y, floor[2], floor[1], floor[0], floor[1]); }
+  if (!joins[3]) { fill(119, 79, 44); quad(x, y, floor[0], floor[1], floor[0], floor[3], x, b); }
+  if (!joins[1]) { fill(64, 43, 30); quad(r, y, r, b, floor[2], floor[3], floor[2], floor[1]); }
+  if (!joins[2]) { fill(49, 34, 25); quad(x, b, floor[0], floor[3], floor[2], floor[3], r, b); }
+  // Three bands compress with depth rather than adding an unbounded number
+  // of strata. Broken roots stay on exposed walls, never on joined cells.
+  for (let i = 1; i <= 3; i++) {
+    const t = i / 4;
+    stroke(i === 2 ? color(174, 125, 72) : color(70, 47, 30)); strokeWeight(i === 2 ? 1.6 : 1);
+    if (!joins[0]) line(x + (floor[0] - x) * t, y + (floor[1] - y) * t, r + (floor[2] - r) * t, y + (floor[1] - y) * t);
+    if (!joins[3]) line(x + (floor[0] - x) * t, y + (floor[1] - y) * t, x + (floor[0] - x) * t, b + (floor[3] - b) * t);
+    if (!joins[1]) line(r + (floor[2] - r) * t, y + (floor[1] - y) * t, r + (floor[2] - r) * t, b + (floor[3] - b) * t);
+    if (!joins[2]) line(x + (floor[0] - x) * t, b + (floor[3] - b) * t, r + (floor[2] - r) * t, b + (floor[3] - b) * t);
+  }
+  stroke(176, 143, 86); strokeWeight(1.3);
+  for (let i = 0; i < 3; i++) {
+    const a = 17 + i * 27;
+    if (!joins[0]) { line(x + a, y + 2, x + a + 3, y + 9); line(x + a + 3, y + 9, x + a + 1, y + 13); }
+    if (!joins[3]) line(x + 2, y + a, x + 9, y + a + 3);
+  }
+  stroke(29, 39, 24); strokeWeight(3);
+  if (!joins[0]) line(x + 1, y + 1, r - 1, y + 1);
+  if (!joins[3]) line(x + 1, y + 1, x + 1, b - 1);
+  if (!joins[1]) line(r - 1, y + 1, r - 1, b - 1);
+  if (!joins[2]) line(x + 1, b - 1, r - 1, b - 1);
+  if (!roofLayer) {
+    stroke(112, 143, 68); strokeWeight(2);
+    if (!joins[0]) line(x + 3, y - 1, r - 3, y - 1);
+    if (!joins[3]) line(x - 1, y + 3, x - 1, b - 3);
+  }
+  // Sparse floor chips remain deterministic across saves and revisits.
+  noStroke(); fill(171 - dark * 90, 126 - dark * 70, 73 - dark * 37);
+  for (let i = 0; i < 4; i++) {
+    const px = floor[0] + (floor[2] - floor[0]) * (.18 + ((c.ix * 13 + c.iy * 7 + i * 3) & 7) * .085);
+    const py = floor[1] + (floor[3] - floor[1]) * (.22 + i * .18);
+    triangle(px - 2, py, px + 3, py - 1, px + 1, py + 2);
+  }
+}
+function drawShovelExcavationGround() {
+  const cells = shovelRenderCellsInView();
+  if (!cells.length) return;
+  push(); for (const c of cells) drawShovelPitCell(c); pop();
+}
+function shovelClipCells(cells) {
+  const ctx = drawingContext, h = SHOVEL.cell / 2;
+  ctx.beginPath();
+  for (const c of cells) ctx.rect(c.x - h, c.y - h, SHOVEL.cell, SHOVEL.cell);
+  ctx.clip();
+}
+function drawShovelPitForeground(c, roofLayer = false, layerDepth = 0) {
+  const joins = shovelPitNeighbors(c, roofLayer, layerDepth);
+  if (joins[2]) return;
+  const f = shovelPitFloorBounds(c, joins), h = SHOVEL.cell / 2;
+  noStroke(); fill(49, 34, 25);
+  quad(c.x - h, c.y + h, f[0], f[3], f[2], f[3], c.x + h, c.y + h);
+  stroke(28, 33, 22); strokeWeight(3);
+  line(c.x - h, c.y + h - 1, c.x + h, c.y + h - 1);
+}
+function drawShovelUndergroundActor() {
+  const e = _shovelBelowActor; _shovelBelowActor = null;
+  if (!shovelBelowGroundActor(e)) return;
+  const cell = shovelCellAt(e.x, e.y), d = shovelPlayerDepth(e);
+  if (!cell) return;
+  const s = SHOVEL.cell, cells = [];
+  const roofed = !cell.open;
+  for (let y = -1; y <= 1; y++) for (let x = -1; x <= 1; x++) {
+    const n = shovelCellAt(cell.x + x * s, cell.y + y * s);
+    if (n && (roofed ? n.depth >= d && n.ceiling < d : n.open && n.depth > 0)) cells.push(n);
+  }
+  push(); const ctx = drawingContext; ctx.save();
+  try {
+    if (roofed) {
+      // A local comic cutaway exposes the tunnel without removing the gate or
+      // pretending the player stands on its roof. The rest of the surface
+      // stays intact, and a hatched ceiling rim closes the near edge again.
+      ctx.beginPath(); ctx.rect(e.x - 64, e.y - 58, 128, 116); ctx.clip();
+      shovelClipCells(cells);
+      for (const c of cells) drawShovelPitCell(c, true, d);
+    } else shovelClipCells(cells);
+    push();
+    try { translate(0, Math.min(14, shovelRenderDepth(e) * .45)); e.show(); }
+    finally { pop(); }
+    for (const c of cells) drawShovelPitForeground(c, roofed, d);
+    if (roofed) {
+      noStroke(); fill(31, 25, 21, 220); rect(e.x - 64, e.y - 58, 128, 9); rect(e.x - 64, e.y + 47, 128, 11);
+      stroke(172, 135, 87); strokeWeight(1.3);
+      for (let x = e.x - 64; x < e.x + 64; x += 10) {
+        line(x, e.y - 57, x + 7, e.y - 50); line(x, e.y + 48, x + 7, e.y + 57);
+      }
+      stroke(23, 20, 17); strokeWeight(3);
+      line(e.x - 64, e.y - 49, e.x + 64, e.y - 49); line(e.x - 64, e.y + 47, e.x + 64, e.y + 47);
+    }
+  } finally { ctx.restore(); pop(); }
+}
 
 // The legacy building flags that are MASSES, and the colour their extruded
 // sides take. Same convention as PROP_RISE: [r, g, b] is a box and gets walls,
@@ -6799,6 +6969,7 @@ viewBottom = camY + height / zoom + shakePad;
   // A FRAME THAT FAILS MUST NOT TAKE THE CONTROLS WITH IT, above.
   const _sceneDepth = frameStackDepth();
   _airborneActors.length = 0;
+  _shovelBelowActor = null;
   _depthActors.length = 0; _depthOn = _legacyActorsQueued = false;
   try {
 
@@ -6826,6 +6997,7 @@ viewBottom = camY + height / zoom + shakePad;
   // handrails stay in the late pass, so the far rail still passes in front of
   // whoever is crossing.
   if (BIOME_ACTIVE) drawBiomeDecks();
+  drawShovelExcavationGround();
   updateBloodPools();
   drawBloodChunks();
 
@@ -7001,12 +7173,15 @@ viewBottom = camY + height / zoom + shakePad;
 
   if (typeof updateWeaponDrops === 'function') updateWeaponDrops(); 
   if (typeof updateHealthPacks === 'function') updateHealthPacks(); 
-  if (typeof updateResourceDrops === 'function') updateResourceDrops(); 
+  if (typeof updateResourceDrops === 'function') updateResourceDrops();
+  updateShovelPickup();
   if (typeof updateGrenadePickups === 'function') updateGrenadePickups();
   for (let i = barrels.length - 1; i >= 0; i--) {
     let b = barrels[i]; if (inView(b.x, b.y, 50)) { fill(200, 30, 30); stroke(100, 0, 0); strokeWeight(2); ellipse(b.x, b.y, 24, 24); fill(40); noStroke(); ellipse(b.x, b.y, 16, 16); fill(255, 70); noStroke(); ellipse(b.x - 4, b.y - 4, 8, 8); }
     if (b.hp <= 0) { triggerExplosion(b.x, b.y, 160); barrels.splice(i, 1); }
   }
+
+  drawShovelUndergroundActor();
 
   // Roofs, standing props and parked vehicles occlude ground actors. Aircraft
   // cross above them, while bullets, muzzle flashes and smoke remain in front.
@@ -7366,7 +7541,8 @@ viewBottom = camY + height / zoom + shakePad;
       else if (nm0AmbushActive) txt = currentLevel === 4 ? "Defeat the Grey Fatigue Ambush!" : "Defeat the NM-0 Ambush!";
       else if (currentLevel === 1) {
           // South is the way onward; the NM-0 HQ behind the north gate is a side leg.
-          if (!window.southGateBreachedStatus) txt = "Find a way past\nthe south \"Great Gate\"!";
+          if (window.passiveRouteUnlocked) txt = "Passive route discovered.\nPause > Overworld > Travel";
+          else if (!window.southGateBreachedStatus) txt = "Find a way past\nthe south \"Great Gate\"!";
           else if (window.northGateBreachedStatus && !window.armorBlueprintPickedUp) txt = "Enter the NM-0 HQ.";
           else txt = "Head SOUTH out of Stick City.";
       }
@@ -7711,7 +7887,7 @@ viewBottom = camY + height / zoom + shakePad;
           }
           
       // --- DRAW MELEE SWITCHER BUTTON ---
-if (swordPickedUp || window.pickaxeOwned) {
+if (swordPickedUp || window.pickaxeOwned || window.shovelOwned) {
     const _mt = meleeTool();
     drawBtn(height/2 - 110, "MELEE: " + (_mt === "NONE" ? "UNARMED" : _mt));
 } else {
@@ -7726,7 +7902,7 @@ if (swordPickedUp || window.pickaxeOwned) {
           }
           
           // 2. Overworld Toggle
-          if (typeof townsData !== 'undefined' && townsData[currentLevel] && townsData[currentLevel].established) {
+          if (sectorOverworldAvailable()) {
               let label = inOverworldView ? "HIDE OVERWORLD" : "OPEN OVERWORLD";
               drawBtn(height/2 - 10, label);
           } else {
@@ -8176,13 +8352,14 @@ let resourceDrops = [];
 
 // ---------------------------------------------------------------------------
 // MELEE TOOL
-// Three states rather than the sword's original two, cycled from the pause
+// Owned tools and unarmed stance are cycled from the pause
 // menu. window.swordEquipped stays the source of truth for "is the sword in
 // hand" because half a dozen places in the combat and animation code already
 // read it; meleeTool() is the wider question, and the two are kept in step by
 // setMeleeTool() so neither can drift.
 // ---------------------------------------------------------------------------
 function meleeTool() {
+  if (window.meleeToolSel === "SHOVEL" && window.shovelOwned) return "SHOVEL";
   if (window.meleeToolSel === "PICKAXE" && window.pickaxeOwned) return "PICKAXE";
   if (typeof swordPickedUp !== 'undefined' && swordPickedUp && window.swordEquipped !== false) return "SWORD";
   return "NONE";
@@ -8191,6 +8368,7 @@ function meleeToolOptions() {
   const out = ["NONE"];
   if (typeof swordPickedUp !== 'undefined' && swordPickedUp) out.push("SWORD");
   if (window.pickaxeOwned) out.push("PICKAXE");
+  if (window.shovelOwned) out.push("SHOVEL");
   return out;
 }
 function setMeleeTool(t) {
@@ -8208,7 +8386,239 @@ function cycleMeleeTool() {
 // How hard a swing hits a harvestable. The pick is the tool; a blade takes
 // chips out of a tree and a fist does almost nothing, which is the whole
 // argument for carrying one.
-const HARVEST_SWING = { PICKAXE: 100, SWORD: 26, NONE: 7 };
+const HARVEST_SWING = { PICKAXE: 100, SWORD: 26, NONE: 7, SHOVEL: 0 };
+
+// The spade is a utility tool. Its broad face knocks people out through the
+// established nonlethal world fall; it never deals weapon or structure damage.
+function shovelMeleeLayerMatch(a,b) {
+  if(typeof shovelSameLayer === 'function')return shovelSameLayer(a,b);
+  if(typeof shovelPlayerDepth !== 'function')return true;
+  return Math.abs(shovelPlayerDepth(a)-shovelPlayerDepth(b))<36;
+}
+function resolveShovelSwing(c) {
+  if(!c||!c.isPlayer||meleeTool()!=="SHOVEL")return 0;
+  let hits=0;
+  for(const e of enemiesList) {
+    if(!e||e===c||!(e.hp>0)||e.dead||e.eType==="AERIAL"||e.eType==="AERIAL_PISTOL"||
+       (e.isFriendly&&!e.isNeutral)||!shovelMeleeLayerMatch(c,e))continue;
+    const d=Math.hypot(e.x-c.x,e.y-c.y);
+    const range=e.eType==="ARMORED"||e.eType==="ALIEN_GATOR"||e.eType==="SAUCER"||
+      e.eType==="SAUCER_RED"||e.eType==="SNAIL_HYBRID"?110:76;
+    if(d>=range)continue;
+    const a=(Math.atan2(e.y-c.y,e.x-c.x)-c.aimAngle+Math.PI*3)%(Math.PI*2)-Math.PI;
+    if(Math.abs(a)>=Math.PI/2&&d>=30)continue;
+    if(boxingActive(e))boxingExit(e);
+    e._boxingWorldManaged=false;
+    startPunchStun(e,c.aimAngle);e.punchHitCount=0;e.hitFlash=4;
+    sfx.hitBody();emit(e.x,e.y,10,color(221,197,135),"DUST");
+    hits++;
+  }
+  return hits;
+}
+
+// Excavations are columns in a square grid, independent of the streamed map.
+// A surface shaft is open; a horizontal tunnel retains the ground above it.
+// Positive depth runs down into the earth, so elevation keeps its own meaning.
+const SHOVEL = Object.freeze({cell:96,step:18,waist:18,underground:36,maxDepth:4096,
+  cooldownMs:320,minScale:.045,bodyRadius:14});
+const SHOVEL_GRASS_PATCHES = Object.freeze([
+  Object.freeze({id:'HOME_GARDEN',x:480,y:672,w:192,h:96}),
+  Object.freeze({id:'NORTH_VERGE',x:4992,y:-3456,w:288,h:288}),
+  Object.freeze({id:'SOUTH_VERGE',x:4992,y:4224,w:288,h:384}),
+  Object.freeze({id:'NORTH_EXIT',x:4992,y:-4992,w:288,h:288}),
+  Object.freeze({id:'SOUTH_EXIT',x:4992,y:5856,w:288,h:288})
+]);
+let shovelExcavation = {};
+// The lawns belong to the authored shovel route even where their verge lies
+// outside the city's chunk mask. Filter after assigning legacy destruction
+// keys so clearing these tiny areas never renumbers a neighbouring building.
+function filterShovelGrassContent(biome,content) {
+  if(biome!==1)return content;
+  for(const key of ['solid','cars','decor','decorBake']) {
+    const list=content[key]||[];
+    for(let i=list.length-1;i>=0;i--) {
+      const b=list[i],clutter=key==='decor'||key==='decorBake';
+      const r=clutter?45*(b.s||1):key==='cars'?45:0;
+      const hw=Math.max(0,b.w||r*2)/2+SHOVEL.bodyRadius;
+      const hh=Math.max(0,b.h||r*2)/2+SHOVEL.bodyRadius;
+      if(SHOVEL_GRASS_PATCHES.some(p=>b.x+hw>p.x&&b.x-hw<p.x+p.w&&
+          b.y+hh>p.y&&b.y-hh<p.y+p.h))list.splice(i,1);
+    }
+  }
+  return content;
+}
+function shovelCellKey(ix,iy,level=currentLevel) {return level+':'+ix+':'+iy;}
+function shovelCellAt(x,y,level=currentLevel) {
+  return shovelExcavation[shovelCellKey(Math.floor(x/SHOVEL.cell),Math.floor(y/SHOVEL.cell),level)]||null;
+}
+function shovelPlayerDepth(e=player) {
+  return e&&e.isPlayer&&currentLevel>=1&&currentLevel<=7&&e.shovelLevel===currentLevel&&Number.isFinite(e.shovelDepth)?
+    Math.max(0,Math.min(SHOVEL.maxDepth,e.shovelDepth)):0;
+}
+function shovelRenderScale(e=player) {
+  return Math.max(SHOVEL.minScale,1/(1+shovelPlayerDepth(e)/76));
+}
+function shovelSameLayer(a,b) {
+  const ad=shovelPlayerDepth(a),bd=shovelPlayerDepth(b);
+  if((ad>=SHOVEL.underground)!==(bd>=SHOVEL.underground))return false;
+  return Math.abs(ad-bd)<=SHOVEL.waist+.01;
+}
+function shovelOverlapsRect(x,y,p,b) {
+  return x+p>b.x-b.w/2&&x-p<b.x+b.w/2&&y+p>b.y-b.h/2&&y-p<b.y+b.h/2;
+}
+function shovelSurfaceSoftAt(x,y,level=currentLevel) {
+  if(level!==currentLevel||level<1||level>7||!Number.isFinite(x)||!Number.isFinite(y))return false;
+  let grass=level===1&&SHOVEL_GRASS_PATCHES.some(r=>x>=r.x&&x<=r.x+r.w&&y>=r.y&&y<=r.y+r.h);
+  const solids=buildings;
+  for(let i=0;i<solids.length;i++) {
+    const b=solids[i];if(!b||!shovelOverlapsRect(x,y,0,b))continue;
+    // Water, car parks and foundations take priority over a painted lawn.
+    if(b.isPond||b.isWater||b.isRiver||b.isParkingLot||b.isDeck)return false;
+    if(b.isGrassLot){grass=true;continue;}
+    if(b.noClip||b.isCropField||b.isMarket)continue;
+    return false;
+  }
+  return grass;
+}
+function shovelSurfaceCellSoft(ix,iy,level=currentLevel) {
+  const x=(ix+.5)*SHOVEL.cell,y=(iy+.5)*SHOVEL.cell,r=SHOVEL.cell*.5-.1;
+  for(const [dx,dy]of[[0,0],[-r,-r],[r,-r],[-r,r],[r,r]])
+    if(!shovelSurfaceSoftAt(x+dx,y+dy,level))return false;
+  // A small foundation entirely between the samples must also prevent a shaft.
+  for(const b of buildings) {
+    if(!b||b.noClip||(b.isGrassLot&&!b.isPond&&!b.isParkingLot&&!b.isWater)||b.isCropField||b.isMarket)continue;
+    if(shovelOverlapsRect(x,y,r,b))return false;
+  }
+  return true;
+}
+function shovelForwardCell(e=player) {
+  const ix=Math.floor(e.x/SHOVEL.cell),iy=Math.floor(e.y/SHOVEL.cell);
+  const a=Number.isFinite(e.aimAngle)?e.aimAngle:(Number.isFinite(e.lastMoveAngle)?e.lastMoveAngle:0);
+  const dx=Math.cos(a),dy=Math.sin(a),horizontal=Math.abs(dx)>=Math.abs(dy);
+  const tx=ix+(horizontal?(dx>=0?1:-1):0),ty=iy+(!horizontal?(dy>=0?1:-1):0);
+  return {ix:tx,iy:ty,x:(tx+.5)*SHOVEL.cell,y:(ty+.5)*SHOVEL.cell};
+}
+function shovelFeedback(e,text) {e.shovelNotice=text;e.shovelNoticeMs=1600;return false;}
+function shovelMakeCell(ix,iy,depth,open,ceiling=0) {
+  return shovelExcavation[shovelCellKey(ix,iy)]={level:currentLevel,ix,iy,
+    x:(ix+.5)*SHOVEL.cell,y:(iy+.5)*SHOVEL.cell,
+    depth:Math.min(SHOVEL.maxDepth,depth),open:!!open,ceiling:open?0:Math.max(0,ceiling)};
+}
+function shovelDig(kind) {
+  const e=player;
+  if(!e||!e.isPlayer||e.dead||e.hp<=0||currentLevel<1||currentLevel>7||!window.shovelOwned||meleeTool()!=='SHOVEL')return false;
+  if(!started||!doTick||isPaused||isDead||isWin||killcamMode||inStoryIntro||inStoryRoom||
+      inTownCutscene||inFarmCutscene||inFarmPostCutscene||inPostAmbushCutscene||inFortCutscene||
+      inLvl4Cutscene||inDarchonCall||inTravelMenu||inOverworldView||inWorldBuildingMenu||inUpgradeMenu||
+      frontierSaloonIsInside()||boxingActive(e))return false;
+  kind=String(kind).toUpperCase();if(!['DOWN','FORWARD','UP'].includes(kind))return false;
+  if(e.mounted||e.isDashing||e.dashTimer>0)return shovelFeedback(e,'Dismount and stand still to dig.');
+  if((e.shovelCooldownMs||0)>0)return false;
+  if(e.shovelLevel!==currentLevel){e.shovelLevel=currentLevel;e.shovelDepth=0;e.shovelDepthTarget=0;}
+  const depth=shovelPlayerDepth(e),target=Number.isFinite(e.shovelDepthTarget)?e.shovelDepthTarget:depth;
+  if(Math.abs(target-depth)>1)return false;
+  const ix=Math.floor(e.x/SHOVEL.cell),iy=Math.floor(e.y/SHOVEL.cell);
+  let cell=shovelCellAt(e.x,e.y),changed=false;
+  if(kind==='DOWN') {
+    if(cell&&!cell.open&&depth<.5) {
+      if(!shovelSurfaceCellSoft(ix,iy))return shovelFeedback(e,'The shovel only breaks grass.');
+      cell.open=true;cell.ceiling=0;
+    }
+    if(!cell) {
+      if(!shovelSurfaceCellSoft(ix,iy))return shovelFeedback(e,'The shovel only breaks grass.');
+      cell=shovelMakeCell(ix,iy,SHOVEL.waist,true);
+    } else if(depth+.5>=cell.depth) {
+      if(cell.depth>=SHOVEL.maxDepth)return shovelFeedback(e,'Bedrock. Dig sideways or climb out.');
+      cell.depth=Math.min(SHOVEL.maxDepth,cell.depth+SHOVEL.step);
+    }
+    e.shovelDepthTarget=Math.min(cell.depth,Math.round(target/SHOVEL.step)*SHOVEL.step+SHOVEL.step);
+    e.shovelClimbing=false;changed=true;
+  } else if(kind==='FORWARD') {
+    const next=shovelForwardCell(e),old=shovelCellAt(next.x,next.y);
+    if(depth<SHOVEL.waist-.5) {
+      if(old)return shovelFeedback(e,'Step into the hole before digging farther.');
+      if(!shovelSurfaceCellSoft(next.ix,next.iy))return shovelFeedback(e,'The shovel only breaks grass.');
+      shovelMakeCell(next.ix,next.iy,SHOVEL.waist,true);changed=true;
+    } else {
+      if(!cell)return shovelFeedback(e,'Enter a dug shaft before tunneling.');
+      const floor=Math.min(SHOVEL.maxDepth,Math.max(SHOVEL.waist,Math.round(target/SHOVEL.step)*SHOVEL.step));
+      if(old) {
+        // Reach only the next face at this height. Repeated outside swings
+        // cannot mine another column deeper than the player's own feet.
+        if(old.depth>=floor&&old.ceiling<=Math.max(0,floor-SHOVEL.waist))
+          return shovelFeedback(e,'The next square is open. Step forward.');
+        if(old.depth<floor)old.depth=floor;
+        old.ceiling=Math.min(old.ceiling,Math.max(0,floor-SHOVEL.waist));
+        changed=true;
+      } else if(floor<SHOVEL.underground) {
+        if(!shovelSurfaceCellSoft(next.ix,next.iy))
+          return shovelFeedback(e,'Dig down once more to tunnel under solid ground.');
+        shovelMakeCell(next.ix,next.iy,SHOVEL.waist,true);changed=true;
+      } else {
+        shovelMakeCell(next.ix,next.iy,floor,false,floor-SHOVEL.waist);changed=true;
+      }
+    }
+  } else {
+    if(!cell||depth<.5)return shovelFeedback(e,'Already at ground level.');
+    const next=Math.max(0,Math.round(target/SHOVEL.step)*SHOVEL.step-SHOVEL.step);
+    if(next<SHOVEL.underground&&!shovelSurfaceCellSoft(ix,iy))
+      return shovelFeedback(e,'Solid ground overhead. Tunnel back to grass.');
+    if(next<SHOVEL.underground){cell.open=true;cell.ceiling=0;}
+    else cell.ceiling=Math.min(cell.ceiling,Math.max(0,next-SHOVEL.waist));
+    e.shovelDepthTarget=next;e.shovelClimbing=true;changed=true;
+  }
+  if(changed) {
+    e._shovelCellKey=shovelCellKey(ix,iy);e.shovelCooldownMs=SHOVEL.cooldownMs;
+    e.shovelDigTimer=360;e.shovelDigKind=kind;e.shovelNoticeMs=0;
+    if(typeof sfx!=='undefined'&&typeof sfx.punch==='function')sfx.punch(e.x,e.y);
+  }
+  return changed;
+}
+function shovelSyncPlayerCell(e) {
+  if(!e||!e.isPlayer||currentLevel<1||currentLevel>7)return;
+  const key=shovelCellKey(Math.floor(e.x/SHOVEL.cell),Math.floor(e.y/SHOVEL.cell));
+  const cell=shovelCellAt(e.x,e.y),depth=shovelPlayerDepth(e);
+  if(e._shovelCellKey!==key) {
+    // A roof is still ordinary ground to a person standing above the tunnel.
+    if(depth>.5||cell&&cell.open) {
+      e.shovelDepthTarget=cell?cell.depth:0;e.shovelClimbing=false;
+    } else e.shovelDepthTarget=0;
+    e._shovelCellKey=key;
+  }
+}
+function shovelUpdatePlayer(e,dtMs) {
+  if(!e||!e.isPlayer)return;
+  const dt=Math.max(0,Math.min(1000,Number.isFinite(dtMs)?dtMs:1000/60));
+  e.shovelCooldownMs=Math.max(0,(e.shovelCooldownMs||0)-dt);
+  e.shovelDigTimer=Math.max(0,(e.shovelDigTimer||0)-dt);
+  e.shovelNoticeMs=Math.max(0,(e.shovelNoticeMs||0)-dt);
+  if(currentLevel<1||currentLevel>7) {e.shovelDepth=0;e.shovelDepthTarget=0;e.shovelLevel=currentLevel;e._shovelCellKey=null;return;}
+  if(e.shovelLevel!==currentLevel){e.shovelLevel=currentLevel;e.shovelDepth=0;e.shovelDepthTarget=0;e._shovelCellKey=null;}
+  shovelSyncPlayerCell(e);
+  const from=shovelPlayerDepth(e),to=Math.max(0,Math.min(SHOVEL.maxDepth,e.shovelDepthTarget||0));
+  e.shovelDepth=from+(to-from)*(1-Math.exp(-dt/75));
+  if(Math.abs(e.shovelDepth-to)<.05)e.shovelDepth=to;
+}
+// null leaves ordinary surface collision in charge. Underground movement is
+// confined to connected excavated space; walls are bypassed only below them.
+function shovelCollision(e,nx,ny) {
+  if(!e||!e.isPlayer||currentLevel<1||currentLevel>7)return null;
+  const depth=shovelPlayerDepth(e);if(depth<.5)return null;
+  const dx=nx-e.x,dy=ny-e.y,d=Math.hypot(dx,dy);
+  if(d>SHOVEL.cell*4)return true;
+  let surface=false;
+  const steps=Math.max(1,Math.ceil(d/10)),r=SHOVEL.bodyRadius;
+  for(let n=0;n<=steps;n++) {
+    const x=e.x+dx*n/steps,y=e.y+dy*n/steps;
+    for(const [ox,oy]of[[0,0],[-r,-r],[r,-r],[-r,r],[r,r]]) {
+      const cell=shovelCellAt(x+ox,y+oy);
+      if(!cell){if(depth<=SHOVEL.waist+.5){surface=true;continue;}return true;}
+      if(cell.depth<depth-SHOVEL.step-.5)return true;
+      if(!cell.open&&depth<cell.ceiling+SHOVEL.waist-.5)return true;
+    }
+  }
+  return surface?null:false;
+}
 
 function resourceCount(kind) {
   if (!window.resources) window.resources = { WOOD: 0, METAL: 0, STONE: 0 };
@@ -8519,6 +8929,7 @@ function resetStoryProgress() {
     resetFrontierSaloonActivity();
     resetFrontierBounties();
     resetFrontierEquipment();
+    resetShovelState();
     window.storyBeats = {};
     biomeState = {}; // A new campaign owes each sector its first arrival again.
     window.resources = { WOOD: 0, METAL: 0, STONE: 0 };
@@ -15876,6 +16287,9 @@ this.skeletonTimer = 0;
   }
 
       takeDamage(amount, source = null) {
+    // Surface attacks cannot pass through an intact tunnel ceiling.
+    if(this.isPlayer && shovelPlayerDepth(this)>=SHOVEL.underground &&
+       (!source || !shovelSameLayer(this,source)))return {blocked:true,broken:false};
     if(unarmedCivilian(this))scareCivilian(this,source?source.x:player?player.x:this.x,source?source.y:player?player.y:this.y);
     if(this.isCityPatrol&&this.hp>80)amount*=.55;
     let res = { blocked: false, broken: false };
@@ -15957,6 +16371,8 @@ this.skeletonTimer = 0;
     
     
       checkCol(nx, ny) {
+    const shovelBlocked=shovelCollision(this,nx,ny);
+    if(shovelBlocked!==null)return shovelBlocked;
     if (this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL" || this.eType === "SAUCER" || this.eType === "SAUCER_RED") return false; 
     if (BIOME_ACTIVE && currentBiome === 3 &&
         frontierCanyonBlocksMove(this.x, this.y, nx, ny, 15)) return true;
@@ -16032,6 +16448,8 @@ this.skeletonTimer = 0;
     return false;
   }
   forceNudge() {
+    // A tunnel wall is unexcavated soil, never an excuse to teleport laterally.
+    if(this.isPlayer&&shovelPlayerDepth(this)>.5)return;
     // Flying enemies don't collide with buildings, so they don't need to be nudged
     if (this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL" || this.eType === "SAUCER" || this.eType === "SAUCER_RED") return;
     
@@ -16059,6 +16477,7 @@ this.skeletonTimer = 0;
   }
 
  attemptMove(vx, vy) {
+    const shovelMoveStartX=this.x,shovelMoveStartY=this.y;
     // Steering memory: which hand they favour going round things, the heading
     // they are currently committed to, and how long that commitment has left.
     if (this.avoidSide === undefined) {
@@ -16070,14 +16489,14 @@ this.skeletonTimer = 0;
     // Ground that rises against you takes some of the step with it. Applied
     // here rather than in each caller so it lands on everything that moves
     // through the collision path, player and pedestrian alike.
-    const eF = elevSpeedFactor(this.x, this.y, vx, vy);
+    const eF = shovelPlayerDepth(this)>.5?1:elevSpeedFactor(this.x, this.y, vx, vy);
     if (eF !== 1) { vx *= eF; vy *= eF; }
 
     // Wading takes its cut in the same place and for the same reason. Water you
     // can walk into has to cost something, or it is a texture rather than a
     // piece of terrain -- and a pool becomes somewhere you think about crossing
     // rather than somewhere you happen to be standing.
-    const wD = waterDepthAt(this.x, this.y);
+    const wD = shovelPlayerDepth(this)>.5?0:waterDepthAt(this.x, this.y);
     if (wD > 0) {
       const wF = 1 - 0.44 * wD;
       vx *= wF; vy *= wF;
@@ -16126,6 +16545,10 @@ this.skeletonTimer = 0;
     // next, and a walker with no gait animates as though standing still.
     this.gait += (Math.min(1, dist(0, 0, finalDx, finalDy) / GAIT_FULL) - this.gait) * GAIT_EASE;
 
+    if(this.isPlayer&&(finalDx!==0||finalDy!==0)) {
+      shovelSyncPlayerCell(this);
+      if(typeof checkShovelPassiveRoute==='function')checkShovelPassiveRoute(this,shovelMoveStartX,shovelMoveStartY);
+    }
     return { x: finalDx, y: finalDy };
 }
 
@@ -16175,7 +16598,14 @@ this.skeletonTimer = 0;
           boxingSeedEntryInput(this);
           return;
       }
-      if (this.meleeTimer > 0 || this.meleeCooldown > 0) return; 
+      if (this.meleeTimer > 0 || this.meleeCooldown > 0) return;
+      if (this.isPlayer && meleeTool() === "SHOVEL") {
+          this.isArmed=false;this.isBackhand=!this.isBackhand;
+          this.meleeTimer=20;this.meleePhase=1;this.meleeCooldown=8;
+          this.meleeComboTimer=0;this.meleeCharge=0;
+          sfx.slash(this.x,this.y);
+          return;
+      }
       
       if (this.meleePhase > 0 && this.meleeComboTimer > 0) {
           this.advanceMeleeCombo();
@@ -16232,7 +16662,11 @@ this.skeletonTimer = 0;
       }
   }
 
-  advanceMeleeCombo() { 
+  advanceMeleeCombo() {
+      if(this.isPlayer&&meleeTool()==="SHOVEL") {
+          this.meleePhase=0;this.meleeComboTimer=0;
+          this.activateMelee(true);return;
+      }
       if (this.isPlayer) {
           let bestTarget = null, minDist = Infinity;
           for (let e of enemiesList) {
@@ -16291,6 +16725,9 @@ this.skeletonTimer = 0;
   }
 
   executeFinisher() {
+      if(this.isPlayer&&meleeTool()==="SHOVEL") {
+          this.meleeCharge=0;this.activateMelee(true);return;
+      }
       if (this.meleeTimer > 0) return;
 
       if (this.isPlayer) {
@@ -16320,6 +16757,7 @@ this.skeletonTimer = 0;
   }
 
   updatePlayer() {
+    shovelUpdatePlayer(this,typeof deltaTime==='number'?deltaTime:1000/60);
     const motionX=this.x,motionY=this.y;
     try {
    this.forceNudge();
@@ -16340,8 +16778,10 @@ this.skeletonTimer = 0;
         if (this.throwAnimTimer > 0) this.throwAnimTimer--;
     
     let isChemist = typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked;
+    const shovelUtility=shovelToolEquipped()||shovelPlayerDepth(this)>=SHOVEL.underground;
+    if(shovelUtility){isCooking=false;this.cannonCharge=0;grenadeInputHeld=false;cannonInputHeld=false;}
 
-    if (isChemist) {
+    if (isChemist && !shovelUtility) {
         // --- CHEMIST FLASKS ---
         if (pFlaskTimer > 0) { pFlaskTimer--; if (pFlaskTimer <= 0) pFlaskAmmo = 2; }
         if (meleeInputHeld && pFlaskAmmo > 0 && !isCooking && this.dashTimer <= 0) { isCooking = true; cookTime = 180; }
@@ -16447,7 +16887,7 @@ this.skeletonTimer = 0;
             if (this.cannonAmmo <= 0) { this.cannonCooldown = 180; this.cannonAmmo = 4; } 
         }
     } 
-    else if (grenadesUnlocked || (typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked)) {
+    else if (!shovelUtility && (grenadesUnlocked || (typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked))) {
         // --- STANDARD GRENADES (ONLY IF NOT CHEMIST) ---
         if (typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked && pGrenadeTimer > 0) {
             pGrenadeTimer--; if (pGrenadeTimer <= 0) pGrenadeAmmo = 4;
@@ -16465,9 +16905,15 @@ this.skeletonTimer = 0;
         }
     }
 
-    let canMelee = meleeUnlocked && !isChemist && this.dashTimer <= 0;
+    const shovelSwing=this.isPlayer&&meleeTool()==="SHOVEL";
+    let canMelee = (meleeUnlocked||shovelSwing) && (!isChemist||shovelSwing) && this.dashTimer <= 0;
 
-    if (canMelee) {
+    if (canMelee && shovelSwing) {
+        // Digging tools swing on press even when the sword charge upgrade is
+        // owned. Holding one cannot arm a lethal finisher or a shockwave.
+        this.meleeCharge=0;
+        if(meleeInputHeld&&!this.prevMeleeInputHeld)this.activateMelee(true);
+    } else if (canMelee) {
         if (meleeInputHeld) {
             if (window.meleeFinisherUnlocked) {
                 this.meleeCharge++; 
@@ -16565,12 +17011,14 @@ this.skeletonTimer = 0;
     if (this.meleeTimer > 0) {
       this.meleeTimer--;if(meleeTool()==="NONE")this.boxingHold=180; let nx = cos(this.aimAngle) * 3, ny = sin(this.aimAngle) * 3; if (!this.checkCol(this.x + nx, this.y)) this.x += nx; if (!this.checkCol(this.x, this.y + ny)) this.y += ny;
       
-      if (this.meleePhase === 4 && this.meleeTimer === 15) { 
+      if (this.meleePhase === 4 && this.meleeTimer === 15 && !shovelSwing) {
           screenShake = 20; 
           shockwaves.push(new Shockwave(this.x, this.y, this.aimAngle, meleeTool()==="SWORD"));
       }
-             else if (this.meleePhase !== 4 && this.meleeTimer === 10) { 
-          screenShake = 12; 
+             else if ((this.meleePhase !== 4 || shovelSwing) && this.meleeTimer === 10) {
+          screenShake = shovelSwing ? 6 : 12;
+          if(shovelSwing)resolveShovelSwing(this);
+          else {
           // A swing lands on the world as well as on people. Same arc, same
           // frame of the animation, so chopping and fighting are one action
           // rather than two systems that happen to share a button.
@@ -16647,7 +17095,8 @@ this.skeletonTimer = 0;
                   } 
               } 
           } 
-          for (let i = enemiesList.length - 1; i >= 0; i--) if (enemiesList[i].hp <= 0) { enemiesList.splice(i, 1); if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100); } 
+          for (let i = enemiesList.length - 1; i >= 0; i--) if (enemiesList[i].hp <= 0) { enemiesList.splice(i, 1); if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100); }
+          }
       }
 
 
@@ -17480,6 +17929,7 @@ if (this.eType === "COW") {
 
 
         fire(sA, bowShot = null) {
+    if (this.isPlayer && (shovelToolEquipped() || shovelPlayerDepth(this)>=SHOVEL.underground)) return;
     if (boxingActive(this)) return;
     if(unarmedCivilian(this))return;
     if (this.currentWeapon === WEAPONS.BOW && this.ammo <= 0) return;
@@ -17570,7 +18020,7 @@ if (this.eType === "COW") {
     // bigger. This is the whole of the relief illusion as far as figures are
     // concerned -- it scales the shadow with the body, which is what keeps a
     // man on the mine bench from looking like a man floating over the flat.
-    const _ez = elevRenderScale(this.x, this.y);
+    const _ez = elevRenderScale(this.x, this.y) * (this.isPlayer ? shovelRenderScale(this) : 1);
     if (_ez !== 1) scale(_ez);
 // 1. Skeleton Flashing Animation (1.1 seconds)
 if (this.skeletonTimer > 0 && frameCount % 6 < 3) {
@@ -17947,8 +18397,9 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
 // 1. AUTO-STATE TRANSITION MANAGER
 // ==========================================
 if (this.isPlayer) {
-    // FORCE UNARMED: Hide the gun whenever a melee swing is active
-    if (this.meleeTimer > 0) {
+    // A shovel stays in hand while the right stick chooses where to dig.
+    // Raising that stick must not replace the tool with the current firearm.
+    if (this.meleeTimer > 0 || meleeTool() === "SHOVEL") {
         this.isArmed = false;
     }
     // FORCE ARMED: Immediately show the gun when firing
@@ -18172,7 +18623,8 @@ if (this.isPlayer) {
             const usingPick = this.isPlayer && !gunInHand &&
                               typeof meleeTool === 'function' &&
                               meleeTool() === "PICKAXE";
-            const armedMelee = usingSword || usingPick;
+            const usingShovel = this.isPlayer && !gunInHand && meleeTool() === "SHOVEL";
+            const armedMelee = usingSword || usingPick || usingShovel;
 
             // The shoulder joints, and they sit INBOARD of the silhouette.
             //
@@ -18306,7 +18758,7 @@ if (this.isPlayer) {
                     // A blade is controlled at the wrist. Let the free arm
                     // drive the stride while the sword stays clear of the hip
                     // instead of sharing its full, flailing running arc.
-                    s.swordPose = swordCarryPose(this, GP, rest);
+                    s.swordPose = usingShovel ? shovelCarryPose(this, GP, rest) : swordCarryPose(this, GP, rest);
                     s.hx = s.swordPose.hx; s.hy = s.swordPose.hy;
                 }
             }
@@ -18632,6 +19084,7 @@ if (this.isPlayer) {
                                                             figureLight(wa), figureSouth(wa));
                         push(); translate(h.x, h.y); rotate(sword.angle);
                         if (usingPick) drawPickGrip(swordProjection);
+                        else if(usingShovel)drawShovelGrip(swordProjection);
                         else drawSwordGrip(swordProjection);
                         pop();
                     }
@@ -18649,6 +19102,7 @@ if (this.isPlayer) {
                         // goes back and levelling as it comes forward.
                         push(); translate(h.x, h.y); rotate(s.swordPose.angle);
                         if (usingPick) drawPickHeadSolid(swordProjection);
+                        else if(usingShovel)drawShovelHeadSolid(swordProjection);
                         else drawSwordBlade(swordProjection);
                         pop();
                     }
@@ -18906,7 +19360,8 @@ if (this.isPlayer) {
         // of the haft that differs, so the animation is shared and only the art
         // in the hand forks.
         const usingPick = (this.isPlayer && typeof meleeTool === 'function' && meleeTool() === "PICKAXE");
-        const armedMelee = usingSword || usingPick;
+        const usingShovel = this.isPlayer && meleeTool() === "SHOVEL";
+        const armedMelee = usingSword || usingPick || usingShovel;
 
         // --- STANDARD WEAPON & LEFT ARM LOGIC ---
         // THE FIX 1: We ONLY draw unarmed/sword arms if we are strictly !this.isArmed
@@ -18929,7 +19384,7 @@ if (this.isPlayer) {
                 // Both tools use the same fitted swing arms and recover to
                 // their carry. Only the mesh and the trail material differ.
                 if (armedMelee) {
-                    drawSwordSwing(this, GP, leftAction, _tw, usingPick);
+                    drawSwordSwing(this, GP, leftAction, _tw, usingPick, usingShovel);
                 } else {
                     // --- 4-PUNCH COMBO ARMS ---
                     drawComboPunchArms(this,lSy,rSy);
@@ -19442,6 +19897,7 @@ function worldBoxingMove(actor, nx, ny) {
   return Math.hypot(actor.x - ox, actor.y - oy) > .0001;
 }
 function beginWorldBoxing(actor) {
+  if(actor&&shovelPlayerDepth(actor)>=SHOVEL.underground)return false;
   if (!boxingActive(actor)) {
     cancelPlayerBowDraw(actor);
     actor._boxingEquipment = { isArmed: actor.isArmed, isUnarmed: actor.isUnarmed };
@@ -21533,7 +21989,9 @@ function drawUI() {
   fill(30, 200); stroke(80); strokeWeight(2); rect(20, 55, 60, 40, 5); 
   noStroke(); fill(150); 
   
-  if (player && player.currentWeapon === WEAPONS.DUAL_SMG) {
+  if (shovelToolEquipped()) {
+      push();translate(45,75);scale(.65);rotate(-.3);drawShovelItem(.12,.15,-.3);pop();
+  } else if (player && player.currentWeapon === WEAPONS.DUAL_SMG) {
       rect(28, 60, 24, 8, 2); rect(32, 68, 6, 8); 
       rect(28, 75, 24, 8, 2); rect(32, 83, 6, 8); 
   } else if (player && player.currentWeapon === WEAPONS.SMG) { 
@@ -21564,7 +22022,9 @@ function drawUI() {
  
   let pA = player ? player.ammo : 0, pM = player ? player.currentWeapon.maxAmmo : 17, pR = player ? player.reloadTimer : 0; 
   
-  if (player && player.currentWeapon === WEAPONS.TASER) {
+  if (shovelToolEquipped()) {
+      textSize(13);text('SHOVEL · '+(shovelPlayerDepth(player)/20).toFixed(1)+' m',90,75);
+  } else if (player && player.currentWeapon === WEAPONS.TASER) {
       text(pR > 0 ? "RECHARGING" : `${pA} / ∞`, 90, 75); 
   } else if (player && player.currentWeapon === WEAPONS.BOW) {
       text(`${pA} ARROWS`,90,75);
@@ -21581,6 +22041,7 @@ function drawUI() {
   textAlign(RIGHT, TOP); textSize(10); fill(255); text("SCORE: " + score, width - 20, 20);
 
   drawClimateReadout();
+  drawShovelStatus();
 
   fill(50, 200); stroke(255); strokeWeight(2); rect(width - 60, 40, 40, 40, 5);
   fill(255); noStroke(); rect(width - 48, 50, 6, 20, 2); rect(width - 34, 50, 6, 20, 2);
@@ -21598,6 +22059,7 @@ function drawUI() {
 
   // These are touch action buttons; controller players keep the status HUD.
   if (player && boxingActive(player)) drawBoxingControls(player);
+  else if (shovelControlsAvailable()) drawShovelControls();
   else if(!connectedGamepad()) {
   let bY = rightStick.base.y - 80, rbX = width - 35, rbY = bY - 170; 
   let isTaser = player && player.currentWeapon === WEAPONS.TASER;
@@ -21804,7 +22266,7 @@ function readGamepadFireInput(pad) {
   return gamepadFireInput;
 }
 function playerWeaponFireInput() {
-  if (!rightStick || isPaused || player && boxingActive(player)) return false;
+  if (!rightStick || isPaused || player && (boxingActive(player) || shovelToolEquipped() || shovelPlayerDepth(player)>=SHOVEL.underground)) return false;
   if (rightStick.gamepadInput)
     return gamepadTriggerShooting() ? gamepadFireInput.trigger : gamepadFireInput.stick;
   return rightStick.active && rightStick.dist > .75;
@@ -22298,6 +22760,17 @@ function handleGamepad() {
       }
   }
   if (jP(12) && player) cycleMeleeTool(); // D-pad up only; down stays unmapped.
+  if (shovelToolEquipped()) {
+    if (btn(3) || btn(5)) meleeInputHeld = true;
+    if (shovelControlsAvailable()) {
+      if (btn(6)) shovelDig('DOWN');
+      else if (btn(7)) shovelDig('FORWARD');
+      else if (btn(1)) shovelDig('UP');
+    }
+    prevGamepadButtons.length=pad.buttons.length;
+    for(let i=0;i<pad.buttons.length;i++)prevGamepadButtons[i]=btn(i);
+    return;
+  }
   if (jP(2) && player && player.reloadTimer <= 0 && player.ammo < player.currentWeapon.maxAmmo) { player.triggerReload(); }
 
   // L2 holds/cooks the suit's throwable; L1 holds the chemist cannon charge.
@@ -22357,6 +22830,18 @@ function handleTouches() {
         continue; 
     }
 
+    const shovelButton=shovelTouchAction(tx,ty);
+    if(shovelButton){shovelUseControl(shovelButton.action);continue;}
+    if(shovelToolEquipped()){
+      if(tx<hw){
+        const dx=tx-leftStick.base.x,dy=ty-leftStick.base.y,d=Math.hypot(dx,dy),m=Math.max(mR,d);
+        leftStick.active=true;leftStick.dx=dx/m;leftStick.dy=dy/m;
+      } else {
+        const dx=tx-rightStick.base.x,dy=ty-rightStick.base.y,d=Math.hypot(dx,dy),m=Math.max(mR,d);
+        rightStick.active=true;rightStick.dx=dx/m;rightStick.dy=dy/m;rightStick.dist=d/m;
+      }
+      continue;
+    }
     // --- UPDATED BUTTON HITBOXES ---
     if (typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) {
         if (dist(tx, ty, width - 35, bY - 240) < 45) currentCannonTouch = true; // Top Slot (Above Reload)
@@ -22571,6 +23056,8 @@ function touchStarted() {
   // Outside, an interaction finger remains consumed until it lifts, so holding
   // a mission button cannot become right-stick gunfire on the following frame.
   if (handlePauseSettingsTap(mx, my)) return false;
+  const shovelButton=shovelTouchAction(mx,my);
+  if(shovelButton){shovelUseControl(shovelButton.action);return false;}
   if (frontierSaloonIsInside()) { handleFrontierSaloonTap(mx, my); return false; }
   if (!isPaused && player && boxingActive(player) && interactWorldBoxingActivity(mx, my)) return false;
   if (!isPaused && player && boxingActive(player) && boxingHandleTouch(mx, my)) return false;
@@ -22731,7 +23218,7 @@ else if (mx > width/2 - 120 && mx < width/2 + 120 && my > height/2 - 110 && my <
                   }
                   
                   if (my > height/2 - 10 && my < height/2 + 30) { 
-                      if (typeof townsData !== 'undefined' && townsData[currentLevel] && townsData[currentLevel].established) {
+                      if (sectorOverworldAvailable()) {
                           inOverworldView = !inOverworldView;
                           isPaused = false;
                           window.lastPauseTime = millis();
@@ -23040,6 +23527,7 @@ else if (typeof inWorldBuildingMenu !== 'undefined' && inWorldBuildingMenu) {
 // ==========================================
 else if (typeof inOverworldView !== 'undefined' && inOverworldView) {
     for(let t = 1; t <= currentLevel; t++) {
+        if (!overworldTownManageable(t)) continue;
         let tx = width/2 - 150 + (t-1)*300;
         let ty = height/2;
         if (dist(mx, my, tx, ty) < 45) {
@@ -23137,6 +23625,7 @@ else if (inTravelMenu) {
 if (inOverworldView) {
     // Check if clicking a Town Node to manage it
     for(let t = 1; t <= currentLevel; t++) {
+        if (!overworldTownManageable(t)) continue;
         let tx = width/2 - 150 + (t-1)*300;
         let ty = height/2;
         if (dist(mx, my, tx, ty) < 45) {
@@ -23399,7 +23888,12 @@ function handleDesktop() {
       leftStick.dy = kDy / mag;
       window.isDesktop = true; 
   }
-  if (keyIsDown(69) && meleeUnlocked) meleeInputHeld = true;
+  if (keyIsDown(69) && (meleeUnlocked || shovelToolEquipped())) meleeInputHeld = true;
+  if (shovelControlsAvailable()) {
+    if (keyIsDown(67)) shovelDig('DOWN');
+    else if (keyIsDown(70)) shovelDig('FORWARD');
+    else if (keyIsDown(86)) shovelDig('UP');
+  }
 
   // R to mount or step down. Edge-triggered: on a level trigger, holding the key
   // toggles sixty times a second and leaves you on or off the horse at random.
@@ -23410,7 +23904,7 @@ function handleDesktop() {
   }
   window.__rideKeyWas = rDown;
 
-  const huntDown = keyIsDown(70); // F: interact/collect; E remains melee.
+  const huntDown = keyIsDown(70) && !shovelToolEquipped(); // F digs while carrying the shovel.
   if (huntDown && !window.__huntKeyWas && BIOME_ACTIVE && currentBiome === 2)
       interactForestHuntingActivity();
   if (huntDown && !window.__huntKeyWas && BIOME_ACTIVE && currentBiome === 3)
@@ -23632,6 +24126,7 @@ function saveGame() {
         frontierEquipment: serializeFrontierEquipment(),
         frontierWeapon: (frontierExterior ? frontierExterior.currentWeapon : (player && player.currentWeapon)) === WEAPONS.REVOLVER ? 'REVOLVER' : null,
         pickaxeOwned: !!window.pickaxeOwned,
+        shovel: serializeShovelState(),
         meleeToolSel: frontierExterior ? frontierExterior.meleeToolSel : (window.meleeToolSel || "NONE"),
         swordEquipped: window.swordEquipped !== false,
 
@@ -23775,6 +24270,7 @@ function loadGame() {
         restoreFrontierSaloonActivity(state.frontierSaloon);
         restoreFrontierBounties(state.frontierBounties);
         restoreFrontierEquipment(state.frontierEquipment);
+        restoreShovelState(state.shovel);
 
         // The escort has to be pending BEFORE the level is built, because
         // legacyStartAtLevel() is what spawns it -- exactly as it does on a
@@ -23965,6 +24461,7 @@ function loadGame() {
                 player.x = state.playerX;
                 player.y = state.playerY;
             }
+            restoreShovelPlayer(state.shovel);
         }
     let mult = (window.milLvl >= 2) ? 2 : 1;
     if (window.archLvl >= 2) window.archBarrierReady = true;
@@ -30414,6 +30911,7 @@ function generateChunkContent(biome, cx, cy) {
   filterFrontierCanyonContent(biome, content);
   filterFrontierBountyContent(biome, content);
   filterFrontierSettlementContent(biome,cx,cy,content);
+  filterShovelGrassContent(biome,content);
   return content;
 }
 
@@ -34679,6 +35177,75 @@ function drawPickHeadSolid(P) {
   noStroke();
 }
 
+// The spade uses the same wrist projection as every other melee tool, so its
+// broad steel blade has real thickness instead of flattening during the run.
+function drawShovelGrip(P) {
+  handGunBox(P,-5.5,34,-2.15,2.15,-1.8,1.8,132,91,49);
+  handGunDetail(P,4,-1.5,1.85,30,-1.5,1.85,194,141,78,.75);
+  // Open D-grip: the gap and the dark steel rim remain readable from above.
+  handGunBox(P,-17,-13,-6.7,6.7,-2,2,63,76,79);
+  handGunBox(P,-13,-5,-6.7,-3.8,-2,2,63,76,79);
+  handGunBox(P,-13,-5,3.8,6.7,-2,2,63,76,79);
+  handGunBox(P,-8,-4,-6.7,6.7,-2,2,73,87,89);
+  handGunDetail(P,-16,-4.7,2.1,-16,4.7,2.1,164,184,182,.65);
+  noStroke();
+}
+const _shovelBladeOutline=[[33,-7.5],[40,-10],[49,-8.5],[57,0],[49,8.5],[40,10],[33,7.5],[31,0]];
+const _shovelBladeFront=Array.from({length:8},()=>[0,0]);
+const _shovelBladeBack=Array.from({length:8},()=>[0,0]);
+const _shovelBladeCenter=[0,0];
+function drawShovelHeadSolid(P) {
+  const sign=P.view[2]>=0?1:-1,top=_shovelBladeFront,back=_shovelBladeBack;
+  for(let i=0;i<8;i++) {
+    const q=_shovelBladeOutline[i];
+    P.point(q[0],q[1],sign*.9,top[i]);
+    P.point(q[0],q[1],-sign*.9,back[i]);
+  }
+  // Visible edge extrusion, including the sharpened point at the front.
+  for(let i=0;i<8;i++) {
+    const j=(i+1)%8,a=_shovelBladeOutline[i],b=_shovelBladeOutline[j];
+    let nx=b[1]-a[1],ny=a[0]-b[0],len=Math.hypot(nx,ny);nx/=len;ny/=len;
+    if(P.view[0]*nx+P.view[1]*ny<=0)continue;
+    const light=.56+Math.max(0,P.light[0]*nx+P.light[1]*ny)*.38;
+    fill(123*light,144*light,151*light);stroke(29,40,44,215);strokeWeight(.65);
+    quad(top[i][0],top[i][1],top[j][0],top[j][1],back[j][0],back[j][1],back[i][0],back[i][1]);
+  }
+  // A raised central rib breaks the face into a few broad cel shaded planes.
+  P.point(42,0,sign*2.5,_shovelBladeCenter);
+  for(let i=0;i<8;i++) {
+    const j=(i+1)%8,a=_shovelBladeOutline[i],b=_shovelBladeOutline[j];
+    const ux=a[0]-42,uy=a[1],uz=-sign*1.6,vx=b[0]-42,vy=b[1],vz=-sign*1.6;
+    let nx=uy*vz-uz*vy,ny=uz*vx-ux*vz,nz=ux*vy-uy*vx;
+    if(nz*sign<0){nx=-nx;ny=-ny;nz=-nz;}
+    const len=Math.hypot(nx,ny,nz);nx/=len;ny/=len;nz/=len;
+    const diffuse=Math.max(0,P.light[0]*nx+P.light[1]*ny+P.light[2]*nz);
+    const light=diffuse>.65?1.10:diffuse>.26?.91:.71;
+    noStroke();fill(157*light,180*light,184*light);
+    triangle(_shovelBladeCenter[0],_shovelBladeCenter[1],top[i][0],top[i][1],top[j][0],top[j][1]);
+  }
+  noFill();stroke(30,42,46,220);strokeWeight(.7);beginShape();
+  for(const p of top)vertex(p[0],p[1]);endShape(CLOSE);
+  handGunDetail(P,42,0,sign*2.55,55,0,sign*1.15,216,230,226,.8);
+  handGunBox(P,28,36,-2.9,2.9,-2.2,2.2,94,113,118);
+  handGunDetail(P,29,-1.4,2.25,35,-1.4,2.25,176,195,195,.7);
+  noStroke();
+}
+function drawShovelItem(elevation=.12,roll=.15,worldAngle=0) {
+  const P=handGunProjection(elevation,roll,figureLight(worldAngle),figureSouth(worldAngle));
+  drawShovelGrip(P);drawShovelHeadSolid(P);
+}
+function shovelCarryPose(c,GP,rest) {
+  const pose=swordCarryPose(c,GP,rest);
+  if(!(c.shovelDigTimer>0))return pose;
+  const p=Math.max(0,Math.min(1,1-c.shovelDigTimer/360));
+  const strike=Math.sin(p*Math.PI),down=c.shovelDigKind==='DOWN';
+  pose.hx+=strike*10;pose.hy-=strike*5;
+  pose.angle-=strike*.32;
+  pose.elevation=pose.elevation+(down?-1.4-pose.elevation:.14-pose.elevation)*strike;
+  pose.roll+=strike*.22;
+  return pose;
+}
+
 function swordFitArm(c,hx,hy,right) {
   const R=figureRig(c.bodyW,c.bodyH),sy=c.bodyH*.425*(right?1:-1);
   const U=R.upper*.94,F=R.fore*.94,max=(U+F)*.98;
@@ -34713,20 +35280,20 @@ function swordSwingPose(c,GP,progress) {
           left:swordFitArm(c,freeX+(7-freeX)*active,freeY+(-c.bodyH*.425+4-freeY)*active,false)};
 }
 
-function drawSwordSwing(c,GP,leftAction,twist,usingPick) {
+function drawSwordSwing(c,GP,leftAction,twist,usingPick,usingShovel=false) {
   const pose=swordSwingPose(c,GP),R=figureRig(c.bodyW,c.bodyH),paint=figurePainter(),g=paint?paint.api:window;
   // A short projected trail follows the actual blade tip through the strike;
   // it is keyed to the melee clock and fades before the wrist recovers.
   if(pose.p>.1&&pose.p<.88) {
     const alpha=150*pose.active;
     push();noFill();
-    if(usingPick)stroke(180,168,140,alpha);else stroke(255,173,83,alpha);
+    if(usingShovel)stroke(178,199,203,alpha);else if(usingPick)stroke(180,168,140,alpha);else stroke(255,173,83,alpha);
     strokeWeight(3.4);beginShape();
     for(let i=0;i<7;i++) {
       const prior=swordSwingPose(c,GP,Math.max(0,pose.p-.14+i*.14/6));
       const wa=c.aimAngle+(twist||0)+prior.angle;
       const P=handGunProjection(prior.elevation,prior.roll,figureLight(wa),figureSouth(wa));
-      const tip=P.point(usingPick?40:46,0,0),co=Math.cos(prior.angle),si=Math.sin(prior.angle);
+      const tip=P.point(usingShovel?57:usingPick?40:46,0,0),co=Math.cos(prior.angle),si=Math.sin(prior.angle);
       vertex(prior.right.hx+tip[0]*co-tip[1]*si,prior.right.hy+tip[0]*si+tip[1]*co);
     }
     endShape();pop();
@@ -34741,10 +35308,10 @@ function drawSwordSwing(c,GP,leftAction,twist,usingPick) {
   const wa=c.aimAngle+(twist||0)+pose.angle;
   const P=handGunProjection(pose.elevation,pose.roll,figureLight(wa),figureSouth(wa));
   push();translate(pose.right.hx,pose.right.hy);rotate(pose.angle);
-  if(usingPick)drawPickGrip(P);else drawSwordGrip(P);pop();
+  if(usingShovel)drawShovelGrip(P);else if(usingPick)drawPickGrip(P);else drawSwordGrip(P);pop();
   figureCelOval(g,pose.right.hx,pose.right.hy,R.hand,R.hand,c.skinCol||[235,180,140],.8);
   push();translate(pose.right.hx,pose.right.hy);rotate(pose.angle);
-  if(usingPick)drawPickHeadSolid(P);else drawSwordBlade(P);pop();
+  if(usingShovel)drawShovelHeadSolid(P);else if(usingPick)drawPickHeadSolid(P);else drawSwordBlade(P);pop();
   if(leftAction)drawLeftHandAction(c,leftAction,-(twist||0));
 }
 
@@ -41313,7 +41880,7 @@ function glRigPaintHeight() {
   //    term the tangent-space branch of the normal pass reads.
   const CH = 17;
   const one = (c) => {
-    if (!c || c.hp <= 0 || c.dead) return;
+    if (!c || c.hp <= 0 || c.dead || shovelBelowGroundActor(c)) return;
     // A height field cannot hold a flying unit -- see CHAR_AIRBORNE. They keep
     // their own offset oval instead.
     if (CHAR_AIRBORNE[c.eType]) return;
@@ -42250,6 +42817,93 @@ function southGateOpen() {
   return !!window.southGateBreachedStatus;
 }
 
+
+function passiveRouteTravelAvailable() {
+  return !!window.passiveRouteUnlocked;
+}
+
+function sectorOverworldAvailable() {
+  return !!(townsData && townsData[currentLevel] && townsData[currentLevel].established) ||
+    (currentLevel === 1 && passiveRouteTravelAvailable());
+}
+
+// The live overworld once had two invisible town-management hitboxes. A quiet
+// tunnel escape must not turn either one into a shortcut to a population grant.
+function overworldTownManageable(id) {
+  if (id !== 1 || !passiveRouteTravelAvailable()) return true;
+  return !!(townsData && townsData[1] && townsData[1].established) ||
+    sectorTowersAreDown(1) || (currentLevel === 1 && !!window.nm0AmbushClearedStatus);
+}
+
+// Award the route only after walking an excavated passage all the way from the
+// city face to the far side of an intact Great Gate. The cursor is plain data so
+// a save halfway through a tunnel can resume it, but discontinuous movement,
+// shallow cells and entering from the country cannot manufacture an escape.
+function checkShovelPassiveRoute(e, fromX, fromY) {
+  if (!e || e !== player) return false;
+  if (currentLevel !== 1 || currentBiome !== 1 ||
+      window.passiveRouteUnlocked || e.dead || e.hp <= 0) {
+    e.shovelGateCrossing = null;
+    return false;
+  }
+  const dx = e.x - fromX, dy = e.y - fromY, distance = Math.hypot(dx, dy);
+  const underground = typeof SHOVEL !== 'undefined' ? SHOVEL.underground : 36;
+  if (!Number.isFinite(distance) || distance > 48 ||
+      typeof shovelPlayerDepth !== 'function' || shovelPlayerDepth(e) < underground ||
+      typeof shovelCellAt !== 'function') {
+    e.shovelGateCrossing = null;
+    return false;
+  }
+  if (distance < 0.0001) return false;
+  let crossing = e.shovelGateCrossing;
+  if (crossing && (!Number.isFinite(crossing.walked) || crossing.walked < 0 ||
+      !Number.isFinite(crossing.lastX) || !Number.isFinite(crossing.lastY) ||
+      Math.hypot(crossing.lastX - fromX, crossing.lastY - fromY) > 0.1)) crossing = null;
+  const gates = sectorGates();
+  let gate = crossing && gates.find(g => g.x === crossing.gateX && g.y === crossing.gateY &&
+    g.w === crossing.gateW && g.h === crossing.gateH);
+  if (!gate) {
+    crossing = null;
+    gate = gates.find(g => {
+      if (g.hp <= 0 || gateIsOpen(g)) return false;
+      const sign = g.y > 0 ? 1 : -1, inner = -g.h / 2;
+      return sign * (fromY - g.y) <= inner && sign * (e.y - g.y) > inner &&
+        Math.abs(fromX - g.x) < g.w / 2 - 16 && Math.abs(e.x - g.x) < g.w / 2 - 16;
+    });
+    if (!gate) { e.shovelGateCrossing = null; return false; }
+    crossing = { gateSide: gate.y > 0 ? 'SOUTH' : 'NORTH', gateX: gate.x, gateY: gate.y,
+      gateW: gate.w, gateH: gate.h, lastX: fromX, lastY: fromY, walked: 0 };
+  }
+  const sign = gate.y > 0 ? 1 : -1, progress = sign * (e.y - gate.y), half = gate.h / 2;
+  if (gate.hp <= 0 || gateIsOpen(gate) || progress < -half - 0.1) {
+    e.shovelGateCrossing = null;
+    return false;
+  }
+  // Include both endpoints and every eight world units between them: neither a
+  // diagonal move nor a cell seam can bridge an unexcavated patch of ground.
+  const samples = Math.max(1, Math.ceil(distance / 8));
+  for (let i = 0; i <= samples; i++) {
+    const t = i / samples, x = fromX + dx * t, y = fromY + dy * t;
+    const cell = shovelCellAt(x, y);
+    if (Math.abs(x - gate.x) >= gate.w / 2 - 12 || !cell || cell.depth < underground) {
+      e.shovelGateCrossing = null;
+      return false;
+    }
+  }
+  crossing.walked += distance;
+  crossing.lastX = e.x; crossing.lastY = e.y;
+  e.shovelGateCrossing = crossing;
+  if (progress < half + 16 || crossing.walked < gate.h) return false;
+  window.passiveRouteUnlocked = true;
+  window.passiveRouteExit = { level: 1, side: crossing.gateSide, x: e.x, y: e.y };
+  e.shovelGateCrossing = null;
+  objectiveTimer = 210;
+  streakMsgText = 'PASSIVE ROUTE';
+  streakMsgTimer = 180;
+  if (typeof sfx !== 'undefined' && sfx.charge) sfx.charge();
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // THE GREAT GATES
 //
@@ -42387,7 +43041,7 @@ function clearGateApproach() {
 function canTravel(dir) {
   const d = travelDestination(dir);
   if (d === null) return false;
-  if (dir === "SOUTH" && currentBiome === 1 && !southGateOpen()) return false;
+  if (dir === "SOUTH" && currentBiome === 1 && !southGateOpen() && !passiveRouteTravelAvailable()) return false;
   return true;
 }
 
@@ -42398,8 +43052,8 @@ function travelBlockedReason(dir) {
     return currentBiome === 1 ? "(" + SECTOR_9_NAME + " — beyond the north Great Gate. Not yet mapped.)"
                               : "(Nothing further north.)";
   }
-  if (dir === "SOUTH" && currentBiome === 1 && !southGateOpen()) {
-    return "(South Great Gate intact. Path blocked.)";
+  if (dir === "SOUTH" && currentBiome === 1 && !southGateOpen() && !passiveRouteTravelAvailable()) {
+    return "(South Great Gate intact. Breach it or dig a passive route.)";
   }
   return "";
 }
@@ -42409,10 +43063,11 @@ let extraction = null;
 
 function startExtraction(dir) {
   const dest = travelDestination(dir);
-  if (dest === null) return;
+  if (dest === null || !canTravel(dir)) return;
   extraction = {
     dir, dest,
     from: currentBiome,
+    passive: currentBiome === 1 && !southGateOpen() && passiveRouteTravelAvailable(),
     timer: 0,
     dur: 190,
     fired: false
@@ -42439,10 +43094,10 @@ function updateExtraction() {
     textAlign(CENTER, CENTER); textFont('sans-serif');
 
     fill(70, 210, 255, a); textSize(15);
-    text("GOVERNMENT DIRECTIVE — TRANSIT AUTHORISATION", width / 2, height / 2 - 120);
+    text(e.passive ? "PASSIVE ROUTE — QUIET DEPARTURE" : "GOVERNMENT DIRECTIVE — TRANSIT AUTHORISATION", width / 2, height / 2 - 120);
 
     fill(255, 255, 255, a); textSize(38);
-    text("EXTRACTION IN PROGRESS", width / 2, height / 2 - 66);
+    text(e.passive ? "LEAVING STICK CITY" : "EXTRACTION IN PROGRESS", width / 2, height / 2 - 66);
 
     fill(180, 180, 180, a); textSize(18);
     text("HEADING " + e.dir, width / 2, height / 2 - 20);
@@ -45174,6 +45829,7 @@ function generateMap() {
 function drawGround() {
   if (!BIOME_ACTIVE || !chunkMgr) { legacyDrawGround(); return; }
   chunkMgr.drawTerrain();
+  drawShovelGrassPatches();
   drawAuthoredGroundOverlay();
   chunkMgr.drawDecor();
   // Cloud shadows land on the ground layer, under the buildings and units, so
@@ -45328,6 +45984,7 @@ function startAtLevel(lvl, isLoading = false) {
   }
 
   legacyStartAtLevel(lvl, isLoading);
+  ensureShovelPickup();
   spawnFrontierTownWorkers();
   applyForestHuntingBow();
   if (frontierTravelEquipment) restoreFrontierEquipment(frontierTravelEquipment);
@@ -46899,3 +47556,129 @@ function restoreForestWildlife(data) {
   _wildlifeLedger.rareMisses=Number.isFinite(data.rareMisses)?Math.max(0,Math.min(18,Math.floor(data.rareMisses))):0;
 }
 // ===== END FOREST WILDLIFE CORE =====
+
+// Shovel pickup, device controls and campaign persistence. Excavated geometry
+// belongs to its level; carrying the tool never turns a gate into a breach.
+let shovelPickup = null;
+let shovelHelpMs = 0;
+function shovelToolEquipped() { return !!window.shovelOwned && meleeTool() === 'SHOVEL'; }
+function shovelControlsAvailable() {
+  return !!(player && shovelToolEquipped() && BIOME_ACTIVE && currentLevel >= 1 && currentLevel <= 7 &&
+    started && !isPaused && !isDead && !isWin && !killcamMode && !inTravelMenu && !inOverworldView &&
+    !inWorldBuildingMenu && !inStoryIntro && !inStoryRoom && !inTownCutscene && !inPostAmbushCutscene &&
+    !inFarmCutscene && !inFarmPostCutscene && !inFortCutscene && !inDarchonCall &&
+    !frontierSaloonIsInside() && !boxingActive(player));
+}
+function ensureShovelPickup() {
+  if(SHOVEL_DEBUG_OWNED)window.shovelOwned=true;
+  if (currentLevel !== 1 || window.shovelDiscovered || shovelPickup) return;
+  const candidates=[];
+  for (const patch of SHOVEL_GRASS_PATCHES) {
+    for(let y=patch.y+SHOVEL.cell/2;y<patch.y+patch.h;y+=SHOVEL.cell)
+      for(let x=patch.x+SHOVEL.cell/2;x<patch.x+patch.w;x+=SHOVEL.cell)
+        if(shovelSurfaceSoftAt(x,y) && insideSector(x,y,32) &&
+           (!player || Math.hypot(player.x-x,player.y-y)>=64))candidates.push({x,y,level:1});
+  }
+  if(candidates.length)shovelPickup=candidates[Math.floor(Math.random()*candidates.length)];
+}
+function updateShovelPickup() {
+  if(currentLevel!==1 || window.shovelDiscovered || !shovelPickup || !player)return;
+  const p=shovelPickup;
+  if(doTick && !isPaused && !isDead && !isWin && !killcamMode && !player.mounted &&
+      shovelPlayerDepth(player)<1 && Math.hypot(player.x-p.x,player.y-p.y)<34) {
+    window.shovelOwned=true;window.shovelDiscovered=true;setMeleeTool('SHOVEL');shovelPickup=null;shovelHelpMs=3500;
+    if(sfx&&sfx.reload)sfx.reload();
+    return;
+  }
+  if(!inView(p.x,p.y,80))return;
+  push();translate(p.x,p.y);rotate(-.65);noStroke();fill(15,23,14,80);ellipse(4,8,50,18);
+  drawShovelItem(.2,.12,-.65);
+  noFill();stroke(236,213,131,190);strokeWeight(1.5);ellipse(7,-1,65,46);
+  noStroke();fill(250,228,153);textFont('sans-serif');textAlign(CENTER,CENTER);textSize(9);
+  push();rotate(.65);text('SHOVEL',0,-32);pop();pop();
+}
+function shovelButtonLayout() {
+  const top=Math.max(136,height-360);
+  return [{action:'SWING',label:'SWING',x:width-106,y:top},
+    {action:'DOWN',label:'DIG\nDOWN',x:width-38,y:top},
+    {action:'UP',label:'CLIMB\nUP',x:width-106,y:top+66},
+    {action:'FORWARD',label:'DIG\nAHEAD',x:width-38,y:top+66}];
+}
+function shovelTouchAction(x,y) {
+  if(!shovelControlsAvailable())return null;
+  return shovelButtonLayout().find(b=>Math.hypot(x-b.x,y-b.y)<32)||null;
+}
+function shovelUseControl(action) {
+  if(!shovelControlsAvailable())return false;
+  if(action==='SWING')meleeInputHeld=true;
+  else shovelDig(action);
+  return true;
+}
+function drawShovelControls() {
+  if(!shovelControlsAvailable()||connectedGamepad())return;
+  push();textAlign(CENTER,CENTER);textFont('sans-serif');textSize(9);strokeWeight(2);
+  for(const b of shovelButtonLayout()){
+    fill(34,31,24,220);stroke(b.action==='SWING'?224:181,b.action==='SWING'?141:198,92);
+    ellipse(b.x,b.y,54,54);noStroke();fill(255,236,195);text(b.label,b.x,b.y);strokeWeight(2);
+  }
+  pop();
+}
+function drawShovelStatus() {
+  if(!player||!shovelToolEquipped()||isPaused)return;
+  const depth=shovelPlayerDepth(player);
+  push();textAlign(LEFT,CENTER);textFont('sans-serif');textSize(10);noStroke();
+  const notice=player.shovelNoticeMs>0?player.shovelNotice:null;
+  if(shovelHelpMs>0 || notice){
+    const w=Math.min(350,width-24),alpha=notice?1:Math.min(1,shovelHelpMs/500);
+    fill(30,25,18,225*alpha);rect(width/2-w/2,height-49,w,37,5);
+    fill(244,221,170,255*alpha);textAlign(CENTER,CENTER);textSize(10);
+    text(notice || (connectedGamepad()?'R1/Y SWING · L2 DOWN · R2 AHEAD · B CLIMB':
+      window.isDesktop?'E SWING · C DOWN · F AHEAD · V CLIMB':'DIG ON GRASS · HOLD TO KEEP DIGGING'),width/2,height-31);
+  }
+  pop();
+  if(doTick && Number.isFinite(deltaTime))shovelHelpMs=Math.max(0,shovelHelpMs-Math.min(100,deltaTime));
+}
+function resetShovelState() {
+  window.shovelOwned=SHOVEL_DEBUG_OWNED;window.shovelDiscovered=false;
+  window.passiveRouteUnlocked=false;window.passiveRouteExit=null;
+  shovelPickup=null;shovelExcavation={};shovelHelpMs=0;
+}
+function serializeShovelState() {
+  const p=player,active=!!(p&&p.shovelLevel===currentLevel);
+  return {version:1,owned:!!window.shovelOwned,discovered:!!window.shovelDiscovered,pickup:shovelPickup,
+    cells:Object.values(shovelExcavation),passive:!!window.passiveRouteUnlocked,exit:window.passiveRouteExit,
+    player:active?{level:currentLevel,depth:shovelPlayerDepth(p),target:p.shovelDepthTarget||0,
+      climbing:!!p.shovelClimbing,crossing:p.shovelGateCrossing||null}:null};
+}
+function restoreShovelState(data) {
+  resetShovelState();if(!data||data.version!==1)return;
+  window.shovelOwned=SHOVEL_DEBUG_OWNED||!!data.owned;
+  window.shovelDiscovered=typeof data.discovered==='boolean'?data.discovered:!!data.owned&&!data.pickup;
+  window.passiveRouteUnlocked=!!data.passive;
+  window.passiveRouteExit=data.passive&&data.exit&&['NORTH','SOUTH'].includes(data.exit.side)?{...data.exit}:null;
+  const p=data.pickup;
+  if(!window.shovelDiscovered&&p&&p.level===1&&Number.isFinite(p.x)&&Number.isFinite(p.y))shovelPickup={x:p.x,y:p.y,level:1};
+  if(Array.isArray(data.cells))for(const c of data.cells.slice(0,32768)){
+    if(!c||!Number.isInteger(c.level)||c.level<1||c.level>7||!Number.isInteger(c.ix)||!Number.isInteger(c.iy)||
+       Math.abs(c.ix)>1000000||Math.abs(c.iy)>1000000||!Number.isFinite(c.depth)||c.depth<=0||c.depth>SHOVEL.maxDepth)continue;
+    const ceiling=c.open?0:Math.max(0,Math.min(c.depth-SHOVEL.step,Number(c.ceiling)||0));
+    const cell={level:c.level,ix:c.ix,iy:c.iy,x:(c.ix+.5)*SHOVEL.cell,y:(c.iy+.5)*SHOVEL.cell,
+      depth:c.depth,ceiling,open:!!c.open};
+    shovelExcavation[c.level+':'+c.ix+':'+c.iy]=cell;
+  }
+}
+function restoreShovelPlayer(data) {
+  if(!player||!data||!data.player||data.player.level!==currentLevel)return;
+  const state=data.player,c=shovelCellAt(player.x,player.y);
+  if(!c)return;
+  player.shovelLevel=currentLevel;
+  player.shovelDepth=Math.max(c.ceiling,Math.min(c.depth,Number(state.depth)||0));
+  player.shovelDepthTarget=Math.max(c.ceiling,Math.min(c.depth,Number.isFinite(state.target)?state.target:player.shovelDepth));
+  player.shovelClimbing=!!state.climbing;
+  player._shovelCellKey=c.level+':'+c.ix+':'+c.iy;
+  const q=state.crossing;
+  if(currentLevel===1&&q&&['NORTH','SOUTH'].includes(q.gateSide)&&
+    ['gateX','gateY','gateW','gateH','lastX','lastY','walked'].every(k=>Number.isFinite(q[k]))&&
+    Math.hypot(q.lastX-player.x,q.lastY-player.y)<1)
+    player.shovelGateCrossing={...q};
+}
