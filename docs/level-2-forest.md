@@ -244,7 +244,7 @@ const animal = {
 const hit = forestWildlifeHitTest(bullet);
 if (hit && coverIsFartherAway) {
   applyForestWildlifeHit(hit.animal, {
-    weapon: bullet.w, head: hit.head, shotId: bullet.shotId,
+    weapon: bullet.w, head: hit.head, vital: hit.vital, shotId: bullet.shotId,
     owner: bullet.shooter,
     damage: weaponDamage * (bullet.isArrow ? bullet.arrowPower : 1),
     arrowPower: bullet.arrowPower, arrowDud: bullet.arrowDud,
@@ -261,6 +261,11 @@ first intersection wins, independently of the army HEAD/BODY toggle: a rear
 shot hits the torso first, while an exposed face can take a headshot in BODY
 mode. A projectile starting inside both shapes counts as a body hit. Targets
 stay anchored in world space; camera parallax cannot move their collision bounds.
+An arrow body hit also traces its forward path inside the torso against a
+smaller, facing-relative heart/lung ellipse in the front chest. A short frame
+that only reaches the outer hide gets the same result as a longer segment;
+flank/rump grazes remain nonvital. This extra interior test runs only on the
+nearest arrow body contact and never changes which head/body surface wins.
 Animals never enter military targeting, recruitment or ambush totals.
 An independent xorshift RNG weights common/uncommon/rare/very-rare species and
 forces a habitat-compatible rare encounter after 18 successful common encounters.
@@ -288,6 +293,21 @@ Hits retain up to eight body-local wound decals, including anatomical head
 wounds. Bounded blood droplets and smoke reuse the existing particle pool;
 floor splashes and growing corpse pools use the existing blood bank. Cosmetic
 variation uses an isolated hit seed, preserving combat and encounter RNG.
+Positive-damage arrow wounds leave a restrained trail of small floor droplets
+while the animal is alive. A sufficiently powered, non-dud vital body arrow
+also causes gradual health loss and death within 60,000 active-gameplay
+milliseconds. Further damage can kill sooner; repeated vital arrows never
+restart that deadline. The bleed timer uses elapsed frame milliseconds apart
+from capped movement steps, so slow rendering does not prolong it. Pause,
+menus and cutscenes freeze both trail and wound progression. Stun, death,
+harvest and travel stop the live trail. Delayed death uses the normal directional
+fall, corpse pool and collection path without adding synthetic shots or
+upgrading specimen condition.
+Mortally wounded animals remain tracked beyond ordinary off-screen culling,
+including after they settle into a corpse, so fleeing prey does not disappear
+just as it dies. Harvest, the normal corpse lifetime or travel releases that
+ephemeral tracking state. The existing 48-actor population cap still bounds
+that work.
 Taser stuns remain bloodless. Directional death types distinguish body collapse,
 headshot, shotgun, overkill, explosion and a falling bird. A short fall preserves
 impact and running momentum, respects nearby solids and settles without corpse
@@ -303,6 +323,7 @@ corpses remain collectable without joining the military corpse/objective lists.
 | Clean arrow headshot, power at least 0.55 | Instant kill, PERFECT DEAD animal |
 | Weak/dud arrow headshot | Scaled ordinary damage; GOOD/FAIR/BAD by shot history, never the PERFECT override |
 | Arrow body kill | FAIR unless damage history already warrants scraps |
+| Powered vital body arrow, including delayed bleed-out | FAIR within three hits; four or more real shots remain BAD |
 
 Collection is explicit: approach a carcass/stunned animal and tap the visible
 prompt, press **F**, or press gamepad **A**. The tablet's **Inventory** page groups
@@ -360,6 +381,7 @@ node tools/check-forest-depth.js
 node tools/check-wildlife-core.js
 node tools/check-wildlife-interaction.js
 node tools/check-wildlife-anatomy.js
+node tools/check-arrow-wildlife-bleed.js
 node tools/check-wildlife-hit-death.js
 node tools/check-forest-hunting.js
 node tools/check-forest-hunting-hud.js

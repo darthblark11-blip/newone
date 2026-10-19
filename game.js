@@ -12141,6 +12141,90 @@ function drawBloodLayer(body) {
     }
 }
 
+// Small impact/trail marks share the wildlife ink and the budgeted floor bank.
+// Their private xorshift never consumes combat, terrain or encounter randomness.
+let _impactBloodPaint = null, _impactBloodFrame = -1, _impactBloodBank = null;
+let _impactBloodHits = 0, _impactBloodDrips = 0;
+const ARROW_BLOOD_MS = 60000, ARROW_BLOOD_INTERVAL_MS = 250;
+function impactBloodColor() {
+    return _impactBloodPaint || (_impactBloodPaint = color(111, 9, 16));
+}
+function bloodMarkBudget(trail) {
+    if (_impactBloodFrame !== frameCount || _impactBloodBank !== bloodChunks) {
+        _impactBloodFrame = frameCount; _impactBloodBank = bloodChunks;
+        _impactBloodHits = _impactBloodDrips = 0;
+    }
+    if (trail) { if (_impactBloodDrips >= 8) return false; _impactBloodDrips++; }
+    else { if (_impactBloodHits >= 24) return false; _impactBloodHits++; }
+    return true;
+}
+function depositSmallBlood(x, y, blobs, spread, owner) {
+    if (owner && (shovelRenderDepth(owner) > 0 || owner.shovelDepthTarget > 0)) {
+        if (shovelBloodMarks.length >= SHOVEL_BLOOD_MARK_MAX) shovelBloodMarks.shift();
+        const mark = shovelBindEffect({x,y,col:impactBloodColor(),blobs,age:24,shovelDeposit:true},owner);
+        // Its world position is fixed. The existing depositor follows depth
+        // during a fall, then detaches when the figure reaches the shaft floor.
+        shovelBloodMarks.push(mark);
+    } else stampGroundBlobs(x, y, blobs, impactBloodColor(), spread);
+}
+function stampImpactBlood(x, y, angle, radius, seed, owner = null) {
+    if (!bloodMarkBudget(false)) return;
+    const rnd = () => { seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5; return (seed >>> 0) / 4294967296; };
+    const c = Math.cos(angle), sn = Math.sin(angle), blobs = [];
+    for (let i = 0; i < 3; i++) {
+        const reach = 3 + rnd() * Math.min(24, radius * .75), side = (rnd() - .5) * 12;
+        blobs.push({ox:c * reach - sn * side,oy:sn * reach + c * side,sz:3 + rnd() * 5});
+    }
+    depositSmallBlood(x, y, blobs, 32, owner);
+}
+function humanBloodTarget(actor) {
+    return actor && (actor.isPlayer || actor.eType === 'ARMORED' || ragHumanoid(actor.eType, actor.bodyW));
+}
+function bloodGameplayActive() {
+    return doTick && !isPaused && !isDead && !isWin && !killcamMode &&
+        !(typeof inCutscene !== 'undefined' && inCutscene) && !inStoryIntro &&
+        !inOverworldView && !inTravelMenu && !inWorldBuildingMenu && !inDarchonCall &&
+        !inTownCutscene && !inFarmCutscene && !inFarmPostCutscene && !inPostAmbushCutscene && !inFortCutscene;
+}
+function bloodElapsedMs() {
+    return typeof deltaTime === 'number' && Number.isFinite(deltaTime) && deltaTime >= 0 ? deltaTime : 1000 / 60;
+}
+function startArrowBloodTrail(actor, hit, point) {
+    if (!actor || actor.dead || actor.hp <= 0 || actor.harvested || actor.state === 'STUNNED') return;
+    const angle = Number.isFinite(actor.angle) ? actor.angle : actor.aimAngle || 0;
+    const c = Math.cos(angle), sn = Math.sin(angle), dx = point.x - actor.x, dy = point.y - actor.y;
+    const limit = actor.bodyR ? actor.bodyR * 1.35 + 2 : Math.max(actor.bodyW || 21,actor.bodyH || 27) * .6;
+    const reach = Math.hypot(dx,dy), scale = reach > limit ? limit / reach : 1;
+    const previous = actor.arrowBloodTrail;
+    actor.arrowBloodTrail = {leftMs:ARROW_BLOOD_MS,untilDropMs:ARROW_BLOOD_INTERVAL_MS,
+        x:(dx*c+dy*sn)*scale,y:(-dx*sn+dy*c)*scale,level:currentLevel,bank:bloodBankId,
+        seed:previous ? previous.seed : (Math.imul((actor.id || actor.x * 16) | 0,0x9e3779b9) ^
+            Math.imul((Number(hit.shotId) || frameCount + 1) | 0,0x85ebca6b)) >>> 0 || 1};
+}
+function updateArrowBloodTrail(actor, elapsedMs) {
+    const trail = actor && actor.arrowBloodTrail;
+    if (!trail) return;
+    if (actor.dead || actor.hp <= 0 || actor.harvested || actor.state === 'STUNNED' ||
+        trail.level !== currentLevel || trail.bank !== bloodBankId) {
+        actor.arrowBloodTrail = null; return;
+    }
+    if (!bloodGameplayActive() || !(elapsedMs > 0) || !Number.isFinite(elapsedMs)) return;
+    trail.leftMs = Math.max(0,trail.leftMs - elapsedMs);
+    trail.untilDropMs -= elapsedMs;
+    if (trail.untilDropMs <= 0 && bloodMarkBudget(true)) {
+        // A delayed frame never dumps a backlog of droplets onto one spot.
+        trail.untilDropMs = ARROW_BLOOD_INTERVAL_MS;
+        let seed = trail.seed;
+        const rnd = () => { seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5; return (seed >>> 0) / 4294967296; };
+        const angle = Number.isFinite(actor.angle) ? actor.angle : actor.aimAngle || 0;
+        const c = Math.cos(angle), sn = Math.sin(angle);
+        const blobs = [{ox:(rnd()-.5)*2,oy:(rnd()-.5)*2,sz:2.5+rnd()*2.5}];
+        trail.seed = seed >>> 0;
+        depositSmallBlood(actor.x+c*trail.x-sn*trail.y,actor.y+sn*trail.x+c*trail.y,blobs,6,actor);
+    }
+    if (!trail.leftMs) actor.arrowBloodTrail = null;
+}
+
 function spawnSplatter(x, y, t = "HIDDEN", col = null, owner = null) {
     if (t === "HIDDEN") return;
 
@@ -16755,6 +16839,7 @@ this.skeletonTimer = 0;
     const restored = min(amount, max(0, this.maxHp - this.hp));
     if (restored > 0) {
       this.hp += restored;
+      this.arrowBloodTrail = null;
       // Body wounds heal with HP. The energy shield can refill independently.
       if (this.isPlayer) this.decals.length = 0;
     }
@@ -20510,6 +20595,8 @@ function updateEntities() {
   if (comboTimer > 0) { comboTimer--; if (comboTimer <= 0) consecutiveKills = 0; }
 
   if (doTick) {
+      const bloodMs = bloodGameplayActive() ? bloodElapsedMs() : 0;
+      if (player && player.arrowBloodTrail) updateArrowBloodTrail(player,bloodMs);
       updateWorldBoxingOpponents();
       // Body-to-body separation only matters where somebody can see it, and
       // with settlements streaming in there are now up to a hundred residents
@@ -20538,6 +20625,7 @@ function updateEntities() {
       for (let n = 0; n < enemiesList.length; n++) {
           const e = enemiesList[n];
           if (!e) continue;
+          if (e.arrowBloodTrail) updateArrowBloodTrail(e,bloodMs);
           // Run before body separation and AI, including while the population
           // refresh is cooling down. An old nearby resident must never enter
           // forceNudge's collision search for a newly forbidden 700m buffer.
@@ -21090,7 +21178,7 @@ function updateBullets() {
                     } else {
                         const damage=b.isOrangeBeam?ROBOT_BEAM_DMG:(b.isRedLaser||b.isPinkLaser?30:(b.isAlienLaser?25:(wildlifeHit.head?b.w.headDmg:b.w.bodyDmg)));
                         applyForestWildlifeHit(wildlifeHit.animal,{weapon:b.w,head:wildlifeHit.head,shotId:b.shotId,owner:b.shooter,
-                            x:b.x,y:b.y,angle:b.a,arrowPower:b.arrowPower,arrowDud:b.arrowDud,
+                            x:b.x,y:b.y,angle:b.a,vital:wildlifeHit.vital,arrowPower:b.arrowPower,arrowDud:b.arrowDud,
                             damage:(damage||0)*(b.isArrow?b.arrowPower:1)});
                     }
                     if(b.isP&&!b.isTaser)totalShotsHit++;
@@ -21185,7 +21273,14 @@ function updateBullets() {
                 // The animation reads this; damage and death selection stay below.
                 const fallMotion=figureMotion(t),fallHit={frame:frameCount,kind:b.tH,weapon:b.w,angle:b.a,
                     force:weaponFallForce(b.w),mx:fallMotion.x,my:fallMotion.y,x:t.x,y:t.y,wound:null};
+                const hpBeforeImpact = t.hp;
                 let dRes = robotHeadAbsorbed ? { blocked: false, broken: false } : t.takeDamage(dmg,b.shooter);
+                if (t.hp < hpBeforeImpact && humanBloodTarget(t) && !(wA && b.tH === 'HEAD')) {
+                    const seed = (Math.imul((Number(b.shotId) || frameCount + 1) | 0,0x9e3779b9) ^
+                        Math.imul((fallHit.x * 16) | 0,0x85ebca6b) ^ (fallHit.y * 16 | 0)) >>> 0 || 1;
+                    stampImpactBlood(b.x,b.y,b.a,Math.max(t.bodyW,t.bodyH)*.5,seed,t);
+                    if (b.isArrow) startArrowBloodTrail(t,b,{x:b.x,y:b.y});
+                }
                 if (!dRes.blocked) t.fallHit=fallHit;
                 b.l = 0; 
 
@@ -21274,7 +21369,8 @@ function updateBullets() {
                       emit(b.x, b.y, 8, bCol, "BLOOD", b.vx, b.vy, t);
                       // 3. Once the shield is gone, every round that lands marks
                       //    the ground. That mark is the read that he is unprotected.
-                      if (t.isPlayer) spawnSplatter(t.x, t.y, "BLOOD", bCol, t);
+                      // The same three small floor drops are stamped above on
+                      // actual flesh damage, including shield-break overflow.
                     }
                 } 
                 if (t.isPlayer) screenShake = 5; 
@@ -47568,7 +47664,7 @@ function wildlifeSpawnAnimal(species, x, y, herd) {
     intrusion: 0, intruder: null, retreatUntil: 0, chaseUntil: 0,
     seenHumanX: x, seenHumanY: y, seenHuman: null,
     shots: 0, headshots: 0, shotIds: [], condition: null, method: null,
-    decals: [], deathType: null, fall: null, fallTilt: 1 };
+    decals: [], deathType: null, fall: null, fallTilt: 1, arrowVitalBleed: null };
   a.contactAngle = a.angle;
   forestWildlife.push(a); _wildlifeGridDirty = true;
   return a;
@@ -47929,7 +48025,12 @@ function wildlifeBrain(a) {
   }
   a.thinkAt = _wildlifeClock + (a.state === 'GRAZE' ? 100 + wildlifeRandom() * 110 : 16);
 }
-function updateForestWildlife(dt) {
+function updateForestWildlife(dt, elapsedMs) {
+  // Locomotion retains its capped simulation step. A mortal wound instead
+  // ages in real active-gameplay milliseconds, including slow rendered frames.
+  const bleedMs = Number.isFinite(elapsedMs) ? Math.max(0, elapsedMs) :
+    Number.isFinite(dt) ? Math.max(0, dt) * (1000 / 60) :
+    typeof deltaTime === 'number' && Number.isFinite(deltaTime) ? Math.max(0, deltaTime) : 1000 / 60;
   dt = Math.max(0, Math.min(3, Number.isFinite(dt) ? dt : 1));
   if (!BIOME_ACTIVE || currentBiome !== 2 || !player) {
     if (_wildlifeLastBiome === 2 || forestWildlife.length) { forestWildlife.length = 0; _wildlifeGridDirty = true; _wildlifeSpawnClock = 0; }
@@ -47946,15 +48047,29 @@ function updateForestWildlife(dt) {
   const far = Math.max(2800, Math.hypot(viewRight - viewLeft, viewBottom - viewTop) + 1900), far2 = far * far;
   for (let i = forestWildlife.length - 1; i >= 0; i--) {
     const a = forestWildlife[i]; a.clock += dt;
-    if (a.harvested || ((!inView(a.x, a.y, 260)) && (a.x-player.x)*(a.x-player.x)+(a.y-player.y)*(a.y-player.y) > far2)) {
+    const trackingWound = a.arrowBleedTracked || (a.dead && a.fall && a.fall.progress < 1);
+    if (a.harvested || (!trackingWound && (!inView(a.x, a.y, 260)) && (a.x-player.x)*(a.x-player.x)+(a.y-player.y)*(a.y-player.y) > far2)) {
       forestWildlife.splice(i, 1); _wildlifeGridDirty = true; continue;
     }
     if (a.hitFlash > 0) a.hitFlash = Math.max(0, a.hitFlash - dt);
     if (a.dead || a.state === 'STUNNED') {
+      updateArrowBloodTrail(a, 0);
       if (a.dead && a.fall && a.fall.progress < 1) wildlifeUpdateFall(a, dt);
       a.ttl -= dt;
       if (a.ttl <= 0) { forestWildlife.splice(i, 1); _wildlifeGridDirty = true; }
       continue;
+    }
+    updateArrowBloodTrail(a, bleedMs);
+    if (a.arrowVitalBleed) {
+      const bleed = a.arrowVitalBleed;
+      bleed.remainingMs = Math.max(0, bleed.remainingMs - bleedMs);
+      a.hp = Math.max(0, a.hp - bleed.hpPerMs * bleedMs);
+      if (bleed.remainingMs <= 0 || a.hp <= 0) {
+        const previousHp = a.hp;
+        a.hp = 0;
+        wildlifeFinishDeath(a, bleed.hit, 'BOW', 0, previousHp, false);
+        continue;
+      }
     }
     a.alarm = Math.max(0, a.alarm - dt);
     if (a.sensorAt <= _wildlifeClock) wildlifeSenseHumans(a);
@@ -48063,6 +48178,31 @@ const _WILDLIFE_SHOT_BODY = {
   beaver:[1.12,.58],bird:[.70,.44],raptor:[.81,.43],owl:[.69,.58],
   snake:[.85,.20],turtle:[.85,.61],amphibian:[.78,.21]
 };
+function wildlifeVitalPath(a, x0, y0, x1, y1, entryT) {
+  // Test the arrow's path inside the torso, not merely this frame's short
+  // entry segment. Otherwise the same chest shot changes with frame rate or
+  // with the distance from which it was fired. The heart/lung ellipse is a
+  // smaller front-torso region; flank/rump grazes do not become vital hits.
+  const shape = _WILDLIFE_SHOT_BODY[WILDLIFE_SPECIES[a.species].family] || _WILDLIFE_SHOT_BODY.rodent;
+  const c = Math.cos(a.angle), sn = Math.sin(a.angle);
+  const dx = x1 - x0, dy = y1 - y0, length = Math.hypot(dx, dy);
+  if (!(length > 1e-9) || !Number.isFinite(entryT)) return false;
+  const ex = x0 + dx * entryT - a.x, ey = y0 + dy * entryT - a.y;
+  const px = ex * c + ey * sn, py = -ex * sn + ey * c;
+  const ux = (dx * c + dy * sn) / length, uy = (-dx * sn + dy * c) / length;
+  const rx = a.bodyR * shape[0] + 1, ry = a.bodyR * shape[1] + 1;
+  const aa = ux * ux / (rx * rx) + uy * uy / (ry * ry);
+  const bb = px * ux / (rx * rx) + py * uy / (ry * ry);
+  const cc = px * px / (rx * rx) + py * py / (ry * ry) - 1;
+  const disc = bb * bb - aa * cc;
+  if (disc < -1e-10) return false;
+  const exit = (-bb + Math.sqrt(Math.max(0, disc))) / aa;
+  if (!(exit > 1e-8)) return false;
+  const vx = a.bodyR * shape[0] * .30, vy = a.bodyR * shape[1] * .57;
+  const cx = a.bodyR * shape[0] * .24;
+  return Number.isFinite(wildlifeSegmentCircle((px - cx) / vx, py / vy,
+    (px + ux * exit - cx) / vx, (py + uy * exit) / vy, 0, 0, 1));
+}
 function forestWildlifeHitTest(b) {
   if (!b || !forestWildlife.length || currentBiome!==2 || b.retracting || b.tetheredTarget) return null;
   wildlifeRebuildGrid();
@@ -48089,9 +48229,10 @@ function forestWildlifeHitTest(b) {
       // flesh first even with HEAD selected; a clean face hit is a headshot
       // even with BODY selected. A round starting in both shapes hits torso.
       const head=headT<bodyT,t=head?headT:bodyT;
-      if(t<bestT){bestT=t;best={animal:a,head,t};}
+      if(t<bestT){bestT=t;best={animal:a,head,t,vital:false};}
     }
   }
+  if(best && !best.head && b.isArrow) best.vital=wildlifeVitalPath(best.animal,x0,y0,x1,y1,best.t);
   return best;
 }
 function wildlifeWeaponKind(w) {
@@ -48152,12 +48293,7 @@ function wildlifeBloodImpact(a, hit, point, killed) {
   }
   // A few small, directional droplets bake into the same budgeted floor bank
   // as army blood. No temporary graphics or growing per-frame decal lists.
-  const blobs = [];
-  for (let i = 0; i < 3; i++) {
-    const reach = 3 + rnd() * Math.min(24, a.bodyR * 0.75), side = (rnd() - 0.5) * 12;
-    blobs.push({ ox: c * reach - sn * side, oy: sn * reach + c * side, sz: 3 + rnd() * 5 });
-  }
-  stampGroundBlobs(point.x, point.y, blobs, _wildlifeBloodPaint, 32);
+  stampImpactBlood(point.x,point.y,angle,a.bodyR,seed,a);
 }
 function wildlifeBeginFall(a, hit, kind, damage, previousHp) {
   const incoming = wildlifeImpactAngle(a, hit), airborne = a.airborne;
@@ -48232,11 +48368,22 @@ function wildlifeUpdateFall(a, dt) {
     wildlifeSettleBlood(a);
   }
 }
+function wildlifeFinishDeath(a, hit, kind, damage, previousHp, cleanBowHead) {
+  a.dead=true;a.state='DEAD';a.ttl=18000;
+  a.arrowVitalBleed=null;
+  updateArrowBloodTrail(a, 0);
+  wildlifeBeginFall(a, hit, kind, damage, previousHp);
+  a.method=cleanBowHead?'BOW_HEAD':kind;
+  a.condition=a.method==='BOW_HEAD'?'PERFECT':kind==='EXPLOSIVE'||a.shots>=4?'BAD':a.shots===1&&a.headshots===1?'GOOD':'FAIR';
+  _wildlifeGridDirty=true;
+  return {hit:true,killed:true,stunned:false,condition:a.condition};
+}
 function applyForestWildlifeHit(a, hit) {
   if(!a||!hit||a.harvested||a.dead||a.state==='STUNNED')return {hit:false};
   const kind=wildlifeWeaponKind(hit.weapon),s=WILDLIFE_SPECIES[a.species];
   if(kind==='TASER'){
     a.state='STUNNED';a.vx=a.vy=0;a.condition='PERFECT';a.method='TASER';a.ttl=18000;a.hitFlash=12;
+    a.arrowVitalBleed=null;updateArrowBloodTrail(a, 0);
     _wildlifeGridDirty=true;return {hit:true,killed:false,stunned:true,condition:a.condition};
   }
   const sid=hit.shotId===undefined||hit.shotId===null?'wildlife:'+(_wildlifeLedger.nextId++):String(hit.shotId);
@@ -48250,17 +48397,24 @@ function applyForestWildlifeHit(a, hit) {
   if(cleanBowHead)damage=a.hp;
   const previousHp = a.hp, point = wildlifeImpactPoint(a, hit);
   a.hp=Math.max(0,a.hp-damage);a.hitFlash=8;
-  if (damage > 0) { wildlifeRecordWound(a, hit, point); wildlifeBloodImpact(a, hit, point, a.hp <= 0); }
+  if (damage > 0) {
+    wildlifeRecordWound(a, hit, point); wildlifeBloodImpact(a, hit, point, a.hp <= 0);
+    if (kind === 'BOW') startArrowBloodTrail(a, hit, point);
+  }
   a.threatX=hit.owner&&Number.isFinite(hit.owner.x)?hit.owner.x:a.x-Math.cos(a.angle)*60;
   a.threatY=hit.owner&&Number.isFinite(hit.owner.y)?hit.owner.y:a.y-Math.sin(a.angle)*60;
   a.alarm=600;a.thinkAt=_wildlifeClock;
   if(a.hp<=0){
-    a.dead=true;a.state='DEAD';a.ttl=18000;
-    wildlifeBeginFall(a, hit, kind, damage, previousHp);
-    a.method=cleanBowHead?'BOW_HEAD':kind;
-    a.condition=a.method==='BOW_HEAD'?'PERFECT':kind==='EXPLOSIVE'||a.shots>=4?'BAD':a.shots===1&&a.headshots===1?'GOOD':'FAIR';
-    _wildlifeGridDirty=true;
-    return {hit:true,killed:true,stunned:false,condition:a.condition};
+    return wildlifeFinishDeath(a, hit, kind, damage, previousHp, cleanBowHead);
+  }
+  if (damage > 0 && kind === 'BOW' && hit.vital && !hit.head && !hit.arrowDud &&
+      (!Number.isFinite(hit.arrowPower) || hit.arrowPower >= .55) && !a.arrowVitalBleed) {
+    // Capture only the original wound's impact data. Repeated arrows may
+    // worsen damage/condition, but never restart the one-minute deadline.
+    a.arrowBleedTracked = true;
+    a.arrowVitalBleed = { remainingMs: 60000, hpPerMs: a.hp / 60000,
+      hit: { head: false, weapon: 'BOW', angle: wildlifeImpactAngle(a, hit),
+        x: point.x, y: point.y } };
   }
   // Crossfire from another army scatters wildlife; it must not blame the
   // player. Only the player who injured a predator can provoke retaliation.

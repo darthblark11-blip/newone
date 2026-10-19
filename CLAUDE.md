@@ -2627,6 +2627,12 @@ the line is baked in with the body instead of vanishing the moment a corpse reti
 
 ### What a headshot leaves on the body
 
+Small living-human projectile splashes and arrow wound trails share the animal
+floor-blood painter. Gate them on actual HP loss; armor regeneration must not
+close a wound. Animal vital-arrow bleed-out preserves the original shot history
+and ordinary hunting corpse lifecycle. Geometry, timing, depth and work-budget
+contracts are in [docs/impact-blood.md](docs/impact-blood.md).
+
 Every death that takes the head off already throws a pool onto the *ground* around it, and
 none of it landed on the person it came out of — so a body with no head above the collar
 had a clean shirt. `bloodSpray(rig, lean)` is the part that falls back on them: a fan over
