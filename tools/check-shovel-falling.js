@@ -37,8 +37,16 @@ for(const type of ['AERIAL','AERIAL_PISTOL','SAUCER','SAUCER_RED']){
  ok('shovelPlayerDepth(flyer)===0&&flyer.shovelDepthTarget===0',type+' remains airborne above the open shaft');
 }
 P('shovelCellAt(528,720).depth=1800;fallTick(fallingEnemy,65);fallTick(fallingCitizen,65);');
-ok('shovelPlayerDepth(fallingEnemy)===1800&&shovelPlayerDepth(fallingCitizen)===1800','Deepening an occupied shaft carries both actors down to its new floor');
+ok('shovelPlayerDepth(fallingEnemy)>36&&shovelPlayerDepth(fallingEnemy)<1800&&shovelPlayerDepth(fallingCitizen)<1800','A very deep drop remains in flight after one second instead of snapping to its floor');
+ok('fallingEnemy.hp>0&&!fallingCitizen.dead','Fall damage waits for floor impact');
+P('fallTick(fallingEnemy,300);fallTick(fallingCitizen,300);');
+ok('shovelPlayerDepth(fallingEnemy)===1800&&shovelPlayerDepth(fallingCitizen)===1800','Gravity eventually carries both actors to the deep floor');
+ok('fallingEnemy.hp===0&&fallingCitizen.dead&&corpses.length===2','Long drops create one fatal floor impact and corpse for each actor');
 ok('shovelRenderScale(fallingEnemy)===SHOVEL.minScale&&shovelRenderScale(fallingCitizen)===SHOVEL.minScale','Both actors reach the bounded pin-sized deep projection');
+// Independently settled survivors exercise visibility and movement below the
+// surface without turning a lethal-drop corpse into a living test subject.
+P(`fallingEnemy=new Character(528,720,false,'NORMAL');fallingCitizen=new Citizen(528,720,'SCIENCE');
+ for(const e of [fallingEnemy,fallingCitizen]){e.shovelLevel=1;e.shovelDepth=e.shovelDepthTarget=1800;e._shovelCellKey=shovelCellKey(5,7);}`);
 P('var hpEnemy=fallingEnemy.hp;fallingEnemy.takeDamage(100,player);');
 ok('fallingEnemy.hp===hpEnemy','A surface attacker cannot hurt an enemy below the ground');
 P('var bulletCount=bullets.length;fallingEnemy.fire(0);');

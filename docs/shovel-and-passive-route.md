@@ -41,11 +41,13 @@ Civilian falls remain separate from the saloon's boxing knockout physics.
 
 ## Excavation
 
-Excavation works throughout the mapped outdoor levels, including existing
-courtyard grass, dirt, streets and paths. Ground does not need a special grass
-record or belong to a marked route. Actual building foundations block the whole
-excavation square, at every depth. Furniture, landscaping, gates and boundary
-walls do not count as building foundations. The added home and gate lawns
+New surface shafts and forward scoops penetrate **grass and dirt only**, including
+existing courtyard lawns, forest soil, farm fields and Dry Gulch's desert/canyon
+floor. Asphalt streets, sidewalks, stone paths/plazas, concrete pads, car parks,
+water and bridge decking reject surface digging. Ground does not need a special
+grass collider or belong to a marked route. Fully underground, tunneling can
+continue beneath paving, gates and boundary walls. Actual building foundations
+block the whole excavation square at every depth. The added home and gate lawns
 remain as optional discovery and entry points.
 
 ![Existing west-side courtyard grass accepts digging](previews/shovel-west-courtyard.png)
@@ -69,16 +71,27 @@ player footprint and intervening excavated space, so unmined soil and
 disconnected holes remain solid.
 
 Climbing raises the player within the shaft without deleting its lower floor.
-Emerging works on open ground, including paved ground; move beyond a solid
-wall before climbing out. Building foundations remain protected underground.
+A covered tunnel can be opened into a new exit only through grass or dirt;
+move beyond paving and solid walls before climbing out. Existing open shafts
+always remain climbable. Building foundations remain protected underground.
 Surface attacks cannot hit a fully underground player, and the shovel cannot
 hit opponents on a different level.
 
-Grounded enemies and civilians fall when they cross an open hole's visible
-mouth. They descend smoothly, shrink with depth and remain constrained by the
-excavated space; an intact tunnel roof still supports actors above it. Aircraft
-remain above the terrain. Buried bodies and deaths stay beneath the surface
-and never bake a corpse onto the roof.
+Grounded players, enemies, civilians and bodies accelerate into an open
+hole's visible mouth. Drop height determines descent time: deep falls stay
+near the rim at first and progressively shrink toward the floor. Blood,
+comic impact bursts, dust and dirt clods follow the same projected depth and
+size. Buried splatter stays on the shaft floor instead of staining its roof.
+An intact tunnel roof supports actors above it, and aircraft remain airborne.
+
+An uninterrupted fall of **10 metres or more** (200 world units) kills a living
+actor on landing, creates blood splatter and leaves a corpse at that depth.
+The player's shield cannot absorb the impact. Normal paced digging and
+climbing remain safe because each scoop is a controlled change of level.
+Midair deaths transfer their remaining fall to the corpse; saving and loading
+retain the player's fall origin and velocity. Fatal falls preserve ordinary
+city, military, fortress and bounty casualty accounting. Deployed workers'
+losses are recorded in their home department so they do not return on reload.
 
 Fully underground actors are hidden from surface enemies. Hostiles can search
 the last place they saw a target, but cannot track a buried target's live
@@ -111,6 +124,9 @@ node tools/check-shovel-tool.js
 node tools/check-shovel-terrain.js
 node tools/check-shovel-dig-animation.js
 node tools/check-shovel-falling.js
+node tools/check-shovel-fall-impact.js
+node tools/check-shovel-depth-effects.js
+node tools/check-shovel-surface-entry.js
 node tools/check-shovel-awareness.js
 node tools/check-shovel-foundations.js
 node tools/check-shovel-render.js

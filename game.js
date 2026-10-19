@@ -4088,7 +4088,61 @@ function shovelTunnelCutawayBounds(e, projection = shovelActorProjection(e)) {
   const s = projection.scale, w = 72 * s + 6, h = 66 * s + 6;
   return [projection.x - w / 2, projection.y - h / 2, w, h];
 }
+// Actor-owned effects keep unscaled simulation coordinates. Project their
+// offsets and footprint together with the falling figure, rather than leaving
+// a full-sized red cloud floating above a pin-sized body at the shaft floor.
+function shovelBindEffect(effect, owner) {
+  owner = owner && (owner.shovelEffectBody || owner);
+  effect.shovelOwner = owner || null;
+  effect.shovelLevel = currentLevel;
+  effect.shovelDepth = owner ? shovelRenderDepth(owner) : 0;
+  effect.shovelOriginX = owner && Number.isFinite(owner.x) ? owner.x : effect.x;
+  effect.shovelOriginY = owner && Number.isFinite(owner.y) ? owner.y : effect.y;
+  return effect;
+}
+function shovelEffectDepth(effect) {
+  if (!effect || effect.shovelLevel !== currentLevel) return 0;
+  const owner = effect.shovelOwner && (effect.shovelOwner.shovelEffectBody || effect.shovelOwner);
+  const depth = owner && owner.shovelLevel === currentLevel ? shovelRenderDepth(owner) : effect.shovelDepth || 0;
+  return effect.shovelDeposit ? Math.max(effect.shovelDepth || 0, depth) : depth;
+}
+function shovelEffectProjection(effect) {
+  const depth = shovelEffectDepth(effect);
+  const origin = { x: effect.shovelOriginX, y: effect.shovelOriginY,
+    shovelLevel: currentLevel, shovelDepth: depth };
+  const p = shovelActorProjection(origin);
+  return { x: p.x + (effect.x - origin.x) * p.scale,
+    y: p.y + (effect.y - origin.y) * p.scale, scale: p.scale, depth,
+    origin, originProjection: p };
+}
+function shovelPaintDepthEffect(effect, paint) {
+  const projection = shovelEffectProjection(effect), d = projection.depth;
+  if (d <= 0) { paint(); return true; }
+  const origin = projection.origin, cell = shovelCellAt(origin.x, origin.y);
+  if (!cell) return false;
+  const roofed = !cell.open;
+  if (roofed && (!player || shovelRenderDepth(player) < SHOVEL.underground ||
+      Math.abs(shovelRenderDepth(player) - d) > SHOVEL.waist + .01 ||
+      Math.hypot(player.x - origin.x, player.y - origin.y) > SHOVEL.cell)) return false;
+  const cells = [];
+  for (let y = -1; y <= 1; y++) for (let x = -1; x <= 1; x++) {
+    const n = shovelCellAt(cell.x + x * SHOVEL.cell, cell.y + y * SHOVEL.cell);
+    if (n && (roofed ? n.depth >= d && n.ceiling < d : n.open && n.depth > 0)) cells.push(n);
+  }
+  push(); const ctx = drawingContext; ctx.save();
+  try {
+    if (roofed) {
+      const cut = shovelTunnelCutawayBounds(origin, projection.originProjection);
+      ctx.beginPath(); ctx.rect(cut[0], cut[1], cut[2], cut[3]); ctx.clip();
+    }
+    shovelClipCells(cells, roofed, d);
+    translate(projection.x, projection.y); scale(projection.scale); translate(-effect.x, -effect.y);
+    paint();
+  } finally { ctx.restore(); pop(); }
+  return true;
+}
 function drawShovelUndergroundActor() {
+  drawShovelBloodMarks();
   const actors = _shovelBelowActors;
   // The surface and underground layers use the same corpse-first rule.
   actors.sort((a, b) => Number(!isGroundBodyActor(a)) - Number(!isGroundBodyActor(b)) ||
@@ -4115,6 +4169,7 @@ function drawShovelUndergroundActor() {
           ctx.beginPath(); ctx.rect(cut[0], cut[1], cut[2], cut[3]); ctx.clip();
           shovelClipCells(cells, true, d);
           for (const c of cells) drawShovelPitCell(c, true, d);
+          drawShovelBloodMarks(e);
         } else shovelClipCells(cells);
         push();
         try {
@@ -6253,7 +6308,7 @@ function drawParkingCars() {
 function windowResized() { resizeCanvas(windowWidth, windowHeight); leftStick.base = { x: 80, y: height - 160 }; rightStick.base = { x: width - 80, y: height - 110 }; if (typeof glRigResize === 'function') glRigResize(); }
 function nextLevel() { startAtLevel(currentLevel + 1); }
 function restartGame() { wipeAllBloodBanks(); seedWorldClock(); window.outpostForts = {}; startAtLevel(1); }
-function emit(x, y, c, col, typ, vx = 0, vy = 0) { for (let i = 0; i < c; i++) { particles.push(newParticle(x, y, col, typ, vx, vy)); } }
+function emit(x, y, c, col, typ, vx = 0, vy = 0, owner = null) { for (let i = 0; i < c; i++) { particles.push(newParticle(x, y, col, typ, vx, vy, owner)); } }
 let activeBuildings = [];
 let activeParkingCars = [];
 
@@ -7137,12 +7192,14 @@ viewBottom = camY + height / zoom + shakePad;
    // knocked-out bodies underneath them. Aircraft have their own upper pass.
    _depthOn = depthSortActive();
    _legacyActorsQueued = !_depthOn;
-   if (player.hp > 0) { if (!isWin && doTick) player.updatePlayer(); actorShow(player); } else if (!isWin && !isDead) { playerRespawnTimer--; if (playerRespawnTimer <= 0) { isDead = true; } }
+   if (player.hp > 0) { if (!isWin && doTick) player.updatePlayer(); if(player.hp>0&&!player.dead)actorShow(player); } else if (!isWin && !isDead) { playerRespawnTimer--; if (playerRespawnTimer <= 0) { isDead = true; } }
   updateEntities(); 
 
   // Draw civilians ALWAYS, so they populate the town while you run around
-  for (let c of townCitizens) {
-      if (doTick) c.update();
+  for (let i=townCitizens.length-1;i>=0;i--) {
+      const c=townCitizens[i];
+      if (doTick && !c.dead) c.update();
+      if(c.dead){townCitizens.splice(i,1);continue;}
       actorShow(c);
   }
   
@@ -8467,7 +8524,7 @@ function resolveShovelSwing(c) {
 // A surface shaft is open; a horizontal tunnel retains the ground above it.
 // Positive depth runs down into the earth, so elevation keeps its own meaning.
 const SHOVEL = Object.freeze({cell:96,step:18,waist:18,underground:36,maxDepth:4096,
-  cooldownMs:440,minScale:.045,bodyRadius:14});
+  cooldownMs:440,minScale:.045,bodyRadius:14,gravity:196,terminal:900,lethalFall:200});
 const SHOVEL_GRASS_PATCHES = Object.freeze([
   Object.freeze({id:'HOME_GARDEN',x:480,y:672,w:192,h:96}),
   Object.freeze({id:'NORTH_VERGE',x:4992,y:-3456,w:288,h:288}),
@@ -8515,7 +8572,7 @@ function shovelSurfaceFallCell(e) {
   return e.x>=b[0]&&e.x<=b[2]&&e.y>=b[1]&&e.y<=b[3]?c:null;
 }
 function shovelRenderScale(e=player) {
-  return Math.max(SHOVEL.minScale,1/(1+shovelPlayerDepth(e)/76));
+  return Math.max(SHOVEL.minScale,1/(1+shovelRenderDepth(e)/76));
 }
 function shovelSameLayer(a,b) {
   const ad=shovelPlayerDepth(a),bd=shovelPlayerDepth(b);
@@ -8546,7 +8603,8 @@ function shovelOverlapsRect(x,y,p,b) {
   return x+p>b.x-b.w/2&&x-p<b.x+b.w/2&&y+p>b.y-b.h/2&&y-p<b.y+b.h/2;
 }
 // Excavation follows actual architecture, not the terrain bake's paint records.
-// Courtyard turf, dirt, paving and scenery do not need an isGrassLot collider.
+// Courtyard turf and dirt do not need an isGrassLot collider; surface material
+// is checked separately so underground tunnels can pass beneath paving.
 const SHOVEL_FOUNDATION_FLAGS = Object.freeze(['isBlockBuilding','isHouse','isBarn','isTrailer',
   'isShanty','isMarket','isGasStation','isLiquorStore','isApartment','isWesternBldg',
   'isMall','isCasino','isTheater','isArena','isAlienBldg','isChip','isPyramid',
@@ -8577,14 +8635,84 @@ function shovelSurfaceWallAt(x,y,r=0) {
   }
   return null;
 }
-function shovelSurfaceSoftAt(x,y,level=currentLevel) {
-  return level===currentLevel&&level>=1&&level<=7&&Number.isFinite(x)&&Number.isFinite(y)&&
-    !shovelFoundationAt(x,y);
-}
-function shovelSurfaceCellSoft(ix,iy,level=currentLevel) {
+function shovelCellFoundationClear(ix,iy,level=currentLevel) {
   if(level!==currentLevel||level<1||level>7||!Number.isInteger(ix)||!Number.isInteger(iy))return false;
   // Test the entire square, including foundations lying between corner samples.
   return !shovelFoundationAt((ix+.5)*SHOVEL.cell,(iy+.5)*SHOVEL.cell,SHOVEL.cell*.5-.1);
+}
+function shovelFrontierDeckAt(x,y) {
+  const bridge=p=>p.depth>1&&p.distance<p.outerHalf&&p.bridge>0;
+  if(bridge(frontierCanyonSample('X',x,y,Math.round((y-3550)/7200)))||
+      bridge(frontierCanyonSample('Y',x,y,Math.round((x-5200)/9200))))return true;
+  for(const site of FRONTIER_CANYON_LANDMARKS)if(frontierCanyonLandmarkNear(site,x,y)&&
+      bridge(frontierCanyonSample(site.axis,x,y,site.index)))return true;
+  // These slim planks are drawn by the authored town overlay, not colliders.
+  for(const run of [[-4760,-4480],[-4160,-3560],[-3240,-1280],[-980,-80]])
+    if(y>=run[0]&&y<run[1]&&((x>=1100&&x<1134)||(x>=1486&&x<1520)))return true;
+  for(const sy of [-3400,-4320])for(const side of [-1,1])
+    if(y>=sy+side*138-16&&y<sy+side*138+16)
+      for(const run of [[-355,970],[1770,2720],[3110,3450]])if(x>=run[0]&&x<run[1])return true;
+  return false;
+}
+function shovelSurfaceSoftAt(x,y,level=currentLevel) {
+  if(level!==currentLevel||level<1||level>7||!Number.isFinite(x)||!Number.isFinite(y)||
+      shovelFoundationAt(x,y))return false;
+  let grass=false;
+  for(const b of buildings) {
+    if(!b||!shovelOverlapsRect(x,y,0,b))continue;
+    if(b.isPond) {
+      if(Math.pow((x-b.x)/(b.w/2),2)+Math.pow((y-b.y)/(b.h/2),2)<=1)return false;
+    } else if(b.isParkingLot||b.isWater||b.isRiver||b.isDeck||
+        ['BRIDGE','CANALBRIDGE','BOARDWALK','CIVICTERRACE','HELIPAD','CANAL','FOUNTAIN'].includes(b.propType))return false;
+    if(b.isGrassLot||b.isCropField)grass=true;
+  }
+  const fort=outpostFortDef(level);
+  if(fort&&Math.abs(x-fort.x)<FORT_HALF_W+220&&Math.abs(y-fort.y)<FORT_HALF_H+260)return false;
+  if(level===1&&SHOVEL_GRASS_PATCHES.some(p=>x>=p.x&&x<p.x+p.w&&y>=p.y&&y<p.y+p.h))return true;
+  const cx=Math.floor(x/CHUNK_W),cy=Math.floor(y/CHUNK_W),ox=cx*CHUNK_W,oy=cy*CHUNK_W;
+  const lay=layoutFor(level,cx,cy),lx=x-ox,ly=y-oy;
+  if(lay==='CITY'||lay==='CITY_DENSE') {
+    // Match the painted 240-unit streets and 45-unit sidewalk ring.
+    if(lx<165||lx>=1035||ly<165||ly>=1035)return false;
+    if(cityHasCanal(level,cy)&&!chunkInAuthoredCore(cx,cy)&&coreTaperX(cx,cy,x)>.35)return false;
+    let zone=cityZoneAt(level,ox,oy);
+    if(chunkInAuthoredCore(cx,cy)&&['PARK','PLAZA','CONSTRUCTION'].includes(zone))zone='RESIDENTIAL';
+    if(zone==='PLAZA')return false;
+    // The green courtyard and its cross-shaped stone paths paint over the
+    // generic yard/alley. Recognize the same footprint, without a collider.
+    if(level===1&&!chunkInAuthoredCore(cx,cy)&&['RESIDENTIAL','COMMERCIAL'].includes(zone)&&
+        cityBlockPlan(cx,cy,zone)===2&&lx>=365&&lx<835&&ly>=365&&ly<835)
+      return !(lx>=562&&lx<638)&&!(ly>=562&&ly<638);
+    if(grass||zone==='PARK'||zone==='CONSTRUCTION')return true;
+    // Unpaved yards remain dirt; the actual service alley is asphalt.
+    const vert=bnoise(level,ox+512,oy+512,.0009)>.5;
+    const along=ox+315+bnoise(level,ox+91,oy+37,.0013)*570;
+    const kink=(bnoise(level,ox+733,oy+211,.0017)-.5)*130;
+    const run=vert?y:x,t=(run-oy-119)/962;
+    if(t>=0&&t<=1&&Math.abs((vert?x:y)-(along+Math.sin(t*Math.PI)*kink))<=54)return false;
+    // Preserve the painter's exact random concrete pads without rerolling any
+    // world RNG. Metadata lives and retires with the bounded terrain buffer.
+    const ch=BIOME_ACTIVE&&chunkMgr&&chunkMgr.biome===level&&chunkMgr.chunks.get(cx+','+cy);
+    if(ch&&!ch.tex)chunkMgr.bakeChunk(ch);
+    if(ch&&ch.tex&&ch.tex.shovelPavedRects&&ch.tex.shovelPavedRects.some(b=>shovelOverlapsRect(x,y,0,b)))return false;
+    return true;
+  }
+  if(grass)return true;
+  if(lay==='FRONTIER')return !shovelFrontierDeckAt(x,y);
+  if(lay==='WOODLAND') {
+    if(woodHasRiver(level,cy)&&Math.abs(y-woodRiverY(level,cy,x))<woodRiverHalf(level,cy,x)*coreTaperX(cx,cy,x))return false;
+    const pools=woodPools(level,cx,cy)||[];
+    if(pools.some(p=>Math.pow((x-p.x)/(p.w/2),2)+Math.pow((y-p.y)/(p.h/2),2)<=1))return false;
+    return true; // Forest floor and its worn tracks are soil.
+  }
+  return lay==='JUNGLE'||(lay==='ALIEN'&&alienRegion(level,x,y)===AL_ASHFALL);
+}
+function shovelSurfaceCellSoft(ix,iy,level=currentLevel) {
+  if(!shovelCellFoundationClear(ix,iy,level))return false;
+  const x0=ix*SHOVEL.cell+.1,y0=iy*SHOVEL.cell+.1,span=SHOVEL.cell-.2;
+  for(let y=0;y<=4;y++)for(let x=0;x<=4;x++)
+    if(!shovelSurfaceSoftAt(x0+x*span/4,y0+y*span/4,level))return false;
+  return true;
 }
 function shovelForwardCell(e=player) {
   const ix=Math.floor(e.x/SHOVEL.cell),iy=Math.floor(e.y/SHOVEL.cell);
@@ -8612,11 +8740,12 @@ function shovelDig(kind) {
   if((e.shovelCooldownMs||0)>0)return false;
   if(e.shovelLevel!==currentLevel){e.shovelLevel=currentLevel;e.shovelDepth=0;e.shovelDepthTarget=0;}
   const depth=shovelPlayerDepth(e),target=Number.isFinite(e.shovelDepthTarget)?e.shovelDepthTarget:depth;
-  if(Math.abs(target-depth)>1)return false;
+  if(e._shovelFall || Math.abs(target-depth)>1)return false;
   const ix=Math.floor(e.x/SHOVEL.cell),iy=Math.floor(e.y/SHOVEL.cell);
   let cell=shovelCellAt(e.x,e.y),changed=false;
   if(kind==='DOWN') {
-    if(!shovelSurfaceCellSoft(ix,iy))return shovelFeedback(e,'A building foundation blocks the shovel.');
+    if(!shovelCellFoundationClear(ix,iy))return shovelFeedback(e,'A building foundation blocks the shovel.');
+    if(depth<.5&&!shovelSurfaceCellSoft(ix,iy))return shovelFeedback(e,'The shovel only breaks grass and dirt.');
     if(depth<.5&&shovelSurfaceWallAt(e.x,e.y,SHOVEL.bodyRadius))
       return shovelFeedback(e,'Dig beside the wall, then tunnel underneath.');
     if(cell&&!cell.open&&depth<.5) {
@@ -8632,7 +8761,9 @@ function shovelDig(kind) {
     e.shovelClimbing=false;changed=true;
   } else if(kind==='FORWARD') {
     const next=shovelForwardCell(e),old=shovelCellAt(next.x,next.y);
-    if(!shovelSurfaceCellSoft(next.ix,next.iy))return shovelFeedback(e,'A building foundation blocks the shovel.');
+    if(!shovelCellFoundationClear(next.ix,next.iy))return shovelFeedback(e,'A building foundation blocks the shovel.');
+    if(depth<SHOVEL.underground-.5&&!shovelSurfaceCellSoft(next.ix,next.iy))
+      return shovelFeedback(e,'The shovel only breaks grass and dirt.');
     if(depth<SHOVEL.waist-.5) {
       if(old)return shovelFeedback(e,'Step into the hole before digging farther.');
       shovelMakeCell(next.ix,next.iy,SHOVEL.waist,true);changed=true;
@@ -8656,7 +8787,9 @@ function shovelDig(kind) {
   } else {
     if(!cell||depth<.5)return shovelFeedback(e,'Already at ground level.');
     const next=Math.max(0,Math.round(target/SHOVEL.step)*SHOVEL.step-SHOVEL.step);
-    if(!shovelSurfaceCellSoft(ix,iy))return shovelFeedback(e,'A building foundation blocks the shovel.');
+    if(!shovelCellFoundationClear(ix,iy))return shovelFeedback(e,'A building foundation blocks the shovel.');
+    if(next<SHOVEL.underground&&!cell.open&&!shovelSurfaceCellSoft(ix,iy))
+      return shovelFeedback(e,'Hard ground overhead. Tunnel to grass or dirt to climb out.');
     if(next<SHOVEL.underground&&shovelSurfaceWallAt(e.x,e.y,SHOVEL.bodyRadius))
       return shovelFeedback(e,'A wall is overhead. Tunnel beyond its edge to climb out.');
     if(next<SHOVEL.underground){cell.open=true;cell.ceiling=0;}
@@ -8680,7 +8813,7 @@ function shovelSyncPlayerCell(e) {
       // Native movement cannot leave a deep cavity. A story teleport or a
       // removed excavation must release the old depth rather than burying a
       // speaker beneath an unrelated piece of solid ground.
-      if(!cell&&depth>=SHOVEL.underground){e.shovelDepth=0;e.shovelDepthTarget=0;}
+      if(!cell&&depth>=SHOVEL.underground){e.shovelDepth=0;e.shovelDepthTarget=0;e._shovelFall=null;}
       else e.shovelDepthTarget=cell?cell.depth:0;
       e.shovelClimbing=false;
     } else if(!e.shovelClimbing&&shovelSurfaceFallCell(e))e.shovelDepthTarget=cell.depth;
@@ -8694,35 +8827,99 @@ function shovelSyncPlayerCell(e) {
   if(depth>.5&&cell&&!e.shovelClimbing&&cell.depth>(e.shovelDepthTarget||0))
     e.shovelDepthTarget=cell.depth;
 }
+// A drop is measured from its takeoff depth, not from cumulative digging.
+// Twenty world units make one metre, matching the shovel's depth display.
+function shovelFallImpact(e,distance) {
+  e.shovelLastFallDistance=distance;e.shovelFallImpactFrame=frameCount;
+  const type=e.eType||e.eT||(e.gender==='FEMALE'?'FEMALE_PISTOL':'CITIZEN');
+  if(distance<SHOVEL.step)return;
+  emit(e.x,e.y,Math.min(18,5+Math.floor(distance/24)),color(151,117,76),'DUST',0,0,e);
+  if(distance+1e-6<SHOVEL.lethalFall || e.shovelFallFatal)return;
+  const blood=type==='ROBOT'?color(24,21,16):['BUG','SNAIL','SNAIL_HYBRID'].includes(type)?color(200,230,40):color(90,0,0);
+  emit(e.x,e.y,24,blood,type==='ROBOT'?'OIL':'BLOOD',0,0,e);
+  spawnSplatter(e.x,e.y,'BLOOD',blood,e);
+  // A body can tumble into a second shaft without creating another victim.
+  if(e.isCorpse || e.dead || Number.isFinite(e.hp)&&e.hp<=0)return;
+  e.shovelFallFatal=true;e.hp=0;e.isMoving=false;
+  if(e.cityPersonKey && typeof bankCityPerson==='function')bankCityPerson(e);
+  if(e.mounted && typeof e.unhorse==='function') {
+    const horse=e.unhorse();
+    if(horse) {
+      horse.x=e.x;horse.y=e.y;horse.shovelLevel=currentLevel;
+      horse.shovelDepth=shovelPlayerDepth(e);horse.shovelDepthTarget=horse.shovelDepth;
+      horse._shovelCellKey=e._shovelCellKey;
+      shovelFallImpact(horse,distance);
+    }
+  }
+  const angle=Number.isFinite(e.moveAngle)?e.moveAngle:0;
+  const src={...e,eType:type,fallHit:{frame:frameCount,kind:'FALL',angle,force:3,mx:0,my:0,fatal:true}};
+  const body=new Corpse(e.x,e.y,e.moveAngle||0,e.aimAngle||0,e.shirtCol||color(120),
+    e.pantsCol||color(35),0,0,e.decals||[],e.currentWeapon||WEAPONS.PISTOL,angle,
+    type,e.bodyW||21,e.bodyH||27,src);
+  // Contact has already happened vertically; settle on the floor rather than
+  // standing back up to perform a second death fall.
+  if(body.fall){body.fall.age=body.fall.duration;body.fall.contacted=true;body.fall.impulse=0;body.fP=1;}
+  corpses.push(body);
+  if(typeof sfx!=='undefined'&&typeof sfx.hitBody==='function')sfx.hitBody();
+  if(e.isPlayer){e.dead=true;playerRespawnTimer=90;}
+  else if(typeof Citizen!=='undefined'&&e instanceof Citizen){directiveCitizenCasualty(e);e.dead=true;}
+  // Character hostiles/allies retain the native processKill cleanup, which
+  // records city, fortress, bounty and military casualties exactly once.
+}
+
 function shovelUpdateActor(e,dtMs) {
-  if(!e)return;
+  if(!e || e.shovelFallFatal)return;
   const dt=Math.max(0,Math.min(1000,Number.isFinite(dtMs)?dtMs:1000/60));
   e.shovelCooldownMs=Math.max(0,(e.shovelCooldownMs||0)-dt);
   const beforeDig=e.shovelDigTimer||0;
-  const drivingDown=e.isPlayer&&beforeDig>0&&e.shovelDigKind==='DOWN';
   if(e.isPlayer)shovelUpdateDigAnimation(e,dt);
   e.shovelNoticeMs=Math.max(0,(e.shovelNoticeMs||0)-dt);
   if(currentLevel<1||currentLevel>7||!shovelActorCanFall(e)) {
-    e.shovelDepth=0;e.shovelDepthTarget=0;e.shovelLevel=currentLevel;e._shovelCellKey=null;return;
+    e.shovelDepth=0;e.shovelDepthTarget=0;e.shovelLevel=currentLevel;e._shovelCellKey=null;e._shovelFall=null;return;
   }
-  if(e.shovelLevel!==currentLevel){e.shovelLevel=currentLevel;e.shovelDepth=0;e.shovelDepthTarget=0;e._shovelCellKey=null;e.shovelClimbing=false;}
+  if(e.shovelLevel!==currentLevel){
+    e.shovelLevel=currentLevel;e.shovelDepth=0;e.shovelDepthTarget=0;
+    e._shovelCellKey=null;e.shovelClimbing=false;e._shovelFall=null;
+  }
   shovelSyncPlayerCell(e);
   const from=shovelPlayerDepth(e),to=Math.max(0,Math.min(SHOVEL.maxDepth,e.shovelDepthTarget||0));
-  // The feet remain planted through the lift: descent starts when the spade
-  // and dirt burst actually make contact, including across a long frame.
+  const drivingDown=e.isPlayer&&beforeDig>0&&e.shovelDigKind==='DOWN'&&to-from<=SHOVEL.step+1.1;
   const wait=drivingDown&&to>from?Math.max(0,beforeDig-SHOVEL_DIG_ANIM.durationMs*(1-SHOVEL_DIG_ANIM.contact)):0;
   const fallDt=Math.max(0,dt-Math.min(dt,wait));
-  e.shovelDepth=from+(to-from)*(1-Math.exp(-fallDt/(drivingDown?50:75)));
-  if(Math.abs(e.shovelDepth-to)<.05)e.shovelDepth=to;
+  if(to<=from || drivingDown || e.shovelClimbing) {
+    e._shovelFall=null;
+    e.shovelDepth=from+(to-from)*(1-Math.exp(-fallDt/(drivingDown?50:75)));
+    if(Math.abs(e.shovelDepth-to)<.05)e.shovelDepth=to;
+    return;
+  }
+  // Free fall accelerates continuously. A taller shaft needs more time and
+  // never turns into a one-frame change of body size, even at great depth.
+  const fall=e._shovelFall||(e._shovelFall={origin:from,velocity:0});
+  let remaining=fallDt/1000,depth=from;
+  while(remaining>0 && depth<to) {
+    const step=Math.min(remaining,1/60),v=fall.velocity;
+    const accelerating=Math.min(step,Math.max(0,(SHOVEL.terminal-v)/SHOVEL.gravity));
+    depth+=v*accelerating+SHOVEL.gravity*accelerating*accelerating/2+
+      SHOVEL.terminal*(step-accelerating);
+    fall.velocity=Math.min(SHOVEL.terminal,v+SHOVEL.gravity*step);
+    remaining-=step;
+  }
+  e.shovelDepth=Math.min(to,depth);
+  if(e.shovelDepth>=to-.000001) {
+    e.shovelDepth=to;e._shovelFall=null;
+    shovelFallImpact(e,Math.max(0,to-fall.origin));
+  }
 }
 function shovelUpdatePlayer(e,dtMs) {shovelUpdateActor(e,dtMs);}
 // null leaves ordinary surface collision in charge. Underground movement is
 // confined to connected excavated space; walls are bypassed only below them.
 function shovelCollision(e,nx,ny) {
   if(!shovelActorCanFall(e)||currentLevel<1||currentLevel>7)return null;
-  const depth=shovelPlayerDepth(e);if(depth<.5)return null;
-  // A falling pedestrian cannot run across the mouth before reaching its floor.
-  if(!e.isPlayer&&(e.shovelDepthTarget||0)-depth>1)return true;
+  const depth=shovelPlayerDepth(e);
+  // Free fall owns horizontal motion from takeoff, even before the first
+  // half-unit of descent. Otherwise a slow initial fall can skate over its lip.
+  if(e._shovelFall)return true;
+  if(depth<.5)return null;
   const dx=nx-e.x,dy=ny-e.y,d=Math.hypot(dx,dy);
   if(d>SHOVEL.cell*4)return true;
   let surface=false;
@@ -9620,6 +9817,23 @@ function postCitizen(dept, sex, fromId, toId) {
     return true;
 }
 
+// A deployed resident still belongs to their source department. An actual
+// fatal fall deducts that person once, so rebuilding this visual roster cannot
+// bring them back or take a different sector's citizen in their place.
+function directiveCitizenCasualty(c) {
+    if(!c || c.directiveDeathCounted || !POP_DEPTS.includes(c.directiveDept) ||
+        !(c.directiveHome===POP_POOL || Number.isInteger(c.directiveHome) &&
+          c.directiveHome>=1 && c.directiveHome<=7))return false;
+    const t=sectorLedger(c.directiveHome),key='pop'+c.directiveDept+(c.gender==='FEMALE'?'F':'M');
+    c.directiveDeathCounted=true;
+    if(!(t[key]>0))return false;
+    t[key]--;
+    t.popTotal=sectorPopSum(t);
+    globalPopulation=globalPopulationCount();
+    invalidateDirectiveBuffer();
+    return true;
+}
+
 // Department residents live at a secured fortress. This is a visual view of
 // the ledgers; making or rebuilding it never creates another population.
 function deployDirectivePopulation() {
@@ -9635,6 +9849,7 @@ function deployDirectivePopulation() {
             if(!point)continue;
             const resident=new Citizen(point.x,point.y,dept.toUpperCase(),sex==='F'?'FEMALE':'MALE');
             resident.fortressHome=point.fortress;
+            resident.directiveHome=source.home;resident.directiveDept=dept;
             townCitizens.push(resident);
         }
     }
@@ -11752,18 +11967,21 @@ let bloodSurfaces = 0;
 let bloodBanks = {};
 let bloodBankId = null;
 let bloodPools = [];
+let shovelBloodMarks = [];
+const SHOVEL_BLOOD_MARK_MAX = 192;
 const BLOOD_POOL_FRAMES = 90;
 
 function useBloodBank(id) {
   const key = String(id);
   if (bloodBankId === key) return;
-  if (bloodBankId !== null) bloodBanks[bloodBankId] = { chunks: bloodChunks, use: bloodChunkUse, pools: bloodPools };
+  if (bloodBankId !== null) bloodBanks[bloodBankId] = { chunks: bloodChunks, use: bloodChunkUse, pools: bloodPools, pitMarks: shovelBloodMarks };
   bloodBankId = key;
   let bank = bloodBanks[key];
-  if (!bank) { bank = { chunks: {}, use: {}, pools: [] }; bloodBanks[key] = bank; }
+  if (!bank) { bank = { chunks: {}, use: {}, pools: [], pitMarks: [] }; bloodBanks[key] = bank; }
   bloodChunks = bank.chunks;
   bloodChunkUse = bank.use;
   bloodPools = bank.pools;
+  shovelBloodMarks = bank.pitMarks || (bank.pitMarks = []);
 }
 
 // Everything, everywhere. Only a genuine restart wants this.
@@ -11774,7 +11992,7 @@ function wipeAllBloodBanks() {
   }
   bloodBanks = {}; bloodBankId = null;
   bloodChunks = {}; bloodChunkUse = {};
-  bloodPools = [];
+  bloodPools = []; shovelBloodMarks = [];
   bloodBytes = 0; bloodSurfaces = 0;
   for (const pg of bloodSurfacePool) pg.remove();
   bloodSurfacePool.length = 0;
@@ -11923,7 +12141,7 @@ function drawBloodLayer(body) {
     }
 }
 
-function spawnSplatter(x, y, t = "HIDDEN", col = null) {
+function spawnSplatter(x, y, t = "HIDDEN", col = null, owner = null) {
     if (t === "HIDDEN") return;
 
     // 1. Define how far the blood/scorch reaches
@@ -11941,6 +12159,11 @@ function spawnSplatter(x, y, t = "HIDDEN", col = null) {
         }
     }
 
+    if (owner && (shovelRenderDepth(owner) > 0 || owner.shovelDepthTarget > 0)) {
+        if (shovelBloodMarks.length >= SHOVEL_BLOOD_MARK_MAX) shovelBloodMarks.shift();
+        shovelBloodMarks.push(shovelBindEffect({x,y,col:col || (t === "SCORCH" ? color(15,15,15,220) : color(90,0,0,220)),blobs,age:0,shovelDeposit:true},owner));
+        return;
+    }
     if(t!=="SCORCH"){
         blobs.sort((a,b)=>a.ox*a.ox+a.oy*a.oy-b.ox*b.ox-b.oy*b.oy);
         for(let i=0;i<blobs.length;i++){
@@ -11951,8 +12174,31 @@ function spawnSplatter(x, y, t = "HIDDEN", col = null) {
     }else stampGroundBlobs(x,y,blobs,color(15,15,15,220),maxSpread);
 }
 
+function drawShovelBloodMarks(actor = null) {
+    for (const mark of shovelBloodMarks) {
+        const cell = shovelCellAt(mark.shovelOriginX, mark.shovelOriginY);
+        if (!cell || (actor ? cell.open || Math.abs(shovelEffectDepth(mark)-shovelRenderDepth(actor))>SHOVEL.waist+.01 ||
+            Math.hypot(mark.shovelOriginX-actor.x,mark.shovelOriginY-actor.y)>SHOVEL.cell : !cell.open)) continue;
+        if (mark.x < viewLeft-100 || mark.x > viewRight+100 || mark.y < viewTop-100 || mark.y > viewBottom+100) continue;
+        shovelPaintDepthEffect(mark, () => {
+            noStroke(); fill(mark.col);
+            const growth = Math.min(1, mark.age / 24);
+            for (const b of mark.blobs) ellipse(mark.x+b.ox,mark.y+b.oy,b.sz*growth,b.sz*growth);
+        });
+    }
+}
 function updateBloodPools() {
     if(!doTick)return;
+    for (const mark of shovelBloodMarks) {
+        mark.age = Math.min(BLOOD_POOL_FRAMES, mark.age + 1);
+        const owner = mark.shovelOwner && (mark.shovelOwner.shovelEffectBody || mark.shovelOwner);
+        if (owner) {
+            mark.shovelOwner = owner;
+            mark.shovelDepth = Math.max(mark.shovelDepth, shovelRenderDepth(owner));
+            if ((owner.shovelDepthTarget || 0) < mark.shovelDepth ||
+                Math.abs(shovelRenderDepth(owner) - (owner.shovelDepthTarget || 0)) < .1) mark.shovelOwner = null;
+        }
+    }
     for(let i=bloodPools.length-1;i>=0;i--){
         const pool=bloodPools[i],brushes=[];pool.age++;
         for(const b of pool.blobs){
@@ -13500,7 +13746,7 @@ function advanceFatalSpray(c) {
     const u=s.seed/4294967296,p=s.cuts?swordCutPoint(c,w):fatalWoundPoint(c,w);
     const a=s.cuts?p.angle+(u-.5)*.55:(s.wounds.length>1?p.frameAngle:p.angle)+s.directions[i]+(u-.5)*(s.wounds.length>1?.4:.65);
     const speed=(2.8+u*1.8)*(.55+.45*s.left/FATAL_SPRAY_FRAMES);
-    particles.push(newParticle(p.x,p.y,col,'WOUND_BLOOD',Math.cos(a)*speed,Math.sin(a)*speed));
+    particles.push(newParticle(p.x,p.y,col,'WOUND_BLOOD',Math.cos(a)*speed,Math.sin(a)*speed, c));
   }
 }
 function projectFallRig(bW,bH,f) {
@@ -13660,6 +13906,8 @@ class Corpse {
       this.shovelLevel = currentLevel; this.shovelDepth = buriedDepth;
       this.shovelDepthTarget = Math.max(buriedDepth, src.shovelDepthTarget || 0);
       this._shovelCellKey = src._shovelCellKey;
+      src.shovelEffectBody = this;
+      this._shovelFall = src._shovelFall ? {...src._shovelFall} : null;
     }
     if (eT === "ARMORED" || eT === "ARMORED_STANDARD" || eT === "ALIEN_GATOR") { this.mA = mA; this.aA = aA; } else { this.mA = mA + PI; this.aA = aA + PI; }
     // Last word on the overkill tables: a robot never comes apart into a torso
@@ -13730,7 +13978,7 @@ class Corpse {
     } else if (dT === 10) {
         this.overkillBits = [ { type: 'torso', x: 0, y: 0, vx: cos(this.bA)*6 + random(-2,2), vy: sin(this.bA)*6 + random(-2,2), rot: this.aA, vr: random(-0.2, 0.2) }, { type: 'lArm', x: 0, y: 0, vx: cos(this.bA - PI/3)*7 + random(-2,2), vy: sin(this.bA - PI/3)*7 + random(-2,2), rot: this.aA, vr: random(-0.4, 0.4) }, { type: 'rArm', x: 0, y: 0, vx: cos(this.bA + PI/3)*7 + random(-2,2), vy: sin(this.bA + PI/3)*7 + random(-2,2), rot: this.aA, vr: random(-0.4, 0.4) } ];
     } else if (this.dT === 11) {
-        emit(this.x, this.y, 40, color(255, 100, 0), "EXPLOSION"); sfx.explosion(this.x, this.y); let fA = this.aA - PI;
+        emit(this.x, this.y, 40, color(255, 100, 0), "EXPLOSION", 0, 0, this); sfx.explosion(this.x, this.y); let fA = this.aA - PI;
         this.aerialBits = [ { type: 'torso', x: 0, y: 0, vx: cos(fA)*6, vy: sin(fA)*6, rot: fA, vr: 0 }, { type: 'lArm', x: 0, y: 0, vx: cos(fA - PI/2)*7, vy: sin(fA - PI/2)*7, rot: fA, vr: 0 }, { type: 'rArm', x: 0, y: 0, vx: cos(fA + PI/2)*7, vy: sin(fA + PI/2)*7, rot: fA, vr: 0 }, { type: 'legs', x: 0, y: 0, vx: cos(fA + PI)*5, vy: sin(fA + PI)*5, rot: fA, vr: 0 } ];
     } else if (this.dT === 12) {
         this.kamikazeTimer = 126; let fA = this.aA - PI; this.vx = cos(fA) * 3.66; this.vy = sin(fA) * 3.66; this.exploded = false;
@@ -13756,18 +14004,18 @@ class Corpse {
     
     if (this.smokeTimer > 0) {
         this.smokeTimer--;
-        if (this.smokeTimer % 6 === 0) emit(this.x + random(-15, 15), this.y + random(-15, 15), 1, color(100), "SMOKE");
+        if (this.smokeTimer % 6 === 0) emit(this.x + random(-15, 15), this.y + random(-15, 15), 1, color(100), "SMOKE", 0, 0, this);
         
         if (this.isCharred) {
             if (this.overkillBits) {
-                for (let ob of this.overkillBits) if (this.smokeTimer % 8 === 0) emit(this.x + ob.x + random(-5, 5), this.y + ob.y + random(-5, 5), 1, color(80), "SMOKE");
+                for (let ob of this.overkillBits) if (this.smokeTimer % 8 === 0) emit(this.x + ob.x + random(-5, 5), this.y + ob.y + random(-5, 5), 1, color(80), "SMOKE", 0, 0, this);
             }
             if (this.bits) {
-                for (let b of this.bits) if (this.smokeTimer % 12 === 0) emit(this.x + b.x, this.y + b.y, 1, color(80), "SMOKE");
+                for (let b of this.bits) if (this.smokeTimer % 12 === 0) emit(this.x + b.x, this.y + b.y, 1, color(80), "SMOKE", 0, 0, this);
             }
             if (this.smokeTimer % 3 === 0) {
-                emit(this.x, this.y, 4, bCol, "BLOOD", random(-5, 5), random(-5, 5));
-                if (this.smokeTimer % 6 === 0) spawnSplatter(this.x + random(-25, 25), this.y + random(-25, 25), "BLOOD", bCol);
+                emit(this.x, this.y, 4, bCol, "BLOOD", random(-5, 5), random(-5, 5), this);
+                if (this.smokeTimer % 6 === 0) spawnSplatter(this.x + random(-25, 25), this.y + random(-25, 25), "BLOOD", bCol, this);
             }
         }
     }
@@ -13780,8 +14028,8 @@ class Corpse {
         if (this.sep < 50) this.sep += 3;
         if (this.bloodTimer > 0) {
             this.bloodTimer--;
-            if (this.bloodTimer % 2 === 0) emit(this.x, this.y, 2, color(90,0,0), "BLOOD", random(-5,5), random(-5,5));
-            if (this.bloodTimer === 175) { spawnSplatter(this.x, this.y, "BLOOD", color(90, 0, 0)); emit(this.x, this.y, 40, color(90, 0, 0), "GORE"); }
+            if (this.bloodTimer % 2 === 0) emit(this.x, this.y, 2, color(90,0,0), "BLOOD", random(-5,5), random(-5,5), this);
+            if (this.bloodTimer === 175) { spawnSplatter(this.x, this.y, "BLOOD", color(90, 0, 0), this); emit(this.x, this.y, 40, color(90, 0, 0), "GORE", 0, 0, this); }
         }
     }
 
@@ -13790,8 +14038,8 @@ class Corpse {
             this.bloodTimer--;
             for (let b of this.aerialBits) {
                 b.x += b.vx; b.y += b.vy; b.vx *= 0.94; b.vy *= 0.94; b.rot += b.vr;
-                if (this.bloodTimer % 3 === 0) emit(this.x + b.x, this.y + b.y, 1, color(90, 0, 0), "BLOOD");
-                if (this.bloodTimer % 20 === 0 && abs(b.vx) < 1) spawnSplatter(this.x + b.x, this.y + b.y, "BLOOD", color(90, 0, 0));
+                if (this.bloodTimer % 3 === 0) emit(this.x + b.x, this.y + b.y, 1, color(90, 0, 0), "BLOOD", 0, 0, this);
+                if (this.bloodTimer % 20 === 0 && abs(b.vx) < 1) spawnSplatter(this.x + b.x, this.y + b.y, "BLOOD", color(90, 0, 0), this);
             }
         }
     }
@@ -13801,58 +14049,58 @@ class Corpse {
             const neck=headWoundPoint(this);let neckX=neck.x,neckY=neck.y;
             let thrustX = this.x - cos(this.aA - PI) * 20, thrustY = this.y - sin(this.aA - PI) * 20;
             let trailX = -cos(this.aA - PI) * 3, trailY = -sin(this.aA - PI) * 3;
-            if (this.kamikazeTimer % 4 === 0) { emit(thrustX, thrustY, 1, color(200), "SMOKE", trailX, trailY); emit(thrustX, thrustY, 1, color(255, 150, 0), "SPARK", trailX, trailY); }
-            if (this.kamikazeTimer % 3 === 0) emit(neckX, neckY, 2, color(90, 0, 0), "BLOOD", cos(this.aA - PI)*random(3,6), sin(this.aA - PI)*random(3,6));
+            if (this.kamikazeTimer % 4 === 0) { emit(thrustX, thrustY, 1, color(200), "SMOKE", trailX, trailY, this); emit(thrustX, thrustY, 1, color(255, 150, 0), "SPARK", trailX, trailY, this); }
+            if (this.kamikazeTimer % 3 === 0) emit(neckX, neckY, 2, color(90, 0, 0), "BLOOD", cos(this.aA - PI)*random(3,6), sin(this.aA - PI)*random(3,6), this);
         }
-        if (this.kamikazeTimer <= 0) { triggerExplosion(this.x, this.y, 160, false, false); emit(this.x, this.y, 60, color(90, 0, 0), "GORE"); emit(this.x, this.y, 15, color(220, 200, 200), "BONE"); spawnSplatter(this.x, this.y, "BLOOD", color(90, 0, 0)); this.exploded = true; }
+        if (this.kamikazeTimer <= 0) { triggerExplosion(this.x, this.y, 160, false, false); emit(this.x, this.y, 60, color(90, 0, 0), "GORE", 0, 0, this); emit(this.x, this.y, 15, color(220, 200, 200), "BONE", 0, 0, this); spawnSplatter(this.x, this.y, "BLOOD", color(90, 0, 0), this); this.exploded = true; }
     }
     if (this.dT === 10 || this.dT === 15) {
         if (this.bloodTimer > 0) {
             this.bloodTimer--;
             for (let ob of this.overkillBits) {
                 if (this.stopMotionTimer > 0) { ob.x += ob.vx; ob.y += ob.vy; ob.vx *= 0.92; ob.vy *= 0.92; ob.rot += ob.vr; }
-                if (this.bloodTimer % 3 === 0) emit(this.x + ob.x, this.y + ob.y, 1, bCol, "BLOOD", random(-2, 2), random(-2, 2));
-                if (this.bloodTimer % 20 === 0) spawnSplatter(this.x + ob.x, this.y + ob.y, "BLOOD", bCol);
+                if (this.bloodTimer % 3 === 0) emit(this.x + ob.x, this.y + ob.y, 1, bCol, "BLOOD", random(-2, 2), random(-2, 2), this);
+                if (this.bloodTimer % 20 === 0) spawnSplatter(this.x + ob.x, this.y + ob.y, "BLOOD", bCol, this);
             }
-            if (this.bloodTimer % 2 === 0) { let sA = this.bA + random(-0.5, 0.5); emit(this.x, this.y, 2, bCol, "BLOOD", cos(sA) * random(3, 7), sin(sA) * random(3, 7)); }
+            if (this.bloodTimer % 2 === 0) { let sA = this.bA + random(-0.5, 0.5); emit(this.x, this.y, 2, bCol, "BLOOD", cos(sA) * random(3, 7), sin(sA) * random(3, 7), this); }
                 if (this.dT === 15 && this.bloodTimer > 0 && frameCount % 6 === 0) {
-            emit(this.x + random(-15, 15), this.y + random(-15, 15), 1, color(100), "SMOKE");
+            emit(this.x + random(-15, 15), this.y + random(-15, 15), 1, color(100), "SMOKE", 0, 0, this);
         }
 
 		}
     }
     if (this.dT === 7 && this.bloodTimer > 0) {
         this.bloodTimer--;
-        if (this.bloodTimer % 2 === 0) { let sA = this.bA + random(-0.6, 0.6); emit(this.x, this.y, 2, bCol, "BLOOD", cos(sA) * random(3, 8), sin(sA) * random(3, 8)); }
-        if (this.bloodTimer % 15 === 0) { spawnSplatter(this.x + random(-25, 25), this.y + random(-25, 25), "BLOOD", bCol); }
+        if (this.bloodTimer % 2 === 0) { let sA = this.bA + random(-0.6, 0.6); emit(this.x, this.y, 2, bCol, "BLOOD", cos(sA) * random(3, 8), sin(sA) * random(3, 8), this); }
+        if (this.bloodTimer % 15 === 0) { spawnSplatter(this.x + random(-25, 25), this.y + random(-25, 25), "BLOOD", bCol, this); }
     }
     if ((this.dT === 8 || this.dT === 9) && this.bloodTimer > 0) {
         this.bloodTimer--; const head=headWoundPoint(this);let headX=head.x,headY=head.y;
-        if (this.bloodTimer % 2 === 0) { let sA = head.angle + random(-0.6, 0.6); emit(headX, headY, 1, bCol, "BLOOD", cos(sA) * random(2, 6), sin(sA) * random(2, 6)); }
-        if (this.bloodTimer % 20 === 0) { spawnSplatter(headX + random(-15, 15), headY + random(-15, 15), "BLOOD", bCol); }
+        if (this.bloodTimer % 2 === 0) { let sA = head.angle + random(-0.6, 0.6); emit(headX, headY, 1, bCol, "BLOOD", cos(sA) * random(2, 6), sin(sA) * random(2, 6), this); }
+        if (this.bloodTimer % 20 === 0) { spawnSplatter(headX + random(-15, 15), headY + random(-15, 15), "BLOOD", bCol, this); }
     }
     if (this.dT === 5 || this.dT === 9) { 
         for(let b of this.bits) { 
             if (this.stopMotionTimer > 0) { b.x += b.vx; b.y += b.vy; b.vx *= 0.93; b.vy *= 0.93; b.rot += b.vr; } else { b.vx = 0; b.vy = 0; b.vr = 0; } 
             let isBrainMeat = (this.dT === 9 && b.type === 'meat') || (this.dT === 5 && (b.type === 'heart' || b.type === 'meat' || b.type === 'intestine' || b.type === 'brain'));
-            if (frameCount % 3 === 0 && abs(b.vx) > 1 && isBrainMeat && this.stopMotionTimer > 0) emit(this.x + b.x, this.y + b.y, 1, bCol, "BLOOD");
-            if (abs(b.vx) < 0.5 && !b.splat) { if (isBrainMeat) spawnSplatter(this.x + b.x, this.y + b.y, "BLOOD", bCol); b.splat = true; }
+            if (frameCount % 3 === 0 && abs(b.vx) > 1 && isBrainMeat && this.stopMotionTimer > 0) emit(this.x + b.x, this.y + b.y, 1, bCol, "BLOOD", 0, 0, this);
+            if (abs(b.vx) < 0.5 && !b.splat) { if (isBrainMeat) spawnSplatter(this.x + b.x, this.y + b.y, "BLOOD", bCol, this); b.splat = true; }
         } 
         if (this.dT === 5 && this.bloodTimer > 0) {
-            this.bloodTimer--; if (this.bloodTimer % 4 === 0 && this.bloodTimer > 100) emit(this.x, this.y, 3, bCol, "GORE");
-            if (this.bloodTimer % 15 === 0) spawnSplatter(this.x + random(-25, 25), this.y + random(-25, 25), "BLOOD", bCol);
+            this.bloodTimer--; if (this.bloodTimer % 4 === 0 && this.bloodTimer > 100) emit(this.x, this.y, 3, bCol, "GORE", 0, 0, this);
+            if (this.bloodTimer % 15 === 0) spawnSplatter(this.x + random(-25, 25), this.y + random(-25, 25), "BLOOD", bCol, this);
         }
     }
     if ((this.dT === 2 || this.dT === 3 || this.dT === 4 || this.dT === 6 || this.dT === 8) && this.sep < 35) this.sep += 2.5; 
     if (this.bT > 0 && --this.bT % 2 === 0) { 
-        if (this.dT === 1) { const head=headWoundPoint(this);let sA=head.angle+random(-0.2,0.2);emit(head.x,head.y,1,bCol,"BLOOD",cos(sA)*6,sin(sA)*6); }
-        else if (this.dT === 4) { const head=headWoundPoint(this);let sA=head.angle+random(-0.4,0.4);emit(head.x,head.y,1,bCol,"BLOOD",cos(sA)*6,sin(sA)*6); }
-        else if (this.dT === 2 || this.dT === 3) { let lSA = this.mA - PI / 2 + random(-0.5, 0.5); emit(this.x, this.y, 1, bCol, "BLOOD", cos(lSA) * 4, sin(lSA) * 4); let tSA = this.bA + random(-0.3, 0.3); emit(this.x + cos(this.bA) * this.sep, this.y + sin(this.bA) * this.sep, 1, bCol, "BLOOD", cos(tSA) * 5, sin(tSA) * 5); } 
-        else if (this.dT === 6) { const head=headWoundPoint(this);let sA=head.angle+random(-0.4,0.4);emit(head.x,head.y,1,bCol,"BLOOD",cos(sA)*6,sin(sA)*6); }
+        if (this.dT === 1) { const head=headWoundPoint(this);let sA=head.angle+random(-0.2,0.2);emit(head.x,head.y,1,bCol,"BLOOD",cos(sA)*6,sin(sA)*6, this); }
+        else if (this.dT === 4) { const head=headWoundPoint(this);let sA=head.angle+random(-0.4,0.4);emit(head.x,head.y,1,bCol,"BLOOD",cos(sA)*6,sin(sA)*6, this); }
+        else if (this.dT === 2 || this.dT === 3) { let lSA = this.mA - PI / 2 + random(-0.5, 0.5); emit(this.x, this.y, 1, bCol, "BLOOD", cos(lSA) * 4, sin(lSA) * 4, this); let tSA = this.bA + random(-0.3, 0.3); emit(this.x + cos(this.bA) * this.sep, this.y + sin(this.bA) * this.sep, 1, bCol, "BLOOD", cos(tSA) * 5, sin(tSA) * 5, this); }
+        else if (this.dT === 6) { const head=headWoundPoint(this);let sA=head.angle+random(-0.4,0.4);emit(head.x,head.y,1,bCol,"BLOOD",cos(sA)*6,sin(sA)*6, this); }
     } 
     if (this.dT === 14) {
         if (this.stopMotionTimer > 0) { this.lH.x += this.lH.vx; this.lH.y += this.lH.vy; this.rH.x += this.rH.vx; this.rH.y += this.rH.vy; this.lH.vx *= 0.9; this.lH.vy *= 0.9; this.rH.vx *= 0.9; this.rH.vy *= 0.9; }
-        if (this.bloodTimer > 0) { this.bloodTimer--; if (this.bloodTimer % 3 === 0) { emit(this.x + this.lH.x, this.y + this.lH.y, 2, bCol, "BLOOD"); emit(this.x + this.rH.x, this.y + this.rH.y, 2, bCol, "BLOOD"); } if (this.bloodTimer % 15 === 0) { spawnSplatter(this.x + this.lH.x, this.y + this.lH.y, "BLOOD", bCol); spawnSplatter(this.x + this.rH.x, this.y + this.rH.y, "BLOOD", bCol); } }
+        if (this.bloodTimer > 0) { this.bloodTimer--; if (this.bloodTimer % 3 === 0) { emit(this.x + this.lH.x, this.y + this.lH.y, 2, bCol, "BLOOD", 0, 0, this); emit(this.x + this.rH.x, this.y + this.rH.y, 2, bCol, "BLOOD", 0, 0, this); } if (this.bloodTimer % 15 === 0) { spawnSplatter(this.x + this.lH.x, this.y + this.lH.y, "BLOOD", bCol, this); spawnSplatter(this.x + this.rH.x, this.y + this.rH.y, "BLOOD", bCol, this); } }
     }
     advanceFatalSpray(this);
   }
@@ -13942,8 +14190,8 @@ if (this.eT === "ROBOT") {
       r.pop();
       // It keeps venting where it lies -- a thin wisp and the odd spark, never
       // enough to be a fire.
-      if (frameCount % 22 === 0) emit(this.x + random(-7, 7), this.y + random(-7, 7), 1, color(62, 62, 62), "SMOKE");
-      if (frameCount % 47 === 0) emit(this.x + random(-6, 6), this.y + random(-6, 6), 1, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK");
+      if (frameCount % 22 === 0) emit(this.x + random(-7, 7), this.y + random(-7, 7), 1, color(62, 62, 62), "SMOKE", 0, 0, this);
+      if (frameCount % 47 === 0) emit(this.x + random(-6, 6), this.y + random(-6, 6), 1, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK", 0, 0, this);
       return;
   }
 if (this.eT === "COW" || this.eT === "HORSE") {
@@ -16561,7 +16809,7 @@ this.skeletonTimer = 0;
                     e.lastKnownY = player.y;
                 }
                 
-                if (typeof emit !== 'undefined') emit(e.x, e.y, 5, color(255, 0, 0), "SPARK"); // Exclamation mark effect
+                if (typeof emit !== 'undefined') emit(e.x, e.y, 5, color(255, 0, 0), "SPARK", 0, 0, e); // Exclamation mark effect
             }
         }
     }
@@ -16736,7 +16984,7 @@ this.skeletonTimer = 0;
       // A splash, thrown only while actually moving and only near enough to
       // see. Enemies wading a pool half a sector away do not need particles.
       if (frameCount % 6 === 0 && (vx * vx + vy * vy) > 0.35 && inView(this.x, this.y, 120)) {
-        emit(this.x, this.y + 6, 2, color(168, 208, 216), "SPARK", vx * 0.4, vy * 0.4);
+        emit(this.x, this.y + 6, 2, color(168, 208, 216), "SPARK", vx * 0.4, vy * 0.4, this);
       }
     }
 
@@ -16992,6 +17240,7 @@ this.skeletonTimer = 0;
 
   updatePlayer() {
     shovelUpdatePlayer(this,typeof deltaTime==='number'?deltaTime:1000/60);
+    if(this.shovelFallFatal)return;
     const motionX=this.x,motionY=this.y;
     try {
    this.forceNudge();
@@ -17093,11 +17342,11 @@ this.skeletonTimer = 0;
                             robotDeathBurst(t, pA, true);
                         } else {
                         if (dT === 5) {
-                            emit(t.x, t.y, 40, color(255, 150, 0), "EXPLOSION"); sfx.explosion(t.x, t.y);
-                            spawnSplatter(t.x, t.y, "SCORCH");
+                            emit(t.x, t.y, 40, color(255, 150, 0), "EXPLOSION", 0, 0, t); sfx.explosion(t.x, t.y);
+                            spawnSplatter(t.x, t.y, "SCORCH", null, t);
                         }
-                        emit(t.x, t.y, 60, bCol, "GORE");
-                        spawnSplatter(t.x, t.y, "BLOOD", bCol);
+                        emit(t.x, t.y, 60, bCol, "GORE", 0, 0, t);
+                        spawnSplatter(t.x, t.y, "BLOOD", bCol, t);
 
                         let c = new Corpse(t.x, t.y, t.moveAngle, t.aimAngle, color(40), color(20), dT, pA, t.decals, t.currentWeapon, pA, t.eType, t.bodyW, t.bodyH, t);
                         c.smokeTimer = 198; c.isCharred = true; c.bloodTimer = 198;
@@ -17114,7 +17363,7 @@ this.skeletonTimer = 0;
             } else {
                 shockPts.push({x: this.x + cos(pA)*range, y: this.y + sin(pA)*range}); 
             }
-            for (let i = 1; i < shockPts.length; i++) emit(shockPts[i].x, shockPts[i].y, 15, color(255, 255, 0), "SPARK");
+            for (let i = 1; i < shockPts.length; i++) emit(shockPts[i].x, shockPts[i].y, 15, color(255, 255, 0), "SPARK", 0, 0, this);
             lightnings.push(new Lightning(shockPts)); sfx.shoot("LIGHTNING", this.x, this.y); screenShake = 10;
 
             this.cannonAmmo--; this.cannonCharge = 0; this.cannonFireDelay = 48; 
@@ -17151,7 +17400,7 @@ this.skeletonTimer = 0;
         if (meleeInputHeld) {
             if (window.meleeFinisherUnlocked) {
                 this.meleeCharge++; 
-                if (this.meleeCharge === 40) { sfx.charge(); emit(this.x, this.y, 20, color(255, 150, 0), "SPARK"); } 
+                if (this.meleeCharge === 40) { sfx.charge(); emit(this.x, this.y, 20, color(255, 150, 0), "SPARK", 0, 0, this); }
             } else {
                 if (!this.prevMeleeInputHeld) this.activateMelee(true); 
             }
@@ -17176,22 +17425,22 @@ this.skeletonTimer = 0;
 
     if (this.dashTimer > 0) { 
         this.dashTimer--; speed = 22; 
-        if (this.dashTimer % 2 === 0) { emit(this.x, this.y, 1, color(0, 200, 255), "THRUST", -cos(this.lastMoveAngle) * 8, -sin(this.lastMoveAngle) * 8); emit(this.x, this.y, 1, color(255, 100, 0), "THRUST", -cos(this.lastMoveAngle) * 8, -sin(this.lastMoveAngle) * 8); } 
+        if (this.dashTimer % 2 === 0) { emit(this.x, this.y, 1, color(0, 200, 255), "THRUST", -cos(this.lastMoveAngle) * 8, -sin(this.lastMoveAngle) * 8, this); emit(this.x, this.y, 1, color(255, 100, 0), "THRUST", -cos(this.lastMoveAngle) * 8, -sin(this.lastMoveAngle) * 8, this); }
         let dx = cos(this.lastMoveAngle) * speed, dy = sin(this.lastMoveAngle) * speed; 
         if (!this.checkCol(this.x + dx, this.y)) this.x += dx; if (!this.checkCol(this.x, this.y + dy)) this.y += dy; this.isMoving = true; 
         
         if (this.dashTimer <= 0 && jetpackFireExplosion) {
             screenShake = 15; sfx.charge(this.x, this.y); sfx.shotgun(this.x, this.y); 
-            for (let a = 0; a < TWO_PI; a += 0.15) { emit(this.x, this.y, 1, color(0, 200, 255), "THRUST", cos(a) * 16, sin(a) * 16); emit(this.x, this.y, 1, color(150, 240, 255), "SPARK", cos(a) * 8, sin(a) * 8); }
-            emit(this.x, this.y, 30, color(0, 100, 255), "EXPLOSION");
+            for (let a = 0; a < TWO_PI; a += 0.15) { emit(this.x, this.y, 1, color(0, 200, 255), "THRUST", cos(a) * 16, sin(a) * 16, this); emit(this.x, this.y, 1, color(150, 240, 255), "SPARK", cos(a) * 8, sin(a) * 8, this); }
+            emit(this.x, this.y, 30, color(0, 100, 255), "EXPLOSION", 0, 0, this);
             for (let e of enemiesList) {
                 if (e.hp > 0 && e.eType !== "AERIAL" && e.eType !== "AERIAL_PISTOL" && dist(this.x, this.y, e.x, e.y) < 140) {
                     let ang = atan2(e.y - this.y, e.x - this.x);
                     for(let k = 0; k < 15; k++) { if(!e.checkCol(e.x + cos(ang)*2, e.y)) e.x += cos(ang)*2; if(!e.checkCol(e.x, e.y + sin(ang)*2)) e.y += sin(ang)*2; }
                     let bCol = (e.eType === "BUG" || e.eType === "SNAIL" || e.eType === "SNAIL_HYBRID") ? color(200, 230, 40) : color(90, 0, 0);
                     let mDmg = ninjaSuitUnlocked ? 120 : 100; e.takeDamage(mDmg); 
-                    if (e.eType === "ROBOT") { sfx.hitArmor(); emit(e.x, e.y, 12, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK"); }
-                    else if ((e.eType === "ARMORED" && e.hp > 300) || (e.eType === "ARMORED_STANDARD" && e.hp > 50) || e.eType === "SAUCER" || e.eType === "SAUCER_RED" || (e.eType === "SNAIL_HYBRID" && e.hp > 150)) { sfx.hitArmor(); emit(e.x, e.y, 10, color(0, 200, 255), "SPARK"); } else { sfx.hitBody(); emit(e.x, e.y, 15, bCol, "BLOOD"); }
+                    if (e.eType === "ROBOT") { sfx.hitArmor(); emit(e.x, e.y, 12, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK", 0, 0, e); }
+                    else if ((e.eType === "ARMORED" && e.hp > 300) || (e.eType === "ARMORED_STANDARD" && e.hp > 50) || e.eType === "SAUCER" || e.eType === "SAUCER_RED" || (e.eType === "SNAIL_HYBRID" && e.hp > 150)) { sfx.hitArmor(); emit(e.x, e.y, 10, color(0, 200, 255), "SPARK", 0, 0, e); } else { sfx.hitBody(); emit(e.x, e.y, 15, bCol, "BLOOD", 0, 0, e); }
 
                     if (e.hp <= 0) {
                         e.dead = true;
@@ -17199,7 +17448,7 @@ this.skeletonTimer = 0;
                         // The burst has already shoved it clear, so this one
                         // just goes up where it landed.
                         else if (e.eType === "ROBOT") { robotDeathBurst(e, ang, true); }
-                        else { emit(e.x, e.y, 40, bCol, "GORE"); spawnSplatter(e.x, e.y, "BLOOD", bCol); corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 3, 0, e.decals, e.currentWeapon, ang, e.eType, e.bodyW, e.bodyH, e)); }
+                        else { emit(e.x, e.y, 40, bCol, "GORE", 0, 0, e); spawnSplatter(e.x, e.y, "BLOOD", bCol, e); corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 3, 0, e.decals, e.currentWeapon, ang, e.eType, e.bodyW, e.bodyH, e)); }
                         processKill(e.x, e.y, false, e.eType, e.isFriendly, e);
                     }
                 }
@@ -17305,9 +17554,9 @@ this.skeletonTimer = 0;
                       if (e.hp > 0) { e.hitFlash = 4; }
                       
                       let bCol = (e.eType === "BUG" || e.eType === "SNAIL" || e.eType === "SNAIL_HYBRID") ? color(200, 230, 40) : color(90, 0, 0);
-                      if(isFistAttack&&unarmedCivilian(e)){sfx.hitBody();emit(e.x,e.y,8,color(200,183,151),"DUST");}
-                      else if (e.eType === "ROBOT") { sfx.hitArmor(); emit(e.x, e.y, 12, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK"); }
-                      else if (e.eType === "SAUCER" || e.eType === "SAUCER_RED" || (e.eType === "ARMORED" && e.hp > 300) || (e.eType === "ARMORED_STANDARD" && e.hp > 50) || (e.eType === "SNAIL_HYBRID" && e.hp > 150)) { sfx.hitArmor(); emit(e.x, e.y, 10, color(255, 200, 0), "SPARK"); } else { sfx.hitBody(); emit(e.x, e.y, 20, bCol, "BLOOD"); }
+                      if(isFistAttack&&unarmedCivilian(e)){sfx.hitBody();emit(e.x,e.y,8,color(200,183,151),"DUST", 0, 0, e);}
+                      else if (e.eType === "ROBOT") { sfx.hitArmor(); emit(e.x, e.y, 12, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK", 0, 0, e); }
+                      else if (e.eType === "SAUCER" || e.eType === "SAUCER_RED" || (e.eType === "ARMORED" && e.hp > 300) || (e.eType === "ARMORED_STANDARD" && e.hp > 50) || (e.eType === "SNAIL_HYBRID" && e.hp > 150)) { sfx.hitArmor(); emit(e.x, e.y, 10, color(255, 200, 0), "SPARK", 0, 0, e); } else { sfx.hitBody(); emit(e.x, e.y, 20, bCol, "BLOOD", 0, 0, e); }
 
                       if (e.hp <= 0) { 
                           e.dead = true; 
@@ -17320,7 +17569,7 @@ this.skeletonTimer = 0;
                               robotDeathBurst(e, atan2(e.y - this.y, e.x - this.x),
                                               !!(this.isPlayer || this.isFriendly), ROBOT_MELEE_KB);
                           }
-                          else { sfx.meleeKill(e.x, e.y); emit(e.x, e.y, 60, bCol, "GORE"); spawnSplatter(e.x, e.y, "BLOOD", bCol);
+                          else { sfx.meleeKill(e.x, e.y); emit(e.x, e.y, 60, bCol, "GORE", 0, 0, e); spawnSplatter(e.x, e.y, "BLOOD", bCol, e);
                             corpses.push(meleeTool()==="SWORD"&&ragHumanoid(e.eType,e.bodyW)?swordKillCorpse(e,this.aimAngle):
                               new Corpse(e.x,e.y,e.moveAngle,e.aimAngle,e.shirtCol,e.pantsCol,3,0,e.decals,e.currentWeapon,this.aimAngle,e.eType,e.bodyW,e.bodyH,e)); }
                           
@@ -17368,6 +17617,7 @@ this.skeletonTimer = 0;
 
     updateEnemy() {
     shovelUpdateActor(this,typeof deltaTime==='number'?deltaTime:1000/60);
+    if(this.shovelFallFatal)return;
     const motionX=this.x,motionY=this.y;
     try {
     if (this._boxingWorldManaged && boxingActive(this) && boxingActive(player)) return;
@@ -17543,7 +17793,7 @@ if (this.eType === "COW") {
     }
 
     if (this.wetTimer === undefined) this.wetTimer = 0;
-    if (this.wetTimer > 0) { this.wetTimer--; if (frameCount % 15 === 0) emit(this.x + random(-10, 10), this.y + random(-10, 10), 1, color(100, 150, 255), "BLOOD"); }
+    if (this.wetTimer > 0) { this.wetTimer--; if (frameCount % 15 === 0) emit(this.x + random(-10, 10), this.y + random(-10, 10), 1, color(100, 150, 255), "BLOOD", 0, 0, this); }
 
     if (this.fireTimer > 0) this.fireTimer--; 
     if (this.muzzleFlash > 0) this.muzzleFlash--;
@@ -17573,7 +17823,7 @@ if (this.eType === "COW") {
     }
     let aDx = 0, aDy = 0;
     
-    if (this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL" || this.eType === "SAUCER" || this.eType === "SAUCER_RED") { emit(this.x, this.y, 1, color(0, 200, 255), "THRUST", -cos(this.aimAngle) * 5, -sin(this.aimAngle) * 5); emit(this.x, this.y, 1, color(255, 100, 0), "THRUST", -cos(this.aimAngle) * 5, -sin(this.aimAngle) * 5); }
+    if (this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL" || this.eType === "SAUCER" || this.eType === "SAUCER_RED") { emit(this.x, this.y, 1, color(0, 200, 255), "THRUST", -cos(this.aimAngle) * 5, -sin(this.aimAngle) * 5, this); emit(this.x, this.y, 1, color(255, 100, 0), "THRUST", -cos(this.aimAngle) * 5, -sin(this.aimAngle) * 5, this); }
 
     if (this.isFriendly) {
         if (this.baseState === undefined) this.baseState = "FOLLOW";
@@ -17833,13 +18083,13 @@ if (this.eType === "COW") {
             // Faster and louder the closer it gets to going off.
             const t01 = 1 - Math.max(0, this.selfDestruct) / ROBOT_FUSE;
             if (frameCount % Math.max(3, Math.round(11 - t01 * 8)) === 0) {
-                emit(this.x, this.y, 2, color(255, 120, 30), "FLECK");
-                if (t01 > 0.45) emit(this.x, this.y, 1, color(60), "SMOKE");
+                emit(this.x, this.y, 2, color(255, 120, 30), "FLECK", 0, 0, this);
+                if (t01 > 0.45) emit(this.x, this.y, 1, color(60), "SMOKE", 0, 0, this);
             }
             if (this.selfDestruct <= 0 && !this.dead) {
                 this.dead = true; this.hp = 0;
-                emit(this.x, this.y, 26, color(OIL_COL[0], OIL_COL[1], OIL_COL[2]), "OIL");
-                spawnSplatter(this.x, this.y, "BLOOD", color(OIL_COL[0], OIL_COL[1], OIL_COL[2]));
+                emit(this.x, this.y, 26, color(OIL_COL[0], OIL_COL[1], OIL_COL[2]), "OIL", 0, 0, this);
+                spawnSplatter(this.x, this.y, "BLOOD", color(OIL_COL[0], OIL_COL[1], OIL_COL[2]), this);
                 triggerExplosion(this.x, this.y, 190, false, false);
                 const ri = enemiesList.indexOf(this);
                 if (ri > -1) enemiesList.splice(ri, 1);
@@ -17858,7 +18108,7 @@ if (this.eType === "COW") {
                 const mx = this.x + cos(aR) * 34 - sin(aR) * 13;
                 const my = this.y + sin(aR) * 34 + cos(aR) * 13;
                 spawnBullet(mx, my, aR, false, "BODY", "ORANGE_BEAM", this);
-                emit(mx, my, 5, color(255, 170, 60), "MUZZLE", cos(aR) * 6, sin(aR) * 6);
+                emit(mx, my, 5, color(255, 170, 60), "MUZZLE", cos(aR) * 6, sin(aR) * 6, this);
                 sfx.shoot("ORANGE_BEAM", mx, my);
                 this.muzzleFlash = 3;
                 this.burstLeft--;
@@ -17898,7 +18148,7 @@ if (this.eType === "COW") {
         // A holed chassis leaks whether it is moving or not.
         if (this.hp <= ROBOT_OIL_AT && frameCount % 14 === 0) {
             emit(this.x + random(-6, 6), this.y + random(-6, 6), 1,
-                 color(OIL_COL[0], OIL_COL[1], OIL_COL[2]), "OIL");
+                 color(OIL_COL[0], OIL_COL[1], OIL_COL[2]), "OIL", 0, 0, this);
         }
         return;
     }
@@ -17988,15 +18238,15 @@ if (this.eType === "COW") {
         this.aimAngle = iA;
 
         if (this.eType === "SNAIL_HYBRID") {
-            if (this.eyeBleedL > 0) { this.eyeBleedL--; if (this.eyeBleedL % 5 === 0) emit(this.x + cos(this.aimAngle)*15 - sin(this.aimAngle)*-35, this.y + sin(this.aimAngle)*15 + cos(this.aimAngle)*-35, 1, color(0, 100, 0), "BLOOD"); }
-            if (this.eyeBleedR > 0) { this.eyeBleedR--; if (this.eyeBleedR % 5 === 0) emit(this.x + cos(this.aimAngle)*15 - sin(this.aimAngle)*35, this.y + sin(this.aimAngle)*15 + cos(this.aimAngle)*35, 1, color(0, 100, 0), "BLOOD"); }
+            if (this.eyeBleedL > 0) { this.eyeBleedL--; if (this.eyeBleedL % 5 === 0) emit(this.x + cos(this.aimAngle)*15 - sin(this.aimAngle)*-35, this.y + sin(this.aimAngle)*15 + cos(this.aimAngle)*-35, 1, color(0, 100, 0), "BLOOD", 0, 0, this); }
+            if (this.eyeBleedR > 0) { this.eyeBleedR--; if (this.eyeBleedR % 5 === 0) emit(this.x + cos(this.aimAngle)*15 - sin(this.aimAngle)*35, this.y + sin(this.aimAngle)*15 + cos(this.aimAngle)*35, 1, color(0, 100, 0), "BLOOD", 0, 0, this); }
             if (this.leftEye <= 0 && this.rightEye <= 0 && !this.enraged) { this.enraged = true; sfx.deathGrunt(); }
 
             if (this.enraged) {
                 if (distToTarget > 20 || canSee) {
                     let vx = cos(iA) * 3.5 * spd, vy = sin(iA) * 3.5 * spd; let m = this.attemptMove(vx, vy); aDx = m.x; aDy = m.y;
                 }
-                if (frameCount % 15 === 0) { spawnSplatter(this.x, this.y, "BLOOD", color(0, 100, 0)); emit(this.x, this.y, 3, color(0, 100, 0), "BLOOD"); }
+                if (frameCount % 15 === 0) { spawnSplatter(this.x, this.y, "BLOOD", color(0, 100, 0), this); emit(this.x, this.y, 3, color(0, 100, 0), "BLOOD", 0, 0, this); }
                 if (canSee && dToP < 70 && trg.hp > 0 && !trg.dead) { trg.takeDamage(999); trg.dead = true; sfx.deathGrunt(); corpses.push(new Corpse(trg.x, trg.y, trg.moveAngle, trg.aimAngle, trg.shirtCol, trg.pantsCol, 13, 0, trg.decals, trg.currentWeapon, 0, "NORMAL", trg.bodyW, trg.bodyH, trg)); if(trg.isPlayer) playerRespawnTimer = 90; }
             } else {
                 if (canSee && dToP < 600) {
@@ -18053,9 +18303,9 @@ if (this.eType === "COW") {
                 if (!hitFence && canSee && distToTarget < 35 && this.biteCooldown <= 0) {  // <--- CHANGED dToP to distToTarget
                     let dRes = trg.takeDamage(5); 
                     if (dRes.blocked) { 
-                        emit(trg.x, trg.y, dRes.broken ? 15 : 8, dRes.broken ? color(0, 200, 255) : color(255, 170, 40), "SPARK"); 
+                        emit(trg.x, trg.y, dRes.broken ? 15 : 8, dRes.broken ? color(0, 200, 255) : color(255, 170, 40), "SPARK", 0, 0, trg);
                     } else { 
-                        emit(trg.x, trg.y, 8, color(90, 0, 0), "BLOOD"); if (trg.isPlayer) spawnSplatter(trg.x, trg.y, "BLOOD", color(90, 0, 0)); 
+                        emit(trg.x, trg.y, 8, color(90, 0, 0), "BLOOD", 0, 0, trg); if (trg.isPlayer) spawnSplatter(trg.x, trg.y, "BLOOD", color(90, 0, 0), trg);
                     }
                     sfx.bite(); this.biteCooldown = 84; 
                     if (trg.hp <= 0 && !trg.dead) { 
@@ -18217,8 +18467,8 @@ if (this.eType === "COW") {
         // EXCLUSIVE PLAYER SHAKE
         if (this.isPlayer) screenShake = 3; 
         
-        emit(tX, tY, 3, color(255, 200, 0), "MUZZLE", cos(sA) * 5, sin(sA) * 5);
-        if (dualLeftReady) emit(tX_L, tY_L, 3, color(255, 200, 0), "MUZZLE", cos(sA) * 5, sin(sA) * 5);
+        emit(tX, tY, 3, color(255, 200, 0), "MUZZLE", cos(sA) * 5, sin(sA) * 5, this);
+        if (dualLeftReady) emit(tX_L, tY_L, 3, color(255, 200, 0), "MUZZLE", cos(sA) * 5, sin(sA) * 5, this);
     } else if (this.currentWeapon === WEAPONS.SHOTGUN) { 
         let s = [-0.1275, -0.0425, 0.0425, 0.1275]; for (let i = 0; i < 4; i++) spawnBullet(tX, tY, sA + s[i], this.isPlayer || this.isFriendly, aH, this.currentWeapon, this, huntShotId);
         sfx.shotgun(tX, tY); 
@@ -18226,7 +18476,7 @@ if (this.eType === "COW") {
         // EXCLUSIVE PLAYER SHAKE
         if (this.isPlayer) screenShake = 8; 
         
-        emit(tX, tY, 6, color(255, 200, 0), "MUZZLE", cos(sA) * 8, sin(sA) * 8); 
+        emit(tX, tY, 6, color(255, 200, 0), "MUZZLE", cos(sA) * 8, sin(sA) * 8, this);
     } else if (this.currentWeapon === WEAPONS.BOW) {
         const arrow = spawnBullet(tX,tY,sA,this.isPlayer || this.isFriendly,aH,this.currentWeapon,this,huntShotId);
         if (bowShot) {
@@ -18246,7 +18496,7 @@ if (this.eType === "COW") {
         // EXCLUSIVE PLAYER SHAKE
         if (this.isPlayer && (this.currentWeapon === WEAPONS.SMG || this.currentWeapon === WEAPONS.ASSAULT_RIFLE)) screenShake = 2; 
         
-        emit(tX, tY, 3, color(255, 200, 0), "MUZZLE", cos(sA) * 5, sin(sA) * 5); 
+        emit(tX, tY, 3, color(255, 200, 0), "MUZZLE", cos(sA) * 5, sin(sA) * 5, this);
     }
     this.ammo = Math.max(0, this.ammo - cost); if (this.eType !== "SAUCER_RED" && this.eType !== "ALIEN_GATOR") this.fireTimer = cd; this.muzzleFlash = this.currentWeapon === WEAPONS.BOW ? 0 : 3; this.weaponKick = this.currentWeapon === WEAPONS.BOW ? 0 : 6;
     if (this.ammo <= 0) { if (this.isPlayer || this.isFriendly) { this.triggerReload(); } else { this.reloadTimer = 90; } }
@@ -20082,6 +20332,7 @@ function boxingEmitContactEffect(event, store = _boxingWorldEffects) {
   const effect = { x: p.x, y: p.y, outcome: event.outcome, ageMs: 0,
     lifeMs: def.lifeMs, radius: def.radius, rays: def.rays,
     angle: event.attacker && event.attacker.aimAngle || 0, seed: ++_boxingEffectSerial };
+  shovelBindEffect(effect, event.defender || event.attacker || null);
   store.push(effect); return effect;
 }
 function boxingAdvanceContactEffects(store, dt) {
@@ -20095,6 +20346,11 @@ function boxingAdvanceContactEffects(store, dt) {
 }
 function boxingDrawContactEffects(store) {
   for (const effect of store) {
+    if (shovelEffectDepth(effect) > 0) shovelPaintDepthEffect(effect, () => boxingDrawContactEffect(effect));
+    else boxingDrawContactEffect(effect);
+  }
+}
+function boxingDrawContactEffect(effect) {
     const t = constrain(effect.ageMs / effect.lifeMs, 0, 1), fade = Math.pow(1 - t, .7),
       popIn = .42 + .58 * Math.min(1, t * 9), r = effect.radius * popIn,
       parry = effect.outcome === 'PARRY', block = effect.outcome === 'BLOCK';
@@ -20141,7 +20397,6 @@ function boxingDrawContactEffects(store) {
       }
     }
     pop();
-  }
 }
 function worldBoxingTargets(actor = player) {
   if (!actor) return [];
@@ -20416,7 +20671,7 @@ function updateEntities() {
       }
 
       
-      if (inView(e.x, e.y, 150)) actorShow(e);
+      if (e.hp>0 && !e.dead && inView(e.x, e.y, 150)) actorShow(e);
       if (e.hp <= 0 && !e.dead) { e.dead = true; processKill(e.x, e.y, false, e.eType, e.isFriendly, e); enemiesList.splice(i, 1); if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100); }
   }
 
@@ -20906,8 +21161,8 @@ function updateBullets() {
                 
                 if (t.eType === "SNAIL_HYBRID" && b.tH === "HEAD") {
                     t.hybridHeadHP -= dmg;
-                    if (t.hybridHeadHP <= 50 && t.leftEye > 0) { t.leftEye = 0; t.eyeBleedL = 600; emit(t.x, t.y, 50, color(0, 100, 0), "GORE"); sfx.deathGrunt(); }
-                    if (t.hybridHeadHP <= 0 && t.rightEye > 0) { t.rightEye = 0; t.eyeBleedR = 600; emit(t.x, t.y, 50, color(0, 100, 0), "GORE"); sfx.deathGrunt(); }
+                    if (t.hybridHeadHP <= 50 && t.leftEye > 0) { t.leftEye = 0; t.eyeBleedL = 600; emit(t.x, t.y, 50, color(0, 100, 0), "GORE", 0, 0, t); sfx.deathGrunt(); }
+                    if (t.hybridHeadHP <= 0 && t.rightEye > 0) { t.rightEye = 0; t.eyeBleedR = 600; emit(t.x, t.y, 50, color(0, 100, 0), "GORE", 0, 0, t); sfx.deathGrunt(); }
                 }
 
                 // The robot's head is its own 150-point pool and does not draw
@@ -20917,7 +21172,7 @@ function updateBullets() {
                 if (t.eType === "ROBOT" && b.tH === "HEAD" && !t.enraged) {
                     t.headHP -= dmg;
                     robotHeadAbsorbed = true;
-                    emit(b.x, b.y, 7, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK", b.vx, b.vy);
+                    emit(b.x, b.y, 7, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK", b.vx, b.vy, t);
                     if (t.headHP <= 0) { robotHeadKill = true; }
                 }
 
@@ -20940,12 +21195,12 @@ function updateBullets() {
                     t.enraged = true;
                     t.selfDestruct = ROBOT_FUSE;
                     t.chargeTimer = 0; t.burstLeft = 0;
-                    emit(t.x, t.y, 30, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK");
-                    emit(t.x, t.y, 16, color(OIL_COL[0], OIL_COL[1], OIL_COL[2]), "OIL");
-                    emit(t.x, t.y, 10, color(90), "CHIP");
-                    emit(t.x, t.y, 6, color(60), "SMOKE");
+                    emit(t.x, t.y, 30, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK", 0, 0, t);
+                    emit(t.x, t.y, 16, color(OIL_COL[0], OIL_COL[1], OIL_COL[2]), "OIL", 0, 0, t);
+                    emit(t.x, t.y, 10, color(90), "CHIP", 0, 0, t);
+                    emit(t.x, t.y, 6, color(60), "SMOKE", 0, 0, t);
                     sfx.hitArmor();
-                    spawnSplatter(t.x, t.y, "BLOOD", color(OIL_COL[0], OIL_COL[1], OIL_COL[2]));
+                    spawnSplatter(t.x, t.y, "BLOOD", color(OIL_COL[0], OIL_COL[1], OIL_COL[2]), t);
                 }
                 
                 if (b.shooter && b.shooter.isFriendly && !b.shooter.isPlayer && !t.isFriendly && nm0AmbushActive) {
@@ -20995,31 +21250,31 @@ function updateBullets() {
                     // up past ROBOT_OIL_AT, and more of it the worse it gets.
                     sfx.hitArmor();
                     emit(b.x, b.y, robotHeadAbsorbed ? 4 : 9,
-                         color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK", b.vx, b.vy);
+                         color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK", b.vx, b.vy, t);
                     if (!robotHeadAbsorbed && t.hp <= ROBOT_OIL_AT) {
                         const bleed = 3 + Math.round((1 - Math.max(0, t.hp) / ROBOT_OIL_AT) * 7);
-                        emit(b.x, b.y, bleed, color(OIL_COL[0], OIL_COL[1], OIL_COL[2]), "OIL", b.vx * 0.4, b.vy * 0.4);
+                        emit(b.x, b.y, bleed, color(OIL_COL[0], OIL_COL[1], OIL_COL[2]), "OIL", b.vx * 0.4, b.vy * 0.4, t);
                     }
                 } 
                 else if (wA) {
                     sfx.hitArmor();
                     if (t.eType === "ARMORED" || t.eType === "ARMORED_STANDARD") {
-                        if (b.tH === "HEAD") emit(b.x, b.y, 9, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK", b.vx, b.vy);
-                        else emit(b.x, b.y, 10, bCol, "BLOOD_SMOKE", b.vx, b.vy);
-                    } else emit(b.x, b.y, 10, color(255, 150, 0), "SPARK");
-                    emit(b.x, b.y, 5, color(100), "CHIP");
+                        if (b.tH === "HEAD") emit(b.x, b.y, 9, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK", b.vx, b.vy, t);
+                        else emit(b.x, b.y, 10, bCol, "BLOOD_SMOKE", b.vx, b.vy, t);
+                    } else emit(b.x, b.y, 10, color(255, 150, 0), "SPARK", 0, 0, t);
+                    emit(b.x, b.y, 5, color(100), "CHIP", 0, 0, t);
                 }
                 else { 
                     // Sparks in the shield's own colour while it holds; the break
                     // keeps its blue, which is the one moment the two should not
                     // look like the same event.
-                    if (t.isPlayer && dRes.blocked) { emit(b.x, b.y, dRes.broken ? 20 : 8, dRes.broken ? color(0, 200, 255) : color(255, 170, 40), "SPARK", b.vx, b.vy); } 
+                    if (t.isPlayer && dRes.blocked) { emit(b.x, b.y, dRes.broken ? 20 : 8, dRes.broken ? color(0, 200, 255) : color(255, 170, 40), "SPARK", b.vx, b.vy, t); }
                     else {
                       if (b.tH === "HEAD" && t.eType !== "BUG" && t.eType !== "SNAIL" && t.eType !== "SNAIL_HYBRID") sfx.hitHead(); else sfx.hitBody();
-                      emit(b.x, b.y, 8, bCol, "BLOOD", b.vx, b.vy);
+                      emit(b.x, b.y, 8, bCol, "BLOOD", b.vx, b.vy, t);
                       // 3. Once the shield is gone, every round that lands marks
                       //    the ground. That mark is the read that he is unprotected.
-                      if (t.isPlayer) spawnSplatter(t.x, t.y, "BLOOD", bCol);
+                      if (t.isPlayer) spawnSplatter(t.x, t.y, "BLOOD", bCol, t);
                     }
                 } 
                 if (t.isPlayer) screenShake = 5; 
@@ -21031,11 +21286,11 @@ function updateBullets() {
                         // burst of oil driven out along the shot that finished it
                         // -- protruding from the point of impact, not sprayed at
                         // random -- and a chassis that lies there smoking.
-                        emit(b.x, b.y, 26, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK", b.vx, b.vy);
-                        emit(b.x, b.y, 22, color(OIL_COL[0], OIL_COL[1], OIL_COL[2]), "OIL", b.vx * 1.5, b.vy * 1.5);
-                        emit(t.x, t.y, 10, color(96, 100, 106), "CHIP");
-                        emit(t.x, t.y, 6, color(70), "SMOKE");
-                        spawnSplatter(t.x, t.y, "BLOOD", color(OIL_COL[0], OIL_COL[1], OIL_COL[2]));
+                        emit(b.x, b.y, 26, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK", b.vx, b.vy, t);
+                        emit(b.x, b.y, 22, color(OIL_COL[0], OIL_COL[1], OIL_COL[2]), "OIL", b.vx * 1.5, b.vy * 1.5, t);
+                        emit(t.x, t.y, 10, color(96, 100, 106), "CHIP", 0, 0, t);
+                        emit(t.x, t.y, 6, color(70), "SMOKE", 0, 0, t);
+                        spawnSplatter(t.x, t.y, "BLOOD", color(OIL_COL[0], OIL_COL[1], OIL_COL[2]), t);
                         sfx.hitArmor();
                         corpses.push(new Corpse(t.x, t.y, t.moveAngle, t.aimAngle, t.shirtCol, t.pantsCol,
                                                 t.enraged ? 1 : 0, hA, t.decals, t.currentWeapon, b.a,
@@ -21055,37 +21310,37 @@ function updateBullets() {
                         if (b.tH === "HEAD") { dT = 12; } else { let choices = [11, 5, 10]; dT = choices[floor(random(3))]; }
                         corpses.push(new Corpse(t.x, t.y, t.moveAngle, t.aimAngle, t.shirtCol, t.pantsCol, dT, hA, t.decals, t.currentWeapon, b.a, t.eType, t.bodyW, t.bodyH, t));
                         retargetHeadHitSpray(corpses[corpses.length-1],fallHit,b);
-                        if (dT === 11) { spawnSplatter(t.x, t.y, "BLOOD", color(90, 0, 0)); } 
-                        else if (dT === 5 || dT === 10) { emit(t.x, t.y, 40, color(255, 100, 0), "EXPLOSION"); sfx.explosion(t.x, t.y); spawnSplatter(t.x, t.y, "BLOOD", color(90, 0, 0)); spawnSplatter(t.x, t.y, "SCORCH"); if (dT === 10) { emit(b.x, b.y, 30, color(220, 200, 200), "BONE", b.vx, b.vy); emit(t.x, t.y, 120, color(90, 0, 0), "GORE"); } }
+                        if (dT === 11) { spawnSplatter(t.x, t.y, "BLOOD", color(90, 0, 0), t); }
+                        else if (dT === 5 || dT === 10) { emit(t.x, t.y, 40, color(255, 100, 0), "EXPLOSION", 0, 0, t); sfx.explosion(t.x, t.y); spawnSplatter(t.x, t.y, "BLOOD", color(90, 0, 0), t); spawnSplatter(t.x, t.y, "SCORCH", null, t); if (dT === 10) { emit(b.x, b.y, 30, color(220, 200, 200), "BONE", b.vx, b.vy, t); emit(t.x, t.y, 120, color(90, 0, 0), "GORE", 0, 0, t); } }
                     } else { 
                         if (b.w === WEAPONS.ASSAULT_RIFLE && b.tH === "HEAD") { 
                             let choices = [6, 8, 9]; dT = choices[headshotCounter % 3]; headshotCounter++;
-                            if (dT === 6) { emit(b.x, b.y, 10, color(220, 200, 200), "BONE", b.vx, b.vy); emit(b.x, b.y, 40, bCol, "GORE"); emit(b.x, b.y, 40, bCol, "BLOOD", b.vx, b.vy); } 
-                            else if (dT === 8) { emit(b.x, b.y, 15, color(220, 200, 200), "BONE", b.vx, b.vy); emit(b.x, b.y, 50, bCol, "GORE"); } 
-                            else { emit(b.x, b.y, 25, color(220, 200, 200), "BONE", b.vx, b.vy); emit(b.x, b.y, 60, bCol, "GORE"); emit(b.x, b.y, 50, bCol, "BLOOD", b.vx, b.vy); }
+                            if (dT === 6) { emit(b.x, b.y, 10, color(220, 200, 200), "BONE", b.vx, b.vy, t); emit(b.x, b.y, 40, bCol, "GORE", 0, 0, t); emit(b.x, b.y, 40, bCol, "BLOOD", b.vx, b.vy, t); }
+                            else if (dT === 8) { emit(b.x, b.y, 15, color(220, 200, 200), "BONE", b.vx, b.vy, t); emit(b.x, b.y, 50, bCol, "GORE", 0, 0, t); }
+                            else { emit(b.x, b.y, 25, color(220, 200, 200), "BONE", b.vx, b.vy, t); emit(b.x, b.y, 60, bCol, "GORE", 0, 0, t); emit(b.x, b.y, 50, bCol, "BLOOD", b.vx, b.vy, t); }
                         } else if (b.w === WEAPONS.SHOTGUN && b.tH === "HEAD") { 
                             let choices = [4, 8, 9]; dT = choices[headshotCounter % 3]; headshotCounter++;
-                            if (dT === 4) { emit(b.x, b.y, 25, color(220, 200, 200), "BONE", b.vx, b.vy); emit(b.x, b.y, 60, bCol, "GORE", b.vx*0.5, b.vy*0.5); emit(b.x, b.y, 60, bCol, "BLOOD", b.vx, b.vy); } 
-                            else if (dT === 8) { emit(b.x, b.y, 30, color(220, 200, 200), "BONE", b.vx, b.vy); emit(b.x, b.y, 80, bCol, "GORE"); } 
-                            else { emit(b.x, b.y, 30, color(220, 200, 200), "BONE", b.vx, b.vy); emit(b.x, b.y, 100, bCol, "GORE"); emit(b.x, b.y, 80, bCol, "BLOOD", b.vx, b.vy); }
+                            if (dT === 4) { emit(b.x, b.y, 25, color(220, 200, 200), "BONE", b.vx, b.vy, t); emit(b.x, b.y, 60, bCol, "GORE", b.vx*0.5, b.vy*0.5, t); emit(b.x, b.y, 60, bCol, "BLOOD", b.vx, b.vy, t); }
+                            else if (dT === 8) { emit(b.x, b.y, 30, color(220, 200, 200), "BONE", b.vx, b.vy, t); emit(b.x, b.y, 80, bCol, "GORE", 0, 0, t); }
+                            else { emit(b.x, b.y, 30, color(220, 200, 200), "BONE", b.vx, b.vy, t); emit(b.x, b.y, 100, bCol, "GORE", 0, 0, t); emit(b.x, b.y, 80, bCol, "BLOOD", b.vx, b.vy, t); }
                         } else if (b.w === WEAPONS.SHOTGUN && dist(b.startX, b.startY, t.x, t.y) <= 160) { 
                             let choices = [2, 7, 10]; dT = choices[bodyOverkillCounter % 3]; bodyOverkillCounter++;
-                            if (dT === 2) { emit(t.x, t.y, 60, bCol, "GORE"); emit(t.x, t.y, 15, color(220, 200, 200), "BONE", b.vx, b.vy); } 
-                            else if (dT === 7) { emit(t.x, t.y, 120, bCol, "GORE"); emit(t.x, t.y, 40, color(220, 200, 200), "BONE", b.vx, b.vy); emit(t.x, t.y, 80, bCol, "BLOOD", b.vx * 1.5, b.vy * 1.5); } 
-                            else if (dT === 10) { emit(b.x, b.y, 30, color(220, 200, 200), "BONE", b.vx, b.vy); emit(t.x, t.y, 120, bCol, "GORE"); }
+                            if (dT === 2) { emit(t.x, t.y, 60, bCol, "GORE", 0, 0, t); emit(t.x, t.y, 15, color(220, 200, 200), "BONE", b.vx, b.vy, t); }
+                            else if (dT === 7) { emit(t.x, t.y, 120, bCol, "GORE", 0, 0, t); emit(t.x, t.y, 40, color(220, 200, 200), "BONE", b.vx, b.vy, t); emit(t.x, t.y, 80, bCol, "BLOOD", b.vx * 1.5, b.vy * 1.5, t); }
+                            else if (dT === 10) { emit(b.x, b.y, 30, color(220, 200, 200), "BONE", b.vx, b.vy, t); emit(t.x, t.y, 120, bCol, "GORE", 0, 0, t); }
                         } else if (b.tH === "HEAD") { 
                             let choices = [1, 8, 9]; dT = choices[headshotCounter % 3]; headshotCounter++;
-                            if (dT === 1) { emit(b.x, b.y, 15, color(220, 200, 200), "BONE", b.vx, b.vy); emit(b.x, b.y, 30, bCol, "GORE"); } 
-                            else if (dT === 8) { emit(b.x, b.y, 20, color(220, 200, 200), "BONE", b.vx, b.vy); emit(b.x, b.y, 45, bCol, "GORE"); } 
-                            else { emit(b.x, b.y, 25, color(220, 200, 200), "BONE", b.vx, b.vy); emit(b.x, b.y, 60, bCol, "GORE"); emit(b.x, b.y, 50, bCol, "BLOOD", b.vx, b.vy); }
+                            if (dT === 1) { emit(b.x, b.y, 15, color(220, 200, 200), "BONE", b.vx, b.vy, t); emit(b.x, b.y, 30, bCol, "GORE", 0, 0, t); }
+                            else if (dT === 8) { emit(b.x, b.y, 20, color(220, 200, 200), "BONE", b.vx, b.vy, t); emit(b.x, b.y, 45, bCol, "GORE", 0, 0, t); }
+                            else { emit(b.x, b.y, 25, color(220, 200, 200), "BONE", b.vx, b.vy, t); emit(b.x, b.y, 60, bCol, "GORE", 0, 0, t); emit(b.x, b.y, 50, bCol, "BLOOD", b.vx, b.vy, t); }
                         } else if (b.w === WEAPONS.DUAL_SMG && b.tH === "BODY" && dist(b.startX, b.startY, t.x, t.y) <= 80) {
-                            dT = 10; emit(b.x, b.y, 30, color(220, 200, 200), "BONE", b.vx, b.vy); emit(t.x, t.y, 120, bCol, "GORE");
-                        } else { dT = 0; emit(t.x, t.y, 40, bCol, "GORE"); } 
+                            dT = 10; emit(b.x, b.y, 30, color(220, 200, 200), "BONE", b.vx, b.vy, t); emit(t.x, t.y, 120, bCol, "GORE", 0, 0, t);
+                        } else { dT = 0; emit(t.x, t.y, 40, bCol, "GORE", 0, 0, t); }
                         
                         corpses.push(new Corpse(t.x, t.y, t.moveAngle, t.aimAngle, t.shirtCol, t.pantsCol, dT, hA, t.decals, t.currentWeapon, b.a, t.eType, t.bodyW, t.bodyH, t)); 
                         retargetHeadHitSpray(corpses[corpses.length-1],fallHit,b);
                         const pool=b.tH==="HEAD"?headWoundPoint(corpses[corpses.length-1]):t;
-                        spawnSplatter(pool.x,pool.y,"BLOOD",bCol);
+                        spawnSplatter(pool.x,pool.y,"BLOOD",bCol, t);
                     } 
                     if (t.isPlayer) { playerRespawnTimer = 90; } else { 
                         let isHeadshot = (b.tH === "HEAD" && t.eType !== "BUG" && t.eType !== "SNAIL" && t.eType !== "SNAIL_HYBRID");
@@ -21244,6 +21499,7 @@ class Citizen {
     
     update() {
         shovelUpdateActor(this,typeof deltaTime==='number'?deltaTime:1000/60);
+        if(this.dead)return;
         // A build site is what the architecture department is FOR, so it takes
         // priority over the wander timer entirely: an architect within reach of
         // unfinished work walks to their slot on the hoarding and stays there
@@ -21288,7 +21544,7 @@ class Citizen {
         }
         
         if (this.state === "IDLE" && frameCount % 120 === 0 && random() > 0.5) {
-            emit(this.x, this.y, 2, this.shirtCol, "SPARK");
+            emit(this.x, this.y, 2, this.shirtCol, "SPARK", 0, 0, this);
         }
 
         this.resolveCollisions();
@@ -21354,7 +21610,7 @@ class Citizen {
             if (this.placeTimer === Math.floor(BUILD_PLACE * 0.35) && inView(this.x, this.y, 60)) {
                 const c = RESOURCE_DEF[this.carrying || "STONE"];
                 emit(this.x + cos(this.moveAngle) * 26, this.y + sin(this.moveAngle) * 26,
-                     3, color(c.col[0], c.col[1], c.col[2]), "CHIP");
+                     3, color(c.col[0], c.col[1], c.col[2]), "CHIP", 0, 0, this);
             }
             if (this.placeTimer <= 0) { this.carrying = null; this.state = "BUILDING"; }
             return;
@@ -21366,7 +21622,7 @@ class Citizen {
             this.lastStrike = strike;
             if (inView(this.x, this.y, 60) && random() < 0.55) {
                 emit(this.x + cos(this.moveAngle) * 22, this.y + sin(this.moveAngle) * 22,
-                     2, color(186, 176, 152), "CHIP");
+                     2, color(186, 176, 152), "CHIP", 0, 0, this);
             }
         }
     }
@@ -22004,21 +22260,22 @@ function particlePaint(c, opacity) {
     }
     return paint;
 }
-function newParticle(x, y, c, t, dX, dY) {
+function newParticle(x, y, c, t, dX, dY, owner = null) {
     if (_particlePool.length) {
         const p = _particlePool.pop();
-        p.init(x, y, c, t, dX, dY);
+        p.init(x, y, c, t, dX, dY, owner);
         return p;
     }
-    return new Particle(x, y, c, t, dX, dY);
+    return new Particle(x, y, c, t, dX, dY, owner);
 }
 
-function Particle(x, y, c, t, dX = 0, dY = 0) {
-    this.init(x, y, c, t, dX, dY);
+function Particle(x, y, c, t, dX = 0, dY = 0, owner = null) {
+    this.init(x, y, c, t, dX, dY, owner);
 }
 
-Particle.prototype.init = function(x, y, c, t, dX = 0, dY = 0) {
+Particle.prototype.init = function(x, y, c, t, dX = 0, dY = 0, owner = null) {
     this.x = x; this.y = y; this.c = c; this.t = t; this.a = 255;
+    shovelBindEffect(this, owner);
     // Fatal-wound droplets receive their cone velocity from their own emitter.
     // Avoid global random draws so existing overkill animation stays identical.
     if(t === "WOUND_BLOOD") { this.sz=2.8;this.vx=dX;this.vy=dY;this.l=16;return; }
@@ -22053,6 +22310,10 @@ Particle.prototype.init = function(x, y, c, t, dX = 0, dY = 0) {
 
 Particle.prototype.update = function() { this.x += this.vx; this.y += this.vy; if (this.t !== "FLASH" && this.t !== "SMOKE") { this.vx *= (this.t === "FLECK" ? 0.9 : 0.85); this.vy *= (this.t === "FLECK" ? 0.9 : 0.85); } if (--this.l <= 0) { if (this.t === "FLASH" || this.t === "MUZZLE" || this.t === "THRUST" || this.t === "EXPLOSION" || this.t === "SPARK" || this.t === "FLECK" || this.t === "BLOOD_SMOKE") this.a -= 60; else this.a -= 15; } }
 Particle.prototype.show = function() {
+    if (shovelEffectDepth(this) <= 0) { this.paint(); return; }
+    shovelPaintDepthEffect(this, () => this.paint());
+};
+Particle.prototype.paint = function() {
     const c = this.c.levels;
     noStroke();
     if (this.t === "FLECK") {
@@ -22106,7 +22367,7 @@ function updateParticles() {
         if (doTick) p.update();
         if (p.x >= left && p.x <= right && p.y >= top && p.y <= bottom) p.show();
         if (p.a > 0) { if (--w !== i) particles[w] = p; }
-        else if (_particlePool.length < PARTICLE_POOL_MAX) _particlePool.push(p);
+        else if (_particlePool.length < PARTICLE_POOL_MAX) { p.shovelOwner = null; _particlePool.push(p); }
     }
     if (w > 0) { particles.copyWithin(0, w); particles.length -= w; }
 }
@@ -32352,6 +32613,7 @@ function bakeFrontierGroundArea(g, biome, x0, y0, x1, y1) {
 }
 
 function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, layout) {
+  g.shovelPavedRects = []; // Exact hard pads, retained with this terrain buffer.
   const p = pal || def.pal;
   g.noStroke();
 
@@ -32650,6 +32912,7 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
           if (Math.abs((vert ? px2 + pw / 2 : py2 + ph / 2) - along) < 130) continue;
           g.fill(conc[0], conc[1], conc[2], 95 + rng() * 45);
           g.rect(px2, py2, pw, ph, 3);
+          g.shovelPavedRects.push({x:px2+pw/2,y:py2+ph/2,w:pw,h:ph});
           g.stroke(0, 0, 0, 34); g.strokeWeight(1.3);
           for (let l = px2 + 60 + rng() * 40; l < px2 + pw - 20; l += 70 + rng() * 50) g.line(l, py2, l, py2 + ph);
           for (let l = py2 + 60 + rng() * 40; l < py2 + ph - 20; l += 70 + rng() * 50) g.line(px2, l, px2 + pw, l);
@@ -35690,7 +35953,7 @@ function shovelEmitDigParticles(e) {
     const clod=i<8,fan=(i/17-.5)*2.2+(Math.random()-.5)*.22;
     const speed=(clod?24:12)+Math.random()*(clod?30:14),side=a+Math.PI+fan;
     shovelDigParticles.push({owner:e,level:currentLevel,depth,ageMs:0,lifeMs:clod?460:620,
-      x:e.x+ox*scale,y:e.y+oy*scale,z:(clod?1:2)*scale,
+      originX:e.x,originY:e.y,x:e.x+ox*scale,y:e.y+oy*scale,z:(clod?1:2)*scale,
       vx:Math.cos(side)*speed*scale,vy:Math.sin(side)*speed*scale,
       vz:(clod?35+Math.random()*24:8+Math.random()*10)*scale,
       size:(clod?1.1+Math.random()*1.6:3+Math.random()*3)*scale,clod,scale,
@@ -35699,11 +35962,14 @@ function shovelEmitDigParticles(e) {
 }
 function shovelDrawDigParticles(layerDepth=0,actor=null) {
   for(const p of shovelDigParticles) {
-    if(actor?p.owner!==actor: p.depth>=.5)continue;
-    if(Math.abs(p.depth-layerDepth)>SHOVEL.waist+.1||p.level!==currentLevel)continue;
+    const owner=p.owner&&(p.owner.shovelEffectBody||p.owner);
+    const depth=owner&&owner.shovelLevel===currentLevel?shovelRenderDepth(owner):p.depth;
+    if(actor?owner!==actor: depth>=.5)continue;
+    if(Math.abs(depth-layerDepth)>SHOVEL.waist+.1||p.level!==currentLevel)continue;
     if(p.x<viewLeft-40||p.x>viewRight+40||p.y<viewTop-40||p.y>viewBottom+40)continue;
     const t=Math.min(1,p.ageMs/p.lifeMs),alpha=(1-t)*(p.clod?240:105);
-    push();translate(p.x,p.y-p.z);noStroke();
+    const ratio=Math.max(SHOVEL.minScale,1/(1+depth/76))/p.scale;
+    push();translate(p.originX+(p.x-p.originX)*ratio,p.originY+(p.y-p.originY-p.z)*ratio);scale(ratio);noStroke();
     if(p.clod){rotate(p.spin+t*3);fill(112,76,43,alpha);quad(-p.size,0,0,-p.size*.7,p.size,.2,0,p.size);}
     else{fill(183,147,101,alpha);const size=p.size*(1+t*2.1);ellipse(0,0,size*1.4,size);}
     pop();
@@ -48135,7 +48401,8 @@ function serializeShovelState() {
   return {version:1,owned:!!window.shovelOwned,discovered:!!window.shovelDiscovered,pickup:shovelPickup,
     cells:Object.values(shovelExcavation),passive:!!window.passiveRouteUnlocked,exit:window.passiveRouteExit,
     player:active?{level:currentLevel,depth:shovelPlayerDepth(p),target:p.shovelDepthTarget||0,
-      climbing:!!p.shovelClimbing,crossing:p.shovelGateCrossing||null}:null};
+      climbing:!!p.shovelClimbing,fall:p._shovelFall?{...p._shovelFall}:null,
+      crossing:p.shovelGateCrossing||null}:null};
 }
 function restoreShovelState(data) {
   resetShovelState();if(!data||data.version!==1)return;
@@ -48162,6 +48429,11 @@ function restoreShovelPlayer(data) {
   player.shovelDepth=Math.max(c.ceiling,Math.min(c.depth,Number(state.depth)||0));
   player.shovelDepthTarget=Math.max(c.ceiling,Math.min(c.depth,Number.isFinite(state.target)?state.target:player.shovelDepth));
   player.shovelClimbing=!!state.climbing;
+  const fall=state.fall;
+  player._shovelFall=!player.shovelClimbing && fall && Number.isFinite(fall.origin) &&
+    fall.origin>=0 && fall.origin<=player.shovelDepth && Number.isFinite(fall.velocity) &&
+    fall.velocity>=0 && fall.velocity<=SHOVEL.terminal && player.shovelDepthTarget>player.shovelDepth
+    ? {origin:fall.origin,velocity:fall.velocity} : null;
   player._shovelCellKey=c.level+':'+c.ix+':'+c.iy;
   const q=state.crossing;
   const continuous=q&&['lastX','lastY','walked'].every(k=>Number.isFinite(q[k]))&&q.walked>=0&&

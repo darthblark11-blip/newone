@@ -57,14 +57,14 @@ check(`SHOVEL_GRASS_PATCHES.every(p=>{
  for(let y=p.y+48;y<p.y+p.h;y+=96)for(let x=p.x+48;x<p.x+p.w;x+=96)
   if(!shovelSurfaceCellSoft(Math.floor(x/96),Math.floor(y/96)))return false;return true;})`,
  'Every authored grass-square garden and gate verge is clear on the real city map');
-check(`shovelSurfaceSoftAt(528,720)&&shovelSurfaceSoftAt(0,0)&&shovelSurfaceSoftAt(1200,720)`,
- 'Grass, street asphalt and sidewalks all permit excavation without marked routes');
-check(`!shovelSurfaceSoftAt(600,600)&&shovelSurfaceSoftAt(5136,5400)&&!!shovelSurfaceWallAt(5136,5400)`,
- 'House foundations block digging while the intact Great Gate permits tunneling beneath its wall');
+check(`shovelSurfaceSoftAt(528,720)&&!shovelSurfaceSoftAt(0,0)&&!shovelSurfaceSoftAt(1200,720)`,
+ 'Grass remains diggable while street asphalt rejects new surface shafts');
+check(`!shovelSurfaceSoftAt(600,600)&&!!shovelSurfaceWallAt(5136,5400)&&shovelCellFoundationClear(53,56)`,
+ 'House foundations block digging while the intact Great Gate retains tunnelable earth below its wall');
 run(`var savedTerrainBuildings=buildings;buildings=[{x:528,y:720,w:96,h:96,isParkingLot:true,isGrassLot:true}];`);
-check(`shovelSurfaceSoftAt(528,720)&&shovelSurfaceCellSoft(5,7)`, 'Car parks do not become building foundations through their legacy grass flag');
+check(`!shovelSurfaceSoftAt(528,720)&&!shovelSurfaceCellSoft(5,7)&&shovelCellFoundationClear(5,7)`, 'Car parks reject surface penetration but retain tunnelable earth below their paving');
 run(`buildings=[{x:528,y:720,w:96,h:96,isPond:true,isGrassLot:true,isWater:true}];`);
-check(`shovelSurfaceSoftAt(528,720)&&shovelSurfaceCellSoft(5,7)`, 'Water surfaces do not add an excavation restriction beyond buildings');
+check(`!shovelSurfaceSoftAt(528,720)&&!shovelSurfaceCellSoft(5,7)&&shovelCellFoundationClear(5,7)`, 'Water rejects surface digging without becoming an underground building foundation');
 run(`buildings=[{x:517,y:709,w:4,h:4}];`);
 check(`!shovelSurfaceCellSoft(5,7)`, 'A foundation entirely between samples also prevents digging');
 run(`buildings=savedTerrainBuildings;`);
@@ -75,7 +75,7 @@ run(`isPaused=false;doTick=false;`);check(`!shovelDig('DOWN')`, 'A frozen simula
 run(`doTick=true;killcamMode=true;`);check(`!shovelDig('DOWN')`, 'Kill cameras reject excavation');
 run(`killcamMode=false;inTownCutscene=true;`);check(`!shovelDig('DOWN')`, 'Story cutscenes retain their normal action lock');
 run(`inTownCutscene=false;player.x=0;player.y=0;`);
-check(`shovelDig('DOWN')&&shovelCellAt(0,0).depth===18`, 'An unmarked paved street can start its own shaft');
+check(`!shovelDig('DOWN')&&!shovelCellAt(0,0)&&player.shovelNotice.includes('grass and dirt')`, 'A paved street rejects digging and explains the grass/dirt surface rule');
 run(`shovelExcavation={};player.x=528;player.y=720;player.shovelDepth=0;player.shovelDepthTarget=0;player.shovelCooldownMs=0;player._shovelCellKey=null;`);
 check(`shovelDig('DOWN')&&shovelCellAt(528,720).depth===18&&player.shovelDepthTarget===18&&shovelPlayerDepth()===0`,
  'First dig opens one waist-deep square and begins a smooth fall');
@@ -159,7 +159,7 @@ check(`shovelSameLayer(p0,p18)&&!shovelSameLayer(p0,p36)&&!shovelSameLayer(p18,p
 run(`var originalLevel=currentLevel;currentLevel=2;buildings=[{x:528,y:720,w:192,h:192,isGrassLot:true}];
  player.x=528;player.y=720;player.shovelLevel=2;player.shovelDepth=0;player.shovelDepthTarget=0;player.shovelCooldownMs=0;player._shovelCellKey=null;`);
 check(`shovelSurfaceCellSoft(5,7)&&shovelDig('DOWN')&&shovelCellAt(528,720,2).depth===18`, 'Grass lots support the owned shovel in other mapped levels');
-check(`shovelSurfaceSoftAt(5136,4560)`, 'Open ground in another biome works without a Level 1 lawn record');
+check(`shovelSurfaceSoftAt(5136,4560)`, 'Natural forest soil in another biome works without a Level 1 lawn record');
 run(`shovelSettle();currentLevel=3;shovelUpdatePlayer(player,16);`);
 check(`shovelPlayerDepth()===0&&player.shovelDepthTarget===0&&shovelCellAt(528,720,2).depth===18`, 'Changing levels resets actor depth without deleting the previous excavation');
 console.log('Shovel terrain: '+checks+' checks passed.');

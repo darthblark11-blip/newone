@@ -1,6 +1,5 @@
-// Excavation follows real architecture, including painted courtyard lawns
-// which never had a grass collider. Exercise native digs and movement rather
-// than requiring a particular surface-material catalog.
+// Surface entry follows painted grass/dirt, including courtyard lawns which
+// never had a grass collider. Underground passage keeps architecture protected.
 const assert = require('assert/strict');
 const {ctx, mkG, probe} = require('./harness');
 let checks = 0;
@@ -26,10 +25,10 @@ probe(`isStoryMode=false;resetStoryProgress();startAtLevel(1);started=true;doTic
 // Coordinates from the west-end screenshot. Use native chunk residency: an
 // authored-only map misses both the old turf bug and adjacent generated roofs.
 probe('foundationStream(-4080,4368);');
-ok(P('shovelSurfaceSoftAt(player.x,player.y)&&shovelDig("DOWN")'),
-  'Existing west-end landscaped ground accepts a native dig after streaming');
-ok(P('shovelCellAt(-4080,4368).depth===18'),
-  'The west-end dig creates the actual waist-deep square');
+ok(P('cityZoneAt(1,-4800,3600)==="PLAZA"&&!shovelSurfaceSoftAt(player.x,player.y)&&!shovelDig("DOWN")'),
+  'The harness paints this west-side fixture as stone plaza, so its paving rejects entry');
+ok(P('!shovelCellAt(-4080,4368)'),
+  'Rejecting a paved plaza leaves the ground intact');
 
 // The harness uses its own deterministic noise, so its nearest residential
 // courtyard is west of the curtain wall. The real painter still owns its turf.
@@ -98,10 +97,10 @@ for (const {label,shape} of scenery) {
     label + ': scenery and terrain permit a player-chosen tunnel underneath');
 }
 probe('buildings=[];foundationReset(912,1104);');
-ok(P('shovelDig("DOWN")'), 'Open untagged land starts a shaft without a grass catalog entry');
+ok(P('!shovelDig("DOWN")&&!shovelCellAt(912,1104)'), 'An untagged paved sidewalk cannot start a surface shaft');
 probe('foundationReset(912,1104);');
-ok(P('shovelDig("FORWARD")&&shovelCellAt(1008,1104).depth===18'),
-  'Surface forward excavation is also free on untagged open land');
+ok(P('!shovelDig("FORWARD")&&!shovelCellAt(1008,1104)'),
+  'Surface forward excavation cannot penetrate an untagged paved sidewalk');
 probe('buildings=[{x:517,y:709,w:4,h:4,isHouse:true}];foundationReset();');
 ok(P('shovelSurfaceSoftAt(528,720)&&!shovelDig("DOWN")&&!shovelCellAt(528,720)'),
   'A small real foundation between sampling points cannot be swallowed by a whole-square dig');
@@ -129,7 +128,7 @@ ok(P('foundationBackedOut&&player.x===528&&shovelPlayerDepth()===36'),
 
 // A wall is intentionally tunnelable, but cannot become an unsafe surface
 // emergence. This preserves the purpose of bypassing an intact Great Gate.
-probe(`buildings=[{x:624,y:720,w:96,h:96,isGiantBarrier:true}];activeBuildings=buildings.slice();buildColIndex();
+probe(`buildings=[{x:624,y:720,w:96,h:96,isGiantBarrier:true},{x:720,y:720,w:96,h:96,isGrassLot:true}];activeBuildings=buildings.slice();buildColIndex();
   foundationReset(528,720,18);var wallWaistDug=shovelDig('FORWARD');shovelUpdatePlayer(player,500);`);
 ok(P('wallWaistDug&&shovelCellAt(624,720).depth===18'),
   'A forward dig can remove waist-deep soil at the wall without removing the wall itself');
@@ -164,7 +163,7 @@ ok(P('shallowWallBackedOut&&player.x===528&&shovelPlayerDepth()===18'),
 // while still permitting a tunnel and a surface exit beyond the obstruction.
 for (const propType of ['BLASTWALL','CHECKPOINT','CIVICBALUSTRADE','REVETMENT']) {
   ctx.__foundationBarrier = propType;
-  probe(`buildings=[{x:624,y:720,w:36,h:150,isBiomeProp:true,propType:__foundationBarrier}];
+  probe(`buildings=[{x:624,y:720,w:36,h:150,isBiomeProp:true,propType:__foundationBarrier},{x:720,y:720,w:96,h:96,isGrassLot:true}];
     activeBuildings=buildings.slice();buildColIndex();foundationReset(528,720,18);
     var propWaistDug=shovelDig('FORWARD');shovelUpdatePlayer(player,500);`);
   ok(P('propWaistDug&&shovelCellAt(624,720).depth===18&&player.checkCol(624,720)'),
