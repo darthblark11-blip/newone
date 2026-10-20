@@ -22313,15 +22313,19 @@ function updateBullets() {
                 else if (wA) {
                     sfx.hitArmor();
                     if (t.eType === "ARMORED" || t.eType === "ARMORED_STANDARD") {
-                        if (b.tH === "HEAD") emit(b.x, b.y, 9, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK", b.vx, b.vy, t);
-                        else {
-                            // Use the robot's broad, slowly drifting smoke,
-                            // with separate blood droplets painted above it.
-                            emit(b.x, b.y, 5, color(70), "SMOKE", 0, 0, t);
-                            emit(b.x, b.y, 10, bCol, "BLOOD", b.vx, b.vy, t);
+                        if (b.tH === "HEAD") {
+                            emit(b.x, b.y, 9, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK", b.vx, b.vy, t);
+                            emit(b.x, b.y, 5, color(100), "CHIP", 0, 0, t);
+                        } else {
+                            // Keep the red impact mist, with a tiny orange burst
+                            // instead of grey smoke or loose debris.
+                            emit(b.x, b.y, 4, color(255, 130, 35), "ARMOR_IMPACT", b.vx, b.vy, t);
+                            emit(b.x, b.y, 10, bCol, "BLOOD_SMOKE", b.vx, b.vy, t);
                         }
-                    } else emit(b.x, b.y, 10, color(255, 150, 0), "SPARK", 0, 0, t);
-                    emit(b.x, b.y, 5, color(100), "CHIP", 0, 0, t);
+                    } else {
+                        emit(b.x, b.y, 10, color(255, 150, 0), "SPARK", 0, 0, t);
+                        emit(b.x, b.y, 5, color(100), "CHIP", 0, 0, t);
+                    }
                 }
                 else { 
                     // Sparks in the shield's own colour while it holds; the break
@@ -23345,7 +23349,8 @@ Particle.prototype.init = function(x, y, c, t, dX = 0, dY = 0, owner = null) {
     // and CHIP by the dozen, which is why those two actions flickered worst.
     // A FLECK is a spark drawn as a streak rather than a dot: thin, quick, and
     // it reads as struck metal instead of as a small fire.
-    if (t === "FLECK") this.sz = random(1.4, 3.2);
+    if (t === "ARMOR_IMPACT") this.sz = random(1.5, 3);
+    else if (t === "FLECK") this.sz = random(1.4, 3.2);
     else if (t === "OIL") this.sz = random(3, 7);
     else if (t === "FLASH" || t === "MUZZLE" || t === "THRUST" || t === "SPARK" || t === "BLOOD_SMOKE") this.sz = random(5, 12);
     else if (t === "GORE" || t === "CHIP") this.sz = random(4, 10);
@@ -23354,7 +23359,8 @@ Particle.prototype.init = function(x, y, c, t, dX = 0, dY = 0, owner = null) {
     else if (t === "SMOKE") this.sz = random(20, 40);
     else this.sz = 5;
 
-    if (t === "FLASH" || t === "MUZZLE") { this.vx = dX + random(-1, 1); this.vy = dY + random(-1, 1); this.l = t === "MUZZLE" ? 4 : random(10, 20); } 
+    if (t === "ARMOR_IMPACT") { this.vx = dX * 0.08 + random(-2, 2); this.vy = dY * 0.08 + random(-2, 2); this.l = random(3, 7); }
+    else if (t === "FLASH" || t === "MUZZLE") { this.vx = dX + random(-1, 1); this.vy = dY + random(-1, 1); this.l = t === "MUZZLE" ? 4 : random(10, 20); }
     else if (t === "SPARK") { this.vx = dX + random(-5, 5); this.vy = dY + random(-5, 5); this.l = random(10, 20); } 
     else if (t === "BLOOD_SMOKE") { this.vx = dX * 0.15 + random(-1.5, 1.5); this.vy = dY * 0.15 + random(-1.5, 1.5); this.l = random(10, 20); }
     else if (t === "FLECK") { this.vx = dX * 0.35 + random(-7, 7); this.vy = dY * 0.35 + random(-7, 7); this.l = random(6, 16); } 
@@ -23368,7 +23374,7 @@ Particle.prototype.init = function(x, y, c, t, dX = 0, dY = 0, owner = null) {
     else { this.vx = random(-4, 4); this.vy = random(-4, 4); this.l = random(10, 20); }
 };
 
-Particle.prototype.update = function() { this.x += this.vx; this.y += this.vy; if (this.t !== "FLASH" && this.t !== "SMOKE") { this.vx *= (this.t === "FLECK" ? 0.9 : 0.85); this.vy *= (this.t === "FLECK" ? 0.9 : 0.85); } if (--this.l <= 0) { if (this.t === "FLASH" || this.t === "MUZZLE" || this.t === "THRUST" || this.t === "EXPLOSION" || this.t === "SPARK" || this.t === "FLECK" || this.t === "BLOOD_SMOKE") this.a -= 60; else this.a -= 15; } }
+Particle.prototype.update = function() { this.x += this.vx; this.y += this.vy; if (this.t !== "FLASH" && this.t !== "SMOKE") { this.vx *= (this.t === "FLECK" ? 0.9 : 0.85); this.vy *= (this.t === "FLECK" ? 0.9 : 0.85); } if (--this.l <= 0) { if (this.t === "FLASH" || this.t === "MUZZLE" || this.t === "THRUST" || this.t === "EXPLOSION" || this.t === "SPARK" || this.t === "FLECK" || this.t === "BLOOD_SMOKE" || this.t === "ARMOR_IMPACT") this.a -= 60; else this.a -= 15; } }
 Particle.prototype.show = function() {
     if (shovelEffectDepth(this) <= 0) { this.paint(); return; }
     shovelPaintDepthEffect(this, () => this.paint());
@@ -23393,7 +23399,7 @@ Particle.prototype.paint = function() {
         // Big, slow puffs get a soft falloff instead of a hard-edged disc, so a
         // cloud reads as one mass rather than a pile of circles.
         softBlob(this.x, this.y, this.sz * 1.35, this.sz * 1.35, c[0], c[1], c[2], this.a);
-    } else if (this.t === "SPARK") {
+    } else if (this.t === "SPARK" || this.t === "ARMOR_IMPACT") {
         // Armor hits use these small ovals. Share the smoke's continuous radial
         // falloff, with a compact bright core so a softened impact still reads
         // clearly in a firefight. Both passes reuse the same cached gradient.
@@ -23413,23 +23419,19 @@ Particle.prototype.paint = function() {
 // four-hundred-element array in a single frame, which is quadratic in exactly
 // the moment the frame can least afford it.
 //
-// Clouds paint first so blood and gore stay visible above smoke regardless of
-// emission order. Walk backwards within each layer to retain its alpha order.
-// Update once, then compact survivors without allocating another particle list.
+// The walk stays BACKWARDS because that is the order the particles are drawn
+// in, and reversing it would reorder the alpha blending between overlapping
+// puffs. Survivors are written backwards from the end as they are found, which
+// leaves them in [w, length) in their original relative order, and one
+// copyWithin then slides that run down to the front.
 function updateParticles() {
+    let w = particles.length;
     const left = viewLeft - 50, right = viewRight + 50;
     const top = viewTop - 50, bottom = viewBottom + 50;
     for (let i = particles.length - 1; i >= 0; i--) {
         const p = particles[i];
         if (doTick) p.update();
-        if ((p.t === "SMOKE" || p.t === "EXPLOSION" || p.t === "BLOOD_SMOKE") &&
-            p.x >= left && p.x <= right && p.y >= top && p.y <= bottom) p.show();
-    }
-    let w = particles.length;
-    for (let i = particles.length - 1; i >= 0; i--) {
-        const p = particles[i];
-        if (p.t !== "SMOKE" && p.t !== "EXPLOSION" && p.t !== "BLOOD_SMOKE" &&
-            p.x >= left && p.x <= right && p.y >= top && p.y <= bottom) p.show();
+        if (p.x >= left && p.x <= right && p.y >= top && p.y <= bottom) p.show();
         if (p.a > 0) { if (--w !== i) particles[w] = p; }
         else if (_particlePool.length < PARTICLE_POOL_MAX) { p.shovelOwner = null; _particlePool.push(p); }
     }

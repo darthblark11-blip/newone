@@ -20,9 +20,11 @@ for (const type of ['ARMORED','ARMORED_STANDARD','SAUCER','SAUCER_RED','SNAIL_HY
   if (type === 'ROBOT') {
     check('robot metal streaks retain their existing emission', hit.particles.length === 9 && hit.particles.every(p=>p.t === 'FLECK'));
   } else if (type === 'ARMORED' || type === 'ARMORED_STANDARD') {
-    const smoke = hit.particles.filter(p=>p.t === 'SMOKE');
-    check(type+' body impacts emit robot smoke and blood and keep five debris chips', smoke.length === 5 && hit.particles.filter(p=>p.t === 'BLOOD').length === 10 && hit.particles.filter(p=>p.t === 'CHIP').length === 5 && !hit.particles.some(p=>p.t === 'SPARK'));
-    check(type+' smoke shares robot color, size and lifetime', smoke.every(p=>p.c.join(',') === '70,70,70' && p.sz >= 20 && p.sz <= 40 && p.l >= 30 && p.l <= 60));
+    const smoke = hit.particles.filter(p=>p.t === 'BLOOD_SMOKE');
+    const burst = hit.particles.filter(p=>p.t === 'ARMOR_IMPACT');
+    check(type+' body impacts keep blood mist and replace smoke/debris with a tiny orange burst', smoke.length === 10 && burst.length === 4 && hit.particles.length === 14 && !hit.particles.some(p=>p.t === 'CHIP' || p.t === 'SMOKE' || p.t === 'SPARK'));
+    check(type+' blood smoke remains compact and short lived', smoke.every(p=>p.c.join(',') === '90,0,0' && p.sz >= 5 && p.sz <= 12 && p.l >= 10 && p.l <= 20));
+    check(type+' impact burst is tiny, orange and brief', burst.every(p=>p.c.join(',') === '255,130,35' && p.sz >= 1.5 && p.sz <= 3 && p.l >= 3 && p.l <= 7));
   } else {
     const sparks = hit.particles.filter(p=>p.t === 'SPARK');
     check(type+' still emits ten sparks and five debris chips', sparks.length === 10 && hit.particles.filter(p=>p.t === 'CHIP').length === 5);
