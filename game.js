@@ -6314,6 +6314,132 @@ function drawParkingCars() {
 function windowResized() { resizeCanvas(windowWidth, windowHeight); leftStick.base = { x: 80, y: height - 160 }; rightStick.base = { x: width - 80, y: height - 110 }; if (typeof glRigResize === 'function') glRigResize(); }
 function nextLevel() { startAtLevel(currentLevel + 1); }
 function restartGame() { wipeAllBloodBanks(); seedWorldClock(); window.outpostForts = {}; startAtLevel(1); }
+const deathMenuInput = { active:false, buttons:[], keys:new Set(), pad:null, focus:0, usingPad:false, mouseBlocked:false };
+let deathMenuNotice = '';
+function deathMenuHasSave() {
+  try { return !!localStorage.getItem('urbanTwinStickSave'); } catch (_) { return false; }
+}
+function deathMenuLayout() {
+  const w=Math.min(420,width-28),h=Math.min(354,height-20);
+  return {x:(width-w)/2,y:(height-h)/2,w,h,s:h/354};
+}
+function deathMenuButtons() {
+  const p=deathMenuLayout();
+  return [['RETRY','RETRY LEVEL',true],['LOAD','LOAD GAME',deathMenuHasSave()],['RESET','RESET GAME',true]]
+    .map(([action,label,enabled],i)=>({action,label,enabled,x:p.x+18,y:p.y+(172+i*54)*p.s,w:p.w-36,h:44*p.s}));
+}
+function prepareDeathMenuAction() {
+  // A menu finger stays consumed until release, including after a new player
+  // replaces the dead one. Seed held controller attacks for the same reason.
+  consumePauseControlInputs();
+  const pad=connectedGamepad();
+  pauseControlsInput.pad=pad?pad.index:null;
+  pauseControlsInput.buttons=pad?pad.buttons.map(b=>!!b.pressed):[];
+  pauseControlsInput.keys=new Set([27,80,38,40,37,39,13].filter(code=>keyIsDown(code)));
+  exitFrontierSaloon();
+  leftStick.active=rightStick.active=false;
+  leftStick.dx=leftStick.dy=rightStick.dx=rightStick.dy=rightStick.dist=0;
+  isPaused=false;pauseMenuState='MAIN';inUpgradeMenu=false;killcamMode=false;
+  inStoryIntro=inStoryRoom=inUpstairsRoom=false;
+  inTravelMenu=inOverworldView=inWorldBuildingMenu=false;
+  travelDirection=null;window.travelArrival=null;extraction=null;buildGhost=null;
+  window.inNM0SecretOverlay=false;isCooking=false;
+  deathMenuInput.active=false;deathMenuInput.mouseBlocked=!!mouseIsPressed;
+  deathMenuNotice='';
+}
+function resetToMainMenu() {
+  prepareDeathMenuAction();
+  started=isDead=isWin=isStoryMode=false;selectingDifficulty=false;
+  pendingStoryMode=pendingDebugStory=false;
+  prologuePhase=storyPhase=upstairsPhase=0;journalRead=false;
+  inTownCutscene=inFortCutscene=inFarmCutscene=inFarmPostCutscene=false;
+  inPostAmbushCutscene=inLvl4Cutscene=inDarchonCall=false;
+  // Campaign storage and device control preferences remain available at title.
+}
+function activateDeathMenuAction(action) {
+  if(!isDead)return false;
+  if(action==='LOAD') {
+    let saved;
+    try {
+      const raw=localStorage.getItem('urbanTwinStickSave');
+      if(!raw){deathMenuNotice='No saved game on this device.';return false;}
+      saved=JSON.parse(raw);
+      if(!saved||!Number.isInteger(saved.currentLevel)||saved.currentLevel<0||saved.currentLevel>8)
+        throw new Error('Invalid saved level');
+    } catch (_) {deathMenuNotice='Saved game could not be loaded.';return false;}
+    prepareDeathMenuAction();
+    loadGame();
+  } else if(action==='RETRY') {
+    const level=currentLevel;
+    prepareDeathMenuAction();
+    // Rebuild this level with a living player, retaining campaign upgrades.
+    // A new run's hard reset still belongs to the main-menu start flow.
+    startAtLevel(level,true);
+  } else if(action==='RESET')resetToMainMenu();
+  else return false;
+  sfx.charge();
+  return true;
+}
+function handleDeathMenuTap(mx,my) {
+  if(!isDead)return false;
+  deathMenuInput.usingPad=false;
+  for(const b of deathMenuButtons())if(mx>=b.x&&mx<=b.x+b.w&&my>=b.y&&my<=b.y+b.h) {
+    if(b.enabled)activateDeathMenuAction(b.action);
+    break;
+  }
+  return true;
+}
+function handleDeathMenuInput() {
+  const state=deathMenuInput;
+  if(!mouseIsPressed)state.mouseBlocked=false;
+  if(!started||!isDead){state.active=false;return;}
+  const pad=connectedGamepad(),buttons=pad?pad.buttons.map(b=>!!b.pressed):[];
+  const keys=new Set([38,40,13].filter(code=>keyIsDown(code)));
+  if(!state.active) {
+    state.active=true;state.buttons=buttons;state.keys=keys;state.pad=pad?pad.index:null;
+    state.focus=0;state.usingPad=!!pad;deathMenuNotice='';
+    return; // An attack held at death cannot instantly choose Retry.
+  }
+  const samePad=!!pad&&state.pad===pad.index;
+  const edge=i=>samePad&&buttons[i]&&!state.buttons[i];
+  const keyEdge=code=>keys.has(code)&&!state.keys.has(code);
+  const list=deathMenuButtons();
+  const direction=edge(12)||keyEdge(38)?-1:edge(13)||keyEdge(40)?1:0;
+  if(direction) {
+    do {state.focus=(state.focus+direction+list.length)%list.length;}while(!list[state.focus].enabled);
+    state.usingPad=true;
+  }
+  if(edge(0)||keyEdge(13)) {
+    state.usingPad=true;
+    if(list[state.focus].enabled)activateDeathMenuAction(list[state.focus].action);
+  }
+  state.buttons=buttons;state.keys=keys;state.pad=pad?pad.index:null;
+}
+function drawDeathMenu() {
+  const p=deathMenuLayout(),s=p.s;
+  const acc=totalShotsFired>0?floor(totalShotsHit/totalShotsFired*100):0,accMult=max(1,floor(acc/10));
+  push();rectMode(CORNER);background(15,17,21);textFont('sans-serif');textAlign(CENTER,CENTER);
+  fill(25,27,33);stroke(105,68,57);strokeWeight(2);rect(p.x,p.y,p.w,p.h,12);
+  noStroke();fill(255,91,78);textSize(Math.min(32,p.w/11)*s);
+  text('A valiant effort..',width/2,p.y+35*s);
+  fill(205);textSize(Math.min(16,(p.w-32)/27)*s);
+  text('KILLS: '+totalKills+'  |  BASE SCORE: '+score,width/2,p.y+76*s);
+  fill(245,200,94);textSize(Math.min(14,(p.w-32)/30)*s);
+  text('ACCURACY: '+acc+'%  (x'+accMult+' MULTIPLIER)',width/2,p.y+103*s);
+  fill(116,232,152);textSize(25*s);text('FINAL SCORE: '+score*accMult,width/2,p.y+140*s);
+  deathMenuButtons().forEach((b,i)=>{
+    const focused=deathMenuInput.usingPad&&deathMenuInput.focus===i;
+    fill(b.enabled?color(43,45,52):color(30,32,37));
+    stroke(focused?color(255,234,171):b.enabled?color(157,139,111):color(65,67,74));
+    strokeWeight(focused?3:1);rect(b.x,b.y,b.w,b.h,7);
+    noStroke();fill(b.enabled?color(237,229,211):color(104,107,115));textSize(16*s);
+    text(b.label+(b.action==='LOAD'&&!b.enabled?' · NO SAVE':''),b.x+b.w/2,b.y+b.h/2);
+  });
+  noStroke();fill(deathMenuNotice?color(255,157,125):color(156,159,168));textSize(Math.min(11,(p.w-24)/34)*s);
+  text(deathMenuNotice||(deathMenuInput.usingPad?(connectedGamepad()?'D-pad select · A choose':'↑/↓ select · Enter choose'):
+    'Reset returns to the main menu'),width/2,p.y+p.h-13*s);
+  pop();
+}
 function emit(x, y, c, col, typ, vx = 0, vy = 0, owner = null) { for (let i = 0; i < c; i++) { particles.push(newParticle(x, y, col, typ, vx, vy, owner)); } }
 let activeBuildings = [];
 let activeParkingCars = [];
@@ -6606,6 +6732,9 @@ function noteFrameFault(where, err) {
 }
 
 function draw() {
+  handleDeathMenuInput();
+  // Death owns the screen even if an old world activity or overlay is open.
+  if(started&&isDead){drawDeathMenu();return;}
   if (started) { handlePauseMenuInput(); updateFrontierExplorationNotice(); }
   tickPlayerBowLifecycle(player);
   if (!started) {
@@ -8333,9 +8462,7 @@ if (swordPickedUp || window.pickaxeOwned || window.shovelOwned) {
   if (isDead || isWin) {
       let acc = totalShotsFired > 0 ? floor((totalShotsHit / totalShotsFired) * 100) : 0; let accMult = max(1, floor(acc / 10)); let finalScore = score * accMult; 
       if (isDead) { 
-          fill(0, 180); rect(0, 0, width, height); fill(255, 50, 50); textAlign(CENTER, CENTER); textSize(50); textFont('sans-serif'); text("A valiant effort..", width / 2, height / 2 - 80); 
-          fill(200); textSize(20); text("KILLS: " + totalKills + "  |  BASE SCORE: " + score, width / 2, height / 2 - 25); fill(255, 200, 0); text("ACCURACY: " + acc + "%  (x" + accMult + " MULTIPLIER)", width / 2, height / 2 + 5); 
-          fill(50, 255, 50); textSize(32); text("FINAL SCORE: " + finalScore, width / 2, height / 2 + 45); textSize(18); fill(150); text("[ TAP TO RETRY ]", width / 2, height / 2 + 100); 
+          drawDeathMenu();return;
       } else if (isWin) {
           // Story sectors 0-4 never dead-end on the arcade score card; they run
           // the story win loop, which hands straight over to the Directive.
@@ -23888,6 +24015,8 @@ function touchStarted() {
   let mx = touches.length > 0 ? touches[touches.length - 1].x : mouseX;
   let my = touches.length > 0 ? touches[touches.length - 1].y : mouseY;
 
+  if(handleDeathMenuTap(mx,my))return false;
+
   // Local saloon controls own every tap while an indoor activity is active.
   // Outside, an interaction finger remains consumed until it lifts, so holding
   // a mission button cannot become right-stick gunfire on the following frame.
@@ -24078,9 +24207,7 @@ else if (mx > width/2 - 120 && mx < width/2 + 120 && my > height/2 - 110 && my <
                   }
 
                   if (my > height/2 + 240 && my < height/2 + 280) {
-                      isPaused = false; started = false; isStoryMode = false;
-                      inStoryRoom = false; inStoryIntro = false; prologuePhase = 0;
-                      inUpstairsRoom = false; journalRead = false; sfx.charge(); return false; 
+                      resetToMainMenu();sfx.charge();return false;
                   }
               }
 
@@ -24760,7 +24887,7 @@ function handleDesktop() {
           rightStick.active = true;
           rightStick.dx = aimDx / aimMag;
           rightStick.dy = aimDy / aimMag;
-          rightStick.dist = (mouseIsPressed && mouseButton === LEFT) ? 1.0 : 0.0;
+          rightStick.dist = (mouseIsPressed && mouseButton === LEFT && !deathMenuInput.mouseBlocked) ? 1.0 : 0.0;
       }
   }
 }
