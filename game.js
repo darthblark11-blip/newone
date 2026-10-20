@@ -3934,7 +3934,7 @@ function drawDepthSorted() {
 const _shovelBelowActors = [];
 const _shovelVisibleCells = [];
 function shovelBelowGroundActor(c) {
-  return currentLevel >= 1 && currentLevel <= 7 && !!c && shovelPlayerDepth(c) > 0;
+  return currentLevel >= 1 && currentLevel <= 7 && !!c && (!!c.shovelMantle || shovelPlayerDepth(c) > 0);
 }
 function shovelRenderDepth(c) {
   const d = Number.isFinite(c && c.shovelVisualDepth) ? c.shovelVisualDepth : shovelPlayerDepth(c);
@@ -3998,6 +3998,7 @@ function shovelPitFloorBounds(c, joins, depth = c.depth) {
     c.x + (joins[1] ? h : half), c.y + (joins[2] ? h : drop + half)];
 }
 function shovelActorProjection(e, cell = shovelCellAt(e.x, e.y)) {
+  if(e.shovelMantle)return shovelMantleProjection(e);
   const depth = shovelRenderDepth(e), scale = Math.max(SHOVEL.minScale, 1 / (1 + depth / 76));
   if (!cell || depth <= 0) return { x: e.x, y: e.y, scale, depth };
   const joins = shovelPitNeighbors(cell, !cell.open, depth);
@@ -4152,6 +4153,11 @@ function drawShovelUndergroundActor() {
       if (!shovelBelowGroundActor(e)) continue;
       const cell = shovelCellAt(e.x, e.y), d = shovelPlayerDepth(e);
       if (!cell) continue;
+      if(e.shovelMantle) {
+        const p=shovelMantleProjection(e);
+        push();try{translate(p.x-e.x,p.y-e.y);e.show();}finally{pop();}
+        continue;
+      }
       const roofed = !cell.open;
       // A local player cutaway can reveal company in the same tunnel; it is
       // not an X-ray exposing unrelated people through intact ground.
@@ -8740,7 +8746,7 @@ function shovelDig(kind) {
   if((e.shovelCooldownMs||0)>0)return false;
   if(e.shovelLevel!==currentLevel){e.shovelLevel=currentLevel;e.shovelDepth=0;e.shovelDepthTarget=0;}
   const depth=shovelPlayerDepth(e),target=Number.isFinite(e.shovelDepthTarget)?e.shovelDepthTarget:depth;
-  if(e._shovelFall || Math.abs(target-depth)>1)return false;
+  if(e.shovelMantle || e._shovelFall || Math.abs(target-depth)>1)return false;
   const ix=Math.floor(e.x/SHOVEL.cell),iy=Math.floor(e.y/SHOVEL.cell);
   let cell=shovelCellAt(e.x,e.y),changed=false;
   if(kind==='DOWN') {
@@ -8803,7 +8809,113 @@ function shovelDig(kind) {
   }
   return changed;
 }
+// A shallow exit owns its movement clock before the body crosses the lip.
+// Physical XY stays inside the cavity until the final foot plant; rendering
+// travels continuously from the projected floor to the safe surface landing.
+const SHOVEL_MANTLE_MS=650;
+function shovelMantleProgress(e) {
+  const m=e&&e.shovelMantle;
+  return m?Math.max(0,Math.min(1,m.elapsedMs/SHOVEL_MANTLE_MS)):0;
+}
+function shovelMantleProjection(e) {
+  const m=e.shovelMantle,p=shovelMantleProgress(e);
+  const brace=smooth01(p/.18),lift=smooth01((p-.18)/.5),step=smooth01((p-.64)/.28);
+  const dx=Math.cos(m.angle),dy=Math.sin(m.angle);
+  const ledgeX=m.rimX-dx*6,ledgeY=m.rimY-dy*6;
+  const x=m.startRenderX+dx*4.5*brace,y=m.startRenderY+dy*4.5*brace;
+  const lx=x+(ledgeX-x)*lift,ly=y+(ledgeY-y)*lift;
+  return {x:lx+(m.toX-lx)*step,y:ly+(m.toY-ly)*step,
+    scale:shovelRenderScale(e),depth:shovelRenderDepth(e)};
+}
+function shovelMantleLandingClear(e,x,y) {
+  const r=SHOVEL.bodyRadius+2;
+  if(shovelFoundationAt(x,y,r)||shovelSurfaceWallAt(x,y,r))return false;
+  for(const [ox,oy]of[[0,0],[-r,-r],[r,-r],[-r,r],[r,r]]) {
+    const cell=shovelCellAt(x+ox,y+oy);
+    if(cell&&cell.open&&cell.depth>0)return false;
+  }
+  // A surface-only proxy keeps checkCol a pure query and preserves its native
+  // building, car, barrel, wildlife and canyon collision rules.
+  const probe=Object.create(e);
+  Object.assign(probe,{shovelDepth:0,shovelDepthTarget:0,shovelMantle:null,
+    _shovelFall:null,ignoreBldgTimer:0});
+  return !Character.prototype.checkCol.call(probe,x,y);
+}
+function shovelMantlePathClear(e,toX,toY) {
+  if(!shovelMantleLandingClear(e,toX,toY))return false;
+  const probe=Object.create(e);
+  Object.assign(probe,{shovelDepth:0,shovelDepthTarget:0,shovelMantle:null,
+    _shovelFall:null,ignoreBldgTimer:0});
+  const count=Math.max(1,Math.ceil(Math.hypot(toX-e.x,toY-e.y)/6));
+  for(let i=0;i<=count;i++) {
+    const t=i/count,x=e.x+(toX-e.x)*t,y=e.y+(toY-e.y)*t;
+    if(shovelFoundationAt(x,y,SHOVEL.bodyRadius)||shovelSurfaceWallAt(x,y,SHOVEL.bodyRadius)||
+        Character.prototype.checkCol.call(probe,x,y))return false;
+  }
+  return true;
+}
+function shovelTryMantle(e,vx,vy) {
+  if(!e||!e.isPlayer||e.shovelMantle||e.dead||e.hp<=0||e.mounted)return false;
+  const depth=shovelPlayerDepth(e),cell=shovelCellAt(e.x,e.y);
+  if(depth<.5||depth>SHOVEL.waist+.5||!cell||!cell.open||e._shovelFall ||
+      Math.abs((e.shovelDepthTarget||0)-depth)>.1)return false;
+  const joins=shovelPitNeighbors(cell),bounds=shovelPitOpeningBounds(cell,joins),r=SHOVEL.bodyRadius;
+  const candidates=[];
+  if(vx>0&&!joins[1]&&e.x+vx+r>=bounds[2])candidates.push({dx:1,dy:0,t:(bounds[2]-r-e.x)/vx});
+  if(vx<0&&!joins[3]&&e.x+vx-r<=bounds[0])candidates.push({dx:-1,dy:0,t:(bounds[0]+r-e.x)/vx});
+  if(vy>0&&!joins[2]&&e.y+vy+r>=bounds[3])candidates.push({dx:0,dy:1,t:(bounds[3]-r-e.y)/vy});
+  if(vy<0&&!joins[0]&&e.y+vy-r<=bounds[1])candidates.push({dx:0,dy:-1,t:(bounds[1]+r-e.y)/vy});
+  if(!candidates.length)return false;
+  candidates.sort((a,b)=>a.t-b.t);
+  const edge=candidates[0],dx=edge.dx,dy=edge.dy;
+  if(e.shovelDigTimer>0||e.meleeTimer>0||e.reloadTimer>0||e.throwAnimTimer>0||e.stunTimer>0||e.skeletonTimer>0||boxingActive(e))return true;
+  const clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
+  const rimX=dx>0?bounds[2]:dx<0?bounds[0]:clamp(e.x,bounds[0]+r+8,bounds[2]-r-8);
+  const rimY=dy>0?bounds[3]:dy<0?bounds[1]:clamp(e.y,bounds[1]+r+8,bounds[3]-r-8);
+  const toX=rimX+dx*(r+16),toY=rimY+dy*(r+16);
+  if(!shovelMantlePathClear(e,toX,toY))return true;
+  const start=shovelActorProjection(e,cell);
+  e.shovelMantle={level:currentLevel,cellKey:shovelCellKey(cell.ix,cell.iy),
+    elapsedMs:0,durationMs:SHOVEL_MANTLE_MS,fromX:e.x,fromY:e.y,toX,toY,
+    rimX,rimY,startRenderX:start.x,startRenderY:start.y,startDepth:depth,angle:Math.atan2(dy,dx)};
+  e.shovelClimbing=false;e.shovelDepthTarget=0;e._shovelFall=null;
+  e.aimAngle=e.moveAngle=e.shovelMantle.angle;e.isMoving=false;e.gait=0;
+  e.dashTimer=0;e.muzzleFlash=0;e.weaponKick=0;e.isArmed=false;
+  e.cannonCharge=0;e.throwAnimTimer=0;isCooking=false;
+  shovelUpdateMantle(e,0);
+  return true;
+}
+function shovelCancelMantle(e) {
+  const m=e.shovelMantle;if(!m)return;
+  e.x=m.fromX;e.y=m.fromY;e.shovelDepth=m.startDepth;e.shovelDepthTarget=m.startDepth;
+  e.shovelClimbing=true;e._shovelCellKey=m.cellKey;e.shovelMantle=null;e.isMoving=false;e.gait=0;
+}
+function shovelUpdateMantle(e,dt) {
+  const m=e.shovelMantle;if(!m)return false;
+  if(m.level!==currentLevel||Math.hypot(e.x-m.fromX,e.y-m.fromY)>2) {
+    e.shovelMantle=null;e._shovelFall=null;e._shovelCellKey=null;
+    if(!shovelCellAt(e.x,e.y)){e.shovelDepth=e.shovelDepthTarget=0;e.shovelClimbing=false;}
+    return false; // travel or a story teleport owns the new position
+  }
+  const cell=shovelCellAt(m.fromX,m.fromY);
+  if(e.dead||e.hp<=0||e.stunTimer>0||!cell||!cell.open||!shovelMantlePathClear(e,m.toX,m.toY)) {
+    shovelCancelMantle(e);return false;
+  }
+  m.elapsedMs=Math.min(SHOVEL_MANTLE_MS,m.elapsedMs+Math.max(0,dt));
+  const p=shovelMantleProgress(e),lift=smooth01((p-.18)/.5);
+  e.shovelDepth=m.startDepth*(1-lift);e.shovelDepthTarget=0;
+  e.aimAngle=e.moveAngle=m.angle;e.isMoving=false;e.gait=0;e.muzzleFlash=0;
+  const view=shovelMantleProjection(e),dx=Math.cos(m.angle),dy=Math.sin(m.angle);
+  m.handReach=((m.rimX-view.x)*dx+(m.rimY-view.y)*dy)/view.scale;
+  if(p>=1) {
+    e.x=m.toX;e.y=m.toY;e.shovelDepth=e.shovelDepthTarget=0;e._shovelFall=null;
+    e._shovelCellKey=shovelCellKey(Math.floor(e.x/SHOVEL.cell),Math.floor(e.y/SHOVEL.cell));
+    e.shovelClimbing=true;e.shovelMantle=null;
+  }
+  return true;
+}
 function shovelSyncPlayerCell(e) {
+  if(e&&e.shovelMantle)return;
   if(!shovelActorCanFall(e)||currentLevel<1||currentLevel>7)return;
   const key=shovelCellKey(Math.floor(e.x/SHOVEL.cell),Math.floor(e.y/SHOVEL.cell));
   const cell=shovelCellAt(e.x,e.y),depth=shovelPlayerDepth(e);
@@ -8875,12 +8987,13 @@ function shovelUpdateActor(e,dtMs) {
   if(e.isPlayer)shovelUpdateDigAnimation(e,dt);
   e.shovelNoticeMs=Math.max(0,(e.shovelNoticeMs||0)-dt);
   if(currentLevel<1||currentLevel>7||!shovelActorCanFall(e)) {
-    e.shovelDepth=0;e.shovelDepthTarget=0;e.shovelLevel=currentLevel;e._shovelCellKey=null;e._shovelFall=null;return;
+    e.shovelDepth=0;e.shovelDepthTarget=0;e.shovelLevel=currentLevel;e._shovelCellKey=null;e._shovelFall=null;e.shovelMantle=null;return;
   }
   if(e.shovelLevel!==currentLevel){
     e.shovelLevel=currentLevel;e.shovelDepth=0;e.shovelDepthTarget=0;
-    e._shovelCellKey=null;e.shovelClimbing=false;e._shovelFall=null;
+    e._shovelCellKey=null;e.shovelClimbing=false;e._shovelFall=null;e.shovelMantle=null;
   }
+  if(e.shovelMantle){shovelUpdateMantle(e,dt);return;}
   shovelSyncPlayerCell(e);
   const from=shovelPlayerDepth(e),to=Math.max(0,Math.min(SHOVEL.maxDepth,e.shovelDepthTarget||0));
   const drivingDown=e.isPlayer&&beforeDig>0&&e.shovelDigKind==='DOWN'&&to-from<=SHOVEL.step+1.1;
@@ -8918,7 +9031,7 @@ function shovelCollision(e,nx,ny) {
   const depth=shovelPlayerDepth(e);
   // Free fall owns horizontal motion from takeoff, even before the first
   // half-unit of descent. Otherwise a slow initial fall can skate over its lip.
-  if(e._shovelFall)return true;
+  if(e._shovelFall||e.shovelMantle)return true;
   if(depth<.5)return null;
   const dx=nx-e.x,dy=ny-e.y,d=Math.hypot(dx,dy);
   if(d>SHOVEL.cell*4)return true;
@@ -8937,7 +9050,7 @@ function shovelCollision(e,nx,ny) {
     if(wall&&wall!==oldWall)return true;
     for(const [ox,oy]of[[0,0],[-r,-r],[r,-r],[-r,r],[r,r]]) {
       const cell=shovelCellAt(x+ox,y+oy);
-      if(!cell){if(depth<=SHOVEL.waist+.5){surface=true;continue;}return true;}
+      if(!cell){if(depth<=SHOVEL.waist+.5&&!e.isPlayer){surface=true;continue;}return true;}
       if(cell.depth<depth-SHOVEL.step-.5)return true;
       if(!cell.open&&depth<cell.ceiling+SHOVEL.waist-.5)return true;
     }
@@ -17041,6 +17154,7 @@ this.skeletonTimer = 0;
   }
 
  attemptMove(vx, vy) {
+    if(this.isPlayer&&(this.shovelMantle||shovelTryMantle(this,vx,vy)))return {x:0,y:0};
     // Both feet stay braced during the short two-handed digging stroke.
     if(this.isPlayer&&this.shovelDigTimer>0)return {x:0,y:0};
     const shovelMoveStartX=this.x,shovelMoveStartY=this.y;
@@ -17136,6 +17250,7 @@ this.skeletonTimer = 0;
 
 
   triggerReload() {
+      if(this.shovelMantle)return;
       if (boxingActive(this)) { boxingRequestPunch(this, 'RIGHT_JAB'); return; }
       if (this.currentWeapon === WEAPONS.BOW) return;
       if (this.currentWeapon === WEAPONS.PISTOL || this.currentWeapon === WEAPONS.TASER) { 
@@ -17150,6 +17265,7 @@ this.skeletonTimer = 0;
 
   
   activateDash() {
+      if(this.shovelMantle)return;
       if (boxingActive(this)) { boxingRequestDodge(this, -1, leftStick.dx || 0, leftStick.dy || 0); return; }
       if (jetpackDoubleDash) {
           if (this.dashCount === 0) { this.dashTimer = 8; this.dashCooldown = 15; this.dashWindow = 180; this.dashCount = 1; if (this.isPlayer) sfx.dash(); } else if (this.dashCount === 1) { this.dashTimer = 8; this.dashCooldown = 60; this.dashWindow = 0; this.dashCount = 0; if (this.isPlayer) sfx.dash(); }
@@ -17157,6 +17273,7 @@ this.skeletonTimer = 0;
   }
 
       activateMelee(isCentral = false) {
+      if(this.shovelMantle)return;
       if (this.isPlayer && !isCentral) return;
       if (this.isPlayer && this.shovelDigTimer>0) return;
       if (this.isPlayer && !this.mounted && meleeTool() === 'NONE') {
@@ -17324,8 +17441,9 @@ this.skeletonTimer = 0;
   }
 
   updatePlayer() {
+    const wasMantling=!!this.shovelMantle;
     shovelUpdatePlayer(this,typeof deltaTime==='number'?deltaTime:1000/60);
-    if(this.shovelFallFatal)return;
+    if(this.shovelFallFatal||wasMantling||this.shovelMantle)return;
     const motionX=this.x,motionY=this.y;
     try {
    this.forceNudge();
@@ -17511,7 +17629,10 @@ this.skeletonTimer = 0;
     if (this.dashTimer > 0) { 
         this.dashTimer--; speed = 22; 
         if (this.dashTimer % 2 === 0) { emit(this.x, this.y, 1, color(0, 200, 255), "THRUST", -cos(this.lastMoveAngle) * 8, -sin(this.lastMoveAngle) * 8, this); emit(this.x, this.y, 1, color(255, 100, 0), "THRUST", -cos(this.lastMoveAngle) * 8, -sin(this.lastMoveAngle) * 8, this); }
-        let dx = cos(this.lastMoveAngle) * speed, dy = sin(this.lastMoveAngle) * speed; 
+        let dx = cos(this.lastMoveAngle) * speed, dy = sin(this.lastMoveAngle) * speed;
+        const rim=shovelTryMantle(this,dx,dy);
+        if(this.shovelMantle)return;
+        if(rim)dx=dy=0;
         if (!this.checkCol(this.x + dx, this.y)) this.x += dx; if (!this.checkCol(this.x, this.y + dy)) this.y += dy; this.isMoving = true; 
         
         if (this.dashTimer <= 0 && jetpackFireExplosion) {
@@ -17550,7 +17671,10 @@ this.skeletonTimer = 0;
             dy = forwardMag * sin(this.aimAngle);
         }
         
-        let aDx = 0, aDy = 0; 
+        const rim=shovelTryMantle(this,dx,dy);
+        if(this.shovelMantle)return;
+        if(rim)dx=dy=0;
+        let aDx = 0, aDy = 0;
         if (abs(dx) > 0.05 || abs(dy) > 0.05) { if (!this.checkCol(this.x + dx, this.y)) { this.x += dx; aDx = dx; } if (!this.checkCol(this.x, this.y + dy)) { this.y += dy; aDy = dy; } if (aDx !== 0 || aDy !== 0) { this.isMoving = true; this.moveAngle = atan2(aDy, aDx); this.lastMoveAngle = this.moveAngle; } else this.isMoving = false; } else this.isMoving = false;
         // The throttle is the stick's own throw, not the distance covered: a
         // player leaning into a wall is still asking to run, and reading the
@@ -18515,6 +18639,7 @@ if (this.eType === "COW") {
 
 
         fire(sA, bowShot = null) {
+    if(this.shovelMantle)return;
     if (shovelPlayerDepth(this)>=SHOVEL.underground || this.isPlayer&&shovelToolEquipped()) return;
     if (boxingActive(this)) return;
     if(unarmedCivilian(this))return;
@@ -18647,7 +18772,7 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
     else { ellipse(charShadowX(sOff), charShadowY(sOff), this.bodyW + 5, this.bodyH + 5); }
     }
 
-    if (this.muzzleFlash > 0 && this.reloadTimer <= 0) {
+    if (!this.shovelMantle && this.muzzleFlash > 0 && this.reloadTimer <= 0) {
         push();
         let isHeavy = (this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER || this.eType === "SAUCER_RED");
         let radius = isHeavy ? 180 : 100;
@@ -18952,14 +19077,16 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
     // walk lengthening into a run has nothing in it that switches.
     const GP = gaitPose(this.isMoving ? this.gait : 0);
     const boxing=this.isPlayer?boxerPose(this):_figureNoBoxing;
-    const shovelStroke=this.isPlayer&&meleeTool()==='SHOVEL'&&this.meleeTimer<=0
+    const mantle=this.isPlayer?shovelMantlePose(this):null;
+    const shovelStroke=!mantle&&this.isPlayer&&meleeTool()==='SHOVEL'&&this.meleeTimer<=0
         ? shovelDigPose(this,GP,0) : null;
     let lS = this.isMoving ? sin(this.walkCycle) * 12 * GP.swing : 0,
         bob = this.isMoving ? abs(sin(this.walkCycle)) * 2 * GP.bob + GP.lean : 0;
     if(shovelStroke){lS*=1-shovelStroke.blend;bob+=shovelStroke.lean;}
+    if(mantle){lS=0;bob=mantle.lean;}
     if (this.mounted) { lS *= 0.35; bob *= 0.4; }
     if (this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL") { bob += sin(frameCount * 0.1) * 15; lS = 0; }
-    if (this.reloadTimer > 0) { let rP = 1 - (this.reloadTimer / 90); push(); noFill(); stroke(0, 200, 255, 150); strokeWeight(4); arc(0, 0, 50, 50, -PI / 2, -PI / 2 + (rP * TWO_PI)); pop(); if (!oneHandWeapon(this.currentWeapon)) bob += sin(frameCount * 0.5) * 3; }
+    if (!mantle && this.reloadTimer > 0) { let rP = 1 - (this.reloadTimer / 90); push(); noFill(); stroke(0, 200, 255, 150); strokeWeight(4); arc(0, 0, 50, 50, -PI / 2, -PI / 2 + (rP * TWO_PI)); pop(); if (!oneHandWeapon(this.currentWeapon)) bob += sin(frameCount * 0.5) * 3; }
     if (this.eType === "ALIEN_GATOR") {
         const g=paint?paint.api:window;
         push(); rotate(this.moveAngle);
@@ -19015,7 +19142,7 @@ if (this.isPlayer) {
         this.shirtCol=color(219,196,146);this.pantsCol=color(61,93,118);
     }
     {
-        push(); rotate(boxing.active?this.aimAngle+boxing.hip:shovelStroke?this.aimAngle+shovelStroke.hip:this.moveAngle); noStroke(); fill(this.pantsCol);
+        push(); rotate(mantle?mantle.angle+mantle.hip:boxing.active?this.aimAngle+boxing.hip:shovelStroke?this.aimAngle+shovelStroke.hip:this.moveAngle); noStroke(); fill(this.pantsCol);
         if (this.bodyW === 105) {
           // ARMORED's 105-wide slab keeps its own legs; the rig is shaped like
           // a person and that is not one.
@@ -19048,7 +19175,8 @@ if (this.isPlayer) {
           // 9.6, knee 7.4, ankle 5.9) and a trimmed cap at the top, where the
           // pelvis is under the torso anyway and nothing needs rounding off.
           const wHip = RGl.thighW, wKnee = RGl.shinW, wAnkle = RGl.shinW * 0.80;
-          if(boxing.active)drawBoxingLegs(this,boxing,RGl);
+          if(mantle)drawShovelMantleLegs(this,mantle,RGl);
+          else if(boxing.active)drawBoxingLegs(this,boxing,RGl);
           else if(shovelStroke)drawShovelDigLegs(this,shovelStroke,RGl);
           else for (const sgn of [1, -1]) {
             // Hips either side of the axis at the spacing the old pair of rects
@@ -19111,17 +19239,17 @@ if (this.isPlayer) {
     // Suppressed whenever the weapon is up, because the muzzle offsets below
     // are measured in this frame -- twisting it would walk the rounds off the
     // line the aim laser is drawn on.
-    const _tw = shovelStroke ? shovelStroke.torso :
+    const _tw = mantle ? mantle.torso : shovelStroke ? shovelStroke.torso :
                 (this.isMoving && !(this.isArmed && this.meleeTimer <= 0 && playerAiming(this)))
                 ? sin(this.walkCycle) * GP.twist : 0;
-    push(); rotate(this.aimAngle+(boxing.active?boxing.torso:_tw)); translate(bob,0);
+    push(); rotate((mantle?mantle.angle:this.aimAngle)+(boxing.active?boxing.torso:_tw)); translate(bob,0);
 
     let bLX = 31, bLY = 8, bLX_L = 59, bLY_L = -17;
     if (this.isArmed && this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { bLX = 47; bLY = 6; } 
     else if (this.currentWeapon === WEAPONS.SMG || this.currentWeapon === WEAPONS.DUAL_SMG) { bLX = 38; bLY = 11; bLX_L = 38; bLY_L = -11; }
     else if (this.currentWeapon === WEAPONS.REVOLVER) { bLX = 47; bLY = 11; }
     else if (this.currentWeapon === WEAPONS.BOW) { bLX = 47-9*bowTension; bLY = 0; }
-    else if (this.isArmed && !carryMode && this.currentWeapon === WEAPONS.TASER) {
+    else if (!mantle && this.isArmed && !carryMode && this.currentWeapon === WEAPONS.TASER) {
         // The presented taser. On a carry it is drawn in the hand instead --
         // left here it would be a second one floating at the hip.
         fill(255, 255, 0); stroke(10); strokeWeight(1);
@@ -19135,7 +19263,7 @@ if (this.isPlayer) {
         bLX += (this.isMoving ? abs(sin(this.walkCycle))*2 : 0)-bob;
     }
 
-    if (this.isPlayer && rightStick.active && this.reloadTimer <= 0 && this.meleeTimer <= 0) { 
+    if (!mantle && this.isPlayer && rightStick.active && this.reloadTimer <= 0 && this.meleeTimer <= 0) {
         if (this.currentWeapon === WEAPONS.BOW) {
             const q=this.bowDrawState ? this.bowDrawState.quality : 1;
             if(q>=.85&&bowTension>=.82&&bowDrawPower(bowTension,q,this.bowDrawState && this.bowDrawState.dud)>=.75)
@@ -19766,8 +19894,13 @@ if (this.isPlayer) {
                 }
                 if (front && leftAction) drawLeftHandAction(this, leftAction, -_tw);
             };
+            if(mantle)armPass=front=>drawShovelMantleArms(this,mantle,front);
             armPass(false);
         }
+    }
+    if(mantle&&!armPass){
+        armPass=front=>drawShovelMantleArms(this,mantle,front);
+        armPass(false);
     }
 
     noStroke();
@@ -19781,7 +19914,7 @@ if (this.isPlayer) {
     // proportions, and bodyW/bodyH themselves are untouched -- collision, the
     // corpse rig and the height field all still measure the same person.
     const _tsq = this.bodyW < 40;
-    if (_tsq) { push(); scale(TORSO_DEPTH, 1); }
+    if (_tsq) { push(); scale(TORSO_DEPTH*(mantle?1+mantle.fold*.18:1), 1); }
     if (this.hitFlash > 0) {
       this.hitFlash--;
       fill(255); ellipse(0, 0, this.bodyW, this.bodyH);
@@ -19933,7 +20066,8 @@ if (this.isPlayer) {
     let isNeutralFarmer = unarmedCivilian(this)||(this.isNeutral&&TOWNSFOLK.indexOf(this.eType)!==-1);
 
     // --- NEUTRAL ARM SWING OVERRIDE ---
-        if(boxing.active){drawBoxingArms(this,boxing);}
+        if(mantle){armPass(true);}
+        else if(boxing.active){drawBoxingArms(this,boxing);}
         else if (isNeutralFarmer) {
         // The limbs and the trailing hand already went down under the torso;
         // this is the leading hand on top. Empty on purpose: a townsman at ease
@@ -20123,7 +20257,7 @@ if (this.isPlayer) {
 
  
  
-    if (this.muzzleFlash > 0 && this.reloadTimer <= 0) { 
+    if (!this.shovelMantle && this.muzzleFlash > 0 && this.reloadTimer <= 0) {
         push(); translate(bLX, bLY); fill(255, 200, 0, 200); noStroke(); beginShape(); vertex(0, -3); vertex(15 + random(10), -8); vertex(20 + random(15), 0); vertex(15 + random(10), 8); vertex(0, 3); endShape(CLOSE); pop(); 
         let isThrowing = this.isPlayer && (typeof isCooking !== 'undefined' && (isCooking || this.throwAnimTimer > 0));
         if (this.currentWeapon === WEAPONS.DUAL_SMG && leftHandAction(this) === 0) { push(); translate(bLX_L, bLY_L); fill(255, 200, 0, 200); noStroke(); beginShape(); vertex(0, -3); vertex(15 + random(10), -8); vertex(20 + random(15), 0); vertex(15 + random(10), 8); vertex(0, 3); endShape(CLOSE); pop(); }
@@ -20141,8 +20275,8 @@ if (this.isPlayer) {
     // not looking down it, he is looking where he is going. Left on through the
     // carry it read as aiming at nothing, and it fought the whole point of the
     // walk/jog/sprint poses, which is that one glance tells you the gun is down.
-    let hX = 0, hY = 0;
-    if (this.isArmed && !carryMode && this.reloadTimer <= 0 && this.meleeTimer <= 0 &&
+    let hX = mantle?mantle.headX:0, hY = 0;
+    if (!mantle && this.isArmed && !carryMode && this.reloadTimer <= 0 && this.meleeTimer <= 0 &&
         !this.dead &&
         (this.currentWeapon === WEAPONS.ASSAULT_RIFLE ||
          this.currentWeapon === WEAPONS.SHOTGUN ||
@@ -35979,6 +36113,72 @@ function shovelDigPose(c,GP,rest,progress) {
   return {p,blend,drive,lift,load,effort,hip,torso,lean:blend*(1+effort*3.8),
           angle,elevation,roll,toolScale,projection,ox,oy,right,left,tip:[ox+tip[0],oy+tip[1]]};
 }
+// A short reach, press and step over the waist-high rim. Body translation is
+// supplied by the mantle movement; these joints keep its palms planted and
+// lift one knee while the trailing leg pushes out of the excavation.
+function shovelMantlePose(c,progress) {
+  if(!c||!c.shovelMantle)return null;
+  const m=c.shovelMantle;
+  const p=Math.max(0,Math.min(1,progress===undefined?
+    m.elapsedMs/(m.durationMs||650):progress));
+  const smooth=t=>{t=Math.max(0,Math.min(1,t));return t*t*(3-2*t);};
+  const brace=smooth(p/.16)*(1-smooth((p-.76)/.24));
+  const tuck=smooth((p-.18)/.25)*(1-smooth((p-.72)/.28));
+  const plant=smooth((p-.42)/.27)*(1-smooth((p-.82)/.18));
+  const fold=brace*(1-smooth((p-.55)/.35));
+  const lean=9*fold+2.6*plant;
+  const GP=gaitPose(0),carry=swordCarryPose(c,GP,0);
+  const reach=Number.isFinite(m.handReach)?m.handReach:18;
+  const side=c.bodyH*.48;
+  const shoulder=3*brace;
+  const fit=(hx,hy,right)=>{
+    const arm=swordFitArm(c,hx-shoulder,hy,right);
+    arm.sx+=shoulder;arm.ex+=shoulder;arm.hx+=shoulder;return arm;
+  };
+  // Reach is measured from the moving body projection. Subtract its forward
+  // lean so planted palms remain on the rim as the torso rises between them.
+  const right=fit(carry.hx+(reach-lean-carry.hx)*brace,
+    carry.hy+(side-carry.hy)*brace,true);
+  const left=fit(-1.5+(reach-lean+1.5)*brace,
+    -side-1.2*fold,false);
+  return {p,brace,tuck,plant,fold,lean,headX:fold*2.4,angle:Number.isFinite(m.angle)?m.angle:(c.aimAngle||0),
+    hip:(-.16*fold+.12*plant),torso:Math.sin(p*Math.PI)*.065,
+    right,left,toolAngle:carry.angle+(1.9-carry.angle)*brace,
+    toolElevation:carry.elevation+(.75-carry.elevation)*brace,
+    toolRoll:carry.roll+(.08-carry.roll)*brace,toolScale:1-.28*brace};
+}
+function drawShovelMantleLegs(c,pose,R) {
+  const paint=figurePainter(),g=paint?paint.api:window;
+  const th=R.thigh*STAND_FORE_LEG,sh=R.shin*STAND_FORE_LEG;
+  const boot=[red(c.pantsCol)*.55,green(c.pantsCol)*.55,blue(c.pantsCol)*.55];
+  for(const side of [1,-1]) {
+    const lead=side===-1,sx=-10+R.thighW*.5+pose.lean*.3,sy=side*6;
+    const ex=sx+th*.92+(lead?8*pose.tuck:-3.5*pose.fold);
+    const ey=sy+side*(lead?3*pose.tuck:1.8*pose.fold);
+    const hx=sx+th*.92+sh+(lead?11*pose.plant-1.5*pose.tuck:-8*pose.fold+4*pose.plant);
+    const hy=sy+side*(lead?1.3*pose.tuck:pose.fold);
+    figureCelLimb(g,sx,sy,ex,ey,hx,hy,R.thighW,R.shinW,R.shinW*.8,c.pantsCol);
+    figureCelOval(g,hx+R.foot*.34,hy,R.foot,R.shinW*.8,boot,.8);
+  }
+}
+function drawShovelMantleArms(c,pose,front) {
+  const paint=figurePainter(),g=paint?paint.api:window,R=figureRig(c.bodyW,c.bodyH);
+  const cloth=[red(c.shirtCol)*.94,green(c.shirtCol)*.94,blue(c.shirtCol)*.96];
+  if(!front) {
+    for(const arm of [pose.left,pose.right])figureCelLimb(g,arm.sx,arm.sy,arm.ex,arm.ey,arm.hx,arm.hy,
+      R.upperW,(R.upperW+R.foreW)*.5,R.foreW*.84,cloth);
+    return;
+  }
+  const tool=meleeTool(),held=tool==='SHOVEL'||tool==='PICKAXE'||tool==='SWORD';
+  const wa=pose.angle+pose.torso+pose.toolAngle;
+  const P=held?handGunProjection(pose.toolElevation,pose.toolRoll,figureLight(wa),figureSouth(wa)):null;
+  const atTool=fn=>{push();translate(pose.right.hx,pose.right.hy);rotate(pose.toolAngle);scale(pose.toolScale);fn(P);pop();};
+  if(held)atTool(tool==='SHOVEL'?drawShovelGrip:tool==='PICKAXE'?drawPickGrip:drawSwordGrip);
+  for(const [arm,left] of [[pose.left,true],[pose.right,false]])
+    figureCelOval(g,arm.hx,arm.hy,R.hand*(1-.12*pose.brace),R.hand,
+      left&&c.isPlayer&&chemistSuitUnlocked?[180,180,190]:c.skinCol||[235,180,140],.8);
+  if(held)atTool(tool==='SHOVEL'?drawShovelHeadSolid:tool==='PICKAXE'?drawPickHeadSolid:drawSwordBlade);
+}
 function shovelCarryPose(c,GP,rest) {
   const dig=shovelDigPose(c,GP,rest);
   return dig?{hx:dig.right.hx,hy:dig.right.hy,angle:dig.angle,elevation:dig.elevation,roll:dig.roll}:
@@ -48556,6 +48756,7 @@ function serializeShovelState() {
     cells:Object.values(shovelExcavation),passive:!!window.passiveRouteUnlocked,exit:window.passiveRouteExit,
     player:active?{level:currentLevel,depth:shovelPlayerDepth(p),target:p.shovelDepthTarget||0,
       climbing:!!p.shovelClimbing,fall:p._shovelFall?{...p._shovelFall}:null,
+      mantle:p.shovelMantle?{...p.shovelMantle}:null,
       crossing:p.shovelGateCrossing||null}:null};
 }
 function restoreShovelState(data) {
@@ -48589,6 +48790,18 @@ function restoreShovelPlayer(data) {
     fall.velocity>=0 && fall.velocity<=SHOVEL.terminal && player.shovelDepthTarget>player.shovelDepth
     ? {origin:fall.origin,velocity:fall.velocity} : null;
   player._shovelCellKey=c.level+':'+c.ix+':'+c.iy;
+  player.shovelMantle=null;
+  const m=state.mantle;
+  if(m&&m.level===currentLevel&&c.open&&m.cellKey===player._shovelCellKey&&
+      ['fromX','fromY','toX','toY','rimX','rimY','startDepth','angle','elapsedMs'].every(k=>Number.isFinite(m[k]))&&
+      Math.hypot(m.fromX-player.x,m.fromY-player.y)<1&&
+      Math.hypot(m.toX-m.fromX,m.toY-m.fromY)<=SHOVEL.cell*2&&
+      m.startDepth>.5&&m.startDepth<=SHOVEL.waist+.5&&m.elapsedMs>=0&&m.elapsedMs<SHOVEL_MANTLE_MS) {
+    const start=shovelActorProjection({...player,shovelDepth:m.startDepth,shovelMantle:null},c);
+    player.shovelMantle={...m,durationMs:SHOVEL_MANTLE_MS,startRenderX:start.x,startRenderY:start.y};
+    player._shovelFall=null;
+    shovelUpdateMantle(player,0);
+  }
   const q=state.crossing;
   const continuous=q&&['lastX','lastY','walked'].every(k=>Number.isFinite(q[k]))&&q.walked>=0&&
     Math.hypot(q.lastX-player.x,q.lastY-player.y)<1;
