@@ -35,7 +35,7 @@ In Level 1, ambient civilians stay at least 300 HUD metres (3,000 world units) f
 
 NM-0 city guards are a new rifle unit with green-gray plate carriers, helmet, visor and insignia. Each eligible procedural block has a synchronized marching pair and two fixed sentries. They use the existing sight/chase/fire state machine during combat and resume their own beat after losing the target. Patrols are distinct from the large orb-weapon armored enemy. Authored story cores and liberated blocks do not receive ambient hostile patrols.
 
-The layer is capped at 42 civilians and 12 guards, adding at most four actors every 20 simulation frames. Distant residents bank their state and release their live actor. An NM-0 ambush banks and removes living ambient civilians before physics or AI runs and suspends ambient candidate searches until the ambush ends. Existing living civilian actors inside the enlarged fortress buffer are banked and removed immediately, including between population refreshes. Distant eligible residents resume through the usual off-screen restoration; guards, recruits and military remain separate. Injuries and deaths persist in `biomeState[1].cityPeople`; killed residents do not reappear when a block reloads. The fixed story population, recruitment roster and military escort ledger remain separate.
+The layer is capped at 42 civilians and 12 guards, adding at most four actors every 20 simulation frames. Distant residents bank their state and release their live actor. An NM-0 ambush banks and removes living unaligned ambient civilians before physics or AI runs and suspends ambient candidate searches until the ambush ends; aligned gang members remain as local helpers. Existing living civilian actors inside the enlarged fortress buffer are banked and removed immediately, including between population refreshes. Distant eligible residents resume through the usual off-screen restoration; guards, recruits and military remain separate. Injuries and deaths persist in `biomeState[1].cityPeople`; killed residents do not reappear when a block reloads. The fixed story population, recruitment roster and military escort ledger remain separate.
 
 New civilians and ambient city guards only appear outside the camera's current view, with a 100-unit margin. This uses the rendered view, including zoom, aim pan and screen shake, rather than distance from the player. Saved residents whose positions are visible wait to reload; guard sentries are checked at their actual posts. Candidate blocks extend through the loaded two-chunk ring so zoomed-out views can still find off-screen residents. Story mode continues to suppress ambient hostile city patrols.
 
@@ -78,6 +78,14 @@ node tools/check-city-subclass-art.js
 node tools/check-city-subclass-scene.js
 node tools/check-city-subclass-render.js
 ```
+
+The four subclass logic/art suites pass 326 checks. Real Chromium scenes pass
+with p5 1.9.4 and 1.11.11, including native six-hit fights, gun panic, all three
+input methods, rare pistol escalation, allied NM-0 combat and off-screen
+save/load restoration. Pending dialogue also fits 320- and 390-pixel portrait
+views and 640-pixel landscape. The existing 150-enemy ambush fixture produces
+identical gameplay and final-frame pixels before and after this update in both
+lighting modes; software-renderer timings are not a mobile FPS measurement.
 
 The browser tools use `VIS_DEPS`, `VIS_CHROME` and `VIS_P5`, with artifacts
 selected by `CITY_SUBCLASS_OUT` or `CITY_ART_OUT`. They exercise generated streets,
