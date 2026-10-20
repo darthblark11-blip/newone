@@ -17,13 +17,18 @@ and livestock do not receive the new human red-blood effect. NM0 armored body
 hits use the same red droplets while retaining their existing armor impact
 particles; hard helmet impacts retain their material effects.
 
-Armored NM0 body impacts retain ten compact red `BLOOD_SMOKE` mist puffs
-and add four tiny orange `ARMOR_IMPACT` bursts, with no grey smoke or debris
-chips. The orange burst uses a separate 1.5–3-unit, 3–7-frame particle so
-helmet streaks and other shared impact effects keep their original appearance.
-Helmet impacts retain their nine metal streaks and five chips; exposed-flesh
-thresholds are unchanged. Effects keep their shovel owner/depth projection
-and use the existing particle order and pool.
+Armored NM0 body impacts retain ten compact red `BLOOD_SMOKE` mist puffs,
+with no grey smoke or debris chips. `ARMORED_STANDARD` soldiers add six
+bright orange `ARMOR_IMPACT` bursts, sized 5–9 units with a 7–12-frame
+lifetime before fading, to make a successful armor hit visible at normal zoom.
+The `ARMORED` orb keeps its four small 1.5–3-unit, 3–7-frame bursts.
+Helmet impacts retain their nine metal streaks and five chips. Effects keep
+their shovel owner/depth projection and use the existing particle order and pool.
+
+The standard soldier still starts with 300 HP and has armor while its health
+before a hit is above 50 HP. The shot that crosses that boundary still hits
+plate; subsequent hits at or below 50 HP use ordinary flesh blood without
+orange bursts. The orb's separate 600-HP / 300-HP armor rule is unchanged.
 
 A positive-damage arrow that leaves a human alive starts a cosmetic wound
 trail. It drops one small 2.5–5-unit droplet every 250 active milliseconds,
@@ -96,6 +101,7 @@ node tools/check-impact-blood.js
 node tools/check-arrow-wildlife-bleed.js
 node tools/check-impact-blood-scene.js
 node tools/check-armored-impact-effects.js
+node tools/check-standard-armor-break.js
 ```
 
 The human suite covers 69 impact, material, shield, healing, trail, budget,

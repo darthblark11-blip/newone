@@ -22,9 +22,12 @@ for (const type of ['ARMORED','ARMORED_STANDARD','SAUCER','SAUCER_RED','SNAIL_HY
   } else if (type === 'ARMORED' || type === 'ARMORED_STANDARD') {
     const smoke = hit.particles.filter(p=>p.t === 'BLOOD_SMOKE');
     const burst = hit.particles.filter(p=>p.t === 'ARMOR_IMPACT');
-    check(type+' body impacts keep blood mist and replace smoke/debris with a tiny orange burst', smoke.length === 10 && burst.length === 4 && hit.particles.length === 14 && !hit.particles.some(p=>p.t === 'CHIP' || p.t === 'SMOKE' || p.t === 'SPARK'));
+    const standard = type === 'ARMORED_STANDARD';
+    check(type+' body impacts keep blood mist and their own orange burst', smoke.length === 10 && burst.length === (standard ? 6 : 4) && hit.particles.length === (standard ? 16 : 14) && !hit.particles.some(p=>p.t === 'CHIP' || p.t === 'SMOKE' || p.t === 'SPARK'));
     check(type+' blood smoke remains compact and short lived', smoke.every(p=>p.c.join(',') === '90,0,0' && p.sz >= 5 && p.sz <= 12 && p.l >= 10 && p.l <= 20));
-    check(type+' impact burst is tiny, orange and brief', burst.every(p=>p.c.join(',') === '255,130,35' && p.sz >= 1.5 && p.sz <= 3 && p.l >= 3 && p.l <= 7));
+    check(type+' impact burst keeps its intended orange size and duration', burst.every(p=>standard
+      ? p.c.join(',') === '255,155,40' && p.sz >= 5 && p.sz <= 9 && p.l >= 7 && p.l <= 12
+      : p.c.join(',') === '255,130,35' && p.sz >= 1.5 && p.sz <= 3 && p.l >= 3 && p.l <= 7));
   } else {
     const sparks = hit.particles.filter(p=>p.t === 'SPARK');
     check(type+' still emits ten sparks and five debris chips', sparks.length === 10 && hit.particles.filter(p=>p.t === 'CHIP').length === 5);

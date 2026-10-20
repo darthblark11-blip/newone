@@ -22317,9 +22317,12 @@ function updateBullets() {
                             emit(b.x, b.y, 9, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK", b.vx, b.vy, t);
                             emit(b.x, b.y, 5, color(100), "CHIP", 0, 0, t);
                         } else {
-                            // Keep the red impact mist, with a tiny orange burst
-                            // instead of grey smoke or loose debris.
-                            emit(b.x, b.y, 4, color(255, 130, 35), "ARMOR_IMPACT", b.vx, b.vy, t);
+                            // Standard rifle armor gets a readable orange burst;
+                            // the larger orb soldier keeps its smaller impact.
+                            const standardArmor = t.eType === "ARMORED_STANDARD";
+                            emit(b.x, b.y, standardArmor ? 6 : 4,
+                                 standardArmor ? color(255, 155, 40) : color(255, 130, 35),
+                                 "ARMOR_IMPACT", b.vx, b.vy, t);
                             emit(b.x, b.y, 10, bCol, "BLOOD_SMOKE", b.vx, b.vy, t);
                         }
                     } else {
@@ -23349,7 +23352,8 @@ Particle.prototype.init = function(x, y, c, t, dX = 0, dY = 0, owner = null) {
     // and CHIP by the dozen, which is why those two actions flickered worst.
     // A FLECK is a spark drawn as a streak rather than a dot: thin, quick, and
     // it reads as struck metal instead of as a small fire.
-    if (t === "ARMOR_IMPACT") this.sz = random(1.5, 3);
+    const standardArmorImpact = t === "ARMOR_IMPACT" && owner && owner.eType === "ARMORED_STANDARD";
+    if (t === "ARMOR_IMPACT") this.sz = standardArmorImpact ? random(5, 9) : random(1.5, 3);
     else if (t === "FLECK") this.sz = random(1.4, 3.2);
     else if (t === "OIL") this.sz = random(3, 7);
     else if (t === "FLASH" || t === "MUZZLE" || t === "THRUST" || t === "SPARK" || t === "BLOOD_SMOKE") this.sz = random(5, 12);
@@ -23359,7 +23363,11 @@ Particle.prototype.init = function(x, y, c, t, dX = 0, dY = 0, owner = null) {
     else if (t === "SMOKE") this.sz = random(20, 40);
     else this.sz = 5;
 
-    if (t === "ARMOR_IMPACT") { this.vx = dX * 0.08 + random(-2, 2); this.vy = dY * 0.08 + random(-2, 2); this.l = random(3, 7); }
+    if (t === "ARMOR_IMPACT") {
+        const drift = standardArmorImpact ? 0.10 : 0.08, spread = standardArmorImpact ? 3 : 2;
+        this.vx = dX * drift + random(-spread, spread); this.vy = dY * drift + random(-spread, spread);
+        this.l = standardArmorImpact ? random(7, 12) : random(3, 7);
+    }
     else if (t === "FLASH" || t === "MUZZLE") { this.vx = dX + random(-1, 1); this.vy = dY + random(-1, 1); this.l = t === "MUZZLE" ? 4 : random(10, 20); }
     else if (t === "SPARK") { this.vx = dX + random(-5, 5); this.vy = dY + random(-5, 5); this.l = random(10, 20); } 
     else if (t === "BLOOD_SMOKE") { this.vx = dX * 0.15 + random(-1.5, 1.5); this.vy = dY * 0.15 + random(-1.5, 1.5); this.l = random(10, 20); }

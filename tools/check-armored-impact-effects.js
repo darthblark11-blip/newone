@@ -28,20 +28,21 @@ function hit(type, kind, hp, weapon='PISTOL') {
 const of = (result,type) => result.particles.filter(p=>p.t===type);
 for (const [type, initial, boundary] of [['ARMORED',600,300],['ARMORED_STANDARD',300,50]]) {
   for (const hp of [initial,boundary+1]) {
+    const standard=type==='ARMORED_STANDARD',count=standard?6:4;
     const r=hit(type,'BODY',hp),mist=of(r,'BLOOD_SMOKE'),burst=of(r,'ARMOR_IMPACT');
     check(type+' body damage at HP '+hp,r.hp===hp-20);
-    check(type+' retains red mist and adds a tiny orange burst at HP '+hp,
-      mist.length===10 && burst.length===4 && r.particles.length===14);
+    check(type+' retains red mist and adds its own orange burst at HP '+hp,
+      mist.length===10 && burst.length===count && r.particles.length===10+count);
     check(type+' body impact has no grey smoke, debris or large sparks at HP '+hp,
       !of(r,'SMOKE').length && !of(r,'CHIP').length && !of(r,'SPARK').length && !of(r,'BLOOD').length);
     check(type+' keeps original compact red mist size and lifetime at HP '+hp,
       mist.every(p=>p.c.join(',')==='90,0,0' && p.sz>=5 && p.sz<=12 && p.l>=10 && p.l<=20));
     check(type+' original red mist follows the incoming shot at HP '+hp,
       mist.every(p=>Math.abs(p.vx-r.vx*.15)<=1.5 && Math.abs(p.vy-r.vy*.15)<=1.5));
-    check(type+' orange burst is tiny and brief at HP '+hp,
-      burst.every(p=>p.c.join(',')==='255,130,35' && p.sz>=1.5 && p.sz<=3 && p.l>=3 && p.l<=7));
+    check(type+' orange burst uses the correct size, color and lifetime at HP '+hp,
+      burst.every(p=>p.c.join(',')===(standard?'255,155,40':'255,130,35') && p.sz>=(standard?5:1.5) && p.sz<=(standard?9:3) && p.l>=(standard?7:3) && p.l<=(standard?12:7)));
     check(type+' orange burst follows the impact without a long trail at HP '+hp,
-      burst.every(p=>Math.abs(p.vx-r.vx*.08)<=2 && Math.abs(p.vy-r.vy*.08)<=2));
+      burst.every(p=>Math.abs(p.vx-r.vx*(standard?.10:.08))<=(standard?3:2) && Math.abs(p.vy-r.vy*(standard?.10:.08))<=(standard?3:2)));
     check(type+' retains body bullet holes at HP '+hp,r.decals.length===1 && r.decals[0]===false);
   }
   const exposed=hit(type,'BODY',boundary);
@@ -100,6 +101,18 @@ const orangePool=read(`(function(){
 check('tiny orange burst resets pooled size, lifetime and owner',orangePool.reset);
 check('tiny orange burst fades quickly after its brief lifetime',orangePool.firstAlpha===195);
 check('tiny orange burst retires to the bounded pool and releases its owner',orangePool.retired);
+
+const standardPool=read(`(function(){
+  const owner={x:0,y:0,eType:'ARMORED_STANDARD',shovelLevel:currentLevel,shovelDepth:0};
+  particles=[];_particlePool.length=0;
+  const p=newParticle(0,0,color(255,155,40),'ARMOR_IMPACT',20,-10,owner);
+  const standard=p.sz>=5&&p.sz<=9&&p.l>=7&&p.l<=12&&p.shovelOwner===owner;
+  p.a=0;particles.push(p);updateParticles();
+  const orb=newParticle(1,2,color(255,130,35),'ARMOR_IMPACT',20,-10,{...owner,eType:'ARMORED'});
+  return {standard,orbReset:orb===p&&orb.sz>=1.5&&orb.sz<=3&&orb.l>=3&&orb.l<=7};
+})()`);
+check('standard rifle armor gets the larger pooled burst',standardPool.standard);
+check('reusing standard impact for the orb soldier restores its original tiny burst',standardPool.orbReset);
 
 const charge=read(`(function(){
   player.x=300;player.y=0;bullets=[];particles=[];buildings=[];activeBuildings=[];
@@ -171,16 +184,24 @@ async function canvasChecks() {
     check('orange burst paints a tiny bright orange center',orangePixel[0]>245&&orangePixel[1]>115&&orangePixel[1]<145&&orangePixel[2]>20&&orangePixel[2]<50&&orangePixel[3]>100);
     check('orange burst has a compact transparent edge',burst.full[3]===0&&burst.full[35]===0&&burst.full.filter((_,i)=>i%4===3&&burst.full[i]>0).length<=6);
     check('orange burst fades with its opacity',fadedPixel[3]>0&&fadedPixel[3]<orangePixel[3]);
+    const standardBurst=await page.evaluate(()=>{
+      clear();const p=new Particle(64,64,color(255,155,40),'ARMOR_IMPACT',0,0,{eType:'ARMORED_STANDARD',x:64,y:64});
+      p.sz=9;p.show();return Array.from(drawingContext.getImageData(52,64,25,1).data);
+    });
+    const standardPixels=standardBurst.filter((_,i)=>i%4===3&&standardBurst[i]>0).length;
+    check('standard armor burst has a visibly larger real Canvas footprint than the orb impact',
+      standardPixels>=12&&standardPixels<=18&&standardPixels>2*burst.full.filter((_,i)=>i%4===3&&burst.full[i]>0).length);
+    check('standard armor burst keeps a bright orange center',standardBurst[48]>245&&standardBurst[49]>140&&standardBurst[49]<170&&standardBurst[50]>25&&standardBurst[50]<55);
     await page.evaluate(()=>{
       background(28,38,43);textAlign(CENTER,CENTER);noStroke();fill(236,231,210);textSize(19);
-      text('NM-0 ARMORED IMPACTS',320,30);textSize(14);text('Body: red mist and tiny orange burst',160,74);text('Helmet: robot metal sparks',480,74);
+      text('NM-0 STANDARD ARMOR IMPACTS',320,30);textSize(14);text('Body: red mist and stronger orange burst',160,74);text('Helmet: unchanged metal sparks',480,74);
       randomSeed(45);
       for(let i=0;i<10;i++){
         const p=new Particle(150+random(-8,8),175+random(-8,8),color(90,0,0),'BLOOD_SMOKE',25,0);
         push();translate(160,175);scale(3);p.x-=160;p.y-=175;p.show();pop();
       }
-      for(let i=0;i<4;i++){
-        const p=new Particle(150+random(-5,5),175+random(-5,5),color(255,130,35),'ARMOR_IMPACT',25,0);
+      for(let i=0;i<6;i++){
+        const p=new Particle(150+random(-5,5),175+random(-5,5),color(255,155,40),'ARMOR_IMPACT',25,0,{eType:'ARMORED_STANDARD'});
         push();translate(160,175);scale(3);p.x-=160;p.y-=175;p.show();pop();
       }
       for(let i=0;i<9;i++){
