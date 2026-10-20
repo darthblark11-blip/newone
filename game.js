@@ -6318,7 +6318,110 @@ function drawParkingCars() {
 
 function windowResized() { resizeCanvas(windowWidth, windowHeight); leftStick.base = { x: 80, y: height - 160 }; rightStick.base = { x: width - 80, y: height - 110 }; if (typeof glRigResize === 'function') glRigResize(); }
 function nextLevel() { startAtLevel(currentLevel + 1); }
-function restartGame() { wipeAllBloodBanks(); seedWorldClock(); window.outpostForts = {}; startAtLevel(1); }
+// Level travel deliberately preserves blood, corpses and campaign progress.
+// Replacing a run must discard them BEFORE level entry can stamp old bodies
+// into the next world's ground buffers. Keep this separate from startAtLevel.
+function resetRunState() {
+  exitFrontierSaloon();
+  corpses.length = 0;
+  wipeAllBloodBanks();
+  if (chunkMgr) { chunkMgr.dispose(); chunkMgr = null; }
+  resetPopulation();
+  resetStoryProgress();
+  resetFrontierAmbient();
+  window.outpostForts = {};
+  window.ambushKillsTotal = 0; window.ambushOrigin = null;
+  militarySelectionM = 0; militarySelectionF = 0; militaryMenuFromWorld = false;
+  invalidateDirectiveBuffer();
+  player = null;
+  bullets = []; particles = []; splatters = []; enemiesList = [];
+  barrels = []; orbs = []; grenades = []; fires = []; sludges = [];
+  healthPacks = []; weaponDrops = []; resourceDrops = []; grenadePickups = [];
+  playerGrenades = []; playerFlasks = []; waterPuddles = []; shockwaves = [];
+  lightnings = []; floatingScores = []; allies = []; townCitizens = [];
+  buildings = []; parkingCars = []; activeBuildings = []; activeParkingCars = [];
+  authoredSolids = []; authoredCars = []; authoredCore = null;
+  authoredChunks = null; authoredMask = null; sealedSector = null;
+  biomeState = {}; BIOME_ACTIVE = false;
+  buildSites = []; playerStructures = []; buildGhost = null; buildMenuPage = 0;
+  spatialGrid = {}; invalidateColIndex(); invalidateCrowdSolids(); lastActiveUpdate = 0;
+  _impactBloodFrame = -1; _impactBloodBank = null;
+  _mountScanFrame = -99; _mountScanResult = null;
+  _depthActors.length = 0; _depthMasses.length = 0; _depthOn = false;
+  _legacyActorsQueued = false; _airborneActors.length = 0;
+  _forestCrowns.length = 0; _standDecor.length = 0; _boxingWorldEffects.length = 0;
+  _waterFrame = -1; _waterList.length = 0; _outerFrame = -99; _emitFrame = -1;
+  weather = null; isRaining = false; lastWeatherRollHour = -1;
+  worldTimeMs = DAY_MS * (8 / 24); clockLastMs = null; worldClockDtMs = 0;
+  window.worldClockSeeded = false;
+  extraction = null; travelDirection = null;
+  window.travelArrival = null; window.__biomeAnchorPending = null;
+  militaryToBring = 0; window.escortHome = null; window.escortWasF = 0;
+  window.southGateBreached = false;
+  window.ambushSpawnsRemaining = 0; window.maxArmySize = 0;
+  window.farmAmbushKills = 0; window.farmAmbushCleared = false;
+  window.farmerBlueprintUnlocked = false; window.inNM0SecretOverlay = false;
+  window.pickaxeOwned = true; window.ninjaOwned = false;
+  window.armorOwned = false; window.chemistOwned = false;
+  window.meleeFinisherUnlocked = false; window.archBarrierReady = false;
+  window.__meterAcc = 0;
+  window.__rideKeyWas = false; banditRollTimer = 0; banditGroupSeq = 0;
+  for (const d of POP_DEPTS) {
+    window['pop' + d + 'M'] = 0; window['pop' + d + 'F'] = 0;
+  }
+  window.popUnassignedM = 0; window.popUnassignedF = 0;
+  window.popTotal = 0;
+  popTotal = 0; popUnassigned = 0; popFarming = 0;
+  popMilitary = 0; popScience = 0; popArchitecture = 0;
+  for (const d of ['farm', 'mil', 'sci', 'arch']) {
+    window[d + 'XP'] = 0; window[d + 'Lvl'] = 1;
+  }
+  statVit = 1; statMen = 1; statPhy = 1; statObe = 1; statInt = 1;
+  smgUnlocked = false; dualSmgUnlocked = false; shotgunUnlocked = false;
+  arUnlocked = false; rocketLauncherUnlocked = false; taserUnlocked = false;
+  jetpackUnlocked = true; meleeUnlocked = true; jetpackFireExplosion = false;
+  jetpackDoubleDash = false; meleeComboUnlocked = false;
+  ninjaSuitUnlocked = false; explosiveArmorUnlocked = false; chemistSuitUnlocked = false;
+  grenadesUnlocked = false; pGrenadeAmmo = 0; pGrenadeTimer = 0;
+  pFlaskAmmo = 0; pFlaskTimer = 0; isCooking = false; cookTime = 0;
+  score = 0; totalKills = 0; killStreak = 0; flawlessHits = 0;
+  consecutiveKills = 0; comboTimer = 0; totalShotsFired = 0; totalShotsHit = 0;
+  headshotCounter = 0; bodyOverkillCounter = 0; lightningCounter = 0;
+  streakMsgTimer = 0; streakMsgText = ''; objectiveTimer = 0; splatterIdx = 0;
+  started = false; isDead = false; isWin = false; isPaused = false;
+  selectingDifficulty = false; pauseMenuState = 'MAIN'; inUpgradeMenu = false;
+  inWorldBuildingMenu = false; inOverworldView = false; inTravelMenu = false;
+  squadCommandMode = false; squadCommand = null;
+  killcamMode = false; killcamTarget = { x: 0, y: 0 }; killcamTimer = 0;
+  doTick = true; winTimer = 0; playerRespawnTimer = 0;
+  screenShake = 0; camX = 0; camY = 0; zoom = 0.66;
+  hpGhost = 100; hpGhostHold = 0; hpPrev = 100;
+  shGhost = 100; shGhostHold = 0; shPrev = 100;
+  meleeInputHeld = false; cannonInputHeld = false; grenadeInputHeld = false;
+  headAimToggle = false; lastToggleTime = 0; lastWeaponSwapTime = 0;
+  leftStick = { active: false, dx: 0, dy: 0, base: { x: 80, y: height - 160 } };
+  rightStick = { active: false, dx: 0, dy: 0, dist: 0, base: { x: width - 80, y: height - 110 } };
+  consumePauseControlInputs();
+  deathMenuInput.active = false; deathMenuInput.mouseBlocked = !!mouseIsPressed;
+  deathMenuNotice = "";
+  inStoryIntro = false; inStoryRoom = false; introScrollY = 0;
+  storyPhase = 0; storyTimer = 0; prologuePhase = 0; prologueTimer = 0;
+  dadEntity = null; dadX = -100;
+  tabletPickedUp = false; journalRead = false; swordPickedUp = false;
+  hasSword = false; tvWatched = false; inUpstairsRoom = false; upstairsPhase = 0;
+  inDarchonCall = false; callPhase = 0; darchonCallCompleted = false;
+  darchonTalkTimer = 0; darchonMouthFrame = 0;
+  inTownCutscene = false; townPhase = 0; townTimer = 0;
+  townSpeaker1 = null; townSpeaker2 = null;
+  inFortCutscene = false; fortPhase = 0; fortTimer = 0; fortSpeaker1 = null; fortSpeaker2 = null;
+  nm0AmbushActive = false; nm0AmbushKills = 0; farmAmbushActive = false;
+  inFarmCutscene = false; farmPhase = 0; farmSpeaker = null;
+  inFarmPostCutscene = false; farmPostPhase = 0;
+  inPostAmbushCutscene = false; postAmbushPhase = 0;
+  inLvl4Cutscene = false; lvl4Phase = 0; lvl4Timer = 0; tanLeader = null;
+}
+
+function restartGame() { resetRunState(); seedWorldClock(); startAtLevel(1); }
 const deathMenuInput = { active:false, buttons:[], keys:new Set(), pad:null, focus:0, usingPad:false, mouseBlocked:false };
 let deathMenuNotice = '';
 function deathMenuHasSave() {
@@ -6354,11 +6457,9 @@ function prepareDeathMenuAction() {
 }
 function resetToMainMenu() {
   prepareDeathMenuAction();
-  started=isDead=isWin=isStoryMode=false;selectingDifficulty=false;
+  resetRunState();
+  isStoryMode=isHardMode=false;currentLevel=pendingLevel=1;
   pendingStoryMode=pendingDebugStory=false;
-  prologuePhase=storyPhase=upstairsPhase=0;journalRead=false;
-  inTownCutscene=inFortCutscene=inFarmCutscene=inFarmPostCutscene=false;
-  inPostAmbushCutscene=inLvl4Cutscene=inDarchonCall=false;
   // Campaign storage and device control preferences remain available at title.
 }
 function activateDeathMenuAction(action) {
@@ -9448,15 +9549,10 @@ function updateHealthPacks() {
 //  RUN START
 // ###########################################################################
 function beginSelectedRun() {
+    resetRunState();
     started = true;
     isStoryMode = pendingStoryMode;
 
-    // Every run launched from the main menu starts from a known state. These
-    // flags live on window and are never cleared by startAtLevel (which is
-    // deliberate — travelling back into Stick City must not wipe them), so a
-    // second run in the same page session would otherwise inherit the first
-    // run's breached gates and settled towns.
-    resetStoryProgress();
     // One roll of the clock for the whole run. startAtLevel() deliberately
     // never touches worldTimeMs, so from here the time of day carries from
     // sector to sector on its own.
@@ -22218,7 +22314,12 @@ function updateBullets() {
                     sfx.hitArmor();
                     if (t.eType === "ARMORED" || t.eType === "ARMORED_STANDARD") {
                         if (b.tH === "HEAD") emit(b.x, b.y, 9, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK", b.vx, b.vy, t);
-                        else emit(b.x, b.y, 10, bCol, "BLOOD_SMOKE", b.vx, b.vy, t);
+                        else {
+                            // Use the robot's broad, slowly drifting smoke,
+                            // with separate blood droplets painted above it.
+                            emit(b.x, b.y, 5, color(70), "SMOKE", 0, 0, t);
+                            emit(b.x, b.y, 10, bCol, "BLOOD", b.vx, b.vy, t);
+                        }
                     } else emit(b.x, b.y, 10, color(255, 150, 0), "SPARK", 0, 0, t);
                     emit(b.x, b.y, 5, color(100), "CHIP", 0, 0, t);
                 }
@@ -23312,19 +23413,23 @@ Particle.prototype.paint = function() {
 // four-hundred-element array in a single frame, which is quadratic in exactly
 // the moment the frame can least afford it.
 //
-// The walk stays BACKWARDS because that is the order the particles are drawn
-// in, and reversing it would reorder the alpha blending between overlapping
-// puffs. Survivors are written backwards from the end as they are found, which
-// leaves them in [w, length) in their original relative order, and one
-// copyWithin then slides that run down to the front.
+// Clouds paint first so blood and gore stay visible above smoke regardless of
+// emission order. Walk backwards within each layer to retain its alpha order.
+// Update once, then compact survivors without allocating another particle list.
 function updateParticles() {
-    let w = particles.length;
     const left = viewLeft - 50, right = viewRight + 50;
     const top = viewTop - 50, bottom = viewBottom + 50;
     for (let i = particles.length - 1; i >= 0; i--) {
         const p = particles[i];
         if (doTick) p.update();
-        if (p.x >= left && p.x <= right && p.y >= top && p.y <= bottom) p.show();
+        if ((p.t === "SMOKE" || p.t === "EXPLOSION" || p.t === "BLOOD_SMOKE") &&
+            p.x >= left && p.x <= right && p.y >= top && p.y <= bottom) p.show();
+    }
+    let w = particles.length;
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        if (p.t !== "SMOKE" && p.t !== "EXPLOSION" && p.t !== "BLOOD_SMOKE" &&
+            p.x >= left && p.x <= right && p.y >= top && p.y <= bottom) p.show();
         if (p.a > 0) { if (--w !== i) particles[w] = p; }
         else if (_particlePool.length < PARTICLE_POOL_MAX) { p.shovelOwner = null; _particlePool.push(p); }
     }
@@ -25645,7 +25750,7 @@ function saveGame() {
     for(const e of enemiesList)bankCityPerson(e);
     const frontierExterior = frontierSaloonSavePlayer();
     let state = {
-        currentLevel, isStoryMode, score, totalKills,
+        currentLevel, isStoryMode, isHardMode, score, totalKills,
         smgUnlocked, dualSmgUnlocked, shotgunUnlocked, arUnlocked, rocketLauncherUnlocked, taserUnlocked,
         jetpackUnlocked, meleeUnlocked, jetpackFireExplosion, jetpackDoubleDash, meleeComboUnlocked, meleeFinisherUnlocked: window.meleeFinisherUnlocked,
         ninjaSuitUnlocked, explosiveArmorUnlocked, chemistSuitUnlocked, ninjaOwned: window.ninjaOwned, armorOwned: window.armorOwned, chemistOwned: window.chemistOwned,
@@ -25796,8 +25901,14 @@ function saveGame() {
 function loadGame() {
     let saved = localStorage.getItem('urbanTwinStickSave');
     if (saved) {
-        let state = JSON.parse(saved);
+        let state;
+        try { state = JSON.parse(saved); } catch (_) { return false; }
+        if (!state || !Number.isInteger(state.currentLevel) || state.currentLevel < 0 || state.currentLevel > 8) return false;
+        resetRunState();
         isStoryMode = state.isStoryMode;
+        isHardMode = !!state.isHardMode;
+        // Character construction derives maximum health from this upgrade.
+        window.farmLvl = Number(state.farmLvl) || 1;
 
         // --- RESTORE STORY ARC PROGRESSION FIRST ---
         // startAtLevel() builds the map, and whether a sector builds its
@@ -25858,7 +25969,7 @@ function loadGame() {
         window.militaryToBringM = Array.isArray(state.escortRoster) ? militaryCount(state.militaryPendingM) : militaryCount(state.militaryToBringM);
         window.militaryToBringF = Array.isArray(state.escortRoster) ? militaryCount(state.militaryPendingF) : militaryCount(state.militaryToBringF);
 
-        startAtLevel(state.currentLevel, true); // true = skip hard reset
+        startAtLevel(state.currentLevel, true); // Preserve saved equipment during level entry.
 
         // --- CRITICAL FIX: Restore flags AFTER startAtLevel so they don't get overwritten! ---
         window.towersDefeated = state.towersDefeated; 

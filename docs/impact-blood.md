@@ -17,6 +17,13 @@ and livestock do not receive the new human red-blood effect. NM0 armored body
 hits use the same red droplets while retaining their existing armor impact
 particles; hard helmet impacts retain their material effects.
 
+Armored NM0 body impacts now emit five grey `SMOKE` puffs using the robot's
+size, drift and lifetime, plus ten directional `BLOOD` droplets and the five
+existing debris chips. Helmet streaks and exposed-flesh thresholds are unchanged.
+The particle pass paints smoke clouds before blood, gore and wound droplets,
+so emission order cannot cover the blood feedback. Each effect retains its
+shovel owner/depth projection, updates once per tick and uses the existing pool.
+
 A positive-damage arrow that leaves a human alive starts a cosmetic wound
 trail. It drops one small 2.5–5-unit droplet every 250 active milliseconds,
 following the wound's body-local position as the person moves and turns.
@@ -87,6 +94,8 @@ node --check game.js
 node tools/check-impact-blood.js
 node tools/check-arrow-wildlife-bleed.js
 node tools/check-impact-blood-scene.js
+node tools/check-armored-impact-effects.js
+node tools/check-particle-layers.js
 ```
 
 The human suite covers 69 impact, material, shield, healing, trail, budget,

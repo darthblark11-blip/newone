@@ -28,15 +28,15 @@ function hit(type, kind, hp, weapon='PISTOL') {
 const of = (result,type) => result.particles.filter(p=>p.t===type);
 for (const [type, initial, boundary] of [['ARMORED',600,300],['ARMORED_STANDARD',300,50]]) {
   for (const hp of [initial,boundary+1]) {
-    const r=hit(type,'BODY',hp),smoke=of(r,'BLOOD_SMOKE');
+    const r=hit(type,'BODY',hp),smoke=of(r,'SMOKE'),blood=of(r,'BLOOD');
     check(type+' body damage at HP '+hp,r.hp===hp-20);
-    check(type+' replaces orange impacts without adding particles at HP '+hp,
-      smoke.length===10 && r.particles.length===15 && of(r,'SPARK').length===0);
+    check(type+' replaces orange impacts with robot smoke and blood at HP '+hp,
+      smoke.length===5 && blood.length===10 && r.particles.length===20 && of(r,'SPARK').length===0);
     check(type+' retains existing debris at HP '+hp,of(r,'CHIP').length===5 && of(r,'CHIP').every(p=>p.c.join(',')==='100,100,100'));
-    check(type+' smoke is blood colored, compact and short lived at HP '+hp,
-      smoke.every(p=>p.c.join(',')==='90,0,0' && p.sz>=5 && p.sz<=12 && p.l>=10 && p.l<=20));
-    check(type+' blood smoke follows the incoming shot at HP '+hp,
-      smoke.every(p=>Math.abs(p.vx-r.vx*.15)<=1.5 && Math.abs(p.vy-r.vy*.15)<=1.5));
+    check(type+' smoke matches robot color, size and lifetime at HP '+hp,
+      smoke.every(p=>p.c.join(',')==='70,70,70' && p.sz>=20 && p.sz<=40 && p.l>=30 && p.l<=60));
+    check(type+' blood follows the incoming shot while robot smoke drifts at HP '+hp,
+      blood.every(p=>p.c.join(',')==='90,0,0' && Math.abs(p.vx-r.vx*.15)<=3 && Math.abs(p.vy-r.vy*.15)<=3) && smoke.every(p=>Math.abs(p.vx)<=1.5 && Math.abs(p.vy)<=1.5));
     check(type+' retains body bullet holes at HP '+hp,r.decals.length===1 && r.decals[0]===false);
   }
   const exposed=hit(type,'BODY',boundary);
@@ -142,12 +142,26 @@ async function canvasChecks() {
     check('blood smoke has a continuous soft radial edge',new Set(r.full.filter(a=>a>0)).size>=5 && r.full.every((a,i)=>i===0||a<=r.full[i-1]+1) && r.full[10]===0);
     check('blood smoke fades its center and edge together',r.faded[0]<r.full[0] && r.faded[3]<r.full[3] && r.faded[3]>0);
     check('blood smoke restores the real Canvas transform and opacity',r.balanced);
+    const layered=await page.evaluate(()=>{
+      viewLeft=viewTop=0;viewRight=640;viewBottom=320;doTick=false;
+      return [['SMOKE','BLOOD'],['BLOOD','SMOKE']].map(types=>{
+        clear();particles=types.map(t=>new Particle(64,64,t==='SMOKE'?color(70):color(90,0,0),t));
+        updateParticles();
+        return Array.from(drawingContext.getImageData(64,64,1,1).data);
+      });
+    });
+    check('blood remains visible over robot smoke in either emission order',
+      layered.every(c=>c[0]>=85&&c[1]<=3&&c[2]<=3&&c[3]>=250));
     await page.evaluate(()=>{
       background(28,38,43);textAlign(CENTER,CENTER);noStroke();fill(236,231,210);textSize(19);
-      text('NM-0 ARMORED IMPACTS',320,30);textSize(14);text('Body: blood smoke and debris',160,74);text('Helmet: robot metal sparks',480,74);
+      text('NM-0 ARMORED IMPACTS',320,30);textSize(14);text('Body: robot smoke, blood and debris',160,74);text('Helmet: robot metal sparks',480,74);
       randomSeed(45);
       for(let i=0;i<10;i++){
-        const p=new Particle(150+random(-8,8),175+random(-8,8),color(90,0,0),'BLOOD_SMOKE',25,0);
+        const p=new Particle(150+random(-8,8),175+random(-8,8),color(70),'SMOKE');
+        push();translate(160,175);scale(3);p.x-=160;p.y-=175;p.show();pop();
+      }
+      for(let i=0;i<10;i++){
+        const p=new Particle(150+random(-8,8),175+random(-8,8),color(90,0,0),'BLOOD',25,0);
         push();translate(160,175);scale(3);p.x-=160;p.y-=175;p.show();pop();
       }
       for(let i=0;i<9;i++){
