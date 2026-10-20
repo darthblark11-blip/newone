@@ -3945,7 +3945,104 @@ function drawParkingCars() {
 
 function windowResized() { resizeCanvas(windowWidth, windowHeight); leftStick.base = { x: 80, y: height - 160 }; rightStick.base = { x: width - 80, y: height - 110 }; if (typeof glRigResize === 'function') glRigResize(); }
 function nextLevel() { startAtLevel(currentLevel + 1); }
-function restartGame() { wipeAllBloodBanks(); seedWorldClock(); startAtLevel(1); }
+// Level travel deliberately preserves blood, corpses and campaign progress.
+// Replacing a run must discard them BEFORE level entry can stamp old bodies
+// into the next world's ground buffers. Keep this separate from startAtLevel.
+function resetRunState() {
+  corpses.length = 0;
+  wipeAllBloodBanks();
+  if (chunkMgr) { chunkMgr.dispose(); chunkMgr = null; }
+  resetPopulation();
+  resetStoryProgress();
+  invalidateDirectiveBuffer();
+  player = null;
+  bullets = []; particles = []; splatters = []; enemiesList = [];
+  barrels = []; orbs = []; grenades = []; fires = []; sludges = [];
+  healthPacks = []; weaponDrops = []; resourceDrops = []; grenadePickups = [];
+  playerGrenades = []; playerFlasks = []; waterPuddles = []; shockwaves = [];
+  lightnings = []; floatingScores = []; allies = []; townCitizens = [];
+  buildings = []; parkingCars = []; activeBuildings = []; activeParkingCars = [];
+  authoredSolids = []; authoredCars = []; authoredCore = null;
+  authoredChunks = null; authoredMask = null; sealedSector = null;
+  biomeState = {}; BIOME_ACTIVE = false;
+  buildSites = []; playerStructures = []; buildGhost = null; buildMenuPage = 0;
+  spatialGrid = {}; invalidateColIndex(); lastActiveUpdate = 0;
+  _depthActors.length = 0; _depthMasses.length = 0; _depthOn = false;
+  _waterFrame = -1; _waterList.length = 0; _outerFrame = -99; _emitFrame = -1;
+  weather = null; isRaining = false; lastWeatherRollHour = -1;
+  worldTimeMs = DAY_MS * (8 / 24); clockLastMs = null; worldClockDtMs = 0;
+  window.worldClockSeeded = false;
+  extraction = null; travelDirection = null;
+  window.travelArrival = null; window.__biomeAnchorPending = null;
+  militaryToBring = 0; window.escortHome = null; window.escortWasF = 0;
+  window.southGateBreached = false;
+  window.ambushSpawnsRemaining = 0; window.maxArmySize = 0;
+  window.farmAmbushKills = 0; window.farmAmbushCleared = false;
+  window.farmerBlueprintUnlocked = false; window.inNM0SecretOverlay = false;
+  window.pickaxeOwned = true; window.ninjaOwned = false;
+  window.armorOwned = false; window.chemistOwned = false;
+  window.meleeFinisherUnlocked = false; window.archBarrierReady = false;
+  window.__meterAcc = 0;
+  window.__rideKeyWas = false; banditRollTimer = 0; banditGroupSeq = 0;
+  for (const d of POP_DEPTS) {
+    window['pop' + d + 'M'] = 0; window['pop' + d + 'F'] = 0;
+  }
+  window.popUnassignedM = 0; window.popUnassignedF = 0;
+  window.popTotal = 0;
+  popTotal = 0; popUnassigned = 0; popFarming = 0;
+  popMilitary = 0; popScience = 0; popArchitecture = 0;
+  for (const d of ['farm', 'mil', 'sci', 'arch']) {
+    window[d + 'XP'] = 0; window[d + 'Lvl'] = 1;
+  }
+  statVit = 1; statMen = 1; statPhy = 1; statObe = 1; statInt = 1;
+  smgUnlocked = false; dualSmgUnlocked = false; shotgunUnlocked = false;
+  arUnlocked = false; rocketLauncherUnlocked = false; taserUnlocked = false;
+  jetpackUnlocked = true; meleeUnlocked = true; jetpackFireExplosion = false;
+  jetpackDoubleDash = false; meleeComboUnlocked = false;
+  ninjaSuitUnlocked = false; explosiveArmorUnlocked = false; chemistSuitUnlocked = false;
+  grenadesUnlocked = false; pGrenadeAmmo = 0; pGrenadeTimer = 0;
+  pFlaskAmmo = 0; pFlaskTimer = 0; isCooking = false; cookTime = 0;
+  score = 0; totalKills = 0; killStreak = 0; flawlessHits = 0;
+  consecutiveKills = 0; comboTimer = 0; totalShotsFired = 0; totalShotsHit = 0;
+  headshotCounter = 0; bodyOverkillCounter = 0; lightningCounter = 0;
+  streakMsgTimer = 0; streakMsgText = ''; objectiveTimer = 0; splatterIdx = 0;
+  started = false; isDead = false; isWin = false; isPaused = false;
+  selectingDifficulty = false; pauseMenuState = 'MAIN'; inUpgradeMenu = false;
+  inWorldBuildingMenu = false; inOverworldView = false; inTravelMenu = false;
+  squadCommandMode = false; squadCommand = null;
+  killcamMode = false; killcamTarget = { x: 0, y: 0 }; killcamTimer = 0;
+  doTick = true; winTimer = 0; playerRespawnTimer = 0;
+  screenShake = 0; camX = 0; camY = 0; zoom = 0.66;
+  hpGhost = 100; hpGhostHold = 0; hpPrev = 100;
+  shGhost = 100; shGhostHold = 0; shPrev = 100;
+  meleeInputHeld = false; cannonInputHeld = false; grenadeInputHeld = false;
+  headAimToggle = false; lastToggleTime = 0; lastWeaponSwapTime = 0;
+  prevGamepadButtons = [];
+  leftStick = { active: false, dx: 0, dy: 0, base: { x: 80, y: height - 160 } };
+  rightStick = { active: false, dx: 0, dy: 0, dist: 0, base: { x: width - 80, y: height - 110 } };
+  inStoryIntro = false; inStoryRoom = false; introScrollY = 0;
+  storyPhase = 0; storyTimer = 0; prologuePhase = 0; prologueTimer = 0;
+  dadEntity = null; dadX = -100;
+  tabletPickedUp = false; journalRead = false; swordPickedUp = false;
+  hasSword = false; tvWatched = false; inUpstairsRoom = false; upstairsPhase = 0;
+  inDarchonCall = false; callPhase = 0; darchonCallCompleted = false;
+  darchonTalkTimer = 0; darchonMouthFrame = 0;
+  inTownCutscene = false; townPhase = 0; townTimer = 0;
+  townSpeaker1 = null; townSpeaker2 = null;
+  nm0AmbushActive = false; nm0AmbushKills = 0; farmAmbushActive = false;
+  inFarmCutscene = false; farmPhase = 0; farmSpeaker = null;
+  inFarmPostCutscene = false; farmPostPhase = 0;
+  inPostAmbushCutscene = false; postAmbushPhase = 0;
+  inLvl4Cutscene = false; lvl4Phase = 0; lvl4Timer = 0; tanLeader = null;
+}
+
+function resetGame() {
+  resetRunState();
+  isStoryMode = false; isHardMode = false; currentLevel = 1;
+  pendingLevel = 1; pendingStoryMode = false; pendingDebugStory = false;
+}
+
+function restartGame() { resetRunState(); seedWorldClock(); startAtLevel(1); }
 function emit(x, y, c, col, typ, vx = 0, vy = 0) { for (let i = 0; i < c; i++) { particles.push(newParticle(x, y, col, typ, vx, vy)); } }
 let activeBuildings = [];
 let activeParkingCars = [];
@@ -5682,7 +5779,15 @@ if (swordPickedUp || window.pickaxeOwned) {
       if (isDead) { 
           fill(0, 180); rect(0, 0, width, height); fill(255, 50, 50); textAlign(CENTER, CENTER); textSize(50); textFont('sans-serif'); text("A valiant effort..", width / 2, height / 2 - 80); 
           fill(200); textSize(20); text("KILLS: " + totalKills + "  |  BASE SCORE: " + score, width / 2, height / 2 - 25); fill(255, 200, 0); text("ACCURACY: " + acc + "%  (x" + accMult + " MULTIPLIER)", width / 2, height / 2 + 5); 
-          fill(50, 255, 50); textSize(32); text("FINAL SCORE: " + finalScore, width / 2, height / 2 + 45); textSize(18); fill(150); text("[ TAP TO RETRY ]", width / 2, height / 2 + 100); 
+          fill(50, 255, 50); textSize(32); text("FINAL SCORE: " + finalScore, width / 2, height / 2 + 45);
+          const hasSave = localStorage.getItem('urbanTwinStickSave') !== null;
+          fill(40); stroke(hasSave ? color(90, 160, 240) : color(100)); strokeWeight(2);
+          rect(width / 2 - 120, height / 2 + 90, 240, 40, 8);
+          fill(hasSave ? 255 : 130); noStroke(); textSize(18);
+          text("LOAD GAME", width / 2, height / 2 + 110);
+          fill(40); stroke(255, 100, 80); strokeWeight(2);
+          rect(width / 2 - 120, height / 2 + 140, 240, 40, 8);
+          fill(255); noStroke(); text("RESET GAME", width / 2, height / 2 + 160);
       } else if (isWin) {
           // Story sectors 0-4 never dead-end on the arcade score card; they run
           // the story win loop, which hands straight over to the Directive.
@@ -6076,15 +6181,10 @@ function updateHealthPacks() {
 //  RUN START
 // ###########################################################################
 function beginSelectedRun() {
+    resetRunState();
     started = true;
     isStoryMode = pendingStoryMode;
 
-    // Every run launched from the main menu starts from a known state. These
-    // flags live on window and are never cleared by startAtLevel (which is
-    // deliberate — travelling back into Stick City must not wipe them), so a
-    // second run in the same page session would otherwise inherit the first
-    // run's breached gates and settled towns.
-    resetStoryProgress();
     // One roll of the clock for the whole run. startAtLevel() deliberately
     // never touches worldTimeMs, so from here the time of day carries from
     // sector to sector on its own.
@@ -14647,7 +14747,15 @@ function updateBullets() {
                         emit(b.x, b.y, bleed, color(OIL_COL[0], OIL_COL[1], OIL_COL[2]), "OIL", b.vx * 0.4, b.vy * 0.4);
                     }
                 } 
-                else if (wA) { sfx.hitArmor(); emit(b.x, b.y, 10, color(255, 150, 0), "SPARK"); emit(b.x, b.y, 5, color(100), "CHIP"); } 
+                else if (wA) {
+                    sfx.hitArmor();
+                    emit(b.x, b.y, 10, color(255, 150, 0), "SPARK");
+                    // NM-0 plate vents the same soft, drifting smoke as a robot
+                    // instead of the hard-edged grey debris cloud.
+                    if (b.isP && (t.eType === "ARMORED" || t.eType === "ARMORED_STANDARD"))
+                        emit(b.x, b.y, 5, color(70), "SMOKE");
+                    else emit(b.x, b.y, 5, color(100), "CHIP");
+                }
                 else { 
                     // Sparks in the shield's own colour while it holds; the break
                     // keeps its blue, which is the one moment the two should not
@@ -15640,17 +15748,20 @@ Particle.prototype.show = function() {
 // four-hundred-element array in a single frame, which is quadratic in exactly
 // the moment the frame can least afford it.
 //
-// The walk stays BACKWARDS because that is the order the particles are drawn
-// in, and reversing it would reorder the alpha blending between overlapping
-// puffs. Survivors are written backwards from the end as they are found, which
-// leaves them in [w, length) in their original relative order, and one
-// copyWithin then slides that run down to the front.
+// Clouds paint first so blood and gore stay readable over the smoke regardless
+// of which effect was emitted last. Both walks stay BACKWARDS to retain alpha
+// order within each layer. Update each particle only once, then draw the solid
+// effects and compact survivors without allocating a second particle list.
 function updateParticles() {
-    let w = particles.length;
     for (let i = particles.length - 1; i >= 0; i--) {
         const p = particles[i];
         if (doTick) p.update();
-        if (inView(p.x, p.y, 50)) p.show();
+        if ((p.t === "SMOKE" || p.t === "EXPLOSION") && inView(p.x, p.y, 50)) p.show();
+    }
+    let w = particles.length;
+    for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        if (p.t !== "SMOKE" && p.t !== "EXPLOSION" && inView(p.x, p.y, 50)) p.show();
         if (p.a > 0) particles[--w] = p;
         else if (_particlePool.length < PARTICLE_POOL_MAX) _particlePool.push(p);
     }
@@ -16273,6 +16384,15 @@ function touchStarted() {
   let mx = touches.length > 0 ? touches[touches.length - 1].x : mouseX;
   let my = touches.length > 0 ? touches[touches.length - 1].y : mouseY;
 
+  // Death owns input before any world interaction, pause menu or build ghost.
+  if (isDead) {
+      if (mx > width / 2 - 120 && mx < width / 2 + 120) {
+          if (my > height / 2 + 90 && my < height / 2 + 130) loadGame();
+          else if (my > height / 2 + 140 && my < height / 2 + 180) resetGame();
+      }
+      return false;
+  }
+
   // Placement owns the screen while it is up: PLACE and CANCEL are checked
   // before anything else so a tap near the sticks cannot fire a weapon through
   // the ghost the player is still lining up.
@@ -16440,9 +16560,7 @@ else if (mx > width/2 - 120 && mx < width/2 + 120 && my > height/2 - 110 && my <
                   }
 
                   if (my > height/2 + 240 && my < height/2 + 280) {
-                      isPaused = false; started = false; isStoryMode = false;
-                      inStoryRoom = false; inStoryIntro = false; prologuePhase = 0;
-                      inUpstairsRoom = false; journalRead = false; sfx.charge(); return false; 
+                      resetGame(); sfx.charge(); return false;
                   }
               }
 
@@ -17017,7 +17135,6 @@ if (inTravelMenu) {
               if (my > height / 2 + 80 && my < height / 2 + 130) { pendingLevel = 1; pendingStoryMode = true; pendingDebugStory = false; selectingDifficulty = true; sfx.charge(); return false; }
               
               if (localStorage.getItem('urbanTwinStickSave') !== null && my > height / 2 + 140 && my < height / 2 + 190) {
-                  started = true;
                   loadGame();
                   if (sfx.bgm && sfx.bgm.paused) sfx.bgm.play().catch(e => console.log(e));
                   if (sfx.ctx && sfx.ctx.state === 'suspended') sfx.ctx.resume();
@@ -17266,7 +17383,7 @@ function countEscort(female) {
 
 function saveGame() {
     let state = {
-        currentLevel, isStoryMode, score, totalKills,
+        currentLevel, isStoryMode, isHardMode, score, totalKills,
         smgUnlocked, dualSmgUnlocked, shotgunUnlocked, arUnlocked, rocketLauncherUnlocked, taserUnlocked,
         jetpackUnlocked, meleeUnlocked, jetpackFireExplosion, jetpackDoubleDash, meleeComboUnlocked, meleeFinisherUnlocked: window.meleeFinisherUnlocked,
         ninjaSuitUnlocked, explosiveArmorUnlocked, chemistSuitUnlocked, ninjaOwned: window.ninjaOwned, armorOwned: window.armorOwned, chemistOwned: window.chemistOwned,
@@ -17388,8 +17505,14 @@ function saveGame() {
 function loadGame() {
     let saved = localStorage.getItem('urbanTwinStickSave');
     if (saved) {
-        let state = JSON.parse(saved);
+        let state;
+        try { state = JSON.parse(saved); } catch (e) { return false; }
+        if (!state || !Number.isInteger(state.currentLevel) || state.currentLevel < 0 || state.currentLevel > 8) return false;
+        resetRunState();
         isStoryMode = state.isStoryMode;
+        isHardMode = !!state.isHardMode;
+        // Character construction derives maxHp from the farming upgrade.
+        window.farmLvl = Number(state.farmLvl) || 1;
 
         // --- RESTORE STORY ARC PROGRESSION FIRST ---
         // startAtLevel() builds the map, and whether a sector builds its
@@ -17429,7 +17552,7 @@ function loadGame() {
         window.militaryToBringM = state.militaryToBringM || 0;
         window.militaryToBringF = state.militaryToBringF || 0;
 
-        startAtLevel(state.currentLevel, true); // true = skip hard reset
+        startAtLevel(state.currentLevel, true); // Preserve the saved loadout during level entry.
 
         // --- CRITICAL FIX: Restore flags AFTER startAtLevel so they don't get overwritten! ---
         window.towersDefeated = state.towersDefeated; 
