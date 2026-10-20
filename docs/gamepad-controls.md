@@ -41,6 +41,8 @@ Touch, mouse, directional blocking and other controls keep their behavior.
 | L1 with chemist suit | Hold to charge the cannon; release to fire |
 | L1 with other suits | Reserved suit ability slot; ninja parry is not implemented yet |
 | A in the forest | Talk or collect at the visible hunting prompt |
+| D-pad left / right during a street gang check | Select Positive, Neutral or Negative |
+| A / B during a street gang check | Confirm the selected reply / leave neutrally |
 | X | Reload; cannot manufacture arrows |
 | Y or R1, without chemist suit | Existing melee attack/finisher input |
 

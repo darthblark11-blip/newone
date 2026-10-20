@@ -1883,6 +1883,18 @@ Two more things found while chasing it, both fixed:
 
 ## Population and settlements
 
+Level 1's ambient city layer has PASSIVE, NEUTRAL and THUG subclasses within
+the same 42-resident cap, off-screen placement and 300-metre fortress buffer.
+Confident neutral men use harmless six-hit street boxing and flee gun threats;
+ordinary passive civilians keep their one-hit stun. Seeded phone, bottle and
+smoking activity phases are simulation state, and painting never advances them.
+Night checks run from 21:00 to 03:30 with one private 9% gun-escalation roll per
+negative reply. District allies can fight NM0 but never become recruits, travel
+escorts or player targets; retain their live helpers during ambush pruning.
+Subclass identity and district relationships survive resident banking and saves.
+See [city residents and boxing](docs/city-people-and-boxing.md) for APIs,
+controls, bounded work, rendering and verification.
+
 `resetPopulation`, `popRelease`, `popReleasable`, `popPlace`, `settlementRoster`,
 `refreshPopulation` (~15553–15806). Settlements get a roster of citizens placed against
 their chunk's solids; `Citizen` (~10751) is the wandering NPC class. `nearSettlement()`,

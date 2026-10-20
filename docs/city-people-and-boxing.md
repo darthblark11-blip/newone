@@ -1,6 +1,33 @@
 # City residents, NM-0 patrols and boxing
 
-Level 1 has a separate ambient resident layer with adult male and female citizens. Seeded appearances combine three skin palettes, five hair colors, seven hair styles, eight top colors, four clothing treatments and four trouser palettes. Skin and hair identity follow the live model into the stun pose and subsequent corpse.
+Level 1 has a separate ambient resident layer with three civilian subclasses. Each eligible block keeps its six resident slots: three passive citizens, two confident unarmed men and one street gang member. Seeded placement rotates the subclasses around the block. Existing saved passive residents retain their identity; skin, hair and clothing follow every resident into a stun pose or corpse.
+
+| Subclass | Appearance and street behavior | Response to the player |
+| --- | --- | --- |
+| Passive | Existing male and female pedestrians, with their original appearance variety and strolling pace | Run from nearby gunfire; one landed punch causes the existing harmless stun |
+| Neutral unarmed | Men with seven skin palettes, varied hair colors, styles and lengths, T-shirts or sleeveless tops; a more confident walk | Box after being punched; six landed punches cause a harmless stun; a nearby shot or firearm aimed at them interrupts the fight and causes flight |
+| Thug | Tan skin, purple clothes and yellow accents; casual walking and smoking | Neutral during the day; may approach and question the player from 21:00 until 03:30 |
+
+Confident residents put a phone to their ear, talk while alternately walking and pausing, lower it and put it away. Other residents smoke or drink from a bottle, with separate reach, use and lower phases. Panic, boxing and knockdowns interrupt these activities.
+
+## Street gang encounters
+
+From 21:00 until 03:30, a nearby neutral gang member can walk up and question the player. The line appears above the speaker, with three compact response buttons. The available lines include “what you iz?”, “what you claim?”, “you know where you at?”, “ey check it out!” and “on 4nem bring that ahh over here”.
+
+| Response | Result |
+| --- | --- |
+| Positive | Align with that district's gang. Members become friendly, player and allied bullets pass through them, and they help fight nearby NM-0 enemies. |
+| Neutral | End the exchange peacefully. The members walk away and remain neutral. |
+| Negative | Start a fist fight. There is one 9% chance per negative response that one member draws a pistol. |
+
+Alignment belongs to the district and survives streaming, travel and campaign saves. It does not recruit the gang into the population or military departments. Aligned members remain available to help during an NM-0 ambush; ordinary residents still bank their state and leave the active battle. No extra civilian spawning takes place during the ambush. Relationships in other districts remain separate.
+
+Tap or click one of the three replies. On keyboard, **1 / 2 / 3** choose
+Positive / Neutral / Negative; **Escape** walks away neutrally. On gamepad,
+**D-pad left/right** selects a reply, **A** confirms and **B** walks away
+neutrally. A confirmation already held before the conversation cannot choose
+automatically. A response finger stays consumed until it lifts, so it cannot
+become gunfire or a boxing input after the choice closes.
 
 Six civilians per eligible city block stroll around its sidewalk, pause at intervals, and navigate obstacles through the existing indexed steering system. Nearby gunfire produces a bounded local sound event; injury records the attacker's position. Civilians run away for six seconds after the most recent threat and settle into walking afterward. Panic retains neutral/friendly flags and cannot fire a weapon. Farmers and other unarmed townsfolk also use the shared unarmed player gait while frightened.
 
@@ -21,7 +48,7 @@ one solver. Selecting a melee tool or returning to the equipped firearm leaves
 the stance. Old saved/preview poses retain their 180-frame guard fallback. See
 [Boxing and quick draw](boxing-and-duels.md) for controls and verification.
 
-One fist hit immediately stuns an unarmed civilian without reducing health.
+One landed fist hit immediately stuns a passive civilian without reducing health. Confident neutral men take six landed punches; street gang members use the existing four-hit fighter threshold. Blocked or missed punches do not advance the count. Both subclasses use the same outdoor boxing geometry, guard, counters and nonlethal knockdown as the player, without turning the whole city hostile.
 Civilian and outdoor hostile knockdowns use the earlier directional fall:
 locomotion determines travel while moving, a stationary victim falls with the
 hit, collision stops the recoil, and the 40-frame buckle settles through the
@@ -40,6 +67,22 @@ their banked age and continue through the original frame-based path.
 Skin, hair and clothing colors survive the fall. The light rig lowers and widens the actor's height footprint with the collapse, while its fallback shadow follows the same ownership rules. Existing lethal corpse fall timing is outside this change.
 
 ## Verification and previews
+
+The subclass and night encounter checks are:
+
+```sh
+node tools/check-city-subclasses.js
+node tools/check-street-thug-encounters.js
+node tools/check-city-street-controls.js
+node tools/check-city-subclass-art.js
+node tools/check-city-subclass-scene.js
+node tools/check-city-subclass-render.js
+```
+
+The browser tools use `VIS_DEPS`, `VIS_CHROME` and `VIS_P5`, with artifacts
+selected by `CITY_SUBCLASS_OUT` or `CITY_ART_OUT`. They exercise generated streets,
+actual fist contacts and projectiles, all response input paths and saved
+district relationships, and inspect the native prop grips across headings.
 
 `node tools/check-city-people.js` exercises appearance coverage, local gunfire, player-gait panic, harmless AI, attacker-relative flight, a real first-punch hit, nonlethal fall/recovery, repeated blows, guard duration and tool/firearm precedence, formation/posts, combat engagement, residency, serialized deaths and falling material height.
 

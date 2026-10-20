@@ -1311,6 +1311,11 @@ function setup() {
       }
   });
     window.addEventListener('keydown', e => {
+      if(streetThugDialogueOpen()){
+          const n=Number(e.key);if(n>=1&&n<=3&&!e.repeat)respondStreetThug(CITY_STREET_RESPONSES[n-1]);
+          else if(e.key==='Escape'&&!e.repeat)respondStreetThug('NEUTRAL');
+          e.preventDefault();return;
+      }
       window.isDesktop = true; window.showOnScreenControls = false; 
       if (!started || isDead || isWin || !player) return;
       // Local fights and duels own these keys through their frame reader. A
@@ -6944,7 +6949,7 @@ function draw() {
             postAmbushPhase = 1;
 
             // Using window.allies makes it globally permanent so it survives into the next frames
-            window.allies = enemiesList.filter(e => e.isFriendly && e.hp > 0 && !e.dead && !frontierCivilianType(e.eType));
+            window.allies = enemiesList.filter(e => e.isFriendly && e.hp > 0 && !e.dead && !e.isCityCivilian && !e.cityPersonKey && !frontierCivilianType(e.eType));
             // The cutscene needs bodies to speak; the LEDGER decides the number.
             grantSectorSurvivors(currentLevel);
             loadLedgerIntoWindow(currentLevel);
@@ -7664,6 +7669,7 @@ viewBottom = camY + height / zoom + shakePad;
       if (currentLevel !== 0 || (inUpstairsRoom && dist(player.x, player.y, 150, 0) >= 80 && dist(player.x, player.y, 0, -200) >= 120 && dist(player.x, player.y, 0, 250) >= 80)) drawUI();
       else if (!inUpstairsRoom && dist(player.x, player.y, -400, 0) >= 80) drawUI();
       if (BIOME_ACTIVE && currentBiome === 2) drawForestHuntingHud();
+      if (BIOME_ACTIVE && currentBiome === 1) drawStreetThugHud();
       if (BIOME_ACTIVE && currentBiome === 3) {
         drawFrontierSaloonHud();
         drawFrontierBountyHud();
@@ -9248,6 +9254,7 @@ function storyBeatDone(name) {
 }
 
 function resetStoryProgress() {
+    resetStreetThugEncounters();resetCityStreetInputs();
     swordKillCounter = 0;
     resetForestHuntingActivity();
     resetForestWildlife();
@@ -9760,7 +9767,7 @@ function storeWindowIntoLedger(id) {
 function sectorSurvivorCount(level) {
     const t = sectorLedger(level);
     if (t.popSeeded > 0) return Math.max(0, t.popSeeded - t.popKilled);
-    return enemiesList.filter(e => e && e.isFriendly && e.hp > 0 && !e.dead && !e.isMilitary && !frontierCivilianType(e.eType)).length;
+    return enemiesList.filter(e => e && e.isFriendly && e.hp > 0 && !e.dead && !e.isMilitary && !e.isCityCivilian && !e.cityPersonKey && !frontierCivilianType(e.eType)).length;
 }
 
 // One grant per sector, ever. `popGranted` is the latch: re-entering a
@@ -9784,7 +9791,7 @@ function grantSectorSurvivors(level) {
     let f = 0;
     if (t.popSeeded > 0) f = (level === 2) ? n : 0;
     else {
-        const freed = enemiesList.filter(e => e && e.isFriendly && e.hp > 0 && !e.dead && !e.isMilitary && !frontierCivilianType(e.eType));
+        const freed = enemiesList.filter(e => e && e.isFriendly && e.hp > 0 && !e.dead && !e.isMilitary && !e.isCityCivilian && !e.cityPersonKey && !frontierCivilianType(e.eType));
         const fem = freed.filter(e => String(e.eType || "").toUpperCase().indexOf("FEMALE") !== -1).length;
         f = Math.min(n, fem);
     }
@@ -11097,7 +11104,7 @@ function triggerExplosion(ex, ey, rad, isMolotov = false, sourceIsPlayer = true)
     let e = enemiesList[i];
     
     // STRICT TEAM FILTER: Player hits enemies ONLY. Enemies hit allies ONLY.
-    let shouldHit = (sourceIsPlayer !== e.isFriendly);
+    let shouldHit = (sourceIsPlayer !== e.isFriendly) && !(sourceIsPlayer&&streetThugCombatProtected(e));
     if (!shouldHit) continue;
 
     if (e.hp > 0 && dist(ex, ey, e.x, e.y) < rad && e.eType !== "AERIAL" && e.eType !== "AERIAL_PISTOL" && e.eType !== "SAUCER" && e.eType !== "SAUCER_RED") {
@@ -11180,7 +11187,7 @@ function triggerRocketExplosion(ex, ey, sourceIsPlayer, directHitTarget = null) 
       let e = enemiesList[i];
       
       // STRICT TEAM FILTER: Player hits enemies ONLY. Enemies hit allies ONLY.
-      let shouldHit = (sourceIsPlayer !== e.isFriendly);
+      let shouldHit = (sourceIsPlayer !== e.isFriendly) && !(sourceIsPlayer&&streetThugCombatProtected(e));
       if (!shouldHit) continue;
       
       let isAerial = (e.eType === "AERIAL" || e.eType === "AERIAL_PISTOL" || e.eType === "SAUCER" || e.eType === "SAUCER_RED");
@@ -13427,6 +13434,7 @@ function drawFigureHead(g, id, hX, hY, wear = true, sway = 0, pitch = 0) {
 function drawFigureHair(g, id, hX, hY, sway = 0) {
   if (!id) return;
   const eT = id.eType;
+  if(cityStreetLook(id)){drawCityStreetHair(g,id,hX,hY,sway);return;}
   if(eT==='NM0_ROOKIE')return; // Blue male pistol regulars are bald.
   if(id.hairStyle!==undefined){
     const c=id.hairCol||color(32,27,26),style=id.hairStyle;
@@ -13469,12 +13477,129 @@ function figureIdentity(c) {
   return { eType: c.eType, isPlayer: !!c.isPlayer, isMilitary: !!c.isMilitary, isUnarmed: !!c.isUnarmed,
            hairCol:c.hairCol,hairStyle:c.hairStyle,skinCol:c.skinCol||(c.eType==='SNAIL_HYBRID'?color(20,100,20):undefined),hatCol:c.hatCol,kerchiefCol:c.kerchiefCol,
            bonnetCol:c.bonnetCol,shirtCol:c.shirtCol,pantsCol:c.pantsCol,vestCol:c.vestCol,
-           isCityCivilian:!!c.isCityCivilian,clothingStyle:c.clothingStyle,maneCol:c.maneCol,isCharred:!!c.isCharred,
+           isCityCivilian:!!c.isCityCivilian,clothingStyle:c.clothingStyle,cityClass:c.cityClass,
+           cityHairLength:c.cityHairLength,cityAccentCol:c.cityAccentCol,maneCol:c.maneCol,isCharred:!!c.isCharred,
            frontierOccupation:c.frontierOccupation,frontierFemale:!!c.frontierFemale,
            ninjaSuit:!!(c.isPlayer&&ninjaSuitUnlocked),chemistSuit:!!(c.isPlayer&&chemistSuitUnlocked),
            cowboySuit:!!(c.isPlayer&&cowboySuitEquipped),
            explosiveArmor:!!((c.isPlayer||c.isMilitary)&&explosiveArmorUnlocked),
            jetpack:!!(c.isPlayer&&jetpackUnlocked) };
+}
+
+// Street residents use the same joints, soft cel surfaces and world light as
+// the rest of the cast. Only these two new classes receive the extra styling;
+// existing passive residents keep their established models and animation.
+function cityStreetLook(id) {
+  return !!id&&(id.cityClass==='NEUTRAL'||id.cityClass==='THUG'||
+    id.eType==='CITY_NEUTRAL_M'||id.eType==='CITY_THUG_M');
+}
+function drawCityStreetHair(g,id,x,y,sway=0) {
+  const c=id.hairCol||_headCelColor.copRim,style=id.hairStyle||0,
+    length=id.cityHairLength||0;
+  // Back and sides remain one cap. Individual curls are confined to its edge
+  // rather than becoming seven overlapping outlined beads.
+  figureCelArc(g,x-.8,y,12.8,12.3,c,HALF_PI-.16,PI+HALF_PI+.16,.64);
+  if(style===6){
+    figureCelOval(g,x-1.5,y,5.8,6.2,id.skinCol||_headCelColor.skin,.35);
+  }else if(style===2){
+    for(let i=0;i<5;i++){
+      const a=1.9+i*.62;
+      figureCelOval(g,x+Math.cos(a)*4.4,y+Math.sin(a)*4.4,4.5,3.8,c,.32);
+    }
+  }else if(style===1||style===4){
+    // A lifted quiff or a swept part has depth without rotating on the scalp.
+    figureCelOval(g,x+1,y+(style===1?-2.5:2),6.6,7.7,c,.48);
+    g.noFill();g.stroke(red(c)*1.2+24,green(c)*1.2+22,blue(c)*1.2+18,180);
+    g.strokeWeight(.55);g.bezier(x-3,y-3.8,x-1,y-2.8,x,y-.5,x+2,y+.6);g.noStroke();
+  }
+  if(length===1){
+    figureCelOval(g,x-5.1,y-3.5,7.6,4.2,c,.4);
+    figureCelOval(g,x-5.1,y+3.5,7.6,4.2,c,.4);
+  }else if(length===2){
+    if(style===3||style===5){
+      g.push();g.translate(x-5.1,y);g.rotate(radians(sway*.16));
+      figureCelOval(g,-4.5,0,11,6.4,c,.47);
+      g.fill(id.cityAccentCol||[70,70,79]);g.ellipse(-1.5,0,2.2,5);g.pop();
+    }else{
+      figureCelOval(g,x-6.1,y-4.2,10,4.6,c,.45);
+      figureCelOval(g,x-6.1,y+4.2,10,4.6,c,.45);
+    }
+  }
+}
+function drawCityStreetAttire(g,id,TL,TW,back=false) {
+  if(!cityStreetLook(id)||id.isCharred)return;
+  const shirt=id.shirtCol||[90,90,100],thug=id.cityClass==='THUG'||id.eType==='CITY_THUG_M';
+  g.push();g.scale(TL/30,TW/20);g.noStroke();
+  // The collar is a shallow curved seam set in the shirt, not an extra torso.
+  g.stroke(red(shirt)*.53,green(shirt)*.53,blue(shirt)*.53,190);g.strokeWeight(.75);g.noFill();
+  g.bezier(10.4,-3.5,7.2,-3.1,7.2,3.1,10.4,3.5);g.noStroke();
+  if(thug){
+    const accent=id.cityAccentCol||[239,194,55];
+    // Purple cloth and yellow shoulder tape read at normal gameplay scale.
+    // The same tape stays on the shirt during boxing, stuns and fatal falls.
+    g.stroke(accent);g.strokeWeight(1.65);
+    g.line(-7.7,-7.3,7,-7.3);g.line(-7.7,7.3,7,7.3);g.noStroke();
+    g.fill(accent);g.rect(-9.8,-5,2.2,10,.8);
+    if(back){g.noFill();g.stroke(accent);g.strokeWeight(.9);g.rect(-4.1,-2.3,5.5,4.6,1);g.noStroke();}
+    else {g.fill(accent);g.rect(4,2.9,3.2,2.1,.65);}
+  }else if(id.clothingStyle===1){
+    g.noFill();g.stroke(red(shirt)*.66,green(shirt)*.66,blue(shirt)*.66,185);g.strokeWeight(.75);
+    g.bezier(-5,-8.4,0,-7.7,5,-7.9,8,-8.3);
+    g.bezier(-5,8.4,0,7.7,5,7.9,8,8.3);g.noStroke();
+  }else if(!back){
+    g.fill(red(shirt)*.73,green(shirt)*.73,blue(shirt)*.73,160);g.rect(1.8,3.8,4.5,3.8,.8);
+    g.stroke(red(shirt)*1.12,green(shirt)*1.12,blue(shirt)*1.12,170);g.strokeWeight(.55);g.line(2,4.4,6,4.4);g.noStroke();
+  }
+  g.pop();
+}
+function drawCityStreetUpperArm(g,id,sx,sy,ex,ey,hx,hy,wU,wE,wH,skin) {
+  figureCelLimb(g,sx,sy,ex,ey,hx,hy,wU,wE,wH,skin);
+  if(id.clothingStyle===1)return; // Cut-off sleeves expose the entire upper arm.
+  const cx=sx+(ex-sx)*.66,cy=sy+(ey-sy)*.66;
+  figureCelLimb(g,sx,sy,(sx+cx)*.5,(sy+cy)*.5,cx,cy,
+    wU*1.10,wU*1.03,wE*1.04,id.shirtCol);
+}
+
+// An action changes the wrist target before the existing two-bone fit. The
+// prop reads that resolved wrist afterwards, so it cannot drift out of a hand.
+function cityStreetActionHand(p,hx,hy) {
+  const t=Math.max(0,Math.min(1,p.amount)),s=t*t*(3-2*t);
+  const x=p.kind==='PHONE'?1.6:p.kind==='SMOKE'?6.6:8.2;
+  const y=p.kind==='PHONE'?6.7:p.kind==='SMOKE'?3.4:5.7;
+  return {x:hx+(x-hx)*s,y:hy+(y-hy)*s};
+}
+function drawCityStreetHeld(g,e,p,hand) {
+  if(!p||!hand||p.amount<=0)return;
+  const t=Math.max(0,Math.min(1,p.amount)),skin=e.skinCol||_headCelColor.skin;
+  g.push();g.translate(hand.x,hand.y);g.noStroke();
+  if(p.kind==='PHONE'){
+    // Long edge nestles against the ear; the palm wraps around the lower edge.
+    g.rotate(-.17*t);g.stroke(12,17,25);g.strokeWeight(.65);g.fill(32,39,49);
+    g.rect(-2.1,-3.7,4.2,7.4,1.05);g.noStroke();g.fill(76,117,142);
+    g.rect(-1.45,-2.8,2.9,4.8,.55);g.fill(179,202,205,150);g.rect(-1.2,-2.4,.65,3.5,.25);
+    g.fill(13,18,24);g.rect(-.65,-3.2,1.3,.35,.15);
+    figureCelOval(g,.2,2.9,3.5,2.1,skin,.35);
+  }else if(p.kind==='BOTTLE'){
+    // The bottle tilts toward the mouth; the cap/neck and base share one axis.
+    g.rotate(-.35-.73*t);g.stroke(20,47,35);g.strokeWeight(.6);g.fill(45,116,72);
+    g.rect(-2,-2.5,4,7.7,1.2);g.noStroke();g.fill(94,159,99);g.rect(-1.3,-2,1,6.2,.5);
+    g.fill(49,99,66);g.rect(-1.05,-5,2.1,3.3,.6);
+    g.fill(206,199,153);g.rect(-1.2,-5.3,2.4,1.3,.35);
+    g.fill(220,206,155);g.rect(-1.9,.4,3.8,2.6,.35);
+    figureCelOval(g,1.4,1.7,2.8,3.8,skin,.35);
+  }else if(p.kind==='SMOKE'){
+    g.rotate(-.45*t);g.stroke(38,31,28);g.strokeWeight(.45);g.fill(226,219,188);
+    g.rect(-.3,-.8,5.9,1.6,.5);g.noStroke();g.fill(166,111,65);g.rect(-.3,-.8,1.8,1.6,.35);
+    g.fill(225,104,43);g.ellipse(5.4,0,1.5,1.65);g.fill(250,194,86);g.ellipse(5.6,-.2,.6,.65);
+    if(p.phase==='USE'){
+      // Static, phase-driven wisps use no live particles or random numbers.
+      const fade=Math.sin(Math.max(0,Math.min(1,p.progress))*PI);
+      g.noFill();g.stroke(190,201,197,70*fade);g.strokeWeight(.7);
+      g.bezier(5.6,-.8,7.4,-3.2,3.9,-5.7,6.2,-8);g.noStroke();
+    }
+    figureCelOval(g,.6,1,2.7,1.7,skin,.32);
+  }
+  g.pop();
 }
 
 // The positive X end is the collar; positive Y is the wearer's right.
@@ -13620,6 +13745,7 @@ function drawFallenAttire(g,id,TL,TW,back,progress=1,half=0) {
     if(id.jetpack&&!id.isCharred)drawFallenJetpack(g);
   }
   if(frontierCivilianType(t)&&!id.isCharred){if(dc)dc.globalAlpha=alpha;drawFrontierCivilianAttire(g,id,30,20,back&&p>.5);}
+  if(cityStreetLook(id)&&!id.isCharred){if(dc)dc.globalAlpha=alpha;drawCityStreetAttire(g,id,30,20,back&&p>.5);}
   if(dc){dc.globalAlpha=alpha;if(half)dc.restore();}g.pop();
 }
 
@@ -13870,7 +13996,7 @@ function drawFallBone(r,x,y,nx,ny,width,col,tip,tipSz,join) {
   if(tip)figureCelOval(r,len+tipSz*.30,0,tipSz,tipSz*.86,tip);
   r.pop();
 }
-function drawFallLimb(r,rig,rg,i,f,shirt,pants,skin,boot,faceDown=false) {
+function drawFallLimb(r,rig,rg,i,f,shirt,pants,skin,boot,faceDown=false,id=null) {
   const L=rg.limbs[i],arm=i<2,s=i%2?1:-1;
   const ox=arm?rig.shX:rig.hipX,oy=s*(arm?rig.shY:rig.hipY);
   const knee=ragKnee(L)*(faceDown?.7:1),limbA=arm?s*(HALF_PI+(faceDown?L.a*.35-.5:L.a)):PI-s*L.a*(faceDown?.7:1)*f;
@@ -13886,8 +14012,10 @@ function drawFallLimb(r,rig,rg,i,f,shirt,pants,skin,boot,faceDown=false) {
   const hx=ex+Math.cos(ang+bend)*l2*projection,hy=ey+Math.sin(ang+bend)*l2;
   const w1=arm?rig.upperW*(faceDown?.92:1):rig.thighW;
   const w2=arm?rig.foreW*(faceDown?.92:1):rig.shinW;
-  drawFallBone(r,ox,oy,ex,ey,w1,arm?shirt:pants,undefined,undefined,{x:hx,y:hy,width:w2});
-  drawFallBone(r,ex,ey,hx,hy,w2,arm?shirt:pants,
+  const streetArm=arm&&cityStreetLook(id);
+  if(streetArm)drawCityStreetUpperArm(r,id,ox,oy,ex,ey,hx,hy,w1,(w1+w2)*.5,w2,skin);
+  else drawFallBone(r,ox,oy,ex,ey,w1,arm?shirt:pants,undefined,undefined,{x:hx,y:hy,width:w2});
+  drawFallBone(r,ex,ey,hx,hy,w2,streetArm?skin:arm?shirt:pants,
     arm?(skin||color(235,180,140)):boot,arm?rig.hand*(faceDown?.94:1):rig.foot,false);
 }
 
@@ -14472,7 +14600,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.fill(sK); r.ellipse(0, -5, 11, 11); r.noStroke(); for (let d of this.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.pop(); 
   } 
   else { 
-      r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.fall?figureFallYaw(this.fall,this.rag):this.aA); const RG = this.rag; if (RG) { if(!this.fall)r.rotate(RG.ang); r.scale(RAG_SCALE); } if (RG) ragContour(r, a); else r.noStroke(); const RP = this.fall?projectFallRig(this.bW,this.bH,f):ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW; r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -10 : -10, lY2 = this.bW === 105 ? 15 : 2; r.push(); if (RG) { const bootC = color(this.pC.levels[0] * 0.55, this.pC.levels[1] * 0.55, this.pC.levels[2] * 0.55, a); if(this.fall){drawFallLimb(r,RP,RG,2,f,this.sC,this.pC,sK,bootC); drawFallLimb(r,RP,RG,3,f,this.sC,this.pC,sK,bootC);}else{ragLimb(r, RP.hipX, -RP.hipY, PI + RG.limbs[2].a, -ragKnee(RG.limbs[2]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[2])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot); ragLimb(r, RP.hipX,  RP.hipY, PI - RG.limbs[3].a,  ragKnee(RG.limbs[3]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[3])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot);} } else { r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4); } if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(lX, -4, 12, 16); } r.pop(); const underArm=this.fall&&this.fall.faceDown&&this.fall.hold&&f>.45?this.fall.hold.arm:-1; if(underArm>=0){ragContour(r,a);drawFallLimb(r,RP,RG,underArm,f,this.sC,this.pC,sK);} if (RG) ragContour(r, a); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); if (RG) { figureCelOval(r, 0, 0, TL, TW, this.sC); } else r.ellipse(0, 0, this.bW + 15 * f, this.bH);
+      r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.fall?figureFallYaw(this.fall,this.rag):this.aA); const RG = this.rag; if (RG) { if(!this.fall)r.rotate(RG.ang); r.scale(RAG_SCALE); } if (RG) ragContour(r, a); else r.noStroke(); const RP = this.fall?projectFallRig(this.bW,this.bH,f):ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW; r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -10 : -10, lY2 = this.bW === 105 ? 15 : 2; r.push(); if (RG) { const bootC = color(this.pC.levels[0] * 0.55, this.pC.levels[1] * 0.55, this.pC.levels[2] * 0.55, a); if(this.fall){drawFallLimb(r,RP,RG,2,f,this.sC,this.pC,sK,bootC); drawFallLimb(r,RP,RG,3,f,this.sC,this.pC,sK,bootC);}else{ragLimb(r, RP.hipX, -RP.hipY, PI + RG.limbs[2].a, -ragKnee(RG.limbs[2]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[2])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot); ragLimb(r, RP.hipX,  RP.hipY, PI - RG.limbs[3].a,  ragKnee(RG.limbs[3]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[3])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot);} } else { r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4); } if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(lX, -4, 12, 16); } r.pop(); const underArm=this.fall&&this.fall.faceDown&&this.fall.hold&&f>.45?this.fall.hold.arm:-1; if(underArm>=0){ragContour(r,a);drawFallLimb(r,RP,RG,underArm,f,this.sC,this.pC,sK,undefined,false,this.id);} if (RG) ragContour(r, a); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); if (RG) { figureCelOval(r, 0, 0, TL, TW, this.sC); } else r.ellipse(0, 0, this.bW + 15 * f, this.bH);
       if (this.eT === "ARMORED_STANDARD") { r.fill(100); if (RG) r.rect(-TL * 0.26, -TW * 0.46, TL * 0.58, TW * 0.92, 4); else r.rect(-10, -12, 20, 24, 4); }
       if (this.eT === "FEMALE_PISTOL" && !(this.backFacing&&(!this.fall||f>.5))) { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(4, -6, 12, 10); r.ellipse(4, 6, 12, 10); }
       drawFallenAttire(r,this.id,RG?TL:this.bW+15*f,RG?TW:this.bH,this.backFacing,this.fall?f:1);
@@ -14482,7 +14610,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       let lAY = this.eT === "ARMORED" ? -30 : -14, rAY = this.eT === "ARMORED" ? 30 : 11, slX = lerp(-5, 0, f), hX = lerp(-12, 12, f), armLY = lerp(lAY, lAY + 3, f), rslX = lerp(15, 0, f), rhX = lerp(25, 12, f), armRY = lerp(rAY, rAY + 3, f); 
       // Decals are stains and cleared the stroke; the arms are limbs
       // and take it back, the same handover the living figure does.
-      if (RG) { ragContour(r, a); if(this.fall){if(underArm!==0)drawFallLimb(r,RP,RG,0,f,this.sC,this.pC,sK); if(underArm!==1)drawFallLimb(r,RP,RG,1,f,this.sC,this.pC,sK);}else{ragLimb(r,  RP.shX, -RP.shY, -(HALF_PI + RG.limbs[0].a), -RG.limbs[0].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand); ragLimb(r,  RP.shX,  RP.shY,   HALF_PI + RG.limbs[1].a,   RG.limbs[1].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand);} } else { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(slX, armLY, 16, 8); r.fill(sK); r.ellipse(hX, armLY, 8, 8); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(rslX, armRY, 25, 8); r.fill(sK); r.ellipse(rhX, armRY, 8, 8); }
+      if (RG) { ragContour(r, a); if(this.fall){if(underArm!==0)drawFallLimb(r,RP,RG,0,f,this.sC,this.pC,sK,undefined,false,this.id); if(underArm!==1)drawFallLimb(r,RP,RG,1,f,this.sC,this.pC,sK,undefined,false,this.id);}else{ragLimb(r,  RP.shX, -RP.shY, -(HALF_PI + RG.limbs[0].a), -RG.limbs[0].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand); ragLimb(r,  RP.shX,  RP.shY,   HALF_PI + RG.limbs[1].a,   RG.limbs[1].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand);} } else { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(slX, armLY, 16, 8); r.fill(sK); r.ellipse(hX, armLY, 8, 8); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(rslX, armRY, 25, 8); r.fill(sK); r.ellipse(rhX, armRY, 8, 8); }
       if (this.eT === "AERIAL" || this.eT === "AERIAL_PISTOL") { r.fill(80, a); r.rect(-18, -12, 12, 24, 3); } 
       if (this.eT !== "ARMORED" && this.eT !== "MOLOTOV" && this.eT !== "AERIAL" && !(this.id&&this.id.isUnarmed)) { r.push(); r.translate(20 - 10 * f, 8 + 15 * f); r.rotate(f * PI / 2); if (this.cW === WEAPONS.SMG || this.cW === WEAPONS.DUAL_SMG) { r.fill(40); r.rect(31, 12, 24, 8, 2); r.rect(35, 20, 6, 12); } else if (this.cW === WEAPONS.ASSAULT_RIFLE) { r.fill(40); r.rect(5, 4, 42, 4, 1); r.fill(139, 69, 19); r.rect(15, 3, 12, 6, 1); r.rect(0, 3, 8, 6, 1); } else if (this.cW === WEAPONS.SHOTGUN) { r.fill(30); r.rect(5, 4, 40, 5, 1); r.fill(15); r.rect(20, 3, 14, 7, 1); r.fill(50); r.rect(5, 3, 12, 7, 2); } else if (this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { r.fill(50, 70, 50); r.rect(5, 4, 45, 6, 2); r.fill(30); r.rect(20, 2, 10, 10, 1); } else { r.fill(40); r.rect(15, 5, 16, 6, 2); } r.pop(); if (this.cW === WEAPONS.DUAL_SMG) { r.push(); r.translate(20 - 10 * f, -14 - 15 * f); r.rotate(-f * PI / 2); r.fill(40); r.rect(15, -7, 24, 8, 2); r.rect(19, -19, 6, 12); r.pop(); } } else if (this.eType === "MOLOTOV") { r.push(); r.translate(20 - 10 * f, 8 + 15 * f); r.rotate(f * PI / 2); r.fill(30, 120, 30); r.rect(0, -8, 8, 16, 2); r.pop(); } else if (this.eType === "ARMORED") { r.push(); r.translate(30 - 10 * f, 25 + 15 * f); r.rotate(f * PI / 2); r.fill(30); r.rect(0, -10, 50, 20, 4); r.pop(); }
       if(this.swordHeadless){r.pop();r.pop();return;}
@@ -14961,8 +15089,9 @@ function pickHead(len) {
 }
 
 // Ambient city residents are independent of the story recruitment ledger.
-const CITY_CIVILIANS = ["CITY_CITIZEN_M", "CITY_CITIZEN_F"];
+const CITY_CIVILIANS = ["CITY_CITIZEN_M", "CITY_CITIZEN_F", "CITY_NEUTRAL_M", "CITY_THUG_M"];
 const CITY_SKIN = [[103,66,47],[176,121,83],[239,199,168]];
+const CITY_STREET_SKIN = [[72,46,35],[103,66,47],[145,94,62],[176,121,83],[200,156,112],[220,183,145],[239,199,168]];
 const CITY_NM0_CLEARANCE = 3000; // HUD distances use 10 world units per metre.
 let cityNoise = [], cityPeopleFrame = -99;
 function cityAppearance(e, seed) {
@@ -14975,6 +15104,69 @@ function cityAppearance(e, seed) {
   e.shirtCol=color(...pick([[40,139,163],[228,171,59],[153,71,102],[91,129,80],[213,206,180],[72,91,143],[188,82,59],[101,83,136]]));
   e.pantsCol=color(...pick([[46,65,91],[83,66,51],[53,58,62],[131,115,90]]));
   e.panicTimer=0; e.state="WANDER"; e.cityDistance=(seed%3664); e.cityPause=0;
+  e.citySeed=seed>>>0;
+  e.cityClass=e.eType==="CITY_THUG_M"?"THUG":e.eType==="CITY_NEUTRAL_M"?"NEUTRAL":"PASSIVE";
+  if(e.cityClass!=="PASSIVE"){
+    e.bodyW=22;e.bodyH=28;e.cityHairLength=pick([0,1,2]);e.clothingStyle=pick([0,1]);
+    if(e.cityClass==="NEUTRAL")e.skinCol=color(...pick(CITY_STREET_SKIN));
+    else {e.skinCol=color(194,143,95);e.shirtCol=color(105,56,151);e.pantsCol=color(48,39,65);e.cityAccentCol=color(244,197,54);}
+    e.cityActivity={kind:e.cityClass==="THUG"?"SMOKE":pick(["PHONE","SMOKE","BOTTLE"]),phase:"WAIT",
+      timeMs:0,durationMs:1800+(seed%7200),cycle:0};
+  }
+}
+// Exactly six slots remain in each block. Rotate the mix deterministically so
+// a particular street corner is not always occupied by the same subclass.
+function cityCivilianType(cx,cy,slot,old) {
+  if(old){
+    if(old.cityClass==="THUG")return "CITY_THUG_M";
+    if(old.cityClass==="NEUTRAL")return "CITY_NEUTRAL_M";
+    // Earlier saves have wounded passive people in these slots, not new thugs.
+    return old.eType==="CITY_CITIZEN_F"?"CITY_CITIZEN_F":CITY_CIVILIANS[slot%2];
+  }
+  const turn=(Math.abs(Math.imul(cx,73856093)^Math.imul(cy,19349663))+slot)%6;
+  return turn===5?"CITY_THUG_M":turn>=3?"CITY_NEUTRAL_M":CITY_CIVILIANS[slot%2];
+}
+function cityInterruptActivity(e) {
+  const a=e.cityActivity;
+  if(a&&a.phase!=="WAIT"){a.phase="WAIT";a.timeMs=0;a.durationMs=2600+((e.citySeed||0)%3400);}
+}
+function cityActivityPose(e) {
+  const a=e&&e.cityActivity;
+  if(!a||a.phase==="WAIT"||e.dead||e.hp<=0||e.panicTimer>0||e.stunTimer>0||
+     e.cityStreetFight||e.cityThugChecking||(typeof boxingActive==="function"&&boxingActive(e)))return null;
+  const progress=Math.max(0,Math.min(1,a.timeMs/a.durationMs));
+  const pose=e._cityActivityPose||(e._cityActivityPose={});
+  pose.kind=a.kind;pose.phase=a.phase;pose.progress=progress;
+  pose.amount=a.phase==="REACH"?progress:a.phase==="LOWER"?1-progress:1;
+  pose.paused=a.phase==="USE"&&(a.kind==="BOTTLE"||
+    a.kind==="PHONE"&&Math.floor(a.timeMs/2200)%3!==2||a.kind==="SMOKE"&&a.timeMs<850);
+  return pose;
+}
+function updateCityActivity(e) {
+  const a=e.cityActivity;if(!a)return false;
+  // Simulation time only: no clocks, particles or shared random draws per frame.
+  a.timeMs+=typeof deltaTime==="number"?Math.max(0,Math.min(50,deltaTime)):1000/60;
+  if(a.timeMs>=a.durationMs){
+    a.timeMs-=a.durationMs;
+    if(a.phase==="WAIT"){a.phase="REACH";a.durationMs=550;}
+    else if(a.phase==="REACH"){a.phase="USE";a.durationMs=a.kind==="PHONE"?12500:a.kind==="SMOKE"?3400:1800;}
+    else if(a.phase==="USE"){a.phase="LOWER";a.durationMs=550;}
+    else {a.phase="WAIT";a.cycle=(a.cycle||0)+1;
+      a.durationMs=6000+((Math.imul((e.citySeed||0)^a.cycle,1664525)>>>0)%6500);}
+  }
+  const pose=cityActivityPose(e);return !!(pose&&pose.paused);
+}
+function noticeCivilianAim(e) {
+  if(e.cityClass!=="NEUTRAL"||!player||player.hp<=0||player.dead||!player.isArmed||
+     player.isUnarmed||player.currentWeapon===WEAPONS.BOW||
+     player.reloadTimer>0||player.meleeTimer>0||!playerAiming(player))return;
+  if(e.cityAimFrame!==undefined&&frameCount-e.cityAimFrame<10)return;
+  e.cityAimFrame=frameCount;
+  const dx=e.x-player.x,dy=e.y-player.y;
+  if(dx*dx+dy*dy>700*700)return;
+  const c=Math.cos(player.aimAngle),s=Math.sin(player.aimAngle),along=dx*c+dy*s;
+  const side=dx*s-dy*c,width=Math.max(22,along*.12);
+  if(along>0&&side*side<width*width&&shovelActorLOS(player,e))scareCivilian(e,player.x,player.y);
 }
 function unarmedCivilian(e) {
   return !!e&&!e.isPlayer&&(e.isCityCivilian||e.eType==="FARMER_MALE"||e.eType==="FARMER_FEMALE"||
@@ -14987,6 +15179,8 @@ function civilianNoise(x,y,radius=620,source=null) {
   cityNoise.push({x,y,r:radius,t:frameCount,depth:sourceDepth});if(cityNoise.length>8)cityNoise.shift();
 }
 function scareCivilian(e,x,y) {
+  if(typeof cityCancelStreetFight==="function")cityCancelStreetFight(e);
+  cityInterruptActivity(e);
   e.panicX=x;e.panicY=y;e.panicTimer=360;e.isNeutral=true;e.isFriendly=true;e.isArmed=false;
   if(e.stunTimer<=0)e.state="FLEE";
 }
@@ -14997,6 +15191,246 @@ function noticeCivilianNoise(e) {
     if((d>=SHOVEL.underground)!==(nd>=SHOVEL.underground)||Math.abs(d-nd)>SHOVEL.step)continue;
     if(Math.hypot(e.x-n.x,e.y-n.y)<n.r){scareCivilian(e,n.x,n.y);e.cityHeard=n.t;break;}
   }
+}
+// Street relationships belong to a stable city district, never to a randomly
+// placed combat recruit. Streaming a block cannot reset an accepted truce.
+const STREET_THUG_PHRASES = Object.freeze(["what you iz?", "what you claim?", "you know where you at?", "ey check it out!", "on 4nem bring that ahh over here"]);
+let _streetThugActive = null, _streetThugTickFrame = -1;
+function streetThugIsGang(e) { return !!e && e.cityClass === 'THUG'; }
+function streetThugNight() {
+  const h = ((worldTimeMs / DAY_MS * 24) % 24 + 24) % 24;
+  return h >= 21 || h < 3.5;
+}
+function streetThugGroupKey(e) {
+  if (e.cityThugGroup) return e.cityThugGroup;
+  const cx = Number.isFinite(e.cityCx) ? e.cityCx : Math.floor(e.x / CHUNK_W),
+    cy = Number.isFinite(e.cityCy) ? e.cityCy : Math.floor(e.y / CHUNK_W);
+  return e.cityThugGroup = Math.floor(cx / 2) + ',' + Math.floor(cy / 2);
+}
+function streetThugSeed(key) {
+  let n = 2166136261;
+  for (let i = 0; i < key.length; i++) n = Math.imul(n ^ key.charCodeAt(i), 16777619);
+  return (n >>> 0) || 1;
+}
+function streetThugGroup(e) {
+  const b = getBiomeState(1), groups = b.streetThugGroups || (b.streetThugGroups = {}), key = streetThugGroupKey(e);
+  return groups[key] || (groups[key] = { relationship: 'NEUTRAL', rng: streetThugSeed(key), encounters: 0, gunRolls: 0, cooldown: 0 });
+}
+function streetThugCombatProtected(e) {
+  return streetThugIsGang(e) && e.cityThugRelationship === 'ALLY';
+}
+function streetThugSetDisposition(e) {
+  const allied = streetThugCombatProtected(e), hostile = !!e.cityThugHostile;
+  e.isFriendly = allied || !hostile; e.isNeutral = !allied && !hostile;
+  e.isUnarmed = !e.cityThugGunDrawn; e.isArmed = !!e.cityThugGunDrawn;
+  if (e.cityThugGunDrawn) {
+    e.currentWeapon = WEAPONS.PISTOL;
+    if (!Number.isFinite(e.ammo)) e.ammo = WEAPONS.PISTOL.maxAmmo;
+  }
+}
+function streetThugPlayAllowed() {
+  return !!player && player.hp > 0 && !player.dead && currentLevel === 1 && currentBiome === 1 && started && doTick &&
+    !isPaused && !isDead && !isWin && !killcamMode && !inStoryIntro && !inStoryRoom &&
+    !inTownCutscene && !inFortCutscene && !inPostAmbushCutscene && !inFarmCutscene && !inFarmPostCutscene &&
+    !inDarchonCall && !inTravelMenu && !inOverworldView && !inWorldBuildingMenu && !inUpgradeMenu;
+}
+function streetThugGunThreat(e) {
+  if (!player || !player.isArmed || player.isUnarmed || player.currentWeapon === WEAPONS.BOW ||
+      !rightStick || !rightStick.active || (rightStick.dist || Math.hypot(rightStick.dx || 0, rightStick.dy || 0)) < .15) return false;
+  const dx = e.x - player.x, dy = e.y - player.y, d2 = dx * dx + dy * dy;
+  return d2 < 620 * 620 && d2 > 0 && (dx * Math.cos(player.aimAngle) + dy * Math.sin(player.aimAngle)) / Math.sqrt(d2) > .88 &&
+    shovelActorLOS(player, e);
+}
+function streetThugGunNoise(e) {
+  for (let i = cityNoise.length - 1; i >= 0; i--) {
+    const n = cityNoise[i];
+    if (frameCount - n.t > 18 || n.t <= (e.cityHeard === undefined ? -1 : e.cityHeard)) continue;
+    const d = shovelPlayerDepth(e), nd = n.depth || 0;
+    if ((d >= SHOVEL.underground) !== (nd >= SHOVEL.underground) || Math.abs(d - nd) > SHOVEL.step) continue;
+    if ((e.x - n.x) ** 2 + (e.y - n.y) ** 2 < n.r * n.r) { e.cityHeard = n.t; return n; }
+  }
+  return null;
+}
+function streetThugStopEncounter(cooldown = 900) {
+  const active = _streetThugActive;
+  if (!active) return;
+  streetThugGroup(active.leader).cooldown = Math.max(streetThugGroup(active.leader).cooldown || 0, cooldown);
+  for (const e of active.members) { e.cityThugChecking = false; e.cityPause = Math.max(e.cityPause || 0, 35); }
+  _streetThugActive = null;
+}
+function streetThugEncounter() {
+  const a = _streetThugActive;
+  if (a && (!streetThugPlayAllowed() || !streetThugNight() || nm0AmbushActive || a.leader.dead || !(a.leader.hp > 0) || a.leader.stunTimer > 0 ||
+      !enemiesList.includes(a.leader) || Math.hypot(a.leader.x - player.x, a.leader.y - player.y) > 650 ||
+      !shovelActorsVisible(a.leader, player) || streetThugGunThreat(a.leader))) streetThugStopEncounter();
+  return _streetThugActive;
+}
+function streetThugCanChallenge(e) {
+  return streetThugIsGang(e) && streetThugPlayAllowed() && streetThugNight() && !nm0AmbushActive &&
+    e.hp > 0 && !e.dead && !(e.stunTimer > 0) && !(e.panicTimer > 0) && !e.cityStreetFight &&
+    !streetThugCombatProtected(e) && !e.cityThugHostile && !(streetThugGroup(e).cooldown > 0) &&
+    !boxingActive(player) && Math.hypot(e.x - player.x, e.y - player.y) < 360 &&
+    cityCivilianAllowed(e.x, e.y) && cityCivilianAllowed(player.x, player.y) && inView(e.x, e.y, 40) &&
+    shovelActorLOS(e, player) && !streetThugGunThreat(e);
+}
+function streetThugBeginEncounter(e) {
+  const groupKey = streetThugGroupKey(e), g = streetThugGroup(e), members = [e];
+  // The civilian budget remains unchanged: a check uses at most four already
+  // resident neighbours, and never spawns an escort in the player's view.
+  for (let i = 0; i < enemiesList.length && members.length < 4; i++) {
+    const m = enemiesList[i];
+    if (m !== e && streetThugIsGang(m) && streetThugGroupKey(m) === groupKey && m.hp > 0 && !m.dead &&
+        !(m.stunTimer > 0) && !(m.panicTimer > 0) && !m.cityStreetFight && !m.cityThugHostile &&
+        Math.hypot(m.x - e.x, m.y - e.y) < 480 && shovelActorsVisible(m, e)) members.push(m);
+  }
+  g.encounters = (g.encounters || 0) + 1;
+  const phrase = STREET_THUG_PHRASES[(streetThugSeed(groupKey) + g.encounters - 1) % STREET_THUG_PHRASES.length];
+  for (const m of members) { m.cityThugChecking = true; m.cityPause = 0; }
+  _streetThugActive = { leader: e, members, phrase, phase: 'APPROACH', ready: false, groupKey };
+}
+function chooseStreetThugResponse(choice) {
+  const a = streetThugEncounter();
+  if (!a || !a.ready || !['POSITIVE', 'NEUTRAL', 'NEGATIVE'].includes(choice)) return false;
+  const g = streetThugGroup(a.leader), members = a.members.filter(e => e.hp > 0 && !e.dead && !(e.stunTimer > 0));
+  streetThugStopEncounter(choice === 'NEUTRAL' ? 2400 : 1800);
+  if (choice === 'POSITIVE') {
+    g.relationship = 'ALLY';
+    for (const e of enemiesList) if (streetThugIsGang(e) && streetThugGroupKey(e) === a.groupKey) {
+      e.cityThugRelationship = 'ALLY'; e.cityThugHostile = false; e.cityThugHostileTicks = 0;
+      cityCancelStreetFight(e); e.cityThugGunDrawn = false; streetThugSetDisposition(e); bankCityPerson(e);
+    }
+  } else if (choice === 'NEUTRAL') {
+    for (const e of members) e.cityThugWalkAway = 180;
+  } else if (choice === 'NEGATIVE') {
+    // Exactly one independent district RNG sample for this response. Neither
+    // walking, drawing speech, nor a later punch can reroll the nine percent.
+    let n = g.rng >>> 0; n ^= n << 13; n ^= n >>> 17; n ^= n << 5; g.rng = (n >>> 0) || 1;
+    g.gunRolls = (g.gunRolls || 0) + 1;
+    const drawsGun = g.rng / 4294967296 < .09;
+    for (let i = 0; i < members.length; i++) {
+      const e = members[i]; e.cityThugHostile = true; e.cityThugHostileTicks = 1800;
+      e.cityThugGunDrawn = drawsGun && i === 0; streetThugSetDisposition(e);
+      if (e.cityThugGunDrawn) { cityCancelStreetFight(e); e.cityThugHostile = true; streetThugSetDisposition(e); }
+      else startCityStreetFight(e, player);
+      bankCityPerson(e);
+    }
+  }
+  return true;
+}
+function streetThugFlee(e, threat) {
+  cityCancelStreetFight(e); e.cityThugHostile = false; e.cityThugHostileTicks = 0; e.cityThugGunDrawn = false;
+  scareCivilian(e, threat.x, threat.y); streetThugSetDisposition(e);
+  if (_streetThugActive && _streetThugActive.members.includes(e)) streetThugStopEncounter(1200);
+}
+function streetThugOnDamage(e, source) {
+  if (!streetThugIsGang(e)) return;
+  cityInterruptActivity(e);
+  // Friendly crossfire cannot revoke an agreement; a committed gunman also
+  // keeps his response rather than becoming friendly on the first body hit.
+  if (streetThugCombatProtected(e) || e.cityThugGunDrawn && e.cityThugHostile) {
+    streetThugSetDisposition(e); return;
+  }
+  streetThugFlee(e, source || player || e);
+}
+function streetThugCombatTarget(e, allied) {
+  if (!allied) return shovelActorsVisible(e, player) ? player : null;
+  if (e.cityThugTargetTick === undefined || frameCount % 10 === (e.aiOffset || 0) % 10) {
+    e.cityThugTargetTick = frameCount; e.cityThugTarget = null; let best = 600 * 600;
+    for (const t of enemiesList) {
+      if (!t || t === e || t.dead || !(t.hp > 0) || t.isFriendly || t.isNeutral || t.isCityCivilian || unarmedCivilian(t)) continue;
+      const d2 = (t.x - e.x) ** 2 + (t.y - e.y) ** 2;
+      if (d2 < best && shovelActorsVisible(e, t)) { best = d2; e.cityThugTarget = t; }
+    }
+    e.cityThugTargetLOS = e.cityThugTarget ? shovelActorLOS(e, e.cityThugTarget) : false;
+  }
+  const t = e.cityThugTarget;
+  return t && !t.dead && t.hp > 0 && !t.isFriendly && !t.isNeutral &&
+    (t.x - e.x) ** 2 + (t.y - e.y) ** 2 < 600 * 600 && shovelActorsVisible(e, t) ? t : null;
+}
+function streetThugArmedCombat(e, allied) {
+  const t = streetThugCombatTarget(e, allied);
+  if (!t) { if (allied) { e.cityThugGunDrawn = false; streetThugSetDisposition(e); } return false; }
+  e.cityThugGunDrawn = true; streetThugSetDisposition(e); e.state = 'CHASE';
+  if (e.fireTimer > 0) e.fireTimer--;
+  if (e.muzzleFlash > 0) e.muzzleFlash--;
+  if (e.weaponKick > 0) e.weaponKick--;
+  if (e.reloadTimer > 0 && --e.reloadTimer <= 0) e.ammo = WEAPONS.PISTOL.maxAmmo;
+  const d = Math.hypot(t.x - e.x, t.y - e.y); e.aimAngle = Math.atan2(t.y - e.y, t.x - e.x);
+  e.isMoving = false; e.gait = lerp(e.gait || 0, 0, .16);
+  if (d > 220) cityMove(e, t.x, t.y, 1.85);
+  e.aimAngle = Math.atan2(t.y - e.y, t.x - e.x);
+  const clear = allied ? e.cityThugTargetLOS : shovelActorLOS(e, t);
+  if (clear && d < 600 && e.fireTimer <= 0 && e.reloadTimer <= 0) {
+    if (e.ammo > 0) e.fire(e.aimAngle);
+    else e.reloadTimer = 90;
+  }
+  return true;
+}
+function updateStreetThug(e) {
+  if (!streetThugIsGang(e)) return false;
+  const g = streetThugGroup(e); e.cityThugRelationship = g.relationship === 'ALLY' ? 'ALLY' : 'NEUTRAL';
+  if (_streetThugTickFrame !== frameCount) { _streetThugTickFrame = frameCount; streetThugEncounter(); }
+  if (g._frame !== frameCount) { g._frame = frameCount; if (streetThugPlayAllowed() && g.cooldown > 0) g.cooldown--; }
+  if (e.hitFlash > 0) e.hitFlash--;
+  if (!streetThugPlayAllowed() || !shovelActorsVisible(e, player)) {
+    cityCancelStreetFight(e); e.cityThugHostile = false; e.cityThugGunDrawn = false; streetThugSetDisposition(e); e.isMoving = false; return true;
+  }
+  const allied = streetThugCombatProtected(e);
+  if (!allied && !e.cityThugGunDrawn) {
+    const noise = streetThugGunNoise(e);
+    if (noise || streetThugGunThreat(e)) streetThugFlee(e, noise || player);
+  }
+  if (!allied && e.panicTimer > 0) {
+    e.panicTimer--; e.state = 'FLEE';
+    const a = Math.atan2(e.y - e.panicY, e.x - e.panicX);
+    cityMove(e, e.x + Math.cos(a) * 120, e.y + Math.sin(a) * 120, 4.5); return true;
+  }
+  if (e.cityThugHostile && (!streetThugNight() || nm0AmbushActive || --e.cityThugHostileTicks <= 0 ||
+      Math.hypot(e.x - player.x, e.y - player.y) > 720)) {
+    cityCancelStreetFight(e); e.cityThugHostile = false; e.cityThugGunDrawn = false; streetThugSetDisposition(e);
+  }
+  if (allied && streetThugArmedCombat(e, true)) return true;
+  if (e.cityThugHostile && e.cityThugGunDrawn) return streetThugArmedCombat(e, false);
+  if (e.cityStreetFight) return false; // Shared world boxing owns fists and hits.
+  if (e.cityThugWalkAway > 0) {
+    e.cityThugWalkAway--; e.state = 'WANDER';
+    const angle = Math.atan2(e.y - player.y, e.x - player.x);
+    cityMove(e, e.x + Math.cos(angle) * 100, e.y + Math.sin(angle) * 100, 1.8); return true;
+  }
+  if (!_streetThugActive && streetThugCanChallenge(e)) streetThugBeginEncounter(e);
+  const a = _streetThugActive;
+  if (a && a.members.includes(e)) {
+    const slot = a.members.indexOf(e), d = Math.hypot(e.x - player.x, e.y - player.y), hold = 112 + slot * 20;
+    e.aimAngle = Math.atan2(player.y - e.y, player.x - e.x); e.isMoving = false; e.gait = lerp(e.gait || 0, 0, .16);
+    if (d > hold + 12) cityMove(e, player.x, player.y, 1.6);
+    if (e === a.leader) { a.ready = d <= 150; a.phase = a.ready ? 'DIALOGUE' : 'APPROACH'; }
+    return true;
+  }
+  streetThugSetDisposition(e); e.state = 'WANDER';
+  // Ordinary idle walking and smoking remain in the common civilian updater.
+  return false;
+}
+function streetThugRecord(e) {
+  if (!streetThugIsGang(e)) return {};
+  const g = streetThugGroup(e);
+  return { streetThugGroup: streetThugGroupKey(e), streetThugRelationship: g.relationship,
+    streetThugCooldown: g.cooldown || 0, streetThugHostile: !!e.cityThugHostile,
+    streetThugHostileTicks: e.cityThugHostileTicks || 0, streetThugGunDrawn: !!e.cityThugGunDrawn };
+}
+function restoreStreetThugRecord(e, old = null) {
+  if (!streetThugIsGang(e)) return;
+  if (old && typeof old.streetThugGroup === 'string') e.cityThugGroup = old.streetThugGroup;
+  const g = streetThugGroup(e);
+  if (old && old.streetThugRelationship === 'ALLY') g.relationship = 'ALLY';
+  if (old) g.cooldown = Math.max(g.cooldown || 0, Math.max(0, Math.min(3600, Number(old.streetThugCooldown) || 0)));
+  e.cityThugRelationship = g.relationship === 'ALLY' ? 'ALLY' : 'NEUTRAL';
+  e.cityThugHostile = !streetThugCombatProtected(e) && !!(old && old.streetThugHostile);
+  e.cityThugHostileTicks = old ? Math.max(0, Math.min(1800, Number(old.streetThugHostileTicks) || 0)) : 0;
+  e.cityThugGunDrawn = e.cityThugHostile && !!(old && old.streetThugGunDrawn);
+  streetThugSetDisposition(e);
+}
+function resetStreetThugEncounters() {
+  streetThugStopEncounter(0); _streetThugActive = null; _streetThugTickFrame = -1;
 }
 function cityRoute(cx,cy,d) {
   d=((d%3664)+3664)%3664;const x=cx*CHUNK_W,y=cy*CHUNK_W;
@@ -15032,10 +15466,12 @@ function cityMove(e,x,y,speed) {
   e.armDrag=lerp(e.armDrag||0,e.isMoving?1:0,.15);
 }
 function updateCityCivilian(e) {
-  noticeCivilianNoise(e);e.forceNudge();if(e.hitFlash>0)e.hitFlash--;
+  if(e.cityClass==="THUG"&&typeof updateStreetThug==="function"&&updateStreetThug(e))return;
+  if(e.cityClass!=="THUG")noticeCivilianNoise(e);noticeCivilianAim(e);e.forceNudge();if(e.hitFlash>0)e.hitFlash--;
   if(e.panicTimer>0){e.panicTimer--;e.state="FLEE";
     const a=Math.atan2(e.y-e.panicY,e.x-e.panicX);cityMove(e,e.x+Math.cos(a)*120,e.y+Math.sin(a)*120,4.5);return;
   }
+  if(typeof updateCityStreetFight==="function"&&updateCityStreetFight(e))return;
   e.state="WANDER";e.isArmed=false;
   if(frontierCivilianType(e.eType)){
     e.cityDistance=(e.cityDistance||0)+.012;
@@ -15043,10 +15479,12 @@ function updateCityCivilian(e) {
     const tx=homeX+Math.sin(phase)*72,ty=homeY+Math.sin(phase*.63)*36;
     cityMove(e,tx,ty,.72);return;
   }
+  if(updateCityActivity(e)){e.isMoving=false;e.gait=lerp(e.gait||0,0,.16);e.armDrag=lerp(e.armDrag||0,0,.15);return;}
   if(e.cityPause>0){e.cityPause--;e.isMoving=false;e.gait=lerp(e.gait,0,.16);return;}
   const cx=e.cityCx===undefined?Math.floor(e.x/CHUNK_W):e.cityCx,cy=e.cityCy===undefined?Math.floor(e.y/CHUNK_W):e.cityCy;
-  e.cityDistance=(e.cityDistance===undefined?((e.x-cx*CHUNK_W-142+3664)%3664):e.cityDistance)+1.15;
-  const p=cityRoute(cx,cy,e.cityDistance);cityMove(e,p.x,p.y,1.15);
+  const speed=e.cityClass==="NEUTRAL"?1.65:e.cityClass==="THUG"?1.4:1.15;
+  e.cityDistance=(e.cityDistance===undefined?((e.x-cx*CHUNK_W-142+3664)%3664):e.cityDistance)+speed;
+  const p=cityRoute(cx,cy,e.cityDistance);cityMove(e,p.x,p.y,speed);
   if(frameCount%720===e.aiOffset)e.cityPause=75;
 }
 function updateCityPatrol(e) {
@@ -15061,7 +15499,12 @@ function bankCityPerson(e) {
   const b=getBiomeState(1);const table=b.cityPeople||(b.cityPeople={});
   table[e.cityPersonKey]={x:e.x,y:e.y,hp:e.hp,dead:e.dead||e.hp<=0,stun:e.stunTimer,
     stunAge:e.stunPose?e.stunPose.age:0,stunA:e.stunPose&&e.stunPose.a,stunFacing:e.stunPose&&e.stunPose.facing,
-    panic:e.panicTimer||0,px:e.panicX,py:e.panicY,d:e.cityDistance};
+    panic:e.panicTimer||0,px:e.panicX,py:e.panicY,d:e.cityDistance,
+    cityClass:e.cityClass,eType:e.eType,citySeed:e.citySeed,
+    punchHitCount:Math.max(0,Math.min(5,e.punchHitCount||0)),
+    cityActivity:e.cityActivity?{kind:e.cityActivity.kind,phase:e.cityActivity.phase,timeMs:e.cityActivity.timeMs,
+      durationMs:e.cityActivity.durationMs,cycle:e.cityActivity.cycle}:null,
+    ...streetThugRecord(e)};
 }
 function refreshCityPeople(mgr,pcx,pcy) {
   if(!mgr||mgr.biome!==1||!player||!doTick||frameCount-cityPeopleFrame<20)return;
@@ -15070,7 +15513,7 @@ function refreshCityPeople(mgr,pcx,pcy) {
     bankCityPerson(e);
     const dx=e.x-player.x,dy=e.y-player.y;
     if(dx*dx+dy*dy>3000*3000 || (e.isCityCivilian&&e.hp>0&&!e.dead&&
-       (nm0AmbushActive||!cityCivilianAllowed(e.x,e.y)))){enemiesList.splice(i,1);continue;}
+       ((nm0AmbushActive&&!(typeof streetThugCombatProtected==="function"&&streetThugCombatProtected(e)))||!cityCivilianAllowed(e.x,e.y)))){enemiesList.splice(i,1);continue;}
     if(e.hp>0&&!e.dead){if(e.isCityCivilian)civ++;else guard++;}
   }
   // Ambient residents wait in their saved records throughout the scripted
@@ -15099,14 +15542,22 @@ function refreshCityPeople(mgr,pcx,pcy) {
       if(Math.hypot(point.x-player.x,point.y-player.y)>3000)continue;
       if(!cityPersonOffscreen(point.x,point.y)||(isCiv&&!cityCivilianAllowed(point.x,point.y))||
          (!isCiv&&insideOwnedFortress(1,point.x,point.y,60)))continue;
-      const e=new Character(point.x,point.y,false,isCiv?CITY_CIVILIANS[n%2]:"NM0_CITY_GUARD");
-      if(isCiv)cityAppearance(e,seed);
+      const e=new Character(point.x,point.y,false,isCiv?cityCivilianType(cx,cy,n,old):"NM0_CITY_GUARD");
+      if(isCiv)cityAppearance(e,old&&Number.isFinite(old.citySeed)?old.citySeed:seed);
       e.cityPersonKey=k;e.cityCx=cx;e.cityCy=cy;e.cityDistance=old&&old.d!==undefined?old.d:d;
+      restoreStreetThugRecord(e,old);
       if(e.checkCol(e.x,e.y))continue;
       if(!isCiv){const other=enemiesList.find(g=>g.isCityPatrol&&g.cityCx===cx&&g.cityCy===cy&&g.cityFormation);
         e.cityFormation=other?other.cityFormation:formation;e.citySlot=n-6;
         if(post){e.cityPost=post;e.aimAngle=post.a;}}
       if(old){e.hp=old.hp;e.panicTimer=old.panic||0;e.panicX=old.px;e.panicY=old.py;
+        e.punchHitCount=Math.max(0,Math.min(e.cityClass==='NEUTRAL'?5:3,Math.floor(Number(old.punchHitCount)||0)));
+        if(isCiv&&e.cityClass!=="PASSIVE"&&old.cityActivity){
+          const a=old.cityActivity;
+          if(["PHONE","SMOKE","BOTTLE"].indexOf(a.kind)!==-1&&["WAIT","REACH","USE","LOWER"].indexOf(a.phase)!==-1&&
+             Number.isFinite(a.timeMs)&&Number.isFinite(a.durationMs)&&a.durationMs>0)
+            e.cityActivity={kind:a.kind,phase:a.phase,timeMs:Math.max(0,Math.min(a.durationMs,a.timeMs)),durationMs:Math.min(20000,a.durationMs),cycle:Math.max(0,a.cycle|0)};
+        }
         if(old.stun>0){
           if(old.stunFacing!==undefined&&old.stunFacing!==null)e.aimAngle=old.stunFacing;
           startPunchStun(e,old.stunA===undefined||old.stunA===null?e.aimAngle:old.stunA);
@@ -15957,7 +16408,11 @@ function drawBoxingArms(e,b) {
 function paintBoxingArm(g,e,arm,rig,skin,pass='ALL') {
   const s=arm.shoulder,k=arm.elbow,h=arm.fist;
   const cuff={x:k.x+(h.x-k.x)*.18,y:k.y+(h.y-k.y)*.18};
-  if(pass!=='FOREARM')figureCelLimb(g,s.x,s.y,k.x,k.y,cuff.x,cuff.y,rig.upperW*.84,rig.foreW*.87,rig.foreW*.80,e.shirtCol);
+  if(pass!=='FOREARM'){
+    if(cityStreetLook(e))drawCityStreetUpperArm(g,e,s.x,s.y,k.x,k.y,cuff.x,cuff.y,
+      rig.upperW*.84,rig.foreW*.87,rig.foreW*.80,skin);
+    else figureCelLimb(g,s.x,s.y,k.x,k.y,cuff.x,cuff.y,rig.upperW*.84,rig.foreW*.87,rig.foreW*.80,e.shirtCol);
+  }
   if(pass==='SLEEVE')return;
   figureCelLimb(g,k.x,k.y,(k.x+h.x)*.5,(k.y+h.y)*.5,h.x,h.y,rig.foreW*.76,rig.foreW*.73,rig.foreW*.65,skin);
   const hand=(h.radius||h.r||BOXING.FIST_RADIUS)*2;
@@ -16304,7 +16759,7 @@ function saloonKnockoutProgress(p) {
     return t<.35?.18*boxingSmooth(t/.35):.18+.82*boxingSmooth((t-.35)/.65);
   return boxingSmooth(t);
 }
-function drawSaloonKnockoutLimb(g,rig,r,i,f,shirt,pants,skin,boot,faceDown) {
+function drawSaloonKnockoutLimb(g,rig,r,i,f,shirt,pants,skin,boot,faceDown,id=null) {
   const L=r.limbs[i],arm=i<2,s=i%2?1:-1,knee=ragKnee(L)*(faceDown?.7:1),
     limbA=arm?s*(HALF_PI+(faceDown?L.a*.35-.5:L.a)):PI-s*L.a*(faceDown?.7:1)*f,
     ang=arm?s*PI+((limbA-s*PI+PI*3)%TWO_PI-PI)*f:limbA,
@@ -16317,8 +16772,10 @@ function drawSaloonKnockoutLimb(g,rig,r,i,f,shirt,pants,skin,boot,faceDown) {
     hx=ex+Math.cos(ang+bend)*l2*projection,hy=ey+Math.sin(ang+bend)*l2,
     ox=arm?rig.shX:rig.hipX,oy=s*(arm?rig.shY:rig.hipY),
     w1=arm?rig.upperW*(faceDown?.92:1):rig.thighW,w2=arm?rig.foreW*(faceDown?.92:1):rig.shinW;
-  drawFallBone(g,ox,oy,ex,ey,w1,arm?shirt:pants,undefined,undefined,{x:hx,y:hy,width:w2});
-  drawFallBone(g,ex,ey,hx,hy,w2,arm?shirt:pants,arm?skin:boot,arm?rig.hand*(faceDown?.94:1):rig.foot,false);
+  const streetArm=arm&&cityStreetLook(id);
+  if(streetArm)drawCityStreetUpperArm(g,id,ox,oy,ex,ey,hx,hy,w1,(w1+w2)*.5,w2,skin);
+  else drawFallBone(g,ox,oy,ex,ey,w1,arm?shirt:pants,undefined,undefined,{x:hx,y:hy,width:w2});
+  drawFallBone(g,ex,ey,hx,hy,w2,streetArm?skin:arm?shirt:pants,arm?skin:boot,arm?rig.hand*(faceDown?.94:1):rig.foot,false);
 }
 function drawSaloonKnockoutFigure(e) {
   const p=e.stunPose,k=p.knockout,r=p.rag,
@@ -16334,7 +16791,7 @@ function drawSaloonKnockoutFigure(e) {
   const legF=Math.min(1,f+k.profile.buckle*Math.sin(f*PI));
   for(let i=2;i<4;i++)drawSaloonKnockoutLimb(window,rig,r,i,legF,shirt,pants,skin,boot,p.faceDown);
   figureCelOval(window,0,0,rig.TL,rig.TW,shirt);drawFallenAttire(window,id,rig.TL,rig.TW,p.faceDown,f);
-  for(let i=0;i<2;i++)drawSaloonKnockoutLimb(window,rig,r,i,f,shirt,pants,skin,boot,p.faceDown);
+  for(let i=0;i<2;i++)drawSaloonKnockoutLimb(window,rig,r,i,f,shirt,pants,skin,boot,p.faceDown,id);
   translate(rig.headX,0);scale(lerp(1/RAG_SCALE,1,f));rotate(figureHeadTurn(p,f));drawFallenHead(window,id,p,f);pop();
 }
 function startPunchStun(e,angle) {
@@ -16370,10 +16827,10 @@ function drawStunnedFigure(e) {
   push();rotate(p?figureFallYaw(p,rg,f):e.aimAngle);scale(RAG_SCALE);
   const skin=e.skinCol||color(235,180,140),boot=color(red(e.pantsCol)*.55,green(e.pantsCol)*.55,blue(e.pantsCol)*.55);
   ragContour(window,255);
-  if(rg){for(let i=2;i<4;i++)drawFallLimb(window,rig,rg,i,f,e.shirtCol,e.pantsCol,skin,boot);}
+  if(rg){for(let i=2;i<4;i++)drawFallLimb(window,rig,rg,i,f,e.shirtCol,e.pantsCol,skin,boot,false,e);}
   figureCelOval(window,0,0,rig.TL,rig.TW,e.shirtCol);
   drawFallenAttire(window,figureIdentity(e),rig.TL,rig.TW,p&&p.faceDown,f);
-  if(rg){for(let i=0;i<2;i++)drawFallLimb(window,rig,rg,i,f,e.shirtCol,e.pantsCol,skin,boot);}
+  if(rg){for(let i=0;i<2;i++)drawFallLimb(window,rig,rg,i,f,e.shirtCol,e.pantsCol,skin,boot,false,e);}
   translate(rg?rig.headX:lerp(12/RAG_SCALE,18,f),0);scale(lerp(1/RAG_SCALE,1,f));rotate(figureHeadTurn(p,f));drawFallenHead(window,figureIdentity(e),p,f);pop();
 }
 
@@ -16847,10 +17304,12 @@ this.skeletonTimer = 0;
   }
 
       takeDamage(amount, source = null) {
+    if(streetThugCombatProtected(this)&&source&&(source===player||source.isPlayer||source.isFriendly))return {blocked:true,broken:false};
     // Surface attacks cannot pass through an intact tunnel ceiling.
     if(shovelPlayerDepth(this)>=SHOVEL.underground &&
        (!source || !shovelSameLayer(this,source)))return {blocked:true,broken:false};
-    if(unarmedCivilian(this))scareCivilian(this,source?source.x:player?player.x:this.x,source?source.y:player?player.y:this.y);
+    if(this.cityClass==='THUG')streetThugOnDamage(this,source);
+    else if(unarmedCivilian(this))scareCivilian(this,source?source.x:player?player.x:this.x,source?source.y:player?player.y:this.y);
     if(this.isCityPatrol&&this.hp>80)amount*=.55;
     if(amount>0)frontierAmbientMarkCombat();
     let res = { blocked: false, broken: false };
@@ -17622,10 +18081,7 @@ this.skeletonTimer = 0;
                           // Check our new variable instead of the graphic state!
                           if (isFistAttack) {
                                
-                              e.punchHitCount = (e.punchHitCount || 0) + 1;
-                              if (unarmedCivilian(e) || e.punchHitCount >= 4) {
-                                  startPunchStun(e,this.aimAngle);e.punchHitCount=0;sfx.charge();
-                              }
+                              registerCityStreetPunch(e,this);
                           } else {
                               // A pick is a heavy tool, not a weapon: it hits
                               // the world far harder than a blade and people
@@ -17792,7 +18248,7 @@ if (this.eType === "COW") {
         }
         return; // Skip the rest of the standard enemy AI
     }
-    if(unarmedCivilian(this))noticeCivilianNoise(this);
+    if(unarmedCivilian(this)&&this.cityClass!=='THUG')noticeCivilianNoise(this);
     if(this.stunTimer>0){advanceStun(this);return;}
     if(unarmedCivilian(this)){updateCityCivilian(this);return;}
 
@@ -18517,8 +18973,9 @@ if (this.eType === "COW") {
         fire(sA, bowShot = null) {
     if (shovelPlayerDepth(this)>=SHOVEL.underground || this.isPlayer&&shovelToolEquipped()) return;
     if (boxingActive(this)) return;
-    if(unarmedCivilian(this))return;
+    if(unarmedCivilian(this)&&!this.cityThugGunDrawn)return;
     if (this.currentWeapon === WEAPONS.BOW && this.ammo <= 0) return;
+    if(this.isPlayer && streetThugDialogueOpen())return;
     if (this.isPlayer) this.isArmed = true;
     frontierAmbientMarkCombat();
     const huntShotId = ++_huntShotSequence;
@@ -19191,12 +19648,15 @@ if (this.isPlayer) {
     // Off-hand actions belong to the walking rig as well as the aimed rig.
     // They do not raise the right-hand gun or replace the rest of the stride.
     const leftAction = leftHandAction(this);
+    const cityAction=cityStreetLook(this)&&!boxing.active&&!this.isArmed&&
+        typeof cityActivityPose==='function'?cityActivityPose(this):null;
+    let cityActionHand=null;
     {
-        const isTownsfolk = unarmedCivilian(this)||(this.isNeutral&&TOWNSFOLK.indexOf(this.eType)!==-1);
+        const isTownsfolk = (unarmedCivilian(this)&&!this.cityThugGunDrawn)||(this.isNeutral&&TOWNSFOLK.indexOf(this.eType)!==-1);
         const isEmptyHanded = this.isPlayer&&!this.isArmed&&this.meleeTimer<=0&&!boxing.active;
         if (isTownsfolk || isEmptyHanded || carryMode) {
             const swing = isTownsfolk
-                ? (this.isMoving ? sin(this.walkCycle) * GP.swing : 0)
+                ? (this.isMoving ? sin(this.walkCycle) * GP.swing * (cityStreetLook(this)?1.12:1) : 0)
                 : ((typeof lS !== 'undefined') ? (lS / 12) : 0);
             // Standing still, the shoulders settle and breathe rather than
             // locking solid. Offset per character so a crowd is not in unison.
@@ -19352,6 +19812,9 @@ if (this.isPlayer) {
                     // instead of sharing its full, flailing running arc.
                     s.swordPose = usingShovel ? shovelCarryPose(this, GP, rest) : swordCarryPose(this, GP, rest);
                     s.hx = s.swordPose.hx; s.hy = s.swordPose.hy;
+                }
+                if(cityAction&&s.right){
+                    const h=cityStreetActionHand(cityAction,s.hx,s.hy);s.hx=h.x;s.hy=h.y;
                 }
             }
 
@@ -19636,6 +20099,7 @@ if (this.isPlayer) {
                 }
                 toDisc(ep, 0, s.sy, PU);
                 s.ex = ep[0]; s.ey = ep[1];
+                if(cityAction&&s.right)cityActionHand={x:s.hx,y:s.hy};
             }
 
             // One cloth surface around the same fitted bones. Only its outer
@@ -19643,7 +20107,9 @@ if (this.isPlayer) {
             const _sc = this.shirtCol;
             const armCol = [red(_sc)*.94,green(_sc)*.94,blue(_sc)*.96];
             const limb = (s) => {
-                figureCelLimb(paint?paint.api:window,0,s.sy,s.ex,s.ey,s.hx,s.hy,
+                if(cityStreetLook(this))drawCityStreetUpperArm(paint?paint.api:window,this,
+                    0,s.sy,s.ex,s.ey,s.hx,s.hy,RG.upperW,(RG.upperW+RG.foreW)*.5,RG.foreW*.84,skin);
+                else figureCelLimb(paint?paint.api:window,0,s.sy,s.ex,s.ey,s.hx,s.hy,
                     RG.upperW,(RG.upperW+RG.foreW)*.5,RG.foreW*.84,armCol);
             };
 
@@ -19664,7 +20130,7 @@ if (this.isPlayer) {
                     // hands on a carried long gun ride it for the same reason.
                     const holdsTool = !!(s.right && armedMelee);
                     const holdsGun = carrying === 1 && (s.right || this.currentWeapon === WEAPONS.DUAL_SMG);
-                    const isFront = (holdsTool || holdsGun || carrying === 2)
+                    const isFront = (holdsTool || holdsGun || carrying === 2 || (cityAction&&s.right))
                                     ? true : s.sw > 0.2;
                     if (isFront !== front) continue;
                     const h = { x: s.hx, y: s.hy };
@@ -19906,11 +20372,12 @@ if (this.isPlayer) {
 
     if(this.isCityPatrol){fill(43,57,57);rect(-8,-11,16,22,3);fill(129,147,139);rect(-6,-9,11,8,2);
       fill(60,72,69);rect(-6,2,11,7,1);fill(225,188,69);rect(-4,-3,7,2);}
-    if(this.isCityCivilian){
+    if(this.isCityCivilian&&!cityStreetLook(this)){
       if(this.clothingStyle===1){fill(red(this.shirtCol)*.7,green(this.shirtCol)*.7,blue(this.shirtCol)*.7);rect(-7,-8,10,16,2);fill(229,218,190);rect(2,-2,4,4,1);}
       if(this.clothingStyle===2){fill(229,224,202);rect(-2,-9,3,18,1);}
       if(this.clothingStyle===3){noFill();stroke(236,218,184,135);strokeWeight(1.2);line(-6,-5,6,-5);line(-6,3,6,3);}
     }
+    if(cityStreetLook(this))drawCityStreetAttire(paint?paint.api:window,this,this.bodyW,this.bodyH);
     if (this.eType === "ARMORED_STANDARD") {
         const g=paint?paint.api:window,ang=this.aimAngle+(boxing.active?boxing.torso:_tw);
         const L=figureLight(ang),S=figureSouth(ang);
@@ -19930,7 +20397,7 @@ if (this.isPlayer) {
         (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN)
         ? aimedLongGunPose(this, _tw, bob) : null;
 
-    let isNeutralFarmer = unarmedCivilian(this)||(this.isNeutral&&TOWNSFOLK.indexOf(this.eType)!==-1);
+    let isNeutralFarmer = (unarmedCivilian(this)&&!this.cityThugGunDrawn)||(this.isNeutral&&TOWNSFOLK.indexOf(this.eType)!==-1);
 
     // --- NEUTRAL ARM SWING OVERRIDE ---
         if(boxing.active){drawBoxingArms(this,boxing);}
@@ -20020,6 +20487,8 @@ if (this.isPlayer) {
                 ex=lerp(ex,te,freeRun);ey=lerp(ey,-this.bodyH*.425-.6,freeRun);
             }
             if(this.isPlayer&&weaponHands(this.currentWeapon)===2)drawAimedTwoHandSleeve(this,g,hx,hy,false);
+            else if(cityStreetLook(this))drawCityStreetUpperArm(g,this,shoulderX,shoulderY,ex,ey,hx,hy,
+                     rg.upperW,(rg.upperW+rg.foreW)*.5,rg.foreW*.84,this.skinCol||_headCelColor.skin);
             else figureCelLimb(g,shoulderX,shoulderY,ex,ey,hx,hy,
                      rg.upperW,(rg.upperW+rg.foreW)*.5,rg.foreW*.84,this.shirtCol);
             const skin=this.isPlayer&&chemistSuitUnlocked?[180,180,190]:(this.skinCol||[235,180,140]);
@@ -20048,6 +20517,9 @@ if (this.isPlayer) {
             const rg=figureRig(this.bodyW,this.bodyH),g=paint?paint.api:window;
             // The wrist/grip stays pinned to the existing muzzle offsets.
             if(this.isPlayer&&weaponHands(this.currentWeapon)===2)drawAimedTwoHandSleeve(this,g,rHandX,rArmY,true);
+            else if(cityStreetLook(this))drawCityStreetUpperArm(g,this,rSleeveX-9,rShoulderY,
+                     rSleeveX+3,(rShoulderY+rArmY)*.5+1,rHandX,rArmY,
+                     rg.upperW,(rg.upperW+rg.foreW)*.5,rg.foreW*.84,skinC);
             else figureCelLimb(g,rSleeveX-9,rShoulderY,rSleeveX+3,(rShoulderY+rArmY)*.5+1,rHandX,rArmY,
                      rg.upperW,(rg.upperW+rg.foreW)*.5,rg.foreW*.84,this.shirtCol);
             figureCelOval(g,rHandX,rArmY,8,8,skinC,.8);
@@ -20153,6 +20625,7 @@ if (this.isPlayer) {
     // One description, shared with the corpse and with the overkill pieces, so
     // that a body keeps what the person was wearing. See drawFigureHead().
     drawFigureHead(paint?paint.api:window, this, hX, hY, true, this.isMoving ? sin(frameCount * 0.3) * 15 : 0);
+    if(cityAction&&cityActionHand)drawCityStreetHeld(paint?paint.api:window,this,cityAction,cityActionHand);
 
 
     if ((this.eType === "ARMORED" && this.hp > 300) || (this.eType === "ARMORED_STANDARD" && this.hp > 50)) { push(); translate(hX, hY); rotate(HALF_PI); drawArmoredHelmet(paint?paint.api:window); pop(); }
@@ -20483,10 +20956,134 @@ function boxingDrawContactEffect(effect) {
     }
     pop();
 }
+let _cityStreetSelection=0, _cityStreetDialogueActor=null, _cityStreetPadButtons=[];
+let _cityStreetMouseConsumed=false;
+const CITY_STREET_RESPONSES=['POSITIVE','NEUTRAL','NEGATIVE'];
+function streetThugDialogueOpen() {
+  const encounter=streetThugEncounter();
+  return !!encounter && encounter.ready && encounter.phase==='DIALOGUE';
+}
+function streetThugDialogueButtons() {
+  const w=Math.min(146,(width-36)/3-6),gap=8,x=width/2-(w*3+gap*2)/2;
+  return CITY_STREET_RESPONSES.map((response,i)=>({response,x:x+i*(w+gap),y:height-134,w,h:52}));
+}
+function resetCityStreetInputs() {
+  _cityStreetSelection=0;_cityStreetDialogueActor=null;_cityStreetPadButtons=[];_cityStreetMouseConsumed=false;
+  window.__streetConsumedTouches=new Set();
+}
+function clearStreetThugInput() {
+  if(leftStick){leftStick.active=false;leftStick.dx=leftStick.dy=0;}
+  if(rightStick){rightStick.active=false;rightStick.dx=rightStick.dy=rightStick.dist=0;rightStick.bowReleaseRequested=false;}
+  meleeInputHeld=cannonInputHeld=grenadeInputHeld=false;
+  if(player){cancelPlayerBowDraw(player);player.meleeCharge=0;}
+}
+function respondStreetThug(response) {
+  clearStreetThugInput();
+  const result=chooseStreetThugResponse(response);
+  const pad=connectedGamepad();
+  if(pad)prevGamepadButtons=pad.buttons.map(b=>!!b.pressed);
+  return result;
+}
+function handleStreetThugDialogueTap(mx,my) {
+  if(!streetThugDialogueOpen())return false;
+  if(touches.length){
+    if(!window.__streetConsumedTouches)window.__streetConsumedTouches=new Set();
+    const id=touches[touches.length-1].id;window.__streetConsumedTouches.add(id);
+    if(!window.__frontierConsumedTouches)window.__frontierConsumedTouches=new Set();
+    window.__frontierConsumedTouches.add(id);
+  }else _cityStreetMouseConsumed=true;
+  for(const b of streetThugDialogueButtons())if(mx>=b.x&&mx<=b.x+b.w&&my>=b.y&&my<=b.y+b.h){respondStreetThug(b.response);break;}
+  clearStreetThugInput();return true;
+}
+function handleStreetThugDialogueInput(source) {
+  if(!streetThugDialogueOpen())return false;
+  const encounter=streetThugEncounter();
+  if(_cityStreetDialogueActor!==encounter.leader){_cityStreetDialogueActor=encounter.leader;_cityStreetSelection=0;_cityStreetPadButtons=prevGamepadButtons.slice();}
+  clearStreetThugInput();
+  if(source==='GAMEPAD'){
+    const pad=connectedGamepad();
+    if(pad){
+      window.showOnScreenControls=false;window.isDesktop=false;
+      const pressed=pad.buttons.map(b=>!!b.pressed),edge=i=>pressed[i]&&!_cityStreetPadButtons[i];
+      if(edge(14))_cityStreetSelection=(_cityStreetSelection+2)%3;
+      if(edge(15))_cityStreetSelection=(_cityStreetSelection+1)%3;
+      if(edge(12))_cityStreetSelection=1;
+      const cancel=edge(1),confirm=edge(0);
+      _cityStreetPadButtons=pressed;prevGamepadButtons=pressed.slice();
+      if(cancel)respondStreetThug('NEUTRAL');
+      else if(confirm)respondStreetThug(CITY_STREET_RESPONSES[_cityStreetSelection]);
+    }
+  }else if(source==='DESKTOP'){
+    for(let i=0;i<3;i++)if(keyIsDown(49+i)){respondStreetThug(CITY_STREET_RESPONSES[i]);break;}
+  }
+  return true;
+}
+function drawStreetThugHud() {
+  const encounter=streetThugEncounter();if(!encounter)return;
+  const e=encounter.leader,sx=(e.x-camX)*zoom,sy=(e.y-camY)*zoom;
+  if(!inView(e.x,e.y,100))return;
+  push();textFont('sans-serif');textStyle(NORMAL);textSize(12);textAlign(CENTER,CENTER);
+  const bubbleW=Math.min(width-24,Math.max(120,textWidth(encounter.phrase)+28));
+  const bx=Math.max(12,Math.min(width-bubbleW-12,sx-bubbleW/2));
+  const by=Math.max(12,Math.min(height-(encounter.ready?215:54),sy-68*zoom-34));
+  stroke(64,39,85);strokeWeight(1.6);fill(254,241,180);rect(bx,by,bubbleW,34,8);
+  triangle(Math.max(bx+10,Math.min(bx+bubbleW-10,sx))-5,by+34,
+    Math.max(bx+10,Math.min(bx+bubbleW-10,sx))+5,by+34,sx,by+42);
+  noStroke();fill(43,29,55);text(encounter.phrase,bx+bubbleW/2,by+17);
+  if(encounter.ready){
+    const buttons=streetThugDialogueButtons(),labels=['Make friends','Walk away','Fight'];
+    fill(25,23,30,230);rect(buttons[0].x-8,height-163,buttons[2].x+buttons[2].w-buttons[0].x+16,90,9);
+    fill(235,224,177);textSize(11);text(connectedGamepad()?'D-PAD · A CONFIRM · B WALK AWAY':window.isDesktop?'RESPOND · 1 / 2 / 3':'RESPOND',width/2,height-150);
+    for(let i=0;i<buttons.length;i++){
+      const b=buttons[i];stroke(i===_cityStreetSelection?238:133,i===_cityStreetSelection?201:106,i===_cityStreetSelection?85:155);
+      strokeWeight(i===_cityStreetSelection?2:1);fill(53,41,68);rect(b.x,b.y,b.w,b.h,6);
+      noStroke();fill(249,229,158);textSize(Math.min(12,b.w/8));text(b.response,b.x+b.w/2,b.y+17);
+      fill(216,207,226);textSize(10);text(labels[i],b.x+b.w/2,b.y+36);
+    }
+  }
+  pop();
+}
+
+function cityCancelStreetFight(e) {
+  if(!e || !e.cityStreetFight)return;
+  boxingExit(e);e._boxingWorldManaged=false;e.cityStreetFight=false;
+  e.isArmed=false;e.isUnarmed=true;e.isFriendly=true;e.isNeutral=!streetThugCombatProtected(e);
+  e.isMoving=false;
+}
+function startCityStreetFight(e, source = player) {
+  if(!e || !source || source!==player || e.hp<=0 || e.dead || e.stunTimer>0 || e.panicTimer>0 ||
+     !['NEUTRAL','THUG'].includes(e.cityClass) || streetThugCombatProtected(e))return false;
+  cityInterruptActivity(e);e.cityStreetFight=true;e.isFriendly=false;e.isNeutral=false;
+  e.isUnarmed=true;e.isArmed=false;e.state='STREET_FIGHT';
+  if(!boxingActive(player))beginWorldBoxing(player);
+  if(!boxingActive(e))boxingEnter(e,[player],'WORLD');
+  e._boxingWorldManaged=true;
+  return true;
+}
+function updateCityStreetFight(e) {
+  if(!e || !e.cityStreetFight)return false;
+  if(e.dead || e.hp<=0 || e.stunTimer>0 || e.panicTimer>0 || !player || !boxingActive(player) ||
+      Math.hypot(e.x-player.x,e.y-player.y)>BOXING.LOCK_RANGE+100 || !shovelActorsVisible(e,player)) {
+    cityCancelStreetFight(e);return false;
+  }
+  e.state='STREET_FIGHT';return true;
+}
+function registerCityStreetPunch(defender, attacker, event = null) {
+  if(streetThugCombatProtected(defender))return;
+  if(defender.cityClass==='NEUTRAL'||defender.cityClass==='THUG')startCityStreetFight(defender,attacker);
+  defender.punchHitCount=(defender.punchHitCount||0)+1;
+  const limit=defender.cityClass==='NEUTRAL'?6:defender.cityClass==='THUG'?4:unarmedCivilian(defender)?1:4;
+  if(defender.punchHitCount>=limit) {
+    cityCancelStreetFight(defender);boxingExit(defender);defender._boxingWorldManaged=false;
+    startPunchStun(defender,attacker.aimAngle,event);defender.punchHitCount=0;sfx.charge();
+  }
+  bankCityPerson(defender);
+}
+
 function worldBoxingTargets(actor = player) {
   if (!actor) return [];
   return enemiesList.filter(e => e && e !== actor && e.hp > 0 && !e.dead && !e.knockedOut &&
-    !(e.stunTimer > 0) && (!e.isFriendly || e.isNeutral) && ragHumanoid(e.eType, e.bodyW) &&
+    !(e.stunTimer > 0) && !streetThugCombatProtected(e) && (!e.isFriendly || e.isNeutral) && ragHumanoid(e.eType, e.bodyW) &&
     Math.hypot(e.x - actor.x, e.y - actor.y) < BOXING.LOCK_RANGE && shovelActorsVisible(actor,e));
 }
 function worldBoxingMove(actor, nx, ny) {
@@ -20547,11 +21144,7 @@ function worldBoxingHit(event) {
   defender.hitFlash = 4; screenShake = Math.max(screenShake, 3);
   sfx.hitBody();
   if (defender.isPlayer) { defender.takeDamage(event.damage, attacker); return; }
-  defender.punchHitCount = (defender.punchHitCount || 0) + 1;
-  if (unarmedCivilian(defender) || defender.punchHitCount >= 4) {
-    boxingExit(defender); defender._boxingWorldManaged = false;
-    startPunchStun(defender, attacker.aimAngle, event); defender.punchHitCount = 0; sfx.charge();
-  }
+  registerCityStreetPunch(defender,attacker,event);
 }
 function updateWorldBoxingPlayer(actor) {
   const input = boxingReadInput(actor, boxingNativeInputState(actor));
@@ -20578,10 +21171,19 @@ function updateWorldBoxingPlayer(actor) {
   if (actor.reloadTimer > 0 && --actor.reloadTimer === 0) actor.ammo = actor.currentWeapon.maxAmmo * (window.milLvl >= 2 ? 2 : 1);
 }
 function updateWorldBoxingOpponents() {
+  // A street boxer still hears gunfire and notices a drawn firearm while its
+  // boxing controller owns movement instead of the ordinary pedestrian AI.
+  for (const e of enemiesList) if (e.cityStreetFight) {
+    if(e.cityClass==='NEUTRAL'){noticeCivilianNoise(e);noticeCivilianAim(e);}
+    else if(e.cityClass==='THUG')updateStreetThug(e);
+  }
   const targets = boxingActive(player) ? worldBoxingTargets() : [];
   const fighters = targets.filter(e => e.isUnarmed && !e.isFriendly && !e.isNeutral);
   for (const e of enemiesList) {
-    if (e._boxingWorldManaged && !fighters.includes(e)) { boxingExit(e); e._boxingWorldManaged = false; }
+    if (e._boxingWorldManaged && !fighters.includes(e)) {
+      boxingExit(e); e._boxingWorldManaged = false;
+      if(e.cityStreetFight && !boxingActive(player)) cityCancelStreetFight(e);
+    }
   }
   if (!boxingActive(player) || !fighters.length) return;
   for (const e of fighters) e._boxingWorldManaged = true;
@@ -20630,7 +21232,7 @@ function updateEntities() {
           // refresh is cooling down. An old nearby resident must never enter
           // forceNudge's collision search for a newly forbidden 700m buffer.
           if (currentLevel===1 && e.isCityCivilian && e.cityPersonKey && e.hp>0 && !e.dead &&
-              (nm0AmbushActive || !cityCivilianAllowed(e.x,e.y))) {
+              ((nm0AmbushActive&&!streetThugCombatProtected(e)) || !cityCivilianAllowed(e.x,e.y))) {
               bankCityPerson(e);enemiesList.splice(n--,1);continue;
           }
           if (e.isFriendly && !e.isCityCivilian) e.allySlot = e.dead ? 0 : allyN++;
@@ -21140,7 +21742,7 @@ function updateBullets() {
   for (let i = 0; i < enemiesList.length; i++) {
       let e = enemiesList[i];
       if (!e || e.hp <= 0 || e.dead) continue;
-      if (!e.isFriendly || e.isNeutral) playerTgs.push(e);
+      if (!streetThugCombatProtected(e) && (!e.isFriendly || e.isNeutral)) playerTgs.push(e);
       if (e.isCityCivilian || (e.isFriendly && !e.isNeutral)) enemyTgs.push(e);
   }
 
@@ -22762,7 +23364,7 @@ function drawUI() {
   // These are touch action buttons; controller players keep the status HUD.
   if (player && boxingActive(player)) drawBoxingControls(player);
   else if (shovelControlsAvailable()) drawShovelControls();
-  else if(!connectedGamepad()) {
+  else if(!connectedGamepad()&&!streetThugDialogueOpen()) {
   let bY = rightStick.base.y - 80, rbX = width - 35, rbY = bY - 170; 
   let isTaser = player && player.currentWeapon === WEAPONS.TASER;
   let isBow = player && player.currentWeapon === WEAPONS.BOW;
@@ -23414,6 +24016,7 @@ function drawBoxingControls(actor = player, contextState = null, hintAlpha = 1) 
   pop();
 }
 function handleGamepad() {
+  if(handleStreetThugDialogueInput('GAMEPAD'))return;
   if (player && boxingActive(player)) return;
   const pad=connectedGamepad();
   if(!pad) {
@@ -23500,6 +24103,7 @@ function handleGamepad() {
 
 
 function handleTouches() {
+  if(handleStreetThugDialogueInput('TOUCH'))return;
   meleeInputHeld = false;
   cannonInputHeld = false;
   grenadeInputHeld = false; 
@@ -23521,7 +24125,12 @@ function handleTouches() {
     for (const id of window.__frontierConsumedTouches)
       if (!heldIds.has(id)) window.__frontierConsumedTouches.delete(id);
   }
+  if (window.__streetConsumedTouches) {
+    const heldIds=new Set(touches.map(t=>t.id));
+    for(const id of window.__streetConsumedTouches)if(!heldIds.has(id))window.__streetConsumedTouches.delete(id);
+  }
   for (let i = 0; i < touches.length; i++) {
+    if(window.__streetConsumedTouches&&window.__streetConsumedTouches.has(touches[i].id))continue;
     if (window.__frontierConsumedTouches && window.__frontierConsumedTouches.has(touches[i].id)) continue;
     let tx = touches[i].x, ty = touches[i].y;
     
@@ -23607,6 +24216,7 @@ function handleTouches() {
 
 
 function drawJoysticks() {
+  if(streetThugDialogueOpen())return;
   if (player && boxingActive(player)) return;
   if(connectedGamepad())return;
   noFill(); stroke(255, 50); ellipse(leftStick.base.x, leftStick.base.y, 120); ellipse(rightStick.base.x, rightStick.base.y, 120);
@@ -23758,6 +24368,7 @@ function touchStarted() {
   // Outside, an interaction finger remains consumed until it lifts, so holding
   // a mission button cannot become right-stick gunfire on the following frame.
   if (handlePauseSettingsTap(mx, my)) return false;
+  if(handleStreetThugDialogueTap(mx,my))return false;
   const shovelButton=shovelTouchAction(mx,my);
   if(shovelButton){shovelUseControl(shovelButton.action);return false;}
   if (frontierSaloonIsInside()) { handleFrontierSaloonTap(mx, my); return false; }
@@ -24575,6 +25186,8 @@ if (inTravelMenu) {
 
 function handleDesktop() {
   if (!player) return;
+  if(handleStreetThugDialogueInput('DESKTOP'))return;
+  if(_cityStreetMouseConsumed){if(mouseIsPressed){clearStreetThugInput();return;}_cityStreetMouseConsumed=false;}
   if (boxingActive(player)) return;
   
   let kDx = 0, kDy = 0;
@@ -25402,7 +26015,7 @@ function restoreFortMuster() {
     
 
 function issueSquadCommand(cmd, dir = "NORTH") {
-    let allies = enemiesList.filter(e => e.isFriendly && !e.dead && !frontierCivilianType(e.eType));
+    let allies = enemiesList.filter(e => e.isFriendly && !e.dead && !e.isCityCivilian && !e.cityPersonKey && !frontierCivilianType(e.eType));
     
     for (let i = 0; i < allies.length; i++) {
         let ally = allies[i];
@@ -46801,6 +47414,7 @@ function getSafeSpawn(away) {
 
 // -- Level entry ------------------------------------------------------------
 function startAtLevel(lvl, isLoading = false) {
+  resetStreetThugEncounters();resetCityStreetInputs();
   if(!isLoading&&lvl!==currentLevel)for(const e of enemiesList)bankFrontierPerson(e);
   exitFrontierSaloon();
   releaseFrontierBountyActors();
