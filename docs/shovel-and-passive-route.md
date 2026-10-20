@@ -70,6 +70,15 @@ dig fully underground before passing underneath. Movement checks the whole
 player footprint and intervening excavated space, so unmined soil and
 disconnected holes remain solid.
 
+Walking into the edge of an open waist-deep hole starts a 650 ms mantle.
+Forward movement pauses while both hands brace on the rim, the body lifts,
+and a leading knee and foot clear the edge. The carried shovel stays visible.
+The figure grows continuously back to surface scale, then ordinary movement
+resumes after the foot plant. Connected shallow holes remain freely walkable.
+Walls, foundations, parked cars and obstructed landing paths prevent an exit;
+deeper or roofed tunnels still require climbing. Saving mid-mantle retains
+the animation stage and landing.
+
 Climbing raises the player within the shaft without deleting its lower floor.
 A covered tunnel can be opened into a new exit only through grass or dirt;
 move beyond paving and solid walls before climbing out. Existing open shafts
@@ -123,6 +132,8 @@ saving and travel.
 node tools/check-shovel-tool.js
 node tools/check-shovel-terrain.js
 node tools/check-shovel-dig-animation.js
+node tools/check-shovel-mantle.js
+node tools/check-shovel-mantle-pose.js
 node tools/check-shovel-falling.js
 node tools/check-shovel-fall-impact.js
 node tools/check-shovel-depth-effects.js
