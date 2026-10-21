@@ -1339,6 +1339,11 @@ function setup() {
       resetTouchAimSelection(true);
       window.isDesktop = true; window.showOnScreenControls = false;
       if (!started || isDead || isWin || !player) return;
+      if (buildGhost && !isPaused) {
+          if (e.key === 'Enter') { confirmBuildPlacement(); e.preventDefault(); }
+          else if (e.key === 'Escape') { cancelBuildPlacement(); pauseControlsInput.keys.add(27); e.preventDefault(); }
+          return;
+      }
       // Local fights and duels own these keys through their frame reader. A
       // browser keydown must not reload a pistol, charge a cannon or jet dash
       // underneath the boxing animation.
@@ -1349,7 +1354,7 @@ function setup() {
       }
       
       if (e.key.toLowerCase() === 'r') {
-          if (player.reloadTimer <= 0 && player.ammo < player.currentWeapon.maxAmmo) player.triggerReload();
+          if (player.reloadTimer <= 0 && player.ammo < playerMagazineCapacity(player.currentWeapon)) player.triggerReload();
       }
       if (e.key.toLowerCase() === 'v' && !e.repeat && !isPaused) {
           cyclePlayerWeapon(e.shiftKey ? -1 : 1);
@@ -1501,11 +1506,11 @@ if (isStoryMode) {
     let pS = getSafeSpawn(false); 
     player = new Character(pS.x, pS.y, true);
   
-    if (smgUnlocked) { player.mags["MACHINE GUN"] = 3; player.weaponAmmo["MACHINE GUN"] = WEAPONS.SMG.maxAmmo; }
-    if (dualSmgUnlocked) { player.mags["DUAL SMGS"] = 3; player.weaponAmmo["DUAL SMGS"] = WEAPONS.DUAL_SMG.maxAmmo; }
-    if (arUnlocked) { player.mags["ASSAULT RIFLE"] = 3; player.weaponAmmo["ASSAULT RIFLE"] = WEAPONS.ASSAULT_RIFLE.maxAmmo; }
-    if (shotgunUnlocked) { player.mags["SHOTGUN"] = 3; player.weaponAmmo["SHOTGUN"] = WEAPONS.SHOTGUN.maxAmmo; }
-    if (rocketLauncherUnlocked) { player.mags["ROCKET LAUNCHER"] = 6; player.weaponAmmo["ROCKET LAUNCHER"] = WEAPONS.ROCKET_LAUNCHER.maxAmmo; }
+    if (smgUnlocked) { player.mags["MACHINE GUN"] = 3; player.weaponAmmo["MACHINE GUN"] = playerMagazineCapacity(WEAPONS.SMG); }
+    if (dualSmgUnlocked) { player.mags["DUAL SMGS"] = 3; player.weaponAmmo["DUAL SMGS"] = playerMagazineCapacity(WEAPONS.DUAL_SMG); }
+    if (arUnlocked) { player.mags["ASSAULT RIFLE"] = 3; player.weaponAmmo["ASSAULT RIFLE"] = playerMagazineCapacity(WEAPONS.ASSAULT_RIFLE); }
+    if (shotgunUnlocked) { player.mags["SHOTGUN"] = 3; player.weaponAmmo["SHOTGUN"] = playerMagazineCapacity(WEAPONS.SHOTGUN); }
+    if (rocketLauncherUnlocked) { player.mags["ROCKET LAUNCHER"] = 6; player.weaponAmmo["ROCKET LAUNCHER"] = playerMagazineCapacity(WEAPONS.ROCKET_LAUNCHER); }
 
     if (rocketLauncherUnlocked) player.currentWeapon = WEAPONS.ROCKET_LAUNCHER;
     else if (shotgunUnlocked) player.currentWeapon = WEAPONS.SHOTGUN;
@@ -8299,10 +8304,9 @@ if (swordPickedUp || window.pickaxeOwned || window.shovelOwned) {
           // phone; the two are the same subject anyway.
           {
               const by = height/2 + 190, hw = 114;
-              const canBuild = buildCrew() > 0;
+              const canBuild = buildCrew() > 0 || window.archLvl >= 2;
               const anySites = buildSites.length > 0;
-              // The architecture department is the prerequisite for BUILD, not a
-              // story flag: no architects, nobody to raise anything.
+              // A ready level-two fortification needs no construction crew.
               fill(canBuild ? 40 : 30); stroke(canBuild ? color(255, 200, 0) : color(100)); strokeWeight(2);
               rect(width/2 - 120, by, hw, 40, 8);
               fill(canBuild ? 255 : 150); noStroke(); textSize(canBuild ? 15 : 11);
@@ -8363,36 +8367,39 @@ if (swordPickedUp || window.pickaxeOwned || window.shovelOwned) {
       }
 
       else if (pauseMenuState === "BUILD") {
-          fill(255); textSize(34); text("BLUEPRINTS", width/2, height/2 - 230);
+          const menu = buildMenuLayout();
+          fill(255); textSize(34); text("BLUEPRINTS", width/2, menu.titleY);
           const crew = buildCrew();
-          fill(170); textSize(14);
+          fill(170); textSize(width < 400 ? 11 : 14);
           text("ARCHITECTURE DEPT: " + crew + "  ·  LEVEL " + (window.archLvl || 1) +
                "  ·  " + (crew * BUILD_DAY_PER_UNIT * buildSpeedMult() * 100).toFixed(0) + "% PER DAY",
-               width/2, height/2 - 198);
+               width/2, menu.statusY);
           for (let i = 0; i < BUILD_ORDER.length; i++) {
               const bp = BLUEPRINTS[BUILD_ORDER[i]];
-              const y = height/2 - 160 + i * 76;
+              const y = menu.top + i * (menu.cardH + 8);
               fill(34, 38, 44); stroke(90, 140, 190); strokeWeight(2);
-              rect(width/2 - 170, y, 340, 64, 8);
-              noStroke(); fill(235); textAlign(LEFT, TOP); textSize(18);
-              text(bp.label, width/2 - 156, y + 9);
-              fill(150); textSize(12); text(bp.blurb, width/2 - 156, y + 32);
+              rect(menu.x, y, menu.w, menu.cardH, 8);
+              noStroke(); fill(235); textAlign(LEFT, TOP); textSize(menu.cardH < 44 ? 14 : 17);
+              text(bp.label, menu.x + 12, y + 8);
+              if (menu.cardH >= 44) { fill(150); textSize(width < 400 ? 10 : 12); text(bp.blurb, menu.x + 12, y + 31); }
               fill(120, 180, 240); textSize(12); textAlign(RIGHT, TOP);
               const eta = buildEtaDays(1);
-              text(bp.w + " x " + bp.h, width/2 + 156, y + 9);
-              text(eta === Infinity ? "--" : (eta < 1 ? "< 1 day" : Math.ceil(eta) + " days"),
-                   width/2 + 156, y + 32);
+              text(bp.w + " x " + bp.h, menu.x + menu.w - 12, y + 8);
+              if (menu.cardH >= 44) text(eta === Infinity ? "--" : (eta < 1 ? "< 1 day" : Math.ceil(eta) + " days"),
+                   menu.x + menu.w - 12, y + 31);
               textAlign(CENTER, CENTER);
           }
           // Anything already going up in this sector, so the player can see the
           // department is actually working without walking back to the site.
-          let ip = 0;
-          for (const s of buildSites) if (s.level === currentLevel && !s.done) ip++;
-          if (ip > 0) {
-              fill(180); textSize(13);
-              text(ip + " under construction in this sector", width/2, height/2 + 168);
-          }
-          drawBtn(height/2 + 190, "BACK");
+          const fortReady = !!window.archBarrierReady;
+          fill(fortReady ? 40 : 30); stroke(fortReady ? color(255, 170, 70) : color(100)); strokeWeight(2);
+          const fortButton = fortificationsMenuButton();
+          rect(fortButton.x, fortButton.y, fortButton.w, fortButton.h, 8);
+          fill(fortReady ? 255 : 160); noStroke(); textSize(16);
+          text("FORTIFICATIONS", width/2, fortButton.y + 15);
+          textSize(11);
+          text(fortReady ? "BARRIER READY · AIM AND PLACE INSTANTLY" : window.archLvl >= 2 ? "LEVEL 2 BARRIER ALREADY USED" : "UNLOCKS AT ARCHITECTURE LEVEL 2", width/2, fortButton.y + 34);
+          drawBtn(menu.backY, "BACK");
       }
 
 
@@ -8612,13 +8619,6 @@ if (swordPickedUp || window.pickaxeOwned || window.shovelOwned) {
               if (winTimer > 0) { winTimer--; } else {
                   if (currentLevel < 7) { fill(40); stroke(255, 200, 0); strokeWeight(2); rect(width/2 - 170, height/2 + 90, 160, 50, 8); fill(255); noStroke(); textSize(18); text("UPGRADES", width/2 - 90, height/2 + 115); fill(40); stroke(50, 255, 50); strokeWeight(2); rect(width/2 + 10, height/2 + 90, 160, 50, 8); fill(255); noStroke(); textSize(18); text("CONTINUE", width/2 + 90, height/2 + 115); } 
                   else { textSize(18); fill(150); noStroke(); text("[ TAP TO RESTART ]", width / 2, height / 2 + 115); 
-                      if (window.archBarrierReady) {
-      let bbX = width / 2, bbY = height - 100;
-      fill(50, 200); stroke(255, 150, 50); strokeWeight(2);
-      rect(bbX - 70, bbY - 20, 140, 40, 5);
-      fill(255); noStroke(); textAlign(CENTER, CENTER); textSize(14);
-      text("BUILD BARRIER", bbX, bbY);
-  }
                   }
               }
           }
@@ -8667,32 +8667,32 @@ if (swordPickedUp || window.pickaxeOwned || window.shovelOwned) {
             if (dualSmgUnlocked) {
                 player.currentWeapon = WEAPONS.DUAL_SMG;
                 player.mags["DUAL SMGS"] = 3; 
-                player.weaponAmmo["DUAL SMGS"] = WEAPONS.DUAL_SMG.maxAmmo;
+                player.weaponAmmo["DUAL SMGS"] = playerMagazineCapacity(WEAPONS.DUAL_SMG);
                 streakMsgText = "DUAL SMGS RELOADED!";
             } else if (smgUnlocked) {
                 dualSmgUnlocked = true;
                 player.currentWeapon = WEAPONS.DUAL_SMG;
                 player.mags["DUAL SMGS"] = 3;
-                player.weaponAmmo["DUAL SMGS"] = WEAPONS.DUAL_SMG.maxAmmo;
+                player.weaponAmmo["DUAL SMGS"] = playerMagazineCapacity(WEAPONS.DUAL_SMG);
                 streakMsgText = "DUAL SMGS ACQUIRED!";
             } else {
                 smgUnlocked = true;
                 player.currentWeapon = WEAPONS.SMG;
                 player.mags["MACHINE GUN"] = 3;
-                player.weaponAmmo["MACHINE GUN"] = WEAPONS.SMG.maxAmmo;
+                player.weaponAmmo["MACHINE GUN"] = playerMagazineCapacity(WEAPONS.SMG);
                 streakMsgText = "SMG ACQUIRED!";
             }
         } else if (d.type === "SHOTGUN") {
             shotgunUnlocked = true;
             player.currentWeapon = WEAPONS.SHOTGUN;
             player.mags["SHOTGUN"] = 3;
-            player.weaponAmmo["SHOTGUN"] = WEAPONS.SHOTGUN.maxAmmo;
+            player.weaponAmmo["SHOTGUN"] = playerMagazineCapacity(WEAPONS.SHOTGUN);
             streakMsgText = "SHOTGUN ACQUIRED!";
         } else if (d.type === "AR") {
             arUnlocked = true;
             player.currentWeapon = WEAPONS.ASSAULT_RIFLE;
             player.mags["ASSAULT RIFLE"] = 3;
-            player.weaponAmmo["ASSAULT RIFLE"] = WEAPONS.ASSAULT_RIFLE.maxAmmo;
+            player.weaponAmmo["ASSAULT RIFLE"] = playerMagazineCapacity(WEAPONS.ASSAULT_RIFLE);
             streakMsgText = "ASSAULT RIFLE ACQUIRED!";
         }
         streakMsgTimer = 90;
@@ -9554,8 +9554,9 @@ function updateHealthPacks() {
     }
     
     if (player && player.hp > 0 && dist(player.x, player.y, hpk.x, hpk.y) < 30) {
-      if (player.hp < 100) {
-        player.restoreHealth(100 - player.hp);
+      applyFarmingReward(player);
+      if (player.hp < player.maxHp) {
+        player.restoreHealth(player.maxHp - player.hp);
         sfx.charge(); 
         streakMsgText = "HEALTH RESTORED!";
         streakMsgTimer = 90;
@@ -12998,6 +12999,12 @@ function spawnBullet(x, y, a, iP, tH, w, shooter = null, shotId = null) {
     b.shooter = shooter;
     b.shotId = huntShotId;
     return b;
+}
+
+// Department levels are campaign state, so every new cannon discharge reads
+// its reach from the saved science level rather than from suit equip timing.
+function chemistCannonRange(owner, baseRange) {
+    return baseRange * (owner && owner.isPlayer && window.sciLvl >= 2 ? 115 : 100) / 100;
 }
 
    class Lightning {
@@ -17336,7 +17343,7 @@ function bowDrawPower(tension, quality, dud = false) {
 }
 function playerBowCanDraw(c) {
   return !!c && c.isPlayer && !boxingActive(c) && c.currentWeapon === WEAPONS.BOW && c.ammo > 0 && c.hp > 0 &&
-    started && doTick && !isPaused && !isDead && !isWin && !killcamMode &&
+    started && doTick && !isPaused && !isDead && !isWin && !killcamMode && !buildGhost &&
     !(typeof inCutscene !== 'undefined' && inCutscene) && !inStoryIntro && !inTownCutscene && !inFortCutscene && !inPostAmbushCutscene &&
     !inFarmCutscene && !inFarmPostCutscene && !inDarchonCall && !inWorldBuildingMenu &&
     !inOverworldView && !inTravelMenu && c.meleeTimer <= 0 && c.dashTimer <= 0 &&
@@ -17417,12 +17424,29 @@ function releasePlayerBowDraw(c) {
   }
 }
 
+// Department levels belong to the campaign. Reuse their derived capacities
+// whenever a character, weapon pickup, purchase or reload fills an inventory.
+// The bow is a finite quiver, not a reloadable magazine.
+function playerHealthCapacity() { return window.farmLvl >= 2 ? 125 : 100; }
+function applyFarmingReward(actor, grantIncrease = false) {
+  if (!actor || !actor.isPlayer) return 0;
+  const previous = Math.max(100, Number(actor.maxHp) || 100);
+  actor.maxHp = Math.max(previous, playerHealthCapacity());
+  return grantIncrease && actor.maxHp > previous ? actor.restoreHealth(actor.maxHp - previous) : 0;
+}
+function playerMagazineCapacity(weapon) {
+  return weapon.maxAmmo * (weapon !== WEAPONS.BOW && window.milLvl >= 2 ? 2 : 1);
+}
+function weaponMagazineCapacity(actor, weapon = actor && actor.currentWeapon) {
+  if (!weapon) return 0;
+  return actor && (actor.isPlayer || actor.isFriendly) ? playerMagazineCapacity(weapon) : weapon.maxAmmo;
+}
+
 class Character {
   constructor(x, y, isP, eT = "NORMAL") {
     this.isFriendly = false;
 	 this.x = x; this.y = y; this.isPlayer = isP; this.eType = eT; 
-        this.hp = 100; this.maxHp = 100;
-    if (isP && window.farmLvl >= 2) { this.hp = 125; this.maxHp = 125; }
+        this.hp = isP ? playerHealthCapacity() : 100; this.maxHp = this.hp;
 ; this.shield = isP ? 100 : 0; this.shieldRechargeTimer = 0;
     this.bodyW = 21; this.bodyH = 27; this.shirtCol = isP ? color(200, 30, 30) : color(220, 200, 20); this.pantsCol = isP ? color(30, 80, 180) : color(30, 30, 30);
         this.aiOffset = Math.floor(Math.random() * 10); // Spreads updates across 10 frames
@@ -17649,16 +17673,16 @@ this.punchHitCount = 0;
     this.throwAnimTimer = 0; this.cannonAmmo = 4; this.cannonCooldown = 0; this.cannonFireDelay = 0; this.cannonCharge = 0;
     this.muzzleFlash = 0; this.weaponKick = 0; this.decals = []; this.isMoving = false; this.walkCycle = 0; this.gait = 0; this.armDrag = 0; this.lastHitFrame = 0; this.frameDamage = 0; this.shieldFlashTimer = 0; this.shieldBurstTimer = 0;
        this.weaponAmmo = { 
-        "PISTOL": WEAPONS.PISTOL.maxAmmo, 
-        "MACHINE GUN": WEAPONS.SMG.maxAmmo, 
-        "DUAL SMGS": WEAPONS.DUAL_SMG.maxAmmo, 
-        "ASSAULT RIFLE": WEAPONS.ASSAULT_RIFLE.maxAmmo, 
-        "SHOTGUN": WEAPONS.SHOTGUN.maxAmmo, 
-        "ROCKET LAUNCHER": WEAPONS.ROCKET_LAUNCHER.maxAmmo,
-        "TASER": WEAPONS.TASER.maxAmmo, // <--- ADDED TASER
+        "PISTOL": weaponMagazineCapacity(this, WEAPONS.PISTOL),
+        "MACHINE GUN": weaponMagazineCapacity(this, WEAPONS.SMG),
+        "DUAL SMGS": weaponMagazineCapacity(this, WEAPONS.DUAL_SMG),
+        "ASSAULT RIFLE": weaponMagazineCapacity(this, WEAPONS.ASSAULT_RIFLE),
+        "SHOTGUN": weaponMagazineCapacity(this, WEAPONS.SHOTGUN),
+        "ROCKET LAUNCHER": weaponMagazineCapacity(this, WEAPONS.ROCKET_LAUNCHER),
+        "TASER": weaponMagazineCapacity(this, WEAPONS.TASER),
         "BOW": 0,
-        "REVOLVER": WEAPONS.REVOLVER.maxAmmo,
-        "COACH GUN": WEAPONS.COACH_GUN.maxAmmo
+        "REVOLVER": weaponMagazineCapacity(this, WEAPONS.REVOLVER),
+        "COACH GUN": weaponMagazineCapacity(this, WEAPONS.COACH_GUN)
     };
     
     this.mags = { 
@@ -17768,6 +17792,7 @@ this.skeletonTimer = 0;
   }
 
   restoreHealth(amount) {
+    applyFarmingReward(this);
     if (amount <= 0 || this.hp <= 0 || this.dead) return 0;
     const restored = min(amount, max(0, this.maxHp - this.hp));
     if (restored > 0) {
@@ -18287,7 +18312,7 @@ this.skeletonTimer = 0;
         if (this.throwAnimTimer > 0) this.throwAnimTimer--;
     
     let isChemist = typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked;
-    const shovelUtility=shovelToolEquipped()||shovelPlayerDepth(this)>=SHOVEL.underground;
+    const shovelUtility=shovelToolEquipped()||shovelPlayerDepth(this)>=SHOVEL.underground||!!buildGhost;
     if(shovelUtility){isCooking=false;this.cannonCharge=0;grenadeInputHeld=false;cannonInputHeld=false;}
 
     if (isChemist && !shovelUtility) {
@@ -18315,7 +18340,7 @@ this.skeletonTimer = 0;
             if (this.cannonCharge >= 120) { dmg = 350; dryMax = 3; } 
             else if (this.cannonCharge >= 80) { dmg = 150; dryMax = 2; } 
             
-            let range = 300, arc = 0.4, pA = supportAimAngle(this);
+            let range = chemistCannonRange(this, 300), chainRange = chemistCannonRange(this, 200), arc = 0.4, pA = supportAimAngle(this);
             let candidates = enemiesList.filter(e => e.hp > 0 && !e.dead && dist(this.x, this.y, e.x, e.y) < range && abs((atan2(e.y - this.y, e.x - this.x) - pA + PI*3) % TWO_PI - PI) < arc);
             
             const muzzle = leftActionMuzzle(this, pA);
@@ -18331,7 +18356,7 @@ this.skeletonTimer = 0;
                 let chaining = true;
                 while(chaining) {
                     chaining = false;
-                    let nextList = enemiesList.filter(e => !hitSet.has(e) && e.hp > 0 && dist(current.x, current.y, e.x, e.y) < 200);
+                    let nextList = enemiesList.filter(e => !hitSet.has(e) && e.hp > 0 && dist(current.x, current.y, e.x, e.y) < chainRange);
                     nextList.sort((a,b) => dist(current.x, current.y, a.x, a.y) - dist(current.x, current.y, b.x, b.y));
                     
                     for (let n of nextList) {
@@ -18415,7 +18440,7 @@ this.skeletonTimer = 0;
     }
 
     const shovelSwing=this.isPlayer&&meleeTool()==="SHOVEL";
-    let canMelee = (meleeUnlocked||shovelSwing) && (!isChemist||shovelSwing) && this.dashTimer <= 0;
+    let canMelee = !buildGhost && (meleeUnlocked||shovelSwing) && (!isChemist||shovelSwing) && this.dashTimer <= 0;
 
     if (canMelee && shovelSwing) {
         // Digging tools swing on press even when the sword charge upgrade is
@@ -18624,7 +18649,7 @@ this.skeletonTimer = 0;
     this.armDrag = lerp(this.armDrag, this.isMoving ? 1 : 0, 0.15); 
     
     if (this.meleeTimer <= 0) {
-        if (rightStick.active) this.aimAngle = this.currentWeapon === WEAPONS.BOW ? playerBowAimAngle(this) : atan2(rightStick.dy, rightStick.dx);
+        if (rightStick.active) this.aimAngle = !buildGhost && this.currentWeapon === WEAPONS.BOW ? playerBowAimAngle(this) : atan2(rightStick.dy, rightStick.dx);
         else if (leftStick.active && this.isMoving && this.dashTimer <= 0 &&
             !(this.currentWeapon === WEAPONS.BOW && this.bowDrawState && this.bowDrawState.phase === 'DRAW')) this.aimAngle = this.moveAngle;
     }
@@ -18632,8 +18657,7 @@ this.skeletonTimer = 0;
     if (this.fireTimer > 0) this.fireTimer--; if (this.muzzleFlash > 0) this.muzzleFlash--;
     if (this.weaponKick > 0) this.weaponKick--;
         if (this.reloadTimer > 0 && --this.reloadTimer <= 0) { 
-        let mult = ((this.isPlayer || this.isFriendly) && window.milLvl >= 2) ? 2 : 1;
-        this.ammo = this.currentWeapon.maxAmmo * mult; 
+        this.ammo = weaponMagazineCapacity(this);
     }
  
     
@@ -18828,10 +18852,9 @@ if (this.eType === "COW") {
     if (this.muzzleFlash > 0) this.muzzleFlash--;
     if (this.weaponKick > 0) this.weaponKick--;
         if (this.reloadTimer > 0 && --this.reloadTimer <= 0) { 
-        let mult = ((this.isPlayer || this.isFriendly) && window.milLvl >= 2) ? 2 : 1;
-        this.ammo = this.currentWeapon.maxAmmo * mult; 
+        this.ammo = weaponMagazineCapacity(this);
     }
- this.ammo = this.currentWeapon.maxAmmo; 
+ this.ammo = weaponMagazineCapacity(this);
     if (this.biteCooldown > 0) this.biteCooldown--;
     if (this.ignoreBldgTimer > 0) this.ignoreBldgTimer--; 
     if(this.orbChargeTimer>0&&!shovelActorsVisible(this,this.aggroTarget||this.leader||player))this.orbChargeTimer=0;
@@ -19459,6 +19482,7 @@ if (this.eType === "COW") {
 
 
         fire(sA, bowShot = null) {
+    if(this.isPlayer&&buildGhost)return;
     if(this.shovelMantle)return;
     if (shovelPlayerDepth(this)>=SHOVEL.underground || this.isPlayer&&shovelToolEquipped()) return;
     if (boxingActive(this)) return;
@@ -21675,7 +21699,7 @@ function updateWorldBoxingPlayer(actor) {
   if (actor.fireTimer > 0) actor.fireTimer--;
   if (actor.weaponKick > 0) actor.weaponKick--;
   if (actor.muzzleFlash > 0) actor.muzzleFlash--;
-  if (actor.reloadTimer > 0 && --actor.reloadTimer === 0) actor.ammo = actor.currentWeapon.maxAmmo * (window.milLvl >= 2 ? 2 : 1);
+  if (actor.reloadTimer > 0 && --actor.reloadTimer === 0) actor.ammo = weaponMagazineCapacity(actor);
 }
 function updateWorldBoxingOpponents() {
   // A street boxer still hears gunfire and notices a drawn firearm while its
@@ -23875,6 +23899,7 @@ function drawUI() {
     pop();
   }
   const hpNow = player ? max(0, player.hp) : 0;
+  const hpMax = player ? Math.max(1, player.maxHp || 100) : 100;
   // Healing overtakes the trail rather than dragging it along behind.
   if (hpNow > hpGhost) { hpGhost = hpNow; hpGhostHold = 0; }
   if (hpNow < hpPrev) hpGhostHold = HP_GHOST_HOLD;
@@ -23892,9 +23917,9 @@ function drawUI() {
   if (hpGhost > hpNow) {
     const held = hpGhostHold > 0;
     fill(255, held ? 245 : 165, held ? 225 : 70, held ? 235 : 195);
-    rect(20, 20, hpGhost * 2, 15, 4);
+    rect(20, 20, Math.min(1, hpGhost / hpMax) * 200, 15, 4);
   }
-  fill(220, 30, 30); rect(20, 20, hpNow * 2, 15, 4);
+  fill(220, 30, 30); rect(20, 20, Math.min(1, hpNow / hpMax) * 200, 15, 4);
   
   // The shield bar carries the same trail, for the same reason: the chunk a
   // hit took off it is worth seeing while it is happening. It recharges on its
@@ -24065,7 +24090,7 @@ function drawUI() {
   pop();
   fill(255); noStroke(); textAlign(ammoHud.centered ? CENTER : LEFT, CENTER); textFont('sans-serif'); textSize(ammoHud.fontSize);
  
-  let pA = player ? player.ammo : 0, pM = player ? player.currentWeapon.maxAmmo : 17, pR = player ? player.reloadTimer : 0; 
+  let pA = player ? player.ammo : 0, pM = player ? playerMagazineCapacity(player.currentWeapon) : 17, pR = player ? player.reloadTimer : 0;
   
   let ammoLabel;
   if (shovelToolEquipped()) ammoLabel = 'SHOVEL · '+(shovelPlayerDepth(player)/20).toFixed(1)+' m';
@@ -24097,7 +24122,7 @@ function drawUI() {
   drawingContext.globalAlpha = controlAlphaBefore * updateTouchControlFade();
   if (player && boxingActive(player)) drawBoxingControls(player);
   else if (shovelControlsAvailable()) drawShovelControls();
-  else if(!connectedGamepad()&&!streetThugDialogueOpen()) {
+  else if(!buildGhost&&!connectedGamepad()&&!streetThugDialogueOpen()) {
   const combat = touchCombatLayout(), rbX = combat.reload.x, rbY = combat.reload.y;
   const buttonSize = combat.radius * 2;
   let isTaser = player && player.currentWeapon === WEAPONS.TASER;
@@ -24306,7 +24331,7 @@ function readGamepadFireInput(pad) {
   return gamepadFireInput;
 }
 function playerWeaponFireInput() {
-  if (!rightStick || isPaused || player && (boxingActive(player) || shovelToolEquipped() || shovelPlayerDepth(player)>=SHOVEL.underground)) return false;
+  if (!rightStick || isPaused || buildGhost || player && (boxingActive(player) || shovelToolEquipped() || shovelPlayerDepth(player)>=SHOVEL.underground)) return false;
   if (rightStick.gamepadInput)
     return gamepadTriggerShooting() ? gamepadFireInput.trigger : gamepadFireInput.stick;
   return rightStick.active && rightStick.dist > .75;
@@ -24766,6 +24791,7 @@ function handleGamepad() {
     prevGamepadButtons=[];return;
   }
   if (touchAimSelection.pointerId !== null) resetTouchAimSelection(true);
+  if (buildGhost) { handleBuildPlacementGamepad(pad); return; }
   // Detection alone hides the touch HUD, even with both sticks at rest.
   gamepadWasConnected=true;
   window.showOnScreenControls=false;
@@ -24813,7 +24839,7 @@ function handleGamepad() {
     for(let i=0;i<pad.buttons.length;i++)prevGamepadButtons[i]=btn(i);
     return;
   }
-  if (jP(2) && player && player.reloadTimer <= 0 && player.ammo < player.currentWeapon.maxAmmo) { player.triggerReload(); }
+  if (jP(2) && player && player.reloadTimer <= 0 && player.ammo < playerMagazineCapacity(player.currentWeapon)) { player.triggerReload(); }
 
   // L2 holds/cooks the suit's throwable; L1 holds the chemist cannon charge.
   // Merge with touch input, which clears these held flags at the frame's start.
@@ -24934,6 +24960,7 @@ function syncTouchAimPointers() {
 }
 function syncTouchAimControlContext() {
   syncTouchAimPointers();
+  if (buildGhost) return; // Placement owns movement/aiming without gun input.
   if (!touchAimControlsAllowed() && (touchAimSelection.pointerId !== null || touches.length)) resetTouchAimSelection(true);
 }
 function touchAimPointerConsumed(id) {
@@ -24990,6 +25017,7 @@ function drawTouchAimSilhouette() {
 }
 function handleTouches() {
   syncTouchAimControlContext();
+  if (buildGhost) { handleBuildPlacementTouches(); return; }
   if (handleStreetThugDialogueInput('TOUCH')) return;
   meleeInputHeld = cannonInputHeld = grenadeInputHeld = false;
   if (rightStick) rightStick.gamepadInput = false;
@@ -25054,7 +25082,7 @@ function handleTouches() {
       continue;
     }
     if (dist(tx, ty, combat.reload.x, combat.reload.y) < combat.hitRadius) {
-      if (player.reloadTimer <= 0 && player.ammo < player.currentWeapon.maxAmmo) player.triggerReload();
+      if (player.reloadTimer <= 0 && player.ammo < playerMagazineCapacity(player.currentWeapon)) player.triggerReload();
       continue;
     }
     if (jetpackUnlocked && dist(tx, ty, combat.dash.x, combat.dash.y) < combat.hitRadius) {
@@ -25074,7 +25102,8 @@ function drawJoysticks() {
   const controlAlphaBefore = Number.isFinite(drawingContext.globalAlpha) ? drawingContext.globalAlpha : 1;
   drawingContext.globalAlpha = controlAlphaBefore * updateTouchControlFade();
   noFill(); stroke(255, 50); ellipse(leftStick.base.x, leftStick.base.y, 120);
-  if (shovelToolEquipped()) ellipse(rightStick.base.x, rightStick.base.y, 120);
+  if (buildGhost) { const base = buildPlacementAimBase(); ellipse(base.x, base.y, 120); }
+  else if (shovelToolEquipped()) ellipse(rightStick.base.x, rightStick.base.y, 120);
   else if (rightStick.touchOrigin && touchAimSelection.pointerId !== null)
     ellipse(rightStick.touchOrigin.x, rightStick.touchOrigin.y, 120);
   else drawTouchAimSilhouette();
@@ -25136,7 +25165,7 @@ function purchaseUpgrade(item) {
         if(f==='revolver')revolverUnlocked=true;if(f==='rocket')rocketLauncherUnlocked=true;
         player.currentWeapon=item.weapon;player.reloadTimer=0;
         player.mags[item.weapon.name]=item.id==='ROCKET'?6:3;
-        player.weaponAmmo[item.weapon.name]=item.weapon.maxAmmo;sfx.reload();return true;
+        player.weaponAmmo[item.weapon.name]=playerMagazineCapacity(item.weapon);sfx.reload();return true;
     }
     if(item.suit){score-=item.price;equipPlayerSuit(item.id);sfx.charge();return true;}
     if(item.price<=0)return false;
@@ -25196,7 +25225,8 @@ function restoreFrontierEquipment(raw) {
     revolverUnlocked=raw.revolverUnlocked===true;cowboyCostumeOwned=raw.cowboyOwned===true;
     cowboySuitEquipped=cowboyCostumeOwned&&raw.cowboyEquipped===true;
     const amount=(v,max,fallback)=>typeof v==='number'&&Number.isFinite(v)?Math.max(0,Math.min(max,Math.floor(v))):fallback;
-    _frontierEquipmentRestore=revolverUnlocked?{ammo:amount(raw.revolverAmmo,6,6),reserve:amount(raw.revolverReserve,99,3)}:null;
+    const capacity=playerMagazineCapacity(WEAPONS.REVOLVER);
+    _frontierEquipmentRestore=revolverUnlocked?{ammo:amount(raw.revolverAmmo,capacity,capacity),reserve:amount(raw.revolverReserve,99,3)}:null;
     if(cowboySuitEquipped){ninjaSuitUnlocked=false;explosiveArmorUnlocked=false;chemistSuitUnlocked=false;}
 }
 function resetFrontierEquipment() {
@@ -25207,7 +25237,7 @@ function applyFrontierEquipment(c,refill=false) {
     if(!c||!c.isPlayer)return;
     if(revolverUnlocked&&(refill||_frontierEquipmentRestore||!c._frontierEquipmentApplied)) {
         const saved=!refill&&_frontierEquipmentRestore;
-        c.weaponAmmo.REVOLVER=saved?saved.ammo:WEAPONS.REVOLVER.maxAmmo;c.mags.REVOLVER=saved?saved.reserve:3;
+        c.weaponAmmo.REVOLVER=saved?saved.ammo:playerMagazineCapacity(WEAPONS.REVOLVER);c.mags.REVOLVER=saved?saved.reserve:3;
         _frontierEquipmentRestore=null;
     }
     c._frontierEquipmentApplied=true;
@@ -25218,10 +25248,11 @@ function touchStarted() {
   syncTouchAimPointers();
   const fresh = touches.filter(t => !touchAimSelection.pointers.has(t.id));
   const unconsumed = handleTouchStartActions();
-  if (unconsumed && touchAimControlsAllowed()) captureTouchAimStarts(fresh);
+  if (unconsumed && buildGhost) captureBuildPlacementTouches(fresh);
+  else if (unconsumed && touchAimControlsAllowed()) captureTouchAimStarts(fresh);
   else {
     for (const t of fresh) touchAimSelection.pointers.set(t.id, { role: 'BLOCKED' });
-    if (!touchAimControlsAllowed() && touchAimSelection.pointerId !== null) resetTouchAimSelection(true);
+    if (!buildGhost && !touchAimControlsAllowed() && touchAimSelection.pointerId !== null) resetTouchAimSelection(true);
   }
   return false;
 }
@@ -25249,6 +25280,11 @@ function handleTouchStartActions() {
   // Outside, an interaction finger remains consumed until it lifts, so holding
   // a mission button cannot become right-stick gunfire on the following frame.
   if (handlePauseSettingsTap(mx, my)) return false;
+  if (buildGhost && !isPaused) {
+    if (handlePauseCornerTap(mx, my)) return false;
+    if (handleBuildHudTap(mx, my)) return false;
+    return true;
+  }
   if(handleStreetThugDialogueTap(mx,my))return false;
   const shovelButton=shovelTouchAction(mx,my);
   if(shovelButton){shovelUseControl(shovelButton.action);return false;}
@@ -25268,14 +25304,6 @@ function handleTouchStartActions() {
   // before anything else so a tap near the sticks cannot fire a weapon through
   // the ghost the player is still lining up.
   if (typeof handleBuildHudTap === 'function' && handleBuildHudTap(mx, my)) return false;
-
-  // THEN check the barrier button
-  if (window.archBarrierReady) {
-      let bbX = width / 2, bbY = height - 100;
-      if (mx > bbX - 70 && mx < bbX + 70 && my > bbY - 20 && my < bbY + 20) {
-          buildBarrier(); return false;
-      }
-  }
 
   // --- NEW: CLOSE NM-0 OVERLAY ---
   if (window.inNM0SecretOverlay) {
@@ -25431,7 +25459,7 @@ else if (mx > width/2 - 120 && mx < width/2 + 120 && my > height/2 - 110 && my <
                       // Left half BUILD, right half MY BUILDINGS.
                       if (mx > width/2 + 6) {
                           if (buildSites.length > 0) { pauseMenuState = "BUILDINGS"; sfx.charge(); }
-                      } else if (buildCrew() > 0) { pauseMenuState = "BUILD"; sfx.charge(); }
+                      } else if (buildCrew() > 0 || window.archLvl >= 2) { pauseMenuState = "BUILD"; sfx.charge(); }
                       return false;
                   }
 
@@ -25463,16 +25491,21 @@ else if (mx > width/2 - 120 && mx < width/2 + 120 && my > height/2 - 110 && my <
               }
 
             } else if (pauseMenuState === "BUILD") {
+              const menu = buildMenuLayout();
               // Blueprint cards are wider than the standard button column, so
               // they test their own x range rather than btnX.
               for (let i = 0; i < BUILD_ORDER.length; i++) {
-                  const y = height / 2 - 160 + i * 76;
-                  if (mx > width / 2 - 170 && mx < width / 2 + 170 && my > y && my < y + 64) {
-                      startBuildPlacement(BUILD_ORDER[i]);
+                  const y = menu.top + i * (menu.cardH + 8);
+                  if (mx > menu.x && mx < menu.x + menu.w && my > y && my < y + menu.cardH) {
+                      if (buildCrew() > 0) startBuildPlacement(BUILD_ORDER[i]);
                       return false;
                   }
               }
-              if (mx > btnX && mx < btnX + btnW && my > height / 2 + 190 && my < height / 2 + 230) {
+              const fortButton = fortificationsMenuButton();
+              if (mx > fortButton.x && mx < fortButton.x + fortButton.w && my > fortButton.y && my < fortButton.y + fortButton.h) {
+                  buildBarrier(); return false;
+              }
+              if (mx > btnX && mx < btnX + btnW && my > menu.backY && my < menu.backY + 40) {
                   pauseMenuState = "MAIN"; return false;
               }
 
@@ -26248,6 +26281,7 @@ document.addEventListener('touchcancel', cancelTouchAimPointer, { passive: true 
 
 function touchMoved() {
     syncTouchAimPointers();
+    if (buildGhost) { handleBuildPlacementTouches(); return false; }
     const t = touches.find(t => t.id === touchAimSelection.pointerId);
     if (t) updateTouchAimPointer(t);
     return false;
@@ -26305,6 +26339,7 @@ function saveGame() {
 
                 farmXP: window.farmXP || 0, milXP: window.milXP || 0, sciXP: window.sciXP || 0, archXP: window.archXP || 0,
         farmLvl: window.farmLvl || 1, milLvl: window.milLvl || 1, sciLvl: window.sciLvl || 1, archLvl: window.archLvl || 1,
+        archBarrierReady: !!window.archBarrierReady,
 
         inTownCutscene, townPhase, townTimer, 
         objectiveTimer,
@@ -26427,8 +26462,9 @@ function loadGame() {
         resetRunState();
         isStoryMode = state.isStoryMode;
         isHardMode = !!state.isHardMode;
-        // Character construction derives maximum health from this upgrade.
-        window.farmLvl = Number(state.farmLvl) || 1;
+        // Player, equipment and allied actors all derive their capacities from
+        // this file's department levels before the world is reconstructed.
+        restoreDepartmentProgress(state);
 
         // --- RESTORE STORY ARC PROGRESSION FIRST ---
         // startAtLevel() builds the map, and whether a sector builds its
@@ -26556,8 +26592,8 @@ function loadGame() {
         })).filter((s) => BLUEPRINTS[s.kind]) : [];
         playerStructures = (Array.isArray(state.playerBarriers) ? state.playerBarriers : [])
             .map((b) => ({ x: b.x, y: b.y, w: b.w || 200, h: b.h || 200, isUBarrier: true,
-                           hp: b.hp || 1000, maxHp: b.maxHp || 1000, hitFlash: 0,
-                           isPlayerBuilt: true, buildLevel: b.level }));
+                           hp: Number.isFinite(b.hp) ? b.hp : 1000, maxHp: Number.isFinite(b.maxHp) ? b.maxHp : 1000, hitFlash: 0,
+                           isPlayerBuilt: true, buildLevel: b.level })).filter(b => b.hp > 0);
         buildGhost = null;
         republishPlayerStructures();
 
@@ -26614,11 +26650,6 @@ function loadGame() {
         window.escortHome = state.escortHome || null;
         window.escortWasF = state.escortWasF || 0;
         if (state.viewingTownId) viewingTownId = state.viewingTownId;
-        window.farmXP = Number(state.farmXP) || 0; window.milXP = Number(state.milXP) || 0; 
-        window.sciXP = Number(state.sciXP) || 0; window.archXP = Number(state.archXP) || 0;
-        window.farmLvl = Number(state.farmLvl) || 1; window.milLvl = Number(state.milLvl) || 1; 
-        window.sciLvl = Number(state.sciLvl) || 1; window.archLvl = Number(state.archLvl) || 1;
-        window.archBarrierReady = false;
 
         journalRead = state.journalRead; tabletPickedUp = state.tabletPickedUp; swordPickedUp = state.swordPickedUp;
         swordKillCounter=[0,1,2].includes(state.swordKillCounter)?state.swordKillCounter:0;
@@ -26662,22 +26693,20 @@ function loadGame() {
         }
 
         if (player) {
-            player.hp = state.playerHp || 100;
-            player.shield = state.playerShield || 100;
+            applyFarmingReward(player);
+            player.hp = Number.isFinite(state.playerHp) ? Math.max(0, Math.min(player.maxHp, state.playerHp)) : player.maxHp;
+            player.shield = Number.isFinite(state.playerShield) ? Math.max(0, Math.min(100, state.playerShield)) : 100;
             if (state.playerX !== null && state.playerY !== null) {
                 player.x = state.playerX;
                 player.y = state.playerY;
             }
             restoreShovelPlayer(state.shovel);
         }
-    let mult = (window.milLvl >= 2) ? 2 : 1;
-    if (window.archLvl >= 2) window.archBarrierReady = true;
-
-        if (smgUnlocked) { player.mags["MACHINE GUN"] = 3; player.weaponAmmo["MACHINE GUN"] = WEAPONS.SMG.maxAmmo; }
-        if (dualSmgUnlocked) { player.mags["DUAL SMGS"] = 3; player.weaponAmmo["DUAL SMGS"] = WEAPONS.DUAL_SMG.maxAmmo; }
-        if (arUnlocked) { player.mags["ASSAULT RIFLE"] = 3; player.weaponAmmo["ASSAULT RIFLE"] = WEAPONS.ASSAULT_RIFLE.maxAmmo; }
-        if (shotgunUnlocked) { player.mags["SHOTGUN"] = 3; player.weaponAmmo["SHOTGUN"] = WEAPONS.SHOTGUN.maxAmmo; }
-        if (rocketLauncherUnlocked) { player.mags["ROCKET LAUNCHER"] = 6; player.weaponAmmo["ROCKET LAUNCHER"] = WEAPONS.ROCKET_LAUNCHER.maxAmmo; }
+        if (smgUnlocked) { player.mags["MACHINE GUN"] = 3; player.weaponAmmo["MACHINE GUN"] = playerMagazineCapacity(WEAPONS.SMG); }
+        if (dualSmgUnlocked) { player.mags["DUAL SMGS"] = 3; player.weaponAmmo["DUAL SMGS"] = playerMagazineCapacity(WEAPONS.DUAL_SMG); }
+        if (arUnlocked) { player.mags["ASSAULT RIFLE"] = 3; player.weaponAmmo["ASSAULT RIFLE"] = playerMagazineCapacity(WEAPONS.ASSAULT_RIFLE); }
+        if (shotgunUnlocked) { player.mags["SHOTGUN"] = 3; player.weaponAmmo["SHOTGUN"] = playerMagazineCapacity(WEAPONS.SHOTGUN); }
+        if (rocketLauncherUnlocked) { player.mags["ROCKET LAUNCHER"] = 6; player.weaponAmmo["ROCKET LAUNCHER"] = playerMagazineCapacity(WEAPONS.ROCKET_LAUNCHER); }
 
         if (rocketLauncherUnlocked) player.currentWeapon = WEAPONS.ROCKET_LAUNCHER;
         else if (shotgunUnlocked) player.currentWeapon = WEAPONS.SHOTGUN;
@@ -26990,7 +27019,7 @@ function triggerBugAmbush() {
             
             // Upgrade their weapons
             e.currentWeapon = random() > 0.5 ? WEAPONS.SHOTGUN : WEAPONS.ASSAULT_RIFLE;
-            e.weaponAmmo[e.currentWeapon.name] = e.currentWeapon.maxAmmo;
+            e.weaponAmmo[e.currentWeapon.name] = weaponMagazineCapacity(e);
         }
     }
 
@@ -27015,12 +27044,24 @@ function spawnFarmBug() {
 }
 // --- NEW METER & UPGRADE SYSTEM ---
 
+function restoreDepartmentProgress(state) {
+    for (const dept of ['farm', 'mil', 'sci', 'arch']) {
+        const xp = Number(state[dept + 'XP']), level = Number(state[dept + 'Lvl']);
+        window[dept + 'XP'] = Number.isFinite(xp) ? Math.max(0, xp) : 0;
+        window[dept + 'Lvl'] = Number.isFinite(level) ? Math.max(1, Math.floor(level)) : 1;
+    }
+    // A pending barrier is one reward, not a refill on every load. Older saves
+    // only recorded placed barriers, so use that history when the flag is absent.
+    const spentLegacyBarrier = Array.isArray(state.playerBarriers) && state.playerBarriers.some(b => b && typeof b === 'object');
+    window.archBarrierReady = window.archLvl >= 2 && (typeof state.archBarrierReady === 'boolean' ?
+        state.archBarrierReady : !spentLegacyBarrier);
+}
 
 function checkLevelUps() {
     let req2 = 50; 
     if (window.farmLvl === 1 && window.farmXP >= req2) { 
         window.farmLvl = 2; streakMsgText = "FARMING LEVEL 2!"; streakMsgTimer = 120; sfx.charge(); 
-        if (player) { player.maxHp = 125; player.restoreHealth(25); }
+        if (player) applyFarmingReward(player, true);
         for (let e of enemiesList) if (e.isFriendly) { e.maxHp = (e.maxHp || 300) + 25; e.hp += 25; }
     }
     if (window.milLvl === 1 && window.milXP >= req2) { 
@@ -27038,16 +27079,18 @@ function checkLevelUps() {
 }
 
 function buildBarrier() {
-    if (!window.archBarrierReady) return;
-    window.archBarrierReady = false;
-    // Through playerStructures rather than straight into buildings[]: see the
-    // construction block below for why anything the player puts in the world
-    // has to survive rebuildWorldArrays().
-    playerStructures.push({ x: player.x, y: player.y - 20, w: 200, h: 200, isUBarrier: true,
-                            hp: 1000, maxHp: 1000, hitFlash: 0,
-                            isPlayerBuilt: true, buildLevel: currentLevel });
-    republishPlayerStructures();
-    sfx.charge();
+    return startBuildPlacement('BARRIER');
+}
+function buildMenuLayout() {
+    const compact = height < 640, w = Math.min(340, width - 24);
+    return { x: (width - w) / 2, w, top: compact ? 80 : height/2 - 160,
+        cardH: compact ? Math.min(60, Math.max(20, (height - 226) / 4)) : 60,
+        titleY: compact ? 30 : height/2 - 230, statusY: compact ? 60 : height/2 - 198,
+        fortY: compact ? height - 110 : height/2 + 132, backY: compact ? height - 52 : height/2 + 190 };
+}
+function fortificationsMenuButton() {
+    const menu = buildMenuLayout();
+    return { x: menu.x, y: menu.fortY, w: menu.w, h: 48 };
 }
 
 // ############################################################################
@@ -27096,7 +27139,9 @@ const BLUEPRINTS = {
     RANGE:      { label: "SHOOTING RANGE", w: Math.round(260 * BUILD_SCALE), h: Math.round(110 * BUILD_SCALE),
                   blurb: "Firing line, six lanes, earth backstop." },
     FARM:       { label: "BARN & FIELD",   w: Math.round(260 * BUILD_SCALE), h: Math.round(190 * BUILD_SCALE),
-                  blurb: "Gambrel barn with a worked field alongside." }
+                  blurb: "Gambrel barn with a worked field alongside." },
+    BARRIER:   { label: "BARRIER", w: 200, h: 200,
+                  blurb: "Architecture level 2 fortification. Placed instantly." }
 };
 const BUILD_ORDER = ["WAREHOUSE", "LABORATORY", "RANGE", "FARM"];
 
@@ -27106,7 +27151,7 @@ const BUILD_ORDER = ["WAREHOUSE", "LABORATORY", "RANGE", "FARM"];
 const BUILD_DAY_PER_UNIT = 0.01;
 
 let buildSites = [];          // every site in every sector; the save's record
-let playerStructures = [];    // the current sector's solids, republished on rebuild
+let playerStructures = [];    // current structures plus saved barriers from every sector
 let buildGhost = null;        // { kind, x, y, w, h, ok } only while placing
 let buildMenuPage = 0;
 
@@ -27189,16 +27234,23 @@ function buildSpotClear(x, y, w, h) {
 
 function startBuildPlacement(kind) {
     const bp = BLUEPRINTS[kind];
-    if (!bp) return false;
+    if (!bp || !player || (kind === 'BARRIER' && !window.archBarrierReady)) return false;
+    consumePauseControlInputs();
     buildGhost = { kind: kind, x: player.x, y: player.y, w: bp.w, h: bp.h, ok: false };
     isPaused = false;
     pauseMenuState = "MAIN";
-    window.lastPauseTime = millis();
     if (sfx && sfx.charge) sfx.charge();
     return true;
 }
+function consumeBuildPlacementInput() {
+    consumePauseControlInputs();
+    if (rightStick) { rightStick.active = false; rightStick.dx = rightStick.dy = rightStick.dist = 0; }
+    deathMenuInput.mouseBlocked = !!mouseIsPressed;
+    pauseControlsInput.keys = new Set([27, 80, 38, 40, 37, 39, 13].filter(code => keyIsDown(code)));
+}
 function cancelBuildPlacement() {
     buildGhost = null;
+    consumeBuildPlacementInput();
     if (sfx && sfx.reload) sfx.reload();
 }
 // The ghost rides in front of the player on the aim angle, so the left stick
@@ -27252,19 +27304,30 @@ function clearBuildLot(x, y, w, h) {
 }
 
 function confirmBuildPlacement() {
-    if (!buildGhost || !buildGhost.ok) return false;
+    if (!buildGhost || !player || player.hp <= 0 || isDead || isWin || isPaused || !buildGhost.ok || !BLUEPRINTS[buildGhost.kind]) return false;
+    if (buildGhost.kind === 'BARRIER' && !window.archBarrierReady) return false;
+    // Recheck the rendered footprint: actors may have moved or a solid may
+    // have appeared since the previous preview frame.
+    if (!buildSpotClear(buildGhost.x, buildGhost.y, buildGhost.w, buildGhost.h)) { buildGhost.ok = false; return false; }
+    const fortification = buildGhost.kind === 'BARRIER';
     const won = clearBuildLot(buildGhost.x, buildGhost.y, buildGhost.w, buildGhost.h);
     const parts = [];
     for (const k of RESOURCE_KINDS) if (won[k]) parts.push("+" + won[k] + " " + k);
     if (parts.length) floatingScores.push({ y: 100, text: "LOT CLEARED  " + parts.join("  "), life: 110, maxLife: 110 });
-    buildSites.push({
+    if (buildGhost.kind === 'BARRIER') {
+        playerStructures.push({ x: Math.round(buildGhost.x), y: Math.round(buildGhost.y),
+            w: buildGhost.w, h: buildGhost.h, isUBarrier: true, hp: 1000, maxHp: 1000,
+            hitFlash: 0, isPlayerBuilt: true, buildLevel: currentLevel });
+        window.archBarrierReady = false;
+    } else buildSites.push({
         level: currentLevel, kind: buildGhost.kind,
         x: Math.round(buildGhost.x), y: Math.round(buildGhost.y),
         w: buildGhost.w, h: buildGhost.h, progress: 0, done: false
     });
     buildGhost = null;
+    consumeBuildPlacementInput();
     republishPlayerStructures();
-    streakMsgText = "GROUND BROKEN"; streakMsgTimer = 110;
+    streakMsgText = fortification ? "BARRIER PLACED" : "GROUND BROKEN"; streakMsgTimer = 110;
     if (sfx && sfx.charge) sfx.charge();
     return true;
 }
@@ -27348,14 +27411,14 @@ function buildSiteSolids(s) {
 // Called on level entry, on placement and on completion -- and appended again
 // by rebuildWorldArrays() every time the chunk streamer republishes the world.
 function republishPlayerStructures() {
-    const keep = playerStructures.filter((b) => b.isUBarrier && b.buildLevel === currentLevel);
+    const keep = playerStructures.filter((b) => b.isUBarrier && b.hp > 0);
     playerStructures = keep;
     for (const s of buildSites) {
         if (s.level !== currentLevel) continue;
         for (const b of buildSiteSolids(s)) playerStructures.push(b);
     }
     for (let i = buildings.length - 1; i >= 0; i--) if (buildings[i].isPlayerBuilt) buildings.splice(i, 1);
-    for (const b of playerStructures) buildings.push(b);
+    for (const b of playerStructures) if (b.buildLevel === currentLevel) buildings.push(b);
     lastActiveUpdate = 0;
     activeBuildings = [];
     if (typeof updateActiveWorld === 'function') updateActiveWorld();
@@ -27680,35 +27743,103 @@ function drawBuiltStructure(b) {
 }
 
 // --- the placement HUD, screen space --------------------------------------
+function buildPlacementControls() {
+    const w = Math.min(150, (width - 40) / 2), h = 46, y = height - 72;
+    return { place: { x: width / 2 - w - 10, y, w, h }, cancel: { x: width / 2 + 10, y, w, h } };
+}
+function buildPlacementAimBase() { return { x: rightStick && rightStick.base ? rightStick.base.x : width - 80, y: height - 160 }; }
+function buildPlacementButtonAt(x, y) {
+    const p = buildPlacementControls();
+    for (const action of ['place', 'cancel']) {
+        const b = p[action];
+        if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return action;
+    }
+    return null;
+}
+function captureBuildPlacementTouches(newTouches = touches) {
+    if (!buildGhost) return;
+    for (const t of newTouches) {
+        if (touchAimSelection.pointers.has(t.id)) continue;
+        if (t.x > width - 100 && t.y < 100) {
+            touchAimSelection.pointers.set(t.id, { role: 'BLOCKED' });
+            handlePauseCornerTap(t.x, t.y);
+            return;
+        } else if (buildPlacementButtonAt(t.x, t.y)) {
+            touchAimSelection.pointers.set(t.id, { role: 'BLOCKED' });
+            handleBuildHudTap(t.x, t.y);
+            if (!buildGhost) return;
+        } else if (t.x < width / 2) {
+            touchAimSelection.pointers.set(t.id, { role: 'BUILD_MOVE' });
+        } else if (touchAimSelection.pointerId === null) {
+            touchAimSelection.pointers.set(t.id, { role: 'BUILD_AIM' });
+            touchAimSelection.pointerId = t.id;
+            rightStick.touchOrigin = buildPlacementAimBase();
+        } else touchAimSelection.pointers.set(t.id, { role: 'BLOCKED' });
+    }
+}
+function handleBuildPlacementTouches() {
+    meleeInputHeld = cannonInputHeld = grenadeInputHeld = false;
+    leftStick.active = rightStick.active = false;
+    leftStick.dx = leftStick.dy = rightStick.dx = rightStick.dy = rightStick.dist = 0;
+    rightStick.gamepadInput = false;
+    if (isPaused || isDead || isWin) return;
+    captureBuildPlacementTouches();
+    if (!buildGhost) return;
+    for (const t of touches) {
+        const role = touchAimSelection.pointers.get(t.id)?.role;
+        if (role !== 'BUILD_MOVE' && role !== 'BUILD_AIM') continue;
+        const stick = role === 'BUILD_MOVE' ? leftStick : rightStick;
+        const base = stick === rightStick ? buildPlacementAimBase() : stick.base;
+        const dx = t.x - base.x, dy = t.y - base.y, d = Math.hypot(dx, dy), m = Math.max(60, d);
+        stick.active = true; stick.dx = dx / m; stick.dy = dy / m;
+        if (stick === rightStick) stick.dist = d / m;
+    }
+}
+function handleBuildPlacementGamepad(pad) {
+    if (isPaused) return;
+    gamepadWasConnected = true; window.showOnScreenControls = false; window.isDesktop = false;
+    const x = pad.axes[0] || 0, y = pad.axes[1] || 0, ax = pad.axes[2] || 0, ay = pad.axes[3] || 0;
+    leftStick.active = Math.hypot(x, y) > .2; leftStick.dx = x; leftStick.dy = y;
+    rightStick.active = Math.hypot(ax, ay) > .2; rightStick.dx = ax; rightStick.dy = ay;
+    rightStick.dist = Math.hypot(ax, ay); rightStick.gamepadInput = true;
+    meleeInputHeld = cannonInputHeld = grenadeInputHeld = false;
+    const down = i => !!pad.buttons[i]?.pressed;
+    if (down(0) && !prevGamepadButtons[0]) confirmBuildPlacement();
+    else if (down(1) && !prevGamepadButtons[1]) cancelBuildPlacement();
+    prevGamepadButtons = pad.buttons.map(b => !!b.pressed);
+}
 function drawBuildHud() {
     if (!buildGhost) return;
-    const bw = 150, bh = 46, y = height - 150;
+    const controls = buildPlacementControls(), y = controls.place.y;
     const okCol = buildGhost.ok ? [40, 120, 200] : [70, 70, 70];
     push(); textAlign(CENTER, CENTER); textFont('sans-serif');
-    fill(0, 150); noStroke(); rect(width / 2 - 210, y - 76, 420, 44, 8);
-    fill(235); textSize(15);
+    const cardW = Math.min(420, width - 24);
+    fill(0, 150); noStroke(); rect((width - cardW) / 2, height - 290, cardW, 44, 8);
+    fill(235); textSize(width < 400 ? 12 : 15);
     const bp = BLUEPRINTS[buildGhost.kind];
     const eta = buildEtaDays(1);
     text((bp ? bp.label : buildGhost.kind) + "  -  " +
-         (buildCrew() > 0 ? (eta < 1 ? "under a day" : Math.ceil(eta) + " day" + (Math.ceil(eta) > 1 ? "s" : ""))
-                          : "NO CREW ASSIGNED"), width / 2, y - 54);
+         (buildGhost.kind === 'BARRIER' ? "INSTANT PLACEMENT" : buildCrew() > 0 ? (eta < 1 ? "under a day" : Math.ceil(eta) + " day" + (Math.ceil(eta) > 1 ? "s" : ""))
+                          : "NO CREW ASSIGNED"), width / 2, height - 275);
+    fill(190); textSize(10);
+    text(connectedGamepad() ? "RIGHT STICK AIM · A PLACE · B CANCEL" : window.isDesktop ? "AIM WITH MOUSE · ENTER PLACE · ESC CANCEL" : "LEFT THUMB MOVE · RIGHT THUMB AIM", width / 2, height - 258);
 
     fill(okCol[0], okCol[1], okCol[2], 220);
     stroke(buildGhost.ok ? color(120, 200, 255) : color(120)); strokeWeight(2);
-    rect(width / 2 - 160, y, bw, bh, 8);
-    fill(120, 40, 40, 220); stroke(220, 120, 120); rect(width / 2 + 10, y, bw, bh, 8);
+    const place = controls.place, cancel = controls.cancel;
+    rect(place.x, y, place.w, place.h, 8);
+    fill(120, 40, 40, 220); stroke(220, 120, 120); rect(cancel.x, y, cancel.w, cancel.h, 8);
     noStroke(); fill(255); textSize(18);
-    text(buildGhost.ok ? "PLACE" : "BLOCKED", width / 2 - 160 + bw / 2, y + bh / 2);
-    text("CANCEL", width / 2 + 10 + bw / 2, y + bh / 2);
+    text(buildGhost.ok ? "PLACE" : "BLOCKED", place.x + place.w / 2, y + place.h / 2);
+    text("CANCEL", cancel.x + cancel.w / 2, y + cancel.h / 2);
     pop();
 }
 // Returns true if the tap was the placement HUD's, so the caller stops there.
 function handleBuildHudTap(mx, my) {
-    if (!buildGhost) return false;
-    const bw = 150, bh = 46, y = height - 150;
-    if (my < y || my > y + bh) return false;
-    if (mx > width / 2 - 160 && mx < width / 2 - 160 + bw) { confirmBuildPlacement(); return true; }
-    if (mx > width / 2 + 10 && mx < width / 2 + 10 + bw) { cancelBuildPlacement(); return true; }
+    if (!buildGhost || isPaused) return false;
+    const action = buildPlacementButtonAt(mx, my);
+    if (action === 'place') { confirmBuildPlacement(); return true; }
+    if (action === 'cancel') { cancelBuildPlacement(); return true; }
     return false;
 }
 function updateProductionMeters() {
@@ -36214,7 +36345,10 @@ class ChunkManager {
     // assignment REPLACES buildings[], and in a streamed biome it runs every
     // time you cross a chunk edge.
     if (typeof playerStructures !== 'undefined') {
-      for (let i = 0; i < playerStructures.length; i++) solids.push(playerStructures[i]);
+      for (let i = 0; i < playerStructures.length; i++) {
+        const structure = playerStructures[i];
+        if (structure.buildLevel === currentLevel && (!structure.isUBarrier || structure.hp > 0)) solids.push(structure);
+      }
     }
     for (const lodge of forestHuntingStructures()) if (!solids.includes(lodge)) solids.push(lodge);
     for (const outpost of frontierBountyStructures()) if (!solids.includes(outpost)) solids.push(outpost);

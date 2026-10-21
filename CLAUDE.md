@@ -1951,6 +1951,13 @@ the invariants, the save, the legacy migration and both structural checks apply 
 unaltered. `consolidateLegacyIntoPool()` runs once on load — an older save has its people
 filed under the sectors they were freed in, and undivided is the default now.
 
+Department level 2 rewards are campaign state. Derive health and magazine
+capacity from the restored department levels before creating actors or equipment;
+do not replace upgraded capacities with weapon defaults in pickups or purchases.
+Architecture's pending barrier is saved independently of placed structures and
+is consumed only by confirmed Fortifications placement. See
+[Department rewards](docs/department-rewards.md) for the reward and save contract.
+
 **`window.pop*` is an edit buffer, not state.** It is loaded when the Directive opens and
 written back when it is confirmed; between those two moments **nothing else may touch it —
 including the panel's own draw pass.** That is not a style preference, it is the whole
