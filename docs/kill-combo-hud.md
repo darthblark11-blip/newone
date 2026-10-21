@@ -1,10 +1,18 @@
 # Personal kill combo
 
 The kill combo appears near the top center beside health on wide screens.
-On narrow screens it takes its own centered row below the status and ammo
-readouts. The fading story objective occupies the next top row and wraps
-without covering those readouts. Objective triggers, duration and pause
-behavior are unchanged.
+On narrow screens the centered combo sits just below the main health/population
+readouts, alongside a compact weapon icon and 11-pixel ammo count in the left
+column. Extra outpost/ambush status rows follow underneath, so they do not
+overlap the ammo. Desktop ammo is 12 pixels. The fading story objective wraps
+below the top readouts. Objective triggers, duration and pause behavior are
+unchanged.
+
+The combo uses Lilita One, a rounded display font bundled in the single-file
+sketch as an unmodified Latin WOFF2 from `@fontsource/lilita-one` 5.3.0. Its
+copyright and SIL Open Font License 1.1 accompany the embedded data in
+`game.js`. FontFace loads it once without a network request; a rounded system
+font stack remains available while loading or if a host cannot use FontFace.
 
 The combo has no shake. Label and timer colors interpolate between these
 kill counts: orange at 2, yellow at 10, gold at 20, purple at 30, violet at 40.

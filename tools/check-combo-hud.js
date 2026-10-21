@@ -19,17 +19,33 @@ for(const w of [320,375,559,560,760,960,1440]) {
   if(w>=560) {
     assert(combo.x-combo.w/2>=232,'combo leaves health bars clear');
     assert(combo.x+combo.w/2<=w-190,'combo leaves pause, score and climate clear');
-    assert.equal(combo.y,20,'wide combo remains at the top');
+    assert.equal(combo.y,12,'wide combo is raised at the top');
   } else {
     assert.equal(combo.x,w/2,'phone combo stays centered');
-    assert(combo.y>=142,'phone combo clears status and ammo');
+    assert.equal(combo.y,82,'phone combo is raised beside compact ammo');
   }
   assert(objective.x>=12&&objective.x+objective.w<=w-12,'objective stays on screen');
   if(w>=760) assert(objective.x>=232,'wide objective clears health and ammo');
   else assert(objective.y>=combo.y+43,'stacked objective clears combo');
 }
 probe(`width=320;currentLevel=8;player={currentWeapon:WEAPONS.BOW};consecutiveKills=40;`);
-assert(read('combatHudLayout().combo.y')>=189,'bow, ammo and extra status bars stay clear');
+const bowLayout=read('combatHudLayout()');
+assert.equal(bowLayout.combo.y,82,'bow and extra status bars do not push the combo down');
+assert(bowLayout.ammo.bowY>=bowLayout.status.hq.labelY+14,'bow feedback clears HQ label');
+assert(bowLayout.objective.y>=bowLayout.ammo.bowY+34,'objective clears bow feedback');
+for(const w of [320,375,393,412,960]) {
+  probe(`width=${w};currentLevel=4;nm0AmbushActive=true;farmAmbushActive=false;player={currentWeapon:WEAPONS.PISTOL};`);
+  const p=read('combatHudLayout()');
+  assert.equal(p.status.outpost.barY-p.status.nm0.barY,24,'simultaneous ambush and outpost get separate rows');
+  assert(p.status.outpost.barY>=p.status.nm0.labelY+14,'labels do not touch the next bar');
+  assert.equal(p.ammo.fontSize,w<560?11:12,'ammo is much smaller than the old 24px text');
+  if(w<560) {
+    assert(p.ammo.textX+p.ammo.maxTextW/2<p.combo.x-p.combo.w/2,'ammo and combo have separate horizontal lanes');
+    assert(p.status.nm0.barY>=128,'status rows stay below combo and ammo');
+    assert(p.objective.y>=p.status.outpost.labelY+26,'objective clears final status label');
+  } else assert(p.ammo.iconY>=p.status.outpost.labelY+14,'desktop ammo clears level4 outpost label');
+}
+probe('width=320;currentLevel=8;nm0AmbushActive=false;');
 const text=[],rect=[],fill=[];
 ctx.text=(...a)=>text.push(a);ctx.rect=(...a)=>rect.push(a);ctx.fill=(...a)=>fill.push(a);
 ctx.textWidth=s=>s.length*8;
