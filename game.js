@@ -8,6 +8,20 @@ let player, bullets = [], particles = [], corpses = [], enemiesList = [], barrel
 let leftStick, rightStick, buildings = [], camX = 0, camY = 0, zoom = 0.66, screenShake = 0, meleeInputHeld = false, cannonInputHeld = false;
 let lightnings = [];
 let started = false, isDead = false, isWin = false, currentLevel = 1, headAimToggle = false, lastToggleTime = 0, lastWeaponSwapTime = 0;
+let playerAimZone = 'BODY';
+function setPlayerAimZone(zone) {
+  if (zone !== 'HEAD' && zone !== 'BODY' && zone !== 'LEGS') return false;
+  playerAimZone = zone;
+  headAimToggle = zone === 'HEAD';
+  return true;
+}
+function playerAimTarget() {
+  // Keep compatibility with existing head/body controller and debug bindings.
+  return headAimToggle ? 'HEAD' : playerAimZone === 'LEGS' ? 'LEGS' : 'BODY';
+}
+function togglePlayerHeadAim() {
+  setPlayerAimZone(playerAimTarget() === 'HEAD' ? 'BODY' : 'HEAD');
+}
 const SPATIAL_CELL_SIZE = 150; 
 let spatialGrid = {};
 
@@ -113,6 +127,7 @@ function gamepadTriggerShooting() { return gamepadControlSettings.shooting === '
 function consumePauseControlInputs() {
   const s = _frontierSaloonSession, pad = connectedGamepad();
   if (player) boxingLeaveInput(player, s ? s.boxingInput : null);
+  resetTouchAimSelection(true);
   resetGamepadFireInput();
   prevGamepadButtons = pad ? pad.buttons.map(b => !!b.pressed) : [];
   meleeInputHeld = cannonInputHeld = grenadeInputHeld = false;
@@ -1305,11 +1320,13 @@ function setup() {
     // --- NATIVE PC CONTROLS LISTENERS ---
   window.isDesktop = false; // Tracks if we are using M&K
   document.addEventListener('contextmenu', event => event.preventDefault()); 
-  window.addEventListener('mousemove', () => { window.isDesktop = true; window.showOnScreenControls = false; });
+  window.addEventListener('mousemove', e => { if (e.sourceCapabilities && e.sourceCapabilities.firesTouchEvents) return; resetTouchAimSelection(true); window.isDesktop = true; window.showOnScreenControls = false; });
   window.addEventListener('mousedown', e => {
+      if (e.sourceCapabilities && e.sourceCapabilities.firesTouchEvents) return;
+      resetTouchAimSelection(true);
       window.isDesktop = true; window.showOnScreenControls = false;
       if (e.button === 2 && started && !isDead && !isWin && player && !boxingActive(player) && !frontierSaloonIsInside()) {
-          if (millis() - lastToggleTime > 300) { headAimToggle = !headAimToggle; lastToggleTime = millis(); }
+          if (millis() - lastToggleTime > 300) { togglePlayerHeadAim(); lastToggleTime = millis(); }
       }
   });
     window.addEventListener('keydown', e => {
@@ -1318,7 +1335,8 @@ function setup() {
           else if(e.key==='Escape'&&!e.repeat)respondStreetThug('NEUTRAL');
           e.preventDefault();return;
       }
-      window.isDesktop = true; window.showOnScreenControls = false; 
+      resetTouchAimSelection(true);
+      window.isDesktop = true; window.showOnScreenControls = false;
       if (!started || isDead || isWin || !player) return;
       // Local fights and duels own these keys through their frame reader. A
       // browser keydown must not reload a pistol, charge a cannon or jet dash
@@ -1392,6 +1410,7 @@ function preload() {
 
 
 function legacyStartAtLevel(lvl, isLoading = false) {
+    resetTouchAimSelection(true);
     if (typeof invalidateDirectiveBuffer === 'function') invalidateDirectiveBuffer();
     // The ground the player is leaving keeps what was spilled on it, and the
     // ground they are arriving at gets its own back. Anything still falling is
@@ -6318,7 +6337,13 @@ function drawParkingCars() {
 
 
 
-function windowResized() { resizeCanvas(windowWidth, windowHeight); leftStick.base = { x: 80, y: height - 160 }; rightStick.base = { x: width - 80, y: height - 110 }; if (typeof glRigResize === 'function') glRigResize(); }
+function windowResized() {
+  resetTouchAimSelection(true);
+  resizeCanvas(windowWidth, windowHeight);
+  leftStick.base = { x: 80, y: height - 160 };
+  rightStick.base = { x: width - 80, y: height - 110 };
+  if (typeof glRigResize === 'function') glRigResize();
+}
 function nextLevel() { startAtLevel(currentLevel + 1); }
 // Level travel deliberately preserves blood, corpses and campaign progress.
 // Replacing a run must discard them BEFORE level entry can stamp old bodies
@@ -6400,7 +6425,7 @@ function resetRunState() {
   hpGhost = 100; hpGhostHold = 0; hpPrev = 100;
   shGhost = 100; shGhostHold = 0; shPrev = 100;
   meleeInputHeld = false; cannonInputHeld = false; grenadeInputHeld = false;
-  headAimToggle = false; lastToggleTime = 0; lastWeaponSwapTime = 0;
+  setPlayerAimZone('BODY'); lastToggleTime = 0; lastWeaponSwapTime = 0;
   leftStick = { active: false, dx: 0, dy: 0, base: { x: 80, y: height - 160 } };
   rightStick = { active: false, dx: 0, dy: 0, dist: 0, base: { x: width - 80, y: height - 110 } };
   consumePauseControlInputs();
@@ -6840,6 +6865,7 @@ function noteFrameFault(where, err) {
 }
 
 function draw() {
+  syncTouchAimControlContext();
   handleDeathMenuInput();
   // Death owns the screen even if an old world activity or overlay is open.
   if(started&&isDead){drawDeathMenu();return;}
@@ -13397,12 +13423,13 @@ function ragStep(rg) {
 // arm -- which is most of why the lower half of the arm read short against the
 // upper: from the elbow, a real arm is forearm AND hand, and the hand is most
 // of the difference (0.145 of standing height against 0.108).
-function ragLimb(r, ox, oy, ang, bend, l1, l2, w1, w2, col, tip, tipSz) {
+function ragLimb(r, ox, oy, ang, bend, l1, l2, w1, w2, col, tip, tipSz, decals=null, legIndex=-1) {
     r.push(); r.translate(ox, oy); r.rotate(ang);
     // The same garment passes through the elbow/knee. Shade a single contour
     // rather than outlining two overlapping ellipses across that joint.
     figureCelLimb(r, 0, 0, l1, 0, l1 + Math.cos(bend) * l2,
       Math.sin(bend) * l2, w1, (w1 + w2) * .5, w2, col);
+    drawLegDecals(r,decals,legIndex,0,0,l1,0,l1+Math.cos(bend)*l2,Math.sin(bend)*l2,w1,(w1+w2)*.5,w2);
     r.translate(l1, 0); r.rotate(bend);
     if (tip) figureCelOval(r, l2 + tipSz * 0.30, 0, tipSz, tipSz * 0.86, tip);
     r.pop();
@@ -13447,6 +13474,108 @@ function ragShin(rig, bend) { return rig.shin * (0.58 + 0.42 * Math.cos(bend)); 
 // room is small enough that a heel coming inward still cannot reach the
 // midline -- check-corpse.js proves that bound rather than trusting it.
 function ragKnee(L) { return Math.max(0, Math.min(L.b, L.a + (L.room || 0))); }
+
+// Bullet height remains a combat choice, not a second ground-plane ray. Leg
+// aim uses the existing body footprint and damage; only its stain is projected
+// onto a trouser leg. Keep that attachment in limb coordinates so a stride,
+// knee bend or fall never leaves a hole floating on the torso.
+function legDecalPoint(d,sx,sy,kx,ky,ax,ay,hipW,kneeW,ankleW) {
+  const shin=d.legSegment!==0,u=Math.max(0,Math.min(1,d.legU));
+  const x0=shin?kx:sx,y0=shin?ky:sy,x1=shin?ax:kx,y1=shin?ay:ky;
+  const dx=x1-x0,dy=y1-y0,len=Math.max(.001,Math.hypot(dx,dy));
+  const width=shin?lerp(kneeW,ankleW,u):lerp(hipW,kneeW,u);
+  const across=Math.max(-.22,Math.min(.22,d.legV||0))*width;
+  return {x:lerp(x0,x1,u)-dy/len*across,y:lerp(y0,y1,u)+dx/len*across,
+    sz:Math.min(d.sz,width*.65),angle:Math.atan2(dy,dx)};
+}
+function drawLegDecals(g,decals,index,sx,sy,kx,ky,ax,ay,hipW,kneeW,ankleW) {
+  if(!decals||!decals.length)return;
+  let painting=false;
+  for(const d of decals) {
+    if(!d.isLeg||d.legIndex!==index)continue;
+    if(!painting){g.push();g.noStroke();painting=true;}
+    const p=legDecalPoint(d,sx,sy,kx,ky,ax,ay,hipW,kneeW,ankleW);
+    g.fill(...(d.col||[90,0,0,220]));g.ellipse(p.x,p.y,p.sz,p.sz);
+  }
+  if(painting)g.pop();
+}
+function fallLegGeometry(rig,rg,index,f,faceDown=false,projected=true) {
+  const L=rg.limbs[index+2],side=index?1:-1,factor=faceDown?.7:1;
+  const progress=projected?f:1,knee=ragKnee(L)*factor;
+  const angle=PI-side*L.a*factor*progress,bend=side*knee*progress;
+  const projection=projected?lerp(-STAND_FORE_LEG,1,f):1;
+  const shin=ragShin(rig,knee*progress)*(projected?1-.20*Math.sin(f*PI):1);
+  const sx=rig.hipX,sy=side*rig.hipY;
+  const kx=sx+Math.cos(angle)*rig.thigh*projection,ky=sy+Math.sin(angle)*rig.thigh;
+  return {sx,sy,kx,ky,ax:kx+Math.cos(angle+bend)*shin*projection,
+    ay:ky+Math.sin(angle+bend)*shin,hipW:rig.thighW,kneeW:(rig.thighW+rig.shinW)*.5,ankleW:rig.shinW};
+}
+function mapLegHitDecal(actor,wx,wy,decal,origin=actor) {
+  if(!ragHumanoid(actor.eType,actor.bodyW))return decal;
+  const rig=figureRig(actor.bodyW,actor.bodyH),pose=boxerPose(actor);
+  const GP=gaitPose(actor.isMoving?actor.gait:0);
+  const mantle=actor.isPlayer?shovelMantlePose(actor):null;
+  const dig=!mantle&&actor.isPlayer&&meleeTool()==='SHOVEL'&&actor.meleeTimer<=0?shovelDigPose(actor,GP,0):null;
+  let swing=actor.isMoving?Math.sin(actor.walkCycle)*12*GP.swing:0;
+  if(dig)swing*=1-dig.blend;if(mantle)swing=0;if(actor.mounted)swing*=.35;
+  if(actor.eType==='AERIAL'||actor.eType==='AERIAL_PISTOL')swing=0;
+  let angle=mantle?mantle.angle+mantle.hip:pose.active?actor.aimAngle+(Array.isArray(pose.feet)?0:pose.hip||0):dig?actor.aimAngle+dig.hip:actor.moveAngle;
+  let scale=1,fallen=null;
+  if(actor.stunPose&&actor.stunTimer>0&&actor.stunPose.rag&&!actor.stunPose.knockout) {
+    const f=stunFall(actor),p=actor.stunPose;
+    fallen={rig:projectFallRig(actor.bodyW,actor.bodyH,f),rag:p.rag,f};
+    angle=figureFallYaw(p,p.rag,f);scale=RAG_SCALE;
+  }
+  const ca=Math.cos(angle),sa=Math.sin(angle),dx=(wx-origin.x)/scale,dy=(wy-origin.y)/scale;
+  const x=ca*dx+sa*dy,y=-sa*dx+ca*dy,th=rig.thigh*STAND_FORE_LEG,sh=rig.shin*STAND_FORE_LEG;
+  const feet=pose.active?boxingFeet(actor,pose):null;
+  let best=null;
+  for(let index=0;index<2;index++) {
+    const side=index?1:-1;
+    let kx,ky,ax,ay,width=rig.shinW*.8;
+    if(fallen){const b=fallLegGeometry(fallen.rig,fallen.rag,index,fallen.f);({kx,ky,ax,ay}=b);width=b.ankleW;}
+    else if(feet){
+      const foot=feet[index],pelvis=pose.pelvis||{x:-3,y:0,angle:0},compression=pose.legCompression||0;
+      const sx=pelvis.x-Math.sin(pelvis.angle||0)*side*4.6,sy=pelvis.y+Math.cos(pelvis.angle||0)*side*4.6;
+      ax=foot.x-Math.cos(foot.heading)*rig.foot*.34;ay=foot.y-Math.sin(foot.heading)*rig.foot*.34-foot.lift;
+      const l1=th*(1+compression*.12),l2=sh*(1+compression*.12),vx=ax-sx,vy=ay-sy;
+      const d=Math.max(.1,Math.min(Math.hypot(vx,vy),l1+l2-.01));
+      const a=Math.atan2(vy,vx)+side*Math.acos(Math.max(-1,Math.min(1,(l1*l1+d*d-l2*l2)/(2*l1*d))));
+      kx=sx+Math.cos(a)*l1;ky=sy+Math.sin(a)*l1;
+    }else if(mantle){
+      const lead=side===-1,sx=-10+rig.thighW*.5+mantle.lean*.3,sy=side*6;
+      kx=sx+th*.92+(lead?8*mantle.tuck:-3.5*mantle.fold);ky=sy+side*(lead?3*mantle.tuck:1.8*mantle.fold);
+      ax=sx+th*.92+sh+(lead?11*mantle.plant-1.5*mantle.tuck:-8*mantle.fold+4*mantle.plant);ay=sy+side*(lead?1.3*mantle.tuck:mantle.fold);
+    }else if(dig){
+      const sx=-10+rig.thighW*.5,sy=side*6;
+      kx=sx+th*.8+side*dig.blend*3-dig.effort*1.1;ky=sy+side*dig.blend*2.4;
+      ax=kx+sh*.8+side*dig.blend*5-dig.effort*1.4;ay=ky+side*dig.blend*1.5;
+    }else{
+      const sx=-10-swing*side+rig.thighW*.5;
+      kx=sx+th*.92;ky=side*6;ax=kx+sh;ay=ky;
+    }
+    const vx=ax-kx,vy=ay-ky,len=Math.max(.001,Math.hypot(vx,vy));
+    // The selected height is the shin rather than the body-root intersection.
+    // Keep the stain on the exposed lower trouser surface, clear of the boot.
+    const u=Math.max(.68,Math.min(.92,((x-kx)*vx+(y-ky)*vy)/(len*len)));
+    const px=kx+vx*u,py=ky+vy*u,d2=(x-px)*(x-px)+(y-py)*(y-py);
+    if(!best||d2<best.d2)best={index,u,v:Math.max(-.22,Math.min(.22,((x-px)*-vy+(y-py)*vx)/(len*width))),d2};
+  }
+  decal.isLeg=true;decal.legIndex=best.index;decal.legSegment=1;decal.legU=best.u;decal.legV=best.v;
+  return decal;
+}
+function fallenLegDecalPoint(c,w) {
+  if(!c.rag)return null; // Overkill without surviving legs has no leg surface.
+  const projected=!!c.fall,faceDown=!projected&&c.dT===7;
+  const rig=projected?projectFallRig(c.bW,c.bH,c.fP):ragRig(c.bW,c.bH);
+  const b=fallLegGeometry(rig,c.rag,w.legIndex,c.fP,faceDown,projected);
+  const p=legDecalPoint(w,b.sx,b.sy,b.kx,b.ky,b.ax,b.ay,b.hipW,b.kneeW,b.ankleW);
+  const angle=faceDown?c.mA+c.rag.ang*.6:projected?figureFallYaw(c.fall,c.rag):c.aA+c.rag.ang;
+  const offset=c.dT===2||c.dT===4?c.sep:0,ca=Math.cos(angle),sa=Math.sin(angle);
+  return {x:c.x+Math.cos(c.bA)*offset+(ca*p.x-sa*p.y)*RAG_SCALE,
+    y:c.y+Math.sin(c.bA)*offset+(sa*p.x+ca*p.y)*RAG_SCALE,
+    angle:angle+p.angle,frameAngle:angle,scale:RAG_SCALE};
+}
 
 // Corpses were reading large against the standing figures. The whole body is
 // one scale so the proportions above survive it -- a smaller person, not a
@@ -14220,6 +14349,7 @@ function buildFatalSpray(src,eT) {
 // Use the same local decal coordinates and transforms as Corpse.paint(). A
 // fatal spot remains attached when the torso separates or a piece is moving.
 function fatalWoundPoint(c,w=c.fatalSpray.wound) {
+  if(w.isLeg)return fallenLegDecalPoint(c,w);
   const s=c.fatalSpray,f=c.fP,rg=c.rag;
   let x=c.x,y=c.y,a=c.aA,lx=w.x,ly=w.y,scale=1,turn=0;
   const piece=(c.overkillBits||c.aerialBits||c.bits||[]).find(b=>b.type===(c.dT===5?(w.isHead?'skull':'ribcage'):'torso'));
@@ -14275,6 +14405,7 @@ function drawFatalWound(c,r) {
   if(['BUG','SNAIL','ALIEN_GATOR'].includes(c.eT)&&![12,13,14].includes(c.dT))return;
   r.push();r.noStroke();
   for(const w of c.fatalSpray.wounds){
+    if(w.isLeg)continue;
     const p=fatalWoundPoint(c,w),col=w.col||[90,0,0,220];
     r.fill(...col);r.ellipse(p.x,p.y,w.sz*p.scale,w.sz*p.scale);
   }r.pop();
@@ -14291,6 +14422,7 @@ function advanceFatalSpray(c) {
     const w=sites[i];
     s.seed=(Math.imul(s.seed,1664525)+1013904223)>>>0;
     const u=s.seed/4294967296,p=s.cuts?swordCutPoint(c,w):fatalWoundPoint(c,w);
+    if(!p)continue;
     const a=s.cuts?p.angle+(u-.5)*.55:(s.wounds.length>1?p.frameAngle:p.angle)+s.directions[i]+(u-.5)*(s.wounds.length>1?.4:.65);
     const speed=(2.8+u*1.8)*(.55+.45*s.left/FATAL_SPRAY_FRAMES);
     particles.push(newParticle(p.x,p.y,col,'WOUND_BLOOD',Math.cos(a)*speed,Math.sin(a)*speed, c));
@@ -14333,7 +14465,7 @@ function drawFallBone(r,x,y,nx,ny,width,col,tip,tipSz,join) {
   if(tip)figureCelOval(r,len+tipSz*.30,0,tipSz,tipSz*.86,tip);
   r.pop();
 }
-function drawFallLimb(r,rig,rg,i,f,shirt,pants,skin,boot,faceDown=false,id=null) {
+function drawFallLimb(r,rig,rg,i,f,shirt,pants,skin,boot,faceDown=false,id=null,decals=null) {
   const L=rg.limbs[i],arm=i<2,s=i%2?1:-1;
   const ox=arm?rig.shX:rig.hipX,oy=s*(arm?rig.shY:rig.hipY);
   const knee=ragKnee(L)*(faceDown?.7:1),limbA=arm?s*(HALF_PI+(faceDown?L.a*.35-.5:L.a)):PI-s*L.a*(faceDown?.7:1)*f;
@@ -14354,6 +14486,7 @@ function drawFallLimb(r,rig,rg,i,f,shirt,pants,skin,boot,faceDown=false,id=null)
   else drawFallBone(r,ox,oy,ex,ey,w1,arm?shirt:pants,undefined,undefined,{x:hx,y:hy,width:w2});
   drawFallBone(r,ex,ey,hx,hy,w2,streetArm?skin:arm?shirt:pants,
     arm?(skin||color(235,180,140)):boot,arm?rig.hand*(faceDown?.94:1):rig.foot,false);
+  if(!arm)drawLegDecals(r,decals||(id&&id.decals),i-2,ox,oy,ex,ey,hx,hy,w1,(w1+w2)*.5,w2);
 }
 
 // Successful humanoid sword kills share one rotation, independent of bullets.
@@ -14811,7 +14944,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
         const pool=Math.min(1,this.poolAge/BLOOD_POOL_FRAMES),spread=Math.sqrt(pool);
         r.fill(90,0,0,a*pool);r.ellipse(-15,-12,35*spread,45*spread);
         r.fill(this.sC);r.ellipse(0,0,this.bW+15*f,this.bH);drawFallenAttire(r,this.id,this.bW+15*f,this.bH,true);
-        for(const d of this.dec){if(!d.isHead){r.fill(...(d.col||[90,0,0,220]));r.ellipse(d.x,d.y,d.sz,d.sz);}}
+        for(const d of this.dec){if(!d.isHead&&!d.isLeg){r.fill(...(d.col||[90,0,0,220]));r.ellipse(d.x,d.y,d.sz,d.sz);}}
         r.push();r.translate(20*f,0);r.fill(30,180,30);r.ellipse(0,0,33,33);r.rect(0,-15,60,30,10);
         r.fill(40,126,41);for(let x=4;x<45;x+=10)r.triangle(x,-3,x+5,0,x,3);
         for(const d of this.dec){if(d.isHead){r.fill(...(d.col||[90,0,0,220]));r.ellipse(d.x,d.y,d.sz,d.sz);}}
@@ -14820,7 +14953,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
     r.push(); r.translate(this.x, this.y); let a = 255, f = this.fP; r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.mA); if (this.dT === 2) r.rotate(PI); r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); r.noStroke();
     r.push(); r.translate(-3 - 30 * f, -18 - 10 * f); r.rotate(-f * 0.5); r.rect(-37, -12, 74, 24, 12); r.pop(); r.push(); r.translate(-3 - 30 * f, 18 + 10 * f); r.rotate(f * 0.5); r.rect(-37, -12, 74, 24, 12); r.pop();  
     if (this.dT === 2 || this.dT === 4) { r.fill(90, 0, 0, a); r.ellipse(-15, -12, 20, 30); } r.pop();
-    r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA + PI) * this.sep, sin(this.bA + PI) * this.sep); r.rotate(this.mA); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(0, 0, this.bW + 15 * f, this.bH); drawFallenAttire(r,this.id,this.bW+15*f,this.bH,true); if (this.dT === 3) { r.fill(90, 0, 0); r.rect(-this.bW/2, -5, this.bW, 10); } r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } }
+    r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA + PI) * this.sep, sin(this.bA + PI) * this.sep); r.rotate(this.mA); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(0, 0, this.bW + 15 * f, this.bH); drawFallenAttire(r,this.id,this.bW+15*f,this.bH,true); if (this.dT === 3) { r.fill(90, 0, 0); r.rect(-this.bW/2, -5, this.bW, 10); } r.noStroke(); for (let d of this.dec) { if (!d.isHead&&!d.isLeg) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } }
     let slX = lerp(20, 10, f), armLY = lerp(-42, -45, f); r.fill(30, 180, 30, a); r.ellipse(slX, armLY, 48, 24); r.ellipse(slX+20, armLY, 24, 24); let rslX = lerp(45, 30, f), armRY = lerp(33, 36, f); r.fill(30, 180, 30, a); r.ellipse(rslX, armRY, 75, 24); r.ellipse(rslX+30, armRY, 30, 30); 
     r.push(); r.translate(40 - 10*f, 8 + 15*f); r.rotate(f * PI/2); r.fill(40); r.rect(15, 5, 45, 12, 2); r.fill(20); r.rect(55, 3, 10, 16); r.pop(); if (this.dT === 2 || this.dT === 4) { r.fill(90, 0, 0, a); r.ellipse(0, 0, this.bW + 15*f, 25); } r.translate(20 * f, 0);
     if (this.dT === 4 || this.dT === 9) { r.fill(90, 0, 0); r.ellipse(0, 0, 20, 20); } else if (this.dT === 1) { r.push(); r.fill(30, 180, 30); r.ellipse(0, 0, 33, 33); r.rect(0, -15, 60, 30, 10); r.fill(0); r.ellipse(20, -10, 5, 5); r.ellipse(20, 10, 5, 5); r.fill(90, 0, 0); r.arc(0, 0, 20, 20, PI-PI/4, PI+PI/4, PIE); r.pop(); } else if (this.dT === 8) { r.push(); r.fill(30, 180, 30); r.ellipse(0, 0, 33, 33); r.rect(0, -15, 60, 30, 10); r.fill(0); r.ellipse(20, -10, 5, 5); r.ellipse(20, 10, 5, 5); r.fill(90, 0, 0); r.arc(0, 0, 35, 35, PI, PI + HALF_PI, PIE); r.pop(); } else { r.fill(30, 180, 30); r.ellipse(0, 0, 33, 33); r.rect(0, -15, 60, 30, 10); r.fill(0); r.ellipse(20, -10, 5, 5); r.ellipse(20, 10, 5, 5); }
@@ -14895,8 +15028,8 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       const RP = ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW;
       if (RG) {
           const bootC = color(this.pC.levels[0] * 0.55, this.pC.levels[1] * 0.55, this.pC.levels[2] * 0.55, a);
-          ragLimb(r, RP.hipX, -RP.hipY, PI + RG.limbs[2].a * 0.7, -ragKnee(RG.limbs[2]) * 0.7, RP.thigh, ragShin(RP, ragKnee(RG.limbs[2]) * 0.7), RP.thighW, RP.shinW, this.pC, bootC, RP.foot);
-          ragLimb(r, RP.hipX,  RP.hipY, PI - RG.limbs[3].a * 0.7,  ragKnee(RG.limbs[3]) * 0.7, RP.thigh, ragShin(RP, ragKnee(RG.limbs[3]) * 0.7), RP.thighW, RP.shinW, this.pC, bootC, RP.foot);
+          ragLimb(r, RP.hipX, -RP.hipY, PI + RG.limbs[2].a * 0.7, -ragKnee(RG.limbs[2]) * 0.7, RP.thigh, ragShin(RP, ragKnee(RG.limbs[2]) * 0.7), RP.thighW, RP.shinW, this.pC, bootC, RP.foot, this.dec, 0);
+          ragLimb(r, RP.hipX,  RP.hipY, PI - RG.limbs[3].a * 0.7,  ragKnee(RG.limbs[3]) * 0.7, RP.thigh, ragShin(RP, ragKnee(RG.limbs[3]) * 0.7), RP.thighW, RP.shinW, this.pC, bootC, RP.foot, this.dec, 1);
           // Arms trapped beneath the chest: short reach, hard fold inward.
           const sK7 = (this.id.skinCol||color(235,180,140,a));
           ragLimb(r, RP.shX, -RP.shY, -(HALF_PI + RG.limbs[0].a * 0.35 - 0.5), -1.2, RP.upper * 0.75, RP.fore * 0.82, RP.upperW * 0.92, RP.foreW * 0.92, this.sC, sK7, RP.hand * 0.94);
@@ -14910,7 +15043,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
           r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a);
           figureCelOval(r, 0, 0, TL, TW, this.sC);
           drawFallenAttire(r,this.id,TL,TW,true,1);
-          r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } }
+          r.noStroke(); for (let d of this.dec) { if (!d.isHead&&!d.isLeg) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } }
           // Back of the head: no face, they are looking at the ground.
           ragContour(r, a);
           r.push();r.translate(TL*.5+5+4*f,0);
@@ -14934,14 +15067,14 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       let off = this.sep; r.push(); r.rotate(this.mA); r.noStroke(); r.fill(this.pC); r.rect(-10,-10+off,18,8,4); r.rect(-10,2+off,18,8,4); r.fill(this.sC); r.ellipse(0,off,this.bW,this.bH/2); r.fill(90, 0, 0); r.ellipse(0, -off, this.bW, 10); r.translate(0, -off*1.8); r.ellipse(0, 0, this.bW, this.bH/2); drawFallenAttire(r,this.id,this.bW,this.bH/2,this.backFacing);
       if (this.eT === "ARMORED_STANDARD") { r.fill(100); r.rect(-10, -6, 20, 12, 4); } 
       if (this.eT === "FEMALE_PISTOL"&&!this.backFacing) { r.fill(this.sC); r.ellipse(4, -6, 12, 10); r.ellipse(4, 6, 12, 10); }
-      r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.fill(sK); r.ellipse(0, -5, 11, 11); r.noStroke(); for (let d of this.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.pop(); 
+      r.noStroke(); for (let d of this.dec) { if (!d.isHead&&!d.isLeg) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.fill(sK); r.ellipse(0, -5, 11, 11); r.noStroke(); for (let d of this.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.pop();
   } 
   else { 
-      r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.fall?figureFallYaw(this.fall,this.rag):this.aA); const RG = this.rag; if (RG) { if(!this.fall)r.rotate(RG.ang); r.scale(RAG_SCALE); } if (RG) ragContour(r, a); else r.noStroke(); const RP = this.fall?projectFallRig(this.bW,this.bH,f):ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW; r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -10 : -10, lY2 = this.bW === 105 ? 15 : 2; r.push(); if (RG) { const bootC = color(this.pC.levels[0] * 0.55, this.pC.levels[1] * 0.55, this.pC.levels[2] * 0.55, a); if(this.fall){drawFallLimb(r,RP,RG,2,f,this.sC,this.pC,sK,bootC); drawFallLimb(r,RP,RG,3,f,this.sC,this.pC,sK,bootC);}else{ragLimb(r, RP.hipX, -RP.hipY, PI + RG.limbs[2].a, -ragKnee(RG.limbs[2]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[2])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot); ragLimb(r, RP.hipX,  RP.hipY, PI - RG.limbs[3].a,  ragKnee(RG.limbs[3]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[3])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot);} } else { r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4); } if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(lX, -4, 12, 16); } r.pop(); const underArm=this.fall&&this.fall.faceDown&&this.fall.hold&&f>.45?this.fall.hold.arm:-1; if(underArm>=0){ragContour(r,a);drawFallLimb(r,RP,RG,underArm,f,this.sC,this.pC,sK,undefined,false,this.id);} if (RG) ragContour(r, a); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); if (RG) { figureCelOval(r, 0, 0, TL, TW, this.sC); } else r.ellipse(0, 0, this.bW + 15 * f, this.bH);
+      r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.fall?figureFallYaw(this.fall,this.rag):this.aA); const RG = this.rag; if (RG) { if(!this.fall)r.rotate(RG.ang); r.scale(RAG_SCALE); } if (RG) ragContour(r, a); else r.noStroke(); const RP = this.fall?projectFallRig(this.bW,this.bH,f):ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW; r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -10 : -10, lY2 = this.bW === 105 ? 15 : 2; r.push(); if (RG) { const bootC = color(this.pC.levels[0] * 0.55, this.pC.levels[1] * 0.55, this.pC.levels[2] * 0.55, a); if(this.fall){drawFallLimb(r,RP,RG,2,f,this.sC,this.pC,sK,bootC,false,this.id,this.dec); drawFallLimb(r,RP,RG,3,f,this.sC,this.pC,sK,bootC,false,this.id,this.dec);}else{ragLimb(r, RP.hipX, -RP.hipY, PI + RG.limbs[2].a, -ragKnee(RG.limbs[2]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[2])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot, this.dec, 0); ragLimb(r, RP.hipX,  RP.hipY, PI - RG.limbs[3].a,  ragKnee(RG.limbs[3]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[3])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot, this.dec, 1);} } else { r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4); } if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(lX, -4, 12, 16); } r.pop(); const underArm=this.fall&&this.fall.faceDown&&this.fall.hold&&f>.45?this.fall.hold.arm:-1; if(underArm>=0){ragContour(r,a);drawFallLimb(r,RP,RG,underArm,f,this.sC,this.pC,sK,undefined,false,this.id);} if (RG) ragContour(r, a); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); if (RG) { figureCelOval(r, 0, 0, TL, TW, this.sC); } else r.ellipse(0, 0, this.bW + 15 * f, this.bH);
       if (this.eT === "ARMORED_STANDARD") { r.fill(100); if (RG) r.rect(-TL * 0.26, -TW * 0.46, TL * 0.58, TW * 0.92, 4); else r.rect(-10, -12, 20, 24, 4); }
       if (this.eT === "FEMALE_PISTOL" && !(this.backFacing&&(!this.fall||f>.5))) { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(4, -6, 12, 10); r.ellipse(4, 6, 12, 10); }
       drawFallenAttire(r,this.id,RG?TL:this.bW+15*f,RG?TW:this.bH,this.backFacing,this.fall?f:1);
-      r.noStroke(); for (let d of this.dec) { if (!d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } } 
+      r.noStroke(); for (let d of this.dec) { if (!d.isHead&&!d.isLeg) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } }
       // Blood from the head coats the collar and shirt, under the sleeves.
       if(this.spray){for(const sp of this.spray){r.fill(96,6,6,sp.a*(a/255));r.ellipse(sp.x,sp.y,sp.r*2,sp.r*1.74);}}
       let lAY = this.eT === "ARMORED" ? -30 : -14, rAY = this.eT === "ARMORED" ? 30 : 11, slX = lerp(-5, 0, f), hX = lerp(-12, 12, f), armLY = lerp(lAY, lAY + 3, f), rslX = lerp(15, 0, f), rhX = lerp(25, 12, f), armRY = lerp(rAY, rAY + 3, f); 
@@ -16717,6 +16850,7 @@ function drawBoxingLegs(e,b,rig) {
     drawFallBone(window,kx,ky,ax,ay,rig.shinW*.80,e.pantsCol,undefined,undefined,false);
     push();translate(foot.x,foot.y-foot.lift);rotate(foot.heading);fill(boot);
     figureCelOval(window,0,0,rig.foot,rig.shinW*.80,boot);pop();
+    drawLegDecals(window,e.decals,i,ox,oy,kx,ky,ax,ay,rig.thighW,(rig.thighW+rig.shinW*.8)*.5,rig.shinW*.8);
   }
 }
 function drawBoxingArms(e,b) {
@@ -16917,7 +17051,7 @@ function paintBoxingFigure(e) {
     paintBoxingArm(g,appearance,arm,rig,skin,'FOREARM');
   // Stains move with the mass they belong to instead of staying at the hips
   // while a slipping head/torso escapes the incoming punch.
-  if(e.decals)for(const d of e.decals){const p=d.isHead?b.head:b.body;g.noStroke();if(d.col)g.fill(...d.col);else g.fill(90,0,0,220);g.ellipse(d.x+p.x,d.y+p.y,d.sz,d.sz);}
+  if(e.decals)for(const d of e.decals){if(d.isLeg)continue;const p=d.isHead?b.head:b.body;g.noStroke();if(d.col)g.fill(...d.col);else g.fill(90,0,0,220);g.ellipse(d.x+p.x,d.y+p.y,d.sz,d.sz);}
   if(b.parryFlash>0){
     const k=Math.min(1,b.parryFlash),a=b.arms.find(arm=>arm.guard)||b.arms[0],h=a.fist;
     g.noFill();g.stroke(245,250,213,220*k);g.strokeWeight(1.4);
@@ -17096,7 +17230,7 @@ function saloonKnockoutProgress(p) {
     return t<.35?.18*boxingSmooth(t/.35):.18+.82*boxingSmooth((t-.35)/.65);
   return boxingSmooth(t);
 }
-function drawSaloonKnockoutLimb(g,rig,r,i,f,shirt,pants,skin,boot,faceDown,id=null) {
+function drawSaloonKnockoutLimb(g,rig,r,i,f,shirt,pants,skin,boot,faceDown,id=null,decals=null) {
   const L=r.limbs[i],arm=i<2,s=i%2?1:-1,knee=ragKnee(L)*(faceDown?.7:1),
     limbA=arm?s*(HALF_PI+(faceDown?L.a*.35-.5:L.a)):PI-s*L.a*(faceDown?.7:1)*f,
     ang=arm?s*PI+((limbA-s*PI+PI*3)%TWO_PI-PI)*f:limbA,
@@ -17113,6 +17247,7 @@ function drawSaloonKnockoutLimb(g,rig,r,i,f,shirt,pants,skin,boot,faceDown,id=nu
   if(streetArm)drawCityStreetUpperArm(g,id,ox,oy,ex,ey,hx,hy,w1,(w1+w2)*.5,w2,skin);
   else drawFallBone(g,ox,oy,ex,ey,w1,arm?shirt:pants,undefined,undefined,{x:hx,y:hy,width:w2});
   drawFallBone(g,ex,ey,hx,hy,w2,streetArm?skin:arm?shirt:pants,arm?skin:boot,arm?rig.hand*(faceDown?.94:1):rig.foot,false);
+  if(!arm)drawLegDecals(g,decals||(id&&id.decals),i-2,ox,oy,ex,ey,hx,hy,w1,(w1+w2)*.5,w2);
 }
 function drawSaloonKnockoutFigure(e) {
   const p=e.stunPose,k=p.knockout,r=p.rag,
@@ -17126,7 +17261,7 @@ function drawSaloonKnockoutFigure(e) {
   push();translate(0,-air);rotate(figureFallYaw(p,r,f)+roll*.35);scale(RAG_SCALE,RAG_SCALE*(1-Math.abs(roll)*.25));
   ragContour(window,255);
   const legF=Math.min(1,f+k.profile.buckle*Math.sin(f*PI));
-  for(let i=2;i<4;i++)drawSaloonKnockoutLimb(window,rig,r,i,legF,shirt,pants,skin,boot,p.faceDown);
+  for(let i=2;i<4;i++)drawSaloonKnockoutLimb(window,rig,r,i,legF,shirt,pants,skin,boot,p.faceDown,null,e.decals);
   figureCelOval(window,0,0,rig.TL,rig.TW,shirt);drawFallenAttire(window,id,rig.TL,rig.TW,p.faceDown,f);
   for(let i=0;i<2;i++)drawSaloonKnockoutLimb(window,rig,r,i,f,shirt,pants,skin,boot,p.faceDown,id);
   translate(rig.headX,0);scale(lerp(1/RAG_SCALE,1,f));rotate(figureHeadTurn(p,f));drawFallenHead(window,id,p,f);pop();
@@ -19329,7 +19464,7 @@ if (this.eType === "COW") {
     if (this.isPlayer) this.isArmed = true;
     frontierAmbientMarkCombat();
     const huntShotId = ++_huntShotSequence;
-    let aH = ((this.isPlayer || this.isFriendly) && headAimToggle) ? "HEAD" : "BODY", cd = (this.isPlayer || this.isFriendly) ? this.currentWeapon.fireCooldown : (this.currentWeapon.enemyCooldown || 48), bob = this.isMoving ? abs(sin(this.walkCycle)) * 2 : 0;
+    let aH = this.isPlayer ? playerAimTarget() : this.isFriendly && headAimToggle ? "HEAD" : "BODY", cd = (this.isPlayer || this.isFriendly) ? this.currentWeapon.fireCooldown : (this.currentWeapon.enemyCooldown || 48), bob = this.isMoving ? abs(sin(this.walkCycle)) * 2 : 0;
     // The off hand cannot fire an SMG while it is throwing or using the cannon.
     const dualLeftReady = this.currentWeapon === WEAPONS.DUAL_SMG && !leftHandAction(this);
     let cost = dualLeftReady ? 2 : 1;
@@ -19876,6 +20011,7 @@ if (this.isPlayer) {
             // ragLimb gives: a circle on the joint buries half of itself in the
             // shin and adds only its radius to the leg.
             figureCelOval(g,th*.92+sh+RGl.foot*.34,0,RGl.foot,wAnkle,bootC,.8);
+            drawLegDecals(g,this.decals,sgn>0?0:1,0,0,th*.92,0,th*.92+sh,0,wHip,wKnee,wAnkle);
             drawingContext.restore();
             fill(this.pantsCol);
           }
@@ -20744,7 +20880,7 @@ if (this.isPlayer) {
     }
     if (this.isPlayer && ninjaSuitUnlocked) { fill(100, 0, 200); rect(-this.bodyW/2, -4, this.bodyW, 8, 2); } 
  
-    noStroke(); for (let d of this.decals) { if (!d.isHead) { if (d.col) fill(d.col[0], d.col[1], d.col[2], d.col[3]); else fill(90, 0, 0, 220); ellipse(d.x, d.y, d.sz, d.sz); } }
+    noStroke(); for (let d of this.decals) { if (!d.isHead&&!d.isLeg) { if (d.col) fill(d.col[0], d.col[1], d.col[2], d.col[3]); else fill(90, 0, 0, 220); ellipse(d.x, d.y, d.sz, d.sz); } }
     if (_tsq) pop();
     // Blood decals are stains ON the shirt and take no contour; everything
     // after them -- sleeves, hands, boots, packs -- is a limb and does.
@@ -22305,8 +22441,10 @@ function updateBullets() {
                 // hole. Holes belong to the health bar and remain until HP
                 // is restored, even after the shield recharges.
                 if (!(t.isPlayer && dRes.blocked)) {
-                  t.decals.push({ x: lX, y: lY, sz: random(4, 7), col: dCol, isHead: b.tH === "HEAD",
-                    isBulletHole:true,shotA:b.a-t.aimAngle });
+                  const decal={x:lX,y:lY,sz:random(4,7),col:dCol,isHead:b.tH==="HEAD",
+                    isBulletHole:true,shotA:b.a-t.aimAngle};
+                  if(b.tH==="LEGS")mapLegHitDecal(t,b.x,b.y,decal,fallHit);
+                  t.decals.push(decal);
                   fallHit.wound=t.decals[t.decals.length-1];
                   fallHit.fatal=t.hp<=0;
                 }
@@ -22413,7 +22551,7 @@ function updateBullets() {
                             if (dT === 1) { emit(b.x, b.y, 15, color(220, 200, 200), "BONE", b.vx, b.vy, t); emit(b.x, b.y, 30, bCol, "GORE", 0, 0, t); }
                             else if (dT === 8) { emit(b.x, b.y, 20, color(220, 200, 200), "BONE", b.vx, b.vy, t); emit(b.x, b.y, 45, bCol, "GORE", 0, 0, t); }
                             else { emit(b.x, b.y, 25, color(220, 200, 200), "BONE", b.vx, b.vy, t); emit(b.x, b.y, 60, bCol, "GORE", 0, 0, t); emit(b.x, b.y, 50, bCol, "BLOOD", b.vx, b.vy, t); }
-                        } else if (b.w === WEAPONS.DUAL_SMG && b.tH === "BODY" && dist(b.startX, b.startY, t.x, t.y) <= 80) {
+                        } else if (b.w === WEAPONS.DUAL_SMG && b.tH !== "HEAD" && dist(b.startX, b.startY, t.x, t.y) <= 80) {
                             dT = 10; emit(b.x, b.y, 30, color(220, 200, 200), "BONE", b.vx, b.vy, t); emit(t.x, t.y, 120, bCol, "GORE", 0, 0, t);
                         } else { dT = 0; emit(t.x, t.y, 40, bCol, "GORE", 0, 0, t); }
                         
@@ -23940,7 +24078,7 @@ function drawUI() {
   if (player && boxingActive(player)) drawBoxingControls(player);
   else if (shovelControlsAvailable()) drawShovelControls();
   else if(!connectedGamepad()&&!streetThugDialogueOpen()) {
-  let bY = rightStick.base.y - 80, rbX = width - 35, rbY = bY - 170; 
+  let bY = touchActionBaseY(), rbX = width - 35, rbY = bY - 170;
   let isTaser = player && player.currentWeapon === WEAPONS.TASER;
   let isBow = player && player.currentWeapon === WEAPONS.BOW;
   
@@ -23997,8 +24135,8 @@ function drawUI() {
       let mbX = rbX - 70, mbY = rbY; fill(50, 200); stroke(255, 100, 0); strokeWeight(2); if (player && player.meleeCooldown > 0) fill(150, 50, 0, 200); ellipse(mbX, mbY, 50, 50); fill(255); noStroke(); text(player && player.meleeCooldown > 0 ? "..." : "MELEE", mbX, mbY); 
   }
 
-  let tbX = width - 35, tbY = bY - 100; stroke(0, 255, 0); strokeWeight(2); noFill(); ellipse(tbX, tbY, 40, 40); line(tbX - 20, tbY, tbX + 20, tbY); line(tbX, tbY - 20, tbX, tbY + 20); if (headAimToggle) { fill(255, 0, 0); noStroke(); ellipse(tbX, tbY, 16, 16); fill(255, 0, 0); textAlign(RIGHT, CENTER); textSize(12); text("HEADSHOT", tbX - 30, tbY - 8); text("MODE", tbX - 30, tbY + 8); }
-  if (jetpackUnlocked) { let dbX = tbX - 70, dbY = tbY; fill(50, 200); stroke(0, 200, 255); strokeWeight(2); if (player && player.dashCooldown > 0) fill(50, 100, 150, 200); ellipse(dbX, dbY, 50, 50); fill(255); noStroke(); textAlign(CENTER, CENTER); text(player && player.dashCooldown > 0 ? "..." : "DASH", dbX, dbY); }
+
+  if (jetpackUnlocked) { let dbX = width - 105, dbY = bY - 100; fill(50, 200); stroke(0, 200, 255); strokeWeight(2); if (player && player.dashCooldown > 0) fill(50, 100, 150, 200); ellipse(dbX, dbY, 50, 50); fill(255); noStroke(); textAlign(CENTER, CENTER); text(player && player.dashCooldown > 0 ? "..." : "DASH", dbX, dbY); }
   }
   if (streakMsgTimer > 0) { push(); fill(255, 200, 0, map(streakMsgTimer, 0, 120, 0, 255)); textAlign(CENTER, CENTER); textSize(40); text(streakMsgText, width / 2, height / 4); pop(); streakMsgTimer--; }
 
@@ -24253,7 +24391,7 @@ function boxingSeedEntryInput(actor = player, contextState = null) {
     state.held.set('PAD_ENTRY_' + i, { punch: boxingEntryPadPunch(i), startedMs: state.clockMs, consumed: true });
   boxingSeedDodgeEdges(state, pad);
   if (!window.__frontierConsumedTouches) window.__frontierConsumedTouches = new Set();
-  const layout = boxingControlLayout(), meleeY = (rightStick.base && rightStick.base.y || height - 110) - 250;
+  const layout = boxingControlLayout(), meleeY = touchActionBaseY() - 170;
   for (const t of touches) {
     const oldMelee = Math.hypot(t.x - (width - 105), t.y - meleeY) < 45;
     const punch = layout.buttons.some(b => !b.action.startsWith('DODGE') && Math.hypot(t.x - b.x, t.y - b.y) <= b.r);
@@ -24279,7 +24417,7 @@ function boxingSeedPhysicalEntryInput(actor = player) {
   state.padScheme = boxingPadScheme();
   state.entryPads = [3, 5].filter(i => down(i) && boxingEntryPadPunch(i));
   boxingSeedDodgeEdges(state, pad);
-  const meleeY = (rightStick.base && rightStick.base.y || height - 110) - 250;
+  const meleeY = touchActionBaseY() - 170;
   for (const t of touches) if (Math.hypot(t.x - (width - 105), t.y - meleeY) < 45) {
     state.touches.set(t.id, { id: t.id, role: 'BUTTON', action: 'LEFT_STRAIGHT', x: t.x, y: t.y,
       startedMs: state.clockMs, consumed: false, began: true, comboIntent: null });
@@ -24604,6 +24742,7 @@ function handleGamepad() {
     gamepadWasConnected=false;
     prevGamepadButtons=[];return;
   }
+  if (touchAimSelection.pointerId !== null) resetTouchAimSelection(true);
   // Detection alone hides the touch HUD, even with both sticks at rest.
   gamepadWasConnected=true;
   window.showOnScreenControls=false;
@@ -24663,7 +24802,7 @@ function handleGamepad() {
       if (btn(6)) grenadeInputHeld = true;
   }
   if (jP(11) && player && player.currentWeapon === WEAPONS.BOW) rightStick.bowReleaseRequested = true;
-  else if (jP(11) && millis() - lastToggleTime > 300) { headAimToggle = !headAimToggle; lastToggleTime = millis(); }
+  else if (jP(11) && millis() - lastToggleTime > 300) { togglePlayerHeadAim(); lastToggleTime = millis(); }
   if (jP(0) && BIOME_ACTIVE && currentBiome === 2) interactForestHuntingActivity();
   if (jP(0) && BIOME_ACTIVE && currentBiome === 3) interactFrontierActivity();
   if (jP(10) && jetpackUnlocked && player && player.dashCooldown <= 0 && player.dashTimer <= 0 && player.meleeTimer <= 0) { player.activateDash(); }
@@ -24677,126 +24816,198 @@ function handleGamepad() {
 
 
 
-function handleTouches() {
-  if(handleStreetThugDialogueInput('TOUCH'))return;
-  meleeInputHeld = false;
-  cannonInputHeld = false;
-  grenadeInputHeld = false; 
-  if (rightStick) rightStick.gamepadInput = false;
-
-  if (player && boxingActive(player)) return;
-
-  leftStick.active = false; rightStick.active = false; leftStick.dx = 0; leftStick.dy = 0; rightStick.dx = 0; rightStick.dy = 0; rightStick.dist = 0; 
-  let hw = width / 2, mR = 60, bY = rightStick.base.y - 80;
-  
-  let currentMeleeTouch = false; 
-  let currentCannonTouch = false; 
-  let currentGrenadeTouch = false;
-  
-  if (window.lastPauseTime === undefined) window.lastPauseTime = 0;
-
-  if (window.__frontierConsumedTouches) {
-    const heldIds = new Set(touches.map(t => t.id));
-    for (const id of window.__frontierConsumedTouches)
-      if (!heldIds.has(id)) window.__frontierConsumedTouches.delete(id);
+// A right-thumb gesture owns its body target and origin until that finger lifts.
+// Keep the layout base fixed: reload, dash and alternate controls use screen space.
+const touchAimSelection = { pointerId: null, pointers: new Map() };
+function touchActionBaseY() { return height - 190; }
+function touchAimSilhouetteLayout() {
+  const x = width - 80, y = height - 188;
+  return { x: x - 48, y, w: 96, h: 160, centerX: x,
+    sections: [ { zone: 'HEAD', y, h: 52 }, { zone: 'BODY', y: y + 52, h: 52 }, { zone: 'LEGS', y: y + 104, h: 56 } ] };
+}
+function touchAimZoneAt(x, y) {
+  const p = touchAimSilhouetteLayout();
+  if (x < p.x || x > p.x + p.w) return null;
+  const section = p.sections.find(s => y >= s.y && y < s.y + s.h);
+  return section ? section.zone : null;
+}
+function touchAimControlsAllowed() {
+  const prologueLocked = currentLevel === 0 && (prologuePhase === 1 || prologuePhase === 3 ||
+    prologuePhase >= 4 && prologuePhase <= 6 || prologuePhase === 8 || prologuePhase === 9 ||
+    inUpstairsRoom && upstairsPhase >= 1 && upstairsPhase <= 5);
+  return !!player && player.hp > 0 && started && !isPaused && !isDead && !isWin && !killcamMode &&
+    !prologueLocked &&
+    !inStoryIntro && !inStoryRoom &&
+    !inTownCutscene && !inFortCutscene && !inPostAmbushCutscene && !inFarmCutscene && !inFarmPostCutscene &&
+    !inDarchonCall && !inWorldBuildingMenu && !inOverworldView && !inTravelMenu &&
+    !inLvl4Cutscene && !window.inNM0SecretOverlay &&
+    !buildGhost && !streetThugDialogueOpen() && !frontierSaloonIsInside() &&
+    !boxingActive(player) && !shovelToolEquipped() && !connectedGamepad();
+}
+function releaseTouchAimPointer() {
+  touchAimSelection.pointerId = null;
+  if (rightStick && rightStick.touchOrigin) {
+    rightStick.touchOrigin = null;
+    rightStick.active = false; rightStick.dx = rightStick.dy = rightStick.dist = 0;
   }
-  if (window.__streetConsumedTouches) {
-    const heldIds=new Set(touches.map(t=>t.id));
-    for(const id of window.__streetConsumedTouches)if(!heldIds.has(id))window.__streetConsumedTouches.delete(id);
-  }
-  for (let i = 0; i < touches.length; i++) {
-    if(window.__streetConsumedTouches&&window.__streetConsumedTouches.has(touches[i].id))continue;
-    if (window.__frontierConsumedTouches && window.__frontierConsumedTouches.has(touches[i].id)) continue;
-    let tx = touches[i].x, ty = touches[i].y;
-    
-    if (tx > width - 100 && ty < 100) {
-        if (millis() - window.lastPauseTime > 300) {
-            isPaused = true; pauseMenuState = "MAIN"; sfx.charge(); window.lastPauseTime = millis();
-        }
-        continue; 
+}
+function resetTouchAimSelection(consumeHeld = true) {
+  const owned = touchAimSelection.pointerId !== null || !!(rightStick && rightStick.touchOrigin);
+  releaseTouchAimPointer();
+  touchAimSelection.pointers.clear();
+  if (consumeHeld) for (const t of touches) touchAimSelection.pointers.set(t.id, { role: 'BLOCKED' });
+  if (owned && consumeHeld && player) cancelPlayerBowDraw(player);
+}
+function syncTouchAimPointers() {
+  const held = new Set(touches.map(t => t.id));
+  if (touchAimSelection.pointerId !== null && !held.has(touchAimSelection.pointerId)) releaseTouchAimPointer();
+  for (const id of touchAimSelection.pointers.keys()) if (!held.has(id)) touchAimSelection.pointers.delete(id);
+}
+function syncTouchAimControlContext() {
+  syncTouchAimPointers();
+  if (!touchAimControlsAllowed() && (touchAimSelection.pointerId !== null || touches.length)) resetTouchAimSelection(true);
+}
+function touchAimPointerConsumed(id) {
+  return !!(window.__frontierConsumedTouches && window.__frontierConsumedTouches.has(id) ||
+    window.__streetConsumedTouches && window.__streetConsumedTouches.has(id));
+}
+function captureTouchAimStarts(newTouches = touches) {
+  for (const t of newTouches) {
+    if (touchAimSelection.pointers.has(t.id)) continue;
+    const zone = touchAimZoneAt(t.x, t.y);
+    const allowed = touchAimControlsAllowed() && !touchAimPointerConsumed(t.id);
+    const aim = allowed && zone && touchAimSelection.pointerId === null;
+    touchAimSelection.pointers.set(t.id, { role: aim ? 'AIM' : allowed ? 'OTHER' : 'BLOCKED' });
+    if (aim) {
+      setPlayerAimZone(zone);
+      touchAimSelection.pointerId = t.id;
+      rightStick.touchOrigin = { x: t.x, y: t.y };
+      rightStick.gamepadInput = false;
+      rightStick.active = true; rightStick.dx = rightStick.dy = rightStick.dist = 0;
     }
-
-    const shovelButton=shovelTouchAction(tx,ty);
-    if(shovelButton){shovelUseControl(shovelButton.action);continue;}
-    if(shovelToolEquipped()){
-      if(tx<hw){
-        const dx=tx-leftStick.base.x,dy=ty-leftStick.base.y,d=Math.hypot(dx,dy),m=Math.max(mR,d);
-        leftStick.active=true;leftStick.dx=dx/m;leftStick.dy=dy/m;
-      } else {
-        const dx=tx-rightStick.base.x,dy=ty-rightStick.base.y,d=Math.hypot(dx,dy),m=Math.max(mR,d);
-        rightStick.active=true;rightStick.dx=dx/m;rightStick.dy=dy/m;rightStick.dist=d/m;
+  }
+}
+function updateTouchAimPointer(t) {
+  const origin = rightStick && rightStick.touchOrigin;
+  if (!origin || t.id !== touchAimSelection.pointerId) return false;
+  const dx = t.x - origin.x, dy = t.y - origin.y, d = Math.hypot(dx, dy), m = Math.max(60, d);
+  rightStick.active = true; rightStick.gamepadInput = false;
+  rightStick.dx = dx / m; rightStick.dy = dy / m; rightStick.dist = d / m;
+  return true;
+}
+function drawTouchAimSilhouette() {
+  const p = touchAimSilhouetteLayout(), x = p.centerX - 14, y = p.y;
+  const selected = typeof playerAimZone === 'string' ? playerAimZone : 'BODY';
+  push(); textFont('sans-serif'); textStyle(NORMAL); textSize(8.5); textAlign(CENTER, CENTER);
+  for (const section of p.sections) {
+    const on = section.zone === selected;
+    noStroke(); fill(on ? 86 : 25, on ? 134 : 36, on ? 147 : 40, on ? 85 : 70);
+    rect(p.x, section.y + 2, p.w, section.h - 4, 10);
+    fill(on ? 238 : 164, on ? 225 : 185, on ? 179 : 188, 220);
+    text(section.zone, p.centerX + 28, section.y + section.h / 2);
+  }
+  const ink = zone => {
+    const on = zone === selected;
+    fill(on ? 242 : 155, on ? 222 : 181, on ? 170 : 187, on ? 235 : 185);
+    stroke(19, 30, 34, 210); strokeWeight(1.2);
+  };
+  ink('HEAD'); ellipse(x, y + 25, 24, 24); rect(x - 5, y + 38, 10, 13, 3);
+  ink('BODY'); rect(x - 14, y + 52, 28, 46, 8); rect(x - 25, y + 54, 8, 40, 4); rect(x + 17, y + 54, 8, 40, 4);
+  ink('LEGS'); rect(x - 13, y + 104, 10, 40, 4); rect(x + 3, y + 104, 10, 40, 4);
+  rect(x - 16, y + 143, 13, 8, 3); rect(x + 3, y + 143, 13, 8, 3);
+  pop();
+}
+function handleTouches() {
+  syncTouchAimControlContext();
+  if (handleStreetThugDialogueInput('TOUCH')) return;
+  meleeInputHeld = cannonInputHeld = grenadeInputHeld = false;
+  if (rightStick) rightStick.gamepadInput = false;
+  if (player && boxingActive(player)) return;
+  if (isPaused || isDead || isWin) return;
+  leftStick.active = false; rightStick.active = false;
+  leftStick.dx = leftStick.dy = rightStick.dx = rightStick.dy = rightStick.dist = 0;
+  const hw = width / 2, mR = 60, bY = touchActionBaseY();
+  let currentMeleeTouch = false, currentCannonTouch = false, currentGrenadeTouch = false;
+  if (window.lastPauseTime === undefined) window.lastPauseTime = 0;
+  for (const key of ['__frontierConsumedTouches', '__streetConsumedTouches']) {
+    if (window[key]) {
+      const heldIds = new Set(touches.map(t => t.id));
+      for (const id of window[key]) if (!heldIds.has(id)) window[key].delete(id);
+    }
+  }
+  captureTouchAimStarts();
+  for (const t of touches) {
+    if (touchAimPointerConsumed(t.id)) continue;
+    // An aim finger retains its role even over a button or another target zone.
+    if (updateTouchAimPointer(t)) continue;
+    if (!shovelToolEquipped() && touchAimSelection.pointers.get(t.id)?.role === 'BLOCKED') continue;
+    const tx = t.x, ty = t.y;
+    if (tx > width - 100 && ty < 100) {
+      if (millis() - window.lastPauseTime > 300) {
+        isPaused = true; pauseMenuState = 'MAIN'; sfx.charge(); window.lastPauseTime = millis();
+        resetTouchAimSelection(true);
       }
       continue;
     }
-    // --- UPDATED BUTTON HITBOXES ---
+    const shovelButton = shovelTouchAction(tx, ty);
+    if (shovelButton) {
+      if (shovelButton.action === 'SWING') currentMeleeTouch = true;
+      else shovelUseControl(shovelButton.action);
+      continue;
+    }
+    if (shovelToolEquipped()) {
+      const base = tx < hw ? leftStick.base : rightStick.base, stick = tx < hw ? leftStick : rightStick;
+      const dx = tx - base.x, dy = ty - base.y, d = Math.hypot(dx, dy), m = Math.max(mR, d);
+      stick.active = true; stick.dx = dx / m; stick.dy = dy / m;
+      if (stick === rightStick) stick.dist = d / m;
+      continue;
+    }
+    if (!touchAimControlsAllowed() || touchAimSelection.pointers.get(t.id)?.role === 'BLOCKED') continue;
     if (typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) {
-        if (dist(tx, ty, width - 35, bY - 240) < 45) currentCannonTouch = true; // Top Slot (Above Reload)
-        if (dist(tx, ty, width - 105, bY - 170) < 45) currentMeleeTouch = true; // Left Slot (Flasks use melee input)
+      if (dist(tx, ty, width - 35, bY - 240) < 45) currentCannonTouch = true;
+      if (dist(tx, ty, width - 105, bY - 170) < 45) currentMeleeTouch = true;
     } else {
-        if ((grenadesUnlocked || (typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked)) && dist(tx, ty, width - 35, bY - 240) < 45) currentGrenadeTouch = true; 
-        if (meleeUnlocked && dist(tx, ty, width - 105, bY - 170) < 45) currentMeleeTouch = true; 
+      if ((grenadesUnlocked || explosiveArmorUnlocked) && dist(tx, ty, width - 35, bY - 240) < 45) currentGrenadeTouch = true;
+      if (meleeUnlocked && dist(tx, ty, width - 105, bY - 170) < 45) currentMeleeTouch = true;
     }
-
-    if (dist(tx, ty, 50, 65) < 40 && (revolverUnlocked || smgUnlocked || dualSmgUnlocked || shotgunUnlocked || arUnlocked || rocketLauncherUnlocked || (player && player.flags && player.flags.bowUnlocked))) {
-        if (millis() - lastWeaponSwapTime > 300 && player) { 
-            let aW = [WEAPONS.PISTOL];
-      if (revolverUnlocked) aW.push(WEAPONS.REVOLVER);
-			if (isStoryMode) aW.push(WEAPONS.TASER);
-            if (player.flags && player.flags.bowUnlocked) aW.push(WEAPONS.BOW);
-            if (dualSmgUnlocked) aW.push(WEAPONS.DUAL_SMG); else if (smgUnlocked) aW.push(WEAPONS.SMG); 
-            if (arUnlocked) aW.push(WEAPONS.ASSAULT_RIFLE); if (shotgunUnlocked) aW.push(WEAPONS.SHOTGUN); if (rocketLauncherUnlocked) aW.push(WEAPONS.ROCKET_LAUNCHER); 
-            player.currentWeapon = aW[(aW.indexOf(player.currentWeapon) + 1) % aW.length]; player.reloadTimer = 0; lastWeaponSwapTime = millis(); 
-        } 
-        continue; 
+    if (dist(tx, ty, 50, 65) < 40 && (revolverUnlocked || smgUnlocked || dualSmgUnlocked || shotgunUnlocked || arUnlocked || rocketLauncherUnlocked || (player.flags && player.flags.bowUnlocked))) {
+      if (millis() - lastWeaponSwapTime > 300) {
+        const aW = [WEAPONS.PISTOL];
+        if (revolverUnlocked) aW.push(WEAPONS.REVOLVER);
+        if (isStoryMode) aW.push(WEAPONS.TASER);
+        if (player.flags && player.flags.bowUnlocked) aW.push(WEAPONS.BOW);
+        if (dualSmgUnlocked) aW.push(WEAPONS.DUAL_SMG); else if (smgUnlocked) aW.push(WEAPONS.SMG);
+        if (arUnlocked) aW.push(WEAPONS.ASSAULT_RIFLE);
+        if (shotgunUnlocked) aW.push(WEAPONS.SHOTGUN);
+        if (rocketLauncherUnlocked) aW.push(WEAPONS.ROCKET_LAUNCHER);
+        player.currentWeapon = aW[(aW.indexOf(player.currentWeapon) + 1) % aW.length];
+        player.reloadTimer = 0; lastWeaponSwapTime = millis();
+      }
+      continue;
     }
-    
-    if (dist(tx, ty, width - 35, bY - 170) < 45) { if (player && player.reloadTimer <= 0 && player.ammo < player.currentWeapon.maxAmmo) { player.triggerReload(); } }
-    if (dist(tx, ty, width - 35, bY - 100) < 45) { if (millis() - lastToggleTime > 300) { headAimToggle = !headAimToggle; lastToggleTime = millis(); } }
-    if (jetpackUnlocked && dist(tx, ty, width - 105, bY - 100) < 45) { if (player && player.dashCooldown <= 0 && player.dashTimer <= 0 && player.meleeTimer <= 0) { player.activateDash(); } }
-    
-    if (tx < hw) { 
-        leftStick.active = true; let dx = tx - leftStick.base.x, dy = ty - leftStick.base.y, d = dist(0, 0, dx, dy); if (d > mR) { dx = (dx / d) * mR; dy = (dy / d) * mR; d = mR; } leftStick.dx = dx / mR; leftStick.dy = dy / mR; 
-    } else { 
-        let touchingBtn = false;
-        if (tx > width - 100 && ty < 100) touchingBtn = true; 
-        if (dist(tx, ty, width - 35, bY - 170) < 45) touchingBtn = true; // Reload
-        if (dist(tx, ty, width - 105, bY - 170) < 45) touchingBtn = true; // Melee/Flask
-        if (dist(tx, ty, width - 35, bY - 100) < 45) touchingBtn = true; // Headshot
-        if (dist(tx, ty, width - 105, bY - 100) < 45) touchingBtn = true; // Jetpack
-        
-        // Cannon OR Grenade exclusion
-        let hasTopBtn = (typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) || grenadesUnlocked || (typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked);
-        if (hasTopBtn && dist(tx, ty, width - 35, bY - 240) < 45) touchingBtn = true;
-        
-        if (!touchingBtn) {
-            rightStick.active = true; let dx = tx - rightStick.base.x, dy = ty - rightStick.base.y, d = dist(0, 0, dx, dy); if (d > mR) { dx = (dx / d) * mR; dy = (dy / d) * mR; d = mR; } rightStick.dx = dx / mR; rightStick.dy = dy / mR; rightStick.dist = d / mR; 
-        }
+    if (dist(tx, ty, width - 35, bY - 170) < 45) {
+      if (player.reloadTimer <= 0 && player.ammo < player.currentWeapon.maxAmmo) player.triggerReload();
+      continue;
     }
-  } 
-  
-  if (currentCannonTouch) cannonInputHeld = true;
-  if (currentMeleeTouch) meleeInputHeld = true;
-  if (currentGrenadeTouch) grenadeInputHeld = true;
+    if (jetpackUnlocked && dist(tx, ty, width - 105, bY - 100) < 45) {
+      if (player.dashCooldown <= 0 && player.dashTimer <= 0 && player.meleeTimer <= 0) player.activateDash();
+      continue;
+    }
+    if (tx < hw) {
+      const dx = tx - leftStick.base.x, dy = ty - leftStick.base.y, d = Math.hypot(dx, dy), m = Math.max(mR, d);
+      leftStick.active = true; leftStick.dx = dx / m; leftStick.dy = dy / m;
+    }
+  }
+  cannonInputHeld = currentCannonTouch; meleeInputHeld = currentMeleeTouch; grenadeInputHeld = currentGrenadeTouch;
 }
-
-
-
-
-
-
-
-
-
-  
-
-
 function drawJoysticks() {
-  if(streetThugDialogueOpen())return;
-  if (player && boxingActive(player)) return;
-  if(connectedGamepad())return;
-  noFill(); stroke(255, 50); ellipse(leftStick.base.x, leftStick.base.y, 120); ellipse(rightStick.base.x, rightStick.base.y, 120);
+  if (streetThugDialogueOpen() || player && boxingActive(player) || connectedGamepad()) return;
+  noFill(); stroke(255, 50); ellipse(leftStick.base.x, leftStick.base.y, 120);
+  if (shovelToolEquipped()) ellipse(rightStick.base.x, rightStick.base.y, 120);
+  else if (rightStick.touchOrigin && touchAimSelection.pointerId !== null)
+    ellipse(rightStick.touchOrigin.x, rightStick.touchOrigin.y, 120);
+  else drawTouchAimSilhouette();
 }
-
 
 
 // Shop descriptors are shared by drawing and input: adding a weapon or reward
@@ -24931,8 +25142,28 @@ function applyFrontierEquipment(c,refill=false) {
 }
 
 function touchStarted() {
-  window.showOnScreenControls = !connectedGamepad();
-  window.isDesktop = false;
+  syncTouchAimPointers();
+  const fresh = touches.filter(t => !touchAimSelection.pointers.has(t.id));
+  const unconsumed = handleTouchStartActions();
+  if (unconsumed && touchAimControlsAllowed()) captureTouchAimStarts(fresh);
+  else {
+    for (const t of fresh) touchAimSelection.pointers.set(t.id, { role: 'BLOCKED' });
+    if (!touchAimControlsAllowed() && touchAimSelection.pointerId !== null) resetTouchAimSelection(true);
+  }
+  return false;
+}
+function touchEnded() {
+  syncTouchAimPointers();
+  return false;
+}
+function cancelTouchAimPointer(event) {
+  const changed = Array.from(event.changedTouches || []);
+  if (changed.some(t => t.identifier === touchAimSelection.pointerId)) resetTouchAimSelection(true);
+}
+
+function handleTouchStartActions() {
+  window.showOnScreenControls = touches.length > 0 && !connectedGamepad();
+  window.isDesktop = touches.length === 0;
   if (!sfx.ctx) sfx.init();
 
   // Define mx and my FIRST
@@ -25750,7 +25981,7 @@ if (inTravelMenu) {
       } else { restartGame(); return false; }
   }
 
-  return false;
+  return true;
 }
 
 
@@ -25937,8 +26168,12 @@ function isClickingBtn(mx, my) {
 document.addEventListener('touchmove', function(e) { 
     e.preventDefault(); 
 }, { passive: false });
+document.addEventListener('touchcancel', cancelTouchAimPointer, { passive: true });
 
 function touchMoved() {
+    syncTouchAimPointers();
+    const t = touches.find(t => t.id === touchAimSelection.pointerId);
+    if (t) updateTouchAimPointer(t);
     return false;
 }
 // Live escort on the map, by sex. Used at save time to fold the soldiers who
@@ -37218,6 +37453,7 @@ function drawShovelMantleLegs(c,pose,R) {
     const hx=sx+th*.92+sh+(lead?11*pose.plant-1.5*pose.tuck:-8*pose.fold+4*pose.plant);
     const hy=sy+side*(lead?1.3*pose.tuck:pose.fold);
     figureCelLimb(g,sx,sy,ex,ey,hx,hy,R.thighW,R.shinW,R.shinW*.8,c.pantsCol);
+    drawLegDecals(g,c.decals,side<0?0:1,sx,sy,ex,ey,hx,hy,R.thighW,R.shinW,R.shinW*.8);
     figureCelOval(g,hx+R.foot*.34,hy,R.foot,R.shinW*.8,boot,.8);
   }
 }
@@ -37255,6 +37491,7 @@ function drawShovelDigLegs(c,pose,R) {
     const hx=ex+sh*.8+side*blend*5-pose.effort*1.4;
     const hy=ey+side*blend*1.5;
     figureCelLimb(api,sx,sy,ex,ey,hx,hy,R.thighW,R.shinW,R.shinW*.8,c.pantsCol);
+    drawLegDecals(api,c.decals,side<0?0:1,sx,sy,ex,ey,hx,hy,R.thighW,R.shinW,R.shinW*.8);
     figureCelOval(api,hx+R.foot*.34,hy,R.foot,R.shinW*.8,boot,.8);
   }
 }
@@ -46756,7 +46993,7 @@ function handleFrontierSaloonTap(mx, my) {
   }
   if (s && s.mode === 'DUEL' && !isPaused && s.duel.phase !== 'RESULT') {
     const c = frontierQuickDrawControls();
-    if (Math.hypot(mx - c.headX, my - c.headY) < 21) { headAimToggle = !headAimToggle; return true; }
+    if (Math.hypot(mx - c.headX, my - c.headY) < 21) { togglePlayerHeadAim(); return true; }
   }
   for (const b of frontierSaloonButtons()) if (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h) {
     if (b.action === 'INTERACT') interactFrontierSaloonActivity();

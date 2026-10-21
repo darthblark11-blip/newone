@@ -580,6 +580,13 @@ device changes, never saved. `check-wildlife-interaction.js`,
 `check-bow-draw.js` checks input/lifecycle and `check-bow-draw-art.js` plus
 `check-bow-draw-render.js` check the string/hand/arrow geometry.
 
+Touch targeting uses the three-section body silhouette and a joystick centered
+at the initial HEAD/BODY/LEGS press. Keep the original analog behavior after
+selection, the aiming finger's ownership and fixed action-button positions.
+Leg aim currently changes humanoid decal placement only, using ordinary body
+damage rules. See [Touch targeting](docs/touch-aim-zones.md) for the input and
+lifecycle contract.
+
 The historical template resolves six regions off three slow world-space fields — `MEADOW · TIMBER · MARSH ·
 HEATH · BURN · FARM` — at roughly a three-chunk patch size. Measured coverage: meadow
 35%, timber 21%, marsh 16%, burn 11%, farm 10%, heath 7%.

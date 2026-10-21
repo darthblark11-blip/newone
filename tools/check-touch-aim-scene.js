@@ -1,0 +1,92 @@
+// Real p5 touch events: down selects a body zone, motion uses the floating
+// stick, and a release allows the next target. Saves phone/landscape previews.
+const fs=require('fs'),path=require('path'),assert=require('node:assert/strict');
+const deps=process.env.VIS_DEPS||'/workspace/newone-dev';
+const {chromium}=require(path.join(deps,'node_modules/playwright'));
+const source=fs.readFileSync(process.env.GAME_JS||path.join(__dirname,'../game.js'),'utf8');
+const p5=fs.readFileSync(path.join(deps,'node_modules/p5/lib/p5.min.js'),'utf8');
+const out=process.env.TOUCH_AIM_OUT||'/tmp/newone-touch-aim';fs.mkdirSync(out,{recursive:true});
+(async()=>{
+ const browser=await chromium.launch({executablePath:process.env.VIS_CHROME||'/usr/bin/chromium',headless:true,args:['--no-sandbox']});
+ try{
+  for(const [name,w,h] of [['phone320',320,700],['phone393',393,800],['landscape',940,430]]){
+   const context=await browser.newContext({viewport:{width:w,height:h},isMobile:true,hasTouch:true,deviceScaleFactor:1});
+   const page=await context.newPage(),errors=[];page.on('pageerror',e=>errors.push(e.message));
+   await page.setContent('<meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0;overflow:hidden;touch-action:none}</style><script>Object.defineProperty(window,"localStorage",{value:{getItem(){return null},setItem(){},removeItem(){}}});</script><script>'+p5+'</script><script>'+source+'</script><script>preload=function(){};setup=function(){createCanvas('+w+','+h+');pixelDensity(1);noLoop();window.__ready=true;};</script>');
+   await page.waitForFunction('__ready');
+   await page.evaluate(()=>{
+    isStoryMode=false;townsData={};startAtLevel(2);started=doTick=true;isPaused=isDead=isWin=killcamMode=false;
+    inStoryIntro=inStoryRoom=inTownCutscene=inFortCutscene=inPostAmbushCutscene=false;
+    inFarmCutscene=inFarmPostCutscene=inDarchonCall=inWorldBuildingMenu=false;
+    inOverworldView=inTravelMenu=inLvl4Cutscene=false;buildGhost=null;
+    leftStick={active:false,dx:0,dy:0,base:{x:80,y:height-160}};
+    rightStick={active:false,dx:0,dy:0,dist:0,base:{x:width-80,y:height-110}};
+    resetTouchAimSelection(false);setPlayerAimZone('BODY');setMeleeTool('NONE');
+    player.x=width/2;player.y=height/2;player.isArmed=true;player.ammo=30;
+    activeBuildings=[];activeParkingCars=[];buildings=[];enemiesList=[];bullets=[];particles=[];barrels=[];
+    invalidateColIndex();window.isDesktop=false;window.showOnScreenControls=true;
+    consecutiveKills=15;comboTimer=75;score=1200;worldTimeMs=12/24*DAY_MS;
+    window.__nativeAimEvents={start:0,move:0,end:0};
+    for(const [name,key]of[['touchStarted','start'],['touchMoved','move'],['touchEnded','end']]){
+     const original=window[name];window[name]=function(...a){__nativeAimEvents[key]++;return original(...a);};
+    }
+    window.__aimStep=()=>{frameCount++;handleTouches();handleGamepad();player.updatePlayer();};
+    window.__aimPaint=()=>{
+     background(32,50,42);stroke(40,64,50);strokeWeight(1);
+     for(let x=0;x<width;x+=40)line(x,0,x,height);
+     for(let y=0;y<height;y+=40)line(0,y,width,y);
+     player.show();drawUI();drawJoysticks();
+    };
+    window.__aimState=()=>({zone:playerAimTarget(),owner:touchAimSelection.pointerId,
+     origin:rightStick.touchOrigin?{...rightStick.touchOrigin}:null,active:rightStick.active,dist:rightStick.dist,
+     bullets:bullets.map(b=>b.tH),events:{...__nativeAimEvents},base:{...rightStick.base}});
+    __aimPaint();
+   });
+   await page.locator('canvas').first().screenshot({path:path.join(out,name+'-idle.png')});
+   const client=await context.newCDPSession(page);
+   const layout=await page.evaluate(()=>touchAimSilhouetteLayout());
+   const head={id:1,x:layout.centerX-8,y:layout.sections[0].y+22};
+   const send=async(type,points)=>{await client.send('Input.dispatchTouchEvent',{type,touchPoints:points});await page.evaluate(()=>__aimStep());};
+   await send('touchStart',[head]);
+   let s=await page.evaluate(()=>__aimState());
+   assert.equal(s.zone,'HEAD');assert.equal(s.dist,0);assert.equal(s.bullets.length,0);
+   assert.deepEqual(s.origin,{x:head.x,y:head.y});assert.equal(s.events.start,1);
+   await page.evaluate(()=>__aimPaint());
+   await page.locator('canvas').first().screenshot({path:path.join(out,name+'-head-pressed.png')});
+   await send('touchMove',[{...head,x:head.x-60}]);
+   s=await page.evaluate(()=>__aimState());
+   assert.equal(s.zone,'HEAD');assert.equal(s.dist,1);assert.deepEqual(s.bullets,['HEAD']);
+   assert.deepEqual(s.origin,{x:head.x,y:head.y});assert.equal(s.events.move,1);
+   await page.evaluate(()=>__aimPaint());
+   await page.locator('canvas').first().screenshot({path:path.join(out,name+'-head-drag.png')});
+   await send('touchMove',[{...head,y:layout.sections[2].y+24}]);
+   s=await page.evaluate(()=>__aimState());assert.equal(s.zone,'HEAD');
+   assert.deepEqual(s.origin,{x:head.x,y:head.y});
+   await send('touchEnd',[]);s=await page.evaluate(()=>__aimState());
+   assert.equal(s.owner,null);assert.equal(s.origin,null);assert.equal(s.active,false);assert.equal(s.events.end,1);
+   const leg={id:2,x:layout.centerX+3,y:layout.sections[2].y+26};
+   await page.evaluate(()=>{player.fireTimer=0;bullets=[];});
+   await send('touchStart',[leg]);s=await page.evaluate(()=>__aimState());
+   assert.equal(s.zone,'LEGS');assert.deepEqual(s.origin,{x:leg.x,y:leg.y});
+   await send('touchMove',[{...leg,x:leg.x-60}]);s=await page.evaluate(()=>__aimState());
+   assert.deepEqual(s.bullets,['LEGS']);assert.equal(s.events.start,2);
+   await send('touchEnd',[]);
+   // A desktop input takeover cancels/consumes the existing finger; keeping
+   // that finger down must not recreate the hidden touch stick on next poll.
+   await send('touchStart',[head]);
+   await page.evaluate(()=>window.dispatchEvent(new KeyboardEvent('keydown',{key:'w'})));
+   await page.evaluate(()=>__aimStep());s=await page.evaluate(()=>__aimState());
+   assert.equal(s.owner,null);assert.equal(s.active,false);
+   await send('touchEnd',[]);
+   await send('touchStart',[head]);
+   await page.evaluate(()=>window.dispatchEvent(new MouseEvent('mousemove',{clientX:40,clientY:40})));
+   await page.evaluate(()=>__aimStep());s=await page.evaluate(()=>__aimState());
+   assert.equal(s.owner,null);assert.equal(s.active,false);
+   await send('touchEnd',[]);
+   assert.deepEqual(errors,[],name+' has no browser exceptions');
+   fs.writeFileSync(path.join(out,name+'.json'),JSON.stringify(s,null,2));
+   await context.close();
+  }
+  console.log('Native p5 touch targeting passed at 320px, 393px and landscape. Screenshots: '+out);
+ }finally{await browser.close();}
+})().catch(e=>{console.error(e.stack||e);process.exit(1);});

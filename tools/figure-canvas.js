@@ -22,8 +22,11 @@ function figureCanvas(width,height){
   arc(x,y,w,h,start,end,mode){while(end<start)end+=Math.PI*2;c.beginPath();if(mode==='pie')c.moveTo(x,y);c.ellipse(x,y,Math.abs(w)*.5,Math.abs(h)*.5,0,start,end);if(mode==='pie'||mode==='chord')c.closePath();paint();},
   line(x,y,nx,ny){if(!stroke)return;c.beginPath();c.moveTo(x,y);c.lineTo(nx,ny);c.stroke();},
   triangle(...a){polygon([[a[0],a[1]],[a[2],a[3]],[a[4],a[5]]]);},quad(...a){polygon([[a[0],a[1]],[a[2],a[3]],[a[4],a[5]],[a[6],a[7]]]);},
-  beginShape(){vertices=[];},vertex(x,y){vertices.push([x,y]);},curveVertex(x,y){vertices.push([x,y]);},
-  endShape(mode){if(!vertices.length)return;c.beginPath();c.moveTo(...vertices[0]);for(const v of vertices.slice(1))c.lineTo(...v);if(mode==='close')c.closePath();paint();},
+  beginShape(){vertices=[];c.beginPath();},
+  vertex(x,y){if(!vertices.length)c.moveTo(x,y);else c.lineTo(x,y);vertices.push([x,y]);},
+  curveVertex(x,y){this.vertex(x,y);},
+  bezierVertex(x1,y1,x2,y2,x,y){c.bezierCurveTo(x1,y1,x2,y2,x,y);vertices.push([x,y]);},
+  endShape(mode){if(!vertices.length)return;if(mode==='close')c.closePath();paint();},
   image(src,x,y,w,h){if(w===undefined)c.drawImage(src.canvas||src,x,y);else c.drawImage(src.canvas||src,x,y,w,h);},
   pixelDensity(){},remove(){},
   clear(){c.clearRect(0,0,width,height);},balanced(){return stack.length===0;}

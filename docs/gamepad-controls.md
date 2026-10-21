@@ -63,7 +63,7 @@ and feed the existing cooking/charging and release mechanics. A missing
 controller clears button history so reconnection can detect a new press.
 
 A connected controller hides the touch action buttons (reload, melee, dash,
-headshot aim, grenade or chemist abilities) and both joystick circles, even
+grenade or chemist abilities), the target silhouette and both joysticks, even
 when the controller is idle. Touching the screen cannot reveal them while
 the controller remains connected. The health, ammo, score and objective HUD
 stay visible. Disconnecting restores the touch controls when using touch
