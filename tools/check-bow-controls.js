@@ -53,7 +53,7 @@ check('player.muzzleFlash===0&&particles.length===0',
   'Bow fire produces no gun muzzle flash or muzzle particles');
 controller();controller([2]);
 check('player.ammo===0&&player.reloadTimer===0','Controller reload cannot refill an empty bow');
-pad=null;ctx.touches=[{x:1165,y:440}];run('handleTouches();');
+pad=null;ctx.touches=[{id:24,...run('touchCombatLayout().reload')}];run('handleTouches();');
 check('player.ammo===0&&player.reloadTimer===0','Touch reload cannot refill an empty bow');
 run(`cyclePlayerWeapon();cyclePlayerWeapon();`);
 check('player.currentWeapon===WEAPONS.BOW&&player.ammo===0','Switching away and back preserves the depleted quiver');

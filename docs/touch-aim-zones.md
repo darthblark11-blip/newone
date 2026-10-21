@@ -11,6 +11,16 @@ section while dragging does not change the target, and another finger can
 still move or use reload, dash and the other action buttons. Those buttons
 stay in their fixed screen positions when the aiming origin moves.
 
+Combat buttons form one column along the right edge: GRENADE, RELOAD, DASH,
+then MELEE. The chemist uses FLASK in the top slot and CANNON in the bottom
+slot. Their cooking, charging, ammunition and cooldown behavior is unchanged.
+Painting and hit detection share `touchCombatLayout()`, with separate hit
+areas for adjacent rows.
+
+The aiming silhouette sits about 68 CSS pixels (approximately 1.8 cm) higher
+than its initial position. Short screens shift it left of the action column
+and keep the buttons below the top status HUD so the touch areas stay separate.
+
 Leg aim currently uses body-shot damage and armor rules. On humanoids it
 places bullet marks on the struck leg, following that limb through movement
 and supported fallen poses. It adds no slowdown, critical damage or new

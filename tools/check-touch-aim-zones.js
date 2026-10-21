@@ -16,6 +16,8 @@ function reset(){
     inPostAmbushCutscene=inFarmCutscene=inFarmPostCutscene=inDarchonCall=false;
     inWorldBuildingMenu=inOverworldView=inTravelMenu=inLvl4Cutscene=false;
     window.inNM0SecretOverlay=false;buildGhost=null;isCooking=false;
+    chemistSuitUnlocked=explosiveArmorUnlocked=false;grenadesUnlocked=meleeUnlocked=jetpackUnlocked=true;
+    pGrenadeAmmo=3;pFlaskAmmo=2;playerGrenades=[];playerFlasks=[];lightnings=[];
     player=new Character(0,0,true);player.isArmed=true;player.ammo=20;
     bullets=[];particles=[];enemiesList=[];activeBuildings=[];activeParkingCars=[];
     buildings=[];barrels=[];invalidateColIndex();resetForestWildlife();
@@ -30,6 +32,7 @@ function point(zone,id=10){
   const p=run('touchAimSilhouetteLayout()'),s=p.sections.find(s=>s.zone===zone);
   return {id,x:p.centerX-9,y:s.y+s.h/2};
 }
+function actionPoint(slot,id=40){return {id,...run('touchCombatLayout().'+slot)};}
 function start(t){ctx.touches.push(t);run('touchStarted();handleTouches();');return t;}
 function move(t,x,y){Object.assign(t,{x,y});run('touchMoved();handleTouches();');}
 function release(id){ctx.touches=ctx.touches.filter(t=>t.id!==id);run('touchEnded();handleTouches();');}
@@ -56,10 +59,10 @@ ok("touchAimSelection.pointerId===10&&playerAimTarget()==='HEAD'",'Another finge
 const movement=start({id:30,x:125,y:640});
 ok('leftStick.active&&leftStick.dx>0&&touchAimSelection.pointerId===10','A second control finger can move independently');
 run('window.touchReloads=0;player.triggerReload=()=>touchReloads++;player.ammo=2;');
-const action=start({id:40,x:358,y:440});
-ok('touchReloads===1&&rightStick.base.x===313&&rightStick.base.y===690&&touchActionBaseY()===610',
+const reloadPoint=actionPoint('reload'),action=start(reloadPoint);
+ok('touchReloads===1&&rightStick.base.x===313&&rightStick.base.y===690',
   'Reload stays at its fixed screen position while aim floats');
-release(action.id);run('touchReloads=0;');move(owner,358,440);
+release(action.id);run('touchReloads=0;');move(owner,reloadPoint.x,reloadPoint.y);
 ok('touchReloads===0&&touchAimSelection.pointerId===10',"Dragging the aiming finger over reload doesn't press it");
 release(owner.id);
 ok('touchAimSelection.pointerId===null&&!rightStick.active','An already-held extra finger cannot become the next aim owner');
@@ -106,4 +109,36 @@ reset();const cancel=start(point('HEAD'));run("player.currentWeapon=WEAPONS.BOW;
 move(cancel,cancel.x-35,cancel.y);tick();run('cancelTouchAimPointer({changedTouches:[{identifier:10}]});handleTouches();');tick();
 ok("bullets.length===0&&!rightStick.active&&touchAimSelection.pointerId===null",'Native touch cancellation discards bow charge without firing');
 
-console.log(`${checks}/${checks} touch aim ownership, targeting and lifecycle checks passed.`);
+// Each column row must drive only its real action in both suits. This also
+// exercises small screens where the column shifts clear of the raised aim pad.
+for(const [w,h] of [[320,568],[320,700],[393,800],[940,430]]){
+  const screen=()=>{reset();run(`width=${w};height=${h};leftStick.base={x:80,y:height-160};rightStick.base={x:width-80,y:height-110};`);};
+  screen();
+  const layout=run('touchCombatLayout()'),rows=['grenade','reload','dash','melee'].map(key=>layout[key]);
+  assert(rows.every(p=>p.x===w-35)&&rows.every((p,i)=>!i||p.y>rows[i-1].y),'column order and right edge');checks++;
+  assert(rows.every(p=>p.y-layout.radius>=100&&p.y+layout.radius<=h),'buttons fit below the HUD');checks++;
+  const aim=run('touchAimSilhouetteLayout()');
+  assert.equal(aim.y,h-256,'silhouette is raised by 68 CSS pixels');checks++;
+  for(const p of rows){
+    const dx=Math.max(aim.x-p.x,0,p.x-aim.x-aim.w),dy=Math.max(aim.y-p.y,0,p.y-aim.y-aim.h);
+    assert(Math.hypot(dx,dy)>layout.hitRadius,'action hit region overlaps silhouette');checks++;
+  }
+  if(h===800){assert.deepEqual(rows.map(p=>p.y),[300,370,440,510],'full-height requested button slots');checks++;}
+  screen();start(actionPoint('grenade'));tick();
+  ok('isCooking&&grenadeInputHeld&&!meleeInputHeld&&!cannonInputHeld&&!rightStick.active&&!boxingActive(player)',w+' standard top row cooks only a grenade');
+  release(40);tick();ok('playerGrenades.length===1&&playerFlasks.length===0&&lightnings.length===0',w+' standard top release throws the grenade');
+  screen();run('player.ammo=2;');start(actionPoint('reload'));
+  ok('player.reloadTimer>0&&!grenadeInputHeld&&!meleeInputHeld&&!cannonInputHeld&&!rightStick.active',w+' second row reloads without another action');
+  screen();start(actionPoint('dash'));
+  ok('player.dashTimer>0&&!grenadeInputHeld&&!meleeInputHeld&&!cannonInputHeld&&!rightStick.active',w+' third row dashes without another action');
+  screen();start(actionPoint('melee'));tick();
+  ok('boxingActive(player)&&playerGrenades.length===0&&playerFlasks.length===0&&lightnings.length===0',w+' bottom row enters the existing melee stance');
+  screen();run('chemistSuitUnlocked=true;');start(actionPoint('flask'));tick();
+  ok('isCooking&&meleeInputHeld&&!grenadeInputHeld&&!cannonInputHeld&&!boxingActive(player)&&!rightStick.active',w+' chemist top row cooks only a flask');
+  release(40);tick();ok('playerFlasks.length===1&&playerGrenades.length===0&&lightnings.length===0',w+' chemist top release throws liquid');
+  screen();run('chemistSuitUnlocked=true;');start(actionPoint('cannon'));tick();
+  ok('player.cannonCharge>0&&cannonInputHeld&&!meleeInputHeld&&!grenadeInputHeld&&!isCooking&&!boxingActive(player)',w+' chemist bottom row charges only the cannon');
+  release(40);tick();ok('lightnings.length===1&&playerFlasks.length===0&&playerGrenades.length===0',w+' chemist bottom release fires the metal-arm cannon');
+}
+
+console.log(`${checks}/${checks} touch aim ownership, column actions and lifecycle checks passed.`);

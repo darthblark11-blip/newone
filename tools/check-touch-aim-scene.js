@@ -25,6 +25,7 @@ const out=process.env.TOUCH_AIM_OUT||'/tmp/newone-touch-aim';fs.mkdirSync(out,{r
     player.x=width/2;player.y=height/2;player.isArmed=true;player.ammo=30;
     activeBuildings=[];activeParkingCars=[];buildings=[];enemiesList=[];bullets=[];particles=[];barrels=[];
     invalidateColIndex();window.isDesktop=false;window.showOnScreenControls=true;
+    grenadesUnlocked=meleeUnlocked=jetpackUnlocked=true;chemistSuitUnlocked=false;pGrenadeAmmo=3;pFlaskAmmo=2;
     consecutiveKills=15;comboTimer=75;score=1200;worldTimeMs=12/24*DAY_MS;
     window.__nativeAimEvents={start:0,move:0,end:0};
     for(const [name,key]of[['touchStarted','start'],['touchMoved','move'],['touchEnded','end']]){
@@ -42,7 +43,26 @@ const out=process.env.TOUCH_AIM_OUT||'/tmp/newone-touch-aim';fs.mkdirSync(out,{r
      bullets:bullets.map(b=>b.tH),events:{...__nativeAimEvents},base:{...rightStick.base}});
     __aimPaint();
    });
+   const paintColumn=async chemist=>page.evaluate(chemist=>{
+    chemistSuitUnlocked=chemist;const records=[],original=window.text;
+    window.text=function(label,x,y,...args){records.push({label:String(label),x,y});return original(label,x,y,...args);};
+    try{__aimPaint();}finally{window.text=original;}
+    return {records,layout:touchCombatLayout()};
+   },chemist);
+   const normal=await paintColumn(false);
+   for(const [label,key]of[['GRENADE\n(3)','grenade'],['RELOAD','reload'],['DASH','dash'],['MELEE','melee']]){
+    const item=normal.records.find(r=>r.label===label);assert(item,name+' draws '+label);
+    assert.equal(item.x,w-35);assert.equal(item.y,normal.layout[key].y);
+   }
    await page.locator('canvas').first().screenshot({path:path.join(out,name+'-idle.png')});
+   const chemist=await paintColumn(true);
+   for(const [label,key]of[['FLASK\n(2)','flask'],['RELOAD','reload'],['DASH','dash'],['CANNON\n(4)','cannon']]){
+    const item=chemist.records.find(r=>r.label===label);assert(item,name+' draws chemist '+label);
+    assert.equal(item.x,w-35);assert.equal(item.y,chemist.layout[key].y);
+   }
+   assert(!chemist.records.some(r=>r.label==='MELEE'||r.label.startsWith('GRENADE')),name+' uses chemist abilities in replacement slots');
+   await page.locator('canvas').first().screenshot({path:path.join(out,name+'-chemist.png')});
+   await page.evaluate(()=>{chemistSuitUnlocked=false;__aimPaint();});
    const client=await context.newCDPSession(page);
    const layout=await page.evaluate(()=>touchAimSilhouetteLayout());
    const head={id:1,x:layout.centerX-8,y:layout.sections[0].y+22};
@@ -83,6 +103,21 @@ const out=process.env.TOUCH_AIM_OUT||'/tmp/newone-touch-aim';fs.mkdirSync(out,{r
    await page.evaluate(()=>__aimStep());s=await page.evaluate(()=>__aimState());
    assert.equal(s.owner,null);assert.equal(s.active,false);
    await send('touchEnd',[]);
+   const column=await page.evaluate(()=>touchCombatLayout());
+   await page.evaluate(()=>{player.reloadTimer=0;player.ammo=2;});
+   await send('touchStart',[{id:3,...column.reload}]);
+   assert(await page.evaluate(()=>player.reloadTimer>0&&!grenadeInputHeld&&!cannonInputHeld&&!meleeInputHeld),name+' native second-row reload');
+   await send('touchEnd',[]);
+   await page.evaluate(()=>{chemistSuitUnlocked=true;player.reloadTimer=0;player.dashTimer=0;isCooking=false;pFlaskAmmo=2;playerFlasks=[];playerGrenades=[];lightnings=[];});
+   await send('touchStart',[{id:4,...column.flask}]);
+   assert(await page.evaluate(()=>isCooking&&meleeInputHeld&&!grenadeInputHeld&&!cannonInputHeld),name+' native top-row flask');
+   await send('touchEnd',[]);
+   assert(await page.evaluate(()=>playerFlasks.length===1&&playerGrenades.length===0),name+' native flask release');
+   await page.evaluate(()=>{player.throwAnimTimer=0;player.cannonCooldown=0;player.cannonFireDelay=0;});
+   await send('touchStart',[{id:5,...column.cannon}]);
+   assert(await page.evaluate(()=>player.cannonCharge>0&&cannonInputHeld&&!meleeInputHeld&&!grenadeInputHeld),name+' native bottom-row cannon');
+   await send('touchEnd',[]);
+   assert(await page.evaluate(()=>lightnings.length===1&&playerGrenades.length===0),name+' native cannon release');
    assert.deepEqual(errors,[],name+' has no browser exceptions');
    fs.writeFileSync(path.join(out,name+'.json'),JSON.stringify(s,null,2));
    await context.close();

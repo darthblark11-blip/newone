@@ -96,9 +96,11 @@ check('R2 held through leaving boxing cannot become an exterior shot',()=>{
   assert.equal(run('bullets.length'),1);
 });
 check('Touch shooting retains its full-stick gesture while R2 is selected',()=>{
-  pad=null;frame();ctx.touches=[{id:11,x:1120,y:690}];frame();
+  pad=null;frame();const aim=run('touchAimSilhouetteLayout()'),body=aim.sections.find(s=>s.zone==='BODY');
+  const origin={x:aim.centerX,y:body.y+body.h/2};
+  ctx.touches=[{id:11,...origin}];frame();
   assert.equal(run('bullets.length'),0,'touchdown selects a zone without firing');
-  ctx.touches=[{id:11,x:1180,y:690}];frame();
+  ctx.touches=[{id:11,x:origin.x+60,y:origin.y}];frame();
   assert.equal(run('bullets.length'),1);
 });
 check('Mouse firing remains independent of the selected gamepad preference',()=>{

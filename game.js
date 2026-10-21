@@ -24078,14 +24078,15 @@ function drawUI() {
   if (player && boxingActive(player)) drawBoxingControls(player);
   else if (shovelControlsAvailable()) drawShovelControls();
   else if(!connectedGamepad()&&!streetThugDialogueOpen()) {
-  let bY = touchActionBaseY(), rbX = width - 35, rbY = bY - 170;
+  const combat = touchCombatLayout(), rbX = combat.reload.x, rbY = combat.reload.y;
+  const buttonSize = combat.radius * 2;
   let isTaser = player && player.currentWeapon === WEAPONS.TASER;
   let isBow = player && player.currentWeapon === WEAPONS.BOW;
   
   if (!isBow) {
   fill(50, 200); stroke(100); strokeWeight(2); 
   if (pR > 0) fill(100, 50, 50, 200); 
-  ellipse(rbX, rbY, 50, 50); 
+  ellipse(rbX, rbY, buttonSize, buttonSize);
   fill(255); noStroke(); textAlign(CENTER, CENTER); textSize(11); 
   
   if (isTaser) text(pR > 0 ? "..." : "RECHARGE", rbX, rbY);
@@ -24094,49 +24095,49 @@ function drawUI() {
   textAlign(CENTER, CENTER); textSize(11);
 
   if (typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) {
-      let cbX = rbX, cbY = rbY - 70; 
+      let cbX = combat.cannon.x, cbY = combat.cannon.y;
       fill(50, 200); stroke(255, 255, 0); strokeWeight(2); 
       if (player && player.cannonCooldown > 0) fill(150, 150, 0, 200); 
-      ellipse(cbX, cbY, 50, 50); 
+      ellipse(cbX, cbY, buttonSize, buttonSize);
       push(); translate(cbX, cbY); rotate(-PI/2); noFill(); strokeWeight(4);
-      if (player && player.cannonCharge > 0) { stroke(255, 255, 0); arc(0, 0, 50, 50, 0, min(1, player.cannonCharge / 180) * TWO_PI); }
-      else if (player && player.cannonCooldown > 0) { stroke(150, 150, 0); arc(0, 0, 50, 50, 0, (1 - (player.cannonCooldown / 180)) * TWO_PI); } 
+      if (player && player.cannonCharge > 0) { stroke(255, 255, 0); arc(0, 0, buttonSize, buttonSize, 0, min(1, player.cannonCharge / 180) * TWO_PI); }
+      else if (player && player.cannonCooldown > 0) { stroke(150, 150, 0); arc(0, 0, buttonSize, buttonSize, 0, (1 - (player.cannonCooldown / 180)) * TWO_PI); }
       pop();
       fill(255); noStroke(); textAlign(CENTER, CENTER); textSize(11); 
       text((player && player.cannonCooldown > 0) ? "RECHARGING" : "CANNON\n(" + (player ? player.cannonAmmo : 4) + ")", cbX, cbY);
   } 
   else if (grenadesUnlocked || (typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked)) {
-      let gbX = rbX, gbY = rbY - 70; 
+      let gbX = combat.grenade.x, gbY = combat.grenade.y;
       fill(50, 200); stroke(100); strokeWeight(2); 
-      if (pGrenadeAmmo <= 0) fill(150, 50, 0, 200); ellipse(gbX, gbY, 50, 50); 
+      if (pGrenadeAmmo <= 0) fill(150, 50, 0, 200); ellipse(gbX, gbY, buttonSize, buttonSize);
       push(); translate(gbX, gbY); rotate(-PI/2); noFill(); strokeWeight(4);
-      if (isCooking) { stroke(255, 150, 0); arc(0, 0, 50, 50, 0, (cookTime / 180) * TWO_PI); } 
-      else if (pGrenadeAmmo <= 0) { stroke(255, 50, 50); arc(0, 0, 50, 50, 0, (1 - (pGrenadeTimer / 600)) * TWO_PI); } 
-      else { stroke(40, 120, 40); ellipse(0, 0, 50, 50); } pop();
+      if (isCooking) { stroke(255, 150, 0); arc(0, 0, buttonSize, buttonSize, 0, (cookTime / 180) * TWO_PI); }
+      else if (pGrenadeAmmo <= 0) { stroke(255, 50, 50); arc(0, 0, buttonSize, buttonSize, 0, (1 - (pGrenadeTimer / 600)) * TWO_PI); }
+      else { stroke(40, 120, 40); ellipse(0, 0, buttonSize, buttonSize); } pop();
       fill(255); noStroke(); textAlign(CENTER, CENTER); textSize(11); 
       let timerTxt = (typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked && pGrenadeAmmo <= 0) ? Math.ceil(pGrenadeTimer / 60) : "EMPTY";
       text(isCooking ? "COOKING" : (pGrenadeAmmo <= 0 ? timerTxt : `GRENADE\n(${pGrenadeAmmo})`), gbX, gbY);
   }
 
   if (typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) {
-      let fbX = rbX - 70, fbY = rbY; 
+      let fbX = combat.flask.x, fbY = combat.flask.y;
       fill(50, 200); stroke(0, 150, 255); strokeWeight(2); 
       if (pFlaskAmmo <= 0) fill(0, 50, 150, 200); 
-      ellipse(fbX, fbY, 50, 50); 
+      ellipse(fbX, fbY, buttonSize, buttonSize);
       push(); translate(fbX, fbY); rotate(-PI/2); noFill(); strokeWeight(4);
-      if (isCooking) { stroke(255, 150, 0); arc(0, 0, 50, 50, 0, (cookTime / 180) * TWO_PI); } 
-      else if (pFlaskAmmo <= 0) { stroke(0, 200, 255); arc(0, 0, 50, 50, 0, (1 - (pFlaskTimer / 600)) * TWO_PI); } 
-      else { stroke(0, 150, 255); ellipse(0, 0, 50, 50); } pop();
+      if (isCooking) { stroke(255, 150, 0); arc(0, 0, buttonSize, buttonSize, 0, (cookTime / 180) * TWO_PI); }
+      else if (pFlaskAmmo <= 0) { stroke(0, 200, 255); arc(0, 0, buttonSize, buttonSize, 0, (1 - (pFlaskTimer / 600)) * TWO_PI); }
+      else { stroke(0, 150, 255); ellipse(0, 0, buttonSize, buttonSize); } pop();
       fill(255); noStroke(); textAlign(CENTER, CENTER); textSize(11); 
       let timerTxt = (pFlaskAmmo <= 0) ? Math.ceil(pFlaskTimer / 60) : "EMPTY";
       text(isCooking ? "COOKING" : (pFlaskAmmo <= 0 ? timerTxt : `FLASK\n(${pFlaskAmmo})`), fbX, fbY);
   } 
   else if (meleeUnlocked) { 
-      let mbX = rbX - 70, mbY = rbY; fill(50, 200); stroke(255, 100, 0); strokeWeight(2); if (player && player.meleeCooldown > 0) fill(150, 50, 0, 200); ellipse(mbX, mbY, 50, 50); fill(255); noStroke(); text(player && player.meleeCooldown > 0 ? "..." : "MELEE", mbX, mbY); 
+      let mbX = combat.melee.x, mbY = combat.melee.y; fill(50, 200); stroke(255, 100, 0); strokeWeight(2); if (player && player.meleeCooldown > 0) fill(150, 50, 0, 200); ellipse(mbX, mbY, buttonSize, buttonSize); fill(255); noStroke(); text(player && player.meleeCooldown > 0 ? "..." : "MELEE", mbX, mbY);
   }
 
 
-  if (jetpackUnlocked) { let dbX = width - 105, dbY = bY - 100; fill(50, 200); stroke(0, 200, 255); strokeWeight(2); if (player && player.dashCooldown > 0) fill(50, 100, 150, 200); ellipse(dbX, dbY, 50, 50); fill(255); noStroke(); textAlign(CENTER, CENTER); text(player && player.dashCooldown > 0 ? "..." : "DASH", dbX, dbY); }
+  if (jetpackUnlocked) { let dbX = combat.dash.x, dbY = combat.dash.y; fill(50, 200); stroke(0, 200, 255); strokeWeight(2); if (player && player.dashCooldown > 0) fill(50, 100, 150, 200); ellipse(dbX, dbY, buttonSize, buttonSize); fill(255); noStroke(); textAlign(CENTER, CENTER); text(player && player.dashCooldown > 0 ? "..." : "DASH", dbX, dbY); }
   }
   if (streakMsgTimer > 0) { push(); fill(255, 200, 0, map(streakMsgTimer, 0, 120, 0, 255)); textAlign(CENTER, CENTER); textSize(40); text(streakMsgText, width / 2, height / 4); pop(); streakMsgTimer--; }
 
@@ -24391,9 +24392,9 @@ function boxingSeedEntryInput(actor = player, contextState = null) {
     state.held.set('PAD_ENTRY_' + i, { punch: boxingEntryPadPunch(i), startedMs: state.clockMs, consumed: true });
   boxingSeedDodgeEdges(state, pad);
   if (!window.__frontierConsumedTouches) window.__frontierConsumedTouches = new Set();
-  const layout = boxingControlLayout(), meleeY = touchActionBaseY() - 170;
+  const layout = boxingControlLayout(), combat = touchCombatLayout();
   for (const t of touches) {
-    const oldMelee = Math.hypot(t.x - (width - 105), t.y - meleeY) < 45;
+    const oldMelee = Math.hypot(t.x - combat.melee.x, t.y - combat.melee.y) < combat.hitRadius;
     const punch = layout.buttons.some(b => !b.action.startsWith('DODGE') && Math.hypot(t.x - b.x, t.y - b.y) <= b.r);
     if (oldMelee || punch) window.__frontierConsumedTouches.add(t.id);
   }
@@ -24417,8 +24418,8 @@ function boxingSeedPhysicalEntryInput(actor = player) {
   state.padScheme = boxingPadScheme();
   state.entryPads = [3, 5].filter(i => down(i) && boxingEntryPadPunch(i));
   boxingSeedDodgeEdges(state, pad);
-  const meleeY = touchActionBaseY() - 170;
-  for (const t of touches) if (Math.hypot(t.x - (width - 105), t.y - meleeY) < 45) {
+  const combat = touchCombatLayout();
+  for (const t of touches) if (Math.hypot(t.x - combat.melee.x, t.y - combat.melee.y) < combat.hitRadius) {
     state.touches.set(t.id, { id: t.id, role: 'BUTTON', action: 'LEFT_STRAIGHT', x: t.x, y: t.y,
       startedMs: state.clockMs, consumed: false, began: true, comboIntent: null });
   }
@@ -24819,9 +24820,20 @@ function handleGamepad() {
 // A right-thumb gesture owns its body target and origin until that finger lifts.
 // Keep the layout base fixed: reload, dash and alternate controls use screen space.
 const touchAimSelection = { pointerId: null, pointers: new Map() };
-function touchActionBaseY() { return height - 190; }
+function touchCombatLayout() {
+  // One shared column for painting, touch hits and the boxing input handoff.
+  // Short landscape screens keep the column below the status HUD.
+  const x = width - 35, top = Math.max(140, height - 500);
+  const gap = Math.min(70, Math.max(44, (height - 175) / 3));
+  const grenade = { x, y: top }, reload = { x, y: top + gap };
+  const dash = { x, y: top + gap * 2 }, melee = { x, y: top + gap * 3 };
+  return { grenade, reload, dash, melee, flask: grenade, cannon: melee, gap,
+    radius: Math.min(25, (gap - 10) / 2), hitRadius: Math.min(32, gap / 2 - 3) };
+}
 function touchAimSilhouetteLayout() {
-  const x = width - 80, y = height - 188;
+  // 68 CSS pixels is approximately 1.8 cm. On short screens, make room
+  // beside the action column rather than laying either touch target over it.
+  const x = width - (height < 640 ? 130 : 80), y = height - 256;
   return { x: x - 48, y, w: 96, h: 160, centerX: x,
     sections: [ { zone: 'HEAD', y, h: 52 }, { zone: 'BODY', y: y + 52, h: 52 }, { zone: 'LEGS', y: y + 104, h: 56 } ] };
 }
@@ -24926,7 +24938,7 @@ function handleTouches() {
   if (isPaused || isDead || isWin) return;
   leftStick.active = false; rightStick.active = false;
   leftStick.dx = leftStick.dy = rightStick.dx = rightStick.dy = rightStick.dist = 0;
-  const hw = width / 2, mR = 60, bY = touchActionBaseY();
+  const hw = width / 2, mR = 60, combat = touchCombatLayout();
   let currentMeleeTouch = false, currentCannonTouch = false, currentGrenadeTouch = false;
   if (window.lastPauseTime === undefined) window.lastPauseTime = 0;
   for (const key of ['__frontierConsumedTouches', '__streetConsumedTouches']) {
@@ -24964,11 +24976,11 @@ function handleTouches() {
     }
     if (!touchAimControlsAllowed() || touchAimSelection.pointers.get(t.id)?.role === 'BLOCKED') continue;
     if (typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) {
-      if (dist(tx, ty, width - 35, bY - 240) < 45) currentCannonTouch = true;
-      if (dist(tx, ty, width - 105, bY - 170) < 45) currentMeleeTouch = true;
+      if (dist(tx, ty, combat.cannon.x, combat.cannon.y) < combat.hitRadius) { currentCannonTouch = true; continue; }
+      if (dist(tx, ty, combat.flask.x, combat.flask.y) < combat.hitRadius) { currentMeleeTouch = true; continue; }
     } else {
-      if ((grenadesUnlocked || explosiveArmorUnlocked) && dist(tx, ty, width - 35, bY - 240) < 45) currentGrenadeTouch = true;
-      if (meleeUnlocked && dist(tx, ty, width - 105, bY - 170) < 45) currentMeleeTouch = true;
+      if ((grenadesUnlocked || explosiveArmorUnlocked) && dist(tx, ty, combat.grenade.x, combat.grenade.y) < combat.hitRadius) { currentGrenadeTouch = true; continue; }
+      if (meleeUnlocked && dist(tx, ty, combat.melee.x, combat.melee.y) < combat.hitRadius) { currentMeleeTouch = true; continue; }
     }
     if (dist(tx, ty, 50, 65) < 40 && (revolverUnlocked || smgUnlocked || dualSmgUnlocked || shotgunUnlocked || arUnlocked || rocketLauncherUnlocked || (player.flags && player.flags.bowUnlocked))) {
       if (millis() - lastWeaponSwapTime > 300) {
@@ -24985,11 +24997,11 @@ function handleTouches() {
       }
       continue;
     }
-    if (dist(tx, ty, width - 35, bY - 170) < 45) {
+    if (dist(tx, ty, combat.reload.x, combat.reload.y) < combat.hitRadius) {
       if (player.reloadTimer <= 0 && player.ammo < player.currentWeapon.maxAmmo) player.triggerReload();
       continue;
     }
-    if (jetpackUnlocked && dist(tx, ty, width - 105, bY - 100) < 45) {
+    if (jetpackUnlocked && dist(tx, ty, combat.dash.x, combat.dash.y) < combat.hitRadius) {
       if (player.dashCooldown <= 0 && player.dashTimer <= 0 && player.meleeTimer <= 0) player.activateDash();
       continue;
     }

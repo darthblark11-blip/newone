@@ -113,10 +113,12 @@ check('bullets.length===0&&player.ammo===24&&player.bowDrawState.tension===0',
   'Controller disconnection cancels instead of masquerading as a release');
 
 function touchFrame(amount) {
+  const aim=run('touchAimSilhouetteLayout()'),body=aim.sections.find(s=>s.zone==='BODY');
+  const origin={x:aim.centerX,y:body.y+body.h/2};
   if(amount&&!ctx.touches.length) {
-    ctx.touches=[{id:91,x:1120,y:690}];run('handleTouches();handleGamepad();');tick(0);
+    ctx.touches=[{id:91,...origin}];run('handleTouches();handleGamepad();');tick(0);
   }
-  ctx.touches=amount ? [{id:91,x:1120-60*amount,y:690}] : [];
+  ctx.touches=amount ? [{id:91,x:origin.x-60*amount,y:origin.y}] : [];
   run('handleTouches();handleGamepad();');tick(0);
 }
 reset();pad=null;touchFrame(0);touchFrame(0);
