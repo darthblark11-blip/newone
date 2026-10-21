@@ -31,11 +31,18 @@ for(const fixture of cases){
   window.ambushKillsTotal=300;nm0AmbushKills=180;window.farmAmbushKills=320;enemiesList=[];
   player.currentWeapon=WEAPONS[c.weapon];player.ammo=17;player.mags[player.currentWeapon.name]=4;player.reloadTimer=c.reload?80:0;
   player.hp=85;player.shield=60;score=5400;floatingScores=[];worldTimeMs=14/24*DAY_MS;
-  background(27,38,36);stroke(37,51,47);strokeWeight(1);
-  for(let x=0;x<width;x+=48)line(x,0,x,height);
-  for(let y=0;y<height;y+=48)line(0,y,width,y);
+  window.__comboSceneBackground=()=>{
+    background(27,38,36);stroke(37,51,47);strokeWeight(1);
+    for(let x=0;x<width;x+=48)line(x,0,x,height);
+    for(let y=0;y<height;y+=48)line(0,y,width,y);
+  };
+  __comboSceneBackground();
   const records=[],paintText=window.text;
-  window.text=function(s,...args){records.push({s:String(s),args,fill:drawingContext.fillStyle,size:window._renderer._textSize,font:drawingContext.font,actualW:textWidth(String(s))});return paintText(s,...args);};
+  window.text=function(s,...args){records.push({s:String(s),args,fill:drawingContext.fillStyle,alpha:color(drawingContext.fillStyle).levels[3]/255,size:window._renderer._textSize,font:drawingContext.font,actualW:textWidth(String(s))});return paintText(s,...args);};
+  deltaTime=1000/60;resetComboHudFade();frameCount++;drawComboHud();
+  const entering=records.find(t=>t.s==='x40 COMBO');
+  for(let i=0;i<5;i++){frameCount++;updateComboHudFade();}
+  records.length=0;__comboSceneBackground();
   drawUI();
   const objectiveStart=records.length;
   drawStoryObjectiveBanner(c.ambush?'Defeat the Grey Fatigue Ambush!':c.farm?'Wipe out the pest infestation!':'Make contact with\nthe Tan Army cordon.',225);
@@ -43,13 +50,15 @@ for(const fixture of cases){
   const r=window.random;window.random=()=>{throw Error('combo used random jitter');};
   try{drawComboHud();drawComboHud();}finally{window.random=r;}
   const layout=combatHudLayout(),combo=records.find(t=>t.s==='x40 COMBO');
-  return {layout,combo,ammo:records.find(t=>t.args[0]===layout.ammo.textX&&t.args[1]===layout.ammo.textY),
+  return {layout,combo,entering,ammo:records.find(t=>t.args[0]===layout.ammo.textX&&t.args[1]===layout.ammo.textY),
     objective:records.slice(objectiveStart),status:records.filter(t=>/^(STICK ARMY OUTPOST|NM-0 AMBUSH FORCES|NM-0 HQ ENEMIES|PEST INFESTATION)/.test(t.s)),
     color:comboHudColor(consecutiveKills),timer:comboTimer};
  },fixture);
  assert.deepEqual(errors,[],'no Canvas errors');assert(result.combo,'combo is painted by drawUI');
  assert.equal(result.combo.args[0],result.layout.combo.x);assert.equal(result.combo.args[1],result.layout.combo.y);
  assert.deepEqual(result.color,[143,60,255]);assert.equal(result.timer,120,'drawing leaves countdown alone');
+ assert(result.entering&&result.entering.alpha>0&&result.entering.alpha<1,'combo begins with partial native Canvas alpha');
+ assert.equal(result.combo.alpha,1,'combo reaches full alpha after its quick entrance');
  assert(result.combo.font.includes('UrbanComboPop'),'combo uses the loaded pop font');
  assert(result.ammo,'ammo label is drawn in the compact ammo lane');
  assert(result.ammo.size<=(w<560?11:12),'ammo uses small text');
@@ -59,6 +68,24 @@ for(const fixture of cases){
  for(const row of result.status)assert(row.args[1]>=128||w>=560,'phone status rows remain below ammo and combo');
  assert(result.objective.every(t=>t.args[1]>=result.layout.objective.y&&t.args[1]<h/2),'objective stays near the top');
  await page.locator('canvas').first().screenshot({path:path.join(out,name+'.png')});
+ const exit=await page.evaluate(()=>{
+  consecutiveKills=0;comboTimer=0;frameCount++;__comboSceneBackground();
+  const records=[],paintText=window.text;
+  window.text=function(s,...args){records.push({s:String(s),fill:drawingContext.fillStyle,alpha:color(drawingContext.fillStyle).levels[3]/255});return paintText(s,...args);};
+  try{drawComboHud();}finally{window.text=paintText;}
+  return {label:records.find(t=>t.s==='x40 COMBO'),kills:consecutiveKills,timer:comboTimer};
+ });
+ assert(exit.label&&exit.label.alpha>0&&exit.label.alpha<1,'expired combo retains its last native label while fading');
+ assert.equal(exit.kills,0);assert.equal(exit.timer,0,'exit rendering leaves gameplay counters expired');
+ if(name==='phone393')await page.locator('canvas').first().screenshot({path:path.join(out,name+'-exit.png')});
+ const hidden=await page.evaluate(()=>{
+  for(let i=0;i<7;i++){frameCount++;updateComboHudFade();}
+  let labels=0;const original=window.text;window.text=()=>labels++;
+  try{drawComboHud();}finally{window.text=original;}
+  return {labels,opacity:updateComboHudFade()};
+ });
+ assert.equal(hidden.labels,0,'expired combo finishes its exit instead of lingering');assert.equal(hidden.opacity,0);
+ result.exit=exit;
  fs.writeFileSync(path.join(out,name+'.json'),JSON.stringify(result,null,2));await page.close();
 }
 console.log('Compact combo/ammo/status Canvas checks passed across eight desktop and phone cases. Screenshots: '+out);

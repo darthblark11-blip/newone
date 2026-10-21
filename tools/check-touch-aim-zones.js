@@ -23,7 +23,7 @@ function reset(){
     buildings=[];barrels=[];invalidateColIndex();resetForestWildlife();
     leftStick={active:false,dx:0,dy:0,base:{x:80,y:height-160}};
     rightStick={active:false,dx:0,dy:0,dist:0,base:{x:width-80,y:height-110}};
-    resetTouchAimSelection(false);setPlayerAimZone('BODY');setMeleeTool('NONE');
+    resetTouchAimSelection(false);resetTouchControlFade();setPlayerAimZone('BODY');setMeleeTool('NONE');
     window.__frontierConsumedTouches=new Set();window.__streetConsumedTouches=new Set();
     window.isDesktop=false;window.showOnScreenControls=true;window.lastPauseTime=0;
     prevGamepadButtons=[];gamepadWasConnected=false;frameCount=100;deltaTime=1000/60;`);
@@ -36,7 +36,7 @@ function actionPoint(slot,id=40){return {id,...run('touchCombatLayout().'+slot)}
 function start(t){ctx.touches.push(t);run('touchStarted();handleTouches();');return t;}
 function move(t,x,y){Object.assign(t,{x,y});run('touchMoved();handleTouches();');}
 function release(id){ctx.touches=ctx.touches.filter(t=>t.id!==id);run('touchEnded();handleTouches();');}
-function tick(){now+=1000/60;run('frameCount++;player.updatePlayer();');}
+function tick(){now+=1000/60;run('frameCount++;player.updatePlayer();updateTouchControlFade();');}
 
 for(const zone of ['HEAD','BODY','LEGS']){
   reset();const t=start(point(zone)),origin={...t};tick();
@@ -118,7 +118,9 @@ for(const [w,h] of [[320,568],[320,700],[393,800],[940,430]]){
   assert(rows.every(p=>p.x===w-35)&&rows.every((p,i)=>!i||p.y>rows[i-1].y),'column order and right edge');checks++;
   assert(rows.every(p=>p.y-layout.radius>=100&&p.y+layout.radius<=h),'buttons fit below the HUD');checks++;
   const aim=run('touchAimSilhouetteLayout()');
-  assert.equal(aim.y,h-256,'silhouette is raised by 68 CSS pixels');checks++;
+  assert(aim.w>96&&aim.h>160,'silhouette buttons are larger than the original control');checks++;
+  if(h>=640){assert(aim.centerX<w-80,'silhouette sits left of its previous position');checks++;}
+  assert(aim.x>=0&&aim.x+aim.w<=w&&aim.y>=100&&aim.y+aim.h<=h,'silhouette remains on screen below the HUD');checks++;
   for(const p of rows){
     const dx=Math.max(aim.x-p.x,0,p.x-aim.x-aim.w),dy=Math.max(aim.y-p.y,0,p.y-aim.y-aim.h);
     assert(Math.hypot(dx,dy)>layout.hitRadius,'action hit region overlaps silhouette');checks++;
@@ -140,5 +142,43 @@ for(const [w,h] of [[320,568],[320,700],[393,800],[940,430]]){
   ok('player.cannonCharge>0&&cannonInputHeld&&!meleeInputHeld&&!grenadeInputHeld&&!isCooking&&!boxingActive(player)',w+' chemist bottom row charges only the cannon');
   release(40);tick();ok('lightnings.length===1&&playerFlasks.length===0&&playerGrenades.length===0',w+' chemist bottom release fires the metal-arm cannon');
 }
+
+// Fading changes the picture, never the input route. An analog aim below the
+// firing threshold still fades the controls, and release returns them smoothly.
+reset();const fadeAim=start(point('HEAD')),fadeOrigin={...fadeAim};tick();
+ok('touchControlFade.alpha===1','A neutral zone press keeps the controls visible');
+move(fadeAim,fadeOrigin.x-25,fadeOrigin.y);tick();
+ok('touchControlFade.alpha>0&&touchControlFade.alpha<1&&bullets.length===0',
+  'Aiming fades controls through an intermediate alpha before firing');
+const sameFrameAlpha=run('touchControlFade.alpha');run('updateTouchControlFade();updateTouchControlFade();');
+assert.equal(run('touchControlFade.alpha'),sameFrameAlpha,'drawing the same frame cannot advance the fade twice');checks++;
+for(let i=0;i<15;i++)tick();
+ok('touchControlFade.alpha===0&&bullets.length===0','Sustained aim fully fades the controls');
+run('player.ammo=2;');const hiddenReload=start(actionPoint('reload',41));
+ok('player.reloadTimer>0&&touchControlFade.alpha===0&&touchAimSelection.pointerId===10',
+  'An invisible reload button still works beside the owned aiming finger');
+release(hiddenReload.id);release(fadeAim.id);tick();
+ok('touchControlFade.alpha>0&&touchControlFade.alpha<1','Stopping aim starts a smooth return');
+for(let i=0;i<15;i++)tick();
+ok('touchControlFade.alpha===1','Idle controls become fully visible again');
+reset();run('player.muzzleFlash=3;frameCount++;updateTouchControlFade();');
+ok('touchControlFade.alpha<1','A firing flash fades controls even after the aiming pointer releases');
+reset();run('window.isDesktop=true;rightStick.active=true;rightStick.dx=1;rightStick.dy=0;rightStick.dist=0;frameCount++;updateTouchControlFade();');
+ok('touchControlFade.alpha===1','An idle desktop aim vector does not count as analog stick travel');
+
+reset();ctx.touches=[{id:92,x:run('width-35'),y:45}];
+run('window.lastPauseTime=-10000;touchStarted();');
+ok('isPaused&&pauseMenuState===\'MAIN\'&&touchAimSelection.pointerId===null',
+  'The native corner-down callback opens pause before any input frame');
+ctx.touches=[];run('touchEnded();');
+ok('isPaused&&touchAimSelection.pointerId===null','A zero-frame corner down/up tap keeps its pause action');
+
+reset();start(point('HEAD'));run('window.lastPauseTime=-10000;');
+start({id:91,x:run('width-35'),y:45});
+ok('isPaused&&pauseMenuState===\'MAIN\'&&touchAimSelection.pointerId===null',
+  'The unmarked top-right corner opens pause and consumes an aiming gesture');
+run('resumeFromPause();handleTouches();');
+ok('!isPaused&&!rightStick.active&&touchAimSelection.pointerId===null',
+  'A held pause-menu finger cannot resume aiming after closing pause');
 
 console.log(`${checks}/${checks} touch aim ownership, column actions and lifecycle checks passed.`);

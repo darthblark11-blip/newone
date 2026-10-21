@@ -18,8 +18,19 @@ Painting and hit detection share `touchCombatLayout()`, with separate hit
 areas for adjacent rows.
 
 The aiming silhouette sits about 68 CSS pixels (approximately 1.8 cm) higher
-than its initial position. Short screens shift it left of the action column
-and keep the buttons below the top status HUD so the touch areas stay separate.
+than its initial position. Its larger sections are 184 pixels tall overall,
+with a wider silhouette shifted slightly left. Short screens fit it between
+movement and the action column and keep buttons below the top status HUD.
+
+Touch buttons and joystick outlines fade out over 160 ms while aiming,
+firing, drawing the bow or charging the cannon, then return over 200 ms when
+idle. Their hit regions stay active at every opacity; health, ammo and other
+status readouts keep their normal visibility. The combo uses its own quicker
+entry and exit fade.
+
+The normal and saloon HUDs omit score and the permanent pause icon. Score
+remains in the shop and results. Tap the top-right corner to open pause,
+including a quick tap that ends between input frames.
 
 Leg aim currently uses body-shot damage and armor rules. On humanoids it
 places bullet marks on the struck leg, following that limb through movement

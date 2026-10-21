@@ -128,6 +128,7 @@ function consumePauseControlInputs() {
   const s = _frontierSaloonSession, pad = connectedGamepad();
   if (player) boxingLeaveInput(player, s ? s.boxingInput : null);
   resetTouchAimSelection(true);
+  resetTouchControlFade();
   resetGamepadFireInput();
   prevGamepadButtons = pad ? pad.buttons.map(b => !!b.pressed) : [];
   meleeInputHeld = cannonInputHeld = grenadeInputHeld = false;
@@ -1411,6 +1412,7 @@ function preload() {
 
 function legacyStartAtLevel(lvl, isLoading = false) {
     resetTouchAimSelection(true);
+    resetTouchControlFade();
     if (typeof invalidateDirectiveBuffer === 'function') invalidateDirectiveBuffer();
     // The ground the player is leaving keeps what was spilled on it, and the
     // ground they are arriving at gets its own back. Anything still falling is
@@ -1420,7 +1422,8 @@ function legacyStartAtLevel(lvl, isLoading = false) {
     
     currentLevel = lvl;
   
-    consecutiveKills = 0; 
+    consecutiveKills = 0;
+    resetComboHudFade();
     totalShotsFired = 0; 
     totalShotsHit = 0;   
 
@@ -6413,6 +6416,7 @@ function resetRunState() {
   pFlaskAmmo = 0; pFlaskTimer = 0; isCooking = false; cookTime = 0;
   score = 0; totalKills = 0; killStreak = 0; flawlessHits = 0;
   consecutiveKills = 0; comboTimer = 0; totalShotsFired = 0; totalShotsHit = 0;
+  resetComboHudFade();
   headshotCounter = 0; bodyOverkillCounter = 0; lightningCounter = 0;
   streakMsgTimer = 0; streakMsgText = ''; objectiveTimer = 0; splatterIdx = 0;
   started = false; isDead = false; isWin = false; isPaused = false;
@@ -23804,19 +23808,37 @@ function combatHudLayout() {
   const centralObjective = width >= 760;
   const objectiveW = centralObjective ? Math.min(500, width - 422) : Math.max(1, width - 32);
   const objectiveX = centralObjective ? 232 + (width - 422 - objectiveW) / 2 : (width - objectiveW) / 2;
-  const objectiveY = centralObjective ? 64 : Math.max(statusBottom + 12, consecutiveKills >= 2 ? comboY + 43 : 0);
+  const objectiveY = centralObjective ? 64 : Math.max(statusBottom + 12, consecutiveKills >= 2 || comboHudFade.visibility > 0 ? comboY + 43 : 0);
   return { combo: { x: comboX, y: comboY, w: comboW }, ammo, status,
     objective: { x: objectiveX, y: objectiveY, w: objectiveW } };
 }
+const comboHudFade = { visibility: 0, kills: 0, timer: 0, frame: -1 };
+function resetComboHudFade() {
+  comboHudFade.visibility = 0; comboHudFade.kills = 0; comboHudFade.timer = 0; comboHudFade.frame = -1;
+}
+function updateComboHudFade() {
+  const visible = consecutiveKills >= 2 && comboTimer > 0;
+  if (visible) { comboHudFade.kills = consecutiveKills; comboHudFade.timer = comboTimer; }
+  if (comboHudFade.frame !== frameCount) {
+    comboHudFade.frame = frameCount;
+    if (!isPaused) {
+      const ms = typeof deltaTime === 'number' && deltaTime > 0 ? Math.min(100, deltaTime) : 1000 / 60;
+      comboHudFade.visibility = Math.max(0, Math.min(1, comboHudFade.visibility + ms / (visible ? 90 : -120)));
+    }
+  }
+  const v = comboHudFade.visibility;
+  return v * v * (3 - 2 * v);
+}
 function drawComboHud() {
-  if (consecutiveKills < 2) return;
-  const p = combatHudLayout().combo, ink = comboHudColor(consecutiveKills);
+  const opacity = updateComboHudFade();
+  if (opacity <= 0) return;
+  const p = combatHudLayout().combo, ink = comboHudColor(comboHudFade.kills);
   push(); noStroke(); textAlign(CENTER, TOP);
   textFont(comboHudFontReady ? COMBO_HUD_FONT_FAMILY : '"Arial Rounded MT Bold", "Trebuchet MS", sans-serif');
   textStyle(comboHudFontReady ? NORMAL : BOLD); textSize(18);
-  fill(ink[0], ink[1], ink[2]); text('x' + Math.min(99, consecutiveKills) + ' COMBO', p.x, p.y);
-  fill(50, 200); rect(p.x - p.w / 2, p.y + 23, p.w, 6, 3);
-  fill(ink[0], ink[1], ink[2]); rect(p.x - p.w / 2, p.y + 23, p.w * Math.max(0, Math.min(1, comboTimer / KILL_COMBO_FRAMES)), 6, 3);
+  fill(ink[0], ink[1], ink[2], 255 * opacity); text('x' + Math.min(99, comboHudFade.kills) + ' COMBO', p.x, p.y);
+  fill(50, 200 * opacity); rect(p.x - p.w / 2, p.y + 23, p.w, 6, 3);
+  fill(ink[0], ink[1], ink[2], 255 * opacity); rect(p.x - p.w / 2, p.y + 23, p.w * Math.max(0, Math.min(1, comboHudFade.timer / KILL_COMBO_FRAMES)), 6, 3);
   pop();
 }
 function drawStoryObjectiveBanner(message, alpha) {
@@ -24062,19 +24084,17 @@ function drawUI() {
   pop(); // CRITICAL FIX: Closes the translation perfectly
 
 
-  textAlign(RIGHT, TOP); textSize(10); fill(255); text("SCORE: " + score, width - 20, 20);
-
   drawClimateReadout();
   drawShovelStatus();
-
-  fill(50, 200); stroke(255); strokeWeight(2); rect(width - 60, 40, 40, 40, 5);
-  fill(255); noStroke(); rect(width - 48, 50, 6, 20, 2); rect(width - 34, 50, 6, 20, 2);
   
   drawComboHud();
 
   updateAndDrawFloatingScores();
 
   // These are touch action buttons; controller players keep the status HUD.
+  push();
+  const controlAlphaBefore = Number.isFinite(drawingContext.globalAlpha) ? drawingContext.globalAlpha : 1;
+  drawingContext.globalAlpha = controlAlphaBefore * updateTouchControlFade();
   if (player && boxingActive(player)) drawBoxingControls(player);
   else if (shovelControlsAvailable()) drawShovelControls();
   else if(!connectedGamepad()&&!streetThugDialogueOpen()) {
@@ -24139,6 +24159,8 @@ function drawUI() {
 
   if (jetpackUnlocked) { let dbX = combat.dash.x, dbY = combat.dash.y; fill(50, 200); stroke(0, 200, 255); strokeWeight(2); if (player && player.dashCooldown > 0) fill(50, 100, 150, 200); ellipse(dbX, dbY, buttonSize, buttonSize); fill(255); noStroke(); textAlign(CENTER, CENTER); text(player && player.dashCooldown > 0 ? "..." : "DASH", dbX, dbY); }
   }
+  drawingContext.globalAlpha = controlAlphaBefore;
+  pop();
   if (streakMsgTimer > 0) { push(); fill(255, 200, 0, map(streakMsgTimer, 0, 120, 0, 255)); textAlign(CENTER, CENTER); textSize(40); text(streakMsgText, width / 2, height / 4); pop(); streakMsgTimer--; }
 
   if ((currentLevel === 1 || currentLevel === 2) && isStoryMode && player && player.hp > 0 && (currentLevel === 2 || journalRead)) {
@@ -24820,6 +24842,34 @@ function handleGamepad() {
 // A right-thumb gesture owns its body target and origin until that finger lifts.
 // Keep the layout base fixed: reload, dash and alternate controls use screen space.
 const touchAimSelection = { pointerId: null, pointers: new Map() };
+const touchControlFade = { alpha: 1, progress: 1, frame: -1 };
+function resetTouchControlFade() {
+  touchControlFade.alpha = touchControlFade.progress = 1;
+  touchControlFade.frame = -1;
+}
+function updateTouchControlFade() {
+  if (touchControlFade.frame === frameCount) return touchControlFade.alpha;
+  touchControlFade.frame = frameCount;
+  const aimTravel = rightStick && (Number.isFinite(rightStick.dist) ? rightStick.dist : Math.hypot(rightStick.dx, rightStick.dy));
+  const aiming = rightStick && rightStick.active && aimTravel > .15;
+  const firing = player && (player.muzzleFlash > 0 || player.bowDrawState && player.bowDrawState.phase === 'DRAW' ||
+    chemistSuitUnlocked && (player.cannonCharge > 0 || player.cannonFireDelay > 35));
+  const hide = touchAimControlsAllowed() && (aiming || firing);
+  const dt = typeof deltaTime === 'number' && deltaTime > 0 ? Math.min(100, deltaTime) : 1000 / 60;
+  touchControlFade.progress = Math.max(0, Math.min(1, touchControlFade.progress + (hide ? -dt / 160 : dt / 200)));
+  const p = touchControlFade.progress;
+  touchControlFade.alpha = p * p * (3 - 2 * p);
+  return touchControlFade.alpha;
+}
+function handlePauseCornerTap(x, y) {
+  if (!started || !player || isDead || isWin || isPaused || x <= width - 100 || x > width || y < 0 || y >= 100) return false;
+  if (window.lastPauseTime === undefined || millis() - window.lastPauseTime > 300) {
+    consumePauseControlInputs();
+    isPaused = true; pauseMenuState = 'MAIN';
+    window.lastPauseTime = millis(); sfx.charge();
+  }
+  return true;
+}
 function touchCombatLayout() {
   // One shared column for painting, touch hits and the boxing input handoff.
   // Short landscape screens keep the column below the status HUD.
@@ -24831,11 +24881,18 @@ function touchCombatLayout() {
     radius: Math.min(25, (gap - 10) / 2), hitRadius: Math.min(32, gap / 2 - 3) };
 }
 function touchAimSilhouetteLayout() {
-  // 68 CSS pixels is approximately 1.8 cm. On short screens, make room
-  // beside the action column rather than laying either touch target over it.
-  const x = width - (height < 640 ? 130 : 80), y = height - 256;
-  return { x: x - 48, y, w: 96, h: 160, centerX: x,
-    sections: [ { zone: 'HEAD', y, h: 52 }, { zone: 'BODY', y: y + 52, h: 52 }, { zone: 'LEGS', y: y + 104, h: 56 } ] };
+  // Keep the raised top edge while enlarging each target and moving left.
+  // Narrow, short screens fit the pad between movement and the action column.
+  const short = height < 640, w = short && width < 340 ? 106 : 112, h = 184;
+  const y = height - 256, unit = h / 160;
+  let x = width - (short ? 146 : 100);
+  if (short) {
+    const combat = touchCombatLayout(), movementX = leftStick && leftStick.base ? leftStick.base.x : 80;
+    x = Math.max(movementX + 63 + w / 2, Math.min(x, combat.melee.x - combat.hitRadius - 3 - w / 2));
+  }
+  return { x: x - w / 2, y, w, h, centerX: x,
+    sections: [ { zone: 'HEAD', y, h: 52 * unit }, { zone: 'BODY', y: y + 52 * unit, h: 52 * unit },
+      { zone: 'LEGS', y: y + 104 * unit, h: 56 * unit } ] };
 }
 function touchAimZoneAt(x, y) {
   const p = touchAimSilhouetteLayout();
@@ -24908,16 +24965,18 @@ function updateTouchAimPointer(t) {
   return true;
 }
 function drawTouchAimSilhouette() {
-  const p = touchAimSilhouetteLayout(), x = p.centerX - 14, y = p.y;
+  const p = touchAimSilhouetteLayout(), sx = p.w / 96, sy = p.h / 160;
+  const x = 0, y = 0;
   const selected = typeof playerAimZone === 'string' ? playerAimZone : 'BODY';
-  push(); textFont('sans-serif'); textStyle(NORMAL); textSize(8.5); textAlign(CENTER, CENTER);
+  push(); textFont('sans-serif'); textStyle(NORMAL); textSize(10); textAlign(CENTER, CENTER);
   for (const section of p.sections) {
     const on = section.zone === selected;
     noStroke(); fill(on ? 86 : 25, on ? 134 : 36, on ? 147 : 40, on ? 85 : 70);
-    rect(p.x, section.y + 2, p.w, section.h - 4, 10);
+    rect(p.x, section.y + 2, p.w, section.h - 4, 12);
     fill(on ? 238 : 164, on ? 225 : 185, on ? 179 : 188, 220);
-    text(section.zone, p.centerX + 28, section.y + section.h / 2);
+    text(section.zone, p.centerX + 28 * sx, section.y + section.h / 2);
   }
+  translate(p.centerX - 14 * sx, p.y); scale(sx, sy);
   const ink = zone => {
     const on = zone === selected;
     fill(on ? 242 : 155, on ? 222 : 181, on ? 170 : 187, on ? 235 : 185);
@@ -24955,10 +25014,7 @@ function handleTouches() {
     if (!shovelToolEquipped() && touchAimSelection.pointers.get(t.id)?.role === 'BLOCKED') continue;
     const tx = t.x, ty = t.y;
     if (tx > width - 100 && ty < 100) {
-      if (millis() - window.lastPauseTime > 300) {
-        isPaused = true; pauseMenuState = 'MAIN'; sfx.charge(); window.lastPauseTime = millis();
-        resetTouchAimSelection(true);
-      }
+      handlePauseCornerTap(tx, ty);
       continue;
     }
     const shovelButton = shovelTouchAction(tx, ty);
@@ -25014,11 +25070,16 @@ function handleTouches() {
 }
 function drawJoysticks() {
   if (streetThugDialogueOpen() || player && boxingActive(player) || connectedGamepad()) return;
+  push();
+  const controlAlphaBefore = Number.isFinite(drawingContext.globalAlpha) ? drawingContext.globalAlpha : 1;
+  drawingContext.globalAlpha = controlAlphaBefore * updateTouchControlFade();
   noFill(); stroke(255, 50); ellipse(leftStick.base.x, leftStick.base.y, 120);
   if (shovelToolEquipped()) ellipse(rightStick.base.x, rightStick.base.y, 120);
   else if (rightStick.touchOrigin && touchAimSelection.pointerId !== null)
     ellipse(rightStick.touchOrigin.x, rightStick.touchOrigin.y, 120);
   else drawTouchAimSilhouette();
+  drawingContext.globalAlpha = controlAlphaBefore;
+  pop();
 }
 
 
@@ -25993,6 +26054,9 @@ if (inTravelMenu) {
       } else { restartGame(); return false; }
   }
 
+  // Handle a quick corner tap on touchdown, even if it ends before the next
+  // input frame. The same invisible target is polled for held touch input.
+  if ((touchAimControlsAllowed() || shovelControlsAvailable()) && handlePauseCornerTap(mx, my)) return false;
   return true;
 }
 
@@ -44696,7 +44760,7 @@ function drawClimateReadout() {
   // Before noon a horizon sun is coming up, after it is going down.
   if (phase === "DUSK" && worldHour() < 12) phase = "DAWN";
 
-  // Sits left of the pause button, which owns width-60 .. width-20 at y 40-80.
+  // Leave the top-right pause tap area clear of the climate readout.
   push();
   textAlign(RIGHT, TOP); textFont('monospace'); noStroke();
   fill(pc[0], pc[1], pc[2]); textSize(11);
@@ -47510,11 +47574,9 @@ function drawFrontierSaloonHud() {
       fill(219, 188, 145); textSize(Math.min(12, (width - 34) / (status.length * .57)));
       text(status, width / 2, headerY + 43);
       fill(174, 156, 133); textSize(11);
-      text('HEALTH ' + Math.ceil(player.hp) + '   SCORE ' + score, width / 2, headerY + 61);
+      text('HEALTH ' + Math.ceil(player.hp), width / 2, headerY + 61);
     });
-    // The pause control stays actionable after the informational header fades.
-    fill(87, 60, 37); rect(width - 61, 12, 45, 31, 5); fill(243, 218, 179);
-    rect(width - 45, 20, 5, 15, 1); rect(width - 35, 20, 5, 15, 1);
+    // The top-right pause tap remains active without a permanent HUD icon.
     if (s.mode === 'SALOON') {
       if (s.brawl === 'ACTIVE' && boxingActive(player) && !isPaused && !s.menu) {
         drawBoxingControls(player, s.boxingInput, hudAlpha);

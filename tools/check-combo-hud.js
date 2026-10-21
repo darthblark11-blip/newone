@@ -50,12 +50,40 @@ const text=[],rect=[],fill=[];
 ctx.text=(...a)=>text.push(a);ctx.rect=(...a)=>rect.push(a);ctx.fill=(...a)=>fill.push(a);
 ctx.textWidth=s=>s.length*8;
 ctx.random=()=>{throw Error('HUD should not jitter or consume combat randomness');};
-probe('consecutiveKills=20;comboTimer=50;drawComboHud();');
+probe('resetComboHudFade();isPaused=false;deltaTime=15;consecutiveKills=20;comboTimer=50;frameCount++;drawComboHud();');
+assert(fill[0][3]>0&&fill[0][3]<255,'combo enters at partial opacity instead of popping in');
+assert.equal(read('comboTimer'),50,'visual fade does not spend the combo window');
 const first=JSON.stringify({text,rect,fill});text.length=rect.length=fill.length=0;
 probe('drawComboHud();');assert.equal(JSON.stringify({text,rect,fill}),first,'repeated frames are stable');
-assert.deepEqual(fill[0],[255,190,35],'label uses the combo gold');
+for(let n=0;n<5;n++){
+  text.length=rect.length=fill.length=0;
+  probe('frameCount++;drawComboHud();');
+}
+assert.deepEqual(fill[0],[255,190,35,255],'label reaches full combo gold after a quick 90ms fade');
 assert.deepEqual(fill[2],fill[0],'timer shares the combo color');
 assert.equal(rect[1][2],rect[0][2]/2,'timer width reflects remaining time');
+text.length=rect.length=fill.length=0;
+probe('consecutiveKills=0;comboTimer=0;deltaTime=20;frameCount++;drawComboHud();');
+assert.equal(text[0][0],'x20 COMBO','expired combo keeps its label during the exit');
+assert.deepEqual(fill[0].slice(0,3),[255,190,35],'exit preserves its existing color');
+assert(fill[0][3]>0&&fill[0][3]<255,'expired combo fades instead of vanishing');
+assert.equal(rect[1][2],rect[0][2]/2,'exit retains the last timer presentation');
+assert.equal(read('consecutiveKills'),0,'exit does not resurrect the gameplay combo');
+const exitAlpha=fill[0][3];
+text.length=rect.length=fill.length=0;
+probe('isPaused=true;frameCount++;drawComboHud();');
+assert.equal(fill[0][3],exitAlpha,'pause freezes an in-progress fade');
+probe('isPaused=false;');
+for(let n=0;n<6;n++){
+  text.length=rect.length=fill.length=0;
+  probe('frameCount++;drawComboHud();');
+}
+assert.equal(text.length,0,'combo disappears after its short exit transition');
+probe('consecutiveKills=4;comboTimer=100;frameCount++;drawComboHud();');
+assert.equal(text[0][0],'x4 COMBO','a new combo begins with the current kill count');
+assert(fill[0][3]>0&&fill[0][3]<255,'a new combo fades in again');
+probe('resetComboHudFade();');
+assert.equal(read('comboHudFade.visibility'),0,'run and travel resets can discard transient fade state');
 text.length=rect.length=fill.length=0;
 probe('objectiveTimer=60;isPaused=true;drawStoryObjectiveBanner("Find a way past the south Great Gate before entering NM-0 HQ.",180);');
 assert.equal(read('objectiveTimer'),60,'painting preserves timer and pause handling');

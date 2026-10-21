@@ -19,6 +19,11 @@ kill counts: orange at 2, yellow at 10, gold at 20, purple at 30, violet at 40.
 The color stays violet above 40. The countdown uses the existing 100-tick
 combo window and fills completely when a player kill refreshes it.
 
+The label and timer ease in over 90 ms and out over 120 ms. An expired combo
+retains its last displayed count, color and timer width during that brief exit;
+the gameplay count and countdown still expire normally. Pause freezes the
+transition, and replacing a run or traveling clears its transient display.
+
 Only player kills advance or refresh the personal combo. Ally kills retain
 their base score reward and still count for sector, ambush, population and
 fortress bookkeeping; they do not earn the player's multiplier. Killer
