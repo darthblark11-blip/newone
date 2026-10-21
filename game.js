@@ -92,6 +92,7 @@ let _frontierEquipmentRestore = null;
 let explosiveArmorUnlocked = false, playerGrenades = [], pGrenadeAmmo = 4, pGrenadeTimer = 0, isCooking = false, cookTime = 0;
 let chemistSuitUnlocked = false, playerFlasks = [], pFlaskAmmo = 2, pFlaskTimer = 0, waterPuddles = [];
 let inUpgradeMenu = false;
+const KILL_COMBO_FRAMES = 100;
 let score = 0; let consecutiveKills = 0; let comboTimer = 0; let floatingScores = []; let totalShotsFired = 0; let totalShotsHit = 0;
 let isPaused = false;
 let pauseMenuState = "MAIN";
@@ -7523,7 +7524,7 @@ viewBottom = camY + height / zoom + shakePad;
   if (typeof updateGrenadePickups === 'function') updateGrenadePickups();
   for (let i = barrels.length - 1; i >= 0; i--) {
     let b = barrels[i]; if (inView(b.x, b.y, 50)) { fill(200, 30, 30); stroke(100, 0, 0); strokeWeight(2); ellipse(b.x, b.y, 24, 24); fill(40); noStroke(); ellipse(b.x, b.y, 16, 16); fill(255, 70); noStroke(); ellipse(b.x - 4, b.y - 4, 8, 8); }
-    if (b.hp <= 0) { triggerExplosion(b.x, b.y, 160); barrels.splice(i, 1); }
+    if (b.hp <= 0) { triggerExplosion(b.x, b.y, 160, false, true, b.killSource); barrels.splice(i, 1); }
   }
 
   drawShovelUndergroundActor();
@@ -7878,8 +7879,7 @@ viewBottom = camY + height / zoom + shakePad;
   // arc is done there is no scripted objective left to announce there.
   if (isStoryMode && currentLevel >= 1 && currentLevel <= 4 && !storyArcCleared(currentLevel) && objectiveTimer > 0) {
       if (!isPaused) objectiveTimer--;
-      let alpha = min(255, objectiveTimer * 3); push(); fill(0, alpha * 0.7); noStroke(); rect(0, height / 2 - 40, width, 80);
-      fill(255, 255, 255, alpha); textAlign(CENTER, CENTER); textSize(24); textFont('sans-serif');
+      let alpha = min(255, objectiveTimer * 3);
 
       let txt;
       if (farmAmbushActive) txt = "Wipe out the pest infestation!";
@@ -7895,7 +7895,7 @@ viewBottom = camY + height / zoom + shakePad;
       else if (currentLevel === 3) txt = "Find out who runs\nthe Anveda farm.";
       else txt = "Make contact with\nthe Tan Army cordon.";
 
-      text(txt, width / 2, height / 2); pop();
+      drawStoryObjectiveBanner(txt, alpha);
   }
 
   if (!isDead && !isWin && !inCutscene && !isPaused) { handleTouches(); handleGamepad(); handleDesktop(); }
@@ -11359,10 +11359,10 @@ function spawnAmbushReinforcement() {
 
 
 
-function triggerExplosion(ex, ey, rad, isMolotov = false, sourceIsPlayer = true) {
+function triggerExplosion(ex, ey, rad, isMolotov = false, sourceIsPlayer = true, killer = sourceIsPlayer ? player : null) {
   sfx.explosion(ex, ey); 
   if (typeof notifyForestWildlifeExplosion === 'function')
-      notifyForestWildlifeExplosion(ex,ey,rad,350,sourceIsPlayer?player:null,++_huntShotSequence);
+      notifyForestWildlifeExplosion(ex,ey,rad,350,killer,++_huntShotSequence);
   screenShake = rad > 160 ? 40 : 30; 
   spawnSplatter(ex, ey, "SCORCH");
   emit(ex, ey, 40, color(255, random(100, 200), 0), "EXPLOSION"); 
@@ -11380,7 +11380,7 @@ function triggerExplosion(ex, ey, rad, isMolotov = false, sourceIsPlayer = true)
       }
       if (b.isTower && b.hp > 0 && sourceIsPlayer && dist(ex, ey, b.x, b.y) < rad + b.w/2) {
           b.hp -= 300; b.hitFlash = 4;
-          if (b.hp <= 0) { triggerExplosion(b.x, b.y, 250, false, true); screenShake = 60; }
+          if (b.hp <= 0) { triggerExplosion(b.x, b.y, 250, false, true, killer); screenShake = 60; }
       }
       
             if (b.isGovFortress && b.hp > 0 && sourceIsPlayer && Math.abs(ex - b.x) < 300) {
@@ -11388,7 +11388,7 @@ function triggerExplosion(ex, ey, rad, isMolotov = false, sourceIsPlayer = true)
           if (dist(ex, ey, b.x, gateY) < rad + 300) {
               b.hp -= 300; b.hitFlash = 4;
               if (b.hp <= 0) { 
-                  triggerExplosion(b.x, gateY, 250, false, true); screenShake = 60; 
+                  triggerExplosion(b.x, gateY, 250, false, true, killer); screenShake = 60;
                   let fY = b.y; 
                   let isNorth = b.y < 0; // <--- ADD THIS
                   if (b.isOutpostGate) {
@@ -11459,7 +11459,7 @@ function triggerExplosion(ex, ey, rad, isMolotov = false, sourceIsPlayer = true)
           let bCol = (e.eType === "BUG" || e.eType === "SNAIL" || e.eType === "SNAIL_HYBRID") ? color(200, 230, 40) : color(90, 0, 0);
           
           if (e.eType === "ROBOT") {
-              robotDeathBurst(e, a, sourceIsPlayer);
+              robotDeathBurst(e, a, sourceIsPlayer, 0, killer);
           } else {
               emit(e.x, e.y, 40, bCol, "GORE");
               if (e.eType === "ALIEN_GATOR") { emit(e.x, e.y, 40, color(30, 180, 30), "GORE"); }
@@ -11467,7 +11467,7 @@ function triggerExplosion(ex, ey, rad, isMolotov = false, sourceIsPlayer = true)
               spawnSplatter(e.x, e.y, "BLOOD", bCol);
           }
 
-          processKill(e.x, e.y, false, e.eType, e.isFriendly, e);
+          processKill(e.x, e.y, false, e.eType, e.isFriendly, e, killer);
           
           enemiesList.splice(i, 1); 
           if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100);
@@ -11480,13 +11480,13 @@ function triggerExplosion(ex, ey, rad, isMolotov = false, sourceIsPlayer = true)
 
   // --- 4. CAR CHAIN EXPLOSIONS ---
   for (let c of explodingCars) {
-    setTimeout(() => { if (started) triggerExplosion(c.x, c.y, 180, false, sourceIsPlayer); }, random(100, 250));
+    setTimeout(() => { if (started) triggerExplosion(c.x, c.y, 180, false, sourceIsPlayer, killer); }, random(100, 250));
   }
 }
-function triggerRocketExplosion(ex, ey, sourceIsPlayer, directHitTarget = null) {
+function triggerRocketExplosion(ex, ey, sourceIsPlayer, directHitTarget = null, killer = sourceIsPlayer ? player : null) {
   sfx.explosion(ex, ey); 
   if (typeof notifyForestWildlifeExplosion === 'function')
-      notifyForestWildlifeExplosion(ex,ey,140,350,sourceIsPlayer?player:null,++_huntShotSequence);
+      notifyForestWildlifeExplosion(ex,ey,140,350,killer,++_huntShotSequence);
   screenShake = 30; 
   spawnSplatter(ex, ey, "SCORCH");
   emit(ex, ey, 40, color(255, 150, 0), "EXPLOSION"); 
@@ -11546,7 +11546,7 @@ function triggerRocketExplosion(ex, ey, sourceIsPlayer, directHitTarget = null) 
               let a = atan2(e.y - ey, e.x - ex);
 
               if (e.eType === "SAUCER" || e.eType === "SAUCER_RED") { 
-                  triggerExplosion(e.x, e.y, 160); 
+                  triggerExplosion(e.x, e.y, 160, false, true, killer);
               } 
               else if (e.eType === "AERIAL" || e.eType === "AERIAL_PISTOL") {
                   let choices = [11, 5, 10]; 
@@ -11557,7 +11557,7 @@ function triggerRocketExplosion(ex, ey, sourceIsPlayer, directHitTarget = null) 
                   spawnSplatter(e.x, e.y, "BLOOD", color(90, 0, 0));
                   if(dT === 10) emit(e.x, e.y, 120, color(90, 0, 0), "GORE");
               }
-              else if (e.eType === "ROBOT") { robotDeathBurst(e, a, sourceIsPlayer); }
+              else if (e.eType === "ROBOT") { robotDeathBurst(e, a, sourceIsPlayer, 0, killer); }
               else {
                   emit(e.x, e.y, 60, bCol, "GORE");
                   let choices = [2, 5, 7, 10, 11]; 
@@ -11566,7 +11566,7 @@ function triggerRocketExplosion(ex, ey, sourceIsPlayer, directHitTarget = null) 
                   spawnSplatter(e.x, e.y, "BLOOD", bCol);
               }
 
-              processKill(e.x, e.y, false, e.eType, e.isFriendly, e);
+              processKill(e.x, e.y, false, e.eType, e.isFriendly, e, killer);
               enemiesList.splice(i, 1); 
               if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100);
           } else if (e.hp > 0) {
@@ -12781,7 +12781,7 @@ class PlayerGrenade {
                                 spawnSplatter(e.x, e.y, "BLOOD", color(90, 0, 0));
                                 corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 11, a, e.decals, e.currentWeapon, a, e.eType, e.bodyW, e.bodyH, e));
                             }
-                            processKill(e.x, e.y, false, e.eType, e.isFriendly, e);
+                            processKill(e.x, e.y, false, e.eType, e.isFriendly, e, player);
                             enemiesList.splice(i, 1); 
                             if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100);
                         } else {
@@ -13207,7 +13207,7 @@ const CORPSE_GIB_DEATHS = [2, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17];
 const ROBOT_BLAST_R = 110;
 const ROBOT_MELEE_KB = 100;   // 5 m. A parked car is 90 units long and ~4.5 m.
 
-function robotDeathBurst(e, a, sourceIsPlayer = true, knockback = 0) {
+function robotDeathBurst(e, a, sourceIsPlayer = true, knockback = 0, killer = sourceIsPlayer ? player : null) {
   // Flung before it goes off, so the charge detonates where it lands rather
   // than where it stood. That is what puts the blast among whatever it was
   // knocked into, and what keeps it clear of whoever swung.
@@ -13238,7 +13238,7 @@ function robotDeathBurst(e, a, sourceIsPlayer = true, knockback = 0) {
   // chain in triggerExplosion staggers itself rather than going up at once.
   const bx = e.x, by = e.y;
   const fuse = knockback > 0 ? 180 : random(70, 150);
-  setTimeout(() => { if (started) triggerExplosion(bx, by, ROBOT_BLAST_R, false, sourceIsPlayer); }, fuse);
+  setTimeout(() => { if (started) triggerExplosion(bx, by, ROBOT_BLAST_R, false, sourceIsPlayer, killer); }, fuse);
 }
 
 // How many intact bodies may lie within one 72-unit patch of ground before the
@@ -17715,7 +17715,8 @@ this.skeletonTimer = 0;
           this.hp -= amount; 
       }
     } else { 
-        this.hp -= amount; 
+        this.hp -= amount;
+        this.lastDamageSource = source;
     }
 
     // Shot out of the saddle. Checked here rather than at each of the half
@@ -18238,7 +18239,7 @@ this.skeletonTimer = 0;
                         corpses.push(c);
                         }
 
-                        processKill(t.x, t.y, false, t.eType, t.isFriendly, t);
+                        processKill(t.x, t.y, false, t.eType, t.isFriendly, t, this);
                         
                         let idx = enemiesList.indexOf(t);
                         if (idx > -1) enemiesList.splice(idx, 1);
@@ -18337,7 +18338,7 @@ this.skeletonTimer = 0;
                         // just goes up where it landed.
                         else if (e.eType === "ROBOT") { robotDeathBurst(e, ang, true); }
                         else { emit(e.x, e.y, 40, bCol, "GORE", 0, 0, e); spawnSplatter(e.x, e.y, "BLOOD", bCol, e); corpses.push(new Corpse(e.x, e.y, e.moveAngle, e.aimAngle, e.shirtCol, e.pantsCol, 3, 0, e.decals, e.currentWeapon, ang, e.eType, e.bodyW, e.bodyH, e)); }
-                        processKill(e.x, e.y, false, e.eType, e.isFriendly, e);
+                        processKill(e.x, e.y, false, e.eType, e.isFriendly, e, this);
                     }
                 }
             }
@@ -18461,7 +18462,7 @@ this.skeletonTimer = 0;
                             corpses.push(meleeTool()==="SWORD"&&ragHumanoid(e.eType,e.bodyW)?swordKillCorpse(e,this.aimAngle):
                               new Corpse(e.x,e.y,e.moveAngle,e.aimAngle,e.shirtCol,e.pantsCol,3,0,e.decals,e.currentWeapon,this.aimAngle,e.eType,e.bodyW,e.bodyH,e)); }
                           
-                          processKill(e.x, e.y, false, e.eType, e.isFriendly, e);
+                          processKill(e.x, e.y, false, e.eType, e.isFriendly, e, this);
                       } 
                   } 
               } 
@@ -21027,9 +21028,13 @@ if (this.isPlayer) {
 
 
 
-function addScore(basePoints, x, y, textPrefix = "") {
-    consecutiveKills++; let currentMultiplier = min(99, consecutiveKills); let earned = basePoints * currentMultiplier; score += earned;
-    floatingScores.push({ y: 100, text: `${textPrefix}${earned}`, life: 90, maxLife: 90 }); comboTimer = 100; 
+function addScore(basePoints, x, y, textPrefix = "", playerKill = true) {
+    if (playerKill) { consecutiveKills++; comboTimer = KILL_COMBO_FRAMES; }
+    // Team kills still pay their base reward, without using or extending the
+    // player's streak. Only the player's own kills earn its multiplier.
+    let currentMultiplier = playerKill ? min(99, consecutiveKills) : 1;
+    let earned = basePoints * currentMultiplier; score += earned;
+    floatingScores.push({ y: 100, text: `${textPrefix}${earned}`, life: 90, maxLife: 90 });
 }
 
 function updateAndDrawFloatingScores() {
@@ -21042,13 +21047,17 @@ function updateAndDrawFloatingScores() {
 }
 
 
-function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = false, victim = null) {
+function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = false, victim = null, killer = undefined) {
     frontierAmbientMarkCombat();
     if(CITY_CIVILIANS.indexOf(eType)!==-1)return;
     if(frontierCivilianType(eType)){bankFrontierPerson(victim);return;}
     
     // Use the actual victim: several falling bodies can share the same spot.
     let deadGuy = victim || enemiesList.find(e => e.x === x && e.y === y && e.dead);
+    const source = killer === undefined ? deadGuy && deadGuy.lastDamageSource : killer;
+    // Legacy scripted/player attacks omit a source. Explicitly owned allied
+    // attacks must never build or refresh the player's personal combo.
+    const playerKill = !isFriendly && (source ? !!source.isPlayer : killer === undefined);
     // Sheriff contracts keep their own roster. Side missions must not satisfy
     // the sector's campaign kill counter or create ambush reinforcements.
     if (frontierBountyOnKill(deadGuy)) return;
@@ -21096,7 +21105,7 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
     if (typeof farmAmbushActive !== 'undefined' && farmAmbushActive && eType === "BUG") {
         window.farmAmbushKills--;
         if (window.farmAmbushKills > 0) setTimeout(spawnFarmBug, random(100, 400));
-        if (x !== undefined && y !== undefined) addScore(2, x, y, "SQUASH+");
+        if (x !== undefined && y !== undefined) addScore(2, x, y, "SQUASH+", playerKill);
         if (window.farmAmbushKills <= 0 && !isWin && !killcamMode) { 
             killcamMode = true; killcamTarget = { x: x !== undefined ? x : player.x, y: y !== undefined ? y : player.y }; 
             killcamTimer = 150; farmAmbushActive = false; window.farmAmbushCleared = true; 
@@ -21115,7 +21124,7 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
     if (eType === "MILITARY_NEUTRAL") {
         // Do NOT trigger ally death penalty
         // Do NOT add to globalPopulation
-        if (x !== undefined && y !== undefined) addScore(5, x, y, "OUTPOST+");
+        if (x !== undefined && y !== undefined) addScore(5, x, y, "OUTPOST+", playerKill);
         return;
     }
 
@@ -21156,7 +21165,7 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
             setTimeout(window.ambushFort ? spawnFortWave : spawnAmbushReinforcement, random(200, 800));
         
         if (x !== undefined && y !== undefined) {
-            if (isHeadshot) addScore(10, x, y, "HEADSHOT+"); else addScore(5, x, y, "KILL+");
+            if (isHeadshot) addScore(10, x, y, "HEADSHOT+", playerKill); else addScore(5, x, y, "KILL+", playerKill);
             if (random(100) > 65) {
                 let r = random(100), dropType = null;
                 if (r < 15) dropType = "SMG"; else if (r < 25) dropType = "SHOTGUN"; else if (r < 30) dropType = "AR"; 
@@ -21177,7 +21186,7 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
 
     
     if (x !== undefined && y !== undefined) {
-        if (isHeadshot) addScore(10, x, y, "HEADSHOT+"); else addScore(5, x, y, "KILL+");
+        if (isHeadshot) addScore(10, x, y, "HEADSHOT+", playerKill); else addScore(5, x, y, "KILL+", playerKill);
         let r = random(100), dropType = null;
         if (r < 15) dropType = "SMG"; else if (r < 25) dropType = "SHOTGUN"; else if (r < 30) dropType = "AR"; 
         if (dropType) { let scatterAngle = random(TWO_PI), dropDist = random(70, 90); weaponDrops.push({ x: x + cos(scatterAngle) * dropDist, y: y + sin(scatterAngle) * dropDist, type: dropType }); }
@@ -22133,7 +22142,7 @@ function updateBullets() {
                     const dx=b.x-b.prevX,dy=b.y-b.prevY;
                     b.x=b.prevX+dx*wildlifeHit.t;b.y=b.prevY+dy*wildlifeHit.t;
                     if(b.isRocket) {
-                        triggerRocketExplosion(b.x,b.y,b.isP);
+                        triggerRocketExplosion(b.x,b.y,b.isP,null,b.shooter || (b.isP ? player : null));
                     } else {
                         const damage=b.isOrangeBeam?ROBOT_BEAM_DMG:(b.isRedLaser||b.isPinkLaser?30:(b.isAlienLaser?25:(wildlifeHit.head?b.w.headDmg:b.w.bodyDmg)));
                         applyForestWildlifeHit(wildlifeHit.animal,{weapon:b.w,head:wildlifeHit.head,shotId:b.shotId,owner:b.shooter,
@@ -22159,15 +22168,18 @@ function updateBullets() {
             if (Math.abs(b.x - barrel.x) > 30 || Math.abs(b.y - barrel.y) > 30) continue;
             if (b.isP && b.tH !== "HEAD" && dist(b.x, b.y, barrel.x, barrel.y) < 15) {
                 hB = true; totalShotsHit++; 
+                const barrelHpBefore = barrel.hp;
                 if (b.w === WEAPONS.SHOTGUN) barrel.hp -= 25;
                 else if (b.isRedLaser || b.isPinkLaser) barrel.hp -= 30;
                 else if (b.isAlienLaser) barrel.hp -= 25;
                 else barrel.hp -= b.w.bodyDmg * (b.isArrow ? b.arrowPower : 1);
+                if (barrelHpBefore > 0 && barrel.hp < barrelHpBefore)
+                    barrel.killSource = b.shooter || (b.isP ? player : null);
                 
                 b.l = 0; emit(b.x, b.y, 3, color(255, 100, 0), "FLASH"); break; 
             }
         }
-        if (hB) { if (b.w === WEAPONS.ROCKET_LAUNCHER) { triggerRocketExplosion(b.x, b.y, b.isP); } b.active = false; continue; }
+        if (hB) { if (b.w === WEAPONS.ROCKET_LAUNCHER) { triggerRocketExplosion(b.x, b.y, b.isP, null, b.shooter || (b.isP ? player : null)); } b.active = false; continue; }
 
         for (let t of localTargets) {
           if (!t || t.hp <= 0 || t.dead) continue;
@@ -22201,7 +22213,7 @@ function updateBullets() {
                   continue; 
               }
 
-                if (b.w === WEAPONS.ROCKET_LAUNCHER) { b.l = 0; triggerRocketExplosion(b.x, b.y, b.isP, t); continue; }
+                if (b.w === WEAPONS.ROCKET_LAUNCHER) { b.l = 0; triggerRocketExplosion(b.x, b.y, b.isP, t, b.shooter || (b.isP ? player : null)); continue; }
                 
                 let dmg = b.isOrangeBeam ? ROBOT_BEAM_DMG : (b.isRedLaser ? 30 : (b.isPinkLaser ? 30 : (b.isAlienLaser ? 25 : (b.w === WEAPONS.SHOTGUN ? (b.tH === "HEAD" ? 50 : 25) : (b.tH === "HEAD" ? b.w.headDmg : b.w.bodyDmg))))); 
                 if (b.isArrow) dmg *= b.arrowPower;
@@ -22362,7 +22374,7 @@ function updateBullets() {
                         corpses.push(new Corpse(t.x, t.y, t.moveAngle, t.aimAngle, t.shirtCol, t.pantsCol,
                                                 t.enraged ? 1 : 0, hA, t.decals, t.currentWeapon, b.a,
                                                 "ROBOT", t.bodyW, t.bodyH, t));
-                        processKill(t.x, t.y, b.tH === "HEAD", t.eType, t.isFriendly, t);
+                        processKill(t.x, t.y, b.tH === "HEAD", t.eType, t.isFriendly, t, b.shooter || (b.isP ? player : null));
                         // `i` here is the BULLET index -- the target loop is a
                         // for-of with no index of its own -- so the body has to
                         // be found rather than assumed.
@@ -22372,7 +22384,7 @@ function updateBullets() {
                         b.active = false;
                         break;
                     }
-                    if (t.eType === "SAUCER" || t.eType === "SAUCER_RED") { triggerExplosion(t.x, t.y, 160); } 
+                    if (t.eType === "SAUCER" || t.eType === "SAUCER_RED") { triggerExplosion(t.x, t.y, 160, false, true, b.shooter || (b.isP ? player : null)); }
                     else if (t.eType === "AERIAL" || t.eType === "AERIAL_PISTOL") {
                         if (b.tH === "HEAD") { dT = 12; } else { let choices = [11, 5, 10]; dT = choices[floor(random(3))]; }
                         corpses.push(new Corpse(t.x, t.y, t.moveAngle, t.aimAngle, t.shirtCol, t.pantsCol, dT, hA, t.decals, t.currentWeapon, b.a, t.eType, t.bodyW, t.bodyH, t));
@@ -22411,7 +22423,7 @@ function updateBullets() {
                     } 
                     if (t.isPlayer) { playerRespawnTimer = 90; } else { 
                         let isHeadshot = (b.tH === "HEAD" && t.eType !== "BUG" && t.eType !== "SNAIL" && t.eType !== "SNAIL_HYBRID");
-                        processKill(t.x, t.y, isHeadshot, t.eType, t.isFriendly, t);
+                        processKill(t.x, t.y, isHeadshot, t.eType, t.isFriendly, t, b.shooter || (b.isP ? player : null));
                         let eI = enemiesList.indexOf(t); if (eI > -1) enemiesList.splice(eI, 1); 
                         if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100); 
                     } 
@@ -22461,15 +22473,15 @@ function updateBullets() {
                         bldg.hp -= dmg;
                         if (bldg.hp <= 0) { sfx.explosion(bldg.x, bldg.y); screenShake = 30; emit(bldg.x, bldg.y, 100, color(200, 230, 40), "GORE"); spawnSplatter(bldg.x, bldg.y, "BLOOD", color(200, 230, 40)); spawnSplatter(bldg.x, bldg.y, "SCORCH"); let bIdx = buildings.indexOf(bldg); if (bIdx > -1) buildings.splice(bIdx, 1); } 
                         else { emit(b.x, b.y, 5, color(255, 20, 147), "BLOOD"); let swarmBug = newHostileCharacter(bldg.x - 20, bldg.y - 20, "BUG"); swarmBug.ignoreBldgTimer = 180; enemiesList.push(swarmBug); sfx.hitBody(); }
-                        if (b.w === WEAPONS.ROCKET_LAUNCHER) triggerRocketExplosion(b.x, b.y, b.isP); 
+                        if (b.w === WEAPONS.ROCKET_LAUNCHER) triggerRocketExplosion(b.x, b.y, b.isP, null, b.shooter || (b.isP ? player : null));
                     } else if (bldg.isTower && bldg.hp > 0 && b.isP) {
                         let dmg = b.w === WEAPONS.SHOTGUN ? 25 : (b.w === WEAPONS.ROCKET_LAUNCHER ? 350 : (b.w.bodyDmg || 20));
                         if (b.isArrow) dmg *= b.arrowPower;
                         bldg.hp -= dmg; bldg.hitFlash = 4; emit(b.x, b.y, 5, color(255, 100, 0), "SPARK");
-                        if (bldg.hp <= 0) { triggerExplosion(bldg.x, bldg.y, 200, false, true); screenShake = 60; }
+                        if (bldg.hp <= 0) { triggerExplosion(bldg.x, bldg.y, 200, false, true, b.shooter || (b.isP ? player : null)); screenShake = 60; }
                     } else if (b.w === WEAPONS.ROCKET_LAUNCHER) {
-                        triggerRocketExplosion(b.x, b.y, b.isP); 
-                        if (bldg.isCar) { triggerExplosion(bldg.x, bldg.y, 160, false, true); let bIdx = buildings.indexOf(bldg); if (bIdx > -1) buildings.splice(bIdx, 1); }
+                        triggerRocketExplosion(b.x, b.y, b.isP, null, b.shooter || (b.isP ? player : null));
+                        if (bldg.isCar) { triggerExplosion(bldg.x, bldg.y, 160, false, true, b.shooter || (b.isP ? player : null)); let bIdx = buildings.indexOf(bldg); if (bIdx > -1) buildings.splice(bIdx, 1); }
                     } else { 
                         emit(b.x, b.y, 3, bldg.isCar ? color(255, 200, 0) : color(100), bldg.isCar ? "SPARK" : "DUST"); 
                     }
@@ -22514,8 +22526,8 @@ function updateBullets() {
                     if (b.x > c.x - cw / 2 && b.x < c.x + cw / 2 && b.y > c.y - ch / 2 && b.y < c.y + ch / 2) {
                         b.l = 0; b.active = false; hitSomething = true;
                         if (b.w === WEAPONS.ROCKET_LAUNCHER) {
-                            triggerRocketExplosion(b.x, b.y, b.isP);
-                            triggerExplosion(c.x, c.y, 160, false, true);
+                            triggerRocketExplosion(b.x, b.y, b.isP, null, b.shooter || (b.isP ? player : null));
+                            triggerExplosion(c.x, c.y, 160, false, true, b.shooter || (b.isP ? player : null));
                             let cIdx = parkingCars.indexOf(c); if(cIdx > -1) parkingCars.splice(cIdx, 1);
                         } else {
                             emit(b.x, b.y, 5, color(255, 200, 0), "SPARK");
@@ -23498,6 +23510,60 @@ function drawNM0AmbushCleanupArrow(ambushRatio) {
   pop();
 }
 
+const COMBO_HUD_COLORS = [
+  [2, 255, 150, 0], [10, 255, 235, 0], [20, 255, 190, 35],
+  [30, 190, 75, 225], [40, 143, 60, 255]
+];
+function comboHudColor(kills) {
+  const n = Math.max(2, Math.min(40, kills));
+  for (let i = 1; i < COMBO_HUD_COLORS.length; i++) {
+    const b = COMBO_HUD_COLORS[i], a = COMBO_HUD_COLORS[i - 1];
+    if (n <= b[0]) {
+      const t = (n - a[0]) / (b[0] - a[0]);
+      return [a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, a[3] + (b[3] - a[3]) * t];
+    }
+  }
+}
+function combatHudLayout() {
+  const sideBySide = width >= 560, comboW = 128;
+  let statusBottom = currentLevel === 8 || nm0AmbushActive || farmAmbushActive ? 155 : 130;
+  if (player && player.currentWeapon === WEAPONS.BOW) statusBottom += 22;
+  const comboX = sideBySide ? Math.max(232 + comboW / 2, Math.min(width / 2, width - 190 - comboW / 2)) : width / 2;
+  const comboY = sideBySide ? 20 : statusBottom + 12;
+  const centralObjective = width >= 760;
+  const objectiveW = centralObjective ? Math.min(500, width - 422) : Math.max(1, width - 32);
+  const objectiveX = centralObjective ? 232 + (width - 422 - objectiveW) / 2 : (width - objectiveW) / 2;
+  const objectiveY = centralObjective ? 64 : Math.max(statusBottom + 12, consecutiveKills >= 2 ? comboY + 43 : 0);
+  return { combo: { x: comboX, y: comboY, w: comboW }, objective: { x: objectiveX, y: objectiveY, w: objectiveW } };
+}
+function drawComboHud() {
+  if (consecutiveKills < 2) return;
+  const p = combatHudLayout().combo, ink = comboHudColor(consecutiveKills);
+  push(); noStroke(); textAlign(CENTER, TOP); textFont('sans-serif'); textStyle(BOLD); textSize(16);
+  fill(ink[0], ink[1], ink[2]); text('x' + Math.min(99, consecutiveKills) + ' COMBO', p.x, p.y);
+  fill(50, 200); rect(p.x - p.w / 2, p.y + 23, p.w, 6, 3);
+  fill(ink[0], ink[1], ink[2]); rect(p.x - p.w / 2, p.y + 23, p.w * Math.max(0, Math.min(1, comboTimer / KILL_COMBO_FRAMES)), 6, 3);
+  pop();
+}
+function drawStoryObjectiveBanner(message, alpha) {
+  const p = combatHudLayout().objective;
+  push(); noStroke(); textFont('sans-serif'); textStyle(NORMAL); textSize(width < 560 ? 16 : 18); textAlign(CENTER, TOP);
+  const lines = [], limit = p.w - 24, lineHeight = width < 560 ? 20 : 23;
+  for (const paragraph of message.split('\n')) {
+    let line = '';
+    for (const word of paragraph.split(/\s+/)) {
+      const next = line ? line + ' ' + word : word;
+      if (line && textWidth(next) > limit) { lines.push(line); line = word; }
+      else line = next;
+    }
+    lines.push(line);
+  }
+  fill(0, alpha * 0.7); rect(p.x, p.y, p.w, lines.length * lineHeight + 16, 7);
+  fill(255, 255, 255, alpha);
+  for (let i = 0; i < lines.length; i++) text(lines[i], p.x + p.w / 2, p.y + 8 + i * lineHeight);
+  pop();
+}
+
 function drawUI() {
   // If the scene guard caught something, say so. It repeats every frame while
   // it lasts, so this stays up until it stops -- which is right: the picture is
@@ -23726,14 +23792,7 @@ function drawUI() {
   fill(50, 200); stroke(255); strokeWeight(2); rect(width - 60, 40, 40, 40, 5);
   fill(255); noStroke(); rect(width - 48, 50, 6, 20, 2); rect(width - 34, 50, 6, 20, 2);
   
-  if (consecutiveKills >= 2) { 
-      let displayMult = min(99, consecutiveKills);
-      fill(255, 150, 0); textSize(16); 
-      let shakeX = random(-1, 1) * displayMult * 0.5; let shakeY = random(-1, 1) * displayMult * 0.5;
-      textAlign(RIGHT, TOP); text("x" + displayMult + " COMBO", width - 20 + shakeX, 33 + shakeY);
-      fill(50, 200); rect(width - 120, 80, 100, 8, 4);
-      fill(255, 150, 0); rect(width - 120, 80, map(comboTimer, 0, 180, 0, 100), 8, 4);
-  }
+  drawComboHud();
 
   updateAndDrawFloatingScores();
 
