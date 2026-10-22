@@ -9003,7 +9003,7 @@ function shovelDig(kind) {
   if(!e||!e.isPlayer||e.dead||e.hp<=0||currentLevel<1||currentLevel>7||!window.shovelOwned||meleeTool()!=='SHOVEL')return false;
   if(!started||!doTick||isPaused||isDead||isWin||killcamMode||inStoryIntro||inStoryRoom||
       inTownCutscene||inFarmCutscene||inFarmPostCutscene||inPostAmbushCutscene||inFortCutscene||
-      inLvl4Cutscene||inDarchonCall||inTravelMenu||inOverworldView||inWorldBuildingMenu||inUpgradeMenu||
+      inLvl4Cutscene||inDarchonCall||inTravelMenu||inWorldBuildingMenu||inUpgradeMenu||
       frontierSaloonIsInside()||boxingActive(e))return false;
   kind=String(kind).toUpperCase();if(!['DOWN','FORWARD','UP'].includes(kind))return false;
   if(e.meleeTimer>0)return false;
@@ -17348,7 +17348,7 @@ function playerBowCanDraw(c) {
     started && doTick && !isPaused && !isDead && !isWin && !killcamMode && !buildGhost &&
     !(typeof inCutscene !== 'undefined' && inCutscene) && !inStoryIntro && !inTownCutscene && !inFortCutscene && !inPostAmbushCutscene &&
     !inFarmCutscene && !inFarmPostCutscene && !inDarchonCall && !inWorldBuildingMenu &&
-    !inOverworldView && !inTravelMenu && c.meleeTimer <= 0 && c.dashTimer <= 0 &&
+    !inTravelMenu && c.meleeTimer <= 0 && c.dashTimer <= 0 &&
     c.reloadTimer <= 0 && !isCooking && c.throwAnimTimer <= 0;
 }
 function cancelPlayerBowDraw(c) {
@@ -24932,11 +24932,12 @@ function touchAimControlsAllowed() {
   const prologueLocked = currentLevel === 0 && (prologuePhase === 1 || prologuePhase === 3 ||
     prologuePhase >= 4 && prologuePhase <= 6 || prologuePhase === 8 || prologuePhase === 9 ||
     inUpstairsRoom && upstairsPhase >= 1 && upstairsPhase <= 5);
+  // inOverworldView is live exploration after liberation, not a modal screen.
   return !!player && player.hp > 0 && started && !isPaused && !isDead && !isWin && !killcamMode &&
     !prologueLocked &&
     !inStoryIntro && !inStoryRoom &&
     !inTownCutscene && !inFortCutscene && !inPostAmbushCutscene && !inFarmCutscene && !inFarmPostCutscene &&
-    !inDarchonCall && !inWorldBuildingMenu && !inOverworldView && !inTravelMenu &&
+    !inDarchonCall && !inWorldBuildingMenu && !inTravelMenu &&
     !inLvl4Cutscene && !window.inNM0SecretOverlay &&
     !buildGhost && !streetThugDialogueOpen() && !frontierSaloonIsInside() &&
     !boxingActive(player) && !shovelToolEquipped() && !connectedGamepad();
@@ -25749,31 +25750,6 @@ else if (typeof inWorldBuildingMenu !== 'undefined' && inWorldBuildingMenu) {
     }
 }
 
-// ==========================================
-// 4. OVERWORLD -> TRAVEL MENU
-// ==========================================
-else if (typeof inOverworldView !== 'undefined' && inOverworldView) {
-    for(let t = 1; t <= currentLevel; t++) {
-        if (!overworldTownManageable(t)) continue;
-        let tx = width/2 - 150 + (t-1)*300;
-        let ty = height/2;
-        if (dist(mx, my, tx, ty) < 45) {
-            viewingTownId=t;
-            invalidateDirectiveBuffer();
-            loadLedgerIntoWindow(POP_POOL);
-            inOverworldView = false;
-            inWorldBuildingMenu = true;
-            if (typeof sfx !== 'undefined' && sfx.charge) sfx.charge();
-            return false;
-        }
-    }
-
-    // A second travel hitbox used to sit here, bottom-centre, with nothing
-    // drawn over it in this view -- an invisible button that ended the level.
-    // Travel is in the pause menu now and this was the same accident waiting to
-    // happen, so it is gone with the visible one.
-}
-
 // --- NEW TRAVEL MENU HITBOXES ---
 else if (inTravelMenu) {
     if (!travelDirection) {
@@ -25848,30 +25824,8 @@ else if (inTravelMenu) {
       return false;
   }
 
-// V V V V V START HIGHLIGHTING HERE V V V V V 
-if (inOverworldView) {
-    // Check if clicking a Town Node to manage it
-    for(let t = 1; t <= currentLevel; t++) {
-        if (!overworldTownManageable(t)) continue;
-        let tx = width/2 - 150 + (t-1)*300;
-        let ty = height/2;
-        if (dist(mx, my, tx, ty) < 45) {
-            viewingTownId=t;
-            invalidateDirectiveBuffer();
-            loadLedgerIntoWindow(POP_POOL);
-            inOverworldView = false;
-            inWorldBuildingMenu = true;
-            sfx.charge();
-            return false;
-        }
-    }
-   // The bottom-right TRAVEL hitbox lived here, matching the green button that
-   // used to be drawn over the play screen. Both are gone -- travel is in the
-   // pause menu beside CONTINUE now. There were three of these entry points in
-   // all, two of them with nothing drawn over them, which is why a stray tap
-   // while exploring could end the level.
-}
-// ^ ^ ^ ^ ^ STOP HIGHLIGHTING HERE ^ ^ ^ ^ ^
+// Exploration has no town-node hitboxes: manual Directive and travel access
+// belong to the pause menu. The old map overlay is no longer drawn.
 
 // --- NEW TRAVEL MENU HITBOXES ---
 if (inTravelMenu) {
@@ -50179,7 +50133,7 @@ let shovelHelpMs = 0;
 function shovelToolEquipped() { return !!window.shovelOwned && meleeTool() === 'SHOVEL'; }
 function shovelControlsAvailable() {
   return !!(player && shovelToolEquipped() && BIOME_ACTIVE && currentLevel >= 1 && currentLevel <= 7 &&
-    started && !isPaused && !isDead && !isWin && !killcamMode && !inTravelMenu && !inOverworldView &&
+    started && !isPaused && !isDead && !isWin && !killcamMode && !inTravelMenu &&
     !inWorldBuildingMenu && !inStoryIntro && !inStoryRoom && !inTownCutscene && !inPostAmbushCutscene &&
     !inFarmCutscene && !inFarmPostCutscene && !inFortCutscene && !inDarchonCall &&
     !frontierSaloonIsInside() && !boxingActive(player));

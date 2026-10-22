@@ -152,10 +152,39 @@ const out=process.env.TOUCH_AIM_OUT||'/tmp/newone-touch-aim';fs.mkdirSync(out,{r
    await page.evaluate(()=>{resumeFromPause();handleTouches();});
    assert(await page.evaluate(()=>!isPaused&&!rightStick.active&&touchAimSelection.pointerId===null),name+' consumes held pause touch on resume');
    await send('touchEnd',[]);
+   // Liberation leaves inOverworldView enabled for exploration and pause
+   // travel. It must keep native movement/aim alive, without old map hitboxes.
+   await page.evaluate(()=>{
+    inOverworldView=true;inWorldBuildingMenu=inTravelMenu=false;isPaused=false;
+    townsData={1:{established:true},2:{established:true}};
+    player=new Character(width/2,height/2,true);player.currentWeapon=WEAPONS.PISTOL;
+    player.isArmed=true;player.ammo=30;chemistSuitUnlocked=false;
+    bullets=[];particles=[];resetTouchAimSelection(false);resetTouchControlFade();
+   });
+   assert(await page.evaluate(()=>overworldTownManageable(1)&&overworldTownManageable(2)),name+' has manageable towns behind the former invisible nodes');
+   const beforeMove=await page.evaluate(()=>({x:player.x,y:player.y,events:__nativeAimEvents.start}));
+   const walk=await page.evaluate(()=>({id:8,x:leftStick.base.x+45,y:leftStick.base.y}));
+   await send('touchStart',[walk]);
+   assert(await page.evaluate(()=>inOverworldView&&!inWorldBuildingMenu&&leftStick.active),name+' native overworld movement captures the left thumb');
+   assert(await page.evaluate(({x,y,events})=>player.x>x&&Math.abs(player.y-y)<.001&&__nativeAimEvents.start>events,beforeMove),name+' native overworld callback moves the real player');
+   await send('touchEnd',[]);
+   await page.evaluate(()=>{player.fireTimer=0;bullets=[];});
+   await send('touchStart',[head]);
+   assert(await page.evaluate(()=>inOverworldView&&playerAimTarget()==='HEAD'&&touchAimSelection.pointerId===1),name+' native overworld aiming selects a body section');
+   await send('touchMove',[{...head,x:head.x-60}]);
+   assert.deepEqual(await page.evaluate(()=>bullets.map(b=>b.tH)),['HEAD'],name+' native overworld aiming fires the weapon');
+   await send('touchEnd',[]);
+   for(const town of [1,2]){
+    await send('touchStart',[{id:8+town,x:w/2-150+(town-1)*300,y:h/2}]);
+    assert(await page.evaluate(()=>inOverworldView&&!inWorldBuildingMenu&&!inTravelMenu&&!isPaused),name+' former town '+town+' node stays in live exploration');
+    await send('touchEnd',[]);
+   }
+   await page.evaluate(()=>__aimPaint());
+   await page.locator('canvas').first().screenshot({path:path.join(out,name+'-overworld.png')});
    assert.deepEqual(errors,[],name+' has no browser exceptions');
    fs.writeFileSync(path.join(out,name+'.json'),JSON.stringify(s,null,2));
    await context.close();
   }
-  console.log('Native p5 touch targeting, control fades and hidden pause passed at 320px, 393px and landscape. Screenshots: '+out);
+  console.log('Native p5 touch targeting, control fades, hidden pause and live-overworld controls passed at 320px, 393px and landscape. Screenshots: '+out);
  }finally{await browser.close();}
 })().catch(e=>{console.error(e.stack||e);process.exit(1);});

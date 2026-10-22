@@ -69,7 +69,10 @@ P(`var flasksBefore=playerFlasks.length,grenadesBefore=playerGrenades.length,lig
 ok(P('!isCooking&&player.cannonCharge===0&&playerFlasks.length===flasksBefore&&playerGrenades.length===grenadesBefore&&lightnings.length===lightningBefore'), 'a chemist shovel swing cannot release a flask or charged cannon');
 ok(P('player.meleeTimer>0'),'the chemist still performs the ordinary shovel swing');
 P('chemistSuitUnlocked=false;player.meleeTimer=0;player.meleeCooldown=0;');
-for(const overlay of ['inTravelMenu','inOverworldView','inWorldBuildingMenu','inTownCutscene']){
+P('inOverworldView=true;');
+ok(P('shovelControlsAvailable()'),'live overworld exploration keeps shovel controls available');
+P('inOverworldView=false;');
+for(const overlay of ['inTravelMenu','inWorldBuildingMenu','inTownCutscene']){
  P(`${overlay}=true;`);
  ok(P('!shovelControlsAvailable()'),overlay+' consumes shovel control input');
  P(`${overlay}=false;`);

@@ -76,13 +76,17 @@ ok('touchAimSelection.pointerId===null&&!rightStick.active','A gesture beginning
 
 for(const flag of ['isPaused','isDead','isWin','killcamMode','inStoryIntro','inStoryRoom','inTownCutscene',
   'inFortCutscene','inFarmCutscene','inFarmPostCutscene','inPostAmbushCutscene','inDarchonCall',
-  'inWorldBuildingMenu','inOverworldView','inTravelMenu','inLvl4Cutscene','window.inNM0SecretOverlay']){
+  'inWorldBuildingMenu','inTravelMenu','inLvl4Cutscene','window.inNM0SecretOverlay']){
   reset();const t=start(point('LEGS'));
   run(`${flag}=true;syncTouchAimControlContext();${flag}=false;handleTouches();`);
   ok('touchAimSelection.pointerId===null&&!rightStick.active',flag+' consumes a held aim gesture through resume');
   release(t.id);start(point('BODY',11));
   ok("touchAimSelection.pointerId===11&&playerAimTarget()==='BODY'",flag+' allows fresh input after release');
 }
+reset();start(point('HEAD'));
+run('inOverworldView=true;syncTouchAimControlContext();handleTouches();');
+ok("touchAimSelection.pointerId===10&&rightStick.active&&playerAimTarget()==='HEAD'",
+  'Live overworld exploration keeps the existing touch gesture active');
 for(const phase of [1,3,4,5,6,8,9]){
   reset();start(point('HEAD'));
   run(`currentLevel=0;prologuePhase=${phase};syncTouchAimControlContext();currentLevel=2;handleTouches();`);

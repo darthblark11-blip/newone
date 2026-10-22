@@ -180,6 +180,11 @@ not belong on the play screen; the deliberate act of opening the pause menu is w
 old press-and-hold timer on it was standing in for. `tools/check-menu.js` sweeps the whole
 unpaused overworld screen and asserts no tap anywhere starts travel.
 
+`inOverworldView` is live exploration with a wider camera, including after a
+liberation or a saved-game load. It must allow movement, aiming, bow drawing
+and shovel input. The old town-map overlay is gone, so its invisible town-node
+hitboxes must stay gone too: manual Directive access belongs to the pause menu.
+
 ### The overworld fortress
 
 The world loop this game is being built toward is **take a fortress, work the country
