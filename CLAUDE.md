@@ -98,6 +98,11 @@ breached). Sectors 2 and 4 then re-enter the generated world. Sector 3 retains
 its authored town and farm after its story beats end, while the countryside
 continues streaming outside the core.
 
+Level 8's laboratory uses its own floor-tile cache, paneled cutaway walls and
+depth-sorted research fixtures. Its three ambient scientists stay outside the
+twenty-guard combat roster. Preserve the clear combat/service aisles and release
+floor canvases on level/run replacement. See [NM-0 headquarters](docs/nm0-headquarters.md).
+
 ### The authored core
 
 When hybrid, `legacyGenerateMap()`'s output is lifted out of `buildings[]` into

@@ -1416,6 +1416,8 @@ function preload() {
 
 
 function legacyStartAtLevel(lvl, isLoading = false) {
+    resetNM0LabFloor();
+    resetNM0Scientists();
     resetTouchAimSelection(true);
     resetTouchControlFade();
     if (typeof invalidateDirectiveBuffer === 'function') invalidateDirectiveBuffer();
@@ -1541,11 +1543,13 @@ if (isStoryMode) {
         window.nm0HqCleared = false;
         
         for (let i = 0; i < 20; i++) {
-            // Spawn enemies ONLY in the main hall so they don't get stuck inside the room
-            let e = newHostileCharacter(random(-400, 400), random(-600, 1000), "ARMORED_STANDARD");
+            // Authored stations keep the finite garrison clear of lab equipment.
+            const post = nm0HqGuardPost(i);
+            let e = newHostileCharacter(post.x, post.y, "ARMORED_STANDARD");
             e.currentWeapon = WEAPONS.PISTOL;
             enemiesList.push(e);
         }
+        seedNM0Scientists();
     }
     else {
         // The scripted openings below only play while the sector is still its
@@ -1984,6 +1988,132 @@ function bakeFrontierSettlementArea(g,biome,ox,oy) {
   }
 }
 
+// Laboratory staff are scenery actors, not combatants or liberated citizens.
+// Keeping their finite roster separate is what keeps the HQ's twenty-guard
+// encounter, kill counter and campaign population unchanged.
+let nm0Scientists = [];
+function resetNM0Scientists() { nm0Scientists.length = 0; }
+function seedNM0Scientists() {
+    if (currentLevel !== 8 || nm0Scientists.length) return;
+    const staff = [
+        { x: -210, y: 970, route: [[-610, 1170], [-830, 1250]], skin: [223, 173, 137], hair: [59, 47, 43] },
+        { x: 210, y: 970, route: [[610, 1170], [830, 1250]], skin: [155, 109, 81], hair: [37, 32, 32] },
+        { x: -80, y: 720, route: [[-60, 990], [-590, 1220], [-760, 1250]], skin: [232, 192, 162], hair: [128, 100, 75] }
+    ];
+    for (let i = 0; i < staff.length; i++) {
+        const s = staff[i], a = new Character(s.x, s.y, false, 'NM0_SCIENTIST');
+        a.isNM0Scientist = a.isFriendly = a.isNeutral = a.isUnarmed = true;
+        a.isArmed = false; a.ammo = 0; a.bodyW = 19; a.bodyH = 27;
+        a.skinCol = color(...s.skin); a.hairCol = color(...s.hair);
+        a.shirtCol = color(229, 237, 232); a.pantsCol = color(48, 61, 67);
+        a.scientistState = 'STARTLED'; a.scientistDelay = 10 + i * 8;
+        a.scientistRoute = s.route; a.scientistWaypoint = 0;
+        a.scientistCrouch = 0; a.scientistPhase = i * 1.9;
+        a.aimAngle = i === 1 ? -HALF_PI : 0;
+        a.show = function () { drawNM0Scientist(this); };
+        nm0Scientists.push(a);
+    }
+}
+function updateNM0Scientists() {
+    if (currentLevel !== 8 || !player || player.hp <= 0 || !started || !doTick ||
+        isPaused || isDead || isWin || killcamMode || inStoryIntro || inStoryRoom ||
+        inTownCutscene || inFortCutscene || inPostAmbushCutscene || inDarchonCall ||
+        inWorldBuildingMenu || inTravelMenu || window.inNM0SecretOverlay) return;
+    const dt = Math.min(3, Math.max(0, Number.isFinite(deltaTime) ? deltaTime : 1000 / 60) / (1000 / 60));
+    for (const a of nm0Scientists) {
+        if (a.dead || a.hp <= 0) continue;
+        a.isMoving = false;
+        if (a.scientistState === 'STARTLED') {
+            a.scientistDelay -= dt;
+            a.aimAngle = atan2(player.y - a.y, player.x - a.x);
+            if (a.scientistDelay <= 0) a.scientistState = 'FLEE';
+        } else if (a.scientistState === 'FLEE') {
+            const p = a.scientistRoute[a.scientistWaypoint];
+            const dx = p[0] - a.x, dy = p[1] - a.y, distance = Math.hypot(dx, dy);
+            const speed = Math.min(distance, 3.6 * dt);
+            if (distance <= 4) {
+                if (++a.scientistWaypoint === a.scientistRoute.length) a.scientistState = 'CROUCH';
+            } else {
+                const vx = dx / distance * speed, vy = dy / distance * speed;
+                const oldX = a.x, oldY = a.y;
+                if (!a.checkCol(a.x + vx, a.y)) a.x += vx;
+                if (!a.checkCol(a.x, a.y + vy)) a.y += vy;
+                // A bench clips a corner of a path only briefly: a bounded
+                // sideways step lets the staff round it, without teleporting
+                // through collision or running an outdoor pathfinder indoors.
+                if (a.x === oldX && a.y === oldY) {
+                    for (const side of [1, -1]) {
+                        const sx = -dy / distance * speed * side, sy = dx / distance * speed * side;
+                        if (!a.checkCol(a.x + sx, a.y + sy)) { a.x += sx; a.y += sy; break; }
+                    }
+                }
+                const movedX = a.x - oldX, movedY = a.y - oldY;
+                a.isMoving = movedX !== 0 || movedY !== 0;
+                if (a.isMoving) {
+                    a.moveAngle = a.aimAngle = atan2(movedY, movedX);
+                    a.walkCycle += .28 * dt;
+                }
+            }
+        }
+        a.scientistCrouch = Math.min(1, a.scientistCrouch + (a.scientistState === 'CROUCH' ? .065 * dt : 0));
+        a.gait = a.isMoving ? .85 : 0;
+    }
+}
+function drawNM0Scientist(a) {
+    if (!a || a.dead || a.hp <= 0) return;
+    const paint = figurePainter(), g = paint ? paint.api : window;
+    const crouch = a.scientistCrouch || 0, rig = figureRig(a.bodyW, a.bodyH);
+    const stride = a.isMoving ? Math.sin(a.walkCycle) : 0;
+    const breathe = Math.sin(frameCount * .055 + a.scientistPhase) * .35;
+    const coat = a.shirtCol, skin = a.skinCol, trousers = a.pantsCol;
+    push(); translate(a.x, a.y);
+    noStroke(); fill(11, 22, 27, 70); ellipse(3, 5, 31 - crouch * 4, 22 - crouch * 4);
+    rotate(a.aimAngle);
+    // The native bone widths and foreshortening keep these figures at the
+    // same scale as the player; crouching folds the knees rather than merely
+    // shrinking a standing sprite.
+    for (const side of [-1, 1]) {
+        const hipX = -5 + stride * side * 7 * (1 - crouch), hy = side * 6;
+        const kneeX = 5 + crouch * 7, kneeY = hy + side * crouch * 3;
+        const ankleX = 13 - crouch * 12, ankleY = hy + side * crouch * 2;
+        figureCelLimb(g, hipX, hy, kneeX, kneeY, ankleX, ankleY,
+            rig.thighW, rig.shinW, rig.shinW * .8, trousers);
+        figureCelOval(g, ankleX + rig.foot * .3, ankleY, rig.foot, rig.shinW * .8, [29, 40, 47], .6);
+    }
+    const torsoX = a.isMoving ? Math.abs(stride) * 1.1 : breathe;
+    const arms = [];
+    for (const side of [-1, 1]) {
+        const sw = stride * -side, sy = side * a.bodyH * .425;
+        const hx = lerp(-1 + sw * 10, 9, crouch), hy = lerp(side * (12 - Math.max(0, sw) * 3), side * 5.5, crouch);
+        const ex = lerp(hx * .38 - 1, 2, crouch), ey = lerp(side * 13, side * 13.5, crouch);
+        arms.push({ sy, hx, hy, ex, ey });
+        figureCelLimb(g, torsoX, sy, ex, ey, hx, hy, rig.upperW * .88, rig.foreW * .86, rig.foreW * .77, coat);
+    }
+    // Split coat tails, broad lapels and an NM-0 clipped identity card.
+    g.noStroke(); g.fill(192, 208, 207);
+    g.beginShape(); g.vertex(-5, -8); g.vertex(-17 + stride * 2, -10);
+    g.vertex(-22 + crouch * 9, -4); g.vertex(-11, 1); g.vertex(-21 + crouch * 9, 7);
+    g.vertex(-15 - stride * 2, 12); g.vertex(-4, 8); g.endShape(CLOSE);
+    figureCelOval(g, torsoX, 0, a.bodyW * TORSO_DEPTH + crouch * 7, a.bodyH - crouch * 3, coat, .8);
+    g.noStroke(); g.fill(64, 106, 111); g.triangle(4, -5, -4, 0, 4, 5);
+    g.fill(247, 250, 241); g.triangle(6, -8, 0, -2, 7, 0); g.triangle(6, 8, 0, 2, 7, 0);
+    g.fill(52, 102, 120); g.rect(-1, -9, 5, 6, .8);
+    g.fill(160, 212, 205); g.rect(-.2, -8, 3.3, 2, .5);
+    g.stroke(161, 181, 183); g.strokeWeight(.7); g.line(-8, 1, -3, 1); g.noStroke();
+    for (const arm of arms) figureCelOval(g, arm.hx, arm.hy, 6.2, 6.2, skin, .5);
+    const headX = torsoX + crouch * 6;
+    drawFigureHead(g, a, headX, 0, false, 0, crouch * .4);
+    // Clear safety goggles: the bridge and strap read at the game's normal
+    // zoom without turning the face into a glowing monitor.
+    g.stroke(35, 66, 75, 210); g.strokeWeight(1.3); g.line(headX + 1, -5, headX + 1, 5);
+    g.noStroke(); g.fill(126, 209, 217, 230); g.rect(headX + 1, -4.7, 3.6, 3.8, 1);
+    g.rect(headX + 1, .9, 3.6, 3.8, 1); g.fill(231, 252, 245, 220); g.rect(headX + 2, -4, .8, 1.5);
+    // Crouched hands cup the lowered head, rather than floating beside it.
+    if (crouch > .2) for (const arm of arms)
+        figureCelOval(g, lerp(arm.hx, headX + 3, crouch), arm.hy * .8, 5.4, 5.4, skin, .45);
+    pop();
+}
+
 function legacyGenerateMap() {
   buildings = [];
   parkingCars = [];
@@ -2007,38 +2137,8 @@ function legacyGenerateMap() {
       return; 
   }
 
-    // --- NEW LEVEL 8: NM-0 HQ INTERIOR ---
   if (currentLevel === 8) {
-      // 1. Outer Boundary Walls
-      buildings.push({ x: 0, y: -2500, w: 2000, h: 100, isWall: true }); // North
-      buildings.push({ x: 0, y: 1500, w: 2000, h: 100, isWall: true });  // South (Front Door Entrance)
-      buildings.push({ x: -1000, y: -500, w: 100, h: 4000, isWall: true }); // West
-      buildings.push({ x: 1000, y: -500, w: 100, h: 4000, isWall: true });  // East
-
-      // 2. Inner Corridor Walls (Forms the main hallway)
-      buildings.push({ x: 500, y: -1000, w: 50, h: 3000, isWall: true });  // Right inner wall
-      buildings.push({ x: -500, y: -1000, w: 50, h: 3000, isWall: true }); // Left inner wall
-
-      // 3. The Sealed Doorway (Secret Room)
-      buildings.push({ x: 0, y: -800, w: 200, h: 40, isWall: true }); // The door
-      buildings.push({ x: -300, y: -800, w: 400, h: 40, isWall: true }); // Left seal
-      buildings.push({ x: 300, y: -800, w: 400, h: 40, isWall: true }); // Right seal
-
-      // 4. Pillars
-      for(let px = -600; px <= 600; px += 500) {
-          for(let py = -1500; py <= 1000; py += 500) {
-              // Prevent pillars from spawning in the secret room AND the dead-center of the hallway
-              if (py > -800 && px !== -100) { 
-                  buildings.push({ x: px, y: py, w: 80, h: 80, isWall: true });
-              }
-          }
-      }
-
-      // 5. Props
-      buildings.push({ x: -300, y: -1000, w: 200, h: 100, isTerminal: true });
-      buildings.push({ x: 300, y: -1000, w: 200, h: 100, isTerminal: true });
-      buildings.push({ x: 0, y: 0, w: 400, h: 200, isUpstairsTable: true });
-      
+      generateNM0LabMap();
       return;
   }
 
@@ -3604,6 +3704,7 @@ function drawBuildingShadows() {
   // whole scene reads as one lit space. See drawBiomeShadows().
   if (BIOME_ACTIVE) { drawBiomeShadows(); return; }
   for (let b of activeBuildings) {
+    if (b.hqProp || b.hqWall) continue; // Indoor contact shade is part of the lab painter.
     if (b.isBiomeProp || b.isTreeTrunk) continue;
     if ((currentLevel === 1 || currentLevel === 2) && b.isGrassLot) continue;
     if (b.isCropField) continue; // Don't shadow the ground
@@ -3724,7 +3825,7 @@ let _forestCrowns = [];    // reused; raised foliage above the ground actor pass
 const DECOR_STANDING = { TREE: 1, PINE: 1, SNAG: 1, KRUMMHOLZ: 1 };
 let _standDecor = [];       // reused; standing decor queued by drawDecor()
 
-function depthSortActive() { return BIOME_ACTIVE; }
+function depthSortActive() { return BIOME_ACTIVE || currentLevel === 8; }
 
 // A character's contact point is their origin. Everything else in the file
 // already treats it that way -- collision is a circle around it, the contact
@@ -4309,6 +4410,157 @@ function legacyBaseOf(b) {
   for (const k in LEGACY_BASE) if (b[k]) return LEGACY_BASE[k];
   return null;
 }
+// NM-0's lab furniture uses the same camera lean as the outdoor architecture,
+// but its shadows stay close to the base under the ceiling's work lights.
+function nm0LabPropRise(b) {
+  return b.hqProp === 'CLONE_POD' ? 46 : b.hqProp === 'CONSOLE' ? 24 : b.hqProp === 'CABINET' ? 28 : 15;
+}
+function drawNM0LabMonitor(x, y, w, h, seed) {
+  noStroke(); fill(7, 14, 20); rect(x - 3, y - 3, w + 6, h + 6, 3);
+  fill(17, 47, 54); rect(x, y, w, h, 1);
+  fill(36, 99, 103); rect(x + 2, y + 2, w - 4, 4);
+  stroke(83, 204, 198, 155); strokeWeight(1);
+  for (let i = 0; i < 4; i++) line(x + 4, y + 11 + i * 4, x + 4 + (w - 10) * (.35 + ((seed + i * 3) % 7) / 11), y + 11 + i * 4);
+  const gx = x + w * .63, gy = y + h * .59;
+  stroke(71, 156, 154, 95); line(gx, y + 10, gx, y + h - 4); line(gx, gy, x + w - 4, gy);
+  stroke(137, 237, 209); noFill(); beginShape();
+  for (let i = 0; i < 8; i++) vertex(gx + i * (w * .32) / 7, gy + Math.sin(i * 1.8 + seed) * h * .18);
+  endShape(); noStroke(); fill(144, 247, 204); ellipse(x + w - 3, y + h + 1, 2, 2);
+}
+function drawNM0LabFlask(x, y, r, green) {
+  stroke(175, 222, 222, 190); strokeWeight(1.3);
+  fill(132, 211, 214, 65); beginShape();
+  vertex(x - r * .25, y - r); vertex(x + r * .25, y - r);
+  vertex(x + r * .25, y - r * .3); vertex(x + r * .7, y + r * .45);
+  vertex(x - r * .7, y + r * .45); vertex(x - r * .25, y - r * .3); endShape(CLOSE);
+  noStroke(); fill(green ? color(83, 203, 121, 215) : color(62, 157, 200, 215));
+  quad(x - r * .42, y - r * .04, x + r * .42, y - r * .04, x + r * .55, y + r * .32, x - r * .55, y + r * .32);
+  stroke(226, 255, 245, 180); line(x - r * .35, y - r * .02, x - r * .22, y + r * .18);
+  stroke(83, 113, 120); line(x - r * .3, y - r, x + r * .3, y - r); noStroke();
+}
+function drawNM0LabProp(b) {
+  const rise = nm0LabPropRise(b), lean = massLean(b.x, b.y, rise, [0, 0]);
+  const pod = b.hqProp === 'CLONE_POD';
+  // A narrow tank still stands upright at the edge of the screen. Letting
+  // its full height pull sideways made a broad black oval behind the glass.
+  if (pod) clampLean(lean, 22);
+  const lx = lean[0], ly = lean[1], x0 = b.x - b.w / 2, y0 = b.y - b.h / 2;
+  push(); noStroke();
+  // Tight layered contact shadows belong to the collision footprint, not the
+  // lifted worktop. No off-screen buffers or per-frame random texture noise.
+  fill(2, 9, 13, 54);
+  if (pod) { ellipse(b.x + 3, b.y + 5, b.w + 8, b.h + 6); fill(2, 9, 13, 82); ellipse(b.x, b.y + 3, b.w + 3, b.h + 2); }
+  else { rect(x0 - 5, y0 - 1, b.w + 10, b.h + 8, 6); fill(2, 9, 13, 75); rect(x0 - 1, y0, b.w + 2, b.h + 4, 3); }
+  if (pod) drawMassSkirt(b.x, b.y, b.w * .94, b.h * .9, 0, true, lx, ly, 55, 90, 91, .94);
+  else drawMassSides(x0, y0, x0 + b.w, y0 + b.h, lx, ly, 102, 125, 133, 0);
+  translate(b.x + lx, b.y + ly);
+  const facing = b.hqFacing || 0, turned = Math.abs(Math.sin(facing)) > .7;
+  rotate(facing);
+  const w = turned ? b.h : b.w, h = turned ? b.w : b.h;
+  const x = -w / 2, y = -h / 2;
+  if (b.hqProp === 'CONSOLE') {
+    fill(33, 45, 54); stroke(14, 23, 31); strokeWeight(2); rect(x, y, w, h, 5);
+    noStroke(); fill(78, 102, 111); rect(x + 3, y + 3, w - 6, h - 6, 3);
+    fill(30, 42, 50); rect(x + 7, y + 7, w - 14, h * .61, 3);
+    const monitors = w >= 150 ? 3 : 2, mw = (w - 22 - (monitors - 1) * 7) / monitors, mh = h * .39;
+    const seed = Math.abs(Math.round(b.x / 53 + b.y / 97));
+    for (let i = 0; i < monitors; i++) drawNM0LabMonitor(x + 11 + i * (mw + 7), y + 11, mw, mh, seed + i);
+    fill(42, 58, 67); rect(x + 9, y + h * .7, w * .63, h * .19, 2);
+    stroke(119, 146, 151, 150); strokeWeight(.8);
+    for (let i = 1; i < 4; i++) line(x + 13, y + h * .7 + i * h * .038, x + w * .65, y + h * .7 + i * h * .038);
+    for (let i = 1; i < 10; i++) line(x + 13 + i * w * .055, y + h * .72, x + 13 + i * w * .055, y + h * .86);
+    noStroke(); fill(20, 31, 37); ellipse(x + w * .74, y + h * .79, 8, 12);
+    fill(99, 233, 192); rect(x + w - 18, y + h * .73, 7, 4, 1);
+    fill(223, 169, 75); rect(x + w - 18, y + h * .84, 7, 3, 1);
+    fill(173, 191, 194); rect(x + 5, y + h - 3, w - 10, 2);
+    fill(21, 31, 39); rect(x + w - 8, y + 9, 3, h * .47, 1);
+  } else if (b.hqProp === 'BENCH') {
+    fill(75, 93, 101); stroke(35, 48, 56); strokeWeight(2); rect(x, y, w, h, 4);
+    noStroke(); fill(184, 202, 202); rect(x + 3, y + 3, w - 6, h - 6, 3);
+    fill(127, 151, 155); rect(x + 7, y + h - 11, w - 14, 5, 1);
+    fill(46, 76, 85); rect(x + 12, y + 12, w * .32, h * .62, 3);
+    stroke(120, 174, 180, 95); strokeWeight(1);
+    for (let i = 1; i < 4; i++) line(x + 15, y + 12 + i * h * .13, x + w * .36, y + 12 + i * h * .13);
+    noStroke(); fill(219, 225, 211); rect(x + w * .48, y + 11, w * .16, h * .28, 1);
+    stroke(90, 116, 126); line(x + w * .5, y + 17, x + w * .6, y + 17); line(x + w * .5, y + 22, x + w * .58, y + 22);
+    // A microscope's foot, curved upright, eyepiece and separate specimen slide.
+    noStroke(); fill(31, 47, 54); ellipse(x + w * .25, y + h * .6, 29, 13);
+    fill(87, 112, 120); rect(x + w * .25 - 5, y + h * .28, 10, h * .3, 3);
+    fill(32, 49, 57); rect(x + w * .25 - 13, y + h * .25, 25, 8, 2);
+    fill(176, 219, 218); ellipse(x + w * .25 - 12, y + h * .25 + 4, 5, 6);
+    fill(226, 244, 232); rect(x + w * .25 - 11, y + h * .48, 21, 4, 1);
+    drawNM0LabFlask(x + w * .55, y + h * .69, 13, true);
+    drawNM0LabFlask(x + w * .72, y + h * .68, 17, false);
+    fill(79, 98, 103); rect(x + w * .76, y + 13, w * .15, h * .3, 2);
+    for (let i = 0; i < 4; i++) {
+      fill(149, 203, 209); rect(x + w * .77 + i * w * .032, y + 15, 4, h * .22, 2);
+      fill(i & 1 ? color(85, 214, 149) : color(58, 173, 206)); rect(x + w * .77 + i * w * .032, y + h * .25, 4, h * .13, 1);
+    }
+    fill(224, 167, 75); rect(x + 7, y + 8, 3, 12); rect(x + w - 10, y + 8, 3, 12);
+    if (b.hqBlueprint && !window.armorBlueprintPickedUp) {
+      fill(15, 68, 117); stroke(158, 218, 235); strokeWeight(1); rect(-25, -31, 50, 62, 2);
+      stroke(65, 133, 170, 130); strokeWeight(.6);
+      for (let i = -2; i <= 2; i++) { line(-22, i * 10, 22, i * 10); line(i * 9, -28, i * 9, 28); }
+      stroke(192, 237, 244); strokeWeight(1.5); noFill();
+      ellipse(0, -15, 11, 12); rect(-10, -7, 20, 20, 2); line(-10, -3, -16, 8); line(10, -3, 16, 8);
+      line(-6, 13, -7, 24); line(6, 13, 7, 24);
+      noStroke(); fill(226, 239, 223); rect(11, -27, 11, 4, 1);
+    }
+  } else if (b.hqProp === 'CLONE_POD') {
+    // Cylindrical steel collars, a luminous liquid chamber and a whole curled
+    // specimen are legible before the fine glass reflections resolve.
+    const pw = w * .82, ph = h * .78;
+    noStroke();
+    fill(18, 72, 62); rect(-pw / 2, -ph / 2, pw, ph, pw / 2);
+    fill(38, 143, 94); ellipse(0, -ph / 2 + 13, pw, 27); rect(-pw / 2, -ph / 2 + 12, pw, ph - 24); ellipse(0, ph / 2 - 11, pw, 25);
+    fill(74, 199, 112, 100); ellipse(0, 0, pw - 10, ph - 8);
+    fill(155, 233, 162, 55); ellipse(-6, -4, pw * .66, ph * .8);
+    // Short attached limbs and a turned head keep the silhouette human.
+    stroke(20, 83, 58, 150); strokeWeight(10); noFill();
+    line(-3, 5, -11, 20); line(-11, 20, -4, 29); line(8, 7, 17, 18); line(17, 18, 12, 29);
+    stroke(155, 199, 144); strokeWeight(7);
+    line(-5, 4, -12, 18); line(-12, 18, -4, 26); line(7, 7, 15, 17); line(15, 17, 11, 27);
+    noStroke(); fill(135, 181, 131); ellipse(1, -1, 24, 33);
+    fill(177, 215, 158); ellipse(-1, -21, 19, 22);
+    fill(122, 166, 124); ellipse(1, -24, 12, 13);
+    stroke(173, 210, 153); strokeWeight(6); noFill();
+    line(-8, -10, -18, -1); line(-18, -1, -9, 6); line(11, -7, 18, 2); line(18, 2, 7, 8);
+    stroke(40, 110, 85); strokeWeight(2); line(4, -20, 12, -21);
+    // Intake hose and a small set of bubbles, fixed to this tank's serial.
+    stroke(24, 92, 65); noFill(); bezier(5, 7, 25, 10, 10, -25, pw * .43, -29);
+    noStroke(); fill(176, 251, 192, 150);
+    for (const bubble of [[-23,-27,4],[23,-12,3],[-21,15,3],[19,31,4],[-16,-38,2]]) ellipse(bubble[0] * w / 96, bubble[1] * h / 112, bubble[2], bubble[2]);
+    // Green glazing goes over the specimen; narrow white reflections preserve
+    // its visibility rather than washing the full chamber in opaque bloom.
+    fill(66, 232, 139, 33); rect(-pw / 2, -ph / 2 + 8, pw, ph - 16, 20);
+    fill(213, 255, 229, 106); rect(-pw / 2 + 8, -ph / 2 + 14, 4, ph - 31, 3);
+    fill(192, 255, 222, 45); rect(pw / 2 - 11, -ph / 2 + 18, 3, ph - 36, 3);
+    fill(22, 45, 48); ellipse(0, -ph / 2 + 2, w * .94, 24); ellipse(0, ph / 2 - 1, w * .94, 25);
+    fill(112, 152, 150); ellipse(0, -ph / 2 - 1, w * .91, 15); ellipse(0, ph / 2 - 4, w * .91, 14);
+    fill(193, 222, 210); ellipse(0, -ph / 2 - 3, w * .72, 6);
+    fill(35, 65, 65); rect(-w * .46, -ph / 2 + 5, 7, ph - 11, 3); rect(w * .46 - 7, -ph / 2 + 5, 7, ph - 11, 3);
+    fill(113, 236, 165); rect(-w * .46 + 1, -ph / 2 + 12, 2, ph - 25, 1);
+    fill(11, 34, 36); rect(-17, ph / 2 - 1, 34, 13, 2);
+    fill(96, 242, 151); rect(-12, ph / 2 + 3, 16, 3, 1);
+    fill(228, 177, 76); ellipse(10, ph / 2 + 5, 3, 3);
+  } else if (b.hqProp === 'CABINET') {
+    fill(44, 61, 70); stroke(22, 35, 43); strokeWeight(2); rect(x, y, w, h, 3);
+    noStroke(); fill(99, 125, 133); rect(x + 3, y + 3, w - 6, h - 6, 2);
+    const rows = Math.max(2, Math.min(5, Math.floor(h / 24)));
+    for (let i = 0; i < rows; i++) {
+      const ry = y + 7 + i * (h - 14) / rows;
+      fill(49, 72, 82); rect(x + 7, ry, w - 14, (h - 18) / rows, 2);
+      fill(159, 180, 180); rect(x + 12, ry + 5, 12, 3, 1);
+      fill(i === 1 ? color(228, 173, 71) : color(87, 212, 184)); ellipse(x + w - 14, ry + 7, 3, 3);
+      stroke(21, 43, 54); strokeWeight(1);
+      for (let j = 0; j < 4; j++) line(x + w * .42, ry + 5 + j * 3, x + w - 22, ry + 5 + j * 3);
+      noStroke();
+    }
+    fill(160, 182, 185); rect(x + 5, y + 3, w - 10, 2);
+  }
+  pop();
+}
+
 function drawBuildings(list, i0, i1) {
   const _arr = list || activeBuildings;
   const _lo = i0 === undefined ? 0 : i0;
@@ -4336,6 +4588,8 @@ function drawBuildings(list, i0, i1) {
     // canopy in the decor list is what you actually see; without this the
     // generic building branch drew a dark box under every tree in the wood.
     if (b.isTreeTrunk) continue;
+    if (b.hqProp) { drawNM0LabProp(b); continue; }
+    if (b.hqWall) { drawNM0LabWall(b); continue; }
     if (b.forestHuntingLodge) { paintForestHuntingLodge(window, b); continue; }
     if (b.isFrontierBountyStructure) { paintFrontierBountyStructure(window, b); continue; }
     if (BIOME_ACTIVE && b.isGrassLot && !b.isPond && !b.isParkingLot) continue;
@@ -6357,6 +6611,8 @@ function nextLevel() { startAtLevel(currentLevel + 1); }
 // Replacing a run must discard them BEFORE level entry can stamp old bodies
 // into the next world's ground buffers. Keep this separate from startAtLevel.
 function resetRunState() {
+  resetNM0Scientists();
+  resetNM0LabFloor();
   exitFrontierSaloon();
   corpses.length = 0;
   wipeAllBloodBanks();
@@ -7472,6 +7728,10 @@ viewBottom = camY + height / zoom + shakePad;
    _legacyActorsQueued = !_depthOn;
    if (player.hp > 0) { if (!isWin && doTick) player.updatePlayer(); if(player.hp>0&&!player.dead)actorShow(player); } else if (!isWin && !isDead) { playerRespawnTimer--; if (playerRespawnTimer <= 0) { isDead = true; } }
   updateEntities(); 
+  if (currentLevel === 8) {
+    updateNM0Scientists();
+    for (const scientist of nm0Scientists) if (inView(scientist.x, scientist.y, 100)) actorShow(scientist);
+  }
 
   // Draw civilians ALWAYS, so they populate the town while you run around
   for (let i=townCitizens.length-1;i>=0;i--) {
@@ -7512,34 +7772,6 @@ viewBottom = camY + height / zoom + shakePad;
     drawBuildings();
     if (BIOME_ACTIVE) drawBiomeProps();
   }
-
-    // NM-0 HQ Custom Level Props
-  if (currentLevel === 8) {
-      // Draw the locked door at 0, -800
-      fill(window.nm0HqCleared ? color(50, 255, 50) : color(255, 50, 50));
-      stroke(20); strokeWeight(4);
-      rect(-100, -820, 200, 40);
-      
-      // --- NEW: Draw Exit Door at 0, 1450 ---
-      fill(0, 200, 255);
-      stroke(20); strokeWeight(4);
-      rect(-100, 1450, 200, 50);
-      fill(255); noStroke(); textAlign(CENTER, CENTER); textSize(20); textFont('sans-serif'); text("EXIT", 0, 1475);
-      
-      // Draw Blueprint on table in secret room at 0, -2000
-      if (!window.armorBlueprintPickedUp && inView(0, -2000, 100)) {
-          push(); translate(0, -2000);
-          fill(80, 50, 30); stroke(50, 30, 10); strokeWeight(4); rect(-40, -30, 80, 60, 5); // Table
-          rotate(0.2);
-          fill(30, 80, 180); stroke(200); strokeWeight(1); rect(-12, -18, 24, 36, 2); 
-          stroke(255, 255, 255, 100); strokeWeight(0.5);
-          for(let i = -8; i <= 8; i += 4) { line(i, -16, i, 16); }
-          for(let i = -14; i <= 14; i += 4) { line(-10, i, 10, i); }
-          fill(255, 150, 0); noStroke(); ellipse(0, 0, 8, 8); rect(-4, 0, 8, 6); 
-          pop();
-      }
-  }
-
 
   if (typeof drawParkingCars === 'function') drawParkingCars();
 
@@ -11918,6 +12150,7 @@ function drawGroundLots() {
 }
 
 function drawBuildingPads() {
+  if (currentLevel === 8) return; // Laboratory fixtures stand on the indoor floor, not outdoor lots.
   for (let b of activeBuildings) { // Changed to activeBuildings
         if (!inView(b.x, b.y, Math.max(b.w || 0, b.h || 0) + 150)) continue;
 
@@ -11962,7 +12195,151 @@ function drawFrontierTownWayfinder(x,y,upper,lower) {
   pop();
 }
 
+// NM-0's closed research floor is authored independently of the outdoor biomes.
+// Ten half-resolution tiles at most, baked on demand; no per-frame floor noise.
+const nm0LabFloorCache = new Map();
+function resetNM0LabFloor() {
+  for (const tile of nm0LabFloorCache.values()) if (tile.remove) tile.remove();
+  nm0LabFloorCache.clear();
+}
+function nm0HqGuardPost(index) {
+  return { x: [-330, -110, 110, 330][index % 4], y: [-560, -220, 150, 510, 1010][Math.floor(index / 4)] };
+}
+function generateNM0LabMap() {
+  const wall = (x, y, w, h, kind = 'PANEL') => buildings.push({ x, y, w, h, isWall: true, hqWall: kind });
+  wall(0, -2500, 2000, 100); wall(0, 1500, 2000, 100, 'ENTRY');
+  wall(-1000, -500, 100, 4000); wall(1000, -500, 100, 4000);
+  wall(-500, -1000, 50, 3000); wall(500, -1000, 50, 3000);
+  wall(0, -800, 200, 40, 'AIRLOCK');
+  wall(-300, -800, 400, 40); wall(300, -800, 400, 40);
+  const prop = (kind, x, y, w, h, extra) => buildings.push({ x, y, w, h, hqProp: kind, ...extra });
+  for (const side of [-1, 1]) {
+    for (const y of [1060, 300, -450, -1200, -2140])
+      prop('CONSOLE', side * 880, y, 75, 190, { hqFacing: side * HALF_PI });
+    for (const y of [330, -350])
+      prop('CONSOLE', side * 410, y, 75, 190, { hqFacing: side * HALF_PI });
+    for (const y of [-200, -850, -1650]) prop('CLONE_POD', side * 750, y, 96, 112);
+    prop('CLONE_POD', side * 230, 850, 96, 112);
+    for (const y of [80, -420]) prop('BENCH', side * 285, y, 180, 90);
+    prop('BENCH', side * 280, -1330, 180, 90);
+    prop('CABINET', side * 880, 620, 85, 110);
+    prop('CABINET', side * 620, -2250, 90, 130);
+  }
+  prop('BENCH', 0, -2000, 140, 95, { hqBlueprint: true });
+}
+function paintNM0LabFloor(g, x0, y0) {
+  g.push(); g.scale(.5); g.translate(-x0, -y0);
+  g.noStroke(); g.fill(55, 65, 70); g.rect(x0, y0, 1000, 1000);
+  // Porcelain-composite panels, inset seams, fasteners and brushed wear.
+  for (let y = y0; y < y0 + 1000; y += 100) for (let x = x0; x < x0 + 1000; x += 100) {
+    const hash = Math.abs(Math.imul(x / 100, 73856093) ^ Math.imul(y / 100, 19349663));
+    const v = hash % 9;
+    const aisle = Math.abs(x + 50) < 190;
+    g.fill(aisle ? 61 + v : 70 + v, aisle ? 74 + v : 79 + v, aisle ? 79 + v : 82 + v);
+    g.rect(x + 2, y + 2, 96, 96, 2);
+    g.stroke(143, 158, 158, 55); g.strokeWeight(1);
+    g.line(x + 5, y + 5, x + 94, y + 5); g.line(x + 5, y + 5, x + 5, y + 94);
+    g.stroke(16, 27, 31, 95); g.line(x + 97, y + 7, x + 97, y + 97);
+    g.noStroke(); g.fill(27, 40, 45, 150);
+    for (const dx of [8, 92]) for (const dy of [8, 92]) g.rect(x + dx, y + dy, 2, 2);
+    g.stroke(182, 195, 195, 18); g.line(x + 22, y + 34 + hash % 27, x + 51 + hash % 31, y + 32 + hash % 27);
+  }
+  // Recessed service drains and the twin cyan path through the stormed hall.
+  for (const x of [-540, 540]) {
+    g.noStroke(); g.fill(25, 34, 38); g.rect(x - 13, y0, 26, 1000);
+    g.stroke(112, 129, 132, 130); g.strokeWeight(2);
+    for (let y = y0; y < y0 + 1000; y += 12) g.line(x - 9, y, x + 9, y);
+  }
+  for (const x of [-165, 165]) {
+    g.noStroke(); g.fill(32, 50, 56); g.rect(x - 8, y0, 16, 1000);
+    g.fill(93, 180, 184, 150); g.rect(x - 2, y0, 4, 1000);
+  }
+  // Work bays and threshold markings repeat in world space across bake seams.
+  for (const y of [570, -730, -2370]) {
+    g.noStroke(); g.fill(31, 45, 51, 170); g.rect(-450, y - 28, 900, 56);
+    g.fill(213, 171, 75, 210);
+    for (let x = -425; x <= 425; x += 40) { g.push(); g.translate(x, y); g.rotate(-.65); g.rect(-5, -19, 10, 38); g.pop(); }
+  }
+  // Shallow work-light reflections; the illumination belongs to the fixtures.
+  for (const side of [-1, 1]) for (const y of [1060, 300, -450, -1200, -2140]) {
+    g.noStroke(); g.fill(79, 172, 182, 12); g.rect(side < 0 ? -920 : 650, y - 85, 270, 170, 12);
+  }
+  g.noStroke(); g.textAlign(CENTER, CENTER); g.textSize(34); g.fill(188, 209, 204, 140);
+  g.text('NM–0', 0, 1120); g.textSize(12); g.fill(155, 179, 181, 150);
+  g.text('GENETICS / RESEARCH DIVISION', 0, 1150);
+  g.textSize(16); g.text('AUTHORIZED PERSONNEL ONLY', 0, 620);
+  g.textSize(22); g.text('CONTAINMENT', 0, -680);
+  g.textSize(13); g.text('RESTRICTED ARCHIVE', 0, -2240);
+  g.pop();
+}
+function drawNM0LabGround() {
+  const x0 = Math.max(-950, viewLeft - 80), x1 = Math.min(950, viewRight + 80);
+  const y0 = Math.max(-2450, viewTop - 80), y1 = Math.min(1450, viewBottom + 80);
+  if (x1 <= x0 || y1 <= y0) return;
+  for (let cy = Math.floor(y0 / 1000); cy <= Math.floor(y1 / 1000); cy++)
+    for (let cx = Math.floor(x0 / 1000); cx <= Math.floor(x1 / 1000); cx++) {
+      const key = cx + ',' + cy;
+      let tile = nm0LabFloorCache.get(key);
+      if (!tile) {
+        tile = createGraphics(500, 500); tile.pixelDensity(1);
+        paintNM0LabFloor(tile, cx * 1000, cy * 1000);
+        nm0LabFloorCache.set(key, tile);
+      }
+      const tx = Math.max(-950, cx * 1000), ty = Math.max(-2450, cy * 1000);
+      const tw = Math.min(950, cx * 1000 + 1000) - tx, th = Math.min(1450, cy * 1000 + 1000) - ty;
+      image(tile, tx, ty, tw, th, (tx - cx * 1000) * .5, (ty - cy * 1000) * .5, tw * .5, th * .5);
+    }
+}
+function drawNM0LabWall(b) {
+  const rise = b.hqWall === 'AIRLOCK' ? 16 : 24;
+  const lean = Math.max(b.w, b.h) >= 1000 ?
+    longMassLean(b, rise, [0, 0], b.hqWall === 'ENTRY' ? 0 : undefined) : massLean(b.x, b.y, rise, [0, 0]);
+  const x0 = b.x - b.w / 2, y0 = b.y - b.h / 2;
+  push(); noStroke(); fill(10, 17, 23, 90); rect(x0 - 5, y0 - 3, b.w + 10, b.h + 10, 3);
+  drawMassSides(x0, y0, x0 + b.w, y0 + b.h, lean[0], lean[1], 71, 85, 94, 0);
+  translate(lean[0], lean[1]);
+  fill(43, 57, 65); stroke(19, 30, 37); strokeWeight(2); rect(x0, y0, b.w, b.h, 3);
+  const horizontal = b.w > b.h;
+  stroke(113, 132, 138, 170); strokeWeight(2);
+  if (horizontal) {
+    line(x0 + 3, y0 + 3, x0 + b.w - 3, y0 + 3);
+    const from = Math.max(x0, Math.floor((viewLeft - 80) / 100) * 100);
+    for (let x = from; x < Math.min(x0 + b.w, viewRight + 80); x += 100) {
+      stroke(22, 35, 43); line(x, y0 + 4, x, y0 + b.h - 4);
+      noStroke(); fill(134, 151, 154); rect(x + 8, y0 + 7, 3, 3); rect(x + 8, y0 + b.h - 10, 3, 3);
+    }
+    noStroke(); fill(92, 200, 204, 185); rect(x0 + 8, y0 + b.h - 7, b.w - 16, 3);
+  } else {
+    line(x0 + 3, y0 + 3, x0 + 3, y0 + b.h - 3);
+    const from = Math.max(y0, Math.floor((viewTop - 80) / 100) * 100);
+    for (let y = from; y < Math.min(y0 + b.h, viewBottom + 80); y += 100) {
+      stroke(22, 35, 43); line(x0 + 3, y, x0 + b.w - 3, y);
+      noStroke(); fill(134, 151, 154); rect(x0 + 7, y + 8, 3, 3);
+    }
+    noStroke(); fill(92, 200, 204, 170); rect(x0 + (b.x < 0 ? b.w - 7 : 4), y0 + 8, 3, b.h - 16);
+  }
+  if (b.hqWall === 'AIRLOCK') {
+    fill(29, 43, 50); stroke(119, 147, 155); strokeWeight(2); rect(x0 + 5, y0 + 4, b.w - 10, b.h - 8, 3);
+    line(b.x, y0 + 5, b.x, y0 + b.h - 5);
+    noStroke(); fill(window.nm0HqCleared ? color(93, 230, 159) : color(229, 112, 71));
+    rect(b.x - 24, y0 + 9, 48, 5, 2);
+    fill(187, 205, 206); textAlign(CENTER, CENTER); textSize(9); text('ARCHIVE / 01', b.x, b.y + 7);
+  }
+  if (b.hqWall === 'ENTRY') {
+    fill(24, 38, 46); stroke(130, 152, 155); strokeWeight(3); rect(-110, y0 + 4, 220, b.h - 8, 3);
+    stroke(64, 87, 96); strokeWeight(2); line(0, y0 + 8, 0, y0 + b.h - 8);
+    for (const side of [-1, 1]) {
+      noStroke(); fill(104, 227, 211); rect(side < 0 ? -105 : 101, y0 + 12, 4, b.h - 24);
+      fill(99, 124, 133); rect(side < 0 ? -24 : 15, b.y - 6, 9, 16, 2);
+    }
+    noStroke(); fill(204, 224, 217); textSize(12); textAlign(CENTER, CENTER); text('SURFACE EXIT', 0, y0 + 20);
+    textSize(8); fill(134, 163, 166); text('NM–0 / PERSONNEL AIRLOCK', 0, y0 + b.h - 16);
+  }
+  pop();
+}
+
 function legacyDrawGround(skipBase) {
+    if (currentLevel === 8) { drawNM0LabGround(); return; }
     if (currentLevel === 0) {
       if (!inUpstairsRoom) { fill(40, 45, 50); } else { fill(210, 180, 140); }
       noStroke(); rect(-1000, -1000, 2000, 2000); return;

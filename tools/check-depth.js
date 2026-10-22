@@ -132,10 +132,11 @@ const leaked = probe('_depthActors.length');
 ok('it is emptied on the way out', leaked === 0, leaked + ' left queued');
 ok('and the flag is lowered', probe('_depthOn') === false);
 
-console.log('\n== outside a biome nothing changes ==');
-// Levels 0 and 8 are closed interiors composed against the old fixed order.
-probe('BIOME_ACTIVE = false;');
-ok('depth sorting is off', probe('depthSortActive()') === false);
+console.log('\n== authored interiors choose their own ordering ==');
+// The prologue keeps its fixed composition; laboratory furniture interleaves
+// with characters just like the outdoor masses.
+probe('BIOME_ACTIVE = false; currentLevel = 0;');
+ok('prologue depth sorting is off', probe('depthSortActive()') === false);
 probe(`
   __order = []; _depthOn = false;
   var _a = actor(7, 0);
@@ -144,7 +145,9 @@ probe(`
 ok('actorShow() paints immediately instead of queueing',
    probe('__order.join(" ")') === 'A7' && probe('_depthActors.length') === 0,
    probe('__order.join(" ")'));
-probe('BIOME_ACTIVE = true;');
+probe('currentLevel = 8;');
+ok('laboratory depth sorting is on without a biome', probe('depthSortActive()') === true);
+probe('currentLevel = 1; BIOME_ACTIVE = true;');
 
 // ---------------------------------------------------------------------------
 // The mass projection.
