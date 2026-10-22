@@ -10990,7 +10990,9 @@ function getOuterSpawn(tries) {
 function spawnSingleEnemy(seed = false) {
   // Do not spawn random hostiles if the town is liberated, ambush is active, or in specific story scenes!
  
-  if (currentLevel === 0 || nm0AmbushActive) return;
+  // The HQ has its own finite twenty-guard roster. Block both the ambient
+  // maintenance tick and delayed death replacements, including after it clears.
+  if (currentLevel === 0 || currentLevel === 8 || nm0AmbushActive) return;
   // City intake is independent of the finite eighty defenders and of tower
   // conversion. Never fall through to the old NORMAL/FEMALE_PISTOL ladder.
   if(currentLevel===1 || currentLevel===2) {
