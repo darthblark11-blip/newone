@@ -18,6 +18,10 @@ global.
   passing `window` as `g` paints to the main canvas. `paintClutter(g, d, t)` is the
   model for this pattern — reuse it when adding art that must work both baked and live.
 - Everything is a global, so name collisions are real. Grep before naming anything.
+- Combat stances resolve target anatomy without changing a projectile's launch
+  elevation. Keep hit geometry, resolved damage/wounds and root-local pose/muzzle
+  transforms consistent; prone has a directional footprint. See
+  [Combat stances](docs/combat-stances.md) for the matrix, transitions and controls.
 - Rendering happens inside a camera transform. Screen-space work (UI, vignette,
   weather screen layer) must be outside it or explicitly reset.
 - Performance is a *design constraint*, not a polish pass. This runs on phones. The
