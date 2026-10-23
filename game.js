@@ -55,8 +55,10 @@ function actorStancePose(a) {
   if(!a||actorStanceSuppressed(a)||!a.stance||!(a.stance.value>0))return STANDING_STANCE_POSE;
   const p=a._stancePose||(a._stancePose={}),v=a.stance.value;
   p.prone=Math.max(0,v-1);p.crouch=Math.min(1,v)*(1-p.prone);
-  p.scaleX=1+.08*p.crouch;p.scaleY=1-.30*p.crouch;
-  p.forward=p.muzzleForward=16*p.prone;p.muzzleSide=0;p.uiOffset=9*p.crouch+19*p.prone;
+  // Camera height changes uniformly. Bent joints, not a squashed standing
+  // canvas, supply the lowered silhouette.
+  p.scaleX=p.scaleY=1-.045*Math.min(1,v)-.025*p.prone;
+  p.forward=p.muzzleForward=0;p.muzzleSide=0;p.uiOffset=9*p.crouch+19*p.prone;
   return p;
 }
 function recordStanceDamage(a,damage,zone) {
@@ -20883,7 +20885,7 @@ if (this.eType === "COW") {
     if(unarmedCivilian(this)&&!this.cityThugGunDrawn)return;
     if (this.currentWeapon === WEAPONS.BOW && this.ammo <= 0) return;
     if(this.isPlayer && streetThugDialogueOpen())return;
-    if (this.isPlayer) this.isArmed = true;
+    if (this.isPlayer) { this.isArmed = true; this.aimHold = AIM_HOLD; }
     frontierAmbientMarkCombat();
     const huntShotId = ++_huntShotSequence;
     let aH = this.isPlayer ? playerAimTarget() : this.stanceAimZone || (this.isFriendly && headAimToggle ? "HEAD" : "BODY"), cd = (this.isPlayer || this.isFriendly) ? this.currentWeapon.fireCooldown : (this.currentWeapon.enemyCooldown || 48), bob = this.isMoving ? abs(sin(this.walkCycle)) * 2 : 0;
@@ -20998,7 +21000,7 @@ if (this.skeletonTimer > 0 && frameCount % 6 < 3) {
 if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return;}
 
     const stancePose = actorStancePose(this);
-    if (stancePose.prone > 0) { drawCombatProneFigure(this, stancePose); pop(); return; }
+    if (stancePose.crouch > 0 || stancePose.prone > 0) { drawCombatStanceFigure(this, stancePose); pop(); return; }
     drawCombatStanceUI(this, stancePose);
 
     let sOff = (currentLevel === 1 || currentLevel === 3) ? 15 : 10;
@@ -21021,10 +21023,6 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
     else if (this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL") { ellipse(charShadowX(sOff * 2), charShadowY(sOff * 2), this.bodyW, this.bodyH); }
     else if (this.eType === "ARMORED" || this.eType === "ALIEN_GATOR" || this.eType === "SNAIL_HYBRID") { ellipse(charShadowX(sOff), charShadowY(sOff), this.bodyW * 0.8, this.bodyH); }
     else { ellipse(charShadowX(sOff), charShadowY(sOff), this.bodyW + 5, this.bodyH + 5); }
-    }
-
-    if (stancePose.crouch > 0) {
-      rotate(this.aimAngle); scale(1-stancePose.crouch*.30,1+stancePose.crouch*.08); rotate(-this.aimAngle);
     }
 
     if (!this.shovelMantle && this.muzzleFlash > 0 && this.reloadTimer <= 0) {
@@ -39991,26 +39989,111 @@ function drawOneHandReload(c) {
 // stick, so holding it IS aiming; a shot in the last few frames and a reload
 // both keep the gun up, because dropping to a carry between rounds would make
 // every burst look like a flinch.
-// The ordinary figure's local X runs toward its aim and Y spans the shoulders.
-// Muzzles, flashes and stance art share this transform; changing a silhouette
-// must never leave the physical shot behind at the old standing wrist.
-function stanceLocalPoint(c, x, y) {
-  const p = actorStancePose(c), low = p.crouch || 0, prone = p.prone || 0;
-  return { x: x * (1 - low * .30) + prone * 16,
-    y: y * (1 + low * .08) * (1 - prone * .45) };
+// Low poses are articulated around the floor root. A posted elbow pulls back
+// while the root advances; its recovery takes an outward arc. The other arm
+// and opposite knee then take the load. Nothing translates the whole actor
+// sideways merely to suggest crawling.
+function stanceElbowCycle(phase, moving) {
+  if (!moving) return {reach:0,lift:0};
+  const t=((phase/(Math.PI*2))%1+1)%1, planted=t<.64;
+  const u=planted?t/.64:(t-.64)/.36, e=u*u*(3-2*u);
+  return {reach:planted?3.4-6.8*e:-3.4+6.8*e,
+    lift:planted?0:Math.sin(u*Math.PI)*1.8};
 }
-function stanceMuzzleWorld(c, x, y, angle = c.aimAngle || 0) {
+function stanceArtAiming(c) {
+  return !c.isPlayer || !!(rightStick && rightStick.active) || c.muzzleFlash>0 || playerAiming(c);
+}
+function stanceBodyPose(c) {
+  const p=actorStancePose(c),value=c.stance?c.stance.value:0,drop=Math.min(1,value),floor=p.prone||0;
+  const aiming=stanceArtAiming(c),cycle=c.walkCycle||0,cached=c._stanceBody;
+  if(cached&&cached.value===value&&cached.cycle===cycle&&cached.moving===!!c.isMoving&&
+      cached.aiming===aiming&&cached.bodyW===c.bodyW&&cached.bodyH===c.bodyH)return cached;
+  const R=figureRig(c.bodyW,c.bodyH),phase=cycle*.65;
+  const right=stanceElbowCycle(phase,c.isMoving),left=stanceElbowCycle(phase+Math.PI,c.isMoving);
+  const yaw=Math.atan2(left.reach-right.reach,c.bodyH*.72)*.38*floor;
+  const shuffle=c.isMoving?Math.sin(c.walkCycle||0)*(1-floor):0;
+  const size=p.scaleX,hipX=-5*drop-4*floor,chestX=1.5*drop-floor*2.5;
+  const joints=[];
+  for (const side of [-1,1]) {
+    const support=side===1?right:left,opposite=side===1?left:right;
+    const tuck=Math.max(0,opposite.reach/3.4)*floor;
+    const hY=side*(5.6+floor*.7),hip={x:hipX-Math.sin(-yaw*.45)*hY,y:Math.cos(yaw*.45)*hY};
+    const knee={x:10*drop+shuffle*side*1.5-floor*(30-5*tuck),y:side*(12.5*drop+floor*(-3.5+5*tuck))};
+    const ankle={x:-4*drop+shuffle*side*2.8-floor*(27-4*tuck),y:side*(8.6+floor*.3)};
+    const shoulder={x:2*drop+floor*4+(aiming&&side<0?2*drop:0)-Math.sin(yaw)*side*c.bodyH*.34,
+      y:Math.cos(yaw)*side*c.bodyH*(.33-floor*.02)};
+    joints.push({side,hip,knee,ankle,shoulder,
+      elbow:{x:4*drop+floor*8+support.reach*floor,
+        y:side*(c.bodyH*.46+support.lift*floor)},support});
+  }
+  const head={x:(aiming?3:0)*(1-drop)+8*drop+7*floor,
+    y:(aiming?4*(1-drop)+2.2*drop-5.8*floor:0)};
+  return c._stanceBody={value,cycle,moving:!!c.isMoving,bodyW:c.bodyW,bodyH:c.bodyH,drop,floor,size,aiming,yaw,hipX,chestX,joints,head,R,
+    torsoLength:c.bodyW*TORSO_DEPTH+floor*3.5,torsoWidth:c.bodyH*(1-.10*drop-.10*floor)};
+}
+// A native gun keeps its own proportions. One rigid mount owns the solid,
+// wrists, laser and flash, and supplies the physical muzzle and torch too.
+// Support actions use the separate body mount, never a rifle's port angle.
+function stanceWeaponMount(c) {
+  const p=actorStancePose(c);
+  if (!p.crouch&&!p.prone) return {x:0,y:0,angle:0,scale:1};
+  const b=stanceBodyPose(c),w=c.currentWeapon;
+  const two=weaponHands(w)===2,aim=b.aiming||c.reloadTimer>0;
+  const cached=c._stanceMount;
+  if(cached&&cached.body===b&&cached.weapon===w&&cached.aim===aim)return cached;
+  const roll=b.yaw*(aim?0:.75),angle=aim?0:(two?-1.12:-.14)*b.drop+roll;
+  const factor=1-b.drop*(two?.18:.02)-b.floor*(two?0:.03),scale=b.size*factor;
+  let x=0,y=0;
+  if (b.floor>0||!aim) {
+    const nativeX=two?(w===WEAPONS.SHOTGUN?10:8):w===WEAPONS.PISTOL||w===WEAPONS.TASER?16:22,nativeY=two?6:w===WEAPONS.PISTOL||w===WEAPONS.TASER?8:11;
+    const stationX=aim?(two?9:16):two?-1+4*b.floor:10,stationY=aim&&two?4:8,strength=aim?b.floor:b.drop;
+    x=(stationX-Math.cos(angle)*nativeX*factor+Math.sin(angle)*nativeY*factor)*strength*b.size;
+    y=(stationY-Math.sin(angle)*nativeX*factor-Math.cos(angle)*nativeY*factor)*strength*b.size;
+    if(!aim){x+=b.yaw*3*b.floor;y+=(b.joints[1].support.reach+b.joints[0].support.reach)*.10*b.floor;}
+  }
+  if(aim&&w===WEAPONS.SHOTGUN)x-=2*b.drop*(1-b.floor)*scale;
+  return c._stanceMount={x,y,angle,scale,body:b,weapon:w,aim};
+}
+function stanceLongGunPose(c) {
+  const pose=aimedLongGunPose(c,0,0),fore=pose.P.point(14.5-pose.pump*4,0,0);
+  // Choke the support grip up on the same handguard rather than lengthening
+  // the forearm to reach a standing grip from a floor-supported shoulder.
+  pose.fore=[pose.x+fore[0],pose.y+fore[1]];
+  return pose;
+}
+function stanceArmElbow(b,joint,hx,hy) {
+  const s=joint.shoulder,e={x:joint.elbow.x,y:joint.elbow.y};
+  // Projected bones may shorten as the elbow folds out of the floor plane;
+  // neither segment grows to fill the gap to a weapon. Alternate floor
+  // contacts remain the preferred solution inside both reach circles.
+  const upper=b.R.upper,fore=b.R.fore;
+  for(let i=0;i<5;i++) {
+    let dx=e.x-s.x,dy=e.y-s.y,d=Math.hypot(dx,dy);
+    if(d>upper){e.x=s.x+dx*upper/d;e.y=s.y+dy*upper/d;}
+    dx=e.x-hx;dy=e.y-hy;d=Math.hypot(dx,dy);
+    if(d>fore){e.x=hx+dx*fore/d;e.y=hy+dy*fore/d;}
+  }
+  return e;
+}
+function stanceLocalPoint(c,x,y,support=false) {
+  const p=actorStancePose(c);
+  if (!p.crouch&&!p.prone) return {x,y};
+  const m=support?{x:0,y:0,angle:0,scale:p.scaleX}:stanceWeaponMount(c),ca=Math.cos(m.angle),sa=Math.sin(m.angle);
+  return {x:m.x+(ca*x-sa*y)*m.scale,y:m.y+(sa*x+ca*y)*m.scale};
+}
+function stanceMuzzleWorld(c, x, y, angle = c.aimAngle || 0, support = false) {
   const p = actorStancePose(c);
   if (!p.crouch && !p.prone) return { x, y };
   const ca = Math.cos(angle), sa = Math.sin(angle), dx = x - c.x, dy = y - c.y;
-  const local = stanceLocalPoint(c, dx * ca + dy * sa, -dx * sa + dy * ca);
+  const local = stanceLocalPoint(c, dx * ca + dy * sa, -dx * sa + dy * ca,support);
   return { x: c.x + ca * local.x - sa * local.y, y: c.y + sa * local.x + ca * local.y };
 }
 function stanceHeadLocal(c) {
-  const p = actorStancePose(c), prone = p.prone || 0;
+  const p = actorStancePose(c);
+  if(p.crouch||p.prone){const b=stanceBodyPose(c);return {x:b.head.x*b.size,y:b.head.y*b.size};}
   const braced = c.isArmed && c.reloadTimer <= 0 && c.meleeTimer <= 0 &&
     (c.currentWeapon === WEAPONS.ASSAULT_RIFLE || c.currentWeapon === WEAPONS.SHOTGUN || c.currentWeapon === WEAPONS.ROCKET_LAUNCHER);
-  return { x: (braced ? 3 : 0) * (1 - prone) + 18 * prone, y: (braced ? 4 : 0) * (1 - prone) - 6 * prone };
+  return { x: braced ? 3 : 0, y: braced ? 4 : 0 };
 }
 function actorStanceUIAnchor(c) {
   const p = actorStancePose(c), h = stanceHeadLocal(c), ca = Math.cos(c.aimAngle || 0), sa = Math.sin(c.aimAngle || 0);
@@ -40054,9 +40137,9 @@ function drawCombatStanceShadow(c, p) {
   }
   pop();
 }
-function drawCombatProneFigure(c, p) {
-  const paint = figurePainter(), g = paint ? paint.api : window, R = figureRig(c.bodyW, c.bodyH);
-  const prone = p.prone || 0, low = p.crouch || 0, ca = c.aimAngle || 0;
+function drawCombatStanceFigure(c, p) {
+  const paint = figurePainter(), g = paint ? paint.api : window,b=stanceBodyPose(c),R=b.R;
+  const prone=b.floor,ca=c.aimAngle||0,mount=stanceWeaponMount(c);
   if (c.isPlayer && c.meleeTimer <= 0 && rightStick && rightStick.active) c.isArmed = true;
   const skin = c.skinCol || color(235, 180, 140);
   let cloth = c.shirtCol, trousers = c.pantsCol;
@@ -40067,43 +40150,91 @@ function drawCombatProneFigure(c, p) {
   if (c.hitFlash > 0) { cloth = color(255); c.hitFlash--; }
   drawCombatStanceShadow(c, p);
   push(); rotate(ca);
-  const crawl = c.isMoving ? Math.sin(c.walkCycle) * prone * 2 : 0;
-  for (const side of [-1, 1]) {
-    const hip = -5 - prone * 10, knee = -3 - prone * 22 + crawl * side, ankle = 10 - prone * 38 + crawl * side;
-    const sy = side * (6 + prone * 1.8), ky = sy + side * prone * 1.5;
-    figureCelLimb(g, hip, sy, knee, ky, ankle, sy, R.thighW * .92, R.shinW, R.shinW * .8, trousers);
-    figureCelOval(g, ankle - prone * 3, sy, R.foot, R.shinW * .8,
-      [red(trousers)*.55,green(trousers)*.55,blue(trousers)*.55], .65);
-    drawLegDecals(g,c.decals,side < 0 ? 0 : 1,hip,sy,knee,ky,ankle,sy,R.thighW*.92,R.shinW,R.shinW*.8);
+  if(c.isPlayer) {
+    if(c.shieldBurstTimer>0) {
+      push();noFill();stroke(0,200,255,c.shieldBurstTimer*17);strokeWeight(3);
+      const size=map(c.shieldBurstTimer,15,0,c.bodyW,c.bodyW+50);
+      ellipse(-prone*6,0,size+prone*25,size);pop();
+    }
+    if(c.shieldFlashTimer>0) {
+      push();noFill();const k=c.shieldFlashTimer/10;
+      for(let i=4;i>=0;i--) {
+        stroke(255,150+i*22,30+i*18,210*k*(1-i*.17));strokeWeight(3.4-i*.5);
+        ellipse(-prone*6,0,c.bodyW+6+prone*25+i*6,c.bodyH+6+i*6);
+      }
+      pop();
+    }
+  }
+  push();scale(b.size);
+  for (const leg of b.joints) {
+    const h=leg.hip,k=leg.knee,a=leg.ankle;
+    const thighX=k.x-h.x,thighY=k.y-h.y,shinX=a.x-k.x,shinY=a.y-k.y;
+    if(thighX*shinX+thighY*shinY<0) {
+      // In a deep squat the shin is behind the folded thigh, not a ribbon
+      // turning inside out at the knee. Layer the two rounded bone masses.
+      figureCelLimb(g,k.x,k.y,(k.x+a.x)*.5,(k.y+a.y)*.5,a.x,a.y,R.shinW,R.shinW*.9,R.shinW*.8,trousers);
+      figureCelLimb(g,h.x,h.y,(h.x+k.x)*.5,(h.y+k.y)*.5,k.x,k.y,R.thighW*.92,R.thighW*.85,R.shinW,trousers);
+      figureCelOval(g,k.x,k.y,R.shinW,R.shinW*.92,trousers,.45);
+    } else figureCelLimb(g,h.x,h.y,k.x,k.y,a.x,a.y,R.thighW*.92,R.shinW,R.shinW*.8,trousers);
+    push();translate(a.x,a.y);rotate(Math.atan2(a.y-k.y,a.x-k.x));
+    figureCelOval(g,1.5,0,R.foot,R.shinW*.82,[red(trousers)*.55,green(trousers)*.55,blue(trousers)*.55],.65);pop();
+    drawLegDecals(g,c.decals,leg.side<0?0:1,h.x,h.y,k.x,k.y,a.x,a.y,R.thighW*.92,R.shinW,R.shinW*.8);
+  }
+  push();translate(b.hipX,0);rotate(-b.yaw*.45);
+  figureCelOval(g,0,0,11+prone*2,c.bodyH*.61,trousers,.38);pop();
+  if(c.isPlayer&&chemistSuitUnlocked) {
+    const back=b.hipX-5-prone*7;
+    g.fill(236,240,240);g.stroke(140,146,151,185);g.strokeWeight(.8);
+    g.beginShape();g.vertex(1,-9);g.bezierVertex(-4,-11,back,-12,back-2,-8);
+    g.bezierVertex(back-4,-3,back-4,3,back-2,8);g.bezierVertex(back,12,-4,11,1,9);g.endShape(CLOSE);
+    g.noFill();g.stroke(188,198,206,180);g.strokeWeight(.7);g.line(back-1,-4,-1,-2);g.line(back-1,4,-1,2);
   }
   const dual = c.currentWeapon === WEAPONS.DUAL_SMG && !leftHandAction(c);
-  const longGun = c.currentWeapon === WEAPONS.ASSAULT_RIFLE || c.currentWeapon === WEAPONS.SHOTGUN ? aimedLongGunPose(c,0,0) : null;
+  const tool=c.isPlayer&&!c.isArmed?meleeTool():'NONE';
+  const heldTool=tool==='SWORD'||tool==='PICKAXE',toolGait=heldTool?gaitPose(c.isMoving?c.gait:0):null;
+  const toolSwing=heldTool&&c.meleeTimer>0;
+  const toolCarry=heldTool&&!toolSwing?swordCarryPose(c,toolGait,0):null;
+  const longGun = c.currentWeapon === WEAPONS.ASSAULT_RIFLE || c.currentWeapon === WEAPONS.SHOTGUN ? stanceLongGunPose(c) : null;
   const bow = c.currentWeapon === WEAPONS.BOW, bowTension = bow ? bowDrawAmount(c) : 0;
-  const hand = stanceLocalPoint(c, longGun ? longGun.rear[0] : bow ? 13-9*bowTension : c.currentWeapon === WEAPONS.PISTOL ? 16 : 22,
-    longGun ? longGun.rear[1] : bow ? 0 : c.currentWeapon === WEAPONS.PISTOL ? 8 : 11);
-  const left = stanceLocalPoint(c, longGun ? longGun.fore[0] : bow ? 24 : dual ? 22 : 27,
-    longGun ? longGun.fore[1] : bow ? 0 : dual ? -11 : 1);
-  for (const [right, wrist] of [[true, hand], [false, left]]) {
+  const hand = stanceLocalPoint(c,longGun?longGun.rear[0]:bow?13-9*bowTension:c.currentWeapon===WEAPONS.PISTOL?16:22,
+    longGun?longGun.rear[1]:bow?0:c.currentWeapon===WEAPONS.PISTOL?8:11);
+  const left = stanceLocalPoint(c,longGun?longGun.fore[0]:bow?24:dual?22:27,
+    longGun?longGun.fore[1]:bow?0:dual?-11:1);
+  const palms=[];
+  for (const joint of b.joints) {
+    const right=joint.side===1,wrist=right?hand:left;
+    if(toolSwing)continue;
     if (c.reloadTimer > 0 && oneHandWeapon(c.currentWeapon)) continue;
     if (!right && c.reloadTimer > 0 && !leftHandAction(c)) continue;
     if (!right && leftHandAction(c)) continue;
-    const sy = (right ? 1 : -1) * (c.bodyH * .36 - prone * 2);
-    figureCelLimb(g, -2, sy, 9 + prone * 9, sy * 1.3, wrist.x, wrist.y,
-      R.upperW, (R.upperW+R.foreW)*.5, R.foreW*.83, cloth);
-    figureCelOval(g,wrist.x,wrist.y,7.2,7.2,skin,.7);
+    const empty=!c.isArmed&&c.isPlayer||!right&&!dual&&weaponHands(c.currentWeapon)!==2;
+    const hx=right&&toolCarry?toolCarry.hx:empty?joint.elbow.x+5:wrist.x/b.size;
+    const hy=right&&toolCarry?toolCarry.hy:empty?joint.elbow.y*.76:wrist.y/b.size;
+    const s=joint.shoulder,e=stanceArmElbow(b,joint,hx,hy);
+    figureCelLimb(g,s.x,s.y,e.x,e.y,hx,hy,R.upperW,(R.upperW+R.foreW)*.5,R.foreW*.83,cloth);
+    palms.push({x:hx,y:hy});
   }
-  figureCelOval(g, -6 * prone, 0, c.bodyW * TORSO_DEPTH * (1 - low*.30) + prone * 16,
-    c.bodyH * (1 + low*.08) - prone * 6, cloth, .5 - prone*.3);
+  push();translate(b.chestX,0);rotate(b.yaw);
+  figureCelOval(g,0,0,b.torsoLength,b.torsoWidth,cloth,.45-prone*.18);
+  if(c.isPlayer&&jetpackUnlocked) {
+    g.stroke(29,34,38);g.strokeWeight(.8);g.fill(80,86,91);g.rect(-9,-9,9,18,3);
+    g.noStroke();g.fill(229,111,34);g.rect(-9,-6,2,12,1);
+  }
+  // A short collar/back plane reads as a torso inclined from hips to neck,
+  // while the bent knees remain visible outside the lower shirt contour.
+  g.noStroke();g.fill(red(cloth)*.72,green(cloth)*.72,blue(cloth)*.72,100);
+  g.ellipse(-b.torsoLength*.27,0,b.torsoLength*.30,b.torsoWidth*.70);
   if (c.eType === 'ARMORED_STANDARD' || (c.isPlayer || c.isMilitary) && explosiveArmorUnlocked) {
-    g.fill(75,87,101); g.stroke(24,36,47); g.strokeWeight(.7); g.rect(-12 * prone - 6, -7, 16 + prone * 4, 14, 3);
+    g.fill(75,87,101); g.stroke(24,36,47); g.strokeWeight(.7); g.rect(-7,-7,14,14,3);
     g.noStroke(); g.fill(146,159,166); g.rect(-7, -5, 10, 1);
   }
   g.noStroke();
   for (const d of c.decals) if (!d.isHead && !d.isLeg) {
     if (d.col) g.fill(...d.col); else g.fill(90,0,0,220);
-    g.ellipse(d.x*(1+prone*.6)-prone*4,d.y*(1-prone*.25),d.sz,d.sz);
+    g.ellipse(d.x,d.y*.85,d.sz,d.sz);
   }
-  const h = stanceHeadLocal(c);
+  pop();
+  const h=b.head;
   drawFigureHead(g,c,h.x,h.y,true,0);
   if (c.eType === 'ARMORED_STANDARD' && c.hp > 50) {
     push(); translate(h.x,h.y); rotate(HALF_PI); drawArmoredHelmet(g); pop();
@@ -40112,10 +40243,9 @@ function drawCombatProneFigure(c, p) {
     if (d.col) g.fill(...d.col); else g.fill(90,0,0,220);
     g.ellipse(h.x+d.x,h.y+d.y,d.sz,d.sz);
   }
-  // The weapon is the native solid, mounted in the same low pose transform
-  // used by Character.fire(). A crawl changes limbs, never muzzle alignment.
-  push(); translate(prone * 16, 0); scale(1-low*.30,(1+low*.08)*(1-prone*.45));
-  const w = c.currentWeapon, L = figureLight(ca), S = figureSouth(ca), kick = handGunKick(c.weaponKick);
+  pop();
+  push();translate(mount.x,mount.y);rotate(mount.angle);scale(mount.scale);
+  const w = c.currentWeapon, L = figureLight(ca+mount.angle), S = figureSouth(ca+mount.angle), kick = handGunKick(c.weaponKick);
   if (c.isArmed || !c.isPlayer) {
     if (c.reloadTimer > 0 && oneHandWeapon(w)) drawOneHandReload(c);
     else if (oneHandWeapon(w)) {
@@ -40145,8 +40275,23 @@ function drawCombatProneFigure(c, p) {
     const reload = 1-c.reloadTimer/90;
     reloadArm(c,0,-c.bodyH*.425,2+Math.sin(reload*PI)*10,10,false);
   }
-  if (leftHandAction(c)) drawLeftHandAction(c,leftHandAction(c),0);
-  pop(); pop();
+  pop();
+  push();scale(b.size);
+  let toolProjection=null;
+  if(toolSwing)drawSwordSwing(c,toolGait,leftHandAction(c),0,tool==='PICKAXE');
+  else if(toolCarry) {
+    const wa=ca+toolCarry.angle;
+    toolProjection=handGunProjection(toolCarry.elevation,toolCarry.roll,figureLight(wa),figureSouth(wa));
+    push();translate(toolCarry.hx,toolCarry.hy);rotate(toolCarry.angle);
+    if(tool==='PICKAXE')drawPickGrip(toolProjection);else drawSwordGrip(toolProjection);pop();
+  }
+  for(const palm of palms)figureCelOval(g,palm.x,palm.y,6.3,6.3,skin,.7);
+  if(toolProjection) {
+    push();translate(toolCarry.hx,toolCarry.hy);rotate(toolCarry.angle);
+    if(tool==='PICKAXE')drawPickHeadSolid(toolProjection);else drawSwordBlade(toolProjection);pop();
+  }
+  if (leftHandAction(c)&&!toolSwing) drawLeftHandAction(c,leftHandAction(c),0);
+  pop();pop();
   if (c.reloadTimer > 0) {
     push(); noFill(); stroke(93,216,229,160); strokeWeight(2);
     arc(0,0,34,25,-HALF_PI,-HALF_PI+(1-c.reloadTimer/90)*TWO_PI); pop();
@@ -40215,15 +40360,17 @@ function leftActionPose(c, action) {
 // The grey hand's charge core and the lightning's first point share one origin.
 function leftActionMuzzle(c, angle) {
   const P = leftActionPose(c, 2), GP = gaitPose(c.isMoving ? c.gait : 0);
+  const low=actorStancePose(c),x=P.hx+P.hand*.48,y=P.hy;
+  if(low.crouch||low.prone)return stanceMuzzleWorld(c,
+    c.x+cos(angle)*x-sin(angle)*y,c.y+sin(angle)*x+cos(angle)*y,angle,true);
   let bob = c.isMoving ? abs(sin(c.walkCycle)) * 2 * GP.bob + GP.lean : 0;
   if (c.mounted) bob *= 0.4;
   if (c.reloadTimer > 0 && !oneHandWeapon(c.currentWeapon)) bob += sin(frameCount * 0.5) * 3;
   const tw = c.isMoving && !(c.isArmed && c.meleeTimer <= 0 && playerAiming(c))
            ? sin(c.walkCycle) * GP.twist : 0;
-  const x = P.hx + P.hand * 0.48, y = P.hy;
   return stanceMuzzleWorld(c,
     c.x + cos(angle) * x - sin(angle) * y + cos(angle + tw) * bob,
-    c.y + sin(angle) * x + cos(angle) * y + sin(angle + tw) * bob, angle);
+    c.y + sin(angle) * x + cos(angle) * y + sin(angle + tw) * bob, angle, true);
 }
 
 function drawLeftHandAction(c, action, untwist) {
@@ -45055,7 +45202,7 @@ function sceneEmitters() {
       // reduction finds the player's own silhouette behind the lamp and the
       // beam comes out as a wedge with a hole punched in it.
       rMin: m[0] + 18, soft: 0.024, p: 0.96,
-      c: [0.90, 0.95, 1.00], aim: a, half: TORCH_OUTER, inner: TORCH_INNER,
+      c: [0.90, 0.95, 1.00], aim: a+stanceWeaponMount(player).angle, half: TORCH_OUTER, inner: TORCH_INNER,
       spill: TORCH_SPILL, spillR: TORCH_SPILL_R,
       // No fixture. The beam is the light; a bulb drawn at the source is a
       // bright disc sitting on the gun, and the muzzle flash already covers

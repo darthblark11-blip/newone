@@ -28,8 +28,8 @@ for(const name of ['STAND','CROUCH','PRONE'])for(const angle of [0,Math.PI/2,Mat
 probe(`player.aimAngle=0;resetActorStance(player,'STAND');var standAnchor=actorStanceUIAnchor(player);
  resetActorStance(player,'CROUCH');var crouchAnchor=actorStanceUIAnchor(player);var crouchPoint=stanceLocalPoint(player,10,10);
  resetActorStance(player,'PRONE');var proneAnchor=actorStanceUIAnchor(player);var pronePoint=stanceLocalPoint(player,10,10);`);
-ok('crouch compresses forward profile by thirty percent and widens shoulders eight percent',P('Math.abs(crouchPoint.x-7)<1e-8 && Math.abs(crouchPoint.y-10.8)<1e-8'));
-ok('prone weapon extends forward and braces closer to the body',P('pronePoint.x===26 && pronePoint.y===5.5'));
+ok('crouch weapon mount preserves equal forward and shoulder scale',P('Math.abs(crouchPoint.x-crouchPoint.y)<1e-8 && crouchPoint.x>7 && crouchPoint.x<10'));
+ok('prone rigid weapon mount retains a finite uniform scale',P('Number.isFinite(pronePoint.x+pronePoint.y)&&stanceWeaponMount(player).scale>.7&&stanceWeaponMount(player).scale<1'));
 ok('floating stance UI descends with the body',P('crouchAnchor.y>standAnchor.y && proneAnchor.y>crouchAnchor.y'));
 let depth=0,minDepth=0;
 ctx.push=()=>{depth++;};ctx.pop=()=>{depth--;minDepth=Math.min(minDepth,depth);};
@@ -66,4 +66,20 @@ probe(`isPaused=false;updateActorStance(player,100);recordStanceDamage(player,10
 ok('rapid follow-up hits merge actual damage without losing a critical cue',P('player.stanceDamage.amount===30&&player.stanceDamage.critical'));
 probe(`for(let i=0;i<5;i++)updateActorStance(player,100);`);
 ok('damage feedback expires through active combat updates',P('player.stanceDamage.leftMs===0'));
+const shieldRings=[],oldEllipse=ctx.ellipse;
+ctx.ellipse=(...args)=>shieldRings.push(args);
+probe(`player.shieldFlashTimer=10;player.shieldBurstTimer=15;player.show();`);
+ok('low stances retain shield absorption and break feedback without consuming timers',
+  shieldRings.filter(a=>a[0]===-6).length>=6&&P('player.shieldFlashTimer===10&&player.shieldBurstTimer===15'));
+ctx.ellipse=oldEllipse;
+probe('player.shieldFlashTimer=player.shieldBurstTimer=0;');
+let blades=0,picks=0,swings=0;
+const oldBlade=ctx.drawSwordBlade,oldPick=ctx.drawPickHeadSolid,oldSwing=ctx.drawSwordSwing;
+ctx.drawSwordBlade=(...args)=>{blades++;return oldBlade(...args);};
+ctx.drawPickHeadSolid=(...args)=>{picks++;return oldPick(...args);};
+ctx.drawSwordSwing=(...args)=>{swings++;return oldSwing(...args);};
+probe(`swordPickedUp=true;window.pickaxeOwned=true;player.isArmed=false;setMeleeTool('SWORD');player.show();player.meleeTimer=12;player.show();
+ player.meleeTimer=0;setMeleeTool('PICKAXE');player.show();setMeleeTool('NONE');player.isArmed=true;`);
+ok('lowered bodies retain carried melee equipment and the native swing delegate',blades>=2&&picks===1&&swings===1);
+ctx.drawSwordBlade=oldBlade;ctx.drawPickHeadSolid=oldPick;ctx.drawSwordSwing=oldSwing;
 console.log(`${checks}/${checks} stance muzzle, pose, anchor and native painter checks passed`);

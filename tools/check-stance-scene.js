@@ -63,7 +63,7 @@ const out = process.env.STANCE_SCENE_OUT || '/tmp/newone-stance-scenes'; fs.mkdi
       ok(clear,name+' stance button clears ammunition and movement controls');
       const press={id:1,x:Math.round(pill.x),y:Math.round(pill.y)};
       await send('touchStart',[press]);let s=await state();
-      ok(s.state.to===1&&s.stance==='STAND',name+' a real press begins the150ms compression without immediate immunity');
+      ok(s.state.to===1&&s.stance==='STAND',name+' a real press begins the150ms jointed crouch without immediate immunity');
       ok(!s.aimActive&&!s.move&&s.ammo===17&&s.bullets.length===0,name+' stance press cannot aim, move or fire');
       await page.evaluate(()=>__stanceStep(40));s=await state();
       ok(s.stance==='CROUCH'&&s.state.value===1,name+' the native frame completes crouch');
@@ -86,7 +86,7 @@ const out = process.env.STANCE_SCENE_OUT || '/tmp/newone-stance-scenes'; fs.mkdi
       await send('touchMove',[walk,{...head,x:head.x-60}]);s=await state();
       ok(s.ammo===16&&s.bullets.length===1&&s.bullets[0].zone==='HEAD',name+' dragging the aim thumb fires the selected elevation while prone');
       const bullet=s.bullets[0],forward=(bullet.x-s.x)*Math.cos(s.angle)+(bullet.y-s.y)*Math.sin(s.angle);
-      ok(forward>40,name+' the prone projectile starts at the extended forward muzzle');
+      ok(forward>20&&forward<35,name+' the compact prone pistol fires ahead of the head without the old exaggerated reach');
       await send('touchEnd',[]);
 
       await page.evaluate(()=>{window.lastPauseTime=millis()-1000;player.fireTimer=0;});
