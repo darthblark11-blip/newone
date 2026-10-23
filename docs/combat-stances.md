@@ -57,6 +57,10 @@ Crawling alternates planted elbow pulls and outward recovery arcs. Opposite
 knees advance under the pelvis, shoulders rotate against the hips, and the
 carried weapon follows that changing support. The actor root does not wobble
 sideways. Sleeves fit the existing arm lengths rather than stretching to grips.
+Shoulder roots sit inside the chest contour. A single final torso/head pass
+occludes sleeves, palms and gun parts passing below the body, including reload
+and support-action arms. The neutral long-gun grip sits forward at the collar
+so the receiver clears the chest during the crawl.
 Native guns, reloads and bow use one rigid weapon mount. Chemist hand actions
 retain an independent body mount. Physical shots, muzzle flashes and torch
 direction share the posed gun. Contact shadows tighten or flatten, and lowered health
@@ -102,6 +106,8 @@ positions; actors rise when combat ends or the target closes in.
 Focused verification lives in `tools/check-stance-{hits,controls,ai,render}.js`.
 `tools/check-stance-anatomy.js` checks bent joints, proportions, crawl support,
 rendered arm lengths, grip attachment and neutral/aimed geometry.
+`tools/check-stance-layering.js` checks torso/head occlusion and single action
+draws for ordinary, reload, chemist and tool poses in both lowered stances.
 `tools/check-stance-scene.js` replays native touch input and complete frames at
 phone and landscape sizes. `tools/visual-combat-stances.js` renders native pose
 comparisons and a full HQ combat scene with adapting enemy fire.

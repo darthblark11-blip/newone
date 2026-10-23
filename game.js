@@ -40013,6 +40013,7 @@ function stanceBodyPose(c) {
   const yaw=Math.atan2(left.reach-right.reach,c.bodyH*.72)*.38*floor;
   const shuffle=c.isMoving?Math.sin(c.walkCycle||0)*(1-floor):0;
   const size=p.scaleX,hipX=-5*drop-4*floor,chestX=1.5*drop-floor*2.5;
+  const torsoLength=c.bodyW*TORSO_DEPTH+floor*3.5,torsoWidth=c.bodyH*(1-.10*drop-.10*floor);
   const joints=[];
   for (const side of [-1,1]) {
     const support=side===1?right:left,opposite=side===1?left:right;
@@ -40020,8 +40021,11 @@ function stanceBodyPose(c) {
     const hY=side*(5.6+floor*.7),hip={x:hipX-Math.sin(-yaw*.45)*hY,y:Math.cos(yaw*.45)*hY};
     const knee={x:10*drop+shuffle*side*1.5-floor*(30-5*tuck),y:side*(12.5*drop+floor*(-3.5+5*tuck))};
     const ankle={x:-4*drop+shuffle*side*2.8-floor*(27-4*tuck),y:side*(8.6+floor*.3)};
-    const shoulder={x:2*drop+floor*4+(aiming&&side<0?2*drop:0)-Math.sin(yaw)*side*c.bodyH*.34,
-      y:Math.cos(yaw)*side*c.bodyH*(.33-floor*.02)};
+    // Seat the sleeve root inside the chest contour. The torso then covers
+    // the shoulder cap instead of leaving the arm pasted onto its outer edge.
+    const sx=torsoLength*.30,sy=side*torsoWidth*.28;
+    const shoulder={x:chestX+Math.cos(yaw)*sx-Math.sin(yaw)*sy,
+      y:Math.sin(yaw)*sx+Math.cos(yaw)*sy};
     joints.push({side,hip,knee,ankle,shoulder,
       elbow:{x:4*drop+floor*8+support.reach*floor,
         y:side*(c.bodyH*.46+support.lift*floor)},support});
@@ -40029,7 +40033,7 @@ function stanceBodyPose(c) {
   const head={x:(aiming?3:0)*(1-drop)+8*drop+7*floor,
     y:(aiming?4*(1-drop)+2.2*drop-5.8*floor:0)};
   return c._stanceBody={value,cycle,moving:!!c.isMoving,bodyW:c.bodyW,bodyH:c.bodyH,drop,floor,size,aiming,yaw,hipX,chestX,joints,head,R,
-    torsoLength:c.bodyW*TORSO_DEPTH+floor*3.5,torsoWidth:c.bodyH*(1-.10*drop-.10*floor)};
+    torsoLength,torsoWidth};
 }
 // A native gun keeps its own proportions. One rigid mount owns the solid,
 // wrists, laser and flash, and supplies the physical muzzle and torch too.
@@ -40046,7 +40050,7 @@ function stanceWeaponMount(c) {
   let x=0,y=0;
   if (b.floor>0||!aim) {
     const nativeX=two?(w===WEAPONS.SHOTGUN?10:8):w===WEAPONS.PISTOL||w===WEAPONS.TASER?16:22,nativeY=two?6:w===WEAPONS.PISTOL||w===WEAPONS.TASER?8:11;
-    const stationX=aim?(two?9:16):two?-1+4*b.floor:10,stationY=aim&&two?4:8,strength=aim?b.floor:b.drop;
+    const stationX=aim?(two?9:16):two?9:10,stationY=aim&&two?4:two?9:8,strength=aim?b.floor:b.drop;
     x=(stationX-Math.cos(angle)*nativeX*factor+Math.sin(angle)*nativeY*factor)*strength*b.size;
     y=(stationY-Math.sin(angle)*nativeX*factor-Math.cos(angle)*nativeY*factor)*strength*b.size;
     if(!aim){x+=b.yaw*3*b.floor;y+=(b.joints[1].support.reach+b.joints[0].support.reach)*.10*b.floor;}
@@ -40137,6 +40141,39 @@ function drawCombatStanceShadow(c, p) {
   }
   pop();
 }
+// One final occlusion pass covers every sleeve, including complete-arm reload
+// and chemist delegates. The body hides the stock/receiver wherever they pass
+// beneath it; the higher head sits over the collar and support wrist.
+function drawCombatStanceBody(c,b,g,cloth) {
+  const prone=b.floor;
+  push();translate(b.chestX,0);rotate(b.yaw);
+  figureCelOval(g,0,0,b.torsoLength,b.torsoWidth,cloth,.45-prone*.18);
+  if(c.isPlayer&&jetpackUnlocked) {
+    g.stroke(29,34,38);g.strokeWeight(.8);g.fill(80,86,91);g.rect(-9,-9,9,18,3);
+    g.noStroke();g.fill(229,111,34);g.rect(-9,-6,2,12,1);
+  }
+  g.noStroke();g.fill(red(cloth)*.72,green(cloth)*.72,blue(cloth)*.72,100);
+  g.ellipse(-b.torsoLength*.27,0,b.torsoLength*.30,b.torsoWidth*.70);
+  if (c.eType === 'ARMORED_STANDARD' || (c.isPlayer || c.isMilitary) && explosiveArmorUnlocked) {
+    g.fill(75,87,101); g.stroke(24,36,47); g.strokeWeight(.7); g.rect(-7,-7,14,14,3);
+    g.noStroke(); g.fill(146,159,166); g.rect(-7, -5, 10, 1);
+  }
+  g.noStroke();
+  for (const d of c.decals) if (!d.isHead && !d.isLeg) {
+    if (d.col) g.fill(...d.col); else g.fill(90,0,0,220);
+    g.ellipse(d.x,d.y*.85,d.sz,d.sz);
+  }
+  pop();
+  const h=b.head;
+  drawFigureHead(g,c,h.x,h.y,true,0);
+  if (c.eType === 'ARMORED_STANDARD' && c.hp > 50) {
+    push(); translate(h.x,h.y); rotate(HALF_PI); drawArmoredHelmet(g); pop();
+  }
+  for (const d of c.decals) if (d.isHead) {
+    if (d.col) g.fill(...d.col); else g.fill(90,0,0,220);
+    g.ellipse(h.x+d.x,h.y+d.y,d.sz,d.sz);
+  }
+}
 function drawCombatStanceFigure(c, p) {
   const paint = figurePainter(), g = paint ? paint.api : window,b=stanceBodyPose(c),R=b.R;
   const prone=b.floor,ca=c.aimAngle||0,mount=stanceWeaponMount(c);
@@ -40214,35 +40251,6 @@ function drawCombatStanceFigure(c, p) {
     figureCelLimb(g,s.x,s.y,e.x,e.y,hx,hy,R.upperW,(R.upperW+R.foreW)*.5,R.foreW*.83,cloth);
     palms.push({x:hx,y:hy});
   }
-  push();translate(b.chestX,0);rotate(b.yaw);
-  figureCelOval(g,0,0,b.torsoLength,b.torsoWidth,cloth,.45-prone*.18);
-  if(c.isPlayer&&jetpackUnlocked) {
-    g.stroke(29,34,38);g.strokeWeight(.8);g.fill(80,86,91);g.rect(-9,-9,9,18,3);
-    g.noStroke();g.fill(229,111,34);g.rect(-9,-6,2,12,1);
-  }
-  // A short collar/back plane reads as a torso inclined from hips to neck,
-  // while the bent knees remain visible outside the lower shirt contour.
-  g.noStroke();g.fill(red(cloth)*.72,green(cloth)*.72,blue(cloth)*.72,100);
-  g.ellipse(-b.torsoLength*.27,0,b.torsoLength*.30,b.torsoWidth*.70);
-  if (c.eType === 'ARMORED_STANDARD' || (c.isPlayer || c.isMilitary) && explosiveArmorUnlocked) {
-    g.fill(75,87,101); g.stroke(24,36,47); g.strokeWeight(.7); g.rect(-7,-7,14,14,3);
-    g.noStroke(); g.fill(146,159,166); g.rect(-7, -5, 10, 1);
-  }
-  g.noStroke();
-  for (const d of c.decals) if (!d.isHead && !d.isLeg) {
-    if (d.col) g.fill(...d.col); else g.fill(90,0,0,220);
-    g.ellipse(d.x,d.y*.85,d.sz,d.sz);
-  }
-  pop();
-  const h=b.head;
-  drawFigureHead(g,c,h.x,h.y,true,0);
-  if (c.eType === 'ARMORED_STANDARD' && c.hp > 50) {
-    push(); translate(h.x,h.y); rotate(HALF_PI); drawArmoredHelmet(g); pop();
-  }
-  for (const d of c.decals) if (d.isHead) {
-    if (d.col) g.fill(...d.col); else g.fill(90,0,0,220);
-    g.ellipse(h.x+d.x,h.y+d.y,d.sz,d.sz);
-  }
   pop();
   push();translate(mount.x,mount.y);rotate(mount.angle);scale(mount.scale);
   const w = c.currentWeapon, L = figureLight(ca+mount.angle), S = figureSouth(ca+mount.angle), kick = handGunKick(c.weaponKick);
@@ -40291,6 +40299,7 @@ function drawCombatStanceFigure(c, p) {
     if(tool==='PICKAXE')drawPickHeadSolid(toolProjection);else drawSwordBlade(toolProjection);pop();
   }
   if (leftHandAction(c)&&!toolSwing) drawLeftHandAction(c,leftHandAction(c),0);
+  drawCombatStanceBody(c,b,g,cloth);
   pop();pop();
   if (c.reloadTimer > 0) {
     push(); noFill(); stroke(93,216,229,160); strokeWeight(2);
