@@ -39996,9 +39996,9 @@ function drawOneHandReload(c) {
 function stanceElbowCycle(phase, moving) {
   if (!moving) return {reach:0,lift:0};
   const t=((phase/(Math.PI*2))%1+1)%1, planted=t<.64;
-  const u=planted?t/.64:(t-.64)/.36, e=u*u*(3-2*u);
+  const u=planted?t/.64:(t-.64)/.36,e=u*u*u*(u*(u*6-15)+10);
   return {reach:planted?3.4-6.8*e:-3.4+6.8*e,
-    lift:planted?0:Math.sin(u*Math.PI)*1.8};
+    lift:planted?0:Math.sin(u*Math.PI)**2*1.8};
 }
 function stanceArtAiming(c) {
   return !c.isPlayer || !!(rightStick && rightStick.active) || c.muzzleFlash>0 || playerAiming(c);
@@ -40017,7 +40017,7 @@ function stanceBodyPose(c) {
   const joints=[];
   for (const side of [-1,1]) {
     const support=side===1?right:left,opposite=side===1?left:right;
-    const tuck=Math.max(0,opposite.reach/3.4)*floor;
+    const drive=Math.max(0,opposite.reach/3.4),tuck=drive*drive*(3-2*drive)*floor;
     const hY=side*(5.6+floor*.7),hip={x:hipX-Math.sin(-yaw*.45)*hY,y:Math.cos(yaw*.45)*hY};
     const knee={x:10*drop+shuffle*side*1.5-floor*(30-5*tuck),y:side*(12.5*drop+floor*(-3.5+5*tuck))};
     const ankle={x:-4*drop+shuffle*side*2.8-floor*(27-4*tuck),y:side*(8.6+floor*.3)};
@@ -40027,7 +40027,7 @@ function stanceBodyPose(c) {
     const shoulder={x:chestX+Math.cos(yaw)*sx-Math.sin(yaw)*sy,
       y:Math.sin(yaw)*sx+Math.cos(yaw)*sy};
     joints.push({side,hip,knee,ankle,shoulder,
-      elbow:{x:4*drop+floor*8+support.reach*floor,
+      elbow:{x:4*drop+floor*4+support.reach*floor,
         y:side*(c.bodyH*.46+support.lift*floor)},support});
   }
   const head={x:(aiming?3:0)*(1-drop)+8*drop+7*floor,
@@ -40078,6 +40078,14 @@ function stanceArmElbow(b,joint,hx,hy) {
     if(d>fore){e.x=hx+dx*fore/d;e.y=hy+dy*fore/d;}
   }
   return e;
+}
+function drawCombatStanceSleeve(g,sx,sy,ex,ey,hx,hy,w0,w1,w2,cloth) {
+  // A deeply folded arm can double back in plan view. One bent ribbon then
+  // has an ambiguous joint normal and flips into a point. Rounded bone
+  // masses keep a continuous elbow silhouette at every amount of flexion.
+  figureCelLimb(g,sx,sy,(sx+ex)*.5,(sy+ey)*.5,ex,ey,w0,(w0+w1)*.5,w1,cloth);
+  figureCelLimb(g,ex,ey,(ex+hx)*.5,(ey+hy)*.5,hx,hy,w1,(w1+w2)*.5,w2,cloth);
+  figureCelOval(g,ex,ey,w1,w1,cloth,.45);
 }
 function stanceLocalPoint(c,x,y,support=false) {
   const p=actorStancePose(c);
@@ -40141,6 +40149,42 @@ function drawCombatStanceShadow(c, p) {
   }
   pop();
 }
+// The upright pack shows its side. As the back levels with the floor, its
+// broad dorsal face turns into view and stays mounted to the torso's roll.
+function drawStanceDashPack(g,c,b) {
+  if(!c.isPlayer||!jetpackUnlocked)return;
+  const t=Math.max(0,Math.min(1,b.floor)),face=t*t*(3-2*t);
+  const x=-9-.5*face,w=9+6*face;
+  g.push();
+  g.stroke(29,34,38);g.strokeWeight(.8);g.fill(80+face*12,86+face*17,91+face*21);
+  g.rect(x,-9,w,18,3);
+  g.noStroke();g.fill(229,111,34);g.rect(x,-6,2,12,1);
+  if(face>0) {
+    // A raised rim and recessed central shell give the pack a full back
+    // surface, rather than widening the old thin side strip into a plank.
+    const alpha=255*face;
+    g.fill(131,148,158,alpha);g.rect(x+1.1,-7.8,w-2.2,15.6,2);
+    g.fill(62,74,84,alpha);g.rect(x+2,-7,w-3.8,14,1.5);
+    g.fill(104,119,130,alpha);g.rect(x+2.2,-6.7,w-4.4,13.1,1.4);
+    // Twin drive housings run down the back. Their orange exhaust collars
+    // point toward the hips, with the dark bores visible from above.
+    for(const side of [-1,1]) {
+      const y=side*5.5;
+      g.fill(36,45,53,alpha);g.rect(x+1.7,y-1.9,w-3.5,3.8,1.2);
+      g.fill(122,138,148,alpha);g.rect(x+2.2,y-1.3,w-4.4,1.1,.5);
+      g.fill(231,119,40,alpha);g.rect(x-.7,y-1.8,3,3.6,.8);
+      g.fill(52,47,41,alpha);g.rect(x-.9,y-1.1,1.1,2.2,.4);
+    }
+    // The center plate and short cooling slots remain readable at native
+    // scale; these are material accents, not light or particle sources.
+    g.fill(52,64,75,alpha);g.rect(x+3.1,-2.7,w-5.3,5.4,1);
+    g.fill(154,168,175,alpha);g.rect(x+3.7,-2.1,w-6.5,.7,.3);
+    g.stroke(25,34,42,alpha);g.strokeWeight(.7);
+    for(let i=0;i<3;i++){const vx=x+4+i*1.7;g.line(vx,-.6,vx,1.5);}
+    g.noStroke();g.fill(242,151,62,alpha);g.rect(x+w-3.4,-1.5,1,3,.4);
+  }
+  g.pop();
+}
 // One final occlusion pass covers every sleeve, including complete-arm reload
 // and chemist delegates. The body hides the stock/receiver wherever they pass
 // beneath it; the higher head sits over the collar and support wrist.
@@ -40148,10 +40192,6 @@ function drawCombatStanceBody(c,b,g,cloth) {
   const prone=b.floor;
   push();translate(b.chestX,0);rotate(b.yaw);
   figureCelOval(g,0,0,b.torsoLength,b.torsoWidth,cloth,.45-prone*.18);
-  if(c.isPlayer&&jetpackUnlocked) {
-    g.stroke(29,34,38);g.strokeWeight(.8);g.fill(80,86,91);g.rect(-9,-9,9,18,3);
-    g.noStroke();g.fill(229,111,34);g.rect(-9,-6,2,12,1);
-  }
   g.noStroke();g.fill(red(cloth)*.72,green(cloth)*.72,blue(cloth)*.72,100);
   g.ellipse(-b.torsoLength*.27,0,b.torsoLength*.30,b.torsoWidth*.70);
   if (c.eType === 'ARMORED_STANDARD' || (c.isPlayer || c.isMilitary) && explosiveArmorUnlocked) {
@@ -40163,6 +40203,7 @@ function drawCombatStanceBody(c,b,g,cloth) {
     if (d.col) g.fill(...d.col); else g.fill(90,0,0,220);
     g.ellipse(d.x,d.y*.85,d.sz,d.sz);
   }
+  drawStanceDashPack(g,c,b);
   pop();
   const h=b.head;
   drawFigureHead(g,c,h.x,h.y,true,0);
@@ -40248,12 +40289,18 @@ function drawCombatStanceFigure(c, p) {
     const hx=right&&toolCarry?toolCarry.hx:empty?joint.elbow.x+5:wrist.x/b.size;
     const hy=right&&toolCarry?toolCarry.hy:empty?joint.elbow.y*.76:wrist.y/b.size;
     const s=joint.shoulder,e=stanceArmElbow(b,joint,hx,hy);
-    figureCelLimb(g,s.x,s.y,e.x,e.y,hx,hy,R.upperW,(R.upperW+R.foreW)*.5,R.foreW*.83,cloth);
+    drawCombatStanceSleeve(g,s.x,s.y,e.x,e.y,hx,hy,R.upperW,(R.upperW+R.foreW)*.5,R.foreW*.83,cloth);
     palms.push({x:hx,y:hy});
   }
+  if(!toolCarry)for(const palm of palms)figureCelOval(g,palm.x,palm.y,6.3,6.3,skin,.7);
+  if(leftHandAction(c)&&!toolSwing)drawLeftHandAction(c,leftHandAction(c),0);
   pop();
   push();translate(mount.x,mount.y);rotate(mount.angle);scale(mount.scale);
   const w = c.currentWeapon, L = figureLight(ca+mount.angle), S = figureSouth(ca+mount.angle), kick = handGunKick(c.weaponKick);
+  if (c.reloadTimer > 0 && !oneHandWeapon(w) && !leftHandAction(c)) {
+    const reload = 1-c.reloadTimer/90;
+    reloadArm(c,0,-c.bodyH*.425,2+Math.sin(reload*PI)*10,10,false);
+  }
   if (c.isArmed || !c.isPlayer) {
     if (c.reloadTimer > 0 && oneHandWeapon(w)) drawOneHandReload(c);
     else if (oneHandWeapon(w)) {
@@ -40279,10 +40326,6 @@ function drawCombatStanceFigure(c, p) {
       if (dual) { g.fill(255,213,83,220); g.triangle(38,-14,53,-11,38,-8); }
     }
   }
-  if (c.reloadTimer > 0 && !oneHandWeapon(w) && !leftHandAction(c)) {
-    const reload = 1-c.reloadTimer/90;
-    reloadArm(c,0,-c.bodyH*.425,2+Math.sin(reload*PI)*10,10,false);
-  }
   pop();
   push();scale(b.size);
   let toolProjection=null;
@@ -40293,12 +40336,11 @@ function drawCombatStanceFigure(c, p) {
     push();translate(toolCarry.hx,toolCarry.hy);rotate(toolCarry.angle);
     if(tool==='PICKAXE')drawPickGrip(toolProjection);else drawSwordGrip(toolProjection);pop();
   }
-  for(const palm of palms)figureCelOval(g,palm.x,palm.y,6.3,6.3,skin,.7);
+  if(toolCarry)for(const palm of palms)figureCelOval(g,palm.x,palm.y,6.3,6.3,skin,.7);
   if(toolProjection) {
     push();translate(toolCarry.hx,toolCarry.hy);rotate(toolCarry.angle);
     if(tool==='PICKAXE')drawPickHeadSolid(toolProjection);else drawSwordBlade(toolProjection);pop();
   }
-  if (leftHandAction(c)&&!toolSwing) drawLeftHandAction(c,leftHandAction(c),0);
   drawCombatStanceBody(c,b,g,cloth);
   pop();pop();
   if (c.reloadTimer > 0) {

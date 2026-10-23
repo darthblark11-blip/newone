@@ -53,14 +53,19 @@ other arm available for crawling. The normal brief aim hold prevents flicker
 between carry and presentation. Firing raises the weapon before resolving its
 muzzle, including a shot immediately after a neutral carry.
 
-Crawling alternates planted elbow pulls and outward recovery arcs. Opposite
-knees advance under the pelvis, shoulders rotate against the hips, and the
+Crawling alternates planted elbow pulls and outward recovery arcs with eased
+contact speed and a smooth lift off the floor. Rounded upper-arm/forearm masses
+and elbow caps keep a deeply folded sleeve from becoming a pointed ribbon.
+Opposite knees advance under the pelvis, shoulders rotate against the hips, and the
 carried weapon follows that changing support. The actor root does not wobble
 sideways. Sleeves fit the existing arm lengths rather than stretching to grips.
 Shoulder roots sit inside the chest contour. A single final torso/head pass
 occludes sleeves, palms and gun parts passing below the body, including reload
 and support-action arms. The neutral long-gun grip sits forward at the collar
 so the receiver clears the chest during the crawl.
+Palms and reload/support hands draw below the firearms. The dash pack reveals
+its full vented back plate and twin drive housings as the torso drops prone;
+its art stays mounted above back clothing and armor.
 Native guns, reloads and bow use one rigid weapon mount. Chemist hand actions
 retain an independent body mount. Physical shots, muzzle flashes and torch
 direction share the posed gun. Contact shadows tighten or flatten, and lowered health
@@ -105,9 +110,10 @@ positions; actors rise when combat ends or the target closes in.
 
 Focused verification lives in `tools/check-stance-{hits,controls,ai,render}.js`.
 `tools/check-stance-anatomy.js` checks bent joints, proportions, crawl support,
-rendered arm lengths, grip attachment and neutral/aimed geometry.
+rendered arm lengths, grip attachment, neutral/aimed geometry and smooth joint motion.
 `tools/check-stance-layering.js` checks torso/head occlusion and single action
-draws for ordinary, reload, chemist and tool poses in both lowered stances.
+draws for ordinary, reload, chemist and tool poses in both lowered stances,
+including hands beneath guns and the pack's full prone face.
 `tools/check-stance-scene.js` replays native touch input and complete frames at
 phone and landscape sizes. `tools/visual-combat-stances.js` renders native pose
 comparisons and a full HQ combat scene with adapting enemy fire.

@@ -66,6 +66,17 @@ ok('recovery advances the elbow along an outward arc instead of sliding the whol
  recover.lift>1&&elbow(.98).reach>elbow(.68).reach);
 ok('the elbow cycle joins continuously at contact and recovery boundaries',
  [0,.64,1].every(t=>{const a=elbow(t-1e-6),b=elbow(t+1e-6);return Math.abs(a.reach-b.reach)<.001&&Math.abs(a.lift-b.lift)<.001;}));
+const derivativeStep=1e-5;
+ok('elbow recovery meets the planted floor with continuous velocity',
+ [0,.64,1].every(t=>{
+  const a=elbow(t-derivativeStep),b=elbow(t),c=elbow(t+derivativeStep);
+  return ['reach','lift'].every(key=>Math.abs((b[key]-a[key])/derivativeStep-(c[key]-b[key])/derivativeStep)<.01);
+ }));
+ok('forward and rearward elbow pulls ease their acceleration at contact changes',
+ [0,.64,1].every(t=>{
+  const h=derivativeStep,a=elbow(t-2*h),b=elbow(t-h),c=elbow(t),d=elbow(t+h),e=elbow(t+2*h);
+  return Math.abs((c.reach-2*b.reach+a.reach)/(h*h))<.25&&Math.abs((e.reach-2*d.reach+c.reach)/(h*h))<.25;
+ }));
 const first=body('PRONE',true,0),second=body('PRONE',true,Math.PI/.65);
 ok('half a crawl cycle exchanges leading elbows and opposite knee drive',
  first.joints[1].elbow.x>first.joints[0].elbow.x&&second.joints[0].elbow.x>second.joints[1].elbow.x&&
@@ -73,6 +84,12 @@ ok('half a crawl cycle exchanges leading elbows and opposite knee drive',
 ok('pelvis and chest counter-rotate under alternating support',first.yaw*second.yaw<0&&
  [first,second].every(b=>Math.sign(b.joints[1].hip.x-b.joints[0].hip.x)===Math.sign(b.yaw)));
 ok('the crawl leaves the actor root fixed rather than adding lateral wobble',P('player.x===70&&player.y===90'));
+ok('opposite knee recovery has no velocity kick as it starts or finishes its fold',
+ [.32,.82].every(t=>{
+  const h=derivativeStep,point=q=>body('PRONE',true,q*TAU/.65).joints[1].knee;
+  const a=point(t-h),b=point(t),c=point(t+h);
+  return ['x','y'].every(key=>Math.abs((b[key]-a[key])/h-(c[key]-b[key])/h)<.05);
+ }));
 
 for(const key of ['PISTOL','ASSAULT_RIFLE','SHOTGUN']) {
  probe(`player.currentWeapon=WEAPONS.${key};`);body('PRONE',true,1.7,false);
@@ -96,9 +113,9 @@ ok('chemist support actions remain independent of the rifle port angle',support.
 
 // Capture the actual native figure draw, rather than checking an elbow helper
 // alone: sleeve endpoints, rendered palms and projected gun grips must agree.
-const nativeLimb=ctx.figureCelLimb,nativeOval=ctx.figureCelOval;
+const nativeSleeve=ctx.drawCombatStanceSleeve,nativeOval=ctx.figureCelOval;
 let drawnLimbs=[],drawnPalms=[];
-ctx.figureCelLimb=(...args)=>{drawnLimbs.push(args);return nativeLimb(...args);};
+ctx.drawCombatStanceSleeve=(...args)=>{drawnLimbs.push(args);return nativeSleeve(...args);};
 ctx.figureCelOval=(...args)=>{
  if(args[3]===6.3&&args[4]===6.3)drawnPalms.push({x:args[1],y:args[2]});
  return nativeOval(...args);
@@ -130,7 +147,29 @@ for(const stance of ['CROUCH','PRONE'])for(const key of ['PISTOL','ASSAULT_RIFLE
  ok(label+' actual sleeve wrists remain on projected native gun grips through the crawl',grips);
  ok(label+' visible palms remain attached to their rendered sleeve endpoints',palms);
 }
-ctx.figureCelLimb=nativeLimb;ctx.figureCelOval=nativeOval;
+ctx.drawCombatStanceSleeve=nativeSleeve;ctx.figureCelOval=nativeOval;
+
+// At a nearly folded elbow the old single ribbon reversed its normal and
+// turned into a point. Trace the painted bone surfaces around that crossing:
+// each surface must remain straight, with a round filled joint between them.
+const nativeBone=ctx.figureCelLimb;
+let boneSurfaces=[],jointSurfaces=[];
+ctx.figureCelLimb=(...args)=>{boneSurfaces.push(args);return nativeBone(...args);};
+ctx.figureCelOval=(...args)=>{jointSurfaces.push(args);return nativeOval(...args);};
+let roundFolds=true,finiteFolds=true;
+for(const turn of [-.15,-1e-5,0,1e-5,.15]) {
+ boneSurfaces=[];jointSurfaces=[];
+ const hx=10-Math.cos(turn)*9,hy=Math.sin(turn)*9;
+ probe(`drawCombatStanceSleeve(window,0,0,10,0,${hx},${hy},8.4,7.5,5.6,[180,40,40]);`);
+ finiteFolds&&=boneSurfaces.every(a=>a.slice(1,10).every(Number.isFinite));
+ roundFolds&&=boneSurfaces.length===2&&boneSurfaces.every(a=>{
+  const ux=a[3]-a[1],uy=a[4]-a[2],vx=a[5]-a[3],vy=a[6]-a[4];
+  return ux*vx+uy*vy>=0&&Math.abs(ux*vy-uy*vx)<1e-8;
+ })&&jointSurfaces.some(a=>a[1]===10&&a[2]===0&&a[3]===a[4]&&a[3]>=7);
+}
+ctx.figureCelLimb=nativeBone;ctx.figureCelOval=nativeOval;
+ok('deep elbow folds retain rounded joint surfaces on both sides of a full reversal',roundFolds);
+ok('rounded sleeve geometry remains finite through the formerly jagged reversal',finiteFolds);
 
 let finite=true,continuous=true;
 for(const stance of ['CROUCH','PRONE'])for(const dimensions of [[21,27],[24,30],[18,24]]) {

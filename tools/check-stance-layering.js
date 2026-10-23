@@ -47,6 +47,7 @@ ctx.emit=(...args)=>{emissions++;return saved.emit(...args);};
 
 const scenarios=[
  {label:'neutral pistol',weapon:'PISTOL'},
+ {label:'dual SMGs',weapon:'DUAL_SMG'},
  {label:'aimed rifle',weapon:'ASSAULT_RIFLE',aim:true},
  {label:'neutral shotgun',weapon:'SHOTGUN'},
  {label:'pistol reload',weapon:'PISTOL',reload:45,delegate:'drawOneHandReload'},
@@ -78,6 +79,8 @@ try{
   ok(label+' leaves no weapon or hand painting over the finished body',
    positions('equipment').length>=1&&positions('equipment').every(index=>index<start)&&
    positions('palm').length>=1&&positions('palm').every(index=>index<start));
+  if(!scenario.tool)ok(label+' paints every palm below the firearm',
+   Math.max(...positions('palm'))<Math.min(...positions('equipment')));
   ok(label+' preserves combat timers and consumes one hit-flash frame',
    P('player.hitFlash===2')&&JSON.stringify(before)===JSON.stringify(P('({ammo:player.ammo,fire:player.fireTimer,reload:player.reloadTimer,melee:player.meleeTimer,charge:player.cannonCharge})')));
   ok(label+' restores painter state',depth===0&&minDepth===0);
@@ -97,4 +100,16 @@ for(const stance of ['CROUCH','PRONE'])for(const phase of [0,.6,1.7,3.1,4.8]){
  }
 }
 ok('both shoulder roots stay inside the body contour throughout the crawl',anchorsInside);
+const packRects=[],packG={};
+for(const key of ['push','pop','stroke','strokeWeight','fill','noStroke','line'])packG[key]=()=>{};
+packG.rect=(...args)=>packRects.push(args);
+probe('jetpackUnlocked=true;');
+ctx.__stancePackG=packG;
+probe('drawStanceDashPack(__stancePackG,player,{floor:0});');const side=packRects[0];packRects.length=0;
+probe('drawStanceDashPack(__stancePackG,player,{floor:1});');const full=packRects[0];
+ok('prone reveals the broad pack face with its inset surface and drive details',
+  full[2]>side[2]*1.5&&full[3]===side[3]&&packRects.length>=12);
+packRects.length=0;probe('jetpackUnlocked=false;drawStanceDashPack(__stancePackG,player,{floor:1});');
+ok('the dash pack is drawn only when the upgrade is owned',packRects.length===0);
+delete ctx.__stancePackG;
 console.log(`${checks}/${checks} low stance body, sleeve, gun and action layering checks passed`);
