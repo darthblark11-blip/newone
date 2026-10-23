@@ -62,6 +62,13 @@ and fist points. Preserve the held load through release and head-punch recovery;
 the back shading and pitched headwear reveal the duck without shifting the
 head's render/contact center or the committed head-strike contact arc.
 
+The central north door in NM-0 headquarters opens a confirmed one-way lift to
+Level 9. Its closed tunnel/chamber uses native collision, damage and corpses,
+with separate bounded Occult Magician spells and a saved encounter. Keep the
+northwest/northeast branches sealed until expanded. Underground lighting has
+no sun or surface fog: both renderers share the torch/flashlight gather and
+ambient floor. See [NM-0 underground chamber](docs/underground-occult.md).
+
 ## The gameplay loop this world serves
 
 1. **Story mode / cutscene** opens each level (biome).
@@ -85,7 +92,7 @@ builders runs:
 
 | Level state | Builder | Notes |
 |---|---|---|
-| Level 0 (prologue house), Level 8 (NM-0 HQ) | `legacyGenerateMap()` only | Closed rooms, no streaming, `BIOME_ACTIVE = false` |
+| Level 0 (prologue house), Level 8 (NM-0 HQ), Level 9 (underground chamber) | `legacyGenerateMap()` only | Closed rooms, no streaming, `BIOME_ACTIVE = false` |
 | Sector 1 (Stick City) — always | **Hybrid**: `legacyGenerateMap()` core + streamed chunks outward | `AUTHORED_SECTORS = [1]` |
 | Sector 3 in all modes, including after settlement | **Hybrid** | Permanent Dry Gulch town and farm; streamed country outside |
 | Sectors 2 and 4 while their story arc runs | **Hybrid** | `hasAuthoredCore()` → `!storyArcCleared()` |

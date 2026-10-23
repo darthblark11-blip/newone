@@ -3,7 +3,9 @@
 Level 8 is a closed authored interior entered from Stick City's north gate.
 This first environment pass preserves its entrance, twenty armored pistol guards,
 secret-room door at `(0,-800)`, armor blueprint at `(0,-2000)`, and surface exit.
-The planned three underground dungeon routes are not connected yet.
+The north wall now reserves three branch doors. The center `DESCENT` door
+opens a yes/no prompt for the downward-only lift to Level 9; the northwest and
+northeast wings remain sealed. See [NM-0 descent and underground chamber](underground-occult.md).
 
 The laboratory has inset composite floor panels, service grates, cyan aisle
 guides, containment markings and paneled cutaway walls. Fourteen computer banks,
