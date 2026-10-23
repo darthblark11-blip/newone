@@ -4725,6 +4725,7 @@ function drawBuildings(list, i0, i1) {
     // canopy in the decor list is what you actually see; without this the
     // generic building branch drew a dark box under every tree in the wood.
     if (b.isTreeTrunk) continue;
+    if(b.undergroundGate)continue; // animated leaves and arch draw together after the mass pass
     if(b.undergroundWall){drawUndergroundWall(b);continue;}
     if(b.undergroundProp){drawUndergroundProp(b);continue;}
     if (b.hqProp) { drawNM0LabProp(b); continue; }
@@ -6754,6 +6755,7 @@ function undergroundDoorOpenAmount(){return Math.min(1,Math.max(0,undergroundRou
 function resetUndergroundRoute(){
   undergroundRoute={visited:false,arrivalMs:900,mode:null,elapsedMs:0,focus:0};
   undergroundInput.buttons=[];undergroundInput.keys=new Set();undergroundInput.pad=null;
+  resetUndergroundDungeon();
 }
 function clearUndergroundControls(){
   consumePauseControlInputs();
@@ -6794,6 +6796,8 @@ function handleUndergroundRouteTap(mx,my){
   }
   if(undergroundRouteBusy())return true;
   if(hqElevatorAvailable()&&isClickingBtn(mx,my)){openHQElevator();return true;}
+  const gate=undergroundNearbyGate();
+  if(gate&&isClickingBtn(mx,my)){openUndergroundGate(gate.id);return true;}
   return false;
 }
 function updateUndergroundRoute(dtMs){
@@ -6812,6 +6816,7 @@ function updateUndergroundRoute(dtMs){
         if(edge(0)||keyEdge(13)||keyEdge(70))chooseHQDescent(undergroundRoute.focus===0);
       }
     }else if(!undergroundRouteBusy()&&hqElevatorAvailable()&&(edge(0)||keyEdge(70)||keyEdge(13)))openHQElevator();
+    else if(!undergroundRouteBusy()&&undergroundNearbyGate()&&(edge(0)||keyEdge(70)||keyEdge(13)))openUndergroundGate(undergroundNearbyGate().id);
     else if(undergroundRoute.mode==='DESCEND'){
       undergroundRoute.elapsedMs+=dt;
       if(undergroundRoute.elapsedMs>=HQ_ELEVATOR.descentMs){
@@ -6828,6 +6833,7 @@ function updateUndergroundRoute(dtMs){
       if(undergroundRoute.arrivalMs===HQ_ELEVATOR.arrivalMs)clearUndergroundControls();
     }
   }
+  if(!isPaused)updateUndergroundDungeon(dt);
   undergroundInput.pad=pad?pad.index:null;undergroundInput.buttons=buttons;undergroundInput.keys=keys;
 }
 function drawUndergroundRouteHud(){
@@ -6857,16 +6863,119 @@ function drawUndergroundRouteHud(){
     push();noStroke();fill(13,14,19,210*(1-undergroundDoorOpenAmount()));rect(0,0,width,height);
     fill(234,207,143);textAlign(CENTER,CENTER);textFont('sans-serif');textSize(18);text('DEEP UNDER NM–0',width/2,height*.25);pop();
   }else if(hqElevatorAvailable())drawPromptBtn('ELEVATOR');
+  else if(undergroundNearbyGate())drawPromptBtn('OPEN DOOR');
 }
 function serializeUndergroundRoute(){return {version:1,visited:undergroundRoute.visited,arrivalMs:undergroundRoute.arrivalMs,
-  mode:currentLevel===8?undergroundRoute.mode:null,elapsedMs:undergroundRoute.elapsedMs};}
+  mode:currentLevel===8?undergroundRoute.mode:null,elapsedMs:undergroundRoute.elapsedMs,
+  dungeon:currentLevel===9?serializeUndergroundDungeon():null};}
 function restoreUndergroundRoute(data){
   if(!data||data.version!==1)return;
   undergroundRoute.visited=!!data.visited;
   undergroundRoute.arrivalMs=currentLevel===9?Math.max(0,Math.min(900,Number(data.arrivalMs)||0)):900;
   undergroundRoute.mode=currentLevel===8&&['CONFIRM','DESCEND'].includes(data.mode)?data.mode:null;
   undergroundRoute.elapsedMs=Math.max(0,Math.min(1800,Number(data.elapsedMs)||0));
+  if(currentLevel===9)restoreUndergroundDungeon(data.dungeon);
   undergroundRoute.focus=0;clearUndergroundControls();
+}
+
+// Dungeon doors are physical barriers until their leaves finish parting.
+// Progress belongs to the route, independently of the finite enemy roster.
+let undergroundDungeon={opened:[],opening:null,activeRoom:'chamber'};
+const UNDERGROUND_GATE_OPEN_MS=650;
+function resetUndergroundDungeon(){undergroundDungeon={opened:[],opening:null,activeRoom:'chamber'};}
+function undergroundGateAmount(id){
+  if(undergroundDungeon.opened.includes(id))return 1;
+  const moving=undergroundDungeon.opening;
+  return moving&&moving.id===id?Math.min(1,moving.elapsedMs/UNDERGROUND_GATE_OPEN_MS):0;
+}
+function undergroundGateBlocksPoint(x,y,r=0){
+  return UNDERGROUND_GATES.some(g=>undergroundGateAmount(g.id)<1&&
+    x+r>g.x-g.w/2&&x-r<g.x+g.w/2&&y+r>g.y-g.h/2&&y-r<g.y+g.h/2);
+}
+function undergroundRoomAccessible(roomId){
+  if(roomId==='chamber')return true;
+  const index=UNDERGROUND_GATES.findIndex(g=>g.nextRoom===roomId);
+  return index>=0&&UNDERGROUND_GATES.slice(0,index+1).every(g=>undergroundDungeon.opened.includes(g.id));
+}
+function undergroundCurrentRoom(){
+  const room=player&&undergroundRoomAt(player.x,player.y);
+  return room?room.id:undergroundDungeon.activeRoom;
+}
+function addUndergroundGateBuildings(){
+  for(const g of UNDERGROUND_GATES)if(undergroundGateAmount(g.id)<1)
+    buildings.push({x:g.x,y:g.y,w:g.w,h:g.h,isWall:true,undergroundGate:g.id});
+}
+function removeUndergroundGateBuilding(id){
+  buildings=buildings.filter(b=>b.undergroundGate!==id);
+  activeBuildings=activeBuildings.filter(b=>b.undergroundGate!==id);
+  invalidateColIndex();lastActiveUpdate=-Infinity;
+}
+function undergroundNearbyGate(){
+  if(currentLevel!==9||!started||!player||player.hp<=0||isDead||isPaused||isWin||killcamMode||
+    undergroundRouteBusy()||boxingActive(player)||undergroundDungeon.opening||
+    inWorldBuildingMenu||inOverworldView||inTravelMenu)return null;
+  return UNDERGROUND_GATES.find((g,i)=>!undergroundDungeon.opened.includes(g.id)&&
+    UNDERGROUND_GATES.slice(0,i).every(prior=>undergroundDungeon.opened.includes(prior.id))&&
+    Math.abs(player.x-g.x)<g.w/2+20&&Math.abs(player.y-g.y)<165)||null;
+}
+function openUndergroundGate(id){
+  const nearby=undergroundNearbyGate();
+  if(!nearby||nearby.id!==id)return false;
+  undergroundDungeon.opening={id,elapsedMs:0};clearUndergroundControls();
+  return true;
+}
+function updateUndergroundDungeon(dt){
+  if(currentLevel!==9||isDead||isWin||undergroundRouteBusy())return;
+  const moving=undergroundDungeon.opening;
+  if(moving){
+    moving.elapsedMs=Math.min(UNDERGROUND_GATE_OPEN_MS,moving.elapsedMs+dt);
+    if(moving.elapsedMs>=UNDERGROUND_GATE_OPEN_MS){
+      undergroundDungeon.opened.push(moving.id);removeUndergroundGateBuilding(moving.id);
+      undergroundDungeon.opening=null;
+    }
+  }
+  const room=player&&undergroundRoomAt(player.x,player.y);
+  if(room)undergroundDungeon.activeRoom=room.id;
+}
+function serializeUndergroundDungeon(){
+  return {version:1,opened:undergroundDungeon.opened.slice(),
+    opening:undergroundDungeon.opening?{...undergroundDungeon.opening}:null,activeRoom:undergroundCurrentRoom()};
+}
+function restoreUndergroundDungeon(data){
+  resetUndergroundDungeon();
+  if(!data||data.version!==1)return;
+  // Only a connected prefix is valid; later rooms cannot unlock through rock.
+  for(const g of UNDERGROUND_GATES){
+    if(!Array.isArray(data.opened)||!data.opened.includes(g.id))break;
+    undergroundDungeon.opened.push(g.id);removeUndergroundGateBuilding(g.id);
+  }
+  const pending=data.opening,g=UNDERGROUND_GATES[undergroundDungeon.opened.length];
+  if(pending&&g&&pending.id===g.id)
+    undergroundDungeon.opening={id:g.id,elapsedMs:Math.max(0,Math.min(649,Number(pending.elapsedMs)||0))};
+  if(UNDERGROUND_ROOMS.some(r=>r.id===data.activeRoom)&&undergroundRoomAccessible(data.activeRoom))
+    undergroundDungeon.activeRoom=data.activeRoom;
+}
+function drawUndergroundGates(){
+  for(const gate of UNDERGROUND_GATES){
+    if(!inView(gate.x,gate.y,300))continue;
+    const half=gate.w/2,open=undergroundGateAmount(gate.id),shift=half*smooth01(open);
+    push();translate(gate.x,gate.y);noStroke();fill(7,6,10,170);rect(-half-16,-30,gate.w+32,66,4);
+    for(const side of [-1,1]){
+      push();translate(side*(half/2+shift),0);
+      fill(53,37,31);stroke(14,13,16);strokeWeight(3);rect(-half/2,-24,half,48,3);
+      stroke(103,68,37);strokeWeight(1.3);
+      for(let x=-half/2+12;x<half/2;x+=20)line(x,-20,x,20);
+      fill(124,93,45);stroke(24,22,23);rect(-half/2+3,-15,half-6,5,1);rect(-half/2+3,10,half-6,5,1);
+      fill(194,154,76);stroke(45,34,21);ellipse(-side*(half/2-13),0,7,10);pop();
+      fill(73,63,56);stroke(20,18,21);strokeWeight(2.5);rect(side*(half+9)-10,-37,20,74,3);
+      stroke(147,118,75);strokeWeight(1);line(side*(half+9)-5,-30,side*(half+9)-5,28);
+    }
+    // The raised lintel crosses above the doorway, like the other cel masses.
+    fill(84,70,57);stroke(19,17,20);strokeWeight(3);quad(-half-23,-42,half+23,-42,half+15,-23,-half-15,-23);
+    noFill();stroke(153,120,64);strokeWeight(1.2);line(-half-10,-36,half+10,-36);
+    noStroke();fill(203,174,108);textAlign(CENTER,CENTER);textFont('sans-serif');textSize(9);text(gate.label,0,-32);
+    pop();
+  }
 }
 
 function nextLevel() { startAtLevel(currentLevel + 1); }
@@ -8042,7 +8151,7 @@ viewBottom = camY + height / zoom + shakePad;
 
   if (typeof drawParkingCars === 'function') drawParkingCars();
   if(currentLevel===8)drawHQBranchDoors();
-  if(currentLevel===9)drawUndergroundElevator(undergroundDoorOpenAmount());
+  if(currentLevel===9){drawUndergroundElevator(undergroundDoorOpenAmount());drawUndergroundGates();}
 
   if (currentLevel === 0) {
       if (!inUpstairsRoom) {
@@ -12470,16 +12579,40 @@ function drawFrontierTownWayfinder(x,y,upper,lower) {
 
 // Authored descent beneath NM-0. Rock is opaque, and the only permanent
 // lamps are the tiki torches: baked floor marks never emit their own light.
+const UNDERGROUND_ROOMS = Object.freeze([
+  Object.freeze({id:'chamber',name:'Ritual Chamber',x:-760,y:-1900,w:1520,h:1500,altarX:-350,altarY:-1790}),
+  Object.freeze({id:'nave',name:'Processional Nave',x:-580,y:-3450,w:1160,h:1200,altarX:0,altarY:-3310}),
+  Object.freeze({id:'transept',name:'Votive Transept',x:180,y:-5000,w:1340,h:1250,altarX:1030,altarY:-4850}),
+  Object.freeze({id:'sanctuary',name:'Grand Sanctuary',x:-900,y:-7200,w:1800,h:1700,altarX:0,altarY:-7050})
+]);
+const UNDERGROUND_GATES = Object.freeze([
+  Object.freeze({id:'nave',x:0,y:-1900,w:250,h:70,label:'PROCESSIONAL NAVE',nextRoom:'nave'}),
+  Object.freeze({id:'transept',x:475,y:-3450,w:250,h:70,label:'VOTIVE TRANSEPT',nextRoom:'transept'}),
+  Object.freeze({id:'sanctuary',x:850,y:-5000,w:250,h:70,label:'GRAND SANCTUARY',nextRoom:'sanctuary'})
+]);
 const UNDERGROUND_FLOORS = Object.freeze([
   Object.freeze({x:-150,y:950,w:300,h:300}),
   Object.freeze({x:-170,y:-400,w:340,h:1400}),
-  Object.freeze({x:-760,y:-1900,w:1520,h:1500})
+  UNDERGROUND_ROOMS[0],
+  Object.freeze({x:-125,y:-2250,w:250,h:350}),UNDERGROUND_ROOMS[1],
+  Object.freeze({x:350,y:-3750,w:250,h:300}),UNDERGROUND_ROOMS[2],
+  Object.freeze({x:725,y:-5300,w:250,h:300}),
+  Object.freeze({x:-125,y:-5400,w:1100,h:200}),
+  Object.freeze({x:-125,y:-5500,w:250,h:175}),UNDERGROUND_ROOMS[3]
 ]);
+const UNDERGROUND_BOUNDS = Object.freeze({x:-900,y:-7200,w:2420,h:8450});
 const UNDERGROUND_TORCHES = Object.freeze([
   ...[-1,1].flatMap(side=>[780,300,-180].map(y=>Object.freeze({x:side*144,y,radius:225}))),
   ...[-1,1].flatMap(side=>[-650,-1150,-1660].map(y=>Object.freeze({x:side*698,y,radius:275}))),
-  Object.freeze({x:-120,y:1160,radius:190}),Object.freeze({x:120,y:1160,radius:190})
+  Object.freeze({x:-120,y:1160,radius:190}),Object.freeze({x:120,y:1160,radius:190}),
+  ...[-1,1].flatMap(side=>[-2400,-2825,-3250].map(y=>Object.freeze({x:side*525,y,radius:275}))),
+  ...[245,1455].flatMap(x=>[-3900,-4375,-4850].map(y=>Object.freeze({x,y,radius:275}))),
+  ...[-1,1].flatMap(side=>[-5650,-6100,-6550,-7000].map(y=>Object.freeze({x:side*840,y,radius:275}))),
+  ...[{x:-97,y:-2080},{x:573,y:-3600},{x:947,y:-5160},{x:400,y:-5225},{x:-97,y:-5440}].map(t=>Object.freeze({...t,radius:225}))
 ]);
+function undergroundRoomAt(x,y) {
+  return UNDERGROUND_ROOMS.find(r=>x>=r.x&&x<=r.x+r.w&&y>=r.y&&y<=r.y+r.h)||null;
+}
 const HQ_BRANCH_DOORS = Object.freeze([
   Object.freeze({x:-720,y:-2440,w:150,label:'WEST WING',sealed:true}),
   Object.freeze({x:0,y:-2440,w:210,label:'DESCENT',sealed:false}),
@@ -12493,25 +12626,68 @@ function resetUndergroundEnvironment() {
 function undergroundPointWalkable(x,y,r=0) {
   if(!Number.isFinite(x)||!Number.isFinite(y)||!Number.isFinite(r)||r<0)return false;
   const inside=(px,py)=>UNDERGROUND_FLOORS.some(f=>px>=f.x&&px<=f.x+f.w&&py>=f.y&&py<=f.y+f.h);
-  if(!inside(x,y))return false;
+  if(!inside(x,y)||undergroundGateBlocksPoint(x,y,r))return false;
   for(const [dx,dy]of[[r,0],[-r,0],[0,r],[0,-r],[r*.7071,r*.7071],[-r*.7071,r*.7071],[r*.7071,-r*.7071],[-r*.7071,-r*.7071]])
     if(!inside(x+dx,y+dy))return false;
   return true;
 }
 function generateUndergroundMap() {
+  resetUndergroundDungeon();
   const wall=(x,y,w,h,kind='STRATA')=>buildings.push({x,y,w,h,isWall:true,undergroundWall:kind});
-  wall(0,-1940,1600,80);wall(-800,-1150,80,1500);wall(800,-1150,80,1500);
-  wall(-485,-360,590,80,'THRESHOLD');wall(485,-360,590,80,'THRESHOLD');
-  wall(-210,300,80,1400);wall(210,300,80,1400);
-  wall(-190,1100,80,300,'SHAFT');wall(190,1100,80,300,'SHAFT');wall(0,1290,460,80,'SHAFT');
-  const prop=(kind,x,y,w,h)=>buildings.push({x,y,w,h,undergroundProp:kind});
+  // Trace the outside of the joined excavation, leaving its shared thresholds
+  // open. Walls sit outside the floor instead of narrowing the passage joins.
+  const inside=(x,y)=>UNDERGROUND_FLOORS.some(f=>x>f.x&&x<f.x+f.w&&y>f.y&&y<f.y+f.h);
+  const boundaries=new Map();
+  const edge=(horizontal,at,start,end,sign)=>{
+    const cuts=[start,end];
+    for(const f of UNDERGROUND_FLOORS)for(const v of horizontal?[f.x,f.x+f.w]:[f.y,f.y+f.h])if(v>start&&v<end)cuts.push(v);
+    cuts.sort((a,b)=>a-b);
+    let from=null,to=null;
+    const emit=()=>{
+      if(from===null)return;
+      const key=[horizontal,at,sign].join(',');
+      if(!boundaries.has(key))boundaries.set(key,{horizontal,at,sign,spans:[]});
+      boundaries.get(key).spans.push([from,to]);from=to=null;
+    };
+    for(let i=0;i<cuts.length-1;i++){
+      const a=cuts[i],b=cuts[i+1];if(b<=a)continue;
+      const mid=(a+b)/2,open=horizontal?inside(mid,at+sign*.5):inside(at+sign*.5,mid);
+      if(open){emit();continue;}
+      if(from===null)from=a;to=b;
+    }
+    emit();
+  };
+  for(const f of UNDERGROUND_FLOORS){
+    edge(true,f.y,f.x,f.x+f.w,-1);edge(true,f.y+f.h,f.x,f.x+f.w,1);
+    edge(false,f.x,f.y,f.y+f.h,-1);edge(false,f.x+f.w,f.y,f.y+f.h,1);
+  }
+  // Overlapping connector rectangles share some exterior edges. Union each
+  // collinear run before building it, avoiding duplicate walls and ink seams.
+  for(const {horizontal,at,sign,spans} of boundaries.values()){
+    spans.sort((a,b)=>a[0]-b[0]);const merged=[];
+    for(const span of spans){const last=merged[merged.length-1];if(last&&span[0]<=last[1])last[1]=Math.max(last[1],span[1]);else merged.push(span.slice());}
+    for(const [from,to]of merged){
+      const mid=(from+to)/2,x=horizontal?mid:at+sign*40,y=horizontal?at+sign*40:mid;
+      wall(x,y,horizontal?to-from:80,horizontal?80:to-from,y< -2250?'ASHLAR':y>950?'SHAFT':'STRATA');
+    }
+  }
+  const prop=(kind,x,y,w,h,extra)=>buildings.push({x,y,w,h,undergroundProp:kind,...extra});
   for(const t of UNDERGROUND_TORCHES)prop('TIKI_TORCH',t.x,t.y,12,12);
   for(const side of [-1,1]) {
     for(const y of [-720,-1510])prop('PILLAR',side*510,y,68,76);
     for(const y of [-930,-1420])prop('RELIQUARY',side*684,y,58,82);
     for(const y of [620,80,-300])prop('TIMBER',side*161,y,12,28);
+    for(const y of [-2500,-2920,-3290])prop('PILLAR',side*240,y,68,76,{cathedral:true});
+    for(const y of [-2700,-3070])prop('PEW',side*400,y,180,52,{broken:y===-3070&&side===1});
+    for(const y of [-5780,-6200,-6620,-7000])prop('PILLAR',side*430,y,80,88,{cathedral:true});
+    for(const y of [-6000,-6400,-6800])prop('PEW',side*660,y,210,58,{broken:y===-6400&&side===-1});
+    prop('BANNER',side*370,-3418,148,26,{cloth:side<0?'RED':'BLUE'});
+    prop('BANNER',side*680,-7168,160,26,{cloth:'BLACK'});
   }
-  prop('ALTAR',0,-1790,216,80);
+  for(const x of [520,1180])for(const y of [-4000,-4560])prop('PILLAR',x,y,72,80,{cathedral:true});
+  for(const x of [245,1455])for(const y of [-4150,-4540])prop('RELIQUARY',x,y,58,82);
+  for(const room of UNDERGROUND_ROOMS)prop('ALTAR',room.altarX,room.altarY,room.id==='sanctuary'?300:room.id==='transept'?240:216,room.id==='sanctuary'?100:80,{cathedral:room.id!=='chamber'});
+  addUndergroundGateBuildings();
 }
 function undergroundStoneHash(x,y) {
   let h=Math.imul(x|0,73856093)^Math.imul(y|0,19349663)^0x491d66b5;
@@ -12565,6 +12741,35 @@ function paintUndergroundFloor(g,x0,y0) {
   g.stroke(125,90,46,95);g.strokeWeight(2);g.beginShape();
   for(const i of [0,2,4,1,3,0]){const a=i*Math.PI*2/5-Math.PI/2;g.vertex(Math.cos(a)*196,-1130+Math.sin(a)*196);}g.endShape();
   g.noStroke();g.fill(27,26,29,95);g.ellipse(0,-1130,97,97);
+  // Cathedral aisles and ceremonial carpets are worn pigment and metal inlay;
+  // their dark folds receive torch light rather than adding emitters.
+  for(const room of UNDERGROUND_ROOMS.slice(1)){
+    const cx=room.x+room.w/2,top=room.y+100,bottom=room.y+room.h-90;
+    if(room.id==='transept'){
+      g.noStroke();g.fill(35,27,31,120);g.rect(cx-110,top,220,bottom-top,10);g.rect(room.x+90,room.y+560,room.w-180,150,8);
+      g.noFill();g.stroke(136,104,54,120);g.strokeWeight(2);g.rect(cx-99,top+9,198,bottom-top-18,7);
+      for(const radius of [112,156,210])g.ellipse(cx,room.y+625,radius*2,radius*2);
+      for(let i=0;i<8;i++){const a=i*Math.PI/4;g.line(cx+Math.cos(a)*160,room.y+625+Math.sin(a)*160,cx+Math.cos(a)*205,room.y+625+Math.sin(a)*205);}
+    }else{
+      g.noStroke();g.fill(room.id==='sanctuary'?61:55,23,29,185);g.rect(cx-102,top,204,bottom-top,5);
+      g.fill(23,20,24,110);g.rect(cx-96,top,11,bottom-top);g.rect(cx+85,top,11,bottom-top);
+      g.noFill();g.stroke(153,117,60,135);g.strokeWeight(2);g.rect(cx-87,top+12,174,bottom-top-24,3);
+      for(let y=top+50;y<bottom;y+=130){g.stroke(166,128,66,85);g.line(cx-81,y,cx+81,y);g.line(cx-81,y+6,cx+81,y+6);}
+    }
+    g.noFill();g.stroke(23,20,23,180);g.strokeWeight(14);g.ellipse(room.altarX,room.altarY+70,300,240);
+    g.stroke(163,126,64,140);g.strokeWeight(2);g.ellipse(room.altarX,room.altarY+70,284,224);
+    for(const side of [-1,1]){
+      g.stroke(139,111,69,70);g.strokeWeight(3);g.line(room.x+65,room.y+115,room.x+65,room.y+room.h-90);
+      g.line(room.x+room.w-65,room.y+115,room.x+room.w-65,room.y+room.h-90);
+    }
+    // Dark pointed vault tracery is engraved flat into the walking surface.
+    for(let y=room.y+230;y<room.y+room.h-150;y+=330){
+      g.stroke(24,24,25,110);g.strokeWeight(7);g.noFill();g.beginShape();
+      g.vertex(room.x+82,y+100);g.bezierVertex(room.x+room.w*.2,y+70,cx-80,y-58,cx,y-94);
+      g.bezierVertex(cx+80,y-58,room.x+room.w*.8,y+70,room.x+room.w-82,y+100);g.endShape();
+      g.stroke(152,129,93,43);g.strokeWeight(1);g.line(room.x+88,y+102,cx,y-88);g.line(cx,y-88,room.x+room.w-88,y+102);
+    }
+  }
   // Elevator landing plate. There are no electric strips or luminous signage.
   g.fill(42,44,46);g.stroke(20,23,27);g.strokeWeight(3);g.rect(-148,956,296,292,8);
   g.stroke(91,89,77,110);g.strokeWeight(1);
@@ -12573,13 +12778,18 @@ function paintUndergroundFloor(g,x0,y0) {
   ctx.restore();g.pop();
 }
 function drawUndergroundGround() {
-  const size=768,x0=Math.max(-760,viewLeft-40),x1=Math.min(760,viewRight+40);
-  const y0=Math.max(-1900,viewTop-40),y1=Math.min(1250,viewBottom+40);
+  const size=768,b=UNDERGROUND_BOUNDS,x0=Math.max(b.x,viewLeft-40),x1=Math.min(b.x+b.w,viewRight+40);
+  const y0=Math.max(b.y,viewTop-40),y1=Math.min(b.y+b.h,viewBottom+40);
   if(x1<=x0||y1<=y0)return;
   for(let cy=Math.floor(y0/size);cy<=Math.floor(y1/size);cy++)for(let cx=Math.floor(x0/size);cx<=Math.floor(x1/size);cx++) {
+    const tx=cx*size,ty=cy*size;
+    if(!UNDERGROUND_FLOORS.some(f=>f.x<tx+size&&f.x+f.w>tx&&f.y<ty+size&&f.y+f.h>ty))continue;
     const key=cx+','+cy;let tile=undergroundFloorCache.get(key);
-    if(!tile){tile=createGraphics(384,384);tile.pixelDensity(1);paintUndergroundFloor(tile,cx*size,cy*size);undergroundFloorCache.set(key,tile);}
-    image(tile,cx*size,cy*size,size,size);
+    if(!tile){
+      if(undergroundFloorCache.size>=24){const old=undergroundFloorCache.keys().next().value,surface=undergroundFloorCache.get(old);if(surface.remove)surface.remove();undergroundFloorCache.delete(old);}
+      tile=createGraphics(384,384);tile.pixelDensity(1);paintUndergroundFloor(tile,tx,ty);
+    }else undergroundFloorCache.delete(key);
+    undergroundFloorCache.set(key,tile);image(tile,tx,ty,size,size);
   }
 }
 function drawUndergroundWall(b) {
@@ -12627,10 +12837,31 @@ function drawUndergroundProp(b) {
       fill(48,41,37);stroke(21,19,20);rect(x+8,y+8,b.w-16,b.h-16,3);
       stroke(150,116,69,135);line(x+11,y+10,x+b.w-11,y+10);line(x+12,y+11,x+12,y+b.h-11);
       stroke(21,19,18);line(-6,y+12,5,0);line(5,0,-3,y+b.h-9);
+      if(b.cathedral){
+        stroke(128,103,69,130);strokeWeight(1.4);for(const dx of [-15,-7,7,15])line(dx,y+14,dx,y+b.h-14);
+        fill(98,80,56);stroke(23,20,21);strokeWeight(2);quad(-b.w*.38,-6,0,-b.h*.32,b.w*.38,-6,0,b.h*.3);
+        noFill();stroke(175,137,73,145);strokeWeight(1.3);quad(-b.w*.25,-5,0,-b.h*.23,b.w*.25,-5,0,b.h*.2);
+      }
+    } else if(b.undergroundProp==='PEW') {
+      fill(66,43,31);stroke(24,19,18);strokeWeight(2);rect(x+4,y+7,b.w-8,b.h-13,3);
+      fill(107,72,40);rect(x+5,y+4,b.w-10,11,2);fill(43,28,24);rect(x+10,y+b.h-15,b.w-20,8,2);
+      stroke(159,114,62,150);strokeWeight(1);line(x+12,y+8,x+b.w-12,y+8);line(x+15,y+23,x+b.w-15,y+23);
+      for(const side of [-1,1]){fill(71,44,28);stroke(23,18,17);strokeWeight(2);rect(side*(b.w/2-12)-7,y-3,14,b.h+9,3);}
+      if(b.broken){stroke(25,18,16);strokeWeight(5);line(-12,y+6,3,y+16);line(3,y+16,-5,y+27);stroke(164,120,66);strokeWeight(1.2);line(-7,y+8,7,y+16);}
+    } else if(b.undergroundProp==='BANNER') {
+      const cloth=b.cloth==='RED'?[96,28,32]:b.cloth==='BLUE'?[36,47,83]:[33,29,40];
+      noStroke();fill(...cloth);beginShape();vertex(x+7,y+4);vertex(x+b.w-7,y+4);vertex(x+b.w-13,y+b.h+11);vertex(0,y+b.h+3);vertex(x+13,y+b.h+11);endShape(CLOSE);
+      stroke(167,127,61);strokeWeight(2);line(x+12,y+8,x+b.w-12,y+8);line(-12,y+12,0,y+b.h-1);line(0,y+b.h-1,12,y+12);
+      stroke(32,24,19);strokeWeight(5);line(x,y+2,x+b.w,y+2);stroke(166,132,75);strokeWeight(2);line(x+1,y+1,x+b.w-1,y+1);
     } else if(b.undergroundProp==='ALTAR') {
       fill(41,33,35);stroke(18);rect(x+10,y+8,b.w-20,b.h-16,4);
       stroke(147,107,47);strokeWeight(2);line(x+17,0,x+b.w-17,0);ellipse(0,0,34,34);
       noStroke();fill(107,23,24);ellipse(-43,11,18,9);fill(154,128,75);rect(46,-14,22,29,2);fill(218,198,151);rect(49,-12,18,25,1);
+      if(b.cathedral){
+        fill(86,26,33);stroke(36,18,24);strokeWeight(1);beginShape();vertex(-b.w*.28,6);vertex(b.w*.28,6);vertex(b.w*.22,b.h*.5+12);vertex(0,b.h*.5+6);vertex(-b.w*.22,b.h*.5+12);endShape(CLOSE);
+        stroke(180,143,79);strokeWeight(1.5);line(-b.w*.23,10,b.w*.23,10);line(0,13,0,b.h*.5);line(-9,b.h*.3,9,b.h*.3);
+        fill(173,145,89);stroke(47,37,24);strokeWeight(1);ellipse(-b.w*.35,-6,19,13);rect(-b.w*.35-3,-17,6,14,1);
+      }
     } else {
       fill(45,36,31);stroke(18);rect(x+8,y+10,b.w-16,b.h-20,3);stroke(165,127,60);line(-8,-5,8,-5);line(0,-13,0,7);
       fill(170,150,110);noStroke();ellipse(0,16,12,10);fill(25);ellipse(-3,15,2,3);ellipse(3,15,2,3);
@@ -18313,15 +18544,73 @@ const OCCULT_TYPES = Object.freeze({
   BLUE:Object.freeze({type:'OCCULT_BLUE',hp:205,speed:40,range:350,color:[36,65,148]})
 });
 const OCCULT = Object.freeze({level:9,metre:20,lavaRange:120,shockRadius:60,
-  maxProjectiles:48,maxGroundEffects:24,maxZombiesPerOwner:12,maxZombies:24,
+  maxProjectiles:48,maxGroundEffects:24,maxZombiesPerOwner:12,maxZombies:24,summonBatch:6,maxActors:78,
   awareness:680,castReach:480,stepMs:1000/60});
 const occultProjectiles = [], occultGroundEffects = [];
 let occultNextId = 1, occultSpellSerial = 1;
+// Stable station identities let old four-caster saves gain the new rooms without
+// resurrecting any of their original defeated magicians.
+const OCCULT_DUNGEON_REVISION = 2;
+const OCCULT_LEGACY_IDS = Object.freeze(['tunnel-red','chamber-black','chamber-red','chamber-blue']);
 const OCCULT_ENCOUNTER = Object.freeze([
-  Object.freeze({id:'tunnel-red',kind:'RED',x:0,y:-180}),
-  Object.freeze({id:'chamber-black',kind:'BLACK',x:-420,y:-1280}),
-  Object.freeze({id:'chamber-red',kind:'RED',x:380,y:-1040}),
-  Object.freeze({id:'chamber-blue',kind:'BLUE',x:80,y:-1630})
+  // Chamber
+  Object.freeze({id:'chamber-black',kind:'BLACK',room:'chamber',x:-420,y:-1280}),
+  Object.freeze({id:'chamber-black-2',kind:'BLACK',room:'chamber',x:420,y:-1660}),
+  Object.freeze({id:'chamber-black-3',kind:'BLACK',room:'chamber',x:-420,y:-800}),
+  Object.freeze({id:'tunnel-red',kind:'RED',room:'chamber',x:0,y:-560}),
+  Object.freeze({id:'chamber-red',kind:'RED',room:'chamber',x:380,y:-1040}),
+  Object.freeze({id:'chamber-red-3',kind:'RED',room:'chamber',x:-350,y:-1040}),
+  Object.freeze({id:'chamber-red-4',kind:'RED',room:'chamber',x:350,y:-700}),
+  Object.freeze({id:'chamber-red-5',kind:'RED',room:'chamber',x:-150,y:-1430}),
+  Object.freeze({id:'chamber-red-6',kind:'RED',room:'chamber',x:190,y:-1300}),
+  Object.freeze({id:'chamber-blue',kind:'BLUE',room:'chamber',x:80,y:-1630}),
+  Object.freeze({id:'chamber-blue-2',kind:'BLUE',room:'chamber',x:-620,y:-1170}),
+  Object.freeze({id:'chamber-blue-3',kind:'BLUE',room:'chamber',x:600,y:-1320}),
+  // Nave
+  Object.freeze({id:'nave-black-1',kind:'BLACK',room:'nave',x:-390,y:-3190}),
+  Object.freeze({id:'nave-black-2',kind:'BLACK',room:'nave',x:390,y:-3190}),
+  Object.freeze({id:'nave-red-1',kind:'RED',room:'nave',x:-140,y:-2460}),
+  Object.freeze({id:'nave-red-2',kind:'RED',room:'nave',x:140,y:-2460}),
+  Object.freeze({id:'nave-red-3',kind:'RED',room:'nave',x:-140,y:-2780}),
+  Object.freeze({id:'nave-red-4',kind:'RED',room:'nave',x:140,y:-3060}),
+  Object.freeze({id:'nave-blue-1',kind:'BLUE',room:'nave',x:-390,y:-2860}),
+  Object.freeze({id:'nave-blue-2',kind:'BLUE',room:'nave',x:390,y:-2860}),
+  Object.freeze({id:'nave-blue-3',kind:'BLUE',room:'nave',x:0,y:-3160}),
+  // Transept
+  Object.freeze({id:'transept-black-1',kind:'BLACK',room:'transept',x:400,y:-4700}),
+  Object.freeze({id:'transept-black-2',kind:'BLACK',room:'transept',x:1300,y:-4700}),
+  Object.freeze({id:'transept-black-3',kind:'BLACK',room:'transept',x:850,y:-4370}),
+  Object.freeze({id:'transept-red-1',kind:'RED',room:'transept',x:400,y:-3910}),
+  Object.freeze({id:'transept-red-2',kind:'RED',room:'transept',x:700,y:-3980}),
+  Object.freeze({id:'transept-red-3',kind:'RED',room:'transept',x:1000,y:-3970}),
+  Object.freeze({id:'transept-red-4',kind:'RED',room:'transept',x:1320,y:-3950}),
+  Object.freeze({id:'transept-red-5',kind:'RED',room:'transept',x:400,y:-4330}),
+  Object.freeze({id:'transept-red-6',kind:'RED',room:'transept',x:1300,y:-4330}),
+  Object.freeze({id:'transept-blue-1',kind:'BLUE',room:'transept',x:400,y:-4540}),
+  Object.freeze({id:'transept-blue-2',kind:'BLUE',room:'transept',x:700,y:-4630}),
+  Object.freeze({id:'transept-blue-3',kind:'BLUE',room:'transept',x:1000,y:-4620}),
+  Object.freeze({id:'transept-blue-4',kind:'BLUE',room:'transept',x:1300,y:-4540}),
+  Object.freeze({id:'transept-blue-5',kind:'BLUE',room:'transept',x:700,y:-4200}),
+  Object.freeze({id:'transept-blue-6',kind:'BLUE',room:'transept',x:1000,y:-4200}),
+  // Sanctuary
+  Object.freeze({id:'sanctuary-black-1',kind:'BLACK',room:'sanctuary',x:-270,y:-6840}),
+  Object.freeze({id:'sanctuary-black-2',kind:'BLACK',room:'sanctuary',x:270,y:-6840}),
+  Object.freeze({id:'sanctuary-black-3',kind:'BLACK',room:'sanctuary',x:-670,y:-7050}),
+  Object.freeze({id:'sanctuary-black-4',kind:'BLACK',room:'sanctuary',x:670,y:-7050}),
+  Object.freeze({id:'sanctuary-red-1',kind:'RED',room:'sanctuary',x:-670,y:-5800}),
+  Object.freeze({id:'sanctuary-red-2',kind:'RED',room:'sanctuary',x:670,y:-5800}),
+  Object.freeze({id:'sanctuary-red-3',kind:'RED',room:'sanctuary',x:-260,y:-5960}),
+  Object.freeze({id:'sanctuary-red-4',kind:'RED',room:'sanctuary',x:260,y:-5960}),
+  Object.freeze({id:'sanctuary-red-5',kind:'RED',room:'sanctuary',x:-260,y:-6290}),
+  Object.freeze({id:'sanctuary-red-6',kind:'RED',room:'sanctuary',x:260,y:-6290}),
+  Object.freeze({id:'sanctuary-red-7',kind:'RED',room:'sanctuary',x:0,y:-6650}),
+  Object.freeze({id:'sanctuary-blue-1',kind:'BLUE',room:'sanctuary',x:-670,y:-6190}),
+  Object.freeze({id:'sanctuary-blue-2',kind:'BLUE',room:'sanctuary',x:670,y:-6190}),
+  Object.freeze({id:'sanctuary-blue-3',kind:'BLUE',room:'sanctuary',x:-260,y:-6610}),
+  Object.freeze({id:'sanctuary-blue-4',kind:'BLUE',room:'sanctuary',x:260,y:-6610}),
+  Object.freeze({id:'sanctuary-blue-5',kind:'BLUE',room:'sanctuary',x:-260,y:-6980}),
+  Object.freeze({id:'sanctuary-blue-6',kind:'BLUE',room:'sanctuary',x:260,y:-6980}),
+  Object.freeze({id:'sanctuary-blue-7',kind:'BLUE',room:'sanctuary',x:0,y:-6880}),
 ]);
 function isOccultMagician(e) { return !!e && (e.eType==='OCCULT_BLACK'||e.eType==='OCCULT_RED'||e.eType==='OCCULT_BLUE'); }
 function isOccultActor(e) { return isOccultMagician(e) || !!e && e.eType==='OCCULT_ZOMBIE'; }
@@ -18331,7 +18620,23 @@ function occultActive() {
     !inStoryIntro && !inStoryRoom && !inTravelMenu && !inWorldBuildingMenu;
 }
 function occultFrameMs(dtMs) { return Math.max(0,Math.min(100,Number.isFinite(dtMs)?dtMs:1000/60)); }
-function createOccultMagician(kind,x,y,id) {
+function occultRoomIdentity(x,y,room) {
+  const rooms=typeof UNDERGROUND_ROOMS!=='undefined'?UNDERGROUND_ROOMS:[];
+  if(rooms.some(r=>r.id===room))return room;
+  const at=typeof undergroundRoomAt==='function'?undergroundRoomAt(x,y):null;
+  return at?at.id:'chamber';
+}
+function occultRoomAwake(e) {
+  const s=e&&(e.occult||e.occultZombie);
+  return !s||typeof undergroundRoomAccessible!=='function'||undergroundRoomAccessible(s.room||'chamber');
+}
+function occultCeremonyFacing(e) {
+  const rooms=typeof UNDERGROUND_ROOMS!=='undefined'?UNDERGROUND_ROOMS:[];
+  const room=rooms.find(r=>r.id===e.occult.room);
+  if(room&&Number.isFinite(room.altarX)&&Number.isFinite(room.altarY))
+    e.aimAngle=Math.atan2(room.altarY-e.y,room.altarX-e.x);
+}
+function createOccultMagician(kind,x,y,id,room) {
   kind=String(kind).replace('OCCULT_','').toUpperCase();
   const type=OCCULT_TYPES[kind];if(!type)return null;
   const e=new Character(x,y,false,type.type);
@@ -18339,17 +18644,18 @@ function createOccultMagician(kind,x,y,id) {
   e.pantsCol=color(34,29,33);e.skinCol=color(167,146,121);
   e.isFriendly=e.isNeutral=e.isPopulation=e.isMilitary=false;e.isUnarmed=true;e.isArmed=false;
   e.currentWeapon=WEAPONS.PISTOL;e.occultKind=kind;e.state='OCCULT_IDLE';
-  e.occult={id:id||'mage-'+occultNextId++,kind,phase:'IDLE',cast:null,
+  e.occult={id:id||'mage-'+occultNextId++,kind,room:occultRoomIdentity(x,y,room),phase:'IDLE',cast:null,
     chargeMs:0,chargeDurationMs:1,cooldownMs:700,sequence:0,angle:0,
     targetX:x,targetY:y,awakened:false,recoverMs:0,sites:[]};
-  return e;
+  occultCeremonyFacing(e);return e;
 }
-function createOccultZombie(x,y,owner,id) {
+function createOccultZombie(x,y,owner,id,room) {
   const e=new Character(x,y,false,'OCCULT_ZOMBIE');
   e.hp=e.maxHp=58;e.bodyW=21;e.bodyH=27;e.shirtCol=color(70,62,49);e.pantsCol=color(46,43,39);
   e.skinCol=color(117,137,92);e.isFriendly=e.isNeutral=e.isPopulation=e.isMilitary=false;
   e.isUnarmed=true;e.isArmed=false;e.currentWeapon=WEAPONS.PISTOL;e.state='OCCULT_HUNT';
   e.occultZombie={id:id||'zombie-'+occultNextId++,ownerId:typeof owner==='string'?owner:owner&&owner.occult&&owner.occult.id,
+    room:occultRoomIdentity(x,y,room||owner&&owner.occult&&owner.occult.room),
     windupMs:0,windupDurationMs:420,biteCooldownMs:500,emergeMs:450};
   return e;
 }
@@ -18373,6 +18679,24 @@ function occultPointClear(x,y,r=0,ignore=null) {
     for(const e of enemiesList)if(e!==ignore&&occultAlive(e)&&Math.hypot(x-e.x,y-e.y)<r+17)return false;
   }
   return true;
+}
+// Authored fixtures can move between revisions. Keep a valid saved survivor
+// near its original station instead of deleting it or trapping it in furniture.
+function occultRestorePosition(x,y,r=15) {
+  if(![x,y,r].every(Number.isFinite)||r<0||r>64||
+      !UNDERGROUND_FLOORS.some(f=>x>=f.x&&x<=f.x+f.w&&y>=f.y&&y<=f.y+f.h))return null;
+  if(occultPointClear(x,y,r))return {x,y};
+  const room=undergroundRoomAt(x,y);
+  for(let radius=16;radius<=240;radius+=16) {
+    const steps=Math.max(16,Math.ceil(Math.PI*2*radius/20));
+    for(let i=0;i<steps;i++) {
+      const angle=i*Math.PI*2/steps,nx=x+Math.cos(angle)*radius,ny=y+Math.sin(angle)*radius;
+      const candidateRoom=undergroundRoomAt(nx,ny);
+      if(room&&(!candidateRoom||candidateRoom.id!==room.id))continue;
+      if(occultPointClear(nx,ny,r))return {x:nx,y:ny};
+    }
+  }
+  return null;
 }
 function occultClearSegment(x0,y0,x1,y1,r=2) {
   if(![x0,y0,x1,y1,r].every(Number.isFinite))return false;
@@ -18415,7 +18739,8 @@ function occultCastPose(e) {
   if(!s)return {kind:null,cast:null,casting:false,progress:0,release:0};
   return {kind:s.kind,cast:s.cast,spell:s.cast,casting:s.phase==='CHARGE',
     progress:Math.min(1,s.chargeMs/Math.max(1,s.chargeDurationMs)),
-    release:s.phase==='RECOVER'?Math.max(0,s.recoverMs/380):0};
+    release:s.phase==='RECOVER'?Math.max(0,s.recoverMs/380):0,
+    ceremony:!s.awakened&&s.phase==='IDLE'?.45+.2*Math.sin(frameCount*.018+e.x*.013+e.y*.007):0};
 }
 function occultCancelCast(e) {
   if(e&&e.occult){const s=e.occult;s.phase='IDLE';s.cast=null;s.chargeMs=0;s.sites=[];s.cooldownMs=Math.max(600,s.cooldownMs||0);}
@@ -18430,8 +18755,8 @@ function occultMove(e,angle,speed,dt) {
 }
 function occultSummonSites(e) {
   const result=[],s=e.occult;
-  for(let i=0;i<24&&result.length<3;i++) {
-    const a=(s.sequence*3+i)*2.399963229728653,d=64+Math.floor(i/8)*28;
+  for(let i=0;i<72&&result.length<OCCULT.summonBatch;i++) {
+    const a=s.sequence*.43+i*Math.PI/3+Math.floor(i/6)*.37,d=76+Math.floor(i/6)*18;
     const x=e.x+Math.cos(a)*d,y=e.y+Math.sin(a)*d;
     if(!occultPointClear(x,y,17,e)||!occultClearSegment(e.x,e.y,x,y,4))continue;
     if(result.some(p=>Math.hypot(p.x-x,p.y-y)<37))continue;
@@ -18470,7 +18795,7 @@ function occultReleaseCast(e) {
   if(s.cast==='SUMMON') {
     const owned=enemiesList.filter(z=>occultAlive(z)&&z.occultZombie&&z.occultZombie.ownerId===s.id).length;
     const total=enemiesList.filter(z=>occultAlive(z)&&z.occultZombie).length;
-    let allowance=Math.min(3,OCCULT.maxZombiesPerOwner-owned,OCCULT.maxZombies-total);
+    let allowance=Math.min(OCCULT.summonBatch,OCCULT.maxZombiesPerOwner-owned,OCCULT.maxZombies-total);
     for(const p of s.sites)if(allowance>0&&occultPointClear(p.x,p.y,17,e)) {
       enemiesList.push(createOccultZombie(p.x,p.y,e));allowance--;
       occultPushGround({kind:'EMERGE',x:p.x,y:p.y,ownerId:s.id,ageMs:0,ttlMs:650,hitIds:[]});
@@ -18532,6 +18857,11 @@ function occultUpdateEnemy(e,dtMs) {
     return true;
   }
   if(e.hitFlash>0)e.hitFlash--;
+  if(!occultRoomAwake(e)) {
+    if(e.occult){occultCancelCast(e);occultCeremonyFacing(e);e.state='OCCULT_CEREMONY';}
+    else e.isMoving=false;
+    return true;
+  }
   if(e.occultZombie){occultZombieUpdate(e,dt);return true;}
   const s=e.occult,target=occultTarget(e);s.cooldownMs=Math.max(0,s.cooldownMs-dt);
   if(s.phase==='CHARGE') {
@@ -18548,7 +18878,7 @@ function occultUpdateEnemy(e,dtMs) {
     if(s.recoverMs<=0){s.phase='IDLE';s.cast=null;}
     return true;
   }
-  if(!target){e.isMoving=false;return true;}
+  if(!target){e.isMoving=false;if(!s.awakened){e.state='OCCULT_CEREMONY';occultCeremonyFacing(e);}return true;}
   s.awakened=true;e.state='OCCULT_HUNT';
   const d=Math.hypot(target.x-e.x,target.y-e.y),a=Math.atan2(target.y-e.y,target.x-e.x);
   e.aimAngle=a;
@@ -18682,12 +19012,12 @@ function resetOccultWorld() { occultProjectiles.length=occultGroundEffects.lengt
 function seedOccultEncounter() {
   if(currentLevel!==OCCULT.level)return;
   for(const post of OCCULT_ENCOUNTER)if(!enemiesList.some(e=>e.occult&&e.occult.id===post.id)) {
-    const e=createOccultMagician(post.kind,post.x,post.y,post.id);enemiesList.push(e);
+    const e=createOccultMagician(post.kind,post.x,post.y,post.id,post.room);enemiesList.push(e);
   }
 }
 function serializeOccultState() {
-  return {version:1,nextId:occultNextId,spellSerial:occultSpellSerial,
-    actors:enemiesList.filter(e=>isOccultActor(e)&&occultAlive(e)).slice(0,40).map(e=>({
+  return {version:1,dungeonRevision:OCCULT_DUNGEON_REVISION,nextId:occultNextId,spellSerial:occultSpellSerial,
+    actors:enemiesList.filter(e=>isOccultActor(e)&&occultAlive(e)).slice(0,OCCULT.maxActors).map(e=>({
       type:e.eType,x:e.x,y:e.y,hp:e.hp,aimAngle:e.aimAngle,moveAngle:e.moveAngle,walkCycle:e.walkCycle,
       stunTimer:e.stunTimer,skeletonTimer:e.skeletonTimer,
       occult:e.occult?{...e.occult,sites:e.occult.sites.map(p=>({...p}))}:null,
@@ -18701,11 +19031,12 @@ function restoreOccultState(data) {
   occultNextId=Math.max(1,Math.min(10000000,Math.floor(data.nextId)||1));
   occultSpellSerial=Math.max(1,Math.min(10000000,Math.floor(data.spellSerial)||1));
   const ids=new Set();let zombies=0;
-  for(const a of data.actors.slice(0,40)) {
-    if(!a||!Number.isFinite(a.x)||!Number.isFinite(a.y)||!occultPointClear(a.x,a.y,14)||!(a.hp>0))continue;
+  for(const a of data.actors.slice(0,OCCULT.maxActors)) {
+    if(!a||!(a.hp>0))continue;
+    const position=occultRestorePosition(a.x,a.y,14);if(!position)continue;
     const isZombie=a.type==='OCCULT_ZOMBIE',s=isZombie?a.zombie:a.occult;
     if(!s||typeof s.id!=='string'||s.id.length>80||ids.has(s.id)||isZombie&&zombies>=OCCULT.maxZombies)continue;
-    const e=isZombie?createOccultZombie(a.x,a.y,s.ownerId,s.id):createOccultMagician(a.type,a.x,a.y,s.id);
+    const e=isZombie?createOccultZombie(position.x,position.y,s.ownerId,s.id,s.room):createOccultMagician(a.type,position.x,position.y,s.id,s.room);
     if(!e)continue;ids.add(s.id);if(isZombie)zombies++;
     e.hp=Math.min(e.maxHp,a.hp);e.aimAngle=Number.isFinite(a.aimAngle)?a.aimAngle:0;
     e.moveAngle=Number.isFinite(a.moveAngle)?a.moveAngle:e.aimAngle;e.walkCycle=Number.isFinite(a.walkCycle)?a.walkCycle:0;
@@ -18719,10 +19050,17 @@ function restoreOccultState(data) {
         sequence:Math.max(0,Math.floor(Number(s.sequence)||0)),angle:Number.isFinite(s.angle)?s.angle:e.aimAngle,
         targetX:Number.isFinite(s.targetX)?s.targetX:e.x,targetY:Number.isFinite(s.targetY)?s.targetY:e.y,
         awakened:!!s.awakened,recoverMs:Math.max(0,Math.min(380,Number(s.recoverMs)||0)),
-        sites:Array.isArray(s.sites)?s.sites.filter(p=>p&&Number.isFinite(p.x)&&Number.isFinite(p.y)&&occultPointClear(p.x,p.y,14)).slice(0,3).map(p=>({x:p.x,y:p.y})):[]});
+        sites:Array.isArray(s.sites)?s.sites.filter(p=>p&&Number.isFinite(p.x)&&Number.isFinite(p.y)&&occultPointClear(p.x,p.y,14)).slice(0,OCCULT.summonBatch).map(p=>({x:p.x,y:p.y})):[]});
       if(!cast)e.occult.phase='IDLE';
     }
     enemiesList.push(e);
+  }
+  // A missing original ID in a legacy save means that caster was defeated.
+  // Only stations introduced by this expansion are added during migration.
+  if(!(Number(data.dungeonRevision)>=OCCULT_DUNGEON_REVISION)) {
+    for(const post of OCCULT_ENCOUNTER)if(ids.size<OCCULT.maxActors&&!OCCULT_LEGACY_IDS.includes(post.id)&&!ids.has(post.id)) {
+      enemiesList.push(createOccultMagician(post.kind,post.x,post.y,post.id,post.room));ids.add(post.id);
+    }
   }
   const restoreItems=(list,out,effect)=>{
     if(!Array.isArray(list))return;
@@ -25415,9 +25753,10 @@ function drawUI() {
     cityPopulationRatio !== null ? cityPopulationRatio : (max(0, MAX_KILLS - totalKills) / MAX_KILLS);
 
   if(currentLevel===9){
-    const remaining=enemiesList.filter(e=>isOccultMagician(e)&&e.hp>0&&!e.dead).length;
+    const roomId=undergroundCurrentRoom(),room=UNDERGROUND_ROOMS.find(r=>r.id===roomId);
+    const remaining=enemiesList.filter(e=>isOccultMagician(e)&&e.hp>0&&!e.dead&&e.occult.room===roomId).length;
     fill(218,181,103);textAlign(LEFT,TOP);textFont('sans-serif');textSize(10);
-    text(remaining?'OCCULT MAGICIANS: '+remaining:'OCCULT CHAMBER · CLEARED',22,59);
+    text((room?room.name.toUpperCase():'OCCULT CHAMBER')+' · '+(remaining?remaining+' MAGICIANS':'CLEARED'),22,59);
   }else{
   fill(50, 200); rect(20, 55, 200, 5, 2);
   
@@ -28123,7 +28462,7 @@ function loadGame() {
             }
             restoreShovelPlayer(state.shovel);
             resetActorStance(player, COMBAT_STANCES.includes(state.playerStance) ? state.playerStance : 'STAND');
-            if (actorStance(player) === 'PRONE' && !stanceProneSpotClear(player)) resetActorStance(player, 'CROUCH');
+            if (currentLevel!==9 && actorStance(player) === 'PRONE' && !stanceProneSpotClear(player)) resetActorStance(player, 'CROUCH');
         }
         if (smgUnlocked) { player.mags["MACHINE GUN"] = 3; player.weaponAmmo["MACHINE GUN"] = playerMagazineCapacity(WEAPONS.SMG); }
         if (dualSmgUnlocked) { player.mags["DUAL SMGS"] = 3; player.weaponAmmo["DUAL SMGS"] = playerMagazineCapacity(WEAPONS.DUAL_SMG); }
@@ -28291,15 +28630,19 @@ function loadGame() {
         // Re-form exterior rookie patrols after the towers-down load path has
         // rebuilt the city roster and removed its old random combatants.
         ensureCityRookiePatrols();
+        restoreUndergroundRoute(state.undergroundRoute);
         if(currentLevel===9){
           restoreOccultState(state.occult);
-          if(!undergroundPointWalkable(player.x,player.y,15)){player.x=0;player.y=1100;}
+          const restoredPosition=occultRestorePosition(player.x,player.y,15);
+          if(restoredPosition){player.x=restoredPosition.x;player.y=restoredPosition.y;}
+          else{player.x=0;player.y=1100;}
+          // A saved open doorway must be restored before testing a prone body.
+          if(actorStance(player)==='PRONE'&&!stanceProneSpotClear(player))resetActorStance(player,'CROUCH');
           // A chamber save must reopen on its player, rather than easing from
           // the lift entry across several screens of unlit rock.
           window.currentPan=0;camX=player.x-width/(2*zoom);camY=player.y-height/(2*zoom);
           viewLeft=camX;viewRight=camX+width/zoom;viewTop=camY;viewBottom=camY+height/zoom;
         }
-        restoreUndergroundRoute(state.undergroundRoute);
     }
 }
 
@@ -38056,6 +38399,7 @@ function LEGACY_RISE_OVERRIDE(b) {
   return 0;
 }
 function buildingRise(b) {
+  if(b.undergroundGate)return 42;
   if(b.undergroundWall)return b.undergroundWall==='SHAFT'?29:38;
   if(b.undergroundProp)return b.undergroundProp==='TIKI_TORCH'?34:b.undergroundProp==='PILLAR'?45:b.undergroundProp==='ALTAR'?24:17;
   if (b._rise !== undefined) return b._rise;
@@ -40494,7 +40838,7 @@ function occultFigurePose(c) {
   const progress=Math.max(0,Math.min(1,raw));
   const recover=native&&Number.isFinite(native.release)?Math.max(0,Math.min(1,native.release)):
     state.phase==='RECOVER'?1-Math.max(0,Math.min(1,(state.elapsedMs||0)/(state.durationMs||380))):0;
-  const charge=casting?progress*progress*(3-2*progress):0;
+  const charge=casting?progress*progress*(3-2*progress):native&&native.ceremony?native.ceremony*.35:0;
   const step=c.isMoving?Math.sin(c.walkCycle||0):0;
   const sway=c.isMoving?Math.sin((c.walkCycle||0)*.5)*1.6:Math.sin(frameCount*.045+(c.x||0)*.017)*.45;
   const right=swordFitArm(c,14+charge*5-recover*2,15-charge*2,true);

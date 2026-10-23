@@ -54,7 +54,7 @@ ok('occultProjectiles.length===0','A knockdown also cancels an already released 
 P(`occultFixture();var black=addMage('BLACK',0,-1300);occultBeginCast(black,'SUMMON',player);occultTick(1100);`);
 ok('enemiesList.filter(e=>e.occultZombie).length===0&&black.occult.sites.length>0','Black summoning shows floor sites before a horde appears');
 P('occultTick(100);');
-ok('enemiesList.filter(e=>e.occultZombie).length===3','The first completed chant raises a three-zombie horde');
+ok('enemiesList.filter(e=>e.occultZombie).length===6','The first completed chant raises a six-zombie horde');
 ok('enemiesList.filter(e=>e.occultZombie).every((a,i,list)=>list.every((b,j)=>i===j||Math.hypot(a.x-b.x,a.y-b.y)>=37))','Summoned zombies start with separated collision footprints');
 P(`for(let i=0;i<10;i++){black.occult.phase='IDLE';black.occult.sequence++;
  occultBeginCast(black,'SUMMON',player);black.occult.chargeMs=1200;occultReleaseCast(black);}`);
@@ -133,7 +133,7 @@ P(`occultFixture();seedOccultEncounter();var savedMage=enemiesList.find(e=>e.occ
  occultBeginCast(savedMage,'SHARD',player);occultUpdateEnemy(savedMage,100);occultUpdateEnemy(savedMage,100);
  enemiesList.find(e=>e.occult.id==='tunnel-red').hp=0;
  var savedOccult=JSON.parse(JSON.stringify(serializeOccultState()));restoreOccultState(savedOccult);`);
-ok('enemiesList.length===3&&!enemiesList.some(e=>e.occult.id===\'tunnel-red\')','A saved cleared caster does not respawn when the encounter restores');
+ok('enemiesList.length===53&&!enemiesList.some(e=>e.occult.id===\'tunnel-red\')','All expanded rooms restore without reviving a defeated original caster');
 ok('enemiesList.find(e=>e.occult.kind===\'BLUE\').hp===165','The saved encounter retains native caster wounds');
 ok('enemiesList.find(e=>e.occult.kind===\'BLUE\').occult.chargeMs===200','A saved charge retains its fair warning stage');
 P(`var savedBlue=enemiesList.find(e=>e.occult.kind==='BLUE');occultFireProjectile(savedBlue,'SHARD',Math.PI/2);

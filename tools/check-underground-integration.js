@@ -84,7 +84,8 @@ P('isPaused=true;var pausedDoor=undergroundDoorOpenAmount();');advance(400);
 ok('undergroundDoorOpenAmount()===pausedDoor','Pausing freezes the arrival door animation');
 P('isPaused=false;');advance(450);
 ok('undergroundDoorOpenAmount()===1&&!undergroundRouteBusy()','The 900 ms opening releases movement into the tunnel');
-ok('enemiesList.length===4&&enemiesList.every(isOccultMagician)','Only the four authored Occult Magicians populate the underground encounter');
+ok('enemiesList.length===54&&enemiesList.every(isOccultMagician)','The four authored rooms hold their finite 54-magician roster');
+ok("enemiesList.filter(e=>e.occult.room==='chamber').length===12",'The opening chamber contains twelve magicians');
 ok('!barrels.length&&!parkingCars.length&&!nm0Scientists.length&&!townCitizens.length','Outdoor clutter and lab civilians do not enter the chamber');
 P(`var caveRosterBefore=enemiesList.length;for(let i=0;i<40;i++){frameCount=(Math.floor(frameCount/45)+1)*45;
  maintainHostiles();spawnSingleEnemy();spawnSingleEnemy(true);}`);
@@ -94,6 +95,40 @@ P('player.ignoreBldgTimer=20;');
 ok('player.checkCol(1000,1100)&&player.checkCol(0,1500)&&!player.checkCol(0,700)',
  'A dash collision bypass cannot leave the authored tunnel footprint');
 P('player.ignoreBldgTimer=0;');
+
+// The room doors are ordinary interaction targets, with the same physical
+// threshold before and after save/load, rather than decorative painted doors.
+ok("!openUndergroundGate('nave')&&!undergroundRoomAccessible('nave')",'A distant player cannot open the next chamber remotely');
+P('player.x=0;player.y=-1780;activeBuildings=buildings;invalidateColIndex();');
+ok("undergroundNearbyGate().id==='nave'&&player.checkCol(0,-1900)", 'The north chamber door is reachable and physically closed');
+ok('!hasLOS(0,-1800,0,-2000)&&!occultClearSegment(0,-1800,0,-2000,1)', 'A closed ritual door blocks native and magical sight');
+P('player.ignoreBldgTimer=20;');
+ok('player.checkCol(0,-1900)', 'A dash cannot pass through an unopened ritual door');
+P('player.ignoreBldgTimer=0;');
+tap(ctx.width/2,ctx.height-95);
+ok("undergroundDungeon.opening.id==='nave'&&undergroundGateAmount('nave')===0",'The native touch prompt starts the north door opening');
+advance(300);
+ok("undergroundGateAmount('nave')>0&&undergroundGateAmount('nave')<1&&player.checkCol(0,-1900)",'The door parts visibly while its threshold stays solid');
+P('isPaused=true;');advance(400);
+ok("undergroundDungeon.opening.elapsedMs===300",'Pause freezes the ritual door animation');
+P('isPaused=false;saveGame();loadGame();');
+ok("undergroundDungeon.opening.id==='nave'&&undergroundDungeon.opening.elapsedMs===300",'Loading resumes a partly opened door');
+advance(350);
+ok("undergroundGateAmount('nave')===1&&undergroundRoomAccessible('nave')&&!player.checkCol(0,-1900)", 'A fully parted door releases the north passage');
+ok("!buildings.some(b=>b.undergroundGate==='nave')&&!activeBuildings.some(b=>b.undergroundGate==='nave')&&hasLOS(0,-1800,0,-2000)&&occultClearSegment(0,-1800,0,-2000,1)", 'Opening immediately clears collision and both sight paths');
+P('player.x=0;player.y=-1900;saveGame();loadGame();');
+ok("player.x===0&&player.y===-1900&&undergroundGateAmount('nave')===1", 'Loading a save on an opened doorway keeps the player at that doorway');
+P("player.aimAngle=-Math.PI/2;resetActorStance(player,'PRONE');saveGame();loadGame();");
+ok("actorStance(player)==='PRONE'&&stanceProneSpotClear(player)&&player.x===0&&player.y===-1900", 'A prone doorway save checks body clearance after restoring the opened door');
+P('player.x=475;player.y=-3330;updateUndergroundRoute(16);');keys.add(70);P('updateUndergroundRoute(16);');keys.clear();
+ok("undergroundDungeon.opening.id==='transept'", 'Keyboard F opens the offset north door');advance(650);
+P('player.x=850;player.y=-4880;');connect();P('updateUndergroundRoute(16);');
+P('boxingEnter(player);');pad.buttons[0].pressed=true;P('updateUndergroundRoute(16);');
+ok("!undergroundDungeon.opening&&!undergroundRoomAccessible('sanctuary')", 'Boxing stance retains ownership of gamepad A at a doorway');
+P('player._boxing.active=false;');pad.buttons[0].pressed=false;P('updateUndergroundRoute(16);');pad.buttons[0].pressed=true;P('updateUndergroundRoute(16);');
+ok("undergroundDungeon.opening.id==='sanctuary'", 'A fresh gamepad A opens the final connected ritual door');advance(650);pad=null;
+P('player.x=0;player.y=-5700;saveGame();loadGame();');
+ok("undergroundCurrentRoom()==='sanctuary'&&undergroundDungeon.opened.length===3&&enemiesList.length===54", 'Native save/load retains the expanded roster and all three opened doors deep in the dungeon');
 
 // The saved encounter keeps wounded and dead casters separate from a fresh
 // seeded visit; the native load path must restore the snapshot after its map.
@@ -112,6 +147,21 @@ ok('enemiesList.some(e=>e.occult&&e.occult.id===woundedCasterId&&e.hp===67)&&!en
 ok('undergroundDoorOpenAmount()===1&&!undergroundRouteBusy()','A completed arrival does not replay its locked door sequence after loading');
 ok('Math.abs(camX+width/(2*zoom)-player.x)<.01&&Math.abs(camY+height/(2*zoom)-player.y)<.01&&window.currentPan===0','A restored chamber is visible immediately, centered on its saved player');
 assert.equal(storage.get('urbanTwinStickSave'),caveSave,'Loading preserves the saved checkpoint bytes');checks++;
+
+// The expanded altar occupies formerly walkable floor. A real pre-expansion
+// checkpoint must rescue blocked people rather than trap or discard them.
+const oldCave=JSON.parse(caveSave);
+delete oldCave.occult.dungeonRevision;delete oldCave.undergroundRoute.dungeon;
+oldCave.playerX=-350;oldCave.playerY=-1790;
+oldCave.occult.actors=oldCave.occult.actors.filter(a=>a.occult&&['tunnel-red','chamber-black','chamber-red','chamber-blue'].includes(a.occult.id));
+const oldBlack=oldCave.occult.actors.find(a=>a.occult.id==='chamber-black');
+oldBlack.x=-400;oldBlack.y=-1790;oldBlack.hp=155;
+storage.set('urbanTwinStickSave',JSON.stringify(oldCave));P('loadGame();');
+ok('!player.checkCol(player.x,player.y)&&Math.hypot(player.x+350,player.y+1790)<=240',
+ 'An older checkpoint blocked by new altar geometry loads the player onto nearby clear floor');
+ok("enemiesList.some(e=>e.occult&&e.occult.id==='chamber-black'&&e.hp===155&&occultPointClear(e.x,e.y,14)&&Math.hypot(e.x+400,e.y+1790)<=240)",
+ 'A surviving old caster inside new furniture retains its identity and wounds on nearby clear floor');
+storage.set('urbanTwinStickSave',caveSave);P('loadGame();');
 P(`isStoryMode=false;totalKills=MAX_KILLS;var killFixture=enemiesList.find(isOccultMagician);
  killFixture.hp=0;doTick=false;updateEntities();`);
 for(const fn of pending.splice(0))fn();

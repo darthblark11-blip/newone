@@ -1,5 +1,5 @@
-// The descent has one connected, enclosed authored floor. Exercise native
-// collision against its fixtures and cache/render paths independently of AI.
+// The dungeon is a joined excavation with physical doors, clear processional
+// routes, distinct fixtures and a bounded texture cache, independent of AI.
 const assert=require('node:assert/strict');
 const {ctx,probe,calls}=require('./harness');
 const P=s=>probe('('+s+')');
@@ -9,39 +9,63 @@ ctx.setTimeout=()=>0;
 probe(`currentLevel=9;currentBiome=9;BIOME_ACTIVE=false;buildings=[];barrels=[];activeParkingCars=[];
  generateUndergroundMap();activeBuildings=buildings;invalidateColIndex();
  player=new Character(0,1100,true);viewLeft=-850;viewRight=850;viewTop=-2000;viewBottom=1350;`);
-ok('the entrance, tunnel and chamber are a fixed three-part floor',P('UNDERGROUND_FLOORS.length===3'));
-ok('the room is substantially wider than its approach',P('UNDERGROUND_FLOORS[2].w>UNDERGROUND_FLOORS[1].w*4'));
-ok('fourteen warm torches are the only authored lamp props',P("UNDERGROUND_TORCHES.length===14&&buildings.filter(b=>b.undergroundProp==='TIKI_TORCH').length===14"));
-ok('all torches are inside the excavation',P('UNDERGROUND_TORCHES.every(t=>undergroundPointWalkable(t.x,t.y)&&t.radius>=190&&t.radius<=275)'));
+ok('four rooms connect to the existing lift and tunnel through five passage sections',P('UNDERGROUND_ROOMS.length===4&&UNDERGROUND_FLOORS.length===11'));
+ok('the opening chamber remains substantially wider than its approach',P('UNDERGROUND_FLOORS[2].w>UNDERGROUND_FLOORS[1].w*4'));
+ok('every room has its own name and accessible footprint',P('new Set(UNDERGROUND_ROOMS.map(r=>r.name)).size===4&&UNDERGROUND_ROOMS.every(r=>undergroundRoomAt(r.x+r.w/2,r.y+r.h/2)===r)'));
+ok('thirty-nine warm tiki torches light the expanded excavation',P("UNDERGROUND_TORCHES.length===39&&buildings.filter(b=>b.undergroundProp==='TIKI_TORCH').length===39"));
+ok('all torches stand inside the excavation with a bounded warm reach',P('UNDERGROUND_TORCHES.every(t=>undergroundPointWalkable(t.x,t.y)&&t.radius>=190&&t.radius<=275)'));
 ok('a healthy player fits the lift arrival',P('undergroundPointWalkable(player.x,player.y,15)&&!player.checkCol(player.x,player.y)'));
 probe(`window.undergroundBlockedRoute=[];
  for(let y=1200;y>=-1670;y-=10)if(!undergroundPointWalkable(0,y,15)||player.checkCol(0,y))undergroundBlockedRoute.push(y);`);
-ok('the full entrance tunnel and chamber approach connect without a seam',P('undergroundBlockedRoute.length===0'));
-ok('all four authored magician stations are clear',P('[[0,-180],[-420,-1280],[380,-1040],[80,-1630]].every(([x,y])=>undergroundPointWalkable(x,y,15)&&!player.checkCol(x,y))'));
-ok('the northern chamber wall is solid',P('player.checkCol(0,-1910)&&!undergroundPointWalkable(0,-1910,15)'));
+ok('the full entrance tunnel and chamber approach still connect without a seam',P('undergroundBlockedRoute.length===0'));
+ok('every authored magician station is physically clear',P('OCCULT_ENCOUNTER.every(p=>undergroundPointWalkable(p.x,p.y,15)&&!player.checkCol(p.x,p.y))'));
+ok('three north doors are solid before opening',P('UNDERGROUND_GATES.every(g=>player.checkCol(g.x,g.y)&&!undergroundPointWalkable(g.x,g.y,15))'));
+ok('walls beside the first door retain a solid threshold',P('player.checkCol(-250,-1910)&&player.checkCol(250,-1910)'));
 ok('both corridor walls block the player',P('player.checkCol(-175,200)&&player.checkCol(175,200)'));
 ok('both chamber walls block the player',P('player.checkCol(-770,-1000)&&player.checkCol(770,-1000)'));
 ok('the lift has a closed back wall',P('player.checkCol(0,1260)&&!undergroundPointWalkable(0,1260,15)'));
 ok('earthen corners do not become diagonal escape routes',P('!undergroundPointWalkable(165,1010,15)&&!undergroundPointWalkable(180,-360,15)'));
 ok('invalid and remote coordinates never count as a floor',P('!undergroundPointWalkable(NaN,0)&&!undergroundPointWalkable(0,Infinity)&&!undergroundPointWalkable(0,0,-1)&&!undergroundPointWalkable(4000,0,15)'));
-ok('standing pillars, reliquaries and altar are native solids',P("buildings.filter(b=>['PILLAR','RELIQUARY','ALTAR'].includes(b.undergroundProp)).every(b=>player.checkCol(b.x,b.y))"));
+ok('pillars, reliquaries, pews and altars are native solids',P("buildings.filter(b=>['PILLAR','RELIQUARY','PEW','ALTAR'].includes(b.undergroundProp)).every(b=>player.checkCol(b.x,b.y))"));
+ok('different rooms have paired nave columns, broken pews and cloth banners',P("buildings.filter(b=>b.undergroundProp==='PEW').length===10&&buildings.filter(b=>b.broken).length===2&&buildings.filter(b=>b.undergroundProp==='BANNER').length===4"));
+probe(`restoreUndergroundDungeon({version:1,opened:UNDERGROUND_GATES.map(g=>g.id)});
+ window.dungeonRouteHits=[];
+ const dungeonRoute=[[0,1200],[0,-2100],[0,-3180],[475,-3180],[475,-3850],[850,-3850],[850,-5380],[0,-5380],[0,-6870]];
+ for(let i=1;i<dungeonRoute.length;i++){
+   const[a,b]=[dungeonRoute[i-1],dungeonRoute[i]],steps=Math.ceil(Math.hypot(b[0]-a[0],b[1]-a[1])/8);
+   for(let k=0;k<=steps;k++){
+     const x=a[0]+(b[0]-a[0])*k/steps,y=a[1]+(b[1]-a[1])*k/steps;
+     if(!undergroundPointWalkable(x,y,15)||player.checkCol(x,y))dungeonRouteHits.push([x,y]);
+   }
+ }`);
+ok('opened doors connect all four rooms without clipping pillars or passage corners',P('dungeonRouteHits.length===0'));
+ok('the sanctuary remains enclosed at its northern and lateral boundaries',P('player.checkCol(0,-7205)&&player.checkCol(-905,-6400)&&player.checkCol(905,-6400)'));
+ok('exterior rock walls never intrude into another room or dogleg floor',P('buildings.filter(b=>b.undergroundWall).every(b=>!UNDERGROUND_FLOORS.some(f=>b.x+b.w/2>f.x&&b.x-b.w/2<f.x+f.w&&b.y+b.h/2>f.y&&b.y-b.h/2<f.y+f.h))'));
+ok('joined connector edges produce no duplicate collinear wall segments',P('(()=>{const walls=buildings.filter(b=>b.undergroundWall);return walls.every((a,i)=>walls.slice(i+1).every(b=>!(a.w===80&&b.w===80&&a.x===b.x&&Math.abs(a.y-b.y)<(a.h+b.h)/2)&&!(a.h===80&&b.h===80&&a.y===b.y&&Math.abs(a.x-b.x)<(a.w+b.w)/2)))})()'));
 let randomCalls=0,graphics=0,removed=0;
 const nativeRandom=ctx.random,nativeGraphics=ctx.createGraphics;
 ctx.random=(...args)=>{randomCalls++;return nativeRandom(...args);};
 ctx.createGraphics=(...args)=>{graphics++;const g=nativeGraphics(...args),remove=g.remove;g.remove=()=>{removed++;remove();};return g;};
 probe('drawUndergroundGround();');
-ok('the whole authored floor stays within ten half-resolution tiles',graphics===10&&P('undergroundFloorCache.size===10'));
+const entranceTiles=graphics;
+ok('visible entrance textures allocate only bounded half-resolution tiles',entranceTiles>0&&entranceTiles<=24&&P('undergroundFloorCache.size<=24'));
 probe('drawUndergroundGround();');
-ok('repeated frames reuse the baked stone floor',graphics===10);
+ok('repeated frames reuse the baked entrance floor',graphics===entranceTiles);
+probe(`for(const r of UNDERGROUND_ROOMS){viewLeft=r.x-70;viewRight=r.x+r.w+70;viewTop=r.y-70;viewBottom=r.y+r.h+70;drawUndergroundGround();}`);
+ok('exploring the expanded dungeon evicts old tiles instead of growing memory',graphics>24&&removed>0&&P('undergroundFloorCache.size===24'));
+ok('eviction releases exactly the surfaces no longer retained',graphics-removed===P('undergroundFloorCache.size'));
+const exploredTiles=graphics;
+probe('drawUndergroundGround();');
+ok('the current sanctuary floor remains cached after exploration',graphics===exploredTiles);
 const before=calls.sig;
-probe(`for(const b of buildings)if(b.undergroundWall)drawUndergroundWall(b);else drawUndergroundProp(b);
+probe(`for(const b of buildings)if(b.undergroundWall)drawUndergroundWall(b);else if(b.undergroundProp)drawUndergroundProp(b);
  drawUndergroundElevator(0);drawUndergroundElevator(.5);drawUndergroundElevator(1);`);
-ok('rock strata, furniture, animated tiki torches and elevator panels render',calls.sig!==before);
+ok('rock strata, cathedral fixtures, tiki torches and elevator panels render',calls.sig!==before);
 ok('baked textures and animated torch art consume no gameplay randomness',randomCalls===0);
 probe('resetUndergroundEnvironment();');
-ok('leaving the floor releases every cached surface',removed===10&&P('undergroundFloorCache.size===0'));
+ok('leaving the floor releases every cached surface once',removed===graphics&&P('undergroundFloorCache.size===0'));
 probe('viewLeft=-1050;viewRight=1050;viewTop=-2600;viewBottom=-2200;drawHQBranchDoors();');
-ok('three northern HQ doors reserve separate routes',P("HQ_BRANCH_DOORS.length===3&&HQ_BRANCH_DOORS.filter(d=>!d.sealed).length===1&&HQ_BRANCH_DOORS[1].x===0"));
-ok('the two outer doors stay sealed while only the middle descends',P("HQ_BRANCH_DOORS.filter(d=>d.sealed).every(d=>Math.abs(d.x)===720)&&HQ_BRANCH_DOORS[1].label==='DESCENT'"));
+ok('three northern HQ doors still reserve separate routes',P("HQ_BRANCH_DOORS.length===3&&HQ_BRANCH_DOORS.filter(d=>!d.sealed).length===1&&HQ_BRANCH_DOORS[1].x===0"));
+ok('the two outer HQ doors stay sealed while only the middle descends',P("HQ_BRANCH_DOORS.filter(d=>d.sealed).every(d=>Math.abs(d.x)===720)&&HQ_BRANCH_DOORS[1].label==='DESCENT'"));
 ctx.random=nativeRandom;ctx.createGraphics=nativeGraphics;
 console.log(`${checks}/${checks} underground authored geometry, access, cache and rendering checks passed`);
