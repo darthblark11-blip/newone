@@ -1,5 +1,5 @@
-// Native standing gait and aim-turn review. Pose sheets compare the same
-// player garment, while turn sequences advance the real input/update path.
+// Native review of restored ordinary locomotion and aimed-only hip limits.
+// Diagnostic visibility samples never force a replacement garment/leg shape.
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
 const {spawnSync}=require('node:child_process');
 const deps=process.env.VIS_DEPS||'/workspace/newone-dev';
@@ -101,7 +101,7 @@ const fps=30,totalFrames=360;
    const records=[],cases=[['FORWARD CARRY',0,false],['AIMED FORWARD',0,true],['BACKWARD',Math.PI,true],['BACK LEFT',-Math.PI*.75,true],['BACK RIGHT',Math.PI*.75,true]];
    for(const weapon of ['PISTOL','ASSAULT_RIFLE'])for(const throttle of [.2,.5,1])for(const [label,delta,aimed]of cases){
     const c=__standingActor(weapon),base=-Math.PI/2;__standingStep(c,base+delta,throttle,aimed?base:null,100);
-    const interval=Math.max(1,Math.round(Math.PI*2/(gaitPose(throttle).cadence*.60*12))),samples=[];
+    const interval=Math.max(1,Math.round(Math.PI*2/(gaitPose(throttle).cadence*12))),samples=[];
     for(let phase=0;phase<12;phase++){
      if(phase)__standingStep(c,base+delta,throttle,aimed?base:null,interval);
      background(35,44,49);__standingPaint(c,320,240,3.2);
@@ -117,17 +117,13 @@ const fps=30,totalFrames=360;
   });
   assert.equal(visibility.records.length,30);assert.equal(visibility.depth,0);assert.equal(visibility.minDepth,0);
   fs.writeFileSync(path.join(out,'visibility.json'),JSON.stringify(visibility,null,2));
-  for(const r of visibility.records){
-   assert(r.samples.filter(p=>p>=12).length>=10,r.weapon+' '+r.throttle+' '+r.label+' hides jeans through most of the step: '+r.samples.join(','));
-   assert(r.mean>=60,r.weapon+' '+r.throttle+' '+r.label+' hides almost all trousers beneath the torso: '+r.samples.join(','));
-   assert(r.throttle<1||r.min>=12,r.weapon+' '+r.label+' loses the running trouser silhouette: '+r.samples.join(','));
-   for(let i=0;i<r.samples.length;i++)assert(r.samples[i]>=12||r.samples[(i+1)%12]>=12||r.samples[(i+2)%12]>=12,
-    r.weapon+' '+r.throttle+' '+r.label+' keeps jeans hidden for an extended contact/recovery interval');
-  }
+  // Occlusion in the original camera is expected. Keeping a shoe visible in
+  // every phase would require widening/rebuilding the user's original legs.
+  for(const r of visibility.records)assert(r.samples.every(Number.isFinite),'finite native visibility samples');
   const gaitSheets=[];
   for(const weapon of ['PISTOL','ASSAULT_RIFLE']){
    const sheet=await page.evaluate(weapon=>{
-    resizeCanvas(1600,1080);__standingBack('STANDING JEANS / '+weapon,'One garment across forward carry, aimed forward, backward and rear-diagonal travel. Each card uses the real movement update.');
+    resizeCanvas(1600,1080);__standingBack('ORIGINAL JEANS / '+weapon,'Original ordinary gait and trouser style; hip limits apply only while aiming or firing. Each card uses the real movement update.');
     const cases=[['FORWARD CARRY',0,false],['AIMED FORWARD',0,true],['BACKWARD',Math.PI,true],['BACK LEFT',-Math.PI*.75,true],['BACK RIGHT',Math.PI*.75,true]],records=[];
     for(let row=0;row<3;row++)for(let col=0;col<cases.length;col++){
      const [label,delta,aimed]=cases[col],c=__standingActor(weapon),base=-Math.PI/2,throttle=[.2,.5,1][row];
@@ -141,7 +137,7 @@ const fps=30,totalFrames=360;
    await page.locator('canvas').first().screenshot({path:path.join(out,'jeans-'+weapon.toLowerCase()+'.png')});
   }
   const phases=await page.evaluate(()=>{
-   resizeCanvas(1600,1080);__standingBack('RUN / PLANT, RECOVERY AND BACKSTEP','Stable pelvis, knee flex and heel-leading backward recovery, shown at consecutive real update intervals.');
+   resizeCanvas(1600,1080);__standingBack('ORIGINAL RUN / AIMED MOVEMENT','Original trouser surfaces and cadence. Aimed backwards travel reverses the step timing without inverting the leg shape.');
    const cases=[['FORWARD',0,null],['BACKWARD',Math.PI,-Math.PI/2],['BACK LEFT',-Math.PI*.75,-Math.PI/2]],records=[];
    for(let row=0;row<cases.length;row++){
     const [label,delta,aim]=cases[row],c=__standingActor('ASSAULT_RIFLE');__standingStep(c,-Math.PI/2+delta,1,aim,100);
@@ -195,7 +191,7 @@ const fps=30,totalFrames=360;
       __standingInput(c,move,throttle,i===0?null:i===3?target:base,false);c.updatePlayer();
      }
     }
-    __standingBack('STANDING RUN / KINETIC CHAIN','Regular forward, heel-leading backsteps, rear diagonal and abrupt input turns. Native simulation at 60 Hz; review video at 30 fps.');
+    __standingBack('ORIGINAL RUN / AIMED HIP LIMITS','Ordinary forward motion uses its original animation. Aimed backward/diagonal movement keeps the original trouser style.');
     for(let i=0;i<4;i++){
      const c=__standingMovie[i],x=320+(i%2)*640,y=245+Math.floor(i/2)*440;
      __standingPaint(c,x,y,4.7);__standingPaint(c,x+142,y+75,1);
@@ -210,6 +206,6 @@ const fps=30,totalFrames=360;
   const encode=spawnSync('ffmpeg',['-y','-loglevel','error','-framerate',String(fps),'-i',path.join(frames,'%04d.png'),'-c:v','libx264','-pix_fmt','yuv420p','-crf','18','-movflags','+faststart',path.join(out,'standing-run.mp4')],{encoding:'utf8'});
   if(encode.error)throw encode.error;assert.equal(encode.status,0,encode.stderr);
   fs.writeFileSync(path.join(out,'review.json'),JSON.stringify({alignment,visibility,gaitSheets,phases,turns,motion,errors,fps,totalFrames},null,2));
-  console.log('288 native barrel/projectile/laser/flash/torch turn checks, 360 visible-jeans samples, 78 standing pose cards and '+totalFrames+' motion frames passed. Previews: '+out);
+  console.log('288 native barrel/projectile/laser/flash/torch turn checks, 360 diagnostic visibility samples, 78 original/aimed pose cards and '+totalFrames+' motion frames passed. Previews: '+out);
  }finally{await browser.close();}
 })().catch(error=>{console.error(error.stack||error);process.exit(1);});

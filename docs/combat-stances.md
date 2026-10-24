@@ -42,15 +42,14 @@ A direct dive therefore passes through crouched vulnerability before reaching
 prone. Requesting a stance never grants immediate immunity. Another transition
 must wait for completion and a 180 ms recovery window. Pausing freezes progress.
 
-Ordinary standing travel uses one trouser rig whether the gun is carried or
-aimed. The seat and hip roots stay together; knees and heels articulate beneath
-them with the same garment widths and taper. Backward and rear-diagonal steps
-keep knees in front of the hips while calves fold behind them. Neither bone
-chain is inverted or scaled through zero. Hips ease toward travel independently
-of the sights, with bounded planted turns and gradual weight transfer.
-Standing steps use 60% of the base gait clock; movement speed and weapon
-cooldowns stay unchanged. Direction changes keep the same continuous step phase.
-Only uninterrupted direct lateral travel (within about 9° of sideways) lasting
+Normal walking, jogging and running use the original standing renderer,
+cadence and movement-facing response. The directional override applies only
+while the player aims or fires a weapon, including its brief lowering hold.
+Aimed legs keep the original thigh/shin/boot stations, six-unit hip spacing,
+garment widths and single tapered surface. Backward steps reverse stride timing
+without inverting the trousers, adding a pelvis overlay or widening the stance.
+The hips ease within 45° of the upper body instead of rotating freely through it.
+During aiming, only uninterrupted direct lateral travel (within about 9° of sideways) lasting
 more than 3.3 seconds blends into a long, rhythmic side skip. Stopping, changing
 sides or moving diagonally restarts that interval. Skip contacts run at about
 0.52–0.72 cycles per second, with eased entry/exit and a direction-led following
@@ -58,10 +57,11 @@ foot. A single-handed weapon's free arm relaxes during the skip. Walking,
 jogging and running keep their ordinary throttle bands and movement speed.
 The same lower-leg geometry places leg wounds.
 
-Standing aim turns accelerate and brake through the shortest angular arc,
+Standing weapon-aim turns accelerate and brake through the shortest angular arc,
 instead of snapping to a new stick or mouse heading. The barrel, shots, laser
-and weapon lights follow the resulting heading. A released aim input finishes
-its ongoing turn. Crouch/prone and dedicated melee, support-action, mounted,
+and weapon lights follow the resulting heading. The filter retires when the
+weapon's aiming hold ends; ordinary movement faces travel immediately.
+Crouch/prone and dedicated melee, support-action, mounted,
 building and scripted controls keep their own heading paths. Bow draw quality
 still observes the raw gesture, so body smoothing cannot improve an abrupt pull.
 
@@ -190,5 +190,5 @@ comparisons and a full HQ combat scene with adapting enemy fire.
 motion clip covering transitions, crouched movement and crawling.
 `tools/visual-directional-stances.js` renders aimed walk/jog/run, crouch stepping
 and all eight planted prone aims, including real barrel/torch/cannon alignment.
-`tools/visual-standing-run.js` compares carried and aimed jeans through forward,
-backward and diagonal gaits, and renders actual input-driven standing turns.
+`tools/visual-standing-run.js` compares the original carried gait with aimed
+forward/backward/diagonal travel, and renders input-driven weapon-aim turns.

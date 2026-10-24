@@ -49,7 +49,7 @@ ok('reversing a turn brakes existing shoulder momentum instead of flipping veloc
  velocity>0&&P('player._standingAim.velocity')>0&&P('player._standingAim.velocity')<velocity);
 tick(80);ok('a reversed turn still reaches its new requested heading',Math.abs(wrap(P('player.aimAngle')+Math.PI/2))<1e-8);
 
-fresh();const once=turn(Math.PI/2),state=P('JSON.stringify(player._standingAim)');
+fresh();target(Math.PI/2);const once=turn(Math.PI/2),state=P('JSON.stringify(player._standingAim)');
 probe('player.aimAngle=standingAimHeading(player,Math.PI/2,1000/60);');
 ok('two heading consumers cannot advance the same simulation frame twice',P('player.aimAngle')===once&&P('JSON.stringify(player._standingAim)')===state);
 probe('isPaused=true;frameCount++;player.aimAngle=standingAimHeading(player,Math.PI,100);');
@@ -58,9 +58,9 @@ probe('isPaused=false;doTick=false;frameCount++;player.aimAngle=standingAimHeadi
 ok('a suspended simulation never advances the standing aim turn',P('player.aimAngle')===once&&P('JSON.stringify(player._standingAim)')===state);
 
 fresh();target(Math.PI/2);tick(4);probe('rightStick.active=false;');tick(80);
-ok('releasing an aim thumb lets the already-started turn settle naturally',Math.abs(P('player.aimAngle')-Math.PI/2)<1e-8);
+ok('releasing the aim input retires the aimed-turn filter after its brief hold',P('!standingAimEligible(player)&&player._standingAim===null'));
 fresh();probe('leftStick.active=true;leftStick.dx=0;leftStick.dy=1;');tick();
-ok('un-aimed locomotion also turns through a continuous body heading',P('player.aimAngle>0&&player.aimAngle<Math.PI/2-.1'));
+ok('un-aimed locomotion retains its original immediate movement facing',P('Math.abs(player.aimAngle-Math.PI/2)<1e-8&&player._standingAim===null'));
 
 fresh();target(Math.PI/2,true);tick();
 const firing=P('({a:player.aimAngle,x:player.x,y:player.y,b:bullets[0],ammo:player.ammo})');

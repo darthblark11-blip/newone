@@ -1,5 +1,5 @@
-// Standing aim-relative leg strokes, sustained side skipping and shared decal
-// attachment. Rendering is pure; elapsed side travel is owned by simulation.
+// Ordinary locomotion retains the original renderer and cadence. Only aimed
+// travel constrains the hips, while keeping the original trouser geometry.
 const assert=require('node:assert/strict');
 const {ctx,probe}=require('./harness');
 const P=s=>probe('('+s+')');
@@ -26,11 +26,11 @@ ok('opposite travel uses backward steps while hips face the weapon',
  P('playerFootworkPose(player).backward>.99&&Math.abs(playerFootworkPose(player).angle-player.aimAngle)<.01'));
 probe('player.walkCycle=0;');const back=P('standingFootworkLeg(player,0)');
 probe('player.moveAngle=0;');advance(350);const forward=P('standingFootworkLeg(player,0)');
-ok('a backward heel plants behind the fixed hip while its knee stays ahead',
- back.ax<back.sx&&back.kx>back.sx&&forward.kx>forward.sx);
+ok('backward travel keeps the original positive thigh and shin directions',
+ back.kx>back.sx&&back.ax>back.kx&&forward.kx>forward.sx&&forward.ax>forward.kx);
 ok('backward toes keep facing forward instead of turning the legs around',Math.abs(back.heading)<.01);
 
-let honestBones=true,sharedGarment=true,kneesForward=true,reverseBothEnds=false;
+let honestBones=true,originalTaper=true,nativeForward=true,nativeBack=true;
 for(const [label,direction]of [['forward',0],['left',-Math.PI/2],['right',Math.PI/2],['backward',Math.PI],['back-left',Math.PI*.75],['back-right',-Math.PI*.75]]){
  fresh(direction);advance(350);
  for(const gait of [.2,.5,1])for(let i=0;i<48;i++){
@@ -39,24 +39,40 @@ for(const [label,direction]of [['forward',0],['left',-Math.PI/2],['right',Math.P
   const body=P('({w:player.bodyW,h:player.bodyH,rig:figureRig(player.bodyW,player.bodyH),gait:{...gaitPose(player.gait)}})');
   const legs=[P('standingFootworkLeg(player,0)'),P('standingFootworkLeg(player,1)')];
   for(let j=0;j<2;j++){
-   const l=legs[j],side=j?1:-1,sx=-10+body.rig.thighW*.5;
-   sharedGarment&&=Math.abs(l.sx-sx)<1e-8&&Math.abs(l.sy-P('playerFootworkPose(player).pelvisY')-side*6)<1e-8&&
+   const l=legs[j],side=j?1:-1,th=body.rig.thigh*.46,sh=body.rig.shin*.46;
+   originalTaper&&=
     l.hipW===body.rig.thighW&&l.kneeW===body.rig.shinW&&l.ankleW===body.rig.shinW*.8;
-   if(direction===Math.PI||Math.abs(direction)===Math.PI*.75)kneesForward&&=l.kx>=l.sx;
-   if(direction===Math.PI&&l.ax<l.sx-4)reverseBothEnds=true;
+   const expected=(direction===Math.PI?1:-1)*Math.sin(phase)*12*body.gait.swing*side-10+body.rig.thighW*.5;
+   const native=Math.abs(l.sx-expected)<1e-8&&l.sy===side*6&&
+    Math.abs(l.kx-l.sx-th*.92)<1e-8&&l.ky===l.sy&&Math.abs(l.ax-l.kx-sh)<1e-8&&l.ay===l.sy;
+   if(direction===0)nativeForward&&=native;
+   if(direction===Math.PI)nativeBack&&=native;
   }
   honestBones&&=legs.every(l=>Math.hypot(l.kx-l.sx,l.ky-l.sy)<=body.rig.thigh&&Math.hypot(l.ax-l.kx,l.ay-l.ky)<=body.rig.shin);
  }
 }
-ok('all travel directions share fixed hip roots and the same native trouser taper',sharedGarment);
+ok('aimed travel preserves the original thigh, knee and ankle widths',originalTaper);
+ok('aimed forward walk, jog and run preserve every original trouser station',nativeForward);
+ok('aimed backsteps reverse the step cycle without inverting or widening the trouser bones',nativeBack);
 ok('forward and backward trouser segments retain the shared rig proportions',honestBones);
-ok('straight and diagonal backsteps keep their knees in front of the pelvis',kneesForward&&reverseBothEnds);
 
 fresh();advance(500);probe('player.walkCycle=1.8;');
-const raised=P('[standingFootworkLeg(player,0),standingFootworkLeg(player,1)]');
 probe('player.aimHold=0;rightStick.active=false;');
-const carried=P('[standingFootworkLeg(player,0),standingFootworkLeg(player,1)]');
-ok('carrying and aiming draw precisely the same jeans joints and seat at a shared heading',JSON.stringify(raised)===JSON.stringify(carried));
+ok('carrying a weapon uses the original standing leg renderer',!P('playerFootworkPose(player).active'));
+probe('player.isArmed=false;');
+ok('unarmed locomotion uses the original standing leg renderer',!P('playerFootworkPose(player).active'));
+probe('rightStick.active=true;rightStick.dist=.4;');
+ok('the first aim press constrains hips before the drawing pass raises the gun',P('playerFootworkPose(player).active'));
+
+fresh();probe('player.aimHold=0;rightStick.active=false;leftStick.active=true;leftStick.dx=0;leftStick.dy=1;player.walkCycle=2;');
+probe('frameCount++;player.updatePlayer();');
+ok('normal movement keeps the original full gait cadence',
+ Math.abs(P('player.walkCycle')-2-P('gaitPose(player.gait).cadence'))<1e-8);
+ok('normal movement immediately faces its original movement heading',
+ P('player.aimAngle===player.moveAngle')&&!P('playerFootworkPose(player).active'));
+fresh();probe('leftStick.active=true;leftStick.dx=1;leftStick.dy=0;player.walkCycle=2;frameCount++;player.updatePlayer();');
+ok('aimed movement also retains the original walk, jog and run clock',
+ Math.abs(P('player.walkCycle')-2-P('gaitPose(player.gait).cadence'))<1e-8);
 
 fresh();advance(800);const plantedHeading=P('playerFootworkPose(player).angle');
 probe('player.aimAngle=.7;');
@@ -82,32 +98,11 @@ for(const direction of [Math.PI*.72,Math.PI*.75,Math.PI,Math.PI*1.25,Math.PI*1.2
  for(let i=0;i<48;i++){
   probe(`player.walkCycle=${i*Math.PI/24};`);
   for(const l of P('[standingFootworkLeg(player,0),standingFootworkLeg(player,1)]'))
-   rearStable&&=l.hipW>l.kneeW&&l.kneeW>l.ankleW&&l.kx>=l.sx&&
-    Math.hypot(l.kx-l.sx,l.ky-l.sy)>.25&&Math.abs(l.ay)>2.7;
+   rearStable&&=l.hipW>l.kneeW&&l.kneeW>l.ankleW&&l.kx>l.sx&&l.ax>l.kx&&
+    Math.hypot(l.kx-l.sx,l.ky-l.sy)>.25&&Math.abs(l.ay)===6;
  }
 }
-ok('rear diagonals keep a visible knee and separate feet through the full gait',rearStable);
-
-let readable=true,straightPair=true,rearHeel=false;
-for(const direction of [0,Math.PI,Math.PI*.75,-Math.PI*.75])for(const gait of [.2,.5,1]){
- fresh(direction);advance(1200);probe(`player.gait=${gait};`);
- for(let i=0;i<48;i++){
-  probe(`player.walkCycle=${i*Math.PI/24};`);
-  const pose=P('playerFootworkPose(player)'),rig=P('figureRig(player.bodyW,player.bodyH)');
-  const ca=Math.cos(pose.angle),sa=Math.sin(pose.angle),legs=P('[standingFootworkLeg(player,0),standingFootworkLeg(player,1)]');
-  let exposed=0;
-  for(const l of legs){
-   const x=ca*l.ax-sa*l.ay,y=sa*l.ax+ca*l.ay;
-   const yr=Math.hypot(sa*rig.foot*.5,ca*l.ankleW*.5),xr=Math.hypot(ca*rig.foot*.5,sa*l.ankleW*.5);
-   if(Math.abs(y)+yr>13.5+.75||x-xr<-10)exposed++;
-   if(direction===Math.PI&&x-xr<-16)rearHeel=true;
-  }
-  readable&&=exposed>=1;
-  if(direction===0||direction===Math.PI)straightPair&&=exposed===2;
- }
-}
-ok('calf and boot tracks remain readable beyond the torso and pack in every gait phase',readable&&straightPair);
-ok('a backward planted heel clears the backpack silhouette without widening the seat',rearHeel);
+ok('rear diagonals preserve the original connected tapered leg style through the full gait',rearStable);
 
 let bounded=true,finite=true,continuous=true,previous=null;
 fresh();
@@ -115,7 +110,7 @@ for(let i=0;i<=720;i++){
  probe(`player.moveAngle=${i*Math.PI/360};player.walkCycle=1.1;frameCount++;updateDirectionalFootwork(player,16.67);`);
  const pose=P('playerFootworkPose(player)'),leg=P('standingFootworkLeg(player,0)');
  const turn=Math.atan2(Math.sin(pose.angle),Math.cos(pose.angle));
- bounded&&=Math.abs(turn)<=Math.PI*.54+1e-8;
+ bounded&&=Math.abs(turn)<=Math.PI/4+1e-8;
  finite&&=Object.values(leg).filter(x=>typeof x==='number').every(Number.isFinite);
  if(previous)continuous&&=Math.hypot(leg.ax-previous.ax,leg.ay-previous.ay)<.8;
  previous=leg;
@@ -186,6 +181,8 @@ probe('for(let i=0;i<10;i++){playerFootworkPose(player);standingFootworkLeg(play
 ok('painting and querying joints never advance the side-skip state',P('JSON.stringify(player._directionalFootwork)')===unchanged);
 
 for(const [label,setup] of [
+ ['un-aimed carry','player.aimHold=0;rightStick.active=false;'],
+ ['unarmed actor','player.isArmed=false;player.aimHold=0;rightStick.active=false;'],
  ['mounted actor','player.mounted=true;'],
  ['crouch stance',"resetActorStance(player,'CROUCH');"],
  ['prone stance',"resetActorStance(player,'PRONE');"],
@@ -208,4 +205,11 @@ ctx.pop=(...args)=>{depth--;minimum=Math.min(minimum,depth);return saved.pop(...
 probe('player.show();');Object.assign(ctx,{drawStandingFootworkLegs:saved.draw,push:saved.push,pop:saved.pop});
 ok('the actual standing renderer paints the shared directional leg rig once',painted===1);
 ok('directional standing footwork restores the native painter stack',depth===0&&minimum===0);
+let surfaces=0,boots=0;
+const nativeSurface=ctx.figureCelLimb,nativeOval=ctx.figureCelOval;
+ctx.figureCelLimb=(...args)=>{surfaces++;return nativeSurface(...args);};
+ctx.figureCelOval=(...args)=>{boots++;return nativeOval(...args);};
+probe('drawStandingFootworkLegs(player,window,figureRig(player.bodyW,player.bodyH),playerFootworkPose(player));');
+ctx.figureCelLimb=nativeSurface;ctx.figureCelOval=nativeOval;
+ok('aimed trousers retain exactly two original continuous leg surfaces and two boots',surfaces===2&&boots===2);
 console.log(`${checks}/${checks} standing backward, strafe, skip and leg-decal checks passed`);

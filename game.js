@@ -21274,10 +21274,7 @@ this.skeletonTimer = 0;
         // brushed a kerb. See GAIT.
         const _thr = this.isMoving ? Math.min(1, Math.hypot(leftStick.dx, leftStick.dy)) : 0;
         this.gait += (_thr - this.gait) * GAIT_EASE;
-        if (this.isMoving) {
-          const low=actorStancePose(this),standing=!low.crouch&&!low.prone&&!actorStanceSuppressed(this);
-          this.walkCycle+=gaitPose(this.gait).cadence*(standing?.60:1);
-        }
+        if (this.isMoving) this.walkCycle+=gaitPose(this.gait).cadence;
     }
 
     // Drive the gait, and turn the animal toward where it is actually going. A
@@ -40212,13 +40209,15 @@ function gaitPose(t) {
   return _gp;
 }
 
-// One standing trouser rig owns the seat and both fixed hip roots, whether
-// the gun is carried or aimed. Only the joint chain steps, never the pelvis.
+// Ordinary walking/carrying uses the original standing renderer. Only a
+// presented weapon needs aim-relative hips instead of unrestricted travel yaw.
 function directionalFootworkEligible(c) {
+  if(!c)return false;
+  const input=!!(rightStick&&rightStick.active)||c.muzzleFlash>0||playerWeaponFireInput();
   return !!c&&c.isPlayer&&c.hp>0&&!c.dead&&!c.mounted&&!(c.dashTimer>0)&&
     !(c.meleeTimer>0)&&!(c.stunTimer>0)&&!boxingActive(c)&&!c.shovelMantle&&
     !shovelToolEquipped()&&shovelPlayerDepth(c)<.5&&actorStance(c)==='STAND'&&
-    !(actorStancePose(c).crouch>0);
+    !(actorStancePose(c).crouch>0)&&(c.isArmed||input)&&(playerAiming(c)||input);
 }
 function directionalFootworkDelta(c) {
   return Math.atan2(Math.sin((c.moveAngle||0)-(c.aimAngle||0)),Math.cos((c.moveAngle||0)-(c.aimAngle||0)));
@@ -40232,8 +40231,7 @@ function updateDirectionalFootwork(c,elapsedMs=deltaTime) {
   s.frame=frameCount;
   if(!eligible){s.active=false;s.skip=s.strafeMs=0;s.skipping=false;return;}
   if(!s.active){
-    s.active=true;s.angle=c.aimAngle||0;s.hip=0;s.origin=0;s.skipPhase=0;s.motion=0;
-    s.travelX=c.isMoving?Math.cos(c.moveAngle||0):0;s.travelY=c.isMoving?Math.sin(c.moveAngle||0):0;
+    s.active=true;s.angle=c.aimAngle||0;s.hip=0;s.origin=0;s.skipPhase=0;s.motion=Number(!!c.isMoving);
     s.backward=directionalFootworkReverse(c);
   }
   const delta=directionalFootworkDelta(c),lateral=Math.sin(delta),forward=Math.cos(delta);
@@ -40249,21 +40247,19 @@ function updateDirectionalFootwork(c,elapsedMs=deltaTime) {
   const support=1-Math.exp(-dt/180),turn=1-Math.exp(-dt/220);
   s.motion+=(Number(!!c.isMoving)-s.motion)*support;if(s.motion<.001)s.motion=0;
   s.backward+=(directionalFootworkReverse(c)-s.backward)*support;
-  s.travelX+=((c.isMoving?Math.cos(c.moveAngle||0):0)-s.travelX)*support;
-  s.travelY+=((c.isMoving?Math.sin(c.moveAngle||0):0)-s.travelY)*support;
   // World-space heading lets the sights turn without towing both hips on
   // the same frame. Large changes plant, pivot, then take the next step.
   const aim=c.aimAngle||0,target=aim+(c.isMoving?directionalFootworkHip(c)*(1-s.skip*.38):0);
   const error=Math.atan2(Math.sin(target-s.angle),Math.cos(target-s.angle));
   const contact=.72+.28*Math.sin(c.walkCycle||0)**2,step=error*turn*contact;
   s.angle+=Math.max(-dt*.0054,Math.min(dt*.0054,step));
-  const relative=Math.atan2(Math.sin(s.angle-aim),Math.cos(s.angle-aim)),limit=Math.PI*.54;
+  const relative=Math.atan2(Math.sin(s.angle-aim),Math.cos(s.angle-aim)),limit=Math.PI*.25;
   s.hip=Math.max(-limit,Math.min(limit,relative));s.angle=aim+s.hip;
 }
 function directionalFootworkHip(c) {
   const delta=directionalFootworkDelta(c),a=Math.abs(delta);
   const t=Math.max(0,Math.min(1,(a-Math.PI*.5)/(Math.PI*.25))),fold=t*t*t*(t*(t*6-15)+10);
-  return delta-Math.sign(delta)*Math.PI*fold;
+  return Math.max(-Math.PI*.25,Math.min(Math.PI*.25,delta-Math.sign(delta)*Math.PI*fold));
 }
 function directionalFootworkReverse(c) {
   if(!c.isMoving)return 0;
@@ -40274,10 +40270,8 @@ function playerFootworkPose(c) {
   if(!directionalFootworkEligible(c))return {active:false};
   const delta=directionalFootworkDelta(c),s=c._directionalFootwork;
   const lateral=Math.sin(delta),live=s&&s.active,angle=live?s.angle:(c.aimAngle||0)+(c.isMoving?directionalFootworkHip(c):0);
-  const motion=live?s.motion:Number(!!c.isMoving),phase=c.walkCycle||0;
-  return {active:true,angle,delta,motion,pelvisY:Math.sin(phase)*.38*motion,
-    travelX:live?s.travelX:c.isMoving?Math.cos(c.moveAngle||0):0,
-    travelY:live?s.travelY:c.isMoving?Math.sin(c.moveAngle||0):0,
+  const motion=live?s.motion:Number(!!c.isMoving);
+  return {active:true,angle,delta,motion,
     backward:live?s.backward:directionalFootworkReverse(c),strafe:Math.abs(lateral),side:lateral<0?-1:1,
     skip:s&&s.active?s.skip:0,skipSide:s&&s.active?s.skipSide:0,
     skipHeading:s&&s.active&&Number.isFinite(s.skipHeading)?s.skipHeading:c.moveAngle||0,
@@ -40287,69 +40281,38 @@ function playerFootworkPose(c) {
 function standingFootworkLeg(c,index,pose=playerFootworkPose(c)) {
   if(!pose.active)return null;
   const R=figureRig(c.bodyW,c.bodyH),side=index?1:-1,gait=Math.max(0,Math.min(1,c.gait||0));
-  const ca=Math.cos(pose.angle),sa=Math.sin(pose.angle),motion=pose.motion===undefined?Number(!!c.isMoving):pose.motion;
-  const vx=pose.travelX===undefined?Math.cos(c.moveAngle||0):pose.travelX;
-  const vy=pose.travelY===undefined?Math.sin(c.moveAngle||0):pose.travelY;
-  const dx=ca*vx+sa*vy,dy=-sa*vx+ca*vy;
+  const motion=pose.motion===undefined?Number(!!c.isMoving):pose.motion,GP=gaitPose(gait);
   const th=R.thigh*STAND_FORE_LEG,sh=R.shin*STAND_FORE_LEG;
-  const stride=4.2+8.2*gait,height=1.2+gait*2.1;
-  const cycle=(phase,delay,stance)=>{
-    const t=((phase/(Math.PI*2)+delay)%1+1)%1,planted=t<stance,u=planted?t/stance:(t-stance)/(1-stance);
+  // These are the original thigh/shin/boot stations and taper. Backpedaling
+  // reverses the step phase, never the garment or the direction of its bones.
+  const swing=Math.sin(c.walkCycle||0)*12*GP.swing*motion*(1-2*pose.backward);
+  const mix=pose.skip||0,lead=side===(pose.skipSide||pose.side);
+  const skipPhase=(pose.skipPhase||0)/(Math.PI*2)+(lead?-.44:.22);
+  const t=((skipPhase%1)+1)%1,planted=t<.56,u=planted?t/.56:(t-.56)/.44;
+  let step=0,lift=0;
+  if(mix>0) {
     const e=u*u*u*(u*(u*6-15)+10);
-    return {step:(planted?1-2*e:-1+2*e)*stride,lift:planted?0:Math.sin(u*Math.PI)**2*height,planted};
-  };
-  const lead=side===(pose.skipSide||pose.side),walk=cycle(pose.phase,index*.5,.62);
-  const skip=cycle(pose.skipPhase,lead?-.44:.22,.56),mix=pose.skip;
-  const step=(walk.step+(skip.step-walk.step)*mix)*motion,lift=(walk.lift+(skip.lift-walk.lift)*mix)*motion;
-  const skipHeading=Number.isFinite(pose.skipHeading)?pose.skipHeading:c.moveAngle||0;
-  const sdx=Math.cos(skipHeading-pose.angle),sdy=Math.sin(skipHeading-pose.angle);
-  const travelX=dx+(sdx-dx)*mix,travelY=dy+(sdy-dy)*mix;
-  const sx=-10+R.thighW*.5,sy=side*6+(pose.pelvisY||0);
-  // The knee remains in front of its hip during a backstep, while the calf
-  // folds behind it and the heel plants first. Reversing both bone vectors
-  // put the widest trouser cap at the foot and collapsed rear diagonals.
-  let kx=sx+th*.92+travelX*step*.45+lift*.34-pose.backward*2.3;
-  // Knees open from the hip line into a modest athletic shoe track. A
-  // six-unit ankle track hid both calves under the shirt and back-mounted
-  // pack at this camera, even when the joints were moving correctly.
-  let ky=side*(8.8+gait*.2)+(pose.pelvisY||0)+travelY*step*.26+side*lift*.10;
-  let ax=sx+th*.92+sh-8-pose.backward*6+travelX*(step-lift*.45);
-  let ay=side*(11.6+gait)+(pose.pelvisY||0)+travelY*step*(.50+mix*.50);
-  const open=(value,min)=>min+((value-min)+Math.sqrt((value-min)**2+.16))*.5;
-  ky=side*open(side*ky,3.3);ay=side*open(side*ay,2.7);
-  const kneeFloor=sx+.8*pose.backward;
-  if(kx<kneeFloor)kx=kneeFloor;
-  // Projected bones may unfold during a running reach, but never lengthen
-  // beyond the shared anatomical rig. The heel target owns the foot path.
-  for(let n=0;n<3;n++){
-    let x=kx-ax,y=ky-ay,d=Math.hypot(x,y),max=R.shin*.94;
-    if(d>max){kx=ax+x*max/d;ky=ay+y*max/d;}
-    x=kx-sx;y=ky-sy;d=Math.hypot(x,y);max=R.thigh*.94;
-    if(d>max){kx=sx+x*max/d;ky=sy+y*max/d;}
+    step=(planted?1-2*e:-1+2*e)*(6.5+6.5*gait)*mix*motion;
+    lift=(planted?0:Math.sin(u*Math.PI)**2*(1.5+gait*1.8))*mix*motion;
   }
-  return {sx,sy,kx,ky,ax,ay,lift,step,planted:mix>.5?skip.planted:walk.planted,leading:lead,
-    heading:Math.atan2(travelY,Math.abs(travelX))*(1-pose.backward)*.18,
+  const skipHeading=Number.isFinite(pose.skipHeading)?pose.skipHeading:c.moveAngle||0;
+  const dx=Math.cos(skipHeading-pose.angle),dy=Math.sin(skipHeading-pose.angle);
+  const sx=-10-swing*side*(1-mix)+R.thighW*.5,sy=side*6;
+  const kx=sx+th*.92+dx*step*.38,ky=side*Math.max(3.3,side*(sy+dy*step*.38));
+  const ax=sx+th*.92+sh+dx*step,ay=side*Math.max(2.7,side*(sy+dy*step-side*lift*.18));
+  return {sx,sy,kx,ky,ax,ay,lift,step,planted,leading:lead,heading:0,
     hipW:R.thighW,kneeW:R.shinW,ankleW:R.shinW*.80};
 }
 function drawStandingFootworkLegs(c,g,R,pose) {
   const boot=[red(c.pantsCol)*.55,green(c.pantsCol)*.55,blue(c.pantsCol)*.55];
   for(let index=0;index<2;index++) {
     const l=standingFootworkLeg(c,index,pose);
-    const folded=(l.kx-l.sx)*(l.ax-l.kx)+(l.ky-l.sy)*(l.ay-l.ky)<0;
-    if(folded) {
-      // A calf folding behind a forward knee belongs below the thigh. A
-      // reversing ribbon would expose an inside-out point at that overlap.
-      figureCelLimb(g,l.kx,l.ky,(l.kx+l.ax)*.5,(l.ky+l.ay)*.5,l.ax,l.ay,l.kneeW,(l.kneeW+l.ankleW)*.5,l.ankleW,c.pantsCol);
-      figureCelLimb(g,l.sx,l.sy,(l.sx+l.kx)*.5,(l.sy+l.ky)*.5,l.kx,l.ky,l.hipW,(l.hipW+l.kneeW)*.5,l.kneeW,c.pantsCol);
-      figureCelOval(g,l.kx,l.ky,l.kneeW,l.kneeW,c.pantsCol,.3);
-    } else figureCelLimb(g,l.sx,l.sy,l.kx,l.ky,l.ax,l.ay,l.hipW,l.kneeW,l.ankleW,c.pantsCol);
-    push();translate(l.ax,l.ay);rotate(l.heading);
-    figureCelOval(g,R.foot*.34,0,R.foot,l.ankleW,boot,.8);pop();
-    drawLegDecals(g,c.decals,index,l.sx,l.sy,l.kx,l.ky,l.ax,l.ay,l.hipW,l.kneeW,l.ankleW);
+    drawingContext.save();drawingContext.translate(l.sx,l.sy);
+    figureCelLimb(g,0,0,l.kx-l.sx,l.ky-l.sy,l.ax-l.sx,l.ay-l.sy,l.hipW,l.kneeW,l.ankleW,c.pantsCol);
+    figureCelOval(g,l.ax-l.sx+R.foot*.34,l.ay-l.sy,R.foot,l.ankleW,boot,.8);
+    drawLegDecals(g,c.decals,index,0,0,l.kx-l.sx,l.ky-l.sy,l.ax-l.sx,l.ay-l.sy,l.hipW,l.kneeW,l.ankleW);
+    drawingContext.restore();
   }
-  // The same seat covers both thigh roots in every direction. It does not
-  // reverse, slide with either foot, or become a second pair of hip caps.
-  figureCelOval(g,-4.8,pose.pelvisY||0,R.thighW*1.10,c.bodyH*.68,c.pantsCol,.32);
 }
 
 // WHERE A CARRIED SIDEARM'S MUZZLE IS POINTING, in radians off the horizontal.
@@ -42146,7 +42109,8 @@ function standingAimEligible(c) {
   if(!c||!c.isPlayer||!combatStanceContext()||actorStanceSuppressed(c)||c.meleeTimer>0||
       c.stance&&c.stance.to>0||leftHandAction(c)||typeof inCutscene!=='undefined'&&inCutscene)return false;
   const p=actorStancePose(c);
-  return !p.crouch&&!p.prone;
+  return !p.crouch&&!p.prone&&
+    (playerAiming(c)||!!(rightStick&&rightStick.active)||c.muzzleFlash>0||playerWeaponFireInput());
 }
 // The visible barrel is the firing direction. A short angular acceleration
 // and bounded turn rate let shoulders lead a turn without teleporting them;
