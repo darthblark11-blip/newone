@@ -57,7 +57,7 @@ const fps=30,totalFrames=Number(process.env.STANDING_RUN_FRAMES||360);
     push();translate(x,y);scale(magnify);translate(-c.x,-c.y);c.show();pop();rightStick.active=active;__standingDraw.figures++;
    };
    window.__standingLabel=(textValue,x,y)=>{noStroke();fill(212,227,222);textSize(11);text(textValue,x,y);};
-   window.__standingRecord=c=>({aim:c.aimAngle,move:c.moveAngle,cycle:c.walkCycle,gait:c.gait,legHeading:c.moveAngle});
+   window.__standingRecord=c=>({aim:c.aimAngle,move:c.moveAngle,cycle:c.walkCycle,gait:c.gait,legHeading:standingHipHeading(c)});
   });
   const alignment=await page.evaluate(()=>{
    const records=[],nativeLong=window.drawLongGunSolid,nativeLine=window.line;
@@ -142,7 +142,7 @@ const fps=30,totalFrames=Number(process.env.STANDING_RUN_FRAMES||360);
   const directionSheets=[];
   for(const weapon of ['PISTOL','ASSAULT_RIFLE']){
    const sheet=await page.evaluate(weapon=>{
-    resizeCanvas(1600,1080);__standingBack('AIMED MOVEMENT / EIGHT DIRECTIONS / '+weapon,'Weapon stays north; original legs follow travel freely, including backward and diagonal directions.');
+    resizeCanvas(1600,1080);__standingBack('AIMED MOVEMENT / EIGHT DIRECTIONS / '+weapon,'Weapon stays north; hips stay connected to the torso with a small natural twist. Original leg animation.');
     const cases=[['N',0],['NW',-Math.PI/4],['W',-Math.PI/2],['SW',-Math.PI*.75],['S',Math.PI],['SE',Math.PI*.75],['E',Math.PI/2],['NE',Math.PI/4]],records=[];
     for(let row=0;row<3;row++)for(let col=0;col<cases.length;col++){
      const [label,delta]=cases[col],base=-Math.PI/2,throttle=[.2,.5,1][row],c=__standingActor(weapon);
@@ -153,12 +153,12 @@ const fps=30,totalFrames=Number(process.env.STANDING_RUN_FRAMES||360);
     return {records,...__standingDraw};
    },weapon);
    assert.equal(sheet.records.length,24);assert.equal(sheet.depth,0);assert.equal(sheet.minDepth,0);
-   for(const r of sheet.records)assert.equal(r.legHeading,r.move,'original standing legs follow movement');
+   for(const r of sheet.records)assert(Math.abs(Math.atan2(Math.sin(r.legHeading-r.aim),Math.cos(r.legHeading-r.aim)))<=Math.PI*25/180+1e-8,'aimed hips stay within natural torso twist');
    directionSheets.push(sheet);
    await page.locator('canvas').first().screenshot({path:path.join(out,'aim-eight-directions-'+weapon.toLowerCase()+'.png')});
   }
   const phases=await page.evaluate(()=>{
-   resizeCanvas(1600,1080);__standingBack('RESTORED ORIGINAL RUN / AIMED MOVEMENT','Original forward, backward and diagonal leg animation; no aimed leg override or hip lock.');
+   resizeCanvas(1600,1080);__standingBack('EXISTING RUN / COUPLED AIMED HIPS','Original leg animation and footwear; backward and diagonal movement stay connected to the torso.');
    const cases=[['FORWARD',0,null],['BACKWARD',Math.PI,-Math.PI/2],['BACK LEFT',-Math.PI*.75,-Math.PI/2]],records=[];
    for(let row=0;row<cases.length;row++){
     const [label,delta,aim]=cases[row],c=__standingActor('ASSAULT_RIFLE');__standingStep(c,-Math.PI/2+delta,1,aim,100);
@@ -173,7 +173,7 @@ const fps=30,totalFrames=Number(process.env.STANDING_RUN_FRAMES||360);
   assert.equal(phases.records.length,24);assert.equal(phases.depth,0);assert.equal(phases.minDepth,0);
   await page.locator('canvas').first().screenshot({path:path.join(out,'run-step-phases.png')});
   const turns=await page.evaluate(()=>{
-   resizeCanvas(1600,1080);__standingBack('AIM TURN / ORIGINAL STANDING LEGS','The sight, gun and torso turn together while original standing legs retain the travel direction.');
+   resizeCanvas(1600,1080);__standingBack('AIM TURN / COUPLED HIPS','The sight, gun, torso and hip frame turn together; movement adds a small, smooth hip twist.');
    const records=[],sample=[0,1,3,6,10,16,28,44];
    for(let row=0;row<3;row++){
     const move=row===0?0:row===1?-Math.PI/2:Math.PI*.98,throttle=row===0?0:1,start=row===2?Math.PI*.98:-Math.PI/2,target=row===2?-Math.PI*.98:Math.PI/2;
@@ -212,7 +212,7 @@ const fps=30,totalFrames=Number(process.env.STANDING_RUN_FRAMES||360);
       __standingInput(c,move,throttle,i===0?null:i===3?target:base,false);c.updatePlayer();
      }
     }
-    __standingBack('RESTORED ORIGINAL STANDING LEGS','Original legs, dark shoes and unrestricted movement heading during carry, aim and fire.');
+    __standingBack('COUPLED HIPS / EXISTING STANDING GAIT','Original legs, dark shoes and stride timing; natural hip flex while aiming backward or diagonally.');
     for(let i=0;i<4;i++){
      const c=__standingMovie[i],x=320+(i%2)*640,y=245+Math.floor(i/2)*440;
      __standingPaint(c,x,y,4.7);__standingPaint(c,x+142,y+75,1);

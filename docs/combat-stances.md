@@ -43,10 +43,13 @@ prone. Requesting a stance never grants immediate immunity. Another transition
 must wait for completion and a 180 ms recovery window. Pausing freezes progress.
 
 Standing walking, jogging and running use the original leg animation in both
-ordinary movement and weapon aim/fire. Legs follow the movement heading without
-an aim-relative hip limit, custom backstep cycle or delayed lateral skip. The
-original tapered jeans and dark, trouser-derived footwear are restored across
-poses and suits. Crouch and prone retain their separate articulated movement.
+ordinary movement and weapon aim/fire. During weapon aim the hip frame follows
+the torso, with up to 25° of smoothly eased flex. Forward and backward travel
+align with the torso; diagonal travel adds a small twist without allowing the
+hips to revolve independently around the waist. Movement still uses the same
+leg coordinates, cadence, tapered jeans and dark footwear. Ordinary unaimed
+movement faces travel directly. Leg wounds and the chemist coat read the same
+hip frame. Crouch and prone retain their separate articulated movement.
 
 Standing weapon-aim turns accelerate and brake through the shortest angular arc,
 instead of snapping to a new stick or mouse heading. The barrel, shots, laser
@@ -170,6 +173,8 @@ roll geometry.
 passes, visible supine engines, and reachable rear-facing sidearm arms.
 `tools/check-standing-aim-turn.js` covers turn acceleration, braking, angular
 seams, input release, shot/light alignment and bow gesture quality.
+`tools/check-standing-hip-coupling.js` checks bounded torso-relative hip flex,
+direction changes, pause, leg wound attachment and dedicated action exceptions.
 `tools/check-player-footwear.js` checks the restored dark footwear across ordinary
 and aimed movement, low stances, suits, utility actions and corpses.
 `tools/check-stance-anatomy.js` checks bent joints, proportions, crawl support,

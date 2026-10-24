@@ -1,5 +1,5 @@
 // Regression checks for the original standing legs: aim/fire must not replace
-// their geometry, material, cadence or unrestricted movement-facing frame.
+// their geometry, material or cadence. Only the aimed hip frame is coupled.
 const assert=require('node:assert/strict');
 const {ctx,probe}=require('./harness');
 const P=s=>probe('('+s+')');
@@ -48,16 +48,17 @@ try{
    legs=[];shoes=[];probe('player.show();');
    const expected=[0,0,th*.92,0,th*.92+sh,0,rig.thighW,rig.shinW,rig.shinW*.8];
    allGeometry&&=legs.length===2&&legs.every(l=>l.geometry.every((v,i)=>near(v,expected[i])));
-   allHeading&&=legs.every(l=>Math.abs(Math.atan2(Math.sin(l.angle-move),Math.cos(l.angle-move)))<1e-8);
+   const expectedHeading=state==='CARRY'?move:P('standingHipHeading(player)');
+   allHeading&&=legs.every(l=>Math.abs(Math.atan2(Math.sin(l.angle-expectedHeading),Math.cos(l.angle-expectedHeading)))<1e-8);
    allShoes&&=shoes.length===2&&shoes.every(s=>s.geometry.every((v,i)=>near(v,[th*.92+sh+rig.foot*.34,0,rig.foot,rig.shinW*.8][i])));
-   const signature=JSON.stringify({legs,shoes});
+   const signature=JSON.stringify({legs:legs.map(l=>l.geometry),shoes:shoes.map(s=>s.geometry)});
    if(reference===null)reference=signature;else aimDoesNotAlter&&=signature===reference;
   }
  }
  ok('all standing travel retains the original two tapered leg surfaces at every gait and phase',allGeometry);
- ok('standing legs freely follow all eight movement headings regardless of weapon aim',allHeading);
+ ok('ordinary legs face travel while aimed legs use the coupled hip frame in all eight directions',allHeading);
  ok('standing footwear retains original dark material and compact foot geometry',allShoes);
- ok('carry, aim and firing use identical standing leg geometry and rotation',aimDoesNotAlter);
+ ok('carry, aim and firing preserve identical local standing leg and footwear geometry',aimDoesNotAlter);
  ok('the standing painter balances its stack throughout every pose',depth===0&&min===0&&stack.length===0);
 }finally{Object.assign(ctx,{figureCelLimb:native.limb,figureCelOval:native.oval,push:native.push,pop:native.pop,rotate:native.rotate});}
 
