@@ -100,16 +100,18 @@ for(const stance of ['CROUCH','PRONE'])for(const phase of [0,.6,1.7,3.1,4.8]){
  }
 }
 ok('both shoulder roots stay inside the body contour throughout the crawl',anchorsInside);
-const packRects=[],packG={};
+const packRects=[],packQuads=[],packG={};
 for(const key of ['push','pop','stroke','strokeWeight','fill','noStroke','line'])packG[key]=()=>{};
 packG.rect=(...args)=>packRects.push(args);
+packG.quad=(...args)=>packQuads.push(args);
 probe('jetpackUnlocked=true;');
 ctx.__stancePackG=packG;
 probe('drawStanceDashPack(__stancePackG,player,{floor:0});');const side=packRects[0];packRects.length=0;
-probe('drawStanceDashPack(__stancePackG,player,{floor:1});');const full=packRects[0];
+probe('drawStanceDashPack(__stancePackG,player,{floor:1});');
+const full=P('stanceDashPackMesh({floor:1}).bounds');
 ok('prone reveals the broad pack face with its inset surface and drive details',
-  full[2]>side[2]*1.5&&full[3]===side[3]&&packRects.length>=12);
-packRects.length=0;probe('jetpackUnlocked=false;drawStanceDashPack(__stancePackG,player,{floor:1});');
-ok('the dash pack is drawn only when the upgrade is owned',packRects.length===0);
+  full.maxX-full.minX>side[2]*1.5&&full.maxY-full.minY>=side[3]&&packQuads.length>=12);
+packRects.length=packQuads.length=0;probe('jetpackUnlocked=false;drawStanceDashPack(__stancePackG,player,{floor:1});');
+ok('the dash pack is drawn only when the upgrade is owned',packRects.length===0&&packQuads.length===0);
 delete ctx.__stancePackG;
 console.log(`${checks}/${checks} low stance body, sleeve, gun and action layering checks passed`);

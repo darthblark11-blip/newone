@@ -26,27 +26,29 @@ ok('opposite travel uses backward steps while hips face the weapon',
  P('playerFootworkPose(player).backward>.99&&Math.abs(playerFootworkPose(player).angle-player.aimAngle)<.01'));
 probe('player.walkCycle=1.7;');const back=P('standingFootworkLeg(player,0)');
 probe('player.moveAngle=0;');advance(350);const forward=P('standingFootworkLeg(player,0)');
-ok('a backstep reverses ankle travel and plants the heel behind the hips',Math.abs(back.ax+forward.ax)<1e-6&&back.ax<back.sx);
+ok('a backstep retains the native leg length while planting behind the hips',
+ Math.abs((back.ax-back.sx)+(forward.ax-forward.sx))<1e-6&&back.ax<back.sx);
 ok('backward toes keep facing forward instead of turning the legs around',Math.abs(back.heading)<.01);
 
-let honestBones=true;
-for(const [label,direction]of [['forward',0],['backward',Math.PI]]){
- fresh(direction);advance(350);let exposed=true;
- for(const gait of [.2,.5])for(let i=0;i<48;i++){
+let honestBones=true,nativeShape=true;
+for(const [label,direction]of [['forward',0],['left',-Math.PI/2],['right',Math.PI/2],['backward',Math.PI]]){
+ fresh(direction);advance(350);
+ for(const gait of [.2,.5,1])for(let i=0;i<48;i++){
   const phase=i*Math.PI/24;
   probe(`player.gait=${gait};player.walkCycle=${phase};`);
   const body=P('({w:player.bodyW,h:player.bodyH,rig:figureRig(player.bodyW,player.bodyH),gait:{...gaitPose(player.gait)}})');
-  const bob=Math.abs(Math.sin(phase))*2*body.gait.bob+body.gait.lean;
   const legs=[P('standingFootworkLeg(player,0)'),P('standingFootworkLeg(player,1)')];
-  exposed&&=legs.some(l=>{
-   const x=l.ax+body.rig.foot*.34,y=l.ay+Math.sign(l.ay)*l.ankleW*.5;
-   return ((x-bob)/(body.w*.84*.5))**2+(y/(body.h*.5))**2>1.02&&Math.abs(y)>12;
-  });
+  const th=body.rig.thigh*.46,sh=body.rig.shin*.46;
+  if(direction!==Math.PI)for(let j=0;j<2;j++){
+   const l=legs[j],side=j?1:-1,sx=-10-Math.sin(phase)*12*body.gait.swing*side+body.rig.thighW*.5;
+   nativeShape&&=Math.abs(l.sx-sx)<1e-8&&l.sy===side*6&&Math.abs(l.kx-sx-th*.92)<1e-8&&
+    Math.abs(l.ax-l.kx-sh)<1e-8&&l.ky===l.sy&&l.ay===l.sy&&l.hipW===body.rig.thighW&&l.kneeW===body.rig.shinW;
+  }
   honestBones&&=legs.every(l=>Math.hypot(l.kx-l.sx,l.ky-l.sy)<=body.rig.thigh&&Math.hypot(l.ax-l.kx,l.ay-l.ky)<=body.rig.shin);
  }
- ok(label+' walk/jog retains an exposed shoe edge through the whole aimed stride',exposed);
 }
-ok('wider aimed feet keep both knee segments within their actual bone lengths',honestBones);
+ok('forward and lateral walk/jog/run use the original trouser shape and stations',nativeShape);
+ok('original and backward trouser segments retain the shared rig proportions',honestBones);
 
 let bounded=true,finite=true,continuous=true,previous=null;
 fresh();
@@ -54,7 +56,7 @@ for(let i=0;i<=720;i++){
  probe(`player.moveAngle=${i*Math.PI/360};player.walkCycle=1.1;frameCount++;updateDirectionalFootwork(player,16.67);`);
  const pose=P('playerFootworkPose(player)'),leg=P('standingFootworkLeg(player,0)');
  const turn=Math.atan2(Math.sin(pose.angle),Math.cos(pose.angle));
- bounded&&=Math.abs(turn)<=.62;
+ bounded&&=Math.abs(turn)<=Math.PI*.5;
  finite&&=Object.values(leg).filter(x=>typeof x==='number').every(Number.isFinite);
  if(previous)continuous&&=Math.hypot(leg.ax-previous.ax,leg.ay-previous.ay)<.8;
  previous=leg;
@@ -64,15 +66,56 @@ ok('all directional ankle and knee positions remain finite',finite);
 ok('crossing forward, lateral and backward directions does not teleport a foot',continuous);
 
 for(const side of [-1,1]){
- fresh(side*Math.PI/2);advance(450);
- ok((side<0?'left':'right')+' brief strafe stays a side step rather than immediately skipping',P('playerFootworkPose(player).skip<.001'));
- advance(650);
+ fresh(side*Math.PI/2);advance(3300);
+ ok((side<0?'left':'right')+' lateral travel stays normal through 3.3 continuous seconds',P('playerFootworkPose(player).skip<.001'));
+ advance(900);
  ok((side<0?'left':'right')+' sustained strafe blends into a side skip',P('playerFootworkPose(player).skip>.85'));
  probe(`window.footworkSkip={...playerFootworkPose(player),skip:1,skipPhase:Math.PI*.2};`);
  const leading=P(`standingFootworkLeg(player,${side<0?0:1},footworkSkip)`),following=P(`standingFootworkLeg(player,${side<0?1:0},footworkSkip)`);
  ok((side<0?'left':'right')+' travel starts its skip with the direction-side foot',leading.leading&&!following.leading&&leading.lift>following.lift+.5);
- probe('player.moveAngle=0;');advance(500);
+ probe('player.moveAngle=0;');advance(1100);
  ok('leaving the '+(side<0?'left':'right')+' strafe releases the skip pose',P('playerFootworkPose(player).skip<.05'));
+}
+
+for(const diagonal of [Math.PI/4,Math.PI*.75,-Math.PI/4,-Math.PI*.75]){
+ fresh(diagonal);advance(5000);
+ ok('diagonal '+diagonal+' never accumulates lateral skip time',P('player._directionalFootwork.strafeMs===0&&playerFootworkPose(player).skip<.001'));
+}
+for(const interrupt of ['player.moveAngle=Math.PI/4;','player.isMoving=false;','player.moveAngle=-Math.PI/2;']){
+ fresh(Math.PI/2);advance(3250);probe(interrupt);advance(50);
+ probe('player.isMoving=true;player.moveAngle=Math.PI/2;');advance(100);
+ ok('a brief '+interrupt+' interruption restarts the lateral hold',P('player._directionalFootwork.strafeMs<=150&&playerFootworkPose(player).skip===0'));
+}
+fresh(Math.PI/2);advance(4300);
+const rhythmStart=P('player._directionalFootwork.skipPhase');advance(1000);
+const rhythmTurns=(P('player._directionalFootwork.skipPhase')-rhythmStart)/(Math.PI*2);
+ok('the long skip advances at a measured rhythm below one cycle per second',rhythmTurns>.5&&rhythmTurns<.8);
+let smoothSkip=true,previousSkip=null;
+for(let i=0;i<240;i++){
+ probe('frameCount++;updateDirectionalFootwork(player,1000/120);');const l=P('standingFootworkLeg(player,0)');
+ if(previousSkip)smoothSkip&&=Math.hypot(l.ax-previousSkip.ax,l.ay-previousSkip.ay)<.9;
+ previousSkip=l;
+}
+ok('long lateral contacts and recovery remain smooth at frame boundaries',smoothSkip);
+const oldSide=P('player._directionalFootwork.skipSide'),oldHeading=P('player._directionalFootwork.skipHeading');
+const oldFeet=P('[standingFootworkLeg(player,0),standingFootworkLeg(player,1)]');
+probe('player.moveAngle=-Math.PI/2;frameCount++;updateDirectionalFootwork(player,1000/60);');
+const changedFeet=P('[standingFootworkLeg(player,0),standingFootworkLeg(player,1)]');
+ok('reversing travel eases out the outgoing support-foot sequence rather than swapping feet',
+ P('player._directionalFootwork.skipSide')===oldSide&&P('player._directionalFootwork.skipHeading')===oldHeading&&
+ changedFeet.every((l,i)=>Math.hypot(l.ax-oldFeet[i].ax,l.ay-oldFeet[i].ay)<4));
+probe('player.isMoving=false;frameCount++;updateDirectionalFootwork(player,1000/60);');
+const stoppedFeet=P('[standingFootworkLeg(player,0),standingFootworkLeg(player,1)]');
+ok('releasing movement lets the long skip settle without snapping the ankle to rest',
+ stoppedFeet.every((l,i)=>Math.hypot(l.ax-changedFeet[i].ax,l.ay-changedFeet[i].ay)<4));
+
+for(const weapon of ['PISTOL','SMG','REVOLVER','TASER']){
+ fresh(Math.PI/2);advance(4300);probe(`player.currentWeapon=WEAPONS.${weapon};player._directionalFootwork.skip=1;player._directionalFootwork.skipPhase=.9;player.gait=1;`);
+ const hands=[],nativeLimb=ctx.figureCelLimb;
+ ctx.figureCelLimb=(...args)=>{if(Math.abs(args[1]+1.5)<1e-8&&Math.abs(args[2]+P('player.bodyH')*.425)<1e-8)hands.push([args[5],args[6]]);return nativeLimb(...args);};
+ for(let i=0;i<16;i++)probe(`player.walkCycle=${i*Math.PI/8};player.show();`);
+ ctx.figureCelLimb=nativeLimb;
+ ok(weapon+' skip keeps its free hand relaxed instead of following the run cycle',hands.length===16&&hands.every(h=>Math.hypot(h[0]-hands[0][0],h[1]-hands[0][1])<1e-8));
 }
 
 fresh(Math.PI/2);advance(300);

@@ -42,11 +42,16 @@ A direct dive therefore passes through crouched vulnerability before reaching
 prone. Requesting a stance never grants immediate immunity. Another transition
 must wait for completion and a 180 ms recovery window. Pausing freezes progress.
 
-While aiming on foot, the player's hip heading stays within about 36° of the
-weapon facing. Opposite travel uses heel-leading backward steps with toes still
-facing the aim. Lateral travel uses the appropriate lead foot; after 600 ms of
-sustained strafing it blends into a sideways skip. Walking, jogging and running
-keep their throttle/cadence bands. The same lower-leg geometry places leg wounds.
+While aiming on foot, forward and lateral travel retain the regular standing
+trouser contours, widths and stride. Hips follow travel through lateral headings;
+opposite travel uses backward steps without turning the pelvis through the spine.
+Only uninterrupted direct lateral travel (within about 9° of sideways) lasting
+more than 3.3 seconds blends into a long, rhythmic side skip. Stopping, changing
+sides or moving diagonally restarts that interval. Skip contacts run at about
+0.52–0.72 cycles per second, with eased entry/exit and a direction-led following
+foot. A single-handed weapon's free arm relaxes during the skip. Walking,
+jogging and running keep their ordinary throttle bands and movement speed.
+The same lower-leg geometry places leg wounds.
 
 Crouch uses a separate articulated pose: hips back, chest/head leaning forward,
 knees bent forward/outward and ankles under the hips. Folded thighs cover the
@@ -55,6 +60,10 @@ camera size reduction conveys lower elevation without distorting the body.
 Each recovering knee withdraws under the shirt while the heel lifts behind the
 hip, exposing the back of the calf and the shoe tread. Chest and shoulders
 counter-rotate against the stepping leg, with a smaller opposing pelvis turn.
+The pelvis follows the movement stick independently of small sight corrections;
+rear-diagonal travel beyond 112.5° from aim uses backward stepping. Hip turns
+ease over 230 ms with a rotation-speed limit. Steps use 46% of the standing gait
+clock, broad shoulder/hip weight transfer, and a gradual settle when stopping.
 
 Prone uses a shorter torso with distinct hip, knee and ankle joints and longer
 rearward legs. Neutral poses center the head; active aim adds a cheek offset.
@@ -99,6 +108,10 @@ Palms and reload/support hands draw below the firearms. The dash pack reveals
 its full vented back plate and twin drive housings as the torso drops prone;
 its art stays mounted above back clothing and armor while face down and turns
 underneath the actor when rolling onto the back.
+The shell and twin drives have projected thickness and opaque surfaces that
+sort around the torso during a roll. Outboard engines and exhaust collars stay
+visible beside the supine torso. A rear-facing sidearm extends its firing arm
+toward the feet; supine forearms lie above the abdomen, with palms below the gun.
 Native guns, reloads and bow use one rigid weapon mount. Chemist hand actions
 retain an independent body mount. Physical shots, muzzle flashes and torch
 direction share the posed gun. Contact shadows tighten or flatten, and lowered health
@@ -149,6 +162,8 @@ Focused verification lives in `tools/check-stance-{hits,controls,ai,render}.js`.
 `tools/check-directional-footwork.js`, `tools/check-crouch-footwork.js` and
 `tools/check-prone-directional-aim.js` exercise directional stepping, heel/sole
 recovery, planted aiming, cannon controls and eight-direction roll geometry.
+`tools/check-prone-pack-aim.js` checks continuous pack projection, opaque depth
+passes, visible supine engines, and reachable rear-facing sidearm arms.
 `tools/check-stance-anatomy.js` checks bent joints, proportions, crawl support,
 rendered arm lengths, grip attachment, neutral/aimed geometry and smooth joint motion.
 `tools/check-stance-layering.js` checks torso/head occlusion and single action

@@ -178,6 +178,7 @@ for(const stance of ['CROUCH','PRONE'])for(const dimensions of [[21,27],[24,30],
  for(let i=0;i<=160;i++) {
   body(stance,true,i*TAU/(160*.65),aiming);
   probe(`player.aimAngle=${i*TAU/160};`);
+  if(stance==='CROUCH')probe('frameCount++;updateCrouchFacing(player,1000/60);');
   const b=P('stanceBodyPose(player)'),angle=i*TAU/160;
   const pts=b.joints.flatMap(j=>[j.hip,j.knee,j.ankle,j.shoulder,j.elbow]);
   const world=pts.map(q=>({x:Math.cos(angle)*q.x-Math.sin(angle)*q.y,y:Math.sin(angle)*q.x+Math.cos(angle)*q.y}));

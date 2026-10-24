@@ -14661,6 +14661,8 @@ function mapLegHitDecal(actor,wx,wy,decal,origin=actor) {
   }
   const directional=!fallen&&!pose.active&&!mantle&&!dig?playerFootworkPose(actor):null;
   if(directional&&directional.active)angle=directional.angle;
+  const crouch=!fallen&&!pose.active&&!mantle&&!dig&&actorStancePose(actor).crouch>0?stanceBodyPose(actor):null;
+  if(crouch){angle=stanceFacingAngle(actor);scale=crouch.size;}
   const ca=Math.cos(angle),sa=Math.sin(angle),dx=(wx-origin.x)/scale,dy=(wy-origin.y)/scale;
   const x=ca*dx+sa*dy,y=-sa*dx+ca*dy,th=rig.thigh*STAND_FORE_LEG,sh=rig.shin*STAND_FORE_LEG;
   const feet=pose.active?boxingFeet(actor,pose):null;
@@ -14685,6 +14687,8 @@ function mapLegHitDecal(actor,wx,wy,decal,origin=actor) {
       const sx=-10+rig.thighW*.5,sy=side*6;
       kx=sx+th*.8+side*dig.blend*3-dig.effort*1.1;ky=sy+side*dig.blend*2.4;
       ax=kx+sh*.8+side*dig.blend*5-dig.effort*1.4;ay=ky+side*dig.blend*1.5;
+    }else if(crouch){
+      const leg=crouch.joints[index];kx=leg.knee.x;ky=leg.knee.y;ax=leg.ankle.x;ay=leg.ankle.y;
     }else if(directional&&directional.active){
       const leg=standingFootworkLeg(actor,index,directional);({kx,ky,ax,ay}=leg);width=leg.ankleW;
     }else{
@@ -21142,6 +21146,7 @@ this.skeletonTimer = 0;
     }
     } finally {
       updateProneFacing(this,0,true);constrainStanceFacing(this);
+      updateCrouchFacing(this,typeof deltaTime==='number'?deltaTime:1000/60);
       if(typeof updateDirectionalFootwork==='function')updateDirectionalFootwork(this,typeof deltaTime==='number'?deltaTime:1000/60);
       rememberFigureMotion(this,this.x-motionX,this.y-motionY);
     }
@@ -23516,6 +23521,16 @@ if (this.isPlayer) {
                 shoulderX=lerp(shoulderX,-1.5,freeRun);shoulderY=lerp(shoulderY,-this.bodyH*.425,freeRun);
                 hx=lerp(hx,tx,freeRun);hy=lerp(hy,ty,freeRun);
                 ex=lerp(ex,te,freeRun);ey=lerp(ey,-this.bodyH*.425-.6,freeRun);
+            }
+            if(this.isPlayer&&weaponHands(this.currentWeapon)===1&&this.currentWeapon!==WEAPONS.DUAL_SMG&&
+                standingFootwork&&standingFootwork.active&&standingFootwork.skip>0) {
+                // A long lateral skip is led by the legs. The empty hand hangs
+                // beside the ribs, absorbing the slower weight transfer rather
+                // than pumping through the forward-running arm animation.
+                const relax=standingFootwork.skip,sway=Math.sin(standingFootwork.skipPhase)*.45;
+                shoulderX=lerp(shoulderX,-1.5,relax);shoulderY=lerp(shoulderY,-this.bodyH*.425,relax);
+                hx=lerp(hx,-2+sway,relax);hy=lerp(hy,-this.bodyH*.49,relax);
+                ex=lerp(ex,-3+sway*.35,relax);ey=lerp(ey,-this.bodyH*.425-.6,relax);
             }
             if(this.isPlayer&&weaponHands(this.currentWeapon)===2)drawAimedTwoHandSleeve(this,g,hx,hy,false);
             else if(cityStreetLook(this))drawCityStreetUpperArm(g,this,shoulderX,shoulderY,ex,ey,hx,hy,
@@ -39910,9 +39925,8 @@ function gaitPose(t) {
   return _gp;
 }
 
-// Aimed locomotion keeps the pelvis near the gun-facing direction. Travel
-// chooses the ground stroke, so moving away from the aim becomes heel-leading
-// backsteps rather than turning the legs through the actor's spine.
+// Keep the ordinary trouser rig for aimed travel. The pelvis follows forward
+// and lateral travel, returning toward the gun for heel-leading backsteps.
 function directionalFootworkEligible(c) {
   return !!c&&c.isPlayer&&c.hp>0&&!c.dead&&!c.mounted&&!(c.dashTimer>0)&&
     !(c.meleeTimer>0)&&!(c.stunTimer>0)&&!boxingActive(c)&&!c.shovelMantle&&
@@ -39926,70 +39940,69 @@ function updateDirectionalFootwork(c,elapsedMs=deltaTime) {
   if(!c||!c.isPlayer||!doTick||!combatStanceContext())return;
   const eligible=directionalFootworkEligible(c),dt=Math.min(100,Math.max(0,Number(elapsedMs)||0));
   let s=c._directionalFootwork;
-  if(!s)s=c._directionalFootwork={frame:-1,active:false,hip:0,side:1,strafeMs:0,skip:0,origin:c.walkCycle||0,skipOrigin:c.walkCycle||0};
+  if(!s)s=c._directionalFootwork={frame:-1,active:false,hip:0,side:1,strafeMs:0,skip:0,origin:0,skipPhase:0};
   if(s.frame===frameCount)return;
   s.frame=frameCount;
-  if(!eligible){s.active=false;s.skip=s.strafeMs=0;return;}
-  if(!s.active){s.active=true;s.hip=0;s.origin=c.walkCycle||0;s.skipOrigin=c.walkCycle||0;}
+  if(!eligible){s.active=false;s.skip=s.strafeMs=0;s.skipping=false;return;}
+  if(!s.active){s.active=true;s.hip=directionalFootworkHip(c);s.origin=0;s.skipPhase=0;}
   const delta=directionalFootworkDelta(c),lateral=Math.sin(delta),forward=Math.cos(delta);
-  const target=c.isMoving?lateral*.58:0,ease=1-Math.exp(-dt/105);
-  s.hip+=(target-s.hip)*ease;
-  const strafe=c.isMoving&&Math.abs(lateral)>.72&&Math.abs(forward)<.70,side=lateral<0?-1:1;
+  // Diagonals remain the normal gait. A short release, direction change or
+  // diagonal excursion restarts the continuous direct-lateral requirement.
+  const strafe=c.isMoving&&Math.abs(lateral)>.987&&Math.abs(forward)<.16,side=lateral<0?-1:1;
   if(strafe&&side===s.side)s.strafeMs+=dt;
-  else{s.strafeMs=0;s.side=side;}
-  const skipping=strafe&&s.strafeMs>=600;
-  if(skipping&&!s.skipping)s.skipOrigin=c.walkCycle||0;
-  s.skipping=skipping;s.skip+=(Number(skipping)-s.skip)*(1-Math.exp(-dt/150));
+  else{s.strafeMs=strafe?dt:0;s.side=side;}
+  const skipping=strafe&&s.strafeMs>3300;
+  if(skipping&&!s.skipping&&s.skip<.01){s.skipPhase=0;s.skipSide=side;s.skipHeading=c.moveAngle||0;}
+  s.skipping=skipping;s.skip+=(Number(skipping)-s.skip)*(1-Math.exp(-dt/320));
+  if(c.isMoving)s.skipPhase+=dt*.001*Math.PI*2*(.52+.20*Math.max(0,Math.min(1,c.gait||0)));
+  const target=c.isMoving?directionalFootworkHip(c)*(1-s.skip*.48):0,ease=1-Math.exp(-dt/180);
+  s.hip+=(target-s.hip)*ease;
+}
+function directionalFootworkHip(c) {
+  const delta=directionalFootworkDelta(c);
+  return Math.atan2(Math.sin(delta),Math.abs(Math.cos(delta)));
 }
 function playerFootworkPose(c) {
   if(!directionalFootworkEligible(c))return {active:false};
   const delta=directionalFootworkDelta(c),s=c._directionalFootwork;
-  const lateral=Math.sin(delta),forward=Math.cos(delta),hip=s&&s.active?s.hip:(c.isMoving?lateral*.58:0);
-  return {active:true,angle:(c.aimAngle||0)+Math.max(-.62,Math.min(.62,hip)),delta,
-    backward:Math.max(0,Math.min(1,(-forward-.1)/.8)),strafe:Math.abs(lateral),side:lateral<0?-1:1,
-    skip:s&&s.active?s.skip:0,
+  const lateral=Math.sin(delta),forward=Math.cos(delta),hip=s&&s.active?s.hip:(c.isMoving?directionalFootworkHip(c):0);
+  const reverse=Math.max(0,Math.min(1,(-forward-.05)/.85));
+  return {active:true,angle:(c.aimAngle||0)+Math.max(-Math.PI*.5,Math.min(Math.PI*.5,hip)),delta,
+    backward:reverse*reverse*(3-2*reverse),strafe:Math.abs(lateral),side:lateral<0?-1:1,
+    skip:s&&s.active?s.skip:0,skipSide:s&&s.active?s.skipSide:0,
+    skipHeading:s&&s.active&&Number.isFinite(s.skipHeading)?s.skipHeading:c.moveAngle||0,
     phase:(c.walkCycle||0)-(s&&s.active?s.origin:0),
-    skipPhase:(c.walkCycle||0)-(s&&s.active?s.skipOrigin:0)};
+    skipPhase:s&&s.active?s.skipPhase:0};
 }
 function standingFootworkLeg(c,index,pose=playerFootworkPose(c)) {
   if(!pose.active)return null;
   const R=figureRig(c.bodyW,c.bodyH),side=index?1:-1,gait=Math.max(0,Math.min(1,c.gait||0));
-  const moving=!!c.isMoving,relative=(c.moveAngle||0)-pose.angle,dx=Math.cos(relative),dy=Math.sin(relative);
-  const stride=(4.5+7*gait)*(1-pose.strafe*.20),height=2.2+gait*2.4;
+  const moving=!!c.isMoving,relative=(Number.isFinite(pose.skipHeading)?pose.skipHeading:c.moveAngle||0)-pose.angle,dx=Math.cos(relative),dy=Math.sin(relative);
+  const GP=gaitPose(gait),swing=moving?Math.sin(c.walkCycle||0)*12*GP.swing:0;
+  const th=R.thigh*STAND_FORE_LEG,sh=R.shin*STAND_FORE_LEG;
+  const stride=6.5+6.5*gait,height=1.5+gait*1.8;
   const cycle=(phase,delay)=>{
-    if(!moving)return {step:0,lift:0};
-    const t=((phase/(Math.PI*2)+delay)%1+1)%1,swing=t<.38,u=swing?t/.38:(t-.38)/.62;
-    const e=u*u*(3-2*u);
+    if(!(pose.skip>0))return {step:0,lift:0};
+    const t=((phase/(Math.PI*2)+delay)%1+1)%1,swing=t<.44,u=swing?t/.44:(t-.44)/.56;
+    const e=u*u*u*(u*(u*6-15)+10);
     return {step:(swing?-1+2*e:1-2*e)*stride,lift:swing?Math.sin(u*Math.PI)**2*height:0};
   };
-  const walk=cycle(pose.phase,index*.5),lead=side===pose.side;
-  const skip=cycle(pose.skipPhase,lead?0:-.28),mix=pose.skip;
-  const step=walk.step+(skip.step-walk.step)*mix,lift=walk.lift+(skip.lift-walk.lift)*mix;
-  const sx=-10+R.thighW*.5,sy=side*6;
-  // The knees keep facing with the hips while the ankle travels forward,
-  // sideways or backward. The stepping foot shortens under the body as it
-  // lifts; a planted one travels rearward relative to the advancing root.
-  const kx=sx+5+dx*step*.45,ky=sy+side*2+dy*step*.43+side*lift*.12;
-  // Backsteps plant the heel behind the hips while the recovering knee
-  // remains under the body. Merely reversing the forward ankle wave left
-  // both backward feet hidden beneath the chest from this camera.
-  const ax=6-pose.backward*12+dx*step;
-  // The feet use a modestly wider track than the hip joints. At walking and
-  // jogging amplitudes a six-unit track buried both boots under the shirt;
-  // knees opening between hips and ankles keeps this an athletic stance.
-  const track=c.bodyH*.39+.5,ay=side*(track-lift*.08)+dy*step;
-  return {sx,sy,kx,ky,ax,ay,lift,step,leading:lead,heading:pose.side*pose.strafe*(.24+pose.skip*.36),
+  const lead=side===(pose.skipSide||pose.side),skip=cycle(pose.skipPhase,lead?0:-.34),mix=pose.skip;
+  const step=skip.step*mix,lift=skip.lift*mix;
+  // Until the deliberate skip begins these are the original standing leg
+  // stations, widths and foreshortening, including the ordinary side run.
+  const sx=-10-swing*side*(1-mix)+R.thighW*.5,sy=side*6;
+  const extension=1-2*pose.backward;
+  const kx=sx+th*.92*extension+dx*step*.38,ky=sy+dy*step*.38;
+  const ax=sx+(th*.92+sh)*extension+dx*step,ay=sy+dy*step-side*lift*.18;
+  return {sx,sy,kx,ky,ax,ay,lift,step,leading:lead,heading:((c.aimAngle||0)-pose.angle)*mix*.6,
     hipW:R.thighW,kneeW:R.shinW,ankleW:R.shinW*.80};
 }
 function drawStandingFootworkLegs(c,g,R,pose) {
   const boot=[red(c.pantsCol)*.55,green(c.pantsCol)*.55,blue(c.pantsCol)*.55];
   for(let index=0;index<2;index++) {
     const l=standingFootworkLeg(c,index,pose);
-    // Separate rounded bones retain a knee when a backstep folds the shin
-    // under its thigh; a continuous reversing ribbon would turn into a point.
-    figureCelLimb(g,l.sx,l.sy,(l.sx+l.kx)*.5,(l.sy+l.ky)*.5,l.kx,l.ky,l.hipW,(l.hipW+l.kneeW)*.5,l.kneeW,c.pantsCol);
-    figureCelLimb(g,l.kx,l.ky,(l.kx+l.ax)*.5,(l.ky+l.ay)*.5,l.ax,l.ay,l.kneeW,(l.kneeW+l.ankleW)*.5,l.ankleW,c.pantsCol);
-    figureCelOval(g,l.kx,l.ky,l.kneeW,l.kneeW,c.pantsCol,.45);
+    figureCelLimb(g,l.sx,l.sy,l.kx,l.ky,l.ax,l.ay,l.hipW,l.kneeW,l.ankleW,c.pantsCol);
     push();translate(l.ax,l.ay);rotate(l.heading);
     figureCelOval(g,R.foot*.34,0,R.foot,l.ankleW,boot,.8);pop();
     drawLegDecals(g,c.decals,index,l.sx,l.sy,l.kx,l.ky,l.ax,l.ay,l.hipW,l.kneeW,l.ankleW);
@@ -41233,11 +41246,55 @@ function stanceElbowCycle(phase, moving) {
 function stanceArtAiming(c) {
   return !c.isPlayer || !!(rightStick && rightStick.active) || c.muzzleFlash>0 || playerAiming(c);
 }
+// The low pelvis follows travel, while the sights belong to the shoulders.
+// Rear diagonals use a backstep instead of asking the spine to turn through
+// a half revolution. Keep the planted hip heading when the aim thumb moves.
+function crouchFacingTarget(c) {
+  const aim=c.aimAngle||0,travel=c.isMoving?(c.moveAngle||0):aim;
+  const delta=Math.atan2(Math.sin(travel-aim),Math.cos(travel-aim));
+  const backward=!!c.isMoving&&Math.cos(delta)<-.3826834324;
+  return {angle:travel+(backward?Math.PI:0),backward:Number(backward)};
+}
+function updateCrouchFacing(c,elapsedMs=deltaTime) {
+  if(!c||!c.isPlayer||!doTick||!combatStanceContext())return;
+  const p=actorStancePose(c),active=p.crouch>0&&!actorStanceSuppressed(c);
+  const cycle=c.walkCycle||0,dt=Math.min(100,Math.max(0,Number(elapsedMs)||0));
+  let s=c._crouchMotion;
+  if(!active){if(s){s.active=false;s.cycle=cycle;}return;}
+  const target=crouchFacingTarget(c);
+  if(!s||!s.active)s=c._crouchMotion={active:true,frame:-1,cycle,phase:cycle*.46,
+    angle:c.isMoving?target.angle:c.aimAngle||0,backward:target.backward,motion:0};
+  if(s.frame===frameCount)return;
+  s.frame=frameCount;
+  const turn=1-Math.exp(-dt/230),settle=1-Math.exp(-dt/180);
+  if(c.isMoving) {
+    const step=Math.atan2(Math.sin(target.angle-s.angle),Math.cos(target.angle-s.angle))*turn;
+    s.angle+=Math.max(-dt*.0032,Math.min(dt*.0032,step));
+  }
+  s.backward+=(target.backward-s.backward)*settle;
+  s.motion+=(Number(!!c.isMoving)-s.motion)*settle;
+  if(s.motion<.001)s.motion=0;
+  s.phase+=Math.max(0,Math.min(1,cycle-s.cycle))*.46;s.cycle=cycle;
+  // At rest a sufficiently large upper-body turn asks the feet to pivot;
+  // small corrections to the sights do not drag the knees around with them.
+  const aim=c.aimAngle||0,relative=Math.atan2(Math.sin(s.angle-aim),Math.cos(s.angle-aim));
+  const limited=Math.max(-Math.PI*.54,Math.min(Math.PI*.54,relative));
+  s.angle=aim+limited;
+}
+function crouchLowerPose(c) {
+  const aim=c.aimAngle||0,s=c.isPlayer&&c._crouchMotion&&c._crouchMotion.active?c._crouchMotion:null;
+  const target=crouchFacingTarget(c),angle=s?s.angle:c.isMoving?target.angle:aim;
+  const delta=Math.atan2(Math.sin(angle-aim),Math.cos(angle-aim));
+  return {angle:aim+Math.max(-Math.PI*.54,Math.min(Math.PI*.54,delta)),
+    yaw:Math.max(-Math.PI*.54,Math.min(Math.PI*.54,delta)),backward:s?s.backward:target.backward,
+    phase:s?s.phase:(c.walkCycle||0)*.46,motion:s?s.motion:Number(!!c.isMoving)};
+}
 // A crouch step folds the recovering knee into the shirt's footprint while
 // the heel comes up behind the hips. The planted foot stays on the floor;
 // it travels rearward only in the advancing actor's local frame.
 function crouchStepPose(c,phase=c&&c.walkCycle||0) {
-  const moving=!!(c&&c.isMoving),scale=Math.max(.75,Math.min(1.35,((c&&c.bodyH)||27)/27));
+  const lower=crouchLowerPose(c),amplitude=lower.motion,moving=amplitude>0;
+  const scale=Math.max(.75,Math.min(1.35,((c&&c.bodyH)||27)/27)),direction=1-2*lower.backward;
   const cycle=Number.isFinite(phase)?phase/(Math.PI*2):0,legs=[];
   const ease=t=>t*t*t*(t*(t*6-15)+10);
   for(const side of [-1,1]) {
@@ -41246,20 +41303,23 @@ function crouchStepPose(c,phase=c&&c.walkCycle||0) {
     if(moving) {
       const u=planted?t/.58:(t-.58)/.42,q=ease(u);
       progress=u;
-      if(planted){kx=-2*q;ax=2-4*q;}
+      if(planted){kx=-2*q*direction;ax=(2-4*q)*direction;}
       else {
         lift=Math.sin(u*Math.PI)**2;
-        kx=-2*(1-q)-7.2*lift;ky=-side*4.5*lift;
-        ax=-2+4*q-3*lift;ay=-side*1.6*lift;
+        kx=-2*(1-q)*direction-7.2*lift;ky=-side*4.5*lift;
+        ax=(-2+4*q)*direction-3*lift;ay=-side*1.6*lift;
         sole=lift*ease(Math.max(0,Math.min(1,(u-.06)/.5)));
       }
     }
     legs.push({side,planted:moving?planted:true,progress,
-      hip:{x:0,y:0},knee:{x:kx*scale,y:ky*scale},ankle:{x:ax*scale,y:ay*scale},
-      lift,sole,calf:lift,footPitch:lift*(.75+progress*.20)});
+      hip:{x:0,y:0},knee:{x:kx*scale*amplitude,y:ky*scale*amplitude},ankle:{x:ax*scale*amplitude,y:ay*scale*amplitude},
+      lift:lift*amplitude,sole:sole*amplitude,calf:lift*amplitude,footPitch:lift*(.75+progress*.20)*amplitude});
   }
-  const balance=legs[1].lift-legs[0].lift,counterYaw=-balance*.065;
-  return {legs,counterYaw,hipYaw:-counterYaw*.5,armCounter:balance*.65};
+  // Weight transfers before the recovering knee peaks. Broad sinusoidal
+  // support transfer keeps the shoulders from flicking with the heel lift.
+  const balance=Math.sin(cycle*Math.PI*2)*amplitude,counterYaw=balance*.105;
+  return {legs,counterYaw,hipYaw:-counterYaw*.43,armCounter:-balance*.85,
+    chestY:balance*.70*scale,chestX:(1-Math.cos(cycle*Math.PI*4))*.22*amplitude*scale};
 }
 // Called in the boot's existing ankle/rotation frame, after its top surface.
 // The raised heel exposes a shallow sole and tread, rather than sliding the
@@ -41288,29 +41348,38 @@ function proneRollPose(c) {
 }
 function stanceBodyPose(c) {
   const p=actorStancePose(c),value=c.stance?c.stance.value:0,drop=Math.min(1,value),floor=p.prone||0;
-  const aiming=stanceArtAiming(c),cycle=c.walkCycle||0,cached=c._stanceBody,roll=proneRollPose(c);
+  const aiming=stanceArtAiming(c),cycle=c.walkCycle||0,cached=c._stanceBody,roll=proneRollPose(c),lower=crouchLowerPose(c);
   if(cached&&cached.value===value&&cached.cycle===cycle&&cached.moving===!!c.isMoving&&
       cached.aiming===aiming&&cached.gait===(c.gait||0)&&cached.bodyW===c.bodyW&&cached.bodyH===c.bodyH&&
-      cached.roll.heading===roll.heading&&cached.roll.delta===roll.delta&&cached.roll.blend===roll.blend)return cached;
+      cached.roll.heading===roll.heading&&cached.roll.delta===roll.delta&&cached.roll.blend===roll.blend&&
+      cached.lower.angle===lower.angle&&cached.lower.backward===lower.backward&&cached.lower.phase===lower.phase&&cached.lower.motion===lower.motion)return cached;
   const R=figureRig(c.bodyW,c.bodyH),phase=cycle*.65;
   const moving=c.isMoving&&!proneAimLocked(c),settle=c.isPlayer&&floor>0?Math.min(1,Math.max(0,c.gait||0)*1.25):0;
   const motion=moving?1:settle,right=stanceElbowCycle(phase,motion>0),left=stanceElbowCycle(phase+Math.PI,motion>0);
   right.reach*=motion;right.lift*=motion;left.reach*=motion;left.lift*=motion;
-  const crouchWeight=drop*(1-floor),step=crouchStepPose(c,cycle);
+  const crouchWeight=drop*(1-floor),step=crouchStepPose(c,lower.phase);
   const yaw=Math.atan2(left.reach-right.reach,c.bodyH*.72)*.38*floor+step.counterYaw*crouchWeight+roll.turn;
-  const hipYaw=-yaw*.45+step.hipYaw*crouchWeight;
-  const size=p.scaleX,hipX=-5*drop-4*floor,chestX=1.5*drop-floor*2.5,chestY=roll.offsetY;
+  const legYaw=lower.yaw*crouchWeight,hipYaw=legYaw-yaw*.45+step.hipYaw*crouchWeight;
+  const size=p.scaleX,hipX=-5*drop-4*floor,hipY=roll.offsetY;
+  const chestX=1.5*drop-floor*2.5+step.chestX*crouchWeight,chestY=hipY+step.chestY*crouchWeight;
   const torsoLength=c.bodyW*TORSO_DEPTH+floor*3.5,torsoWidth=c.bodyH*(1-.10*drop-.10*floor)*(1-roll.side*.53);
   const joints=[];
   for (const side of [-1,1]) {
     const support=side===1?right:left,opposite=side===1?left:right;
     const drive=Math.max(0,opposite.reach/3.4),tuck=drive*drive*(3-2*drive)*floor;
     const stepLeg=step.legs[side<0?0:1];
-    const hY=side*(5.6+floor*.7)*(1-roll.side*.68),hip={x:hipX-Math.sin(hipYaw)*hY,y:Math.cos(hipYaw)*hY+chestY};
+    const hY=side*(5.6+floor*.7)*(1-roll.side*.68),hip={x:hipX-Math.sin(hipYaw)*hY,y:Math.cos(hipYaw)*hY+hipY};
     const knee={x:10*drop-floor*(30-5*tuck)+stepLeg.knee.x*crouchWeight,
-      y:side*(12.5*drop+floor*(-3.5+5*tuck))*(1-roll.side*.45)+stepLeg.knee.y*crouchWeight+chestY};
+      y:side*(12.5*drop+floor*(-3.5+5*tuck))*(1-roll.side*.45)+stepLeg.knee.y*crouchWeight};
     const ankle={x:-4*drop-floor*(27-4*tuck)+stepLeg.ankle.x*crouchWeight,
-      y:side*(8.6+floor*.3)*(1-roll.side*.38)+stepLeg.ankle.y*crouchWeight+chestY};
+      y:side*(8.6+floor*.3)*(1-roll.side*.38)+stepLeg.ankle.y*crouchWeight};
+    // Rotate only the folded lower chain around its pelvis. The upper torso
+    // remains in the gun's frame, so the aim thumb cannot tow the knees.
+    const co=Math.cos(legYaw),si=Math.sin(legYaw);
+    for(const point of [knee,ankle]) {
+      const x=point.x-hipX,y=point.y;
+      point.x=hipX+co*x-si*y;point.y=si*x+co*y+hipY;
+    }
     // Seat the sleeve root inside the chest contour. The torso then covers
     // the shoulder cap instead of leaving the arm pasted onto its outer edge.
     const sx=torsoLength*.30,sy=side*torsoWidth*.28;
@@ -41318,13 +41387,13 @@ function stanceBodyPose(c) {
       y:Math.sin(yaw)*sx+Math.cos(yaw)*sy+chestY};
     const post=side===roll.supportSide?roll.post:0;
     joints.push({side,hip,knee,ankle,shoulder,
-      elbow:{x:4*drop+floor*4+support.reach*floor-post*3,
+      elbow:{x:4*drop+floor*4+support.reach*floor-post*3+side*step.armCounter*crouchWeight,
         y:side*(c.bodyH*.46+support.lift*floor)*(1-roll.side*.45)+chestY+side*post},support,step:stepLeg});
   }
-  const head={x:(aiming?3:0)*(1-drop)+8*drop+7*floor-roll.back*.8,
+  const head={x:(aiming?3:0)*(1-drop)+8*drop+7*floor-roll.back*.8+step.chestX*crouchWeight*.55,
     y:(aiming?4*(1-drop)+2.2*drop-5.8*floor:0)*(1-roll.side*.6-roll.back)+chestY};
-  return c._stanceBody={value,cycle,moving:!!c.isMoving,gait:c.gait||0,bodyW:c.bodyW,bodyH:c.bodyH,drop,floor,size,aiming,yaw,hipYaw,hipX,chestX,chestY,joints,head,R,
-    torsoLength,torsoWidth,crouchWeight,step,roll};
+  return c._stanceBody={value,cycle,moving:!!c.isMoving,gait:c.gait||0,bodyW:c.bodyW,bodyH:c.bodyH,drop,floor,size,aiming,yaw,hipYaw,hipX,hipY,chestX,chestY,joints,head,R,
+    torsoLength,torsoWidth,crouchWeight,step,roll,lower};
 }
 // A native gun keeps its own proportions. One rigid mount owns the solid,
 // wrists, laser and flash, and supplies the physical muzzle and torch too.
@@ -41352,8 +41421,11 @@ function stanceWeaponMount(c) {
     if(c.isPlayer&&b.floor>0) {
       const delta=b.roll.delta,co=Math.cos(delta),si=Math.sin(delta);
       const mix=aim?1:carryBlend,carryX=two?9:10,carryY=two?9:8;
-      const bodyX=carryX+((two?9:16)-7*b.roll.back-carryX)*mix;
-      const bodyY=carryY+((two?4:8)*co+b.roll.offsetY-carryY)*mix;
+      // A sidearm reaches toward the feet when lying on the back, with
+      // the wrist on the firing shoulder's side rather than across the face.
+      const single=!two&&w!==WEAPONS.DUAL_SMG;
+      const bodyX=carryX+((two?9:16)-(single?29:7)*b.roll.back-carryX)*mix;
+      const bodyY=carryY+((two?4:8)*co+(single?16*b.roll.back:0)+b.roll.offsetY-carryY)*mix;
       stationX=co*bodyX+si*bodyY;stationY=-si*bodyX+co*bodyY;
     }
     x=(stationX-Math.cos(angle)*nativeX*factor+Math.sin(angle)*nativeY*factor)*strength*b.size;
@@ -41462,40 +41534,65 @@ function drawCombatStanceShadow(c, p) {
   }
   pop();
 }
-// The upright pack shows its side. As the back levels with the floor, its
-// broad dorsal face turns into view and stays mounted to the torso's roll.
-function drawStanceDashPack(g,c,b) {
-  if(!c.isPlayer||!jetpackUnlocked)return;
-  const roll=b.roll||{side:0,back:0},t=Math.max(0,Math.min(1,b.floor*(1-roll.side)*(1-roll.back))),face=t*t*(3-2*t);
-  const x=-9-.5*face,w=9+6*face;
-  g.push();
-  g.stroke(29,34,38);g.strokeWeight(.8);g.fill(80+face*12,86+face*17,91+face*21);
-  g.rect(x,-9,w,18,3);
-  g.noStroke();g.fill(229,111,34);g.rect(x,-6,2,12,1);
-  if(face>0) {
-    // A raised rim and recessed central shell give the pack a full back
-    // surface, rather than widening the old thin side strip into a plank.
-    const alpha=255*face;
-    g.fill(131,148,158,alpha);g.rect(x+1.1,-7.8,w-2.2,15.6,2);
-    g.fill(62,74,84,alpha);g.rect(x+2,-7,w-3.8,14,1.5);
-    g.fill(104,119,130,alpha);g.rect(x+2.2,-6.7,w-4.4,13.1,1.4);
-    // Twin drive housings run down the back. Their orange exhaust collars
-    // point toward the hips, with the dark bores visible from above.
-    for(const side of [-1,1]) {
-      const y=side*5.5;
-      g.fill(36,45,53,alpha);g.rect(x+1.7,y-1.9,w-3.5,3.8,1.2);
-      g.fill(122,138,148,alpha);g.rect(x+2.2,y-1.3,w-4.4,1.1,.5);
-      g.fill(231,119,40,alpha);g.rect(x-.7,y-1.8,3,3.6,.8);
-      g.fill(52,47,41,alpha);g.rect(x-.9,y-1.1,1.1,2.2,.4);
-    }
-    // The center plate and short cooling slots remain readable at native
-    // scale; these are material accents, not light or particle sources.
-    g.fill(52,64,75,alpha);g.rect(x+3.1,-2.7,w-5.3,5.4,1);
-    g.fill(154,168,175,alpha);g.rect(x+3.7,-2.1,w-6.5,.7,.3);
-    g.stroke(25,34,42,alpha);g.strokeWeight(.7);
-    for(let i=0;i<3;i++){const vx=x+4+i*1.7;g.line(vx,-.6,vx,1.5);}
-    g.noStroke();g.fill(242,151,62,alpha);g.rect(x+w-3.4,-1.5,1,3,.4);
+// Project the pack's shell and outboard drives about the torso's long axis.
+// A back-lying torso covers the center plate, but never the whole pack.
+function stanceDashPackMesh(b) {
+  if(b._dashPackMesh)return b._dashPackMesh;
+  const floor=Math.max(0,Math.min(1,b.floor||0)),roll=b.roll||{};
+  const angle=(roll.delta||0)*(roll.amount||0),co=Math.cos(angle),si=Math.sin(angle);
+  const faces=[],x0=-9-.5*floor,x1=x0+9+6*floor;
+  const point=(x,y,z)=>{const height=y*si+z*co;return {x:x-height*.18,y:y*co-z*si,z:height};};
+  const surface=(name,vertices,col,normal,detail=false)=>{
+    if(normal[0]*.18+normal[2]<=.00001)return;
+    const shade=detail?1:.69+.31*Math.max(0,normal[2]-.22*normal[1]-.16*normal[0]);
+    faces.push({name,points:vertices.map(v=>point(...v)),col:col.map(c=>Math.round(c*shade)),detail});
+  };
+  const box=(name,xa,xb,ya,yb,za,zb,col)=>{
+    surface(name,[[xb,ya,za],[xb,yb,za],[xb,yb,zb],[xb,ya,zb]],col,[1,0,0]);
+    surface(name,[[xa,ya,za],[xb,ya,za],[xb,ya,zb],[xa,ya,zb]],col,[0,-co,-si]);
+    surface(name,[[xa,yb,za],[xa,yb,zb],[xb,yb,zb],[xb,yb,za]],col,[0,co,si]);
+    surface(name,[[xa,ya,za],[xa,yb,za],[xb,yb,za],[xb,ya,za]],col,[0,si,-co]);
+    surface(name,[[xa,ya,zb],[xb,ya,zb],[xb,yb,zb],[xa,yb,zb]],col,[0,-si,co]);
+  };
+  const plate=(name,xa,xb,ya,yb,z,col)=>surface(name,[[xa,ya,z],[xb,ya,z],[xb,yb,z],[xa,yb,z]],col,[0,-si,co],true);
+  box('shell',x0,x1,-9,9,4.8,8.8,[91,105,117]);
+  plate('rim',x0+1,x1-1,-8,8,8.84,[137,153,164]);
+  plate('back plate',x0+2,x1-2,-7.1,7.1,8.88,[78,94,108]);
+  plate('orange strip',x0,x0+2,-6,6,8.92,[230,116,38]);
+  for(const side of [-1,1]) {
+    const y=side*(6+5.5*floor),half=.7+1.7*floor;
+    box('drive',x0-2*floor,x1-.8,y-half,y+half,4,9.5+floor,[64,78,91]);
+    box('exhaust',x0-2.6*floor,x0+.4,y-half,y+half,4.2,9.6+floor,[227,116,37]);
+    plate('drive rail',x0-.4,x1-1.5,y-.5,y+.5,9.65+floor,[151,166,174]);
+    plate('exhaust bore',x0-2.3*floor,x0-1.2*floor,y-half*.63,y+half*.63,9.68+floor,[40,44,47]);
   }
+  plate('vent recess',x0+3,x1-2.5,-2.7,2.7,8.95,[40,53,65]);
+  for(let i=0;i<3;i++)plate('vent',x0+3.8+i*1.7,x0+4.4+i*1.7,-1.7,1.7,8.98,[144,160,169]);
+  for(const face of faces)face.depth=face.points.reduce((sum,p)=>sum+p.z,0)/4;
+  faces.sort((a,b)=>a.depth-b.depth||Number(a.detail)-Number(b.detail));
+  const points=faces.flatMap(face=>face.points);
+  return b._dashPackMesh={angle,faces,above:faces.some(f=>f.depth>=0),below:faces.some(f=>f.depth<0),
+    bounds:{minX:Math.min(...points.map(p=>p.x)),maxX:Math.max(...points.map(p=>p.x)),
+      minY:Math.min(...points.map(p=>p.y)),maxY:Math.max(...points.map(p=>p.y))}};
+}
+// The upright pack retains its side strip. Prone surfaces change depth as
+// they roll; none use alpha or a binary whole-pack visibility threshold.
+function drawStanceDashPack(g,c,b,layer='ALL') {
+  if(!c.isPlayer||!jetpackUnlocked)return;
+  if(b.floor>0) {
+    g.push();
+    for(const face of stanceDashPackMesh(b).faces) {
+      if(layer==='UNDER'&&face.depth>=0||layer==='OVER'&&face.depth<0)continue;
+      if(face.detail)g.noStroke();else{g.stroke(29,37,44);g.strokeWeight(.55);}
+      g.fill(...face.col);
+      const q=face.points;g.quad(q[0].x,q[0].y,q[1].x,q[1].y,q[2].x,q[2].y,q[3].x,q[3].y);
+    }
+    g.pop();return;
+  }
+  g.push();
+  g.stroke(29,34,38);g.strokeWeight(.8);g.fill(80,86,91);
+  g.rect(-9,-9,9,18,3);
+  g.noStroke();g.fill(229,111,34);g.rect(-9,-6,2,12,1);
   g.pop();
 }
 // One final occlusion pass covers every sleeve, including complete-arm reload
@@ -41503,9 +41600,9 @@ function drawStanceDashPack(g,c,b) {
 // beneath it; the higher head sits over the collar and support wrist.
 function drawCombatStanceBody(c,b,g,cloth,withHead=true) {
   const prone=b.floor;
-  const packUnder=b.roll.side>.45||b.roll.back>.02;
+  const pack=c.isPlayer&&jetpackUnlocked&&b.floor>0?stanceDashPackMesh(b):null;
   push();translate(b.chestX,b.chestY);rotate(b.yaw);
-  if(packUnder)drawStanceDashPack(g,c,b);
+  if(pack&&pack.below)drawStanceDashPack(g,c,b,'UNDER');
   figureCelOval(g,0,0,b.torsoLength,b.torsoWidth,cloth,.45-prone*.18);
   g.noStroke();g.fill(red(cloth)*.72,green(cloth)*.72,blue(cloth)*.72,100*(1-b.roll.back));
   g.ellipse(-b.torsoLength*.27,0,b.torsoLength*.30,b.torsoWidth*.70);
@@ -41524,7 +41621,7 @@ function drawCombatStanceBody(c,b,g,cloth,withHead=true) {
     if (d.col) g.fill(...d.col); else g.fill(90,0,0,220);
     g.ellipse(d.x,d.y*.85,d.sz,d.sz);
   }
-  if(!packUnder)drawStanceDashPack(g,c,b);
+  if(!pack||pack.above)drawStanceDashPack(g,c,b,'OVER');
   pop();
   if(withHead)drawCombatStanceHead(c,b,g);
 }
@@ -41599,7 +41696,7 @@ function drawCombatStanceFigure(c, p) {
     drawCrouchStepSole(g,leg.step,R.foot,R.shinW*.82,b.crouchWeight);pop();
     drawLegDecals(g,c.decals,leg.side<0?0:1,h.x,h.y,k.x,k.y,a.x,a.y,R.thighW*.92,R.shinW,R.shinW*.8);
   }
-  push();translate(b.hipX,b.chestY);rotate(b.hipYaw);
+  push();translate(b.hipX,b.hipY);rotate(b.hipYaw);
   figureCelOval(g,0,0,11+prone*2,c.bodyH*.61*(1-b.roll.side*.5),trousers,.38);pop();
   if(b.roll.side>.02) {
     const raised=b.joints[b.roll.supportSide<0?1:0].hip;
@@ -41623,6 +41720,9 @@ function drawCombatStanceFigure(c, p) {
     longGun?longGun.rear[1]:bow?0:c.currentWeapon===WEAPONS.PISTOL?8:11);
   const left = stancePointInBody(c,longGun?longGun.fore[0]:bow?24:dual?22:27,
     longGun?longGun.fore[1]:bow?0:dual?-11:1);
+  // Face up, the reaching forearms lie above the chest/abdomen. Face down,
+  // the final torso pass still covers their roots beneath the back.
+  if(b.roll.foreground)drawCombatStanceBody(c,b,g,cloth,false);
   const palms=[];
   for (const joint of b.joints) {
     const right=joint.side===1,wrist=right?hand:left;
@@ -41637,7 +41737,6 @@ function drawCombatStanceFigure(c, p) {
     drawCombatStanceSleeve(g,s.x,s.y,e.x,e.y,hx,hy,R.upperW,(R.upperW+R.foreW)*.5,R.foreW*.83,cloth);
     palms.push({x:hx,y:hy});
   }
-  if(b.roll.foreground)drawCombatStanceBody(c,b,g,cloth,false);
   if(!toolCarry)for(const palm of palms)figureCelOval(g,palm.x,palm.y,6.3,6.3,skin,.7);
   pop();
   if(leftHandAction(c)&&!toolSwing) {
