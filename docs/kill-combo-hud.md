@@ -14,15 +14,33 @@ copyright and SIL Open Font License 1.1 accompany the embedded data in
 `game.js`. FontFace loads it once without a network request; a rounded system
 font stack remains available while loading or if a host cannot use FontFace.
 
-The combo has no shake. Label and timer colors interpolate between these
-kill counts: orange at 2, yellow at 10, gold at 20, purple at 30, violet at 40.
-The color stays violet above 40. The countdown uses the existing 100-tick
-combo window and fills completely when a player kill refreshes it.
+The combo has no shake. Its first colors remain orange at 2 kills, yellow at
+10, gold at 20, purple at 30 and violet at 40. Higher streaks continue through
+these visual stages:
+
+| Kills | Label and countdown treatment |
+| --- | --- |
+| 40–50 | Blood red creeps inward from the purple letter edges; short, subtle drips develop as the letters become red. |
+| 50–55 | Black enters at the edges while white radiates from the middle. |
+| 55–60 | The white settles on the left and black on the right. |
+| 60–70 | The split gradually hardens into grey stone with grain and cracks. |
+| 70–80 | A soul-fire burst breaks the stone; yellow-green flames grow into neon green. |
+| 80–90 | A second burst leads into indigo flames. |
+| 90–100 | A shifting pearlescent sheen replaces the indigo. |
+| Above 100 | Rainbow colors pulse in a repeating star cadence. |
+
+The full kill count remains readable above 99. These changes are cosmetic: the
+score multiplier retains its existing cap, and the countdown uses the existing
+100-tick combo window. A player kill still refreshes the timer completely.
 
 The label and timer ease in over 90 ms and out over 120 ms. An expired combo
 retains its last displayed count, color and timer width during that brief exit;
 the gameplay count and countdown still expire normally. Pause freezes the
 transition, and replacing a run or traveling clears its transient display.
+The same clock drives drips, flames, sheen and rainbow cadence, so pause also
+freezes those effects. The bursts fire once when a streak crosses 70 and 80;
+painting the HUD repeatedly cannot retrigger them. New streaks clear old bursts.
+The effect stays inside the compact HUD area and does not create combat particles.
 
 Only player kills advance or refresh the personal combo. Ally kills retain
 their base score reward and still count for sector, ambush, population and
@@ -37,8 +55,12 @@ Checks:
 node tools/check-player-kill-combo.js
 node tools/check-combo-hud.js
 VIS_DEPS=/workspace/newone-dev node tools/check-combo-hud-scene.js
+VIS_DEPS=/workspace/newone-dev node tools/visual-combo-progression.js
 ```
 
 The Canvas scene checks desktop and 320-pixel phone layouts. Set `VIS_DEPS`
 to a directory with p5 and Playwright installed and `VIS_CHROME` to the
 Chromium executable when the environment uses different paths.
+The progression review renders twenty material stages, three narrow HUD layouts
+and a motion clip in `/tmp/newone-combo-progression`. It also samples actual glyph
+pixels to check that the pearl and rainbow gradients span the lettering.

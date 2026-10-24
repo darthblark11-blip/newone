@@ -26626,10 +26626,12 @@ function initComboHudFont() {
 
 const COMBO_HUD_COLORS = [
   [2, 255, 150, 0], [10, 255, 235, 0], [20, 255, 190, 35],
-  [30, 190, 75, 225], [40, 143, 60, 255]
+  [30, 190, 75, 225], [40, 143, 60, 255], [50, 188, 22, 40],
+  [55, 238, 241, 244], [60, 166, 174, 181], [69, 133, 145, 151],
+  [70, 194, 255, 64], [80, 27, 255, 72], [90, 83, 48, 238], [100, 225, 237, 249]
 ];
 function comboHudColor(kills) {
-  const n = Math.max(2, Math.min(40, kills));
+  const n = Math.max(2, Math.min(100, Number(kills) || 0));
   for (let i = 1; i < COMBO_HUD_COLORS.length; i++) {
     const b = COMBO_HUD_COLORS[i], a = COMBO_HUD_COLORS[i - 1];
     if (n <= b[0]) {
@@ -26637,6 +26639,21 @@ function comboHudColor(kills) {
       return [a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t, a[3] + (b[3] - a[3]) * t];
     }
   }
+}
+function comboHudStyle(kills, ms = 0) {
+  const n = Math.max(0, Number(kills) || 0), clamp = v => Math.max(0, Math.min(1, v));
+  const s = {stage:'base', t:0, color:comboHudColor(n), blood:0, mono:0,
+    split:0, stone:0, flame:0, pearl:0, rainbow:0};
+  if(n<=40)return s;
+  if(n<=50){s.stage='blood';s.t=(n-40)/10;s.blood=s.t;}
+  else if(n<=55){s.stage='mono';s.t=(n-50)/5;s.blood=1-s.t;s.mono=s.t;}
+  else if(n<=60){s.stage='split';s.t=(n-55)/5;s.mono=1;s.split=s.t;}
+  else if(n<70){s.stage='stone';s.t=(n-60)/10;s.mono=s.split=1;s.stone=s.t;}
+  else if(n<80){s.stage='soul';s.t=(n-70)/10;s.stone=1-clamp(s.t*5);s.flame=1;}
+  else if(n<90){s.stage='indigo';s.t=(n-80)/10;s.flame=1;}
+  else if(n<=100){s.stage='pearl';s.t=(n-90)/10;s.flame=1-s.t;s.pearl=s.t;}
+  else{s.stage='rainbow';s.t=clamp((n-100)/5);s.pearl=s.rainbow=1;}
+  return s;
 }
 function combatHudLayout() {
   const sideBySide = width >= 560, comboW = 128;
@@ -26669,33 +26686,232 @@ function combatHudLayout() {
   return { combo: { x: comboX, y: comboY, w: comboW }, ammo, status,
     objective: { x: objectiveX, y: objectiveY, w: objectiveW } };
 }
-const comboHudFade = { visibility: 0, kills: 0, timer: 0, frame: -1 };
+const comboHudFade = { visibility: 0, kills: 0, timer: 0, frame: -1,
+  clockMs:0, burst70:-1, burst80:-1, effectKills:0, active:false };
 function resetComboHudFade() {
   comboHudFade.visibility = 0; comboHudFade.kills = 0; comboHudFade.timer = 0; comboHudFade.frame = -1;
+  comboHudFade.clockMs=0;comboHudFade.burst70=comboHudFade.burst80=-1;
+  comboHudFade.effectKills=0;comboHudFade.active=false;
 }
 function updateComboHudFade() {
   const visible = consecutiveKills >= 2 && comboTimer > 0;
-  if (visible) { comboHudFade.kills = consecutiveKills; comboHudFade.timer = comboTimer; }
   if (comboHudFade.frame !== frameCount) {
     comboHudFade.frame = frameCount;
     if (!isPaused) {
       const ms = typeof deltaTime === 'number' && deltaTime > 0 ? Math.min(100, deltaTime) : 1000 / 60;
+      if(visible&&(!comboHudFade.active||consecutiveKills<comboHudFade.effectKills)) {
+        comboHudFade.clockMs=0;comboHudFade.burst70=comboHudFade.burst80=-1;comboHudFade.effectKills=0;
+      }
+      if(visible||comboHudFade.visibility>0)comboHudFade.clockMs+=ms;
+      if(visible) {
+        if(comboHudFade.effectKills<70&&consecutiveKills>=70)comboHudFade.burst70=comboHudFade.clockMs;
+        if(comboHudFade.effectKills<80&&consecutiveKills>=80)comboHudFade.burst80=comboHudFade.clockMs;
+      }
+      comboHudFade.effectKills=visible?consecutiveKills:0;comboHudFade.active=visible;
       comboHudFade.visibility = Math.max(0, Math.min(1, comboHudFade.visibility + ms / (visible ? 90 : -120)));
     }
   }
+  if (visible) { comboHudFade.kills = consecutiveKills; comboHudFade.timer = comboTimer; }
   const v = comboHudFade.visibility;
   return v * v * (3 - 2 * v);
+}
+
+// Six fixed, small Canvas surfaces hold glyph masks and reusable materials.
+// They are rebuilt only when the count/font changes, never per animation frame.
+// Effects remain in this HUD lane and never use combat particles or randomness.
+let comboHudArtCache=null;
+function comboHudCanvasCache(label,kills) {
+  if(comboHudArtCache===false)return null;
+  if(!comboHudArtCache) {
+    if(typeof document==='undefined'||!document.createElement)return null;
+    const c={w:176,h:52,scale:2,key:'',tops:[],drips:[]};
+    for(const name of ['mask','rim','blood','stone','work','ink']) {
+      const canvas=document.createElement('canvas');canvas.width=c.w*c.scale;canvas.height=c.h*c.scale;
+      const context=canvas.getContext&&canvas.getContext('2d');
+      if(!context||!context.fillText||!context.drawImage||!context.getImageData||!context.createLinearGradient) {
+        comboHudArtCache=false;return null;
+      }
+      c[name]={canvas,ctx:context};
+    }
+    comboHudArtCache=c;
+  }
+  const c=comboHudArtCache,face=comboHudFontReady?COMBO_HUD_FONT_FAMILY:'"Arial Rounded MT Bold", "Trebuchet MS", sans-serif';
+  const key=label+'|'+face;
+  if(c.key===key)return c;
+  c.key=key;c.tops.length=c.drips.length=0;
+  const w=c.w*2,h=c.h*2,m=c.mask.ctx;
+  for(const name of ['mask','rim','blood','stone','work','ink']) {
+    const q=c[name].ctx;q.setTransform(1,0,0,1,0,0);q.globalCompositeOperation='source-over';q.globalAlpha=1;q.clearRect(0,0,w,h);
+  }
+  m.scale(2,2);m.font=(comboHudFontReady?'':'bold ')+'18px '+face;
+  const measured=m.measureText(label).width;
+  c.fontSize=18*Math.min(1,128/Math.max(1,measured));
+  m.font=(comboHudFontReady?'':'bold ')+c.fontSize+'px '+face;
+  c.textW=m.measureText(label).width;m.textAlign='center';m.textBaseline='top';m.fillStyle='#fff';
+  m.fillText(label,c.w/2,12);m.setTransform(1,0,0,1,0,0);
+  const edge=(target,radius)=>{
+    const q=c.work.ctx;q.clearRect(0,0,w,h);q.globalCompositeOperation='source-over';q.drawImage(c.mask.canvas,0,0);
+    q.globalCompositeOperation='destination-in';
+    for(const [x,y] of [[1,0],[-1,0],[0,1],[0,-1],[.7,.7],[-.7,.7],[.7,-.7],[-.7,-.7]])
+      q.drawImage(c.mask.canvas,x*radius*2,y*radius*2);
+    q.globalCompositeOperation='source-over';
+    const out=c[target].ctx;out.drawImage(c.mask.canvas,0,0);out.globalCompositeOperation='destination-out';out.drawImage(c.work.canvas,0,0);out.globalCompositeOperation='source-over';
+  };
+  edge('rim',.55);edge('blood',Math.max(.35,Math.min(3.2,(kills-40)*.32)));
+  const rock=c.stone.ctx;rock.drawImage(c.mask.canvas,0,0);rock.globalCompositeOperation='source-in';
+  const grain=rock.createLinearGradient(0,20,w,h);grain.addColorStop(0,'#c5c9c6');grain.addColorStop(.45,'#899497');grain.addColorStop(1,'#525d66');
+  rock.fillStyle=grain;rock.fillRect(0,0,w,h);rock.globalCompositeOperation='source-atop';
+  for(let i=0;i<43;i++) {
+    const x=(i*73+17)%w,y=24+(i*37)%39;
+    rock.fillStyle=i%2?'rgba(240,242,226,.27)':'rgba(26,38,44,.38)';
+    rock.beginPath();rock.moveTo(x,y);rock.lineTo(x+5+i%7,y-3);rock.lineTo(x+10,y+4+i%5);rock.closePath();rock.fill();
+    if(i%3===0){rock.strokeStyle='rgba(22,30,37,.60)';rock.lineWidth=.85;rock.beginPath();rock.moveTo(x,y-5);rock.lineTo(x+3,y);rock.lineTo(x+1,y+5);rock.stroke();}
+  }
+  rock.globalCompositeOperation='source-over';
+  // Find actual letter edges once, so blood/fire emerge from ink, not spaces.
+  const pixels=m.getImageData(0,0,w,h).data;
+  for(let x=Math.ceil((c.w-c.textW)/2)+2;x<(c.w+c.textW)/2-1;x+=7) {
+    let top=-1,bottom=-1;
+    for(let y=24;y<76;y++)if(pixels[(y*w+x*2)*4+3]>100){if(top<0)top=y;bottom=y;}
+    if(top>=0){c.tops.push({x:x-c.w/2,y:top/2-12});if(c.tops.length%2)c.drips.push({x:x-c.w/2,y:bottom/2-12});}
+  }
+  return c;
+}
+function comboHudRgb(c,alpha=1) {return 'rgba('+Math.round(c[0])+','+Math.round(c[1])+','+Math.round(c[2])+','+alpha+')';}
+function comboHudGradient(q,s,w,ms,cx=0,cy=0,scale=1) {
+  const gradient=(from,to)=>q.createLinearGradient(cx+from,cy-2*scale,cx+to,cy+18*scale);
+  const g=gradient(-w/2,w/2);
+  if(s.rainbow) {
+    const phase=ms*.045;
+    for(let i=0;i<=8;i++)g.addColorStop(i/8,'hsl('+((phase+i*45)%360)+',100%,66%)');
+  } else if(s.pearl) {
+    const colors=['#f7fcff','#b2ffed','#bac8ff','#ffe0f0','#fff7c9','#d1eeff'],shift=(ms*.00014)%1;
+    const sheen=gradient(-w/2-w*shift,w*1.5-w*shift);
+    for(let i=0;i<=12;i++)sheen.addColorStop(i/12,colors[i%6]);
+    return sheen;
+  } else if(s.stage==='mono'||s.stage==='split'||s.stage==='stone') {
+    const t=s.split||0,mix=(a,b,t)=>a.map((v,i)=>v+(b[i]-v)*t);
+    const edge=mix([188,22,40],[9,12,20],s.mono),core=mix([188,22,40],[247,252,255],s.mono);
+    g.addColorStop(0,comboHudRgb(mix(edge,[255,250,242],t)));g.addColorStop(.38,comboHudRgb(core));
+    g.addColorStop(.5,comboHudRgb(core));g.addColorStop(.5+.12*(1-t)+.001,comboHudRgb(edge));g.addColorStop(1,comboHudRgb(edge));
+  } else {
+    const core=s.flame?comboHudRgb(s.color.map(v=>v+(255-v)*.65)):comboHudRgb(s.color);
+    g.addColorStop(0,comboHudRgb(s.color));g.addColorStop(.5,core);g.addColorStop(1,comboHudRgb(s.color));
+  }
+  return g;
+}
+function paintComboHudGlyphs(c,s,ms) {
+  const q=c.ink.ctx,work=c.work.ctx,w=c.w*2,h=c.h*2;
+  q.clearRect(0,0,w,h);q.globalAlpha=1;q.globalCompositeOperation='source-over';q.drawImage(c.mask.canvas,0,0);
+  q.globalCompositeOperation='source-in';q.fillStyle=comboHudRgb(s.blood?COMBO_HUD_COLORS[4].slice(1):s.color);q.fillRect(0,0,w,h);q.globalCompositeOperation='source-over';
+  const overlay=(source,paint,alpha)=>{
+    if(alpha<=0)return;
+    work.clearRect(0,0,w,h);work.globalCompositeOperation='source-over';work.drawImage(source,0,0);
+    if(paint){work.globalCompositeOperation='source-in';work.fillStyle=paint;work.fillRect(0,0,w,h);work.globalCompositeOperation='source-over';}
+    q.globalAlpha=alpha;q.drawImage(c.work.canvas,0,0);q.globalAlpha=1;
+  };
+  overlay(c.blood.canvas,'#b50c2c',s.blood);
+  if(s.blood&&s.stage==='mono')overlay(c.mask.canvas,'#bd132d',s.blood);
+  if(s.mono) {
+    const g=q.createLinearGradient(0,0,w,0),core=.03+.34*s.mono;
+    g.addColorStop(0,'#090c14');g.addColorStop(.5-core,'#10121a');g.addColorStop(.5,'#fffdf2');g.addColorStop(.5+core,'#10121a');g.addColorStop(1,'#090c14');
+    overlay(c.mask.canvas,g,s.mono);
+  }
+  if(s.split) {
+    const g=q.createLinearGradient(0,0,w,0);g.addColorStop(0,'#fffdf6');g.addColorStop(.49,'#fffdf6');g.addColorStop(.51,'#0a0d15');g.addColorStop(1,'#0a0d15');
+    overlay(c.mask.canvas,g,s.split);
+  }
+  overlay(c.stone.canvas,null,s.stone);
+  if(s.pearl||s.rainbow) {
+    const sheen=comboHudGradient(work,s,c.textW*2,ms,w/2,24,2);
+    overlay(c.mask.canvas,sheen,s.rainbow?1:s.pearl);
+  }
+  // A fine silver edge keeps the black half legible over dark scenery.
+  overlay(c.rim.canvas,'#b2c6cf',Math.max(s.mono,s.split)*.5*(1-s.stone));
+  if(s.stone>.5)overlay(c.rim.canvas,'#323e45',s.stone*.6);
+}
+function drawComboHudFlame(q,c,s,ms) {
+  if(s.flame<=0)return;
+  q.save();q.globalAlpha*=s.flame;
+  const g=q.createLinearGradient(0,-10,0,17);
+  g.addColorStop(0,comboHudRgb(s.color,.03));g.addColorStop(.55,comboHudRgb(s.color,.85));g.addColorStop(1,comboHudRgb(s.color,.3));
+  q.fillStyle=g;
+  for(let i=0;i<c.tops.length;i++) {
+    const a=c.tops[i],phase=ms*.005+i*2.37,amp=(4.5+3.5*(.5+.5*Math.sin(phase)))*s.flame;
+    const sway=Math.sin(phase*.81)*2;
+    q.beginPath();q.moveTo(a.x-3,a.y+3);q.quadraticCurveTo(a.x-4+sway,a.y-amp*.4,a.x+sway,a.y-amp);
+    q.quadraticCurveTo(a.x+1+sway,a.y-amp*.4,a.x+3,a.y+3);q.closePath();q.fill();
+  }
+  q.restore();
+}
+function drawComboHudBurst(q,c,ms,started,tier) {
+  const age=ms-started;if(started<0||age<0||age>720)return;
+  const t=age/720,e=1-(1-t)*(1-t),fade=(1-t)*(1-t);
+  for(let i=0;i<16;i++) {
+    const x=(i*31%119)-59,angle=i*2.4,spread=4+e*14,px=x+Math.cos(angle)*spread,py=9+Math.sin(angle)*spread*.75;
+    q.fillStyle=i%3===0&&tier===70?'rgba(148,158,145,'+fade+')':(i%2?'rgba(220,255,115,':'rgba(76,255,74,')+fade+')';
+    const r=(2.4+i%3*.4)*(1-t);q.beginPath();q.moveTo(px-r,py+r);q.lineTo(px,py-r*1.6);q.lineTo(px+r,py+r*.4);q.closePath();q.fill();
+  }
+}
+function drawComboHudMaterial(p,s,opacity,label) {
+  const c=comboHudCanvasCache(label,comboHudFade.kills);
+  if(!c||typeof drawingContext==='undefined'||!drawingContext.drawImage)return false;
+  const q=drawingContext,ms=comboHudFade.clockMs;
+  paintComboHudGlyphs(c,s,ms);
+  q.save();q.translate(p.x,p.y);q.globalAlpha*=opacity;
+  drawComboHudFlame(q,c,s,ms);
+  if(s.flame>0){q.shadowColor=comboHudRgb(s.color,.8*s.flame);q.shadowBlur=5*s.flame;}
+  q.drawImage(c.ink.canvas,-c.w/2,-12,c.w,c.h);q.shadowBlur=0;
+  if(s.blood>0) {
+    q.strokeStyle='rgba(163,4,31,.9)';q.lineWidth=1.15;q.lineCap='round';
+    for(let i=0;i<c.drips.length;i++) {
+      const a=c.drips[i],pulse=.5+.5*Math.sin(ms*.003+i*1.8),length=s.blood*(1.4+2.6*pulse);
+      q.beginPath();q.moveTo(a.x,a.y-1);q.quadraticCurveTo(a.x+.6,a.y+length*.6,a.x,a.y+length);q.stroke();
+    }
+  }
+  drawComboHudBurst(q,c,ms,comboHudFade.burst70,70);drawComboHudBurst(q,c,ms,comboHudFade.burst80,80);
+  q.restore();return true;
+}
+function drawComboHudAdvancedBar(p,s,opacity,fraction) {
+  const q=typeof drawingContext==='undefined'?null:drawingContext;
+  if(!q||!q.createLinearGradient||!q.roundRect)return false;
+  const ms=comboHudFade.clockMs;
+  q.save();q.translate(p.x,p.y);q.globalAlpha*=opacity;q.beginPath();q.roundRect(-p.w/2,23,p.w*fraction,6,3);q.clip();
+  q.fillStyle=comboHudRgb(s.color);q.fillRect(-p.w/2,23,p.w,6);
+  const alpha=q.globalAlpha;if(s.pearl&&!s.rainbow)q.globalAlpha*=s.pearl;
+  q.fillStyle=comboHudGradient(q,s,p.w,ms);q.fillRect(-p.w/2,23,p.w,6);
+  q.globalAlpha=alpha;
+  if(s.stone>0){q.fillStyle='rgba(112,126,132,'+s.stone+')';q.fillRect(-p.w/2,23,p.w,6);}
+  if(s.rainbow) {
+    const beat=ms/850*Math.PI*2,pulse=Math.min(1,Math.max(0,Math.cos(beat))**12+.45*Math.max(0,Math.cos(beat-1))**14);
+    q.fillStyle='rgba(255,255,255,'+(pulse*.65)+')';q.fillRect(-p.w/2,23,p.w,6);
+    q.fillStyle='rgba(255,255,255,'+(.55+.45*pulse)+')';
+    for(let i=0;i<4;i++) {
+      const x=-p.w/2+12+i*(p.w-24)/3,r=2+2*pulse;q.beginPath();
+      for(let j=0;j<10;j++){const a=-Math.PI/2+j*Math.PI/5,d=j%2?r*.43:r;const px=x+Math.cos(a)*d,py=26+Math.sin(a)*d;j?q.lineTo(px,py):q.moveTo(px,py);}
+      q.closePath();q.fill();
+    }
+  }
+  q.restore();return true;
 }
 function drawComboHud() {
   const opacity = updateComboHudFade();
   if (opacity <= 0) return;
-  const p = combatHudLayout().combo, ink = comboHudColor(comboHudFade.kills);
+  const p = combatHudLayout().combo, ink = comboHudColor(comboHudFade.kills),label='x'+comboHudFade.kills+' COMBO';
+  const style=comboHudFade.kills>40?comboHudStyle(comboHudFade.kills,comboHudFade.clockMs):null;
+  if(style&&style.stone>0&&style.flame>0&&comboHudFade.burst70>=0) {
+    const t=Math.max(0,Math.min(1,(comboHudFade.clockMs-comboHudFade.burst70)/520));
+    style.stone*=1-t*t*(3-2*t);
+  }
   push(); noStroke(); textAlign(CENTER, TOP);
   textFont(comboHudFontReady ? COMBO_HUD_FONT_FAMILY : '"Arial Rounded MT Bold", "Trebuchet MS", sans-serif');
   textStyle(comboHudFontReady ? NORMAL : BOLD); textSize(18);
-  fill(ink[0], ink[1], ink[2], 255 * opacity); text('x' + Math.min(99, comboHudFade.kills) + ' COMBO', p.x, p.y);
+  fill(ink[0], ink[1], ink[2], 255 * opacity);
+  if(!style||!drawComboHudMaterial(p,style,opacity,label))text(label,p.x,p.y);
   fill(50, 200 * opacity); rect(p.x - p.w / 2, p.y + 23, p.w, 6, 3);
-  fill(ink[0], ink[1], ink[2], 255 * opacity); rect(p.x - p.w / 2, p.y + 23, p.w * Math.max(0, Math.min(1, comboHudFade.timer / KILL_COMBO_FRAMES)), 6, 3);
+  const fraction=Math.max(0,Math.min(1,comboHudFade.timer/KILL_COMBO_FRAMES));
+  fill(ink[0], ink[1], ink[2], 255 * opacity);
+  if(!style||!drawComboHudAdvancedBar(p,style,opacity,fraction))rect(p.x-p.w/2,p.y+23,p.w*fraction,6,3);
   pop();
 }
 function drawStoryObjectiveBanner(message, alpha) {
