@@ -57,7 +57,7 @@ const fps=30,totalFrames=Number(process.env.STANDING_RUN_FRAMES||360);
     push();translate(x,y);scale(magnify);translate(-c.x,-c.y);c.show();pop();rightStick.active=active;__standingDraw.figures++;
    };
    window.__standingLabel=(textValue,x,y)=>{noStroke();fill(212,227,222);textSize(11);text(textValue,x,y);};
-   window.__standingRecord=c=>({aim:c.aimAngle,move:c.moveAngle,cycle:c.walkCycle,gait:c.gait,legHeading:standingHipHeading(c)});
+   window.__standingRecord=c=>({aim:c.aimAngle,move:c.moveAngle,cycle:c.walkCycle,gait:c.gait,legHeading:(standingRearPose(c)||{}).angle??c.moveAngle});
   });
   const alignment=await page.evaluate(()=>{
    const records=[],nativeLong=window.drawLongGunSolid,nativeLine=window.line;
@@ -142,7 +142,7 @@ const fps=30,totalFrames=Number(process.env.STANDING_RUN_FRAMES||360);
   const directionSheets=[];
   for(const weapon of ['PISTOL','ASSAULT_RIFLE']){
    const sheet=await page.evaluate(weapon=>{
-    resizeCanvas(1600,1080);__standingBack('AIMED MOVEMENT / EIGHT DIRECTIONS / '+weapon,'Weapon stays north; hips stay connected to the torso with a small natural twist. Original leg animation.');
+    resizeCanvas(1600,1080);__standingBack('AIMED MOVEMENT / EIGHT DIRECTIONS / '+weapon,'Weapon stays north. Original forward/side gait; rear half uses backward steps.');
     const cases=[['N',0],['NW',-Math.PI/4],['W',-Math.PI/2],['SW',-Math.PI*.75],['S',Math.PI],['SE',Math.PI*.75],['E',Math.PI/2],['NE',Math.PI/4]],records=[];
     for(let row=0;row<3;row++)for(let col=0;col<cases.length;col++){
      const [label,delta]=cases[col],base=-Math.PI/2,throttle=[.2,.5,1][row],c=__standingActor(weapon);
@@ -153,12 +153,12 @@ const fps=30,totalFrames=Number(process.env.STANDING_RUN_FRAMES||360);
     return {records,...__standingDraw};
    },weapon);
    assert.equal(sheet.records.length,24);assert.equal(sheet.depth,0);assert.equal(sheet.minDepth,0);
-   for(const r of sheet.records)assert(Math.abs(Math.atan2(Math.sin(r.legHeading-r.aim),Math.cos(r.legHeading-r.aim)))<=Math.PI*25/180+1e-8,'aimed hips stay within natural torso twist');
+   for(const r of sheet.records){const delta=Math.atan2(Math.sin(r.move-r.aim),Math.cos(r.move-r.aim));if(Math.cos(delta)>=-1e-8)assert(Math.abs(Math.atan2(Math.sin(r.legHeading-r.move),Math.cos(r.legHeading-r.move)))<1e-8,'forward and lateral gait stays original');}
    directionSheets.push(sheet);
    await page.locator('canvas').first().screenshot({path:path.join(out,'aim-eight-directions-'+weapon.toLowerCase()+'.png')});
   }
   const phases=await page.evaluate(()=>{
-   resizeCanvas(1600,1080);__standingBack('EXISTING RUN / COUPLED AIMED HIPS','Original leg animation and footwear; backward and diagonal movement stay connected to the torso.');
+   resizeCanvas(1600,1080);__standingBack('ORIGINAL RUN / REAR BACKSTEPS','Original forward and side motion. Backward and rear diagonals use planted/returning steps.');
    const cases=[['FORWARD',0,null],['BACKWARD',Math.PI,-Math.PI/2],['BACK LEFT',-Math.PI*.75,-Math.PI/2]],records=[];
    for(let row=0;row<cases.length;row++){
     const [label,delta,aim]=cases[row],c=__standingActor('ASSAULT_RIFLE');__standingStep(c,-Math.PI/2+delta,1,aim,100);
@@ -173,7 +173,7 @@ const fps=30,totalFrames=Number(process.env.STANDING_RUN_FRAMES||360);
   assert.equal(phases.records.length,24);assert.equal(phases.depth,0);assert.equal(phases.minDepth,0);
   await page.locator('canvas').first().screenshot({path:path.join(out,'run-step-phases.png')});
   const turns=await page.evaluate(()=>{
-   resizeCanvas(1600,1080);__standingBack('AIM TURN / COUPLED HIPS','The sight, gun, torso and hip frame turn together; movement adds a small, smooth hip twist.');
+   resizeCanvas(1600,1080);__standingBack('AIM TURN / DIRECTIONAL GAIT','The sight and torso turn together. Only rearward movement selects backward steps.');
    const records=[],sample=[0,1,3,6,10,16,28,44];
    for(let row=0;row<3;row++){
     const move=row===0?0:row===1?-Math.PI/2:Math.PI*.98,throttle=row===0?0:1,start=row===2?Math.PI*.98:-Math.PI/2,target=row===2?-Math.PI*.98:Math.PI/2;

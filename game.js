@@ -14660,7 +14660,8 @@ function mapLegHitDecal(actor,wx,wy,decal,origin=actor) {
   let swing=actor.isMoving?Math.sin(actor.walkCycle)*12*GP.swing:0;
   if(dig)swing*=1-dig.blend;if(mantle)swing=0;if(actor.mounted)swing*=.35;
   if(actor.eType==='AERIAL'||actor.eType==='AERIAL_PISTOL')swing=0;
-  let angle=mantle?mantle.angle+mantle.hip:pose.active?actor.aimAngle+(Array.isArray(pose.feet)?0:pose.hip||0):dig?actor.aimAngle+dig.hip:standingHipHeading(actor);
+  const backstep=!mantle&&!dig&&!pose.active?standingRearPose(actor):null;
+  let angle=mantle?mantle.angle+mantle.hip:pose.active?actor.aimAngle+(Array.isArray(pose.feet)?0:pose.hip||0):dig?actor.aimAngle+dig.hip:backstep?backstep.angle:actor.moveAngle;
   let scale=1,fallen=null;
   if(actor.stunPose&&actor.stunTimer>0&&actor.stunPose.rag&&!actor.stunPose.knockout) {
     const f=stunFall(actor),p=actor.stunPose;
@@ -14695,6 +14696,8 @@ function mapLegHitDecal(actor,wx,wy,decal,origin=actor) {
       ax=kx+sh*.8+side*dig.blend*5-dig.effort*1.4;ay=ky+side*dig.blend*1.5;
     }else if(crouch){
       const leg=crouch.joints[index];kx=leg.knee.x;ky=leg.knee.y;ax=leg.ankle.x;ay=leg.ankle.y;
+    }else if(backstep){
+      ({kx,ky,ax,ay}=standingRearLeg(actor,backstep,rig,index));
     }else{
       const sx=-10-swing*side+rig.thighW*.5;
       kx=sx+th*.92;ky=side*6;ax=kx+sh;ay=ky;
@@ -21418,7 +21421,6 @@ this.skeletonTimer = 0;
     } finally {
       updateProneFacing(this,0,true);constrainStanceFacing(this);
       updateCrouchFacing(this,typeof deltaTime==='number'?deltaTime:1000/60);
-      updateStandingHip(this,typeof deltaTime==='number'?deltaTime:1000/60);
       rememberFigureMotion(this,this.x-motionX,this.y-motionY);
     }
   }
@@ -22768,8 +22770,9 @@ if (this.isPlayer) {
     } else if (this.isPlayer && cowboySuitEquipped) {
         this.shirtCol=color(219,196,146);this.pantsCol=color(61,93,118);
     }
+    const backstep=!mantle&&!boxing.active&&!shovelStroke?standingRearPose(this):null;
     {
-        push(); rotate(mantle?mantle.angle+mantle.hip:boxing.active?this.aimAngle+boxing.hip:shovelStroke?this.aimAngle+shovelStroke.hip:standingHipHeading(this)); noStroke(); fill(this.pantsCol);
+        push(); rotate(mantle?mantle.angle+mantle.hip:boxing.active?this.aimAngle+boxing.hip:shovelStroke?this.aimAngle+shovelStroke.hip:backstep?backstep.angle:this.moveAngle); noStroke(); fill(this.pantsCol);
         if (this.bodyW === 105) {
           // ARMORED's 105-wide slab keeps its own legs; the rig is shaped like
           // a person and that is not one.
@@ -22805,6 +22808,12 @@ if (this.isPlayer) {
           if(mantle)drawShovelMantleLegs(this,mantle,RGl);
           else if(boxing.active)drawBoxingLegs(this,boxing,RGl);
           else if(shovelStroke)drawShovelDigLegs(this,shovelStroke,RGl);
+          else if(backstep)for(let index=0;index<2;index++) {
+            const leg=standingRearLeg(this,backstep,RGl,index),g=paint?paint.api:window;
+            figureCelLimb(g,leg.sx,leg.sy,leg.kx,leg.ky,leg.ax,leg.ay,wHip,wKnee,wAnkle,this.pantsCol);
+            figureCelOval(g,leg.ax+RGl.foot*.34,leg.ay,RGl.foot,wAnkle,bootC,.8);
+            drawLegDecals(g,this.decals,index,leg.sx,leg.sy,leg.kx,leg.ky,leg.ax,leg.ay,wHip,wKnee,wAnkle);
+          }
           else for (const sgn of [1, -1]) {
             // Hips either side of the axis at the spacing the old pair of rects
             // used -- wide enough that the two thighs do not merge at the
@@ -22831,7 +22840,7 @@ if (this.isPlayer) {
     }
     if (isChemist) {
         const sway=this.isMoving?sin(frameCount*.2)*.2:sin(frameCount*.05)*.05;
-        const tail=this.isMoving?standingHipHeading(this)-this.aimAngle:0;
+        const tail=this.isMoving?(backstep?backstep.angle:this.moveAngle)-this.aimAngle:0;
         push();rotate(this.aimAngle);translate(bob,0);rotate(tail+sway+HALF_PI);
         const g=paint?paint.api:window;
         // Cloth follows a curved hem instead of a rigid polygon at the hips.
@@ -42199,41 +42208,41 @@ function drawCombatStanceFigure(c, p) {
   drawCombatStanceUI(c,p);
 }
 
-// The movement stick supplies the existing stride; the aimed torso supplies
-// its hip frame. A small opposing twist on rear diagonals keeps that connection
-// flexible without turning the jeans around the waist. Painting only reads it.
-const STANDING_HIP_TWIST_MAX=Math.PI*25/180;
-const STANDING_HIP_TURN_RATE=.0035;
-function standingHipCoupled(c) {
-  if(!c||!c.isPlayer||!Number.isFinite(c.aimAngle)||actorStanceSuppressed(c)||
-     c.meleeTimer>0||c.stance&&c.stance.to>0||leftHandAction(c))return false;
+// Keep the original forward and lateral gait. Only the rear half of movement
+// relative to the sight gets backsteps: the waist turns toward the torso while
+// the feet still travel along the movement stick, with a separate return phase.
+function standingRearPose(c) {
+  if(!c||!c.isPlayer||!c.isMoving||!Number.isFinite(c.aimAngle)||
+     !Number.isFinite(c.moveAngle)||actorStanceSuppressed(c)||c.meleeTimer>0||
+     c.stance&&c.stance.to>0||leftHandAction(c))return null;
   const p=actorStancePose(c);
-  return !p.crouch&&!p.prone&&(c.isArmed&&playerAiming(c)||
-    typeof rightStick!=='undefined'&&rightStick&&rightStick.active||
-    c.muzzleFlash>0||c.isArmed&&c.reloadTimer>0||playerWeaponFireInput());
+  if(p.crouch||p.prone||!(c.isArmed&&playerAiming(c)||
+     typeof rightStick!=='undefined'&&rightStick&&rightStick.active||
+     c.muzzleFlash>0||c.isArmed&&c.reloadTimer>0||playerWeaponFireInput()))return null;
+  const delta=Math.atan2(Math.sin(c.moveAngle-c.aimAngle),Math.cos(c.moveAngle-c.aimAngle));
+  const rear=-Math.cos(delta);
+  if(rear<=1e-8)return null;
+  // Meet the unchanged lateral pose without a switch in position or velocity.
+  const blend=rear*rear*(3-2*rear),angle=c.aimAngle+delta*(1-blend);
+  return {blend,angle,travelX:Math.cos(c.moveAngle-angle),travelY:Math.sin(c.moveAngle-angle)};
 }
-function standingHipTwist(c) {
-  if(!c.isMoving)return 0;
-  const move=Number.isFinite(c.moveAngle)?c.moveAngle:c.aimAngle;
-  return Math.sin(2*(move-c.aimAngle))*STANDING_HIP_TWIST_MAX;
-}
-function standingHipHeading(c) {
-  if(!standingHipCoupled(c))return c&&Number.isFinite(c.moveAngle)?c.moveAngle:0;
-  const s=c._standingHip,twist=s&&Number.isFinite(s.twist)?s.twist:standingHipTwist(c);
-  return c.aimAngle+Math.max(-STANDING_HIP_TWIST_MAX,Math.min(STANDING_HIP_TWIST_MAX,twist));
-}
-function updateStandingHip(c,elapsedMs=deltaTime) {
-  if(!c||!c.isPlayer||!doTick||!combatStanceContext())return;
-  if(!standingHipCoupled(c)){c._standingHip=null;return;}
-  let s=c._standingHip;
-  if(!s||!Number.isFinite(s.twist))s=c._standingHip={frame:-1,twist:0};
-  if(s.frame===frameCount)return;
-  s.frame=frameCount;
-  const ms=Math.max(0,Math.min(100,Number(elapsedMs)||0));
-  const step=(standingHipTwist(c)-s.twist)*(1-Math.exp(-ms/130));
-  const limit=ms*STANDING_HIP_TURN_RATE;
-  s.twist+=Math.max(-limit,Math.min(limit,step));
-  s.twist=Math.max(-STANDING_HIP_TWIST_MAX,Math.min(STANDING_HIP_TWIST_MAX,s.twist));
+function standingRearLeg(c,pose,rig,index) {
+  const side=index?1:-1,GP=gaitPose(c.gait),root=-10+rig.thighW*.5,sy=side*6;
+  const th=rig.thigh*STAND_FORE_LEG,sh=rig.shin*STAND_FORE_LEG;
+  const step=-side*Math.sin(c.walkCycle)*12*GP.swing,b=pose.blend;
+  // A planted boot recedes opposite travel; the returning leg lifts and bends
+  // at the knee. Hip roots stay attached instead of sliding two rigid legs.
+  const lift=Math.max(0,-side*Math.cos(c.walkCycle))*b*2.4*GP.swing;
+  // Project the lowered legs behind the waist, clear of the chest and pack.
+  // Keep the boot toe facing forward, and give each foot its own lateral track.
+  const projection=1-2*b;
+  const ky=sy+.35*step*b*pose.travelY+side*lift*.45;
+  const ay=sy+step*b*pose.travelY+side*lift*.3;
+  return {sx:root+step*(1-b),sy,
+    kx:root+th*.92*projection+step*(1-b+.35*b*pose.travelX)+lift*.55,
+    ky:side*Math.max(rig.shinW*.52,side*ky),
+    ax:root+(th*.92+sh)*projection+step*(1-b+b*pose.travelX)-lift*.75,
+    ay:side*Math.max(rig.shinW*.8*.55,side*ay),lift};
 }
 
 function standingAimEligible(c) {
@@ -42245,7 +42254,7 @@ function standingAimEligible(c) {
 }
 // The visible barrel is the firing direction. A short angular acceleration
 // and bounded turn rate let shoulders lead a turn without teleporting them.
-// The original leg stride uses a gently coupled hip frame while aiming.
+// Forward and lateral legs retain their original movement-facing animation.
 function standingAimHeading(c,target,elapsedMs=deltaTime) {
   if(!Number.isFinite(target))return c&&c.aimAngle||0;
   if(!c||!c.isPlayer)return target;

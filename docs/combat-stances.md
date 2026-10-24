@@ -42,14 +42,16 @@ A direct dive therefore passes through crouched vulnerability before reaching
 prone. Requesting a stance never grants immediate immunity. Another transition
 must wait for completion and a 180 ms recovery window. Pausing freezes progress.
 
-Standing walking, jogging and running use the original leg animation in both
-ordinary movement and weapon aim/fire. During weapon aim the hip frame follows
-the torso, with up to 25° of smoothly eased flex. Forward and backward travel
-align with the torso; diagonal travel adds a small twist without allowing the
-hips to revolve independently around the waist. Movement still uses the same
-leg coordinates, cadence, tapered jeans and dark footwear. Ordinary unaimed
-movement faces travel directly. Leg wounds and the chemist coat read the same
-hip frame. Crouch and prone retain their separate articulated movement.
+Standing walking, jogging and running retain the original movement-facing
+animation for ordinary travel, aimed forward travel and lateral strafing. Only
+movement in the rear half-circle relative to the weapon aim uses backward
+steps. Straight backward movement keeps the hips facing with the torso; rear
+diagonals allow a small waist turn. The transition meets the existing lateral
+pose continuously. Hip roots stay attached while the knees bend and the boots
+alternate between planting and returning along the actual movement direction.
+Leg proportions, tapered jeans, dark footwear, speed and cadence are unchanged.
+Leg wounds and the chemist coat use the same rear pose. Crouch, prone, boxing,
+melee/support actions, digging and riding retain their separate animations.
 
 Standing weapon-aim turns accelerate and brake through the shortest angular arc,
 instead of snapping to a new stick or mouse heading. The barrel, shots, laser
@@ -173,8 +175,11 @@ roll geometry.
 passes, visible supine engines, and reachable rear-facing sidearm arms.
 `tools/check-standing-aim-turn.js` covers turn acceleration, braking, angular
 seams, input release, shot/light alignment and bow gesture quality.
-`tools/check-standing-hip-coupling.js` checks bounded torso-relative hip flex,
-direction changes, pause, leg wound attachment and dedicated action exceptions.
+`tools/check-standing-backsteps.js` checks rear-half selection, continuous lateral
+boundaries, separate foot tracks, leg wound attachment and dedicated action exceptions.
+`tools/check-standing-movement-parity.js` compares original forward, sideways and
+unaimed movement pixels against an explicit baseline, and can render a rear-step
+review clip plus an input sweep across the full movement circle.
 `tools/check-player-footwear.js` checks the restored dark footwear across ordinary
 and aimed movement, low stances, suits, utility actions and corpses.
 `tools/check-stance-anatomy.js` checks bent joints, proportions, crawl support,
