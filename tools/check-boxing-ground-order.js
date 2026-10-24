@@ -1,0 +1,58 @@
+// Knockouts share corpse floor layering without changing standing actor depth.
+const assert = require('assert');
+const {ctx, probe} = require('./harness');
+let count = 0;
+const check = (code, label) => { assert.ok(probe(code), label); count++; };
+probe(`var groundOrder=[];
+ function groundActor(name,y,flags={}){return {name,x:0,y,hp:100,...flags,show(){groundOrder.push(name);}};}
+ var grounded=groundActor('KO',100,{knockedOut:true,hp:0});
+ var stunned=groundActor('STUN',80,{stunTimer:120});
+ var parried=groundActor('PARRY',10,{_boxing:{active:true,stunMs:2600}});
+ var electric=groundActor('ELECTRIC',20,{stunTimer:100,skeletonTimer:40});
+ var live=groundActor('PLAYER',0,{isPlayer:true});`);
+check('isGroundBodyActor(grounded)&&isGroundBodyActor(stunned)', 'Nonlethal native knockdowns and saloon knockouts use the corpse floor pass');
+check('!isGroundBodyActor(parried)&&!isGroundBodyActor(electric)&&!isGroundBodyActor(live)', 'A standing parry stagger, electric shock and player keep their standing depth');
+probe('var groundList=[live,grounded,parried,stunned,electric];drawGroundBodyActors(groundList);');
+check('groundOrder.join(",")==="KO,STUN"', 'The floor pass draws both bodies before standing actors even when their y is larger');
+check('groundList.map(c=>c.name).join(",")==="PLAYER,PARRY,ELECTRIC"', 'The floor pass removes only bodies and preserves the live actor order');
+probe('groundOrder=[];_depthActors.length=0;_depthOn=false;_legacyActorsQueued=true;actorShow(live);actorShow(grounded);actorShow(parried);actorShow(stunned);actorShow(electric);');
+check('groundOrder.length===0&&_depthActors.length===5', 'Legacy scene actors wait for one shared painter pass');
+probe('drawLegacyActors();');
+check('groundOrder.join(",")==="KO,STUN,PLAYER,PARRY,ELECTRIC"', 'Legacy rooms draw bodies below the player without reordering standing actors');
+check('_depthActors.length===0&&!_legacyActorsQueued', 'Legacy drawing clears the actor queue and frame-only deferral flag');
+probe('drawLegacyActors();');
+check('groundOrder.length===5', 'A second legacy flush cannot draw a corpse or player twice');
+probe('groundOrder=[];_depthActors.length=0;_depthOn=true;activeBuildings=[];_standDecor.length=0;actorShow(grounded);actorShow(electric);actorShow(live);actorShow(stunned);actorShow(parried);drawDepthSorted();');
+check('groundOrder.join(",")==="KO,STUN,PLAYER,PARRY,ELECTRIC"', 'Biome depth drawing keeps floor bodies below standing player and restores live y sorting');
+check('_depthActors.length===0&&!_depthOn', 'Biome drawing consumes each actor once and clears depth mode');
+probe('groundOrder=[];stunned.stunTimer=0;_depthOn=true;actorShow(stunned);actorShow(live);drawDepthSorted();');
+check('groundOrder.join(",")==="PLAYER,STUN"&&!isGroundBodyActor(stunned)', 'A recovered knockdown returns to normal standing depth on the next frame');
+probe('groundOrder=[];_depthOn=false;actorShow(live);');
+check('groundOrder.join(",")==="PLAYER"', 'Direct actor previews remain immediate outside a queued frame');
+probe(`groundOrder=[];_depthActors.length=0;_depthOn=false;_legacyActorsQueued=true;
+ var broken=groundActor('BROKEN',1);broken.show=()=>{throw new Error('expected painter failure');};actorShow(broken);
+ try{drawLegacyActors();}catch(e){if(e.message!=='expected painter failure')throw e;}`);
+check('_depthActors.length===0&&!_legacyActorsQueued', 'A legacy painter exception cannot leave stale actors queued for the next frame');
+// Call the real interior painter and observe production draw order. Furniture
+// and bodies stay distinct; there is no mocked replacement render ordering.
+probe(`leftStick={active:false,dx:0,dy:0,base:{x:80,y:height-160}};
+ rightStick={active:false,dx:0,dy:0,dist:0,base:{x:width-80,y:height-110}};
+ isStoryMode=false;resetStoryProgress();startAtLevel(3);started=true;isPaused=isDead=isWin=killcamMode=false;
+ inTownCutscene=inFarmCutscene=inFarmPostCutscene=inFortCutscene=inPostAmbushCutscene=inStoryIntro=inDarchonCall=false;
+ inWorldBuildingMenu=inOverworldView=inTravelMenu=false;
+ enterFrontierSaloon();startFrontierSaloonBrawl();
+ var groundScene=_frontierSaloonSession;
+ var groundFighter=groundScene.fighters[0];groundFighter.x=player.x+3;groundFighter.y=player.y+7;
+ frontierSaloonKnockOut(groundFighter,0);
+ var groundPatron=groundScene.patrons[0];groundPatron.x=player.x+5;groundPatron.y=player.y+9;groundPatron.stunTimer=120;
+ var renderOrder=[],originalPlayerShow=player.show,originalPatronShow=groundPatron.show,originalBrawlerPaint=paintFrontierSaloonBrawler;
+ player.show=function(){renderOrder.push('PLAYER');return originalPlayerShow.call(this);};
+ groundPatron.show=function(){renderOrder.push('PATRON_DOWN');return originalPatronShow.call(this);};
+ paintFrontierSaloonBrawler=function(c){renderOrder.push(c===groundFighter?'KO':'LIVE');return originalBrawlerPaint(c);};
+ drawFrontierSaloonInterior();`);
+check('Math.hypot(groundFighter.x-player.x,groundFighter.y-player.y)<10', 'The knockout overlap fixture shares the standing player footprint');
+check('renderOrder.indexOf("KO")<renderOrder.indexOf("PLAYER")', 'Actual saloon knockout painting happens before the overlapping standing player');
+check('renderOrder.indexOf("PATRON_DOWN")<renderOrder.indexOf("PLAYER")', 'A native stunned patron also stays beneath the player in the saloon');
+check('renderOrder.filter(x=>x==="KO").length===1&&renderOrder.filter(x=>x==="PLAYER").length===1', 'The actual saloon draws neither the body nor the standing player twice');
+probe('player.show=originalPlayerShow;groundPatron.show=originalPatronShow;paintFrontierSaloonBrawler=originalBrawlerPaint;exitFrontierSaloon();');
+console.log(`Boxing ground layering: ${count} production renderer checks passed.`);

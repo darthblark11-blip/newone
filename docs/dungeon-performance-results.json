@@ -1,0 +1,263 @@
+{
+  "baselineCommit": "174069e",
+  "baselineSourceSha256": "177479f6614fbb32438028aa9a2f2b21d46da16b651f84026aa2a3d1d9a5c977",
+  "optimizedSourceSha256": "89e6126acb70c27fa9a7d53d16a194256ae66fe5132b35de2e312cf89154f6eb",
+  "host": "Headless Chromium / SwiftShader; timings describe cloud host, not phone frame rate.",
+  "p5Version": "1.11.10",
+  "viewportCssPixels": {
+    "width": 390,
+    "height": 844
+  },
+  "devicePixelRatio": 3,
+  "framesPerCase": 120,
+  "warmupFramesPerCase": 30,
+  "cases": [
+    {
+      "scenario": "opening_horde",
+      "lighting": "fallback",
+      "initialActors": {
+        "casters": 12,
+        "zombies": 72
+      },
+      "finalActorCount": 84,
+      "density": 2,
+      "baselineCpuMs": {
+        "mean": 44.9383333330974,
+        "median": 42.69999999925494,
+        "p95": 63.19999999925494,
+        "p99": 68.39999999850988,
+        "max": 69
+      },
+      "optimizedCpuMs": {
+        "mean": 12.493333333109815,
+        "median": 11.5,
+        "p95": 21.19999999552965,
+        "p99": 23.700000002980232,
+        "max": 25.5
+      },
+      "baselinePaintedIntervalMs": {
+        "mean": 237.07899159665743,
+        "median": 215.60000000149012,
+        "p95": 451.79999999701977,
+        "p99": 471.4000000022352,
+        "max": 472.30000000074506
+      },
+      "optimizedPaintedIntervalMs": {
+        "mean": 244.39579831934026,
+        "median": 205.80000000447035,
+        "p95": 442,
+        "p99": 458.3999999985099,
+        "max": 468.90000000596046
+      },
+      "medianCpuReductionPercent": 73.06791569039659,
+      "errors": []
+    },
+    {
+      "scenario": "populated_dungeon",
+      "lighting": "fallback",
+      "initialActors": {
+        "casters": 54,
+        "zombies": 288
+      },
+      "finalActorCount": 342,
+      "density": 2,
+      "baselineCpuMs": {
+        "mean": 45.36416666656733,
+        "median": 42.599999997764826,
+        "p95": 64.39999999850988,
+        "p99": 77.39999999850988,
+        "max": 107.60000000149012
+      },
+      "optimizedCpuMs": {
+        "mean": 13.239999999850989,
+        "median": 12.100000001490116,
+        "p95": 22.5,
+        "p99": 29.299999997019768,
+        "max": 29.900000005960464
+      },
+      "baselinePaintedIntervalMs": {
+        "mean": 251.48067226890132,
+        "median": 199.69999999925494,
+        "p95": 440.6000000014901,
+        "p99": 511.6000000014901,
+        "max": 517.3999999985099
+      },
+      "optimizedPaintedIntervalMs": {
+        "mean": 238.28403361342035,
+        "median": 202.79999999701977,
+        "p95": 446,
+        "p99": 457.19999999552965,
+        "max": 460.20000000298023
+      },
+      "medianCpuReductionPercent": 71.59624412646717,
+      "errors": []
+    },
+    {
+      "scenario": "dense_horde",
+      "lighting": "fallback",
+      "initialActors": {
+        "casters": 54,
+        "zombies": 288
+      },
+      "finalActorCount": 342,
+      "density": 2,
+      "baselineCpuMs": {
+        "mean": 110.77416666674738,
+        "median": 107.39999999850988,
+        "p95": 148.30000000074506,
+        "p99": 163.39999999850988,
+        "max": 166.39999999850988
+      },
+      "optimizedCpuMs": {
+        "mean": 33.897500000397365,
+        "median": 32.79999999701977,
+        "p95": 46.19999999552965,
+        "p99": 54.899999998509884,
+        "max": 56.100000001490116
+      },
+      "baselinePaintedIntervalMs": {
+        "mean": 1186.8428571428321,
+        "median": 1137,
+        "p95": 1658.6000000014901,
+        "p99": 2106.5,
+        "max": 2123.300000000745
+      },
+      "optimizedPaintedIntervalMs": {
+        "mean": 1132.2966386554372,
+        "median": 1128.2999999970198,
+        "p95": 1568.5,
+        "p99": 1739.1000000014901,
+        "max": 1794.0999999940395
+      },
+      "medianCpuReductionPercent": 69.45996275840331,
+      "errors": []
+    },
+    {
+      "scenario": "opening_horde",
+      "lighting": "advanced",
+      "initialActors": {
+        "casters": 12,
+        "zombies": 72
+      },
+      "finalActorCount": 84,
+      "density": 2,
+      "baselineCpuMs": {
+        "mean": 47.04916666696469,
+        "median": 44.30000000074506,
+        "p95": 70.10000000149012,
+        "p99": 74.80000000074506,
+        "max": 79.10000000149012
+      },
+      "optimizedCpuMs": {
+        "mean": 15.85083333334575,
+        "median": 14.299999997019768,
+        "p95": 28.200000002980232,
+        "p99": 34.20000000298023,
+        "max": 37.600000001490116
+      },
+      "baselinePaintedIntervalMs": {
+        "mean": 382.3142857143045,
+        "median": 359.80000000074506,
+        "p95": 575.3999999985099,
+        "p99": 617.8000000007451,
+        "max": 619.1000000014901
+      },
+      "optimizedPaintedIntervalMs": {
+        "mean": 347.36386554619344,
+        "median": 312.80000000447035,
+        "p95": 570.2000000029802,
+        "p99": 582.3000000044703,
+        "max": 589.7999999970198
+      },
+      "medianCpuReductionPercent": 67.72009030072401,
+      "errors": []
+    },
+    {
+      "scenario": "dense_horde",
+      "lighting": "advanced",
+      "initialActors": {
+        "casters": 54,
+        "zombies": 288
+      },
+      "finalActorCount": 342,
+      "density": 2,
+      "baselineCpuMs": {
+        "mean": 116.76166666659216,
+        "median": 113.5,
+        "p95": 148.5,
+        "p99": 171.5,
+        "max": 233
+      },
+      "optimizedCpuMs": {
+        "mean": 38.04499999973923,
+        "median": 36.29999999701977,
+        "p95": 51.099999994039536,
+        "p99": 58.19999999552965,
+        "max": 61.70000000298023
+      },
+      "baselinePaintedIntervalMs": {
+        "mean": 1319.0025210084095,
+        "median": 1302.5,
+        "p95": 1735.5,
+        "p99": 1782.1000000014901,
+        "max": 1897.5
+      },
+      "optimizedPaintedIntervalMs": {
+        "mean": 1298.3428571428947,
+        "median": 1274.0999999940395,
+        "p95": 1756.6000000014901,
+        "p99": 1852.8000000044703,
+        "max": 1853.3999999985099
+      },
+      "medianCpuReductionPercent": 68.0176211480002,
+      "errors": []
+    }
+  ],
+  "provenance": "Full matrix was captured before integrating concurrent footwork commit a8f62d6. Integrated measurements are recorded separately.",
+  "integratedComparison": {
+    "baselineCommit": "a8f62d6",
+    "baselineSourceSha256": "1c76d14fa09c7951711e9af8d70a89022572cc099fe488a18c035f2712392702",
+    "optimizedSourceSha256": "6caf027a558643daefa74a7587223bf0ef9ca5cb75ba0f0d0885f8c16fdb1c13",
+    "scenario": "opening_horde",
+    "lighting": "advanced",
+    "framesPerCase": 120,
+    "warmupFramesPerCase": 30,
+    "baselineCpuMs": {
+      "mean": 47.269166666890186,
+      "median": 45.599999994039536,
+      "p95": 66.59999999403954,
+      "p99": 83.10000000149012,
+      "max": 96
+    },
+    "optimizedCpuMs": {
+      "mean": 15.601666665884355,
+      "median": 14.799999997019768,
+      "p95": 24.299999997019768,
+      "p99": 30.600000001490116,
+      "max": 32.30000000447035
+    },
+    "baselinePaintedIntervalMs": {
+      "mean": 379.1210084033488,
+      "median": 365.3999999985099,
+      "p95": 562.1999999955297,
+      "p99": 580.5999999940395,
+      "max": 609.1999999955297
+    },
+    "optimizedPaintedIntervalMs": {
+      "mean": 330.5058823529036,
+      "median": 303.6000000014901,
+      "p95": 537.5,
+      "p99": 557.4000000059605,
+      "max": 563.0999999940395
+    },
+    "actorCounts": {
+      "actors": 84,
+      "casters": 12,
+      "zombies": 72,
+      "projectiles": 20,
+      "grounds": 0,
+      "bursts": 1
+    },
+    "errors": []
+  }
+}
