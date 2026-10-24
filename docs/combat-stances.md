@@ -19,7 +19,9 @@ impact effect, wound, hit statistic or kill credit. It can hit another actor or
 ordinary solid farther along its trajectory.
 
 Prone contact uses a directional capsule with 25-unit half-length and 10-unit
-radius, independently of the HEAD damage profile. Swept projectile contacts and
+radius, independently of the HEAD damage profile. The player's capsule follows
+the planted body heading, so turning the gun does not rotate the feet or wall
+clearance. Swept projectile contacts and
 the broad phase cover the longer shape. Hunting cover uses the same resolver,
 so a lowered humanoid cannot invisibly intercept an overhead shot to an animal.
 
@@ -40,10 +42,19 @@ A direct dive therefore passes through crouched vulnerability before reaching
 prone. Requesting a stance never grants immediate immunity. Another transition
 must wait for completion and a 180 ms recovery window. Pausing freezes progress.
 
+While aiming on foot, the player's hip heading stays within about 36° of the
+weapon facing. Opposite travel uses heel-leading backward steps with toes still
+facing the aim. Lateral travel uses the appropriate lead foot; after 600 ms of
+sustained strafing it blends into a sideways skip. Walking, jogging and running
+keep their throttle/cadence bands. The same lower-leg geometry places leg wounds.
+
 Crouch uses a separate articulated pose: hips back, chest/head leaning forward,
 knees bent forward/outward and ankles under the hips. Folded thighs cover the
 shins, with rounded knee contours visible beside the shirt. A slight uniform
 camera size reduction conveys lower elevation without distorting the body.
+Each recovering knee withdraws under the shirt while the heel lifts behind the
+hip, exposing the back of the calf and the shoe tread. Chest and shoulders
+counter-rotate against the stepping leg, with a smaller opposing pelvis turn.
 
 Prone uses a shorter torso with distinct hip, knee and ankle joints and longer
 rearward legs. Neutral poses center the head; active aim adds a cheek offset.
@@ -53,19 +64,41 @@ other arm available for crawling. The normal brief aim hold prevents flicker
 between carry and presentation. Firing raises the weapon before resolving its
 muzzle, including a shot immediately after a neutral carry.
 
+Player prone aiming locks voluntary movement on the first input frame while
+combat timers continue. The body heading is captured when lying down and follows
+neutral crawling; aiming then rolls around that planted heading. Relative to a
+body lying north, the continuous poses pass through:
+
+| Aim | Prone pose |
+| --- | --- |
+| North | Face down, weapon forward |
+| Northwest / northeast | Posted right / left elbow |
+| West / east | Right / left side, opposite hip raised |
+| Southwest / southeast | Interpolating from the side onto the back |
+| South | Face up, weapon aimed back past the torso |
+
+Head, chest, hips and shoulders reveal the roll; the pack lies underneath when
+face up. Arms and gun rise above the chest on back-lying poses, while palms stay
+below the gun and the head keeps its own depth. Gun, flashlight and cannon use
+the true aim direction independently of the body's anchored floor footprint.
+Main-weapon and cannon aim/fire stop crawling; the normal brief aim hold and a
+140 ms lowering blend return the actor to a neutral crawl before movement resumes.
+Flasks alone do not create an aim lock. Pause freezes these transitions.
+
 Crawling alternates planted elbow pulls and outward recovery arcs with eased
 contact speed and a smooth lift off the floor. Rounded upper-arm/forearm masses
 and elbow caps keep a deeply folded sleeve from becoming a pointed ribbon.
 Opposite knees advance under the pelvis, shoulders rotate against the hips, and the
 carried weapon follows that changing support. The actor root does not wobble
 sideways. Sleeves fit the existing arm lengths rather than stretching to grips.
-Shoulder roots sit inside the chest contour. A single final torso/head pass
+Shoulder roots sit inside the chest contour. In face-down/crouched poses, a final torso/head pass
 occludes sleeves, palms and gun parts passing below the body, including reload
 and support-action arms. The neutral long-gun grip sits forward at the collar
 so the receiver clears the chest during the crawl.
 Palms and reload/support hands draw below the firearms. The dash pack reveals
 its full vented back plate and twin drive housings as the torso drops prone;
-its art stays mounted above back clothing and armor.
+its art stays mounted above back clothing and armor while face down and turns
+underneath the actor when rolling onto the back.
 Native guns, reloads and bow use one rigid weapon mount. Chemist hand actions
 retain an independent body mount. Physical shots, muzzle flashes and torch
 direction share the posed gun. Contact shadows tighten or flatten, and lowered health
@@ -89,6 +122,8 @@ boxing and saloon activities retain their dedicated controls. Elevator prompts,
 descent and arrival doors suspend stance input and transitions. Saves record the
 current effective player stance; loading restores a settled valid pose. Older
 saves start standing, and an obstructed saved prone footprint falls back to crouch.
+Prone saves also preserve the anchored body heading; older saves fall back to
+their saved aim heading.
 
 ## Balance and enemy response
 
@@ -97,6 +132,8 @@ saves start standing, and an obstructed saved prone footprint falls back to crou
 | Standing | 100% | 100% | 100% |
 | Crouched | 60% | 80% | 125% |
 | Prone | 25% | 65% | 150% |
+
+Prone speed applies to neutral crawling; aiming and firing hold the player still.
 
 Movement retains only 35% of the stability bonus. Fire cooldowns, magazine sizes
 and weapon definitions do not change. Weapons with zero inherent spread do not
@@ -109,6 +146,9 @@ Some sustained ranged engagements also use crouch or occasional distant prone
 positions; actors rise when combat ends or the target closes in.
 
 Focused verification lives in `tools/check-stance-{hits,controls,ai,render}.js`.
+`tools/check-directional-footwork.js`, `tools/check-crouch-footwork.js` and
+`tools/check-prone-directional-aim.js` exercise directional stepping, heel/sole
+recovery, planted aiming, cannon controls and eight-direction roll geometry.
 `tools/check-stance-anatomy.js` checks bent joints, proportions, crawl support,
 rendered arm lengths, grip attachment, neutral/aimed geometry and smooth joint motion.
 `tools/check-stance-layering.js` checks torso/head occlusion and single action
@@ -119,3 +159,5 @@ phone and landscape sizes. `tools/visual-combat-stances.js` renders native pose
 comparisons and a full HQ combat scene with adapting enemy fire.
 `tools/visual-stance-motion.js` produces native idle/aim and gait sheets plus a
 motion clip covering transitions, crouched movement and crawling.
+`tools/visual-directional-stances.js` renders aimed walk/jog/run, crouch stepping
+and all eight planted prone aims, including real barrel/torch/cannon alignment.

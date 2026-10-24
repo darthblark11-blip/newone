@@ -15,7 +15,7 @@ probe(`started=doTick=true;isPaused=isDead=isWin=killcamMode=false;
  setMeleeTool('NONE');window.milLvl=1;player=new Character(70,90,true);player.isArmed=true;
  player.aimHold=14;player.ammo=30;player.reloadTimer=0;player.meleeTimer=0;player.dashTimer=0;`);
 for(const name of ['STAND','CROUCH','PRONE'])for(const angle of [0,Math.PI/2,Math.PI,Math.PI*1.5]){
- probe(`resetActorStance(player,'${name}');player.aimAngle=${angle};player.moveAngle=${angle};`);
+ probe(`player.aimAngle=${angle};player.moveAngle=${angle};resetActorStance(player,'${name}');`);
  for(const key of ['PISTOL','SMG','DUAL_SMG','ASSAULT_RIFLE','SHOTGUN','ROCKET_LAUNCHER','REVOLVER','COACH_GUN','BOW']){
   const x=key==='BOW'?47-9*.8:['ASSAULT_RIFLE','SHOTGUN','ROCKET_LAUNCHER','REVOLVER'].includes(key)?47:['SMG','DUAL_SMG'].includes(key)?38:31;
   const y=key==='BOW'?0:['ASSAULT_RIFLE','SHOTGUN','ROCKET_LAUNCHER'].includes(key)?6:['SMG','DUAL_SMG','REVOLVER'].includes(key)?11:8;

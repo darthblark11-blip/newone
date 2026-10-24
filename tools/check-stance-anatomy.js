@@ -126,13 +126,13 @@ for(const stance of ['CROUCH','PRONE'])for(const key of ['PISTOL','ASSAULT_RIFLE
  let bounded=true,grips=true,palms=true,maxRatio=0;
  for(const phase of [0,.12,.34,.5,.64,.72,.82,.94])for(const heading of [0,Math.PI/2,Math.PI,Math.PI*1.5]) {
   const b=body(stance,true,phase*TAU/.65,aiming);
-  probe(`player.aimAngle=${heading};`);
+  probe(`player.aimAngle=${heading};player.stance.proneHeading=${heading};`);
   drawnLimbs=[];drawnPalms=[];
   probe('drawCombatStanceFigure(player,actorStancePose(player));');
   const arms=drawnLimbs.filter(a=>Math.abs(a[7]-b.R.upperW)<1e-8);
   if(arms.length!==2||drawnPalms.length!==2){bounded=grips=palms=false;continue;}
-  const grip=P(key==='PISTOL'?'({right:stanceLocalPoint(player,16,8),left:null})':
-   '(()=>{const g=stanceLongGunPose(player);return {right:stanceLocalPoint(player,...g.rear),left:stanceLocalPoint(player,...g.fore)};})()');
+  const grip=P(key==='PISTOL'?'({right:stancePointInBody(player,16,8),left:null})':
+   '(()=>{const g=stanceLongGunPose(player);return {right:stancePointInBody(player,...g.rear),left:stancePointInBody(player,...g.fore)};})()');
   for(let i=0;i<arms.length;i++) {
    const a=arms[i],shoulder={x:a[1],y:a[2]},elbow={x:a[3],y:a[4]},wrist={x:a[5],y:a[6]};
    const ratio=Math.max(distance(shoulder,elbow)/b.R.upper,distance(elbow,wrist)/b.R.fore);
@@ -172,11 +172,11 @@ ok('deep elbow folds retain rounded joint surfaces on both sides of a full rever
 ok('rounded sleeve geometry remains finite through the formerly jagged reversal',finiteFolds);
 
 let finite=true,continuous=true;
-for(const stance of ['CROUCH','PRONE'])for(const dimensions of [[21,27],[24,30],[18,24]]) {
+for(const stance of ['CROUCH','PRONE'])for(const dimensions of [[21,27],[24,30],[18,24]])for(const aiming of [false,true]) {
  probe(`player.bodyW=${dimensions[0]};player.bodyH=${dimensions[1]};`);
  let previous=null;
  for(let i=0;i<=160;i++) {
-  body(stance,true,i*TAU/(160*.65),i%2===0); // Aim switches must never deform the body joints.
+  body(stance,true,i*TAU/(160*.65),aiming);
   probe(`player.aimAngle=${i*TAU/160};`);
   const b=P('stanceBodyPose(player)'),angle=i*TAU/160;
   const pts=b.joints.flatMap(j=>[j.hip,j.knee,j.ankle,j.shoulder,j.elbow]);

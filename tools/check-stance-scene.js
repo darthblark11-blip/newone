@@ -42,7 +42,9 @@ const out = process.env.STANCE_SCENE_OUT || '/tmp/newone-stance-scenes'; fs.mkdi
         }
         window.__stanceStep=(frames=1)=>{for(let i=0;i<frames;i++){frameCount++;deltaTime=1000/60;draw();}};
         window.__stanceState=()=>({stance:actorStance(player),state:{...player.stance},
-          x:player.x,y:player.y,angle:player.aimAngle,ammo:player.ammo,paused:isPaused,
+          x:player.x,y:player.y,angle:player.aimAngle,body:stanceFacingAngle(player),moving:player.isMoving,cycle:player.walkCycle,
+          muzzle:stanceMuzzleWorld(player,player.x+Math.cos(player.aimAngle)*31-Math.sin(player.aimAngle)*8,
+            player.y+Math.sin(player.aimAngle)*31+Math.cos(player.aimAngle)*8),ammo:player.ammo,paused:isPaused,
           bullets:bullets.filter(b=>b.active).map(b=>({zone:b.tH,x:b.startX,y:b.startY})),
           aim:touchAimSelection.pointerId,aimActive:rightStick.active,move:leftStick.active,
           events:{...__stanceEvents},fault:window.FRAME_FAULT||null});
@@ -81,12 +83,16 @@ const out = process.env.STANCE_SCENE_OUT || '/tmp/newone-stance-scenes'; fs.mkdi
       const walk=await page.evaluate(()=>({id:3,x:Math.round(leftStick.base.x+45),y:Math.round(leftStick.base.y)}));
       const beforeMove=s.x;await send('touchStart',[walk]);await page.evaluate(()=>__stanceStep(4));s=await state();
       ok(s.move&&s.x>beforeMove&&s.stance==='PRONE',name+' a separate movement finger crawls the real actor');
+      const planted={x:s.x,y:s.y,body:s.body,cycle:s.cycle};
       await send('touchStart',[walk,head]);s=await state();
       ok(s.aim!==null&&s.ammo===17&&s.bullets.length===0,name+' a separate silhouette press selects aim without firing');
+      ok(s.x===planted.x&&s.y===planted.y&&!s.moving&&s.cycle===planted.cycle,name+' prone aiming locks movement and cadence on the first touch frame');
       await send('touchMove',[walk,{...head,x:head.x-60}]);s=await state();
       ok(s.ammo===16&&s.bullets.length===1&&s.bullets[0].zone==='HEAD',name+' dragging the aim thumb fires the selected elevation while prone');
-      const bullet=s.bullets[0],forward=(bullet.x-s.x)*Math.cos(s.angle)+(bullet.y-s.y)*Math.sin(s.angle);
-      ok(forward>20&&forward<35,name+' the compact prone pistol fires ahead of the head without the old exaggerated reach');
+      const bullet=s.bullets[0];
+      ok(Math.hypot(bullet.x-s.muzzle.x,bullet.y-s.muzzle.y)<1e-5,name+' the rolled prone pistol fires from its actual posed muzzle');
+      ok(s.x===planted.x&&s.y===planted.y&&Math.abs(Math.atan2(Math.sin(s.body-planted.body),Math.cos(s.body-planted.body)))<1e-8,
+        name+' firing keeps the body and feet planted while the weapon turns');
       await send('touchEnd',[]);
 
       await page.evaluate(()=>{window.lastPauseTime=millis()-1000;player.fireTimer=0;});

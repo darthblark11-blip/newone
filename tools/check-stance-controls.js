@@ -118,11 +118,15 @@ ok('a dive is refused if its extended body would enter cover', !P("requestActorS
 probe("resetActorStance(player,'PRONE');");
 ok('prone movement checks its forward end rather than only its root', P('player.checkCol(0,0)'));
 probe('player.aimAngle=Math.PI/2;');
-ok('the prone footprint rotates with the actor facing', !P('player.checkCol(0,0)'));
+ok('gun aiming cannot rotate the anchored prone footprint',P('player.checkCol(0,0)')&&P('stanceFacingAngle(player)===0'));
+probe('player.stance.proneHeading=Math.PI/2;');
+ok('a physical body turn rotates the prone footprint',!P('player.checkCol(0,0)'));
 probe('constrainStanceFacing(player);rightStick.active=true;rightStick.dx=1;rightStick.dy=0;rightStick.dist=0;frameCount++;player.updatePlayer();');
 ok('a native aim update cannot rotate the prone body through an adjacent wall',
-  P('Math.abs(player.aimAngle-Math.PI/2)<1e-8 && stanceProneSpotClear(player)'));
+  P('Math.abs(player.aimAngle)<1e-8 && Math.abs(stanceFacingAngle(player)-Math.PI/2)<1e-8 && stanceProneSpotClear(player)'));
 probe('leftStick.active=true;leftStick.dx=1;leftStick.dy=0;for(let i=0;i<30;i++){frameCount++;player.updatePlayer();}');
+ok('holding prone aim prevents voluntary movement beside cover',P('player.x===0&&!player.isMoving'));
+probe('rightStick.active=false;for(let i=0;i<60;i++){frameCount++;player.updatePlayer();}');
 ok('the prone body translates until its capsule reaches cover without entering it',
   P('player.x>0 && player.x<=20 && !player.checkCol(player.x,player.y)'));
 fresh();probe("requestActorStance(player,'PRONE');");advance(100);

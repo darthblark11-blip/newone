@@ -48,7 +48,8 @@ function actorStance(a) {
 function resetActorStance(a,name='STAND') {
   if(!a)return;
   const level=Math.max(0,COMBAT_STANCES.indexOf(name));
-  a.stance={from:level,to:level,value:level,elapsedMs:0,durationMs:0,cooldownMs:0};
+  a.stance={from:level,to:level,value:level,elapsedMs:0,durationMs:0,cooldownMs:0,
+    proneHeading:Number.isFinite(a.aimAngle)?a.aimAngle:0,proneAimBlend:0};
   a._stanceClearAngle=Number.isFinite(a.aimAngle)?a.aimAngle:0;
 }
 function actorStancePose(a) {
@@ -61,6 +62,37 @@ function actorStancePose(a) {
   p.forward=p.muzzleForward=0;p.muzzleSide=0;p.uiOffset=9*p.crouch+19*p.prone;
   return p;
 }
+function stanceFacingAngle(a) {
+  const angle=Number.isFinite(a&&a.aimAngle)?a.aimAngle:0;
+  return a&&a.isPlayer&&a.stance&&actorStancePose(a).prone>0&&Number.isFinite(a.stance.proneHeading)
+    ?a.stance.proneHeading:angle;
+}
+function proneAimInput(a) {
+  return !!a&&a.isPlayer&&((rightStick&&rightStick.active)||
+    playerWeaponFireInput()||(a.aimHold||0)>0||(a.muzzleFlash||0)>0||
+    !!(a.bowDrawState&&a.bowDrawState.phase==='DRAW')||leftHandAction(a)===2);
+}
+function proneAimLocked(a) {
+  return !!a&&a.isPlayer&&actorStancePose(a).prone>0&&
+    (proneAimInput(a)||!!(a.stance&&a.stance.proneAimBlend>.01));
+}
+function updateProneFacing(a,elapsedMs=deltaTime,afterMove=false) {
+  if(!a||!a.isPlayer||!a.stance||!doTick||!combatStanceContext())return;
+  const s=a.stance;
+  if(!(actorStancePose(a).prone>0)) {
+    s.proneAimBlend=0;
+    if(s.to!==2)s.proneHeading=Number.isFinite(a.aimAngle)?a.aimAngle:0;
+    return;
+  }
+  if(!Number.isFinite(s.proneHeading))s.proneHeading=Number.isFinite(a.aimAngle)?a.aimAngle:0;
+  if(!afterMove) {
+    const dt=Math.min(100,Math.max(0,Number(elapsedMs)||0)),target=proneAimInput(a)?1:0;
+    s.proneAimBlend=Math.max(0,Math.min(1,(Number(s.proneAimBlend)||0)+(target?1:-1)*dt/140));
+    if(s.proneAimBlend<.01)s.proneAimBlend=0;
+  } else if(!proneAimLocked(a)&&a.isMoving) {
+    s.proneHeading=Number.isFinite(a.moveAngle)?a.moveAngle:a.aimAngle||0;
+  }
+}
 function recordStanceDamage(a,damage,zone) {
   const p=actorStancePose(a);
   if(!(damage>0)||!(p.crouch+p.prone>0))return;
@@ -72,7 +104,8 @@ function recordStanceDamage(a,damage,zone) {
 }
 function stanceProneSpotClear(a) {
   if(!a||typeof a.checkCol!=='function')return true;
-  const angle=Number.isFinite(a.aimAngle)?a.aimAngle:a.moveAngle||0;
+  const angle=a.isPlayer&&a.stance&&a.stance.to===2&&Number.isFinite(a.stance.proneHeading)
+    ?a.stance.proneHeading:stanceFacingAngle(a);
   for(const d of [-25,0,25])if(a.checkCol(a.x+Math.cos(angle)*d,a.y+Math.sin(angle)*d,true))return false;
   return true;
 }
@@ -83,6 +116,7 @@ function requestActorStance(a,name) {
   const s=a.stance;
   if(s.elapsedMs<s.durationMs||s.cooldownMs>0||s.to===target)return false;
   if(target===2&&!stanceProneSpotClear(a))return false;
+  if(target===2&&a.isPlayer){s.proneHeading=Number.isFinite(a.aimAngle)?a.aimAngle:0;s.proneAimBlend=0;a._stanceClearAngle=s.proneHeading;}
   s.from=s.value;s.to=target;s.elapsedMs=0;s.durationMs=target===2||s.from>1?300:150;
   cancelPlayerBowDraw(a);return true;
 }
@@ -105,9 +139,15 @@ function updateActorStance(a,elapsedMs=deltaTime) {
 }
 function constrainStanceFacing(a) {
   if(!a)return;
-  if(!(actorStancePose(a).prone>0)) {a._stanceClearAngle=a.aimAngle;return;}
-  if(stanceProneSpotClear(a)){a._stanceClearAngle=a.aimAngle;return;}
-  if(Number.isFinite(a._stanceClearAngle))a.aimAngle=a._stanceClearAngle;
+  if(!(actorStancePose(a).prone>0)) {
+    a._stanceClearAngle=a.isPlayer&&a.stance&&a.stance.to===2?a.stance.proneHeading:a.aimAngle;
+    return;
+  }
+  if(stanceProneSpotClear(a)){a._stanceClearAngle=stanceFacingAngle(a);return;}
+  if(Number.isFinite(a._stanceClearAngle)) {
+    if(a.isPlayer&&a.stance)a.stance.proneHeading=a._stanceClearAngle;
+    else a.aimAngle=a._stanceClearAngle;
+  }
   if(!stanceProneSpotClear(a))resetActorStance(a,'CROUCH');
 }
 function stanceMovementScale(a) {const p=actorStancePose(a);return 1-.40*p.crouch-.75*p.prone;}
@@ -14622,6 +14662,8 @@ function mapLegHitDecal(actor,wx,wy,decal,origin=actor) {
     fallen={rig:projectFallRig(actor.bodyW,actor.bodyH,f),rag:p.rag,f};
     angle=figureFallYaw(p,p.rag,f);scale=RAG_SCALE;
   }
+  const directional=!fallen&&!pose.active&&!mantle&&!dig?playerFootworkPose(actor):null;
+  if(directional&&directional.active)angle=directional.angle;
   const ca=Math.cos(angle),sa=Math.sin(angle),dx=(wx-origin.x)/scale,dy=(wy-origin.y)/scale;
   const x=ca*dx+sa*dy,y=-sa*dx+ca*dy,th=rig.thigh*STAND_FORE_LEG,sh=rig.shin*STAND_FORE_LEG;
   const feet=pose.active?boxingFeet(actor,pose):null;
@@ -14646,6 +14688,8 @@ function mapLegHitDecal(actor,wx,wy,decal,origin=actor) {
       const sx=-10+rig.thighW*.5,sy=side*6;
       kx=sx+th*.8+side*dig.blend*3-dig.effort*1.1;ky=sy+side*dig.blend*2.4;
       ax=kx+sh*.8+side*dig.blend*5-dig.effort*1.4;ay=ky+side*dig.blend*1.5;
+    }else if(directional&&directional.active){
+      const leg=standingFootworkLeg(actor,index,directional);({kx,ky,ax,ay}=leg);width=leg.ankleW;
     }else{
       const sx=-10-swing*side+rig.thighW*.5;
       kx=sx+th*.92;ky=side*6;ax=kx+sh;ay=ky;
@@ -20033,7 +20077,7 @@ this.skeletonTimer = 0;
       checkCol(nx, ny, stanceProbe = false) {
     if(currentLevel===9&&!undergroundPointWalkable(nx,ny,15))return true;
     if (!stanceProbe && actorStancePose(this).prone > 0) {
-      const dx = Math.cos(this.aimAngle || 0) * 25, dy = Math.sin(this.aimAngle || 0) * 25;
+      const heading=stanceFacingAngle(this),dx=Math.cos(heading)*25,dy=Math.sin(heading)*25;
       if (this.checkCol(nx + dx, ny + dy, true) || this.checkCol(nx - dx, ny - dy, true)) return true;
     }
     const shovelBlocked=shovelCollision(this,nx,ny);
@@ -20460,6 +20504,12 @@ this.skeletonTimer = 0;
     if(shovelUtility){isCooking=false;this.cannonCharge=0;grenadeInputHeld=false;cannonInputHeld=false;}
 
     if (isChemist && !shovelUtility) {
+        // The free-hand cannon aims from the movement stick when the gun
+        // stick is idle. Keep that true heading before resolving its release
+        // muzzle, while the prone floor heading stays planted.
+        if(actorStancePose(this).prone>0&&leftHandAction(this)===2) {
+            updateProneFacing(this,0);this.aimAngle=supportAimAngle(this);
+        }
         // --- CHEMIST FLASKS ---
         if (pFlaskTimer > 0) { pFlaskTimer--; if (pFlaskTimer <= 0) pFlaskAmmo = 2; }
         if (meleeInputHeld && pFlaskAmmo > 0 && !isCooking && this.dashTimer <= 0) { isCooking = true; cookTime = 180; }
@@ -20614,6 +20664,7 @@ this.skeletonTimer = 0;
 
     // Whether the gun is up, with a short hold on the way down. See AIM_HOLD.
     this.aimHold = aimIntent(this) ? AIM_HOLD : Math.max(0, (this.aimHold || 0) - 1);
+    updateProneFacing(this,typeof deltaTime==='number'?deltaTime:1000/60);
 
     // Mounted, on the flat, a horse is most of twice a man's pace.
     let speed = (ninjaSuitUnlocked ? 6.6 : 6.0) * (this.mounted ? 1.78 : 1) * stanceMovementScale(this);
@@ -20655,7 +20706,8 @@ this.skeletonTimer = 0;
         }
     } else { 
         if (this.dashCooldown > 0) this.dashCooldown--; 
-        let dx = leftStick.dx * speed, dy = leftStick.dy * speed; 
+        let dx = leftStick.dx * speed, dy = leftStick.dy * speed;
+        if(proneAimLocked(this))dx=dy=0;
         
         if (this.meleeTimer > 0) {
             let forwardMag = (dx * cos(this.aimAngle)) + (dy * sin(this.aimAngle));
@@ -20693,7 +20745,9 @@ this.skeletonTimer = 0;
 
     if(this.meleeTimer<=0&&this.boxingHold>0)this.boxingHold--;
     if (this.meleeTimer > 0) {
-      this.meleeTimer--;if(meleeTool()==="NONE")this.boxingHold=180; let nx = cos(this.aimAngle) * 3, ny = sin(this.aimAngle) * 3; if (!this.checkCol(this.x + nx, this.y)) this.x += nx; if (!this.checkCol(this.x, this.y + ny)) this.y += ny;
+      this.meleeTimer--;if(meleeTool()==="NONE")this.boxingHold=180;
+      const lunge=proneAimLocked(this)?0:3,nx=cos(this.aimAngle)*lunge,ny=sin(this.aimAngle)*lunge;
+      if(!this.checkCol(this.x+nx,this.y))this.x+=nx;if(!this.checkCol(this.x,this.y+ny))this.y+=ny;
       
       if (this.meleePhase === 4 && this.meleeTimer === 15 && !shovelSwing) {
           screenShake = 20; 
@@ -20810,7 +20864,11 @@ this.skeletonTimer = 0;
     else if (playerWeaponFireInput() && this.reloadTimer <= 0 && this.meleeTimer <= 0 && this.dashTimer <= 0 && !isCooking && this.throwAnimTimer <= 0 && this.fireTimer <= 0 && this.ammo > 0) {
         this.fire(this.aimAngle);
     }
-    } finally { constrainStanceFacing(this); rememberFigureMotion(this,this.x-motionX,this.y-motionY); }
+    } finally {
+      updateProneFacing(this,0,true);constrainStanceFacing(this);
+      if(typeof updateDirectionalFootwork==='function')updateDirectionalFootwork(this,typeof deltaTime==='number'?deltaTime:1000/60);
+      rememberFigureMotion(this,this.x-motionX,this.y-motionY);
+    }
   }
 
     updateEnemy() {
@@ -21644,7 +21702,12 @@ if (this.eType === "COW") {
     if(unarmedCivilian(this)&&!this.cityThugGunDrawn)return;
     if (this.currentWeapon === WEAPONS.BOW && this.ammo <= 0) return;
     if(this.isPlayer && streetThugDialogueOpen())return;
-    if (this.isPlayer) { this.isArmed = true; this.aimHold = AIM_HOLD; }
+    if (this.isPlayer) {
+      const directProne=actorStancePose(this).prone>0&&!proneAimInput(this);
+      if(directProne&&this.stance&&!Number.isFinite(this.stance.proneHeading))this.stance.proneHeading=this.aimAngle||0;
+      this.isArmed=true;this.aimHold=AIM_HOLD;
+      if(actorStancePose(this).prone>0&&this.stance){this.stance.proneAimBlend=Math.max(.01,this.stance.proneAimBlend||0);this.isMoving=false;}
+    }
     frontierAmbientMarkCombat();
     const huntShotId = ++_huntShotSequence;
     let aH = this.isPlayer ? playerAimTarget() : this.stanceAimZone || (this.isFriendly && headAimToggle ? "HEAD" : "BODY"), cd = (this.isPlayer || this.isFriendly) ? this.currentWeapon.fireCooldown : (this.currentWeapon.enemyCooldown || 48), bob = this.isMoving ? abs(sin(this.walkCycle)) * 2 : 0;
@@ -22092,6 +22155,7 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
     const mantle=this.isPlayer?shovelMantlePose(this):null;
     const shovelStroke=!mantle&&this.isPlayer&&meleeTool()==='SHOVEL'&&this.meleeTimer<=0
         ? shovelDigPose(this,GP,0) : null;
+    const standingFootwork=!mantle&&!boxing.active&&!shovelStroke?playerFootworkPose(this):null;
     let lS = this.isMoving ? sin(this.walkCycle) * 12 * GP.swing : 0,
         bob = this.isMoving ? abs(sin(this.walkCycle)) * 2 * GP.bob + GP.lean : 0;
     if(shovelStroke){lS*=1-shovelStroke.blend;bob+=shovelStroke.lean;}
@@ -22154,7 +22218,7 @@ if (this.isPlayer) {
         this.shirtCol=color(219,196,146);this.pantsCol=color(61,93,118);
     }
     {
-        push(); rotate(mantle?mantle.angle+mantle.hip:boxing.active?this.aimAngle+boxing.hip:shovelStroke?this.aimAngle+shovelStroke.hip:this.moveAngle); noStroke(); fill(this.pantsCol);
+        push(); rotate(mantle?mantle.angle+mantle.hip:boxing.active?this.aimAngle+boxing.hip:shovelStroke?this.aimAngle+shovelStroke.hip:standingFootwork&&standingFootwork.active?standingFootwork.angle:this.moveAngle); noStroke(); fill(this.pantsCol);
         if (this.bodyW === 105) {
           // ARMORED's 105-wide slab keeps its own legs; the rig is shaped like
           // a person and that is not one.
@@ -22190,6 +22254,7 @@ if (this.isPlayer) {
           if(mantle)drawShovelMantleLegs(this,mantle,RGl);
           else if(boxing.active)drawBoxingLegs(this,boxing,RGl);
           else if(shovelStroke)drawShovelDigLegs(this,shovelStroke,RGl);
+          else if(standingFootwork&&standingFootwork.active)drawStandingFootworkLegs(this,paint?paint.api:window,RGl,standingFootwork);
           else for (const sgn of [1, -1]) {
             // Hips either side of the axis at the spacing the old pair of rects
             // used -- wide enough that the two thighs do not merge at the
@@ -22216,7 +22281,7 @@ if (this.isPlayer) {
     }
     if (isChemist) {
         const sway=this.isMoving?sin(frameCount*.2)*.2:sin(frameCount*.05)*.05;
-        const tail=this.isMoving?this.moveAngle-this.aimAngle:0;
+        const tail=this.isMoving?(standingFootwork&&standingFootwork.active?standingFootwork.angle:this.moveAngle)-this.aimAngle:0;
         push();rotate(this.aimAngle);translate(bob,0);rotate(tail+sway+HALF_PI);
         const g=paint?paint.api:window;
         // Cloth follows a curved hem instead of a rigid polygon at the hips.
@@ -24431,7 +24496,7 @@ function stanceSegmentBoxTime(px,py,dx,dy,x0,y0,x1,y1) {
 function stanceProjectileContact(b,actor,profile=stanceHitProfile(actor,b.tH)) {
     if(!profile)return Infinity;
     if(!profile.capsule)return forestShotCircleTime(b,actor.x,actor.y,profile.radius);
-    const angle=Number.isFinite(actor.aimAngle)?actor.aimAngle:actor.moveAngle||0;
+    const angle=stanceFacingAngle(actor);
     const c=Math.cos(angle),s=Math.sin(angle),x=b.prevX-actor.x,y=b.prevY-actor.y;
     const dx=b.x-b.prevX,dy=b.y-b.prevY,half=profile.halfLength,r=profile.radius;
     const box=stanceSegmentBoxTime(x*c+y*s,-x*s+y*c,dx*c+dy*s,-dx*s+dy*c,-half,-r,half,r);
@@ -28530,6 +28595,7 @@ function saveGame() {
         militaryToBring: window.militaryToBring,
         playerHp: player ? player.hp : 100,
         playerStance: player ? actorStance(player) : 'STAND',
+        playerProneHeading:player&&actorStance(player)==='PRONE'?stanceFacingAngle(player):null,
         playerShield: player ? player.shield : 100,
         playerX: frontierExterior ? frontierExterior.x : (player ? player.x : null),
         playerY: frontierExterior ? frontierExterior.y : (player ? player.y : null),
@@ -28882,6 +28948,9 @@ function loadGame() {
                 player.y = state.playerY;
             }
             restoreShovelPlayer(state.shovel);
+            if(state.playerStance==='PRONE'&&Number.isFinite(state.playerProneHeading)) {
+              player.aimAngle=player.moveAngle=Math.atan2(Math.sin(state.playerProneHeading),Math.cos(state.playerProneHeading));
+            }
             resetActorStance(player, COMBAT_STANCES.includes(state.playerStance) ? state.playerStance : 'STAND');
             if (currentLevel!==9 && actorStance(player) === 'PRONE' && !stanceProneSpotClear(player)) resetActorStance(player, 'CROUCH');
         }
@@ -39531,6 +39600,92 @@ function gaitPose(t) {
   return _gp;
 }
 
+// Aimed locomotion keeps the pelvis near the gun-facing direction. Travel
+// chooses the ground stroke, so moving away from the aim becomes heel-leading
+// backsteps rather than turning the legs through the actor's spine.
+function directionalFootworkEligible(c) {
+  return !!c&&c.isPlayer&&c.hp>0&&!c.dead&&!c.mounted&&!(c.dashTimer>0)&&
+    !(c.meleeTimer>0)&&!(c.stunTimer>0)&&!boxingActive(c)&&!c.shovelMantle&&
+    !shovelToolEquipped()&&shovelPlayerDepth(c)<.5&&actorStance(c)==='STAND'&&
+    c.isArmed&&(playerAiming(c)||!!(rightStick&&rightStick.active)||c.muzzleFlash>0);
+}
+function directionalFootworkDelta(c) {
+  return Math.atan2(Math.sin((c.moveAngle||0)-(c.aimAngle||0)),Math.cos((c.moveAngle||0)-(c.aimAngle||0)));
+}
+function updateDirectionalFootwork(c,elapsedMs=deltaTime) {
+  if(!c||!c.isPlayer||!doTick||!combatStanceContext())return;
+  const eligible=directionalFootworkEligible(c),dt=Math.min(100,Math.max(0,Number(elapsedMs)||0));
+  let s=c._directionalFootwork;
+  if(!s)s=c._directionalFootwork={frame:-1,active:false,hip:0,side:1,strafeMs:0,skip:0,origin:c.walkCycle||0,skipOrigin:c.walkCycle||0};
+  if(s.frame===frameCount)return;
+  s.frame=frameCount;
+  if(!eligible){s.active=false;s.skip=s.strafeMs=0;return;}
+  if(!s.active){s.active=true;s.hip=0;s.origin=c.walkCycle||0;s.skipOrigin=c.walkCycle||0;}
+  const delta=directionalFootworkDelta(c),lateral=Math.sin(delta),forward=Math.cos(delta);
+  const target=c.isMoving?lateral*.58:0,ease=1-Math.exp(-dt/105);
+  s.hip+=(target-s.hip)*ease;
+  const strafe=c.isMoving&&Math.abs(lateral)>.72&&Math.abs(forward)<.70,side=lateral<0?-1:1;
+  if(strafe&&side===s.side)s.strafeMs+=dt;
+  else{s.strafeMs=0;s.side=side;}
+  const skipping=strafe&&s.strafeMs>=600;
+  if(skipping&&!s.skipping)s.skipOrigin=c.walkCycle||0;
+  s.skipping=skipping;s.skip+=(Number(skipping)-s.skip)*(1-Math.exp(-dt/150));
+}
+function playerFootworkPose(c) {
+  if(!directionalFootworkEligible(c))return {active:false};
+  const delta=directionalFootworkDelta(c),s=c._directionalFootwork;
+  const lateral=Math.sin(delta),forward=Math.cos(delta),hip=s&&s.active?s.hip:(c.isMoving?lateral*.58:0);
+  return {active:true,angle:(c.aimAngle||0)+Math.max(-.62,Math.min(.62,hip)),delta,
+    backward:Math.max(0,Math.min(1,(-forward-.1)/.8)),strafe:Math.abs(lateral),side:lateral<0?-1:1,
+    skip:s&&s.active?s.skip:0,
+    phase:(c.walkCycle||0)-(s&&s.active?s.origin:0),
+    skipPhase:(c.walkCycle||0)-(s&&s.active?s.skipOrigin:0)};
+}
+function standingFootworkLeg(c,index,pose=playerFootworkPose(c)) {
+  if(!pose.active)return null;
+  const R=figureRig(c.bodyW,c.bodyH),side=index?1:-1,gait=Math.max(0,Math.min(1,c.gait||0));
+  const moving=!!c.isMoving,relative=(c.moveAngle||0)-pose.angle,dx=Math.cos(relative),dy=Math.sin(relative);
+  const stride=(4.5+7*gait)*(1-pose.strafe*.20),height=2.2+gait*2.4;
+  const cycle=(phase,delay)=>{
+    if(!moving)return {step:0,lift:0};
+    const t=((phase/(Math.PI*2)+delay)%1+1)%1,swing=t<.38,u=swing?t/.38:(t-.38)/.62;
+    const e=u*u*(3-2*u);
+    return {step:(swing?-1+2*e:1-2*e)*stride,lift:swing?Math.sin(u*Math.PI)**2*height:0};
+  };
+  const walk=cycle(pose.phase,index*.5),lead=side===pose.side;
+  const skip=cycle(pose.skipPhase,lead?0:-.28),mix=pose.skip;
+  const step=walk.step+(skip.step-walk.step)*mix,lift=walk.lift+(skip.lift-walk.lift)*mix;
+  const sx=-10+R.thighW*.5,sy=side*6;
+  // The knees keep facing with the hips while the ankle travels forward,
+  // sideways or backward. The stepping foot shortens under the body as it
+  // lifts; a planted one travels rearward relative to the advancing root.
+  const kx=sx+5+dx*step*.45,ky=sy+side*2+dy*step*.43+side*lift*.12;
+  // Backsteps plant the heel behind the hips while the recovering knee
+  // remains under the body. Merely reversing the forward ankle wave left
+  // both backward feet hidden beneath the chest from this camera.
+  const ax=6-pose.backward*12+dx*step;
+  // The feet use a modestly wider track than the hip joints. At walking and
+  // jogging amplitudes a six-unit track buried both boots under the shirt;
+  // knees opening between hips and ankles keeps this an athletic stance.
+  const track=c.bodyH*.39+.5,ay=side*(track-lift*.08)+dy*step;
+  return {sx,sy,kx,ky,ax,ay,lift,step,leading:lead,heading:pose.side*pose.strafe*(.24+pose.skip*.36),
+    hipW:R.thighW,kneeW:R.shinW,ankleW:R.shinW*.80};
+}
+function drawStandingFootworkLegs(c,g,R,pose) {
+  const boot=[red(c.pantsCol)*.55,green(c.pantsCol)*.55,blue(c.pantsCol)*.55];
+  for(let index=0;index<2;index++) {
+    const l=standingFootworkLeg(c,index,pose);
+    // Separate rounded bones retain a knee when a backstep folds the shin
+    // under its thigh; a continuous reversing ribbon would turn into a point.
+    figureCelLimb(g,l.sx,l.sy,(l.sx+l.kx)*.5,(l.sy+l.ky)*.5,l.kx,l.ky,l.hipW,(l.hipW+l.kneeW)*.5,l.kneeW,c.pantsCol);
+    figureCelLimb(g,l.kx,l.ky,(l.kx+l.ax)*.5,(l.ky+l.ay)*.5,l.ax,l.ay,l.kneeW,(l.kneeW+l.ankleW)*.5,l.ankleW,c.pantsCol);
+    figureCelOval(g,l.kx,l.ky,l.kneeW,l.kneeW,c.pantsCol,.45);
+    push();translate(l.ax,l.ay);rotate(l.heading);
+    figureCelOval(g,R.foot*.34,0,R.foot,l.ankleW,boot,.8);pop();
+    drawLegDecals(g,c.decals,index,l.sx,l.sy,l.kx,l.ky,l.ax,l.ay,l.hipW,l.kneeW,l.ankleW);
+  }
+}
+
 // WHERE A CARRIED SIDEARM'S MUZZLE IS POINTING, in radians off the horizontal.
 // Negative is down at the floor; positive is brought up in front of him.
 //
@@ -40768,37 +40923,98 @@ function stanceElbowCycle(phase, moving) {
 function stanceArtAiming(c) {
   return !c.isPlayer || !!(rightStick && rightStick.active) || c.muzzleFlash>0 || playerAiming(c);
 }
+// A crouch step folds the recovering knee into the shirt's footprint while
+// the heel comes up behind the hips. The planted foot stays on the floor;
+// it travels rearward only in the advancing actor's local frame.
+function crouchStepPose(c,phase=c&&c.walkCycle||0) {
+  const moving=!!(c&&c.isMoving),scale=Math.max(.75,Math.min(1.35,((c&&c.bodyH)||27)/27));
+  const cycle=Number.isFinite(phase)?phase/(Math.PI*2):0,legs=[];
+  const ease=t=>t*t*t*(t*(t*6-15)+10);
+  for(const side of [-1,1]) {
+    const t=((cycle+(side<0?.5:0))%1+1)%1,planted=t<.58;
+    let kx=0,ky=0,ax=0,ay=0,lift=0,sole=0,progress=0;
+    if(moving) {
+      const u=planted?t/.58:(t-.58)/.42,q=ease(u);
+      progress=u;
+      if(planted){kx=-2*q;ax=2-4*q;}
+      else {
+        lift=Math.sin(u*Math.PI)**2;
+        kx=-2*(1-q)-7.2*lift;ky=-side*4.5*lift;
+        ax=-2+4*q-3*lift;ay=-side*1.6*lift;
+        sole=lift*ease(Math.max(0,Math.min(1,(u-.06)/.5)));
+      }
+    }
+    legs.push({side,planted:moving?planted:true,progress,
+      hip:{x:0,y:0},knee:{x:kx*scale,y:ky*scale},ankle:{x:ax*scale,y:ay*scale},
+      lift,sole,calf:lift,footPitch:lift*(.75+progress*.20)});
+  }
+  const balance=legs[1].lift-legs[0].lift,counterYaw=-balance*.065;
+  return {legs,counterYaw,hipYaw:-counterYaw*.5,armCounter:balance*.65};
+}
+// Called in the boot's existing ankle/rotation frame, after its top surface.
+// The raised heel exposes a shallow sole and tread, rather than sliding the
+// entire shoe sideways or flattening the whole leg model.
+function drawCrouchStepSole(g,step,w,h,weight=1) {
+  const amount=Math.max(0,Math.min(1,(step&&step.sole||0)*weight));
+  if(!(amount>0))return;
+  const alpha=235*amount,heelH=h*(.20+.48*amount),heelW=w*.88;
+  g.push();g.stroke(17,22,27,alpha);g.strokeWeight(.65);g.fill(42,50,58,alpha);
+  g.rect(1.5-heelW*.5,-heelH*.5,heelW,heelH,1.3);
+  g.stroke(119,133,142,alpha*.85);g.strokeWeight(.55);
+  for(const part of [-.24,0,.24])g.line(1.5+heelW*part,-heelH*.32,1.5+heelW*part,heelH*.32);
+  g.noStroke();g.fill(161,170,171,alpha*.65);g.rect(1.5-heelW*.40,-heelH*.43,heelW*.78,.65,.3);
+  g.pop();
+}
+function proneRollPose(c) {
+  const p=actorStancePose(c),heading=stanceFacingAngle(c);
+  const delta=Math.atan2(Math.sin((c.aimAngle||0)-heading),Math.cos((c.aimAngle||0)-heading));
+  const blend=c.isPlayer&&c.stance?Math.max(0,Math.min(1,c.stance.proneAimBlend||0)):0;
+  const amount=(p.prone||0)*blend,angle=Math.abs(delta),ease=t=>{t=Math.max(0,Math.min(1,t));return t*t*(3-2*t);};
+  const lateral=Math.sin(delta),side=Math.abs(lateral)*amount,back=ease((angle-Math.PI*.5)/(Math.PI*.5))*amount;
+  const supportSide=lateral<0?1:lateral>0?-1:0;
+  return {heading,delta,blend,amount,side,back,supportSide,
+    post:Math.max(0,Math.sin(angle*2))*amount,turn:lateral*.25*amount,
+    offsetY:supportSide*side*2.6,foreground:amount>0&&angle>Math.PI*.505};
+}
 function stanceBodyPose(c) {
   const p=actorStancePose(c),value=c.stance?c.stance.value:0,drop=Math.min(1,value),floor=p.prone||0;
-  const aiming=stanceArtAiming(c),cycle=c.walkCycle||0,cached=c._stanceBody;
+  const aiming=stanceArtAiming(c),cycle=c.walkCycle||0,cached=c._stanceBody,roll=proneRollPose(c);
   if(cached&&cached.value===value&&cached.cycle===cycle&&cached.moving===!!c.isMoving&&
-      cached.aiming===aiming&&cached.bodyW===c.bodyW&&cached.bodyH===c.bodyH)return cached;
+      cached.aiming===aiming&&cached.gait===(c.gait||0)&&cached.bodyW===c.bodyW&&cached.bodyH===c.bodyH&&
+      cached.roll.heading===roll.heading&&cached.roll.delta===roll.delta&&cached.roll.blend===roll.blend)return cached;
   const R=figureRig(c.bodyW,c.bodyH),phase=cycle*.65;
-  const right=stanceElbowCycle(phase,c.isMoving),left=stanceElbowCycle(phase+Math.PI,c.isMoving);
-  const yaw=Math.atan2(left.reach-right.reach,c.bodyH*.72)*.38*floor;
-  const shuffle=c.isMoving?Math.sin(c.walkCycle||0)*(1-floor):0;
-  const size=p.scaleX,hipX=-5*drop-4*floor,chestX=1.5*drop-floor*2.5;
-  const torsoLength=c.bodyW*TORSO_DEPTH+floor*3.5,torsoWidth=c.bodyH*(1-.10*drop-.10*floor);
+  const moving=c.isMoving&&!proneAimLocked(c),settle=c.isPlayer&&floor>0?Math.min(1,Math.max(0,c.gait||0)*1.25):0;
+  const motion=moving?1:settle,right=stanceElbowCycle(phase,motion>0),left=stanceElbowCycle(phase+Math.PI,motion>0);
+  right.reach*=motion;right.lift*=motion;left.reach*=motion;left.lift*=motion;
+  const crouchWeight=drop*(1-floor),step=crouchStepPose(c,cycle);
+  const yaw=Math.atan2(left.reach-right.reach,c.bodyH*.72)*.38*floor+step.counterYaw*crouchWeight+roll.turn;
+  const hipYaw=-yaw*.45+step.hipYaw*crouchWeight;
+  const size=p.scaleX,hipX=-5*drop-4*floor,chestX=1.5*drop-floor*2.5,chestY=roll.offsetY;
+  const torsoLength=c.bodyW*TORSO_DEPTH+floor*3.5,torsoWidth=c.bodyH*(1-.10*drop-.10*floor)*(1-roll.side*.53);
   const joints=[];
   for (const side of [-1,1]) {
     const support=side===1?right:left,opposite=side===1?left:right;
     const drive=Math.max(0,opposite.reach/3.4),tuck=drive*drive*(3-2*drive)*floor;
-    const hY=side*(5.6+floor*.7),hip={x:hipX-Math.sin(-yaw*.45)*hY,y:Math.cos(yaw*.45)*hY};
-    const knee={x:10*drop+shuffle*side*1.5-floor*(30-5*tuck),y:side*(12.5*drop+floor*(-3.5+5*tuck))};
-    const ankle={x:-4*drop+shuffle*side*2.8-floor*(27-4*tuck),y:side*(8.6+floor*.3)};
+    const stepLeg=step.legs[side<0?0:1];
+    const hY=side*(5.6+floor*.7)*(1-roll.side*.68),hip={x:hipX-Math.sin(hipYaw)*hY,y:Math.cos(hipYaw)*hY+chestY};
+    const knee={x:10*drop-floor*(30-5*tuck)+stepLeg.knee.x*crouchWeight,
+      y:side*(12.5*drop+floor*(-3.5+5*tuck))*(1-roll.side*.45)+stepLeg.knee.y*crouchWeight+chestY};
+    const ankle={x:-4*drop-floor*(27-4*tuck)+stepLeg.ankle.x*crouchWeight,
+      y:side*(8.6+floor*.3)*(1-roll.side*.38)+stepLeg.ankle.y*crouchWeight+chestY};
     // Seat the sleeve root inside the chest contour. The torso then covers
     // the shoulder cap instead of leaving the arm pasted onto its outer edge.
     const sx=torsoLength*.30,sy=side*torsoWidth*.28;
     const shoulder={x:chestX+Math.cos(yaw)*sx-Math.sin(yaw)*sy,
-      y:Math.sin(yaw)*sx+Math.cos(yaw)*sy};
+      y:Math.sin(yaw)*sx+Math.cos(yaw)*sy+chestY};
+    const post=side===roll.supportSide?roll.post:0;
     joints.push({side,hip,knee,ankle,shoulder,
-      elbow:{x:4*drop+floor*4+support.reach*floor,
-        y:side*(c.bodyH*.46+support.lift*floor)},support});
+      elbow:{x:4*drop+floor*4+support.reach*floor-post*3,
+        y:side*(c.bodyH*.46+support.lift*floor)*(1-roll.side*.45)+chestY+side*post},support,step:stepLeg});
   }
-  const head={x:(aiming?3:0)*(1-drop)+8*drop+7*floor,
-    y:(aiming?4*(1-drop)+2.2*drop-5.8*floor:0)};
-  return c._stanceBody={value,cycle,moving:!!c.isMoving,bodyW:c.bodyW,bodyH:c.bodyH,drop,floor,size,aiming,yaw,hipX,chestX,joints,head,R,
-    torsoLength,torsoWidth};
+  const head={x:(aiming?3:0)*(1-drop)+8*drop+7*floor-roll.back*.8,
+    y:(aiming?4*(1-drop)+2.2*drop-5.8*floor:0)*(1-roll.side*.6-roll.back)+chestY};
+  return c._stanceBody={value,cycle,moving:!!c.isMoving,gait:c.gait||0,bodyW:c.bodyW,bodyH:c.bodyH,drop,floor,size,aiming,yaw,hipYaw,hipX,chestX,chestY,joints,head,R,
+    torsoLength,torsoWidth,crouchWeight,step,roll};
 }
 // A native gun keeps its own proportions. One rigid mount owns the solid,
 // wrists, laser and flash, and supplies the physical muzzle and torch too.
@@ -40808,20 +41024,34 @@ function stanceWeaponMount(c) {
   if (!p.crouch&&!p.prone) return {x:0,y:0,angle:0,scale:1};
   const b=stanceBodyPose(c),w=c.currentWeapon;
   const two=weaponHands(w)===2,aim=b.aiming||c.reloadTimer>0;
+  const carryBlend=!aim&&leftHandAction(c)!==2?b.roll.blend:0;
   const cached=c._stanceMount;
-  if(cached&&cached.body===b&&cached.weapon===w&&cached.aim===aim)return cached;
-  const roll=b.yaw*(aim?0:.75),angle=aim?0:(two?-1.12:-.14)*b.drop+roll;
+  if(cached&&cached.body===b&&cached.weapon===w&&cached.aim===aim&&cached.carryBlend===carryBlend)return cached;
+  const roll=b.yaw*(aim?0:.75),port=(two?-1.12:-.14)*b.drop+roll;
+  let angle=aim?0:port;
+  if(!aim&&c.isPlayer&&b.floor>0) {
+    const turn=Math.atan2(Math.sin(b.roll.delta-port),Math.cos(b.roll.delta-port));
+    angle=port-b.roll.delta+turn*carryBlend;
+  }
   const factor=1-b.drop*(two?.18:.02)-b.floor*(two?0:.03),scale=b.size*factor;
   let x=0,y=0;
   if (b.floor>0||!aim) {
     const nativeX=two?(w===WEAPONS.SHOTGUN?10:8):w===WEAPONS.PISTOL||w===WEAPONS.TASER?16:22,nativeY=two?6:w===WEAPONS.PISTOL||w===WEAPONS.TASER?8:11;
-    const stationX=aim?(two?9:16):two?9:10,stationY=aim&&two?4:two?9:8,strength=aim?b.floor:b.drop;
+    let stationX=aim?(two?9:16):two?9:10,stationY=aim&&two?4:two?9:8;
+    const strength=aim?b.floor:b.drop;
+    if(c.isPlayer&&b.floor>0) {
+      const delta=b.roll.delta,co=Math.cos(delta),si=Math.sin(delta);
+      const mix=aim?1:carryBlend,carryX=two?9:10,carryY=two?9:8;
+      const bodyX=carryX+((two?9:16)-7*b.roll.back-carryX)*mix;
+      const bodyY=carryY+((two?4:8)*co+b.roll.offsetY-carryY)*mix;
+      stationX=co*bodyX+si*bodyY;stationY=-si*bodyX+co*bodyY;
+    }
     x=(stationX-Math.cos(angle)*nativeX*factor+Math.sin(angle)*nativeY*factor)*strength*b.size;
     y=(stationY-Math.sin(angle)*nativeX*factor-Math.cos(angle)*nativeY*factor)*strength*b.size;
     if(!aim){x+=b.yaw*3*b.floor;y+=(b.joints[1].support.reach+b.joints[0].support.reach)*.10*b.floor;}
   }
   if(aim&&w===WEAPONS.SHOTGUN)x-=2*b.drop*(1-b.floor)*scale;
-  return c._stanceMount={x,y,angle,scale,body:b,weapon:w,aim};
+  return c._stanceMount={x,y,angle,scale,body:b,weapon:w,aim,carryBlend};
 }
 function stanceLongGunPose(c) {
   const pose=aimedLongGunPose(c,0,0),fore=pose.P.point(14.5-pose.pump*4,0,0);
@@ -40855,8 +41085,16 @@ function drawCombatStanceSleeve(g,sx,sy,ex,ey,hx,hy,w0,w1,w2,cloth) {
 function stanceLocalPoint(c,x,y,support=false) {
   const p=actorStancePose(c);
   if (!p.crouch&&!p.prone) return {x,y};
-  const m=support?{x:0,y:0,angle:0,scale:p.scaleX}:stanceWeaponMount(c),ca=Math.cos(m.angle),sa=Math.sin(m.angle);
+  const m=support?stanceSupportMount(c):stanceWeaponMount(c),ca=Math.cos(m.angle),sa=Math.sin(m.angle);
   return {x:m.x+(ca*x-sa*y)*m.scale,y:m.y+(sa*x+ca*y)*m.scale};
+}
+function stanceSupportMount(c) {
+  const p=actorStancePose(c),delta=(c.aimAngle||0)-stanceFacingAngle(c),pivot=5*(p.prone||0);
+  return {x:(Math.cos(delta)*pivot-pivot)*p.scaleX,y:-Math.sin(delta)*pivot*p.scaleX,angle:0,scale:p.scaleX};
+}
+function stancePointInBody(c,x,y) {
+  const p=stanceLocalPoint(c,x,y),delta=(c.aimAngle||0)-stanceFacingAngle(c),co=Math.cos(delta),si=Math.sin(delta);
+  return {x:co*p.x-si*p.y,y:si*p.x+co*p.y};
 }
 function stanceMuzzleWorld(c, x, y, angle = c.aimAngle || 0, support = false) {
   const p = actorStancePose(c);
@@ -40873,7 +41111,7 @@ function stanceHeadLocal(c) {
   return { x: braced ? 3 : 0, y: braced ? 4 : 0 };
 }
 function actorStanceUIAnchor(c) {
-  const p = actorStancePose(c), h = stanceHeadLocal(c), ca = Math.cos(c.aimAngle || 0), sa = Math.sin(c.aimAngle || 0);
+  const p = actorStancePose(c), h = stanceHeadLocal(c), ca = Math.cos(stanceFacingAngle(c)), sa = Math.sin(stanceFacingAngle(c));
   const low = p.crouch || 0, prone = p.prone || 0;
   return { x: c.x + ca * h.x - sa * h.y,
     y: c.y + sa * h.x + ca * h.y - 28 + low * 10 + prone * 18 };
@@ -40904,7 +41142,7 @@ function drawCombatStanceUI(c, p) {
 }
 function drawCombatStanceShadow(c, p) {
   const prone = p.prone || 0, low = p.crouch || 0;
-  push(); rotate(c.aimAngle || 0); noStroke();
+  push(); rotate(stanceFacingAngle(c)); noStroke();
   // A dense squat is tight beneath the hips. A floor-level body owns a broad,
   // very shallow contact blur, rather than the standing sun-offset oval.
   for (let i = 2; i >= 0; i--) {
@@ -40918,7 +41156,7 @@ function drawCombatStanceShadow(c, p) {
 // broad dorsal face turns into view and stays mounted to the torso's roll.
 function drawStanceDashPack(g,c,b) {
   if(!c.isPlayer||!jetpackUnlocked)return;
-  const t=Math.max(0,Math.min(1,b.floor)),face=t*t*(3-2*t);
+  const roll=b.roll||{side:0,back:0},t=Math.max(0,Math.min(1,b.floor*(1-roll.side)*(1-roll.back))),face=t*t*(3-2*t);
   const x=-9-.5*face,w=9+6*face;
   g.push();
   g.stroke(29,34,38);g.strokeWeight(.8);g.fill(80+face*12,86+face*17,91+face*21);
@@ -40953,12 +41191,20 @@ function drawStanceDashPack(g,c,b) {
 // One final occlusion pass covers every sleeve, including complete-arm reload
 // and chemist delegates. The body hides the stock/receiver wherever they pass
 // beneath it; the higher head sits over the collar and support wrist.
-function drawCombatStanceBody(c,b,g,cloth) {
+function drawCombatStanceBody(c,b,g,cloth,withHead=true) {
   const prone=b.floor;
-  push();translate(b.chestX,0);rotate(b.yaw);
+  const packUnder=b.roll.side>.45||b.roll.back>.02;
+  push();translate(b.chestX,b.chestY);rotate(b.yaw);
+  if(packUnder)drawStanceDashPack(g,c,b);
   figureCelOval(g,0,0,b.torsoLength,b.torsoWidth,cloth,.45-prone*.18);
-  g.noStroke();g.fill(red(cloth)*.72,green(cloth)*.72,blue(cloth)*.72,100);
+  g.noStroke();g.fill(red(cloth)*.72,green(cloth)*.72,blue(cloth)*.72,100*(1-b.roll.back));
   g.ellipse(-b.torsoLength*.27,0,b.torsoLength*.30,b.torsoWidth*.70);
+  if(b.roll.back>0) {
+    const alpha=220*b.roll.back;
+    g.noStroke();g.fill(209,157,121,alpha);g.triangle(7,0,1,-3,1,3);
+    g.stroke(35,34,40,140*b.roll.back);g.strokeWeight(.65);g.line(-7,0,1,0);
+    g.noStroke();g.fill(227,225,205,alpha);g.ellipse(-4.5,.7,1,1);g.ellipse(-1.8,.7,1,1);
+  }
   if (c.eType === 'ARMORED_STANDARD' || (c.isPlayer || c.isMilitary) && explosiveArmorUnlocked) {
     g.fill(75,87,101); g.stroke(24,36,47); g.strokeWeight(.7); g.rect(-7,-7,14,14,3);
     g.noStroke(); g.fill(146,159,166); g.rect(-7, -5, 10, 1);
@@ -40968,10 +41214,24 @@ function drawCombatStanceBody(c,b,g,cloth) {
     if (d.col) g.fill(...d.col); else g.fill(90,0,0,220);
     g.ellipse(d.x,d.y*.85,d.sz,d.sz);
   }
-  drawStanceDashPack(g,c,b);
+  if(!packUnder)drawStanceDashPack(g,c,b);
   pop();
+  if(withHead)drawCombatStanceHead(c,b,g);
+}
+function drawCombatStanceHead(c,b,g) {
   const h=b.head;
   drawFigureHead(g,c,h.x,h.y,true,0);
+  const face=Math.min(1,b.roll.back+b.roll.side*.72);
+  if(face>0) {
+    const skin=c.skinCol||[235,180,140],alpha=255*face;
+    g.noStroke();g.fill(red(skin),green(skin),blue(skin),alpha);
+    g.ellipse(h.x-.7,h.y,8.5*(1-b.roll.side*.2),9);
+    g.fill(33,29,29,230*face);
+    if(b.roll.side>.65)g.ellipse(h.x+.4,h.y-b.roll.supportSide,1.2,1.3);
+    else {g.ellipse(h.x+.7,h.y-1.8,1.1,1.2);g.ellipse(h.x+.7,h.y+1.8,1.1,1.2);}
+    g.stroke(137,85,70,185*face);g.strokeWeight(.65);g.line(h.x-1.1,h.y,h.x-2,h.y+.4);
+    g.line(h.x-3,h.y-.9,h.x-3,h.y+.9);g.noStroke();
+  }
   if (c.eType === 'ARMORED_STANDARD' && c.hp > 50) {
     push(); translate(h.x,h.y); rotate(HALF_PI); drawArmoredHelmet(g); pop();
   }
@@ -40982,7 +41242,7 @@ function drawCombatStanceBody(c,b,g,cloth) {
 }
 function drawCombatStanceFigure(c, p) {
   const paint = figurePainter(), g = paint ? paint.api : window,b=stanceBodyPose(c),R=b.R;
-  const prone=b.floor,ca=c.aimAngle||0,mount=stanceWeaponMount(c);
+  const prone=b.floor,ca=stanceFacingAngle(c),aimDelta=(c.aimAngle||0)-ca,mount=stanceWeaponMount(c);
   if (c.isPlayer && c.meleeTimer <= 0 && rightStick && rightStick.active) c.isArmed = true;
   const skin = c.skinCol || color(235, 180, 140);
   let cloth = c.shirtCol, trousers = c.pantsCol;
@@ -41009,7 +41269,8 @@ function drawCombatStanceFigure(c, p) {
     }
   }
   push();scale(b.size);
-  for (const leg of b.joints) {
+  const legOrder=b.roll.side>.4?[b.joints[b.roll.supportSide<0?0:1],b.joints[b.roll.supportSide<0?1:0]]:b.joints;
+  for (const leg of legOrder) {
     const h=leg.hip,k=leg.knee,a=leg.ankle;
     const thighX=k.x-h.x,thighY=k.y-h.y,shinX=a.x-k.x,shinY=a.y-k.y;
     if(thighX*shinX+thighY*shinY<0) {
@@ -41019,12 +41280,21 @@ function drawCombatStanceFigure(c, p) {
       figureCelLimb(g,h.x,h.y,(h.x+k.x)*.5,(h.y+k.y)*.5,k.x,k.y,R.thighW*.92,R.thighW*.85,R.shinW,trousers);
       figureCelOval(g,k.x,k.y,R.shinW,R.shinW*.92,trousers,.45);
     } else figureCelLimb(g,h.x,h.y,k.x,k.y,a.x,a.y,R.thighW*.92,R.shinW,R.shinW*.8,trousers);
+    if(leg.step.calf*b.crouchWeight>0) {
+      g.stroke(red(trousers)*.5,green(trousers)*.5,blue(trousers)*.5,150*leg.step.calf*b.crouchWeight);
+      g.strokeWeight(R.shinW*.32);g.line((k.x+a.x)*.5,(k.y+a.y)*.5,a.x,a.y);g.noStroke();
+    }
     push();translate(a.x,a.y);rotate(Math.atan2(a.y-k.y,a.x-k.x));
-    figureCelOval(g,1.5,0,R.foot,R.shinW*.82,[red(trousers)*.55,green(trousers)*.55,blue(trousers)*.55],.65);pop();
+    figureCelOval(g,1.5,0,R.foot,R.shinW*.82,[red(trousers)*.55,green(trousers)*.55,blue(trousers)*.55],.65);
+    drawCrouchStepSole(g,leg.step,R.foot,R.shinW*.82,b.crouchWeight);pop();
     drawLegDecals(g,c.decals,leg.side<0?0:1,h.x,h.y,k.x,k.y,a.x,a.y,R.thighW*.92,R.shinW,R.shinW*.8);
   }
-  push();translate(b.hipX,0);rotate(-b.yaw*.45);
-  figureCelOval(g,0,0,11+prone*2,c.bodyH*.61,trousers,.38);pop();
+  push();translate(b.hipX,b.chestY);rotate(b.hipYaw);
+  figureCelOval(g,0,0,11+prone*2,c.bodyH*.61*(1-b.roll.side*.5),trousers,.38);pop();
+  if(b.roll.side>.02) {
+    const raised=b.joints[b.roll.supportSide<0?1:0].hip;
+    figureCelOval(g,raised.x-1,raised.y,12,8+b.roll.side*2,trousers,.6);
+  }
   if(c.isPlayer&&chemistSuitUnlocked) {
     const back=b.hipX-5-prone*7;
     g.fill(236,240,240);g.stroke(140,146,151,185);g.strokeWeight(.8);
@@ -41039,9 +41309,9 @@ function drawCombatStanceFigure(c, p) {
   const toolCarry=heldTool&&!toolSwing?swordCarryPose(c,toolGait,0):null;
   const longGun = c.currentWeapon === WEAPONS.ASSAULT_RIFLE || c.currentWeapon === WEAPONS.SHOTGUN ? stanceLongGunPose(c) : null;
   const bow = c.currentWeapon === WEAPONS.BOW, bowTension = bow ? bowDrawAmount(c) : 0;
-  const hand = stanceLocalPoint(c,longGun?longGun.rear[0]:bow?13-9*bowTension:c.currentWeapon===WEAPONS.PISTOL?16:22,
+  const hand = stancePointInBody(c,longGun?longGun.rear[0]:bow?13-9*bowTension:c.currentWeapon===WEAPONS.PISTOL?16:22,
     longGun?longGun.rear[1]:bow?0:c.currentWeapon===WEAPONS.PISTOL?8:11);
-  const left = stanceLocalPoint(c,longGun?longGun.fore[0]:bow?24:dual?22:27,
+  const left = stancePointInBody(c,longGun?longGun.fore[0]:bow?24:dual?22:27,
     longGun?longGun.fore[1]:bow?0:dual?-11:1);
   const palms=[];
   for (const joint of b.joints) {
@@ -41057,11 +41327,15 @@ function drawCombatStanceFigure(c, p) {
     drawCombatStanceSleeve(g,s.x,s.y,e.x,e.y,hx,hy,R.upperW,(R.upperW+R.foreW)*.5,R.foreW*.83,cloth);
     palms.push({x:hx,y:hy});
   }
+  if(b.roll.foreground)drawCombatStanceBody(c,b,g,cloth,false);
   if(!toolCarry)for(const palm of palms)figureCelOval(g,palm.x,palm.y,6.3,6.3,skin,.7);
-  if(leftHandAction(c)&&!toolSwing)drawLeftHandAction(c,leftHandAction(c),0);
   pop();
-  push();translate(mount.x,mount.y);rotate(mount.angle);scale(mount.scale);
-  const w = c.currentWeapon, L = figureLight(ca+mount.angle), S = figureSouth(ca+mount.angle), kick = handGunKick(c.weaponKick);
+  if(leftHandAction(c)&&!toolSwing) {
+    const support=stanceSupportMount(c);push();rotate(aimDelta);translate(support.x,support.y);scale(support.scale);
+    drawLeftHandAction(c,leftHandAction(c),0);pop();
+  }
+  push();rotate(aimDelta);translate(mount.x,mount.y);rotate(mount.angle);scale(mount.scale);
+  const w = c.currentWeapon, L = figureLight(c.aimAngle+mount.angle), S = figureSouth(c.aimAngle+mount.angle), kick = handGunKick(c.weaponKick);
   if (c.reloadTimer > 0 && !oneHandWeapon(w) && !leftHandAction(c)) {
     const reload = 1-c.reloadTimer/90;
     reloadArm(c,0,-c.bodyH*.425,2+Math.sin(reload*PI)*10,10,false);
@@ -41106,7 +41380,8 @@ function drawCombatStanceFigure(c, p) {
     push();translate(toolCarry.hx,toolCarry.hy);rotate(toolCarry.angle);
     if(tool==='PICKAXE')drawPickHeadSolid(toolProjection);else drawSwordBlade(toolProjection);pop();
   }
-  drawCombatStanceBody(c,b,g,cloth);
+  if(b.roll.foreground)drawCombatStanceHead(c,b,g);
+  else drawCombatStanceBody(c,b,g,cloth);
   pop();pop();
   if (c.reloadTimer > 0) {
     push(); noFill(); stroke(93,216,229,160); strokeWeight(2);
@@ -47241,8 +47516,8 @@ function glRigPaintHeight() {
     if (!inView(c.x, c.y, 60)) return;
     const fallen=c.stunTimer>0?stunFall(c):0, stance=actorStancePose(c);
     glRigMat(g, CH*(1-fallen)*(1-stance.crouch*.35-stance.prone*.90)+2*fallen+groundElev(c.x,c.y),0.18+0.25*wet,
-             (c.aimAngle || 0) / (Math.PI * 2));
-    g.push(); g.translate(c.x,c.y); g.rotate(c.aimAngle || 0);
+             stanceFacingAngle(c) / (Math.PI * 2));
+    g.push(); g.translate(c.x,c.y); g.rotate(stanceFacingAngle(c));
     g.ellipse(0,0,20+24*fallen+40*stance.prone,20+12*fallen-5*stance.crouch-8*stance.prone);
     g.pop();
   };
