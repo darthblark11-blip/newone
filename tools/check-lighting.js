@@ -134,8 +134,13 @@ ok('nothing is emitted from the player themselves',
    !/x: player\.x, y: player\.y \+ 6, r: 240/.test(src));
 ok('the torch is keyed off the equipped weapon',
    /const wk = w \? weaponKey\(w\) : '';/.test(emitFn) && /WEAPON_TORCH\[wk\]/.test(emitFn));
-ok('and leaves from the muzzle, not the player centre',
-   /WEAPON_MUZZLE\[wk\]/.test(emitFn) && /ca \* m\[0\] - sa \* m\[1\]/.test(emitFn));
+const movingWeaponLight=P(`(() => {
+  const c=new Character(100,200,true);c.aimAngle=Math.PI/2;c.isMoving=true;c.walkCycle=.5;
+  return weaponLightMuzzle(c,WEAPON_MUZZLE.ASSAULT_RIFLE);
+})()`);
+ok('and leaves from the rotated, moving weapon muzzle',
+   /WEAPON_MUZZLE\[wk\]/.test(emitFn) && /weaponLightMuzzle\(player,m\)/.test(emitFn) &&
+   Math.abs(movingWeaponLight.x-94)<1e-8&&Math.abs(movingWeaponLight.y-247-2*Math.sin(.5))<1e-8);
 // A key that is not in WEAPONS is silent: the lookup just never matches and
 // that weapon quietly has no torch.
 const wt = /const WEAPON_TORCH = \{([\s\S]*?)\};/.exec(src);

@@ -42,9 +42,14 @@ A direct dive therefore passes through crouched vulnerability before reaching
 prone. Requesting a stance never grants immediate immunity. Another transition
 must wait for completion and a 180 ms recovery window. Pausing freezes progress.
 
-While aiming on foot, forward and lateral travel retain the regular standing
-trouser contours, widths and stride. Hips follow travel through lateral headings;
-opposite travel uses backward steps without turning the pelvis through the spine.
+Ordinary standing travel uses one trouser rig whether the gun is carried or
+aimed. The seat and hip roots stay together; knees and heels articulate beneath
+them with the same garment widths and taper. Backward and rear-diagonal steps
+keep knees in front of the hips while calves fold behind them. Neither bone
+chain is inverted or scaled through zero. Hips ease toward travel independently
+of the sights, with bounded planted turns and gradual weight transfer.
+Standing steps use 60% of the base gait clock; movement speed and weapon
+cooldowns stay unchanged. Direction changes keep the same continuous step phase.
 Only uninterrupted direct lateral travel (within about 9° of sideways) lasting
 more than 3.3 seconds blends into a long, rhythmic side skip. Stopping, changing
 sides or moving diagonally restarts that interval. Skip contacts run at about
@@ -52,6 +57,13 @@ sides or moving diagonally restarts that interval. Skip contacts run at about
 foot. A single-handed weapon's free arm relaxes during the skip. Walking,
 jogging and running keep their ordinary throttle bands and movement speed.
 The same lower-leg geometry places leg wounds.
+
+Standing aim turns accelerate and brake through the shortest angular arc,
+instead of snapping to a new stick or mouse heading. The barrel, shots, laser
+and weapon lights follow the resulting heading. A released aim input finishes
+its ongoing turn. Crouch/prone and dedicated melee, support-action, mounted,
+building and scripted controls keep their own heading paths. Bow draw quality
+still observes the raw gesture, so body smoothing cannot improve an abrupt pull.
 
 Crouch uses a separate articulated pose: hips back, chest/head leaning forward,
 knees bent forward/outward and ankles under the hips. Folded thighs cover the
@@ -62,7 +74,7 @@ hip, exposing the back of the calf and the shoe tread. Chest and shoulders
 counter-rotate against the stepping leg, with a smaller opposing pelvis turn.
 The pelvis follows the movement stick independently of small sight corrections;
 rear-diagonal travel beyond 112.5° from aim uses backward stepping. Hip turns
-ease over 230 ms with a rotation-speed limit. Steps use 46% of the standing gait
+ease over 230 ms with a rotation-speed limit. Steps use 46% of the base gait
 clock, broad shoulder/hip weight transfer, and a gradual settle when stopping.
 
 Prone uses a shorter torso with distinct hip, knee and ankle joints and longer
@@ -164,6 +176,8 @@ Focused verification lives in `tools/check-stance-{hits,controls,ai,render}.js`.
 recovery, planted aiming, cannon controls and eight-direction roll geometry.
 `tools/check-prone-pack-aim.js` checks continuous pack projection, opaque depth
 passes, visible supine engines, and reachable rear-facing sidearm arms.
+`tools/check-standing-aim-turn.js` covers turn acceleration, braking, angular
+seams, input release, shot/light alignment and bow gesture quality.
 `tools/check-stance-anatomy.js` checks bent joints, proportions, crawl support,
 rendered arm lengths, grip attachment, neutral/aimed geometry and smooth joint motion.
 `tools/check-stance-layering.js` checks torso/head occlusion and single action
@@ -176,3 +190,5 @@ comparisons and a full HQ combat scene with adapting enemy fire.
 motion clip covering transitions, crouched movement and crawling.
 `tools/visual-directional-stances.js` renders aimed walk/jog/run, crouch stepping
 and all eight planted prone aims, including real barrel/torch/cannon alignment.
+`tools/visual-standing-run.js` compares carried and aimed jeans through forward,
+backward and diagonal gaits, and renders actual input-driven standing turns.

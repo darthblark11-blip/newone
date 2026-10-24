@@ -50,7 +50,12 @@ for(const weapon of ['PISTOL','REVOLVER','SMG','DUAL_SMG','ASSAULT_RIFLE','SHOTG
     const ammo=run('player.ammo');pad.axes=[0,0,0,-1];buttons([7]);frame();
     assert(run('bullets.length')>0);assert(run('player.ammo')<ammo);
     assert(run('player.muzzleFlash')>0 || weapon==='TASER');
-    assert(Math.abs(run('player.aimAngle')+Math.PI/2)<1e-8);
+    assert(run('player.aimAngle')<0&&run('player.aimAngle')>-Math.PI/2+.1,
+      'an abrupt stick turn passes through an intermediate standing pose');
+    assert(run('bullets.every(b=>Math.abs(Math.atan2(Math.sin(b.a-player.aimAngle),Math.cos(b.a-player.aimAngle)))<=player.currentWeapon.spread*stanceSpreadScale(player)+1e-8)'),
+      'all native pellets track the actual turning barrel within their weapon spread');
+    buttons([]);frame(80);
+    assert(Math.abs(run('player.aimAngle')+Math.PI/2)<1e-8,'the held stick reaches its requested facing');
   });
 check('A neutral right stick fires along the retained facing',()=>{
   run('player.aimAngle=1.2;');buttons([7]);frame();

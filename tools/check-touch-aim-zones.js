@@ -44,8 +44,11 @@ for(const zone of ['HEAD','BODY','LEGS']){
     rightStick.touchOrigin.x===${origin.x}&&rightStick.touchOrigin.y===${origin.y}&&rightStick.dist===0&&bullets.length===0`,
     zone+' down selects without firing and anchors at the exact press');
   move(t,origin.x-60,origin.y);tick();
-  ok(`bullets.length===1&&bullets[0].tH==='${zone}'&&Math.abs(player.aimAngle-PI)<1e-8&&
-    rightStick.dx===-1&&rightStick.dy===0&&rightStick.dist===1`,zone+' retains existing analog gun firing');
+  ok(`bullets.length===1&&bullets[0].tH==='${zone}'&&player.aimAngle>0&&player.aimAngle<PI-.1&&
+    Math.abs(bullets[0].a-player.aimAngle)<1e-8&&rightStick.dx===-1&&rightStick.dy===0&&rightStick.dist===1`,
+    zone+' fires along the visible intermediate barrel while turning toward the touch heading');
+  run('rightStick.dist=.4;');for(let i=0;i<80;i++)tick();
+  ok('Math.abs(player.aimAngle-PI)<1e-8&&bullets.length===1',zone+' settles onto the selected touch heading without extra firing');
   release(t.id);
   ok(`!rightStick.active&&!rightStick.touchOrigin&&touchAimSelection.pointerId===null&&playerAimTarget()==='${zone}'`,
     zone+' release hides joystick and preserves selected target');

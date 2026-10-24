@@ -18522,12 +18522,17 @@ function updatePlayerBowDraw(c) {
     return;
   }
   if (neutral) {
-    if (s.phase === 'DRAW') releasePlayerBowDraw(c);
+    if (s.phase === 'DRAW') {
+      s.angle=standingAimHeading(c,Number.isFinite(s.inputAngle)?s.inputAngle:s.angle,ms);c.aimAngle=s.angle;
+      releasePlayerBowDraw(c);
+    }
     return;
   }
-  const first = s.phase !== 'DRAW', previousTension = s.tension, previousAngle = s.angle;
+  const first = s.phase !== 'DRAW', previousTension = s.tension;
+  const previousInputAngle=Number.isFinite(s.inputAngle)?s.inputAngle:s.angle;
   if (first) { s.phase = 'DRAW'; s.earned = 0; }
-  s.angle = playerBowAimAngle(c); c.aimAngle = s.angle;
+  s.inputAngle=playerBowAimAngle(c);
+  s.angle=standingAimHeading(c,s.inputAngle,ms);c.aimAngle=s.angle;
   // A mouse has no analog travel: holding draws gradually, releasing fires.
   // Touch/gamepad tension follows actual travel, never a smoothing filter
   // that would turn a sudden full-stick jab into a perfect pull afterwards.
@@ -18537,7 +18542,9 @@ function updatePlayerBowDraw(c) {
   if (rise > 0) s.earned += Math.min(rise, ms * .0022);
   else if (previousTension > 0) s.earned *= tension / previousTension;
   if (!first) {
-    const turn = Math.abs(Math.atan2(Math.sin(s.angle - previousAngle), Math.cos(s.angle - previousAngle)));
+    // Turning the body smoothly cannot turn an abrupt draw gesture into a
+    // steady one. Draw quality still observes the unfiltered input heading.
+    const turn = Math.abs(Math.atan2(Math.sin(s.inputAngle - previousInputAngle), Math.cos(s.inputAngle - previousInputAngle)));
     const excessTurn = Math.max(0, turn - .12 - ms * .004);
     if (excessTurn > 0) s.earned *= Math.max(.2, 1 - excessTurn);
   }
@@ -21006,7 +21013,10 @@ this.skeletonTimer = 0;
         // brushed a kerb. See GAIT.
         const _thr = this.isMoving ? Math.min(1, Math.hypot(leftStick.dx, leftStick.dy)) : 0;
         this.gait += (_thr - this.gait) * GAIT_EASE;
-        if (this.isMoving) this.walkCycle += gaitPose(this.gait).cadence;
+        if (this.isMoving) {
+          const low=actorStancePose(this),standing=!low.crouch&&!low.prone&&!actorStanceSuppressed(this);
+          this.walkCycle+=gaitPose(this.gait).cadence*(standing?.60:1);
+        }
     }
 
     // Drive the gait, and turn the animal toward where it is actually going. A
@@ -21125,11 +21135,18 @@ this.skeletonTimer = 0;
     }
 
     this.armDrag = lerp(this.armDrag, this.isMoving ? 1 : 0, 0.15); 
+    if(!standingAimEligible(this))this._standingAim=null;
     
     if (this.meleeTimer <= 0) {
-        if (rightStick.active) this.aimAngle = !buildGhost && this.currentWeapon === WEAPONS.BOW ? playerBowAimAngle(this) : atan2(rightStick.dy, rightStick.dx);
+        if (rightStick.active) {
+            const target=Math.hypot(rightStick.dx,rightStick.dy)>.001
+                ?!buildGhost&&this.currentWeapon===WEAPONS.BOW?playerBowAimAngle(this):atan2(rightStick.dy,rightStick.dx)
+                :this.aimAngle;
+            this.aimAngle=standingAimHeading(this,target);
+        }
         else if (leftStick.active && this.isMoving && this.dashTimer <= 0 &&
-            !(this.currentWeapon === WEAPONS.BOW && this.bowDrawState && this.bowDrawState.phase === 'DRAW')) this.aimAngle = this.moveAngle;
+            !(this.currentWeapon === WEAPONS.BOW && this.bowDrawState && this.bowDrawState.phase === 'DRAW')) this.aimAngle=standingAimHeading(this,this.moveAngle);
+        else if(this._standingAim&&standingAimEligible(this))this.aimAngle=standingAimHeading(this,this._standingAim.target);
     }
 
     if (this.fireTimer > 0) this.fireTimer--; if (this.muzzleFlash > 0) this.muzzleFlash--;
@@ -39925,13 +39942,13 @@ function gaitPose(t) {
   return _gp;
 }
 
-// Keep the ordinary trouser rig for aimed travel. The pelvis follows forward
-// and lateral travel, returning toward the gun for heel-leading backsteps.
+// One standing trouser rig owns the seat and both fixed hip roots, whether
+// the gun is carried or aimed. Only the joint chain steps, never the pelvis.
 function directionalFootworkEligible(c) {
   return !!c&&c.isPlayer&&c.hp>0&&!c.dead&&!c.mounted&&!(c.dashTimer>0)&&
     !(c.meleeTimer>0)&&!(c.stunTimer>0)&&!boxingActive(c)&&!c.shovelMantle&&
     !shovelToolEquipped()&&shovelPlayerDepth(c)<.5&&actorStance(c)==='STAND'&&
-    c.isArmed&&(playerAiming(c)||!!(rightStick&&rightStick.active)||c.muzzleFlash>0);
+    !(actorStancePose(c).crouch>0);
 }
 function directionalFootworkDelta(c) {
   return Math.atan2(Math.sin((c.moveAngle||0)-(c.aimAngle||0)),Math.cos((c.moveAngle||0)-(c.aimAngle||0)));
@@ -39940,11 +39957,15 @@ function updateDirectionalFootwork(c,elapsedMs=deltaTime) {
   if(!c||!c.isPlayer||!doTick||!combatStanceContext())return;
   const eligible=directionalFootworkEligible(c),dt=Math.min(100,Math.max(0,Number(elapsedMs)||0));
   let s=c._directionalFootwork;
-  if(!s)s=c._directionalFootwork={frame:-1,active:false,hip:0,side:1,strafeMs:0,skip:0,origin:0,skipPhase:0};
+  if(!s)s=c._directionalFootwork={frame:-1,active:false,angle:c.aimAngle||0,hip:0,side:1,strafeMs:0,skip:0,origin:0,skipPhase:0};
   if(s.frame===frameCount)return;
   s.frame=frameCount;
   if(!eligible){s.active=false;s.skip=s.strafeMs=0;s.skipping=false;return;}
-  if(!s.active){s.active=true;s.hip=directionalFootworkHip(c);s.origin=0;s.skipPhase=0;}
+  if(!s.active){
+    s.active=true;s.angle=c.aimAngle||0;s.hip=0;s.origin=0;s.skipPhase=0;s.motion=0;
+    s.travelX=c.isMoving?Math.cos(c.moveAngle||0):0;s.travelY=c.isMoving?Math.sin(c.moveAngle||0):0;
+    s.backward=directionalFootworkReverse(c);
+  }
   const delta=directionalFootworkDelta(c),lateral=Math.sin(delta),forward=Math.cos(delta);
   // Diagonals remain the normal gait. A short release, direction change or
   // diagonal excursion restarts the continuous direct-lateral requirement.
@@ -39955,20 +39976,39 @@ function updateDirectionalFootwork(c,elapsedMs=deltaTime) {
   if(skipping&&!s.skipping&&s.skip<.01){s.skipPhase=0;s.skipSide=side;s.skipHeading=c.moveAngle||0;}
   s.skipping=skipping;s.skip+=(Number(skipping)-s.skip)*(1-Math.exp(-dt/320));
   if(c.isMoving)s.skipPhase+=dt*.001*Math.PI*2*(.52+.20*Math.max(0,Math.min(1,c.gait||0)));
-  const target=c.isMoving?directionalFootworkHip(c)*(1-s.skip*.48):0,ease=1-Math.exp(-dt/180);
-  s.hip+=(target-s.hip)*ease;
+  const support=1-Math.exp(-dt/180),turn=1-Math.exp(-dt/220);
+  s.motion+=(Number(!!c.isMoving)-s.motion)*support;if(s.motion<.001)s.motion=0;
+  s.backward+=(directionalFootworkReverse(c)-s.backward)*support;
+  s.travelX+=((c.isMoving?Math.cos(c.moveAngle||0):0)-s.travelX)*support;
+  s.travelY+=((c.isMoving?Math.sin(c.moveAngle||0):0)-s.travelY)*support;
+  // World-space heading lets the sights turn without towing both hips on
+  // the same frame. Large changes plant, pivot, then take the next step.
+  const aim=c.aimAngle||0,target=aim+(c.isMoving?directionalFootworkHip(c)*(1-s.skip*.38):0);
+  const error=Math.atan2(Math.sin(target-s.angle),Math.cos(target-s.angle));
+  const contact=.72+.28*Math.sin(c.walkCycle||0)**2,step=error*turn*contact;
+  s.angle+=Math.max(-dt*.0054,Math.min(dt*.0054,step));
+  const relative=Math.atan2(Math.sin(s.angle-aim),Math.cos(s.angle-aim)),limit=Math.PI*.54;
+  s.hip=Math.max(-limit,Math.min(limit,relative));s.angle=aim+s.hip;
 }
 function directionalFootworkHip(c) {
-  const delta=directionalFootworkDelta(c);
-  return Math.atan2(Math.sin(delta),Math.abs(Math.cos(delta)));
+  const delta=directionalFootworkDelta(c),a=Math.abs(delta);
+  const t=Math.max(0,Math.min(1,(a-Math.PI*.5)/(Math.PI*.25))),fold=t*t*t*(t*(t*6-15)+10);
+  return delta-Math.sign(delta)*Math.PI*fold;
+}
+function directionalFootworkReverse(c) {
+  if(!c.isMoving)return 0;
+  const t=Math.max(0,Math.min(1,(Math.abs(directionalFootworkDelta(c))-Math.PI*.5)/(Math.PI*.25)));
+  return t*t*t*(t*(t*6-15)+10);
 }
 function playerFootworkPose(c) {
   if(!directionalFootworkEligible(c))return {active:false};
   const delta=directionalFootworkDelta(c),s=c._directionalFootwork;
-  const lateral=Math.sin(delta),forward=Math.cos(delta),hip=s&&s.active?s.hip:(c.isMoving?directionalFootworkHip(c):0);
-  const reverse=Math.max(0,Math.min(1,(-forward-.05)/.85));
-  return {active:true,angle:(c.aimAngle||0)+Math.max(-Math.PI*.5,Math.min(Math.PI*.5,hip)),delta,
-    backward:reverse*reverse*(3-2*reverse),strafe:Math.abs(lateral),side:lateral<0?-1:1,
+  const lateral=Math.sin(delta),live=s&&s.active,angle=live?s.angle:(c.aimAngle||0)+(c.isMoving?directionalFootworkHip(c):0);
+  const motion=live?s.motion:Number(!!c.isMoving),phase=c.walkCycle||0;
+  return {active:true,angle,delta,motion,pelvisY:Math.sin(phase)*.38*motion,
+    travelX:live?s.travelX:c.isMoving?Math.cos(c.moveAngle||0):0,
+    travelY:live?s.travelY:c.isMoving?Math.sin(c.moveAngle||0):0,
+    backward:live?s.backward:directionalFootworkReverse(c),strafe:Math.abs(lateral),side:lateral<0?-1:1,
     skip:s&&s.active?s.skip:0,skipSide:s&&s.active?s.skipSide:0,
     skipHeading:s&&s.active&&Number.isFinite(s.skipHeading)?s.skipHeading:c.moveAngle||0,
     phase:(c.walkCycle||0)-(s&&s.active?s.origin:0),
@@ -39977,36 +40017,69 @@ function playerFootworkPose(c) {
 function standingFootworkLeg(c,index,pose=playerFootworkPose(c)) {
   if(!pose.active)return null;
   const R=figureRig(c.bodyW,c.bodyH),side=index?1:-1,gait=Math.max(0,Math.min(1,c.gait||0));
-  const moving=!!c.isMoving,relative=(Number.isFinite(pose.skipHeading)?pose.skipHeading:c.moveAngle||0)-pose.angle,dx=Math.cos(relative),dy=Math.sin(relative);
-  const GP=gaitPose(gait),swing=moving?Math.sin(c.walkCycle||0)*12*GP.swing:0;
+  const ca=Math.cos(pose.angle),sa=Math.sin(pose.angle),motion=pose.motion===undefined?Number(!!c.isMoving):pose.motion;
+  const vx=pose.travelX===undefined?Math.cos(c.moveAngle||0):pose.travelX;
+  const vy=pose.travelY===undefined?Math.sin(c.moveAngle||0):pose.travelY;
+  const dx=ca*vx+sa*vy,dy=-sa*vx+ca*vy;
   const th=R.thigh*STAND_FORE_LEG,sh=R.shin*STAND_FORE_LEG;
-  const stride=6.5+6.5*gait,height=1.5+gait*1.8;
-  const cycle=(phase,delay)=>{
-    if(!(pose.skip>0))return {step:0,lift:0};
-    const t=((phase/(Math.PI*2)+delay)%1+1)%1,swing=t<.44,u=swing?t/.44:(t-.44)/.56;
+  const stride=4.2+8.2*gait,height=1.2+gait*2.1;
+  const cycle=(phase,delay,stance)=>{
+    const t=((phase/(Math.PI*2)+delay)%1+1)%1,planted=t<stance,u=planted?t/stance:(t-stance)/(1-stance);
     const e=u*u*u*(u*(u*6-15)+10);
-    return {step:(swing?-1+2*e:1-2*e)*stride,lift:swing?Math.sin(u*Math.PI)**2*height:0};
+    return {step:(planted?1-2*e:-1+2*e)*stride,lift:planted?0:Math.sin(u*Math.PI)**2*height,planted};
   };
-  const lead=side===(pose.skipSide||pose.side),skip=cycle(pose.skipPhase,lead?0:-.34),mix=pose.skip;
-  const step=skip.step*mix,lift=skip.lift*mix;
-  // Until the deliberate skip begins these are the original standing leg
-  // stations, widths and foreshortening, including the ordinary side run.
-  const sx=-10-swing*side*(1-mix)+R.thighW*.5,sy=side*6;
-  const extension=1-2*pose.backward;
-  const kx=sx+th*.92*extension+dx*step*.38,ky=sy+dy*step*.38;
-  const ax=sx+(th*.92+sh)*extension+dx*step,ay=sy+dy*step-side*lift*.18;
-  return {sx,sy,kx,ky,ax,ay,lift,step,leading:lead,heading:((c.aimAngle||0)-pose.angle)*mix*.6,
+  const lead=side===(pose.skipSide||pose.side),walk=cycle(pose.phase,index*.5,.62);
+  const skip=cycle(pose.skipPhase,lead?-.44:.22,.56),mix=pose.skip;
+  const step=(walk.step+(skip.step-walk.step)*mix)*motion,lift=(walk.lift+(skip.lift-walk.lift)*mix)*motion;
+  const skipHeading=Number.isFinite(pose.skipHeading)?pose.skipHeading:c.moveAngle||0;
+  const sdx=Math.cos(skipHeading-pose.angle),sdy=Math.sin(skipHeading-pose.angle);
+  const travelX=dx+(sdx-dx)*mix,travelY=dy+(sdy-dy)*mix;
+  const sx=-10+R.thighW*.5,sy=side*6+(pose.pelvisY||0);
+  // The knee remains in front of its hip during a backstep, while the calf
+  // folds behind it and the heel plants first. Reversing both bone vectors
+  // put the widest trouser cap at the foot and collapsed rear diagonals.
+  let kx=sx+th*.92+travelX*step*.45+lift*.34-pose.backward*2.3;
+  // Knees open from the hip line into a modest athletic shoe track. A
+  // six-unit ankle track hid both calves under the shirt and back-mounted
+  // pack at this camera, even when the joints were moving correctly.
+  let ky=side*(8.8+gait*.2)+(pose.pelvisY||0)+travelY*step*.26+side*lift*.10;
+  let ax=sx+th*.92+sh-8-pose.backward*6+travelX*(step-lift*.45);
+  let ay=side*(11.6+gait)+(pose.pelvisY||0)+travelY*step*(.50+mix*.50);
+  const open=(value,min)=>min+((value-min)+Math.sqrt((value-min)**2+.16))*.5;
+  ky=side*open(side*ky,3.3);ay=side*open(side*ay,2.7);
+  const kneeFloor=sx+.8*pose.backward;
+  if(kx<kneeFloor)kx=kneeFloor;
+  // Projected bones may unfold during a running reach, but never lengthen
+  // beyond the shared anatomical rig. The heel target owns the foot path.
+  for(let n=0;n<3;n++){
+    let x=kx-ax,y=ky-ay,d=Math.hypot(x,y),max=R.shin*.94;
+    if(d>max){kx=ax+x*max/d;ky=ay+y*max/d;}
+    x=kx-sx;y=ky-sy;d=Math.hypot(x,y);max=R.thigh*.94;
+    if(d>max){kx=sx+x*max/d;ky=sy+y*max/d;}
+  }
+  return {sx,sy,kx,ky,ax,ay,lift,step,planted:mix>.5?skip.planted:walk.planted,leading:lead,
+    heading:Math.atan2(travelY,Math.abs(travelX))*(1-pose.backward)*.18,
     hipW:R.thighW,kneeW:R.shinW,ankleW:R.shinW*.80};
 }
 function drawStandingFootworkLegs(c,g,R,pose) {
   const boot=[red(c.pantsCol)*.55,green(c.pantsCol)*.55,blue(c.pantsCol)*.55];
   for(let index=0;index<2;index++) {
     const l=standingFootworkLeg(c,index,pose);
-    figureCelLimb(g,l.sx,l.sy,l.kx,l.ky,l.ax,l.ay,l.hipW,l.kneeW,l.ankleW,c.pantsCol);
+    const folded=(l.kx-l.sx)*(l.ax-l.kx)+(l.ky-l.sy)*(l.ay-l.ky)<0;
+    if(folded) {
+      // A calf folding behind a forward knee belongs below the thigh. A
+      // reversing ribbon would expose an inside-out point at that overlap.
+      figureCelLimb(g,l.kx,l.ky,(l.kx+l.ax)*.5,(l.ky+l.ay)*.5,l.ax,l.ay,l.kneeW,(l.kneeW+l.ankleW)*.5,l.ankleW,c.pantsCol);
+      figureCelLimb(g,l.sx,l.sy,(l.sx+l.kx)*.5,(l.sy+l.ky)*.5,l.kx,l.ky,l.hipW,(l.hipW+l.kneeW)*.5,l.kneeW,c.pantsCol);
+      figureCelOval(g,l.kx,l.ky,l.kneeW,l.kneeW,c.pantsCol,.3);
+    } else figureCelLimb(g,l.sx,l.sy,l.kx,l.ky,l.ax,l.ay,l.hipW,l.kneeW,l.ankleW,c.pantsCol);
     push();translate(l.ax,l.ay);rotate(l.heading);
     figureCelOval(g,R.foot*.34,0,R.foot,l.ankleW,boot,.8);pop();
     drawLegDecals(g,c.decals,index,l.sx,l.sy,l.kx,l.ky,l.ax,l.ay,l.hipW,l.kneeW,l.ankleW);
   }
+  // The same seat covers both thigh roots in every direction. It does not
+  // reverse, slide with either foot, or become a second pair of hip caps.
+  figureCelOval(g,-4.8,pose.pelvisY||0,R.thighW*1.10,c.bodyH*.68,c.pantsCol,.32);
 }
 
 // WHERE A CARRIED SIDEARM'S MUZZLE IS POINTING, in radians off the horizontal.
@@ -41799,6 +41872,37 @@ function drawCombatStanceFigure(c, p) {
   drawCombatStanceUI(c,p);
 }
 
+function standingAimEligible(c) {
+  if(!c||!c.isPlayer||!combatStanceContext()||actorStanceSuppressed(c)||c.meleeTimer>0||
+      c.stance&&c.stance.to>0||leftHandAction(c)||typeof inCutscene!=='undefined'&&inCutscene)return false;
+  const p=actorStancePose(c);
+  return !p.crouch&&!p.prone;
+}
+// The visible barrel is the firing direction. A short angular acceleration
+// and bounded turn rate let shoulders lead a turn without teleporting them;
+// the pelvis has its own slower planted heading in directional footwork.
+function standingAimHeading(c,target,elapsedMs=deltaTime) {
+  if(!Number.isFinite(target))return c&&c.aimAngle||0;
+  if(!c||!c.isPlayer)return target;
+  const current=Number.isFinite(c.aimAngle)?c.aimAngle:target;
+  if(!doTick||isPaused)return current;
+  if(!standingAimEligible(c)){c._standingAim=null;return target;}
+  let s=c._standingAim;
+  if(!s)s=c._standingAim={frame:-1,angle:current,velocity:0,target};
+  if(s.frame===frameCount)return current;
+  s.frame=frameCount;s.target=target;
+  if(Math.abs(Math.atan2(Math.sin(current-s.angle),Math.cos(current-s.angle)))>.0001)s.velocity=0;
+  const ms=Math.max(0,Math.min(100,Number(elapsedMs)||0)),dt=ms*.001;
+  let delta=Math.atan2(Math.sin(target-current),Math.cos(target-current));
+  if(Math.abs(Math.abs(delta)-Math.PI)<.00001&&Math.abs(s.velocity)>.001)delta=Math.sign(s.velocity)*Math.PI;
+  const desired=Math.max(-11,Math.min(11,delta*12));
+  s.velocity+=(desired-s.velocity)*(1-Math.exp(-ms/55));
+  let step=s.velocity*dt;
+  if(step*delta>=0&&Math.abs(step)>=Math.abs(delta)){step=delta;s.velocity=0;}
+  if(Math.abs(delta)<.00005&&Math.abs(s.velocity)<.004){s.angle=target;s.velocity=0;}
+  else s.angle=current+step;
+  return s.angle;
+}
 function aimIntent(c) {
   if (typeof rightStick === 'undefined') return true;
   return !!rightStick.active || c.muzzleFlash > 0 || c.reloadTimer > 0 ||
@@ -46552,8 +46656,16 @@ const WEAPON_MUZZLE = {
   SMG:             [38, 11],
   DUAL_SMG:        [38, 11],
   ASSAULT_RIFLE:   [47, 6],
-  ROCKET_LAUNCHER: [47, 6]
+  SHOTGUN:        [47, 6],
+  ROCKET_LAUNCHER: [47, 6],
+  REVOLVER:       [47, 11],
+  COACH_GUN:      [31, 8]
 };
+function weaponLightMuzzle(c,m) {
+  const a=c.aimAngle||0,ca=Math.cos(a),sa=Math.sin(a);
+  const forward=m[0]+(c.isMoving?Math.abs(Math.sin(c.walkCycle||0))*2:0);
+  return stanceMuzzleWorld(c,c.x+ca*forward-sa*m[1],c.y+sa*forward+ca*m[1]);
+}
 
 // A muzzle flash as a light source. Short (three frames), hot, and small: a
 // shot lights the ground around the shooter hard and reaches nothing. Capped
@@ -46690,11 +46802,10 @@ function sceneEmitters() {
   const wk = w ? weaponKey(w) : '';
   if (player && player.hp > 0 && WEAPON_TORCH[wk]) {
     const a = player.aimAngle || 0;
-    const ca = Math.cos(a), sa = Math.sin(a);
     // The muzzle, in the gun's own frame: forward along the aim and offset to
     // whichever side the weapon is held. Same transform the bullets use.
     const m = WEAPON_MUZZLE[wk] || [31, 8];
-    const muzzle = stanceMuzzleWorld(player, player.x + ca * m[0] - sa * m[1], player.y + sa * m[0] + ca * m[1]);
+    const muzzle=weaponLightMuzzle(player,m);
     const mx = muzzle.x, my = muzzle.y, stance = actorStancePose(player);
     out.push({
       x: mx, y: my, z: 22 * (1-stance.crouch*.35-stance.prone*.90), r: TORCH_R,
@@ -46751,9 +46862,8 @@ function sceneEmitters() {
     }
     for (let i = 0; i < nF; i++) {
       const c = fl[i];
-      const a = c.aimAngle || 0, ca = Math.cos(a), sa = Math.sin(a);
       const m = WEAPON_MUZZLE[weaponKey(c.currentWeapon)] || [31, 8];
-      const muzzle = stanceMuzzleWorld(c, c.x + ca * m[0] - sa * m[1], c.y + sa * m[0] + ca * m[1]);
+      const muzzle=weaponLightMuzzle(c,m);
       const mx = muzzle.x, my = muzzle.y, stance = actorStancePose(c);
       const dx = mx - px0, dy = my - py0, d2 = dx * dx + dy * dy;
       out.push({
