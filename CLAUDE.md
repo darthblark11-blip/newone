@@ -2784,8 +2784,12 @@ draw nothing at all.
 
 ## Getting round things
 
-`steerAvoid(ent, ang, speed, blocked)` (~7960) is how everything that walks and is not
-the player deals with an obstacle. The player is steered by the player.
+`steerAvoid(ent, ang, speed, blocked)` (~7960) handles ordinary outdoor walkers.
+Level 9 casters and zombies use the separate bounded `occultFindPath()` A* grid,
+native collision and remembered-target tactical goals. Door changes must call
+`occultInvalidateNavigation()`. Keep temporary spell lights in the shared
+underground emitter gather. See [Underground combat](docs/underground-occult.md).
+The player is steered by the player.
 
 **What it replaced was a wall slide.** Movement was applied per axis, so a runner meeting
 a wall head-on had one axis blocked and the other free and smeared along the face — and a

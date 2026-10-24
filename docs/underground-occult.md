@@ -73,19 +73,19 @@ color identifies their attack family:
 
 | Color | Attacks |
 | --- | --- |
-| Black | Chants over six separated summoning circles and raises groups of six zombies while alive. |
-| Red | Charges a fireball that separates into three outward projectiles; at close range also drives a forward cracked-ground lava eruption 6 metres from the staff. |
-| Blue | Charges a lightning shard; its second spell is a centered shock field with a 3-metre radius. |
+| Black | Seeks cover and chants out of sight, raising groups of six zombies while alive. |
+| Red | Charges a fireball that separates into three outward projectiles; also drives a forward cracked-ground lava eruption 30 metres from the staff. |
+| Blue | Charges a lightning shard; its second spell is a centered shock field with an 18-metre radius. |
 
 The opening chamber triples the original color mix to three black, six red
-and three blue magicians. A black magician can
-maintain at most twelve living summons, with twenty-four living zombies across
-the encounter. Death stops further summoning. Existing zombies remain tangible
+and three blue magicians. Each black magician can maintain twenty-four living
+summons independently. The twelve authored summoners therefore have room for
+288 living zombies across the dungeon. Death stops further summoning. Existing zombies remain tangible
 opponents; they do not replace the caster's health or create a separate kill
 counter. Zombie emergence and bite windups are visible. Crowded emergence
 sites and the population caps can reduce the number raised in a chant.
 
-Saved encounters retain all 54 casters plus up to 24 summons, including wounds,
+Saved encounters retain all 54 casters plus up to 288 summons, including wounds,
 defeated casters, prepared spells and opened or partly opened doors.
 Door state restores before actor and player collision checks. Older four-caster
 saves gain the new stations while preserving the health and deaths of their
@@ -99,6 +99,29 @@ rock, pillars and other solid cover block them. Charging ends when a caster is
 stunned or killed. Spell arrays and summoned populations are bounded, and
 pause, death screens and elevator transitions suspend their simulation.
 
+Magicians notice visible threats within 75 metres and begin ranged casts within
+54 metres. Red and blue magicians move at 6 and 5.6 metres per second; black
+magicians move at 5.5 metres per second. They retreat toward safer spacing and
+can reposition during early preparation and recovery. Lava and shock casts
+plant their feet for the committed portion of the warning. Lost sight leads
+to pursuit of the last observed position rather than freezing immediately.
+Black magicians favor actual occluding cover, remember the nearby threat, and
+continue summoning without needing a direct view of the player.
+
+Casters and zombies share a cached 40-unit A* grid with diagonal clearance,
+smoothed waypoints, crowd separation and a bounded search budget. Door changes
+invalidate geometry caches. Paths and live target references are rebuilt after
+loading; saved encounter state retains the last observed threat position.
+
+Fire preparation, flying fireballs and the advancing fissure carry animated
+flames, ember trails and temporary warm scene lights. Electrical charges,
+shards and shock fields add blue light. All projectile exits—body hits, walls,
+expiry, fireball splitting and caster interruption—leave fading comic fragments.
+Wall contacts place the burst on the near face of cover. The same light list
+feeds WebGL and the canvas fallback, while idle rooms retain only torch and
+flashlight lighting. Spell light candidates and procedural particle bursts
+have separate fixed budgets and consume no gameplay randomness.
+
 ## Focused checks
 
 ```sh
@@ -108,6 +131,9 @@ node tools/check-underground-integration.js
 node tools/check-occult-combat.js
 node tools/check-occult-art.js
 node tools/check-dungeon-combat.js
+node tools/check-dungeon-navigation.js
+node tools/check-mage-refinement.js
+node tools/check-occult-spell-fx.js
 ```
 
 The checks exercise native collision along the entrance and connecting passages,

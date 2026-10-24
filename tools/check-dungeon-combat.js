@@ -60,21 +60,38 @@ P('black.occult.chargeMs=1200;occultReleaseCast(black);');
 ok('enemiesList.filter(e=>e.occultZombie).length===6&&enemiesList.filter(e=>e.occultZombie).every(e=>e.occultZombie.room===black.occult.room)',
  'Six emerging native zombies inherit their summoner room identity');
 
-P(`dungeonCombatFixture();var saveOwner=enemiesList.find(e=>e.occult.kind==='BLACK');
- for(let y=-1700;y<=-600&&enemiesList.filter(e=>e.occultZombie).length<24;y+=70)
-  for(let x=-650;x<=650&&enemiesList.filter(e=>e.occultZombie).length<24;x+=70)
-   if(occultPointClear(x,y,17,player))enemiesList.push(createOccultZombie(x,y,saveOwner));
+P(`dungeonCombatFixture();var saveOwners=enemiesList.filter(e=>e.occult&&e.occult.kind==='BLACK');
+ for(const owner of saveOwners){
+  const room=UNDERGROUND_ROOMS.find(r=>r.id===owner.occult.room);let placed=0;
+  for(let y=room.y+45;y<room.y+room.h-45&&placed<24;y+=62)
+   for(let x=room.x+45;x<room.x+room.w-45&&placed<24;x+=62)
+    if(occultPointClear(x,y,17,player)){enemiesList.push(createOccultZombie(x,y,owner));placed++;}
+ }
  var finalStation=enemiesList.find(e=>e.occult.id==='sanctuary-blue-7');finalStation.hp=111;
  var fullDungeonSave=JSON.parse(JSON.stringify(serializeOccultState()));
  restoreOccultState(fullDungeonSave);`);
-ok('fullDungeonSave.actors.length===78&&fullDungeonSave.dungeonRevision===OCCULT_DUNGEON_REVISION&&enemiesList.length===78',
- 'The bounded save round trip retains all 54 casters plus the 24-zombie population');
-ok("enemiesList.find(e=>e.occult.id==='sanctuary-blue-7').hp===111&&enemiesList.filter(e=>e.occultZombie).length===24",
+ok('fullDungeonSave.actors.length===342&&fullDungeonSave.dungeonRevision===OCCULT_DUNGEON_REVISION&&enemiesList.length===342',
+ 'The bounded save round trip retains all 54 casters plus each of twelve summoners\' 24 zombies');
+ok(`saveOwners.length===12&&saveOwners.every(owner=>enemiesList.filter(e=>e.occultZombie&&e.occultZombie.ownerId===owner.occult.id).length===24)`,
+ 'The 24-zombie allowance belongs to each summoner rather than being shared across the dungeon');
+ok("enemiesList.find(e=>e.occult.id==='sanctuary-blue-7').hp===111&&enemiesList.filter(e=>e.occultZombie).length===288",
  'The final room beyond the previous forty-actor limit retains wounds and all summons');
 P(`enemiesList.find(e=>e.occult&&e.occult.id==='nave-red-1').hp=0;
  var clearedSave=JSON.parse(JSON.stringify(serializeOccultState()));restoreOccultState(clearedSave);`);
-ok("enemiesList.length===77&&!enemiesList.some(e=>e.occult&&e.occult.id==='nave-red-1')",
+ok("enemiesList.length===341&&!enemiesList.some(e=>e.occult&&e.occult.id==='nave-red-1')",
  'Defeated new-room casters remain defeated on every modern save load');
+P(`var corruptHordeSave=JSON.parse(JSON.stringify(fullDungeonSave));
+ var ownerA=saveOwners[0].occult.id,ownerB=saveOwners[1].occult.id;
+ var ownerAHorde=corruptHordeSave.actors.filter(a=>a.zombie&&a.zombie.ownerId===ownerA);
+ var ownerBHorde=corruptHordeSave.actors.filter(a=>a.zombie&&a.zombie.ownerId===ownerB);
+ var excessZombie=JSON.parse(JSON.stringify(ownerAHorde[0]));excessZombie.zombie.id='overflow-owner-a';
+ corruptHordeSave.actors=[...corruptHordeSave.actors.filter(a=>a.occult),...ownerAHorde,excessZombie,...ownerBHorde];
+ restoreOccultState(corruptHordeSave);`);
+ok(`enemiesList.filter(e=>e.occultZombie&&e.occultZombie.ownerId===ownerA).length===24&&
+ !enemiesList.some(e=>e.occultZombie&&e.occultZombie.id==='overflow-owner-a')`,
+ 'Loading rejects a saved twenty-fifth zombie from one summoner');
+ok(`enemiesList.length===102&&enemiesList.filter(e=>e.occultZombie&&e.occultZombie.ownerId===ownerB).length===24`,
+ 'Rejecting an overfull owner does not consume the second summoner\'s independent allowance');
 
 P(`dungeonCombatFixture();var legacySave=JSON.parse(JSON.stringify(serializeOccultState()));
  delete legacySave.dungeonRevision;
