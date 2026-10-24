@@ -12665,12 +12665,9 @@ function resetUndergroundEnvironment() {
   undergroundFloorCache.clear();
 }
 function undergroundPointWalkable(x,y,r=0) {
-  if(!Number.isFinite(x)||!Number.isFinite(y)||!Number.isFinite(r)||r<0)return false;
-  const inside=(px,py)=>UNDERGROUND_FLOORS.some(f=>px>=f.x&&px<=f.x+f.w&&py>=f.y&&py<=f.y+f.h);
-  if(!inside(x,y)||undergroundGateBlocksPoint(x,y,r))return false;
-  for(const [dx,dy]of[[r,0],[-r,0],[0,r],[0,-r],[r*.7071,r*.7071],[-r*.7071,r*.7071],[r*.7071,-r*.7071],[-r*.7071,-r*.7071]])
-    if(!inside(x+dx,y+dy))return false;
-  return true;
+  // Native movement and occult rays share the same allocation-free footprint
+  // predicate; the common one-rectangle interior needs no repeated union walk.
+  return occultFloorPointClear(x,y,r);
 }
 function generateUndergroundMap() {
   resetUndergroundDungeon();
@@ -18712,12 +18709,117 @@ function occultActorId(e) {
   return e._occultTargetId||(e._occultTargetId='ally-'+occultNextId++);
 }
 function occultOwner(id) { return enemiesList.find(e=>e.occult&&e.occult.id===id); }
+// Authored dungeon masses never move between map/door revisions. Keep their
+// spatial broad phase separate from actor buckets: paths and spells query it
+// thousands of times a frame, while cover geometry is almost always unchanged.
+const OCCULT_GEOMETRY_CELL=160;
+const occultGeometry={source:null,count:-1,buckets:null,loose:[],records:[],stamp:0,candidates:[],
+  stats:{rebuilds:0,queries:0,solidTests:0,floorSamples:0,floorFast:0}};
+function occultInvalidateGeometry(){
+  occultGeometry.source=null;occultGeometry.count=-1;occultGeometry.buckets=null;
+  occultGeometry.loose.length=occultGeometry.records.length=occultGeometry.candidates.length=0;occultGeometry.stamp=0;
+}
+function occultGeometryIndex(){
+  const index=occultGeometry;
+  if(index.source===buildings&&index.count===buildings.length&&index.buckets)return index;
+  index.source=buildings;index.count=buildings.length;index.buckets=new Map();index.loose.length=0;index.records.length=0;
+  index.minCellX=index.minCellY=Infinity;index.maxCellX=index.maxCellY=-Infinity;
+  index.stats.rebuilds++;
+  for(let i=0;i<buildings.length;i++){
+    const b=buildings[i],fixed=!!(b.undergroundWall||b.undergroundProp||b.undergroundGate)&&b.w>=0&&b.h>=0;
+    const entry={b,fixed,stamp:0,minX:b.x-b.w/2,maxX:b.x+b.w/2,minY:b.y-b.h/2,maxY:b.y+b.h/2};
+    index.records.push(entry);
+    // Unauthored solids include mutable test/build fixtures. Always examine
+    // them with their live bounds, so an in-place edit cannot leave stale cells.
+    if(!fixed||![entry.minX,entry.maxX,entry.minY,entry.maxY].every(Number.isFinite)){index.loose.push(entry);continue;}
+    const x0=Math.floor(entry.minX/OCCULT_GEOMETRY_CELL),x1=Math.floor(entry.maxX/OCCULT_GEOMETRY_CELL);
+    const y0=Math.floor(entry.minY/OCCULT_GEOMETRY_CELL),y1=Math.floor(entry.maxY/OCCULT_GEOMETRY_CELL);
+    index.minCellX=Math.min(index.minCellX,x0);index.maxCellX=Math.max(index.maxCellX,x1);
+    index.minCellY=Math.min(index.minCellY,y0);index.maxCellY=Math.max(index.maxCellY,y1);
+    for(let cy=y0;cy<=y1;cy++)for(let cx=x0;cx<=x1;cx++){
+      const key=cx*65536+cy;let bucket=index.buckets.get(key);if(!bucket)index.buckets.set(key,bucket=[]);bucket.push(entry);
+    }
+  }
+  return index;
+}
+function occultGeometryStatic(){return occultGeometryIndex().loose.length===0;}
+function occultGeometryCandidates(minX,minY,maxX,maxY){
+  const index=occultGeometryIndex(),out=index.candidates;out.length=0;index.stats.queries++;
+  const stamp=++index.stamp;
+  const x0=Math.max(index.minCellX,Math.floor(minX/OCCULT_GEOMETRY_CELL)),x1=Math.min(index.maxCellX,Math.floor(maxX/OCCULT_GEOMETRY_CELL));
+  const y0=Math.max(index.minCellY,Math.floor(minY/OCCULT_GEOMETRY_CELL)),y1=Math.min(index.maxCellY,Math.floor(maxY/OCCULT_GEOMETRY_CELL));
+  for(let cy=y0;cy<=y1;cy++)for(let cx=x0;cx<=x1;cx++){
+    const bucket=index.buckets.get(cx*65536+cy);if(!bucket)continue;
+    for(let i=0;i<bucket.length;i++){
+      const entry=bucket[i];if(entry.stamp===stamp)continue;entry.stamp=stamp;
+      if(entry.maxX>=minX&&entry.minX<=maxX&&entry.maxY>=minY&&entry.minY<=maxY)out.push(entry);
+    }
+  }
+  for(let i=0;i<index.loose.length;i++)out.push(index.loose[i]);
+  return out;
+}
+function occultFloorContains(x,y){
+  for(let i=0;i<UNDERGROUND_FLOORS.length;i++){
+    const f=UNDERGROUND_FLOORS[i];if(x>=f.x&&x<=f.x+f.w&&y>=f.y&&y<=f.y+f.h)return true;
+  }
+  return false;
+}
+function occultFloorPointClear(x,y,r){
+  if(!Number.isFinite(x)||!Number.isFinite(y)||!Number.isFinite(r)||r<0)return false;
+  for(let i=0;i<UNDERGROUND_GATES.length;i++){
+    const g=UNDERGROUND_GATES[i];
+    if(x+r>g.x-g.w/2&&x-r<g.x+g.w/2&&y+r>g.y-g.h/2&&y-r<g.y+g.h/2&&undergroundGateAmount(g.id)<1)return false;
+  }
+  let inside=false;
+  for(let i=0;i<UNDERGROUND_FLOORS.length;i++){
+    const f=UNDERGROUND_FLOORS[i];
+    if(x>=f.x&&x<=f.x+f.w&&y>=f.y&&y<=f.y+f.h){inside=true;
+      if(x-r>=f.x&&x+r<=f.x+f.w&&y-r>=f.y&&y+r<=f.y+f.h)return true;
+    }
+  }
+  if(!inside)return false;
+  const d=r*.7071;
+  return occultFloorContains(x+r,y)&&occultFloorContains(x-r,y)&&occultFloorContains(x,y+r)&&occultFloorContains(x,y-r)&&
+    occultFloorContains(x+d,y+d)&&occultFloorContains(x-d,y+d)&&occultFloorContains(x+d,y-d)&&occultFloorContains(x-d,y-d);
+}
+function occultFloorSegmentFast(x0,y0,x1,y1,r){
+  if(!Number.isFinite(r)||r<0)return false;
+  const minX=Math.min(x0,x1)-r,maxX=Math.max(x0,x1)+r,minY=Math.min(y0,y1)-r,maxY=Math.max(y0,y1)+r;
+  for(let i=0;i<UNDERGROUND_GATES.length;i++){
+    const g=UNDERGROUND_GATES[i];
+    if(maxX>g.x-g.w/2&&minX<g.x+g.w/2&&maxY>g.y-g.h/2&&minY<g.y+g.h/2&&undergroundGateAmount(g.id)<1)return false;
+  }
+  for(let i=0;i<UNDERGROUND_FLOORS.length;i++){
+    const f=UNDERGROUND_FLOORS[i];
+    // Boundary traces retain their old sampled/bisected contact, including
+    // endpoint rounding in fraction*i/steps. Only strict interiors skip it.
+    if(minX>f.x+1e-7&&maxX<f.x+f.w-1e-7&&minY>f.y+1e-7&&maxY<f.y+f.h-1e-7){occultGeometry.stats.floorFast++;return true;}
+  }
+  return false;
+}
+function occultGeometryEntryFraction(entry,x,y,dx,dy,r){
+  const b=entry.b;
+  if(b.occultDecor||b.isUndergroundDecor||b.isDeck||!Number.isFinite(b.w)||!Number.isFinite(b.h))return Infinity;
+  occultGeometry.stats.solidTests++;
+  const minX=(entry.fixed?entry.minX:b.x-b.w/2)-r,maxX=(entry.fixed?entry.maxX:b.x+b.w/2)+r;
+  const minY=(entry.fixed?entry.minY:b.y-b.h/2)-r,maxY=(entry.fixed?entry.maxY:b.y+b.h/2)+r;
+  let lo=0,hi=1;
+  if(Math.abs(dx)<1e-9){if(x<minX||x>maxX)return Infinity;}
+  else{const a=(minX-x)/dx,c=(maxX-x)/dx;lo=Math.max(lo,Math.min(a,c));hi=Math.min(hi,Math.max(a,c));if(lo>hi)return Infinity;}
+  if(Math.abs(dy)<1e-9){if(y<minY||y>maxY)return Infinity;}
+  else{const a=(minY-y)/dy,c=(maxY-y)/dy;lo=Math.max(lo,Math.min(a,c));hi=Math.min(hi,Math.max(a,c));if(lo>hi)return Infinity;}
+  return lo;
+}
 function occultPointClear(x,y,r=0,ignore=null) {
-  if(!Number.isFinite(x)||!Number.isFinite(y))return false;
-  if(typeof undergroundPointWalkable==='function'&&!undergroundPointWalkable(x,y,r))return false;
-  for(const b of buildings) {
+  if(!occultFloorPointClear(x,y,r))return false;
+  const near=occultGeometryCandidates(x-r,y-r,x+r,y+r);
+  for(let i=0;i<near.length;i++){
+    const entry=near[i],b=entry.b;
     if(b.occultDecor||b.isUndergroundDecor||b.isDeck||!Number.isFinite(b.w)||!Number.isFinite(b.h))continue;
-    if(x+r>b.x-b.w/2&&x-r<b.x+b.w/2&&y+r>b.y-b.h/2&&y-r<b.y+b.h/2)return false;
+    occultGeometry.stats.solidTests++;
+    const minX=entry.fixed?entry.minX:b.x-b.w/2,maxX=entry.fixed?entry.maxX:b.x+b.w/2;
+    const minY=entry.fixed?entry.minY:b.y-b.h/2,maxY=entry.fixed?entry.maxY:b.y+b.h/2;
+    if(x+r>minX&&x-r<maxX&&y+r>minY&&y-r<maxY)return false;
   }
   if(ignore) {
     if(player&&player!==ignore&&occultAlive(player)&&Math.hypot(x-player.x,y-player.y)<r+19)return false;
@@ -18744,23 +18846,17 @@ function occultRestorePosition(x,y,r=15) {
   return null;
 }
 function occultClearSegment(x0,y0,x1,y1,r=2) {
-  if(![x0,y0,x1,y1,r].every(Number.isFinite))return false;
+  if(!Number.isFinite(x0)||!Number.isFinite(y0)||!Number.isFinite(x1)||!Number.isFinite(y1)||!Number.isFinite(r)||r<0)return false;
   const dx=x1-x0,dy=y1-y0,count=Math.max(1,Math.ceil(Math.hypot(dx,dy)/6));
   if(count>512)return false;
-  // Floor topology needs samples; solids use an exact expanded slab test so
-  // even a one-unit divider cannot disappear between fast projectile steps.
-  if(typeof undergroundPointWalkable==='function')for(let i=0;i<=count;i++)
-    if(!undergroundPointWalkable(x0+dx*i/count,y0+dy*i/count,r))return false;
-  for(const b of buildings) {
-    if(b.occultDecor||b.isUndergroundDecor||b.isDeck||!Number.isFinite(b.w)||!Number.isFinite(b.h))continue;
-    let lo=0,hi=1,hit=true;
-    for(const [start,delta,min,max]of[[x0,dx,b.x-b.w/2-r,b.x+b.w/2+r],[y0,dy,b.y-b.h/2-r,b.y+b.h/2+r]]) {
-      if(Math.abs(delta)<1e-9){if(start<min||start>max){hit=false;break;}}
-      else {const a=(min-start)/delta,c=(max-start)/delta;lo=Math.max(lo,Math.min(a,c));hi=Math.min(hi,Math.max(a,c));
-        if(lo>hi){hit=false;break;}}
-    }
-    if(hit)return false;
+  // Rays inside one authored floor rectangle need no six-unit footprint walk.
+  // A union seam or door keeps the original sampled topology checks exactly.
+  if(!occultFloorSegmentFast(x0,y0,x1,y1,r))for(let i=0;i<=count;i++){
+    occultGeometry.stats.floorSamples++;
+    if(!occultFloorPointClear(x0+dx*i/count,y0+dy*i/count,r))return false;
   }
+  const near=occultGeometryCandidates(Math.min(x0,x1)-r,Math.min(y0,y1)-r,Math.max(x0,x1)+r,Math.max(y0,y1)+r);
+  for(let i=0;i<near.length;i++)if(occultGeometryEntryFraction(near[i],x0,y0,dx,dy,r)!==Infinity)return false;
   return true;
 }
 function occultTarget(e) {
@@ -18795,10 +18891,11 @@ function occultCancelCast(e) {
 // A dungeon-only navigation grid, shared by the casters and their hordes.
 // Geometry is cached until a door/map changes. Searches have a per-frame
 // budget; individual actors retain their route between tactical decisions.
-const OCCULT_NAV=Object.freeze({cell:40,radius:17,maxExpanded:6000,searchesPerFrame:6});
+const OCCULT_NAV=Object.freeze({cell:40,radius:17,maxExpanded:6000,searchesPerFrame:6,expansionsPerFrame:1500});
 const occultNavigation={revision:1,grid:null,frame:-1,queries:0,crowdFrame:-1,crowd:null,
-  stats:{searches:0,expanded:0,maxExpanded:0,deferred:0}};
+  stats:{searches:0,expanded:0,maxExpanded:0,deferred:0,directQueries:0,directCacheHits:0}};
 function occultInvalidateNavigation(){
+  occultInvalidateGeometry();occultNavigationRuntimeReset();occultCrowdBucketPool.length=0;
   occultNavigation.revision++;occultNavigation.grid=null;occultNavigation.frame=-1;
   occultNavigation.crowdFrame=-1;occultNavigation.crowd=null;
 }
@@ -18816,14 +18913,15 @@ function occultNavigationGrid(){
 function occultNavigationNodePoint(g,index){return{x:g.x+(index%g.cols+.5)*g.cell,y:g.y+(Math.floor(index/g.cols)+.5)*g.cell};}
 function occultNavigationNodeClear(g,index){
   if(index<0||index>=g.n)return false;
-  if(!g.clear[index]){const p=occultNavigationNodePoint(g,index);g.clear[index]=occultPointClear(p.x,p.y,OCCULT_NAV.radius)?2:1;}
+  if(!g.clear[index]){const x=g.x+(index%g.cols+.5)*g.cell,y=g.y+(Math.floor(index/g.cols)+.5)*g.cell;g.clear[index]=occultPointClear(x,y,OCCULT_NAV.radius)?2:1;}
   return g.clear[index]===2;
 }
 const OCCULT_NAV_DIRS=Object.freeze([[1,0],[0,1],[-1,0],[0,-1],[1,1],[-1,1],[-1,-1],[1,-1]]);
 function occultNavigationLink(g,index,next,direction){
   const bit=1<<direction;if(g.linksKnown[index]&bit)return !!(g.links[index]&bit);
-  const p=occultNavigationNodePoint(g,index),q=occultNavigationNodePoint(g,next);
-  const clear=occultClearSegment(p.x,p.y,q.x,q.y,OCCULT_NAV.radius);
+  const x=g.x+(index%g.cols+.5)*g.cell,y=g.y+(Math.floor(index/g.cols)+.5)*g.cell;
+  const nx=g.x+(next%g.cols+.5)*g.cell,ny=g.y+(Math.floor(next/g.cols)+.5)*g.cell;
+  const clear=occultClearSegment(x,y,nx,ny,OCCULT_NAV.radius);
   g.linksKnown[index]|=bit;if(clear)g.links[index]|=bit;return clear;
 }
 function occultNavigationNearestNode(g,x,y){
@@ -18836,8 +18934,8 @@ function occultNavigationNearestNode(g,x,y){
       if(r&&Math.abs(ox)!==r&&Math.abs(oy)!==r)continue;
       const nx=cx+ox,ny=cy+oy;if(nx<0||nx>=g.cols||ny<0||ny>=g.rows)continue;
       const index=ny*g.cols+nx;if(!occultNavigationNodeClear(g,index))continue;
-      const p=occultNavigationNodePoint(g,index),d=(p.x-x)**2+(p.y-y)**2;
-      if(d<bestD&&occultClearSegment(x,y,p.x,p.y,clearance)){best=index;bestD=d;}
+      const px=g.x+(nx+.5)*g.cell,py=g.y+(ny+.5)*g.cell,d=(px-x)**2+(py-y)**2;
+      if(d<bestD&&occultClearSegment(x,y,px,py,clearance)){best=index;bestD=d;}
     }
     if(best>=0)return best;
   }
@@ -18889,21 +18987,33 @@ function occultFindPath(x0,y0,x1,y1){
   }
   return path;
 }
+// Buckets and the separation result live across frames: crowd motion must not
+// allocate hundreds of arrays/vectors and trigger a collection during combat.
+const occultCrowdBucketPool=[];
+const occultSeparationResult={x:0,y:0};
 function occultNavigationCrowd(){
   if(occultNavigation.crowdFrame===frameCount&&occultNavigation.crowd)return occultNavigation.crowd;
-  const buckets=new Map(),add=e=>{if(!occultAlive(e))return;const key=Math.floor(e.x/64)+','+Math.floor(e.y/64);let bucket=buckets.get(key);if(!bucket)buckets.set(key,bucket=[]);bucket.push(e);};
-  add(player);for(const e of enemiesList)if(isOccultActor(e))add(e);
+  const buckets=occultNavigation.crowd||new Map();buckets.clear();let used=0;
+  for(let i=-1;i<enemiesList.length;i++){
+    const e=i<0?player:enemiesList[i];if(!occultAlive(e)||i>=0&&!isOccultActor(e))continue;
+    const key=(Math.floor(e.y/64)+512)*1024+Math.floor(e.x/64)+512;
+    let bucket=buckets.get(key);
+    if(!bucket){bucket=occultCrowdBucketPool[used];if(!bucket)occultCrowdBucketPool[used]=bucket=[];used++;bucket.length=0;buckets.set(key,bucket);}
+    bucket.push(e);
+  }
   occultNavigation.crowdFrame=frameCount;occultNavigation.crowd=buckets;return buckets;
 }
 function occultNavigationSeparation(e){
   const buckets=occultNavigationCrowd(),cx=Math.floor(e.x/64),cy=Math.floor(e.y/64);let x=0,y=0;
   for(let oy=-1;oy<=1;oy++)for(let ox=-1;ox<=1;ox++){
-    const bucket=buckets.get((cx+ox)+','+(cy+oy));if(!bucket)continue;
-    for(const other of bucket){if(other===e)continue;const dx=e.x-other.x,dy=e.y-other.y,d=Math.hypot(dx,dy),radius=other.isPlayer?26:43;
-      if(d>0&&d<radius){const push=(radius-d)/radius;x+=dx/d*push;y+=dy/d*push;}
+    const bucket=buckets.get((cy+oy+512)*1024+cx+ox+512);if(!bucket)continue;
+    for(let i=0;i<bucket.length;i++){const other=bucket[i];if(other===e)continue;
+      const dx=e.x-other.x,dy=e.y-other.y,d2=dx*dx+dy*dy,radius=other.isPlayer?26:43;
+      if(d2>0&&d2<radius*radius){const d=Math.sqrt(d2),push=(radius-d)/radius;x+=dx/d*push;y+=dy/d*push;}
     }
   }
-  const length=Math.hypot(x,y);return length>1?{x:x/length,y:y/length}:{x,y};
+  const length=Math.hypot(x,y),out=occultSeparationResult;
+  out.x=length>1?x/length:x;out.y=length>1?y/length:y;return out;
 }
 function occultMove(e,angle,speed,dt){
   const separation=occultNavigationSeparation(e),sx=Math.cos(angle)+separation.x*.85,sy=Math.sin(angle)+separation.y*.85;
@@ -18912,18 +19022,181 @@ function occultMove(e,angle,speed,dt){
   if(e.isMoving){e.moveAngle=Math.atan2(m.y,m.x);e.walkCycle+=dt*.012*Math.max(.7,speed/100);}
   return e.isMoving;
 }
+// Only runtime route requests use this queue. Diagnostic path queries remain
+// synchronous; an encounter cannot spend six entire searches in one frame.
+const occultNavigationRuntime={frame:-1,expanded:0,started:0,active:null,queue:[],head:0,work:null,
+  stats:{expanded:0,maxFrameExpanded:0,completed:0,failed:0,maxQueued:0,workspaceAllocations:0}};
+function occultNavigationRuntimeReset(){
+  const run=occultNavigationRuntime;
+  if(run.active)run.active.status='CANCELLED';
+  for(let i=run.head;i<run.queue.length;i++)run.queue[i].status='CANCELLED';
+  run.active=null;run.queue.length=0;run.head=0;run.work=null;
+  // A door opening cannot buy a second expansion budget in the same frame.
+  if(run.frame!==frameCount){run.frame=-1;run.expanded=run.started=0;}
+}
+function occultNavigationRuntimeValid(job){
+  return !!job&&job.revision===occultNavigation.revision&&occultAlive(job.actor)&&
+    job.nav.pending===job&&job.status!=='CANCELLED';
+}
+function occultNavigationRuntimeScore(w,index){
+  const dx=Math.abs(index%w.grid.cols-w.goalX),dy=Math.abs(Math.floor(index/w.grid.cols)-w.goalY);
+  return w.cost[index]+Math.max(dx,dy)+(Math.SQRT2-1)*Math.min(dx,dy);
+}
+function occultNavigationRuntimeHeapPush(w,index){
+  let i=w.heapPosition[index];
+  if(i<0){i=w.heapCount++;w.heapPosition[index]=i;}
+  const score=occultNavigationRuntimeScore(w,index);
+  while(i){const p=(i-1)>>1,parent=w.heap[p];if(occultNavigationRuntimeScore(w,parent)<=score)break;
+    w.heap[i]=parent;w.heapPosition[parent]=i;i=p;}
+  w.heap[i]=index;w.heapPosition[index]=i;
+}
+function occultNavigationRuntimeHeapPop(w){
+  const first=w.heap[0],last=w.heap[--w.heapCount];w.heapPosition[first]=-1;
+  if(w.heapCount){let i=0;const score=occultNavigationRuntimeScore(w,last);
+    while(i*2+1<w.heapCount){let c=i*2+1;
+      if(c+1<w.heapCount&&occultNavigationRuntimeScore(w,w.heap[c+1])<occultNavigationRuntimeScore(w,w.heap[c]))c++;
+      const child=w.heap[c];if(occultNavigationRuntimeScore(w,child)>=score)break;
+      w.heap[i]=child;w.heapPosition[child]=i;i=c;}
+    w.heap[i]=last;w.heapPosition[last]=i;}
+  return first;
+}
+function occultNavigationRuntimeWorkspace(grid){
+  let w=occultNavigationRuntime.work;
+  if(w&&w.grid===grid)return w;
+  const n=grid.n;
+  w={grid,serial:0,token:0,heapCount:0,heap:new Int32Array(n),heapPosition:new Int32Array(n),
+    visited:new Uint32Array(n),closed:new Uint32Array(n),cost:new Float64Array(n),parent:new Int32Array(n),raw:new Int32Array(n)};
+  occultNavigationRuntime.work=w;occultNavigationRuntime.stats.workspaceAllocations++;
+  return w;
+}
+function occultNavigationRuntimeFinish(job,w,found){
+  const run=occultNavigationRuntime,nav=job.nav;run.active=null;
+  if(!occultNavigationRuntimeValid(job))return;
+  job.status=found?'DONE':'FAILED';nav.pending=null;
+  if(!found){run.stats.failed++;nav.repathMs=150;return;}
+  // An actor may have kept following its previous route while this job ran.
+  // A substantially changed start needs a fresh route instead of a snap back.
+  if(Math.hypot(job.actor.x-job.x,job.actor.y-job.y)>90){nav.repathMs=0;return;}
+  const g=w.grid;let rawCount=0;
+  for(let node=job.goal;node>=0&&rawCount<g.n;node=w.parent[node]){
+    w.raw[rawCount++]=node;if(node===job.start)break;
+  }
+  const path=nav.path,pool=nav.pointPool||(nav.pointPool=[]);path.length=0;
+  let x=job.x,y=job.y,index=0;
+  while(index<=rawCount){let next=index;
+    for(let k=Math.min(rawCount,index+14);k>index;k--){
+      const node=k===rawCount?-1:w.raw[rawCount-1-k];
+      const px=node<0?job.gx:g.x+(node%g.cols+.5)*g.cell,py=node<0?job.gy:g.y+(Math.floor(node/g.cols)+.5)*g.cell;
+      if(occultClearSegment(x,y,px,py,OCCULT_NAV.radius)){next=k;break;}
+    }
+    const node=next===rawCount?-1:w.raw[rawCount-1-next];
+    const px=node<0?job.gx:g.x+(node%g.cols+.5)*g.cell,py=node<0?job.gy:g.y+(Math.floor(node/g.cols)+.5)*g.cell;
+    let point=pool[path.length];if(!point)pool[path.length]=point={x:px,y:py};else{point.x=px;point.y=py;}
+    path.push(point);x=px;y=py;index=next+1;
+  }
+  nav.index=0;nav.gx=job.gx;nav.gy=job.gy;nav.revision=job.revision;
+  nav.repathMs=650+Math.abs(Math.round(job.actor.x+job.actor.y))%260;
+  run.stats.completed++;
+}
+function occultNavigationRuntimeBegin(job){
+  const run=occultNavigationRuntime,g=occultNavigationGrid(),w=occultNavigationRuntimeWorkspace(g);
+  job.x=job.actor.x;job.y=job.actor.y;
+  job.start=occultNavigationNearestNode(g,job.x,job.y);job.goal=occultNavigationNearestNode(g,job.gx,job.gy);
+  if(job.start<0||job.goal<0){occultNavigationRuntimeFinish(job,w,false);return false;}
+  w.token=++w.serial;
+  if(w.token>=0xffffffff){w.visited.fill(0);w.closed.fill(0);w.serial=w.token=1;}
+  w.heapCount=0;w.goalX=job.goal%g.cols;w.goalY=Math.floor(job.goal/g.cols);
+  w.visited[job.start]=w.token;w.cost[job.start]=0;w.parent[job.start]=-1;w.heapPosition[job.start]=-1;
+  occultNavigationRuntimeHeapPush(w,job.start);job.expanded=0;job.status='ACTIVE';run.active=job;
+  occultNavigation.stats.searches++;return true;
+}
+function occultNavigationRuntimePump(){
+  if(!occultActive())return;
+  const run=occultNavigationRuntime;
+  if(run.frame!==frameCount){run.frame=frameCount;run.expanded=run.started=0;}
+  while(run.expanded<OCCULT_NAV.expansionsPerFrame){
+    let job=run.active;
+    if(job&&!occultNavigationRuntimeValid(job)){job.status='CANCELLED';run.active=job=null;}
+    if(!job){
+      if(run.started>=OCCULT_NAV.searchesPerFrame)break;
+      while(run.head<run.queue.length&&!occultNavigationRuntimeValid(run.queue[run.head]))run.head++;
+      if(run.head>=run.queue.length){run.queue.length=0;run.head=0;break;}
+      job=run.queue[run.head++];run.started++;
+      if(!occultNavigationRuntimeBegin(job))continue;
+    }
+    const w=run.work,g=w.grid,token=w.token;
+    if(g!==occultNavigation.grid){job.status='CANCELLED';job.nav.pending=null;job.nav.repathMs=0;run.active=null;continue;}
+    if(!w.heapCount||job.expanded>=OCCULT_NAV.maxExpanded){occultNavigationRuntimeFinish(job,w,false);continue;}
+    const current=occultNavigationRuntimeHeapPop(w);w.closed[current]=token;
+    job.expanded++;run.expanded++;run.stats.expanded++;occultNavigation.stats.expanded++;
+    run.stats.maxFrameExpanded=Math.max(run.stats.maxFrameExpanded,run.expanded);
+    occultNavigation.stats.maxExpanded=Math.max(occultNavigation.stats.maxExpanded,job.expanded);
+    if(current===job.goal){occultNavigationRuntimeFinish(job,w,true);continue;}
+    const cx=current%g.cols,cy=Math.floor(current/g.cols);
+    for(let direction=0;direction<8;direction++){
+      const dir=OCCULT_NAV_DIRS[direction],nx=cx+dir[0],ny=cy+dir[1];
+      if(nx<0||nx>=g.cols||ny<0||ny>=g.rows)continue;
+      const next=ny*g.cols+nx;if(w.closed[next]===token||!occultNavigationNodeClear(g,next))continue;
+      if(direction>=4&&(!occultNavigationNodeClear(g,cy*g.cols+nx)||!occultNavigationNodeClear(g,ny*g.cols+cx)))continue;
+      if(!occultNavigationLink(g,current,next,direction))continue;
+      const cost=w.cost[current]+(direction<4?1:Math.SQRT2);
+      if(w.visited[next]!==token||cost<w.cost[next]){
+        if(w.visited[next]!==token){w.visited[next]=token;w.heapPosition[next]=-1;}
+        w.cost[next]=cost;w.parent[next]=current;occultNavigationRuntimeHeapPush(w,next);
+      }
+    }
+  }
+  if(run.head>64&&run.head*2>run.queue.length){run.queue.splice(0,run.head);run.head=0;}
+}
+function occultNavigationRuntimeRequest(e,nav,gx,gy){
+  const run=occultNavigationRuntime,old=nav.pending;
+  if(old&&occultNavigationRuntimeValid(old)&&Math.hypot(old.gx-gx,old.gy-gy)<=90)return;
+  if(old)old.status='CANCELLED';nav.pending=null;
+  if(run.queue.length-run.head>=OCCULT.maxActors){
+    let write=0;for(let i=run.head;i<run.queue.length;i++)if(occultNavigationRuntimeValid(run.queue[i]))run.queue[write++]=run.queue[i];
+    run.queue.length=write;run.head=0;
+  }
+  if(run.queue.length-run.head>=OCCULT.maxActors){nav.repathMs=50;return;}
+  const job={actor:e,nav,gx,gy,revision:occultNavigation.revision,status:'QUEUED'};
+  nav.pending=job;run.queue.push(job);run.stats.maxQueued=Math.max(run.stats.maxQueued,run.queue.length-run.head);
+}
+// A shorter collinear segment inside an unchanged, already-cleared corridor
+// needs no new long ray. Actor pushes, a changed goal or loose moving fixtures
+// revoke the proof immediately; native movement collision still runs per step.
+function occultNavigationCorridorClear(e,nav,gx,gy){
+  const cache=nav.corridor,staticGeometry=occultGeometryStatic();
+  if(staticGeometry&&cache&&cache.valid&&cache.revision===occultNavigation.revision&&
+     cache.buildings===buildings&&cache.count===buildings.length&&cache.gx===gx&&cache.gy===gy){
+    const x=e.x-cache.x,y=e.y-cache.y,dot=x*cache.dx+y*cache.dy,cross=x*cache.dy-y*cache.dx;
+    if(dot>=0&&dot<=cache.length2&&cross*cross<=cache.length2*1e-12){
+      occultNavigation.stats.directCacheHits++;return true;
+    }
+  }
+  occultNavigation.stats.directQueries++;
+  const clear=occultClearSegment(e.x,e.y,gx,gy,OCCULT_NAV.radius);
+  if(clear&&staticGeometry){
+    const out=cache||(nav.corridor={});out.x=e.x;out.y=e.y;out.gx=gx;out.gy=gy;
+    out.dx=gx-e.x;out.dy=gy-e.y;out.length2=out.dx*out.dx+out.dy*out.dy;
+    out.revision=occultNavigation.revision;out.buildings=buildings;out.count=buildings.length;out.valid=true;
+  }else if(cache)cache.valid=false;
+  return clear;
+}
 function occultNavigate(e,gx,gy,speed,dt){
-  const nav=e._occultNav||(e._occultNav={path:[],index:0,repathMs:0,revision:0,blockedMs:0});
+  if(!occultActive()){e.isMoving=false;return false;}
+  const nav=e._occultNav||(e._occultNav={path:[],index:0,repathMs:0,revision:0,blockedMs:0,pending:null});
   nav.repathMs=Math.max(0,nav.repathMs-dt);
+  occultNavigationRuntimePump();
   if(![gx,gy,speed,dt].every(Number.isFinite)||Math.hypot(gx-e.x,gy-e.y)<8){e.isMoving=false;return false;}
   let point=null;
-  if(occultClearSegment(e.x,e.y,gx,gy,OCCULT_NAV.radius)){nav.path=[];nav.index=0;point={x:gx,y:gy};}
-  else{
+  if(occultNavigationCorridorClear(e,nav,gx,gy)){
+    if(nav.pending){nav.pending.status='CANCELLED';nav.pending=null;}
+    nav.path.length=0;nav.index=0;point=nav.directPoint||(nav.directPoint={x:gx,y:gy});point.x=gx;point.y=gy;
+  }else{
     const changed=nav.revision!==occultNavigation.revision||!Number.isFinite(nav.gx)||Math.hypot(nav.gx-gx,nav.gy-gy)>90;
     if(changed||nav.repathMs<=0){
-      const path=occultFindPath(e.x,e.y,gx,gy);
-      if(path){nav.path=path;nav.index=0;nav.gx=gx;nav.gy=gy;nav.revision=occultNavigation.revision;nav.repathMs=650+Math.abs(Math.round(e.x+e.y))%260;}
-      else{nav.repathMs=150;nav.gx=gx;nav.gy=gy;nav.revision=occultNavigation.revision;if(changed)nav.path=[];}
+      if(changed){nav.path.length=0;nav.index=0;}
+      occultNavigationRuntimeRequest(e,nav,gx,gy);nav.gx=gx;nav.gy=gy;nav.revision=occultNavigation.revision;
+      nav.repathMs=150;occultNavigationRuntimePump();
     }
     while(nav.index<nav.path.length&&Math.hypot(nav.path[nav.index].x-e.x,nav.path[nav.index].y-e.y)<15)nav.index++;
     point=nav.path[nav.index]||null;
@@ -18933,7 +19206,7 @@ function occultNavigate(e,gx,gy,speed,dt){
   const beforeX=e.x,beforeY=e.y,moved=occultMove(e,Math.atan2(point.y-e.y,point.x-e.x),speed,dt);
   const travel=Math.hypot(e.x-beforeX,e.y-beforeY);
   nav.blockedMs=travel<speed*dt/1000*.2?nav.blockedMs+dt:0;
-  if(nav.blockedMs>280){nav.repathMs=0;nav.path=[];nav.blockedMs=0;}
+  if(nav.blockedMs>280){nav.repathMs=0;nav.path.length=0;nav.blockedMs=0;}
   return moved;
 }
 function occultSenseTarget(e,dt){
@@ -18965,19 +19238,22 @@ function occultTacticalPointClear(x,y){
   return room?undergroundRoomAccessible(room.id):UNDERGROUND_GATES.every(g=>y>=g.y||undergroundGateAmount(g.id)>=1);
 }
 function occultTacticalGoal(e,sense,dt){
-  const tactics=e._occultTactics||(e._occultTactics={goal:null,goalMs:0,hidden:false});
+  const tactics=e._occultTactics||(e._occultTactics={goal:null,goalMs:0,hidden:false,candidates:[],candidatePool:[]});
   tactics.goalMs-=dt;
   const kind=e.occult.kind,minimum=kind==='BLACK'?550:kind==='RED'?330:300,preferred=OCCULT_TYPES[kind].range;
   const distance=Math.hypot(e.x-sense.x,e.y-sense.y);
-  if(tactics.goal&&tactics.goalMs>0&&occultTacticalPointClear(tactics.goal.x,tactics.goal.y)&&
+  if(tactics.goal&&tactics.goalMs>0&&tactics.revision===occultNavigation.revision&&tactics.buildings===buildings&&tactics.buildingCount===buildings.length&&
+     (occultGeometryStatic()||occultTacticalPointClear(tactics.goal.x,tactics.goal.y))&&
      !(distance<minimum*.75&&Math.hypot(tactics.goal.x-sense.x,tactics.goal.y-sense.y)<minimum))return tactics.goal;
-  const candidates=[],base=Math.atan2(e.y-sense.y,e.x-sense.x),phase=(Math.round(e.x+e.y)&1)?1:-1;
+  const candidates=tactics.candidates,pool=tactics.candidatePool;let candidateCount=0;
+  const base=Math.atan2(e.y-sense.y,e.x-sense.x),phase=(Math.round(e.x+e.y)&1)?1:-1;
   const offer=(x,y)=>{
     if(!occultTacticalPointClear(x,y))return;
     const d=Math.hypot(x-sense.x,y-sense.y),travel=Math.hypot(x-e.x,y-e.y);
     if(travel>1200)return;
     const score=Math.abs(d-preferred)*.8+Math.max(0,minimum-d)*4+travel*.19;
-    candidates.push({x,y,score,d,hidden:false});
+    let point=pool[candidateCount];if(!point)pool[candidateCount]=point={x:0,y:0,score:0,d:0,hidden:false};
+    point.x=x;point.y=y;point.score=score;point.d=d;point.hidden=false;candidates[candidateCount++]=point;
   };
   if(kind==='BLACK'){
     offer(e.x,e.y);
@@ -18996,14 +19272,15 @@ function occultTacticalGoal(e,sense,dt){
   // Local retreat alternatives keep a caster moving when its ideal ring is
   // outside the current room or a distant door has not been opened.
   for(const r of [130,260,400])for(const offset of [0,.55,-.55,1.15,-1.15])offer(e.x+Math.cos(base+offset)*r,e.y+Math.sin(base+offset)*r);
-  candidates.sort((a,b)=>a.score-b.score);
+  candidates.length=candidateCount;candidates.sort((a,b)=>a.score-b.score);
   let best=null,bestScore=Infinity;
-  for(const p of candidates.slice(0,kind==='BLACK'?38:18)){
+  for(let i=0,limit=Math.min(candidateCount,kind==='BLACK'?38:18);i<limit;i++){const p=candidates[i];
     const visible=occultClearSegment(sense.x,sense.y,p.x,p.y,1);p.hidden=!visible;
     const score=p.score+(kind==='BLACK'?(visible?750:-650):(visible?0:220));
     if(score<bestScore){best=p;bestScore=score;}
   }
-  tactics.goal=best?{x:best.x,y:best.y}:null;tactics.hidden=!!(best&&best.hidden);
+  if(best){if(!tactics.goal)tactics.goal={x:best.x,y:best.y};else{tactics.goal.x=best.x;tactics.goal.y=best.y;}}else tactics.goal=null;
+  tactics.hidden=!!(best&&best.hidden);tactics.revision=occultNavigation.revision;tactics.buildings=buildings;tactics.buildingCount=buildings.length;
   tactics.goalMs=950+Math.abs(Math.round(e.x))%300;return tactics.goal;
 }
 
@@ -19050,22 +19327,21 @@ function occultFireProjectile(e,kind,angle,extra={}) {
 function occultTraceSpell(x0,y0,x1,y1,r=0) {
   const dx=x1-x0,dy=y1-y0,distance=Math.hypot(dx,dy);
   let fraction=1,hit=false;
-  for(const b of buildings) {
-    if(b.occultDecor||b.isUndergroundDecor||b.isDeck||!Number.isFinite(b.w)||!Number.isFinite(b.h))continue;
-    let lo=0,hi=1,intersects=true;
-    for(const [start,delta,min,max]of[[x0,dx,b.x-b.w/2-r,b.x+b.w/2+r],[y0,dy,b.y-b.h/2-r,b.y+b.h/2+r]]) {
-      if(Math.abs(delta)<1e-9){if(start<min||start>max){intersects=false;break;}}
-      else{const a=(min-start)/delta,c=(max-start)/delta;lo=Math.max(lo,Math.min(a,c));hi=Math.min(hi,Math.max(a,c));if(lo>hi){intersects=false;break;}}
-    }
-    if(intersects&&lo<=fraction){fraction=lo;hit=true;}
+  const near=occultGeometryCandidates(Math.min(x0,x1)-r,Math.min(y0,y1)-r,Math.max(x0,x1)+r,Math.max(y0,y1)+r);
+  for(let i=0;i<near.length;i++){
+    const entry=occultGeometryEntryFraction(near[i],x0,y0,dx,dy,r);
+    if(entry<=fraction){fraction=entry;hit=true;}
   }
-  const steps=Math.max(1,Math.ceil(distance*fraction/6));
-  for(let i=0;i<=steps;i++) {
-    const t=fraction*i/steps;
-    if(undergroundPointWalkable(x0+dx*t,y0+dy*t,r))continue;
-    let lo=i?fraction*(i-1)/steps:0,hi=t;
-    for(let k=0;k<10;k++){const mid=(lo+hi)/2;if(undergroundPointWalkable(x0+dx*mid,y0+dy*mid,r))lo=mid;else hi=mid;}
-    fraction=lo;hit=true;break;
+  const tx=x0+dx*fraction,ty=y0+dy*fraction;
+  if(!occultFloorSegmentFast(x0,y0,tx,ty,r)){
+    const steps=Math.max(1,Math.ceil(distance*fraction/6));
+    for(let i=0;i<=steps;i++) {
+      const t=fraction*i/steps;occultGeometry.stats.floorSamples++;
+      if(occultFloorPointClear(x0+dx*t,y0+dy*t,r))continue;
+      let lo=i?fraction*(i-1)/steps:0,hi=t;
+      for(let k=0;k<10;k++){const mid=(lo+hi)/2;occultGeometry.stats.floorSamples++;if(occultFloorPointClear(x0+dx*mid,y0+dy*mid,r))lo=mid;else hi=mid;}
+      fraction=lo;hit=true;break;
+    }
   }
   const safe=hit?Math.max(0,fraction-.05/Math.max(1,distance)):fraction;
   return {x:x0+dx*safe,y:y0+dy*safe,fraction:safe,hit};
@@ -39264,13 +39540,47 @@ function figurePainter() {
   if (!_figurePainter || _figurePainter.renderer !== renderer) {
     const numeric = new Map(), objects = new WeakMap();
     const context = renderer.drawingContext;
-    const nativeShapes=p5.VERSION==='1.11.11';
+    const nativeShapes=p5.VERSION==='1.11.11'||p5.VERSION==='1.11.10';
     const ellipseArgs=[0,0,0,0],rectArgs=[0,0,0,0,undefined,undefined,undefined,undefined];
     // p5 1.9.x uses arcTo for rounded rectangles and does not close ellipse
     // paths. Unknown versions keep their own renderer primitives; only the
-    // pixel-tested 1.11.11 paths are duplicated below.
+    // pixel-tested 1.11.10/1.11.11 paths are duplicated below.
+    // In the two verified p5 versions, RGB CSS uses rounded 8-bit colour
+    // levels but keeps the normalized alpha. Cache those final levels instead
+    // of each floating point shade tuple, without constructing a Color and
+    // its temporary arrays for every limb. Other modes/inputs keep p5 parsing.
+    function rgbPaintString(args) {
+      if(!nativeShapes||inst._colorMode!==RGB)return null;
+      const input=Array.isArray(args[0])?args[0]:args,n=input.length;
+      if(n<1)return null;
+      const maxes=inst._colorMaxes[RGB];
+      if(!(maxes[0]>0&&maxes[1]>0&&maxes[2]>0&&maxes[3]>0)||
+         !Number.isFinite(maxes[0])||!Number.isFinite(maxes[1])||!Number.isFinite(maxes[2])||!Number.isFinite(maxes[3]))return null;
+      let r=input[0],g,b,a;
+      if(!Number.isFinite(r))return null;
+      if(n>=3){
+        g=input[1];b=input[2];
+        if(!Number.isFinite(g)||!Number.isFinite(b))return null;
+        r/=maxes[0];g/=maxes[1];b/=maxes[2];a=typeof input[3]==='number'?input[3]/maxes[3]:1;
+      }else{
+        r/=maxes[2];g=b=r;a=typeof input[1]==='number'?input[1]/maxes[3]:1;
+      }
+      if(!Number.isFinite(a))return null;
+      r=Math.round(255*(r<0?0:r>1?1:r));
+      g=Math.round(255*(g<0?0:g>1?1:g));
+      b=Math.round(255*(b<0?0:b>1?1:b));a=a<0?0:a>1?1:a;
+      const rgb=r*65536+g*256+b,key=a===1?rgb:rgb+'|'+a;
+      let css=numeric.get(key);
+      if(css===undefined){
+        css='rgba('+r+','+g+','+b+','+a+')';
+        if(numeric.size>=1024)numeric.delete(numeric.keys().next().value);
+        numeric.set(key,css);
+      }
+      return css;
+    }
     function paintString(args) {
-      const r=args[0];let css;
+      const r=args[0];let css=rgbPaintString(args);
+      if(css!==null)return css;
       if(args.length===1 && r instanceof p5.Color) {
         const level=r.levels,alpha=r._array[3];let cached=objects.get(r);
         if(!cached || cached.r!==level[0] || cached.g!==level[1] || cached.b!==level[2] || cached.a!==alpha) {
@@ -39386,7 +39696,7 @@ function figureCelLight(g) {
 function figureCelContext(g) {
   const inst=typeof p5!=='undefined'?p5.instance:null;
   const r=g._renderer||(inst&&inst._renderer),dc=g.drawingContext;
-  return r&&typeof p5!=='undefined'&&p5.VERSION==='1.11.11'&&!r.isP3D&&!r._clipping&&dc&&typeof dc.getTransform==='function'&&
+  return r&&typeof p5!=='undefined'&&(p5.VERSION==='1.11.11'||p5.VERSION==='1.11.10')&&!r.isP3D&&!r._clipping&&dc&&typeof dc.getTransform==='function'&&
     !(inst&&inst._accessibleOutputs&&(inst._accessibleOutputs.grid||inst._accessibleOutputs.text))?dc:null;
 }
 function figureCelPathStart(g,dc,x,y) {
@@ -46861,6 +47171,12 @@ float marchSun(vec2 uv, float h0) {
 }
 
 void main() {
+  // Uniform across the draw: a buried room has no directional contribution.
+  // Keep its exact ambient output without twenty shadow samples per pixel.
+  if (uSunPow == 0.0 && uSpec == 0.0) {
+    oCol = vec4(uAmbCol, 1.0);
+    return;
+  }
   vec4 hgt = texture(uHgt, vUV);
   vec3 N = texture(uNrm, vUV).xyz * 2.0 - 1.0;
   float h0 = hgt.r * uHeightMax;

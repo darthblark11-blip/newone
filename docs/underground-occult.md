@@ -109,9 +109,17 @@ Black magicians favor actual occluding cover, remember the nearby threat, and
 continue summoning without needing a direct view of the player.
 
 Casters and zombies share a cached 40-unit A* grid with diagonal clearance,
-smoothed waypoints, crowd separation and a bounded search budget. Door changes
+smoothed waypoints, crowd separation and a bounded search budget. Runtime
+searches resume across frames under one shared node-expansion budget instead
+of allowing several complete searches to stall a frame. Door changes
 invalidate geometry caches. Paths and live target references are rebuilt after
 loading; saved encounter state retains the last observed threat position.
+
+Solid queries use a separate spatial index. Interior floor queries avoid
+repeated footprint sampling; room seams and boundary contacts retain their
+original collision rules. Native movement still checks collision on each step.
+See [Dungeon performance](dungeon-performance.md) for measurements and parity
+checks.
 
 Fire preparation, flying fireballs and the advancing fissure carry animated
 flames, ember trails and temporary warm scene lights. Electrical charges,
