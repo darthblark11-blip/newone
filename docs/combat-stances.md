@@ -42,16 +42,16 @@ A direct dive therefore passes through crouched vulnerability before reaching
 prone. Requesting a stance never grants immediate immunity. Another transition
 must wait for completion and a 180 ms recovery window. Pausing freezes progress.
 
-Standing walking, jogging and running retain the original movement-facing
-animation for ordinary travel, aimed forward travel and lateral strafing. Only
-movement in the rear half-circle relative to the weapon aim uses backward
-steps. Straight backward movement keeps the hips facing with the torso; rear
-diagonals allow a small waist turn. The transition meets the existing lateral
-pose continuously. Hip roots stay attached while the knees bend and the boots
-alternate between planting and returning along the actual movement direction.
-Leg proportions, tapered jeans, dark footwear, speed and cadence are unchanged.
-Leg wounds and the chemist coat use the same rear pose. Crouch, prone, boxing,
-melee/support actions, digging and riding retain their separate animations.
+Standing and crouching share the same hip-direction solver. The pelvis follows
+travel through forward/sideways directions; travel beyond 112.5° from the torso
+uses the opposite hip heading and a backward stride. Turns ease over 230 ms
+with a 0.0032 rad/ms limit. The final hip heading stays within 97.2° of the torso,
+including when stopped, releasing the aim stick or changing aim at rest.
+Stopping retains the planted hip heading while the step motion settles.
+Standing keeps its original leg surfaces, dark footwear, speed and full stride
+clock; crouch keeps its separate folded legs and 46% clock. Rear standing steps
+use the shared backward blend. Leg wounds and the chemist coat follow the same
+standing hip frame. Prone, boxing, melee, digging and riding keep their own poses.
 
 Standing weapon-aim turns accelerate and brake through the shortest angular arc,
 instead of snapping to a new stick or mouse heading. The barrel, shots, laser
@@ -175,11 +175,11 @@ roll geometry.
 passes, visible supine engines, and reachable rear-facing sidearm arms.
 `tools/check-standing-aim-turn.js` covers turn acceleration, braking, angular
 seams, input release, shot/light alignment and bow gesture quality.
-`tools/check-standing-backsteps.js` checks rear-half selection, continuous lateral
-boundaries, separate foot tracks, leg wound attachment and dedicated action exceptions.
-`tools/check-standing-movement-parity.js` compares original forward, sideways and
-unaimed movement pixels against an explicit baseline, and can render a rear-step
-review clip plus an input sweep across the full movement circle.
+`tools/check-standing-backsteps.js` compares standing/crouch hip direction through
+movement, stopping, aim release and aim turns, including the visible standing
+hip transform, native standing cadence, leg wounds and dedicated action exceptions.
+`tools/check-standing-movement-parity.js` verifies native standing hip transforms
+against the crouch reference and can render a comparison clip and direction sweeps.
 `tools/check-player-footwear.js` checks the restored dark footwear across ordinary
 and aimed movement, low stances, suits, utility actions and corpses.
 `tools/check-stance-anatomy.js` checks bent joints, proportions, crawl support,

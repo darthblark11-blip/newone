@@ -1,5 +1,5 @@
 // Regression checks for the original standing legs: aim/fire must not replace
-// their geometry, material or cadence. Only the aimed rear half uses backsteps.
+// their geometry, material or cadence. Hip direction shares the crouch solver.
 const assert=require('node:assert/strict');
 const {ctx,probe}=require('./harness');
 const P=s=>probe('('+s+')');
@@ -50,7 +50,7 @@ try{
    const rear=P('standingRearPose(player)');
    if(!rear)allGeometry&&=legs.length===2&&legs.every(l=>l.geometry.every((v,i)=>near(v,expected[i])));
    else rearPoses++;
-   const expectedHeading=rear?rear.angle:move;
+   const expectedHeading=P('standingLowerPose(player).angle');
    allHeading&&=legs.every(l=>Math.abs(Math.atan2(Math.sin(l.angle-expectedHeading),Math.cos(l.angle-expectedHeading)))<1e-8);
    allShoes&&=shoes.length===2&&shoes.every(s=>near(s.geometry[2],rig.foot)&&near(s.geometry[3],rig.shinW*.8));
    if(!rear)allShoes&&=shoes.every(s=>near(s.geometry[0],th*.92+sh+rig.foot*.34)&&near(s.geometry[1],0));
@@ -58,8 +58,8 @@ try{
    if(reference===null)reference=signature;else if(!rear)aimDoesNotAlter&&=signature===reference;
   }
  }
- ok('ordinary, forward and lateral travel retain the original legs at every gait and phase',allGeometry);
- ok('only rear aimed travel uses backsteps; forward and side legs keep their original headings',allHeading&&rearPoses===144);
+ ok('forward and lateral travel retain original leg surfaces at every gait and phase',allGeometry);
+ ok('standing surfaces follow the shared crouch hip frame for carry, aim and fire',allHeading&&rearPoses===216);
  ok('standing footwear retains original dark material and compact foot geometry',allShoes);
  ok('aim and firing preserve original forward and lateral leg and footwear geometry',aimDoesNotAlter);
  ok('the standing painter balances its stack throughout every pose',depth===0&&min===0&&stack.length===0);
@@ -73,12 +73,12 @@ for(const aimed of [false,true])for(const throttle of [.2,.5,1]){
  ok((aimed?'aimed':'ordinary')+' movement retains full original cadence at throttle '+throttle,
   near(P('player.walkCycle')-2,P('gaitPose(player.gait).cadence')));
 }
-probe('leftStick.active=false;rightStick.active=false;player.aimHold=0;player.muzzleFlash=0;player.gait=.7;player.walkCycle=.8;player.moveAngle=Math.PI*.75;');
+probe('leftStick.active=false;rightStick.active=false;player.aimHold=0;player.muzzleFlash=0;player.gait=.7;player.walkCycle=.8;player.moveAngle=player.aimAngle=Math.PI*.75;player._standingMotion=null;');
 const gp=P('({...gaitPose(player.gait)})'),swing=Math.sin(.8)*12*gp.swing;
 const sx=-10-swing*-1+rig.thighW*.5,kx=sx+th*.92,ax=kx+sh;
 const x=kx+(ax-kx)*.8,y=-6,move=Math.PI*.75;
 probe(`window.restoredLegWound={sz:2};mapLegHitDecal(player,player.x+${Math.cos(move)*x-Math.sin(move)*y},player.y+${Math.sin(move)*x+Math.cos(move)*y},restoredLegWound);`);
-ok('leg wounds map onto the original travel-facing shin',P('restoredLegWound.legIndex===0&&Math.abs(restoredLegWound.legU-.8)<1e-6'));
-ok('the removed standing hip, backstep and skip state cannot affect later updates',
+ok('leg wounds map onto the original shin in the shared hip frame',P('restoredLegWound.legIndex===0&&Math.abs(restoredLegWound.legU-.8)<1e-6'));
+ok('the superseded standing hip and lateral skip implementations remain removed',
  P("typeof playerFootworkPose==='undefined'&&typeof updateDirectionalFootwork==='undefined'&&typeof standingFootworkLeg==='undefined'&&typeof standingHipHeading==='undefined'&&typeof updateStandingHip==='undefined'"));
 console.log(`${checks}/${checks} restored standing leg geometry, footwear, heading, cadence and decal checks passed`);
