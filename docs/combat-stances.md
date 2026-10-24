@@ -42,28 +42,11 @@ A direct dive therefore passes through crouched vulnerability before reaching
 prone. Requesting a stance never grants immediate immunity. Another transition
 must wait for completion and a 180 ms recovery window. Pausing freezes progress.
 
-Normal walking, jogging and running use the original standing renderer,
-cadence and movement-facing response. The directional override applies only
-while the player aims or fires a weapon, including its brief lowering hold.
-Aimed poses keep the original garment material, taper and six-unit hip spacing.
-Their hip roots stay beneath the shirt while knees and heels follow short ground
-paths, instead of sliding the whole trouser chain beside the head. A planted heel
-takes weight before the calf recovers beneath its knee; folded calves pass below
-the thigh without extra joint rings or a pelvis overlay. Recovering shoes shorten
-slightly in projection with a small toe turn. Travel direction settles with the
-weight transfer, and the hips ease within 90° of the upper body, allowing full
-lateral steps while preventing independent full rotations.
-During aiming, only uninterrupted direct lateral travel (within about 9° of sideways) lasting
-more than 3.3 seconds blends into a long, rhythmic side skip. Stopping, changing
-sides or moving diagonally restarts that interval. Skip contacts run at about
-0.52–0.72 cycles per second, with eased entry/exit and a direction-led following
-foot. A single-handed weapon's free arm relaxes during the skip. Walking,
-jogging and running keep their ordinary throttle bands and movement speed.
-The same lower-leg geometry places leg wounds.
-
-Player shoes use a consistent yellow material across standing, aiming, low
-stances, utility actions and fallen poses. NPC boots keep their existing
-material; charred remains keep their burned appearance.
+Standing walking, jogging and running use the original leg animation in both
+ordinary movement and weapon aim/fire. Legs follow the movement heading without
+an aim-relative hip limit, custom backstep cycle or delayed lateral skip. The
+original tapered jeans and dark, trouser-derived footwear are restored across
+poses and suits. Crouch and prone retain their separate articulated movement.
 
 Standing weapon-aim turns accelerate and brake through the shortest angular arc,
 instead of snapping to a new stick or mouse heading. The barrel, shots, laser
@@ -180,14 +163,15 @@ positions; actors rise when combat ends or the target closes in.
 
 Focused verification lives in `tools/check-stance-{hits,controls,ai,render}.js`.
 `tools/check-directional-footwork.js`, `tools/check-crouch-footwork.js` and
-`tools/check-prone-directional-aim.js` exercise directional stepping, heel/sole
-recovery, planted aiming, cannon controls and eight-direction roll geometry.
+`tools/check-prone-directional-aim.js` check restored standing leg geometry,
+crouched heel/sole recovery, planted aiming, cannon controls and eight-direction
+roll geometry.
 `tools/check-prone-pack-aim.js` checks continuous pack projection, opaque depth
 passes, visible supine engines, and reachable rear-facing sidearm arms.
 `tools/check-standing-aim-turn.js` covers turn acceleration, braking, angular
 seams, input release, shot/light alignment and bow gesture quality.
-`tools/check-player-footwear.js` checks the shared yellow shoe material across
-poses, suits and corpses while preserving NPC footwear and fade opacity.
+`tools/check-player-footwear.js` checks the restored dark footwear across ordinary
+and aimed movement, low stances, suits, utility actions and corpses.
 `tools/check-stance-anatomy.js` checks bent joints, proportions, crawl support,
 rendered arm lengths, grip attachment, neutral/aimed geometry and smooth joint motion.
 `tools/check-stance-layering.js` checks torso/head occlusion and single action

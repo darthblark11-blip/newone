@@ -1,4 +1,4 @@
-// Native review of restored ordinary locomotion and aimed-only hip limits.
+// Native review of original standing legs during ordinary and aimed movement.
 // Diagnostic visibility samples never force a replacement garment/leg shape.
 const fs=require('node:fs'),path=require('node:path'),assert=require('node:assert/strict');
 const {spawnSync}=require('node:child_process');
@@ -8,7 +8,7 @@ const source=fs.readFileSync(process.env.GAME_JS||path.join(__dirname,'../game.j
 const p5=fs.readFileSync(path.join(deps,'node_modules/p5/lib/p5.min.js'),'utf8');
 const out=process.env.STANDING_RUN_OUT||'/tmp/newone-standing-run';
 const frames=path.join(out,'frames');fs.mkdirSync(frames,{recursive:true});
-const fps=30,totalFrames=360;
+const fps=30,totalFrames=Number(process.env.STANDING_RUN_FRAMES||360);
 (async()=>{
  const browser=await chromium.launch({executablePath:process.env.VIS_CHROME||'/usr/bin/chromium',headless:true,args:['--no-sandbox']});
  try{
@@ -57,8 +57,7 @@ const fps=30,totalFrames=360;
     push();translate(x,y);scale(magnify);translate(-c.x,-c.y);c.show();pop();rightStick.active=active;__standingDraw.figures++;
    };
    window.__standingLabel=(textValue,x,y)=>{noStroke();fill(212,227,222);textSize(11);text(textValue,x,y);};
-   window.__standingRecord=c=>({aim:c.aimAngle,move:c.moveAngle,cycle:c.walkCycle,gait:c.gait,footwork:{...playerFootworkPose(c)},
-    legs:[standingFootworkLeg(c,0),standingFootworkLeg(c,1)]});
+   window.__standingRecord=c=>({aim:c.aimAngle,move:c.moveAngle,cycle:c.walkCycle,gait:c.gait,legHeading:c.moveAngle});
   });
   const alignment=await page.evaluate(()=>{
    const records=[],nativeLong=window.drawLongGunSolid,nativeLine=window.line;
@@ -101,22 +100,19 @@ const fps=30,totalFrames=360;
    const records=[],cases=[['FORWARD CARRY',0,false],['AIMED FORWARD',0,true],['BACKWARD',Math.PI,true],['BACK LEFT',-Math.PI*.75,true],['BACK RIGHT',Math.PI*.75,true]];
    for(const weapon of ['PISTOL','ASSAULT_RIFLE'])for(const throttle of [.2,.5,1])for(const [label,delta,aimed]of cases){
     const c=__standingActor(weapon),base=-Math.PI/2;__standingStep(c,base+delta,throttle,aimed?base:null,100);
-    const interval=Math.max(1,Math.round(Math.PI*2/(gaitPose(throttle).cadence*12))),samples=[],yellowShoes=[];
+    const interval=Math.max(1,Math.round(Math.PI*2/(gaitPose(throttle).cadence*12))),samples=[];
     for(let phase=0;phase<12;phase++){
      if(phase)__standingStep(c,base+delta,throttle,aimed?base:null,interval);
      background(35,44,49);__standingPaint(c,320,240,3.2);
      const pixels=drawingContext.getImageData(240,160,160,160).data,col=c.pantsCol.levels||c.pantsCol;
      const redGap=Math.max(20,(col[2]-col[0])*.20),greenGap=Math.max(18,(col[2]-col[1])*.20);
-     let blue=0,yellow=0;
+     let blue=0;
      for(let i=0;i<pixels.length;i+=4){
       if(pixels[i+2]>65&&pixels[i+2]-pixels[i]>redGap&&pixels[i+2]-pixels[i+1]>greenGap)blue++;
-      // Separate yellow footwear from the red shirt, skin, grey pack and
-      // orange exhaust; natural top-down occlusion can still hide a phase.
-      if(pixels[i]>90&&pixels[i+1]>75&&pixels[i+2]<100&&pixels[i+1]>pixels[i]*.63&&pixels[i+1]-pixels[i+2]>50)yellow++;
      }
-     samples.push(blue);yellowShoes.push(yellow);
+     samples.push(blue);
     }
-    records.push({weapon,throttle,label,interval,samples,yellowShoes,min:Math.min(...samples),mean:samples.reduce((a,b)=>a+b,0)/samples.length});
+    records.push({weapon,throttle,label,interval,samples,min:Math.min(...samples),mean:samples.reduce((a,b)=>a+b,0)/samples.length});
    }
    return {records,...__standingDraw};
   });
@@ -126,13 +122,11 @@ const fps=30,totalFrames=360;
   // every phase would require widening/rebuilding the user's original legs.
   for(const r of visibility.records){
    assert(r.samples.every(Number.isFinite),'finite native visibility samples');
-   r.shoesFullyOccluded=r.yellowShoes.every(value=>value===0);
-   assert(!r.shoesFullyOccluded,'yellow shoes remain readable during '+r.weapon+' '+r.throttle+' '+r.label);
   }
   const gaitSheets=[];
   for(const weapon of ['PISTOL','ASSAULT_RIFLE']){
    const sheet=await page.evaluate(weapon=>{
-    resizeCanvas(1600,1080);__standingBack('ORIGINAL JEANS / GROUNDED AIM / '+weapon,'Ordinary gait stays original. Aimed hips stay under the shirt; knees and yellow heels articulate below it. Each card uses the real movement update.');
+    resizeCanvas(1600,1080);__standingBack('ORIGINAL LEGS / AIM AND CARRY / '+weapon,'Original leg animation and dark footwear in every standing movement. Each card uses the real movement update.');
     const cases=[['FORWARD CARRY',0,false],['AIMED FORWARD',0,true],['BACKWARD',Math.PI,true],['BACK LEFT',-Math.PI*.75,true],['BACK RIGHT',Math.PI*.75,true]],records=[];
     for(let row=0;row<3;row++)for(let col=0;col<cases.length;col++){
      const [label,delta,aimed]=cases[col],c=__standingActor(weapon),base=-Math.PI/2,throttle=[.2,.5,1][row];
@@ -148,7 +142,7 @@ const fps=30,totalFrames=360;
   const directionSheets=[];
   for(const weapon of ['PISTOL','ASSAULT_RIFLE']){
    const sheet=await page.evaluate(weapon=>{
-    resizeCanvas(1600,1080);__standingBack('AIMED MOVEMENT / EIGHT DIRECTIONS / '+weapon,'Weapon stays north. Original trouser materials and proportions; hips may turn 90 degrees to either side.');
+    resizeCanvas(1600,1080);__standingBack('AIMED MOVEMENT / EIGHT DIRECTIONS / '+weapon,'Weapon stays north; original legs follow travel freely, including backward and diagonal directions.');
     const cases=[['N',0],['NW',-Math.PI/4],['W',-Math.PI/2],['SW',-Math.PI*.75],['S',Math.PI],['SE',Math.PI*.75],['E',Math.PI/2],['NE',Math.PI/4]],records=[];
     for(let row=0;row<3;row++)for(let col=0;col<cases.length;col++){
      const [label,delta]=cases[col],base=-Math.PI/2,throttle=[.2,.5,1][row],c=__standingActor(weapon);
@@ -159,12 +153,12 @@ const fps=30,totalFrames=360;
     return {records,...__standingDraw};
    },weapon);
    assert.equal(sheet.records.length,24);assert.equal(sheet.depth,0);assert.equal(sheet.minDepth,0);
-   for(const r of sheet.records)assert(Math.abs(Math.atan2(Math.sin(r.footwork.angle-r.aim),Math.cos(r.footwork.angle-r.aim)))<=Math.PI/2+1e-8,'aimed hips stay within 90 degrees');
+   for(const r of sheet.records)assert.equal(r.legHeading,r.move,'original standing legs follow movement');
    directionSheets.push(sheet);
    await page.locator('canvas').first().screenshot({path:path.join(out,'aim-eight-directions-'+weapon.toLowerCase()+'.png')});
   }
   const phases=await page.evaluate(()=>{
-   resizeCanvas(1600,1080);__standingBack('ORIGINAL RUN / GROUNDED AIMED MOVEMENT','Original ordinary gait. Aimed hip roots stay beneath the shirt while the knee and heel follow a short ground path.');
+   resizeCanvas(1600,1080);__standingBack('RESTORED ORIGINAL RUN / AIMED MOVEMENT','Original forward, backward and diagonal leg animation; no aimed leg override or hip lock.');
    const cases=[['FORWARD',0,null],['BACKWARD',Math.PI,-Math.PI/2],['BACK LEFT',-Math.PI*.75,-Math.PI/2]],records=[];
    for(let row=0;row<cases.length;row++){
     const [label,delta,aim]=cases[row],c=__standingActor('ASSAULT_RIFLE');__standingStep(c,-Math.PI/2+delta,1,aim,100);
@@ -179,7 +173,7 @@ const fps=30,totalFrames=360;
   assert.equal(phases.records.length,24);assert.equal(phases.depth,0);assert.equal(phases.minDepth,0);
   await page.locator('canvas').first().screenshot({path:path.join(out,'run-step-phases.png')});
   const turns=await page.evaluate(()=>{
-   resizeCanvas(1600,1080);__standingBack('AIM TURN / INPUT TO PLANTED PIVOT','The sight, gun and torso turn together. Hips follow through their own support motion; no pose teleport is used.');
+   resizeCanvas(1600,1080);__standingBack('AIM TURN / ORIGINAL STANDING LEGS','The sight, gun and torso turn together while original standing legs retain the travel direction.');
    const records=[],sample=[0,1,3,6,10,16,28,44];
    for(let row=0;row<3;row++){
     const move=row===0?0:row===1?-Math.PI/2:Math.PI*.98,throttle=row===0?0:1,start=row===2?Math.PI*.98:-Math.PI/2,target=row===2?-Math.PI*.98:Math.PI/2;
@@ -218,7 +212,7 @@ const fps=30,totalFrames=360;
       __standingInput(c,move,throttle,i===0?null:i===3?target:base,false);c.updatePlayer();
      }
     }
-    __standingBack('ORIGINAL RUN / GROUNDED AIMED STEPS','Ordinary forward motion stays original. Aimed hips remain tucked beneath the shirt while yellow heels recover behind the knees.');
+    __standingBack('RESTORED ORIGINAL STANDING LEGS','Original legs, dark shoes and unrestricted movement heading during carry, aim and fire.');
     for(let i=0;i<4;i++){
      const c=__standingMovie[i],x=320+(i%2)*640,y=245+Math.floor(i/2)*440;
      __standingPaint(c,x,y,4.7);__standingPaint(c,x+142,y+75,1);

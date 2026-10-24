@@ -1,5 +1,4 @@
-// Player shoes are one identity material across poses and death, while NPC
-// boots retain their original trousers-derived colour and every foot outline.
+// Restore trouser-derived dark footwear across player poses, suits and death.
 const assert=require('node:assert/strict');
 const {ctx,probe}=require('./harness');
 const P=s=>probe('('+s+')');
@@ -20,32 +19,23 @@ probe(`started=doTick=true;isPaused=isDead=isWin=killcamMode=false;
  player.aimAngle=player.moveAngle=0;player.aimHold=0;player.walkCycle=1.3;player.gait=.7;
  player.isMoving=true;player.meleeTimer=player.reloadTimer=player.dashTimer=player.muzzleFlash=0;
  resetActorStance(player,'STAND');`);
-const yellow=P('PLAYER_SHOE_COLOR');
-ok('the player shoe upper reads as yellow',yellow[0]>210&&yellow[1]>155&&yellow[2]<70);
-ok('repeated player shoe painting reuses the shared palette',
- P('figureFootwearColor(player,player.pantsCol)===PLAYER_SHOE_COLOR&&figureFootwearColor(player,[2,2,2])===PLAYER_SHOE_COLOR'));
-const npc=P('figureFootwearColor({isPlayer:false},[60,100,140])');
-ok('NPC footwear retains the original dark trouser material',
- npc.every((value,i)=>Math.abs(value-[33,55,77][i])<1e-8));
-ok('fading player bodies retain yellow footwear with their actual alpha',
- P('JSON.stringify(figureFootwearColor(figureIdentity(player),player.pantsCol,91))===JSON.stringify([...PLAYER_SHOE_COLOR,91])'));
-ok('burned player remains retain their charred boot material',
- P('figureFootwearColor({isPlayer:true,isCharred:true},[20,20,20]).every(v=>v===11)'));
-
+ok('the yellow shoe override and palette are removed',
+ P("typeof PLAYER_SHOE_COLOR==='undefined'&&typeof figureFootwearColor==='undefined'"));
 const original=ctx.figureCelOval;let shoes=[];
 ctx.figureCelOval=(...args)=>{
- const c=args[5]&&(args[5].levels||args[5]);
- if(c&&yellow.every((v,i)=>c[i]===v))shoes.push({w:args[3],h:args[4]});
+ const c=args[5]&&(args[5].levels||args[5]),pants=P('player.pantsCol.levels');
+ if(c&&pants.slice(0,3).every((v,i)=>Math.abs(c[i]-v*.55)<1)&&args[3]>5&&args[3]<=11)
+  shoes.push({w:args[3],h:args[4],color:c.slice(0,3)});
  return original(...args);
 };
 const draw=(label,code)=>{
  shoes=[];probe(code);
- ok(label+' paints both yellow shoes',shoes.length===2);
+ ok(label+' paints both original dark shoes',shoes.length===2);
  ok(label+' keeps the original compact shoe outline',shoes.every(s=>s.w>0&&s.w<=11&&s.h>0&&s.h<=10));
 };
 try{
  draw('ordinary standing movement','player.show();');
- draw('aimed standing movement','player.aimHold=14;rightStick.active=true;frameCount++;updateDirectionalFootwork(player,1000/60);player.show();');
+ draw('aimed standing movement','player.aimHold=14;rightStick.active=true;frameCount++;player.show();');
  for(const stance of ['CROUCH','PRONE'])
   draw(stance,`rightStick.active=false;resetActorStance(player,'${stance}');player.show();`);
  for(const suit of ['chemistSuitUnlocked','ninjaSuitUnlocked','explosiveArmorUnlocked','cowboySuitEquipped']){
@@ -59,7 +49,6 @@ try{
  for(const death of [0,7])
   draw('fallen player type '+death,`window.__shoeCorpse=new Corpse(0,0,0,0,player.shirtCol,player.pantsCol,${death},0,[],WEAPONS.PISTOL,0,player.eType,player.bodyW,player.bodyH,player);
    __shoeCorpse.fP=1;__shoeCorpse.show();`);
- shoes=[];probe('window.__shoeNpc=new Character(0,0,false,"NORMAL");__shoeNpc.show();');
- ok('ordinary NPC painting never acquires player shoe colours',shoes.length===0);
+
 }finally{ctx.figureCelOval=original;}
-console.log(`${checks}/${checks} player shoe identity, material, pose and corpse checks passed`);
+console.log(`${checks}/${checks} restored dark footwear, pose and corpse checks passed`);

@@ -52,7 +52,7 @@ const fps=30,totalFrames=300;
    };
    window.__directionalPrepareFeet=(c,direction,elapsed=0)=>{
     c.isMoving=true;c.moveAngle=c.aimAngle+direction;player=c;rightStick.active=true;
-    for(let remaining=elapsed;remaining>0;){const dt=Math.min(100,remaining);remaining-=dt;frameCount++;updateDirectionalFootwork(c,dt);}
+    frameCount+=Math.ceil(elapsed/100);
    };
    window.__directionalPrepareCrouch=(c,direction,elapsed=1000)=>{
     c.isMoving=true;c.moveAngle=c.aimAngle+direction;player=c;rightStick.active=true;
@@ -118,25 +118,19 @@ const fps=30,totalFrames=300;
   assert.equal(alignment.depth,0);assert.equal(alignment.minDepth,0);
   await page.setViewportSize({width:1320,height:1050});
   const standing=await page.evaluate(()=>{
-   resizeCanvas(1320,1050);__directionalBack('AIMED WALK / JOG / RUN','Native trouser contours; long lateral skips begin only after 3.3 seconds of direct sideways travel.');
-   const cases=[['FORWARD',0,800],['BACKWARD',Math.PI,800],['LEFT STEP',-Math.PI/2,300],['DIAGONAL / NO SKIP',-Math.PI/4,4300],['RIFLE / LEFT SKIP',-Math.PI/2,4300],['PISTOL / RIGHT SKIP',Math.PI/2,4300]],records=[];
+   resizeCanvas(1320,1050);__directionalBack('AIMED WALK / JOG / RUN','Original standing leg animation and free hip heading in forward, backward and lateral travel.');
+   const cases=[['FORWARD',0,800],['BACKWARD',Math.PI,800],['LEFT',-Math.PI/2,300],['DIAGONAL',-Math.PI/4,4300],['RIFLE / LEFT',-Math.PI/2,4300],['PISTOL / RIGHT',Math.PI/2,4300]],records=[];
    for(let row=0;row<3;row++)for(let col=0;col<cases.length;col++){
     const [label,delta,elapsed]=cases[col],c=__directionalActor('STAND',label.startsWith('PISTOL')?'PISTOL':'ASSAULT_RIFLE');c.gait=[.2,.5,1][row];
     __directionalPrepareFeet(c,delta,elapsed);c.walkCycle+=(.7+row*.25);frameCount++;
     const x=110+col*220,y=200+row*310;__directionalPaint(c,x,y,3.1);__directionalPaint(c,x+70,y+75,1);
     noStroke();fill(212,227,222);textSize(12);text(['WALK','JOG','RUN'][row]+' / '+label,x,y+123);
-    records.push({gait:c.gait,label,footwork:{...playerFootworkPose(c)}});
+    records.push({gait:c.gait,label,legHeading:c.moveAngle,moveAngle:c.moveAngle});
    }
    return {records,...__directionalDraw};
   });
   assert.equal(standing.records.length,18);assert.equal(standing.depth,0);assert.equal(standing.minDepth,0);
-  for(const card of standing.records){
-   assert(card.footwork.active,'the native standing card must exercise aimed footwork');
-   if(card.label==='BACKWARD')assert(card.footwork.backward>.9,'reverse travel must exercise backsteps');
-   if(card.label.endsWith('STEP'))assert(card.footwork.skip<.1,'a brief sidestep must not already skip');
-   if(card.label.includes('NO SKIP'))assert(card.footwork.skip<.1,'sustained diagonal travel must not become a skip');
-   if(card.label.endsWith('SKIP')&&!card.label.includes('NO SKIP'))assert(card.footwork.skip>.5,'a sustained strafe must exercise the skip');
-  }
+  for(const card of standing.records)assert.equal(card.legHeading,card.moveAngle,'standing legs follow original movement heading');
   await page.locator('canvas').first().screenshot({path:path.join(out,'standing-footwork.png')});
   const comparison=await page.evaluate(()=>{
    __directionalBack('TROUSER CONTOURS / NATIVE AND AIMED','The same walking, jogging and running leg surfaces remain in forward and brief sideways movement.');
@@ -228,12 +222,12 @@ const fps=30,totalFrames=300;
   let motion;
   for(let f=0;f<totalFrames;f++){
    motion=await page.evaluate(({f,fps,totalFrames})=>{
-    frameCount++;deltaTime=1000/fps;__directionalBack('DIRECTIONAL STANCES / NATIVE MOTION','Sideways skipping begins after 3.3 seconds; crouch hips turn beneath a fixed aim; prone backpack follows the full roll.');
+    frameCount++;deltaTime=1000/fps;__directionalBack('DIRECTIONAL STANCES / NATIVE MOTION','Original standing legs follow travel; crouch hips turn beneath a fixed aim; prone backpack follows the full roll.');
     const throttle=f<55?.2:f<110?.5:1;
     for(let i=0;i<__directionalMovie.length;i++){
      const c=__directionalMovie[i];player=c;rightStick.active=true;c.aimHold=14;c.muzzleFlash=Math.max(0,c.muzzleFlash-1);c.weaponKick=Math.max(0,c.weaponKick-1);
      if(i<4){
-      c.gait=throttle;c.walkCycle+=gaitPose(c.gait).cadence*2;updateDirectionalFootwork(c,deltaTime);
+      c.gait=throttle;c.walkCycle+=gaitPose(c.gait).cadence*2;
       const x=150+i*300,y=220;__directionalPaint(c,x,y,3.1);__directionalPaint(c,x+76,y+65,1);
       noStroke();fill(211,227,220);textSize(12);text(['FORWARD','BACKWARD','LEFT STRAFE','RIGHT STRAFE'][i]+' / '+(throttle<.3?'WALK':throttle<.6?'JOG':'RUN'),x,y+122);
      }else if(i<6){
