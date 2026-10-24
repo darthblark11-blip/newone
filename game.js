@@ -15088,6 +15088,16 @@ function drawFigureHair(g, id, hX, hY, sway = 0) {
   }
 }
 
+// Player footwear is an identity material, independent of trousers or suits.
+// Reuse the palette so painting shoes does not allocate p5.Color objects.
+const PLAYER_SHOE_COLOR=[239,190,42];
+function figureFootwearColor(id,pants,alpha=255) {
+  if(id&&id.isPlayer&&!id.isCharred)return alpha===255?PLAYER_SHOE_COLOR:
+    [PLAYER_SHOE_COLOR[0],PLAYER_SHOE_COLOR[1],PLAYER_SHOE_COLOR[2],alpha];
+  const p=pants&&pants.levels||pants||[30,30,35];
+  return alpha===255?[p[0]*.55,p[1]*.55,p[2]*.55]:[p[0]*.55,p[1]*.55,p[2]*.55,alpha];
+}
+
 // Everything a head needs to be drawn again later, frozen at the moment of
 // death. A corpse cannot read it off the character: the character is gone.
 function figureIdentity(c) {
@@ -16182,7 +16192,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a);
       const RP = ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW;
       if (RG) {
-          const bootC = color(this.pC.levels[0] * 0.55, this.pC.levels[1] * 0.55, this.pC.levels[2] * 0.55, a);
+          const bootC=figureFootwearColor(this.id,this.pC,a);
           ragLimb(r, RP.hipX, -RP.hipY, PI + RG.limbs[2].a * 0.7, -ragKnee(RG.limbs[2]) * 0.7, RP.thigh, ragShin(RP, ragKnee(RG.limbs[2]) * 0.7), RP.thighW, RP.shinW, this.pC, bootC, RP.foot, this.dec, 0);
           ragLimb(r, RP.hipX,  RP.hipY, PI - RG.limbs[3].a * 0.7,  ragKnee(RG.limbs[3]) * 0.7, RP.thigh, ragShin(RP, ragKnee(RG.limbs[3]) * 0.7), RP.thighW, RP.shinW, this.pC, bootC, RP.foot, this.dec, 1);
           // Arms trapped beneath the chest: short reach, hard fold inward.
@@ -16225,7 +16235,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       r.noStroke(); for (let d of this.dec) { if (!d.isHead&&!d.isLeg) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.fill(sK); r.ellipse(0, -5, 11, 11); r.noStroke(); for (let d of this.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.pop();
   } 
   else { 
-      r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.fall?figureFallYaw(this.fall,this.rag):this.aA); const RG = this.rag; if (RG) { if(!this.fall)r.rotate(RG.ang); r.scale(RAG_SCALE); } if (RG) ragContour(r, a); else r.noStroke(); const RP = this.fall?projectFallRig(this.bW,this.bH,f):ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW; r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -10 : -10, lY2 = this.bW === 105 ? 15 : 2; r.push(); if (RG) { const bootC = color(this.pC.levels[0] * 0.55, this.pC.levels[1] * 0.55, this.pC.levels[2] * 0.55, a); if(this.fall){drawFallLimb(r,RP,RG,2,f,this.sC,this.pC,sK,bootC,false,this.id,this.dec); drawFallLimb(r,RP,RG,3,f,this.sC,this.pC,sK,bootC,false,this.id,this.dec);}else{ragLimb(r, RP.hipX, -RP.hipY, PI + RG.limbs[2].a, -ragKnee(RG.limbs[2]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[2])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot, this.dec, 0); ragLimb(r, RP.hipX,  RP.hipY, PI - RG.limbs[3].a,  ragKnee(RG.limbs[3]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[3])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot, this.dec, 1);} } else { r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4); } if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(lX, -4, 12, 16); } r.pop(); const underArm=this.fall&&this.fall.faceDown&&this.fall.hold&&f>.45?this.fall.hold.arm:-1; if(underArm>=0){ragContour(r,a);drawFallLimb(r,RP,RG,underArm,f,this.sC,this.pC,sK,undefined,false,this.id);} if (RG) ragContour(r, a); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); if (RG) { figureCelOval(r, 0, 0, TL, TW, this.sC); } else r.ellipse(0, 0, this.bW + 15 * f, this.bH);
+      r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.fall?figureFallYaw(this.fall,this.rag):this.aA); const RG = this.rag; if (RG) { if(!this.fall)r.rotate(RG.ang); r.scale(RAG_SCALE); } if (RG) ragContour(r, a); else r.noStroke(); const RP = this.fall?projectFallRig(this.bW,this.bH,f):ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW; r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -10 : -10, lY2 = this.bW === 105 ? 15 : 2; r.push(); if (RG) { const bootC=figureFootwearColor(this.id,this.pC,a); if(this.fall){drawFallLimb(r,RP,RG,2,f,this.sC,this.pC,sK,bootC,false,this.id,this.dec); drawFallLimb(r,RP,RG,3,f,this.sC,this.pC,sK,bootC,false,this.id,this.dec);}else{ragLimb(r, RP.hipX, -RP.hipY, PI + RG.limbs[2].a, -ragKnee(RG.limbs[2]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[2])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot, this.dec, 0); ragLimb(r, RP.hipX,  RP.hipY, PI - RG.limbs[3].a,  ragKnee(RG.limbs[3]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[3])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot, this.dec, 1);} } else { r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4); } if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(lX, -4, 12, 16); } r.pop(); const underArm=this.fall&&this.fall.faceDown&&this.fall.hold&&f>.45?this.fall.hold.arm:-1; if(underArm>=0){ragContour(r,a);drawFallLimb(r,RP,RG,underArm,f,this.sC,this.pC,sK,undefined,false,this.id);} if (RG) ragContour(r, a); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); if (RG) { figureCelOval(r, 0, 0, TL, TW, this.sC); } else r.ellipse(0, 0, this.bW + 15 * f, this.bH);
       if (this.eT === "ARMORED_STANDARD") { r.fill(100); if (RG) r.rect(-TL * 0.26, -TW * 0.46, TL * 0.58, TW * 0.92, 4); else r.rect(-10, -12, 20, 24, 4); }
       if (this.eT === "FEMALE_PISTOL" && !(this.backFacing&&(!this.fall||f>.5))) { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(4, -6, 12, 10); r.ellipse(4, 6, 12, 10); }
       drawFallenAttire(r,this.id,RG?TL:this.bW+15*f,RG?TW:this.bH,this.backFacing,this.fall?f:1);
@@ -17991,7 +18001,7 @@ function boxingFeet(e,b) {
 function drawBoxingLegs(e,b,rig) {
   const feet=boxingFeet(e,b),compression=b.legCompression||0;
   const l1=rig.thigh*STAND_FORE_LEG*(1+compression*.12),l2=rig.shin*STAND_FORE_LEG*(1+compression*.12);
-  const boot=color(red(e.pantsCol)*.55,green(e.pantsCol)*.55,blue(e.pantsCol)*.55);
+  const boot=figureFootwearColor(e,e.pantsCol);
   for(let i=0;i<2;i++){
     const s=i===0?-1:1,foot=feet[i],pelvis=b.pelvis||{x:-3,y:0,angle:0};
     const c=Math.cos(pelvis.angle||0),sn=Math.sin(pelvis.angle||0);
@@ -18412,7 +18422,7 @@ function drawSaloonKnockoutFigure(e) {
     rise=e.stunTimer<32?Math.max(0,e.stunTimer/32):1,f=saloonKnockoutProgress(p)*rise,
     rig=projectFallRig(e.bodyW,e.bodyH,f),air=!p.done?k.height*rise:0,roll=k.roll*f,
     id=p.identity||figureIdentity(e),shirt=id.shirtCol||e.shirtCol,pants=id.pantsCol||e.pantsCol,
-    skin=id.skinCol||e.skinCol||color(235,180,140),boot=color(red(pants)*.55,green(pants)*.55,blue(pants)*.55),
+    skin=id.skinCol||e.skinCol||color(235,180,140),boot=figureFootwearColor(id,pants),
     bend=k.profile.fold*Math.sin(f*PI);
   rig.TL*=1-bend*.10;rig.headX-=bend*2.4;
   if(!charShadowOwned(e.eType)){charShadowFill(55-air*.8);ellipse(charShadowX(12*(1-f)),charShadowY(12*(1-f)),20+f*24+air*.25,21+f*12+air*.15);}
@@ -18455,7 +18465,7 @@ function drawStunnedFigure(e) {
   const f=stunFall(e),p=e.stunPose,rg=p&&p.rag,rig=projectFallRig(e.bodyW,e.bodyH,f);
   if (!charShadowOwned(e.eType)) {charShadowFill(55);ellipse(charShadowX(12*(1-f)),charShadowY(12*(1-f)),20+f*24,21+f*12);}
   push();rotate(p?figureFallYaw(p,rg,f):e.aimAngle);scale(RAG_SCALE);
-  const skin=e.skinCol||color(235,180,140),boot=color(red(e.pantsCol)*.55,green(e.pantsCol)*.55,blue(e.pantsCol)*.55);
+  const skin=e.skinCol||color(235,180,140),boot=figureFootwearColor(e,e.pantsCol);
   ragContour(window,255);
   if(rg){for(let i=2;i<4;i++)drawFallLimb(window,rig,rg,i,f,e.shirtCol,e.pantsCol,skin,boot,false,e);}
   figureCelOval(window,0,0,rig.TL,rig.TW,e.shirtCol);
@@ -22789,11 +22799,9 @@ if (this.isPlayer) {
           // the way down.
           const RGl = figureRig(this.bodyW, this.bodyH);
           const th = RGl.thigh * STAND_FORE_LEG, sh = RGl.shin * STAND_FORE_LEG;
-          // The boot is the trousers darkened, exactly as the corpse does it --
-          // not a near-black, which against a contour that is itself nearly
-          // black reads as a hole punched in the end of the leg.
-          const bootC = [red(this.pantsCol) * 0.55, green(this.pantsCol) * 0.55,
-                         blue(this.pantsCol) * 0.55];
+          // Shoes retain their original outline. The player wears yellow;
+          // other actors keep their existing trouser-derived boot material.
+          const bootC=figureFootwearColor(this,this.pantsCol);
           if (BIOME_ACTIVE) figureContour();
           // THE LEG HAS TO NARROW ALL THE WAY DOWN, or it is a sausage.
           //
@@ -40232,6 +40240,7 @@ function updateDirectionalFootwork(c,elapsedMs=deltaTime) {
   if(!eligible){s.active=false;s.skip=s.strafeMs=0;s.skipping=false;return;}
   if(!s.active){
     s.active=true;s.angle=c.aimAngle||0;s.hip=0;s.origin=0;s.skipPhase=0;s.motion=Number(!!c.isMoving);
+    s.travelX=c.isMoving?Math.cos(c.moveAngle||0):0;s.travelY=c.isMoving?Math.sin(c.moveAngle||0):0;
     s.backward=directionalFootworkReverse(c);
   }
   const delta=directionalFootworkDelta(c),lateral=Math.sin(delta),forward=Math.cos(delta);
@@ -40247,19 +40256,21 @@ function updateDirectionalFootwork(c,elapsedMs=deltaTime) {
   const support=1-Math.exp(-dt/180),turn=1-Math.exp(-dt/220);
   s.motion+=(Number(!!c.isMoving)-s.motion)*support;if(s.motion<.001)s.motion=0;
   s.backward+=(directionalFootworkReverse(c)-s.backward)*support;
+  s.travelX+=((c.isMoving?Math.cos(c.moveAngle||0):0)-s.travelX)*support;
+  s.travelY+=((c.isMoving?Math.sin(c.moveAngle||0):0)-s.travelY)*support;
   // World-space heading lets the sights turn without towing both hips on
   // the same frame. Large changes plant, pivot, then take the next step.
   const aim=c.aimAngle||0,target=aim+(c.isMoving?directionalFootworkHip(c)*(1-s.skip*.38):0);
   const error=Math.atan2(Math.sin(target-s.angle),Math.cos(target-s.angle));
   const contact=.72+.28*Math.sin(c.walkCycle||0)**2,step=error*turn*contact;
   s.angle+=Math.max(-dt*.0054,Math.min(dt*.0054,step));
-  const relative=Math.atan2(Math.sin(s.angle-aim),Math.cos(s.angle-aim)),limit=Math.PI*.25;
+  const relative=Math.atan2(Math.sin(s.angle-aim),Math.cos(s.angle-aim)),limit=Math.PI*.5;
   s.hip=Math.max(-limit,Math.min(limit,relative));s.angle=aim+s.hip;
 }
 function directionalFootworkHip(c) {
   const delta=directionalFootworkDelta(c),a=Math.abs(delta);
   const t=Math.max(0,Math.min(1,(a-Math.PI*.5)/(Math.PI*.25))),fold=t*t*t*(t*(t*6-15)+10);
-  return Math.max(-Math.PI*.25,Math.min(Math.PI*.25,delta-Math.sign(delta)*Math.PI*fold));
+  return Math.max(-Math.PI*.5,Math.min(Math.PI*.5,delta-Math.sign(delta)*Math.PI*fold));
 }
 function directionalFootworkReverse(c) {
   if(!c.isMoving)return 0;
@@ -40272,6 +40283,8 @@ function playerFootworkPose(c) {
   const lateral=Math.sin(delta),live=s&&s.active,angle=live?s.angle:(c.aimAngle||0)+(c.isMoving?directionalFootworkHip(c):0);
   const motion=live?s.motion:Number(!!c.isMoving);
   return {active:true,angle,delta,motion,
+    travelX:live?s.travelX:c.isMoving?Math.cos(c.moveAngle||0):0,
+    travelY:live?s.travelY:c.isMoving?Math.sin(c.moveAngle||0):0,
     backward:live?s.backward:directionalFootworkReverse(c),strafe:Math.abs(lateral),side:lateral<0?-1:1,
     skip:s&&s.active?s.skip:0,skipSide:s&&s.active?s.skipSide:0,
     skipHeading:s&&s.active&&Number.isFinite(s.skipHeading)?s.skipHeading:c.moveAngle||0,
@@ -40281,35 +40294,53 @@ function playerFootworkPose(c) {
 function standingFootworkLeg(c,index,pose=playerFootworkPose(c)) {
   if(!pose.active)return null;
   const R=figureRig(c.bodyW,c.bodyH),side=index?1:-1,gait=Math.max(0,Math.min(1,c.gait||0));
-  const motion=pose.motion===undefined?Number(!!c.isMoving):pose.motion,GP=gaitPose(gait);
-  const th=R.thigh*STAND_FORE_LEG,sh=R.shin*STAND_FORE_LEG;
-  // These are the original thigh/shin/boot stations and taper. Backpedaling
-  // reverses the step phase, never the garment or the direction of its bones.
-  const swing=Math.sin(c.walkCycle||0)*12*GP.swing*motion*(1-2*pose.backward);
+  const motion=pose.motion===undefined?Number(!!c.isMoving):pose.motion;
+  const th=R.thigh*STAND_FORE_LEG;
+  // In the aimed pose the hips stay underneath the shirt. Move the heel
+  // around that joint, rather than translating a complete trouser-shaped
+  // rod until its shoe appears in front of the shooter's head.
   const mix=pose.skip||0,lead=side===(pose.skipSide||pose.side);
+  const backPhase=(((c.walkCycle||0)/(Math.PI*2)+index*.5-.25)%1+1)%1;
+  const returning=backPhase>=.5,returnT=returning?(backPhase-.5)*2:0;
+  const recovery=Math.sin(returnT*Math.PI)**2*(1-mix)*motion;
   const skipPhase=(pose.skipPhase||0)/(Math.PI*2)+(lead?-.44:.22);
   const t=((skipPhase%1)+1)%1,planted=t<.56,u=planted?t/.56:(t-.56)/.44;
-  let step=0,lift=0;
+  const walkStep=Math.sin((c.walkCycle||0)+index*Math.PI)*(2.8+4*gait);
+  let step=walkStep*(1-mix)*motion,lift=recovery*2.2;
   if(mix>0) {
     const e=u*u*u*(u*(u*6-15)+10);
-    step=(planted?1-2*e:-1+2*e)*(6.5+6.5*gait)*mix*motion;
-    lift=(planted?0:Math.sin(u*Math.PI)**2*(1.5+gait*1.8))*mix*motion;
+    step+=(planted?1-2*e:-1+2*e)*(6.5+6.5*gait)*mix*motion;
+    lift+=(planted?0:Math.sin(u*Math.PI)**2*(1.5+gait*1.8))*mix*motion;
   }
   const skipHeading=Number.isFinite(pose.skipHeading)?pose.skipHeading:c.moveAngle||0;
-  const dx=Math.cos(skipHeading-pose.angle),dy=Math.sin(skipHeading-pose.angle);
-  const sx=-10-swing*side*(1-mix)+R.thighW*.5,sy=side*6;
-  const kx=sx+th*.92+dx*step*.38,ky=side*Math.max(3.3,side*(sy+dy*step*.38));
-  const ax=sx+th*.92+sh+dx*step,ay=side*Math.max(2.7,side*(sy+dy*step-side*lift*.18));
-  return {sx,sy,kx,ky,ax,ay,lift,step,planted,leading:lead,heading:0,
+  const ca=Math.cos(pose.angle),sa=Math.sin(pose.angle),skipTravel=skipHeading-pose.angle;
+  const vx=pose.travelX===undefined?Math.cos(c.moveAngle||0):pose.travelX;
+  const vy=pose.travelY===undefined?Math.sin(c.moveAngle||0):pose.travelY;
+  const dx=(ca*vx+sa*vy)*(1-mix)+Math.cos(skipTravel)*mix;
+  const dy=(-sa*vx+ca*vy)*(1-mix)+Math.sin(skipTravel)*mix;
+  const sx=-10+R.thighW*.5,sy=side*6,reverse=pose.backward;
+  const kx=sx+th*(.5-.55*reverse)+dx*step*.24+recovery*1.8;
+  const ky=side*Math.max(3.3,side*(sy+side*.6+dy*step*.18+side*recovery*.4));
+  const ax=sx-4.5-2.3*reverse+dx*(step-recovery);
+  const ay=side*Math.max(2.7,side*(sy+dy*step*(.55+.45*mix)+side*recovery*.3));
+  return {sx,sy,kx,ky,ax,ay,lift,step,recovery,
+    planted:motion<.001|| (mix>.5?planted:!returning),leading:lead,heading:dy*.10-side*recovery*.08,footScale:1-Math.min(1,lift/3)*.12,
     hipW:R.thighW,kneeW:R.shinW,ankleW:R.shinW*.80};
 }
 function drawStandingFootworkLegs(c,g,R,pose) {
-  const boot=[red(c.pantsCol)*.55,green(c.pantsCol)*.55,blue(c.pantsCol)*.55];
+  const boot=figureFootwearColor(c,c.pantsCol);
   for(let index=0;index<2;index++) {
     const l=standingFootworkLeg(c,index,pose);
     drawingContext.save();drawingContext.translate(l.sx,l.sy);
-    figureCelLimb(g,0,0,l.kx-l.sx,l.ky-l.sy,l.ax-l.sx,l.ay-l.sy,l.hipW,l.kneeW,l.ankleW,c.pantsCol);
-    figureCelOval(g,l.ax-l.sx+R.foot*.34,l.ay-l.sy,R.foot,l.ankleW,boot,.8);
+    const kx=l.kx-l.sx,ky=l.ky-l.sy,ax=l.ax-l.sx,ay=l.ay-l.sy;
+    if(kx*(ax-kx)+ky*(ay-ky)<0) {
+      // The recovering calf passes beneath its thigh. Layer the same cloth
+      // surfaces through a fold, without a reversing ribbon or a knee ring.
+      figureCelLimb(g,kx,ky,(kx+ax)*.5,(ky+ay)*.5,ax,ay,l.kneeW,(l.kneeW+l.ankleW)*.5,l.ankleW,c.pantsCol);
+      figureCelLimb(g,0,0,kx*.5,ky*.5,kx,ky,l.hipW,(l.hipW+l.kneeW)*.5,l.kneeW,c.pantsCol);
+    } else figureCelLimb(g,0,0,kx,ky,ax,ay,l.hipW,l.kneeW,l.ankleW,c.pantsCol);
+    push();translate(l.ax-l.sx,l.ay-l.sy);rotate(l.heading);
+    figureCelOval(g,R.foot*.34,0,R.foot*l.footScale,l.ankleW,boot,.8);pop();
     drawLegDecals(g,c.decals,index,0,0,l.kx-l.sx,l.ky-l.sy,l.ax-l.sx,l.ay-l.sy,l.hipW,l.kneeW,l.ankleW);
     drawingContext.restore();
   }
@@ -40638,7 +40669,7 @@ function shovelMantlePose(c,progress) {
 function drawShovelMantleLegs(c,pose,R) {
   const paint=figurePainter(),g=paint?paint.api:window;
   const th=R.thigh*STAND_FORE_LEG,sh=R.shin*STAND_FORE_LEG;
-  const boot=[red(c.pantsCol)*.55,green(c.pantsCol)*.55,blue(c.pantsCol)*.55];
+  const boot=figureFootwearColor(c,c.pantsCol);
   for(const side of [1,-1]) {
     const lead=side===-1,sx=-10+R.thighW*.5+pose.lean*.3,sy=side*6;
     const ex=sx+th*.92+(lead?8*pose.tuck:-3.5*pose.fold);
@@ -40676,7 +40707,7 @@ function shovelCarryPose(c,GP,rest) {
 function drawShovelDigLegs(c,pose,R) {
   const g=figurePainter(),api=g?g.api:window,blend=pose.blend;
   const th=R.thigh*STAND_FORE_LEG,sh=R.shin*STAND_FORE_LEG;
-  const boot=[red(c.pantsCol)*.55,green(c.pantsCol)*.55,blue(c.pantsCol)*.55];
+  const boot=figureFootwearColor(c,c.pantsCol);
   for(const side of [-1,1]) {
     const sx=-10+R.thighW*.5,sy=side*6;
     const ex=sx+th*.8+side*blend*3-pose.effort*1.1;
@@ -41998,7 +42029,7 @@ function drawCombatStanceFigure(c, p) {
       g.strokeWeight(R.shinW*.32);g.line((k.x+a.x)*.5,(k.y+a.y)*.5,a.x,a.y);g.noStroke();
     }
     push();translate(a.x,a.y);rotate(Math.atan2(a.y-k.y,a.x-k.x));
-    figureCelOval(g,1.5,0,R.foot,R.shinW*.82,[red(trousers)*.55,green(trousers)*.55,blue(trousers)*.55],.65);
+    figureCelOval(g,1.5,0,R.foot,R.shinW*.82,figureFootwearColor(c,trousers),.65);
     drawCrouchStepSole(g,leg.step,R.foot,R.shinW*.82,b.crouchWeight);pop();
     drawLegDecals(g,c.decals,leg.side<0?0:1,h.x,h.y,k.x,k.y,a.x,a.y,R.thighW*.92,R.shinW,R.shinW*.8);
   }

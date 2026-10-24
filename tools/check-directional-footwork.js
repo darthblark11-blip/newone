@@ -1,5 +1,5 @@
 // Ordinary locomotion retains the original renderer and cadence. Only aimed
-// travel constrains the hips, while keeping the original trouser geometry.
+// travel constrains the hips, keeping the original trouser widths/materials.
 const assert=require('node:assert/strict');
 const {ctx,probe}=require('./harness');
 const P=s=>probe('('+s+')');
@@ -26,12 +26,12 @@ ok('opposite travel uses backward steps while hips face the weapon',
  P('playerFootworkPose(player).backward>.99&&Math.abs(playerFootworkPose(player).angle-player.aimAngle)<.01'));
 probe('player.walkCycle=0;');const back=P('standingFootworkLeg(player,0)');
 probe('player.moveAngle=0;');advance(350);const forward=P('standingFootworkLeg(player,0)');
-ok('backward travel keeps the original positive thigh and shin directions',
- back.kx>back.sx&&back.ax>back.kx&&forward.kx>forward.sx&&forward.ax>forward.kx);
-ok('backward toes keep facing forward instead of turning the legs around',Math.abs(back.heading)<.01);
+ok('backward heels remain behind the planted hips instead of carrying a whole trouser rod forward',
+ back.ax<back.sx&&back.ax<back.kx&&forward.ax<forward.kx);
+ok('backward toes keep facing forward with a small recovery roll',Math.abs(back.heading)<=.12+1e-8);
 
-let honestBones=true,originalTaper=true,nativeForward=true,nativeBack=true;
-for(const [label,direction]of [['forward',0],['left',-Math.PI/2],['right',Math.PI/2],['backward',Math.PI],['back-left',Math.PI*.75],['back-right',-Math.PI*.75]]){
+let honestBones=true,originalTaper=true,tuckedHips=true,groundedFeet=true,backwardHeels=true;
+for(const [label,direction]of [['forward',0],['forward-left',-Math.PI/4],['forward-right',Math.PI/4],['left',-Math.PI/2],['right',Math.PI/2],['backward',Math.PI],['back-left',Math.PI*.75],['back-right',-Math.PI*.75]]){
  fresh(direction);advance(350);
  for(const gait of [.2,.5,1])for(let i=0;i<48;i++){
   const phase=i*Math.PI/24;
@@ -39,21 +39,23 @@ for(const [label,direction]of [['forward',0],['left',-Math.PI/2],['right',Math.P
   const body=P('({w:player.bodyW,h:player.bodyH,rig:figureRig(player.bodyW,player.bodyH),gait:{...gaitPose(player.gait)}})');
   const legs=[P('standingFootworkLeg(player,0)'),P('standingFootworkLeg(player,1)')];
   for(let j=0;j<2;j++){
-   const l=legs[j],side=j?1:-1,th=body.rig.thigh*.46,sh=body.rig.shin*.46;
+   const l=legs[j],side=j?1:-1;
    originalTaper&&=
     l.hipW===body.rig.thighW&&l.kneeW===body.rig.shinW&&l.ankleW===body.rig.shinW*.8;
-   const expected=(direction===Math.PI?1:-1)*Math.sin(phase)*12*body.gait.swing*side-10+body.rig.thighW*.5;
-   const native=Math.abs(l.sx-expected)<1e-8&&l.sy===side*6&&
-    Math.abs(l.kx-l.sx-th*.92)<1e-8&&l.ky===l.sy&&Math.abs(l.ax-l.kx-sh)<1e-8&&l.ay===l.sy;
-   if(direction===0)nativeForward&&=native;
-   if(direction===Math.PI)nativeBack&&=native;
+   tuckedHips&&=Math.abs(l.sx-(-10+body.rig.thighW*.5))<1e-8&&l.sy===side*6;
+   const hip=P('playerFootworkPose(player).angle'),shoeReach=body.rig.foot*(.34+l.footScale*.5);
+   const toeX=l.ax+Math.cos(l.heading)*shoeReach,toeY=l.ay+Math.sin(l.heading)*shoeReach;
+   const aimForward=Math.cos(hip)*toeX-Math.sin(hip)*toeY;
+   groundedFeet&&=aimForward<body.w*.45&&l.footScale>=.88&&l.footScale<=1;
+   if(direction===Math.PI)backwardHeels&&=l.ax<=l.sx+.01&&l.ax<l.kx;
   }
   honestBones&&=legs.every(l=>Math.hypot(l.kx-l.sx,l.ky-l.sy)<=body.rig.thigh&&Math.hypot(l.ax-l.kx,l.ay-l.ky)<=body.rig.shin);
  }
 }
 ok('aimed travel preserves the original thigh, knee and ankle widths',originalTaper);
-ok('aimed forward walk, jog and run preserve every original trouser station',nativeForward);
-ok('aimed backsteps reverse the step cycle without inverting or widening the trouser bones',nativeBack);
+ok('aimed hip roots stay tucked beneath the shirt through forward and backward strides',tuckedHips);
+ok('aimed shoes follow a grounded path rather than migrating in front of the head',groundedFeet);
+ok('backward steps keep the narrow heel end behind the hips and knees',backwardHeels);
 ok('forward and backward trouser segments retain the shared rig proportions',honestBones);
 
 fresh();advance(500);probe('player.walkCycle=1.8;');
@@ -98,11 +100,45 @@ for(const direction of [Math.PI*.72,Math.PI*.75,Math.PI,Math.PI*1.25,Math.PI*1.2
  for(let i=0;i<48;i++){
   probe(`player.walkCycle=${i*Math.PI/24};`);
   for(const l of P('[standingFootworkLeg(player,0),standingFootworkLeg(player,1)]'))
-   rearStable&&=l.hipW>l.kneeW&&l.kneeW>l.ankleW&&l.kx>l.sx&&l.ax>l.kx&&
-    Math.hypot(l.kx-l.sx,l.ky-l.sy)>.25&&Math.abs(l.ay)===6;
+   rearStable&&=l.hipW>l.kneeW&&l.kneeW>l.ankleW&&l.ax<l.kx&&
+    Math.hypot(l.kx-l.sx,l.ky-l.sy)>.25&&l.sy===(l.sy<0?-6:6)&&Math.abs(l.ay)>=2.7-1e-8;
  }
 }
 ok('rear diagonals preserve the original connected tapered leg style through the full gait',rearStable);
+
+fresh(Math.PI);advance(1000);probe('player.walkCycle=0;');
+const recovery=P('[standingFootworkLeg(player,0),standingFootworkLeg(player,1)]');
+ok('one backward heel recovers while the opposite foot remains planted',
+ recovery[0].recovery>.99&&recovery[0].lift>2&&recovery[1].planted&&recovery[1].recovery===0);
+ok('a recovering backstep raises the heel behind the knee while the hips remain planted',
+ recovery[0].sx===recovery[1].sx&&recovery[0].ax<recovery[0].kx&&recovery[0].kx>recovery[1].kx&&
+ recovery.every(l=>l.hipW>l.kneeW&&l.kneeW>l.ankleW));
+ok('heel recovery gives the shoe a small roll and foreshortening instead of swivelling the whole leg',
+ recovery[0].footScale>=.88&&recovery[0].footScale<1&&Math.abs(recovery[0].heading)<=.18+1e-8&&
+ recovery[1].footScale===1&&Math.abs(recovery[1].heading)<1e-8);
+let alternateSupport=true,smoothReturn=true,previousReturn=null;
+for(let i=0;i<=240;i++){
+ probe(`player.walkCycle=${i*Math.PI/120};`);
+ const legs=P('[standingFootworkLeg(player,0),standingFootworkLeg(player,1)]');
+ alternateSupport&&=legs.some(l=>l.recovery<1e-8)&&legs.every(l=>l.recovery>=0&&l.recovery<=1);
+ if(previousReturn)smoothReturn&&=legs.every((l,j)=>Math.hypot(l.ax-previousReturn[j].ax,l.ay-previousReturn[j].ay)<.8&&Math.abs(l.heading-previousReturn[j].heading)<.02);
+ previousReturn=legs;
+}
+ok('backward recovery alternates support feet through the complete cycle',alternateSupport);
+ok('heel lift, calf recovery and shoe roll remain smooth across contact boundaries',smoothReturn);
+
+let smoothTravel=true,travelSettles=true;
+for(const direction of [Math.PI,-Math.PI/2,Math.PI/2,-Math.PI*.75]){
+ fresh();advance(800);probe('player.walkCycle=1.1;');
+ const before=P('[standingFootworkLeg(player,0),standingFootworkLeg(player,1)]');
+ probe(`player.moveAngle=${direction};frameCount++;updateDirectionalFootwork(player,1000/60);`);
+ const after=P('[standingFootworkLeg(player,0),standingFootworkLeg(player,1)]');
+ smoothTravel&&=after.every((leg,i)=>Math.hypot(leg.ax-before[i].ax,leg.ay-before[i].ay)<2.5);
+ advance(1500);
+ const travel=P('({x:playerFootworkPose(player).travelX,y:playerFootworkPose(player).travelY})');
+ travelSettles&&=Math.hypot(travel.x-Math.cos(direction),travel.y-Math.sin(direction))<.001;
+}
+ok('abrupt travel reversals settle the heel path instead of swapping whole legs instantly',smoothTravel&&travelSettles);
 
 let bounded=true,finite=true,continuous=true,previous=null;
 fresh();
@@ -110,17 +146,27 @@ for(let i=0;i<=720;i++){
  probe(`player.moveAngle=${i*Math.PI/360};player.walkCycle=1.1;frameCount++;updateDirectionalFootwork(player,16.67);`);
  const pose=P('playerFootworkPose(player)'),leg=P('standingFootworkLeg(player,0)');
  const turn=Math.atan2(Math.sin(pose.angle),Math.cos(pose.angle));
- bounded&&=Math.abs(turn)<=Math.PI/4+1e-8;
+ bounded&&=Math.abs(turn)<=Math.PI/2+1e-8;
  finite&&=Object.values(leg).filter(x=>typeof x==='number').every(Number.isFinite);
  if(previous)continuous&&=Math.hypot(leg.ax-previous.ax,leg.ay-previous.ay)<.8;
  previous=leg;
 }
-ok('hips remain anatomically bounded over a complete aim/travel rotation',bounded);
+ok('aimed hips remain within 90 degrees over a complete aim/travel rotation',bounded);
+let relativeBounded=true;
+for(const aim of [-Math.PI,-Math.PI/2,0,Math.PI/2,Math.PI])for(let i=0;i<8;i++){
+ fresh();probe(`player.aimAngle=${aim};player.moveAngle=${aim+i*Math.PI/4};`);advance(1200);
+ const hip=P('playerFootworkPose(player).angle'),relative=Math.atan2(Math.sin(hip-aim),Math.cos(hip-aim));
+ relativeBounded&&=Math.abs(relative)<=Math.PI/2+1e-8;
+}
+ok('the hip limit stays relative to the upper body at every world heading',relativeBounded);
 ok('all directional ankle and knee positions remain finite',finite);
 ok('crossing forward, lateral and backward directions does not teleport a foot',continuous);
 
 for(const side of [-1,1]){
- fresh(side*Math.PI/2);advance(3300);
+ fresh(side*Math.PI/2);advance(2000);
+ ok((side<0?'left':'right')+' direct lateral aim can turn the hips to the full 90-degree side plane',
+  Math.abs(P('playerFootworkPose(player).angle')-side*Math.PI/2)<.01);
+ advance(1300);
  ok((side<0?'left':'right')+' lateral travel stays normal through 3.3 continuous seconds',P('playerFootworkPose(player).skip<.001'));
  advance(900);
  ok((side<0?'left':'right')+' sustained strafe blends into a side skip',P('playerFootworkPose(player).skip>.85'));
@@ -211,5 +257,5 @@ ctx.figureCelLimb=(...args)=>{surfaces++;return nativeSurface(...args);};
 ctx.figureCelOval=(...args)=>{boots++;return nativeOval(...args);};
 probe('drawStandingFootworkLegs(player,window,figureRig(player.bodyW,player.bodyH),playerFootworkPose(player));');
 ctx.figureCelLimb=nativeSurface;ctx.figureCelOval=nativeOval;
-ok('aimed trousers retain exactly two original continuous leg surfaces and two boots',surfaces===2&&boots===2);
+ok('aimed trousers paint two tapered leg chains and two shoes without extra hip or knee caps',surfaces>=2&&surfaces<=4&&boots===2);
 console.log(`${checks}/${checks} standing backward, strafe, skip and leg-decal checks passed`);
