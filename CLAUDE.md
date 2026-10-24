@@ -72,9 +72,12 @@ with separate bounded Occult Magician spells and a saved encounter. Keep the
 northwest/northeast branches sealed until expanded. Underground lighting has
 no sun or surface fog: both renderers share the torch/flashlight gather and
 ambient floor. See [NM-0 underground chamber](docs/underground-occult.md).
-Dungeon geometry queries share a revisioned spatial index, while runtime A*
-jobs share one resumable per-frame expansion budget. Preserve their map/door
-invalidation and native movement collision checks. See
+Dungeon geometry queries share a revisioned spatial index. Magicians retain
+individual A* routes; zombies share a player target and reusable reverse fields.
+Both use one resumable per-frame expansion budget. Spell records come from
+fixed pools; preserve fork transfer, cleanup and detached save snapshots.
+Zombies drop no items and magicians drop no weapons. Preserve map/door
+invalidation and native movement/bite collision checks. See
 [Dungeon performance](docs/dungeon-performance.md) for profiling and parity checks.
 
 ## The gameplay loop this world serves

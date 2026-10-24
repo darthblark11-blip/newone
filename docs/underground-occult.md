@@ -84,6 +84,8 @@ summons independently. The twelve authored summoners therefore have room for
 opponents; they do not replace the caster's health or create a separate kill
 counter. Zombie emergence and bite windups are visible. Crowded emergence
 sites and the population caps can reduce the number raised in a chant.
+Zombies drop no items, and magicians drop no weapons. Their ordinary score,
+headshot progression and native corpses still apply.
 
 Saved encounters retain all 54 casters plus up to 288 summons, including wounds,
 defeated casters, prepared spells and opened or partly opened doors.
@@ -108,12 +110,19 @@ to pursuit of the last observed position rather than freezing immediately.
 Black magicians favor actual occluding cover, remember the nearby threat, and
 continue summoning without needing a direct view of the player.
 
-Casters and zombies share a cached 40-unit A* grid with diagonal clearance,
-smoothed waypoints, crowd separation and a bounded search budget. Runtime
-searches resume across frames under one shared node-expansion budget instead
-of allowing several complete searches to stall a frame. Door changes
-invalidate geometry caches. Paths and live target references are rebuilt after
-loading; saved encounter state retains the last observed threat position.
+Casters use a cached 40-unit A* grid with diagonal clearance, smoothed waypoints
+and crowd separation. Zombies share the player's current position and a reverse
+direction field over that same grid, rather than sensing and searching
+individually. Clear corridors need no field; blocked zombies share one flood
+around obstacles. Two reusable buffers let an old field remain usable while
+a replacement finishes, even when the player keeps moving. Each zombie retains
+its own bite windup, cooldown, health and collision. Bites still require close
+range and a clear path, and a fully buried player remains protected.
+
+Mage searches and the shared horde flood resume across frames under one total
+node-expansion budget. Door changes invalidate geometry caches. Paths and live
+target references are rebuilt after loading; saved magician state retains the
+last observed threat position.
 
 Solid queries use a separate spatial index. Interior floor queries avoid
 repeated footprint sampling; room seams and boundary contacts retain their
@@ -129,6 +138,10 @@ Wall contacts place the burst on the near face of cover. The same light list
 feeds WebGL and the canvas fallback, while idle rooms retain only torch and
 flashlight lighting. Spell light candidates and procedural particle bursts
 have separate fixed budgets and consume no gameplay randomness.
+Projectiles, ground spells and dispersion bursts reuse preallocated record
+banks. Retirement clears old owners, volley IDs and hit lists; reset and load
+return records to those same banks. The projectile bank includes one transfer
+slot so a fireball can fork into all three children at the 96-live limit.
 
 ## Focused checks
 
@@ -142,6 +155,8 @@ node tools/check-dungeon-combat.js
 node tools/check-dungeon-navigation.js
 node tools/check-mage-refinement.js
 node tools/check-occult-spell-fx.js
+node tools/check-dungeon-loot.js
+node tools/check-occult-spell-pooling.js
 ```
 
 The checks exercise native collision along the entrance and connecting passages,

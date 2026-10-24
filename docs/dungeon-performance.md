@@ -11,11 +11,33 @@ retain the original sampling and contact rules. Movement still checks native
 collision on every step; a cached straight corridor is reused only while the
 actor remains on its previously cleared segment in unchanged static geometry.
 
-Runtime A* jobs resume across frames in a FIFO queue. All actors share a
-1,500-node expansion budget and at most six new searches per frame. One typed
+Runtime magician A* jobs resume across frames in a FIFO queue. Navigation shares
+a 1,500-node expansion budget and at most six new magician searches per frame. One typed
 workspace, reused waypoints and reusable crowd buckets reduce garbage
 collection. Unfinished searches can retain a previous usable route. Death,
 pause and world replacement cannot advance stale jobs.
+
+Zombies now share one player destination and a lazy reverse direction field.
+Clear corridors skip the field entirely. Obstructed zombies follow the same
+settled cells instead of creating individual A* jobs or polling line of sight
+for pursuit. A bounded part of the same node budget advances the shared field
+before magician searches. Two reusable field buffers avoid restarting the
+whole flood whenever the moving player crosses a cell. Bite collision still
+tests range and cover individually.
+
+Spell simulation uses prewarmed banks of 97 projectile records (96 live plus
+one fork-transfer slot), 48 ground effects and 96 dispersion records. Stable
+in-place retirement retains painting and simulation order. A released record
+clears its old state; ground records keep their private reusable hit-ID arrays.
+Save snapshots remain detached from pool storage. No spell bank grows during
+sustained combat.
+
+Canonical, unstunned dungeon zombies use a conservative 64-unit render margin,
+within which their complete model fits. The generic margin is 150 units.
+Knockdowns, boxing, custom dimensions and other levels keep that wider margin.
+This skips fully offscreen vector painting; simulation, visible art and the
+lighting/height passes retain their own rules. Native edge and camera tests
+compare every framebuffer channel before and after the cull.
 
 The existing native Canvas character paths now support the pixel-tested p5
 1.11.10 renderer as well as 1.11.11. Other versions and accessibility/clipping
@@ -60,6 +82,29 @@ lighting measured 45.6 → 14.8 ms median CPU time and 66.6 → 24.3 ms p95. Bot
 versions retained all 84 actors. The combined source SHA-256 is
 `6caf027a558643daefa74a7587223bf0ef9ca5cb75ba0f0d0885f8c16fdb1c13`.
 
+The subsequent horde/pooling pass compared `bb6a044` with source SHA-256
+`d5e7b9cf41f2577285e15f8f5e6556e2e6106febe3bf9eedc450dd6d4acf670c`,
+using the same 30/120-frame setup and Canvas renderer:
+
+| Scene | CPU median before → after | CPU p95 before → after |
+| --- | ---: | ---: |
+| First-room horde | 12.6 → 10.2 ms | 23.1 → 21.5 ms |
+| All 288 zombies in first room | 32.0 → 29.3 ms | 44.4 → 43.0 ms |
+
+All 84/342 actors remained alive. Average zombie paints fell from 44.2 to 24.1
+and from 213.0 to 170.3 per frame by skipping fully offscreen models. These
+captures preceded integration of the concurrent `818afab`/`d6b2969` footwork
+updates. The [follow-up data](dungeon-horde-performance-results.json) records
+both sources, navigation work and fixed pool capacities. Shared navigation
+changes pursuit behavior; it still performs local steering and bite collision
+for each zombie. Total AI time was approximately unchanged in these fixtures;
+most measured frame savings came from avoiding offscreen painting. The dense
+case still exceeds the 16.7 ms CPU budget on this software-rendered host.
+The combined source after integrating `d6b2969` is SHA-256
+`17907c1ed17c098f81f8dd9bd59d89038a33a33dff6030dc33b4e8e62558f5fa`.
+It passes 1,381 headless checks, native dungeon/magician checks, 270 exact spell
+simulation/art frames and 2,880 exact native edge-of-screen zombie poses.
+
 ## Reproducing the measurements
 
 `tools/profile-dungeon.js` runs real p5 frames with live AI, spells, collision,
@@ -96,6 +141,10 @@ hardware frame rate. A 60 FPS frame has about 16.7 ms for its CPU and GPU work.
 ```sh
 node tools/check-dungeon-query-performance.js
 node tools/check-dungeon-ai-performance.js
+node tools/check-dungeon-horde.js
+node tools/check-dungeon-loot.js
+SPELL_POOL_BASELINE=/tmp/dungeon-before.js node tools/check-occult-spell-pooling.js
+DUNGEON_P5=/path/to/p5.min.js node tools/check-zombie-render-culling.js
 CHARACTER_P5=/path/to/p5.min.js node tools/check-character-color-performance.js
 DUNGEON_BASELINE=/tmp/dungeon-before.js DUNGEON_P5=/path/to/p5.min.js \
   node tools/check-dungeon-art-performance.js

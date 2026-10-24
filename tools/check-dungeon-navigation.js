@@ -62,13 +62,13 @@ ok('hiddenMage._occultSense.target===player&&hiddenMage._occultSense.memoryMs>0'
 ok('hiddenSave.actors.every(a=>!a._occultNav&&!a._occultSense&&!a._occultTactics)',
  'Saved actors do not retain navigation grids, live target references or large path arrays');
 
-// A pursuer that loses sight after moving behind a pillar must still route
-// toward the position it actually observed, without learning an unseen move.
+// Summoned zombies share the live player destination, including behind cover,
+// while their individual body motion still respects the native solids.
 P(`navFixture();var pursuer=createOccultZombie(-250,-1100,'gone-owner');pursuer.occultZombie.emergeMs=0;enemiesList.push(pursuer);
  player.x=-510;player.y=-1660;frameCount++;occultUpdateEnemy(pursuer,20);
- var observedPursuit=pursuer._occultSense.target===player;pursuer.x=-510;var chaseClear=true;
+ var observedPursuit=occultHordeTarget()===player&&!pursuer._occultSense&&!pursuer._occultNav;pursuer.x=-510;var chaseClear=true;
  for(let i=0;i<450;i++){frameCount++;occultUpdateEnemy(pursuer,20);chaseClear=chaseClear&&!pursuer.checkCol(pursuer.x,pursuer.y);}`);
-ok('observedPursuit&&chaseClear&&pursuer.y< -1550','A zombie uses its remembered target and pathfinding to get around cover');
+ok('observedPursuit&&chaseClear&&pursuer.y< -1550','A zombie follows the shared player destination around cover without individual sensing or searches');
 
 P(`navFixture();var sleeping=createOccultMagician('BLACK',-390,-3190,'nav-dormant','nave');enemiesList.push(sleeping);
  player.x=sleeping.x;player.y=sleeping.y+100;var asleepAt={x:sleeping.x,y:sleeping.y};

@@ -4116,6 +4116,14 @@ function isAirborneEnemy(e) {
     (e.eType === 'AERIAL' || e.eType === 'AERIAL_PISTOL' || e.eType === 'SAUCER' || e.eType === 'SAUCER_RED');
 }
 
+// A normal dungeon zombie has no muzzle glow, weapon or floating UI. Its
+// complete rotated walk/bite silhouette (including stroke and contact shade)
+// fits inside 40 units; 64 leaves room for antialiasing and the relief scale.
+// Other models and every knockdown/boxing case retain the generic allowance.
+function actorRenderCullPad(c) {
+  return currentLevel===9&&c&&c.eType==='OCCULT_ZOMBIE'&&c.bodyW===21&&c.bodyH===27&&
+    !(c.stunTimer>0)&&!c.knockedOut&&!c.isCorpse&&!boxingActive(c)?64:150;
+}
 function actorShow(c) {
   if (shovelBelowGroundActor(c)) { if (!_shovelBelowActors.includes(c)) _shovelBelowActors.push(c); return; }
   if (isAirborneEnemy(c) && !isGroundBodyActor(c)) { _airborneActors.push(c); return; }
@@ -18600,6 +18608,77 @@ const OCCULT = Object.freeze({level:9,metre:20,lavaRange:600,shockRadius:360,
   maxProjectiles:96,maxGroundEffects:48,maxZombiesPerOwner:24,maxZombies:288,summonBatch:6,maxActors:342,
   awareness:1500,castReach:1080,stepMs:1000/60});
 const occultProjectiles = [], occultGroundEffects = [];
+const occultSpellTargetsScratch=[];
+const occultSpellTraceScratch={x:0,y:0,fraction:1,hit:false};
+// Fixed-capacity storage is warmed once, not allocated during a spell storm.
+// Numeric slots keep numeric defaults so recycling does not force V8 to
+// generalize their double fields into tagged number/undefined storage.
+// One extra projectile record holds a retiring parent until all three fork
+// children copy its original position/volley; only 96 can ever be live.
+function occultCreateSpellPool(capacity,fields,list,defaults){
+  const pool={capacity,fields,list,defaults,keys:new Set(fields),records:[],free:[],active:0,
+    acquired:0,released:0,highWater:0};
+  for(let i=0;i<capacity;i++){
+    const record={};
+    for(const key of fields)record[key]=key==='hitIds'?[]:defaults[key];
+    Object.defineProperties(record,{_occultPool:{value:pool},
+      _occultFree:{value:true,writable:true},_occultExtras:{value:false,writable:true}});
+    pool.records.push(record);pool.free.push(record);
+  }
+  return pool;
+}
+function occultClearSpellRecord(pool,p){
+  if(p._occultExtras){for(const key in p)if(!pool.keys.has(key))delete p[key];p._occultExtras=false;}
+  for(const key of pool.fields){if(key==='hitIds')p.hitIds.length=0;else p[key]=pool.defaults[key];}
+}
+function occultAcquireSpellRecord(pool,retained=null){
+  if(!pool.free.length){
+    // Only direct debug-array truncation can orphan slots. Reclaim them on
+    // exhaustion, never by growing the bank or scanning it on ordinary shots.
+    for(const p of pool.records)if(!p._occultFree&&p!==retained&&pool.list.indexOf(p)<0)
+      occultReleaseSpellRecord(pool,p);
+  }
+  const p=pool.free.pop();if(!p)return null;
+  p._occultFree=false;pool.active++;pool.acquired++;
+  pool.highWater=Math.max(pool.highWater,pool.active);return p;
+}
+function occultReleaseSpellRecord(pool,p){
+  if(!p||p._occultPool!==pool||p._occultFree)return;
+  occultClearSpellRecord(pool,p);p._occultFree=true;pool.active--;pool.released++;pool.free.push(p);
+}
+function occultResetSpellPool(pool){
+  // Rebuild from owned slots as well as the live list: debug fixtures that
+  // truncate an array directly must not strand records across world resets.
+  pool.free.length=0;
+  for(const p of pool.records){
+    if(!p._occultFree)pool.released++;
+    occultClearSpellRecord(pool,p);p._occultFree=true;pool.free.push(p);
+  }
+  pool.active=0;
+}
+function occultCopySpellRecord(pool,p,source){
+  if(!p)return null;
+  for(const key in source)if(Object.prototype.hasOwnProperty.call(source,key)){
+    if(key==='hitIds'&&pool.keys.has(key)){
+      const ids=source.hitIds;if(ids!==p.hitIds&&Array.isArray(ids))for(let i=0;i<ids.length;i++)p.hitIds.push(ids[i]);
+    }else{
+      p[key]=source[key];if(!pool.keys.has(key))p._occultExtras=true;
+    }
+  }
+  return p;
+}
+function occultRemoveSpellAt(list,index){
+  const p=list[index];
+  // Stable order preserves overlap painting and reverse simulation order.
+  // splice would create a temporary array for every retired projectile.
+  for(let i=index+1;i<list.length;i++)list[i-1]=list[i];list.length--;return p;
+}
+const occultProjectilePool=occultCreateSpellPool(OCCULT.maxProjectiles+1,
+  ['kind','x','y','px','py','angle','ownerId','volley','ageMs','travel','speed','ttlMs','radius','damage','forked'],occultProjectiles,
+  {x:0,y:0,px:0,py:0,angle:0,ageMs:0,travel:0,speed:0,ttlMs:0,radius:0,damage:0,forked:false});
+const occultGroundPool=occultCreateSpellPool(OCCULT.maxGroundEffects,
+  ['kind','x','y','ownerId','angle','length','radius','ageMs','ttlMs','hitIds'],occultGroundEffects,
+  {x:0,y:0,ageMs:0,ttlMs:0});
 let occultNextId = 1, occultSpellSerial = 1;
 // Stable station identities let old four-caster saves gain the new rooms without
 // resurrecting any of their original defeated magicians.
@@ -18881,8 +18960,8 @@ function occultTarget(e) {
   for(const a of enemiesList)if(a.isFriendly&&!a.isNeutral)consider(a);
   return best;
 }
-function occultTargets() {
-  const targets=[];if(occultAlive(player))targets.push(player);
+function occultTargets(out=null) {
+  const targets=out||[];targets.length=0;if(occultAlive(player))targets.push(player);
   for(const e of enemiesList)if(occultAlive(e)&&e.isFriendly&&!e.isNeutral)targets.push(e);
   return targets;
 }
@@ -18906,7 +18985,7 @@ const OCCULT_NAV=Object.freeze({cell:40,radius:17,maxExpanded:6000,searchesPerFr
 const occultNavigation={revision:1,grid:null,frame:-1,queries:0,crowdFrame:-1,crowd:null,
   stats:{searches:0,expanded:0,maxExpanded:0,deferred:0,directQueries:0,directCacheHits:0}};
 function occultInvalidateNavigation(){
-  occultInvalidateGeometry();occultNavigationRuntimeReset();occultCrowdBucketPool.length=0;
+  occultInvalidateGeometry();occultNavigationRuntimeReset();occultHordeReset();occultCrowdBucketPool.length=0;
   occultNavigation.revision++;occultNavigation.grid=null;occultNavigation.frame=-1;
   occultNavigation.crowdFrame=-1;occultNavigation.crowd=null;
 }
@@ -19123,8 +19202,9 @@ function occultNavigationRuntimeBegin(job){
 }
 function occultNavigationRuntimePump(){
   if(!occultActive())return;
-  const run=occultNavigationRuntime;
-  if(run.frame!==frameCount){run.frame=frameCount;run.expanded=run.started=0;}
+  const run=occultNavigationRuntimeFrame();
+  // The shared flood gets its reserved slice before independent mage jobs.
+  occultHordePump();
   while(run.expanded<OCCULT_NAV.expansionsPerFrame){
     let job=run.active;
     if(job&&!occultNavigationRuntimeValid(job)){job.status='CANCELLED';run.active=job=null;}
@@ -19220,16 +19300,164 @@ function occultNavigate(e,gx,gy,speed,dt){
   if(nav.blockedMs>280){nav.repathMs=0;nav.path.length=0;nav.blockedMs=0;}
   return moved;
 }
+// Summoned zombies share one player destination and reverse route field.
+// Open rooms keep the cheap certified direct corridor. A field exists only
+// after an actual obstruction, and moving targets never cancel unfinished work.
+const OCCULT_HORDE=Object.freeze({expansionsPerFrame:512,lookAhead:4});
+const occultHorde={frame:-1,sourcePlayer:null,target:null,x:0,y:0,geometryFrame:-1,geometryKnown:false,
+  geometrySource:null,geometryCount:-1,looseState:[],grid:null,fields:[null,null],
+  published:null,building:null,pumpFrame:-1,workFrame:-1,
+  stats:{targetSamples:0,directSteps:0,flowSteps:0,requests:0,builds:0,completed:0,
+    expanded:0,maxFrameExpanded:0,bufferAllocations:0,geometryInvalidations:0,waiting:0}};
+function occultHordeReset(){
+  const h=occultHorde;
+  h.frame=h.geometryFrame=h.workFrame=-1;h.sourcePlayer=h.target=null;h.x=h.y=0;
+  h.geometryKnown=false;h.geometrySource=null;h.geometryCount=-1;h.looseState.length=0;
+  h.grid=h.published=h.building=null;h.fields[0]=h.fields[1]=null;
+  // A same-frame door change cannot acquire another reserved flow slice.
+  if(h.pumpFrame!==frameCount)h.pumpFrame=-1;
+}
+function occultHordeCheckGeometry(){
+  const h=occultHorde;if(h.geometryFrame===frameCount)return;
+  const index=occultGeometryIndex(),loose=index.loose,old=h.looseState;
+  let changed=h.geometryKnown&&(h.geometrySource!==buildings||h.geometryCount!==buildings.length||old.length!==loose.length);
+  if(h.geometryKnown&&!changed)for(let i=0;i<loose.length;i++){
+    const b=loose[i].b,p=old[i];
+    if(p.b!==b||p.x!==b.x||p.y!==b.y||p.w!==b.w||p.h!==b.h||
+       p.decor!==b.occultDecor||p.underDecor!==b.isUndergroundDecor||p.deck!==b.isDeck){changed=true;break;}
+  }
+  if(changed){h.stats.geometryInvalidations++;occultInvalidateNavigation();invalidateColIndex();}
+  h.geometryFrame=frameCount;h.geometryKnown=true;h.geometrySource=buildings;h.geometryCount=buildings.length;
+  const current=occultGeometryIndex().loose;
+  for(let i=0;i<current.length;i++){
+    const b=current[i].b,p=h.looseState[i]||(h.looseState[i]={});
+    p.b=b;p.x=b.x;p.y=b.y;p.w=b.w;p.h=b.h;p.decor=b.occultDecor;p.underDecor=b.isUndergroundDecor;p.deck=b.isDeck;
+  }
+  h.looseState.length=current.length;
+}
+function occultHordeTarget(){
+  const h=occultHorde;
+  if(!occultActive())return null;
+  if(h.frame!==frameCount||h.sourcePlayer!==player){
+    occultHordeCheckGeometry();h.frame=frameCount;h.sourcePlayer=player;h.stats.targetSamples++;
+    h.target=occultAlive(player)&&shovelPlayerDepth(player)<SHOVEL.underground?player:null;
+    if(h.target){h.x=player.x;h.y=player.y;}
+  }
+  return occultAlive(h.target)&&shovelPlayerDepth(h.target)<SHOVEL.underground?h.target:null;
+}
+function occultNavigationRuntimeFrame(){
+  const run=occultNavigationRuntime;
+  if(run.frame!==frameCount){run.frame=frameCount;run.expanded=run.started=0;}
+  return run;
+}
+function occultHordeField(g,slot){
+  let f=occultHorde.fields[slot];
+  if(f&&f.grid===g)return f;
+  f={grid:g,slot,goal:-1,cellX:0,cellY:0,heapCount:0,
+    cost:new Float64Array(g.n),next:new Int32Array(g.n),settled:new Uint8Array(g.n),
+    heap:new Int32Array(g.n),heapPosition:new Int32Array(g.n)};
+  occultHorde.fields[slot]=f;occultHorde.stats.bufferAllocations++;return f;
+}
+function occultHordeHeapPush(f,index){
+  let i=f.heapPosition[index];if(i<0)i=f.heapCount++;
+  const cost=f.cost[index];
+  while(i){const p=(i-1)>>1,parent=f.heap[p];if(f.cost[parent]<=cost)break;
+    f.heap[i]=parent;f.heapPosition[parent]=i;i=p;}
+  f.heap[i]=index;f.heapPosition[index]=i;
+}
+function occultHordeHeapPop(f){
+  const first=f.heap[0],last=f.heap[--f.heapCount];f.heapPosition[first]=-1;
+  if(f.heapCount){let i=0;const cost=f.cost[last];
+    while(i*2+1<f.heapCount){let c=i*2+1;
+      if(c+1<f.heapCount&&f.cost[f.heap[c+1]]<f.cost[f.heap[c]])c++;
+      const child=f.heap[c];if(f.cost[child]>=cost)break;
+      f.heap[i]=child;f.heapPosition[child]=i;i=c;}
+    f.heap[i]=last;f.heapPosition[last]=i;}
+  return first;
+}
+function occultHordeRequest(){
+  const h=occultHorde,g=occultNavigationGrid();h.stats.requests++;
+  if(h.grid!==g){h.grid=g;h.published=h.building=null;h.fields[0]=h.fields[1]=null;}
+  // Finish this wave even if the player keeps moving. Otherwise far zombies
+  // could wait forever while a new goal cell restarts the flood every few frames.
+  if(h.building)return;
+  const cellX=Math.floor((h.x-g.x)/g.cell),cellY=Math.floor((h.y-g.y)/g.cell);
+  if(h.published&&h.published.cellX===cellX&&h.published.cellY===cellY)return;
+  const goal=occultNavigationNearestNode(g,h.x,h.y);if(goal<0)return;
+  const f=occultHordeField(g,h.published?1-h.published.slot:0);
+  f.cost.fill(Infinity);f.next.fill(-1);f.settled.fill(0);f.heapPosition.fill(-1);f.heapCount=0;
+  f.goal=goal;f.cellX=cellX;f.cellY=cellY;f.cost[goal]=0;occultHordeHeapPush(f,goal);
+  h.building=f;h.stats.builds++;
+}
+function occultHordePump(){
+  const h=occultHorde;if(!occultActive()||!h.building||h.pumpFrame===frameCount)return;
+  const run=occultNavigationRuntimeFrame(),budget=Math.min(OCCULT_HORDE.expansionsPerFrame,OCCULT_NAV.expansionsPerFrame-run.expanded);
+  if(budget<=0)return;
+  h.pumpFrame=frameCount;let used=0;
+  const f=h.building,g=f.grid;
+  if(g!==occultNavigation.grid){h.building=h.published=null;h.grid=null;return;}
+  while(f.heapCount&&used<budget){
+    const current=occultHordeHeapPop(f);f.settled[current]=1;used++;run.expanded++;
+    run.stats.expanded++;h.stats.expanded++;occultNavigation.stats.expanded++;
+    const cx=current%g.cols,cy=Math.floor(current/g.cols);
+    for(let direction=0;direction<8;direction++){
+      const dir=OCCULT_NAV_DIRS[direction],nx=cx+dir[0],ny=cy+dir[1];
+      if(nx<0||nx>=g.cols||ny<0||ny>=g.rows)continue;
+      const next=ny*g.cols+nx;if(f.settled[next]||!occultNavigationNodeClear(g,next))continue;
+      if(direction>=4&&(!occultNavigationNodeClear(g,cy*g.cols+nx)||!occultNavigationNodeClear(g,ny*g.cols+cx)))continue;
+      // Certify the actual pursuit edge from this neighbor toward the goal.
+      const reverse=direction<4?(direction+2)%4:4+(direction-4+2)%4;
+      if(!occultNavigationLink(g,next,current,reverse))continue;
+      const cost=f.cost[current]+(direction<4?1:Math.SQRT2);
+      if(cost<f.cost[next]){f.cost[next]=cost;f.next[next]=current;occultHordeHeapPush(f,next);}
+    }
+  }
+  h.stats.maxFrameExpanded=Math.max(h.stats.maxFrameExpanded,used);
+  run.stats.maxFrameExpanded=Math.max(run.stats.maxFrameExpanded,run.expanded);
+  if(!f.heapCount){h.published=f;h.building=null;h.stats.completed++;}
+}
+function occultHordeNavigate(e,speed,dt){
+  const target=occultHordeTarget();if(!target){e.isMoving=false;return false;}
+  const h=occultHorde,x=h.x,y=h.y;
+  const state=e._occultHorde||(e._occultHorde={corridor:null,cell:-1,node:-1,grid:null});
+  if(occultNavigationCorridorClear(e,state,x,y)||
+     Math.hypot(x-e.x,y-e.y)<100&&occultClearSegment(e.x,e.y,x,y,15)){
+    h.stats.directSteps++;return occultMove(e,Math.atan2(y-e.y,x-e.x),speed,dt);
+  }
+  occultHordeRequest();
+  if(h.workFrame!==frameCount){h.workFrame=frameCount;occultNavigationRuntimePump();}
+  const g=h.grid;if(!g){e.isMoving=false;return false;}
+  const cx=Math.floor((e.x-g.x)/g.cell),cy=Math.floor((e.y-g.y)/g.cell),cell=cy*g.cols+cx;
+  const clearance=occultPointClear(e.x,e.y,OCCULT_NAV.radius)?OCCULT_NAV.radius:15;
+  let node=-1;
+  if(cx>=0&&cx<g.cols&&cy>=0&&cy<g.rows&&occultNavigationNodeClear(g,cell))node=cell;
+  else if(state.grid===g&&state.cell===cell&&state.node>=0)node=state.node;
+  if(node>=0){
+    const nx=g.x+(node%g.cols+.5)*g.cell,ny=g.y+(Math.floor(node/g.cols)+.5)*g.cell;
+    if(!occultClearSegment(e.x,e.y,nx,ny,clearance))node=-1;
+  }
+  if(node<0)node=occultNavigationNearestNode(g,e.x,e.y);
+  state.grid=g;state.cell=cell;state.node=node;
+  const field=node>=0&&h.building&&h.building.settled[node]?h.building:
+    node>=0&&h.published&&h.published.settled[node]?h.published:null;
+  if(!field){h.stats.waiting++;e.isMoving=false;return false;}
+  let chosen=node,next=field.next[node];
+  for(let i=0;i<OCCULT_HORDE.lookAhead&&next>=0;i++){
+    const nx=g.x+(next%g.cols+.5)*g.cell,ny=g.y+(Math.floor(next/g.cols)+.5)*g.cell;
+    if(!occultClearSegment(e.x,e.y,nx,ny,clearance))break;
+    chosen=next;next=field.next[next];
+  }
+  const px=g.x+(chosen%g.cols+.5)*g.cell,py=g.y+(Math.floor(chosen/g.cols)+.5)*g.cell;
+  if(Math.hypot(px-e.x,py-e.y)<3){h.stats.waiting++;e.isMoving=false;return false;}
+  h.stats.flowSteps++;return occultMove(e,Math.atan2(py-e.y,px-e.x),speed,dt);
+}
+
 function occultSenseTarget(e,dt){
   const s=e.occult,existing=e._occultSense;
   const sense=existing||(e._occultSense={target:null,x:e.x,y:e.y,visible:false,memoryMs:0,pollMs:0});
   sense.memoryMs=Math.max(0,sense.memoryMs-dt);sense.pollMs-=dt;
   if(!existing&&s&&s.awakened&&occultAlive(player)&&Number.isFinite(s.targetX)&&Number.isFinite(s.targetY)){
     sense.target=player;sense.x=s.targetX;sense.y=s.targetY;sense.memoryMs=s.kind==='BLACK'?30000:8000;
-  }
-  if(!existing&&e.occultZombie){
-    const owner=occultOwner(e.occultZombie.ownerId),memory=owner&&owner._occultSense;
-    if(memory&&occultAlive(memory.target)&&memory.memoryMs>0){sense.target=memory.target;sense.x=memory.x;sense.y=memory.y;sense.memoryMs=8000;}
   }
   if(s&&s.kind==='BLACK'&&s.awakened&&occultAlive(sense.target)&&
     Math.hypot(e.x-sense.target.x,e.y-sense.target.y)<OCCULT.awareness*1.2)
@@ -19317,25 +19545,40 @@ function occultBeginCast(e,cast,target) {
   e.aimAngle=s.angle;e.isMoving=false;e.state='OCCULT_CAST';
   return true;
 }
+function occultPrepareGround(kind,x,y,ownerId,ttlMs){
+  if(occultGroundEffects.length>=OCCULT.maxGroundEffects)
+    occultReleaseSpellRecord(occultGroundPool,occultRemoveSpellAt(occultGroundEffects,0));
+  const p=occultAcquireSpellRecord(occultGroundPool);if(!p)return null;
+  p.kind=kind;p.x=x;p.y=y;p.ownerId=ownerId;p.ageMs=0;p.ttlMs=ttlMs;
+  occultGroundEffects.push(p);return p;
+}
 function occultPushGround(effect) {
-  if(occultGroundEffects.length>=OCCULT.maxGroundEffects)occultGroundEffects.shift();
-  occultGroundEffects.push(effect);return effect;
+  const p=occultPrepareGround(effect.kind,effect.x,effect.y,effect.ownerId,effect.ttlMs);
+  return p?occultCopySpellRecord(occultGroundPool,p,effect):null;
 }
-function occultPushProjectile(p) {
+function occultPushProjectile(source) {
   if(occultProjectiles.length>=OCCULT.maxProjectiles)return false;
-  occultProjectiles.push(p);return true;
+  const p=source._occultPool===occultProjectilePool&&!source._occultFree?source:
+    occultCopySpellRecord(occultProjectilePool,occultAcquireSpellRecord(occultProjectilePool),source);
+  if(!p)return false;occultProjectiles.push(p);return true;
 }
-function occultFireProjectile(e,kind,angle,extra={}) {
+function occultFireProjectile(e,kind,angle,extra=null) {
   const x=e.x+Math.cos(angle)*24,y=e.y+Math.sin(angle)*24;
   if(!occultClearSegment(e.x,e.y,x,y,3))return false;
-  return occultPushProjectile({kind,x,y,px:x,py:y,angle,ownerId:e.occult.id,
-    volley:'spell-'+occultSpellSerial++,ageMs:0,travel:0,
-    speed:kind==='SHARD'?560:300,ttlMs:kind==='SHARD'?2600:3000,
-    radius:kind==='SHARD'?6:9,damage:kind==='SHARD'?27:23,forked:false,...extra});
+  // A rejected full-bank cast still advances the old volley sequence.
+  const volley='spell-'+occultSpellSerial++;
+  if(occultProjectiles.length>=OCCULT.maxProjectiles)return false;
+  const p=occultAcquireSpellRecord(occultProjectilePool);if(!p)return false;
+  p.kind=kind;p.x=p.px=x;p.y=p.py=y;p.angle=angle;p.ownerId=e.occult.id;
+  p.volley=volley;p.ageMs=p.travel=0;
+  p.speed=kind==='SHARD'?560:300;p.ttlMs=kind==='SHARD'?2600:3000;
+  p.radius=kind==='SHARD'?6:9;p.damage=kind==='SHARD'?27:23;p.forked=false;
+  if(extra)occultCopySpellRecord(occultProjectilePool,p,extra);
+  occultProjectiles.push(p);return true;
 }
 // Exact first-contact tracing keeps spell bursts on the near face of cover.
 // Floor topology uses short samples; even a hairline solid uses its slab entry.
-function occultTraceSpell(x0,y0,x1,y1,r=0) {
+function occultTraceSpell(x0,y0,x1,y1,r=0,out=null) {
   const dx=x1-x0,dy=y1-y0,distance=Math.hypot(dx,dy);
   let fraction=1,hit=false;
   const near=occultGeometryCandidates(Math.min(x0,x1)-r,Math.min(y0,y1)-r,Math.max(x0,x1)+r,Math.max(y0,y1)+r);
@@ -19355,12 +19598,12 @@ function occultTraceSpell(x0,y0,x1,y1,r=0) {
     }
   }
   const safe=hit?Math.max(0,fraction-.05/Math.max(1,distance)):fraction;
-  return {x:x0+dx*safe,y:y0+dy*safe,fraction:safe,hit};
+  const result=out||{};result.x=x0+dx*safe;result.y=y0+dy*safe;result.fraction=safe;result.hit=hit;return result;
 }
 function occultLavaReach(e) {
   const a=e.occult.angle,sx=e.x+Math.cos(a)*24,sy=e.y+Math.sin(a)*24;
   if(!occultClearSegment(e.x,e.y,sx,sy,8))return 0;
-  const contact=occultTraceSpell(sx,sy,sx+Math.cos(a)*OCCULT.lavaRange,sy+Math.sin(a)*OCCULT.lavaRange,8);
+  const contact=occultTraceSpell(sx,sy,sx+Math.cos(a)*OCCULT.lavaRange,sy+Math.sin(a)*OCCULT.lavaRange,8,occultSpellTraceScratch);
   return OCCULT.lavaRange*contact.fraction;
 }
 function occultReleaseCast(e) {
@@ -19371,17 +19614,17 @@ function occultReleaseCast(e) {
     let allowance=Math.min(OCCULT.summonBatch,OCCULT.maxZombiesPerOwner-owned,OCCULT.maxZombies-total);
     for(const p of s.sites)if(allowance>0&&occultPointClear(p.x,p.y,17,e)) {
       enemiesList.push(createOccultZombie(p.x,p.y,e));allowance--;
-      occultPushGround({kind:'EMERGE',x:p.x,y:p.y,ownerId:s.id,ageMs:0,ttlMs:650,hitIds:[]});
+      occultPrepareGround('EMERGE',p.x,p.y,s.id,650);
     }
   } else if(s.cast==='FIREBALL')occultFireProjectile(e,'FIREBALL',s.angle);
   else if(s.cast==='SHARD')occultFireProjectile(e,'SHARD',s.angle);
   else if(s.cast==='LAVA') {
     const sx=e.x+Math.cos(s.angle)*24,sy=e.y+Math.sin(s.angle)*24;
     const reach=occultLavaReach(e);
-    if(reach>0)occultPushGround({kind:'LAVA',x:sx,y:sy,angle:s.angle,length:reach,
-      ownerId:s.id,ageMs:0,ttlMs:780,hitIds:[]});
-  } else if(s.cast==='SHOCK')occultPushGround({kind:'SHOCK',x:e.x,y:e.y,radius:OCCULT.shockRadius,
-    ownerId:s.id,ageMs:0,ttlMs:440,hitIds:[]});
+    if(reach>0){const h=occultPrepareGround('LAVA',sx,sy,s.id,780);if(h){h.angle=s.angle;h.length=reach;}}
+  } else if(s.cast==='SHOCK'){
+    const h=occultPrepareGround('SHOCK',e.x,e.y,s.id,440);if(h)h.radius=OCCULT.shockRadius;
+  }
   s.phase='RECOVER';s.recoverMs=380;s.sequence++;s.sites=[];
   s.cooldownMs=s.kind==='BLACK'?5100:s.kind==='RED'?1550:1850;
   return true;
@@ -19404,9 +19647,9 @@ function occultDamage(target,amount,owner,angle,volley) {
 function occultZombieUpdate(e,dt) {
   const s=e.occultZombie;s.biteCooldownMs=Math.max(0,s.biteCooldownMs-dt);
   if(s.emergeMs>0){s.emergeMs=Math.max(0,s.emergeMs-dt);e.isMoving=false;return;}
-  const sense=occultSenseTarget(e,dt),target=sense.target;
+  const target=occultHordeTarget();
   if(!target){e.isMoving=false;s.windupMs=0;return;}
-  const x=sense.visible?target.x:sense.x,y=sense.visible?target.y:sense.y;
+  const x=occultHorde.x,y=occultHorde.y;
   const d=Math.hypot(x-e.x,y-e.y),a=Math.atan2(y-e.y,x-e.x);e.aimAngle=a;
   if(s.windupMs>0){
     s.windupMs+=dt;e.isMoving=false;
@@ -19414,8 +19657,8 @@ function occultZombieUpdate(e,dt) {
       if(Math.hypot(target.x-e.x,target.y-e.y)<=47&&occultClearSegment(e.x,e.y,target.x,target.y,2))occultDamage(target,12,e,a);
       s.windupMs=0;s.biteCooldownMs=1100;
     }
-  }else if(sense.visible&&d<37&&s.biteCooldownMs<=0){s.windupMs=.001;e.isMoving=false;}
-  else if(d>29)occultNavigate(e,x,y,78,dt);else e.isMoving=false;
+  }else if(d<37&&s.biteCooldownMs<=0&&occultClearSegment(e.x,e.y,target.x,target.y,2)){s.windupMs=.001;e.isMoving=false;}
+  else if(d>29)occultHordeNavigate(e,78,dt);else e.isMoving=false;
 }
 function occultUpdateEnemy(e,dtMs) {
   if(!isOccultActor(e))return false;
@@ -19481,16 +19724,17 @@ function occultUpdateWorld(dtMs) {
   occultUpdateSpellEffects(dtMs);
   let remaining=occultFrameMs(dtMs);
   while(remaining>0) {
-    const dt=Math.min(remaining,OCCULT.stepMs),targets=occultTargets();remaining-=dt;
+    const dt=Math.min(remaining,OCCULT.stepMs),targets=occultTargets(occultSpellTargetsScratch);remaining-=dt;
     for(let i=occultProjectiles.length-1;i>=0;i--) {
       const p=occultProjectiles[i],owner=occultOwner(p.ownerId);
       if(!occultAlive(owner)||owner.stunTimer>0||owner.skeletonTimer>0){
-        occultDisperseProjectile(p,'cancel');occultProjectiles.splice(i,1);continue;
+        occultDisperseProjectile(p,'cancel');occultRemoveSpellAt(occultProjectiles,i);
+        occultReleaseSpellRecord(occultProjectilePool,p);continue;
       }
       const stepMs=Math.max(0,Math.min(dt,p.ttlMs));
       p.ageMs+=stepMs;p.ttlMs-=dt;p.px=p.x;p.py=p.y;
       const distance=p.speed*stepMs/1000,nx=p.x+Math.cos(p.angle)*distance,ny=p.y+Math.sin(p.angle)*distance;
-      const contact=occultTraceSpell(p.x,p.y,nx,ny,p.radius*.5);
+      const contact=occultTraceSpell(p.x,p.y,nx,ny,p.radius*.5,occultSpellTraceScratch);
       let reason=contact.hit?'wall':p.ttlMs<=0?'expire':null;
       let fraction=contact.fraction,hitTarget=null;
       // Resolve the nearest target before the near side of a wall, regardless
@@ -19508,17 +19752,22 @@ function occultUpdateWorld(dtMs) {
       p.x+= (nx-p.x)*fraction;p.y+=(ny-p.y)*fraction;p.travel+=distance*fraction;
       if(!reason&&p.kind==='FIREBALL'&&!p.forked&&p.travel>=75&&occultProjectiles.length+2<=OCCULT.maxProjectiles) {
         // Retire the parent first so a full three-way fork fits its budget.
-        occultProjectiles.splice(i,1);
-        for(const offset of [-.30,0,.30])occultPushProjectile({...p,angle:p.angle+offset,
-          kind:'FIRE_FORK',speed:390,ttlMs:3000,ageMs:0,travel:0,forked:true,radius:7});
-        occultDisperseProjectile(p,'fork');continue;
+        occultRemoveSpellAt(occultProjectiles,i);
+        for(let side=-1;side<=1;side++){
+          const child=occultAcquireSpellRecord(occultProjectilePool,p);
+          occultCopySpellRecord(occultProjectilePool,child,p);
+          child.angle=p.angle+side*.30;child.kind='FIRE_FORK';child.speed=390;
+          child.ttlMs=3000;child.ageMs=child.travel=0;child.forked=true;child.radius=7;
+          occultProjectiles.push(child);
+        }
+        occultDisperseProjectile(p,'fork');occultReleaseSpellRecord(occultProjectilePool,p);continue;
       }
-      if(reason){occultDisperseProjectile(p,reason);occultProjectiles.splice(i,1);}
+      if(reason){occultDisperseProjectile(p,reason);occultRemoveSpellAt(occultProjectiles,i);occultReleaseSpellRecord(occultProjectilePool,p);}
     }
     for(let i=occultGroundEffects.length-1;i>=0;i--) {
       const h=occultGroundEffects[i],owner=occultOwner(h.ownerId);h.ageMs+=dt;
       if(h.ageMs>=h.ttlMs||h.kind!=='EMERGE'&&(!occultAlive(owner)||owner.stunTimer>0||owner.skeletonTimer>0)) {
-        occultGroundEffects.splice(i,1);continue;
+        occultRemoveSpellAt(occultGroundEffects,i);occultReleaseSpellRecord(occultGroundPool,h);continue;
       }
       if(h.kind==='EMERGE'||h.ageMs<80)continue;
       for(const t of targets) {
@@ -19546,16 +19795,22 @@ function occultDrawRune(x,y,r,col,phase=0,alpha=150) {
 // One bounded record paints a complete comic burst and survives its caster.
 const OCCULT_FX = Object.freeze({maxBursts:96,maxEmitters:32});
 const occultSpellBursts=[];
+const occultBurstPool=occultCreateSpellPool(OCCULT_FX.maxBursts,
+  ['kind','x','y','angle','reason','ageMs','ttlMs','seed','count'],occultSpellBursts,
+  {x:0,y:0,angle:0,ageMs:0,ttlMs:0,seed:0,count:0});
 let occultFxSerial=1;
 function occultFxHash(n){let h=Math.imul((n|0)^0x56e8143b,0x45d9f3b);h=Math.imul(h^(h>>>16),0x45d9f3b);return((h^(h>>>16))>>>0)/4294967296;}
 function occultDisperseProjectile(p,reason='impact'){
-  if(!p||![p.x,p.y].every(Number.isFinite))return false;
+  if(!p||!Number.isFinite(p.x)||!Number.isFinite(p.y))return false;
   const kind=p.kind==='SHARD'?'SHARD':p.kind==='FIRE_FORK'?'FIRE_FORK':'FIREBALL';
   const fork=reason==='fork',cancel=reason==='cancel',expire=reason==='expire';
-  if(occultSpellBursts.length>=OCCULT_FX.maxBursts)occultSpellBursts.shift();
-  occultSpellBursts.push({kind,x:p.x,y:p.y,angle:Number.isFinite(p.angle)?p.angle:0,reason,
-    ageMs:0,ttlMs:fork?300:cancel?460:kind==='SHARD'?560:720,
-    seed:occultFxSerial++,count:fork?7:cancel||expire?9:kind==='SHARD'?12:14});
+  if(occultSpellBursts.length>=OCCULT_FX.maxBursts)
+    occultReleaseSpellRecord(occultBurstPool,occultRemoveSpellAt(occultSpellBursts,0));
+  const b=occultAcquireSpellRecord(occultBurstPool);if(!b)return false;
+  b.kind=kind;b.x=p.x;b.y=p.y;b.angle=Number.isFinite(p.angle)?p.angle:0;b.reason=reason;
+  b.ageMs=0;b.ttlMs=fork?300:cancel?460:kind==='SHARD'?560:720;
+  b.seed=occultFxSerial++;b.count=fork?7:cancel||expire?9:kind==='SHARD'?12:14;
+  occultSpellBursts.push(b);
   _emitFrame=-1;return true;
 }
 function occultUpdateSpellEffects(dtMs){
@@ -19563,11 +19818,11 @@ function occultUpdateSpellEffects(dtMs){
   const dt=occultFrameMs(dtMs);if(dt<=0)return;
   for(let i=occultSpellBursts.length-1;i>=0;i--){
     const b=occultSpellBursts[i];b.ageMs+=dt;
-    if(b.ageMs>=b.ttlMs)occultSpellBursts.splice(i,1);
+    if(b.ageMs>=b.ttlMs){occultRemoveSpellAt(occultSpellBursts,i);occultReleaseSpellRecord(occultBurstPool,b);}
   }
   _emitFrame=-1;
 }
-function resetOccultSpellEffects(){occultSpellBursts.length=0;occultFxSerial=1;_emitFrame=-1;}
+function resetOccultSpellEffects(){occultSpellBursts.length=0;occultResetSpellPool(occultBurstPool);occultFxSerial=1;_emitFrame=-1;}
 function occultDrawFlame(x,y,size,phase=0,alpha=255){
   const bend=Math.sin(phase*1.7)*size*.17,lift=.9+.12*Math.sin(phase*2.3);
   push();translate(x,y);noStroke();fill(239,74,13,alpha*.20);ellipse(0,-size*.36,size*1.15,size*1.45);
@@ -19757,7 +20012,9 @@ function occultDrawProjectiles() {
 }
 
 function resetOccultWorld() {
-  occultProjectiles.length=occultGroundEffects.length=0;occultNextId=occultSpellSerial=1;
+  occultProjectiles.length=occultGroundEffects.length=occultSpellTargetsScratch.length=0;
+  occultResetSpellPool(occultProjectilePool);occultResetSpellPool(occultGroundPool);
+  occultNextId=occultSpellSerial=1;
   occultInvalidateNavigation();resetOccultSpellEffects();
 }
 function seedOccultEncounter() {
@@ -19820,17 +20077,21 @@ function restoreOccultState(data) {
       if(!p||!Number.isFinite(p.x)||!Number.isFinite(p.y)||!occultOwner(p.ownerId)||!occultPointClear(p.x,p.y,1))continue;
       if(effect) {
         if(!['LAVA','SHOCK','EMERGE'].includes(p.kind))continue;
-        out.push({kind:p.kind,x:p.x,y:p.y,ownerId:p.ownerId,angle:Number.isFinite(p.angle)?p.angle:0,
-          length:Math.max(0,Math.min(OCCULT.lavaRange,Number(p.length)||0)),radius:OCCULT.shockRadius,
-          ageMs:Math.max(0,Math.min(800,Number(p.ageMs)||0)),ttlMs:p.kind==='LAVA'?780:p.kind==='SHOCK'?440:650,
-          hitIds:Array.isArray(p.hitIds)?p.hitIds.filter(x=>typeof x==='string').slice(0,24):[]});
+        const h=occultPrepareGround(p.kind,p.x,p.y,p.ownerId,p.kind==='LAVA'?780:p.kind==='SHOCK'?440:650);
+        if(!h)continue;h.angle=Number.isFinite(p.angle)?p.angle:0;
+        h.length=Math.max(0,Math.min(OCCULT.lavaRange,Number(p.length)||0));h.radius=OCCULT.shockRadius;
+        h.ageMs=Math.max(0,Math.min(800,Number(p.ageMs)||0));
+        if(Array.isArray(p.hitIds))for(let i=0;i<p.hitIds.length&&h.hitIds.length<24;i++)
+          if(typeof p.hitIds[i]==='string')h.hitIds.push(p.hitIds[i]);
       } else {
         if(!['FIREBALL','FIRE_FORK','SHARD'].includes(p.kind)||!Number.isFinite(p.angle))continue;
-        out.push({kind:p.kind,x:p.x,y:p.y,px:p.x,py:p.y,ownerId:p.ownerId,angle:p.angle,
-          volley:typeof p.volley==='string'?p.volley:'spell-'+occultSpellSerial++,
-          ageMs:Math.max(0,Math.min(3000,Number(p.ageMs)||0)),travel:Math.max(0,Math.min(1000,Number(p.travel)||0)),
-          ttlMs:Math.max(1,Math.min(3000,Number(p.ttlMs)||1)),speed:p.kind==='SHARD'?560:p.kind==='FIRE_FORK'?390:300,
-          radius:p.kind==='SHARD'?6:p.kind==='FIRE_FORK'?7:9,damage:p.kind==='SHARD'?27:23,forked:p.kind!=='FIREBALL'});
+        const h=occultAcquireSpellRecord(occultProjectilePool);if(!h)continue;
+        h.kind=p.kind;h.x=h.px=p.x;h.y=h.py=p.y;h.ownerId=p.ownerId;h.angle=p.angle;
+        h.volley=typeof p.volley==='string'?p.volley:'spell-'+occultSpellSerial++;
+        h.ageMs=Math.max(0,Math.min(3000,Number(p.ageMs)||0));h.travel=Math.max(0,Math.min(1000,Number(p.travel)||0));
+        h.ttlMs=Math.max(1,Math.min(3000,Number(p.ttlMs)||1));h.speed=p.kind==='SHARD'?560:p.kind==='FIRE_FORK'?390:300;
+        h.radius=p.kind==='SHARD'?6:p.kind==='FIRE_FORK'?7:9;h.damage=p.kind==='SHARD'?27:23;h.forked=p.kind!=='FIREBALL';
+        out.push(h);
       }
     }
   };
@@ -23759,6 +24020,13 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
     
     // Use the actual victim: several falling bodies can share the same spot.
     let deadGuy = victim || enemiesList.find(e => e.x === x && e.y === y && e.dead);
+    // Summoned bodies carry no inventory. Mage staffs/books are spell props,
+    // so neither occult class may enter the generic firearm-loot lottery.
+    // Keep this policy beside the shared kill ledger: bullets, burns, melee,
+    // explosions and lethal falls all retain their ordinary score/corpse path.
+    const dropsItems=eType!=='OCCULT_ZOMBIE'&&!(deadGuy&&deadGuy.eType==='OCCULT_ZOMBIE');
+    const dropsWeapons=dropsItems&&!isOccultMagician(deadGuy)&&
+      eType!=='OCCULT_BLACK'&&eType!=='OCCULT_RED'&&eType!=='OCCULT_BLUE';
     const source = killer === undefined ? deadGuy && deadGuy.lastDamageSource : killer;
     // Legacy scripted/player attacks omit a source. Explicitly owned allied
     // attacks must never build or refresh the player's personal combo.
@@ -23801,7 +24069,7 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
     // A machine is a pile of salvage the moment it stops working. Done here
     // rather than at any of the half-dozen places that splice a dead body out
     // of the list, so every way of killing one pays the same.
-    if (eType === "ROBOT" && x !== undefined && y !== undefined &&
+    if (dropsItems && eType === "ROBOT" && x !== undefined && y !== undefined &&
         typeof spawnResourceDrop === 'function') {
         spawnResourceDrop(x, y, "METAL", Math.round(random(5, 15)));
     }
@@ -23871,7 +24139,7 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
         
         if (x !== undefined && y !== undefined) {
             if (isHeadshot) addScore(10, x, y, "HEADSHOT+", playerKill); else addScore(5, x, y, "KILL+", playerKill);
-            if (random(100) > 65) {
+            if (dropsWeapons && random(100) > 65) {
                 let r = random(100), dropType = null;
                 if (r < 15) dropType = "SMG"; else if (r < 25) dropType = "SHOTGUN"; else if (r < 30) dropType = "AR"; 
                 if (dropType) { let sa = random(TWO_PI), dd = random(70, 90); weaponDrops.push({ x: x + cos(sa) * dd, y: y + sin(sa) * dd, type: dropType }); }
@@ -23892,9 +24160,11 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
     
     if (x !== undefined && y !== undefined) {
         if (isHeadshot) addScore(10, x, y, "HEADSHOT+", playerKill); else addScore(5, x, y, "KILL+", playerKill);
-        let r = random(100), dropType = null;
-        if (r < 15) dropType = "SMG"; else if (r < 25) dropType = "SHOTGUN"; else if (r < 30) dropType = "AR"; 
-        if (dropType) { let scatterAngle = random(TWO_PI), dropDist = random(70, 90); weaponDrops.push({ x: x + cos(scatterAngle) * dropDist, y: y + sin(scatterAngle) * dropDist, type: dropType }); }
+        if (dropsWeapons) {
+            let r = random(100), dropType = null;
+            if (r < 15) dropType = "SMG"; else if (r < 25) dropType = "SHOTGUN"; else if (r < 30) dropType = "AR";
+            if (dropType) { let scatterAngle = random(TWO_PI), dropDist = random(70, 90); weaponDrops.push({ x: x + cos(scatterAngle) * dropDist, y: y + sin(scatterAngle) * dropDist, type: dropType }); }
+        }
     }
     
     if (currentLevel === 1 && isStoryMode && totalKills === 6 && !darchonCallCompleted) {
@@ -24432,7 +24702,7 @@ function updateEntities() {
       }
 
       
-      if (e.hp>0 && !e.dead && inView(e.x, e.y, 150)) actorShow(e);
+      if (e.hp>0 && !e.dead && inView(e.x, e.y, actorRenderCullPad(e))) actorShow(e);
       if (e.hp <= 0 && !e.dead) { e.dead = true; processKill(e.x, e.y, false, e.eType, e.isFriendly, e); enemiesList.splice(i, 1); if (totalKills < MAX_KILLS) setTimeout(spawnSingleEnemy, 100); }
   }
 
