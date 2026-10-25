@@ -29,8 +29,10 @@ for (const [type, initial, boundary] of [['ARMORED',600,300],['ARMORED_STANDARD'
   for (const hp of [initial,boundary+1]) {
     const r=hit(type,'BODY',hp),spray=of(r,'HIT_BLOOD'),burst=of(r,'COMIC_IMPACT');
     check(type+' body damage at HP '+hp,r.hp===hp-20);
-    check(type+' body emits eight blood spray particles and one comic burst at HP '+hp,
-      spray.length===8 && burst.length===1 && r.particles.length===9);
+    check(type+' body emits twelve blood spray particles and one comic burst at HP '+hp,
+      spray.length===12 && burst.length===1 && r.particles.length===13);
+    check(type+' comic pop is larger than the previous maximum armor burst at HP '+hp,
+      burst[0].sz>13.5*1.2);
     check(type+' body impact removes smoke, debris and old orange effects at HP '+hp,
       !r.particles.some(p=>['SMOKE','CHIP','SPARK','BLOOD_SMOKE','ARMOR_IMPACT','BLOOD'].includes(p.t)));
     check(type+' spray has finite bounded geometry and lifetime at HP '+hp,
@@ -41,7 +43,7 @@ for (const [type, initial, boundary] of [['ARMORED',600,300],['ARMORED_STANDARD'
     check(type+' retains body bullet holes at HP '+hp,r.decals.length===1 && r.decals[0]===false);
   }
   const exposed=hit(type,'BODY',boundary);
-  check(type+' exact armor boundary uses flesh spray and comic feedback',of(exposed,'HIT_BLOOD').length===8 && of(exposed,'COMIC_IMPACT').length===1 && !of(exposed,'BLOOD_SMOKE').length && !of(exposed,'FLECK').length && !of(exposed,'ARMOR_IMPACT').length && !of(exposed,'CHIP').length);
+  check(type+' exact armor boundary uses flesh spray and comic feedback',of(exposed,'HIT_BLOOD').length===12 && of(exposed,'COMIC_IMPACT').length===1 && !of(exposed,'BLOOD_SMOKE').length && !of(exposed,'FLECK').length && !of(exposed,'ARMOR_IMPACT').length && !of(exposed,'CHIP').length);
   check(type+' boundary contact records exposed flesh',of(exposed,'COMIC_IMPACT')[0].material==='FLESH');
   const helmet=hit(type,'HEAD',initial),flecks=of(helmet,'FLECK');
   check(type+' head damage remains unchanged',helmet.hp===initial-(type==='ARMORED'?200:100));
@@ -63,7 +65,8 @@ for(const type of ['NM0_GREY_FATIGUE','NM0_CITY_GUARD','NORMAL']) {
   const r=hit(type,'HEAD',900);
   check(type+' keeps existing head blood alongside comic contact',r.hp===(type==='NM0_CITY_GUARD'?845:800) && of(r,'BLOOD').length===8 && of(r,'COMIC_IMPACT').length===1 && !of(r,'HIT_BLOOD').length && !of(r,'FLECK').length && !of(r,'BLOOD_SMOKE').length && !of(r,'ARMOR_IMPACT').length);
   const flesh=hit(type,'BODY',900);
-  check(type+' exposed body keeps damage and uses new spray and comic contact',flesh.hp===(type==='NM0_CITY_GUARD'?889:880)&&of(flesh,'HIT_BLOOD').length===8&&of(flesh,'COMIC_IMPACT').length===1&&flesh.particles.length===9);
+  check(type+' exposed body keeps damage and uses new spray and comic contact',flesh.hp===(type==='NM0_CITY_GUARD'?889:880)&&of(flesh,'HIT_BLOOD').length===12&&of(flesh,'COMIC_IMPACT').length===1&&flesh.particles.length===13);
+  check(type+' exposed-flesh pop exceeds the prior maximum contact size',of(flesh,'COMIC_IMPACT')[0].sz>13.5);
 }
 const robotBody=hit('ROBOT','BODY',900);
 check('robot chassis effects remain unchanged',robotBody.hp===880 && of(robotBody,'FLECK').length===9 && robotBody.particles.length===9);
@@ -77,7 +80,7 @@ for(const [label,shield,immune] of [['shield only',100,false],['shield overflow'
     for(let i=0;i<8&&b.active;i++)updateBullets();inTownCutscene=false;player=savedPlayer;
     return {hp:target.hp,spray:particles.filter(p=>p.t==='HIT_BLOOD').length,comic:particles.filter(p=>p.t==='COMIC_IMPACT').length};})()`);
   check(label+' only produces flesh feedback for actual HP damage',
-    shield===1?r.hp<100&&r.spray===8&&r.comic===1:r.hp===100&&r.spray===0&&r.comic===0);
+    shield===1?r.hp<100&&r.spray===12&&r.comic===1:r.hp===100&&r.spray===0&&r.comic===0);
 }
 
 for(const type of ['HIT_BLOOD','COMIC_IMPACT']) {

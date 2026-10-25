@@ -13682,6 +13682,87 @@ function stampImpactBlood(x, y, angle, radius, seed, owner = null) {
     }
     depositSmallBlood(x, y, blobs, 32, owner);
 }
+// A kill adds one directional vector stain; the existing oval pools still grow
+// beneath the corpse. These paths are baked once, rather than kept as a new
+// per-frame decal list, and use their own seed instead of combat randomness.
+let _killVectorBloodFrame=-1,_killVectorBloodBank=null,_killVectorBloodCount=0;
+function buildKillVectorBlood(angle, seed) {
+    seed=seed>>>0||1;
+    const rnd=()=>{seed^=seed<<13;seed^=seed>>>17;seed^=seed<<5;return(seed>>>0)/4294967296;};
+    const ca=Math.cos(angle),sa=Math.sin(angle),paths=[];
+    const path=(points,tone=0)=>paths.push({points:points.map(p=>[ca*p[0]-sa*p[1],sa*p[0]+ca*p[1]]),tone});
+    // An irregular central wet patch and asymmetrical fingers make one heavy
+    // thrown fan, with narrow gaps and broken edges instead of a radial star.
+    const core=[];
+    for(let i=0;i<13;i++){
+        const a=i*Math.PI*2/13,r=7+rnd()*4;
+        core.push([Math.cos(a)*r*1.25+2,Math.sin(a)*r]);
+    }
+    path(core);
+    for(let i=0;i<5;i++){
+        const side=(i-2)*3.3+(rnd()-.5)*2.2,reach=31+rnd()*24+(i===2?12:0),w=2.4+rnd()*2.7;
+        path([[-2,side*.40],[reach*.30,side-w],[reach*.62,side-w*.8],
+            [reach*.88,side-w*1.45],[reach,side-w*.28],[reach*.91,side+w*.5],
+            [reach*.57,side+w],[reach*.22,side+w*.52],[0,side*.45+w*.2]]);
+    }
+    for(let i=0;i<9;i++){
+        const a=(rnd()-.5)*.75,reach=25+rnd()*51,x=Math.cos(a)*reach,y=Math.sin(a)*reach;
+        const length=2.5+rnd()*5.5,w=.65+rnd()*1.9;
+        path([[x-length,y-w*.15],[x+length*.3,y-w],[x+length,y],
+            [x+length*.15,y+w],[x-length*.5,y+w*.3]],i%3===0?1:0);
+    }
+    // Two short entry-side tears counter the stronger exit-side fan.
+    for(let i=0;i<2;i++){
+        const x=-10-rnd()*9,y=(i?1:-1)*(3+rnd()*5);
+        path([[x+5,y-1],[x-4,y-.4],[x-6,y+1],[x+1,y+2]]);
+    }
+    let spread=0;
+    for(const p of paths)for(const v of p.points)spread=Math.max(spread,Math.abs(v[0]),Math.abs(v[1]));
+    return {angle,paths,spread:Math.ceil(spread)+2};
+}
+function paintKillVectorBlood(g,x,y,paths,col) {
+    g.noStroke();
+    for(const path of paths){
+        if(path.tone)g.fill(137,12,23,220);else g.fill(col);
+        g.beginShape();for(const p of path.points)g.vertex(x+p[0],y+p[1]);g.endShape(CLOSE);
+    }
+}
+function stampGroundBloodVectors(mark) {
+    const {x,y,paths,spread,col}=mark;
+    const minCX=Math.floor((x-spread)/CHUNK_SIZE),maxCX=Math.floor((x+spread)/CHUNK_SIZE);
+    const minCY=Math.floor((y-spread)/CHUNK_SIZE),maxCY=Math.floor((y+spread)/CHUNK_SIZE);
+    // Paint the same geometry on each crossed canvas. Canvas clipping owns
+    // the seam; no new random pattern is rolled on either side of it.
+    for(let cx=minCX;cx<=maxCX;cx++)for(let cy=minCY;cy<=maxCY;cy++){
+        const rx=x-cx*CHUNK_SIZE,ry=y-cy*CHUNK_SIZE;
+        const e=acquireBloodChunk(bloodKey(cx,cy,false),rx-spread,ry-spread,rx+spread,ry+spread);
+        paintKillVectorBlood(e.pg,rx-e.bx,ry-e.by,paths,col);
+    }
+}
+function stampKillVectorBlood(victim,killer,x=victim&&victim.x,y=victim&&victim.y) {
+    if(!victim||!(victim.hp<=0)||!humanBloodTarget(victim)||victim._killVectorBloodStamped||
+        !Number.isFinite(x)||!Number.isFinite(y))return null;
+    if(_killVectorBloodFrame!==frameCount||_killVectorBloodBank!==bloodChunks){
+        _killVectorBloodFrame=frameCount;_killVectorBloodBank=bloodChunks;_killVectorBloodCount=0;
+    }
+    if(_killVectorBloodCount>=24)return null;
+    let angle;
+    const hit=victim.fallHit;
+    if(hit&&hit.fatal&&hit.frame===frameCount&&Number.isFinite(hit.angle))angle=hit.angle;
+    else if(killer&&Number.isFinite(killer.x)&&Number.isFinite(killer.y)&&Math.hypot(x-killer.x,y-killer.y)>.01)
+        angle=Math.atan2(y-killer.y,x-killer.x);
+    else if(Math.hypot(victim.motionX||0,victim.motionY||0)>.01)angle=Math.atan2(victim.motionY||0,victim.motionX||0);
+    else angle=Number.isFinite(victim.aimAngle)?victim.aimAngle:0;
+    const seed=(Math.imul((x*16)|0,0x9e3779b9)^Math.imul((y*16)|0,0x85ebca6b)^frameCount)>>>0||1;
+    const pattern=buildKillVectorBlood(angle,seed),mark={x,y,...pattern,col:impactBloodColor()};
+    _killVectorBloodCount++;victim._killVectorBloodStamped=true;
+    if(shovelRenderDepth(victim)>0||victim.shovelDepthTarget>0){
+        if(shovelBloodMarks.length>=SHOVEL_BLOOD_MARK_MAX)shovelBloodMarks.shift();
+        mark.vectors=mark.paths;mark.blobs=[];mark.age=24;mark.shovelDeposit=true;
+        shovelBloodMarks.push(shovelBindEffect(mark,victim));
+    }else stampGroundBloodVectors(mark);
+    return mark;
+}
 function humanBloodTarget(actor) {
     return actor && (actor.isPlayer || actor.eType === 'ARMORED' || ragHumanoid(actor.eType, actor.bodyW));
 }
@@ -13770,6 +13851,7 @@ function drawShovelBloodMarks(actor = null) {
             Math.hypot(mark.shovelOriginX-actor.x,mark.shovelOriginY-actor.y)>SHOVEL.cell : !cell.open)) continue;
         if (mark.x < viewLeft-100 || mark.x > viewRight+100 || mark.y < viewTop-100 || mark.y > viewBottom+100) continue;
         shovelPaintDepthEffect(mark, () => {
+            if(mark.vectors){paintKillVectorBlood(window,mark.x,mark.y,mark.vectors,mark.col);return;}
             noStroke(); fill(mark.col);
             const growth = Math.min(1, mark.age / 24);
             for (const b of mark.blobs) ellipse(mark.x+b.ox,mark.y+b.oy,b.sz*growth,b.sz*growth);
@@ -24004,11 +24086,15 @@ function updateAndDrawFloatingScores() {
 
 function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = false, victim = null, killer = undefined) {
     frontierAmbientMarkCombat();
+    // Resolve contact before bookkeeping early returns, so side-mission and
+    // civilian deaths receive the same floor stain without gaining kill credit.
+    let deadGuy = victim || enemiesList.find(e => e.x === x && e.y === y && e.dead);
+    const source = killer === undefined ? deadGuy && deadGuy.lastDamageSource : killer;
+    stampKillVectorBlood(deadGuy,source,x,y);
     if(CITY_CIVILIANS.indexOf(eType)!==-1)return;
     if(frontierCivilianType(eType)){bankFrontierPerson(victim);return;}
     
     // Use the actual victim: several falling bodies can share the same spot.
-    let deadGuy = victim || enemiesList.find(e => e.x === x && e.y === y && e.dead);
     // Summoned bodies carry no inventory. Mage staffs/books are spell props,
     // so neither occult class may enter the generic firearm-loot lottery.
     // Keep this policy beside the shared kill ledger: bullets, burns, melee,
@@ -24016,7 +24102,6 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
     const dropsItems=eType!=='OCCULT_ZOMBIE'&&!(deadGuy&&deadGuy.eType==='OCCULT_ZOMBIE');
     const dropsWeapons=dropsItems&&!isOccultMagician(deadGuy)&&
       eType!=='OCCULT_BLACK'&&eType!=='OCCULT_RED'&&eType!=='OCCULT_BLUE';
-    const source = killer === undefined ? deadGuy && deadGuy.lastDamageSource : killer;
     // Legacy scripted/player attacks omit a source. Explicitly owned allied
     // attacks must never build or refresh the player's personal combo.
     const playerKill = !isFriendly && (source ? !!source.isPlayer : killer === undefined);
@@ -26331,7 +26416,7 @@ class Bullet {
 // then holds it is a leak wearing a different hat.
 const PARTICLE_POOL_MAX = 900;
 const _particlePool = [];
-const COMIC_HIT_LIMIT = 900, COMIC_HITS_PER_FRAME = 24;
+const COMIC_HIT_LIMIT = 900, COMIC_HITS_PER_FRAME = 24, COMIC_HIT_BLOOD_COUNT = 12;
 let _comicHitFrame=-1,_comicHitsThisFrame=0,_comicHitSerial=0;
 function comicHitHash(n) {
     let h=Math.imul((n|0)^0x51ed270b,0x45d9f3b);h=Math.imul(h^(h>>>16),0x45d9f3b);
@@ -26342,7 +26427,7 @@ function emitComicHit(x,y,vx,vy,owner,armor=false,blood=true,bloodColor=null,for
     if(_comicHitsThisFrame>=COMIC_HITS_PER_FRAME||particles.length>=COMIC_HIT_LIMIT)return false;
     _comicHitsThisFrame++;
     // The particle pass paints backwards: spray goes above the brief flash.
-    const count=blood?Math.min(8,COMIC_HIT_LIMIT-particles.length-1):0,ink=bloodColor||color(90,0,0);
+    const count=blood?Math.min(COMIC_HIT_BLOOD_COUNT,COMIC_HIT_LIMIT-particles.length-1):0,ink=bloodColor||color(90,0,0);
     for(let i=0;i<count;i++)particles.push(newParticle(x,y,ink,'HIT_BLOOD',vx,vy,owner));
     const p=newParticle(x,y,ink,'COMIC_IMPACT',vx,vy,owner);
     p.fxMaterial=armor?'ARMOR':'FLESH';p.sz*=(armor?1.2:1)*Math.max(.7,Math.min(1.3,force));
@@ -26392,14 +26477,14 @@ Particle.prototype.init = function(x, y, c, t, dX = 0, dY = 0, owner = null) {
         const h=comicHitHash(this.fxSeed),j=comicHitHash(this.fxSeed+53);
         this.fxKind=this.fxSeed%4;this.fxStretch=1.8+j*2.4;
         if(t==='COMIC_IMPACT') {
-            this.sz=10+h*3.5;this.vx=this.vy=0;this.l=this.fxLife=14;this.fxMaterial='FLESH';
+            this.sz=14.5+h*5.1;this.vx=this.vy=0;this.l=this.fxLife=14;this.fxMaterial='FLESH';
         } else {
             // Most of the jet follows the round; a smaller back-spatter cone
             // rebounds from the entry wound. Geometry stays fixed while flying.
             const back=this.fxKind===0,a=this.fxAngle+(j-.5)*1.25+(back?Math.PI:0);
-            const speed=(2.6+h*4.5)*(back?.66:1);
+            const speed=(3.5+h*6)*(back?.66:1);
             this.vx=Math.cos(a)*speed;this.vy=Math.sin(a)*speed;this.fxAngle=a;
-            this.sz=1.8+j*1.8;this.l=this.fxLife=14+Math.floor(h*8);
+            this.sz=1.8+j*1.8;this.l=this.fxLife=18+Math.floor(h*10);
         }
         return;
     }
@@ -26489,7 +26574,7 @@ Particle.prototype.paint = function() {
     }
 }
 
-const COMIC_HIT_INK=[57,26,24],COMIC_HIT_GOLD=[255,218,76],COMIC_HIT_LIGHT=[255,249,222];
+const COMIC_HIT_INK=[57,26,24],COMIC_HIT_GOLD=[255,204,12],COMIC_HIT_LIGHT=[255,232,65];
 const HIT_BLOOD_INK=[48,2,12],HIT_BLOOD_DARK=[105,2,16],HIT_BLOOD_RED=[163,6,25],HIT_BLOOD_GLEAM=[202,18,39];
 function comicHitFill(rgb,a) {const ink=particlePaint(rgb,a);if(ink)fill(ink);else fill(rgb[0],rgb[1],rgb[2],a);}
 function comicHitStroke(rgb,a) {const ink=particlePaint(rgb,a);if(ink)stroke(ink);else stroke(rgb[0],rgb[1],rgb[2],a);}

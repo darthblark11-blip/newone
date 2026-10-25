@@ -35,7 +35,7 @@ for (const hit of result.hits) {
   assert.equal(hit.oldOrange,0,'old orange blobs and sparks are replaced');
   assert.equal(hit.mist,0,'blood smoke is replaced by shaped spray');
   assert.equal(hit.bursts,1,'a hit produces one coherent comic burst');
-  assert.equal(hit.blood,8,'a hit keeps the directional blood spray');
+  assert.equal(hit.blood,12,'a hit keeps the denser directional blood spray');
   if (hit.before>50) {
     assert.equal(hit.material,'ARMOR','intact plate produces the armor comic contact');
   } else {

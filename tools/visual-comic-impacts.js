@@ -9,6 +9,7 @@ const p5=fs.readFileSync(path.join(deps,'node_modules/p5/lib/p5.min.js'),'utf8')
 const out=process.env.COMIC_IMPACT_OUT||'/tmp/newone-comic-impacts';
 const frames=path.join(out,'frames');fs.mkdirSync(frames,{recursive:true});
 const fps=30,totalFrames=Number(process.env.COMIC_IMPACT_FRAMES||120);
+const expectedBlood=Number(process.env.COMIC_IMPACT_BLOOD_COUNT||12);
 const cases=[
  {name:'NORMAL / BODY',type:'NORMAL',hp:900,zone:'BODY',comic:true,blood:true},
  {name:'NORMAL / LEGS',type:'NORMAL',hp:900,zone:'LEGS',comic:true,blood:true},
@@ -75,7 +76,9 @@ const cases=[
     __comicUse(f);doTick=false;__comicPaintOrder.length=0;
     push();translate(x,y);scale(magnify);drawBloodChunks();f.e.show();updateParticles();pop();
     const order=__comicPaintOrder.filter(t=>t==='COMIC_IMPACT'||t==='HIT_BLOOD');
-    const snapshot={tick:f.tick,live:f.particles.length,order,stack:{...__comicStack}};
+    const sharp=f.particles.filter(p=>p.t==='HIT_BLOOD'),flash=f.particles.find(p=>p.t==='COMIC_IMPACT');
+    const snapshot={tick:f.tick,live:f.particles.length,order,stack:{...__comicStack},flashSize:flash&&flash.sz,
+     bloodReach:sharp.length?Math.max(...sharp.map(p=>Math.hypot(p.x-f.hit.x,p.y-f.hit.y))):0};
     f.snapshots.push(snapshot);return snapshot;
    };
    window.__comicBack=(title,subtitle)=>{
@@ -111,7 +114,7 @@ const cases=[
   for(const [i,r] of sheet.records.entries()){
    const c=cases[i];
    if(c.comic)assert.equal(r.types.COMIC_IMPACT,1,c.name+' uses one authored comic contact burst');
-   if(c.blood)assert.equal(r.types.HIT_BLOOD,8,c.name+' uses eight sharp directional blood fragments');
+   if(c.blood)assert.equal(r.types.HIT_BLOOD,expectedBlood,c.name+' uses the expected sharp directional blood volume');
    if(c.helmet){assert.equal(r.types.FLECK,9,'helmet retains nine native metal flecks');assert.equal(r.types.COMIC_IMPACT,1,'helmet adds one comic contact');assert(!r.types.CHIP,'helmet loses debris chips');}
    if(c.head){assert.equal(r.types.BLOOD,8,'bare headshot retains its existing blood');assert.equal(r.types.COMIC_IMPACT,1,'bare headshot adds one comic contact');assert(!r.types.HIT_BLOOD,'bare headshot retains its original blood particle path');}
    if(c.robot){assert.equal(r.types.FLECK,9,'robot retains nine native metal flecks');assert(!r.types.COMIC_IMPACT&&!r.types.HIT_BLOOD,'robot remains a material control');}
@@ -140,7 +143,7 @@ const cases=[
    return records;
   });
   await page.setViewportSize({width:1600,height:1080});
-  for(const r of directions){assert.equal(r.types.COMIC_IMPACT,1);assert.equal(r.types.HIT_BLOOD,8);assert.equal(r.large.stack.depth,0);}
+  for(const r of directions){assert.equal(r.types.COMIC_IMPACT,1);assert.equal(r.types.HIT_BLOOD,expectedBlood);assert.equal(r.large.stack.depth,0);}
   await page.locator('canvas').first().screenshot({path:path.join(out,'comic-impact-directions.png')});
   await page.setViewportSize({width:1600,height:1080});
   const movieStart=await page.evaluate(cases=>{

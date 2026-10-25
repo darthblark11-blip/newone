@@ -21,7 +21,7 @@ for (const type of ['ARMORED','ARMORED_STANDARD','SAUCER','SAUCER_RED','SNAIL_HY
     check('robot metal streaks retain their existing emission', hit.particles.length === 9 && hit.particles.every(p=>p.t === 'FLECK'));
   } else if (type === 'ARMORED' || type === 'ARMORED_STANDARD') {
     const spray=hit.particles.filter(p=>p.t==='HIT_BLOOD'),burst=hit.particles.filter(p=>p.t==='COMIC_IMPACT');
-    check(type+' has directional blood and one coherent comic contact',spray.length===8&&burst.length===1&&hit.particles.length===9);
+    check(type+' has denser directional blood and one coherent comic contact',spray.length===12&&burst.length===1&&hit.particles.length===13);
     check(type+' no longer emits smoke, gray chunks or old orange blobs',
       !hit.particles.some(p=>['CHIP','SMOKE','SPARK','BLOOD_SMOKE','ARMOR_IMPACT'].includes(p.t)));
     check(type+' spray and contact have finite compact geometry',
@@ -78,8 +78,8 @@ for (const type of ['ARMORED','ARMORED_STANDARD','SAUCER','SAUCER_RED','SNAIL_HY
       let yellow=0,light=0,ink=0,fullAlpha=0,fadedAlpha=0;
       for(let i=0;i<full.length;i+=4){
         const [r,g,b,a]=full.slice(i,i+4);fullAlpha+=a;fadedAlpha+=faded[i+3];
-        if(a>100&&r>230&&g>150&&b<170)yellow++;
-        if(a>100&&r>230&&g>220&&b>170)light++;
+        if(a>100&&r>235&&g>150&&g<220&&b<55)yellow++;
+        if(a>100&&r>235&&g>=220&&b<130)light++;
         if(a>100&&r<110&&g<90&&b<90)ink++;
       }
       const nativeEllipse=window.ellipse,nativeRandom=window.random;
@@ -94,7 +94,7 @@ for (const type of ['ARMORED','ARMORED_STANDARD','SAUCER','SAUCER_RED','SNAIL_HY
       return {yellow,light,ink,fullAlpha,fadedAlpha,ovals,unchanged:pose===JSON.stringify([burst,spray]),
         balanced:['a','b','c','d','e','f'].every(k=>transform[k]===after[k])&&Math.abs(alpha-.37)<1e-8};
     });
-    check('comic contact has a bright core, yellow lobes and a hard ink rim',comic.yellow>8&&comic.light>8&&comic.ink>8);
+    check('comic contact has saturated yellow lobes, a light yellow core and a hard ink rim',comic.yellow>8&&comic.light>8&&comic.ink>8);
     check('comic contact fades across its whole native footprint',comic.fadedAlpha>0&&comic.fadedAlpha<comic.fullAlpha);
     check('new spray and comic contact use shaped ink instead of repeated ovals',comic.ovals===0);
     check('native painting never advances the impact pose',comic.unchanged);

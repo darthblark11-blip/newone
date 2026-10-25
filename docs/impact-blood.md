@@ -6,7 +6,8 @@ ink (`111, 9, 16`), 3–8-unit diameters and a short forward spread. These marks
 use the existing floor blood bank, beneath bodies, and remain fixed on the
 ground when the victim moves. Body wound decals keep their own rendering path.
 Airborne projectile contact now adds a brief ink-rimmed comic burst with a
-bright core and angular rays. Non-head human hits throw directional blood
+strong yellow core and angular rays. The contact pop is about 45% larger than
+the first comic version. Non-head human hits throw denser, farther-reaching blood
 ribbons, pointed spray fans and smaller streaks instead of a cluster of ovals.
 The effect is cosmetic; hit resolution, damage and knockback do not change.
 
@@ -21,7 +22,7 @@ hits use the same red floor droplets alongside the new airborne spray. Hard
 helmet impacts retain their metal streaks and do not produce flesh blood.
 
 NM0 body and leg contacts replace the old orange `ARMOR_IMPACT` blobs and
-`BLOOD_SMOKE` puffs with one `COMIC_IMPACT` burst and eight `HIT_BLOOD`
+`BLOOD_SMOKE` puffs with one `COMIC_IMPACT` burst and twelve `HIT_BLOOD`
 particles. The comic burst reflects whether the projectile struck intact plate
 or exposed flesh. Gray debris, smoke and the old orange sparks are absent from
 these hits. Helmet impacts retain nine metal streaks and add a comic burst;
@@ -41,6 +42,27 @@ The standard soldier still starts with 300 HP and has armor while its health
 before a hit is above 50 HP. The shot that crosses that boundary still hits
 plate; subsequent hits at or below 50 HP use the exposed-flesh burst and spray.
 The orb's separate 600-HP / 300-HP armor rule is unchanged.
+
+## Directional kill stains
+
+Each actual human death adds a ragged vector floor splatter alongside the
+existing oval pool. The finishing projectile's direction controls the heavy
+forward fan, tapered satellite streaks and smaller entry-side tears. Other
+finishing attacks use the killer-to-victim direction, then recent motion or
+facing when no attack origin is available. A previous nonfatal shot cannot
+override the finishing attack, even if both happen in the same frame.
+
+The seventeen polygon marks bake once into the existing floor blood bank,
+below corpses, using the same surface limits and seam clipping as the oval
+pools. Moving or removing the victim leaves the stain fixed. Duplicate death
+dispatches cannot add it twice; nonfatal hits, machines, alien bodies and
+wildlife do not create human kill stains. A separate budget accepts at most
+24 kill stains in one frame without using gameplay randomness.
+
+Below the surface, vector stains reuse the bounded depth-mark list. They
+follow a falling victim's depth, detach on reaching the shaft floor and stay
+on that floor when the victim moves. Travel banks the marks with the sector;
+a genuine restart clears them along with the other blood surfaces.
 
 A positive-damage arrow that leaves a human alive starts a cosmetic wound
 trail. It drops one small 2.5–5-unit droplet every 250 active milliseconds,
@@ -93,7 +115,7 @@ The existing 48-animal population cap still bounds tracking work.
   droplets across humans and wildlife. Each accepted impact has three drops.
 - New airborne comic contacts accept at most 24 events in a frame and stop
   adding particles at the existing 900-particle ceiling. A full contact uses
-  eight small spray records plus one burst, with no backlog after a busy frame.
+  twelve small spray records plus one burst, with no backlog after a busy frame.
 - A delayed frame emits at most one trail droplet per actor. It does not queue
   a backlog or dump missed droplets together. A budget-deferred wound remains
   due; actors that received a drop wait another 250 milliseconds, allowing
@@ -118,7 +140,10 @@ node tools/check-impact-blood-scene.js
 node tools/check-armored-impact-effects.js
 node tools/check-standard-armor-break.js
 node tools/check-comic-hit-feedback.js
+node tools/check-kill-vector-blood.js
 VIS_DEPS=/workspace/newone-dev node tools/check-impact-particles.js
+VIS_DEPS=/workspace/newone-dev node tools/visual-comic-impacts.js
+VIS_DEPS=/workspace/newone-dev node tools/visual-kill-vector-splatter.js
 ```
 
 The human suite covers 69 impact, material, shield, healing, trail, budget,
