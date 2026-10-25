@@ -1,6 +1,7 @@
 // Native p5 checks: original front/side art, unchanged hip/aim history, and rear heel poses.
 // STANDING_BASELINE=/tmp/game-before.js VIS_DEPS=/tmp/newone-hip-deps node tools/check-standing-movement-parity.js
 // Set STANDING_REVIEW_OUT to also write standing/crouch reference sheets and a real-input clip.
+// STANDING_FLUID_REVIEW=1 adds a before/after gait movie; STANDING_FLUID_ONLY=1 renders only that movie.
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'),assert=require('node:assert/strict');
 const {spawnSync}=require('node:child_process');
 const deps=process.env.VIS_DEPS||'/tmp/newone-hip-deps';
@@ -327,10 +328,60 @@ async function heelReview(page){
  fs.writeFileSync(path.join(heelOut,'review.json'),JSON.stringify({sheets,motion},null,2));
  return {frames:total,directionCards:sheets.length,phaseCards:24,out:heelOut};
 }
+async function fluidReview(beforePage,afterPage){
+ const fluidOut=path.join(out,'fluid');
+ for(const label of ['before','after'])fs.mkdirSync(path.join(fluidOut,label),{recursive:true});
+ for(const [page,label]of [[beforePage,'BEFORE'],[afterPage,'AFTER']]){
+  await page.setViewportSize({width:960,height:1080});
+  await page.evaluate(label=>{
+   resizeCanvas(960,1080);BIOME_ACTIVE=false;frameCount=10000;deltaTime=1000/60;
+   window.__fluidLabel=label;window.__fluidActors=[.2,.5,1].map(()=>__movementActor('ASSAULT_RIFLE',-Math.PI/2));
+   for(let i=0;i<3;i++)__movementStep(__fluidActors[i],Math.PI/2,[.2,.5,1][i],-Math.PI/2,120);
+   window.__fluidFrame=(f,total)=>{
+    const t=f/total,aim=-Math.PI/2;let move=aim+Math.PI,look=aim,weight=1,stage='BACKWARD STRIDE';
+    if(t<.25){}
+    else if(t<5/12){move=aim+Math.PI*(1-(t-.25)*6);stage='BACKWARD → FORWARD';}
+    else if(t<7/12){move=aim+Math.PI*((t-5/12)*6);stage='FORWARD → BACKWARD';}
+    else if(t<2/3){weight=1-(t-7/12)*12;stage='SETTLE TO STOP';}
+    else if(t<.75){weight=0;stage='STOP / KEEP AIM';}
+    else if(t<5/6){weight=(t-.75)*12;stage='RESTART BACKWARD';}
+    else if(t<11/12){look=null;stage='RELEASE AIM / KEEP MOVING';}
+    else stage='RE-AIM / KEEP MOVING';
+    for(let step=0;step<2;step++)for(let i=0;i<3;i++){
+     frameCount++;deltaTime=1000/60;__movementInput(__fluidActors[i],move,[.2,.5,1][i]*weight,look);__fluidActors[i].updatePlayer();
+    }
+    background(37,50,57);noStroke();textFont('sans-serif');textAlign(CENTER,CENTER);fill(226,236,231);textSize(23);text(__fluidLabel+' / '+stage,width/2,30);
+    const records=[];
+    for(let i=0;i<3;i++){
+     const c=__fluidActors[i],x=480,y=260+i*340,scaleValue=3.8;
+     push();drawingContext.beginPath();drawingContext.rect(30,y-195,900,325);drawingContext.clip();stroke(57,73,80);strokeWeight(1);
+     const gx=((c.x*scaleValue)%56+56)%56,gy=((c.y*scaleValue)%56+56)%56;
+     for(let xx=0-gx;xx<width;xx+=56)line(xx,y-205,xx,y+140);
+     for(let yy=y-205-gy;yy<y+140;yy+=56)line(0,yy,width,yy);
+     __movementPaint(c,x,y,scaleValue);__movementPaint(c,x+210,y+70,1);pop();
+     noStroke();fill(212,227,222);textSize(14);text(['WALK','JOG','RUN'][i],120,y+85);
+     records.push({x:c.x,y:c.y,aim:c.aimAngle,move:c.moveAngle,gait:c.gait,cycle:c.walkCycle,moving:c.isMoving,lower:standingLowerPose(c),motion:{...c._standingMotion},aimFilter:c._standingAim?{...c._standingAim}:null});
+    }
+    return {stage,records,depth:__paintStats.depth,minDepth:__paintStats.minDepth};
+   };
+  },label);
+ }
+ const total=Number(process.env.STANDING_FLUID_FRAMES||360),records=[];
+ for(let f=0;f<total;f++){
+  const a=await beforePage.evaluate(({f,total})=>__fluidFrame(f,total),{f,total}),b=await afterPage.evaluate(({f,total})=>__fluidFrame(f,total),{f,total});
+  assert.deepEqual(b,a,'fluid gait retains exact physical hip/torso/input state, frame '+f);assert.equal(b.depth,0);assert.equal(b.minDepth,0);records.push(b);
+  await beforePage.locator('canvas').first().screenshot({path:path.join(fluidOut,'before',String(f).padStart(4,'0')+'.png')});
+  await afterPage.locator('canvas').first().screenshot({path:path.join(fluidOut,'after',String(f).padStart(4,'0')+'.png')});
+ }
+ const encode=spawnSync('ffmpeg',['-y','-loglevel','error','-framerate','30','-i',path.join(fluidOut,'before','%04d.png'),'-framerate','30','-i',path.join(fluidOut,'after','%04d.png'),'-filter_complex','[0:v][1:v]hstack=inputs=2','-c:v','libx264','-pix_fmt','yuv420p','-crf','18','-movflags','+faststart',path.join(fluidOut,'standing-fluid-before-after.mp4')],{encoding:'utf8'});
+ if(encode.error)throw encode.error;assert.equal(encode.status,0,encode.stderr);
+ fs.writeFileSync(path.join(fluidOut,'motion.json'),JSON.stringify(records,null,2));return {frames:total,out:fluidOut};
+}
 (async()=>{
  const browser=await chromium.launch({executablePath:process.env.VIS_CHROME||'/usr/bin/chromium',headless:true,args:['--no-sandbox']});
  try{
   const a=await load(browser,baseline),b=await load(browser,candidate),samples=cases(),records=[];
+  if(process.env.STANDING_FLUID_ONLY){if(!out)throw Error('Set STANDING_REVIEW_OUT for fluid review');const fluid=await fluidReview(a.page,b.page);assert.deepEqual(a.errors,[]);assert.deepEqual(b.errors,[]);console.log('PASS '+fluid.frames+' native before/after fluid-gait frames. Preview: '+fluid.out);return;}
   const beforeStand=await locomotionHistory(a.page,'STAND'),afterStand=await locomotionHistory(b.page,'STAND');
   assert.deepEqual(afterStand,beforeStand,'standing hip/aim/input histories remain exactly unchanged');
   console.log('PASS '+beforeStand.records.length+' original standing hip/aim/input samples unchanged.');
@@ -355,7 +406,7 @@ async function heelReview(page){
    assert.equal(pb.stats.depth,0);assert.equal(pb.stats.minDepth,0);records.push({biome,offset,poses:batch.length,sha256:ha});
   }
   if(!process.env.STANDING_REVIEW_ONLY)console.log('PASS '+samples.length*2+' native front/side poses match original pixels and state exactly.');
-  let previews=null;if(out){previews=await review(b.page);if(process.env.STANDING_HEEL_REVIEW){previews.heelVisibility=await heelVisibility(b.page);previews.heels=await heelReview(b.page);}fs.writeFileSync(path.join(out,'parity.json'),JSON.stringify({baseline,candidate,poses:records.reduce((n,r)=>n+r.poses,0),records,previews,errors:b.errors},null,2));console.log('PASS '+previews.frames+' input-driven motion frames and '+previews.actualInputSamples+' actual-input reference samples. Previews: '+out);}
+  let previews=null;if(out){previews=await review(b.page);if(process.env.STANDING_HEEL_REVIEW){previews.heelVisibility=await heelVisibility(b.page);previews.heels=await heelReview(b.page);}if(process.env.STANDING_FLUID_REVIEW)previews.fluid=await fluidReview(a.page,b.page);fs.writeFileSync(path.join(out,'parity.json'),JSON.stringify({baseline,candidate,poses:records.reduce((n,r)=>n+r.poses,0),records,previews,errors:b.errors},null,2));console.log('PASS '+previews.frames+' input-driven motion frames and '+previews.actualInputSamples+' actual-input reference samples. Previews: '+out);}
   assert.deepEqual(a.errors,[]);assert.deepEqual(b.errors,[]);
  }finally{await browser.close();}
 })().catch(e=>{console.error(e.stack||e);process.exitCode=1;});

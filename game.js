@@ -42237,8 +42237,8 @@ function standingRearPose(c,lower=standingLowerPose(c)) {
   if(!lower)return null;
   // Heel presentation covers the whole rear hemisphere; the shared hip
   // solver keeps its existing direction-fold threshold and trailing motion.
-  const rear=c.isMoving?Math.max(0,-Math.cos(c.moveAngle-c.aimAngle)):0;
-  const blend=Math.max(lower.backward,rear);
+  const rear=Math.max(0,-Math.cos(c.moveAngle-c.aimAngle));
+  const blend=lower.backward+rear-lower.backward*rear;
   if(!(blend>1e-8))return null;
   return {blend,angle:lower.angle,motion:lower.motion,
     heelExposure:rear>1e-8?.45+.55*rear:lower.backward,
@@ -42248,15 +42248,19 @@ function standingRearLeg(c,pose,rig,index) {
   const side=index?1:-1,GP=gaitPose(c.gait),root=-10+rig.thighW*.5,sy=side*6;
   const th=rig.thigh*STAND_FORE_LEG,sh=rig.shin*STAND_FORE_LEG;
   const motion=Number.isFinite(pose.motion)?pose.motion:1,b=pose.blend;
-  const beat=-side*Math.sin(c.walkCycle),recover=Math.max(0,-side*Math.cos(c.walkCycle));
+  const beat=-side*Math.sin(c.walkCycle),returning=Math.max(0,-side*Math.cos(c.walkCycle));
+  // Ease into heel recovery, and let the same motion envelope settle every
+  // joint. Keep the body's original stride clock through stops and restarts.
+  const recover=returning*returning*motion;
   const originalStep=beat*12*GP.swing*motion,stride=beat*3.6*GP.swing*motion;
-  const lift=recover*b*2.4*GP.swing*motion;
-  const sx=root+originalStep*(1-b);
+  const follow=beat*2.8*GP.swing*motion*pose.travelX;
+  const lift=recover*b*2.4*GP.swing;
+  const sx=root+originalStep*(1-b)+follow*b;
   // Knees keep pointing forward. The shin folds back beneath the thigh;
   // its projection may shorten, but never exceeds the actual bone length.
   const kx=sx+th*(.92*(1-b)+(.35+.20*recover)*b);
   const ky=sy+side*recover*b*1.3;
-  const rearAx=root-sh*1.15+stride*pose.travelX+recover*rig.foot*.12;
+  const rearAx=root+follow-sh*1.15+stride*pose.travelX+recover*rig.foot*.12;
   const rearAy=side*Math.max(rig.shinW*.8*.55,side*(sy+stride*pose.travelY));
   let ax=(root+originalStep+th*.92+sh)*(1-b)+rearAx*b;
   let ay=sy*(1-b)+rearAy*b;
@@ -42269,8 +42273,8 @@ function standingRearLeg(c,pose,rig,index) {
   const dx=ax-kx,dy=ay-ky,length=Math.hypot(dx,dy),limit=rig.shin*.98;
   if(length>limit){ax=kx+dx*limit/length;ay=ky+dy*limit/length;}
   return {sx,sy,kx,ky,ax,ay,lift,
-    heel:pose.heelExposure*(.55+.45*recover)*motion,
-    sole:pose.heelExposure*recover*motion};
+    heel:pose.heelExposure*(.55+.45*recover),
+    sole:pose.heelExposure*recover};
 }
 function drawStandingRearHeel(g,leg,rig,boot) {
   const amount=Math.max(0,Math.min(1,leg.heel||0));
