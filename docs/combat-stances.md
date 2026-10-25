@@ -35,12 +35,17 @@ rules and do not become harmless merely because a target is prone.
 ## Transitions, poses and controls
 
 The actor's stance stores a continuous level: standing 0, crouched 1, prone 2.
-Standing/crouch transitions take 150 ms; transitions involving prone take 300 ms.
+Standing/crouch transitions take 150 ms; ordinary transitions involving prone
+take 300 ms. A moving dive takes 420 ms.
 Smoothstep interpolation drives the pose. Incoming hits use standing coverage
 below 0.5, crouched coverage from 0.5 to below 1.5, and prone coverage thereafter.
-A direct dive therefore passes through crouched vulnerability before reaching
-prone. Requesting a stance never grants immediate immunity. Another transition
-must wait for completion and a 180 ms recovery window. Pausing freezes progress.
+An ordinary drop passes through crouched coverage before reaching prone.
+Holding the stance control for one second while moving instead commits a
+directional dive with invulnerability only during the 420 ms dive. The planted
+body faces travel from launch, extends through the dive and eases onto the floor.
+The 132-unit lunge sweeps the full body against cover and cannot steer midair. A stationary
+hold lowers the actor in place without invulnerability. Another transition must
+wait for completion and a 180 ms recovery window. Pausing freezes progress.
 
 Standing and crouching share the same hip-direction solver. The pelvis follows
 travel through forward/sideways directions; travel beyond 112.5° from the torso
@@ -142,10 +147,19 @@ standing actor: its first press from a lower stance requests a rise.
 
 Controls:
 
-- Touch: the button beside/above the left movement stick cycles standing →
-  crouch → prone → standing. It remains separate from the right aiming silhouette.
-- Keyboard: **C** toggles crouch; **Z** toggles prone. Shovel mode retains its C dig key.
-- Controller: **D-pad down** cycles stances. **L3** retains dash; **R3** retains aim/bow release.
+- Touch: tap the button beside/above the left movement stick to toggle crouch/stand.
+  Hold it for **1 second** to enter prone. It remains separate from the right aiming silhouette.
+- Keyboard: tap **C** to toggle crouch/stand; hold **C** for **1 second** to enter prone.
+  **Z** retains the explicit prone/stand shortcut. Shovel mode retains its C dig key.
+- Controller: tap **D-pad down** to toggle crouch/stand; hold for **1 second** to enter
+  prone. **L3** retains dash; **R3** retains aim/bow release.
+
+A short tap never advances from crouch to prone. Tapping while prone requests
+standing. Movement at the moment the hold reaches one second determines the
+dive direction; releasing the movement stick before that point lowers in place.
+The dive checks its full body footprint against cover and ends invulnerability
+on landing or an interrupted dive. Holding the button after entry does not repeat
+the action or stand the player back up when released.
 
 Menus consume held input until release. Mounted actors, underground shovel use,
 boxing and saloon activities retain their dedicated controls. Elevator prompts,
@@ -176,6 +190,10 @@ Some sustained ranged engagements also use crouch or occasional distant prone
 positions; actors rise when combat ends or the target closes in.
 
 Focused verification lives in `tools/check-stance-{hits,controls,ai,render}.js`.
+`tools/check-prone-dive-motion.js` covers all eight directions, preparation timing,
+frame-rate independent travel, paused pose continuity and full-body cover sweeps.
+`tools/check-prone-dive-damage.js` checks dive immunity across projectiles, spells,
+blasts, damage over time, contact attacks and landing.
 `tools/check-directional-footwork.js`, `tools/check-crouch-footwork.js` and
 `tools/check-prone-directional-aim.js` check restored standing leg geometry,
 crouched heel/sole recovery, planted aiming, cannon controls and eight-direction

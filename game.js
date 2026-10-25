@@ -26,7 +26,8 @@ function togglePlayerHeadAim() {
 // Combat stance stays separate from aim elevation, knockouts and boxing.
 const COMBAT_STANCES = ['STAND', 'CROUCH', 'PRONE'];
 const STANDING_STANCE_POSE = {crouch:0,prone:0,scaleX:1,scaleY:1,forward:0,muzzleForward:0,muzzleSide:0,uiOffset:0};
-const stanceInput = {crouch:false,prone:false};
+const STANCE_HOLD_MS = 1000, PRONE_DIVE_MS = 420, PRONE_DIVE_DISTANCE = 132;
+const stanceInput = {crouch:false,prone:false,hold:null};
 function actorCanUseStances(a) {
   return !!a && !a.isNM0Scientist && !a.isCorpse && (a.isPlayer || ragHumanoid(a.eType,a.bodyW)) &&
     !['ARMORED','ROBOT','SNAIL_HYBRID','ALIEN_GATOR','COW','HORSE','BUG','SNAIL','AERIAL','AERIAL_PISTOL','SAUCER','SAUCER_RED'].includes(a.eType);
@@ -64,13 +65,23 @@ function actorStancePose(a) {
 }
 function stanceFacingAngle(a) {
   const angle=Number.isFinite(a&&a.aimAngle)?a.aimAngle:0;
-  return a&&a.isPlayer&&a.stance&&actorStancePose(a).prone>0&&Number.isFinite(a.stance.proneHeading)
+  return a&&a.isPlayer&&a.stance&&(actorStancePose(a).prone>0||proneDivePoseActive(a))&&Number.isFinite(a.stance.proneHeading)
     ?a.stance.proneHeading:angle;
 }
 function proneAimInput(a) {
   return !!a&&a.isPlayer&&((rightStick&&rightStick.active)||
     playerWeaponFireInput()||(a.aimHold||0)>0||(a.muzzleFlash||0)>0||
     !!(a.bowDrawState&&a.bowDrawState.phase==='DRAW')||leftHandAction(a)===2);
+}
+function proneDivePoseActive(a) {
+  return !!a&&a.isPlayer&&!!(a.stance&&a.stance.dive)&&a.stance.to===2&&
+    a.stance.elapsedMs<a.stance.durationMs&&!actorStanceSuppressed(a);
+}
+function proneDiveActive(a) { return proneDivePoseActive(a)&&combatStanceContext(); }
+function proneDiveArc(a) {
+  if(!proneDivePoseActive(a))return 0;
+  const t=a.stance.elapsedMs/a.stance.durationMs;
+  return Math.sin(Math.PI*t)**2;
 }
 function proneAimLocked(a) {
   return !!a&&a.isPlayer&&actorStancePose(a).prone>0&&
@@ -79,6 +90,7 @@ function proneAimLocked(a) {
 function updateProneFacing(a,elapsedMs=deltaTime,afterMove=false) {
   if(!a||!a.isPlayer||!a.stance||!doTick||!combatStanceContext())return;
   const s=a.stance;
+  if(proneDiveActive(a)){s.proneAimBlend=0;return;}
   if(!(actorStancePose(a).prone>0)) {
     s.proneAimBlend=0;
     if(s.to!==2)s.proneHeading=Number.isFinite(a.aimAngle)?a.aimAngle:0;
@@ -102,38 +114,74 @@ function recordStanceDamage(a,damage,zone) {
   popup.critical=zone==='HEAD'||merge&&popup.critical;
   popup.leftMs=500;
 }
-function stanceProneSpotClear(a) {
+function stanceProneSpotClear(a,x=a&&a.x,y=a&&a.y,heading=null) {
   if(!a||typeof a.checkCol!=='function')return true;
-  const angle=a.isPlayer&&a.stance&&a.stance.to===2&&Number.isFinite(a.stance.proneHeading)
+  const angle=Number.isFinite(heading)?heading:a.isPlayer&&a.stance&&a.stance.to===2&&Number.isFinite(a.stance.proneHeading)
     ?a.stance.proneHeading:stanceFacingAngle(a);
-  for(const d of [-25,0,25])if(a.checkCol(a.x+Math.cos(angle)*d,a.y+Math.sin(angle)*d,true))return false;
+  for(const d of [-25,0,25])if(a.checkCol(x+Math.cos(angle)*d,y+Math.sin(angle)*d,true))return false;
   return true;
 }
-function requestActorStance(a,name) {
+function requestActorStance(a,name,heading=null) {
   const target=COMBAT_STANCES.indexOf(name);
   if(target<0||!combatStanceContext()||actorStanceSuppressed(a)||a.meleeTimer>0||a.throwAnimTimer>0||a.shovelDigTimer>0)return false;
   if(!a.stance)resetActorStance(a);
   const s=a.stance;
   if(s.elapsedMs<s.durationMs||s.cooldownMs>0||s.to===target)return false;
-  if(target===2&&!stanceProneSpotClear(a))return false;
-  if(target===2&&a.isPlayer){s.proneHeading=Number.isFinite(a.aimAngle)?a.aimAngle:0;s.proneAimBlend=0;a._stanceClearAngle=s.proneHeading;}
+  const proneHeading=Number.isFinite(heading)?heading:Number.isFinite(a.aimAngle)?a.aimAngle:0;
+  if(target===2&&!stanceProneSpotClear(a,a.x,a.y,proneHeading))return false;
+  s.dive=null;
+  if(target===2&&a.isPlayer){s.proneHeading=proneHeading;s.proneAimBlend=0;a._stanceClearAngle=s.proneHeading;}
   s.from=s.value;s.to=target;s.elapsedMs=0;s.durationMs=target===2||s.from>1?300:150;
   cancelPlayerBowDraw(a);return true;
 }
+// Moving drops commit to the movement thumb, independently of weapon aim.
+function requestPlayerProne() {
+  if(!player)return false;
+  const moving=leftStick&&leftStick.active&&Math.hypot(leftStick.dx,leftStick.dy)>.12;
+  const heading=moving?Math.atan2(leftStick.dy,leftStick.dx):player.aimAngle||0;
+  if(!requestActorStance(player,'PRONE',heading))return false;
+  if(moving) {
+    player.stance.dive={angle:heading,moved:0};
+    player.stance.durationMs=PRONE_DIVE_MS;
+    player.moveAngle=player.lastMoveAngle=heading;
+  }
+  return true;
+}
+// Integrated displacement eases out onto the belly. Sweep the entire planted
+// capsule in small steps so a long frame can never dive through thin cover.
+function moveProneDive(a) {
+  const s=a.stance,d=s&&s.dive;
+  if(!d)return;
+  const t=Math.min(1,s.elapsedMs/s.durationMs);
+  const target=PRONE_DIVE_DISTANCE*(1-(1-t)**3),distance=target-d.moved;
+  const steps=Math.max(1,Math.ceil(distance/4)),step=distance/steps;
+  let traveled=0;
+  for(let i=0;i<steps;i++) {
+    const nx=a.x+Math.cos(d.angle)*step,ny=a.y+Math.sin(d.angle)*step;
+    if(!stanceProneSpotClear(a,nx,ny,d.angle))break;
+    a.x=nx;a.y=ny;traveled+=step;
+  }
+  d.moved=target;
+  a.isMoving=traveled>.001&&t<1;
+  a.moveAngle=a.lastMoveAngle=d.angle;
+  a.gait+=(0-a.gait)*GAIT_EASE;
+}
 function updateActorStance(a,elapsedMs=deltaTime) {
   if(!a||!a.stance)return;
-  if(actorStanceSuppressed(a)){resetActorStance(a);return;}
-  if(!doTick||!combatStanceContext())return;
+  if(actorStanceSuppressed(a)){resetActorStance(a);if(a.isPlayer)stanceInput.hold=null;return;}
+  if(!combatStanceContext()){if(a.isPlayer)stanceInput.hold=null;return;}
+  if(!doTick)return;
   const dt=Math.min(100,Math.max(0,Number(elapsedMs)||0)),s=a.stance;
+  const began=a.isPlayer&&updateStanceHold(dt);
   if(a.stanceDamage)a.stanceDamage.leftMs=Math.max(0,a.stanceDamage.leftMs-dt);
   if(s.to===2&&s.value<=1&&!stanceProneSpotClear(a)) {
-    s.from=s.value;s.to=1;s.elapsedMs=0;s.durationMs=150;
+    s.from=s.value;s.to=1;s.elapsedMs=0;s.durationMs=150;s.dive=null;
   }
   s.cooldownMs=Math.max(0,s.cooldownMs-dt);
-  if(s.elapsedMs>=s.durationMs)return;
+  if(began||s.elapsedMs>=s.durationMs)return;
   // Incoming shots resolve the current drop height, never the destination early.
   s.elapsedMs=Math.min(s.durationMs,s.elapsedMs+dt);
-  const t=s.elapsedMs/s.durationMs,eased=t*t*(3-2*t);
+  const t=Math.min(1,s.elapsedMs/s.durationMs*(s.dive?1.25:1)),eased=t*t*(3-2*t);
   s.value=s.from+(s.to-s.from)*eased;
   if(s.elapsedMs===s.durationMs){s.value=s.to;s.cooldownMs=180;}
 }
@@ -154,15 +202,41 @@ function stanceMovementScale(a) {const p=actorStancePose(a);return 1-.40*p.crouc
 function stanceSpreadScale(a) {const p=actorStancePose(a),k=a&&a.isMoving ? .35 : 1;return 1-(.20*p.crouch+.35*p.prone)*k;}
 function stanceRecoilRecovery(a) {const p=actorStancePose(a),k=a&&a.isMoving ? .35 : 1;return 1+(.25*p.crouch+.5*p.prone)*k;}
 function cyclePlayerStance() {
-  return !!player&&requestActorStance(player,COMBAT_STANCES[(COMBAT_STANCES.indexOf(actorStance(player))+1)%3]);
+  return !!player&&requestActorStance(player,actorStance(player)==='STAND'?'CROUCH':'STAND');
 }
-function consumeStanceInputs() {stanceInput.crouch=keyIsDown(67);stanceInput.prone=keyIsDown(90);}
+function beginStanceHold(source,id=null) {
+  if(stanceInput.hold||!combatStanceContext()||!player||actorStanceSuppressed(player))return false;
+  stanceInput.hold={source,id,actor:player,elapsedMs:0,triggered:false};return true;
+}
+function endStanceHold(source,tap=true) {
+  const h=stanceInput.hold;
+  if(!h||h.source!==source)return false;
+  stanceInput.hold=null;
+  return tap&&!h.triggered&&h.actor===player&&h.elapsedMs<STANCE_HOLD_MS?cyclePlayerStance():false;
+}
+function updateStanceHold(dt) {
+  const h=stanceInput.hold;
+  if(!h||h.triggered)return;
+  if(h.actor!==player){stanceInput.hold=null;return;}
+  const held=h.source==='KEYBOARD'?keyIsDown(67):h.source==='PAD'?!!connectedGamepad()?.buttons[13]?.pressed:
+    h.source==='MOUSE'?mouseIsPressed:touches.some(t=>t.id===h.id);
+  if(!held){endStanceHold(h.source);return;}
+  h.elapsedMs=Math.min(STANCE_HOLD_MS,h.elapsedMs+dt);
+  if(h.elapsedMs===STANCE_HOLD_MS){h.triggered=true;return requestPlayerProne();}
+}
+function consumeStanceInputs() {
+  stanceInput.hold=null;stanceInput.crouch=keyIsDown(67);stanceInput.prone=keyIsDown(90);
+}
 function handleDesktopStance() {
   const c=keyIsDown(67),p=keyIsDown(90);
   if(combatStanceContext()&&player&&!shovelToolEquipped()) {
-    if(c&&!stanceInput.crouch)requestActorStance(player,actorStance(player)==='CROUCH'?'STAND':'CROUCH');
-    else if(p&&!stanceInput.prone)requestActorStance(player,actorStance(player)==='PRONE'?'STAND':'PRONE');
-  }
+    if(c&&!stanceInput.crouch)beginStanceHold('KEYBOARD');
+    else if(!c&&stanceInput.crouch)endStanceHold('KEYBOARD');
+    if(p&&!stanceInput.prone) {
+      endStanceHold('KEYBOARD',false);
+      if(actorStance(player)==='PRONE')requestActorStance(player,'STAND');else requestPlayerProne();
+    }
+  } else endStanceHold('KEYBOARD',false);
   stanceInput.crouch=c;stanceInput.prone=p;
 }
 function stanceTouchButton() {
@@ -174,15 +248,19 @@ function handleStanceTouch(x,y) {
   if(!combatStanceContext()||!player||actorStanceSuppressed(player))return false;
   const b=stanceTouchButton();
   if(Math.abs(x-b.x)>b.w/2||Math.abs(y-b.y)>b.h/2)return false;
-  cyclePlayerStance();return true;
+  const touch=touches.length?touches[touches.length-1]:null;
+  beginStanceHold(touch?'TOUCH':'MOUSE',touch?touch.id:null);return true;
 }
 function drawStanceTouchButton() {
   if(!combatStanceContext()||!player||actorStanceSuppressed(player))return;
   const b=stanceTouchButton(),current=actorStance(player);
   push();fill(24,37,43,190);stroke(111,170,177,190);strokeWeight(1.5);rect(b.x-b.w/2,b.y-b.h/2,b.w,b.h,12);
   noStroke();textFont('sans-serif');textAlign(CENTER,CENTER);textSize(12);fill(222,234,227);
-  text(COMBAT_STANCES[(COMBAT_STANCES.indexOf(current)+1)%3],b.x,b.y-7);
-  textSize(9);fill(148,182,187);text(current==='STAND'?'STANDING':current,b.x,b.y+9);pop();
+  text(current==='STAND'?'CROUCH':'STAND',b.x,b.y-7);
+  textSize(9);fill(148,182,187);text('HOLD 1s: PRONE',b.x,b.y+9);
+  const h=stanceInput.hold;
+  if(h&&!h.triggered){stroke(154,216,213);strokeWeight(2);line(b.x-b.w/2+10,b.y+b.h/2-4,b.x-b.w/2+10+(b.w-20)*h.elapsedMs/STANCE_HOLD_MS,b.y+b.h/2-4);}
+  pop();
 }
 const SPATIAL_CELL_SIZE = 150; 
 let spatialGrid = {};
@@ -12115,7 +12193,7 @@ function triggerExplosion(ex, ey, rad, isMolotov = false, sourceIsPlayer = true,
   }
 
   // --- 2. PLAYER DAMAGE ---
-  if (player && player.hp > 0 && dist(ex, ey, player.x, player.y) < rad) { 
+  if (player && player.hp > 0 && !proneDiveActive(player) && dist(ex, ey, player.x, player.y) < rad) {
       if (!explosiveArmorUnlocked || isMolotov || !sourceIsPlayer) {
           let dRes = player.takeDamage(60); 
           if (dRes.blocked) { 
@@ -12192,7 +12270,7 @@ function triggerRocketExplosion(ex, ey, sourceIsPlayer, directHitTarget = null, 
   let rRad = 140; 
 
   // --- 1. PLAYER DAMAGE ---
-  if (player.hp > 0 && dist(ex, ey, player.x, player.y) < rRad) {
+  if (player.hp > 0 && !proneDiveActive(player) && dist(ex, ey, player.x, player.y) < rRad) {
       if (!explosiveArmorUnlocked || !sourceIsPlayer) {
           let dRes = player.takeDamage(60); 
           if (dRes.blocked) { 
@@ -19712,7 +19790,7 @@ function occultReleaseCast(e) {
   return true;
 }
 function occultDamage(target,amount,owner,angle,volley) {
-  if(!occultAlive(target)||!occultAlive(owner)||!shovelActorsVisible(owner,target))return false;
+  if(!occultAlive(target)||!occultAlive(owner)||proneDiveActive(target)||!shovelActorsVisible(owner,target))return false;
   if(volley&&target._occultLastVolley===volley)return false;
   if(volley)target._occultLastVolley=volley;
   target.takeDamage(amount,owner);target.hitFlash=Math.max(target.hitFlash||0,7);
@@ -20614,6 +20692,8 @@ this.skeletonTimer = 0;
   }
 
       takeDamage(amount, source = null) {
+    // A committed prone dive evades damage before shield, aggro or hurt state.
+    if(proneDiveActive(this))return {blocked:true,broken:false,evaded:true};
     if(streetThugCombatProtected(this)&&source&&(source===player||source.isPlayer||source.isFriendly))return {blocked:true,broken:false};
     // Surface attacks cannot pass through an intact tunnel ceiling.
     if(shovelPlayerDepth(this)>=SHOVEL.underground &&
@@ -21106,6 +21186,7 @@ this.skeletonTimer = 0;
   }
 
   updatePlayer() {
+    const wasProneDive=proneDiveActive(this);
     updateActorStance(this, typeof deltaTime === 'number' ? deltaTime : 1000 / 60);
     const wasMantling=!!this.shovelMantle;
     shovelUpdatePlayer(this,typeof deltaTime==='number'?deltaTime:1000/60);
@@ -21299,7 +21380,9 @@ this.skeletonTimer = 0;
     // Mounted, on the flat, a horse is most of twice a man's pace.
     let speed = (ninjaSuitUnlocked ? 6.6 : 6.0) * (this.mounted ? 1.78 : 1) * stanceMovementScale(this);
 
-    if (this.dashTimer > 0) { 
+    if((wasProneDive||proneDiveActive(this))&&this.stance.dive) {
+        moveProneDive(this);
+    } else if (this.dashTimer > 0) {
         this.dashTimer--; speed = 22; 
         if (this.dashTimer % 2 === 0) { emit(this.x, this.y, 1, color(0, 200, 255), "THRUST", -cos(this.lastMoveAngle) * 8, -sin(this.lastMoveAngle) * 8, this); emit(this.x, this.y, 1, color(255, 100, 0), "THRUST", -cos(this.lastMoveAngle) * 8, -sin(this.lastMoveAngle) * 8, this); }
         let dx = cos(this.lastMoveAngle) * speed, dy = sin(this.lastMoveAngle) * speed;
@@ -22147,7 +22230,7 @@ if (this.eType === "COW") {
                     let vx = cos(iA) * 3.5 * spd, vy = sin(iA) * 3.5 * spd; let m = this.attemptMove(vx, vy); aDx = m.x; aDy = m.y;
                 }
                 if (frameCount % 15 === 0) { spawnSplatter(this.x, this.y, "BLOOD", color(0, 100, 0), this); emit(this.x, this.y, 3, color(0, 100, 0), "BLOOD", 0, 0, this); }
-                if (canSee && dToP < 70 && trg.hp > 0 && !trg.dead) { trg.takeDamage(999); trg.dead = true; sfx.deathGrunt(); corpses.push(new Corpse(trg.x, trg.y, trg.moveAngle, trg.aimAngle, trg.shirtCol, trg.pantsCol, 13, 0, trg.decals, trg.currentWeapon, 0, "NORMAL", trg.bodyW, trg.bodyH, trg)); if(trg.isPlayer) playerRespawnTimer = 90; }
+                if (canSee && dToP < 70 && trg.hp > 0 && !trg.dead && !proneDiveActive(trg)) { trg.takeDamage(999); trg.dead = true; sfx.deathGrunt(); corpses.push(new Corpse(trg.x, trg.y, trg.moveAngle, trg.aimAngle, trg.shirtCol, trg.pantsCol, 13, 0, trg.decals, trg.currentWeapon, 0, "NORMAL", trg.bodyW, trg.bodyH, trg)); if(trg.isPlayer) playerRespawnTimer = 90; }
             } else {
                 if (canSee && dToP < 600) {
                     if (this.burstCooldown > 0) { this.burstCooldown--; } 
@@ -22200,7 +22283,7 @@ if (this.eType === "COW") {
                     }
                 }
                                 // STANDARD BITE LOGIC (Only fires if not actively eating a fence)
-                if (!hitFence && canSee && distToTarget < 35 && this.biteCooldown <= 0) {  // <--- CHANGED dToP to distToTarget
+                if (!hitFence && canSee && distToTarget < 35 && this.biteCooldown <= 0 && !proneDiveActive(trg)) {  // <--- CHANGED dToP to distToTarget
                     let dRes = trg.takeDamage(5); 
                     if (dRes.blocked) { 
                         emit(trg.x, trg.y, dRes.broken ? 15 : 8, dRes.broken ? color(0, 200, 255) : color(255, 170, 40), "SPARK", 0, 0, trg);
@@ -24554,6 +24637,7 @@ function interactWorldBoxingActivity(mx = null, my = null) {
 }
 function worldBoxingHit(event) {
   const { attacker, defender, outcome } = event;
+  if(proneDiveActive(defender))return;
   boxingEmitContactEffect(event);
   if (outcome !== 'HIT') { sfx.hitArmor(); return; }
   defender.hitFlash = 4; screenShake = Math.max(screenShake, 3);
@@ -24681,7 +24765,7 @@ function updateEntities() {
 
       for (let i = 0; i < actors.length; i++) {
           let A = actors[i];
-          if (player && player.dashTimer > 0 && A.isPlayer) continue;
+          if (A.isPlayer && (A.dashTimer > 0 || proneDiveActive(A))) continue;
           if (A.ignoreBldgTimer > 0) continue;
 
           let cx = Math.floor(A.x / SPATIAL_CELL_SIZE);
@@ -24695,7 +24779,7 @@ function updateEntities() {
                   if (neighbors) {
                       for (let B of neighbors) {
                           if (A === B || A._pushIdx >= B._pushIdx) continue;
-                          if (player && player.dashTimer > 0 && B.isPlayer) continue;
+                          if (B.isPlayer && (B.dashTimer > 0 || proneDiveActive(B))) continue;
                           if (B.ignoreBldgTimer > 0) continue;
 
                           const radB = B._pushRadius;
@@ -25125,6 +25209,8 @@ const STANCE_PROJECTILE_PROFILES = {
 };
 const _standingProjectileProfiles = new Map();
 function stanceHitProfile(actor,incomingZone) {
+    // Passing shots keep flying without impact, stains, knockback or stun.
+    if(proneDiveActive(actor))return null;
     const incoming = incomingZone==='HEAD' ? 'HEAD' : incomingZone==='LEGS' ? 'LEGS' : 'BODY';
     const stance = actorCanUseStances(actor) ? actorStance(actor) : 'STAND';
     if(stance==='CROUCH')return incoming==='HEAD' ? null : STANCE_PROJECTILE_PROFILES['CROUCH_'+incoming];
@@ -28050,6 +28136,7 @@ function handleGamepad() {
   const pad=connectedGamepad();
   if(!pad) {
     readGamepadFireInput(null);
+    endStanceHold('PAD',false);
     if (rightStick.gamepadInput) {
       rightStick.active = false; rightStick.dx = rightStick.dy = rightStick.dist = 0;
       rightStick.gamepadInput = false;
@@ -28096,7 +28183,8 @@ function handleGamepad() {
       }
   }
   if (jP(12) && player) cycleMeleeTool();
-  if (jP(13) && player) cyclePlayerStance(); // D-pad down; L3 retains dash.
+  if(jP(13)&&player)beginStanceHold('PAD'); // Tap crouch/stand; hold prone.
+  else if(!btn(13)&&prevGamepadButtons[13])endStanceHold('PAD');
   if (shovelToolEquipped()) {
     if (btn(3) || btn(5)) meleeInputHeld = true;
     if (shovelControlsAvailable()) {
@@ -28286,6 +28374,7 @@ function drawTouchAimSilhouette() {
   pop();
 }
 function handleTouches() {
+  if(stanceInput.hold?.source==='TOUCH'&&!touches.some(t=>t.id===stanceInput.hold.id))endStanceHold('TOUCH');
   if(undergroundRouteBusy())return;
   syncTouchAimControlContext();
   if (buildGhost) { handleBuildPlacementTouches(); return; }
@@ -28529,11 +28618,13 @@ function touchStarted() {
   return false;
 }
 function touchEnded() {
+  if(stanceInput.hold?.source==='TOUCH'&&!touches.some(t=>t.id===stanceInput.hold.id))endStanceHold('TOUCH');
   syncTouchAimPointers();
   return false;
 }
 function cancelTouchAimPointer(event) {
   const changed = Array.from(event.changedTouches || []);
+  if(stanceInput.hold?.source==='TOUCH'&&changed.some(t=>t.identifier===stanceInput.hold.id))endStanceHold('TOUCH',false);
   if (changed.some(t => t.identifier === touchAimSelection.pointerId)) resetTouchAimSelection(true);
 }
 
@@ -29383,7 +29474,7 @@ function handleDesktop() {
           rightStick.active = true;
           rightStick.dx = aimDx / aimMag;
           rightStick.dy = aimDy / aimMag;
-          rightStick.dist = (mouseIsPressed && mouseButton === LEFT && !deathMenuInput.mouseBlocked) ? 1.0 : 0.0;
+          rightStick.dist = (mouseIsPressed && mouseButton === LEFT && !deathMenuInput.mouseBlocked && stanceInput.hold?.source!=='MOUSE') ? 1.0 : 0.0;
       }
   }
 }
@@ -29395,6 +29486,7 @@ function interactFrontierActivity() {
 function mousePressed() {
     if (touches.length === 0) touchStarted();
 }
+function mouseReleased() { endStanceHold('MOUSE'); }
 
 function drawSpeechBubble(x, y, txt) {
     push();
@@ -41965,20 +42057,20 @@ function proneRollPose(c) {
 }
 function stanceBodyPose(c) {
   const p=actorStancePose(c),value=c.stance?c.stance.value:0,drop=Math.min(1,value),floor=p.prone||0;
-  const aiming=stanceArtAiming(c),cycle=c.walkCycle||0,cached=c._stanceBody,roll=proneRollPose(c),lower=crouchLowerPose(c);
-  if(cached&&cached.value===value&&cached.cycle===cycle&&cached.moving===!!c.isMoving&&
+  const dive=proneDiveArc(c),aiming=stanceArtAiming(c),cycle=c.walkCycle||0,cached=c._stanceBody,roll=proneRollPose(c),lower=crouchLowerPose(c);
+  if(cached&&cached.dive===dive&&cached.value===value&&cached.cycle===cycle&&cached.moving===!!c.isMoving&&
       cached.aiming===aiming&&cached.gait===(c.gait||0)&&cached.bodyW===c.bodyW&&cached.bodyH===c.bodyH&&
       cached.roll.heading===roll.heading&&cached.roll.delta===roll.delta&&cached.roll.blend===roll.blend&&
       cached.lower.angle===lower.angle&&cached.lower.backward===lower.backward&&cached.lower.phase===lower.phase&&cached.lower.motion===lower.motion)return cached;
   const R=figureRig(c.bodyW,c.bodyH),phase=cycle*.65;
-  const moving=c.isMoving&&!proneAimLocked(c),settle=c.isPlayer&&floor>0?Math.min(1,Math.max(0,c.gait||0)*1.25):0;
+  const diving=proneDivePoseActive(c),moving=c.isMoving&&!proneAimLocked(c)&&!diving,settle=!diving&&c.isPlayer&&floor>0?Math.min(1,Math.max(0,c.gait||0)*1.25):0;
   const motion=moving?1:settle,right=stanceElbowCycle(phase,motion>0),left=stanceElbowCycle(phase+Math.PI,motion>0);
   right.reach*=motion;right.lift*=motion;left.reach*=motion;left.lift*=motion;
   const crouchWeight=drop*(1-floor),step=crouchStepPose(c,lower.phase);
   const yaw=Math.atan2(left.reach-right.reach,c.bodyH*.72)*.38*floor+step.counterYaw*crouchWeight+roll.turn;
   const legYaw=lower.yaw*crouchWeight,hipYaw=legYaw-yaw*.45+step.hipYaw*crouchWeight;
-  const size=p.scaleX,hipX=-5*drop-4*floor,hipY=roll.offsetY;
-  const chestX=1.5*drop-floor*2.5+step.chestX*crouchWeight,chestY=hipY+step.chestY*crouchWeight;
+  const size=p.scaleX,hipX=-5*drop-4*floor-dive*2,hipY=roll.offsetY;
+  const chestX=1.5*drop-floor*2.5+step.chestX*crouchWeight+dive*3,chestY=hipY+step.chestY*crouchWeight;
   const torsoLength=c.bodyW*TORSO_DEPTH+floor*3.5,torsoWidth=c.bodyH*(1-.10*drop-.10*floor)*(1-roll.side*.53);
   const joints=[];
   for (const side of [-1,1]) {
@@ -41986,9 +42078,9 @@ function stanceBodyPose(c) {
     const drive=Math.max(0,opposite.reach/3.4),tuck=drive*drive*(3-2*drive)*floor;
     const stepLeg=step.legs[side<0?0:1];
     const hY=side*(5.6+floor*.7)*(1-roll.side*.68),hip={x:hipX-Math.sin(hipYaw)*hY,y:Math.cos(hipYaw)*hY+hipY};
-    const knee={x:10*drop-floor*(30-5*tuck)+stepLeg.knee.x*crouchWeight,
+    const knee={x:10*drop-floor*(30-5*tuck)+stepLeg.knee.x*crouchWeight-dive*6,
       y:side*(12.5*drop+floor*(-3.5+5*tuck))*(1-roll.side*.45)+stepLeg.knee.y*crouchWeight};
-    const ankle={x:-4*drop-floor*(27-4*tuck)+stepLeg.ankle.x*crouchWeight,
+    const ankle={x:-4*drop-floor*(27-4*tuck)+stepLeg.ankle.x*crouchWeight-dive*8,
       y:side*(8.6+floor*.3)*(1-roll.side*.38)+stepLeg.ankle.y*crouchWeight};
     // Rotate only the folded lower chain around its pelvis. The upper torso
     // remains in the gun's frame, so the aim thumb cannot tow the knees.
@@ -42007,9 +42099,9 @@ function stanceBodyPose(c) {
       elbow:{x:4*drop+floor*4+support.reach*floor-post*3+side*step.armCounter*crouchWeight,
         y:side*(c.bodyH*.46+support.lift*floor)*(1-roll.side*.45)+chestY+side*post},support,step:stepLeg});
   }
-  const head={x:(aiming?3:0)*(1-drop)+8*drop+7*floor-roll.back*.8+step.chestX*crouchWeight*.55,
+  const head={x:(aiming?3:0)*(1-drop)+8*drop+7*floor-roll.back*.8+step.chestX*crouchWeight*.55+dive*5,
     y:(aiming?4*(1-drop)+2.2*drop-5.8*floor:0)*(1-roll.side*.6-roll.back)+chestY};
-  return c._stanceBody={value,cycle,moving:!!c.isMoving,gait:c.gait||0,bodyW:c.bodyW,bodyH:c.bodyH,drop,floor,size,aiming,yaw,hipYaw,hipX,hipY,chestX,chestY,joints,head,R,
+  return c._stanceBody={dive,value,cycle,moving:!!c.isMoving,gait:c.gait||0,bodyW:c.bodyW,bodyH:c.bodyH,drop,floor,size,aiming,yaw,hipYaw,hipX,hipY,chestX,chestY,joints,head,R,
     torsoLength,torsoWidth,crouchWeight,step,roll,lower};
 }
 // A native gun keeps its own proportions. One rigid mount owns the solid,

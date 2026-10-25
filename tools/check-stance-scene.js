@@ -65,19 +65,28 @@ const out = process.env.STANCE_SCENE_OUT || '/tmp/newone-stance-scenes'; fs.mkdi
       ok(clear,name+' stance button clears ammunition and movement controls');
       const press={id:1,x:Math.round(pill.x),y:Math.round(pill.y)};
       await send('touchStart',[press]);let s=await state();
-      ok(s.state.to===1&&s.stance==='STAND',name+' a real press begins the150ms jointed crouch without immediate immunity');
+      ok(s.state.to===0&&s.stance==='STAND',name+' a real press waits for tap release');
       ok(!s.aimActive&&!s.move&&s.ammo===17&&s.bullets.length===0,name+' stance press cannot aim, move or fire');
+      await page.evaluate(()=>__stanceStep(5));await send('touchEnd',[]);s=await state();
+      ok(s.state.to===1&&s.stance==='STAND',name+' a short release begins the150ms jointed crouch without immediate immunity');
       await page.evaluate(()=>__stanceStep(40));s=await state();
       ok(s.stance==='CROUCH'&&s.state.value===1,name+' the native frame completes crouch');
+      await page.locator('canvas').first().screenshot({path:path.join(out,name+'-crouch.png')});
       const layout=await page.evaluate(()=>touchAimSilhouetteLayout());
       const head={id:2,x:Math.round(layout.centerX-8),y:Math.round(layout.sections[0].y+22)};
+      await send('touchStart',[press]);
       await send('touchMove',[{...press,x:head.x,y:head.y}]);await page.evaluate(()=>__stanceStep(20));s=await state();
-      ok(s.stance==='CROUCH'&&s.aim===null&&s.ammo===17&&s.bullets.length===0,name+' held stance finger cannot become aiming or another stance');
-      await send('touchEnd',[]);
-      await page.locator('canvas').first().screenshot({path:path.join(out,name+'-crouch.png')});
-      await send('touchStart',[press]);await send('touchEnd',[]);await page.evaluate(()=>__stanceStep(40));s=await state();
-      ok(s.stance==='PRONE'&&s.state.value===2,name+' a fresh press completes the300ms prone drop');
-      ok(s.ammo===17&&s.bullets.length===0,name+' both stance transitions preserve ammunition');
+      ok(s.stance==='CROUCH'&&s.state.to===1&&s.aim===null&&s.ammo===17&&s.bullets.length===0,
+        name+' a pending stance finger stays owned when it moves across the aiming silhouette');
+      await send('touchEnd',[]);await page.evaluate(()=>__stanceStep(40));s=await state();
+      ok(s.stance==='STAND'&&s.state.value===0,name+' a second short tap stands rather than cycling to prone');
+      await send('touchStart',[press]);await page.evaluate(()=>__stanceStep(50));s=await state();
+      ok(s.state.to===0,name+' a native hold below one second cannot enter prone');
+      await page.evaluate(()=>__stanceStep(15));s=await state();
+      ok(s.state.to===2,name+' a one-second native touch hold commits prone');
+      await page.evaluate(()=>__stanceStep(40));await send('touchEnd',[]);await page.evaluate(()=>__stanceStep(2));s=await state();
+      ok(s.stance==='PRONE'&&s.state.value===2,name+' releasing the completed hold keeps the player prone');
+      ok(s.ammo===17&&s.bullets.length===0,name+' taps and held stance changes preserve ammunition');
       await page.locator('canvas').first().screenshot({path:path.join(out,name+'-prone.png')});
 
       const walk=await page.evaluate(()=>({id:3,x:Math.round(leftStick.base.x+45),y:Math.round(leftStick.base.y)}));
