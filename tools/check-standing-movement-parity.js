@@ -1,4 +1,4 @@
-// Native p5 checks: unchanged direct-forward art and the shared crouch hip policy.
+// Native p5 checks: original front/side art, unchanged hip/aim history, and rear heel poses.
 // STANDING_BASELINE=/tmp/game-before.js VIS_DEPS=/tmp/newone-hip-deps node tools/check-standing-movement-parity.js
 // Set STANDING_REVIEW_OUT to also write standing/crouch reference sheets and a real-input clip.
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'),assert=require('node:assert/strict');
@@ -53,7 +53,8 @@ window.__movementBytes=()=>{
  const px=drawingContext.getImageData(0,0,width,height).data;let raw='';
  for(let i=0;i<px.length;i+=32768)raw+=String.fromCharCode.apply(null,px.subarray(i,i+32768));return btoa(raw);
 };
-window.__movementAtlas=(cases,biome)=>{
+window.__movementAtlas=(cases,biome,withoutRear=false)=>{
+ const nativeRear=window.standingRearPose;if(withoutRear)window.standingRearPose=()=>null;
  BIOME_ACTIVE=biome;GLRig.on=GLRig.ok=false;GLRig.failure=GLRIG_SHED_MSG;frameCount=43;
  worldTimeMs=13/24*DAY_MS;updateSunVector();background(46,56,61);const states=[];
  for(let i=0;i<cases.length;i++){
@@ -63,13 +64,14 @@ window.__movementAtlas=(cases,biome)=>{
   push();drawingContext.beginPath();drawingContext.rect(x-64,y-64,128,128);drawingContext.clip();__movementPaint(c,x,y);pop();
   states.push({aim:c.aimAngle,move:c.moveAngle,gait:c.gait,cycle:c.walkCycle,armed:c.isArmed,hold:c.aimHold});
  }
+ if(withoutRear)window.standingRearPose=nativeRear;
  return {pixels:__movementBytes(),states,stats:__paintStats};
 };`;
 function cases(){
  const result=[];
- for(const weapon of ['PISTOL','ASSAULT_RIFLE'])for(const gait of [.2,.5,1])for(let phase=0;phase<8;phase++)for(let a=0;a<4;a++)for(const aimed of [false,true]){
+ for(const weapon of ['PISTOL','ASSAULT_RIFLE'])for(const gait of [.2,.5,1])for(let phase=0;phase<8;phase++)for(let a=0;a<4;a++)for(const aimed of [false,true])for(const delta of [-Math.PI/2,-Math.PI/4,0,Math.PI/4,Math.PI/2]){
   const aim=-Math.PI/2+a*Math.PI/2;
-  result.push({weapon,gait,phase:phase*Math.PI/4,aim,move:aim,aimed});
+  result.push({weapon,gait,phase:phase*Math.PI/4,aim,move:aim+delta,aimed});
  }
  return result;
 }
@@ -80,11 +82,11 @@ async function load(browser,file){
  await page.waitForFunction('__ready');await page.evaluate(()=>__movementReset());return {page,errors};
 }
 function hashPixels(result){const hash=crypto.createHash('sha256').update(Buffer.from(result.pixels,'base64')).digest('hex');delete result.pixels;return hash;}
-async function crouchHistory(page){
- return page.evaluate(()=>{
+async function locomotionHistory(page,stance='CROUCH'){
+ return page.evaluate(stance=>{
   const records=[],snapshots=[];
   for(const weapon of ['PISTOL','ASSAULT_RIFLE'])for(let heading=0;heading<4;heading++){
-   const base=-Math.PI/2+heading*Math.PI/2,c=__movementActor(weapon,base);resetActorStance(c,'CROUCH');
+   const base=-Math.PI/2+heading*Math.PI/2,c=__movementActor(weapon,base);resetActorStance(c,stance);
    for(let f=0;f<720;f++){
     let move=base,aim=base,throttle=.7;
     if(f<120)move=base+f*Math.PI/60;
@@ -95,14 +97,14 @@ async function crouchHistory(page){
     else if(f<600){move=base+Math.PI/2;aim=null;}
     else{move=base+(f-600)*Math.PI/60;aim=base+(f-600)*.01;}
     __movementStep(c,move,throttle,aim);
-    records.push({heading,weapon,frame:f,aim:c.aimAngle,move:c.moveAngle,cycle:c.walkCycle,gait:c.gait,x:c.x,y:c.y,pose:crouchLowerPose(c),motion:{...c._crouchMotion}});
-    if(f%30===0||f===719)snapshots.push({weapon,aim:c.aimAngle,move:c.moveAngle,gait:c.gait,phase:c.walkCycle,aimed:aim!==null,stance:'CROUCH',state:{
-     x:c.x,y:c.y,aimAngle:c.aimAngle,moveAngle:c.moveAngle,isMoving:c.isMoving,walkCycle:c.walkCycle,gait:c.gait,aimHold:c.aimHold,_crouchMotion:{...c._crouchMotion}
+    records.push({heading,weapon,frame:f,aim:c.aimAngle,move:c.moveAngle,cycle:c.walkCycle,gait:c.gait,x:c.x,y:c.y,pose:stance==='CROUCH'?crouchLowerPose(c):standingLowerPose(c),motion:{...(stance==='CROUCH'?c._crouchMotion:c._standingMotion)},aimFilter:c._standingAim?{...c._standingAim}:null});
+    if(f%30===0||f===719)snapshots.push({weapon,aim:c.aimAngle,move:c.moveAngle,gait:c.gait,phase:c.walkCycle,aimed:aim!==null,stance,state:{
+     x:c.x,y:c.y,aimAngle:c.aimAngle,moveAngle:c.moveAngle,isMoving:c.isMoving,walkCycle:c.walkCycle,gait:c.gait,aimHold:c.aimHold,[stance==='CROUCH'?'_crouchMotion':'_standingMotion']:{...(stance==='CROUCH'?c._crouchMotion:c._standingMotion)}
     }});
    }
   }
   return {records,snapshots};
- });
+ },stance);
 }
 async function review(page){
  fs.mkdirSync(out,{recursive:true});fs.mkdirSync(path.join(out,'frames'),{recursive:true});
@@ -138,7 +140,7 @@ async function review(page){
   window.__referencePaint=(c,x,y,scaleValue,stance)=>{
    __lowerPaintRecords=[];__recordLower=stance;__movementPaint(c,x,y,scaleValue);__recordLower=null;
    const records=__lowerPaintRecords.slice(),expected=stance==='STAND'?standingLowerPose(c).angle:stanceFacingAngle(c)+stanceBodyPose(c).hipYaw;
-   if(records.length!==(stance==='STAND'?2:1)||records.some(r=>Math.abs(__wrap(r.angle-expected))>1e-8))throw Error('Native '+stance+' painter did not consume its lower-body heading');
+   if((stance==='STAND'?records.length<2:records.length!==1)||records.some(r=>Math.abs(__wrap(r.angle-expected))>1e-8))throw Error('Native '+stance+' painter did not consume its lower-body heading');
    return records;
   };
   window.__reviewBackground=(title,sub)=>{background(37,50,57);noStroke();textFont('sans-serif');textAlign(CENTER,CENTER);fill(226,236,231);textSize(21);text(title,width/2,28);fill(156,185,188);textSize(11);text(sub,width/2,54);};
@@ -223,11 +225,123 @@ async function review(page){
  if(encode.error)throw encode.error;assert.equal(encode.status,0,encode.stderr);
  fs.writeFileSync(path.join(out,'motion.json'),JSON.stringify(motion,null,2));return {frames:total,actualInputSamples:sweep.length,renderedSweepPoses:sweep.filter(r=>r.renderedStand).length*2};
 }
+// Measure visible heel pixels after the torso has painted. A pose helper can
+// return a heel that is completely hidden, so compare native frames with only
+// the heel delegate omitted across the vulnerable rear-side angles.
+async function heelVisibility(page){
+ const rows=await page.evaluate(()=>{
+  resizeCanvas(400,400);const rows=[],angles=[];
+  for(let a=91;a<=112;a++)angles.push(a,360-a);
+  angles.push(120,135,150,165,180,195,210,225,240);
+  const native=window.drawStandingRearHeel;
+  const paint=(c,hidden)=>{
+   window.drawStandingRearHeel=hidden?()=>{}:native;
+   background(37,50,57);__movementPaint(c,200,190,6);
+   return drawingContext.getImageData(50,75,300,300).data;
+  };
+  try{
+   for(const weapon of ['PISTOL','ASSAULT_RIFLE'])for(const throttle of [.2,.5,1])for(const degrees of angles){
+    const aim=-Math.PI/2,c=__movementActor(weapon,aim);
+    __movementStep(c,aim+degrees*Math.PI/180,throttle,aim,180);
+    const pixels=[];
+    for(let phase=0;phase<4;phase++){
+     c.walkCycle=phase*Math.PI/2;
+     const a=paint(c,false),b=paint(c,true);let count=0;
+     for(let i=0;i<a.length;i+=4)if(a[i]!==b[i]||a[i+1]!==b[i+1]||a[i+2]!==b[i+2])count++;
+     pixels.push(count);
+    }
+    rows.push({weapon,throttle,degrees,pixels,max:Math.max(...pixels)});
+   }
+  }finally{window.drawStandingRearHeel=native;}
+  return rows;
+ });
+ for(const r of rows)assert(r.max>0,'heel hidden for whole stride: '+JSON.stringify(r));
+ if(out)fs.writeFileSync(path.join(out,'heel-visibility.json'),JSON.stringify(rows,null,2));
+ console.log('PASS '+rows.length+' rear angle/speed/weapon groups expose visible native heel pixels.');
+ return {groups:rows.length,frames:rows.length*4,minimumVisiblePixels:Math.min(...rows.map(r=>r.max))};
+}
+async function heelReview(page){
+ const heelOut=path.join(out,'heels');fs.mkdirSync(path.join(heelOut,'frames'),{recursive:true});
+ await page.setViewportSize({width:1728,height:1140});
+ await page.evaluate(()=>resizeCanvas(1728,1140));
+ const sheets=[];
+ for(const weapon of ['PISTOL','ASSAULT_RIFLE']){
+  const records=await page.evaluate(weapon=>{
+   __reviewBackground('REAR HALF / KNEES FORWARD / HEELS VISIBLE — '+weapon,'Aim stays north. Actual movement updates cover the full rear half, including 91° through 112° where the hip policy remains lateral.');
+   const degrees=[91,100,112,135,180,225,248,260,269],records=[];
+   for(let row=0;row<3;row++)for(let col=0;col<degrees.length;col++){
+    const aim=-Math.PI/2,move=aim+degrees[col]*Math.PI/180,pair=__referencePair(weapon,aim),throttle=[.2,.5,1][row];
+    for(let f=0;f<180;f++)__referenceStep(pair,move,throttle,aim);
+    const c=pair.stand;c.walkCycle=Math.PI*.75;if(c._standingMotion)c._standingMotion.phase=c.walkCycle;
+    const lower=standingLowerPose(c),pose=standingRearPose(c,lower);
+    if(!pose)throw Error('Missing rear heel art at '+degrees[col]+'°');
+    const R=figureRig(c.bodyW,c.bodyH),legs=[0,1].map(i=>standingRearLeg(c,pose,R,i));
+    __referencePaint(c,96+col*192,220+row*360,3.5,'STAND');__referencePaint(c,153+col*192,295+row*360,1,'STAND');
+    __reviewLabel(['WALK','JOG','RUN'][row]+' / '+degrees[col]+'° / HIP '+Math.round(__wrap(lower.angle-aim)*180/Math.PI)+'°',96+col*192,370+row*360);
+    records.push({weapon,degrees:degrees[col],throttle,lower,pose,legs});
+   }
+   return records;
+  },weapon);
+  sheets.push(...records);
+  await page.locator('canvas').first().screenshot({path:path.join(heelOut,'rear-half-'+weapon.toLowerCase()+'.png')});
+ }
+ await page.setViewportSize({width:1600,height:1080});
+ await page.evaluate(()=>{
+  resizeCanvas(1600,1080);__reviewBackground('BACKWARD GAIT / KNEE AND HEEL PHASES','North-facing rifle. The thigh points forward while the heel recedes and lifts behind the body. Same hips and torso as before.');
+  for(let row=0;row<3;row++)for(let col=0;col<8;col++){
+   const aim=-Math.PI/2,move=aim+[Math.PI,Math.PI*.75,-Math.PI*.75][row],pair=__referencePair();
+   for(let f=0;f<180;f++)__referenceStep(pair,move,1,aim);
+   const c=pair.stand;c.walkCycle=col*Math.PI/4;if(c._standingMotion)c._standingMotion.phase=c.walkCycle;
+   __referencePaint(c,100+col*200,220+row*320,3.8,'STAND');__referencePaint(c,162+col*200,295+row*320,1,'STAND');
+   __reviewLabel(['BACKWARD','BACK RIGHT','BACK LEFT'][row]+' / '+col+'π/4',100+col*200,365+row*320);
+  }
+ });
+ await page.locator('canvas').first().screenshot({path:path.join(heelOut,'knee-heel-phases.png')});
+ await page.setViewportSize({width:1440,height:850});
+ await page.evaluate(()=>{
+  resizeCanvas(1440,850);window.__heelPairs=Array.from({length:3},(_,i)=>__referencePair(i===1?'PISTOL':'ASSAULT_RIFLE'));
+  for(let i=0;i<3;i++)for(let f=0;f<120;f++)__referenceStep(__heelPairs[i],-Math.PI/2+[Math.PI,Math.PI*.55,Math.PI*.75][i],.2,-Math.PI/2);
+ });
+ const total=Number(process.env.STANDING_HEEL_FRAMES||240),motion=[];
+ for(let f=0;f<total;f++){
+  const record=await page.evaluate(({f,total})=>{
+   const throttle=f<total/3?.2:f<total*2/3?.5:1,aim=-Math.PI/2,deltas=[Math.PI,Math.PI*.55,Math.PI*.75],poses=[];
+   for(let step=0;step<2;step++)for(let i=0;i<3;i++)poses[i]=__referenceStep(__heelPairs[i],aim+deltas[i],throttle,aim);
+   __reviewBackground('BACKWARD WALK / JOG / RUN — KNEES AND HEELS','Shared hip and torso handling is unchanged. The rear leg articulation and heel surfaces sell backward steps.');
+   for(let i=0;i<3;i++){
+    const c=__heelPairs[i].stand,x=240+i*480,y=400,scaleValue=5;
+    push();drawingContext.beginPath();drawingContext.rect(x-230,y-250,460,540);drawingContext.clip();stroke(57,73,80);strokeWeight(1);
+    const gx=((c.x*scaleValue)%72+72)%72,gy=((c.y*scaleValue)%72+72)%72;
+    for(let xx=x-250-gx;xx<x+250;xx+=72)line(xx,y-260,xx,y+300);
+    for(let yy=y-260-gy;yy<y+300;yy+=72)line(x-250,yy,x+250,yy);
+    poses[i].rendered=__referencePaint(c,x,y,scaleValue,'STAND');pop();
+    __reviewLabel(['BACKWARD 180°','REAR EDGE 99°','BACK RIGHT 135°'][i]+' / '+(throttle<.3?'WALK':throttle<.6?'JOG':'RUN'),x,y+310);
+   }
+   return {frame:f,poses,stats:__paintStats};
+  },{f,total});
+  assert.equal(record.stats.depth,0);assert.equal(record.stats.minDepth,0);motion.push(record);
+  await page.locator('canvas').first().screenshot({path:path.join(heelOut,'frames',String(f).padStart(4,'0')+'.png')});
+ }
+ const encode=spawnSync('ffmpeg',['-y','-loglevel','error','-framerate','30','-i',path.join(heelOut,'frames','%04d.png'),'-c:v','libx264','-pix_fmt','yuv420p','-crf','18','-movflags','+faststart',path.join(heelOut,'backward-heels.mp4')],{encoding:'utf8'});
+ if(encode.error)throw encode.error;assert.equal(encode.status,0,encode.stderr);
+ fs.writeFileSync(path.join(heelOut,'review.json'),JSON.stringify({sheets,motion},null,2));
+ return {frames:total,directionCards:sheets.length,phaseCards:24,out:heelOut};
+}
 (async()=>{
  const browser=await chromium.launch({executablePath:process.env.VIS_CHROME||'/usr/bin/chromium',headless:true,args:['--no-sandbox']});
  try{
   const a=await load(browser,baseline),b=await load(browser,candidate),samples=cases(),records=[];
-  const beforeCrouch=await crouchHistory(a.page),afterCrouch=await crouchHistory(b.page);
+  const beforeStand=await locomotionHistory(a.page,'STAND'),afterStand=await locomotionHistory(b.page,'STAND');
+  assert.deepEqual(afterStand,beforeStand,'standing hip/aim/input histories remain exactly unchanged');
+  console.log('PASS '+beforeStand.records.length+' original standing hip/aim/input samples unchanged.');
+  // Bypass only the changed leg branch to compare the retained hip transform,
+  // torso, arms and firearm over actual histories, including rear/idle.
+  for(let offset=0;offset<beforeStand.snapshots.length;offset+=64){
+   const batch=beforeStand.snapshots.slice(offset,offset+64),pa=await a.page.evaluate(batch=>__movementAtlas(batch,false,true),batch),pb=await b.page.evaluate(batch=>__movementAtlas(batch,false,true),batch);
+   assert.equal(hashPixels(pb),hashPixels(pa),'retained model and torso pixels outside rear leg art, batch='+offset);assert.deepEqual(pb,pa);
+  }
+  console.log('PASS '+beforeStand.snapshots.length+' retained hip/torso/arm/firearm native poses unchanged with rear leg art bypassed.');
+  const beforeCrouch=await locomotionHistory(a.page),afterCrouch=await locomotionHistory(b.page);
   assert.deepEqual(afterCrouch,beforeCrouch,'existing crouch input histories and solver state remain unchanged');
   for(let offset=0;offset<beforeCrouch.snapshots.length;offset+=64){
    const batch=beforeCrouch.snapshots.slice(offset,offset+64),pa=await a.page.evaluate(batch=>__movementAtlas(batch,false),batch),pb=await b.page.evaluate(batch=>__movementAtlas(batch,false),batch);
@@ -236,12 +350,12 @@ async function review(page){
   console.log('PASS '+beforeCrouch.records.length+' original crouch input/state samples and '+beforeCrouch.snapshots.length+' native crouch poses unchanged.');
   if(!process.env.STANDING_REVIEW_ONLY)for(const biome of [false,true])for(let offset=0;offset<samples.length;offset+=64){
    const batch=samples.slice(offset,offset+64),pa=await a.page.evaluate(({batch,biome})=>__movementAtlas(batch,biome),{batch,biome}),pb=await b.page.evaluate(({batch,biome})=>__movementAtlas(batch,biome),{batch,biome});
-   const ha=hashPixels(pa),hb=hashPixels(pb);assert.equal(hb,ha,'original direct-forward pixels, biome='+biome+', batch='+offset);
-   assert.deepEqual(pb,pa,'original direct-forward painter state, biome='+biome+', batch='+offset);
+   const ha=hashPixels(pa),hb=hashPixels(pb);assert.equal(hb,ha,'original front/side pixels, biome='+biome+', batch='+offset);
+   assert.deepEqual(pb,pa,'original front/side painter state, biome='+biome+', batch='+offset);
    assert.equal(pb.stats.depth,0);assert.equal(pb.stats.minDepth,0);records.push({biome,offset,poses:batch.length,sha256:ha});
   }
-  if(!process.env.STANDING_REVIEW_ONLY)console.log('PASS '+samples.length*2+' native direct-forward poses match original pixels and state exactly.');
-  let previews=null;if(out){previews=await review(b.page);fs.writeFileSync(path.join(out,'parity.json'),JSON.stringify({baseline,candidate,poses:records.reduce((n,r)=>n+r.poses,0),records,previews,errors:b.errors},null,2));console.log('PASS '+previews.frames+' input-driven motion frames and '+previews.actualInputSamples+' actual-input reference samples. Previews: '+out);}
+  if(!process.env.STANDING_REVIEW_ONLY)console.log('PASS '+samples.length*2+' native front/side poses match original pixels and state exactly.');
+  let previews=null;if(out){previews=await review(b.page);if(process.env.STANDING_HEEL_REVIEW){previews.heelVisibility=await heelVisibility(b.page);previews.heels=await heelReview(b.page);}fs.writeFileSync(path.join(out,'parity.json'),JSON.stringify({baseline,candidate,poses:records.reduce((n,r)=>n+r.poses,0),records,previews,errors:b.errors},null,2));console.log('PASS '+previews.frames+' input-driven motion frames and '+previews.actualInputSamples+' actual-input reference samples. Previews: '+out);}
   assert.deepEqual(a.errors,[]);assert.deepEqual(b.errors,[]);
  }finally{await browser.close();}
 })().catch(e=>{console.error(e.stack||e);process.exitCode=1;});

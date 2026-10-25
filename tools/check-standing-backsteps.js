@@ -130,8 +130,10 @@ try{
  for(const setup of ['', 'player.isMoving=false;', 'rightStick.active=false;player.aimHold=0;', 'player.isArmed=false;',
   'player.aimAngle=Math.PI;', 'player.isMoving=true;player.moveAngle=-Math.PI*.75;']){
   probe(setup);advance(1,0);const p=lower();limbs=[];boots=[];probe('player.show();');
-  frames&&=limbs.length===2&&limbs.every(l=>near(wrap(l.angle-p.angle),0));
-  materials&&=limbs.every(l=>l.widths.every((v,i)=>near(v,[R.thighW,R.shinW,R.shinW*.8][i])))&&
+  frames&&=limbs.length===(rear()?4:2)&&limbs.every(l=>near(wrap(l.angle-p.angle),0));
+  const widths=[[R.thighW,R.shinW,R.shinW*.8],[R.shinW,R.shinW*.9,R.shinW*.8],
+   [R.thighW,(R.thighW+R.shinW)*.5,R.shinW]];
+  materials&&=limbs.every(l=>widths.some(w=>l.widths.every((v,i)=>near(v,w[i]))))&&
    boots.length===2&&boots.every(b=>near(b.geometry[2],R.foot)&&near(b.geometry[3],R.shinW*.8));
  }
  ok('the actual standing painter retains the crouch-derived hip frame after stopping or releasing aim',frames);

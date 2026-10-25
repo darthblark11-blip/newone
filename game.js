@@ -22811,12 +22811,8 @@ if (this.isPlayer) {
           if(mantle)drawShovelMantleLegs(this,mantle,RGl);
           else if(boxing.active)drawBoxingLegs(this,boxing,RGl);
           else if(shovelStroke)drawShovelDigLegs(this,shovelStroke,RGl);
-          else if(backstep)for(let index=0;index<2;index++) {
-            const leg=standingRearLeg(this,backstep,RGl,index),g=paint?paint.api:window;
-            figureCelLimb(g,leg.sx,leg.sy,leg.kx,leg.ky,leg.ax,leg.ay,wHip,wKnee,wAnkle,this.pantsCol);
-            figureCelOval(g,leg.ax+RGl.foot*.34,leg.ay,RGl.foot,wAnkle,bootC,.8);
-            drawLegDecals(g,this.decals,index,leg.sx,leg.sy,leg.kx,leg.ky,leg.ax,leg.ay,wHip,wKnee,wAnkle);
-          }
+          else if(backstep)for(let index=0;index<2;index++)
+            drawStandingRearLeg(paint?paint.api:window,this,backstep,RGl,index,bootC);
           else for (const sgn of [1, -1]) {
             // Hips either side of the axis at the spacing the old pair of rects
             // used -- wide enough that the two thighs do not merge at the
@@ -42238,28 +42234,74 @@ function standingLowerPose(c) {
   return locomotionLowerPose(c,s,1);
 }
 function standingRearPose(c,lower=standingLowerPose(c)) {
-  if(!lower||!(lower.backward>1e-8))return null;
-  return {blend:lower.backward,angle:lower.angle,motion:lower.motion,
+  if(!lower)return null;
+  // Heel presentation covers the whole rear hemisphere; the shared hip
+  // solver keeps its existing direction-fold threshold and trailing motion.
+  const rear=c.isMoving?Math.max(0,-Math.cos(c.moveAngle-c.aimAngle)):0;
+  const blend=Math.max(lower.backward,rear);
+  if(!(blend>1e-8))return null;
+  return {blend,angle:lower.angle,motion:lower.motion,
+    heelExposure:rear>1e-8?.45+.55*rear:lower.backward,
     travelX:Math.cos(c.moveAngle-lower.angle),travelY:Math.sin(c.moveAngle-lower.angle)};
 }
 function standingRearLeg(c,pose,rig,index) {
   const side=index?1:-1,GP=gaitPose(c.gait),root=-10+rig.thighW*.5,sy=side*6;
   const th=rig.thigh*STAND_FORE_LEG,sh=rig.shin*STAND_FORE_LEG;
-  const motion=Number.isFinite(pose.motion)?pose.motion:1;
-  const step=-side*Math.sin(c.walkCycle)*12*GP.swing*motion,b=pose.blend;
-  // A planted boot recedes opposite travel; the returning leg lifts and bends
-  // at the knee. Hip roots stay attached instead of sliding two rigid legs.
-  const lift=Math.max(0,-side*Math.cos(c.walkCycle))*b*2.4*GP.swing*motion;
-  // Project the lowered legs behind the waist, clear of the chest and pack.
-  // Keep the boot toe facing forward, and give each foot its own lateral track.
-  const projection=1-2*b;
-  const ky=sy+.35*step*b*pose.travelY+side*lift*.45;
-  const ay=sy+step*b*pose.travelY+side*lift*.3;
-  return {sx:root+step*(1-b),sy,
-    kx:root+th*.92*projection+step*(1-b+.35*b*pose.travelX)+lift*.55,
-    ky:side*Math.max(rig.shinW*.52,side*ky),
-    ax:root+(th*.92+sh)*projection+step*(1-b+b*pose.travelX)-lift*.75,
-    ay:side*Math.max(rig.shinW*.8*.55,side*ay),lift};
+  const motion=Number.isFinite(pose.motion)?pose.motion:1,b=pose.blend;
+  const beat=-side*Math.sin(c.walkCycle),recover=Math.max(0,-side*Math.cos(c.walkCycle));
+  const originalStep=beat*12*GP.swing*motion,stride=beat*3.6*GP.swing*motion;
+  const lift=recover*b*2.4*GP.swing*motion;
+  const sx=root+originalStep*(1-b);
+  // Knees keep pointing forward. The shin folds back beneath the thigh;
+  // its projection may shorten, but never exceeds the actual bone length.
+  const kx=sx+th*(.92*(1-b)+(.35+.20*recover)*b);
+  const ky=sy+side*recover*b*1.3;
+  const rearAx=root-sh*1.15+stride*pose.travelX+recover*rig.foot*.12;
+  const rearAy=side*Math.max(rig.shinW*.8*.55,side*(sy+stride*pose.travelY));
+  let ax=(root+originalStep+th*.92+sh)*(1-b)+rearAx*b;
+  let ay=sy*(1-b)+rearAy*b;
+  // During a shallow rear step the trailing hips still face sideways. Project
+  // the feet toward the torso's rear so the heels clear its lower silhouette.
+  // The offset meets both the unchanged strafe and full backstep at zero.
+  const clearance=8*Math.sin(Math.PI*b),yaw=c.aimAngle-pose.angle;
+  ax-=Math.cos(yaw)*clearance;
+  ay=side*Math.max(rig.shinW*.8*.55,side*(ay-Math.sin(yaw)*clearance));
+  const dx=ax-kx,dy=ay-ky,length=Math.hypot(dx,dy),limit=rig.shin*.98;
+  if(length>limit){ax=kx+dx*limit/length;ay=ky+dy*limit/length;}
+  return {sx,sy,kx,ky,ax,ay,lift,
+    heel:pose.heelExposure*(.55+.45*recover)*motion,
+    sole:pose.heelExposure*recover*motion};
+}
+function drawStandingRearHeel(g,leg,rig,boot) {
+  const amount=Math.max(0,Math.min(1,leg.heel||0));
+  if(!(amount>0))return;
+  const w=rig.foot,h=rig.shinW*.8,sole=Math.max(0,Math.min(1,leg.sole||0));
+  const x=leg.ax-w*.16,y=leg.ay,depth=w*(.20+.12*sole),alpha=255*amount;
+  g.push();g.stroke(18,21,27,alpha);g.strokeWeight(.6);
+  g.fill(boot[0]*.62,boot[1]*.62,boot[2]*.65,alpha);
+  g.rect(x-depth*.40,y-h*.44,depth,h*.88,1);
+  // Back leather panel and the lower sole edge reveal the heel, rather than
+  // putting a knee-shaped cap on the end of a rear-pointing trouser leg.
+  g.stroke(boot[0]+30,boot[1]+30,boot[2]+32,alpha*.8);g.strokeWeight(.55);
+  g.line(x+depth*.45,y-h*.30,x+depth*.45,y+h*.30);
+  if(sole>0) {
+    g.stroke(138,149,157,alpha*sole);g.strokeWeight(.55);
+    for(const across of [-.23,0,.23])g.line(x-depth*.20,y+h*across,x+depth*.24,y+h*across);
+  }
+  g.pop();
+}
+function drawStandingRearLeg(g,c,pose,rig,index,boot) {
+  const leg=standingRearLeg(c,pose,rig,index),wAnkle=rig.shinW*.8;
+  // Paint the calf behind the forward thigh so the folded knee cannot read
+  // as an inverted joint. The boot toe still points in the hip's forward axis.
+  figureCelLimb(g,leg.kx,leg.ky,(leg.kx+leg.ax)*.5,(leg.ky+leg.ay)*.5,
+    leg.ax,leg.ay,rig.shinW,rig.shinW*.9,wAnkle,c.pantsCol);
+  figureCelOval(g,leg.ax+rig.foot*.34,leg.ay,rig.foot,wAnkle,boot,.8);
+  drawStandingRearHeel(g,leg,rig,boot);
+  figureCelLimb(g,leg.sx,leg.sy,(leg.sx+leg.kx)*.5,(leg.sy+leg.ky)*.5,
+    leg.kx,leg.ky,rig.thighW,(rig.thighW+rig.shinW)*.5,rig.shinW,c.pantsCol);
+  drawLegDecals(g,c.decals,index,leg.sx,leg.sy,leg.kx,leg.ky,leg.ax,leg.ay,
+    rig.thighW,rig.shinW,wAnkle);
 }
 
 function standingAimEligible(c) {
