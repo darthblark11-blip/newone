@@ -53,16 +53,24 @@ const out=process.env.KILL_VECTOR_OUT||'/tmp/newone-kill-vector-splatter';fs.mkd
     for(let i=0;i<16&&b.active;i++){frameCount++;deltaTime=1000/60;updateBullets();}pop();
     if(!e.dead||!corpses.length)throw Error('Fatal native projectile did not create a corpse');
     const marks=__killMarks.slice(markStart),poolCount=bloodPools.length,blobCount=bloodPools.reduce((n,p)=>n+p.blobs.length,0);
-    const initialFloor=__floorDigest();
-    push();translate(-10000,-10000);
-    for(let i=0;i<168;i++){frameCount++;deltaTime=1000/60;updateCorpses();updateBloodPools();updateParticles();}pop();
-    const settledFloor=__floorDigest(),savedBodies=corpses.slice();
-    const before={x:e.x,y:e.y};e.x+=160;e.y-=90;enemiesList=[];corpses=[];
-    const afterRemoval=__floorDigest();e.x=before.x;e.y=before.y;corpses=savedBodies;
-    const f={zone,angle,bank,e,corpses:savedBodies,marks,poolCount,blobCount,initialFloor,settledFloor,afterRemoval,
-     deathTypes:savedBodies.map(c=>c.dT),bodyPositions:savedBodies.map(c=>({x:c.x,y:c.y,fP:c.fP})),
-     liveParticles:particles.length,stack:{...__killStack}};
+    const f={zone,angle,bank,e,corpses,particles,marks,poolCount,blobCount,initialFloor:__floorDigest(),tick:0,
+     deathTypes:corpses.map(c=>c.dT)};
     __killFixtures.push(f);return f;
+   };
+   window.__killAdvance=(f,toTick)=>{
+    useBloodBank(f.bank);particles=f.particles;corpses=f.corpses;enemiesList=[];doTick=true;
+    push();translate(-10000,-10000);
+    for(;f.tick<toTick;f.tick++){frameCount++;deltaTime=1000/60;updateCorpses();updateBloodPools();updateParticles();}
+    pop();
+   };
+   window.__killRecord=f=>{
+    useBloodBank(f.bank);const settledFloor=__floorDigest();
+    const before={x:f.e.x,y:f.e.y};f.e.x+=160;f.e.y-=90;enemiesList=[];corpses=[];
+    const afterRemoval=__floorDigest();f.e.x=before.x;f.e.y=before.y;corpses=f.corpses;
+    return {zone:f.zone,angle:f.angle,tick:f.tick,marks:f.marks.map(m=>({x:m.x,y:m.y,angle:m.angle,spread:m.spread,paths:m.paths})),
+     poolCount:f.poolCount,blobCount:f.blobCount,initialFloor:f.initialFloor,settledFloor,afterRemoval,
+     deathTypes:f.deathTypes,bodyPositions:f.corpses.map(c=>({x:c.x,y:c.y,fP:c.fP})),
+     liveParticles:f.particles.length,activePools:bloodPools.length,poolAges:bloodPools.map(p=>p.age),stack:{...__killStack}};
    };
    window.__killBack=(title,subtitle)=>{
     background(29,41,45);textFont('sans-serif');textStyle(NORMAL);textAlign(CENTER,TOP);noStroke();
@@ -70,11 +78,12 @@ const out=process.env.KILL_VECTOR_OUT||'/tmp/newone-kill-vector-splatter';fs.mkd
    };
    window.__killPaint=(f,x,y,magnify,showBody)=>{
     useBloodBank(f.bank);doTick=false;
-    push();translate(x,y);scale(magnify);drawBloodLayer(false);if(showBody)for(const corpse of f.corpses)corpse.show();pop();
+    push();translate(x,y);scale(magnify);drawBloodLayer(false);
+    if(showBody){drawBloodLayer(true);for(const corpse of f.corpses)corpse.show();}pop();
    };
-   window.__killSheet=showBody=>{
+   window.__killSheet=(showBody,age)=>{
     __killBack(showBody?'FATAL GUN HITS / EXISTING CORPSES AND BLOOD POOLS':'FATAL GUN HITS / FIXED FLOOR VECTOR STAINS',
-     showBody?'Actual body/head kills after 168 ticks. Old pool and corpse remain; native 1× at left and 2× at right.':'Same floor bank with the corpse hidden. Polygon jet follows each incoming shot; the original rounded pool remains.');
+     'After '+age+' active ticks ('+(age/60).toFixed(1)+' s). '+(showBody?'Actual corpse and gradual pool; native 1× at left and 2× at right.':'Corpse hidden: immediate directional jet remains while the original rounded pool grows slowly.'));
     const labels=['WEST → EAST','NORTH → SOUTH','EAST → WEST','SOUTH → NORTH'];
     for(let i=0;i<__killFixtures.length;i++){
      const f=__killFixtures[i],col=i%4,row=Math.floor(i/4),x=col*500,y=88+row*500;
@@ -86,32 +95,43 @@ const out=process.env.KILL_VECTOR_OUT||'/tmp/newone-kill-vector-splatter';fs.mkd
     return {...__killStack};
    };
   });
-  const records=await page.evaluate(()=>{
-   const records=[];
+  await page.evaluate(()=>{
    for(const zone of ['BODY','HEAD'])for(let direction=0;direction<4;direction++){
-    const f=__killFixture(zone,direction,records.length);
-    records.push({zone:f.zone,angle:f.angle,marks:f.marks.map(m=>({x:m.x,y:m.y,angle:m.angle,spread:m.spread,paths:m.paths})),
-     poolCount:f.poolCount,blobCount:f.blobCount,initialFloor:f.initialFloor,settledFloor:f.settledFloor,afterRemoval:f.afterRemoval,
-     deathTypes:f.deathTypes,bodyPositions:f.bodyPositions,liveParticles:f.liveParticles,stack:f.stack});
+    __killFixture(zone,direction,__killFixtures.length);
    }
-   return records;
   });
-  for(const r of records){
-   assert.equal(r.marks.length,1,'real fatal projectile produces exactly one fixed vector stain');
-   assert.equal(r.marks[0].paths.length,17,'directional floor stain retains its authored polygon fan');
-   assert(Math.abs(Math.atan2(Math.sin(r.marks[0].angle-r.angle),Math.cos(r.marks[0].angle-r.angle)))<1e-8,'floor vector follows incoming projectile');
-   assert(r.poolCount>0&&r.blobCount>=8,'existing rounded death pool is still created');
-   assert(r.initialFloor.ink>0,'vector stain is immediately baked to the native floor');
-   assert(r.settledFloor.ink>=r.initialFloor.ink,'original gradual pool adds floor blood while settling');
-   assert.deepEqual(r.settledFloor,r.afterRemoval,'floor ink remains fixed when the victim moves and the corpse is removed');
-   assert.equal(r.stack.depth,0);assert.equal(r.stack.minDepth,0);
+  const phases=[];
+  for(const age of [60,168,360]){
+   const records=await page.evaluate(age=>{
+    for(const f of __killFixtures)__killAdvance(f,age);
+    return __killFixtures.map(__killRecord);
+   },age);
+   for(const r of records){
+    assert.equal(r.marks.length,1,'real fatal projectile produces exactly one fixed vector stain');
+    assert.equal(r.marks[0].paths.length,17,'directional floor stain retains its authored polygon fan');
+    assert(Math.abs(Math.atan2(Math.sin(r.marks[0].angle-r.angle),Math.cos(r.marks[0].angle-r.angle)))<1e-8,'floor vector follows incoming projectile');
+    assert(r.poolCount>0&&r.blobCount>=8,'existing rounded death pool is still created');
+    assert(r.initialFloor.ink>0,'vector stain is immediately baked to the native floor');
+    assert(r.settledFloor.ink>=r.initialFloor.ink,'original gradual pool adds floor blood while settling');
+    assert.deepEqual(r.settledFloor,r.afterRemoval,'floor ink remains fixed when the victim moves and the corpse is removed');
+    assert.equal(r.stack.depth,0);assert.equal(r.stack.minDepth,0);
+   }
+   const suffix=String(age).padStart(3,'0');
+   const withBodies=await page.evaluate(age=>__killSheet(true,age),age);assert.equal(withBodies.depth,0);
+   await page.locator('canvas').first().screenshot({path:path.join(out,'kill-vector-with-corpses-'+suffix+'.png')});
+   if(age===168)await page.locator('canvas').first().screenshot({path:path.join(out,'kill-vector-with-corpses.png')});
+   const exposedFloor=await page.evaluate(age=>__killSheet(false,age),age);assert.equal(exposedFloor.depth,0);
+   await page.locator('canvas').first().screenshot({path:path.join(out,'kill-vector-floor-only-'+suffix+'.png')});
+   if(age===168)await page.locator('canvas').first().screenshot({path:path.join(out,'kill-vector-floor-only.png')});
+   phases.push({age,records,withBodies,exposedFloor});
   }
-  const withBodies=await page.evaluate(()=>__killSheet(true));assert.equal(withBodies.depth,0);
-  await page.locator('canvas').first().screenshot({path:path.join(out,'kill-vector-with-corpses.png')});
-  const exposedFloor=await page.evaluate(()=>__killSheet(false));assert.equal(exposedFloor.depth,0);
-  await page.locator('canvas').first().screenshot({path:path.join(out,'kill-vector-floor-only.png')});
+  const gradual=phases.map(p=>p.records[0]);
+  assert(gradual[0].activePools>0&&gradual[1].activePools>0,'ordinary death pools remain actively growing at 60 and 168 ticks');
+  assert.equal(gradual[2].activePools,0,'ordinary death pool finishes its slow deposition by 360 ticks');
+  assert(gradual[0].settledFloor.ink<gradual[1].settledFloor.ink&&gradual[1].settledFloor.ink<gradual[2].settledFloor.ink,
+   'native rounded pool occupies progressively more ground while the vector stain remains fixed');
   assert.deepEqual(errors,[],'native fatal render produces no page errors');
-  fs.writeFileSync(path.join(out,'review.json'),JSON.stringify({records,withBodies,exposedFloor,errors},null,2));
-  console.log(`${records.length} real body/head kills, four incoming vectors, unchanged rounded pools and persistent baked floor checks passed. Previews: ${out}`);
+  fs.writeFileSync(path.join(out,'review.json'),JSON.stringify({records:phases.at(-1).records,phases,errors},null,2));
+  console.log(`8 real body/head kills at 60/168/360 ticks, four incoming vectors, slow rounded pools and persistent baked floor checks passed. Previews: ${out}`);
  }finally{await browser.close();}
 })().catch(error=>{console.error(error.stack||error);process.exit(1);});

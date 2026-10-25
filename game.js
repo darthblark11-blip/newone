@@ -1744,6 +1744,7 @@ if (isStoryMode) {
 	
     started = true; isDead = false; isWin = false; killStreak = 0; screenShake = 0;
     bullets = []; particles = []; splatters = []; corpses = []; enemiesList = []; barrels = []; orbs = []; grenades = []; fires = []; sludges = []; healthPacks = []; weaponDrops = []; resourceDrops = [];
+    resetCelExplosionBudget();
     _boxingWorldEffects.length = 0;
     grenadePickups = []; 
   
@@ -7126,6 +7127,7 @@ function resetRunState() {
   invalidateDirectiveBuffer();
   player = null;
   bullets = []; particles = []; splatters = []; enemiesList = [];
+  resetCelExplosionBudget();
   barrels = []; orbs = []; grenades = []; fires = []; sludges = [];
   healthPacks = []; weaponDrops = []; resourceDrops = []; grenadePickups = [];
   playerGrenades = []; playerFlasks = []; waterPuddles = []; shockwaves = [];
@@ -7338,7 +7340,10 @@ function drawDeathMenu() {
     'Reset returns to the main menu'),width/2,p.y+p.h-13*s);
   pop();
 }
-function emit(x, y, c, col, typ, vx = 0, vy = 0, owner = null) { for (let i = 0; i < c; i++) { particles.push(newParticle(x, y, col, typ, vx, vy, owner)); } }
+function emit(x, y, c, col, typ, vx = 0, vy = 0, owner = null) {
+  if(typ==='EXPLOSION')return c>0?emitCelExplosion(x,y,85+Math.sqrt(c)*12,col,owner,vx,vy):null;
+  for (let i = 0; i < c; i++) particles.push(newParticle(x, y, col, typ, vx, vy, owner));
+}
 let activeBuildings = [];
 let activeParkingCars = [];
 
@@ -12140,8 +12145,7 @@ function triggerExplosion(ex, ey, rad, isMolotov = false, sourceIsPlayer = true,
       notifyForestWildlifeExplosion(ex,ey,rad,350,killer,++_huntShotSequence);
   screenShake = rad > 160 ? 40 : 30; 
   spawnSplatter(ex, ey, "SCORCH");
-  emit(ex, ey, 40, color(255, random(100, 200), 0), "EXPLOSION"); 
-  emit(ex, ey, 20, color(50), "SMOKE");
+  emitCelExplosion(ex,ey,rad,color(255,150,0));
   if (isMolotov) fires.push(new FireZone(ex, ey, rad));
   
   let explodingCars = [];
@@ -12264,8 +12268,7 @@ function triggerRocketExplosion(ex, ey, sourceIsPlayer, directHitTarget = null, 
       notifyForestWildlifeExplosion(ex,ey,140,350,killer,++_huntShotSequence);
   screenShake = 30; 
   spawnSplatter(ex, ey, "SCORCH");
-  emit(ex, ey, 40, color(255, 150, 0), "EXPLOSION"); 
-  emit(ex, ey, 20, color(50), "SMOKE");
+  emitCelExplosion(ex,ey,140,color(255,150,0));
   
   let rRad = 140; 
 
@@ -13552,7 +13555,10 @@ let bloodBankId = null;
 let bloodPools = [];
 let shovelBloodMarks = [];
 const SHOVEL_BLOOD_MARK_MAX = 192;
-const BLOOD_POOL_FRAMES = 90;
+const BLOOD_POOL_FRAMES = 360, BLOOD_POOL_HOLD_FRAMES = 45, BLOOD_POOL_BLOB_FRAMES = 90;
+function bloodPoolProgress(age) {
+    return Math.max(0,Math.min(1,(age-BLOOD_POOL_HOLD_FRAMES)/(BLOOD_POOL_FRAMES-BLOOD_POOL_HOLD_FRAMES)));
+}
 
 function useBloodBank(id) {
   const key = String(id);
@@ -13909,13 +13915,13 @@ function spawnSplatter(x, y, t = "HIDDEN", col = null, owner = null) {
 
     if (owner && (shovelRenderDepth(owner) > 0 || owner.shovelDepthTarget > 0)) {
         if (shovelBloodMarks.length >= SHOVEL_BLOOD_MARK_MAX) shovelBloodMarks.shift();
-        shovelBloodMarks.push(shovelBindEffect({x,y,col:col || (t === "SCORCH" ? color(15,15,15,220) : color(90,0,0,220)),blobs,age:0,shovelDeposit:true},owner));
+        shovelBloodMarks.push(shovelBindEffect({x,y,col:col || (t === "SCORCH" ? color(15,15,15,220) : color(90,0,0,220)),blobs,age:t==='SCORCH'?24:0,slowPool:t!=='SCORCH',shovelDeposit:true},owner));
         return;
     }
     if(t!=="SCORCH"){
         blobs.sort((a,b)=>a.ox*a.ox+a.oy*a.oy-b.ox*b.ox-b.oy*b.oy);
         for(let i=0;i<blobs.length;i++){
-            blobs[i].delay=Math.floor(i*(BLOOD_POOL_FRAMES-24)/Math.max(1,blobs.length-1));
+            blobs[i].delay=BLOOD_POOL_HOLD_FRAMES+Math.floor(i*(BLOOD_POOL_FRAMES-BLOOD_POOL_HOLD_FRAMES-BLOOD_POOL_BLOB_FRAMES)/Math.max(1,blobs.length-1));
             blobs[i].stage=0;
         }
         bloodPools.push({x,y,col:col||color(90,0,0,220),blobs,age:0});
@@ -13931,7 +13937,7 @@ function drawShovelBloodMarks(actor = null) {
         shovelPaintDepthEffect(mark, () => {
             if(mark.vectors){paintKillVectorBlood(window,mark.x,mark.y,mark.vectors,mark.col);return;}
             noStroke(); fill(mark.col);
-            const growth = Math.min(1, mark.age / 24);
+            const growth = mark.slowPool?bloodPoolProgress(mark.age):Math.min(1,mark.age/24);
             for (const b of mark.blobs) ellipse(mark.x+b.ox,mark.y+b.oy,b.sz*growth,b.sz*growth);
         });
     }
@@ -13951,7 +13957,7 @@ function updateBloodPools() {
     for(let i=bloodPools.length-1;i>=0;i--){
         const pool=bloodPools[i],brushes=[];pool.age++;
         for(const b of pool.blobs){
-            const stage=Math.max(0,Math.min(4,Math.ceil((pool.age-b.delay)/6)));
+            const stage=Math.max(0,Math.min(4,Math.ceil((pool.age-b.delay)/(BLOOD_POOL_BLOB_FRAMES/4))));
             if(stage>b.stage){b.stage=stage;brushes.push({ox:b.ox,oy:b.oy,sz:b.sz*stage/4});}
         }
         if(brushes.length)stampGroundBlobs(pool.x,pool.y,brushes,pool.col,70);
@@ -16256,7 +16262,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
     if (this.dT === 7) {
         r.push(); r.translate(this.x, this.y); let a = 255, f = this.fP; r.push(); r.rotate(this.mA); r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); r.noStroke();
         r.push(); r.translate(-3 - 30 * f, -18 - 10 * f); r.rotate(-f * 0.5); r.rect(-37, -12, 74, 24, 12); r.pop(); r.push(); r.translate(-3 - 30 * f, 18 + 10 * f); r.rotate(f * 0.5); r.rect(-37, -12, 74, 24, 12); r.pop();  
-        const pool=Math.min(1,this.poolAge/BLOOD_POOL_FRAMES),spread=Math.sqrt(pool);
+        const pool=bloodPoolProgress(this.poolAge),spread=Math.sqrt(pool);
         r.fill(90,0,0,a*pool);r.ellipse(-15,-12,35*spread,45*spread);
         r.fill(this.sC);r.ellipse(0,0,this.bW+15*f,this.bH);drawFallenAttire(r,this.id,this.bW+15*f,this.bH,true);
         for(const d of this.dec){if(!d.isHead&&!d.isLeg){r.fill(...(d.col||[90,0,0,220]));r.ellipse(d.x,d.y,d.sz,d.sz);}}
@@ -16352,7 +16358,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
           // Torso over the top of them, and the pool spreading out from under.
           // The pool is on the FLOOR, so it takes no contour -- an outlined
           // pool of blood reads as an object lying beside the body.
-          const pool=Math.min(1,this.poolAge/BLOOD_POOL_FRAMES),spread=Math.sqrt(pool);
+          const pool=bloodPoolProgress(this.poolAge),spread=Math.sqrt(pool);
           r.noStroke();r.fill(90,0,0,a*.85*pool);r.ellipse(-4,0,(TL+14*f)*spread,TW*1.5*spread);
           ragContour(r, a);
           r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a);
@@ -16489,6 +16495,7 @@ function corpseSettled(c) {
     if (c.fP < 1 || (c.fall&&!c.fall.done)) return false;           // falling / contact recoil
     if (c.rag && !c.rag.done) return false;                       // still settling
     if (c.bloodTimer > 0 || c.smokeTimer > 0 || (c.fatalSpray&&c.fatalSpray.left>0)) return false;
+    if(c.dT===7&&c.poolAge<BLOOD_POOL_FRAMES)return false;        // visible floor pool is still spreading
     if (!c.sword&&c.sep < corpseSepMax(c.dT)) return false;        // legacy halves still parting
     if (CORPSE_SPURT_DEATHS.indexOf(c.dT) !== -1 && c.bT > 0) return false;
     if (CORPSE_MOVING_BITS.indexOf(c.dT) !== -1 && c.stopMotionTimer > 0) return false;
@@ -26504,6 +26511,22 @@ const PARTICLE_POOL_MAX = 900;
 const _particlePool = [];
 const COMIC_HIT_LIMIT = 900, COMIC_HITS_PER_FRAME = 24, COMIC_HIT_BLOOD_COUNT = 12;
 let _comicHitFrame=-1,_comicHitsThisFrame=0,_comicHitSerial=0;
+const CEL_EXPLOSION_MAX=24,CEL_EXPLOSIONS_PER_FRAME=8;
+let _celExplosionFrame=-1,_celExplosionCount=0,_celExplosionLive=0,_celExplosionSerial=0;
+function resetCelExplosionBudget() {
+    _celExplosionFrame=-1;_celExplosionCount=_celExplosionLive=0;
+}
+function emitCelExplosion(x,y,radius=160,col=null,owner=null,dx=0,dy=0) {
+    if(!Number.isFinite(x)||!Number.isFinite(y)||!(radius>0))return null;
+    if(_celExplosionFrame!==frameCount) {
+        _celExplosionFrame=frameCount;_celExplosionCount=0;_celExplosionLive=0;
+        for(const p of particles)if(p.t==='CEL_EXPLOSION'&&p.a>0)_celExplosionLive++;
+    }
+    if(_celExplosionCount>=CEL_EXPLOSIONS_PER_FRAME||_celExplosionLive>=CEL_EXPLOSION_MAX)return null;
+    const p=newParticle(x,y,col||color(255,150,0),'CEL_EXPLOSION',dx,dy,owner);
+    p.sz=Math.max(28,Math.min(105,radius*.43));particles.push(p);
+    _celExplosionCount++;_celExplosionLive++;return p;
+}
 function comicHitHash(n) {
     let h=Math.imul((n|0)^0x51ed270b,0x45d9f3b);h=Math.imul(h^(h>>>16),0x45d9f3b);
     return ((h^(h>>>16))>>>0)/4294967296;
@@ -26558,6 +26581,11 @@ Particle.prototype.init = function(x, y, c, t, dX = 0, dY = 0, owner = null) {
     this.fxSeed=0;this.fxAge=0;this.fxLife=0;this.fxAngle=0;
     this.fxMaterial='';this.fxKind=0;this.fxStretch=1;
     shovelBindEffect(this, owner);
+    if(t==='CEL_EXPLOSION') {
+        this.fxSeed=++_celExplosionSerial;this.fxAngle=Math.atan2(dY,dX);
+        this.fxMaterial=c.levels[2]>c.levels[0]+35?'BLUE':'FIRE';
+        this.sz=68.8;this.vx=this.vy=0;this.l=this.fxLife=48;return;
+    }
     if(t==='HIT_BLOOD'||t==='COMIC_IMPACT') {
         this.fxSeed=++_comicHitSerial;this.fxAngle=Math.atan2(dY,dX);
         const h=comicHitHash(this.fxSeed),j=comicHitHash(this.fxSeed+53);
@@ -26614,6 +26642,9 @@ Particle.prototype.init = function(x, y, c, t, dX = 0, dY = 0, owner = null) {
 };
 
 Particle.prototype.update = function() {
+    if(this.t==='CEL_EXPLOSION') {
+        this.fxAge++;this.l--;this.a=Math.round(255*Math.min(1,Math.max(0,(1-this.fxAge/this.fxLife)*2)));return;
+    }
     if(this.t==='HIT_BLOOD'||this.t==='COMIC_IMPACT') {
         this.fxAge++;this.l--;this.x+=this.vx;this.y+=this.vy;
         this.vx*=.89;this.vy*=.89;
@@ -26628,6 +26659,7 @@ Particle.prototype.show = function() {
 Particle.prototype.paint = function() {
     const c = this.c.levels;
     noStroke();
+    if(this.t==='CEL_EXPLOSION'){drawCelExplosion(this);return;}
     if(this.t==='COMIC_IMPACT'){drawComicImpactParticle(this);return;}
     if(this.t==='HIT_BLOOD'){drawHitBloodParticle(this);return;}
     if (this.t === "FLECK") {
@@ -26729,6 +26761,97 @@ function drawHitBloodParticle(p) {
     pop();
 }
 
+const CEL_BLAST_FIRE={ink:[66,25,28],shade:[181,42,24],mid:[255,101,13],hot:[255,207,24],core:[255,249,151],
+    soot:[74,48,55],smoke:[133,81,64],rim:[187,124,78]};
+const CEL_BLAST_BLUE={ink:[16,27,68],shade:[28,64,162],mid:[31,146,255],hot:[105,232,255],core:[226,255,251],
+    soot:[39,47,79],smoke:[67,91,139],rim:[112,154,185]};
+const CEL_BLAST_LOBES=[[-.34,-.16,.50],[.33,-.04,.47],[-.06,-.07,.62],[-.52,.16,.40],[.43,.25,.48],[-.05,.30,.49]];
+function celExplosionCloudPath(x,y,rx,ry,seed) {
+    beginShape();
+    for(let i=-1;i<=21;i++) {
+        const a=(i%20+20)%20*Math.PI/10;
+        const bulge=1+.10*Math.sin(a*5+seed*.73)+.055*Math.sin(a*3+seed*.29);
+        curveVertex(x+Math.cos(a)*rx*bulge,y+Math.sin(a)*ry*bulge);
+    }
+    endShape(CLOSE);
+}
+function drawCelExplosion(p) {
+    const t=Math.max(0,Math.min(1,p.fxAge/Math.max(1,p.fxLife))),life=p.a;
+    if(life<=0)return;
+    const pal=p.fxMaterial==='BLUE'?CEL_BLAST_BLUE:CEL_BLAST_FIRE,r=p.sz;
+    const growth=.18+.82*(1-Math.pow(1-Math.min(1,t/.32),3));
+    const cool=Math.max(0,Math.min(1,(t-.48)/.37));
+    const blend=(a,b,k)=>a.map((v,i)=>Math.round(v+(b[i]-v)*k));
+    const shade=blend(pal.shade,pal.soot,cool),mid=blend(pal.mid,pal.smoke,cool),hot=blend(pal.hot,pal.rim,cool);
+    const lift=r*(.12+t*.98),size=r*growth;
+    push();translate(p.x,p.y);
+    // A flattened footprint stays on the floor while the fire rises from it.
+    noStroke();comicHitFill(pal.ink,Math.round(life*.22));ellipse(0,r*.10,size*2.5,size*.72);
+    comicHitFill(pal.hot,Math.round(life*(1-t)*.12));ellipse(0,0,size*2.15,size*.66);
+    if(t<.70) {
+        const shock=r*(.24+t*2.25),alpha=Math.round(life*(1-t/.70));
+        push();scale(1,.38);noFill();comicHitStroke(pal.shade,alpha);strokeWeight(4.5);
+        for(let i=0;i<3;i++)arc(0,0,shock*2,shock*2,i*Math.PI*2/3+.10,i*Math.PI*2/3+1.82);
+        comicHitStroke(pal.hot,alpha);strokeWeight(2.1);
+        for(let i=0;i<3;i++)arc(0,-2,shock*2,shock*2,i*Math.PI*2/3+.12,i*Math.PI*2/3+1.78);
+        pop();
+    }
+    // Long, kinked ink strokes travel out ahead of the rolling fireball.
+    if(t<.64)for(let i=0;i<11;i++) {
+        const a=i*Math.PI*2/11+(comicHitHash(p.fxSeed+i*7)-.5)*.48;
+        const co=Math.cos(a),sn=Math.sin(a),d=r*(.40+t*2),len=r*(.26+.70*comicHitHash(p.fxSeed+i*13))*(1-t/.64);
+        const x=co*d,y=sn*d*.63-lift*.14,kink=i%2?1:-1;
+        const alpha=Math.round(life*(1-t/.64)),width=(i%4===0?4.2:1.6)*(1-t/.64)+.25;noFill();
+        for(let pass=0;pass<2;pass++) {
+            comicHitStroke(pass?pal.hot:pal.ink,alpha);strokeWeight(pass?width:width+2.2);
+            beginShape();vertex(x,y);vertex(x+co*len*.45-sn*kink*4,y+sn*len*.30+co*kink*4);vertex(x+co*len,y+sn*len*.63);endShape();
+        }
+    }
+    // A torn central fire column joins the rising cap to the lower blast.
+    // Keeping it behind the lobes gives their overlapping edges real depth.
+    if(t<.73) {
+        const crown=-lift*1.15-size*.25;
+        comicHitStroke(pal.ink,life);strokeWeight(1.5);comicHitFill(shade,life);
+        beginShape();vertex(-size*.48,size*.18);vertex(-size*.31,-lift*.45);
+        vertex(-size*.42,crown*.75);vertex(-size*.12,crown*.65);vertex(-size*.08,crown);
+        vertex(size*.18,crown*.68);vertex(size*.39,crown*.80);vertex(size*.29,-lift*.35);vertex(size*.48,size*.20);endShape(CLOSE);
+    }
+    // Raised scalloped masses have a dark underside, orange side plane and
+    // bright upper cap. The front row overlaps the higher rear cloud.
+    for(let i=0;i<CEL_BLAST_LOBES.length;i++) {
+        const l=CEL_BLAST_LOBES[i],seed=p.fxSeed+i*11;
+        const x=(l[0]*1.65+(comicHitHash(seed)-.5)*.18)*size,y=l[1]*size-lift*(i===2?1.20:i<2?.85:.44);
+        const rx=size*l[2],ry=rx*(i===2?.98:i<2?.90:.82);
+        comicHitStroke(pal.ink,life);strokeWeight(1.9);comicHitFill(shade,life);
+        celExplosionCloudPath(x,y,rx,ry,seed);
+        noStroke();comicHitFill(mid,life);celExplosionCloudPath(x-rx*.07,y-ry*.13,rx*.84,ry*.79,seed);
+        comicHitFill(hot,Math.round(life*(.92-cool*.24)));
+        celExplosionCloudPath(x-rx*.16,y-ry*.29,rx*.60,ry*.45,seed+3);
+        if(t<.42){comicHitFill(pal.core,Math.round(life*(1-t/.42)*.9));celExplosionCloudPath(x-rx*.23,y-ry*.36,rx*.28,ry*.20,seed+3);}
+        // A short broken crease explains the shaded underside without
+        // drawing a complete ring through every neighboring fire lobe.
+        noFill();comicHitStroke(pal.ink,Math.round(life*.48));strokeWeight(.9);
+        bezier(x+rx*.56,y+ry*.30,x+rx*.37,y+ry*.66,x-rx*.08,y+ry*.80,x-rx*.36,y+ry*.58);
+    }
+    if(t<.20) {
+        const flash=size*(.72-t*1.1);comicHitStroke(pal.shade,life);strokeWeight(1.2);comicHitFill(pal.hot,life);
+        beginShape();for(let i=0;i<14;i++){const a=i*Math.PI/7,reach=flash*(i%2?.25:.8+.2*comicHitHash(p.fxSeed+i));vertex(Math.cos(a)*reach,Math.sin(a)*reach*.66-lift*.34);}endShape(CLOSE);
+        noStroke();comicHitFill(pal.core,Math.round(life*(1-t/.20)));
+        quad(-flash*.26,-lift*.34,0,-flash*.28-lift*.34,flash*.36,-lift*.34,0,flash*.22-lift*.34);
+    }
+    // Ejected pieces follow small ballistic arcs rather than smoke-dot drift.
+    for(let i=0;i<9;i++) {
+        const a=i*Math.PI*2/9+comicHitHash(p.fxSeed+i*17)*.3;
+        const distance=r*(.23+t*(1.2+.8*comicHitHash(p.fxSeed+i*23)));
+        const x=Math.cos(a)*distance,y=Math.sin(a)*distance*.38-r*(1.2+t*.25)*4*t*(1-t);
+        const w=r*(.022+.018*comicHitHash(p.fxSeed+i*29))*(1-t)+.3,alpha=Math.round(life*(1-t*.5));
+        comicHitStroke(pal.ink,alpha);strokeWeight(.75);comicHitFill(i%3===0?shade:pal.hot,alpha);
+        quad(x-w,y,x,y-w*1.4,x+w*1.8,y+w*.2,x+w*.2,y+w*.7);
+        if(i%2===0&&t<.7){comicHitStroke(pal.core,Math.round(alpha*.7));strokeWeight(.9);line(x-w*.5,y+w*1.6,x-w*.7,y+w*4.5);}
+    }
+    pop();
+}
+
 // One memmove per frame instead of one per death. This walked backwards
 // splicing each dead particle out where it stood, and a splice from the middle
 // of an array shifts every element after it -- so an explosion whose four
@@ -26748,7 +26871,8 @@ function updateParticles() {
     for (let i = particles.length - 1; i >= 0; i--) {
         const p = particles[i];
         if (doTick) p.update();
-        if (p.x >= left && p.x <= right && p.y >= top && p.y <= bottom) p.show();
+        const extra=p.t==='CEL_EXPLOSION'?p.sz*3:0;
+        if (p.x >= left-extra && p.x <= right+extra && p.y >= top-extra && p.y <= bottom+extra) p.show();
         if (p.a > 0) { if (--w !== i) particles[w] = p; }
         else if (_particlePool.length < PARTICLE_POOL_MAX) { p.shovelOwner = null; _particlePool.push(p); }
     }
@@ -29316,7 +29440,7 @@ if (inTravelMenu) {
           if (prologuePhase >= 10) {
               if (dist(player.x, player.y, -400, 0) < 80 && isClickingBtn(mx, my)) {
                   inUpstairsRoom = true; player.x = 0; player.y = 150; player.aimAngle = -HALF_PI;
-                  corpses = []; splatters = []; bullets = []; particles = [];
+                  corpses = []; splatters = []; bullets = []; particles = [];resetCelExplosionBudget();
                   clearAllBlood();
 				  generateMap(); sfx.charge(); return false;
               }

@@ -45,6 +45,16 @@ The orb's separate 600-HP / 300-HP armor rule is unchanged.
 
 ## Directional kill stains
 
+Oval death pools now hold for 45 active ticks (about 0.75 seconds), then spread
+gradually until 360 ticks (about six seconds). Center droplets begin first and
+each oval takes 90 ticks to reach its final size. This gives the immediate
+directional stain time to show before the round pool covers it. Surface, pit
+and built-in face-down pools use the same hold and finish time; the corpse's
+settled pose stays frozen while its pool grows. The final oval pattern, size,
+color and random sequence are unchanged. Small impact/trail drops and scorch
+still appear immediately. Pause freezes growth, and biome travel retains the
+pending floor deposition in its own blood bank.
+
 Each actual human death adds a ragged vector floor splatter alongside the
 existing oval pool. The finishing projectile's direction controls the heavy
 forward fan, tapered satellite streaks and smaller entry-side tears. Other

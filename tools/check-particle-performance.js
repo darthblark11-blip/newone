@@ -1,5 +1,7 @@
-// Particle allocation, recycling, simulation and Canvas parity against the
-// version before battle optimization. Optional PARTICLE_BASELINE overrides it.
+// Unchanged particle allocation, recycling, simulation and Canvas parity
+// against the version before battle optimization. Optional PARTICLE_BASELINE
+// overrides it. Explosions now use a coherent cel-shaded blast; their intended
+// emission and art changes are checked by check-cel-explosions.js instead.
 // VIS_DEPS points at the external p5/playwright installation.
 const assert = require('assert');
 const fs = require('fs');
@@ -31,7 +33,7 @@ function harness(file) {
   h.draws = () => draws;
   h.probe(`doTick=true;viewLeft=-200;viewRight=200;viewTop=-150;viewBottom=150;
     particles=[];_particlePool.length=0;
-    window.__kinds=['WOUND_BLOOD','FLASH','MUZZLE','THRUST','SPARK','FLECK','OIL','GORE','CHIP','BONE','EXPLOSION','SMOKE','BLOOD','CUSTOM'];`);
+    window.__kinds=['WOUND_BLOOD','FLASH','MUZZLE','THRUST','SPARK','FLECK','OIL','GORE','CHIP','BONE','SMOKE','BLOOD','CUSTOM'];`);
   return h;
 }
 try {
@@ -47,7 +49,7 @@ try {
     assert.strictEqual(after.draws(),before.draws(),'random stream at frame '+f);
     assert.deepStrictEqual(after.calls,before.calls,'draw order/geometry at frame '+f);
   }
-  check('220 frames preserve all particle types, pause, RNG, order and pool reuse',true);
+  check('220 frames preserve all unchanged particle types, pause, RNG, order and pool reuse',true);
   const alive = after.probe(`particles.every(p=>p.a>0)`);
   check('retirement leaves only live particles',alive);
 } finally { fs.unlinkSync(temporary); }
@@ -68,7 +70,7 @@ try {
     await page.waitForFunction('__ready');
     const result=await page.evaluate(()=>{
       randomSeed(35217);
-      const types=['WOUND_BLOOD','FLASH','MUZZLE','THRUST','SPARK','FLECK','OIL','GORE','CHIP','BONE','EXPLOSION','SMOKE','BLOOD'];
+      const types=['WOUND_BLOOD','FLASH','MUZZLE','THRUST','SPARK','FLECK','OIL','GORE','CHIP','BONE','SMOKE','BLOOD'];
       const ps=[];
       for(let i=0;i<260;i++){
         const p=new Particle(random(640),random(420),color(70+(i%11)*16,40+(i%7)*24,30+(i%5)*36),types[i%types.length],2,-3);

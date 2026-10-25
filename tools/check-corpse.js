@@ -575,7 +575,7 @@ console.log('\n== and the ground keeps it, per biome ==');
            color(1), 0, 0.2, [], null, 0.7, "NORMAL", 21, 27));`);
   for (let i = 0; i < 300 && P('corpses.length'); i++) probe('frameCount++; updateCorpses();');
   const bodyKeys = P('Object.keys(bloodChunks).filter(isBodyLayer).length');
-  probe('spawnSplatter(60, 0, "BLOOD", color(90, 0, 0)); spawnSplatter(120, 0, "BLOOD", color(90, 0, 0)); frameCount++; updateBloodPools();');
+  probe('spawnSplatter(60, 0, "BLOOD", color(90, 0, 0)); spawnSplatter(120, 0, "BLOOD", color(90, 0, 0)); for(let i=0;i<46;i++){frameCount++;updateBloodPools();}');
   const floorKeys = P('Object.keys(bloodChunks).filter(function (k) { return !isBodyLayer(k); }).length');
   ok('bodies and floor blood are separate surfaces', bodyKeys > 0 && floorKeys > 0,
      `${bodyKeys} body, ${floorKeys} floor`);
