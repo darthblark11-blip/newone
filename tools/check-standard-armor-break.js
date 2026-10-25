@@ -1,5 +1,5 @@
-// Repeated real shots must stop producing armor bursts after the standard
-// soldier's plate is spent. Orb armor has a separate health threshold.
+// Repeated shots keep the plate boundary while the comic contact changes from
+// armor to flesh. Old orange blobs, smoke and debris never return.
 const assert = require('node:assert/strict');
 const { probe } = require('./harness');
 const read = code => JSON.parse(probe('JSON.stringify(' + code + ')'));
@@ -18,9 +18,11 @@ const result = read(`(() => {
     const b=spawnBullet(soldier.x-40,soldier.y,0,true,'BODY',WEAPONS.PISTOL,player);
     for(let frame=0;frame<8&&b.active;frame++)updateBullets();
     hits.push({before,after:soldier.hp,
-      bursts:particles.filter(p=>p.t==='ARMOR_IMPACT').length,
+      bursts:particles.filter(p=>p.t==='COMIC_IMPACT').length,
+      material:particles.find(p=>p.t==='COMIC_IMPACT')?.fxMaterial,
       mist:particles.filter(p=>p.t==='BLOOD_SMOKE').length,
-      blood:particles.filter(p=>p.t==='BLOOD').length,
+      blood:particles.filter(p=>p.t==='HIT_BLOOD').length,
+      oldOrange:particles.filter(p=>p.t==='ARMOR_IMPACT'||p.t==='SPARK').length,
       debris:particles.filter(p=>p.t==='CHIP'||p.t==='SMOKE').length});
   }
   return {initialHp,hits};
@@ -30,18 +32,19 @@ assert.equal(result.hits.length,14,'all repeated shots execute');
 for (const hit of result.hits) {
   assert.equal(hit.after,hit.before-20,'each shot actually hits for normal pistol damage');
   assert.equal(hit.debris,0,'no gray smoke or chips return on body hits');
+  assert.equal(hit.oldOrange,0,'old orange blobs and sparks are replaced');
+  assert.equal(hit.mist,0,'blood smoke is replaced by shaped spray');
+  assert.equal(hit.bursts,1,'a hit produces one coherent comic burst');
+  assert.equal(hit.blood,8,'a hit keeps the directional blood spray');
   if (hit.before>50) {
-    assert.equal(hit.bursts,6,'intact plate produces the noticeable orange burst');
-    assert.equal(hit.mist,10,'armor hits preserve the existing blood mist');
+    assert.equal(hit.material,'ARMOR','intact plate produces the armor comic contact');
   } else {
-    assert.equal(hit.bursts,0,'spent armor no longer produces an orange burst');
-    assert.equal(hit.mist,0,'spent armor switches from mist to flesh effects');
-    assert.equal(hit.blood,8,'exposed flesh keeps its established blood droplets');
+    assert.equal(hit.material,'FLESH','spent armor produces the exposed-flesh contact');
   }
 }
-assert(result.hits.some(h=>h.before===60&&h.after===40&&h.bursts===6),
+assert(result.hits.some(h=>h.before===60&&h.after===40&&h.material==='ARMOR'),
   'the shot that breaks the plate still strikes armor');
-assert(result.hits.some(h=>h.before===40&&h.after===20&&h.bursts===0),
+assert(result.hits.some(h=>h.before===40&&h.after===20&&h.material==='FLESH'),
   'the next shot strikes exposed flesh');
 // The exact cutoff can be skipped by twenty-point damage, so test it directly.
 for (const hp of [51,50]) {
@@ -51,9 +54,11 @@ for (const hp of [51,50]) {
     enemiesList=[e];frameCount++;bullets=[];particles=[];
     const b=spawnBullet(0,0,0,true,'BODY',WEAPONS.PISTOL,player);
     for(let i=0;i<8&&b.active;i++)updateBullets();
-    return {hp:e.hp,bursts:particles.filter(p=>p.t==='ARMOR_IMPACT').length};
+    return {hp:e.hp,bursts:particles.filter(p=>p.t==='COMIC_IMPACT').length,
+      material:particles.find(p=>p.t==='COMIC_IMPACT')?.fxMaterial};
   })()`);
   assert.equal(hit.hp,hp-20);
-  assert.equal(hit.bursts,hp>50?6:0,'exact fifty-HP armor boundary remains unchanged');
+  assert.equal(hit.bursts,1,'one comic burst marks either material');
+  assert.equal(hit.material,hp>50?'ARMOR':'FLESH','exact fifty-HP armor boundary remains unchanged');
 }
 console.log('Standard armor break passed: 14 real hits, 300 HP, 50 HP cutoff, crossing shot and exposed flesh.');

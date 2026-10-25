@@ -25336,15 +25336,11 @@ function updateBullets() {
                     if (t.eType === "ARMORED" || t.eType === "ARMORED_STANDARD") {
                         if (impactZone === "HEAD") {
                             emit(b.x, b.y, 9, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK", b.vx, b.vy, t);
-                            emit(b.x, b.y, 5, color(100), "CHIP", 0, 0, t);
+                            emitComicHit(b.x,b.y,b.vx,b.vy,t,true,false,bCol);
                         } else {
-                            // Standard rifle armor gets a readable orange burst;
-                            // the larger orb soldier keeps its smaller impact.
-                            const standardArmor = t.eType === "ARMORED_STANDARD";
-                            emit(b.x, b.y, standardArmor ? 6 : 4,
-                                 standardArmor ? color(255, 155, 40) : color(255, 130, 35),
-                                 "ARMOR_IMPACT", b.vx, b.vy, t);
-                            emit(b.x, b.y, 10, bCol, "BLOOD_SMOKE", b.vx, b.vy, t);
+                            // Inked plate flash and a directional red jet replace
+                            // orange puffs, smoke and rectangular armor debris.
+                            if(t.hp<hpBeforeImpact)emitComicHit(b.x,b.y,b.vx,b.vy,t,true,true,bCol,b.w===WEAPONS.SHOTGUN?1.18:1);
                         }
                     } else {
                         emit(b.x, b.y, 10, color(255, 150, 0), "SPARK", 0, 0, t);
@@ -25355,10 +25351,18 @@ function updateBullets() {
                     // Sparks in the shield's own colour while it holds; the break
                     // keeps its blue, which is the one moment the two should not
                     // look like the same event.
-                    if (t.isPlayer && dRes.blocked) { emit(b.x, b.y, dRes.broken ? 20 : 8, dRes.broken ? color(0, 200, 255) : color(255, 170, 40), "SPARK", b.vx, b.vy, t); }
+                    if (t.isPlayer && dRes.blocked) {
+                      emit(b.x, b.y, dRes.broken ? 20 : 8, dRes.broken ? color(0, 200, 255) : color(255, 170, 40), "SPARK", b.vx, b.vy, t);
+                      if(t.hp<hpBeforeImpact&&humanBloodTarget(t))emitComicHit(b.x,b.y,b.vx,b.vy,t,false,impactZone!=='HEAD',bCol);
+                    }
                     else {
                       if (impactZone === "HEAD" && t.eType !== "BUG" && t.eType !== "SNAIL" && t.eType !== "SNAIL_HYBRID") sfx.hitHead(); else sfx.hitBody();
-                      emit(b.x, b.y, 8, bCol, "BLOOD", b.vx, b.vy, t);
+                      if(humanBloodTarget(t)&&impactZone!=='HEAD') {
+                        if(t.hp<hpBeforeImpact)emitComicHit(b.x,b.y,b.vx,b.vy,t,false,true,bCol,b.w===WEAPONS.SHOTGUN?1.18:1);
+                      } else {
+                        emit(b.x, b.y, 8, bCol, "BLOOD", b.vx, b.vy, t);
+                        if(humanBloodTarget(t)&&t.hp<hpBeforeImpact)emitComicHit(b.x,b.y,b.vx,b.vy,t,false,false,bCol);
+                      }
                       // 3. Once the shield is gone, every round that lands marks
                       //    the ground. That mark is the read that he is unprotected.
                       // The same three small floor drops are stamped above on
@@ -26327,6 +26331,23 @@ class Bullet {
 // then holds it is a leak wearing a different hat.
 const PARTICLE_POOL_MAX = 900;
 const _particlePool = [];
+const COMIC_HIT_LIMIT = 900, COMIC_HITS_PER_FRAME = 24;
+let _comicHitFrame=-1,_comicHitsThisFrame=0,_comicHitSerial=0;
+function comicHitHash(n) {
+    let h=Math.imul((n|0)^0x51ed270b,0x45d9f3b);h=Math.imul(h^(h>>>16),0x45d9f3b);
+    return ((h^(h>>>16))>>>0)/4294967296;
+}
+function emitComicHit(x,y,vx,vy,owner,armor=false,blood=true,bloodColor=null,force=1) {
+    if(_comicHitFrame!==frameCount){_comicHitFrame=frameCount;_comicHitsThisFrame=0;}
+    if(_comicHitsThisFrame>=COMIC_HITS_PER_FRAME||particles.length>=COMIC_HIT_LIMIT)return false;
+    _comicHitsThisFrame++;
+    // The particle pass paints backwards: spray goes above the brief flash.
+    const count=blood?Math.min(8,COMIC_HIT_LIMIT-particles.length-1):0,ink=bloodColor||color(90,0,0);
+    for(let i=0;i<count;i++)particles.push(newParticle(x,y,ink,'HIT_BLOOD',vx,vy,owner));
+    const p=newParticle(x,y,ink,'COMIC_IMPACT',vx,vy,owner);
+    p.fxMaterial=armor?'ARMOR':'FLESH';p.sz*=(armor?1.2:1)*Math.max(.7,Math.min(1.3,force));
+    particles.push(p);return true;
+}
 // The particle objects are pooled, but fill(r,g,b,a) and stroke(r,g,b,a)
 // still construct a p5.Color and its channel arrays every time they draw.
 // Particle opacity advances through a small set of integer values. Reuse
@@ -26363,7 +26384,25 @@ function Particle(x, y, c, t, dX = 0, dY = 0, owner = null) {
 
 Particle.prototype.init = function(x, y, c, t, dX = 0, dY = 0, owner = null) {
     this.x = x; this.y = y; this.c = c; this.t = t; this.a = 255;
+    this.fxSeed=0;this.fxAge=0;this.fxLife=0;this.fxAngle=0;
+    this.fxMaterial='';this.fxKind=0;this.fxStretch=1;
     shovelBindEffect(this, owner);
+    if(t==='HIT_BLOOD'||t==='COMIC_IMPACT') {
+        this.fxSeed=++_comicHitSerial;this.fxAngle=Math.atan2(dY,dX);
+        const h=comicHitHash(this.fxSeed),j=comicHitHash(this.fxSeed+53);
+        this.fxKind=this.fxSeed%4;this.fxStretch=1.8+j*2.4;
+        if(t==='COMIC_IMPACT') {
+            this.sz=10+h*3.5;this.vx=this.vy=0;this.l=this.fxLife=14;this.fxMaterial='FLESH';
+        } else {
+            // Most of the jet follows the round; a smaller back-spatter cone
+            // rebounds from the entry wound. Geometry stays fixed while flying.
+            const back=this.fxKind===0,a=this.fxAngle+(j-.5)*1.25+(back?Math.PI:0);
+            const speed=(2.6+h*4.5)*(back?.66:1);
+            this.vx=Math.cos(a)*speed;this.vy=Math.sin(a)*speed;this.fxAngle=a;
+            this.sz=1.8+j*1.8;this.l=this.fxLife=14+Math.floor(h*8);
+        }
+        return;
+    }
     // Fatal-wound droplets receive their cone velocity from their own emitter.
     // Avoid global random draws so existing overkill animation stays identical.
     if(t === "WOUND_BLOOD") { this.sz=2.8;this.vx=dX;this.vy=dY;this.l=16;return; }
@@ -26403,7 +26442,14 @@ Particle.prototype.init = function(x, y, c, t, dX = 0, dY = 0, owner = null) {
     else { this.vx = random(-4, 4); this.vy = random(-4, 4); this.l = random(10, 20); }
 };
 
-Particle.prototype.update = function() { this.x += this.vx; this.y += this.vy; if (this.t !== "FLASH" && this.t !== "SMOKE") { this.vx *= (this.t === "FLECK" ? 0.9 : 0.85); this.vy *= (this.t === "FLECK" ? 0.9 : 0.85); } if (--this.l <= 0) { if (this.t === "FLASH" || this.t === "MUZZLE" || this.t === "THRUST" || this.t === "EXPLOSION" || this.t === "SPARK" || this.t === "FLECK" || this.t === "BLOOD_SMOKE" || this.t === "ARMOR_IMPACT") this.a -= 60; else this.a -= 15; } }
+Particle.prototype.update = function() {
+    if(this.t==='HIT_BLOOD'||this.t==='COMIC_IMPACT') {
+        this.fxAge++;this.l--;this.x+=this.vx;this.y+=this.vy;
+        this.vx*=.89;this.vy*=.89;
+        this.a=Math.round(255*Math.pow(Math.max(0,1-this.fxAge/this.fxLife),.7));return;
+    }
+    this.x += this.vx; this.y += this.vy; if (this.t !== "FLASH" && this.t !== "SMOKE") { this.vx *= (this.t === "FLECK" ? 0.9 : 0.85); this.vy *= (this.t === "FLECK" ? 0.9 : 0.85); } if (--this.l <= 0) { if (this.t === "FLASH" || this.t === "MUZZLE" || this.t === "THRUST" || this.t === "EXPLOSION" || this.t === "SPARK" || this.t === "FLECK" || this.t === "BLOOD_SMOKE" || this.t === "ARMOR_IMPACT") this.a -= 60; else this.a -= 15; }
+}
 Particle.prototype.show = function() {
     if (shovelEffectDepth(this) <= 0) { this.paint(); return; }
     shovelPaintDepthEffect(this, () => this.paint());
@@ -26411,6 +26457,8 @@ Particle.prototype.show = function() {
 Particle.prototype.paint = function() {
     const c = this.c.levels;
     noStroke();
+    if(this.t==='COMIC_IMPACT'){drawComicImpactParticle(this);return;}
+    if(this.t==='HIT_BLOOD'){drawHitBloodParticle(this);return;}
     if (this.t === "FLECK") {
         // Drawn along its own velocity, so a shower of them reads as directional
         // spray rather than as a cloud of dots.
@@ -26439,6 +26487,75 @@ Particle.prototype.paint = function() {
         if (paint) fill(paint); else fill(c[0], c[1], c[2], this.a);
         ellipse(this.x, this.y, this.sz, this.sz);
     }
+}
+
+const COMIC_HIT_INK=[57,26,24],COMIC_HIT_GOLD=[255,218,76],COMIC_HIT_LIGHT=[255,249,222];
+const HIT_BLOOD_INK=[48,2,12],HIT_BLOOD_DARK=[105,2,16],HIT_BLOOD_RED=[163,6,25],HIT_BLOOD_GLEAM=[202,18,39];
+function comicHitFill(rgb,a) {const ink=particlePaint(rgb,a);if(ink)fill(ink);else fill(rgb[0],rgb[1],rgb[2],a);}
+function comicHitStroke(rgb,a) {const ink=particlePaint(rgb,a);if(ink)stroke(ink);else stroke(rgb[0],rgb[1],rgb[2],a);}
+function drawComicImpactParticle(p) {
+    const t=Math.min(1,p.fxAge/Math.max(1,p.fxLife)),impactScale=.55+.45*Math.min(1,t*8),r=p.sz*impactScale;
+    push();translate(p.x,p.y);rotate(p.fxAngle+(p.fxSeed%5)*.11);scale(1.12,.82);
+    if(t<.68) {
+        const a=Math.round(p.a*Math.min(1,(.68-t)*4));
+        comicHitStroke(COMIC_HIT_INK,a);strokeWeight(1.25);comicHitFill(COMIC_HIT_GOLD,a);
+        beginShape();
+        for(let i=0;i<14;i++) {
+            const angle=i*Math.PI/7,reach=i%2?.26+.08*comicHitHash(p.fxSeed+i):.78+.24*comicHitHash(p.fxSeed+i*13);
+            vertex(Math.cos(angle)*r*reach,Math.sin(angle)*r*reach);
+        }
+        endShape(CLOSE);noStroke();comicHitFill(COMIC_HIT_LIGHT,a);
+        beginShape();
+        for(let i=0;i<10;i++) {
+            const angle=i*Math.PI/5+.13,reach=i%2?.16:.48+.1*comicHitHash(p.fxSeed+i*19);
+            vertex(Math.cos(angle)*r*reach,Math.sin(angle)*r*reach);
+        }
+        endShape(CLOSE);
+    }
+    noStroke();comicHitFill(COMIC_HIT_LIGHT,p.a);
+    for(let i=0;i<5;i++) {
+        const angle=i*Math.PI*2/5+comicHitHash(p.fxSeed+i*7)*.30;
+        const co=Math.cos(angle),si=Math.sin(angle),reach=r*(.75+t*1.1),length=r*.40*(1-t),w=.7*(1-t)+.12;
+        beginShape();vertex(co*reach-si*w,si*reach+co*w);vertex(co*(reach+length),si*(reach+length));vertex(co*reach+si*w,si*reach-co*w);endShape(CLOSE);
+    }
+    pop();
+}
+function drawHitBloodParticle(p) {
+    const t=Math.min(1,p.fxAge/Math.max(1,p.fxLife)),w=p.sz*(1-t*.36);
+    const length=w*p.fxStretch*(.70+.30*Math.min(1,p.fxAge/3));
+    push();translate(p.x,p.y);rotate(p.fxAngle);
+    comicHitStroke(HIT_BLOOD_INK,p.a);strokeWeight(.55);
+    comicHitFill(p.fxKind===0?HIT_BLOOD_DARK:HIT_BLOOD_RED,p.a);
+    beginShape();
+    if(p.fxKind===0) {
+        // A torn ribbon, with two trailing tips and a thick leading clot.
+        vertex(-length,-w*.34);vertex(-length*.28,-w*.20);vertex(-length*.40,-w*.63);
+        bezierVertex(length*.24,-w*.90,length*.70,-w*.65,length*.75,0);
+        bezierVertex(length*.68,w*.62,length*.12,w*.73,-length*.22,w*.30);
+        vertex(-length*.80,w*.62);vertex(-length*.55,w*.05);
+    } else if(p.fxKind===1) {
+        // The fan splits into narrow fingers instead of circular droplets.
+        vertex(-length,-w*.12);vertex(-length*.10,-w*.45);vertex(length*.40,-w*1.02);
+        vertex(length*.22,-w*.18);vertex(length*.95,-w*.20);vertex(length*.30,w*.20);
+        vertex(length*.62,w*.80);vertex(-length*.08,w*.46);
+    } else if(p.fxKind===2) {
+        vertex(-length,-w*.05);bezierVertex(-length*.25,-w*.20,length*.28,-w*.84,length*.68,-w*.26);
+        bezierVertex(length*.95,w*.20,length*.18,w*.92,-length*.25,w*.23);
+        vertex(-length*.70,w*.40);
+    } else {
+        vertex(-length,-w*.15);vertex(length*.12,-w*.38);vertex(length*.92,0);
+        vertex(length*.08,w*.36);vertex(-length*.46,w*.17);
+    }
+    endShape(CLOSE);noStroke();
+    // A small wet facet follows the jet, never a full bubble-shaped highlight.
+    comicHitFill(HIT_BLOOD_GLEAM,Math.round(p.a*.62));
+    triangle(-length*.25,-w*.18,length*.44,-w*.20,length*.08,w*.12);
+    if(p.fxKind===1||p.fxKind===3) {
+        comicHitFill(HIT_BLOOD_DARK,p.a);
+        const y=w*(p.fxKind===1?1.35:-1.2);
+        triangle(-length*.64,y,-length*.12,y-w*.15,length*.20,y+w*.12);
+    }
+    pop();
 }
 
 // One memmove per frame instead of one per death. This walked backwards

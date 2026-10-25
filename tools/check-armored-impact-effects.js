@@ -1,8 +1,7 @@
-// Actual projectile impacts, armor boundaries, pooled blood smoke and the
-// robot's complete charge/burst. Set VIS_DEPS for optional real Canvas checks.
+// Actual comic projectile impacts, armor boundaries, pooled blood and the
+// robot's complete charge/burst. Native painting is checked separately by
+// check-impact-particles.js.
 const assert = require('assert');
-const fs = require('fs');
-const path = require('path');
 const {ctx, probe} = require('./harness');
 let checks = 0;
 function check(label, condition) { assert(condition, label); checks++; }
@@ -22,41 +21,39 @@ function hit(type, kind, hp, weapon='PISTOL') {
     const b=spawnBullet(0,0,0,true,${JSON.stringify(kind)},WEAPONS.${weapon},player);
     for(let i=0;i<8&&b.active;i++)updateBullets();
     return {hp:e.hp,headHP:e.headHP,decals:e.decals.map(d=>d.isHead),
-      vx:b.vx,vy:b.vy,particles:particles.map(p=>({t:p.t,c:p.c.levels.slice(0,3),sz:p.sz,l:p.l,vx:p.vx,vy:p.vy}))};
+      vx:b.vx,vy:b.vy,particles:particles.map(p=>({t:p.t,c:p.c.levels.slice(0,3),sz:p.sz,l:p.l,vx:p.vx,vy:p.vy,material:p.fxMaterial}))};
   })()`);
 }
 const of = (result,type) => result.particles.filter(p=>p.t===type);
 for (const [type, initial, boundary] of [['ARMORED',600,300],['ARMORED_STANDARD',300,50]]) {
   for (const hp of [initial,boundary+1]) {
-    const standard=type==='ARMORED_STANDARD',count=standard?6:4;
-    const r=hit(type,'BODY',hp),mist=of(r,'BLOOD_SMOKE'),burst=of(r,'ARMOR_IMPACT');
+    const r=hit(type,'BODY',hp),spray=of(r,'HIT_BLOOD'),burst=of(r,'COMIC_IMPACT');
     check(type+' body damage at HP '+hp,r.hp===hp-20);
-    check(type+' retains red mist and adds its own orange burst at HP '+hp,
-      mist.length===10 && burst.length===count && r.particles.length===10+count);
-    check(type+' body impact has no grey smoke, debris or large sparks at HP '+hp,
-      !of(r,'SMOKE').length && !of(r,'CHIP').length && !of(r,'SPARK').length && !of(r,'BLOOD').length);
-    check(type+' keeps original compact red mist size and lifetime at HP '+hp,
-      mist.every(p=>p.c.join(',')==='90,0,0' && p.sz>=5 && p.sz<=12 && p.l>=10 && p.l<=20));
-    check(type+' original red mist follows the incoming shot at HP '+hp,
-      mist.every(p=>Math.abs(p.vx-r.vx*.15)<=1.5 && Math.abs(p.vy-r.vy*.15)<=1.5));
-    check(type+' orange burst uses the correct size, color and lifetime at HP '+hp,
-      burst.every(p=>p.c.join(',')===(standard?'255,155,40':'255,130,35') && p.sz>=(standard?5:1.5) && p.sz<=(standard?9:3) && p.l>=(standard?7:3) && p.l<=(standard?12:7)));
-    check(type+' orange burst follows the impact without a long trail at HP '+hp,
-      burst.every(p=>Math.abs(p.vx-r.vx*(standard?.10:.08))<=(standard?3:2) && Math.abs(p.vy-r.vy*(standard?.10:.08))<=(standard?3:2)));
+    check(type+' body emits eight blood spray particles and one comic burst at HP '+hp,
+      spray.length===8 && burst.length===1 && r.particles.length===9);
+    check(type+' body impact removes smoke, debris and old orange effects at HP '+hp,
+      !r.particles.some(p=>['SMOKE','CHIP','SPARK','BLOOD_SMOKE','ARMOR_IMPACT','BLOOD'].includes(p.t)));
+    check(type+' spray has finite bounded geometry and lifetime at HP '+hp,
+      spray.every(p=>[p.sz,p.l,p.vx,p.vy].every(Number.isFinite)&&p.sz>0&&p.sz<30&&p.l>0&&p.l<80));
+    check(type+' blood paints over the comic flash at HP '+hp,
+      r.particles.findIndex(p=>p.t==='HIT_BLOOD')<r.particles.findIndex(p=>p.t==='COMIC_IMPACT'));
+    check(type+' comic contact records intact plate at HP '+hp,burst[0].material==='ARMOR');
     check(type+' retains body bullet holes at HP '+hp,r.decals.length===1 && r.decals[0]===false);
   }
   const exposed=hit(type,'BODY',boundary);
-  check(type+' exact armor boundary keeps ordinary blood',of(exposed,'BLOOD').length===8 && !of(exposed,'BLOOD_SMOKE').length && !of(exposed,'FLECK').length && !of(exposed,'ARMOR_IMPACT').length && !of(exposed,'CHIP').length);
+  check(type+' exact armor boundary uses flesh spray and comic feedback',of(exposed,'HIT_BLOOD').length===8 && of(exposed,'COMIC_IMPACT').length===1 && !of(exposed,'BLOOD_SMOKE').length && !of(exposed,'FLECK').length && !of(exposed,'ARMOR_IMPACT').length && !of(exposed,'CHIP').length);
+  check(type+' boundary contact records exposed flesh',of(exposed,'COMIC_IMPACT')[0].material==='FLESH');
   const helmet=hit(type,'HEAD',initial),flecks=of(helmet,'FLECK');
   check(type+' head damage remains unchanged',helmet.hp===initial-(type==='ARMORED'?200:100));
   check(type+' helmet uses robot spark count/color',flecks.length===9 && flecks.every(p=>p.c.join(',')==='255,214,140'));
   check(type+' helmet keeps directional robot streaks',flecks.every(p=>p.sz>=1.4 && p.sz<=3.2 && p.l>=6 && p.l<=16 && Math.abs(p.vx-helmet.vx*.35)<=7 && Math.abs(p.vy-helmet.vy*.35)<=7));
-  check(type+' helmet keeps debris and head holes',of(helmet,'CHIP').length===5 && helmet.decals.length===1 && helmet.decals[0]===true && helmet.particles.length===14 && !of(helmet,'ARMOR_IMPACT').length && of(helmet,'CHIP').every(p=>p.c.join(',')==='100,100,100'));
-  check(type+' helmet emits neither oval sparks nor blood smoke',!of(helmet,'SPARK').length && !of(helmet,'BLOOD_SMOKE').length);
+  check(type+' helmet replaces gray debris with a comic burst and keeps head holes',!of(helmet,'CHIP').length && helmet.decals.length===1 && helmet.decals[0]===true && helmet.particles.length===10 && of(helmet,'COMIC_IMPACT').length===1 && !of(helmet,'ARMOR_IMPACT').length);
+  check(type+' helmet emits neither oval sparks nor flesh spray',!of(helmet,'SPARK').length && !of(helmet,'BLOOD_SMOKE').length && !of(helmet,'HIT_BLOOD').length);
   const crossingHead=hit(type,'HEAD',boundary+1);
   check(type+' threshold-crossing headshot still strikes the helmet',of(crossingHead,'FLECK').length===9 && !of(crossingHead,'SPARK').length && !of(crossingHead,'BLOOD_SMOKE').length);
   const bare=hit(type,'HEAD',boundary);
   check(type+' head at exact armor boundary keeps ordinary blood',of(bare,'BLOOD').length>=8 && !of(bare,'FLECK').length && !of(bare,'BLOOD_SMOKE').length && !of(bare,'ARMOR_IMPACT').length);
+  check(type+' exposed head gains one comic contact',of(bare,'COMIC_IMPACT').length===1);
 }
 for(const type of ['SAUCER','SAUCER_RED','SNAIL_HYBRID']) {
   const r=hit(type,'BODY',900);
@@ -64,55 +61,41 @@ for(const type of ['SAUCER','SAUCER_RED','SNAIL_HYBRID']) {
 }
 for(const type of ['NM0_GREY_FATIGUE','NM0_CITY_GUARD','NORMAL']) {
   const r=hit(type,'HEAD',900);
-  check(type+' keeps existing head effects',r.hp===(type==='NM0_CITY_GUARD'?845:800) && of(r,'BLOOD').length===8 && !of(r,'FLECK').length && !of(r,'BLOOD_SMOKE').length && !of(r,'ARMOR_IMPACT').length);
+  check(type+' keeps existing head blood alongside comic contact',r.hp===(type==='NM0_CITY_GUARD'?845:800) && of(r,'BLOOD').length===8 && of(r,'COMIC_IMPACT').length===1 && !of(r,'HIT_BLOOD').length && !of(r,'FLECK').length && !of(r,'BLOOD_SMOKE').length && !of(r,'ARMOR_IMPACT').length);
+  const flesh=hit(type,'BODY',900);
+  check(type+' exposed body keeps damage and uses new spray and comic contact',flesh.hp===(type==='NM0_CITY_GUARD'?889:880)&&of(flesh,'HIT_BLOOD').length===8&&of(flesh,'COMIC_IMPACT').length===1&&flesh.particles.length===9);
 }
 const robotBody=hit('ROBOT','BODY',900);
 check('robot chassis effects remain unchanged',robotBody.hp===880 && of(robotBody,'FLECK').length===9 && robotBody.particles.length===9);
 const robotHead=hit('ROBOT','HEAD',900);
 check('robot head retains its separate health pool and spark emissions',robotHead.hp===900 && robotHead.headHP===50 && of(robotHead,'FLECK').length===11 && robotHead.particles.length===11);
 
-const pool=read(`(function(){
-  particles=[];_particlePool.length=0;
-  const old=newParticle(3,4,color(60),'SMOKE');old.a=0;particles.push(old);updateParticles();
-  const p=newParticle(7,8,color(90,0,0),'BLOOD_SMOKE',20,-10);
-  const reused=p===old,reset=p.x===7&&p.y===8&&p.t==='BLOOD_SMOKE'&&p.a===255&&p.c.levels[0]===90;
-  p.l=1;p.update();const firstAlpha=p.a;
-  particles.push(p);for(let i=0;i<5;i++)updateParticles();
-  const retired=particles.length===0&&_particlePool.length===1;
-  const next=newParticle(0,0,color(90,0,0),'BLOOD_SMOKE');
-  return {reused,reset,firstAlpha,retired,nextReused:next===p};
-})()`);
-check('blood smoke reuses an existing particle',pool.reused);
-check('blood smoke fully resets pooled state',pool.reset);
-check('blood smoke fades by 60 after its lifetime',pool.firstAlpha===195);
-check('blood smoke retires and returns to the same bounded pool',pool.retired && pool.nextReused);
+for(const [label,shield,immune] of [['shield only',100,false],['shield overflow',1,false],['immune flesh',0,true]]) {
+  const r=read(`(()=>{const savedPlayer=player;frameCount++;bullets=[];particles=[];enemiesList=[];
+    const target=new Character(40,0,true);target.hp=100;target.shield=${shield};player=target;
+    inTownCutscene=${immune};const b=spawnBullet(0,0,0,false,'BODY',WEAPONS.PISTOL,{isPlayer:false});
+    for(let i=0;i<8&&b.active;i++)updateBullets();inTownCutscene=false;player=savedPlayer;
+    return {hp:target.hp,spray:particles.filter(p=>p.t==='HIT_BLOOD').length,comic:particles.filter(p=>p.t==='COMIC_IMPACT').length};})()`);
+  check(label+' only produces flesh feedback for actual HP damage',
+    shield===1?r.hp<100&&r.spray===8&&r.comic===1:r.hp===100&&r.spray===0&&r.comic===0);
+}
 
-const orangePool=read(`(function(){
-  particles=[];_particlePool.length=0;
-  const old=newParticle(3,4,color(60),'SMOKE');old.a=0;particles.push(old);updateParticles();
-  const owner={x:7,y:8,shovelLevel:currentLevel,shovelDepth:0};
-  const p=newParticle(7,8,color(255,130,35),'ARMOR_IMPACT',20,-10,owner);
-  const reset=p===old&&p.x===7&&p.y===8&&p.a===255&&p.t==='ARMOR_IMPACT'&&
-    p.sz>=1.5&&p.sz<=3&&p.l>=3&&p.l<=7&&p.shovelOwner===owner;
-  p.l=1;p.update();const firstAlpha=p.a;
-  particles.push(p);for(let i=0;i<5;i++)updateParticles();
-  return {reset,firstAlpha,retired:particles.length===0&&_particlePool.length===1&&p.shovelOwner===null};
-})()`);
-check('tiny orange burst resets pooled size, lifetime and owner',orangePool.reset);
-check('tiny orange burst fades quickly after its brief lifetime',orangePool.firstAlpha===195);
-check('tiny orange burst retires to the bounded pool and releases its owner',orangePool.retired);
-
-const standardPool=read(`(function(){
-  const owner={x:0,y:0,eType:'ARMORED_STANDARD',shovelLevel:currentLevel,shovelDepth:0};
-  particles=[];_particlePool.length=0;
-  const p=newParticle(0,0,color(255,155,40),'ARMOR_IMPACT',20,-10,owner);
-  const standard=p.sz>=5&&p.sz<=9&&p.l>=7&&p.l<=12&&p.shovelOwner===owner;
-  p.a=0;particles.push(p);updateParticles();
-  const orb=newParticle(1,2,color(255,130,35),'ARMOR_IMPACT',20,-10,{...owner,eType:'ARMORED'});
-  return {standard,orbReset:orb===p&&orb.sz>=1.5&&orb.sz<=3&&orb.l>=3&&orb.l<=7};
-})()`);
-check('standard rifle armor gets the larger pooled burst',standardPool.standard);
-check('reusing standard impact for the orb soldier restores its original tiny burst',standardPool.orbReset);
+for(const type of ['HIT_BLOOD','COMIC_IMPACT']) {
+  const pool=read(`(()=>{
+    particles=[];_particlePool.length=0;
+    const old=newParticle(3,4,color(60),'SMOKE');old.a=0;particles.push(old);updateParticles();
+    const owner={x:7,y:8,shovelLevel:currentLevel,shovelDepth:18,eType:'ARMORED_STANDARD'};
+    const p=newParticle(7,8,color(90,0,0),${JSON.stringify(type)},20,-10,owner);
+    const reset=p===old&&p.x===7&&p.y===8&&p.a===255&&p.t===${JSON.stringify(type)}&&p.shovelOwner===owner&&p.sz>0&&p.l>0&&p.fxAge===0;
+    particles.push(p);for(let i=0;i<120;i++)updateParticles();
+    const retired=particles.length===0&&_particlePool.length===1&&p.shovelOwner===null;
+    const q=newParticle(11,12,color(90,0,0),'WOUND_BLOOD',3,-2);
+    return {reset,retired,continuous:q===p&&q.sz===2.8&&q.vx===3&&q.vy===-2&&q.l===16&&q.fxSeed===0&&q.fxAge===0&&q.fxLife===0&&q.fxMaterial===''&&q.fxKind===0&&q.fxStretch===1&&q.shovelOwner===null};
+  })()`);
+  check(type+' resets an existing pooled particle',pool.reset);
+  check(type+' retires and releases its owner',pool.retired);
+  check(type+' safely reuses its record for original continuous bleeding',pool.continuous);
+}
 
 const charge=read(`(function(){
   player.x=300;player.y=0;bullets=[];particles=[];buildings=[];activeBuildings=[];
@@ -152,70 +135,4 @@ const playerCharge=read(`(function(){
 })()`);
 check('player chemist charging spark remains unchanged',playerCharge===1);
 
-async function canvasChecks() {
-  const deps=process.env.VIS_DEPS||path.join(__dirname,'..');
-  const {chromium}=require(path.join(deps,'node_modules/playwright'));
-  const browser=await chromium.launch({executablePath:process.env.VIS_CHROME||'/usr/bin/chromium',headless:true,args:['--no-sandbox']});
-  try {
-    const page=await browser.newPage({viewport:{width:640,height:320},deviceScaleFactor:1});
-    await page.setContent(`<style>body{margin:0}</style>
-      <script>Object.defineProperty(window,'localStorage',{value:{getItem(){return null},setItem(){},removeItem(){}}});</script>
-      <script>${fs.readFileSync(path.join(deps,'node_modules/p5/lib/p5.min.js'),'utf8')}</script>
-      <script>${fs.readFileSync(path.join(__dirname,'../game.js'),'utf8')}</script>
-      <script>preload=function(){};setup=function(){createCanvas(640,320);pixelDensity(1);noLoop();window.__ready=true;};</script>`);
-    await page.waitForFunction('__ready');
-    const r=await page.evaluate(()=>{
-      const p=new Particle(64,64,color(90,0,0),'BLOOD_SMOKE');p.sz=12;
-      const draw=(alpha)=>{clear();p.a=alpha;p.show();const d=drawingContext.getImageData(64,64,12,1).data;return Array.from({length:12},(_,i)=>d[i*4+3]);};
-      const full=draw(255),faded=draw(135);
-      clear();drawingContext.save();drawingContext.translate(11.3,17.8);drawingContext.scale(1.2,.75);drawingContext.globalAlpha=.37;
-      const before=drawingContext.getTransform();p.show();const after=drawingContext.getTransform();const alpha=drawingContext.globalAlpha;drawingContext.restore();
-      return {full,faded,balanced:['a','b','c','d','e','f'].every(k=>before[k]===after[k])&&Math.abs(alpha-.37)<1e-8};
-    });
-    check('blood smoke has a continuous soft radial edge',new Set(r.full.filter(a=>a>0)).size>=5 && r.full.every((a,i)=>i===0||a<=r.full[i-1]+1) && r.full[10]===0);
-    check('blood smoke fades its center and edge together',r.faded[0]<r.full[0] && r.faded[3]<r.full[3] && r.faded[3]>0);
-    check('blood smoke restores the real Canvas transform and opacity',r.balanced);
-    const burst=await page.evaluate(()=>{
-      const p=new Particle(64,64,color(255,130,35),'ARMOR_IMPACT');p.sz=3;
-      const draw=alpha=>{clear();p.a=alpha;p.show();return Array.from(drawingContext.getImageData(60,64,9,1).data);};
-      return {full:draw(255),faded:draw(135)};
-    });
-    const orangePixel=burst.full.slice(16,20),fadedPixel=burst.faded.slice(16,20);
-    check('orange burst paints a tiny bright orange center',orangePixel[0]>245&&orangePixel[1]>115&&orangePixel[1]<145&&orangePixel[2]>20&&orangePixel[2]<50&&orangePixel[3]>100);
-    check('orange burst has a compact transparent edge',burst.full[3]===0&&burst.full[35]===0&&burst.full.filter((_,i)=>i%4===3&&burst.full[i]>0).length<=6);
-    check('orange burst fades with its opacity',fadedPixel[3]>0&&fadedPixel[3]<orangePixel[3]);
-    const standardBurst=await page.evaluate(()=>{
-      clear();const p=new Particle(64,64,color(255,155,40),'ARMOR_IMPACT',0,0,{eType:'ARMORED_STANDARD',x:64,y:64});
-      p.sz=9;p.show();return Array.from(drawingContext.getImageData(52,64,25,1).data);
-    });
-    const standardPixels=standardBurst.filter((_,i)=>i%4===3&&standardBurst[i]>0).length;
-    check('standard armor burst has a visibly larger real Canvas footprint than the orb impact',
-      standardPixels>=12&&standardPixels<=18&&standardPixels>2*burst.full.filter((_,i)=>i%4===3&&burst.full[i]>0).length);
-    check('standard armor burst keeps a bright orange center',standardBurst[48]>245&&standardBurst[49]>140&&standardBurst[49]<170&&standardBurst[50]>25&&standardBurst[50]<55);
-    await page.evaluate(()=>{
-      background(28,38,43);textAlign(CENTER,CENTER);noStroke();fill(236,231,210);textSize(19);
-      text('NM-0 STANDARD ARMOR IMPACTS',320,30);textSize(14);text('Body: red mist and stronger orange burst',160,74);text('Helmet: unchanged metal sparks',480,74);
-      randomSeed(45);
-      for(let i=0;i<10;i++){
-        const p=new Particle(150+random(-8,8),175+random(-8,8),color(90,0,0),'BLOOD_SMOKE',25,0);
-        push();translate(160,175);scale(3);p.x-=160;p.y-=175;p.show();pop();
-      }
-      for(let i=0;i<6;i++){
-        const p=new Particle(150+random(-5,5),175+random(-5,5),color(255,155,40),'ARMOR_IMPACT',25,0,{eType:'ARMORED_STANDARD'});
-        push();translate(160,175);scale(3);p.x-=160;p.y-=175;p.show();pop();
-      }
-      for(let i=0;i<9;i++){
-        const p=new Particle(480+random(-8,8),175+random(-8,8),color(...SPARK_COL),'FLECK',25,0);
-        push();translate(480,175);scale(3);p.x-=480;p.y-=175;p.show();pop();
-      }
-      fill(176,195,195);textSize(13);text('Shown at 3× size; charge orb remains, charging sparks removed',320,283);
-    });
-    const out=process.env.ARMORED_EFFECTS_OUT||'/tmp/armored-impact-effects.png';
-    await page.locator('canvas').first().screenshot({path:out});
-    console.log('Preview: '+out);
-  } finally {await browser.close();}
-}
-(async()=>{
-  if(process.env.VIS_DEPS||process.argv.includes('--visual'))await canvasChecks();
-  console.log('Armored impact effects: '+checks+'/'+checks+' checks passed.');
-})().catch(e=>{console.error(e.stack||e);process.exitCode=1;});
+console.log('Armored comic impact, material, pool and robot checks: '+checks+'/'+checks+' passed.');

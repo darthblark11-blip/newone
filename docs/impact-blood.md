@@ -4,8 +4,11 @@ Human projectile impacts now share the small wildlife floor splatter. The
 shared painter deposits exactly three directional droplets using the animal
 ink (`111, 9, 16`), 3–8-unit diameters and a short forward spread. These marks
 use the existing floor blood bank, beneath bodies, and remain fixed on the
-ground when the victim moves. Existing impact particles and body wound decals
-keep their own rendering paths.
+ground when the victim moves. Body wound decals keep their own rendering path.
+Airborne projectile contact now adds a brief ink-rimmed comic burst with a
+bright core and angular rays. Non-head human hits throw directional blood
+ribbons, pointed spray fans and smaller streaks instead of a cluster of ovals.
+The effect is cosmetic; hit resolution, damage and knockback do not change.
 
 ## Human impact eligibility
 
@@ -14,21 +17,30 @@ This includes damage that overflows the player's shield when it breaks.
 Shield-only damage, immunity, taser contact and hits on an active armored
 helmet do not produce this flesh splatter. Machines, vehicles, alien bodies
 and livestock do not receive the new human red-blood effect. NM0 armored body
-hits use the same red droplets while retaining their existing armor impact
-particles; hard helmet impacts retain their material effects.
+hits use the same red floor droplets alongside the new airborne spray. Hard
+helmet impacts retain their metal streaks and do not produce flesh blood.
 
-Armored NM0 body impacts retain ten compact red `BLOOD_SMOKE` mist puffs,
-with no grey smoke or debris chips. `ARMORED_STANDARD` soldiers add six
-bright orange `ARMOR_IMPACT` bursts, sized 5–9 units with a 7–12-frame
-lifetime before fading, to make a successful armor hit visible at normal zoom.
-The `ARMORED` orb keeps its four small 1.5–3-unit, 3–7-frame bursts.
-Helmet impacts retain their nine metal streaks and five chips. Effects keep
-their shovel owner/depth projection and use the existing particle order and pool.
+NM0 body and leg contacts replace the old orange `ARMOR_IMPACT` blobs and
+`BLOOD_SMOKE` puffs with one `COMIC_IMPACT` burst and eight `HIT_BLOOD`
+particles. The comic burst reflects whether the projectile struck intact plate
+or exposed flesh. Gray debris, smoke and the old orange sparks are absent from
+these hits. Helmet impacts retain nine metal streaks and add a comic burst;
+their gray chips are removed. Robot chassis/head effects, oil, alien armor and
+shield feedback retain their existing materials.
+
+Ordinary exposed human body/leg impacts use the same new burst and directional
+spray. Existing bare-head blood effects remain, with the comic contact layered
+underneath them. The old death pools and small floor drops keep their oval
+shapes. Continuous corpse bleeding and fatal wound jets retain their existing
+emitters, timing and particles: the experiment is scoped to projectile impact.
+Blood remains above the bright contact burst. Effects keep their shovel
+owner/depth projection and reuse the bounded particle pool; drawing never rolls
+gameplay randomness or changes the effect's pose.
 
 The standard soldier still starts with 300 HP and has armor while its health
 before a hit is above 50 HP. The shot that crosses that boundary still hits
-plate; subsequent hits at or below 50 HP use ordinary flesh blood without
-orange bursts. The orb's separate 600-HP / 300-HP armor rule is unchanged.
+plate; subsequent hits at or below 50 HP use the exposed-flesh burst and spray.
+The orb's separate 600-HP / 300-HP armor rule is unchanged.
 
 A positive-damage arrow that leaves a human alive starts a cosmetic wound
 trail. It drops one small 2.5–5-unit droplet every 250 active milliseconds,
@@ -79,6 +91,9 @@ The existing 48-animal population cap still bounds tracking work.
 
 - A shared frame budget permits 24 impact splashes and eight individual trail
   droplets across humans and wildlife. Each accepted impact has three drops.
+- New airborne comic contacts accept at most 24 events in a frame and stop
+  adding particles at the existing 900-particle ceiling. A full contact uses
+  eight small spray records plus one burst, with no backlog after a busy frame.
 - A delayed frame emits at most one trail droplet per actor. It does not queue
   a backlog or dump missed droplets together. A budget-deferred wound remains
   due; actors that received a drop wait another 250 milliseconds, allowing
@@ -102,6 +117,8 @@ node tools/check-arrow-wildlife-bleed.js
 node tools/check-impact-blood-scene.js
 node tools/check-armored-impact-effects.js
 node tools/check-standard-armor-break.js
+node tools/check-comic-hit-feedback.js
+VIS_DEPS=/workspace/newone-dev node tools/check-impact-particles.js
 ```
 
 The human suite covers 69 impact, material, shield, healing, trail, budget,

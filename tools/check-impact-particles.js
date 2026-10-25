@@ -1,5 +1,5 @@
-// Actual armor-hit emission plus a real Canvas pixel check for smooth spark
-// falloff. Run with VIS_DEPS pointing to p5/playwright and VIS_CHROME if needed.
+// Real armor contacts use comic bursts and directional blood. Unrelated sparks
+// retain their original falloff; native checks also inspect the new ink shapes.
 const assert = require('assert'), fs = require('fs'), path = require('path');
 const { ctx, probe } = require('./harness');
 let checks = 0;
@@ -20,14 +20,12 @@ for (const type of ['ARMORED','ARMORED_STANDARD','SAUCER','SAUCER_RED','SNAIL_HY
   if (type === 'ROBOT') {
     check('robot metal streaks retain their existing emission', hit.particles.length === 9 && hit.particles.every(p=>p.t === 'FLECK'));
   } else if (type === 'ARMORED' || type === 'ARMORED_STANDARD') {
-    const smoke = hit.particles.filter(p=>p.t === 'BLOOD_SMOKE');
-    const burst = hit.particles.filter(p=>p.t === 'ARMOR_IMPACT');
-    const standard = type === 'ARMORED_STANDARD';
-    check(type+' body impacts keep blood mist and their own orange burst', smoke.length === 10 && burst.length === (standard ? 6 : 4) && hit.particles.length === (standard ? 16 : 14) && !hit.particles.some(p=>p.t === 'CHIP' || p.t === 'SMOKE' || p.t === 'SPARK'));
-    check(type+' blood smoke remains compact and short lived', smoke.every(p=>p.c.join(',') === '90,0,0' && p.sz >= 5 && p.sz <= 12 && p.l >= 10 && p.l <= 20));
-    check(type+' impact burst keeps its intended orange size and duration', burst.every(p=>standard
-      ? p.c.join(',') === '255,155,40' && p.sz >= 5 && p.sz <= 9 && p.l >= 7 && p.l <= 12
-      : p.c.join(',') === '255,130,35' && p.sz >= 1.5 && p.sz <= 3 && p.l >= 3 && p.l <= 7));
+    const spray=hit.particles.filter(p=>p.t==='HIT_BLOOD'),burst=hit.particles.filter(p=>p.t==='COMIC_IMPACT');
+    check(type+' has directional blood and one coherent comic contact',spray.length===8&&burst.length===1&&hit.particles.length===9);
+    check(type+' no longer emits smoke, gray chunks or old orange blobs',
+      !hit.particles.some(p=>['CHIP','SMOKE','SPARK','BLOOD_SMOKE','ARMOR_IMPACT'].includes(p.t)));
+    check(type+' spray and contact have finite compact geometry',
+      hit.particles.every(p=>Number.isFinite(p.sz)&&p.sz>0&&p.sz<40&&p.l>0&&p.l<80));
   } else {
     const sparks = hit.particles.filter(p=>p.t === 'SPARK');
     check(type+' still emits ten sparks and five debris chips', sparks.length === 10 && hit.particles.filter(p=>p.t === 'CHIP').length === 5);
@@ -72,20 +70,51 @@ for (const type of ['ARMORED','ARMORED_STANDARD','SAUCER','SAUCER_RED','SNAIL_HY
     check('fading dims both the center and the halo', result.faded[0] < result.opaque[0] && result.faded[10] < result.opaque[10] && result.faded[10] > 0);
     check('particle drawing restores canvas state', result.balanced);
 
+    const comic=await page.evaluate(()=>{
+      const burst=new Particle(64,64,color(90,0,0),'COMIC_IMPACT',20,0);burst.fxAge=2;burst.fxMaterial='ARMOR';
+      const spray=new Particle(160,64,color(90,0,0),'HIT_BLOOD',20,0);spray.fxAge=2;
+      const draw=alpha=>{clear();burst.a=alpha;burst.show();return Array.from(drawingContext.getImageData(40,40,48,48).data);};
+      const full=draw(255),faded=draw(100);
+      let yellow=0,light=0,ink=0,fullAlpha=0,fadedAlpha=0;
+      for(let i=0;i<full.length;i+=4){
+        const [r,g,b,a]=full.slice(i,i+4);fullAlpha+=a;fadedAlpha+=faded[i+3];
+        if(a>100&&r>230&&g>150&&b<170)yellow++;
+        if(a>100&&r>230&&g>220&&b>170)light++;
+        if(a>100&&r<110&&g<90&&b<90)ink++;
+      }
+      const nativeEllipse=window.ellipse,nativeRandom=window.random;
+      let ovals=0;window.ellipse=(...a)=>{ovals++;return nativeEllipse(...a);};
+      window.random=()=>{throw Error('Impact painting consumed gameplay RNG');};
+      try{for(let kind=0;kind<4;kind++){spray.fxKind=kind;spray.show();}burst.show();}
+      finally{window.ellipse=nativeEllipse;window.random=nativeRandom;}
+      // Freeze a single pose while checking the native context is restored.
+      spray.fxKind=3;drawingContext.save();drawingContext.translate(11,17);drawingContext.scale(1.25,.75);drawingContext.globalAlpha=.37;
+      const transform=drawingContext.getTransform();spray.show();burst.show();const after=drawingContext.getTransform(),alpha=drawingContext.globalAlpha;drawingContext.restore();
+      const pose=JSON.stringify([burst,spray]);spray.show();burst.show();
+      return {yellow,light,ink,fullAlpha,fadedAlpha,ovals,unchanged:pose===JSON.stringify([burst,spray]),
+        balanced:['a','b','c','d','e','f'].every(k=>transform[k]===after[k])&&Math.abs(alpha-.37)<1e-8};
+    });
+    check('comic contact has a bright core, yellow lobes and a hard ink rim',comic.yellow>8&&comic.light>8&&comic.ink>8);
+    check('comic contact fades across its whole native footprint',comic.fadedAlpha>0&&comic.fadedAlpha<comic.fullAlpha);
+    check('new spray and comic contact use shaped ink instead of repeated ovals',comic.ovals===0);
+    check('native painting never advances the impact pose',comic.unchanged);
+    check('new impact painters preserve Canvas transforms and opacity',comic.balanced);
+
     await page.evaluate(() => {
       background(28,38,43);textAlign(CENTER,CENTER);noStroke();fill(236,231,210);textSize(23);
-      text('ARMOR IMPACT SPARKS',400,35);textSize(15);fill(176,195,195);
-      text('Previous solid edge',200,78);text('Smooth falloff and bright core',600,78);
-      for(const [index,col] of [[255,150,0],[255,200,0],[0,200,255]].entries()) {
-        const y=145+index*105;
-        for(const [i,size] of [8,12,20].entries()) {
-          const x=110+i*88;
-          fill(...col);ellipse(x,y,size*3,size*3);
-          const p=new Particle(x+400,y,color(...col),'SPARK');p.sz=size;
-          push();translate(x+400,y);scale(3);p.x=p.y=0;p.show();pop();
+      text('COMIC CONTACT / DIRECTIONAL BLOOD',400,35);textSize(14);fill(176,195,195);
+      text('Hard ink rim and bright impact core',210,75);text('Torn ribbons, fans and sharp streaks',610,75);
+      for(let row=0;row<3;row++){
+        const age=[1,4,8][row],y=140+row*105;
+        const p=new Particle(0,0,color(90,0,0),'COMIC_IMPACT',25,0);p.fxAge=age;p.sz=15;
+        push();translate(200,y);scale(2.6);p.show();pop();
+        for(let kind=0;kind<4;kind++){
+          const blood=new Particle(0,0,color(90,0,0),'HIT_BLOOD',25,0);
+          blood.fxKind=kind;blood.fxAngle=0;blood.fxAge=age;blood.sz=3;
+          push();translate(460+kind*88,y);scale(2.6);blood.show();pop();
         }
       }
-      textSize(13);fill(176,195,195);text('Same impact colors and motion; shown at 3× size for edge inspection',400,448);
+      textSize(13);fill(176,195,195);text('Shown at 2.6×; continuous wound spray and floor puddles keep their existing rendering',400,448);
     });
     const out=process.env.IMPACT_OUT || path.join('/tmp','armor-impact-particles.png');
     await page.locator('canvas').first().screenshot({path:out});

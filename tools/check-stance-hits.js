@@ -77,7 +77,7 @@ ok('stance critical preserves existing shield break and overflow rules',shieldHe
 const armoredHead=shot('STAND','HEAD',{type:'ARMORED_STANDARD'}),armoredShift=shot('CROUCH','BODY',{type:'ARMORED_STANDARD'});
 ok('armored standard critical preserves helmet impact feedback',armoredHead.hp===armoredShift.hp&&armoredShift.particles.includes('FLECK')&&!armoredShift.particles.includes('ARMOR_IMPACT'));
 const armoredBody=shot('CROUCH','LEGS',{type:'ARMORED_STANDARD'});
-ok('crouched low armor hit follows standard body impact feedback',armoredBody.hp===980&&armoredBody.particles.includes('ARMOR_IMPACT')&&!armoredBody.decals[0].isLeg);
+ok('crouched low armor hit follows standard body impact feedback',armoredBody.hp===980&&armoredBody.particles.includes('COMIC_IMPACT')&&armoredBody.particles.includes('HIT_BLOOD')&&!armoredBody.decals[0].isLeg);
 
 // The capsule's end caps remain hittable when its root is outside a head or
 // body circle, at all headings. A lateral ray outside its width still misses.
