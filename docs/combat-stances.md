@@ -49,18 +49,18 @@ with a 0.0032 rad/ms limit. The final hip heading stays within 97.2° of the tor
 including when stopped, releasing the aim stick or changing aim at rest.
 Stopping retains the planted hip heading while the step motion settles.
 Standing keeps its original leg surfaces, dark footwear, speed and full stride
-clock; crouch keeps its separate folded legs and 46% clock. Standing heel poses
-cover the full rear hemisphere relative to aim, including shallow rear diagonals
-between 90° and 112.5°. Knees remain ahead of the hips; the shin folds backward
-and the raised heel exposes a rear leather face and sole tread. Calves paint
-beneath thighs and shin reach remains bounded by the actual bone length. A
-rearward foot projection keeps shallow-diagonal heels clear of the torso. The
-hip solver keeps its existing 112.5° fold and trailing motion. Backward steps
-use the same stride clock as the body, with a small following thigh motion and
-a smooth heel-return curve. The rear presentation stays consistent when stopping;
-the existing motion weight settles the joints and soles while the heel remains
-part of the boot. Leg wounds and the chemist coat follow the same standing hip
-frame. Prone, boxing, melee, digging and riding keep their own poses.
+clock; crouch keeps its separate folded legs and 46% clock. Rear standing
+movement covers the full rear hemisphere relative to aim, including shallow
+rear diagonals between 90° and 112.5°. Its camera-facing cloth uses the original
+forward stride's broad, lighter trouser cap, taper and light planes. The narrow
+ankle and dark boot point forward underneath the body. This surface projection
+follows the existing rear joints without changing their motion or dimensions.
+Backward steps use the body's stride clock, a small following thigh motion and
+a smooth recovery curve. The rear presentation stays consistent when stopping;
+the existing motion weight settles the joints. Leg stains map onto the projected
+cloth, and the chemist coat follows the standing hip frame. The hip solver keeps
+its existing 112.5° fold and trailing motion. Prone, boxing, melee, digging and
+riding keep their own poses.
 
 Standing weapon-aim turns accelerate and brake through the shortest angular arc,
 instead of snapping to a new stick or mouse heading. The barrel, shots, laser
@@ -186,8 +186,9 @@ passes, visible supine engines, and reachable rear-facing sidearm arms.
 seams, input release, shot/light alignment and bow gesture quality.
 `tools/check-standing-fluidity.js` checks rear-pose continuity on stopping,
 heel-return velocity, joint settling and the existing stride clock.
-`tools/check-standing-heels.js` checks forward-pointing knees, bounded shins,
-rear-hemisphere heel coverage, recovery tread, layering and wound attachment.
+`tools/check-standing-heels.js` retains the canonical rear joint and recovery
+checks. `tools/check-standing-rear-surface.js` checks the original rear trouser
+mesh, palette, projected stain attachment and painter stack.
 `tools/check-standing-backsteps.js` compares standing/crouch hip direction through
 movement, stopping, aim release and aim turns, including the visible standing
 hip transform, native standing cadence, leg wounds and dedicated action exceptions.

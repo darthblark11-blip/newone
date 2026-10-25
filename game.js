@@ -14698,7 +14698,7 @@ function mapLegHitDecal(actor,wx,wy,decal,origin=actor) {
     }else if(crouch){
       const leg=crouch.joints[index];kx=leg.knee.x;ky=leg.knee.y;ax=leg.ankle.x;ay=leg.ankle.y;
     }else if(backstep){
-      ({kx,ky,ax,ay}=standingRearLeg(actor,backstep,rig,index));
+      ({kx,ky,ax,ay}=standingRearClothPose(standingRearLeg(actor,backstep,rig,index),rig,backstep.blend));
     }else{
       const sx=-10-swing*side+rig.thighW*.5;
       kx=sx+th*.92;ky=side*6;ax=kx+sh;ay=ky;
@@ -42393,36 +42393,24 @@ function standingRearLeg(c,pose,rig,index) {
     heel:pose.heelExposure*(.55+.45*recover),
     sole:pose.heelExposure*recover};
 }
-function drawStandingRearHeel(g,leg,rig,boot) {
-  const amount=Math.max(0,Math.min(1,leg.heel||0));
-  if(!(amount>0))return;
-  const w=rig.foot,h=rig.shinW*.8,sole=Math.max(0,Math.min(1,leg.sole||0));
-  const x=leg.ax-w*.16,y=leg.ay,depth=w*(.20+.12*sole),alpha=255*amount;
-  g.push();g.stroke(18,21,27,alpha);g.strokeWeight(.6);
-  g.fill(boot[0]*.62,boot[1]*.62,boot[2]*.65,alpha);
-  g.rect(x-depth*.40,y-h*.44,depth,h*.88,1);
-  // Back leather panel and the lower sole edge reveal the heel, rather than
-  // putting a knee-shaped cap on the end of a rear-pointing trouser leg.
-  g.stroke(boot[0]+30,boot[1]+30,boot[2]+32,alpha*.8);g.strokeWeight(.55);
-  g.line(x+depth*.45,y-h*.30,x+depth*.45,y+h*.30);
-  if(sole>0) {
-    g.stroke(138,149,157,alpha*sole);g.strokeWeight(.55);
-    for(const across of [-.23,0,.23])g.line(x-depth*.20,y+h*across,x+depth*.24,y+h*across);
-  }
-  g.pop();
+// Use the same broad, tapered rear trouser surface as the original stride.
+// Its camera-facing end is cloth; the narrow ankle and boot point forward
+// beneath the body. Only the surface projection changes, not the gait joints.
+function standingRearClothPose(leg,rig,blend=1) {
+  const sx=leg.sx+(leg.ax-rig.foot*.16-leg.sx)*blend;
+  const sy=leg.sy+(leg.ay-leg.sy)*blend;
+  const kx=sx+rig.thigh*STAND_FORE_LEG*.92;
+  return {sx,sy,kx,ky:sy,ax:kx+rig.shin*STAND_FORE_LEG,ay:sy};
 }
 function drawStandingRearLeg(g,c,pose,rig,index,boot) {
-  const leg=standingRearLeg(c,pose,rig,index),wAnkle=rig.shinW*.8;
-  // Paint the calf behind the forward thigh so the folded knee cannot read
-  // as an inverted joint. The boot toe still points in the hip's forward axis.
-  figureCelLimb(g,leg.kx,leg.ky,(leg.kx+leg.ax)*.5,(leg.ky+leg.ay)*.5,
-    leg.ax,leg.ay,rig.shinW,rig.shinW*.9,wAnkle,c.pantsCol);
-  figureCelOval(g,leg.ax+rig.foot*.34,leg.ay,rig.foot,wAnkle,boot,.8);
-  drawStandingRearHeel(g,leg,rig,boot);
-  figureCelLimb(g,leg.sx,leg.sy,(leg.sx+leg.kx)*.5,(leg.sy+leg.ky)*.5,
-    leg.kx,leg.ky,rig.thighW,(rig.thighW+rig.shinW)*.5,rig.shinW,c.pantsCol);
-  drawLegDecals(g,c.decals,index,leg.sx,leg.sy,leg.kx,leg.ky,leg.ax,leg.ay,
-    rig.thighW,rig.shinW,wAnkle);
+  const leg=standingRearClothPose(standingRearLeg(c,pose,rig,index),rig,pose.blend);
+  const th=rig.thigh*STAND_FORE_LEG,sh=rig.shin*STAND_FORE_LEG,wAnkle=rig.shinW*.8;
+  // These are the original standing mesh, taper, colour and light planes.
+  drawingContext.save();drawingContext.translate(leg.sx,leg.sy);
+  figureCelLimb(g,0,0,th*.92,0,th*.92+sh,0,rig.thighW,rig.shinW,wAnkle,c.pantsCol);
+  figureCelOval(g,th*.92+sh+rig.foot*.34,0,rig.foot,wAnkle,boot,.8);
+  drawLegDecals(g,c.decals,index,0,0,th*.92,0,th*.92+sh,0,rig.thighW,rig.shinW,wAnkle);
+  drawingContext.restore();g.fill(c.pantsCol);
 }
 
 function standingAimEligible(c) {

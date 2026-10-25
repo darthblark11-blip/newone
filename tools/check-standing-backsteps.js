@@ -130,7 +130,7 @@ try{
  for(const setup of ['', 'player.isMoving=false;', 'rightStick.active=false;player.aimHold=0;', 'player.isArmed=false;',
   'player.aimAngle=Math.PI;', 'player.isMoving=true;player.moveAngle=-Math.PI*.75;']){
   probe(setup);advance(1,0);const p=lower();limbs=[];boots=[];probe('player.show();');
-  frames&&=limbs.length===(rear()?4:2)&&limbs.every(l=>near(wrap(l.angle-p.angle),0));
+  frames&&=limbs.length===2&&limbs.every(l=>near(wrap(l.angle-p.angle),0));
   const widths=[[R.thighW,R.shinW,R.shinW*.8],[R.shinW,R.shinW*.9,R.shinW*.8],
    [R.thighW,(R.thighW+R.shinW)*.5,R.shinW]];
   materials&&=limbs.every(l=>widths.some(w=>l.widths.every((v,i)=>near(v,w[i]))))&&
@@ -144,10 +144,10 @@ try{
 fresh(.4,.4+Math.PI*.75);advance(1,0);
 const p=rear();
 if(p){
- const l=leg(0),u=.8,x=l.kx+(l.ax-l.kx)*u,y=l.ky+(l.ay-l.ky)*u;
+ const l=P('standingRearClothPose(standingRearLeg(player,standingRearPose(player),figureRig(player.bodyW,player.bodyH),0),figureRig(player.bodyW,player.bodyH),standingRearPose(player).blend)'),u=.8,x=l.kx+(l.ax-l.kx)*u,y=l.ky+(l.ay-l.ky)*u;
  probe(`window.standingLegWound={sz:2};mapLegHitDecal(player,
   player.x+${Math.cos(p.angle)*x-Math.sin(p.angle)*y},player.y+${Math.sin(p.angle)*x+Math.cos(p.angle)*y},standingLegWound);`);
- ok('standing wounds resolve onto the same backward shin and hip frame as the painter',
+ ok('standing wounds resolve onto the same projected trouser surface and hip frame as the painter',
   P('standingLegWound.legIndex===0&&Math.abs(standingLegWound.legU-.8)<1e-6'));
 }else throw Error('rear travel must provide a backward leg pose');
 console.log(`${checks}/${checks} standing/crouch hip parity, direction bounds, lifecycle, native gait and painter checks passed`);
