@@ -40,13 +40,24 @@ for(const start of ['STAND','CROUCH'])for(let i=0;i<8;i++){
    Math.abs(P('player.x')*Math.sin(angle)-P('player.y')*Math.cos(angle))<1e-7&&P('proneDiveActive(player)'));
  advance(210);
  ok('landing reaches the same endpoint in each direction '+start+i,
-   near(P('player.x'),Math.cos(angle)*180)&&near(P('player.y'),Math.sin(angle)*180));
+   near(P('player.x'),Math.cos(angle)*270)&&near(P('player.y'),Math.sin(angle)*270));
  ok('landing ends immunity in the existing prone pose '+start+i,P('player.stance.value===2&&!proneDiveActive(player)&&!proneDivePoseActive(player)&&stanceProneSpotClear(player)'));
+}
+for(const start of ['STAND','CROUCH']) {
+ fresh(start);input(0);probe('requestPlayerProne();');step(20);
+ ok(start+' begins a fast interpolated unfold instead of snapping straight to prone',P('player.stance.value>0&&player.stance.value<2'));
+ advance(45);
+ ok(start+' reaches a level belly-down body within 65 ms of launch',P('player.stance.value===2&&actorStancePose(player).prone===1&&proneDiveActive(player)'));
+ const extended=P('JSON.stringify(stanceBodyPose(player).joints.map(j=>({knee:j.knee,ankle:j.ankle})))');
+ probe('player.walkCycle+=2;player.gait=1;');
+ ok(start+' keeps its legs extended in flight instead of entering a crawl',P('JSON.stringify(stanceBodyPose(player).joints.map(j=>({knee:j.knee,ankle:j.ankle})))')===extended);
+ advance(200);
+ ok(start+' remains level through the air while the height arc descends',P('player.stance.value===2&&actorStancePose(player).prone===1&&proneDiveActive(player)'));
 }
 fresh();input(0);probe('requestPlayerProne();');
 ok('the raised dive starts at ground height',P('proneDiveLift(player)===0'));
 advance(210);
-ok('the dive apex rises five units with a modest uniform size increase',P('Math.abs(proneDiveLift(player)-5)<1e-8&&Math.abs(actorStancePose(player).scaleX/(1-.045-.025*actorStancePose(player).prone)-1.05)<1e-8&&actorStancePose(player).scaleX===actorStancePose(player).scaleY'));
+ok('the dive apex rises fourteen units with a modest uniform size increase',P('Math.abs(proneDiveLift(player)-14)<1e-8&&Math.abs(actorStancePose(player).scaleX/(1-.045-.025*actorStancePose(player).prone)-1.09)<1e-8&&actorStancePose(player).scaleX===actorStancePose(player).scaleY'));
 probe(`window.diveRaisedMuzzle=stanceMuzzleWorld(player,player.x+31,player.y+8);
  window.diveRaisedSupport=stanceMuzzleWorld(player,player.x+31,player.y+8,0,true);
  window.diveRaisedUI=actorStanceUIAnchor(player);
@@ -54,9 +65,30 @@ probe(`window.diveRaisedMuzzle=stanceMuzzleWorld(player,player.x+31,player.y+8);
  window.diveGroundMuzzle=stanceMuzzleWorld(player,player.x+31,player.y+8);
  window.diveGroundSupport=stanceMuzzleWorld(player,player.x+31,player.y+8,0,true);
  window.diveGroundUI=actorStanceUIAnchor(player);proneDiveLift=diveLiftOriginal;`);
-ok('height lifts main and support shot origins and labels with the actor',P('Math.abs(diveRaisedMuzzle.x-diveGroundMuzzle.x)<1e-8&&Math.abs(diveRaisedMuzzle.y-diveGroundMuzzle.y+5)<1e-8&&Math.abs(diveRaisedSupport.x-diveGroundSupport.x)<1e-8&&Math.abs(diveRaisedSupport.y-diveGroundSupport.y+5)<1e-8&&Math.abs(diveRaisedUI.y-diveGroundUI.y+5)<1e-8'));
+ok('height lifts main and support shot origins and labels with the actor',P('Math.abs(diveRaisedMuzzle.x-diveGroundMuzzle.x)<1e-8&&Math.abs(diveRaisedMuzzle.y-diveGroundMuzzle.y+14)<1e-8&&Math.abs(diveRaisedSupport.x-diveGroundSupport.x)<1e-8&&Math.abs(diveRaisedSupport.y-diveGroundSupport.y+14)<1e-8&&Math.abs(diveRaisedUI.y-diveGroundUI.y+14)<1e-8'));
 advance(210);
 ok('landing returns fully to the existing floor height and prone size',P('proneDiveLift(player)===0&&Math.abs(actorStancePose(player).scaleX-.93)<1e-8'));
+
+// Dust is a landing event, not a per-frame effect or a static-prone side effect.
+fresh();input(0);probe('requestPlayerProne();');advance(419);
+ok('the airborne dive produces no landing dust before floor contact',P("particles.filter(p=>p.t==='PRONE_DUST').length===0&&!player.stance.dive.landed"));
+probe('isPaused=true;updateActorStance(player,100);');
+ok('pause cannot advance the landing clock or release dust early',P("player.stance.elapsedMs===419&&particles.filter(p=>p.t==='PRONE_DUST').length===0&&!player.stance.dive.landed"));
+probe('isPaused=false;');step(1);
+const landingDust=P("particles.filter(p=>p.t==='PRONE_DUST').length");
+ok('floor contact emits a bounded pooled dust burst exactly at landing',landingDust>0&&landingDust<=32&&P("player.stance.dive.landed&&proneDiveLift(player)===0&&particles.filter(p=>p.t==='PRONE_DUST').every(p=>p.shovelOwner===player)"));
+probe('leftStick.active=false;leftStick.dx=leftStick.dy=0;moveProneDive(player);moveProneDive(player);');advance(100);
+ok('settled frames and duplicate landing queries cannot emit another burst',P("particles.filter(p=>p.t==='PRONE_DUST').length")===landingDust);
+probe(`window.diveDustRefs=particles.filter(p=>p.t==='PRONE_DUST');window.diveDustFrozen=JSON.stringify(diveDustRefs);
+ doTick=false;updateParticles();updateParticles();`);
+ok('paused dust rendering leaves particle simulation state untouched',P('JSON.stringify(diveDustRefs)===diveDustFrozen'));
+probe('doTick=true;for(let i=0;i<26;i++)updateParticles();');
+ok('landing dust retires after 26 simulation ticks and releases its actor references',P("particles.filter(p=>p.t==='PRONE_DUST').length===0&&diveDustRefs.every(p=>p.shovelOwner===null&&_particlePool.includes(p))"));
+probe('emitProneLandingDust(player);');
+ok('a later landing reuses the same bounded puff records with fresh lifetime',P("particles.filter(p=>p.t==='PRONE_DUST').length===8&&particles.filter(p=>p.t==='PRONE_DUST').every(p=>diveDustRefs.includes(p)&&p.fxAge===0&&p.fxLife===26&&p.a===175&&p.shovelOwner===player)"));
+
+fresh();probe('requestPlayerProne();');advance(600);
+ok('lowering into prone while stationary does not create impact dust',P("particles.filter(p=>p.t==='PRONE_DUST').length===0"));
 
 const endpoints=[];
 for(const fps of [15,30,60,120]){
@@ -84,7 +116,7 @@ const pose=P('JSON.stringify(stanceBodyPose(player))'),heading=P('stanceFacingAn
 probe('isPaused=true;updateActorStance(player,100);');
 ok('pause freezes the dive clock and all canonical body joints',P('JSON.stringify(player.stance)')===state&&P('JSON.stringify(stanceBodyPose(player))')===pose&&P('stanceFacingAngle(player)')===heading);
 probe('isPaused=false;');advance(280);
-ok('resuming completes the remainder of the same dive',near(P('player.x'),180)&&P('player.stance.value===2&&!proneDiveActive(player)'));
+ok('resuming completes the remainder of the same dive',near(P('player.x'),270)&&P('player.stance.value===2&&!proneDiveActive(player)'));
 
 fresh('STAND',Math.PI/2);probe('buildings=activeBuildings=[{x:0,y:42,w:120,h:10,isWall:true}];invalidateColIndex();');
 ok('an aimed stationary footprint is blocked beside cover',!P("requestActorStance(player,'PRONE')"));
@@ -98,5 +130,5 @@ ok('cover appearing during launch cancels the extended dive safely',P('!proneDiv
 
 fresh();input(0);probe('requestPlayerProne();');advance(420);
 probe('leftStick.active=false;leftStick.dx=leftStick.dy=0;');step(16);
-ok('the dive cannot continue drifting once its displacement is spent',near(P('player.x'),180));
+ok('the dive cannot continue drifting once its displacement is spent',near(P('player.x'),270));
 console.log(`${checks}/${checks} prone dive direction, timing, movement, collision and pose checks passed.`);

@@ -56,6 +56,7 @@ const out = process.env.STANCE_SCENE_OUT || '/tmp/newone-stance-scenes'; fs.mkdi
       const state=()=>page.evaluate(()=>__stanceState());
       const pill=await page.evaluate(()=>stanceTouchButton());
       ok(pill.x-pill.w/2>=0&&pill.x+pill.w/2<=w&&pill.y-pill.h/2>=0&&pill.y+pill.h/2<=h,name+' stance button fits the viewport');
+      ok(Math.abs(pill.y-await page.evaluate(()=>touchCombatLayout().dash.y))<1e-8,name+' raised stance control sits across from dash');
       const clear=await page.evaluate(()=>{
         const b=stanceTouchButton(),a=combatHudLayout().ammo;
         const outsideAmmo=b.x-b.w/2>a.iconX+a.iconW||b.y-b.h/2>a.iconY+a.iconH;

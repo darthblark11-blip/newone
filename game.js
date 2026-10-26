@@ -26,7 +26,7 @@ function togglePlayerHeadAim() {
 // Combat stance stays separate from aim elevation, knockouts and boxing.
 const COMBAT_STANCES = ['STAND', 'CROUCH', 'PRONE'];
 const STANDING_STANCE_POSE = {crouch:0,prone:0,scaleX:1,scaleY:1,forward:0,muzzleForward:0,muzzleSide:0,uiOffset:0};
-const STANCE_HOLD_MS = 250, PRONE_DIVE_MS = 420, PRONE_DIVE_DISTANCE = 180;
+const STANCE_HOLD_MS = 250, PRONE_DIVE_MS = 420, PRONE_DIVE_DISTANCE = 270, PRONE_DIVE_LEVEL_MS = 65;
 const stanceInput = {crouch:false,prone:false,hold:null};
 function actorCanUseStances(a) {
   return !!a && !a.isNM0Scientist && !a.isCorpse && (a.isPlayer || ragHumanoid(a.eType,a.bodyW)) &&
@@ -59,7 +59,7 @@ function actorStancePose(a) {
   p.prone=Math.max(0,v-1);p.crouch=Math.min(1,v)*(1-p.prone);
   // Camera height changes uniformly. Bent joints, not a squashed standing
   // canvas, supply the lowered silhouette.
-  p.scaleX=p.scaleY=(1-.045*Math.min(1,v)-.025*p.prone)*(1+.05*proneDiveArc(a));
+  p.scaleX=p.scaleY=(1-.045*Math.min(1,v)-.025*p.prone)*(1+.09*proneDiveArc(a));
   p.forward=p.muzzleForward=0;p.muzzleSide=0;p.uiOffset=9*p.crouch+19*p.prone;
   return p;
 }
@@ -83,8 +83,8 @@ function proneDiveArc(a) {
   const t=a.stance.elapsedMs/a.stance.durationMs;
   return Math.sin(Math.PI*t)**2;
 }
-// A small camera-height lift separates the diving body from its ground shadow.
-function proneDiveLift(a) { return 5*proneDiveArc(a); }
+// Camera height is independent of the fast belly-down pose interpolation.
+function proneDiveLift(a) { return 14*proneDiveArc(a); }
 function proneAimLocked(a) {
   return !!a&&a.isPlayer&&actorStancePose(a).prone>0&&
     (proneAimInput(a)||!!(a.stance&&a.stance.proneAimBlend>.01));
@@ -153,9 +153,11 @@ function requestPlayerProne() {
 // capsule in small steps so a long frame can never dive through thin cover.
 function moveProneDive(a) {
   const s=a.stance,d=s&&s.dive;
-  if(!d)return;
-  const t=Math.min(1,s.elapsedMs/s.durationMs);
-  const target=PRONE_DIVE_DISTANCE*(1-(1-t)**3),distance=target-d.moved;
+  if(!d||!doTick||!combatStanceContext())return;
+  const t=Math.min(1,s.elapsedMs/s.durationMs),brake=Math.max(0,(t-.6)/.4);
+  // Carry forward momentum through the level flight, then smoothly brake.
+  const travel=t<=.6?t/.8:(.6+.4*(brake-brake**3+.5*brake**4))/.8;
+  const target=PRONE_DIVE_DISTANCE*travel,distance=target-d.moved;
   const steps=Math.max(1,Math.ceil(distance/4)),step=distance/steps;
   let traveled=0;
   for(let i=0;i<steps;i++) {
@@ -167,6 +169,17 @@ function moveProneDive(a) {
   a.isMoving=traveled>.001&&t<1;
   a.moveAngle=a.lastMoveAngle=d.angle;
   a.gait+=(0-a.gait)*GAIT_EASE;
+  if(t===1&&!d.landed){d.landed=true;emitProneLandingDust(a);}
+}
+function emitProneLandingDust(a) {
+  const angle=a.stance.dive.angle,co=Math.cos(angle),si=Math.sin(angle);
+  // A bounded ring of pooled ground puffs marks contact, after the final sweep.
+  for(let i=0;i<8;i++) {
+    const fan=angle+i*Math.PI/4,dx=Math.cos(fan),dy=Math.sin(fan);
+    const p=newParticle(a.x-co*9+dx*12,a.y-si*9+dy*8,color(183,150,103),
+      'PRONE_DUST',dx*(1.3+i%3*.35)+co*.4,dy*(1.3+i%3*.35)+si*.4,a);
+    p.fxSeed=i+1;particles.push(p);
+  }
 }
 function updateActorStance(a,elapsedMs=deltaTime) {
   if(!a||!a.stance)return;
@@ -183,7 +196,7 @@ function updateActorStance(a,elapsedMs=deltaTime) {
   if(began||s.elapsedMs>=s.durationMs)return;
   // Incoming shots resolve the current drop height, never the destination early.
   s.elapsedMs=Math.min(s.durationMs,s.elapsedMs+dt);
-  const t=Math.min(1,s.elapsedMs/s.durationMs*(s.dive?1.25:1)),eased=t*t*(3-2*t);
+  const t=Math.min(1,s.elapsedMs/(s.dive?PRONE_DIVE_LEVEL_MS:s.durationMs)),eased=t*t*(3-2*t);
   s.value=s.from+(s.to-s.from)*eased;
   if(s.elapsedMs===s.durationMs){s.value=s.to;s.cooldownMs=180;}
 }
@@ -244,7 +257,7 @@ function handleDesktopStance() {
 function stanceTouchButton() {
   const base=leftStick&&leftStick.base?leftStick.base:{x:80,y:height-160};
   const beside=width>=560&&height<500;
-  return {x:Math.max(58,base.x)+(beside?140:0),y:beside?base.y:height-270,w:104,h:44};
+  return {x:Math.max(58,base.x)+(beside?140:0),y:touchCombatLayout().dash.y,w:104,h:44};
 }
 function handleStanceTouch(x,y) {
   if(!combatStanceContext()||!player||actorStanceSuppressed(player))return false;
@@ -26789,6 +26802,9 @@ Particle.prototype.init = function(x, y, c, t, dX = 0, dY = 0, owner = null) {
     this.fxSeed=0;this.fxAge=0;this.fxLife=0;this.fxAngle=0;
     this.fxMaterial='';this.fxKind=0;this.fxStretch=1;
     shovelBindEffect(this, owner);
+    if(t==='PRONE_DUST') {
+        this.sz=6.5;this.vx=dX;this.vy=dY;this.l=this.fxLife=26;this.a=175;return;
+    }
     if(t==='CEL_EXPLOSION') {
         this.fxSeed=++_celExplosionSerial;this.fxAngle=Math.atan2(dY,dX);
         this.fxMaterial=c.levels[2]>c.levels[0]+35?'BLUE':'FIRE';
@@ -26850,6 +26866,10 @@ Particle.prototype.init = function(x, y, c, t, dX = 0, dY = 0, owner = null) {
 };
 
 Particle.prototype.update = function() {
+    if(this.t==='PRONE_DUST') {
+        this.fxAge++;this.l--;this.x+=this.vx;this.y+=this.vy;this.vx*=.88;this.vy*=.88;
+        this.a=Math.round(175*Math.max(0,1-this.fxAge/this.fxLife));return;
+    }
     if(this.t==='CEL_EXPLOSION') {
         this.fxAge++;this.l--;this.a=Math.round(255*Math.min(1,Math.max(0,(1-this.fxAge/this.fxLife)*2)));return;
     }
@@ -26867,6 +26887,7 @@ Particle.prototype.show = function() {
 Particle.prototype.paint = function() {
     const c = this.c.levels;
     noStroke();
+    if(this.t==='PRONE_DUST'){drawProneLandingDust(this);return;}
     if(this.t==='CEL_EXPLOSION'){drawCelExplosion(this);return;}
     if(this.t==='COMIC_IMPACT'){drawComicImpactParticle(this);return;}
     if(this.t==='HIT_BLOOD'){drawHitBloodParticle(this);return;}
@@ -26898,6 +26919,16 @@ Particle.prototype.paint = function() {
         if (paint) fill(paint); else fill(c[0], c[1], c[2], this.a);
         ellipse(this.x, this.y, this.sz, this.sz);
     }
+}
+
+function drawProneLandingDust(p) {
+    const t=Math.min(1,p.fxAge/p.fxLife),size=p.sz*(.65+t*1.5),lift=t*2;
+    push();translate(p.x,p.y);
+    stroke(103,79,49,Math.round(p.a*.6));strokeWeight(.55);fill(162,129,85,p.a);
+    celExplosionCloudPath(0,-lift,size,size*.43,p.fxSeed);
+    noStroke();fill(223,194,146,Math.round(p.a*.85));
+    celExplosionCloudPath(-size*.13,-lift-size*.12,size*.72,size*.27,p.fxSeed);
+    pop();
 }
 
 const COMIC_HIT_INK=[57,26,24],COMIC_HIT_GOLD=[255,204,12],COMIC_HIT_LIGHT=[255,232,65];

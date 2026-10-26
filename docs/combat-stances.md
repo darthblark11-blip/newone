@@ -42,9 +42,10 @@ below 0.5, crouched coverage from 0.5 to below 1.5, and prone coverage thereafte
 An ordinary drop passes through crouched coverage before reaching prone.
 Holding the stance control for a quarter second while moving instead commits a
 directional dive with invulnerability only during the 420 ms dive. The planted
-body faces travel from launch, extends through the dive and eases onto the floor.
-At the apex the body rises five units above its shadow and grows uniformly by
-5%, then settles back to its normal prone size. The 180-unit
+body faces travel from launch and interpolates into a level belly-down position
+within 65 ms. It stays extended while airborne, then falls onto the floor with one
+dust burst at contact. At the apex the body rises fourteen units above its shadow
+and grows uniformly by 9%, then settles back to its normal prone size. The 270-unit
 lunge sweeps the full body against cover and cannot steer midair. A stationary
 hold lowers the actor in place without invulnerability. Another transition must
 wait for completion and a 180 ms recovery window. Pausing freezes progress.
@@ -149,7 +150,7 @@ standing actor: its first press from a lower stance requests a rise.
 
 Controls:
 
-- Touch: tap the button beside/above the left movement stick to toggle crouch/stand.
+- Touch: tap the button above the left movement stick, across from dash, to toggle crouch/stand.
   Hold it for **0.25 seconds** to enter prone. It remains separate from the right aiming silhouette.
 - Keyboard: tap **C** to toggle crouch/stand; hold **C** for **0.25 seconds** to enter prone.
   **Z** retains the explicit prone/stand shortcut. Shovel mode retains its C dig key.

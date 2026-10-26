@@ -112,6 +112,7 @@ for (const [w,h] of [[320,568],[393,800],[940,430]]) {
   probe(`width=${w};height=${h};leftStick.base={x:80,y:height-160};`);const b=P('stanceTouchButton()');
   ok('the left stance control fits '+w+'x'+h,b.x-b.w/2>=0&&b.x+b.w/2<=w&&b.y-b.h/2>=100&&b.y+b.h/2<h&&
     (Math.abs(b.x-80)>b.w/2+60||Math.abs(b.y-(h-160))>b.h/2+60));
+  ok('the raised crouch button sits across from dash '+w+'x'+h,Math.abs(b.y-P('touchCombatLayout().dash.y'))<1e-8);
 }
 
 fresh();keys.add(67);probe('handleDesktop();');advance(100);
