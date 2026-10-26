@@ -40,9 +40,24 @@ for(const start of ['STAND','CROUCH'])for(let i=0;i<8;i++){
    Math.abs(P('player.x')*Math.sin(angle)-P('player.y')*Math.cos(angle))<1e-7&&P('proneDiveActive(player)'));
  advance(210);
  ok('landing reaches the same endpoint in each direction '+start+i,
-   near(P('player.x'),Math.cos(angle)*132)&&near(P('player.y'),Math.sin(angle)*132));
+   near(P('player.x'),Math.cos(angle)*180)&&near(P('player.y'),Math.sin(angle)*180));
  ok('landing ends immunity in the existing prone pose '+start+i,P('player.stance.value===2&&!proneDiveActive(player)&&!proneDivePoseActive(player)&&stanceProneSpotClear(player)'));
 }
+fresh();input(0);probe('requestPlayerProne();');
+ok('the raised dive starts at ground height',P('proneDiveLift(player)===0'));
+advance(210);
+ok('the dive apex rises five units with a modest uniform size increase',P('Math.abs(proneDiveLift(player)-5)<1e-8&&Math.abs(actorStancePose(player).scaleX/(1-.045-.025*actorStancePose(player).prone)-1.05)<1e-8&&actorStancePose(player).scaleX===actorStancePose(player).scaleY'));
+probe(`window.diveRaisedMuzzle=stanceMuzzleWorld(player,player.x+31,player.y+8);
+ window.diveRaisedSupport=stanceMuzzleWorld(player,player.x+31,player.y+8,0,true);
+ window.diveRaisedUI=actorStanceUIAnchor(player);
+ var diveLiftOriginal=proneDiveLift;proneDiveLift=()=>0;
+ window.diveGroundMuzzle=stanceMuzzleWorld(player,player.x+31,player.y+8);
+ window.diveGroundSupport=stanceMuzzleWorld(player,player.x+31,player.y+8,0,true);
+ window.diveGroundUI=actorStanceUIAnchor(player);proneDiveLift=diveLiftOriginal;`);
+ok('height lifts main and support shot origins and labels with the actor',P('Math.abs(diveRaisedMuzzle.x-diveGroundMuzzle.x)<1e-8&&Math.abs(diveRaisedMuzzle.y-diveGroundMuzzle.y+5)<1e-8&&Math.abs(diveRaisedSupport.x-diveGroundSupport.x)<1e-8&&Math.abs(diveRaisedSupport.y-diveGroundSupport.y+5)<1e-8&&Math.abs(diveRaisedUI.y-diveGroundUI.y+5)<1e-8'));
+advance(210);
+ok('landing returns fully to the existing floor height and prone size',P('proneDiveLift(player)===0&&Math.abs(actorStancePose(player).scaleX-.93)<1e-8'));
+
 const endpoints=[];
 for(const fps of [15,30,60,120]){
  fresh();input(-Math.PI/4);probe('requestPlayerProne();');advance(420,1000/fps);
@@ -50,17 +65,17 @@ for(const fps of [15,30,60,120]){
 }
 ok('dive distance is independent of frame rate',endpoints.every(p=>near(p[0],endpoints[0][0])&&near(p[1],endpoints[0][1])));
 fresh();probe('requestPlayerProne();');advance(300);
-ok('a stationary hold lowers in place with no movement or dive pose',P("player.x===0&&player.y===0&&player.stance.value===2&&!player.stance.dive&&!proneDiveActive(player)"));
+ok('a stationary hold lowers in place with no movement or dive pose',P("player.x===0&&player.y===0&&player.stance.value===2&&!player.stance.dive&&!proneDiveActive(player)&&proneDiveLift(player)===0"));
 
 fresh();keys.add(67);probe('handleDesktopStance();');
-for(let i=0;i<9;i++)probe('updateActorStance(player,100);');
-probe('updateActorStance(player,99);');
+for(let i=0;i<2;i++)probe('updateActorStance(player,100);');
+probe('updateActorStance(player,49);');
 input(Math.PI/2);probe('updateActorStance(player,1);');
-ok('the hold samples the current movement thumb at one second',P('proneDiveActive(player)')&&near(P('player.stance.dive.angle'),Math.PI/2));
-ok('the one-second preparation does not spend the dive animation early',P('player.stance.elapsedMs===0&&player.stance.value===0'));
+ok('the hold samples the current movement thumb at a quarter second',P('proneDiveActive(player)')&&near(P('player.stance.dive.angle'),Math.PI/2));
+ok('the quarter-second preparation does not spend the dive animation early',P('player.stance.elapsedMs===0&&player.stance.value===0'));
 fresh();input(0);keys.add(67);probe('handleDesktopStance();');
-for(let i=0;i<9;i++)probe('updateActorStance(player,100);');
-probe('updateActorStance(player,99);');
+for(let i=0;i<2;i++)probe('updateActorStance(player,100);');
+probe('updateActorStance(player,49);');
 probe('leftStick.active=false;leftStick.dx=leftStick.dy=0;updateActorStance(player,1);');
 ok('releasing movement before the threshold produces a stationary drop',P('player.stance.to===2&&!player.stance.dive&&!proneDiveActive(player)'));
 
@@ -69,7 +84,7 @@ const pose=P('JSON.stringify(stanceBodyPose(player))'),heading=P('stanceFacingAn
 probe('isPaused=true;updateActorStance(player,100);');
 ok('pause freezes the dive clock and all canonical body joints',P('JSON.stringify(player.stance)')===state&&P('JSON.stringify(stanceBodyPose(player))')===pose&&P('stanceFacingAngle(player)')===heading);
 probe('isPaused=false;');advance(280);
-ok('resuming completes the remainder of the same dive',near(P('player.x'),132)&&P('player.stance.value===2&&!proneDiveActive(player)'));
+ok('resuming completes the remainder of the same dive',near(P('player.x'),180)&&P('player.stance.value===2&&!proneDiveActive(player)'));
 
 fresh('STAND',Math.PI/2);probe('buildings=activeBuildings=[{x:0,y:42,w:120,h:10,isWall:true}];invalidateColIndex();');
 ok('an aimed stationary footprint is blocked beside cover',!P("requestActorStance(player,'PRONE')"));
@@ -83,5 +98,5 @@ ok('cover appearing during launch cancels the extended dive safely',P('!proneDiv
 
 fresh();input(0);probe('requestPlayerProne();');advance(420);
 probe('leftStick.active=false;leftStick.dx=leftStick.dy=0;');step(16);
-ok('the dive cannot continue drifting once its displacement is spent',near(P('player.x'),132));
+ok('the dive cannot continue drifting once its displacement is spent',near(P('player.x'),180));
 console.log(`${checks}/${checks} prone dive direction, timing, movement, collision and pose checks passed.`);

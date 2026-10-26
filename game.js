@@ -26,7 +26,7 @@ function togglePlayerHeadAim() {
 // Combat stance stays separate from aim elevation, knockouts and boxing.
 const COMBAT_STANCES = ['STAND', 'CROUCH', 'PRONE'];
 const STANDING_STANCE_POSE = {crouch:0,prone:0,scaleX:1,scaleY:1,forward:0,muzzleForward:0,muzzleSide:0,uiOffset:0};
-const STANCE_HOLD_MS = 1000, PRONE_DIVE_MS = 420, PRONE_DIVE_DISTANCE = 132;
+const STANCE_HOLD_MS = 250, PRONE_DIVE_MS = 420, PRONE_DIVE_DISTANCE = 180;
 const stanceInput = {crouch:false,prone:false,hold:null};
 function actorCanUseStances(a) {
   return !!a && !a.isNM0Scientist && !a.isCorpse && (a.isPlayer || ragHumanoid(a.eType,a.bodyW)) &&
@@ -59,7 +59,7 @@ function actorStancePose(a) {
   p.prone=Math.max(0,v-1);p.crouch=Math.min(1,v)*(1-p.prone);
   // Camera height changes uniformly. Bent joints, not a squashed standing
   // canvas, supply the lowered silhouette.
-  p.scaleX=p.scaleY=1-.045*Math.min(1,v)-.025*p.prone;
+  p.scaleX=p.scaleY=(1-.045*Math.min(1,v)-.025*p.prone)*(1+.05*proneDiveArc(a));
   p.forward=p.muzzleForward=0;p.muzzleSide=0;p.uiOffset=9*p.crouch+19*p.prone;
   return p;
 }
@@ -83,6 +83,8 @@ function proneDiveArc(a) {
   const t=a.stance.elapsedMs/a.stance.durationMs;
   return Math.sin(Math.PI*t)**2;
 }
+// A small camera-height lift separates the diving body from its ground shadow.
+function proneDiveLift(a) { return 5*proneDiveArc(a); }
 function proneAimLocked(a) {
   return !!a&&a.isPlayer&&actorStancePose(a).prone>0&&
     (proneAimInput(a)||!!(a.stance&&a.stance.proneAimBlend>.01));
@@ -257,7 +259,7 @@ function drawStanceTouchButton() {
   push();fill(24,37,43,190);stroke(111,170,177,190);strokeWeight(1.5);rect(b.x-b.w/2,b.y-b.h/2,b.w,b.h,12);
   noStroke();textFont('sans-serif');textAlign(CENTER,CENTER);textSize(12);fill(222,234,227);
   text(current==='STAND'?'CROUCH':'STAND',b.x,b.y-7);
-  textSize(9);fill(148,182,187);text('HOLD 1s: PRONE',b.x,b.y+9);
+  textSize(9);fill(148,182,187);text('HOLD .25s: PRONE',b.x,b.y+9);
   const h=stanceInput.hold;
   if(h&&!h.triggered){stroke(154,216,213);strokeWeight(2);line(b.x-b.w/2+10,b.y+b.h/2-4,b.x-b.w/2+10+(b.w-20)*h.elapsedMs/STANCE_HOLD_MS,b.y+b.h/2-4);}
   pop();
@@ -42522,7 +42524,7 @@ function stanceMuzzleWorld(c, x, y, angle = c.aimAngle || 0, support = false) {
   if (!p.crouch && !p.prone) return { x, y };
   const ca = Math.cos(angle), sa = Math.sin(angle), dx = x - c.x, dy = y - c.y;
   const local = stanceLocalPoint(c, dx * ca + dy * sa, -dx * sa + dy * ca,support);
-  return { x: c.x + ca * local.x - sa * local.y, y: c.y + sa * local.x + ca * local.y };
+  return { x: c.x + ca * local.x - sa * local.y, y: c.y + sa * local.x + ca * local.y - proneDiveLift(c) };
 }
 function stanceHeadLocal(c) {
   const p = actorStancePose(c);
@@ -42535,7 +42537,7 @@ function actorStanceUIAnchor(c) {
   const p = actorStancePose(c), h = stanceHeadLocal(c), ca = Math.cos(stanceFacingAngle(c)), sa = Math.sin(stanceFacingAngle(c));
   const low = p.crouch || 0, prone = p.prone || 0;
   return { x: c.x + ca * h.x - sa * h.y,
-    y: c.y + sa * h.x + ca * h.y - 28 + low * 10 + prone * 18 };
+    y: c.y + sa * h.x + ca * h.y - 28 + low * 10 + prone * 18 - proneDiveLift(c) };
 }
 function drawCombatStanceUI(c, p) {
   const low = (p.crouch || 0) + (p.prone || 0);
@@ -42698,7 +42700,7 @@ function drawCombatStanceFigure(c, p) {
   else if (c.isPlayer && cowboySuitEquipped) { cloth = color(219,196,146); trousers = color(61,93,118); }
   if (c.hitFlash > 0) { cloth = color(255); c.hitFlash--; }
   drawCombatStanceShadow(c, p);
-  push(); rotate(ca);
+  push(); translate(0,-proneDiveLift(c)); rotate(ca);
   if(c.isPlayer) {
     if(c.shieldBurstTimer>0) {
       push();noFill();stroke(0,200,255,c.shieldBurstTimer*17);strokeWeight(3);
@@ -42833,7 +42835,7 @@ function drawCombatStanceFigure(c, p) {
   pop();pop();
   if (c.reloadTimer > 0) {
     push(); noFill(); stroke(93,216,229,160); strokeWeight(2);
-    arc(0,0,34,25,-HALF_PI,-HALF_PI+(1-c.reloadTimer/90)*TWO_PI); pop();
+    translate(0,-proneDiveLift(c));arc(0,0,34,25,-HALF_PI,-HALF_PI+(1-c.reloadTimer/90)*TWO_PI); pop();
   }
   drawCombatStanceUI(c,p);
 }

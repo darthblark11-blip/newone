@@ -75,15 +75,15 @@ const out = process.env.STANCE_SCENE_OUT || '/tmp/newone-stance-scenes'; fs.mkdi
       const layout=await page.evaluate(()=>touchAimSilhouetteLayout());
       const head={id:2,x:Math.round(layout.centerX-8),y:Math.round(layout.sections[0].y+22)};
       await send('touchStart',[press]);
-      await send('touchMove',[{...press,x:head.x,y:head.y}]);await page.evaluate(()=>__stanceStep(20));s=await state();
+      await send('touchMove',[{...press,x:head.x,y:head.y}]);await page.evaluate(()=>__stanceStep(5));s=await state();
       ok(s.stance==='CROUCH'&&s.state.to===1&&s.aim===null&&s.ammo===17&&s.bullets.length===0,
         name+' a pending stance finger stays owned when it moves across the aiming silhouette');
       await send('touchEnd',[]);await page.evaluate(()=>__stanceStep(40));s=await state();
       ok(s.stance==='STAND'&&s.state.value===0,name+' a second short tap stands rather than cycling to prone');
-      await send('touchStart',[press]);await page.evaluate(()=>__stanceStep(50));s=await state();
-      ok(s.state.to===0,name+' a native hold below one second cannot enter prone');
-      await page.evaluate(()=>__stanceStep(15));s=await state();
-      ok(s.state.to===2,name+' a one-second native touch hold commits prone');
+      await send('touchStart',[press]);await page.evaluate(()=>__stanceStep(12));s=await state();
+      ok(s.state.to===0,name+' a native hold below a quarter second cannot enter prone');
+      await page.evaluate(()=>__stanceStep(3));s=await state();
+      ok(s.state.to===2,name+' a quarter-second native touch hold commits prone');
       await page.evaluate(()=>__stanceStep(40));await send('touchEnd',[]);await page.evaluate(()=>__stanceStep(2));s=await state();
       ok(s.stance==='PRONE'&&s.state.value===2,name+' releasing the completed hold keeps the player prone');
       ok(s.ammo===17&&s.bullets.length===0,name+' taps and held stance changes preserve ammunition');

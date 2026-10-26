@@ -34,7 +34,7 @@ Touch, mouse, directional blocking and other controls keep their behavior.
 | L3 — left stick click | Dash |
 | R3 — right stick click | Release a drawn bow; otherwise toggle headshot aim |
 | D-pad up | Cycle owned melee tools: sword → pickaxe → unarmed |
-| D-pad down | Tap to crouch/stand; hold 1 second for prone (moving dives) |
+| D-pad down | Tap to crouch/stand; hold 0.25 seconds for prone (moving dives) |
 | D-pad left / right | Previous / next available firearm, taser or unlocked bow |
 | L2 | Hold/cook grenade; release to throw |
 | L2 with chemist suit | Hold/cook flask; release to throw. No grenades. |
