@@ -55,6 +55,13 @@ color and random sequence are unchanged. Small impact/trail drops and scorch
 still appear immediately. Pause freezes growth, and biome travel retains the
 pending floor deposition in its own blood bank.
 
+Explosion deaths are the exception: their oval pools hold for only six active
+ticks (about 0.1 seconds) and complete at 54 ticks (about 0.9 seconds). The
+center ovals grow first over 20 ticks while the outer ovals follow. The same
+short schedule applies to built-in face-down and below-ground blast pools.
+This changes timing only; the rolled final oval shapes, colors and random
+sequence remain identical to the ordinary pool.
+
 Each actual human death adds a ragged vector floor splatter alongside the
 existing oval pool. The finishing projectile's direction controls the heavy
 forward fan, tapered satellite streaks and smaller entry-side tears. Other
@@ -151,6 +158,7 @@ node tools/check-armored-impact-effects.js
 node tools/check-standard-armor-break.js
 node tools/check-comic-hit-feedback.js
 node tools/check-kill-vector-blood.js
+node tools/check-blast-blood-pools.js
 VIS_DEPS=/workspace/newone-dev node tools/check-impact-particles.js
 VIS_DEPS=/workspace/newone-dev node tools/visual-comic-impacts.js
 VIS_DEPS=/workspace/newone-dev node tools/visual-kill-vector-splatter.js

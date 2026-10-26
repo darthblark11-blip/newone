@@ -12,9 +12,23 @@ lightning, corpse and finisher bursts to the new art. Grenades, rockets,
 barrels, car chains and robot charges use their normal blast trigger with its
 actual radius. The jetpack's blue explosion retains its blue palette.
 
-These are cosmetic changes. Damage, allegiance, blast radii, grenade fire
-zones, audio, screen shake, scorch marks and existing death selections retain
-their previous behavior. New explosion death animations are outside this change.
+Damage, allegiance, blast radii, grenade fire zones, audio, screen shake and
+scorch marks retain their previous behavior.
+
+Human grenade, rocket and jetpack dash-blast deaths now cycle through three additional deaths:
+both legs destroyed beneath a thrown torso, one leg torn off while the rest of
+the body flies away, and a diagonal split into two flying body sections. These
+join the existing dismemberment deaths in a separate rotation, independent of
+headshot, shotgun and lightning selections. The standard NM0 armor uses the
+human rig; the armored orb, creatures, robots and airborne jetpack enemies keep
+their own death tables. The player uses the human blast rotation too.
+
+The new parts rise above their floor shadows, spin, shed blood and gibs, then
+land and freeze into the existing body layer. Their clothing and surviving
+limbs use the native fallen-figure materials. Explosion puddles have only a
+six-tick hold and finish growing by tick 54; ordinary-death puddles retain their
+slower six-second spread. The fast timing also follows detached parts and
+below-ground blood deposits.
 
 Each effect occupies one `CEL_EXPLOSION` particle and lasts 48 active simulation
 ticks. Eight starts per frame and twenty-four simultaneous effects bound the
@@ -31,10 +45,13 @@ Verification:
 
 ```sh
 node tools/check-cel-explosions.js
+node tools/check-explosion-deaths.js
+node tools/check-blast-blood-pools.js
 node tools/check-robot.js
 node tools/check-player-kill-combo.js
 VIS_DEPS=/workspace/newone-dev node tools/check-particle-performance.js
 VIS_DEPS=/workspace/newone-dev node tools/visual-cel-explosions.js
+VIS_DEPS=/workspace/newone-dev node tools/visual-explosion-deaths.js
 ```
 
 The older particle-parity check continues to compare every unchanged particle

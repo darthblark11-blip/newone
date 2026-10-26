@@ -92,7 +92,7 @@ probe(`window.celInside=new Character(80,0,false,'NORMAL');celInside.hp=1000;cel
  enemiesList=[celInside,celOutside];triggerExplosion(0,0,160,false,true,player);`);
 ok('ordinary grenade-sized blasts create exactly one cel effect',numberOf('CEL_EXPLOSION')===1);
 ok('ordinary blast damage still kills an in-range hostile only',P('celInside.dead&&celInside.hp===0&&celOutside.hp===1000&&!celOutside.dead'));
-ok('the existing grenade death animation is retained',P("corpses.length===1&&corpses[0].dT===5"));
+ok('the grenade death enters the dedicated human explosion rotation',P("corpses.length===1&&EXPLOSION_HUMAN_DEATHS.includes(corpses[0].dT)&&corpses[0].blastBlood"));
 ok('the main blast no longer emits its old explosion or smoke cloud',numberOf('EXPLOSION')===0&&numberOf('SMOKE')===0);
 const grenadeSize=P("particles.find(p=>p.t==='CEL_EXPLOSION').sz");
 
