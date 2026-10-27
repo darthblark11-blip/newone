@@ -1,26 +1,75 @@
 # Level 1 city districts
 
-The streamed residential and commercial city now selects six deterministic block plans: brownstone mews, offset office campus, open courtyard housing, market streets, workshop yards, and garden apartments. Industrial blocks select workshops or garden apartments alongside the existing parking lots. Parks, canal quays, construction sites, civic terraces and the authored story core retain their specialized layouts.
+Stick City's ordinary opening blocks and its streamed residential/commercial
+neighbourhoods share ten deterministic plans. The opening enclosure now includes
+all ten identities, and the same plans continue beyond the story walls.
 
-Buildings have six corresponding roof families: terracotta/copper pitches and dormers; glass atria; residential terraces; pitched shops; sawtooth workshop roofs; and planted apartments. Visible facade windows interpolate along the actual ground-to-roof quadrilateral. Chimneys, stair cores and planter beds use independent short mass projections with contact shadows. Mirrored block addresses and material tones vary deterministically.
+| Plan | Buildings and open space |
+| --- | --- |
+| Brownstone mews | Copper/terracotta roofs, dormers and a central carriage lane. |
+| Office campus | Offset glass atria, service cores and broad cross routes. |
+| Courtyard housing | Four separated residential wings around lawn and stone paths. |
+| Market streets | Small pitched shops, striped produce stalls and pedestrian lanes. |
+| Workshop yards | Sawtooth roofs, north-light glazing and loading lanes. |
+| Garden apartments | Staggered planted terraces, pergolas and asymmetric passages. |
+| Transit exchange | Ribbed station halls, amber fascia, bus shelter and paved public court. |
+| Civic library | Stepped limestone roofs, bronze-framed skylights, reading wings and benches. |
+| Conservatory | Planted glasshouses with visible beds, glazing ribs and garden walks. |
+| Municipal depot | Solar-panel roofs, vents, loading shutters and marked service bays. |
 
-Court paths and market lanes are baked into the ground; roofs and facade geometry remain live at screen resolution. Bus shelters stand on four projected posts instead of a solid rectangular skirt. Glazing reflections, thick roof edges, kiosk awning fascia and roof rain darkening retain the existing cel-shaded palette. Selected facade windows warm after dusk; existing lamps continue to provide night illumination.
+Industrial blocks select workshop, garden-apartment or depot plans alongside
+existing parking lots. A shared address selector keeps industrial parking and
+depot ground treatments aligned with their buildings. Parks, canal quays,
+construction sites and civic terraces retain their specialized layouts. The protagonist's house block, five original
+entertainment landmarks, Great Gates, curtain walls and two story transmission
+towers retain their original positions and footprints.
+
+District-specific street furniture includes bicycle racks with parked bikes,
+produce stalls, wayfinding plaques, planters, postboxes and benches. Furniture
+uses checked ground footprints and leaves pedestrian crossings clear. Mirrored
+addresses and material tones vary deterministically. Facade windows follow the
+actual ground-to-roof quadrilateral; depot shutters, library pilasters and transit
+fascia follow the same projection. Rooftop additions remain visual masses.
+
+Court paths, service bays, paving joints, storm drains, utility covers, asphalt
+repairs and kerb litter are baked once into chunk terrain. The paths use the
+same district selection and mirroring as the buildings, including inside the
+authored opening area. Paved rectangles also register their shovel surface
+metadata. Selected windows warm after dusk; existing lamps continue to provide
+night illumination. The new streets do not add a per-frame ground-detail pass.
 
 ## Persistence and scope
 
-Changed districts use a `district:` destruction-key namespace for the entire block. Old grid destruction indexes cannot erase unrelated replacement buildings or street fixtures. This means old destroyed buildings in replaced districts do not map onto their replacements. Civic and untouched block keys retain their previous behavior.
+Changed streamed districts use the `district:v2:` destruction-key namespace for
+an entire block, including furniture and industrial parking replacements. Old
+numeric-grid and `district:` indexes cannot erase unrelated replacement structures. Destruction from those previous
+layouts does not map onto replacement buildings. Current destruction still
+removes only its intended solid and survives revisiting. Civic and untouched
+block keys retain their previous behavior.
 
-Building collision and depth sorting use ground footprints. Courtyards and lanes remain navigable; rooftop details are visual masses, not accessible interiors. Existing civic terrace elevation is preserved. This update adds procedural variety outside the authored story core.
+Collision and depth sorting continue to use ground footprints. Courtyards and
+lanes remain navigable, rooftop details add no accessible interiors, and the
+existing civic terrace elevation is preserved. No combat values or objectives
+change.
 
 ## Validation
 
-Run `node tools/check-city-districts.js` for 1,000 deterministic generated chunks, six plan/style coverage, footprint bounds, overlap checks, cross routes, destruction persistence, finite foliage geometry, exposed facade placement, and 72 time/weather/view combinations.
+`node tools/check-city-districts.js` checks 1,000 deterministic chunks, ten
+plan/roof families, authored home/landmark/gate/tower preservation, clear
+24-unit pedestrian crossings, furniture bounds and overlaps, old/current
+destruction-key isolation, 40 mirrored ground bakes with paint/metadata parity,
+and 120 time/weather/view renders with finite drawing coordinates.
 
-Render individual plans with real p5/Chromium:
+Render individual streamed plans with real p5/Chromium:
 
+```sh
+VIS_DEPS=/path/to/deps VIS_CHROME=/path/to/chrome VW_W=1100 VW_H=1000 node tools/visual-world.js 1 0 0 0.85 district=6
+VIS_DEPS=/path/to/deps VIS_CHROME=/path/to/chrome VW_W=1100 VW_H=1000 node tools/visual-world.js 1 0 0 0.85 district=8 night rain
 ```
-VIS_DEPS=/path/to/deps VIS_CHROME=/path/to/chrome VW_W=1100 VW_H=1000 node tools/visual-world.js 1 0 0 0.85 district=2
-VIS_DEPS=/path/to/deps VIS_CHROME=/path/to/chrome VW_W=1100 VW_H=1000 node tools/visual-world.js 1 0 0 0.85 district=5 night rain
-```
 
-Representative previews are in `docs/previews/city-*.png`. The existing generation, render, depth, lighting, save/load, civic-terrain and real-browser frame checks also pass. No manual combat playthrough or mobile performance measurement was performed; the software browser's light rig exercised its existing frame-budget fallback.
+Population, fortress, save/load and the real-browser frame/control checks pass.
+The civic-terrace check currently fails its other-biome elevation assertion on
+both this version and the preceding commit; its Level 1 assertions pass before
+that failure. No manual combat playthrough or physical-phone performance
+measurement was performed. The software-browser frame check exercised the
+existing light-rig frame-budget fallback while keeping controls responsive.

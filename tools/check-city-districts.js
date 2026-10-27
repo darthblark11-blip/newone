@@ -1,47 +1,211 @@
 // Real generator invariants: distinct routes, collision geometry, persistence,
-// and rendering at opposite lean directions in daylight, night and rain.
+// authored story landmarks, and projection at opposite views in sun/night/rain.
 const assert=require('assert');
-const {ctx,probe}=require('./harness');
+const {ctx,mkG,probe}=require('./harness');
 const P=s=>probe('('+s+')');
 probe('currentLevel=1;currentBiome=1;BIOME_ACTIVE=true;authoredCore=null;authoredMask=null;authoredChunks=null;biomeState={};');
-const found=new Map(),arches=new Set();let chunks=0;
+const found=new Map(),arches=new Set(),streetProps=new Set();let chunks=0;
+const industrial={parking:0,district:0,depot:0};let parkingFixture=null;
+const blockersOf=solids=>solids.filter(b=>!b.noClip&&!b.isGrassLot&&!b.isDeck&&!b.isWater);
+function checkBlock(solids,cx,cy,label) {
+  const bs=solids.filter(b=>b.cityArchitecture!==undefined),blockers=blockersOf(solids);
+  const furniture=solids.filter(b=>b.cityPlan!==undefined&&b.cityArchitecture===undefined);
+  for(const a of furniture){
+    streetProps.add(a.propType);
+    for(const b of blockers){if(a===b)continue;
+      assert(!(Math.abs(a.x-b.x)<(a.w+b.w)/2&&Math.abs(a.y-b.y)<(a.h+b.h)/2),`${label}: street furniture overlaps another solid`);
+    }
+  }
+  for(const b of solids.filter(b=>b.cityPlan!==undefined))
+    assert(b.x-b.w/2>=cx*1200+120&&b.x+b.w/2<=cx*1200+1080&&b.y-b.h/2>=cy*1200+120&&b.y+b.h/2<=cy*1200+1080,`${label}: district furniture enters the main road`);
+  assert(bs.length,`${label}: no architecture`);
+  for(const b of bs){
+    assert(b.x-b.w/2>=cx*1200+165&&b.x+b.w/2<=cx*1200+1035,`${label}: building leaves usable block`);
+    assert(b.y-b.h/2>=cy*1200+165&&b.y+b.h/2<=cy*1200+1035,`${label}: building leaves usable block`);
+    assert(P(`buildingRise(${JSON.stringify(b)})`)<=42,`${label}: excessive building rise`);
+    for(const other of blockers){if(b===other)continue;
+      assert(!(Math.abs(b.x-other.x)<(b.w+other.w)/2&&Math.abs(b.y-other.y)<(b.h+other.h)/2),`${label}: architecture overlaps cover`);
+    }
+  }
+  // The buildings must leave an interior crossing at player diameter 24.
+  const midY=cy*1200+600;
+  assert(Array.from({length:61},(_,i)=>midY-300+i*10).some(y=>
+    bs.every(b=>Math.abs(y-b.y)>=b.h/2+12)),`${label}: buildings seal all cross routes`);
+  // Trace actual ground collision too: furniture cannot close the only route.
+  // A 20-unit grid is finer than a player diameter, and each node includes the
+  // 12-unit actor margin. Search from west to east through the block interior.
+  const n=44,step=20,ox=cx*1200+170,oy=cy*1200+170,clear=new Uint8Array(n*n);
+  for(let y=0;y<n;y++)for(let x=0;x<n;x++){
+    const wx=ox+x*step,wy=oy+y*step;
+    clear[y*n+x]=blockers.every(b=>Math.abs(wx-b.x)>=b.w/2+12||Math.abs(wy-b.y)>=b.h/2+12)?1:0;
+  }
+  const queue=[],seen=new Uint8Array(n*n);
+  for(let y=0;y<n;y++)if(clear[y*n]){queue.push(y*n);seen[y*n]=1;}
+  let reached=false;
+  for(let at=0;at<queue.length;at++){
+    const id=queue[at],x=id%n,y=(id/n)|0;
+    if(x===n-1){reached=true;break;}
+    for(const [dx,dy]of[[-1,0],[1,0],[0,-1],[0,1]]){
+      const nx=x+dx,ny=y+dy;if(nx<0||ny<0||nx>=n||ny>=n)continue;
+      const next=ny*n+nx;if(clear[next]&&!seen[next]){seen[next]=1;queue.push(next);}
+    }
+  }
+  assert(reached,`${label}: furniture blocks the 24-unit pedestrian crossing`);
+}
 for(let cy=5;cy<25;cy++)for(let cx=-25;cx<25;cx++){
   const ch=P(`generateChunkContent(1,${cx},${cy})`);chunks++;
   assert.equal(JSON.stringify(ch),JSON.stringify(P(`generateChunkContent(1,${cx},${cy})`)));
   const bs=ch.solid.filter(b=>b.cityArchitecture!==undefined);
+  // Validate industrial ground against the native generator, rather than two
+  // helper functions which might agree with each other while buildings differ.
+  const zone=P(`cityZoneAt(1,${cx*1200},${cy*1200})`);
+  if(zone==='INDUSTRIAL'&&!P(`cityHasCanal(1,${cy})`)){
+    const parking=ch.solid.find(b=>b.cityDistrictParking);
+    if(parking||bs.length){
+      const ground=P(`cityDistrictGroundPlan(${cx},${cy},'INDUSTRIAL')`);
+      assert.equal(P(`cityIndustrialParking(${cx},${cy})`),!!parking,'industrial parking selector disagrees with native geometry');
+      if(parking){
+        industrial.parking++;parkingFixture={cx,cy,ch};
+        assert(parking.isParkingLot&&parking.isGrassLot,'industrial parking lost its native lot footprint');
+        assert.equal(bs.length,0,'parking and depot geometry occupy the same address');
+        assert.equal(ground,null,'industrial parking receives workshop pedestrian paving');
+      }else{
+        industrial.district++;
+        assert(bs.every(b=>b.cityPlan===ground),'industrial ground identity disagrees with its actual buildings');
+        assert([4,5,9].includes(ground),'industrial building identity is outside the workshop/depot vocabulary');
+        if(ground===9){industrial.depot++;assert(bs.some(b=>b.cityArchitecture===9),'native depot lacks depot architecture');}
+      }
+      assert(ch.solid.every(b=>b.chunkKey.includes('district:v2:')),'industrial replacement left fixtures or parking under old destruction keys');
+    }
+  }
   if(!bs.length)continue;
   found.set(bs[0].cityPlan,{cx,cy,ch});
-  for(const b of bs){
-    arches.add(b.cityArchitecture);assert(b.chunkKey.includes('district:'));
-    assert(b.x-b.w/2>=cx*1200+165&&b.x+b.w/2<=cx*1200+1035);
-    assert(b.y-b.h/2>=cy*1200+165&&b.y+b.h/2<=cy*1200+1035);
-    assert(P(`buildingRise(${JSON.stringify(b)})`)<=42);
-  }
-  // Every plan leaves a continuous east-west route at player diameter 24.
-  // Furniture may provide cover, but buildings must never seal the whole block.
-  const cy0=cy*1200+600,cx0=cx*1200+600;
-  assert(Array.from({length:61},(_,i)=>cy0-300+i*10).some(y=>
-    bs.every(b=>Math.abs(y-b.y)>=b.h/2+12)), 'district lacks a traversable cross route');
-  const blockers=ch.solid.filter(b=>!b.isGrassLot&&!b.isDeck&&!b.isWater);
-  for(const a of bs)for(const b of blockers){if(a===b)continue;
-    assert(!(Math.abs(a.x-b.x)<(a.w+b.w)/2&&Math.abs(a.y-b.y)<(a.h+b.h)/2),'new architecture overlaps cover');
+  for(const b of bs){arches.add(b.cityArchitecture);assert(b.chunkKey.includes('district:v2:'),'district replacement keys must be versioned');}
+  checkBlock(ch.solid,cx,cy,`streamed ${cx},${cy}`);
+}
+assert.deepEqual([...found.keys()].sort((a,b)=>a-b),[0,1,2,3,4,5,6,7,8,9],'all ten plans generate');
+assert.deepEqual([...arches].sort((a,b)=>a-b),[0,1,2,3,4,5,6,7,8,9],'all ten roof families generate');
+assert(industrial.parking>0&&industrial.district>0&&industrial.depot>0,'native sample must exercise industrial parking, workshops and real depots');
+// A previous district or numeric grid key must never erase a replacement prop
+// or building. Conversely, destroying a current building must stay persistent.
+for(const {cx,cy,ch}of [...found.values(),parkingFixture]){
+  const oldKeys=ch.solid.flatMap((b,i)=>[`${cx},${cy},district:${i}`,`${cx},${cy},${i}`]);
+  probe(`for(const key of ${JSON.stringify(oldKeys)})getBiomeState(1).destroyed[key]=true;`);
+  assert.equal(JSON.stringify(ch),JSON.stringify(P(`generateChunkContent(1,${cx},${cy})`)),'old destruction indices erased a replacement district');
+  const target=ch.solid.find(b=>b.cityArchitecture!==undefined||b.cityDistrictParking);
+  probe(`getBiomeState(1).destroyed[${JSON.stringify(target.chunkKey)}]=true;`);
+  const remaining=P(`generateChunkContent(1,${cx},${cy})`).solid;
+  assert(!remaining.some(b=>b.chunkKey===target.chunkKey));
+  assert.equal(remaining.length,ch.solid.length-1,'current destruction must remove only its intended solid');
+}
+// The opening city shares the district vocabulary, while its protagonist's
+// house, entertainment landmarks, walls and gate approaches remain authored.
+const reserved=new Map([['0,0',null],['0,-3','isCasino'],['-1,-3','isTheater'],['-2,-3','isArena'],['-3,-1','isAmusementPark'],['-3,0','isCircus']]);
+const authoredPlans=new Set();
+for(let cy=-3;cy<=3;cy++)for(let cx=-3;cx<=3;cx++){
+  const key=`${cx},${cy}`,plan=P(`authoredCityBlockPlan(${cx},${cy})`);
+  assert.equal(plan,P(`authoredCityBlockPlan(${cx},${cy})`),'authored address selection changes between calls');
+  if(reserved.has(key)){assert.equal(plan,null,`authored landmark ${key} was replaced`);continue;}
+  assert(Number.isInteger(plan)&&plan>=0&&plan<10,'authored plan outside city vocabulary');authoredPlans.add(plan);
+  probe(`window.__authoredDistrict=[];buildCityDistrict(__authoredDistrict,${cx*1200},${cy*1200},'RESIDENTIAL',()=>false,${plan});`);
+  const district=P('__authoredDistrict');
+  probe(`window.__authoredAgain=[];buildCityDistrict(__authoredAgain,${cx*1200},${cy*1200},'RESIDENTIAL',()=>false,${plan});`);
+  assert.equal(JSON.stringify(district),JSON.stringify(P('__authoredAgain')),'authored district geometry is not deterministic');
+  checkBlock(district,cx,cy,`authored ${key}`);
+}
+assert.equal(authoredPlans.size,10,'opening city should contain every new block identity');
+for(const prop of['CITYBIKERACK','CITYSTALL','CITYWAYFINDER'])assert(streetProps.has(prop),`${prop} never appears in generated or authored blocks`);
+// Ground selection must ask the same address helper as its real buildings.
+// Include reserved story blocks, whose original surface must remain untouched.
+probe('authoredChunks=new Set();');
+for(let cy=-3;cy<=3;cy++)for(let cx=-3;cx<=3;cx++){
+  probe(`authoredChunks.add('${cx},${cy}');`);
+  assert.equal(P(`cityDistrictGroundPlan(${cx},${cy},'PARK')`),P(`authoredCityBlockPlan(${cx},${cy})`),'authored paving uses a different block identity');
+}
+probe('authoredChunks=null;');
+for(let cy=5;cy<15;cy++)for(let cx=-5;cx<5;cx++)for(const zone of['RESIDENTIAL','COMMERCIAL']){
+  const plan=P(`cityDistrictGroundPlan(${cx},${cy},'${zone}')`);
+  if(P(`cityHasCanal(1,${cy})`))assert.equal(plan,null,'district paving replaces a canal quay');
+  else assert.equal(plan,P(`cityBlockPlan(${cx},${cy},'${zone}')`),'streamed paving disagrees with generated buildings');
+}
+// Exercise every mirror at a different address. Metadata must match the paths
+// actually painted into terrain, and transform in lockstep with the buildings.
+const mirrorSites=new Map();
+for(let cy=-8;cy<=8&&mirrorSites.size<4;cy++)for(let cx=-8;cx<=8&&mirrorSites.size<4;cx++){
+  const orientation=P(`chunkHash(1,${cx},${cy},8175)>>>0`)&3;
+  mirrorSites.set(orientation,{cx,cy});
+}
+assert.equal(mirrorSites.size,4);
+let groundBakes=0;
+for(let plan=0;plan<10;plan++){
+  let reference=null;
+  for(const [orientation,{cx,cy}]of mirrorSites){
+    const ox=cx*1200,oy=cy*1200,g=mkG(),rects=[];
+    g.shovelPavedRects=[];
+    for(const fn of['rect','ellipse','line']){
+      const paint=g[fn];g[fn]=(...args)=>{assert(args.every(v=>typeof v!=='number'||Number.isFinite(v)),`non-finite baked ${fn}`);if(fn==='rect')rects.push(args);return paint(...args);};
+    }
+    ctx.__ground=g;probe(`bakeCityDistrictGround(__ground,${ox},${oy},${plan});`);groundBakes++;
+    assert(g.shovelPavedRects.length>0,`plan ${plan} paints no registered route`);
+    const normalized=[];
+    for(const path of g.shovelPavedRects){
+      assert(Object.values(path).every(Number.isFinite)&&path.w>0&&path.h>0,'non-finite or empty paving metadata');
+      assert(rects.some(r=>r[0]+r[2]/2===path.x&&r[1]+r[3]/2===path.y&&r[2]===path.w&&r[3]===path.h),'paving collision metadata does not match its painted rectangle');
+      normalized.push([(path.x-ox-600)*(orientation&1?-1:1),(path.y-oy-600)*(orientation&2?-1:1),path.w,path.h]);
+    }
+    const signature=JSON.stringify(normalized);
+    if(reference===null)reference=signature;else assert.equal(signature,reference,`plan ${plan} paving fails mirrored address parity`);
+    if(plan>=6){
+      probe(`window.__pavedBuildings=[];buildCityDistrict(__pavedBuildings,${ox},${oy},'RESIDENTIAL',()=>false,${plan});`);
+      for(const b of P('__pavedBuildings.filter(b=>b.cityArchitecture!==undefined)'))
+        assert(!g.shovelPavedRects.some(p=>Math.abs(b.x-p.x)<p.w/2&&Math.abs(b.y-p.y)<p.h/2),`plan ${plan} registers a pedestrian route through a building centre`);
+    }
   }
 }
-assert.equal(found.size,6);assert.equal(arches.size,6);
-const ellipse=ctx.ellipse;
-ctx.ellipse=(...args)=>{assert(args.every(Number.isFinite),'non-finite foliage geometry');return ellipse(...args);};
-// Facade windows must be on the two exposed faces, not covered by the roof.
+
+probe('isStoryMode=false;legacyGenerateMap();');
+const authored=P('buildings');
+const nativeDistricts=authored.filter(b=>b.cityArchitecture!==undefined);
+assert(nativeDistricts.length>100,'ordinary opening blocks did not adopt district architecture');
+const house=authored.find(b=>b.isHouse);
+assert(house&&house.x===600&&house.y===600&&house.w===160&&house.h===100,'protagonist house footprint changed');
+for(const [key,flag]of reserved){
+  if(!flag)continue;const [cx,cy]=key.split(',').map(Number);
+  assert(authored.some(b=>b[flag]&&b.x===cx*1200+600&&b.y===cy*1200+600),`${flag} landmark missing`);
+}
+for(const y of[-4200,5400])assert(authored.some(b=>b.isGovFortress&&b.x===600&&b.y===y&&b.w===9600&&b.h===800),'Great Gate footprint changed');
+assert.equal(authored.filter(b=>b.isGiantBarrier).length,2,'curtain wall enclosure changed');
+for(const b of nativeDistricts){
+  const cx=Math.floor(b.x/1200),cy=Math.floor(b.y/1200);
+  assert(b.x-b.w/2>=cx*1200+120&&b.x+b.w/2<=cx*1200+1080&&b.y-b.h/2>=cy*1200+120&&b.y+b.h/2<=cy*1200+1080,'authored replacement blocks main streets');
+}
+probe('legacyGenerateMap();');
+assert.equal(JSON.stringify(nativeDistricts),JSON.stringify(P('buildings.filter(b=>b.cityArchitecture!==undefined)')),'regenerating the opening city changes its district footprints');
+probe('isStoryMode=true;legacyGenerateMap();');
+const story=P('buildings'),towers=story.filter(b=>b.isTower);
+assert.equal(towers.length,2,'opening story lost its two transmission towers');
+for(const tower of towers){
+  assert([-3000,4200].includes(tower.x)&&[-3000,4200].includes(tower.y),'tower moved away from its story corner');
+  assert(!story.some(b=>b!==tower&&b.cityArchitecture!==undefined&&Math.hypot(b.x-tower.x,b.y-tower.y)<250),'new architecture prevents the existing tower clearing');
+  assert(!story.some(b=>b.cityArchitecture!==undefined&&Math.abs(b.x-tower.x)<(b.w+tower.w)/2&&Math.abs(b.y-tower.y)<(b.h+tower.h)/2),'new building footprint overlaps a story tower');
+}
+// Every primitive in the live projected art must stay finite. Check real
+// drawBuildings/drawBiomeProps, rather than calling only roof helpers directly.
+for(const fn of['rect','ellipse','line','quad','triangle']){
+  const draw=ctx[fn];ctx[fn]=(...args)=>{assert(args.every(v=>typeof v!=='number'||Number.isFinite(v)),`non-finite ${fn} geometry`);return draw(...args);};
+}
 const quad=ctx.quad,quads=[];ctx.quad=(...a)=>{quads.push(a);return quad(...a);};
 probe('drawCityFacades({x:0,y:0,w:200,h:200,cityStoreys:2,cityAccent:0},20,20);');
 assert(quads.length>0);assert(quads.every(q=>q[0]<-80||q[1]<-80));ctx.quad=quad;
-for(const {cx,cy,ch} of found.values()){
+const painted=new Set(),drawArchitecture=ctx.drawCityArchitecture;
+ctx.drawCityArchitecture=b=>{painted.add(b.cityArchitecture);return drawArchitecture(b);};
+let renders=0;
+for(const {cx,cy,ch}of found.values()){
   ctx.__district=ch.solid;
   probe('activeBuildings=__district;buildings=__district;viewLeft=-1e6;viewRight=1e6;viewTop=-1e6;viewBottom=1e6;');
-  for(const hour of [8,13,23])for(const rain of [false,true])for(const side of [-1,1]){
-    probe(`worldTimeMs=${hour}/24*DAY_MS;isRaining=${rain};camX=${cx*1200+600}+${side}*700;camY=${cy*1200+600}+${side}*700;updateSunVector();drawBuildings();drawBiomeProps();`);
+  for(const hour of[8,13,23])for(const rain of[false,true])for(const side of[-1,1]){
+    probe(`worldTimeMs=${hour}/24*DAY_MS;isRaining=${rain};camX=${cx*1200+600}+${side}*700;camY=${cy*1200+600}+${side}*700;updateSunVector();drawBuildings();drawBiomeProps();`);renders++;
   }
-  const target=ch.solid.find(b=>b.cityArchitecture!==undefined);
-  probe(`getBiomeState(1).destroyed[${JSON.stringify(target.chunkKey)}]=true;`);
-  assert(!P(`generateChunkContent(1,${cx},${cy}).solid.some(b=>b.chunkKey===${JSON.stringify(target.chunkKey)})`));
 }
-console.log(`City districts passed: ${chunks} deterministic chunks, six plans / six architectures, clear footprints, destruction persistence and 72 lighting/view renders.`);
+assert.equal(painted.size,10,'native renderer did not paint every roof family');
+console.log(`City districts passed: ${chunks} deterministic chunks, ten plans / ten architectures, ${authoredPlans.size} authored identities, story landmarks, 24-unit routes, versioned destruction, ${groundBakes} mirrored ground bakes, ${industrial.parking} industrial lots / ${industrial.depot} depots and ${renders} lighting/view renders.`);

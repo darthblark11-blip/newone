@@ -2522,6 +2522,16 @@ function legacyGenerateMap() {
                 });
                 continue; 
             }
+            // The opening city uses the same readable districts as the world
+            // beyond its walls. Keep the house block and story landmarks on
+            // their original footprints; only ordinary blocks are replaced.
+            const plan = authoredCityBlockPlan(bX, bY);
+            if (plan !== null) {
+                buildCityDistrict(buildings, bX * 1200, bY * 1200, 'RESIDENTIAL', () => false, plan);
+                for (const dx of [115, 1085]) for (const dy of [115, 1085])
+                    buildings.push({x:bX*1200+dx,y:bY*1200+dy,w:16,h:16,isStreetLight:true});
+                continue;
+            }
         }
 
         let isOuterRing = abs(bX) >= 2 || abs(bY) >= 2;
@@ -9714,8 +9724,7 @@ function shovelSurfaceSoftAt(x,y,level=currentLevel) {
     if(zone==='PLAZA')return false;
     // The green courtyard and its cross-shaped stone paths paint over the
     // generic yard/alley. Recognize the same footprint, without a collider.
-    if(level===1&&!chunkInAuthoredCore(cx,cy)&&['RESIDENTIAL','COMMERCIAL'].includes(zone)&&
-        cityBlockPlan(cx,cy,zone)===2&&lx>=365&&lx<835&&ly>=365&&ly<835)
+    if(level===1&&cityDistrictGroundPlan(cx,cy,zone)===2&&lx>=365&&lx<835&&ly>=365&&ly<835)
       return !(lx>=562&&lx<638)&&!(ly>=562&&ly<638);
     if(grass||zone==='PARK'||zone==='CONSTRUCTION')return true;
     // Unpaved yards remain dirt; the actual service alley is asphalt.
@@ -33054,21 +33063,40 @@ function nextCheckpoint(biome, cx, cy) {
 // blocks, and PARK / INDUSTRIAL / COMMERCIAL / RESIDENTIAL is a small enough
 // vocabulary that a five-minute walk sees every word in it twice.
 // ---------------------------------------------------------------------------
-// Six street-address plans. Rectangular wings keep collision, occlusion and
+// Ten street-address plans. Rectangular wings keep collision, occlusion and
 // projectile cover identical to the projected architecture; courtyards are air.
 function cityBlockPlan(cx, cy, zone) {
   const n = chunkHash(1, cx, cy, 8173) >>> 0;
-  return zone === "INDUSTRIAL" ? 4 + n % 2 : n % 6;
+  return zone === "INDUSTRIAL" ? [4, 5, 9][n % 3] : n % 10;
 }
-function buildCityDistrict(solid, ox, oy, zone, nearAnchor) {
-  const plan = cityBlockPlan(ox / CHUNK_W, oy / CHUNK_W, zone);
+function authoredCityBlockPlan(cx, cy) {
+  if (cx < -3 || cx > 3 || cy < -3 || cy > 3 ||
+      (cx === 0 && cy === 0) ||
+      (cy === -3 && cx >= -2 && cx <= 0) ||
+      (cx === -3 && (cy === -1 || cy === 0))) return null;
+  return ((cx * 3 + cy * 7) % 10 + 10) % 10;
+}
+function cityIndustrialParking(cx, cy) {
+  // Terrain and buildings must agree whether this industrial address is a
+  // parking lot or a workshop/depot, without advancing the chunk's RNG.
+  return (chunkHash(1, cx, cy, 8193) >>> 0) % 10 < 4;
+}
+function cityDistrictGroundPlan(cx, cy, zone) {
+  if (chunkInAuthoredCore(cx, cy)) return authoredCityBlockPlan(cx, cy);
+  if (cityHasCanal(1, cy)) return null;
+  if (zone === 'INDUSTRIAL') return cityIndustrialParking(cx,cy) ? null : cityBlockPlan(cx,cy,zone);
+  if (zone !== 'RESIDENTIAL' && zone !== 'COMMERCIAL') return null;
+  return cityBlockPlan(cx, cy, zone);
+}
+function buildCityDistrict(solid, ox, oy, zone, nearAnchor, planOverride = null) {
+  const plan = planOverride === null ? cityBlockPlan(ox / CHUNK_W, oy / CHUNK_W, zone) : planOverride;
   const rng = makeRng(chunkHash(1, ox / CHUNK_W, oy / CHUNK_W, 8174));
   const orientation=chunkHash(1,ox/CHUNK_W,oy/CHUNK_W,8175)>>>0;
   const add = (x,y,w,h,arch) => {
     x = (orientation&1 ? -x : x)+ox+600; y = (orientation&2 ? -y : y)+oy+600;
     if (nearAnchor(x,y,Math.max(w,h)/2+150)) return;
     solid.push({x,y,w,h,isBlockBuilding:true,cityArchitecture:arch,
-      cityPlan:plan,style:[1,3,2,0,0,2][arch],details:[],
+      cityPlan:plan,style:[1,3,2,0,0,2,3,2,3,0][arch],details:[],
       cityAccent:rngInt(rng,0,4),cityStoreys:2+arch%3});
   };
   if (plan === 0) { // Brownstone mews: two rows, central carriage lane.
@@ -33086,9 +33114,21 @@ function buildCityDistrict(solid, ox, oy, zone, nearAnchor) {
   } else if (plan === 4) { // Workshop yards: sawtooth sheds and loading lanes.
     add(-220,-240,300,280,4); add(205,-235,320,290,4);
     add(-270,245,200,260,0); add(170,250,390,250,4);
-  } else { // Garden apartments: staggered terraces, asymmetric passages.
+  } else if (plan === 5) { // Garden apartments: staggered terraces, asymmetric passages.
     add(-240,-230,270,280,5); add(220,-285,300,170,5);
     add(-245,260,260,210,2); add(235,185,280,370,5);
+  } else if (plan === 6) { // Transit exchange: a station hall faces a wide public court.
+    add(0,-245,640,230,6);
+    add(-270,260,190,190,3); add(270,260,190,190,6);
+  } else if (plan === 7) { // Library: stone reading wings frame an open forecourt.
+    add(0,-240,500,240,7);
+    add(-280,245,170,250,7); add(280,245,170,250,7);
+  } else if (plan === 8) { // Conservatory: glazed growing houses and garden terraces.
+    add(-260,-220,210,300,8); add(260,210,210,300,8);
+    add(220,-260,300,180,5); add(-220,260,300,180,5);
+  } else if (plan === 9) { // Municipal depot: a long shed and two repair wings.
+    add(0,-280,690,190,9);
+    add(-280,235,190,260,4); add(280,235,190,260,9);
   }
   // Furniture belongs to the open court, never to a roof or doorway.
   const positions = plan===2 ? [[-90,-90],[90,90]] : [[0,-100],[0,100]];
@@ -33096,6 +33136,92 @@ function buildCityDistrict(solid, ox, oy, zone, nearAnchor) {
     const x=ox+600+dx,y=oy+600+dy;
     if(nearAnchor(x,y,180)||!solidsClearAt(solid,x,y,62,62,30))continue;
     solid.push({x,y,w:62,h:62,isBiomeProp:true,propType:"TERRACEPLANTER",cityPlan:plan,tint:rng()});
+  }
+  // Short address-specific clusters, with a clear central crossing. These
+  // solids use the same footprint for collision and art; no random scatter
+  // into the carriageway, tower clearance or a neighbouring roof.
+  const furnish = (dx,dy,w,h,propType) => {
+    const x=ox+600+(orientation&1?-dx:dx),y=oy+600+(orientation&2?-dy:dy);
+    if(nearAnchor(x,y,Math.max(w,h)/2+100)||!solidsClearAt(solid,x,y,w,h,22))return;
+    solid.push({x,y,w,h,isBiomeProp:true,propType,cityPlan:plan,tint:rng()});
+  };
+  furnish(-100,458,74,28,'CITYBIKERACK');
+  furnish(210,-458,32,32,'CITYWAYFINDER');
+  if(plan===3){for(const dx of [-200,200])furnish(dx,-140,96,60,'CITYSTALL');}
+  else if(plan===6){furnish(-235,5,96,34,'BUSSTOP');furnish(220,70,74,28,'CITYBIKERACK');}
+  else if(plan===7){furnish(-180,60,84,26,'BENCH');furnish(180,-60,84,26,'BENCH');}
+  else if(plan===8){furnish(-145,-145,62,62,'TERRACEPLANTER');furnish(145,145,62,62,'TERRACEPLANTER');}
+  else if(plan===9){furnish(-200,-40,84,54,'MATERIALS');furnish(205,25,40,25,'WRECK');}
+  else {furnish(-180,0,84,26,'BENCH');furnish(180,0,22,22,'POSTBOX');}
+}
+
+// The district's open space follows the same address and mirrors as its
+// buildings. Paving and small street wear are stamped once in the chunk bake.
+function bakeCityDistrictGround(g, ox, oy, plan) {
+  if (plan === null) return;
+  const orientation=chunkHash(1,ox/CHUNK_W,oy/CHUNK_W,8175)>>>0;
+  const wx=x=>ox+600+(orientation&1?600-x:x-600);
+  const wy=y=>oy+600+(orientation&2?600-y:y-600);
+  const pad=(x,y,w,h,c)=>{
+    const px=wx(x+w/2)-w/2,py=wy(y+h/2)-h/2;
+    g.fill(...c);g.rect(px,py,w,h,3);
+    g.shovelPavedRects.push({x:px+w/2,y:py+h/2,w,h});
+  };
+  const joint=(x,y,x1,y1)=>g.line(wx(x),wy(y),wx(x1),wy(y1));
+  g.noStroke();
+  if(plan===2){
+    g.fill(64,93,72);g.rect(ox+365,oy+365,470,470,10);
+    pad(562,365,76,470,[163,151,119]);pad(365,562,470,76,[163,151,119]);
+  }else if(plan===3){
+    for(const k of [180,460,740,1020])pad(165,k-25,870,50,[146,124,95,190]);
+  }else if(plan===6){
+    pad(200,495,800,190,[133,141,136]);pad(558,685,84,350,[163,156,129]);
+    g.fill(212,174,81);g.rect(wx(600)-48,wy(565)-6,96,12,2);
+  }else if(plan===7){
+    pad(315,485,570,225,[181,167,134]);pad(560,710,80,325,[145,139,121]);
+    g.fill(111,131,118);g.ellipse(wx(600),wy(600),126,126);
+    g.fill(194,181,145);g.ellipse(wx(600),wy(600),94,94);
+  }else if(plan===8){
+    pad(540,165,120,870,[152,145,116]);pad(165,540,870,120,[152,145,116]);
+    g.fill(88,109,72);for(const [x,y] of [[470,470],[730,730]])g.rect(wx(x)-20,wy(y)-20,40,40,3);
+  }else if(plan===9){
+    pad(265,470,670,330,[95,107,109]);pad(550,800,100,235,[113,120,117]);
+    g.stroke(218,182,85,185);g.strokeWeight(4);
+    for(const x of [330,460,720,850]){joint(x,480,x,535);joint(x,535,x+70,535);}
+    g.noStroke();
+  }else{
+    // Thin pedestrian spines make the older mews/campus plans feel inhabited
+    // without covering the whole yard in another featureless slab.
+    pad(165,575,870,50,[143,137,114,190]);
+  }
+  g.stroke(57,64,60,85);g.strokeWeight(2);
+  if(plan===2)for(let k=385;k<835;k+=38){joint(562,k,638,k);joint(k,562,k,638);}
+  else if(plan===3)for(const k of [460,740])for(let x=185;x<1035;x+=42)joint(x,k-24,x,k+24);
+  else if(plan>=6&&plan<=8)for(let x=340;x<900;x+=46)joint(x,550,x,650);
+  g.noStroke();
+}
+function bakeCityStreetDetails(g, ox, oy, cx, cy) {
+  const seed=chunkHash(1,cx,cy,8192)>>>0;
+  g.noStroke();
+  // Patched asphalt, drain slots and utility lids stay on their own surfaces.
+  g.fill(57,64,68,115);g.rect(ox+32,oy+620,52,150,5);
+  g.stroke(37,43,46,110);g.strokeWeight(2);g.noFill();g.rect(ox+32,oy+620,52,150,5);g.noStroke();
+  for(const [x,y,vertical] of [[107,300,true],[1093,875,true],[300,107,false],[875,1093,false]]){
+    g.fill(48,56,57);g.rect(ox+x-(vertical?6:23),oy+y-(vertical?23:6),vertical?12:46,vertical?46:12,2);
+    g.stroke(132,139,129,130);g.strokeWeight(2);
+    for(let k=-16;k<=16;k+=8){if(vertical)g.line(ox+x-4,oy+y+k,ox+x+4,oy+y+k);else g.line(ox+x+k,oy+y-4,ox+x+k,oy+y+4);}
+    g.noStroke();
+  }
+  g.fill(51,58,59);g.ellipse(ox+62,oy+390,33,33);
+  g.noFill();g.stroke(145,151,139,145);g.strokeWeight(2);g.ellipse(ox+62,oy+390,25,25);
+  g.line(ox+53,oy+386,ox+71,oy+386);g.line(ox+53,oy+394,ox+71,oy+394);g.noStroke();
+  for(const x of [205,995]){
+    g.fill(167,155,115,165);g.rect(ox+x-15,oy+126,30,27,2);
+    g.fill(84,83,71,120);for(let k=0;k<3;k++)g.rect(ox+x-10+k*8,oy+131,3,17);
+  }
+  for(let i=0;i<5;i++){
+    const x=245+((seed+i*137)%700),y=i%2?1030:169;
+    g.fill(190+i*7,181+i*6,151+i*5,130);g.rect(ox+x,oy+y,7+i%3*3,5);
   }
 }
 
@@ -33106,15 +33232,43 @@ function drawCityFacades(b,lx,ly) {
   const x0=b.x-b.w/2,y0=b.y-b.h/2,x1=x0+b.w,y1=y0+b.h;
   const face=(ax,ay,bx,by,len)=>{
     const bays=Math.max(2,Math.min(12,Math.floor(len/35)));
+    const panel=(u,v,t,q)=>quad(ax+(bx-ax)*u+lx*t,ay+(by-ay)*u+ly*t,
+      ax+(bx-ax)*v+lx*t,ay+(by-ay)*v+ly*t,
+      ax+(bx-ax)*v+lx*q,ay+(by-ay)*v+ly*q,
+      ax+(bx-ax)*u+lx*q,ay+(by-ay)*u+ly*q);
+    // These are still the base-to-roof faces: glazing and loading doors may
+    // change the frontage, never the collision rectangle or the wall lean.
+    if(b.cityArchitecture===8){
+      fill(32,88,65,235);panel(.04,.96,.12,.86);
+      for(let i=0;i<bays;i++){
+        fill(88,143,116,195);panel((i+.12)/bays,(i+.82)/bays,.48,.83);
+        fill(42,103,64,235);panel((i+.20)/bays,(i+.75)/bays,.16,.39);
+        fill(192,203,161);panel((i+.91)/bays,(i+.98)/bays,.10,.91);
+      }
+      return;
+    }
+    if(b.cityArchitecture===9){
+      const doors=Math.max(2,Math.min(7,Math.floor(len/80)));
+      for(let i=0;i<doors;i++){
+        fill(43,54,59);panel((i+.12)/doors,(i+.88)/doors,.10,.66);
+        fill(113,133,137);panel((i+.17)/doors,(i+.83)/doors,.15,.61);
+        fill(55,77,83);panel((i+.20)/doors,(i+.80)/doors,.75,.88);
+        for(const t of [.25,.39,.53]){fill(63,82,86);panel((i+.17)/doors,(i+.83)/doors,t,t+.035);}
+        fill(222,172,76);panel((i+.09)/doors,(i+.14)/doors,.10,.36);
+      }
+      return;
+    }
     for(let floor=0;floor<b.cityStoreys;floor++)for(let i=0;i<bays;i++){
-      const u=(i+.20)/bays,v=(i+.80)/bays;
-      const t=(floor+.20)/b.cityStoreys,q=(floor+.70)/b.cityStoreys;
+      const library=b.cityArchitecture===7,station=b.cityArchitecture===6;
+      const u=(i+(library?.33:.20))/bays,v=(i+(library?.67:.80))/bays;
+      const t=(floor+(library?.12:.20))/b.cityStoreys,q=(floor+(library?.83:.70))/b.cityStoreys;
       const lit=((i+floor+b.cityAccent)%4===0)&&daylight()<.75;
-      fill(lit?242:29,lit?181:68,lit?87:83,230);
-      quad(ax+(bx-ax)*u+lx*t,ay+(by-ay)*u+ly*t,
-           ax+(bx-ax)*v+lx*t,ay+(by-ay)*v+ly*t,
-           ax+(bx-ax)*v+lx*q,ay+(by-ay)*v+ly*q,
-           ax+(bx-ax)*u+lx*q,ay+(by-ay)*u+ly*q);
+      fill(lit?242:29,lit?181:station?88:68,lit?87:station?106:83,230);
+      panel(u,v,t,q);
+    }
+    if(b.cityArchitecture===6){fill(221,169,72);panel(.025,.975,.88,.98);}
+    if(b.cityArchitecture===7)for(let i=1;i<bays;i++){
+      fill(216,198,157);panel((i-.035)/bays,(i+.035)/bays,.07,.94);
     }
   };
   noStroke();
@@ -33166,6 +33320,70 @@ function drawCityArchitecture(b) {
       fill(214,195,133);rect(x,y+k*step,w,3);
     }
     fill(45,53,55);for(let k=x+20;k<w/2;k+=55)rect(k,y,3,h);
+  }else if(a===6){ // Transit hall: shallow ribbed vault and a glazed spine.
+    fill(65+tone,92+tone,105+tone);rect(x+4,y+5,w-8,h-10,5);
+    const vault=cityRoofBox(b,x+10,y+14,w-20,h-28,8,[116,144,151]);
+    const vx=x+10+vault[0],vy=y+14+vault[1],vw=w-20,vh=h-28;
+    fill(70,98,111);rect(vx,vy+vh*.72,vw,vh*.28,2);
+    fill(174,191,183);rect(vx,vy+vh*.25,vw,vh*.28,2);
+    fill(45,86,105);rect(vx+7,vy+vh*.39,vw-14,vh*.20,2);
+    fill(142,191,198);rect(vx+9,vy+vh*.40,vw-18,4);
+    stroke(54,76,83);strokeWeight(3);
+    for(let k=vx+20;k<vx+vw-10;k+=44)line(k,vy+2,k,vy+vh-2);
+    noStroke();fill(231,173,66);rect(x+4,h/2-10,w-8,6,1);
+    fill(40,60,71);for(let k=x+18;k<w/2-12;k+=72)rect(k,h/2-9,24,3);
+    cityRoofBox(b,x+w*.73,y+19,w*.18,Math.min(29,h*.15),5,[86,101,105]);
+  }else if(a===7){ // Civic library: stepped limestone deck, bronze-framed rooflights.
+    fill(163+tone,151+tone,124+tone);rect(x+3,y+3,w-6,h-6,2);
+    const step=cityRoofBox(b,x+12,y+12,w-24,h-24,5,[205,190,151]);
+    const sx=x+12+step[0],sy=y+12+step[1],sw=w-24,sh=h-24;
+    fill(143,137,114);rect(sx+9,sy+9,sw-18,sh-18,1);
+    fill(213,196,152);rect(sx+9,sy+sh*.66,sw-18,sh*.13,1);
+    const count=Math.max(2,Math.min(6,Math.floor(sw/65))),gap=12,lw=(sw-26-(count-1)*gap)/count;
+    for(let i=0;i<count;i++){
+      const px=sx+13+i*(lw+gap),py=sy+sh*.18;
+      fill(72,66,49);rect(px-3,py-3,lw+6,sh*.30+6,1);
+      fill(59,108,117);rect(px,py,lw,sh*.30,1);
+      fill(141,186,182);rect(px+3,py+3,lw-6,sh*.10,1);
+      fill(210,183,116);rect(px+lw*.48,py,3,sh*.30);
+    }
+    cityRoofBox(b,x+15,y+h*.77,w*.25,h*.14,5,[176,159,125]);
+    fill(97,84,63);for(let k=0;k<4;k++)rect(x+w*.61+k*8,y+h*.84,4,h*.09);
+  }else if(a===8){ // Conservatory: plants under glass, not an opaque green shed.
+    fill(36,73,57);rect(x+3,y+3,w-6,h-6,4);
+    for(let row=0;row<4;row++){
+      const py=y+18+row*(h-38)/4;
+      fill(131,111,73);rect(x+15,py,w-30,(h-38)/4-8,2);
+      fill(44,104,62);rect(x+19,py+3,w-38,(h-38)/4-14,3);
+      for(let col=0;col<3;col++){
+        const px=x+w*(.26+col*.24);
+        fill(84+row*5,137+col*7,74);ellipse(px,py+(h-38)/8-3,w*.14,Math.min(22,h*.07));
+      }
+    }
+    fill(97,166,160,92);rect(x+7,y+7,w-14,h-14,3);
+    fill(183,221,208,51);quad(x+10,y+10,x+w*.30,y+10,w/2-10,h/2-10,w*.18,h/2-10);
+    stroke(175,192,157);strokeWeight(3);
+    for(let py=y+10;py<h/2-5;py+=35)line(x+7,py,w/2-7,py);
+    line(x+w*.32,y+7,x+w*.32,h/2-7);line(x+w*.68,y+7,x+w*.68,h/2-7);
+    noStroke();fill(225,213,166);rect(-3,y+5,6,h-10);
+    fill(51,75,62);rect(x+3,h/2-15,w-6,9);
+  }else if(a===9){ // City works: blue solar banks and a separate vent/service run.
+    fill(127+tone,139+tone,135+tone);rect(x+3,y+3,w-6,h-6,2);
+    fill(86,104,107);rect(x+10,y+10,w-20,h-20,1);
+    const count=Math.max(2,Math.min(8,Math.floor(w/72))),gap=12,pw=(w-38-(count-1)*gap)/count,ph=h*.47;
+    for(let i=0;i<count;i++){
+      const px=x+19+i*(pw+gap),py=y+17;
+      fill(35,48,59);rect(px+3,py+4,pw,ph,1);
+      fill(37,75,108);rect(px,py,pw,ph,1);
+      stroke(122,169,182,190);strokeWeight(1.5);
+      line(px+pw/2,py,px+pw/2,py+ph);
+      for(let j=1;j<3;j++)line(px,py+ph*j/3,px+pw,py+ph*j/3);
+      noStroke();fill(195,207,189);rect(px,py,pw,3);
+    }
+    const run=cityRoofBox(b,x+18,y+h*.73,w*.53,Math.min(22,h*.13),5,[165,172,158]);
+    fill(71,88,91);for(let px=x+26;px<x+w*.51;px+=24)rect(px+run[0],y+h*.73+5+run[1],13,9,1);
+    fill(218,175,78);rect(x+w*.76,y+h*.75,w*.15,5);
+    fill(60,73,74);rect(x+w*.80,y+h*.80,w*.11,h*.10,1);
   }else { // Residential roof terraces: planted beds, pergola and service stair.
     fill(a===5?106:168,a===5?131:142,a===5?107:106);rect(x+4,y+4,w-8,h-8,2);
     fill(192,169,116);rect(x+12,y+12,w*.38,h-24,2);
@@ -35657,11 +35875,11 @@ function generateChunkContent(biome, cx, cy) {
                                                   y: rngRange(rng, -mall.h / 2 + 40, mall.h / 2 - 40) });
         }
         solid.push(mall);
-      } else if (zone === "INDUSTRIAL" && rng() > 0.6) {
+      } else if (zone === "INDUSTRIAL" && (biome === 1 ? cityIndustrialParking(cx,cy) : rng() > 0.6)) {
         // Parking lot with cars
         let lotW = blockSz - 90, lotH = blockSz - 90;
         let lx = ox + 600, ly = oy + 600;
-        solid.push({ x: lx, y: ly, w: lotW, h: lotH, isParkingLot: true, isGrassLot: true });
+        solid.push({ x: lx, y: ly, w: lotW, h: lotH, isParkingLot: true, isGrassLot: true, cityDistrictParking: biome === 1 });
         const carCols = [[200,30,30],[30,80,200],[200,200,200],[40,40,40],[200,200,30],[120,120,130]];
         let spotW = 100, spotH = 65, aisleW = 80;
         for (let px = lx - lotW/2 + 40; px < lx + lotW/2 - (spotW*2 + aisleW); px += (spotW*2 + aisleW)) {
@@ -37049,8 +37267,8 @@ function generateChunkContent(biome, cx, cy) {
   // A replacement district has a different index sequence from the old grid.
   // Namespace the whole block, including its street fixtures, so an old roof's
   // saved destruction index cannot erase a new streetlight or court planter.
-  const districtBlock = solid.some(b => b.cityArchitecture !== undefined);
-  for (let i = 0; i < solid.length; i++) solid[i].chunkKey = cx + "," + cy + "," + (districtBlock ? "district:" : solid[i].isCivic ? "civic:" : "") + i;
+  const districtBlock = solid.some(b => b.cityArchitecture !== undefined || b.cityDistrictParking);
+  for (let i = 0; i < solid.length; i++) solid[i].chunkKey = cx + "," + cy + "," + (districtBlock ? "district:v2:" : solid[i].isCivic ? "civic:" : "") + i;
 
   appendWoodlandForest(biome, cx, cy, solid, decor, decorBake, nearAnchor);
   removeDestroyedTreeDecor(biome, solid, decor);
@@ -38532,26 +38750,9 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
         g.noStroke();
       }
 
-      // Designed pedestrian routes occupy only actual open space in the new
-      // housing court and market plan. No city-wide tile slab; authored and
-      // canal blocks retain their original ground. Static joints are baked.
-      if (biome === 1 && !chunkInAuthoredCore(cx,cy) && !canalB &&
-          (zone === "RESIDENTIAL" || zone === "COMMERCIAL")) {
-        const plan=cityBlockPlan(cx,cy,zone);
-        if(plan===2){
-          g.fill(64,93,72);g.rect(ox+365,oy+365,470,470,10);
-          g.fill(163,151,119);g.rect(ox+562,oy+365,76,470);g.rect(ox+365,oy+562,470,76);
-          g.stroke(83,80,66,100);g.strokeWeight(2);
-          for(let k=385;k<835;k+=38){g.line(ox+562,oy+k,ox+638,oy+k);g.line(ox+k,oy+562,ox+k,oy+638);}
-          g.noStroke();
-        }else if(plan===3){
-          g.fill(146,124,95,165);
-          for(const k of [180,460,740,1020])g.rect(ox+165,oy+k-25,870,50);
-          g.stroke(59,61,55,100);g.strokeWeight(2);
-          for(const k of [460,740])for(let x=185;x<1035;x+=42)g.line(ox+x,oy+k-24,ox+x,oy+k+24);
-          g.noStroke();
-        }
-      }
+      // The authored opening blocks and streamed districts share their paths.
+      if (biome === 1 && !canalB)
+        bakeCityDistrictGround(g,ox,oy,cityDistrictGroundPlan(cx,cy,zone));
 
       // --- Sidewalks ---
       const walkW = 45, bs = 960;
@@ -38636,6 +38837,8 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
           g.rect(ix + 80,  iy + w - 6, 30, 12);
         }
       }
+
+      if(biome===1)bakeCityStreetDetails(g,ox,oy,cx,cy);
 
       // Oil stains and tyre scuff — the lived-in layer, on the carriageway
       // only. Spread over the whole chunk it also greased the parks.
@@ -45760,6 +45963,7 @@ const PROP_RISE = {
   SITEHUT:    [20, 136, 128,  96],  HOARDING:   [16, 124, 118, 100],
   MATERIALS:  [12,  66,  68,  70],  SPOIL:      [12],
   KIOSK:      [20,  86,  80,  70],  BUSSTOP:    [20,  96, 112, 126],
+  CITYBIKERACK: [9], CITYSTALL: [24, 94, 71, 49], CITYWAYFINDER: [24, 51, 67, 71],
   HEDGE:      [16],                 FOUNTAIN:   [12],
   PLANTER:    [10, 138, 136, 128],  BENCH:      [ 8, 110,  84,  52],
   POSTBOX:    [14,  28,  60,  96],  HYDRANT:    [10, 140,  34,  28],
@@ -45800,6 +46004,8 @@ const PROP_RISE = {
 const PROP_BASE = {
   ARCADESTALL: { legs: 7 },
   BUSSTOP: { legs: 4 },
+  CITYSTALL: { legs: 4 },
+  CITYWAYFINDER: { round: 1, w: 10, h: 10, top: .86 },
   HYDRANT:   { round: 1, w: 20, h: 19, top: 0.72 },
   POSTBOX:   { round: 1, w: 22, h: 21, top: 0.78 },
   BOLLARD:   { round: 1,               top: 0.84 },
@@ -47118,6 +47324,86 @@ function drawBiomeProps(list, i0, i1) {
         fill(255, 255, 255, 34); ellipse(-LIGHT_DX * 4, -LIGHT_DY * 4, 7, 6);
         pop();
         break;
+      }
+
+      case "CITYBIKERACK": {
+        castShadow(b.x,b.y,b.w,18,5,48);
+        push(); translate(b.x,b.y); noFill();
+        // Open steel hoops leave air between parked bikes rather than a box
+        // skirt. Tyres are narrow ellipses, with coloured twin frame triangles.
+        stroke(40,51,55); strokeWeight(4);
+        line(-b.w/2+4,9,b.w/2-4,9);
+        stroke(164,178,176); strokeWeight(2.5);
+        for(const x of [-27,0,27]) {
+          line(x,-10,x,9); line(x-4,-10,x+4,-10);
+        }
+        for(let i=0;i<2;i++) {
+          const x=i===0?-18:18, y=i===0?-2:2;
+          stroke(27,31,33); strokeWeight(2.5);
+          ellipse(x-11,y,8,15); ellipse(x+11,y,8,15);
+          stroke(169,180,172); strokeWeight(1);
+          line(x-11,y-5,x-11,y+5); line(x+11,y-5,x+11,y+5);
+          stroke(i===0?63:186,i===0?151:107,i===0?155:65); strokeWeight(2.3);
+          triangle(x-11,y,x-2,y+4,x+3,y-5);
+          triangle(x-2,y+4,x+11,y,x+3,y-5);
+          stroke(49,55,56); strokeWeight(2);
+          line(x+3,y-5,x+7,y-9); line(x+4,y-9,x+11,y-9);
+          line(x-2,y+4,x-4,y-5);
+          line(x-8,y-5,x-1,y-5);
+          stroke(210,194,139); strokeWeight(1.4); line(x-2,y+4,x+3,y+6);
+        }
+        noStroke(); pop(); break;
+      }
+
+      case "CITYSTALL": {
+        castShadowRect(b.x,b.y,b.w,b.h,24,76,3);
+        push(); translate(b.x,b.y); noStroke();
+        const hw=b.w/2,hh=b.h/2,warm=(b.tint||0)<.5;
+        // Sheltered counter and produce crates stay visible beyond the canopy.
+        fill(68,54,40); rect(-hw+4,-hh+4,b.w-8,b.h-8,2);
+        fill(158,118,68); rect(-hw+5,hh-15,b.w-10,12,1);
+        for(let i=0;i<3;i++) {
+          const cx=-hw+11+i*(b.w-22)/3;
+          fill(95,72,44); rect(cx,hh-14,19,10,1);
+          fill(i===0?200:i===1?122:214,i===0?73:i===1?164:163,i===0?46:i===1?65:49);
+          for(let j=0;j<3;j++)ellipse(cx+4+j*5,hh-9+(j%2),5,5);
+          fill(205,161,99); rect(cx,hh-5,19,2);
+        }
+        fill(47,51,49); rect(-hw,-hh,b.w,b.h-17,2);
+        fill(warm?191:57,warm?77:135,warm?55:143);
+        rect(-hw+2,-hh+2,b.w-4,b.h-21,2);
+        fill(250,230,183,65); rect(-hw+2,-hh+2,b.w-4,(b.h-21)*.48,1);
+        fill(16,40,49,50); rect(-hw+2,-hh+2+(b.h-21)*.5,b.w-4,(b.h-21)*.5,1);
+        for(let x=-hw+10;x<hw-4;x+=20) {
+          fill(246,225,178); rect(x,-hh+2,9,b.h-21);
+          fill(183,169,137); rect(x,-hh+2+(b.h-21)*.5,9,(b.h-21)*.5);
+        }
+        fill(warm?112:31,warm?49:85,warm?40:95); rect(-hw,hh-20,b.w,5,1);
+        stroke(242,220,172); strokeWeight(2);
+        line(-hw+3,-hh+3+(b.h-21)*.5,hw-3,-hh+3+(b.h-21)*.5);
+        noStroke(); fill(223,192,133);
+        for(const x of [-1,1])for(const y of [-1,1])rect(x*(hw-4)-2,y*(hh-4)-2,4,4,1);
+        if(isRaining){fill(198,229,232,70);rect(-hw+4,-hh+3,b.w-8,3,1);}
+        pop(); break;
+      }
+
+      case "CITYWAYFINDER": {
+        castShadow(b.x,b.y,22,18,14,66);
+        push(); translate(b.x,b.y); noStroke();
+        fill(43,57,61); ellipse(0,0,12,12);
+        fill(114,133,131); ellipse(-LIGHT_DX*2,-LIGHT_DY*2,8,8);
+        // Small directional blades read as signage at play scale; inset dashes
+        // suggest lettering without asking the phone to rasterise tiny text.
+        for(let i=0;i<3;i++) {
+          const y=-11+i*9,right=i!==1;
+          fill(i===0?212:i===1?49:185,i===0?184:i===1?109:142,i===0?112:i===1?119:70);
+          if(right){rect(-14,y-3,24,6,1);triangle(10,y-3,15,y,10,y+3);}
+          else{rect(-10,y-3,24,6,1);triangle(-10,y-3,-15,y,-10,y+3);}
+          fill(i===1?230:48,i===1?222:69,i===1?183:72);
+          rect(right?-10:-6,y-1,8,2,1); rect(right?0:4,y-1,4,2,1);
+        }
+        fill(232,212,156); ellipse(0,-14,5,3);
+        pop(); break;
       }
 
       case "KIOSK": {
