@@ -4,10 +4,7 @@ Human projectile impacts now share the small wildlife floor splatter. The
 shared painter deposits exactly three directional droplets using the animal
 ink (`111, 9, 16`), 3–8-unit diameters and a short forward spread. These marks
 use the existing floor blood bank, beneath bodies, and remain fixed on the
-ground when the victim moves. Persistent body bullet holes use their own
-[caliber-based flesh decal painter](caliber-body-decals.md), with light, medium
-and heavy weapon groups. Head marks, animal wounds and armor marks retain
-their existing painters.
+ground when the victim moves. Body wound decals keep their own rendering path.
 Airborne projectile contact now adds a brief ink-rimmed comic burst with a
 strong yellow core and angular rays. The contact pop is about 45% larger than
 the first comic version. Non-head human hits throw denser, farther-reaching blood
