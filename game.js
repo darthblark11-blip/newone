@@ -665,11 +665,13 @@ const ENEMY_BULLET_SPEED  = 12.5;   // every hostile round, whatever the weapon
 const PLAYER_BULLET_SPEED = 35;     // the player's and their allies' small arms
 
 const WEAPONS = {
-  PISTOL: { name: "PISTOL", fireCooldown: 15, enemyCooldown: 48, maxAmmo: 17, bodyDmg: 20, headDmg: 100, spread: 0, pellets: 1 },
-  SMG: { name: "MACHINE GUN", fireCooldown: 6, enemyCooldown: 48, maxAmmo: 30, bodyDmg: 20, headDmg: 50, spread: 0.1, pellets: 1 },
-  DUAL_SMG: { name: "DUAL SMGS", fireCooldown: 5, enemyCooldown: 48, maxAmmo: 60, bodyDmg: 20, headDmg: 50, spread: 0.15, pellets: 2 },
-  ASSAULT_RIFLE: { name: "ASSAULT RIFLE", fireCooldown: 7, enemyCooldown: 48, maxAmmo: 30, bodyDmg: 30, headDmg: 60, spread: 0, pellets: 1 },
-  SHOTGUN: { name: "SHOTGUN", fireCooldown: 20, enemyCooldown: 60, maxAmmo: 8, bodyDmg: 25, headDmg: 50, spread: 0.1275, pellets: 4 },
+  // Caliber tiers control persistent flesh-wound art; damage remains authored
+  // per weapon below, including the separate damage from each shotgun pellet.
+  PISTOL: { name: "PISTOL", caliber: 'LIGHT', fireCooldown: 15, enemyCooldown: 48, maxAmmo: 17, bodyDmg: 20, headDmg: 100, spread: 0, pellets: 1 },
+  SMG: { name: "MACHINE GUN", caliber: 'LIGHT', fireCooldown: 6, enemyCooldown: 48, maxAmmo: 30, bodyDmg: 20, headDmg: 50, spread: 0.1, pellets: 1 },
+  DUAL_SMG: { name: "DUAL SMGS", caliber: 'LIGHT', fireCooldown: 5, enemyCooldown: 48, maxAmmo: 60, bodyDmg: 20, headDmg: 50, spread: 0.15, pellets: 2 },
+  ASSAULT_RIFLE: { name: "ASSAULT RIFLE", caliber: 'MEDIUM', fireCooldown: 7, enemyCooldown: 48, maxAmmo: 30, bodyDmg: 30, headDmg: 60, spread: 0, pellets: 1 },
+  SHOTGUN: { name: "SHOTGUN", caliber: 'MEDIUM', fireCooldown: 20, enemyCooldown: 60, maxAmmo: 8, bodyDmg: 25, headDmg: 50, spread: 0.1275, pellets: 4 },
   ROCKET_LAUNCHER: { name: "ROCKET LAUNCHER", fireCooldown: 45, enemyCooldown: 60, maxAmmo: 4, bodyDmg: 350, headDmg: 350, spread: 0, pellets: 1 },
   TASER: { name: "TASER", fireCooldown: 90, enemyCooldown: 60, maxAmmo: 4, bodyDmg: 0, headDmg: 0, spread: 0, pellets: 1 },
   // The quiver is finite ammunition, not a magazine that reload can recreate.
@@ -679,9 +681,9 @@ const WEAPONS = {
   // than anything else per shot and reloads far more often, which is the whole
   // character of it: the Dry Gulch cowboys will drop the player in two body
   // shots, and a single head shot ends anyone in the game.
-  REVOLVER: { name: "REVOLVER", fireCooldown: 53, enemyCooldown: 53, maxAmmo: 6, bodyDmg: 75, headDmg: 250, spread: 0, pellets: 1 },
+  REVOLVER: { name: "REVOLVER", caliber: 'HEAVY', fireCooldown: 53, enemyCooldown: 53, maxAmmo: 6, bodyDmg: 75, headDmg: 250, spread: 0, pellets: 1 },
   // Coach gun -- the lawman's short double-barrel. Two shells, wide pattern.
-  COACH_GUN: { name: "COACH GUN", fireCooldown: 34, enemyCooldown: 62, maxAmmo: 2, bodyDmg: 30, headDmg: 65, spread: 0.16, pellets: 5 } 
+  COACH_GUN: { name: "COACH GUN", caliber: 'MEDIUM', fireCooldown: 34, enemyCooldown: 62, maxAmmo: 2, bodyDmg: 30, headDmg: 65, spread: 0.16, pellets: 5 }
 };
 
 
@@ -14833,6 +14835,93 @@ function ragShin(rig, bend) { return rig.shin * (0.58 + 0.42 * Math.cos(bend)); 
 // midline -- check-corpse.js proves that bound rather than trusting it.
 function ragKnee(L) { return Math.max(0, Math.min(L.b, L.a + (L.room || 0))); }
 
+// Caliber is a cosmetic wound tier, independent of the combat damage table.
+// Keep the decal's old center/size and snapshot JSON-safe caliber/seed values;
+// leg mapping adds its relative angle. A fall, detached torso or old save must
+// not need the weapon object to draw the mark.
+const BODY_IMPACT_PROFILES = {
+  LIGHT:{scale:.75,tears:1},MEDIUM:{scale:1,tears:2},HEAVY:{scale:1.22,tears:3}
+};
+const BODY_IMPACT_GEOMETRY_MAX=96,_bodyImpactGeometry=new Map();
+const BODY_IMPACT_INK={rim:[105,4,19],depth:[58,2,12],tissue:[167,18,36],edge:[212,42,53],hole:[25,3,9]};
+function attachCaliberBodyDecal(d,weapon,seed) {
+  if(!d||d.isHead||!d.isBulletHole||!weapon||!BODY_IMPACT_PROFILES[weapon.caliber])return d;
+  d.fleshCaliber=weapon.caliber;d.fleshSeed=(Number.isFinite(seed)?seed:1)>>>0||1;return d;
+}
+function bodyImpactGeometry(caliber,seed) {
+  const profile=BODY_IMPACT_PROFILES[caliber];if(!profile)return null;
+  // Thirty-two irregular cuts per tier bound the cache while avoiding a fresh
+  // polygon/paint allocation for every hole on every frame of a crowded fight.
+  const variant=(seed>>>0)%32,key=caliber+':'+variant;
+  let shape=_bodyImpactGeometry.get(key);if(shape)return shape;
+  const h=n=>comicHitHash(variant*83+n*17+caliber.length*631),outer=[],deep=[],core=[];
+  const count=caliber==='HEAVY'?15:caliber==='MEDIUM'?13:11;
+  for(let i=0;i<count;i++){
+    const a=i*TWO_PI/count+(h(i)-.5)*.22,r=.32+h(i+21)*.12;
+    outer.push([Math.cos(a)*r,Math.sin(a)*r*(.79+h(i+41)*.11)]);
+    deep.push([Math.cos(a)*r*.72,Math.sin(a)*r*.61]);
+    core.push([Math.cos(a)*r*(caliber==='HEAVY'?.43:.34),Math.sin(a)*r*.38]);
+  }
+  const tears=[];
+  for(let i=0;i<profile.tears;i++){
+    const side=i%2?-1:1,y=side*(.05+h(i+71)*.08),reach=.39+h(i+93)*.10;
+    tears.push([[.04,y*.4],[.19,y-side*.065],[reach,y+side*(.10+h(i+111)*.12)],[.24,y+side*.055],[.07,y+side*.045]]);
+  }
+  // The asymmetrical red tongue and displaced flecks read as torn tissue and
+  // entry spatter rather than an evenly spaced comic impact star.
+  const flecks=caliber==='LIGHT'?[]:caliber==='MEDIUM'?[[[-.32,.24],[-.40,.31],[-.30,.30]]]:
+    [[[-.32,.24],[-.43,.33],[-.28,.31]],[[-.23,-.31],[-.31,-.43],[-.18,-.36]]];
+  shape={outer,deep,core,tears,flecks,lip:[[-.25,-.12],[-.13,-.24],[.12,-.20],[.07,-.13],[-.12,-.15]]};
+  for(const path of [outer,deep,core,shape.lip,...tears,...flecks])for(const p of path){
+    const radius=Math.hypot(p[0],p[1]);if(radius>.49){p[0]*=.49/radius;p[1]*=.49/radius;}
+  }
+  if(_bodyImpactGeometry.size>=BODY_IMPACT_GEOMETRY_MAX)_bodyImpactGeometry.delete(_bodyImpactGeometry.keys().next().value);
+  _bodyImpactGeometry.set(key,shape);return shape;
+}
+function bodyImpactFill(g,ink,alpha) {
+  const paint=particlePaint(ink,alpha);if(paint)g.fill(paint);else g.fill(ink[0],ink[1],ink[2],alpha);
+}
+function bodyImpactPath(g,points) {
+  // The cached polygon can go directly to Canvas without allocating p5 vertex
+  // arrays. Match its closing segments through the shared figure-path helpers;
+  // other renderers and accessible output modes keep their exact p5 fallback.
+  const dc=figureCelContext(g);
+  if(dc){
+    const first=points[0];figureCelPathStart(g,dc,first[0],first[1]);
+    for(let i=1;i<points.length;i++)dc.lineTo(points[i][0],points[i][1]);
+    figureCelPathEnd(g,dc,false,first[0],first[1]);
+  }else{g.beginShape();for(const p of points)g.vertex(p[0],p[1]);g.endShape(CLOSE);}
+}
+function drawBodyImpactDecal(g,d,x=d.x,y=d.y,size=d.sz,alpha=1,rotationOffset=0) {
+  const profile=!d.isHead&&BODY_IMPACT_PROFILES[d.fleshCaliber];
+  if(!profile){
+    const col=d.col||[90,0,0,220],opacity=(col[3]===undefined?255:col[3])*alpha;
+    g.noStroke();g.fill(col[0],col[1],col[2],opacity);g.ellipse(x,y,size,size);return;
+  }
+  const opacity=Math.round((d.col&&d.col[3]!==undefined?d.col[3]:220)*Math.max(0,Math.min(1,alpha)));
+  if(!(size>0)||opacity<=0)return;
+  const shape=bodyImpactGeometry(d.fleshCaliber,d.fleshSeed);
+  g.push();g.translate(x,y);g.rotate((Number.isFinite(d.shotA)?d.shotA:0)+rotationOffset);g.scale(size*profile.scale);g.noStroke();
+  bodyImpactFill(g,BODY_IMPACT_INK.rim,opacity);bodyImpactPath(g,shape.outer);
+  for(const path of shape.tears)bodyImpactPath(g,path);
+  for(const path of shape.flecks)bodyImpactPath(g,path);
+  bodyImpactFill(g,BODY_IMPACT_INK.depth,opacity);bodyImpactPath(g,shape.deep);
+  bodyImpactFill(g,BODY_IMPACT_INK.tissue,opacity);bodyImpactPath(g,shape.lip);
+  bodyImpactFill(g,BODY_IMPACT_INK.hole,opacity);bodyImpactPath(g,shape.core);
+  // One short wet edge catches the light; it stays blood-red, never a spark.
+  bodyImpactFill(g,BODY_IMPACT_INK.edge,Math.round(opacity*.72));
+  g.triangle(-.23,-.09,-.15,-.20,-.11,-.15);g.pop();
+}
+function drawBodySurfaceDecal(g,d,width,height,x=d.x,y=d.y) {
+  // A wound at the silhouette edge is still ink on the shirt/skin. Restrict
+  // only the new torn border to that surface; old saves keep their old dots.
+  g.push();const dc=g.drawingContext;
+  if(dc&&typeof dc.ellipse==='function'){
+    dc.beginPath();dc.ellipse(0,0,width*.5,height*.5,0,0,TWO_PI);dc.clip();
+  }
+  drawBodyImpactDecal(g,d,x,y);g.pop();
+}
+
 // Bullet height remains a combat choice, not a second ground-plane ray. Leg
 // aim uses the existing body footprint and damage; only its stain is projected
 // onto a trouser leg. Keep that attachment in limb coordinates so a stride,
@@ -14853,7 +14942,11 @@ function drawLegDecals(g,decals,index,sx,sy,kx,ky,ax,ay,hipW,kneeW,ankleW) {
     if(!d.isLeg||d.legIndex!==index)continue;
     if(!painting){g.push();g.noStroke();painting=true;}
     const p=legDecalPoint(d,sx,sy,kx,ky,ax,ay,hipW,kneeW,ankleW);
-    g.fill(...(d.col||[90,0,0,220]));g.ellipse(p.x,p.y,p.sz,p.sz);
+    if(d.fleshCaliber){
+      const profile=BODY_IMPACT_PROFILES[d.fleshCaliber],size=p.sz/Math.max(1,profile?profile.scale:1);
+      const offset=p.angle+(Number.isFinite(d.fleshLegAngle)?d.fleshLegAngle:0)-(d.shotA||0);
+      drawBodyImpactDecal(g,d,p.x,p.y,size,1,offset);
+    }else{g.fill(...(d.col||[90,0,0,220]));g.ellipse(p.x,p.y,p.sz,p.sz);}
   }
   if(painting)g.pop();
 }
@@ -14925,9 +15018,10 @@ function mapLegHitDecal(actor,wx,wy,decal,origin=actor) {
     // Keep the stain on the exposed lower trouser surface, clear of the boot.
     const u=Math.max(.68,Math.min(.92,((x-kx)*vx+(y-ky)*vy)/(len*len)));
     const px=kx+vx*u,py=ky+vy*u,d2=(x-px)*(x-px)+(y-py)*(y-py);
-    if(!best||d2<best.d2)best={index,u,v:Math.max(-.22,Math.min(.22,((x-px)*-vy+(y-py)*vx)/(len*width))),d2};
+    if(!best||d2<best.d2)best={index,u,v:Math.max(-.22,Math.min(.22,((x-px)*-vy+(y-py)*vx)/(len*width))),d2,angle:Math.atan2(vy,vx)};
   }
   decal.isLeg=true;decal.legIndex=best.index;decal.legSegment=1;decal.legU=best.u;decal.legV=best.v;
+  if(decal.fleshCaliber)decal.fleshLegAngle=(actor.aimAngle||0)+(decal.shotA||0)-angle-best.angle;
   return decal;
 }
 function fallenLegDecalPoint(c,w) {
@@ -15779,7 +15873,8 @@ function drawFatalWound(c,r) {
   for(const w of c.fatalSpray.wounds){
     if(w.isLeg)continue;
     const p=fatalWoundPoint(c,w),col=w.col||[90,0,0,220];
-    r.fill(...col);r.ellipse(p.x,p.y,w.sz*p.scale,w.sz*p.scale);
+    if(w.fleshCaliber&&!w.isHead)drawBodyImpactDecal(r,w,p.x,p.y,w.sz*p.scale,1,p.angle-(w.shotA||0));
+    else{r.fill(...col);r.ellipse(p.x,p.y,w.sz*p.scale,w.sz*p.scale);}
   }r.pop();
 }
 function advanceFatalSpray(c) {
@@ -16060,7 +16155,7 @@ function drawBlastAnatomy(r,c,p) {
   if(c.dT!==18)for(let i=0;i<2;i++)if(c.dT!==19||i!==b.legIndex)drawFallLimb(r,rig,c.rag,2+i,1,c.sC,c.pC,skin,b.boot,false,c.id,c.dec);
   if(c.dT===18&&dc){const plane=blastCutPlane(c,p);dc.save();dc.beginPath();dc.rect(plane.x,-160,240,320);dc.clip();}
   figureCelOval(r,0,0,rig.TL,rig.TW,c.sC);drawFallenAttire(r,c.id,rig.TL,rig.TW,c.backFacing,1);
-  r.noStroke();for(const d of c.dec||[])if(!d.isHead&&!d.isLeg){r.fill(...(d.col||[90,0,0,220]));r.ellipse(d.x,d.y,d.sz,d.sz);}
+  r.noStroke();for(const d of c.dec||[])if(!d.isHead&&!d.isLeg){if(d.fleshCaliber)drawBodyImpactDecal(r,d);else{r.fill(...(d.col||[90,0,0,220]));r.ellipse(d.x,d.y,d.sz,d.sz);}}
   if(c.dT===18&&dc)dc.restore();
   for(let i=0;i<2;i++){ragContour(r,255);drawFallLimb(r,rig,c.rag,i,1,c.sC,c.pC,skin,undefined,false,c.id);}
   r.push();r.translate(Math.max(18,rig.TL*.5+3.5),0);r.rotate(c.backFacing?0:PI);
@@ -16583,7 +16678,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
           r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a);
           figureCelOval(r, 0, 0, TL, TW, this.sC);
           drawFallenAttire(r,this.id,TL,TW,true,1);
-          r.noStroke(); for (let d of this.dec) { if (!d.isHead&&!d.isLeg) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } }
+          r.noStroke(); for (let d of this.dec) { if (!d.isHead&&!d.isLeg) { if(d.fleshCaliber)drawBodyImpactDecal(r,d);else{if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz);} } }
           // Back of the head: no face, they are looking at the ground.
           ragContour(r, a);
           r.push();r.translate(TL*.5+5+4*f,0);
@@ -16607,14 +16702,14 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       let off = this.sep; r.push(); r.rotate(this.mA); r.noStroke(); r.fill(this.pC); r.rect(-10,-10+off,18,8,4); r.rect(-10,2+off,18,8,4); r.fill(this.sC); r.ellipse(0,off,this.bW,this.bH/2); r.fill(90, 0, 0); r.ellipse(0, -off, this.bW, 10); r.translate(0, -off*1.8); r.ellipse(0, 0, this.bW, this.bH/2); drawFallenAttire(r,this.id,this.bW,this.bH/2,this.backFacing);
       if (this.eT === "ARMORED_STANDARD") { r.fill(100); r.rect(-10, -6, 20, 12, 4); } 
       if (this.eT === "FEMALE_PISTOL"&&!this.backFacing) { r.fill(this.sC); r.ellipse(4, -6, 12, 10); r.ellipse(4, 6, 12, 10); }
-      r.noStroke(); for (let d of this.dec) { if (!d.isHead&&!d.isLeg) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.fill(sK); r.ellipse(0, -5, 11, 11); r.noStroke(); for (let d of this.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.pop();
+      r.noStroke(); for (let d of this.dec) { if (!d.isHead&&!d.isLeg) { if(d.fleshCaliber)drawBodyImpactDecal(r,d);else{if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz);} } } r.fill(sK); r.ellipse(0, -5, 11, 11); r.noStroke(); for (let d of this.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.pop();
   } 
   else { 
       r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.fall?figureFallYaw(this.fall,this.rag):this.aA); const RG = this.rag; if (RG) { if(!this.fall)r.rotate(RG.ang); r.scale(RAG_SCALE); } if (RG) ragContour(r, a); else r.noStroke(); const RP = this.fall?projectFallRig(this.bW,this.bH,f):ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW; r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -10 : -10, lY2 = this.bW === 105 ? 15 : 2; r.push(); if (RG) { const bootC = color(this.pC.levels[0] * 0.55, this.pC.levels[1] * 0.55, this.pC.levels[2] * 0.55, a); if(this.fall){drawFallLimb(r,RP,RG,2,f,this.sC,this.pC,sK,bootC,false,this.id,this.dec); drawFallLimb(r,RP,RG,3,f,this.sC,this.pC,sK,bootC,false,this.id,this.dec);}else{ragLimb(r, RP.hipX, -RP.hipY, PI + RG.limbs[2].a, -ragKnee(RG.limbs[2]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[2])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot, this.dec, 0); ragLimb(r, RP.hipX,  RP.hipY, PI - RG.limbs[3].a,  ragKnee(RG.limbs[3]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[3])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot, this.dec, 1);} } else { r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4); } if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(lX, -4, 12, 16); } r.pop(); const underArm=this.fall&&this.fall.faceDown&&this.fall.hold&&f>.45?this.fall.hold.arm:-1; if(underArm>=0){ragContour(r,a);drawFallLimb(r,RP,RG,underArm,f,this.sC,this.pC,sK,undefined,false,this.id);} if (RG) ragContour(r, a); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); if (RG) { figureCelOval(r, 0, 0, TL, TW, this.sC); } else r.ellipse(0, 0, this.bW + 15 * f, this.bH);
       if (this.eT === "ARMORED_STANDARD") { r.fill(100); if (RG) r.rect(-TL * 0.26, -TW * 0.46, TL * 0.58, TW * 0.92, 4); else r.rect(-10, -12, 20, 24, 4); }
       if (this.eT === "FEMALE_PISTOL" && !(this.backFacing&&(!this.fall||f>.5))) { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(4, -6, 12, 10); r.ellipse(4, 6, 12, 10); }
       drawFallenAttire(r,this.id,RG?TL:this.bW+15*f,RG?TW:this.bH,this.backFacing,this.fall?f:1);
-      r.noStroke(); for (let d of this.dec) { if (!d.isHead&&!d.isLeg) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } }
+      r.noStroke(); for (let d of this.dec) { if (!d.isHead&&!d.isLeg) { if(d.fleshCaliber)drawBodyImpactDecal(r,d,d.x,d.y,d.sz,a/255);else{if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz);} } }
       // Blood from the head coats the collar and shirt, under the sleeves.
       if(this.spray){for(const sp of this.spray){r.fill(96,6,6,sp.a*(a/255));r.ellipse(sp.x,sp.y,sp.r*2,sp.r*1.74);}}
       let lAY = this.eT === "ARMORED" ? -30 : -14, rAY = this.eT === "ARMORED" ? 30 : 11, slX = lerp(-5, 0, f), hX = lerp(-12, 12, f), armLY = lerp(lAY, lAY + 3, f), rslX = lerp(15, 0, f), rhX = lerp(25, 12, f), armRY = lerp(rAY, rAY + 3, f); 
@@ -18597,7 +18692,9 @@ function paintBoxingFigure(e) {
     paintBoxingArm(g,appearance,arm,rig,skin,'FOREARM');
   // Stains move with the mass they belong to instead of staying at the hips
   // while a slipping head/torso escapes the incoming punch.
-  if(e.decals)for(const d of e.decals){if(d.isLeg)continue;const p=d.isHead?b.head:b.body;g.noStroke();if(d.col)g.fill(...d.col);else g.fill(90,0,0,220);g.ellipse(d.x+p.x,d.y+p.y,d.sz,d.sz);}
+  if(e.decals)for(const d of e.decals){if(d.isLeg)continue;const p=d.isHead?b.head:b.body;
+    if(d.fleshCaliber&&!d.isHead){g.push();g.translate(p.x,p.y);drawBodySurfaceDecal(g,d,p.rx*2,p.ry*2);g.pop();}
+    else{g.noStroke();if(d.col)g.fill(...d.col);else g.fill(90,0,0,220);g.ellipse(d.x+p.x,d.y+p.y,d.sz,d.sz);}}
   if(b.parryFlash>0){
     const k=Math.min(1,b.parryFlash),a=b.arms.find(arm=>arm.guard)||b.arms[0],h=a.fist;
     g.noFill();g.stroke(245,250,213,220*k);g.strokeWeight(1.4);
@@ -24091,7 +24188,10 @@ if (this.isPlayer) {
     }
     if (this.isPlayer && ninjaSuitUnlocked) { fill(100, 0, 200); rect(-this.bodyW/2, -4, this.bodyW, 8, 2); } 
  
-    noStroke(); for (let d of this.decals) { if (!d.isHead&&!d.isLeg) { if (d.col) fill(d.col[0], d.col[1], d.col[2], d.col[3]); else fill(90, 0, 0, 220); ellipse(d.x, d.y, d.sz, d.sz); } }
+    noStroke(); for (let d of this.decals) { if (!d.isHead&&!d.isLeg) {
+      if(d.fleshCaliber)drawBodySurfaceDecal(paint?paint.api:window,d,this.bodyW,this.bodyH);
+      else{if (d.col) fill(d.col[0], d.col[1], d.col[2], d.col[3]); else fill(90, 0, 0, 220); ellipse(d.x, d.y, d.sz, d.sz);}
+    } }
     if (_tsq) pop();
     // Blood decals are stains ON the shirt and take no contour; everything
     // after them -- sleeves, hands, boots, packs -- is a limb and does.
@@ -25712,6 +25812,13 @@ function updateBullets() {
                 if (!(t.isPlayer && dRes.blocked)) {
                   const decal={x:lX,y:lY,sz:random(4,7),col:dCol,isHead:impactZone==="HEAD",
                     isBulletHole:true,shotA:b.a-t.aimAngle};
+                  if (impactZone !== 'HEAD' && !wA && t.hp < hpBeforeImpact &&
+                      (t.isPlayer || ragHumanoid(t.eType,t.bodyW)) &&
+                      !(b.isArrow || b.isOrangeBeam || b.isRedLaser || b.isPinkLaser || b.isAlienLaser)) {
+                    const woundSeed=(Math.imul((Number(b.shotId)||frameCount+1)|0,0x9e3779b9) ^
+                      Math.imul((b.x*32)|0,0x85ebca6b) ^ Math.imul((b.y*32)|0,0xc2b2ae35))>>>0;
+                    attachCaliberBodyDecal(decal,b.w,woundSeed);
+                  }
                   if(impactZone==="LEGS")mapLegHitDecal(t,b.x,b.y,decal,fallHit);
                   t.decals.push(decal);
                   fallHit.wound=t.decals[t.decals.length-1];
@@ -42690,8 +42797,8 @@ function drawCombatStanceBody(c,b,g,cloth,withHead=true) {
   }
   g.noStroke();
   for (const d of c.decals) if (!d.isHead && !d.isLeg) {
-    if (d.col) g.fill(...d.col); else g.fill(90,0,0,220);
-    g.ellipse(d.x,d.y*.85,d.sz,d.sz);
+    if(d.fleshCaliber)drawBodySurfaceDecal(g,d,b.torsoLength,b.torsoWidth,d.x,d.y*.85);
+    else{if (d.col) g.fill(...d.col); else g.fill(90,0,0,220);g.ellipse(d.x,d.y*.85,d.sz,d.sz);}
   }
   if(!pack||pack.above)drawStanceDashPack(g,c,b,'OVER');
   pop();
@@ -51524,6 +51631,8 @@ function startFrontierQuickDraw() {
 function frontierQuickDrawDeath(actor, bullet) {
   const d = _frontierSaloonSession.duel, wound = { x: 0, y: 0, sz: 5, col: [90, 0, 0, 220],
     isHead: bullet.tH === 'HEAD', isBulletHole: true, shotA: bullet.a - actor.aimAngle };
+  if (!wound.isHead) attachCaliberBodyDecal(wound,WEAPONS.REVOLVER,
+    (Math.imul((Number(bullet.shotId)||frameCount+1)|0,0x9e3779b9)^Math.imul((actor.x*32)|0,0x85ebca6b)^(actor.y*32|0))>>>0);
   // The mission uses the same fatal wound, directional fall and clothing
   // snapshot as a normal gun death. Its bodies and particles stay local, so
   // a duel defeat can offer a rematch without killing the outdoor campaign.
