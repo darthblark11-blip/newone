@@ -5,12 +5,13 @@ const {createHash}=require('crypto');
 const {ctx,mkG,probe}=require('./harness');
 const P=s=>probe('('+s+')');
 probe('currentLevel=1;currentBiome=1;BIOME_ACTIVE=true;authoredCore=null;authoredMask=null;authoredChunks=null;biomeState={};');
-const found=new Map(),arches=new Set(),streetProps=new Set();let chunks=0;
+const found=new Map(),arches=new Set(),streetProps=new Set();let chunks=0,edgeFixture=null;
 const industrial={parking:0,district:0,depot:0,freight:0};let parkingFixture=null;
+const expectedNamespace=(cx,cy)=>P(`cityDowntownBlockPlan(${cx},${cy})`)!==null?'downtown:v1:':P(`cityDowntownJunction(${cx},${cy})&&bnoise(1,${cx}*4096+7717,${cy}*4096+3131,.31)>.62`)?'downtown-edge:v1:':'district:v3:';
 const blockersOf=solids=>solids.filter(b=>!b.noClip&&!b.isGrassLot&&!b.isDeck&&!b.isWater);
 function checkBlock(solids,cx,cy,label) {
   const bs=solids.filter(b=>b.cityArchitecture!==undefined),blockers=blockersOf(solids);
-  const furniture=solids.filter(b=>b.cityPlan!==undefined&&b.cityArchitecture===undefined);
+  const furniture=solids.filter(b=>b.cityPlan!==undefined&&b.cityArchitecture===undefined&&!b.isDeck);
   for(const a of furniture){
     streetProps.add(a.propType);
     if(a.propType==='CITYBIKERACK'){
@@ -41,7 +42,9 @@ function checkBlock(solids,cx,cy,label) {
   for(const b of bs){
     assert(b.x-b.w/2>=cx*1200+165&&b.x+b.w/2<=cx*1200+1035,`${label}: building leaves usable block`);
     assert(b.y-b.h/2>=cy*1200+165&&b.y+b.h/2<=cy*1200+1035,`${label}: building leaves usable block`);
-    assert(P(`buildingRise(${JSON.stringify(b)})`)<=42,`${label}: excessive building rise`);
+    const rise=P(`buildingRise(${JSON.stringify(b)})`);
+    if(b.cityArchitecture===14)assert(rise>=52&&rise<=64&&b.cityStoreys===6,`${label}: business tower lacks its intended height`);
+    else assert(rise<=42,`${label}: excessive building rise`);
     for(const other of blockers){if(b===other)continue;
       assert(!(Math.abs(b.x-other.x)<(b.w+other.w)/2&&Math.abs(b.y-other.y)<(b.h+other.h)/2),`${label}: architecture overlaps cover`);
     }
@@ -75,6 +78,7 @@ for(let cy=5;cy<25;cy++)for(let cx=-25;cx<25;cx++){
   const ch=P(`generateChunkContent(1,${cx},${cy})`);chunks++;
   assert.equal(JSON.stringify(ch),JSON.stringify(P(`generateChunkContent(1,${cx},${cy})`)));
   const bs=ch.solid.filter(b=>b.cityArchitecture!==undefined);
+  if(ch.solid.some(b=>b.chunkKey.includes('downtown-edge:v1:')))edgeFixture={cx,cy,ch};
   // Validate industrial ground against the native generator, rather than two
   // helper functions which might agree with each other while buildings differ.
   const zone=P(`cityZoneAt(1,${cx*1200},${cy*1200})`);
@@ -95,25 +99,31 @@ for(let cy=5;cy<25;cy++)for(let cx=-25;cx<25;cx++){
         if(ground===9){industrial.depot++;assert(bs.some(b=>b.cityArchitecture===9),'native depot lacks depot architecture');}
         if(ground===12){industrial.freight++;assert(bs.some(b=>b.cityArchitecture===12),'native freight terminal lacks freight architecture');}
       }
-      assert(ch.solid.every(b=>b.chunkKey.includes('district:v3:')),'industrial replacement left fixtures or parking under old destruction keys');
+      assert(ch.solid.every(b=>b.chunkKey.includes(expectedNamespace(cx,cy))),'industrial replacement left fixtures or parking under old destruction keys');
     }
   }
   if(!bs.length)continue;
   if(bs[0].cityPlan>=10)assert(!ch.solid.some(b=>b.propType==='WRECK'),'new exterior district contains legacy flat wreck scatter');
   found.set(bs[0].cityPlan,{cx,cy,ch});
-  for(const b of bs){arches.add(b.cityArchitecture);assert(b.chunkKey.includes('district:v3:'),'district replacement keys must be versioned');}
+  for(const b of bs){
+    arches.add(b.cityArchitecture);
+    assert(b.chunkKey.includes(expectedNamespace(cx,cy)),'district replacement keys must keep their own versioned namespace');
+  }
   checkBlock(ch.solid,cx,cy,`streamed ${cx},${cy}`);
 }
-assert.deepEqual([...found.keys()].sort((a,b)=>a-b),[0,1,2,3,4,5,6,7,8,9,10,11,12,13],'all fourteen plans generate');
-assert.deepEqual([...arches].sort((a,b)=>a-b),[0,1,2,3,4,5,6,7,8,9,10,11,12,13],'all fourteen roof families generate');
+assert.deepEqual([...found.keys()].sort((a,b)=>a-b),[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16],'all seventeen plans generate');
+assert.deepEqual([...arches].sort((a,b)=>a-b),[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15],'all sixteen roof families generate');
 assert(industrial.parking>0&&industrial.district>0&&industrial.depot>0&&industrial.freight>0,'native sample must exercise industrial parking, workshops, depots and freight terminals');
 // A previous district or numeric grid key must never erase a replacement prop
 // or building. Conversely, destroying a current building must stay persistent.
-for(const {cx,cy,ch}of [...found.values(),parkingFixture]){
-  const oldKeys=ch.solid.flatMap((b,i)=>[`${cx},${cy},district:${i}`,`${cx},${cy},district:v2:${i}`,`${cx},${cy},${i}`]);
+assert(edgeFixture,'sample must exercise a renamed downtown-edge block');
+for(const {cx,cy,ch}of [...found.values(),parkingFixture,edgeFixture]){
+  const downtown=ch.solid.some(b=>b.chunkKey.includes('downtown:v1:')||b.chunkKey.includes('downtown-edge:v1:'));
+  const oldKeys=ch.solid.flatMap(b=>{const i=b.chunkKey.slice(b.chunkKey.lastIndexOf(':')+1);return[`${cx},${cy},district:${i}`,`${cx},${cy},district:v2:${i}`,`${cx},${cy},${i}`,
+    ...(downtown?[`${cx},${cy},district:v3:${i}`,`${cx},${cy},civic:${i}`]:[])];});
   probe(`for(const key of ${JSON.stringify(oldKeys)})getBiomeState(1).destroyed[key]=true;`);
   assert.equal(JSON.stringify(ch),JSON.stringify(P(`generateChunkContent(1,${cx},${cy})`)),'old destruction indices erased a replacement district');
-  const target=ch.solid.find(b=>b.cityArchitecture!==undefined||b.cityDistrictParking);
+  const target=ch.solid.find(b=>b.cityArchitecture!==undefined||b.cityDistrictParking)||ch.solid.find(b=>!b.isGrassLot&&!b.isDeck);
   probe(`getBiomeState(1).destroyed[${JSON.stringify(target.chunkKey)}]=true;`);
   const remaining=P(`generateChunkContent(1,${cx},${cy})`).solid;
   assert(!remaining.some(b=>b.chunkKey===target.chunkKey));
@@ -167,7 +177,7 @@ for(let cy=-8;cy<=8&&mirrorSites.size<4;cy++)for(let cx=-8;cx<=8&&mirrorSites.si
 }
 assert.equal(mirrorSites.size,4);
 let groundBakes=0;
-for(let plan=0;plan<14;plan++){
+for(let plan=0;plan<17;plan++){
   let reference=null;
   for(const [orientation,{cx,cy}]of mirrorSites){
     const ox=cx*1200,oy=cy*1200,g=mkG(),rects=[];
@@ -243,5 +253,5 @@ for(const {cx,cy,ch}of found.values()){
     probe(`worldTimeMs=${hour}/24*DAY_MS;isRaining=${rain};camX=${cx*1200+600}+${side}*700;camY=${cy*1200+600}+${side}*700;updateSunVector();drawBuildings();drawBiomeProps();`);renders++;
   }
 }
-assert.equal(painted.size,14,'native renderer did not paint every roof family');
-console.log(`City districts passed: ${chunks} deterministic chunks, fourteen streamed plans / fourteen architectures, ${authoredPlans.size} authored identities, story landmarks, 24-unit routes, versioned destruction, ${groundBakes} mirrored ground bakes, ${industrial.parking} industrial lots / ${industrial.depot} depots / ${industrial.freight} freight terminals and ${renders} lighting/view renders.`);
+assert.equal(painted.size,16,'native renderer did not paint every roof family');
+console.log(`City districts passed: ${chunks} deterministic chunks, seventeen streamed plans / sixteen architectures, ${authoredPlans.size} authored identities, story landmarks, 24-unit routes, versioned destruction, ${groundBakes} mirrored ground bakes, ${industrial.parking} industrial lots / ${industrial.depot} depots / ${industrial.freight} freight terminals and ${renders} lighting/view renders.`);

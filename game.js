@@ -3863,6 +3863,7 @@ function smooth01(t) { return t <= 0 ? 0 : t >= 1 ? 1 : t * t * (3 - 2 * t); }
 function groundElev(x, y) {
   const zs = elevZones();
   let h = civicGroundHeight(x, y);
+  if (BIOME_ACTIVE && currentBiome === 1) h += cityDowntownGroundHeight(x, y);
   // A gulch lowers the shared ground field; figures, movement and the light
   // rig read this same value, including when Dry Gulch's story is settled.
   if (BIOME_ACTIVE && currentBiome === 3) h += frontierCanyonHeight(x, y);
@@ -33035,7 +33036,16 @@ const CITY_BRIDGE_HALF = 132;
 // across a junction is what a checkpoint IS. Nothing has to move out of the way
 // for it.
 function cityIsCheckpoint(biome, cx, cy) {
+  if(biome===1&&cityDowntownJunction(cx,cy))return false;
   return bnoise(biome, cx * 4096 + 7717, cy * 4096 + 3131, 0.31) > 0.62;
+}
+function cityDowntownJunction(cx,cy) {
+  // Checkpoint arms reach into all four neighbouring blocks. Keep downtown
+  // junctions open instead of clearing only one chunk and intersecting a
+  // park pavilion or shop across the seam.
+  for(let dy=-1;dy<=0;dy++)for(let dx=-1;dx<=0;dx++)
+    if(cityDowntownBlockPlan(cx+dx,cy+dy)!==null)return true;
+  return false;
 }
 // The next checkpoint over, for the patrol that walks between them. Searched
 // outward so a post always pairs with its nearest neighbour, and deterministic,
@@ -33063,9 +33073,40 @@ function nextCheckpoint(biome, cx, cy) {
 // blocks, and PARK / INDUSTRIAL / COMMERCIAL / RESIDENTIAL is a small enough
 // vocabulary that a five-minute walk sees every word in it twice.
 // ---------------------------------------------------------------------------
-// Fourteen street-address plans. Rectangular wings keep collision, occlusion and
+// The downtown is a connected district south of the starting gates. Its canal
+// row remains a continuous waterfront; a ridge rises beyond it into the business
+// quarter and descends through park blocks toward the southern neighbourhoods.
+const CITY_DOWNTOWN_RELIEF = Object.freeze({x0:-4200,x1:4200,y0:8400,y1:13200});
+function cityDowntownBlockPlan(cx,cy) {
+  if(cx < -3 || cx > 2 || cy < 5 || cy > 9 || cityHasCanal(1,cy))return null;
+  const col=cx+3;
+  if(cy===9)return col%3===1?15:16;
+  if(cy===8)return col===0||col===3||col===5?16:14;
+  if(cy===7)return col===0||col===5?16:col%2?14:15;
+  return col%2?14:15;
+}
+function cityDowntownParkHeight(x,y) {
+  const cx=Math.floor(x/CHUNK_W),cy=Math.floor(y/CHUNK_W);
+  if(cityDowntownBlockPlan(cx,cy)!==16)return 0;
+  const dx=Math.abs(x-cx*CHUNK_W-600),dy=Math.abs(y-cy*CHUNK_W-600);
+  return 28*smooth01(Math.min((410-dx)/110,(350-dy)/110));
+}
+function cityDowntownGroundHeight(x,y) {
+  // Compact C1 envelope: no steps at chunk seams, gate approaches, the canal
+  // or the edge of downtown. This field is independent of streaming residency.
+  const r=CITY_DOWNTOWN_RELIEF;
+  if(x<=r.x0||x>=r.x1||y<=r.y0||y>=r.y1)return 0;
+  const sides=smooth01((x+4200)/1000)*smooth01((4200-x)/1000);
+  const ridge=(62+18*Math.cos((x+600)*Math.PI/4200))*sides*
+    smooth01((y-8400)/900)*smooth01((13200-y)/2400);
+  return ridge+cityDowntownParkHeight(x,y);
+}
+
+// Seventeen street-address plans. Rectangular wings keep collision, occlusion and
 // projectile cover identical to the projected architecture; courtyards are air.
 function cityBlockPlan(cx, cy, zone) {
+  const downtown=cityDowntownBlockPlan(cx,cy);
+  if(downtown!==null)return downtown;
   const n = chunkHash(1, cx, cy, 8173) >>> 0;
   const expansion = chunkHash(1, cx, cy, 8231) >>> 0;
   if (cityOuterExpansionAllowed(cx,cy) && expansion % 5 < 2)
@@ -33092,6 +33133,8 @@ function cityIndustrialParking(cx, cy) {
 function cityDistrictGroundPlan(cx, cy, zone) {
   if (chunkInAuthoredCore(cx, cy)) return authoredCityBlockPlan(cx, cy);
   if (cityHasCanal(1, cy)) return null;
+  const downtown=cityDowntownBlockPlan(cx,cy);
+  if(downtown!==null)return downtown;
   if (zone === 'INDUSTRIAL') return cityIndustrialParking(cx,cy) ? null : cityBlockPlan(cx,cy,zone);
   if (zone !== 'RESIDENTIAL' && zone !== 'COMMERCIAL') return null;
   return cityBlockPlan(cx, cy, zone);
@@ -33110,8 +33153,9 @@ function buildCityDistrict(solid, ox, oy, zone, nearAnchor, planOverride = null)
     x = (orientation&1 ? -x : x)+ox+600; y = (orientation&2 ? -y : y)+oy+600;
     if (nearAnchor(x,y,Math.max(w,h)/2+150)) return;
     solid.push({x,y,w,h,isBlockBuilding:true,cityArchitecture:arch,
-      cityPlan:plan,style:[1,3,2,0,0,2,3,2,3,0,2,2,0,1][arch],details:[],
-      cityAccent:rngInt(rng,0,4),cityStoreys:2+arch%3});
+      cityPlan:plan,style:[1,3,2,0,0,2,3,2,3,0,2,2,0,1,3,2][arch],details:[],
+      cityAccent:rngInt(rng,0,4),cityStoreys:arch===14?6:2+arch%3,
+      ...(plan>=14?{cityDowntown:true}:{}),...(arch===14?{_rise:52+rngInt(rng,0,4)*4}:arch===15?{_rise:34}:{})});
   };
   if (plan === 0) { // Brownstone mews: two rows, central carriage lane.
     for (let i=0;i<5;i++) for (const side of [-1,1])
@@ -33154,9 +33198,16 @@ function buildCityDistrict(solid, ox, oy, zone, nearAnchor, planOverride = null)
   } else if (plan === 13) { // Recreation club: low pavilions around an open court.
     add(0,-300,600,140,13);
     add(-300,235,140,260,13);add(300,235,140,260,13);
+  } else if (plan === 14) { // Downtown towers: four independently grounded masses.
+    add(-240,-240,250,290,14);add(250,-200,220,330,14);
+    add(-220,250,290,230,14);add(270,260,190,230,14);
+  } else if (plan === 15) { // Business arcade: retail frontage and office wings.
+    add(0,-290,620,160,15);add(-295,200,150,330,15);add(295,200,150,330,15);
+  } else if (plan === 16) { // Terraced park: a small pavilion off the stair axis.
+    add(-260,-245,220,140,13);
   }
   // Furniture belongs to the open court, never to a roof or doorway.
-  const positions = plan===12 ? [] : plan===13 ? [[-220,-160],[220,-160]] :
+  const positions = plan===12||plan===16 ? [] : plan===13 ? [[-220,-160],[220,-160]] :
     plan===2 ? [[-90,-90],[90,90]] : [[0,-100],[0,100]];
   for (const [dx,dy] of positions) {
     const x=ox+600+dx,y=oy+600+dy;
@@ -33175,7 +33226,7 @@ function buildCityDistrict(solid, ox, oy, zone, nearAnchor, planOverride = null)
   // Park bicycles in a recessed outer-city court, never on a pavement or
   // carriageway. Leave both central walking strips open, and omit a rack
   // entirely when an address has no honest parking space.
-  if(planOverride===null && plan!==13 && cityOuterExpansionAllowed(ox/CHUNK_W,oy/CHUNK_W)){
+  if(planOverride===null && plan!==13 && plan!==16 && cityOuterExpansionAllowed(ox/CHUNK_W,oy/CHUNK_W)){
     for(const [dx,dy] of [[-160,150],[160,-150],[-160,-150],[160,150],[-210,150],[210,-150]]){
       if(furnish(dx,dy,74,28,'CITYBIKERACK'))break;
     }
@@ -33193,7 +33244,26 @@ function buildCityDistrict(solid, ox, oy, zone, nearAnchor, planOverride = null)
     for(const dy of [-150,330])furnish(0,dy,18,18,'CITYCOURTHOOP',{courtFacing:(dy<0?1:-1)*(orientation&2?-1:1)});
     furnish(-200,90,84,26,'BENCH');furnish(200,90,84,26,'BENCH');
   }
+  else if(plan===14||plan===15){
+    furnish(-175,45,84,26,'BENCH');furnish(175,-45,62,62,'TERRACEPLANTER');
+  }
+  else if(plan===16){
+    furnish(-190,75,84,26,'BENCH');furnish(190,75,84,26,'BENCH');
+    furnish(-190,-75,62,62,'TERRACEPLANTER');furnish(190,-75,62,62,'TERRACEPLANTER');
+  }
   else {furnish(-180,0,84,26,'BENCH');furnish(180,0,22,22,'POSTBOX');}
+}
+function buildCityDowntownPark(solid,decor,ox,oy,nearAnchor) {
+  buildCityDistrict(solid,ox,oy,'PARK',nearAnchor,16);
+  const rng=makeRng(chunkHash(1,ox/CHUNK_W,oy/CHUNK_W,8243));
+  for(const [dx,dy] of [[-350,-270],[350,-270],[-350,270],[350,270],[-355,100],[355,100]]){
+    const x=ox+600+dx,y=oy+600+dy;
+    if(nearAnchor(x,y,100)||!solidsClearAt(solid,x,y,18,18,24))continue;
+    solid.push({x,y,w:18,h:18,isTreeTrunk:true,cityDowntown:true,cityPlan:16});
+    decor.push({t:'TREE',x,y,s:.85+rng()*.2,r:rng()*TWO_PI,c:rng(),cityDowntown:true});
+  }
+  solid.push({x:ox+600,y:oy+600,w:820,h:700,isBiomeProp:true,isDeck:true,
+    propType:'CITYPARKTERRACE',cityPlan:16,cityDowntown:true});
 }
 
 // The district's open space follows the same address and mirrors as its
@@ -33258,6 +33328,21 @@ function bakeCityDistrictGround(g, ox, oy, plan) {
       g.ellipse(wx(600),wy(y===485?555:825),90,90);
     }
     g.noStroke();
+  }else if(plan===14||plan===15){
+    pad(165,560,870,80,[155,165,163]);
+    pad(558,plan===15?410:165,84,plan===15?625:870,[155,165,163]);
+    g.fill(198,183,142);g.rect(wx(600)-50,wy(600)-50,100,100,3);
+    g.stroke(75,92,94,105);g.strokeWeight(2);
+    for(let x=200;x<1040;x+=56)joint(x,565,x,635);
+    g.noStroke();
+  }else if(plan===16){
+    g.fill(57,101,68);g.rect(ox+190,oy+250,820,700,14);
+    g.fill(80,126,78);g.rect(ox+290,oy+330,620,540,10);
+    // Fixed cardinal walks meet the deck's stairs and side ramps.
+    pad(510,250,180,700,[181,171,133]);pad(190,555,820,90,[181,171,133]);
+    g.stroke(116,112,85,105);g.strokeWeight(2);
+    for(let k=270;k<950;k+=40)g.line(ox+514,oy+k,ox+686,oy+k);
+    g.noStroke();
   }else{
     // Thin pedestrian spines make the older mews/campus plans feel inhabited
     // without covering the whole yard in another featureless slab.
@@ -33292,6 +33377,25 @@ function bakeCityStreetDetails(g, ox, oy, cx, cy) {
     const x=245+((seed+i*137)%700),y=i%2?1030:169;
     g.fill(190+i*7,181+i*6,151+i*5,130);g.rect(ox+x,oy+y,7+i%3*3,5);
   }
+}
+function bakeCityDowntownRelief(g,biome,ox,oy) {
+  const r=CITY_DOWNTOWN_RELIEF;
+  if(biome!==1||ox>=r.x1||ox+CHUNK_W<=r.x0||oy>=r.y1||oy+CHUNK_W<=r.y0)return;
+  // A low-contrast, world-aligned ground wash carries the continuous grade
+  // across road/chunk seams. All sample work happens once during the bake.
+  withBakedSun(()=>{
+    g.noStroke();
+    for(let y=oy;y<oy+CHUNK_W;y+=80)for(let x=ox;x<ox+CHUNK_W;x+=80){
+      const cx=x+40,cy=y+40,z=cityDowntownGroundHeight(cx,cy);
+      if(z<.05)continue;
+      const dx=(cityDowntownGroundHeight(cx+40,cy)-cityDowntownGroundHeight(cx-40,cy))/80;
+      const dy=(cityDowntownGroundHeight(cx,cy+40)-cityDowntownGroundHeight(cx,cy-40))/80;
+      const sun=-(dx*LIGHT_DX+dy*LIGHT_DY);
+      if(sun>=0)g.fill(232,225,184,Math.min(31,4+z*.08+sun*75));
+      else g.fill(29,49,48,Math.min(42,4+z*.04-sun*100));
+      g.rect(x,y,80,80);
+    }
+  });
 }
 
 // Facade glazing follows the actual base-to-roof quadrilateral, not a flat
@@ -33345,6 +33449,43 @@ function drawCityFacades(b,lx,ly) {
       }
       return;
     }
+    if(b.cityArchitecture===14){
+      // Floor glazing follows the tower's actual base-to-roof wall plane.
+      fill(26,56,73);panel(.025,.975,.035,.96);
+      const floors=Math.max(4,Math.min(7,b.cityStoreys||5));
+      for(let floor=0;floor<floors;floor++)for(let i=0;i<bays;i++){
+        const lit=daylight()<.65&&(i+floor*3+b.cityAccent)%5===0;
+        fill(lit?236:47,lit?186:104,lit?104:128,235);
+        panel((i+.14)/bays,(i+.84)/bays,(floor+.16)/floors,(floor+.82)/floors);
+        fill(lit?251:123,lit?213:174,lit?151:183,155);
+        panel((i+.16)/bays,(i+.26)/bays,(floor+.19)/floors,(floor+.76)/floors);
+      }
+      fill(175,194,183);panel(.015,.035,.02,.98);panel(.965,.985,.02,.98);
+      fill(209,213,184);panel(.02,.98,.94,.985);
+      return;
+    }
+    if(b.cityArchitecture===15){
+      fill(183,168,136);panel(.015,.985,.035,.96);
+      const shops=Math.max(2,Math.min(8,Math.floor(len/70)));
+      for(let i=0;i<shops;i++){
+        fill(28,65,77);panel((i+.10)/shops,(i+.90)/shops,.10,.44);
+        fill(103,160,161);panel((i+.16)/shops,(i+.84)/shops,.25,.40);
+        fill(44,78,91);panel((i+.16)/shops,(i+.84)/shops,.60,.84);
+        fill(188,210,191);panel((i+.48)/shops,(i+.52)/shops,.10,.44);
+      }
+      fill(225,206,163);panel(.02,.98,.87,.97);
+      // The projecting canopy has a top, fascia and end faces, rather than
+      // painting an awning stripe on the masonry or onto the pavement.
+      const nx=ax===bx?(ax===x0?-1:1):0,ny=ay===by?(ay===y0?-1:1):0;
+      const point=(u,t,depth)=>[ax+(bx-ax)*u+lx*t+nx*depth,ay+(by-ay)*u+ly*t+ny*depth];
+      const p0=point(.06,.48,0),p1=point(.94,.48,0),p2=point(.94,.48,12),p3=point(.06,.48,12);
+      const q2=point(.94,.43,12),q3=point(.06,.43,12);
+      fill(58,100,103);quad(...p0,...p1,...p2,...p3);
+      fill(33,66,71);quad(...p3,...p2,...q2,...q3);
+      fill(111,137,122);quad(...p0,...p3,...q3,...point(.06,.43,0));
+      fill(84,113,106);quad(...p1,...p2,...q2,...point(.94,.43,0));
+      return;
+    }
     for(let floor=0;floor<b.cityStoreys;floor++)for(let i=0;i<bays;i++){
       const library=b.cityArchitecture===7,station=b.cityArchitecture===6,deco=b.cityArchitecture===11;
       const u=(i+(library?.33:.20))/bays,v=(i+(library?.67:.80))/bays;
@@ -33391,6 +33532,25 @@ function cityRoofPitchedMass(b,x,y,w,h,z,c) {
   fill(c[0]*south,c[1]*south,c[2]*south);quad(x,y+h,x+w,y+h,bx,by,ax,ay);
   stroke(c[0]*1.08,c[1]*1.08,c[2]*1.08);strokeWeight(3);line(ax,ay,bx,by);noStroke();
   return {ax,ay,bx,by};
+}
+// Setback tower rooms retain their own visible glass wall planes. The parent
+// roof is already lifted; each tier adds only its independent short rise.
+function cityBusinessRoofTier(b,x,y,w,h,z,c) {
+  const lean=cityRoofBox(b,x,y,w,h,z,c),lx=lean[0],ly=lean[1];
+  const glass=(ax,ay,bx,by,len)=>{
+    const bays=Math.max(2,Math.min(8,Math.floor(len/28)));
+    for(let i=0;i<bays;i++){
+      const u=(i+.16)/bays,v=(i+.84)/bays;
+      fill(41,90,108);
+      quad(ax+(bx-ax)*u+lx*.13,ay+(by-ay)*u+ly*.13,
+        ax+(bx-ax)*v+lx*.13,ay+(by-ay)*v+ly*.13,
+        ax+(bx-ax)*v+lx*.82,ay+(by-ay)*v+ly*.82,
+        ax+(bx-ax)*u+lx*.82,ay+(by-ay)*u+ly*.82);
+    }
+  };
+  if(Math.abs(lx)>.5)glass(lx>0?x:x+w,y,lx>0?x:x+w,y+h,h);
+  if(Math.abs(ly)>.5)glass(x,ly>0?y:y+h,x+w,ly>0?y:y+h,w);
+  return lean;
 }
 function drawCityArchitecture(b) {
   push();translate(b.x,b.y);noStroke();
@@ -33541,6 +33701,37 @@ function drawCityArchitecture(b) {
     }
     noStroke();
     cityRoofBox(b,x+w*.66,y+h*.69,w*.20,h*.17,7,[90,91,71]);
+  }else if(a===14){ // Business tower: glass setbacks rise to a metal plant crown.
+    fill(55+tone,92+tone,105+tone);rect(x+3,y+3,w-6,h-6,2);
+    const podium=cityBusinessRoofTier(b,x+12,y+13,w-24,h-26,5,[140,167,165]);
+    const px=x+12+podium[0],py=y+13+podium[1];
+    fill(46,83,100);rect(px+6,py+6,w-36,h-38,2);
+    const tx=x+w*.20+podium[0],ty=y+h*.19+podium[1];
+    const tower=cityBusinessRoofTier(b,tx,ty,w*.60,h*.61,7,[157,181,174]);
+    const rx=tx+tower[0],ry=ty+tower[1];
+    fill(49,98,119);rect(rx+5,ry+5,w*.60-10,h*.61-10,2);
+    fill(126,177,185,100);quad(rx+6,ry+6,rx+w*.21,ry+6,rx+w*.60-7,ry+h*.61-7,rx+w*.42,ry+h*.61-7);
+    const crown=cityRoofBox(b,rx+w*.13,ry+h*.14,w*.34,h*.25,5,[190,193,165]);
+    fill(62,84,89);for(let i=0;i<4;i++)rect(rx+w*.15+crown[0],ry+h*.17+crown[1]+i*h*.045,w*.29,h*.021,1);
+    const mastX=rx+w*.44+crown[0],mastY=ry+h*.22+crown[1];
+    const aerial=massLean(b.x+mastX,b.y+mastY,8,[0,0]);
+    stroke(58,79,83);strokeWeight(3);line(mastX,mastY,mastX+aerial[0],mastY+aerial[1]);
+    noStroke();fill(238,198,108);ellipse(mastX+aerial[0],mastY+aerial[1],4,4);
+  }else if(a===15){ // Office arcade: a raised glazed clerestory over stone roof wings.
+    fill(165+tone,149+tone,116+tone);rect(x+3,y+3,w-6,h-6,2);
+    const cornice=cityRoofBox(b,x+10,y+10,w-20,h-20,5,[214,199,158]);
+    const gx=x+24+cornice[0],gy=y+22+cornice[1],gw=w-48,gh=h-44;
+    fill(58,93,104);rect(gx-4,gy-4,gw+8,gh+8,2);
+    const ridge=cityRoofPitchedMass(b,gx,gy,gw,gh,9,[75,137,145]);
+    stroke(186,208,181);strokeWeight(3);
+    const ribs=Math.max(3,Math.min(14,Math.floor(gw/42)));
+    for(let i=1;i<ribs;i++){
+      const t=i/ribs,px=gx+gw*t,rx=ridge.ax+(ridge.bx-ridge.ax)*t,ry=ridge.ay+(ridge.by-ridge.ay)*t;
+      line(px,gy,rx,ry);line(rx,ry,px,gy+gh);
+    }
+    noStroke();
+    const core=cityRoofBox(b,gx+gw*.75,gy+gh*.13,Math.min(52,gw*.17),Math.max(16,gh*.20),6,[134,139,121]);
+    fill(55,78,82);for(let i=0;i<3;i++)rect(gx+gw*.75+core[0]+4,gy+gh*.13+core[1]+4+i*5,Math.min(52,gw*.17)-8,2);
   }else { // Residential roof terraces: planted beds, pergola and service stair.
     fill(a===5?106:168,a===5?131:142,a===5?107:106);rect(x+4,y+4,w-8,h-8,2);
     fill(192,169,116);rect(x+12,y+12,w*.38,h-24,2);
@@ -33561,6 +33752,10 @@ function drawCityArchitecture(b) {
 }
 
 function cityZoneAt(biome, ox, oy) {
+  if(biome===1){
+    const downtown=cityDowntownBlockPlan(ox/CHUNK_W,oy/CHUNK_W);
+    if(downtown!==null)return downtown===16?'PARK':'COMMERCIAL';
+  }
   const n = bnoise(biome, ox, oy, 0.00035);
   if (n < 0.20) return "PARK";
   if (n < 0.30) return "PLAZA";
@@ -33718,6 +33913,80 @@ function drawCivicTerrace(b) {
     for(const side of [-1,1]) ellipse(side*408,110,20,110);
     stroke(182, 222, 226, 110); strokeWeight(1.5);
     for(const side of [-1,1]) line(side*408,65,side*408,145);
+    noStroke();
+  }
+  pop();
+}
+
+// The park is walkable terrain, not a raised collision box. Its riser faces
+// use the same local height samples as movement, while every lower edge stays
+// on its own world contact. The broad east/west ramps remain open between lips.
+function drawCityParkTerrace(b) {
+  push(); translate(b.x,b.y); noStroke();
+  const heightAt=(x,y)=>cityDowntownParkHeight(b.x+x,b.y+y);
+  const point=(x,y,z)=>{
+    const lean=massLean(b.x+x,b.y+y,z,[0,0]);
+    return [x+lean[0],y+lean[1]];
+  };
+  const face=(a,c,d,e)=>quad(...point(...a),...point(...c),...point(...d),...point(...e));
+  // Each stone riser owns only its height increment. Lifting the whole flight
+  // by the terrace height would move the apparent path away from actor feet.
+  for(const side of [-1,1]){
+    const half=side<0?84:112;
+    // The stone bed closes small perspective gaps between neighbouring
+    // risers; turf cannot show through the body of a flight when it leans.
+    fill(140,154,128);rect(-half,side<0?-350:210,half*2,140);
+    for(let k=0;k<7;k++){
+      const outer=350-k*20,inner=outer-20;
+      const h0=heightAt(0,side*outer),h1=heightAt(0,side*inner);
+      const rise=Math.max(0,h1-h0);
+      const nearY=side*outer,farY=side*inner;
+      const light=Math.max(0,-side*LIGHT_DY);
+      fill(104+light*34,111+light*31,95+light*28);
+      face([-half,nearY,0],[half,nearY,0],[half,nearY,rise],[-half,nearY,rise]);
+      fill(189+light*24,192+light*20,157+light*21);
+      face([-half,nearY,rise],[half,nearY,rise],[half,farY,rise],[-half,farY,rise]);
+      // End cheeks connect the tread to its own foot, rather than a flat
+      // highlight stripe pretending to be the shaded side of a step.
+      const end=massLean(b.x,b.y+nearY,rise,[0,0])[0]>=0?-half:half;
+      fill(91+light*26,101+light*23,87+light*20);
+      face([end,nearY,0],[end,farY,0],[end,farY,rise],[end,nearY,rise]);
+      stroke(232,229,191,205);strokeWeight(1.5);
+      line(...point(-half+2,nearY,rise),...point(half-2,nearY,rise));noStroke();
+    }
+  }
+  // Short retaining courses reveal the bench's side without sealing its
+  // accessible perimeter or filling the four path entrances with walls.
+  for(const side of [-1,1])for(const run of [[-210,-86],[86,210]]){
+    const x=side*302,y0=run[0],y1=run[1];
+    const z0=heightAt(x,y0),z1=heightAt(x,y1);
+    const light=Math.max(0,-side*LIGHT_DX);
+    fill(83+light*38,99+light*30,85+light*24);
+    face([x,y0,0],[x,y1,0],[x,y1,z1],[x,y0,z0]);
+    fill(174+light*29,186+light*25,151+light*26);
+    const inside=x-side*7;
+    face([x,y0,z0],[x,y1,z1],[inside,y1,heightAt(inside,y1)],[inside,y0,heightAt(inside,y0)]);
+    stroke(48,67,59,120);strokeWeight(1);
+    for(let y=y0+26;y<y1;y+=28)line(...point(x,y,2),...point(x,y,heightAt(x,y)-2));
+    noStroke();
+  }
+  // Low stone lips follow both long ramps. They have top and side planes,
+  // but the path between them is entirely the terrain's smooth heightfield.
+  for(const side of [-1,1])for(const edge of [-1,1]){
+    const y=edge*45;
+    for(let k=0;k<5;k++){
+      const x0=side*(410-k*22),x1=side*(388-k*22);
+      const rise=3.5+Math.min(1,heightAt(x1,y)/28)*1.5;
+      const light=Math.max(0,-edge*LIGHT_DY);
+      fill(105+light*24,121+light*23,103+light*20);
+      face([x0,y,0],[x1,y,0],[x1,y,rise],[x0,y,rise]);
+      fill(196+light*21,207+light*18,174+light*20);
+      face([x0,y,rise],[x1,y,rise],[x1,y-edge*5,rise],[x0,y-edge*5,rise]);
+    }
+  }
+  if(isRaining){
+    stroke(184,219,215,110);strokeWeight(1.3);
+    for(const side of [-1,1])line(...point(side*402,-42,4),...point(side*306,-42,5));
     noStroke();
   }
   pop();
@@ -35554,7 +35823,7 @@ function placeCheckpoint(solid, biome, cx, cy, ox, oy, nearAnchor) {
   // right of way a checkpoint has anyway.
   for (let i = solid.length - 1; i >= 0; i--) {
     const s = solid[i];
-    if (s.isGrassLot && !s.isPond) continue;      // surfaces, not masses
+    if ((s.isGrassLot && !s.isPond) || s.propType==='CITYPARKTERRACE') continue; // surfaces, not masses
     const sw = s.w || 0, sh = s.h || 0;
     for (const q of parts) {
       if (Math.abs(s.x - q.x) < (sw + q.w) / 2 + 14 &&
@@ -35902,6 +36171,8 @@ function generateChunkContent(biome, cx, cy) {
           }
         }
 
+      } else if (biome===1 && cityDowntownBlockPlan(cx,cy)===16) {
+        buildCityDowntownPark(solid,decor,ox,oy,nearAnchor);
       } else if (hasCivicTerrace(biome, cx, cy)) {
         buildCivicTerrace(solid, ox, oy);
       } else if (zone === "PLAZA") {
@@ -37433,7 +37704,10 @@ function generateChunkContent(biome, cx, cy) {
   // Namespace the whole block, including its street fixtures, so an old roof's
   // saved destruction index cannot erase a new streetlight or court planter.
   const districtBlock = solid.some(b => b.cityArchitecture !== undefined || b.cityDistrictParking);
-  for (let i = 0; i < solid.length; i++) solid[i].chunkKey = cx + "," + cy + "," + (districtBlock ? "district:v3:" : solid[i].isCivic ? "civic:" : "") + i;
+  const downtownBlock=biome===1&&cityDowntownBlockPlan(cx,cy)!==null;
+  const downtownEdge=biome===1&&!downtownBlock&&cityDowntownJunction(cx,cy)&&
+    bnoise(1,cx*4096+7717,cy*4096+3131,.31)>.62;
+  for (let i = 0; i < solid.length; i++) solid[i].chunkKey = cx + "," + cy + "," + (downtownBlock ? "downtown:v1:" : downtownEdge ? "downtown-edge:v1:" : districtBlock ? "district:v3:" : solid[i].isCivic ? "civic:" : "") + i;
 
   appendWoodlandForest(biome, cx, cy, solid, decor, decorBake, nearAnchor);
   removeDestroyedTreeDecor(biome, solid, decor);
@@ -37999,6 +38273,7 @@ function bakeChunkTerrainAt(biome, cx, cy, staticDecor) {
   // Hardstanding belongs to every fortress, including those over wet biomes.
   // Last in the bake: neither river paint nor tree litter can cover the yard.
   bakeCivicTerrace(g, biome, cx, cy);
+  bakeCityDowntownRelief(g,biome,ox,oy);
   bakeFortHardstanding(g, biome, ox, oy);
   g.pop();
 
@@ -46012,6 +46287,8 @@ function drawBiomeDecks() {
 
     if (b.propType === "CIVICTERRACE") {
       drawCivicTerrace(b);
+    } else if (b.propType === "CITYPARKTERRACE") {
+      drawCityParkTerrace(b);
     } else if (b.propType === "BRIDGE") {
       // Timber trestle over a woodland river. Travel runs north-south, so the
       // planks run across it and the stringers run along its length.
@@ -49718,8 +49995,8 @@ function glRigSetNormalAtlas(src, mix) {
 //   G  gloss -- how much Blinn-Phong specular the surface takes
 //   B  facing as turns, for the tangent-space rotation in the normal pass
 //   A  coverage: 1 where geometry stands, 0 on bare ground
-// Canyon floors, desert rims and roofs share one scene-relative lighting
-// height. The remaining biomes keep their existing encoding and range.
+// Canyon floors, city hills and roofs share one scene-relative lighting
+// height. Positive city relief retains the existing 0..200 encoding.
 function glRigHeightOrigin() { return BIOME_ACTIVE && currentBiome === 3 ? -160 : 0; }
 function glRigHeightRange() { return GLRIG_HEIGHT_MAX - glRigHeightOrigin(); }
 function glRigHeightByte(hWorld) {
@@ -49727,7 +50004,7 @@ function glRigHeightByte(hWorld) {
   return shifted <= 0 ? 0 : shifted >= range ? 255 : shifted / range * 255;
 }
 function glRigEmitterGround(e) {
-  return BIOME_ACTIVE && currentBiome === 3 ? groundElev(e.x, e.y) : 0;
+  return BIOME_ACTIVE && (currentBiome === 1 || currentBiome === 3) ? groundElev(e.x, e.y) : 0;
 }
 function glRigEmitterHeight(e, ground) {
   // Civic lamps already carry their ground height in sceneEmitters().
@@ -49736,6 +50013,40 @@ function glRigEmitterHeight(e, ground) {
 function glRigMat(g, hWorld, gloss, turns) {
   const r = glRigHeightByte(hWorld);
   g.fill(r, gloss * 255, ((turns % 1) + 1) % 1 * 255, 255);
+}
+
+const _cityDowntownLightHeights = new Float32Array(2048);
+function paintCityDowntownHeightfield(g) {
+  if (!BIOME_ACTIVE || currentBiome !== 1 || typeof cityDowntownGroundHeight !== 'function') return;
+  const relief=CITY_DOWNTOWN_RELIEF;
+  if(viewRight<=relief.x0||viewLeft>=relief.x1||viewBottom<=relief.y0||viewTop>=relief.y1)return;
+  const spanX=viewRight-viewLeft,spanY=viewBottom-viewTop;
+  if (!(spanX>0) || !(spanY>0) || !Number.isFinite(spanX*spanY)) return;
+  // Use the same world-aligned corner samples on both sides of every join.
+  // Coarsen only at large views; the visible mesh never exceeds 1080 faces.
+  let step=80*Math.max(1,Math.ceil(Math.sqrt(spanX*spanY/(80*80*480))));
+  let left,top,cols,rows;
+  do {
+    left=Math.floor(viewLeft/step)*step;top=Math.floor(viewTop/step)*step;
+    cols=Math.ceil((viewRight-left)/step)+1;rows=Math.ceil((viewBottom-top)/step)+1;
+    if((cols-1)*(rows-1)<=540)break;
+    step+=80;
+  } while(true);
+  const heights=_cityDowntownLightHeights;
+  for(let j=0;j<rows;j++)for(let i=0;i<cols;i++)
+    heights[j*cols+i]=cityDowntownGroundHeight(left+i*step,top+j*step);
+  const pixelWorld=GLRig.hw>0&&zoom>0?width/(GLRig.hw*zoom):1;
+  const overlap=Math.max(2,pixelWorld*2)/step,ctx=g.drawingContext;
+  ctx.save();
+  for(let j=0;j<rows-1;j++)for(let i=0;i<cols-1;i++){
+    const n=j*cols+i,a=heights[n],b=heights[n+1],c=heights[n+cols],d=heights[n+cols+1];
+    if(Math.max(a,b,c,d)<=.001)continue;
+    const x=left+i*step,y=top+j*step;
+    // The shared triangle painter encodes any world height, not only canyons.
+    paintFrontierHeightTriangle(ctx,x,y,a,x+step,y,b,x,y+step,c,overlap);
+    paintFrontierHeightTriangle(ctx,x+step,y+step,d,x,y+step,c,x+step,y,b,overlap);
+  }
+  ctx.restore();
 }
 
 const _glForestCanopies = []; // bounded by visible streamed crowns, reused
@@ -49792,6 +50103,7 @@ function glRigPaintHeight() {
 
   if (BIOME_ACTIVE && currentBiome === 3 && typeof paintFrontierCanyonHeightfield === 'function')
     paintFrontierCanyonHeightfield(g);
+  paintCityDowntownHeightfield(g);
 
   // 1. Ground relief. Concentric insets reproduce groundElev()'s feather, so
   //    the bench the player walks up shades and self-shadows as one surface
@@ -49812,11 +50124,13 @@ function glRigPaintHeight() {
 
   for (const b of activeBuildings) {
     if (b.propType !== "CIVICTERRACE" || !inView(b.x, b.y, 900)) continue;
+    const cityBase=BIOME_ACTIVE&&currentBiome===1&&typeof cityDowntownGroundHeight==='function'
+      ?cityDowntownGroundHeight(b.x,b.y):0;
     for (let j = 0; j < CIVIC_BENCHES.length; j++) {
       const z = CIVIC_BENCHES[j];
       for (let i = 0; i <= 8; i++) {
         const t = i / 8, inset = z.f * t;
-        glRigMat(g, Math.max(j ? 24 : 0, z.z * smooth01(t)), 0.12 + .32*wet, 0);
+        glRigMat(g, cityBase+Math.max(j ? 24 : 0, z.z * smooth01(t)), 0.12 + .32*wet, 0);
         g.rect(b.x-z.w/2+inset, b.y-z.h/2+inset, z.w-2*inset, z.h-2*inset);
       }
     }
@@ -49831,23 +50145,23 @@ function glRigPaintHeight() {
     // The trunk is a collision volume; the crown is a decor entry, and that is
     // what casts. Painted below, off the same list drawDecor() walks.
     if (b.isTreeTrunk) continue;
-    if (b.propType === "CIVICTERRACE") continue;
+    if (b.propType === "CIVICTERRACE" || b.propType === 'CITYPARKTERRACE') continue;
 
     // Water is below the ground, not above it, and it is the glossiest thing in
     // the scene -- this is what puts a lamp's reflection on the canal.
     if (b.isRiver || b.isWater || b.isPond) {
-      glRigMat(g, BIOME_ACTIVE && currentBiome === 3 ? groundElev(b.x, b.y) : 0, 0.95, 0);
+      glRigMat(g, BIOME_ACTIVE && (currentBiome === 1 || currentBiome === 3) ? groundElev(b.x, b.y) : 0, 0.95, 0);
       g.rect(b.x - w / 2, b.y - h / 2, w, h);
       continue;
     }
     // Surfaces: walkable, so no mass, but they still take a highlight.
     if (b.isDeck || b.isParkingLot || b.isCropField || b.isGrassLot) {
-      glRigMat(g, 1.5 + (BIOME_ACTIVE && currentBiome === 3 ? groundElev(b.x, b.y) : 0), 0.10 + 0.35 * wet, 0);
+      glRigMat(g, 1.5 + (BIOME_ACTIVE && (currentBiome === 1 || currentBiome === 3) ? groundElev(b.x, b.y) : 0), 0.10 + 0.35 * wet, 0);
       g.rect(b.x - w / 2, b.y - h / 2, w, h);
       continue;
     }
     if (b.isStreetLight) {
-      glRigMat(g, 46 + (b.isCivic || BIOME_ACTIVE && currentBiome === 3 ? groundElev(b.x, b.y) : 0), 0.35, 0);
+      glRigMat(g, 46 + (b.isCivic || BIOME_ACTIVE && (currentBiome === 1 || currentBiome === 3) ? groundElev(b.x, b.y) : 0), 0.35, 0);
       g.rect(b.x - 4, b.y - 4, 8, 8);
       continue;
     }

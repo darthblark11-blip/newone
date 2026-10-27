@@ -1,10 +1,9 @@
 # Level 1 city districts
 
-Stick City's streamed neighbourhoods have fourteen deterministic block plans.
-The four newest identities appear exclusively outside the whole starting-gate
-enclosure and curtain walls: only addresses beyond the protected -4..4 chunk
-range can select them. The opening area's existing ten identities and all 235
-ordinary building footprints/architectures remain unchanged.
+Stick City's streamed neighbourhoods have seventeen deterministic block plans.
+All expansion remains beyond the starting-gate enclosure and curtain walls. The
+opening area's existing ten identities and all 235 ordinary building footprints
+and architectures remain unchanged.
 
 | Plan | Buildings and open space |
 | --- | --- |
@@ -22,6 +21,37 @@ ordinary building footprints/architectures remain unchanged.
 | Exterior Art Deco hotel | Stepped stone/copper roof crowns and a public arrival court. |
 | Exterior freight terminal | Pitched corrugated sheds, ventilators and solid shipping containers. |
 | Exterior recreation club | Timber/glass pavilions, an open sports court and upright basketball hoops. |
+| Downtown business towers | Six-storey glass facades, connected setbacks and metal plant crowns. |
+| Downtown retail arcades | Shopfront glazing, projecting canopies, office wings and raised clerestories. |
+| Downtown terraced parks | Planted lawns, live trees, benches, a pavilion, stone steps and side ramps. |
+
+## Downtown and hills
+
+Exit the south Great Gate and continue toward the canal. Downtown occupies
+chunk columns -3..2 and rows 5..9 (world x -3600..3600, y 6000..12000). The
+existing canal in row 6 remains continuous with its bridge crossings. Eight
+business blocks, seven arcade blocks and nine parks form a connected district
+around that waterfront. Other city districts continue beyond it.
+
+The business quarter rises on a smooth ridge after the canal, then descends
+through the southern parks toward the lower city. The shared positive ground
+height reaches about 80 units; park terraces add up to 28. Height and first
+slope remain continuous across chunk borders and at the outer hill envelope.
+The starting enclosure, gate approaches, canal water and relay fortress remain
+at their previous heights. Other biomes retain their existing elevation.
+
+Native character movement uses this field for uphill slowdown and downhill
+pace; figure scale also follows ground height. Trees have small visible-stem
+colliders, and cardinal park paths remain clear. Park stairs, retaining faces
+and ramp lips are projected from the same local height profile used underfoot.
+Business towers rise 52–64 units with six facade storeys; other district masses
+retain their existing height limits.
+
+Slope tone is baked once into the existing terrain textures with a fixed sun
+and world-aligned samples. The advanced lighting height buffer uses a bounded,
+continuous mesh of the same hill field (at most 1,080 triangles), culled entirely
+outside the relief area. Lamps, decks, water, canopies and civic terraces use
+the same ground base; civic emitters avoid adding their base twice.
 
 Industrial blocks select workshop, garden-apartment, depot or freight plans alongside
 existing parking lots. A shared address selector keeps industrial parking and
@@ -61,7 +91,15 @@ night illumination. The new streets do not add a per-frame ground-detail pass.
 
 ## Persistence and scope
 
-Changed streamed districts use the `district:v3:` destruction-key namespace for
+Only the 24 new downtown land blocks use `downtown:v1:` keys, including their
+street furniture and park stems. Checkpoint junctions touching downtown stay
+open; only edge chunks whose former checkpoint is removed use
+`downtown-edge:v1:` keys. Old grid, civic and `district:v3:` indices
+cannot erase unrelated downtown replacements. Current destruction persists on
+its intended object; unchanged districts keep their prior keys. Canal geometry
+and bridge crossings stay continuous.
+
+Existing streamed districts retain the `district:v3:` destruction-key namespace for
 an entire block, including furniture and industrial parking replacements. Old
 numeric-grid, `district:` and `district:v2:` indexes cannot erase unrelated
 replacement structures. Destruction from those previous
@@ -71,25 +109,31 @@ block keys retain their previous behavior.
 
 Collision and depth sorting continue to use ground footprints. Courtyards and
 lanes remain navigable, rooftop details add no accessible interiors, and the
-existing civic terrace elevation is preserved. No combat values or objectives
-change.
+existing civic terraces retain their local elevation above the shared city
+ground. No combat values or objectives change.
 
 ## Validation
 
-`node tools/check-city-districts.js` checks 1,000 deterministic chunks, fourteen
-streamed plan/roof families, ten unchanged authored identities and a frozen
+`node tools/check-city-districts.js` checks 1,000 deterministic chunks, seventeen
+streamed plans and sixteen roof families, ten unchanged authored identities and a frozen
 signature of all 235 starting buildings. It also checks exclusion of the new
 plans from the protected enclosure, clear 24-unit pedestrian crossings,
 recessed bicycle placement, empty playing fields with two footplate-sized hoop
-bases, old/current destruction-key isolation, 56 mirrored ground bakes with
-paint/metadata parity, and 168 time/weather/view renders with finite drawing
+bases, old/current destruction-key isolation, 68 mirrored ground bakes with
+paint/metadata parity, and 204 time/weather/view renders with finite drawing
 coordinates.
+
+`node tools/check-city-downtown.js` checks native downtown generation, protected
+areas and old-city persistence, clear cardinal routes through parks, continuous
+hill/park heights, native uphill/downhill travel, lighting-height parity, a
+bounded visible mesh and open shared junctions.
+See the test output for its current assertion count.
 
 Render individual streamed plans with real p5/Chromium:
 
 ```sh
-VIS_DEPS=/path/to/deps VIS_CHROME=/path/to/chrome VW_W=1100 VW_H=1000 node tools/visual-world.js 1 0 0 0.85 district=10
-VIS_DEPS=/path/to/deps VIS_CHROME=/path/to/chrome VW_W=1100 VW_H=1000 node tools/visual-world.js 1 0 0 0.85 district=12 night rain
+VIS_DEPS=/path/to/deps VIS_CHROME=/path/to/chrome VW_W=1100 VW_H=1000 node tools/visual-world.js 1 0 0 0.85 district=14
+VIS_DEPS=/path/to/deps VIS_CHROME=/path/to/chrome VW_W=1100 VW_H=1000 node tools/visual-world.js 1 0 0 0.85 district=16 night rain
 ```
 
 Generation, city placement, shovel terrain, projection/depth, rendering and
