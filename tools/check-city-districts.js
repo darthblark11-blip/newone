@@ -1,17 +1,23 @@
 // Real generator invariants: distinct routes, collision geometry, persistence,
 // authored story landmarks, and projection at opposite views in sun/night/rain.
 const assert=require('assert');
+const {createHash}=require('crypto');
 const {ctx,mkG,probe}=require('./harness');
 const P=s=>probe('('+s+')');
 probe('currentLevel=1;currentBiome=1;BIOME_ACTIVE=true;authoredCore=null;authoredMask=null;authoredChunks=null;biomeState={};');
 const found=new Map(),arches=new Set(),streetProps=new Set();let chunks=0;
-const industrial={parking:0,district:0,depot:0};let parkingFixture=null;
+const industrial={parking:0,district:0,depot:0,freight:0};let parkingFixture=null;
 const blockersOf=solids=>solids.filter(b=>!b.noClip&&!b.isGrassLot&&!b.isDeck&&!b.isWater);
 function checkBlock(solids,cx,cy,label) {
   const bs=solids.filter(b=>b.cityArchitecture!==undefined),blockers=blockersOf(solids);
   const furniture=solids.filter(b=>b.cityPlan!==undefined&&b.cityArchitecture===undefined);
   for(const a of furniture){
     streetProps.add(a.propType);
+    if(a.propType==='CITYBIKERACK'){
+      assert(Math.abs(cx)>4||Math.abs(cy)>4,`${label}: bike rack enters the starting enclosure`);
+      assert(a.x-a.w/2>=cx*1200+195&&a.x+a.w/2<=cx*1200+1005&&a.y-a.h/2>=cy*1200+195&&a.y+a.h/2<=cy*1200+1005,`${label}: parked bicycle reaches road or pavement`);
+      assert(Math.abs(a.x-cx*1200-600)>=100&&Math.abs(a.y-cy*1200-600)>=100,`${label}: parked bicycle obstructs a central walking strip`);
+    }
     for(const b of blockers){if(a===b)continue;
       assert(!(Math.abs(a.x-b.x)<(a.w+b.w)/2&&Math.abs(a.y-b.y)<(a.h+b.h)/2),`${label}: street furniture overlaps another solid`);
     }
@@ -19,6 +25,19 @@ function checkBlock(solids,cx,cy,label) {
   for(const b of solids.filter(b=>b.cityPlan!==undefined))
     assert(b.x-b.w/2>=cx*1200+120&&b.x+b.w/2<=cx*1200+1080&&b.y-b.h/2>=cy*1200+120&&b.y+b.h/2<=cy*1200+1080,`${label}: district furniture enters the main road`);
   assert(bs.length,`${label}: no architecture`);
+  if(bs.some(b=>b.cityPlan===13)){
+    const orientation=P(`chunkHash(1,${cx},${cy},8175)>>>0`)&3;
+    // Canonical painted playfield x420..780,y470..910. Check full collider
+    // footprints after applying the address mirrors, including end hoops.
+    for(const b of blockers){
+      const x=(b.x-cx*1200-600)*(orientation&1?-1:1)+600;
+      const y=(b.y-cy*1200-600)*(orientation&2?-1:1)+600;
+      assert(!(x+b.w/2>420&&x-b.w/2<780&&y+b.h/2>470&&y-b.h/2<910),`${label}: obstacle ${b.propType||'building'} intrudes on the playing field`);
+    }
+    const hoops=furniture.filter(b=>b.propType==='CITYCOURTHOOP');
+    assert.equal(hoops.length,2,`${label}: recreation court lost an end hoop`);
+    assert(hoops.every(b=>b.w===18&&b.h===18),`${label}: hoop collision must stay on the actual footplate`);
+  }
   for(const b of bs){
     assert(b.x-b.w/2>=cx*1200+165&&b.x+b.w/2<=cx*1200+1035,`${label}: building leaves usable block`);
     assert(b.y-b.h/2>=cy*1200+165&&b.y+b.h/2<=cy*1200+1035,`${label}: building leaves usable block`);
@@ -72,24 +91,26 @@ for(let cy=5;cy<25;cy++)for(let cx=-25;cx<25;cx++){
       }else{
         industrial.district++;
         assert(bs.every(b=>b.cityPlan===ground),'industrial ground identity disagrees with its actual buildings');
-        assert([4,5,9].includes(ground),'industrial building identity is outside the workshop/depot vocabulary');
+        assert([4,5,9,12].includes(ground),'industrial building identity is outside the workshop/depot vocabulary');
         if(ground===9){industrial.depot++;assert(bs.some(b=>b.cityArchitecture===9),'native depot lacks depot architecture');}
+        if(ground===12){industrial.freight++;assert(bs.some(b=>b.cityArchitecture===12),'native freight terminal lacks freight architecture');}
       }
-      assert(ch.solid.every(b=>b.chunkKey.includes('district:v2:')),'industrial replacement left fixtures or parking under old destruction keys');
+      assert(ch.solid.every(b=>b.chunkKey.includes('district:v3:')),'industrial replacement left fixtures or parking under old destruction keys');
     }
   }
   if(!bs.length)continue;
+  if(bs[0].cityPlan>=10)assert(!ch.solid.some(b=>b.propType==='WRECK'),'new exterior district contains legacy flat wreck scatter');
   found.set(bs[0].cityPlan,{cx,cy,ch});
-  for(const b of bs){arches.add(b.cityArchitecture);assert(b.chunkKey.includes('district:v2:'),'district replacement keys must be versioned');}
+  for(const b of bs){arches.add(b.cityArchitecture);assert(b.chunkKey.includes('district:v3:'),'district replacement keys must be versioned');}
   checkBlock(ch.solid,cx,cy,`streamed ${cx},${cy}`);
 }
-assert.deepEqual([...found.keys()].sort((a,b)=>a-b),[0,1,2,3,4,5,6,7,8,9],'all ten plans generate');
-assert.deepEqual([...arches].sort((a,b)=>a-b),[0,1,2,3,4,5,6,7,8,9],'all ten roof families generate');
-assert(industrial.parking>0&&industrial.district>0&&industrial.depot>0,'native sample must exercise industrial parking, workshops and real depots');
+assert.deepEqual([...found.keys()].sort((a,b)=>a-b),[0,1,2,3,4,5,6,7,8,9,10,11,12,13],'all fourteen plans generate');
+assert.deepEqual([...arches].sort((a,b)=>a-b),[0,1,2,3,4,5,6,7,8,9,10,11,12,13],'all fourteen roof families generate');
+assert(industrial.parking>0&&industrial.district>0&&industrial.depot>0&&industrial.freight>0,'native sample must exercise industrial parking, workshops, depots and freight terminals');
 // A previous district or numeric grid key must never erase a replacement prop
 // or building. Conversely, destroying a current building must stay persistent.
 for(const {cx,cy,ch}of [...found.values(),parkingFixture]){
-  const oldKeys=ch.solid.flatMap((b,i)=>[`${cx},${cy},district:${i}`,`${cx},${cy},${i}`]);
+  const oldKeys=ch.solid.flatMap((b,i)=>[`${cx},${cy},district:${i}`,`${cx},${cy},district:v2:${i}`,`${cx},${cy},${i}`]);
   probe(`for(const key of ${JSON.stringify(oldKeys)})getBiomeState(1).destroyed[key]=true;`);
   assert.equal(JSON.stringify(ch),JSON.stringify(P(`generateChunkContent(1,${cx},${cy})`)),'old destruction indices erased a replacement district');
   const target=ch.solid.find(b=>b.cityArchitecture!==undefined||b.cityDistrictParking);
@@ -98,7 +119,16 @@ for(const {cx,cy,ch}of [...found.values(),parkingFixture]){
   assert(!remaining.some(b=>b.chunkKey===target.chunkKey));
   assert.equal(remaining.length,ch.solid.length-1,'current destruction must remove only its intended solid');
 }
-// The opening city shares the district vocabulary, while its protagonist's
+// New expansion identities are strictly outside the gate enclosure, including
+// the guard band on every side. Test both selection and native generated data.
+for(let cy=-4;cy<=4;cy++)for(let cx=-4;cx<=4;cx++){
+  assert(!P(`cityOuterExpansionAllowed(${cx},${cy})`),'expansion eligibility enters the protected gate zone');
+  for(const zone of['RESIDENTIAL','COMMERCIAL','INDUSTRIAL'])
+    assert(P(`cityBlockPlan(${cx},${cy},'${zone}')`)<10,'new block identity enters the protected gate zone');
+  const protectedBlock=P(`generateChunkContent(1,${cx},${cy})`);
+  assert(!protectedBlock.solid.some(b=>b.cityArchitecture>=10||b.cityPlan>=10||b.propType==='CITYBIKERACK'),'new architecture or bike parking enters the starting gate zone');
+}
+// The opening city keeps its previous district vocabulary, while its protagonist's
 // house, entertainment landmarks, walls and gate approaches remain authored.
 const reserved=new Map([['0,0',null],['0,-3','isCasino'],['-1,-3','isTheater'],['-2,-3','isArena'],['-3,-1','isAmusementPark'],['-3,0','isCircus']]);
 const authoredPlans=new Set();
@@ -114,7 +144,7 @@ for(let cy=-3;cy<=3;cy++)for(let cx=-3;cx<=3;cx++){
   checkBlock(district,cx,cy,`authored ${key}`);
 }
 assert.equal(authoredPlans.size,10,'opening city should contain every new block identity');
-for(const prop of['CITYBIKERACK','CITYSTALL','CITYWAYFINDER'])assert(streetProps.has(prop),`${prop} never appears in generated or authored blocks`);
+for(const prop of['CITYBIKERACK','CITYSTALL','CITYWAYFINDER','CITYCARGO','CITYCOURTHOOP'])assert(streetProps.has(prop),`${prop} never appears in generated or authored blocks`);
 // Ground selection must ask the same address helper as its real buildings.
 // Include reserved story blocks, whose original surface must remain untouched.
 probe('authoredChunks=new Set();');
@@ -137,13 +167,13 @@ for(let cy=-8;cy<=8&&mirrorSites.size<4;cy++)for(let cx=-8;cx<=8&&mirrorSites.si
 }
 assert.equal(mirrorSites.size,4);
 let groundBakes=0;
-for(let plan=0;plan<10;plan++){
+for(let plan=0;plan<14;plan++){
   let reference=null;
   for(const [orientation,{cx,cy}]of mirrorSites){
     const ox=cx*1200,oy=cy*1200,g=mkG(),rects=[];
     g.shovelPavedRects=[];
     for(const fn of['rect','ellipse','line']){
-      const paint=g[fn];g[fn]=(...args)=>{assert(args.every(v=>typeof v!=='number'||Number.isFinite(v)),`non-finite baked ${fn}`);if(fn==='rect')rects.push(args);return paint(...args);};
+      const paint=g[fn];g[fn]=(...args)=>{assert(args.every(Number.isFinite),`non-finite baked ${fn}`);if(fn==='rect')rects.push(args);return paint(...args);};
     }
     ctx.__ground=g;probe(`bakeCityDistrictGround(__ground,${ox},${oy},${plan});`);groundBakes++;
     assert(g.shovelPavedRects.length>0,`plan ${plan} paints no registered route`);
@@ -167,6 +197,12 @@ probe('isStoryMode=false;legacyGenerateMap();');
 const authored=P('buildings');
 const nativeDistricts=authored.filter(b=>b.cityArchitecture!==undefined);
 assert(nativeDistricts.length>100,'ordinary opening blocks did not adopt district architecture');
+// Frozen from commit 4f29331 before this outer-city expansion. Exclude furniture:
+// the requested removal of bikes changes props, while all 235 building bodies,
+// material identities and authored addresses must remain identical.
+const coreSignature=nativeDistricts.map(({x,y,w,h,cityArchitecture,cityPlan,style,cityAccent,cityStoreys})=>[x,y,w,h,cityArchitecture,cityPlan,style,cityAccent,cityStoreys]);
+assert.equal(createHash('sha256').update(JSON.stringify(coreSignature)).digest('hex'),'251c63fbd24e948966fa5843560c2a4e953af96334c89db8e3e944857976bc51','outer expansion changed the starting city architecture');
+assert(!authored.some(b=>b.propType==='CITYBIKERACK'),'bike parking remains inside the authored enclosure');
 const house=authored.find(b=>b.isHouse);
 assert(house&&house.x===600&&house.y===600&&house.w===160&&house.h===100,'protagonist house footprint changed');
 for(const [key,flag]of reserved){
@@ -192,7 +228,7 @@ for(const tower of towers){
 // Every primitive in the live projected art must stay finite. Check real
 // drawBuildings/drawBiomeProps, rather than calling only roof helpers directly.
 for(const fn of['rect','ellipse','line','quad','triangle']){
-  const draw=ctx[fn];ctx[fn]=(...args)=>{assert(args.every(v=>typeof v!=='number'||Number.isFinite(v)),`non-finite ${fn} geometry`);return draw(...args);};
+  const draw=ctx[fn];ctx[fn]=(...args)=>{assert(args.every(Number.isFinite),`non-finite ${fn} geometry`);return draw(...args);};
 }
 const quad=ctx.quad,quads=[];ctx.quad=(...a)=>{quads.push(a);return quad(...a);};
 probe('drawCityFacades({x:0,y:0,w:200,h:200,cityStoreys:2,cityAccent:0},20,20);');
@@ -207,5 +243,5 @@ for(const {cx,cy,ch}of found.values()){
     probe(`worldTimeMs=${hour}/24*DAY_MS;isRaining=${rain};camX=${cx*1200+600}+${side}*700;camY=${cy*1200+600}+${side}*700;updateSunVector();drawBuildings();drawBiomeProps();`);renders++;
   }
 }
-assert.equal(painted.size,10,'native renderer did not paint every roof family');
-console.log(`City districts passed: ${chunks} deterministic chunks, ten plans / ten architectures, ${authoredPlans.size} authored identities, story landmarks, 24-unit routes, versioned destruction, ${groundBakes} mirrored ground bakes, ${industrial.parking} industrial lots / ${industrial.depot} depots and ${renders} lighting/view renders.`);
+assert.equal(painted.size,14,'native renderer did not paint every roof family');
+console.log(`City districts passed: ${chunks} deterministic chunks, fourteen streamed plans / fourteen architectures, ${authoredPlans.size} authored identities, story landmarks, 24-unit routes, versioned destruction, ${groundBakes} mirrored ground bakes, ${industrial.parking} industrial lots / ${industrial.depot} depots / ${industrial.freight} freight terminals and ${renders} lighting/view renders.`);

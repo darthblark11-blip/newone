@@ -99,8 +99,8 @@ window.setup = function () {
     let found=false;
     for(let cy=5;cy<40&&!found;cy++)for(let cx=-18;cx<18;cx++){
       const ch=generateChunkContent(1,cx,cy);
-      // Transit, library and depot plans have three masses around an open court.
-      if(ch.solid.filter(b=>b.cityPlan===${DISTRICT}&&b.isBlockBuilding).length<3)continue;
+      // The freight terminal has two long sheds; other courts have three or more masses.
+      if(ch.solid.filter(b=>b.cityPlan===${DISTRICT}&&b.isBlockBuilding).length<(${DISTRICT}===12?2:3))continue;
       window.__wx=cx*CHUNK_W+600;window.__wy=cy*CHUNK_W+600;found=true;break;
     }
     if(!found)window.__errs.push('No city district found');

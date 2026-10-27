@@ -285,7 +285,8 @@ const fs = require('fs');
 const src = fs.readFileSync(process.env.GAME_JS || __dirname + '/../game.js', 'utf8');
 const src2 = src;
 const propsAt = src.search(/function drawBiomeProps\s*\(/);
-const propsFn = src.slice(propsAt, src.indexOf('function drawLightPass()'));
+const propsEnd = src.indexOf('\nfunction ', propsAt + 1);
+const propsFn = src.slice(propsAt, propsEnd < 0 ? src.length : propsEnd);
 const drawn = new Set((propsFn.match(/case *["'](\w+)["'] *:/g) || [])
   .map(x => /["'](\w+)["']/.exec(x)[1]));
 const pr = /const PROP_RISE = \{([\s\S]*?)\n\};/.exec(src);
@@ -302,9 +303,87 @@ const decks = ['BRIDGE', 'CANALBRIDGE', 'BOARDWALK', 'RIVER', 'CANAL', 'HELIPAD'
 const wrong = decks.filter(k => rkeys.includes(k));
 ok('surfaces and collision volumes are left flat', wrong.length === 0,
    wrong.length ? wrong.join(' ') + ' should not rise' : decks.join(' '));
-ok('the lean is applied once, generically, not per case',
-   /const _pr = PROP_RISE\[b\.propType\]/.test(propsFn) &&
-   (propsFn.match(/drawMassSides\(/g) || []).length === 1);
+// Ordinary props still receive the shared footprint-to-roof pass. A few open
+// constructions own several heights, so their native painters cancel that top
+// translate and project the actual 3D points through the same massLean().
+const genericPropPass = propsFn.slice(0, propsFn.indexOf('switch (b.propType)'));
+ok('ordinary props use one shared footprint-to-roof pass',
+   /const _pr = PROP_RISE\[b\.propType\]/.test(genericPropPass) &&
+   (genericPropPass.match(/drawMassSides\(/g) || []).length === 1);
+const pointwiseProps = ['CITYBIKERACK', 'CITYCOURTHOOP', 'CITYCARGO'];
+const caseStarts = Array.from(propsFn.matchAll(/case\s+["'](\w+)["']\s*:/g));
+const ownProjection = caseStarts.filter((m,i) =>
+  /(?:massLean|drawMassSides)\s*\(/.test(propsFn.slice(m.index, i+1<caseStarts.length?caseStarts[i+1].index:propsFn.length)))
+  .map(m => m[1]);
+ok('only explicit multi-height constructions own a per-case projection',
+   ownProjection.length === pointwiseProps.length && ownProjection.every(k => pointwiseProps.includes(k)),
+   ownProjection.join(' '));
+
+console.log('\n== open constructions have grounded, independently raised geometry ==');
+{
+  // Track the native painter's transforms and output, rather than accepting a
+  // translated side-view sprite just because its source mentions massLean().
+  const names=['push','pop','translate','rotate','scale','line','quad','rect','ellipse','vertex','massLean','drawMassSides','drawMassSkirt'];
+  const saved=Object.fromEntries(names.map(k=>[k,ctx[k]]));
+  const fixtures=[
+    {propType:'CITYBIKERACK',w:74,h:28,open:true},
+    {propType:'CITYCOURTHOOP',w:18,h:18,courtFacing:1,open:true},
+    {propType:'CITYCARGO',w:104,h:56,open:false}
+  ];
+  const close=(a,b)=>Math.abs(a-b)<1e-7;
+  const hasPoint=(painted,p)=>painted.some(q=>close(p[0],q[0])&&close(p[1],q[1]));
+  const capture=(fixture,cameraOffset)=>{
+    const b={...fixture,x:240,y:160,isBiomeProp:true,tint:.2};
+    probe(`width=1200;height=800;zoom=1;currentLevel=currentBiome=1;worldTimeMs=13/24*DAY_MS;
+      camX=${b.x+cameraOffset}-600;camY=${b.y}-400;
+      viewLeft=viewTop=-1e5;viewRight=viewBottom=1e5;updateSunVector();`);
+    let matrix=[1,0,0,1,0,0],lowest=0;
+    const stack=[],painted=[],samples=[],sides=[],skirts=[];
+    const point=(x,y)=>[matrix[0]*x+matrix[2]*y+matrix[4],matrix[1]*x+matrix[3]*y+matrix[5]];
+    const pairs=a=>{for(let i=0;i+1<a.length;i+=2)painted.push(point(a[i],a[i+1]));};
+    ctx.push=()=>stack.push(matrix.slice());
+    ctx.pop=()=>{if(!stack.length){lowest--;return;}matrix=stack.pop();};
+    ctx.translate=(x,y)=>{matrix[4]+=matrix[0]*x+matrix[2]*y;matrix[5]+=matrix[1]*x+matrix[3]*y;};
+    ctx.scale=(x,y=x)=>{matrix[0]*=x;matrix[1]*=x;matrix[2]*=y;matrix[3]*=y;};
+    ctx.rotate=a=>{const c=Math.cos(a),s=Math.sin(a),m=matrix.slice();matrix[0]=m[0]*c+m[2]*s;matrix[1]=m[1]*c+m[3]*s;matrix[2]=m[2]*c-m[0]*s;matrix[3]=m[3]*c-m[1]*s;};
+    ctx.line=(...a)=>pairs(a);ctx.quad=(...a)=>pairs(a);ctx.vertex=(...a)=>pairs(a);
+    ctx.rect=(x,y,w,h)=>pairs([x,y,x+w,y,x+w,y+h,x,y+h,x+w/2,y+h/2]);
+    ctx.ellipse=(x,y,w,h)=>pairs([x,y,x-w/2,y,x+w/2,y,x,y-h/2,x,y+h/2]);
+    ctx.massLean=(x,y,z,out)=>{
+      const projected=saved.massLean(x,y,z,out);
+      samples.push({x,y,z,lx:projected[0],ly:projected[1]});return projected;
+    };
+    ctx.drawMassSides=(...a)=>{sides.push(a);return saved.drawMassSides(...a);};
+    ctx.drawMassSkirt=(...a)=>{skirts.push(a);return saved.drawMassSkirt(...a);};
+    ctx.drawBiomeProps([b]);
+    return {b,painted,samples,sides,skirts,balanced:stack.length===0&&lowest===0&&matrix.every((v,i)=>close(v,[1,0,0,1,0,0][i]))};
+  };
+  try {
+    for(const fixture of fixtures){
+      // Mild opposing camera positions avoid the intentional small-prop cap,
+      // allowing exact correspondence to the shared projection to be checked.
+      const left=capture(fixture,-90),right=capture(fixture,90),name=fixture.propType;
+      ok(name+' balances its complete transform stack',left.balanced&&right.balanced);
+      ok(name+' paints finite native geometry',
+         left.painted.length>0&&right.painted.length>0&&[...left.painted,...right.painted].flat().every(Number.isFinite));
+      const ground=(record)=>fixture.open
+        ? record.samples.filter(s=>s.z===0).map(s=>[s.x,s.y])
+        : [[record.b.x-fixture.w/2,record.b.y-fixture.h/2],[record.b.x+fixture.w/2,record.b.y-fixture.h/2]];
+      const anchors=ground(left);
+      ok(name+' keeps real ground contacts fixed when the camera moves',
+         anchors.length>=2&&anchors.every(p=>hasPoint(left.painted,p)&&hasPoint(right.painted,p)));
+      const heights=new Set(left.samples.filter(s=>s.z>0).map(s=>s.z));
+      ok(name+' projects more than one raised construction height',heights.size>=2,heights.size+' heights');
+      const lifted=left.samples.find(s=>s.z>0&&hasPoint(left.painted,[s.x+s.lx,s.y+s.ly])&&
+        right.samples.some(t=>close(s.x,t.x)&&close(s.y,t.y)&&close(s.z,t.z)&&
+          hasPoint(right.painted,[t.x+t.lx,t.y+t.ly])&&Math.hypot(s.lx-t.lx,s.ly-t.ly)>1));
+      ok(name+' raised paint follows massLean across opposing views',!!lifted);
+      if(fixture.open)ok(name+' has no solid collision-box skirt',
+        P(`PROP_RISE.${name}.length`)===1&&left.sides.length===0&&right.sides.length===0&&left.skirts.length===0&&right.skirts.length===0);
+      else ok(name+' retains real footprint-to-roof container walls',left.sides.length>0&&right.sides.length>0);
+    }
+  } finally { Object.assign(ctx,saved); }
+}
 
 // ---------------------------------------------------------------------------
 // A SKIRT IS THE SHAPE OF THE THING IT IS UNDER

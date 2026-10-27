@@ -33063,11 +33063,19 @@ function nextCheckpoint(biome, cx, cy) {
 // blocks, and PARK / INDUSTRIAL / COMMERCIAL / RESIDENTIAL is a small enough
 // vocabulary that a five-minute walk sees every word in it twice.
 // ---------------------------------------------------------------------------
-// Ten street-address plans. Rectangular wings keep collision, occlusion and
+// Fourteen street-address plans. Rectangular wings keep collision, occlusion and
 // projectile cover identical to the projected architecture; courtyards are air.
 function cityBlockPlan(cx, cy, zone) {
   const n = chunkHash(1, cx, cy, 8173) >>> 0;
+  const expansion = chunkHash(1, cx, cy, 8231) >>> 0;
+  if (cityOuterExpansionAllowed(cx,cy) && expansion % 5 < 2)
+    return zone === 'INDUSTRIAL' ? 12 : 10 + (expansion >>> 3) % 4;
   return zone === "INDUSTRIAL" ? [4, 5, 9][n % 3] : n % 10;
+}
+function cityOuterExpansionAllowed(cx,cy) {
+  // Even a standalone city generator keeps the entire gate enclosure and
+  // curtain walls out of this expansion. New neighbourhoods start beyond it.
+  return cx < -4 || cx > 4 || cy < -4 || cy > 4;
 }
 function authoredCityBlockPlan(cx, cy) {
   if (cx < -3 || cx > 3 || cy < -3 || cy > 3 ||
@@ -33088,6 +33096,12 @@ function cityDistrictGroundPlan(cx, cy, zone) {
   if (zone !== 'RESIDENTIAL' && zone !== 'COMMERCIAL') return null;
   return cityBlockPlan(cx, cy, zone);
 }
+function cityRecreationCourtBounds(cx,cy) {
+  const zone=cityZoneAt(1,cx*CHUNK_W,cy*CHUNK_W);
+  if(!cityOuterExpansionAllowed(cx,cy)||cityDistrictGroundPlan(cx,cy,zone)!==13)return null;
+  const orientation=chunkHash(1,cx,cy,8175)>>>0;
+  return {x:cx*CHUNK_W+600,y:cy*CHUNK_W+600+(orientation&2?-90:90),w:360,h:440};
+}
 function buildCityDistrict(solid, ox, oy, zone, nearAnchor, planOverride = null) {
   const plan = planOverride === null ? cityBlockPlan(ox / CHUNK_W, oy / CHUNK_W, zone) : planOverride;
   const rng = makeRng(chunkHash(1, ox / CHUNK_W, oy / CHUNK_W, 8174));
@@ -33096,7 +33110,7 @@ function buildCityDistrict(solid, ox, oy, zone, nearAnchor, planOverride = null)
     x = (orientation&1 ? -x : x)+ox+600; y = (orientation&2 ? -y : y)+oy+600;
     if (nearAnchor(x,y,Math.max(w,h)/2+150)) return;
     solid.push({x,y,w,h,isBlockBuilding:true,cityArchitecture:arch,
-      cityPlan:plan,style:[1,3,2,0,0,2,3,2,3,0][arch],details:[],
+      cityPlan:plan,style:[1,3,2,0,0,2,3,2,3,0,2,2,0,1][arch],details:[],
       cityAccent:rngInt(rng,0,4),cityStoreys:2+arch%3});
   };
   if (plan === 0) { // Brownstone mews: two rows, central carriage lane.
@@ -33129,9 +33143,21 @@ function buildCityDistrict(solid, ox, oy, zone, nearAnchor, planOverride = null)
   } else if (plan === 9) { // Municipal depot: a long shed and two repair wings.
     add(0,-280,690,190,9);
     add(-280,235,190,260,4); add(280,235,190,260,9);
+  } else if (plan === 10) { // Medical campus: a clinic and two detached care wings.
+    add(0,-250,500,230,10);
+    add(-270,245,220,230,10);add(270,245,220,230,10);
+  } else if (plan === 11) { // Art Deco hotel: a stepped crown and a sheltered court.
+    add(0,-235,400,280,11);
+    add(-285,235,170,280,11);add(285,235,170,280,11);
+  } else if (plan === 12) { // Freight terminal: long sheds framing a loading yard.
+    add(0,-265,600,190,12);add(0,265,600,190,12);
+  } else if (plan === 13) { // Recreation club: low pavilions around an open court.
+    add(0,-300,600,140,13);
+    add(-300,235,140,260,13);add(300,235,140,260,13);
   }
   // Furniture belongs to the open court, never to a roof or doorway.
-  const positions = plan===2 ? [[-90,-90],[90,90]] : [[0,-100],[0,100]];
+  const positions = plan===12 ? [] : plan===13 ? [[-220,-160],[220,-160]] :
+    plan===2 ? [[-90,-90],[90,90]] : [[0,-100],[0,100]];
   for (const [dx,dy] of positions) {
     const x=ox+600+dx,y=oy+600+dy;
     if(nearAnchor(x,y,180)||!solidsClearAt(solid,x,y,62,62,30))continue;
@@ -33140,18 +33166,33 @@ function buildCityDistrict(solid, ox, oy, zone, nearAnchor, planOverride = null)
   // Short address-specific clusters, with a clear central crossing. These
   // solids use the same footprint for collision and art; no random scatter
   // into the carriageway, tower clearance or a neighbouring roof.
-  const furnish = (dx,dy,w,h,propType) => {
+  const furnish = (dx,dy,w,h,propType,extra) => {
     const x=ox+600+(orientation&1?-dx:dx),y=oy+600+(orientation&2?-dy:dy);
-    if(nearAnchor(x,y,Math.max(w,h)/2+100)||!solidsClearAt(solid,x,y,w,h,22))return;
-    solid.push({x,y,w,h,isBiomeProp:true,propType,cityPlan:plan,tint:rng()});
+    if(nearAnchor(x,y,Math.max(w,h)/2+100)||!solidsClearAt(solid,x,y,w,h,22))return false;
+    solid.push({x,y,w,h,isBiomeProp:true,propType,cityPlan:plan,tint:rng(),...extra});
+    return true;
   };
-  furnish(-100,458,74,28,'CITYBIKERACK');
+  // Park bicycles in a recessed outer-city court, never on a pavement or
+  // carriageway. Leave both central walking strips open, and omit a rack
+  // entirely when an address has no honest parking space.
+  if(planOverride===null && plan!==13 && cityOuterExpansionAllowed(ox/CHUNK_W,oy/CHUNK_W)){
+    for(const [dx,dy] of [[-160,150],[160,-150],[-160,-150],[160,150],[-210,150],[210,-150]]){
+      if(furnish(dx,dy,74,28,'CITYBIKERACK'))break;
+    }
+  }
   furnish(210,-458,32,32,'CITYWAYFINDER');
   if(plan===3){for(const dx of [-200,200])furnish(dx,-140,96,60,'CITYSTALL');}
-  else if(plan===6){furnish(-235,5,96,34,'BUSSTOP');furnish(220,70,74,28,'CITYBIKERACK');}
+  else if(plan===6){furnish(-235,5,96,34,'BUSSTOP');}
   else if(plan===7){furnish(-180,60,84,26,'BENCH');furnish(180,-60,84,26,'BENCH');}
   else if(plan===8){furnish(-145,-145,62,62,'TERRACEPLANTER');furnish(145,145,62,62,'TERRACEPLANTER');}
   else if(plan===9){furnish(-200,-40,84,54,'MATERIALS');furnish(205,25,40,25,'WRECK');}
+  else if(plan===10){furnish(-200,70,84,26,'BENCH');furnish(200,-70,62,62,'TERRACEPLANTER');}
+  else if(plan===11){furnish(-180,45,84,26,'BENCH');furnish(180,-45,84,26,'BENCH');}
+  else if(plan===12){for(const dx of [-220,220])for(const dy of [-60,60])furnish(dx,dy,104,56,'CITYCARGO');}
+  else if(plan===13){
+    for(const dy of [-150,330])furnish(0,dy,18,18,'CITYCOURTHOOP',{courtFacing:(dy<0?1:-1)*(orientation&2?-1:1)});
+    furnish(-200,90,84,26,'BENCH');furnish(200,90,84,26,'BENCH');
+  }
   else {furnish(-180,0,84,26,'BENCH');furnish(180,0,22,22,'POSTBOX');}
 }
 
@@ -33188,6 +33229,34 @@ function bakeCityDistrictGround(g, ox, oy, plan) {
     pad(265,470,670,330,[95,107,109]);pad(550,800,100,235,[113,120,117]);
     g.stroke(218,182,85,185);g.strokeWeight(4);
     for(const x of [330,460,720,850]){joint(x,480,x,535);joint(x,535,x+70,535);}
+    g.noStroke();
+  }else if(plan===10){
+    pad(250,490,700,190,[169,187,181]);pad(558,680,84,355,[160,171,163]);
+    g.stroke(85,132,129,145);g.strokeWeight(3);
+    for(let x=280;x<=920;x+=80)joint(x,510,x,660);
+    g.noStroke();
+  }else if(plan===11){
+    pad(365,520,470,175,[179,156,125]);pad(558,695,84,340,[162,143,119]);
+    g.fill(92,111,103);g.rect(wx(600)-46,wy(600)-46,92,92,4);
+    g.fill(199,176,135);g.rect(wx(600)-34,wy(600)-34,68,68,3);
+  }else if(plan===12){
+    pad(200,445,800,310,[92,105,110]);
+    g.stroke(212,181,98,185);g.strokeWeight(3);
+    for(const x of [315,755])for(const y of [475,655]){
+      joint(x,y,x+130,y);joint(x,y,x,y+70);joint(x+130,y,x+130,y+70);
+    }
+    g.noStroke();
+  }else if(plan===13){
+    // Painted playing surface is ground; backboards/posts are live 3D props
+    // at its ends, with collision only on their visible footplates.
+    pad(390,450,420,500,[159,143,117]);pad(420,470,360,440,[52,108,99]);
+    g.stroke(231,224,189);g.strokeWeight(3);g.noFill();
+    g.rect(wx(600)-165,wy(690)-205,330,410);
+    joint(435,690,765,690);g.ellipse(wx(600),wy(690),76,76);
+    for(const y of [485,825]){
+      g.rect(wx(600)-52,wy(y+35)-35,104,70);
+      g.ellipse(wx(600),wy(y===485?555:825),90,90);
+    }
     g.noStroke();
   }else{
     // Thin pedestrian spines make the older mews/campus plans feel inhabited
@@ -33247,24 +33316,46 @@ function drawCityFacades(b,lx,ly) {
       }
       return;
     }
-    if(b.cityArchitecture===9){
+    if(b.cityArchitecture===9||b.cityArchitecture===12){
       const doors=Math.max(2,Math.min(7,Math.floor(len/80)));
       for(let i=0;i<doors;i++){
         fill(43,54,59);panel((i+.12)/doors,(i+.88)/doors,.10,.66);
-        fill(113,133,137);panel((i+.17)/doors,(i+.83)/doors,.15,.61);
+        fill(b.cityArchitecture===12?140:113,b.cityArchitecture===12?112:133,b.cityArchitecture===12?82:137);panel((i+.17)/doors,(i+.83)/doors,.15,.61);
         fill(55,77,83);panel((i+.20)/doors,(i+.80)/doors,.75,.88);
         for(const t of [.25,.39,.53]){fill(63,82,86);panel((i+.17)/doors,(i+.83)/doors,t,t+.035);}
         fill(222,172,76);panel((i+.09)/doors,(i+.14)/doors,.10,.36);
       }
       return;
     }
+    if(b.cityArchitecture===10){
+      fill(224,229,211);panel(.02,.98,.08,.94);
+      fill(48,128,132);panel(.02,.98,.12,.25);panel(.02,.98,.80,.92);
+      for(let i=0;i<bays;i++){
+        fill(37,80,90);panel((i+.18)/bays,(i+.82)/bays,.36,.70);
+        fill(127,188,185);panel((i+.23)/bays,(i+.77)/bays,.56,.67);
+      }
+      return;
+    }
+    if(b.cityArchitecture===13){
+      fill(89,63,42);panel(.02,.98,.08,.92);
+      for(let i=0;i<bays;i++){
+        fill(42,98,109);panel((i+.12)/bays,(i+.88)/bays,.20,.82);
+        fill(131,189,180,205);panel((i+.18)/bays,(i+.82)/bays,.52,.77);
+        fill(197,157,99);panel((i+.91)/bays,(i+.99)/bays,.08,.94);
+      }
+      return;
+    }
     for(let floor=0;floor<b.cityStoreys;floor++)for(let i=0;i<bays;i++){
-      const library=b.cityArchitecture===7,station=b.cityArchitecture===6;
+      const library=b.cityArchitecture===7,station=b.cityArchitecture===6,deco=b.cityArchitecture===11;
       const u=(i+(library?.33:.20))/bays,v=(i+(library?.67:.80))/bays;
       const t=(floor+(library?.12:.20))/b.cityStoreys,q=(floor+(library?.83:.70))/b.cityStoreys;
       const lit=((i+floor+b.cityAccent)%4===0)&&daylight()<.75;
       fill(lit?242:29,lit?181:station?88:68,lit?87:station?106:83,230);
       panel(u,v,t,q);
+    }
+    if(b.cityArchitecture===11){
+      fill(208,183,124);panel(.015,.985,.88,.96);
+      for(let i=1;i<bays;i++){fill(225,209,161);panel((i-.07)/bays,(i+.07)/bays,.05,.94);}
     }
     if(b.cityArchitecture===6){fill(221,169,72);panel(.025,.975,.88,.98);}
     if(b.cityArchitecture===7)for(let i=1;i<bays;i++){
@@ -33286,6 +33377,20 @@ function cityRoofBox(b,x,y,w,h,z,c) {
   fill(c[0],c[1],c[2]);rect(x+dx,y+dy,w,h,2);
   fill(246,232,181,95);rect(x+dx,y+dy,w,3);
   return [dx,dy];
+}
+// A raised ridge is a volume: its gable ends and two sloping planes meet
+// points projected at their actual heights, above the parent's lifted roof.
+function cityRoofPitchedMass(b,x,y,w,h,z,c) {
+  const left=massLean(b.x+x,b.y+y+h/2,z,[0,0]);
+  const right=massLean(b.x+x+w,b.y+y+h/2,z,[0,0]);
+  const ax=x+left[0],ay=y+h/2+left[1],bx=x+w+right[0],by=y+h/2+right[1];
+  noStroke();fill(0,0,0,40);rect(x+LIGHT_DX*z*.75,y+LIGHT_DY*z*.75,w,h,2);
+  fill(c[0]*.56,c[1]*.56,c[2]*.56);triangle(x,y,x,y+h,ax,ay);triangle(x+w,y,x+w,y+h,bx,by);
+  const north=.65+.22*Math.max(0,LIGHT_DY),south=.65+.22*Math.max(0,-LIGHT_DY);
+  fill(c[0]*north,c[1]*north,c[2]*north);quad(x,y,x+w,y,bx,by,ax,ay);
+  fill(c[0]*south,c[1]*south,c[2]*south);quad(x,y+h,x+w,y+h,bx,by,ax,ay);
+  stroke(c[0]*1.08,c[1]*1.08,c[2]*1.08);strokeWeight(3);line(ax,ay,bx,by);noStroke();
+  return {ax,ay,bx,by};
 }
 function drawCityArchitecture(b) {
   push();translate(b.x,b.y);noStroke();
@@ -33384,6 +33489,58 @@ function drawCityArchitecture(b) {
     fill(71,88,91);for(let px=x+26;px<x+w*.51;px+=24)rect(px+run[0],y+h*.73+5+run[1],13,9,1);
     fill(218,175,78);rect(x+w*.76,y+h*.75,w*.15,5);
     fill(60,73,74);rect(x+w*.80,y+h*.80,w*.11,h*.10,1);
+  }else if(a===10){ // Clinic: white plant podium, raised lightwell and teal service wings.
+    fill(181+tone,203+tone,195+tone);rect(x+3,y+3,w-6,h-6,2);
+    const podium=cityRoofBox(b,x+w*.13,y+h*.14,w*.74,h*.68,7,[229,231,213]);
+    const px=x+w*.13+podium[0],py=y+h*.14+podium[1];
+    fill(65,137,139);rect(px+5,py+5,w*.74-10,6);rect(px+5,py+h*.68-11,w*.74-10,6);
+    const well=cityRoofBox(b,px+w*.10,py+h*.16,w*.25,h*.30,6,[80,133,137]);
+    fill(130,193,188);rect(px+w*.10+well[0]+4,py+h*.16+well[1]+4,w*.25-8,h*.30-8,1);
+    stroke(220,235,215);strokeWeight(3);line(px+w*.22+well[0],py+h*.16+well[1]+3,px+w*.22+well[0],py+h*.46+well[1]-3);noStroke();
+    const plant=cityRoofBox(b,px+w*.47,py+h*.18,w*.17,h*.28,8,[155,177,170]);
+    fill(62,85,87);for(let k=0;k<3;k++)rect(px+w*.48+plant[0],py+h*.21+plant[1]+k*h*.065,w*.14,h*.027,1);
+    fill(47,121,121);rect(x+13,y+h*.79,w*.18,h*.13,2);
+    fill(230,231,212);rect(x+w*.205,y+h*.80,w*.035,h*.10);rect(x+w*.177,y+h*.833,w*.091,h*.034);
+  }else if(a===11){ // Hotel: three stepped masses rather than a flat art-deco motif.
+    fill(167+tone,144+tone,103+tone);rect(x+3,y+3,w-6,h-6,2);
+    const plinth=cityRoofBox(b,x+12,y+14,w-24,h-28,6,[214,195,151]);
+    const tx=x+w*.20+plinth[0],ty=y+h*.21+plinth[1];
+    const tower=cityRoofBox(b,tx,ty,w*.60,h*.58,9,[178,154,106]);
+    const crown=cityRoofBox(b,tx+w*.13+tower[0],ty+h*.13+tower[1],w*.34,h*.32,8,[81,131,121]);
+    fill(42,83,84);rect(tx+w*.13+tower[0]+crown[0]+5,ty+h*.13+tower[1]+crown[1]+5,w*.34-10,h*.32-10,2);
+    fill(213,187,119);rect(tx+w*.285+tower[0]+crown[0],ty+h*.13+tower[1]+crown[1]+3,w*.03,h*.32-6);
+    for(const side of[-1,1]){
+      const dx=side<0?x+20:x+w*.82;
+      const service=cityRoofBox(b,dx,y+h*.30,w*.10,h*.34,5,[119,106,78]);
+      fill(222,202,151);for(let k=0;k<3;k++)rect(dx+4+service[0],y+h*.33+k*h*.09+service[1],w*.10-8,4);
+    }
+  }else if(a===12){ // Freight shed: a raised corrugated ridge and box ventilators.
+    fill(112+tone,105+tone,86+tone);rect(x+3,y+3,w-6,h-6,2);
+    const roof=cityRoofPitchedMass(b,x+7,y+10,w-14,h-20,11,[159,154,127]);
+    stroke(83,88,76);strokeWeight(2);
+    const ribs=Math.max(3,Math.min(17,Math.floor(w/34)));
+    for(let i=1;i<ribs;i++){
+      const t=i/ribs,rx=x+7+(w-14)*t,ax=roof.ax+(roof.bx-roof.ax)*t,ay=roof.ay+(roof.by-roof.ay)*t;
+      line(rx,y+10,ax,ay);line(ax,ay,rx,h/2-10);
+    }
+    noStroke();
+    for(const t of[.23,.72]){
+      const vx=x+w*t,vy=y+h*.16,vent=cityRoofBox(b,vx,vy,Math.min(56,w*.16),h*.19,7,[107,123,117]);
+      fill(41,61,63);rect(vx+4+vent[0],vy+4+vent[1],Math.min(56,w*.16)-8,h*.19-8,1);
+    }
+    fill(198,158,79);rect(x+10,h/2-12,w-20,5);
+  }else if(a===13){ // Recreation pavilion: timber eaves support a pitched glazed roof.
+    fill(114+tone,88+tone,57+tone);rect(x+3,y+3,w-6,h-6,2);
+    const eaves=cityRoofBox(b,x+9,y+9,w-18,h-18,4,[174,144,94]);
+    const roof=cityRoofPitchedMass(b,x+14+eaves[0],y+14+eaves[1],w-28,h-28,12,[84,143,139]);
+    stroke(184,205,172);strokeWeight(3);
+    for(let i=1;i<5;i++){
+      const t=i/5,ax=roof.ax+(roof.bx-roof.ax)*t,ay=roof.ay+(roof.by-roof.ay)*t;
+      line(x+14+eaves[0]+(w-28)*t,y+14+eaves[1],ax,ay);
+      line(ax,ay,x+14+eaves[0]+(w-28)*t,h/2-14+eaves[1]);
+    }
+    noStroke();
+    cityRoofBox(b,x+w*.66,y+h*.69,w*.20,h*.17,7,[90,91,71]);
   }else { // Residential roof terraces: planted beds, pergola and service stair.
     fill(a===5?106:168,a===5?131:142,a===5?107:106);rect(x+4,y+4,w-8,h-8,2);
     fill(192,169,116);rect(x+12,y+12,w*.38,h-24,2);
@@ -35324,13 +35481,18 @@ function groundReserved(biome, cx, cy, x, y, w, h, pad) {
       return false;
     }
     case "CITY":
-    case "CITY_DENSE":
+    case "CITY_DENSE": {
+      // A recreation court is usable open ground. Late wreck/cover scatter
+      // must not place an obstacle over its painted playing surface.
+      const court=biome===1?cityRecreationCourtBounds(cx,cy):null;
+      if(court&&Math.abs(x-court.x)<hw+court.w/2&&Math.abs(y-court.y)<hh+court.h/2)return true;
       // The water only. The quay either side is ground -- it is where the
       // bollards, the crane and anybody walking the towpath belong -- so
       // reserving it would have banned the furniture that defines a waterside.
       return cityHasCanal(biome, cy) &&
              crossesEW((sx) => cityCanalY(biome, cy, sx),
                        (sx) => cityCanalHalf(biome, cy, sx) * 1.15, x, y, hw, hh);
+    }
     case "FRONTIER":
       return frontierSettlementRoadReserved(x, y, w, h, p) ||
         frontierCanyonReserved(x, y, w, h, p) ||
@@ -37237,7 +37399,10 @@ function generateChunkContent(biome, cx, cy) {
   // this used to take a raw random point and push it unconditionally: the last
   // solid added to the chunk, landing on top of whatever was already there.
   // It is the single biggest source of buildings that appear welded together.
-  if (rng() > 0.72) {
+  // New exterior neighbourhoods use the projected freight/court furniture,
+  // rather than scattering an older vehicle sprite over their public space.
+  const exteriorPlan = biome === 1 ? cityDistrictGroundPlan(cx,cy,cityZoneAt(1,ox,oy)) : null;
+  if (rng() > 0.72 && !(exteriorPlan >= 10)) {
     let spot = null;
     if (lat) {
       spot = lat.take(110, 110);
@@ -37268,7 +37433,7 @@ function generateChunkContent(biome, cx, cy) {
   // Namespace the whole block, including its street fixtures, so an old roof's
   // saved destruction index cannot erase a new streetlight or court planter.
   const districtBlock = solid.some(b => b.cityArchitecture !== undefined || b.cityDistrictParking);
-  for (let i = 0; i < solid.length; i++) solid[i].chunkKey = cx + "," + cy + "," + (districtBlock ? "district:v2:" : solid[i].isCivic ? "civic:" : "") + i;
+  for (let i = 0; i < solid.length; i++) solid[i].chunkKey = cx + "," + cy + "," + (districtBlock ? "district:v3:" : solid[i].isCivic ? "civic:" : "") + i;
 
   appendWoodlandForest(biome, cx, cy, solid, decor, decorBake, nearAnchor);
   removeDestroyedTreeDecor(biome, solid, decor);
@@ -45963,7 +46128,8 @@ const PROP_RISE = {
   SITEHUT:    [20, 136, 128,  96],  HOARDING:   [16, 124, 118, 100],
   MATERIALS:  [12,  66,  68,  70],  SPOIL:      [12],
   KIOSK:      [20,  86,  80,  70],  BUSSTOP:    [20,  96, 112, 126],
-  CITYBIKERACK: [9], CITYSTALL: [24, 94, 71, 49], CITYWAYFINDER: [24, 51, 67, 71],
+  CITYBIKERACK: [26], CITYSTALL: [24, 94, 71, 49], CITYWAYFINDER: [24, 51, 67, 71],
+  CITYCARGO: [27], CITYCOURTHOOP: [36],
   HEDGE:      [16],                 FOUNTAIN:   [12],
   PLANTER:    [10, 138, 136, 128],  BENCH:      [ 8, 110,  84,  52],
   POSTBOX:    [14,  28,  60,  96],  HYDRANT:    [10, 140,  34,  28],
@@ -47327,32 +47493,201 @@ function drawBiomeProps(list, i0, i1) {
       }
 
       case "CITYBIKERACK": {
-        castShadow(b.x,b.y,b.w,18,5,48);
-        push(); translate(b.x,b.y); noFill();
-        // Open steel hoops leave air between parked bikes rather than a box
-        // skirt. Tyres are narrow ellipses, with coloured twin frame triangles.
-        stroke(40,51,55); strokeWeight(4);
-        line(-b.w/2+4,9,b.w/2-4,9);
-        stroke(164,178,176); strokeWeight(2.5);
-        for(const x of [-27,0,27]) {
-          line(x,-10,x,9); line(x-4,-10,x+4,-10);
+        // A bicycle is an upright open frame, not a raised drawing of its side.
+        // Undo the generic top lift: tyre contacts stay at z=0 and every spoke,
+        // tube, hoop and saddle projects at its own real height instead.
+        push(); translate(b.x-_plx,b.y-_ply);
+        const topLean=massLean(b.x,b.y,26,[0,0]),leanLen=Math.hypot(topLean[0],topLean[1]);
+        const cap=leanLen>20?20/leanLen:1,lean=[0,0],point=[0,0],other=[0,0];
+        const project=(x,y,z,out=point)=>{
+          massLean(b.x+x,b.y+y,z,lean);
+          out[0]=x+lean[0]*cap;out[1]=y+lean[1]*cap;return out;
+        };
+        const segment=(a,c)=>{const p=project(a[0],a[1],a[2]),q=project(c[0],c[1],c[2],other);line(p[0],p[1],q[0],q[1]);};
+        const face=points=>{beginShape();for(const p of points){const q=project(...p);vertex(q[0],q[1]);}endShape(CLOSE);};
+        const shadow=(a,c)=>line(a[0]+LIGHT_DX*a[2]*.7,a[1]+LIGHT_DY*a[2]*.7,
+                                  c[0]+LIGHT_DX*c[2]*.7,c[1]+LIGHT_DY*c[2]*.7);
+        const wheel=(cx,cy)=>{
+          const r=7.1,z=r,n=zoom<.65?8:12,near=topLean[1]>=0?-1.15:1.15;
+          // A thin tyre cylinder: two vertical rings joined by tread faces.
+          // Circle geometry lives in the x/z plane, never on the ground plane.
+          noStroke();
+          for(let k=0;k<n;k++){
+            const a=k/n*TWO_PI,c=(k+1)/n*TWO_PI;
+            const ax=cx+Math.cos(a)*r,az=z+Math.sin(a)*r,bx=cx+Math.cos(c)*r,bz=z+Math.sin(c)*r;
+            fill(k<n/2?58:31,k<n/2?65:37,k<n/2?64:39);
+            face([[ax,cy-1.15,az],[bx,cy-1.15,bz],[bx,cy+1.15,bz],[ax,cy+1.15,az]]);
+          }
+          noFill();stroke(22,29,31);strokeWeight(1.7);beginShape();
+          for(let k=0;k<n;k++){const a=k/n*TWO_PI,p=project(cx+Math.cos(a)*r,cy+near,z+Math.sin(a)*r);vertex(...p);}endShape(CLOSE);
+          stroke(155,169,164);strokeWeight(.7);
+          for(let k=0;k<6;k++){
+            const a=k/6*TWO_PI;
+            segment([cx,cy+near,z],[cx+Math.cos(a)*r*.74,cy+near,z+Math.sin(a)*r*.74]);
+          }
+          const hub=project(cx,cy+near,z);noStroke();fill(197,198,169);ellipse(hub[0],hub[1],2.6,2.6);
+        };
+        const frame=(x,y)=>[[[x-9.5,y,7.1],[x-.8,y,7.4]],[[x-.8,y,7.4],[x-4,y,19]],
+          [[x-4,y,19],[x-9.5,y,7.1]],[[x-4,y,19],[x+7,y,18.5]],
+          [[x+7,y,18.5],[x-.8,y,7.4]],[[x+7,y,18.5],[x+9.5,y,7.1]]];
+        // Sun shadows use the same vertices at ground level and remain attached
+        // to the contact points while the camera moves to either side.
+        noFill();stroke(20,28,29,48);strokeWeight(2.6);
+        for(const [x,y] of [[-18,-4],[18,4]]){
+          for(const [a,c] of frame(x,y))shadow(a,c);
+          for(const cx of [x-9.5,x+9.5]){
+            beginShape();
+            for(let k=0;k<10;k++){
+              const a=k/10*TWO_PI,z=7.1+Math.sin(a)*7.1;
+              vertex(cx+Math.cos(a)*7.1+LIGHT_DX*z*.7,y+LIGHT_DY*z*.7);
+            }
+            endShape(CLOSE);
+          }
         }
-        for(let i=0;i<2;i++) {
-          const x=i===0?-18:18, y=i===0?-2:2;
-          stroke(27,31,33); strokeWeight(2.5);
-          ellipse(x-11,y,8,15); ellipse(x+11,y,8,15);
-          stroke(169,180,172); strokeWeight(1);
-          line(x-11,y-5,x-11,y+5); line(x+11,y-5,x+11,y+5);
-          stroke(i===0?63:186,i===0?151:107,i===0?155:65); strokeWeight(2.3);
-          triangle(x-11,y,x-2,y+4,x+3,y-5);
-          triangle(x-2,y+4,x+11,y,x+3,y-5);
-          stroke(49,55,56); strokeWeight(2);
-          line(x+3,y-5,x+7,y-9); line(x+4,y-9,x+11,y-9);
-          line(x-2,y+4,x-4,y-5);
-          line(x-8,y-5,x-1,y-5);
-          stroke(210,194,139); strokeWeight(1.4); line(x-2,y+4,x+3,y+6);
+        for(const x of [-30,0,30])shadow([x,-10,0],[x,-7,18]);
+        noStroke();fill(21,29,29,65);
+        for(const [x,y] of [[-18,-4],[18,4]])for(const dx of [-9.5,9.5])ellipse(x+dx,y,5,3.5);
+        // Bolted foot rails and upright U-hoops have visible air beneath them.
+        stroke(44,55,57);strokeWeight(3.4);
+        for(const y of [-10,10])segment([-33,y,1.5],[33,y,1.5]);
+        for(const x of [-30,0,30]){
+          noStroke();fill(91,105,103);rect(x-2,-12,4,4,1);rect(x-2,8,4,4,1);
+          stroke(53,67,68);strokeWeight(3.1);
+          const hoop=[[x,-10,1],[x,-10,15],[x,-6,19],[x,6,19],[x,10,15],[x,10,1]];
+          for(let k=1;k<hoop.length;k++)segment(hoop[k-1],hoop[k]);
+          stroke(174,186,174);strokeWeight(.9);
+          for(let k=1;k<hoop.length;k++)segment(hoop[k-1],hoop[k]);
         }
-        noStroke(); pop(); break;
+        // Both bicycles keep their ground heading. Camera parallax changes
+        // which tread side, rack strut and saddle faces can be seen.
+        for(let i=0;i<2;i++){
+          const x=i===0?-18:18,y=i===0?-4:4;
+          wheel(x-9.5,y);wheel(x+9.5,y);
+          const tubes=frame(x,y);
+          stroke(31,44,47);strokeWeight(3.4);for(const [a,c] of tubes)segment(a,c);
+          stroke(i===0?59:190,i===0?151:117,i===0?158:67);strokeWeight(2.1);for(const [a,c] of tubes)segment(a,c);
+          stroke(197,206,171,180);strokeWeight(.6);segment([x-4,y,19],[x+7,y,18.5]);
+          stroke(43,55,56);strokeWeight(2.1);
+          segment([x-4,y,19],[x-4.7,y,22]);segment([x+7,y,18.5],[x+8.5,y,25]);
+          segment([x+8.5,y-4,25],[x+8.5,y+4,25]);
+          segment([x-.8,y-3.6,7.4],[x-.8,y+3.6,7.4]);
+          noStroke();fill(38,43,41);
+          face([[x-8,y-2.7,21.5],[x-.5,y-2.7,21.5],[x-.5,y+2.7,21.5],[x-8,y+2.7,21.5]]);
+          fill(91,98,82);
+          face([[x-8,y-2.7,23],[x-.5,y-2.7,23],[x-.5,y+2.7,23],[x-8,y+2.7,23]]);
+          const side=y+(topLean[1]>=0?-2.7:2.7);
+          fill(46,54,50);face([[x-8,side,21.5],[x-.5,side,21.5],[x-.5,side,23],[x-8,side,23]]);
+          const pedal=project(x-.8,y+3.6,7.4);fill(193,180,128);ellipse(pedal[0],pedal[1],3,2);
+        }
+        pop(); break;
+      }
+
+      case "CITYCARGO": {
+        // The shadow lands before the full projected body. Corrugation and
+        // door ribs follow those same footprint-to-roof wall planes.
+        push(); translate(-_plx,-_ply);
+        castShadowRect(b.x,b.y,b.w,b.h,27,76,2);
+        const x0=b.x-b.w/2,y0=b.y-b.h/2,x1=x0+b.w,y1=y0+b.h;
+        drawMassSides(x0,y0,x1,y1,_plx,_ply,72,106,116,0);
+        const wall=(ax,ay,bx,by,len,doors)=>{
+          const point=(u,t)=>[ax+(bx-ax)*u+_plx*t,ay+(by-ay)*u+_ply*t];
+          if(doors){
+            const a=point(.07,.10),c=point(.93,.10),d=point(.93,.92),e=point(.07,.92);
+            noStroke();fill(42,71,82);quad(...a,...c,...d,...e);
+          }
+          stroke(132,157,157,170);strokeWeight(1.2);
+          const n=Math.max(3,Math.round(len/13));
+          for(let i=0;i<n;i++){
+            const a=point((i+.5)/n,.08),c=point((i+.5)/n,.94);line(...a,...c);
+          }
+          if(doors){
+            stroke(35,49,55);strokeWeight(2);
+            const a=point(.5,.08),c=point(.5,.94);line(...a,...c);
+            stroke(187,192,171);strokeWeight(2);
+            for(const u of [.28,.72]){const a=point(u,.18),c=point(u,.82);line(...a,...c);}
+          }
+          noStroke();
+        };
+        if(Math.abs(_ply)>.5)wall(x0,_ply>0?y0:y1,x1,_ply>0?y0:y1,b.w,false);
+        if(Math.abs(_plx)>.5)wall(_plx>0?x0:x1,y0,_plx>0?x0:x1,y1,b.h,true);
+        pop();
+        push();translate(b.x,b.y);noStroke();
+        fill(67,105,118);rect(-b.w/2,-b.h/2,b.w,b.h,2);
+        fill(96,135,143);rect(-b.w/2+3,-b.h/2+3,b.w-6,b.h-6,1);
+        fill(50,83,96);rect(-b.w/2+4,b.h/2-8,b.w-8,4);
+        const ribLean=massLean(b.x,b.y,2,[0,0]);
+        for(let x=-b.w/2+12;x<b.w/2-9;x+=14){
+          drawMassSides(x,-b.h/2+5,x+3,b.h/2-5,ribLean[0],ribLean[1],121,152,151,0);
+          fill(137,164,157);rect(x+ribLean[0],-b.h/2+5+ribLean[1],3,b.h-10,1);
+        }
+        const castLean=massLean(b.x,b.y,3,[0,0]);
+        for(const sx of [-1,1])for(const sy of [-1,1]){
+          const x=sx*(b.w/2-4)-3,y=sy*(b.h/2-4)-3;
+          drawMassSides(x,y,x+6,y+6,castLean[0],castLean[1],177,181,161,0);
+          fill(208,207,179);rect(x+castLean[0],y+castLean[1],6,6,1);
+          fill(58,76,79);rect(x+castLean[0]+2,y+castLean[1]+2,2,2);
+        }
+        if(isRaining){fill(42,76,93,45);rect(-b.w/2+4,-b.h/2+4,b.w-8,b.h-8,1);}
+        pop();break;
+      }
+
+      case "CITYCOURTHOOP": {
+        // A hoop is mostly air. Cancel the generic roof translate, then lift
+        // each point from its own ground contact through its actual height.
+        // Only the visible footplate is solid at ground level (18 by18).
+        push();translate(-_plx,-_ply);translate(b.x,b.y);
+        const facing=b.courtFacing===-1?-1:1;
+        const point=(x,y,z)=>{
+          const lean=massLean(b.x+x,b.y+y*facing,z,[0,0]);
+          clampLean(lean,z*.72);
+          return [x+lean[0],y*facing+lean[1]];
+        };
+        const segment=(a,c)=>line(...point(...a),...point(...c));
+        const plate=(x0,y0,x1,y1,z)=>quad(...point(x0,y0,z),...point(x1,y0,z),...point(x1,y1,z),...point(x0,y1,z));
+        // Ground silhouette follows the sun, independent of camera parallax.
+        const shadowScale=shadowLengthScale(),sd=shadowDensity();
+        const shadow=(x,y,z)=>[x+LIGHT_DX*Math.min(42,z*shadowScale),y*facing+LIGHT_DY*Math.min(42,z*shadowScale)];
+        noStroke();fill(0,0,0,44*sd);ellipse(1,1,23,21);
+        stroke(0,0,0,57*sd);strokeWeight(5);
+        line(...shadow(0,0,0),...shadow(0,0,25));
+        line(...shadow(0,0,25),...shadow(0,6,28));
+        noStroke();fill(0,0,0,45*sd);
+        quad(...shadow(-20,6,24),...shadow(20,6,24),...shadow(20,6,36),...shadow(-20,6,36));
+        noFill();stroke(0,0,0,38*sd);strokeWeight(2);
+        const rimShadow=shadow(0,14,26);ellipse(rimShadow[0],rimShadow[1],18,11);
+        // Weight-bearing base, bright anchor bolts and the tapered steel post.
+        noStroke();fill(51,65,67);rect(-9,-9,18,18,2);
+        fill(127,142,138);rect(-7,-7,14,14,1);
+        fill(210,205,169);for(const x of [-5,5])for(const y of [-5,5])ellipse(x,y,2.5,2.5);
+        const p0=point(-3,0,0),p1=point(3,0,0),p2=point(2,0,25),p3=point(-2,0,25);
+        fill(50,73,79);quad(...p0,...p1,...p2,...p3);
+        stroke(154,177,174);strokeWeight(1.5);segment([-1.5,0,1],[-1,0,25]);
+        stroke(47,68,75);strokeWeight(4);segment([0,0,25],[0,6,28]);
+        stroke(151,176,174);strokeWeight(1.3);segment([0,0,25],[0,6,28]);
+        // A vertical glass board has real thickness at the top and both ends.
+        noStroke();fill(41,65,74);
+        quad(...point(-21,5,23),...point(-21,7,23),...point(-21,7,37),...point(-21,5,37));
+        fill(64,91,95);quad(...point(21,5,23),...point(21,7,23),...point(21,7,37),...point(21,5,37));
+        noStroke();fill(38,69,83);quad(...point(-21,5,23),...point(21,5,23),...point(21,5,37),...point(-21,5,37));
+        fill(102,167,174,200);quad(...point(-19,6,25),...point(19,6,25),...point(19,6,35),...point(-19,6,35));
+        fill(227,225,186);quad(...point(-21,5,37),...point(21,5,37),...point(21,7,37),...point(-21,7,37));
+        stroke(238,236,202);strokeWeight(1.4);
+        segment([-6,6,25],[-6,6,31]);segment([-6,6,31],[6,6,31]);segment([6,6,31],[6,6,25]);
+        // Net strands join a raised horizontal rim to a narrower hanging ring.
+        const rim=[],net=[];
+        for(let i=0;i<12;i++){
+          const angle=i*Math.PI/6;
+          rim.push(point(Math.cos(angle)*8,14+Math.sin(angle)*5,26));
+          net.push(point(Math.cos(angle)*4.5,14+Math.sin(angle)*3,19));
+        }
+        stroke(217,220,199,200);strokeWeight(1);
+        for(let i=0;i<12;i++){
+          line(...rim[i],...net[i]);line(...net[i],...net[(i+1)%12]);
+          if(i%2===0)line(...rim[i],...net[(i+1)%12]);
+        }
+        stroke(55,54,44);strokeWeight(3.8);for(let i=0;i<12;i++)line(...rim[i],...rim[(i+1)%12]);
+        stroke(224,115,58);strokeWeight(2.2);for(let i=0;i<12;i++)line(...rim[i],...rim[(i+1)%12]);
+        noStroke();pop();break;
       }
 
       case "CITYSTALL": {
