@@ -38,6 +38,18 @@ and supported fallen poses. It adds no slowdown, critical damage or new
 dismemberment behavior. Existing headshot effects stay on the head. Actors
 without humanoid legs retain their existing body-hit behavior.
 
+Bullet decal placement separates the projectile's lateral contact from the
+mark's anatomical height. The actual bullet path still determines the
+left-to-right position; height varies within the resolved head, torso or leg
+section instead of repeatedly marking one row. Stance remapping chooses that
+section before placing the mark. The sampled position is stored at impact,
+so walking, turning, crouching and falling carry the same wound rather than
+choosing another height while drawing it. This changes decal placement only,
+not projectile flight, hit detection or damage. Leg hits can land on the thigh
+or shin of the leg selected by the actual shot, rather than only the bottom
+shin. Pellets sharing one shot ID still receive separate heights. Placement
+uses a private cosmetic hash and consumes no combat randomness.
+
 Pause, travel, death, reset, resize and input handoffs cancel the held gesture.
 Menu touches remain consumed until release. New games and loaded games start
 with BODY aim; the selected zone and joystick gesture are not saved. Desktop
@@ -50,11 +62,13 @@ Checks:
 node tools/check-aim-zones.js
 node tools/check-touch-aim-zones.js
 node tools/check-leg-aim.js
+node tools/check-vertical-hit-decals.js
 node tools/check-bow-controls.js
 node tools/check-bow-draw.js
 node tools/check-gamepad-trigger-shooting.js
 VIS_DEPS=/workspace/newone-dev node tools/check-touch-aim-scene.js
 VIS_DEPS=/workspace/newone-dev node tools/check-leg-aim-scene.js
+VIS_DEPS=/workspace/newone-dev node tools/visual-vertical-hit-decals.js
 ```
 
 The scene checks use p5, Playwright and Chromium for native touch events and

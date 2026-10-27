@@ -14834,6 +14834,28 @@ function ragShin(rig, bend) { return rig.shin * (0.58 + 0.42 * Math.cos(bend)); 
 // midline -- check-corpse.js proves that bound rather than trusting it.
 function ragKnee(L) { return Math.max(0, Math.min(L.b, L.a + (L.room || 0))); }
 
+// The world ray supplies the actual transverse contact. Its ground-plane
+// depth cannot also represent height on an upright figure: repeated shots
+// would all paint one row. Pick that missing dimension once at contact, using
+// a private hash so cosmetic placement never rerolls combat or death motion.
+function bulletDecalHeightSample(b,actor) {
+  const seed=Math.imul((Number(b.shotId)||frameCount+1)|0,0x9e3779b9) ^
+    Math.imul((b.x*16)|0,0x85ebca6b) ^ Math.imul((b.y*16)|0,0xc2b2ae35) ^
+    Math.imul(((actor.decals&&actor.decals.length)||0)+1,0x27d4eb2d);
+  // Pellets and dual-SMG barrels share a shot ID; the victim's impact count
+  // gives each of their holes its own height without another global counter.
+  return comicHitHash(seed);
+}
+function mapHitDecalHeight(actor,decal,zone,sample) {
+  const rw=(zone==='HEAD'?5.5:actor.bodyW*.5)*.85,
+    rh=(zone==='HEAD'?5.5:actor.bodyH*.5)*.85;
+  // Preserve the previously resolved left/right coordinate exactly. The
+  // ellipse's available height narrows near either silhouette edge.
+  const lateral=decal.y/rh,room=rw*Math.sqrt(Math.max(0,1-lateral*lateral));
+  decal.x=(Math.max(0,Math.min(1,sample))*2-1)*room;
+  return decal;
+}
+
 // Bullet height remains a combat choice, not a second ground-plane ray. Leg
 // aim uses the existing body footprint and damage; only its stain is projected
 // onto a trouser leg. Keep that attachment in limb coordinates so a stride,
@@ -14869,7 +14891,7 @@ function fallLegGeometry(rig,rg,index,f,faceDown=false,projected=true) {
   return {sx,sy,kx,ky,ax:kx+Math.cos(angle+bend)*shin*projection,
     ay:ky+Math.sin(angle+bend)*shin,hipW:rig.thighW,kneeW:(rig.thighW+rig.shinW)*.5,ankleW:rig.shinW};
 }
-function mapLegHitDecal(actor,wx,wy,decal,origin=actor) {
+function mapLegHitDecal(actor,wx,wy,decal,origin=actor,heightSample=null) {
   if(!ragHumanoid(actor.eType,actor.bodyW))return decal;
   const rig=figureRig(actor.bodyW,actor.bodyH),pose=boxerPose(actor);
   const GP=gaitPose(actor.isMoving?actor.gait:0);
@@ -14922,13 +14944,21 @@ function mapLegHitDecal(actor,wx,wy,decal,origin=actor) {
       kx=sx+th*.92;ky=side*6;ax=kx+sh;ay=ky;
     }
     const vx=ax-kx,vy=ay-ky,len=Math.max(.001,Math.hypot(vx,vy));
-    // The selected height is the shin rather than the body-root intersection.
-    // Keep the stain on the exposed lower trouser surface, clear of the boot.
+    // Resolve which leg and its across-cloth offset from the actual shot
+    // before choosing height. A new height must never switch legs or sway
+    // the hole sideways. Callers without a height sample keep the old projection.
     const u=Math.max(.68,Math.min(.92,((x-kx)*vx+(y-ky)*vy)/(len*len)));
     const px=kx+vx*u,py=ky+vy*u,d2=(x-px)*(x-px)+(y-py)*(y-py);
     if(!best||d2<best.d2)best={index,u,v:Math.max(-.22,Math.min(.22,((x-px)*-vy+(y-py)*vx)/(len*width))),d2};
   }
   decal.isLeg=true;decal.legIndex=best.index;decal.legSegment=1;decal.legU=best.u;decal.legV=best.v;
+  if(Number.isFinite(heightSample)) {
+    // The selected leg plane covers thigh and shin, with a little clearance
+    // from the hip and boot. Both attachment segments already follow the rig.
+    const height=.08+.86*Math.max(0,Math.min(1,heightSample));
+    decal.legSegment=height<.5?0:1;
+    decal.legU=height<.5?height*2:(height-.5)*2;
+  }
   return decal;
 }
 function fallenLegDecalPoint(c,w) {
@@ -25713,7 +25743,11 @@ function updateBullets() {
                 if (!(t.isPlayer && dRes.blocked)) {
                   const decal={x:lX,y:lY,sz:random(4,7),col:dCol,isHead:impactZone==="HEAD",
                     isBulletHole:true,shotA:b.a-t.aimAngle};
-                  if(impactZone==="LEGS")mapLegHitDecal(t,b.x,b.y,decal,fallHit);
+                  const variedHeight=(t.isPlayer||ragHumanoid(t.eType,t.bodyW))&&
+                    !(b.isArrow||b.isOrangeBeam||b.isRedLaser||b.isPinkLaser||b.isAlienLaser);
+                  const heightSample=variedHeight?bulletDecalHeightSample(b,t):null;
+                  if(impactZone==="LEGS")mapLegHitDecal(t,b.x,b.y,decal,fallHit,heightSample);
+                  else if(variedHeight)mapHitDecalHeight(t,decal,impactZone,heightSample);
                   t.decals.push(decal);
                   fallHit.wound=t.decals[t.decals.length-1];
                   fallHit.fatal=t.hp<=0;
@@ -51651,6 +51685,7 @@ function startFrontierQuickDraw() {
 function frontierQuickDrawDeath(actor, bullet) {
   const d = _frontierSaloonSession.duel, wound = { x: 0, y: 0, sz: 5, col: [90, 0, 0, 220],
     isHead: bullet.tH === 'HEAD', isBulletHole: true, shotA: bullet.a - actor.aimAngle };
+  mapHitDecalHeight(actor,wound,bullet.tH,bulletDecalHeightSample(bullet,actor));
   // The mission uses the same fatal wound, directional fall and clothing
   // snapshot as a normal gun death. Its bodies and particles stay local, so
   // a duel defeat can offer a rematch without killing the outdoor campaign.

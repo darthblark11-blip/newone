@@ -5,6 +5,14 @@ shared painter deposits exactly three directional droplets using the animal
 ink (`111, 9, 16`), 3–8-unit diameters and a short forward spread. These marks
 use the existing floor blood bank, beneath bodies, and remain fixed on the
 ground when the victim moves. Body wound decals keep their own rendering path.
+
+Humanoid bullet holes retain their existing ellipse appearance while their
+anatomical height varies within the resolved target section. The projectile's
+actual lateral contact still determines the side-to-side location. Each mark
+keeps its chosen attachment through movement and the native corpse painters;
+the height is not rerolled during drawing. Animal decals and the separate
+floor splatter remain on their existing paths.
+
 Airborne projectile contact now adds a brief ink-rimmed comic burst with a
 strong yellow core and angular rays. The contact pop is about 45% larger than
 the first comic version. Non-head human hits throw denser, farther-reaching blood

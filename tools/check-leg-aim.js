@@ -31,7 +31,7 @@ function shot(kind,type='NORMAL',hp=1000,weapon='PISTOL',angle=0,range=80){
 for(const type of ['NORMAL','NM0_ROOKIE','NM0_ROOKIE_F','ARMORED_STANDARD']){
   const body=shot('BODY',type),leg=shot('LEGS',type),head=shot('HEAD',type);
   ok(type+' LEGS hits with unchanged body damage and knockback',leg.hp===body.hp&&leg.x===body.x&&leg.y===body.y&&leg.stun===body.stun);
-  ok(type+' LEGS records a normalized real leg surface',leg.wound.isLeg===true&&!leg.wound.isHead&&[0,1].includes(leg.wound.legIndex)&&leg.wound.legSegment===1&&leg.wound.legU>=0&&leg.wound.legU<=1&&Math.abs(leg.wound.legV)<=.22);
+  ok(type+' LEGS records a normalized real leg surface',leg.wound.isLeg===true&&!leg.wound.isHead&&[0,1].includes(leg.wound.legIndex)&&[0,1].includes(leg.wound.legSegment)&&leg.wound.legU>=0&&leg.wound.legU<=1&&Math.abs(leg.wound.legV)<=.22);
   ok(type+' HEAD/BODY decal destinations stay unchanged',!body.wound.isLeg&&!body.wound.isHead&&!head.wound.isLeg&&head.wound.isHead&&head.hp<body.hp);
 }
 for(const type of ['ARMORED','ROBOT','BUG','SNAIL','SNAIL_HYBRID','ALIEN_GATOR','SAUCER','COW','HORSE']){
