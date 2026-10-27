@@ -51,7 +51,7 @@ for(let cy=4;cy<=10;cy++)for(let cx=-4;cx<=3;cx++){
     assert(!P(`cityIsCheckpoint(1,${cx},${cy})`),'downtown public junction remains a military checkpoint');
     assert(!ch.solid.some(b=>checkpointTypes.has(b.propType)),'checkpoint masses remain at a public downtown junction');openJunctions++;
   }
-  if(!land&&touches&&oldCheckpoint){assert(ch.solid.every(b=>b.chunkKey.includes('downtown-edge:v1:')),'removed checkpoint left old edge destruction keys active');edgeChunks++;}
+  if(!land&&touches&&oldCheckpoint){const key=P(`cityLeisureBlockPlan(${cx},${cy})`)!==null?'leisure:v1:':'downtown-edge:v1:';assert(ch.solid.every(b=>b.chunkKey.includes(key)),'removed checkpoint left old edge destruction keys active');edgeChunks++;}
   else if(!land)assert(!ch.solid.some(b=>b.chunkKey.includes('downtown-edge:v1:')),'unchanged city chunk was unnecessarily renamed');
 }
 assert(edgeChunks>0,'native neighbourhood does not exercise the former checkpoint boundary');

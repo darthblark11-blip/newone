@@ -7,7 +7,20 @@ const P=s=>probe('('+s+')');
 probe('currentLevel=1;currentBiome=1;BIOME_ACTIVE=true;authoredCore=null;authoredMask=null;authoredChunks=null;biomeState={};');
 const found=new Map(),arches=new Set(),streetProps=new Set();let chunks=0,edgeFixture=null;
 const industrial={parking:0,district:0,depot:0,freight:0};let parkingFixture=null;
-const expectedNamespace=(cx,cy)=>P(`cityDowntownBlockPlan(${cx},${cy})`)!==null?'downtown:v1:':P(`cityDowntownJunction(${cx},${cy})&&bnoise(1,${cx}*4096+7717,${cy}*4096+3131,.31)>.62`)?'downtown-edge:v1:':'district:v3:';
+const expectedNamespace=(cx,cy)=>{
+  if(P(`cityDowntownBlockPlan(${cx},${cy})`)!==null)return 'downtown:v1:';
+  if(P(`cityLeisureBlockPlan(${cx},${cy})`)!==null)return 'leisure:v1:';
+  if(P(`bnoise(1,${cx}*4096+7717,${cy}*4096+3131,.31)>.62`)){
+    if(P(`cityDowntownJunction(${cx},${cy})`))return 'downtown-edge:v1:';
+    if(P(`cityLeisureJunction(${cx},${cy})`))return 'leisure-edge:v1:';
+  }
+  return 'district:v3:';
+};
+const sharedTennisPost=(a,b)=>{
+  if(a.propType!=='CITYTENNISFENCE'||b.propType!=='CITYTENNISFENCE'||(a.w>a.h)===(b.w>b.h))return false;
+  const h=a.w>a.h?a:b,v=a.w>a.h?b:a;
+  return Math.abs(Math.abs(h.x-v.x)-h.w/2)<1e-8&&Math.abs(Math.abs(h.y-v.y)-v.h/2)<1e-8;
+};
 const blockersOf=solids=>solids.filter(b=>!b.noClip&&!b.isGrassLot&&!b.isDeck&&!b.isWater);
 function checkBlock(solids,cx,cy,label) {
   const bs=solids.filter(b=>b.cityArchitecture!==undefined),blockers=blockersOf(solids);
@@ -19,7 +32,7 @@ function checkBlock(solids,cx,cy,label) {
       assert(a.x-a.w/2>=cx*1200+195&&a.x+a.w/2<=cx*1200+1005&&a.y-a.h/2>=cy*1200+195&&a.y+a.h/2<=cy*1200+1005,`${label}: parked bicycle reaches road or pavement`);
       assert(Math.abs(a.x-cx*1200-600)>=100&&Math.abs(a.y-cy*1200-600)>=100,`${label}: parked bicycle obstructs a central walking strip`);
     }
-    for(const b of blockers){if(a===b)continue;
+    for(const b of blockers){if(a===b||sharedTennisPost(a,b))continue;
       assert(!(Math.abs(a.x-b.x)<(a.w+b.w)/2&&Math.abs(a.y-b.y)<(a.h+b.h)/2),`${label}: street furniture overlaps another solid`);
     }
   }
@@ -111,14 +124,14 @@ for(let cy=5;cy<25;cy++)for(let cx=-25;cx<25;cx++){
   }
   checkBlock(ch.solid,cx,cy,`streamed ${cx},${cy}`);
 }
-assert.deepEqual([...found.keys()].sort((a,b)=>a-b),[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16],'all seventeen plans generate');
-assert.deepEqual([...arches].sort((a,b)=>a-b),[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15],'all sixteen roof families generate');
+assert.deepEqual([...found.keys()].sort((a,b)=>a-b),Array.from({length:23},(_,i)=>i),'all twenty-three plans generate');
+assert.deepEqual([...arches].sort((a,b)=>a-b),Array.from({length:22},(_,i)=>i),'all twenty-two roof families generate');
 assert(industrial.parking>0&&industrial.district>0&&industrial.depot>0&&industrial.freight>0,'native sample must exercise industrial parking, workshops, depots and freight terminals');
 // A previous district or numeric grid key must never erase a replacement prop
 // or building. Conversely, destroying a current building must stay persistent.
 assert(edgeFixture,'sample must exercise a renamed downtown-edge block');
 for(const {cx,cy,ch}of [...found.values(),parkingFixture,edgeFixture]){
-  const downtown=ch.solid.some(b=>b.chunkKey.includes('downtown:v1:')||b.chunkKey.includes('downtown-edge:v1:'));
+  const downtown=expectedNamespace(cx,cy)!=='district:v3:';
   const oldKeys=ch.solid.flatMap(b=>{const i=b.chunkKey.slice(b.chunkKey.lastIndexOf(':')+1);return[`${cx},${cy},district:${i}`,`${cx},${cy},district:v2:${i}`,`${cx},${cy},${i}`,
     ...(downtown?[`${cx},${cy},district:v3:${i}`,`${cx},${cy},civic:${i}`]:[])];});
   probe(`for(const key of ${JSON.stringify(oldKeys)})getBiomeState(1).destroyed[key]=true;`);
@@ -177,7 +190,7 @@ for(let cy=-8;cy<=8&&mirrorSites.size<4;cy++)for(let cx=-8;cx<=8&&mirrorSites.si
 }
 assert.equal(mirrorSites.size,4);
 let groundBakes=0;
-for(let plan=0;plan<17;plan++){
+for(let plan=0;plan<23;plan++){
   let reference=null;
   for(const [orientation,{cx,cy}]of mirrorSites){
     const ox=cx*1200,oy=cy*1200,g=mkG(),rects=[];
@@ -253,5 +266,5 @@ for(const {cx,cy,ch}of found.values()){
     probe(`worldTimeMs=${hour}/24*DAY_MS;isRaining=${rain};camX=${cx*1200+600}+${side}*700;camY=${cy*1200+600}+${side}*700;updateSunVector();drawBuildings();drawBiomeProps();`);renders++;
   }
 }
-assert.equal(painted.size,16,'native renderer did not paint every roof family');
-console.log(`City districts passed: ${chunks} deterministic chunks, seventeen streamed plans / sixteen architectures, ${authoredPlans.size} authored identities, story landmarks, 24-unit routes, versioned destruction, ${groundBakes} mirrored ground bakes, ${industrial.parking} industrial lots / ${industrial.depot} depots / ${industrial.freight} freight terminals and ${renders} lighting/view renders.`);
+assert.equal(painted.size,22,'native renderer did not paint every roof family');
+console.log(`City districts passed: ${chunks} deterministic chunks, twenty-three streamed plans / twenty-two architectures, ${authoredPlans.size} authored identities, story landmarks, 24-unit routes, versioned destruction, ${groundBakes} mirrored ground bakes, ${industrial.parking} industrial lots / ${industrial.depot} depots / ${industrial.freight} freight terminals and ${renders} lighting/view renders.`);

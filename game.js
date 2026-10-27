@@ -33036,7 +33036,7 @@ const CITY_BRIDGE_HALF = 132;
 // across a junction is what a checkpoint IS. Nothing has to move out of the way
 // for it.
 function cityIsCheckpoint(biome, cx, cy) {
-  if(biome===1&&cityDowntownJunction(cx,cy))return false;
+  if(biome===1&&(cityDowntownJunction(cx,cy)||cityLeisureJunction(cx,cy)))return false;
   return bnoise(biome, cx * 4096 + 7717, cy * 4096 + 3131, 0.31) > 0.62;
 }
 function cityDowntownJunction(cx,cy) {
@@ -33102,11 +33102,37 @@ function cityDowntownGroundHeight(x,y) {
   return ridge+cityDowntownParkHeight(x,y);
 }
 
-// Seventeen street-address plans. Rectangular wings keep collision, occlusion and
+// Dining/nightlife flank the first downtown avenue; sports follow its park edges.
+// Keep the eastern branch west of the relay fortress's protected approach.
+function cityLeisureBlockPlan(cx,cy) {
+  if(cy===5){
+    if(!((cx>=3&&cx<=5)||(cx>=-6&&cx<=-4)))return null;
+  }else if(cy<7||cy>9||(cx!==3&&cx!==-4))return null;
+  if(cityHasCanal(1,cy))return null;
+  if(cy===5){
+    if(cx>=3&&cx<=5)return 17+cx-3;
+    if(cx>=-6&&cx<=-4)return 17+cx+6;
+  }
+  return cy>=7&&cy<=9&&(cx===3||cx===-4)?20+cy-7:null;
+}
+function cityLeisureJunction(cx,cy) {
+  for(let dy=-1;dy<=0;dy++)for(let dx=-1;dx<=0;dx++)
+    if(cityLeisureBlockPlan(cx+dx,cy+dy)!==null)return true;
+  return false;
+}
+function cityTennisCourtBounds(cx,cy) {
+  if(cityLeisureBlockPlan(cx,cy)!==20)return null;
+  const mirror=chunkHash(1,cx,cy,8175)&2?-1:1;
+  return {x:cx*CHUNK_W+600,y:cy*CHUNK_W+600+110*mirror,w:580,h:600};
+}
+
+// Twenty-three street-address plans. Rectangular wings keep collision, occlusion and
 // projectile cover identical to the projected architecture; courtyards are air.
 function cityBlockPlan(cx, cy, zone) {
   const downtown=cityDowntownBlockPlan(cx,cy);
   if(downtown!==null)return downtown;
+  const leisure=cityLeisureBlockPlan(cx,cy);
+  if(leisure!==null)return leisure;
   const n = chunkHash(1, cx, cy, 8173) >>> 0;
   const expansion = chunkHash(1, cx, cy, 8231) >>> 0;
   if (cityOuterExpansionAllowed(cx,cy) && expansion % 5 < 2)
@@ -33135,6 +33161,8 @@ function cityDistrictGroundPlan(cx, cy, zone) {
   if (cityHasCanal(1, cy)) return null;
   const downtown=cityDowntownBlockPlan(cx,cy);
   if(downtown!==null)return downtown;
+  const leisure=cityLeisureBlockPlan(cx,cy);
+  if(leisure!==null)return leisure;
   if (zone === 'INDUSTRIAL') return cityIndustrialParking(cx,cy) ? null : cityBlockPlan(cx,cy,zone);
   if (zone !== 'RESIDENTIAL' && zone !== 'COMMERCIAL') return null;
   return cityBlockPlan(cx, cy, zone);
@@ -33147,6 +33175,7 @@ function cityRecreationCourtBounds(cx,cy) {
 }
 function buildCityDistrict(solid, ox, oy, zone, nearAnchor, planOverride = null) {
   const plan = planOverride === null ? cityBlockPlan(ox / CHUNK_W, oy / CHUNK_W, zone) : planOverride;
+  if(plan>=17){buildCityLeisureDistrict(solid,ox,oy,plan,nearAnchor);return;}
   const rng = makeRng(chunkHash(1, ox / CHUNK_W, oy / CHUNK_W, 8174));
   const orientation=chunkHash(1,ox/CHUNK_W,oy/CHUNK_W,8175)>>>0;
   const add = (x,y,w,h,arch) => {
@@ -33266,6 +33295,67 @@ function buildCityDowntownPark(solid,decor,ox,oy,nearAnchor) {
     propType:'CITYPARKTERRACE',cityPlan:16,cityDowntown:true});
 }
 
+// An address is a venue, not a generic roof with a different label. The public
+// door faces a generous court; all secondary masses and furniture leave its
+// central approach open. Entrance data is ready for an interior scene later.
+function buildCityLeisureDistrict(solid,ox,oy,plan,nearAnchor) {
+  const cx=ox/CHUNK_W,cy=oy/CHUNK_W,orientation=chunkHash(1,cx,cy,8175)>>>0;
+  const mx=orientation&1?-1:1,my=orientation&2?-1:1;
+  const rng=makeRng(chunkHash(1,cx,cy,8251)),kind=['RESTAURANT','BAR','LOUNGE','TENNIS','GYM','BOXING'][plan-17];
+  const names=[['EMBER KITCHEN','CORNER DINER'],['THE COPPER TAP','NIGHT SHIFT'],
+    ['VELVET ROOM', 'THE ONYX CLUB'],['RIVERSIDE TENNIS','EASTSIDE TENNIS'],
+    ['PULSE FITNESS','IRONWORKS GYM'],['SOUTHPAW BOXING','EIGHT COUNT BOXING']];
+  const name=names[plan-17][cx<0?0:1],arch=plan-1,rise=[30,32,40,24,34,38][plan-17];
+  const point=(dx,dy)=>({x:ox+600+dx*mx,y:oy+600+dy*my});
+  const add=(dx,dy,w,h,secondary=false)=>{
+    const pos=point(dx,dy);
+    if(nearAnchor(pos.x,pos.y,Math.max(w,h)/2+150))return null;
+    const b={...pos,w,h,isBlockBuilding:true,cityArchitecture:arch,cityPlan:plan,
+      cityVenue:kind,cityVenueName:name,cityVenueSecondary:secondary,cityFrontSign:my,
+      style:[2,0,2,1,3,0][plan-17],cityStoreys:2,cityAccent:rngInt(rng,0,4),_rise:rise,details:[]};
+    if(!secondary){
+      b.cityEntrance={x:b.x,y:b.y+my*(h/2+28),face:my};
+      if(plan===22){b.cityInterior='BOXING_GYM';b.cityInteriorPending=true;}
+    }
+    solid.push(b);return b;
+  };
+  const primary=plan===20?add(0,-340,480,160):
+    plan===21?add(0,-250,680,280):plan===22?add(0,-250,600,280):add(0,-260,620,240);
+  if(!primary)return;
+  if(plan!==20){
+    add(-300,230,140,280,true);add(300,250,140,240,true);
+  }
+  const furnish=(dx,dy,w,h,propType,extra={})=>{
+    const pos=point(dx,dy);
+    // Fence runs share their corner posts; only that deliberate joint may touch.
+    const obstacles=propType==='CITYTENNISFENCE'?solid.filter(b=>b.propType!=='CITYTENNISFENCE'):solid;
+    if(nearAnchor(pos.x,pos.y,Math.max(w,h)/2+100)||!solidsClearAt(obstacles,pos.x,pos.y,w,h,18))return;
+    solid.push({...pos,w,h,isBiomeProp:true,propType,cityPlan:plan,cityVenue:kind,tint:rng(),...extra});
+  };
+  if(plan===20){
+    // The side gates stay open at y650..770. Forty units beyond each net end
+    // also leave a genuine walking route between its two playing halves.
+    furnish(0,110,460,8,'CITYTENNISNET');
+    for(const dy of[-190,410])furnish(0,dy,580,8,'CITYTENNISFENCE',{cityFenceAxis:'X'});
+    for(const dx of[-290,290])for(const dy of[-70,290])
+      furnish(dx,dy,8,240,'CITYTENNISFENCE',{cityFenceAxis:'Y'});
+    furnish(-385,110,26,18,'CITYVENUESIGN',{cityVenueLabel:'TENNIS',cityVenueName:name});
+    furnish(385,110,26,18,'CITYVENUESIGN',{cityVenueLabel:'TENNIS',cityVenueName:name});
+    return;
+  }
+  // Dining furniture occupies two recessed wings, clear of the central walk.
+  if(plan===17||plan===18){
+    for(const dx of[-180,180])for(const dy of[-35,165,330])
+      furnish(dx,dy,60,60,'CITYCAFETABLE');
+  }else{
+    for(const dx of[-140,140])furnish(dx,170,84,26,'BENCH');
+    for(const dx of[-180,180])furnish(dx,330,62,62,'TERRACEPLANTER');
+  }
+  for(const dx of[-240,240])furnish(dx,-60,62,62,'TERRACEPLANTER');
+  furnish(-105,-20,26,18,'CITYVENUESIGN',{
+    cityVenueLabel:['MENU','BAR','LOUNGE','TENNIS','FITNESS','BOXING'][plan-17],cityVenueName:name});
+}
+
 // The district's open space follows the same address and mirrors as its
 // buildings. Paving and small street wear are stamped once in the chunk bake.
 function bakeCityDistrictGround(g, ox, oy, plan) {
@@ -33335,6 +33425,30 @@ function bakeCityDistrictGround(g, ox, oy, plan) {
     g.stroke(75,92,94,105);g.strokeWeight(2);
     for(let x=200;x<1040;x+=56)joint(x,565,x,635);
     g.noStroke();
+  }else if(plan>=17){
+    if(plan===20){
+      pad(330,430,540,560,[62,115,111]);pad(390,470,420,480,[57,99,155]);
+      // Only paint is flat. Net, posts and perimeter fencing are live masses.
+      g.stroke(228,233,210);g.strokeWeight(3);g.noFill();
+      g.rect(wx(600)-210,wy(710)-240,420,480);
+      for(const x of[440,760])joint(x,470,x,950);
+      for(const y of[580,840])joint(440,y,760,y);
+      joint(600,580,600,840);
+      joint(590,470,610,470);joint(590,950,610,950);
+      g.noStroke();
+      pad(180,665,150,90,[171,171,145]);pad(870,665,150,90,[171,171,145]);
+      pad(555,340,90,90,[171,171,145]);
+    }else{
+      const stone=plan===19?[124,105,126]:plan===22?[143,138,125]:[167,157,133];
+      pad(390,490,420,545,stone);pad(165,560,870,80,stone);
+      pad(555,plan===21||plan===22?490:460,90,plan===21||plan===22?545:575,stone);
+      // Recessed terraces visibly own their furniture; plant strips soften
+      // the sports fronts without putting a new obstacle on the public walk.
+      for(const x of[375,735])pad(x,515,90,455,plan===17?[180,151,117]:[142,137,123]);
+      g.stroke(75,73,65,85);g.strokeWeight(2);
+      for(let y=510;y<1035;y+=45)joint(560,y,640,y);
+      g.noStroke();
+    }
   }else if(plan===16){
     g.fill(57,101,68);g.rect(ox+190,oy+250,820,700,14);
     g.fill(80,126,78);g.rect(ox+290,oy+330,620,540,10);
@@ -33409,6 +33523,9 @@ function drawCityFacades(b,lx,ly) {
       ax+(bx-ax)*v+lx*t,ay+(by-ay)*v+ly*t,
       ax+(bx-ax)*v+lx*q,ay+(by-ay)*v+ly*q,
       ax+(bx-ax)*u+lx*q,ay+(by-ay)*u+ly*q);
+    if(b.cityArchitecture>=16&&b.cityArchitecture<=21){
+      drawCityVenueFacade(b,lx,ly,ax,ay,bx,by,len,panel);return;
+    }
     // These are still the base-to-roof faces: glazing and loading doors may
     // change the frontage, never the collision rectangle or the wall lean.
     if(b.cityArchitecture===8){
@@ -33507,6 +33624,84 @@ function drawCityFacades(b,lx,ly) {
   if(Math.abs(lx)>2)face(lx>0?x0:x1,y0,lx>0?x0:x1,y1,b.h);
   if(Math.abs(ly)>2)face(x0,ly>0?y0:y1,x1,ly>0?y0:y1,b.w);
 }
+// Venue details live on the same wall quadrilateral as the building. A door
+// belongs only to the courtyard-facing wall; the rear stays a service facade.
+const CITY_VENUE_MATERIALS = {
+  16:{wall:[158,83,60],trim:[231,209,158],roof:[159,83,57],accent:[153,54,39],glass:[45,76,79],ink:[255,231,174],label:'RESTAURANT'},
+  17:{wall:[46,79,68],trim:[177,137,82],roof:[65,82,72],accent:[32,64,57],glass:[38,63,65],ink:[255,209,128],label:'BAR & TAPROOM'},
+  18:{wall:[65,57,68],trim:[181,146,92],roof:[54,53,64],accent:[73,36,65],glass:[37,41,54],ink:[244,210,152],label:"GENTLEMEN'S CLUB"},
+  19:{wall:[210,211,178],trim:[239,229,183],roof:[53,111,89],accent:[33,91,70],glass:[45,99,106],ink:[244,238,196],label:'TENNIS CLUB'},
+  20:{wall:[150,169,166],trim:[218,229,202],roof:[90,117,119],accent:[26,115,124],glass:[38,101,122],ink:[237,242,197],label:'FITNESS GYM'},
+  21:{wall:[143,76,59],trim:[224,205,163],roof:[109,118,116],accent:[160,45,36],glass:[43,82,93],ink:[255,230,174],label:'BOXING GYM'}
+};
+function drawCityVenueFacade(b,lx,ly,ax,ay,bx,by,len,panel) {
+  const a=b.cityArchitecture,m=CITY_VENUE_MATERIALS[a],front=b.cityFrontSign===-1?-1:1;
+  const yFace=ay===by,isFront=yFace&&ay===b.y+front*b.h/2;
+  const nx=ax===bx?(ax<b.x?-1:1):0,ny=yFace?(ay<b.y?-1:1):0;
+  const sunlight=.57+.30*Math.max(0,-nx*LIGHT_DX-ny*LIGHT_DY);
+  const material=(c,k=1)=>fill(c[0]*sunlight*k,c[1]*sunlight*k,c[2]*sunlight*k);
+  const bays=Math.max(2,Math.min(12,Math.floor(len/(a===20?68:55))));
+  material(m.wall);panel(.008,.992,.015,.985);
+  if(a===16||a===17||a===21){
+    // Mortar and staggered headers follow the upright wall, never the ground.
+    for(let row=0;row<6;row++){
+      const t=.10+row*.14;material(m.trim,.61);panel(.015,.985,t,t+.018);
+      for(let i=0;i<bays;i++){
+        const u=(i+(row%2?.5:0))/bays;
+        if(u>.02&&u<.98)panel(u,u+.008,t+.018,t+.13);
+      }
+    }
+  }
+  const windowLow=a===21?.43:.14,windowHigh=a===18?.62:a===21?.79:.68;
+  for(let i=0;i<bays;i++){
+    const u=(i+.17)/bays,v=(i+.83)/bays;
+    if(isFront&&u<.59&&v>.41)continue;
+    material(m.trim,.92);panel(u-.014,v+.014,windowLow-.035,windowHigh+.035);
+    const lit=daylight()<.65&&(i+b.cityAccent)%3!==1;
+    if(lit)fill(a===18?183:223,a===18?118:178,a===18?124:103,238);
+    else fill(...m.glass);
+    panel(u,v,windowLow,windowHigh);
+    fill(163,200,189,lit?55:112);panel(u+.01,u+(v-u)*.25,windowLow+.04,windowHigh-.04);
+    material(m.trim,.78);panel((u+v)/2-.005,(u+v)/2+.005,windowLow,windowHigh);
+    if(a===19){material(m.accent);panel(u-.13/bays,u-.035/bays,windowLow-.015,windowHigh+.015);panel(v+.035/bays,v+.13/bays,windowLow-.015,windowHigh+.015);}
+    if(a===18){material(m.trim);panel(u-.11/bays,u-.025/bays,.08,.91);panel(v+.025/bays,v+.11/bays,.08,.91);}
+  }
+  material(m.trim);panel(.015,.985,.86,.965);panel(.015,.985,.035,.08);
+  if(a===20){material(m.accent);panel(.02,.98,.74,.86);}
+  if(a===19)for(let i=1;i<7;i++){material(m.trim,.78);panel(.02,.98,i*.115,i*.115+.012);}
+  if(!isFront)return;
+  const door=Math.min(.15,Math.max(.10,65/len));
+  material(m.trim);panel(.5-door*.64,.5+door*.64,.025,.73);
+  fill(22,35,40);panel(.5-door*.49,.5+door*.49,.045,.66);
+  fill(83,126,127);panel(.5-door*.42,.5+door*.42,.16,.61);
+  material(m.trim);panel(.495,.505,.045,.66);
+  fill(239,204,126);panel(.5-door*.13,.5-door*.075,.27,.37);panel(.5+door*.075,.5+door*.13,.27,.37);
+  // A cantilevered canopy has a sloped upper plane, thick fascia and both
+  // end returns. Its root meets the doorway; it introduces no false collider.
+  const point=(u,t,d)=>[ax+(bx-ax)*u+lx*t+nx*d,ay+(by-ay)*u+ly*t+ny*d];
+  const u=a===21?.33:a===18?.27:.11,v=1-u,depth=a===21?27:a===18?23:18;
+  const p0=point(u,.73,0),p1=point(v,.73,0),p2=point(v,.59,depth),p3=point(u,.59,depth);
+  const q2=point(v,.50,depth),q3=point(u,.50,depth);
+  fill(...m.accent);quad(...p0,...p1,...p2,...p3);
+  if(a===16||a===19){
+    const n=Math.max(4,Math.floor(len*(v-u)/35));fill(...m.trim);
+    for(let i=0;i<n;i+=2){const l=u+(v-u)*i/n,r=u+(v-u)*(i+1)/n;quad(...point(l,.73,0),...point(r,.73,0),...point(r,.59,depth),...point(l,.59,depth));}
+  }
+  material(m.accent,.72);quad(...p3,...p2,...q2,...q3);
+  material(m.trim,.82);quad(...p0,...p3,...q3,...point(u,.64,0));quad(...p1,...p2,...q2,...point(v,.64,0));
+  // The boxing entrance reads as a raised framed portal, ready for a future
+  // interior trigger without advertising a working door interaction today.
+  if(a===21){
+    for(const side of[-1,1]){
+      const c=.5+side*door*.76,du=.013;
+      const p=point(c-du,.04,0),q=point(c+du,.04,0),r=point(c+du,.73,0),s=point(c-du,.73,0);
+      const p1=point(c-du,.04,5),q1=point(c+du,.04,5),r1=point(c+du,.73,5),s1=point(c-du,.73,5);
+      fill(...m.accent);quad(...p1,...q1,...r1,...s1);
+      fill(...m.trim);quad(...q,...q1,...r1,...r);quad(...p,...p1,...s1,...s);
+      fill(170,67,47);quad(...r,...r1,...s1,...s);quad(...p,...q,...q1,...p1);
+    }
+  }
+}
 // Secondary roof masses use the same projection as the parent, with their own
 // short rise. Coordinates are local to the already lifted roof; never shift the
 // building footprint or register rooftop furniture as ground-level collision.
@@ -33551,6 +33746,92 @@ function cityBusinessRoofTier(b,x,y,w,h,z,c) {
   if(Math.abs(lx)>.5)glass(lx>0?x:x+w,y,lx>0?x:x+w,y+h,h);
   if(Math.abs(ly)>.5)glass(x,ly>0?y:y+h,x+w,ly>0?y:y+h,w);
   return lean;
+}
+function cityVenueRoofPlant(b,x,y,w,h,z,c) {
+  const lean=cityRoofBox(b,x,y,w,h,z,c);
+  fill(38,55,59);rect(x+lean[0]+4,y+lean[1]+4,w-8,h-8,1);
+  stroke(156,166,148);strokeWeight(2);
+  for(let k=7;k<w-3;k+=8)line(x+lean[0]+k,y+lean[1]+5,x+lean[0]+k,y+lean[1]+h-5);
+  noStroke();return lean;
+}
+function cityVenueRoofMarquee(b,x,y,w,h,m) {
+  const label=b.cityVenueName||m.label,lean=cityRoofBox(b,x,y,w,h,7,m.accent);
+  const sx=x+lean[0],sy=y+lean[1];
+  fill(...m.trim);rect(sx+3,sy+3,w-6,3);rect(sx+3,sy+h-6,w-6,3);
+  push();textFont('sans-serif');textStyle(BOLD);textAlign(CENTER,CENTER);noStroke();
+  fill(...m.ink);textSize(Math.min(22,(w-22)/Math.max(8,label.length)*1.58));text(label,sx+w/2,sy+h*.36);
+  textSize(Math.min(12,(w-22)/Math.max(8,m.label.length)*1.5));text(m.label,sx+w/2,sy+h*.75);pop();
+}
+// These roof volumes sit on the parent's already lifted deck. Every kitchen
+// stack, lantern, rooflight and marquee carries its own connected side faces.
+function drawCityVenueRoof(b,x,y,w,h,tone) {
+  const a=b.cityArchitecture,m=CITY_VENUE_MATERIALS[a],front=b.cityFrontSign===-1?-1:1;
+  fill(m.roof[0]+tone,m.roof[1]+tone,m.roof[2]+tone);rect(x+3,y+3,w-6,h-6,2);
+  const cornice=cityRoofBox(b,x+7,y+7,w-14,h-14,3,m.trim);
+  const rx=x+7+cornice[0],ry=y+7+cornice[1],rw=w-14,rh=h-14;
+  fill(...m.roof);rect(rx+5,ry+5,rw-10,rh-10,1);
+  const primary=!b.cityVenueSecondary;
+  // Keep a reserved front roof strip for the raised business marquee; the
+  // back portion holds the roof's architectural silhouette and service plant.
+  const signH=Math.min(48,rh*.27),signY=front>0?ry+rh-signH-9:ry+9;
+  const backY=front>0?ry+12:ry+signH+24,backH=Math.max(24,rh-signH-36);
+  if(a===16){ // Warm tiled dining room roof with a separate kitchen flue.
+    const pw=rw*.69,ph=backH*.92,px=rx+11;
+    const ridge=cityRoofPitchedMass(b,px,backY,pw,ph,11,m.roof);
+    stroke(101,54,40);strokeWeight(2);
+    for(let i=1;i<Math.max(3,Math.floor(pw/29));i++){
+      const t=i/Math.max(3,Math.floor(pw/29)),xx=px+pw*t,xx1=ridge.ax+(ridge.bx-ridge.ax)*t,yy1=ridge.ay+(ridge.by-ridge.ay)*t;
+      line(xx,backY,xx1,yy1);line(xx1,yy1,xx,backY+ph);
+    }
+    noStroke();
+    cityVenueRoofPlant(b,rx+rw*.78,backY+backH*.10,rw*.14,Math.max(19,backH*.35),8,[135,143,132]);
+    const stack=cityRoofBox(b,rx+rw*.82,backY+backH*.58,Math.max(14,rw*.07),Math.max(15,backH*.23),16,[154,130,98]);
+    fill(42,47,45);rect(rx+rw*.82+stack[0]+3,backY+backH*.58+stack[1]+3,Math.max(8,rw*.07-6),Math.max(9,backH*.23-6));
+  }else if(a===17){ // Copper lantern over a dark timber public house.
+    const px=rx+rw*.18,py=backY+backH*.13,pw=rw*.64,ph=backH*.68;
+    const lantern=cityBusinessRoofTier(b,px,py,pw,ph,8,[143,112,74]);
+    cityRoofPitchedMass(b,px+4+lantern[0],py+4+lantern[1],pw-8,ph-8,8,[79,121,101]);
+    cityVenueRoofPlant(b,rx+rw*.84,backY+8,Math.max(17,rw*.10),Math.max(19,backH*.27),7,[91,101,89]);
+  }else if(a===18){ // A restrained bronze-and-plum art-deco club exterior.
+    const px=rx+rw*.14,py=backY+backH*.10,pw=rw*.72,ph=backH*.77;
+    const lower=cityRoofBox(b,px,py,pw,ph,7,[113,93,74]);
+    const crown=cityRoofBox(b,px+pw*.18+lower[0],py+ph*.18+lower[1],pw*.64,ph*.64,7,[67,56,72]);
+    const cx=px+pw*.18+lower[0]+crown[0],cy=py+ph*.18+lower[1]+crown[1];
+    fill(...m.trim);for(let k=1;k<5;k++)rect(cx+pw*.64*k/5-2,cy+3,4,ph*.64-6);
+    cityVenueRoofPlant(b,rx+rw*.85,backY+backH*.18,rw*.10,Math.max(18,backH*.40),6,[85,78,81]);
+  }else if(a===19){ // Green clubhouse gables and white timber eaves.
+    const pw=rw-24,ph=backH*.95,px=rx+12;
+    const roof=cityRoofPitchedMass(b,px,backY,pw,ph,12,m.roof);
+    stroke(...m.trim);strokeWeight(3);
+    for(let i=1;i<5;i++){
+      const t=i/5,xx=px+pw*t,xx1=roof.ax+(roof.bx-roof.ax)*t,yy1=roof.ay+(roof.by-roof.ay)*t;
+      line(xx,backY,xx1,yy1);line(xx1,yy1,xx,backY+ph);
+    }
+    noStroke();
+    cityRoofBox(b,rx+11,backY+ph-2,rw-22,7,3,[208,208,169]);
+  }else if(a===20){ // A broad glazed fitness hall with three raised rooflights.
+    for(let i=0;i<3;i++){
+      const px=rx+rw*(.06+i*.275),py=backY+backH*.10,pw=rw*.22,ph=backH*.72;
+      const curb=cityRoofBox(b,px,py,pw,ph,4,m.accent);
+      const ridge=cityRoofPitchedMass(b,px+4+curb[0],py+4+curb[1],pw-8,ph-8,8,[91,165,169]);
+      stroke(196,226,199);strokeWeight(2);line(ridge.ax,ridge.ay,ridge.bx,ridge.by);noStroke();
+    }
+    cityVenueRoofPlant(b,rx+rw*.89,backY+backH*.13,Math.max(15,rw*.08),Math.max(21,backH*.58),8,[161,178,164]);
+  }else{ // Boxing warehouse: real clerestory ridges and industrial roof plant.
+    const n=2,step=backH/n;
+    for(let row=0;row<n;row++){
+      const px=rx+15,py=backY+row*step,pw=rw*.76,ph=step-7;
+      const ridge=cityRoofPitchedMass(b,px,py,pw,ph,10,[141,149,133]);
+      stroke(83,104,107);strokeWeight(3);
+      for(let i=1;i<7;i++){
+        const t=i/7,xx=px+pw*t,xx1=ridge.ax+(ridge.bx-ridge.ax)*t,yy1=ridge.ay+(ridge.by-ridge.ay)*t;
+        line(xx,py,xx1,yy1);line(xx1,yy1,xx,py+ph);
+      }
+      noStroke();
+    }
+    cityVenueRoofPlant(b,rx+rw*.84,backY+backH*.15,rw*.11,Math.max(22,backH*.53),10,[120,129,116]);
+  }
+  if(primary)cityVenueRoofMarquee(b,rx+rw*.08,signY,rw*.84,signH,m);
 }
 function drawCityArchitecture(b) {
   push();translate(b.x,b.y);noStroke();
@@ -33732,6 +34013,8 @@ function drawCityArchitecture(b) {
     noStroke();
     const core=cityRoofBox(b,gx+gw*.75,gy+gh*.13,Math.min(52,gw*.17),Math.max(16,gh*.20),6,[134,139,121]);
     fill(55,78,82);for(let i=0;i<3;i++)rect(gx+gw*.75+core[0]+4,gy+gh*.13+core[1]+4+i*5,Math.min(52,gw*.17)-8,2);
+  }else if(a>=16&&a<=21){
+    drawCityVenueRoof(b,x,y,w,h,tone);
   }else { // Residential roof terraces: planted beds, pergola and service stair.
     fill(a===5?106:168,a===5?131:142,a===5?107:106);rect(x+4,y+4,w-8,h-8,2);
     fill(192,169,116);rect(x+12,y+12,w*.38,h-24,2);
@@ -33755,6 +34038,7 @@ function cityZoneAt(biome, ox, oy) {
   if(biome===1){
     const downtown=cityDowntownBlockPlan(ox/CHUNK_W,oy/CHUNK_W);
     if(downtown!==null)return downtown===16?'PARK':'COMMERCIAL';
+    if(cityLeisureBlockPlan(ox/CHUNK_W,oy/CHUNK_W)!==null)return 'COMMERCIAL';
   }
   const n = bnoise(biome, ox, oy, 0.00035);
   if (n < 0.20) return "PARK";
@@ -35753,7 +36037,7 @@ function groundReserved(biome, cx, cy, x, y, w, h, pad) {
     case "CITY_DENSE": {
       // A recreation court is usable open ground. Late wreck/cover scatter
       // must not place an obstacle over its painted playing surface.
-      const court=biome===1?cityRecreationCourtBounds(cx,cy):null;
+      const court=biome===1?(cityTennisCourtBounds(cx,cy)||cityRecreationCourtBounds(cx,cy)):null;
       if(court&&Math.abs(x-court.x)<hw+court.w/2&&Math.abs(y-court.y)<hh+court.h/2)return true;
       // The water only. The quay either side is ground -- it is where the
       // bollards, the crane and anybody walking the towpath belong -- so
@@ -37707,7 +37991,10 @@ function generateChunkContent(biome, cx, cy) {
   const downtownBlock=biome===1&&cityDowntownBlockPlan(cx,cy)!==null;
   const downtownEdge=biome===1&&!downtownBlock&&cityDowntownJunction(cx,cy)&&
     bnoise(1,cx*4096+7717,cy*4096+3131,.31)>.62;
-  for (let i = 0; i < solid.length; i++) solid[i].chunkKey = cx + "," + cy + "," + (downtownBlock ? "downtown:v1:" : downtownEdge ? "downtown-edge:v1:" : districtBlock ? "district:v3:" : solid[i].isCivic ? "civic:" : "") + i;
+  const leisureBlock=biome===1&&cityLeisureBlockPlan(cx,cy)!==null;
+  const leisureEdge=biome===1&&!downtownBlock&&!leisureBlock&&!cityDowntownJunction(cx,cy)&&
+    cityLeisureJunction(cx,cy)&&bnoise(1,cx*4096+7717,cy*4096+3131,.31)>.62;
+  for (let i = 0; i < solid.length; i++) solid[i].chunkKey = cx + "," + cy + "," + (downtownBlock ? "downtown:v1:" : leisureBlock ? "leisure:v1:" : downtownEdge ? "downtown-edge:v1:" : leisureEdge ? "leisure-edge:v1:" : districtBlock ? "district:v3:" : solid[i].isCivic ? "civic:" : "") + i;
 
   appendWoodlandForest(biome, cx, cy, solid, decor, decorBake, nearAnchor);
   removeDestroyedTreeDecor(biome, solid, decor);
@@ -37731,7 +38018,8 @@ function generateChunkContent(biome, cx, cy) {
   // themselves, anything you walk across, and the quayside furniture. A barge
   // floats in the canal; that is not a structure built on the water.
   const onReserved = (s) =>
-    !(RESERVED_OK[s.propType] || s.isDeck || s.isMarshPool || s.isPond) &&
+    !(RESERVED_OK[s.propType] || s.isDeck || s.isMarshPool || s.isPond ||
+      (s.cityPlan===20&&(s.propType==='CITYTENNISNET'||s.propType==='CITYTENNISFENCE'))) &&
     groundReserved(biome, cx, cy, s.x, s.y, s.w || 0, s.h || 0, 0);
   // The fortress yard takes precedence over the exemptions too. RESERVED_OK
   // names the things that ARE a waterway rather than something built on one --
@@ -46407,6 +46695,7 @@ const PROP_RISE = {
   KIOSK:      [20,  86,  80,  70],  BUSSTOP:    [20,  96, 112, 126],
   CITYBIKERACK: [26], CITYSTALL: [24, 94, 71, 49], CITYWAYFINDER: [24, 51, 67, 71],
   CITYCARGO: [27], CITYCOURTHOOP: [36],
+  CITYCAFETABLE: [26], CITYVENUESIGN: [35], CITYTENNISNET: [31], CITYTENNISFENCE: [39],
   HEDGE:      [16],                 FOUNTAIN:   [12],
   PLANTER:    [10, 138, 136, 128],  BENCH:      [ 8, 110,  84,  52],
   POSTBOX:    [14,  28,  60,  96],  HYDRANT:    [10, 140,  34,  28],
@@ -46458,6 +46747,131 @@ const PROP_BASE = {
   BENCH:     { ang: 1 },
   WATCHTOWER:{ legs: 14 }
 };
+
+// Venue furniture is open structure: each point has a ground location and a
+// height. A single roof-plane translate would lift chair feet, sign legs and
+// tennis posts off the floor, so these cases cancel that lift and project xyz.
+function drawCityVenueProp(b, plx, ply) {
+  push();translate(b.x-plx,b.y-ply);
+  const lean=massLean(b.x,b.y,PROP_RISE[b.propType][0],[0,0]);
+  clampLean(lean,PROP_RISE[b.propType][0]*.72);
+  const point=(x,y,z)=>{
+    const q=massLean(b.x+x,b.y+y,z,[0,0]);clampLean(q,z*.72);
+    return [x+q[0],y+q[1]];
+  };
+  const segment=(a,c)=>line(...point(...a),...point(...c));
+  const face=vertices=>{beginShape();for(const v of vertices)vertex(...point(...v));endShape(CLOSE);};
+  const box=(x,y,z,w,d,h,col)=>{
+    const x0=x-w/2,x1=x+w/2,y0=y-d/2,y1=y+d/2;
+    const sideX=lean[0]>=0?x0:x1,sideY=lean[1]>=0?y0:y1;
+    noStroke();fill(col[0]*.59,col[1]*.65,col[2]*.69);
+    face([[sideX,y0,z],[sideX,y1,z],[sideX,y1,z+h],[sideX,y0,z+h]]);
+    fill(col[0]*.77,col[1]*.81,col[2]*.81);
+    face([[x0,sideY,z],[x1,sideY,z],[x1,sideY,z+h],[x0,sideY,z+h]]);
+    fill(...col);face([[x0,y0,z+h],[x1,y0,z+h],[x1,y1,z+h],[x0,y1,z+h]]);
+  };
+  const shadowScale=shadowLengthScale(),density=shadowDensity();
+  const shadow=(x,y,z)=>[x+LIGHT_DX*Math.min(42,z*shadowScale),y+LIGHT_DY*Math.min(42,z*shadowScale)];
+  const shadowLine=(a,c)=>line(...shadow(...a),...shadow(...c));
+  if(b.propType==='CITYCAFETABLE'){
+    const radius=15.5,n=16;
+    // The tabletop casts a separate sun silhouette; its pedestal and the
+    // chair legs retain four grounded contacts rather than a solid plinth.
+    noStroke();fill(0,0,0,43*density);beginShape();
+    for(let i=0;i<n;i++){const a=i/n*TWO_PI;vertex(...shadow(Math.cos(a)*radius,Math.sin(a)*radius,22));}endShape(CLOSE);
+    fill(0,0,0,57*density);ellipse(0,0,20,14);
+    box(0,0,0,12,12,2,[73,91,87]);box(0,0,2,5,5,17,[107,128,117]);
+    // Four chairs visibly occupy the outer part of the exact60x60 footprint.
+    for(const [cx,cy,across]of[[0,-23,true],[0,23,true],[-23,0,false],[23,0,false]]){
+      const cw=across?13:10,cd=across?10:13;
+      noStroke();fill(0,0,0,43*density);ellipse(cx,cy,cw+2,cd+2);
+      for(const sx of[-1,1])for(const sy of[-1,1])box(cx+sx*(cw/2-2),cy+sy*(cd/2-2),0,2.4,2.4,9,[80,101,94]);
+      box(cx,cy,8,cw,cd,2,[149,162,127]);
+      if(across)box(cx,cy+(cy<0?-1:1)*4,10,cw,2,7,[112,138,118]);
+      else box(cx+(cx<0?-1:1)*4,cy,10,2,cd,7,[112,138,118]);
+    }
+    noStroke();
+    for(let i=0;i<n;i++){
+      const a=i/n*TWO_PI,c=(i+1)/n*TWO_PI;
+      fill(i<n/2?98:70,i<n/2?113:83,i<n/2?96:74);
+      face([[Math.cos(a)*radius,Math.sin(a)*radius,19],[Math.cos(c)*radius,Math.sin(c)*radius,19],
+        [Math.cos(c)*radius,Math.sin(c)*radius,22],[Math.cos(a)*radius,Math.sin(a)*radius,22]]);
+    }
+    fill(216,202,159);beginShape();
+    for(let i=0;i<n;i++){const a=i/n*TWO_PI;vertex(...point(Math.cos(a)*radius,Math.sin(a)*radius,22));}endShape(CLOSE);
+    stroke(139,142,111,170);strokeWeight(.8);
+    for(const x of[-8,0,8])segment([x,-Math.sqrt(radius*radius-x*x),22.1],[x,Math.sqrt(radius*radius-x*x),22.1]);
+    // Raised cups and a small centre planter share the table's own plane.
+    box(0,0,22,5.5,5.5,3,[128,91,60]);
+    const plant=point(0,0,26);noStroke();fill(71,119,80);ellipse(...plant,5.5,5);
+    for(const [x,y]of[[-7,5],[6,-5]]){
+      box(x,y,22,3.5,3.5,2.8,[229,225,192]);
+      const cup=point(x,y,25);fill(89,60,40);ellipse(...cup,2,1.5);
+    }
+  }else if(b.propType==='CITYVENUESIGN'){
+    noStroke();fill(0,0,0,47*density);
+    quad(...shadow(-12,-2,14),...shadow(12,-2,14),...shadow(12,-2,35),...shadow(-12,-2,35));
+    // A weighted double-foot stand supports a thick, two-sided vertical board.
+    for(const x of[-8,8]){
+      box(x,0,0,5,16,2,[61,78,78]);box(x,0,2,3,3,29,[123,141,130]);
+    }
+    box(0,0,14,24,5,21,[210,185,129]);
+    const sideY=lean[1]>=0?-2.6:2.6;
+    fill(35,77,82);face([[-10,sideY,17],[10,sideY,17],[10,sideY,32],[-10,sideY,32]]);
+    stroke(234,217,168);strokeWeight(1.2);segment([-8,sideY,29],[8,sideY,29]);
+    stroke(181,198,164);strokeWeight(1);segment([-7,sideY,20],[2,sideY,20]);
+    segment([2,sideY,20],[.2,sideY,18.5]);segment([2,sideY,20],[.2,sideY,21.5]);
+    // The label is drawn in the projected vertical face's affine basis, so it
+    // foreshortens with the board instead of lying flat across the pavement.
+    const origin=point(-10,sideY,28),u=point(10,sideY,28),v=point(-10,sideY,21);
+    push();drawingContext.transform((u[0]-origin[0])/20,(u[1]-origin[1])/20,
+      (v[0]-origin[0])/7,(v[1]-origin[1])/7,origin[0],origin[1]);
+    noStroke();fill(238,227,190);textFont('sans-serif');textStyle(BOLD);textSize(4.5);textAlign(CENTER,CENTER);
+    text(String(b.cityVenueLabel||'CITY').slice(0,8),10,3);pop();
+  }else{
+    const fence=b.propType==='CITYTENNISFENCE',vertical=fence&&(b.cityFenceAxis==='Y'||b.h>b.w);
+    const length=vertical?b.h:b.w,half=length/2-3;
+    const position=(u,z,side=0)=>vertical?[side,u,z]:[u,side,z];
+    const height=fence?34:26,top=u=>height-(fence?0:3*(1-Math.pow(u/half,2)));
+    // Both orientations keep the collision line fixed at ground level. The
+    // net's cable sags; fence rail height remains rigid between grounded posts.
+    const n=Math.max(3,Math.min(24,Math.ceil(length/(zoom<.7?48:30))));
+    stroke(0,0,0,36*density);strokeWeight(fence?2.5:2);
+    shadowLine(position(-half,0),position(-half,height));
+    shadowLine(position(half,0),position(half,height));
+    for(let i=0;i<n;i++){
+      const a=-half+i*2*half/n,c=-half+(i+1)*2*half/n;
+      shadowLine(position(a,top(a)),position(c,top(c)));
+    }
+    const postCount=fence?Math.max(2,Math.ceil(length/115)+1):2;
+    for(let i=0;i<postCount;i++){
+      const u=-half+i*2*half/(postCount-1),x=vertical?0:u,y=vertical?u:0;
+      box(x,y,0,5,5,2,[79,98,89]);box(x,y,2,3.5,3.5,height+1,[126,151,134]);
+      box(x,y,height+3,5,5,1.5,[196,204,167]);
+    }
+    // Diagonal wire cells are actual upright planes. No opaque rectangle
+    // fills the air behind the mesh, even when seen from the opposite side.
+    noFill();stroke(fence?109:155,fence?139:165,fence?117:146,fence?135:175);strokeWeight(fence?.8:1);
+    const rows=fence?4:3,base=3;
+    for(let i=0;i<n;i++){
+      const a=-half+i*2*half/n,c=-half+(i+1)*2*half/n;
+      for(let row=0;row<rows;row++){
+        const za=base+(top(a)-base)*row/rows,zc=base+(top(c)-base)*(row+1)/rows;
+        segment(position(a,za),position(c,zc));
+        segment(position(a,base+(top(a)-base)*(row+1)/rows),position(c,base+(top(c)-base)*row/rows));
+      }
+    }
+    stroke(fence?54:222,fence?85:220,fence?72:187);strokeWeight(fence?2.8:2.5);
+    for(let i=0;i<n;i++){
+      const a=-half+i*2*half/n,c=-half+(i+1)*2*half/n;
+      segment(position(a,top(a)),position(c,top(c)));
+    }
+    stroke(fence?154:81,fence?175:103,fence?144:91);strokeWeight(fence?1.2:1.1);
+    segment(position(-half,base),position(half,base));
+    if(fence){stroke(190,204,168);strokeWeight(.9);segment(position(-half,height+.8),position(half,height+.8));}
+  }
+  noStroke();pop();
+}
 
 function drawBiomeProps(list, i0, i1) {
   const _arr = list || activeBuildings;
@@ -47768,6 +48182,12 @@ function drawBiomeProps(list, i0, i1) {
         pop();
         break;
       }
+
+      case "CITYCAFETABLE":
+      case "CITYVENUESIGN":
+      case "CITYTENNISNET":
+      case "CITYTENNISFENCE":
+        drawCityVenueProp(b,_plx,_ply);break;
 
       case "CITYBIKERACK": {
         // A bicycle is an upright open frame, not a raised drawing of its side.

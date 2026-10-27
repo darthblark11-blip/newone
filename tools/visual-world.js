@@ -43,7 +43,7 @@ const LABELS = process.argv.includes('labels');
 // exist after dark: the fixtures (drawNightLights) and the light rig's pool
 // (drawLightPass). Judging a lamp at midday tells you nothing about a lamp.
 const NIGHT = process.argv.includes('night');
-// `district=0..5` finds a complete generated city plan at real p5 noise.
+// `district=0..22` finds a complete generated city plan at real p5 noise.
 // `civic` finds a real generated Level 1 terrace with p5's actual noise.
 const CIVIC = process.argv.includes('civic');
 const DISTRICT = +(process.argv.find(a => /^district=/.test(a)) || 'district=-1').split('=')[1];
@@ -99,8 +99,8 @@ window.setup = function () {
     let found=false;
     for(let cy=5;cy<40&&!found;cy++)for(let cx=-18;cx<18;cx++){
       const ch=generateChunkContent(1,cx,cy);
-      // Park terraces have one pavilion, freight two sheds, other courts at least three masses.
-      if(ch.solid.filter(b=>b.cityPlan===${DISTRICT}&&b.isBlockBuilding).length<(${DISTRICT}===16?1:${DISTRICT}===12?2:3))continue;
+      // Park and tennis blocks have one pavilion, freight two sheds, other courts at least three masses.
+      if(ch.solid.filter(b=>b.cityPlan===${DISTRICT}&&b.isBlockBuilding).length<([16,20].includes(${DISTRICT})?1:${DISTRICT}===12?2:3))continue;
       window.__wx=cx*CHUNK_W+600;window.__wy=cy*CHUNK_W+600;found=true;break;
     }
     if(!found)window.__errs.push('No city district found');

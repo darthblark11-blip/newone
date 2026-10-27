@@ -328,7 +328,12 @@ console.log('\n== open constructions have grounded, independently raised geometr
   const fixtures=[
     {propType:'CITYBIKERACK',w:74,h:28,open:true},
     {propType:'CITYCOURTHOOP',w:18,h:18,courtFacing:1,open:true},
-    {propType:'CITYCARGO',w:104,h:56,open:false}
+    {propType:'CITYCARGO',w:104,h:56,open:false},
+    {propType:'CITYCAFETABLE',w:60,h:60,groundFaces:true,open:true},
+    {propType:'CITYVENUESIGN',w:26,h:18,groundFaces:true,cityVenueLabel:'BOXING',open:true},
+    {propType:'CITYTENNISNET',w:460,h:8,groundFaces:true,open:true},
+    {propType:'CITYTENNISFENCE',w:580,h:8,groundFaces:true,cityFenceAxis:'X',open:true},
+    {propType:'CITYTENNISFENCE',w:8,h:240,groundFaces:true,cityFenceAxis:'Y',open:true}
   ];
   const close=(a,b)=>Math.abs(a-b)<1e-7;
   const hasPoint=(painted,p)=>painted.some(q=>close(p[0],q[0])&&close(p[1],q[1]));
@@ -369,7 +374,9 @@ console.log('\n== open constructions have grounded, independently raised geometr
       const ground=(record)=>fixture.open
         ? record.samples.filter(s=>s.z===0).map(s=>[s.x,s.y])
         : [[record.b.x-fixture.w/2,record.b.y-fixture.h/2],[record.b.x+fixture.w/2,record.b.y-fixture.h/2]];
-      const anchors=ground(left);
+      // Box feet paint only their exposed side faces. Compare contacts shared
+      // by both views; a corner hidden by the opposite face is not a moved foot.
+      const anchors=ground(left).filter(p=>!fixture.groundFaces||ground(right).some(q=>close(p[0],q[0])&&close(p[1],q[1])));
       ok(name+' keeps real ground contacts fixed when the camera moves',
          anchors.length>=2&&anchors.every(p=>hasPoint(left.painted,p)&&hasPoint(right.painted,p)));
       const heights=new Set(left.samples.filter(s=>s.z>0).map(s=>s.z));

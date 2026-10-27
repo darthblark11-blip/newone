@@ -1,6 +1,6 @@
 # Level 1 city districts
 
-Stick City's streamed neighbourhoods have seventeen deterministic block plans.
+Stick City's streamed neighbourhoods have twenty-three deterministic block plans.
 All expansion remains beyond the starting-gate enclosure and curtain walls. The
 opening area's existing ten identities and all 235 ordinary building footprints
 and architectures remain unchanged.
@@ -24,6 +24,12 @@ and architectures remain unchanged.
 | Downtown business towers | Six-storey glass facades, connected setbacks and metal plant crowns. |
 | Downtown retail arcades | Shopfront glazing, projecting canopies, office wings and raised clerestories. |
 | Downtown terraced parks | Planted lawns, live trees, benches, a pavilion, stone steps and side ramps. |
+| Restaurant terraces | Glazed dining rooms, kitchen stacks, striped awnings and recessed outdoor tables. |
+| Neighbourhood bars | Brick pubs, raised bar signs, timber trim and courtyard seating. |
+| Gentlemen’s clubs | Burgundy/black lounge fronts, projecting marquees and a formal arrival court. |
+| Tennis clubs | A low clubhouse, blue/green marked courts, upright nets and gated mesh fencing. |
+| Fitness gyms | Broad glazed training halls, metal roof lights and open entrance forecourts. |
+| Boxing gyms | Brick training halls, raised boxing signage and a clear door approach reserved for a later interior. |
 
 ## Downtown and hills
 
@@ -52,6 +58,32 @@ and world-aligned samples. The advanced lighting height buffer uses a bounded,
 continuous mesh of the same hill field (at most 1,080 triangles), culled entirely
 outside the relief area. Lamps, decks, water, canopies and civic terraces use
 the same ground base; civic emitters avoid adding their base twice.
+
+## Dining, nightlife and sports
+
+Twelve destination blocks flank downtown. Restaurants, bars and gentlemen’s
+clubs run along row 5 at columns -6..-4 and 3..5. Tennis clubs, fitness gyms and
+boxing gyms follow the park edges at columns -4 and 3, rows 7, 8 and 9. Each
+venue has a different name on each side of town. Both branches remain outside
+the starting walls and clear of the relay fortress and its approaches.
+
+The six building families have distinct projected facades, connected canopies,
+roof equipment and raised signs. Restaurant and bar tables have visible
+pedestals, cups and four grounded chairs within their collision footprint.
+Freestanding menu and venue boards have thick raised faces and grounded feet.
+The central pedestrian approach stays open through the venue forecourts.
+
+Tennis courts have actual ground-painted singles/doubles lines, service boxes,
+a sagging raised net and mesh fences with corner posts. Both side gates have
+120-unit openings, and players can walk around the net ends. The whole court
+is reserved from later obstacle scatter; only the intended net and perimeter
+fences occupy that area. Nets and fences project every point at its actual
+height and retain thin, visible ground collision footprints.
+
+Primary venue buildings expose a deterministic `cityEntrance` position and
+courtyard-facing normal. Boxing gyms additionally identify the future
+`BOXING_GYM` interior and mark it pending. Their facade door and open approach
+are built now; entering the building and its interior scene are deferred.
 
 Industrial blocks select workshop, garden-apartment, depot or freight plans alongside
 existing parking lots. A shared address selector keeps industrial parking and
@@ -91,7 +123,12 @@ night illumination. The new streets do not add a per-frame ground-detail pass.
 
 ## Persistence and scope
 
-Only the 24 new downtown land blocks use `downtown:v1:` keys, including their
+The twelve new destination land blocks use `leisure:v1:` keys. Junctions
+touching them remain open. Only neighboring chunks whose checkpoint is newly
+removed use `leisure-edge:v1:`; existing downtown checkpoint suppression and
+keys take precedence. Old destruction indices cannot remove a new venue prop.
+
+Only the 24 downtown land blocks use `downtown:v1:` keys, including their
 street furniture and park stems. Checkpoint junctions touching downtown stay
 open; only edge chunks whose former checkpoint is removed use
 `downtown-edge:v1:` keys. Old grid, civic and `district:v3:` indices
@@ -114,20 +151,23 @@ ground. No combat values or objectives change.
 
 ## Validation
 
-`node tools/check-city-districts.js` checks 1,000 deterministic chunks, seventeen
-streamed plans and sixteen roof families, ten unchanged authored identities and a frozen
+`node tools/check-city-districts.js` checks 1,000 deterministic chunks, twenty-three
+streamed plans and twenty-two roof families, ten unchanged authored identities and a frozen
 signature of all 235 starting buildings. It also checks exclusion of the new
 plans from the protected enclosure, clear 24-unit pedestrian crossings,
 recessed bicycle placement, empty playing fields with two footplate-sized hoop
-bases, old/current destruction-key isolation, 68 mirrored ground bakes with
-paint/metadata parity, and 204 time/weather/view renders with finite drawing
+bases, old/current destruction-key isolation, 92 mirrored ground bakes with
+paint/metadata parity, and 276 time/weather/view renders with finite drawing
 coordinates.
 
 `node tools/check-city-downtown.js` checks native downtown generation, protected
 areas and old-city persistence, clear cardinal routes through parks, continuous
 hill/park heights, native uphill/downhill travel, lighting-height parity, a
 bounded visible mesh and open shared junctions.
-See the test output for its current assertion count.
+`node tools/check-city-venues.js` checks the twelve real destination blocks,
+entrance approaches, court gates and net-end travel, collision footprints,
+fortress clearance, destruction-key isolation and finite native rendering.
+See the test output for current assertion counts.
 
 Render individual streamed plans with real p5/Chromium:
 
