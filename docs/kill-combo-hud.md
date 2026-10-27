@@ -14,6 +14,15 @@ copyright and SIL Open Font License 1.1 accompany the embedded data in
 `game.js`. FontFace loads it once without a network request; a rounded system
 font stack remains available while loading or if a host cannot use FontFace.
 
+The surrounding HUD uses Rajdhani SemiBold for ammo, objectives, the clock,
+activity readouts and navigation, with real Bold for upright population/status
+labels and touch actions. Status labels and climate text are 12 pixels; ammo
+retains its compact 11/12-pixel size and width fitting. Both Latin WOFF2 faces
+are bundled unmodified from `@fontsource/rajdhani` 5.3.0 with their copyright
+and OFL 1.1 in `game.js`. `setup()` starts `initHudFont()` once; the HUD uses a
+system sans-serif fallback until both faces load or if loading fails. Debug
+telemetry retains monospace. The combo keeps its separate Lilita One lettering.
+
 The combo has no shake. Its first colors remain orange at 2 kills, yellow at
 10, gold at 20, purple at 30 and violet at 40. Higher streaks continue through
 these visual stages:
