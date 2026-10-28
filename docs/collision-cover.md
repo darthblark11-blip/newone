@@ -7,7 +7,11 @@ the face remains free. No button, rail, snap, or camera change is involved.
 
 High walls use a back-to-wall posture. Aiming past a nearby open end moves the
 upper torso, head, arms and weapon around that end while the hips and legs stay
-planted. The available lean must clear the head and every weapon muzzle,
+planted. The shirt keeps its original proportions: the torso hinges at the waist,
+with a short, bounded head-and-shoulder lean instead of a stretched connection.
+The head, shoulders and weapon turn together through the full outward 180° arc,
+including shots directly along either side of the wall. The available lean must
+clear the head and every weapon muzzle,
 including both dual SMGs. A sealed corner or an opening beyond the actor's reach
 produces no peek. Feet remain inside the wall's end while taking cover; walking
 farther around it naturally ends cover. Aiming into open space away from the
@@ -19,6 +23,9 @@ releasing aim starts ducking immediately, independently of the normal brief
 weapon aim hold. The chosen manual stance is remembered and restored on exit.
 An explicit stance action takes priority over automatic cover. Saves record the
 selected stance rather than a temporary low-cover crouch.
+
+Enemies and allies detect the head or torso that is actually exposed by a wall
+peek or a low-cover pop-up; ducking or retracting conceals it again.
 
 Cover protection uses actual intervening solid geometry. Head and upper-body
 shot contacts follow their posed positions during a standing peek; leg contacts
@@ -49,3 +56,8 @@ Focused checks:
 - `tools/check-cover-render.js`: planted legs, upper-body projection, gun and
   support mounts, and painter balance.
 - `tools/check-cover-ai.js`: shared enemy behavior and bounded cover decisions.
+- `tools/check-cover-fire-arc.js`: full outward aim arc, both tangent shots,
+  bounded peeks and unchanged wall occlusion.
+- `tools/check-cover-sight.js`: visible upper-body detection and retraction.
+- `tools/visual-collision-cover.js`: native cover gallery and rendered barrel
+  alignment with actual pooled shots.

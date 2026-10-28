@@ -64,22 +64,25 @@ fresh('LOW');probe('buildings=activeBuildings=[];parkingCars=activeParkingCars=[
 ok('parked car geometry intercepts low fire before a farther actor',P('coverVictim.hp===1000&&!coverRound.active&&coverRound.x>=25&&coverRound.x<26'));
 
 function peak(side=1){
- fresh();probe(`shotWall.x=40;shotWall.w=20;shotWall.h=160;coverVictim.x=12;coverVictim.y=${side*68};
+ fresh();probe(`shotWall.x=40;shotWall.w=20;shotWall.h=160;coverVictim.x=12;coverVictim.y=${side*71};
  coverVictim.cover={active:true,kind:'HIGH',blend:1,peek:1,pop:0,nx:-1,ny:0,tx:0,ty:-1,
- bodyAngle:Math.PI,aiming:true,openAim:false,validPeek:true,offsetX:0,offsetY:${side*26},upper:{x:0,y:${side*26}}};
+ bodyAngle:Math.PI,aiming:true,openAim:false,validPeek:true,offsetX:0,offsetY:${side*21},upper:{x:0,y:${side*21}}};
  invalidateColIndex();`);
 }
 for(const side of [-1,1]){
  peak(side);const head=P("coverActorHitCenter(coverVictim,'HEAD','HEAD')");
+ const headAngle=P("stanceFacingAngle(coverVictim)+stanceBodyPose(coverVictim).yaw");
  launch('HEAD','PISTOL',160,head.y,Math.PI,200);tick();
  ok('an exposed head can be hit around the real wall end '+side,P('coverVictim.hp===900&&coverVictim.decals.length===1&&coverVictim.decals[0].isHead'));
+ ok('the head wound follows the same rotated frame as the visible head '+side,
+   P(`Math.abs(Math.atan2(Math.sin(coverVictim.decals[0].shotA-(${Math.PI-headAngle})),Math.cos(coverVictim.decals[0].shotA-(${Math.PI-headAngle}))))<1e-7`));
  ok('the upper hit keeps a finite pose-local vertical wound '+side,P('Number.isFinite(coverVictim.decals[0].x+coverVictim.decals[0].y)&&Math.abs(coverVictim.decals[0].y)<1e-6'));
  peak(side);const body=P("coverActorHitCenter(coverVictim,'BODY','BODY')");
  launch('BODY','PISTOL',160,body.y,Math.PI,200);tick();
  ok('the leaning torso is also exposed while its collision root stays behind cover '+side,P('coverVictim.hp===980&&coverVictim.decals.length===1'));
- peak(side);launch('LEGS','PISTOL',160,side*68,Math.PI,200);tick();
+ peak(side);launch('LEGS','PISTOL',160,side*71,Math.PI,200);tick();
  ok('the legs remain physically protected on the far side during a standing peek '+side,P('coverVictim.hp===1000&&coverVictim.decals.length===0&&!coverRound.active'));
- peak(side);launch('LEGS','PISTOL',-120,side*68,0,140);tick();
+ peak(side);launch('LEGS','PISTOL',-120,side*71,0,140);tick();
  ok('cover does not make exposed legs invulnerable from the open side '+side,P('coverVictim.hp===980&&coverVictim.decals[0].isLeg'));
 }
 

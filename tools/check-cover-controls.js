@@ -51,7 +51,7 @@ ok('a sealed cover shot is not permitted',!P('coverFireAllowed(player)'));
 const ammo=P('player.ammo');aim(1,0,true);frames(20);
 ok('holding fire at a sealed wall cannot spawn rounds through it',P('player.ammo')===ammo&&P('bullets.length===0'));
 
-contact('HIGH',66);const edgeRoot=P('[player.x,player.y]');aim(1,.8);frames(20);
+contact('HIGH',71);const edgeRoot=P('[player.x,player.y]');aim(1,.8);frames(20);
 ok('aiming past an open end permits an upper-body peek',P('!!player.cover?.active&&player.cover.peek>0&&Math.hypot(coverUpperOffset(player).x,coverUpperOffset(player).y)>1'));
 ok('standing peeks leave both legs at the planted root',P('player.x')===edgeRoot[0]&&P('player.y')===edgeRoot[1]);
 aim(0,0);frames(20);

@@ -142,10 +142,10 @@ const out = process.env.STANCE_SCENE_OUT || '/tmp/newone-stance-scenes'; fs.mkdi
       const contactRoot=await page.evaluate(()=>({x:player.x,y:player.y}));
       await send('touchStart',[head]);await send('touchMove',[{...head,x:head.x+60}]);await page.evaluate(()=>__stanceStep(18));
       ok(await page.evaluate(()=>!player.cover.peek&&player.ammo===17&&bullets.length===0),name+' real held fire cannot shoot through a sealed cover face');
-      await send('touchEnd',[]);await page.evaluate(()=>{player.y=66;});
+      await send('touchEnd',[]);await page.evaluate(()=>{player.y=71;});
       await send('touchStart',[head]);await send('touchMove',[{...head,x:head.x+30,y:head.y+24}]);await page.evaluate(()=>__stanceStep(20));
       ok(await page.evaluate(()=>player.cover?.active&&player.cover.peek>0&&Math.hypot(coverUpperOffset(player).x,coverUpperOffset(player).y)>1),name+' a real aim gesture leans through an open wall end');
-      ok(await page.evaluate(({x})=>player.x===x&&player.y===66,contactRoot),name+' native upper-body peeking leaves its collision root planted');
+      ok(await page.evaluate(({x})=>player.x===x&&player.y===71,contactRoot),name+' native upper-body peeking leaves its collision root planted');
       await page.locator('canvas').first().screenshot({path:path.join(out,name+'-high-cover.png')});
       await send('touchEnd',[]);await page.evaluate(()=>__stanceStep(20));
       ok(await page.evaluate(()=>Math.hypot(coverUpperOffset(player).x,coverUpperOffset(player).y)<1),name+' native aim release retracts the wall lean');

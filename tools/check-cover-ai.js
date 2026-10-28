@@ -50,7 +50,7 @@ ok('expired sight memory releases the cover decision',P('!coverGunner._enemyCove
 
 fresh();probe('window.aiWall={x:60,y:0,w:40,h:140,isWall:true};buildings=activeBuildings=[aiWall];invalidateColIndex();window.aiGoal=enemyCoverGoal(coverGunner,180,-80,{});');
 ok('high-cover goals sit near a physically valid edge',P("aiGoal&&aiGoal.kind==='HIGH'&&!!coverPeekCandidate({x:aiGoal.x,y:aiGoal.y,currentWeapon:coverGunner.currentWeapon},aiGoal,Math.atan2(-80-aiGoal.y,180-aiGoal.x))"));
-ok('the standing cover goal keeps twelve units of leg clearance',P('aiGoal.x*aiGoal.tx+aiGoal.y*aiGoal.ty>=aiGoal.edgeMin+12&&aiGoal.x*aiGoal.tx+aiGoal.y*aiGoal.ty<=aiGoal.edgeMax-12'));
+ok('the standing cover goal keeps nine units of leg clearance',P('aiGoal.x*aiGoal.tx+aiGoal.y*aiGoal.ty>=aiGoal.edgeMin+COVER_FOOT_MARGIN&&aiGoal.x*aiGoal.tx+aiGoal.y*aiGoal.ty<=aiGoal.edgeMax-COVER_FOOT_MARGIN'));
 
 fresh();probe('coverGunner.y=-100;window.aiWall={x:60,y:0,w:40,h:140,isWall:true};buildings=activeBuildings=[aiWall];invalidateColIndex();');
 let highPeeks=0,highCover=0;

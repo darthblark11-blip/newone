@@ -289,7 +289,8 @@ function drawStanceTouchButton() {
 // be frozen streamed props; keep cached bounds externally and revalidate edits.
 const _coverRectCache=new WeakMap(),_coverContactCars=[];
 const _coverRayIndex=newCrowdSolidIndex(2),_coverRayCandidates=[];
-const _coverLowPropTypes=new Set(['SANDBAG','CRATE','BENCH','PLANTER','TERRACEPLANTER','LOGPILE','MATERIALS','WRECK','RUINWALL','REVETMENT','FOUNTAIN','HOARDING','FALLEN']);
+const COVER_FOOT_MARGIN=9,COVER_LEAN_MAX=22;
+const _coverLowPropTypes=new Set(['HEDGE','CITYCAFETABLE','SANDBAG','CRATE','BENCH','PLANTER','TERRACEPLANTER','LOGPILE','MATERIALS','WRECK','RUINWALL','REVETMENT','FOUNTAIN','HOARDING','FALLEN']);
 const _coverPistolMuzzles=[[31,8]],_coverSmgMuzzles=[[38,11]],_coverDualMuzzles=[[38,11],[38,-11]],
   _coverRifleMuzzles=[[47,6]],_coverRevolverMuzzles=[[47,11]];
 function coverWeaponMuzzles(a) {
@@ -317,7 +318,7 @@ function coverSolidKind(b) {
   if(b.coverType==='HIGH')return 'HIGH';
   if(Number.isFinite(b.coverHeight))return b.coverHeight>0?(b.coverHeight<=1.35?'LOW':'HIGH'):null;
   if(b.isParkingCar||b.isCar||b.isCrateProp||b.isHayBale||b.isDumpster||b.isFence||b.isWagonProp||
-      b.hqProp==='BENCH'||b.hqProp==='CONSOLE'||b.undergroundProp==='PEW'||b.undergroundProp==='TIMBER'||
+      b.hqProp==='BENCH'||b.hqProp==='CONSOLE'||b.undergroundProp==='PEW'||b.undergroundProp==='TIMBER'||b.undergroundProp==='ALTAR'||
       _coverLowPropTypes.has(b.propType))return 'LOW';
   if(b.isRock||b.propType==='BOULDER')return Math.max(b.w||0,b.h||0)<=90?'LOW':'HIGH';
   if(!(b.w>0&&b.h>0)&&activeParkingCars.includes(b))return 'LOW';
@@ -351,9 +352,9 @@ function coverConsiderContact(a,b,dx,dy,previous,best,parking=false) {
       const edgeMin=face===0?-r.y1:face===1?r.y0:face===2?r.x0:-r.x1;
       const edgeMax=face===0?-r.y0:face===1?r.y1:face===2?r.x1:-r.x0;
       const distance=a.x*nx+a.y*ny-plane,tangent=a.x*tx+a.y*ty,into=dx*nx+dy*ny;
-      // A twelve-unit tangent margin keeps both planted feet behind the end.
+      // Keep the planted foot centers inside the end; only the upper chain leans.
       // Six-unit walking steps can stop up to six units short of contact.
-      if(distance<14.5||distance>22.5||tangent<edgeMin+12-.001||tangent>edgeMax-12+.001)continue;
+      if(distance<14.5||distance>22.5||tangent<edgeMin+COVER_FOOT_MARGIN-.001||tangent>edgeMax-COVER_FOOT_MARGIN+.001)continue;
       if(b.isGovFortress&&inOpenGateway(b,a.x+dx))continue;
       const retained=previous&&previous.solid===b&&previous.rectIndex===ri&&previous.nx===nx&&previous.ny===ny&&into<=.001;
       if(!retained&&(!(speed>.001)||into>=-.15*speed||distance+into>15.1))continue;
@@ -388,20 +389,22 @@ function coverRayClear(x0,y0,x1,y1,radius=0) {
 function coverPeekCandidate(a,state,aimAngle) {
   if(!a||!state||state.kind!=='HIGH'||!Number.isFinite(aimAngle)||coverSolidKind(state.solid)!=='HIGH')return null;
   const ca=Math.cos(aimAngle),sa=Math.sin(aimAngle),toward=ca*state.nx+sa*state.ny;
-  if(toward>=-.05)return null;
+  if(toward>=-1e-8)return null;
   const here=a.x*state.tx+a.y*state.ty,muzzles=coverWeaponMuzzles(a);
   let found=false,bestDistance=Infinity;
   const result=a._coverPeekGeom||(a._coverPeekGeom={});
   for(const side of [-1,1]) {
     // The entire actual muzzle envelope must clear: the other SMG or the
     // pistol wrist can remain blocked after the head has reached an opening.
-    let clearance=7;
+    // The rotated head center is up to five units from the upper pivot.
+    // Its six-unit contact circle must clear along with every barrel.
+    let clearance=12;
     for(let i=0;i<muzzles.length;i++) {
       const m=muzzles[i],along=(ca*m[0]-sa*m[1])*state.tx+(sa*m[0]+ca*m[1])*state.ty;
       clearance=Math.max(clearance,2-side*along);
     }
     const edge=side<0?state.edgeMin:state.edgeMax,target=edge+side*clearance,delta=target-here;
-    if(delta*side<0||Math.abs(delta)>34)continue;
+    if(delta*side<0||Math.abs(delta)>COVER_LEAN_MAX)continue;
     const offsetX=state.tx*delta,offsetY=state.ty*delta,x=a.x+offsetX,y=a.y+offsetY;
     if(!coverRayClear(a.x,a.y,x,y,6)||!coverRayClear(x,y,x+ca*160,y+sa*160,2))continue;
     let clear=true;
@@ -472,13 +475,13 @@ function updateActorCover(a,elapsedMs=deltaTime,dx=0,dy=0,aiming=false) {
     const normal=Math.atan2(c.ny,c.nx),turn=Math.atan2(Math.sin(normal-c.bodyAngle),Math.cos(normal-c.bodyAngle));
     c.bodyAngle+=turn*Math.min(1,dt/120);
   }
-  c.openAim=!!c.active&&(Math.cos(a.aimAngle||0)*c.nx+Math.sin(a.aimAngle||0)*c.ny>=-.05);
+  c.openAim=!!c.active&&(Math.cos(a.aimAngle||0)*c.nx+Math.sin(a.aimAngle||0)*c.ny>=-1e-8);
   const candidate=c.active&&c.kind==='HIGH'&&aiming?coverPeekCandidate(a,c,a.aimAngle||0):null;
   c.validPeek=!!candidate;
   c.peek=approach(c.peek,candidate?1:0,dt/COLLISION_COVER.leanMs);
   const targetX=candidate?candidate.offsetX*c.blend:0,targetY=candidate?candidate.offsetY*c.blend:0;
-  c.offsetX=approach(c.offsetX,targetX,34*dt/COLLISION_COVER.leanMs);
-  c.offsetY=approach(c.offsetY,targetY,34*dt/COLLISION_COVER.leanMs);
+  c.offsetX=approach(c.offsetX,targetX,COVER_LEAN_MAX*dt/COLLISION_COVER.leanMs);
+  c.offsetY=approach(c.offsetY,targetY,COVER_LEAN_MAX*dt/COLLISION_COVER.leanMs);
   c.upper.x=c.offsetX;c.upper.y=c.offsetY;
   c.pop=approach(c.pop,aiming?1:0,dt/(aiming?COLLISION_COVER.riseMs:COLLISION_COVER.duckMs));
   if(!c.active&&c.blend===0){c.peek=0;c.offsetX=c.offsetY=c.upper.x=c.upper.y=0;}
@@ -9866,7 +9869,22 @@ function shovelActorsVisible(observer,target) {
 }
 function shovelActorLOS(observer,target) {
   if(!shovelActorsVisible(observer,target))return false;
-  return shovelPlayerDepth(observer)>=SHOVEL.underground||hasLOS(observer.x,observer.y,target.x,target.y);
+  if(shovelPlayerDepth(observer)>=SHOVEL.underground)return true;
+  // Humanoid sight uses the anatomy exposed by cover, just as shots do. A
+  // root hidden behind the wall must not hide an actually visible peek, and
+  // a low-cover pop-up must become visible before the actor fires. This stays
+  // on the existing staggered sight query; creatures keep their own senses.
+  if(!observer.isPlayer&&actorCanUseStances(observer)&&
+      !String(observer.eType||'').startsWith('OCCULT_')&&
+      (coverRenderActive(observer)||coverRenderActive(target))) {
+    const eye=coverActorHitCenter(observer,'HEAD','HEAD');
+    const head=coverActorHitCenter(target,'HEAD','HEAD');
+    if(coverLineClear(eye.x,eye.y,head.x,head.y,'HEAD',observer,target))return true;
+    const body=coverActorHitCenter(target,'BODY','BODY');
+    return (body.x!==head.x||body.y!==head.y)&&
+      coverLineClear(eye.x,eye.y,body.x,body.y,'BODY',observer,target);
+  }
+  return hasLOS(observer.x,observer.y,target.x,target.y);
 }
 function shovelOverlapsRect(x,y,p,b) {
   return x+p>b.x-b.w/2&&x-p<b.x+b.w/2&&y+p>b.y-b.h/2&&y-p<b.y+b.h/2;
@@ -20806,7 +20824,8 @@ function enemyCoverGoal(a,threatX,threatY,state) {
     const min=nx<0?-rect.y1:nx>0?rect.y0:ny<0?rect.x0:-rect.x1;
     const max=nx<0?-rect.y0:nx>0?rect.y1:ny<0?rect.x1:-rect.x0;
     if(max-min<30)return;
-    const span=Math.max(min+14,Math.min(max-14,tangent));
+    const inset=kind==='HIGH'?COVER_FOOT_MARGIN:14;
+    const span=Math.max(min+inset,Math.min(max-inset,tangent));
     const x=nx*(plane+17)+tx*span,y=ny*(plane+17)+ty*span;
     if((threatX-x)*nx+(threatY-y)*ny>=-12)return;
     const dx=x-a.x,dy=y-a.y,d2=dx*dx+dy*dy;
@@ -20835,8 +20854,8 @@ function enemyCoverGoal(a,threatX,threatY,state) {
         else {
           const low=nx<0?-r.y1:nx>0?r.y0:ny<0?r.x0:-r.x1;
           const high=nx<0?-r.y0:nx>0?r.y1:ny<0?r.x1:-r.x0;
-          consider(solid,kind,r,ri,nx,ny,low+14);
-          consider(solid,kind,r,ri,nx,ny,high-14);
+          consider(solid,kind,r,ri,nx,ny,low+COVER_FOOT_MARGIN);
+          consider(solid,kind,r,ri,nx,ny,high-COVER_FOOT_MARGIN);
         }
       }
     }
@@ -20882,8 +20901,11 @@ function updateEnemyCoverAI(a,target,canSee,distance,elapsedMs=deltaTime) {
   if(!a.cover?.active) {
     const dx=goal.x-a.x,dy=goal.y-a.y,d=Math.hypot(dx,dy);
     const speed=Math.min(2.45*stanceMovementScale(a),d);
-    let vx=d>3?dx/Math.max(d,.001)*speed:-goal.nx*6;
-    let vy=d>3?dy/Math.max(d,.001)*speed:-goal.ny*6;
+    // Settle the tangent exactly before pressing the blocking face. Merely
+    // pushing normal from within three units can stop short of the end margin.
+    const tangent=dx*goal.tx+dy*goal.ty;
+    let vx=d>3?dx/Math.max(d,.001)*speed:-goal.nx*6+goal.tx*tangent;
+    let vy=d>3?dy/Math.max(d,.001)*speed:-goal.ny*6+goal.ty*tangent;
     a._coverApproach=d<48;
     const moved=a.attemptMove(vx,vy);a._coverApproach=false;
     a.isMoving=Math.hypot(moved.x,moved.y)>.01;
@@ -26150,7 +26172,7 @@ function updateBullets() {
                     force:weaponFallForce(b.w),mx:fallMotion.x,my:fallMotion.y,x:t.x,y:t.y,wound:null};
                 const coverWound=coverRenderActive(t)&&impactZone!=='LEGS'?stanceBodyPose(t):null;
                 const woundCenter=coverWound?coverActorHitCenter(t,b.tH,impactZone):fallHit;
-                const woundAngle=coverWound?stanceFacingAngle(t)+(impactZone==='HEAD'?0:coverWound.yaw):t.aimAngle;
+                const woundAngle=coverWound?stanceFacingAngle(t)+coverWound.yaw:t.aimAngle;
                 const woundScale=coverWound?coverWound.size:1;
                 const hpBeforeImpact = t.hp;
                 let dRes = robotHeadAbsorbed ? { blocked: false, broken: false } : t.takeDamage(dmg,b.shooter);
@@ -44015,14 +44037,20 @@ function stanceBodyPose(c) {
   const motion=moving?1:settle,right=stanceElbowCycle(phase,motion>0),left=stanceElbowCycle(phase+Math.PI,motion>0);
   right.reach*=motion;right.lift*=motion;left.reach*=motion;left.lift*=motion;
   const crouchWeight=drop*(1-floor),step=crouchStepPose(c,lower.phase);
-  const coverTurn=cover&&aiming?Math.max(-1.15,Math.min(1.15,roll.delta*.55))*coverBlend:0;
+  // The upper body turns as one rigid section. A partial shoulder turn while
+  // the hands followed the complete aim arc pulled the sleeves into ribbons.
+  const coverTurn=cover&&aiming?roll.delta*coverBlend:0;
   const yaw=Math.atan2(left.reach-right.reach,c.bodyH*.72)*.38*floor+step.counterYaw*crouchWeight+roll.turn+coverTurn;
   const legYaw=lower.yaw*crouchWeight,hipYaw=legYaw-(yaw-coverTurn)*.45+step.hipYaw*crouchWeight;
   const size=p.scaleX,hipX=-5*drop-4*floor-dive*2,hipY=roll.offsetY;
   const heading=stanceFacingAngle(c),ca=Math.cos(heading),sa=Math.sin(heading);
   const upperX=(ca*coverX+sa*coverY)/size,upperY=(-sa*coverX+ca*coverY)/size;
   const brace=cover&&!aiming?-2*coverBlend*(1-floor):0;
-  const chestX=1.5*drop-floor*2.5+step.chestX*crouchWeight+dive*3+upperX+brace,chestY=hipY+step.chestY*crouchWeight+upperY;
+  // Lateral cover is a waist hinge, not an extensible shirt. Most of the
+  // lean reaches the chest; the short remaining reach belongs to the head
+  // and arms. The original torso silhouette and all limb widths stay fixed.
+  const chestLean=cover ? .75 : 1;
+  const chestX=1.5*drop-floor*2.5+step.chestX*crouchWeight+dive*3+upperX*chestLean+brace,chestY=hipY+step.chestY*crouchWeight+upperY*chestLean;
   const torsoLength=c.bodyW*TORSO_DEPTH+floor*3.5,torsoWidth=c.bodyH*(1-.10*drop-.10*floor)*(1-roll.side*.53);
   const joints=[];
   for (const side of [-1,1]) {
@@ -44050,15 +44078,21 @@ function stanceBodyPose(c) {
     // Seat the sleeve root inside the chest contour. The torso then covers
     // the shoulder cap instead of leaving the arm pasted onto its outer edge.
     const sx=torsoLength*.30,sy=side*torsoWidth*.28;
-    const shoulder={x:chestX+Math.cos(yaw)*sx-Math.sin(yaw)*sy,
-      y:Math.sin(yaw)*sx+Math.cos(yaw)*sy+chestY};
+    const shoulder={x:chestX+upperX*(1-chestLean)+Math.cos(yaw)*sx-Math.sin(yaw)*sy,
+      y:Math.sin(yaw)*sx+Math.cos(yaw)*sy+chestY+upperY*(1-chestLean)};
     const post=side===roll.supportSide?roll.post:0;
-    joints.push({side,hip,knee,ankle,shoulder,
-      elbow:{x:4*drop+floor*4+support.reach*floor-post*3+side*step.armCounter*crouchWeight+upperX+brace,
-        y:side*(c.bodyH*.46+support.lift*floor)*(1-roll.side*.45)+chestY+side*post},support,step:stepLeg});
+    const elbowX=4*drop+floor*4+support.reach*floor-post*3+side*step.armCounter*crouchWeight;
+    const elbowY=side*(c.bodyH*.46+support.lift*floor)*(1-roll.side*.45)+side*post;
+    const elbow=cover?{x:chestX+upperX*(1-chestLean)+Math.cos(yaw)*elbowX-Math.sin(yaw)*elbowY,
+      y:chestY+upperY*(1-chestLean)+Math.sin(yaw)*elbowX+Math.cos(yaw)*elbowY}:
+      {x:elbowX+upperX+brace,y:elbowY+chestY};
+    joints.push({side,hip,knee,ankle,shoulder,elbow,support,step:stepLeg});
   }
-  const head={x:(aiming?3:0)*(1-drop)+8*drop+7*floor-roll.back*.8+step.chestX*crouchWeight*.55+dive*5+upperX+brace,
-    y:(aiming?4*(1-drop)+2.2*drop-5.8*floor:0)*(1-roll.side*.6-roll.back)+chestY};
+  const headX=(aiming?3:0)*(1-drop)+8*drop+7*floor-roll.back*.8+step.chestX*crouchWeight*.55+dive*5;
+  const headY=(aiming?4*(1-drop)+2.2*drop-5.8*floor:0)*(1-roll.side*.6-roll.back);
+  const head=cover?{x:Math.cos(yaw)*headX-Math.sin(yaw)*headY+upperX+brace,
+    y:Math.sin(yaw)*headX+Math.cos(yaw)*headY+hipY+step.chestY*crouchWeight+upperY}:
+    {x:headX+upperX+brace,y:headY+chestY};
   return c._stanceBody={cover,coverBlend,coverX,coverY,coverAim:c.aimAngle||0,upperX,upperY,dive,value,cycle,moving:!!c.isMoving,gait:c.gait||0,bodyW:c.bodyW,bodyH:c.bodyH,drop,floor,size,aiming,yaw,hipYaw,hipX,hipY,chestX,chestY,joints,head,R,
     torsoLength,torsoWidth,crouchWeight,step,roll,lower};
 }
@@ -44108,7 +44142,9 @@ function stanceWeaponMount(c) {
   return c._stanceMount={x,y,angle,scale,body:b,weapon:w,aim,carryBlend};
 }
 function stanceLongGunPose(c) {
-  const pose=aimedLongGunPose(c,0,0),fore=pose.P.point(14.5-pose.pump*4,0,0);
+  const pose=aimedLongGunPose(c,0,0);
+  const grip=stanceCoverPoseActive(c)?c.currentWeapon===WEAPONS.SHOTGUN?11.8:13.4:14.5;
+  const fore=pose.P.point(grip-pose.pump*4,0,0);
   // Choke the support grip up on the same handguard rather than lengthening
   // the forearm to reach a standing grip from a floor-supported shoulder.
   pose.fore=[pose.x+fore[0],pose.y+fore[1]];
@@ -44120,6 +44156,25 @@ function stanceArmElbow(b,joint,hx,hy) {
   // neither segment grows to fill the gap to a weapon. Alternate floor
   // contacts remain the preferred solution inside both reach circles.
   const upper=b.R.upper,fore=b.R.fore;
+  if(b.cover) {
+    // Project the authored elbow into the intersection of the two reach
+    // disks. Projected bones may shorten as an arm folds out of the floor
+    // plane; forcing both to full length made a near-closed wrist orbit its
+    // shoulder at the bottom of the low-cover crouch.
+    const ux=e.x-s.x,uy=e.y-s.y,ud=Math.hypot(ux,uy),uk=ud>upper?upper/ud:1;
+    const u={x:s.x+ux*uk,y:s.y+uy*uk};
+    if(Math.hypot(u.x-hx,u.y-hy)<=fore+.000001)return u;
+    const fx=e.x-hx,fy=e.y-hy,fd=Math.hypot(fx,fy),fk=fd>fore?fore/fd:1;
+    const f={x:hx+fx*fk,y:hy+fy*fk};
+    if(Math.hypot(f.x-s.x,f.y-s.y)<=upper+.000001)return f;
+    const dx=hx-s.x,dy=hy-s.y,d=Math.hypot(dx,dy);
+    if(d>Math.abs(upper-fore)&&d<=upper+fore) {
+      const along=(upper*upper-fore*fore+d*d)/(2*d),across=Math.sqrt(Math.max(0,upper*upper-along*along));
+      const cx=s.x+dx*along/d,cy=s.y+dy*along/d,px=-dy*across/d,py=dx*across/d;
+      const side=(e.x-cx)*px+(e.y-cy)*py>=0?1:-1;
+      return {x:cx+px*side,y:cy+py*side};
+    }
+  }
   for(let i=0;i<5;i++) {
     let dx=e.x-s.x,dy=e.y-s.y,d=Math.hypot(dx,dy);
     if(d>upper){e.x=s.x+dx*upper/d;e.y=s.y+dy*upper/d;}
@@ -44275,10 +44330,6 @@ function drawStanceDashPack(g,c,b,layer='ALL') {
 function drawCombatStanceBody(c,b,g,cloth,withHead=true) {
   const prone=b.floor;
   const pack=c.isPlayer&&jetpackUnlocked&&b.floor>0?stanceDashPackMesh(b):null;
-  if(b.cover&&(Math.abs(b.upperX)+Math.abs(b.upperY)>.01)) {
-    figureCelLimb(g,b.hipX,b.hipY,(b.hipX+b.chestX)*.5,(b.hipY+b.chestY)*.5,
-      b.chestX,b.chestY,c.bodyH*.65,c.bodyH*.69,c.bodyH*.72,cloth);
-  }
   push();translate(b.chestX,b.chestY);rotate(b.yaw);
   if(pack&&pack.below)drawStanceDashPack(g,c,b,'UNDER');
   figureCelOval(g,0,0,b.torsoLength,b.torsoWidth,cloth,.45-prone*.18);
@@ -44305,6 +44356,7 @@ function drawCombatStanceBody(c,b,g,cloth,withHead=true) {
 }
 function drawCombatStanceHead(c,b,g) {
   const h=b.head;
+  if(b.cover){push();translate(h.x,h.y);rotate(b.yaw);translate(-h.x,-h.y);}
   drawFigureHead(g,c,h.x,h.y,true,0);
   const face=Math.min(1,b.roll.back+b.roll.side*.72);
   if(face>0) {
@@ -44324,6 +44376,7 @@ function drawCombatStanceHead(c,b,g) {
     if (d.col) g.fill(...d.col); else g.fill(90,0,0,220);
     g.ellipse(h.x+d.x,h.y+d.y,d.sz,d.sz);
   }
+  if(b.cover)pop();
 }
 function drawCombatStanceFigure(c, p) {
   const paint = figurePainter(), g = paint ? paint.api : window,b=stanceBodyPose(c),R=b.R;
