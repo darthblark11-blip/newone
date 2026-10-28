@@ -9,10 +9,10 @@ High walls use a back-to-wall posture. Aiming past a nearby open end moves the
 upper torso, head, arms and weapon around that end while the hips and legs stay
 planted. The shirt keeps its original proportions: the torso hinges at the waist,
 with a short, bounded head-and-shoulder lean instead of a stretched connection.
-The head, shoulders and weapon turn together through the full outward 180° arc,
-including shots directly along either side of the wall. The available lean must
-clear the head and every weapon muzzle,
-including both dual SMGs. A sealed corner or an opening beyond the actor's reach
+The head, shoulders and weapon turn together with the aim. Approaching an open
+end uses a comfortable activation region, including a short preparatory lean
+before the entire weapon has cleared. The head and weapon paths determine the
+available lean, including both dual SMGs. A sealed corner or an opening beyond the actor's reach
 produces no peek. Feet remain inside the wall's end while taking cover; walking
 farther around it naturally ends cover. Aiming into open space away from the
 wall can fire without an edge lean.
@@ -32,8 +32,10 @@ shot contacts follow their posed positions during a standing peek; leg contacts
 stay at the planted root. High walls block every shot height. Low objects block
 leg-height rounds and protect lowered bodies, including manually crouched actors
 that did not acquire automatic cover. Standing upper-body shots can pass above
-low objects. Outgoing shots must clear the path from the body to their actual
-muzzles; placing a barrel beyond a thin wall cannot bypass it. Projectiles keep
+low objects. Player fire input always produces the normal shot, recoil, sound and cooldown.
+An obstructing wall absorbs the round through the normal impact path instead of
+cancelling the weapon. The initial body-to-muzzle segment is also checked, so
+placing a barrel beyond a thin wall cannot bypass it. Projectiles keep
 their launch height after a shooter ducks back down. Cover grants no invulnerability;
 shots from an unprotected side, explosions and melee retain their normal rules.
 
@@ -56,6 +58,8 @@ Focused checks:
 - `tools/check-cover-render.js`: planted legs, upper-body projection, gun and
   support mounts, and painter balance.
 - `tools/check-cover-ai.js`: shared enemy behavior and bounded cover decisions.
+- `tools/check-cover-player-fire.js`: uninterrupted player firing, native wall
+  impacts and pooled launch-state reset.
 - `tools/check-cover-fire-arc.js`: full outward aim arc, both tangent shots,
   bounded peeks and unchanged wall occlusion.
 - `tools/check-cover-sight.js`: visible upper-body detection and retraction.

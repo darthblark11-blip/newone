@@ -57,7 +57,8 @@ for(const kind of ['HIGH','LOW'])for(let q=0;q<4;q++){
   }
  }
  // A release retracts LOW cover, while HIGH cover stays tall. Neither grants
- // permission to fire back through a sealed wall at the midpoint.
+ // clearance to shoot through a sealed wall at the midpoint (the player still fires
+ // and produces a normal wall impact).
  probe(`player.currentWeapon=WEAPONS.PISTOL;player.isMoving=false;
   player.aimAngle=arcNormal.angle+Math.PI;
   for(let i=0;i<20;i++){frameCount++;updateActorCover(player,1000/60,0,0,true);}`);

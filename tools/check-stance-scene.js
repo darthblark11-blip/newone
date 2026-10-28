@@ -141,7 +141,7 @@ const out = process.env.STANCE_SCENE_OUT || '/tmp/newone-stance-scenes'; fs.mkdi
       ok(await page.evaluate(()=>player.cover?.active&&player.cover.kind==='HIGH'&&coverRenderActive(player)),name+' a real movement finger acquires high cover on collision');
       const contactRoot=await page.evaluate(()=>({x:player.x,y:player.y}));
       await send('touchStart',[head]);await send('touchMove',[{...head,x:head.x+60}]);await page.evaluate(()=>__stanceStep(18));
-      ok(await page.evaluate(()=>!player.cover.peek&&player.ammo===17&&bullets.length===0),name+' real held fire cannot shoot through a sealed cover face');
+      ok(await page.evaluate(()=>!player.cover.peek&&player.ammo<17&&bullets.every(b=>!b.active)&&particles.length>0),name+' held fire keeps shooting and resolves native impacts at a sealed cover face');
       await send('touchEnd',[]);await page.evaluate(()=>{player.y=71;});
       await send('touchStart',[head]);await send('touchMove',[{...head,x:head.x+30,y:head.y+24}]);await page.evaluate(()=>__stanceStep(20));
       ok(await page.evaluate(()=>player.cover?.active&&player.cover.peek>0&&Math.hypot(coverUpperOffset(player).x,coverUpperOffset(player).y)>1),name+' a real aim gesture leans through an open wall end');
@@ -149,6 +149,26 @@ const out = process.env.STANCE_SCENE_OUT || '/tmp/newone-stance-scenes'; fs.mkdi
       await page.locator('canvas').first().screenshot({path:path.join(out,name+'-high-cover.png')});
       await send('touchEnd',[]);await page.evaluate(()=>__stanceStep(20));
       ok(await page.evaluate(()=>Math.hypot(coverUpperOffset(player).x,coverUpperOffset(player).y)<1),name+' native aim release retracts the wall lean');
+      // Walk into the edge with real fingers: no exact-position fixture can
+      // substitute for reaching a peek through ordinary movement increments.
+      await page.evaluate(()=>__coverFixture('HIGH'));
+      await send('touchStart',[walkRight]);await page.evaluate(()=>__stanceStep(24));await send('touchEnd',[]);
+      const firingAim={...head,x:head.x+60,y:head.y+48};
+      await send('touchStart',[head]);await send('touchMove',[firingAim]);
+      const slideFinger={...walkRight,id:22,y:walkRight.y+45};
+      await send('touchStart',[firingAim,slideFinger]);
+      const slide=await page.evaluate(()=>{
+        const samples=[];
+        for(let i=0;i<32;i++){
+          __stanceStep();samples.push({x:player.x,y:player.y,ammo:player.ammo,active:!!player.cover?.active,peek:player.cover?.peek||0});
+          if(player.cover?.active&&player.cover.peek>.35)break;
+        }
+        return samples;
+      });
+      ok(slide.some(s=>s.active&&s.peek>.35),name+' natural two-thumb wall movement reaches a player peek without precise positioning '+JSON.stringify(slide));
+      ok(slide.at(-1).ammo<17,name+' firing remains active while approaching and entering the peek');
+      await page.locator('canvas').first().screenshot({path:path.join(out,name+'-moving-peek.png')});
+      await send('touchEnd',[]);
       await page.evaluate(()=>__coverFixture('LOW'));
       await send('touchStart',[walkRight]);await page.evaluate(()=>__stanceStep(24));await send('touchEnd',[]);await page.evaluate(()=>__stanceStep(18));
       ok(await page.evaluate(()=>player.cover?.active&&actorStance(player)==='CROUCH'),name+' real contact with waist cover automatically crouches');

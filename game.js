@@ -386,35 +386,54 @@ function coverRayClear(x0,y0,x1,y1,radius=0) {
   }
   return true;
 }
+function coverPeekHeadClear(a,ox,oy,hx,hy) {
+  return coverRayClear(a.x+hx,a.y+hy,a.x+hx+ox,a.y+hy+oy,6)&&
+    coverRayClear(a.x,a.y,a.x+ox,a.y+oy,6);
+}
+function coverPeekShotClear(a,ox,oy,hx,hy,ca,sa,muzzles) {
+  const x=a.x+ox,y=a.y+oy;
+  if(!coverRayClear(x+hx,y+hy,x+hx+ca*160,y+hy+sa*160,2))return false;
+  for(let i=0;i<muzzles.length;i++) {
+    const m=muzzles[i],mx=x+ca*m[0]-sa*m[1],my=y+sa*m[0]+ca*m[1];
+    if(!coverRayClear(x,y,mx,my,1)||!coverRayClear(mx,my,mx+ca*64,my+sa*64,1))return false;
+  }
+  return true;
+}
 function coverPeekCandidate(a,state,aimAngle) {
   if(!a||!state||state.kind!=='HIGH'||!Number.isFinite(aimAngle)||coverSolidKind(state.solid)!=='HIGH')return null;
   const ca=Math.cos(aimAngle),sa=Math.sin(aimAngle),toward=ca*state.nx+sa*state.ny;
   if(toward>=-1e-8)return null;
-  const here=a.x*state.tx+a.y*state.ty,muzzles=coverWeaponMuzzles(a);
-  let found=false,bestDistance=Infinity;
+  const here=a.x*state.tx+a.y*state.ty,muzzles=coverWeaponMuzzles(a),playerPeek=!!a.isPlayer;
+  // Aim around a reachable end as before. Requiring the whole upper pivot to
+  // sit twelve units beyond it left only a one-unit player activation strip.
+  // Keep the compact pose, and test the actual turned head and weapon instead.
+  const level=Math.min(1,Math.max(0,a.stance&&a.stance.value||0)),size=1-.03*level;
+  const headX=(3+5*level)*size,headY=(4-1.8*level)*size;
+  const hx=ca*headX-sa*headY,hy=sa*headX+ca*headY;
+  let found=false,bestDistance=Infinity,bestClear=false;
   const result=a._coverPeekGeom||(a._coverPeekGeom={});
   for(const side of [-1,1]) {
-    // The entire actual muzzle envelope must clear: the other SMG or the
-    // pistol wrist can remain blocked after the head has reached an opening.
-    // The rotated head center is up to five units from the upper pivot.
-    // Its six-unit contact circle must clear along with every barrel.
-    let clearance=12;
+    let clearance=playerPeek?7:12;
     for(let i=0;i<muzzles.length;i++) {
       const m=muzzles[i],along=(ca*m[0]-sa*m[1])*state.tx+(sa*m[0]+ca*m[1])*state.ty;
       clearance=Math.max(clearance,2-side*along);
     }
-    const edge=side<0?state.edgeMin:state.edgeMax,target=edge+side*clearance,delta=target-here;
-    if(delta*side<0||Math.abs(delta)>COVER_LEAN_MAX)continue;
-    const offsetX=state.tx*delta,offsetY=state.ty*delta,x=a.x+offsetX,y=a.y+offsetY;
-    if(!coverRayClear(a.x,a.y,x,y,6)||!coverRayClear(x,y,x+ca*160,y+sa*160,2))continue;
-    let clear=true;
-    for(let i=0;i<muzzles.length;i++) {
-      const m=muzzles[i],mx=x+ca*m[0]-sa*m[1],my=y+sa*m[0]+ca*m[1];
-      if(!coverRayClear(x,y,mx,my,1)||!coverRayClear(mx,my,mx+ca*64,my+sa*64,1)){clear=false;break;}
+    const edge=side<0?state.edgeMin:state.edgeMax,target=edge+side*clearance,requested=target-here;
+    if(requested*side<0||Math.abs(requested)>(playerPeek?34:COVER_LEAN_MAX))continue;
+    const delta=side*Math.min(COVER_LEAN_MAX,Math.abs(requested));
+    const offsetX=state.tx*delta,offsetY=state.ty*delta;
+    if(!coverPeekHeadClear(a,offsetX,offsetY,hx,hy))continue;
+    const clear=coverPeekShotClear(a,offsetX,offsetY,hx,hy,ca,sa,muzzles);
+    if(!clear) {
+      // A player still begins a bounded lean in the original corner region.
+      // A remaining obstruction absorbs their rounds; it never disables fire.
+      // Validate the reachable opening as well, so sealed corners cannot peek.
+      if(!playerPeek||!coverPeekHeadClear(a,state.tx*requested,state.ty*requested,hx,hy)||
+          !coverPeekShotClear(a,state.tx*requested,state.ty*requested,hx,hy,ca,sa,muzzles))continue;
     }
-    if(!clear||Math.abs(delta)>=bestDistance)continue;
-    found=true;bestDistance=Math.abs(delta);const m=muzzles[0];
-    Object.assign(result,{side,offsetX,offsetY,muzzleX:x+ca*m[0]-sa*m[1],muzzleY:y+sa*m[0]+ca*m[1]});
+    if(found&&(bestClear&&!clear||bestClear===clear&&Math.abs(delta)>=bestDistance))continue;
+    found=true;bestClear=clear;bestDistance=Math.abs(delta);const m=muzzles[0];
+    Object.assign(result,{side,offsetX,offsetY,clear,muzzleX:a.x+offsetX+ca*m[0]-sa*m[1],muzzleY:a.y+offsetY+sa*m[0]+ca*m[1]});
   }
   return found?result:null;
 }
@@ -440,7 +459,7 @@ function coverFacingAngle(a) {
 }
 function coverAimActive(a) {
   const c=a&&a.cover;
-  return !!c&&c.aiming&&(c.kind==='LOW'||c.openAim||c.peek>.01&&c.validPeek);
+  return !!c&&c.aiming&&(a.isPlayer||c.kind==='LOW'||c.openAim||c.peek>.01&&c.validPeek);
 }
 function coverPlayerAiming(a) {
   return !!(rightStick&&rightStick.active)||playerWeaponFireInput()||
@@ -477,7 +496,7 @@ function updateActorCover(a,elapsedMs=deltaTime,dx=0,dy=0,aiming=false) {
   }
   c.openAim=!!c.active&&(Math.cos(a.aimAngle||0)*c.nx+Math.sin(a.aimAngle||0)*c.ny>=-1e-8);
   const candidate=c.active&&c.kind==='HIGH'&&aiming?coverPeekCandidate(a,c,a.aimAngle||0):null;
-  c.validPeek=!!candidate;
+  c.validPeek=!!candidate&&candidate.clear!==false;
   c.peek=approach(c.peek,candidate?1:0,dt/COLLISION_COVER.leanMs);
   const targetX=candidate?candidate.offsetX*c.blend:0,targetY=candidate?candidate.offsetY*c.blend:0;
   c.offsetX=approach(c.offsetX,targetX,COVER_LEAN_MAX*dt/COLLISION_COVER.leanMs);
@@ -14582,7 +14601,7 @@ function takeBulletSlot() {
     return null;
 }
 let _huntShotSequence = 0;
-function spawnBullet(x, y, a, iP, tH, w, shooter = null, shotId = null) {
+function spawnBullet(x, y, a, iP, tH, w, shooter = null, shotId = null, nativeLaunch = false) {
     if (w !== WEAPONS.BOW) civilianNoise(x,y,620,shooter);
     if (shotId === null && w !== WEAPONS.BOW && typeof notifyForestWildlifeThreat === 'function')
         notifyForestWildlifeThreat(x,y,w === WEAPONS.TASER ? 100 : 560);
@@ -14590,12 +14609,12 @@ function spawnBullet(x, y, a, iP, tH, w, shooter = null, shotId = null) {
 
     const huntShotId = shotId === null ? ++_huntShotSequence : shotId;
     const reused=takeBulletSlot();
-    if(reused){reused.init(x,y,a,iP,tH,w,shooter);reused.shooter=shooter;reused.shotId=huntShotId;return reused;}
+    if(reused){reused.init(x,y,a,iP,tH,w,shooter,nativeLaunch);reused.shooter=shooter;reused.shotId=huntShotId;return reused;}
     let b = new Bullet();
     bullets.push(b);
     b._slotSource=bullets;b._slotIndex=bullets.length-1;b._slotQueued=false;
     _bulletSlotCount=bullets.length;
-    b.init(x, y, a, iP, tH, w, shooter);
+    b.init(x, y, a, iP, tH, w, shooter, nativeLaunch);
     b.shooter = shooter;
     b.shotId = huntShotId;
     return b;
@@ -23085,7 +23104,10 @@ if (this.eType === "COW") {
       this.isArmed=true;this.aimHold=AIM_HOLD;
       if(actorStancePose(this).prone>0&&this.stance){this.stance.proneAimBlend=Math.max(.01,this.stance.proneAimBlend||0);this.isMoving=false;}
     }
-    if(!coverFireAllowed(this,sA,bowShot))return false;
+    // Cover guides the player's pose; it must never swallow the fire input.
+    // Tactical AI may wait for a clear shot. Player rounds hit any intervening
+    // wall normally, including one crossed by a close-range weapon muzzle.
+    if(!this.isPlayer&&!coverFireAllowed(this,sA,bowShot))return false;
     frontierAmbientMarkCombat();
     const huntShotId = ++_huntShotSequence;
     let aH = this.isPlayer ? playerAimTarget() : this.stanceAimZone || (this.isFriendly && headAimToggle ? "HEAD" : "BODY"), cd = (this.isPlayer || this.isFriendly) ? this.currentWeapon.fireCooldown : (this.currentWeapon.enemyCooldown || 48), bob = this.isMoving&&!stanceCoverPoseActive(this) ? abs(sin(this.walkCycle)) * 2 : 0;
@@ -23109,15 +23131,15 @@ if (this.eType === "COW") {
     else if (this.eType === "SAUCER_RED") {
         let tX_R = this.x + cos(this.aimAngle) * 45 - sin(this.aimAngle) * 25, tY_R = this.y + sin(this.aimAngle) * 45 + cos(this.aimAngle) * 25;
         let tX_L = this.x + cos(this.aimAngle) * 45 - sin(this.aimAngle) * -25, tY_L = this.y + sin(this.aimAngle) * 45 + cos(this.aimAngle) * -25;
-        spawnBullet(tX_R, tY_R, sA + random(-0.1, 0.1), false, "BODY", "RED_LASER", this, huntShotId);
-        spawnBullet(tX_L, tY_L, sA + random(-0.1, 0.1), false, "BODY", "RED_LASER", this, huntShotId); sfx.shoot("RED_LASER", tX_R, tY_R);
+        spawnBullet(tX_R, tY_R, sA + random(-0.1, 0.1), false, "BODY", "RED_LASER", this, huntShotId, true);
+        spawnBullet(tX_L, tY_L, sA + random(-0.1, 0.1), false, "BODY", "RED_LASER", this, huntShotId, true); sfx.shoot("RED_LASER", tX_R, tY_R);
     } else if (this.currentWeapon === WEAPONS.DUAL_SMG) {
         let tX_L = this.x + cos(this.aimAngle) * (bLX_L + bob) - sin(this.aimAngle) * bLY_L, tY_L = this.y + sin(this.aimAngle) * (bLX_L + bob) + cos(this.aimAngle) * bLY_L;
         const stanceLeftMuzzle = stanceMuzzleWorld(this, tX_L, tY_L);
         tX_L = stanceLeftMuzzle.x; tY_L = stanceLeftMuzzle.y;
         let iP = this.isPlayer || this.isFriendly;
-        spawnBullet(tX, tY, sA + random(-shotSpread, shotSpread), iP, aH, this.currentWeapon, this, huntShotId);
-        if (dualLeftReady) spawnBullet(tX_L, tY_L, sA + random(-shotSpread, shotSpread), iP, aH, this.currentWeapon, this, huntShotId);
+        spawnBullet(tX, tY, sA + random(-shotSpread, shotSpread), iP, aH, this.currentWeapon, this, huntShotId, true);
+        if (dualLeftReady) spawnBullet(tX_L, tY_L, sA + random(-shotSpread, shotSpread), iP, aH, this.currentWeapon, this, huntShotId, true);
         sfx.shoot(this.currentWeapon, tX, tY); 
         
         // EXCLUSIVE PLAYER SHAKE
@@ -23126,7 +23148,7 @@ if (this.eType === "COW") {
         emit(tX, tY, 3, color(255, 200, 0), "MUZZLE", cos(sA) * 5, sin(sA) * 5, this);
         if (dualLeftReady) emit(tX_L, tY_L, 3, color(255, 200, 0), "MUZZLE", cos(sA) * 5, sin(sA) * 5, this);
     } else if (this.currentWeapon === WEAPONS.SHOTGUN) { 
-        let s = [-0.1275, -0.0425, 0.0425, 0.1275]; for (let i = 0; i < 4; i++) spawnBullet(tX, tY, sA + s[i] * stanceSpreadScale(this), this.isPlayer || this.isFriendly, aH, this.currentWeapon, this, huntShotId);
+        let s = [-0.1275, -0.0425, 0.0425, 0.1275]; for (let i = 0; i < 4; i++) spawnBullet(tX, tY, sA + s[i] * stanceSpreadScale(this), this.isPlayer || this.isFriendly, aH, this.currentWeapon, this, huntShotId, true);
         sfx.shotgun(tX, tY); 
         
         // EXCLUSIVE PLAYER SHAKE
@@ -23134,7 +23156,7 @@ if (this.eType === "COW") {
         
         emit(tX, tY, 6, color(255, 200, 0), "MUZZLE", cos(sA) * 8, sin(sA) * 8, this);
     } else if (this.currentWeapon === WEAPONS.BOW) {
-        const arrow = spawnBullet(tX,tY,sA,this.isPlayer || this.isFriendly,aH,this.currentWeapon,this,huntShotId);
+        const arrow = spawnBullet(tX,tY,sA,this.isPlayer || this.isFriendly,aH,this.currentWeapon,this, huntShotId, true);
         if (bowShot) {
             arrow.arrowPower = Number.isFinite(bowShot.power) ? Math.max(0, Math.min(1, bowShot.power)) :
                 bowDrawPower(bowShot.tension, bowShot.quality, bowShot.dud);
@@ -23146,7 +23168,7 @@ if (this.eType === "COW") {
         }
         sfx.shoot(this.currentWeapon,tX,tY);
     } else { 
-        spawnBullet(tX, tY, sA + random(-shotSpread, shotSpread), this.isPlayer || this.isFriendly, aH, this.currentWeapon, this, huntShotId);
+        spawnBullet(tX, tY, sA + random(-shotSpread, shotSpread), this.isPlayer || this.isFriendly, aH, this.currentWeapon, this, huntShotId, true);
         sfx.shoot(this.currentWeapon, tX, tY); 
         
         // EXCLUSIVE PLAYER SHAKE
@@ -26056,9 +26078,9 @@ function updateBullets() {
         const nearbyBarrels=barrels.length<=16?barrels:crowdNearbyBarrels(b.x,b.y,18,_projectileBarrels);
         const targetBuckets = b.isP ? playerBuckets : enemyBuckets;
         const targetRadius=coverReach+Math.hypot(b.x-b.prevX,b.y-b.prevY)*.5;
-        const localTargets = querySpatialBuckets(targetBuckets,(b.x+b.prevX)*.5,(b.y+b.prevY)*.5,
+        const localTargets = b._coverLaunchImpact?EMPTY_LIST:querySpatialBuckets(targetBuckets,(b.x+b.prevX)*.5,(b.y+b.prevY)*.5,
             SPATIAL_CELL_SIZE,targetRadius,targetRadius*targetRadius,null,_projectileNearby);
-        if(currentBiome===2&&!b.retracting&&!b.tetheredTarget&&typeof forestWildlifeHitTest==='function') {
+        if(currentBiome===2&&!b._coverLaunchImpact&&!b.retracting&&!b.tetheredTarget&&typeof forestWildlifeHitTest==='function') {
             const wildlifeHit=forestWildlifeHitTest(b);
             if(wildlifeHit) {
                 const cover=forestShotCover(b,localTargets,nearbyBarrels,targetBuckets);
@@ -27014,11 +27036,19 @@ class Bullet {
       if(!value)queueBulletSlot(this);
   }
   
-  init(x, y, a, iP, tH, w, shooter = null) {
+  init(x, y, a, iP, tH, w, shooter = null, nativeLaunch = false) {
     this.active = true;
     this.x = x; this.y = y; this.startX = x; this.startY = y; this.isP = iP; this.tH = tH; this.w = w; this.a = a; 
     this.prevX = x; this.prevY = y; this.shotId = 0;
     this.shooter=shooter;this.coverLaunchLow=coverLaunchIsLow(shooter);this._coverImpactSolid=null;this._coverImpactCar=false;
+    // Keep the rendered muzzle/start point. The first flight also checks the
+    // launch segment, so a barrel extending through a thin wall cannot spawn
+    // a round beyond it. Reuse resets all launch state with the pooled round.
+    this.coverLaunchPending=!!(nativeLaunch&&shooter&&shooter.isPlayer&&actorCanUseStances(shooter));
+    const upper=this.coverLaunchPending?coverUpperOffset(shooter):NO_COVER_OFFSET;
+    this.coverLaunchX=shooter?shooter.x+upper.x:x;
+    this.coverLaunchY=shooter?shooter.y+upper.y:y;
+    this._coverLaunchImpact=false;
     this.isArrow = w === WEAPONS.BOW;
     this.arrowPower = 1; this.arrowDud = false; this.arrowSpeed = 28;
     this.arrowRange = 2520; this.arrowTravel = 0;
@@ -27071,6 +27101,20 @@ class Bullet {
 
   update() { 
       if (!this.active) return;
+      this._coverLaunchImpact=false;
+      if(this.coverLaunchPending) {
+          this.coverLaunchPending=false;
+          const mx=this.x,my=this.y;
+          this.prevX=this.coverLaunchX;this.prevY=this.coverLaunchY;
+          const block=coverBulletBlock(this);
+          if(block.t!==Infinity) {
+              const dx=mx-this.prevX,dy=my-this.prevY;
+              const t=block.t+.001/Math.max(.001,Math.hypot(dx,dy));
+              this.x=this.prevX=this.prevX+dx*t;
+              this.y=this.prevY=this.prevY+dy*t;
+              this._coverLaunchImpact=true;this.l--;return;
+          }
+      }
       this.prevX = this.x; this.prevY = this.y;
       if (!this.isAllyProjectile() && !this.isArrow) {
           let maxLen = this.isRocket ? 15 : (this.isAlienLaser || this.isRedLaser || this.isPinkLaser || this.isOrangeBeam ? 8 : 5);

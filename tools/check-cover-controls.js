@@ -49,7 +49,7 @@ contact();aim(1,0);frames(15);
 ok('aiming through a sealed wall cannot initiate a peek',P('!!player.cover?.active&&!player.cover.peek&&Math.hypot(coverUpperOffset(player).x,coverUpperOffset(player).y)<.01'));
 ok('a sealed cover shot is not permitted',!P('coverFireAllowed(player)'));
 const ammo=P('player.ammo');aim(1,0,true);frames(20);
-ok('holding fire at a sealed wall cannot spawn rounds through it',P('player.ammo')===ammo&&P('bullets.length===0'));
+ok('holding fire at a sealed wall still fires native rounds for physical impact',P('player.ammo')<ammo&&P('bullets.some(b=>b.coverLaunchPending)'));
 
 contact('HIGH',71);const edgeRoot=P('[player.x,player.y]');aim(1,.8);frames(20);
 ok('aiming past an open end permits an upper-body peek',P('!!player.cover?.active&&player.cover.peek>0&&Math.hypot(coverUpperOffset(player).x,coverUpperOffset(player).y)>1'));

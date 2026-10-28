@@ -54,8 +54,8 @@ for(const side of [-1,1]){
  for(const key of ['PISTOL','DUAL_SMG','ASSAULT_RIFLE']){
   probe(`player.currentWeapon=WEAPONS.${key};window.coverEdge=coverPeekCandidate(player,coverFace,0);`);
   ok(key+' can clear a real open wall end '+side,P('!!coverEdge&&Math.hypot(coverEdge.offsetX,coverEdge.offsetY)<=COVER_LEAN_MAX'));
-  ok(key+' keeps the head and every native muzzle outside that end '+side,
-   P(`Math.abs(player.y+coverEdge.offsetY)>=92&&coverWeaponMuzzles(player).every(m=>${side}>0?player.y+coverEdge.offsetY+m[1]>=82:player.y+coverEdge.offsetY+m[1]<=-82)`));
+  ok(key+' validates the turned head and every muzzle at the real opening '+side,
+   P('coverEdge.clear&&coverPeekHeadClear(player,coverEdge.offsetX,coverEdge.offsetY,3,4)&&coverPeekShotClear(player,coverEdge.offsetX,coverEdge.offsetY,3,4,1,0,coverWeaponMuzzles(player))'));
   ok(key+' has a clear physical path to each muzzle '+side,
    P('coverWeaponMuzzles(player).every(m=>coverRayClear(player.x+coverEdge.offsetX,player.y+coverEdge.offsetY,player.x+coverEdge.offsetX+m[0],player.y+coverEdge.offsetY+m[1],1))'));
  }
@@ -78,7 +78,8 @@ for(let quarter=0;quarter<4;quarter++)for(const end of [-1,1]) {
 }
 delete ctx.__coverRotation;
 fresh(12,65);probe('window.coverFace=Object.assign({},findCoverContact(player,6,0));');
-ok('a corner beyond the natural upper-chain reach does not stretch the figure',!P('coverPeekCandidate(player,coverFace,0)'));
+ok('a player can begin a compact peek from the original reachable corner region',P('!!coverPeekCandidate(player,coverFace,0)&&Math.hypot(coverPeekCandidate(player,coverFace,0).offsetX,coverPeekCandidate(player,coverFace,0).offsetY)<=COVER_LEAN_MAX'));
+probe('player.y=44;');ok('a distant corner still cannot trigger a peek',!P('coverPeekCandidate(player,coverFace,0)'));
 
 fresh(12,71);probe('window.coverFace=Object.assign({},findCoverContact(player,6,0));buildings=activeBuildings=[coverWall,{x:70,y:90,w:80,h:20,isWall:true}];invalidateColIndex();');
 ok('a perpendicular wall that seals the corner prevents the peek',!P('coverPeekCandidate(player,coverFace,0)'));
