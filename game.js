@@ -21269,7 +21269,7 @@ function combatAimElevation(shooter, target, canSee = false) {
 // Only real, nearby fire supplies reaction evidence. A short memory bridges
 // the gap between rounds; stopping, turning away or changing elevation lets
 // it expire. No per-paint decisions or combat random draws are involved.
-const ENEMY_SHOT_REACTIONS={noticeMs:180,holdMs:1800,shotAgeMs:650,legChoiceMs:2400};
+const ENEMY_SHOT_REACTIONS={noticeMs:2600,holdMs:1800,shotAgeMs:650,legChoiceMs:2400};
 const enemyShotClock={frame:-1,ms:0};
 function enemyShotReactionTime() {
   if(doTick&&combatStanceContext()&&enemyShotClock.frame!==frameCount) {
@@ -21294,7 +21294,9 @@ function rememberEnemyShotThreat(a,source,shot) {
   const changed=s.source!==source||s.zone!==shot.zone||s.remainingMs<=0;
   if(changed){s.observedMs=0;s.shots=0;s.action=null;}
   s.source=source;s.zone=shot.zone;s.lastShotId=shot.id;s.shots++;
-  s.remainingMs=ENEMY_SHOT_REACTIONS.holdMs;
+  // A single shot must survive the full reaction delay, then the normal hold.
+  // Further rounds refresh the hold without restarting the pending delay.
+  s.remainingMs=ENEMY_SHOT_REACTIONS.holdMs+Math.max(0,ENEMY_SHOT_REACTIONS.noticeMs-s.observedMs);
   return s;
 }
 function recordEnemyShotThreat(a,b) {
@@ -21336,6 +21338,8 @@ function updateEnemyShotReaction(a,target,canSee,distance,elapsedMs=deltaTime) {
   }
   if(!s||s.remainingMs<=0||!s.source||s.source.dead||s.source.hp<=0)return false;
   const ready=s.observedMs>=ENEMY_SHOT_REACTIONS.noticeMs;
+  // Keeping an existing low posture does not start a new evasive movement.
+  // A standing enemy must wait out the full delay before ducking.
   if(s.zone==='HEAD'&&(ready||actorStance(a)!=='STAND'||a.stance&&a.stance.to>0)) {
     s.action='DUCK';
     const wanted=actorStance(a)==='PRONE'||a.stance&&a.stance.to===2?'PRONE':'CROUCH';

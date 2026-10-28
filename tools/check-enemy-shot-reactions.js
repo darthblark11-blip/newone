@@ -48,18 +48,70 @@ function tick(n=1,zone=null,extraY=0){
   }
 }
 const reaction=()=>P("reactor.shotReaction?({zone:reactor.shotReaction.zone,action:reactor.shotReaction.action,remainingMs:reactor.shotReaction.remainingMs,observedMs:reactor.shotReaction.observedMs,shots:reactor.shotReaction.shots}):null");
+function advanceReaction(ms){
+  probe(`for(let left=${ms};left>0;){const step=Math.min(left,100);
+    frameCount++;deltaTime=step;updateEnemyShotReaction(reactor,player,true,180,step);
+    updateActorStance(reactor,step);updateBullets();left-=step;}`);
+}
 
 fresh();
 ok('enemy reactions use the shared public observation/update hooks',P("typeof recordEnemyShotThreat==='function'&&typeof updateEnemyShotReaction==='function'"));
 
+// One actual shot must remain hittable before the delay, and stay remembered
+// long enough to cause the existing response even after the shooter stops.
+for(const [zone,role,expected]of [['HEAD',1,'DUCK'],['BODY',1,null],
+  ['LEGS',0,'CROUCH'],['LEGS',1,'CROUCH'],['LEGS',2,'FIGHT']]){
+  fresh(role);input(zone,true,true,zone==='LEGS'?6:0);tick();input(zone,false,false);
+  ok(`${zone} role${role} observes a single real shot`,reaction()?.shots===1);
+  advanceReaction(2599);
+  ok(`${zone} role${role} cannot start an evasion before 2.6 seconds`,
+    P("reactor.shotReaction.observedMs===2599&&!reactor.shotReaction.action&&reactor.stance.to===0"));
+  if(zone==='HEAD')ok('a single aimed headshot lands before the enemy can duck',
+    P('reactor.hp<reactor.maxHp&&reactor.decals.some(d=>d.isHead)'));
+  advanceReaction(1);
+  ok(`${zone} role${role} finishes the delay at exactly 2.6 seconds`,
+    reaction().observedMs===2600&&reaction().action===expected);
+  ok(`${zone} role${role} retains the original 1.8 second hold after reacting`,reaction().remainingMs===1800);
+}
+
+fresh();input('HEAD');tick();input('HEAD',false,false);advanceReaction(1300);
+probe("isPaused=true;");advanceReaction(5000);
+ok('pause does not consume a pending shot delay',reaction().observedMs===1300);
+probe('isPaused=false;');advanceReaction(1299);
+ok('resuming still waits the remainder of the delay',!reaction().action);
+advanceReaction(1);
+ok('a paused single shot reacts only after 2.6 seconds of active time',reaction().action==='DUCK');
+
+fresh();input('HEAD');tick();input('HEAD',false,false);advanceReaction(1300);
+probe('player.fireTimer=0;');input('HEAD');tick();input('HEAD',false,false);
+const repeatedObserved=reaction().observedMs;
+ok('another shot at the same elevation does not restart the pending delay',repeatedObserved>1300);
+advanceReaction(2600-repeatedObserved);
+ok('repeated fire does not postpone the first response',reaction().action==='DUCK');
+
+fresh();input('HEAD');tick();input('HEAD',false,false);advanceReaction(2500);
+probe('player.fireTimer=0;');input('BODY');tick();input('BODY',false,false);
+ok('switching to body fire starts a fresh shared delay and clears the head duck',
+  reaction().zone==='BODY'&&reaction().observedMs===0&&!reaction().action);
+advanceReaction(2500);
+probe('player.fireTimer=0;');input('LEGS');tick();input('LEGS',false,false);
+ok('switching from body to leg fire also starts a fresh delay',
+  reaction().zone==='LEGS'&&reaction().observedMs===0&&!reaction().action);
+advanceReaction(2599);
+ok('the new leg threat cannot inherit the earlier shot delay',!reaction().action);
+advanceReaction(1);
+ok('the new leg threat reacts after its own full delay',reaction().action==='CROUCH');
+
 // The reported bug: a nearby shooter has already stopped walking. A high
 // incoming ray must remain harmless once that enemy ducks beneath it.
-fresh();tick(90,'HEAD');
+fresh();tick(180,'HEAD');
 ok('sustained real head-height fire makes a stationary enemy duck',P("actorStance(reactor)==='CROUCH'&&reactor.shotReaction?.action==='DUCK'"));
+const duckHeadContacts=P('reactor.decals.filter(d=>d.isHead).length');
 let safe=true;
 for(let i=0;i<180;i++){tick(1,'HEAD');safe&&=P("actorStance(reactor)!=='STAND'");}
 ok('the enemy does not stand up under a sustained stream of overhead head shots',safe);
-ok('native rounds keep passing overhead instead of manufacturing wound contacts',P("reactor.decals.filter(d=>d.isHead).length<8&&reactor.hp>0"));
+ok('native rounds keep passing overhead instead of manufacturing wound contacts',
+  P('reactor.decals.filter(d=>d.isHead).length')===duckHeadContacts&&P('reactor.hp>0'));
 input('HEAD',false,false);tick(180);
 ok('releasing fire eventually releases the temporary protective posture',P("actorStance(reactor)==='STAND'"));
 
@@ -81,7 +133,7 @@ ok('the reload grace still releases the duck after the aiming gesture ends',P("a
 fresh();probe("resetActorStance(reactor,'PRONE');");tick(150,'HEAD');
 ok('head fire preserves an already advantageous prone posture',P("actorStance(reactor)==='PRONE'"));
 
-fresh();tick(90,'HEAD');tick(180,'BODY');
+fresh();tick(180,'HEAD');tick(300,'BODY');
 ok('changing away from head shots retires the old high-shot duck hold',P("!reactor.shotReaction||reactor.shotReaction.zone!=='HEAD'||reactor.shotReaction.remainingMs<=0"));
 
 fresh();input('HEAD',true,false);tick(90);
@@ -142,7 +194,7 @@ ok('travel overlay freezes shot response timing and choice',JSON.stringify(react
 // Repeated low hits can be answered by a protective crouch or by accepting
 // the risk and continuing to fight. A missing safe cover dive falls back.
 for(const [role,expected]of [[0,'CROUCH'],[1,'CROUCH'],[2,'FIGHT']]){
-  fresh(role,'NORMAL',240,2);tick(90,'LEGS',6);
+  fresh(role,'NORMAL',240,2);tick(210,'LEGS',6);
   ok(`low fire role${role} chooses ${expected}`,P(`reactor.shotReaction?.action===${JSON.stringify(expected)}`));
   ok(`low fire role${role} remains a living fighter instead of a fake leg injury`,P('!reactor.legInjury&&reactor.hp>0'));
   if(expected==='CROUCH'){
@@ -153,10 +205,13 @@ for(const [role,expected]of [[0,'CROUCH'],[1,'CROUCH'],[2,'FIGHT']]){
 }
 
 fresh(0,'NORMAL',240,2);probe(`window.diveCover={x:140,y:122,w:80,h:100,isLowWall:true,hp:1000};
-  buildings=activeBuildings=[diveCover];invalidateColIndex();`);
+  buildings=activeBuildings=[diveCover];invalidateColIndex();
+  // Keep ordinary cover seeking from reaching shelter before this longer
+  // incoming-fire delay finishes; the native reactive dive still owns travel.
+  reactor._enemyCover={target:player,searchMs:10000,seenMs:1800,cycleMs:0};`);
 let sawDive=false,clearDive=true,diveDuration=0;
 const beforeDive=P('({x:reactor.x,y:reactor.y})');
-for(let i=0;i<75;i++){
+for(let i=0;i<225;i++){
   tick(1,'LEGS',6);
   if(P('enemyCoverDiveActive(reactor)')){
     sawDive=true;diveDuration=P('reactor.stance.durationMs');

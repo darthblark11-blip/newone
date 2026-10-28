@@ -205,15 +205,19 @@ positions; actors rise when combat ends or the target closes in.
 Incoming player/allied fire now supplies a separate response before ordinary
 stance roles and cover pop-up timing. A visible, aimed muzzle event or a real
 nearby projectile supplies evidence; merely selecting an aim button does not.
-The response takes 180 ms, with a 1.8 second memory refreshed by further shots
-to bridge ordinary reloads. Repeated HEAD fire makes hostile humanoids crouch.
+New incoming-fire reactions wait 2.6 seconds for every shot elevation. A single
+shot stays remembered through that delay, followed by the existing 1.8 second
+hold; further shots refresh the hold without restarting the delay. Changing
+the shooter or shot elevation starts a fresh delay. HEAD fire makes hostile humanoids crouch.
 An actor already below that plane keeps its useful crouch/prone posture rather
 than standing because it stopped moving or reached the next cover firing cycle.
 Changing elevation, firing elsewhere or ending the attack releases the hold.
 
 LEGS fire mixes three stable baseline responses: dive to usable nearby cover,
 crouch to move body damage into the low plane, or keep fighting. A blocked dive
-falls back to crouching. NPC cover dives use the original 420 ms animation,
+falls back to crouching. BODY fire still releases the old headshot hold without
+adding a new evasive action. Hit detection and damage remain immediate.
+NPC cover dives use the original 420 ms animation,
 65 ms unfolding and up to 270 units of travel, stopping at a safe sheltered
 landing. The full prone footprint is swept throughout, firing waits for landing,
 and the actor then joins crouched cover. The dive uses ordinary stance damage
