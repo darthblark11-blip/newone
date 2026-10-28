@@ -61,15 +61,15 @@ target();
 probe("window.gapRound=spawnBullet(-90,0,0,true,'LEGS',WEAPONS.PISTOL,player,40001);for(let i=0;i<80&&gapRound.active;i++){frameCount++;updateBullets();}");
 ok('a real low round passes through the air between the legs without damage or an injury',
  P('injuryTarget.hp===1000&&injuryTarget.decals.length===0&&!injuryTarget.legInjury'));
-ok('a missed low round retires at its exact13m floor contact',
- P('!gapRound.active&&Math.abs(Math.hypot(gapRound.x-gapRound.startX,gapRound.y-gapRound.startY)-260)<1e-6'));
-for(const distance of [240,300]){
+ok('a missed standing low round retires at its exact15m floor contact',
+ P('!gapRound.active&&Math.abs(Math.hypot(gapRound.x-gapRound.startX,gapRound.y-gapRound.startY)-300)<1e-6'));
+for(const distance of [280,340]){
  target();probe(`injuryTarget.x=${distance};window.farGeometry=humanLegHitGeometry(injuryTarget);
   window.farLeg=farGeometry.legs[0];window.farY=(farLeg.sy+farLeg.ky+farLeg.ay)/3;
   window.rangeRound=spawnBullet(0,farY,0,true,'LEGS',WEAPONS.PISTOL,player,40002);
   for(let i=0;i<80&&rangeRound.active;i++){frameCount++;updateBullets();}`);
- ok(`${distance}unit target is ${distance<260?'inside':'beyond'} the low round range`,
-  P(distance<260?'injuryTarget.hp===980':'injuryTarget.hp===1000&&!injuryTarget.legInjury'));
+ ok(`${distance}unit target is ${distance<300?'inside':'beyond'} the standing low round range`,
+  P(distance<300?'injuryTarget.hp===980':'injuryTarget.hp===1000&&!injuryTarget.legInjury'));
 }
 target();probe("injuryTarget.x=540;window.bodyRangeRound=spawnBullet(0,0,0,true,'BODY',WEAPONS.PISTOL,player,40003);for(let i=0;i<80&&bodyRangeRound.active;i++){frameCount++;updateBullets();}");
 ok('ordinary body rounds retain their greater range',P('injuryTarget.hp===980'));

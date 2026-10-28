@@ -1,5 +1,6 @@
 // Low firearm rounds sweep the actual paired leg silhouettes and finish at
-// 13 m. Head/body flight, nonhuman anatomy and stance promotions stay separate.
+// 15/20/26 m for standing/crouched/prone shooters. Head/body flight,
+// nonhuman anatomy and stance promotions stay separate.
 const assert=require('node:assert/strict');
 const {ctx,probe}=require('./harness');
 const P=s=>probe('('+s+')');
@@ -17,7 +18,7 @@ function stage(){
  window.inNM0SecretOverlay=false;buildGhost=null;townsData={};window.outpostForts={};
  buildings=activeBuildings=[];parkingCars=activeParkingCars=[];barrels=[];
  particles=[];bullets=[];corpses=[];enemiesList=[];invalidateColIndex();resetForestWildlife();resetShovelState();
- player=new Character(-2000,-2000,true);player.shield=0;
+ player=new Character(-2000,-2000,true);player.shield=0;resetActorStance(player);
  leftStick={active:false,dx:0,dy:0};rightStick={active:false,dx:0,dy:0,dist:0};
  viewLeft=viewTop=-10000;viewRight=viewBottom=10000;MAX_KILLS=100000;totalKills=0;
  setMeleeTool('NONE');frameCount++;`);
@@ -69,27 +70,65 @@ ok('machines keep their existing body footprint for low shots',P('stanceProjecti
 
 // Native flight clamps the last partial step. It still resolves target
 // contacts in that step before an empty round drops onto the floor.
+for(const [stance,range]of [['STAND',300],['CROUCH',400],['PRONE',520]])
 for(const heading of [0,.63,Math.PI/2,Math.PI,-Math.PI/2])for(const weapon of ['PISTOL','SMG','SHOTGUN','REVOLVER']){
  stage();
- probe(`window.round=spawnBullet(0,0,${heading},true,'LEGS',WEAPONS.${weapon},player);
+ probe(`resetActorStance(player,'${stance}');window.round=spawnBullet(0,0,${heading},true,'LEGS',WEAPONS.${weapon},player);
   for(let i=0;i<100&&round.active;i++){frameCount++;updateBullets();}`);
- ok(`${weapon}/${heading} a low round drops exactly at13m`,P('!round.active&&round.l===0&&Math.abs(Math.hypot(round.x,round.y)-260)<1e-7&&round.legShotTravel===260'));
- ok(`${weapon}/${heading} the floor gets one small paired dust contact`,P("particles.filter(p=>p.t==='DUST').length===2"));
+ ok(`${stance}/${weapon}/${heading} a low round drops at its launch-stance range`,P(`!round.active&&round.l===0&&Math.abs(Math.hypot(round.x,round.y)-${range})<1e-7&&round.legShotTravel===${range}`));
+ ok(`${stance}/${weapon}/${heading} the floor gets one small paired dust contact`,P("particles.filter(p=>p.t==='DUST').length===2"));
 }
-for(const speed of [17,44,300])for(const x of [267,280]){
+for(const [stance,range]of [['STAND',300],['CROUCH',400],['PRONE',520]])
+for(const speed of [17,44,700])for(const offset of [7,20]){
+ const x=range+offset;
  stage();
  probe(`window.target=new Character(${x},6,false,'NORMAL');target.hp=target.maxHp=100000;
   target.aimAngle=target.moveAngle=0;target.isNeutral=target.isFriendly=false;target.isMoving=false;resetActorStance(target);enemiesList=[target];
+  resetActorStance(player,'${stance}');
   window.round=spawnBullet(0,0,0,true,'LEGS',WEAPONS.PISTOL,player);
   round.vx=${speed};round.vy=0;
   for(let i=0;i<100&&round.active;i++){frameCount++;updateBullets();}`);
- ok(`speed${speed} / root${x} respects the final partial leg-shot segment`,P(x===267?'target.hp===99980':'target.hp===100000'));
+ ok(`${stance}/speed${speed}/root${x} respects the final partial leg-shot segment`,P(offset===7?'target.hp===99980':'target.hp===100000'));
 }
+// Airborne rounds own their launch range; stance transitions and death later
+// in flight cannot extend or shorten them, including reused pool records.
+for(const [stance,range]of [['STAND',300],['CROUCH',400],['PRONE',520]]){
+ stage();
+ probe(`resetActorStance(player,'${stance}');window.round=spawnBullet(0,0,0,true,'LEGS',WEAPONS.PISTOL,player);
+  frameCount++;updateBullets();resetActorStance(player,'${stance==='PRONE'?'STAND':'PRONE'}');
+  player.dead=true;player.hp=0;player.isFriendly=true;
+  for(let i=0;i<100&&round.active;i++){frameCount++;updateBullets();}`);
+ ok(`${stance} range stays frozen after the shooter changes stance and dies`,P(`round.legShotRange===${range}&&Math.abs(round.x-${range})<1e-7`));
+ probe(`player.dead=false;player.hp=100;resetActorStance(player,'CROUCH');round.init(0,0,0,true,'LEGS',WEAPONS.PISTOL,player);`);
+ ok(`${stance} reused bullet resamples its next shooter's crouch`,P('round.legShotRange===400&&round.legShotTravel===0&&!round.legShotAtFloor'));
+}
+stage();
+probe(`player.cover={active:true,kind:'LOW',blend:1,pop:0,bodyAngle:0,upper:{x:0,y:0}};
+ window.round=spawnBullet(0,0,0,true,'LEGS',WEAPONS.PISTOL,player);`);
+ok('effective crouched cover grants the crouched range without changing the raw stance',P("player.stance.value===0&&actorStance(player)==='CROUCH'&&round.legShotRange===400"));
+probe('player.cover.pop=1;round.init(0,0,0,true,\'LEGS\',WEAPONS.PISTOL,player);');
+ok('a standing pop from low cover uses standing range',P("actorStance(player)==='STAND'&&round.legShotRange===300"));
+probe("round.init(0,0,0,true,'LEGS',WEAPONS.PISTOL,null);");
+ok('rounds without an actor use the standing range',P('round.legShotRange===300'));
+
+// Reproduce the reported stalemate: a gunner can remain at his low-cover
+// firing spot and hit a prone player beyond the previous 13 m muzzle cap.
+stage();
+probe(`player.x=355;player.y=8;player.hp=player.maxHp=1000;resetActorStance(player,'PRONE');
+ window.coverGunner=new Character(0,0,false,'NORMAL');coverGunner.hp=coverGunner.maxHp=1000;
+ coverGunner.isFriendly=coverGunner.isNeutral=false;coverGunner.currentWeapon=WEAPONS.PISTOL;coverGunner.ammo=20;
+ coverGunner.isMoving=false;coverGunner.aimAngle=coverGunner.moveAngle=0;coverGunner.stanceAimZone='LEGS';resetActorStance(coverGunner);
+ coverGunner.cover={active:true,kind:'LOW',blend:1,pop:1,aiming:true,bodyAngle:0,upper:{x:0,y:0}};
+ window.coverBehind={x:-30,y:0,w:20,h:100,isLowWall:true,hp:1000};buildings=activeBuildings=[coverBehind];invalidateColIndex();
+ enemiesList=[coverGunner];coverGunner.fire(0);window.coverRound=bullets[0];
+ for(let i=0;i<100&&coverRound&&coverRound.active;i++){frameCount++;updateBullets();}`);
+ok('a covered gunner no longer leaves a prone player invulnerable beyond the old cap',P('coverRound&&player.hp<1000&&Math.hypot(coverRound.x-coverRound.startX,coverRound.y-coverRound.startY)>260'));
+ok('the gunner hits without abandoning his covered firing location',P('coverGunner.x===0&&coverGunner.y===0&&coverGunner.cover.active'));
 stage();
 probe(`window.round=spawnBullet(0,0,0,true,'LEGS',WEAPONS.PISTOL,player);doTick=false;
  for(let i=0;i<30;i++)updateBullets();`);
 ok('paused low shots keep their range and floor state frozen',P('round.x===0&&round.legShotTravel===0&&!round.legShotAtFloor&&round.active'));
-probe(`doTick=true;round.legShotTravel=260;round.legShotAtFloor=true;
+probe(`doTick=true;round.legShotTravel=300;round.legShotAtFloor=true;
  round.init(0,0,0,true,'BODY',WEAPONS.PISTOL);`);
 ok('pooled reuse clears low-shot travel and expiry state',P('round.legShotRange===0&&round.legShotTravel===0&&!round.legShotAtFloor'));
 probe("round.init(0,0,0,true,'HEAD',WEAPONS.PISTOL);");
@@ -100,4 +139,4 @@ for(const weapon of ['BOW','TASER','ROCKET_LAUNCHER']){
 }
 probe("round.init(0,0,0,true,'LEGS','ALIEN_LASER');");
 ok('energy projectiles keep their existing range lifecycle',P('round.legShotRange===0'));
-console.log(`${checks}/${checks} thin leg collision, physical side, stance isolation,13m range, floor, pause and pooling checks passed.`);
+console.log(`${checks}/${checks} thin leg collision, launch-stance range, covered counterfire, floor, pause and pooling checks passed.`);

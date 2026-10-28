@@ -70,7 +70,7 @@ function stanceFacingAngle(a) {
   const angle=Number.isFinite(a&&a.aimAngle)?a.aimAngle:0;
   if(a&&a.legInjury&&Number.isFinite(a.legInjury.heading))return a.legInjury.heading;
   if(coverRenderActive(a))return coverFacingAngle(a);
-  return a&&a.isPlayer&&a.stance&&(actorStancePose(a).prone>0||proneDivePoseActive(a))&&Number.isFinite(a.stance.proneHeading)
+  return a&&(a.isPlayer||a.stance&&a.stance.dive&&a.stance.dive.enemy)&&a.stance&&(actorStancePose(a).prone>0||proneDivePoseActive(a))&&Number.isFinite(a.stance.proneHeading)
     ?a.stance.proneHeading:angle;
 }
 function proneAimInput(a) {
@@ -79,10 +79,10 @@ function proneAimInput(a) {
     !!(a.bowDrawState&&a.bowDrawState.phase==='DRAW')||leftHandAction(a)===2);
 }
 function proneDivePoseActive(a) {
-  return !!a&&a.isPlayer&&!!(a.stance&&a.stance.dive)&&a.stance.to===2&&
+  return !!a&&!!(a.stance&&a.stance.dive)&&(a.isPlayer||a.stance.dive.enemy)&&a.stance.to===2&&
     a.stance.elapsedMs<a.stance.durationMs&&!actorStanceSuppressed(a);
 }
-function proneDiveActive(a) { return proneDivePoseActive(a)&&combatStanceContext(); }
+function proneDiveActive(a) { return !!a&&a.isPlayer&&proneDivePoseActive(a)&&combatStanceContext(); }
 function proneDiveArc(a) {
   if(!proneDivePoseActive(a))return 0;
   const t=a.stance.elapsedMs/a.stance.durationMs;
@@ -175,6 +175,7 @@ function beginLegInjury(a,b,legIndex) {
   resetActorStance(a);
   if(a._enemyCover)a._enemyCover.goal=null;
   a._coverApproach=false;
+  a.shotReaction=null;
   a.legInjury=s;a._legHitGeometry=null;a.isMoving=false;a.gait=0;a.meleeTimer=0;a.meleeQueued=false;
   a.throwAnimTimer=0;a.chargeTimer=0;a.orbChargeTimer=0;a.stanceAIOwned=false;
   a.state='CHASE';a.fireTimer=Math.max(a.fireTimer||0,8);
@@ -210,11 +211,11 @@ function finishLegInjury(a) {
   resetActorStance(a);a.isMoving=false;a.gait=0;
   if(a.hp>0&&!a.dead&&!(a.stunTimer>0)&&!a.knockedOut&&!boxingActive(a))a.state='CHASE';
 }
-function updateLegInjuryTimers(a,s,dt) {
+function updateLegInjuryTimers(a,s,dt,agePopup=true) {
   s.tickRemainderMs+=dt;
   const ticks=Math.floor((s.tickRemainderMs+1e-7)/(1000/60));
   s.tickRemainderMs-=ticks*(1000/60);
-  if(a.stanceDamage)a.stanceDamage.leftMs=Math.max(0,a.stanceDamage.leftMs-dt);
+  if(agePopup&&a.stanceDamage)a.stanceDamage.leftMs=Math.max(0,a.stanceDamage.leftMs-dt);
   if(!ticks)return;
   a.fireTimer=Math.max(0,(a.fireTimer||0)-ticks);a.muzzleFlash=Math.max(0,(a.muzzleFlash||0)-ticks);
   a.weaponKick=Math.max(0,(a.weaponKick||0)-ticks*stanceRecoilRecovery(a));
@@ -320,7 +321,7 @@ function moveProneDive(a) {
   const t=Math.min(1,s.elapsedMs/s.durationMs),brake=Math.max(0,(t-.6)/.4);
   // Carry forward momentum through the level flight, then smoothly brake.
   const travel=t<=.6?t/.8:(.6+.4*(brake-brake**3+.5*brake**4))/.8;
-  const target=PRONE_DIVE_DISTANCE*travel,distance=target-d.moved;
+  const target=(Number.isFinite(d.distance)?d.distance:PRONE_DIVE_DISTANCE)*travel,distance=target-d.moved;
   const steps=Math.max(1,Math.ceil(distance/4)),step=distance/steps;
   let traveled=0;
   for(let i=0;i<steps;i++) {
@@ -343,6 +344,100 @@ function emitProneLandingDust(a) {
       'PRONE_DUST',dx*(1.3+i%3*.35)+co*.4,dy*(1.3+i%3*.35)+si*.4,a);
     p.fxSeed=i+1;particles.push(p);
   }
+}
+// NPC reactions keep the original short dive, independently of the player's
+// longer tuned animation. Only shortlist nearby covered landings; a dive is
+// never a path search or permission to cross a wall.
+const ENEMY_COVER_DIVE_MS=420,ENEMY_COVER_DIVE_DISTANCE=270;
+const _enemyDiveIndex=newCrowdSolidIndex(2),_enemyDiveSolids=[],_enemyDiveCars=[];
+function enemyCoverDiveActive(a) {
+  return !!(a&&a.stance&&a.stance.dive&&a.stance.dive.enemy&&!a.stance.dive.landed);
+}
+function enemyCoverDiveEligible(a) {
+  return !!a&&!a.isFriendly&&!a.isPlayer&&!a.isNeutral&&a.hp>0&&!a.dead&&
+    enemyCoverEligible(a)&&!boxingActive(a)&&!streetThugCombatProtected(a)&&
+    !['DAD','SIA'].includes(a.eType)&&!enemyCoverDiveActive(a);
+}
+function enemyCoverDivePathClear(a,x,y,angle) {
+  const dx=x-a.x,dy=y-a.y,n=Math.max(1,Math.ceil(Math.hypot(dx,dy)/4));
+  for(let i=0;i<=n;i++)if(!stanceProneSpotClear(a,a.x+dx*i/n,a.y+dy*i/n,angle))return false;
+  return true;
+}
+function enemyCoverDiveGoal(a,threat) {
+  const reach=ENEMY_COVER_DIVE_DISTANCE;
+  const solids=activeBuildings.length<=24?activeBuildings:crowdSolidCandidates(_enemyDiveIndex,activeBuildings,
+    a.x-reach,a.y-reach,a.x+reach,a.y+reach,_enemyDiveSolids,false);
+  const cars=activeParkingCars.length<=8?activeParkingCars:crowdNearbyCars(a.x,a.y,reach,_enemyDiveCars);
+  const goals=a._enemyDiveGoals||(a._enemyDiveGoals=[]);goals.length=0;
+  const consider=(solid,kind,r,nx,ny,tangent)=>{
+    const tx=-ny,ty=nx,plane=nx<0?-r.x0:nx>0?r.x1:ny<0?-r.y0:r.y1;
+    const low=nx<0?-r.y1:nx>0?r.y0:ny<0?r.x0:-r.x1;
+    const high=nx<0?-r.y0:nx>0?r.y1:ny<0?r.x1:-r.x0;
+    if(high-low<32)return;
+    tangent=Math.max(low+16,Math.min(high-16,tangent));
+    const x=nx*(plane+46)+tx*tangent,y=ny*(plane+46)+ty*tangent;
+    const dx=x-a.x,dy=y-a.y,d2=dx*dx+dy*dy;
+    if(d2<60*60||d2>reach*reach||(threat.x-x)*nx+(threat.y-y)*ny>=-12)return;
+    if(stanceSegmentBoxTime(threat.x,threat.y,x-threat.x,y-threat.y,r.x0,r.y0,r.x1,r.y1)===Infinity)return;
+    const angle=Math.atan2(dy,dx);
+    if(!stanceProneSpotClear(a,x,y,angle))return;
+    const goal={x,y,angle,distance:Math.sqrt(d2),solid,kind,score:d2};
+    goals.push(goal);goals.sort((u,v)=>u.score-v.score);if(goals.length>5)goals.length=5;
+  };
+  for(let i=0,count=Math.min(32,solids.length)+Math.min(8,cars.length);i<count;i++) {
+    const b=i<Math.min(32,solids.length)?solids[i]:cars[i-Math.min(32,solids.length)],kind=coverSolidKind(b);
+    if(!kind)continue;
+    for(const r of coverSolidRects(b))for(let face=0;face<4;face++) {
+      const nx=face===0?-1:face===1?1:0,ny=face===2?-1:face===3?1:0,tx=-ny,ty=nx;
+      const along=a.x*tx+a.y*ty;
+      consider(b,kind,r,nx,ny,along);consider(b,kind,r,nx,ny,along-160);consider(b,kind,r,nx,ny,along+160);
+    }
+  }
+  for(const goal of goals)if(enemyCoverDivePathClear(a,goal.x,goal.y,goal.angle))return goal;
+  return null;
+}
+function beginEnemyCoverDive(a,threat) {
+  if(!enemyCoverDiveEligible(a)||!combatStanceContext()||!doTick||!threat||threat.dead||!(threat.hp>0))return false;
+  const goal=enemyCoverDiveGoal(a,threat);if(!goal)return false;
+  const previous=a.stance?Math.max(0,Math.min(1,a.stance.value)):0;
+  resetActorStance(a);if(a._enemyCover)a._enemyCover.goal=null;a._coverApproach=false;
+  const s=a.stance;s.from=s.value=previous;s.to=2;s.elapsedMs=0;s.durationMs=ENEMY_COVER_DIVE_MS;
+  s.proneHeading=goal.angle;s.proneAimBlend=0;
+  s.dive={enemy:true,angle:goal.angle,distance:goal.distance,moved:0,landed:false,tickRemainderMs:0,
+    landingX:goal.x,landingY:goal.y};
+  a.aimAngle=a.moveAngle=a.lastMoveAngle=goal.angle;a._stanceClearAngle=goal.angle;
+  a.isMoving=true;a.gait=0;a.meleeTimer=0;a.meleeQueued=false;a.throwAnimTimer=0;
+  a.stanceAIOwned=true;a.fireTimer=Math.max(a.fireTimer||0,8);
+  return true;
+}
+function updateEnemyCoverDive(a,elapsedMs=deltaTime) {
+  if(!enemyCoverDiveActive(a))return false;
+  if(a.legInjury||actorStanceSuppressed(a)||a.isFriendly||a.isNeutral){
+    if(!a.legInjury)resetActorStance(a);return false;
+  }
+  if(!doTick||!combatStanceContext())return true;
+  const dt=Math.min(100,Math.max(0,Number(elapsedMs)||0)),s=a.stance,d=s.dive,x=a.x,y=a.y;
+  updateLegInjuryTimers(a,d,dt,false);
+  updateActorStance(a,dt);moveProneDive(a);
+  // Native movement is swept again every tick: newly placed/destroyed cover
+  // cannot teleport the diver to an endpoint that was safe at launch only.
+  a._coverMoveX=a._coverMoveY=0;
+  if(s.elapsedMs>=s.durationMs){
+    a.isMoving=false;a.gait=0;s.proneAimBlend=1;
+    // A tactical dive ends at shelter, then joins ordinary crouched cover.
+    // Keeping an AI gunner prone forever would pin its own muzzle below the
+    // wall. The reaction's hold still protects this rise from idle stand-up.
+    const reaction=a.shotReaction;
+    if(reaction&&reaction.action==='DIVE'){
+      s.cooldownMs=0;
+      if(requestActorStance(a,'CROUCH')){
+        reaction.action='CROUCH';reaction.remainingMs=Math.max(reaction.remainingMs||0,1200);
+        a.stanceAIOwned=true;
+      }
+    }
+  }
+  rememberFigureMotion(a,a.x-x,a.y-y);
+  return true;
 }
 function updateActorStance(a,elapsedMs=deltaTime) {
   if(!a||!a.stance)return;
@@ -7661,6 +7756,8 @@ function resetRunState() {
   headshotCounter = 0; bodyOverkillCounter = 0; lightningCounter = 0;
   explosionDeathCounter = 0;
   legInjurySerial = 0;
+  enemyShotClock.frame=-1;enemyShotClock.ms=0;
+  clearCrowdSolidIndex(_enemyDiveIndex);_enemyDiveSolids.length=_enemyDiveCars.length=0;
   streakMsgTimer = 0; streakMsgText = ''; objectiveTimer = 0; splatterIdx = 0;
   started = false; isDead = false; isWin = false; isPaused = false;
   selectingDifficulty = false; pauseMenuState = 'MAIN'; inUpgradeMenu = false;
@@ -21169,6 +21266,94 @@ function combatAimElevation(shooter, target, canSee = false) {
   }
   return shooter.stanceAimZone || baseline;
 }
+// Only real, nearby fire supplies reaction evidence. A short memory bridges
+// the gap between rounds; stopping, turning away or changing elevation lets
+// it expire. No per-paint decisions or combat random draws are involved.
+const ENEMY_SHOT_REACTIONS={noticeMs:180,holdMs:1800,shotAgeMs:650,legChoiceMs:2400};
+const enemyShotClock={frame:-1,ms:0};
+function enemyShotReactionTime() {
+  if(doTick&&combatStanceContext()&&enemyShotClock.frame!==frameCount) {
+    enemyShotClock.frame=frameCount;enemyShotClock.ms+=Math.min(100,Math.max(0,Number(deltaTime)||0));
+  }
+  return enemyShotClock.ms;
+}
+function enemyShotReactionEligible(a) {
+  return !!a&&!a.isPlayer&&!a.isFriendly&&!a.isNeutral&&a.hp>0&&!a.dead&&
+    actorCanUseStances(a)&&!actorStanceSuppressed(a)&&!a.legInjury&&!enemyCoverDiveActive(a)&&
+    !a.isUnarmed&&!a.isCoward&&!a.isNM0Scientist&&!isOccultActor(a)&&
+    !['DAD','SIA'].includes(a.eType)&&!streetThugCombatProtected(a);
+}
+function rememberCombatShot(a,id,zone,angle,x,y) {
+  if(!a||!doTick||!combatStanceContext()||!a.isPlayer&&!a.isFriendly)return;
+  const shot=a.lastCombatShot||(a.lastCombatShot={});
+  Object.assign(shot,{id,zone,angle,x,y,atMs:enemyShotReactionTime(),range:legShotRangeForWeapon(zone,a.currentWeapon,a)||800});
+}
+function rememberEnemyShotThreat(a,source,shot) {
+  const s=a.shotReaction||(a.shotReaction={remainingMs:0,observedMs:0,shots:0,nextLegChoiceMs:0,frame:-1});
+  if(s.source===source&&s.lastShotId>=shot.id)return s;
+  const changed=s.source!==source||s.zone!==shot.zone||s.remainingMs<=0;
+  if(changed){s.observedMs=0;s.shots=0;s.action=null;}
+  s.source=source;s.zone=shot.zone;s.lastShotId=shot.id;s.shots++;
+  s.remainingMs=ENEMY_SHOT_REACTIONS.holdMs;
+  return s;
+}
+function recordEnemyShotThreat(a,b) {
+  if(!doTick||!combatStanceContext()||!b||!b.isP||!b.shooter||
+      !enemyShotReactionEligible(a)||!shovelActorsVisible(a,b.shooter))return false;
+  if(forestShotCircleTime(b,a.x,a.y,28)===Infinity)return false;
+  rememberEnemyShotThreat(a,b.shooter,{id:b.shotId,zone:b.tH});return true;
+}
+function enemyShotReactionHoldsLow(a) {
+  const s=a&&a.shotReaction;
+  return !!s&&s.remainingMs>0&&(s.action==='DUCK'||s.action==='CROUCH')&&
+    !!s.source&&!s.source.dead&&s.source.hp>0&&enemyShotReactionEligible(a);
+}
+function requestEnemyShotCrouch(a,wanted='CROUCH') {
+  // Already sheltered by a low wall, hold the current duck instead of
+  // cancelling that cover contact to request the same effective height.
+  if(wanted==='CROUCH'&&a.cover&&a.cover.active&&actorStance(a)==='CROUCH')return;
+  requestActorStance(a,wanted);
+}
+function updateEnemyShotReaction(a,target,canSee,distance,elapsedMs=deltaTime) {
+  if(!a)return false;
+  if(!doTick||!combatStanceContext())return enemyShotReactionHoldsLow(a);
+  if(!enemyShotReactionEligible(a)){a.shotReaction=null;return false;}
+  const now=enemyShotReactionTime(),dt=Math.min(100,Math.max(0,Number(elapsedMs)||0));
+  let s=a.shotReaction;
+  if(s&&s.frame!==frameCount){s.frame=frameCount;s.remainingMs=Math.max(0,s.remainingMs-dt);s.observedMs+=dt;}
+  // An observed muzzle flash can warn before its round arrives. Direction,
+  // launch range and actual cover still limit which actors can notice it.
+  const shot=target&&target.lastCombatShot;
+  if(target&&!target.dead&&target.hp>0&&shot&&now-shot.atMs<=ENEMY_SHOT_REACTIONS.shotAgeMs&&
+      (!s||s.source!==target||s.lastShotId!==shot.id)&&shovelActorsVisible(a,target)) {
+    const dx=a.x-shot.x,dy=a.y-shot.y,co=Math.cos(shot.angle),si=Math.sin(shot.angle);
+    const along=dx*co+dy*si,across=Math.abs(-dx*si+dy*co);
+    if(along>=-28&&along<=shot.range+28&&across<=24+Math.max(0,along)*.035&&
+        (canSee||!!s&&s.source===target&&s.remainingMs>0)&&
+        coverLineClear(shot.x,shot.y,a.x,a.y,shot.zone,target,null)) {
+      s=rememberEnemyShotThreat(a,target,shot);s.frame=frameCount;
+    }
+  }
+  if(!s||s.remainingMs<=0||!s.source||s.source.dead||s.source.hp<=0)return false;
+  const ready=s.observedMs>=ENEMY_SHOT_REACTIONS.noticeMs;
+  if(s.zone==='HEAD'&&(ready||actorStance(a)!=='STAND'||a.stance&&a.stance.to>0)) {
+    s.action='DUCK';
+    const wanted=actorStance(a)==='PRONE'||a.stance&&a.stance.to===2?'PRONE':'CROUCH';
+    requestEnemyShotCrouch(a,wanted);a.stanceAIOwned=true;return true;
+  }
+  if(s.zone==='LEGS'&&ready) {
+    if(!s.action&&now>=s.nextLegChoiceMs) {
+      const role=Math.abs(Math.floor(a.aiOffset||0))%3;
+      s.action=role===0?'DIVE':role===1?'CROUCH':'FIGHT';
+      s.nextLegChoiceMs=now+ENEMY_SHOT_REACTIONS.legChoiceMs;
+      if(s.action==='DIVE'&&!beginEnemyCoverDive(a,s.source))s.action='CROUCH';
+    }
+    if(s.action==='CROUCH'){requestEnemyShotCrouch(a);a.stanceAIOwned=true;}
+    return !!s.action;
+  }
+  return false;
+}
+
 // Gunners share the player's contact/peek solver. Only choosing a nearby
 // place to approach is AI work; wall contact never becomes a movement lock.
 const ENEMY_COVER_WEAPONS=new Set(Object.values(WEAPONS)),_enemyCoverCars=[];
@@ -21191,6 +21376,11 @@ function enemyCoverGoal(a,threatX,threatY,state) {
     const span=Math.max(min+inset,Math.min(max-inset,tangent));
     const x=nx*(plane+17)+tx*span,y=ny*(plane+17)+ty*span;
     if((threatX-x)*nx+(threatY-y)*ny>=-12)return;
+    if(a.stanceAimZone==='LEGS') {
+      const range=legShotRangeForWeapon('LEGS',a.currentWeapon,a);
+      const fireRange=kind==='LOW'&&range?LEG_SHOT_RANGES.STAND:range;
+      if(fireRange&&Math.hypot(threatX-x,threatY-y)>fireRange+70)return;
+    }
     const dx=x-a.x,dy=y-a.y,d2=dx*dx+dy*dy;
     if(d2>230*230||a.checkCol(x,y))return;
     const goal={solid,kind,x,y,nx,ny,tx,ty,plane,edgeMin:min,edgeMax:max,rectIndex,
@@ -21280,15 +21470,22 @@ function updateEnemyCoverAI(a,target,canSee,distance,elapsedMs=deltaTime) {
     return true;
   }
   state.cycleMs+=dt;
-  const aiming=state.cycleMs%1500<560&&a.reloadTimer<=0;
+  const aiming=state.cycleMs%1500<560&&a.reloadTimer<=0&&!enemyShotReactionHoldsLow(a);
   a.isMoving=false;a.gait+=(0-a.gait)*GAIT_EASE;a._coverApproach=false;
   updateActorCover(a,dt,0,0,aiming);
   if(!a.cover?.active){state.goal=null;return false;}
-  if(aiming&&coverFireAllowed(a)&&a.fireTimer<=0&&a.reloadTimer<=0&&a.ammo>0) {
+  if(aiming&&a.fireTimer<=0&&a.reloadTimer<=0&&a.ammo>0) {
     const upper=coverUpperOffset(a);
     const zone=combatAimElevation(a,target,true);
+    const range=legShotRangeForWeapon(zone,a.currentWeapon,a);
+    if(range) {
+      const muzzle=aimLaserMuzzle(a),reach=Math.hypot(target.x-muzzle.x,target.y-muzzle.y);
+      // Do not stay on a firing cycle that cannot reach a low target. The
+      // normal chase can approach or find a closer piece of cover.
+      if(reach>range+40){releaseActorCover(a,true);state.goal=null;state.searchMs=900;return false;}
+    }
     const point=typeof coverActorHitCenter==='function'?coverActorHitCenter(target,zone):target;
-    if(coverLineClear(a.x+upper.x,a.y+upper.y,point.x,point.y,zone,a,target)) {
+    if(coverFireAllowed(a)&&coverLineClear(a.x+upper.x,a.y+upper.y,point.x,point.y,zone,a,target)) {
       state.seenMs=1800;state.lastX=target.x;state.lastY=target.y;
       a.aimAngle=Math.atan2(point.y-a.y,point.x-a.x);
       updateActorCover(a,0,0,0,true);
@@ -21300,6 +21497,7 @@ function updateEnemyCoverAI(a,target,canSee,distance,elapsedMs=deltaTime) {
 }
 
 function updateCombatStanceAI(actor, target, canSee, distance) {
+  if(updateEnemyShotReaction(actor,target,canSee,distance))return;
   if(actor&&(actor.cover&&actor.cover.active||actor._enemyCover&&actor._enemyCover.goal))return;
   if (!actor || actor.legInjury || actor.isPlayer || !actorCanUseStances(actor)) return;
   const combat = !!target && target.hp > 0 && !target.dead && canSee &&
@@ -22607,6 +22805,7 @@ this.skeletonTimer = 0;
     if(updateLegInjuryActor(this,typeof deltaTime==='number'?deltaTime:1000/60)){
       shovelUpdateActor(this,typeof deltaTime==='number'?deltaTime:1000/60);return;
     }
+    if(updateEnemyCoverDive(this,typeof deltaTime==='number'?deltaTime:1000/60))return;
     updateActorStance(this, typeof deltaTime === 'number' ? deltaTime : 1000 / 60);
     shovelUpdateActor(this,typeof deltaTime==='number'?deltaTime:1000/60);
     if(this.shovelFallFatal)return;
@@ -23044,6 +23243,7 @@ if (this.eType === "COW") {
     let inFOV = true;
     combatAimElevation(this, trg, canSee);
     updateCombatStanceAI(this, trg, canSee, dToP);
+    if(enemyCoverDiveActive(this))return;
 
     if (ninjaSuitUnlocked && this.state === "PATROL" && !this.isFriendly) {
         if (abs((iA - this.aimAngle + PI * 3) % TWO_PI - PI) > PI / 2) inFOV = false; 
@@ -23437,6 +23637,7 @@ if (this.eType === "COW") {
 
 
         fire(sA, bowShot = null) {
+    if(enemyCoverDiveActive(this))return false;
     const stanceAimBefore = this.aimAngle;
     constrainStanceFacing(this);
     if (actorStancePose(this).prone > 0) sA += this.aimAngle - stanceAimBefore;
@@ -23473,6 +23674,7 @@ if (this.eType === "COW") {
     let tX = this.x + cos(this.aimAngle) * (bLX + bob) - sin(this.aimAngle) * bLY, tY = this.y + sin(this.aimAngle) * (bLX + bob) + cos(this.aimAngle) * bLY;
     const stanceMuzzle = stanceMuzzleWorld(this, tX, tY);
     tX = stanceMuzzle.x; tY = stanceMuzzle.y;
+    rememberCombatShot(this,huntShotId,aH,sA,tX,tY);
     if (this.currentWeapon !== WEAPONS.BOW && typeof notifyForestWildlifeThreat === 'function')
         notifyForestWildlifeThreat(tX,tY,this.currentWeapon === WEAPONS.TASER ? 100 : 560);
     
@@ -26424,7 +26626,7 @@ function tracePlayerAimLaser(actor,index=0,maxDistance=800) {
     const results=actor._aimLaserResults||(actor._aimLaserResults=[{},{}]),out=results[slot];
     const muzzle=aimLaserMuzzle(actor,slot),zone=actor.isPlayer?playerAimTarget():actor.stanceAimZone||'BODY';
     const angle=actor.aimAngle||0,co=Math.cos(angle),si=Math.sin(angle),w=actor.currentWeapon;
-    const lowRange=legShotRangeForWeapon(zone,w);
+    const lowRange=legShotRangeForWeapon(zone,w,actor);
     let reach=Math.max(0,Number.isFinite(maxDistance)?maxDistance:800),floor=false;
     if(lowRange&&lowRange<=reach){reach=lowRange;floor=true;}
     if(w===WEAPONS.BOW) {
@@ -26477,7 +26679,7 @@ function tracePlayerAimLaser(actor,index=0,maxDistance=800) {
     return out;
 }
 // Both painters call this inside their gun frame. Undo its known transforms
-// numerically so world hits and the 13 m floor remain exact on raised ground,
+// numerically so world hits and the stance-based floor remain exact on raised ground,
 // in cover, and with the smaller crouched/prone firearm mount.
 function drawPlayerAimLaser(g,actor,index=0,bob=0,mount=null) {
     const hit=tracePlayerAimLaser(actor,index),angle=actor.aimAngle||0,co=Math.cos(angle),si=Math.sin(angle);
@@ -26623,6 +26825,7 @@ function updateBullets() {
 
         for (let t of localTargets) {
           if (!t || t.hp <= 0 || t.dead) continue;
+          recordEnemyShotThreat(t,b);
           // The bucket was built from this exact target list above.
           
           if (t.eType === "COW" && b.shooter && !b.shooter.isPlayer) continue;
@@ -27531,10 +27734,11 @@ class Citizen {
 
 
 
-const LEG_SHOT_RANGE=260; // 13 m at the world's existing 20 units per metre.
-function legShotRangeForWeapon(zone,weapon) {
-  return zone==='LEGS'&&weapon!==WEAPONS.BOW&&weapon!==WEAPONS.TASER&&weapon!==WEAPONS.ROCKET_LAUNCHER&&
-    weapon!=='ALIEN_LASER'&&weapon!=='RED_LASER'&&weapon!=='PINK_LASER'&&weapon!=='ORANGE_BEAM'?LEG_SHOT_RANGE:0;
+const LEG_SHOT_RANGES=Object.freeze({STAND:300,CROUCH:400,PRONE:520}); // 15/20/26 m, at 20 units per metre.
+function legShotRangeForWeapon(zone,weapon,shooter=null) {
+  if(zone!=='LEGS'||weapon===WEAPONS.BOW||weapon===WEAPONS.TASER||weapon===WEAPONS.ROCKET_LAUNCHER||
+    weapon==='ALIEN_LASER'||weapon==='RED_LASER'||weapon==='PINK_LASER'||weapon==='ORANGE_BEAM')return 0;
+  return LEG_SHOT_RANGES[actorStance(shooter)];
 }
 class Bullet {
   constructor() { this.active = false; }
@@ -27561,7 +27765,9 @@ class Bullet {
     this.arrowPower = 1; this.arrowDud = false; this.arrowSpeed = 28;
     this.arrowRange = 2520; this.arrowTravel = 0;
     this.isAlienLaser = (w === "ALIEN_LASER"); this.isRedLaser = (w === "RED_LASER"); this.isPinkLaser = (w === "PINK_LASER"); this.isOrangeBeam = (w === "ORANGE_BEAM"); this.isRocket = (w === WEAPONS.ROCKET_LAUNCHER); this.isTaser = (w === WEAPONS.TASER);
-    this.legShotRange=legShotRangeForWeapon(tH,w);
+    // Snapshot the effective shooter stance, including crouched cover. A rise,
+    // death or allegiance change after launch cannot shorten an airborne round.
+    this.legShotRange=legShotRangeForWeapon(tH,w,shooter);
     this.legShotTravel=0;this.legShotAtFloor=false;
     
     // NEW TASER VARIABLES
@@ -44554,7 +44760,7 @@ function proneRollPose(c) {
   const p=actorStancePose(c),heading=stanceFacingAngle(c);
   const delta=Math.atan2(Math.sin((c.aimAngle||0)-heading),Math.cos((c.aimAngle||0)-heading));
   const injured=c.legInjury&&legInjuryPose(c);
-  const blend=injured&&injured.prone>0&&injured.phase!=='FALL'?1:
+  const blend=(injured&&injured.prone>0&&injured.phase!=='FALL'||c.stance&&c.stance.dive&&c.stance.dive.enemy&&c.stance.dive.landed)?1:
     c.isPlayer&&c.stance?Math.max(0,Math.min(1,c.stance.proneAimBlend||0)):0;
   const amount=(p.prone||0)*blend,angle=Math.abs(delta),ease=t=>{t=Math.max(0,Math.min(1,t));return t*t*(3-2*t);};
   const lateral=Math.sin(delta),side=Math.abs(lateral)*amount,back=ease((angle-Math.PI*.5)/(Math.PI*.5))*amount;

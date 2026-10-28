@@ -54,14 +54,20 @@ for(const [incoming,stance,hit]of [['HEAD','STAND',true],['HEAD','CROUCH',false]
 }
 for(const offset of [0,-6,6,16]){
  stage('LEGS');target('STAND',140,8+offset);const guide=trace(),hit=Math.abs(offset)===6;
- ok(`standing low offset${offset} honors the two thin legs and their empty gap`,hit?guide.x<170:near(guide.distance,260));
+ ok(`standing low offset${offset} honors the two thin legs and their empty gap`,hit?guide.x<170:near(guide.distance,300));
  const contact=actualContact();ok(`standing low offset${offset} matches native hit/floor contact`,near(guide.x,contact.x)&&near(guide.y,contact.y));
 }
-for(const angle of [0,.63,Math.PI/2,-Math.PI/2,Math.PI]){
- stage('LEGS','STAND','PISTOL',angle);const guide=trace(),muzzle=P('aimLaserMuzzle(player,0)');
- ok(`low floor ${angle} is exactly13m beyond the physical muzzle`,near(Math.hypot(guide.x-muzzle.x,guide.y-muzzle.y),260));
- const contact=actualContact();ok(`low floor ${angle} matches the round's final partial step`,near(guide.x,contact.x)&&near(guide.y,contact.y));
+for(const [stance,range]of [['STAND',300],['CROUCH',400],['PRONE',520]])for(const angle of [0,.63,Math.PI/2,-Math.PI/2,Math.PI]){
+ stage('LEGS',stance,'PISTOL',angle);const guide=trace(),muzzle=P('aimLaserMuzzle(player,0)');
+ ok(`${stance} low floor ${angle} uses its shooter stance beyond the physical muzzle`,near(Math.hypot(guide.x-muzzle.x,guide.y-muzzle.y),range));
+ const contact=actualContact();ok(`${stance} low floor ${angle} matches the round's final partial step`,near(guide.x,contact.x)&&near(guide.y,contact.y));
 }
+stage('LEGS');const standingGuide=trace();
+probe("window.airborneRangeRound=spawnBullet(laserGuide.startX,laserGuide.startY,0,true,'LEGS',WEAPONS.PISTOL,player);resetActorStance(player,'PRONE');player.stance.proneAimBlend=1;");
+ok('a stance change updates the next-shot laser without extending an airborne round',near(standingGuide.distance,300)&&near(trace().distance,520)&&P('airborneRangeRound.legShotRange===300'));
+stage('LEGS');probe("player.cover={active:true,kind:'LOW',blend:1,pop:0,bodyAngle:0,upper:{x:0,y:0}};");
+ok('the laser uses the same effective crouched cover range as a launched low round',near(trace().distance,400));
+probe('player.cover.pop=1;');ok('standing above low cover changes the guide back to15m',near(trace().distance,300));
 // Array order must never make the guide select a farther contact first.
 for(const incoming of ['HEAD','BODY','LEGS']){
  stage(incoming);target('STAND',240,incoming==='LEGS'?14:8);probe('window.farVictim=laserVictim;');

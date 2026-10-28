@@ -78,12 +78,12 @@ fs.mkdirSync(out,{recursive:true});
    };
    background(23,36,41);noStroke();textFont('sans-serif');textAlign(CENTER,TOP);
    fill(239,241,217);textSize(25);text('THREE ELEVATIONS / NATIVE AIM LASER',width/2,17);
-   fill(160,190,178);textSize(13);text('Real player weapon painters. The laser stops at the first valid surface; low firearm fire reaches the floor at 13 m.',width/2,51);
+   fill(160,190,178);textSize(13);text('Real player weapon painters. Low fire reaches the floor at 15 m standing / 20 m crouched / 26 m prone.',width/2,51);
    const cards=[
     ['HEAD / ABOVE PRONE','A lowered target cannot stop a high ray.',()=>{select('HEAD');enemy(170,8,'PRONE');enemy(370,8);}],
     ['BODY / CROUCHED HEAD','The middle elevation resolves a critical head hit.',()=>{select('BODY');enemy(230,8,'CROUCH');}],
     ['LEGS / EMPTY GAP','The ray passes between both legs, then reaches the floor.',()=>{select('LEGS');enemy(170,8);}],
-    ['LEGS / ACTUAL SHIN','One thin leg stops the ray before the 13 m floor limit.',()=>{select('LEGS');enemy(170,2);}],
+    ['LEGS / ACTUAL SHIN','One thin leg stops the ray before its stance-based floor limit.',()=>{select('LEGS');enemy(170,2);}],
     ['LEGS / LOW COVER','A low wall intercepts the low elevation.',()=>{select('LEGS');buildings=activeBuildings=[{x:170,y:8,w:14,h:90,isLowWall:true,hp:1000}];enemy(230,2);invalidateColIndex();}],
     ['CROUCH / LOW LAUNCH','Even HEAD selection launches below low cover while crouched.',()=>{select('HEAD');resetActorStance(player,'CROUCH');buildings=activeBuildings=[{x:170,y:8,w:14,h:90,isLowWall:true,hp:1000}];enemy(230,8);invalidateColIndex();}],
     ['PRONE / PLANTED AIM','The posed barrel and physical ray agree on the floor.',()=>{select('LEGS');resetActorStance(player,'PRONE');player.stance.proneHeading=-HALF_PI;player.stance.proneAimBlend=1;enemy(220,8,'PRONE');}],
@@ -101,7 +101,7 @@ fs.mkdirSync(out,{recursive:true});
     const rays=paint(title),expected=['ACTOR','ACTOR','FLOOR','ACTOR','SOLID','SOLID','FLOOR','ACTOR'][index];
     verify(rays.every(ray=>ray.kind===expected),title+' meets the illustrated surface');
     if(index===1)verify(rays[0].zone==='HEAD','body-height crouched hit resolves critical head anatomy');
-    if(expected==='FLOOR')verify(rays.every(ray=>Math.abs(ray.distance-260)<1e-7),'low ray reaches its exact physical 13 m floor');
+    if(expected==='FLOOR')verify(rays.every(ray=>Math.abs(ray.distance-legShotRangeForWeapon('LEGS',player.currentWeapon,player))<1e-7),'low ray reaches its exact physical shooter-stance floor');
     records.push({title,rays});pop();drawingContext.restore();
    }
    // Exercise the same native figure under nontrivial outer transforms and

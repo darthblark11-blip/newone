@@ -34,7 +34,8 @@ including a quick tap that ends between input frames.
 
 Standing humanoid leg aim uses two thin swept leg shapes, so the gap between
 the legs and the space outside them are misses. Low firearm rounds meet the
-floor after 13 m. A surviving leg hit keeps body-shot damage and armor rules,
+floor after 15 m standing, 20 m crouched or 26 m prone, using the shooter's
+effective stance at launch. A surviving leg hit keeps body-shot damage and armor rules,
 with a 25% chance to collapse a hostile humanoid onto the struck side. Wounded
 enemies can fire prone, sit and fire, or get back up. See
 [Leg injuries](leg-injuries.md) for timing and lowered hit profiles.
@@ -45,7 +46,7 @@ humanoid legs retain their existing body-hit behavior.
 The aiming laser now stops at the first valid contact for the selected HEAD,
 BODY or LEGS elevation. It shares projectile anatomy and cover checks: raised
 shots pass over lowered actors, while low shots can pass between standing legs.
-Low firearm guides end at the same 13 m floor limit as their bullets. Each dual
+Low firearm guides use the same 15/20/26 m stance limits as their bullets. Each dual
 SMG barrel has its own guide, and crouch, prone and cover use the actual posed
 muzzle. The guide follows the weapon's central aiming direction; weapon spread
 still applies to fired rounds and shotgun pellets.

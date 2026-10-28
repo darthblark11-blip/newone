@@ -6,8 +6,12 @@ the legs and outside the pants is a miss. Projectile sweeps retain fast-shot
 contact and record which leg was struck before damage or knockback moves the
 target. Existing vertical wound variation is preserved on that leg.
 
-LEGS firearm rounds meet the floor at **13 m (260 world units)**. Collision is
-checked through the final partial step before the round retires. Other aim
+LEGS firearm rounds meet the floor according to the shooter's effective stance
+at launch: **standing 15 m (300 units), crouched 20 m (400 units), prone 26 m
+(520 units)**. Crouching behind low cover counts as crouched; a standing pop
+counts as standing. The launched round keeps that range even if its shooter
+changes stance or dies. The aiming laser previews the current launch stance.
+Collision is checked through the final partial step before the round retires. Other aim
 elevations retain their normal range; arrows, energy weapons, rockets and tasers
 retain their own flight behavior.
 
@@ -46,7 +50,7 @@ fatal spray follow the same limbs during that handoff. Cover releases on injury
 and cannot take control again until the fighter recovers.
 
 `LEG_INJURY_CHANCE`, `LEG_INJURY_RECOVER_MS`, `LEG_INJURY_COOLDOWN_MS` and
-`LEG_SHOT_RANGE` in `game.js` are the principal balance controls. The injury state
+`LEG_SHOT_RANGES` in `game.js` are the principal balance controls. The injury state
 is transient and is rebuilt with the hostile roster on travel/load/reset.
 Outcome choices and proc rolls consume no shared gameplay RNG; rendering does
 not advance the state or choose a new pose.

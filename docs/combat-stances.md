@@ -21,7 +21,9 @@ impact effect, wound, hit statistic or kill credit. It can hit another actor or
 ordinary solid farther along its trajectory.
 
 Standing LEGS contact follows the two actual thigh/shin chains without filling
-the gap between them. Low firearm rounds stop at the floor after 13 m. Surviving
+the gap between them. Low firearm range follows the shooter's effective launch
+stance: standing 15 m, crouched 20 m and prone 26 m. The round keeps that range
+through later stance changes; the laser previews the current stance. Surviving
 hostile humanoid leg hits can trigger side-specific falls and temporary prone
 or seated fighting; [Leg injuries](leg-injuries.md) describes those states.
 Seated enemies use the crouch elevation matrix, with an extended floor footprint.
@@ -200,7 +202,31 @@ to LEGS against prone targets. Lost sight restarts the observation period.
 Some sustained ranged engagements also use crouch or occasional distant prone
 positions; actors rise when combat ends or the target closes in.
 
+Incoming player/allied fire now supplies a separate response before ordinary
+stance roles and cover pop-up timing. A visible, aimed muzzle event or a real
+nearby projectile supplies evidence; merely selecting an aim button does not.
+The response takes 180 ms, with a 1.8 second memory refreshed by further shots
+to bridge ordinary reloads. Repeated HEAD fire makes hostile humanoids crouch.
+An actor already below that plane keeps its useful crouch/prone posture rather
+than standing because it stopped moving or reached the next cover firing cycle.
+Changing elevation, firing elsewhere or ending the attack releases the hold.
+
+LEGS fire mixes three stable baseline responses: dive to usable nearby cover,
+crouch to move body damage into the low plane, or keep fighting. A blocked dive
+falls back to crouching. NPC cover dives use the original 420 ms animation,
+65 ms unfolding and up to 270 units of travel, stopping at a safe sheltered
+landing. The full prone footprint is swept throughout, firing waits for landing,
+and the actor then joins crouched cover. The dive uses ordinary stance damage
+rules. `ENEMY_SHOT_REACTIONS` and the role choice in `updateEnemyShotReaction`
+keep reaction delay, memory and baseline responses available for difficulty tuning.
+Cover gunners also stop repeating low shots that cannot reach a distant target
+and can resume their ordinary approach to find a closer position.
+
 Focused verification lives in `tools/check-stance-{hits,controls,ai,render}.js`.
+`tools/check-enemy-shot-reactions.js` covers actual fire, sustained ducking,
+reloads, incoming elevations, cover timing and all three leg-fire responses.
+`tools/check-enemy-cover-dive.js` covers protected landings, swept motion,
+timers, damage, pause and the handoff back to combat.
 `tools/check-prone-dive-motion.js` covers all eight directions, preparation timing,
 frame-rate independent travel, paused pose continuity and full-body cover sweeps.
 `tools/check-prone-dive-damage.js` checks dive immunity across projectiles, spells,
