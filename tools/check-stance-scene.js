@@ -52,7 +52,15 @@ const out = process.env.STANCE_SCENE_OUT || '/tmp/newone-stance-scenes'; fs.mkdi
       });
       ok(initial.guards===20&&initial.armored,name+' starts with the native finite HQ roster');
       const client=await context.newCDPSession(page);
-      const send=async(type,points)=>{await client.send('Input.dispatchTouchEvent',{type,touchPoints:points});await page.evaluate(()=>__stanceStep());};
+      const send=async(type,points)=>{
+        const key=type==='touchStart'?'start':type==='touchMove'?'move':'end';
+        const count=await page.evaluate(key=>__stanceEvents[key],key);
+        await client.send('Input.dispatchTouchEvent',{type,touchPoints:points});
+        // CDP may acknowledge before p5 receives its queued touch callback.
+        // Advance the first simulation frame only after that input is owned.
+        await page.waitForFunction(({key,count})=>__stanceEvents[key]>count,{key,count});
+        await page.evaluate(()=>__stanceStep());
+      };
       const state=()=>page.evaluate(()=>__stanceState());
       const pill=await page.evaluate(()=>stanceTouchButton());
       ok(pill.x-pill.w/2>=0&&pill.x+pill.w/2<=w&&pill.y-pill.h/2>=0&&pill.y+pill.h/2<=h,name+' stance button fits the viewport');
@@ -81,10 +89,10 @@ const out = process.env.STANCE_SCENE_OUT || '/tmp/newone-stance-scenes'; fs.mkdi
         name+' a pending stance finger stays owned when it moves across the aiming silhouette');
       await send('touchEnd',[]);await page.evaluate(()=>__stanceStep(40));s=await state();
       ok(s.stance==='STAND'&&s.state.value===0,name+' a second short tap stands rather than cycling to prone');
-      await send('touchStart',[press]);await page.evaluate(()=>__stanceStep(12));s=await state();
-      ok(s.state.to===0,name+' a native hold below a quarter second cannot enter prone');
-      await page.evaluate(()=>__stanceStep(3));s=await state();
-      ok(s.state.to===2,name+' a quarter-second native touch hold commits prone');
+      await send('touchStart',[press]);await page.evaluate(()=>__stanceStep(8));s=await state();
+      ok(s.state.to===0,name+' a native hold below 200 milliseconds cannot enter prone');
+      await page.evaluate(()=>__stanceStep(5));s=await state();
+      ok(s.state.to===2,name+' a 200-millisecond native touch hold commits prone');
       await page.evaluate(()=>__stanceStep(40));await send('touchEnd',[]);await page.evaluate(()=>__stanceStep(2));s=await state();
       ok(s.stance==='PRONE'&&s.state.value===2,name+' releasing the completed hold keeps the player prone');
       ok(s.ammo===17&&s.bullets.length===0,name+' taps and held stance changes preserve ammunition');
@@ -116,12 +124,59 @@ const out = process.env.STANCE_SCENE_OUT || '/tmp/newone-stance-scenes'; fs.mkdi
       ok(!s.paused&&s.state.to===0,name+' Continue resumes the existing stance transition');
       await send('touchEnd',[]);await page.evaluate(()=>__stanceStep(40));s=await state();
       ok(s.stance==='STAND'&&s.state.value===0,name+' resumed simulation finishes standing');
+      // Replay actual movement and aim fingers against isolated real solids.
+      await page.evaluate(()=>{
+        window.__coverFixture=kind=>{
+          resetTouchAimSelection(false);resetActorStance(player);player.x=player.y=0;
+          player.aimAngle=player.moveAngle=0;player.aimHold=0;player._standingAim=null;
+          player.fireTimer=player.reloadTimer=player.muzzleFlash=0;player.ammo=17;
+          buildings=activeBuildings=[{x:40,y:0,w:20,h:160,isWall:kind==='HIGH',isCrateProp:kind==='LOW'}];
+          parkingCars=activeParkingCars=[];barrels=[];bullets=[];particles=[];enemiesList=[];
+          invalidateColIndex();
+        };
+        __coverFixture('HIGH');
+      });
+      const walkRight=await page.evaluate(()=>({id:20,x:Math.round(leftStick.base.x+45),y:Math.round(leftStick.base.y)}));
+      await send('touchStart',[walkRight]);await page.evaluate(()=>__stanceStep(24));await send('touchEnd',[]);
+      ok(await page.evaluate(()=>player.cover?.active&&player.cover.kind==='HIGH'&&coverRenderActive(player)),name+' a real movement finger acquires high cover on collision');
+      const contactRoot=await page.evaluate(()=>({x:player.x,y:player.y}));
+      await send('touchStart',[head]);await send('touchMove',[{...head,x:head.x+60}]);await page.evaluate(()=>__stanceStep(18));
+      ok(await page.evaluate(()=>!player.cover.peek&&player.ammo===17&&bullets.length===0),name+' real held fire cannot shoot through a sealed cover face');
+      await send('touchEnd',[]);await page.evaluate(()=>{player.y=66;});
+      await send('touchStart',[head]);await send('touchMove',[{...head,x:head.x+30,y:head.y+24}]);await page.evaluate(()=>__stanceStep(20));
+      ok(await page.evaluate(()=>player.cover?.active&&player.cover.peek>0&&Math.hypot(coverUpperOffset(player).x,coverUpperOffset(player).y)>1),name+' a real aim gesture leans through an open wall end');
+      ok(await page.evaluate(({x})=>player.x===x&&player.y===66,contactRoot),name+' native upper-body peeking leaves its collision root planted');
+      await page.locator('canvas').first().screenshot({path:path.join(out,name+'-high-cover.png')});
+      await send('touchEnd',[]);await page.evaluate(()=>__stanceStep(20));
+      ok(await page.evaluate(()=>Math.hypot(coverUpperOffset(player).x,coverUpperOffset(player).y)<1),name+' native aim release retracts the wall lean');
+      await page.evaluate(()=>__coverFixture('LOW'));
+      await send('touchStart',[walkRight]);await page.evaluate(()=>__stanceStep(24));await send('touchEnd',[]);await page.evaluate(()=>__stanceStep(18));
+      ok(await page.evaluate(()=>player.cover?.active&&actorStance(player)==='CROUCH'),name+' real contact with waist cover automatically crouches');
+      await send('touchStart',[head]);await send('touchMove',[{...head,x:head.x+30}]);await page.evaluate(()=>__stanceStep(20));
+      ok(await page.evaluate(()=>actorStance(player)==='STAND'&&coverFireAllowed(player)),name+' native aim pops up over waist cover');
+      const popLevel=await page.evaluate(()=>coverStanceLevel(player));
+      await send('touchEnd',[]);
+      ok(await page.evaluate(level=>coverStanceLevel(player)>level,popLevel),name+' releasing the real aim finger starts ducking immediately');
+      await page.evaluate(()=>__stanceStep(20));
+      ok(await page.evaluate(()=>actorStance(player)==='CROUCH'),name+' the native actor settles back into low cover');
+      await page.locator('canvas').first().screenshot({path:path.join(out,name+'-low-cover.png')});
+      const beforeLeave=await page.evaluate(()=>player.x);
+      const walkLeft={...walkRight,id:21,x:walkRight.x-90};
+      await send('touchStart',[walkLeft]);
+      // Native movement sticks are polled at the end of draw(). This next
+      // frame is the first simulation that consumes the new away direction.
+      await page.evaluate(()=>__stanceStep());
+      const leaveState=await page.evaluate(()=>({x:player.x,y:player.y,hp:player.hp,dead:isDead,paused:isPaused,tick:doTick,left:{...leftStick},right:{...rightStick},stance:actorStance(player),fault:window.FRAME_FAULT||null,coverActive:!!player.cover?.active}));
+      ok(leaveState.x<beforeLeave,name+' walking away moves freely on its first simulation frame '+JSON.stringify({beforeLeave,...leaveState}));
+      await page.evaluate(()=>__stanceStep(24));await send('touchEnd',[]);await page.evaluate(()=>__stanceStep(20));
+      ok(await page.evaluate(()=>!coverRenderActive(player)&&actorStance(player)==='STAND'),name+' native free exit restores ordinary movement');
+      s=await state();
       ok(s.events.start>=7&&s.events.move>=2&&s.events.end>=5,name+' the replay uses actual p5 touch callbacks');
       ok(!s.fault,name+' the complete scene has no frame fault');
       assert.deepEqual(errors,[],name+' has no browser exceptions');
       await page.locator('canvas').first().screenshot({path:path.join(out,name+'-resumed.png')});
       await context.close();
     }
-    console.log(`${checks}/${checks} native stance touch, movement, aiming and pause checks passed. Screenshots: ${out}`);
+    console.log(`${checks}/${checks} native stance and cover touch, movement, aiming and pause checks passed. Screenshots: ${out}`);
   } finally {await browser.close();}
 })().catch(error=>{console.error(error.stack||error);process.exit(1);});

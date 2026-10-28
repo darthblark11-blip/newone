@@ -3,6 +3,8 @@
 Combat stances share the existing HEAD / BODY / LEGS aiming system. They apply
 to the player and humanoid allies/enemies across the campaign, including the HQ.
 They are separate from knockouts, dead bodies, boxing poses and ambient scientists.
+Automatic contact cover layers its posture over the selected stance without changing it.
+See [Collision-based cover](collision-cover.md) for wall peeks and low-cover pop-ups.
 
 ## Hitboxes and trajectories
 
@@ -36,16 +38,16 @@ rules and do not become harmless merely because a target is prone.
 
 The actor's stance stores a continuous level: standing 0, crouched 1, prone 2.
 Standing/crouch transitions take 150 ms; ordinary transitions involving prone
-take 300 ms. A moving dive takes 420 ms.
+take 300 ms. A moving dive takes 700 ms.
 Smoothstep interpolation drives the pose. Incoming hits use standing coverage
 below 0.5, crouched coverage from 0.5 to below 1.5, and prone coverage thereafter.
 An ordinary drop passes through crouched coverage before reaching prone.
-Holding the stance control for a quarter second while moving instead commits a
-directional dive with invulnerability only during the 420 ms dive. The planted
+Holding the stance control for 200 milliseconds while moving instead commits a
+directional dive with invulnerability only during the 700 ms dive. The planted
 body faces travel from launch and interpolates into a level belly-down position
 within 65 ms. It stays extended while airborne, then falls onto the floor with one
 dust burst at contact. At the apex the body rises fourteen units above its shadow
-and grows uniformly by 9%, then settles back to its normal prone size. The 270-unit
+and grows uniformly by 9%, then settles back to its normal prone size. The 220-unit
 lunge sweeps the full body against cover and cannot steer midair. A stationary
 hold lowers the actor in place without invulnerability. Another transition must
 wait for completion and a 180 ms recovery window. Pausing freezes progress.
@@ -151,14 +153,14 @@ standing actor: its first press from a lower stance requests a rise.
 Controls:
 
 - Touch: tap the button above the left movement stick, across from dash, to toggle crouch/stand.
-  Hold it for **0.25 seconds** to enter prone. It remains separate from the right aiming silhouette.
-- Keyboard: tap **C** to toggle crouch/stand; hold **C** for **0.25 seconds** to enter prone.
+  Hold it for **0.2 seconds** to enter prone. It remains separate from the right aiming silhouette.
+- Keyboard: tap **C** to toggle crouch/stand; hold **C** for **0.2 seconds** to enter prone.
   **Z** retains the explicit prone/stand shortcut. Shovel mode retains its C dig key.
-- Controller: tap **D-pad down** to toggle crouch/stand; hold for **0.25 seconds** to enter
+- Controller: tap **D-pad down** to toggle crouch/stand; hold for **0.2 seconds** to enter
   prone. **L3** retains dash; **R3** retains aim/bow release.
 
 A short tap never advances from crouch to prone. Tapping while prone requests
-standing. Movement at the moment the hold reaches 0.25 seconds determines the
+standing. Movement at the moment the hold reaches 0.2 seconds determines the
 dive direction; releasing the movement stick before that point lowers in place.
 The dive checks its full body footprint against cover and ends invulnerability
 on landing or an interrupted dive. Holding the button after entry does not repeat

@@ -26,7 +26,7 @@ function togglePlayerHeadAim() {
 // Combat stance stays separate from aim elevation, knockouts and boxing.
 const COMBAT_STANCES = ['STAND', 'CROUCH', 'PRONE'];
 const STANDING_STANCE_POSE = {crouch:0,prone:0,scaleX:1,scaleY:1,forward:0,muzzleForward:0,muzzleSide:0,uiOffset:0};
-const STANCE_HOLD_MS = 250, PRONE_DIVE_MS = 420, PRONE_DIVE_DISTANCE = 270, PRONE_DIVE_LEVEL_MS = 65;
+const STANCE_HOLD_MS = 200, PRONE_DIVE_MS = 700, PRONE_DIVE_DISTANCE = 220, PRONE_DIVE_LEVEL_MS = 65;
 const stanceInput = {crouch:false,prone:false,hold:null};
 function actorCanUseStances(a) {
   return !!a && !a.isNM0Scientist && !a.isCorpse && (a.isPlayer || ragHumanoid(a.eType,a.bodyW)) &&
@@ -44,18 +44,21 @@ function actorStanceSuppressed(a) {
 }
 function actorStance(a) {
   if(!a||actorStanceSuppressed(a)||!a.stance)return 'STAND';
-  return a.stance.value<.5?'STAND':a.stance.value<1.5?'CROUCH':'PRONE';
+  const value=coverStanceLevel(a);
+  return value<.5?'STAND':value<1.5?'CROUCH':'PRONE';
 }
 function resetActorStance(a,name='STAND') {
   if(!a)return;
   const level=Math.max(0,COMBAT_STANCES.indexOf(name));
+  a.cover=null;
   a.stance={from:level,to:level,value:level,elapsedMs:0,durationMs:0,cooldownMs:0,
     proneHeading:Number.isFinite(a.aimAngle)?a.aimAngle:0,proneAimBlend:0};
   a._stanceClearAngle=Number.isFinite(a.aimAngle)?a.aimAngle:0;
 }
 function actorStancePose(a) {
-  if(!a||actorStanceSuppressed(a)||!a.stance||!(a.stance.value>0))return STANDING_STANCE_POSE;
-  const p=a._stancePose||(a._stancePose={}),v=a.stance.value;
+  if(!a||actorStanceSuppressed(a)||!a.stance)return STANDING_STANCE_POSE;
+  const v=coverStanceLevel(a);if(!(v>0))return STANDING_STANCE_POSE;
+  const p=a._stancePose||(a._stancePose={});
   p.prone=Math.max(0,v-1);p.crouch=Math.min(1,v)*(1-p.prone);
   // Camera height changes uniformly. Bent joints, not a squashed standing
   // canvas, supply the lowered silhouette.
@@ -65,6 +68,7 @@ function actorStancePose(a) {
 }
 function stanceFacingAngle(a) {
   const angle=Number.isFinite(a&&a.aimAngle)?a.aimAngle:0;
+  if(coverRenderActive(a))return coverFacingAngle(a);
   return a&&a.isPlayer&&a.stance&&(actorStancePose(a).prone>0||proneDivePoseActive(a))&&Number.isFinite(a.stance.proneHeading)
     ?a.stance.proneHeading:angle;
 }
@@ -131,7 +135,7 @@ function requestActorStance(a,name,heading=null) {
   if(s.elapsedMs<s.durationMs||s.cooldownMs>0||s.to===target)return false;
   const proneHeading=Number.isFinite(heading)?heading:Number.isFinite(a.aimAngle)?a.aimAngle:0;
   if(target===2&&!stanceProneSpotClear(a,a.x,a.y,proneHeading))return false;
-  s.dive=null;
+  releaseActorCover(a,true);s.dive=null;
   if(target===2&&a.isPlayer){s.proneHeading=proneHeading;s.proneAimBlend=0;a._stanceClearAngle=s.proneHeading;}
   s.from=s.value;s.to=target;s.elapsedMs=0;s.durationMs=target===2||s.from>1?300:150;
   cancelPlayerBowDraw(a);return true;
@@ -196,6 +200,7 @@ function updateActorStance(a,elapsedMs=deltaTime) {
   if(began||s.elapsedMs>=s.durationMs)return;
   // Incoming shots resolve the current drop height, never the destination early.
   s.elapsedMs=Math.min(s.durationMs,s.elapsedMs+dt);
+  if(s.elapsedMs>=s.durationMs-1e-6)s.elapsedMs=s.durationMs;
   const t=Math.min(1,s.elapsedMs/(s.dive?PRONE_DIVE_LEVEL_MS:s.durationMs)),eased=t*t*(3-2*t);
   s.value=s.from+(s.to-s.from)*eased;
   if(s.elapsedMs===s.durationMs){s.value=s.to;s.cooldownMs=180;}
@@ -217,7 +222,10 @@ function stanceMovementScale(a) {const p=actorStancePose(a);return 1-.40*p.crouc
 function stanceSpreadScale(a) {const p=actorStancePose(a),k=a&&a.isMoving ? .35 : 1;return 1-(.20*p.crouch+.35*p.prone)*k;}
 function stanceRecoilRecovery(a) {const p=actorStancePose(a),k=a&&a.isMoving ? .35 : 1;return 1+(.25*p.crouch+.5*p.prone)*k;}
 function cyclePlayerStance() {
-  return !!player&&requestActorStance(player,actorStance(player)==='STAND'?'CROUCH':'STAND');
+  if(!player)return false;
+  const wanted=actorStance(player)==='STAND'?'CROUCH':'STAND';
+  if(player.cover&&player.cover.active){releaseActorCover(player,true);if(player.stance.to===COMBAT_STANCES.indexOf(wanted))return true;}
+  return requestActorStance(player,wanted);
 }
 function beginStanceHold(source,id=null) {
   if(stanceInput.hold||!combatStanceContext()||!player||actorStanceSuppressed(player))return false;
@@ -237,7 +245,7 @@ function updateStanceHold(dt) {
     h.source==='MOUSE'?mouseIsPressed:touches.some(t=>t.id===h.id);
   if(!held){endStanceHold(h.source);return;}
   h.elapsedMs=Math.min(STANCE_HOLD_MS,h.elapsedMs+dt);
-  if(h.elapsedMs===STANCE_HOLD_MS){h.triggered=true;return requestPlayerProne();}
+  if(h.elapsedMs>=STANCE_HOLD_MS-1e-6){h.elapsedMs=STANCE_HOLD_MS;h.triggered=true;return requestPlayerProne();}
 }
 function consumeStanceInputs() {
   stanceInput.hold=null;stanceInput.crouch=keyIsDown(67);stanceInput.prone=keyIsDown(90);
@@ -272,11 +280,227 @@ function drawStanceTouchButton() {
   push();fill(24,37,43,190);stroke(111,170,177,190);strokeWeight(1.5);rect(b.x-b.w/2,b.y-b.h/2,b.w,b.h,12);
   noStroke();textFont('sans-serif');textAlign(CENTER,CENTER);textSize(12);fill(222,234,227);
   text(current==='STAND'?'CROUCH':'STAND',b.x,b.y-7);
-  textSize(9);fill(148,182,187);text('HOLD .25s: PRONE',b.x,b.y+9);
+  textSize(9);fill(148,182,187);text('HOLD .2s: PRONE',b.x,b.y+9);
   const h=stanceInput.hold;
   if(h&&!h.triggered){stroke(154,216,213);strokeWeight(2);line(b.x-b.w/2+10,b.y+b.h/2-4,b.x-b.w/2+10+(b.w-20)*h.elapsedMs/STANCE_HOLD_MS,b.y+b.h/2-4);}
   pop();
 }
+// Cover uses the same native collision footprints as walking. The records may
+// be frozen streamed props; keep cached bounds externally and revalidate edits.
+const _coverRectCache=new WeakMap(),_coverContactCars=[];
+const _coverRayIndex=newCrowdSolidIndex(2),_coverRayCandidates=[];
+const _coverLowPropTypes=new Set(['SANDBAG','CRATE','BENCH','PLANTER','TERRACEPLANTER','LOGPILE','MATERIALS','WRECK','RUINWALL','REVETMENT','FOUNTAIN','HOARDING','FALLEN']);
+const _coverPistolMuzzles=[[31,8]],_coverSmgMuzzles=[[38,11]],_coverDualMuzzles=[[38,11],[38,-11]],
+  _coverRifleMuzzles=[[47,6]],_coverRevolverMuzzles=[[47,11]];
+function coverWeaponMuzzles(a) {
+  const w=a&&a.currentWeapon;
+  if(w===WEAPONS.DUAL_SMG)return leftHandAction(a)?_coverSmgMuzzles:_coverDualMuzzles;
+  if(w===WEAPONS.SMG)return _coverSmgMuzzles;
+  if(w===WEAPONS.REVOLVER)return _coverRevolverMuzzles;
+  if(w===WEAPONS.ASSAULT_RIFLE||w===WEAPONS.SHOTGUN||w===WEAPONS.ROCKET_LAUNCHER)return _coverRifleMuzzles;
+  if(w===WEAPONS.BOW) {
+    const points=a._coverBowMuzzles||(a._coverBowMuzzles=[[38,0]]);
+    points[0][0]=47-9*bowDrawAmount(a);return points;
+  }
+  return _coverPistolMuzzles;
+}
+function coverSolidKind(b) {
+  if(!b||!Number.isFinite(b.x)||!Number.isFinite(b.y)||b.noCover||
+      b.hp<=0&&!b.isGovFortress||b.isUBarrier)return null;
+  if(b.isCropField||b.isMarket||b.isGrassLot||b.isParkingLot||b.isPond||b.isRiver||b.isCanal||b.isDeck||
+      b.isStreetLight||b.isPalm||b.isAlienPlant||b.isEnergyPole||b.isCactusProp||b.isTumbleweedProp||
+      b.isMushroom||b.isWater||b.propType==='RIVER'||b.propType==='CANAL'||b.propType==='HELIPAD'||
+      b.propType==='BRIDGE'||b.propType==='CANALBRIDGE'||b.propType==='BOARDWALK'||
+      b.propType==='SIGNPOST'||b.propType==='BOLLARD'||b.propType==='HYDRANT'||b.propType==='MAST'||
+      b.undergroundProp==='TIKI_TORCH'||b.undergroundProp==='BANNER')return null;
+  if(b.coverType==='LOW'||b.coverHeight==='WAIST'||b.isLowWall||b.lowCover)return 'LOW';
+  if(b.coverType==='HIGH')return 'HIGH';
+  if(Number.isFinite(b.coverHeight))return b.coverHeight>0?(b.coverHeight<=1.35?'LOW':'HIGH'):null;
+  if(b.isParkingCar||b.isCar||b.isCrateProp||b.isHayBale||b.isDumpster||b.isFence||b.isWagonProp||
+      b.hqProp==='BENCH'||b.hqProp==='CONSOLE'||b.undergroundProp==='PEW'||b.undergroundProp==='TIMBER'||
+      _coverLowPropTypes.has(b.propType))return 'LOW';
+  if(b.isRock||b.propType==='BOULDER')return Math.max(b.w||0,b.h||0)<=90?'LOW':'HIGH';
+  if(!(b.w>0&&b.h>0)&&activeParkingCars.includes(b))return 'LOW';
+  return b.w>0&&b.h>0?'HIGH':null;
+}
+function coverSolidRects(b) {
+  if(!b||!Number.isFinite(b.x)||!Number.isFinite(b.y)||b.hp<=0&&!b.isGovFortress)return EMPTY_LIST;
+  const parking=b.isParkingCar||(!(b.w>0&&b.h>0)&&activeParkingCars.includes(b));
+  const w=parking?50:Math.abs(b.w||0),h=parking?90:Math.abs(b.h||0);
+  if(!(w>0&&h>0))return EMPTY_LIST;
+  const open=!!(b.isGovFortress&&gateIsOpen(b)),old=_coverRectCache.get(b);
+  if(old&&old.x===b.x&&old.y===b.y&&old.w===w&&old.h===h&&old.open===open&&old.u===!!b.isUBarrier)return old.rects;
+  const x0=b.x-w/2,x1=b.x+w/2,y0=b.y-h/2,y1=b.y+h/2,rects=[];
+  if(b.isUBarrier) {
+    rects.push({x0:x0-15,y0,x1:x0+15,y1},{x0:x1-15,y0,x1:x1+15,y1},{x0,y0:y0-15,x1,y1:y0+15});
+  } else if(open) {
+    if(x0<b.x-GATE_DOOR_HALF)rects.push({x0,y0,x1:b.x-GATE_DOOR_HALF,y1});
+    if(x1>b.x+GATE_DOOR_HALF)rects.push({x0:b.x+GATE_DOOR_HALF,y0,x1,y1});
+  } else rects.push({x0,y0,x1,y1});
+  _coverRectCache.set(b,{x:b.x,y:b.y,w,h,open,u:!!b.isUBarrier,rects});return rects;
+}
+function coverConsiderContact(a,b,dx,dy,previous,best,parking=false) {
+  const kind=parking?'LOW':coverSolidKind(b);
+  if(!kind)return;
+  const rects=coverSolidRects(b),speed=Math.hypot(dx,dy);
+  for(let ri=0;ri<rects.length;ri++) {
+    const r=rects[ri];
+    for(let face=0;face<4;face++) {
+      const nx=face===0?-1:face===1?1:0,ny=face===2?-1:face===3?1:0,tx=-ny,ty=nx;
+      const plane=face===0?-r.x0:face===1?r.x1:face===2?-r.y0:r.y1;
+      const edgeMin=face===0?-r.y1:face===1?r.y0:face===2?r.x0:-r.x1;
+      const edgeMax=face===0?-r.y0:face===1?r.y1:face===2?r.x1:-r.x0;
+      const distance=a.x*nx+a.y*ny-plane,tangent=a.x*tx+a.y*ty,into=dx*nx+dy*ny;
+      // A twelve-unit tangent margin keeps both planted feet behind the end.
+      // Six-unit walking steps can stop up to six units short of contact.
+      if(distance<14.5||distance>22.5||tangent<edgeMin+12-.001||tangent>edgeMax-12+.001)continue;
+      if(b.isGovFortress&&inOpenGateway(b,a.x+dx))continue;
+      const retained=previous&&previous.solid===b&&previous.rectIndex===ri&&previous.nx===nx&&previous.ny===ny&&into<=.001;
+      if(!retained&&(!(speed>.001)||into>=-.15*speed||distance+into>15.1))continue;
+      const score=distance-15+(retained?-3:0);
+      if(score>=best.score)continue;
+      Object.assign(best,{solid:b,kind,nx,ny,tx,ty,plane,edgeMin,edgeMax,rectIndex:ri,score});
+    }
+  }
+}
+function findCoverContact(a,dx=0,dy=0,previous=null) {
+  if(!a||!Number.isFinite(a.x)||!Number.isFinite(a.y)||!Number.isFinite(dx)||!Number.isFinite(dy))return null;
+  const result=a._coverContactGeom||(a._coverContactGeom={});result.score=Infinity;
+  const near=colNear(a.x,a.y);
+  for(let i=0;i<near.length;i++)coverConsiderContact(a,near[i],dx,dy,previous,result);
+  const cars=activeParkingCars.length<=16?activeParkingCars:crowdNearbyCars(a.x,a.y,24,_coverContactCars);
+  for(let i=0;i<cars.length;i++)if(cars[i].hp>0||cars[i].hp===undefined)coverConsiderContact(a,cars[i],dx,dy,previous,result,true);
+  return Number.isFinite(result.score)?result:null;
+}
+function coverRayClear(x0,y0,x1,y1,radius=0) {
+  const candidates=activeBuildings.length<=16?activeBuildings:crowdSolidCandidates(_coverRayIndex,activeBuildings,
+    Math.min(x0,x1)-radius,Math.min(y0,y1)-radius,Math.max(x0,x1)+radius,Math.max(y0,y1)+radius,_coverRayCandidates,false);
+  for(let i=0;i<candidates.length;i++) {
+    const b=candidates[i];if(coverSolidKind(b)!=='HIGH')continue;
+    const rects=coverSolidRects(b);
+    for(let ri=0;ri<rects.length;ri++) {
+      const r=rects[ri];
+      if(stanceSegmentBoxTime(x0,y0,x1-x0,y1-y0,r.x0-radius,r.y0-radius,r.x1+radius,r.y1+radius)!==Infinity)return false;
+    }
+  }
+  return true;
+}
+function coverPeekCandidate(a,state,aimAngle) {
+  if(!a||!state||state.kind!=='HIGH'||!Number.isFinite(aimAngle)||coverSolidKind(state.solid)!=='HIGH')return null;
+  const ca=Math.cos(aimAngle),sa=Math.sin(aimAngle),toward=ca*state.nx+sa*state.ny;
+  if(toward>=-.05)return null;
+  const here=a.x*state.tx+a.y*state.ty,muzzles=coverWeaponMuzzles(a);
+  let found=false,bestDistance=Infinity;
+  const result=a._coverPeekGeom||(a._coverPeekGeom={});
+  for(const side of [-1,1]) {
+    // The entire actual muzzle envelope must clear: the other SMG or the
+    // pistol wrist can remain blocked after the head has reached an opening.
+    let clearance=7;
+    for(let i=0;i<muzzles.length;i++) {
+      const m=muzzles[i],along=(ca*m[0]-sa*m[1])*state.tx+(sa*m[0]+ca*m[1])*state.ty;
+      clearance=Math.max(clearance,2-side*along);
+    }
+    const edge=side<0?state.edgeMin:state.edgeMax,target=edge+side*clearance,delta=target-here;
+    if(delta*side<0||Math.abs(delta)>34)continue;
+    const offsetX=state.tx*delta,offsetY=state.ty*delta,x=a.x+offsetX,y=a.y+offsetY;
+    if(!coverRayClear(a.x,a.y,x,y,6)||!coverRayClear(x,y,x+ca*160,y+sa*160,2))continue;
+    let clear=true;
+    for(let i=0;i<muzzles.length;i++) {
+      const m=muzzles[i],mx=x+ca*m[0]-sa*m[1],my=y+sa*m[0]+ca*m[1];
+      if(!coverRayClear(x,y,mx,my,1)||!coverRayClear(mx,my,mx+ca*64,my+sa*64,1)){clear=false;break;}
+    }
+    if(!clear||Math.abs(delta)>=bestDistance)continue;
+    found=true;bestDistance=Math.abs(delta);const m=muzzles[0];
+    Object.assign(result,{side,offsetX,offsetY,muzzleX:x+ca*m[0]-sa*m[1],muzzleY:y+sa*m[0]+ca*m[1]});
+  }
+  return found?result:null;
+}
+
+// Contact cover changes posture, never the collision root or movement ownership.
+const COLLISION_COVER={enterMs:120,exitMs:150,leanMs:110,riseMs:135,duckMs:100};
+const NO_COVER_OFFSET={x:0,y:0};
+function actorCoverSuppressed(a) {
+  return !a||actorStanceSuppressed(a)||a.meleeTimer>0||a.throwAnimTimer>0||
+    !!(a.stance&&(a.stance.to===2||a.stance.value>1.01));
+}
+function coverRenderActive(a) {
+  return !!(a&&a.cover&&a.cover.blend>.001)&&!actorCoverSuppressed(a);
+}
+function coverStanceLevel(a) {
+  const raw=a&&a.stance?a.stance.value:0,c=a&&a.cover;
+  return coverRenderActive(a)&&c.kind==='LOW'?raw+(1-c.pop-raw)*c.blend:raw;
+}
+function coverUpperOffset(a) { return coverRenderActive(a)?a.cover.upper:NO_COVER_OFFSET; }
+function coverFacingAngle(a) {
+  const aim=a.aimAngle||0,c=a.cover;
+  return aim+Math.atan2(Math.sin(c.bodyAngle-aim),Math.cos(c.bodyAngle-aim))*c.blend;
+}
+function coverAimActive(a) {
+  const c=a&&a.cover;
+  return !!c&&c.aiming&&(c.kind==='LOW'||c.openAim||c.peek>.01&&c.validPeek);
+}
+function coverPlayerAiming(a) {
+  return !!(rightStick&&rightStick.active)||playerWeaponFireInput()||
+    !!(a.bowDrawState&&a.bowDrawState.phase==='DRAW')||!!cannonInputHeld;
+}
+function releaseActorCover(a,manual=false) {
+  const c=a&&a.cover;if(!c)return;
+  c.active=false;c.validPeek=false;c.aiming=false;
+  if(manual)c.manualExit=true;
+}
+function updateActorCover(a,elapsedMs=deltaTime,dx=0,dy=0,aiming=false) {
+  if(!a||isPaused||!doTick)return;
+  if(!combatStanceContext()||actorCoverSuppressed(a)){a.cover=null;return;}
+  if(!a.stance)resetActorStance(a);
+  const dt=a._coverControllerFrame===frameCount?0:Math.min(100,Math.max(0,Number(elapsedMs)||0));
+  if(dt>0)a._coverControllerFrame=frameCount;
+  let c=a.cover;
+  const previous=c&&(c.active||c.manualExit)?c:null;
+  const contact=findCoverContact(a,dx,dy,previous);
+  if(c&&c.manualExit&&!contact)c.manualExit=false;
+  if(contact&&!(c&&c.manualExit)) {
+    if(!c)c=a.cover={active:false,blend:0,peek:0,pop:0,offsetX:0,offsetY:0,upper:{x:0,y:0},bodyAngle:Math.atan2(contact.ny,contact.nx)};
+    const changed=c.solid!==contact.solid||c.nx!==contact.nx||c.ny!==contact.ny;
+    Object.assign(c,contact);c.active=true;
+    if(changed){c.validPeek=false;c.peek=0;}
+  } else if(c)c.active=false;
+  if(!c)return;
+  c.aiming=!!aiming;
+  const approach=(value,target,amount)=>value<target?Math.min(target,value+amount):Math.max(target,value-amount);
+  c.blend=approach(c.blend,c.active?1:0,dt/(c.active?COLLISION_COVER.enterMs:COLLISION_COVER.exitMs));
+  if(c.active) {
+    const normal=Math.atan2(c.ny,c.nx),turn=Math.atan2(Math.sin(normal-c.bodyAngle),Math.cos(normal-c.bodyAngle));
+    c.bodyAngle+=turn*Math.min(1,dt/120);
+  }
+  c.openAim=!!c.active&&(Math.cos(a.aimAngle||0)*c.nx+Math.sin(a.aimAngle||0)*c.ny>=-.05);
+  const candidate=c.active&&c.kind==='HIGH'&&aiming?coverPeekCandidate(a,c,a.aimAngle||0):null;
+  c.validPeek=!!candidate;
+  c.peek=approach(c.peek,candidate?1:0,dt/COLLISION_COVER.leanMs);
+  const targetX=candidate?candidate.offsetX*c.blend:0,targetY=candidate?candidate.offsetY*c.blend:0;
+  c.offsetX=approach(c.offsetX,targetX,34*dt/COLLISION_COVER.leanMs);
+  c.offsetY=approach(c.offsetY,targetY,34*dt/COLLISION_COVER.leanMs);
+  c.upper.x=c.offsetX;c.upper.y=c.offsetY;
+  c.pop=approach(c.pop,aiming?1:0,dt/(aiming?COLLISION_COVER.riseMs:COLLISION_COVER.duckMs));
+  if(!c.active&&c.blend===0){c.peek=0;c.offsetX=c.offsetY=c.upper.x=c.upper.y=0;}
+}
+function coverFireAllowed(a,shotAngle=a&&a.aimAngle||0,bowShot=null) {
+  if(!a||!actorCanUseStances(a))return true;
+  const c=a.cover,active=!!(c&&c.active&&!actorCoverSuppressed(a));
+  if(active&&(!coverAimActive(a)||c.kind==='LOW'&&coverStanceLevel(a)>=.5||
+      c.kind==='HIGH'&&!c.openAim&&(!c.validPeek||c.peek<.5)))return false;
+  const angle=a.aimAngle||0,ca=Math.cos(angle),sa=Math.sin(angle);
+  const zone=a.isPlayer?playerAimTarget():a.stanceAimZone||(a.isFriendly&&headAimToggle?'HEAD':'BODY');
+  const upper=coverUpperOffset(a),muzzles=a.currentWeapon===WEAPONS.BOW&&bowShot?
+    [[47-9*Math.max(0,Math.min(1,bowShot.tension||0)),0]]:coverWeaponMuzzles(a);
+  const bob=!coverRenderActive(a)&&a.isMoving?Math.abs(Math.sin(a.walkCycle))*2:0;
+  for(let i=0;i<muzzles.length;i++) {
+    const m=muzzles[i],muzzle=stanceMuzzleWorld(a,a.x+ca*(m[0]+bob)-sa*m[1],a.y+sa*(m[0]+bob)+ca*m[1]);
+    if(!coverLineClear(a.x+upper.x,a.y+upper.y,muzzle.x,muzzle.y,zone,a,null))return false;
+    if(active&&!coverLineClear(muzzle.x,muzzle.y,muzzle.x+Math.cos(shotAngle)*64,muzzle.y+Math.sin(shotAngle)*64,zone,a,null))return false;
+  }
+  return true;
+}
+
 const SPATIAL_CELL_SIZE = 150; 
 let spatialGrid = {};
 
@@ -14348,12 +14572,12 @@ function spawnBullet(x, y, a, iP, tH, w, shooter = null, shotId = null) {
 
     const huntShotId = shotId === null ? ++_huntShotSequence : shotId;
     const reused=takeBulletSlot();
-    if(reused){reused.init(x,y,a,iP,tH,w);reused.shooter=shooter;reused.shotId=huntShotId;return reused;}
+    if(reused){reused.init(x,y,a,iP,tH,w,shooter);reused.shooter=shooter;reused.shotId=huntShotId;return reused;}
     let b = new Bullet();
     bullets.push(b);
     b._slotSource=bullets;b._slotIndex=bullets.length-1;b._slotQueued=false;
     _bulletSlotCount=bullets.length;
-    b.init(x, y, a, iP, tH, w);
+    b.init(x, y, a, iP, tH, w, shooter);
     b.shooter = shooter;
     b.shotId = huntShotId;
     return b;
@@ -14919,7 +15143,7 @@ function mapLegHitDecal(actor,wx,wy,decal,origin=actor,heightSample=null) {
     fallen={rig:projectFallRig(actor.bodyW,actor.bodyH,f),rag:p.rag,f};
     angle=figureFallYaw(p,p.rag,f);scale=RAG_SCALE;
   }
-  const crouch=!fallen&&!pose.active&&!mantle&&!dig&&actorStancePose(actor).crouch>0?stanceBodyPose(actor):null;
+  const crouch=!fallen&&!pose.active&&!mantle&&!dig&&(actorStancePose(actor).crouch>0||coverRenderActive(actor))?stanceBodyPose(actor):null;
   if(crouch){angle=stanceFacingAngle(actor);scale=crouch.size;}
   const ca=Math.cos(angle),sa=Math.sin(angle),dx=(wx-origin.x)/scale,dy=(wy-origin.y)/scale;
   const x=ca*dx+sa*dy,y=-sa*dx+ca*dy,th=rig.thigh*STAND_FORE_LEG,sh=rig.shin*STAND_FORE_LEG;
@@ -20564,7 +20788,134 @@ function combatAimElevation(shooter, target, canSee = false) {
   }
   return shooter.stanceAimZone || baseline;
 }
+// Gunners share the player's contact/peek solver. Only choosing a nearby
+// place to approach is AI work; wall contact never becomes a movement lock.
+const ENEMY_COVER_WEAPONS=new Set(Object.values(WEAPONS)),_enemyCoverCars=[];
+function enemyCoverEligible(a) {
+  return !!a&&!a.isPlayer&&!a.isNeutral&&!a.isUnarmed&&!a.isCoward&&!a.mounted&&
+    !String(a.eType||'').startsWith('OCCULT_')&&a.eType!=='MOLOTOV'&&
+    actorCanUseStances(a)&&!actorStanceSuppressed(a)&&a.meleeTimer<=0&&
+    !!a.currentWeapon&&ENEMY_COVER_WEAPONS.has(a.currentWeapon)&&
+    !(a.stance&&(a.stance.to===2||a.stance.value>1.01));
+}
+function enemyCoverGoal(a,threatX,threatY,state) {
+  const near=colNear(a.x,a.y),goals=state.candidates||(state.candidates=[]);
+  goals.length=0;
+  const consider=(solid,kind,rect,rectIndex,nx,ny,tangent)=>{
+    const tx=-ny,ty=nx,plane=nx<0?-rect.x0:nx>0?rect.x1:ny<0?-rect.y0:rect.y1;
+    const min=nx<0?-rect.y1:nx>0?rect.y0:ny<0?rect.x0:-rect.x1;
+    const max=nx<0?-rect.y0:nx>0?rect.y1:ny<0?rect.x1:-rect.x0;
+    if(max-min<30)return;
+    const span=Math.max(min+14,Math.min(max-14,tangent));
+    const x=nx*(plane+17)+tx*span,y=ny*(plane+17)+ty*span;
+    if((threatX-x)*nx+(threatY-y)*ny>=-12)return;
+    const dx=x-a.x,dy=y-a.y,d2=dx*dx+dy*dy;
+    if(d2>230*230||a.checkCol(x,y))return;
+    const goal={solid,kind,x,y,nx,ny,tx,ty,plane,edgeMin:min,edgeMax:max,rectIndex,
+      score:d2+(kind==='HIGH'?160:0)};
+    if(kind==='HIGH') {
+      const probe={x,y,currentWeapon:a.currentWeapon,bodyW:a.bodyW,bodyH:a.bodyH};
+      if(!coverPeekCandidate(probe,goal,Math.atan2(threatY-y,threatX-x)))return;
+    }
+    goals.push(goal);goals.sort((u,v)=>u.score-v.score);if(goals.length>3)goals.length=3;
+  };
+  const cars=activeParkingCars.length<=16?activeParkingCars:crowdNearbyCars(a.x,a.y,230,_enemyCoverCars);
+  const nearCount=Math.min(24,near.length),carCount=Math.min(8,cars.length);
+  const count=nearCount+carCount+Math.min(32-nearCount-carCount,near.length-nearCount);
+  for(let i=0;i<count;i++) {
+    const solid=i<nearCount?near[i]:i<nearCount+carCount?cars[i-nearCount]:near[i-carCount];
+    const kind=coverSolidKind(solid);if(!kind)continue;
+    const rects=coverSolidRects(solid);
+    for(let ri=0;ri<rects.length;ri++) {
+      const r=rects[ri];
+      for(let side=0;side<4;side++) {
+        const nx=side===0?-1:side===1?1:0,ny=side===2?-1:side===3?1:0;
+        const tx=-ny,ty=nx,along=a.x*tx+a.y*ty;
+        if(kind==='LOW')consider(solid,kind,r,ri,nx,ny,along);
+        else {
+          const low=nx<0?-r.y1:nx>0?r.y0:ny<0?r.x0:-r.x1;
+          const high=nx<0?-r.y0:nx>0?r.y1:ny<0?r.x1:-r.x0;
+          consider(solid,kind,r,ri,nx,ny,low+14);
+          consider(solid,kind,r,ri,nx,ny,high-14);
+        }
+      }
+    }
+  }
+  // Four samples for each of three shortlisted goals, not path searches for
+  // every face of every prop. Native steering still handles the actual walk.
+  for(let i=0;i<goals.length;i++) {
+    const goal=goals[i];let clear=true;
+    for(let step=1;step<=4;step++)if(a.checkCol(a.x+(goal.x-a.x)*step/4,a.y+(goal.y-a.y)*step/4)){clear=false;break;}
+    if(clear)return goal;
+  }
+  return null;
+}
+function updateEnemyCoverAI(a,target,canSee,distance,elapsedMs=deltaTime) {
+  if(isPaused||!doTick)return false;
+  if(typeof updateActorCover!=='function'||typeof coverSolidKind!=='function'||
+      !enemyCoverEligible(a)||!target||target.dead||target.hp<=0||
+      !doTick||!combatStanceContext()||distance<100||distance>760) {
+    if(a&&a._enemyCover){a._enemyCover.goal=null;a._coverApproach=false;}
+    return false;
+  }
+  const dt=Math.min(100,Math.max(0,Number(elapsedMs)||0));
+  const state=a._enemyCover||(a._enemyCover={searchMs:0,cycleMs:(a.aiOffset||0)*83,seenMs:0,target:null,goal:null});
+  if(state.target!==target){state.target=target;state.seenMs=0;state.goal=null;state.searchMs=0;}
+  if(canSee){state.seenMs=1800;state.lastX=target.x;state.lastY=target.y;}
+  else state.seenMs=Math.max(0,state.seenMs-dt);
+  if(state.seenMs<=0) {
+    state.goal=null;a._coverApproach=false;
+    if(a.cover&&a.cover.active)releaseActorCover(a,true);
+    return false;
+  }
+  state.searchMs=Math.max(0,state.searchMs-dt);
+  if(state.goal&&(!coverSolidKind(state.goal.solid)||
+      Math.hypot(state.goal.x-a.x,state.goal.y-a.y)>300))state.goal=null;
+  if(!state.goal&&!a.cover?.active&&state.searchMs===0) {
+    state.searchMs=400+(Math.abs(a.aiOffset||0)%10)*19;
+    state.goal=enemyCoverGoal(a,state.lastX,state.lastY,state);
+    state.approachMs=0;
+  }
+  const goal=state.goal;
+  if(!goal&&!a.cover?.active)return false;
+  a.aimAngle=Math.atan2(state.lastY-a.y,state.lastX-a.x);
+  if(!a.cover?.active) {
+    const dx=goal.x-a.x,dy=goal.y-a.y,d=Math.hypot(dx,dy);
+    const speed=Math.min(2.45*stanceMovementScale(a),d);
+    let vx=d>3?dx/Math.max(d,.001)*speed:-goal.nx*6;
+    let vy=d>3?dy/Math.max(d,.001)*speed:-goal.ny*6;
+    a._coverApproach=d<48;
+    const moved=a.attemptMove(vx,vy);a._coverApproach=false;
+    a.isMoving=Math.hypot(moved.x,moved.y)>.01;
+    if(a.isMoving){a.moveAngle=Math.atan2(moved.y,moved.x);a.walkCycle+=.2;}
+    state.approachMs=(state.approachMs||0)+dt;
+    updateActorCover(a,dt,vx,vy,false);
+    if(state.approachMs>1800&&!a.cover?.active){state.goal=null;state.searchMs=500;return false;}
+    a.armDrag+=(Number(a.isMoving)-a.armDrag)*.15;
+    return true;
+  }
+  state.cycleMs+=dt;
+  const aiming=state.cycleMs%1500<560&&a.reloadTimer<=0;
+  a.isMoving=false;a.gait+=(0-a.gait)*GAIT_EASE;a._coverApproach=false;
+  updateActorCover(a,dt,0,0,aiming);
+  if(!a.cover?.active){state.goal=null;return false;}
+  if(aiming&&coverFireAllowed(a)&&a.fireTimer<=0&&a.reloadTimer<=0&&a.ammo>0) {
+    const upper=coverUpperOffset(a);
+    const zone=combatAimElevation(a,target,true);
+    const point=typeof coverActorHitCenter==='function'?coverActorHitCenter(target,zone):target;
+    if(coverLineClear(a.x+upper.x,a.y+upper.y,point.x,point.y,zone,a,target)) {
+      state.seenMs=1800;state.lastX=target.x;state.lastY=target.y;
+      a.aimAngle=Math.atan2(point.y-a.y,point.x-a.x);
+      updateActorCover(a,0,0,0,true);
+      a.fire(a.aimAngle);
+    }
+  }
+  a.armDrag+=(0-a.armDrag)*.15;
+  return true;
+}
+
 function updateCombatStanceAI(actor, target, canSee, distance) {
+  if(actor&&(actor.cover&&actor.cover.active||actor._enemyCover&&actor._enemyCover.goal))return;
   if (!actor || actor.isPlayer || !actorCanUseStances(actor)) return;
   const combat = !!target && target.hp > 0 && !target.dead && canSee &&
     distance >= 240 && distance <= 650 && !actor.isNeutral &&
@@ -21165,6 +21516,7 @@ this.skeletonTimer = 0;
   }
 
  attemptMove(vx, vy) {
+    if(!this.isPlayer){this._coverMoveX=vx;this._coverMoveY=vy;}
     if(this.isPlayer&&(this.shovelMantle||shovelTryMantle(this,vx,vy)))return {x:0,y:0};
     // Both feet stay braced during the short two-handed digging stroke.
     if(this.isPlayer&&this.shovelDigTimer>0)return {x:0,y:0};
@@ -21207,7 +21559,7 @@ this.skeletonTimer = 0;
     //
     //    Skipped when already standing inside something -- forceNudge() is what
     //    gets them out of that, and a sweep from inside a wall finds nothing.
-    if (!this.isPlayer && speed > 0.0001 && !this.checkCol(this.x, this.y)) {
+    if (!this.isPlayer && !this._coverApproach && speed > 0.0001 && !this.checkCol(this.x, this.y)) {
         // The probe is built once per entity and kept, not rebuilt per step.
         // steerAvoid takes a callback because its two callers test different
         // things -- a character's checkCol against a citizen's citizenBlocked --
@@ -21455,6 +21807,7 @@ this.skeletonTimer = 0;
   }
 
   updatePlayer() {
+    updateActorCover(this,typeof deltaTime==='number'?deltaTime:1000/60,leftStick.dx*6,leftStick.dy*6,coverPlayerAiming(this));
     const wasProneDive=proneDiveActive(this);
     updateActorStance(this, typeof deltaTime === 'number' ? deltaTime : 1000 / 60);
     const wasMantling=!!this.shovelMantle;
@@ -21848,6 +22201,7 @@ this.skeletonTimer = 0;
     }
  
     
+    updateActorCover(this,0,leftStick.dx*6,leftStick.dy*6,coverPlayerAiming(this));
     constrainStanceFacing(this);
     if (this.currentWeapon === WEAPONS.BOW) updatePlayerBowDraw(this);
     else if (playerWeaponFireInput() && this.reloadTimer <= 0 && this.meleeTimer <= 0 && this.dashTimer <= 0 && !isCooking && this.throwAnimTimer <= 0 && this.fireTimer <= 0 && this.ammo > 0) {
@@ -21862,6 +22216,7 @@ this.skeletonTimer = 0;
   }
 
     updateEnemy() {
+    this._coverMoveX=this._coverMoveY=0;
     updateActorStance(this, typeof deltaTime === 'number' ? deltaTime : 1000 / 60);
     shovelUpdateActor(this,typeof deltaTime==='number'?deltaTime:1000/60);
     if(this.shovelFallFatal)return;
@@ -22204,6 +22559,10 @@ if (this.eType === "COW") {
             }
         }
 
+        if (isFighting) {
+            if(this.allySeeOf!==trg||this.allyTick===frameCount){this.allySee=shovelActorLOS(this,trg);this.allySeeOf=trg;}
+            if(updateEnemyCoverAI(this,trg,this.allySee&&shovelActorsVisible(this,trg),distToTarget,deltaTime))return;
+        }
         if (shouldMove) {
             let mAng = atan2(moveTargetY - this.y, moveTargetX - this.x);
             let vx = cos(mAng) * ALLY_COMMAND_SPEED * spd;
@@ -22597,7 +22956,8 @@ if (this.eType === "COW") {
             if (canSee && dToP < 500 && this.fireTimer <= 0) { grenades.push(new Molotov(this.x, this.y, trg.x, trg.y)); sfx.throwG(); this.fireTimer = 180; } 
             if (distToTarget > 300 || (!canSee && distToTarget > 20)) { let vx = cos(iA) * 2.45 * spd, vy = sin(iA) * 2.45 * spd; let m = this.attemptMove(vx, vy); aDx = m.x; aDy = m.y; } 
         }
-        else { 
+        else {
+            if(updateEnemyCoverAI(this,trg,canSee,distToTarget,deltaTime))return;
             if (typeof isHardMode !== 'undefined' && isHardMode) {
                 if (this.standStillTimer === undefined) { this.standStillTimer = 0; this.strafeTimer = 0; this.strafeDir = 1; }
                 let mAng = iA;
@@ -22672,7 +23032,12 @@ if (this.eType === "COW") {
     } 
     
     this.armDrag = lerp(this.armDrag, this.isMoving ? 1 : 0, 0.15);
-    } finally { constrainStanceFacing(this); rememberFigureMotion(this,this.x-motionX,this.y-motionY); }
+    } finally {
+      if(typeof updateActorCover==='function'&&this._coverControllerFrame!==frameCount&&
+          (this.cover||enemyCoverEligible(this)))
+        updateActorCover(this,typeof deltaTime==='number'?deltaTime:1000/60,this._coverMoveX||0,this._coverMoveY||0,false);
+      constrainStanceFacing(this);rememberFigureMotion(this,this.x-motionX,this.y-motionY);
+    }
 } 
 
 
@@ -22698,9 +23063,10 @@ if (this.eType === "COW") {
       this.isArmed=true;this.aimHold=AIM_HOLD;
       if(actorStancePose(this).prone>0&&this.stance){this.stance.proneAimBlend=Math.max(.01,this.stance.proneAimBlend||0);this.isMoving=false;}
     }
+    if(!coverFireAllowed(this,sA,bowShot))return false;
     frontierAmbientMarkCombat();
     const huntShotId = ++_huntShotSequence;
-    let aH = this.isPlayer ? playerAimTarget() : this.stanceAimZone || (this.isFriendly && headAimToggle ? "HEAD" : "BODY"), cd = (this.isPlayer || this.isFriendly) ? this.currentWeapon.fireCooldown : (this.currentWeapon.enemyCooldown || 48), bob = this.isMoving ? abs(sin(this.walkCycle)) * 2 : 0;
+    let aH = this.isPlayer ? playerAimTarget() : this.stanceAimZone || (this.isFriendly && headAimToggle ? "HEAD" : "BODY"), cd = (this.isPlayer || this.isFriendly) ? this.currentWeapon.fireCooldown : (this.currentWeapon.enemyCooldown || 48), bob = this.isMoving&&!stanceCoverPoseActive(this) ? abs(sin(this.walkCycle)) * 2 : 0;
     const shotSpread = this.currentWeapon.spread * stanceSpreadScale(this);
     // The off hand cannot fire an SMG while it is throwing or using the cannon.
     const dualLeftReady = this.currentWeapon === WEAPONS.DUAL_SMG && !leftHandAction(this);
@@ -22812,7 +23178,7 @@ if (this.skeletonTimer > 0 && frameCount % 6 < 3) {
 if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return;}
 
     const stancePose = actorStancePose(this);
-    if (stancePose.crouch > 0 || stancePose.prone > 0) { drawCombatStanceFigure(this, stancePose); pop(); return; }
+    if (stancePose.crouch > 0 || stancePose.prone > 0 || stanceCoverPoseActive(this)) { drawCombatStanceFigure(this, stancePose); pop(); return; }
     drawCombatStanceUI(this, stancePose);
 
     let sOff = (currentLevel === 1 || currentLevel === 3) ? 15 : 10;
@@ -25500,15 +25866,92 @@ function stanceSegmentBoxTime(px,py,dx,dy,x0,y0,x1,y1) {
     else{const a=(y0-py)/dy,b=(y1-py)/dy;lo=Math.max(lo,Math.min(a,b));hi=Math.min(hi,Math.max(a,b));}
     return lo<=hi?lo:Infinity;
 }
+// Collision cover shares one height-aware ray for sight, fire and impact.
+// Launch height is frozen per pooled round; ducking later cannot lower bullets
+// that were already fired over a waist-high object.
+function coverLaunchIsLow(actor) {
+    return !!actor&&actorCanUseStances(actor)&&actorStance(actor)!=='STAND';
+}
+function coverLowBlocks(zone,shooter=null,target=null,launchLowOverride=null) {
+    return zone==='LEGS'||(launchLowOverride===null?coverLaunchIsLow(shooter):launchLowOverride)||
+        !!target&&actorCanUseStances(target)&&actorStance(target)!=='STAND';
+}
+const _coverShotIndex=newCrowdSolidIndex(2),_coverShotCandidates=[],_coverShotCars=[];
+function coverLineClear(x1,y1,x2,y2,zone='BODY',shooter=null,target=null,launchLowOverride=null) {
+    const low=coverLowBlocks(zone,shooter,target,launchLowOverride);
+    const solids=activeBuildings.length<=16?activeBuildings:crowdSolidCandidates(_coverShotIndex,activeBuildings,
+        Math.min(x1,x2),Math.min(y1,y2),Math.max(x1,x2),Math.max(y1,y2),_coverShotCandidates,false);
+    for(let i=0;i<solids.length;i++) {
+        const solid=solids[i],kind=coverSolidKind(solid);
+        if(!kind||kind==='LOW'&&!low)continue;
+        const rects=coverSolidRects(solid);
+        for(let j=0;j<rects.length;j++) {
+            const r=rects[j];
+            if(stanceSegmentBoxTime(x1,y1,x2-x1,y2-y1,r.x0,r.y0,r.x1,r.y1)!==Infinity)return false;
+        }
+    }
+    if(low) {
+        const reach=Math.hypot(x2-x1,y2-y1)*.5+50;
+        const cars=activeParkingCars.length<=16?activeParkingCars:crowdNearbyCars((x1+x2)*.5,(y1+y2)*.5,reach,_coverShotCars);
+        for(let i=0;i<cars.length;i++) {
+            const c=cars[i];if(c.hp<=0)continue;
+            if(stanceSegmentBoxTime(x1,y1,x2-x1,y2-y1,c.x-25,c.y-45,c.x+25,c.y+45)!==Infinity)return false;
+        }
+    }
+    return true;
+}
+function coverActorHitCenter(actor,incomingZone,resolvedZone=incomingZone) {
+    if(incomingZone==='LEGS'||!coverRenderActive(actor))return actor;
+    const body=stanceBodyPose(actor),head=resolvedZone==='HEAD',point=head?body.head:{x:body.chestX,y:body.chestY};
+    const angle=stanceFacingAngle(actor),ca=Math.cos(angle),sa=Math.sin(angle);
+    return {x:actor.x+(ca*point.x-sa*point.y)*body.size,
+        y:actor.y+(sa*point.x+ca*point.y)*body.size};
+}
+const _coverBulletBlock={t:Infinity,solid:null,car:false};
+function coverBulletBlock(b) {
+    const hit=_coverBulletBlock;hit.t=Infinity;hit.solid=null;hit.car=false;
+    const low=coverLowBlocks(b.tH,b.shooter,null,b.coverLaunchLow);
+    const solids=activeBuildings.length<=16?activeBuildings:crowdSolidCandidates(_coverShotIndex,activeBuildings,
+        Math.min(b.prevX,b.x),Math.min(b.prevY,b.y),Math.max(b.prevX,b.x),Math.max(b.prevY,b.y),_coverShotCandidates,false);
+    for(let i=0;i<solids.length;i++) {
+        const solid=solids[i],kind=coverSolidKind(solid);
+        if(!kind||kind==='LOW'&&!low)continue;
+        const rects=coverSolidRects(solid);
+        for(let j=0;j<rects.length;j++) {
+            const r=rects[j],t=forestShotRectTime(b,r.x0,r.y0,r.x1,r.y1);
+            if(t<hit.t){hit.t=t;hit.solid=solid;hit.car=false;}
+        }
+    }
+    if(low) {
+        const reach=Math.hypot(b.x-b.prevX,b.y-b.prevY)*.5+50;
+        const cars=activeParkingCars.length<=16?activeParkingCars:crowdNearbyCars((b.x+b.prevX)*.5,(b.y+b.prevY)*.5,reach,_coverShotCars);
+        for(let i=0;i<cars.length;i++) {
+            const c=cars[i];if(c.hp<=0)continue;
+            const t=forestShotRectTime(b,c.x-25,c.y-45,c.x+25,c.y+45);
+            if(t<hit.t){hit.t=t;hit.solid=c;hit.car=true;}
+        }
+    }
+    return hit;
+}
 function stanceProjectileContact(b,actor,profile=stanceHitProfile(actor,b.tH)) {
     if(!profile)return Infinity;
-    if(!profile.capsule)return forestShotCircleTime(b,actor.x,actor.y,profile.radius);
+    if(!profile.capsule) {
+        const center=coverActorHitCenter(actor,b.tH,profile.zone),t=forestShotCircleTime(b,center.x,center.y,profile.radius);
+        if(t===Infinity)return t;
+        if(coverRenderActive(actor)||actorCanUseStances(actor)&&actorStance(actor)!=='STAND') {
+            if(!coverLineClear(b.startX,b.startY,b.prevX+(b.x-b.prevX)*t,b.prevY+(b.y-b.prevY)*t,
+                b.tH,b.shooter,actor,b.coverLaunchLow))return Infinity;
+        }
+        return t;
+    }
     const angle=stanceFacingAngle(actor);
     const c=Math.cos(angle),s=Math.sin(angle),x=b.prevX-actor.x,y=b.prevY-actor.y;
     const dx=b.x-b.prevX,dy=b.y-b.prevY,half=profile.halfLength,r=profile.radius;
     const box=stanceSegmentBoxTime(x*c+y*s,-x*s+y*c,dx*c+dy*s,-dx*s+dy*c,-half,-r,half,r);
-    return Math.min(box,forestShotCircleTime(b,actor.x-c*half,actor.y-s*half,r),
+    const t=Math.min(box,forestShotCircleTime(b,actor.x-c*half,actor.y-s*half,r),
         forestShotCircleTime(b,actor.x+c*half,actor.y+s*half,r));
+    return t!==Infinity&&!coverLineClear(b.startX,b.startY,b.prevX+dx*t,b.prevY+dy*t,
+        b.tH,b.shooter,actor,b.coverLaunchLow)?Infinity:t;
 }
 const _forestShotCover={t:Infinity,kind:null};
 const _forestShotTargets=[];
@@ -25532,6 +25975,7 @@ function forestShotCover(b,targets,nearbyBarrels,targetBuckets=null) {
         const near=colNear(endpoint?b.x:b.prevX,endpoint?b.y:b.prevY);
         for(const solid of near) {
             if(solid.isRiver||solid.isDeck||((currentLevel===1||currentLevel===2)&&solid.isGrassLot))continue;
+            if(coverSolidKind(solid)==='LOW'&&!coverLowBlocks(b.tH,b.shooter,null,b.coverLaunchLow))continue;
             const t=forestShotRectTime(b,solid.x-solid.w*.5,solid.y-solid.h*.5,solid.x+solid.w*.5,solid.y+solid.h*.5);
             if(t===Infinity)continue;
             if(solid.isGovFortress&&inOpenGateway(solid,b.prevX+(b.x-b.prevX)*t))continue;
@@ -25539,7 +25983,7 @@ function forestShotCover(b,targets,nearbyBarrels,targetBuckets=null) {
         }
     }
     const cars=activeParkingCars.length<=16?activeParkingCars:crowdNearbyCars(b.x,b.y,40,_projectileCars);
-    for(const car of cars)consider(forestShotRectTime(b,car.x-25,car.y-45,car.x+25,car.y+45),'CAR');
+    if(coverLowBlocks(b.tH,b.shooter,null,b.coverLaunchLow))for(const car of cars)consider(forestShotRectTime(b,car.x-25,car.y-45,car.x+25,car.y+45),'CAR');
     return out;
 }
 function updateBullets() {
@@ -25554,6 +25998,9 @@ function updateBullets() {
       if (e.isCityCivilian || (e.isFriendly && !e.isNeutral)) enemyTgs.push(e);
   }
 
+  let coverReach=40;
+  for(let n=0;n<playerTgs.length;n++)if(coverRenderActive(playerTgs[n])){coverReach=80;break;}
+  if(coverReach===40)for(let n=0;n<enemyTgs.length;n++)if(coverRenderActive(enemyTgs[n])){coverReach=80;break;}
   const playerBuckets = projectileBuckets(playerTgs,_projectilePlayerGrid,_projectilePlayerBucketPool);
   const enemyBuckets = projectileBuckets(enemyTgs,_projectileEnemyGrid,_projectileEnemyBucketPool);
 
@@ -25572,10 +26019,21 @@ function updateBullets() {
     if (b.active && inView(b.x, b.y, 50) && !b.isAllyProjectile()) b.show(); 
     
     if (doTick && b.active) {
+        // Sweep before the actor pass so a fast round cannot damage somebody
+        // behind thin cover before the old endpoint-only solid pass sees it.
+        b._coverImpactSolid=null;b._coverImpactCar=false;
+        if(!b.retracting&&!b.tetheredTarget) {
+            const block=coverBulletBlock(b);
+            if(block.t!==Infinity) {
+                const t=Math.min(1,block.t+1e-6);
+                b.x=b.prevX+(b.x-b.prevX)*t;b.y=b.prevY+(b.y-b.prevY)*t;
+                b._coverImpactSolid=block.solid;b._coverImpactCar=block.car;
+            }
+        }
         let hB = false;
         const nearbyBarrels=barrels.length<=16?barrels:crowdNearbyBarrels(b.x,b.y,18,_projectileBarrels);
         const targetBuckets = b.isP ? playerBuckets : enemyBuckets;
-        const targetRadius=40+Math.hypot(b.x-b.prevX,b.y-b.prevY)*.5;
+        const targetRadius=coverReach+Math.hypot(b.x-b.prevX,b.y-b.prevY)*.5;
         const localTargets = querySpatialBuckets(targetBuckets,(b.x+b.prevX)*.5,(b.y+b.prevY)*.5,
             SPATIAL_CELL_SIZE,targetRadius,targetRadius*targetRadius,null,_projectileNearby);
         if(currentBiome===2&&!b.retracting&&!b.tetheredTarget&&typeof forestWildlifeHitTest==='function') {
@@ -25690,6 +26148,10 @@ function updateBullets() {
                 // The animation reads this; damage and death selection stay below.
                 const fallMotion=figureMotion(t),fallHit={frame:frameCount,kind:impactZone,weapon:b.w,angle:b.a,
                     force:weaponFallForce(b.w),mx:fallMotion.x,my:fallMotion.y,x:t.x,y:t.y,wound:null};
+                const coverWound=coverRenderActive(t)&&impactZone!=='LEGS'?stanceBodyPose(t):null;
+                const woundCenter=coverWound?coverActorHitCenter(t,b.tH,impactZone):fallHit;
+                const woundAngle=coverWound?stanceFacingAngle(t)+(impactZone==='HEAD'?0:coverWound.yaw):t.aimAngle;
+                const woundScale=coverWound?coverWound.size:1;
                 const hpBeforeImpact = t.hp;
                 let dRes = robotHeadAbsorbed ? { blocked: false, broken: false } : t.takeDamage(dmg,b.shooter);
                 recordStanceDamage(t,Math.max(0,hpBeforeImpact-t.hp),impactZone);
@@ -25739,8 +26201,10 @@ function updateBullets() {
                 let bCol = (t.eType === "BUG" || t.eType === "SNAIL" || t.eType === "SNAIL_HYBRID") ? color(200, 230, 40) : color(90, 0, 0); 
                 if (t.eType === "SNAIL_HYBRID" && impactZone === "HEAD") bCol = color(0, 100, 0);
                 
-                let dx = b.x - fallHit.x, dy = b.y - fallHit.y; let rotX = dx * cos(-t.aimAngle) - dy * sin(-t.aimAngle); let rotY = dx * sin(-t.aimAngle) + dy * cos(-t.aimAngle);
-                let bobOffset = t.isMoving ? abs(sin(t.walkCycle)) * 2 : 0; if (t.eType === "AERIAL" || t.eType === "AERIAL_PISTOL") bobOffset += sin(frameCount * 0.1) * 15;
+                let dx=(b.x-woundCenter.x)/woundScale,dy=(b.y-woundCenter.y)/woundScale;
+                let rotX=dx*cos(-woundAngle)-dy*sin(-woundAngle),rotY=dx*sin(-woundAngle)+dy*cos(-woundAngle);
+                if(coverWound&&impactZone!=='HEAD')rotY/=.85;
+                let bobOffset = !coverWound&&t.isMoving ? abs(sin(t.walkCycle)) * 2 : 0; if (t.eType === "AERIAL" || t.eType === "AERIAL_PISTOL") bobOffset += sin(frameCount * 0.1) * 15;
                 let lX = rotX - bobOffset, lY = rotY; let rw = (impactZone === "HEAD" ? 5.5 : t.bodyW / 2) * 0.85; let rh = (impactZone === "HEAD" ? 5.5 : t.bodyH / 2) * 0.85;
                 let distSq = (lX * lX) / (rw * rw) + (lY * lY) / (rh * rh); if (distSq > 1) { let scale = 1 / Math.sqrt(distSq); lX *= scale; lY *= scale; }
                 let dCol = b.isRedLaser ? [255, 50, 50, 220] : (b.isPinkLaser ? [255, 105, 180, 220] : (b.isAlienLaser ? [200, 20, 100, 220] : ((t.eType === "BUG" || t.eType === "SNAIL") ? [200, 230, 40, 220] : [90, 0, 0, 220])));
@@ -25752,7 +26216,7 @@ function updateBullets() {
                 // is restored, even after the shield recharges.
                 if (!(t.isPlayer && dRes.blocked)) {
                   const decal={x:lX,y:lY,sz:random(4,7),col:dCol,isHead:impactZone==="HEAD",
-                    isBulletHole:true,shotA:b.a-t.aimAngle};
+                    isBulletHole:true,shotA:b.a-woundAngle};
                   const variedHeight=(t.isPlayer||ragHumanoid(t.eType,t.bodyW))&&
                     !(b.isArrow||b.isOrangeBeam||b.isRedLaser||b.isPinkLaser||b.isAlienLaser);
                   const heightSample=variedHeight?bulletDecalHeightSample(b,t):null;
@@ -25903,6 +26367,8 @@ function updateBullets() {
             // place either can splice activeBuildings out from under the
             // shared scratch array colNear hands back.
             for (let bldg of colNear(b.x, b.y)) { 
+                if(b._coverImpactSolid&&(b._coverImpactCar||b._coverImpactSolid!==bldg))continue;
+                if(coverSolidKind(bldg)==='LOW'&&!coverLowBlocks(b.tH,b.shooter,null,b.coverLaunchLow))continue;
                 if (currentLevel === 4 && bldg.isPalm) continue; 
                 if (currentLevel === 6 && (bldg.isAlienPlant || bldg.isEnergyPole)) continue; 
                 if ((currentLevel === 1 || currentLevel === 2) && bldg.isGrassLot) continue; 
@@ -25977,6 +26443,7 @@ function updateBullets() {
             if (!hitSomething) {
                 const nearbyCars=activeParkingCars.length<=16?activeParkingCars:crowdNearbyCars(b.x,b.y,0,_projectileCars);
                 for (let c of nearbyCars) {
+                    if(!coverLowBlocks(b.tH,b.shooter,null,b.coverLaunchLow)||b._coverImpactSolid&&b._coverImpactSolid!==c)continue;
                     let cw = 50, ch = 90; 
                     if (Math.abs(b.x - c.x) > cw || Math.abs(b.y - c.y) > ch) continue;
 
@@ -26525,10 +26992,11 @@ class Bullet {
       if(!value)queueBulletSlot(this);
   }
   
-  init(x, y, a, iP, tH, w) { 
+  init(x, y, a, iP, tH, w, shooter = null) {
     this.active = true;
     this.x = x; this.y = y; this.startX = x; this.startY = y; this.isP = iP; this.tH = tH; this.w = w; this.a = a; 
     this.prevX = x; this.prevY = y; this.shotId = 0;
+    this.shooter=shooter;this.coverLaunchLow=coverLaunchIsLow(shooter);this._coverImpactSolid=null;this._coverImpactCar=false;
     this.isArrow = w === WEAPONS.BOW;
     this.arrowPower = 1; this.arrowDud = false; this.arrowSpeed = 28;
     this.arrowRange = 2520; this.arrowTravel = 0;
@@ -30204,7 +30672,7 @@ function saveGame() {
         darchonCallCompleted,
         militaryToBring: window.militaryToBring,
         playerHp: player ? player.hp : 100,
-        playerStance: player ? actorStance(player) : 'STAND',
+        playerStance: player&&player.stance ? COMBAT_STANCES[player.stance.value<.5?0:player.stance.value<1.5?1:2] : 'STAND',
         playerProneHeading:player&&actorStance(player)==='PRONE'?stanceFacingAngle(player):null,
         playerShield: player ? player.shield : 100,
         playerX: frontierExterior ? frontierExterior.x : (player ? player.x : null),
@@ -43509,10 +43977,36 @@ function proneRollPose(c) {
     post:Math.max(0,Math.sin(angle*2))*amount,turn:lateral*.25*amount,
     offsetY:supportSide*side*2.6,foreground:amount>0&&angle>Math.PI*.505};
 }
+function stanceCoverPoseActive(c) { return typeof coverRenderActive==='function'&&coverRenderActive(c); }
+// A wall shuffle keeps the back against cover. Entry and release blend into
+// the same ordinary leg surfaces and trailing hip frame used outside cover.
+function standingCoverLeg(c,R,index,heading,blend) {
+  const side=index?1:-1,GP=gaitPose(c.gait||0),th=R.thigh*STAND_FORE_LEG,sh=R.shin*STAND_FORE_LEG;
+  const beat=c.isMoving?-side*Math.sin(c.walkCycle||0)*12*GP.swing:0;
+  const travel=(c.moveAngle||0)-heading;
+  const sx=-10+R.thighW*.5+beat*Math.cos(travel),sy=side*6+beat*Math.sin(travel)*.3;
+  const wall={sx,sy,kx:sx+th*.92,ky:sy,ax:sx+th*.92+sh,ay:sy};
+  const lower=c.isPlayer?standingLowerPose(c):null;
+  if(!lower||blend>=1)return wall;
+  const rear=standingRearPose(c,lower);
+  const step=c.isMoving?-side*Math.sin(c.walkCycle||0)*12*GP.swing:0,root=-10+R.thighW*.5+step;
+  const native=rear?standingRearClothPose(standingRearLeg(c,rear,R,index),R,rear.blend):
+    {sx:root,sy:side*6,kx:root+th*.92,ky:side*6,ax:root+th*.92+sh,ay:side*6};
+  const delta=lower.angle-heading,co=Math.cos(delta),si=Math.sin(delta),mix=1-blend;
+  for(const pair of [['sx','sy'],['kx','ky'],['ax','ay']]) {
+    const x=native[pair[0]],y=native[pair[1]];
+    wall[pair[0]]+=(co*x-si*y-wall[pair[0]])*mix;
+    wall[pair[1]]+=(si*x+co*y-wall[pair[1]])*mix;
+  }
+  return wall;
+}
 function stanceBodyPose(c) {
-  const p=actorStancePose(c),value=c.stance?c.stance.value:0,drop=Math.min(1,value),floor=p.prone||0;
-  const dive=proneDiveArc(c),aiming=stanceArtAiming(c),cycle=c.walkCycle||0,cached=c._stanceBody,roll=proneRollPose(c),lower=crouchLowerPose(c);
-  if(cached&&cached.dive===dive&&cached.value===value&&cached.cycle===cycle&&cached.moving===!!c.isMoving&&
+  const cover=stanceCoverPoseActive(c),p=actorStancePose(c),value=cover?coverStanceLevel(c):c.stance?c.stance.value:0,drop=Math.min(1,value),floor=p.prone||0;
+  const upper=cover?coverUpperOffset(c):null,coverX=upper?upper.x:0,coverY=upper?upper.y:0;
+  const coverBlend=cover?Math.max(0,Math.min(1,c.cover.blend||0)):0;
+  const dive=proneDiveArc(c),aiming=cover?coverAimActive(c):stanceArtAiming(c),cycle=c.walkCycle||0,cached=c._stanceBody,roll=proneRollPose(c),lower=crouchLowerPose(c);
+  if(cached&&cached.cover===cover&&cached.coverBlend===coverBlend&&cached.coverX===coverX&&cached.coverY===coverY&&
+      cached.coverAim===(c.aimAngle||0)&&cached.dive===dive&&cached.value===value&&cached.cycle===cycle&&cached.moving===!!c.isMoving&&
       cached.aiming===aiming&&cached.gait===(c.gait||0)&&cached.bodyW===c.bodyW&&cached.bodyH===c.bodyH&&
       cached.roll.heading===roll.heading&&cached.roll.delta===roll.delta&&cached.roll.blend===roll.blend&&
       cached.lower.angle===lower.angle&&cached.lower.backward===lower.backward&&cached.lower.phase===lower.phase&&cached.lower.motion===lower.motion)return cached;
@@ -43521,10 +44015,14 @@ function stanceBodyPose(c) {
   const motion=moving?1:settle,right=stanceElbowCycle(phase,motion>0),left=stanceElbowCycle(phase+Math.PI,motion>0);
   right.reach*=motion;right.lift*=motion;left.reach*=motion;left.lift*=motion;
   const crouchWeight=drop*(1-floor),step=crouchStepPose(c,lower.phase);
-  const yaw=Math.atan2(left.reach-right.reach,c.bodyH*.72)*.38*floor+step.counterYaw*crouchWeight+roll.turn;
-  const legYaw=lower.yaw*crouchWeight,hipYaw=legYaw-yaw*.45+step.hipYaw*crouchWeight;
+  const coverTurn=cover&&aiming?Math.max(-1.15,Math.min(1.15,roll.delta*.55))*coverBlend:0;
+  const yaw=Math.atan2(left.reach-right.reach,c.bodyH*.72)*.38*floor+step.counterYaw*crouchWeight+roll.turn+coverTurn;
+  const legYaw=lower.yaw*crouchWeight,hipYaw=legYaw-(yaw-coverTurn)*.45+step.hipYaw*crouchWeight;
   const size=p.scaleX,hipX=-5*drop-4*floor-dive*2,hipY=roll.offsetY;
-  const chestX=1.5*drop-floor*2.5+step.chestX*crouchWeight+dive*3,chestY=hipY+step.chestY*crouchWeight;
+  const heading=stanceFacingAngle(c),ca=Math.cos(heading),sa=Math.sin(heading);
+  const upperX=(ca*coverX+sa*coverY)/size,upperY=(-sa*coverX+ca*coverY)/size;
+  const brace=cover&&!aiming?-2*coverBlend*(1-floor):0;
+  const chestX=1.5*drop-floor*2.5+step.chestX*crouchWeight+dive*3+upperX+brace,chestY=hipY+step.chestY*crouchWeight+upperY;
   const torsoLength=c.bodyW*TORSO_DEPTH+floor*3.5,torsoWidth=c.bodyH*(1-.10*drop-.10*floor)*(1-roll.side*.53);
   const joints=[];
   for (const side of [-1,1]) {
@@ -43543,6 +44041,12 @@ function stanceBodyPose(c) {
       const x=point.x-hipX,y=point.y;
       point.x=hipX+co*x-si*y;point.y=si*x+co*y+hipY;
     }
+    if(cover&&drop<1) {
+      const standing=standingCoverLeg(c,R,side<0?0:1,heading,coverBlend),weight=1-drop;
+      hip.x+=(standing.sx-hip.x)*weight;hip.y+=(standing.sy-hip.y)*weight;
+      knee.x+=(standing.kx-knee.x)*weight;knee.y+=(standing.ky-knee.y)*weight;
+      ankle.x+=(standing.ax-ankle.x)*weight;ankle.y+=(standing.ay-ankle.y)*weight;
+    }
     // Seat the sleeve root inside the chest contour. The torso then covers
     // the shoulder cap instead of leaving the arm pasted onto its outer edge.
     const sx=torsoLength*.30,sy=side*torsoWidth*.28;
@@ -43550,12 +44054,12 @@ function stanceBodyPose(c) {
       y:Math.sin(yaw)*sx+Math.cos(yaw)*sy+chestY};
     const post=side===roll.supportSide?roll.post:0;
     joints.push({side,hip,knee,ankle,shoulder,
-      elbow:{x:4*drop+floor*4+support.reach*floor-post*3+side*step.armCounter*crouchWeight,
+      elbow:{x:4*drop+floor*4+support.reach*floor-post*3+side*step.armCounter*crouchWeight+upperX+brace,
         y:side*(c.bodyH*.46+support.lift*floor)*(1-roll.side*.45)+chestY+side*post},support,step:stepLeg});
   }
-  const head={x:(aiming?3:0)*(1-drop)+8*drop+7*floor-roll.back*.8+step.chestX*crouchWeight*.55+dive*5,
+  const head={x:(aiming?3:0)*(1-drop)+8*drop+7*floor-roll.back*.8+step.chestX*crouchWeight*.55+dive*5+upperX+brace,
     y:(aiming?4*(1-drop)+2.2*drop-5.8*floor:0)*(1-roll.side*.6-roll.back)+chestY};
-  return c._stanceBody={dive,value,cycle,moving:!!c.isMoving,gait:c.gait||0,bodyW:c.bodyW,bodyH:c.bodyH,drop,floor,size,aiming,yaw,hipYaw,hipX,hipY,chestX,chestY,joints,head,R,
+  return c._stanceBody={cover,coverBlend,coverX,coverY,coverAim:c.aimAngle||0,upperX,upperY,dive,value,cycle,moving:!!c.isMoving,gait:c.gait||0,bodyW:c.bodyW,bodyH:c.bodyH,drop,floor,size,aiming,yaw,hipYaw,hipX,hipY,chestX,chestY,joints,head,R,
     torsoLength,torsoWidth,crouchWeight,step,roll,lower};
 }
 // A native gun keeps its own proportions. One rigid mount owns the solid,
@@ -43563,7 +44067,7 @@ function stanceBodyPose(c) {
 // Support actions use the separate body mount, never a rifle's port angle.
 function stanceWeaponMount(c) {
   const p=actorStancePose(c);
-  if (!p.crouch&&!p.prone) return {x:0,y:0,angle:0,scale:1};
+  if (!p.crouch&&!p.prone&&!stanceCoverPoseActive(c)) return {x:0,y:0,angle:0,scale:1};
   const b=stanceBodyPose(c),w=c.currentWeapon;
   const two=weaponHands(w)===2,aim=b.aiming||c.reloadTimer>0;
   const carryBlend=!aim&&leftHandAction(c)!==2?b.roll.blend:0;
@@ -43571,6 +44075,7 @@ function stanceWeaponMount(c) {
   if(cached&&cached.body===b&&cached.weapon===w&&cached.aim===aim&&cached.carryBlend===carryBlend)return cached;
   const roll=b.yaw*(aim?0:.75),port=(two?-1.12:-.14)*b.drop+roll;
   let angle=aim?0:port;
+  if(b.cover&&!aim)angle=stanceFacingAngle(c)-(c.aimAngle||0)+(two?-1.12:-.25)*b.coverBlend;
   if(!aim&&c.isPlayer&&b.floor>0) {
     const turn=Math.atan2(Math.sin(b.roll.delta-port),Math.cos(b.roll.delta-port));
     angle=port-b.roll.delta+turn*carryBlend;
@@ -43596,6 +44101,10 @@ function stanceWeaponMount(c) {
     if(!aim){x+=b.yaw*3*b.floor;y+=(b.joints[1].support.reach+b.joints[0].support.reach)*.10*b.floor;}
   }
   if(aim&&w===WEAPONS.SHOTGUN)x-=2*b.drop*(1-b.floor)*scale;
+  if(b.cover) {
+    const co=Math.cos(c.aimAngle||0),si=Math.sin(c.aimAngle||0);
+    x+=co*b.coverX+si*b.coverY;y+=-si*b.coverX+co*b.coverY;
+  }
   return c._stanceMount={x,y,angle,scale,body:b,weapon:w,aim,carryBlend};
 }
 function stanceLongGunPose(c) {
@@ -43629,13 +44138,15 @@ function drawCombatStanceSleeve(g,sx,sy,ex,ey,hx,hy,w0,w1,w2,cloth) {
 }
 function stanceLocalPoint(c,x,y,support=false) {
   const p=actorStancePose(c);
-  if (!p.crouch&&!p.prone) return {x,y};
+  if (!p.crouch&&!p.prone&&!stanceCoverPoseActive(c)) return {x,y};
   const m=support?stanceSupportMount(c):stanceWeaponMount(c),ca=Math.cos(m.angle),sa=Math.sin(m.angle);
   return {x:m.x+(ca*x-sa*y)*m.scale,y:m.y+(sa*x+ca*y)*m.scale};
 }
 function stanceSupportMount(c) {
   const p=actorStancePose(c),delta=(c.aimAngle||0)-stanceFacingAngle(c),pivot=5*(p.prone||0);
-  return {x:(Math.cos(delta)*pivot-pivot)*p.scaleX,y:-Math.sin(delta)*pivot*p.scaleX,angle:0,scale:p.scaleX};
+  const upper=stanceCoverPoseActive(c)?coverUpperOffset(c):null,co=Math.cos(c.aimAngle||0),si=Math.sin(c.aimAngle||0);
+  return {x:(Math.cos(delta)*pivot-pivot)*p.scaleX+(upper?co*upper.x+si*upper.y:0),
+    y:-Math.sin(delta)*pivot*p.scaleX+(upper?-si*upper.x+co*upper.y:0),angle:0,scale:p.scaleX};
 }
 function stancePointInBody(c,x,y) {
   const p=stanceLocalPoint(c,x,y),delta=(c.aimAngle||0)-stanceFacingAngle(c),co=Math.cos(delta),si=Math.sin(delta);
@@ -43643,14 +44154,14 @@ function stancePointInBody(c,x,y) {
 }
 function stanceMuzzleWorld(c, x, y, angle = c.aimAngle || 0, support = false) {
   const p = actorStancePose(c);
-  if (!p.crouch && !p.prone) return { x, y };
+  if (!p.crouch && !p.prone&&!stanceCoverPoseActive(c)) return { x, y };
   const ca = Math.cos(angle), sa = Math.sin(angle), dx = x - c.x, dy = y - c.y;
   const local = stanceLocalPoint(c, dx * ca + dy * sa, -dx * sa + dy * ca,support);
   return { x: c.x + ca * local.x - sa * local.y, y: c.y + sa * local.x + ca * local.y - proneDiveLift(c) };
 }
 function stanceHeadLocal(c) {
   const p = actorStancePose(c);
-  if(p.crouch||p.prone){const b=stanceBodyPose(c);return {x:b.head.x*b.size,y:b.head.y*b.size};}
+  if(p.crouch||p.prone||stanceCoverPoseActive(c)){const b=stanceBodyPose(c);return {x:b.head.x*b.size,y:b.head.y*b.size};}
   const braced = c.isArmed && c.reloadTimer <= 0 && c.meleeTimer <= 0 &&
     (c.currentWeapon === WEAPONS.ASSAULT_RIFLE || c.currentWeapon === WEAPONS.SHOTGUN || c.currentWeapon === WEAPONS.ROCKET_LAUNCHER);
   return { x: braced ? 3 : 0, y: braced ? 4 : 0 };
@@ -43764,6 +44275,10 @@ function drawStanceDashPack(g,c,b,layer='ALL') {
 function drawCombatStanceBody(c,b,g,cloth,withHead=true) {
   const prone=b.floor;
   const pack=c.isPlayer&&jetpackUnlocked&&b.floor>0?stanceDashPackMesh(b):null;
+  if(b.cover&&(Math.abs(b.upperX)+Math.abs(b.upperY)>.01)) {
+    figureCelLimb(g,b.hipX,b.hipY,(b.hipX+b.chestX)*.5,(b.hipY+b.chestY)*.5,
+      b.chestX,b.chestY,c.bodyH*.65,c.bodyH*.69,c.bodyH*.72,cloth);
+  }
   push();translate(b.chestX,b.chestY);rotate(b.yaw);
   if(pack&&pack.below)drawStanceDashPack(g,c,b,'UNDER');
   figureCelOval(g,0,0,b.torsoLength,b.torsoWidth,cloth,.45-prone*.18);
@@ -44138,7 +44653,7 @@ function leftActionPose(c, action) {
 function leftActionMuzzle(c, angle) {
   const P = leftActionPose(c, 2), GP = gaitPose(c.isMoving ? c.gait : 0);
   const low=actorStancePose(c),x=P.hx+P.hand*.48,y=P.hy;
-  if(low.crouch||low.prone)return stanceMuzzleWorld(c,
+  if(low.crouch||low.prone||stanceCoverPoseActive(c))return stanceMuzzleWorld(c,
     c.x+cos(angle)*x-sin(angle)*y,c.y+sin(angle)*x+cos(angle)*y,angle,true);
   let bob = c.isMoving ? abs(sin(c.walkCycle)) * 2 * GP.bob + GP.lean : 0;
   if (c.mounted) bob *= 0.4;
@@ -49223,7 +49738,7 @@ const WEAPON_MUZZLE = {
 };
 function weaponLightMuzzle(c,m) {
   const a=c.aimAngle||0,ca=Math.cos(a),sa=Math.sin(a);
-  const forward=m[0]+(c.isMoving?Math.abs(Math.sin(c.walkCycle||0))*2:0);
+  const forward=m[0]+(c.isMoving&&!stanceCoverPoseActive(c)?Math.abs(Math.sin(c.walkCycle||0))*2:0);
   return stanceMuzzleWorld(c,c.x+ca*forward-sa*m[1],c.y+sa*forward+ca*m[1]);
 }
 
