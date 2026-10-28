@@ -3,6 +3,7 @@
 Combat stances share the existing HEAD / BODY / LEGS aiming system. They apply
 to the player and humanoid allies/enemies across the campaign, including the HQ.
 They are separate from knockouts, dead bodies, boxing poses and ambient scientists.
+Dungeon magicians and zombies retain their own standing hitboxes and combat rules.
 Automatic contact cover layers its posture over the selected stance without changing it.
 See [Collision-based cover](collision-cover.md) for wall peeks and low-cover pop-ups.
 

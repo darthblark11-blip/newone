@@ -29,7 +29,7 @@ const STANDING_STANCE_POSE = {crouch:0,prone:0,scaleX:1,scaleY:1,forward:0,muzzl
 const STANCE_HOLD_MS = 200, PRONE_DIVE_MS = 700, PRONE_DIVE_DISTANCE = 220, PRONE_DIVE_LEVEL_MS = 65;
 const stanceInput = {crouch:false,prone:false,hold:null};
 function actorCanUseStances(a) {
-  return !!a && !a.isNM0Scientist && !a.isCorpse && (a.isPlayer || ragHumanoid(a.eType,a.bodyW)) &&
+  return !!a && !a.isNM0Scientist && !a.isCorpse && !isOccultActor(a) && (a.isPlayer || ragHumanoid(a.eType,a.bodyW)) &&
     !['ARMORED','ROBOT','SNAIL_HYBRID','ALIEN_GATOR','COW','HORSE','BUG','SNAIL','AERIAL','AERIAL_PISTOL','SAUCER','SAUCER_RED'].includes(a.eType);
 }
 function combatStanceContext() {
@@ -732,7 +732,8 @@ function coverPeekCandidate(a,state,aimAngle) {
 const COLLISION_COVER={enterMs:120,exitMs:150,leanMs:110,riseMs:135,duckMs:100};
 const NO_COVER_OFFSET={x:0,y:0};
 function actorCoverSuppressed(a) {
-  return !a||!!a.legInjury||actorStanceSuppressed(a)||a.meleeTimer>0||a.throwAnimTimer>0||
+  // NPC contact and rendering share the tactical firearm eligibility gate.
+  return !a||!a.isPlayer&&!enemyCoverEligible(a)||!!a.legInjury||actorStanceSuppressed(a)||a.meleeTimer>0||a.throwAnimTimer>0||
     !!(a.stance&&(a.stance.to===2||a.stance.value>1.01));
 }
 function coverRenderActive(a) {
@@ -21360,7 +21361,8 @@ function updateEnemyShotReaction(a,target,canSee,distance,elapsedMs=deltaTime) {
 
 // Gunners share the player's contact/peek solver. Only choosing a nearby
 // place to approach is AI work; wall contact never becomes a movement lock.
-const ENEMY_COVER_WEAPONS=new Set(Object.values(WEAPONS)),_enemyCoverCars=[];
+const ENEMY_COVER_WEAPONS=new Set([WEAPONS.PISTOL,WEAPONS.SMG,WEAPONS.DUAL_SMG,WEAPONS.ASSAULT_RIFLE,
+  WEAPONS.SHOTGUN,WEAPONS.REVOLVER,WEAPONS.COACH_GUN]),_enemyCoverCars=[];
 function enemyCoverEligible(a) {
   return !!a&&!a.legInjury&&!a.isPlayer&&!a.isNeutral&&!a.isUnarmed&&!a.isCoward&&!a.mounted&&
     !String(a.eType||'').startsWith('OCCULT_')&&a.eType!=='MOLOTOV'&&
@@ -26871,7 +26873,7 @@ function updateBullets() {
                 if (b.isArrow) dmg *= b.arrowPower;
                 // Balance actual firearm leg hits, not low launch elevation:
                 // falling/crouched targets still receive full body/head damage.
-                if(impactZone==='LEGS'&&!b.isArrow&&!b.isOrangeBeam&&!b.isRedLaser&&!b.isPinkLaser&&!b.isAlienLaser)
+                if(impactZone==='LEGS'&&!isOccultActor(t)&&!b.isArrow&&!b.isOrangeBeam&&!b.isRedLaser&&!b.isPinkLaser&&!b.isAlienLaser)
                     dmg*=LEG_SHOT_DAMAGE_SCALE;
                 
                 if (t.eType === "SNAIL_HYBRID" && impactZone === "HEAD") {

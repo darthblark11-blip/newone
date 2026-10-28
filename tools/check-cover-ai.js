@@ -25,13 +25,36 @@ function fresh(type='NORMAL'){
 }
 function step(n=1){probe(`for(let i=0;i<${n};i++){frameCount++;deltaTime=1000/60;coverGunner.updateEnemy();}`);}
 function low(){probe('window.aiCover={x:60,y:40,w:40,h:80,isCrateProp:true};buildings=activeBuildings=[aiCover];invalidateColIndex();');}
+function noDirectCover(label){
+ low();probe(`coverGunner.x=23;coverGunner.y=40;
+  coverGunner.cover={active:true,kind:'LOW',blend:1,pop:0,upper:{x:0,y:0}};`);
+ ok(label+' cannot render a stale cover posture',!P('coverRenderActive(coverGunner)'));
+ probe('updateActorCover(coverGunner,100,6,0,true);');
+ ok(label+' clears stale cover through the direct contact controller',P('coverGunner.cover===null'));
+ probe('frameCount++;updateActorCover(coverGunner,100,6,0,true);');
+ ok(label+' cannot acquire cover when pressed against a wall',P('coverGunner.cover===null'));
+}
 
 fresh();ok('a normal firearm enemy is eligible for shared cover',P('enemyCoverEligible(coverGunner)'));
-for(const type of ['OCCULT_ZOMBIE','OCCULT_BLACK','BUG','HORSE','ROBOT','MOLOTOV','SNAIL_HYBRID']){
+for(const weapon of ['PISTOL','SMG','DUAL_SMG','ASSAULT_RIFLE','SHOTGUN','REVOLVER','COACH_GUN']){
+ fresh();low();probe(`coverGunner.currentWeapon=WEAPONS.${weapon};coverGunner.x=23;coverGunner.y=40;`);
+ ok(weapon+' human gunner remains eligible for tactical cover',P('enemyCoverEligible(coverGunner)'));
+ probe('updateActorCover(coverGunner,100,6,0,true);');
+ ok(weapon+' human gunner can acquire native wall contact',P('coverGunner.cover?.active&&coverRenderActive(coverGunner)'));
+}
+for(const type of ['OCCULT_ZOMBIE','OCCULT_BLACK','OCCULT_RED','OCCULT_BLUE','BUG','HORSE','ROBOT','MOLOTOV','SNAIL_HYBRID']){
  fresh(type);ok(type+' keeps its dedicated combat/navigation path',!P('enemyCoverEligible(coverGunner)'));
+ noDirectCover(type);
 }
 fresh();probe('coverGunner.isNeutral=true;');ok('neutral armed civilians do not acquire combat cover goals',!P('enemyCoverEligible(coverGunner)'));
+noDirectCover('neutral civilian');
 probe('coverGunner.isNeutral=false;coverGunner.isUnarmed=true;');ok('unarmed civilians keep their native flee behavior',!P('enemyCoverEligible(coverGunner)'));
+noDirectCover('unarmed civilian');
+for(const weapon of ['BOW','TASER','ROCKET_LAUNCHER','RED_LASER','PINK_LASER','ALIEN_LASER','ORANGE_BEAM']){
+ fresh();probe(`coverGunner.currentWeapon=WEAPONS.${weapon}||'${weapon}';`);
+ ok(weapon+' NPCs do not receive normal firearm cover decisions',!P('enemyCoverEligible(coverGunner)'));
+ noDirectCover(weapon+' NPC');
+}
 
 fresh();low();probe('window.aiSearch={};window.aiGoal=enemyCoverGoal(coverGunner,player.x,player.y,aiSearch);');
 ok('nearby waist cover produces a safe accessible goal',P("aiGoal&&aiGoal.kind==='LOW'&&!coverGunner.checkCol(aiGoal.x,aiGoal.y)"));

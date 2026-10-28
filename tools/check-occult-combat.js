@@ -29,6 +29,32 @@ for(const kind of ['BLACK','RED','BLUE']){
  P('var hpBefore=mage.hp;mage.takeDamage(31,player);');
  ok('mage.hp===hpBefore-31&&mage.lastDamageSource===player','Ordinary native damage wounds the '+kind+' caster');
 }
+// Dungeon actors retain their pre-cover circular hurt boxes and full firearm
+// damage. Their bookkeeping pistol must never opt them into humanoid tactics.
+for(const kind of ['BLACK','RED','BLUE','ZOMBIE']){
+ for(const weapon of ['PISTOL','SMG','DUAL_SMG','ASSAULT_RIFLE','SHOTGUN','REVOLVER','COACH_GUN']){
+  for(const zone of ['HEAD','BODY','LEGS']){
+   P(`occultFixture();var dungeonVictim=${kind==='ZOMBIE'?"createOccultZombie(0,-1100,'test-owner')":`createOccultMagician('${kind}',0,-1100)`};
+    dungeonVictim.hp=dungeonVictim.maxHp=1000;dungeonVictim.aimAngle=-Math.PI/2;
+    enemiesList=[dungeonVictim];
+    var dungeonRound=spawnBullet(0,-1020,-Math.PI/2,true,'${zone}',WEAPONS.${weapon},player);
+    for(let i=0;i<12&&dungeonRound.active;i++){frameCount++;updateBullets();}`);
+   ok(`dungeonVictim.hp===1000-WEAPONS.${weapon}.${zone==='HEAD'?'headDmg':'bodyDmg'}&&
+      dungeonVictim.fallHit.kind==='${zone}'&&!dungeonRound.active&&!dungeonVictim.legInjury&&!dungeonVictim.shotReaction`,
+    `${kind}/${weapon}/${zone} retains full legacy damage and native dungeon hit contact`);
+  }
+ }
+ P(`occultFixture();var dungeonVictim=${kind==='ZOMBIE'?"createOccultZombie(0,-1100,'test-owner')":`createOccultMagician('${kind}',0,-1100)`};
+   enemiesList=[dungeonVictim];
+   var dungeonRay={prevX:-30,prevY:-1100,x:30,y:-1100,startX:-30,startY:-1100,tH:'LEGS',shooter:player};`);
+ ok("stanceHitProfile(dungeonVictim,'LEGS').radius===12&&Number.isFinite(stanceProjectileContact(dungeonRay,dungeonVictim))",
+  kind+' restores the circular low hitbox, including its centerline');
+ ok("!actorCanUseStances(dungeonVictim)&&!enemyCoverEligible(dungeonVictim)&&!enemyCoverDiveEligible(dungeonVictim)&&!enemyShotReactionEligible(dungeonVictim)&&!legInjuryEligible(dungeonVictim)",
+  kind+' cannot enter firearm cover, stances, evasion or leg injuries');
+ P("resetActorStance(dungeonVictim,'CROUCH');updateCombatStanceAI(dungeonVictim,player,true,300);updateActorStance(dungeonVictim,100);");
+ ok("actorStance(dungeonVictim)==='STAND'&&stanceHitProfile(dungeonVictim,'BODY').zone==='BODY'",
+  kind+' cannot inherit a stale firearm posture');
+}
 P(`occultFixture();var nativeMage=addMage('RED',0,-1100);nativeMage.occult.cooldownMs=0;deltaTime=20;nativeMage.updateEnemy();`);
 ok('nativeMage.occult.phase===\'CHARGE\'&&nativeMage.occult.cast===\'FIREBALL\'', 'The production Character AI routes a mage into its magical charge');
 P(`nativeMage.occult.phase='IDLE';player.currentWeapon=WEAPONS.PISTOL;player.fireTimer=0;headAimToggle=false;

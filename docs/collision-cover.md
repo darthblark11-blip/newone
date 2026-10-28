@@ -1,5 +1,10 @@
 # Collision-based cover
 
+NPC cover is limited to humanoids carrying conventional firearms. Magicians,
+zombies, creatures, unarmed actors and NPCs using bows, tasers or rockets keep
+their own behavior; the contact controller and cover rendering use the same
+eligibility gate as tactical cover AI. Player cover controls remain available.
+
 Walk into a solid wall or waist-high object to take cover. Pressing against it
 establishes stable contact: releasing movement or angling the thumb slightly
 outward keeps that contact while movement along the face remains free. A firm

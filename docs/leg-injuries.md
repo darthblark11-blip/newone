@@ -6,8 +6,9 @@ the legs and outside the pants is a miss. Projectile sweeps retain fast-shot
 contact and record which leg was struck before damage or knockback moves the
 target. Existing vertical wound variation is preserved on that leg.
 
-All conventional firearms deal **50% body damage** when the resolved hit is
-LEGS. Low shots converted to BODY or HEAD during a fall, seated pose or prone
+Conventional firearms deal **50% body damage** when the resolved hit is
+LEGS. Dungeon magicians and zombies retain their earlier circular hitboxes and
+full low-shot damage. Low shots converted to BODY or HEAD during a fall, seated pose or prone
 pose keep their normal body or head damage. Armor and shield rules still apply;
 arrows, energy weapons, explosions and tasers retain their existing damage.
 

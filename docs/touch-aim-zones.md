@@ -37,7 +37,8 @@ the legs and the space outside them are misses. Low firearm rounds meet the
 floor after 15 m standing, 20 m crouched or 26 m prone, using the shooter's
 effective stance at launch. Conventional firearm hits resolved to LEGS deal
 50% body damage, with existing armor rules and a 25% chance to collapse a
-surviving hostile humanoid onto the struck side. Low shots converted to BODY
+surviving hostile humanoid onto the struck side. Dungeon magicians and zombies
+retain full low-shot damage and cannot receive leg injuries. Low shots converted to BODY
 or HEAD keep normal damage, including during falls and seated/prone transitions.
 Arrows, energy weapons, explosions and tasers retain their existing damage. Wounded
 enemies can fire prone, sit and fire, or get back up. See
