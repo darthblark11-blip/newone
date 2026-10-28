@@ -289,7 +289,8 @@ function drawStanceTouchButton() {
 // be frozen streamed props; keep cached bounds externally and revalidate edits.
 const _coverRectCache=new WeakMap(),_coverContactCars=[];
 const _coverRayIndex=newCrowdSolidIndex(2),_coverRayCandidates=[];
-const COVER_FOOT_MARGIN=9,COVER_LEAN_MAX=22;
+const COVER_FOOT_MARGIN=9,COVER_LEAN_MAX=22,COVER_NEAR_DISTANCE=38;
+const _coverNearbyCandidates=[];
 const _coverLowPropTypes=new Set(['HEDGE','CITYCAFETABLE','SANDBAG','CRATE','BENCH','PLANTER','TERRACEPLANTER','LOGPILE','MATERIALS','WRECK','RUINWALL','REVETMENT','FOUNTAIN','HOARDING','FALLEN']);
 const _coverPistolMuzzles=[[31,8]],_coverSmgMuzzles=[[38,11]],_coverDualMuzzles=[[38,11],[38,-11]],
   _coverRifleMuzzles=[[47,6]],_coverRevolverMuzzles=[[47,11]];
@@ -340,7 +341,13 @@ function coverSolidRects(b) {
   } else rects.push({x0,y0,x1,y1});
   _coverRectCache.set(b,{x:b.x,y:b.y,w,h,open,u:!!b.isUBarrier,rects});return rects;
 }
-function coverConsiderContact(a,b,dx,dy,previous,best,parking=false) {
+function coverWantsExit(a,nx,ny,dx,dy) {
+  const outward=dx*nx+dy*ny;
+  // A firm outward thumb throw releases on its first simulation frame. A
+  // slight diagonal away from the face is still a slide along that wall.
+  return a&&a.isPlayer?outward>=3&&outward>=Math.hypot(dx,dy)*.6:outward>.001;
+}
+function coverConsiderContact(a,b,dx,dy,previous,best,parking=false,nearby=false) {
   const kind=parking?'LOW':coverSolidKind(b);
   if(!kind)return;
   const rects=coverSolidRects(b),speed=Math.hypot(dx,dy);
@@ -354,13 +361,19 @@ function coverConsiderContact(a,b,dx,dy,previous,best,parking=false) {
       const distance=a.x*nx+a.y*ny-plane,tangent=a.x*tx+a.y*ty,into=dx*nx+dy*ny;
       // Keep the planted foot centers inside the end; only the upper chain leans.
       // Six-unit walking steps can stop up to six units short of contact.
-      if(distance<14.5||distance>22.5||tangent<edgeMin+COVER_FOOT_MARGIN-.001||tangent>edgeMax-COVER_FOOT_MARGIN+.001)continue;
+      if(distance<14.5||distance>(nearby?COVER_NEAR_DISTANCE:22.5)||tangent<edgeMin+COVER_FOOT_MARGIN-.001||tangent>edgeMax-COVER_FOOT_MARGIN+.001)continue;
       if(b.isGovFortress&&inOpenGateway(b,a.x+dx))continue;
-      const retained=previous&&previous.solid===b&&previous.rectIndex===ri&&previous.nx===nx&&previous.ny===ny&&into<=.001;
-      if(!retained&&(!(speed>.001)||into>=-.15*speed||distance+into>15.1))continue;
+      const same=previous&&previous.solid===b&&previous.rectIndex===ri&&previous.nx===nx&&previous.ny===ny;
+      const retained=same&&(a.isPlayer?previous.attached!==false&&!coverWantsExit(a,nx,ny,dx,dy):into<=.001);
+      if(nearby) {
+        if(!a.isPlayer||kind!=='HIGH'||coverWantsExit(a,nx,ny,dx,dy))continue;
+        const face=a._coverNearbyFace||(a._coverNearbyFace={});
+        Object.assign(face,{solid:b,kind,nx,ny,tx,ty,plane,edgeMin,edgeMax,rectIndex:ri});
+        if(!coverPeekCandidate(a,face,a.aimAngle||0))continue;
+      } else if(!retained&&(!(speed>.001)||into>=-.15*speed||distance+into>15.1))continue;
       const score=distance-15+(retained?-3:0);
       if(score>=best.score)continue;
-      Object.assign(best,{solid:b,kind,nx,ny,tx,ty,plane,edgeMin,edgeMax,rectIndex:ri,score});
+      Object.assign(best,{solid:b,kind,nx,ny,tx,ty,plane,edgeMin,edgeMax,rectIndex:ri,score,attached:!nearby});
     }
   }
 }
@@ -372,6 +385,27 @@ function findCoverContact(a,dx=0,dy=0,previous=null) {
   const cars=activeParkingCars.length<=16?activeParkingCars:crowdNearbyCars(a.x,a.y,24,_coverContactCars);
   for(let i=0;i<cars.length;i++)if(cars[i].hp>0||cars[i].hp===undefined)coverConsiderContact(a,cars[i],dx,dy,previous,result,true);
   return Number.isFinite(result.score)?result:null;
+}
+function findNearbyCoverPeek(a,dx=0,dy=0,previous=null) {
+  if(!a||!a.isPlayer)return null;
+  const best=a._coverNearbyGeom||(a._coverNearbyGeom={});best.score=Infinity;
+  // The aiming reach extends past the walking index's thirty-unit padding.
+  // Reuse the existing bounded solid index, with separate query scratch from
+  // the head/muzzle rays invoked while considering each nearby corner.
+  const r=COVER_NEAR_DISTANCE;
+  const near=activeBuildings.length<=16?activeBuildings:crowdSolidCandidates(_coverRayIndex,activeBuildings,
+    a.x-r,a.y-r,a.x+r,a.y+r,_coverNearbyCandidates,false);
+  for(let i=0;i<near.length;i++)coverConsiderContact(a,near[i],dx,dy,previous,best,false,true);
+  return Number.isFinite(best.score)?best:null;
+}
+function coverMovementIntent(a,dx,dy,rawX=dx,rawY=dy) {
+  const c=a&&a.cover;
+  if(!a||!a.isPlayer||!c||!c.active||!c.attached||actorCoverSuppressed(a))return null;
+  const outward=dx*c.nx+dy*c.ny;
+  if(outward<=0)return null;
+  if(coverWantsExit(a,c.nx,c.ny,rawX,rawY)) {c.awayExit=true;releaseActorCover(a);return null;}
+  const result=a._coverMoveIntent||(a._coverMoveIntent={x:0,y:0});
+  result.x=dx-c.nx*outward;result.y=dy-c.ny*outward;return result;
 }
 function coverRayClear(x0,y0,x1,y1,radius=0) {
   const candidates=activeBuildings.length<=16?activeBuildings:crowdSolidCandidates(_coverRayIndex,activeBuildings,
@@ -477,10 +511,19 @@ function updateActorCover(a,elapsedMs=deltaTime,dx=0,dy=0,aiming=false) {
   const dt=a._coverControllerFrame===frameCount?0:Math.min(100,Math.max(0,Number(elapsedMs)||0));
   if(dt>0)a._coverControllerFrame=frameCount;
   let c=a.cover;
+  if(c&&c.active&&c.attached&&coverWantsExit(a,c.nx,c.ny,dx,dy))c.awayExit=true;
   const previous=c&&(c.active||c.manualExit)?c:null;
-  const contact=findCoverContact(a,dx,dy,previous);
+  const contact=findCoverContact(a,dx,dy,previous)||(aiming?findNearbyCoverPeek(a,dx,dy,previous):null);
+  if(c&&c.awayExit) {
+    const distance=a.x*c.nx+a.y*c.ny-c.plane,along=a.x*c.tx+a.y*c.ty;
+    const leftFace=distance>COVER_NEAR_DISTANCE||distance<14.5||along<c.edgeMin||along>c.edgeMax||!coverSolidKind(c.solid);
+    const pressing=contact&&contact.attached&&dx*contact.nx+dy*contact.ny<-.15*Math.hypot(dx,dy);
+    // Do not re-grab an aimed corner as soon as the player releases the away
+    // stick. Re-aiming, walking clear, or deliberately pressing back can enter.
+    if(!aiming||leftFace||pressing)c.awayExit=false;
+  }
   if(c&&c.manualExit&&!contact)c.manualExit=false;
-  if(contact&&!(c&&c.manualExit)) {
+  if(contact&&!(c&&(c.manualExit||c.awayExit))) {
     if(!c)c=a.cover={active:false,blend:0,peek:0,pop:0,offsetX:0,offsetY:0,upper:{x:0,y:0},bodyAngle:Math.atan2(contact.ny,contact.nx)};
     const changed=c.solid!==contact.solid||c.nx!==contact.nx||c.ny!==contact.ny;
     Object.assign(c,contact);c.active=true;
@@ -22091,6 +22134,8 @@ this.skeletonTimer = 0;
             dy = forwardMag * sin(this.aimAngle);
         }
         
+        const coverMove=coverMovementIntent(this,dx,dy,leftStick.dx*6,leftStick.dy*6);
+        if(coverMove){dx=coverMove.x;dy=coverMove.y;}
         const rim=shovelTryMantle(this,dx,dy);
         if(this.shovelMantle)return;
         if(rim)dx=dy=0;
@@ -25977,8 +26022,50 @@ function coverBulletBlock(b) {
     }
     return hit;
 }
+// Standing cover can plant one boot farther from the root. Its trousers and
+// braced legs use the same cached joints as the painter and wound attachment;
+// a root circle would miss that exposed foot while hitting empty floor beside it.
+function coverLegEllipseTime(px,py,dx,dy,cx,cy,rx,ry,angle=0) {
+    const co=Math.cos(angle),si=Math.sin(angle),x=px-cx,y=py-cy;
+    const qx=(co*x+si*y)/rx,qy=(-si*x+co*y)/ry;
+    const vx=(co*dx+si*dy)/rx,vy=(-si*dx+co*dy)/ry;
+    const c=qx*qx+qy*qy-1;if(c<=0)return 0;
+    const a=vx*vx+vy*vy;if(a<1e-12)return Infinity;
+    const dot=qx*vx+qy*vy,disc=dot*dot-a*c;
+    if(disc<0)return Infinity;
+    const t=(-dot-Math.sqrt(disc))/a;
+    return t>=0&&t<=1?t:Infinity;
+}
+function coverLegCapsuleTime(px,py,dx,dy,x0,y0,x1,y1,radius) {
+    const vx=x1-x0,vy=y1-y0,len=Math.hypot(vx,vy);
+    if(len<1e-6)return coverLegEllipseTime(px,py,dx,dy,x0,y0,radius,radius);
+    const co=vx/len,si=vy/len,x=px-x0,y=py-y0;
+    return Math.min(stanceSegmentBoxTime(co*x+si*y,-si*x+co*y,co*dx+si*dy,-si*dx+co*dy,0,-radius,len,radius),
+        coverLegEllipseTime(px,py,dx,dy,x0,y0,radius,radius),
+        coverLegEllipseTime(px,py,dx,dy,x1,y1,radius,radius));
+}
+function coverStandingLegContact(b,actor) {
+    const pose=stanceBodyPose(actor),size=pose.size,angle=stanceFacingAngle(actor),co=Math.cos(angle),si=Math.sin(angle);
+    const x=(b.prevX-actor.x)/size,y=(b.prevY-actor.y)/size;
+    const vx=(b.x-b.prevX)/size,vy=(b.y-b.prevY)/size;
+    const px=co*x+si*y,py=-si*x+co*y,dx=co*vx+si*vy,dy=-si*vx+co*vy,R=pose.R;
+    let t=coverLegEllipseTime(px,py,dx,dy,pose.hipX,pose.hipY,(11+pose.floor*2)*.5,
+        actor.bodyH*.305*(1-pose.roll.side*.5),pose.hipYaw);
+    for(let i=0;i<pose.joints.length;i++) {
+        const j=pose.joints[i],h=j.hip,k=j.knee,a=j.ankle;
+        t=Math.min(t,coverLegCapsuleTime(px,py,dx,dy,h.x,h.y,k.x,k.y,R.thighW*.46),
+            coverLegCapsuleTime(px,py,dx,dy,k.x,k.y,a.x,a.y,R.shinW*.5));
+        const footAngle=Math.atan2(a.y-k.y,a.x-k.x);
+        t=Math.min(t,coverLegEllipseTime(px,py,dx,dy,a.x+Math.cos(footAngle)*1.5,a.y+Math.sin(footAngle)*1.5,
+            R.foot*.5,R.shinW*.41,footAngle));
+    }
+    return t!==Infinity&&!coverLineClear(b.startX,b.startY,b.prevX+(b.x-b.prevX)*t,b.prevY+(b.y-b.prevY)*t,
+        b.tH,b.shooter,actor,b.coverLaunchLow)?Infinity:t;
+}
 function stanceProjectileContact(b,actor,profile=stanceHitProfile(actor,b.tH)) {
     if(!profile)return Infinity;
+    if(b.tH==='LEGS'&&profile.stance==='STAND'&&coverRenderActive(actor)&&actor.cover.kind==='HIGH')
+        return coverStandingLegContact(b,actor);
     if(!profile.capsule) {
         const center=coverActorHitCenter(actor,b.tH,profile.zone),t=forestShotCircleTime(b,center.x,center.y,profile.radius);
         if(t===Infinity)return t;
@@ -44052,6 +44139,24 @@ function standingCoverLeg(c,R,index,heading,blend) {
   const travel=(c.moveAngle||0)-heading;
   const sx=-10+R.thighW*.5+beat*Math.cos(travel),sy=side*6+beat*Math.sin(travel)*.3;
   const wall={sx,sy,kx:sx+th*.92,ky:sy,ax:sx+th*.92+sh,ay:sy};
+  if(c.cover&&c.cover.kind==='HIGH') {
+    // Keep the inner leg planted as the waist leans around the wall. The
+    // outside foot steps out to catch the weight instead of both feet staying
+    // parallel beneath a displaced torso. Crossing sides passes through the
+    // neutral stance, so there is no abrupt choice of a different pinned leg.
+    const upper=coverUpperOffset(c),lateral=-Math.sin(heading)*upper.x+Math.cos(heading)*upper.y;
+    if(side*lateral>0) {
+      const amount=smooth01(Math.min(1,Math.abs(lateral)/COVER_LEAN_MAX));
+      wall.ax+=3.5*amount;wall.ay+=side*6*amount;
+      // A wider step reveals more of the two solid leg segments in plan view.
+      // Their projected lengths remain shorter than the actual authored bones.
+      const l1=th*.92*(1+.48*amount),l2=sh*(1+.48*amount);
+      const dx=wall.ax-sx,dy=wall.ay-sy,d=Math.max(.001,Math.hypot(dx,dy));
+      const along=(l1*l1-l2*l2+d*d)/(2*d),across=Math.sqrt(Math.max(0,l1*l1-along*along));
+      wall.kx=sx+dx*along/d+side*dy*across/d;
+      wall.ky=sy+dy*along/d-side*dx*across/d;
+    }
+  }
   const lower=c.isPlayer?standingLowerPose(c):null;
   if(!lower||blend>=1)return wall;
   const rear=standingRearPose(c,lower);
@@ -44071,7 +44176,7 @@ function stanceBodyPose(c) {
   const upper=cover?coverUpperOffset(c):null,coverX=upper?upper.x:0,coverY=upper?upper.y:0;
   const coverBlend=cover?Math.max(0,Math.min(1,c.cover.blend||0)):0;
   const dive=proneDiveArc(c),aiming=cover?coverAimActive(c):stanceArtAiming(c),cycle=c.walkCycle||0,cached=c._stanceBody,roll=proneRollPose(c),lower=crouchLowerPose(c);
-  if(cached&&cached.cover===cover&&cached.coverBlend===coverBlend&&cached.coverX===coverX&&cached.coverY===coverY&&
+  if(cached&&cached.cover===cover&&cached.coverKind===(cover?c.cover.kind:null)&&cached.coverBlend===coverBlend&&cached.coverX===coverX&&cached.coverY===coverY&&
       cached.coverAim===(c.aimAngle||0)&&cached.dive===dive&&cached.value===value&&cached.cycle===cycle&&cached.moving===!!c.isMoving&&
       cached.aiming===aiming&&cached.gait===(c.gait||0)&&cached.bodyW===c.bodyW&&cached.bodyH===c.bodyH&&
       cached.roll.heading===roll.heading&&cached.roll.delta===roll.delta&&cached.roll.blend===roll.blend&&
@@ -44137,7 +44242,7 @@ function stanceBodyPose(c) {
   const head=cover?{x:Math.cos(yaw)*headX-Math.sin(yaw)*headY+upperX+brace,
     y:Math.sin(yaw)*headX+Math.cos(yaw)*headY+hipY+step.chestY*crouchWeight+upperY}:
     {x:headX+upperX+brace,y:headY+chestY};
-  return c._stanceBody={cover,coverBlend,coverX,coverY,coverAim:c.aimAngle||0,upperX,upperY,dive,value,cycle,moving:!!c.isMoving,gait:c.gait||0,bodyW:c.bodyW,bodyH:c.bodyH,drop,floor,size,aiming,yaw,hipYaw,hipX,hipY,chestX,chestY,joints,head,R,
+  return c._stanceBody={cover,coverKind:cover?c.cover.kind:null,coverBlend,coverX,coverY,coverAim:c.aimAngle||0,upperX,upperY,dive,value,cycle,moving:!!c.isMoving,gait:c.gait||0,bodyW:c.bodyW,bodyH:c.bodyH,drop,floor,size,aiming,yaw,hipYaw,hipX,hipY,chestX,chestY,joints,head,R,
     torsoLength,torsoWidth,crouchWeight,step,roll,lower};
 }
 // A native gun keeps its own proportions. One rigid mount owns the solid,

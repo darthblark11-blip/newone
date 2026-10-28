@@ -1,13 +1,21 @@
 # Collision-based cover
 
-Walk into a solid wall or waist-high object to take cover. Releasing movement
-keeps the character against that face. Moving away releases cover immediately;
-movement and collision remain in charge of the root throughout. Movement along
-the face remains free. No button, rail, snap, or camera change is involved.
+Walk into a solid wall or waist-high object to take cover. Pressing against it
+establishes stable contact: releasing movement or angling the thumb slightly
+outward keeps that contact while movement along the face remains free. A firm
+outward joystick push releases on its first movement frame. Held aim cannot
+immediately reattach after that deliberate exit. Re-aiming, pressing back toward
+the wall, or walking clear allows entry again. No button, root snap, rail or
+camera change is involved.
+
+Aiming near a reachable open end also starts a standing peek without first
+pressing into the wall. This nearby peek never pulls the root toward the wall or
+attaches movement to it; releasing aim returns to the ordinary stance.
 
 High walls use a back-to-wall posture. Aiming past a nearby open end moves the
-upper torso, head, arms and weapon around that end while the hips and legs stay
-planted. The shirt keeps its original proportions: the torso hinges at the waist,
+upper torso, head, arms and weapon around that end. The wall-side leg stays
+planted while the outside foot steps into a wider brace with a bent knee; the
+collision root stays in place. The shirt keeps its original proportions: the torso hinges at the waist,
 with a short, bounded head-and-shoulder lean instead of a stretched connection.
 The head, shoulders and weapon turn together with the aim. Approaching an open
 end uses a comfortable activation region, including a short preparatory lean
@@ -29,7 +37,7 @@ peek or a low-cover pop-up; ducking or retracting conceals it again.
 
 Cover protection uses actual intervening solid geometry. Head and upper-body
 shot contacts follow their posed positions during a standing peek; leg contacts
-stay at the planted root. High walls block every shot height. Low objects block
+follow the actual braced pelvis, legs and boots during a standing wall peek. High walls block every shot height. Low objects block
 leg-height rounds and protect lowered bodies, including manually crouched actors
 that did not acquire automatic cover. Standing upper-body shots can pass above
 low objects. Player fire input always produces the normal shot, recoil, sound and cooldown.
@@ -49,6 +57,10 @@ cover interpolation and drawing does not advance it.
 
 Focused checks:
 
+- `tools/check-cover-proximity-latch.js`: nearby aim-only entry, stable pressed
+  contact, deliberate outward release and re-entry.
+- `tools/check-cover-brace-hits.js`: actual standing leg/boot contacts and wall
+  protection.
 - `tools/check-cover-controls.js`: contact, free movement, release, manual
   priority, raw aim, pause and save behavior.
 - `tools/check-cover-geometry.js`: material classification, exact faces, valid

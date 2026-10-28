@@ -39,7 +39,8 @@ ok('contact discovery leaves the root unchanged',P('player.x===12&&player.y===0'
 ok('releasing the stick retains previously acquired contact',!!P('findCoverContact(player,0,0,coverFace)'));
 ok('a held wall contact accepts tangent movement',!!P('findCoverContact(player,0,6,coverFace)'));
 ok('walking away releases contact immediately',!P('findCoverContact(player,-6,0,coverFace)'));
-ok('a diagonal step with even a small outward component releases contact',!P('findCoverContact(player,-.02,6,coverFace)'));
+ok('a shallow outward diagonal retains pressed contact',!!P('findCoverContact(player,-.02,6,coverFace)'));
+ok('a firm outward diagonal releases pressed contact',!P('findCoverContact(player,-4.2,4.2,coverFace)'));
 probe('player.x=8;');
 ok('new cover waits until the intended native step really reaches the wall',!P('findCoverContact(player,6,0)'));
 probe('player.x=9;');ok('a six-unit remainder still reaches collision contact',!!P('findCoverContact(player,6,0)'));

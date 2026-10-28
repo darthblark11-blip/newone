@@ -90,6 +90,38 @@ for(const lean of [-22,22]){
  ok('maximum lateral peek keeps head connected to the rigid torso '+lean,
   Math.hypot(b.head.x-b.chestX,b.head.y-b.chestY)<P('player.bodyH')*.6);
 }
+// Standing peeks brace on the inner leg and step only the outside foot. The
+// approved crouched cover chain remains unchanged, including at full pop-up.
+for(let turn=0;turn<8;turn++)for(const direction of [-1,1]){
+ const heading=turn*Math.PI/4;pose(0,heading);probe(`player.cover.kind='HIGH';player.aimAngle=${heading};`);
+ const base=P('JSON.parse(JSON.stringify(stanceBodyPose(player)))');
+ probe(`player.cover.upper.x=player.cover.offsetX=${-Math.sin(heading)*22*direction};player.cover.upper.y=player.cover.offsetY=${Math.cos(heading)*22*direction};`);
+ const leaned=P('JSON.parse(JSON.stringify(stanceBodyPose(player)))'),outer=direction>0?1:0,inner=1-outer;
+ ok('standing peek pins the wall-side leg '+turn+'/'+direction,['hip','knee','ankle'].every(key=>JSON.stringify(leaned.joints[inner][key])===JSON.stringify(base.joints[inner][key])));
+ const before=base.joints[outer],after=leaned.joints[outer];
+ ok('standing peek steps the outside foot into a wider support stance '+turn+'/'+direction,
+   near(after.ankle.x-before.ankle.x,3.5)&&near(after.ankle.y-before.ankle.y,direction*6)&&
+   Math.hypot(after.ankle.x-before.ankle.x,after.ankle.y-before.ankle.y)<7);
+ ok('standing peek bends a bounded outside knee '+turn+'/'+direction,
+   Math.hypot(after.knee.x-after.hip.x,after.knee.y-after.hip.y)<=leaned.R.thigh&&
+   Math.hypot(after.ankle.x-after.knee.x,after.ankle.y-after.knee.y)<=leaned.R.shin&&
+   Math.abs((after.knee.x-after.hip.x)*(after.ankle.y-after.knee.y)-(after.knee.y-after.hip.y)*(after.ankle.x-after.knee.x))>1);
+ ok('standing brace leaves the actor root and pelvis in place '+turn+'/'+direction,
+   near(leaned.hipX,base.hipX)&&near(leaned.hipY,base.hipY)&&P('player.x===37&&player.y===-19'));
+}
+let previousLegs=null,largestLegStep=0;
+for(let i=-88;i<=88;i++){
+ pose(0,.4);probe(`player.cover.kind='HIGH';player.aimAngle=.4;player.cover.upper.x=player.cover.offsetX=${-Math.sin(.4)*i*.25};player.cover.upper.y=player.cover.offsetY=${Math.cos(.4)*i*.25};`);
+ const legs=P('stanceBodyPose(player).joints');
+ if(previousLegs)for(let n=0;n<2;n++)for(const key of ['hip','knee','ankle'])
+  largestLegStep=Math.max(largestLegStep,Math.hypot(legs[n][key].x-previousLegs[n][key].x,legs[n][key].y-previousLegs[n][key].y));
+ previousLegs=legs;
+}
+ok('standing brace crosses between left and right through a continuous neutral stance',largestLegStep<.35);
+pose(0,0,0,22);probe('player.aimAngle=0;var lowBraceBase=JSON.stringify(stanceBodyPose(player).joints.map(j=>[j.hip,j.knee,j.ankle]));player.cover.kind="HIGH";stanceBodyPose(player);player.cover.kind="LOW";');
+ok('switching from a braced wall to a popped-up low object invalidates the pose cache',P('JSON.stringify(stanceBodyPose(player).joints.map(j=>[j.hip,j.knee,j.ankle]))')===P('lowBraceBase'));
+
+
 // A stance change must not choose the other intersection of the arm circles.
 // Both intersections are valid lengths, but switching sides makes the elbow pop.
 for(const key of ['PISTOL','DUAL_SMG','ASSAULT_RIFLE','SHOTGUN']){

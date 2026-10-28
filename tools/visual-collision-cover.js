@@ -47,7 +47,7 @@ const out=process.env.COVER_VIS_OUT||'/tmp/newone-collision-cover';fs.mkdirSync(
     const c=__coverActor(kind,angle,aiming,edge,key),wall=activeBuildings[0];
     push();translate(x,y);noStroke();fill(36,48,55);rect(-192,-155,384,300,8);
     fill(225,234,225);textFont('sans-serif');textAlign(CENTER,CENTER);textSize(15);text(title,0,-133);
-    fill(140,169,177);textSize(11);text(kind==='HIGH'?'Tall wall · feet stay planted':'Waist object · crouch / rise',0,-112);
+    fill(140,169,177);textSize(11);text(kind==='HIGH'?'Tall wall · wall-side foot planted':'Waist object · crouch / rise',0,-112);
     push();translate(8,25);scale(2.3);translate(-c.x,-c.y);
     stroke(54,68,75);strokeWeight(.5);
     for(let n=-80;n<=80;n+=20){line(-80,n,80,n);line(n,-80,n,80);}noStroke();

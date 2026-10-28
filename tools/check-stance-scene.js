@@ -169,6 +169,26 @@ const out = process.env.STANCE_SCENE_OUT || '/tmp/newone-stance-scenes'; fs.mkdi
       ok(slide.at(-1).ammo<17,name+' firing remains active while approaching and entering the peek');
       await page.locator('canvas').first().screenshot({path:path.join(out,name+'-moving-peek.png')});
       await send('touchEnd',[]);
+      // Aim alone can find a nearby corner; no press, root pull, or latch.
+      await page.evaluate(()=>{__coverFixture('HIGH');player.x=-6;player.y=65;});
+      await send('touchStart',[head]);await send('touchMove',[{...head,x:head.x+30,y:head.y+24}]);await page.evaluate(()=>__stanceStep(20));
+      ok(await page.evaluate(()=>player.cover?.active&&player.cover.attached===false&&player.cover.peek>.5),name+' aiming beside a nearby corner automatically leans without wall contact');
+      ok(await page.evaluate(()=>player.x===-6&&player.y===65),name+' a nearby aim-only peek never pulls the collision root toward the wall');
+      await page.locator('canvas').first().screenshot({path:path.join(out,name+'-nearby-peek.png')});
+      await send('touchEnd',[]);await page.evaluate(()=>__stanceStep(20));
+      ok(await page.evaluate(()=>!coverRenderActive(player)),name+' releasing nearby aim returns naturally to the ordinary stance');
+      // Pressed contact is stable under a shallow outward thumb diagonal.
+      await page.evaluate(()=>__coverFixture('HIGH'));
+      await send('touchStart',[walkRight]);await page.evaluate(()=>__stanceStep(24));await send('touchEnd',[]);
+      const jitterAnchor=await page.evaluate(()=>player.x);
+      const shallowAway={...walkRight,id:23,x:walkRight.x-53,y:walkRight.y+45};
+      await send('touchStart',[shallowAway]);await page.evaluate(()=>__stanceStep(6));
+      ok(await page.evaluate(x=>player.cover?.active&&player.cover.attached&&Math.abs(player.x-x)<1e-8&&player.y>0,jitterAnchor),name+' a shallow outward diagonal slides freely while retaining pressed wall contact');
+      await send('touchEnd',[]);
+      const deliberateAway={...walkRight,id:24,x:walkRight.x-90};
+      await send('touchStart',[deliberateAway]);await page.evaluate(()=>__stanceStep());
+      ok(await page.evaluate(x=>!player.cover?.active&&player.x<x,jitterAnchor),name+' a deliberate outward joystick push releases contact on its first movement frame');
+      await send('touchEnd',[]);
       await page.evaluate(()=>__coverFixture('LOW'));
       await send('touchStart',[walkRight]);await page.evaluate(()=>__stanceStep(24));await send('touchEnd',[]);await page.evaluate(()=>__stanceStep(18));
       ok(await page.evaluate(()=>player.cover?.active&&actorStance(player)==='CROUCH'),name+' real contact with waist cover automatically crouches');
