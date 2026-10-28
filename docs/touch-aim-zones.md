@@ -35,13 +35,16 @@ including a quick tap that ends between input frames.
 Standing humanoid leg aim uses two thin swept leg shapes, so the gap between
 the legs and the space outside them are misses. Low firearm rounds meet the
 floor after 15 m standing, 20 m crouched or 26 m prone, using the shooter's
-effective stance at launch. A surviving leg hit keeps body-shot damage and armor rules,
-with a 25% chance to collapse a hostile humanoid onto the struck side. Wounded
+effective stance at launch. Conventional firearm hits resolved to LEGS deal
+50% body damage, with existing armor rules and a 25% chance to collapse a
+surviving hostile humanoid onto the struck side. Low shots converted to BODY
+or HEAD keep normal damage, including during falls and seated/prone transitions.
+Arrows, energy weapons, explosions and tasers retain their existing damage. Wounded
 enemies can fire prone, sit and fire, or get back up. See
 [Leg injuries](leg-injuries.md) for timing and lowered hit profiles.
 Bullet marks follow the selected leg through movement, injury and supported
 fallen poses. Existing headshot effects stay on the head. Actors without
-humanoid legs retain their existing body-hit behavior.
+humanoid legs retain their existing hit shapes and decal placement.
 
 The aiming laser now stops at the first valid contact for the selected HEAD,
 BODY or LEGS elevation. It shares projectile anatomy and cover checks: raised

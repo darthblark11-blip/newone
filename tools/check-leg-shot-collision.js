@@ -88,7 +88,7 @@ for(const speed of [17,44,700])for(const offset of [7,20]){
   window.round=spawnBullet(0,0,0,true,'LEGS',WEAPONS.PISTOL,player);
   round.vx=${speed};round.vy=0;
   for(let i=0;i<100&&round.active;i++){frameCount++;updateBullets();}`);
- ok(`${stance}/speed${speed}/root${x} respects the final partial leg-shot segment`,P(offset===7?'target.hp===99980':'target.hp===100000'));
+ ok(`${stance}/speed${speed}/root${x} respects the final partial leg-shot segment`,P(offset===7?'target.hp===99990':'target.hp===100000'));
 }
 // Airborne rounds own their launch range; stance transitions and death later
 // in flight cannot extend or shorten them, including reused pool records.

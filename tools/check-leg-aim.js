@@ -1,4 +1,4 @@
-// Leg aim changes the surface bearing the bullet hole, not combat balance.
+// Leg aim halves firearm leg damage while keeping wounds on the struck limb.
 // Real projectiles exercise damage/death; real Canvas painters verify that one
 // stain follows the actual living and fallen bones instead of the torso.
 const assert=require('node:assert/strict');
@@ -34,13 +34,13 @@ function shot(kind,type='NORMAL',hp=1000,weapon='PISTOL',angle=0,range=80){
 }
 for(const type of ['NORMAL','NM0_ROOKIE','NM0_ROOKIE_F','ARMORED_STANDARD']){
   const body=shot('BODY',type),leg=shot('LEGS',type),head=shot('HEAD',type);
-  ok(type+' LEGS hits with unchanged body damage and knockback',leg.hp===body.hp&&leg.x===body.x&&leg.y===body.y&&leg.stun===body.stun);
+  ok(type+' LEGS hits with half body damage and unchanged knockback',1000-leg.hp===(1000-body.hp)*.5&&leg.x===body.x&&leg.y===body.y&&leg.stun===body.stun);
   ok(type+' LEGS records a normalized real leg surface',leg.wound.isLeg===true&&!leg.wound.isHead&&[0,1].includes(leg.wound.legIndex)&&[0,1].includes(leg.wound.legSegment)&&leg.wound.legU>=0&&leg.wound.legU<=1&&Math.abs(leg.wound.legV)<=.22);
   ok(type+' HEAD/BODY decal destinations stay unchanged',!body.wound.isLeg&&!body.wound.isHead&&!head.wound.isLeg&&head.wound.isHead&&head.hp<body.hp);
 }
 for(const type of ['ARMORED','ROBOT','BUG','SNAIL','SNAIL_HYBRID','ALIEN_GATOR','SAUCER','COW','HORSE']){
   const body=shot('BODY',type),leg=shot('LEGS',type);
-  ok(type+' keeps its existing nonhuman body hit and decal',leg.hp===body.hp&&!leg.wound.isLeg&&!leg.wound.isHead&&leg.wound.x===body.wound.x&&leg.wound.y===body.wound.y);
+  ok(type+' low fire halves damage and keeps its existing nonhuman body decal',1000-leg.hp===(1000-body.hp)*.5&&!leg.wound.isLeg&&!leg.wound.isHead&&leg.wound.x===body.wound.x&&leg.wound.y===body.wound.y);
 }
 for(const weapon of ['PISTOL','SMG','DUAL_SMG','ASSAULT_RIFLE','SHOTGUN']){
   const body=shot('BODY','NORMAL',1,weapon,0,40),leg=shot('LEGS','NORMAL',1,weapon,0,40);
@@ -126,7 +126,7 @@ for(const type of ['NORMAL','NM0_ROOKIE','ARMORED_STANDARD'])for(const direction
 const out=process.env.LEG_AIM_OUT||'/tmp/leg-aim-scene.png';
 c.resetTransform();c.fillStyle='#18232d';c.fillRect(0,0,canvas.width,canvas.height);
 c.fillStyle='#f4e8ca';c.font='25px sans-serif';c.fillText('LEG AIM / ACTUAL LIVE AND FALLEN PAINTERS',20,35);
-c.fillStyle='#b7c5cf';c.font='14px sans-serif';c.fillText('Body damage unchanged · red holes stay on trouser legs · no new leg injury behavior',20,60);
+c.fillStyle='#b7c5cf';c.font='14px sans-serif';c.fillText('Firearm leg damage halved · converted body/head damage unchanged · wounds follow the legs',20,60);
 const types=['NORMAL','NM0_ROOKIE','ARMORED_STANDARD'],poses=['Idle','Walking stride','Bullet fall','Settled'];
 for(let row=0;row<poses.length;row++)for(let col=0;col<types.length;col++){
   const x=10+col*316,y=80+row*255;

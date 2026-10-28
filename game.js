@@ -26869,6 +26869,10 @@ function updateBullets() {
                 if(impactZone==='HEAD'&&b.tH!=='HEAD'&&
                     (b.isOrangeBeam||b.isRedLaser||b.isPinkLaser||b.isAlienLaser))dmg*=2;
                 if (b.isArrow) dmg *= b.arrowPower;
+                // Balance actual firearm leg hits, not low launch elevation:
+                // falling/crouched targets still receive full body/head damage.
+                if(impactZone==='LEGS'&&!b.isArrow&&!b.isOrangeBeam&&!b.isRedLaser&&!b.isPinkLaser&&!b.isAlienLaser)
+                    dmg*=LEG_SHOT_DAMAGE_SCALE;
                 
                 if (t.eType === "SNAIL_HYBRID" && impactZone === "HEAD") {
                     t.hybridHeadHP -= dmg;
@@ -27738,6 +27742,7 @@ class Citizen {
 
 
 
+const LEG_SHOT_DAMAGE_SCALE=0.5;
 const LEG_SHOT_RANGES=Object.freeze({STAND:300,CROUCH:400,PRONE:520}); // 15/20/26 m, at 20 units per metre.
 function legShotRangeForWeapon(zone,weapon,shooter=null) {
   if(zone!=='LEGS'||weapon===WEAPONS.BOW||weapon===WEAPONS.TASER||weapon===WEAPONS.ROCKET_LAUNCHER||

@@ -36,6 +36,14 @@ function shot(stance,zone,options={}) {
     window.stanceShooter=__stanceShot.owner==='PLAYER'?player:new Character(-2000,-2000,false,'NORMAL');
     stanceShooter.isFriendly=__stanceShot.owner==='ALLY';
     if(__stanceShot.target!=='PLAYER')enemiesList=[stanceVictim];
+    if(__stanceShot.injuryProgress!==undefined){
+      legInjurySerial=__stanceShot.seatedInjury?1:0;
+      if(!beginLegInjury(stanceVictim,{a:0},0))throw Error('injury damage fixture rejected');
+      let left=stanceVictim.legInjury.fallMs*__stanceShot.injuryProgress+
+        (__stanceShot.seatedInjury?LEG_INJURY_SUPINE_MS+LEG_INJURY_SIT_UP_MS:0);
+      while(left>1e-7){const step=Math.min(left,100);frameCount++;updateLegInjuryActor(stanceVictim,step);left-=step;}
+      bullets=[];
+    }
     window.stanceRound=spawnBullet(__stanceShot.sx,__stanceShot.sy,__stanceShot.angle,__stanceShot.owner!=='ENEMY',
       __stanceShot.zone,typeof __stanceShot.weapon==='string'&&WEAPONS[__stanceShot.weapon]?WEAPONS[__stanceShot.weapon]:__stanceShot.weapon,stanceShooter);
     if(stanceRound.isArrow)stanceRound.arrowPower=__stanceShot.power;
@@ -47,7 +55,7 @@ const matrix={STAND:{HEAD:'HEAD',BODY:'BODY',LEGS:'LEGS'},CROUCH:{HEAD:null,BODY
 for(const stance of Object.keys(matrix))for(const zone of ['HEAD','BODY','LEGS']) {
   const hit=matrix[stance][zone],r=shot(stance,zone);
   ok(stance+' '+zone+' preserves the immutable launch elevation',r.zone===zone);
-  ok(stance+' '+zone+' applies the requested damage matrix',r.hp===1000-(hit==='HEAD'?100:hit?20:0));
+  ok(stance+' '+zone+' applies the requested damage matrix',r.hp===1000-(hit==='HEAD'?100:hit==='LEGS'?10:hit?20:0));
   if(!hit) {
     ok(stance+' '+zone+' overhead miss leaves the projectile flying',r.active&&r.hit===0);
     ok(stance+' '+zone+' overhead miss has no wound, feedback, or kill',!r.decals.length&&!r.particles.length&&r.kills===0);
@@ -56,17 +64,31 @@ for(const stance of Object.keys(matrix))for(const zone of ['HEAD','BODY','LEGS']
     ok(stance+' '+zone+' only standing leg contact leaves a leg wound',!!r.decals[0].isLeg===(hit==='LEGS'));
   }
 }
-for(const weapon of ['SMG','ASSAULT_RIFLE','SHOTGUN','BOW','REVOLVER','COACH_GUN']) {
+for(const weapon of ['PISTOL','SMG','DUAL_SMG','ASSAULT_RIFLE','SHOTGUN','REVOLVER','COACH_GUN','BOW']) {
   const head=shot('STAND','HEAD',{weapon}),crouch=shot('CROUCH','BODY',{weapon}),prone=shot('PRONE','LEGS',{weapon});
   ok(weapon+' promoted critical uses its existing head profile once',head.hp===crouch.hp&&head.hp===prone.hp);
+  const body=shot('STAND','BODY',{weapon}),leg=shot('STAND','LEGS',{weapon}),lowBody=shot('CROUCH','LEGS',{weapon});
+  ok(weapon+' actual leg damage is '+(weapon==='BOW'?'unchanged':'exactly half body damage'),
+    1000-leg.hp===(1000-body.hp)*(weapon==='BOW'?1:.5));
+  ok(weapon+' low shots converted to body hits retain full body damage',lowBody.hp===body.hp);
+  if(weapon!=='BOW')for(const [phase,injuryProgress,seatedInjury,kind]of [
+    ['mid-fall',.5,false,'BODY'],['late-fall',.9,false,'HEAD'],
+    ['prone',1,false,'HEAD'],['seated',1,true,'BODY']]){
+    const fallen=shot('STAND','LEGS',{weapon,injuryProgress,seatedInjury});
+    ok(weapon+' '+phase+' low contact keeps full converted '+kind+' damage',
+      fallen.kind===kind&&fallen.hp===(kind==='HEAD'?head.hp:body.hp));
+  }
 }
 const weak=shot('PRONE','LEGS',{weapon:'BOW',power:.4});
 ok('prone arrow critical retains earned bow power',weak.hp===1000-120*.4);
 for(const energy of ['RED_LASER','PINK_LASER','ALIEN_LASER','ORANGE_BEAM']) {
-  const normal=shot('STAND','BODY',{weapon:energy}),critical=shot('CROUCH','BODY',{weapon:energy});
+  const normal=shot('STAND','BODY',{weapon:energy}),critical=shot('CROUCH','BODY',{weapon:energy}),leg=shot('STAND','LEGS',{weapon:energy});
   ok(energy+' stance critical adds one fallback multiplier',1000-critical.hp===2*(1000-normal.hp));
+  ok(energy+' retains its existing leg damage',leg.hp===normal.hp);
 }
 for(const target of ['PLAYER','ALLY']) {
+  const leg=shot('STAND','LEGS',{owner:'ENEMY',target});
+  ok('hostile firearm leg hits also deal half damage to '+target,leg.hp===990&&leg.decals[0].isLeg);
   const critical=shot('CROUCH','BODY',{owner:'ENEMY',target});
   ok('enemy rounds use the same stance matrix against '+target,critical.hp===900&&critical.decals[0].isHead);
   const overhead=shot('PRONE','BODY',{owner:'ENEMY',target,shield:60});
@@ -74,6 +96,7 @@ for(const target of ['PLAYER','ALLY']) {
 }
 const ally=shot('PRONE','LEGS',{owner:'ALLY'});
 ok('allied low rounds resolve critical damage on a prone hostile',ally.hp===900&&ally.decals[0].isHead);
+ok('allied actual leg hits use the same half damage',shot('STAND','LEGS',{owner:'ALLY'}).hp===990);
 const shieldHead=shot('STAND','HEAD',{owner:'ENEMY',target:'PLAYER',shield:60});
 const shieldShift=shot('CROUCH','BODY',{owner:'ENEMY',target:'PLAYER',shield:60});
 ok('stance critical preserves existing shield break and overflow rules',shieldHead.hp===shieldShift.hp&&shieldHead.shield===shieldShift.shield);

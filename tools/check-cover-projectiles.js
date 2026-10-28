@@ -88,7 +88,7 @@ for(const side of [-1,1]){
    a=stanceFacingAngle(coverVictim);return {x:coverVictim.x+(Math.cos(a)*x-Math.sin(a)*y)*p.size,
    y:coverVictim.y+(Math.sin(a)*x+Math.cos(a)*y)*p.size};})()`);
  launch('LEGS','PISTOL',-120,shin.y,0,140);tick();
- ok('cover does not make exposed legs invulnerable from the open side '+side,P('coverVictim.hp===980&&coverVictim.decals[0].isLeg'));
+ ok('cover does not make exposed legs invulnerable from the open side '+side,P('coverVictim.hp===990&&coverVictim.decals[0].isLeg'));
 }
 
 // A low cover target must expose its actual raised upper body before it is hit.

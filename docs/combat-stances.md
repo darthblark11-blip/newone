@@ -12,7 +12,12 @@ See [Collision-based cover](collision-cover.md) for wall peeks and low-cover pop
 | --- | --- | --- | --- |
 | HEAD | Head critical | Passes overhead | Passes overhead |
 | BODY | Body damage | Head critical | Passes overhead |
-| LEGS | Existing body damage / leg decal | Body damage | Head critical |
+| LEGS | 50% body damage / leg decal | Body damage | Head critical |
+
+Conventional firearms deal 50% body damage on resolved LEGS hits. Low shots
+converted to BODY or HEAD keep their normal damage, including during injury
+falls and seated/prone transitions. Armor and shields retain their rules.
+Arrows, energy weapons, explosions and tasers retain their existing damage.
 
 `Bullet.tH` remains the original elevation throughout flight. `stanceHitProfile`
 resolves anatomy per target; it does not rewrite the projectile. An overhead

@@ -69,7 +69,7 @@ for(const distance of [280,340]){
   window.rangeRound=spawnBullet(0,farY,0,true,'LEGS',WEAPONS.PISTOL,player,40002);
   for(let i=0;i<80&&rangeRound.active;i++){frameCount++;updateBullets();}`);
  ok(`${distance}unit target is ${distance<300?'inside':'beyond'} the standing low round range`,
-  P(distance<300?'injuryTarget.hp===980':'injuryTarget.hp===1000&&!injuryTarget.legInjury'));
+  P(distance<300?'injuryTarget.hp===990':'injuryTarget.hp===1000&&!injuryTarget.legInjury'));
 }
 target();probe("injuryTarget.x=540;window.bodyRangeRound=spawnBullet(0,0,0,true,'BODY',WEAPONS.PISTOL,player,40003);for(let i=0;i<80&&bodyRangeRound.active;i++){frameCount++;updateBullets();}");
 ok('ordinary body rounds retain their greater range',P('injuryTarget.hp===980'));

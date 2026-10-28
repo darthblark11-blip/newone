@@ -69,7 +69,7 @@ for(let face=0;face<4;face++)for(const side of [-1,1]){
  Math.atan2(-braceNormal.y,-braceNormal.x),true,'LEGS',WEAPONS.PISTOL,player);
  nativeBraceShot.vx=-braceNormal.x*80;nativeBraceShot.vy=-braceNormal.y*80;frameCount++;updateBullets();`);
  ok('real bullets damage the exposed boot and retain its leg-local wound '+face+'/'+side,
-  P('braceVictim.hp===980&&braceVictim.decals.length===1&&braceVictim.decals[0].isLeg&&braceVictim.decals[0].legIndex===braceOuter'));
+  P('braceVictim.hp===990&&braceVictim.decals.length===1&&braceVictim.decals[0].isLeg&&braceVictim.decals[0].legIndex===braceOuter'));
 }
 
 fresh();probe('buildings=activeBuildings=[];invalidateColIndex();');

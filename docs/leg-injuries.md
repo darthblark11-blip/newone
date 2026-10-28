@@ -6,6 +6,11 @@ the legs and outside the pants is a miss. Projectile sweeps retain fast-shot
 contact and record which leg was struck before damage or knockback moves the
 target. Existing vertical wound variation is preserved on that leg.
 
+All conventional firearms deal **50% body damage** when the resolved hit is
+LEGS. Low shots converted to BODY or HEAD during a fall, seated pose or prone
+pose keep their normal body or head damage. Armor and shield rules still apply;
+arrows, energy weapons, explosions and tasers retain their existing damage.
+
 LEGS firearm rounds meet the floor according to the shooter's effective stance
 at launch: **standing 15 m (300 units), crouched 20 m (400 units), prone 26 m
 (520 units)**. Crouching behind low cover counts as crouched; a standing pop
@@ -49,9 +54,10 @@ prone or seated fighter does not briefly stand up when killed. Wounds and
 fatal spray follow the same limbs during that handoff. Cover releases on injury
 and cannot take control again until the fighter recovers.
 
-`LEG_INJURY_CHANCE`, `LEG_INJURY_RECOVER_MS`, `LEG_INJURY_COOLDOWN_MS` and
-`LEG_SHOT_RANGES` in `game.js` are the principal balance controls. The injury state
-is transient and is rebuilt with the hostile roster on travel/load/reset.
+`LEG_INJURY_CHANCE`, `LEG_INJURY_RECOVER_MS`, `LEG_INJURY_COOLDOWN_MS`,
+`LEG_SHOT_DAMAGE_SCALE` and `LEG_SHOT_RANGES` in `game.js` are the principal
+balance controls. The injury state is transient and is rebuilt with the hostile
+roster on travel/load/reset.
 Outcome choices and proc rolls consume no shared gameplay RNG; rendering does
 not advance the state or choose a new pose.
 

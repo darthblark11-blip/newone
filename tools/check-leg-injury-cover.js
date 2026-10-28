@@ -83,7 +83,7 @@ for(const side of [-1,1]){
    window.nativeCoverLegShot=spawnBullet(nativeCoverLegPoint.x+40,nativeCoverLegPoint.y,PI,true,
     'LEGS',WEAPONS.PISTOL,player,${50001+attempt});
    nativeCoverLegShot.vx=-80;nativeCoverLegShot.vy=0;frameCount++;updateBullets();`);
-  assert(P('coverInjuryTarget.hp===980&&coverInjuryTarget.decals[0].legIndex===coverInjuryOuter'),
+  assert(P('coverInjuryTarget.hp===990&&coverInjuryTarget.decals[0].legIndex===coverInjuryOuter'),
    'native covered leg fixture missed its exposed shin');
   if(P('!!coverInjuryTarget.legInjury')){struck=true;break;}
  }
