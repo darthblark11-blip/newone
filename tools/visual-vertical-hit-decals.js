@@ -24,6 +24,8 @@ fs.mkdirSync(out,{recursive:true});
    window.inNM0SecretOverlay=false;buildGhost=null;nm0AmbushActive=farmAmbushActive=false;
    buildings=activeBuildings=[];activeParkingCars=[];parkingCars=[];barrels=[];enemiesList=[];corpses=[];particles=[];bullets=[];
    invalidateColIndex();resetForestWildlife();setMeleeTool('NONE');jetpackUnlocked=false;
+   // Show wound placement without transitioning the fixture into an injury.
+   tryLegShotInjury=()=>false;
    chemistSuitUnlocked=ninjaSuitUnlocked=explosiveArmorUnlocked=cowboySuitEquipped=false;
    leftStick={active:false,dx:0,dy:0};rightStick={active:false,dx:0,dy:0,dist:0};
    player=new Character(10000,10000,true);player.currentWeapon=WEAPONS.PISTOL;

@@ -68,6 +68,7 @@ function actorStancePose(a) {
 }
 function stanceFacingAngle(a) {
   const angle=Number.isFinite(a&&a.aimAngle)?a.aimAngle:0;
+  if(a&&a.legInjury&&Number.isFinite(a.legInjury.heading))return a.legInjury.heading;
   if(coverRenderActive(a))return coverFacingAngle(a);
   return a&&a.isPlayer&&a.stance&&(actorStancePose(a).prone>0||proneDivePoseActive(a))&&Number.isFinite(a.stance.proneHeading)
     ?a.stance.proneHeading:angle;
@@ -120,6 +121,153 @@ function recordStanceDamage(a,damage,zone) {
   popup.critical=zone==='HEAD'||merge&&popup.critical;
   popup.leftMs=500;
 }
+
+// A leg injury owns a short, finite combat state rather than reusing a punch
+// stun. The wounded actor can fight from the floor, then regains locomotion.
+// All choices are sampled at impact; drawing and paused frames never advance
+// the outcome rotation or roll against combat's random stream.
+const LEG_INJURY_CHANCE=.25,LEG_INJURY_RECOVER_MS=950,LEG_INJURY_COOLDOWN_MS=3000;
+const LEG_INJURY_OUTCOMES=['PRONE','SEATED','RECOVER'];
+let legInjurySerial=0;
+function legInjuryEligible(a) {
+  return !!a&&!a.isPlayer&&!a.isFriendly&&!a.isNeutral&&a.hp>0&&!a.dead&&
+    actorCanUseStances(a)&&!a.isUnarmed&&!a.isNM0Scientist&&!a.mounted&&
+    !a.knockedOut&&!(a.stunTimer>0)&&!boxingActive(a)&&
+    !['DAD','SIA'].includes(a.eType)&&!isOccultActor(a)&&
+    !streetThugCombatProtected(a)&&!(shovelPlayerDepth(a)>.5)&&
+    !a.legInjury&&!(a.legInjuryCooldownMs>0);
+}
+function legInjuryProcChance(a,b) {
+  const seed=Math.imul((Number(b&&b.shotId)||frameCount+1)|0,0x9e3779b9) ^
+    Math.imul((a.x*16)|0,0x85ebca6b)^Math.imul((a.y*16)|0,0xc2b2ae35) ^
+    Math.imul((a.legInjuryAttempts||0)+1,0x27d4eb2d);
+  return comicHitHash(seed);
+}
+function tryLegShotInjury(a,b,legIndex) {
+  if(!b||b.tH!=='LEGS'||b.isArrow||b.isTaser||b.isRocket||b.isAlienLaser||b.isRedLaser||b.isPinkLaser||b.isOrangeBeam||
+      !legInjuryEligible(a)||!combatStanceContext())return false;
+  const hit=a.fallHit;
+  if(!hit||hit.frame!==frameCount||hit.kind!=='LEGS'||!hit.wound||!hit.wound.isLeg)return false;
+  const chance=legInjuryProcChance(a,b);
+  a.legInjuryAttempts=(a.legInjuryAttempts||0)+1;
+  if(chance>=LEG_INJURY_CHANCE)return false;
+  return beginLegInjury(a,b,legIndex);
+}
+function beginLegInjury(a,b,legIndex) {
+  if(!legInjuryEligible(a)||!combatStanceContext())return false;
+  if(legIndex&&typeof legIndex==='object')legIndex=legIndex.legIndex??legIndex.index;
+  if(legIndex!==0&&legIndex!==1)return false;
+  const hit=a.fallHit&&a.fallHit.frame===frameCount?a.fallHit:null;
+  const motion=hit?{x:hit.mx||0,y:hit.my||0}:figureMotion(a),speed=Math.hypot(motion.x,motion.y);
+  const wasMoving=speed>.18,heading=wasMoving?Math.atan2(motion.y,motion.x):a.aimAngle||0;
+  const geometry=typeof humanLegHitGeometry==='function'?humanLegHitGeometry(a):null;
+  const serial=legInjurySerial++,variant=(serial+Math.floor(serial/3))%3,
+    outcome=LEG_INJURY_OUTCOMES[serial%LEG_INJURY_OUTCOMES.length];
+  const s={phase:'FALL',phaseMs:0,ageMs:0,fallMs:650+variant*60,legIndex,variant,outcome,heading,wasMoving,
+    moveX:motion.x,moveY:motion.y,hitAngle:Number.isFinite(b&&b.a)?b.a:heading,
+    aimAngleAtHit:a.aimAngle||0,initialWalkCycle:a.walkCycle||0,initialGait:a.gait||0,
+    initialStanceValue:a.stance&&a.stance.value||0,
+    initialLegAngle:geometry?geometry.angle:heading,initialLegScale:geometry?geometry.scale:1,
+    initialLegs:geometry?geometry.legs.map(l=>({...l})):null,
+    fallTravel:wasMoving?22+variant*4:5+variant*2,fallMoved:0,
+    slideHeading:wasMoving?heading:heading+PI,tickRemainderMs:0,sightMs:160,canSee:false};
+  resetActorStance(a);
+  if(a._enemyCover)a._enemyCover.goal=null;
+  a._coverApproach=false;
+  a.legInjury=s;a._legHitGeometry=null;a.isMoving=false;a.gait=0;a.meleeTimer=0;a.meleeQueued=false;
+  a.throwAnimTimer=0;a.chargeTimer=0;a.orbChargeTimer=0;a.stanceAIOwned=false;
+  a.state='CHASE';a.fireTimer=Math.max(a.fireTimer||0,8);
+  return true;
+}
+function legInjuryPose(a) {
+  const s=a&&a.legInjury;if(!s)return null;
+  const duration=s.phase==='FALL'?s.fallMs:s.phase==='RECOVER'?LEG_INJURY_RECOVER_MS:1;
+  const progress=Math.max(0,Math.min(1,s.phaseMs/duration)),smooth=progress*progress*(3-2*progress);
+  const down=s.phase==='FALL'?smooth:s.phase==='RECOVER'?1-smooth:1;
+  return {phase:s.phase,legIndex:s.legIndex,variant:s.variant,outcome:s.outcome,heading:s.heading,
+    wasMoving:s.wasMoving,moveX:s.moveX,moveY:s.moveY,ageMs:s.ageMs,progress,down,
+    rise:s.phase==='RECOVER'?smooth:0,seated:s.outcome==='SEATED'?down:0,
+    prone:s.outcome==='SEATED'?0:down,reach:s.phase==='FALL'&&!s.wasMoving?Math.sin(progress*PI):0};
+}
+function legInjurySetHeight(a) {
+  const p=legInjuryPose(a),s=a.legInjury;if(!p||!a.stance)return;
+  const target=s.outcome==='SEATED'?1:2;
+  a.stance.value=s.phase==='FALL'?s.initialStanceValue+(target-s.initialStanceValue)*p.down:target*p.down;
+  a.stance.from=a.stance.to=a.stance.value;a.stance.elapsedMs=a.stance.durationMs=0;
+  a.stance.proneHeading=s.heading;a.stance.proneAimBlend=p.prone;
+  a._stanceBodyFrame=-1;a._legHitGeometry=null;
+}
+function finishLegInjury(a) {
+  a.legInjury=null;a.legInjuryCooldownMs=LEG_INJURY_COOLDOWN_MS;a._legHitGeometry=null;
+  resetActorStance(a);a.isMoving=false;a.gait=0;
+  if(a.hp>0&&!a.dead&&!(a.stunTimer>0)&&!a.knockedOut&&!boxingActive(a))a.state='CHASE';
+}
+function updateLegInjuryTimers(a,s,dt) {
+  s.tickRemainderMs+=dt;
+  const ticks=Math.floor((s.tickRemainderMs+1e-7)/(1000/60));
+  s.tickRemainderMs-=ticks*(1000/60);
+  if(a.stanceDamage)a.stanceDamage.leftMs=Math.max(0,a.stanceDamage.leftMs-dt);
+  if(!ticks)return;
+  a.fireTimer=Math.max(0,(a.fireTimer||0)-ticks);a.muzzleFlash=Math.max(0,(a.muzzleFlash||0)-ticks);
+  a.weaponKick=Math.max(0,(a.weaponKick||0)-ticks*stanceRecoilRecovery(a));
+  if(a.reloadTimer>0){a.reloadTimer=Math.max(0,a.reloadTimer-ticks);if(a.reloadTimer===0)a.ammo=weaponMagazineCapacity(a);}
+  if(a.hitFlash>0)a.hitFlash=Math.max(0,a.hitFlash-ticks);
+}
+function updateLegInjuryCombat(a,s,dt) {
+  if(s.phase!=='PRONE'&&s.phase!=='SEATED'||s.outcome==='RECOVER')return;
+  const target=a.aggroTarget&&a.aggroTarget.hp>0&&!a.aggroTarget.dead?a.aggroTarget:player;
+  if(!target||!(target.hp>0)||target.dead)return;
+  const dx=target.x-a.x,dy=target.y-a.y,distance=Math.hypot(dx,dy),wanted=Math.atan2(dy,dx);
+  a.aimAngle+=(Math.atan2(Math.sin(wanted-a.aimAngle),Math.cos(wanted-a.aimAngle)))*Math.min(1,dt/90);
+  s.sightMs+=dt;
+  if(s.sightTarget!==target||s.sightMs>=160){s.sightTarget=target;s.sightMs=0;
+    s.canSee=shovelActorsVisible(a,target)&&shovelActorLOS(a,target);}
+  const canSee=s.canSee&&shovelActorsVisible(a,target);
+  combatAimElevation(a,target,canSee);
+  if(!canSee||distance>600||a.isUnarmed||!a.currentWeapon||a.fireTimer>0||a.reloadTimer>0)return;
+  if(a.ammo<=0){a.reloadTimer=90;return;}
+  a.fire(a.aimAngle);
+}
+function updateLegInjuryActor(a,elapsedMs=deltaTime) {
+  if(!a)return false;
+  const dt=Math.min(100,Math.max(0,Number(elapsedMs)||0));
+  if(!a.legInjury){
+    if(doTick&&combatStanceContext()&&a.legInjuryCooldownMs>0)
+      a.legInjuryCooldownMs=Math.max(0,a.legInjuryCooldownMs-dt);
+    return false;
+  }
+  if(a.hp<=0||a.dead){a.legInjury=null;return false;}
+  if(a.stunTimer>0||a.knockedOut||boxingActive(a)){finishLegInjury(a);return false;}
+  if(a.isFriendly||a.isNeutral||a.mounted||!actorCanUseStances(a)){finishLegInjury(a);return false;}
+  if(!doTick||!combatStanceContext())return true;
+  const s=a.legInjury;updateLegInjuryTimers(a,s,dt);
+  let remaining=dt;
+  while(remaining>0&&a.legInjury){
+    const duration=s.phase==='FALL'?s.fallMs:s.phase==='RECOVER'?LEG_INJURY_RECOVER_MS:
+      s.outcome==='RECOVER'?650:s.phase==='SEATED'?5400:4800;
+    const step=Math.min(remaining,duration-s.phaseMs);s.phaseMs+=step;s.ageMs+=step;remaining-=step;
+    if(s.phase==='FALL'){
+      const t=s.phaseMs/s.fallMs,target=s.fallTravel*(t*t*(3-2*t)),distance=target-s.fallMoved;
+      const pieces=Math.max(1,Math.ceil(distance/3));
+      for(let i=0;i<pieces;i++)a.attemptMove(Math.cos(s.slideHeading)*distance/pieces,Math.sin(s.slideHeading)*distance/pieces);
+      s.fallMoved=target;
+    }
+    if(s.phaseMs+1e-7>=duration){
+      if(s.phase==='FALL'){s.phase=s.outcome==='SEATED'?'SEATED':'PRONE';s.phaseMs=0;}
+      else if(s.phase==='RECOVER'){finishLegInjury(a);break;}
+      else{s.phase='RECOVER';s.phaseMs=0;}
+    }
+  }
+  if(a.legInjury){legInjurySetHeight(a);a.isMoving=false;a.gait=0;a.armDrag=0;
+    updateLegInjuryCombat(a,s,dt);}
+  return true;
+}
+const LEG_INJURY_SEATED_BODY={zone:'HEAD',stance:'SEATED',radius:9,halfLength:12,capsule:true};
+const LEG_INJURY_SEATED_LEGS={zone:'BODY',stance:'SEATED',radius:8,halfLength:20,capsule:true};
+function legInjuryHitProfile(a,incoming) {
+  if(!a||!a.legInjury||a.legInjury.outcome!=='SEATED'||actorStance(a)!=='CROUCH')return undefined;
+  return incoming==='HEAD'?null:incoming==='LEGS'?LEG_INJURY_SEATED_LEGS:LEG_INJURY_SEATED_BODY;
+}
 function stanceProneSpotClear(a,x=a&&a.x,y=a&&a.y,heading=null) {
   if(!a||typeof a.checkCol!=='function')return true;
   const angle=Number.isFinite(heading)?heading:a.isPlayer&&a.stance&&a.stance.to===2&&Number.isFinite(a.stance.proneHeading)
@@ -129,7 +277,7 @@ function stanceProneSpotClear(a,x=a&&a.x,y=a&&a.y,heading=null) {
 }
 function requestActorStance(a,name,heading=null) {
   const target=COMBAT_STANCES.indexOf(name);
-  if(target<0||!combatStanceContext()||actorStanceSuppressed(a)||a.meleeTimer>0||a.throwAnimTimer>0||a.shovelDigTimer>0)return false;
+  if(target<0||a.legInjury||!combatStanceContext()||actorStanceSuppressed(a)||a.meleeTimer>0||a.throwAnimTimer>0||a.shovelDigTimer>0)return false;
   if(!a.stance)resetActorStance(a);
   const s=a.stance;
   if(s.elapsedMs<s.durationMs||s.cooldownMs>0||s.to===target)return false;
@@ -187,6 +335,7 @@ function emitProneLandingDust(a) {
 }
 function updateActorStance(a,elapsedMs=deltaTime) {
   if(!a||!a.stance)return;
+  if(a.legInjury)return;
   if(actorStanceSuppressed(a)){resetActorStance(a);if(a.isPlayer)stanceInput.hold=null;return;}
   if(!combatStanceContext()){if(a.isPlayer)stanceInput.hold=null;return;}
   if(!doTick)return;
@@ -207,6 +356,7 @@ function updateActorStance(a,elapsedMs=deltaTime) {
 }
 function constrainStanceFacing(a) {
   if(!a)return;
+  if(a.legInjury)return;
   if(!(actorStancePose(a).prone>0)) {
     a._stanceClearAngle=a.isPlayer&&a.stance&&a.stance.to===2?a.stance.proneHeading:a.aimAngle;
     return;
@@ -476,7 +626,7 @@ function coverPeekCandidate(a,state,aimAngle) {
 const COLLISION_COVER={enterMs:120,exitMs:150,leanMs:110,riseMs:135,duckMs:100};
 const NO_COVER_OFFSET={x:0,y:0};
 function actorCoverSuppressed(a) {
-  return !a||actorStanceSuppressed(a)||a.meleeTimer>0||a.throwAnimTimer>0||
+  return !a||!!a.legInjury||actorStanceSuppressed(a)||a.meleeTimer>0||a.throwAnimTimer>0||
     !!(a.stance&&(a.stance.to===2||a.stance.value>1.01));
 }
 function coverRenderActive(a) {
@@ -4409,7 +4559,8 @@ function actorDepth(c) { return c.y; }
 // Nonlethal bodies lie on the floor, like corpses. A parry is a standing
 // boxing stun and deliberately remains in the ordinary standing actor pass.
 function isGroundBodyActor(c) {
-  return !!c && (!!c.isCorpse || !!c.knockedOut || (c.stunTimer > 0 && !(c.skeletonTimer > 0)));
+  return !!c && (!!c.isCorpse || !!c.knockedOut ||
+    !!(c.legInjury&&legInjuryPose(c).down>.65) || (c.stunTimer > 0 && !(c.skeletonTimer > 0)));
 }
 function drawGroundBodyActors(actors) {
   let standing = 0;
@@ -7498,6 +7649,7 @@ function resetRunState() {
   resetComboHudFade();
   headshotCounter = 0; bodyOverkillCounter = 0; lightningCounter = 0;
   explosionDeathCounter = 0;
+  legInjurySerial = 0;
   streakMsgTimer = 0; streakMsgText = ''; objectiveTimer = 0; splatterIdx = 0;
   started = false; isDead = false; isWin = false; isPaused = false;
   selectingDifficulty = false; pauseMenuState = 'MAIN'; inUpgradeMenu = false;
@@ -15195,6 +15347,10 @@ function drawLegDecals(g,decals,index,sx,sy,kx,ky,ax,ay,hipW,kneeW,ankleW) {
   if(painting)g.pop();
 }
 function fallLegGeometry(rig,rg,index,f,faceDown=false,projected=true) {
+  if(rig.injuryBody){
+    const b=fallLimbGeometry(rig,rg,index+2,f,faceDown);
+    return {sx:b.ox,sy:b.oy,kx:b.ex,ky:b.ey,ax:b.hx,ay:b.hy,hipW:b.w1,kneeW:(b.w1+b.w2)*.5,ankleW:b.w2};
+  }
   const L=rg.limbs[index+2],side=index?1:-1,factor=faceDown?.7:1;
   const progress=projected?f:1,knee=ragKnee(L)*factor;
   const angle=PI-side*L.a*factor*progress,bend=side*knee*progress;
@@ -15205,8 +15361,8 @@ function fallLegGeometry(rig,rg,index,f,faceDown=false,projected=true) {
   return {sx,sy,kx,ky,ax:kx+Math.cos(angle+bend)*shin*projection,
     ay:ky+Math.sin(angle+bend)*shin,hipW:rig.thighW,kneeW:(rig.thighW+rig.shinW)*.5,ankleW:rig.shinW};
 }
-function mapLegHitDecal(actor,wx,wy,decal,origin=actor,heightSample=null) {
-  if(!ragHumanoid(actor.eType,actor.bodyW))return decal;
+function buildHumanLegHitGeometry(actor,origin=actor) {
+  if(!actor||!ragHumanoid(actor.eType,actor.bodyW))return null;
   const rig=figureRig(actor.bodyW,actor.bodyH),pose=boxerPose(actor);
   const GP=gaitPose(actor.isMoving?actor.gait:0);
   const mantle=actor.isPlayer?shovelMantlePose(actor):null;
@@ -15225,38 +15381,62 @@ function mapLegHitDecal(actor,wx,wy,decal,origin=actor,heightSample=null) {
   }
   const crouch=!fallen&&!pose.active&&!mantle&&!dig&&(actorStancePose(actor).crouch>0||coverRenderActive(actor))?stanceBodyPose(actor):null;
   if(crouch){angle=stanceFacingAngle(actor);scale=crouch.size;}
-  const ca=Math.cos(angle),sa=Math.sin(angle),dx=(wx-origin.x)/scale,dy=(wy-origin.y)/scale;
-  const x=ca*dx+sa*dy,y=-sa*dx+ca*dy,th=rig.thigh*STAND_FORE_LEG,sh=rig.shin*STAND_FORE_LEG;
+  const th=rig.thigh*STAND_FORE_LEG,sh=rig.shin*STAND_FORE_LEG;
   const feet=pose.active?boxingFeet(actor,pose):null;
-  let best=null;
+  const legs=[];
   for(let index=0;index<2;index++) {
     const side=index?1:-1;
-    let kx,ky,ax,ay,width=rig.shinW*.8;
-    if(fallen){const b=fallLegGeometry(fallen.rig,fallen.rag,index,fallen.f);({kx,ky,ax,ay}=b);width=b.ankleW;}
+    let sx,sy,kx,ky,ax,ay,hipW=rig.thighW,kneeW=rig.shinW,width=rig.shinW*.8;
+    if(fallen){const b=fallLegGeometry(fallen.rig,fallen.rag,index,fallen.f);({sx,sy,kx,ky,ax,ay,hipW,kneeW}=b);width=b.ankleW;}
     else if(feet){
       const foot=feet[index],pelvis=pose.pelvis||{x:-3,y:0,angle:0},compression=pose.legCompression||0;
-      const sx=pelvis.x-Math.sin(pelvis.angle||0)*side*4.6,sy=pelvis.y+Math.cos(pelvis.angle||0)*side*4.6;
+      sx=pelvis.x-Math.sin(pelvis.angle||0)*side*4.6;sy=pelvis.y+Math.cos(pelvis.angle||0)*side*4.6;
       ax=foot.x-Math.cos(foot.heading)*rig.foot*.34;ay=foot.y-Math.sin(foot.heading)*rig.foot*.34-foot.lift;
       const l1=th*(1+compression*.12),l2=sh*(1+compression*.12),vx=ax-sx,vy=ay-sy;
       const d=Math.max(.1,Math.min(Math.hypot(vx,vy),l1+l2-.01));
       const a=Math.atan2(vy,vx)+side*Math.acos(Math.max(-1,Math.min(1,(l1*l1+d*d-l2*l2)/(2*l1*d))));
       kx=sx+Math.cos(a)*l1;ky=sy+Math.sin(a)*l1;
     }else if(mantle){
-      const lead=side===-1,sx=-10+rig.thighW*.5+mantle.lean*.3,sy=side*6;
+      const lead=side===-1;sx=-10+rig.thighW*.5+mantle.lean*.3;sy=side*6;
       kx=sx+th*.92+(lead?8*mantle.tuck:-3.5*mantle.fold);ky=sy+side*(lead?3*mantle.tuck:1.8*mantle.fold);
       ax=sx+th*.92+sh+(lead?11*mantle.plant-1.5*mantle.tuck:-8*mantle.fold+4*mantle.plant);ay=sy+side*(lead?1.3*mantle.tuck:mantle.fold);
     }else if(dig){
-      const sx=-10+rig.thighW*.5,sy=side*6;
+      sx=-10+rig.thighW*.5;sy=side*6;
       kx=sx+th*.8+side*dig.blend*3-dig.effort*1.1;ky=sy+side*dig.blend*2.4;
       ax=kx+sh*.8+side*dig.blend*5-dig.effort*1.4;ay=ky+side*dig.blend*1.5;
     }else if(crouch){
-      const leg=crouch.joints[index];kx=leg.knee.x;ky=leg.knee.y;ax=leg.ankle.x;ay=leg.ankle.y;
+      const leg=crouch.joints[index];sx=leg.hip.x;sy=leg.hip.y;kx=leg.knee.x;ky=leg.knee.y;ax=leg.ankle.x;ay=leg.ankle.y;
     }else if(backstep){
-      ({kx,ky,ax,ay}=standingRearClothPose(standingRearLeg(actor,backstep,rig,index),rig,backstep.blend));
+      ({sx,sy,kx,ky,ax,ay}=standingRearClothPose(standingRearLeg(actor,backstep,rig,index),rig,backstep.blend));
     }else{
-      const sx=-10-swing*side+rig.thighW*.5;
+      sx=-10-swing*side+rig.thighW*.5;sy=side*6;
       kx=sx+th*.92;ky=side*6;ax=kx+sh;ay=ky;
     }
+    legs.push({index,sx,sy,kx,ky,ax,ay,hipW,kneeW,ankleW:width});
+  }
+  return {x:origin.x,y:origin.y,angle,scale,legs};
+}
+function humanLegHitGeometry(actor,origin=actor) {
+  const old=actor&&actor._legHitGeometry;
+  const coverPose=coverRenderActive(actor)?stanceBodyPose(actor):null;
+  const stance=actor&&actor.stance?actor.stance.value:0,fallAge=actor&&actor.stunPose?actor.stunPose.age:-1;
+  if(old&&old.frame===frameCount&&old.x===origin.x&&old.y===origin.y&&old.aim===actor.aimAngle&&
+      old.move===actor.moveAngle&&old.cycle===actor.walkCycle&&old.gait===actor.gait&&
+      old.moving===!!actor.isMoving&&old.stance===stance&&old.fallAge===fallAge&&old.coverPose===coverPose)return old;
+  const geometry=buildHumanLegHitGeometry(actor,origin);
+  if(geometry){geometry.frame=frameCount;geometry.aim=actor.aimAngle;geometry.move=actor.moveAngle;
+    geometry.cycle=actor.walkCycle;geometry.gait=actor.gait;geometry.moving=!!actor.isMoving;geometry.stance=stance;geometry.fallAge=fallAge;geometry.coverPose=coverPose;
+    actor._legHitGeometry=geometry;}
+  return geometry;
+}
+function mapLegHitDecal(actor,wx,wy,decal,origin=actor,heightSample=null,forcedLegIndex=null) {
+  const geometry=humanLegHitGeometry(actor,origin);if(!geometry)return decal;
+  const {angle,scale}=geometry,ca=Math.cos(angle),sa=Math.sin(angle),dx=(wx-origin.x)/scale,dy=(wy-origin.y)/scale;
+  const x=ca*dx+sa*dy,y=-sa*dx+ca*dy;
+  let best=null;
+  for(const leg of geometry.legs) {
+    const {index,kx,ky,ax,ay}=leg,width=leg.ankleW;
+    if((forcedLegIndex===0||forcedLegIndex===1)&&index!==forcedLegIndex)continue;
     const vx=ax-kx,vy=ay-ky,len=Math.max(.001,Math.hypot(vx,vy));
     // Resolve which leg and its across-cloth offset from the actual shot
     // before choosing height. A new height must never switch legs or sway
@@ -15278,7 +15458,7 @@ function mapLegHitDecal(actor,wx,wy,decal,origin=actor,heightSample=null) {
 function fallenLegDecalPoint(c,w) {
   if(!c.rag)return null; // Overkill without surviving legs has no leg surface.
   const projected=!!c.fall,faceDown=!projected&&c.dT===7;
-  const rig=projected?projectFallRig(c.bW,c.bH,c.fP):ragRig(c.bW,c.bH);
+  const rig=projected?corpseFallRig(c):ragRig(c.bW,c.bH);
   const b=fallLegGeometry(rig,c.rag,w.legIndex,c.fP,faceDown,projected);
   const p=legDecalPoint(w,b.sx,b.sy,b.kx,b.ky,b.ax,b.ay,b.hipW,b.kneeW,b.ankleW);
   const angle=faceDown?c.mA+c.rag.ang*.6:projected?figureFallYaw(c.fall,c.rag):c.aA+c.rag.ang;
@@ -15947,6 +16127,31 @@ function figureMotion(e) {
 function weaponFallForce(w) {
   return w===WEAPONS.SHOTGUN?6:w===WEAPONS.ASSAULT_RIFLE?4.5:w===WEAPONS.PISTOL?3:2;
 }
+function snapshotLegInjuryBody(src,frameAngle=null) {
+  if(!src||!src.legInjury||typeof stanceBodyPose!=='function')return null;
+  const b=stanceBodyPose(src),heading=stanceFacingAngle(src),delta=heading-(Number.isFinite(frameAngle)?frameAngle:heading),co=Math.cos(delta),si=Math.sin(delta);
+  const point=p=>{const x=Number(p&&p.x)||0,y=Number(p&&p.y)||0;return {x:co*x-si*y,y:si*x+co*y};};
+  const numbers=o=>{
+    const copy={};if(o)for(const key in o)if(typeof o[key]==='number'||typeof o[key]==='boolean')copy[key]=o[key];
+    return copy;
+  };
+  const longGun=src.currentWeapon===WEAPONS.ASSAULT_RIFLE||src.currentWeapon===WEAPONS.SHOTGUN?stanceLongGunPose(src):null;
+  const dual=src.currentWeapon===WEAPONS.DUAL_SMG,one=src.currentWeapon===WEAPONS.PISTOL;
+  const hand=stancePointInBody(src,longGun?longGun.rear[0]:one?16:22,longGun?longGun.rear[1]:one?8:11);
+  const left=stancePointInBody(src,longGun?longGun.fore[0]:dual?22:27,longGun?longGun.fore[1]:dual?-11:1);
+  const joints=b.joints.map(j=>{
+    const right=j.side===1,empty=!right&&!dual&&weaponHands(src.currentWeapon)!==2,w=right?hand:left;
+    let hx=empty?j.elbow.x+5:w.x/b.size,hy=empty?j.elbow.y*.76:w.y/b.size;
+    if(!right&&b.injury&&b.grab>0){const knee=b.joints[b.injury.legIndex].knee;hx=lerp(hx,knee.x+1,b.grab);hy=lerp(hy,knee.y,b.grab);}
+    return {side:j.side,hip:point(j.hip),knee:point(j.knee),ankle:point(j.ankle),shoulder:point(j.shoulder),
+      elbow:point(stanceArmElbow(b,j,hx,hy)),wrist:point({x:hx,y:hy}),step:numbers(j.step),support:numbers(j.support)};
+  });
+  const chest=point({x:b.chestX,y:b.chestY}),hip=point({x:b.hipX,y:b.hipY});
+  return {head:point(b.head),headTurn:delta,chestX:chest.x,chestY:chest.y,
+    yaw:Math.atan2(Math.sin(b.yaw+delta),Math.cos(b.yaw+delta)),hipX:hip.x,hipY:hip.y,hipYaw:b.hipYaw+delta,
+    torsoLength:b.torsoLength,torsoWidth:b.torsoWidth,size:b.size,drop:b.drop,floor:b.floor,
+    R:numbers(b.R),roll:numbers(b.roll),joints};
+}
 function buildFigureFall(src,angle,force,stun,facing) {
   const hit=!stun&&src&&src.fallHit&&src.fallHit.frame===frameCount?src.fallHit:null;
   const m=hit?{x:hit.mx,y:hit.my}:figureMotion(src),speed=Math.hypot(m.x,m.y);
@@ -15963,6 +16168,30 @@ function buildFigureFall(src,angle,force,stun,facing) {
   // A fatal shot at somebody already down continues their current fall.
   if(src&&src.stunPose&&src.stunTimer>0){const old=src.stunPose;
     p.a=old.a;p.facing=old.facing;p.yawFrom=old.yawFrom===undefined?old.facing:old.yawFrom;p.age=Math.min(p.duration,old.age/old.duration*p.duration);p.impulse=old.impulse*.25;}
+  // A leg-injured gunman is already falling or on the floor when the fatal
+  // round arrives. Continue from that height and planted heading instead of
+  // constructing a fresh standing collapse or carrying old running velocity.
+  // The snapshot contains no live actor/AI reference and survives bank stamps.
+  if(!stun&&src&&src.legInjury&&typeof legInjuryPose==='function') {
+    const injury=legInjuryPose(src);
+    if(injury) {
+      const down=Math.max(0,Math.min(1,injury.down||0));
+      const heading=Number.isFinite(injury.heading)?injury.heading:(facing||0);
+      const aim=Number.isFinite(src.aimAngle)?src.aimAngle:heading;
+      const faceUp=injury.seated>0||Math.cos(aim-heading)<0;
+      // From sitting, the feet already extend forward. The skull drops
+      // behind the pelvis; do not swing both legs through the abdomen just
+      // to reach the default head-first corpse frame.
+      const floorHeading=injury.seated>0?heading+PI:heading;
+      p.a=p.yawFrom=floorHeading;p.facing=floorHeading+(faceUp?PI:0);
+      p.age=down/.15;p.impulse*=1-down;p.moving=false;p.mx=p.my=0;p.lean*=1-down;
+      p.contacted=down>=1;
+      p.injuryFrom={down,startAge:p.age,seated:Math.max(0,Math.min(1,injury.seated||0)),
+        prone:Math.max(0,Math.min(1,injury.prone||0)),heading,floorHeading,aimAngle:aim,
+        legIndex:injury.legIndex===1?1:0,variant:injury.variant|0,
+        phase:String(injury.phase||'FALL'),outcome:String(injury.outcome||'PRONE')};
+    }
+  }
   // Forward/backward belongs to this fall, not to north/south on the map.
   p.faceDown=Math.cos(p.a-p.facing)>=0;
   return p;
@@ -15985,7 +16214,12 @@ function figureFallProgress(p) {
 function figureFallYaw(p,rg,f=figureFallProgress(p)) {
   const start=p.yawFrom===undefined?p.facing:p.yawFrom;
   const turn=Math.atan2(Math.sin(p.a-start),Math.cos(p.a-start));
-  return start+turn*f+(rg?rg.ang:0)*f+p.lean*Math.sin(f*PI)*.10;
+  const yaw=start+turn*f+(rg?rg.ang:0)*f+p.lean*Math.sin(f*PI)*.10;
+  if(p.injuryFrom){
+    const u=Math.max(0,Math.min(1,(p.age-p.injuryFrom.startAge)/12)),blend=u*u*(3-2*u);
+    return p.a+Math.atan2(Math.sin(yaw-p.a),Math.cos(yaw-p.a))*blend;
+  }
+  return yaw;
 }
 function stepFigureFall(p,e,rg) {
   if(p.done)return;
@@ -16067,6 +16301,20 @@ function buildFatalSpray(src,eT) {
 // fatal spot remains attached when the torso separates or a piece is moving.
 function fatalWoundPoint(c,w=c.fatalSpray.wound) {
   if(w.isLeg)return fallenLegDecalPoint(c,w);
+  if(c.injuryFrom&&c.fall){
+    const rig=corpseFallRig(c);
+    if(rig.injuryBody){
+      const heading=figureFallYaw(c.fall,c.rag),head=!!w.isHead;
+      const turn=head?rig.headTurn:rig.chestYaw,co=Math.cos(turn),si=Math.sin(turn);
+      const size=head?rig.headScale:lerp(1,rig.injurySize,rig.injuryMix),dy=head?w.y:w.y*lerp(1,.85,rig.injuryMix);
+      const x=(head?rig.headX:rig.chestX)+(co*w.x-si*dy)*size;
+      const y=(head?rig.headY:rig.chestY)+(si*w.x+co*dy)*size;
+      return {x:c.x+(Math.cos(heading)*x-Math.sin(heading)*y)*RAG_SCALE,
+        y:c.y+(Math.sin(heading)*x+Math.cos(heading)*y)*RAG_SCALE,
+        angle:heading+turn+(w.shotA===undefined?c.fatalSpray&&c.fatalSpray.angle||0:w.shotA),
+        frameAngle:heading,scale:RAG_SCALE*size};
+    }
+  }
   const s=c.fatalSpray,f=c.fP,rg=c.rag;
   let x=c.x,y=c.y,a=c.aA,lx=w.x,ly=w.y,scale=1,turn=0;
   const piece=(c.overkillBits||c.aerialBits||c.bits||[]).find(b=>b.type===(c.dT===5?(w.isHead?'skull':'ribcage'):'torso'));
@@ -16158,6 +16406,24 @@ function projectFallRig(bW,bH,f) {
   r.hipX=lerp(-6/RAG_SCALE,r.hipX,f);r.hipY=lerp(6/RAG_SCALE,r.hipY,f);
   return r;
 }
+// Preserve a falling/grounded victim's actual joints at the lethal handoff.
+// The frozen numeric snapshot blends into the native corpse during its live
+// settle, then becomes exactly the normal rig before the blood-bank stamp.
+function corpseFallRig(c) {
+  const rig=projectFallRig(c.bW,c.bH,c.fP),from=c.injuryFrom,b=from&&from.body;
+  if(!b||!c.fall)return rig;
+  const u=Math.max(0,Math.min(1,(c.fall.age-from.startAge)/12)),mix=1-u*u*(3-2*u);
+  if(mix<=0)return rig;
+  const size=b.size/RAG_SCALE;
+  rig.injuryBody=b;rig.injuryMix=mix;rig.injurySize=size;
+  rig.chestX=b.chestX*size*mix;rig.chestY=b.chestY*size*mix;rig.chestYaw=b.yaw*mix;
+  rig.TL=lerp(rig.TL,b.torsoLength*size,mix);rig.TW=lerp(rig.TW,b.torsoWidth*size,mix);
+  rig.headX=lerp(rig.headX,b.head.x*size,mix);rig.headY=b.head.y*size*mix;
+  rig.headScale=lerp(lerp(1/RAG_SCALE,1,c.fP),size,mix);
+  const nativeTurn=figureHeadTurn(c.fall,c.fP),turnDelta=(b.headTurn||0)-nativeTurn;
+  rig.headTurn=nativeTurn+Math.atan2(Math.sin(turnDelta),Math.cos(turnDelta))*mix;
+  return rig;
+}
 function woundHold(rg,rig,w) {
   const i=w.y<0?0:1,s=i===0?-1:1,ox=rig.shX,oy=s*rig.shY;
   const dx=w.x-ox,dy=w.y-oy,d=Math.hypot(dx,dy);
@@ -16182,9 +16448,9 @@ function drawFallBone(r,x,y,nx,ny,width,col,tip,tipSz,join) {
   if(tip)figureCelOval(r,len+tipSz*.30,0,tipSz,tipSz*.86,tip);
   r.pop();
 }
-function drawFallLimb(r,rig,rg,i,f,shirt,pants,skin,boot,faceDown=false,id=null,decals=null) {
+function fallLimbGeometry(rig,rg,i,f,faceDown=false) {
   const L=rg.limbs[i],arm=i<2,s=i%2?1:-1;
-  const ox=arm?rig.shX:rig.hipX,oy=s*(arm?rig.shY:rig.hipY);
+  let ox=arm?rig.shX:rig.hipX,oy=s*(arm?rig.shY:rig.hipY);
   const knee=ragKnee(L)*(faceDown?.7:1),limbA=arm?s*(HALF_PI+(faceDown?L.a*.35-.5:L.a)):PI-s*L.a*(faceDown?.7:1)*f;
   const ang=arm?s*PI+((limbA-s*PI+PI*3)%TWO_PI-PI)*f:limbA;
   const bend=s*(arm?(faceDown?1.2:L.b):knee)*f;
@@ -16194,10 +16460,23 @@ function drawFallLimb(r,rig,rg,i,f,shirt,pants,skin,boot,faceDown=false,id=null,
   const projection=arm?lerp(STAND_FORE_ARM,1,f):lerp(-STAND_FORE_LEG,1,f);
   const l1=arm?rig.upper*(faceDown?.75:1):rig.thigh;
   const l2=arm?rig.fore*(faceDown?.82:1):ragShin(rig,knee*f)*(1-.20*Math.sin(f*PI));
-  const ex=ox+Math.cos(ang)*l1*projection,ey=oy+Math.sin(ang)*l1;
-  const hx=ex+Math.cos(ang+bend)*l2*projection,hy=ey+Math.sin(ang+bend)*l2;
-  const w1=arm?rig.upperW*(faceDown?.92:1):rig.thighW;
-  const w2=arm?rig.foreW*(faceDown?.92:1):rig.shinW;
+  let ex=ox+Math.cos(ang)*l1*projection,ey=oy+Math.sin(ang)*l1;
+  let hx=ex+Math.cos(ang+bend)*l2*projection,hy=ey+Math.sin(ang+bend)*l2;
+  let w1=arm?rig.upperW*(faceDown?.92:1):rig.thighW;
+  let w2=arm?rig.foreW*(faceDown?.92:1):rig.shinW;
+  if(rig.injuryBody){
+    const b=rig.injuryBody,j=b.joints[i%2],mix=rig.injuryMix,size=rig.injurySize;
+    const start=arm?j.shoulder:j.hip,middle=arm?j.elbow:j.knee,end=arm?j.wrist:j.ankle;
+    ox=lerp(ox,start.x*size,mix);oy=lerp(oy,start.y*size,mix);
+    ex=lerp(ex,middle.x*size,mix);ey=lerp(ey,middle.y*size,mix);
+    hx=lerp(hx,end.x*size,mix);hy=lerp(hy,end.y*size,mix);
+    w1=lerp(w1,(arm?b.R.upperW:b.R.thighW*.92)*size,mix);
+    w2=lerp(w2,(arm?b.R.foreW*.83:b.R.shinW*.8)*size,mix);
+  }
+  return {ox,oy,ex,ey,hx,hy,w1,w2};
+}
+function drawFallLimb(r,rig,rg,i,f,shirt,pants,skin,boot,faceDown=false,id=null,decals=null) {
+  const arm=i<2,{ox,oy,ex,ey,hx,hy,w1,w2}=fallLimbGeometry(rig,rg,i,f,faceDown);
   const streetArm=arm&&cityStreetLook(id);
   if(streetArm)drawCityStreetUpperArm(r,id,ox,oy,ex,ey,hx,hy,w1,(w1+w2)*.5,w2,skin);
   else drawFallBone(r,ox,oy,ex,ey,w1,arm?shirt:pants,undefined,undefined,{x:hx,y:hy,width:w2});
@@ -16508,6 +16787,9 @@ class Corpse {
     // 14/15 come apart into pieces and draw their own thing; 12 flies off.
     this.rag = blast||sword||[0, 1, 2, 4, 6, 7, 8, 9].indexOf(dT) !== -1 ? ragBuild(eT, bW, bA, aA) : null;
     this.fall = this.rag&&!blast&&!legacyOverkillFall(dT,src&&src.fallHit) ? buildFigureFall(src,bA,3,false,aA) : null;
+    if(this.fall&&this.fall.injuryFrom){
+      this.injuryFrom=this.fall.injuryFrom;this.injuryFrom.body=snapshotLegInjuryBody(src,this.fall.a);
+    }
     this.backFacing=dT===7||(this.fall?this.fall.faceDown:Math.cos((mA||0)-(aA||0))>=0);
     if (this.fall) {
         this.fP=figureFallProgress(this.fall);
@@ -16955,13 +17237,14 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       r.noStroke(); for (let d of this.dec) { if (!d.isHead&&!d.isLeg) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.fill(sK); r.ellipse(0, -5, 11, 11); r.noStroke(); for (let d of this.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.pop();
   } 
   else { 
-      r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.fall?figureFallYaw(this.fall,this.rag):this.aA); const RG = this.rag; if (RG) { if(!this.fall)r.rotate(RG.ang); r.scale(RAG_SCALE); } if (RG) ragContour(r, a); else r.noStroke(); const RP = this.fall?projectFallRig(this.bW,this.bH,f):ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW; r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -10 : -10, lY2 = this.bW === 105 ? 15 : 2; r.push(); if (RG) { const bootC = color(this.pC.levels[0] * 0.55, this.pC.levels[1] * 0.55, this.pC.levels[2] * 0.55, a); if(this.fall){drawFallLimb(r,RP,RG,2,f,this.sC,this.pC,sK,bootC,false,this.id,this.dec); drawFallLimb(r,RP,RG,3,f,this.sC,this.pC,sK,bootC,false,this.id,this.dec);}else{ragLimb(r, RP.hipX, -RP.hipY, PI + RG.limbs[2].a, -ragKnee(RG.limbs[2]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[2])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot, this.dec, 0); ragLimb(r, RP.hipX,  RP.hipY, PI - RG.limbs[3].a,  ragKnee(RG.limbs[3]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[3])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot, this.dec, 1);} } else { r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4); } if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(lX, -4, 12, 16); } r.pop(); const underArm=this.fall&&this.fall.faceDown&&this.fall.hold&&f>.45?this.fall.hold.arm:-1; if(underArm>=0){ragContour(r,a);drawFallLimb(r,RP,RG,underArm,f,this.sC,this.pC,sK,undefined,false,this.id);} if (RG) ragContour(r, a); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); if (RG) { figureCelOval(r, 0, 0, TL, TW, this.sC); } else r.ellipse(0, 0, this.bW + 15 * f, this.bH);
+      r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.fall?figureFallYaw(this.fall,this.rag):this.aA); const RG = this.rag; if (RG) { if(!this.fall)r.rotate(RG.ang); r.scale(RAG_SCALE); } if (RG) ragContour(r, a); else r.noStroke(); const RP = this.fall?corpseFallRig(this):ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW; r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -10 : -10, lY2 = this.bW === 105 ? 15 : 2; r.push(); if (RG) { const bootC = color(this.pC.levels[0] * 0.55, this.pC.levels[1] * 0.55, this.pC.levels[2] * 0.55, a); if(this.fall){drawFallLimb(r,RP,RG,2,f,this.sC,this.pC,sK,bootC,false,this.id,this.dec); drawFallLimb(r,RP,RG,3,f,this.sC,this.pC,sK,bootC,false,this.id,this.dec);}else{ragLimb(r, RP.hipX, -RP.hipY, PI + RG.limbs[2].a, -ragKnee(RG.limbs[2]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[2])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot, this.dec, 0); ragLimb(r, RP.hipX,  RP.hipY, PI - RG.limbs[3].a,  ragKnee(RG.limbs[3]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[3])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot, this.dec, 1);} } else { r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4); } if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(lX, -4, 12, 16); } r.pop(); const underArm=this.fall&&this.fall.faceDown&&this.fall.hold&&f>.45?this.fall.hold.arm:-1; if(underArm>=0){ragContour(r,a);drawFallLimb(r,RP,RG,underArm,f,this.sC,this.pC,sK,undefined,false,this.id);} if (RG) ragContour(r, a); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.push();if(RP.injuryBody){r.translate(RP.chestX,RP.chestY);r.rotate(RP.chestYaw);} if (RG) { figureCelOval(r, 0, 0, TL, TW, this.sC); } else r.ellipse(0, 0, this.bW + 15 * f, this.bH);
       if (this.eT === "ARMORED_STANDARD") { r.fill(100); if (RG) r.rect(-TL * 0.26, -TW * 0.46, TL * 0.58, TW * 0.92, 4); else r.rect(-10, -12, 20, 24, 4); }
       if (this.eT === "FEMALE_PISTOL" && !(this.backFacing&&(!this.fall||f>.5))) { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(4, -6, 12, 10); r.ellipse(4, 6, 12, 10); }
       drawFallenAttire(r,this.id,RG?TL:this.bW+15*f,RG?TW:this.bH,this.backFacing,this.fall?f:1);
-      r.noStroke(); for (let d of this.dec) { if (!d.isHead&&!d.isLeg) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); r.ellipse(d.x, d.y, d.sz, d.sz); } }
+      r.noStroke(); for (let d of this.dec) { if (!d.isHead&&!d.isLeg) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220 * (a/255)); const ds=RP.injuryBody?lerp(1,RP.injurySize,RP.injuryMix):1;r.ellipse(d.x*ds,d.y*ds*(RP.injuryBody?lerp(1,.85,RP.injuryMix):1),d.sz*ds,d.sz*ds); } }
       // Blood from the head coats the collar and shirt, under the sleeves.
       if(this.spray){for(const sp of this.spray){r.fill(96,6,6,sp.a*(a/255));r.ellipse(sp.x,sp.y,sp.r*2,sp.r*1.74);}}
+      r.pop();
       let lAY = this.eT === "ARMORED" ? -30 : -14, rAY = this.eT === "ARMORED" ? 30 : 11, slX = lerp(-5, 0, f), hX = lerp(-12, 12, f), armLY = lerp(lAY, lAY + 3, f), rslX = lerp(15, 0, f), rhX = lerp(25, 12, f), armRY = lerp(rAY, rAY + 3, f); 
       // Decals are stains and cleared the stroke; the arms are limbs
       // and take it back, the same handover the living figure does.
@@ -16969,7 +17252,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       if (this.eT === "AERIAL" || this.eT === "AERIAL_PISTOL") { r.fill(80, a); r.rect(-18, -12, 12, 24, 3); } 
       if (this.eT !== "ARMORED" && this.eT !== "MOLOTOV" && this.eT !== "AERIAL" && !(this.id&&this.id.isUnarmed)) { r.push(); r.translate(20 - 10 * f, 8 + 15 * f); r.rotate(f * PI / 2); if (this.cW === WEAPONS.SMG || this.cW === WEAPONS.DUAL_SMG) { r.fill(40); r.rect(31, 12, 24, 8, 2); r.rect(35, 20, 6, 12); } else if (this.cW === WEAPONS.ASSAULT_RIFLE) { r.fill(40); r.rect(5, 4, 42, 4, 1); r.fill(139, 69, 19); r.rect(15, 3, 12, 6, 1); r.rect(0, 3, 8, 6, 1); } else if (this.cW === WEAPONS.SHOTGUN) { r.fill(30); r.rect(5, 4, 40, 5, 1); r.fill(15); r.rect(20, 3, 14, 7, 1); r.fill(50); r.rect(5, 3, 12, 7, 2); } else if (this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { r.fill(50, 70, 50); r.rect(5, 4, 45, 6, 2); r.fill(30); r.rect(20, 2, 10, 10, 1); } else { r.fill(40); r.rect(15, 5, 16, 6, 2); } r.pop(); if (this.cW === WEAPONS.DUAL_SMG) { r.push(); r.translate(20 - 10 * f, -14 - 15 * f); r.rotate(-f * PI / 2); r.fill(40); r.rect(15, -7, 24, 8, 2); r.rect(19, -19, 6, 12); r.pop(); } } else if (this.eType === "MOLOTOV") { r.push(); r.translate(20 - 10 * f, 8 + 15 * f); r.rotate(f * PI / 2); r.fill(30, 120, 30); r.rect(0, -8, 8, 16, 2); r.pop(); } else if (this.eType === "ARMORED") { r.push(); r.translate(30 - 10 * f, 25 + 15 * f); r.rotate(f * PI / 2); r.fill(30); r.rect(0, -10, 50, 20, 4); r.pop(); }
       if(this.swordHeadless){r.pop();r.pop();return;}
-      if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(0, 0, this.bW + 15 * f, 20); if (RG) ragContour(r, a); } r.translate(this.fall?RP.headX:(RG?18:20)*f,0); if(this.fall)r.scale(lerp(1/RAG_SCALE,1,f)); r.push(); r.rotate(figureHeadTurn(this.fall,f)); const hK=fallenHeadColor(this.id,this.fall,f,sK); if (this.dT === 4) { r.fill(90, 0, 0); r.ellipse(0, 0, 14, 14); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-figureHeadTurn(this.fall,f)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 1) { r.fill(hK); r.arc(0, 0, 11, 11, this.hA + PI / 4, this.hA + TWO_PI - PI / 4, PIE); r.fill(90, 0, 0); r.arc(0, 0, 8, 8, this.hA - PI / 4, this.hA + PI / 4, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-figureHeadTurn(this.fall,f)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 6) { r.push(); r.rotate(this.hA); r.fill(90, 0, 0); r.ellipse(0, 0, 10, 10); let spread = min(this.sep * 0.4, 8); r.fill(hK); r.arc(0, -spread, 11, 11, PI, TWO_PI, CHORD); r.arc(0, spread, 11, 11, 0, PI, CHORD); r.pop(); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-figureHeadTurn(this.fall,f)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 8) { r.push(); r.rotate(this.hA); r.fill(hK); r.arc(0, 0, 11, 11, 0, PI + HALF_PI, PIE); r.fill(90, 0, 0); r.arc(0, 0, 11, 11, PI + HALF_PI, TWO_PI, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-figureHeadTurn(this.fall,f)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } r.pop(); } else if (this.dT === 9) { let nX = 10 + 5 * this.fP; r.fill(90, 0, 0); r.ellipse(nX, 0, 12, 12); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-figureHeadTurn(this.fall,f)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else { figureCelOval(r,0,0,11,11,hK,.65); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-figureHeadTurn(this.fall,f)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } r.noStroke();
+      if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(0, 0, this.bW + 15 * f, 20); if (RG) ragContour(r, a); } r.translate(this.fall?RP.headX:(RG?18:20)*f,RP.headY||0); if(this.fall)r.scale(RP.headScale===undefined?lerp(1/RAG_SCALE,1,f):RP.headScale); r.push(); r.rotate((RP.headTurn===undefined?figureHeadTurn(this.fall,f):RP.headTurn)); const hK=fallenHeadColor(this.id,this.fall,f,sK); if (this.dT === 4) { r.fill(90, 0, 0); r.ellipse(0, 0, 14, 14); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-(RP.headTurn===undefined?figureHeadTurn(this.fall,f):RP.headTurn)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 1) { r.fill(hK); r.arc(0, 0, 11, 11, this.hA + PI / 4, this.hA + TWO_PI - PI / 4, PIE); r.fill(90, 0, 0); r.arc(0, 0, 8, 8, this.hA - PI / 4, this.hA + PI / 4, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-(RP.headTurn===undefined?figureHeadTurn(this.fall,f):RP.headTurn)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 6) { r.push(); r.rotate(this.hA); r.fill(90, 0, 0); r.ellipse(0, 0, 10, 10); let spread = min(this.sep * 0.4, 8); r.fill(hK); r.arc(0, -spread, 11, 11, PI, TWO_PI, CHORD); r.arc(0, spread, 11, 11, 0, PI, CHORD); r.pop(); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-(RP.headTurn===undefined?figureHeadTurn(this.fall,f):RP.headTurn)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 8) { r.push(); r.rotate(this.hA); r.fill(hK); r.arc(0, 0, 11, 11, 0, PI + HALF_PI, PIE); r.fill(90, 0, 0); r.arc(0, 0, 11, 11, PI + HALF_PI, TWO_PI, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-(RP.headTurn===undefined?figureHeadTurn(this.fall,f):RP.headTurn)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } r.pop(); } else if (this.dT === 9) { let nX = 10 + 5 * this.fP; r.fill(90, 0, 0); r.ellipse(nX, 0, 12, 12); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-(RP.headTurn===undefined?figureHeadTurn(this.fall,f):RP.headTurn)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else { figureCelOval(r,0,0,11,11,hK,.65); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-(RP.headTurn===undefined?figureHeadTurn(this.fall,f):RP.headTurn)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } r.noStroke();
       // The hair, and whatever was on the head. The identity was frozen at the
       // moment of death (figureIdentity), so this body keeps what the person
       // was wearing instead of coming to rest as a bare skin dome. Anything
@@ -16983,7 +17266,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
         const hw = headwearOf(this.id);
         if (hw && !headwearFalls(hw)) drawFallenHeadwear(r,this.id,hw,this.backFacing&&f>.5);
         else if (hw && this.hatOff) {
-          r.push(); r.rotate(-figureHeadTurn(this.fall,f)); r.translate(this.hatOff.x, this.hatOff.y); r.rotate(this.hatOff.r);
+          r.push(); r.rotate(-(RP.headTurn===undefined?figureHeadTurn(this.fall,f):RP.headTurn)); r.translate(this.hatOff.x, this.hatOff.y); r.rotate(this.hatOff.r);
           drawHeadwear(r, this.id, hw); r.pop();
         }
         if (r.drawingContext) r.drawingContext.globalAlpha = 1;
@@ -20872,7 +21155,7 @@ function combatAimElevation(shooter, target, canSee = false) {
 // place to approach is AI work; wall contact never becomes a movement lock.
 const ENEMY_COVER_WEAPONS=new Set(Object.values(WEAPONS)),_enemyCoverCars=[];
 function enemyCoverEligible(a) {
-  return !!a&&!a.isPlayer&&!a.isNeutral&&!a.isUnarmed&&!a.isCoward&&!a.mounted&&
+  return !!a&&!a.legInjury&&!a.isPlayer&&!a.isNeutral&&!a.isUnarmed&&!a.isCoward&&!a.mounted&&
     !String(a.eType||'').startsWith('OCCULT_')&&a.eType!=='MOLOTOV'&&
     actorCanUseStances(a)&&!actorStanceSuppressed(a)&&a.meleeTimer<=0&&
     !!a.currentWeapon&&ENEMY_COVER_WEAPONS.has(a.currentWeapon)&&
@@ -21000,7 +21283,7 @@ function updateEnemyCoverAI(a,target,canSee,distance,elapsedMs=deltaTime) {
 
 function updateCombatStanceAI(actor, target, canSee, distance) {
   if(actor&&(actor.cover&&actor.cover.active||actor._enemyCover&&actor._enemyCover.goal))return;
-  if (!actor || actor.isPlayer || !actorCanUseStances(actor)) return;
+  if (!actor || actor.legInjury || actor.isPlayer || !actorCanUseStances(actor)) return;
   const combat = !!target && target.hp > 0 && !target.dead && canSee &&
     distance >= 240 && distance <= 650 && !actor.isNeutral &&
     !isPaused && doTick && !isDead && !isWin && !killcamMode &&
@@ -22303,6 +22586,9 @@ this.skeletonTimer = 0;
 
     updateEnemy() {
     this._coverMoveX=this._coverMoveY=0;
+    if(updateLegInjuryActor(this,typeof deltaTime==='number'?deltaTime:1000/60)){
+      shovelUpdateActor(this,typeof deltaTime==='number'?deltaTime:1000/60);return;
+    }
     updateActorStance(this, typeof deltaTime === 'number' ? deltaTime : 1000 / 60);
     shovelUpdateActor(this,typeof deltaTime==='number'?deltaTime:1000/60);
     if(this.shovelFallFatal)return;
@@ -23265,6 +23551,8 @@ if (this.skeletonTimer > 0 && frameCount % 6 < 3) {
 
 // Nonlethal collapse is simulated in updateEnemy, never in the painter.
 if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return;}
+
+    if(this.legInjury&&drawLegInjuryFigure(this)){pop();return;}
 
     const stancePose = actorStancePose(this);
     if (stancePose.crouch > 0 || stancePose.prone > 0 || stanceCoverPoseActive(this)) { drawCombatStanceFigure(this, stancePose); pop(); return; }
@@ -25936,6 +26224,8 @@ function stanceHitProfile(actor,incomingZone) {
     // Passing shots keep flying without impact, stains, knockback or stun.
     if(proneDiveActive(actor))return null;
     const incoming = incomingZone==='HEAD' ? 'HEAD' : incomingZone==='LEGS' ? 'LEGS' : 'BODY';
+    const injuredProfile=legInjuryHitProfile(actor,incoming);
+    if(injuredProfile!==undefined)return injuredProfile;
     const stance = actorCanUseStances(actor) ? actorStance(actor) : 'STAND';
     if(stance==='CROUCH')return incoming==='HEAD' ? null : STANCE_PROJECTILE_PROFILES['CROUCH_'+incoming];
     if(stance==='PRONE')return incoming==='LEGS' ? STANCE_PROJECTILE_PROFILES.PRONE_LEGS : null;
@@ -26022,50 +26312,66 @@ function coverBulletBlock(b) {
     }
     return hit;
 }
-// Standing cover can plant one boot farther from the root. Its trousers and
-// braced legs use the same cached joints as the painter and wound attachment;
-// a root circle would miss that exposed foot while hitting empty floor beside it.
-function coverLegEllipseTime(px,py,dx,dy,cx,cy,rx,ry,angle=0) {
-    const co=Math.cos(angle),si=Math.sin(angle),x=px-cx,y=py-cy;
-    const qx=(co*x+si*y)/rx,qy=(-si*x+co*y)/ry;
-    const vx=(co*dx+si*dy)/rx,vy=(-si*dx+co*dy)/ry;
-    const c=qx*qx+qy*qy-1;if(c<=0)return 0;
-    const a=vx*vx+vy*vy;if(a<1e-12)return Infinity;
-    const dot=qx*vx+qy*vy,disc=dot*dot-a*c;
-    if(disc<0)return Infinity;
-    const t=(-dot-Math.sqrt(disc))/a;
-    return t>=0&&t<=1?t:Infinity;
-}
-function coverLegCapsuleTime(px,py,dx,dy,x0,y0,x1,y1,radius) {
-    const vx=x1-x0,vy=y1-y0,len=Math.hypot(vx,vy);
-    if(len<1e-6)return coverLegEllipseTime(px,py,dx,dy,x0,y0,radius,radius);
-    const co=vx/len,si=vy/len,x=px-x0,y=py-y0;
-    return Math.min(stanceSegmentBoxTime(co*x+si*y,-si*x+co*y,co*dx+si*dy,-si*dx+co*dy,0,-radius,len,radius),
-        coverLegEllipseTime(px,py,dx,dy,x0,y0,radius,radius),
-        coverLegEllipseTime(px,py,dx,dy,x1,y1,radius,radius));
-}
-function coverStandingLegContact(b,actor) {
-    const pose=stanceBodyPose(actor),size=pose.size,angle=stanceFacingAngle(actor),co=Math.cos(angle),si=Math.sin(angle);
-    const x=(b.prevX-actor.x)/size,y=(b.prevY-actor.y)/size;
-    const vx=(b.x-b.prevX)/size,vy=(b.y-b.prevY)/size;
-    const px=co*x+si*y,py=-si*x+co*y,dx=co*vx+si*vy,dy=-si*vx+co*vy,R=pose.R;
-    let t=coverLegEllipseTime(px,py,dx,dy,pose.hipX,pose.hipY,(11+pose.floor*2)*.5,
-        actor.bodyH*.305*(1-pose.roll.side*.5),pose.hipYaw);
-    for(let i=0;i<pose.joints.length;i++) {
-        const j=pose.joints[i],h=j.hip,k=j.knee,a=j.ankle;
-        t=Math.min(t,coverLegCapsuleTime(px,py,dx,dy,h.x,h.y,k.x,k.y,R.thighW*.46),
-            coverLegCapsuleTime(px,py,dx,dy,k.x,k.y,a.x,a.y,R.shinW*.5));
-        const footAngle=Math.atan2(a.y-k.y,a.x-k.x);
-        t=Math.min(t,coverLegEllipseTime(px,py,dx,dy,a.x+Math.cos(footAngle)*1.5,a.y+Math.sin(footAngle)*1.5,
-            R.foot*.5,R.shinW*.41,footAngle));
+// Low standing shots target the two cloth-covered leg chains, not the empty
+// circle between them. Each bone is a tapered capsule with no bullet padding.
+// Sweeping the whole frame segment prevents a fast round skipping a thin shin.
+const _legShotRay={prevX:0,prevY:0,x:0,y:0};
+function legShotBoneTime(b,x0,y0,x1,y1,width0,width1) {
+    const bx=x1-x0,by=y1-y0,len=Math.hypot(bx,by),r0=width0*.5,r1=width1*.5;
+    if(len<1e-8)return forestShotCircleTime(b,x0,y0,Math.max(r0,r1));
+    const co=bx/len,si=by/len,px=(b.prevX-x0)*co+(b.prevY-y0)*si,
+        py=-(b.prevX-x0)*si+(b.prevY-y0)*co,
+        dx=(b.x-b.prevX)*co+(b.y-b.prevY)*si,dy=-(b.x-b.prevX)*si+(b.y-b.prevY)*co,k=(r1-r0)/len;
+    let lo=0,hi=1;
+    for(let i=0;i<4;i++) {
+        const a=i===0?px:i===1?len-px:i===2?r0+k*px-py:r0+k*px+py,
+            d=i===0?dx:i===1?-dx:i===2?k*dx-dy:k*dx+dy;
+        if(Math.abs(d)<1e-10){if(a<-.0000001){lo=Infinity;break;}}
+        else if(d>0)lo=Math.max(lo,(-a-.0000001)/d);
+        else hi=Math.min(hi,(-a-.0000001)/d);
+        if(lo>hi){lo=Infinity;break;}
     }
-    return t!==Infinity&&!coverLineClear(b.startX,b.startY,b.prevX+(b.x-b.prevX)*t,b.prevY+(b.y-b.prevY)*t,
-        b.tH,b.shooter,actor,b.coverLaunchLow)?Infinity:t;
+    const slab=lo<=1&&hi>=0?Math.max(0,lo):Infinity;
+    return Math.min(slab,forestShotCircleTime(b,x0,y0,r0+.0000001),forestShotCircleTime(b,x1,y1,r1+.0000001));
+}
+function legProjectileContact(b,actor) {
+    const geometry=humanLegHitGeometry(actor);if(!geometry)return null;
+    const co=Math.cos(geometry.angle),si=Math.sin(geometry.angle),scale=geometry.scale;
+    const px=(b.prevX-geometry.x)/scale,py=(b.prevY-geometry.y)/scale,
+        x=(b.x-geometry.x)/scale,y=(b.y-geometry.y)/scale,ray=_legShotRay;
+    ray.prevX=px*co+py*si;ray.prevY=-px*si+py*co;ray.x=x*co+y*si;ray.y=-x*si+y*co;
+    let best=null;
+    for(const leg of geometry.legs)for(let segment=0;segment<2;segment++) {
+        const x0=segment?leg.kx:leg.sx,y0=segment?leg.ky:leg.sy,
+            x1=segment?leg.ax:leg.kx,y1=segment?leg.ay:leg.ky,
+            w0=segment?leg.kneeW:leg.hipW,w1=segment?leg.ankleW:leg.kneeW;
+        const t=legShotBoneTime(ray,x0,y0,x1,y1,w0,w1);
+        if(t===Infinity||best&&t>=best.t)continue;
+        const dx=x1-x0,dy=y1-y0,len=Math.max(.001,Math.hypot(dx,dy)),
+            cx=ray.prevX+(ray.x-ray.prevX)*t,cy=ray.prevY+(ray.y-ray.prevY)*t,
+            u=Math.max(0,Math.min(1,((cx-x0)*dx+(cy-y0)*dy)/(len*len))),width=lerp(w0,w1,u);
+        best={t,index:leg.index,segment,u,v:Math.max(-.22,Math.min(.22,((cx-x0)*-dy+(cy-y0)*dx)/(len*width)))};
+    }
+    return best;
+}
+const _legShotSideRay={prevX:0,prevY:0,x:0,y:0};
+function legShotHitSide(b,actor) {
+    let hit=legProjectileContact(b,actor);if(hit)return hit.index;
+    // The caller has clipped the frame segment to its first contact. A tiny
+    // endpoint-only tolerance recovers that same boundary after float rounding;
+    // it never participates in deciding whether the projectile actually hits.
+    const dx=b.x-b.prevX,dy=b.y-b.prevY,len=Math.hypot(dx,dy);if(len<1e-8)return -1;
+    const ray=_legShotSideRay;ray.prevX=b.prevX;ray.prevY=b.prevY;
+    ray.x=b.x+dx/len*.00001;ray.y=b.y+dy/len*.00001;
+    hit=legProjectileContact(ray,actor);return hit?hit.index:-1;
 }
 function stanceProjectileContact(b,actor,profile=stanceHitProfile(actor,b.tH)) {
     if(!profile)return Infinity;
-    if(b.tH==='LEGS'&&profile.stance==='STAND'&&coverRenderActive(actor)&&actor.cover.kind==='HIGH')
-        return coverStandingLegContact(b,actor);
+    if(b.tH==='LEGS'&&profile.zone==='LEGS'&&profile.stance==='STAND'&&actorCanUseStances(actor)) {
+        const hit=legProjectileContact(b,actor),t=hit?hit.t:Infinity;
+        return t!==Infinity&&!coverLineClear(b.startX,b.startY,b.prevX+(b.x-b.prevX)*t,b.prevY+(b.y-b.prevY)*t,
+            b.tH,b.shooter,actor,b.coverLaunchLow)?Infinity:t;
+    }
     if(!profile.capsule) {
         const center=coverActorHitCenter(actor,b.tH,profile.zone),t=forestShotCircleTime(b,center.x,center.y,profile.radius);
         if(t===Infinity)return t;
@@ -26225,6 +26531,9 @@ function updateBullets() {
               const impactZone=impactProfile.zone;
               b.x=b.prevX+(b.x-b.prevX)*hitTime;
               b.y=b.prevY+(b.y-b.prevY)*hitTime;
+              // Freeze the contacted side before damage knockback moves the
+              // actor away from the swept leg geometry.
+              const struckLegIndex=impactZone==='LEGS'?legShotHitSide(b,t):-1;
               if (b.isP && b.active && !b.isTaser) totalShotsHit++; 
               
               if (b.isTaser) {
@@ -26351,11 +26660,13 @@ function updateBullets() {
                   const variedHeight=(t.isPlayer||ragHumanoid(t.eType,t.bodyW))&&
                     !(b.isArrow||b.isOrangeBeam||b.isRedLaser||b.isPinkLaser||b.isAlienLaser);
                   const heightSample=variedHeight?bulletDecalHeightSample(b,t):null;
-                  if(impactZone==="LEGS")mapLegHitDecal(t,b.x,b.y,decal,fallHit,heightSample);
+                  if(impactZone==="LEGS")mapLegHitDecal(t,b.x,b.y,decal,fallHit,heightSample,struckLegIndex);
                   else if(variedHeight)mapHitDecalHeight(t,decal,impactZone,heightSample);
                   t.decals.push(decal);
                   fallHit.wound=t.decals[t.decals.length-1];
                   fallHit.fatal=t.hp<=0;
+                  if(impactZone==='LEGS'&&t.hp>0&&t.hp<hpBeforeImpact)
+                    tryLegShotInjury(t,b,struckLegIndex);
                 }
                 
                 fallHit.particleStart=particles.length;
@@ -26591,6 +26902,10 @@ function updateBullets() {
                     }
                 }
             }
+        }
+        if(b.active&&b.legShotAtFloor) {
+            b.l=0;b.active=false;
+            emit(b.x,b.y,2,color(117,102,80),'DUST',0,0,b.shooter);
         }
     }
   }
@@ -27115,6 +27430,7 @@ class Citizen {
 
 
 
+const LEG_SHOT_RANGE=500; // 25 m at the world's existing 20 units per metre.
 class Bullet {
   constructor() { this.active = false; }
   get active() { return this._active; }
@@ -27140,6 +27456,8 @@ class Bullet {
     this.arrowPower = 1; this.arrowDud = false; this.arrowSpeed = 28;
     this.arrowRange = 2520; this.arrowTravel = 0;
     this.isAlienLaser = (w === "ALIEN_LASER"); this.isRedLaser = (w === "RED_LASER"); this.isPinkLaser = (w === "PINK_LASER"); this.isOrangeBeam = (w === "ORANGE_BEAM"); this.isRocket = (w === WEAPONS.ROCKET_LAUNCHER); this.isTaser = (w === WEAPONS.TASER);
+    this.legShotRange=tH==='LEGS'&&!(this.isArrow||this.isAlienLaser||this.isRedLaser||this.isPinkLaser||this.isOrangeBeam||this.isRocket||this.isTaser)?LEG_SHOT_RANGE:0;
+    this.legShotTravel=0;this.legShotAtFloor=false;
     
     // NEW TASER VARIABLES
     this.retracting = false;
@@ -27238,6 +27556,14 @@ class Bullet {
           if (step <= 0) { this.l = 0; this.active = false; return; }
           this.x += this.vx * step / this.arrowSpeed; this.y += this.vy * step / this.arrowSpeed;
           this.arrowTravel += step; this.l--;
+      } else if (this.legShotRange) {
+          const speed=Math.hypot(this.vx,this.vy),step=Math.min(speed,Math.max(0,this.legShotRange-this.legShotTravel));
+          if(step<=0){this.l=0;this.active=false;return;}
+          this.x+=this.vx*step/speed;this.y+=this.vy*step/speed;
+          this.legShotTravel+=step;this.l--;
+          // The last, clipped segment still gets its complete target/cover
+          // pass before an unobstructed round settles onto the floor.
+          this.legShotAtFloor=this.legShotTravel>=this.legShotRange;
       } else {
           this.x += this.vx; this.y += this.vy; this.l--;
       }
@@ -44122,7 +44448,9 @@ function drawCrouchStepSole(g,step,w,h,weight=1) {
 function proneRollPose(c) {
   const p=actorStancePose(c),heading=stanceFacingAngle(c);
   const delta=Math.atan2(Math.sin((c.aimAngle||0)-heading),Math.cos((c.aimAngle||0)-heading));
-  const blend=c.isPlayer&&c.stance?Math.max(0,Math.min(1,c.stance.proneAimBlend||0)):0;
+  const injured=c.legInjury&&legInjuryPose(c);
+  const blend=injured&&injured.prone>0&&injured.phase!=='FALL'?1:
+    c.isPlayer&&c.stance?Math.max(0,Math.min(1,c.stance.proneAimBlend||0)):0;
   const amount=(p.prone||0)*blend,angle=Math.abs(delta),ease=t=>{t=Math.max(0,Math.min(1,t));return t*t*(3-2*t);};
   const lateral=Math.sin(delta),side=Math.abs(lateral)*amount,back=ease((angle-Math.PI*.5)/(Math.PI*.5))*amount;
   const supportSide=lateral<0?1:lateral>0?-1:0;
@@ -44171,7 +44499,90 @@ function standingCoverLeg(c,R,index,heading,blend) {
   }
   return wall;
 }
+// An injured body keeps the heading and stride it had at impact. Each joint
+// then follows a continuous fall, rather than switching to a different whole
+// sprite. The same result feeds legs, sleeves, weapon mounts and muzzle math.
+function legInjuryBodyPose(c,p) {
+  const state=c.legInjury,cached=c._legInjuryBody,aim=c.aimAngle||0;
+  if(cached&&cached.state===state&&cached.ageMs===p.ageMs&&cached.aimAngle===aim&&
+    cached.bodyW===c.bodyW&&cached.bodyH===c.bodyH)return cached;
+  const R=figureRig(c.bodyW,c.bodyH),down=p.down,seat=p.seated,prone=p.prone;
+  const index=p.legIndex===1?1:0,struck=index?1:-1,variant=p.variant||0;
+  const progress=Math.max(0,Math.min(1,p.progress||0));
+  const fallPulse=p.phase==='FALL'?Math.sin(Math.PI*Math.min(1,progress/.76)):0;
+  const kick=p.wasMoving?fallPulse:0,grab=Math.max(0,Math.min(1,p.reach||0));
+  const initialYaw=Math.atan2(Math.sin((state.aimAngleAtHit||p.heading)-p.heading),Math.cos((state.aimAngleAtHit||p.heading)-p.heading));
+  const delta=Math.atan2(Math.sin(aim-p.heading),Math.cos(aim-p.heading));
+  const standingYaw=p.phase==='RECOVER'?delta:initialYaw;
+  const roll=prone>0?proneRollPose(c):{heading:p.heading,delta,blend:0,amount:0,side:0,back:0,supportSide:0,post:0,turn:0,offsetY:0,foreground:false};
+  const hipX=lerp(-5,-9,prone)-seat*2,hipY=roll.offsetY-struck*fallPulse*(variant===1?2.5:.8);
+  const chestX=lerp(0,-1.1,prone)-seat*3+kick*2.5,
+    chestY=hipY-struck*fallPulse*(variant===2?1.5:.6);
+  const yaw=standingYaw*(1-down)+roll.turn+seat*Math.max(-1.25,Math.min(1.25,delta))-
+    struck*fallPulse*(variant===1?.23:.11);
+  const torsoLength=c.bodyW*TORSO_DEPTH+prone*3.5-seat*.7,
+    torsoWidth=c.bodyH*(1-.20*prone-.14*seat)*(1-roll.side*.53);
+  const sourceAngle=(Number(state.initialLegAngle)||0)-p.heading,
+    sourceScale=Number(state.initialLegScale)||1,co=Math.cos(sourceAngle),si=Math.sin(sourceAngle);
+  const point=(x,y)=>({x:(co*x-si*y)*sourceScale,y:(si*x+co*y)*sourceScale});
+  const joints=[],step={calf:0,sole:0,footPitch:0,lift:0,planted:true};
+  for(const side of [-1,1]){
+    const legIndex=side<0?0:1,hit=legIndex===index,
+      source=p.phase==='RECOVER'?null:state.initialLegs&&state.initialLegs[legIndex];
+    const sx=-10+R.thighW*.5,sy=side*6,th=R.thigh*STAND_FORE_LEG,sh=R.shin*STAND_FORE_LEG;
+    const startHip=source?point(source.sx,source.sy):point(sx,sy),
+      startKnee=source?point(source.kx,source.ky):point(sx+th*.92,sy),
+      startAnkle=source?point(source.ax,source.ay):point(sx+th*.92+sh,sy);
+    const hY=side*(6.3+seat*.9)*(1-roll.side*.68),
+      targetHip={x:hipX,y:hipY+hY},
+      targetKnee={x:prone?-23+(hit?variant*1.5:0):seat?8-(hit?3:0):startKnee.x,
+        y:side*(prone?(9+(hit?variant*1.6:0))*(1-roll.side*.45):seat?(10+(hit?2:0)):6)},
+      targetAnkle={x:prone?-37+(hit?3+variant:0):seat?25-(hit?4+variant:0):startAnkle.x,
+        y:side*(prone?8.9*(1-roll.side*.38):seat?11.5+(hit?3:0):6)};
+    const hip={x:lerp(startHip.x,targetHip.x,down),y:lerp(startHip.y,targetHip.y,down)},
+      knee={x:lerp(startKnee.x,targetKnee.x,down),y:lerp(startKnee.y,targetKnee.y,down)},
+      ankle={x:lerp(startAnkle.x,targetAnkle.x,down),y:lerp(startAnkle.y,targetAnkle.y,down)};
+    if(hit){
+      knee.x-=kick*(3+variant);ankle.x-=kick*(12+variant*3);
+      knee.y+=side*kick*(2+variant);ankle.y+=side*kick*(3+variant);
+      knee.x+=grab*8;ankle.x+=grab*3;knee.y+=side*grab*3;
+    }else{ankle.x+=kick*(3+variant);knee.y-=side*kick;}
+    const shoulderX=torsoLength*.30,shoulderY=side*torsoWidth*.28;
+    joints.push({side,hip,knee,ankle,step,support:{reach:0,lift:0},
+      shoulder:{x:chestX+Math.cos(yaw)*shoulderX-Math.sin(yaw)*shoulderY,
+        y:chestY+Math.sin(yaw)*shoulderX+Math.cos(yaw)*shoulderY},
+      elbow:{x:lerp(5,prone?8:7,down),y:side*c.bodyH*.46*(1-roll.side*.45)+chestY}});
+  }
+  const braced=c.currentWeapon===WEAPONS.ASSAULT_RIFLE||c.currentWeapon===WEAPONS.SHOTGUN||c.currentWeapon===WEAPONS.ROCKET_LAUNCHER;
+  const initialHead={x:Math.cos(standingYaw)*(braced?3:0)-Math.sin(standingYaw)*(braced?4:0),
+    y:Math.sin(standingYaw)*(braced?3:0)+Math.cos(standingYaw)*(braced?4:0)};
+  const headX=prone?15-roll.back*.8:8.5,
+    headY=prone?-3.6*(1-roll.side*.6-roll.back)+chestY:chestY;
+  const head={x:lerp(initialHead.x,headX,down),y:lerp(initialHead.y,headY,down)};
+  const lower={angle:p.heading,yaw:0,backward:0,phase:c.walkCycle||0,motion:0};
+  return c._legInjuryBody={state,ageMs:p.ageMs,aimAngle:aim,bodyW:c.bodyW,bodyH:c.bodyH,
+    injury:p,grab,dive:0,value:c.stance?c.stance.value:2*down,cycle:c.walkCycle||0,moving:false,gait:0,
+    drop:down,floor:prone,size:1-.07*down,aiming:true,yaw,hipYaw:yaw*.15,hipX,hipY,chestX,chestY,
+    joints,head,R,torsoLength,torsoWidth,crouchWeight:0,step:{legs:[step,step]},roll,lower};
+}
+function drawLegInjuryShadow(c,b) {
+  push();rotate(stanceFacingAngle(c));scale(b.size);noStroke();fill(12,20,27,42);
+  ellipse(b.hipX,b.hipY,28,23);
+  for(const leg of b.joints){
+    const h=leg.hip,k=leg.knee,a=leg.ankle;
+    stroke(12,20,27,27);strokeWeight(6);
+    line(h.x,h.y+2,k.x,k.y+2);line(k.x,k.y+2,a.x,a.y+2);noStroke();
+    ellipse(a.x,a.y+2,10,7);
+  }
+  pop();
+}
+function drawLegInjuryFigure(c) {
+  const p=legInjuryPose(c);if(!p)return false;
+  drawCombatStanceFigure(c,actorStancePose(c));return true;
+}
 function stanceBodyPose(c) {
+  const injury=c.legInjury&&legInjuryPose(c);
+  if(injury)return legInjuryBodyPose(c,injury);
   const cover=stanceCoverPoseActive(c),p=actorStancePose(c),value=cover?coverStanceLevel(c):c.stance?c.stance.value:0,drop=Math.min(1,value),floor=p.prone||0;
   const upper=cover?coverUpperOffset(c):null,coverX=upper?upper.x:0,coverY=upper?upper.y:0;
   const coverBlend=cover?Math.max(0,Math.min(1,c.cover.blend||0)):0;
@@ -44269,7 +44680,7 @@ function stanceWeaponMount(c) {
     const nativeX=two?(w===WEAPONS.SHOTGUN?10:8):w===WEAPONS.PISTOL||w===WEAPONS.TASER?16:22,nativeY=two?6:w===WEAPONS.PISTOL||w===WEAPONS.TASER?8:11;
     let stationX=aim?(two?9:16):two?9:10,stationY=aim&&two?4:two?9:8;
     const strength=aim?b.floor:b.drop;
-    if(c.isPlayer&&b.floor>0) {
+    if((c.isPlayer||b.injury)&&b.floor>0) {
       const delta=b.roll.delta,co=Math.cos(delta),si=Math.sin(delta);
       const mix=aim?1:carryBlend,carryX=two?9:10,carryY=two?9:8;
       // A sidearm reaches toward the feet when lying on the back, with
@@ -44401,6 +44812,7 @@ function drawCombatStanceUI(c, p) {
   pop();
 }
 function drawCombatStanceShadow(c, p) {
+  if(c.legInjury){drawLegInjuryShadow(c,stanceBodyPose(c));return;}
   const prone = p.prone || 0, low = p.crouch || 0;
   push(); rotate(stanceFacingAngle(c)); noStroke();
   // A dense squat is tight beneath the hips. A floor-level body owns a broad,
@@ -44537,7 +44949,7 @@ function drawCombatStanceFigure(c, p) {
   else if (c.isPlayer && chemistSuitUnlocked) { cloth = color(240); trousers = color(15); }
   else if (c.isPlayer && ninjaSuitUnlocked) { cloth = color(20); trousers = color(15); }
   else if (c.isPlayer && cowboySuitEquipped) { cloth = color(219,196,146); trousers = color(61,93,118); }
-  if (c.hitFlash > 0) { cloth = color(255); c.hitFlash--; }
+  if (c.hitFlash > 0) { cloth = color(255); if(!b.injury)c.hitFlash--; }
   drawCombatStanceShadow(c, p);
   push(); translate(0,-proneDiveLift(c)); rotate(ca);
   if(c.isPlayer) {
@@ -44611,8 +45023,14 @@ function drawCombatStanceFigure(c, p) {
     if (!right && c.reloadTimer > 0 && !leftHandAction(c)) continue;
     if (!right && leftHandAction(c)) continue;
     const empty=!c.isArmed&&c.isPlayer||!right&&!dual&&weaponHands(c.currentWeapon)!==2;
-    const hx=right&&toolCarry?toolCarry.hx:empty?joint.elbow.x+5:wrist.x/b.size;
-    const hy=right&&toolCarry?toolCarry.hy:empty?joint.elbow.y*.76:wrist.y/b.size;
+    let hx=right&&toolCarry?toolCarry.hx:empty?joint.elbow.x+5:wrist.x/b.size;
+    let hy=right&&toolCarry?toolCarry.hy:empty?joint.elbow.y*.76:wrist.y/b.size;
+    // The gun stays in the strong hand while the other hand finds the struck
+    // knee. This is a real wrist target, shared by the sleeve and palm.
+    if(!right&&b.injury&&b.grab>0){
+      const knee=b.joints[b.injury.legIndex].knee;
+      hx=lerp(hx,knee.x+1,b.grab);hy=lerp(hy,knee.y,b.grab);
+    }
     const s=joint.shoulder,e=stanceArmElbow(b,joint,hx,hy);
     drawCombatStanceSleeve(g,s.x,s.y,e.x,e.y,hx,hy,R.upperW,(R.upperW+R.foreW)*.5,R.foreW*.83,cloth);
     palms.push({x:hx,y:hy});

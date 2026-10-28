@@ -6,6 +6,8 @@ const fs=require('node:fs');
 const {ctx,probe}=require('./harness');
 const {figureCanvas}=require('./figure-canvas');
 const P=s=>probe('('+s+')');
+// These checks isolate wound attachment; injury outcomes have their own suite.
+ctx.tryLegShotInjury=()=>false;
 let checks=0,seed=927;
 ctx.setTimeout=()=>0;
 ctx.random=(a,b)=>{seed=(Math.imul(seed,1664525)+1013904223)>>>0;const v=seed/4294967296;
@@ -24,7 +26,9 @@ function shot(kind,type='NORMAL',hp=1000,weapon='PISTOL',angle=0,range=80){
     window.victim=new Character(${range}*Math.cos(${angle}),${range}*Math.sin(${angle}),false,'${type}');
     victim.aimAngle=${angle};victim.moveAngle=${angle};victim.hp=${hp};victim.maxHp=${hp};victim.isNeutral=victim.isFriendly=false;
     victim.isMoving=false;victim.gait=0;enemiesList=[victim];frameCount++;
-    window.legBullet=spawnBullet(0,0,${angle},true,'${kind}',WEAPONS.${weapon},player);
+    window.legAimLateral=${kind==='LEGS'}&&ragHumanoid(victim.eType,victim.bodyW)?6:0;
+    window.legBullet=spawnBullet(-Math.sin(${angle})*legAimLateral,
+      Math.cos(${angle})*legAimLateral,${angle},true,'${kind}',WEAPONS.${weapon},player);
     for(let i=0;i<12&&legBullet.active;i++)updateBullets();`);
   return P('({hp:victim.hp,x:victim.x,y:victim.y,stun:victim.stunTimer,wound:victim.decals[0],dead:victim.dead,body:corpses[0]&&corpses[0].dT})');
 }

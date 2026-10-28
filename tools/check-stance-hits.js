@@ -3,6 +3,8 @@
 const assert = require('node:assert/strict');
 const { ctx, probe } = require('./harness');
 const P = source => probe('(' + source + ')');
+// Injury procs are tested separately from the elevation damage matrix.
+ctx.tryLegShotInjury=()=>false;
 let checks = 0, seed = 7103;
 ctx.setTimeout = () => 0;
 ctx.random = (a,b) => {
@@ -14,6 +16,7 @@ function ok(label,value) { assert.ok(value,label); checks++; }
 function shot(stance,zone,options={}) {
   ctx.__stanceShot={stance,zone,type:'NORMAL',weapon:'PISTOL',owner:'PLAYER',target:'HOSTILE',
     x:80,y:0,angle:0,aim:0,sx:0,sy:0,hp:1000,shield:0,power:1,ticks:12,...options};
+  if(stance==='STAND'&&zone==='LEGS'&&options.sy===undefined)ctx.__stanceShot.sy=6;
   probe(`currentLevel=currentBiome=8;BIOME_ACTIVE=false;started=doTick=true;
     isStoryMode=isPaused=isDead=isWin=killcamMode=nm0AmbushActive=farmAmbushActive=false;
     inStoryIntro=inStoryRoom=inTownCutscene=inFortCutscene=inPostAmbushCutscene=false;

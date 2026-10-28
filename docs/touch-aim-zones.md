@@ -32,11 +32,15 @@ The normal and saloon HUDs omit score and the permanent pause icon. Score
 remains in the shop and results. Tap the top-right corner to open pause,
 including a quick tap that ends between input frames.
 
-Leg aim currently uses body-shot damage and armor rules. On humanoids it
-places bullet marks on the struck leg, following that limb through movement
-and supported fallen poses. It adds no slowdown, critical damage or new
-dismemberment behavior. Existing headshot effects stay on the head. Actors
-without humanoid legs retain their existing body-hit behavior.
+Standing humanoid leg aim uses two thin swept leg shapes, so the gap between
+the legs and the space outside them are misses. Low firearm rounds meet the
+floor after 25 m. A surviving leg hit keeps body-shot damage and armor rules,
+with a 25% chance to collapse a hostile humanoid onto the struck side. Wounded
+enemies can fire prone, sit and fire, or get back up. See
+[Leg injuries](leg-injuries.md) for timing and lowered hit profiles.
+Bullet marks follow the selected leg through movement, injury and supported
+fallen poses. Existing headshot effects stay on the head. Actors without
+humanoid legs retain their existing body-hit behavior.
 
 Bullet decal placement separates the projectile's lateral contact from the
 mark's anatomical height. The actual bullet path still determines the
@@ -62,6 +66,8 @@ Checks:
 node tools/check-aim-zones.js
 node tools/check-touch-aim-zones.js
 node tools/check-leg-aim.js
+node tools/check-leg-shot-collision.js
+node tools/check-leg-injury-integration.js
 node tools/check-vertical-hit-decals.js
 node tools/check-bow-controls.js
 node tools/check-bow-draw.js

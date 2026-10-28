@@ -5,6 +5,8 @@ const assert=require('node:assert/strict');
 const {ctx,probe}=require('./harness');
 const {figureCanvas}=require('./figure-canvas');
 const P=s=>probe('('+s+')');
+// Test the placement distribution independently of the injury state machine.
+ctx.tryLegShotInjury=()=>false;
 let checks=0,seed=8197,randomCalls=0;
 ctx.setTimeout=()=>0;
 ctx.random=(a,b)=>{
@@ -34,6 +36,7 @@ function stage(type='NORMAL',facing=0,hp=100000,stance='STAND'){
    resetActorStance(victim,${JSON.stringify(stance)});enemiesList=[victim];`);
 }
 function shot(zone='BODY',lateral=0,facing=0,id=1,weapon='PISTOL'){
+  if(zone==='LEGS'&&lateral===0&&P("actorStance(victim)==='STAND'"))lateral=6;
   probe(`frameCount++;window.round=spawnBullet(-90*Math.cos(${facing})-(${lateral})*Math.sin(${facing}),
     -90*Math.sin(${facing})+(${lateral})*Math.cos(${facing}),${facing},true,${JSON.stringify(zone)},WEAPONS.${weapon},player);
     round.shotId=${id};for(let i=0;i<12&&round.active;i++)updateBullets();`);
@@ -176,7 +179,7 @@ if(process.env.VERTICAL_DECAL_BASELINE){
       target.isNeutral=target.isFriendly=false;target.isMoving=false;target.aimAngle=target.moveAngle=0;
       rememberFigureMotion(target,0,0);resetActorStance(target);enemiesList=[target];frameCount=400;`);
     draws=0;
-    h.probe(`window.testRound=spawnBullet(0,0,0,true,'${zone}',WEAPONS.${weapon},player);testRound.shotId=919;
+    h.probe(`window.testRound=spawnBullet(0,${zone==='LEGS'?6:0},0,true,'${zone}',WEAPONS.${weapon},player);testRound.shotId=919;
       for(let i=0;i<12&&testRound.active;i++)updateBullets();`);
     const value=h.probe(`JSON.stringify({hp:target.hp,x:target.x,y:target.y,stun:target.stunTimer,
       decals:target.decals.map(d=>({sz:d.sz,col:d.col,isHead:d.isHead,isLeg:d.isLeg,legIndex:d.legIndex,legV:d.legV})),

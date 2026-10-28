@@ -82,7 +82,12 @@ for(const side of [-1,1]){
  ok('the leaning torso is also exposed while its collision root stays behind cover '+side,P('coverVictim.hp===980&&coverVictim.decals.length===1'));
  peak(side);launch('LEGS','PISTOL',160,side*71,Math.PI,200);tick();
  ok('the legs remain physically protected on the far side during a standing peek '+side,P('coverVictim.hp===1000&&coverVictim.decals.length===0&&!coverRound.active'));
- peak(side);launch('LEGS','PISTOL',-120,side*71,0,140);tick();
+ peak(side);
+ const shin=P(`(()=>{const p=stanceBodyPose(coverVictim),j=p.joints[${side>0?1:0}],
+   x=j.knee.x+(j.ankle.x-j.knee.x)*.8,y=j.knee.y+(j.ankle.y-j.knee.y)*.8,
+   a=stanceFacingAngle(coverVictim);return {x:coverVictim.x+(Math.cos(a)*x-Math.sin(a)*y)*p.size,
+   y:coverVictim.y+(Math.sin(a)*x+Math.cos(a)*y)*p.size};})()`);
+ launch('LEGS','PISTOL',-120,shin.y,0,140);tick();
  ok('cover does not make exposed legs invulnerable from the open side '+side,P('coverVictim.hp===980&&coverVictim.decals[0].isLeg'));
 }
 

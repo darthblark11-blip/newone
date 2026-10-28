@@ -18,6 +18,8 @@ const out=process.env.LEG_AIM_SCENE_OUT||'/tmp/leg-aim-p5-scene.png';
    started=doTick=true;isStoryMode=isPaused=isDead=isWin=killcamMode=false;currentLevel=currentBiome=1;BIOME_ACTIVE=false;
    leftStick={active:false,dx:0,dy:0};rightStick={active:false,dx:0,dy:0,dist:0};
    setMeleeTool('NONE');window.farmLvl=0;window.outpostForts={};townsData={};
+   // This scene checks a visible shin stain, independently of injury chance.
+   tryLegShotInjury=()=>false;bulletDecalHeightSample=()=>.9;
    viewLeft=viewTop=-10000;viewRight=viewBottom=10000;MAX_KILLS=100000;
    const original=drawLegDecals,events=[];
    drawLegDecals=function(...args){
@@ -33,7 +35,10 @@ const out=process.env.LEG_AIM_SCENE_OUT||'/tmp/leg-aim-p5-scene.png';
     resetForestWildlife();invalidateColIndex();headshotCounter=bodyOverkillCounter=totalKills=0;frameCount++;
     player=new Character(-1000,-1000,true);
     const e=new Character(80,0,false,type);e.hp=e.maxHp=1000;e.isMoving=false;e.aimAngle=e.moveAngle=-HALF_PI;e.isFriendly=e.isNeutral=false;
-    enemiesList=[e];const b=spawnBullet(0,0,0,true,'LEGS',WEAPONS.PISTOL,player);
+    enemiesList=[e];const geometry=humanLegHitGeometry(e),leg=geometry.legs[0],
+      localX=(leg.kx+leg.ax)*.5,localY=(leg.ky+leg.ay)*.5,
+      rayY=e.y+Math.sin(geometry.angle)*localX+Math.cos(geometry.angle)*localY;
+    const b=spawnBullet(0,rayY,0,true,'LEGS',WEAPONS.PISTOL,player);
     for(let i=0;i<12&&b.active;i++)updateBullets();
     verify(e.decals.length===1&&e.decals[0].isLeg&&!e.decals[0].isHead,type+' native bullet has one leg wound');
     return e;

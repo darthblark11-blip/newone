@@ -1,5 +1,6 @@
 // A braced boot belongs to the canonical figure, including when it moves
-// beyond the old root circle. Closed geometry must still protect its legs.
+// beyond the old root circle. Closed geometry must still protect its legs;
+// the air gap between them must remain a miss.
 const assert=require('node:assert/strict');
 const {ctx,probe}=require('./harness');
 const P=s=>probe('('+s+')');
@@ -51,8 +52,8 @@ for(let face=0;face<4;face++)for(const side of [-1,1]){
  ok('the wall still protects its planted inside leg '+face+'/'+side,
   P('stanceProjectileContact(innerShot,braceVictim)===Infinity'));
  probe('window.centerShot=braceRay(braceVictim);');
- ok('native centerline leg aiming can hit the visible pelvis from the open side '+face+'/'+side,
-  P('Number.isFinite(stanceProjectileContact(centerShot,braceVictim))'));
+ ok('low centerline aiming passes through the gap between the braced legs '+face+'/'+side,
+  P('stanceProjectileContact(centerShot,braceVictim)===Infinity'));
  probe('window.closedShot=braceRay(braceVictim,-1);');
  ok('the same pelvis stays protected behind the wall '+face+'/'+side,
   P('stanceProjectileContact(closedShot,braceVictim)===Infinity'));
@@ -71,20 +72,21 @@ for(let face=0;face<4;face++)for(const side of [-1,1]){
   P('braceVictim.hp===980&&braceVictim.decals.length===1&&braceVictim.decals[0].isLeg&&braceVictim.decals[0].legIndex===braceOuter'));
 }
 
-fresh();probe('buildings=activeBuildings=[];invalidateColIndex();window.nonBraceContact=coverStandingLegContact;window.braceCalls=0;coverStandingLegContact=(...args)=>{braceCalls++;return nonBraceContact(...args);};');
+fresh();probe('buildings=activeBuildings=[];invalidateColIndex();');
 for(const stance of ['STAND','CROUCH','PRONE']){
- probe(`resetActorStance(braceVictim,'${stance}');window.plainShot=braceRay(braceVictim);stanceProjectileContact(plainShot,braceVictim);`);
- ok('ordinary '+stance+' contacts retain the existing stance path',P('braceCalls===0'));
+ probe(`resetActorStance(braceVictim,'${stance}');`);
+ ok('ordinary '+stance+' retains its low shot damage mapping',
+  P(`stanceHitProfile(braceVictim,'LEGS').zone==='${stance==='STAND'?'LEGS':stance==='CROUCH'?'BODY':'HEAD'}'`));
 }
 for(const pop of [0,.5,1]){
  probe(`resetActorStance(braceVictim);braceVictim.cover={active:true,kind:'LOW',blend:1,pop:${pop},bodyAngle:0,aiming:true,upper:{x:0,y:0}};
  window.lowShot=braceRay(braceVictim);stanceProjectileContact(lowShot,braceVictim);`);
- ok('LOW cover contacts retain the approved crouch/pop path at '+pop,P('braceCalls===0'));
+ ok('LOW cover contacts retain crouch/pop remapping at '+pop,
+  P(`stanceHitProfile(braceVictim,'LEGS').zone==='${pop<=.5?'BODY':'LEGS'}'`));
 }
 probe('resetActorStance(braceVictim);braceVictim.cover={active:true,kind:"HIGH",blend:1,pop:0,bodyAngle:0,aiming:true,upper:{x:0,y:22}};');
 for(const zone of ['HEAD','BODY']){
- probe(`window.upperShot=braceRay(coverActorHitCenter(braceVictim,'${zone}'));upperShot.tH='${zone}';stanceProjectileContact(upperShot,braceVictim);`);
- ok(zone+' keeps the existing upper-body contact path',P('braceCalls===0'));
+ probe(`window.upperShot=braceRay(coverActorHitCenter(braceVictim,'${zone}'));upperShot.tH='${zone}';`);
+ ok(zone+' keeps the existing upper-body contact path',P('Number.isFinite(stanceProjectileContact(upperShot,braceVictim))'));
 }
-probe('coverStandingLegContact=nonBraceContact;');
-console.log(`${checks}/${checks} canonical standing brace, boot, pelvis, wall protection and leg-wound checks passed.`);
+console.log(`${checks}/${checks} canonical standing brace, boot, empty gap, wall protection and leg-wound checks passed.`);
