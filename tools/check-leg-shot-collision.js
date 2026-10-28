@@ -1,5 +1,5 @@
 // Low firearm rounds sweep the actual paired leg silhouettes and finish at
-// 25 m. Head/body flight, nonhuman anatomy and stance promotions stay separate.
+// 13 m. Head/body flight, nonhuman anatomy and stance promotions stay separate.
 const assert=require('node:assert/strict');
 const {ctx,probe}=require('./harness');
 const P=s=>probe('('+s+')');
@@ -73,28 +73,31 @@ for(const heading of [0,.63,Math.PI/2,Math.PI,-Math.PI/2])for(const weapon of ['
  stage();
  probe(`window.round=spawnBullet(0,0,${heading},true,'LEGS',WEAPONS.${weapon},player);
   for(let i=0;i<100&&round.active;i++){frameCount++;updateBullets();}`);
- ok(`${weapon}/${heading} a low round drops exactly at25m`,P('!round.active&&round.l===0&&Math.abs(Math.hypot(round.x,round.y)-500)<1e-7&&round.legShotTravel===500'));
+ ok(`${weapon}/${heading} a low round drops exactly at13m`,P('!round.active&&round.l===0&&Math.abs(Math.hypot(round.x,round.y)-260)<1e-7&&round.legShotTravel===260'));
  ok(`${weapon}/${heading} the floor gets one small paired dust contact`,P("particles.filter(p=>p.t==='DUST').length===2"));
 }
-for(const x of [507,520]){
+for(const speed of [17,44,300])for(const x of [267,280]){
  stage();
  probe(`window.target=new Character(${x},6,false,'NORMAL');target.hp=target.maxHp=100000;
   target.aimAngle=target.moveAngle=0;target.isNeutral=target.isFriendly=false;target.isMoving=false;resetActorStance(target);enemiesList=[target];
   window.round=spawnBullet(0,0,0,true,'LEGS',WEAPONS.PISTOL,player);
+  round.vx=${speed};round.vy=0;
   for(let i=0;i<100&&round.active;i++){frameCount++;updateBullets();}`);
- ok(`a target with root${x} respects the final partial leg-shot segment`,P(x===507?'target.hp===99980':'target.hp===100000'));
+ ok(`speed${speed} / root${x} respects the final partial leg-shot segment`,P(x===267?'target.hp===99980':'target.hp===100000'));
 }
 stage();
 probe(`window.round=spawnBullet(0,0,0,true,'LEGS',WEAPONS.PISTOL,player);doTick=false;
  for(let i=0;i<30;i++)updateBullets();`);
 ok('paused low shots keep their range and floor state frozen',P('round.x===0&&round.legShotTravel===0&&!round.legShotAtFloor&&round.active'));
-probe(`doTick=true;round.legShotTravel=500;round.legShotAtFloor=true;
+probe(`doTick=true;round.legShotTravel=260;round.legShotAtFloor=true;
  round.init(0,0,0,true,'BODY',WEAPONS.PISTOL);`);
 ok('pooled reuse clears low-shot travel and expiry state',P('round.legShotRange===0&&round.legShotTravel===0&&!round.legShotAtFloor'));
+probe("round.init(0,0,0,true,'HEAD',WEAPONS.PISTOL);");
+ok('head-height rounds retain their own full range',P('round.legShotRange===0'));
 for(const weapon of ['BOW','TASER','ROCKET_LAUNCHER']){
  probe(`round.init(0,0,0,true,'LEGS',WEAPONS.${weapon});`);
  ok(`${weapon} retains its own non-ballistic range lifecycle`,P('round.legShotRange===0'));
 }
 probe("round.init(0,0,0,true,'LEGS','ALIEN_LASER');");
 ok('energy projectiles keep their existing range lifecycle',P('round.legShotRange===0'));
-console.log(`${checks}/${checks} thin leg collision, physical side, stance isolation,25m range, floor, pause and pooling checks passed.`);
+console.log(`${checks}/${checks} thin leg collision, physical side, stance isolation,13m range, floor, pause and pooling checks passed.`);

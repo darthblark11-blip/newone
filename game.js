@@ -127,6 +127,7 @@ function recordStanceDamage(a,damage,zone) {
 // All choices are sampled at impact; drawing and paused frames never advance
 // the outcome rotation or roll against combat's random stream.
 const LEG_INJURY_CHANCE=.25,LEG_INJURY_RECOVER_MS=950,LEG_INJURY_COOLDOWN_MS=3000;
+const LEG_INJURY_SUPINE_MS=280,LEG_INJURY_SIT_UP_MS=520;
 const LEG_INJURY_OUTCOMES=['PRONE','SEATED','RECOVER'];
 let legInjurySerial=0;
 function legInjuryEligible(a) {
@@ -181,20 +182,27 @@ function beginLegInjury(a,b,legIndex) {
 }
 function legInjuryPose(a) {
   const s=a&&a.legInjury;if(!s)return null;
-  const duration=s.phase==='FALL'?s.fallMs:s.phase==='RECOVER'?LEG_INJURY_RECOVER_MS:1;
+  const duration=s.phase==='FALL'?s.fallMs:s.phase==='RECOVER'?LEG_INJURY_RECOVER_MS:
+    s.phase==='SUPINE'?LEG_INJURY_SUPINE_MS:s.phase==='SIT_UP'?LEG_INJURY_SIT_UP_MS:1;
   const progress=Math.max(0,Math.min(1,s.phaseMs/duration)),smooth=progress*progress*(3-2*progress);
   const down=s.phase==='FALL'?smooth:s.phase==='RECOVER'?1-smooth:1;
+  // A seated survivor first lands flat on the back, then bends at the hips
+  // while the forward feet stay planted. Height follows that actual rise.
+  const sitting=s.outcome==='SEATED',seat=sitting?
+    (s.phase==='SEATED'||s.phase==='RECOVER'?down:s.phase==='SIT_UP'?smooth:0):0;
+  const supine=sitting?Math.max(0,down-seat):0;
   return {phase:s.phase,legIndex:s.legIndex,variant:s.variant,outcome:s.outcome,heading:s.heading,
     wasMoving:s.wasMoving,moveX:s.moveX,moveY:s.moveY,ageMs:s.ageMs,progress,down,
-    rise:s.phase==='RECOVER'?smooth:0,seated:s.outcome==='SEATED'?down:0,
-    prone:s.outcome==='SEATED'?0:down,reach:s.phase==='FALL'&&!s.wasMoving?Math.sin(progress*PI):0};
+    rise:s.phase==='RECOVER'?smooth:0,seated:seat,supine,
+    prone:sitting?0:down,reach:s.phase==='FALL'&&!s.wasMoving?Math.sin(progress*PI):0};
 }
 function legInjurySetHeight(a) {
   const p=legInjuryPose(a),s=a.legInjury;if(!p||!a.stance)return;
   const target=s.outcome==='SEATED'?1:2;
-  a.stance.value=s.phase==='FALL'?s.initialStanceValue+(target-s.initialStanceValue)*p.down:target*p.down;
+  a.stance.value=s.phase==='FALL'?s.initialStanceValue+(2-s.initialStanceValue)*p.down:
+    s.phase==='SIT_UP'?2-p.seated:s.phase==='SUPINE'?2:target*p.down;
   a.stance.from=a.stance.to=a.stance.value;a.stance.elapsedMs=a.stance.durationMs=0;
-  a.stance.proneHeading=s.heading;a.stance.proneAimBlend=p.prone;
+  a.stance.proneHeading=s.heading;a.stance.proneAimBlend=Math.max(p.prone,p.supine);
   a._stanceBodyFrame=-1;a._legHitGeometry=null;
 }
 function finishLegInjury(a) {
@@ -244,6 +252,7 @@ function updateLegInjuryActor(a,elapsedMs=deltaTime) {
   let remaining=dt;
   while(remaining>0&&a.legInjury){
     const duration=s.phase==='FALL'?s.fallMs:s.phase==='RECOVER'?LEG_INJURY_RECOVER_MS:
+      s.phase==='SUPINE'?LEG_INJURY_SUPINE_MS:s.phase==='SIT_UP'?LEG_INJURY_SIT_UP_MS:
       s.outcome==='RECOVER'?650:s.phase==='SEATED'?5400:4800;
     const step=Math.min(remaining,duration-s.phaseMs);s.phaseMs+=step;s.ageMs+=step;remaining-=step;
     if(s.phase==='FALL'){
@@ -253,7 +262,9 @@ function updateLegInjuryActor(a,elapsedMs=deltaTime) {
       s.fallMoved=target;
     }
     if(s.phaseMs+1e-7>=duration){
-      if(s.phase==='FALL'){s.phase=s.outcome==='SEATED'?'SEATED':'PRONE';s.phaseMs=0;}
+      if(s.phase==='FALL'){s.phase=s.outcome==='SEATED'?'SUPINE':'PRONE';s.phaseMs=0;}
+      else if(s.phase==='SUPINE'){s.phase='SIT_UP';s.phaseMs=0;}
+      else if(s.phase==='SIT_UP'){s.phase='SEATED';s.phaseMs=0;}
       else if(s.phase==='RECOVER'){finishLegInjury(a);break;}
       else{s.phase='RECOVER';s.phaseMs=0;}
     }
@@ -16137,8 +16148,14 @@ function snapshotLegInjuryBody(src,frameAngle=null) {
   };
   const longGun=src.currentWeapon===WEAPONS.ASSAULT_RIFLE||src.currentWeapon===WEAPONS.SHOTGUN?stanceLongGunPose(src):null;
   const dual=src.currentWeapon===WEAPONS.DUAL_SMG,one=src.currentWeapon===WEAPONS.PISTOL;
-  const hand=stancePointInBody(src,longGun?longGun.rear[0]:one?16:22,longGun?longGun.rear[1]:one?8:11);
-  const left=stancePointInBody(src,longGun?longGun.fore[0]:dual?22:27,longGun?longGun.fore[1]:dual?-11:1);
+  // Damage has already marked the source dead, suppressing ordinary stance
+  // queries. Resolve the wrist mount from this frozen living body instead.
+  const mount=stanceWeaponMount(src,null,b),gunAngle=(src.aimAngle||0)-heading,
+    gc=Math.cos(gunAngle),gs=Math.sin(gunAngle),mc=Math.cos(mount.angle),ms=Math.sin(mount.angle);
+  const grip=(x,y)=>{const px=mount.x+(mc*x-ms*y)*mount.scale,py=mount.y+(ms*x+mc*y)*mount.scale;
+    return {x:gc*px-gs*py,y:gs*px+gc*py};};
+  const hand=grip(longGun?longGun.rear[0]:one?16:22,longGun?longGun.rear[1]:one?8:11);
+  const left=grip(longGun?longGun.fore[0]:dual?22:27,longGun?longGun.fore[1]:dual?-11:1);
   const joints=b.joints.map(j=>{
     const right=j.side===1,empty=!right&&!dual&&weaponHands(src.currentWeapon)!==2,w=right?hand:left;
     let hx=empty?j.elbow.x+5:w.x/b.size,hy=empty?j.elbow.y*.76:w.y/b.size;
@@ -16178,15 +16195,16 @@ function buildFigureFall(src,angle,force,stun,facing) {
       const down=Math.max(0,Math.min(1,injury.down||0));
       const heading=Number.isFinite(injury.heading)?injury.heading:(facing||0);
       const aim=Number.isFinite(src.aimAngle)?src.aimAngle:heading;
-      const faceUp=injury.seated>0||Math.cos(aim-heading)<0;
+      const faceUp=injury.seated>0||injury.supine>0||Math.cos(aim-heading)<0;
       // From sitting, the feet already extend forward. The skull drops
       // behind the pelvis; do not swing both legs through the abdomen just
       // to reach the default head-first corpse frame.
-      const floorHeading=injury.seated>0?heading+PI:heading;
+      const floorHeading=injury.seated>0||injury.supine>0?heading+PI:heading;
       p.a=p.yawFrom=floorHeading;p.facing=floorHeading+(faceUp?PI:0);
       p.age=down/.15;p.impulse*=1-down;p.moving=false;p.mx=p.my=0;p.lean*=1-down;
       p.contacted=down>=1;
       p.injuryFrom={down,startAge:p.age,seated:Math.max(0,Math.min(1,injury.seated||0)),
+        supine:Math.max(0,Math.min(1,injury.supine||0)),
         prone:Math.max(0,Math.min(1,injury.prone||0)),heading,floorHeading,aimAngle:aim,
         legIndex:injury.legIndex===1?1:0,variant:injury.variant|0,
         phase:String(injury.phase||'FALL'),outcome:String(injury.outcome||'PRONE')};
@@ -24083,8 +24101,8 @@ if (this.isPlayer) {
                 stroke(169,231,132,105);
             else stroke(228,184,104,65);
         } else stroke(255, 0, 0, playerWeaponFireInput() ? 200 : 50);
-        strokeWeight(2); line(bLX, bLY, 800, bLY);
-        if (this.currentWeapon === WEAPONS.DUAL_SMG) line(bLX_L, bLY_L, 800, bLY_L);
+        strokeWeight(2); drawPlayerAimLaser(window,this,0,bob);
+        if (this.currentWeapon === WEAPONS.DUAL_SMG&&!leftHandAction(this)) drawPlayerAimLaser(window,this,1,bob);
     }
     
     if (this.isPlayer) {
@@ -26390,6 +26408,89 @@ function stanceProjectileContact(b,actor,profile=stanceHitProfile(actor,b.tH)) {
     return t!==Infinity&&!coverLineClear(b.startX,b.startY,b.prevX+dx*t,b.prevY+dy*t,
         b.tH,b.shooter,actor,b.coverLaunchLow)?Infinity:t;
 }
+// Preview the barrel's unspread center ray with the same elevation, anatomy
+// and cover tests as a real round. These bounded records never enter the
+// projectile pool, roll damage or disturb the combat random stream.
+const _aimLaserRays=[{},{}];
+function aimLaserMuzzle(actor,index=0) {
+    const points=coverWeaponMuzzles(actor),m=points[Math.min(index,points.length-1)];
+    const angle=actor.aimAngle||0,co=Math.cos(angle),si=Math.sin(angle);
+    const bob=actor.isMoving&&!stanceCoverPoseActive(actor)?Math.abs(Math.sin(actor.walkCycle||0))*2:0;
+    const p=stanceMuzzleWorld(actor,actor.x+co*(m[0]+bob)-si*m[1],actor.y+si*(m[0]+bob)+co*m[1]);
+    return p;
+}
+function tracePlayerAimLaser(actor,index=0,maxDistance=800) {
+    const slot=index===1?1:0,ray=_aimLaserRays[slot];
+    const results=actor._aimLaserResults||(actor._aimLaserResults=[{},{}]),out=results[slot];
+    const muzzle=aimLaserMuzzle(actor,slot),zone=actor.isPlayer?playerAimTarget():actor.stanceAimZone||'BODY';
+    const angle=actor.aimAngle||0,co=Math.cos(angle),si=Math.sin(angle),w=actor.currentWeapon;
+    const lowRange=legShotRangeForWeapon(zone,w);
+    let reach=Math.max(0,Number.isFinite(maxDistance)?maxDistance:800),floor=false;
+    if(lowRange&&lowRange<=reach){reach=lowRange;floor=true;}
+    if(w===WEAPONS.BOW) {
+        const draw=actor.bowDrawState,power=bowDrawPower(bowDrawAmount(actor),draw?draw.quality:1,draw&&draw.dud);
+        const range=25+power*1175;if(range<=reach){reach=range;floor=true;}
+    }
+    Object.assign(ray,{startX:muzzle.x,startY:muzzle.y,prevX:muzzle.x,prevY:muzzle.y,
+        x:muzzle.x+co*reach,y:muzzle.y+si*reach,tH:zone,w,shooter:actor,isP:true,
+        coverLaunchLow:coverLaunchIsLow(actor),isArrow:w===WEAPONS.BOW,retracting:false,tetheredTarget:null});
+    Object.assign(out,{startX:muzzle.x,startY:muzzle.y,x:ray.x,y:ray.y,distance:reach,
+        kind:floor?'FLOOR':'RANGE',zone,launchBlocked:false});
+    // A muzzle poking through a wall still hits that wall on its first tick.
+    // Show the short blocked launch segment, rather than a ray beyond cover.
+    if(actor.isPlayer&&actorCanUseStances(actor)) {
+        const upper=coverUpperOffset(actor),lx=actor.x+upper.x,ly=actor.y+upper.y;
+        ray.prevX=lx;ray.prevY=ly;ray.x=muzzle.x;ray.y=muzzle.y;
+        const launch=coverBulletBlock(ray);
+        if(launch.t!==Infinity) {
+            out.startX=lx;out.startY=ly;out.x=lx+(muzzle.x-lx)*launch.t;out.y=ly+(muzzle.y-ly)*launch.t;
+            out.distance=Math.hypot(out.x-lx,out.y-ly);out.kind=launch.car?'CAR':'SOLID';out.launchBlocked=true;
+            return out;
+        }
+        ray.prevX=muzzle.x;ray.prevY=muzzle.y;ray.x=out.x;ray.y=out.y;
+    }
+    const block=coverBulletBlock(ray);
+    let nearest=block.t!==Infinity?block.t:1;
+    if(block.t!==Infinity)out.kind=block.car?'CAR':'SOLID';
+    // The cheap ray AABB rejects distant actors before their articulated
+    // stance geometry is touched. Cover leans and large bodies fit this pad.
+    const minX=Math.min(ray.prevX,ray.x)-80,maxX=Math.max(ray.prevX,ray.x)+80,
+        minY=Math.min(ray.prevY,ray.y)-80,maxY=Math.max(ray.prevY,ray.y)+80;
+    for(let i=0;i<enemiesList.length;i++) {
+        const target=enemiesList[i];
+        if(!target||target===actor||target.hp<=0||target.dead||target.isFriendly&&!target.isNeutral||
+            streetThugCombatProtected(target)||target.x<minX||target.x>maxX||target.y<minY||target.y>maxY)continue;
+        const profile=stanceHitProfile(target,zone),t=stanceProjectileContact(ray,target,profile);
+        if(t<nearest||t===nearest&&(out.kind==='FLOOR'||out.kind==='RANGE')) {
+            nearest=t;out.kind='ACTOR';out.zone=profile.zone;
+        }
+    }
+    if(zone!=='HEAD')for(let i=0;i<barrels.length;i++) {
+        const barrel=barrels[i],t=forestShotCircleTime(ray,barrel.x,barrel.y,15);
+        if(t<nearest){nearest=t;out.kind='BARREL';out.zone=zone;}
+    }
+    if(currentBiome===2&&forestWildlife.length) {
+        const wildlife=forestWildlifeHitTest(ray);
+        if(wildlife&&wildlife.t<nearest){nearest=wildlife.t;out.kind='WILDLIFE';out.zone=wildlife.head?'HEAD':'BODY';}
+    }
+    out.distance=reach*nearest;out.x=muzzle.x+co*out.distance;out.y=muzzle.y+si*out.distance;
+    return out;
+}
+// Both painters call this inside their gun frame. Undo its known transforms
+// numerically so world hits and the 13 m floor remain exact on raised ground,
+// in cover, and with the smaller crouched/prone firearm mount.
+function drawPlayerAimLaser(g,actor,index=0,bob=0,mount=null) {
+    const hit=tracePlayerAimLaser(actor,index),angle=actor.aimAngle||0,co=Math.cos(angle),si=Math.sin(angle);
+    const entityScale=elevRenderScale(actor.x,actor.y)*shovelRenderScale(actor),lift=mount?proneDiveLift(actor):0;
+    const scale=mount?mount.scale:1,turn=mount?mount.angle:0,ct=Math.cos(turn),st=Math.sin(turn);
+    const point=(wx,wy)=>{
+        const x=(wx-actor.x)/entityScale,y=(wy-actor.y)/entityScale+lift;
+        const rx=co*x+si*y-(mount?mount.x:bob),ry=-si*x+co*y-(mount?mount.y:0);
+        return {x:(ct*rx+st*ry)/scale,y:(-st*rx+ct*ry)/scale};
+    };
+    const start=point(hit.startX,hit.startY),end=point(hit.x,hit.y);
+    g.line(start.x,start.y,end.x,end.y);
+}
 const _forestShotCover={t:Infinity,kind:null};
 const _forestShotTargets=[];
 function forestShotCover(b,targets,nearbyBarrels,targetBuckets=null) {
@@ -27430,7 +27531,11 @@ class Citizen {
 
 
 
-const LEG_SHOT_RANGE=500; // 25 m at the world's existing 20 units per metre.
+const LEG_SHOT_RANGE=260; // 13 m at the world's existing 20 units per metre.
+function legShotRangeForWeapon(zone,weapon) {
+  return zone==='LEGS'&&weapon!==WEAPONS.BOW&&weapon!==WEAPONS.TASER&&weapon!==WEAPONS.ROCKET_LAUNCHER&&
+    weapon!=='ALIEN_LASER'&&weapon!=='RED_LASER'&&weapon!=='PINK_LASER'&&weapon!=='ORANGE_BEAM'?LEG_SHOT_RANGE:0;
+}
 class Bullet {
   constructor() { this.active = false; }
   get active() { return this._active; }
@@ -27456,7 +27561,7 @@ class Bullet {
     this.arrowPower = 1; this.arrowDud = false; this.arrowSpeed = 28;
     this.arrowRange = 2520; this.arrowTravel = 0;
     this.isAlienLaser = (w === "ALIEN_LASER"); this.isRedLaser = (w === "RED_LASER"); this.isPinkLaser = (w === "PINK_LASER"); this.isOrangeBeam = (w === "ORANGE_BEAM"); this.isRocket = (w === WEAPONS.ROCKET_LAUNCHER); this.isTaser = (w === WEAPONS.TASER);
-    this.legShotRange=tH==='LEGS'&&!(this.isArrow||this.isAlienLaser||this.isRedLaser||this.isPinkLaser||this.isOrangeBeam||this.isRocket||this.isTaser)?LEG_SHOT_RANGE:0;
+    this.legShotRange=legShotRangeForWeapon(tH,w);
     this.legShotTravel=0;this.legShotAtFloor=false;
     
     // NEW TASER VARIABLES
@@ -44506,7 +44611,8 @@ function legInjuryBodyPose(c,p) {
   const state=c.legInjury,cached=c._legInjuryBody,aim=c.aimAngle||0;
   if(cached&&cached.state===state&&cached.ageMs===p.ageMs&&cached.aimAngle===aim&&
     cached.bodyW===c.bodyW&&cached.bodyH===c.bodyH)return cached;
-  const R=figureRig(c.bodyW,c.bodyH),down=p.down,seat=p.seated,prone=p.prone;
+  const R=figureRig(c.bodyW,c.bodyH),down=p.down,seat=p.seated,prone=p.prone,back=p.supine||0;
+  const seatedLegs=seat+back,floor=prone+back;
   const index=p.legIndex===1?1:0,struck=index?1:-1,variant=p.variant||0;
   const progress=Math.max(0,Math.min(1,p.progress||0));
   const fallPulse=p.phase==='FALL'?Math.sin(Math.PI*Math.min(1,progress/.76)):0;
@@ -44514,14 +44620,15 @@ function legInjuryBodyPose(c,p) {
   const initialYaw=Math.atan2(Math.sin((state.aimAngleAtHit||p.heading)-p.heading),Math.cos((state.aimAngleAtHit||p.heading)-p.heading));
   const delta=Math.atan2(Math.sin(aim-p.heading),Math.cos(aim-p.heading));
   const standingYaw=p.phase==='RECOVER'?delta:initialYaw;
-  const roll=prone>0?proneRollPose(c):{heading:p.heading,delta,blend:0,amount:0,side:0,back:0,supportSide:0,post:0,turn:0,offsetY:0,foreground:false};
-  const hipX=lerp(-5,-9,prone)-seat*2,hipY=roll.offsetY-struck*fallPulse*(variant===1?2.5:.8);
-  const chestX=lerp(0,-1.1,prone)-seat*3+kick*2.5,
+  const roll=prone>0?proneRollPose(c):{heading:p.heading,delta,blend:back>0?1:0,amount:back,side:0,back,
+    supportSide:0,post:0,turn:0,offsetY:0,foreground:back>.505};
+  const hipX=lerp(-5,-9,prone)-seatedLegs*2,hipY=roll.offsetY-struck*fallPulse*(variant===1?2.5:.8);
+  const chestX=lerp(0,-1.1,prone)-seat*3-back*16+kick*2.5,
     chestY=hipY-struck*fallPulse*(variant===2?1.5:.6);
   const yaw=standingYaw*(1-down)+roll.turn+seat*Math.max(-1.25,Math.min(1.25,delta))-
     struck*fallPulse*(variant===1?.23:.11);
-  const torsoLength=c.bodyW*TORSO_DEPTH+prone*3.5-seat*.7,
-    torsoWidth=c.bodyH*(1-.20*prone-.14*seat)*(1-roll.side*.53);
+  const torsoLength=c.bodyW*TORSO_DEPTH+floor*3.5-seat*.7,
+    torsoWidth=c.bodyH*(1-.20*prone-.16*back-.14*seat)*(1-roll.side*.53);
   const sourceAngle=(Number(state.initialLegAngle)||0)-p.heading,
     sourceScale=Number(state.initialLegScale)||1,co=Math.cos(sourceAngle),si=Math.sin(sourceAngle);
   const point=(x,y)=>({x:(co*x-si*y)*sourceScale,y:(si*x+co*y)*sourceScale});
@@ -44533,12 +44640,12 @@ function legInjuryBodyPose(c,p) {
     const startHip=source?point(source.sx,source.sy):point(sx,sy),
       startKnee=source?point(source.kx,source.ky):point(sx+th*.92,sy),
       startAnkle=source?point(source.ax,source.ay):point(sx+th*.92+sh,sy);
-    const hY=side*(6.3+seat*.9)*(1-roll.side*.68),
+    const hY=side*(6.3+seatedLegs*.9)*(1-roll.side*.68),
       targetHip={x:hipX,y:hipY+hY},
-      targetKnee={x:prone?-23+(hit?variant*1.5:0):seat?8-(hit?3:0):startKnee.x,
-        y:side*(prone?(9+(hit?variant*1.6:0))*(1-roll.side*.45):seat?(10+(hit?2:0)):6)},
-      targetAnkle={x:prone?-37+(hit?3+variant:0):seat?25-(hit?4+variant:0):startAnkle.x,
-        y:side*(prone?8.9*(1-roll.side*.38):seat?11.5+(hit?3:0):6)};
+      targetKnee={x:prone?-23+(hit?variant*1.5:0):seatedLegs?8-(hit?3:0):startKnee.x,
+        y:side*(prone?(9+(hit?variant*1.6:0))*(1-roll.side*.45):seatedLegs?(10+(hit?2:0)):6)},
+      targetAnkle={x:prone?-37+(hit?3+variant:0):seatedLegs?25-(hit?4+variant:0):startAnkle.x,
+        y:side*(prone?8.9*(1-roll.side*.38):seatedLegs?11.5+(hit?3:0):6)};
     const hip={x:lerp(startHip.x,targetHip.x,down),y:lerp(startHip.y,targetHip.y,down)},
       knee={x:lerp(startKnee.x,targetKnee.x,down),y:lerp(startKnee.y,targetKnee.y,down)},
       ankle={x:lerp(startAnkle.x,targetAnkle.x,down),y:lerp(startAnkle.y,targetAnkle.y,down)};
@@ -44547,22 +44654,27 @@ function legInjuryBodyPose(c,p) {
       knee.y+=side*kick*(2+variant);ankle.y+=side*kick*(3+variant);
       knee.x+=grab*8;ankle.x+=grab*3;knee.y+=side*grab*3;
     }else{ankle.x+=kick*(3+variant);knee.y-=side*kick;}
-    const shoulderX=torsoLength*.30,shoulderY=side*torsoWidth*.28;
+    // The shoulder/head chain pitches backward, then folds over the pelvis
+    // on the sit-up. It does not yaw the whole body or drag the planted feet.
+    const shoulderX=torsoLength*.30*(1-2*back),shoulderY=side*torsoWidth*.28;
     joints.push({side,hip,knee,ankle,step,support:{reach:0,lift:0},
       shoulder:{x:chestX+Math.cos(yaw)*shoulderX-Math.sin(yaw)*shoulderY,
         y:chestY+Math.sin(yaw)*shoulderX+Math.cos(yaw)*shoulderY},
-      elbow:{x:lerp(5,prone?8:7,down),y:side*c.bodyH*.46*(1-roll.side*.45)+chestY}});
+      elbow:{x:lerp(lerp(5,prone?8:7,down),-15,back),y:side*c.bodyH*.46*(1-roll.side*.45)+chestY}});
   }
   const braced=c.currentWeapon===WEAPONS.ASSAULT_RIFLE||c.currentWeapon===WEAPONS.SHOTGUN||c.currentWeapon===WEAPONS.ROCKET_LAUNCHER;
   const initialHead={x:Math.cos(standingYaw)*(braced?3:0)-Math.sin(standingYaw)*(braced?4:0),
     y:Math.sin(standingYaw)*(braced?3:0)+Math.cos(standingYaw)*(braced?4:0)};
-  const headX=prone?15-roll.back*.8:8.5,
+  const headX=prone?15-roll.back*.8:8.5-37.5*(down>0?back/down:0),
     headY=prone?-3.6*(1-roll.side*.6-roll.back)+chestY:chestY;
   const head={x:lerp(initialHead.x,headX,down),y:lerp(initialHead.y,headY,down)};
   const lower={angle:p.heading,yaw:0,backward:0,phase:c.walkCycle||0,motion:0};
+  const present=p.phase==='SIT_UP'?Math.max(0,Math.min(1,(progress-.55)/.45)):
+    p.phase==='SEATED'||p.phase==='RECOVER'?1:0;
   return c._legInjuryBody={state,ageMs:p.ageMs,aimAngle:aim,bodyW:c.bodyW,bodyH:c.bodyH,
     injury:p,grab,dive:0,value:c.stance?c.stance.value:2*down,cycle:c.walkCycle||0,moving:false,gait:0,
-    drop:down,floor:prone,size:1-.07*down,aiming:true,yaw,hipYaw:yaw*.15,hipX,hipY,chestX,chestY,
+    drop:down,floor,size:1-.07*down,presentation:present*present*(3-2*present),
+    aiming:!(p.outcome==='SEATED'&&p.phase!=='SEATED'&&p.phase!=='RECOVER'),yaw,hipYaw:yaw*.15,hipX,hipY,chestX,chestY,
     joints,head,R,torsoLength,torsoWidth,crouchWeight:0,step:{legs:[step,step]},roll,lower};
 }
 function drawLegInjuryShadow(c,b) {
@@ -44659,11 +44771,18 @@ function stanceBodyPose(c) {
 // A native gun keeps its own proportions. One rigid mount owns the solid,
 // wrists, laser and flash, and supplies the physical muzzle and torch too.
 // Support actions use the separate body mount, never a rifle's port angle.
-function stanceWeaponMount(c) {
+function stanceWeaponMount(c,aimOverride=null,bodyOverride=null) {
   const p=actorStancePose(c);
-  if (!p.crouch&&!p.prone&&!stanceCoverPoseActive(c)) return {x:0,y:0,angle:0,scale:1};
-  const b=stanceBodyPose(c),w=c.currentWeapon;
-  const two=weaponHands(w)===2,aim=b.aiming||c.reloadTimer>0;
+  if (!bodyOverride&&!p.crouch&&!p.prone&&!stanceCoverPoseActive(c)) return {x:0,y:0,angle:0,scale:1};
+  const b=bodyOverride||stanceBodyPose(c),w=c.currentWeapon;
+  if(aimOverride===null&&b.injury&&b.injury.phase==='SIT_UP'&&b.presentation>0&&c.reloadTimer<=0) {
+    const cached=c._injuryMount;if(cached&&cached.body===b&&cached.weapon===w)return cached;
+    const carry=stanceWeaponMount(c,false,bodyOverride),ready=stanceWeaponMount(c,true,bodyOverride),t=b.presentation;
+    const turn=Math.atan2(Math.sin(ready.angle-carry.angle),Math.cos(ready.angle-carry.angle));
+    return c._injuryMount={x:lerp(carry.x,ready.x,t),y:lerp(carry.y,ready.y,t),
+      angle:carry.angle+turn*t,scale:lerp(carry.scale,ready.scale,t),body:b,weapon:w,aim:true};
+  }
+  const two=weaponHands(w)===2,aim=aimOverride===null?b.aiming||c.reloadTimer>0:aimOverride;
   const carryBlend=!aim&&leftHandAction(c)!==2?b.roll.blend:0;
   const cached=c._stanceMount;
   if(cached&&cached.body===b&&cached.weapon===w&&cached.aim===aim&&cached.carryBlend===carryBlend)return cached;
@@ -44695,6 +44814,10 @@ function stanceWeaponMount(c) {
     if(!aim){x+=b.yaw*3*b.floor;y+=(b.joints[1].support.reach+b.joints[0].support.reach)*.10*b.floor;}
   }
   if(aim&&w===WEAPONS.SHOTGUN)x-=2*b.drop*(1-b.floor)*scale;
+  if(b.injury&&b.injury.supine>0&&two) {
+    const shift=-16*b.injury.supine*b.size,delta=(c.aimAngle||0)-stanceFacingAngle(c);
+    x+=Math.cos(delta)*shift;y-=Math.sin(delta)*shift;
+  }
   if(b.cover) {
     const co=Math.cos(c.aimAngle||0),si=Math.sin(c.aimAngle||0);
     x+=co*b.coverX+si*b.coverY;y+=-si*b.coverX+co*b.coverY;
@@ -45060,9 +45183,8 @@ function drawCombatStanceFigure(c, p) {
     else if (w === WEAPONS.COACH_GUN) { push(); translate(-6,9.7); carryLongGun(w,0,L,S); pop(); }
     else if (w === WEAPONS.TASER) { push(); translate(18,8.4); carryHandGun(w,0,L,S,0,c.weaponKick); pop(); }
     if (c.isPlayer && rightStick.active && c.reloadTimer <= 0) {
-      const mx = w === WEAPONS.BOW ? 47-9*bowDrawAmount(c) : w === WEAPONS.PISTOL || w === WEAPONS.TASER || w === WEAPONS.COACH_GUN ? 31 : oneHandWeapon(w) && w !== WEAPONS.REVOLVER ? 38 : 47;
-      const my = w === WEAPONS.BOW ? 0 : w === WEAPONS.PISTOL || w === WEAPONS.TASER || w === WEAPONS.COACH_GUN ? 8 : oneHandWeapon(w) ? 11 : 6;
-      g.stroke(240,75,64,80); g.strokeWeight(1); g.line(mx,my,800,my);
+      g.stroke(240,75,64,80); g.strokeWeight(1); drawPlayerAimLaser(g,c,0,0,mount);
+      if(dual)drawPlayerAimLaser(g,c,1,0,mount);
     }
     if (c.muzzleFlash > 0 && c.reloadTimer <= 0 && w !== WEAPONS.BOW) {
       const mx = w === WEAPONS.PISTOL || w === WEAPONS.TASER || w === WEAPONS.COACH_GUN ? 31 : oneHandWeapon(w) && w !== WEAPONS.REVOLVER ? 38 : 47;

@@ -113,7 +113,12 @@ for(const rate of [30,60,120]) {
 for(const serial of [0,1,2]) {
   start(serial);const s=P('injured.legInjury');
   advance(s.fallMs);
-  ok(s.outcome+' completes its finite fall',P('injured.legInjury.phase')===(s.outcome==='SEATED'?'SEATED':'PRONE'));
+  ok(s.outcome+' completes its finite fall',P('injured.legInjury.phase')===(s.outcome==='SEATED'?'SUPINE':'PRONE'));
+  if(s.outcome==='SEATED'){
+    ok('the seated outcome lands below head and torso shots before rising',P("actorStance(injured)==='PRONE'&&stanceHitProfile(injured,'HEAD')===null&&stanceHitProfile(injured,'BODY')===null&&stanceHitProfile(injured,'LEGS').zone==='HEAD'"));
+    advance(P('LEG_INJURY_SUPINE_MS+LEG_INJURY_SIT_UP_MS'));
+    ok('seated combat begins only after the complete sit-up',P("injured.legInjury.phase==='SEATED'"));
+  }
   ok(s.outcome+' cannot enter ordinary voluntary stance changes',!P("requestActorStance(injured,'STAND')"));
   const x=P('injured.x'),y=P('injured.y');advance(300);
   ok(s.outcome+' stays planted after landing',Math.abs(P('injured.x')-x)+Math.abs(P('injured.y')-y)<1e-8);
@@ -134,6 +139,7 @@ for(const serial of [0,1,2]) {
 // Exercise native firearm emission from both downed forms and eight headings.
 for(const serial of [0,1])for(const weapon of ['PISTOL','ASSAULT_RIFLE'])for(let dir=0;dir<8;dir++) {
   start(serial);const fall=P('injured.legInjury.fallMs');advance(fall);
+  if(serial===1)advance(P('LEG_INJURY_SUPINE_MS+LEG_INJURY_SIT_UP_MS'));
   probe(`bullets=[];injured.currentWeapon=WEAPONS.${weapon};injured.ammo=10;
     injured.fireTimer=injured.reloadTimer=0;injured.aimAngle=${dir}*PI/4;
     player.x=injured.x+Math.cos(injured.aimAngle)*300;player.y=injured.y+Math.sin(injured.aimAngle)*300;

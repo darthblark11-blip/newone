@@ -21,7 +21,7 @@ impact effect, wound, hit statistic or kill credit. It can hit another actor or
 ordinary solid farther along its trajectory.
 
 Standing LEGS contact follows the two actual thigh/shin chains without filling
-the gap between them. Low firearm rounds stop at the floor after 25 m. Surviving
+the gap between them. Low firearm rounds stop at the floor after 13 m. Surviving
 hostile humanoid leg hits can trigger side-specific falls and temporary prone
 or seated fighting; [Leg injuries](leg-injuries.md) describes those states.
 Seated enemies use the crouch elevation matrix, with an extended floor footprint.

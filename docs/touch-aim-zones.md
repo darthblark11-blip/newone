@@ -34,13 +34,21 @@ including a quick tap that ends between input frames.
 
 Standing humanoid leg aim uses two thin swept leg shapes, so the gap between
 the legs and the space outside them are misses. Low firearm rounds meet the
-floor after 25 m. A surviving leg hit keeps body-shot damage and armor rules,
+floor after 13 m. A surviving leg hit keeps body-shot damage and armor rules,
 with a 25% chance to collapse a hostile humanoid onto the struck side. Wounded
 enemies can fire prone, sit and fire, or get back up. See
 [Leg injuries](leg-injuries.md) for timing and lowered hit profiles.
 Bullet marks follow the selected leg through movement, injury and supported
 fallen poses. Existing headshot effects stay on the head. Actors without
 humanoid legs retain their existing body-hit behavior.
+
+The aiming laser now stops at the first valid contact for the selected HEAD,
+BODY or LEGS elevation. It shares projectile anatomy and cover checks: raised
+shots pass over lowered actors, while low shots can pass between standing legs.
+Low firearm guides end at the same 13 m floor limit as their bullets. Each dual
+SMG barrel has its own guide, and crouch, prone and cover use the actual posed
+muzzle. The guide follows the weapon's central aiming direction; weapon spread
+still applies to fired rounds and shotgun pellets.
 
 Bullet decal placement separates the projectile's lateral contact from the
 mark's anatomical height. The actual bullet path still determines the
@@ -68,6 +76,7 @@ node tools/check-touch-aim-zones.js
 node tools/check-leg-aim.js
 node tools/check-leg-shot-collision.js
 node tools/check-leg-injury-integration.js
+node tools/check-aim-laser.js
 node tools/check-vertical-hit-decals.js
 node tools/check-bow-controls.js
 node tools/check-bow-draw.js
@@ -75,6 +84,7 @@ node tools/check-gamepad-trigger-shooting.js
 VIS_DEPS=/workspace/newone-dev node tools/check-touch-aim-scene.js
 VIS_DEPS=/workspace/newone-dev node tools/check-leg-aim-scene.js
 VIS_DEPS=/workspace/newone-dev node tools/visual-vertical-hit-decals.js
+VIS_DEPS=/workspace/newone-dev node tools/visual-aim-laser.js
 ```
 
 The scene checks use p5, Playwright and Chromium for native touch events and

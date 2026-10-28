@@ -124,7 +124,7 @@ const movieFrames=Number(process.env.LEG_INJURY_FRAMES||300),fps=30;
     resizeCanvas(2400,950);__injuryBack(name.toUpperCase()+' / EIGHT AIM DIRECTIONS','Native sidearm and rifle mounts, wrists, muzzle flash and original clothing. No independently drawn preview weapon.');
     const records=[];
     for(let row=0;row<2;row++){
-     const f=__injuryMake(30+outcome*3+row,row%2,false,outcome,row?'ASSAULT_RIFLE':'PISTOL');__injuryAdvance(f,1400);
+     const f=__injuryMake(30+outcome*3+row,row%2,false,outcome,row?'ASSAULT_RIFLE':'PISTOL');__injuryAdvance(f,outcome===1?1900:1400);
      for(let col=0;col<8;col++){
       const x=col*300,y=84+row*425,angle=-Math.PI/2+col*Math.PI/4;
       __injuryCard(x+7,y,286,413,(row?'RIFLE':'PISTOL')+' / '+['N','NE','E','SE','S','SW','W','NW'][col],f.e.legInjury?.phase||'NORMAL AI');
