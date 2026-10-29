@@ -46,6 +46,8 @@ along collision-checked routes and crouch in the south corners. They use native
 cel figure primitives with coats, badges and safety goggles. Their separate list
 does not add hostiles, kills, reinforcements or government population. They freeze
 with the simulation and reset when leaving or replacing the run.
+Player department residents do not enter the HQ; their assignments remain in
+the campaign ledgers and their outdoor roster is rebuilt on return.
 
 Floor detail is baked lazily into at most twenty-four 500×500 canvases. Repeated frames
 reuse them, and level entry or a hard reset releases them. Surface detail and

@@ -2219,6 +2219,7 @@ function preload() {
 
 
 function legacyStartAtLevel(lvl, isLoading = false) {
+    townCitizens=[];
     resetNM0LabFloor();
     resetNM0Scientists();
     resetNM0Offices();
@@ -11700,6 +11701,9 @@ function directiveCitizenCasualty(c) {
 // the ledgers; making or rebuilding it never creates another population.
 function deployDirectivePopulation() {
     townCitizens=[];
+    // Department residents belong to outdoor sectors, not authored interiors.
+    if(currentLevel<1||currentLevel>7)return 0;
+    if(!nearestOwnedFortress(currentLevel))return 0;
     let index=0;
     const sources=[{home:POP_POOL,data:poolLedger()}];
     if(currentLevel>=1&&currentLevel<=7)sources.push({home:currentLevel,data:sectorLedger(currentLevel)});
@@ -56595,6 +56599,9 @@ function startAtLevel(lvl, isLoading = false) {
   }
 
   ensureCityRookiePatrols();
+  // Rebuild the local department view after geometry and escorts are placed.
+  // Interior entry clears it; returning outside restores residents from ledgers.
+  if(!isLoading)deployDirectivePopulation();
   window.travelArrival = null;
   window.__biomeAnchorPending = null;
 }

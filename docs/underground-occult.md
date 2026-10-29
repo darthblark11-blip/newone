@@ -31,6 +31,7 @@ Dungeon magicians and zombies use their own spellcasting, summoning, navigation
 and melee AI. Firearm cover, reactive ducking/dives and leg injuries do not apply
 to them. They retain circular standing hitboxes and full body damage from low
 firearm hits, rather than thin leg collision or the firearm leg-damage penalty.
+Player department residents do not deploy or carry over into the dungeon.
 
 The elevator floor occupies `(-150,950)` to `(150,1250)`. Its approach tunnel
 occupies `(-170,-400)` to `(170,1000)`, and the main chamber occupies
