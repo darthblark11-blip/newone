@@ -102,7 +102,7 @@ for(const serial of [0,1,2]){
  ok('injury clears active cover and stale approach ownership '+serial,
   P('injuryStarted&&!coverInjuryTarget.cover&&!coverInjuryTarget._coverApproach&&!coverInjuryTarget._enemyCover?.goal'));
  const phases=new Set();
- for(let tick=0;tick<800&&P('!!coverInjuryTarget.legInjury');tick++){
+ for(let tick=0;tick<2700&&P('!!coverInjuryTarget.legInjury');tick++){
   probe(`frameCount++;updateLegInjuryActor(coverInjuryTarget,1000/60);
    updateActorCover(coverInjuryTarget,1000/60,-6,0,true);`);
   const phase=P('coverInjuryTarget.legInjury&&coverInjuryTarget.legInjury.phase');if(!phase)break;

@@ -21,7 +21,14 @@ fs.mkdirSync(out, { recursive: true });
     { name: 'hallway', w: 940, h: 800, x: 0, y: 100, zoom: .66 },
     { name: 'clone-lab', w: 940, h: 800, x: 680, y: -800, zoom: .66 },
     { name: 'archive', w: 940, h: 800, x: 0, y: -1800, zoom: .66 },
-    { name: 'staff-cover', w: 940, h: 700, x: -700, y: 1180, zoom: 1, cover: true }
+    { name: 'staff-cover', w: 940, h: 700, x: -700, y: 1180, zoom: 1, cover: true },
+    { name: 'office-doors-closed', w: 1200, h: 700, x: 0, y: 800, zoom: .42 },
+    { name: 'west-office-entry', w: 940, h: 700, x: -1160, y: 800, zoom: .75, open: ['WEST'], guards: true },
+    { name: 'west-offices', w: 1000, h: 1000, x: -2130, y: 400, zoom: .4, open: ['WEST'], cover: true },
+    { name: 'east-offices', w: 1000, h: 1000, x: 2130, y: 400, zoom: .4, open: ['EAST'], cover: true },
+    { name: 'light-key-desk', w: 940, h: 700, x: 2670, y: -245, zoom: 1, open: ['EAST'], cover: true },
+    { name: 'whole-hq-layout', w: 1600, h: 1300, x: 0, y: -500, zoom: .25,
+      open: ['WEST', 'EAST'], cover: true }
   ];
   const results = [];
   try {
@@ -60,8 +67,10 @@ fs.mkdirSync(out, { recursive: true });
       ok(initial.staff === 3 && initial.staffStates.every(s => s === 'STARTLED'), scene.name + ' staff begin startled');
       ok(initial.closed, scene.name + ' uses the closed authored interior');
       await page.evaluate(scene => {
-        if (!scene.guards) enemiesList = [];
-        if (scene.cover) for (let i = 0; i < 400; i++) { frameCount++; updateNM0Scientists(); }
+        for(const room of scene.open||[])openNM0Office(room);
+        if (!scene.guards) { enemiesList = []; window.nm0HqCleared = true; }
+        if (scene.cover) for (let i = 0; i < 500; i++) { frameCount++; updateNM0Scientists(); }
+        if(!scene.guards)streakMsgTimer=0;
         player.x = scene.x; player.y = scene.y; player.aimAngle = -HALF_PI;
         // A screenshot jumps the camera farther than ten walking frames can.
         // Invalidate the arrival cull once so the native next-frame rebuild
@@ -83,13 +92,19 @@ fs.mkdirSync(out, { recursive: true });
       const state = await page.evaluate(() => ({ graphics: __labGraphicsCreated,
         tiles: nm0LabFloorCache.size, fault: window.FRAME_FAULT || null,
         guards: enemiesList.length, kills: totalKills, blocked: player.checkCol(player.x, player.y),
+        opened: {...nm0OfficeOpened},lightKey:!!window.nm0LightKey,
         staff: nm0Scientists.map(a => ({ x: a.x, y: a.y, state: a.scientistState, crouch: a.scientistCrouch })) }));
       ok(!first.fault && !state.fault, scene.name + ' completes the real frame without a scene fault');
       ok(!state.blocked, scene.name + ' places the player in a clear floor lane');
-      ok(state.tiles > 0 && state.tiles <= 10, scene.name + ' keeps floor tiles bounded');
+      ok(state.tiles > 0 && state.tiles <= 24, scene.name + ' keeps floor tiles bounded');
       ok(first.graphics === state.graphics && first.tiles === state.tiles,
         scene.name + ' reuses floor graphics on a repeated frame');
-      if (scene.guards) ok(state.guards === 20, scene.name + ' native frame preserves the finite guard roster');
+      if (scene.guards) ok(state.guards === 20+8*(scene.open||[]).length,
+        scene.name + ' native frame preserves the finite guard roster');
+      ok(state.staff.length===3+3*(scene.open||[]).length,scene.name+' preserves the finite staff roster');
+      if(scene.open)ok(scene.open.every(id=>state.opened[id]),scene.name+' opens the requested native office doors');
+      if(scene.name==='light-key-desk')ok(!state.lightKey,scene.name+' keeps the desk key available for interaction');
+      if(scene.name==='whole-hq-layout')ok(state.tiles===22,scene.name+' covers the complete authored floor union');
       if (scene.cover) ok(state.staff.every(a => a.state === 'CROUCH' && a.crouch > .95),
         scene.name + ' staff reach cover and settle into crouching');
       assert.deepEqual(errors, [], scene.name + ' has no browser exceptions');

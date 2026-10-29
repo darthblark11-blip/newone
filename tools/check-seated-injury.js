@@ -73,7 +73,7 @@ for(const side of [0,1])for(const moving of [false,true])for(const weapon of ['P
   ok(label+' retains native firing once seated',P('bullets.length>0'));
 }
 for(const rate of [30,60,120]){
-  stage();const total=P('seatedVictim.legInjury.fallMs+LEG_INJURY_SUPINE_MS+LEG_INJURY_SIT_UP_MS+5400+LEG_INJURY_RECOVER_MS');
+  stage();const total=P('seatedVictim.legInjury.fallMs+LEG_INJURY_SUPINE_MS+LEG_INJURY_SIT_UP_MS+LEG_INJURY_DOWNED_MS+LEG_INJURY_RECOVER_MS');
   advance(total,1000/rate);
   ok(rate+'Hz complete seated sequence releases normal movement',P("!seatedVictim.legInjury&&actorStance(seatedVictim)==='STAND'&&seatedVictim.state==='CHASE'"));
 }

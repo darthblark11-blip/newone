@@ -127,8 +127,11 @@ for(const serial of [0,1,2]) {
     ok('seated body-height rounds resolve critical head damage',P("stanceHitProfile(injured,'BODY').zone==='HEAD'"));
     ok('seated low rounds resolve standard body damage',P("stanceHitProfile(injured,'LEGS').zone==='BODY'"));
   }
-  advance(s.outcome==='RECOVER'?350:s.outcome==='SEATED'?5100:4500);
-  ok(s.outcome+' enters a finite recovery',P("injured.legInjury.phase==='RECOVER'"));
+  advance(39699);
+  ok(s.outcome+' stays down through 39999 active milliseconds',
+    P(`injured.legInjury.phase===${JSON.stringify(s.outcome==='SEATED'?'SEATED':'PRONE')}&&Math.abs(injured.legInjury.phaseMs-39999)<1e-7`));
+  advance(1);
+  ok(s.outcome+' begins recovery after exactly 40 seconds down',P("injured.legInjury.phase==='RECOVER'&&Math.abs(injured.legInjury.phaseMs)<1e-7"));
   advance(950);
   ok(s.outcome+' restores a living standing fighter',P("!injured.legInjury&&actorStance(injured)==='STAND'&&injured.state==='CHASE'&&injured.hp>0"));
   ok(s.outcome+' grants a repeat-injury cooldown',P('injured.legInjuryCooldownMs===LEG_INJURY_COOLDOWN_MS&&!legInjuryEligible(injured)'));

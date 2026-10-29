@@ -93,7 +93,7 @@ stage();const outcomes=new Set();
 for(let n=0;n<3;n++){
  const hit=findProc(n%2,n%2===0);outcomes.add(hit.injury.outcome);
  const seen=new Set([hit.injury.phase]);let shots=0,previous=0;
- for(let i=0;i<1100&&P('!!injuryTarget.legInjury');i++){
+ for(let i=0;i<2700&&P('!!injuryTarget.legInjury');i++){
   previous=P('bullets.length');advance();
   shots+=Math.max(0,P('bullets.length')-previous);
   const current=P('injuryTarget.legInjury');if(current)seen.add(current.phase);

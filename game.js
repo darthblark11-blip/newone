@@ -122,11 +122,12 @@ function recordStanceDamage(a,damage,zone) {
   popup.leftMs=500;
 }
 
-// A leg injury owns a short, finite combat state rather than reusing a punch
+// A leg injury owns a finite combat state rather than reusing a punch
 // stun. The wounded actor can fight from the floor, then regains locomotion.
 // All choices are sampled at impact; drawing and paused frames never advance
 // the outcome rotation or roll against combat's random stream.
 const LEG_INJURY_CHANCE=.25,LEG_INJURY_RECOVER_MS=950,LEG_INJURY_COOLDOWN_MS=3000;
+const LEG_INJURY_DOWNED_MS=40000;
 const LEG_INJURY_SUPINE_MS=280,LEG_INJURY_SIT_UP_MS=520;
 const LEG_INJURY_OUTCOMES=['PRONE','SEATED','RECOVER'];
 let legInjurySerial=0;
@@ -253,8 +254,7 @@ function updateLegInjuryActor(a,elapsedMs=deltaTime) {
   let remaining=dt;
   while(remaining>0&&a.legInjury){
     const duration=s.phase==='FALL'?s.fallMs:s.phase==='RECOVER'?LEG_INJURY_RECOVER_MS:
-      s.phase==='SUPINE'?LEG_INJURY_SUPINE_MS:s.phase==='SIT_UP'?LEG_INJURY_SIT_UP_MS:
-      s.outcome==='RECOVER'?650:s.phase==='SEATED'?5400:4800;
+      s.phase==='SUPINE'?LEG_INJURY_SUPINE_MS:s.phase==='SIT_UP'?LEG_INJURY_SIT_UP_MS:LEG_INJURY_DOWNED_MS;
     const step=Math.min(remaining,duration-s.phaseMs);s.phaseMs+=step;s.ageMs+=step;remaining-=step;
     if(s.phase==='FALL'){
       const t=s.phaseMs/s.fallMs,target=s.fallTravel*(t*t*(3-2*t)),distance=target-s.fallMoved;
@@ -2221,6 +2221,7 @@ function preload() {
 function legacyStartAtLevel(lvl, isLoading = false) {
     resetNM0LabFloor();
     resetNM0Scientists();
+    resetNM0Offices();
     resetUndergroundEnvironment();resetOccultWorld();
     undergroundRoute.mode=null;
     resetTouchAimSelection(true);
@@ -2351,8 +2352,7 @@ if (isStoryMode) {
         for (let i = 0; i < 20; i++) {
             // Authored stations keep the finite garrison clear of lab equipment.
             const post = nm0HqGuardPost(i);
-            let e = newHostileCharacter(post.x, post.y, "ARMORED_STANDARD");
-            e.currentWeapon = WEAPONS.PISTOL;
+            let e = createNM0HqGuard('MAIN',i,post);
             enemiesList.push(e);
         }
         seedNM0Scientists();
@@ -2802,6 +2802,140 @@ function bakeFrontierSettlementArea(g,biome,ox,oy) {
   }
 }
 
+// Side offices share the HQ map, but own finite guards and persistent access.
+let nm0OfficeOpened={WEST:false,EAST:false};
+function resetNM0Offices(){nm0OfficeOpened={WEST:false,EAST:false};}
+function createNM0HqGuard(room,index,post){
+  const e=newHostileCharacter(post.x,post.y,'ARMORED_STANDARD');
+  e.nm0HqGuardId=room+'-'+index;e.nm0HqRoom=room;
+  e.currentWeapon=room!=='MAIN'&&index%3===2?WEAPONS.ASSAULT_RIFLE:WEAPONS.PISTOL;
+  e.ammo=e.currentWeapon.maxAmmo;
+  if(room!=='MAIN'){
+    e.state='CHASE';e.loseSightTimer=1200;
+    e.lastKnownX=post.x;e.lastKnownY=post.y;
+  }
+  return e;
+}
+function nm0HqRoomRemaining(room='MAIN'){
+  let count=0;
+  for(const e of enemiesList)if(e.nm0HqRoom===room&&!e.isFriendly&&!e.dead&&e.hp>0)count++;
+  return count;
+}
+function syncNM0OfficeDoors(){
+  buildings=buildings.filter(b=>!b.nm0OfficeDoor);
+  for(const room of NM0_OFFICES)if(!nm0OfficeOpened[room.id])
+    buildings.push({...room.door,isWall:true,hqWall:'OFFICE_DOOR',nm0OfficeDoor:room.id});
+  activeBuildings=activeBuildings.filter(b=>!b.nm0OfficeDoor);
+  for(const b of buildings)if(b.nm0OfficeDoor)activeBuildings.push(b);
+  // Door changes invalidate both the cull and collision index on this frame.
+  lastActiveUpdate=-1000;invalidateColIndex();
+}
+function nm0OfficeInteraction(){
+  if(currentLevel!==8||!player||player.hp<=0||!started||isPaused||isDead||isWin||killcamMode||
+      !combatStanceContext()||window.inNM0SecretOverlay||undergroundRouteBusy())return null;
+  const east=NM0_OFFICES.find(r=>r.id==='EAST');
+  if(!window.nm0LightKey&&nm0OfficeOpened.EAST&&
+      Math.hypot(player.x-east.key.x,player.y-east.key.y)<145)return {kind:'KEY',room:east,label:'TAKE LIGHT KEY'};
+  for(const room of NM0_OFFICES)if(!nm0OfficeOpened[room.id]&&
+      Math.abs(player.x-room.door.x)<180&&Math.abs(player.y-room.door.y)<140)
+    return {kind:'DOOR',room,label:'OPEN OFFICE'};
+  return null;
+}
+function useNM0OfficeInteraction(){
+  const action=nm0OfficeInteraction();if(!action)return false;
+  if(action.kind==='KEY'){
+    window.nm0LightKey=true;streakMsgText='LIGHT KEY ACQUIRED';streakMsgTimer=180;sfx.charge();
+    return true;
+  }
+  return openNM0Office(action.room.id);
+}
+function openNM0Office(id){
+  const room=NM0_OFFICES.find(r=>r.id===id);
+  if(currentLevel!==8||!room||nm0OfficeOpened[id]||!player||player.hp<=0||isPaused||isDead||isWin||killcamMode)return false;
+  nm0OfficeOpened[id]=true;syncNM0OfficeDoors();
+  for(let i=0;i<room.guards.length;i++)enemiesList.push(createNM0HqGuard(id,i,room.guards[i]));
+  seedNM0OfficeScientists(room);
+  streakMsgText=id+' OFFICE / NM-0 SECURITY';streakMsgTimer=150;sfx.charge();
+  return true;
+}
+function drawNM0LightSymbol(x,y,r=7){
+  noFill();stroke(250,223,130);strokeWeight(1.8);ellipse(x,y,r*2,r*2);
+  noStroke();fill(250,223,130);ellipse(x,y,r*.6,r*.6);
+}
+function drawNM0OfficeDoors(){
+  for(const room of NM0_OFFICES){
+    const {x,y}=room.door;if(!inView(x,y,180))continue;
+    const open=nm0OfficeOpened[room.id];
+    push();translate(x,y);noStroke();fill(12,24,30);rect(-53,-116,106,232,4);
+    fill(112,136,142);rect(-50,-114,100,9,2);rect(-50,105,100,9,2);
+    if(!open){
+      fill(56,77,88);stroke(20,38,47);strokeWeight(3);rect(-44,-103,88,206,3);
+      stroke(120,151,159);strokeWeight(1);line(0,-100,0,100);
+      noStroke();fill(123,213,201);rect(-28,-89,56,5,1);
+      fill(27,45,54);rect(-27,-36,54,70,3);fill(197,224,218);textAlign(CENTER,CENTER);textSize(9);
+      text(room.id+'\nOFFICE',0,-9);textSize(8);text('ACCESS',0,19);
+    }else{
+      fill(71,97,106);rect(-43,-103,86,16,2);rect(-43,87,86,16,2);
+      fill(82,210,167);rect(-36,-110,72,3,1);rect(-36,107,72,3,1);
+    }
+    fill(211,226,217);textAlign(CENTER,CENTER);textSize(11);
+    text(room.id+' OFFICES',room.side*10,-132);pop();
+  }
+  const east=NM0_OFFICES.find(r=>r.id==='EAST');
+  if(!window.nm0LightKey&&nm0OfficeOpened.EAST&&inView(east.key.x,east.key.y,100)){
+    push();translate(east.key.x,east.key.y);rotate(-.13);
+    noStroke();fill(4,12,17,130);rect(-23,-27,46,58,5);
+    fill(224,222,190);stroke(90,110,115);strokeWeight(2);rect(-19,-25,38,50,4);
+    noStroke();fill(27,48,60);rect(-15,-21,30,30,2);drawNM0LightSymbol(0,-6,10);
+    fill(61,77,82);rect(-12,14,14,3,1);rect(-12,19,24,2,1);
+    fill(239,224,164);textAlign(CENTER,CENTER);textSize(10);text('LIGHT KEY',0,40);pop();
+  }
+}
+function serializeNM0Hq(){
+  const state={version:1,lightKey:!!window.nm0LightKey};
+  if(currentLevel!==8)return state;
+  state.opened={...nm0OfficeOpened};state.mainCleared=!!window.nm0HqCleared;
+  state.guards=enemiesList.filter(e=>e.nm0HqGuardId&&!e.dead&&e.hp>0).map(e=>({
+    id:e.nm0HqGuardId,room:e.nm0HqRoom,x:e.x,y:e.y,hp:e.hp,ammo:e.ammo,
+    weapon:e.currentWeapon===WEAPONS.ASSAULT_RIFLE?'ASSAULT_RIFLE':'PISTOL'}));
+  state.staff=nm0Scientists.map(a=>({room:a.nm0HqRoom||'MAIN',index:a.nm0StaffIndex,
+    x:a.x,y:a.y,state:a.scientistState,waypoint:a.scientistWaypoint,delay:a.scientistDelay,crouch:a.scientistCrouch}));
+  return state;
+}
+function restoreNM0Hq(data,legacyCleared=false){
+  window.nm0LightKey=!!(data&&data.lightKey);
+  if(currentLevel!==8)return;
+  if(!data||!Array.isArray(data.guards)){
+    window.nm0HqCleared=!!legacyCleared;
+    if(legacyCleared)enemiesList=enemiesList.filter(e=>e.nm0HqRoom!=='MAIN');
+    return;
+  }
+  nm0OfficeOpened={WEST:!!data.opened?.WEST,EAST:!!data.opened?.EAST};syncNM0OfficeDoors();
+  enemiesList=enemiesList.filter(e=>!e.nm0HqGuardId);
+  const used=new Set();
+  for(const saved of data.guards.slice(0,36)){
+    const room=NM0_OFFICES.find(r=>r.id===saved.room),count=saved.room==='MAIN'?20:room&&nm0OfficeOpened[room.id]?room.guards.length:0;
+    const index=Number(String(saved.id).split('-').pop());
+    if(!Number.isInteger(index)||index<0||index>=count||saved.id!==saved.room+'-'+index||used.has(saved.id)||
+       !Number.isFinite(saved.x)||!Number.isFinite(saved.y)||!(saved.hp>0))continue;
+    used.add(saved.id);
+    const post=saved.room==='MAIN'?nm0HqGuardPost(index):room.guards[index];
+    const e=createNM0HqGuard(saved.room,index,post);
+    e.hp=Math.min(e.maxHp,Number(saved.hp));e.ammo=Math.max(0,Math.min(e.currentWeapon.maxAmmo,Number(saved.ammo)||0));
+    if(!e.checkCol(saved.x,saved.y)){e.x=saved.x;e.y=saved.y;}
+    enemiesList.push(e);
+  }
+  for(const room of NM0_OFFICES)if(nm0OfficeOpened[room.id])seedNM0OfficeScientists(room);
+  for(const saved of (Array.isArray(data.staff)?data.staff:[]).slice(0,9)){
+    const a=nm0Scientists.find(a=>a.nm0HqRoom===saved.room&&a.nm0StaffIndex===saved.index);if(!a)continue;
+    if(Number.isFinite(saved.x)&&Number.isFinite(saved.y)&&!a.checkCol(saved.x,saved.y)){a.x=saved.x;a.y=saved.y;}
+    if(['STARTLED','FLEE','CROUCH'].includes(saved.state))a.scientistState=saved.state;
+    a.scientistWaypoint=Math.max(0,Math.min(a.scientistRoute.length-1,Number(saved.waypoint)||0));
+    a.scientistDelay=Math.max(0,Number(saved.delay)||0);a.scientistCrouch=Math.max(0,Math.min(1,Number(saved.crouch)||0));
+  }
+  window.nm0HqCleared=!!data.mainCleared||nm0HqRoomRemaining('MAIN')===0;
+}
+
 // Laboratory staff are scenery actors, not combatants or liberated citizens.
 // Keeping their finite roster separate is what keeps the HQ's twenty-guard
 // encounter, kill counter and campaign population unchanged.
@@ -2815,18 +2949,27 @@ function seedNM0Scientists() {
         { x: -80, y: 720, route: [[-60, 990], [-590, 1220], [-760, 1250]], skin: [232, 192, 162], hair: [128, 100, 75] }
     ];
     for (let i = 0; i < staff.length; i++) {
-        const s = staff[i], a = new Character(s.x, s.y, false, 'NM0_SCIENTIST');
+        const s = staff[i], a = createNM0Scientist(s,'MAIN',i);
+        nm0Scientists.push(a);
+    }
+}
+function createNM0Scientist(s,room,index){
+        const a = new Character(s.x, s.y, false, 'NM0_SCIENTIST');
+        a.nm0HqRoom=room;a.nm0StaffIndex=index;
         a.isNM0Scientist = a.isFriendly = a.isNeutral = a.isUnarmed = true;
         a.isArmed = false; a.ammo = 0; a.bodyW = 19; a.bodyH = 27;
         a.skinCol = color(...s.skin); a.hairCol = color(...s.hair);
         a.shirtCol = color(229, 237, 232); a.pantsCol = color(48, 61, 67);
-        a.scientistState = 'STARTLED'; a.scientistDelay = 10 + i * 8;
+        a.scientistState = 'STARTLED'; a.scientistDelay = 10 + index * 8;
         a.scientistRoute = s.route; a.scientistWaypoint = 0;
-        a.scientistCrouch = 0; a.scientistPhase = i * 1.9;
-        a.aimAngle = i === 1 ? -HALF_PI : 0;
+        a.scientistCrouch = 0; a.scientistPhase = index * 1.9;
+        a.aimAngle = index === 1 ? -HALF_PI : 0;
         a.show = function () { drawNM0Scientist(this); };
-        nm0Scientists.push(a);
-    }
+        return a;
+}
+function seedNM0OfficeScientists(room){
+    if(currentLevel!==8||nm0Scientists.some(a=>a.nm0HqRoom===room.id))return;
+    for(let i=0;i<room.staff.length;i++)nm0Scientists.push(createNM0Scientist(room.staff[i],room.id,i));
 }
 function updateNM0Scientists() {
     if (currentLevel !== 8 || !player || player.hp <= 0 || !started || !doTick ||
@@ -2954,6 +3097,7 @@ function legacyGenerateMap() {
   if(currentLevel===9){generateUndergroundMap();return;}
   if (currentLevel === 8) {
       generateNM0LabMap();
+      syncNM0OfficeDoors();
       return;
   }
 
@@ -7496,6 +7640,7 @@ function handleUndergroundRouteTap(mx,my){
     return true;
   }
   if(undergroundRouteBusy())return true;
+  if(nm0OfficeInteraction()&&isClickingBtn(mx,my)){useNM0OfficeInteraction();return true;}
   if(hqElevatorAvailable()&&isClickingBtn(mx,my)){openHQElevator();return true;}
   const gate=undergroundNearbyGate();
   if(gate&&isClickingBtn(mx,my)){openUndergroundGate(gate.id);return true;}
@@ -7516,7 +7661,8 @@ function updateUndergroundRoute(dtMs){
         if(edge(14)||edge(15)||edge(12)||edge(13)||[37,38,39,40].some(keyEdge))undergroundRoute.focus=1-undergroundRoute.focus;
         if(edge(0)||keyEdge(13)||keyEdge(70))chooseHQDescent(undergroundRoute.focus===0);
       }
-    }else if(!undergroundRouteBusy()&&hqElevatorAvailable()&&(edge(0)||keyEdge(70)||keyEdge(13)))openHQElevator();
+    }else if(!undergroundRouteBusy()&&nm0OfficeInteraction()&&(edge(0)||keyEdge(70)||keyEdge(13)))useNM0OfficeInteraction();
+    else if(!undergroundRouteBusy()&&hqElevatorAvailable()&&(edge(0)||keyEdge(70)||keyEdge(13)))openHQElevator();
     else if(!undergroundRouteBusy()&&undergroundNearbyGate()&&(edge(0)||keyEdge(70)||keyEdge(13)))openUndergroundGate(undergroundNearbyGate().id);
     else if(undergroundRoute.mode==='DESCEND'){
       undergroundRoute.elapsedMs+=dt;
@@ -7565,6 +7711,7 @@ function drawUndergroundRouteHud(){
     fill(234,207,143);textAlign(CENTER,CENTER);textFont('sans-serif');textSize(18);text('DEEP UNDER NM–0',width/2,height*.25);pop();
   }else if(hqElevatorAvailable())drawPromptBtn('ELEVATOR');
   else if(undergroundNearbyGate())drawPromptBtn('OPEN DOOR');
+  else if(nm0OfficeInteraction())drawPromptBtn(nm0OfficeInteraction().label);
 }
 function serializeUndergroundRoute(){return {version:1,visited:undergroundRoute.visited,arrivalMs:undergroundRoute.arrivalMs,
   mode:currentLevel===8?undergroundRoute.mode:null,elapsedMs:undergroundRoute.elapsedMs,
@@ -7685,6 +7832,7 @@ function nextLevel() { startAtLevel(currentLevel + 1); }
 // Replacing a run must discard them BEFORE level entry can stamp old bodies
 // into the next world's ground buffers. Keep this separate from startAtLevel.
 function resetRunState() {
+  resetNM0Offices();
   resetUndergroundRoute();resetUndergroundEnvironment();resetOccultWorld();
   resetNM0Scientists();
   resetNM0LabFloor();
@@ -8653,7 +8801,7 @@ viewBottom = camY + height / zoom + shakePad;
 
 
   // Level 8 Door Unlock Check
-  if (currentLevel === 8 && !window.nm0HqCleared && totalKills >= 20) {
+  if (currentLevel === 8 && !window.nm0HqCleared && nm0HqRoomRemaining('MAIN')===0) {
       window.nm0HqCleared = true;
       streakMsgText = "DOOR UNLOCKED";
       streakMsgTimer = 120;
@@ -8860,7 +9008,7 @@ viewBottom = camY + height / zoom + shakePad;
   }
 
   if (typeof drawParkingCars === 'function') drawParkingCars();
-  if(currentLevel===8)drawHQBranchDoors();
+  if(currentLevel===8){drawHQBranchDoors();drawNM0OfficeDoors();}
   if(currentLevel===9){drawUndergroundElevator(undergroundDoorOpenAmount());drawUndergroundGates();}
 
   if (currentLevel === 0) {
@@ -10984,6 +11132,7 @@ function resetStoryProgress() {
     window.nm0AmbushClearedStatus = false;
     window.nm0AmbushCleared = false;
     window.nm0HqCleared = false;
+    window.nm0LightKey = false;
     window.armorBlueprintPickedUp = false;
     window.genocideRouteActive = false;
     window.genocideAmbushCleared = false;
@@ -13645,8 +13794,28 @@ function drawHQBranchDoors() {
 }
 
 // NM-0's closed research floor is authored independently of the outdoor biomes.
-// Ten half-resolution tiles at most, baked on demand; no per-frame floor noise.
+// Half-resolution tiles bake on demand; a bounded LRU includes both office wings.
 const nm0LabFloorCache = new Map();
+const NM0_LAB_FLOOR_CACHE_LIMIT=24;
+const NM0_OFFICES=[-1,1].map(side=>({
+  id:side<0?'WEST':'EAST',side,door:{x:side*1000,y:800,w:100,h:220},
+  guards:[[1730,850],[2660,850],[1880,250],[2800,200],
+    [1750,-180],[2450,-180],[1900,1130],[2420,1130]].map(([x,y])=>({x:side*x,y})),
+  staff:[
+    {x:2540,y:-180,route:[[2810,-180],[2810,-420],[2780,-510]],skin:[214,165,132],hair:[58,45,38]},
+    {x:1850,y:180,route:[[1850,280],[1980,280],[1980,450]],skin:[147,105,79],hair:[29,28,30]},
+    {x:2380,y:1130,route:[[2380,1310],[2590,1310]],skin:[233,195,166],hair:[120,92,67]}
+  ].map(s=>({...s,x:side*s.x,route:s.route.map(([x,y])=>[side*x,y])})),
+  key:{x:side*2670,y:-340}
+}));
+const NM0_LAB_FLOOR_RECTS=[{x0:-950,y0:-2450,x1:950,y1:1450},
+  ...NM0_OFFICES.flatMap(o=>o.side<0?
+    [{x0:-1470,y0:690,x1:-950,y1:910},{x0:-2930,y0:-580,x1:-1470,y1:1380}]:
+    [{x0:950,y0:690,x1:1470,y1:910},{x0:1470,y0:-580,x1:2930,y1:1380}])];
+function nm0HqOfficeAt(x,y) {
+  if(y< -600||y>1400)return null;
+  const u=Math.abs(x);return u>=1450&&u<=2950?NM0_OFFICES[x<0?0:1]:null;
+}
 function resetNM0LabFloor() {
   for (const tile of nm0LabFloorCache.values()) if (tile.remove) tile.remove();
   nm0LabFloorCache.clear();
@@ -13657,7 +13826,12 @@ function nm0HqGuardPost(index) {
 function generateNM0LabMap() {
   const wall = (x, y, w, h, kind = 'PANEL') => buildings.push({ x, y, w, h, isWall: true, hqWall: kind });
   wall(0, -2500, 2000, 100); wall(0, 1500, 2000, 100, 'ENTRY');
-  wall(-1000, -500, 100, 4000); wall(1000, -500, 100, 4000);
+  // The ground-level side doors are actual sidewall openings. The sealed
+  // north branch doors keep their original, independent geometry.
+  for(const side of [-1,1]) {
+    wall(side*1000,-905,100,3190);wall(side*1000,1205,100,590);
+    wall(side*1240,660,480,40);wall(side*1240,940,480,40);
+  }
   wall(-500, -1000, 50, 3000); wall(500, -1000, 50, 3000);
   wall(0, -800, 200, 40, 'AIRLOCK');
   wall(-300, -800, 400, 40); wall(300, -800, 400, 40);
@@ -13675,6 +13849,84 @@ function generateNM0LabMap() {
     prop('CABINET', side * 620, -2250, 90, 130);
   }
   prop('BENCH', 0, -2000, 140, 95, { hqBlueprint: true });
+  // Low cover in the stormed room leaves x=0, both service aisles, every
+  // original guard post and the staff's retreat across the south end clear.
+  for(const side of [-1,1]) {
+    prop('BENCH',side*460,750,180,75);
+    prop('BENCH',side*720,1000,150,85);
+    prop('CONSOLE',side*270,650,170,80);
+  }
+  for(const office of NM0_OFFICES) {
+    const side=office.side;
+    const officeWall=(u,y,w,h)=>wall(side*u,y,w,h,'OFFICE');
+    const officeProp=(kind,u,y,w,h,extra={})=>prop(kind,side*u,y,w,h,{hqOffice:office.id,...extra});
+    // A 220-unit entrance hall meets the cross aisle. All room doorways are
+    // 160 units or wider, and the north/south office corridor is 140 wide.
+    officeWall(2200,-600,1500,40);officeWall(2200,1400,1500,40);
+    officeWall(2950,400,40,2000);
+    officeWall(1450,45,40,1290);officeWall(1450,1155,40,490);
+    for(const u of [2040,2220])for(const [from,to]of
+      [[-580,-340],[-180,170],[330,680],[920,1000],[1180,1380]])
+      officeWall(u,(from+to)/2,40,to-from);
+    for(const y of [0,500,980]) {
+      officeWall(1755,y,570,40);officeWall(2585,y,690,40);
+    }
+    // Open-front cubicles share the existing physical desk/bench painters,
+    // so their worktops also participate in native cover and projectile hits.
+    officeWall(1730,250,20,180);officeWall(2520,250,20,180);
+    officeProp('CONSOLE',1750,-400,300,100);
+    officeProp('CABINET',1560,-180,80,140);
+    officeProp('BENCH',1870,-140,180,90);
+    officeProp('CONSOLE',2670,-340,220,86,{hqLightKeyDesk:office.id==='EAST'});
+    officeProp('CABINET',2390,-480,100,140);
+    officeProp('CABINET',2860,-500,80,100);
+    officeProp('BENCH',2430,-100,180,90);
+    officeProp('CONSOLE',1600,230,180,80);
+    officeProp('CONSOLE',1840,380,220,80);
+    officeProp('CONSOLE',2380,160,220,80);
+    officeProp('CONSOLE',2670,380,220,80);
+    officeProp('CONSOLE',1740,640,300,90);
+    officeProp('CONSOLE',2650,650,320,90);
+    officeProp('CABINET',1560,900,80,100);
+    officeProp('CABINET',2850,900,80,100);
+    officeProp('BENCH',1740,1210,260,100);
+    officeProp('BENCH',2650,1210,280,100);
+    officeProp('CABINET',1560,1300,80,100);
+    officeProp('CABINET',2860,1300,80,100);
+  }
+}
+function paintNM0OfficeFloor(g,office) {
+  const side=office.side,X=u=>side*u;
+  g.noStroke();g.fill(29,57,62,160);
+  g.rect(Math.min(X(2060),X(2200)),-580,140,1960);
+  g.rect(Math.min(X(1470),X(2930)),705,1460,190);
+  g.fill(155,197,187,150);
+  for(const u of [2070,2190])g.rect(X(u)-2,-570,4,1940);
+  for(const y of [715,885])g.rect(Math.min(X(1490),X(2910)),y,1420,3);
+  // Arrival arrows, workstation pads and room numbers belong to the baked
+  // floor; mirrored layouts retain readable, unmirrored text on each wing.
+  for(const u of [1570,1830,2370,2770]) {
+    g.fill(157,198,186,150);
+    g.triangle(X(u-18),792,X(u-18),808,X(u+12),800);
+  }
+  g.noFill();g.stroke(177,189,172,70);g.strokeWeight(2);
+  for(const [u,y,w,h]of [[1750,-400,360,160],[2670,-340,280,145],
+    [1600,230,230,135],[1840,380,270,130],[2380,160,270,130],
+    [2670,380,270,130],[1740,1210,320,160],[2650,1210,340,160]])
+    g.rect(X(u)-w/2,y-h/2,w,h,6);
+  g.noStroke();g.textAlign(CENTER,CENTER);
+  g.fill(193,211,197,190);g.textSize(24);g.text(office.id+' OFFICES',X(2570),804);
+  g.textSize(12);g.fill(163,186,177,170);
+  g.text('PERSONNEL / RESEARCH',X(1720),565);
+  g.text('SPECIMEN ANALYSIS',X(2600),1040);
+  g.text('ARCHIVE / CLEARANCE 02',X(2670),-70);
+  g.text('GENETICS STAFF',X(1740),-70);
+  g.textSize(10);g.text('CUBICLE 01',X(1740),60);g.text('CUBICLE 02',X(2650),60);
+  g.fill(218,183,100,180);g.text('STAFF ACCESS',X(1250),802);
+  for(const y of [-260,250,1100]) {
+    g.fill(215,177,83,145);
+    for(const u of [2039,2221])g.rect(X(u)-5,y-38,10,76);
+  }
 }
 function paintNM0LabFloor(g, x0, y0) {
   g.push(); g.scale(.5); g.translate(-x0, -y0);
@@ -13683,8 +13935,9 @@ function paintNM0LabFloor(g, x0, y0) {
   for (let y = y0; y < y0 + 1000; y += 100) for (let x = x0; x < x0 + 1000; x += 100) {
     const hash = Math.abs(Math.imul(x / 100, 73856093) ^ Math.imul(y / 100, 19349663));
     const v = hash % 9;
-    const aisle = Math.abs(x + 50) < 190;
-    g.fill(aisle ? 61 + v : 70 + v, aisle ? 74 + v : 79 + v, aisle ? 79 + v : 82 + v);
+    const office=nm0HqOfficeAt(x+50,y+50),aisle=Math.abs(x+50)<190;
+    if(office)g.fill(80+v,88+v,86+v);
+    else g.fill(aisle ? 61 + v : 70 + v, aisle ? 74 + v : 79 + v, aisle ? 79 + v : 82 + v);
     g.rect(x + 2, y + 2, 96, 96, 2);
     g.stroke(143, 158, 158, 55); g.strokeWeight(1);
     g.line(x + 5, y + 5, x + 94, y + 5); g.line(x + 5, y + 5, x + 5, y + 94);
@@ -13719,25 +13972,34 @@ function paintNM0LabFloor(g, x0, y0) {
   g.textSize(16); g.text('AUTHORIZED PERSONNEL ONLY', 0, 620);
   g.textSize(22); g.text('CONTAINMENT', 0, -680);
   g.textSize(13); g.text('RESTRICTED ARCHIVE', 0, -2240);
+  for(const office of NM0_OFFICES)paintNM0OfficeFloor(g,office);
   g.pop();
 }
 function drawNM0LabGround() {
-  const x0 = Math.max(-950, viewLeft - 80), x1 = Math.min(950, viewRight + 80);
-  const y0 = Math.max(-2450, viewTop - 80), y1 = Math.min(1450, viewBottom + 80);
-  if (x1 <= x0 || y1 <= y0) return;
-  for (let cy = Math.floor(y0 / 1000); cy <= Math.floor(y1 / 1000); cy++)
-    for (let cx = Math.floor(x0 / 1000); cx <= Math.floor(x1 / 1000); cx++) {
+  // Draw only the floor union: no canvas tile may fill the outdoor void
+  // beside a hallway. Each source crop remains on the same world grid.
+  for(const floor of NM0_LAB_FLOOR_RECTS) {
+    const x0=Math.max(floor.x0,viewLeft-80),x1=Math.min(floor.x1,viewRight+80);
+    const y0=Math.max(floor.y0,viewTop-80),y1=Math.min(floor.y1,viewBottom+80);
+    if(x1<=x0||y1<=y0)continue;
+    for(let cy=Math.floor(y0/1000);cy<Math.ceil(y1/1000);cy++)
+      for(let cx=Math.floor(x0/1000);cx<Math.ceil(x1/1000);cx++) {
       const key = cx + ',' + cy;
       let tile = nm0LabFloorCache.get(key);
       if (!tile) {
         tile = createGraphics(500, 500); tile.pixelDensity(1);
         paintNM0LabFloor(tile, cx * 1000, cy * 1000);
-        nm0LabFloorCache.set(key, tile);
+      }else nm0LabFloorCache.delete(key);
+      nm0LabFloorCache.set(key,tile);
+      while(nm0LabFloorCache.size>NM0_LAB_FLOOR_CACHE_LIMIT) {
+        const oldest=nm0LabFloorCache.keys().next().value,stale=nm0LabFloorCache.get(oldest);
+        if(stale&&stale.remove)stale.remove();nm0LabFloorCache.delete(oldest);
       }
-      const tx = Math.max(-950, cx * 1000), ty = Math.max(-2450, cy * 1000);
-      const tw = Math.min(950, cx * 1000 + 1000) - tx, th = Math.min(1450, cy * 1000 + 1000) - ty;
+      const tx=Math.max(floor.x0,cx*1000),ty=Math.max(floor.y0,cy*1000);
+      const tw=Math.min(floor.x1,cx*1000+1000)-tx,th=Math.min(floor.y1,cy*1000+1000)-ty;
       image(tile, tx, ty, tw, th, (tx - cx * 1000) * .5, (ty - cy * 1000) * .5, tw * .5, th * .5);
     }
+  }
 }
 function drawNM0LabWall(b) {
   const rise = b.hqWall === 'AIRLOCK' ? 16 : 24;
@@ -29137,8 +29399,10 @@ function drawUI() {
   if (currentLevel === 8) {
       const row = combatLayout.status.hq;
       // Calculate enemies remaining in HQ
-      let hqEnemies = enemiesList.filter(e => !e.isFriendly && e.hp > 0 && !e.dead).length;
-      let hqRatio = max(0, hqEnemies) / 20; 
+      const office=NM0_OFFICES.find(r=>nm0OfficeOpened[r.id]&&player.x*r.side>1000);
+      const room=office?office.id:'MAIN';
+      let hqEnemies = nm0HqRoomRemaining(room);
+      let hqRatio = max(0, hqEnemies) / (office?office.guards.length:20);
       
       fill(50, 200); noStroke(); 
       rect(20, row.barY, 200, 5, 2);
@@ -29147,7 +29411,8 @@ function drawUI() {
       rect(20, row.barY, 200 * hqRatio, 5, 2);
       
       fill(255, 150, 150); textAlign(LEFT, TOP); hudTextFont(true); textSize(12);
-      text("NM-0 HQ ENEMIES: " + hqEnemies, 22, row.labelY);
+      text((office?'NM-0 '+office.id+': ':'NM-0 HQ ENEMIES: ') + hqEnemies, 22, row.labelY);
+      if(window.nm0LightKey){drawNM0LightSymbol(231,row.labelY+6,5);fill(244,222,153);textSize(10);text('LIGHT KEY',242,row.labelY);}
       textStyle(NORMAL);
   }
   if (nm0AmbushActive) {
@@ -31429,6 +31694,7 @@ function saveGame() {
     let state = {
         currentLevel, isStoryMode, isHardMode, score, totalKills,
         undergroundRoute:serializeUndergroundRoute(),occult:currentLevel===9?serializeOccultState():null,
+        nm0Hq:serializeNM0Hq(),
         smgUnlocked, dualSmgUnlocked, shotgunUnlocked, arUnlocked, rocketLauncherUnlocked, taserUnlocked,
         jetpackUnlocked, meleeUnlocked, jetpackFireExplosion, jetpackDoubleDash, meleeComboUnlocked, meleeFinisherUnlocked: window.meleeFinisherUnlocked,
         ninjaSuitUnlocked, explosiveArmorUnlocked, chemistSuitUnlocked, ninjaOwned: window.ninjaOwned, armorOwned: window.armorOwned, chemistOwned: window.chemistOwned,
@@ -31652,6 +31918,7 @@ function loadGame() {
         window.militaryToBringF = Array.isArray(state.escortRoster) ? militaryCount(state.militaryPendingF) : militaryCount(state.militaryToBringF);
 
         startAtLevel(state.currentLevel, true); // Preserve saved equipment during level entry.
+        restoreNM0Hq(state.nm0Hq,state.nm0HqCleared);
 
         // --- CRITICAL FIX: Restore flags AFTER startAtLevel so they don't get overwritten! ---
         window.towersDefeated = state.towersDefeated; 
