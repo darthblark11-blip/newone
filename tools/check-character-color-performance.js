@@ -54,7 +54,7 @@ window.__checkColors=()=>{
   await page.setContent('<!doctype html><script>Object.defineProperty(window,\'localStorage\',{value:{getItem:()=>null,setItem:()=>{},removeItem:()=>{}}});</script><script>'+p5+'</script><script>'+source+'</script><script>'+fixture+'</script>');
   await page.waitForFunction(()=>window.__ready);const result=await page.evaluate(()=>window.__checkColors());
   assert.deepEqual(errors,[]);assert.deepEqual(result.failures,[]);
-  if(['1.11.10','1.11.11'].includes(result.version))assert.equal(result.colorCalls,0,'Verified RGB palettes must allocate no native Color objects');
+  if(['1.9.4','1.11.10','1.11.11'].includes(result.version))assert.equal(result.colorCalls,0,'Verified RGB palettes must allocate no native Color objects');
   else assert.ok(result.colorCalls>0,'Other p5 versions retain native color conversion');
   assert.ok(result.cacheSize<=1024,'Palette cache stays bounded');
   console.log(JSON.stringify({p5:result.version,checks:result.count,nativeColorCallsFor1000Paints:result.colorCalls,cacheSize:result.cacheSize}));

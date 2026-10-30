@@ -28,9 +28,10 @@ const COMBAT_STANCES = ['STAND', 'CROUCH', 'PRONE'];
 const STANDING_STANCE_POSE = {crouch:0,prone:0,scaleX:1,scaleY:1,forward:0,muzzleForward:0,muzzleSide:0,uiOffset:0};
 const STANCE_HOLD_MS = 200, PRONE_DIVE_MS = 700, PRONE_DIVE_DISTANCE = 220, PRONE_DIVE_LEVEL_MS = 65;
 const stanceInput = {crouch:false,prone:false,hold:null};
+const STANCE_EXCLUDED_TYPES = new Set(['ARMORED','ROBOT','SNAIL_HYBRID','ALIEN_GATOR','COW','HORSE','BUG','SNAIL','AERIAL','AERIAL_PISTOL','SAUCER','SAUCER_RED']);
 function actorCanUseStances(a) {
   return !!a && !a.isNM0Scientist && !a.isCorpse && !isOccultActor(a) && (a.isPlayer || ragHumanoid(a.eType,a.bodyW)) &&
-    !['ARMORED','ROBOT','SNAIL_HYBRID','ALIEN_GATOR','COW','HORSE','BUG','SNAIL','AERIAL','AERIAL_PISTOL','SAUCER','SAUCER_RED'].includes(a.eType);
+    !STANCE_EXCLUDED_TYPES.has(a.eType);
 }
 function combatStanceContext() {
   return started&&!isPaused&&!isDead&&!isWin&&!killcamMode&&!inStoryIntro&&!inStoryRoom&&
@@ -56,8 +57,13 @@ function resetActorStance(a,name='STAND') {
   a._stanceClearAngle=Number.isFinite(a.aimAngle)?a.aimAngle:0;
 }
 function actorStancePose(a) {
-  if(!a||actorStanceSuppressed(a)||!a.stance)return STANDING_STANCE_POSE;
+  if(!a||!a.stance)return STANDING_STANCE_POSE;
+  // Collision/steering probes ask for this pose many times per actor. A zero
+  // effective stance is standing regardless of suppression; reserve the full
+  // eligibility/boxing/depth checks for an actual lowered pose. Cover still
+  // resolves first so a standing actor ducking behind a low wall is preserved.
   const v=coverStanceLevel(a);if(!(v>0))return STANDING_STANCE_POSE;
+  if(actorStanceSuppressed(a))return STANDING_STANCE_POSE;
   const p=a._stancePose||(a._stancePose={});
   p.prone=Math.max(0,v-1);p.crouch=Math.min(1,v)*(1-p.prone);
   // Camera height changes uniformly. Bent joints, not a squashed standing
@@ -719,10 +725,18 @@ function coverMovementIntent(a,dx,dy,rawX=dx,rawY=dy) {
   result.x=dx-c.nx*outward;result.y=dy-c.ny*outward;return result;
 }
 function coverRayClear(x0,y0,x1,y1,radius=0) {
+  const minX=Math.min(x0,x1),minY=Math.min(y0,y1),maxX=Math.max(x0,x1),maxY=Math.max(y0,y1);
   const candidates=activeBuildings.length<=16?activeBuildings:crowdSolidCandidates(_coverRayIndex,activeBuildings,
-    Math.min(x0,x1)-radius,Math.min(y0,y1)-radius,Math.max(x0,x1)+radius,Math.max(y0,y1)+radius,_coverRayCandidates,false);
+    minX-radius,minY-radius,maxX+radius,maxY+radius,_coverRayCandidates,false);
   for(let i=0;i<candidates.length;i++) {
-    const b=candidates[i];if(coverSolidKind(b)!=='HIGH')continue;
+    const b=candidates[i];
+    // A cell can hold many props beside this short head/muzzle sweep. Reject
+    // their real bounds before material flags, gate state and cached rects.
+    // Unusual dimensions and parked-car overrides retain the native solver.
+    if(b&&radius>=0&&b.w>0&&b.h>0&&!b.isParkingCar&&
+        (b.x+b.w/2+radius<minX||b.x-b.w/2-radius>maxX||
+         b.y+b.h/2+radius<minY||b.y-b.h/2-radius>maxY))continue;
+    if(coverSolidKind(b)!=='HIGH')continue;
     const rects=coverSolidRects(b);
     for(let ri=0;ri<rects.length;ri++) {
       const r=rects[ri];
@@ -10555,8 +10569,7 @@ function shovelPlayerDepth(e=player) {
   return e&&!SHOVEL_AIRBORNE_TYPES.has(e.eType)&&currentLevel>=1&&currentLevel<=7&&e.shovelLevel===currentLevel&&Number.isFinite(e.shovelDepth)?
     Math.max(0,Math.min(SHOVEL.maxDepth,e.shovelDepth)):0;
 }
-function shovelSurfaceFallCell(e) {
-  const c=shovelCellAt(e.x,e.y);
+function shovelSurfaceFallCell(e,c=shovelCellAt(e.x,e.y)) {
   if(!c||!c.open)return null;
   const b=shovelPitOpeningBounds(c);
   return e.x>=b[0]&&e.x<=b[2]&&e.y>=b[1]&&e.y<=b[3]?c:null;
@@ -10916,7 +10929,10 @@ function shovelSyncPlayerCell(e) {
   if(e&&e.shovelMantle)return;
   if(!shovelActorCanFall(e)||currentLevel<1||currentLevel>7)return;
   const key=shovelCellKey(Math.floor(e.x/SHOVEL.cell),Math.floor(e.y/SHOVEL.cell));
-  const cell=shovelCellAt(e.x,e.y),depth=shovelPlayerDepth(e);
+  // Movement and actor simulation both visit this path for every grounded
+  // body. Reuse the key and cell already read here when testing the mouth;
+  // rebuilding the same string and looking up the same cell adds no geometry.
+  const cell=shovelExcavation[key]||null,depth=shovelPlayerDepth(e);
   if(e._shovelCellKey!==key) {
     if(depth<.5)e.shovelClimbing=false;
     if(depth>.5) {
@@ -10926,13 +10942,13 @@ function shovelSyncPlayerCell(e) {
       if(!cell&&depth>=SHOVEL.underground){e.shovelDepth=0;e.shovelDepthTarget=0;e._shovelFall=null;}
       else e.shovelDepthTarget=cell?cell.depth:0;
       e.shovelClimbing=false;
-    } else if(!e.shovelClimbing&&shovelSurfaceFallCell(e))e.shovelDepthTarget=cell.depth;
+    } else if(!e.shovelClimbing&&shovelSurfaceFallCell(e,cell))e.shovelDepthTarget=cell.depth;
     else if(!e.shovelDigTimer)e.shovelDepthTarget=0;
     e._shovelCellKey=key;
   }
   // Crossing a narrow mouth can happen within the same logical grid square.
   // A climb that has reached the rim stays there until the actor walks away.
-  if(depth<.5&&!e.shovelClimbing&&!(e.shovelDepthTarget>0)&&shovelSurfaceFallCell(e))
+  if(depth<.5&&!e.shovelClimbing&&!(e.shovelDepthTarget>0)&&shovelSurfaceFallCell(e,cell))
     e.shovelDepthTarget=cell.depth;
   if(depth>.5&&cell&&!e.shovelClimbing&&cell.depth>(e.shovelDepthTarget||0))
     e.shovelDepthTarget=cell.depth;
@@ -10999,6 +11015,9 @@ function shovelUpdateActor(e,dtMs) {
   const fallDt=Math.max(0,dt-Math.min(dt,wait));
   if(to<=from || drivingDown || e.shovelClimbing) {
     e._shovelFall=null;
+    // Most of an army is already standing on its floor. Settled depth is
+    // exact, so avoid evaluating a decay whose multiplier would be zero.
+    if(from===to){e.shovelDepth=to;return;}
     e.shovelDepth=from+(to-from)*(1-Math.exp(-fallDt/(drivingDown?50:75)));
     if(Math.abs(e.shovelDepth-to)<.05)e.shovelDepth=to;
     return;
@@ -27449,10 +27468,15 @@ function coverLowBlocks(zone,shooter=null,target=null,launchLowOverride=null) {
 const _coverShotIndex=newCrowdSolidIndex(2),_coverShotCandidates=[],_coverShotCars=[];
 function coverLineClear(x1,y1,x2,y2,zone='BODY',shooter=null,target=null,launchLowOverride=null) {
     const low=coverLowBlocks(zone,shooter,target,launchLowOverride);
+    const minX=Math.min(x1,x2),minY=Math.min(y1,y2),maxX=Math.max(x1,x2),maxY=Math.max(y1,y2);
     const solids=activeBuildings.length<=16?activeBuildings:crowdSolidCandidates(_coverShotIndex,activeBuildings,
-        Math.min(x1,x2),Math.min(y1,y2),Math.max(x1,x2),Math.max(y1,y2),_coverShotCandidates,false);
+        minX,minY,maxX,maxY,_coverShotCandidates,false);
     for(let i=0;i<solids.length;i++) {
-        const solid=solids[i],kind=coverSolidKind(solid);
+        const solid=solids[i];
+        if(solid&&solid.w>0&&solid.h>0&&!solid.isParkingCar&&
+            (solid.x+solid.w/2<minX||solid.x-solid.w/2>maxX||
+             solid.y+solid.h/2<minY||solid.y-solid.h/2>maxY))continue;
+        const kind=coverSolidKind(solid);
         if(!kind||kind==='LOW'&&!low)continue;
         const rects=coverSolidRects(solid);
         for(let j=0;j<rects.length;j++) {
@@ -27481,10 +27505,15 @@ const _coverBulletBlock={t:Infinity,solid:null,car:false};
 function coverBulletBlock(b) {
     const hit=_coverBulletBlock;hit.t=Infinity;hit.solid=null;hit.car=false;
     const low=coverLowBlocks(b.tH,b.shooter,null,b.coverLaunchLow);
+    const minX=Math.min(b.prevX,b.x),minY=Math.min(b.prevY,b.y),maxX=Math.max(b.prevX,b.x),maxY=Math.max(b.prevY,b.y);
     const solids=activeBuildings.length<=16?activeBuildings:crowdSolidCandidates(_coverShotIndex,activeBuildings,
-        Math.min(b.prevX,b.x),Math.min(b.prevY,b.y),Math.max(b.prevX,b.x),Math.max(b.prevY,b.y),_coverShotCandidates,false);
+        minX,minY,maxX,maxY,_coverShotCandidates,false);
     for(let i=0;i<solids.length;i++) {
-        const solid=solids[i],kind=coverSolidKind(solid);
+        const solid=solids[i];
+        if(solid&&solid.w>0&&solid.h>0&&!solid.isParkingCar&&
+            (solid.x+solid.w/2<minX||solid.x-solid.w/2>maxX||
+             solid.y+solid.h/2<minY||solid.y-solid.h/2>maxY))continue;
+        const kind=coverSolidKind(solid);
         if(!kind||kind==='LOW'&&!low)continue;
         const rects=coverSolidRects(solid);
         for(let j=0;j<rects.length;j++) {
@@ -44072,16 +44101,18 @@ function figurePainter() {
     const numeric = new Map(), objects = new WeakMap();
     const context = renderer.drawingContext;
     const nativeShapes=p5.VERSION==='1.11.11'||p5.VERSION==='1.11.10';
+    const nativeRgb=nativeShapes||p5.VERSION==='1.9.4';
     const ellipseArgs=[0,0,0,0],rectArgs=[0,0,0,0,undefined,undefined,undefined,undefined];
     // p5 1.9.x uses arcTo for rounded rectangles and does not close ellipse
     // paths. Unknown versions keep their own renderer primitives; only the
     // pixel-tested 1.11.10/1.11.11 paths are duplicated below.
-    // In the two verified p5 versions, RGB CSS uses rounded 8-bit colour
+    // All three verified p5 versions use the same RGB CSS conversion, even
+    // though 1.9.4 retains its different native shape paths. RGB CSS uses 8-bit
     // levels but keeps the normalized alpha. Cache those final levels instead
     // of each floating point shade tuple, without constructing a Color and
     // its temporary arrays for every limb. Other modes/inputs keep p5 parsing.
     function rgbPaintString(args) {
-      if(!nativeShapes||inst._colorMode!==RGB)return null;
+      if(!nativeRgb||inst._colorMode!==RGB)return null;
       const input=Array.isArray(args[0])?args[0]:args,n=input.length;
       if(n<1)return null;
       const maxes=inst._colorMaxes[RGB];
@@ -44227,7 +44258,7 @@ function figureCelLight(g) {
 function figureCelContext(g) {
   const inst=typeof p5!=='undefined'?p5.instance:null;
   const r=g._renderer||(inst&&inst._renderer),dc=g.drawingContext;
-  return r&&typeof p5!=='undefined'&&(p5.VERSION==='1.11.11'||p5.VERSION==='1.11.10')&&!r.isP3D&&!r._clipping&&dc&&typeof dc.getTransform==='function'&&
+  return r&&typeof p5!=='undefined'&&(p5.VERSION==='1.11.11'||p5.VERSION==='1.11.10'||p5.VERSION==='1.9.4')&&!r.isP3D&&!r._clipping&&dc&&typeof dc.getTransform==='function'&&
     !(inst&&inst._accessibleOutputs&&(inst._accessibleOutputs.grid||inst._accessibleOutputs.text))?dc:null;
 }
 function figureCelPathStart(g,dc,x,y) {
@@ -44238,7 +44269,7 @@ function figureCelPathCurve(g,dc,x1,y1,x2,y2,x,y) {
 }
 function figureCelPathEnd(g,dc,ink,x,y) {
   if(dc){
-    // p5 1.11.11 appends the first vertex in both endShape and Renderer2D.
+    // p5 1.9.4 and 1.11.x append the first vertex in both endShape and Renderer2D.
     // Keep those closing segments too: they affect antialiasing at the seam.
     dc.lineTo(x,y);dc.lineTo(x,y);dc.closePath();dc.fill();if(ink)dc.stroke();
   }else g.endShape(CLOSE);
@@ -44301,13 +44332,17 @@ function figureCelLimb(g, sx, sy, ex, ey, hx, hy, w0, w1, w2, c) {
   let tx=ex-sx,ty=ey-sy,ux=hx-ex,uy=hy-ey;
   const tl=Math.hypot(tx,ty),ul=Math.hypot(ux,uy);
   if(tl+ul<.1){figureCelOval(g,sx,sy,w0,w0,c,.8);return;}
+  let tlen=tl,ulen=ul;
   // A fully foreshortened bone has no visible elbow. Merge its cross-section
   // into the remaining surface so the shade cannot fold outside the outline.
   if(tl<.01||ul<.01){
     ex=(sx+hx)*.5;ey=(sy+hy)*.5;w1=(w0+w2)*.5;
     tx=ex-sx;ty=ey-sy;ux=hx-ex;uy=hy-ey;
+    tlen=Math.hypot(tx,ty);ulen=Math.hypot(ux,uy);
   }
-  const tlen=Math.hypot(tx,ty)||1,ulen=Math.hypot(ux,uy)||1;
+  // Most limbs kept their original bones: normalize with the lengths already
+  // measured for the collapsed-joint test, rather than rooting each twice.
+  tlen=tlen||1;ulen=ulen||1;
   tx/=tlen;ty/=tlen;ux/=ulen;uy/=ulen;
   let mx=-ty-uy,my=tx+ux;const ml=Math.hypot(mx,my);
   if(ml<.1){mx=-ty;my=tx;}else{mx/=ml;my/=ml;}
@@ -58331,8 +58366,17 @@ function wildlifeSpawnAllowed(s, x, y) {
   const probe = { species: s.id, bodyR: s.size * 1.10, airborne: false, placement: true };
   return wildlifeCanStand(probe, x, y);
 }
+function wildlifeEncountersAllowed() {
+  if (!BIOME_ACTIVE || currentLevel !== 2 || currentBiome !== 2 || !player || nm0AmbushActive) return false;
+  // The starting compound is not the forest. Reuse its cached outer wall/gate
+  // bounds so blowing a door does not enable distant herds before we leave it.
+  // No new saved escape flag is needed, including for old or returned saves.
+  const bounds = sealedSector ? shovelPassiveSectorBounds() : null;
+  return !bounds || player.x < bounds.x0 || player.x > bounds.x1 ||
+    player.y < bounds.y0 || player.y > bounds.y1;
+}
 function wildlifeSpawnEncounter() {
-  if (!player || forestWildlife.length >= WILDLIFE_MAX_ACTORS - 4) return 0;
+  if (!wildlifeEncountersAllowed() || forestWildlife.length >= WILDLIFE_MAX_ACTORS - 4) return 0;
   const cx = (viewLeft + viewRight) / 2, cy = (viewTop + viewBottom) / 2;
   const halfW = Math.max(250, (viewRight - viewLeft) / 2), halfH = Math.max(180, (viewBottom - viewTop) / 2);
   // Probes use the actual camera rectangle, including pan/zoom. A member of a
@@ -58465,8 +58509,13 @@ function updateForestWildlife(dt, elapsedMs) {
       inDarchonCall || inTownCutscene || inFarmCutscene || inFarmPostCutscene ||
       inPostAmbushCutscene || inFortCutscene || inWorldBuildingMenu || player.hp <= 0) return;
   _wildlifeLastBiome = 2; _wildlifeClock += dt;
-  _wildlifeSpawnClock -= dt;
-  if (_wildlifeSpawnClock <= 0) { wildlifeSpawnEncounter(); _wildlifeSpawnClock = 180; }
+  // Suspend only new encounters during the army fight and inside its opening
+  // compound. Existing animals, wounds and corpses retain their normal timing.
+  if (wildlifeEncountersAllowed()) {
+    _wildlifeSpawnClock -= dt;
+    if (_wildlifeSpawnClock <= 0) { wildlifeSpawnEncounter(); _wildlifeSpawnClock = 180; }
+  }
+  if (!forestWildlife.length) return;
   const far = Math.max(2800, Math.hypot(viewRight - viewLeft, viewBottom - viewTop) + 1900), far2 = far * far;
   for (let i = forestWildlife.length - 1; i >= 0; i--) {
     const a = forestWildlife[i]; a.clock += dt;

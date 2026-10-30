@@ -272,7 +272,11 @@ forces a habitat-compatible rare encounter after 18 successful common encounters
 Encounter placement checks each herd member against the actual camera rectangle,
 loaded chunks, solids, roads, crossings, authored geometry and fortress yards.
 
-The manager rolls an encounter every 180 simulation ticks. Collision probes are
+The manager rolls an encounter every 180 simulation ticks. New encounters are
+held during NM-0 ambushes and while the player remains within the starting
+compound's outer walls/gates. Existing animals, wounds and corpse lifetimes
+continue normally; the empty wildlife manager skips grid work during the fight.
+Collision probes are
 staggered over four frames; cached velocities move each frame. A pooled 128-unit
 spatial grid services projectile, ground-contact and throttled noise queries.
 Human sensing runs every eight ticks, reusing local army buckets with a fixed
