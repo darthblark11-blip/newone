@@ -110,9 +110,31 @@ ok('a sword finisher retains its launch shake even in empty space', P('shockwave
 fresh();probe(`player.meleeTimer=0;window.swordWave=new Shockwave(200,200,0,true,player);
   particles=[];frameCount++;swordWave.update();`);
 ok('a surviving sword finisher keeps simulation active with its bar and directional blood',
-  P('doTick&&swordVictim.hp===770&&!!swordVictim.swordHitFeedback&&corpses.length===0') && floor.length===1 && Math.abs(floor[0].angle)<1e-8);
+  P('doTick&&swordVictim.hp===400&&!!swordVictim.swordHitFeedback&&corpses.length===0') && floor.length===1 && Math.abs(floor[0].angle)<1e-8);
 probe('frameCount++;swordWave.update();');
-ok('the same finisher cannot damage or deposit blood on its target twice', P('swordVictim.hp===770') && floor.length===1);
+ok('the same finisher cannot damage or deposit blood on its target twice', P('swordVictim.hp===400') && floor.length===1);
+
+for(const suit of ['NONE','NINJA','CHEMIST','EXPLOSIVE'])for(const hp of [501,500,499]) {
+  fresh('NORMAL',hp);
+  probe(`ninjaSuitUnlocked=${suit==='NINJA'};chemistSuitUnlocked=${suit==='CHEMIST'};
+    explosiveArmorUnlocked=${suit==='EXPLOSIVE'};player.meleeTimer=0;
+    window.swordBoundaryWave=new Shockwave(200,200,0,true,player);frameCount++;swordBoundaryWave.update();`);
+  ok(suit+' sword finisher deals exactly 500 HP at the survival boundary '+hp,
+    P('swordVictim.hp')===hp-500&&P('doTick'));
+  ok(suit+' finisher keeps the native surviving or explosive-death path at '+hp,
+    hp>500?P('!swordVictim.dead&&corpses.length===0&&!!swordVictim.swordHitFeedback'):
+      P('swordVictim.dead&&corpses.length===1&&!!corpses[0].blast&&!corpses[0].sword&&!swordVictim.swordHitFeedback'));
+}
+for(const suit of ['NONE','NINJA','CHEMIST','EXPLOSIVE']) {
+  fresh();probe(`ninjaSuitUnlocked=${suit==='NINJA'};chemistSuitUnlocked=${suit==='CHEMIST'};
+    explosiveArmorUnlocked=${suit==='EXPLOSIVE'};`);strike();
+  ok(suit+' normal sword swing retains its existing 200 HP damage', P('swordVictim.hp===700'));
+}
+for(const ninja of [false,true]) {
+  fresh('NORMAL',900,'PICKAXE');probe(`ninjaSuitUnlocked=${ninja};player.meleeTimer=0;
+    window.nonSwordWave=new Shockwave(200,200,0,false,player);frameCount++;nonSwordWave.update();`);
+  ok('a non-sword finisher retains its authored '+(ninja?'156':'130')+' HP damage', P('swordVictim.hp')===900-(ninja?156:130));
+}
 
 for (const stance of ['STAND','CROUCH','PRONE']) {
   fresh();probe(`resetActorStance(swordVictim,'${stance}');`);strike();

@@ -13,7 +13,7 @@ ok('HQ stays a closed indoor map', P('currentLevel===8 && !BIOME_ACTIVE && chunk
 ok('all four laboratory fixtures are authored',
   P("['CONSOLE','BENCH','CLONE_POD','CABINET'].every(kind=>buildings.some(b=>b.hqProp===kind))"));
 ok('the main lab keeps eight specimen capsules and adds two cover computer stations',
-  P("buildings.filter(b=>b.hqProp==='CLONE_POD').length===8 && buildings.filter(b=>b.hqProp==='CONSOLE'&&!b.hqOffice).length===16"));
+  P("buildings.filter(b=>b.hqProp==='CLONE_POD'&&!b.hqWhiteLab).length===8 && buildings.filter(b=>b.hqProp==='CONSOLE'&&!b.hqOffice&&!b.hqWhiteLab).length===16"));
 ok('each side office has eight physical computer workstations',
   P("NM0_OFFICES.every(o=>buildings.filter(b=>b.hqProp==='CONSOLE'&&b.hqOffice===o.id).length===8)"));
 ok('the original secret door and blueprint coordinates remain',

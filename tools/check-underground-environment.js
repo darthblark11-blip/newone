@@ -65,7 +65,7 @@ ok('baked textures and animated torch art consume no gameplay randomness',random
 probe('resetUndergroundEnvironment();');
 ok('leaving the floor releases every cached surface once',removed===graphics&&P('undergroundFloorCache.size===0'));
 probe('viewLeft=-1050;viewRight=1050;viewTop=-2600;viewBottom=-2200;drawHQBranchDoors();');
-ok('three northern HQ doors still reserve separate routes',P("HQ_BRANCH_DOORS.length===3&&HQ_BRANCH_DOORS.filter(d=>!d.sealed).length===1&&HQ_BRANCH_DOORS[1].x===0"));
-ok('the two outer HQ doors stay sealed while only the middle descends',P("HQ_BRANCH_DOORS.filter(d=>d.sealed).every(d=>Math.abs(d.x)===720)&&HQ_BRANCH_DOORS[1].label==='DESCENT'"));
+ok('three northern HQ doors retain one central descent and one keyed lab branch',P("HQ_BRANCH_DOORS.length===3&&HQ_BRANCH_DOORS.filter(d=>!d.sealed&&!d.lightKey).length===1&&HQ_BRANCH_DOORS[1].x===0"));
+ok('the northwest lab uses the Light Key while the eastern branch remains sealed',P("HQ_BRANCH_DOORS.filter(d=>d.sealed).length===1&&HQ_BRANCH_DOORS.find(d=>d.sealed).x===720&&HQ_BRANCH_DOORS.some(d=>d.x===-720&&!d.sealed&&d.lightKey)&&HQ_BRANCH_DOORS[1].label==='DESCENT'"));
 ctx.random=nativeRandom;ctx.createGraphics=nativeGraphics;
 console.log(`${checks}/${checks} underground authored geometry, access, cache and rendering checks passed`);

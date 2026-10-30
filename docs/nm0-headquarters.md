@@ -4,8 +4,9 @@ Level 8 is a closed authored interior entered from Stick City's north gate.
 The main laboratory preserves its entrance, twenty armored pistol guards,
 archive door at `(0,-800)`, armor blueprint at `(0,-2000)`, and surface exit.
 The north wall now reserves three branch doors. The center `DESCENT` door
-opens a yes/no prompt for the downward-only lift to Level 9; the northwest and
-northeast wings remain sealed. See [NM-0 descent and underground chamber](underground-occult.md).
+opens a yes/no prompt for the downward-only lift to Level 9. The northwest
+Photon Lab uses the east office's Light Key; the northeast wing stays sealed.
+See [NM-0 descent and underground chamber](underground-occult.md).
 
 The laboratory has inset composite floor panels, service grates, cyan aisle
 guides, containment markings and paneled cutaway walls. Computer banks,
@@ -37,9 +38,35 @@ The east office contains one **Light Key** card on the records desk at
 `(2670,-340)`. Its symbol is a circle with a dot in the center. Approach the
 desk and use **TAKE LIGHT KEY** with the same controls. Acquisition shows the
 name and symbol on the HQ HUD and persists through saves and level travel.
-The card is retained for later use; it does not open the sealed north branches.
+The card unlocks the northwest Photon Lab and remains in the player's inventory.
 HQ saves preserve open side doors, surviving guards and their health, hiding
 scientists and the original archive unlock. Older saves remain compatible.
+
+## Northwest Photon Lab
+
+The northwest door at `(-720,-2440)` opens a real passage through the north
+wall after acquiring the Light Key. Approach it and use **USE LIGHT KEY** with
+touch, **F**, **Enter**, or controller **A**. The threshold remains physically
+blocked without the card. Opening the door keeps the player on the same map.
+
+A white research corridor continues north along `x=-720`, with staggered low
+repair benches and computer cover. It leads into a larger containment room
+centered around a portal machine at `(-720,-5480)`. Twelve finite native
+`NM0_CITY_GUARD` rifle guards defend the corridor and room; their deaths do not
+unlock the main archive or trigger generic replacements. Open access, surviving
+guards, health and ammunition persist through HQ save/load. Older saves begin
+with this wing closed and preserve any Light Key already owned.
+
+The wing uses white composite walls, porcelain floor panels, cyan aisle guides,
+service drains and containment markings. Nineteen solid furniture fixtures
+include computer banks, server racks, tool cabinets and robot repair benches
+with detached chassis, optics, arms and hand tools. The portal device has a
+raised segmented containment ring, cyan field aperture, coil pods and controls.
+It is laboratory machinery; the wing adds no separate travel transition.
+
+The floor shares the existing twenty-four-tile cache. Static detail is baked
+once per resident tile; equipment uses native contact shade, camera lean,
+collision, cover and depth ordering.
 
 Three ambient scientists start within the phone's entrance view, startle, run
 along collision-checked routes and crouch in the south corners. They use native
@@ -60,7 +87,9 @@ node tools/check-nm0-lab.js
 node tools/check-nm0-scientists.js
 node tools/check-nm0-hq-spawning.js
 node tools/check-nm0-offices.js
+node tools/check-nm0-north-lab.js
 VIS_DEPS=/workspace/newone-dev VIS_CHROME=/usr/bin/chromium node tools/visual-nm0-lab.js
+VIS_DEPS=/workspace/newone-dev VIS_CHROME=/usr/bin/chromium node tools/visual-nm0-north-lab.js
 ```
 
 The native p5 replay renders arrival, hallway, clone laboratory, archive,

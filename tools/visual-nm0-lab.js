@@ -3,7 +3,9 @@
 // all walls, furniture, floor, staff and the full draw() remain the game's own.
 const fs = require('node:fs'), path = require('node:path'), assert = require('node:assert/strict');
 const deps = process.env.VIS_DEPS || '/workspace/newone-dev';
-const { chromium } = require(path.join(deps, 'node_modules/playwright'));
+let chromium;
+try { ({ chromium } = require('playwright')); }
+catch { ({ chromium } = require(path.join(deps, 'node_modules/playwright'))); }
 const source = fs.readFileSync(process.env.GAME_JS || path.join(__dirname, '../game.js'), 'utf8');
 const p5 = fs.readFileSync(process.env.VIS_P5 || path.join(deps, 'node_modules/p5/lib/p5.min.js'), 'utf8');
 const out = process.env.NM0_LAB_OUT || '/tmp/newone-nm0-lab';
@@ -89,11 +91,22 @@ fs.mkdirSync(out, { recursive: true });
       const first = await page.evaluate(() => ({ graphics: __labGraphicsCreated,
         tiles: nm0LabFloorCache.size, fault: window.FRAME_FAULT || null }));
       await page.evaluate(() => __labFrame());
-      const state = await page.evaluate(() => ({ graphics: __labGraphicsCreated,
+      const state = await page.evaluate(() => {
+        const visibleFloorTiles = new Set();
+        for (const floor of NM0_LAB_FLOOR_RECTS) {
+          const x0 = Math.max(floor.x0, viewLeft - 80), x1 = Math.min(floor.x1, viewRight + 80);
+          const y0 = Math.max(floor.y0, viewTop - 80), y1 = Math.min(floor.y1, viewBottom + 80);
+          if (x1 <= x0 || y1 <= y0) continue;
+          for (let cy = Math.floor(y0 / 1000); cy < Math.ceil(y1 / 1000); cy++)
+            for (let cx = Math.floor(x0 / 1000); cx < Math.ceil(x1 / 1000); cx++) visibleFloorTiles.add(cx + ',' + cy);
+        }
+        return { graphics: __labGraphicsCreated,
         tiles: nm0LabFloorCache.size, fault: window.FRAME_FAULT || null,
+        visibleFloorTiles: visibleFloorTiles.size,
         guards: enemiesList.length, kills: totalKills, blocked: player.checkCol(player.x, player.y),
         opened: {...nm0OfficeOpened},lightKey:!!window.nm0LightKey,
-        staff: nm0Scientists.map(a => ({ x: a.x, y: a.y, state: a.scientistState, crouch: a.scientistCrouch })) }));
+        staff: nm0Scientists.map(a => ({ x: a.x, y: a.y, state: a.scientistState, crouch: a.scientistCrouch })) };
+      });
       ok(!first.fault && !state.fault, scene.name + ' completes the real frame without a scene fault');
       ok(!state.blocked, scene.name + ' places the player in a clear floor lane');
       ok(state.tiles > 0 && state.tiles <= 24, scene.name + ' keeps floor tiles bounded');
@@ -104,7 +117,7 @@ fs.mkdirSync(out, { recursive: true });
       ok(state.staff.length===3+3*(scene.open||[]).length,scene.name+' preserves the finite staff roster');
       if(scene.open)ok(scene.open.every(id=>state.opened[id]),scene.name+' opens the requested native office doors');
       if(scene.name==='light-key-desk')ok(!state.lightKey,scene.name+' keeps the desk key available for interaction');
-      if(scene.name==='whole-hq-layout')ok(state.tiles===22,scene.name+' covers the complete authored floor union');
+      if(scene.name==='whole-hq-layout')ok(state.tiles===state.visibleFloorTiles,scene.name+' covers every visible tile of the expanded authored floor union');
       if (scene.cover) ok(state.staff.every(a => a.state === 'CROUCH' && a.crouch > .95),
         scene.name + ' staff reach cover and settle into crouching');
       assert.deepEqual(errors, [], scene.name + ' has no browser exceptions');

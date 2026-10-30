@@ -69,7 +69,9 @@ head's render/contact center or the committed head-strike contact arc.
 The central north door in NM-0 headquarters opens a confirmed one-way lift to
 Level 9. Its closed tunnel/chamber uses native collision, damage and corpses,
 with separate bounded Occult Magician spells and a saved encounter. Keep the
-northwest/northeast branches sealed until expanded. Underground lighting has
+northeast branch sealed. The northwest Photon Lab now opens with the east
+office's Light Key into a white corridor shootout and portal research room;
+see [NM-0 headquarters](docs/nm0-headquarters.md). Underground lighting has
 no sun or surface fog: both renderers share the torch/flashlight gather and
 ambient floor. See [NM-0 underground chamber](docs/underground-occult.md).
 Dungeon geometry queries share a revisioned spatial index. Magicians retain

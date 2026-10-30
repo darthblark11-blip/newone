@@ -61,6 +61,8 @@ flash plus a temporary 1.8-second reveal of the existing target health bar.
 The bar holds the lost-health chip briefly before draining it. Each target takes
 damage once per swing. Normal sword swings add no camera shake; the explosive
 finisher retains its original shake.
+Sword finisher contacts deal 500 HP damage per target across all suits;
+ordinary sword swings retain their 200 HP damage.
 
 Each accepted normal sword swing refreshes a one-second active-play combo
 window. After it expires, the next swing starts at phase one rather than

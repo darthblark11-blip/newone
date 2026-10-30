@@ -2860,11 +2860,13 @@ function bakeFrontierSettlementArea(g,biome,ox,oy) {
 
 // Side offices share the HQ map, but own finite guards and persistent access.
 let nm0OfficeOpened={WEST:false,EAST:false};
-function resetNM0Offices(){nm0OfficeOpened={WEST:false,EAST:false};}
+let nm0NorthOpened=false;
+function resetNM0Offices(){nm0OfficeOpened={WEST:false,EAST:false};nm0NorthOpened=false;}
 function createNM0HqGuard(room,index,post){
-  const e=newHostileCharacter(post.x,post.y,'ARMORED_STANDARD');
+  const north=room==='NORTH';
+  const e=newHostileCharacter(post.x,post.y,north?'NM0_CITY_GUARD':'ARMORED_STANDARD');
   e.nm0HqGuardId=room+'-'+index;e.nm0HqRoom=room;
-  e.currentWeapon=room!=='MAIN'&&index%3===2?WEAPONS.ASSAULT_RIFLE:WEAPONS.PISTOL;
+  e.currentWeapon=north||room!=='MAIN'&&index%3===2?WEAPONS.ASSAULT_RIFLE:WEAPONS.PISTOL;
   e.ammo=e.currentWeapon.maxAmmo;
   if(room!=='MAIN'){
     e.state='CHASE';e.loseSightTimer=1200;
@@ -2878,11 +2880,12 @@ function nm0HqRoomRemaining(room='MAIN'){
   return count;
 }
 function syncNM0OfficeDoors(){
-  buildings=buildings.filter(b=>!b.nm0OfficeDoor);
+  buildings=buildings.filter(b=>!b.nm0OfficeDoor&&!b.nm0NorthDoor);
   for(const room of NM0_OFFICES)if(!nm0OfficeOpened[room.id])
     buildings.push({...room.door,isWall:true,hqWall:'OFFICE_DOOR',nm0OfficeDoor:room.id});
-  activeBuildings=activeBuildings.filter(b=>!b.nm0OfficeDoor);
-  for(const b of buildings)if(b.nm0OfficeDoor)activeBuildings.push(b);
+  if(!nm0NorthOpened)buildings.push({...NM0_NW_LAB.door,isWall:true,hqWall:'WHITE_LAB',nm0NorthDoor:true});
+  activeBuildings=activeBuildings.filter(b=>!b.nm0OfficeDoor&&!b.nm0NorthDoor);
+  for(const b of buildings)if(b.nm0OfficeDoor||b.nm0NorthDoor)activeBuildings.push(b);
   // Door changes invalidate both the cull and collision index on this frame.
   lastActiveUpdate=-1000;invalidateColIndex();
 }
@@ -2892,6 +2895,9 @@ function nm0OfficeInteraction(){
   const east=NM0_OFFICES.find(r=>r.id==='EAST');
   if(!window.nm0LightKey&&nm0OfficeOpened.EAST&&
       Math.hypot(player.x-east.key.x,player.y-east.key.y)<145)return {kind:'KEY',room:east,label:'TAKE LIGHT KEY'};
+  if(!nm0NorthOpened&&Math.abs(player.x-NM0_NW_LAB.door.x)<160&&
+      Math.abs(player.y-NM0_NW_LAB.door.y)<190)
+    return {kind:'NORTH_DOOR',room:NM0_NW_LAB,label:window.nm0LightKey?'USE LIGHT KEY':'LIGHT KEY NEEDED'};
   for(const room of NM0_OFFICES)if(!nm0OfficeOpened[room.id]&&
       Math.abs(player.x-room.door.x)<180&&Math.abs(player.y-room.door.y)<140)
     return {kind:'DOOR',room,label:'OPEN OFFICE'};
@@ -2903,7 +2909,16 @@ function useNM0OfficeInteraction(){
     window.nm0LightKey=true;streakMsgText='LIGHT KEY ACQUIRED';streakMsgTimer=180;sfx.charge();
     return true;
   }
+  if(action.kind==='NORTH_DOOR')return openNM0NorthLab();
   return openNM0Office(action.room.id);
+}
+function openNM0NorthLab(){
+  if(currentLevel!==8||nm0NorthOpened||!window.nm0LightKey||!player||player.hp<=0||
+      !started||isPaused||isDead||isWin||killcamMode||!combatStanceContext())return false;
+  nm0NorthOpened=true;syncNM0OfficeDoors();
+  for(let i=0;i<NM0_NW_LAB.guards.length;i++)enemiesList.push(createNM0HqGuard('NORTH',i,NM0_NW_LAB.guards[i]));
+  streakMsgText='LIGHT KEY / RESEARCH WING UNLOCKED';streakMsgTimer=180;sfx.charge();
+  return true;
 }
 function openNM0Office(id){
   const room=NM0_OFFICES.find(r=>r.id===id);
@@ -2951,6 +2966,7 @@ function serializeNM0Hq(){
   const state={version:1,lightKey:!!window.nm0LightKey};
   if(currentLevel!==8)return state;
   state.opened={...nm0OfficeOpened};state.mainCleared=!!window.nm0HqCleared;
+  state.northOpened=nm0NorthOpened;
   state.guards=enemiesList.filter(e=>e.nm0HqGuardId&&!e.dead&&e.hp>0).map(e=>({
     id:e.nm0HqGuardId,room:e.nm0HqRoom,x:e.x,y:e.y,hp:e.hp,ammo:e.ammo,
     weapon:e.currentWeapon===WEAPONS.ASSAULT_RIFLE?'ASSAULT_RIFLE':'PISTOL'}));
@@ -2962,18 +2978,22 @@ function restoreNM0Hq(data,legacyCleared=false){
   window.nm0LightKey=!!(data&&data.lightKey);
   if(currentLevel!==8)return;
   if(!data||!Array.isArray(data.guards)){
+    nm0NorthOpened=false;syncNM0OfficeDoors();
     window.nm0HqCleared=!!legacyCleared;
     if(legacyCleared)enemiesList=enemiesList.filter(e=>e.nm0HqRoom!=='MAIN');
     return;
   }
+  nm0NorthOpened=!!data.northOpened&&!!window.nm0LightKey;
   nm0OfficeOpened={WEST:!!data.opened?.WEST,EAST:!!data.opened?.EAST};syncNM0OfficeDoors();
   enemiesList=enemiesList.filter(e=>!e.nm0HqGuardId);
   const used=new Set();
-  for(const saved of data.guards.slice(0,36)){
-    const room=NM0_OFFICES.find(r=>r.id===saved.room),count=saved.room==='MAIN'?20:room&&nm0OfficeOpened[room.id]?room.guards.length:0;
+  for(const saved of data.guards.slice(0,36+NM0_NW_LAB.guards.length)){
+    const room=saved.room==='NORTH'?NM0_NW_LAB:NM0_OFFICES.find(r=>r.id===saved.room);
+    const open=room&&(room.id==='NORTH'?nm0NorthOpened:nm0OfficeOpened[room.id]);
+    const count=saved.room==='MAIN'?20:open?room.guards.length:0;
     const index=Number(String(saved.id).split('-').pop());
     if(!Number.isInteger(index)||index<0||index>=count||saved.id!==saved.room+'-'+index||used.has(saved.id)||
-       !Number.isFinite(saved.x)||!Number.isFinite(saved.y)||!(saved.hp>0))continue;
+       !Number.isFinite(saved.x)||!Number.isFinite(saved.y)||!Number.isFinite(saved.hp)||!(saved.hp>0))continue;
     used.add(saved.id);
     const post=saved.room==='MAIN'?nm0HqGuardPost(index):room.guards[index];
     const e=createNM0HqGuard(saved.room,index,post);
@@ -5451,6 +5471,10 @@ function legacyBaseOf(b) {
 // NM-0's lab furniture uses the same camera lean as the outdoor architecture,
 // but its shadows stay close to the base under the ceiling's work lights.
 function nm0LabPropRise(b) {
+  if(b.hqProp==='PORTAL_MACHINE')return 58;
+  if(b.hqProp==='SERVER_BANK')return 36;
+  if(b.hqProp==='TOOL_CABINET')return 29;
+  if(b.hqProp==='ROBOT_BENCH')return 18;
   return b.hqProp === 'CLONE_POD' ? 46 : b.hqProp === 'CONSOLE' ? 24 : b.hqProp === 'CABINET' ? 28 : 15;
 }
 function drawNM0LabMonitor(x, y, w, h, seed) {
@@ -5476,7 +5500,172 @@ function drawNM0LabFlask(x, y, r, green) {
   stroke(226, 255, 245, 180); line(x - r * .35, y - r * .02, x - r * .22, y + r * .18);
   stroke(83, 113, 120); line(x - r * .3, y - r, x + r * .3, y - r); noStroke();
 }
+const _nm0WhitePropLean=[0,0],_nm0WhiteWallLean=[0,0];
+function drawNM0LabTool(x,y,size,angle,driver=false) {
+  push();translate(x,y);rotate(angle);stroke(45,65,76);strokeWeight(size*.28);
+  line(-size*.40,0,size*.36,0);stroke(178,199,208);strokeWeight(size*.15);
+  line(-size*.40,-size*.025,size*.36,-size*.025);
+  if(driver){
+    stroke(25,75,92);strokeWeight(size*.28);line(-size*.52,0,-size*.15,0);
+    stroke(85,192,203);strokeWeight(size*.07);line(-size*.48,-size*.05,-size*.20,-size*.05);
+  }else{
+    noFill();stroke(48,68,80);strokeWeight(size*.17);
+    arc(-size*.45,0,size*.30,size*.35,.75,Math.PI*2-.75);
+    arc(size*.43,0,size*.30,size*.35,Math.PI+.75,Math.PI*3-.75);
+  }
+  pop();
+}
+function drawNM0RobotBench(w,h,seed) {
+  const x=-w/2,y=-h/2;
+  noStroke();fill(30,64,74);rect(x+10,y+10,w*.65,h-24,3);
+  stroke(92,151,157,90);strokeWeight(.7);
+  for(let i=1;i<5;i++)line(x+14,y+10+i*(h-24)/5,x+w*.64,y+10+i*(h-24)/5);
+  for(let i=1;i<8;i++)line(x+12+i*w*.077,y+14,x+12+i*w*.077,y+h-18);
+  // A detached chassis and separate jointed limbs read as repair work, with
+  // the same steel, black recesses and red optic as the living robots.
+  push();translate(-w*.14,0);rotate(-.14);
+  fill(36,48,59);stroke(23,33,43);strokeWeight(1.5);rect(-w*.095,-h*.25,w*.19,h*.46,4);
+  noStroke();fill(159,179,189);rect(-w*.083,-h*.235,w*.166,h*.17,3);
+  fill(63,85,98);rect(-w*.073,-h*.04,w*.146,h*.19,2);
+  fill(12,26,36);rect(-w*.052,-h*.015,w*.104,h*.13,2);
+  stroke(220,103,70);strokeWeight(1.3);line(-w*.04,h*.015,w*.025,h*.08);
+  stroke(72,213,225);line(-w*.032,h*.095,w*.036,h*.025);
+  noStroke();fill(205,220,225);rect(-w*.062,-h*.36,w*.124,h*.12,3);
+  fill(31,48,61);rect(-w*.049,-h*.337,w*.098,h*.046,1);
+  fill(236,80,70);rect(-w*.029,-h*.333,w*.058,h*.025,1);pop();
+  for(let side=-1;side<=1;side+=2){
+    const lx=w*(side<0?-.36:.09),ly=h*(side<0?.05:.13);
+    stroke(37,55,68);strokeWeight(9);line(lx,ly-h*.20,lx+side*11,ly+h*.04);
+    line(lx+side*11,ly+h*.04,lx+side*4,ly+h*.29);
+    stroke(169,190,199);strokeWeight(5.5);line(lx,ly-h*.19,lx+side*11,ly+h*.04);
+    line(lx+side*11,ly+h*.04,lx+side*4,ly+h*.27);
+    noStroke();fill(47,82,96);ellipse(lx+side*11,ly+h*.04,11,11);
+    fill(122,223,227);ellipse(lx+side*11,ly+h*.04,4,4);
+    stroke(63,87,101);strokeWeight(2);line(lx+side*4,ly+h*.26,lx+side*9,ly+h*.34);
+    line(lx+side*4,ly+h*.26,lx-side*1,ly+h*.34);
+  }
+  drawNM0LabMonitor(x+w*.73,y+11,w*.22,h*.32,seed);
+  noStroke();fill(183,203,210);rect(x+w*.73,y+h*.49,w*.22,h*.39,2);
+  fill(228,236,236);rect(x+w*.75,y+h*.52,w*.18,h*.32,1);
+  drawNM0LabTool(w*.32,h*.10,24,.42);
+  drawNM0LabTool(w*.36,h*.26,22,-.38,true);
+  fill(100,133,144);ellipse(w*.25,h*.27,9,9);fill(29,56,68);ellipse(w*.25,h*.27,4,4);
+  fill(32,72,88);rect(x+12,y+h-9,w*.55,3,1);
+}
+function drawNM0PortalMachine(w,h) {
+  const cy=-h*.055,rx=w*.365,ry=h*.365;
+  noStroke();fill(165,185,195);rect(-w/2+8,-h/2+8,w-16,h-16,18);
+  fill(202,217,223);rect(-w/2+13,-h/2+12,w-26,h-25,15);
+  stroke(127,155,169);strokeWeight(2);noFill();rect(-w/2+23,-h/2+22,w-46,h-45,12);
+  // Exposed conduits enter the containment frame from its four service pods.
+  stroke(30,56,71);strokeWeight(9);noFill();
+  bezier(-w*.43,h*.25,-w*.26,h*.42,-w*.37,-h*.16,-w*.19,-h*.26);
+  bezier(w*.43,h*.25,w*.27,h*.43,w*.39,-h*.15,w*.19,-h*.26);
+  stroke(64,154,175);strokeWeight(2);
+  bezier(-w*.43,h*.25,-w*.26,h*.42,-w*.37,-h*.16,-w*.19,-h*.26);
+  bezier(w*.43,h*.25,w*.27,h*.43,w*.39,-h*.15,w*.19,-h*.26);
+  noStroke();fill(26,48,66);ellipse(0,cy,rx*2.12,ry*2.15);
+  fill(91,120,139);ellipse(0,cy-3,rx*2.02,ry*2.03);
+  fill(226,237,240);ellipse(0,cy-6,rx*1.91,ry*1.90);
+  fill(16,41,57);ellipse(0,cy-6,rx*1.53,ry*1.53);
+  fill(10,29,45);ellipse(0,cy-7,rx*1.37,ry*1.37);
+  // Broad cel facets make the aperture luminous without a frame-sized blur.
+  fill(24,83,112);beginShape();vertex(-rx*.62,cy-ry*.15);vertex(-rx*.18,cy-ry*.64);
+  vertex(rx*.45,cy-ry*.40);vertex(rx*.21,cy+ry*.42);vertex(-rx*.29,cy+ry*.53);endShape(CLOSE);
+  fill(43,135,156,115);beginShape();vertex(-rx*.42,cy-ry*.24);vertex(rx*.13,cy-ry*.56);
+  vertex(rx*.46,cy+ry*.08);vertex(-rx*.11,cy+ry*.45);endShape(CLOSE);
+  noFill();stroke(74,244,246,55);strokeWeight(14);ellipse(0,cy-6,rx*1.56,ry*1.56);
+  stroke(78,230,239);strokeWeight(4);ellipse(0,cy-6,rx*1.57,ry*1.57);
+  stroke(198,255,252);strokeWeight(1.3);ellipse(0,cy-7,rx*1.50,ry*1.50);
+  stroke(100,216,231,100);strokeWeight(1.2);
+  for(let i=0;i<3;i++)bezier(-rx*.50,cy-ry*.22+i*17,-rx*.08,cy-ry*.55+i*24,
+    rx*.49,cy+ry*.02+i*10,rx*.14,cy+ry*.49);
+  // Twelve individually inked casing blocks and bolted seams read as a built
+  // machine surrounding the field, rather than a painted circle on the floor.
+  for(let i=0;i<12;i++){
+    const a=i*Math.PI/6,co=Math.cos(a),si=Math.sin(a),a0=a-.18,a1=a+.18;
+    fill(i%3===0?184:225,i%3===0?204:236,i%3===0?216:239);stroke(82,111,130);strokeWeight(1.6);
+    quad(Math.cos(a0)*rx*.83,cy+Math.sin(a0)*ry*.83-6,
+      Math.cos(a0)*rx*.96,cy+Math.sin(a0)*ry*.96-6,
+      Math.cos(a1)*rx*.96,cy+Math.sin(a1)*ry*.96-6,
+      Math.cos(a1)*rx*.83,cy+Math.sin(a1)*ry*.83-6);
+    noStroke();fill(52,83,102);ellipse(co*rx*.91,cy+si*ry*.91-6,4,4);
+    fill(72,232,238);ellipse(co*rx*.82,cy+si*ry*.82-6,3,3);
+  }
+  for(let side=-1;side<=1;side+=2){
+    const px=side*w*.405;
+    stroke(46,72,90);strokeWeight(2);fill(215,229,233);rect(px-w*.055,-h*.32,w*.11,h*.54,6);
+    noStroke();fill(29,62,82);rect(px-w*.036,-h*.28,w*.072,h*.43,3);
+    for(let i=0;i<7;i++){
+      fill(116,149,166);rect(px-w*.043,-h*.27+i*h*.056,w*.086,h*.026,2);
+      fill(57,225,236);rect(px-w*.032,-h*.255+i*h*.056,w*.064,h*.009,1);
+    }
+    fill(225,178,73);rect(px-6,h*.22,12,4,1);
+  }
+  fill(40,66,84);stroke(23,43,60);strokeWeight(2);rect(-w*.22,h*.31,w*.44,h*.13,5);
+  noStroke();fill(194,215,224);rect(-w*.21,h*.32,w*.42,h*.10,3);
+  drawNM0LabMonitor(-w*.18,h*.325,w*.23,h*.075,7);
+  fill(51,213,225);rect(w*.09,h*.34,w*.04,h*.026,1);
+  fill(232,167,69);rect(w*.15,h*.34,w*.025,h*.026,1);
+  fill(48,82,100);textAlign(CENTER,CENTER);textSize(7);text('FIELD ARRAY',w*.125,h*.395);
+}
+function drawNM0WhiteLabProp(b) {
+  const lean=massLean(b.x,b.y,nm0LabPropRise(b),_nm0WhitePropLean);
+  clampLean(lean,b.hqProp==='PORTAL_MACHINE'?26:18);
+  const x0=b.x-b.w/2,y0=b.y-b.h/2;
+  push();noStroke();fill(28,48,63,35);rect(x0-5,y0-2,b.w+10,b.h+9,6);
+  fill(29,51,66,60);rect(x0,y0,b.w,b.h+4,4);
+  drawMassSides(x0,y0,x0+b.w,y0+b.h,lean[0],lean[1],132,160,177,0);
+  translate(b.x+lean[0],b.y+lean[1]);
+  const facing=b.hqFacing||0,turned=Math.abs(Math.sin(facing))>.7;
+  rotate(facing);const w=turned?b.h:b.w,h=turned?b.w:b.h,x=-w/2,y=-h/2;
+  if(b.hqProp==='PORTAL_MACHINE'){drawNM0PortalMachine(w,h);pop();return;}
+  fill(174,195,207);stroke(53,80,98);strokeWeight(2);rect(x,y,w,h,5);
+  noStroke();fill(234,243,244);rect(x+3,y+3,w-6,h-6,3);
+  fill(255,255,250);rect(x+6,y+4,w-12,3,1);
+  fill(141,174,191);rect(x+5,y+h-9,w-10,5,1);
+  const seed=Math.abs(Math.round(b.x/53+b.y/97));
+  if(b.hqProp==='ROBOT_BENCH'){drawNM0RobotBench(w,h,seed);}
+  else if(b.hqProp==='SERVER_BANK'){
+    fill(37,63,82);rect(x+8,y+8,w-16,h-21,4);
+    const rows=Math.max(3,Math.floor((h-20)/32)),rh=(h-23)/rows;
+    for(let i=0;i<rows;i++){
+      const ry=y+11+i*rh;
+      fill(170,195,210);rect(x+11,ry,w-22,rh-4,2);
+      fill(20,43,62);rect(x+17,ry+4,w*.55,rh-12,1);
+      stroke(94,134,151);strokeWeight(1);
+      for(let j=0;j<4;j++)line(x+21+j*w*.11,ry+7,x+21+j*w*.11,ry+rh-10);
+      noStroke();fill(49,217,228);rect(x+w*.70,ry+7,w*.09,3,1);
+      fill(i%3===1?234:92,i%3===1?183:218,i%3===1?75:195);ellipse(x+w*.85,ry+8,3,3);
+    }
+    fill(218,240,241);rect(x+13,y+6,w-26,3,1);
+  }else if(b.hqProp==='TOOL_CABINET'){
+    fill(184,207,217);rect(x+8,y+9,w-16,h*.50,3);
+    fill(76,110,129);
+    for(let row=0;row<4;row++)for(let col=0;col<5;col++)ellipse(x+14+col*(w-28)/4,y+15+row*h*.105,1.8,1.8);
+    drawNM0LabTool(-w*.23,-h*.17,Math.min(32,h*.27),.35);
+    drawNM0LabTool(w*.20,-h*.18,Math.min(29,h*.26),-.22,true);
+    for(let i=0;i<3;i++){
+      fill(206,224,232);stroke(121,154,176);strokeWeight(1);rect(x+8,y+h*.56+i*h*.12,w-16,h*.105,2);
+      noStroke();fill(70,104,125);rect(-w*.14,y+h*.59+i*h*.12,w*.28,3,1);
+    }
+  }else{
+    // White housings surround native dark screens; the contrast survives a
+    // phone-scale view of the computer banks against the sterile floor.
+    fill(141,170,184);rect(x+8,y+8,w-16,h*.61,3);
+    const n=w>=210?3:2,mw=(w-24-(n-1)*7)/n;
+    for(let i=0;i<n;i++)drawNM0LabMonitor(x+12+i*(mw+7),y+11,mw,h*.43,seed+i);
+    fill(192,213,223);rect(x+11,y+h*.72,w*.65,h*.17,2);
+    stroke(89,125,145);strokeWeight(.7);
+    for(let i=0;i<3;i++)line(x+15,y+h*(.75+i*.04),x+w*.65,y+h*(.75+i*.04));
+    for(let i=1;i<11;i++)line(x+13+i*w*.057,y+h*.74,x+13+i*w*.057,y+h*.86);
+    noStroke();fill(49,84,105);ellipse(x+w*.78,y+h*.80,8,12);
+    fill(56,209,219);rect(x+w-17,y+h*.74,6,4,1);
+  }
+  pop();
+}
 function drawNM0LabProp(b) {
+  if(b.hqWhiteLab){drawNM0WhiteLabProp(b);return;}
   const rise = nm0LabPropRise(b), lean = massLean(b.x, b.y, rise, [0, 0]);
   const pod = b.hqProp === 'CLONE_POD';
   // A narrow tank still stands upright at the edge of the screen. Letting
@@ -13574,7 +13763,7 @@ function undergroundRoomAt(x,y) {
   return UNDERGROUND_ROOMS.find(r=>x>=r.x&&x<=r.x+r.w&&y>=r.y&&y<=r.y+r.h)||null;
 }
 const HQ_BRANCH_DOORS = Object.freeze([
-  Object.freeze({x:-720,y:-2440,w:150,label:'WEST WING',sealed:true}),
+  Object.freeze({x:-720,y:-2440,w:150,label:'PHOTON LAB',sealed:false,lightKey:true}),
   Object.freeze({x:0,y:-2440,w:210,label:'DESCENT',sealed:false}),
   Object.freeze({x:720,y:-2440,w:150,label:'EAST WING',sealed:true})
 ]);
@@ -13842,6 +14031,7 @@ function drawUndergroundElevator(amount=1) {
 function drawHQBranchDoors() {
   for(const d of HQ_BRANCH_DOORS) {
     if(!inView(d.x,d.y,170))continue;
+    if(d.lightKey){drawNM0NorthLabDoor(d);continue;}
     const x=d.x-d.w/2,y=d.y-21;
     push();noStroke();fill(4,9,14,170);rect(x-15,y-10,d.w+30,70,4);
     fill(32,43,51);stroke(16,24,30);strokeWeight(3);rect(x-9,y-7,d.w+18,59,4);
@@ -13854,6 +14044,32 @@ function drawHQBranchDoors() {
     if(!d.sealed)for(let i=0;i<6;i++)quad(x+14+i*30,y+47,x+23+i*30,y+47,x+16+i*30,y+54,x+7+i*30,y+54);
     pop();
   }
+}
+function drawNM0NorthLabDoor(d) {
+  const open=nm0NorthOpened,key=!!window.nm0LightKey,w=d.w;
+  push();translate(d.x,d.y);
+  // The open threshold stays transparent: its floor and walking characters
+  // already belong to the native world pass beneath these narrow jambs.
+  noStroke();fill(18,35,45,145);
+  rect(-w/2-20,-104,19,107,3);rect(w/2+1,-104,19,107,3);
+  fill(202,216,220);stroke(61,89,101);strokeWeight(2);
+  rect(-w/2-15,-104,14,105,3);rect(w/2+1,-104,14,105,3);
+  fill(230,239,237);rect(-w/2-15,-108,w+30,12,2);
+  if(!open) {
+    fill(171,193,202);rect(-w/2,-94,w,85,3);
+    fill(220,231,232);noStroke();rect(-w/2+5,-89,w/2-7,74,2);rect(2,-89,w/2-7,74,2);
+    stroke(66,98,113);strokeWeight(2);line(0,-89,0,-15);
+    noStroke();fill(41,67,83);rect(-28,-66,56,43,3);
+    drawNM0LightSymbol(0,-44,12);
+  }
+  noStroke();fill(open?color(83,229,190):key?color(108,224,235):color(236,185,83));
+  rect(-w/2-10,-101,4,94,1);rect(w/2+6,-101,4,94,1);
+  fill(31,54,68);rect(w/2+22,-66,30,48,3);drawNM0LightSymbol(w/2+37,-44,7);
+  fill(212,233,235);textFont('sans-serif');textAlign(CENTER,CENTER);textSize(11);
+  text('PHOTON LAB',0,-125);
+  textSize(8);fill(open?color(115,233,199):color(229,208,150));
+  text(open?'ACCESS GRANTED':key?'LIGHT KEY READY':'LIGHT KEY REQUIRED',0,16);
+  pop();
 }
 
 // NM-0's closed research floor is authored independently of the outdoor biomes.
@@ -13871,10 +14087,20 @@ const NM0_OFFICES=[-1,1].map(side=>({
   ].map(s=>({...s,x:side*s.x,route:s.route.map(([x,y])=>[side*x,y])})),
   key:{x:side*2670,y:-340}
 }));
+const NM0_NW_LAB=(()=>{
+  const corridor={x0:-950,y0:-4320,x1:-490,y1:-2450};
+  const room={x0:-1680,y0:-5950,x1:240,y1:-4320};
+  return Object.freeze({id:'NORTH',door:{x:-720,y:-2500,w:190,h:100},corridor,room,
+    portal:{x:-720,y:-5480,w:420,h:330},floorRects:[corridor,room],
+    guards:[[-790,-2760],[-650,-3070],[-790,-3390],[-650,-3710],[-790,-4030],[-650,-4210],
+      [-1040,-4520],[-400,-4510],[-1420,-4750],[-50,-4750],[-1140,-5580],[-300,-5590]]
+      .map(([x,y])=>({x,y}))});
+})();
 const NM0_LAB_FLOOR_RECTS=[{x0:-950,y0:-2450,x1:950,y1:1450},
   ...NM0_OFFICES.flatMap(o=>o.side<0?
     [{x0:-1470,y0:690,x1:-950,y1:910},{x0:-2930,y0:-580,x1:-1470,y1:1380}]:
-    [{x0:950,y0:690,x1:1470,y1:910},{x0:1470,y0:-580,x1:2930,y1:1380}])];
+    [{x0:950,y0:690,x1:1470,y1:910},{x0:1470,y0:-580,x1:2930,y1:1380}]),
+  ...NM0_NW_LAB.floorRects];
 function nm0HqOfficeAt(x,y) {
   if(y< -600||y>1400)return null;
   const u=Math.abs(x);return u>=1450&&u<=2950?NM0_OFFICES[x<0?0:1]:null;
@@ -13888,9 +14114,12 @@ function nm0HqGuardPost(index) {
 }
 function generateNM0LabMap() {
   const wall = (x, y, w, h, kind = 'PANEL') => buildings.push({ x, y, w, h, isWall: true, hqWall: kind });
-  wall(0, -2500, 2000, 100); wall(0, 1500, 2000, 100, 'ENTRY');
-  // The ground-level side doors are actual sidewall openings. The sealed
-  // north branch doors keep their original, independent geometry.
+  const door=NM0_NW_LAB.door,left=door.x-door.w/2,right=door.x+door.w/2;
+  // The west branch has a real gap. Its saved access blocker is installed by
+  // syncNM0OfficeDoors; the descent and east branch retain their north wall.
+  wall((-1000+left)/2,-2500,left+1000,100);
+  wall((right+1000)/2,-2500,1000-right,100);
+  wall(0, 1500, 2000, 100, 'ENTRY');
   for(const side of [-1,1]) {
     wall(side*1000,-905,100,3190);wall(side*1000,1205,100,590);
     wall(side*1240,660,480,40);wall(side*1240,940,480,40);
@@ -13957,6 +14186,40 @@ function generateNM0LabMap() {
     officeProp('CABINET',1560,1300,80,100);
     officeProp('CABINET',2860,1300,80,100);
   }
+  generateNM0NorthLab(wall,prop);
+}
+function generateNM0NorthLab(wall,prop) {
+  const {corridor:c,room:r,portal}=NM0_NW_LAB;
+  const panel=(x,y,w,h)=>wall(x,y,w,h,'WHITE_LAB');
+  const fixture=(kind,x,y,w,h,extra={})=>prop(kind,x,y,w,h,{hqWhiteLab:true,...extra});
+  // Enclose the connected floor union, leaving a full-width join at the room.
+  for(const x of [c.x0-30,c.x1+30])panel(x,(c.y0-2500)/2,60,-2500-c.y0);
+  panel((r.x0+r.x1)/2,r.y0-30,r.x1-r.x0+120,60);
+  for(const x of [r.x0-30,r.x1+30])panel(x,(r.y0+r.y1)/2,60,r.y1-r.y0);
+  panel((r.x0+c.x0)/2,r.y1+30,c.x0-r.x0,60);
+  panel((c.x1+r.x1)/2,r.y1+30,r.x1-c.x1,60);
+
+  // Staggered low worktops give the corridor firefight cover without closing
+  // its central walking and shooting lane.
+  fixture('ROBOT_BENCH',-865,-2950,120,100,{lowCover:true});
+  fixture('CONSOLE',-575,-3280,110,150);
+  fixture('ROBOT_BENCH',-865,-3630,120,110,{lowCover:true});
+  fixture('SERVER_BANK',-575,-3920,110,160);
+  fixture('TOOL_CABINET',-865,-4160,100,90);
+
+  fixture('PORTAL_MACHINE',portal.x,portal.y,portal.w,portal.h);
+  fixture('CONSOLE',-720,-4950,260,110);
+  for(const x of [-1530,90]) {
+    fixture('CONSOLE',x,-4570,150,110);
+    fixture('CONSOLE',x,-4840,150,110);
+    fixture('SERVER_BANK',x,-5480,140,180);
+  }
+  fixture('ROBOT_BENCH',-1360,-5190,340,140,{lowCover:true});
+  fixture('ROBOT_BENCH',-80,-5240,280,130,{lowCover:true});
+  fixture('TOOL_CABINET',-1530,-5740,140,150);
+  fixture('TOOL_CABINET',90,-5740,140,150);
+  fixture('SERVER_BANK',-1310,-5780,260,110);
+  fixture('SERVER_BANK',-130,-5780,260,110);
 }
 function paintNM0OfficeFloor(g,office) {
   const side=office.side,X=u=>side*u;
@@ -13990,6 +14253,76 @@ function paintNM0OfficeFloor(g,office) {
     g.fill(215,177,83,145);
     for(const u of [2039,2221])g.rect(X(u)-5,y-38,10,76);
   }
+}
+function paintNM0WhiteLabFloor(g,x0=-Infinity,y0=-Infinity) {
+  const lab=NM0_NW_LAB,clipped=Number.isFinite(x0)&&Number.isFinite(y0);
+  for(const floor of lab.floorRects){
+    const left=clipped?Math.max(floor.x0,x0):floor.x0,right=clipped?Math.min(floor.x1,x0+1000):floor.x1;
+    const top=clipped?Math.max(floor.y0,y0):floor.y0,bottom=clipped?Math.min(floor.y1,y0+1000):floor.y1;
+    if(right<=left||bottom<=top)continue;
+    g.noStroke();g.fill(170,193,204);g.rect(left,top,right-left,bottom-top);
+    for(let yy=Math.floor(top/100)*100;yy<bottom;yy+=100)for(let xx=Math.floor(left/100)*100;xx<right;xx+=100){
+      const hash=Math.abs(Math.imul(xx/100,73856093)^Math.imul(yy/100,19349663)),v=hash%7;
+      const px=Math.max(xx+2,left),py=Math.max(yy+2,top),pw=Math.min(xx+98,right)-px,ph=Math.min(yy+98,bottom)-py;
+      if(pw<=0||ph<=0)continue;
+      g.fill(223+v,233+v,234+v);g.rect(px,py,pw,ph,2);
+      g.stroke(252,255,251,195);g.strokeWeight(1.2);g.line(px+3,py+2,px+pw-3,py+2);
+      g.stroke(137,171,189,100);g.strokeWeight(.8);g.line(px+pw-1,py+4,px+pw-1,py+ph-2);
+      g.noStroke();g.fill(142,173,187,160);
+      if(pw>25&&ph>25){g.rect(px+7,py+7,2,2);g.rect(px+pw-9,py+ph-9,2,2);}
+    }
+    // Blue-clean circulation lanes and recessed service strips are baked in
+    // world space. Their fine panel work never becomes live texture noise.
+    if(floor===lab.corridor){
+      const cx=(floor.x0+floor.x1)/2;
+      g.noStroke();g.fill(206,227,233,165);g.rect(cx-118,top,236,bottom-top);
+      for(let side=-1;side<=1;side+=2){
+        g.fill(122,157,176);g.rect(cx+side*145-8,top,16,bottom-top);
+        g.fill(71,207,218);g.rect(cx+side*145-2,top,4,bottom-top);
+      }
+      for(let yy=Math.ceil(top/200)*200;yy<bottom;yy+=200){
+        g.fill(86,159,182,125);g.triangle(cx-14,yy+7,cx+14,yy+7,cx,yy-9);
+      }
+      g.fill(69,102,121,185);g.textAlign(CENTER,CENTER);g.textSize(19);
+      g.text('ROBOTICS / FIELD LAB',cx,-4095);g.textSize(12);g.text('NORTH RESEARCH',cx,-2825);
+    }else{
+      const cx=(floor.x0+floor.x1)/2;
+      g.noStroke();g.fill(198,223,232,105);g.rect(cx-130,top,260,bottom-top);
+      for(let side=-1;side<=1;side+=2){
+        const sx=side<0?floor.x0+67:floor.x1-83;
+        g.fill(120,155,173);g.rect(sx,top,16,bottom-top);
+        g.stroke(204,222,228);g.strokeWeight(2);
+        for(let yy=Math.ceil(top/16)*16;yy<bottom;yy+=16)g.line(sx+3,yy,sx+13,yy);
+      }
+      g.stroke(117,163,182,95);g.strokeWeight(2);g.noFill();
+      g.rect(floor.x0+100,floor.y0+130,400,490,10);g.rect(floor.x1-500,floor.y0+130,400,490,10);
+      g.rect(floor.x0+100,floor.y1-700,400,540,10);g.rect(floor.x1-500,floor.y1-700,400,540,10);
+      g.fill(70,110,132,165);g.noStroke();g.textAlign(CENTER,CENTER);g.textSize(23);
+      g.text('FIELD SYSTEMS / 07',cx,floor.y0+100);g.textSize(13);
+      g.text('ASSEMBLY',floor.x0+300,floor.y1-130);g.text('DIAGNOSTICS',floor.x1-300,floor.y1-130);
+      g.textSize(10);g.text('NM–0 / CONTROLLED ENVIRONMENT',cx,floor.y1-84);
+    }
+  }
+  const p=lab.portal;
+  if(clipped&&(p.x+310<x0||p.x-310>x0+1000||p.y+270<y0||p.y-270>y0+1000))return;
+  // Floor cables and the containment keep-clear ring sit under the actual
+  // raised machine, leaving its aperture and white housing to the mass pass.
+  g.noFill();g.stroke(142,179,194,140);g.strokeWeight(18);g.ellipse(p.x,p.y,570,480);
+  g.stroke(240,248,244);g.strokeWeight(12);g.ellipse(p.x,p.y,568,478);
+  g.stroke(57,177,196,170);g.strokeWeight(2);g.ellipse(p.x,p.y,580,490);
+  for(let i=0;i<16;i++){
+    const a=i*Math.PI/8,co=Math.cos(a),si=Math.sin(a);
+    g.stroke(i%2?216:89,i%2?174:133,i%2?65:152,190);g.strokeWeight(5);
+    g.line(p.x+co*277,p.y+si*232,p.x+co*290,p.y+si*244);
+  }
+  g.stroke(80,119,140,165);g.strokeWeight(7);g.noFill();
+  g.bezier(p.x-300,p.y-105,p.x-390,p.y-105,p.x-400,p.y+155,p.x-260,p.y+194);
+  g.bezier(p.x+300,p.y-105,p.x+390,p.y-105,p.x+400,p.y+155,p.x+260,p.y+194);
+  g.stroke(91,203,215,175);g.strokeWeight(2);
+  g.bezier(p.x-300,p.y-105,p.x-390,p.y-105,p.x-400,p.y+155,p.x-260,p.y+194);
+  g.bezier(p.x+300,p.y-105,p.x+390,p.y-105,p.x+400,p.y+155,p.x+260,p.y+194);
+  g.noStroke();g.fill(60,108,130,190);g.textAlign(CENTER,CENTER);g.textSize(11);
+  g.text('CONTAINMENT ARRAY / KEEP CLEAR',p.x,p.y+280);
 }
 function paintNM0LabFloor(g, x0, y0) {
   g.push(); g.scale(.5); g.translate(-x0, -y0);
@@ -14036,6 +14369,7 @@ function paintNM0LabFloor(g, x0, y0) {
   g.textSize(22); g.text('CONTAINMENT', 0, -680);
   g.textSize(13); g.text('RESTRICTED ARCHIVE', 0, -2240);
   for(const office of NM0_OFFICES)paintNM0OfficeFloor(g,office);
+  paintNM0WhiteLabFloor(g,x0,y0);
   g.pop();
 }
 function drawNM0LabGround() {
@@ -14064,7 +14398,34 @@ function drawNM0LabGround() {
     }
   }
 }
+function drawNM0WhiteLabWall(b) {
+  const rise=24,lean=Math.max(b.w,b.h)>=1000?longMassLean(b,rise,_nm0WhiteWallLean):massLean(b.x,b.y,rise,_nm0WhiteWallLean);
+  const x0=b.x-b.w/2,y0=b.y-b.h/2,horizontal=b.w>b.h;
+  push();noStroke();fill(38,68,89,45);rect(x0-4,y0-2,b.w+8,b.h+8,3);
+  drawMassSides(x0,y0,x0+b.w,y0+b.h,lean[0],lean[1],142,171,189,0);
+  translate(lean[0],lean[1]);fill(215,231,238);stroke(83,117,139);strokeWeight(2);
+  rect(x0,y0,b.w,b.h,3);noStroke();fill(250,255,253);rect(x0+3,y0+3,b.w-6,4,1);
+  if(horizontal){
+    const from=Math.max(x0,Math.floor((viewLeft-80)/100)*100),to=Math.min(x0+b.w,viewRight+80);
+    for(let x=from;x<to;x+=100){
+      stroke(154,183,201);strokeWeight(1);line(x,y0+5,x,y0+b.h-5);
+      noStroke();fill(82,123,148);rect(x+10,y0+b.h-13,4,4,1);
+    }
+    noStroke();fill(106,182,203);rect(x0+5,y0+b.h-8,b.w-10,4,1);
+    fill(204,251,251);rect(x0+5,y0+b.h-7,b.w-10,1);
+  }else{
+    const from=Math.max(y0,Math.floor((viewTop-80)/100)*100),to=Math.min(y0+b.h,viewBottom+80);
+    for(let y=from;y<to;y+=100){
+      stroke(154,183,201);strokeWeight(1);line(x0+4,y,x0+b.w-4,y);
+      noStroke();fill(82,123,148);rect(x0+7,y+10,4,4,1);
+    }
+    noStroke();fill(106,182,203);rect(x0+b.w-8,y0+5,4,b.h-10,1);
+    fill(249,255,251);rect(x0+3,y0+3,3,b.h-6,1);
+  }
+  pop();
+}
 function drawNM0LabWall(b) {
+  if(b.hqWall==='WHITE_LAB'){drawNM0WhiteLabWall(b);return;}
   const rise = b.hqWall === 'AIRLOCK' ? 16 : 24;
   const lean = Math.max(b.w, b.h) >= 1000 ?
     longMassLean(b, rise, [0, 0], b.hqWall === 'ENTRY' ? 0 : undefined) : massLean(b.x, b.y, rise, [0, 0]);
@@ -15479,7 +15840,8 @@ class Shockwave {
                 this.hitList.push(e); 
                 
                 const hpBefore = e.hp;
-                let mDmg = (typeof ninjaSuitUnlocked !== 'undefined' && ninjaSuitUnlocked) ? 156 : 130; 
+                const mDmg = this.sword ? 500 :
+                    ((typeof ninjaSuitUnlocked !== 'undefined' && ninjaSuitUnlocked) ? 156 : 130);
                 e.takeDamage(mDmg); 
                 
                 // NEW: Make ALL enemies flash white on Finisher hits!
@@ -29776,7 +30138,8 @@ function drawUI() {
   if (currentLevel === 8) {
       const row = combatLayout.status.hq;
       // Calculate enemies remaining in HQ
-      const office=NM0_OFFICES.find(r=>nm0OfficeOpened[r.id]&&player.x*r.side>1000);
+      const north=nm0NorthOpened&&player.y<-2450;
+      const office=north?NM0_NW_LAB:NM0_OFFICES.find(r=>nm0OfficeOpened[r.id]&&player.x*r.side>1000);
       const room=office?office.id:'MAIN';
       let hqEnemies = nm0HqRoomRemaining(room);
       let hqRatio = max(0, hqEnemies) / (office?office.guards.length:20);
