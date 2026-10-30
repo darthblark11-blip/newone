@@ -280,6 +280,66 @@ function legInjuryHitProfile(a,incoming) {
   if(!a||!a.legInjury||a.legInjury.outcome!=='SEATED'||actorStance(a)!=='CROUCH')return undefined;
   return incoming==='HEAD'?null:incoming==='LEGS'?LEG_INJURY_SEATED_LEGS:LEG_INJURY_SEATED_BODY;
 }
+
+// Surviving blade contacts share a short real-time stop. Their presentation
+// advances on simulation ticks, so the contact remains visible during it.
+const SWORD_HIT_STOP_MS = 100;
+let swordHitStopUntil = 0;
+const swordHitTargets = new Set();
+function swordHitStopped() { return millis() < swordHitStopUntil; }
+function beginSwordHitFeedback(attacker,target,hpBefore,slashAngle) {
+  if(!target||target.dead||!(target.hp>0)||!(hpBefore>target.hp))return false;
+  const previous=target.swordHitFeedback;
+  target.swordHitFeedback={lifeMs:1800,flashMs:180,ghostHoldMs:280,
+    ghostHp:Math.max(hpBefore,previous?previous.ghostHp:target.hp),
+    angle:Number.isFinite(slashAngle)?slashAngle:
+      (attacker&&attacker.aimAngle||0)+(attacker&&attacker.isBackhand?HALF_PI:-HALF_PI)};
+  target.hitFlash=Math.max(target.hitFlash||0,2);
+  swordHitTargets.add(target);
+  swordHitStopUntil=Math.max(swordHitStopUntil,millis()+SWORD_HIT_STOP_MS);
+  doTick=false;
+  return true;
+}
+function updateSwordHitFeedback(elapsedMs=deltaTime) {
+  const dt=doTick?Math.max(0,Math.min(100,Number(elapsedMs)||0)):0;
+  for(const target of swordHitTargets) {
+    const f=target.swordHitFeedback;
+    if(!f||target.dead||!(target.hp>0)||f.lifeMs<=0) {
+      delete target.swordHitFeedback;swordHitTargets.delete(target);continue;
+    }
+    f.lifeMs=Math.max(0,f.lifeMs-dt);
+    f.flashMs=Math.max(0,f.flashMs-dt);
+    // The older model painters count their torso flash in rendered frames.
+    // Keep that white body read for the same duration as the new slash, even
+    // while contact stop prevents the simulation from advancing.
+    if(f.flashMs>0)target.hitFlash=Math.max(target.hitFlash||0,2);
+    const drainMs=Math.max(0,dt-f.ghostHoldMs);
+    f.ghostHoldMs=Math.max(0,f.ghostHoldMs-dt);
+    f.ghostHp=Math.max(target.hp,f.ghostHp-drainMs*Math.max(1,target.maxHp||f.ghostHp)/450);
+    if(f.lifeMs<=0){delete target.swordHitFeedback;swordHitTargets.delete(target);}
+  }
+}
+function resetSwordHitFeedback() {
+  for(const target of swordHitTargets)delete target.swordHitFeedback;
+  swordHitTargets.clear();swordHitStopUntil=0;
+}
+function drawSwordTargetFlash(c) {
+  const f=c.swordHitFeedback;
+  if(!f||!(f.flashMs>0)||c.dead||!(c.hp>0))return;
+  const fade=Math.min(1,f.flashMs/90),reach=Math.max(21,Math.min(59,Math.max(c.bodyW,c.bodyH)*.62+6));
+  push();rotate(f.angle);
+  // An ink-edged white cut stays above helmets, coats and plate. Its tapered
+  // tips and separated chips make the strike read at the normal camera zoom.
+  stroke(39,29,35,235*fade);strokeWeight(1.5);fill(255,245,209,235*fade);
+  beginShape();vertex(-reach,-1);vertex(-reach*.28,-4.5);vertex(reach*.83,-2.4);
+  vertex(reach*1.18,0);vertex(reach*.16,4.2);vertex(-reach*.78,2.3);endShape(CLOSE);
+  noStroke();fill(255,255,255,255*fade);
+  quad(-reach*.82,-.4,reach*.78,-1.3,reach*1.08,0,-reach*.22,1.6);
+  fill(255,247,220,225*fade);
+  triangle(-reach*.36,-8,-reach*.09,-11,reach*.33,-7);
+  triangle(reach*.05,8,reach*.42,10,reach*.62,6);
+  pop();
+}
 function stanceProneSpotClear(a,x=a&&a.x,y=a&&a.y,heading=null) {
   if(!a||typeof a.checkCol!=='function')return true;
   const angle=Number.isFinite(heading)?heading:a.isPlayer&&a.stance&&a.stance.to===2&&Number.isFinite(a.stance.proneHeading)
@@ -7834,6 +7894,7 @@ function nextLevel() { startAtLevel(currentLevel + 1); }
 // into the next world's ground buffers. Keep this separate from startAtLevel.
 function resetRunState() {
   resetNM0Offices();
+  resetSwordHitFeedback();
   resetUndergroundRoute();resetUndergroundEnvironment();resetOccultWorld();
   resetNM0Scientists();
   resetNM0LabFloor();
@@ -8788,7 +8849,8 @@ function draw() {
 }
 
 }
-doTick = (!killcamMode || (frameCount % 4 === 0)) && !isPaused && !inDarchonCall && !inTownCutscene && !inFarmCutscene && !inFarmPostCutscene && !inPostAmbushCutscene && !inFortCutscene && !undergroundRouteBusy();
+doTick = (!killcamMode || (frameCount % 4 === 0)) && !isPaused && !inDarchonCall && !inTownCutscene && !inFarmCutscene && !inFarmPostCutscene && !inPostAmbushCutscene && !inFortCutscene && !undergroundRouteBusy() && !swordHitStopped();
+updateSwordHitFeedback();
 // Screen shake translates the whole world INSIDE the zoom, so during a shake
 // the camera really sees up to screenShake/zoom world units past these edges.
 // Culling to the un-shaken rect let terrain chunks and props at the border
@@ -14711,6 +14773,40 @@ function stampGroundBloodVectors(mark) {
         paintKillVectorBlood(e.pg,rx-e.bx,ry-e.by,paths,col);
     }
 }
+// A surviving sword contact leaves a small cut fan rather than a death pool.
+// Its fixed geometry follows the blade's travel, shared with the airborne jet.
+function buildSwordHitBlood(angle, seed) {
+    seed=seed>>>0||1;
+    const rnd=()=>{seed^=seed<<13;seed^=seed>>>17;seed^=seed<<5;return(seed>>>0)/4294967296;};
+    const ca=Math.cos(angle),sa=Math.sin(angle),paths=[];
+    const path=points=>paths.push({points:points.map(p=>[ca*p[0]-sa*p[1],sa*p[0]+ca*p[1]]),tone:0});
+    for(let i=0;i<3;i++){
+        const y=(i-1)*2.5+(rnd()-.5)*1.5,reach=15+rnd()*13+(i===1?5:0),w=1+rnd()*1.3;
+        path([[-3,y*.4],[reach*.24,y-w],[reach*.58,y-w*.65],
+            [reach*.84,y-w*1.1],[reach,y-.2],[reach*.72,y+w*.7],
+            [reach*.37,y+w],[0,y*.4+w*.25]]);
+    }
+    for(let i=0;i<5;i++){
+        const reach=16+rnd()*20,y=(rnd()-.5)*reach*.45,length=1.7+rnd()*3,w=.45+rnd()*.8;
+        path([[reach-length,y-w*.15],[reach,y-w],[reach+length,y],
+            [reach-length*.15,y+w],[reach-length*.7,y+w*.35]]);
+    }
+    path([[-2,-1],[-7-rnd()*3,-2],[-6,1],[-1,1.5]]);
+    let spread=0;
+    for(const p of paths)for(const v of p.points)spread=Math.max(spread,Math.abs(v[0]),Math.abs(v[1]));
+    return {angle,paths,spread:Math.ceil(spread)+2};
+}
+function stampSwordHitBlood(x,y,angle,owner,col) {
+    if(!owner||!(owner.hp>0)||owner.dead||!Number.isFinite(x)||!Number.isFinite(y)||!bloodMarkBudget(false))return null;
+    const seed=(Math.imul((x*16)|0,0x9e3779b9)^Math.imul((y*16)|0,0x85ebca6b)^frameCount)>>>0||1;
+    const mark={x,y,...buildSwordHitBlood(angle,seed),col};
+    if(shovelRenderDepth(owner)>0||owner.shovelDepthTarget>0){
+        if(shovelBloodMarks.length>=SHOVEL_BLOOD_MARK_MAX)shovelBloodMarks.shift();
+        mark.vectors=mark.paths;mark.blobs=[];mark.age=24;mark.shovelDeposit=true;
+        shovelBloodMarks.push(shovelBindEffect(mark,owner));
+    }else stampGroundBloodVectors(mark);
+    return mark;
+}
 function stampKillVectorBlood(victim,killer,x=victim&&victim.x,y=victim&&victim.y) {
     if(!victim||!(victim.hp<=0)||!humanBloodTarget(victim)||victim._killVectorBloodStamped||
         !Number.isFinite(x)||!Number.isFinite(y))return null;
@@ -15318,10 +15414,28 @@ function updateOrbs() {
     } 
 }
 
+// Only a landed sword hit that actually costs HP and leaves its target alive
+// receives contact feedback. The finishing blow keeps its existing dispatch.
+function resolveSurvivingSwordHit(attacker, target, hpBefore, angle = null) {
+    if (!attacker || !attacker.isPlayer || !target || target.dead ||
+        !(target.hp > 0) || !(target.hp < hpBefore)) return false;
+    const slash = Number.isFinite(angle) ? angle :
+        attacker.aimAngle + (attacker.isBackhand ? HALF_PI : -HALF_PI);
+    const dx = Math.cos(slash), dy = Math.sin(slash);
+    const insect = target.eType === 'BUG' || target.eType === 'SNAIL' || target.eType === 'SNAIL_HYBRID';
+    const ink = insect ? color(200,230,40) : color(90,0,0);
+    const armor = target.eType === 'ROBOT' || target.eType === 'SAUCER' || target.eType === 'SAUCER_RED' ||
+        target.eType === 'ARMORED' && hpBefore > 300 || target.eType === 'ARMORED_STANDARD' && hpBefore > 50 ||
+        target.eType === 'SNAIL_HYBRID' && hpBefore > 150;
+    beginSwordHitFeedback(attacker, target, hpBefore, slash);
+    emitSwordHitBlood(target.x - dx * 4, target.y - dy * 4, dx * 10, dy * 10, target, ink, armor);
+    return true;
+}
+
 class Shockwave {
-    constructor(x, y, a, sword = false) {
+    constructor(x, y, a, sword = false, owner = null) {
         this.x = x; this.y = y; this.a = a; 
-        this.sword = sword;
+        this.sword = sword; this.owner = owner || (sword ? player : null);
         this.life = 10; 
         this.vx = cos(a) * 15; this.vy = sin(a) * 15; 
         this.hitList = []; 
@@ -15339,6 +15453,7 @@ class Shockwave {
             if (e.hp > 0 && dist(this.x, this.y, e.x, e.y) < 60 && !this.hitList.includes(e)) {
                 this.hitList.push(e); 
                 
+                const hpBefore = e.hp;
                 let mDmg = (typeof ninjaSuitUnlocked !== 'undefined' && ninjaSuitUnlocked) ? 156 : 130; 
                 e.takeDamage(mDmg); 
                 
@@ -15346,7 +15461,10 @@ class Shockwave {
                 if (e.hp > 0) e.hitFlash = 4;
                 
                 let bCol = (e.eType === "BUG" || e.eType === "SNAIL" || e.eType === "SNAIL_HYBRID") ? color(200, 230, 40) : color(90, 0, 0);
-                if (e.eType === "ROBOT") { sfx.hitArmor(); emit(e.x, e.y, 12, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK"); }
+                if (this.sword && resolveSurvivingSwordHit(this.owner, e, hpBefore, this.a)) {
+                    if (e.eType === "ROBOT") sfx.hitArmor(); else sfx.hitBody();
+                }
+                else if (e.eType === "ROBOT") { sfx.hitArmor(); emit(e.x, e.y, 12, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK"); }
                 else { sfx.hitBody(); emit(e.x, e.y, 20, bCol, "BLOOD"); }
 
                 if (e.hp <= 0) { 
@@ -23086,7 +23204,7 @@ this.skeletonTimer = 0;
       
       if (this.meleePhase === 4 && this.meleeTimer === 15 && !shovelSwing) {
           screenShake = 20; 
-          shockwaves.push(new Shockwave(this.x, this.y, this.aimAngle, meleeTool()==="SWORD"));
+          shockwaves.push(new Shockwave(this.x, this.y, this.aimAngle, meleeTool()==="SWORD", this));
       }
              else if ((this.meleePhase !== 4 || shovelSwing) && this.meleeTimer === 10) {
           screenShake = shovelSwing ? 6 : 12;
@@ -23124,6 +23242,7 @@ this.skeletonTimer = 0;
                       let aD = (atan2(e.y - this.y, e.x - this.x) - this.aimAngle + PI * 3) % TWO_PI - PI; 
                       if (abs(aD) < PI / 2 || dist(this.x, this.y, e.x, e.y) < 30) { 
                           
+                          const hpBefore = e.hp;
                           // Check our new variable instead of the graphic state!
                           if (isFistAttack) {
                                
@@ -23141,7 +23260,12 @@ this.skeletonTimer = 0;
                       if (e.hp > 0) { e.hitFlash = 4; }
                       
                       let bCol = (e.eType === "BUG" || e.eType === "SNAIL" || e.eType === "SNAIL_HYBRID") ? color(200, 230, 40) : color(90, 0, 0);
-                      if(isFistAttack&&unarmedCivilian(e)){sfx.hitBody();emit(e.x,e.y,8,color(200,183,151),"DUST", 0, 0, e);}
+                      if(this.isPlayer && meleeTool()==="SWORD" && resolveSurvivingSwordHit(this,e,hpBefore)) {
+                          const armor=e.eType==='ROBOT'||e.eType==='SAUCER'||e.eType==='SAUCER_RED'||
+                            e.eType==='ARMORED'&&hpBefore>300||e.eType==='ARMORED_STANDARD'&&hpBefore>50||e.eType==='SNAIL_HYBRID'&&hpBefore>150;
+                          if(armor)sfx.hitArmor();else sfx.hitBody();
+                      }
+                      else if(isFistAttack&&unarmedCivilian(e)){sfx.hitBody();emit(e.x,e.y,8,color(200,183,151),"DUST", 0, 0, e);}
                       else if (e.eType === "ROBOT") { sfx.hitArmor(); emit(e.x, e.y, 12, color(SPARK_COL[0], SPARK_COL[1], SPARK_COL[2]), "FLECK", 0, 0, e); }
                       else if (e.eType === "SAUCER" || e.eType === "SAUCER_RED" || (e.eType === "ARMORED" && e.hp > 300) || (e.eType === "ARMORED_STANDARD" && e.hp > 50) || (e.eType === "SNAIL_HYBRID" && e.hp > 150)) { sfx.hitArmor(); emit(e.x, e.y, 10, color(255, 200, 0), "SPARK", 0, 0, e); } else { sfx.hitBody(); emit(e.x, e.y, 20, bCol, "BLOOD", 0, 0, e); }
 
@@ -24149,6 +24273,7 @@ if (this.eType === "COW") {
 
 
   show() {
+    try {
     const paint=figurePainter();
     const fill=paint?paint.fill:window.fill,ellipse=paint?paint.ellipse:window.ellipse;
     const stroke=paint?paint.stroke:window.stroke,rect=paint?paint.rect:window.rect;
@@ -24191,7 +24316,7 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
 
     const stancePose = actorStancePose(this);
     if (stancePose.crouch > 0 || stancePose.prone > 0 || stanceCoverPoseActive(this)) { drawCombatStanceFigure(this, stancePose); pop(); return; }
-    drawCombatStanceUI(this, stancePose);
+    if(!this.swordHitFeedback)drawCombatStanceUI(this, stancePose);
 
     let sOff = (currentLevel === 1 || currentLevel === 3) ? 15 : 10;
     let sAlp = (currentLevel === 1 || currentLevel === 3) ? 45 : 80;
@@ -25790,6 +25915,18 @@ if (this.isPlayer) {
     }
 
     pop();
+    } finally {
+      // Every model, including the species with early returns, receives the
+      // same contact read after its clothing and before nearer world objects.
+      if(this.swordHitFeedback&&!this.dead&&this.hp>0) {
+        push();translate(this.x,this.y);
+        const size=elevRenderScale(this.x,this.y)*shovelRenderScale(this);
+        if(size!==1)scale(size);
+        drawSwordTargetFlash(this);
+        drawCombatStanceUI(this,actorStancePose(this));
+        pop();
+      }
+    }
 }
 }
 
@@ -28486,6 +28623,33 @@ function emitComicHit(x,y,vx,vy,owner,armor=false,blood=true,bloodColor=null,for
     p.fxMaterial=armor?'ARMOR':'FLESH';p.sz*=(armor?1.2:1)*Math.max(.7,Math.min(1.3,force));
     particles.push(p);return true;
 }
+function emitSwordHitBlood(x,y,vx,vy,owner,bloodColor=null,armor=false) {
+    if(!owner||!(owner.hp>0)||owner.dead||!Number.isFinite(x)||!Number.isFinite(y))return false;
+    const angle=Math.hypot(vx,vy)>.001?Math.atan2(vy,vx):(Number.isFinite(owner.aimAngle)?owner.aimAngle:0);
+    const machine=owner.eType==='ROBOT'||owner.eType==='SAUCER'||owner.eType==='SAUCER_RED';
+    const ink=machine?color(OIL_COL[0],OIL_COL[1],OIL_COL[2]):bloodColor||impactBloodColor();
+    stampSwordHitBlood(x,y,angle,owner,ink);
+    if(_comicHitFrame!==frameCount){_comicHitFrame=frameCount;_comicHitsThisFrame=0;}
+    if(_comicHitsThisFrame>=COMIC_HITS_PER_FRAME||particles.length>=COMIC_HIT_LIMIT)return false;
+    _comicHitsThisFrame++;
+    const sparks=machine?Math.min(4,COMIC_HIT_LIMIT-particles.length-1):0;
+    const count=Math.min(COMIC_HIT_BLOOD_COUNT,COMIC_HIT_LIMIT-particles.length-1-sparks);
+    for(let i=0;i<count;i++){
+        const p=newParticle(x,y,ink,'HIT_BLOOD',Math.cos(angle),Math.sin(angle),owner);
+        p.fxMaterial=machine?'SWORD_OIL':ink.levels[1]>ink.levels[0]*.75?'SWORD_YELLOW':'';
+        particles.push(p);
+    }
+    for(let i=0;i<sparks;i++){
+        const p=newParticle(x,y,color(SPARK_COL[0],SPARK_COL[1],SPARK_COL[2]),'HIT_BLOOD',0,0,owner);
+        // Deterministic contact sparks retain the same bounded pool and depth.
+        const a=angle+(comicHitHash(_comicHitSerial+i+17)-.5)*1.3,speed=3+comicHitHash(_comicHitSerial+i+29)*5;
+        p.t='FLECK';p.sz=1.4+comicHitHash(_comicHitSerial+i+37)*1.8;p.l=6+Math.floor(comicHitHash(_comicHitSerial+i+43)*10);
+        p.vx=Math.cos(a)*speed;p.vy=Math.sin(a)*speed;particles.push(p);
+    }
+    const pop=newParticle(x,y,ink,'COMIC_IMPACT',Math.cos(angle),Math.sin(angle),owner);
+    pop.fxMaterial=armor||machine?'ARMOR':'FLESH';pop.sz*=armor||machine?1.2:1;
+    particles.push(pop);return true;
+}
 // The particle objects are pooled, but fill(r,g,b,a) and stroke(r,g,b,a)
 // still construct a p5.Color and its channel arrays every time they draw.
 // Particle opacity advances through a small set of integer values. Reuse
@@ -28656,6 +28820,8 @@ function drawProneLandingDust(p) {
 
 const COMIC_HIT_INK=[57,26,24],COMIC_HIT_GOLD=[255,204,12],COMIC_HIT_LIGHT=[255,232,65];
 const HIT_BLOOD_INK=[48,2,12],HIT_BLOOD_DARK=[105,2,16],HIT_BLOOD_RED=[163,6,25],HIT_BLOOD_GLEAM=[202,18,39];
+const SWORD_OIL_INK=[12,15,19],SWORD_OIL_DARK=[22,27,34],SWORD_OIL_RED=[40,47,55],SWORD_OIL_GLEAM=[82,91,100];
+const SWORD_YELLOW_INK=[55,55,7],SWORD_YELLOW_DARK=[112,125,12],SWORD_YELLOW_RED=[200,230,40],SWORD_YELLOW_GLEAM=[232,249,106];
 function comicHitFill(rgb,a) {const ink=particlePaint(rgb,a);if(ink)fill(ink);else fill(rgb[0],rgb[1],rgb[2],a);}
 function comicHitStroke(rgb,a) {const ink=particlePaint(rgb,a);if(ink)stroke(ink);else stroke(rgb[0],rgb[1],rgb[2],a);}
 function drawComicImpactParticle(p) {
@@ -28688,9 +28854,14 @@ function drawComicImpactParticle(p) {
 function drawHitBloodParticle(p) {
     const t=Math.min(1,p.fxAge/Math.max(1,p.fxLife)),w=p.sz*(1-t*.36);
     const length=w*p.fxStretch*(.70+.30*Math.min(1,p.fxAge/3));
+    const oil=p.fxMaterial==='SWORD_OIL',yellow=p.fxMaterial==='SWORD_YELLOW';
+    const ink=oil?SWORD_OIL_INK:yellow?SWORD_YELLOW_INK:HIT_BLOOD_INK;
+    const dark=oil?SWORD_OIL_DARK:yellow?SWORD_YELLOW_DARK:HIT_BLOOD_DARK;
+    const red=oil?SWORD_OIL_RED:yellow?SWORD_YELLOW_RED:HIT_BLOOD_RED;
+    const gleam=oil?SWORD_OIL_GLEAM:yellow?SWORD_YELLOW_GLEAM:HIT_BLOOD_GLEAM;
     push();translate(p.x,p.y);rotate(p.fxAngle);
-    comicHitStroke(HIT_BLOOD_INK,p.a);strokeWeight(.55);
-    comicHitFill(p.fxKind===0?HIT_BLOOD_DARK:HIT_BLOOD_RED,p.a);
+    comicHitStroke(ink,p.a);strokeWeight(.55);
+    comicHitFill(p.fxKind===0?dark:red,p.a);
     beginShape();
     if(p.fxKind===0) {
         // A torn ribbon, with two trailing tips and a thick leading clot.
@@ -28713,10 +28884,10 @@ function drawHitBloodParticle(p) {
     }
     endShape(CLOSE);noStroke();
     // A small wet facet follows the jet, never a full bubble-shaped highlight.
-    comicHitFill(HIT_BLOOD_GLEAM,Math.round(p.a*.62));
+    comicHitFill(gleam,Math.round(p.a*.62));
     triangle(-length*.25,-w*.18,length*.44,-w*.20,length*.08,w*.12);
     if(p.fxKind===1||p.fxKind===3) {
-        comicHitFill(HIT_BLOOD_DARK,p.a);
+        comicHitFill(dark,p.a);
         const y=w*(p.fxKind===1?1.35:-1.2);
         triangle(-length*.64,y,-length*.12,y-w*.15,length*.20,y+w*.12);
     }
@@ -45544,19 +45715,25 @@ function actorStanceUIAnchor(c) {
 function drawCombatStanceUI(c, p) {
   const low = (p.crouch || 0) + (p.prone || 0);
   const damage = c.stanceDamage && c.stanceDamage.leftMs > 0 ? c.stanceDamage : null;
-  if (!low && !c.stanceAimReadying && !damage) return;
+  const sword=c.swordHitFeedback&&c.swordHitFeedback.lifeMs>0?c.swordHitFeedback:null;
+  if (!low && !c.stanceAimReadying && !damage && !sword) return;
   const anchor = actorStanceUIAnchor(c);
   push(); translate(anchor.x - c.x, anchor.y - c.y); textAlign(CENTER, BOTTOM); textFont('sans-serif');
   if (c.stanceAimReadying && !c.isPlayer) {
     noStroke(); fill(255, 190, 70, 225); triangle(-4, -6, 4, -6, 0, -1);
-    textSize(7); text('LOW AIM', 0, -8);
-  } else if (low && !c.isPlayer) {
-    if (c.hp < c.maxHp) {
-      noStroke(); fill(14, 22, 27, 190); rect(-13, -4, 26, 3, 1);
+    textSize(7); text('LOW AIM', 0, sword?-14:-8);
+  }
+  if ((low || sword) && !c.isPlayer) {
+    if (c.hp < c.maxHp || sword) {
+      const maxHp=Math.max(1,c.maxHp||c.hp),alpha=sword?Math.min(1,sword.lifeMs/250):1;
+      const w=sword?34:26,h=sword?4:3,x=-w/2;
+      noStroke();fill(9,14,20,235*alpha);rect(x-1,-5,w+2,h+2,1.5);
+      fill(14,22,27,220*alpha);rect(x,-4,w,h,1);
+      if(sword){fill(255,218,139,245*alpha);rect(x,-4,w*Math.min(1,sword.ghostHp/maxHp),h,1);}
       fill(c.isFriendly ? color(90, 211, 179) : color(235, 99, 77));
-      rect(-13, -4, 26 * Math.max(0, Math.min(1, c.hp / c.maxHp)), 3, 1);
+      rect(x,-4,w*Math.max(0,Math.min(1,c.hp/maxHp)),h,1);
     }
-    if (c.name) { fill(229, 236, 226, 210); noStroke(); textSize(7); text(c.name, 0, -6); }
+    if (c.name && !c.stanceAimReadying) { fill(229, 236, 226, 210); noStroke(); textSize(7); text(c.name, 0, -6); }
   }
   if (damage) {
     const alpha = Math.min(1, damage.leftMs / 150) * 240;
@@ -45847,7 +46024,7 @@ function drawCombatStanceFigure(c, p) {
     push(); noFill(); stroke(93,216,229,160); strokeWeight(2);
     translate(0,-proneDiveLift(c));arc(0,0,34,25,-HALF_PI,-HALF_PI+(1-c.reloadTimer/90)*TWO_PI); pop();
   }
-  drawCombatStanceUI(c,p);
+  if(!c.swordHitFeedback)drawCombatStanceUI(c,p);
 }
 
 // Standing uses the crouch's travel folding, planted heading, easing and
@@ -56620,6 +56797,7 @@ function getSafeSpawn(away) {
 
 // -- Level entry ------------------------------------------------------------
 function startAtLevel(lvl, isLoading = false) {
+  resetSwordHitFeedback();
   resetStreetThugEncounters();resetCityStreetInputs();
   if(!isLoading&&lvl!==currentLevel)for(const e of enemiesList)bankFrontierPerson(e);
   exitFrontierSaloon();

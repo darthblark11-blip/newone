@@ -51,6 +51,28 @@ before a hit is above 50 HP. The shot that crosses that boundary still hits
 plate; subsequent hits at or below 50 HP use the exposed-flesh burst and spray.
 The orb's separate 600-HP / 300-HP armor rule is unchanged.
 
+## Surviving sword contacts
+
+Player sword swings and sword finisher contacts now use the same inked spray
+when they lower HP and leave the target alive. The contact freezes gameplay
+for 100 real milliseconds, including the remaining swing, target movement and
+particles. Each target receives a 180-active-millisecond white slash and torso
+flash plus a temporary 1.8-second reveal of the existing target health bar.
+The bar holds the lost-health chip briefly before draining it. Multiple targets
+in one swing share the stop; resuming does not apply the hit again.
+
+Each surviving hit also stamps a small nine-polygon floor slash, aligned with
+the spray. Forehand and backhand slashes follow the blade in opposite directions;
+the traveling finisher follows its own direction. These marks bake into the
+existing floor bank and use its seam clipping and below-ground projection.
+Machine hits keep oil and sparks, and insects keep yellow fluid. Airborne
+contacts share the existing 24-contact/900-particle limits; floor slashes share
+the 24-impact limit. All cosmetic variation avoids gameplay randomness.
+
+Misses, immunity, punches, picks and shovels keep their existing feedback.
+Lethal sword hits retain their existing animations, blood pools and corpse
+effects. Travel, load and reset clear transient hit feedback.
+
 ## Directional kill stains
 
 Oval death pools now hold for 45 active ticks (about 0.75 seconds), then spread
@@ -165,6 +187,10 @@ node tools/check-impact-blood-scene.js
 node tools/check-armored-impact-effects.js
 node tools/check-standard-armor-break.js
 node tools/check-comic-hit-feedback.js
+node tools/check-sword-hit-feedback.js
+node tools/check-sword-deaths.js
+# Browser sword scene: serve /workspace on port 8000 first, or set SWORD_SCENE_URL.
+node tools/check-sword-hits-scene.js
 node tools/check-kill-vector-blood.js
 node tools/check-blast-blood-pools.js
 VIS_DEPS=/workspace/newone-dev node tools/check-impact-particles.js

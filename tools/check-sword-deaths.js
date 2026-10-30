@@ -7,7 +7,7 @@ probe(`isStoryMode=false;townsData={};startAtLevel(1);started=true;doTick=true;B
  leftStick={active:false,dx:0,dy:0};rightStick={active:false,dx:0,dy:0,dist:0};
  swordPickedUp=window.pickaxeOwned=true;setMeleeTool('SWORD');swordKillCounter=0;`);
 function strike(type='NORMAL',hp=1,tool='SWORD'){
- probe(`frameCount++;enemiesList=[];corpses=[];particles=[];player.x=player.y=0;player.hp=100;player.dead=false;player.dashTimer=0;player.aimAngle=0;player.meleeTimer=11;player.meleePhase=1;player.isArmed=false;player.meleeCharge=0;
+ probe(`resetSwordHitFeedback();doTick=true;frameCount++;enemiesList=[];corpses=[];particles=[];player.x=player.y=0;player.hp=100;player.dead=false;player.dashTimer=0;player.aimAngle=0;player.meleeTimer=11;player.meleePhase=1;player.isArmed=false;player.meleeCharge=0;
   setMeleeTool('${tool}');window.e=new Character(45,0,false,'${type}');e.hp=${hp};e.isFriendly=e.isNeutral=false;enemiesList=[e];player.updatePlayer();window.c=corpses[0];`);
  return P('c&&c.dT');
 }
