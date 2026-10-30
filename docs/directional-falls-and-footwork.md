@@ -1,5 +1,9 @@
 # Directional falls and boxing footwork
 
+NM-0 armored firearm guards use the same corpse orientation as other humanoids,
+including legacy shotgun and dual-SMG death variants. Hybrid and creature
+corpse frames retain their own orientation.
+
 Ordinary humanoid corpse falls and punch stuns use a projected two-bone rig. Actual locomotion is frozen before bullet knockback: a moving actor falls along that vector, while a stationary bullet fatality falls along the bullet’s travel direction, away from the shooter, without a rotating turn; punch stuns retain their incoming-punch direction. The bullet's entry position is captured before knockback too, so body-side reactions and wound holding use the decal that actually landed.
 
 Corpse collapse retains the previous 0.15-per-frame speed, reaching the floor on the seventh simulation frame. The previous 34-frame limb settle and spring rates are restored. Weapon force still affects displacement, but does not slow the collapse. Punch stuns retain their 40-frame buckle and 16-frame contact settle. The torso, head, shoulders, hips and limbs change projection together; signed leg foreshortening tucks the knees underneath the pelvis before the heels extend onto the floor. Ordinary directional falls limit additional torso spin to 0.26 radians. Final joints freeze and existing corpse retirement still stamps the body into the blood bank.

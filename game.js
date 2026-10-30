@@ -17132,7 +17132,9 @@ class Corpse {
       src.shovelEffectBody = this;
       this._shovelFall = src._shovelFall ? {...src._shovelFall} : null;
     }
-    if (eT === "ARMORED" || eT === "ARMORED_STANDARD" || eT === "ALIEN_GATOR") { this.mA = mA; this.aA = aA; } else { this.mA = mA + PI; this.aA = aA + PI; }
+    // NM-0 pistol armor is a humanoid: legacy death variants use the same
+    // body frame as the other people, while the hybrid and gator keep theirs.
+    if (eT === "ARMORED" || eT === "ALIEN_GATOR") { this.mA = mA; this.aA = aA; } else { this.mA = mA + PI; this.aA = aA + PI; }
     // Last word on the overkill tables: a robot never comes apart into a torso
     // and two arms, never scatters a skull and a ribcage, and is never halved.
     // The six death sites all route through robotDeathBurst() now, but this is
