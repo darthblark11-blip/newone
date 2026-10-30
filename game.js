@@ -14773,33 +14773,60 @@ function stampGroundBloodVectors(mark) {
         paintKillVectorBlood(e.pg,rx-e.bx,ry-e.by,paths,col);
     }
 }
-// A surviving sword contact leaves a small cut fan rather than a death pool.
-// Its fixed geometry follows the blade's travel, shared with the airborne jet.
-function buildSwordHitBlood(angle, seed) {
+// A surviving sword contact flings a small curved fan beyond the victim.
+// The curve follows the blade's travel and bends away from the attacker;
+// separated ragged lobes and satellites leave air between the wet marks.
+function buildSwordHitBlood(angle, seed, attackAngle = null) {
     seed=seed>>>0||1;
     const rnd=()=>{seed^=seed<<13;seed^=seed>>>17;seed^=seed<<5;return(seed>>>0)/4294967296;};
     const ca=Math.cos(angle),sa=Math.sin(angle),paths=[];
     const path=points=>paths.push({points:points.map(p=>[ca*p[0]-sa*p[1],sa*p[0]+ca*p[1]]),tone:0});
+    const outward=Number.isFinite(attackAngle)?attackAngle:angle+Math.PI/2;
+    const bendSign=Math.sin(outward-angle)<0?-1:1;
+    const lobe=(x,y,tangent,length,width)=>{
+        const tx=Math.cos(tangent),ty=Math.sin(tangent);
+        const point=(u,v)=>[x+tx*u-ty*v,y+ty*u+tx*v];
+        path([point(-length,-width*.15),point(-length*.48,-width*.77),
+            point(length*.12,-width*(.75+rnd()*.45)),point(length*.73,-width*.30),
+            point(length,0),point(length*.28,width*.65),point(-length*.12,width),
+            point(-length*.42,width*.24),point(-length*.83,width*.48)]);
+    };
+    // Separate little thrown clots trace the arc. Their staggered sides and
+    // unequal torn edges avoid drawing three continuous scratch-like lines.
+    const bend=9+rnd()*6;
+    for(let i=0;i<6;i++){
+        const t=.12+i*.16+(rnd()-.5)*.055,x=27*t;
+        const side=(i%2?1:-1)*(1.3+rnd()*2.7),y=bendSign*bend*t*t+side;
+        const tangent=Math.atan2(bendSign*bend*2*t,27)+(rnd()-.5)*.35;
+        lobe(x,y,tangent,1.8+rnd()*1.7,1+rnd()*1.4);
+    }
     for(let i=0;i<3;i++){
-        const y=(i-1)*2.5+(rnd()-.5)*1.5,reach=15+rnd()*13+(i===1?5:0),w=1+rnd()*1.3;
-        path([[-3,y*.4],[reach*.24,y-w],[reach*.58,y-w*.65],
-            [reach*.84,y-w*1.1],[reach,y-.2],[reach*.72,y+w*.7],
-            [reach*.37,y+w],[0,y*.4+w*.25]]);
+        const t=.23+i*.26+(rnd()-.5)*.09,x=25*t;
+        const y=bendSign*bend*t*t+(i%2?1:-1)*(6+rnd()*4);
+        lobe(x,y,Math.atan2(bendSign*bend*2*t,25)+(rnd()-.5)*.6,1.1+rnd()*1.4,.6+rnd()*.65);
     }
-    for(let i=0;i<5;i++){
-        const reach=16+rnd()*20,y=(rnd()-.5)*reach*.45,length=1.7+rnd()*3,w=.45+rnd()*.8;
-        path([[reach-length,y-w*.15],[reach,y-w],[reach+length,y],
-            [reach-length*.15,y+w],[reach-length*.7,y+w*.35]]);
+    for(let i=0;i<4;i++){
+        const t=.9+i*.14+(rnd()-.5)*.07,x=26*t,y=bendSign*10*t*t+(rnd()-.5)*5;
+        const length=1.3+rnd()*1.8,width=.35+rnd()*.55;
+        const tangent=Math.atan2(bendSign*20*t,26),tx=Math.cos(tangent),ty=Math.sin(tangent);
+        const point=(u,v)=>[x+tx*u-ty*v,y+ty*u+tx*v];
+        path([point(-length,-width*.15),point(0,-width),point(length,0),
+            point(-length*.15,width),point(-length*.7,width*.35)]);
     }
-    path([[-2,-1],[-7-rnd()*3,-2],[-6,1],[-1,1.5]]);
     let spread=0;
     for(const p of paths)for(const v of p.points)spread=Math.max(spread,Math.abs(v[0]),Math.abs(v[1]));
     return {angle,paths,spread:Math.ceil(spread)+2};
 }
-function stampSwordHitBlood(x,y,angle,owner,col) {
+function stampSwordHitBlood(x,y,angle,owner,col,attackAngle = null) {
     if(!owner||!(owner.hp>0)||owner.dead||!Number.isFinite(x)||!Number.isFinite(y)||!bloodMarkBudget(false))return null;
+    const outward=Number.isFinite(attackAngle)?attackAngle:angle;
+    const radius=Math.max(8,Math.min(22,Math.max(owner.bodyW||24,owner.bodyH||24)*.38));
+    // Use the body center, rather than the near-side airborne contact. The
+    // stain clears the body both behind it and on the blade's exit side.
+    x=(Number.isFinite(owner.x)?owner.x:x)+Math.cos(outward)*(radius+8)+Math.cos(angle)*(radius+6);
+    y=(Number.isFinite(owner.y)?owner.y:y)+Math.sin(outward)*(radius+8)+Math.sin(angle)*(radius+6);
     const seed=(Math.imul((x*16)|0,0x9e3779b9)^Math.imul((y*16)|0,0x85ebca6b)^frameCount)>>>0||1;
-    const mark={x,y,...buildSwordHitBlood(angle,seed),col};
+    const mark={x,y,...buildSwordHitBlood(angle,seed,outward),col};
     if(shovelRenderDepth(owner)>0||owner.shovelDepthTarget>0){
         if(shovelBloodMarks.length>=SHOVEL_BLOOD_MARK_MAX)shovelBloodMarks.shift();
         mark.vectors=mark.paths;mark.blobs=[];mark.age=24;mark.shovelDeposit=true;
@@ -15428,7 +15455,8 @@ function resolveSurvivingSwordHit(attacker, target, hpBefore, angle = null) {
         target.eType === 'ARMORED' && hpBefore > 300 || target.eType === 'ARMORED_STANDARD' && hpBefore > 50 ||
         target.eType === 'SNAIL_HYBRID' && hpBefore > 150;
     beginSwordHitFeedback(attacker, target, hpBefore, slash);
-    emitSwordHitBlood(target.x - dx * 4, target.y - dy * 4, dx * 10, dy * 10, target, ink, armor);
+    const attackAngle = Math.atan2(target.y - attacker.y, target.x - attacker.x);
+    emitSwordHitBlood(target.x - dx * 4, target.y - dy * 4, dx * 10, dy * 10, target, ink, armor, attackAngle);
     return true;
 }
 
@@ -23203,11 +23231,11 @@ this.skeletonTimer = 0;
       if(!this.checkCol(this.x+nx,this.y))this.x+=nx;if(!this.checkCol(this.x,this.y+ny))this.y+=ny;
       
       if (this.meleePhase === 4 && this.meleeTimer === 15 && !shovelSwing) {
-          screenShake = 20; 
+          if(meleeTool()!=="SWORD")screenShake = 20;
           shockwaves.push(new Shockwave(this.x, this.y, this.aimAngle, meleeTool()==="SWORD", this));
       }
              else if ((this.meleePhase !== 4 || shovelSwing) && this.meleeTimer === 10) {
-          screenShake = shovelSwing ? 6 : 12;
+          if(meleeTool()!=="SWORD")screenShake = shovelSwing ? 6 : 12;
           if(shovelSwing)resolveShovelSwing(this);
           else {
           // A swing lands on the world as well as on people. Same arc, same
@@ -28591,6 +28619,7 @@ class Bullet {
 const PARTICLE_POOL_MAX = 900;
 const _particlePool = [];
 const COMIC_HIT_LIMIT = 900, COMIC_HITS_PER_FRAME = 24, COMIC_HIT_BLOOD_COUNT = 12;
+const SWORD_HIT_BLOOD_COUNT = 36, SWORD_HIT_BLOOD_SPEED = 1.35;
 let _comicHitFrame=-1,_comicHitsThisFrame=0,_comicHitSerial=0;
 const CEL_EXPLOSION_MAX=24,CEL_EXPLOSIONS_PER_FRAME=8;
 let _celExplosionFrame=-1,_celExplosionCount=0,_celExplosionLive=0,_celExplosionSerial=0;
@@ -28623,19 +28652,20 @@ function emitComicHit(x,y,vx,vy,owner,armor=false,blood=true,bloodColor=null,for
     p.fxMaterial=armor?'ARMOR':'FLESH';p.sz*=(armor?1.2:1)*Math.max(.7,Math.min(1.3,force));
     particles.push(p);return true;
 }
-function emitSwordHitBlood(x,y,vx,vy,owner,bloodColor=null,armor=false) {
+function emitSwordHitBlood(x,y,vx,vy,owner,bloodColor=null,armor=false,attackAngle=null) {
     if(!owner||!(owner.hp>0)||owner.dead||!Number.isFinite(x)||!Number.isFinite(y))return false;
     const angle=Math.hypot(vx,vy)>.001?Math.atan2(vy,vx):(Number.isFinite(owner.aimAngle)?owner.aimAngle:0);
     const machine=owner.eType==='ROBOT'||owner.eType==='SAUCER'||owner.eType==='SAUCER_RED';
     const ink=machine?color(OIL_COL[0],OIL_COL[1],OIL_COL[2]):bloodColor||impactBloodColor();
-    stampSwordHitBlood(x,y,angle,owner,ink);
+    stampSwordHitBlood(x,y,angle,owner,ink,attackAngle);
     if(_comicHitFrame!==frameCount){_comicHitFrame=frameCount;_comicHitsThisFrame=0;}
     if(_comicHitsThisFrame>=COMIC_HITS_PER_FRAME||particles.length>=COMIC_HIT_LIMIT)return false;
     _comicHitsThisFrame++;
     const sparks=machine?Math.min(4,COMIC_HIT_LIMIT-particles.length-1):0;
-    const count=Math.min(COMIC_HIT_BLOOD_COUNT,COMIC_HIT_LIMIT-particles.length-1-sparks);
+    const count=Math.min(SWORD_HIT_BLOOD_COUNT,COMIC_HIT_LIMIT-particles.length-1-sparks);
     for(let i=0;i<count;i++){
         const p=newParticle(x,y,ink,'HIT_BLOOD',Math.cos(angle),Math.sin(angle),owner);
+        p.vx*=SWORD_HIT_BLOOD_SPEED;p.vy*=SWORD_HIT_BLOOD_SPEED;
         p.fxMaterial=machine?'SWORD_OIL':ink.levels[1]>ink.levels[0]*.75?'SWORD_YELLOW':'';
         particles.push(p);
     }

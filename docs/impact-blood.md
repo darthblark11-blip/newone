@@ -60,14 +60,19 @@ particles. Each target receives a 180-active-millisecond white slash and torso
 flash plus a temporary 1.8-second reveal of the existing target health bar.
 The bar holds the lost-health chip briefly before draining it. Multiple targets
 in one swing share the stop; resuming does not apply the hit again.
+Sword swings and finishers add no camera shake.
 
-Each surviving hit also stamps a small nine-polygon floor slash, aligned with
-the spray. Forehand and backhand slashes follow the blade in opposite directions;
-the traveling finisher follows its own direction. These marks bake into the
-existing floor bank and use its seam clipping and below-ground projection.
-Machine hits keep oil and sparks, and insects keep yellow fluid. Airborne
-contacts share the existing 24-contact/900-particle limits; floor slashes share
-the 24-impact limit. All cosmetic variation avoids gameplay randomness.
+Surviving sword hits throw 36 inked blood particles, three times the original
+sword spray, with 35% greater travel. Projectile spray keeps its own count and
+speed. Each sword hit also stamps a small arcing floor splash behind the victim,
+away from the attacker and toward the blade's exit side. Forehand and backhand
+slashes fling it to opposite sides; the traveling finisher follows its own
+direction. Tapered, separated wet marks and scattered droplets follow the arc.
+These marks bake into the existing floor bank and use its seam clipping and
+below-ground projection. Machine hits keep oil and sparks, and insects keep
+yellow fluid. Airborne contacts share the existing 24-contact/900-particle
+limits; floor splashes share the 24-impact limit. All cosmetic variation avoids
+gameplay randomness.
 
 Misses, immunity, punches, picks and shovels keep their existing feedback.
 Lethal sword hits retain their existing animations, blood pools and corpse

@@ -47,9 +47,10 @@ const noSwordFeedback = () => P(`!swordHitStopped()&&!swordVictim.swordHitFeedba
 
 fresh();strike();
 ok('a real surviving sword hit applies its existing 200 damage exactly once', P('swordVictim.hp===700&&!swordVictim.dead&&corpses.length===0'));
+ok('a surviving sword hit adds no camera shake', P('screenShake===0'));
 ok('contact stops the active frame and arms a 100 ms wall-clock freeze', P('!doTick&&swordHitStopped()&&swordHitStopUntil===millis()+100'));
 ok('the survivor has a bright flash and a bar showing pre-hit health', P('swordVictim.swordHitFeedback.flashMs>0&&swordVictim.swordHitFeedback.ghostHp===900&&swordHitTargets.has(swordVictim)'));
-ok('the flesh spray replaces the old oval blood particles on surviving hits', P("particles.filter(p=>p.t==='HIT_BLOOD').length===12&&particles.filter(p=>p.t==='COMIC_IMPACT').length===1&&!particles.some(p=>p.t==='BLOOD'||p.t==='GORE')"));
+ok('the flesh spray triples to 36 inked particles on each surviving hit', P("particles.filter(p=>p.t==='HIT_BLOOD').length===36&&particles.filter(p=>p.t==='COMIC_IMPACT').length===1&&!particles.some(p=>p.t==='BLOOD'||p.t==='GORE')"));
 ok('every surviving hit immediately stamps one minor directional cut on the floor', floor.length===1 && floor[0].spread<50 && floor[0].paths.length>0 && P('bloodPools.length===0'));
 
 const held = P('JSON.stringify(swordVictim.swordHitFeedback)'), heldParticles = P('JSON.stringify(particles)');
@@ -61,7 +62,49 @@ probe('doTick=true;frameCount++;player.updatePlayer();');
 ok('resuming the same swing does not deal duplicate damage or stamp twice', P('swordVictim.hp===700') && floor.length===1);
 probe('player.meleeTimer=11;player.meleePhase=2;player.isBackhand=true;frameCount++;player.updatePlayer();');
 ok('the next surviving combo hit refreshes feedback and applies one more hit', P('swordVictim.hp===500&&swordHitStopped()&&swordVictim.swordHitFeedback.lifeMs>0') && floor.length===2);
+ok('a backhand adds no camera shake', P('screenShake===0'));
 ok('the backhand reverses the floor slash with the blade travel', Math.cos(floor[0].angle-floor[1].angle)<-.99);
+
+for(const heading of [0,Math.PI/2,Math.PI,-Math.PI/2])for(const backhand of [false,true]) {
+  fresh('NORMAL',900,'SWORD',backhand);
+  probe(`player.aimAngle=${heading};swordVictim.x=200+45*Math.cos(${heading});
+    swordVictim.y=200+45*Math.sin(${heading});`);
+  strike();
+  const mark=floor[0],victim=P('({x:swordVictim.x,y:swordVictim.y})');
+  const away=[Math.cos(heading),Math.sin(heading)],travel=[Math.cos(mark.angle),Math.sin(mark.angle)];
+  const along=p=>p[0]*travel[0]+p[1]*travel[1],out=p=>p[0]*away[0]+p[1]*away[1];
+  const vertices=mark.paths.flatMap(path=>path.points),offset=[mark.x-victim.x,mark.y-victim.y];
+  ok('the curved floor spray clears the victim on its backward and blade-exit sides',
+    out(offset)>15&&along(offset)>10&&vertices.every(p=>out([p[0]+offset[0],p[1]+offset[1]])>4&&along([p[0]+offset[0],p[1]+offset[1]])>10));
+  const clots=mark.paths.map(path=>{
+    const center=path.points.reduce((a,p)=>[a[0]+p[0]/path.points.length,a[1]+p[1]/path.points.length],[0,0]);
+    // Measure each polygon's principal axis independently of the generator.
+    const cov=path.points.reduce((a,p)=>{const x=along(p)-along(center),y=out(p)-out(center);return [a[0]+x*x,a[1]+y*y,a[2]+x*y];},[0,0,0]);
+    return {x:along(center),y:out(center),angle:.5*Math.atan2(2*cov[2],cov[0]-cov[1])};
+  }).sort((a,b)=>a.x-b.x);
+  const average=(list,key)=>list.reduce((s,c)=>s+c[key]/list.length,0),near=clots.slice(0,3),far=clots.slice(-4);
+  ok('the separated blood drops visibly arc away from the attacker through the slash',
+    average(far,'y')>average(near,'y')+6&&average(far,'angle')>average(near,'angle')+.15);
+  const area=mark.paths.reduce((sum,path)=>sum+Math.abs(path.points.reduce((a,p,i)=>{
+    const q=path.points[(i+1)%path.points.length];return a+p[0]*q[1]-q[0]*p[1];
+  },0))/2,0);
+  const width=Math.max(...vertices.map(along))-Math.min(...vertices.map(along));
+  const height=Math.max(...vertices.map(out))-Math.min(...vertices.map(out));
+  ok('separated thin streaks and droplets leave substantial open floor between marks',
+    mark.paths.length===13&&area/(width*height)<.3&&mark.spread<50);
+}
+
+fresh();probe('screenShake=4;');strike();
+ok('a sword hit preserves camera shake from an unrelated source', P('screenShake===4'));
+
+for(const hp of [900,100]) {
+  fresh('NORMAL',hp);probe('player.meleeTimer=16;player.meleePhase=4;frameCount++;player.updatePlayer();');
+  ok('launching a sword finisher adds no camera shake', P('shockwaves.length===1&&screenShake===0'));
+  probe('frameCount++;shockwaves[0].update();');
+  ok((hp===900?'surviving':'lethal')+' finisher contact adds no camera shake', P('screenShake===0'));
+}
+fresh();probe('enemiesList=[];player.meleeTimer=16;player.meleePhase=4;frameCount++;player.updatePlayer();');
+ok('a sword finisher launched into empty space adds no camera shake', P('shockwaves.length===1&&screenShake===0'));
 
 fresh();probe(`player.meleeTimer=0;window.swordWave=new Shockwave(200,200,0,true,player);
   particles=[];frameCount++;swordWave.update();`);
@@ -82,12 +125,17 @@ for (const stance of ['STAND','CROUCH','PRONE']) {
 
 fresh('NORMAL',100);strike();
 ok('a lethal sword strike retains its existing death dispatch without survivor feedback', P('swordVictim.hp<=0&&corpses.length===1&&!!corpses[0].sword') && noSwordFeedback());
+ok('a lethal sword strike adds no camera shake', P('screenShake===0'));
 ok('the new nonfatal stencil is not added to the death stain', floor.every(mark=>mark.spread>=50));
 fresh();probe('swordVictim.x=700;');strike();ok('a whiff never requests hit stop or target feedback', noSwordFeedback() && floor.length===0);
+ok('an ordinary sword whiff adds no camera shake', P('screenShake===0'));
 for(const tool of ['NONE','PICKAXE','SHOVEL']) {
   fresh('NORMAL',900,tool);strike();
   ok(tool+' melee retains its own feedback path', noSwordFeedback() && floor.length===0);
+  ok(tool+' retains its original camera shake strength', P('screenShake')===(tool==='SHOVEL'?6:12));
 }
+fresh('NORMAL',900,'PICKAXE');probe('player.meleeTimer=16;player.meleePhase=4;frameCount++;player.updatePlayer();');
+ok('another melee tool retains its finisher camera shake', P('screenShake===20'));
 fresh();
 probe(`swordVictim.isPlayer=true;resetActorStance(swordVictim);
   swordVictim.stance.to=2;swordVictim.stance.durationMs=420;swordVictim.stance.elapsedMs=0;
@@ -118,10 +166,33 @@ try {
   const stamp=JSON.stringify(floor[0]);probe('swordVictim.x+=500;swordVictim.aimAngle=2;doTick=false;updateParticles();');
   ok('moving or turning the survivor leaves the deposited floor slash fixed', floor.length===1&&JSON.stringify(floor[0])===stamp);
   probe('particles=[];frameCount++;for(let i=0;i<100;i++)emitSwordHitBlood(245,200,0,-1,swordVictim,color(90,0,0),false);');
-  ok('a crowded frame bounds sword contacts and floor deposits without backlog', P("particles.filter(p=>p.t==='COMIC_IMPACT').length===24&&particles.length===24*13") && floor.length===25);
+  ok('a crowded frame fits 24 denser sword contacts below the particle ceiling', P("particles.filter(p=>p.t==='COMIC_IMPACT').length===24&&particles.filter(p=>p.t==='HIT_BLOOD').length===24*36&&particles.length===888") && floor.length===25);
   probe('particles=Array(899).fill(null);frameCount++;emitSwordHitBlood(245,200,0,-1,swordVictim,color(90,0,0),false);');
   ok('sword particles respect the shared 900-record ceiling', P('particles.length===900'));
 } finally { ctx.random=gameplayRandom; }
+
+fresh();
+probe(`window.swordCompareSerial=_comicHitSerial;
+  emitComicHit(245,200,0,-1,swordVictim,false,true,color(90,0,0));
+  window.swordCompareBaseline=particles.filter(p=>p.t==='HIT_BLOOD');
+  window.swordCompareMotion=swordCompareBaseline.map(p=>({vx:p.vx,vy:p.vy,size:p.sz,life:p.fxLife,kind:p.fxKind,seed:p.fxSeed}));
+  particles=[];_comicHitSerial=swordCompareSerial;
+  emitSwordHitBlood(245,200,0,-1,swordVictim,color(90,0,0));
+  window.swordCompareSpray=particles.filter(p=>p.t==='HIT_BLOOD');`);
+ok('projectile contact still emits its original twelve blood particles', P('swordCompareBaseline.length===12'));
+ok('the denser sword spray preserves matched particle shape and lifetime',
+  P('swordCompareBaseline.every((p,i)=>swordCompareSpray[i].fxSeed===p.fxSeed&&swordCompareSpray[i].sz===p.sz&&swordCompareSpray[i].fxLife===p.fxLife&&swordCompareSpray[i].fxKind===p.fxKind)'));
+const reachRatios=P(`swordCompareBaseline.map((p,i)=>{
+  const q=swordCompareSpray[i],px=p.x,py=p.y,qx=q.x,qy=q.y;
+  let steps=0;while((p.a>0||q.a>0)&&steps++<100){p.update();q.update();}
+  return Math.hypot(q.x-qx,q.y-qy)/Math.hypot(p.x-px,p.y-py);
+})`);
+ok('matched sword droplets travel 35 percent farther through their complete lifetime',
+  reachRatios.every(r=>Math.abs(r-1.35)<1e-8));
+probe(`particles=[];_comicHitSerial=swordCompareSerial;
+  emitComicHit(245,200,0,-1,swordVictim,false,true,color(90,0,0));`);
+ok('sword travel changes never alter the next projectile spray',
+  P(`JSON.stringify(particles.filter(p=>p.t==='HIT_BLOOD').map(p=>({vx:p.vx,vy:p.vy,size:p.sz,life:p.fxLife,kind:p.fxKind,seed:p.fxSeed})))===JSON.stringify(swordCompareMotion)`));
 
 for(const [type,material] of [['BUG','SWORD_YELLOW'],['ROBOT','SWORD_OIL']]) {
   fresh(type);strike();

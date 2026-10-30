@@ -5,7 +5,7 @@ const {chromium}=require('playwright');
 (async()=>{
  const browser=await chromium.launch({executablePath:process.env.VIS_CHROME||'/usr/bin/chromium',headless:true,args:['--no-sandbox','--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
  try{
-  const page=await browser.newPage({viewport:{width:1100,height:760}}),errors=[];
+  const page=await browser.newPage({viewport:{width:1200,height:1050}}),errors=[];
   page.on('pageerror',e=>errors.push(e.message));
   await page.goto(process.env.SWORD_SCENE_URL||'http://127.0.0.1:8000/newone-dev/');
   await page.waitForFunction(()=>window.frameCount>3);
@@ -21,7 +21,7 @@ const {chromium}=require('playwright');
    enemiesList=[swordSceneTarget];particles=[];bullets=[];corpses=[];
    window.swordSceneTime=1000;window.millis=()=>swordSceneTime;
    frameCount++;player.updatePlayer();
-   const atHit={hp:swordSceneTarget.hp,timer:player.meleeTimer,deadline:swordHitStopUntil,particles:particles.length};
+   const atHit={hp:swordSceneTarget.hp,timer:player.meleeTimer,deadline:swordHitStopUntil,particles:particles.length,shake:screenShake};
    // Aim input keeps asking to move throughout the contact freeze.
    leftStick.active=true;leftStick.dx=1;
    const x=player.x,y=player.y,enemyX=swordSceneTarget.x,enemyY=swordSceneTarget.y;
@@ -35,6 +35,7 @@ const {chromium}=require('playwright');
    return {atHit,frozen,resumed,before:{x,y,enemyX,enemyY,effect,poses}};
   });
   assert.equal(state.atHit.hp,500);assert.equal(state.atHit.deadline,1100);
+  assert.equal(state.atHit.shake,0);assert.equal(state.atHit.particles,37);
   assert.equal(state.frozen.x,state.before.x);assert.equal(state.frozen.y,state.before.y);
   assert.equal(state.frozen.enemyX,state.before.enemyX);assert.equal(state.frozen.enemyY,state.before.enemyY);
   assert.equal(state.frozen.timer,state.atHit.timer);assert.equal(state.frozen.hp,500);
@@ -55,7 +56,7 @@ const {chromium}=require('playwright');
    }
    background(34,44,46);noStroke();textAlign(CENTER,TOP);textFont('sans-serif');
    fill(239,235,215);textSize(23);text('SURVIVING SWORD HITS',width/2,20);
-   textSize(13);fill(177,191,188);text('100 ms contact stop · directional spray · temporary target health',width/2,54);
+   textSize(13);fill(177,191,188);text('100 ms contact stop · 3× blood spray · arcing floor splatter · no sword shake',width/2,54);
    const times=[0,220,600];
    for(let row=0;row<3;row++)for(let col=0;col<3;col++){
     const f=swordGallery[col];useBloodBank(f.bank);particles=f.particles;
@@ -64,10 +65,10 @@ const {chromium}=require('playwright');
     for(let left=times[row];left>0;left-=16.67)updateSwordHitFeedback(Math.min(left,16.67));
     if(row===1)for(let i=0;i<13;i++)for(const p of particles)p.update();
     if(row===2)for(let i=0;i<24;i++)for(const p of particles)p.update();
-    doTick=false;push();translate(185+col*365,200+row*210);scale(2.4);
+    doTick=false;push();translate(200+col*400,230+row*330);scale(2.2);
     drawBloodChunks();f.e.show();updateParticles();pop();
     fill(188,203,195);noStroke();textSize(12);textAlign(CENTER,TOP);
-    text(['STANDING / FOREHAND','CROUCH / BACKHAND','PRONE / FOREHAND'][col]+' · '+times[row]+' ms',185+col*365,272+row*210);
+    text(['STANDING / FOREHAND','CROUCH / BACKHAND','PRONE / FOREHAND'][col]+' · '+times[row]+' ms',200+col*400,302+row*330);
    }
   });
   await page.screenshot({path:process.env.SWORD_SCENE_OUT||'/tmp/newone-sword-hits.png'});
