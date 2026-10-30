@@ -676,8 +676,18 @@ console.log('== a body keeps what the person was wearing ==');
      threw || '54 combinations');
   ok('and a dressed body is visibly more than a bare one', dressed > bare,
      `${dressed} draw calls against ${bare}`);
-  ok('an overkill torso carries the head it had', /drawFigureHair\(r, this\.id, 0, -this\.bH \* 0\.4/.test(src),
-     'body-part gibs are the same person');
+  const overkillHeads=[],realHair=ctx.drawFigureHair;
+  ctx.drawFigureHair=function(g,id,x,y){overkillHeads.push({id,x,y});return realHair.apply(this,arguments);};
+  let matched=true;
+  try {
+    for(const death of [10,15]){
+      drawn('COWBOY',death);const id=P('corpses[0].id');overkillHeads.length=0;
+      probe('corpses[0].show();');
+      matched=matched&&overkillHeads.some(p=>p.id===id&&p.x===0&&Math.abs(p.y+27*.4)<1e-9);
+    }
+  } finally {ctx.drawFigureHair=realHair;}
+  ok('an overkill torso carries the head it had',matched,
+     'both torso painters read the frozen identity at the attached head');
 }
 
 console.log(`\n${checks - fails}/${checks} checks passed`);

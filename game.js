@@ -5811,7 +5811,17 @@ function drawBuildings(list, i0, i1) {
   // Closing the previous record's lean and forgetting how far it went are one
   // act, so they live in one function -- a branch that read a stale _lgLx would
   // put its base plate under the lamp post before it.
-  const _lgClose = () => { _lgLx = 0; _lgLy = 0; if (_lgOpen) { pop(); _lgOpen = false; } };
+  let _wallPaint = null;
+  const _lgClose = () => {
+    _lgLx = 0; _lgLy = 0;
+    if (_lgOpen) { pop(); _lgOpen = false; }
+    if (_wallPaint) {
+      drawBuildingWallBlood(_wallPaint);
+      if (typeof drawWallCorpsePieces === 'function') drawWallCorpsePieces(_wallPaint, window);
+      if (typeof drawWallCorpses === 'function') drawWallCorpses(_wallPaint, window);
+      _wallPaint = null;
+    }
+  };
   for (let _i = _lo; _i < _hi; _i++) { let b = _arr[_i];
     _lgClose();
     if (!inView(b.x, b.y, Math.max(b.w || 0, b.h || 0) + 150)) continue;
@@ -5820,6 +5830,7 @@ function drawBuildings(list, i0, i1) {
     // canopy in the decor list is what you actually see; without this the
     // generic building branch drew a dark box under every tree in the wood.
     if (b.isTreeTrunk) continue;
+    _wallPaint = b;
     if(b.undergroundGate)continue; // animated leaves and arch draw together after the mass pass
     if(b.undergroundWall){drawUndergroundWall(b);continue;}
     if(b.undergroundProp){drawUndergroundProp(b);continue;}
@@ -14978,6 +14989,9 @@ let bloodBanks = {};
 let bloodBankId = null;
 let bloodPools = [];
 let shovelBloodMarks = [];
+let wallBloodMarks = new Map();
+let wallBloodCount = 0;
+const WALL_BLOOD_BANK_MAX = 192, WALL_BLOOD_TOTAL_MAX = 768, WALL_BLOOD_FACE_MAX = 12;
 const SHOVEL_BLOOD_MARK_MAX = 192;
 const BLOOD_POOL_FRAMES = 360, BLOOD_POOL_HOLD_FRAMES = 45, BLOOD_POOL_BLOB_FRAMES = 90;
 const BLAST_BLOOD_POOL_FRAMES = 54, BLAST_BLOOD_POOL_HOLD_FRAMES = 6, BLAST_BLOOD_POOL_BLOB_FRAMES = 20;
@@ -14990,7 +15004,7 @@ function bloodPoolProgress(age, blastBlood = false) {
 function useBloodBank(id) {
   const key = String(id);
   if (bloodBankId === key) return;
-  if (bloodBankId !== null) bloodBanks[bloodBankId] = { chunks: bloodChunks, use: bloodChunkUse, pools: bloodPools, pitMarks: shovelBloodMarks };
+  if (bloodBankId !== null) bloodBanks[bloodBankId] = { chunks: bloodChunks, use: bloodChunkUse, pools: bloodPools, pitMarks: shovelBloodMarks, wallMarks: wallBloodMarks };
   bloodBankId = key;
   let bank = bloodBanks[key];
   if (!bank) { bank = { chunks: {}, use: {}, pools: [], pitMarks: [] }; bloodBanks[key] = bank; }
@@ -14998,6 +15012,7 @@ function useBloodBank(id) {
   bloodChunkUse = bank.use;
   bloodPools = bank.pools;
   shovelBloodMarks = bank.pitMarks || (bank.pitMarks = []);
+  wallBloodMarks = bank.wallMarks || (bank.wallMarks = new Map());
 }
 
 // Everything, everywhere. Only a genuine restart wants this.
@@ -15009,21 +15024,25 @@ function wipeAllBloodBanks() {
   bloodBanks = {}; bloodBankId = null;
   bloodChunks = {}; bloodChunkUse = {};
   bloodPools = []; shovelBloodMarks = [];
+  wallBloodMarks = new Map(); wallBloodCount = 0;
+  if (typeof clearWallCorpses === 'function') clearWallCorpses();
   bloodBytes = 0; bloodSurfaces = 0;
   for (const pg of bloodSurfacePool) pg.remove();
   bloodSurfacePool.length = 0;
 }
 
 // Anything still lying there when the player leaves belongs to the ground they
-// are leaving, not to the one they are arriving at. The settle is deterministic
-// and freezes anyway, so fast-forwarding it costs at most RAG_FRAMES steps and
-// stamps the same body they would have watched land.
+// are leaving, not to the one they are arriving at. Finish the bounded settle
+// and piece trajectories before stamping, so no airborne or wall-pinned pose
+// is baked into the floor. Supported seated bodies stay in their wall bank.
 function retireCorpsesToBloodBank() {
   for (const c of corpses) {
     if (c.isStatic) continue;
+    if(c.wallSit)while(!c.wallSit.done)stepCorpseWallSit(c);
     finishFigureFall(c);
     finishSwordParts(c);
     finishBlastDeath(c);
+    finishCorpsePieces(c);
     if(c.fatalSpray)c.fatalSpray.left=0;
     c.poolAge=BLOOD_POOL_FRAMES;
     c.sep = corpseSepMax(c.dT);
@@ -15382,6 +15401,171 @@ function updateArrowBloodTrail(actor, elapsedMs) {
         depositSmallBlood(actor.x+c*trail.x-sn*trail.y,actor.y+sn*trail.x+c*trail.y,blobs,6,actor);
     }
     if (!trail.leftMs) actor.arrowBloodTrail = null;
+}
+
+// A floor stain cannot be pasted over the mass pass: it would float in front
+// of actors and survive the wall being destroyed. These small vector decals
+// belong to their wall's geometry and are painted with that wall, in its own
+// depth-sorted run. Coordinates are along the wall and UP it, before camera
+// lean, so panning never makes blood skate over the masonry.
+const _wallBloodKeys=new WeakMap();
+function wallBloodKey(b) {
+    let key=_wallBloodKeys.get(b);
+    if(key===undefined){
+        const kind=b.propType||b.hqWall||b.undergroundWall||
+            (b.isGovFortress?'GATE':b.isGiantBarrier?'BARRIER':b.isHouseWall?'HOUSEWALL':
+            b.isBlockBuilding?'BLOCK':b.isWall?'WALL':'MASS');
+        key=b.x+':'+b.y+':'+b.w+':'+b.h+':'+(b.isHouseWall?b.angle||0:0)+':'+kind;_wallBloodKeys.set(b,key);
+    }
+    return key;
+}
+function corpseBloodWall(b) {
+    if (!b || b.noClip || !(b.w > 0) || !(b.h > 0) || b.hp !== undefined && b.hp <= 0 && !b.isGovFortress) return false;
+    if (b.isWall || b.isHouseWall || b.hqWall || b.undergroundWall || b.isGiantBarrier ||
+        b.isGovFortress || b.isBlockBuilding) return true;
+    if (b.isBiomeProp) return ['BORDERWALL','BLASTWALL','CHECKPOINT','CIVICBALUSTRADE',
+        'REVETMENT','RUINWALL','HOARDING','BUNKER'].includes(b.propType);
+    const mass = legacyMassOf(b);
+    return !!mass && mass !== true && !b.isDumpster && !b.isCrateProp;
+}
+function corpseWallProjection(b) {
+    let rise=0, lx=0, ly=0;
+    if (b.undergroundWall || b.hqWall) {
+        rise=b.hqWall?(b.hqWall==='AIRLOCK'?16:24):buildingRise(b);
+        const long=b.hqWall?Math.max(b.w,b.h)>=1000:Math.max(b.w,b.h)>500;
+        const lean=long?longMassLean(b,rise,[0,0],b.hqWall==='ENTRY'?0:undefined):massLean(b.x,b.y,rise,[0,0]);
+        lx=lean[0];ly=lean[1];
+    } else if (b.isBiomeProp && PROP_RISE[b.propType]) {
+        rise=PROP_RISE[b.propType][0];
+        const lean=massLean(b.x,b.y,rise,[0,0]);lx=lean[0];ly=lean[1];
+    } else if (b.isBlockBuilding || BIOME_ACTIVE && (b.isGovFortress || b.isGiantBarrier || legacyMassOf(b))) {
+        rise=buildingRise(b);
+        const lean=b.isGovFortress||b.isGiantBarrier?
+            longMassLean(b,rise,[0,0],b.isGovFortress?b.x:undefined):massLean(b.x,b.y,rise,[0,0]);
+        if (!b.isBlockBuilding && !b.isGovFortress && !b.isGiantBarrier) clampLean(lean,leanCapOf(b));
+        lx=lean[0];ly=lean[1];
+    }
+    return {rise:rise||Math.min(24,Math.max(8,Math.min(b.w,b.h))),lx,ly,projected:rise>0};
+}
+function corpseWallBloodColor(c) {
+    if (!c || c.eT==='ROBOT' || c.eT==='SAUCER' || c.eT==='SAUCER_RED' ||
+        c.dT===15 || c.isCharred || c.id&&c.id.isCharred || shovelRenderDepth(c)>0 || c.shovelDepthTarget>0) return null;
+    return c.eT==='BUG'||c.eT==='SNAIL'||c.eT==='SNAIL_HYBRID'?[200,230,40,220]:[90,0,0,220];
+}
+function pruneWallBlood(bank, limit) {
+    let count=0;
+    for (const marks of bank.values()) count+=marks.length;
+    while (count>limit) {
+        let oldest=null,oldKey=null;
+        for (const [key,marks] of bank) if (marks.length && (!oldest || marks[0].serial<oldest.serial)) {
+            oldest=marks[0];oldKey=key;
+        }
+        if (!oldest) break;
+        const marks=bank.get(oldKey);marks.shift();count--;wallBloodCount--;
+        if (!marks.length) bank.delete(oldKey);
+    }
+}
+let _wallBloodSerial=0;
+function wallBloodFrame(b) {
+    const a=b.isHouseWall?b.angle||0:0;
+    return {ca:Math.cos(a),sa:Math.sin(a)};
+}
+function spawnCorpseWallImpactBlood(c, contact) {
+    const col=corpseWallBloodColor(c),b=contact&&contact.b;
+    if (!col || !corpseBloodWall(b)) return;
+    const frame=wallBloodFrame(b),ca=frame.ca,sa=frame.sa;
+    const localNX=(contact.nx||0)*ca+(contact.ny||0)*sa,localNY=-(contact.nx||0)*sa+(contact.ny||0)*ca;
+    if (Math.hypot(localNX,localNY)<.5) return;
+    const faceX=Math.abs(localNX)>=Math.abs(localNY)?Math.sign(localNX):0,faceY=faceX?0:Math.sign(localNY);
+    const px=(contact.x-b.x)*ca+(contact.y-b.y)*sa,py=-(contact.x-b.x)*sa+(contact.y-b.y)*ca;
+    const localX=faceX?faceX*b.w/2:Math.max(-b.w/2,Math.min(b.w/2,px));
+    const localY=faceY?faceY*b.h/2:Math.max(-b.h/2,Math.min(b.h/2,py));
+    const x=b.x+localX*ca-localY*sa,y=b.y+localX*sa+localY*ca,nx=faceX*ca-faceY*sa,ny=faceX*sa+faceY*ca;
+    if (b.isGovFortress && inOpenGateway(b,x)) return;
+    const projection=corpseWallProjection(b),rise=projection.rise;
+    let seed=(Math.imul((x*16)|0,0x9e3779b9)^Math.imul((y*16)|0,0x85ebca6b)^++_wallBloodSerial)>>>0||1;
+    const rnd=()=>{seed^=seed<<13;seed^=seed>>>17;seed^=seed<<5;return(seed>>>0)/4294967296;};
+    const up=rise*(.4+rnd()*.22),blobs=[];
+    for(let i=0;i<12;i++) {
+        const side=(rnd()-.5)*43,sz=4+rnd()*14;
+        blobs.push({u:side,v:Math.max(1,Math.min(rise-1,up+(rnd()-.5)*rise*.65)),w:sz,
+            h:Math.min(sz*(.6+rnd()*.55),rise*(.16+rnd()*.28))});
+    }
+    for(let i=0;i<6;i++) {
+        const size=1.2+rnd()*2.1;
+        blobs.push({u:(rnd()-.5)*73,v:rise*(.12+rnd()*.76),w:size,h:Math.min(size,rise*.13)});
+    }
+    for(let i=0;i<3;i++) {
+        const top=Math.max(2,up-rnd()*rise*.2),bottom=Math.max(.6,top-(4+rnd()*rise*.5));
+        blobs.push({u:(rnd()-.5)*27,v:(top+bottom)*.5,w:1.4+rnd()*1.7,h:top-bottom+1});
+    }
+    const key=wallBloodKey(b),marks=wallBloodMarks.get(key)||[];
+    if (!wallBloodMarks.has(key)) wallBloodMarks.set(key,marks);
+    marks.push({x,y,nx,ny,faceX,faceY,along:faceX?localY:localX,col,blobs,serial:_wallBloodSerial});wallBloodCount++;
+    while(marks.length>WALL_BLOOD_FACE_MAX){marks.shift();wallBloodCount--;}
+    pruneWallBlood(wallBloodMarks,WALL_BLOOD_BANK_MAX);
+    // The vector bank has a separate global ceiling; a long campaign cannot
+    // retain one live object per kill forever just because the floor is baked.
+    while(wallBloodCount>WALL_BLOOD_TOTAL_MAX) {
+        let bank=wallBloodMarks,old=Infinity;
+        const consider=m=>{for(const marks of m.values())if(marks.length&&marks[0].serial<old){old=marks[0].serial;bank=m;}};
+        consider(wallBloodMarks);
+        for(const id in bloodBanks)if(bloodBanks[id].wallMarks&&bloodBanks[id].wallMarks!==wallBloodMarks)consider(bloodBanks[id].wallMarks);
+        let count=0;for(const marks of bank.values())count+=marks.length;
+        if(!count)break;
+        pruneWallBlood(bank,count-1);
+    }
+}
+function spawnCorpseWallBlood(c) {
+    if(!corpseWallBloodColor(c))return;
+    let nearest=null,second=null;
+    // Death is an event, not a moving-body query. The active ring is scanned
+    // once so a stain 90 units away cannot miss a wall across a grid-cell seam.
+    for(const b of activeBuildings) {
+        if(!corpseBloodWall(b))continue;
+        const frame=wallBloodFrame(b),ca=frame.ca,sa=frame.sa;
+        const px=(c.x-b.x)*ca+(c.y-b.y)*sa,py=-(c.x-b.x)*sa+(c.y-b.y)*ca;
+        const localX=Math.max(-b.w/2,Math.min(b.w/2,px)),localY=Math.max(-b.h/2,Math.min(b.h/2,py));
+        const x=b.x+localX*ca-localY*sa,y=b.y+localX*sa+localY*ca,dx=px-localX,dy=py-localY,d=Math.hypot(dx,dy);
+        if(d>90 || !d || b.isGovFortress&&inOpenGateway(b,x))continue;
+        const faceX=Math.abs(dx)>=Math.abs(dy)?Math.sign(dx):0,faceY=faceX?0:Math.sign(dy);
+        const nx=faceX*ca-faceY*sa,ny=faceX*sa+faceY*ca;
+        const hit={b,x,y,nx,ny,d};
+        if(!nearest||d<nearest.d){second=nearest;nearest=hit;}
+        else if(!second||d<second.d)second=hit;
+    }
+    if(nearest)spawnCorpseWallImpactBlood(c,nearest);
+    if(second&&second.d<48&&Math.abs(nearest.nx*second.nx+nearest.ny*second.ny)<.05)spawnCorpseWallImpactBlood(c,second);
+}
+function drawBuildingWallBlood(b) {
+    if(!wallBloodMarks.size)return;
+    const marks=wallBloodMarks.get(wallBloodKey(b));
+    if(!marks||!corpseBloodWall(b))return;
+    const projection=corpseWallProjection(b),rise=projection.rise;
+    for(const m of marks) {
+        if(!inView(m.x,m.y,90))continue;
+        const nx=m.nx,ny=m.ny,frame=wallBloodFrame(b);
+        const tx=m.faceY?frame.ca:-frame.sa,ty=m.faceY?frame.sa:frame.ca;
+        if(b.isGovFortress&&inOpenGateway(b,m.x))continue;
+        // Only the face visible below the roof may receive paint. Hidden
+        // faces stay stored and reappear naturally when the camera crosses it.
+        if(projection.projected && nx*projection.lx+ny*projection.ly>=-.01)continue;
+        const span=m.faceX?b.h:b.w,along=m.along;
+        const ux=projection.projected?projection.lx/rise:-nx;
+        const uy=projection.projected?projection.ly/rise:-ny;
+        let u0=-span/2-along+.5,u1=span/2-along-.5;
+        if(b.isGovFortress && m.faceY && gateIsOpen(b)) {
+            if(m.x<b.x)u1=Math.min(u1,b.x-GATE_DOOR_HALF-m.x);
+            else u0=Math.max(u0,b.x+GATE_DOOR_HALF-m.x);
+        }
+        if(u1<=u0)continue;
+        push();translate(m.x,m.y);applyMatrix(tx,ty,ux,uy,0,0);
+        const ctx=drawingContext;
+        ctx.save();ctx.beginPath();ctx.rect(u0,.5,u1-u0,rise-1);ctx.clip();
+        noStroke();fill(...m.col);
+        for(const blob of m.blobs)ellipse(blob.u,blob.v,blob.w,blob.h);
+        ctx.restore();pop();
+    }
 }
 
 function spawnSplatter(x, y, t = "HIDDEN", col = null, owner = null, timing = null) {
@@ -17315,6 +17499,7 @@ function buildFatalSpray(src,eT) {
 // fatal spot remains attached when the torso separates or a piece is moving.
 function fatalWoundPoint(c,w=c.fatalSpray&&c.fatalSpray.wound||c.dec&&c.dec[c.dec.length-1]||{x:0,y:0}) {
   if(c.blast&&c.blast.mode)return gunOverkillWoundPoint(c,w);
+  if(c.wallSit)return seatedWoundPoint(c,w);
   if(w.isLeg)return fallenLegDecalPoint(c,w);
   if(c.injuryFrom&&c.fall){
     const rig=corpseFallRig(c);
@@ -17331,11 +17516,11 @@ function fatalWoundPoint(c,w=c.fatalSpray&&c.fatalSpray.wound||c.dec&&c.dec[c.de
     }
   }
   const s=c.fatalSpray,f=c.fP,rg=c.rag;
-  let x=c.x,y=c.y,a=c.aA,lx=w.x,ly=w.y,scale=1,turn=0;
+  let x=c.x,y=c.y,a=c.aA,lx=w.x,ly=w.y,scale=1,turn=0,pieceSx=1,pieceSy=1;
   const piece=(c.overkillBits||c.aerialBits||c.bits||[]).find(b=>b.type===(c.dT===5?(w.isHead?'skull':'ribcage'):'torso'));
   if([12,13,14].includes(c.dT)){
     if(c.dT===13){
-      x+=Math.cos(a)*Math.min(c.sep,50);y+=Math.sin(a)*Math.min(c.sep,50);
+      const b=corpseSplitPieces(c)[1],pose=corpsePiecePose(b);x+=b.x+pose.dx;y+=b.y+pose.dy;a=pose.rot;pieceSx=pose.sx;pieceSy=pose.sy;
       if(w.isHead)ly-=c.bH*.4;else{lx=w.y;ly=-w.x*.7;turn=-HALF_PI;}
     }else if(c.dT===14){const b=w.x<0?c.lH:c.rH;x+=b.x;y+=b.y;a=c.splitA;
     }else{a-=PI;if(w.isHead)lx+=12;}
@@ -17346,14 +17531,14 @@ function fatalWoundPoint(c,w=c.fatalSpray&&c.fatalSpray.wound||c.dec&&c.dec[c.de
     if(c.dT===2||c.dT===4){x+=Math.cos(c.bA+PI)*c.sep;y+=Math.sin(c.bA+PI)*c.sep;}
     if(w.isHead)lx+=20*f;
   }else if(c.dT===5||c.dT===10||c.dT===11||c.dT===15){
-    if(piece){x+=piece.x;y+=piece.y;a=piece.rot;}
+    if(piece){const pose=corpsePiecePose(piece);x+=piece.x+pose.dx;y+=piece.y+pose.dy;a=pose.rot;pieceSx=pose.sx;pieceSy=pose.sy;}
     if(w.isHead){if(c.dT!==5)ly-=c.bH*.4;}
     else{lx=w.y;ly=-w.x*.7;turn=-HALF_PI;}
-  }else if(c.dT===3){a=c.mA;ly-=c.sep*1.8;
+  }else if(c.dT===3){const b=corpseSplitPieces(c)[1],pose=corpsePiecePose(b);x+=b.x+pose.dx;y+=b.y+pose.dy;a=pose.rot;pieceSx=pose.sx;pieceSy=pose.sy;
   }else if(c.dT===7&&!c.fall){a=c.mA+(rg?rg.ang*.6:0);scale=rg?RAG_SCALE:1;
     if(w.isHead&&rg)lx+=ragRig(c.bW,c.bH).TL*.5+5+4*f;
   }else{
-    if(c.dT===2||c.dT===4){x+=Math.cos(c.bA)*c.sep;y+=Math.sin(c.bA)*c.sep;}
+    if(c.dT===2||c.dT===4){const b=c.separatedTorso;if(b){const p=corpsePiecePose(b);x+=b.x+p.dx;y+=b.y+p.dy;if(b.wallImpact){pieceSx=p.sx;pieceSy=p.sy;}}else{x+=Math.cos(c.bA)*c.sep;y+=Math.sin(c.bA)*c.sep;}}
     a=c.fall?figureFallYaw(c.fall,rg):c.aA+(rg?rg.ang:0);scale=rg?RAG_SCALE:1;
     if(w.isHead){
       const hs=c.fall?lerp(1/RAG_SCALE,1,f):1,ht=figureHeadTurn(c.fall,f);
@@ -17362,6 +17547,8 @@ function fatalWoundPoint(c,w=c.fatalSpray&&c.fatalSpray.wound||c.dec&&c.dec[c.de
       ly=(Math.sin(ht)*w.x+Math.cos(ht)*w.y)*hs;turn=ht;
     }
   }
+  if(c.separatedTorso&&c.separatedTorso.wallImpact)a=corpsePiecePose(c.separatedTorso).rot;
+  lx*=pieceSx;ly*=pieceSy;
   const ca=Math.cos(a),sa=Math.sin(a);
   return {x:x+(ca*lx-sa*ly)*scale,y:y+(sa*lx+ca*ly)*scale,
     angle:a+turn+(w.shotA===undefined?(s?s.angle:0):w.shotA),frameAngle:a,scale};
@@ -17523,7 +17710,16 @@ function buildSwordDeath(c) {
 }
 function stepSwordParts(c) {
   const s=c.sword;if(s.done)return;
-  for(const p of s.parts){p.x+=p.vx;p.y+=p.vy;p.rot+=p.vr;p.vx*=.9;p.vy*=.9;p.vr*=.9;}
+  const yaw=figureFallYaw(c.fall,c.rag),ca=Math.cos(yaw),sa=Math.sin(yaw),plane=swordCutPlane(c);
+  for(let i=0;i<s.parts.length;i++){
+    const p=s.parts[i],pivot=swordPartPivot(c,i,plane),lx=pivot.x+p.x,ly=pivot.y+p.y;
+    const b={x:(ca*lx-sa*ly)*RAG_SCALE,y:(sa*lx+ca*ly)*RAG_SCALE,
+      vx:(ca*p.vx-sa*p.vy)*RAG_SCALE,vy:(sa*p.vx+ca*p.vy)*RAG_SCALE,rot:0};
+    corpsePieceStep(c,b,1,c.dT===16&&i===1?8:16);
+    p.x=(ca*b.x+sa*b.y)/RAG_SCALE-pivot.x;p.y=(-sa*b.x+ca*b.y)/RAG_SCALE-pivot.y;
+    p.vx=(ca*b.vx+sa*b.vy)/RAG_SCALE*.9;p.vy=(-sa*b.vx+ca*b.vy)/RAG_SCALE*.9;
+    p.rot+=p.vr;p.vr*=.9;
+  }
   if(++s.age>=RAG_FRAMES){s.done=true;for(const p of s.parts)p.vx=p.vy=p.vr=0;}
 }
 function finishSwordParts(c) {if(c.sword)while(!c.sword.done)stepSwordParts(c);}
@@ -17643,13 +17839,38 @@ function blastCutPlane(c,p) {
 }
 function blastCutPoint(c,partIndex,along=0) {
   const p=c.blast.parts[partIndex],plane=blastCutPlane(c,p),u=lerp(plane.lo,plane.hi,(along+1)*.5);
-  const x=plane.x+plane.tx*u-p.pivot.x,y=plane.y+plane.ty*u-p.pivot.y,ca=Math.cos(p.rot),sa=Math.sin(p.rot);
-  return{x:c.x+p.x+(ca*x-sa*y)*RAG_SCALE,y:c.y+p.y-p.z+(sa*x+ca*y)*RAG_SCALE,
-    floorY:c.y+p.y+(sa*x+ca*y)*RAG_SCALE,angle:p.rot+Math.atan2(plane.ny,plane.nx)+(p.side>0?PI:0)};
+  const pose=blastPiecePose(p),x=(plane.x+plane.tx*u-p.pivot.x)*pose.sx,y=(plane.y+plane.ty*u-p.pivot.y)*pose.sy,
+    ca=Math.cos(pose.rot),sa=Math.sin(pose.rot);
+  return{x:c.x+p.x+pose.dx+(ca*x-sa*y)*RAG_SCALE,y:c.y+p.y+pose.dy+(sa*x+ca*y)*RAG_SCALE,
+    floorY:c.y+p.y+(sa*x+ca*y)*RAG_SCALE,angle:pose.rot+Math.atan2(plane.ny,plane.nx)+(p.side>0?PI:0)};
 }
-function stepBlastBallistic(p,age) {
+function blastPieceRadius(c,p) {
+  if(!p.pivot)return Math.max(3,(p.sz||6)*.8);
+  const r=c.blast.rig,limb=(r.upper+r.fore+r.hand)*RAG_SCALE;
+  if(p.type==='gunArm')return Math.max(10,limb);
+  const legs=(r.thigh+r.shin+r.foot)*RAG_SCALE;
+  if(p.type==='leg'||p.type==='gunLower')return Math.max(15,legs);
+  const head=(Math.max(18,r.headX||r.TL*.5+3.5)+7)*RAG_SCALE;
+  const torso=Math.max(14,head,(Math.abs(r.shX)+r.upper+r.fore+r.hand)*RAG_SCALE);
+  return p.type==='body'||p.type==='diagonalHalf'?Math.max(torso,(Math.abs(r.hipX)+r.thigh+r.shin+r.foot)*RAG_SCALE):
+    p.type==='gunUpper'&&c.blast.mode==='BREAKUP'?head:torso;
+}
+function blastPiecePose(p) {
+  return p.wallImpact?corpsePiecePose(p):{rot:p.rot,z:p.z,dx:0,dy:-p.z,sx:1,sy:1};
+}
+function stepBlastBallistic(p,age,c=null) {
+  if(p.wallImpact&&c){corpsePieceStep(c,p,1,blastPieceRadius(c,p));p.z=p.vz=0;p.landed=true;return false;}
   if(age>=BLAST_DEATH_FRAMES){p.z=0;p.vx=p.vy=p.vz=p.vr=0;p.landed=true;return false;}
-  p.x+=p.vx;p.y+=p.vy;p.rot+=p.vr;
+  if(c){
+    p.wallTorso=p.type==='torso'||p.type==='body'||p.type==='diagonalHalf'||p.type==='gunUpper';
+    if(p.wallTorso)p.uprightRot=-HALF_PI;
+    corpsePieceStep(c,p,1,blastPieceRadius(c,p));
+    if(p.wallImpact){
+      const wall=corpseWallProjection(p.wallImpact.b);
+      p.wallImpact.height=p.wallImpact.z=Math.min(wall.rise*.8,Math.max(8,p.z));
+      p.z=p.vz=0;p.landed=true;return false;
+    }
+  }else{p.x+=p.vx;p.y+=p.vy;p.rot+=p.vr;}
   if(p.landed){p.vx*=.78;p.vy*=.78;p.vr*=.72;return false;}
   p.z+=p.vz;p.vz-=.32;p.vx*=.987;p.vy*=.987;p.vr*=.992;
   if(p.z>0)return false;
@@ -17663,7 +17884,7 @@ function stepBlastDeath(c,emitEffects=true) {
   const bleedFrames=b.bleedFrames||BLAST_BLEED_FRAMES;
   b.age++;
   for(let i=0;i<b.parts.length;i++){
-    const p=b.parts[i],contact=stepBlastBallistic(p,b.age);
+    const p=b.parts[i],contact=stepBlastBallistic(p,b.age,c);
     if(emitEffects&&contact&&p.bounces===1)spawnSplatter(c.x+p.x,c.y+p.y,'BLOOD',b.paint.blood,c);
     if(emitEffects&&b.age<=bleedFrames&&b.age%3===0&&particles.length<COMIC_HIT_LIMIT-2){
       for(const along of [-.5,.5]){
@@ -17674,13 +17895,13 @@ function stepBlastDeath(c,emitEffects=true) {
     }
   }
   for(const g of b.gibs){
-    const contact=stepBlastBallistic(g,b.age);
+    const contact=stepBlastBallistic(g,b.age,c);
     if(emitEffects&&contact&&g.bounces===1){
       depositSmallBlood(c.x+g.x,c.y+g.y,[{ox:0,oy:0,sz:g.sz*.8},{ox:g.vx,oy:g.vy,sz:g.sz*.4}],12,c);
     }
   }
   c.bloodTimer=Math.max(0,bleedFrames-b.age);
-  if(b.age>=bleedFrames){b.done=true;c.bloodTimer=0;}
+  if(b.age>=bleedFrames&&!corpsePiecesMoving(c)){b.done=true;c.bloodTimer=0;}
 }
 function finishBlastDeath(c) {if(c.blast)while(!c.blast.done)stepBlastDeath(c,false);}
 function blastCorpseReach(c,airborne=false) {
@@ -17737,8 +17958,13 @@ function drawBlastCorpse(r,c) {
       if(g.type==='blood'&&!g.landed){r.fill(b.paint.bloodRibbon);r.triangle(-s*.3,-s*.2,s*.35,s*.2,-s*.7,s*1.7);}
     }r.pop();
   }
-  for(const p of b.parts){
-    r.push();r.translate(c.x+p.x,c.y+p.y-p.z);r.rotate(p.rot);r.scale(RAG_SCALE);r.translate(-p.pivot.x,-p.pivot.y);
+  for(const p of b.parts)if(!corpsePiecePinned(p))drawBlastCorpsePart(r,c,p);
+}
+
+function drawBlastCorpsePart(r,c,p) {
+  const dc=r.drawingContext;
+    const pose=blastPiecePose(p);
+    r.push();r.translate(c.x+p.x+pose.dx,c.y+p.y+pose.dy);r.rotate(pose.rot);r.scale(RAG_SCALE*pose.sx,RAG_SCALE*pose.sy);r.translate(-p.pivot.x,-p.pivot.y);
     if(c.dT===20&&dc){
       const plane=blastCutPlane(c,p),E=240;dc.save();dc.beginPath();
       dc.moveTo(plane.x-plane.tx*E,plane.y-plane.ty*E);dc.lineTo(plane.x+plane.tx*E,plane.y+plane.ty*E);
@@ -17749,7 +17975,6 @@ function drawBlastCorpse(r,c) {
     if(c.dT===20&&dc)dc.restore();
     if(c.dT===20)drawBlastCut(r,c,p);
     r.pop();
-  }
 }
 
 // Firearm body overkill reuses the bounded blast-piece lifecycle. Only the
@@ -17788,9 +18013,9 @@ function buildGunOverkill(c,src){
   c.bT=0;c.sep=corpseSepMax(c.dT);c.stopMotionTimer=BLAST_DEATH_FRAMES;
 }
 function gunOverkillPoint(c,p,x,y,turn=0){
-  const co=Math.cos(p.rot),si=Math.sin(p.rot),dx=x-p.pivot.x,dy=y-p.pivot.y;
-  return{x:c.x+p.x+(co*dx-si*dy)*RAG_SCALE,y:c.y+p.y-p.z+(si*dx+co*dy)*RAG_SCALE,
-    angle:p.rot+turn,frameAngle:p.rot,scale:RAG_SCALE};
+  const pose=blastPiecePose(p),co=Math.cos(pose.rot),si=Math.sin(pose.rot),dx=(x-p.pivot.x)*pose.sx,dy=(y-p.pivot.y)*pose.sy;
+  return{x:c.x+p.x+pose.dx+(co*dx-si*dy)*RAG_SCALE,y:c.y+p.y+pose.dy+(si*dx+co*dy)*RAG_SCALE,
+    angle:pose.rot+turn,frameAngle:pose.rot,scale:RAG_SCALE};
 }
 function gunOverkillWoundPoint(c,w){
   const b=c.blast,r=b.rig;
@@ -17839,6 +18064,323 @@ function drawGunOverkillAnatomy(r,c,p){
   r.push();r.translate(rig.headX,0);r.rotate(c.backFacing?0:PI);
   ragContour(r,255);drawFallenHead(r,c.id,{faceDown:c.backFacing},1,true);
   r.noStroke();for(const d of c.dec||[])if(d.isHead){r.fill(...(d.col||[90,0,0,220]));r.ellipse(d.x,d.y,d.sz,d.sz);}r.pop();
+}
+
+// Corpse pieces use a small swept footprint rather than character movement:
+// the living actor's flying exception and fixed 15-unit radius cannot describe
+// a severed arm. Contact normals also drive the brief torso wall flattening.
+function corpsePieceRectContact(x,y,r,b,cx=b.x,cy=b.y,w=b.w,h=b.h,angle=b.angle||0) {
+  const ca=Math.cos(angle),sa=Math.sin(angle),dx=x-cx,dy=y-cy;
+  const lx=dx*ca+dy*sa,ly=-dx*sa+dy*ca,hw=Math.abs(w)*.5,hh=Math.abs(h)*.5;
+  const px=hw+r-Math.abs(lx),py=hh+r-Math.abs(ly);
+  if(px<=0||py<=0)return null;
+  const ax=px<py?(lx<0?-1:1):0,ay=px<py?0:(ly<0?-1:1),depth=Math.min(px,py);
+  const nx=ax*ca-ay*sa,ny=ax*sa+ay*ca;
+  return {x:x+nx*(depth+.01),y:y+ny*(depth+.01),nx,ny,b,depth};
+}
+let _corpseRotatedFrame=-1,_corpseRotatedSource=null,_corpseRotatedCount=-1;
+const _corpseRotatedSolids=[];
+function corpseRotatedSolids() {
+  if(_corpseRotatedFrame!==frameCount||_corpseRotatedSource!==activeBuildings||_corpseRotatedCount!==activeBuildings.length){
+    _corpseRotatedFrame=frameCount;_corpseRotatedSource=activeBuildings;_corpseRotatedCount=activeBuildings.length;
+    _corpseRotatedSolids.length=0;
+    for(const b of activeBuildings)if(b.angle)_corpseRotatedSolids.push(b);
+  }
+  return _corpseRotatedSolids;
+}
+function corpsePieceContact(c,x,y,r) {
+  // Surface facades must never catch debris moving on a tunnel's depth plane.
+  if(shovelPlayerDepth(c)>.5||(c.shovelDepthTarget||0)>.5)return null;
+  const near=r>COL_PAD?activeBuildings:colNear(x,y);
+  // Supplement the living-body grid only for corpse queries. Rotated walls
+  // can extend beyond that grid's original bounds; spawn and AI indexing keep
+  // their existing cost and behavior. Reuse this short list within the frame.
+  const rotated=r>COL_PAD?EMPTY_LIST:corpseRotatedSolids();
+  let best=null;
+  for(let i=0;i<near.length+rotated.length;i++){
+    const b=i<near.length?near[i]:rotated[i-near.length];
+    if(b.noClip||(b.hp!==undefined&&b.hp<=0&&!b.isGovFortress)||b.isCropField||b.isMarket||b.isDeck||b.isGrassLot||b.isPond||b.isParkingLot||
+      (currentLevel===4&&b.isPalm)||(currentLevel===6&&(b.isAlienPlant||b.isEnergyPole)))continue;
+    if(b.isGovFortress&&inOpenGateway(b,x-r)&&inOpenGateway(b,x+r))continue;
+    let hit;
+    if(b.isUBarrier){
+      const w=Math.abs(b.w),h=Math.abs(b.h);
+      for(const box of [[b.x-w*.5,b.y,30,h],[b.x+w*.5,b.y,30,h],[b.x,b.y-h*.5,w,30]]){
+        hit=corpsePieceRectContact(x,y,r,b,...box,0);
+        if(hit&&(!best||hit.depth<best.depth))best=hit;
+      }
+    }else{
+      hit=corpsePieceRectContact(x,y,r,b);
+      if(hit&&(!best||hit.depth<best.depth))best=hit;
+    }
+  }
+  const cars=activeParkingCars.length<=16?activeParkingCars:crowdNearbyCars(x,y,r,_crowdColCars);
+  for(const b of cars){const hit=corpsePieceRectContact(x,y,r,b,b.x,b.y,50,90,b.angle||0);if(hit&&(!best||hit.depth<best.depth))best=hit;}
+  const drums=barrels.length<=16?barrels:crowdNearbyBarrels(x,y,r,_crowdColBarrels);
+  for(const b of drums){const hit=corpsePieceRectContact(x,y,r,b,b.x,b.y,24,24,0);if(hit&&(!best||hit.depth<best.depth))best=hit;}
+  return best;
+}
+function corpsePieceRadius(c,b) {
+  return b.type==='torso'?Math.max(13,c.bW*.58,c.bH*.64):
+    b.type==='legs'?14:b.type==='lArm'||b.type==='rArm'?13:Math.max(4,Math.min(11,(b.sz||12)*.65));
+}
+function corpsePiecePose(b) {
+  const w=b.wallImpact;
+  if(!w)return {rot:b.rot||0,z:0,dx:0,dy:0,sx:1,sy:1};
+  const fall=Math.max(0,Math.min(1,(w.age-w.hold)/w.slide)),ease=fall*fall*(3-2*fall);
+  const rise=Math.min(1,w.age/4),angle=w.rot+Math.atan2(Math.sin((w.uprightRot||0)-w.rot),Math.cos((w.uprightRot||0)-w.rot))*rise;
+  const wall=corpseWallProjection(w.b),up=wall.projected?w.z/wall.rise:0,stand=1-ease;
+  return {rot:angle+Math.atan2(Math.sin(w.flatRot-angle),Math.cos(w.flatRot-angle))*ease,
+    z:w.z,dx:-w.nx*w.radius*stand+wall.lx*up,dy:-w.ny*w.radius*stand+wall.ly*up,
+    sx:.82+.18*ease,sy:1.2-.2*ease};
+}
+function corpsePieceTransform(r,b) {
+  const p=corpsePiecePose(b);r.translate(b.x+p.dx,b.y+p.dy);r.rotate(p.rot);r.scale(p.sx,p.sy);
+}
+function corpsePieceStep(c,b,drag=.93,r=corpsePieceRadius(c,b)) {
+  b._corpseStepFrame=c._corpsePieceFrame;
+  if(b.wallImpact){
+    const w=b.wallImpact;
+    if(w.done){b.vx=b.vy=b.vr=0;return;}
+    const supportGone=!corpseBloodWall(w.b)||
+      (w.b.isGovFortress&&inOpenGateway(w.b,c.x+b.x))||
+      (activeBuildings.indexOf(w.b)<0&&buildings.indexOf(w.b)<0);
+    if(!w.done&&supportGone){w.done=true;w.z=0;b.rot=w.flatRot;}
+    if(!w.done){
+      w.age++;const t=Math.max(0,Math.min(1,(w.age-w.hold)/w.slide));
+      w.z=w.height*(1-t*t*(3-2*t));
+      if(w.age>=w.hold+w.slide){w.done=true;w.z=0;b.rot=w.flatRot;}
+    }
+    b.vx=b.vy=b.vr=0;return;
+  }
+  const vx=b.vx||0,vy=b.vy||0,steps=Math.max(1,Math.ceil(Math.hypot(vx,vy)/3));
+  for(let n=0;n<steps;n++){
+    let x=c.x+b.x+(b.vx||0)/steps,y=c.y+b.y+(b.vy||0)/steps;
+    const hit=corpsePieceContact(c,x,y,r);
+    if(hit){x=hit.x;y=hit.y;
+      for(let k=0;k<4;k++){const corner=corpsePieceContact(c,x,y,r);if(!corner)break;x=corner.x;y=corner.y;}
+      const incoming=-((b.vx||0)*hit.nx+(b.vy||0)*hit.ny);
+      if((b.type==='torso'||b.wallTorso)&&incoming>1.8&&corpseBloodWall(hit.b)){
+        b.wallImpact={age:0,hold:Math.min(24,12+incoming*1.4),slide:32,nx:hit.nx,ny:hit.ny,
+          b:hit.b,radius:r,rot:b.rot||0,uprightRot:b.uprightRot||0,flatRot:Math.atan2(-hit.nx,hit.ny)+(b.uprightRot||0),height:Math.min(18,10+incoming*.6),z:Math.min(18,10+incoming*.6),done:false};
+        b.vx=b.vy=b.vr=0;
+        if(typeof spawnCorpseWallImpactBlood==='function')spawnCorpseWallImpactBlood(c,hit);
+      }else if(incoming>0){b.vx+=hit.nx*incoming*1.22;b.vy+=hit.ny*incoming*1.22;b.vr=(b.vr||0)*-.45;}
+    }
+    b.x=x-c.x;b.y=y-c.y;
+    if(b.wallImpact)break;
+  }
+  b.rot=(b.rot||0)+(b.vr||0);b.vx=(b.vx||0)*drag;b.vy=(b.vy||0)*drag;b.vr=(b.vr||0)*drag;
+}
+function corpseSplitPieces(c) {
+  if(c.splitPieces)return c.splitPieces;
+  if(c.dT!==3&&c.dT!==13)return null;
+  return c.splitPieces=[{type:'legs',x:0,y:0,vx:0,vy:0,rot:c.dT===3?c.mA:c.aA},
+    {type:'torso',x:0,y:0,vx:0,vy:0,rot:c.dT===3?c.mA:c.aA}];
+}
+function corpseStepSplit(c) {
+  if((c.dT===2||c.dT===4)&&!c.sword){
+    const b=c.separatedTorso||(c.separatedTorso={type:'torso',x:0,y:0,vx:0,vy:0,
+      rot:c.aA+(c.rag?c.rag.ang:0),uprightRot:-HALF_PI});
+    if(!b.wallImpact){b.rot=c.aA+(c.rag?c.rag.ang:0);b.vx=Math.cos(c.bA)*c.sep-b.x;b.vy=Math.sin(c.bA)*c.sep-b.y;}
+    corpsePieceStep(c,b,.9,Math.max(22,c.bH*1.05,c.bW*.75));
+  }
+  const parts=corpseSplitPieces(c);if(!parts)return;
+  const a=c.dT===3?c.mA+HALF_PI:c.aA,ca=Math.cos(a),sa=Math.sin(a);
+  for(let i=0;i<2;i++){
+    const b=parts[i],distance=c.dT===3?c.sep*(i?-.8:1):c.sep*(i?1:-1);
+    if(!b.wallImpact){b.vx=ca*distance-b.x;b.vy=sa*distance-b.y;}
+    corpsePieceStep(c,b,0.9,i?corpsePieceRadius(c,b):14);
+  }
+}
+function corpseStepWallImpacts(c) {
+  for(const list of [c.bits,c.overkillBits,c.aerialBits,c.splitPieces,c.blast?c.blast.parts:null,c.blast?c.blast.gibs:null,c.separatedTorso?[c.separatedTorso]:null,c.lH?[c.lH,c.rH]:null])
+    if(list)for(const b of list)if(b.wallImpact&&!b.wallImpact.done&&b._corpseStepFrame!==c._corpsePieceFrame)
+      corpsePieceStep(c,b);
+}
+function corpsePiecesMoving(c) {
+  for(const list of [c.bits,c.overkillBits,c.aerialBits,c.splitPieces,c.blast?c.blast.parts:null,c.blast?c.blast.gibs:null,c.separatedTorso?[c.separatedTorso]:null,c.lH?[c.lH,c.rH]:null])
+    if(list)for(const b of list)if(b.wallImpact&&!b.wallImpact.done)return true;
+  return false;
+}
+
+// Supported bodies keep their height and wall layer after settling. Floor
+// stamping would put their shoulders underneath the wall extrusion again.
+const WALL_CORPSE_LIMIT = 128;
+const wallCorpseBanks = new Map();
+const wallCorpseOrder = [];
+function clearWallCorpses() { wallCorpseBanks.clear();wallCorpseOrder.length=0; }
+function wallCorpseBankKey(b) { return bloodBankId+'|'+wallBloodKey(b); }
+function rememberWallCorpse(c) {
+  const key=wallCorpseBankKey(c.wallSit.b);let list=wallCorpseBanks.get(key);
+  if(!list){list=[];wallCorpseBanks.set(key,list);}list.push(c);wallCorpseOrder.push({key,c});
+  while(wallCorpseOrder.length>WALL_CORPSE_LIMIT){
+    const old=wallCorpseOrder.shift(),bucket=wallCorpseBanks.get(old.key);
+    if(bucket){const i=bucket.indexOf(old.c);if(i>=0)bucket.splice(i,1);if(!bucket.length)wallCorpseBanks.delete(old.key);}
+    if(old.c.wallSit)old.c.wallSit.hidden=true;
+  }
+}
+function initCorpseWallSit(c,src,facing) {
+  if(c.blast||c.sword||!c.rag||![0,1,6,7,8,9].includes(c.dT)||shovelRenderDepth(c)>0)return;
+  if(src&&src.stunTimer>0&&src.stunPose&&figureFallProgress(src.stunPose)>.6)return;
+  const injury=c.fall&&c.fall.injuryFrom;
+  if(injury&&injury.down>.6&&injury.seated<.5)return;
+  const fx=Math.cos(facing||0),fy=Math.sin(facing||0),radius=17;
+  const hit=corpsePieceContact(c,c.x-fx*9,c.y-fy*9,radius);
+  if(!hit||!corpseBloodWall(hit.b)||hit.nx*fx+hit.ny*fy<.70)return;
+  // A runner escaping the wall continues forward. A backward collapse stays
+  // supported rather than extending its head and shoulders inside the solid.
+  const p=c.fall;if(p&&p.moving&&Math.cos(p.a)*hit.nx+Math.sin(p.a)*hit.ny>.45)return;
+  const age=injury&&injury.seated>.5?Math.round(injury.seated*24):0;
+  c.wallSit={b:hit.b,key:wallBloodKey(hit.b),nx:hit.nx,ny:hit.ny,age,done:false};
+  if(age)c.fP=Math.max(c.fP,Math.min(1,age*.15));
+  c.x=hit.x-hit.nx*(radius-10);c.y=hit.y-hit.ny*(radius-10);c.backFacing=false;
+  if(p){p.impulse=0;p.hold=null;p.faceDown=false;}
+  rememberWallCorpse(c);
+}
+function stepCorpseWallSit(c) {
+  const s=c.wallSit;if(!s||s.done)return;
+  s.age++;c.fP=Math.min(1,s.age*.15);
+  if(c.fall){c.fall.age=s.age;c.fall.impulse=0;}
+  if(s.age>=RAG_FRAMES){s.done=true;if(c.fall)c.fall.done=true;}
+}
+function drawWallCorpses(b,r=window) {
+  if(!wallCorpseBanks.size)return;
+  const list=wallCorpseBanks.get(wallCorpseBankKey(b));if(!list)return;
+  for(const c of list)if(c.wallSit&&!c.wallSit.hidden){c.wallSit.b=b;c.show(r);}
+}
+function releaseUnsupportedWallCorpses() {
+  if(frameCount%20!==0)return;
+  for(let i=wallCorpseOrder.length-1;i>=0;i--){
+    const entry=wallCorpseOrder[i],c=entry.c,s=c.wallSit;
+    if(!s||!entry.key.startsWith(bloodBankId+'|')||!inView(c.x,c.y,180))continue;
+    const nearby=colNear(c.x,c.y);
+    if(nearby.some(b=>corpseBloodWall(b)&&wallBloodKey(b)===s.key))continue;
+    const bucket=wallCorpseBanks.get(entry.key);
+    if(bucket){const j=bucket.indexOf(c);if(j>=0)bucket.splice(j,1);if(!bucket.length)wallCorpseBanks.delete(entry.key);}
+    wallCorpseOrder.splice(i,1);c.wallSit=null;c.isStatic=false;
+    c.fall=buildFigureFall(null,Math.atan2(s.ny,s.nx),2,false,Math.atan2(s.ny,s.nx));
+    c.fall.a=Math.atan2(s.ny,s.nx);c.fall.faceDown=false;c.fP=0;
+    if(c.rag){c.rag.done=false;c.rag.t=0;}
+    if(!corpses.includes(c))corpses.push(c);
+  }
+}
+function seatedCorpsePoint(c,x,y,z,projection=corpseWallProjection(c.wallSit.b)) {
+  const s=c.wallSit,k=projection.projected?Math.min(z,projection.rise)/projection.rise:0;
+  return {x:c.x+s.nx*x-s.ny*y+projection.lx*k,y:c.y+s.ny*x+s.nx*y+projection.ly*k};
+}
+function seatedCorpseAnatomy(c) {
+  const f=Math.min(1,c.wallSit.age/24),scale=Math.min(1.5,Math.max(.8,c.bH/27));
+  const projection=corpseWallProjection(c.wallSit.b);
+  const point=(x,y,z)=>seatedCorpsePoint(c,x*scale,y*scale,z*scale,projection);
+  return {f,scale,point,hip:point(1,0,3),chest:point(-2,0,22-5*f),head:point(-1+3*f,0,33-9*f)};
+}
+function seatedWoundPoint(c,w) {
+  const a=seatedCorpseAnatomy(c),isHead=w.isHead,p=isHead?a.head:w.isLeg?a.point(15,(w.legIndex?1:-1)*7,2):a.chest;
+  const turn=Math.atan2(c.wallSit.ny,c.wallSit.nx),scale=isHead?1:.65;
+  return {x:p.x+(Math.cos(turn)*w.x-Math.sin(turn)*w.y)*scale,
+    y:p.y+(Math.sin(turn)*w.x+Math.cos(turn)*w.y)*scale,angle:turn+(w.shotA||0),frameAngle:turn,scale};
+}
+function drawSeatedCorpse(r,c) {
+  const a=seatedCorpseAnatomy(c),s=c.wallSit,skin=c.id.skinCol||color(235,180,140),
+    boot=color(red(c.pC)*.55,green(c.pC)*.55,blue(c.pC)*.55),sc=a.scale;
+  const bone=(p,q,w,col,tip,sz)=>drawFallBone(r,p.x,p.y,q.x,q.y,w*sc,col,tip,sz?sz*sc:undefined);
+  r.push();r.noStroke();
+  // Bent knees and forward heels give the shortened upright torso a seated
+  // silhouette. Every point shares the wall's existing height projection.
+  for(const side of [-1,1]){
+    const hip=a.point(1,side*5,3),knee=a.point(12,side*7,7*a.f),foot=a.point(23,side*9,0);
+    bone(hip,knee,7,c.pC);bone(knee,foot,5.5,c.pC,boot,6);
+  }
+  const dx=a.head.x-a.hip.x,dy=a.head.y-a.hip.y,yaw=Math.atan2(dy,dx),length=Math.max(13*sc,Math.hypot(dx,dy)*.66);
+  r.push();r.translate((a.chest.x+a.hip.x)*.5,(a.chest.y+a.hip.y)*.5);r.rotate(yaw);
+  figureCelOval(r,0,0,length,c.bH*.70,c.sC);drawFallenAttire(r,c.id,length,c.bH*.70,false,1);r.pop();
+  for(const side of [-1,1]){
+    const shoulder=a.point(-2,side*9,19-3*a.f),elbow=a.point(6,side*13,8),hand=a.point(13,side*10,3);
+    bone(shoulder,elbow,5.8,c.sC);bone(elbow,hand,4.6,c.sC,skin,5.4);
+  }
+  r.push();r.translate(a.head.x,a.head.y);r.rotate(Math.atan2(s.ny,s.nx));
+  if(c.dT===9){r.fill(90,0,0);r.ellipse(0,0,7,9);}
+  else {
+    if(c.dT===1){r.fill(skin);r.arc(0,0,11,11,QUARTER_PI,TWO_PI-QUARTER_PI,PIE);r.fill(90,0,0);r.arc(0,0,8,8,-QUARTER_PI,QUARTER_PI,PIE);}
+    else if(c.dT===6){r.fill(skin);r.arc(0,-1,11,10,PI,TWO_PI,CHORD);r.arc(0,2,11,10,0,PI,CHORD);}
+    else if(c.dT===8){r.fill(skin);r.arc(0,0,11,11,0,PI+HALF_PI,PIE);}
+    else figureCelOval(r,0,0,11,10,skin,.65);
+    drawFigureHair(r,c.id,0,0);const hw=headwearOf(c.id);
+    if(hw&&!headwearFalls(hw))drawHeadwear(r,c.id,hw);
+    if(c.eT==='ARMORED_STANDARD')drawArmoredHelmet(r);
+  }
+  r.pop();
+  const hw=headwearOf(c.id);if(hw&&headwearFalls(hw)&&c.hatOff){const p=a.point(23,18,0);r.push();r.translate(p.x,p.y);r.rotate(c.hatOff.r);drawHeadwear(r,c.id,hw);r.pop();}
+  for(const d of c.dec){if(c.dT===9&&d.isHead)continue;const p=seatedWoundPoint(c,d);r.fill(...(d.col||[90,0,0,220]));r.ellipse(p.x,p.y,d.sz*p.scale,d.sz*p.scale);}
+  r.pop();
+}
+
+function finishCorpsePieces(c) {
+  if(c._corpsePiecesFinished||c.sword)return;
+  c._corpsePiecesFinished=true;
+  if(c.blast){finishBlastDeath(c);return;}
+  if(!(c.bits&&c.bits.length)&&!c.overkillBits&&!c.aerialBits&&!c.lH&&![2,3,4,13].includes(c.dT))return;
+  const frames=Math.max(c.stopMotionTimer||0,c.dT===11?(c.bloodTimer||0):0,60);
+  for(let n=0;n<frames+60;n++){
+    c._corpsePieceFrame=(c._corpsePieceFrame||0)+1;
+    if(n<(c.stopMotionTimer||0)){
+      if(c.bits)for(const b of c.bits)corpsePieceStep(c,b,.93);
+      if(c.overkillBits)for(const b of c.overkillBits)corpsePieceStep(c,b,.92);
+      if(c.lH){corpsePieceStep(c,c.lH,.9,Math.max(12,c.bW*.4));corpsePieceStep(c,c.rH,.9,Math.max(12,c.bW*.4));}
+    }
+    if(c.aerialBits&&n<(c.bloodTimer||0))for(const b of c.aerialBits)corpsePieceStep(c,b,.94);
+    const maxSep=corpseSepMax(c.dT);if(c.sep<maxSep)c.sep=Math.min(maxSep,c.sep+(c.dT===13?3:2.5));
+    corpseStepSplit(c);corpseStepWallImpacts(c);
+  }
+  c.stopMotionTimer=0;
+}
+// Shared by the ground and facade passes, keeping a pinned torso's clothes,
+// hair and severed edge identical as it slides back onto the floor.
+function drawCorpseFlyingTorso(r,c,aerial=false) {
+  r.fill(c.sC);r.ellipse(0,0,c.bW,c.bH*.7);
+  if(aerial){r.fill(80);r.rect(-6,-6,12,12,2);}
+  r.push();r.rotate(-HALF_PI);drawFallenAttire(r,c.id,c.bH*.7,c.bW,aerial||c.backFacing);r.pop();
+  r.fill(90,0,0);r.ellipse(0,c.bH*.35,c.bW*.8,12);
+  if(!aerial){
+    r.fill(c.id.skinCol||color(235,180,140));r.ellipse(0,-c.bH*.4,11,11);
+    drawFigureHair(r,c.id,0,-c.bH*.4,0);
+    const hw=headwearOf(c.id);if(hw&&!headwearFalls(hw)){r.push();r.translate(0,-c.bH*.4);drawHeadwear(r,c.id,hw);r.pop();}
+  }
+}
+function drawCorpseSplitUpper(r,c) {
+  const sK=c.id.skinCol||color(235,180,140);
+  if(c.dT===13){r.fill(c.sC); r.ellipse(0, 0, c.bW, c.bH * 0.7); r.push();r.rotate(-HALF_PI);drawFallenAttire(r,c.id,c.bH*.7,c.bW,c.backFacing);r.pop(); r.fill(90, 0, 0); r.ellipse(0, 10, c.bW * 0.8, 12); r.fill(235, 180, 140); r.ellipse(0, -c.bH * 0.4, 11, 11);}
+  else {r.fill(90,0,0); r.ellipse(0, 0, c.bW, c.bH/2); drawFallenAttire(r,c.id,c.bW,c.bH/2,c.backFacing);
+      if (c.eT === "ARMORED_STANDARD") { r.fill(100); r.rect(-10, -6, 20, 12, 4); }
+      if (c.eT === "FEMALE_PISTOL"&&!c.backFacing) { r.fill(c.sC); r.ellipse(4, -6, 12, 10); r.ellipse(4, 6, 12, 10); }
+      r.noStroke(); for (let d of c.dec) { if (!d.isHead&&!d.isLeg) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.fill(sK); r.ellipse(0, -5, 11, 11); r.noStroke(); for (let d of c.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } }}
+}
+function corpsePiecePinned(b) {return !!(b&&b.wallImpact&&!b.wallImpact.done);}
+let _corpseFacadeFrame=-1,_corpseFacadeList=null,_corpseFacadeCount=-1;
+const _corpseFacadeMap=new Map();
+function drawWallCorpsePieces(b,r=window) {
+  if(_corpseFacadeFrame!==frameCount||_corpseFacadeList!==corpses||_corpseFacadeCount!==corpses.length){
+    _corpseFacadeFrame=frameCount;_corpseFacadeList=corpses;_corpseFacadeCount=corpses.length;_corpseFacadeMap.clear();
+    const add=(c,p,kind)=>{if(!corpsePiecePinned(p))return;const key=wallBloodKey(p.wallImpact.b);
+      let list=_corpseFacadeMap.get(key);if(!list){list=[];_corpseFacadeMap.set(key,list);}list.push({c,p,kind});};
+    for(const c of corpses){
+      if(c.blast)for(const p of c.blast.parts)if(p.wallTorso)add(c,p,4);
+      if(c.separatedTorso)add(c,c.separatedTorso,0);
+      if(c.overkillBits)for(const p of c.overkillBits)if(p.type==='torso')add(c,p,1);
+      if(c.aerialBits)for(const p of c.aerialBits)if(p.type==='torso')add(c,p,2);
+      if(c.splitPieces)for(const p of c.splitPieces)if(p.type==='torso')add(c,p,3);
+    }
+  }
+  if(!_corpseFacadeMap.size)return;
+  const list=_corpseFacadeMap.get(wallBloodKey(b));if(!list)return;
+  for(const e of list){const c=e.c,p=e.p;if(!corpsePiecePinned(p))continue;
+    if(e.kind===4){drawBlastCorpsePart(r,c,p);continue;}
+    if(e.kind===0){c._drawWallOverlay=true;try{c.paint(r);drawFatalWound(c,r);}finally{c._drawWallOverlay=false;}continue;}
+    r.push();r.translate(c.x,c.y);corpsePieceTransform(r,p);
+    if(e.kind===3)drawCorpseSplitUpper(r,c);else drawCorpseFlyingTorso(r,c,e.kind===2);
+    r.pop();drawFatalWound(c,r);
+  }
 }
 
 class Corpse {
@@ -17930,6 +18472,7 @@ class Corpse {
     this.bloodTimer = !sword&&(dT === 5 || dT === 7 || dT === 8 || dT === 9 || dT === 10 || dT === 11 || dT === 13 || dT === 14) ? 180 : 0;
     if(sword)buildSwordDeath(this);
     if(blast)buildBlastDeath(this,src,gunOverkill?(dT===2?'SLICE':'BREAKUP'):null);
+    initCorpseWallSit(this,src,aA);
 
     if (dT === 14) { this.splitA = bA; this.lH = { x: 0, y: 0, vx: cos(this.splitA - HALF_PI) * 2, vy: sin(this.splitA - HALF_PI) * 2 }; this.rH = { x: 0, y: 0, vx: cos(this.splitA + HALF_PI) * 2, vy: sin(this.splitA + HALF_PI) * 2 }; }
 
@@ -17951,9 +18494,11 @@ class Corpse {
         this.sC = color(40); this.pC = color(20); this.id.isCharred=true;
         this.overkillBits = [ { type: 'torso', x: 0, y: 0, vx: cos(this.bA)*6 + random(-2,2), vy: sin(this.bA)*6 + random(-2,2), rot: this.aA, vr: random(-0.2, 0.2) }, { type: 'lArm', x: 0, y: 0, vx: cos(this.bA - PI/3)*7 + random(-2,2), vy: sin(this.bA - PI/3)*7 + random(-2,2), rot: this.aA, vr: random(-0.4, 0.4) }, { type: 'rArm', x: 0, y: 0, vx: cos(this.bA + PI/3)*7 + random(-2,2), vy: sin(this.bA + PI/3)*7 + random(-2,2), rot: this.aA, vr: random(-0.4, 0.4) } ];
 	}
+    spawnCorpseWallBlood(this);
   }
 
   update() { 
+    this._corpsePieceFrame=(this._corpsePieceFrame||0)+1;
     if(this.sword)stepSwordParts(this);
     if(this.blast&&this.blast.mode){
       stepBlastDeath(this);ragStep(this.rag);
@@ -17962,7 +18507,8 @@ class Corpse {
     }
     if(this.blast)stepBlastDeath(this);
     if(this.dT===7)this.poolAge=Math.min(bloodPoolFrames(this.blastBlood),this.poolAge+1);
-    if (this.fall) { stepFigureFall(this.fall,this,this.rag);this.fP=figureFallProgress(this.fall); }
+    if (this.wallSit) stepCorpseWallSit(this);
+    else if (this.fall) { stepFigureFall(this.fall,this,this.rag);this.fP=figureFallProgress(this.fall); }
     else if (this.fP < 1) this.fP += 0.15;
     ragStep(this.rag);
     // The settle clock, ticked in ONE place for every body. It used to be
@@ -18008,7 +18554,7 @@ class Corpse {
         if (this.bloodTimer > 0) {
             this.bloodTimer--;
             for (let b of this.aerialBits) {
-                b.x += b.vx; b.y += b.vy; b.vx *= 0.94; b.vy *= 0.94; b.rot += b.vr;
+                corpsePieceStep(this,b,.94);
                 if (this.bloodTimer % 3 === 0) emit(this.x + b.x, this.y + b.y, 1, color(90, 0, 0), "BLOOD", 0, 0, this);
                 if (this.bloodTimer % 20 === 0 && abs(b.vx) < 1) spawnSplatter(this.x + b.x, this.y + b.y, "BLOOD", color(90, 0, 0), this);
             }
@@ -18016,7 +18562,11 @@ class Corpse {
     }
     if (this.dT === 12 && !this.exploded) {
         if (this.kamikazeTimer > 0) {
-            this.kamikazeTimer--; this.x += this.vx; this.y += this.vy;
+            this.kamikazeTimer--;
+            const flying={type:'torso',x:0,y:0,vx:this.vx,vy:this.vy,rot:0};
+            corpsePieceStep(this,flying,1,Math.max(16,this.bW*.6));
+            this.x+=flying.x;this.y+=flying.y;
+            if(flying.wallImpact)this.kamikazeTimer=0;
             const neck=headWoundPoint(this);let neckX=neck.x,neckY=neck.y;
             let thrustX = this.x - cos(this.aA - PI) * 20, thrustY = this.y - sin(this.aA - PI) * 20;
             let trailX = -cos(this.aA - PI) * 3, trailY = -sin(this.aA - PI) * 3;
@@ -18026,10 +18576,10 @@ class Corpse {
         if (this.kamikazeTimer <= 0) { triggerExplosion(this.x, this.y, 160, false, false); emit(this.x, this.y, 60, color(90, 0, 0), "GORE", 0, 0, this); emit(this.x, this.y, 15, color(220, 200, 200), "BONE", 0, 0, this); spawnSplatter(this.x, this.y, "BLOOD", color(90, 0, 0), this); this.exploded = true; }
     }
     if (this.dT === 10 || this.dT === 15) {
+        if(this.stopMotionTimer>0)for(const ob of this.overkillBits)corpsePieceStep(this,ob,.92);
         if (this.bloodTimer > 0) {
             this.bloodTimer--;
             for (let ob of this.overkillBits) {
-                if (this.stopMotionTimer > 0) { ob.x += ob.vx; ob.y += ob.vy; ob.vx *= 0.92; ob.vy *= 0.92; ob.rot += ob.vr; }
                 if (this.bloodTimer % 3 === 0) emit(this.x + ob.x, this.y + ob.y, 1, bCol, "BLOOD", random(-2, 2), random(-2, 2), this);
                 if (this.bloodTimer % 20 === 0) spawnSplatter(this.x + ob.x, this.y + ob.y, "BLOOD", bCol, this);
             }
@@ -18052,7 +18602,7 @@ class Corpse {
     }
     if (this.dT === 5 || this.dT === 9) { 
         for(let b of this.bits) { 
-            if (this.stopMotionTimer > 0) { b.x += b.vx; b.y += b.vy; b.vx *= 0.93; b.vy *= 0.93; b.rot += b.vr; } else { b.vx = 0; b.vy = 0; b.vr = 0; } 
+            if (this.stopMotionTimer > 0) { corpsePieceStep(this,b,.93); } else { b.vx = 0; b.vy = 0; b.vr = 0; }
             let isBrainMeat = (this.dT === 9 && b.type === 'meat') || (this.dT === 5 && (b.type === 'heart' || b.type === 'meat' || b.type === 'intestine' || b.type === 'brain'));
             if (frameCount % 3 === 0 && abs(b.vx) > 1 && isBrainMeat && this.stopMotionTimer > 0) emit(this.x + b.x, this.y + b.y, 1, bCol, "BLOOD", 0, 0, this);
             if (abs(b.vx) < 0.5 && !b.splat) { if (isBrainMeat) spawnSplatter(this.x + b.x, this.y + b.y, "BLOOD", bCol, this); b.splat = true; }
@@ -18070,9 +18620,11 @@ class Corpse {
         else if (this.dT === 6) { const head=headWoundPoint(this);let sA=head.angle+random(-0.4,0.4);emit(head.x,head.y,1,bCol,"BLOOD",cos(sA)*6,sin(sA)*6, this); }
     } 
     if (this.dT === 14) {
-        if (this.stopMotionTimer > 0) { this.lH.x += this.lH.vx; this.lH.y += this.lH.vy; this.rH.x += this.rH.vx; this.rH.y += this.rH.vy; this.lH.vx *= 0.9; this.lH.vy *= 0.9; this.rH.vx *= 0.9; this.rH.vy *= 0.9; }
+        if (this.stopMotionTimer > 0) { corpsePieceStep(this,this.lH,.9,Math.max(12,this.bW*.4));corpsePieceStep(this,this.rH,.9,Math.max(12,this.bW*.4)); }
         if (this.bloodTimer > 0) { this.bloodTimer--; if (this.bloodTimer % 3 === 0) { emit(this.x + this.lH.x, this.y + this.lH.y, 2, bCol, "BLOOD", 0, 0, this); emit(this.x + this.rH.x, this.y + this.rH.y, 2, bCol, "BLOOD", 0, 0, this); } if (this.bloodTimer % 15 === 0) { spawnSplatter(this.x + this.lH.x, this.y + this.lH.y, "BLOOD", bCol, this); spawnSplatter(this.x + this.rH.x, this.y + this.rH.y, "BLOOD", bCol, this); } }
     }
+    if(!this.sword)corpseStepSplit(this);
+    corpseStepWallImpacts(this);
     advanceFatalSpray(this);
   }
     
@@ -18089,6 +18641,8 @@ class Corpse {
   paint(r = window) {
   r.noStroke();
   if(this.blast){drawBlastCorpse(r,this);return;}
+  if(this.wallSit){drawSeatedCorpse(r,this);return;}
+  if(corpsePiecePinned(this.separatedTorso)&&!this._drawWallOverlay)return;
   if(this.sword){drawSwordCorpse(r,this);return;}
   if (this.dT === 14) {
       r.push(); r.translate(this.x, this.y); 
@@ -18098,16 +18652,17 @@ class Corpse {
   }
 
   if (this.dT === 13) { 
-      r.push(); r.translate(this.x, this.y); let a = 255; r.rotate(this.aA); let spread = min(this.sep, 50);
-      r.push(); r.translate(-spread, 0); r.fill(this.pC); r.rect(-10, -10, 18, 8, 4); r.rect(-10, 2, 18, 8, 4); r.fill(90, 0, 0); r.ellipse(0, -4, 18, 22); r.pop();
-      r.push(); r.translate(spread, 0); r.fill(this.sC); r.ellipse(0, 0, this.bW, this.bH * 0.7); r.push();r.rotate(-HALF_PI);drawFallenAttire(r,this.id,this.bH*.7,this.bW,this.backFacing);r.pop(); r.fill(90, 0, 0); r.ellipse(0, 10, this.bW * 0.8, 12); r.fill(235, 180, 140); r.ellipse(0, -this.bH * 0.4, 11, 11); r.pop();
+      r.push(); r.translate(this.x, this.y); let a = 255; const halves=corpseSplitPieces(this);
+      r.push(); corpsePieceTransform(r,halves[0]); r.fill(this.pC); r.rect(-10, -10, 18, 8, 4); r.rect(-10, 2, 18, 8, 4); r.fill(90, 0, 0); r.ellipse(0, -4, 18, 22); r.pop();
+      if(!corpsePiecePinned(halves[1])){r.push();corpsePieceTransform(r,halves[1]);drawCorpseSplitUpper(r,this);r.pop();}
       r.pop(); return;
   }
   if (this.dT === 11) {
       r.push(); r.translate(this.x, this.y);
       for (let b of this.aerialBits) {
-          r.push(); r.translate(b.x, b.y); r.rotate(b.rot);
-          if (b.type === 'torso') { r.fill(this.sC); r.ellipse(0, 0, this.bW, this.bH * 0.7); r.fill(80); r.rect(-6, -6, 12, 12, 2); r.push();r.rotate(-HALF_PI);drawFallenAttire(r,this.id,this.bH*.7,this.bW,true);r.pop(); r.fill(90, 0, 0); r.ellipse(0, this.bH * 0.35, 18, 10); }
+          if(corpsePiecePinned(b))continue;
+          r.push(); corpsePieceTransform(r,b);
+          if (b.type === 'torso') {drawCorpseFlyingTorso(r,this,true);}
           else if (b.type === 'lArm' || b.type === 'rArm') { r.fill(this.sC); r.ellipse(0, 0, 16, 8); r.fill(235, 180, 140); r.ellipse(8, 0, 8, 8); r.fill(90, 0, 0); r.ellipse(-6, 0, 8, 8); } 
           else if (b.type === 'legs') { r.fill(this.pC); r.rect(-10, -10, 18, 8, 4); r.rect(-10, 2, 18, 8, 4); r.fill(90, 0, 0); r.ellipse(-10, -1, 10, 16); }
           r.pop();
@@ -18252,26 +18807,9 @@ if (this.eT === "COW" || this.eT === "HORSE") {
   if (this.dT === 10 || this.dT === 15) {
       r.push(); r.translate(this.x, this.y); let a = 255, f = this.fP;
       for (let ob of this.overkillBits) {
-          r.push(); r.translate(ob.x, ob.y); r.rotate(ob.rot);
-          if (ob.type === 'torso') {
-            r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(0, 0, this.bW, this.bH * 0.7);
-            r.push();r.rotate(-HALF_PI);drawFallenAttire(r,this.id,this.bH*.7,this.bW,this.backFacing);r.pop();
-            r.fill(90, 0, 0); r.ellipse(0, this.bH * 0.35, this.bW * 0.8, 12);
-            r.fill(235, 180, 140, a); r.ellipse(0, -this.bH * 0.4, 11, 11);
-            // The head still on this piece is still the head of whoever this
-            // was: same hair, same hat, on the same identity the intact body
-            // reads. A torso spinning past with a bare dome on it was the one
-            // place the overkill deaths gave the character away as generic.
-            if (this.id) {
-              r.push();
-              if (r.drawingContext) r.drawingContext.globalAlpha = Math.max(0, Math.min(1, a / 255));
-              drawFigureHair(r, this.id, 0, -this.bH * 0.4, 0);
-              const hw = headwearOf(this.id);
-              if (hw && !headwearFalls(hw)) { r.push(); r.translate(0, -this.bH * 0.4); drawHeadwear(r, this.id, hw); r.pop(); }
-              if (r.drawingContext) r.drawingContext.globalAlpha = 1;
-              r.pop();
-            }
-          } 
+          if(corpsePiecePinned(ob))continue;
+          r.push(); corpsePieceTransform(r,ob);
+          if (ob.type === 'torso') {drawCorpseFlyingTorso(r,this);}
           else if (ob.type === 'lArm' || ob.type === 'rArm') { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(0, 0, 16, 8); r.fill(235, 180, 140, a); r.ellipse(10, 0, 8, 8); r.fill(90, 0, 0); r.ellipse(-6, 0, 8, 8); } r.pop();
       }
       r.push(); r.rotate(this.mA); let fallOffset = lerp(0, -15, f), fallSquish = lerp(1, 0.6, f); r.translate(fallOffset, 0); r.scale(fallSquish, 1); r.noStroke(); r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a);
@@ -18387,13 +18925,14 @@ if (this.eT === "COW" || this.eT === "HORSE") {
 
   r.push(); r.translate(this.x, this.y); let a = 255, f = this.fP, sK = (this.id.skinCol||color(235,180,140,a));
   if (this.dT === 3) { 
-      let off = this.sep; r.push(); r.rotate(this.mA); r.noStroke(); r.fill(this.pC); r.rect(-10,-10+off,18,8,4); r.rect(-10,2+off,18,8,4); r.fill(this.sC); r.ellipse(0,off,this.bW,this.bH/2); r.fill(90, 0, 0); r.ellipse(0, -off, this.bW, 10); r.translate(0, -off*1.8); r.ellipse(0, 0, this.bW, this.bH/2); drawFallenAttire(r,this.id,this.bW,this.bH/2,this.backFacing);
-      if (this.eT === "ARMORED_STANDARD") { r.fill(100); r.rect(-10, -6, 20, 12, 4); } 
-      if (this.eT === "FEMALE_PISTOL"&&!this.backFacing) { r.fill(this.sC); r.ellipse(4, -6, 12, 10); r.ellipse(4, 6, 12, 10); }
-      r.noStroke(); for (let d of this.dec) { if (!d.isHead&&!d.isLeg) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.fill(sK); r.ellipse(0, -5, 11, 11); r.noStroke(); for (let d of this.dec) { if (d.isHead) { if (d.col) r.fill(d.col[0], d.col[1], d.col[2], d.col[3]); else r.fill(90, 0, 0, 220); r.ellipse(d.x, d.y, d.sz, d.sz); } } r.pop();
+      const halves=corpseSplitPieces(this); r.push();corpsePieceTransform(r,halves[0]);r.noStroke();r.fill(this.pC);r.rect(-10,-10,18,8,4);r.rect(-10,2,18,8,4);r.fill(this.sC);r.ellipse(0,0,this.bW,this.bH/2);r.fill(90,0,0);r.ellipse(0,-this.bH*.2,this.bW,10);r.pop();if(!corpsePiecePinned(halves[1])){r.push();corpsePieceTransform(r,halves[1]);drawCorpseSplitUpper(r,this);r.pop();}
   } 
   else { 
-      r.push(); if (this.dT === 2 || this.dT === 4) r.translate(cos(this.bA) * this.sep, sin(this.bA) * this.sep); r.rotate(this.fall?figureFallYaw(this.fall,this.rag):this.aA); const RG = this.rag; if (RG) { if(!this.fall)r.rotate(RG.ang); r.scale(RAG_SCALE); } if (RG) ragContour(r, a); else r.noStroke(); const RP = this.fall?corpseFallRig(this):ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW; r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -10 : -10, lY2 = this.bW === 105 ? 15 : 2; r.push(); if (RG) { const bootC = color(this.pC.levels[0] * 0.55, this.pC.levels[1] * 0.55, this.pC.levels[2] * 0.55, a); if(this.fall){drawFallLimb(r,RP,RG,2,f,this.sC,this.pC,sK,bootC,false,this.id,this.dec); drawFallLimb(r,RP,RG,3,f,this.sC,this.pC,sK,bootC,false,this.id,this.dec);}else{ragLimb(r, RP.hipX, -RP.hipY, PI + RG.limbs[2].a, -ragKnee(RG.limbs[2]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[2])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot, this.dec, 0); ragLimb(r, RP.hipX,  RP.hipY, PI - RG.limbs[3].a,  ragKnee(RG.limbs[3]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[3])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot, this.dec, 1);} } else { r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4); } if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(lX, -4, 12, 16); } r.pop(); const underArm=this.fall&&this.fall.faceDown&&this.fall.hold&&f>.45?this.fall.hold.arm:-1; if(underArm>=0){ragContour(r,a);drawFallLimb(r,RP,RG,underArm,f,this.sC,this.pC,sK,undefined,false,this.id);} if (RG) ragContour(r, a); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.push();if(RP.injuryBody){r.translate(RP.chestX,RP.chestY);r.rotate(RP.chestYaw);} if (RG) { figureCelOval(r, 0, 0, TL, TW, this.sC); } else r.ellipse(0, 0, this.bW + 15 * f, this.bH);
+      r.push(); if (this.dT === 2 || this.dT === 4) {
+        const b=this.separatedTorso;if(b){const p=corpsePiecePose(b);r.translate(b.x+p.dx,b.y+p.dy);
+          if(b.wallImpact){r.rotate(p.rot);r.scale(p.sx,p.sy);r.rotate(-(this.aA+(this.rag?this.rag.ang:0)));}}
+        else r.translate(cos(this.bA)*this.sep,sin(this.bA)*this.sep);
+      } r.rotate(this.fall?figureFallYaw(this.fall,this.rag):this.aA); const RG = this.rag; if (RG) { if(!this.fall)r.rotate(RG.ang); r.scale(RAG_SCALE); } if (RG) ragContour(r, a); else r.noStroke(); const RP = this.fall?corpseFallRig(this):ragRig(this.bW, this.bH), TL = RP.TL, TW = RP.TW; r.fill(this.pC.levels[0], this.pC.levels[1], this.pC.levels[2], a); let lW = this.bW === 105 ? 40 : 18, lX = this.bW === 105 ? -30 : -10, lY1 = this.bW === 105 ? -10 : -10, lY2 = this.bW === 105 ? 15 : 2; r.push(); if (RG) { const bootC = color(this.pC.levels[0] * 0.55, this.pC.levels[1] * 0.55, this.pC.levels[2] * 0.55, a); if(this.fall){drawFallLimb(r,RP,RG,2,f,this.sC,this.pC,sK,bootC,false,this.id,this.dec); drawFallLimb(r,RP,RG,3,f,this.sC,this.pC,sK,bootC,false,this.id,this.dec);}else{ragLimb(r, RP.hipX, -RP.hipY, PI + RG.limbs[2].a, -ragKnee(RG.limbs[2]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[2])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot, this.dec, 0); ragLimb(r, RP.hipX,  RP.hipY, PI - RG.limbs[3].a,  ragKnee(RG.limbs[3]), RP.thigh, ragShin(RP, ragKnee(RG.limbs[3])), RP.thighW, RP.shinW, this.pC, bootC, RP.foot, this.dec, 1);} } else { r.rect(lX - 20 * f, lY1 - 5 * f, lW + 10 * f, 8, 4); r.rect(lX - 20 * f, lY2 + 5 * f, lW + 10 * f, 8, 4); } if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(lX, -4, 12, 16); } r.pop(); const underArm=this.fall&&this.fall.faceDown&&this.fall.hold&&f>.45?this.fall.hold.arm:-1; if(underArm>=0){ragContour(r,a);drawFallLimb(r,RP,RG,underArm,f,this.sC,this.pC,sK,undefined,false,this.id);} if (RG) ragContour(r, a); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.push();if(RP.injuryBody){r.translate(RP.chestX,RP.chestY);r.rotate(RP.chestYaw);} if (RG) { figureCelOval(r, 0, 0, TL, TW, this.sC); } else r.ellipse(0, 0, this.bW + 15 * f, this.bH);
       if (this.eT === "ARMORED_STANDARD") { r.fill(100); if (RG) r.rect(-TL * 0.26, -TW * 0.46, TL * 0.58, TW * 0.92, 4); else r.rect(-10, -12, 20, 24, 4); }
       if (this.eT === "FEMALE_PISTOL" && !(this.backFacing&&(!this.fall||f>.5))) { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(4, -6, 12, 10); r.ellipse(4, 6, 12, 10); }
       drawFallenAttire(r,this.id,RG?TL:this.bW+15*f,RG?TW:this.bH,this.backFacing,this.fall?f:1);
@@ -18434,6 +18973,8 @@ if (this.eT === "COW" || this.eT === "HORSE") {
 }
 
 function stampCorpse(c) {
+    if(c.wallSit)return; // retained in the bounded wall bank, above its support
+
     // The ordinary blood bank is a surface texture. Keep a below-ground
     // corpse in its clipped shaft pass instead of baking it above the hole.
     if (shovelBelowGroundActor(c)) return;
@@ -18494,6 +19035,7 @@ function corpseSepMax(dT) {
 }
 function corpseSettled(c) {
     if(c.blast&&!c.blast.done)return false;
+    if((c.wallSit&&!c.wallSit.done)||corpsePiecesMoving(c))return false;
     if(c.sword&&!c.sword.done)return false;
     if (c.dT === 12 && !c.exploded) return false;                 // still in the air
     if (c.fP < 1 || (c.fall&&!c.fall.done)) return false;           // falling / contact recoil
@@ -18507,6 +19049,7 @@ function corpseSettled(c) {
 }
 
 function updateCorpses() {
+  if(doTick)releaseUnsupportedWallCorpses();
   // Pass 1: advance and retire. Backwards, because it splices.
   for (let i = corpses.length - 1; i >= 0; i--) {
       let c = corpses[i];
@@ -18524,12 +19067,12 @@ function updateCorpses() {
               // the player happens to wander back past it, which on a long
               // biome run is every body they ever left behind.
               //
-              // Nobody is watching, so this is the clock and nothing else: no
-              // particles, no smoke, no per-piece motion. The pose is
-              // fast-forwarded to where it would have ended up -- the settle is
-              // deterministic and freezes after RAG_FRAMES anyway -- so what
-              // gets stamped is the same body you would have seen land.
-              if (c.fall&&!c.fall.done) stepFigureFall(c.fall,c,c.rag);
+              // Finish piece collision once without particle/smoke emission;
+              // subsequent offscreen frames only advance the remaining clocks.
+              // A wall hold must finish before its final pose can be stamped.
+              finishCorpsePieces(c);
+              if(c.wallSit)stepCorpseWallSit(c);
+              else if (c.fall&&!c.fall.done) stepFigureFall(c.fall,c,c.rag);
               c.fP = c.fall ? figureFallProgress(c.fall) : 1;
               if (c.bT > 0) c.bT--;
               if (c.bloodTimer > 0) c.bloodTimer--;
@@ -18563,7 +19106,7 @@ function updateCorpses() {
   // dropped most recently is the one lying on the heap.
   for (let i = 0; i < corpses.length; i++) {
       const c = corpses[i];
-      if (inView(c.x, c.y, c.blast?blastCorpseReach(c,true):150)) {
+      if (!c.wallSit && inView(c.x, c.y, c.blast?blastCorpseReach(c,true):150)) {
         if (shovelBelowGroundActor(c)) actorShow(c);
         else c.show();
       }
@@ -51814,6 +52357,9 @@ function drawBiomeProps(list, i0, i1) {
     }
 
     pop();   // closes the lean translate — see PROP_RISE
+    drawBuildingWallBlood(b);
+    if (typeof drawWallCorpsePieces === 'function') drawWallCorpsePieces(b, window);
+    if (typeof drawWallCorpses === 'function') drawWallCorpses(b, window);
   }
 }
 
