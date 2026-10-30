@@ -281,12 +281,9 @@ function legInjuryHitProfile(a,incoming) {
   return incoming==='HEAD'?null:incoming==='LEGS'?LEG_INJURY_SEATED_LEGS:LEG_INJURY_SEATED_BODY;
 }
 
-// Surviving blade contacts share a short real-time stop. Their presentation
-// advances on simulation ticks, so the contact remains visible during it.
-const SWORD_HIT_STOP_MS = 100;
-let swordHitStopUntil = 0;
+// Surviving blade contacts keep their flash and health readout while combat
+// continues. Presentation clocks advance only during active simulation.
 const swordHitTargets = new Set();
-function swordHitStopped() { return millis() < swordHitStopUntil; }
 function beginSwordHitFeedback(attacker,target,hpBefore,slashAngle) {
   if(!target||target.dead||!(target.hp>0)||!(hpBefore>target.hp))return false;
   const previous=target.swordHitFeedback;
@@ -296,8 +293,6 @@ function beginSwordHitFeedback(attacker,target,hpBefore,slashAngle) {
       (attacker&&attacker.aimAngle||0)+(attacker&&attacker.isBackhand?HALF_PI:-HALF_PI)};
   target.hitFlash=Math.max(target.hitFlash||0,2);
   swordHitTargets.add(target);
-  swordHitStopUntil=Math.max(swordHitStopUntil,millis()+SWORD_HIT_STOP_MS);
-  doTick=false;
   return true;
 }
 function updateSwordHitFeedback(elapsedMs=deltaTime) {
@@ -311,7 +306,7 @@ function updateSwordHitFeedback(elapsedMs=deltaTime) {
     f.flashMs=Math.max(0,f.flashMs-dt);
     // The older model painters count their torso flash in rendered frames.
     // Keep that white body read for the same duration as the new slash, even
-    // while contact stop prevents the simulation from advancing.
+    // while an ordinary pause prevents the simulation from advancing.
     if(f.flashMs>0)target.hitFlash=Math.max(target.hitFlash||0,2);
     const drainMs=Math.max(0,dt-f.ghostHoldMs);
     f.ghostHoldMs=Math.max(0,f.ghostHoldMs-dt);
@@ -321,7 +316,7 @@ function updateSwordHitFeedback(elapsedMs=deltaTime) {
 }
 function resetSwordHitFeedback() {
   for(const target of swordHitTargets)delete target.swordHitFeedback;
-  swordHitTargets.clear();swordHitStopUntil=0;
+  swordHitTargets.clear();
 }
 function drawSwordTargetFlash(c) {
   const f=c.swordHitFeedback;
@@ -8849,7 +8844,7 @@ function draw() {
 }
 
 }
-doTick = (!killcamMode || (frameCount % 4 === 0)) && !isPaused && !inDarchonCall && !inTownCutscene && !inFarmCutscene && !inFarmPostCutscene && !inPostAmbushCutscene && !inFortCutscene && !undergroundRouteBusy() && !swordHitStopped();
+doTick = (!killcamMode || (frameCount % 4 === 0)) && !isPaused && !inDarchonCall && !inTownCutscene && !inFarmCutscene && !inFarmPostCutscene && !inPostAmbushCutscene && !inFortCutscene && !undergroundRouteBusy();
 updateSwordHitFeedback();
 // Screen shake translates the whole world INSIDE the zoom, so during a shake
 // the camera really sees up to screenShake/zoom world units past these edges.
@@ -12949,20 +12944,22 @@ function spawnAmbushReinforcement() {
 // Blast deaths have their own rotation; a volley of shotgun kills must not
 // consume it. Alien bodies and airborne jetpacks keep their bespoke tables.
 const EXPLOSION_HUMAN_DEATHS = [18, 19, 20, 5, 2, 7, 10, 11];
+const EXPLOSION_DISMEMBER_DEATHS = [18, 19, 20];
 let explosionDeathCounter = 0;
-function explosionDeathType(actor, fallback = 5) {
+function explosionDeathType(actor, fallback = 5, dismemberOnly = false) {
   if (!actor || (!actor.isPlayer && (!ragHumanoid(actor.eType, actor.bodyW) ||
       actor.eType === 'AERIAL' || actor.eType === 'AERIAL_PISTOL'))) return fallback;
-  return EXPLOSION_HUMAN_DEATHS[explosionDeathCounter++ % EXPLOSION_HUMAN_DEATHS.length];
+  const deaths = dismemberOnly ? EXPLOSION_DISMEMBER_DEATHS : EXPLOSION_HUMAN_DEATHS;
+  return deaths[explosionDeathCounter++ % deaths.length];
 }
-function explosionCorpse(actor, angle, fallback = 5) {
+function explosionCorpse(actor, angle, fallback = 5, dismemberOnly = false) {
   const motion = figureMotion(actor);
   // A rocket may finish a target in the same frame as a bullet. The blast's
   // direction replaces that stale wound for both the fall and floor splatter.
   actor.fallHit = {frame:frameCount,kind:'BLAST',fatal:true,angle,force:6,
     mx:motion.x,my:motion.y,x:actor.x,y:actor.y};
   const c = new Corpse(actor.x, actor.y, actor.moveAngle, actor.aimAngle,
-    actor.shirtCol, actor.pantsCol, explosionDeathType(actor, fallback), angle,
+    actor.shirtCol, actor.pantsCol, explosionDeathType(actor, fallback, dismemberOnly), angle,
     actor.decals, actor.currentWeapon, angle, actor.isPlayer ? 'NORMAL' : actor.eType,
     actor.bodyW, actor.bodyH, actor);
   c.blastBlood = true;
@@ -15499,9 +15496,13 @@ class Shockwave {
                     e.dead = true; 
                     if (e.eType === "SAUCER" || e.eType === "SAUCER_RED") { 
                         triggerExplosion(e.x, e.y, 160); 
-                    } else if (this.sword && ragHumanoid(e.eType, e.bodyW)) {
-                        emit(e.x, e.y, 60, bCol, "GORE"); spawnSplatter(e.x, e.y, "BLOOD", bCol);
-                        corpses.push(swordKillCorpse(e, this.a));
+                    } else if (this.sword && ragHumanoid(e.eType, e.bodyW) &&
+                               e.eType !== "AERIAL" && e.eType !== "AERIAL_PISTOL") {
+                        // The charged finisher explodes human bodies into the
+                        // existing ballistic blast pieces, never sword cuts.
+                        emit(e.x, e.y, 60, bCol, "GORE", 0, 0, e);
+                        spawnSplatter(e.x, e.y, "BLOOD", bCol, e, 'BLAST');
+                        corpses.push(explosionCorpse(e, this.a, 5, true));
                     } else if (e.eType === "AERIAL" || e.eType === "AERIAL_PISTOL") {
                         emit(e.x, e.y, 40, color(255, 100, 0), "EXPLOSION"); sfx.explosion(e.x, e.y);
                         spawnSplatter(e.x, e.y, "BLOOD", color(90, 0, 0));
@@ -22782,10 +22783,30 @@ this.skeletonTimer = 0;
       } else { this.dashTimer = 8; this.dashCooldown = 60; if (this.isPlayer) sfx.dash(); }
   }
 
+  updateSwordComboWindow(elapsedMs=deltaTime) {
+      if(!this.isPlayer||meleeTool()!=="SWORD"||this._swordComboFrame===frameCount)return;
+      this._swordComboFrame=frameCount;
+      if(!doTick||!combatStanceContext()||!(this.meleeComboTimer>0))return;
+      // Count active play from the last accepted slash, including its swing.
+      // Input can arrive before updatePlayer, so each frame is consumed once.
+      const elapsed=Number(elapsedMs),dt=Number.isFinite(elapsed)?Math.max(0,elapsed):0;
+      this.meleeComboTimer=Math.max(0,this.meleeComboTimer-dt*60/1000);
+      if(this.meleeComboTimer<1e-6) {
+          this.meleeComboTimer=0;
+          if(this.meleePhase>0&&this.meleePhase<4){this.meleePhase=0;this.meleeCooldown=0;}
+      }
+  }
+
+  refreshSwordComboWindow() {
+      this.meleeComboTimer=60;
+      this._swordComboFrame=frameCount;
+  }
+
       activateMelee(isCentral = false) {
       if(this.shovelMantle)return;
       if (this.isPlayer && !isCentral) return;
       if (this.isPlayer && this.shovelDigTimer>0) return;
+      this.updateSwordComboWindow();
       if (this.isPlayer && !this.mounted && meleeTool() === 'NONE') {
           beginWorldBoxing(this);
           boxingRequestPunch(this, 'LEFT_STRAIGHT');
@@ -22848,6 +22869,7 @@ this.skeletonTimer = 0;
           if (typeof meleeComboUnlocked !== 'undefined' && meleeComboUnlocked) { 
               this.meleeCooldown = 0; 
               this.meleeComboTimer = 50; 
+              if(this.isPlayer&&meleeTool()==="SWORD")this.refreshSwordComboWindow();
               this.meleePhase = 1; 
           } else { 
               this.meleeCooldown = 45; 
@@ -22857,6 +22879,11 @@ this.skeletonTimer = 0;
   }
 
   advanceMeleeCombo() {
+      if(this.isPlayer&&meleeTool()==="SWORD") {
+          this.updateSwordComboWindow();
+          if(this.meleeTimer>0||this.meleeCooldown>0)return;
+          if(!(this.meleeComboTimer>0)){this.meleePhase=0;this.activateMelee(true);return;}
+      }
       if(this.isPlayer&&meleeTool()==="SHOVEL") {
           this.meleePhase=0;this.meleeComboTimer=0;
           this.activateMelee(true);return;
@@ -22915,6 +22942,7 @@ this.skeletonTimer = 0;
           return; 
       }
       
+      if(this.isPlayer&&meleeTool()==="SWORD")this.refreshSwordComboWindow();
       if (this.isPlayer) sfx.slash(this.x, this.y); 
   }
 
@@ -22951,6 +22979,7 @@ this.skeletonTimer = 0;
   }
 
   updatePlayer() {
+    this.updateSwordComboWindow();
     updateActorCover(this,typeof deltaTime==='number'?deltaTime:1000/60,leftStick.dx*6,leftStick.dy*6,coverPlayerAiming(this));
     const wasProneDive=proneDiveActive(this);
     updateActorStance(this, typeof deltaTime === 'number' ? deltaTime : 1000 / 60);
@@ -23231,7 +23260,7 @@ this.skeletonTimer = 0;
       if(!this.checkCol(this.x+nx,this.y))this.x+=nx;if(!this.checkCol(this.x,this.y+ny))this.y+=ny;
       
       if (this.meleePhase === 4 && this.meleeTimer === 15 && !shovelSwing) {
-          if(meleeTool()!=="SWORD")screenShake = 20;
+          screenShake = 20;
           shockwaves.push(new Shockwave(this.x, this.y, this.aimAngle, meleeTool()==="SWORD", this));
       }
              else if ((this.meleePhase !== 4 || shovelSwing) && this.meleeTimer === 10) {
@@ -23325,7 +23354,7 @@ this.skeletonTimer = 0;
     } else { 
         if (this.meleePhase === 4 && this.meleeCooldown <= 0) { this.meleePhase = 0; }
         if (this.meleeCooldown > 0) { this.meleeCooldown--; }
-        if (this.meleeComboTimer > 0) { 
+        if (this.meleeComboTimer > 0 && !(this.isPlayer&&meleeTool()==="SWORD")) {
             this.meleeComboTimer--; 
             if (this.meleeComboTimer <= 0 && this.meleePhase > 0) { this.meleeCooldown = 0; this.meleePhase = 0; } 
         }

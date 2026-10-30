@@ -19,28 +19,22 @@ const {chromium}=require('playwright');
    window.swordSceneTarget=new Character(45,0,false,'ARMORED_STANDARD');
    swordSceneTarget.hp=swordSceneTarget.maxHp=700;swordSceneTarget.isFriendly=swordSceneTarget.isNeutral=false;
    enemiesList=[swordSceneTarget];particles=[];bullets=[];corpses=[];
-   window.swordSceneTime=1000;window.millis=()=>swordSceneTime;
    frameCount++;player.updatePlayer();
-   const atHit={hp:swordSceneTarget.hp,timer:player.meleeTimer,deadline:swordHitStopUntil,particles:particles.length,shake:screenShake};
-   // Aim input keeps asking to move throughout the contact freeze.
+   const atHit={hp:swordSceneTarget.hp,timer:player.meleeTimer,active:doTick,particles:particles.length,shake:screenShake};
+   // The next real draw must advance immediately after contact.
    leftStick.active=true;leftStick.dx=1;
-   const x=player.x,y=player.y,enemyX=swordSceneTarget.x,enemyY=swordSceneTarget.y;
-   const effect=JSON.stringify(swordSceneTarget.swordHitFeedback),poses=particles.map(p=>[p.x,p.y,p.fxAge,p.a]);
-   for(const elapsed of [0,25,60,99]){swordSceneTime=1000+elapsed;frameCount++;draw();}
-   const frozen={x:player.x,y:player.y,timer:player.meleeTimer,hp:swordSceneTarget.hp,
-    enemyX:swordSceneTarget.x,enemyY:swordSceneTarget.y,feedback:JSON.stringify(swordSceneTarget.swordHitFeedback),
-    particles:particles.map(p=>[p.x,p.y,p.fxAge,p.a]),doTick};
-   swordSceneTime=1100;frameCount++;draw();
-   const resumed={x:player.x,timer:player.meleeTimer,doTick};
-   return {atHit,frozen,resumed,before:{x,y,enemyX,enemyY,effect,poses}};
+   const x=player.x,flash=swordSceneTarget.swordHitFeedback.flashMs;
+   frameCount++;deltaTime=1000/60;draw();
+   const next={x:player.x,timer:player.meleeTimer,hp:swordSceneTarget.hp,active:doTick,
+    flash:swordSceneTarget.swordHitFeedback.flashMs,
+    bloodAges:particles.filter(p=>p.t==='HIT_BLOOD').map(p=>p.fxAge)};
+   return {atHit,next,before:{x,flash}};
   });
-  assert.equal(state.atHit.hp,500);assert.equal(state.atHit.deadline,1100);
+  assert.equal(state.atHit.hp,500);assert(state.atHit.active);
   assert.equal(state.atHit.shake,0);assert.equal(state.atHit.particles,37);
-  assert.equal(state.frozen.x,state.before.x);assert.equal(state.frozen.y,state.before.y);
-  assert.equal(state.frozen.enemyX,state.before.enemyX);assert.equal(state.frozen.enemyY,state.before.enemyY);
-  assert.equal(state.frozen.timer,state.atHit.timer);assert.equal(state.frozen.hp,500);
-  assert.equal(state.frozen.feedback,state.before.effect);assert.deepEqual(state.frozen.particles,state.before.poses);
-  assert.equal(state.frozen.doTick,false);assert(state.resumed.doTick);assert(state.resumed.timer<state.atHit.timer);
+  assert(state.next.active);assert.equal(state.next.timer,state.atHit.timer-1);
+  assert(state.next.x>state.before.x);assert.equal(state.next.hp,500);
+  assert(state.next.flash<state.before.flash);assert(state.next.bloodAges.length===36&&state.next.bloodAges.every(age=>age===1));
   // Show the same actual hit at contact, after the flash, and after spray fades.
   await page.evaluate(()=>{
    leftStick.active=false;leftStick.dx=0;resetSwordHitFeedback();
@@ -56,7 +50,7 @@ const {chromium}=require('playwright');
    }
    background(34,44,46);noStroke();textAlign(CENTER,TOP);textFont('sans-serif');
    fill(239,235,215);textSize(23);text('SURVIVING SWORD HITS',width/2,20);
-   textSize(13);fill(177,191,188);text('100 ms contact stop · 3× blood spray · arcing floor splatter · no sword shake',width/2,54);
+   textSize(13);fill(177,191,188);text('Continuous combat · 3× blood spray · arcing floor splatter · no normal swing shake',width/2,54);
    const times=[0,220,600];
    for(let row=0;row<3;row++)for(let col=0;col<3;col++){
     const f=swordGallery[col];useBloodBank(f.bank);particles=f.particles;
@@ -72,7 +66,40 @@ const {chromium}=require('playwright');
    }
   });
   await page.screenshot({path:process.env.SWORD_SCENE_OUT||'/tmp/newone-sword-hits.png'});
+  const finishers=await page.evaluate(()=>{
+   resetSwordHitFeedback();leftStick.active=rightStick.active=false;leftStick.dx=leftStick.dy=0;
+   MAX_KILLS=10000;totalKills=0;killcamMode=isWin=false;
+   const fixtures=[];
+   for(let i=0;i<3;i++){
+    useBloodBank('sword-finisher-'+i);particles=[];corpses=[];frameCount++;
+    const e=new Character(0,0,false,'ARMORED_STANDARD');e.hp=1;e.aimAngle=Math.PI;e.isNeutral=e.isFriendly=false;
+    enemiesList=[e];player.x=-45;player.y=0;player.aimAngle=0;
+    player.meleePhase=4;player.meleeTimer=16;shockwaves=[];setMeleeTool('SWORD');
+    explosionDeathCounter=i;doTick=true;player.updatePlayer();shockwaves[0].update();
+    const c=corpses[0];
+    fixtures.push({c,particles,bank:'sword-finisher-'+i,tick:0,shake:screenShake,
+     dT:c.dT,blast:!!c.blast,cut:!!c.sword,parts:c.blast.parts.length,gibs:c.blast.gibs.length});
+   }
+   background(34,44,46);textAlign(CENTER,TOP);textFont('sans-serif');noStroke();
+   fill(239,235,215);textSize(23);text('EXPLOSIVE SWORD FINISHER',width/2,20);
+   fill(177,191,188);textSize(13);text('Explosion shake restored · native ballistic dismemberment · normal sword cuts preserved',width/2,54);
+   for(let row=0;row<3;row++)for(let col=0;col<3;col++){
+    const f=fixtures[col],age=[0,24,112][row];useBloodBank(f.bank);particles=f.particles;
+    doTick=true;deltaTime=1000/60;
+    push();translate(-10000,-10000);
+    for(;f.tick<age;f.tick++){frameCount++;f.c.update();updateBloodPools();updateParticles();}
+    pop();doTick=false;
+    push();translate(150+col*400,230+row*330);scale(1.7);
+    drawBloodChunks();f.c.show();updateParticles();pop();
+    fill(188,203,195);noStroke();textSize(12);textAlign(CENTER,TOP);
+    text(['PULVERIZED LEGS','SEVERED LEG','DIAGONAL HALVES'][col]+' · '+Math.round(age*1000/60)+' ms',200+col*400,320+row*330);
+   }
+   return fixtures.map(({dT,blast,cut,parts,gibs,shake})=>({dT,blast,cut,parts,gibs,shake}));
+  });
+  assert.deepEqual(finishers.map(f=>f.dT),[18,19,20]);
+  assert(finishers.every(f=>f.blast&&!f.cut&&f.parts>0&&f.gibs>0&&f.shake===20));
+  await page.screenshot({path:process.env.SWORD_FINISHER_OUT||'/tmp/newone-sword-finisher.png'});
   assert.deepEqual(errors,[]);
-  console.log('Browser sword hits passed: actual draw freezes movement, swing, targets and spray for 100 ms, resumes once, and renders standing/crouch/prone contact and floor marks without errors.');
+  console.log('Browser sword hits passed: uninterrupted next-frame combat, no normal swing shake, restored finisher shake, and all three native blast dismemberment animations render without errors.');
  }finally{await browser.close();}
 })().catch(e=>{console.error(e);process.exit(1);});

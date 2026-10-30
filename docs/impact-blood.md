@@ -54,13 +54,19 @@ The orb's separate 600-HP / 300-HP armor rule is unchanged.
 ## Surviving sword contacts
 
 Player sword swings and sword finisher contacts now use the same inked spray
-when they lower HP and leave the target alive. The contact freezes gameplay
-for 100 real milliseconds, including the remaining swing, target movement and
-particles. Each target receives a 180-active-millisecond white slash and torso
+when they lower HP and leave the target alive. Combat continues immediately
+through contact, with no hit stop. Each target receives a
+180-active-millisecond white slash and torso
 flash plus a temporary 1.8-second reveal of the existing target health bar.
-The bar holds the lost-health chip briefly before draining it. Multiple targets
-in one swing share the stop; resuming does not apply the hit again.
-Sword swings and finishers add no camera shake.
+The bar holds the lost-health chip briefly before draining it. Each target takes
+damage once per swing. Normal sword swings add no camera shake; the explosive
+finisher retains its original shake.
+
+Each accepted normal sword swing refreshes a one-second active-play combo
+window. After it expires, the next swing starts at phase one rather than
+continuing a stale combo into its terminal cooldown. Rejected mid-swing taps
+do not extend the window, and pauses do not consume it. Finisher and completed
+combo cooldowns retain their own behavior.
 
 Surviving sword hits throw 36 inked blood particles, three times the original
 sword spray, with 35% greater travel. Projectile spray keeps its own count and
@@ -75,8 +81,10 @@ limits; floor splashes share the 24-impact limit. All cosmetic variation avoids
 gameplay randomness.
 
 Misses, immunity, punches, picks and shovels keep their existing feedback.
-Lethal sword hits retain their existing animations, blood pools and corpse
-effects. Travel, load and reset clear transient hit feedback.
+Normal lethal sword hits retain their cut animations, blood pools and corpse
+effects. Human sword finisher kills use the three existing dismembering blast
+deaths and their fast explosion pools, without consuming the normal sword-cut
+rotation. Travel, load and reset clear transient hit feedback.
 
 ## Directional kill stains
 
@@ -193,6 +201,7 @@ node tools/check-armored-impact-effects.js
 node tools/check-standard-armor-break.js
 node tools/check-comic-hit-feedback.js
 node tools/check-sword-hit-feedback.js
+node tools/check-sword-combo.js
 node tools/check-sword-deaths.js
 # Browser sword scene: serve /workspace on port 8000 first, or set SWORD_SCENE_URL.
 node tools/check-sword-hits-scene.js

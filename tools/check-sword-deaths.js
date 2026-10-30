@@ -18,10 +18,47 @@ let next=P('swordKillCounter');assert.equal(strike('NORMAL',500),undefined);asse
 assert.equal(strike('NORMAL',1,'PICKAXE'),3);assert.equal(P('swordKillCounter'),next,'pickaxe consumed sword sequence');
 assert.equal(strike('ARMORED'),3);assert(P('!c.sword&&!c.rag'));assert.equal(P('swordKillCounter'),next,'red-orb hybrid entered sword sequence');
 probe(`setMeleeTool('SWORD');enemiesList=[];player.meleeTimer=11;player.updatePlayer();`);assert.equal(P('swordKillCounter'),next,'miss consumed a death');
-// Finisher ownership is frozen when launched, even if the tool changes later.
-probe(`player.x=player.y=0;player.aimAngle=0;player.meleeTimer=16;player.meleePhase=4;shockwaves=[];player.updatePlayer();window.wave=shockwaves[0];setMeleeTool('PICKAXE');
+// The explosive finisher reuses dismembering blast deaths, independent of the
+// normal sword sequence. Its ownership stays frozen after changing the tool.
+probe(`explosionDeathCounter=0;bloodPools=[];player.x=player.y=0;player.aimAngle=0;player.meleeTimer=16;player.meleePhase=4;shockwaves=[];player.updatePlayer();window.wave=shockwaves[0];setMeleeTool('PICKAXE');
  enemiesList=[new Character(wave.x+30,wave.y,false,'ARMORED_STANDARD')];enemiesList[0].hp=1;corpses=[];wave.update();window.c=corpses[0];`);
-assert(P('wave.sword&&!!c.sword'));assert.equal(P('c.dT'),[16,13,17][next]);next=P('swordKillCounter');
+assert(P('wave.sword&&!c.sword&&!!c.blast&&!c.fall&&c.blastBlood&&c.dT===18'));
+assert.equal(P('swordKillCounter'),next,'explosive finisher consumed a normal sword death');
+assert(P('bloodPools.length>0&&bloodPools.every(p=>p.blastBlood)'),'explosive finisher missed fast blast pools');
+for(const type of ['NORMAL','ARMORED_STANDARD','NM0_ROOKIE','NM0_ROOKIE_F','FEMALE_PISTOL','CITY_CITIZEN_F']){
+ const counter=P('explosionDeathCounter');
+ probe(`frameCount++;bloodPools=[];corpses=[];particles=[];window.e=new Character(30,0,false,'${type}');e.hp=1;
+  e.fallHit={frame:frameCount,kind:'BODY',weapon:WEAPONS.SHOTGUN,angle:Math.PI};enemiesList=[e];
+  new Shockwave(0,0,0,true,player).update();window.c=corpses[0];`);
+ assert.equal(P('c.dT'),[18,19,20][counter%3],type+' finisher left the dismemberment rotation');
+ assert(P("c.blast&&!c.blast.mode&&!c.sword&&!c.fall&&c.blast.gibs.length>0&&c.blastBlood&&e.fallHit.kind==='BLAST'&&e.fallHit.angle===0"));
+ assert(P('bloodPools.length>0&&bloodPools.every(p=>p.blastBlood)'));
+ assert.equal(P('swordKillCounter'),next);
+}
+// A buried finisher retains the explosion corpse and pool's depth binding.
+probe(`frameCount++;bloodPools=[];shovelBloodMarks=[];corpses=[];window.e=new Character(30,0,false,'NORMAL');e.hp=1;
+ e.shovelLevel=currentLevel;e.shovelDepth=18;e.shovelDepthTarget=240;enemiesList=[e];
+ new Shockwave(0,0,0,true,player).update();window.c=corpses[0];`);
+assert(P('c.blast&&c.shovelDepth===18&&c.shovelDepthTarget===240&&e.shovelEffectBody===c'));
+assert(P('shovelBloodMarks.some(m=>m.blastBlood&&m.shovelDepth===18)&&bloodPools.length===0'));
+// Material-specific deaths retain their native dispatch and do not consume
+// either human death selector, including aerial jetpack wreckage.
+probe('player.x=player.y=2000;');
+for(const [type,dt] of [['AERIAL',11],['AERIAL_PISTOL',11],['ARMORED',10],['ALIEN_GATOR',10],['BUG',14],['SNAIL',14],['SNAIL_HYBRID',14],['ROBOT',0]]){
+ const counter=P('explosionDeathCounter');
+ probe(`frameCount++;corpses=[];particles=[];window.e=new Character(30,0,false,'${type}');e.hp=1;enemiesList=[e];
+  new Shockwave(0,0,0,true,player).update();window.c=corpses[0];`);
+ assert.equal(P('c.dT'),dt,type+' finisher changed its native corpse');
+ assert(P('!c.sword&&!c.blast'),type+' finisher entered human blast anatomy');
+ assert.equal(P('explosionDeathCounter'),counter);assert.equal(P('swordKillCounter'),next);
+ if(type==='ROBOT')assert(P("particles.every(p=>!['BLOOD','GORE','BONE','HIT_BLOOD'].includes(p.t))"));
+}
+for(const type of ['SAUCER','SAUCER_RED']){
+ const counter=P('explosionDeathCounter');
+ probe(`frameCount++;corpses=[];window.e=new Character(30,0,false,'${type}');e.hp=1;enemiesList=[e];new Shockwave(0,0,0,true,player).update();`);
+ assert(P('e.dead&&corpses.length===0'),type+' stopped using its native explosion');
+ assert.equal(P('explosionDeathCounter'),counter);assert.equal(P('swordKillCounter'),next);
+}
 probe(`enemiesList=[new Character(30,0,false,'NORMAL')];enemiesList[0].hp=1;corpses=[];new Shockwave(0,0,0,false).update();`);assert.equal(P('swordKillCounter'),next);
 // Existing gun deaths retain their own selectors and counters.
 probe(`frameCount++;setMeleeTool('NONE');enemiesList=[new Character(60,0,false,'NORMAL')];enemiesList[0].hp=1;corpses=[];bullets=[];spawnBullet(0,0,0,true,'HEAD',WEAPONS.PISTOL,player);for(let i=0;i<12&&!corpses.length;i++)updateBullets();window.c=corpses[0];`);
@@ -58,4 +95,4 @@ probe('doTick=true;viewLeft=viewTop=10000;viewRight=viewBottom=11000;for(let i=0
 let slot=null;ctx.localStorage={getItem:()=>slot,setItem:(k,v)=>slot=v,removeItem:()=>slot=null};
 probe('swordKillCounter=2;saveGame();swordKillCounter=0;loadGame();');assert.equal(P('swordKillCounter'),2);
 const legacy=JSON.parse(slot);delete legacy.swordKillCounter;slot=JSON.stringify(legacy);probe('loadGame();');assert.equal(P('swordKillCounter'),0);
-console.log(`Sword deaths passed: repeating real strike/finisher kills; misses, nonfatal hits, pickaxes, guns and hybrids excluded; ${origins} independently painted cut origins; both cut faces; frozen pieces; 210-tick spray; pause/off-screen retirement and save/load continuity.`);
+console.log(`Sword deaths passed: normal slash rotation; explosive finisher dismemberment, fast pools, depth and material isolation; misses, nonfatal hits, pickaxes, guns and hybrids excluded; ${origins} independently painted cut origins; both cut faces; frozen pieces; 210-tick spray; pause/off-screen retirement and save/load continuity.`);

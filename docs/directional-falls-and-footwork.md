@@ -120,7 +120,7 @@ The focused preview uses `node tools/visual-humanoid-corpse-standard.js`; add `a
 
 ## Sword kill rotation
 
-Successful humanoid sword kills repeat in this order across ordinary swings and sword finishers:
+Successful humanoid kills from ordinary sword swings repeat in this order:
 
 | Sequence | Death | Cut effects |
 | --- | --- | --- |
@@ -128,13 +128,13 @@ Successful humanoid sword kills repeat in this order across ordinary swings and 
 | 2 | Waist split (`dT 13`, sword variant) | Upper and lower halves separate across the torso. Both exposed waist edges spray. |
 | 3 | Diagonal split (`dT 17`) | The full figure is cut diagonally in its body frame. Both exposed diagonal edges spray. |
 
-The two new IDs do not replace the projectile death tables. The older non-sword use of `dT 13` retains its original painter and effects. Misses, nonfatal strikes, pickaxe kills, gun kills and non-humanoid deaths do not advance the sword cycle. The red-orb hybrid, beasts and robots keep their existing melee reactions. A finisher keeps its sword identity from launch if the player switches tools before impact. The next sword death survives save/load; older saves and a new story start with decapitation.
+The two new IDs do not replace the projectile death tables. The older non-sword use of `dT 13` retains its original painter and effects. Misses, nonfatal strikes, pickaxe kills, gun kills, finishers and non-humanoid deaths do not advance the normal sword cycle. Human sword finisher kills use the existing dismembering explosion deaths: pulverized legs, a severed leg, or diagonal body halves, with their ballistic gibs and fast blast pools. The red-orb hybrid, beasts and robots keep their existing melee reactions. A finisher keeps its sword identity from launch if the player switches tools before impact. The next normal sword death survives save/load; older saves and a new story start with decapitation.
 
 Pieces reuse the actual standard corpse painter, preserving proportional limbs, face-up/down head orientation, original hair, clothing, armor and bullet wounds. Half-plane clipping keeps each piece's share of the full figure, including an insignia crossing the cut. Both parts fall in the actor's existing direction, separate with bounded damped motion and freeze after 34 ticks. Cut blood follows the same evolving projection, pivot and part rotation as the painted cut edges. Decapitation retains the collar/shirt stain.
 
 Every sword cut sprays continuously for 210 simulation ticks (3.5 seconds), using the existing pooled wound droplets and incremental ground-blood deposition. Decapitation uses a neck and head-stump jet; waist and diagonal cuts use three sites on each exposed edge. Opposing edges spray outward with separate jitter. Pauses freeze the pieces and timer, off-screen deaths finish without transient particles, and biome retirement finishes the parts before stamping them. Sword gibs remain exempt from pile culling.
 
-`node tools/check-sword-deaths.js` checks actual repeating sword strikes and finishers, successful-kill-only advancement, tool-switch ownership, unchanged other kill counters, 4,032 independently painted cut origins on live/stamped targets, forward/backward falls in four map directions, frozen pieces, both cut faces, exact spray cutoff, pause, off-screen retirement, saved sequence and older saves. The corpse check now exercises all 18 death IDs on five body types and retirement of the new sword deaths.
+`node tools/check-sword-deaths.js` checks actual repeating sword strikes and explosive finishers, successful-kill-only advancement, tool-switch ownership, dismembering blast selection and pools, unchanged normal sword counters, 4,032 independently painted cut origins on live/stamped targets, forward/backward falls in four map directions, frozen pieces, both cut faces, exact spray cutoff, pause, off-screen retirement, saved sequence and older saves.
 
 ```
 node tools/check-sword-deaths.js
