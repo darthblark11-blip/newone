@@ -15831,6 +15831,7 @@ function mapLegHitDecal(actor,wx,wy,decal,origin=actor,heightSample=null,forcedL
   return decal;
 }
 function fallenLegDecalPoint(c,w) {
+  if(c.blast&&c.blast.mode)return gunOverkillWoundPoint(c,w);
   if(!c.rag)return null; // Overkill without surviving legs has no leg surface.
   const projected=!!c.fall,faceDown=!projected&&c.dT===7;
   const rig=projected?corpseFallRig(c):ragRig(c.bW,c.bH);
@@ -16618,11 +16619,10 @@ function finishFigureFall(c) {
   if(c.fall)while(!c.fall.done){stepFigureFall(c.fall,c,c.rag);ragStep(c.rag);}
   c.fP=1;
 }
-// Shotgun/dual-SMG overkill keeps its original rotation, limb projection and
-// separation. Feeding it through the directional rig rotates the two halves
-// independently of the old gore animation.
+// Headshot and other legacy separation paths keep their own frames. Human
+// body outcomes 2/10 use ballistic pieces; outcome 7 uses the shared fall.
 function legacyOverkillFall(dT,hit) {
-  return dT===2||dT===4||dT===7||
+  return dT===2||dT===4||
     (CORPSE_GIB_DEATHS.indexOf(dT)!==-1&&hit&&hit.frame===frameCount&&
       (hit.weapon===WEAPONS.SHOTGUN||hit.weapon===WEAPONS.DUAL_SMG));
 }
@@ -16681,7 +16681,8 @@ function buildFatalSpray(src,eT) {
 }
 // Use the same local decal coordinates and transforms as Corpse.paint(). A
 // fatal spot remains attached when the torso separates or a piece is moving.
-function fatalWoundPoint(c,w=c.fatalSpray.wound) {
+function fatalWoundPoint(c,w=c.fatalSpray&&c.fatalSpray.wound||c.dec&&c.dec[c.dec.length-1]||{x:0,y:0}) {
+  if(c.blast&&c.blast.mode)return gunOverkillWoundPoint(c,w);
   if(w.isLeg)return fallenLegDecalPoint(c,w);
   if(c.injuryFrom&&c.fall){
     const rig=corpseFallRig(c);
@@ -16717,7 +16718,7 @@ function fatalWoundPoint(c,w=c.fatalSpray.wound) {
     if(w.isHead){if(c.dT!==5)ly-=c.bH*.4;}
     else{lx=w.y;ly=-w.x*.7;turn=-HALF_PI;}
   }else if(c.dT===3){a=c.mA;ly-=c.sep*1.8;
-  }else if(c.dT===7){a=c.mA+(rg?rg.ang*.6:0);scale=rg?RAG_SCALE:1;
+  }else if(c.dT===7&&!c.fall){a=c.mA+(rg?rg.ang*.6:0);scale=rg?RAG_SCALE:1;
     if(w.isHead&&rg)lx+=ragRig(c.bW,c.bH).TL*.5+5+4*f;
   }else{
     if(c.dT===2||c.dT===4){x+=Math.cos(c.bA)*c.sep;y+=Math.sin(c.bA)*c.sep;}
@@ -16952,10 +16953,11 @@ function drawSwordCorpse(r,c) {
 // and the final bank stamp therefore never mistake a flying torso for its floor.
 // 18: both legs pulverized; 19: one complete leg off; 20: diagonal body halves.
 const BLAST_DEATH_FRAMES=96,BLAST_BLEED_FRAMES=112,BLAST_SHADOW_INK=[12,9,13];
+const GUN_OVERKILL_BLEED_FRAMES=180;
 function blastRandom(b) {
   b.seed=(Math.imul(b.seed,1664525)+1013904223)>>>0;return b.seed/4294967296;
 }
-function buildBlastDeath(c,src) {
+function buildBlastDeath(c,src,mode=null) {
   const rig=ragRig(c.bW,c.bH),yaw=src&&Number.isFinite(src.aimAngle)?src.aimAngle:c.aA;
   const b=c.blast={age:0,done:false,seed:(Math.imul(Math.round(c.x),73856093)^Math.imul(Math.round(c.y),19349663)^frameCount^c.dT)>>>0,
     legIndex:0,parts:[],gibs:[],rig,skin:c.id.skinCol||color(235,180,140),boot:color(c.pC.levels[0]*.55,c.pC.levels[1]*.55,c.pC.levels[2]*.55)};
@@ -16963,6 +16965,7 @@ function buildBlastDeath(c,src) {
   b.paint={blood:color(90,0,0),meat:color(71,1,15),meatLight:color(163,12,34),bloodRibbon:color(134,2,20),
     clothLight:color(c.pC.levels[0]*1.15,c.pC.levels[1]*1.15,c.pC.levels[2]*1.15),boneDark:color(80,30,34),bone:color(225,205,171),
     cutInk:color(55,1,10),cutRed:color(148,8,23),cutFaces:[color(102,4,18),color(222,192,164),color(130,4,18),color(144,4,18)]};
+  if(mode){b.mode=mode;b.rig=projectFallRig(c.bW,c.bH,1);buildGunOverkill(c,src);return;}
   const rnd=()=>blastRandom(b),ca=Math.cos(yaw),sa=Math.sin(yaw),legIndex=b.legIndex=rnd()<.5?0:1;
   const part=(type,pivot,side,angle,speed,lift)=>{
     const x=(ca*pivot.x-sa*pivot.y)*RAG_SCALE,y=(sa*pivot.x+ca*pivot.y)*RAG_SCALE;
@@ -16996,6 +16999,11 @@ function buildBlastDeath(c,src) {
 }
 function blastCutPlane(c,p) {
   const b=c.blast,r=b.rig;
+  if(b.mode){
+    if(p.type==='gunArm')return{x:r.shX,y:p.limb===0?-r.shY:r.shY,nx:0,ny:p.limb===0?-1:1,
+      tx:1,ty:0,lo:-r.upperW*.48,hi:r.upperW*.48};
+    return b.cut;
+  }
   if(c.dT===19)return{x:r.hipX,y:(b.legIndex?1:-1)*r.hipY,nx:1,ny:0,tx:0,ty:1,lo:-r.thighW*.43,hi:r.thighW*.43};
   const nx=c.dT===20?.75:1,ny=c.dT===20?.6614378278:0,tx=-ny,ty=nx,x=c.dT===20?0:-r.TL*.33;
   const reach=c.dT===20?1/Math.sqrt(tx*tx/(r.TL*r.TL*.25)+ty*ty/(r.TW*r.TW*.25)):r.TW*.37;
@@ -17020,11 +17028,12 @@ function stepBlastBallistic(p,age) {
 }
 function stepBlastDeath(c,emitEffects=true) {
   const b=c.blast;if(!b||b.done)return;
+  const bleedFrames=b.bleedFrames||BLAST_BLEED_FRAMES;
   b.age++;
   for(let i=0;i<b.parts.length;i++){
     const p=b.parts[i],contact=stepBlastBallistic(p,b.age);
     if(emitEffects&&contact&&p.bounces===1)spawnSplatter(c.x+p.x,c.y+p.y,'BLOOD',b.paint.blood,c);
-    if(emitEffects&&b.age<BLAST_BLEED_FRAMES&&b.age%3===0&&particles.length<COMIC_HIT_LIMIT-2){
+    if(emitEffects&&b.age<=bleedFrames&&b.age%3===0&&particles.length<COMIC_HIT_LIMIT-2){
       for(const along of [-.5,.5]){
         const w=blastCutPoint(c,i,along),j=(blastRandom(b)-.5)*.8;
         const q=newParticle(w.x,w.y,b.paint.blood,'HIT_BLOOD',Math.cos(w.angle+j)*4,Math.sin(w.angle+j)*4,c);
@@ -17038,8 +17047,8 @@ function stepBlastDeath(c,emitEffects=true) {
       depositSmallBlood(c.x+g.x,c.y+g.y,[{ox:0,oy:0,sz:g.sz*.8},{ox:g.vx,oy:g.vy,sz:g.sz*.4}],12,c);
     }
   }
-  c.bloodTimer=Math.max(0,BLAST_BLEED_FRAMES-b.age);
-  if(b.age>=BLAST_BLEED_FRAMES){b.done=true;c.bloodTimer=0;}
+  c.bloodTimer=Math.max(0,bleedFrames-b.age);
+  if(b.age>=bleedFrames){b.done=true;c.bloodTimer=0;}
 }
 function finishBlastDeath(c) {if(c.blast)while(!c.blast.done)stepBlastDeath(c,false);}
 function blastCorpseReach(c,airborne=false) {
@@ -17060,6 +17069,7 @@ function drawBlastCut(r,c,p) {
   }
 }
 function drawBlastAnatomy(r,c,p) {
+  if(c.blast.mode){drawGunOverkillAnatomy(r,c,p);return;}
   const b=c.blast,rig=b.rig,dc=r.drawingContext,skin=b.skin;
   ragContour(r,255);
   if(p.type==='leg'){drawFallLimb(r,rig,c.rag,2+b.legIndex,1,c.sC,c.pC,skin,b.boot,false,c.id,c.dec);drawBlastCut(r,c,p);return;}
@@ -17110,6 +17120,95 @@ function drawBlastCorpse(r,c) {
   }
 }
 
+// Firearm body overkill reuses the bounded blast-piece lifecycle. Only the
+// cut and anatomy differ; height, floor sliding, visibility and banking agree.
+function buildGunOverkill(c,src){
+  const b=c.blast,r=b.rig,rnd=()=>blastRandom(b);
+  const facing=src&&Number.isFinite(src.aimAngle)?src.aimAngle:c.aA-PI;
+  const fall=buildFigureFall(src,c.bA,weaponFallForce(src.fallHit.weapon),false,facing);
+  b.heading=fall.a;c.backFacing=fall.faceDown;b.bleedFrames=GUN_OVERKILL_BLEED_FRAMES;
+  const cutAngle=(rnd()-.5)*.95,nx=Math.cos(cutAngle),ny=Math.sin(cutAngle),tx=-ny,ty=nx;
+  const x=-r.TL*(.22+rnd()*.1),rx=r.TL*.5,ry=r.TW*.5;
+  const aa=tx*tx/(rx*rx)+ty*ty/(ry*ry),bb=2*x*tx/(rx*rx),cc=x*x/(rx*rx)-1;
+  const disc=Math.sqrt(Math.max(0,bb*bb-4*aa*cc));
+  b.cut={x,y:0,nx,ny,tx,ty,lo:(-bb-disc)/(2*aa),hi:(-bb+disc)/(2*aa)};
+  const ca=Math.cos(b.heading),sa=Math.sin(b.heading);
+  const part=(type,pivot,side,angle,speed,lift,limb=-1)=>{
+    const p={type,pivot,side,limb,x:(ca*pivot.x-sa*pivot.y)*RAG_SCALE,
+      y:(sa*pivot.x+ca*pivot.y)*RAG_SCALE,z:0,vx:Math.cos(angle)*speed,vy:Math.sin(angle)*speed,
+      vz:lift,rot:b.heading,vr:(rnd()-.5)*.055,landed:lift<=0,bounces:0};
+    b.parts.push(p);return p;
+  };
+  part('gunLower',{x:r.hipX,y:0},-1,c.bA,1.0+rnd()*.4,0);
+  part('gunUpper',{x:0,y:0},1,c.bA+(rnd()-.5)*.12,7.5+rnd()*1.5,3.4+rnd()*.8);
+  if(b.mode==='BREAKUP')for(let limb=0;limb<2;limb++)
+    part('gunArm',{x:r.shX,y:(limb?1:-1)*r.shY},1,c.bA+(limb?1:-1)*.5,
+      5+rnd()*1.5,3+rnd(),limb);
+  for(let i=0;i<12;i++){
+    const u=lerp(b.cut.lo,b.cut.hi,rnd()),px=b.cut.x+b.cut.tx*u,py=b.cut.y+b.cut.ty*u;
+    const a=c.bA+(rnd()-.5)*1.8,speed=2+rnd()*3;
+    b.gibs.push({type:i%5===0?'bone':i%4===0?'cloth':i%3===0?'blood':'meat',
+      x:(ca*px-sa*py)*RAG_SCALE,y:(sa*px+ca*py)*RAG_SCALE,z:0,
+      vx:Math.cos(a)*speed,vy:Math.sin(a)*speed,vz:2.5+rnd()*2,
+      rot:rnd()*TWO_PI,vr:(rnd()-.5)*.25,sz:2.4+rnd()*3.2,landed:false,bounces:0});
+  }
+  c.blastBlood=true;c.fP=1;c.bloodTimer=b.bleedFrames;c.fatalSpray=null;
+  c.bT=0;c.sep=corpseSepMax(c.dT);c.stopMotionTimer=BLAST_DEATH_FRAMES;
+}
+function gunOverkillPoint(c,p,x,y,turn=0){
+  const co=Math.cos(p.rot),si=Math.sin(p.rot),dx=x-p.pivot.x,dy=y-p.pivot.y;
+  return{x:c.x+p.x+(co*dx-si*dy)*RAG_SCALE,y:c.y+p.y-p.z+(si*dx+co*dy)*RAG_SCALE,
+    angle:p.rot+turn,frameAngle:p.rot,scale:RAG_SCALE};
+}
+function gunOverkillWoundPoint(c,w){
+  const b=c.blast,r=b.rig;
+  let x=w.x||0,y=w.y||0,turn=0;
+  let type='gunUpper';
+  if(w.isLeg){
+    type='gunLower';const g=fallLegGeometry(r,c.rag,w.legIndex,1,false,true);
+    const d=legDecalPoint(w,g.sx,g.sy,g.kx,g.ky,g.ax,g.ay,g.hipW,g.kneeW,g.ankleW);
+    x=d.x;y=d.y;turn=d.angle;
+  }else if(w.isHead){
+    turn=c.backFacing?0:PI;const co=Math.cos(turn),si=Math.sin(turn),dx=x;
+    x=r.headX+co*dx-si*y;y=si*dx+co*y;
+  }else if((x-b.cut.x)*b.cut.nx+(y-b.cut.y)*b.cut.ny<0)type='gunLower';
+  const p=b.parts.find(p=>p.type===type),point=gunOverkillPoint(c,p,x,y,turn);
+  point.angle+=w.shotA||0;return point;
+}
+function drawGunOverkillTorso(r,c,p){
+  const b=c.blast,rig=b.rig,plane=b.cut,dc=r.drawingContext,E=240;
+  // Only the torso is clipped; attached arms/legs retain their own joints.
+  if(dc){dc.save();dc.beginPath();
+    dc.moveTo(plane.x-plane.tx*E,plane.y-plane.ty*E);dc.lineTo(plane.x+plane.tx*E,plane.y+plane.ty*E);
+    dc.lineTo(plane.x+plane.tx*E+p.side*plane.nx*E,plane.y+plane.ty*E+p.side*plane.ny*E);
+    dc.lineTo(plane.x-plane.tx*E+p.side*plane.nx*E,plane.y-plane.ty*E+p.side*plane.ny*E);dc.closePath();dc.clip();}
+  ragContour(r,255);figureCelOval(r,0,0,rig.TL,rig.TW,c.sC);
+  drawFallenAttire(r,c.id,rig.TL,rig.TW,c.backFacing,1);
+  r.noStroke();for(const d of c.dec||[])if(!d.isHead&&!d.isLeg&&
+      (((d.x-plane.x)*plane.nx+(d.y-plane.y)*plane.ny>=0)===(p.side>0))){
+    r.fill(...(d.col||[90,0,0,220]));r.ellipse(d.x,d.y,d.sz,d.sz);
+  }
+  if(dc)dc.restore();drawBlastCut(r,c,p);
+}
+function drawGunOverkillAnatomy(r,c,p){
+  const b=c.blast,rig=b.rig;
+  if(p.type==='gunArm'){
+    ragContour(r,255);drawFallLimb(r,rig,c.rag,p.limb,1,c.sC,c.pC,b.skin,undefined,false,c.id);
+    drawBlastCut(r,c,p);return;
+  }
+  if(p.type==='gunLower'){
+    for(let i=2;i<4;i++){ragContour(r,255);drawFallLimb(r,rig,c.rag,i,1,c.sC,c.pC,b.skin,b.boot,false,c.id,c.dec);}
+    drawGunOverkillTorso(r,c,p);return;
+  }
+  drawGunOverkillTorso(r,c,p);
+  if(b.mode==='SLICE')for(let i=0;i<2;i++){
+    ragContour(r,255);drawFallLimb(r,rig,c.rag,i,1,c.sC,c.pC,b.skin,undefined,false,c.id);
+  }else for(let limb=0;limb<2;limb++)drawBlastCut(r,c,{type:'gunArm',limb,side:-1});
+  r.push();r.translate(rig.headX,0);r.rotate(c.backFacing?0:PI);
+  ragContour(r,255);drawFallenHead(r,c.id,{faceDown:c.backFacing},1,true);
+  r.noStroke();for(const d of c.dec||[])if(d.isHead){r.fill(...(d.col||[90,0,0,220]));r.ellipse(d.x,d.y,d.sz,d.sz);}r.pop();
+}
+
 class Corpse {
   constructor(x, y, mA, aA, sC, pC, dT, hA, dec, cW, bA, eT, bW, bH, src, sword = false) {
     // Frozen at the moment of death, because a corpse cannot read anything off
@@ -17141,7 +17240,10 @@ class Corpse {
     // the guard that makes a seventh one impossible to get wrong.
     if (eT === "ROBOT" && CORPSE_GIB_DEATHS.indexOf(dT) !== -1) dT = 0;
     if(dT>=18&&dT<=20&&!ragHumanoid(eT,bW))dT=eT==='ROBOT'?0:5;
-    const blast=dT>=18&&dT<=20;
+    const gunHit=src&&src.fallHit;
+    const gunOverkill=ragHumanoid(eT,bW)&&(dT===2||dT===10)&&gunHit&&gunHit.frame===frameCount&&
+      gunHit.kind!=='HEAD'&&(gunHit.weapon===WEAPONS.SHOTGUN||gunHit.weapon===WEAPONS.DUAL_SMG);
+    const blast=dT>=18&&dT<=20||gunOverkill;
     sword=ragHumanoid(eT,bW)&&(sword||dT===16||dT===17);
     if(sword){const motion=figureMotion(src);src={...src,bodyW:bW,bodyH:bH,
       fallHit:{frame:frameCount,kind:'SWORD',angle:bA,force:3,mx:motion.x,my:motion.y}};}
@@ -17195,7 +17297,7 @@ class Corpse {
         this.fatalSpray&&this.fatalSpray.wound.isHead?this.fatalSpray.wound:null):null;
     this.bloodTimer = !sword&&(dT === 5 || dT === 7 || dT === 8 || dT === 9 || dT === 10 || dT === 11 || dT === 13 || dT === 14) ? 180 : 0;
     if(sword)buildSwordDeath(this);
-    if(blast)buildBlastDeath(this,src);
+    if(blast)buildBlastDeath(this,src,gunOverkill?(dT===2?'SLICE':'BREAKUP'):null);
 
     if (dT === 14) { this.splitA = bA; this.lH = { x: 0, y: 0, vx: cos(this.splitA - HALF_PI) * 2, vy: sin(this.splitA - HALF_PI) * 2 }; this.rH = { x: 0, y: 0, vx: cos(this.splitA + HALF_PI) * 2, vy: sin(this.splitA + HALF_PI) * 2 }; }
 
@@ -17206,7 +17308,7 @@ class Corpse {
         let ox = cos(this.aA) * 10, oy = sin(this.aA) * 10;
         for (let i=0; i<3; i++) this.bits.push({ x:ox, y:oy, vx:random(-6,6), vy:random(-6,6), rot:random(TWO_PI), vr:random(-0.3,0.3), sz:random(4, 7), type: 'skull_frag', splat: false });
         for (let i=0; i<6; i++) this.bits.push({ x:ox, y:oy, vx:random(-6,6), vy:random(-6,6), rot:random(TWO_PI), vr:random(-0.3,0.3), sz:random(4, 8), type: 'meat', splat: false });
-    } else if (dT === 10) {
+    } else if (dT === 10&&!gunOverkill) {
         this.overkillBits = [ { type: 'torso', x: 0, y: 0, vx: cos(this.bA)*6 + random(-2,2), vy: sin(this.bA)*6 + random(-2,2), rot: this.aA, vr: random(-0.2, 0.2) }, { type: 'lArm', x: 0, y: 0, vx: cos(this.bA - PI/3)*7 + random(-2,2), vy: sin(this.bA - PI/3)*7 + random(-2,2), rot: this.aA, vr: random(-0.4, 0.4) }, { type: 'rArm', x: 0, y: 0, vx: cos(this.bA + PI/3)*7 + random(-2,2), vy: sin(this.bA + PI/3)*7 + random(-2,2), rot: this.aA, vr: random(-0.4, 0.4) } ];
     } else if (this.dT === 11) {
         emit(this.x, this.y, 40, color(255, 100, 0), "EXPLOSION", 0, 0, this); sfx.explosion(this.x, this.y); let fA = this.aA - PI;
@@ -17221,6 +17323,11 @@ class Corpse {
 
   update() { 
     if(this.sword)stepSwordParts(this);
+    if(this.blast&&this.blast.mode){
+      stepBlastDeath(this);ragStep(this.rag);
+      if(this.stopMotionTimer>0)this.stopMotionTimer--;
+      return;
+    }
     if(this.blast)stepBlastDeath(this);
     if(this.dT===7)this.poolAge=Math.min(bloodPoolFrames(this.blastBlood),this.poolAge+1);
     if (this.fall) { stepFigureFall(this.fall,this,this.rag);this.fP=figureFallProgress(this.fall); }
@@ -17567,6 +17674,39 @@ if (this.eT === "COW" || this.eT === "HORSE") {
   }
 
   if (this.dT === 7) {
+      if(this.fall&&this.rag){
+          // An intact shotgun victim uses the current directional body and
+          // joints. Its actual fall side also owns the head, clothes and holes.
+          const f=this.fP,RG=this.rag,RP=corpseFallRig(this),faceDown=!!this.fall.faceDown;
+          const skin=this.id.skinCol||color(235,180,140),boot=color(red(this.pC)*.55,green(this.pC)*.55,blue(this.pC)*.55);
+          r.push();r.translate(this.x,this.y);r.rotate(figureFallYaw(this.fall,RG));r.scale(RAG_SCALE);
+          const pool=bloodPoolProgress(this.poolAge,this.blastBlood),spread=Math.sqrt(pool);
+          r.noStroke();r.fill(90,0,0,255*.85*pool);r.ellipse(-4,0,(RP.TL+14*f)*spread,RP.TW*1.5*spread);
+          ragContour(r,255);
+          for(let i=2;i<4;i++)drawFallLimb(r,RP,RG,i,f,this.sC,this.pC,skin,boot,false,this.id,this.dec);
+          if(faceDown)for(let i=0;i<2;i++)drawFallLimb(r,RP,RG,i,f,this.sC,this.pC,skin,undefined,true,this.id);
+          r.push();if(RP.injuryBody){r.translate(RP.chestX,RP.chestY);r.rotate(RP.chestYaw);}
+          ragContour(r,255);figureCelOval(r,0,0,RP.TL,RP.TW,this.sC);
+          if(this.eT==='ARMORED_STANDARD'){r.fill(100);r.rect(-RP.TL*.26,-RP.TW*.46,RP.TL*.58,RP.TW*.92,4);}
+          drawFallenAttire(r,this.id,RP.TL,RP.TW,faceDown,f);
+          r.noStroke();
+          for(const d of this.dec)if(!d.isHead&&!d.isLeg){
+              const size=RP.injuryBody?lerp(1,RP.injurySize,RP.injuryMix):1;
+              r.fill(...(d.col||[90,0,0,220]));
+              r.ellipse(d.x*size,d.y*size*(RP.injuryBody?lerp(1,.85,RP.injuryMix):1),d.sz*size,d.sz*size);
+          }
+          r.pop();
+          if(!faceDown){ragContour(r,255);for(let i=0;i<2;i++)drawFallLimb(r,RP,RG,i,f,this.sC,this.pC,skin,undefined,false,this.id);}
+          r.push();r.translate(RP.headX,RP.headY||0);
+          r.scale(RP.headScale===undefined?lerp(1/RAG_SCALE,1,f):RP.headScale);
+          const headTurn=RP.headTurn===undefined?figureHeadTurn(this.fall,f):RP.headTurn;
+          r.rotate(headTurn);ragContour(r,255);drawFallenHead(r,this.id,this.fall,f,false);
+          const hw=headwearOf(this.id);
+          if(hw&&!headwearFalls(hw))drawFallenHeadwear(r,this.id,hw,faceDown&&f>.5);
+          else if(hw&&this.hatOff){r.push();r.rotate(-headTurn);r.translate(this.hatOff.x,this.hatOff.y);r.rotate(this.hatOff.r);drawHeadwear(r,this.id,hw);r.pop();}
+          r.noStroke();for(const d of this.dec)if(d.isHead){r.fill(...(d.col||[90,0,0,220]));r.ellipse(d.x,d.y,d.sz,d.sz);}
+          r.pop();r.pop();return;
+      }
       // Face down. This used to be two leg rects and a pool of blood with no
       // body between them -- a pair of trousers lying in the street. It gets
       // the same settle as every other lay-down now, with the arms folded
@@ -17816,7 +17956,8 @@ function cullCorpseStacks() {
   const cells = new Map();
   for (let i = 0; i < corpses.length; i++) {
       const c = corpses[i];
-      if (shovelBelowGroundActor(c) || !c.isIntactBody || (c.fatalSpray&&c.fatalSpray.left>0)) continue;
+      if (shovelBelowGroundActor(c) || !c.isIntactBody || (c.fatalSpray&&c.fatalSpray.left>0)||
+          c.fall&&!c.fall.done||c.bloodTimer>0) continue;
       const k = Math.floor(c.x / CORPSE_STACK_CELL) + ',' + Math.floor(c.y / CORPSE_STACK_CELL);
       let list = cells.get(k);
       if (!list) { list = []; cells.set(k, list); }

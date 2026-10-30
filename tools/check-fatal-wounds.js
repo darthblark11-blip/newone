@@ -18,6 +18,11 @@ function shot(weapon,kind,counter=0,range=0,hp=1){
 }
 for(const w of ['PISTOL','SMG','ASSAULT_RIFLE','SHOTGUN','DUAL_SMG'])for(const kind of ['BODY','HEAD'])for(let n=0;n<3;n++){
  shot(w,kind,n);assert(P('corpses.length===1'),w+' '+kind+' failed to kill');
+ if(P('!!corpses[0].blast?.mode')){
+  assert.equal(P('corpses[0].bloodTimer'),180);
+  assert.equal(P('corpses[0].fatalSpray'),null,'cut jets must replace the old wound timer');
+  assert(P('corpses[0].blast.parts.length>=2'));continue;
+ }
  assert.equal(P('corpses[0].fatalSpray.left'),210);
  assert.deepStrictEqual(P('corpses[0].fatalSpray.wound'),P('e.fallHit.wound'));
  assert.equal(P('corpses[0].fatalSpray.wound.isHead'),kind==='HEAD');
@@ -130,7 +135,8 @@ assert.equal(P('p.t'),'BLOOD');assert.equal(P('p.sz'),5);assert(P('Number.isFini
 // Added spray must not change the existing heavy overkill physics or random art.
 const state=()=>P('({x:c.x,y:c.y,sep:c.sep,fP:c.fP,bits:c.bits,overkill:c.overkillBits,rag:c.rag})');
 for(const type of [2,4,7,8,9,10]){
- fixture(type,type===4||type===8||type===9?'HEAD':'BODY',60,'NORMAL',.7,-.8,false);const old=state(),oldSeed=seed;
+ fixture(type,type===4||type===8||type===9?'HEAD':'BODY',0);
+ probe('c.fatalSpray=null;for(let i=0;i<60;i++){frameCount++;c.update();}');const old=state(),oldSeed=seed;
  fixture(type,type===4||type===8||type===9?'HEAD':'BODY',60);assert.deepStrictEqual(state(),old,'spray changed overkill state');assert.equal(seed,oldSeed,'spray consumed global random draws');
 }
 console.log(`Fatal wounds passed: actual firearm killshots, ${origins} painted-decal origins, forward/back corpse and slow-stun heads, downed death continuity, 210-tick cutoff, pause/off-screen/stack/travel retirement, particle recycling and unchanged heavy overkill physics/randomness.`);

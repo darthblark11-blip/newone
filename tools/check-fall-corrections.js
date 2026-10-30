@@ -51,7 +51,11 @@ function fixture(type,weapon,age=0,facing=.4,motion=-.9,eType='NORMAL'){
 }
 if(process.argv.includes('--legacy-snapshot')){
  const snapshots=[];
- for(const eType of ['NORMAL','ARMORED'])for(const w of ['SHOTGUN','DUAL_SMG'])for(const type of [2,4,7,8,9,10])for(const age of [0,1,4,7,17,34,60])snapshots.push(fixture(type,w,age,.4,-.9,eType));
+ // Human body outcomes2/7/10 intentionally use the current anatomy now.
+ // Keep legacy headshot art and every nonhuman outcome under comparison.
+ for(const eType of ['NORMAL','ARMORED'])for(const w of ['SHOTGUN','DUAL_SMG'])
+  for(const type of eType==='NORMAL'?[4,8,9]:[2,4,7,8,9,10])for(const age of [0,1,4,7,17,34,60])
+   snapshots.push(fixture(type,w,age,.4,-.9,eType));
  process.stdout.write(JSON.stringify(snapshots));
 }else{
  for(const a of [0,Math.PI/2,Math.PI,-Math.PI/2])for(const backward of [false,true]){
@@ -83,7 +87,7 @@ if(process.argv.includes('--legacy-snapshot')){
   const old=JSON.parse(execFileSync(process.execPath,args,{env:{...process.env,GAME_JS:process.env.FALL_LEGACY_GAME},maxBuffer:12*1024*1024}));
   const current=JSON.parse(execFileSync(process.execPath,args,{env:{...process.env,GAME_JS:require('path').join(__dirname,'../game.js')},maxBuffer:12*1024*1024}));
   assert.deepStrictEqual(current,old,'overkill state or transformed drawing differs from the pre-refinement version');
-  console.log('Legacy comparison passed: 168 ordinary/heavy-armored shotgun/dual-SMG overkill snapshots match the previous state and transformed body drawing; clothing details, bald scalp, head marks and ground-puddle growth are checked separately.');
+  console.log('Legacy comparison passed: 126 human headshot and heavy-armored shotgun/dual-SMG snapshots match the previous state and transformed body drawing; current human body overkill, clothing details, bald scalp, head marks and ground-puddle growth are checked separately.');
  }
  for(const [n,fn]of Object.entries(originals))ctx[n]=fn;
  console.log('Corpse head corrections passed: forward/back face orientation in every cardinal direction, unchanged body direction, long hair, detached hat placement, balanced transforms and graphics-target drawing.');

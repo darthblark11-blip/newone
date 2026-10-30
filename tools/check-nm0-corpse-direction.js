@@ -1,5 +1,5 @@
 // Actual fatal rounds must leave NM-0 standard armor in the same corpse frame
-// as other humanoids, including legacy shotgun art and its attached wounds.
+// as other humanoids, including modern body overkill, legacy headshot art and wounds.
 const assert=require('node:assert/strict');
 const {ctx,probe}=require('./harness');
 const P=s=>probe('('+s+')');
@@ -51,6 +51,10 @@ function kill(type,zone='BODY',weapon='SHOTGUN',counter=0,facing=0,moving=false)
     directionVictim.hp=1;directionVictim.shield=0;directionVictim.isFriendly=directionVictim.isNeutral=false;
     directionVictim.aimAngle=${facing};directionVictim.moveAngle=${move};directionVictim.isMoving=${moving};
     directionVictim.currentWeapon=WEAPONS.PISTOL;
+    // Isolate corpse direction from armor's different impact knockback. Equal
+    // impact roots also give the detached-piece solver the same cosmetic seed;
+    // its subsequent travel and the current fall controller remain native.
+    directionVictim.attemptMove=()=>({x:0,y:0});
     rememberFigureMotion(directionVictim,${moving?4:0}*Math.cos(${move}),${moving?4:0}*Math.sin(${move}));
     enemiesList=[directionVictim];`);
   // All compared actors receive the same shot and simulation random stream.
@@ -64,13 +68,15 @@ function kill(type,zone='BODY',weapon='SHOTGUN',counter=0,facing=0,moving=false)
 }
 function advance(frames){probe(`for(let i=0;i<${frames};i++){frameCount++;directionCorpse.update();}`);}
 function sample(){
-  const origin=P('directionOrigin'),frame=paintFrame(),wound=P('fatalWoundPoint(directionCorpse,directionCorpse.fatalSpray.wound)');
+  const origin=P('directionOrigin'),frame=paintFrame(),wound=P('fatalWoundPoint(directionCorpse,directionCorpse.dec[directionCorpse.dec.length-1])');
   frame[4]-=origin.x;frame[5]-=origin.y;wound.x-=origin.x;wound.y-=origin.y;
   return {state:P(`({x:directionCorpse.x-directionOrigin.x,y:directionCorpse.y-directionOrigin.y,fP:directionCorpse.fP,sep:directionCorpse.sep,
     bT:directionCorpse.bT,bloodTimer:directionCorpse.bloodTimer,stop:directionCorpse.stopMotionTimer,
     poolAge:directionCorpse.poolAge,mA:directionCorpse.mA,aA:directionCorpse.aA,
     bits:directionCorpse.bits.map(b=>({type:b.type,x:b.x,y:b.y,vx:b.vx,vy:b.vy,rot:b.rot,vr:b.vr})),
-    parts:(directionCorpse.overkillBits||[]).map(b=>({...b})),
+    parts:(directionCorpse.blast&&directionCorpse.blast.mode?directionCorpse.blast.parts:directionCorpse.overkillBits||[]).map(b=>({...b})),
+    gun:directionCorpse.blast&&directionCorpse.blast.mode?{mode:directionCorpse.blast.mode,age:directionCorpse.blast.age,
+      done:directionCorpse.blast.done,heading:directionCorpse.blast.heading,gibs:directionCorpse.blast.gibs}:null,
     rag:directionCorpse.rag?{t:directionCorpse.rag.t,done:directionCorpse.rag.done,ang:directionCorpse.rag.ang,
       joints:directionCorpse.rag.limbs.map(l=>[l.a,l.b])}:null})`),
     frame,wound};
@@ -85,17 +91,21 @@ function equivalent(a,b,label){
     near(a.state[key],b.state[key],label+' unchanged collapse/timer '+key);
   assert.deepEqual(a.state.rag,b.state.rag,label+' unchanged joint settling');checks++;
   assert.deepEqual(a.state.parts,b.state.parts,label+' unchanged detached part travel');checks++;
+  assert.deepEqual(a.state.gun,b.state.gun,label+' shared firearm part simulation');checks++;
   assert.deepEqual(a.state.bits,b.state.bits,label+' unchanged skull fragment travel');checks++;
 }
 
-// The six actual shotgun outcomes bypass the current directional controller.
-// Their legacy frame must still agree with the rest of the human cast at
-// impact, during collapse, and once all detached pieces have stopped moving.
+// The three shotgun body outcomes use current anatomy and motion: two bounded
+// piece simulations and an intact directional fall. Headshot cycles keep the
+// legacy art. Every frame still agrees across matching human identities.
 for(const facing of [0,Math.PI/2,Math.PI,-Math.PI/2])for(const zone of ['BODY','HEAD'])for(let counter=0;counter<3;counter++){
   const death=(zone==='BODY'?[2,7,10]:[4,8,9])[counter],snapshots=[];
   for(const type of ['NORMAL','NM0_ROOKIE','ARMORED_STANDARD']){
     kill(type,zone,'SHOTGUN',counter,facing,true);
-    ok(type+' native shotgun selects legacy death '+death,P(`directionCorpse.dT===${death}&&directionCorpse.fall===null`));
+    ok(type+' native shotgun selects death '+death,P(`directionCorpse.dT===${death}`));
+    if(zone==='HEAD')ok(type+' shotgun headshot retains its legacy controller',P('directionCorpse.fall===null&&!directionCorpse.blast'));
+    else if(death===7)ok(type+' intact shotgun body uses the current directional fall',P('!!directionCorpse.fall&&!directionCorpse.blast'));
+    else ok(type+' separated shotgun body uses current firearm anatomy',P(`directionCorpse.blast?.mode==='${death===2?'SLICE':'BREAKUP'}'&&directionCorpse.fall===null`));
     const samples=[sample()];advance(4);samples.push(sample());advance(196);samples.push(sample());snapshots.push(samples);
   }
   for(let age=0;age<3;age++)for(let type=1;type<3;type++)
@@ -127,4 +137,4 @@ for(const type of ['ARMORED','ALIEN_GATOR'])for(const facing of [0,Math.PI/2,Mat
   angleNear(Math.atan2(frame[1],frame[0]),type==='ALIEN_GATOR'?move:facing,type+' native painted frame remains unchanged');
 }
 for(const [key,fn]of Object.entries(original))ctx[key]=fn;
-console.log(`${checks}/${checks} native NM-0 corpse direction, shotgun legacy frames, wound attachment and unchanged fall/part timing checks passed.`);
+console.log(`${checks}/${checks} native NM-0 corpse direction, current shotgun body/legacy head frames, wound attachment and shared fall/part timing checks passed.`);

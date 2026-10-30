@@ -74,11 +74,12 @@ for(const [w,expected] of [['PISTOL',[1,8,9]],['ASSAULT_RIFLE',[6,8,9]],['SHOTGU
   if(w==='SHOTGUN'||(w==='DUAL_SMG'&&i>0))assert(P('corpses[0].fall===null'),'heavy overkill entered the directional controller');
  }
 for(let i=0;i<3;i++){
- assert.equal(shot('SHOTGUN','BODY',i),[2,7,10][i]);assert(P('corpses[0].fall===null'),'shotgun overkill entered the directional controller');
- assert(P('!corpses[0].rag||corpses[0].rag.turnLimit===undefined'),'overkill received the new spin/limb settings');
+ assert.equal(shot('SHOTGUN','BODY',i),[2,7,10][i]);
+ if(i===1){assert(P('!!corpses[0].fall&&!corpses[0].blast'),'intact shotgun body lost the current directional fall');assert.equal(P('corpses[0].fall.a'),Math.PI/2);}
+ else assert(P(`corpses[0].blast?.mode==='${i===0?'SLICE':'BREAKUP'}'&&corpses[0].fall===null`),'separated shotgun body lost its current anatomy');
 }
 for(const w of ['SHOTGUN','DUAL_SMG']){assert.equal(shot(w,'BODY',0,500),0);assert.equal(P('corpses[0].fall.a'),Math.PI/2);}
-assert.equal(shot('DUAL_SMG','BODY'),10);assert(P('corpses[0].fall===null'));
+assert.equal(shot('DUAL_SMG','BODY'),10);assert(P("corpses[0].blast?.mode==='BREAKUP'&&corpses[0].fall===null"));
 // Ordinary body deaths hold a real decal with the arm on the corresponding side.
 let held=0,loose=0;
 for(let i=0;i<50;i++){
@@ -127,4 +128,4 @@ for(const type of [0,1,2,4,6,7,8,9])for(const age of [0,4,15,32,50,90]){
 }
 ctx.push=push;ctx.pop=pop;ctx.ellipse=ellipse;
 probe('corpses=[c];retireCorpsesToBloodBank();');assert.equal(P('corpses.length'),0);
-console.log('Directional falls and footwork passed: original corpse speed, stationary front/rear killshots without swivel, proportional arm widths and upper/forearm/torso ordering, movement/force, frozen rest, collision, actual bullet metadata, legacy shotgun/dual-SMG overkill, unchanged death tables, wound holding, downed death continuity, actor motion, compact stance, steps, heel pivot and finite balanced rendering.');
+console.log('Directional falls and footwork passed: original corpse speed, stationary front/rear killshots without swivel, proportional arm widths and upper/forearm/torso ordering, movement/force, frozen rest, collision, actual bullet metadata, current shotgun/dual-SMG body overkill and legacy headshots, unchanged death tables, wound holding, downed death continuity, actor motion, compact stance, steps, heel pivot and finite balanced rendering.');
