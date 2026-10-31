@@ -268,7 +268,15 @@ console.log('\n== a chunk rebuild does not sweep it away ==');
      `${before} -> ${after}`);
   // And the barrier, which had this bug all along.
   probe(`playerStructures = []; buildSites = buildSites.filter(s => s.kind !== "__none");
-         window.archBarrierReady = true; buildBarrier(); chunkMgr.rebuildWorldArrays();`);
+         window.archBarrierReady = true;`);
+  let raisedBarrier = false;
+  for (let n = 0; n < 400 && !raisedBarrier; n++) {
+    probe(`player.x=${-9000+n*40};player.y=900;player.aimAngle=0;
+           lastActiveUpdate=0;activeBuildings=[];updateActiveWorld();buildBarrier();updateBuildPlacement();`);
+    if (P('buildGhost.ok')) raisedBarrier = P('confirmBuildPlacement()');
+  }
+  ok('the reward is placed through its aimed preview', raisedBarrier);
+  probe('chunkMgr.rebuildWorldArrays();');
   ok('and so does a raised barrier', P('buildings.filter(b => b.isUBarrier).length') >= 1);
 }
 

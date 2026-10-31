@@ -1,0 +1,173 @@
+// Native Character health/collision plus the closed underground spell solver.
+// Checks reach, charge windows, cancellation, bounded summoning and save recovery.
+const assert=require('node:assert/strict');
+const {ctx,probe:P}=require('./harness');
+let checks=0;
+ctx.setTimeout=()=>0;
+function ok(code,label){assert.ok(P(code),label);checks++;}
+P(`var occultFixture=()=>{
+ currentLevel=currentBiome=9;BIOME_ACTIVE=false;started=doTick=true;
+ viewLeft=viewTop=-10000;viewRight=viewBottom=10000;
+ isPaused=isDead=isWin=killcamMode=false;inStoryIntro=inStoryRoom=inTravelMenu=inWorldBuildingMenu=false;
+ inTownCutscene=inFarmCutscene=inFarmPostCutscene=inPostAmbushCutscene=inFortCutscene=inDarchonCall=false;
+ buildings=[];activeBuildings=[];parkingCars=[];activeParkingCars=[];barrels=[];invalidateColIndex();
+ enemiesList=[];particles=[];corpses=[];bullets=[];resetOccultWorld();
+ player=new Character(0,-1000,true);player.hp=100;player.shield=0;player.dead=false;
+ leftStick={active:false,dx:0,dy:0,base:{x:80,y:640}};
+ rightStick={active:false,dx:0,dy:0,dist:0,base:{x:1120,y:690}};
+ window.meleeToolSel='NONE';window.shovelOwned=false;
+ return player;
+};
+ var occultTick=(ms,enemy=true)=>{for(let t=0;t<ms;t+=20){frameCount++;var d=Math.min(20,ms-t);
+  if(enemy)for(const e of enemiesList.slice())occultUpdateEnemy(e,d);occultUpdateWorld(d);}};
+ var addMage=(kind,x=0,y=-1200)=>{const e=createOccultMagician(kind,x,y);enemiesList.push(e);return e;};
+ occultFixture();`);
+for(const kind of ['BLACK','RED','BLUE']){
+ P(`var mage=addMage('${kind}',${kind==='BLACK'?-300:kind==='RED'?0:300},-1200);`);
+ ok(`mage instanceof Character&&mage.eType==='OCCULT_${kind}'&&mage.occult.kind==='${kind}'`,'The '+kind+' caster uses native Character health and identity');
+ ok('!mage.isFriendly&&!mage.isNeutral&&!mage.isPopulation&&!mage.isMilitary&&mage.isUnarmed','The '+kind+' caster cannot become population or fire a bookkeeping pistol');
+ P('var hpBefore=mage.hp;mage.takeDamage(31,player);');
+ ok('mage.hp===hpBefore-31&&mage.lastDamageSource===player','Ordinary native damage wounds the '+kind+' caster');
+}
+// Dungeon actors retain their pre-cover circular hurt boxes and full firearm
+// damage. Their bookkeeping pistol must never opt them into humanoid tactics.
+for(const kind of ['BLACK','RED','BLUE','ZOMBIE']){
+ for(const weapon of ['PISTOL','SMG','DUAL_SMG','ASSAULT_RIFLE','SHOTGUN','REVOLVER','COACH_GUN']){
+  for(const zone of ['HEAD','BODY','LEGS']){
+   P(`occultFixture();var dungeonVictim=${kind==='ZOMBIE'?"createOccultZombie(0,-1100,'test-owner')":`createOccultMagician('${kind}',0,-1100)`};
+    dungeonVictim.hp=dungeonVictim.maxHp=1000;dungeonVictim.aimAngle=-Math.PI/2;
+    enemiesList=[dungeonVictim];
+    var dungeonRound=spawnBullet(0,-1020,-Math.PI/2,true,'${zone}',WEAPONS.${weapon},player);
+    for(let i=0;i<12&&dungeonRound.active;i++){frameCount++;updateBullets();}`);
+   ok(`dungeonVictim.hp===1000-WEAPONS.${weapon}.${zone==='HEAD'?'headDmg':'bodyDmg'}&&
+      dungeonVictim.fallHit.kind==='${zone}'&&!dungeonRound.active&&!dungeonVictim.legInjury&&!dungeonVictim.shotReaction`,
+    `${kind}/${weapon}/${zone} retains full legacy damage and native dungeon hit contact`);
+  }
+ }
+ P(`occultFixture();var dungeonVictim=${kind==='ZOMBIE'?"createOccultZombie(0,-1100,'test-owner')":`createOccultMagician('${kind}',0,-1100)`};
+   enemiesList=[dungeonVictim];
+   var dungeonRay={prevX:-30,prevY:-1100,x:30,y:-1100,startX:-30,startY:-1100,tH:'LEGS',shooter:player};`);
+ ok("stanceHitProfile(dungeonVictim,'LEGS').radius===12&&Number.isFinite(stanceProjectileContact(dungeonRay,dungeonVictim))",
+  kind+' restores the circular low hitbox, including its centerline');
+ ok("!actorCanUseStances(dungeonVictim)&&!enemyCoverEligible(dungeonVictim)&&!enemyCoverDiveEligible(dungeonVictim)&&!enemyShotReactionEligible(dungeonVictim)&&!legInjuryEligible(dungeonVictim)",
+  kind+' cannot enter firearm cover, stances, evasion or leg injuries');
+ P("resetActorStance(dungeonVictim,'CROUCH');updateCombatStanceAI(dungeonVictim,player,true,300);updateActorStance(dungeonVictim,100);");
+ ok("actorStance(dungeonVictim)==='STAND'&&stanceHitProfile(dungeonVictim,'BODY').zone==='BODY'",
+  kind+' cannot inherit a stale firearm posture');
+}
+P(`occultFixture();var nativeMage=addMage('RED',0,-1100);nativeMage.occult.cooldownMs=0;deltaTime=20;nativeMage.updateEnemy();`);
+ok('nativeMage.occult.phase===\'CHARGE\'&&nativeMage.occult.cast===\'FIREBALL\'', 'The production Character AI routes a mage into its magical charge');
+P(`nativeMage.occult.phase='IDLE';player.currentWeapon=WEAPONS.PISTOL;player.fireTimer=0;headAimToggle=false;
+ player.aimAngle=-Math.PI/2;player.fire(player.aimAngle);for(let i=0;i<12;i++){frameCount++;updateBullets();}`);
+ok('nativeMage.hp<nativeMage.maxHp&&nativeMage.lastDamageSource===player', 'A real player pistol projectile hits the native magician hurt box');
+P(`occultFixture();var budgetMage=addMage('RED');for(let i=0;i<200;i++)occultFireProjectile(budgetMage,'FIREBALL',0);
+ for(let i=0;i<200;i++)occultPushGround({kind:'EMERGE',x:0,y:-1200,ownerId:budgetMage.occult.id,ageMs:0,ttlMs:650,hitIds:[]});`);
+ok('occultProjectiles.length===96&&occultGroundEffects.length===48','Magical projectile and ground-effect banks remain bounded under burst creation');
+P('occultFixture();var red=addMage(\'RED\');occultBeginCast(red,\'FIREBALL\',player);occultTick(700);');
+ok('red.occult.phase===\'CHARGE\'&&occultProjectiles.length===0','Red fireball has a visible pre-release charge');
+P('occultTick(100);');
+ok('occultProjectiles.length===1&&occultProjectiles[0].kind===\'FIREBALL\'','A completed red charge emits one parent fireball');
+P('occultTick(400,false);');
+ok('occultProjectiles.length===3&&occultProjectiles.every(p=>p.kind===\'FIRE_FORK\')','The parent forks once into exactly three fireballs');
+ok('Math.abs(occultProjectiles[0].angle-occultProjectiles[2].angle)>.59','Forked fireballs spread outward rather than overlap on one ray');
+P('red.hp=0;occultTick(20,false);');
+ok('occultProjectiles.length===0','Killing the caster cancels its remaining magic');
+P('occultFixture();red=addMage(\'RED\');occultBeginCast(red,\'FIREBALL\',player);red.stunTimer=10;occultTick(100);');
+ok('red.occult.phase!==\'CHARGE\'&&occultProjectiles.length===0','A native knockdown interrupts an unfinished spell');
+P('occultFixture();red=addMage(\'RED\');occultFireProjectile(red,\'FIREBALL\',Math.PI/2);red.stunTimer=20;occultTick(20,false);');
+ok('occultProjectiles.length===0','A knockdown also cancels an already released magical volley');
+
+P(`occultFixture();var black=addMage('BLACK',0,-1300);occultBeginCast(black,'SUMMON',player);occultTick(1100);`);
+ok('enemiesList.filter(e=>e.occultZombie).length===0&&black.occult.sites.length>0','Black summoning shows floor sites before a horde appears');
+P('occultTick(100);');
+ok('enemiesList.filter(e=>e.occultZombie).length===6','The first completed chant raises a six-zombie horde');
+ok('enemiesList.filter(e=>e.occultZombie).every((a,i,list)=>list.every((b,j)=>i===j||Math.hypot(a.x-b.x,a.y-b.y)>=37))','Summoned zombies start with separated collision footprints');
+P(`for(let i=0;i<10;i++){black.occult.phase='IDLE';black.occult.sequence++;
+ occultBeginCast(black,'SUMMON',player);black.occult.chargeMs=1200;occultReleaseCast(black);}`);
+ok('enemiesList.filter(e=>e.occultZombie).length===24','One living summoner can fill its own twenty-four-zombie allowance');
+P(`var countBeforeDeath=enemiesList.length;black.hp=0;occultTick(10000);`);
+ok('enemiesList.length===countBeforeDeath','A dead black magician cannot continue summoning');
+P(`occultFixture();black=addMage('BLACK',0,-1300);
+ for(let i=0;i<24;i++)enemiesList.push(createOccultZombie(-600+(i%8)*75,-1850+Math.floor(i/8)*75,'another-owner'));
+ occultBeginCast(black,'SUMMON',player);black.occult.chargeMs=1200;occultReleaseCast(black);`);
+ok('enemiesList.filter(e=>e.occultZombie).length===30&&enemiesList.filter(e=>e.occultZombie&&e.occultZombie.ownerId===black.occult.id).length===6','An existing horde does not consume another summoner’s independent allowance');
+P(`occultFixture();var zombie=createOccultZombie(0,-1034,'dead-summoner');zombie.occultZombie.emergeMs=0;
+ zombie.occultZombie.biteCooldownMs=0;enemiesList.push(zombie);occultUpdateEnemy(zombie,20);`);
+ok('zombie.occultZombie.windupMs>0&&player.hp===100','A close zombie telegraphs its swipe instead of applying instant overlap damage');
+P('occultTick(460);');
+ok('player.hp===88','A zombie swipe lands once after its windup');
+P('occultTick(200);');
+ok('player.hp===88','The same swipe cannot damage again every frame');
+P(`zombie.occultZombie.biteCooldownMs=0;occultUpdateEnemy(zombie,20);player.y=-900;occultTick(460);`);
+ok('player.hp===88','Stepping out during the zombie windup avoids the swipe');
+
+P(`occultFixture();red=addMage('RED',0,-1200);player.x=0;player.y=-1300;
+ occultBeginCast(red,'LAVA',player);red.occult.chargeMs=1000;occultReleaseCast(red);
+ var lava=occultGroundEffects.find(e=>e.kind==='LAVA');`);
+ok('lava&&lava.length===600','The straight lava fissure reaches exactly thirty metres from the staff');
+P('player.y=-1823;occultTick(400,false);');
+ok('player.hp===70','A target inside the advancing thirty-metre fissure receives native damage');
+P('occultTick(200,false);');
+ok('player.hp===70','One lava explosion cannot repeatedly tick damage on a trapped body');
+P(`occultFixture();red=addMage('RED',0,-1200);player.y=-1300;
+ occultBeginCast(red,'LAVA',player);red.occult.chargeMs=1000;occultReleaseCast(red);player.y=-1826;occultTick(400,false);`);
+ok('player.hp===100','Lava does not reach beyond thirty metres from the staff');
+P(`occultFixture();red=addMage('RED',0,-1200);player.y=-1300;
+ occultBeginCast(red,'LAVA',player);red.occult.chargeMs=1000;
+ buildings=[{x:0,y:-1290,w:100,h:8,isWall:true}];activeBuildings=buildings;invalidateColIndex();occultReleaseCast(red);`);
+ok('occultGroundEffects.find(h=>h.kind===\'LAVA\').length<70','A thin stone wall clips the fissure before its far endpoint');
+P('occultTick(500,false);');
+ok('player.hp===100','Lava on the near side of a wall cannot hurt someone on its far side');
+
+P('occultFixture();var blue=addMage(\'BLUE\',0,-1200);occultBeginCast(blue,\'SHARD\',player);occultTick(1000);');
+ok('blue.occult.phase===\'CHARGE\'&&occultProjectiles.length===0','The blue lightning shard charges for over one second before firing');
+P('occultTick(120);');
+ok('occultProjectiles.length===1&&occultProjectiles[0].kind===\'SHARD\'','A completed blue charge emits a lightning shard');
+P('occultTick(500,false);');
+ok('player.hp===73&&occultProjectiles.length===0','A lightning shard uses native damage and vanishes on contact');
+P(`occultFixture();blue=addMage('BLUE',0,-1200);player.y=-1141;
+ occultBeginCast(blue,'SHOCK',player);occultTick(1000);`);
+ok('player.hp===100&&occultGroundEffects.length===0','The area shock shows a full warning before its active field');
+P('occultTick(200);');
+ok('player.hp===78&&occultGroundEffects.some(h=>h.kind===\'SHOCK\'&&h.radius===360)','Blue shock damages a target within its expanded eighteen-metre radius');
+P('occultTick(200,false);');
+ok('player.hp===78','A single shock pulse cannot apply damage every frame');
+P(`occultFixture();blue=addMage('BLUE',0,-1200);player.y=-839;
+ occultBeginCast(blue,'SHOCK',player);blue.occult.chargeMs=1100;occultReleaseCast(blue);occultTick(150,false);`);
+ok('player.hp===100','A target beyond eighteen metres is outside the electric field');
+
+P(`occultFixture();red=addMage('RED',0,-1200);
+ buildings=[{x:0,y:-1100,w:300,h:8,isWall:true}];activeBuildings=buildings;invalidateColIndex();`);
+ok('!occultBeginCast(red,\'FIREBALL\',player)','Caster sight cannot acquire through a thin stone wall');
+P(`buildings=[];activeBuildings=[];invalidateColIndex();occultFireProjectile(red,'SHARD',Math.PI/2);
+ buildings=[{x:0,y:-1100,w:300,h:8,isWall:true}];activeBuildings=buildings;invalidateColIndex();occultTick(500,false);`);
+ok('player.hp===100&&occultProjectiles.length===0','A fast shard cannot tunnel through a thin wall between frames');
+P(`occultFixture();red=addMage('RED',0,-1200);
+ buildings=[{x:0,y:-1103.25,w:300,h:1,isWall:true}];activeBuildings=buildings;invalidateColIndex();`);
+ok('!occultClearSegment(0,-1200,0,-1000,0)', 'Exact spell geometry catches even a one-unit divider between floor samples');
+P(`var allyA=new Character(10,-1000,false),allyB=new Character(20,-1000,false);`);
+ok('occultActorId(allyA)!==occultActorId(allyB)', 'Distinct allies have separate once-per-pulse damage identities');
+P(`occultFixture();blue=addMage('BLUE',0,-1100);player.shield=50;
+ occultFireProjectile(blue,'SHARD',Math.PI/2);occultTick(300,false);`);
+ok('player.hp===100&&player.shield===23','Magical hits respect the ordinary player shield');
+P(`occultFixture();blue=addMage('BLUE',0,-1100);player.hp=8;
+ occultFireProjectile(blue,'SHARD',Math.PI/2);occultTick(300,false);`);
+ok('player.hp<=0&&player.dead&&playerRespawnTimer===90&&corpses.length===1','A fatal spell enters the ordinary player fall/corpse and death-screen timer');
+
+P(`occultFixture();seedOccultEncounter();var savedMage=enemiesList.find(e=>e.occult.kind==='BLUE');
+ player.x=savedMage.x;player.y=savedMage.y+200;savedMage.takeDamage(40,player);
+ occultBeginCast(savedMage,'SHARD',player);occultUpdateEnemy(savedMage,100);occultUpdateEnemy(savedMage,100);
+ enemiesList.find(e=>e.occult.id==='tunnel-red').hp=0;
+ var savedOccult=JSON.parse(JSON.stringify(serializeOccultState()));restoreOccultState(savedOccult);`);
+ok('enemiesList.length===53&&!enemiesList.some(e=>e.occult.id===\'tunnel-red\')','All expanded rooms restore without reviving a defeated original caster');
+ok('enemiesList.find(e=>e.occult.kind===\'BLUE\').hp===165','The saved encounter retains native caster wounds');
+ok('enemiesList.find(e=>e.occult.kind===\'BLUE\').occult.chargeMs===200','A saved charge retains its fair warning stage');
+P(`var savedBlue=enemiesList.find(e=>e.occult.kind==='BLUE');occultFireProjectile(savedBlue,'SHARD',Math.PI/2);
+ var spellSave=JSON.parse(JSON.stringify(serializeOccultState()));restoreOccultState(spellSave);`);
+ok('occultProjectiles.length===1&&occultProjectiles[0].kind===\'SHARD\'','Released magical projectiles survive the bounded save round trip');
+P(`var beforePause=JSON.stringify(serializeOccultState());isPaused=true;occultTick(1000);
+ var afterPause=JSON.stringify(serializeOccultState());isPaused=false;`);
+ok('beforePause===afterPause','Pause stops caster charges, movement and magical hazards together');
+P(`resetOccultWorld();`);
+ok('occultProjectiles.length===0&&occultGroundEffects.length===0','Level replacement releases every transient magical effect');
+console.log('Occult combat: '+checks+' native health, casting, reach, wall, horde, death and persistence checks passed.');

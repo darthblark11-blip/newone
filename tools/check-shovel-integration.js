@@ -1,0 +1,97 @@
+// Real pickup, native device dispatch and full campaign save/load: the shovel
+// must work before combat upgrades and never turn a dig button into gunfire.
+const assert=require('assert');
+const {ctx,probe:P}=require('./harness');
+let checks=0;
+const ok=(value,label)=>{assert.ok(value,label);checks++;};
+P(`isStoryMode=true;resetStoryProgress();startAtLevel(1);started=true;doTick=true;
+ isPaused=isDead=isWin=killcamMode=false;inTownCutscene=inPostAmbushCutscene=inDarchonCall=false;
+ inFarmCutscene=inFarmPostCutscene=inFortCutscene=inStoryIntro=inStoryRoom=false;meleeUnlocked=false;
+ var memory={};localStorage={setItem(k,v){memory[k]=v},getItem(k){return memory[k]||null},removeItem(k){delete memory[k]}};`);
+ok(P('SHOVEL_DEBUG_OWNED&&window.shovelOwned&&meleeToolOptions().includes("SHOVEL")&&!window.shovelDiscovered'),'debug campaigns start with an inventory shovel while discovery remains available');
+ok(P('meleeTool()==="NONE"'),'debug inventory grant does not force the shovel equipped');
+ok(P('!!shovelPickup&&insideSector(shovelPickup.x,shovelPickup.y,32)&&shovelSurfaceSoftAt(shovelPickup.x,shovelPickup.y)'), 'random ground item lies on real grass inside main gates');
+ok(P('Math.hypot(player.x-shovelPickup.x,player.y-shovelPickup.y)>=64'),'ground item cannot auto-collect underneath the initial player spawn');
+P('var originalPickup=JSON.stringify(shovelPickup);ensureShovelPickup();saveGame();loadGame();');
+ok(P('JSON.stringify(shovelPickup)===originalPickup'),'uncollected random pickup does not reroll on reload');
+ok(P('window.shovelOwned&&!window.shovelDiscovered&&!!shovelPickup'),'save/load keeps debug ownership independent of the ground discovery');
+P('player.x=shovelPickup.x;player.y=shovelPickup.y;updateShovelPickup();');
+ok(P('window.shovelOwned&&window.shovelDiscovered&&meleeTool()==="SHOVEL"&&!meleeUnlocked&&!shovelPickup'),'walking over the separate ground item records discovery and equips the shovel without upgrades');
+ok(P('meleeToolOptions().filter(t=>t==="SHOVEL").length===1'),'owned tool joins the melee cycle exactly once');
+P('ensureShovelPickup();');
+ok(P('shovelPickup===null'),'collected shovel cannot duplicate');
+P('saveGame();loadGame();ensureShovelPickup();');
+ok(P('window.shovelOwned&&window.shovelDiscovered&&!shovelPickup'),'discovered ground shovel stays collected after a full reload');
+
+for(const [w,h] of [[320,568],[390,844],[940,390]]){
+ P(`width=${w};height=${h};`);
+ const buttons=P('shovelButtonLayout()');
+ ok(buttons.every(b=>b.x>=27&&b.x+27<w&&b.y>=127&&b.y+27<h),`four touch controls fit ${w}x${h}`);
+ for(let a=0;a<buttons.length;a++)for(let b=a+1;b<buttons.length;b++)
+  ok(Math.hypot(buttons[a].x-buttons[b].x,buttons[a].y-buttons[b].y)>64,`${w}x${h} dig targets stay separate`);
+}
+P(`width=390;height=844;leftStick={base:{x:80,y:684},active:false,dx:0,dy:0};rightStick={base:{x:310,y:734},active:false,dx:0,dy:0,dist:0};
+ player.x=528;player.y=720;player.aimAngle=0;player.shovelLevel=1;player.shovelDepth=0;
+ player.shovelDepthTarget=0;player.shovelCooldownMs=0;player._shovelCellKey=null;
+ var down=shovelButtonLayout().find(b=>b.action==='DOWN');touches=[{id:91,x:down.x,y:down.y}];handleTouches();`);
+ok(P('shovelCellAt(528,720).depth===18&&!rightStick.active&&!meleeInputHeld&&!grenadeInputHeld'),'touch down excavates and consumes its finger without aim/fire/throw');
+P('touches=[];for(let i=0;i<25;i++)shovelUpdatePlayer(player,33);var ahead=shovelButtonLayout().find(b=>b.action==="FORWARD");touches=[{id:92,x:ahead.x,y:ahead.y}];handleTouches();');
+ok(P('shovelCellAt(624,720).depth===18&&!rightStick.active'),'touch ahead opens the next square');
+P('touches=[];var swing=shovelButtonLayout().find(b=>b.action==="SWING");touches=[{id:93,x:swing.x,y:swing.y}];handleTouches();');
+ok(P('meleeInputHeld&&!rightStick.active'),'touch swing uses the nonlethal melee action');
+P('touches=[];player.shovelCooldownMs=0;');
+ctx.keyIsDown=code=>code===67;
+P('handleDesktop();');
+ok(P('shovelCellAt(528,720).depth===36'),'keyboard C digs down through native desktop input');
+ctx.keyIsDown=()=>false;
+P('for(let i=0;i<25;i++)shovelUpdatePlayer(player,33);');
+const pad={index:0,id:'SHOVEL TEST',axes:[0,0,1,0],buttons:Array.from({length:17},()=>({pressed:false,value:0}))};
+ctx.__shovelPad=pad;
+P('var originalPadFunction=connectedGamepad;connectedGamepad=()=>window.__shovelPad;');
+pad.buttons[7]={pressed:true,value:1};
+P('handleGamepad();');
+ok(P('shovelCellAt(624,720).depth===36'),'controller R2 digs ahead');
+ok(P('!playerWeaponFireInput()'),'controller aiming/trigger cannot fire a gun while shoveling');
+pad.buttons[7]={pressed:false,value:0};pad.buttons[6]={pressed:true,value:1};
+P('player.shovelCooldownMs=0;handleGamepad();');
+ok(P('shovelCellAt(528,720).depth===54&&!grenadeInputHeld'),'controller L2 digs down instead of throwing a grenade');
+pad.buttons[6]={pressed:false,value:0};pad.buttons[1]={pressed:true,value:1};
+P('for(let i=0;i<25;i++)shovelUpdatePlayer(player,33);handleGamepad();');
+ok(P('player.shovelClimbing&&player.shovelDepthTarget===36'),'controller B climbs the shaft');
+P('connectedGamepad=originalPadFunction;for(let i=0;i<25;i++)shovelUpdatePlayer(player,33);');
+P('var hpBefore=player.hp,shieldBefore=player.shield;player.takeDamage(100,new Character(player.x+20,player.y,false,"NORMAL"));');
+ok(P('player.hp===hpBefore&&player.shield===shieldBefore'),'surface attacks cannot penetrate an underground ceiling');
+P('var bulletsBefore=bullets.length;player.fire(0);');
+ok(P('bullets.length===bulletsBefore'),'shovel mode cannot spawn surface gunshots');
+P(`var flasksBefore=playerFlasks.length,grenadesBefore=playerGrenades.length,lightningBefore=lightnings.length;
+ chemistSuitUnlocked=true;isCooking=true;player.cannonCharge=60;player.meleeTimer=0;player.meleeCooldown=0;
+ player.prevMeleeInputHeld=false;meleeInputHeld=true;player.updatePlayer();meleeInputHeld=false;player.updatePlayer();`);
+ok(P('!isCooking&&player.cannonCharge===0&&playerFlasks.length===flasksBefore&&playerGrenades.length===grenadesBefore&&lightnings.length===lightningBefore'), 'a chemist shovel swing cannot release a flask or charged cannon');
+ok(P('player.meleeTimer>0'),'the chemist still performs the ordinary shovel swing');
+P('chemistSuitUnlocked=false;player.meleeTimer=0;player.meleeCooldown=0;');
+P('inOverworldView=true;');
+ok(P('shovelControlsAvailable()'),'live overworld exploration keeps shovel controls available');
+P('inOverworldView=false;');
+for(const overlay of ['inTravelMenu','inWorldBuildingMenu','inTownCutscene']){
+ P(`${overlay}=true;`);
+ ok(P('!shovelControlsAvailable()'),overlay+' consumes shovel control input');
+ P(`${overlay}=false;`);
+}
+P('saveGame();var shovelDisk=JSON.parse(memory.urbanTwinStickSave);loadGame();');
+ok(P('window.shovelOwned&&meleeTool()==="SHOVEL"&&!shovelPickup'),'full load retains ownership and selected tool');
+ok(P('player.shovelDepth===36&&player.shovelClimbing&&shovelCellAt(player.x,player.y).depth===54'),'full load restores climbing height independently of deeper floor');
+ok(P('shovelCellAt(624,720).depth===36'),'full load preserves the connected forward tunnel');
+P(`player.shovelDepth=1;player.shovelDepthTarget=0;player.shovelClimbing=true;
+ saveGame();loadGame();for(let i=0;i<30;i++)shovelUpdatePlayer(player,33);`);
+ok(P('player.shovelDepth===0&&player.shovelDepthTarget===0'),'saved final ascent finishes at surface instead of hanging above zero');
+P('isPaused=true;var cellsBeforePause=JSON.stringify(shovelExcavation);shovelDig("DOWN");');
+ok(P('JSON.stringify(shovelExcavation)===cellsBeforePause'),'pause blocks excavation mutations');
+P('isPaused=false;startAtLevel(2);');
+ok(P('window.shovelOwned&&Object.keys(shovelExcavation).length>0&&shovelPlayerDepth()===0'),'travel carries the tool and leaves saved excavation in its own level');
+P('resetStoryProgress();');
+ok(P('window.shovelOwned&&!window.shovelDiscovered&&!window.passiveRouteUnlocked&&Object.keys(shovelExcavation).length===0'),'new game resets discovery, route and excavations while retaining the debug inventory grant');
+P('restoreShovelState(undefined);');
+ok(P('window.shovelOwned&&!window.shovelDiscovered&&Object.keys(shovelExcavation).length===0'),'legacy saves receive the debug shovel without inventing discovery or excavations');
+P('window.shovelOwned=false;startAtLevel(3);');
+ok(P('window.shovelOwned'),'every level spawn includes the shovel for debugging');
+console.log('Shovel integration: '+checks+' pickup, device, combat and campaign persistence checks passed.');
