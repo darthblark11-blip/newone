@@ -16,10 +16,21 @@ const reference={...ctx};reference.window=reference;reference.globalThis=referen
 vm.createContext(reference);vm.runInContext(baseline,reference,{filename:'mechanics-reference.js'});
 const before=expression=>vm.runInContext(expression,reference);
 let functions=0,methods=0,constants=0,constructors=0;
-// Only the explicitly authorized crowd-fire call sites may differ. The
+// Only the explicitly authorized crowd-fire and ambush batch sizing may differ. The
 // coordinator itself is covered by check-hostile-frontline.js; all other
 // mechanics below retain their exact established implementation.
 const frontlineEdits={
+  maintainOutpostMuster:[
+    ['  for (let i = 0; i < 4 && live < FORT_WAVE_FLOOR && st.musterWaves > 0; i++)',
+     '  const refillBatch = FORT_REFILL_BATCHES[Math.floor(frameCount / FORT_MUSTER_TICK) % FORT_REFILL_BATCHES.length];\n  for (let i = 0; i < refillBatch && live < FORT_WAVE_FLOOR && st.musterWaves > 0; i++)']
+  ],
+  triggerGateAmbush:[
+    ['window.ambushSpawnsRemaining += 100;','window.ambushSpawnsRemaining += 150 - NM0_GATE_COUNTED_INITIAL;'],
+    ['window.ambushSpawnsRemaining = 100;','window.ambushSpawnsRemaining = 150 - NM0_GATE_COUNTED_INITIAL;'],
+    ['i<21;','i<13;',3],['i<2;','i<1;',6],
+    ['// Tag the 50 enemies we just spawned!','// Preserve the gate\'s existing counted contingent at 40% smaller size.'],
+    ['enemiesList.length - 50','enemiesList.length - NM0_GATE_COUNTED_INITIAL']
+  ],
   updateEnemyCoverAI:[
     ['if(aiming&&a.fireTimer<=0&&a.reloadTimer<=0&&a.ammo>0) {',
      'if(aiming&&a.fireTimer<=0&&a.reloadTimer<=0&&a.ammo>0&&hostileFrontlineFireAllowed(a,target)) {'],
@@ -39,9 +50,9 @@ const frontlineEdits={
   ]
 };
 function expectedMechanics(name,source){
-  for(const [oldText,newText]of frontlineEdits[name]||[]){
-    assert.equal(source.split(oldText).length,2,name+' has exactly one authorized edit site');
-    source=source.replace(oldText,newText);
+  for(const [oldText,newText,count=1]of frontlineEdits[name]||[]){
+    assert.equal(source.split(oldText).length,count+1,name+' has exactly the authorized edit sites');
+    source=source.split(oldText).join(newText);
   }
   return source;
 }
@@ -131,4 +142,4 @@ for(const name of ['ENEMY_COVER_WEAPONS','SHOVEL_AIRBORNE_TYPES']){
   assert.equal(probe(expression),before(expression),name+' eligibility set');constants++;
 }
 assert.ok(!candidate.includes('const STANCE_EXCLUDED_TYPES'),'the previous stance shortcut is removed');
-console.log(`PASS mechanics source lock: ${functions} functions, ${methods} methods/accessors, ${constructors} constructors and ${constants} tuning tables/constants match 37dfd72 with only the authorized frontline fire gates.`);
+console.log(`PASS mechanics source lock: ${functions} functions, ${methods} methods/accessors, ${constructors} constructors and ${constants} tuning tables/constants match 37dfd72 with only authorized frontline fire gates and ambush batch sizing.`);

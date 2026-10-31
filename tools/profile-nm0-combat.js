@@ -175,7 +175,8 @@ window.__battleInit=async function(count,mode){
   inTownCutscene=true;townPhase=7;deltaTime=1000/60;redraw();
   if(!nm0AmbushActive)throw Error('Native Level 2 tower ambush did not start');
   const ambushers=enemiesList.filter(e=>!e.isFriendly&&e.isAmbush);
-  if(ambushers.length!==100)throw Error('Expected 100 initial NM-0 ambushers, got '+ambushers.length);
+  const expectedInitial=typeof NM0_TOWER_INITIAL==='number'?NM0_TOWER_INITIAL:100;
+  if(ambushers.length!==expectedInitial)throw Error('Expected '+expectedInitial+' initial NM-0 ambushers, got '+ambushers.length);
   if(!${normalHealth})for(const e of ambushers){e.hp=e.maxHp=1e8;e.fireTimer=e.aiOffset*3;}
   window.__initial={allies:recruits.length,ambushers:ambushers.length,reserves:window.ambushSpawnsRemaining};
   zoom=.65;camX=px-width/2/zoom;camY=py-height/2/zoom;

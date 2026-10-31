@@ -1138,6 +1138,8 @@ let inTownCutscene = false, townPhase = 0, townTimer = 0, townSpeaker1 = null, t
 // out in the country where that clamp would drag them back to the city.
 let inFortCutscene = false, fortPhase = 0, fortTimer = 0, fortSpeaker1 = null, fortSpeaker2 = null;
 let nm0AmbushActive = false, nm0AmbushKills = 0;
+// 40% smaller opening groups; counted enemies held back stay in reserve.
+const NM0_TOWER_INITIAL=60, NM0_GATE_COUNTED_INITIAL=30, NM0_GREY_INITIAL=30;
 let isHardMode = false, selectingDifficulty = false, pendingLevel = 1, pendingStoryMode = false;
 let levelSelectStory = false;   // debug: numbered level shortcuts launch story mode
 let pendingDebugStory = false;  // set when this run came from that shortcut
@@ -9518,16 +9520,16 @@ viewBottom = camY + height / zoom + shakePad;
           let spawnX1 = 600;  
           let spawnX2 = -200; 
           
-          for(let i=0; i<42; i++) enemiesList.push(newHostileCharacter(spawnX1 + random(-250, 250), spawnY + random(-50, 50), "ARMORED_STANDARD"));
-          for(let i=0; i<4; i++) enemiesList.push(newHostileCharacter(spawnX1 + random(-100, 100), spawnY + random(-50, 50), "ARMORED"));
-          for(let i=0; i<4; i++) enemiesList.push(newHostileCharacter(spawnX1 + random(-300, 300), aerY, "AERIAL"));
+          for(let i=0; i<26; i++) enemiesList.push(newHostileCharacter(spawnX1 + random(-250, 250), spawnY + random(-50, 50), "ARMORED_STANDARD"));
+          for(let i=0; i<2; i++) enemiesList.push(newHostileCharacter(spawnX1 + random(-100, 100), spawnY + random(-50, 50), "ARMORED"));
+          for(let i=0; i<2; i++) enemiesList.push(newHostileCharacter(spawnX1 + random(-300, 300), aerY, "AERIAL"));
 
-                   for(let i=0; i<42; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-250, 250), spawnY + random(-50, 50), "ARMORED_STANDARD"));
-          for(let i=0; i<4; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-100, 100), spawnY + random(-50, 50), "ARMORED"));
-          for(let i=0; i<4; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-300, 300), aerY, "AERIAL"));
+                   for(let i=0; i<26; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-250, 250), spawnY + random(-50, 50), "ARMORED_STANDARD"));
+          for(let i=0; i<2; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-100, 100), spawnY + random(-50, 50), "ARMORED"));
+          for(let i=0; i<2; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-300, 300), aerY, "AERIAL"));
 
-          // Tag the 100 enemies we just spawned!
-          for(let i = enemiesList.length - 100; i < enemiesList.length; i++) {
+          // Tag the smaller opening group, without touching existing allies.
+          for(let i = enemiesList.length - NM0_TOWER_INITIAL; i < enemiesList.length; i++) {
               if (enemiesList[i]) enemiesList[i].isAmbush = true;
           }
 
@@ -9538,13 +9540,13 @@ viewBottom = camY + height / zoom + shakePad;
           if (nm0AmbushActive) {
               nm0AmbushKills += 300;
               window.ambushKillsTotal = (window.ambushKillsTotal || 0) + 300;
-              window.ambushSpawnsRemaining += 200;
+              window.ambushSpawnsRemaining += 300 - NM0_TOWER_INITIAL;
               streakMsgText = "MULTIPLE AMBUSHES!";
           } else {
               nm0AmbushActive = true;
               nm0AmbushKills = 300;
               window.ambushKillsTotal = 300;
-              window.ambushSpawnsRemaining = 200;
+              window.ambushSpawnsRemaining = 300 - NM0_TOWER_INITIAL;
               streakMsgText = "NM-0 AMBUSH!";
           }
           // The sector's own beat spawns against the map constants in
@@ -12419,13 +12421,13 @@ function triggerGateAmbush(fortressY, isNorthGate = false) {
     if (nm0AmbushActive) {
         nm0AmbushKills += 150;
         window.ambushKillsTotal = (window.ambushKillsTotal || 0) + 150;
-        window.ambushSpawnsRemaining += 100;
+        window.ambushSpawnsRemaining += 150 - NM0_GATE_COUNTED_INITIAL;
         streakMsgText = "MULTIPLE BREACHES!";
     } else {
         nm0AmbushActive = true;
         nm0AmbushKills = 150;
         window.ambushKillsTotal = 150;
-        window.ambushSpawnsRemaining = 100;
+        window.ambushSpawnsRemaining = 150 - NM0_GATE_COUNTED_INITIAL;
         objectiveTimer = 360;
         // A wall coming down is a wall coming down -- it opens the road, it does
         // not finish the sector. Tagging the ambush is what keeps its clear from
@@ -12440,24 +12442,24 @@ function triggerGateAmbush(fortressY, isNorthGate = false) {
     let gateAerY = spawnY < 0 ? spawnY + 100 : spawnY - 100;
 
     // --- BATCH 1: EAST ---
-    for(let i=0; i<21; i++) enemiesList.push(newHostileCharacter(spawnX1 + random(-250, 250), spawnY + random(-50, 50), "ARMORED_STANDARD"));
-    for(let i=0; i<2; i++) enemiesList.push(newHostileCharacter(spawnX1 + random(-100, 100), spawnY + random(-50, 50), "ARMORED"));
-    for(let i=0; i<2; i++) enemiesList.push(newHostileCharacter(spawnX1 + random(-300, 300), gateAerY, "AERIAL"));
+    for(let i=0; i<13; i++) enemiesList.push(newHostileCharacter(spawnX1 + random(-250, 250), spawnY + random(-50, 50), "ARMORED_STANDARD"));
+    for(let i=0; i<1; i++) enemiesList.push(newHostileCharacter(spawnX1 + random(-100, 100), spawnY + random(-50, 50), "ARMORED"));
+    for(let i=0; i<1; i++) enemiesList.push(newHostileCharacter(spawnX1 + random(-300, 300), gateAerY, "AERIAL"));
 
     // --- BATCH 2: WEST ---
-    for(let i=0; i<21; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-250, 250), spawnY + random(-50, 50), "ARMORED_STANDARD"));
-    for(let i=0; i<2; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-100, 100), spawnY + random(-50, 50), "ARMORED"));
-    for(let i=0; i<2; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-300, 300), gateAerY, "AERIAL"));
+    for(let i=0; i<13; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-250, 250), spawnY + random(-50, 50), "ARMORED_STANDARD"));
+    for(let i=0; i<1; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-100, 100), spawnY + random(-50, 50), "ARMORED"));
+    for(let i=0; i<1; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-300, 300), gateAerY, "AERIAL"));
 
         // --- BATCH 2: WEST ---
-    for(let i=0; i<21; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-250, 250), spawnY + random(-50, 50), "ARMORED_STANDARD"));
-    for(let i=0; i<2; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-100, 100), spawnY + random(-50, 50), "ARMORED"));
-    for(let i=0; i<2; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-300, 300), gateAerY, "AERIAL"));
+    for(let i=0; i<13; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-250, 250), spawnY + random(-50, 50), "ARMORED_STANDARD"));
+    for(let i=0; i<1; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-100, 100), spawnY + random(-50, 50), "ARMORED"));
+    for(let i=0; i<1; i++) enemiesList.push(newHostileCharacter(spawnX2 + random(-300, 300), gateAerY, "AERIAL"));
     
     for(let e of enemiesList) { if(!e.isFriendly && !independentCityRookie(e) && e.hp > 0 && !e.dead) { e.state = "CHASE"; e.loseSightTimer = 999; } }
 
-    // Tag the 50 enemies we just spawned!
-    for(let i = enemiesList.length - 50; i < enemiesList.length; i++) {
+    // Preserve the gate's existing counted contingent at 40% smaller size.
+    for(let i = enemiesList.length - NM0_GATE_COUNTED_INITIAL; i < enemiesList.length; i++) {
         if (enemiesList[i]) enemiesList[i].isAmbush = true;
     }
 
@@ -32964,13 +32966,15 @@ function loadGame() {
                 if (!window.ambushKind) window.ambushKind = "TOWER";
 
                 // Keep the live counter and active spawns perfectly locked
-                let activeToSpawn = Math.min(100, nm0AmbushKills);
+                let activeToSpawn = Math.min(NM0_TOWER_INITIAL, nm0AmbushKills);
                 window.ambushSpawnsRemaining = Math.max(0, nm0AmbushKills - activeToSpawn);
                 if (!window.ambushKillsTotal) window.ambushKillsTotal = nm0AmbushKills;
                 
-                let remainingStandard = Math.ceil(activeToSpawn * 0.84);
-                let remainingArmored = Math.ceil(activeToSpawn * 0.08);
-                let remainingAerial = Math.ceil(activeToSpawn * 0.08);
+                // Allocate the remainder instead of rounding all three up:
+                // the smaller cap must not restore 61 bodies for 60 owed.
+                let remainingArmored = Math.min(activeToSpawn, Math.round(activeToSpawn * 0.08));
+                let remainingAerial = Math.min(activeToSpawn - remainingArmored, Math.round(activeToSpawn * 0.08));
+                let remainingStandard = activeToSpawn - remainingArmored - remainingAerial;
                 
                 for(let i=0; i<remainingStandard; i++) {
                     let sX = random() > 0.5 ? 600 : -200;
@@ -34085,7 +34089,7 @@ function triggerLvl4Ambush() {
     nm0AmbushActive = true;
     nm0AmbushKills = 150; 
     window.ambushKillsTotal = 150;
-    window.ambushSpawnsRemaining = 100;
+    window.ambushSpawnsRemaining = 150 - NM0_GREY_INITIAL;
     window.ambushOrigin = null;
     window.ambushFort   = null;
     objectiveTimer = 360;
@@ -34093,7 +34097,7 @@ function triggerLvl4Ambush() {
     streakMsgTimer = 120;
 
     // First initial wave spawn
-    for(let i = 0; i < 50; i++) {
+    for(let i = 0; i < NM0_GREY_INITIAL; i++) {
         let sX = random() > 0.5 ? -1500 : 1500; 
         let sY = player.y + random(-1000, 1000);
         let e = newHostileCharacter(sX, sY, "NM0_GREY_FATIGUE");
@@ -37434,12 +37438,12 @@ const FORT_GATE_H   = 420;    // the gate slab's depth, and the wall thickness w
 const FORT_GATE_HP  = 1500;
 const FORT_TOWER_HP = 1600;
 // THE FORT'S OWN NUMBERS, and they are the sector's own beat one scale down.
-// Stick City's gate ambush asks for 150 against 50 spawned plus 100
-// reinforcements; so does this. The garrison is fifty yellow regulars who roam
+// The 150-count muster now opens with 30 spawned plus 120 reinforcements.
+// The garrison is still fifty yellow regulars who roam
 // the compound and are NOT part of that fight -- they are the people the player
 // is being asked not to shoot, and dropping the two masts is what turns them.
 const FORT_MUSTER_TOTAL = 150;   // kills the bar asks for
-const FORT_MUSTER_SPAWN = 50;    // of them, standing in the yard when the door goes in
+const FORT_MUSTER_SPAWN = 30;    // 40% smaller opening; the other 120 stay in reserve
 const FORT_GARRISON     = 50;    // finite local garrison roaming the compound
 const FORT_WAKE_R   = 2600;   // the garrison musters when the player gets this close
 
@@ -38073,8 +38077,9 @@ function triggerOutpostAmbush(def) {
 
 // How thin the muster is allowed to get on the field before NM-0 sends the next
 // one in, and how often that is asked.
-const FORT_WAVE_FLOOR  = 10;
+const FORT_WAVE_FLOOR  = 6;
 const FORT_MUSTER_TICK = 24;
+const FORT_REFILL_BATCHES = [2, 2, 3, 2, 3]; // 12 arrivals per five full batches, formerly 20
 
 // ---------------------------------------------------------------------------
 // KEEPING THE MUSTER A FIGHT
@@ -38213,7 +38218,8 @@ function maintainOutpostMuster() {
   // Refill toward the floor rather than one at a time: a reload lands with an
   // empty yard, and one body every twenty-four frames is a trickle, not a
   // muster. Bounded per tick so a fight is never a wall of bodies either.
-  for (let i = 0; i < 4 && live < FORT_WAVE_FLOOR && st.musterWaves > 0; i++)
+  const refillBatch = FORT_REFILL_BATCHES[Math.floor(frameCount / FORT_MUSTER_TICK) % FORT_REFILL_BATCHES.length];
+  for (let i = 0; i < refillBatch && live < FORT_WAVE_FLOOR && st.musterWaves > 0; i++)
     if (spawnFortWave()) live++;
 }
 

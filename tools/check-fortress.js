@@ -598,14 +598,14 @@ console.log('\n== the liberation beat ==');
   ok('a fort already liberated does not replay its beat', P('inFortCutscene') === false);
 }
 
-// Stick City's own musters must be untouched by all of that.
-console.log('\n== the sector\'s own musters are unchanged ==');
+// Stick City's muster totals and origin survive the smaller opening batches.
+console.log('\n== the sector\'s own muster totals are unchanged ==');
 {
   probe(`isStoryMode = true; townsData = {}; window.outpostForts = {};
          startAtLevel(1); nm0AmbushActive = false; window.ambushOrigin = 'sentinel';
          triggerGateAmbush(5400, false);`);
   ok('a Great Gate breach still asks for 150', P('nm0AmbushKills') === 150 &&
-     P('window.ambushKillsTotal') === 150 && P('window.ambushSpawnsRemaining') === 100,
+     P('window.ambushKillsTotal') === 150 && P('window.ambushSpawnsRemaining') === 120,
      P('nm0AmbushKills') + '/' + P('window.ambushKillsTotal') + '/' + P('window.ambushSpawnsRemaining'));
   ok('and spawns its waves against the map constants, not an origin',
      P('window.ambushOrigin') === null);
