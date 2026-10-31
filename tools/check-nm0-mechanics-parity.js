@@ -16,9 +16,38 @@ const reference={...ctx};reference.window=reference;reference.globalThis=referen
 vm.createContext(reference);vm.runInContext(baseline,reference,{filename:'mechanics-reference.js'});
 const before=expression=>vm.runInContext(expression,reference);
 let functions=0,methods=0,constants=0,constructors=0;
+// Only the explicitly authorized crowd-fire call sites may differ. The
+// coordinator itself is covered by check-hostile-frontline.js; all other
+// mechanics below retain their exact established implementation.
+const frontlineEdits={
+  updateEnemyCoverAI:[
+    ['if(aiming&&a.fireTimer<=0&&a.reloadTimer<=0&&a.ammo>0) {',
+     'if(aiming&&a.fireTimer<=0&&a.reloadTimer<=0&&a.ammo>0&&hostileFrontlineFireAllowed(a,target)) {'],
+    ['      a.fire(a.aimAngle);','      a.fire(a.aimAngle,null,target);']
+  ],
+  'Character.updateEnemy':[
+    ['if (canSee && dToP < 700 && this.fireTimer <= 0 && this.ammo > 0 && this.reloadTimer <= 0) { \n                    this.fire(iA); ',
+     'if (canSee && dToP < 700 && this.fireTimer <= 0 && this.ammo > 0 && this.reloadTimer <= 0 && hostileFrontlineFireAllowed(this,trg)) {\n                    this.fire(iA,null,trg);'],
+    ['if (canSee && dToP < 400 && this.fireTimer <= 0 && this.ammo > 0 && this.reloadTimer <= 0) { ',
+     'if (canSee && dToP < 400 && this.fireTimer <= 0 && this.ammo > 0 && this.reloadTimer <= 0 && hostileFrontlineFireAllowed(this,trg)) {'],
+    ['                        this.fire(sA); ','                        this.fire(sA,null,trg);']
+  ],
+  'Character.fire':[
+    ['fire(sA, bowShot = null)','fire(sA, bowShot = null, combatTarget = null)'],
+    ['    if(!this.isPlayer&&!coverFireAllowed(this,sA,bowShot))return false;',
+     '    if(!this.isPlayer&&!coverFireAllowed(this,sA,bowShot))return false;\n    if(!hostileFrontlineFireAllowed(this,combatTarget))return false;']
+  ]
+};
+function expectedMechanics(name,source){
+  for(const [oldText,newText]of frontlineEdits[name]||[]){
+    assert.equal(source.split(oldText).length,2,name+' has exactly one authorized edit site');
+    source=source.replace(oldText,newText);
+  }
+  return source;
+}
 function sameFunction(name){
   assert.equal(probe(`typeof ${name}`),'function',name+' exists');
-  assert.equal(probe(`${name}.toString()`),before(`${name}.toString()`),
+  assert.equal(probe(`${name}.toString()`),expectedMechanics(name,before(`${name}.toString()`)),
     name+' must remain exactly the directional-falls branch implementation');
   functions++;
 }
@@ -68,7 +97,7 @@ for(const className of ['Character','Bullet','Orb','Grenade','Molotov','PlayerGr
   for(const [name,oldDescriptor]of Object.entries(oldDescriptors)){
     if(name==='constructor'||name==='show')continue;
     for(const kind of ['value','get','set'])if(typeof oldDescriptor[kind]==='function'){
-      assert.equal(String(newDescriptors[name][kind]),String(oldDescriptor[kind]),className+'.'+name+' '+kind+' mechanics');
+      assert.equal(String(newDescriptors[name][kind]),expectedMechanics(className+'.'+name,String(oldDescriptor[kind])),className+'.'+name+' '+kind+' mechanics');
       methods++;
     }
   }
@@ -102,4 +131,4 @@ for(const name of ['ENEMY_COVER_WEAPONS','SHOVEL_AIRBORNE_TYPES']){
   assert.equal(probe(expression),before(expression),name+' eligibility set');constants++;
 }
 assert.ok(!candidate.includes('const STANCE_EXCLUDED_TYPES'),'the previous stance shortcut is removed');
-console.log(`PASS mechanics source lock: ${functions} functions, ${methods} methods/accessors, ${constructors} constructors and ${constants} tuning tables/constants match 37dfd72 exactly.`);
+console.log(`PASS mechanics source lock: ${functions} functions, ${methods} methods/accessors, ${constructors} constructors and ${constants} tuning tables/constants match 37dfd72 with only the authorized frontline fire gates.`);

@@ -8077,6 +8077,7 @@ function nextLevel() { startAtLevel(currentLevel + 1); }
 // Replacing a run must discard them BEFORE level entry can stamp old bodies
 // into the next world's ground buffers. Keep this separate from startAtLevel.
 function resetRunState() {
+  resetHostileFrontline();
   resetNM0Offices();
   resetSwordHitFeedback();
   resetUndergroundRoute();resetUndergroundEnvironment();resetOccultWorld();
@@ -22281,6 +22282,54 @@ function updateEnemyShotReaction(a,target,canSee,distance,elapsedMs=deltaTime) {
 // place to approach is AI work; wall contact never becomes a movement lock.
 const ENEMY_COVER_WEAPONS=new Set([WEAPONS.PISTOL,WEAPONS.SMG,WEAPONS.DUAL_SMG,WEAPONS.ASSAULT_RIFLE,
   WEAPONS.SHOTGUN,WEAPONS.REVOLVER,WEAPONS.COACH_GUN]),_enemyCoverCars=[];
+// Large crowds share a front rank against the player. Keep owners through
+// their ordinary weapon cooldowns; handing a slot to every ready rear gunner
+// would merely spread the same volume of fire across adjacent frames.
+const HOSTILE_FRONTLINE={enabled:true,crowdThreshold:32,shooters:24};
+const _hostileFrontline={frame:-1,player:null,level:-1,limited:false,
+  candidates:[],allowed:new Set()};
+function hostileFrontlineEligible(a) {
+  return !!a&&!a.isPlayer&&!a.isFriendly&&!a.isNeutral&&!a.dead&&a.hp>0&&a.state==='CHASE'&&
+    !a.isUnarmed&&!a.isNM0Scientist&&!a.mounted&&!a.legInjury&&!a.knockedOut&&!(a.stunTimer>0)&&
+    !(a.reloadTimer>0)&&a.ammo>0&&a.eType!=='MOLOTOV'&&actorCanUseStances(a)&&
+    ENEMY_COVER_WEAPONS.has(a.currentWeapon)&&shovelPlayerDepth(a)<SHOVEL.underground;
+}
+function resetHostileFrontline() {
+  const s=_hostileFrontline;s.frame=-1;s.player=null;s.level=-1;s.limited=false;
+  s.candidates.length=0;s.allowed.clear();
+}
+function hostileFrontlineDistance(a) {
+  const dx=a.x-player.x,dy=a.y-player.y;return dx*dx+dy*dy;
+}
+function hostileFrontlineFireAllowed(a,target) {
+  if(!HOSTILE_FRONTLINE.enabled||target!==player||!hostileFrontlineEligible(a)||
+      !doTick||!combatStanceContext())return true;
+  const s=_hostileFrontline;
+  if(s.frame!==frameCount||s.player!==player||s.level!==currentLevel) {
+    s.frame=frameCount;s.player=player;s.level=currentLevel;
+    s.candidates.length=0;s.allowed.clear();s.limited=false;
+    for(let i=0;i<enemiesList.length;i++) {
+      const e=enemiesList[i];
+      if(hostileFrontlineEligible(e)&&e.cachedTargetActor===player&&e.cachedCanSee&&
+          hostileFrontlineDistance(e)<700*700)s.candidates.push(e);
+    }
+    if(s.candidates.length>HOSTILE_FRONTLINE.crowdThreshold) {
+      s.limited=true;
+      s.candidates.sort((a,b)=>hostileFrontlineDistance(a)-hostileFrontlineDistance(b));
+      // Keep pressure from every occupied direction, then fill the remaining
+      // places with the nearest rank. A one-sided rush can still use 24 guns.
+      let directions=0;
+      for(let i=0;i<s.candidates.length&&s.allowed.size<HOSTILE_FRONTLINE.shooters;i++) {
+        const e=s.candidates[i],angle=Math.atan2(e.y-player.y,e.x-player.x);
+        const bit=1<<Math.min(7,Math.floor((angle+Math.PI)*4/Math.PI));
+        if(!(directions&bit)){directions|=bit;s.allowed.add(e);}
+      }
+      for(let i=0;i<s.candidates.length&&s.allowed.size<HOSTILE_FRONTLINE.shooters;i++)
+        s.allowed.add(s.candidates[i]);
+    }
+  }
+  return !s.limited||s.allowed.has(a);
+}
 function enemyCoverEligible(a) {
   return !!a&&!a.legInjury&&!a.isPlayer&&!a.isNeutral&&!a.isUnarmed&&!a.isCoward&&!a.mounted&&
     !String(a.eType||'').startsWith('OCCULT_')&&a.eType!=='MOLOTOV'&&
@@ -22398,7 +22447,7 @@ function updateEnemyCoverAI(a,target,canSee,distance,elapsedMs=deltaTime) {
   a.isMoving=false;a.gait+=(0-a.gait)*GAIT_EASE;a._coverApproach=false;
   updateActorCover(a,dt,0,0,aiming);
   if(!a.cover?.active){state.goal=null;return false;}
-  if(aiming&&a.fireTimer<=0&&a.reloadTimer<=0&&a.ammo>0) {
+  if(aiming&&a.fireTimer<=0&&a.reloadTimer<=0&&a.ammo>0&&hostileFrontlineFireAllowed(a,target)) {
     const upper=coverUpperOffset(a);
     const zone=combatAimElevation(a,target,true);
     const range=legShotRangeForWeapon(zone,a.currentWeapon,a);
@@ -22413,7 +22462,7 @@ function updateEnemyCoverAI(a,target,canSee,distance,elapsedMs=deltaTime) {
       state.seenMs=1800;state.lastX=target.x;state.lastY=target.y;
       a.aimAngle=Math.atan2(point.y-a.y,point.x-a.x);
       updateActorCover(a,0,0,0,true);
-      a.fire(a.aimAngle);
+      a.fire(a.aimAngle,null,target);
     }
   }
   a.armDrag+=(0-a.armDrag)*.15;
@@ -24542,8 +24591,8 @@ if (this.eType === "COW") {
                     }
                 }
 
-                if (canSee && dToP < 700 && this.fireTimer <= 0 && this.ammo > 0 && this.reloadTimer <= 0) { 
-                    this.fire(iA); 
+                if (canSee && dToP < 700 && this.fireTimer <= 0 && this.ammo > 0 && this.reloadTimer <= 0 && hostileFrontlineFireAllowed(this,trg)) {
+                    this.fire(iA,null,trg);
                     this.strafeTimer = 0;
                 }
                 
@@ -24552,13 +24601,13 @@ if (this.eType === "COW") {
                     let vx = cos(iA) * 2.45 * spd, vy = sin(iA) * 2.45 * spd; 
                     let m = this.attemptMove(vx, vy); aDx = m.x; aDy = m.y; 
                 } 
-                if (canSee && dToP < 400 && this.fireTimer <= 0 && this.ammo > 0 && this.reloadTimer <= 0) { 
+                if (canSee && dToP < 400 && this.fireTimer <= 0 && this.ammo > 0 && this.reloadTimer <= 0 && hostileFrontlineFireAllowed(this,trg)) {
                     if(this.eType === "ARMORED" && this.orbChargeTimer <= 0) { this.orbChargeTimer = 120; sfx.charge(); } 
                     else if (this.eType !== "ARMORED") { 
                         let sA = iA; 
                         if (random() > 0.25 && dToP > 80) sA = iA + atan2(random(30, 60) * stanceSpreadScale(this) * (random() > 0.5 ? 1 : -1), dToP);
                         this.aimAngle = sA; 
-                        this.fire(sA); 
+                        this.fire(sA,null,trg);
                     } 
                 } 
             }
@@ -24594,7 +24643,7 @@ if (this.eType === "COW") {
 
 
 
-        fire(sA, bowShot = null) {
+        fire(sA, bowShot = null, combatTarget = null) {
     if(enemyCoverDiveActive(this))return false;
     const stanceAimBefore = this.aimAngle;
     constrainStanceFacing(this);
@@ -24616,6 +24665,7 @@ if (this.eType === "COW") {
     // Tactical AI may wait for a clear shot. Player rounds hit any intervening
     // wall normally, including one crossed by a close-range weapon muzzle.
     if(!this.isPlayer&&!coverFireAllowed(this,sA,bowShot))return false;
+    if(!hostileFrontlineFireAllowed(this,combatTarget))return false;
     frontierAmbientMarkCombat();
     const huntShotId = ++_huntShotSequence;
     let aH = this.isPlayer ? playerAimTarget() : this.stanceAimZone || (this.isFriendly && headAimToggle ? "HEAD" : "BODY"), cd = (this.isPlayer || this.isFriendly) ? this.currentWeapon.fireCooldown : (this.currentWeapon.enemyCooldown || 48), bob = this.isMoving&&!stanceCoverPoseActive(this) ? abs(sin(this.walkCycle)) * 2 : 0;
