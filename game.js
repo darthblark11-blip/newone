@@ -44122,13 +44122,13 @@ function figurePainter() {
     const numeric = new Map(), objects = new WeakMap();
     const context = renderer.drawingContext;
     const nativeShapes=p5.VERSION==='1.11.11'||p5.VERSION==='1.11.10';
-    const nativeRgb=nativeShapes||p5.VERSION==='1.9.4';
+    const nativeRgb=nativeShapes||p5.VERSION==='1.9.4'||p5.VERSION==='1.9.0';
     const ellipseArgs=[0,0,0,0],rectArgs=[0,0,0,0,undefined,undefined,undefined,undefined];
     // p5 1.9.x uses arcTo for rounded rectangles and does not close ellipse
     // paths. Unknown versions keep their own renderer primitives; only the
     // pixel-tested 1.11.10/1.11.11 paths are duplicated below.
-    // All three verified p5 versions use the same RGB CSS conversion, even
-    // though 1.9.4 retains its different native shape paths. RGB CSS uses 8-bit
+    // The verified 1.9.x and 1.11.x versions use the same RGB CSS conversion,
+    // while 1.9.x retains its own native shape paths. RGB CSS uses 8-bit
     // levels but keeps the normalized alpha. Cache those final levels instead
     // of each floating point shade tuple, without constructing a Color and
     // its temporary arrays for every limb. Other modes/inputs keep p5 parsing.
@@ -44299,7 +44299,7 @@ function figureCelLight(g) {
 function figureCelContext(g) {
   const inst=typeof p5!=='undefined'?p5.instance:null;
   const r=g._renderer||(inst&&inst._renderer),dc=g.drawingContext;
-  return r&&typeof p5!=='undefined'&&(p5.VERSION==='1.11.11'||p5.VERSION==='1.11.10'||p5.VERSION==='1.9.4')&&!r.isP3D&&!r._clipping&&dc&&typeof dc.getTransform==='function'&&
+  return r&&typeof p5!=='undefined'&&(p5.VERSION==='1.11.11'||p5.VERSION==='1.11.10'||p5.VERSION==='1.9.4'||p5.VERSION==='1.9.0')&&!r.isP3D&&!r._clipping&&dc&&typeof dc.getTransform==='function'&&
     !(inst&&inst._accessibleOutputs&&(inst._accessibleOutputs.grid||inst._accessibleOutputs.text))?dc:null;
 }
 function figureCelPathStart(g,dc,x,y) {
@@ -44310,7 +44310,7 @@ function figureCelPathCurve(g,dc,x1,y1,x2,y2,x,y) {
 }
 function figureCelPathEnd(g,dc,ink,x,y) {
   if(dc){
-    // p5 1.9.4 and 1.11.x append the first vertex in both endShape and Renderer2D.
+    // Verified p5 1.9.x and 1.11.x append the first vertex in both endShape and Renderer2D.
     // Keep those closing segments too: they affect antialiasing at the seam.
     dc.lineTo(x,y);dc.lineTo(x,y);dc.closePath();dc.fill();if(ink)dc.stroke();
   }else g.endShape(CLOSE);
@@ -47356,7 +47356,7 @@ const _forestPolygonPainters = new WeakMap();
 function forestPolygonPainter(g) {
   const inst = typeof window !== 'undefined' && g === window && typeof p5 !== 'undefined' ? p5.instance : g;
   const renderer = inst && inst._renderer;
-  if (typeof p5 === 'undefined' || (p5.VERSION !== '1.9.4' && p5.VERSION !== '1.11.11') ||
+  if (typeof p5 === 'undefined' || (p5.VERSION !== '1.9.0' && p5.VERSION !== '1.9.4' && p5.VERSION !== '1.11.11') ||
       typeof p5.Renderer2D !== 'function' || !renderer || !(renderer instanceof p5.Renderer2D) || renderer.isP3D || renderer._clipping ||
       (inst._accessibleOutputs && (inst._accessibleOutputs.grid || inst._accessibleOutputs.text))) return g;
   let path = _forestPolygonPainters.get(renderer);

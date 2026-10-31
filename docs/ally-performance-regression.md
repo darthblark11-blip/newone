@@ -50,6 +50,9 @@ fast paths recognize p5 1.9.4, 1.11.10 and 1.11.11, while other versions use
 fallback paths. The actual Spck p5 script URL/version has been requested to
 check whether the phone and cloud are exercising the same renderer.
 
+That mismatch was subsequently confirmed: the supplied library is p5 1.9.0.
+See [validated 1.9.0 rendering support](p5-190-rendering.md) for the correction.
+
 The final retained state passes syntax checking, all 63 hostile-coordinator
 checks and the established mechanics source guard. There is no new FPS gain
 to claim from this follow-up. Galaxy S25 performance remains unverified beyond
