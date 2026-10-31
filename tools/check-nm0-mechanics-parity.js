@@ -16,8 +16,8 @@ const reference={...ctx};reference.window=reference;reference.globalThis=referen
 vm.createContext(reference);vm.runInContext(baseline,reference,{filename:'mechanics-reference.js'});
 const before=expression=>vm.runInContext(expression,reference);
 let functions=0,methods=0,constants=0,constructors=0;
-// Only the explicitly authorized hostile/allied combat coordination may differ.
-// Coordinators are covered by their focused tests; all other
+// Only the explicitly authorized crowd-fire call sites may differ. The
+// coordinator itself is covered by check-hostile-frontline.js; all other
 // mechanics below retain their exact established implementation.
 const frontlineEdits={
   updateEnemyCoverAI:[
@@ -38,26 +38,8 @@ const frontlineEdits={
      '    if(!this.isPlayer&&!coverFireAllowed(this,sA,bowShot))return false;\n    if(!hostileFrontlineFireAllowed(this,combatTarget))return false;']
   ]
 };
-const allyCombatEdits={
-  updateEnemyCoverAI:[
-    ['&&hostileFrontlineFireAllowed(a,target)) {','&&hostileFrontlineFireAllowed(a,target)&&allyCombatFireAllowed(a,target)) {']
-  ],
-  'Character.updateEnemy':[
-    ['let best = null, bestD2 = Infinity;\n            for (let i = 0; i < enemiesList.length; i++) {\n                const e = enemiesList[i];',
-     'let best = null, bestD2 = Infinity;\n            const allyTargets=allyTargetCandidates();\n            for (let i = 0; i < allyTargets.length; i++) {\n                const e = allyTargets[i];'],
-    ['            this.allySee = shovelActorLOS(this,trg);',
-     '            // Outside combat the wall-sight result is unused: formation and\n            // orders read vertical visibility above, and a new foe gets its\n            // own fresh sight check before cover or firing.\n            this.allySee = (!ALLY_COMBAT.enabled||isFighting)?shovelActorLOS(this,trg):false;'],
-    ['if (isFighting && canSee && distToTarget < 600 && this.fireTimer <= 0 && this.ammo > 0 && this.reloadTimer <= 0) {',
-     'if (isFighting && canSee && distToTarget < 600 && this.fireTimer <= 0 && this.ammo > 0 && this.reloadTimer <= 0 && allyCombatFireAllowed(this,trg)) {'],
-    ['            this.fire(sA);','            this.fire(sA,null,trg);']
-  ],
-  'Character.fire':[
-    ['    if(!hostileFrontlineFireAllowed(this,combatTarget))return false;',
-     '    if(!hostileFrontlineFireAllowed(this,combatTarget))return false;\n    if(!allyCombatFireAllowed(this,combatTarget))return false;']
-  ]
-};
 function expectedMechanics(name,source){
-  for(const [oldText,newText]of [...frontlineEdits[name]||[],...allyCombatEdits[name]||[]]){
+  for(const [oldText,newText]of frontlineEdits[name]||[]){
     assert.equal(source.split(oldText).length,2,name+' has exactly one authorized edit site');
     source=source.replace(oldText,newText);
   }
@@ -149,4 +131,4 @@ for(const name of ['ENEMY_COVER_WEAPONS','SHOVEL_AIRBORNE_TYPES']){
   assert.equal(probe(expression),before(expression),name+' eligibility set');constants++;
 }
 assert.ok(!candidate.includes('const STANCE_EXCLUDED_TYPES'),'the previous stance shortcut is removed');
-console.log(`PASS mechanics source lock: ${functions} functions, ${methods} methods/accessors, ${constructors} constructors and ${constants} tuning tables/constants match 37dfd72 with only the authorized hostile/allied combat coordination.`);
+console.log(`PASS mechanics source lock: ${functions} functions, ${methods} methods/accessors, ${constructors} constructors and ${constants} tuning tables/constants match 37dfd72 with only the authorized frontline fire gates.`);
