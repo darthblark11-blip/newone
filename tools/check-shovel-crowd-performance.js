@@ -1,5 +1,5 @@
-// Exact state parity against the published actor-depth controller, including
-// native digging/mantling and moving across a pit mouth inside one grid cell.
+// Exact state parity for the restored actor-depth controller, including native
+// digging/mantling and moving across a pit mouth inside one grid cell.
 // SHOVEL_BASELINE_JS can select another compatible source snapshot.
 const assert=require('assert/strict');
 const fs=require('fs');
@@ -94,10 +94,6 @@ both(`e=fixture('NORMAL',true);shovelDig('DOWN');shovelUpdateActor(e,120);`,
 for(let i=0;i<50;i++)both('frameCount++;shovelUpdateActor(e,1000/60);','Dig animation, contact and depth remain synchronized');
 both('shovelDig("DOWN");shovelUpdateActor(e,300);','A second stroke preserves its driving-down depth decay');
 
-// Count real hot-path work rather than checking for source text. The ordinary
-// surface crowd no longer rebuilds the same cell key on its fall-mouth checks.
-for(const h of [before,after])h.probe(`e=fixture();var keyCalls=0,oldKey=shovelCellKey;
-  shovelCellKey=function(){keyCalls++;return oldKey.apply(this,arguments);};
-  shovelSyncPlayerCell(e);`);
-assert(after.probe('keyCalls')<before.probe('keyCalls'),'Surface crowd synchronization performs fewer cell-key builds');
-console.log('Shovel crowd performance: '+comparisons+' exact controller-state comparisons passed; fewer repeated cell lookups.');
+for(const name of ['shovelSurfaceFallCell','shovelSyncPlayerCell','shovelUpdateActor'])
+  assert.equal(after.probe(name+'.toString()'),before.probe(name+'.toString()'),name+' source is restored');
+console.log('Restored shovel controller: '+comparisons+' exact controller-state comparisons passed.');

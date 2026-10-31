@@ -1,5 +1,5 @@
-// Compare hot-path stance shortcuts with the pre-optimization implementation.
-// Keep transitions, contact cover and suppression live; no frame-level pose cache.
+// Keep restored stance helpers identical to the established branch, including
+// transitions, contact cover and live suppression between collision probes.
 const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
 const { ctx, probe } = require('./harness');
@@ -50,12 +50,6 @@ a.cover={blend:1,pop:0,kind:'LOW'};
 assert.equal(ctx.actorStancePose(a).crouch,1);
 a.stunTimer=1;
 assert.equal(ctx.actorStancePose(a).crouch,0);comparisons+=3;
-// Verify the intended budget reduction on the actual collision caller.
-a.stunTimer=0;a.cover=null;a.stance.value=0;
-let eligibilityCalls=0;
-ctx.actorCanUseStances=function(actor){eligibilityCalls++;return eligibility(actor);};
-probe(`activeBuildings=[];activeParkingCars=[];barrels=[];resetForestWildlife();invalidateColIndex();
-  for(let i=0;i<1000;i++)stancePerfActor.checkCol(100+i*.01,100);`);
-assert.equal(eligibilityCalls,0,'standing collision probes avoid stance eligibility walks');
-ctx.actorCanUseStances=eligibility;
-console.log(`${comparisons} stance eligibility/pose parity checks; 1,000 standing collision probes skip eligibility`);
+assert.equal(ctx.actorCanUseStances.toString(),ctx.oldStanceEligibility.toString(),'eligibility source is restored');
+assert.equal(ctx.actorStancePose.toString(),ctx.oldStancePose.toString(),'pose evaluation order is restored');
+console.log(`${comparisons} restored stance eligibility/pose parity checks passed.`);

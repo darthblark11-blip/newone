@@ -1,6 +1,6 @@
-// Compare the optimized cover broad phase with the branch's original exact
-// solvers. Keep endpoint/tangent hits, gate wings, unusual geometry and the
-// first swept impact unchanged while rejecting coarse-cell false positives.
+// Compare the restored cover queries with the branch's original exact solvers.
+// Keep endpoint/tangent hits, gate wings, unusual geometry and the first swept
+// impact unchanged. The prior pass's material-work budget is no longer a goal.
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
 const {execFileSync}=require('node:child_process');
@@ -82,19 +82,13 @@ for(let mutation=0;mutation<6;mutation++) {
   for(const ray of edges)for(const radius of [0,1,6,-1,NaN,Infinity])
     for(const zone of ['HEAD','BODY','LEGS'])check(ray,radius,zone,mutation%2===0);
 }
-probe(`activeParkingCars=[];activeBuildings=buildings=[];
-  for(let i=0;i<200;i++)activeBuildings.push({x:100+(i%10)*10,y:100+Math.floor(i/10)*5,w:2,h:2,isWall:true});
-  frameCount++;window.__kind=coverSolidKind;window.__kindCalls=0;
-  coverSolidKind=b=>{__kindCalls++;return __kind(b);};`);
-for(const call of ['coverRayClear(0,0,50,0,6)',"coverLineClear(0,0,50,0,'BODY',null,null,false)",
-  "coverBulletBlock({prevX:0,prevY:0,x:50,y:0,tH:'BODY',coverLaunchLow:false})"]) {
-  probe('__kindCalls=0;'+call+';');
-  assert.equal(P('__kindCalls'),0,'coarse-cell misses skip material classification');
-}
-probe('coverSolidKind=__kind;');
 // Small collections have always tolerated missing optional records. Keep
 // their native material rejection ahead of any attempt to read bounds.
 probe(`activeBuildings=buildings=[null,undefined,{x:40,y:0,w:20,h:160,isWall:true}];frameCount++;`);
 for(const ray of [[0,0,80,0],[0,100,80,100],[30,80,30,80]])
   for(const zone of ['HEAD','BODY','LEGS'])check(ray,6,zone,false);
-console.log(`${comparisons} cover ray, height and swept-impact parity comparisons passed; coarse-cell misses classify zero materials.`);
+// Preserve the original slab arithmetic even at cancellation-sensitive world
+// scales. A mathematically conservative precheck need not be bit-equivalent.
+probe(`activeBuildings=buildings=[{x:-1.5,y:0,w:1,h:2,isWall:true}];activeParkingCars=[];frameCount++;`);
+check([1e16,0,0,0],0,'BODY',false);
+console.log(`${comparisons} restored cover ray, height and swept-impact parity comparisons passed.`);

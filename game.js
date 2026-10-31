@@ -28,10 +28,9 @@ const COMBAT_STANCES = ['STAND', 'CROUCH', 'PRONE'];
 const STANDING_STANCE_POSE = {crouch:0,prone:0,scaleX:1,scaleY:1,forward:0,muzzleForward:0,muzzleSide:0,uiOffset:0};
 const STANCE_HOLD_MS = 200, PRONE_DIVE_MS = 700, PRONE_DIVE_DISTANCE = 220, PRONE_DIVE_LEVEL_MS = 65;
 const stanceInput = {crouch:false,prone:false,hold:null};
-const STANCE_EXCLUDED_TYPES = new Set(['ARMORED','ROBOT','SNAIL_HYBRID','ALIEN_GATOR','COW','HORSE','BUG','SNAIL','AERIAL','AERIAL_PISTOL','SAUCER','SAUCER_RED']);
 function actorCanUseStances(a) {
   return !!a && !a.isNM0Scientist && !a.isCorpse && !isOccultActor(a) && (a.isPlayer || ragHumanoid(a.eType,a.bodyW)) &&
-    !STANCE_EXCLUDED_TYPES.has(a.eType);
+    !['ARMORED','ROBOT','SNAIL_HYBRID','ALIEN_GATOR','COW','HORSE','BUG','SNAIL','AERIAL','AERIAL_PISTOL','SAUCER','SAUCER_RED'].includes(a.eType);
 }
 function combatStanceContext() {
   return started&&!isPaused&&!isDead&&!isWin&&!killcamMode&&!inStoryIntro&&!inStoryRoom&&
@@ -57,13 +56,8 @@ function resetActorStance(a,name='STAND') {
   a._stanceClearAngle=Number.isFinite(a.aimAngle)?a.aimAngle:0;
 }
 function actorStancePose(a) {
-  if(!a||!a.stance)return STANDING_STANCE_POSE;
-  // Collision/steering probes ask for this pose many times per actor. A zero
-  // effective stance is standing regardless of suppression; reserve the full
-  // eligibility/boxing/depth checks for an actual lowered pose. Cover still
-  // resolves first so a standing actor ducking behind a low wall is preserved.
+  if(!a||actorStanceSuppressed(a)||!a.stance)return STANDING_STANCE_POSE;
   const v=coverStanceLevel(a);if(!(v>0))return STANDING_STANCE_POSE;
-  if(actorStanceSuppressed(a))return STANDING_STANCE_POSE;
   const p=a._stancePose||(a._stancePose={});
   p.prone=Math.max(0,v-1);p.crouch=Math.min(1,v)*(1-p.prone);
   // Camera height changes uniformly. Bent joints, not a squashed standing
@@ -725,18 +719,10 @@ function coverMovementIntent(a,dx,dy,rawX=dx,rawY=dy) {
   result.x=dx-c.nx*outward;result.y=dy-c.ny*outward;return result;
 }
 function coverRayClear(x0,y0,x1,y1,radius=0) {
-  const minX=Math.min(x0,x1),minY=Math.min(y0,y1),maxX=Math.max(x0,x1),maxY=Math.max(y0,y1);
   const candidates=activeBuildings.length<=16?activeBuildings:crowdSolidCandidates(_coverRayIndex,activeBuildings,
-    minX-radius,minY-radius,maxX+radius,maxY+radius,_coverRayCandidates,false);
+    Math.min(x0,x1)-radius,Math.min(y0,y1)-radius,Math.max(x0,x1)+radius,Math.max(y0,y1)+radius,_coverRayCandidates,false);
   for(let i=0;i<candidates.length;i++) {
-    const b=candidates[i];
-    // A cell can hold many props beside this short head/muzzle sweep. Reject
-    // their real bounds before material flags, gate state and cached rects.
-    // Unusual dimensions and parked-car overrides retain the native solver.
-    if(b&&radius>=0&&b.w>0&&b.h>0&&!b.isParkingCar&&
-        (b.x+b.w/2+radius<minX||b.x-b.w/2-radius>maxX||
-         b.y+b.h/2+radius<minY||b.y-b.h/2-radius>maxY))continue;
-    if(coverSolidKind(b)!=='HIGH')continue;
+    const b=candidates[i];if(coverSolidKind(b)!=='HIGH')continue;
     const rects=coverSolidRects(b);
     for(let ri=0;ri<rects.length;ri++) {
       const r=rects[ri];
@@ -10569,7 +10555,8 @@ function shovelPlayerDepth(e=player) {
   return e&&!SHOVEL_AIRBORNE_TYPES.has(e.eType)&&currentLevel>=1&&currentLevel<=7&&e.shovelLevel===currentLevel&&Number.isFinite(e.shovelDepth)?
     Math.max(0,Math.min(SHOVEL.maxDepth,e.shovelDepth)):0;
 }
-function shovelSurfaceFallCell(e,c=shovelCellAt(e.x,e.y)) {
+function shovelSurfaceFallCell(e) {
+  const c=shovelCellAt(e.x,e.y);
   if(!c||!c.open)return null;
   const b=shovelPitOpeningBounds(c);
   return e.x>=b[0]&&e.x<=b[2]&&e.y>=b[1]&&e.y<=b[3]?c:null;
@@ -10929,10 +10916,7 @@ function shovelSyncPlayerCell(e) {
   if(e&&e.shovelMantle)return;
   if(!shovelActorCanFall(e)||currentLevel<1||currentLevel>7)return;
   const key=shovelCellKey(Math.floor(e.x/SHOVEL.cell),Math.floor(e.y/SHOVEL.cell));
-  // Movement and actor simulation both visit this path for every grounded
-  // body. Reuse the key and cell already read here when testing the mouth;
-  // rebuilding the same string and looking up the same cell adds no geometry.
-  const cell=shovelExcavation[key]||null,depth=shovelPlayerDepth(e);
+  const cell=shovelCellAt(e.x,e.y),depth=shovelPlayerDepth(e);
   if(e._shovelCellKey!==key) {
     if(depth<.5)e.shovelClimbing=false;
     if(depth>.5) {
@@ -10942,13 +10926,13 @@ function shovelSyncPlayerCell(e) {
       if(!cell&&depth>=SHOVEL.underground){e.shovelDepth=0;e.shovelDepthTarget=0;e._shovelFall=null;}
       else e.shovelDepthTarget=cell?cell.depth:0;
       e.shovelClimbing=false;
-    } else if(!e.shovelClimbing&&shovelSurfaceFallCell(e,cell))e.shovelDepthTarget=cell.depth;
+    } else if(!e.shovelClimbing&&shovelSurfaceFallCell(e))e.shovelDepthTarget=cell.depth;
     else if(!e.shovelDigTimer)e.shovelDepthTarget=0;
     e._shovelCellKey=key;
   }
   // Crossing a narrow mouth can happen within the same logical grid square.
   // A climb that has reached the rim stays there until the actor walks away.
-  if(depth<.5&&!e.shovelClimbing&&!(e.shovelDepthTarget>0)&&shovelSurfaceFallCell(e,cell))
+  if(depth<.5&&!e.shovelClimbing&&!(e.shovelDepthTarget>0)&&shovelSurfaceFallCell(e))
     e.shovelDepthTarget=cell.depth;
   if(depth>.5&&cell&&!e.shovelClimbing&&cell.depth>(e.shovelDepthTarget||0))
     e.shovelDepthTarget=cell.depth;
@@ -11015,9 +10999,6 @@ function shovelUpdateActor(e,dtMs) {
   const fallDt=Math.max(0,dt-Math.min(dt,wait));
   if(to<=from || drivingDown || e.shovelClimbing) {
     e._shovelFall=null;
-    // Most of an army is already standing on its floor. Settled depth is
-    // exact, so avoid evaluating a decay whose multiplier would be zero.
-    if(from===to){e.shovelDepth=to;return;}
     e.shovelDepth=from+(to-from)*(1-Math.exp(-fallDt/(drivingDown?50:75)));
     if(Math.abs(e.shovelDepth-to)<.05)e.shovelDepth=to;
     return;
@@ -27468,15 +27449,10 @@ function coverLowBlocks(zone,shooter=null,target=null,launchLowOverride=null) {
 const _coverShotIndex=newCrowdSolidIndex(2),_coverShotCandidates=[],_coverShotCars=[];
 function coverLineClear(x1,y1,x2,y2,zone='BODY',shooter=null,target=null,launchLowOverride=null) {
     const low=coverLowBlocks(zone,shooter,target,launchLowOverride);
-    const minX=Math.min(x1,x2),minY=Math.min(y1,y2),maxX=Math.max(x1,x2),maxY=Math.max(y1,y2);
     const solids=activeBuildings.length<=16?activeBuildings:crowdSolidCandidates(_coverShotIndex,activeBuildings,
-        minX,minY,maxX,maxY,_coverShotCandidates,false);
+        Math.min(x1,x2),Math.min(y1,y2),Math.max(x1,x2),Math.max(y1,y2),_coverShotCandidates,false);
     for(let i=0;i<solids.length;i++) {
-        const solid=solids[i];
-        if(solid&&solid.w>0&&solid.h>0&&!solid.isParkingCar&&
-            (solid.x+solid.w/2<minX||solid.x-solid.w/2>maxX||
-             solid.y+solid.h/2<minY||solid.y-solid.h/2>maxY))continue;
-        const kind=coverSolidKind(solid);
+        const solid=solids[i],kind=coverSolidKind(solid);
         if(!kind||kind==='LOW'&&!low)continue;
         const rects=coverSolidRects(solid);
         for(let j=0;j<rects.length;j++) {
@@ -27505,15 +27481,10 @@ const _coverBulletBlock={t:Infinity,solid:null,car:false};
 function coverBulletBlock(b) {
     const hit=_coverBulletBlock;hit.t=Infinity;hit.solid=null;hit.car=false;
     const low=coverLowBlocks(b.tH,b.shooter,null,b.coverLaunchLow);
-    const minX=Math.min(b.prevX,b.x),minY=Math.min(b.prevY,b.y),maxX=Math.max(b.prevX,b.x),maxY=Math.max(b.prevY,b.y);
     const solids=activeBuildings.length<=16?activeBuildings:crowdSolidCandidates(_coverShotIndex,activeBuildings,
-        minX,minY,maxX,maxY,_coverShotCandidates,false);
+        Math.min(b.prevX,b.x),Math.min(b.prevY,b.y),Math.max(b.prevX,b.x),Math.max(b.prevY,b.y),_coverShotCandidates,false);
     for(let i=0;i<solids.length;i++) {
-        const solid=solids[i];
-        if(solid&&solid.w>0&&solid.h>0&&!solid.isParkingCar&&
-            (solid.x+solid.w/2<minX||solid.x-solid.w/2>maxX||
-             solid.y+solid.h/2<minY||solid.y-solid.h/2>maxY))continue;
-        const kind=coverSolidKind(solid);
+        const solid=solids[i],kind=coverSolidKind(solid);
         if(!kind||kind==='LOW'&&!low)continue;
         const rects=coverSolidRects(solid);
         for(let j=0;j<rects.length;j++) {
@@ -44168,6 +44139,22 @@ function figurePainter() {
       stroke(r,g,b,a) {
         renderer._strokeSet=true;renderer._doStroke=true;renderer._setStroke(paintString(arguments));
       },
+      quad(x1,y1,x2,y2,x3,y3,x4,y4) {
+        if(!nativeRgb||renderer._clipping)return inst.quad.apply(inst,arguments);
+        if(!renderer._doFill&&!renderer._doStroke)return;
+        if(renderer._doFill&&!renderer._doStroke&&renderer._getFill()==='rgba(0,0,0,0)')return;
+        if(!renderer._doFill&&renderer._doStroke&&renderer._getStroke()==='rgba(0,0,0,0)')return;
+        // Verified Renderer2D quad order in 1.9.4 and 1.11.10/1.11.11.
+        // Preserve separate fills/strokes on touching weapon faces.
+        context.beginPath();context.moveTo(x1,y1);context.lineTo(x2,y2);
+        context.lineTo(x3,y3);context.lineTo(x4,y4);context.closePath();
+        if(renderer._doFill)context.fill();if(renderer._doStroke)context.stroke();
+      },
+      line(x1,y1,x2,y2) {
+        if(!nativeRgb||renderer._clipping)return inst.line.apply(inst,arguments);
+        if(!renderer._doStroke||renderer._getStroke()==='rgba(0,0,0,0)')return;
+        context.beginPath();context.moveTo(x1,y1);context.lineTo(x2,y2);context.stroke();
+      },
       rect(x,y,w,h,tl,tr,br,bl) {
         if(!renderer._doFill&&!renderer._doStroke)return;
         if(renderer._rectMode!==CORNER||renderer._clipping)return inst.rect.apply(inst,arguments);
@@ -44212,7 +44199,8 @@ function figurePainter() {
     };
     _figurePainter.api=Object.create(window);
     Object.assign(_figurePainter.api,{fill:_figurePainter.fill,stroke:_figurePainter.stroke,
-      ellipse:_figurePainter.ellipse,rect:_figurePainter.rect});
+      ellipse:_figurePainter.ellipse,rect:_figurePainter.rect,
+      quad:_figurePainter.quad,line:_figurePainter.line});
   }
   const painter = _figurePainter, maxes = inst._colorMaxes[inst._colorMode];
   if (painter.mode !== inst._colorMode || painter.maxes[0] !== maxes[0] ||
@@ -45184,6 +45172,7 @@ function gunProj(el, L, S) {
 // own shade from the height of the ground under it.
 const GUN_BANDS = 3;
 function gunPiece(P, x0, x1, y, h, br, bg, bb, lift) {
+  const paint=figurePainter(),fill=paint?paint.fill:window.fill,quad=paint?paint.quad:window.quad;
   const yc = y + h * 0.5, half = h * 0.5;
   const n = Math.abs(P.x(x1) - P.x(x0)) > 9 ? GUN_BANDS : 1;
   const at = function (v, o) {
@@ -45233,6 +45222,8 @@ function gunPiece(P, x0, x1, y, h, br, bg, bb, lift) {
 // both cases is what made a pistol carried muzzle-down read as one carried
 // muzzle-up.
 function gunMuzzle(P, x, y, h, br, bg, bb) {
+  const paint=figurePainter(),fill=paint?paint.fill:window.fill;
+  const ellipse=paint?paint.ellipse:window.ellipse,rect=paint?paint.rect:window.rect;
   const up = P.up, d = P.h(x) * GUN_TILT;
   const cx = P.x(x) + P.S[0] * d * GUN_AXIAL, cy = y + P.S[1] * d;
   const t = P.w(x);
@@ -45331,7 +45322,9 @@ function handGunProjection(el, roll, L, S) {
   };
 }
 
-function handGunFace(P, a, b, c, d, axis, sign, r, g, bl) {
+function handGunFace(P, a, b, c, d, axis, sign, r, g, bl, paint) {
+  const fill=paint?paint.fill:window.fill,stroke=paint?paint.stroke:window.stroke;
+  const quad=paint?paint.quad:window.quad;
   const n = P.light[axis] * sign;
   // Three cel values, with a small continuous term so rotating through the
   // light does not snap a face between unrelated colours.
@@ -45347,21 +45340,22 @@ function handGunFace(P, a, b, c, d, axis, sign, r, g, bl) {
 const _handGunVerts = Array.from({length:8}, () => [0,0]);
 const _handGunLineA = [0,0], _handGunLineB = [0,0];
 function handGunBox(P, x0, x1, y0, y1, z0, z1, r, g, b) {
-  const v = _handGunVerts;
+  const v = _handGunVerts,paint=figurePainter();
   P.point(x0,y0,z0,v[0]); P.point(x1,y0,z0,v[1]);
   P.point(x1,y1,z0,v[2]); P.point(x0,y1,z0,v[3]);
   P.point(x0,y0,z1,v[4]); P.point(x1,y0,z1,v[5]);
   P.point(x1,y1,z1,v[6]); P.point(x0,y1,z1,v[7]);
   // Orthographic faces meet along edges; the three facing the camera never
   // overlap. Drawing only them keeps the outline and avoids hidden-face ink.
-  if (P.view[0] < 0) handGunFace(P,v[0],v[3],v[7],v[4],0,-1,r,g,b);
-  else handGunFace(P,v[1],v[5],v[6],v[2],0,1,r,g,b);
-  if (P.view[1] < 0) handGunFace(P,v[0],v[4],v[5],v[1],1,-1,r,g,b);
-  else handGunFace(P,v[3],v[2],v[6],v[7],1,1,r,g,b);
-  if (P.view[2] < 0) handGunFace(P,v[0],v[1],v[2],v[3],2,-1,r,g,b);
-  else handGunFace(P,v[4],v[7],v[6],v[5],2,1,r,g,b);
+  if (P.view[0] < 0) handGunFace(P,v[0],v[3],v[7],v[4],0,-1,r,g,b,paint);
+  else handGunFace(P,v[1],v[5],v[6],v[2],0,1,r,g,b,paint);
+  if (P.view[1] < 0) handGunFace(P,v[0],v[4],v[5],v[1],1,-1,r,g,b,paint);
+  else handGunFace(P,v[3],v[2],v[6],v[7],1,1,r,g,b,paint);
+  if (P.view[2] < 0) handGunFace(P,v[0],v[1],v[2],v[3],2,-1,r,g,b,paint);
+  else handGunFace(P,v[4],v[7],v[6],v[5],2,1,r,g,b,paint);
 }
 function handGunDetail(P, x0, y0, z0, x1, y1, z1, r, g, b, weight) {
+  const paint=figurePainter(),stroke=paint?paint.stroke:window.stroke,line=paint?paint.line:window.line;
   const a=P.point(x0,y0,z0,_handGunLineA), c=P.point(x1,y1,z1,_handGunLineB);
   stroke(r,g,b); strokeWeight(weight || 0.6); line(a[0],a[1],c[0],c[1]); noStroke();
 }
@@ -45411,6 +45405,7 @@ function drawAimedTwoHandSleeve(c,g,hx,hy,right) {
 
 const _longGunBoreVerts=Array.from({length:4},()=>[0,0]);
 function longGunMuzzle(P,muzzle,r,g,b) {
+  const paint=figurePainter(),fill=paint?paint.fill:window.fill,quad=paint?paint.quad:window.quad;
   // A shallow steel collar has real end and side planes; the dark bore appears
   // only when the camera sees the front face. It fades into that face instead
   // of popping between two muzzle drawings as the carry crosses level.
@@ -45514,6 +45509,7 @@ function drawHandGunSolid(w, el, L, S, roll, kick, magOut, slideOpen) {
 }
 
 function carryHandGun(w, el, L, S, roll, kick, magOut, slideOpen) {
+  const paint=figurePainter(),fill=paint?paint.fill:window.fill,ellipse=paint?paint.ellipse:window.ellipse;
   el = el === undefined ? 0 : el;
   L = L || _figLit;
   if(w===WEAPONS.REVOLVER) {
@@ -45580,6 +45576,8 @@ function oneHandWeapon(w) {
 // wrap around a rotating cylinder. A reload swings that cylinder out on its
 // crane, ejects cases, seats a six-round loader and closes it again.
 function drawRevolverSolid(el,roll,L,S,kick,open) {
+  const paint=figurePainter(),fill=paint?paint.fill:window.fill,stroke=paint?paint.stroke:window.stroke;
+  const quad=paint?paint.quad:window.quad,ellipse=paint?paint.ellipse:window.ellipse;
   const P=handGunProjection(el,roll,L,S),turn=handGunKick(kick)*PI/3;
   handGunBox(P,-2,3,-2,2,-3.8,-.4,95,58,33);
   handGunDetail(P,-1,-1.8,-1.1,2,-1.8,-1.1,176,116,64,.7);
@@ -52456,6 +52454,9 @@ float marchSun(vec2 uv, float h0) {
       // is crisp at its foot and soft where it ends. +1 keeps the divide safe.
       float pen = uPenumbra * t + 1.0;
       vis = min(vis, 1.0 - clamp(over / pen, 0.0, 1.0));
+      // Further samples can only lower visibility. Once fully occluded, the
+      // exact answer is already zero; keep every penumbra sample otherwise.
+      if (vis == 0.0) break;
     }
   }
   return vis;
@@ -52555,6 +52556,9 @@ void main() {
       extra++;
       if (extra >= 6) break;
     }
+    // The occlusion texture is normalized to [0,1]. A peak of one cannot
+    // increase during the remaining six-tap search; nearest is already fixed.
+    if (strength == 1.0) break;
   }
   oCol = vec4(nearest, clamp(strength, 0.0, 1.0), 0.0, 1.0);
 }`;

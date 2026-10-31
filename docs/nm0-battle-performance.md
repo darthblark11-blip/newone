@@ -1,112 +1,147 @@
-# Level 2 NM-0 crowd performance
+# Level 2 NM-0 combat rendering
 
-This pass starts at `37dfd722d2524a1810851ffc62905b3aa1d655a4`, the remote head of
-`codex/directional-falls-and-footwork` when work began. It preserves character
-art, effects, lighting, actor counts, AI scheduling, reaction delays, damage and
-movement. The requested exception is ambient encounter scheduling: new forest
-animals wait during NM-0 ambushes and until the player is outside Level 2's
-starting compound. Existing animals, wounds and corpses continue to update.
+The shared stance, cover-query and excavation shortcuts from `eec8fed` have
+been removed. Enemy decisions, targeting, reaction delays, cover goals,
+movement, injuries, projectile damage and reinforcement rules match
+`37dfd722d2524a1810851ffc62905b3aa1d655a4` again. The separately requested
+animal encounter gate remains: new forest animals wait during NM-0 ambushes
+and inside Level 2's starting compound. Existing animals retain their original
+collision, simulation, wounds and corpse timing.
 
-## Changes
+This follow-up targets rendering:
 
-- Cover sight, muzzle and projectile queries reject coarse spatial-cell misses
-  using conservative bounds before classifying cover or resolving its geometry.
-  Exact swept intersections, gate wings and first-hit order are retained.
-- Standing collision probes skip stance eligibility work when the effective
-  pose is already standing. Low cover still resolves before this shortcut;
-  suppression and transitions remain live between probes within a frame.
-- Excavation synchronization reuses its existing key/cell. Actors already at
-  their target depth skip a zero-delta exponential without skipping timers.
-- The existing exact RGB palette cache also handles p5 1.9.4. Native cel paths
-  use its verified closing sequence, avoiding temporary p5 vertex arrays. Its
-  different rectangle and ellipse implementations retain their original paths.
-  Alternate color modes, clipping, accessibility and unknown versions retain
-  their fallbacks. Limb normalization reuses lengths already calculated.
-- Empty wildlife updates skip grid work; suppressed encounters consume no
-  ecology random numbers or placement attempts.
-
-## Reproduction
-
-`tools/profile-nm0-battle.js` starts the native Level 2 tower victory ambush with
-80 recruited allies and 100 initial NM-0 ambushers. Ten ambient patrol actors
-also remain in the native world. Actor health is raised to sustain fire for
-the whole sample. The native replacement spawner is retained, but its 200
-reserves are unused because the high-health actors do not die. This measures
-sustained crowd/combat work rather than a complete ambush victory.
-
-The profiler runs real p5 `draw()` in Chromium at 540 × 1170, including native
-movement, cover, incoming-shot reactions, projectiles, particles, streaming,
-terrain, shadows, lighting and HUD. Lighting quality is pinned for comparisons.
-The default quiet wildlife timer isolates equivalent work from the separately
-requested spawn suppression; `BATTLE_WILDLIFE=native` includes that change.
-
-Install Playwright and p5 outside the repository, provide Chromium, then run
-sources sequentially with the same dependency versions:
-
-```sh
-mkdir -p work
-git show 37dfd72:game.js > work/nm0-before.js
-VIS_DEPS=/path/to/dependencies VIS_CHROME=/usr/bin/chromium \
-  BATTLE_WARM=60 BATTLE_FRAMES=120 BATTLE_LIGHTING=fallback \
-  GAME_JS=work/nm0-before.js BATTLE_OUT=work/nm0-before.json \
-  node tools/profile-nm0-battle.js
-VIS_DEPS=/path/to/dependencies VIS_CHROME=/usr/bin/chromium \
-  BATTLE_WARM=60 BATTLE_FRAMES=120 BATTLE_LIGHTING=fallback \
-  BATTLE_OUT=work/nm0-after.json node tools/profile-nm0-battle.js
-```
-
-`BATTLE_P5=/path/to/p5.min.js` selects a specific p5 version.
-`BATTLE_LIGHTING=advanced` exercises the advanced light rig.
-`BATTLE_PROFILE=1 BATTLE_FINE=1` adds diagnostic instrumentation; leave those off
-when comparing timings. `BATTLE_PIXELS=1` fingerprints every measured Canvas
-frame after the CPU timer, so use that mode for parity rather than painted
-interval timings. Reports include raw frame samples, gameplay/RNG fingerprints,
-actual crowd/projectile/effect load, browser errors and caught frame faults.
+- Firearm faces/details use the existing exact color palette and native Canvas
+  quad/line paths. Geometry, face order, separate strokes and alpha stay intact.
+  The ordinary RGB fixture creates 4,723 fewer temporary p5 colors. Unsupported
+  versions, clipping, accessibility and alternate modes retain their fallbacks.
+- Directional shadows stop sampling when visibility is exactly zero. Polar
+  shadows stop when their recorded peak is exactly one. Further samples cannot
+  change those saturated answers; partial rays retain every original sample.
+  Shadow resolution, light budgets and visual settings are unchanged.
 
 ## Verification
 
-Adjacent runs used 60 warm-up frames and 120 measured frames, with diagnostic
-instrumentation disabled. Median synchronous `draw()` CPU time:
+`check-nm0-mechanics-parity.js` locks 218 functions, 33 methods/accessors, six
+constructors and 50 tuning tables/constants to the original branch. This
+includes the state machine, collision, cover, physical weapon/stance geometry,
+timers, targeting, damage, injuries and native ambush replacement rules. The
+previous optimization commit intentionally fails this guard. Restored cover,
+stance and excavation tests compare original behavior; they no longer assert
+the discarded shortcut budgets.
 
-| p5 / lighting | Original | Optimized | Change |
-| --- | ---: | ---: | ---: |
-| 1.9.4 / fallback, pair 1 | 70.1 ms | 61.5 ms | 12.3% lower |
-| 1.9.4 / fallback, repeat | 70.0 ms | 60.7 ms | 13.3% lower |
-| 1.11.11 / fallback | 61.6 ms | 59.9 ms | 2.8% lower |
-| 1.11.11 / advanced | 170.6 ms | 172.0 ms | Effectively unchanged |
+Full normal-health replays compare own actor fields/reference graphs,
+projectiles/shooter references, wounds/corpses, world/gate/fort/town state,
+counters, ecology RNG and delayed callback queues after every frame.
+Both lighting modes passed 160 state frames and 120 measured picture frames
+against the original source, including 56 kills, ten reserve callbacks,
+56 corpses and eight lowered actors. The seeded replay did not trigger a
+probabilistic leg injury; focused native injury/recovery tests cover that
+branch separately.
 
-The 1.9.4 fallback p95 improved from 84.3–87.4 ms to 77.4–77.6 ms.
-Its entity update stage fell from 7.1–7.3 ms to 6.4–6.5 ms, while the depth-sorted
-scene pass fell from 51.7–52.4 ms to 43.7 ms. Particle work remained unchanged.
-The modern fallback p95 improved from 77.7 ms to 73.8 ms. Advanced lighting's
-software WebGL cost dominates this host; its p95 was 205.2 ms before and
-204.3 ms after, so these measurements establish no advanced-lighting speedup.
-These figures remain above the 16.7 ms frame budget on this software-rendered
-host. They establish less work in the fallback path, not universal 60 FPS.
+`check-firearm-render-parity.js` compares exact Canvas pixels and painter state
+on p5 1.9.4 and 1.11.11 across eight ordinary/fallback modes, including recoil,
+reload, crouch/prone, high/low cover and injury poses. `check-lighting-shadow-budget.js`
+compares every byte in composite, normal, light, polar and occlusion targets
+over 21 scenes. Real GLSL counters show saturated sun samples falling from
+20 to one and saturated polar samples from seven to one. Partial rays retain
+20 and seven samples respectively.
 
-All timed pairs retained 80 allies, 100 ambushers and the 10 native patrol
-actors. Full gameplay fingerprints, both random states and final Canvas pixels
-matched within each p5/lighting mode, with no browser errors or frame faults.
-Separate p5 1.9.4 fallback and 1.11.11 advanced replays also matched every one
-of their 120 measured Canvas frame fingerprints, plus gameplay, RNG, events
-and loads. All 12 final timing/parity runs completed without frame faults.
-Raw timing and replay data are in `nm0-battle-performance-results.json`.
+Incoming-shot, dive, cover, stance, leg contact/injury, ally-command, ambush
+cleanup, native handgun and shovel perception checks pass. Two older longgun
+aim-laser fixture assertions also fail on unchanged `eec8fed`; their gameplay
+is untouched.
 
-Focused checks compare the changed functions with the original branch:
-`check-cover-query-performance.js`, `check-stance-performance.js` and
-`check-shovel-crowd-performance.js`. `check-wildlife-battle-budget.js` checks
-suppression, no placement/RNG work, recovery and existing animal/corpse timing.
+## Measured scope
 
-`check-character-color-performance.js`, `check-character-render-parity.js` and
-`check-figure-path-performance.js` verify native color and exact Canvas pixels
-on p5 1.9.4 and 1.11.11, including lowered/cover figures and Graphics buffers.
-The cover, stance, incoming-shot, dive, leg injury, projectile leg-contact,
-shovel, population, fortress, save/load and reset regression checks also pass.
+Clean, sequential normal-health replay pairs compared `eec8fed` with this
+rendering follow-up, using p5 1.11.11, 40 warm-up frames and 120 measured frames
+at 540 × 1170 CSS pixels and density one. All per-frame actor/effect/death and
+reserve loads, final state, RNG and pixels matched within each pair.
 
-The older `check-falls-and-footwork.js` fails its boxing foot-width assertion
-at line 117 on both the untouched source and the optimized source. The current
-directional and crouch footwork checks pass; this pass does not alter boxing.
+| Lighting | Earlier pass median CPU | Follow-up median CPU |
+| --- | ---: | ---: |
+| Fallback, pair 1 | 65.8 ms | 62.6 ms |
+| Fallback, repeat | 65.8 ms | 63.9 ms |
+| Advanced | 176.9 ms | 173.8 ms |
 
-Cloud Chromium uses software rendering. CPU time and painted intervals describe
-this host rather than device FPS. Audio cues execute without an initialized Web
-Audio context, so synthesized voice cost is excluded.
+These are modest gains: roughly 3–5% in fallback and 2% in advanced lighting
+on the software-rendered host. They do not establish a noticeable FPS gain on
+the user's Galaxy S25. A 360 × 780 CSS, DPR-three, density-two touch fixture
+also verified the production 720 × 1560 backing dimensions. The actual Adreno
+GPU remains unavailable in the cloud.
+
+The close-range leg-aim replay additionally matched 110 state frames and
+80 picture frames against the original mechanics, including a naturally
+triggered leg injury, 38 deaths and six native reserve callbacks. No injury
+proc or combat decision was forced.
+
+Experiments using bitmap transfer, repeated polar-texture lookup caching and
+opaque hexadecimal paint assignment were rejected after whole-frame tests
+showed no useful gain or a regression. A tighter actor painting margin was
+also rejected: although omitted actors painted no visible pixels themselves,
+skipping their render calls exposed a shared state dependency and changed
+13 interior color channels. The original 150-unit allowance is retained.
+The final game includes none of these experiments.
+
+Raw CPU/interval samples and compact verification results are in
+`nm0-rendering-followup-results.json`.
+
+## Profiling
+
+`profile-nm0-combat.js` starts the native Level 2 tower-victory ambush with
+80 recruited allies and 100 initial NM-0 ambushers. NPCs/barrels retain normal
+health, enabling wounds, deaths, corpses and native kill-driven reserves.
+Only the player is kept alive to observe the complete sample.
+
+The native driver uses the actual p5 loop, real elapsed time/browser timers,
+and initialized Web Audio. The replay driver uses the same native game
+functions with a virtual timer queue honoring callback delays. Input cycles
+between body, head and leg aim. Optional elapsed-time traces include slow frames.
+
+Install Playwright and p5 outside the repository, then run sources sequentially:
+
+```sh
+mkdir -p work
+git show eec8fed:game.js > work/nm0-pass1.js
+git show 37dfd72:game.js > work/nm0-original.js
+VIS_DEPS=/path/to/dependencies BATTLE_P5=/path/to/p5.min.js \
+  BATTLE_DRIVER=native BATTLE_AUDIO=native BATTLE_HEALTH=normal \
+  BATTLE_LIGHTING=fallback,advanced BATTLE_WARM=40 BATTLE_FRAMES=120 \
+  BATTLE_OUT=work/nm0-native.json node tools/profile-nm0-combat.js
+VIS_DEPS=/path/to/dependencies BATTLE_P5=/path/to/p5.min.js \
+  BATTLE_DRIVER=replay BATTLE_AUDIO=off BATTLE_HEALTH=normal \
+  BATTLE_COMPARE=work/nm0-original.js BATTLE_PIXELS=1 \
+  BATTLE_WARM=40 BATTLE_FRAMES=120 BATTLE_OUT=work/nm0-parity.json \
+  node tools/profile-nm0-combat.js
+```
+
+Keep sampling, full-state and per-frame pixel instrumentation off for clean
+timing pairs. Native audio acceptance uses wall time and consumes shared
+`Math.random` draws, so strict state/pixel comparisons disable audio. Separate
+native runs measure sound. Sound graphs, voice limits, scheduling and random
+draws are unchanged.
+
+This cloud browser exposes Vulkan SwiftShader rather than a hardware GPU.
+Canvas/WebGL transfers and synchronization dominate advanced-lighting frames.
+Synchronous audio chain work averaged about 0.42 ms per frame. These results
+cannot establish FPS on a phone or desktop GPU.
+
+For the actual Galaxy S25, `tools/build-s25-benchmark.js` builds a standalone
+HTML test with both the original and current game, p5, fonts and audio embedded:
+
+```sh
+node tools/build-s25-benchmark.js --p5 /path/to/p5.min.js \
+  --out work/s25-combat-benchmark.html
+```
+
+Copy that file to the phone and open it in Chrome. Each run starts from its own
+tap so native audio can resume. It runs one game at a time, hides the benchmark
+controls during play, disposes the preceding audio/GPU context, and offers a
+local JSON download. No network resources or saved campaign state are needed.
+Its measurements describe the phone that actually runs it; the tool is not an
+assertion that the S25 FPS problem has been resolved.
+
+The [first-pass data](nm0-battle-performance-results.json) is historical.
+It used high-health actors, disabled audio and a quiet wildlife clock, and did
+not exercise normal deaths/reinforcement scheduling. It does not describe this
+follow-up implementation.
