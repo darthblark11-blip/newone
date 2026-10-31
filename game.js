@@ -8078,6 +8078,7 @@ function nextLevel() { startAtLevel(currentLevel + 1); }
 // into the next world's ground buffers. Keep this separate from startAtLevel.
 function resetRunState() {
   resetHostileFrontline();
+  resetAllyCombat();
   resetNM0Offices();
   resetSwordHitFeedback();
   resetUndergroundRoute();resetUndergroundEnvironment();resetOccultWorld();
@@ -22330,6 +22331,61 @@ function hostileFrontlineFireAllowed(a,target) {
   }
   return !s.limited||s.allowed.has(a);
 }
+// Following armies share a hostile roster and a firing front. Explicit Hold
+// and Search orders keep their existing firing permissions.
+const ALLY_COMBAT={enabled:true,crowdThreshold:24,shooters:16};
+const _allyCombat={targetFrame:-1,roster:null,rosterLength:-1,targetLevel:-1,level:-1,targets:[],
+  fireFrame:-1,player:null,limited:false,candidates:[],allowed:new Set(),threats:new Set()};
+function resetAllyCombat() {
+  const s=_allyCombat;s.targetFrame=s.fireFrame=s.targetLevel=s.level=-1;s.roster=s.player=null;s.rosterLength=-1;
+  s.targets.length=s.candidates.length=0;s.allowed.clear();s.threats.clear();s.limited=false;
+}
+function allyTargetCandidates() {
+  if(!ALLY_COMBAT.enabled)return enemiesList;
+  const s=_allyCombat;
+  if(s.targetFrame!==frameCount||s.roster!==enemiesList||s.rosterLength!==enemiesList.length||s.targetLevel!==currentLevel) {
+    s.targetFrame=frameCount;s.roster=enemiesList;s.rosterLength=enemiesList.length;s.targetLevel=currentLevel;
+    s.targets.length=0;
+    // Liveness is checked by each reader, including deaths during this frame.
+    for(let i=0;i<enemiesList.length;i++) {
+      const e=enemiesList[i];if(e&&!e.isFriendly)s.targets.push(e);
+    }
+  }
+  return s.targets;
+}
+function allyCombatDistance(a) {
+  const t=a.allyFoe,dx=a.x-t.x,dy=a.y-t.y;return dx*dx+dy*dy;
+}
+function allyCombatEligible(a) {
+  const t=a&&a.allyFoe;
+  return !!a&&a.isFriendly&&!a.isPlayer&&!a.isNeutral&&!a.dead&&a.hp>0&&
+    (!a.baseState||a.baseState==='FOLLOW')&&!a.isUnarmed&&!a.mounted&&!a.legInjury&&
+    !a.knockedOut&&!(a.stunTimer>0)&&!(a.reloadTimer>0)&&a.ammo>0&&
+    actorCanUseStances(a)&&ENEMY_COVER_WEAPONS.has(a.currentWeapon)&&
+    !!t&&!t.dead&&t.hp>0&&!t.isFriendly&&a.allySeeOf===t&&a.allySee&&
+    shovelPlayerDepth(a)<SHOVEL.underground&&shovelActorsVisible(a,t)&&allyCombatDistance(a)<600*600;
+}
+function allyCombatFireAllowed(a,target) {
+  if(!ALLY_COMBAT.enabled||!allyCombatEligible(a)||target!==a.allyFoe||
+      !doTick||!combatStanceContext())return true;
+  const s=_allyCombat;
+  if(s.fireFrame!==frameCount||s.player!==player||s.level!==currentLevel) {
+    s.fireFrame=frameCount;s.player=player;s.level=currentLevel;
+    s.candidates.length=0;s.allowed.clear();s.threats.clear();s.limited=false;
+    for(let i=0;i<enemiesList.length;i++)if(allyCombatEligible(enemiesList[i]))s.candidates.push(enemiesList[i]);
+    if(s.candidates.length>ALLY_COMBAT.crowdThreshold) {
+      s.limited=true;s.candidates.sort((a,b)=>allyCombatDistance(a)-allyCombatDistance(b));
+      // Cover distinct threats first, then fill with the nearest supporting
+      // gunners. Keep ownership through cooldowns to limit sustained fire too.
+      for(let i=0;i<s.candidates.length&&s.allowed.size<ALLY_COMBAT.shooters;i++) {
+        const e=s.candidates[i];
+        if(!s.threats.has(e.allyFoe)){s.threats.add(e.allyFoe);s.allowed.add(e);}
+      }
+      for(let i=0;i<s.candidates.length&&s.allowed.size<ALLY_COMBAT.shooters;i++)s.allowed.add(s.candidates[i]);
+    }
+  }
+  return !s.limited||s.allowed.has(a);
+}
 function enemyCoverEligible(a) {
   return !!a&&!a.legInjury&&!a.isPlayer&&!a.isNeutral&&!a.isUnarmed&&!a.isCoward&&!a.mounted&&
     !String(a.eType||'').startsWith('OCCULT_')&&a.eType!=='MOLOTOV'&&
@@ -22447,7 +22503,7 @@ function updateEnemyCoverAI(a,target,canSee,distance,elapsedMs=deltaTime) {
   a.isMoving=false;a.gait+=(0-a.gait)*GAIT_EASE;a._coverApproach=false;
   updateActorCover(a,dt,0,0,aiming);
   if(!a.cover?.active){state.goal=null;return false;}
-  if(aiming&&a.fireTimer<=0&&a.reloadTimer<=0&&a.ammo>0&&hostileFrontlineFireAllowed(a,target)) {
+  if(aiming&&a.fireTimer<=0&&a.reloadTimer<=0&&a.ammo>0&&hostileFrontlineFireAllowed(a,target)&&allyCombatFireAllowed(a,target)) {
     const upper=coverUpperOffset(a);
     const zone=combatAimElevation(a,target,true);
     const range=legShotRangeForWeapon(zone,a.currentWeapon,a);
@@ -24052,8 +24108,9 @@ if (this.eType === "COW") {
             // Nearest hostile. Ranked by the SQUARE -- the same ranking, and
             // the one threshold that reads it is squared to match.
             let best = null, bestD2 = Infinity;
-            for (let i = 0; i < enemiesList.length; i++) {
-                const e = enemiesList[i];
+            const allyTargets=allyTargetCandidates();
+            for (let i = 0; i < allyTargets.length; i++) {
+                const e = allyTargets[i];
                 if (!e.isFriendly && !e.dead && e.hp > 0 && shovelActorsVisible(this,e)) {
                     const ex = this.x - e.x, ey = this.y - e.y;
                     const d2 = ex * ex + ey * ey;
@@ -24173,17 +24230,20 @@ if (this.eType === "COW") {
         // recomputed on the spot; that costs a sight test only on the frame the
         // target actually changes, which is rare.
         if (this.allySeeOf !== trg || this.allyTick === frameCount) {
-            this.allySee = shovelActorLOS(this,trg);
+            // Outside combat the wall-sight result is unused: formation and
+            // orders read vertical visibility above, and a new foe gets its
+            // own fresh sight check before cover or firing.
+            this.allySee = (!ALLY_COMBAT.enabled||isFighting)?shovelActorLOS(this,trg):false;
             this.allySeeOf = trg;
         }
         let canSee = this.allySee && shovelActorsVisible(this,trg);
         combatAimElevation(this, isFighting ? trg : null, isFighting && canSee);
         updateCombatStanceAI(this, isFighting ? trg : null, isFighting && canSee, distToTarget);
-        if (isFighting && canSee && distToTarget < 600 && this.fireTimer <= 0 && this.ammo > 0 && this.reloadTimer <= 0) {
+        if (isFighting && canSee && distToTarget < 600 && this.fireTimer <= 0 && this.ammo > 0 && this.reloadTimer <= 0 && allyCombatFireAllowed(this,trg)) {
             let sA = angToTarget;
             if (random() > 0.25 && distToTarget > 80) sA = angToTarget + atan2(random(30, 60) * stanceSpreadScale(this) * (random() > 0.5 ? 1 : -1), distToTarget);
             this.aimAngle = sA;
-            this.fire(sA);
+            this.fire(sA,null,trg);
         }
         
         if (aDx !== 0 || aDy !== 0) { this.isMoving = true; this.walkCycle += 0.2 * spd; this.moveAngle = atan2(aDy, aDx); } 
@@ -24666,6 +24726,7 @@ if (this.eType === "COW") {
     // wall normally, including one crossed by a close-range weapon muzzle.
     if(!this.isPlayer&&!coverFireAllowed(this,sA,bowShot))return false;
     if(!hostileFrontlineFireAllowed(this,combatTarget))return false;
+    if(!allyCombatFireAllowed(this,combatTarget))return false;
     frontierAmbientMarkCombat();
     const huntShotId = ++_huntShotSequence;
     let aH = this.isPlayer ? playerAimTarget() : this.stanceAimZone || (this.isFriendly && headAimToggle ? "HEAD" : "BODY"), cd = (this.isPlayer || this.isFriendly) ? this.currentWeapon.fireCooldown : (this.currentWeapon.enemyCooldown || 48), bob = this.isMoving&&!stanceCoverPoseActive(this) ? abs(sin(this.walkCycle)) * 2 : 0;
