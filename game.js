@@ -44102,14 +44102,17 @@ function figurePainter() {
       r=Math.round(255*(r<0?0:r>1?1:r));
       g=Math.round(255*(g<0?0:g>1?1:g));
       b=Math.round(255*(b<0?0:b>1?1:b));a=a<0?0:a>1?1:a;
-      const rgb=r*65536+g*256+b,key=a===1?rgb:rgb+'|'+a;
-      let css=numeric.get(key);
-      if(css===undefined){
-        css='rgba('+r+','+g+','+b+','+a+')';
-        if(numeric.size>=1024)numeric.delete(numeric.keys().next().value);
-        numeric.set(key,css);
+      // Index by the packed RGB value so translucent paints do not allocate
+      // and hash a composite RGB/alpha string on every cache hit. Compare the
+      // exact alpha separately; alternating opacity only replaces this entry.
+      const rgb=r*65536+g*256+b;
+      let cached=numeric.get(rgb);
+      if(cached===undefined||cached.alpha!==a){
+        if(cached===undefined&&numeric.size>=1024)numeric.delete(numeric.keys().next().value);
+        cached={alpha:a,css:'rgba('+r+','+g+','+b+','+a+')'};
+        numeric.set(rgb,cached);
       }
-      return css;
+      return cached.css;
     }
     function paintString(args) {
       const r=args[0];let css=rgbPaintString(args);

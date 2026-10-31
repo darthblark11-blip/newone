@@ -118,7 +118,8 @@ async function capture(browser,source,mode){
   const oldColors=before.directColorCalls,newColors=after.directColorCalls;
   delete before.pixels;delete after.pixels;delete before.directColorCalls;delete after.directColorCalls;
   assert.deepEqual(after,before,mode+' painter/gameplay state changed');
-  if(mode==='rgb')assert.ok(newColors<oldColors*.25,'Ordinary firearms should avoid at least 75% of p5.Color parsing');
+  if(mode==='rgb')assert.ok(oldColors===0?newColors===0:newColors<oldColors*.25,
+    'Ordinary firearms must preserve zero p5.Color allocations, or avoid at least 75% of existing parsing');
   if(mode==='accessible'||mode==='ellipse-corner')assert.equal(after.rejected,true,mode+' must retain p5 fallback');
   if(mode==='clipping')assert.equal(after.clippingRejected,true,'Clipping must retain p5 fallback');
   console.log('PASS '+after.version+' '+mode+': '+after.poses+' poses; p5.Color '+oldColors+' -> '+newColors+'; sha256 '+crypto.createHash('sha256').update(a).digest('hex'));checks++;

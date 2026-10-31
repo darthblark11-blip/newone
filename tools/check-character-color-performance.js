@@ -39,6 +39,10 @@ window.__checkColors=()=>{
   cases.push({mode,maxes,count});
  }
  colorMode(RGB,255);
+ // Reusing an RGB entry must still preserve every exact opacity, including
+ // an opaque paint interleaved with translucent versions of the same color.
+ for(let i=0;i<20;i++)for(const alpha of [255,128,0,168,128,254.5,255])
+  test([83,94,105,alpha],'same RGB alternating alpha');
  for(const edge of [-.5,.5,127.5,254.5,255.5])for(const epsilon of [-Number.EPSILON,0,Number.EPSILON,-1e-12,1e-12])test([edge+epsilon,edge+epsilon,edge+epsilon,128.5],'rounding edge');
  const palette=[31,70,112];for(let i=0;i<20;i++){palette[i%3]+=1;test([palette],'mutable array');}
  const c=color(10,20,30,120);for(let i=0;i<20;i++){c.setRed(20+i);c.setAlpha(80+i);test([c],'mutable Color');}
