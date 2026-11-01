@@ -27,6 +27,14 @@ City-sector outpost forts also use blue rookies for their separate finite
 50-person garrisons. Their own masts, casualties and capture rewards remain
 independent of the city's towers and original 80 defenders.
 
+Fort masts free their living garrison without immediately awarding population.
+The gate's complete ambush, including reserves, must clear first. Its surviving
+freed cohort then joins the pooled Directive once; pre-existing troops and
+unrelated allies are excluded. Each fort keeps its pending identities and
+casualties across saves and travel. The southwest relay has a separate cohort
+and award latch. Destroying the masts does not cancel the fort's waves or make
+the territory owned while the fight is still active.
+
 Tower collapse changes the surviving sector roster to friendly recruits.
 Those recruits join the army only when the NM-0 liberation ambush clears:
 
@@ -59,6 +67,8 @@ node tools/check-overworld-rookie-spawning.js
 node tools/check-checkpoint-rookies.js
 node tools/check-rookie-campaign-isolation.js
 node tools/check-gate-survivors.js
+node tools/check-fort-capture-survivors.js
+node tools/check-fort-capture-browser.js
 node tools/check-ambush-cleanup-arrow.js
 node tools/check-population.js
 node tools/check-fortress.js

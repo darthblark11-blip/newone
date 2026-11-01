@@ -7,6 +7,21 @@ outside those boundaries; hostile fort garrisons and reinforcement ticks cannot
 refill a captured yard. The existing fights and their completion conditions still
 run, with the hostile arrivals assembling outside the gates.
 
+For an overworld fort, dropping its two masts first **frees** the surviving
+garrison to fight as allies. It does not grant citizens, open the Directive,
+cancel waves or finalize ownership. Its gate-triggered NM-0 muster must finish
+before the liberation scene and Directive. Only survivors of that fort's
+marked cohort join UNASSIGNED, once. Existing army members, department workers,
+city residents and visitors do not join this award. Friendly casualties reduce
+the pending cohort just as hostile casualties reduced its original garrison.
+
+The pending cohort, including identity, gender, health and position, survives
+saves and travel. Reloading restores the still-unbeaten enemies as well as the
+freed allies. Capturing a fort and unlocking connected territory happen after
+the fight. Masts destroyed before its gate is breached must still wait for
+that gate's ambush. Previously paid captured saves retain their existing
+population and assignments and do not receive another award.
+
 Level 1 expands this after the starting fortress and primary relay are both
 owned and the original tower battle has cleared: connected territory excludes
 hostile arrivals, with a 1,500 HUD metre clearance from each owned compound.

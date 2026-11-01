@@ -98,7 +98,7 @@ function capture(level, killedBefore) {
   ok('tower destruction converts the remaining roster', P(`enemiesList.filter(e => e.isPopulation && e.isRecruit && e.isFriendly && !e.dead && e.hp > 0).length`) === 80 - killedBefore);
   ok('tower destruction awards no citizens yet', P('poolLedger().popTotal') === 0 && !P('!!sectorLedger(currentLevel).popGranted'));
   probe('killcamTimer = 1; draw(); townPhase = 7; draw();');
-  ok('the authored tower scene starts a real ambush', P('nm0AmbushActive && window.ambushKind === "TOWER"') && P('enemiesList.filter(e => e.isAmbush && !e.dead && e.hp > 0).length') === 100);
+  ok('the authored tower scene starts a real ambush', P('nm0AmbushActive && window.ambushKind === "TOWER"') && P('enemiesList.filter(e => e.isAmbush && !e.dead && e.hp > 0).length') === 60);
 }
 
 function loseRecruits(n) {

@@ -482,14 +482,15 @@ console.log('\n== every door grants ==');
   lines.forEach((ln, i) => {
     if (ln.indexOf('openSectorDirective(') === -1) return;
     if (/function openSectorDirective/.test(ln)) return;          // the definition
-    // the one legitimate call, inside the wrapper
-    const near = lines.slice(Math.max(0, i - 3), i + 1).join('\n');
+    // Sector grants use the wrapper; a fort pays only its own saved cohort.
+    const near = lines.slice(Math.max(0, i - 4), i + 1).join('\n');
     if (/function openDirectiveWithGrant/.test(near)) return;
+    if (/grantFreedFortSurvivors\(def\)/.test(near) && /openSectorDirective\(currentLevel\)/.test(ln)) return;
     stray.push(i + 1);
   });
   ok('nothing opens the Directive without granting first', stray.length === 0,
      stray.length ? 'bare openSectorDirective() at line ' + stray.join(', ')
-                  : 'all callers use openDirectiveWithGrant()');
+                  : 'all callers use their sector or fort survivor grant');
 }
 
 // And a zero must never latch on a sector whose people are counted off the

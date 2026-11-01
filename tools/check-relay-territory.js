@@ -107,6 +107,11 @@ probe(`markSectorTowersDown(1);player.x=OUTPOST_FORT[1].x;player.y=OUTPOST_FORT[
   window.relayKillsBefore=totalKills;window.relayScoreBefore=score;
   for(const b of buildings)if(b.isTower&&b.outpostFortId==='OUTPOST')b.hp=0;
   checkOutpostCaptured();`);
+ok(P('outpostFortState(1).freed&&!outpostFortState(1).captured&&outpostFortDefs(1).length===1'), 'tower collapse alone cannot publish owned territory or the next relay');
+ok(P('nm0AmbushKills===150&&outpostFortState(1).musterWaves===120'), 'the pending liberation keeps all gate defenders and reinforcements');
+probe(`enemiesList=enemiesList.filter(e=>!e.isAmbush);window.ambushSpawnsRemaining=0;
+  outpostFortState(1).musterWaves=0;nm0AmbushKills=0;checkAmbushCleared();
+  killcamMode=false;nm0AmbushActive=false;checkOutpostCaptured();`);
 ok(P('chunkMgr.anchors.some(b=>b.outpostFortId==="RELAY_SW")&&buildings.some(b=>b.outpostFortId==="RELAY_SW")'), 'live primary capture publishes the next landmark without changing levels');
 ok(P('enemiesList.every(e=>e.isFriendly||e.isNeutral||e.isPopulation||!hostileSpawnExcluded(1,e.x,e.y))'), 'capture drives existing hostiles out of the newly protected land');
 ok(P('totalKills===relayKillsBefore&&score===relayScoreBefore'), 'capture pushback awards no kills or score');
@@ -124,6 +129,7 @@ ok(P('nm0AmbushKills===249&&outpostFortState(1).musterLeft===150'), 'native stor
 probe('saveGame();window.outpostForts={};loadGame();');
 ok(P('nm0AmbushKills===249&&outpostFortState(1).musterLeft===150'), 'mixed story and fort counters survive persistence');
 ok(P('enemiesList.some(e=>e.isAmbush&&!e.outpostFortId)&&enemiesList.some(e=>e.isAmbush&&e.outpostFortId==="OUTPOST")'), 'mixed reload reforms actual native attackers as well as fort attackers');
+ok(P('enemiesList.filter(e=>e.isAmbush&&e.outpostFortId==="OUTPOST").length+outpostFortState(1).musterWaves===150'), 'native attackers never consume the independent fort reload reserve');
 probe(`var mixedFort=outpostFortState(1);mixedFort.captured=true;mixedFort.musterOn=true;
   mixedFort.musterLeft=30;mixedFort.musterTotal=30;mixedFort.musterWaves=0;
   nm0AmbushActive=true;nm0AmbushKills=130;window.ambushKillsTotal=130;
@@ -145,6 +151,6 @@ probe(`markSectorTowersDown(1);markStoryBeat('L1_TOWN');triggerGateAmbush(5400,f
   var relayCaptureScore=score,relayCaptureKills=totalKills;
   for(const b of buildings)if(b.isTower&&b.outpostFortId==='OUTPOST')b.hp=0;
   checkOutpostCaptured();checkAmbushCleared();`);
-ok(P('nm0AmbushKills===0&&window.ambushSpawnsRemaining===0&&!outpostFortState(1).musterOn'), 'live capture retires the native gate reserve instead of leaving an empty mixed battle');
+ok(P('nm0AmbushKills===300&&window.ambushSpawnsRemaining===240&&outpostFortState(1).musterOn&&!outpostFortState(1).captured'), 'live tower collapse preserves both gate battles and their reserves until cleared');
 ok(P('score===relayCaptureScore&&totalKills===relayCaptureKills'), 'retreating native reserves award no kills or score');
 console.log(checks + ' relay territory checks passed');

@@ -1,6 +1,6 @@
 {
   "baseline": "37dfd722d2524a1810851ffc62905b3aa1d655a4",
-  "description": "Reviewed source changes authorized for Level 1 territory and independent relay fortresses. Previous hashes include the existing authorized frontline and batch edits. All other source guards remain exact.",
+  "description": "Reviewed source changes authorized for territory, independent relay fortresses and deferred fort survivor awards. Previous hashes include the existing authorized frontline and batch edits. All other source guards remain exact.",
   "functions": {
     "shovelSurfaceSoftAt": {
       "reason": "Reserve the successor compound ground using the same fort surface rule.",
@@ -13,9 +13,9 @@
       "current": "301fdd4a526c7a9ad42d32e43c789385a395478755581128d0ad5fd8ebfb753c"
     },
     "processKill": {
-      "reason": "Debit the killed actor's fort and refill its waves without consuming a different battle's counters.",
+      "reason": "Debit the victim's fort muster and record pending garrison casualties exactly once before the friendly early return.",
       "previous": "d51d3d48ad10d87937ae3911f25f15c2be3cf6d3b4719ebc041751351a1ce136",
-      "current": "c5c25faacf5011ab32dc17a70dbcdf75dd752af4a2e392f38c8eaf4fdbdb1227"
+      "current": "c8bc0ff8b04320d831ecd732127617140f3e091db7004af277b20b45244b934d"
     },
     "updateEntities": {
       "reason": "Keep regular civilians on captured ground during a remote relay battle.",
@@ -53,9 +53,9 @@
       "current": "aee0cf1c523f8fc12aef1ff860662105df421fe946ef5ffb9b33dfd709a2da7f"
     },
     "outpostFortState": {
-      "reason": "Keep the legacy primary save key and give RELAY_SW a separate persistent record.",
+      "reason": "Keep legacy and independent fort keys, pending liberation/cohort state, and a persistent one-time award latch; old captured records stay paid.",
       "previous": "b3c95dc4f8dbca909bbb8b424e27e13c0a3aad932f32aced9684ceb082fbc7ee",
-      "current": "4f7a02192bc5bb55d297c8ac686185b531e4a5f565c7c2e7e4787b0ca4399e33"
+      "current": "002d18d07fa11769dd1e2c306903076481ce2fc4adf6eba560cc2bd7c0b91eac"
     },
     "activeFortMuster": {
       "reason": "Select a live fort from the unlocked relay definitions.",

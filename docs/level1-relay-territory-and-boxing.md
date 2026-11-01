@@ -33,6 +33,12 @@ save records. Capturing it extends the protected connection and releases its
 civilian exclusion area. Existing primary fort saves retain their numeric key;
 the successor uses `outpostForts['1:RELAY_SW']`. Other biomes keep one fort.
 
+Masts down first frees its guards to help fight. Ownership, territory expansion
+and the Directive wait for the gate ambush to clear. The fort's saved pending
+cohort loses members to casualties; only its survivors are awarded once after
+the battle. Its reserves continue throughout the fight. Existing army and
+department assignments remain separate from this new cohort.
+
 ## Eight Count boxing club
 
 The city boxing doorway unlocks after ownership of the starting fortress and
@@ -78,7 +84,7 @@ next visit; the club unlock follows the saved fortress ownership.
 
 ## Validation
 
-`node tools/check-relay-territory.js` covers 57 progression, territory, spawning,
+`node tools/check-relay-territory.js` covers 60 progression, territory, spawning,
 independent persistence and mixed-battle checks. `node tools/check-city-boxing-club.js`
 covers 153 entry, real keyboard/gamepad/touch dispatch, native contact, eight
 sequential rounds, knockouts, pause, exit and exact equipment restoration checks.
@@ -87,6 +93,13 @@ knockouts exercise progression rather than claiming a complete playthrough.
 `node tools/check-club-walking-art.js` covers 18 native painter, jetpack
 ownership and interior/exterior hip-cache checks, including all four walking
 directions and the return outside.
+
+`node tools/check-fort-capture-survivors.js` checks 36 deferred-award, casualty,
+save/load, travel, gender, independent-fort and legacy-save cases. The native
+p5 browser check `tools/check-fort-capture-browser.js` runs the actual killcam
+draw and final cutscene tap: all 150 enemies must clear; seven losses from the
+50 freed guards produce exactly 43 new citizens, with no early Directive or
+duplicate award after reload. This is a staged regression, not a combat playthrough.
 
 `node tools/visual-city-boxing-club.js` checks the actual city world/HUD entry
 and 399 club frames in Chromium with p5 1.9.0, portrait 390×844 and landscape

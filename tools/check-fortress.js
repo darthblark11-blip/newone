@@ -529,10 +529,10 @@ console.log('\n== the liberation beat ==');
   ok('but the beat waits while the muster is still shooting',
      P('inFortCutscene') === false && P('!!outpostFortState(1).cutscenePending') === true);
   ok('and taking the fort does not switch its muster off under the sector\'s gate',
-     P('outpostFortState(1).musterOn') === true && P('outpostFortState(1).musterWaves') === 0,
+     P('outpostFortState(1).musterOn') === true && P('outpostFortState(1).musterWaves') === 120,
      'waves ' + P('outpostFortState(1).musterWaves') + ', on ' + P('outpostFortState(1).musterOn'));
 
-  probe('enemiesList = enemiesList.filter(e => e.isFriendly || e.isOutpostGarrison || e.isPopulation);');
+  probe('enemiesList = enemiesList.filter(e => e.isFriendly || e.isOutpostGarrison || e.isPopulation);window.ambushSpawnsRemaining=0;outpostFortState(1).musterWaves=0;');
   probe('checkAmbushCleared();');
   ok('clearing the field hands the beat to the killcam, tagged as the FORT\'s',
      P('killcamMode') === true && P('!!window.fortMusterJustCleared') === true &&
@@ -546,6 +546,7 @@ console.log('\n== the liberation beat ==');
   flushTimers();
   probe('player.x = outpostFortDef(1).x; player.y = outpostFortDef(1).y + 300; frameCount = 30; maintainOutpostGarrison();');
   probe(`enemiesList = enemiesList.filter(e => e.isFriendly || e.isOutpostGarrison || e.isPopulation);
+         window.ambushSpawnsRemaining=0;outpostFortState(1).musterWaves=0;
          checkAmbushCleared(); killcamMode = false; window.fortMusterJustCleared = false; nm0AmbushActive = false;`);
   probe('for (const b of buildings) if (b.isTower && b.isOutpost) b.hp = 0; checkOutpostCaptured();');
 
@@ -643,12 +644,15 @@ ok('and none of them is the fort\'s', P('sectorTowers().filter(b=>b.isOutpost).l
 ok('the sector\'s objective is untouched by any of this',
    P('!window.towersDefeated') && P('sectorTowers().filter(b=>b.hp>0).length') === 2);
 
-// Taking the fort now runs its liberation beat, which ends in the Directive --
-// and that pays the SECTOR's one-time survivor grant as well. Spend that latch
-// first so what is measured here is the fort's own contribution and nothing else.
+// This contribution belongs only to the fort; the sector grant stays separate.
 probe('grantSectorSurvivors(1); markStoryBeat("FORT_1");');
 const before = P('sectorPopSum(sectorLedger(POP_POOL))');
+probe('triggerOutpostAmbush(outpostFortDef(1));');
 probe('for (const b of buildings) if (b.isTower && b.isOutpost) b.hp = 0; checkOutpostCaptured();');
+ok('masts free the garrison without paying before the gate fight ends', P('outpostFortState(1).freed&&!outpostFortState(1).captured') && P('sectorPopSum(sectorLedger(POP_POOL))') === before);
+probe(`enemiesList=enemiesList.filter(e=>e.isFriendly||e.isOutpostGarrison||e.isPopulation);
+  window.ambushSpawnsRemaining=0;outpostFortState(1).musterWaves=0;nm0AmbushKills=0;
+  checkAmbushCleared();killcamMode=false;nm0AmbushActive=false;checkOutpostCaptured();`);
 ok('dropping both masts takes the fort', P('outpostFortState(1).captured') === true);
 const allies = P('enemiesList.filter(e=>e.isOutpostGarrison && e.isFriendly).length');
 ok('the garrison changes sides', allies === g0 - 3, allies + ' of ' + (g0 - 3));

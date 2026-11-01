@@ -160,21 +160,25 @@ probe(`enemiesList=[];chunkPop.clear();popLosses.clear();window.savedSettlementR
   refreshPopulation(ownedMgr,0,0);settlementRoster=savedSettlementRoster;`);
 ok(P('enemiesList.length===1&&enemiesList[0].isFriendly'), 'streamed checkpoint hostiles are rejected without losing neutral residents');
 
-// The outpost's canceled waves are removed from its remaining battle count.
+// Masts free the defenders, while the gate's full battle remains outstanding.
 fresh();
 probe(`player.x=7200;player.y=10800;triggerOutpostAmbush(outpostFortDef(1));
   window.liveMuster=enemiesList.filter(e=>e.isAmbush).length;
   for(const b of buildings)if(b.isTower&&b.isOutpost)b.hp=0;checkOutpostCaptured();`);
-ok(P('outpostFortState(1).captured&&outpostFortState(1).musterWaves===0'), 'capture cancels its reinforcement order');
-ok(P('outpostFortState(1).musterLeft===liveMuster&&nm0AmbushKills===liveMuster'), 'canceled waves cannot leave a phantom battle counter');
-probe('window.musterBodies=enemiesList.length;outpostFortState(1).musterWaves=5;');
-ok(!P('spawnFortWave()') && P('enemiesList.length===musterBodies'), 'even a stale wave budget cannot spawn in a captured fortress');
+ok(P('outpostFortState(1).freed&&!outpostFortState(1).captured&&outpostFortState(1).musterWaves===120'), 'masts leave the complete reinforcement order active');
+ok(P('outpostFortState(1).musterLeft===150&&nm0AmbushKills===150'), 'freeing the yard preserves every enemy still owed');
+probe('window.musterBodies=enemiesList.length;');
+ok(P('spawnFortWave()') && P('enemiesList.length===musterBodies+1'), 'the pending fort continues receiving its gate reinforcements');
+probe('window.musterBodies=enemiesList.length;');
 probe('triggerOutpostAmbush(outpostFortDef(1));frameCount=30;maintainOutpostGarrison();');
-ok(P('enemiesList.length===musterBodies'), 'captured fortresses do not restart their muster or hostile garrison');
-probe(`enemiesList=[];window.ambushFort={x:7200,y:10800};window.ambushKind='GATE';
-  restoreFortMuster();`);
-ok(P('enemiesList.length===0&&outpostFortState(1).musterDone&&!outpostFortState(1).musterOn'), 'reloading a captured fort does not rematerialize its old hostiles');
-ok(P('!nm0AmbushActive&&window.fortMusterJustCleared'), 'captured-fort reload can finish its pending liberation beat');
+ok(P('enemiesList.length===musterBodies'), 'freed fortresses cannot restart their muster or hostile garrison');
+probe('saveGame();loadGame();');
+ok(P('outpostFortState(1).freed&&!outpostFortState(1).captured&&outpostFortState(1).musterOn'), 'reload preserves the freed but still-contested fort');
+ok(P('nm0AmbushActive&&enemiesList.filter(e=>e.isAmbush).length+outpostFortState(1).musterWaves===150'), 'reload reforms every outstanding enemy rather than completing the battle');
+probe(`enemiesList=enemiesList.filter(e=>e.isFriendly||e.isPopulation||e.isOutpostGarrison);window.ambushSpawnsRemaining=0;
+  outpostFortState(1).musterWaves=0;nm0AmbushKills=0;killcamMode=false;checkAmbushCleared();
+  nm0AmbushActive=false;killcamMode=false;checkOutpostCaptured();finishFortCapture();`);
+ok(P('outpostFortState(1).captured&&outpostFortState(1).rosterGranted'), 'only a completed gate battle finalizes the fort');
 
 // A separate ongoing sector fight must not be canceled by fort restoration.
 probe(`outpostFortState(1).musterOn=true;outpostFortState(1).musterLeft=8;
@@ -186,8 +190,8 @@ fresh();
 probe(`player.x=7200;player.y=10800;triggerOutpostAmbush(outpostFortDef(1));
   for(const b of buildings)if(b.isTower&&b.isOutpost)b.hp=0;
   checkOutpostCaptured();saveGame();enemiesList=[];loadGame();`);
-ok(P('outpostFortState(1).captured&&outpostFortState(1).musterDone&&!nm0AmbushActive'), 'a real captured-muster save/load settles the saved battle');
-ok(P('enemiesList.every(e=>e.isFriendly||!insideOwnedFortress(1,e.x,e.y))'), 'real reload does not resurrect hostile occupants of the captured fortress');
+ok(P('outpostFortState(1).freed&&!outpostFortState(1).captured&&outpostFortState(1).musterOn&&nm0AmbushActive'), 'a real pending-muster save/load keeps the saved battle active');
+ok(P('enemiesList.some(e=>e.isAmbush&&e.outpostFortId==="OUTPOST")'), 'real reload restores the outstanding enemy combatants');
 
 fresh(3, false);
 probe('outpostFortState(3).captured=true;player.x=outpostFortDef(3).x;player.y=outpostFortDef(3).y;');

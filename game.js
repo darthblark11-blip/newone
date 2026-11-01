@@ -8892,13 +8892,14 @@ function draw() {
             const _fst  = outpostFortState(currentBiome,_fdef);
             camX = player.x - (width / 2) / zoom;
             camY = player.y - (height / 2) / zoom;
-            if (_fst.captured) {
+            if (_fst.freed || _fst.captured) {
                 streakMsgText = (_fdef ? _fdef.name : "FORT") + " SECURED";
                 streakMsgTimer = 180;
                 // The masts came down while the muster was still shooting, so
                 // its beat was deferred to here. Run it now; finishFortCapture()
                 // is its own last phase.
-                if (!startFortCutscene(_fdef)) finishFortCapture();
+                if (!_fst.captured) checkFortCaptured(_fdef);
+                else if (!startFortCutscene(_fdef)) finishFortCapture();
             } else {
                 streakMsgText = "YARD CLEARED — DROP THE MASTS";
                 streakMsgTimer = 180;
@@ -11880,7 +11881,7 @@ function storeWindowIntoLedger(id) {
 function sectorSurvivorCount(level) {
     const t = sectorLedger(level);
     if (t.popSeeded > 0) return Math.max(0, t.popSeeded - t.popKilled);
-    return enemiesList.filter(e => e && e.isFriendly && e.hp > 0 && !e.dead && !e.isMilitary && !e.isCityCivilian && !e.cityPersonKey && !frontierCivilianType(e.eType)).length;
+    return enemiesList.filter(e => e && e.isFriendly && e.hp > 0 && !e.dead && !e.isMilitary && !e.isOutpostGarrison && !e.isCityCivilian && !e.cityPersonKey && !frontierCivilianType(e.eType)).length;
 }
 
 // One grant per sector, ever. `popGranted` is the latch: re-entering a
@@ -11904,7 +11905,7 @@ function grantSectorSurvivors(level) {
     let f = 0;
     if (t.popSeeded > 0) f = (level === 2) ? n : 0;
     else {
-        const freed = enemiesList.filter(e => e && e.isFriendly && e.hp > 0 && !e.dead && !e.isMilitary && !e.isCityCivilian && !e.cityPersonKey && !frontierCivilianType(e.eType));
+        const freed = enemiesList.filter(e => e && e.isFriendly && e.hp > 0 && !e.dead && !e.isMilitary && !e.isOutpostGarrison && !e.isCityCivilian && !e.cityPersonKey && !frontierCivilianType(e.eType));
         const fem = freed.filter(e => String(e.eType || "").toUpperCase().indexOf("FEMALE") !== -1).length;
         f = Math.min(n, fem);
     }
@@ -26521,11 +26522,7 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
     // One of the fort's own. Counted here, as it happens, for the same reason
     // the sector's roster is: walking away and coming back must re-form the
     // ones the player spared and no more.
-    if (deadGuy && deadGuy.isOutpostGarrison && !deadGuy.isFriendly &&
-        typeof outpostFortState === 'function') {
-        const _fs = outpostFortState(currentBiome,deadGuy.outpostFortId);
-        if (_fs.garrison > 0) _fs.garrison--;
-    }
+    if (deadGuy && deadGuy.isOutpostGarrison) recordFortGarrisonDeath(deadGuy);
 
     // A machine is a pile of salvage the moment it stops working. Done here
     // rather than at any of the half-dozen places that splice a dead body out
@@ -32571,6 +32568,7 @@ function restoreCityBoxingEquipment(saved) {
 }
 
 function saveGame() {
+    bankFortRecruits();
     for(const e of enemiesList)bankCityPerson(e);
     const frontierExterior = frontierSaloonSavePlayer();
     let state = {
@@ -33129,6 +33127,7 @@ function loadGame() {
         // `if (window.towersDefeated)` and wipes every hostile on the field, so
         // a fort's muster has to be re-formed after it and outside it.
         restoreFortMuster();
+        restorePendingFortRecruits();
         // Outpost-only captures in later sectors do not set the main-city
         // towers flag. Their deployed residents still belong to the ledger.
         deployDirectivePopulation();
@@ -33255,6 +33254,11 @@ function restoreOneFortMuster(def) {
         st._legacyMuster = false;
     }
     if (!st.musterOn) return;
+
+    // Active bodies are not serialized. Re-form every outstanding enemy,
+    // including the original opening, instead of silently losing its count.
+    const live=enemiesList.filter(e=>e && e.isAmbush && e.outpostFortId===outpostFortId(def) && !e.dead && e.hp>0).length;
+    st.musterWaves=Math.max(0,st.musterLeft-live);
 
     nm0AmbushActive = true;
     window.ambushKind = "GATE";
@@ -37655,6 +37659,14 @@ function outpostFortState(biome, id = 'OUTPOST') {
   if (typeof s.musterLeft  !== 'number') s.musterLeft  = 0;
   if (typeof s.musterTotal !== 'number') s.musterTotal = 0;
   if (typeof s.musterWaves !== 'number') s.musterWaves = 0;
+  // Captured legacy forts have already paid their old immediate award.
+  // New liberations keep their own surviving cohort outside the departments.
+  if (typeof s.freed !== 'boolean') s.freed = !!s.captured;
+  if (typeof s.rosterGranted !== 'boolean') s.rosterGranted = !!s.captured;
+  if (!Array.isArray(s.pendingRecruits)) s.pendingRecruits = [];
+  // Old tower-only captures could already be paid and mid-cutscene without
+  // ever recording a muster. They must finish that saved scene without repaying.
+  if (s.captured && s.rosterGranted && !s.musterOn) s.musterDone = true;
   return s;
 }
 
@@ -38049,6 +38061,7 @@ function maintainOutpostGarrison() {
 }
 function maintainFortGarrison(def) {
   const st = outpostFortState(currentBiome, def);
+  if (st.freed && !st.rosterGranted) { restoreFortRecruits(def); return; }
   if (st.captured || st.garrison <= 0) return;
   const dx = player.x - def.x, dy = player.y - def.y;
   if (dx * dx + dy * dy > FORT_WAKE_R * FORT_WAKE_R) return;
@@ -38083,6 +38096,7 @@ function maintainFortGarrison(def) {
 
 // The towers are this fort's leash exactly as the sector's are the sector's.
 function recruitOutpostGarrison(def = outpostFortDef(currentBiome)) {
+  const st=outpostFortState(currentBiome,def);
   let n = 0, f = 0;
   for (const e of enemiesList) {
     if (!e || !e.isOutpostGarrison || !outpostFortMatches(e,def) || e.isFriendly || e.dead || e.hp <= 0) continue;
@@ -38092,14 +38106,70 @@ function recruitOutpostGarrison(def = outpostFortDef(currentBiome)) {
     e.state      = "IDLE";
     e.hp         = 300;
     e.loseSightTimer = 0;
+    if (!st.rosterGranted) {
+      const female=e.eType==='NM0_ROOKIE_F'||String(e.eType).toUpperCase().includes('FEMALE');
+      const id=st.pendingRecruits.length;
+      e.fortRecruitId=id;
+      st.pendingRecruits.push({id,type:e.eType,female,hp:e.hp,x:e.x,y:e.y});
+    }
     n++;
     if (e.eType === "NM0_ROOKIE_F" || String(e.eType).toUpperCase().indexOf("FEMALE") !== -1) f++;
   }
   return { total: n, female: f, male: n - f };
 }
 
-// Called every frame the fort's towers can be shot at. One shot: the moment the
-// second mast falls, the yard changes sides and the door stays open for good.
+function recordFortGarrisonDeath(actor) {
+  if (!actor || actor.outpostGarrisonDeathCounted) return;
+  const st=outpostFortState(currentBiome,actor.outpostFortId);
+  if (!actor.isFriendly) st.garrison=Math.max(0,st.garrison-1);
+  else if (!st.rosterGranted && Number.isInteger(actor.fortRecruitId)) {
+    const index=st.pendingRecruits.findIndex(r=>r.id===actor.fortRecruitId);
+    if (index>=0) st.pendingRecruits.splice(index,1);
+    st.garrison=st.pendingRecruits.length;
+  }
+  actor.outpostGarrisonDeathCounted=true;
+}
+function bankFortRecruits(biome=currentBiome) {
+  for (const e of enemiesList) {
+    if (!e || !e.isOutpostGarrison || !Number.isInteger(e.fortRecruitId)) continue;
+    const st=outpostFortState(biome,e.outpostFortId);
+    if (st.rosterGranted) continue;
+    if (e.dead || e.hp<=0) { recordFortGarrisonDeath(e); continue; }
+    const record=st.pendingRecruits.find(r=>r.id===e.fortRecruitId);
+    if (record) { record.hp=e.hp;record.x=e.x;record.y=e.y; }
+  }
+}
+function restoreFortRecruits(def) {
+  const st=outpostFortState(currentBiome,def);
+  if (!st.freed || st.rosterGranted || !st.pendingRecruits.length) return;
+  const present=new Set();
+  for (const e of enemiesList)
+    if (e && e.isOutpostGarrison && outpostFortMatches(e,def) && !e.dead && e.hp>0)
+      present.add(e.fortRecruitId);
+  for (const record of st.pendingRecruits) {
+    if (present.has(record.id)) continue;
+    const e=new Character(record.x,record.y,false,record.type);
+    Object.assign(e,{isOutpostGarrison:true,outpostFortId:outpostFortId(def),fortRecruitId:record.id,
+      isFriendly:true,isNeutral:false,isRecruit:true,state:'IDLE',hp:record.hp});
+    enemiesList.push(e);
+  }
+}
+function restorePendingFortRecruits() {
+  for (const def of outpostFortDefs(currentBiome)) restoreFortRecruits(def);
+}
+function grantFreedFortSurvivors(def) {
+  const st=outpostFortState(currentBiome,def);
+  if (!st.captured || !st.musterDone || st.musterOn || nm0AmbushActive || st.rosterGranted) return 0;
+  bankFortRecruits();
+  const female=st.pendingRecruits.filter(r=>r.female).length,total=st.pendingRecruits.length;
+  st.rosterGranted=true;st.pendingRecruits=[];st.garrison=0;
+  if (total) grantCitizens(POP_POOL,total-female,female);
+  globalPopulation=globalPopulationCount();
+  return total;
+}
+
+// Masts free the cohort once. Ownership and the Directive wait for its gate's
+// complete muster; mast destruction does not cancel or clear that battle.
 function checkOutpostCaptured() {
   for (const def of outpostFortDefs(currentBiome)) checkFortCaptured(def);
   if (!nm0AmbushActive && !inFortCutscene && !inWorldBuildingMenu && !killcamMode) {
@@ -38110,47 +38180,31 @@ function checkOutpostCaptured() {
 function checkFortCaptured(def) {
   const st = outpostFortState(currentBiome, def);
   if (st.captured) return;
-  let any = false, standing = 0;
-  for (const b of buildings) {
-    if (!b.isTower || !b.isOutpost || !outpostFortMatches(b,def)) continue;
-    any = true;
-    if (b.hp > 0) standing++;
-    if (b.fortIdx === 0 || b.fortIdx === 1) st.towerHp[b.fortIdx] = Math.max(0, b.hp);
+  if (!st.freed) {
+    let any = false, standing = 0;
+    for (const b of buildings) {
+      if (!b.isTower || !b.isOutpost || !outpostFortMatches(b,def)) continue;
+      any = true;
+      if (b.hp > 0) standing++;
+      if (b.fortIdx === 0 || b.fortIdx === 1) st.towerHp[b.fortIdx] = Math.max(0, b.hp);
+    }
+    if (!any || standing > 0) return;
+    st.freed=true;
+    const got = recruitOutpostGarrison(def);
+    st.garrison=got.total;
+    st.cutscenePending=true;
+    streakMsgText = got.total > 0
+      ? (def.name + " — " + got.total + " ALLIES FREED. CLEAR THE NM-0 AMBUSH")
+      : (def.name + " — CLEAR THE NM-0 AMBUSH");
+    streakMsgTimer = 220;
+    screenShake = 30;
   }
-  if (!any || standing > 0) return;
-
-  st.captured = true;
-  st.breached = true;
-  st.gateHp = 0;
-  // Taking the compound calls off NM-0's reinforcements, but it does not make
-  // the bodies already on the field vanish -- and musterOn is what keeps the
-  // conscription tick running and what stops a fort's fight holding the CITY'S
-  // gate shut. Switch it off here and the sector's gate slams for as long as
-  // the last of the muster is still shooting. Let the fight end where every
-  // other fight ends: checkAmbushCleared().
-  const canceledWaves = Math.min(st.musterLeft, Math.max(0, st.musterWaves));
-  st.musterLeft = Math.max(0, st.musterLeft - canceledWaves);
-  st.musterTotal = Math.max(st.musterLeft, st.musterTotal - canceledWaves);
-  st.musterWaves = 0;
-  if (st.musterOn) {
-    nm0AmbushKills = Math.max(0, nm0AmbushKills - canceledWaves);
-    window.ambushKillsTotal = Math.max(nm0AmbushKills, (window.ambushKillsTotal || 0) - canceledWaves);
-    window.ambushSpawnsRemaining = Math.max(0, (window.ambushSpawnsRemaining || 0) - canceledWaves);
-  }
-  const got = recruitOutpostGarrison(def);
-  st.garrison = 0;
-  if (currentBiome === 1) pushHostilesOutsideCityTerritory();
-  // They join the Directive the same way the sector's survivors do: as integers
-  // in the undivided pool, never as a headcount of who is standing here.
-  if (got.total > 0 && typeof grantCitizens === 'function') {
-    grantCitizens(POP_POOL, got.male, got.female);
-    if (typeof globalPopulation !== 'undefined') globalPopulation = globalPopulationCount();
-  }
-  streakMsgText = got.total > 0
-    ? (def.name + " TAKEN — " + got.total + " FREED")
-    : (def.name + " TAKEN");
-  streakMsgTimer = 220;
-  screenShake = 30;
+  // Dropping the masts changes allegiance, not the ambush budget or ownership.
+  // The gate's complete muster must be beaten before any Directive reward.
+  if (!st.musterDone || st.musterOn || nm0AmbushActive) return;
+  st.captured=true;st.breached=true;st.gateHp=0;
+  streakMsgText=def.name+' SECURED';streakMsgTimer=220;
+  if (currentBiome===1) pushHostilesOutsideCityTerritory();
   // The next landmark joins the manager by identity. Its permanent reservation
   // was already clear, so existing chunk destruction records stay untouched.
   if (currentBiome === 1 && outpostFortId(def) === 'OUTPOST' && chunkMgr &&
@@ -38181,12 +38235,10 @@ function checkFortCaptured(def) {
 // ---------------------------------------------------------------------------
 function startFortCutscene(def) {
   if (!def) return false;
+  const st=outpostFortState(currentBiome,def);
+  if (!st.captured || !st.musterDone || st.musterOn || nm0AmbushActive) { st.cutscenePending=true;return false; }
   window.fortCutsceneId = outpostFortId(def);
   if (storyBeatDone(outpostFortStoryBeat(def))) { finishFortCapture(); return false; }
-  // Not while the muster is still shooting. Dropping the masts mid-fight is a
-  // legitimate way to take the fort; the beat waits for the field, the same way
-  // the sector's tower cutscene waits on !nm0AmbushActive.
-  if (nm0AmbushActive) { outpostFortState(currentBiome,def).cutscenePending = true; return false; }
   outpostFortState(currentBiome,def).cutscenePending = false;
 
   // The speakers are the fort's OWN freed garrison, standing in its yard --
@@ -38212,17 +38264,20 @@ function startFortCutscene(def) {
   return true;
 }
 
-// Where the fort's loop ends, and the only place it ends: the Directive, then
-// the overworld -- exactly what a sector does. The freed regulars were already
-// paid into the undivided pool by checkOutpostCaptured(), so they are sitting
-// in UNASSIGNED waiting to be given a department.
+// The gate ambush must be over before this final, one-time survivor award.
+// Only this fort's saved cohort joins UNASSIGNED; existing armies stay put.
 function finishFortCapture() {
+  const def=outpostFortDef(currentBiome,window.fortCutsceneId);
+  const st=outpostFortState(currentBiome,def);
+  if (!st.captured || !st.musterDone || st.musterOn || nm0AmbushActive) return false;
   inFortCutscene = false;
   fortPhase = 0;
-  const def=outpostFortDef(currentBiome,window.fortCutsceneId);
   outpostFortState(currentBiome,def).cutscenePending=false;
+  grantFreedFortSurvivors(def);
   markStoryBeat(outpostFortStoryBeat(def));
-  openDirectiveWithGrant(currentLevel);
+  invalidateDirectiveBuffer();
+  openSectorDirective(currentLevel);
+  loadLedgerIntoWindow(POP_POOL);
   // An established sector's Directive goes straight to the overworld map. That
   // is right after a travel arrival and wrong here -- the whole point of taking
   // the fort is the people it freed, and they need posting. Show the assign
@@ -57943,6 +57998,7 @@ function getSafeSpawn(away) {
 
 // -- Level entry ------------------------------------------------------------
 function startAtLevel(lvl, isLoading = false) {
+  if (!isLoading) bankFortRecruits();
   resetSwordHitFeedback();
   resetStreetThugEncounters();resetCityStreetInputs();
   if(!isLoading&&lvl!==currentLevel)for(const e of enemiesList)bankFrontierPerson(e);
@@ -58066,6 +58122,7 @@ function startAtLevel(lvl, isLoading = false) {
   }
 
   ensureCityRookiePatrols();
+  if (!isLoading) { restoreFortMuster();restorePendingFortRecruits(); }
   // Rebuild the local department view after geometry and escorts are placed.
   // Interior entry clears it; returning outside restores residents from ledgers.
   if(!isLoading)deployDirectivePopulation();
