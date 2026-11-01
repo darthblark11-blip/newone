@@ -7,6 +7,12 @@ many ordinary hostile gunners can shoot at the player in a large crowd; it is
 not a behavior-identical rendering optimization. Fewer incoming shots can make
 these encounters easier.
 
+The coordinator and its native firing hooks apply across levels; Level 2 was
+only the profiling fixture. `tools/check-nm0-global-policy.js` additionally
+exercises actual 40-gunner firing in every overworld sector (1–7), confirming
+the same 24 firing owners and unrestricted allies. No level-specific toggle
+or second reduction is needed.
+
 When more than 32 eligible gunners within 700 units have cached sight of the
 player, a shared coordinator selects up to 24 firing owners. It first keeps
 the nearest gunner in each occupied direction, then fills the remaining slots

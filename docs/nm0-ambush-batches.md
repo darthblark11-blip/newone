@@ -5,6 +5,12 @@ reserve. Mission kill targets, spawn locations, per-enemy behavior and the
 existing reinforcement delays remain unchanged. The p5 1.9.0 rendering fix
 and hostile firing coordinator remain active; allied firing is unrestricted.
 
+These settings are global, including every sector's tower/gate entry points,
+Level 4's Grey Fatigue encounter, all overworld relay forts and Level 1's new
+southwest relay. Level 2 was the profiling scene, not a runtime restriction.
+The smaller openings, reserve accounting and fort refill cadence must not be
+reduced a second time when applying this policy to another level.
+
 | Spawn | Before | After | Counted reserves after opening |
 | --- | ---: | ---: | ---: |
 | Tower ambush, both flanks combined | 100 | 60 | 240 toward the same 300-kill target |
@@ -37,6 +43,12 @@ of 60, or exceed the remaining kill count near the end of a fight.
 
 Validation passed:
 
+- `node tools/check-nm0-global-policy.js`: 100 cross-level checks exercise
+  native tower and north/south gate entry points, relay openings and all five
+  refill phases across sectors 1–7. Actual crowded pistol firing emits 24
+  projectiles per sector; allies remain unrestricted. The separate Grey
+  opening retains its authored unit type and reserve count. This verifies
+  the existing rollout without changing runtime code or claiming new FPS.
 - 56 native batch checks: openings, merges, ally tagging, reserve conservation,
   complete kill/reserve drains, blocked fort stations, refill timing and
   reload counts for 0, 1, 2, 7, 59, 60, 61, 150 and 300 remaining kills.
