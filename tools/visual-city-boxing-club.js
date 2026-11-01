@@ -22,7 +22,7 @@ fs.mkdirSync(out, {recursive:true});
       '<script>'+p5+'</script><script>'+source+'</script><script>preload=function(){};'+
       'setup=function(){createCanvas(390,844);pixelDensity(2);noLoop();window.__ready=true;};</script>');
     await page.waitForFunction('__ready');
-    const entry = await page.evaluate(() => {
+    const exterior = await page.evaluate(() => {
       resetRunState();currentLevel=currentBiome=1;BIOME_ACTIVE=true;started=doTick=true;isStoryMode=false;
       isPaused=isDead=isWin=killcamMode=false;
       inStoryIntro=inStoryRoom=inTownCutscene=inFortCutscene=inPostAmbushCutscene=false;
@@ -31,9 +31,12 @@ fs.mkdirSync(out, {recursive:true});
       window.isDesktop=false;window.showOnScreenControls=true;
       jetpackUnlocked=chemistSuitUnlocked=ninjaSuitUnlocked=explosiveArmorUnlocked=cowboySuitEquipped=false;
       townsData={1:{towersDown:true}};outpostFortState(1).captured=true;
+      // Liberation leaves the live world in this zoomed-out mode. It must not
+      // suppress the gym prompt as if it were a modal map screen.
+      inOverworldView=true;zoom=.45;
       const chunk=generateChunkContent(1,3,9),site=chunk.solid.find(b=>b.cityVenue==='BOXING'&&!b.cityVenueSecondary);
       buildings=activeBuildings=chunk.solid;parkingCars=activeParkingCars=[];barrels=[];enemiesList=[];invalidateColIndex();
-      player=new Character(site.cityEntrance.x,site.cityEntrance.y,true);
+      player=new Character(site.x,site.y+site.cityEntrance.face*(site.h/2+300),true);
       player.isArmed=true;player.currentWeapon=WEAPONS.ASSAULT_RIFLE;
       leftStick={active:false,dx:0,dy:0,base:{x:80,y:height-160}};
       rightStick={active:false,dx:0,dy:0,dist:0,base:{x:width-80,y:height-110}};
@@ -43,7 +46,36 @@ fs.mkdirSync(out, {recursive:true});
       deltaTime=16.67;draw();
       const worldPrompt=!!(_frontierSaloonPrompt&&_frontierSaloonPrompt.kind==='CITY_BOXING'&&_frontierSaloonPrompt.unlocked);
       const worldFault=window.FRAME_FAULT||null;
-      const entered=interactFrontierSaloonActivity();
+      window.__clubExterior={site,solids:chunk.solid,x:player.x,y:player.y};
+      return {worldPrompt,worldFault,marker:cityBoxingClubMarker(),venue:site.cityVenueName};
+    });
+    assert.equal(exterior.worldPrompt,true);assert.equal(exterior.worldFault,null);assert.ok(exterior.marker);
+    await page.locator('canvas').first().screenshot({path:path.join(out,'club-exterior-entry-portrait.png')});
+    await page.setViewportSize({width:844,height:390});
+    const landscapeEntry = await page.evaluate(() => {
+      resizeCanvas(844,390);leftStick.base={x:80,y:height-160};rightStick.base={x:width-80,y:height-110};
+      camX=player.x-width/(2*zoom);camY=player.y-height/(2*zoom);doTick=true;draw();
+      return {button:frontierSaloonButtons()[0],fault:window.FRAME_FAULT||null};
+    });
+    assert.ok(landscapeEntry.button);assert.equal(landscapeEntry.fault,null);
+    await page.locator('canvas').first().screenshot({path:path.join(out,'club-exterior-entry-landscape.png')});
+    await page.setViewportSize({width:390,height:844});
+    const distant = await page.evaluate(() => {
+      resizeCanvas(390,844);leftStick.base={x:80,y:height-160};rightStick.base={x:width-80,y:height-110};
+      buildings=activeBuildings=[];invalidateColIndex();player.x=600;player.y=600;
+      camX=player.x-width/(2*zoom);camY=player.y-height/(2*zoom);doTick=true;draw();
+      return {marker:cityBoxingClubMarker(),prompt:_frontierSaloonPrompt,fault:window.FRAME_FAULT||null};
+    });
+    assert.equal(distant.marker.edge,true);assert.equal(distant.prompt,null);assert.equal(distant.fault,null);
+    await page.locator('canvas').first().screenshot({path:path.join(out,'club-distant-marker-portrait.png')});
+    const entry = await page.evaluate(() => {
+      buildings=activeBuildings=__clubExterior.solids;invalidateColIndex();
+      player.x=__clubExterior.x;player.y=__clubExterior.y;
+      camX=player.x-width/(2*zoom);camY=player.y-height/(2*zoom);doTick=true;draw();
+      const b=frontierSaloonButtons().find(b=>b.action==='INTERACT');
+      mouseX=b.x+b.w/2;mouseY=b.y+b.h/2;mouseButton=LEFT;
+      touchStarted();
+      const entered=frontierSaloonIsInside()&&_frontierSaloonSession.venue==='CITY_BOXING';
       window.__clubPaint={depth:0,minDepth:0,frames:0};
       const savedPush=window.push,savedPop=window.pop;
       window.push=function(...args){__clubPaint.depth++;return savedPush(...args);};
@@ -52,10 +84,9 @@ fs.mkdirSync(out, {recursive:true});
         for(let i=0;i<frames;i++){deltaTime=16.67;frameCount++;updateFrontierSaloonActivity();drawFrontierSaloonScene();__clubPaint.frames++;}
         return {...__clubPaint,fault:window.FRAME_FAULT||null};
       };
-      __clubFrame();return {entered,worldPrompt,worldFault,venue:site.cityVenueName,...__clubPaint};
+      __clubFrame();return {entered,venue:__clubExterior.site.cityVenueName,...__clubPaint};
     });
     assert.equal(entry.entered,true);assert.match(entry.venue,/EIGHT COUNT/);
-    assert.equal(entry.worldPrompt,true);assert.equal(entry.worldFault,null);
     assert.equal(entry.depth,0);assert.equal(entry.minDepth,0);
     await page.locator('canvas').first().screenshot({path:path.join(out,'club-entry-portrait.png')});
     // A review-only wide framing shows the full native room painter, including
@@ -98,7 +129,7 @@ fs.mkdirSync(out, {recursive:true});
     assert.equal(knockout.depth,0);assert.equal(knockout.minDepth,0);assert.equal(knockout.fault,null);
     await page.locator('canvas').first().screenshot({path:path.join(out,'club-knockout-landscape.png')});
     assert.deepEqual(errors,[]);
-    fs.writeFileSync(path.join(out,'review.json'),JSON.stringify({entry,overview,bag,fight,landscape,knockout,errors},null,2));
+    fs.writeFileSync(path.join(out,'review.json'),JSON.stringify({exterior,landscapeEntry,distant,entry,overview,bag,fight,landscape,knockout,errors},null,2));
     console.log('Native city boxing club: entry, bags, portrait/landscape sparring and knockout pass browser/painter checks. Previews: '+out);
   } finally { await browser.close(); }
 })().catch(e=>{console.error(e.stack||e);process.exit(1);});

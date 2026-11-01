@@ -48,6 +48,7 @@ check('clubMissingPlayer===null', 'An absent player cannot resolve a city entran
 check('clubSite&&/EIGHT COUNT/.test(clubSite.cityVenueName)', 'The authored Eight Count exterior supplies a real entrance');
 check('!player.checkCol(player.x,player.y)', 'The generated entrance is on reachable exterior ground');
 check('cityBoxingClubInteraction()&&!cityBoxingClubInteraction().unlocked&&!enterCityBoxingClub(clubSite)', 'A new campaign sees the locked club and cannot enter');
+check('!cityBoxingClubMarker()', 'A locked campaign has no gym navigation marker');
 check('!enterFrontierSaloon()&&!enterFrontierSaloon("SALOON",clubSite)', 'Generic and direct scene entry cannot bypass the locked city doorway');
 run('updateFrontierSaloonActivity(false);');
 check('_frontierSaloonPrompt&&_frontierSaloonPrompt.kind==="CITY_BOXING"&&!_frontierSaloonPrompt.unlocked&&frontierSaloonButtons().some(b=>/LOCKED/.test(b.label))', 'The public city prompt identifies the locked club');
@@ -57,10 +58,62 @@ check('!_frontierSaloonPrompt', 'The old Copper Spur doorstep cannot show a Leve
 run('player.x=clubSite.cityEntrance.x;player.y=clubSite.cityEntrance.y;');
 run('markSectorTowersDown(1);');
 check('!cityBoxingClubUnlocked()&&!enterCityBoxingClub(clubSite)', 'Owning the starting fortress alone does not open the club');
+check('!cityBoxingClubMarker()', 'The gym marker waits for both original fortresses');
 run('outpostFortState(1,"RELAY_SW").captured=true;');
 check('!cityBoxingClubUnlocked()&&!enterCityBoxingClub(clubSite)', 'Capturing a later relay does not substitute for the primary NM-0 relay');
 run('outpostFortState(1).captured=true;');
 check('cityBoxingClubUnlocked()&&cityBoxingClubInteraction().unlocked', 'Owning both required fortresses opens Eight Count');
+check('cityBoxingClubMarker()&&cityBoxingClubDestination().x===clubSite.cityEntrance.x&&cityBoxingClubDestination().y===clubSite.cityEntrance.y', 'Unlocking adds a marker at the real Eight Count doorstep');
+run('var navBuildings=buildings;buildings=[];camX=camY=0;');
+check('cityBoxingClubMarker().edge&&buildings.length===0', 'The distant gym stays marked while its chunk is unloaded without adding world geometry');
+run('isPaused=true;');check('!cityBoxingClubMarker()', 'Pause hides world gym navigation');
+run('isPaused=false;buildings=navBuildings;');
+run('inOverworldView=true;updateFrontierSaloonActivity(false);');
+check('cityBoxingClubMarker()&&cityBoxingClubInteraction().unlocked&&frontierSaloonButtons().some(b=>b.action==="INTERACT")', 'Liberated overworld exploration keeps the gym marker and entry button available');
+button('INTERACT');
+check('frontierSaloonIsInside()&&inOverworldView', 'The real touch button enters from zoomed-out city exploration');
+run('exitFrontierSaloon();');
+check('inOverworldView&&player.x===clubSite.cityEntrance.x&&player.y===clubSite.cityEntrance.y', 'Leaving preserves the original exploration mode and position');
+run('inOverworldView=false;');
+
+// The reported missing button happened on the visible forecourt, farther than
+// the old 100-unit doorstep circle. Both mirrored venues use the same lane.
+for(const cx of [3,-4]){
+  run(`var approachChunk=generateChunkContent(1,${cx},9);
+    var approachGym=approachChunk.solid.find(b=>b.cityVenue==='BOXING'&&!b.cityVenueSecondary);
+    buildings=activeBuildings=approachChunk.solid;invalidateColIndex();
+    var approachFace=approachGym.cityEntrance.face;
+    player.x=approachGym.x;player.y=approachGym.y+approachFace*(approachGym.h/2+300);
+    var approachOutside={x:player.x,y:player.y};updateFrontierSaloonActivity(false);`);
+  check('!player.checkCol(player.x,player.y)&&cityBoxingClubInteraction().unlocked', 'The '+cx+' gym offers entry from its reachable central forecourt');
+  button('INTERACT');
+  check('frontierSaloonIsInside()&&!cityBoxingClubMarker()', 'The '+cx+' forecourt entry button opens the gym and hides its exterior marker');
+  run('exitFrontierSaloon();');
+  check('player.x===approachOutside.x&&player.y===approachOutside.y', 'Leaving returns to the exact forecourt entry position');
+  for(const [label,position] of [
+    ['side lane','player.x=approachGym.x+101;'],
+    ['interior footprint','player.x=approachGym.x;player.y=approachGym.y;'],
+    ['rear wall','player.x=approachGym.x;player.y=approachGym.y-approachFace*(approachGym.h/2+30);'],
+    ['distant courtyard','player.x=approachGym.x;player.y=approachGym.y+approachFace*(approachGym.h/2+441);']
+  ]){
+    run(position+'updateFrontierSaloonActivity(false);');
+    check('!cityBoxingClubInteraction()&&!enterCityBoxingClub(approachGym)&&!enterFrontierSaloon("SALOON",approachGym)', 'The '+cx+' '+label+' cannot enter through a wall or from outside the approach');
+  }
+}
+run('buildings=activeBuildings=clubChunk.solid;invalidateColIndex();player.x=clubSite.cityEntrance.x;player.y=clubSite.cityEntrance.y;updateFrontierSaloonActivity(false);');
+const priorSize={w:ctx.width,h:ctx.height};
+for(const [w,h] of [[390,844],[844,390]]){
+  ctx.width=w;ctx.height=h;
+  const layout=run('({button:frontierSaloonButtons()[0],aim:touchAimSilhouetteLayout(),stance:stanceTouchButton()})');
+  const b=layout.button,overlaps=r=>b.x<r.x+r.w&&b.x+b.w>r.x&&b.y<r.y+r.h&&b.y+b.h>r.y;
+  assert.ok(b.x>=0&&b.y>=0&&b.x+b.w<=w&&b.y+b.h<=h,'The entry button fits '+w+'×'+h);checks++;
+  assert.ok(!overlaps(layout.aim)&&!overlaps({...layout.stance,x:layout.stance.x-layout.stance.w/2,y:layout.stance.y-layout.stance.h/2}),'The entry button clears aiming and crouch controls at '+w+'×'+h);checks++;
+}
+ctx.width=390;ctx.height=844;
+run('var navView={zoom,camX,camY};zoom=.45;player.y=clubSite.y+clubSite.cityEntrance.face*(clubSite.h/2+300);camX=player.x-width/(2*zoom);camY=player.y-height/(2*zoom);updateFrontierSaloonActivity(false);');
+check('(()=>{const m=cityBoxingClubMarker(),b=frontierSaloonButtons()[0];return !m.edge&&(m.y+14<=b.y||m.y-14>=b.y+b.h||m.x+14<=b.x||m.x-14>=b.x+b.w);})()', 'The doorway pin stays visible above the entry button at liberated portrait zoom');
+run('zoom=navView.zoom;camX=navView.camX;camY=navView.camY;player.y=clubSite.cityEntrance.y;');
+ctx.width=priorSize.w;ctx.height=priorSize.h;
 run('player.x=clubSite.cityEntrance.x+200;');
 check('!enterCityBoxingClub(clubSite)&&!enterFrontierSaloon("SALOON",clubSite)', 'Unlocked entry still requires the real exterior doorstep');
 run('player.x=clubSite.cityEntrance.x;');
@@ -171,6 +224,7 @@ check('JSON.stringify(player.weaponAmmo)===clubOutside.ammo&&JSON.stringify(play
 run('loadGame();'); ready();
 check('!frontierSaloonIsInside()&&!boxingActive(player)&&player.x===clubOutside.x&&player.y===clubOutside.y&&player.currentWeapon===clubOutside.weapon&&meleeTool()==="SWORD"&&cowboySuitEquipped', 'Loading a club save resumes outside with original equipment and owned costume');
 check('!Object.hasOwn(player,"cityBoxingGloves")&&!Object.hasOwn(player,"cityBoxingGloveOz")', 'Loading resumes without temporary activity gloves');
+check('cityBoxingClubMarker()&&cityBoxingClubUnlocked()', 'Loading owned fortresses restores the unlocked gym marker');
 check('JSON.stringify(player.weaponAmmo)===clubOutside.ammo&&JSON.stringify(player.mags)===clubOutside.mags', 'Loading the activity snapshot retains exact nonfull ammo and reserves');
 check('player.mounted&&JSON.stringify([player.mountCoat.levels,player.mountMane.levels,player.mountSock,player.mountWalk])===clubOutside.horse', 'Loading the activity restores the exterior horse and its appearance');
 run(`buildings=clubChunk.solid;activeBuildings=buildings;invalidateColIndex();

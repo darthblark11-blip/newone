@@ -9666,6 +9666,7 @@ viewBottom = camY + height / zoom + shakePad;
       if (BIOME_ACTIVE && currentBiome === 2) drawForestHuntingHud();
       if (BIOME_ACTIVE && currentBiome === 1) {
         drawStreetThugHud();
+        drawCityBoxingClubMarker();
         drawFrontierSaloonHud();
       }
       if (BIOME_ACTIVE && currentBiome === 3) {
@@ -36147,8 +36148,7 @@ function drawCityVenueFacade(b,lx,ly,ax,ay,bx,by,len,panel) {
   }
   material(m.accent,.72);quad(...p3,...p2,...q2,...q3);
   material(m.trim,.82);quad(...p0,...p3,...q3,...point(u,.64,0));quad(...p1,...p2,...q2,...point(v,.64,0));
-  // The boxing entrance reads as a raised framed portal, ready for a future
-  // interior trigger without advertising a working door interaction today.
+  // The boxing entrance's framed portal faces the club's central forecourt.
   if(a===21){
     for(const side of[-1,1]){
       const c=.5+side*door*.76,du=.013;
@@ -55397,10 +55397,60 @@ const CITY_BOXING_CLUB_ROOM = { left: -630, right: 630, top: -440, bottom: 440,
   door: { x: 0, y: 424 }, entry: { x: 0, y: 390 }, trainer: { x: 0, y: 215 },
   fight: { x: 0, y: 60 } };
 const CITY_BOXING_CLUB_RING = { left: -250, right: 250, top: -260, bottom: 170, gate: 68 };
+let _cityBoxingClubDestination = null;
+function cityBoxingClubDestination() {
+  if (!_cityBoxingClubDestination) {
+    // Reuse the deterministic authored venue once. Navigation must keep its
+    // destination when streaming unloads the gym, without generating chunks.
+    const solids = [];
+    buildCityLeisureDistrict(solids, 3 * CHUNK_W, 9 * CHUNK_W, 22, () => false);
+    const site = solids.find(b => b.cityVenue === 'BOXING' && !b.cityVenueSecondary);
+    if (site) _cityBoxingClubDestination = { x: site.cityEntrance.x, y: site.cityEntrance.y, name: site.cityVenueName };
+  }
+  return _cityBoxingClubDestination;
+}
+function cityBoxingClubMarker() {
+  if (!cityBoxingClubContext() || isPaused || frontierSaloonIsInside() || !cityBoxingClubUnlocked()) return null;
+  const site = cityBoxingClubDestination();
+  if (!site) return null;
+  const sx = (site.x-camX)*zoom, sy = (site.y-camY)*zoom-12;
+  let x = Math.max(22,Math.min(width-22,sx)), y = Math.max(150,Math.min(height-70,sy));
+  const w = Math.min(210,width-24), edge = x!==sx || y!==sy;
+  const button = _frontierSaloonPrompt && _frontierSaloonPrompt.kind==='CITY_BOXING' ? frontierSaloonButtons()[0] : null;
+  if (!edge && button && x+14>button.x && x-14<button.x+button.w && y+14>button.y && y-14<button.y+button.h)
+    y=button.y-22;
+  // Distant navigation sits below the status HUD, clear of the aim silhouette
+  // and sticks. Once visible, the doorway itself gets the small "8" pin.
+  const labelX = width/2, labelY = height<500?112:146;
+  return { x: edge?labelX+w/2-17:x, y: edge?labelY+18:y, edge,
+    angle: Math.atan2(sy-height/2,sx-width/2), labelX, labelY, w,
+    metres: Math.floor(Math.hypot(player.x-site.x,player.y-site.y)/10) };
+}
+function drawCityBoxingClubMarker() {
+  const marker = cityBoxingClubMarker();
+  if (!marker) return;
+  const { x, y, labelX, labelY, w } = marker;
+  push();hudTextFont();textAlign(CENTER,CENTER);
+  if (marker.edge) {
+    stroke(108,231,221);strokeWeight(1.5);fill(18,40,44,235);
+    rect(labelX-w/2,labelY,w,36,6);
+    noStroke();fill(172,248,235);textSize(11);text('EIGHT COUNT BOXING',labelX-12,labelY+11);
+    fill(237,230,190);textSize(10);text(marker.metres+'m · BOXING GYM',labelX-12,labelY+26);
+    stroke(108,231,221);strokeWeight(2);fill(20,58,62,240);
+    translate(x,y);rotate(marker.angle);triangle(12,0,-8,-8,-8,8);
+  } else {
+    stroke(108,231,221);strokeWeight(2);fill(20,58,62,240);
+    line(x,y+12,x,y+24);ellipse(x,y,25,25);
+    noStroke();fill(215,255,241);textSize(15);text('8',x,y);
+  }
+  pop();
+}
 function cityBoxingClubContext() {
+  // Overworld view is live, zoomed-out city exploration after liberation.
+  // Keep the unlocked doorway available there as well as at normal zoom.
   return !!player && started && player.hp > 0 && !isDead && !isWin && currentLevel === 1 && BIOME_ACTIVE &&
     !killcamMode && !inTownCutscene && !inFarmCutscene && !inFarmPostCutscene && !inFortCutscene &&
-    !inPostAmbushCutscene && !inWorldBuildingMenu && !inOverworldView && !inTravelMenu &&
+    !inPostAmbushCutscene && !inWorldBuildingMenu && !inTravelMenu &&
     !inStoryIntro && !inDarchonCall;
 }
 function cityBoxingClubSites(building = null) {
@@ -55416,10 +55466,18 @@ function cityBoxingClubSites(building = null) {
   }
   return site ? { building: site, door: { x: site.cityEntrance.x, y: site.cityEntrance.y } } : null;
 }
+function cityBoxingClubApproach(site) {
+  if (!player || !site) return false;
+  const b = site.building, face = b.cityEntrance.face === -1 ? -1 : 1;
+  const outward = (player.y-(b.y+face*b.h/2))*face;
+  // The visible entrance opens onto this clear central lane. Keep the button
+  // available along its approach, but never through the rear or side walls.
+  return Math.abs(player.x-site.door.x)<=100 && outward>=15 && outward<=440;
+}
 function cityBoxingClubInteraction() {
   if (!cityBoxingClubContext() || isPaused || frontierSaloonIsInside()) return null;
   const site = cityBoxingClubSites();
-  if (!site || Math.hypot(player.x - site.door.x, player.y - site.door.y) > 100) return null;
+  if (!cityBoxingClubApproach(site)) return null;
   const unlocked = typeof cityBoxingClubUnlocked === 'function' && cityBoxingClubUnlocked();
   return { ...site, unlocked, label: unlocked ? 'ENTER EIGHT COUNT BOXING' : 'BOXING CLUB · OWN BOTH CITY FORTRESSES' };
 }
@@ -55427,7 +55485,7 @@ function enterCityBoxingClub(building = null) {
   const site = cityBoxingClubSites(building);
   if (!site || !cityBoxingClubContext() || isPaused || frontierSaloonIsInside() ||
       typeof cityBoxingClubUnlocked !== 'function' || !cityBoxingClubUnlocked() ||
-      Math.hypot(player.x - site.door.x, player.y - site.door.y) > 100) return false;
+      !cityBoxingClubApproach(site)) return false;
   return enterFrontierSaloon('SALOON', site.building);
 }
 function cityBoxingClubSetPlayerGloves(s, active) {
@@ -55849,7 +55907,7 @@ function enterFrontierSaloon(mode = 'SALOON', clubBuilding = null) {
     const site = cityBoxingClubSites(clubBuilding);
     if (!site || site.building !== clubBuilding ||
         typeof cityBoxingClubUnlocked !== 'function' || !cityBoxingClubUnlocked() ||
-        Math.hypot(player.x - site.door.x, player.y - site.door.y) > 100) return false;
+        !cityBoxingClubApproach(site)) return false;
   }
   if (!(clubBuilding ? cityBoxingClubContext() : frontierSaloonContext()) || isPaused || _frontierSaloonSession) return false;
   const save = { x: player.x, y: player.y, aimAngle: player.aimAngle, moveAngle: player.moveAngle,
@@ -56440,9 +56498,13 @@ function updateFrontierSaloonActivity(advanceTime = true) {
 }
 function frontierSaloonButtons() {
   const s = _frontierSaloonSession;
+  if (!s && _frontierSaloonPrompt && _frontierSaloonPrompt.kind === 'CITY_BOXING') {
+    const w = Math.min(220,width-32);
+    return [{ action: 'INTERACT', x: (width-w)/2, y: Math.max(152,height-324), w, h: 50,
+      label: _frontierSaloonPrompt.unlocked ? 'ENTER EIGHT COUNT BOXING' : 'BOXING CLUB · LOCKED' }];
+  }
   if (!s) return _frontierSaloonPrompt ? [{ action: 'INTERACT', x: width / 2 - 100, y: height - 125, w: 200, h: 50,
-    label: _frontierSaloonPrompt.kind === 'CITY_BOXING' ? _frontierSaloonPrompt.unlocked ? 'ENTER EIGHT COUNT BOXING' : 'BOXING CLUB · LOCKED' :
-      _frontierSaloonPrompt.kind === 'SALOON' ? 'ENTER COPPER SPUR' : 'CHALLENGE QUICKHAND' }] : [];
+    label: _frontierSaloonPrompt.kind === 'SALOON' ? 'ENTER COPPER SPUR' : 'CHALLENGE QUICKHAND' }] : [];
   if (isPaused && pauseSettingsOpen()) return pauseSettingsButtons();
   if (isPaused) return [
     { action: 'RESUME', label: 'RESUME', x: width / 2 - 115, y: height / 2 - 97, w: 230, h: 46 },
@@ -57131,8 +57193,9 @@ function drawFrontierSaloonHud() {
     if (isPaused && pauseSettingsOpen()) { drawPauseSettings(); pop(); return; }
   }
   if (!s && _frontierSaloonPrompt && _frontierSaloonPrompt.kind === 'CITY_BOXING' && !_frontierSaloonPrompt.unlocked) {
-    fill(30,38,41,235);noStroke();rect(width/2-Math.min(178,width/2-10),height-185,Math.min(356,width-20),46,6);
-    fill(236,215,167);textSize(Math.min(11,(width-30)/33));text('OWN BOTH CITY FORTRESSES TO ENTER',width/2,height-162);
+    const hintY = frontierSaloonButtons()[0].y-54;
+    fill(30,38,41,235);noStroke();rect(width/2-Math.min(178,width/2-10),hintY,Math.min(356,width-20),46,6);
+    fill(236,215,167);textSize(Math.min(11,(width-30)/33));text('OWN BOTH CITY FORTRESSES TO ENTER',width/2,hintY+23);
   }
   for (const b of frontierSaloonButtons()) {
     const selected = s && s.menu && s.menuChoice === b.action, fireCue = s && s.mode === 'DUEL' && s.duel.phase === 'DRAW' && b.action === 'FIRE';

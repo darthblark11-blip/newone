@@ -37,8 +37,16 @@ the successor uses `outpostForts['1:RELAY_SW']`. Other biomes keep one fort.
 
 The city boxing doorway unlocks after ownership of the starting fortress and
 original relay, without requiring the southwest relay. Enter at the real
-exterior doorstep with its touch button, **F**, or gamepad **A**. Carrying a
+exterior entrance with its touch button, **F**, or gamepad **A**. Carrying a
 shovel retains the existing F-to-dig binding; touch remains available.
+
+After unlocking, a teal direction/distance marker guides the player to Eight
+Count even when its block is unloaded. A small **8** pin marks the doorway once
+it is visible. **ENTER EIGHT COUNT BOXING** appears along the central paved
+forecourt, above the aim controls. Entry requires the front approach; side and
+rear walls do not grant access. The marker and button also work in the live,
+zoomed-out overworld view used after liberation, while the Directive and travel
+menus keep their normal input ownership.
 
 The private interior reuses the Copper Spur activity scene and native boxing
 controls. It contains a ring with a south gate, three heavy bags, lockers,
@@ -66,7 +74,7 @@ next visit; the club unlock follows the saved fortress ownership.
 
 `node tools/check-relay-territory.js` covers 57 progression, territory, spawning,
 independent persistence and mixed-battle checks. `node tools/check-city-boxing-club.js`
-covers 118 entry, real keyboard/gamepad/touch dispatch, native contact, eight
+covers 149 entry, real keyboard/gamepad/touch dispatch, native contact, eight
 sequential rounds, knockouts, pause, exit and exact equipment restoration checks.
 The first opponent is defeated through native E/guard input; later test
 knockouts exercise progression rather than claiming a complete playthrough.
@@ -74,7 +82,10 @@ knockouts exercise progression rather than claiming a complete playthrough.
 `node tools/visual-city-boxing-club.js` checks the actual city world/HUD entry
 and 375 club frames in Chromium with p5 1.9.0, portrait 390×844 and landscape
 940×590 at DPR 2. It checks browser/frame errors and balanced canvas state.
-The overview preview uses a wider review-only camera to show the room.
+It also reproduces forecourt entry in liberated overworld view, checks the
+portrait/landscape entry button, and renders the navigation marker with the
+gym's block unloaded. The overview preview uses a wider review-only camera to
+show the room.
 
 Existing fortress, population, save/load, travel, biome, hostile frontline,
 NM-0 batch and saloon/boxing regression suites remain applicable. The mechanics
