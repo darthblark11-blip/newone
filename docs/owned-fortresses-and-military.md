@@ -7,6 +7,13 @@ outside those boundaries; hostile fort garrisons and reinforcement ticks cannot
 refill a captured yard. The existing fights and their completion conditions still
 run, with the hostile arrivals assembling outside the gates.
 
+Level 1 expands this after the starting fortress and primary relay are both
+owned and the original tower battle has cleared: connected territory excludes
+hostile arrivals, with a 1,500 HUD metre clearance from each owned compound.
+Regular city residents regain the former facility buffers, Eight Count opens,
+and a separately saved southwest relay continues the capture chain. See
+[Level 1 relay territory and boxing](level1-relay-territory-and-boxing.md).
+
 Confirming the Government Directive deploys the assigned population at the
 nearest owned fortress in the current sector. Departments retain their assigned
 men and women; deployment only rebuilds their visible residents. Idle residents

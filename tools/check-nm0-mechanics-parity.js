@@ -5,7 +5,9 @@
 const assert=require('node:assert/strict');
 const fs=require('node:fs'),vm=require('node:vm');
 const {execFileSync}=require('node:child_process');
+const {createHash}=require('node:crypto');
 const {ctx,probe}=require('./harness');
+const relayChanges=require('./fixtures/level1-relay-mechanics.json').functions;
 const baseline=execFileSync('git',['show','37dfd722d2524a1810851ffc62905b3aa1d655a4:game.js'],
   {cwd:__dirname+'/..',maxBuffer:8e6}).toString();
 const candidate=fs.readFileSync(process.env.GAME_JS||__dirname+'/../game.js','utf8');
@@ -16,9 +18,9 @@ const reference={...ctx};reference.window=reference;reference.globalThis=referen
 vm.createContext(reference);vm.runInContext(baseline,reference,{filename:'mechanics-reference.js'});
 const before=expression=>vm.runInContext(expression,reference);
 let functions=0,methods=0,constants=0,constructors=0;
-// Only the explicitly authorized crowd-fire and ambush batch sizing may differ. The
-// coordinator itself is covered by check-hostile-frontline.js; all other
-// mechanics below retain their exact established implementation.
+// Explicit crowd-fire and batch edits are normalized below. The separately
+// requested Level 1 territory/relay changes have reviewed before/after hashes;
+// they do not exempt other movement, collision, weapon or combat functions.
 const frontlineEdits={
   maintainOutpostMuster:[
     ['  for (let i = 0; i < 4 && live < FORT_WAVE_FLOOR && st.musterWaves > 0; i++)',
@@ -58,9 +60,15 @@ function expectedMechanics(name,source){
 }
 function sameFunction(name){
   assert.equal(probe(`typeof ${name}`),'function',name+' exists');
-  assert.equal(probe(`${name}.toString()`),expectedMechanics(name,before(`${name}.toString()`)),
-    name+' must remain exactly the directional-falls branch implementation');
+  sameSource(name,probe(`${name}.toString()`),expectedMechanics(name,before(`${name}.toString()`)));
   functions++;
+}
+function sameSource(name,actual,expected){
+  const reviewed=relayChanges[name];
+  if(!reviewed){assert.equal(actual,expected,name+' must remain exactly the directional-falls branch implementation');return;}
+  const hash=source=>createHash('sha256').update(source).digest('hex');
+  assert.equal(hash(expected),reviewed.previous,name+' reviewed pre-feature source');
+  assert.equal(hash(actual),reviewed.current,name+' reviewed relay source: '+reviewed.reason);
 }
 function namesBetween(start,end){
   const a=baseline.indexOf(start),b=baseline.indexOf(end,a+start.length);
@@ -108,7 +116,7 @@ for(const className of ['Character','Bullet','Orb','Grenade','Molotov','PlayerGr
   for(const [name,oldDescriptor]of Object.entries(oldDescriptors)){
     if(name==='constructor'||name==='show')continue;
     for(const kind of ['value','get','set'])if(typeof oldDescriptor[kind]==='function'){
-      assert.equal(String(newDescriptors[name][kind]),expectedMechanics(className+'.'+name,String(oldDescriptor[kind])),className+'.'+name+' '+kind+' mechanics');
+      sameSource(className+'.'+name,String(newDescriptors[name][kind]),expectedMechanics(className+'.'+name,String(oldDescriptor[kind])));
       methods++;
     }
   }
@@ -142,4 +150,4 @@ for(const name of ['ENEMY_COVER_WEAPONS','SHOVEL_AIRBORNE_TYPES']){
   assert.equal(probe(expression),before(expression),name+' eligibility set');constants++;
 }
 assert.ok(!candidate.includes('const STANCE_EXCLUDED_TYPES'),'the previous stance shortcut is removed');
-console.log(`PASS mechanics source lock: ${functions} functions, ${methods} methods/accessors, ${constructors} constructors and ${constants} tuning tables/constants match 37dfd72 with only authorized frontline fire gates and ambush batch sizing.`);
+console.log(`PASS mechanics source lock: ${functions} functions, ${methods} methods/accessors, ${constructors} constructors and ${constants} tuning tables/constants match 37dfd72 with authorized frontline gates, ambush sizing and ${Object.keys(relayChanges).length} reviewed territory/relay source changes.`);

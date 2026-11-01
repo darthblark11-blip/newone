@@ -2345,6 +2345,7 @@ if (isStoryMode) {
     window.ambushFort = null;
     inTownCutscene = false;
     inFortCutscene = false; fortPhase = 0; fortSpeaker1 = null; fortSpeaker2 = null;
+    resetFortSceneIdentity();
     inFarmCutscene = false;
     farmAmbushActive = false;
     inFarmPostCutscene = false;
@@ -8183,6 +8184,7 @@ function resetRunState() {
   inTownCutscene = false; townPhase = 0; townTimer = 0;
   townSpeaker1 = null; townSpeaker2 = null;
   inFortCutscene = false; fortPhase = 0; fortTimer = 0; fortSpeaker1 = null; fortSpeaker2 = null;
+  resetFortSceneIdentity();
   nm0AmbushActive = false; nm0AmbushKills = 0; farmAmbushActive = false;
   inFarmCutscene = false; farmPhase = 0; farmSpeaker = null;
   inFarmPostCutscene = false; farmPostPhase = 0;
@@ -8886,8 +8888,8 @@ function draw() {
         // means the yard is theirs and the masts are the objective.
         if (window.fortMusterJustCleared) {
             window.fortMusterJustCleared = false;
-            const _fdef = outpostFortDef(currentBiome);
-            const _fst  = outpostFortState(currentBiome);
+            const _fdef = outpostFortDef(currentBiome,window.fortMusterClearedId);
+            const _fst  = outpostFortState(currentBiome,_fdef);
             camX = player.x - (width / 2) / zoom;
             camY = player.y - (height / 2) / zoom;
             if (_fst.captured) {
@@ -9238,6 +9240,7 @@ viewBottom = camY + height / zoom + shakePad;
     drawForestHuntingSettlement();
     drawForestWildlifeAnimals();
   }
+  if (BIOME_ACTIVE && currentBiome === 1 && doTick && !isWin) updateFrontierSaloonActivity();
   if (BIOME_ACTIVE && currentBiome === 3) {
     if (doTick && !isWin) {
       updateFrontierSaloonActivity();
@@ -9661,7 +9664,10 @@ viewBottom = camY + height / zoom + shakePad;
       if (currentLevel !== 0 || (inUpstairsRoom && dist(player.x, player.y, 150, 0) >= 80 && dist(player.x, player.y, 0, -200) >= 120 && dist(player.x, player.y, 0, 250) >= 80)) drawUI();
       else if (!inUpstairsRoom && dist(player.x, player.y, -400, 0) >= 80) drawUI();
       if (BIOME_ACTIVE && currentBiome === 2) drawForestHuntingHud();
-      if (BIOME_ACTIVE && currentBiome === 1) drawStreetThugHud();
+      if (BIOME_ACTIVE && currentBiome === 1) {
+        drawStreetThugHud();
+        drawFrontierSaloonHud();
+      }
       if (BIOME_ACTIVE && currentBiome === 3) {
         drawFrontierSaloonHud();
         drawFrontierBountyHud();
@@ -10674,8 +10680,7 @@ function shovelSurfaceSoftAt(x,y,level=currentLevel) {
         ['BRIDGE','CANALBRIDGE','BOARDWALK','CIVICTERRACE','HELIPAD','CANAL','FOUNTAIN'].includes(b.propType))return false;
     if(b.isGrassLot||b.isCropField)grass=true;
   }
-  const fort=outpostFortDef(level);
-  if(fort&&Math.abs(x-fort.x)<FORT_HALF_W+220&&Math.abs(y-fort.y)<FORT_HALF_H+260)return false;
+  if(outpostFortDefs(level,true).some(fort=>Math.abs(x-fort.x)<FORT_HALF_W+220&&Math.abs(y-fort.y)<FORT_HALF_H+260))return false;
   if(level===1&&SHOVEL_GRASS_PATCHES.some(p=>x>=p.x&&x<p.x+p.w&&y>=p.y&&y<p.y+p.h))return true;
   const cx=Math.floor(x/CHUNK_W),cy=Math.floor(y/CHUNK_W),ox=cx*CHUNK_W,oy=cy*CHUNK_W;
   const lay=layoutFor(level,cx,cy),lx=x-ox,ly=y-oy;
@@ -11416,6 +11421,7 @@ function seedDebugStoryProgress(level) {
     inTownCutscene = false; inFarmCutscene = false; inFarmPostCutscene = false;
     inPostAmbushCutscene = false; inLvl4Cutscene = false;
     inFortCutscene = false; fortPhase = 0; fortSpeaker1 = null; fortSpeaker2 = null;
+    resetFortSceneIdentity();
     inWorldBuildingMenu = false; inOverworldView = false; inTravelMenu = false;
 
     // Savior route, not genocide.
@@ -11593,6 +11599,7 @@ function markSectorTowersDown(level) {
     if (typeof townsData === 'undefined') window.townsData = {};
     if (!townsData[level]) townsData[level] = { established: false };
     townsData[level].towersDown = true;
+    if (level === 1 && currentLevel === 1) pushHostilesOutsideCityTerritory();
 }
 
 function openSectorDirective(level) {
@@ -12364,7 +12371,7 @@ function legacyGetSafeSpawn(away) {
     rx = random(-bndX, bndX);
     ry = random(-bndY, bndY);
 
-    let hit = !insideSector(rx, ry) || (away && insideOwnedFortress(currentLevel, rx, ry, 60));
+    let hit = !insideSector(rx, ry) || (away && hostileSpawnExcluded(currentLevel, rx, ry, 60));
     
     // 3. Keep enemies from spawning directly on the player's head
     if (away && player && player.hp > 0 && dist(rx, ry, player.x, player.y) < 500) hit = true;
@@ -12416,6 +12423,9 @@ function triggerGateAmbush(fortressY, isNorthGate = false) {
     // Stick City's Great Gate down without a shot being fired there.
     recordSectorGateBreach(isNorthGate);
     clearGateApproach();
+    // A controlled city keeps its newly opened road without remustering NM-0
+    // inside the protected territory or stranding troops beyond the AI range.
+    if (currentLevel === 1 && cityRelayTerritoryUnlocked()) return;
 
     // MERGE ACTIVE AMBUSHES (Scenario 4)
     if (nm0AmbushActive) {
@@ -12522,7 +12532,7 @@ function cityOverworldSpawnPoint(station = null) {
   if (!player || (currentLevel !== 1 && currentLevel !== 2)) return null;
   const cache = new Map();
   const clear = (x,y) => {
-    if (inAuthoredSector(x,y,500) || insideOwnedFortress(currentLevel,x,y,60) || nearSettlement(x,y)) return false;
+    if (inAuthoredSector(x,y,500) || hostileSpawnExcluded(currentLevel,x,y,60) || nearSettlement(x,y)) return false;
     if (enemiesList.some(e => e && !e.dead && e.hp>0 && (e.x-x)**2+(e.y-y)**2<70*70)) return false;
     const blocked = b => b && !b.noClip && !b.isPalm && !b.isAlienPlant && !b.isEnergyPole &&
       !(b.isGrassLot && !b.isPond) && Math.abs(x-b.x)<(b.w||0)/2+38 && Math.abs(y-b.y)<(b.h||0)/2+38;
@@ -12713,7 +12723,7 @@ function getOuterSpawn(tries) {
   for (let i = 0; i < n; i++) {
     const eS = getSafeSpawn(true);
     if (!eS) continue;
-    if (inAuthoredSector(eS.x, eS.y, 500) || insideOwnedFortress(currentLevel, eS.x, eS.y, 60)) continue;
+    if (inAuthoredSector(eS.x, eS.y, 500) || hostileSpawnExcluded(currentLevel, eS.x, eS.y, 60)) continue;
     // Not in a town either -- but deliberately NOT the full outerRegionUncached
     // test. That one also rejects the whole 3x3 chunk neighbourhood around
     // every checkpoint, and at 21% checkpoint density it refused so much ground
@@ -13185,6 +13195,7 @@ function triggerExplosion(ex, ey, rad, isMolotov = false, sourceIsPlayer = true,
                     let gateY = gateFaceY(b);
           if (dist(ex, ey, b.x, gateY) < rad + 300) {
               b.hp -= 300; b.hitFlash = 4;
+              if (b.isOutpostGate) outpostFortState(currentBiome,b.outpostFortId).gateHp = Math.max(0,b.hp);
               if (b.hp <= 0) { 
                   triggerExplosion(b.x, gateY, 250, false, true, killer); screenShake = 60;
                   let fY = b.y; 
@@ -13192,7 +13203,7 @@ function triggerExplosion(ex, ey, rad, isMolotov = false, sourceIsPlayer = true,
                   if (b.isOutpostGate) {
                       // The overworld fort keeps its own record and its own
                       // muster; Stick City's breach flags are not its business.
-                      const fdef = outpostFortDef(currentBiome);
+                      const fdef = outpostFortDef(currentBiome,b.outpostFortId);
                       setTimeout(() => { if (started) triggerOutpostAmbush(fdef); }, 2000);
                   }
                   else if (typeof triggerGateAmbush === 'function') {
@@ -16470,6 +16481,7 @@ function ragRig(bW, bH) {
 // What is on this head, if anything. Null means bare.
 function headwearOf(id) {
   if (!id) return null;
+  if (id.cityBoxer) return null;
   const eT = id.eType;
   if(eT==='OCCULT_BLACK'||eT==='OCCULT_RED'||eT==='OCCULT_BLUE')return 'OCCULT_HOOD';
   if(eT==="NM0_CITY_GUARD")return "NM0_HELMET";
@@ -16728,6 +16740,7 @@ function figureIdentity(c) {
            isCityCivilian:!!c.isCityCivilian,clothingStyle:c.clothingStyle,cityClass:c.cityClass,
            cityHairLength:c.cityHairLength,cityAccentCol:c.cityAccentCol,maneCol:c.maneCol,isCharred:!!c.isCharred,
            frontierOccupation:c.frontierOccupation,frontierFemale:!!c.frontierFemale,
+           cityBoxer:!!c.cityBoxer,cityBoxingGloves:c.cityBoxingGloves,cityBoxingGloveOz:c.cityBoxingGloveOz,
            ninjaSuit:!!(c.isPlayer&&ninjaSuitUnlocked),chemistSuit:!!(c.isPlayer&&chemistSuitUnlocked),
            cowboySuit:!!(c.isPlayer&&cowboySuitEquipped),
            explosiveArmor:!!((c.isPlayer||c.isMilitary)&&explosiveArmorUnlocked),
@@ -16894,6 +16907,7 @@ function drawCowboyAttire(g,TL,TW,back=false) {
 // Outfit details ride the existing torso transform, underneath wounds and
 // sleeves. Normalized dimensions also fit stunned bodies and separated torsos.
 function drawFallenAttire(g,id,TL,TW,back,progress=1,half=0) {
+  if(id&&id.cityBoxer){paintCityBoxerMuscles(g,TL,TW,id.skinCol||id.shirtCol,back?1:0);return;}
   if(drawOccultFallenAttire(g,id,TL,TW,back,progress,half))return;
   if(!id||id.eType==='ARMORED')return; // The red-orb hybrid keeps its original bare oval body.
   const t=id.eType,shirt=id.shirtCol||color(220,200,20),p=Math.max(0,Math.min(1,progress));
@@ -19121,16 +19135,19 @@ function cityRoute(cx,cy,d) {
 }
 function cityCivilianAllowed(x,y,pad=15) {
   if(currentLevel!==1)return true;
-  // Keep the whole main compound, including the outer curtain-wall and gate
-  // faces, 300 metres from ambient residents in story and arcade alike.
-  // Open doors and captured fortresses retain the civilian exclusion.
+  // Regular city residents remain ambient people, separate from the saved
+  // department roster. Captured facilities release their civilian buffer.
   const clearance=CITY_NM0_CLEARANCE+pad;
-  if(x>=-4700-clearance&&x<=5900+clearance&&
+  if(!(cityRelayTerritoryUnlocked()&&startingFortressOwned(1))&&x>=-4700-clearance&&x<=5900+clearance&&
      y>=-4600-clearance&&y<=5800+clearance)return false;
-  const fort=outpostFortDef(1);
-  if(fort&&Math.abs(x-fort.x)<=FORT_HALF_W+FORT_GATE_H/2+clearance&&
+  for(const fort of outpostFortDefs(1)) {
+  if(!outpostFortState(1,fort).captured&&Math.abs(x-fort.x)<=FORT_HALF_W+FORT_GATE_H/2+clearance&&
            Math.abs(y-fort.y)<=FORT_HALF_H+FORT_GATE_H/2+clearance)return false;
+  }
   return true;
+}
+function cityCivilianBattleSafe(x,y) {
+  return !nm0AmbushActive || (cityRelayTerritoryUnlocked() && cityPlayerTerritoryContains(x,y));
 }
 function cityPersonOffscreen(x,y) {
   // draw() publishes the camera's actual view, including aim pan, zoom and
@@ -19194,12 +19211,12 @@ function refreshCityPeople(mgr,pcx,pcy) {
     bankCityPerson(e);
     const dx=e.x-player.x,dy=e.y-player.y;
     if(dx*dx+dy*dy>3000*3000 || (e.isCityCivilian&&e.hp>0&&!e.dead&&
-       ((nm0AmbushActive&&!(typeof streetThugCombatProtected==="function"&&streetThugCombatProtected(e)))||!cityCivilianAllowed(e.x,e.y)))){enemiesList.splice(i,1);continue;}
+       ((!cityCivilianBattleSafe(e.x,e.y)&&!(typeof streetThugCombatProtected==="function"&&streetThugCombatProtected(e)))||!cityCivilianAllowed(e.x,e.y)))){enemiesList.splice(i,1);continue;}
     if(e.hp>0&&!e.dead){if(e.isCityCivilian)civ++;else guard++;}
   }
   // Ambient residents wait in their saved records throughout the scripted
   // battle. No candidate searches, civilian AI or bullet targets are needed.
-  if(nm0AmbushActive)return;
+  if(nm0AmbushActive&&!cityRelayTerritoryUnlocked())return;
   // The retention circle lies entirely inside a forbidden compound buffer.
   // Skip its civilian slots before routes and duplicate-key scans are built.
   const civiliansNearby=cityCivilianAllowed(player.x,player.y,-3000);
@@ -19221,8 +19238,8 @@ function refreshCityPeople(mgr,pcx,pcy) {
       // The outer ring includes corners beyond the retention radius. Do not
       // spend the spawn budget rebuilding somebody the next refresh evicts.
       if(Math.hypot(point.x-player.x,point.y-player.y)>3000)continue;
-      if(!cityPersonOffscreen(point.x,point.y)||(isCiv&&!cityCivilianAllowed(point.x,point.y))||
-         (!isCiv&&insideOwnedFortress(1,point.x,point.y,60)))continue;
+      if(!cityPersonOffscreen(point.x,point.y)||(isCiv&&(!cityCivilianAllowed(point.x,point.y)||!cityCivilianBattleSafe(point.x,point.y)))||
+         (!isCiv&&hostileSpawnExcluded(1,point.x,point.y,60)))continue;
       const e=new Character(point.x,point.y,false,isCiv?cityCivilianType(cx,cy,n,old):"NM0_CITY_GUARD");
       if(isCiv)cityAppearance(e,old&&Number.isFinite(old.citySeed)?old.citySeed:seed);
       e.cityPersonKey=k;e.cityCx=cx;e.cityCy=cy;e.cityDistance=old&&old.d!==undefined?old.d:d;
@@ -20091,7 +20108,8 @@ function paintBoxingArm(g,e,arm,rig,skin,pass='ALL') {
   const s=arm.shoulder,k=arm.elbow,h=arm.fist;
   const cuff={x:k.x+(h.x-k.x)*.18,y:k.y+(h.y-k.y)*.18};
   if(pass!=='FOREARM'){
-    if(cityStreetLook(e))drawCityStreetUpperArm(g,e,s.x,s.y,k.x,k.y,cuff.x,cuff.y,
+    if(e.cityBoxer)figureCelLimb(g,s.x,s.y,k.x,k.y,cuff.x,cuff.y,rig.upperW*.96,rig.foreW*.94,rig.foreW*.82,skin);
+    else if(cityStreetLook(e))drawCityStreetUpperArm(g,e,s.x,s.y,k.x,k.y,cuff.x,cuff.y,
       rig.upperW*.84,rig.foreW*.87,rig.foreW*.80,skin);
     else figureCelLimb(g,s.x,s.y,k.x,k.y,cuff.x,cuff.y,rig.upperW*.84,rig.foreW*.87,rig.foreW*.80,e.shirtCol);
   }
@@ -20099,11 +20117,12 @@ function paintBoxingArm(g,e,arm,rig,skin,pass='ALL') {
   figureCelLimb(g,k.x,k.y,(k.x+h.x)*.5,(k.y+h.y)*.5,h.x,h.y,rig.foreW*.76,rig.foreW*.73,rig.foreW*.65,skin);
   const hand=(h.radius||h.r||BOXING.FIST_RADIUS)*2;
   const fistSkin=e.isPlayer&&chemistSuitUnlocked&&arm.side<0?color(180,180,190):skin;
-  figureCelOval(g,h.x,h.y,hand,hand,fistSkin,.75);
+  if(e.cityBoxingGloves)paintSmallBoxingGlove(g,h.x,h.y,hand,e.cityBoxingGloves,Math.atan2(h.y-k.y,h.x-k.x));
+  else figureCelOval(g,h.x,h.y,hand,hand,fistSkin,.75);
   // Two quiet knuckle marks establish a closed fist rather than a round palm.
   const a=Math.atan2(h.y-k.y,h.x-k.x),cx=Math.cos(a),cy=Math.sin(a);
   g.stroke(red(fistSkin)*.58,green(fistSkin)*.55,blue(fistSkin)*.54,160);g.strokeWeight(.55);
-  for(const side of [-1,1])g.line(h.x+cx*2-cy*side*1.25,h.y+cy*2+cx*side*1.25,h.x+cx*.4-cy*side*1.25,h.y+cy*.4+cx*side*1.25);
+  if(!e.cityBoxingGloves)for(const side of [-1,1])g.line(h.x+cx*2-cy*side*1.25,h.y+cy*2+cx*side*1.25,h.x+cx*.4-cy*side*1.25,h.y+cy*.4+cx*side*1.25);
   if(arm.striking&&arm.phase==='ACTIVE'&&arm.drive>.40){
     // Short comic motion ticks sit behind the driving forearm. They never add
     // a second glove or shift its visible center away from actual contact.
@@ -20114,6 +20133,32 @@ function paintBoxingArm(g,e,arm,rig,skin,pass='ALL') {
     }
   }
   g.noStroke();
+}
+
+// Eight-ounce training gloves stay within six percent of the native fist.
+// The padded knuckles, attached thumb and short cuff all share its contact.
+function paintSmallBoxingGlove(g,x,y,hand,glove,angle) {
+  g.push();g.translate(x,y);g.rotate(angle);g.noStroke();
+  figureCelOval(g,0,0,hand*1.06,hand*.98,glove,.70);
+  g.fill(red(glove)*.70,green(glove)*.70,blue(glove)*.70);g.rect(-hand*.60,-hand*.28,hand*.30,hand*.56,1);
+  figureCelOval(g,-hand*.19,hand*.24,hand*.38,hand*.31,glove,.45);
+  g.fill(231,221,198);g.rect(-hand*.57,-hand*.20,hand*.13,hand*.40,.5);
+  g.pop();
+}
+function paintCityBoxerMuscles(g,w,h,skin,back=0) {
+  if(!skin)return;
+  const light=color(Math.min(255,red(skin)*1.12+5),Math.min(255,green(skin)*1.10+5),Math.min(255,blue(skin)*1.08+4)),
+    shade=color(red(skin)*.72,green(skin)*.70,blue(skin)*.69);
+  g.push();g.noStroke();
+  // Soft pectoral/scapular planes remain inside the same torso hurt ellipse.
+  for(const side of [-1,1]) {
+    figureCelOval(g,w*.12,side*h*.22,w*.48,h*.30,side<0?light:skin,.30);
+    g.fill(shade);g.ellipse(-w*.04,side*h*.14,w*.30,h*.045);
+  }
+  g.fill(red(skin)*.83,green(skin)*.80,blue(skin)*.79,135);
+  g.ellipse(-w*.20,0,w*.05,h*.44);
+  if(back<.4)for(const side of [-1,1]){g.fill(light);g.ellipse(-w*.18,side*h*.10,w*.16,h*.10);}
+  g.pop();
 }
 
 // Pitched back surfaces stay inside the canonical torso's local ellipse.
@@ -20240,9 +20285,10 @@ function paintBoxingFigure(e) {
   push();if(!Array.isArray(b.feet))rotate(b.hip||0);drawBoxingLegs(appearance,b,rig);pop();
   for(const arm of b.arms)paintBoxingArm(g,appearance,arm,rig,skin,'SLEEVE');
   push();translate(b.body.x,b.body.y);rotate(b.body.angle||0);
-  figureCelOval(g,0,0,b.body.rx*2,b.body.ry*2,e.hitFlash>0||b.hitFlash>0?color(242,217,160):shirt,1);
+  figureCelOval(g,0,0,b.body.rx*2,b.body.ry*2,e.hitFlash>0||b.hitFlash>0?color(242,217,160):e.cityBoxer?skin:shirt,1);
   // Shared suit detailing preserves the identity the native model/corpse wears.
-  drawFallenAttire(g,id,b.body.rx*2,b.body.ry*2,true,1);
+  if(e.cityBoxer)paintCityBoxerMuscles(g,b.body.rx*2,b.body.ry*2,skin,b.backReveal||0);
+  else drawFallenAttire(g,id,b.body.rx*2,b.body.ry*2,true,1);
   if(e.vestCol&&!id.cowboySuit){g.noStroke();g.fill(e.vestCol);g.rect(-6,-b.body.ry*.78,4.3,b.body.ry*1.56,1.2);g.rect(3,-b.body.ry*.78,4,b.body.ry*1.56,1.2);}
   if(id.chemistSuit){g.stroke(167,177,173);g.strokeWeight(.6);g.line(-5,0,5,0);g.noStroke();}
   if(id.ninjaSuit){g.noStroke();g.fill(100,0,200);g.rect(-b.body.rx,-3,b.body.rx*2,6,1.4);}
@@ -20457,7 +20503,7 @@ function drawSaloonKnockoutLimb(g,rig,r,i,f,shirt,pants,skin,boot,faceDown,id=nu
   const streetArm=arm&&cityStreetLook(id);
   if(streetArm)drawCityStreetUpperArm(g,id,ox,oy,ex,ey,hx,hy,w1,(w1+w2)*.5,w2,skin);
   else drawFallBone(g,ox,oy,ex,ey,w1,arm?shirt:pants,undefined,undefined,{x:hx,y:hy,width:w2});
-  drawFallBone(g,ex,ey,hx,hy,w2,streetArm?skin:arm?shirt:pants,arm?skin:boot,arm?rig.hand*(faceDown?.94:1):rig.foot,false);
+  drawFallBone(g,ex,ey,hx,hy,w2,streetArm?skin:arm?shirt:pants,arm&&id&&id.cityBoxingGloves?id.cityBoxingGloves:arm?skin:boot,arm?rig.hand*(faceDown?.94:1):rig.foot,false);
   if(!arm)drawLegDecals(g,decals||(id&&id.decals),i-2,ox,oy,ex,ey,hx,hy,w1,(w1+w2)*.5,w2);
 }
 function drawSaloonKnockoutFigure(e) {
@@ -22973,7 +23019,7 @@ this.skeletonTimer = 0;
     if (this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL" || this.eType === "SAUCER" || this.eType === "SAUCER_RED") return false; 
     if (BIOME_ACTIVE && currentBiome === 3 &&
         frontierCanyonBlocksMove(this.x, this.y, nx, ny, 15)) return true;
-    if(this.isCityCivilian&&!cityCivilianAllowed(nx,ny))return true;
+    if(this.isCityCivilian&&(!cityCivilianAllowed(nx,ny)||!cityCivilianBattleSafe(nx,ny)))return true;
     if (this.ignoreBldgTimer > 0) return false; 
     
     let r = (this.eType === "ARMORED" || this.eType === "ALIEN_GATOR" || this.eType === "SNAIL_HYBRID") ? 28 : (this.eType === "BUG" ? 10 : (this.eType === "SNAIL" ? 15 : 15));
@@ -26474,7 +26520,7 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
     // ones the player spared and no more.
     if (deadGuy && deadGuy.isOutpostGarrison && !deadGuy.isFriendly &&
         typeof outpostFortState === 'function') {
-        const _fs = outpostFortState(currentBiome);
+        const _fs = outpostFortState(currentBiome,deadGuy.outpostFortId);
         if (_fs.garrison > 0) _fs.garrison--;
     }
 
@@ -26538,8 +26584,12 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
         nm0AmbushKills--;
         // The fort's muster is kept on the fort's own record, because nothing
         // about the entity list survives a save and the counter has to.
-        if (typeof activeFortMuster === 'function' && activeFortMuster(currentBiome))
-            outpostFortState(currentBiome).musterLeft = Math.max(0, nm0AmbushKills);
+        const killedFort = deadGuy && deadGuy.outpostFortId ? outpostFortDef(currentBiome,deadGuy.outpostFortId) :
+          (deadGuy && deadGuy.isOutpost ? activeFortMuster(currentBiome) : null);
+        if (killedFort) {
+            const fs = outpostFortState(currentBiome,killedFort);
+            fs.musterLeft = Math.max(0,fs.musterLeft-1);
+        }
         
         // An overworld fort spawns its OWN waves, at its own north gate. The
         // shared reinforcement reads window.ambushOrigin, which four other
@@ -26547,7 +26597,7 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
         // so a fort's waves came out of the city, nine thousand units from the
         // fight, and the bar could not drain.
         if (window.ambushSpawnsRemaining > 0)
-            setTimeout(window.ambushFort ? spawnFortWave : spawnAmbushReinforcement, random(200, 800));
+            setTimeout(killedFort ? () => spawnFortWave(killedFort) : spawnAmbushReinforcement, random(200, 800));
         
         if (x !== undefined && y !== undefined) {
             if (isHeadshot) addScore(10, x, y, "HEADSHOT+", playerKill); else addScore(5, x, y, "KILL+", playerKill);
@@ -26559,6 +26609,7 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
         }
         
         if (nm0AmbushKills <= 0 && !isWin && !killcamMode) { 
+            finishActiveFortMusters();
             killcamMode = true; killcamTarget = { x: x !== undefined ? x : player.x, y: y !== undefined ? y : player.y }; 
             killcamTimer = 150; window.nm0AmbushCleared = true;
             finishSectorRecruitment();
@@ -26876,7 +26927,11 @@ function interactWorldBoxingActivity(mx = null, my = null) {
   if (!boxingActive(player) || !BIOME_ACTIVE || frontierSaloonIsInside() || isPaused) return false;
   const tapped = mx !== null, hit = b => !tapped || (mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h);
   let action = null;
-  if (currentBiome === 3) {
+  if (currentBiome === 1) {
+    updateFrontierSaloonActivity(false);
+    if (_frontierSaloonPrompt && frontierSaloonButtons().some(b => b.action === 'INTERACT' && hit(b)))
+      action = interactFrontierSaloonActivity;
+  } else if (currentBiome === 3) {
     updateFrontierSaloonActivity(false); updateFrontierBounties(false);
     if (_frontierSaloonPrompt && frontierSaloonButtons().some(b => b.action === 'INTERACT' && hit(b)))
       action = interactFrontierSaloonActivity;
@@ -26986,7 +27041,7 @@ function updateEntities() {
           // refresh is cooling down. An old nearby resident must never enter
           // forceNudge's collision search for a newly forbidden 700m buffer.
           if (currentLevel===1 && e.isCityCivilian && e.cityPersonKey && e.hp>0 && !e.dead &&
-              ((nm0AmbushActive&&!streetThugCombatProtected(e)) || !cityCivilianAllowed(e.x,e.y))) {
+              ((!cityCivilianBattleSafe(e.x,e.y)&&!streetThugCombatProtected(e)) || !cityCivilianAllowed(e.x,e.y))) {
               bankCityPerson(e);enemiesList.splice(n--,1);continue;
           }
           if (e.isFriendly && !e.isCityCivilian) e.allySlot = e.dead ? 0 : allyN++;
@@ -27285,7 +27340,7 @@ function maintainBanditPosse(hostiles) {
   for (let i = 0; i < n; i++) {
     const sx = ox + cos(a + HALF_PI) * (i - (n - 1) / 2) * 95;
     const sy = oy + sin(a + HALF_PI) * (i - (n - 1) / 2) * 95;
-    if (inAuthoredSector(sx, sy, 500) || (hostile && insideOwnedFortress(currentLevel, sx, sy, 60))) continue;
+    if (inAuthoredSector(sx, sy, 500) || (hostile && hostileSpawnExcluded(currentLevel, sx, sy, 60))) continue;
     if(story && (nearSettlement(sx,sy) || !frontierCanyonSpawnSafe(sx,sy)))continue;
     const b = new Character(sx, sy, false, "BANDIT");
     if(story && b.checkCol(sx,sy))continue;
@@ -27394,16 +27449,7 @@ function checkAmbushCleared() {
   objectiveTimer = 0;
   // The muster is over. Written on the fort's own record so a reload cannot
   // restart a fight the player has already won, and so the tick above stops.
-  {
-    const _fs = outpostFortState(currentBiome);
-    if (_fs.musterOn) { _fs.musterOn = false; _fs.musterDone = true;
-                        _fs.musterLeft = 0; _fs.musterWaves = 0;
-                        // Whose muster just ended. The beat dispatcher reads
-                        // this at the end of the killcam: clearedKind is "GATE"
-                        // for a Great Gate and for a fort alike, so it cannot
-                        // tell them apart on its own.
-                        window.fortMusterJustCleared = true; }
-  }
+  finishActiveFortMusters();
   window.ambushFort = null;              // the muster is over; stop conscripting
   window.nm0AmbushCleared = true;        // routes through the killcam into the story loop
   finishSectorRecruitment();
@@ -30424,8 +30470,8 @@ function drawUI() {
   // destination the player has no other way to learn about. It goes out once
   // the fort is theirs -- there is nothing left to go and do there.
   if (typeof outpostFortDef === 'function' && player && player.hp > 0 && BIOME_ACTIVE) {
-      const _fd = outpostFortDef(currentBiome);
-      if (_fd && !outpostFortState(currentBiome).captured) {
+      const _fd = outpostFortDefs(currentBiome).find(def=>!outpostFortState(currentBiome,def).captured);
+      if (_fd) {
           const d = dist(player.x, player.y, _fd.x, _fd.y);
           if (d > 900) {
               const ang = atan2(_fd.y - player.y, _fd.x - player.x);
@@ -31069,7 +31115,7 @@ function handleGamepad() {
   if (jP(11) && player && player.currentWeapon === WEAPONS.BOW) rightStick.bowReleaseRequested = true;
   else if (jP(11) && millis() - lastToggleTime > 300) { togglePlayerHeadAim(); lastToggleTime = millis(); }
   if (jP(0) && BIOME_ACTIVE && currentBiome === 2) interactForestHuntingActivity();
-  if (jP(0) && BIOME_ACTIVE && currentBiome === 3) interactFrontierActivity();
+  if (jP(0) && BIOME_ACTIVE && (currentBiome === 1 || currentBiome === 3)) interactFrontierActivity();
   if (jP(10) && jetpackUnlocked && player && player.dashCooldown <= 0 && player.dashTimer <= 0 && player.meleeTimer <= 0) { player.activateDash(); }
 
   prevGamepadButtons.length = pad.buttons.length;
@@ -32316,7 +32362,7 @@ function handleDesktop() {
   const huntDown = keyIsDown(70) && !shovelToolEquipped(); // F digs while carrying the shovel.
   if (huntDown && !window.__huntKeyWas && BIOME_ACTIVE && currentBiome === 2)
       interactForestHuntingActivity();
-  if (huntDown && !window.__huntKeyWas && BIOME_ACTIVE && currentBiome === 3)
+  if (huntDown && !window.__huntKeyWas && BIOME_ACTIVE && (currentBiome === 1 || currentBiome === 3))
       interactFrontierActivity();
   window.__huntKeyWas = huntDown;
 
@@ -32480,6 +32526,47 @@ function countEscort(female) {
   return n;
 }
 
+// A club save resumes at its exterior doorway. Keep the holstered campaign
+// equipment too: the generic loader otherwise selects/refills the best gun.
+function serializeCityBoxingEquipment() {
+    const session = _frontierSaloonSession;
+    if (!player || !session || session.venue !== 'CITY_BOXING') return null;
+    const saved = session.save, pack = values => Object.fromEntries(Object.values(WEAPONS)
+        .map(w => [w.name, values[w.name] === Infinity ? -1 : values[w.name]])
+        .filter(([, n]) => Number.isFinite(n)));
+    const levels = c => c && c.levels ? Array.from(c.levels) : null;
+    return {
+        weapon: Object.keys(WEAPONS).find(key => WEAPONS[key] === saved.currentWeapon),
+        ammo: pack(player.weaponAmmo), mags: pack(player.mags),
+        isArmed: saved.isArmed, isUnarmed: saved.isUnarmed,
+        aimAngle: saved.aimAngle, moveAngle: saved.moveAngle,
+        mounted: saved.mounted, mountCoat: levels(player.mountCoat), mountMane: levels(player.mountMane),
+        mountSock: player.mountSock, mountWalk: player.mountWalk, mountFacing: player.mountFacing
+    };
+}
+function restoreCityBoxingEquipment(saved) {
+    if (!player || !saved || typeof saved !== 'object' || !Object.hasOwn(WEAPONS, saved.weapon)) return;
+    for (const [field, target] of [['ammo', player.weaponAmmo], ['mags', player.mags]]) {
+        const values = saved[field];
+        if (!values || typeof values !== 'object') continue;
+        for (const weapon of Object.values(WEAPONS)) {
+            const n = values[weapon.name];
+            if (Number.isFinite(n) && n >= 0) target[weapon.name] = n;
+            else if (field === 'mags' && n === -1) target[weapon.name] = Infinity;
+        }
+    }
+    player.currentWeapon = WEAPONS[saved.weapon];
+    if (typeof saved.isArmed === 'boolean') player.isArmed = saved.isArmed;
+    if (typeof saved.isUnarmed === 'boolean') player.isUnarmed = saved.isUnarmed;
+    for (const key of ['aimAngle', 'moveAngle', 'mountWalk', 'mountFacing'])
+        if (Number.isFinite(saved[key])) player[key] = saved[key];
+    player.mounted = !!saved.mounted;
+    for (const key of ['mountCoat', 'mountMane'])
+        if (Array.isArray(saved[key]) && saved[key].length >= 3 && saved[key].length <= 4 && saved[key].every(Number.isFinite))
+            player[key] = color(...saved[key]);
+    if (typeof saved.mountSock === 'boolean') player.mountSock = saved.mountSock;
+}
+
 function saveGame() {
     for(const e of enemiesList)bankCityPerson(e);
     const frontierExterior = frontierSaloonSavePlayer();
@@ -32544,6 +32631,7 @@ function saveGame() {
         frontierSaloon: serializeFrontierSaloonActivity(),
         frontierBounties: serializeFrontierBounties(),
         frontierEquipment: serializeFrontierEquipment(),
+        cityBoxingEquipment: serializeCityBoxingEquipment(),
         frontierWeapon: (frontierExterior ? frontierExterior.currentWeapon : (player && player.currentWeapon)) === WEAPONS.REVOLVER ? 'REVOLVER' : null,
         pickaxeOwned: !!window.pickaxeOwned,
         shovel: serializeShovelState(),
@@ -32575,7 +32663,7 @@ function saveGame() {
         // The fort's liberation beat. Its speakers are object references into
         // enemiesList, which is not saved -- so the phase comes back and the
         // cast is re-cast on load, exactly as the town scene's is.
-        inFortCutscene, fortPhase,
+        inFortCutscene, fortPhase, fortCutsceneId: window.fortCutsceneId || 'OUTPOST',
         inLvl4Cutscene, lvl4Phase, lvl4Timer,
         inDarchonCall, callPhase,
 
@@ -32731,6 +32819,7 @@ function loadGame() {
         // fresh entry. A save made mid-cutscene comes back mid-cutscene.
         window.storyBeats = state.storyBeats || {};
         inFortCutscene = state.inFortCutscene || false;
+        window.fortCutsceneId = state.fortCutsceneId || 'OUTPOST';
         fortPhase = state.fortPhase || 0;
         prologuePhase = state.prologuePhase || 0;
         storyPhase = state.storyPhase || 0;
@@ -32907,11 +32996,13 @@ function loadGame() {
         applyForestHuntingBow();
         applyFrontierEquipment(player);
         if (state.frontierWeapon === 'REVOLVER' && revolverUnlocked) player.currentWeapon = WEAPONS.REVOLVER;
+        restoreCityBoxingEquipment(state.cityBoxingEquipment);
+        retireCapturedFortMustersOnLoad();
         
                        // 1. If towers are defeated, physically delete them from the spawned map
         if (window.towersDefeated && currentLevel>=1 && currentLevel<=7) {
             for (let i = buildings.length - 1; i >= 0; i--) {
-                if (buildings[i].isTower) buildings.splice(i, 1);
+                if (buildings[i].isTower && !buildings[i].isOutpost) buildings.splice(i, 1);
             }
             
             // WIPE RANDOM HOSTILES BUT PRESERVE DEPLOYED MILITARY
@@ -32960,14 +33051,17 @@ function loadGame() {
             // put through here it came back a hundred strong at the city, which
             // is the "it's just empty" report from the fort's side and the
             // "waves out of the beginning fortress" report from the city's.
-            if (nm0AmbushActive && !activeFortMuster(currentBiome)) {
+            const savedForts = outpostFortDefs(currentBiome).map(def=>outpostFortState(currentBiome,def));
+            const nativeLeft = Math.max(0,nm0AmbushKills-savedForts.reduce((n,st)=>n+(st.musterOn?st.musterLeft:0),0));
+            const legacyFortFight = savedForts.some(st=>st._legacyMuster&&st.breached&&!st.captured);
+            if (nm0AmbushActive && nativeLeft > 0 && !legacyFortFight) {
                 let spawnY = (currentLevel === 1) ? 4950 : 1800;
                 let aerY = (currentLevel === 1) ? 4900 : 1750;
                 if (!window.ambushKind) window.ambushKind = "TOWER";
 
                 // Keep the live counter and active spawns perfectly locked
-                let activeToSpawn = Math.min(NM0_TOWER_INITIAL, nm0AmbushKills);
-                window.ambushSpawnsRemaining = Math.max(0, nm0AmbushKills - activeToSpawn);
+                let activeToSpawn = Math.min(NM0_TOWER_INITIAL, nativeLeft);
+                window.ambushSpawnsRemaining = savedForts.reduce((n,st)=>n+(st.musterOn?st.musterWaves:0),0) + Math.max(0, nativeLeft - activeToSpawn);
                 if (!window.ambushKillsTotal) window.ambushKillsTotal = nm0AmbushKills;
                 
                 // Allocate the remainder instead of rounding all three up:
@@ -33043,7 +33137,8 @@ function loadGame() {
         spawnFrontierTownWorkers();
         if (inFortCutscene) {
             const _cast = enemiesList.filter(e => e && !e.dead && e.hp > 0 &&
-                                             e.isFriendly && e.isOutpostGarrison);
+                                             e.isFriendly && e.isOutpostGarrison &&
+                                             outpostFortMatches(e,outpostFortDef(currentLevel,window.fortCutsceneId)));
             if (_cast.length) {
                 fortSpeaker1 = _cast[0];
                 fortSpeaker2 = _cast.length > 1 ? _cast[1] : _cast[0];
@@ -33085,10 +33180,42 @@ function loadGame() {
 // back nine thousand units from where it was, and the compound the player is
 // standing in is empty. The record is the fight; this is how it comes back.
 // ---------------------------------------------------------------------------
+function retireCapturedFortMustersOnLoad() {
+    for (const def of outpostFortDefs(currentLevel)) {
+        const st=outpostFortState(currentLevel,def);
+        if (!st.captured || !st.musterOn) continue;
+        // Unsaved bodies from a conquered fort are gone; they must not become
+        // phantom city attackers when a native battle shares its counter.
+        nm0AmbushKills=Math.max(0,nm0AmbushKills-st.musterLeft);
+        window.ambushKillsTotal=Math.max(nm0AmbushKills,(window.ambushKillsTotal||0)-st.musterTotal);
+        window.ambushSpawnsRemaining=Math.max(0,(window.ambushSpawnsRemaining||0)-st.musterWaves);
+        st.musterOn=false;st.musterDone=true;st.musterLeft=0;st.musterWaves=0;
+        if (window.ambushFort && window.ambushFort.x===def.x && window.ambushFort.y===def.y) window.ambushFort=null;
+        if (nm0AmbushKills===0) {
+            nm0AmbushActive=false;window.nm0AmbushCleared=true;
+            window.fortMusterJustCleared=true;window.fortMusterClearedId=outpostFortId(def);
+        }
+    }
+}
 function restoreFortMuster() {
-    const def = (typeof outpostFortDef === 'function') ? outpostFortDef(currentLevel) : null;
-    if (!def) return;
-    const st = outpostFortState(currentLevel);
+    const defs=outpostFortDefs(currentLevel);
+    const savedKind=window.ambushKind;
+    const active=defs.filter(def=>outpostFortState(currentLevel,def).musterOn);
+    const legacy=defs.some(def=>outpostFortState(currentLevel,def)._legacyMuster);
+    const extraLeft=legacy?0:Math.max(0,nm0AmbushKills-active.reduce((n,def)=>n+outpostFortState(currentLevel,def).musterLeft,0));
+    const extraTotal=legacy?0:Math.max(0,(window.ambushKillsTotal||0)-active.reduce((n,def)=>n+outpostFortState(currentLevel,def).musterTotal,0));
+    const extraWaves=legacy?0:Math.max(0,(window.ambushSpawnsRemaining||0)-active.reduce((n,def)=>n+outpostFortState(currentLevel,def).musterWaves,0));
+    for (const def of defs) restoreOneFortMuster(def);
+    const remaining=defs.filter(def=>outpostFortState(currentLevel,def).musterOn);
+    if (!remaining.length) return;
+    nm0AmbushActive=true;
+    nm0AmbushKills=extraLeft+remaining.reduce((n,def)=>n+outpostFortState(currentLevel,def).musterLeft,0);
+    window.ambushKillsTotal=extraTotal+remaining.reduce((n,def)=>n+outpostFortState(currentLevel,def).musterTotal,0);
+    window.ambushSpawnsRemaining=extraWaves+remaining.reduce((n,def)=>n+outpostFortState(currentLevel,def).musterWaves,0);
+    if (savedKind === 'TOWER') window.ambushKind='TOWER';
+}
+function restoreOneFortMuster(def) {
+    const st = outpostFortState(currentLevel,def);
 
     // Secured yards do not recreate an old enemy muster on reload. The save
     // keeps counters rather than bodies; with the reinforcement order canceled,
@@ -33102,6 +33229,7 @@ function restoreFortMuster() {
             nm0AmbushActive = false; nm0AmbushKills = 0;
             window.ambushSpawnsRemaining = 0;
             window.fortMusterJustCleared = true;
+            window.fortMusterClearedId = outpostFortId(def);
             window.nm0AmbushCleared = true;
         }
         return;
@@ -33130,12 +33258,12 @@ function restoreFortMuster() {
     nm0AmbushKills = st.musterLeft;
     window.ambushKillsTotal = st.musterTotal;
     window.ambushSpawnsRemaining = st.musterWaves;
-    window.ambushFort = { x: def.x, y: def.y };
+    window.ambushFort = { x: def.x, y: def.y, id: outpostFortId(def) };
     const wp = fortWavePoint(def, false);
     window.ambushOrigin = { x: def.x, y: wp.y, aerY: wp.y - 60, flank: 120, jitter: 90 };
     // Seed the compound at once rather than making the player stand in an empty
     // yard while the tick fills it a body at a time.
-    for (let i = 0; i < FORT_WAVE_FLOOR && st.musterWaves > 0; i++) spawnFortWave();
+    for (let i = 0; i < FORT_WAVE_FLOOR && st.musterWaves > 0; i++) spawnFortWave(def);
 }
 
     
@@ -35645,7 +35773,7 @@ function buildCityLeisureDistrict(solid,ox,oy,plan,nearAnchor) {
       style:[2,0,2,1,3,0][plan-17],cityStoreys:2,cityAccent:rngInt(rng,0,4),_rise:rise,details:[]};
     if(!secondary){
       b.cityEntrance={x:b.x,y:b.y+my*(h/2+28),face:my};
-      if(plan===22){b.cityInterior='BOXING_GYM';b.cityInteriorPending=true;}
+      if(plan===22){b.cityInterior='BOXING_GYM';b.cityInteriorPending=false;}
     }
     solid.push(b);return b;
   };
@@ -37447,20 +37575,53 @@ const FORT_MUSTER_SPAWN = 30;    // 40% smaller opening; the other 120 stay in r
 const FORT_GARRISON     = 50;    // finite local garrison roaming the compound
 const FORT_WAKE_R   = 2600;   // the garrison musters when the player gets this close
 
-function outpostFortDef(biome) {
+// HUD metres are ten world units. Reserve the next compound from the outset,
+// but publish its hostile landmark only after the original relay is captured.
+const CITY_TERRITORY_CLEARANCE = 1500 * 10;
+const CITY_RELAY_SW = {
+  id: 'RELAY_SW', name: 'NM-0 SOUTHWEST RELAY FORT',
+  x: OUTPOST_FORT[1].x - FORT_HALF_W * 2 - FORT_GATE_H - CITY_TERRITORY_CLEARANCE / Math.SQRT2,
+  y: OUTPOST_FORT[1].y + FORT_HALF_H * 2 + FORT_GATE_H + CITY_TERRITORY_CLEARANCE / Math.SQRT2
+};
+const OUTPOST_FORT_LISTS = Object.fromEntries(Object.keys(OUTPOST_FORT).map(b=>[b,[OUTPOST_FORT[b]]]));
+const CITY_RELAY_CHAIN = [OUTPOST_FORT[1],CITY_RELAY_SW];
+function outpostFortDef(biome, id = 'OUTPOST') {
   const b = (biome === undefined) ? currentBiome : biome;
+  if (b === 1 && id === 'RELAY_SW') return CITY_RELAY_SW;
   return OUTPOST_FORT[b] || null;
+}
+function outpostFortDefs(biome = currentBiome, includeLocked = false) {
+  const primary = window.outpostForts && window.outpostForts[1];
+  if (biome === 1 && (includeLocked || (primary && primary.captured))) return CITY_RELAY_CHAIN;
+  return OUTPOST_FORT_LISTS[biome] || [];
+}
+function outpostFortId(def) { return def && def.id === 'RELAY_SW' ? 'RELAY_SW' : 'OUTPOST'; }
+function outpostFortMatches(entity, def) {
+  return (entity.outpostFortId || 'OUTPOST') === outpostFortId(def);
+}
+function outpostFortStoryBeat(def) {
+  return 'FORT_' + currentLevel + (outpostFortId(def) === 'OUTPOST' ? '' : '_RELAY_SW');
+}
+function cityBoxingClubUnlocked() {
+  return cityRelayTerritoryUnlocked();
+}
+function cityRelayTerritoryUnlocked() {
+  const primary=window.outpostForts&&window.outpostForts[1];
+  return startingFortressOwned(1) && !!(primary&&primary.captured) &&
+    !(currentLevel===1 && (inTownCutscene || (nm0AmbushActive && window.ambushKind==='TOWER')));
 }
 
 // The record that survives leaving the sector, and the save. Everything the
 // player did to the fort is a number or a flag here; the solids are rebuilt
 // from it on every entry, which is why they can be thrown away freely.
-function outpostFortState(biome) {
+function outpostFortState(biome, id = 'OUTPOST') {
   const b = (biome === undefined) ? currentBiome : biome;
+  if (id && typeof id === 'object') id = outpostFortId(id);
+  const key = b === 1 && id === 'RELAY_SW' ? '1:RELAY_SW' : b;
   if (!window.outpostForts) window.outpostForts = {};
-  let s = window.outpostForts[b];
+  let s = window.outpostForts[key];
   if (!s) {
-    s = window.outpostForts[b] = {
+    s = window.outpostForts[key] = {
       breached: false, captured: false,
       gateHp: FORT_GATE_HP,
       towerHp: [FORT_TOWER_HP, FORT_TOWER_HP],
@@ -37499,10 +37660,25 @@ function outpostFortState(biome) {
 // rather than off a window global. window.ambushFort is a cache of this, and a
 // cache is exactly what a save cannot be trusted to have.
 function activeFortMuster(biome) {
-  const def = outpostFortDef(biome);
-  if (!def) return null;
-  const st = outpostFortState(biome);
-  return st.musterOn ? def : null;
+  const defs = outpostFortDefs(biome);
+  const cached = window.ambushFort;
+  return defs.find(def => cached && cached.x === def.x && cached.y === def.y &&
+    outpostFortState(biome, def).musterOn) ||
+    defs.find(def => outpostFortState(biome, def).musterOn) || null;
+}
+function finishActiveFortMusters() {
+  for (const def of outpostFortDefs(currentBiome)) {
+    const st=outpostFortState(currentBiome,def);
+    if (!st.musterOn) continue;
+    st.musterOn=false;st.musterDone=true;st.musterLeft=0;st.musterWaves=0;
+    window.fortMusterJustCleared=true;
+    window.fortMusterClearedId=outpostFortId(def);
+  }
+}
+function resetFortSceneIdentity() {
+  window.fortCutsceneId='OUTPOST';
+  window.fortMusterClearedId='OUTPOST';
+  window.fortMusterJustCleared=false;
 }
 
 // The sector's OWN transmission towers. The outpost's two are the same flag and
@@ -37553,10 +37729,10 @@ function gateFaceY(b) {
   return b.y < 0 ? b.y + b.h / 2 - d : b.y - b.h / 2;
 }
 
-function buildOutpostFortress(biome) {
-  const def = outpostFortDef(biome);
-  if (!def) return [];
-  const st = outpostFortState(biome);
+function buildOutpostFortress(biome, fort = null) {
+  if (!fort) return outpostFortDefs(biome).flatMap(def => buildOutpostFortress(biome, def));
+  const def = fort;
+  const st = outpostFortState(biome, def);
   const out = [];
   const FX = def.x, FY = def.y, W = FORT_HALF_W, H = FORT_HALF_H;
 
@@ -37628,17 +37804,16 @@ function buildOutpostFortress(biome) {
   // published TWICE, and the six that are not props were being folded into
   // authoredMask and authoredChunks as well, which would have blanked the
   // streamer for four chunks around the fort.
-  for (const o of out) o.isLandmark = true;
+  for (const o of out) { o.isLandmark = true; o.outpostFortId = outpostFortId(def); }
   return out;
 }
 
 // Is this point inside the compound the fort owns? Used by the chunk generator
 // to keep its ground clear and by the garrison placer to stay inside the walls.
-function insideFortYard(biome, x, y, pad) {
-  const def = outpostFortDef(biome);
-  if (!def) return false;
+function insideFortYard(biome, x, y, pad, fort = null) {
   const p = pad || 0;
-  return Math.abs(x - def.x) < FORT_HALF_W + p && Math.abs(y - def.y) < FORT_HALF_H + p;
+  return (fort ? [fort] : outpostFortDefs(biome, true)).some(def =>
+    Math.abs(x - def.x) < FORT_HALF_W + p && Math.abs(y - def.y) < FORT_HALF_H + p);
 }
 
 // Ownership belongs to the saved capture record, never merely to an open door.
@@ -37665,17 +37840,92 @@ function ownedFortresses(biome = currentLevel) {
       x0: -4700, y0: -4600, x1: 5900, y1: 5800,
       innerX0: -4200, innerY0: -3800, innerX1: 5400, innerY1: 5000 });
   }
-  const def = outpostFortDef(biome);
-  const st = window.outpostForts && window.outpostForts[biome];
+  for (const def of outpostFortDefs(biome)) {
+  const st = window.outpostForts && window.outpostForts[outpostFortId(def) === 'OUTPOST' ? biome : '1:RELAY_SW'];
   if (def && st && st.captured) {
     const wall = FORT_GATE_H / 2;
-    forts.push({ id: 'OUTPOST', biome, name: def.name, x: def.x, y: def.y,
+    forts.push({ id: outpostFortId(def), biome, name: def.name, x: def.x, y: def.y,
       x0: def.x - FORT_HALF_W - wall, y0: def.y - FORT_HALF_H - wall,
       x1: def.x + FORT_HALF_W + wall, y1: def.y + FORT_HALF_H + wall,
       innerX0: def.x - FORT_HALF_W + wall, innerY0: def.y - FORT_HALF_H + wall,
       innerX1: def.x + FORT_HALF_W - wall, innerY1: def.y + FORT_HALF_H - wall });
   }
+  }
   return forts;
+}
+
+// The captured chain owns the land between its fortress footprints. A convex
+// hull around each adjacent pair gives the entire approach a continuous edge.
+let cityTerritoryCacheKey = '', cityTerritoryCache = new Map();
+function cityPlayerTerritoryContains(x, y, pad = 0) {
+  const key = (startingFortressOwned(1)?'1':'0') +
+    ((window.outpostForts&&window.outpostForts[1]&&window.outpostForts[1].captured)?'1':'0') +
+    ((window.outpostForts&&window.outpostForts['1:RELAY_SW']&&window.outpostForts['1:RELAY_SW'].captured)?'1':'0');
+  if (key !== cityTerritoryCacheKey) { cityTerritoryCacheKey=key;cityTerritoryCache.clear(); }
+  let territory = cityTerritoryCache.get(pad);
+  if (!territory) {
+  const forts = ownedFortresses(1);
+  territory = { forts, hulls: [] };
+  const links = [['SECTOR', 'OUTPOST'], ['OUTPOST', 'RELAY_SW']];
+  for (const ids of links) {
+    const pair = ids.map(id => forts.find(f => f.id === id));
+    if (!pair[0] || !pair[1]) continue;
+    const points = pair.flatMap(f => [[f.x0-pad,f.y0-pad],[f.x1+pad,f.y0-pad],
+      [f.x1+pad,f.y1+pad],[f.x0-pad,f.y1+pad]]).sort((a,b)=>a[0]-b[0]||a[1]-b[1]);
+    const cross = (a,b,c) => (b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]);
+    const lower=[],upper=[];
+    for (const p of points) { while(lower.length>1&&cross(lower[lower.length-2],lower[lower.length-1],p)<=0)lower.pop();lower.push(p); }
+    for (let i=points.length-1;i>=0;i--) { const p=points[i];while(upper.length>1&&cross(upper[upper.length-2],upper[upper.length-1],p)<=0)upper.pop();upper.push(p); }
+    const hull=lower.slice(0,-1).concat(upper.slice(0,-1));
+    territory.hulls.push(hull);
+  }
+  if (cityTerritoryCache.size >= 16) cityTerritoryCache.clear();
+  cityTerritoryCache.set(pad,territory);
+  }
+  if (territory.forts.some(f=>x>=f.x0-pad&&x<=f.x1+pad&&y>=f.y0-pad&&y<=f.y1+pad)) return true;
+  return territory.hulls.some(hull=>hull.every((a,i)=>{
+    const b=hull[(i+1)%hull.length];
+    return (b[0]-a[0])*(y-a[1])-(b[1]-a[1])*(x-a[0])>=-0.001;
+  }));
+}
+function hostileSpawnExcluded(biome, x, y, pad = 60) {
+  if (biome !== 1 || !cityRelayTerritoryUnlocked()) return insideOwnedFortress(biome, x, y, pad);
+  if (cityPlayerTerritoryContains(x, y, pad)) return true;
+  const clearance = CITY_TERRITORY_CLEARANCE + pad;
+  return ownedFortresses(1).some(f => {
+    const dx = Math.max(f.x0-x,0,x-f.x1), dy = Math.max(f.y0-y,0,y-f.y1);
+    return dx*dx+dy*dy <= clearance*clearance;
+  });
+}
+function pushHostilesOutsideCityTerritory() {
+  if (currentLevel !== 1 || !cityRelayTerritoryUnlocked()) return;
+  for (let i=enemiesList.length-1;i>=0;i--) {
+    const e=enemiesList[i];
+    if (!e || e.dead || e.hp<=0 || e.isFriendly || e.isNeutral || e.isPopulation || e.isCityCivilian) continue;
+    if (!hostileSpawnExcluded(1,e.x,e.y)) continue;
+    // The conquered area drives these units away. Moving a live ambusher
+    // far outside the facility would strand its fight beyond the AI budget.
+    // Retire its outstanding counter without awarding a kill or any loot.
+    if (e.isAmbush && nm0AmbushActive) {
+      nm0AmbushKills=Math.max(0,nm0AmbushKills-1);
+      if (e.outpostFortId) {
+        const st=outpostFortState(1,e.outpostFortId);
+        st.musterLeft=Math.max(0,st.musterLeft-1);
+      }
+    }
+    enemiesList.splice(i,1);
+  }
+  // The city gate's unspawned reserve also retreats when the territory changes
+  // hands. Keep any live frontier relay's independent reserve intact.
+  if (nm0AmbushActive && window.ambushKind === 'GATE') {
+    const fortWaves=outpostFortDefs(1).reduce((n,def)=>{
+      const st=outpostFortState(1,def);return n+(st.musterOn?st.musterWaves:0);
+    },0);
+    const retired=Math.max(0,(window.ambushSpawnsRemaining||0)-fortWaves);
+    nm0AmbushKills=Math.max(0,nm0AmbushKills-retired);
+    window.ambushKillsTotal=Math.max(nm0AmbushKills,(window.ambushKillsTotal||0)-retired);
+    window.ambushSpawnsRemaining=fortWaves;
+  }
 }
 
 function insideOwnedFortress(biome, x, y, pad = 0) {
@@ -37729,6 +37979,23 @@ function getOwnedFortressSpawnPoint(index = 0, biome = currentLevel, nearPlayer 
 // Story ambushes still have to be fought after the grid falls. They assemble
 // outside the captured gates instead of materialising in the player's yard.
 function hostileSpawnPoint(x, y, biome = currentLevel) {
+  if (biome === 1 && cityRelayTerritoryUnlocked()) for (const f of ownedFortresses(1)) {
+    if (x < f.x0-60 || x > f.x1+60 || y < f.y0-60 || y > f.y1+60) continue;
+    x = Math.max(f.x-230,Math.min(f.x+230,x));
+    y = f.id !== 'SECTOR' && y < f.y ? f.y0-CITY_TERRITORY_CLEARANCE-140 : f.y1+CITY_TERRITORY_CLEARANCE+140;
+  }
+  if (biome === 1 && cityRelayTerritoryUnlocked() && hostileSpawnExcluded(biome,x,y)) {
+    const sourceX=x, sourceY=y;
+    // Search around the requested arrival; the first free ring preserves the
+    // approach direction while honoring every owned fort and connecting road.
+    search: for (let radius=1000;radius<=100000;radius+=1000) {
+      for (let spoke=0;spoke<24;spoke++) {
+        const angle=Math.PI/2+spoke*Math.PI/12;
+        const px=sourceX+Math.cos(angle)*radius,py=sourceY+Math.sin(angle)*radius;
+        if (!hostileSpawnExcluded(biome,px,py)) { x=px;y=py;break search; }
+      }
+    }
+  }
   for (const f of ownedFortresses(biome)) {
     if (x < f.x0 - 60 || x > f.x1 + 60 || y < f.y0 - 60 || y > f.y1 + 60) continue;
     x = Math.max(f.x - 230, Math.min(f.x + 230, x));
@@ -37776,15 +38043,16 @@ function newHostileCharacter(x, y, type) {
 function maintainOutpostGarrison() {
   if (!doTick || !player || !BIOME_ACTIVE || isWin || isDead || killcamMode) return;
   if (frameCount % 30 !== 0) return;
-  const def = outpostFortDef(currentBiome);
-  if (!def) return;
-  const st = outpostFortState(currentBiome);
+  for (const def of outpostFortDefs(currentBiome)) maintainFortGarrison(def);
+}
+function maintainFortGarrison(def) {
+  const st = outpostFortState(currentBiome, def);
   if (st.captured || st.garrison <= 0) return;
   const dx = player.x - def.x, dy = player.y - def.y;
   if (dx * dx + dy * dy > FORT_WAKE_R * FORT_WAKE_R) return;
 
   let live = 0;
-  for (const e of enemiesList) if (e && e.isOutpostGarrison && !e.dead && e.hp > 0) live++;
+  for (const e of enemiesList) if (e && e.isOutpostGarrison && outpostFortMatches(e,def) && !e.dead && e.hp > 0) live++;
   if (live >= st.garrison) return;
 
   // Placed on the fort's own stations rather than at random: the yard has a
@@ -37801,20 +38069,21 @@ function maintainOutpostGarrison() {
   let put = 0;
   for (let i = pts.length - 1; i >= 0 && live + put < st.garrison; i--) {
     const p = pts[i];
-    if (!insideFortYard(currentBiome, p.x, p.y, -160)) continue;
+    if (!insideFortYard(currentBiome, p.x, p.y, -160, def) || hostileSpawnExcluded(currentBiome,p.x,p.y)) continue;
     const c = new Character(p.x, p.y, false, type);
     if (c.checkCol(p.x, p.y)) continue;
     c.isOutpostGarrison = true;
+    c.outpostFortId = outpostFortId(def);
     enemiesList.push(c);
     put++;
   }
 }
 
 // The towers are this fort's leash exactly as the sector's are the sector's.
-function recruitOutpostGarrison() {
+function recruitOutpostGarrison(def = outpostFortDef(currentBiome)) {
   let n = 0, f = 0;
   for (const e of enemiesList) {
-    if (!e || !e.isOutpostGarrison || e.isFriendly || e.dead || e.hp <= 0) continue;
+    if (!e || !e.isOutpostGarrison || !outpostFortMatches(e,def) || e.isFriendly || e.dead || e.hp <= 0) continue;
     e.isFriendly = true;
     e.isNeutral  = false;
     e.isRecruit  = true;
@@ -37830,13 +38099,18 @@ function recruitOutpostGarrison() {
 // Called every frame the fort's towers can be shot at. One shot: the moment the
 // second mast falls, the yard changes sides and the door stays open for good.
 function checkOutpostCaptured() {
-  const def = outpostFortDef(currentBiome);
-  if (!def) return;
-  const st = outpostFortState(currentBiome);
+  for (const def of outpostFortDefs(currentBiome)) checkFortCaptured(def);
+  if (!nm0AmbushActive && !inFortCutscene && !inWorldBuildingMenu && !killcamMode) {
+    const pending=outpostFortDefs(currentBiome).find(def=>outpostFortState(currentBiome,def).cutscenePending);
+    if (pending) startFortCutscene(pending);
+  }
+}
+function checkFortCaptured(def) {
+  const st = outpostFortState(currentBiome, def);
   if (st.captured) return;
   let any = false, standing = 0;
   for (const b of buildings) {
-    if (!b.isTower || !b.isOutpost) continue;
+    if (!b.isTower || !b.isOutpost || !outpostFortMatches(b,def)) continue;
     any = true;
     if (b.hp > 0) standing++;
     if (b.fortIdx === 0 || b.fortIdx === 1) st.towerHp[b.fortIdx] = Math.max(0, b.hp);
@@ -37856,13 +38130,14 @@ function checkOutpostCaptured() {
   st.musterLeft = Math.max(0, st.musterLeft - canceledWaves);
   st.musterTotal = Math.max(st.musterLeft, st.musterTotal - canceledWaves);
   st.musterWaves = 0;
-  if (st.musterOn && window.ambushFort && window.ambushFort.x === def.x && window.ambushFort.y === def.y) {
+  if (st.musterOn) {
     nm0AmbushKills = Math.max(0, nm0AmbushKills - canceledWaves);
     window.ambushKillsTotal = Math.max(nm0AmbushKills, (window.ambushKillsTotal || 0) - canceledWaves);
     window.ambushSpawnsRemaining = Math.max(0, (window.ambushSpawnsRemaining || 0) - canceledWaves);
   }
-  const got = recruitOutpostGarrison();
+  const got = recruitOutpostGarrison(def);
   st.garrison = 0;
+  if (currentBiome === 1) pushHostilesOutsideCityTerritory();
   // They join the Directive the same way the sector's survivors do: as integers
   // in the undivided pool, never as a headcount of who is standing here.
   if (got.total > 0 && typeof grantCitizens === 'function') {
@@ -37874,6 +38149,13 @@ function checkOutpostCaptured() {
     : (def.name + " TAKEN");
   streakMsgTimer = 220;
   screenShake = 30;
+  // The next landmark joins the manager by identity. Its permanent reservation
+  // was already clear, so existing chunk destruction records stay untouched.
+  if (currentBiome === 1 && outpostFortId(def) === 'OUTPOST' && chunkMgr &&
+      !chunkMgr.anchors.some(b => b.outpostFortId === 'RELAY_SW')) {
+    chunkMgr.anchors.push(...buildOutpostFortress(1,CITY_RELAY_SW));
+    chunkMgr.rebuildWorldArrays();
+  }
 
   // THE SAME BEAT THE SECTOR'S OWN TOWERS RUN, one scale down. Masts down ->
   // the yard changes sides -> they say so -> the Directive -> the overworld.
@@ -37897,12 +38179,13 @@ function checkOutpostCaptured() {
 // ---------------------------------------------------------------------------
 function startFortCutscene(def) {
   if (!def) return false;
-  if (storyBeatDone("FORT_" + currentLevel)) { finishFortCapture(); return false; }
+  window.fortCutsceneId = outpostFortId(def);
+  if (storyBeatDone(outpostFortStoryBeat(def))) { finishFortCapture(); return false; }
   // Not while the muster is still shooting. Dropping the masts mid-fight is a
   // legitimate way to take the fort; the beat waits for the field, the same way
   // the sector's tower cutscene waits on !nm0AmbushActive.
-  if (nm0AmbushActive) { outpostFortState(currentBiome).cutscenePending = true; return false; }
-  outpostFortState(currentBiome).cutscenePending = false;
+  if (nm0AmbushActive) { outpostFortState(currentBiome,def).cutscenePending = true; return false; }
+  outpostFortState(currentBiome,def).cutscenePending = false;
 
   // The speakers are the fort's OWN freed garrison, standing in its yard --
   // not whoever happens to be nearest, which out here is as likely to be a
@@ -37910,8 +38193,8 @@ function startFortCutscene(def) {
   const cast = [];
   for (const e of enemiesList) {
     if (!e || e.dead || e.hp <= 0 || !e.isFriendly) continue;
-    if (!e.isOutpostGarrison) continue;
-    if (!insideFortYard(currentBiome, e.x, e.y, 260)) continue;
+    if (!e.isOutpostGarrison || !outpostFortMatches(e,def)) continue;
+    if (!insideFortYard(currentBiome, e.x, e.y, 260,def)) continue;
     cast.push(e);
   }
   if (!cast.length) { finishFortCapture(); return false; }
@@ -37934,7 +38217,9 @@ function startFortCutscene(def) {
 function finishFortCapture() {
   inFortCutscene = false;
   fortPhase = 0;
-  markStoryBeat("FORT_" + currentLevel);
+  const def=outpostFortDef(currentBiome,window.fortCutsceneId);
+  outpostFortState(currentBiome,def).cutscenePending=false;
+  markStoryBeat(outpostFortStoryBeat(def));
   openDirectiveWithGrant(currentLevel);
   // An established sector's Directive goes straight to the overworld map. That
   // is right after a travel arrival and wrong here -- the whole point of taking
@@ -37995,13 +38280,14 @@ function fortWavePoint(def, aerial) {
 
 function triggerOutpostAmbush(def) {
   if (!def) return;
-  const st = outpostFortState(currentBiome);
+  if (!outpostFortDefs(currentBiome).includes(def)) return;
+  const st = outpostFortState(currentBiome,def);
   if (st.captured || st.musterOn || st.musterDone) return;
   st.breached = true;
   st.gateHp = 0;
   // Both gates. The breach is the compound's, not one wall's -- and the north
   // one has to be standing open for the waves to come through it.
-  for (const b of buildings) if (b.isOutpostGate) b.hp = 0;
+  for (const b of buildings) if (b.isOutpostGate && outpostFortMatches(b,def)) b.hp = 0;
 
   // EVERY LOOSE NM-0 BODY IN THE AREA JOINS THE MUSTER. See
   // conscriptIntoMuster() for why this is a tick as well as a one-shot.
@@ -38012,6 +38298,7 @@ function triggerOutpostAmbush(def) {
     const dx = e.x - def.x, dy = e.y - def.y;
     if (dx * dx + dy * dy > FORT_MUSTER_R * FORT_MUSTER_R) continue;
     e.isAmbush = true;
+    e.outpostFortId = outpostFortId(def);
     conscripted++;
   }
 
@@ -38023,10 +38310,12 @@ function triggerOutpostAmbush(def) {
   for (let i = 0; i < pts.length && spawned < FORT_MUSTER_SPAWN; i++) {
     const r = i % 10;
     const t = r === 9 ? "AERIAL" : (r === 8 ? "ARMORED" : "ARMORED_STANDARD");
-    const e = new Character(pts[i].x, pts[i].y, false, t);
+    const point = hostileSpawnPoint(pts[i].x, pts[i].y);
+    const e = new Character(point.x, point.y, false, t);
     if (t !== "AERIAL" && e.checkCol(e.x, e.y)) continue;   // a mast, the post, a guard box
     e.isAmbush = true;
     e.isOutpost = true;
+    e.outpostFortId = outpostFortId(def);
     e.state = "CHASE";
     e.loseSightTimer = 999;
     enemiesList.push(e);
@@ -38068,7 +38357,7 @@ function triggerOutpostAmbush(def) {
   // point it at the north gate too. spawnFortWave() is what actually runs.
   const wp = fortWavePoint(def, false);
   window.ambushOrigin = { x: def.x, y: wp.y, aerY: wp.y - 60, flank: 120, jitter: 90 };
-  window.ambushFort   = { x: def.x, y: def.y };
+  window.ambushFort   = { x: def.x, y: def.y, id: outpostFortId(def) };
 
   for (const e of enemiesList) {
     if (!e.isFriendly && e.hp > 0 && !e.dead) { e.state = "CHASE"; e.loseSightTimer = 999; }
@@ -38113,22 +38402,24 @@ const FORT_REFILL_BATCHES = [2, 2, 3, 2, 3]; // 12 arrivals per five full batche
 // So the fort spawns its own. It reads window.ambushFort and nothing else, and
 // it puts each body OUTSIDE the north gate, inside that gate's doorway, facing
 // a walk down the whole length of the compound.
-function spawnFortWave() {
-  const def = activeFortMuster(currentBiome);
+function spawnFortWave(fort = null) {
+  const def = fort || activeFortMuster(currentBiome);
   if (!def || !started || isDead || isWin) return false;
-  const st = outpostFortState(currentBiome);
+  const st = outpostFortState(currentBiome,def);
   if (st.captured || !(st.musterWaves > 0)) return false;
   st.musterWaves--;
-  window.ambushSpawnsRemaining = st.musterWaves;
+  window.ambushSpawnsRemaining = Math.max(0,(window.ambushSpawnsRemaining||0)-1);
 
   const r = random();
   const type = r > 0.9 ? "AERIAL" : (r > 0.8 ? "ARMORED" : "ARMORED_STANDARD");
-  const p = fortWavePoint(def, type === "AERIAL");
+  const raw = fortWavePoint(def, type === "AERIAL");
+  const p = hostileSpawnPoint(raw.x, raw.y);
   const e = new Character(p.x, p.y, false, type);
   e.state = "CHASE";
   e.loseSightTimer = 999;
   e.isAmbush = true;
   e.isOutpost = true;
+  e.outpostFortId = outpostFortId(def);
   enemiesList.push(e);
   return true;
 }
@@ -38148,13 +38439,13 @@ function conscriptIntoMuster(e) {
   if (e.isPopulation || e.isOutpostGarrison) return false;   // the ones you are asked to spare
   const fort = activeFortMuster(currentBiome);
   if (!nm0AmbushActive || !fort) return false;
-  if (outpostFortState(currentBiome).captured) return false;
+  if (outpostFortState(currentBiome,fort).captured) return false;
   const R2 = FORT_MUSTER_R * FORT_MUSTER_R;
   const fx = e.x - fort.x, fy = e.y - fort.y;
   if (fx * fx + fy * fy <= R2) {
-    e.isAmbush = true; nm0AmbushKills++;
+    e.isAmbush = true; e.outpostFortId = outpostFortId(fort); nm0AmbushKills++;
     window.ambushKillsTotal = (window.ambushKillsTotal || 0) + 1;
-    const s0 = outpostFortState(currentBiome); s0.musterLeft++; s0.musterTotal++;
+    const s0 = outpostFortState(currentBiome,fort); s0.musterLeft++; s0.musterTotal++;
     return true;
   }
   // Near the PLAYER also counts -- a fight this size moves, and a body shooting
@@ -38168,18 +38459,30 @@ function conscriptIntoMuster(e) {
   const ex = e.x - player.x, ey = e.y - player.y;
   if (ex * ex + ey * ey > R2) return false;
   e.isAmbush = true;
+  e.outpostFortId = outpostFortId(fort);
   nm0AmbushKills++;
   window.ambushKillsTotal = (window.ambushKillsTotal || 0) + 1;
-  const st = outpostFortState(currentBiome);
+  const st = outpostFortState(currentBiome,fort);
   st.musterLeft++; st.musterTotal++;
   return true;
 }
 
 function maintainOutpostMuster() {
   if (!doTick || !player || !BIOME_ACTIVE || isWin || isDead || killcamMode) return;
-  const def = activeFortMuster(currentBiome);
-  if (!def) return;
-  const st = outpostFortState(currentBiome);
+  const defs = outpostFortDefs(currentBiome).filter(def=>outpostFortState(currentBiome,def).musterOn);
+  if (!defs.length) return;
+  // A city gate/tower battle can share the field with a fort. Preserve its
+  // remaining budget instead of replacing it with only the fort's counters.
+  const extraLeft=nm0AmbushActive?Math.max(0,nm0AmbushKills-defs.reduce((n,def)=>n+outpostFortState(currentBiome,def).musterLeft,0)):0;
+  const extraTotal=nm0AmbushActive?Math.max(0,(window.ambushKillsTotal||0)-defs.reduce((n,def)=>n+outpostFortState(currentBiome,def).musterTotal,0)):0;
+  const extraWaves=nm0AmbushActive?Math.max(0,(window.ambushSpawnsRemaining||0)-defs.reduce((n,def)=>n+outpostFortState(currentBiome,def).musterWaves,0)):0;
+  for (const def of defs) maintainFortMuster(def);
+  nm0AmbushKills = extraLeft+defs.reduce((n,def)=>n+outpostFortState(currentBiome,def).musterLeft,0);
+  window.ambushKillsTotal = extraTotal+defs.reduce((n,def)=>n+outpostFortState(currentBiome,def).musterTotal,0);
+  window.ambushSpawnsRemaining = extraWaves+defs.reduce((n,def)=>n+outpostFortState(currentBiome,def).musterWaves,0);
+}
+function maintainFortMuster(def) {
+  const st = outpostFortState(currentBiome,def);
 
   // A RELOAD LANDS IN A MUSTER WITH NOTHING ON THE FIELD.
   //
@@ -38193,10 +38496,7 @@ function maintainOutpostMuster() {
     window.ambushKind = "GATE";
     objectiveTimer = 360;
   }
-  nm0AmbushKills = st.musterLeft;
-  window.ambushKillsTotal = st.musterTotal;
-  window.ambushSpawnsRemaining = st.musterWaves;
-  window.ambushFort = { x: def.x, y: def.y };
+  window.ambushFort = { x: def.x, y: def.y, id: outpostFortId(def) };
 
   if (frameCount % FORT_MUSTER_TICK !== 0) return;
 
@@ -38204,7 +38504,7 @@ function maintainOutpostMuster() {
   for (const e of enemiesList) {
     if (!e || e.isFriendly || e.dead || e.hp <= 0) continue;
     if (e.isPopulation || e.isOutpostGarrison) continue;
-    if (e.isAmbush || conscriptIntoMuster(e)) live++;
+    if ((e.isAmbush && e.outpostFortId===outpostFortId(def)) || conscriptIntoMuster(e)) live++;
   }
 
   // AND A WAVE DOES NOT WAIT ON A KILL LANDING. processKill() schedules one
@@ -38220,7 +38520,7 @@ function maintainOutpostMuster() {
   // muster. Bounded per tick so a fight is never a wall of bodies either.
   const refillBatch = FORT_REFILL_BATCHES[Math.floor(frameCount / FORT_MUSTER_TICK) % FORT_REFILL_BATCHES.length];
   for (let i = 0; i < refillBatch && live < FORT_WAVE_FLOOR && st.musterWaves > 0; i++)
-    if (spawnFortWave()) live++;
+    if (spawnFortWave(def)) live++;
 }
 
 // ---------------------------------------------------------------------------
@@ -38328,9 +38628,8 @@ function groundReserved(biome, cx, cy, x, y, w, h, pad) {
   // function exists to stop; the fort is simply a very large thing that got
   // there first. See THE OVERWORLD FORTRESS.
   if (typeof outpostFortDef === 'function') {
-    const fd = outpostFortDef(biome);
-    if (fd && Math.abs(x - fd.x) < FORT_HALF_W + 460 + hw &&
-              Math.abs(y - fd.y) < FORT_HALF_H + 460 + hh) return true;
+    if (outpostFortDefs(biome,true).some(fd=>Math.abs(x - fd.x) < FORT_HALF_W + 460 + hw &&
+              Math.abs(y - fd.y) < FORT_HALF_H + 460 + hh)) return true;
   }
 
   switch (lay) {
@@ -38657,11 +38956,11 @@ function generateChunkContent(biome, cx, cy) {
   // ground than an anchor's square pad -- and it is folded in here rather than
   // given its own test so that every existing caller (the block loop, the park
   // and plaza zoning, the checkpoint placer) reserves it without being touched.
-  const fortDef = (typeof outpostFortDef === 'function') ? outpostFortDef(biome) : null;
+  const fortDefs = outpostFortDefs(biome,true);
   const nearAnchor = (x, y, pad) => {
     for (let a of anchors) if (Math.abs(x - a.x) < pad && Math.abs(y - a.y) < pad) return true;
-    if (fortDef && Math.abs(x - fortDef.x) < FORT_HALF_W + 460 &&
-                   Math.abs(y - fortDef.y) < FORT_HALF_H + 460) return true;
+    if (fortDefs.some(fortDef=>Math.abs(x - fortDef.x) < FORT_HALF_W + 460 &&
+                   Math.abs(y - fortDef.y) < FORT_HALF_H + 460)) return true;
     return false;
   };
 
@@ -40901,8 +41200,9 @@ function bakeChunkTerrainAt(biome, cx, cy, staticDecor) {
 }
 
 function bakeFortHardstanding(g, biome, ox, oy) {
-  const f = outpostFortDef(biome);
-  if (!f) return;
+  for (const f of outpostFortDefs(biome,true)) bakeOneFortHardstanding(g,biome,ox,oy,f);
+}
+function bakeOneFortHardstanding(g, biome, ox, oy, f) {
   const x0 = Math.max(ox, f.x - FORT_HALF_W - 220);
   const x1 = Math.min(ox + CHUNK_W, f.x + FORT_HALF_W + 220);
   const y0 = Math.max(oy, f.y - FORT_HALF_H - 260);
@@ -43196,7 +43496,7 @@ function refreshPopulation(mgr, pcx, pcy) {
           const r = roster[n];
           const c = new Character(r.x, r.y, false, r.type);
           if(r.residentKey&&!restoreFrontierPerson(c,r.residentKey,r.seed))continue;
-          if (!c.isFriendly && insideOwnedFortress(mgr.biome, c.x, c.y, 60)) continue;
+          if (!c.isFriendly && hostileSpawnExcluded(mgr.biome, c.x, c.y, 60)) continue;
           if (c.eType !== "COW" && c.eType !== "HORSE") c.state = "PATROL";
           if (r.route) { c.routeA = r.home; c.routeB = r.route; c.routeLeg = 0; }
           if (r.post)  { c.postX = r.post.x; c.postY = r.post.y; c.postR = 300; }
@@ -54283,7 +54583,7 @@ function gateIsOpen(b) {
   if (!b || !b.isGovFortress) return false;
   // An overworld fort answers to its own record.
   if (b.isOutpostGate) {
-    const st = outpostFortState(currentBiome);
+    const st = outpostFortState(currentBiome,b.outpostFortId);
     return !!(st.captured || st.breached);
   }
   // A destroyed door opens immediately, including during an active ambush.
@@ -55091,6 +55391,92 @@ const FRONTIER_SALOON_ROOM = { left: -700, right: 700, top: -490, bottom: 490,
   door: { x: 0, y: 465 }, entry: { x: 0, y: 425 }, counter: { x: -90, y: -272 },
   fight: { x: 180, y: 120 } };
 
+// Eight Count shares the saloon's private scene, input and native boxing rig.
+// Its campaign doorway never becomes local geometry or a streamed actor.
+const CITY_BOXING_CLUB_ROOM = { left: -630, right: 630, top: -440, bottom: 440,
+  door: { x: 0, y: 424 }, entry: { x: 0, y: 390 }, trainer: { x: 0, y: 215 },
+  fight: { x: 0, y: 60 } };
+const CITY_BOXING_CLUB_RING = { left: -250, right: 250, top: -260, bottom: 170, gate: 68 };
+function cityBoxingClubContext() {
+  return !!player && started && player.hp > 0 && !isDead && !isWin && currentLevel === 1 && BIOME_ACTIVE &&
+    !killcamMode && !inTownCutscene && !inFarmCutscene && !inFarmPostCutscene && !inFortCutscene &&
+    !inPostAmbushCutscene && !inWorldBuildingMenu && !inOverworldView && !inTravelMenu &&
+    !inStoryIntro && !inDarchonCall;
+}
+function cityBoxingClubSites(building = null) {
+  if (!player) return null;
+  const eligible = b => b && b.cityVenue === 'BOXING' && !b.cityVenueSecondary && b.cityEntrance;
+  let site = eligible(building) ? building : null;
+  if (!site) {
+    let nearest = Infinity;
+    for (const candidate of buildings || []) if (eligible(candidate)) {
+      const distance = (player.x-candidate.cityEntrance.x)**2 + (player.y-candidate.cityEntrance.y)**2;
+      if (distance < nearest) { nearest=distance;site=candidate; }
+    }
+  }
+  return site ? { building: site, door: { x: site.cityEntrance.x, y: site.cityEntrance.y } } : null;
+}
+function cityBoxingClubInteraction() {
+  if (!cityBoxingClubContext() || isPaused || frontierSaloonIsInside()) return null;
+  const site = cityBoxingClubSites();
+  if (!site || Math.hypot(player.x - site.door.x, player.y - site.door.y) > 100) return null;
+  const unlocked = typeof cityBoxingClubUnlocked === 'function' && cityBoxingClubUnlocked();
+  return { ...site, unlocked, label: unlocked ? 'ENTER EIGHT COUNT BOXING' : 'BOXING CLUB · OWN BOTH CITY FORTRESSES' };
+}
+function enterCityBoxingClub(building = null) {
+  const site = cityBoxingClubSites(building);
+  if (!site || !cityBoxingClubContext() || isPaused || frontierSaloonIsInside() ||
+      typeof cityBoxingClubUnlocked !== 'function' || !cityBoxingClubUnlocked() ||
+      Math.hypot(player.x - site.door.x, player.y - site.door.y) > 100) return false;
+  return enterFrontierSaloon('SALOON', site.building);
+}
+function cityBoxingClubSetPlayerGloves(s, active) {
+  if (!s || s.venue !== 'CITY_BOXING') return;
+  if (active) { player.cityBoxingGloves = color(174, 42, 36); player.cityBoxingGloveOz = 8; }
+  else for (const key of ['cityBoxingGloves', 'cityBoxingGloveOz']) {
+    if (s.save.clubAppearance[key].own) player[key] = s.save.clubAppearance[key].value;
+    else delete player[key];
+  }
+}
+function cityBoxingClubStartRound(s, round, movePlayer = false) {
+  const level = Math.max(1, Math.floor(round || 1)), skill = level === 1 ? 'ROOKIE' : level < 4 ? 'BRAWLER' : 'ACE';
+  s.arena = 'CITY_BOXING'; s.transition = null;
+  if (movePlayer) { player.x = CITY_BOXING_CLUB_ROOM.fight.x; player.y = CITY_BOXING_CLUB_ROOM.fight.y; }
+  s.downFighters = [...(s.downFighters || []), ...s.fighters.filter(c => c.knockedOut)].slice(-2);
+  s.gauntlet.wave = level; s.gauntlet.phase = 'FIGHT'; s.gauntlet.nextWave = null;
+  s.gauntlet.remainingMs = s.gauntlet.finishMs = 0; s.gauntlet.finishMessage = null;
+  s.club.round = level; s.brawl = 'ACTIVE'; s.boxingInput = {}; s.boxingEffects.length = 0; s.hitMs = 0;
+  const palettes = [[112,70,49], [222,167,126], [166,110,71], [76,49,39], [238,196,157], [191,137,98], [139,103,74], [210,169,119]],
+    names = ['MALIK', 'RAFAEL', 'ANDRE', 'DARIUS', 'LUCA', 'TOMAS', 'ELI', 'KENJI'], i = (level - 1) % palettes.length,
+    mark = frontierSaloonWaveSpawn(0, 1, []), c = frontierSaloonPerson(mark.x, mark.y, 'VILLAGER_MALE', names[i]);
+  c.cityBoxer = true; c.cityBoxingGloves = color(37, 82, 146); c.cityBoxingGloveOz = 8;
+  c.skinCol = color(...palettes[i]); c.shirtCol = c.skinCol; c.vestCol = null;
+  c.hairCol = color(35 + i * 5, 27 + i * 3, 23 + i * 2); c.hairStyle = i % 3;
+  c.pantsCol = color(...[[35,68,115], [120,37,36], [40,91,62]][i % 3]);
+  c.bodyW *= 1.10; c.bodyH *= 1.07; c.boxingSkill = skill;
+  c.boxingPressure = Math.min(.55, Math.max(0, level - 3) * .035);
+  c.hp = c.maxHp = Math.min(145, 62 + (level - 1) * 9);
+  s.fighters = [c]; boxingEnter(c, [player], 'SALOON');
+  player.isMoving = false; player.gait = 0; player.isArmed = false; player.isUnarmed = true;
+  player.boxingHold = 180; player.meleeTimer = player.meleeCooldown = 0;
+  cityBoxingClubSetPlayerGloves(s, true); boxingEnter(player, s.fighters, 'SALOON');
+  boxingSeedEntryInput(player, s.boxingInput);
+  frontierSaloonNotify('EIGHT COUNT · SPARRING ' + level + ' · ' + c.name + '\nOne boxer at a time. Guard, slip and find your opening.');
+}
+function startCityBoxingClubSparring() {
+  const s = _frontierSaloonSession;
+  return !!s && s.venue === 'CITY_BOXING' && startFrontierSaloonBrawl();
+}
+function cityBoxingClubStopSparring(s = _frontierSaloonSession) {
+  if (!s || s.venue !== 'CITY_BOXING' || ['KNOCKOUT', 'INTERMISSION'].includes(s.brawl)) return false;
+  boxingLeaveInput(player, s.boxingInput); boxingExit(player); s.fighters.forEach(boxingExit);
+  s.fighters = []; s.downFighters = []; s.boxingInput = {}; s.gauntlet = null;
+  s.boxingEffects.length = 0; s.brawl = 'IDLE'; s.menu = false; player.boxingHold = 0;
+  cityBoxingClubSetPlayerGloves(s, false);
+  frontierSaloonNotify('SPARRING FINISHED\nWalk through the south ring gate to leave, or ask the trainer to start again.');
+  return true;
+}
+
 // The opening lessons are fixed; later street and bridge waves add skilled
 // fighters without letting attack leases or the local body pool grow forever.
 function frontierSaloonWaveSpec(wave) {
@@ -55135,6 +55521,7 @@ function frontierSaloonWaveSpawn(index, count, placed) {
   return { ...frontierSaloonArenaInfo().fight };
 }
 function frontierSaloonStartWave(s, wave, movePlayer = false) {
+  if (s.venue === 'CITY_BOXING') return cityBoxingClubStartRound(s, wave, movePlayer);
   const spec = frontierSaloonWaveSpec(wave);
   s.arena = spec.arena; s.transition = null;
   if (movePlayer) {
@@ -55175,13 +55562,17 @@ function frontierSaloonClearWave(s) {
   if (player._boxing) { player._boxing.target = null; player._boxing.director = null; }
   s.boxingInput = {}; player.boxingHold = 180; player.isMoving = false; player.gait = 0;
   const wave = s.gauntlet.wave;
-  frontierSaloonProgress.bestWave = Math.max(frontierSaloonProgress.bestWave, wave);
+  if (s.venue === 'CITY_BOXING') s.club.bestRound = Math.max(s.club.bestRound, wave);
+  else frontierSaloonProgress.bestWave = Math.max(frontierSaloonProgress.bestWave, wave);
   s.grit = Math.min(100, s.grit + 12);
   s.brawl = 'INTERMISSION'; s.gauntlet.phase = 'SETTLE';
   s.gauntlet.nextWave = Math.min(9999, wave + 1);
   s.gauntlet.remainingMs = FRONTIER_SALOON_ROUND_FINISH.holdMs; s.gauntlet.finishMs = 0;
   _frontierSaloonToastMs = 0;
-  if (wave === 14 && !frontierSaloonProgress.brawlCleared) {
+  if (s.venue === 'CITY_BOXING') {
+    s.gauntlet.finishMessage = wave === 8 ? 'EIGHT COUNT CIRCUIT COMPLETE\nAll eight opponents down. Visit the trainer to spar again, or head outside.' :
+      'SPARRING ' + wave + '/8 COMPLETE · +12 GRIT\nRest, leave, or ask the trainer for your next opponent.';
+  } else if (wave === 14 && !frontierSaloonProgress.brawlCleared) {
     frontierSaloonProgress.brawlCleared = true; score += 75;
     s.gauntlet.finishMessage = 'CANYON GAUNTLET CLEARED · +75 SCORE\nThe bridge survived. Keep going for a higher survival record.';
   } else s.gauntlet.finishMessage = 'LEVEL ' + wave + ' SURVIVED · +12 GRIT\nCatch your breath. Level ' + s.gauntlet.nextWave + ' is coming.';
@@ -55201,7 +55592,13 @@ function frontierSaloonAdvanceGauntlet(s, dt) {
     }
     s.gauntlet.remainingMs = Math.max(0, s.gauntlet.remainingMs - dt);
     if (s.gauntlet.remainingMs > 0 || player._boxing && player._boxing.punch) return;
-    const next = s.gauntlet.nextWave, arena = frontierSaloonWaveSpec(next).arena;
+    if (s.venue === 'CITY_BOXING') {
+      boxingExit(player); player.boxingHold = 0; cityBoxingClubSetPlayerGloves(s, false);
+      s.club.completed = s.gauntlet.wave >= 8; s.club.nextRound = s.club.completed ? null : s.gauntlet.wave + 1;
+      s.brawl = s.club.completed ? 'CLEARED' : 'READY'; s.gauntlet.phase = 'BREAK';
+      s.gauntlet.nextWave = null; s.menuChoice = 'BRAWL'; return;
+    }
+    const next = s.gauntlet.nextWave, arena = s.venue === 'CITY_BOXING' ? 'CITY_BOXING' : frontierSaloonWaveSpec(next).arena;
     if (arena !== s.arena) {
       boxingLeaveInput(player, s.boxingInput); s.fighters.forEach(boxingExit);
       s.boxingInput = {}; s.brawl = 'TRANSITION'; s.gauntlet.phase = 'TRANSITION';
@@ -55218,6 +55615,8 @@ function frontierSaloonAdvanceGauntlet(s, dt) {
 // The bridge's movement rectangle is the actual deck between its railings.
 function frontierSaloonArenaInfo(arena) {
   const name = arena || (_frontierSaloonSession && _frontierSaloonSession.arena) || 'SALOON';
+  if (name === 'CITY_BOXING') return { name, bounds: CITY_BOXING_CLUB_ROOM,
+    fight: CITY_BOXING_CLUB_ROOM.fight, door: CITY_BOXING_CLUB_ROOM.door, label: 'EIGHT COUNT · BOXING CLUB' };
   if (name === 'STREET') return { name, bounds: { left: -720, right: 720, top: -245, bottom: 470 },
     fight: { x: 0, y: -30 }, door: { x: 0, y: -215 }, label: 'COPPER SPUR · MAIN STREET' };
   if (name === 'BRIDGE') return { name, bounds: { left: -620, right: 620, top: -156, bottom: 156 },
@@ -55228,6 +55627,7 @@ function frontierSaloonArenaInfo(arena) {
 
 function frontierSaloonIsInside() { return !!_frontierSaloonSession; }
 function frontierSaloonContext() {
+  if (currentLevel === 1) return cityBoxingClubContext();
   return !!player && started && player.hp > 0 && !isDead && !isWin && currentLevel === 3 && BIOME_ACTIVE &&
     !killcamMode && !inTownCutscene && !inFarmCutscene && !inFarmPostCutscene && !inFortCutscene &&
     !inPostAmbushCutscene && !inWorldBuildingMenu && !inOverworldView && !inTravelMenu &&
@@ -55260,6 +55660,14 @@ function frontierSaloonHudLayer(alpha, paint) {
   push(); drawingContext.globalAlpha *= alpha; paint(); pop();
 }
 function frontierSaloonFurniture() {
+  if (frontierSaloonArenaInfo().name === 'CITY_BOXING') return [
+    { kind: 'BAG', x: -430, y: -235, w: 46, h: 46, rise: 62 },
+    { kind: 'BAG', x: -430, y: -65, w: 46, h: 46, rise: 62 },
+    { kind: 'BAG', x: -430, y: 105, w: 46, h: 46, rise: 62 },
+    { kind: 'CLUB_BENCH', x: 445, y: -150, w: 82, h: 240, rise: 13 },
+    { kind: 'CLUB_LOCKERS', x: 430, y: -365, w: 250, h: 55, rise: 42 },
+    { kind: 'CLUB_DESK', x: 390, y: 285, w: 170, h: 70, rise: 22 }
+  ];
   if (frontierSaloonArenaInfo().name !== 'SALOON') return [];
   return [
     { kind: 'BAR', x: -90, y: -350, w: 920, h: 78, rise: 27 },
@@ -55274,6 +55682,8 @@ function frontierSaloonFurniture() {
   ];
 }
 function frontierSaloonNearCounter() {
+  if (frontierSaloonArenaInfo().name === 'CITY_BOXING')
+    return Math.hypot(player.x - CITY_BOXING_CLUB_ROOM.trainer.x, player.y - CITY_BOXING_CLUB_ROOM.trainer.y) < 100;
   if (frontierSaloonArenaInfo().name !== 'SALOON') return false;
   const p = FRONTIER_SALOON_ROOM.counter;
   return Math.hypot(player.x - p.x, player.y - p.y) < 128;
@@ -55286,6 +55696,19 @@ function frontierSaloonCanLeave() {
 function frontierSaloonBlocked(x, y, radius = 16) {
   const r = frontierSaloonArenaInfo().bounds;
   if (x < r.left + radius || x > r.right - radius || y < r.top + radius || y > r.bottom - radius) return true;
+  const s = _frontierSaloonSession;
+  if (s && s.venue === 'CITY_BOXING') {
+    const ring = CITY_BOXING_CLUB_RING;
+    if (frontierSaloonRunActive(s)) {
+      if (x < ring.left + radius || x > ring.right - radius || y < ring.top + radius || y > ring.bottom - radius) return true;
+    } else {
+      const inX = x > ring.left - radius && x < ring.right + radius,
+        inY = y > ring.top - radius && y < ring.bottom + radius;
+      if (inY && (Math.abs(x - ring.left) < radius + 4 || Math.abs(x - ring.right) < radius + 4) ||
+          inX && Math.abs(y - ring.top) < radius + 4 ||
+          inX && Math.abs(y - ring.bottom) < radius + 4 && Math.abs(x) > ring.gate - radius) return true;
+    }
+  }
   for (const b of frontierSaloonFurniture())
     if (x > b.x - b.w / 2 - radius && x < b.x + b.w / 2 + radius &&
         y > b.y - b.h / 2 - radius && y < b.y + b.h / 2 + radius) return true;
@@ -55420,27 +55843,45 @@ function frontierSaloonCreatePeople() {
     frontierSaloonPerson(555, 355, 'COWBOY', 'PATRON'),
     frontierSaloonPerson(490, -215, 'COWGIRL', 'PATRON')];
 }
-function enterFrontierSaloon(mode = 'SALOON') {
-  if (!frontierSaloonContext() || isPaused || _frontierSaloonSession) return false;
+function enterFrontierSaloon(mode = 'SALOON', clubBuilding = null) {
+  if (!clubBuilding && currentLevel !== 3) return false;
+  if (clubBuilding) {
+    const site = cityBoxingClubSites(clubBuilding);
+    if (!site || site.building !== clubBuilding ||
+        typeof cityBoxingClubUnlocked !== 'function' || !cityBoxingClubUnlocked() ||
+        Math.hypot(player.x - site.door.x, player.y - site.door.y) > 100) return false;
+  }
+  if (!(clubBuilding ? cityBoxingClubContext() : frontierSaloonContext()) || isPaused || _frontierSaloonSession) return false;
   const save = { x: player.x, y: player.y, aimAngle: player.aimAngle, moveAngle: player.moveAngle,
     currentWeapon: player.currentWeapon, isArmed: player.isArmed, isUnarmed: player.isUnarmed,
     mounted: !!player.mounted, meleeTool: meleeTool(), swordEquipped: window.swordEquipped,
     meleeToolSel: window.meleeToolSel, zoom, camX, camY,
     stunTimer: player.stunTimer, stunPose: player.stunPose, skeletonTimer: player.skeletonTimer,
-    knockedOut: player.knockedOut, state: player.state };
+    knockedOut: player.knockedOut, state: player.state,
+    clubAppearance: Object.fromEntries(['cityBoxingGloves', 'cityBoxingGloveOz', 'shirtCol', 'pantsCol', 'vestCol'].map(key =>
+      [key, { own: Object.prototype.hasOwnProperty.call(player, key), value: player[key] }])) };
   boxingExit(player);
   _frontierSaloonSession = { mode: 'SALOON', save, patrons: frontierSaloonCreatePeople(), fighters: [],
     brawl: 'IDLE', arena: 'SALOON', gauntlet: null, downFighters: [], grit: 100,
     boxingInput: {}, boxingEffects: [], knockoutEffects: [], camera: null, hitMs: 0,
     menu: false, menuChoice: frontierSaloonProgress.brawlCleared ? 'DUEL' : 'BRAWL',
     pause: false, keys: {}, fireWas: true, padWas: [], duel: null, elapsedMs: 0 };
+  if (clubBuilding) {
+    const s = _frontierSaloonSession, mark = CITY_BOXING_CLUB_ROOM.trainer,
+      trainer = frontierSaloonPerson(mark.x, mark.y, 'VILLAGER_MALE', 'COACH · TRAINER');
+    trainer.shirtCol = color(52, 72, 79); trainer.pantsCol = color(35, 39, 45);
+    trainer.hairCol = color(88, 80, 74); trainer.hairStyle = 6;
+    s.venue = 'CITY_BOXING'; s.arena = 'CITY_BOXING'; s.club = { round: 0, bestRound: 0, nextRound: 1, completed: false };
+    s.patrons = [trainer]; s.menuChoice = 'BRAWL'; s.clubBuilding = clubBuilding;
+  }
   // Entering on a held F/A consumes that edge in the exterior. Seed the room
   // input history from the same physical buttons, so its first frame cannot
   // reinterpret the held entry press as another interaction at the exit.
   for (const code of [27, 80, 70, 49, 50]) _frontierSaloonSession.keys[code] = keyIsDown(code);
   const entryPad = connectedGamepad();
   if (entryPad) _frontierSaloonSession.padWas = entryPad.buttons.map(b => !!b.pressed);
-  player.x = FRONTIER_SALOON_ROOM.entry.x; player.y = FRONTIER_SALOON_ROOM.entry.y;
+  const entry = clubBuilding ? CITY_BOXING_CLUB_ROOM.entry : FRONTIER_SALOON_ROOM.entry;
+  player.x = entry.x; player.y = entry.y;
   _boxingWorldEffects.length = 0;
   player.mounted = false; player.isArmed = false; player.isUnarmed = true;
   player.currentWeapon = WEAPONS.PISTOL; player.reloadTimer = 0; player.meleeTimer = 0;
@@ -55449,7 +55890,8 @@ function enterFrontierSaloon(mode = 'SALOON') {
   player.stunTimer = player.skeletonTimer = 0; player.stunPose = null; player.knockedOut = false;
   leftStick.active = false; rightStick.active = false; meleeInputHeld = false; cannonInputHeld = false;
   _frontierSaloonPrompt = null;
-  if (mode === 'DUEL') startFrontierQuickDraw();
+  if (clubBuilding) frontierSaloonNotify('EIGHT COUNT BOXING CLUB\nTalk to the trainer by the south ring gate. Eight opponents, one at a time.');
+  else if (mode === 'DUEL') startFrontierQuickDraw();
   else frontierSaloonNotify('THE COPPER SPUR\nTalk to Mae at the counter for a fistfight or quick draw.');
   return true;
 }
@@ -55474,6 +55916,9 @@ function exitFrontierSaloon() {
       stunTimer: s.save.stunTimer, stunPose: s.save.stunPose, skeletonTimer: s.save.skeletonTimer,
       knockedOut: s.save.knockedOut, state: s.save.state });
     window.swordEquipped = s.save.swordEquipped; window.meleeToolSel = s.save.meleeToolSel;
+    if (s.venue === 'CITY_BOXING') for (const [key, old] of Object.entries(s.save.clubAppearance)) {
+      if (old.own) player[key] = old.value; else delete player[key];
+    }
   }
   zoom = s.save.zoom; camX = s.save.camX; camY = s.save.camY;
   _frontierSaloonSession = null; _frontierSaloonPrompt = null; isPaused = false;
@@ -55486,6 +55931,15 @@ function exitFrontierSaloon() {
 }
 function startFrontierSaloonBrawl() {
   const s = _frontierSaloonSession; if (!s || s.mode !== 'SALOON' || frontierSaloonRunActive(s)) return false;
+  if (s.venue === 'CITY_BOXING') {
+    const next = s.brawl === 'READY' && s.club.nextRound ? s.club.nextRound : 1;
+    frontierSaloonClearPlayerKnockout(s); s.knockoutEffects.length = 0;
+    boxingLeaveInput(player, s.boxingInput); boxingExit(player); s.fighters.forEach(boxingExit);
+    s.menu = false; s.camera = null; s.transition = null;
+    if (next === 1) { s.grit = 100; s.downFighters = []; s.club.completed = false; }
+    s.gauntlet = { wave: next, phase: 'FIGHT', nextWave: null, remainingMs: 0 };
+    cityBoxingClubStartRound(s, next, true); return true;
+  }
   frontierSaloonClearPlayerKnockout(s); s.knockoutEffects.length = 0;
   boxingLeaveInput(player, s.boxingInput); boxingExit(player); s.fighters.forEach(boxingExit);
   s.menu = false; s.grit = 100; s.camera = null; s.arena = 'SALOON';
@@ -55564,7 +56018,7 @@ function frontierSaloonBeginPlayerKnockout(impact = {}) {
   leftStick.active = rightStick.active = false;
   leftStick.dx = leftStick.dy = rightStick.dx = rightStick.dy = rightStick.dist = 0;
   meleeInputHeld = cannonInputHeld = grenadeInputHeld = false;
-  frontierSaloonNotify('KNOCKED OUT · -12 HEALTH\nMae is breaking up the fight. Catch your breath.');
+  frontierSaloonNotify('KNOCKED OUT · -12 HEALTH\n' + (s.venue === 'CITY_BOXING' ? 'The trainer has stopped the spar. Catch your breath.' : 'Mae is breaking up the fight. Catch your breath.'));
   return true;
 }
 function frontierSaloonKnockoutContact(event) {
@@ -55588,15 +56042,17 @@ function frontierSaloonAdvancePlayerKnockout(s, dt) {
     player.stunTimer = k.recoveryFrames;
     if (k.recoveryFrames <= 0) {
       frontierSaloonClearPlayerKnockout(s); s.brawl = 'LOST';
+      if (s.venue === 'CITY_BOXING') cityBoxingClubSetPlayerGloves(s, false);
       frontierSaloonNotify('BACK ON YOUR FEET · LEVEL ' + (s.gauntlet ? s.gauntlet.wave : 1) + '\n' +
-        (s.arena === 'SALOON' ? 'Return to Mae at the counter when you are ready to retry.' :
+        (s.venue === 'CITY_BOXING' ? 'Talk to the trainer to retry the circuit, or leave through the south doorway.' :
+        s.arena === 'SALOON' ? 'Return to Mae at the counter when you are ready to retry.' :
           'Follow the return marker when you are ready to head back to the saloon.'));
     }
   }
   player.isMoving = false; player.gait = 0;
 }
 function startFrontierQuickDraw() {
-  const s = _frontierSaloonSession; if (!s || frontierSaloonRunActive(s)) return false;
+  const s = _frontierSaloonSession; if (!s || s.venue === 'CITY_BOXING' || frontierSaloonRunActive(s)) return false;
   frontierSaloonClearPlayerKnockout(s); s.knockoutEffects.length = 0;
   s.boxingEffects.length = 0;
   boxingLeaveInput(player, s.boxingInput); boxingExit(player); s.fighters.forEach(boxingExit); s.boxingInput = {};
@@ -55802,6 +56258,7 @@ function frontierSaloonAction(action) {
   const s = _frontierSaloonSession; if (!s) return false;
   if (action === 'SHOP' && isPaused) { exitFrontierSaloon(); isPaused = true; pauseMenuState = 'SHOP'; return true; }
   if (action === 'EXIT') return frontierSaloonCanLeave() ? exitFrontierSaloon() : false;
+  if (action === 'CLUB_STOP') return cityBoxingClubStopSparring(s);
   if (action === 'BRAWL') {
     if (s.brawl === 'ACTIVE' && !boxingActive(player)) { s.menu = false; return frontierSaloonResumeBoxing(); }
     return startFrontierSaloonBrawl();
@@ -55828,13 +56285,20 @@ function interactFrontierSaloonActivity() {
     if (s.menu) return frontierSaloonAction(s.menuChoice);
     if (frontierSaloonCanLeave()) return exitFrontierSaloon();
     if (s.brawl !== 'KNOCKOUT' && (s.brawl !== 'ACTIVE' || !boxingActive(player)) && frontierSaloonNearCounter()) {
-      s.menu = true; s.menuChoice = s.brawl === 'ACTIVE' ? 'BRAWL' :
+      s.menu = true; s.menuChoice = s.venue === 'CITY_BOXING' || s.brawl === 'ACTIVE' ? 'BRAWL' :
         frontierSaloonProgress.brawlCleared ? 'DUEL' : 'BRAWL'; return true;
     }
     return false;
   }
   updateFrontierSaloonActivity(false);
   if (!_frontierSaloonPrompt) return false;
+  if (_frontierSaloonPrompt.kind === 'CITY_BOXING') {
+    if (!_frontierSaloonPrompt.unlocked) {
+      frontierSaloonNotify('EIGHT COUNT BOXING CLUB · LOCKED\nOwn the starting fortress and capture the primary NM-0 relay fortress to enter.');
+      return true;
+    }
+    return enterCityBoxingClub(_frontierSaloonPrompt.building);
+  }
   return enterFrontierSaloon(_frontierSaloonPrompt.kind === 'DUEL' ? 'DUEL' : 'SALOON');
 }
 function frontierSaloonInput(advanceTime) {
@@ -55896,8 +56360,9 @@ function frontierSaloonInput(advanceTime) {
   if (window.isDesktop && mouseIsPressed && mouseButton === LEFT && mouseY > 80 && mouseY < height - 215 && !s.menu) fire = true;
   if (isPaused) { s.fireWas = fire; if (s.duel) s.duel.stickFireWas = true; return; }
   if (s.menu) {
-    if (one) frontierSaloonAction('BRAWL'); else if (two) frontierSaloonAction('DUEL');
-    else if (choiceChange) s.menuChoice = s.menuChoice === 'BRAWL' ? 'DUEL' : 'BRAWL';
+    if (one) frontierSaloonAction('BRAWL'); else if (two) frontierSaloonAction(s.venue === 'CITY_BOXING' ? 'CLUB_STOP' : 'DUEL');
+    else if (choiceChange) s.menuChoice = s.venue === 'CITY_BOXING' ?
+      s.brawl === 'ACTIVE' && s.menuChoice === 'BRAWL' ? 'CLUB_STOP' : 'BRAWL' : s.menuChoice === 'BRAWL' ? 'DUEL' : 'BRAWL';
   }
   if (interact && !stanceAtInput) interactFrontierSaloonActivity();
   if (s.mode === 'DUEL') { frontierQuickDrawAimInput(); if (fire && !s.fireWas) frontierSaloonFire(); }
@@ -55916,6 +56381,11 @@ function updateFrontierSaloonActivity(advanceTime = true) {
   const s = _frontierSaloonSession;
   if (!s) {
     if (isPaused) return;
+    if (currentLevel === 1) {
+      const club = cityBoxingClubInteraction();
+      if (club) _frontierSaloonPrompt = { kind: 'CITY_BOXING', ...club };
+      return;
+    }
     const sites = frontierSaloonSites();
     if (Math.hypot(player.x - sites.door.x, player.y - sites.door.y) < 90) _frontierSaloonPrompt = { kind: 'SALOON' };
     else if (Math.hypot(player.x - sites.duel.x, player.y - sites.duel.y) < 105) _frontierSaloonPrompt = { kind: 'DUEL' };
@@ -55971,13 +56441,21 @@ function updateFrontierSaloonActivity(advanceTime = true) {
 function frontierSaloonButtons() {
   const s = _frontierSaloonSession;
   if (!s) return _frontierSaloonPrompt ? [{ action: 'INTERACT', x: width / 2 - 100, y: height - 125, w: 200, h: 50,
-    label: _frontierSaloonPrompt.kind === 'SALOON' ? 'ENTER COPPER SPUR' : 'CHALLENGE QUICKHAND' }] : [];
+    label: _frontierSaloonPrompt.kind === 'CITY_BOXING' ? _frontierSaloonPrompt.unlocked ? 'ENTER EIGHT COUNT BOXING' : 'BOXING CLUB · LOCKED' :
+      _frontierSaloonPrompt.kind === 'SALOON' ? 'ENTER COPPER SPUR' : 'CHALLENGE QUICKHAND' }] : [];
   if (isPaused && pauseSettingsOpen()) return pauseSettingsButtons();
   if (isPaused) return [
     { action: 'RESUME', label: 'RESUME', x: width / 2 - 115, y: height / 2 - 97, w: 230, h: 46 },
     { action: 'SAVE', label: 'SAVE GAME', x: width / 2 - 115, y: height / 2 - 41, w: 230, h: 46 },
     { action: 'SHOP', label: 'LEAVE & OPEN SHOP', x: width / 2 - 115, y: height / 2 + 71, w: 230, h: 46 },
     { action: 'SETTINGS', label: connectedGamepad() ? 'SETTINGS · Y' : 'SETTINGS', x: width / 2 - 115, y: height / 2 + 15, w: 230, h: 46 }];
+  if (s.menu && s.venue === 'CITY_BOXING') return [
+    { action: 'BRAWL', label: s.brawl === 'ACTIVE' ? 'RESUME SPARRING ' + s.club.round :
+        s.brawl === 'READY' ? 'NEXT OPPONENT · ' + s.club.nextRound + '/8' :
+        s.brawl === 'LOST' || s.brawl === 'CLEARED' ? 'RETRY EIGHT COUNT CIRCUIT' : 'START EIGHT COUNT CIRCUIT',
+      x: width / 2 - 140, y: height / 2 - 45, w: 280, h: 54 },
+    ...(s.brawl === 'ACTIVE' ? [{ action: 'CLUB_STOP', label: 'END SPARRING', x: width / 2 - 140, y: height / 2 + 23, w: 280, h: 44 }] : []),
+    { action: 'CLOSE', label: 'BACK', x: width / 2 - 90, y: height / 2 + (s.brawl === 'ACTIVE' ? 80 : 23), w: 180, h: 42 }];
   if (s.menu && s.brawl === 'ACTIVE') return [
     { action: 'BRAWL', label: 'RESUME GAUNTLET · LEVEL ' + (s.gauntlet ? s.gauntlet.wave : 1),
       x: width / 2 - 140, y: height / 2 - 45, w: 280, h: 54 },
@@ -55992,13 +56470,13 @@ function frontierSaloonButtons() {
     { action: 'FIRE', label: s.duel.phase === 'DRAW' ? 'DRAW · FIRE!' : 'WAIT · HOLD YOUR FIRE',
       x: width / 2 - 140, y: height - 238, w: 190, h: 50 }];
   const buttons = frontierSaloonCanLeave() ?
-    [{ action: 'EXIT', label: s.arena && s.arena !== 'SALOON' ? 'RETURN TO SALOON' : 'LEAVE SALOON',
+    [{ action: 'EXIT', label: s.venue === 'CITY_BOXING' ? 'LEAVE BOXING CLUB' : s.arena && s.arena !== 'SALOON' ? 'RETURN TO SALOON' : 'LEAVE SALOON',
       x: width / 2 - 88, y: height - 48, w: 176, h: 36 }] : [];
   if (s.brawl === 'ACTIVE' && !boxingActive(player))
     buttons.push({ action: 'BOXING', label: 'RAISE FISTS', x: width - 154, y: height - 198, w: 142, h: 44 });
   if (!['KNOCKOUT', 'INTERMISSION', 'TRANSITION'].includes(s.brawl) &&
       (s.brawl !== 'ACTIVE' || !boxingActive(player)) && frontierSaloonNearCounter())
-    buttons.push({ action: 'INTERACT', label: 'TALK TO MAE', x: width / 2 - 100, y: height - 250, w: 200, h: 48 });
+    buttons.push({ action: 'INTERACT', label: s.venue === 'CITY_BOXING' ? 'TALK TO TRAINER' : 'TALK TO MAE', x: width / 2 - 100, y: height - 250, w: 200, h: 48 });
   return buttons;
 }
 function handleFrontierSaloonTap(mx, my) {
@@ -56020,7 +56498,7 @@ function handleFrontierSaloonTap(mx, my) {
     else if (b.action === 'FIRE') frontierSaloonFire();
     else if (b.action === 'RESUME') resumeFromPause();
     else if (b.action === 'SETTINGS') openPauseSettings();
-    else if (b.action === 'SAVE') { saveGame(); frontierSaloonNotify('GAME SAVED\nYou will resume outside the Copper Spur.'); }
+    else if (b.action === 'SAVE') { saveGame(); frontierSaloonNotify('GAME SAVED\nYou will resume outside ' + (s.venue === 'CITY_BOXING' ? 'Eight Count Boxing.' : 'the Copper Spur.')); }
     else if (b.action === 'SHOP') { exitFrontierSaloon(); isPaused = true; pauseMenuState = 'SHOP'; }
     else if (b.action === 'CLOSE') s.menu = false;
     else frontierSaloonAction(b.action);
@@ -56035,7 +56513,87 @@ function handleFrontierSaloonTap(mx, my) {
 // The interior is a cut-away room: rooted furniture, joined riser planes,
 // planked floors, an upstairs gallery and warm light pools, all drawn in the
 // same curved cel-material language as the revised characters.
+function paintCityBoxingClubRoom() {
+  const r = CITY_BOXING_CLUB_ROOM, ring = CITY_BOXING_CLUB_RING;
+  push();stroke(32,39,43);strokeWeight(3);fill(110,112,106);rect(r.left,r.top,r.right-r.left,r.bottom-r.top,5);
+  noStroke();fill(126,128,120);rect(r.left+12,r.top+12,r.right-r.left-24,r.bottom-r.top-24);
+  stroke(85,89,85,100);strokeWeight(1);
+  for(let y=r.top+40;y<r.bottom;y+=64)line(r.left+12,y,r.right-12,y);
+  for(let x=r.left+50;x<r.right;x+=74)line(x,r.top+12,x,r.bottom-12);
+  // Brick at the back, rooted in the floor and lit by long gym windows.
+  noStroke();fill(49,61,65);rect(r.left,r.top-38,r.right-r.left,56,3);
+  stroke(72,85,87);strokeWeight(1);
+  for(let y=r.top-28;y<r.top+16;y+=14){line(r.left,y,r.right,y);for(let x=r.left+(y%28?0:28);x<r.right;x+=56)line(x,y,x,y+13);}
+  noStroke();fill(166,191,185);rect(-290,r.top-27,580,32,3);
+  fill(41,51,56);for(const x of [-300,-150,0,150,300])rect(x-3,r.top-29,6,36);
+  fill(26,36,40);rect(-215,r.top+38,430,58,4);
+  fill(233,218,178);textAlign(CENTER,CENTER);textSize(25);text('EIGHT COUNT',0,r.top+59);
+  fill(178,196,190);textSize(11);text('BOXING CLUB · EARN YOUR NEXT ROUND',0,r.top+80);
+  fill(34,52,59);rect(-559,-335,120,47,3);fill(218,207,179);textSize(11);text('HEAVY BAGS',-499,-312);
+  fill(34,52,59);rect(342,355,190,42,3);fill(218,207,179);textSize(10);text('GUARD · FOOTWORK · RESPECT',437,376);
+  // A generous apron surrounds a bounded, furniture-free fighting canvas.
+  fill(29,43,53,70);rect(ring.left-24,ring.top-10,548,466,8);
+  stroke(34,40,47);strokeWeight(3);fill(117,41,40);rect(ring.left-18,ring.top-18,536,466,4);
+  noStroke();fill(154,185,187);rect(ring.left,ring.top,500,430,2);
+  fill(172,199,196,80);rect(ring.left+10,ring.top+10,480,410,2);
+  noFill();stroke(225,226,201,130);strokeWeight(2);rect(ring.left+27,ring.top+27,446,376,2);
+  noStroke();fill(66,100,110,65);textSize(154);text('8',0,-53);
+  fill(57,85,94,130);textSize(13);text('EIGHT COUNT',0,37);
+  fill(36,49,52);rect(-62,r.bottom-12,124,12,2);fill(218,209,171);textSize(10);text('CITY STREET',0,r.bottom-24);
+  fill(37,49,51);textSize(10);text('TRAINER',0,258);
+  pop();paintCityBoxingClubRopes(false);
+}
+function paintCityBoxingClubRopes(front) {
+  const r=CITY_BOXING_CLUB_RING,s=_frontierSaloonSession,closed=s&&frontierSaloonRunActive(s);
+  push();strokeWeight(2.1);
+  for(let i=0;i<3;i++){
+    const z=11+i*11;
+    stroke(...(i===1?[227,220,196]:i===0?[39,58,75]:[173,52,45]));
+    if(front){
+      if(closed)line(r.left,r.bottom-z,r.right,r.bottom-z);
+      else {line(r.left,r.bottom-z,-r.gate,r.bottom-z);line(r.gate,r.bottom-z,r.right,r.bottom-z);}
+    }else{
+      line(r.left,r.top-z,r.right,r.top-z);line(r.left,r.top-z,r.left,r.bottom-z);line(r.right,r.top-z,r.right,r.bottom-z);
+    }
+  }
+  for(const x of [r.left,r.right]){
+    const y=front?r.bottom:r.top;
+    stroke(31,38,42);strokeWeight(2);fill(x<0?color(157,45,40):color(37,77,125));rect(x-7,y-44,14,48,4);
+    noStroke();fill(240,224,184,160);rect(x-4,y-37,3,30,1);
+  }
+  if(front&&!closed){noStroke();fill(66,82,85);rect(-60,r.bottom+4,120,22,2);fill(215,208,174);textSize(9);textAlign(CENTER,CENTER);text('RING GATE',0,r.bottom+15);}
+  pop();
+}
+function paintCityBoxingClubSolid(b) {
+  const x=b.x-b.w/2,y=b.y-b.h/2;
+  push();noStroke();fill(23,30,32,65);ellipse(b.x+5,b.y+8,b.w+12,b.kind==='BAG'?35:b.h+12);
+  if(b.kind==='BAG'){
+    stroke(46,54,55);strokeWeight(2);line(b.x,b.y-96,b.x,b.y-70);
+    line(b.x,b.y-70,b.x-12,b.y-60);line(b.x,b.y-70,b.x+12,b.y-60);
+    stroke(35,35,35);fill(118,42,35);rect(x,b.y-62,b.w,65,11);
+    noStroke();fill(170,65,48);rect(x+5,b.y-57,9,53,4);fill(63,32,31);rect(x+b.w-10,b.y-56,5,54,3);
+    fill(211,199,164);rect(x+12,b.y-46,b.w-24,19,2);fill(64,62,55);textAlign(CENTER,CENTER);textSize(11);text('8',b.x,b.y-36);
+    fill(74,41,34);ellipse(b.x,b.y+1,b.w-2,9);
+  }else{
+    stroke(33,42,45);strokeWeight(1.7);fill(57,73,79);rect(x,y-b.rise,b.w,b.h+b.rise,3);
+    fill(b.kind==='CLUB_BENCH'?color(163,137,96):color(84,105,109));rect(x,y-b.rise,b.w,b.h,3);
+    if(b.kind==='CLUB_LOCKERS')for(let i=0;i<5;i++){
+      const lx=x+i*b.w/5;stroke(42,55,61);line(lx,y-b.rise,lx,y+b.h-b.rise);
+      noStroke();fill(185,190,172);rect(lx+31,y-b.rise+23,3,11,1);fill(41,56,61);for(let j=0;j<3;j++)rect(lx+9,y-b.rise+8+j*4,25,1);
+    }
+    if(b.kind==='CLUB_DESK'){
+      noStroke();fill(213,207,178);rect(b.x-43,b.y-b.rise-16,31,23,1);fill(29,46,52);rect(b.x+13,b.y-b.rise-20,29,19,3);
+      fill(212,204,172);textAlign(CENTER,CENTER);textSize(8);text('COACH',b.x+27,b.y-b.rise-10);
+    }
+    if(b.kind==='CLUB_BENCH'){
+      noStroke();fill(230,221,188);rect(b.x-25,b.y-81-b.rise,33,48,3);fill(86,107,130);rect(b.x-23,b.y-72-b.rise,29,31,2);
+      fill(208,208,187);ellipse(b.x+9,b.y+70-b.rise,17,18);
+    }
+  }
+  pop();
+}
 function paintFrontierSaloonSolid(b) {
+  if (b.kind === 'BAG' || b.kind.startsWith('CLUB_')) { paintCityBoxingClubSolid(b); return; }
   const x = b.x - b.w / 2, y = b.y - b.h / 2, z = b.rise;
   push(); noStroke(); fill(22, 14, 10, 80); rect(x + 9, y + 10, b.w + 4, b.h + 6, 7);
   stroke(44, 27, 19); strokeWeight(1.7);
@@ -56348,16 +56906,17 @@ function frontierSaloonCamera(s, dt = deltaTime) {
 function drawFrontierSaloonInterior() {
   const s = _frontierSaloonSession; if (!s || s.mode !== 'SALOON') return;
   const arena = frontierSaloonArenaInfo(s.arena).name;
-  background(arena === 'SALOON' ? color(24, 17, 16) : color(210, 163, 106));
+  background(arena === 'CITY_BOXING' ? color(24, 33, 38) : arena === 'SALOON' ? color(24, 17, 16) : color(210, 163, 106));
   // Keep the figures large and the mobile attack controls clear while the
   // smoothed camera follows the player through the explorable saloon.
   const camera = frontierSaloonCamera(s);
   push(); translate(camera.centerX, camera.centerY); scale(camera.scale); translate(-camera.x, -camera.y);
-  if (arena === 'SALOON') paintFrontierSaloonRoom();
+  if (arena === 'CITY_BOXING') paintCityBoxingClubRoom();
+  else if (arena === 'SALOON') paintFrontierSaloonRoom();
   else if (arena === 'STREET') paintFrontierSaloonStreet();
   else paintFrontierSaloonBridge();
   const layers = frontierSaloonFurniture().map(b => ({ y: b.y + b.h / 2, draw: () => paintFrontierSaloonSolid(b) }));
-  let patrons = arena === 'SALOON' ? s.patrons : [];
+  let patrons = arena === 'SALOON' || arena === 'CITY_BOXING' ? s.patrons : [];
   if (arena === 'STREET') {
     if (!s.streetCrowd) s.streetCrowd = s.patrons.map((c, i) => Object.assign(Object.create(c),
       { x: i < 6 ? (i % 2 ? 1 : -1) * 760 : 280, y: i < 6 ? -140 + Math.floor(i / 2) * 230 : 522,
@@ -56399,7 +56958,8 @@ function drawFrontierSaloonInterior() {
     const r = FRONTIER_SALOON_ROOM;
     quad(r.left, r.bottom, -54, r.bottom, -54, r.bottom - 15, r.left, r.bottom - 15);
     quad(54, r.bottom, r.right, r.bottom, r.right, r.bottom - 15, 54, r.bottom - 15);
-  } else if (arena === 'BRIDGE') paintFrontierSaloonBridgeRail(1);
+  } else if (arena === 'CITY_BOXING') paintCityBoxingClubRopes(true);
+  else if (arena === 'BRIDGE') paintFrontierSaloonBridgeRail(1);
   pop();
 }
 function paintFrontierQuickDrawPerson(c, opposing, projectionX = 1) {
@@ -56502,13 +57062,20 @@ function drawFrontierSaloonHud() {
     frontierSaloonHudLayer(settling ? 0 : hudAlpha, () => {
       noStroke(); fill(26, 18, 14, 223); rect(8, headerY, width - 16, 76, 8);
       const titleLeft = 18, titleRight = fightHud ? width - 18 : width - 72, titleWidth = titleRight - titleLeft,
-        title = width < 480 ? s.mode === 'DUEL' ? 'QUICK DRAW' : fightHud ? 'PEACEMAKER' : 'COPPER SPUR' :
+        title = s.venue === 'CITY_BOXING' ? width < 480 ? 'EIGHT COUNT' : 'EIGHT COUNT · BOXING CLUB' :
+          width < 480 ? s.mode === 'DUEL' ? 'QUICK DRAW' : fightHud ? 'PEACEMAKER' : 'COPPER SPUR' :
           s.mode === 'DUEL' ? 'DRY GULCH · QUICK DRAW' : 'COPPER SPUR · SALOON';
       fill(239, 203, 141); textSize(Math.min(19, titleWidth / Math.max(1, title.length * .58)));
       text(title, (titleLeft + titleRight) / 2, headerY + 21);
       const g = s.gauntlet, alive = s.fighters.filter(c => !c.knockedOut).length,
         arena = s.arena === 'BRIDGE' ? 'CANYON BRIDGE' : s.arena === 'STREET' ? 'SALOON STREET' : 'SALOON',
-        status = s.mode === 'DUEL' ? 'ROUND ' + (s.duel.tier + 1) + ' · ' + s.duel.distance + ' DISTANCE · QUICKHAND REED' :
+        status = s.venue === 'CITY_BOXING' ? s.brawl === 'ACTIVE' ? 'SPARRING ' + s.club.round + '/8 · ' + s.fighters[0].name :
+          s.brawl === 'INTERMISSION' ? 'SPARRING ' + s.club.round + '/8 COMPLETE · CATCH YOUR BREATH' :
+          s.brawl === 'READY' ? 'REST · NEXT OPPONENT ' + s.club.nextRound + '/8 · TALK TO TRAINER' :
+          s.brawl === 'CLEARED' ? 'EIGHT COUNT CIRCUIT COMPLETE · ALL EIGHT DOWN' :
+          s.brawl === 'KNOCKOUT' ? 'TRAINER STOPPAGE · CATCH YOUR BREATH' :
+          s.brawl === 'LOST' ? 'TALK TO THE TRAINER TO RETRY' : 'TRAINER BY THE RING · EIGHT OPPONENT CIRCUIT' :
+          s.mode === 'DUEL' ? 'ROUND ' + (s.duel.tier + 1) + ' · ' + s.duel.distance + ' DISTANCE · QUICKHAND REED' :
           s.brawl === 'KNOCKOUT' ? 'KNOCKED OUT · CATCH YOUR BREATH' :
           s.brawl === 'TRANSITION' ? (g && (g.nextWave || g.wave) >= 14 ? 'TO THE CANYON BRIDGE' : 'THROUGH THE SALOON DOORS') :
           s.brawl === 'INTERMISSION' ? 'LEVEL ' + (g ? g.wave : 1) + ' CLEARED · CATCH YOUR BREATH' :
@@ -56558,10 +57125,14 @@ function drawFrontierSaloonHud() {
     }
     if (s.hitMs > 0) { noFill(); stroke(205, 73, 34, s.hitMs); strokeWeight(9); rect(5, 5, width - 10, height - 10, 12); }
     if (s.menu) { noStroke(); fill(17, 13, 10, 232); rect(10, height / 2 - 129, width - 20, 290, 12);
-      fill(242, 208, 151); textSize(19); text('MAE’S SIDE MISSIONS', width / 2, height / 2 - 105);
-      fill(202, 178, 139); textSize(11); text('Brawl: +75 score · Duel: cowboy costume +120', width / 2, height / 2 - 75); }
+      fill(242, 208, 151); textSize(19); text(s.venue === 'CITY_BOXING' ? 'EIGHT COUNT · TRAINER' : 'MAE’S SIDE MISSIONS', width / 2, height / 2 - 105);
+      fill(202, 178, 139); textSize(11); text(s.venue === 'CITY_BOXING' ? 'One boxer at a time · Rest or leave between bouts' : 'Brawl: +75 score · Duel: cowboy costume +120', width / 2, height / 2 - 75); }
     if (isPaused) { noStroke(); fill(12, 9, 8, 224); rect(0, 0, width, height); fill(244, 211, 159); textSize(26); if (!pauseSettingsOpen()) text('PAUSED', width / 2, height / 2 - 132); }
     if (isPaused && pauseSettingsOpen()) { drawPauseSettings(); pop(); return; }
+  }
+  if (!s && _frontierSaloonPrompt && _frontierSaloonPrompt.kind === 'CITY_BOXING' && !_frontierSaloonPrompt.unlocked) {
+    fill(30,38,41,235);noStroke();rect(width/2-Math.min(178,width/2-10),height-185,Math.min(356,width-20),46,6);
+    fill(236,215,167);textSize(Math.min(11,(width-30)/33));text('OWN BOTH CITY FORTRESSES TO ENTER',width/2,height-162);
   }
   for (const b of frontierSaloonButtons()) {
     const selected = s && s.menu && s.menuChoice === b.action, fireCue = s && s.mode === 'DUEL' && s.duel.phase === 'DRAW' && b.action === 'FIRE';
@@ -57281,7 +57852,7 @@ function getSafeSpawn(away) {
     const r = minR + Math.random() * (maxR - minR);
     const rx = cx2 + Math.cos(a) * r;
     const ry = cy2 + Math.sin(a) * r;
-    if (!insideSector(rx, ry) || (away && insideOwnedFortress(currentLevel, rx, ry, 60))) continue;
+    if (!insideSector(rx, ry) || (away && hostileSpawnExcluded(currentLevel, rx, ry, 60))) continue;
     if (currentBiome === 3 && !frontierCanyonSpawnSafe(rx, ry)) continue;
     // Never drop a random hostile into a settlement whose story arc is still
     // running, even when the player is standing just outside it.
@@ -57493,7 +58064,7 @@ function restoreAuthoredStoryState(lvl) {
   if (window.towersDefeated || (t && t.towersDown)) {
     window.towersDefeated = true;
     for (let i = buildings.length - 1; i >= 0; i--) {
-      if (buildings[i].isTower) buildings.splice(i, 1);
+      if (buildings[i].isTower && !buildings[i].isOutpost) buildings.splice(i, 1);
     }
     recruitSectorSurvivors();
   }

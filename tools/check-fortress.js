@@ -666,7 +666,7 @@ probe('const _s = JSON.stringify(window.outpostForts); window.__fs = _s;');
 probe('startAtLevel(1);');
 ok('a re-entry rebuilds it from the record', P('outpostFortState(1).captured') === true);
 ok('its gate comes back down', P('buildings.find(b=>b.isOutpostGate && !b.fortSide).hp') === 0);
-ok('its masts come back down', P('buildings.filter(b=>b.isTower && b.isOutpost).every(b=>b.hp===0)') === true);
+ok('the captured primary fort masts come back down', P('buildings.filter(b=>b.isTower && b.isOutpost && (!b.outpostFortId || b.outpostFortId==="OUTPOST")).every(b=>b.hp===0)') === true);
 probe(`player.x = outpostFortDef(1).x; player.y = outpostFortDef(1).y;
        frameCount = 30; doTick = true; maintainOutpostGarrison();`);
 ok('and a captured fort does not re-garrison itself',

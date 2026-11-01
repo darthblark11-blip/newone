@@ -28,7 +28,7 @@ for(let cy=3;cy<=11;cy++)for(let cx=-7;cx<=6;cx++){
   assert(b.cityEntrance&&[1,-1].includes(b.cityFrontSign)&&b.cityEntrance.face===b.cityFrontSign,'entrance metadata lost its real facade orientation');
   assert(Math.abs(b.cityEntrance.x-b.x)<1e-9&&(b.cityEntrance.y-b.y)*b.cityFrontSign>b.h/2+14,'entrance lies inside a wall or lacks player clearance');
   assert(!P(`insideFortYard(1,${b.x},${b.y},${300+Math.max(b.w,b.h)/2})`),'venue intrudes into the relay fortress reservation');
-  if(plan===22)assert(b.cityInterior==='BOXING_GYM'&&b.cityInteriorPending===true,'boxing exterior lost its deferred interior hook');
+  if(plan===22)assert(b.cityInterior==='BOXING_GYM'&&b.cityInteriorPending===false,'boxing exterior lost its implemented interior hook');
   const orientation=P(`chunkHash(1,${cx},${cy},8175)>>>0`),site={cx,cy,ch,plan,primary:b,mx:orientation&1?-1:1,my:orientation&2?-1:1};sites.push(site);
   coverage.set(plan,(coverage.get(plan)||0)+1);
 }

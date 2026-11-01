@@ -118,9 +118,9 @@ ok(P('enemiesList.length===1&&!insideOwnedFortress(1,enemiesList[0].x,enemiesLis
 // Exercise the real tower scene, not just the shared factory.
 fresh();
 probe('markSectorTowersDown(1);window.towersDefeated=true;inTownCutscene=true;townPhase=7;draw();');
-ok(P('enemiesList.filter(e=>e.isAmbush).length===100'), 'tower capture keeps the authored ambush headcount');
+ok(P('enemiesList.filter(e=>e.isAmbush).length===60'), 'tower capture keeps the reduced authored ambush opening');
 ok(P('enemiesList.every(e=>e.isFriendly||!insideOwnedFortress(1,e.x,e.y,60))'), 'tower cutscene puts every new hostile beyond the owned gates');
-ok(P('window.ambushKind==="TOWER"&&nm0AmbushKills===300&&window.ambushSpawnsRemaining===200'), 'exterior deployment preserves story objectives and reinforcement budget');
+ok(P('window.ambushKind==="TOWER"&&nm0AmbushKills===300&&window.ambushSpawnsRemaining===240'), 'exterior deployment preserves story objectives and reinforcement budget');
 ok(P('gateIsOpen(sectorGates().find(b=>b.y>0))'), 'ownership opens the south approach during the tower fight');
 probe('saveGame();enemiesList=[];loadGame();');
 ok(P('enemiesList.some(e=>e.isAmbush)&&enemiesList.every(e=>e.isFriendly||!insideOwnedFortress(1,e.x,e.y,60))'), 'reloaded tower ambushers still assemble outside the captured main fortress');
