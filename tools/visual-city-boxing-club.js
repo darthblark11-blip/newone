@@ -30,6 +30,7 @@ fs.mkdirSync(out, {recursive:true});
       inWorldBuildingMenu=inOverworldView=inTravelMenu=inUpgradeMenu=false;
       window.isDesktop=false;window.showOnScreenControls=true;
       jetpackUnlocked=chemistSuitUnlocked=ninjaSuitUnlocked=explosiveArmorUnlocked=cowboySuitEquipped=false;
+      jetpackUnlocked=true;
       townsData={1:{towersDown:true}};outpostFortState(1).captured=true;
       // Liberation leaves the live world in this zoomed-out mode. It must not
       // suppress the gym prompt as if it were a modal map screen.
@@ -49,7 +50,7 @@ fs.mkdirSync(out, {recursive:true});
       window.__clubExterior={site,solids:chunk.solid,x:player.x,y:player.y};
       return {worldPrompt,worldFault,marker:cityBoxingClubMarker(),venue:site.cityVenueName};
     });
-    assert.equal(exterior.worldPrompt,true);assert.equal(exterior.worldFault,null);assert.ok(exterior.marker);
+    assert.equal(exterior.worldPrompt,true);assert.equal(exterior.worldFault,null);assert.equal(exterior.marker,null);
     await page.locator('canvas').first().screenshot({path:path.join(out,'club-exterior-entry-portrait.png')});
     await page.setViewportSize({width:844,height:390});
     const landscapeEntry = await page.evaluate(() => {
@@ -89,6 +90,31 @@ fs.mkdirSync(out, {recursive:true});
     assert.equal(entry.entered,true);assert.match(entry.venue,/EIGHT COUNT/);
     assert.equal(entry.depth,0);assert.equal(entry.minDepth,0);
     await page.locator('canvas').first().screenshot({path:path.join(out,'club-entry-portrait.png')});
+    const freeWalking = await page.evaluate(() => {
+      // Reproduce the phone recording: free walking after a loss, with an
+      // owned jetpack and an exterior hip cache left over from the campaign.
+      const s=_frontierSaloonSession,oldKeys=window.keyIsDown,oldShow=player.show;
+      const dc=drawingContext,oldFill=dc.fill;
+      let paintingPlayer=false,orangeDraws=0;
+      dc.fill=function(...args){
+        if(paintingPlayer&&this.fillStyle==='#ff6400')orangeDraws++;
+        return oldFill.apply(this,args);
+      };
+      player.show=function(...args){paintingPlayer=true;try{return oldShow.apply(this,args);}finally{paintingPlayer=false;}};
+      const cache={active:true,angle:Math.PI/2,phase:.7,motion:1,backward:0,cycle:0,frame:-1};
+      player._standingMotion=cache;
+      const before=JSON.stringify(cache);
+      player.x=-340;player.y=300;s.camera=null;s.brawl='LOST';s.grit=0;
+      window.keyIsDown=code=>code===68||code===87;
+      try{__clubFrame(24);}finally{window.keyIsDown=oldKeys;player.show=oldShow;dc.fill=oldFill;}
+      return {orangeDraws,jetpackOwned:jetpackUnlocked,cacheIntact:player._standingMotion===cache&&JSON.stringify(cache)===before,
+        walking:player.isMoving,hip:standingLowerPose(player).angle,heading:player.moveAngle,fault:window.FRAME_FAULT||null};
+    });
+    assert.equal(freeWalking.orangeDraws,0);assert.equal(freeWalking.jetpackOwned,true);
+    assert.equal(freeWalking.cacheIntact,true);assert.equal(freeWalking.walking,true);
+    assert.ok(Math.abs(freeWalking.hip-freeWalking.heading)<1e-8);assert.equal(freeWalking.fault,null);
+    await page.locator('canvas').first().screenshot({path:path.join(out,'club-free-walking-portrait.png')});
+    await page.evaluate(()=>{player.x=0;player.y=390;_frontierSaloonSession.brawl='IDLE';_frontierSaloonSession.grit=100;_frontierSaloonSession.camera=null;});
     // A review-only wide framing shows the full native room painter, including
     // the ring, its south gate, the bag aisle and the trainer approach.
     await page.setViewportSize({width:960,height:800});
@@ -129,7 +155,7 @@ fs.mkdirSync(out, {recursive:true});
     assert.equal(knockout.depth,0);assert.equal(knockout.minDepth,0);assert.equal(knockout.fault,null);
     await page.locator('canvas').first().screenshot({path:path.join(out,'club-knockout-landscape.png')});
     assert.deepEqual(errors,[]);
-    fs.writeFileSync(path.join(out,'review.json'),JSON.stringify({exterior,landscapeEntry,distant,entry,overview,bag,fight,landscape,knockout,errors},null,2));
+    fs.writeFileSync(path.join(out,'review.json'),JSON.stringify({exterior,landscapeEntry,distant,entry,freeWalking,overview,bag,fight,landscape,knockout,errors},null,2));
     console.log('Native city boxing club: entry, bags, portrait/landscape sparring and knockout pass browser/painter checks. Previews: '+out);
   } finally { await browser.close(); }
 })().catch(e=>{console.error(e.stack||e);process.exit(1);});

@@ -25389,7 +25389,9 @@ if (this.isPlayer) {
     // narrower than it collides (TORSO_DEPTH) -- so its old fixed offsets left
     // it floating a body's width off the spine with clear ground between.
     // Measured off the drawn back edge instead, it stays put whatever the depth.
-    if ((this.isPlayer && jetpackUnlocked) || this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL") { const _bk = -this.bodyW * TORSO_DEPTH * 0.5; fill(80); rect(_bk - 6.5, -12, 12, 24, 3); fill(255, 100, 0); rect(_bk - 8.5, -8, 4, 16); }
+    // Club training holsters this pack visually; its orange exhaust otherwise
+    // overlaps the free-walking legs. The campaign upgrade stays owned.
+    if ((this.isPlayer && jetpackUnlocked && !(_frontierSaloonSession && _frontierSaloonSession.venue === 'CITY_BOXING')) || this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL") { const _bk = -this.bodyW * TORSO_DEPTH * 0.5; fill(80); rect(_bk - 6.5, -12, 12, 24, 3); fill(255, 100, 0); rect(_bk - 8.5, -8, 4, 16); }
     if ((this.isPlayer || this.isMilitary) && typeof explosiveArmorUnlocked !== 'undefined' && explosiveArmorUnlocked) { this.shirtCol = color(60, 100, 40); this.pantsCol = color(139, 115, 85); }
     else if (this.isPlayer && typeof chemistSuitUnlocked !== 'undefined' && chemistSuitUnlocked) { this.shirtCol = color(255); this.pantsCol = color(15); } 
     else if (this.isPlayer && ninjaSuitUnlocked) { this.shirtCol = color(20); this.pantsCol = color(15); }
@@ -46857,7 +46859,9 @@ function updateStandingFacing(c,elapsedMs=deltaTime) {
 }
 function standingLowerPose(c) {
   if(!standingLowerEligible(c))return null;
-  const s=c._standingMotion&&c._standingMotion.active?c._standingMotion:null;
+  // Interior movement does not tick the outdoor hip cache. Use the current
+  // walking direction there, leaving the exterior pose intact for the exit.
+  const s=!frontierSaloonIsInside()&&c._standingMotion&&c._standingMotion.active?c._standingMotion:null;
   return locomotionLowerPose(c,s,1);
 }
 function standingRearPose(c,lower=standingLowerPose(c)) {
@@ -55413,36 +55417,24 @@ function cityBoxingClubMarker() {
   if (!cityBoxingClubContext() || isPaused || frontierSaloonIsInside() || !cityBoxingClubUnlocked()) return null;
   const site = cityBoxingClubDestination();
   if (!site) return null;
-  const sx = (site.x-camX)*zoom, sy = (site.y-camY)*zoom-12;
-  let x = Math.max(22,Math.min(width-22,sx)), y = Math.max(150,Math.min(height-70,sy));
-  const w = Math.min(210,width-24), edge = x!==sx || y!==sy;
-  const button = _frontierSaloonPrompt && _frontierSaloonPrompt.kind==='CITY_BOXING' ? frontierSaloonButtons()[0] : null;
-  if (!edge && button && x+14>button.x && x-14<button.x+button.w && y+14>button.y && y-14<button.y+button.h)
-    y=button.y-22;
-  // Distant navigation sits below the status HUD, clear of the aim silhouette
-  // and sticks. Once visible, the doorway itself gets the small "8" pin.
-  const labelX = width/2, labelY = height<500?112:146;
-  return { x: edge?labelX+w/2-17:x, y: edge?labelY+18:y, edge,
-    angle: Math.atan2(sy-height/2,sx-width/2), labelX, labelY, w,
-    metres: Math.floor(Math.hypot(player.x-site.x,player.y-site.y)/10) };
+  const dx=site.x-player.x, dy=site.y-player.y, distance=Math.hypot(dx,dy);
+  if (distance<=900) return null;
+  const angle=Math.atan2(dy,dx), ax=Math.cos(angle), ay=Math.sin(angle);
+  const scale=Math.min((width/2-15)/Math.abs(ax),(height/2-15)/Math.abs(ay));
+  return { x:width/2+ax*scale, y:height/2+ay*scale, angle, edge:true,
+    metres:Math.floor(distance/10) };
 }
 function drawCityBoxingClubMarker() {
   const marker = cityBoxingClubMarker();
   if (!marker) return;
-  const { x, y, labelX, labelY, w } = marker;
-  push();hudTextFont();textAlign(CENTER,CENTER);
-  if (marker.edge) {
-    stroke(108,231,221);strokeWeight(1.5);fill(18,40,44,235);
-    rect(labelX-w/2,labelY,w,36,6);
-    noStroke();fill(172,248,235);textSize(11);text('EIGHT COUNT BOXING',labelX-12,labelY+11);
-    fill(237,230,190);textSize(10);text(marker.metres+'m · BOXING GYM',labelX-12,labelY+26);
-    stroke(108,231,221);strokeWeight(2);fill(20,58,62,240);
-    translate(x,y);rotate(marker.angle);triangle(12,0,-8,-8,-8,8);
-  } else {
-    stroke(108,231,221);strokeWeight(2);fill(20,58,62,240);
-    line(x,y+12,x,y+24);ellipse(x,y,25,25);
-    noStroke();fill(215,255,241);textSize(15);text('8',x,y);
-  }
+  const { x,y,angle }=marker;
+  // Match the existing location arrows: no panel, compass or doorway badge.
+  const labelX=Math.max(80,Math.min(width-80,x-Math.cos(angle)*30));
+  const labelY=Math.max(20,Math.min(height-20,y-Math.sin(angle)*30));
+  push();hudTextFont();textAlign(CENTER,CENTER);stroke(0);strokeWeight(2);
+  fill(135,241,225);textSize(11);text('EIGHT COUNT BOXING',labelX,labelY-9);
+  textSize(12);text(marker.metres+'m',labelX,labelY+5);
+  translate(x,y);rotate(angle);fill(89,219,202,235);triangle(12,0,-8,-8,-8,8);
   pop();
 }
 function cityBoxingClubContext() {

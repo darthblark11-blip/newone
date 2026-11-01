@@ -40,9 +40,10 @@ original relay, without requiring the southwest relay. Enter at the real
 exterior entrance with its touch button, **F**, or gamepad **A**. Carrying a
 shovel retains the existing F-to-dig binding; touch remains available.
 
-After unlocking, a teal direction/distance marker guides the player to Eight
-Count even when its block is unloaded. A small **8** pin marks the doorway once
-it is visible. **ENTER EIGHT COUNT BOXING** appears along the central paved
+After unlocking, a small teal screen-edge arrow, name and distance guide the
+player to Eight Count even when its block is unloaded, matching the other
+location pointers. It hides within 90 HUD metres of the entrance.
+**ENTER EIGHT COUNT BOXING** appears along the central paved
 forecourt, above the aim controls. Entry requires the front approach; side and
 rear walls do not grant access. The marker and button also work in the live,
 zoomed-out overworld view used after liberation, while the Directive and travel
@@ -55,6 +56,11 @@ Eight named opponents have distinct skin palettes, shirtless muscular torsos
 and compact eight-ounce gloves. The player receives temporary matching-size
 gloves during sparring. Hand/contact geometry, punch timing, guards, dodges
 and native nonlethal knockouts use the existing boxing solver.
+
+Free walking inside follows the current movement heading rather than reusing
+the outdoor hip cache. The club hides the player's jetpack art so its orange
+exhaust strip does not overlap the legs; the owned upgrade and its exterior
+appearance return immediately outside. Walking speed and collision are unchanged.
 
 Only one opponent is active. After a knockout settles, the player can ask the
 trainer for the next round, stop or leave. After eight opponents the circuit
@@ -74,18 +80,23 @@ next visit; the club unlock follows the saved fortress ownership.
 
 `node tools/check-relay-territory.js` covers 57 progression, territory, spawning,
 independent persistence and mixed-battle checks. `node tools/check-city-boxing-club.js`
-covers 149 entry, real keyboard/gamepad/touch dispatch, native contact, eight
+covers 153 entry, real keyboard/gamepad/touch dispatch, native contact, eight
 sequential rounds, knockouts, pause, exit and exact equipment restoration checks.
 The first opponent is defeated through native E/guard input; later test
 knockouts exercise progression rather than claiming a complete playthrough.
+`node tools/check-club-walking-art.js` covers 18 native painter, jetpack
+ownership and interior/exterior hip-cache checks, including all four walking
+directions and the return outside.
 
 `node tools/visual-city-boxing-club.js` checks the actual city world/HUD entry
-and 375 club frames in Chromium with p5 1.9.0, portrait 390×844 and landscape
+and 399 club frames in Chromium with p5 1.9.0, portrait 390×844 and landscape
 940×590 at DPR 2. It checks browser/frame errors and balanced canvas state.
 It also reproduces forecourt entry in liberated overworld view, checks the
 portrait/landscape entry button, and renders the navigation marker with the
-gym's block unloaded. The overview preview uses a wider review-only camera to
-show the room.
+gym's block unloaded. It reproduces walking after a loss with an owned jetpack,
+checks for the recorded orange strip and verifies that hips follow movement
+without mutating the exterior cache. The overview preview uses a wider
+review-only camera to show the room.
 
 Existing fortress, population, save/load, travel, biome, hostile frontline,
 NM-0 batch and saloon/boxing regression suites remain applicable. The mechanics
