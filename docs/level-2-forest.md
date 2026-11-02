@@ -50,10 +50,11 @@ the lighting height field. Renderers do not change generation metadata.
 | `TREE`, `PINE` | Douglas fir, western redcedar, Sitka spruce, red alder and lodgepole pine; fixed asymmetric branch masses, connected canopy sides and rooted bark | Fixed root; established 34×34 trunks and harvest girth retained |
 | `SNAG` | Bent charred trunks with broken limbs and warm exposed timber | Root; existing tree lifecycle |
 | `BOULDER` | Fractured granite with strong side/top facets, lichen and moss | Existing solid AABB; no rotated collision mismatch |
-| `WEED` / bush | Three raised, faceted salal leaf masses with bright cel bands | Live camera projection; roots depth-sort with feet; decorative, no collider |
-| `FERN`, `REED`, `GRASS` | Bowed sword-fern fronds, curved wetland stems and grouped grass blades | Ground anchored; static terrain bake |
-| `LOG`, `STUMP` | Bark sides, exposed end grain, moss crowns, root flares | Small decorative pieces baked; existing large deadfall/wood piles retain solids |
-| `MUSHROOM`, `PEBBLE`, `ASH` | Raised caps, faceted chips and graphic char debris | Baked ground detail |
+| `WEED` / bush | Overlapping low salal mounds with near-ground leaf rims and raised ridges; no long prismatic skirts | Live camera projection; roots depth-sort with feet; decorative, no collider |
+| `FERN`, `REED` | Arched paired leaflets and tapered wetland blades with projected seed heads | Bounded live selection; fixed roots, varying raised heights |
+| `LOG`, `STUMP` | Tapered cylinder bark, sawn end grain, attached moss, split cut rims and squat root flares | Bounded live selection; existing large deadfall/wood piles retain solids |
+| `PEBBLE` | Joined low stone chips with shaded sides and a raised ridge | Bounded live selection; no new collider |
+| `MUSHROOM`, `GRASS`, `ASH`, `LITTER` | Tiny caps/blades, char debris and subdued fallen leaves/bark | Baked ground detail |
 
 The four stable placement habitats and three visual/ecology variations are
 world-space clusters, not one roll per chunk:
@@ -92,11 +93,22 @@ harvesting a neighbor cannot make a new grove tree appear after reload.
 Fallen timber, ferns and mushroom pockets dress the copse margins. Fire scars
 and rocky ridges retain more open space.
 
-Bushes no longer flatten into the low-resolution floor texture. Up to twelve
-shrubs per chunk move into standing decor; remaining bush placements become
-low sword ferns. Shrub contact shade paints on the floor, followed by their
-root-sorted raised volume. They do not enter the overhead canopy pass or add
-collision/AI work. Existing 3D tree painters and palettes remain unchanged.
+Substantial plants and timber no longer flatten into the low-resolution floor
+texture. Up to twelve shrubs and twenty smaller floor props per chunk move into
+standing decor. Timber takes priority, then larger ferns/reeds, then stone
+chips. Excess placements become quiet fallen-leaf or bark litter, retaining
+their source species for color selection. Selection runs after placement and
+never consumes RNG or changes root coordinates. These props paint floor
+contact shade followed by a root-sorted body; they do not enter the overhead
+canopy pass or add collision/AI work. Existing 3D tree and boulder painters
+remain unchanged.
+
+Shrubs have low rims and higher leaf ridges joined into domed foliage planes.
+Their profile avoids the long green prisms that a swept flat cap produced at
+screen edges. Timber cap rings, moss and bark seams share the same projected
+surface as their parent piece. Fern spines arch through several heights while
+their leaflets remain attached. Stumps retain a short rise so the cut top does
+not read as another fallen log when the camera passes it.
 
 The woodland base uses a dedicated soil/moss material lattice. Small torn
 material beds and needle clusters live on an independent 420-unit world grid;
@@ -107,6 +119,10 @@ Material beds use a single quiet colored face; repeated inset
 contours are omitted so overlapping patches stay natural in daytime.
 Living habitats use brighter emerald, jade and lime moss, with golden meadow
 and edge soil. Reduced grain and quieter litter keep the cel faces readable.
+`woodlandFloorColourAt()` blends these materials through the underlying ecology
+noise and riverbank distance. Categorical placement habitats remain unchanged;
+their hard thresholds no longer turn material-lattice cells into squared color
+patches. All blending happens during baking.
 Baked small props reserve their complete silhouette inside the owner texture,
 so ferns and logs cannot be cut off at a chunk edge.
 
@@ -169,17 +185,21 @@ The real frame opens its depth queue **before** `drawGround()` calls the chunk
 decor pass. Opening it only when actors begin would paint trees into the floor
 and let the player cover their crowns. `tools/check-forest-depth.js` exercises
 consecutive real frames as well as isolated depth dispatch. Shrub camera/phase
-geometry is covered by `tools/check-forest-shrubs.js`; copse clustering,
-clearances, budgets and reverse-order regeneration by
+geometry is covered by `tools/check-forest-shrubs.js`; timber and leaf projection
+by `tools/check-forest-timber.js` and `tools/check-forest-plants.js`. The live
+selection/bake split is covered by `tools/check-forest-floor-props.js`, and
+continuous habitat colors plus complete base-texture seams by
+`tools/check-forest-floor-transitions.js`. Copse clustering,
+clearances, budgets and reverse-order regeneration are checked by
 `tools/check-forest-copses.js`. Lifecycle checks include harvested and cleared
 grove roots across rebuild and reload.
 
 No shader compilation or lighting-quality tier is added by Phases 1–2. The
 existing shadow and normal/material passes receive larger species-specific
-canopy dimensions. Small plants are drawn once into chunk albedo. The current
+canopy dimensions. Fine grass and litter stay in chunk albedo. The current
 automatic lighting reduction and optimized combat paths remain in use.
 
-For verified p5 1.9.4 and 1.11.11 Canvas renderers, closed forest polygons use a
+For supported p5 1.9.0, 1.9.4 and 1.11.11 Canvas renderers, closed forest polygons use a
 cached native path emitter instead of allocating p5 vertex records. The
 closing edges, fill and stroke calls are pixel-identical to p5. Fixed crown and
 bough coordinates and closed `Path2D` objects use weak caches, so retiring a
@@ -189,6 +209,15 @@ styles for boughs and vein lines. Other color modes retain p5 color handling.
 Unsupported versions/renderers, clipping and accessible output retain the
 normal p5 path. Cross-source RGBA comparisons check that these optimizations
 preserve the reviewed artwork.
+
+`forestFloorPainter()` also reuses opaque RGB styles and native quad/triangle
+emission for the selected live floor props. It updates the renderer's own style
+cache and retains normal p5 push/pop state, so interleaved trees and figures
+keep their materials. Transparent colors and unsupported renderer/color modes
+use the regular API. Camera-dependent geometry still updates every frame;
+the optimization does not cache a stationary camera's projected artwork.
+`tools/check-forest-floor-art.js` compares mixed tree/prop/figure scenes across
+camera positions, depth phases and renderer fallbacks on p5 1.9.0 and 1.11.11.
 
 ## 3. Step-by-step execution plan
 

@@ -54,7 +54,9 @@ probe(`
     {id:'northTree',t:'PINE',x:0,y:10,forestSpecies:'DOUGLAS_FIR'},
     {id:'southTree',t:'TREE',x:0,y:90,forestSpecies:'RED_ALDER'},
     {id:'snag',t:'SNAG',x:0,y:70,forestSpecies:'CHARRED_SNAG'},
-    {id:'shrub',t:'WEED',x:0,y:30,forestSpecies:'BUSH'}
+    {id:'shrub',t:'WEED',x:0,y:30,forestSpecies:'BUSH'},
+    {id:'log',t:'LOG',x:0,y:40,forestSpecies:'LOG',forestLiveProp:true},
+    {id:'fern',t:'FERN',x:0,y:80,forestSpecies:'FERN',forestLiveProp:true}
   ];
   _depthActors=[];_airborneActors=[];_depthOn=true;
   for(const point of [5,50,100]) actorShow({y:point,show(){__events.push('actor'+point);}});
@@ -77,6 +79,14 @@ ok(pos('snag:whole')>pos('wall:building') && pos('snag:whole')<pos('actor100'), 
 ok(pos('shrub:shadow')<pos('actor5') && pos('shrub:root')>pos('northTree:root') &&
   pos('shrub:root')<pos('actor50') && !events.includes('shrub:crown') && !events.includes('shrub:whole'),
   'raised shrubs cast floor shade then interleave with feet without becoming overhead crowns');
+for (const prop of ['log','fern']) {
+  ok(pos(prop+':shadow')<pos('actor5') && !events.includes(prop+':whole') && !events.includes(prop+':crown'),
+    `${prop} draws contact shade below actors without joining the overhead crown pass`);
+  ok(events.filter(e=>e===prop+':root').length===1, `${prop} raised volume draws exactly once`);
+}
+ok(pos('shrub:root')<pos('log:root') && pos('log:root')<pos('actor50') &&
+  pos('actor50')<pos('fern:root') && pos('fern:root')<pos('actor100'),
+  'small forest volumes retain their true ground depth on either side of a character');
 ok(P('_depthActors.length===0&&_standDecor.length===0&&_forestCrowns.length===0&&_airborneActors.length===0&&!_depthOn'),
   'all reused queues close after the frame');
 
