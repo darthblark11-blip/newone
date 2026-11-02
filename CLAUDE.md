@@ -563,8 +563,8 @@ and its crown, including when a destroyed chunk is regenerated.
 
 Live forest bushes use swept player contact to bend without blocking movement.
 Keep their spring state outside generated decor and bound updates to nearby
-chunks. Selected logs/stumps have oriented collision companions and existing
-wood salvage, linked by `forestSolidKey`; those companions never paint a second
+chunks. Selected logs/stumps have oriented waist-high cover companions and
+existing wood salvage, linked by `forestSolidKey`; those companions never paint a second
 body or shadow. See the forest interaction checks for native input and reload.
 
 Forest crown outlines and seeded bough headings stay fixed in world space.

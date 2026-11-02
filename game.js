@@ -424,16 +424,16 @@ function enemyCoverDiveGoal(a,threat) {
     a.x-reach,a.y-reach,a.x+reach,a.y+reach,_enemyDiveSolids,false);
   const cars=activeParkingCars.length<=8?activeParkingCars:crowdNearbyCars(a.x,a.y,reach,_enemyDiveCars);
   const goals=a._enemyDiveGoals||(a._enemyDiveGoals=[]);goals.length=0;
-  const consider=(solid,kind,r,nx,ny,tangent)=>{
-    const tx=-ny,ty=nx,plane=nx<0?-r.x0:nx>0?r.x1:ny<0?-r.y0:r.y1;
-    const low=nx<0?-r.y1:nx>0?r.y0:ny<0?r.x0:-r.x1;
-    const high=nx<0?-r.y0:nx>0?r.y1:ny<0?r.x1:-r.x0;
+  const consider=(solid,kind,face,tangent)=>{
+    const nx=face.nx,ny=face.ny,tx=face.tx,ty=face.ty,plane=face.plane;
+    const low=face.edgeMin,high=face.edgeMax,r=face.rect;
     if(high-low<32)return;
     tangent=Math.max(low+16,Math.min(high-16,tangent));
     const x=nx*(plane+46)+tx*tangent,y=ny*(plane+46)+ty*tangent;
     const dx=x-a.x,dy=y-a.y,d2=dx*dx+dy*dy;
     if(d2<60*60||d2>reach*reach||(threat.x-x)*nx+(threat.y-y)*ny>=-12)return;
-    if(stanceSegmentBoxTime(threat.x,threat.y,x-threat.x,y-threat.y,r.x0,r.y0,r.x1,r.y1)===Infinity)return;
+    if((solid.isForestTimber?forestTimberSegmentTime(solid,threat.x,threat.y,x,y):
+        stanceSegmentBoxTime(threat.x,threat.y,x-threat.x,y-threat.y,r.x0,r.y0,r.x1,r.y1))===Infinity)return;
     const angle=Math.atan2(dy,dx);
     if(!stanceProneSpotClear(a,x,y,angle))return;
     const goal={x,y,angle,distance:Math.sqrt(d2),solid,kind,score:d2};
@@ -442,10 +442,9 @@ function enemyCoverDiveGoal(a,threat) {
   for(let i=0,count=Math.min(32,solids.length)+Math.min(8,cars.length);i<count;i++) {
     const b=i<Math.min(32,solids.length)?solids[i]:cars[i-Math.min(32,solids.length)],kind=coverSolidKind(b);
     if(!kind)continue;
-    for(const r of coverSolidRects(b))for(let face=0;face<4;face++) {
-      const nx=face===0?-1:face===1?1:0,ny=face===2?-1:face===3?1:0,tx=-ny,ty=nx;
-      const along=a.x*tx+a.y*ty;
-      consider(b,kind,r,nx,ny,along);consider(b,kind,r,nx,ny,along-160);consider(b,kind,r,nx,ny,along+160);
+    for(const face of coverSolidFaces(b)) {
+      const along=a.x*face.tx+a.y*face.ty;
+      consider(b,kind,face,along);consider(b,kind,face,along-160);consider(b,kind,face,along+160);
     }
   }
   for(const goal of goals)if(enemyCoverDivePathClear(a,goal.x,goal.y,goal.angle))return goal;
@@ -619,7 +618,8 @@ function coverWeaponMuzzles(a) {
 }
 function coverSolidKind(b) {
   if(!b||!Number.isFinite(b.x)||!Number.isFinite(b.y)||b.noCover||
-      b.hp<=0&&!b.isGovFortress||b.isUBarrier)return null;
+      b.hp<=0&&!b.isGovFortress||b.isForestTimber&&b.__hv&&b.__hv.hp<=0||b.isUBarrier)return null;
+  if(b.isForestTimber)return 'LOW';
   if(b.isCropField||b.isMarket||b.isGrassLot||b.isParkingLot||b.isPond||b.isRiver||b.isCanal||b.isDeck||
       b.isStreetLight||b.isPalm||b.isAlienPlant||b.isEnergyPole||b.isCactusProp||b.isTumbleweedProp||
       b.isMushroom||b.isWater||b.propType==='RIVER'||b.propType==='CANAL'||b.propType==='HELIPAD'||
@@ -637,12 +637,16 @@ function coverSolidKind(b) {
   return b.w>0&&b.h>0?'HIGH':null;
 }
 function coverSolidRects(b) {
-  if(!b||!Number.isFinite(b.x)||!Number.isFinite(b.y)||b.hp<=0&&!b.isGovFortress)return EMPTY_LIST;
+  if(!b||!Number.isFinite(b.x)||!Number.isFinite(b.y)||b.hp<=0&&!b.isGovFortress||
+      b.isForestTimber&&b.__hv&&b.__hv.hp<=0)return EMPTY_LIST;
   const parking=b.isParkingCar||(!(b.w>0&&b.h>0)&&activeParkingCars.includes(b));
   const w=parking?50:Math.abs(b.w||0),h=parking?90:Math.abs(b.h||0);
   if(!(w>0&&h>0))return EMPTY_LIST;
   const open=!!(b.isGovFortress&&gateIsOpen(b)),old=_coverRectCache.get(b);
-  if(old&&old.x===b.x&&old.y===b.y&&old.w===w&&old.h===h&&old.open===open&&old.u===!!b.isUBarrier)return old.rects;
+  const tw=b.isForestTimber?b.forestTimberWidth:0,th=b.isForestTimber?b.forestTimberDepth:0;
+  const co=b.isForestTimber?b.forestTimberCos:1,si=b.isForestTimber?b.forestTimberSin:0;
+  if(old&&old.x===b.x&&old.y===b.y&&old.w===w&&old.h===h&&old.open===open&&old.u===!!b.isUBarrier&&
+      old.tw===tw&&old.th===th&&old.co===co&&old.si===si)return old.rects;
   const x0=b.x-w/2,x1=b.x+w/2,y0=b.y-h/2,y1=b.y+h/2,rects=[];
   if(b.isUBarrier) {
     rects.push({x0:x0-15,y0,x1:x0+15,y1},{x0:x1-15,y0,x1:x1+15,y1},{x0,y0:y0-15,x1,y1:y0+15});
@@ -650,7 +654,33 @@ function coverSolidRects(b) {
     if(x0<b.x-GATE_DOOR_HALF)rects.push({x0,y0,x1:b.x-GATE_DOOR_HALF,y1});
     if(x1>b.x+GATE_DOOR_HALF)rects.push({x0:b.x+GATE_DOOR_HALF,y0,x1,y1});
   } else rects.push({x0,y0,x1,y1});
-  _coverRectCache.set(b,{x:b.x,y:b.y,w,h,open,u:!!b.isUBarrier,rects});return rects;
+  _coverRectCache.set(b,{x:b.x,y:b.y,w,h,open,u:!!b.isUBarrier,tw,th,co,si,rects});return rects;
+}
+// Contact and tactical goals use the actual outward faces, not the empty
+// corners of a diagonal timber AABB. Ordinary walls retain their exact faces.
+function coverSolidFaces(b) {
+  const rects=coverSolidRects(b);
+  if(!rects.length)return EMPTY_LIST;
+  const cached=_coverRectCache.get(b);
+  if(cached.faces)return cached.faces;
+  const faces=[];
+  for(let ri=0;ri<rects.length;ri++)for(let face=0;face<4;face++) {
+    const r=rects[ri];
+    let nx=face===0?-1:face===1?1:0,ny=face===2?-1:face===3?1:0;
+    let plane,edgeMin,edgeMax;
+    if(b.isForestTimber) {
+      const x=nx,y=ny;nx=x*cached.co-y*cached.si;ny=x*cached.si+y*cached.co;
+      const half=face<2?cached.tw*.5:cached.th*.5,span=face<2?cached.th*.5:cached.tw*.5;
+      const along=b.x*-ny+b.y*nx;
+      plane=b.x*nx+b.y*ny+half;edgeMin=along-span;edgeMax=along+span;
+    } else {
+      plane=face===0?-r.x0:face===1?r.x1:face===2?-r.y0:r.y1;
+      edgeMin=face===0?-r.y1:face===1?r.y0:face===2?r.x0:-r.x1;
+      edgeMax=face===0?-r.y0:face===1?r.y1:face===2?r.x1:-r.x0;
+    }
+    faces.push({nx,ny,tx:-ny,ty:nx,plane,edgeMin,edgeMax,rectIndex:ri,faceIndex:face,rect:r});
+  }
+  cached.faces=faces;return faces;
 }
 function coverWantsExit(a,nx,ny,dx,dy) {
   const outward=dx*nx+dy*ny;
@@ -661,14 +691,10 @@ function coverWantsExit(a,nx,ny,dx,dy) {
 function coverConsiderContact(a,b,dx,dy,previous,best,parking=false,nearby=false) {
   const kind=parking?'LOW':coverSolidKind(b);
   if(!kind)return;
-  const rects=coverSolidRects(b),speed=Math.hypot(dx,dy);
-  for(let ri=0;ri<rects.length;ri++) {
-    const r=rects[ri];
-    for(let face=0;face<4;face++) {
-      const nx=face===0?-1:face===1?1:0,ny=face===2?-1:face===3?1:0,tx=-ny,ty=nx;
-      const plane=face===0?-r.x0:face===1?r.x1:face===2?-r.y0:r.y1;
-      const edgeMin=face===0?-r.y1:face===1?r.y0:face===2?r.x0:-r.x1;
-      const edgeMax=face===0?-r.y0:face===1?r.y1:face===2?r.x1:-r.x0;
+  const faces=coverSolidFaces(b),speed=Math.hypot(dx,dy);
+  for(let fi=0;fi<faces.length;fi++) {
+      const f=faces[fi],nx=f.nx,ny=f.ny,tx=f.tx,ty=f.ty,plane=f.plane;
+      const edgeMin=f.edgeMin,edgeMax=f.edgeMax,ri=f.rectIndex;
       const distance=a.x*nx+a.y*ny-plane,tangent=a.x*tx+a.y*ty,into=dx*nx+dy*ny;
       // Keep the planted foot centers inside the end; only the upper chain leans.
       // Six-unit walking steps can stop up to six units short of contact.
@@ -685,7 +711,6 @@ function coverConsiderContact(a,b,dx,dy,previous,best,parking=false,nearby=false
       const score=distance-15+(retained?-3:0);
       if(score>=best.score)continue;
       Object.assign(best,{solid:b,kind,nx,ny,tx,ty,plane,edgeMin,edgeMax,rectIndex:ri,score,attached:!nearby});
-    }
   }
 }
 function findCoverContact(a,dx=0,dy=0,previous=null) {
@@ -10631,7 +10656,8 @@ function shovelActorLOS(observer,target) {
   // on the existing staggered sight query; creatures keep their own senses.
   if(!observer.isPlayer&&actorCanUseStances(observer)&&
       !String(observer.eType||'').startsWith('OCCULT_')&&
-      (coverRenderActive(observer)||coverRenderActive(target))) {
+      (coverRenderActive(observer)||coverRenderActive(target)||actorStance(observer)!=='STAND'||
+        actorCanUseStances(target)&&actorStance(target)!=='STAND')) {
     const eye=coverActorHitCenter(observer,'HEAD','HEAD');
     const head=coverActorHitCenter(target,'HEAD','HEAD');
     if(coverLineClear(eye.x,eye.y,head.x,head.y,'HEAD',observer,target))return true;
@@ -23178,10 +23204,9 @@ function enemyCoverEligible(a) {
 function enemyCoverGoal(a,threatX,threatY,state) {
   const near=colNear(a.x,a.y),goals=state.candidates||(state.candidates=[]);
   goals.length=0;
-  const consider=(solid,kind,rect,rectIndex,nx,ny,tangent)=>{
-    const tx=-ny,ty=nx,plane=nx<0?-rect.x0:nx>0?rect.x1:ny<0?-rect.y0:rect.y1;
-    const min=nx<0?-rect.y1:nx>0?rect.y0:ny<0?rect.x0:-rect.x1;
-    const max=nx<0?-rect.y0:nx>0?rect.y1:ny<0?rect.x1:-rect.x0;
+  const consider=(solid,kind,face,tangent)=>{
+    const nx=face.nx,ny=face.ny,tx=face.tx,ty=face.ty,plane=face.plane,rectIndex=face.rectIndex;
+    const min=face.edgeMin,max=face.edgeMax;
     if(max-min<30)return;
     const inset=kind==='HIGH'?COVER_FOOT_MARGIN:14;
     const span=Math.max(min+inset,Math.min(max-inset,tangent));
@@ -23208,20 +23233,13 @@ function enemyCoverGoal(a,threatX,threatY,state) {
   for(let i=0;i<count;i++) {
     const solid=i<nearCount?near[i]:i<nearCount+carCount?cars[i-nearCount]:near[i-carCount];
     const kind=coverSolidKind(solid);if(!kind)continue;
-    const rects=coverSolidRects(solid);
-    for(let ri=0;ri<rects.length;ri++) {
-      const r=rects[ri];
-      for(let side=0;side<4;side++) {
-        const nx=side===0?-1:side===1?1:0,ny=side===2?-1:side===3?1:0;
-        const tx=-ny,ty=nx,along=a.x*tx+a.y*ty;
-        if(kind==='LOW')consider(solid,kind,r,ri,nx,ny,along);
+    for(const face of coverSolidFaces(solid)) {
+        const along=a.x*face.tx+a.y*face.ty;
+        if(kind==='LOW')consider(solid,kind,face,along);
         else {
-          const low=nx<0?-r.y1:nx>0?r.y0:ny<0?r.x0:-r.x1;
-          const high=nx<0?-r.y0:nx>0?r.y1:ny<0?r.x1:-r.x0;
-          consider(solid,kind,r,ri,nx,ny,low+COVER_FOOT_MARGIN);
-          consider(solid,kind,r,ri,nx,ny,high-COVER_FOOT_MARGIN);
+          consider(solid,kind,face,face.edgeMin+COVER_FOOT_MARGIN);
+          consider(solid,kind,face,face.edgeMax-COVER_FOOT_MARGIN);
         }
-      }
     }
   }
   // Four samples for each of three shortlisted goals, not path searches for
@@ -28360,6 +28378,10 @@ function coverLineClear(x1,y1,x2,y2,zone='BODY',shooter=null,target=null,launchL
     for(let i=0;i<solids.length;i++) {
         const solid=solids[i],kind=coverSolidKind(solid);
         if(!kind||kind==='LOW'&&!low)continue;
+        if(solid.isForestTimber) {
+            if(forestTimberSegmentTime(solid,x1,y1,x2,y2)!==Infinity)return false;
+            continue;
+        }
         const rects=coverSolidRects(solid);
         for(let j=0;j<rects.length;j++) {
             const r=rects[j];
@@ -28391,12 +28413,12 @@ function coverBulletBlock(b) {
         Math.min(b.prevX,b.x),Math.min(b.prevY,b.y),Math.max(b.prevX,b.x),Math.max(b.prevY,b.y),_coverShotCandidates,false);
     for(let i=0;i<solids.length;i++) {
         const solid=solids[i],kind=coverSolidKind(solid);
+        if(!kind||kind==='LOW'&&!low)continue;
         if(solid.isForestTimber) {
             const t=forestTimberSegmentTime(solid,b.prevX,b.prevY,b.x,b.y);
             if(t<hit.t){hit.t=t;hit.solid=solid;hit.car=false;}
             continue;
         }
-        if(!kind||kind==='LOW'&&!low)continue;
         const rects=coverSolidRects(solid);
         for(let j=0;j<rects.length;j++) {
             const r=rects[j],t=forestShotRectTime(b,r.x0,r.y0,r.x1,r.y1);
@@ -35929,8 +35951,10 @@ const FOREST_PROPS = {
   CHARRED_SNAG: { canopyMass: [30, 40, 34], trunkWidth: 10, outline: 1.6, tier: "canopy", collision: [34, 34] },
   BUSH: { width: 64, depth: 54, rise: 9, outline: 1.2, tier: "midstory", collision: null },
   FERN: { width: 58, depth: 58, rise: 9, outline: 0.9, tier: "underbrush", collision: null },
+  // Timber shares the waist-high rise of native sandbags/log piles. Decorative
+  // scale widens the footprint but never raises this cover into a head wall.
   LOG: { width: 64, depth: 32, rise: 12, outline: 1.5, tier: "underbrush", collision: [50, 15] },
-  STUMP: { width: 36, depth: 34, rise: 7, outline: 1.5, tier: "underbrush", collision: [28, 22] },
+  STUMP: { width: 36, depth: 34, rise: 12, outline: 1.5, tier: "underbrush", collision: [28, 22] },
   MUSHROOM: { width: 28, depth: 28, rise: 9, outline: 0.9, tier: "underbrush", collision: null },
   PEBBLE: { width: 32, depth: 32, rise: 7, outline: 1.0, tier: "underbrush", collision: null },
   REED: { width: 48, depth: 48, rise: 18, outline: 1.0, tier: "underbrush", collision: null },
@@ -39956,7 +39980,7 @@ function appendForestTimberSolids(biome, cx, cy, content) {
     content.solid.push({ x: d.x, y: d.y,
       w: Math.abs(ca) * width + Math.abs(sa) * depth,
       h: Math.abs(sa) * width + Math.abs(ca) * depth,
-      isForestTimber: true, isBiomeProp: true, propType: 'FOREST_TIMBER', noCover: true,
+      isForestTimber: true, isBiomeProp: true, propType: 'FOREST_TIMBER', coverType: 'LOW',
       forestSpecies: d.forestSpecies, forestRegion: d.forestRegion, forestHabitat: d.forestHabitat,
       forestTimberScale: scale, forestTimberAngle: angle,
       forestTimberWidth: width, forestTimberDepth: depth, forestTimberCos: ca, forestTimberSin: sa,
@@ -49159,7 +49183,9 @@ function paintForestTimber(g, d, path, live, phase, sd, sl) {
     g.pop();
   }
   if (phase === 'shadow') return;
-  const point = p => [s * (p[0] + ux * p[2]), s * (p[1] + uy * p[2])];
+  // Keep the cut top at waist height even on a broad saved log or stump.
+  // Ground width/depth and yield retain their original decorative scale.
+  const point = p => [s * p[0] + ux * p[2], s * p[1] + uy * p[2]];
   const polygon = points => {
     path.beginShape();
     for (const p of points) { const q = point(p); path.vertex(q[0], q[1]); }

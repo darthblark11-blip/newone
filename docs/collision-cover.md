@@ -37,6 +37,14 @@ weapon aim hold. The chosen manual stance is remembered and restored on exit.
 An explicit stance action takes priority over automatic cover. Saves record the
 selected stance rather than a temporary low-cover crouch.
 
+Forest logs and stumps use this same low-cover behavior. Their contact normals,
+tangent limits and shot intersections follow the rotated physical timber,
+including diagonal pieces. Empty corners of their enclosing bounding boxes
+provide no cover. Their artwork stays waist-high even when a piece is broader;
+standing BODY and HEAD fire passes over it, while LEGS/low-launch fire strikes
+the wood. Ducking behind intervening timber protects lowered targets, and
+salvaging the piece removes that protection immediately.
+
 Enemies and allies detect the head or torso that is actually exposed by a wall
 peek or a low-cover pop-up; ducking or retracting conceals it again.
 
@@ -80,5 +88,9 @@ Focused checks:
 - `tools/check-cover-fire-arc.js`: full outward aim arc, both tangent shots,
   bounded peeks and unchanged wall occlusion.
 - `tools/check-cover-sight.js`: visible upper-body detection and retraction.
+- `tools/check-forest-timber-cover.js`: rotated timber contact, upper-shot
+  clearance, duck protection, flanking, launch height and destruction.
+- `tools/check-forest-timber-cover-scene.js`: native phone-sized timber cover,
+  incoming gunfire, pop-up exposure and salvage.
 - `tools/visual-collision-cover.js`: native cover gallery and rendered barrel
   alignment with actual pooled shots.

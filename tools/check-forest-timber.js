@@ -47,9 +47,9 @@ for (const species of ['LOG','STUMP']) for (const scale of [.75,1.3,1.9])
         assert.deepEqual(a.slice(0,2),b.slice(0,2),'stump bark lost its fixed lower edge');
         for (const [vertex, topIndex] of [[2,(i+1)%9],[3,i]]) {
           const z = rise * (seed > .56 && topIndex === 2 ? 1.24 : seed > .56 && topIndex === 3 ? 1.10 : 1);
-          assert(Math.abs(b[vertex][0]-a[vertex][0]-(unitB[0]-unitA[0])*z*scale)<1e-8 &&
-            Math.abs(b[vertex][1]-a[vertex][1]-(unitB[1]-unitA[1])*z*scale)<1e-8,
-            'stump top must follow its own seeded height rather than a fixed baked tilt');
+          assert(Math.abs(b[vertex][0]-a[vertex][0]-(unitB[0]-unitA[0])*z)<1e-8 &&
+            Math.abs(b[vertex][1]-a[vertex][1]-(unitB[1]-unitA[1])*z)<1e-8,
+            'stump top must follow its seeded waist height independently of its footprint scale');
         }
       }
     } else {
@@ -57,8 +57,15 @@ for (const species of ['LOG','STUMP']) for (const scale of [.75,1.3,1.9])
         'log needs a complete cylinder cross-section');
       assert.deepEqual(first.paths[0][5],moved.paths[0][5],
         'the bottom of the fallen cylinder must remain on the ground');
+      const unitA=P('timberUnit(__d,0,0)'),unitB=P('timberUnit(__d,30,-20)');
+      const capRise=P('FOREST_PROPS.LOG.rise')*(unitA[0]>=0?.89:1);
+      assert(Math.abs(moved.paths[0][0][0]-first.paths[0][0][0]-(unitB[0]-unitA[0])*capRise)<1e-8 &&
+        Math.abs(moved.paths[0][0][1]-first.paths[0][0][1]-(unitB[1]-unitA[1])*capRise)<1e-8,
+        'broad logs must retain waist height instead of scaling into a high wall');
       assert(first.paths.some(p=>p.length===6), 'log body lost its tapered bark faces');
     }
     cases++;
   }
+assert(P('FOREST_PROPS.LOG.rise===PROP_RISE.SANDBAG[0]&&FOREST_PROPS.STUMP.rise===FOREST_PROPS.LOG.rise'),
+  'logs and stumps should share the established waist-high cover rise');
 console.log(`Forest timber passed: ${cases} camera/scale/rotation cases, fixed roots, projected bark and separate contact shade.`);

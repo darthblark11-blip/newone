@@ -52,7 +52,7 @@ the lighting height field. Renderers do not change generation metadata.
 | `BOULDER` | Fractured granite with strong side/top facets, lichen and moss | Existing solid AABB; no rotated collision mismatch |
 | `WEED` / bush | Overlapping low salal mounds with near-ground leaf rims and raised ridges; directional brushing and spring-back | Soft player-contact trigger; never blocks movement; roots depth-sort with feet |
 | `FERN`, `REED` | Arched paired leaflets and tapered wetland blades with projected seed heads | Bounded live selection; fixed roots, varying raised heights |
-| `LOG`, `STUMP` | Tapered cylinder bark, sawn end grain, attached moss, split cut rims and squat root flares | Oriented solid ground footprint; destructible for wood; bounded live selection |
+| `LOG`, `STUMP` | Tapered cylinder bark, sawn end grain, attached moss, split cut rims and rooted bark | Waist-high cover with an oriented footprint; destructible for wood; bounded live selection |
 | `PEBBLE` | Joined low stone chips with shaded sides and a raised ridge | Bounded live selection; no new collider |
 | `MUSHROOM`, `GRASS`, `ASH`, `LITTER` | Tiny caps/blades, char debris and subdued fallen leaves/bark | Baked ground detail |
 
@@ -108,8 +108,9 @@ Shrubs have low rims and higher leaf ridges joined into domed foliage planes.
 Their profile avoids the long green prisms that a swept flat cap produced at
 screen edges. Timber cap rings, moss and bark seams share the same projected
 surface as their parent piece. Fern spines arch through several heights while
-their leaflets remain attached. Stumps retain a short rise so the cut top does
-not read as another fallen log when the camera passes it.
+their leaflets remain attached. Timber uses the same 12-unit waist rise as
+native sandbags. Decorative scale widens its footprint without increasing its
+vertical rise, keeping broad saved logs and stumps below standing body/head fire.
 
 ### Brushing and timber interaction
 
@@ -129,10 +130,15 @@ and receives a matching `forestSolidKey` / `forest:timber:` destruction key.
 The broad-phase AABB encloses an oriented physical footprint; movement and
 projectile checks use that footprint, so diagonal logs do not block the empty
 corners of their bounding boxes. Companions add no duplicate art, ground pad,
-shadow or canopy. They are low debris rather than a cover attachment.
+shadow or canopy. They provide `LOW` cover using their actual rotated faces.
+Pressing against them crouches the player; aiming pops up to shoot, and
+releasing aim ducks back down. Standing body/head rounds pass over the wood;
+leg-height rounds and low launches strike it. Intervening timber protects
+lowered targets through the existing cover rules. Unprotected sides, melee and
+explosions retain their normal behavior. Removing the timber removes its cover.
 
 Timber uses `harvestProfile()` / `damageHarvestable()` and the existing tool,
-bullet and player-explosion damage paths. Wood yield scales with the piece's
+low-shot and player-explosion damage paths. Wood yield scales with the piece's
 size. Destruction removes the resident, published and queued visual/collision
 records, drops wood bundles for the normal inventory pickup, and records the
 stable key. Reloading or regenerating a neighbor cannot restore the piece or
@@ -228,6 +234,10 @@ tool-swing, pickup and save/load route is exercised by
 `tools/check-forest-interaction-scene.js`.
 `tools/check-forest-timber-interaction.js` checks oriented collision, fast
 projectiles, wood rewards, construction clearing, blasts and persistence.
+`tools/check-forest-timber-cover.js` checks waist-height fire, rotated contact,
+duck/pop-up exposure, launch-height persistence, manual sight and flanking.
+`tools/check-forest-timber-cover-scene.js` exercises generated timber with native
+phone controls, incoming rounds and harvesting in Chromium.
 
 No shader compilation or lighting-quality tier is added by Phases 1–2. The
 existing shadow and normal/material passes receive larger species-specific

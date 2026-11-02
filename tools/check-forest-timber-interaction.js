@@ -29,24 +29,24 @@ for (const species of ['LOG','STUMP']) for (const scale of [.8,1.4,2]) for (cons
   ok(!P('Character.prototype.checkCol.call(__walker,__outside.x,__outside.y)') &&
     P('Character.prototype.checkCol.call(__walker,__inside.x,__inside.y)'), species+' collision follows the rotated visible side');
   ok(P(`(function(){const a=timberWorld(0,-100),b=timberWorld(0,100);
-    const ray={prevX:a.x,prevY:a.y,x:b.x,y:b.y,tH:'BODY',shooter:null};
+    const ray={prevX:a.x,prevY:a.y,x:b.x,y:b.y,tH:'LEGS',shooter:null};
     return coverBulletBlock(ray).solid===__wood&&forestShotCover(ray,[],[]).kind==='SOLID';})()`),
-    species+' thin footprint catches a swept native projectile');
+    species+' thin footprint catches a swept low projectile');
 }
 probe("timberFixture('LOG',2,Math.PI/4);__corner={x:__wood.x+__wood.w*.5-.1,y:__wood.y-__wood.h*.5+.1};");
 ok(!P('forestTimberPointBlocked(__wood,__corner.x,__corner.y)'), 'empty diagonal AABB corners must not become solid');
 ok(P('forestTimberSegmentTime(__wood,__corner.x-.01,__corner.y,__corner.x+.01,__corner.y)===Infinity'),
   'rounds through empty diagonal AABB corners must not damage timber');
-ok(P('coverSolidKind(__wood)===null&&hasLOS(0,300,600,300)'), 'low timber must not become a fake high cover wall');
+ok(P('coverSolidKind(__wood)==="LOW"&&hasLOS(0,300,600,300)'), 'waist-high timber stays low cover rather than a high sight wall');
 
 // Exercise the actual projectile update, not only the shape helper. The round
 // crosses the whole narrow log in one tick, so endpoint-only collision fails.
 probe(`timberFixture('LOG',1.4,.8);player=new Character(800,800,true);enemiesList=[];forestWildlife.length=0;
   bullets=[];doTick=true;__start=timberWorld(0,-100);__end=timberWorld(0,100);
   __hp=harvestProfile(__wood).hp;
-  __round=spawnBullet(__start.x,__start.y,Math.atan2(__end.y-__start.y,__end.x-__start.x),true,'BODY',WEAPONS.ASSAULT_RIFLE,player);
+  __round=spawnBullet(__start.x,__start.y,Math.atan2(__end.y-__start.y,__end.x-__start.x),true,'LEGS',WEAPONS.ASSAULT_RIFLE,player);
   __round.vx=__end.x-__start.x;__round.vy=__end.y-__start.y;updateBullets();`);
-ok(P('!__round.active&&harvestProfile(__wood).hp<__hp'), 'native fast gunfire must stop and damage the wood');
+ok(P('!__round.active&&harvestProfile(__wood).hp<__hp'), 'native fast low gunfire must stop and damage the wood');
 
 function stage(species) {
   ctx.__species = species;
