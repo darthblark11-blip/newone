@@ -1139,7 +1139,7 @@ let inTownCutscene = false, townPhase = 0, townTimer = 0, townSpeaker1 = null, t
 let inFortCutscene = false, fortPhase = 0, fortTimer = 0, fortSpeaker1 = null, fortSpeaker2 = null;
 let nm0AmbushActive = false, nm0AmbushKills = 0;
 // 40% smaller opening groups; counted enemies held back stay in reserve.
-const NM0_TOWER_INITIAL=60, NM0_GATE_COUNTED_INITIAL=30, NM0_GREY_INITIAL=30;
+const NM0_TOWER_INITIAL=60, NM0_GATE_COUNTED_INITIAL=45, NM0_GREY_INITIAL=30;
 let isHardMode = false, selectingDifficulty = false, pendingLevel = 1, pendingStoryMode = false;
 let levelSelectStory = false;   // debug: numbered level shortcuts launch story mode
 let pendingDebugStory = false;  // set when this run came from that shortcut
@@ -2343,6 +2343,8 @@ if (isStoryMode) {
     nm0AmbushKills = 0;
     window.ambushKind = null;
     window.ambushFort = null;
+    window.gateAmbushLevel = null; window.gateAmbushFortIds = [];
+    window.gateOverworldSuspended = false;
     inTownCutscene = false;
     inFortCutscene = false; fortPhase = 0; fortSpeaker1 = null; fortSpeaker2 = null;
     resetFortSceneIdentity();
@@ -8080,6 +8082,7 @@ function nextLevel() { startAtLevel(currentLevel + 1); }
 // Replacing a run must discard them BEFORE level entry can stamp old bodies
 // into the next world's ground buffers. Keep this separate from startAtLevel.
 function resetRunState() {
+  window.gateAmbushLevel=null;window.gateAmbushFortIds=[];window.gateOverworldSuspended=false;
   resetHostileFrontline();
   resetNM0Offices();
   resetSwordHitFeedback();
@@ -11386,6 +11389,8 @@ function resetStoryProgress() {
     window.undercitySouthBreached = false;
     window.ambushKind = null;
     window.ambushFort = null;
+    window.gateAmbushLevel = null; window.gateAmbushFortIds = [];
+    window.gateOverworldSuspended = false;
     window.nm0AmbushClearedStatus = false;
     window.nm0AmbushCleared = false;
     window.nm0HqCleared = false;
@@ -11959,6 +11964,7 @@ function directiveCitizenCasualty(c) {
 // the ledgers; making or rebuilding it never creates another population.
 function deployDirectivePopulation() {
     townCitizens=[];
+    if (gateAmbushIsolated()) return 0;
     // Department residents belong to outdoor sectors, not authored interiors.
     if(currentLevel<1||currentLevel>7)return 0;
     if(!nearestOwnedFortress(currentLevel))return 0;
@@ -12410,6 +12416,100 @@ function legacyGetSafeSpawn(away) {
   return safe ? { x: rx, y: ry } : (away ? hostileSpawnPoint(fallback.x, fallback.y) : fallback);
 }
 
+// A breached gate owns the active encounter until every ambusher is dead.
+// Keep this separate from ambushKind: a tower fight can merge into a gate fight.
+function gateAmbushIsolated() {
+  return nm0AmbushActive && window.gateAmbushLevel === currentLevel;
+}
+function gateBattleActor(e) {
+  if (!e) return false;
+  if (e.isAmbush) return true;
+  if (e.isOutpostGarrison) return (window.gateAmbushFortIds || []).includes(e.outpostFortId || 'OUTPOST');
+  // Authored, finite liberation cohorts and deployed combat allies are not
+  // ambient residents. Their casualties must still reach their own ledgers.
+  return !!(e.isPopulation || e.isFriendly && !e.isNeutral && !e.cityPersonKey &&
+    !unarmedCivilian(e) && !frontierCivilianType(e.eType));
+}
+function beginGateAmbush(def = null) {
+  if (window.gateAmbushLevel !== currentLevel) window.gateAmbushFortIds = [];
+  window.gateAmbushLevel = currentLevel;
+  if (def && !window.gateAmbushFortIds.includes(outpostFortId(def))) window.gateAmbushFortIds.push(outpostFortId(def));
+  suspendGateOverworld(true);
+}
+function suspendGateOverworld(force = false) {
+  if (!force && !gateAmbushIsolated()) return;
+  const first = !window.gateOverworldSuspended;
+  window.gateOverworldSuspended = true;
+  // Despawning is not a death. Bank wounds/relationships/fort survivors and
+  // contract state without calling processKill or changing population totals.
+  if (first || force) bankFortRecruits();
+  if (_frontierBountyActors.size) releaseFrontierBountyActors();
+  for (const [key, list] of chunkPop) popRelease(key, list.filter(e => !gateBattleActor(e)));
+  for (let i = enemiesList.length - 1; i >= 0; i--) {
+    const e = enemiesList[i];
+    if (gateBattleActor(e)) continue;
+    bankCityPerson(e); bankFrontierPerson(e);
+    enemiesList.splice(i, 1);
+  }
+  if (first || force) resetStreetThugEncounters();
+  townCitizens.length = 0;
+  if (forestWildlife.length) { forestWildlife.length = 0; _wildlifeGridDirty = true; }
+}
+function resumeGateOverworld() {
+  if (!window.gateOverworldSuspended || gateAmbushIsolated()) return;
+  window.gateOverworldSuspended = false;
+  window.gateAmbushLevel = null; window.gateAmbushFortIds = [];
+  cityPeopleFrame = -99;
+  deployDirectivePopulation();
+  spawnFrontierTownWorkers();
+  ensureCityRookiePatrols();
+}
+// Far-away reserves arrive off screen around the pursued player. Existing
+// bodies walk there with their normal movement/collision/LOS; none teleport.
+function gateAmbushSpawnPoint(x, y, type) {
+  if (!gateAmbushIsolated() || !player) return hostileSpawnPoint(x, y);
+  if ((x-player.x)**2 + (y-player.y)**2 <= 4800*4800) return hostileSpawnPoint(x,y,currentLevel,true);
+  const start = random(TWO_PI);
+  const radius = Math.max(1000, Math.hypot(viewRight-viewLeft, viewBottom-viewTop)*.5+300);
+  for (let ring = 0; ring < 4; ring++) for (let spoke = 0; spoke < 24; spoke++) {
+    const a = start + spoke*TWO_PI/24, r = radius + ring*180;
+    const px = player.x+Math.cos(a)*r, py = player.y+Math.sin(a)*r;
+    if (currentLevel===3 && !frontierCanyonSpawnSafe(px,py)) continue;
+    if (type!=='AERIAL' && buildings.some(b => !b.noClip && !b.isPalm && !b.isAlienPlant &&
+        !b.isEnergyPole && (!b.isGrassLot || b.isPond) &&
+        Math.abs(px-b.x)<(b.w||0)/2+34 && Math.abs(py-b.y)<(b.h||0)/2+34)) continue;
+    if (parkingCars.some(c=>c.hp>0 && Math.abs(px-c.x)<64 && Math.abs(py-c.y)<84)) continue;
+    return {x:px,y:py};
+  }
+  // No safe nearby arrival: retain the original approach and reserve count.
+  return hostileSpawnPoint(x,y,currentLevel,true);
+}
+function restoreGateAmbushIsolation() {
+  if (!nm0AmbushActive) return;
+  const forts = outpostFortDefs(currentLevel).filter(def=>outpostFortState(currentLevel,def).musterOn);
+  if (!gateAmbushIsolated() && window.ambushKind!=='GATE' && !forts.length) return;
+  if (forts.length) for (const def of forts) beginGateAmbush(def);
+  else beginGateAmbush();
+  // Unsaved or unexpectedly missing bodies still have to be killed. Re-form
+  // each fort's own missing contingent without stealing another fight's quota.
+  for (const def of forts) {
+    const st=outpostFortState(currentLevel,def);
+    const live=enemiesList.filter(e=>e.isAmbush&&e.outpostFortId===outpostFortId(def)&&!e.dead&&e.hp>0).length;
+    st.musterWaves=Math.max(0,st.musterLeft-live);
+  }
+  const fortLeft=forts.reduce((n,def)=>n+outpostFortState(currentLevel,def).musterLeft,0);
+  const fortWaves=forts.reduce((n,def)=>n+outpostFortState(currentLevel,def).musterWaves,0);
+  let nativeLive=enemiesList.filter(e=>e.isAmbush&&!e.outpostFortId&&!e.dead&&e.hp>0).length;
+  window.ambushSpawnsRemaining=fortWaves+Math.max(0,nm0AmbushKills-fortLeft-nativeLive);
+  for (const def of forts) {
+    const st=outpostFortState(currentLevel,def);
+    let live=enemiesList.filter(e=>e.isAmbush&&e.outpostFortId===outpostFortId(def)&&!e.dead&&e.hp>0).length;
+    for (;live<FORT_WAVE_FLOOR && st.musterWaves>0;live++) spawnFortWave(def);
+  }
+  // Gate-only saves need this too, even when the city's towers still stand.
+  for (; nativeLive<FORT_WAVE_FLOOR && window.ambushSpawnsRemaining>forts.reduce((n,def)=>n+outpostFortState(currentLevel,def).musterWaves,0); nativeLive++) spawnAmbushReinforcement();
+}
+
 function triggerGateAmbush(fortressY, isNorthGate = false) {
     // The garrison musters just inside the gate that came down, wherever that
     // gate happens to sit. Stick City's Great Gates are at -4200 / 5400 and the
@@ -12428,6 +12528,7 @@ function triggerGateAmbush(fortressY, isNorthGate = false) {
     // A controlled city keeps its newly opened road without remustering NM-0
     // inside the protected territory or stranding troops beyond the AI range.
     if (currentLevel === 1 && cityRelayTerritoryUnlocked()) return;
+    beginGateAmbush();
 
     // MERGE ACTIVE AMBUSHES (Scenario 4)
     if (nm0AmbushActive) {
@@ -12470,7 +12571,7 @@ function triggerGateAmbush(fortressY, isNorthGate = false) {
     
     for(let e of enemiesList) { if(!e.isFriendly && !independentCityRookie(e) && e.hp > 0 && !e.dead) { e.state = "CHASE"; e.loseSightTimer = 999; } }
 
-    // Preserve the gate's existing counted contingent at 40% smaller size.
+    // Every enemy created by the breach belongs to its finite 150-person fight.
     for(let i = enemiesList.length - NM0_GATE_COUNTED_INITIAL; i < enemiesList.length; i++) {
         if (enemiesList[i]) enemiesList[i].isAmbush = true;
     }
@@ -12584,6 +12685,7 @@ function cityOverworldRoamer(e) {
 }
 
 function ensureCityRookiePatrols() {
+  if (gateAmbushIsolated()) return;
   if(!isStoryMode || !player || (currentLevel!==1 && currentLevel!==2))return;
   const type=currentLevel===1?'NM0_ROOKIE':'NM0_ROOKIE_F';
   for(let station=0;station<CITY_ROOKIE_PATROL_COUNT;station++) {
@@ -13097,7 +13199,8 @@ function spawnAmbushReinforcement() {
     if (currentLevel === 4) {
         let sX = random() > 0.5 ? player.x - 1200 : player.x + 1200;
         let sY = player.y + random(-800, 800);
-        let e = newHostileCharacter(sX, sY, "NM0_GREY_FATIGUE");
+        const p = gateAmbushSpawnPoint(sX,sY,"NM0_GREY_FATIGUE");
+        let e = new Character(p.x,p.y,false,"NM0_GREY_FATIGUE");
         e.state = "CHASE"; e.loseSightTimer = 999; e.isAmbush = true;
         enemiesList.push(e);
         return;
@@ -13134,7 +13237,8 @@ function spawnAmbushReinforcement() {
     if (r > 0.9) { type = "AERIAL"; sY = aerY; }
     else if (r > 0.8) { type = "ARMORED"; }
     
-        let e = newHostileCharacter(sX + random(-jitter, jitter), sY, type);
+    const p = gateAmbushSpawnPoint(sX + random(-jitter, jitter),sY,type);
+    let e = new Character(p.x,p.y,false,type);
     e.state = "CHASE";
     e.loseSightTimer = 999;
     e.isAmbush = true; 
@@ -18531,6 +18635,7 @@ const FRONTIER_CIVILIAN_TYPES = Object.freeze([
   'FRONTIER_SMITH','FRONTIER_TRAVELER','FRONTIER_TOWNSWOMAN']);
 function frontierCivilianType(type) {return FRONTIER_CIVILIAN_TYPES.indexOf(type)!==-1;}
 function spawnFrontierTownWorkers() {
+  if (gateAmbushIsolated()) return;
   if(currentLevel!==3||!authoredCore)return;
   // Public Main Street remains populated in arcade, first story arrival and
   // liberated return visits; these workers are independent of campaign ledgers.
@@ -19207,6 +19312,7 @@ function bankCityPerson(e) {
     ...streetThugRecord(e)};
 }
 function refreshCityPeople(mgr,pcx,pcy) {
+  if (gateAmbushIsolated()) return;
   if(!mgr||mgr.biome!==1||!player||!doTick||frameCount-cityPeopleFrame<20)return;
   cityPeopleFrame=frameCount;let civ=0,guard=0;
   for(let i=enemiesList.length-1;i>=0;i--){const e=enemiesList[i];if(!e.cityPersonKey)continue;
@@ -24255,6 +24361,14 @@ if (this.eType === "COW") {
         }
     }
 
+    if (gateAmbushIsolated() && this.isAmbush && !this.isFriendly) {
+        // Aggro still allows fighting nearby allies; distant former targets
+        // cannot pull the pursuit away from the player's current position.
+        if (trg!==player && (!gateBattleActor(trg) || (trg.x-this.x)**2+(trg.y-this.y)**2>700*700)) trg=player;
+        this.state="CHASE"; this.loseSightTimer=1200;
+        this.lastKnownX=trg.x; this.lastKnownY=trg.y;
+    }
+
     // Ground occlusion is cheap and checked every frame; cached surface sight
     // must not reveal a digger for another nine frames after he disappears.
     const layerVisible=shovelActorsVisible(this,trg);
@@ -27003,6 +27117,8 @@ function updateWorldBoxingOpponents() {
   }
 }
 function updateEntities() {
+  if (gateAmbushIsolated()) suspendGateOverworld();
+  else resumeGateOverworld();
   if (comboTimer > 0) { comboTimer--; if (comboTimer <= 0) consecutiveKills = 0; }
 
   if (doTick) {
@@ -27164,7 +27280,7 @@ function updateEntities() {
           // cost of a plain sqrt it did not need either.
           let cullDist = currentLevel===9?2400:((nm0AmbushActive || currentLevel === 4) && !e.isFriendly) ? 6000 : 1450;
           const cdx = player.x - e.x, cdy = player.y - e.y;
-          if ((e.isFriendly && e.isMilitary) || cdx * cdx + cdy * cdy < cullDist * cullDist) {
+          if ((e.isFriendly && e.isMilitary) || (gateAmbushIsolated() && e.isAmbush) || cdx * cdx + cdy * cdy < cullDist * cullDist) {
               e.updateEnemy();
           }
       }
@@ -27192,6 +27308,7 @@ function updateEntities() {
 // up again. Ticked slowly and one at a time, so crossing the line out of a town
 // reads as the country getting dangerous rather than as an ambush.
 function maintainHostiles() {
+  if (gateAmbushIsolated()) return;
   if(currentLevel===9)return;
   if (!doTick || isDead || isWin || killcamMode || isPaused) return;
   if (frameCount % 45 !== 0) return;
@@ -27399,6 +27516,7 @@ function cullDepartedBands() {
 // farmAmbushKills still above zero, leaving the farm with no way to finish.
 // Top it back up whenever the field is empty and there are bugs still owed.
 function checkFarmSwarmAlive() {
+  if (gateAmbushIsolated()) return;
   if (typeof farmAmbushActive === 'undefined' || !farmAmbushActive) return;
   if (isDead || isWin || killcamMode) return;
   if (!(window.farmAmbushKills > 0)) return;
@@ -27445,6 +27563,10 @@ function checkAmbushCleared() {
     if (!e.isFriendly && e.hp > 0 && !e.dead) return;   // still hostiles on the field
   }
 
+  if (gateAmbushIsolated() && nm0AmbushKills>0) {
+    restoreGateAmbushIsolation();
+    return;
+  }
   nm0AmbushKills = 0;
   objectiveTimer = 0;
   // The muster is over. Written on the fort's own record so a reload cannot
@@ -32673,6 +32795,8 @@ function saveGame() {
         // saving one without the other reloads into a fight that can never be
         // finished, because checkAmbushCleared() waits on ambushSpawnsRemaining.
         nm0AmbushActive, nm0AmbushKills,
+        gateAmbushLevel: gateAmbushIsolated() ? currentLevel : null,
+        gateAmbushFortIds: window.gateAmbushFortIds || [],
         ambushSpawnsRemaining: window.ambushSpawnsRemaining || 0,
         // The muster's own size and where it musters FROM. Without the first
         // the bar comes back as a fraction of 300; without the second the waves
@@ -32766,6 +32890,8 @@ function loadGame() {
         window.undercityNorthBreached = state.undercityNorthBreached || false;
         window.undercitySouthBreached = state.undercitySouthBreached || false;
         window.ambushKind = state.ambushKind || null;
+        window.gateAmbushLevel = state.gateAmbushLevel ?? (nm0AmbushActive && window.ambushKind==='GATE' ? currentLevel : null);
+        window.gateAmbushFortIds = state.gateAmbushFortIds || [];
         window.nm0HqCleared = state.nm0HqCleared || false;
         window.armorBlueprintPickedUp = state.armorBlueprintPickedUp || false;
         window.farmerBlueprintUnlocked = state.farmerBlueprintUnlocked || false;
@@ -32814,6 +32940,8 @@ function loadGame() {
         // Restored again here: it is set before startAtLevel() for the map
         // builder's benefit, and legacyStartAtLevel() nulls it on every entry.
         window.ambushKind = state.ambushKind || null;
+        window.gateAmbushLevel = state.gateAmbushLevel ?? (nm0AmbushActive && window.ambushKind==='GATE' ? currentLevel : null);
+        window.gateAmbushFortIds = state.gateAmbushFortIds || [];
 
         // --- CUTSCENES ---
         // Restored after startAtLevel(), which resets every one of them for a
@@ -33055,7 +33183,7 @@ function loadGame() {
             const savedForts = outpostFortDefs(currentBiome).map(def=>outpostFortState(currentBiome,def));
             const nativeLeft = Math.max(0,nm0AmbushKills-savedForts.reduce((n,st)=>n+(st.musterOn?st.musterLeft:0),0));
             const legacyFortFight = savedForts.some(st=>st._legacyMuster&&st.breached&&!st.captured);
-            if (nm0AmbushActive && nativeLeft > 0 && !legacyFortFight) {
+            if (nm0AmbushActive && nativeLeft > 0 && !legacyFortFight && !gateAmbushIsolated()) {
                 let spawnY = (currentLevel === 1) ? 4950 : 1800;
                 let aerY = (currentLevel === 1) ? 4900 : 1750;
                 if (!window.ambushKind) window.ambushKind = "TOWER";
@@ -33128,6 +33256,7 @@ function loadGame() {
         // a fort's muster has to be re-formed after it and outside it.
         restoreFortMuster();
         restorePendingFortRecruits();
+        restoreGateAmbushIsolation();
         // Outpost-only captures in later sectors do not set the main-city
         // towers flag. Their deployed residents still belong to the ledger.
         deployDirectivePopulation();
@@ -33207,6 +33336,7 @@ function restoreFortMuster() {
     const extraLeft=legacy?0:Math.max(0,nm0AmbushKills-active.reduce((n,def)=>n+outpostFortState(currentLevel,def).musterLeft,0));
     const extraTotal=legacy?0:Math.max(0,(window.ambushKillsTotal||0)-active.reduce((n,def)=>n+outpostFortState(currentLevel,def).musterTotal,0));
     const extraWaves=legacy?0:Math.max(0,(window.ambushSpawnsRemaining||0)-active.reduce((n,def)=>n+outpostFortState(currentLevel,def).musterWaves,0));
+    for (const def of active) beginGateAmbush(def);
     for (const def of defs) restoreOneFortMuster(def);
     const remaining=defs.filter(def=>outpostFortState(currentLevel,def).musterOn);
     if (!remaining.length) return;
@@ -33370,6 +33500,7 @@ function triggerBugAmbush() {
 }
 
 function spawnFarmBug() {
+  if (gateAmbushIsolated()) return;
     if (!farmAmbushActive || isDead || isWin) return;
     
     // 50/50 split between West and North-West spawns
@@ -33675,6 +33806,7 @@ function confirmBuildPlacement() {
 // Every site in every sector advances, which is the whole point -- walk away
 // from a half-built warehouse, clear a biome, come back and it is up.
 function updateBuildSites() {
+  if (gateAmbushIsolated()) return;
     const dt = worldClockDtMs;
     if (!(dt > 0) || buildSites.length === 0) return;
     const crew = buildCrew();
@@ -33815,6 +33947,7 @@ const BUILD_HANDOFF   = 30;      // frames the two of them spend on the exchange
 const BUILD_PLACE     = 54;      // frames the mason spends setting the material
 
 function updateBuildCrews() {
+  if (gateAmbushIsolated()) return;
     if (typeof townCitizens === 'undefined' || !townCitizens.length) return;
     const live = [];
     for (const s of buildSites) {
@@ -34235,7 +34368,8 @@ function triggerLvl4Ambush() {
     for(let i = 0; i < NM0_GREY_INITIAL; i++) {
         let sX = random() > 0.5 ? -1500 : 1500; 
         let sY = player.y + random(-1000, 1000);
-        let e = newHostileCharacter(sX, sY, "NM0_GREY_FATIGUE");
+        const p = gateAmbushSpawnPoint(sX,sY,"NM0_GREY_FATIGUE");
+        let e = new Character(p.x,p.y,false,"NM0_GREY_FATIGUE");
         e.state = "CHASE"; 
         e.loseSightTimer = 2500;
         e.isAmbush = true;
@@ -37912,7 +38046,7 @@ function hostileSpawnExcluded(biome, x, y, pad = 60) {
   });
 }
 function pushHostilesOutsideCityTerritory() {
-  if (currentLevel !== 1 || !cityRelayTerritoryUnlocked()) return;
+  if (currentLevel !== 1 || !cityRelayTerritoryUnlocked() || gateAmbushIsolated()) return;
   for (let i=enemiesList.length-1;i>=0;i--) {
     const e=enemiesList[i];
     if (!e || e.dead || e.hp<=0 || e.isFriendly || e.isNeutral || e.isPopulation || e.isCityCivilian) continue;
@@ -37992,13 +38126,13 @@ function getOwnedFortressSpawnPoint(index = 0, biome = currentLevel, nearPlayer 
 
 // Story ambushes still have to be fought after the grid falls. They assemble
 // outside the captured gates instead of materialising in the player's yard.
-function hostileSpawnPoint(x, y, biome = currentLevel) {
-  if (biome === 1 && cityRelayTerritoryUnlocked()) for (const f of ownedFortresses(1)) {
+function hostileSpawnPoint(x, y, biome = currentLevel, pursuit = false) {
+  if (!pursuit && biome === 1 && cityRelayTerritoryUnlocked()) for (const f of ownedFortresses(1)) {
     if (x < f.x0-60 || x > f.x1+60 || y < f.y0-60 || y > f.y1+60) continue;
     x = Math.max(f.x-230,Math.min(f.x+230,x));
     y = f.id !== 'SECTOR' && y < f.y ? f.y0-CITY_TERRITORY_CLEARANCE-140 : f.y1+CITY_TERRITORY_CLEARANCE+140;
   }
-  if (biome === 1 && cityRelayTerritoryUnlocked() && hostileSpawnExcluded(biome,x,y)) {
+  if (!pursuit && biome === 1 && cityRelayTerritoryUnlocked() && hostileSpawnExcluded(biome,x,y)) {
     const sourceX=x, sourceY=y;
     // Search around the requested arrival; the first free ring preserves the
     // approach direction while honoring every owned fort and connecting road.
@@ -38060,6 +38194,7 @@ function maintainOutpostGarrison() {
   for (const def of outpostFortDefs(currentBiome)) maintainFortGarrison(def);
 }
 function maintainFortGarrison(def) {
+  if (gateAmbushIsolated() && !(window.gateAmbushFortIds||[]).includes(outpostFortId(def))) return;
   const st = outpostFortState(currentBiome, def);
   if (st.freed && !st.rosterGranted) { restoreFortRecruits(def); return; }
   if (st.captured || st.garrison <= 0) return;
@@ -38346,18 +38481,8 @@ function triggerOutpostAmbush(def) {
   // one has to be standing open for the waves to come through it.
   for (const b of buildings) if (b.isOutpostGate && outpostFortMatches(b,def)) b.hp = 0;
 
-  // EVERY LOOSE NM-0 BODY IN THE AREA JOINS THE MUSTER. See
-  // conscriptIntoMuster() for why this is a tick as well as a one-shot.
-  let conscripted = 0;
-  for (const e of enemiesList) {
-    if (!e || e.isFriendly || e.dead || e.hp <= 0) continue;
-    if (e.isAmbush || e.isPopulation || e.isOutpostGarrison) continue;
-    const dx = e.x - def.x, dy = e.y - def.y;
-    if (dx * dx + dy * dy > FORT_MUSTER_R * FORT_MUSTER_R) continue;
-    e.isAmbush = true;
-    e.outpostFortId = outpostFortId(def);
-    conscripted++;
-  }
+  beginGateAmbush(def);
+  const conscripted = 0; // Ambient arrivals never enlarge this encounter.
 
   // The muster itself, on the fort's stations. Same mix the sector's gate beat
   // uses -- armour with a little heavy and a little air -- and the same refusal
@@ -38367,7 +38492,7 @@ function triggerOutpostAmbush(def) {
   for (let i = 0; i < pts.length && spawned < FORT_MUSTER_SPAWN; i++) {
     const r = i % 10;
     const t = r === 9 ? "AERIAL" : (r === 8 ? "ARMORED" : "ARMORED_STANDARD");
-    const point = hostileSpawnPoint(pts[i].x, pts[i].y);
+    const point = gateAmbushSpawnPoint(pts[i].x, pts[i].y, t);
     const e = new Character(point.x, point.y, false, t);
     if (t !== "AERIAL" && e.checkCol(e.x, e.y)) continue;   // a mast, the post, a guard box
     e.isAmbush = true;
@@ -38470,7 +38595,7 @@ function spawnFortWave(fort = null) {
   const r = random();
   const type = r > 0.9 ? "AERIAL" : (r > 0.8 ? "ARMORED" : "ARMORED_STANDARD");
   const raw = fortWavePoint(def, type === "AERIAL");
-  const p = hostileSpawnPoint(raw.x, raw.y);
+  const p = gateAmbushSpawnPoint(raw.x, raw.y, type);
   const e = new Character(p.x, p.y, false, type);
   e.state = "CHASE";
   e.loseSightTimer = 999;
@@ -38491,6 +38616,7 @@ function spawnFortWave(fort = null) {
 // The arithmetic stays closed both ways: a body joining the muster is one more
 // body to kill AND one more the bar was always going to have to count.
 function conscriptIntoMuster(e) {
+  if (gateAmbushIsolated()) return false;
   if (!e || e.isAmbush || e.isFriendly || e.frontierBountyId) return false;
   if (e.cityPersonKey) return false; // city patrols keep their own resident record
   if (e.isPopulation || e.isOutpostGarrison) return false;   // the ones you are asked to spare
@@ -43493,6 +43619,7 @@ function settlementRoster(biome, cx, cy, solids) {
 // it spawns, so a settlement walking out of range frees its share of the budget
 // for the one walking in.
 function refreshPopulation(mgr, pcx, pcy) {
+  if (gateAmbushIsolated()) return;
   if (!mgr || !player) return;
 
   // -- release ------------------------------------------------------------
@@ -54757,6 +54884,7 @@ function clearGateApproach() {
 }
 
 function canTravel(dir) {
+  if (gateAmbushIsolated()) return false;
   const d = travelDestination(dir);
   if (d === null) return false;
   if (dir === "SOUTH" && currentBiome === 1 && !southGateOpen() && !passiveRouteTravelAvailable()) return false;
@@ -54764,6 +54892,7 @@ function canTravel(dir) {
 }
 
 function travelBlockedReason(dir) {
+  if (gateAmbushIsolated()) return "(Clear the gate ambush before travelling.)";
   if (travelDestination(dir) === null) {
     if (dir === "SOUTH") return "(No mapped sector south. Terminus.)";
     // North of Stick City is Sector 09; everywhere else north is just backwards.
@@ -55177,6 +55306,7 @@ function paintFrontierBountyStructure(g, b) {
 }
 
 function frontierBountyContext() {
+  if (gateAmbushIsolated()) return false;
   return !!player && started && currentLevel === 3 && BIOME_ACTIVE && !isDead && !isWin &&
     !isPaused && !killcamMode && !inTownCutscene && !inFarmCutscene && !inFarmPostCutscene &&
     !inFortCutscene && !inPostAmbushCutscene && !inWorldBuildingMenu && !inOverworldView &&
@@ -55493,6 +55623,7 @@ function drawCityBoxingClubMarker() {
   pop();
 }
 function cityBoxingClubContext() {
+  if (gateAmbushIsolated()) return false;
   // Overworld view is live, zoomed-out city exploration after liberation.
   // Keep the unlocked doorway available there as well as at normal zoom.
   return !!player && started && player.hp > 0 && !isDead && !isWin && currentLevel === 1 && BIOME_ACTIVE &&
@@ -55732,6 +55863,7 @@ function frontierSaloonArenaInfo(arena) {
 
 function frontierSaloonIsInside() { return !!_frontierSaloonSession; }
 function frontierSaloonContext() {
+  if (gateAmbushIsolated()) return false;
   if (currentLevel === 1) return cityBoxingClubContext();
   return !!player && started && player.hp > 0 && !isDead && !isWin && currentLevel === 3 && BIOME_ACTIVE &&
     !killcamMode && !inTownCutscene && !inFarmCutscene && !inFarmPostCutscene && !inFortCutscene &&
@@ -57412,6 +57544,7 @@ function paintForestHuntingLodge(g, b) {
 }
 
 function forestHuntingContext() {
+  if (gateAmbushIsolated()) return false;
   return !!player && started && !isDead && !isWin && currentLevel === 2 && BIOME_ACTIVE &&
     !isPaused && !killcamMode && !inTownCutscene && !inFortCutscene && !inPostAmbushCutscene &&
     !inFarmCutscene && !inFarmPostCutscene && !(typeof inCutscene !== 'undefined' && inCutscene) &&
@@ -57580,6 +57713,7 @@ function handleForestHuntingTap(mx, my) {
 }
 
 function drawForestHuntingSteward() {
+  if (gateAmbushIsolated()) return;
   const s = forestHuntingSite(); if (!s || !inView(s.stewardX, s.stewardY, 70)) return;
   if (!_forestHuntingSteward) _forestHuntingSteward = { x: s.stewardX, y: s.stewardY,
     isFriendly: true, isNeutral: true, hp: 100, show() {
@@ -58122,7 +58256,7 @@ function startAtLevel(lvl, isLoading = false) {
   }
 
   ensureCityRookiePatrols();
-  if (!isLoading) { restoreFortMuster();restorePendingFortRecruits(); }
+  if (!isLoading) { restoreFortMuster();restorePendingFortRecruits();restoreGateAmbushIsolation(); }
   // Rebuild the local department view after geometry and escorts are placed.
   // Interior entry clears it; returning outside restores residents from ledgers.
   if(!isLoading)deployDirectivePopulation();
@@ -59239,6 +59373,7 @@ function wildlifeBrain(a) {
   a.thinkAt = _wildlifeClock + (a.state === 'GRAZE' ? 100 + wildlifeRandom() * 110 : 16);
 }
 function updateForestWildlife(dt, elapsedMs) {
+  if (gateAmbushIsolated()) return;
   // Locomotion retains its capped simulation step. A mortal wound instead
   // ages in real active-gameplay milliseconds, including slow rendered frames.
   const bleedMs = Number.isFinite(elapsedMs) ? Math.max(0, elapsedMs) :

@@ -90,24 +90,18 @@ console.log('== gate opening and merge ==');
 fresh(2);
 probe('triggerGateAmbush(3000, false);');
 ok('gate keeps all three authored fifteen-body groups', P('enemiesList.length') === 46);
-ok('gate tags only its existing two counted groups', live() === 30 && reserve() === 120 && !P('!!batchAlly.isAmbush'));
+ok('gate counts all three spawned groups against the same total', live() === 45 && reserve() === 105 && !P('!!batchAlly.isAmbush'));
 ok('gate composition remains 13 standard, 1 heavy, 1 aerial per group',
   P('enemiesList.filter(e => !e.isFriendly && e.eType === "ARMORED_STANDARD").length') === 39 &&
   P('enemiesList.filter(e => e.eType === "ARMORED").length') === 3 &&
   P('enemiesList.filter(e => e.eType === "AERIAL").length') === 3);
 closed('gate', 150);
-// The pre-existing extra gate group stays uncounted; remove those hostiles
-// without claiming their deaths should drain this mission's kill bar.
-probe(`for (const e of enemiesList.filter(e => !e.isFriendly && !e.isAmbush)) {
-  e.hp = 0; e.dead = true; processKill(e.x, e.y, false, e.eType, false, e);
-} enemiesList = enemiesList.filter(e => !e.dead);`);
-ok('the existing untagged group does not consume counted kills or reserves', P('nm0AmbushKills') === 150 && reserve() === 120 && timers.length === 0);
 drain('gate', 150);
 
 fresh(2);
 probe('triggerGateAmbush(3000, false); triggerGateAmbush(-1800, true);');
 ok('merged gate breaches append two smaller openings without tagging the ally',
-  P('enemiesList.length') === 91 && live() === 60 && reserve() === 240 && !P('!!batchAlly.isAmbush'));
+  P('enemiesList.length') === 91 && live() === 90 && reserve() === 210 && !P('!!batchAlly.isAmbush'));
 closed('merged gates', 300);
 
 console.log('== native tower scene and merge ==');
@@ -132,7 +126,7 @@ closed('tower', 300);
 probe('enemiesList = enemiesList.filter(e => e.isFriendly || e.isAmbush);');
 drain('tower', 300);
 towerOpening(true);
-ok('tower merges sixty live and 240 held into the active gate fight', live() === 90 && reserve() === 360 && P('window.ambushKind === "TOWER"'));
+ok('tower merges sixty live and 240 held into the active gate fight', live() === 105 && reserve() === 345 && P('window.ambushKind === "TOWER"'));
 closed('gate plus tower', 450);
 
 console.log('== Grey Fatigue opening ==');
@@ -157,11 +151,11 @@ function fortOpening(conscripts = 0, blocked = false) {
 fortOpening(3);
 const generated = P('enemiesList.filter(e => e.isAmbush && e.isOutpost).length');
 ok('fort creates at most thirty new station bodies and keeps at least 120 in reserve', generated > 0 && generated <= 30 && reserve() >= 120);
-ok('existing fort-area hostiles are counted in addition to the 150 authored bodies',
-  P('enemiesList.filter(e => e.isAmbush && e.eType === "NM0_ROOKIE").length') === 3 &&
-  P('outpostFortState(1).musterTotal') === 153 && !P('!!batchAlly.isAmbush'));
-closed('fort plus conscripts', 153);
-drain('fort plus conscripts', 153, true);
+ok('existing fort-area overworld hostiles despawn without enlarging the 150-body battle',
+  P('enemiesList.filter(e => e.isAmbush && e.eType === "NM0_ROOKIE").length') === 0 &&
+  P('outpostFortState(1).musterTotal') === 150 && !P('!!batchAlly.isAmbush'));
+closed('isolated fort', 150);
+drain('isolated fort', 150, true);
 
 fortOpening(0, true);
 ok('blocked ground stations become extra reserves while aerial stations still spawn',

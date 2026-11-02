@@ -18,29 +18,29 @@
       "current": "c8bc0ff8b04320d831ecd732127617140f3e091db7004af277b20b45244b934d"
     },
     "updateEntities": {
-      "reason": "Keep regular civilians on captured ground during a remote relay battle.",
+      "reason": "Keep regular civilians on captured ground during a remote relay battle.; gate isolation removes ambient actors before AI and updates counted ambushers beyond the distance cutoff",
       "previous": "98e31f2f22d50e83d84f5600db2891c9197c7535d6402db29d22878a2d0f6697",
-      "current": "6edcd6555cb91800a0a732e315e7c5e69f3fa87592a8c33d3c107cb8ab349a79"
+      "current": "ef73022bde409cc6c8ef72e8525d9126b3331acbb6e7b98e3a8eaf1a3bb2bb81"
     },
     "triggerGateAmbush": {
-      "reason": "Owned city roads cannot remuster hostile attackers inside protected territory.",
+      "reason": "Owned city roads cannot remuster hostile attackers inside protected territory.; gate breaches suspend the ambient world; all three opening groups belong to the same 150-person quota",
       "previous": "22bcd96b8cb075dc47a51e238e8ec2809216cf2b979455310f8e0aceba13764c",
-      "current": "68dfec1d9c4ccc251e4344cf91fbf0cb2d8aefafc43b1d7fc546c37e7e8b43d7"
+      "current": "0f2675d2ec9263ece26976b7f62ecb58fee367cb4c22a4feadf796b3a967b903"
     },
     "checkAmbushCleared": {
-      "reason": "Finish the active relay records through the existing clear dispatcher.",
+      "reason": "Finish the active relay records through the existing clear dispatcher.; a missing gate body returns to reserve instead of granting victory without a kill",
       "previous": "739e079efc1f2eb9419ac33324cdbe41cb44cef1bfd879dd728beb5503e4753f",
-      "current": "c204382ea64c601e6db3af3bf8d5531a7ddb2be30148ff8bed7b87e3d1e6ebc2"
+      "current": "ffb3c6784defe913b94deaacb94b125a239a9fbe850b9a62a5d5f6c76292b693"
     },
     "triggerOutpostAmbush": {
-      "reason": "Apply the existing gate/muster behavior to the selected relay, respecting controlled spawn ground.",
+      "reason": "Apply the existing gate/muster behavior to the selected relay, respecting controlled spawn ground.; gate breaches despawn ambient actors instead of conscripting them; relay arrivals use the gate pursuit helper",
       "previous": "ae1fb6e2bda2aba3eb416234fc63ac5e36219a61080f31a1c54f0aca7d9047f1",
-      "current": "1e04d71243538e4126c4a9b224cb74cc8e42518f8e84cf66c82e0e292fd4ac8a"
+      "current": "485988011589f74eb8d2a2d92ed7d09cb915fb497a685e176f3e150834dee382"
     },
     "conscriptIntoMuster": {
-      "reason": "Assign each conscript and its counters to the active fort identity.",
+      "reason": "Assign each conscript and its counters to the active fort identity.; isolated gate fights do not conscript overworld actors or inflate their finite quota",
       "previous": "e71c8fdf986dda210b3a84e5dc6afc14fcfdb7bbead5f1aa7f9f0fde10e79ebb",
-      "current": "35f4e1b7974773fbafc68a4bfe6027e77ee54ecf2b34c1c788b440bd6ac4fabf"
+      "current": "c873f8f9b5eefb6b0d159975078a20f29d3bad8c54342cfab2161ef2ab7f288f"
     },
     "maintainOutpostMuster": {
       "reason": "Maintain independent relays while retaining any merged native story battle counters; the native refill loop is moved to maintainFortMuster.",
@@ -66,6 +66,16 @@
       "reason": "Regular city civilians stay on safe captured ground during remote ambushes; native solid collision remains unchanged.",
       "previous": "a30d2d1f21febe5045ab1f4f542a6ad9d0ecfadf63b8b4d06779df28e4c175a8",
       "current": "72b569de57430ae65e877342e39a95f72c0220bd067080b5014816816fb58acc"
+    },
+    "spawnAmbushReinforcement": {
+      "previous": "d94eb3d30659d5f706b313e43c49e2776ce0726951b752e04932b04f347ee8e5",
+      "current": "daa944b961fa09ab421f589ffd5751d8b58e7decd7fc5ee3033cab97c693d84c",
+      "reason": "gate reserves follow a distant player using collision-safe offscreen arrivals; standalone tower arrivals are unchanged"
+    },
+    "Character.updateEnemy": {
+      "previous": "5651f7b4cb84768f642ee20834d98c6e94998f20b1aee08009e7d5ab2cedf76f",
+      "current": "5640ad5e6e32f7659eb1d4129aa29cc7c5f27b22f18792bd00cfce38902383b4",
+      "reason": "isolated ambushers keep CHASE and track the player at any distance while retaining native movement, collision and firing LOS"
     }
   }
 }

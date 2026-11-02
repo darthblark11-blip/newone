@@ -75,9 +75,9 @@ ok(P('enemiesList.filter(e=>e.isAmbush).every(e=>e.outpostFortId==="RELAY_SW"&&!
 probe(`window.relaySavedBuildings=buildings;buildings=[];activeBuildings=[];
   player.x=600;player.y=600;cityPeopleFrame=-99;frameCount+=30;
   refreshCityPeople(relayPeopleManager,0,0);`);
-ok(P('nm0AmbushActive&&enemiesList.some(e=>e.isCityCivilian&&e.cityPersonKey)'), 'successor battle permits regular civilian streaming in the captured city');
+ok(P('nm0AmbushActive&&!enemiesList.some(e=>e.isCityCivilian&&e.cityPersonKey)'), 'successor gate battle suspends regular civilian streaming even in the captured city');
 probe('cityPeopleFrame=-99;frameCount+=30;refreshCityPeople(relayPeopleManager,0,0);updateEntities();');
-ok(P('enemiesList.some(e=>e.isCityCivilian&&cityPlayerTerritoryContains(e.x,e.y))'), 'population refresh and entity cleanup retain civilians in owned land during a remote battle');
+ok(P('!enemiesList.some(e=>e.isCityCivilian&&cityPlayerTerritoryContains(e.x,e.y))'), 'owned land stays quiet until the remote gate battle is cleared');
 probe('buildings=relaySavedBuildings;activeBuildings=buildings;player.x=CITY_RELAY_SW.x;player.y=CITY_RELAY_SW.y;');
 probe(`window.relayVictim=enemiesList.find(e=>e.isAmbush);relayVictim.hp=0;relayVictim.dead=true;
   processKill(relayVictim.x,relayVictim.y,false,relayVictim.eType,false,relayVictim);`);
@@ -136,7 +136,7 @@ probe(`var mixedFort=outpostFortState(1);mixedFort.captured=true;mixedFort.muste
   window.ambushSpawnsRemaining=70;window.ambushKind='TOWER';
   window.towersDefeated=true;saveGame();window.outpostForts={};loadGame();`);
 ok(P('nm0AmbushActive&&nm0AmbushKills===100&&!outpostFortState(1).musterOn&&outpostFortState(1).musterLeft===0'), 'reload retires captured fort bodies without erasing the concurrent native battle');
-ok(P('enemiesList.filter(e=>e.isAmbush&&!e.outpostFortId).length===60&&window.ambushSpawnsRemaining===40'), 'captured mixed reload supplies native bodies and their exact remaining reserve');
+ok(P('enemiesList.filter(e=>e.isAmbush&&!e.outpostFortId).length===6&&window.ambushSpawnsRemaining===94'), 'captured mixed reload supplies native bodies and their exact remaining reserve');
 fresh();
 probe(`outpostFortState(1).captured=true;startAtLevel(1);enemiesList=[];
   player.x=600;player.y=4940;inStoryIntro=false;inStoryRoom=false;inDarchonCall=false;
@@ -151,6 +151,6 @@ probe(`markSectorTowersDown(1);markStoryBeat('L1_TOWN');triggerGateAmbush(5400,f
   var relayCaptureScore=score,relayCaptureKills=totalKills;
   for(const b of buildings)if(b.isTower&&b.outpostFortId==='OUTPOST')b.hp=0;
   checkOutpostCaptured();checkAmbushCleared();`);
-ok(P('nm0AmbushKills===300&&window.ambushSpawnsRemaining===240&&outpostFortState(1).musterOn&&!outpostFortState(1).captured'), 'live tower collapse preserves both gate battles and their reserves until cleared');
+ok(P('nm0AmbushKills===300&&window.ambushSpawnsRemaining===225&&outpostFortState(1).musterOn&&!outpostFortState(1).captured'), 'live tower collapse preserves both gate battles and their reserves until cleared');
 ok(P('score===relayCaptureScore&&totalKills===relayCaptureKills'), 'retreating native reserves award no kills or score');
 console.log(checks + ' relay territory checks passed');

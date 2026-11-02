@@ -150,4 +150,4 @@ for(const name of ['ENEMY_COVER_WEAPONS','SHOVEL_AIRBORNE_TYPES']){
   assert.equal(probe(expression),before(expression),name+' eligibility set');constants++;
 }
 assert.ok(!candidate.includes('const STANCE_EXCLUDED_TYPES'),'the previous stance shortcut is removed');
-console.log(`PASS mechanics source lock: ${functions} functions, ${methods} methods/accessors, ${constructors} constructors and ${constants} tuning tables/constants match 37dfd72 with authorized frontline gates, ambush sizing and ${Object.keys(relayChanges).length} reviewed territory/relay source changes.`);
+console.log(`PASS mechanics source lock: ${functions} functions, ${methods} methods/accessors, ${constructors} constructors and ${constants} tuning tables/constants match 37dfd72 with authorized frontline gates, ambush sizing and ${Object.keys(relayChanges).length} reviewed territory/relay/gate-isolation source changes.`);

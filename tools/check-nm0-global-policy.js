@@ -36,7 +36,7 @@ for(const level of [1,2,3,4,5,6,7]){
   for(const north of [false,true]){
     clearFight();
     probe(`triggerGateAmbush(${north?-4400:level===1?5400:3000},${north});`);
-    check('enemiesList.length===46&&enemiesList.filter(e=>e.isAmbush).length===30&&nm0AmbushKills===150&&window.ambushSpawnsRemaining===120',
+    check('enemiesList.length===46&&enemiesList.filter(e=>e.isAmbush).length===45&&nm0AmbushKills===150&&window.ambushSpawnsRemaining===105',
       'Level '+level+' '+(north?'north':'south')+' gate uses all three smaller flank groups');
     check('!globalPolicyAlly.isAmbush','Level '+level+' gate beat leaves allies uncounted');
   }
