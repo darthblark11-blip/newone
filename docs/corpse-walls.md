@@ -11,6 +11,14 @@ Its bent legs remain outside the solid, while the upper body uses the wall's
 existing height projection. Clothing, head injuries and wounds stay attached.
 A body moving away from the wall continues its ordinary directional fall.
 
+Wall-supported bodies are clipped against their own building before drawing.
+On a visible face, its roof occludes the body; on a hidden face, the whole
+extruded silhouette does. Visible feet outside that silhouette remain visible,
+and open gateways retain their gaps. The masks share the wall's current camera
+projection and are cached per occupied support. Later buildings retain the
+ordinary depth order. Seated torso proportions stay fixed as the camera pans;
+bounded joint projection keeps the head and sleeves attached at distant angles.
+
 Blood spatters are stored in the current sector's blood bank, attached to wall
 geometry rather than floor textures. Each wall paints its own visible face,
 with clipping at corners and open gateways. Camera motion uses the same wall
@@ -28,6 +36,7 @@ Verification:
 - `node tools/check-sword-deaths.js`
 - `node tools/check-depth.js`
 - `node tools/check-render.js`
+- `VIS_P5=/path/to/p5.min.js node tools/check-corpse-wall-occlusion.js`
 
 For an offline p5/Chromium contact sheet, run
 `VIS_DEPS=/path/to/deps VIS_CHROME=/path/to/chromium node tools/visual-corpse-walls.js work`.

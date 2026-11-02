@@ -18244,10 +18244,71 @@ function stepCorpseWallSit(c) {
   if(c.fall){c.fall.age=s.age;c.fall.impulse=0;}
   if(s.age>=RAG_FRAMES){s.done=true;if(c.fall)c.fall.done=true;}
 }
+// Attachments paint with their support, then later masses keep the ordinary
+// depth order. Exclude the owning roof locally so a back-wall corpse cannot
+// paint through masonry when the camera crosses to the other side.
+const _corpseWallMaskCache=new WeakMap();
+function corpseWallHull(points) {
+  points.sort((a,b)=>a.x-b.x||a.y-b.y);
+  const cross=(a,b,c)=>(b.x-a.x)*(c.y-a.y)-(b.y-a.y)*(c.x-a.x),lower=[],upper=[];
+  for(const p of points){while(lower.length>1&&cross(lower[lower.length-2],lower[lower.length-1],p)<=0)lower.pop();lower.push(p);}
+  for(let i=points.length-1;i>=0;i--){const p=points[i];while(upper.length>1&&cross(upper[upper.length-2],upper[upper.length-1],p)<=0)upper.pop();upper.push(p);}
+  lower.pop();upper.pop();return lower.concat(upper);
+}
+function corpseWallMasks(b) {
+  let cache=_corpseWallMaskCache.get(b);
+  const angle=b.isHouseWall?b.angle||0:0,open=!!(b.isGovFortress&&gateIsOpen(b));
+  if(cache&&cache.level===currentLevel&&cache.biome===currentBiome&&cache.active===BIOME_ACTIVE&&cache.camX===camX&&cache.camY===camY&&cache.zoom===zoom&&
+      cache.width===width&&cache.height===height&&cache.x===b.x&&cache.y===b.y&&cache.w===b.w&&cache.h===b.h&&cache.angle===angle&&cache.open===open)return cache;
+  const projection=corpseWallProjection(b),pad=Math.min(2,.35/Math.max(.1,zoom||1)),ca=Math.cos(angle),sa=Math.sin(angle);
+  const spans=open?[[-b.w/2,-GATE_DOOR_HALF],[GATE_DOOR_HALF,b.w/2]]:[[-b.w/2,b.w/2]],parts=[];
+  for(const span of spans){
+    if(span[1]<=span[0])continue;
+    const x0=span[0]-pad,x1=span[1]+pad,y0=-b.h/2-pad,y1=b.h/2+pad;
+    const corners=[[x0,y0],[x1,y0],[x1,y1],[x0,y1]].map(p=>({x:b.x+p[0]*ca-p[1]*sa,y:b.y+p[0]*sa+p[1]*ca}));
+    const roof=corners.map(p=>({x:p.x+projection.lx,y:p.y+projection.ly}));
+    const hull=projection.projected?corpseWallHull(corners.concat(roof)):roof;
+    parts.push({roof,hull});
+  }
+  cache={level:currentLevel,biome:currentBiome,active:BIOME_ACTIVE,camX,camY,zoom,width,height,x:b.x,y:b.y,w:b.w,h:b.h,angle,open,projection,parts};
+  _corpseWallMaskCache.set(b,cache);return cache;
+}
+function beginCorpseWallClip(r,b,nx,ny,x,y,reach=100) {
+  if(!corpseBloodWall(b))return false;
+  const dc=r.drawingContext;
+  // Headless targets do not have a canvas clip; their painters still execute
+  // so arithmetic, identity and draw-stack checks use the same path.
+  if(!dc||!dc.save||!dc.clip||!dc.moveTo)return true;
+  const mask=corpseWallMasks(b),near=nx*mask.projection.lx+ny*mask.projection.ly<-.01;
+  dc.save();
+  for(const part of mask.parts){
+    const polygon=near?part.roof:part.hull;
+    let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
+    for(const p of polygon){x0=Math.min(x0,p.x);x1=Math.max(x1,p.x);y0=Math.min(y0,p.y);y1=Math.max(y1,p.y);}
+    if(x1<x-reach||x0>x+reach||y1<y-reach||y0>y+reach)continue;
+    // Clip sequential complements, rather than XORing separate wing masks:
+    // overlapping projected wings must stay opaque around a breached gate.
+    dc.beginPath();dc.rect(x-reach,y-reach,reach*2,reach*2);
+    dc.moveTo(polygon[0].x,polygon[0].y);
+    for(let i=1;i<polygon.length;i++)dc.lineTo(polygon[i].x,polygon[i].y);
+    dc.closePath();dc.clip('evenodd');
+  }
+  return true;
+}
+function endCorpseWallClip(r) {
+  const dc=r.drawingContext;if(dc&&dc.save&&dc.clip&&dc.moveTo)dc.restore();
+}
+
 function drawWallCorpses(b,r=window) {
   if(!wallCorpseBanks.size)return;
   const list=wallCorpseBanks.get(wallCorpseBankKey(b));if(!list)return;
-  for(const c of list)if(c.wallSit&&!c.wallSit.hidden){c.wallSit.b=b;c.show(r);}
+  for(const c of list)if(c.wallSit&&!c.wallSit.hidden){
+    const sit=c.wallSit;sit.b=b;
+    const reach=Math.max(90,c.bW*2,c.bH*2);
+    if(r===window&&!inView(c.x,c.y,reach))continue;
+    if(!beginCorpseWallClip(r,b,sit.nx,sit.ny,c.x,c.y,reach))continue;
+    try{c.show(r);}finally{endCorpseWallClip(r);}
+  }
 }
 function releaseUnsupportedWallCorpses() {
   if(frameCount%20!==0)return;
@@ -18266,37 +18327,58 @@ function releaseUnsupportedWallCorpses() {
   }
 }
 function seatedCorpsePoint(c,x,y,z,projection=corpseWallProjection(c.wallSit.b)) {
-  const s=c.wallSit,k=projection.projected?Math.min(z,projection.rise)/projection.rise:0;
-  return {x:c.x+s.nx*x-s.ny*y+projection.lx*k,y:c.y+s.ny*x+s.nx*y+projection.ly*k};
+  const s=c.wallSit,lean=Math.hypot(projection.lx,projection.ly);
+  // Buildings exaggerate parallax to sell their height. A seated person keeps
+  // the same lean direction, with a bounded human-height projection so their
+  // spine and sleeves cannot stretch as the camera moves toward the view edge.
+  // Do not clamp each joint to a low wall's roof: that merged head/shoulders.
+  const height=projection.projected?z/projection.rise*Math.min(1,projection.rise*.72/Math.max(.001,lean)):0;
+  return {x:c.x+s.nx*x-s.ny*y+projection.lx*height,y:c.y+s.ny*x+s.nx*y+projection.ly*height};
 }
 function seatedCorpseAnatomy(c) {
-  const f=Math.min(1,c.wallSit.age/24),scale=Math.min(1.5,Math.max(.8,c.bH/27));
-  const projection=corpseWallProjection(c.wallSit.b);
+  const s=c.wallSit,f=Math.min(1,s.age/24),scale=Math.min(1.5,Math.max(.8,c.bH/27));
+  const projection=corpseWallProjection(s.b);
   const point=(x,y,z)=>seatedCorpsePoint(c,x*scale,y*scale,z*scale,projection);
-  return {f,scale,point,hip:point(1,0,3),chest:point(-2,0,22-5*f),head:point(-1+3*f,0,33-9*f)};
+  const hip=point(1,0,3),projectedHead=point(-4+2*f,0,33-9*f);
+  const dx=projectedHead.x-hip.x,dy=projectedHead.y-hip.y,d=Math.hypot(dx,dy);
+  const ux=d>.01?dx/d:-s.nx,uy=d>.01?dy/d:-s.ny;
+  const reach=Math.max(7*scale,Math.min(22*scale,d));
+  const head={x:hip.x+ux*reach,y:hip.y+uy*reach};
+  const length=15*scale,width=c.bH*.70;
+  const chest={x:hip.x+ux*reach*.44,y:hip.y+uy*reach*.44};
+  const torso={x:chest.x,y:chest.y,yaw:Math.atan2(uy,ux),length,width};
+  const shoulderSide=(-uy*-s.ny+ux*s.nx)>=0?1:-1;
+  const shoulders=[-1,1].map(side=>({x:chest.x+ux*length*.24-uy*side*shoulderSide*width*.39,
+    y:chest.y+uy*length*.24+ux*side*shoulderSide*width*.39}));
+  return {f,scale,point,hip,chest,head,torso,shoulders};
 }
-function seatedWoundPoint(c,w) {
-  const a=seatedCorpseAnatomy(c),isHead=w.isHead,p=isHead?a.head:w.isLeg?a.point(15,(w.legIndex?1:-1)*7,2):a.chest;
-  const turn=Math.atan2(c.wallSit.ny,c.wallSit.nx),scale=isHead?1:.65;
-  return {x:p.x+(Math.cos(turn)*w.x-Math.sin(turn)*w.y)*scale,
-    y:p.y+(Math.sin(turn)*w.x+Math.cos(turn)*w.y)*scale,angle:turn+(w.shotA||0),frameAngle:turn,scale};
+function seatedWoundPoint(c,w,a=seatedCorpseAnatomy(c)) {
+  const isHead=w.isHead;
+  let p,turn,sx=1,sy=1;
+  if(isHead){p=a.head;turn=Math.atan2(c.wallSit.ny,c.wallSit.nx);}
+  else if(w.isLeg){p=a.point(15,(w.legIndex?1:-1)*7,2);turn=Math.atan2(c.wallSit.ny,c.wallSit.nx);sx=sy=.65;}
+  else {p=a.chest;turn=a.torso.yaw;sx=a.torso.length/(c.bW*TORSO_DEPTH);sy=a.torso.width/c.bH;}
+  return {x:p.x+Math.cos(turn)*w.x*sx-Math.sin(turn)*w.y*sy,
+    y:p.y+Math.sin(turn)*w.x*sx+Math.cos(turn)*w.y*sy,
+    angle:turn+(w.shotA||0),frameAngle:turn,scale:Math.sqrt(sx*sy)};
 }
 function drawSeatedCorpse(r,c) {
   const a=seatedCorpseAnatomy(c),s=c.wallSit,skin=c.id.skinCol||color(235,180,140),
     boot=color(red(c.pC)*.55,green(c.pC)*.55,blue(c.pC)*.55),sc=a.scale;
   const bone=(p,q,w,col,tip,sz)=>drawFallBone(r,p.x,p.y,q.x,q.y,w*sc,col,tip,sz?sz*sc:undefined);
   r.push();r.noStroke();
-  // Bent knees and forward heels give the shortened upright torso a seated
-  // silhouette. Every point shares the wall's existing height projection.
+  // Knees and heels remain on the same floor contacts at every view angle.
   for(const side of [-1,1]){
     const hip=a.point(1,side*5,3),knee=a.point(12,side*7,7*a.f),foot=a.point(23,side*9,0);
     bone(hip,knee,7,c.pC);bone(knee,foot,5.5,c.pC,boot,6);
   }
-  const dx=a.head.x-a.hip.x,dy=a.head.y-a.hip.y,yaw=Math.atan2(dy,dx),length=Math.max(13*sc,Math.hypot(dx,dy)*.66);
-  r.push();r.translate((a.chest.x+a.hip.x)*.5,(a.chest.y+a.hip.y)*.5);r.rotate(yaw);
-  figureCelOval(r,0,0,length,c.bH*.70,c.sC);drawFallenAttire(r,c.id,length,c.bH*.70,false,1);r.pop();
-  for(const side of [-1,1]){
-    const shoulder=a.point(-2,side*9,19-3*a.f),elbow=a.point(6,side*13,8),hand=a.point(13,side*10,3);
+  // Torso dimensions belong to the person, not the projected head/hip gap.
+  // Shoulders share this plate's frame, keeping sleeves attached at a distance.
+  const t=a.torso;
+  r.push();r.translate(t.x,t.y);r.rotate(t.yaw);
+  figureCelOval(r,0,0,t.length,t.width,c.sC);drawFallenAttire(r,c.id,t.length,t.width,false,1);r.pop();
+  for(let i=0;i<2;i++){
+    const side=i?1:-1,shoulder=a.shoulders[i],elbow=a.point(6,side*13,8),hand=a.point(13,side*10,3);
     bone(shoulder,elbow,5.8,c.sC);bone(elbow,hand,4.6,c.sC,skin,5.4);
   }
   r.push();r.translate(a.head.x,a.head.y);r.rotate(Math.atan2(s.ny,s.nx));
@@ -18312,7 +18394,7 @@ function drawSeatedCorpse(r,c) {
   }
   r.pop();
   const hw=headwearOf(c.id);if(hw&&headwearFalls(hw)&&c.hatOff){const p=a.point(23,18,0);r.push();r.translate(p.x,p.y);r.rotate(c.hatOff.r);drawHeadwear(r,c.id,hw);r.pop();}
-  for(const d of c.dec){if(c.dT===9&&d.isHead)continue;const p=seatedWoundPoint(c,d);r.fill(...(d.col||[90,0,0,220]));r.ellipse(p.x,p.y,d.sz*p.scale,d.sz*p.scale);}
+  for(const d of c.dec){if(c.dT===9&&d.isHead)continue;const p=seatedWoundPoint(c,d,a);r.fill(...(d.col||[90,0,0,220]));r.ellipse(p.x,p.y,d.sz*p.scale,d.sz*p.scale);}
   r.pop();
 }
 
@@ -18375,11 +18457,17 @@ function drawWallCorpsePieces(b,r=window) {
   if(!_corpseFacadeMap.size)return;
   const list=_corpseFacadeMap.get(wallBloodKey(b));if(!list)return;
   for(const e of list){const c=e.c,p=e.p;if(!corpsePiecePinned(p))continue;
-    if(e.kind===4){drawBlastCorpsePart(r,c,p);continue;}
-    if(e.kind===0){c._drawWallOverlay=true;try{c.paint(r);drawFatalWound(c,r);}finally{c._drawWallOverlay=false;}continue;}
-    r.push();r.translate(c.x,c.y);corpsePieceTransform(r,p);
-    if(e.kind===3)drawCorpseSplitUpper(r,c);else drawCorpseFlyingTorso(r,c,e.kind===2);
-    r.pop();drawFatalWound(c,r);
+    const pose=corpsePiecePose(p),w=p.wallImpact;
+    const x=c.x+p.x+pose.dx,y=c.y+p.y+pose.dy,reach=Math.max(100,c.bW*2,c.bH*2);
+    if(r===window&&!inView(x,y,reach))continue;
+    if(!beginCorpseWallClip(r,b,w.nx,w.ny,x,y,reach))continue;
+    try{
+      if(e.kind===4){drawBlastCorpsePart(r,c,p);continue;}
+      if(e.kind===0){c._drawWallOverlay=true;try{c.paint(r);drawFatalWound(c,r);}finally{c._drawWallOverlay=false;}continue;}
+      r.push();r.translate(c.x,c.y);corpsePieceTransform(r,p);
+      if(e.kind===3)drawCorpseSplitUpper(r,c);else drawCorpseFlyingTorso(r,c,e.kind===2);
+      r.pop();drawFatalWound(c,r);
+    }finally{endCorpseWallClip(r);}
   }
 }
 
