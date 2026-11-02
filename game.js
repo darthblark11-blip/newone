@@ -4660,6 +4660,7 @@ function groundElev(x, y) {
   const zs = elevZones();
   let h = civicGroundHeight(x, y);
   if (BIOME_ACTIVE && currentBiome === 1) h += cityDowntownGroundHeight(x, y);
+  if (BIOME_ACTIVE && currentBiome === 2) h += forestRidgeHeight(x, y);
   // A gulch lowers the shared ground field; figures, movement and the light
   // rig read this same value, including when Dry Gulch's story is settled.
   if (BIOME_ACTIVE && currentBiome === 3) h += frontierCanyonHeight(x, y);
@@ -4678,7 +4679,7 @@ function groundElev(x, y) {
 
 // Render scale for a figure standing at (x, y). Height reads as proximity.
 function elevRenderScale(x, y) {
-  if (!elevZones() && (!BIOME_ACTIVE || (currentBiome !== 1 && currentBiome !== 3))) return 1;
+  if (!elevZones() && (!BIOME_ACTIVE || (currentBiome !== 1 && currentBiome !== 2 && currentBiome !== 3))) return 1;
   const s = 1 + groundElev(x, y) * ELEV_SCALE;
   return s < ELEV_SCALE_LO ? ELEV_SCALE_LO : s > ELEV_SCALE_HI ? ELEV_SCALE_HI : s;
 }
@@ -4687,7 +4688,7 @@ function elevRenderScale(x, y) {
 // Climbing costs, descending pays a little of it back, and the range is kept
 // narrow -- this is meant to be felt, not fought.
 function elevSpeedFactor(x, y, vx, vy) {
-  if (!elevZones() && (!BIOME_ACTIVE || (currentBiome !== 1 && currentBiome !== 3))) return 1;
+  if (!elevZones() && (!BIOME_ACTIVE || (currentBiome !== 1 && currentBiome !== 2 && currentBiome !== 3))) return 1;
   const m = Math.hypot(vx, vy);
   if (m < 0.01) return 1;
   const step = 26 / m;
@@ -5064,7 +5065,7 @@ function forestRaisedCrown(d) {
   return !!d.forestSpecies && d.forestSpecies !== 'CHARRED_SNAG' && !!forestCanopyMass(d);
 }
 function forestStandingShrub(d) { return d.forestSpecies === 'BUSH'; }
-function forestStandingFloorProp(d) { return forestStandingShrub(d) || !!(d.forestSpecies && d.forestLiveProp); }
+function forestStandingFloorProp(d) { return forestStandingShrub(d) || !!(d.forestSpecies && (d.forestLiveProp || d.forestLandscapeProp)); }
 function drawMassRun(arr, i0, i1) {
   let s = i0;
   while (s < i1) {
@@ -35898,6 +35899,115 @@ function forestHabitatAt(wx, wy, biome = 2) {
   return RG_TIMBER;
 }
 
+// Landscape accents are an independent, world-aligned layer. They neither
+// consume the saved layout's RNG nor change any tree/solid identities. Rotated
+// ellipses overlap chunk boundaries; callers replay the same sites on each side.
+const FOREST_LANDSCAPE_PITCH = 2800;
+const forestLandscapeSiteCache = new Map();
+function forestLandscapeSite(biome, ix, iy) {
+  const key = biome + ':' + ix + ':' + iy;
+  if (forestLandscapeSiteCache.has(key)) return forestLandscapeSiteCache.get(key);
+  const seed = chunkHash(biome, ix, iy, 18671), rng = makeRng(seed);
+  const x = (ix + rngRange(rng, 0.25, 0.75)) * FOREST_LANDSCAPE_PITCH;
+  const y = (iy + rngRange(rng, 0.25, 0.75)) * FOREST_LANDSCAPE_PITCH;
+  const rx = rngRange(rng, 850, 1150), ry = rngRange(rng, 650, 950);
+  const r = rngRange(rng, -Math.PI, Math.PI), roll = rng();
+  const legacy = woodLegacyRegion(biome, x, y), cy = Math.floor(y / CHUNK_W);
+  let wet = legacy === RG_MARSH;
+  for (let row = cy - 1; row <= cy + 1 && !wet; row++)
+    if (woodHasRiver(biome, row) &&
+        Math.abs(y - woodRiverY(biome, row, x)) < woodRiverHalf(biome, row, x) + 620) wet = true;
+  const kind = wet ? 'BOG' : legacy === RG_HEATH ? (roll < 0.8 ? 'RIDGE' : 'BLOOM') :
+    legacy === RG_FARM ? (roll < 0.75 ? 'BLOOM' : 'HOLLOW') :
+    roll < 0.40 ? 'RIDGE' : roll < 0.82 ? 'BLOOM' : 'HOLLOW';
+  const site = rng() < 0.93 && legacy !== RG_BURN ? { key, kind, x, y, rx, ry, r, seed } : null;
+  if (forestLandscapeSiteCache.size >= 512) forestLandscapeSiteCache.delete(forestLandscapeSiteCache.keys().next().value);
+  forestLandscapeSiteCache.set(key, site);
+  return site;
+}
+function forestLandscapeWeight(site, x, y) {
+  if (!site) return 0;
+  const dx = x - site.x, dy = y - site.y, c = Math.cos(site.r), s = Math.sin(site.r);
+  return smooth01(1 - Math.hypot((dx * c + dy * s) / site.rx, (dy * c - dx * s) / site.ry));
+}
+function forestLandscapeSites(biome, cx, cy, pad = 0) {
+  if (biome !== 2) return [];
+  const x0 = cx * CHUNK_W - pad, y0 = cy * CHUNK_W - pad;
+  const x1 = (cx + 1) * CHUNK_W + pad, y1 = (cy + 1) * CHUNK_W + pad, out = [];
+  for (let iy = Math.floor((y0 - 1500) / FOREST_LANDSCAPE_PITCH); iy <= Math.floor((y1 + 1500) / FOREST_LANDSCAPE_PITCH); iy++)
+    for (let ix = Math.floor((x0 - 1500) / FOREST_LANDSCAPE_PITCH); ix <= Math.floor((x1 + 1500) / FOREST_LANDSCAPE_PITCH); ix++) {
+      const site = forestLandscapeSite(biome, ix, iy);
+      if (!site) continue;
+      const c = Math.cos(site.r), s = Math.sin(site.r);
+      const ex = Math.hypot(site.rx * c, site.ry * s), ey = Math.hypot(site.rx * s, site.ry * c);
+      if (site.x + ex >= x0 && site.x - ex <= x1 && site.y + ey >= y0 && site.y - ey <= y1) out.push(site);
+    }
+  return out;
+}
+function forestLandscapeAt(wx, wy, biome = 2) {
+  let best = null, weight = 0;
+  for (const site of forestLandscapeSites(biome, Math.floor(wx / CHUNK_W), Math.floor(wy / CHUNK_W))) {
+    const w = forestLandscapeWeight(site, wx, wy);
+    if (w > weight) { weight = w; best = site; }
+  }
+  return best;
+}
+
+// Cache only the immutable exclusion geometry, with a bounded lifetime. Height
+// samples use smooth distances, so roads and banks stay flat across chunk seams.
+const forestLandscapeGroundPlans = new Map();
+let forestLandscapeGroundCore = null, forestLandscapeGroundChunks = null;
+function forestLandscapeGroundPlan(biome, cx, cy) {
+  if (forestLandscapeGroundCore !== authoredCore || forestLandscapeGroundChunks !== authoredChunks) {
+    forestLandscapeGroundPlans.clear();
+    forestLandscapeGroundCore = authoredCore; forestLandscapeGroundChunks = authoredChunks;
+  }
+  const key = biome + ':' + cx + ':' + cy;
+  if (forestLandscapeGroundPlans.has(key)) return forestLandscapeGroundPlans.get(key);
+  const plan = { pools: [], spurs: [], posts: [], farms: [], forts: outpostFortDefs(biome, true), anchors: authoredCore ? [] :
+    [getAnchorPos(biome, ANCHOR_HELIPAD), getAnchorPos(biome, ANCHOR_CHECKPOINT), getAnchorPos(biome, ANCHOR_OUTPOST)] };
+  for (let row = cy - 1; row <= cy + 1; row++) for (let col = cx - 1; col <= cx + 1; col++) {
+    const pools = woodPools(biome, col, row), spur = woodSpur(biome, col, row);
+    if (pools) plan.pools.push(...pools);
+    if (spur) plan.spurs.push(spur);
+    // Saved farm fields may occupy any part of their agricultural parcel.
+    // Preserve its flat ground without replaying the historical layout RNG.
+    if (woodLegacyRegion(biome, (col + 0.5) * CHUNK_W, (row + 0.5) * CHUNK_W) === RG_FARM)
+      plan.farms.push({ x: (col + 0.5) * CHUNK_W, y: (row + 0.5) * CHUNK_W });
+  }
+  for (let row = cy - 1; row <= cy + 2; row++) for (let col = cx - 1; col <= cx + 2; col++)
+    if (cityIsCheckpoint(biome, col, row)) plan.posts.push({ x: col * CHUNK_W, y: row * CHUNK_W });
+  if (forestLandscapeGroundPlans.size >= 128) forestLandscapeGroundPlans.delete(forestLandscapeGroundPlans.keys().next().value);
+  forestLandscapeGroundPlans.set(key, plan);
+  return plan;
+}
+function forestLandscapeGroundMask(wx, wy, biome = 2) {
+  if (biome !== 2) return 0;
+  const cx = Math.floor(wx / CHUNK_W), cy = Math.floor(wy / CHUNK_W), plan = forestLandscapeGroundPlan(biome, cx, cy);
+  let mask = 1;
+  const avoid = (distance, feather) => { mask = Math.min(mask, smooth01(distance / feather)); };
+  const rect = (x, y, hw, hh, feather) => avoid(Math.hypot(Math.max(0, Math.abs(wx-x)-hw), Math.max(0, Math.abs(wy-y)-hh)), feather);
+  if (authoredCore) rect((authoredCore.x0 + authoredCore.x1) / 2, (authoredCore.y0 + authoredCore.y1) / 2,
+    (authoredCore.x1 - authoredCore.x0) / 2 + 50, (authoredCore.y1 - authoredCore.y0) / 2 + 50, 300);
+  for (const a of plan.anchors) rect(a.x, a.y, 650, 650, 240);
+  for (const f of plan.forts) rect(f.x, f.y, FORT_HALF_W + 460, FORT_HALF_H + 460, 300);
+  for (const p of plan.posts) rect(p.x, p.y, 500, 500, 200);
+  for (const f of plan.farms) rect(f.x, f.y, CHUNK_W / 2, CHUNK_W / 2, 200);
+  for (let col = cx - 1; col <= cx + 1; col++) if (woodHasTrunk(biome, col))
+    avoid(Math.abs(wx - woodTrailX(biome, col, wy)) - ROAD_HALF.WOODLAND - 45, 170);
+  for (let row = cy - 1; row <= cy + 1; row++) {
+    if (woodHasLink(biome, row)) avoid(Math.abs(wy - woodLinkY(biome, row, wx)) - ROAD_HALF.WOODLAND - 45, 170);
+    if (woodHasRiver(biome, row)) avoid(Math.abs(wy - woodRiverY(biome, row, wx)) - woodRiverHalf(biome, row, wx) * 1.35 - 95, 190);
+  }
+  for (const p of plan.pools) rect(p.x, p.y, p.w / 2 + 60, p.h / 2 + 60, 170);
+  for (const s of plan.spurs) {
+    const dx = s.x1 - s.x0, dy = s.y1 - s.y0;
+    const t = Math.max(0, Math.min(1, ((wx-s.x0)*dx+(wy-s.y0)*dy)/(dx*dx+dy*dy)));
+    avoid(Math.hypot(wx-s.x0-dx*t, wy-s.y0-dy*t) - SPUR_HALF - 40, 170);
+  }
+  return mask;
+}
+
 function forestDressHabitat(d, biome = 2) {
   d.forestHabitat = forestHabitatAt(d.x, d.y, biome);
   // A grove of broad, sculpted comic crowns, with fixed seeded branches.
@@ -35956,8 +36066,15 @@ const FOREST_PROPS = {
   LOG: { width: 64, depth: 32, rise: 12, outline: 1.5, tier: "underbrush", collision: [50, 15] },
   STUMP: { width: 36, depth: 34, rise: 12, outline: 1.5, tier: "underbrush", collision: [28, 22] },
   MUSHROOM: { width: 28, depth: 28, rise: 9, outline: 0.9, tier: "underbrush", collision: null },
+  LUPINE: { width: 44, depth: 34, rise: 24, outline: 0.9, tier: "underbrush", collision: null },
+  FOXGLOVE: { width: 42, depth: 36, rise: 25, outline: 0.9, tier: "underbrush", collision: null },
+  SUN_DAISY: { width: 50, depth: 40, rise: 18, outline: 0.9, tier: "underbrush", collision: null },
+  AMBER_FUNGUS: { width: 42, depth: 34, rise: 17, outline: 1.0, tier: "underbrush", collision: null },
   PEBBLE: { width: 32, depth: 32, rise: 7, outline: 1.0, tier: "underbrush", collision: null },
   REED: { width: 48, depth: 48, rise: 18, outline: 1.0, tier: "underbrush", collision: null },
+  BOG_HUMMOCK: { width: 64, depth: 48, rise: 11, outline: 1.0, tier: "underbrush", collision: null },
+  BOG_SEDGE: { width: 60, depth: 50, rise: 28, outline: 1.0, tier: "underbrush", collision: null },
+  BOG_MOSS: { width: 58, depth: 44, rise: 22, outline: 1.0, tier: "underbrush", collision: null },
   GRASS: { width: 40, depth: 40, rise: 7, outline: 1.0, tier: "underbrush", collision: null },
   ASH: { width: 34, depth: 30, rise: 2, outline: 0, tier: "underbrush", collision: null },
   LITTER: { width: 32, depth: 28, rise: 0, outline: 0, tier: "underbrush", collision: null },
@@ -39957,6 +40074,80 @@ function appendWoodlandForest(biome, cx, cy, solid, decor, decorBake, nearAnchor
   }
 }
 
+// Independent wetland dressing follows the saved solid/timber pass. It never
+// consumes the woodland placement stream, creates water, or adds a collider.
+const BOG_PROP_MAX = 6;
+const BOG_RIVER_STEP = 360;
+function appendForestBogDressing(biome, cx, cy, content) {
+  if (biome !== 2 || layoutFor(biome, cx, cy) !== 'WOODLAND' || chunkInAuthoredCore(cx, cy)) return;
+  const ox = cx * CHUNK_W, oy = cy * CHUNK_W, sources = [];
+  const sites = forestLandscapeSites(biome, cx, cy, 100).filter(s => s.kind === 'BOG');
+  const pools = woodPools(biome, cx, cy) || [];
+  for (let i=0;i<pools.length;i++) {
+    const p=pools[i];
+    sources.push({x:p.x,y:p.y,rx:p.w*.5+90,ry:p.h*.5+90,
+      seed:chunkHash(biome,cx,cy,72931+i*391),key:'pool:'+cx+','+cy+':'+i,pool:true});
+  }
+  // Reeds follow quiet river margins, while roads, bridge approaches and fords
+  // are still rejected by the authoritative reservation predicate below.
+  if (woodHasRiver(biome,cy)) {
+    const ix0=Math.floor(ox/BOG_RIVER_STEP),ix1=Math.floor((ox+CHUNK_W)/BOG_RIVER_STEP);
+    for(let ix=ix0;ix<=ix1;ix++) {
+      const seed=chunkHash(biome,ix,cy,72973),rng=makeRng(seed),x=(ix+.22+rng()*.55)*BOG_RIVER_STEP;
+      if(x<ox+50||x>=ox+CHUNK_W-50)continue;
+      const y=woodRiverY(biome,cy,x),wet=woodRegion(biome,x,y)===RG_MARSH ||
+        sites.some(s=>forestLandscapeWeight(s,x,y)>0);
+      if(!wet)continue;
+      const side=rng()<.5?-1:1;
+      sources.push({x,y:y+side*(woodRiverHalf(biome,cy,x)*1.35+85),rx:68,ry:32,
+        seed,key:'river:'+ix+','+cy,river:true});
+    }
+  }
+  // A broad wetland site can include a dry peat pocket between real pools.
+  // These pockets receive plants and moss only; blue water is never invented.
+  for(const site of sites) {
+    const rng=makeRng(site.seed^0x71b3);
+    for(let i=0;i<3;i++) {
+      const a=rng()*TWO_PI,rad=.16+rng()*.42;
+      const ca=Math.cos(site.r||0),sa=Math.sin(site.r||0);
+      const lx=Math.cos(a)*site.rx*rad,ly=Math.sin(a)*site.ry*rad;
+      const x=site.x+lx*ca-ly*sa,y=site.y+lx*sa+ly*ca;
+      if(x<ox+50||x>=ox+CHUNK_W-50||y<oy+50||y>=oy+CHUNK_W-50)continue;
+      sources.push({x,y,rx:95,ry:70,seed:site.seed^(i*0x1367),key:site.key+':peat:'+i});
+    }
+  }
+  if(!sources.length)return;
+  const anchors=authoredCore?[]:[getAnchorPos(biome,ANCHOR_HELIPAD),
+    getAnchorPos(biome,ANCHOR_CHECKPOINT),getAnchorPos(biome,ANCHOR_OUTPOST)];
+  const accepted=[];
+  for(const source of sources) {
+    const rng=makeRng(source.seed),phase=rng()*TWO_PI;
+    let count=0;
+    for(let i=0;i<18&&count<2&&accepted.length<BOG_PROP_MAX;i++) {
+      const angle=phase+i*2.3999632297,reach=.88+rng()*.24;
+      const x=source.x+Math.cos(angle)*source.rx*reach,y=source.y+Math.sin(angle)*source.ry*reach;
+      const roll=rng(),species=source.river||roll<.40?'BOG_SEDGE':roll<.73?'BOG_MOSS':'BOG_HUMMOCK';
+      const d={t:species,x,y,s:.95+rng()*.32,r:angle+(rng()-.5)*.65,c:rng(),
+        forestSpecies:species,forestRegion:woodRegion(biome,x,y),forestTier:'underbrush',
+        forestLandscapeProp:true,forestBogProp:true,forestBogSource:source.key};
+      const radius=forestPropRadius(d),width=radius*1.7;
+      if(x<ox+radius+8||x>=ox+CHUNK_W-radius-8||y<oy+radius+8||y>=oy+CHUNK_W-radius-8 ||
+          coreTaperX(cx,cy,x)<.72||coreTaperY(cx,cy,y)<.72 ||
+          groundReserved(biome,cx,cy,x,y,width,width,8)||hitsAuthored(x,y,width,width,18)||
+          !solidsClearAt(content.solid,x,y,width,width,8)||
+          anchors.some(a=>Math.abs(x-a.x)<700+radius&&Math.abs(y-a.y)<700+radius)||
+          accepted.some(a=>Math.hypot(x-a.x,y-a.y)<95))continue;
+      let checkpoint=false;
+      for(const [ix,iy] of [[cx,cy],[cx+1,cy],[cx,cy+1],[cx+1,cy+1]])
+        if(cityIsCheckpoint(biome,ix,iy)&&Math.abs(x-ix*CHUNK_W)<640+radius&&Math.abs(y-iy*CHUNK_W)<640+radius)
+          checkpoint=true;
+      if(checkpoint)continue;
+      forestDressHabitat(d,biome);content.decor.push(d);accepted.push(d);count++;
+    }
+    if(accepted.length>=BOG_PROP_MAX)break;
+  }
+}
+
 // Create collision companions only after all original placement and filtering.
 // Their namespaced identities derive from stable roots/variants, never the
 // solids' numeric index or a new RNG draw. The existing live decor paints them.
@@ -39986,6 +40177,98 @@ function appendForestTimberSolids(biome, cx, cy, content) {
       forestTimberWidth: width, forestTimberDepth: depth, forestTimberCos: ca, forestTimberSin: sa,
       chunkKey: key });
   }
+}
+
+// Flora is a separate decoration pass. Its world-cell seeds never draw from
+// chunk layout RNG, and it runs after the old floor/timber budgets are final.
+function forestFloraRootClear(biome, cx, cy, x, y, radius, solid) {
+  if (forestLandscapeGroundMask(x, y, biome) < .25 ||
+      groundReserved(biome, cx, cy, x, y, radius * 2, radius * 2, 26) ||
+      hitsAuthored(x, y, radius * 2, radius * 2, 24)) return false;
+  if (!authoredCore) for (const id of [ANCHOR_HELIPAD, ANCHOR_CHECKPOINT, ANCHOR_OUTPOST]) {
+    const a = getAnchorPos(biome, id);
+    if (Math.abs(x - a.x) < 940 + radius && Math.abs(y - a.y) < 940 + radius) return false;
+  }
+  const spur = woodSpur(biome, cx, cy);
+  if (spur && Math.abs(x - spur.x1) < 235 + radius && Math.abs(y - spur.y1) < 235 + radius) return false;
+  return !solid || solidsClearAt(solid, x, y, radius * 2, radius * 2, 10);
+}
+function appendForestFlora(biome, cx, cy, content) {
+  if (biome !== 2 || layoutFor(biome, cx, cy) !== 'WOODLAND') return;
+  const ox = cx * CHUNK_W, oy = cy * CHUNK_W, candidates = [], cell = 165;
+  const add = (x, y, rng, forcedFungus) => {
+    if (x < ox + 30 || x >= ox + CHUNK_W - 30 || y < oy + 30 || y >= oy + CHUNK_W - 30) return;
+    const site = forestLandscapeAt(x, y, biome);
+    if (!site || (site.kind !== 'BLOOM' && site.kind !== 'HOLLOW') ||
+        forestLandscapeWeight(site, x, y) < .20) return;
+    const fungus = forcedFungus || site.kind === 'HOLLOW';
+    const choice = rng(), species = fungus ? 'AMBER_FUNGUS' :
+      choice < .37 ? 'LUPINE' : choice < .66 ? 'FOXGLOVE' : 'SUN_DAISY';
+    const scale = .94 + rng() * .30, radius = (species === 'SUN_DAISY' ? 26 : 23) * scale;
+    if (!forestFloraRootClear(biome, cx, cy, x, y, radius, content.solid)) return;
+    if (candidates.some(d => Math.hypot(x - d.x, y - d.y) < 74)) return;
+    const d = { t: species, x, y, s: scale, r: rng() * TWO_PI, c: rng(),
+      forestSpecies: species, forestRegion: woodRegion(biome, x, y),
+      forestLandscape: site.kind, forestLandscapeSite: site.key, forestLandscapeProp: true,
+      forestFloraRank: (forcedFungus ? -.15 : 0) + rng() };
+    forestDressHabitat(d, biome); candidates.push(d);
+  };
+  // A few shelves grow beside old fallen wood, offset beyond its real cover
+  // footprint. The wood keeps its saved identity and salvageable collision.
+  for (const d of content.decor) if (d.forestSpecies === 'LOG' || d.forestSpecies === 'STUMP') {
+    const site = forestLandscapeAt(d.x, d.y, biome);
+    if (!site || site.kind !== 'HOLLOW') continue;
+    const rng = makeRng(chunkHash(biome, Math.floor(d.x * 4), Math.floor(d.y * 4), 86771));
+    const a = (d.r || 0) + Math.PI * .5, offset = 39 + (d.s || 1) * 8;
+    add(d.x + Math.cos(a) * offset, d.y + Math.sin(a) * offset, rng, true);
+  }
+  for (let ix = Math.floor(ox / cell); ix <= Math.floor((ox + CHUNK_W) / cell); ix++)
+    for (let iy = Math.floor(oy / cell); iy <= Math.floor((oy + CHUNK_W) / cell); iy++) {
+      const rng = makeRng(chunkHash(biome, ix, iy, 86779));
+      const x = ix * cell + 35 + rng() * 95, y = iy * cell + 35 + rng() * 95;
+      add(x, y, rng, false);
+    }
+  candidates.sort((a, b) => a.forestFloraRank - b.forestFloraRank || a.x - b.x || a.y - b.y);
+  for (const d of candidates.slice(0, 10)) { delete d.forestFloraRank; content.decor.push(d); }
+}
+
+// Small bloom drifts are baked as broad petal/leaf marks; the important stems
+// above remain live raised volumes. Fixed world cells keep chunk seams quiet.
+function bakeForestFloraBeds(g, biome, cx, cy) {
+  if (biome !== 2 || layoutFor(biome, cx, cy) !== 'WOODLAND') return;
+  const ox = cx * CHUNK_W, oy = cy * CHUNK_W, cell = 190;
+  for (let ix = Math.floor((ox - 80) / cell); ix <= Math.ceil((ox + CHUNK_W + 80) / cell); ix++)
+    for (let iy = Math.floor((oy - 80) / cell); iy <= Math.ceil((oy + CHUNK_W + 80) / cell); iy++) {
+      const rng = makeRng(chunkHash(biome, ix, iy, 86797));
+      if (rng() > .52) continue;
+      const x = ix * cell + rng() * cell, y = iy * cell + rng() * cell;
+      const site = forestLandscapeAt(x, y, biome);
+      if (!site || (site.kind !== 'BLOOM' && site.kind !== 'HOLLOW')) continue;
+      const weight = forestLandscapeWeight(site, x, y);
+      if (weight < .28 || !forestFloraRootClear(biome, Math.floor(x / CHUNK_W), Math.floor(y / CHUNK_W), x, y, 65)) continue;
+      const hollow = site.kind === 'HOLLOW', a = rng() * TWO_PI, family = rng();
+      g.push(); g.translate(x, y); g.rotate(a); g.noStroke();
+      g.fill(hollow ? 55 : 121, hollow ? 106 : 145, hollow ? 88 : 66, 34 * weight);
+      g.beginShape();
+      for (let k = 0; k < 9; k++) {
+        const ang = k * TWO_PI / 9, radius = 43 + rng() * 16;
+        g.vertex(Math.cos(ang) * radius, Math.sin(ang) * radius * .65);
+      }
+      g.endShape(CLOSE);
+      for (let k = 0; k < (hollow ? 3 : 6); k++) {
+        const px = (rng() - .5) * 77, py = (rng() - .5) * 47;
+        g.fill(hollow ? 111 : 77, hollow ? 147 : 118, hollow ? 107 : 60, 115 * weight);
+        g.quad(px - 12, py + 4, px - 3, py - 4, px + 12, py - 1, px + 3, py + 6);
+        if (hollow) continue;
+        const colour = family < .35 ? [166, 154, 225] : family < .67 ? [237, 153, 178] : [245, 216, 126];
+        g.fill(colour[0], colour[1], colour[2], 180 * weight);
+        // Three broad petal lobes survive the terrain buffer's downsample;
+        // these are a low carpet, not tiny imitations of the live tall blooms.
+        g.ellipse(px - 4, py - 1, 14, 10); g.ellipse(px + 4, py - 1, 14, 10); g.ellipse(px, py + 4, 13, 10);
+        g.fill(228, 185, 79, 160 * weight); g.ellipse(px, py, 5, 5);
+      }
+      g.pop();
+    }
 }
 
 function generateChunkContent(biome, cx, cy, forestBaseOnly = false) {
@@ -41761,7 +42044,11 @@ function generateChunkContent(biome, cx, cy, forestBaseOnly = false) {
   filterFrontierBountyContent(biome, content);
   filterFrontierSettlementContent(biome,cx,cy,content);
   filterShovelGrassContent(biome,content);
-  if (!forestBaseOnly) appendForestTimberSolids(biome, cx, cy, content);
+  if (!forestBaseOnly) {
+    appendForestTimberSolids(biome, cx, cy, content);
+    appendForestFlora(biome, cx, cy, content);
+    appendForestBogDressing(biome, cx, cy, content);
+  }
   return content;
 }
 
@@ -41868,6 +42155,125 @@ function woodlandFloorColourAt(biome, wx, wy, growth, roughness, exposure) {
   mix(RG_MARSH, 1 - (1 - above(wet, .655)) * (1 - river));
   mix(RG_BURN, above(burn, .63));
   return colour;
+}
+// Moss-backed limestone rises. The saved forest remains where it was: these
+// are walkable ground, never new blockers or a second placement RNG stream.
+// An 80-unit, world-aligned mesh is shared by the bake, movement, actor scale
+// and the lighting rig. Sampling the mesh is constant-time even in a copse.
+const FOREST_RIDGE_STEP = 80;
+const _forestRidgeGrids = new Map();
+let _forestRidgeCore = null, _forestRidgeChunks = null;
+function forestRidgeProfile(site, x, y) {
+  const co=site.co===undefined?Math.cos(site.r||0):site.co,si=site.si===undefined?Math.sin(site.r||0):site.si;
+  const dx=x-site.x,dy=y-site.y,nx=(dx*co+dy*si)/site.rx,ny=(-dx*si+dy*co)/site.ry;
+  const angle = Math.atan2(ny,nx), phase = (site.seed>>>0)*.000023;
+  const edge = .88 + .058*Math.cos(angle*3+phase) + .042*Math.sin(angle*5-phase*.7);
+  const radius = Math.hypot(nx,ny)/edge;
+  if (radius >= 1) return 0;
+  // A long grassy approach, a broad shoulder, then a small rounded summit.
+  // Each bench eases into the next; there is no invisible cliff to snag on.
+  const rise = 58 + ((site.seed>>>8)%19);
+  return rise*(.40*smooth01((1-radius)/.43) +
+    .38*smooth01((.69-radius)/.28) + .22*smooth01((.38-radius)/.25));
+}
+function forestRidgeRawHeight(x, y, sites) {
+  let height = 0;
+  for (let i=0;i<sites.length;i++) height=Math.max(height,forestRidgeProfile(sites[i],x,y));
+  if (height <= 0) return 0;
+  return height * (typeof forestLandscapeGroundMask === 'function' ? forestLandscapeGroundMask(x,y,2) : 1);
+}
+function forestRidgeGrid(cx, cy) {
+  // Authored ground can be released after the story. Its old, flattened hills
+  // must not remain in the cache after that transition (or a level reload).
+  if (_forestRidgeCore !== authoredCore || _forestRidgeChunks !== authoredChunks) {
+    _forestRidgeGrids.clear();_forestRidgeCore=authoredCore;_forestRidgeChunks=authoredChunks;
+  }
+  const key=cx+','+cy;
+  let grid=_forestRidgeGrids.get(key);
+  if (grid) return grid;
+  const sites=typeof forestLandscapeSites === 'function'
+    ?forestLandscapeSites(2,cx,cy,FOREST_RIDGE_STEP).filter(s=>s.kind==='RIDGE')
+      .map(s=>Object.assign({},s,{co:Math.cos(s.r||0),si:Math.sin(s.r||0),
+        rockScale:(s.rx+s.ry)*.5,rockShift:((s.seed>>>16)%71)-35})):[];
+  const cells=CHUNK_W/FOREST_RIDGE_STEP, stride=cells+1;
+  const heights=new Float32Array(stride*stride), ox=cx*CHUNK_W,oy=cy*CHUNK_W;
+  let maximum=0;
+  if(sites.length)for(let j=0;j<=cells;j++)for(let i=0;i<=cells;i++){
+    const z=forestRidgeRawHeight(ox+i*FOREST_RIDGE_STEP,oy+j*FOREST_RIDGE_STEP,sites);
+    heights[j*stride+i]=z;maximum=Math.max(maximum,z);
+  }
+  const normalsX=new Float32Array(stride*stride),normalsY=new Float32Array(stride*stride);
+  if(sites.length)for(let j=0;j<=cells;j++)for(let i=0;i<=cells;i++){
+    const n=j*stride+i,x=ox+i*FOREST_RIDGE_STEP,y=oy+j*FOREST_RIDGE_STEP;
+    const l=i?heights[n-1]:forestRidgeRawHeight(x-FOREST_RIDGE_STEP,y,sites);
+    const r=i<cells?heights[n+1]:forestRidgeRawHeight(x+FOREST_RIDGE_STEP,y,sites);
+    const u=j?heights[n-stride]:forestRidgeRawHeight(x,y-FOREST_RIDGE_STEP,sites);
+    const d=j<cells?heights[n+stride]:forestRidgeRawHeight(x,y+FOREST_RIDGE_STEP,sites);
+    normalsX[n]=(r-l)/(FOREST_RIDGE_STEP*2);normalsY[n]=(d-u)/(FOREST_RIDGE_STEP*2);
+  }
+  grid={cx,cy,ox,oy,cells,stride,heights,normalsX,normalsY,sites,maximum};
+  // Less than 400 KB of height/normal samples; an endless walk cannot grow it.
+  if(_forestRidgeGrids.size>=128)_forestRidgeGrids.delete(_forestRidgeGrids.keys().next().value);
+  _forestRidgeGrids.set(key,grid);
+  return grid;
+}
+function forestRidgeHeight(x, y) {
+  const grid=forestRidgeGrid(Math.floor(x/CHUNK_W),Math.floor(y/CHUNK_W));
+  if(!grid.maximum)return 0;
+  const px=(x-grid.ox)/FOREST_RIDGE_STEP,py=(y-grid.oy)/FOREST_RIDGE_STEP;
+  const ix=Math.min(grid.cells-1,Math.floor(px)),iy=Math.min(grid.cells-1,Math.floor(py));
+  const tx=px-ix,ty=py-iy,n=iy*grid.stride+ix,h=grid.heights;
+  const a=h[n],b=h[n+1],c=h[n+grid.stride],d=h[n+grid.stride+1];
+  return tx+ty<=1?a+(b-a)*tx+(c-a)*ty:d+(c-d)*(1-tx)+(b-d)*(1-ty);
+}
+function bakeForestRidges(g,biome,cx,cy) {
+  if(biome!==2)return;
+  const grid=forestRidgeGrid(cx,cy);
+  if(!grid.maximum)return;
+  // Interpolate the shared mesh into one static overlay. Painting each mesh
+  // triangle with a constant colour exposed a checkerboard instead of a hill;
+  // the normal ramp below gives the broad cel planes continuous boundaries.
+  const layer=createGraphics(CHUNK_TEX,CHUNK_TEX);layer.pixelDensity(1);layer.loadPixels();
+  const h=grid.heights,nx=grid.normalsX,ny=grid.normalsY,stride=grid.stride,p=layer.pixels;
+  for(let py=0;py<CHUNK_TEX;py++)for(let px=0;px<CHUNK_TEX;px++){
+    const ux=(px+.5)*grid.cells/CHUNK_TEX,uy=(py+.5)*grid.cells/CHUNK_TEX;
+    const ix=Math.floor(ux),iy=Math.floor(uy),tx=ux-ix,ty=uy-iy,n=iy*stride+ix;
+    const a=h[n],b=h[n+1],c=h[n+stride],d=h[n+stride+1];
+    const z=tx+ty<=1?a+(b-a)*tx+(c-a)*ty:d+(c-d)*(1-tx)+(b-d)*(1-ty);
+    if(z<.03)continue;
+    const gx=(nx[n]+(nx[n+1]-nx[n])*tx)*(1-ty)+(nx[n+stride]+(nx[n+stride+1]-nx[n+stride])*tx)*ty;
+    const gy=(ny[n]+(ny[n+1]-ny[n])*tx)*(1-ty)+(ny[n+stride]+(ny[n+stride+1]-ny[n+stride])*tx)*ty;
+    const light=(gx*LIGHT_DX+gy*LIGHT_DY)*3.5;
+    const shade=-.32+.23*smooth01((light+.25)/.12)+.20*smooth01(light/.10)+.20*smooth01((light-.22)/.12);
+    const wx=grid.ox+(px+.5)*CHUNK_W/CHUNK_TEX,wy=grid.oy+(py+.5)*CHUNK_W/CHUNK_TEX;
+    let site=grid.sites[0],nearest=Infinity;
+    for(let k=0;k<grid.sites.length;k++){
+      const s=grid.sites[k],dx=wx-s.x,dy=wy-s.y;
+      const u=(dx*s.co+dy*s.si)/s.rx,v=(-dx*s.si+dy*s.co)/s.ry,dist=u*u+v*v;
+      if(dist<nearest){nearest=dist;site=s;}
+    }
+    // Three localized exposures, with generous moss breaks between them.
+    // Their lengths vary with the hill, and the actual height band/normal cuts
+    // their edges into irregular shelves instead of a road around the summit.
+    const along=-(wx-site.x)*.78+(wy-site.y)*.62+site.rockShift,rs=site.rockScale;
+    const pocket=Math.max(smooth01((rs*.17-Math.abs(along+rs*.53))/(rs*.025)),
+      smooth01((rs*.145-Math.abs(along-rs*.01))/(rs*.025)),
+      smooth01((rs*.18-Math.abs(along-rs*.51))/(rs*.03)));
+    const lee=-gx*.62-gy*.78,steep=Math.hypot(gx,gy);
+    const stone=pocket*smooth01((lee-.016)/.045)*smooth01((steep-.055)/.05)*
+      smooth01((z-30)/2)*(1-smooth01((z-51)/1.4));
+    const joint=wx*.011+wy*.006+.25*Math.sin(wy*.018);
+    const fracture=stone*(1-smooth01(Math.abs(joint-Math.round(joint))/.018));
+    const lip=stone*smooth01((z-48)/1.2),dark=fracture*23+lip*17;
+    const course=stone*smooth01((z-38)/1.1)*(1-smooth01((z-39.5)/1.1));
+    const toe=stone*(1-smooth01((z-32)/2));
+    const i=(py*CHUNK_TEX+px)*4;
+    p[i]=111+stone*43+shade*54-dark-course*20-toe*24;
+    p[i+1]=157+stone*5+shade*54-dark-course*17-toe*25;
+    p[i+2]=72+stone*52+shade*40-dark*.72-course*10-toe*19;
+    p[i+3]=Math.min(210+stone*40,z*8);
+  }
+  layer.updatePixels();g.image(layer,grid.ox,grid.oy,CHUNK_W,CHUNK_W);layer.remove();
 }
 function layoutFor(biome, cx, cy) {
   const def = BIOMES[biome];
@@ -42797,6 +43203,110 @@ function bakeWoodlandPool(g, p) {
   }
 }
 
+function bakeForestBogLily(g, x, y, radius, angle, bloom, seed) {
+  g.push();g.translate(x,y);g.rotate(angle);
+  // The notch is part of the pad's silhouette. A narrow low edge makes a
+  // fleshy water leaf instead of a circle stamped on top of the pond.
+  const pad=offset=>{
+    g.beginShape();g.vertex(radius*.07,offset);
+    for(let i=0;i<=14;i++) {
+      const a=.28+i/14*(TWO_PI-.56),r=radius*(.94+.045*Math.sin(i*1.8+seed*7));
+      g.vertex(Math.cos(a)*r,Math.sin(a)*r*.75+offset);
+    }
+    g.vertex(radius*.07,offset);g.endShape(CLOSE);
+  };
+  g.noStroke();g.fill(23,82,78);pad(1.9);
+  g.stroke(30,100,83);g.strokeWeight(1.2);g.fill(66,164,108);pad(0);
+  g.noStroke();g.fill(130,197,123);g.beginShape();
+  g.vertex(-radius*.72,-radius*.36);g.vertex(-radius*.27,-radius*.66);
+  g.vertex(radius*.36,-radius*.61);g.vertex(radius*.80,-radius*.31);
+  g.vertex(radius*.33,-radius*.25);g.vertex(-radius*.34,-radius*.33);g.endShape(CLOSE);
+  g.stroke(35,123,88);g.strokeWeight(.9);
+  g.line(radius*.07,0,-radius*.56,radius*.27);
+  g.line(radius*.07,0,-radius*.28,-radius*.45);
+  if(bloom) {
+    const pink=seed>.43,cx=-radius*.10,cy=-radius*.10,w=radius*.48,h=radius*.59;
+    const petal=(dx,dy,side,col)=>{
+      g.fill(col[0],col[1],col[2]);g.stroke(pink?147:162,pink?78:151,pink?122:135);g.strokeWeight(.7);
+      g.beginShape();g.vertex(cx,cy+2);
+      g.bezierVertex(cx+dx-w*.5,cy+dy-h*.25,cx+dx-w*.43+side,cy+dy-h*.86,cx+dx,cy+dy-h);
+      g.bezierVertex(cx+dx+w*.53,cy+dy-h*.68,cx+dx+w*.6,cy+dy-h*.22,cx,cy+2);g.endShape(CLOSE);
+    };
+    petal(-w*.47,0,-1,pink?[229,117,166]:[229,217,193]);
+    petal(w*.48,-.4,1,pink?[248,167,198]:[255,244,219]);
+    petal(0,-h*.17,0,pink?[255,202,216]:[255,254,233]);
+    g.noStroke();g.fill(237,194,75);g.ellipse(cx,cy+1.2,w*.55,w*.40);
+  }
+  g.pop();
+}
+
+// Peat-water art is constrained to the same deterministic marsh pools used by
+// waterDepthAt and generation. Every feature remains well inside its owning
+// chunk, so neighboring terrain bakes cannot clip or duplicate its pads.
+function bakeForestBogDressing(g, biome, cx, cy) {
+  if(biome!==2||layoutFor(biome,cx,cy)!=='WOODLAND')return;
+  const pools=woodPools(biome,cx,cy);
+  if(!pools)return;
+  for(let pi=0;pi<pools.length;pi++) {
+    const p=pools[pi],rx=p.w*.5,ry=p.h*.5;
+    const rng=makeRng(chunkHash(biome,cx,cy,73117+pi*733));
+    const edge=a=>1+.17*Math.sin(a*3+p.k*21)+.09*Math.sin(a*5-p.k*13);
+    const contour=(scale,col,shiftX=0,shiftY=0,skew=0)=>{
+      g.noStroke();g.fill(col[0],col[1],col[2]);g.beginShape();
+      for(let i=0;i<32;i++) {
+        const a=i/32*TWO_PI,e=edge(a)*scale*(1+skew*Math.sin(a*2+p.k*11));
+        g.vertex(p.x+shiftX+Math.cos(a)*rx*e,p.y+shiftY+Math.sin(a)*ry*e);
+      }
+      g.endShape(CLOSE);
+    };
+    // Irregular turquoise shelves surround an off-centre indigo peat basin.
+    // Unequal banks replace nested target-shaped rings with connected water.
+    contour(.985,[44,151,145]);
+    contour(.82,[38,119,130],rx*.055,-ry*.025,.055);
+    contour(.60,[35,79,106],rx*.15,ry*.11,.09);
+    g.noStroke();g.fill(70,181,160);g.beginShape();
+    for(let i=0;i<=12;i++) {
+      const a=2.6+i/12*1.9,e=edge(a)*.91;
+      g.vertex(p.x+Math.cos(a)*rx*e,p.y+Math.sin(a)*ry*e);
+    }
+    for(let i=12;i>=0;i--) {
+      const a=2.6+i/12*1.9,e=edge(a)*(.67+.05*Math.sin(i*1.2+p.k*9));
+      g.vertex(p.x+Math.cos(a)*rx*e,p.y+Math.sin(a)*ry*e);
+    }
+    g.endShape(CLOSE);
+    // Broken horizontal reflections leave most of the cel water undisturbed.
+    g.noFill();g.stroke(143,219,210,145);g.strokeWeight(2.1);
+    for(let i=0;i<4;i++) {
+      const x=p.x-rx*.38+Math.sin(i*2.1+p.k*12)*rx*.22,y=p.y+(i-1.5)*ry*.27;
+      g.beginShape();g.vertex(x,y);g.vertex(x+rx*.17,y-1.6);g.vertex(x+rx*.26,y-.3);g.endShape();
+    }
+    // A few localized colonies leave open dark water between the banks. No
+    // water art is painted elsewhere in a BOG site or across a crossing.
+    const groups=2+(p.k>.5?1:0),phase=rng()*TWO_PI;
+    for(let group=0;group<groups;group++) {
+      const angle=phase+group*2.19,bank=.55+rng()*.13;
+      const gx=p.x+Math.cos(angle)*rx*bank,gy=p.y+Math.sin(angle)*ry*bank;
+      for(let n=0;n<3;n++) {
+        const a=angle+n*2.51,radius=10+rng()*5;
+        let x=gx+Math.cos(a)*(n?radius*1.24:0),y=gy+Math.sin(a)*(n?radius*.91:0);
+        const dx=(x-p.x)/rx,dy=(y-p.y)/ry,distance=Math.hypot(dx,dy);
+        const safe=Math.max(.18,Math.min(.84,edge(Math.atan2(dy,dx))*.92)-radius/Math.min(rx,ry));
+        if(distance>safe){x=p.x+dx/distance*safe*rx;y=p.y+dy/distance*safe*ry;}
+        bakeForestBogLily(g,x,y,radius,rng()*TWO_PI,n===0,rng());
+      }
+    }
+    // Duckweed is clustered into thin islands near one bank, never sprinkled
+    // over the whole scene or used as a broad green ground badge.
+    const a=phase+1.1;
+    for(let i=0;i<9;i++) {
+      const ang=a+(rng()-.5)*.65,r=edge(ang)*(.65+rng()*.12);
+      const x=p.x+Math.cos(ang)*rx*r,y=p.y+Math.sin(ang)*ry*r;
+      g.noStroke();g.fill(i%3===0?146:90,i%3===0?191:160,i%3===0?103:109);
+      g.ellipse(x,y,4+rng()*6,3+rng()*3);
+    }
+  }
+}
+
 // Dry Gulch's loose sand, crust and scree are world features, not per-chunk
 // stamps. Every overlapping bake visits the same cells in the same order. The
 // generous reach includes the rotated bed and all of its stone shadows, so a
@@ -43567,6 +44077,8 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
 
     case "WOODLAND": {
       bakeSharedWoodlandPatches(g, biome, cx, cy);
+      bakeForestRidges(g, biome, cx, cy);
+      bakeForestFloraBeds(g, biome, cx, cy);
 
       // Marsh pools. Painted with the ground rather than drawn over it -- see
       // bakePool(). woodPools() hands the generator the identical list, so the
@@ -43575,6 +44087,7 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
         const bPools = woodPools(biome, cx, cy);
         if (bPools) for (const bp of bPools) bakeWoodlandPool(g, bp);
       }
+      bakeForestBogDressing(g, biome, cx, cy);
 
       // --- The road network -------------------------------------------------
       // Only the columns and rows that actually carry a road paint one. What
@@ -49480,7 +49993,289 @@ function paintForestShrub(g, d, path, fp, habitatKey, live, phase, sd, sl) {
   }
 }
 
+// Wildflower clumps have real raised stems, leaf folds and petal undersides.
+// Only these explicit families enter this painter; old saved forest art keeps
+// its own palette, geometry and renderer path.
+function paintForestFlora(g, d, t, phase) {
+  const species = d.forestSpecies;
+  if (species !== 'LUPINE' && species !== 'FOXGLOVE' &&
+      species !== 'SUN_DAISY' && species !== 'AMBER_FUNGUS') return false;
+  const live = typeof window !== 'undefined' && g === window && BIOME_ACTIVE;
+  const path = forestPolygonPainter(g);
+  const s = d.s || 1, seed = d.c || 0, fungus = species === 'AMBER_FUNGUS';
+  const sd = live ? shadowDensity() : 1, sl = live ? shadowLengthScale() : 1;
+  const lift = [0, 0]; forestFloorLift(d, 1, live, lift);
+  const ux = lift[0], uy = lift[1], rot = d.r || 0;
+  const ca = Math.cos(rot), sa = Math.sin(rot);
+  const lx = LIGHT_DX * ca + LIGHT_DY * sa, ly = -LIGHT_DX * sa + LIGHT_DY * ca;
+  g.push(); g.translate(d.x, d.y); g.rotate(rot);
+  g = forestFloorPainter(g, path) || g;
+  const point = (x, y, z) => [(x + ux * z) * s, (y + uy * z) * s];
+  const polygon = vertices => {
+    path.beginShape();
+    for (const p of vertices) { const q = point(p[0], p[1], p[2]); path.vertex(q[0], q[1]); }
+    path.endShape(CLOSE);
+  };
+  const segment = (x0, y0, z0, x1, y1, z1) => {
+    const a = point(x0, y0, z0), b = point(x1, y1, z1); g.line(a[0], a[1], b[0], b[1]);
+  };
+  if (phase !== 'root' && sd > .025) {
+    g.noStroke(); g.fill(18, 42, 34, 35 * sd);
+    g.ellipse(lx * 7 * sl * s, ly * 7 * sl * s, (fungus ? 32 : 38) * s, 19 * s);
+    g.fill(22, 47, 34, 42 * sd); g.ellipse(0, 1 * s, 28 * s, 14 * s);
+  }
+  if (phase === 'shadow') { g.pop(); return true; }
+  // Low folded basal leaves tie each tall stem into the ground. Teal moss is
+  // restricted to the fungal hollow, rather than a disk behind every flower.
+  g.noStroke();
+  if (fungus) {
+    // Moss and broken needles thread through a colony, without a repeated
+    // leaf-shaped island framing every group of caps.
+    for (let k = 0; k < 6; k++) {
+      const a = k * 2.39 + seed * 17, radius = 8 + Math.sin(k * 4.1 + seed * 23) * 6;
+      const x = Math.cos(a) * radius, y = Math.sin(a) * radius * .7;
+      g.fill(k & 1 ? 87 : 90, k & 1 ? 119 : 101, k & 1 ? 73 : 62);
+      polygon([[x - 4, y + 1, 0], [x - 1, y - 2.5, .4], [x + 5, y - 1, .5], [x + 2, y + 2, 0]]);
+      if (!(k & 1)) { g.fill(119, 130, 79); polygon([[x - 2, y, .5], [x + 4, y - 1, .7], [x + 1, y + 1, .3]]); }
+    }
+  } else {
+    for (let i = 0; i < 5; i++) {
+      const a = i * 2.39 + seed * 4, x = Math.cos(a) * 16, y = Math.sin(a) * 10;
+      const side = a + .72, dx = Math.cos(side) * 4, dy = Math.sin(side) * 2.8;
+      g.fill(i & 1 ? 54 : 48, i & 1 ? 113 : 97, i & 1 ? 60 : 58);
+      polygon([[0, 0, 0], [x * .55 + dx, y * .55 + dy, 1.8], [x, y, 2.5],
+        [x * .55 - dx, y * .55 - dy, 1.6]]);
+      g.fill(111, 156, 72);
+      polygon([[0, 0, .2], [x * .55 + dx, y * .55 + dy, 1.8], [x, y, 2.5], [x * .5, y * .5, 2.1]]);
+    }
+  }
+  const stems = [];
+  if (fungus) {
+    const n = 2 + Math.floor(seed * 3.999);
+    for (let k = 0; k < n; k++) {
+      const a = k * 2.39 + seed * 11, radius = k ? 8 + (k % 3) * 2 : 1.5;
+      const size = k === 0 ? 8.5 + seed * 2.3 : 4.2 + ((seed * 7 + k * .41) % 1) * 3.2;
+      stems.push([Math.cos(a) * radius, Math.sin(a) * radius * .75,
+        size * (1.05 + ((seed * 13 + k * .37) % 1) * .32), size]);
+    }
+    stems.sort((a, b) => a[1] - b[1]);
+  } else stems.push([-11, -4, .78], [8, -3, 1], [-1, 7, .85]);
+  for (let i = 0; i < stems.length; i++) {
+    const stem = stems[i], x = stem[0], y = stem[1];
+    if (fungus) {
+      const z = stem[2], r = stem[3], red = ((seed * 5.7 + i * .43) % 1) < .34;
+      const stemWidth = r * .26;
+      g.stroke(79, 65, 42); g.strokeWeight(.85 * s); g.fill(206, 177, 117);
+      polygon([[x - stemWidth * 1.25, y + .6, 0], [x - stemWidth * .70, y - .3, z],
+        [x + stemWidth * .65, y - .3, z], [x + stemWidth * 1.25, y + .6, 0]]);
+      g.noStroke(); g.fill(249, 226, 168);
+      polygon([[x - stemWidth, y, .5], [x - stemWidth * .50, y - .2, z],
+        [x + stemWidth * .03, y - .2, z], [x + stemWidth * .15, y, .5]]);
+      // A broad cap is a shallow domed disk, with a rolled lower edge and
+      // radial gills. It never becomes a sharp leaf or a flat painted coin.
+      const rim = [], under = [];
+      for (let k = 0; k < 10; k++) {
+        const a = k * TWO_PI / 10;
+        rim.push([x + Math.cos(a) * r, y + Math.sin(a) * r * .68, z]);
+        under.push([x + Math.cos(a) * r, y + Math.sin(a) * r * .68, z - 2.5]);
+      }
+      g.stroke(92, 67, 38); g.strokeWeight(.85 * s); g.fill(190, 149, 92); polygon(under);
+      g.stroke(231, 191, 127); g.strokeWeight(.65 * s);
+      const facing = Math.atan2(-uy, -ux);
+      for (let k = -2; k <= 2; k++) {
+        const a = facing + k * .35, dx = Math.cos(a) * r, dy = Math.sin(a) * r * .68;
+        segment(x + dx * .98, y + dy * .98, z - 2.4, x + dx * .67, y + dy * .67, z - 2.4);
+      }
+      g.stroke(77, 45, 28); g.strokeWeight(.9 * s); g.fill(red ? 195 : 227, red ? 78 : 146, red ? 43 : 47);
+      polygon(rim);
+      g.noStroke(); g.fill(red ? 239 : 255, red ? 128 : 196, red ? 65 : 85);
+      polygon([rim[4], rim[5], rim[6], rim[7], rim[8], [x + .4, y - .3, z + 2.4]]);
+      if (red) {
+        g.fill(255, 215, 148);
+        const q = point(x - r * .24, y - r * .18, z + 1.8); g.ellipse(q[0], q[1], r * .36 * s, r * .22 * s);
+      }
+      continue;
+    }
+    const height = (species === 'FOXGLOVE' ? 24 : species === 'LUPINE' ? 23 : 16) * stem[2];
+    const bend = (i - 1) * 2.4 + Math.sin(seed * 5) * 1.5;
+    g.stroke(32, 71, 49); g.strokeWeight(2.8 * s);
+    segment(x, y, 0, x + bend * .48, y, height * .6);
+    segment(x + bend * .48, y, height * .6, x + bend, y - .2, height);
+    g.stroke(120, 167, 77); g.strokeWeight(.9 * s);
+    segment(x - .5, y, 0, x + bend * .48 - .5, y, height * .6);
+    segment(x + bend * .48 - .5, y, height * .6, x + bend - .5, y - .2, height);
+    g.noStroke(); g.fill(56, 118, 62);
+    polygon([[x, y, height * .30], [x - 7, y - 2, height * .46], [x - 5, y + 2, height * .51], [x, y, height * .39]]);
+    g.fill(119, 164, 80);
+    polygon([[x, y, height * .45], [x + 7, y - 1, height * .65], [x + 4, y + 2, height * .65], [x, y, height * .51]]);
+    if (species === 'LUPINE') {
+      for (let k = 0; k < 5; k++) {
+        const z = height * (.53 + k * .105), w = 4.3 - k * .56;
+        const bx = x + bend * z / height;
+        for (const side of [-1, 1]) {
+          g.stroke(61, 49, 111); g.strokeWeight(.65 * s); g.fill(k & 1 ? 114 : 96, k & 1 ? 106 : 112, 207);
+          polygon([[bx, y, z - 1.4], [bx + side * w, y - 1.2, z - .9], [bx + side * (w + .4), y, z + .5],
+            [bx + side * w * .52, y + 1.2, z + 1.7], [bx, y, z + .7]]);
+          g.noStroke(); g.fill(171, 165, 246);
+          polygon([[bx + side * .5, y - .2, z + .25], [bx + side * (w - .2), y - .6, z + .3],
+            [bx + side * w * .5, y + .6, z + 1.35]]);
+        }
+      }
+    } else if (species === 'FOXGLOVE') {
+      for (let k = 0; k < 4; k++) {
+        const z = height * (.50 + k * .135), bx = x + bend * z / height;
+        const side = i === 0 ? -1 : 1, w = 4.1 - k * .55;
+        g.stroke(104, 42, 82); g.strokeWeight(.75 * s); g.fill(222, 102 + k * 5, 151 + k * 4);
+        polygon([[bx, y, z + 1], [bx + side * w * .75, y - .9, z + 2.4],
+          [bx + side * (w + 1), y - .4, z - .6], [bx + side * w, y + 1.1, z - 2.6],
+          [bx + side * (w - 2), y + .5, z - 2], [bx, y, z]]);
+        g.noStroke(); g.fill(255, 166, 192);
+        polygon([[bx + side * .5, y - .2, z + .8], [bx + side * w * .7, y - .6, z + 1.9],
+          [bx + side * (w + .4), y - .2, z - .5], [bx + side * w * .6, y, z - .4]]);
+        g.fill(123, 45, 90);
+        polygon([[bx + side * (w - 2), y + .5, z - 2], [bx + side * w, y + .8, z - 2.5],
+          [bx + side * (w + .7), y + .1, z - .8], [bx + side * (w - .5), y, z - .7]]);
+      }
+    } else {
+      const bx = x + bend, r = 6.2 - i * .55;
+      // The shallow flower bowl has a dark rim, broad rounded petal planes
+      // and a raised ochre centre. Cream and marigold share a real silhouette.
+      const cream = (i === 1) !== (seed > .5);
+      for (let k = 0; k < 7; k++) {
+        const a = k * TWO_PI / 7 + seed, dx = Math.cos(a), dy = Math.sin(a);
+        const px = -dy * 1.9, py = dx * 1.25;
+        g.stroke(cream ? 151 : 160, cream ? 133 : 99, cream ? 71 : 24); g.strokeWeight(.6 * s);
+        g.fill(cream ? 249 : 249, cream ? 231 : 185, cream ? 157 : 55);
+        polygon([[bx + dx * 1.2, y + dy * .8, height], [bx + dx * r * .7 + px, y + dy * r * .52 + py, height + .6],
+          [bx + dx * r, y + dy * r * .72, height + 1.4], [bx + dx * r * .7 - px, y + dy * r * .52 - py, height + .6]]);
+        g.noStroke(); g.fill(cream ? 255 : 255, cream ? 249 : 220, cream ? 199 : 107);
+        polygon([[bx + dx * 1.4, y + dy, height + .1], [bx + dx * r * .7 + px, y + dy * r * .52 + py, height + .7],
+          [bx + dx * r, y + dy * r * .72, height + 1.4]]);
+      }
+      const q = point(bx, y, height + .5);
+      g.stroke(114, 74, 26); g.strokeWeight(.65 * s); g.fill(190, 113, 29); g.ellipse(q[0], q[1], 5.6 * s, 4.4 * s);
+      g.noStroke(); g.fill(246, 190, 62); g.ellipse(q[0] - .5 * s, q[1] - .5 * s, 3.4 * s, 2.4 * s);
+    }
+  }
+  g.pop(); return true;
+}
+
+// Wetland plants are rooted volumes in the actor pass. Each folded leaf,
+// buttress and moss ridge projects its own height from an unchanged ground
+// contact; no canopy-sized sprite is laid over the player.
+function paintForestBogProp(g, d, path, live, phase, sd, sl) {
+  const s = d.s || 1, seed = d.c || 0, rot = d.r || 0;
+  const kind = d.forestSpecies;
+  if (phase !== 'root') forestContactShadow(g, 35 * s, 22 * s, 3 * sl, 27, sd);
+  if (phase === 'shadow') return;
+  g.rotate(rot);
+  const point = (x, y, z) => {
+    const lift = forestFloorLift(d, z * s, live, [0, 0]);
+    return [x * s + lift[0], y * s + lift[1]];
+  };
+  const shape = (points, colour, ink) => {
+    g.fill(colour[0], colour[1], colour[2]);
+    if (ink) { g.stroke(33, 67, 58); g.strokeWeight(.9 * s); } else g.noStroke();
+    path.beginShape();
+    for (const q of points) path.vertex(q[0], q[1]);
+    path.endShape(CLOSE);
+  };
+  if (kind === 'BOG_SEDGE') {
+    // A loose, one-directional stand of folded sword leaves. The wide low
+    // blades and copper seed heads distinguish it from ordinary bank reeds.
+    const blades = 8;
+    for (let i = 0; i < blades; i++) {
+      const bx = -6 + i * 1.7, by = (i % 3 - 1) * 2.7;
+      const height = 15 + (i % 3) * 5 + Math.sin(seed * 13 + i * 2.1) * 2;
+      const ex = -24 + i * 6.2, ey = -8 + Math.sin(seed * 9 + i * 1.8) * 6;
+      const root = point(bx, by, 0), tip = point(bx + ex, by + ey, height);
+      const ridge = point(bx + ex * .45, by + ey * .45, height * .78);
+      const edge = point(bx + ex * .38 - 3, by + ey * .42 - 1.7, height * .61);
+      const fold = point(bx + ex * .52 + 2.5, by + ey * .44 + 2, height * .66);
+      shape([root, edge, tip, ridge], i % 3 === 0 ? [104, 173, 113] : [42, 136, 112], true);
+      shape([root, ridge, tip, fold], i % 3 === 1 ? [171, 208, 116] : [80, 183, 139], false);
+      g.stroke(164, 210, 131); g.strokeWeight(.6 * s);
+      g.line(root[0], root[1], ridge[0], ridge[1]);
+      g.line(ridge[0], ridge[1], tip[0], tip[1]);
+    }
+    for (const i of [0, 1, 2]) {
+      const x = -6 + i * 6, y = -2 + i * 2.4;
+      const a = point(x, y, 0), b = point(x + 3 - i * 2, y - 2, 26 - i * 2);
+      const c = point(x + 2 - i * 1.4, y - 1.5, 21 - i * 2);
+      g.stroke(55, 103, 69); g.strokeWeight(1.2 * s); g.line(a[0], a[1], b[0], b[1]);
+      g.stroke(111, 66, 48); g.strokeWeight(4.4 * s); g.line(c[0], c[1], b[0], b[1]);
+      g.stroke(211, 153, 80); g.strokeWeight(1.6 * s);
+      g.line(c[0] - .7 * s, c[1], b[0] - .7 * s, b[1]);
+    }
+    return;
+  }
+
+  if (kind === 'BOG_HUMMOCK') {
+    // An asymmetric peat bank has two long, soft moss ridges. Its silhouette
+    // grows along the shore rather than radiating from a central badge.
+    const outline=[[-29,-4],[-25,-11],[-15,-16],[-4,-15],[5,-11],[16,-13],
+      [27,-6],[29,2],[21,10],[10,13],[-3,10],[-16,14],[-27,7]];
+    const cap=outline.map((q,i)=>point(q[0]*.89,q[1]*.86,5.4+(i%4)*.8));
+    for(let i=0;i<outline.length;i++) {
+      const j=(i+1)%outline.length;
+      shape([point(outline[i][0],outline[i][1],0),point(outline[j][0],outline[j][1],0),cap[j],cap[i]],
+        i<6?[48,112,82]:[42,96,74],false);
+    }
+    shape(cap,[85,154,94],true);
+    const left=point(-13,-3,11),right=point(11,-1,8.8);
+    shape([cap[0],cap[1],cap[2],cap[3],cap[4],right,left],[139,189,111],false);
+    shape([cap[4],cap[5],cap[6],cap[7],cap[8],right],[103,171,112],false);
+    shape([cap[0],left,right,cap[9],cap[10],cap[11],cap[12]],[73,141,95],false);
+    // Short hanging moss follows the front edge with a rounded, unequal hem.
+    for(const i of [8,10,11]) {
+      const a=cap[i],q=outline[i],b=point(q[0]*.98,q[1]*.96,1.2);
+      g.noStroke();g.fill(i===10?134:95,i===10?188:165,108);
+      if(path.beginCurveShape)path.beginCurveShape();else path.beginShape();
+      path.vertex(a[0]-2*s,a[1]);path.vertex(a[0]+2.4*s,a[1]+.4*s);
+      path.bezierVertex(a[0]+2.8*s,a[1]+3*s,b[0]+2*s,b[1]+2*s,b[0],b[1]);
+      path.bezierVertex(b[0]-1.5*s,b[1]-.7*s,a[0]-2.7*s,a[1]+2*s,a[0]-2*s,a[1]);path.endShape(CLOSE);
+    }
+    const moss=point(-10,-1,10.5);
+    g.noStroke();g.fill(176,207,128);g.ellipse(moss[0],moss[1],5*s,2.5*s);
+    return;
+  }
+
+  // A peat hummock: short rooted walls support uneven moss ridges. Long moss
+  // fingers hang down the banks of the mound rather than forming a flat disc.
+  const knots = [[-14,0,15,11,8],[8,-4,17,12,16],[17,7,11,9,10]];
+  for (let k=0;k<knots.length;k++) {
+    const q=knots[k], outline=[[-.97,-.08],[-.88,-.49],[-.58,-.77],[-.13,-.89],[.35,-.84],
+      [.73,-.55],[.96,-.17],[.91,.29],[.63,.65],[.14,.82],[-.39,.77],[-.81,.42]];
+    const rim=outline.map(p=>point(q[0]+p[0]*q[2],q[1]+p[1]*q[3],1.5));
+    const cap=outline.map((p,i)=>point(q[0]+p[0]*q[2]*.8,q[1]+p[1]*q[3]*.8,q[4]*(.75+(i%3)*.08)));
+    for(let i=0;i<rim.length;i++) {
+      const j=(i+1)%rim.length;
+      shape([rim[i],rim[j],cap[j],cap[i]],i%3===0?[42,99,77]:[49,118,83],false);
+    }
+    shape(cap,k===1?[93,171,103]:[76,149,91],true);
+    const peak=point(q[0]-3,q[1]-2,q[4]+1);
+    shape([cap[0],cap[1],cap[2],cap[3],cap[4],peak],[142,195,113],false);
+    shape([cap[4],cap[5],cap[6],cap[7],cap[8],peak],[98,177,118],false);
+    for(const i of [7,8,10]) {
+      const a=cap[i],b=point(q[0]+outline[i][0]*q[2]*.88,q[1]+outline[i][1]*q[3]*.87,3.1);
+      g.noStroke();g.fill(i%2?115:68,i%2?181:150,i%2?107:109);
+      if(path.beginCurveShape)path.beginCurveShape();else path.beginShape();
+      path.vertex(a[0]-1.7*s,a[1]);path.vertex(a[0]+1.4*s,a[1]);
+      path.bezierVertex(a[0]+2*s,a[1]+3*s,b[0]+2.4*s,b[1],b[0],b[1]+.5*s);
+      path.bezierVertex(b[0]-1.3*s,b[1],a[0]-2.2*s,a[1]+2*s,a[0]-1.7*s,a[1]);path.endShape(CLOSE);
+    }
+  }
+  // Two quiet shelf caps are anchored to the peat face, not collectible gems.
+  for (let i=0;i<2;i++) {
+    const p=point(-8+i*6,6+i*3,7-i*2),w=(4.4-i*.7)*s;
+    g.stroke(83,96,67);g.strokeWeight(.7*s);g.fill(224,201,141);
+    g.ellipse(p[0],p[1],w*2,w*.95);
+    g.noStroke();g.fill(249,226,172);g.ellipse(p[0]-.4*s,p[1]-.7*s,w*1.6,w*.6);
+  }
+}
+
 function paintForestClutter(g, d, t, phase) {
+  if (paintForestFlora(g, d, t, phase)) return true;
   const path = forestPolygonPainter(g);
   const fp = forestPropProfile(d);
   if (!fp) return false;
@@ -49810,6 +50605,12 @@ function paintForestClutter(g, d, t, phase) {
         g.triangle(ridgeX, ridgeY, x + outline[8] * rx * .83 + ux, y + outline[9] * ry * .83 + uy,
           x + outline[10] * rx * .83 + ux, y + outline[11] * ry * .83 + uy);
       }
+      break;
+    }
+    case "BOG_HUMMOCK":
+    case "BOG_SEDGE":
+    case "BOG_MOSS": {
+      paintForestBogProp(g, d, path, live, phase, sd, sl);
       break;
     }
     case "REED":
@@ -54816,7 +55617,7 @@ function glRigHeightByte(hWorld) {
   return shifted <= 0 ? 0 : shifted >= range ? 255 : shifted / range * 255;
 }
 function glRigEmitterGround(e) {
-  return BIOME_ACTIVE && (currentBiome === 1 || currentBiome === 3) ? groundElev(e.x, e.y) : 0;
+  return BIOME_ACTIVE && (currentBiome === 1 || currentBiome === 2 || currentBiome === 3) ? groundElev(e.x, e.y) : 0;
 }
 function glRigEmitterHeight(e, ground) {
   // Civic lamps already carry their ground height in sceneEmitters().
@@ -54855,6 +55656,34 @@ function paintCityDowntownHeightfield(g) {
     if(Math.max(a,b,c,d)<=.001)continue;
     const x=left+i*step,y=top+j*step;
     // The shared triangle painter encodes any world height, not only canyons.
+    paintFrontierHeightTriangle(ctx,x,y,a,x+step,y,b,x,y+step,c,overlap);
+    paintFrontierHeightTriangle(ctx,x+step,y+step,d,x,y+step,c,x+step,y,b,overlap);
+  }
+  ctx.restore();
+}
+
+const _forestRidgeLightHeights = new Float32Array(2048);
+function paintForestRidgeHeightfield(g) {
+  if(!BIOME_ACTIVE||currentBiome!==2)return;
+  const spanX=viewRight-viewLeft,spanY=viewBottom-viewTop;
+  if(!(spanX>0)||!(spanY>0)||!Number.isFinite(spanX*spanY))return;
+  let step=FOREST_RIDGE_STEP*Math.max(1,Math.ceil(Math.sqrt(spanX*spanY/(6400*420))));
+  let left,top,cols,rows;
+  do{
+    left=Math.floor(viewLeft/step)*step;top=Math.floor(viewTop/step)*step;
+    cols=Math.ceil((viewRight-left)/step)+1;rows=Math.ceil((viewBottom-top)/step)+1;
+    if((cols-1)*(rows-1)<=540)break;
+    step+=FOREST_RIDGE_STEP;
+  }while(true);
+  const h=_forestRidgeLightHeights;
+  for(let j=0;j<rows;j++)for(let i=0;i<cols;i++)h[j*cols+i]=forestRidgeHeight(left+i*step,top+j*step);
+  const pixelWorld=GLRig.hw>0&&zoom>0?width/(GLRig.hw*zoom):1;
+  const overlap=Math.max(2,pixelWorld*2)/step,ctx=g.drawingContext;
+  ctx.save();
+  for(let j=0;j<rows-1;j++)for(let i=0;i<cols-1;i++){
+    const n=j*cols+i,a=h[n],b=h[n+1],c=h[n+cols],d=h[n+cols+1];
+    if(Math.max(a,b,c,d)<=.001)continue;
+    const x=left+i*step,y=top+j*step;
     paintFrontierHeightTriangle(ctx,x,y,a,x+step,y,b,x,y+step,c,overlap);
     paintFrontierHeightTriangle(ctx,x+step,y+step,d,x,y+step,c,x+step,y,b,overlap);
   }
@@ -54916,6 +55745,7 @@ function glRigPaintHeight() {
   if (BIOME_ACTIVE && currentBiome === 3 && typeof paintFrontierCanyonHeightfield === 'function')
     paintFrontierCanyonHeightfield(g);
   paintCityDowntownHeightfield(g);
+  paintForestRidgeHeightfield(g);
 
   // 1. Ground relief. Concentric insets reproduce groundElev()'s feather, so
   //    the bench the player walks up shades and self-shadows as one surface
@@ -54962,18 +55792,18 @@ function glRigPaintHeight() {
     // Water is below the ground, not above it, and it is the glossiest thing in
     // the scene -- this is what puts a lamp's reflection on the canal.
     if (b.isRiver || b.isWater || b.isPond) {
-      glRigMat(g, BIOME_ACTIVE && (currentBiome === 1 || currentBiome === 3) ? groundElev(b.x, b.y) : 0, 0.95, 0);
+      glRigMat(g, BIOME_ACTIVE && (currentBiome === 1 || currentBiome === 2 || currentBiome === 3) ? groundElev(b.x, b.y) : 0, 0.95, 0);
       g.rect(b.x - w / 2, b.y - h / 2, w, h);
       continue;
     }
     // Surfaces: walkable, so no mass, but they still take a highlight.
     if (b.isDeck || b.isParkingLot || b.isCropField || b.isGrassLot) {
-      glRigMat(g, 1.5 + (BIOME_ACTIVE && (currentBiome === 1 || currentBiome === 3) ? groundElev(b.x, b.y) : 0), 0.10 + 0.35 * wet, 0);
+      glRigMat(g, 1.5 + (BIOME_ACTIVE && (currentBiome === 1 || currentBiome === 2 || currentBiome === 3) ? groundElev(b.x, b.y) : 0), 0.10 + 0.35 * wet, 0);
       g.rect(b.x - w / 2, b.y - h / 2, w, h);
       continue;
     }
     if (b.isStreetLight) {
-      glRigMat(g, 46 + (b.isCivic || BIOME_ACTIVE && (currentBiome === 1 || currentBiome === 3) ? groundElev(b.x, b.y) : 0), 0.35, 0);
+      glRigMat(g, 46 + (b.isCivic || BIOME_ACTIVE && (currentBiome === 1 || currentBiome === 2 || currentBiome === 3) ? groundElev(b.x, b.y) : 0), 0.35, 0);
       g.rect(b.x - 4, b.y - 4, 8, 8);
       continue;
     }

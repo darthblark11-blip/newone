@@ -81,6 +81,32 @@ namespaced keys, so adding underbrush cannot change a saved building or tree's
 identity. Existing worked clearings, settlements, pools, crossings and logging
 destinations stay functional within the four forest habitats.
 
+### Exploratory landscapes
+
+An independent `forestLandscapeSites()` layer adds four kinds of places between
+the existing destinations. Rotated world-space sites cross chunk boundaries;
+their own seeds leave the historical layout and destruction keys intact.
+
+| Landscape | Environment |
+| --- | --- |
+| Mossback ridges (`RIDGE`) | Walkable mossy hills with broad shoulders, pale limestone exposures and broken strata; elevation affects figure scale, slope speed and lighting |
+| Wildflower glades (`BLOOM`) | Raised violet lupines, pink foxgloves and golden/cream daisies, with smaller baked flower drifts |
+| Mushroom hollows (`HOLLOW`) | Uneven amber/russet cap colonies, pale stems, gilled undersides and moss/litter pockets beside fallen timber |
+| Peat wetlands (`BOG`) | Folded sedges, copper seed heads, rooted moss hummocks and turquoise/indigo pools with notched lily leaves and pink/cream blooms |
+
+Ridges use a bounded, shared height mesh. A continuous clearance mask flattens
+roads, crossings, real water, cultivated parcels, travel arrivals, checkpoints, forts and the
+authored core. The terrain bake and runtime height queries agree across chunk
+edges. The water remains the existing deterministic `woodPools()`/river network;
+wetland decoration never invents a painted pool without its water volume.
+
+New detailed plants carry `forestLandscapeProp` and join the root-sorted standing
+decor pass, with fixed ground contacts and projected raised faces. They add no
+collision or AI. There are at most ten new flower/fungus clumps and six wetland
+clumps per chunk. Ground carpets, pool details and hill materials are baked;
+landscape and height caches are bounded for long walks. Timber cover, wood
+salvage, brushing shrubs and existing tree art retain their prior behavior.
+
 Compact copses now supplement that saved layout. `woodlandGrovePlan()` supplies
 shared world-space groups of mature trees and younger companions around small
 walkable glades. Crowns meet while roots retain room for characters. Each chunk

@@ -16,7 +16,7 @@ const game = fs.readFileSync(process.env.GAME_JS || path.join(__dirname, '..', '
       const page = await browser.newPage(), errors = [];
       page.on('pageerror', error => errors.push(error.message));
       await page.setContent('<script>' + fs.readFileSync(file, 'utf8') + '</script><script>' + game +
-        '</script><script>window.preload=function(){};window.setup=function(){createCanvas(640,480);' +
+        '</script><script>window.preload=function(){};window.setup=function(){createCanvas(640,920);' +
         'pixelDensity(1);noLoop();window.__ready=true;};window.draw=function(){};</script>');
       await page.waitForFunction(() => window.__ready);
       const result = await page.evaluate(() => {
@@ -25,7 +25,8 @@ const game = fs.readFileSync(process.env.GAME_JS || path.join(__dirname, '..', '
         shadowDensity=()=>.8;shadowLengthScale=()=>1;
         LIGHT_DX=-.7;LIGHT_DY=.7;
         const native=forestFloorPainter,version=p5.VERSION,inst=p5.instance,renderer=inst._renderer;
-        const species=['BUSH','LOG','STUMP','FERN','REED','PEBBLE','GRASS','MUSHROOM','LITTER'];
+        const species=['BUSH','LOG','STUMP','FERN','REED','PEBBLE','GRASS','MUSHROOM','LITTER',
+          'LUPINE','FOXGLOVE','SUN_DAISY','AMBER_FUNGUS','BOG_HUMMOCK','BOG_SEDGE','BOG_MOSS'];
         const props=species.map((name,i)=>({t:name==='BUSH'?'WEED':name,
           forestSpecies:name,forestRegion:i%2?'MARSH':'TIMBER',forestHabitat:i%3?'TIMBER':'VIBRANT',
           x:80+i%3*160,y:100+Math.floor(i/3)*125,s:1.4,r:.47+i*.31,c:.67,forestLiveProp:true}));
