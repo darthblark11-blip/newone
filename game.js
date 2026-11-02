@@ -5067,6 +5067,7 @@ function drawDepthSorted() {
   _forestCrowns.length = 0;
   for (let i = 0; i < activeBuildings.length; i++) {
     const b = activeBuildings[i];
+    if (b.isForestTimber) continue; // Collision companion; live decor owns the entire visible volume.
     // The same cull both draw functions apply. Doing it once here keeps the
     // sort down to what is actually on screen, which is a fraction of the
     // 1500-unit ring activeBuildings holds.
@@ -8134,6 +8135,7 @@ function resetRunState() {
   _depthActors.length = 0; _depthMasses.length = 0; _depthOn = false;
   _legacyActorsQueued = false; _airborneActors.length = 0;
   _forestCrowns.length = 0; _standDecor.length = 0; _boxingWorldEffects.length = 0;
+  resetForestBrushInteractions();
   _waterFrame = -1; _waterList.length = 0; _outerFrame = -99; _emitFrame = -1;
   weather = null; isRaining = false; lastWeatherRollHour = -1;
   worldTimeMs = DAY_MS * (8 / 24); clockLastMs = null; worldClockDtMs = 0;
@@ -9237,6 +9239,7 @@ viewBottom = camY + height / zoom + shakePad;
    // knocked-out bodies underneath them. Aircraft have their own upper pass.
    _legacyActorsQueued = !_depthOn;
    if (player.hp > 0) { if (!isWin && doTick) player.updatePlayer(); if(player.hp>0&&!player.dead)actorShow(player); } else if (!isWin && !isDead) { playerRespawnTimer--; if (playerRespawnTimer <= 0) { isDead = true; } }
+  updateForestBrushInteractions();
   updateEntities();
   if (currentLevel === 8) {
     updateNM0Scientists();
@@ -11216,11 +11219,34 @@ const HARVEST_YIELD = {
   WRECK:     { kind: "METAL", dens: 0.0022 }
 };
 
+// Small fallen timber keeps an oriented ground footprint. Its w/h are the
+// enclosing AABB for the existing spatial indexes, never an invisible square
+// that catches feet or rounds beside a diagonal log.
+function forestTimberPointBlocked(b, x, y, radius = 0) {
+  const dx = x - b.x, dy = y - b.y, ca = b.forestTimberCos, sa = b.forestTimberSin;
+  const lx = Math.abs(dx * ca + dy * sa) - b.forestTimberWidth * .5;
+  const ly = Math.abs(-dx * sa + dy * ca) - b.forestTimberDepth * .5;
+  const qx = Math.max(0, lx), qy = Math.max(0, ly);
+  return qx * qx + qy * qy <= radius * radius + 1e-8;
+}
+function forestTimberSegmentTime(b, x0, y0, x1, y1) {
+  const ca = b.forestTimberCos, sa = b.forestTimberSin;
+  const px = x0 - b.x, py = y0 - b.y, dx = x1 - x0, dy = y1 - y0;
+  const hw = b.forestTimberWidth * .5, hh = b.forestTimberDepth * .5;
+  return stanceSegmentBoxTime(px * ca + py * sa, -px * sa + py * ca,
+    dx * ca + dy * sa, -dx * sa + dy * ca, -hw, -hh, hw, hh);
+}
+
 function harvestProfile(b) {
   if (!b) return null;
   if (b.__hv !== undefined) return b.__hv;
   let kind = null, amount = 0;
-  if (b.isTreeTrunk) {
+  if (b.isForestTimber) {
+    kind = "WOOD";
+    const scale = b.forestTimberScale || 1;
+    amount = Math.max(b.forestSpecies === 'STUMP' ? 2 : 3,
+      Math.round((b.forestSpecies === 'STUMP' ? 2 : 4) * scale * scale));
+  } else if (b.isTreeTrunk) {
     kind = "WOOD";
     amount = Math.round(3 + (b.girth || 1) * 9);
   } else if (b.isRock) {
@@ -11245,16 +11271,20 @@ function treeDecorMatchesTrunk(d, b) {
   if (d.forestTrunkKey && b.chunkKey) return d.forestTrunkKey === b.chunkKey;
   return Math.abs(d.x - b.x) < 6 && Math.abs(d.y - b.y) < 6;
 }
+function forestHarvestDecorMatches(d, b) {
+  return !!(d && b && b.isForestTimber && d.forestSolidKey && d.forestSolidKey === b.chunkKey) ||
+    treeDecorMatchesTrunk(d, b);
+}
 
 // Reconcile crowns while the generated trunks still carry their stable keys.
 // A saved removal must affect the visual tree as well as its collision solid.
 function removeDestroyedTreeDecor(biome, solid, decor) {
   const destroyed = getBiomeState(biome).destroyed;
-  const felled = solid.filter(b => b.isTreeTrunk && destroyed[b.chunkKey]);
+  const felled = solid.filter(b => (b.isTreeTrunk || b.isForestTimber) && destroyed[b.chunkKey]);
   if (!felled.length) return;
   for (let i = decor.length - 1; i >= 0; i--) {
     const d = decor[i];
-    if (felled.some(b => treeDecorMatchesTrunk(d, b))) decor.splice(i, 1);
+    if (felled.some(b => forestHarvestDecorMatches(d, b))) decor.splice(i, 1);
   }
 }
 
@@ -11267,16 +11297,22 @@ function removeResidentHarvestable(b) {
       const s = ch.solid[i];
       if (s === b || (b.chunkKey && s.chunkKey === b.chunkKey)) ch.solid.splice(i, 1);
     }
-    if (!b.isTreeTrunk) continue;
+    if (!b.isTreeTrunk && !b.isForestTimber) continue;
     for (let i = ch.decor.length - 1; i >= 0; i--) {
-      if (treeDecorMatchesTrunk(ch.decor[i], b)) ch.decor.splice(i, 1);
+      if (forestHarvestDecorMatches(ch.decor[i], b)) ch.decor.splice(i, 1);
     }
   }
+  // A melee strike occurs after drawDecor queued the standing bodies. Remove
+  // that same-frame reference too rather than showing a final ghost log.
+  for (let i = _standDecor.length - 1; i >= 0; i--)
+    if (forestHarvestDecorMatches(_standDecor[i], b)) _standDecor.splice(i, 1);
 }
 
 // One entry point, so a pick, a rifle round and a rocket all take the same path
 // into a harvestable and the drop can only happen once.
 function damageHarvestable(b, amount) {
+  if (b && b.isForestTimber && b.chunkKey && BIOME_ACTIVE &&
+      getBiomeState(currentBiome).destroyed[b.chunkKey]) return false;
   const hv = harvestProfile(b);
   if (!hv || hv.hp <= 0 || amount <= 0) return false;
   hv.hp -= amount;
@@ -13309,6 +13345,11 @@ function triggerExplosion(ex, ey, rad, isMolotov = false, sourceIsPlayer = true,
   // --- 1. DESTRUCTIBLE BUILDINGS & CARS ---
   for (let i = buildings.length - 1; i >= 0; i--) {
       let b = buildings[i];
+      if (b.isForestTimber && sourceIsPlayer && !isMolotov &&
+          forestTimberPointBlocked(b,ex,ey,rad)) {
+          damageHarvestable(b,300);
+          continue;
+      }
       if (b.isCar && dist(ex, ey, b.x, b.y) < rad) {
           explodingCars.push({x: b.x, y: b.y}); buildings.splice(i, 1);
       }
@@ -13662,7 +13703,7 @@ function hasLOS(x1, y1, x2, y2) {
       const hw = b.w / 2, hh = b.h / 2;
       if (!(b.x + hw > minX && b.x - hw < maxX && b.y + hh > minY && b.y - hh < maxY)) continue;
 
-      if (b.isCropField || b.isMarket || b.isFence) continue;
+      if (b.isCropField || b.isMarket || b.isFence || b.isForestTimber) continue;
       if (lvl4 && b.isPalm) continue;
       if (lvl6 && (b.isAlienPlant || b.isEnergyPole)) continue;
       if (lvl12 && (b.isGrassLot || b.isCar)) continue;
@@ -18119,7 +18160,8 @@ function corpsePieceContact(c,x,y,r) {
         if(hit&&(!best||hit.depth<best.depth))best=hit;
       }
     }else{
-      hit=corpsePieceRectContact(x,y,r,b);
+      hit=b.isForestTimber ? corpsePieceRectContact(x,y,r,b,b.x,b.y,
+        b.forestTimberWidth,b.forestTimberDepth,b.forestTimberAngle) : corpsePieceRectContact(x,y,r,b);
       if(hit&&(!best||hit.depth<best.depth))best=hit;
     }
   }
@@ -23792,6 +23834,10 @@ this.skeletonTimer = 0;
         const extra = b.isUBarrier ? 15 : 0;
         if (!(nx + r > b.x - hw - extra && nx - r < b.x + hw + extra &&
               ny + r > b.y - hh - extra && ny - r < b.y + hh + extra)) continue;
+        if (b.isForestTimber) {
+            if (forestTimberPointBlocked(b, nx, ny, r)) return true;
+            continue;
+        }
         if (b.isCropField || b.isMarket) continue;
         if (lvl4 && b.isPalm) continue;
         if (lvl6 && (b.isAlienPlant || b.isEnergyPole)) continue;
@@ -28345,6 +28391,11 @@ function coverBulletBlock(b) {
         Math.min(b.prevX,b.x),Math.min(b.prevY,b.y),Math.max(b.prevX,b.x),Math.max(b.prevY,b.y),_coverShotCandidates,false);
     for(let i=0;i<solids.length;i++) {
         const solid=solids[i],kind=coverSolidKind(solid);
+        if(solid.isForestTimber) {
+            const t=forestTimberSegmentTime(solid,b.prevX,b.prevY,b.x,b.y);
+            if(t<hit.t){hit.t=t;hit.solid=solid;hit.car=false;}
+            continue;
+        }
         if(!kind||kind==='LOW'&&!low)continue;
         const rects=coverSolidRects(solid);
         for(let j=0;j<rects.length;j++) {
@@ -28547,7 +28598,8 @@ function forestShotCover(b,targets,nearbyBarrels,targetBuckets=null) {
         for(const solid of near) {
             if(solid.isRiver||solid.isDeck||((currentLevel===1||currentLevel===2)&&solid.isGrassLot))continue;
             if(coverSolidKind(solid)==='LOW'&&!coverLowBlocks(b.tH,b.shooter,null,b.coverLaunchLow))continue;
-            const t=forestShotRectTime(b,solid.x-solid.w*.5,solid.y-solid.h*.5,solid.x+solid.w*.5,solid.y+solid.h*.5);
+            const t=solid.isForestTimber ? forestTimberSegmentTime(solid,b.prevX,b.prevY,b.x,b.y) :
+                forestShotRectTime(b,solid.x-solid.w*.5,solid.y-solid.h*.5,solid.x+solid.w*.5,solid.y+solid.h*.5);
             if(t===Infinity)continue;
             if(solid.isGovFortress&&inOpenGateway(solid,b.prevX+(b.x-b.prevX)*t))continue;
             consider(t,'SOLID');
@@ -28961,7 +29013,8 @@ function updateBullets() {
                 // Cheap pre-check for buildings before bounding box check
                 if (Math.abs(b.x - bldg.x) > bldg.w || Math.abs(b.y - bldg.y) > bldg.h) continue;
 
-                if (b.x > bldg.x - bldg.w / 2 && b.x < bldg.x + bldg.w / 2 && b.y > bldg.y - bldg.h / 2 && b.y < bldg.y + bldg.h / 2) { 
+                if (bldg.isForestTimber ? forestTimberPointBlocked(bldg,b.x,b.y) :
+                    b.x > bldg.x - bldg.w / 2 && b.x < bldg.x + bldg.w / 2 && b.y > bldg.y - bldg.h / 2 && b.y < bldg.y + bldg.h / 2) {
                     b.l = 0; b.active = false; hitSomething = true;
                     // Gunfire will bring a tree down eventually, but slowly --
                     // a third of the round's damage. The point is that the pick
@@ -29250,7 +29303,8 @@ class Citizen {
             if (currentLevel === 6 && (b.isAlienPlant || b.isEnergyPole)) continue;
             if (b.isGovFortress && inOpenGateway(b, x)) continue;
             if (x + r > b.x - b.w / 2 && x - r < b.x + b.w / 2 &&
-                y + r > b.y - b.h / 2 && y - r < b.y + b.h / 2) return true;
+                y + r > b.y - b.h / 2 && y - r < b.y + b.h / 2 &&
+                (!b.isForestTimber || forestTimberPointBlocked(b,x,y,r))) return true;
         }
         for (const c of activeParkingCars) {
             if (x + r > c.x - 25 && x - r < c.x + 25 && y + r > c.y - 45 && y - r < c.y + 45) return true;
@@ -34398,7 +34452,8 @@ function clearBuildLot(x, y, w, h) {
         if (!buildClearable(o)) continue;
         if (Math.abs(x - o.x) > (w + (o.w || 0)) / 2 || Math.abs(y - o.y) > (h + (o.h || 0)) / 2) continue;
         const hv = harvestProfile(o);
-        if (hv) {
+        if (hv && hv.hp > 0 && !(o.isForestTimber && o.chunkKey && BIOME_ACTIVE &&
+            getBiomeState(currentBiome).destroyed[o.chunkKey])) {
             won[hv.kind] = (won[hv.kind] || 0) + hv.yield;
             addResource(hv.kind, hv.yield);
             hv.hp = 0;
@@ -35874,8 +35929,8 @@ const FOREST_PROPS = {
   CHARRED_SNAG: { canopyMass: [30, 40, 34], trunkWidth: 10, outline: 1.6, tier: "canopy", collision: [34, 34] },
   BUSH: { width: 64, depth: 54, rise: 9, outline: 1.2, tier: "midstory", collision: null },
   FERN: { width: 58, depth: 58, rise: 9, outline: 0.9, tier: "underbrush", collision: null },
-  LOG: { width: 64, depth: 32, rise: 12, outline: 1.5, tier: "underbrush", collision: null },
-  STUMP: { width: 36, depth: 34, rise: 7, outline: 1.5, tier: "underbrush", collision: null },
+  LOG: { width: 64, depth: 32, rise: 12, outline: 1.5, tier: "underbrush", collision: [50, 15] },
+  STUMP: { width: 36, depth: 34, rise: 7, outline: 1.5, tier: "underbrush", collision: [28, 22] },
   MUSHROOM: { width: 28, depth: 28, rise: 9, outline: 0.9, tier: "underbrush", collision: null },
   PEBBLE: { width: 32, depth: 32, rise: 7, outline: 1.0, tier: "underbrush", collision: null },
   REED: { width: 48, depth: 48, rise: 18, outline: 1.0, tier: "underbrush", collision: null },
@@ -39878,6 +39933,37 @@ function appendWoodlandForest(biome, cx, cy, solid, decor, decorBake, nearAnchor
   }
 }
 
+// Create collision companions only after all original placement and filtering.
+// Their namespaced identities derive from stable roots/variants, never the
+// solids' numeric index or a new RNG draw. The existing live decor paints them.
+function appendForestTimberSolids(biome, cx, cy, content) {
+  if (biome !== 2 || layoutFor(biome, cx, cy) !== 'WOODLAND') return;
+  const destroyed = getBiomeState(biome).destroyed, ox = cx * CHUNK_W, oy = cy * CHUNK_W;
+  const seen = new Set();
+  for (let i = content.decor.length - 1; i >= 0; i--) {
+    const d = content.decor[i];
+    if (!d.forestLiveProp || (d.forestSpecies !== 'LOG' && d.forestSpecies !== 'STUMP')) continue;
+    const token = Math.round((d.x - ox) * 100).toString(36) + ':' +
+      Math.round((d.y - oy) * 100).toString(36) + ':' + Math.round((d.c || 0) * 65535).toString(36);
+    const key = cx + ',' + cy + ',forest:timber:' + d.forestSpecies + ':' + token;
+    d.forestSolidKey = key;
+    if (destroyed[key]) { content.decor.splice(i, 1); continue; }
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const scale = d.s || 1, angle = d.r || 0, ca = Math.cos(angle), sa = Math.sin(angle);
+    const footprint = FOREST_PROPS[d.forestSpecies].collision;
+    const width = footprint[0] * scale, depth = footprint[1] * scale;
+    content.solid.push({ x: d.x, y: d.y,
+      w: Math.abs(ca) * width + Math.abs(sa) * depth,
+      h: Math.abs(sa) * width + Math.abs(ca) * depth,
+      isForestTimber: true, isBiomeProp: true, propType: 'FOREST_TIMBER', noCover: true,
+      forestSpecies: d.forestSpecies, forestRegion: d.forestRegion, forestHabitat: d.forestHabitat,
+      forestTimberScale: scale, forestTimberAngle: angle,
+      forestTimberWidth: width, forestTimberDepth: depth, forestTimberCos: ca, forestTimberSin: sa,
+      chunkKey: key });
+  }
+}
+
 function generateChunkContent(biome, cx, cy, forestBaseOnly = false) {
   // Inside the authored core the hand-placed map IS the world. The chunk still
   // bakes its terrain there — that is what makes the streets and textures run
@@ -41651,6 +41737,7 @@ function generateChunkContent(biome, cx, cy, forestBaseOnly = false) {
   filterFrontierBountyContent(biome, content);
   filterFrontierSettlementContent(biome,cx,cy,content);
   filterShovelGrassContent(biome,content);
+  if (!forestBaseOnly) appendForestTimberSolids(biome, cx, cy, content);
   return content;
 }
 
@@ -49201,6 +49288,105 @@ function paintForestTimber(g, d, path, live, phase, sd, sl) {
   g.pop();
 }
 
+// Brushing foliage is a trigger, never a movement collider. Only the player's
+// short swept footprint visits nearby chunk decor; an active spring owns no
+// saved prop fields and releases its record when it settles or its chunk goes.
+const FOREST_BRUSH_MAX_ACTIVE = 32;
+let _forestBrushStates = new WeakMap();
+const _forestBrushActive = [];
+const _forestBrushStats = { chunks: 0, candidates: 0, contacts: 0, active: 0 };
+let _forestBrushManager = null, _forestBrushPlayer = null;
+let _forestBrushX = 0, _forestBrushY = 0, _forestBrushFrame = -1;
+function resetForestBrushInteractions() {
+  _forestBrushStates = new WeakMap(); _forestBrushActive.length = 0;
+  _forestBrushManager = _forestBrushPlayer = null; _forestBrushFrame = -1;
+  _forestBrushStats.chunks = _forestBrushStats.candidates = _forestBrushStats.contacts = _forestBrushStats.active = 0;
+}
+function forestBrushState(d) { return _forestBrushStates.get(d) || null; }
+function updateForestBrushInteractions(dtMs) {
+  _forestBrushStats.chunks = _forestBrushStats.candidates = _forestBrushStats.contacts = 0;
+  if (!BIOME_ACTIVE || currentBiome !== 2 || !chunkMgr || !player || !(player.hp > 0) || player.dead) {
+    if (_forestBrushManager || _forestBrushActive.length) resetForestBrushInteractions();
+    return;
+  }
+  if (_forestBrushManager !== chunkMgr || _forestBrushPlayer !== player) {
+    resetForestBrushInteractions();
+    _forestBrushManager = chunkMgr; _forestBrushPlayer = player;
+    _forestBrushX = player.x; _forestBrushY = player.y;
+  }
+  if (!doTick || isPaused) { _forestBrushX = player.x; _forestBrushY = player.y; return; }
+  if (_forestBrushFrame === frameCount) return;
+  _forestBrushFrame = frameCount;
+  const x0 = _forestBrushX, y0 = _forestBrushY, x1 = player.x, y1 = player.y;
+  const dx = x1 - x0, dy = y1 - y0, distance = Math.hypot(dx, dy);
+  _forestBrushX = x1; _forestBrushY = y1;
+  if (!Number.isFinite(distance) || distance > 180) {
+    // Loading, respawning and travel must not sweep a trail of remote bushes.
+    _forestBrushStates = new WeakMap(); _forestBrushActive.length = 0;
+    _forestBrushStats.active = 0; return;
+  }
+  if (distance > .025) {
+    const prone = actorStancePose(player).prone || 0, facing = stanceFacingAngle(player);
+    const fx = Math.cos(facing) * 25 * prone, fy = Math.sin(facing) * 25 * prone;
+    const bodyR = ['ARMORED','ALIEN_GATOR','SNAIL_HYBRID'].includes(player.eType) ? 28 : 15;
+    const pad = 112, length2 = dx * dx + dy * dy;
+    const cx0 = Math.floor((Math.min(x0,x1)-pad)/CHUNK_W), cx1 = Math.floor((Math.max(x0,x1)+pad)/CHUNK_W);
+    const cy0 = Math.floor((Math.min(y0,y1)-pad)/CHUNK_W), cy1 = Math.floor((Math.max(y0,y1)+pad)/CHUNK_W);
+    for (let cx=cx0;cx<=cx1;cx++) for (let cy=cy0;cy<=cy1;cy++) {
+      _forestBrushStats.chunks++;
+      const key = ChunkManager.keyOf(cx,cy), ch = chunkMgr.chunks.get(key);
+      if (!ch) continue;
+      for (const d of ch.decor) {
+        _forestBrushStats.candidates++;
+        if (d.forestSpecies !== 'BUSH') continue;
+        const radius = forestPropRadius(d) * .84 + bodyR;
+        let best = Infinity, pushX = 0, pushY = 0;
+        for (let end=prone>0?-1:0;end<=(prone>0?1:0);end++) {
+          const sx=x0+fx*end,sy=y0+fy*end;
+          const q=Math.max(0,Math.min(1,((d.x-sx)*dx+(d.y-sy)*dy)/length2));
+          const nx=d.x-(sx+dx*q),ny=d.y-(sy+dy*q),squared=nx*nx+ny*ny;
+          if(squared<best){best=squared;pushX=nx;pushY=ny;}
+        }
+        if(best>=radius*radius)continue;
+        _forestBrushStats.contacts++;
+        let state=_forestBrushStates.get(d);
+        if(!state){
+          if(_forestBrushActive.length>=FOREST_BRUSH_MAX_ACTIVE)continue;
+          state={d,owner:ch,key,x:0,y:0,vx:0,vy:0};
+          _forestBrushStates.set(d,state);_forestBrushActive.push(state);
+        }
+        const near=Math.sqrt(best),away=near>.05?1/near:0;
+        let nx=dx/distance*.70+pushX*away*.60,ny=dy/distance*.70+pushY*away*.60;
+        const inv=1/(Math.hypot(nx,ny)||1);nx*=inv;ny*=inv;
+        const contact=.30+.70*Math.sqrt(Math.max(0,1-near/radius));
+        const impulse=Math.min(distance,12)*8*contact;
+        state.vx+=nx*impulse;state.vy+=ny*impulse;
+        const speed=Math.hypot(state.vx,state.vy),limit=90*(d.s||1);
+        if(speed>limit){state.vx*=limit/speed;state.vy*=limit/speed;}
+      }
+    }
+  }
+  const elapsed=Math.max(0,Math.min(50,Number(dtMs===undefined?deltaTime:dtMs)||0))/1000;
+  const steps=Math.max(1,Math.ceil(elapsed/.016)),step=elapsed/steps;
+  for(let i=_forestBrushActive.length-1;i>=0;i--){
+    const state=_forestBrushActive[i],d=state.d;
+    if(chunkMgr.chunks.get(state.key)!==state.owner || state.owner.decor.indexOf(d)<0){
+      _forestBrushStates.delete(d);_forestBrushActive.splice(i,1);continue;
+    }
+    for(let j=0;j<steps;j++){
+      state.vx+=(-155*state.x-16*state.vx)*step;
+      state.vy+=(-155*state.y-16*state.vy)*step;
+      state.x+=state.vx*step;state.y+=state.vy*step;
+    }
+    const amount=Math.hypot(state.x,state.y),limit=9*(d.s||1);
+    if(amount>limit){state.x*=limit/amount;state.y*=limit/amount;}
+    if(state.x*state.x+state.y*state.y<.0009&&state.vx*state.vx+state.vy*state.vy<.04){
+      _forestBrushStates.delete(d);_forestBrushActive.splice(i,1);
+    }
+  }
+  _forestBrushStats.active=_forestBrushActive.length;
+}
+
 // A shrub is a low leafy mound, not a flat cap swept into a long prism.
 // Its rim stays close to the soil while the higher, asymmetrical leaf ridges
 // carry the camera projection. Each joined plane has one opaque cel value.
@@ -49210,6 +49396,10 @@ function paintForestShrub(g, d, path, fp, habitatKey, live, phase, sd, sl) {
   if (phase === 'shadow') return;
   g.rotate(rot);
   const cr = Math.cos(rot), sr = Math.sin(rot);
+  const motion = live ? forestBrushState(d) : null;
+  const bendX = motion ? motion.x*cr+motion.y*sr : 0;
+  const bendY = motion ? -motion.x*sr+motion.y*cr : 0;
+  const twist = Math.max(-.065,Math.min(.065,bendY*.006/s));
   const ldx = LIGHT_DX * cr + LIGHT_DY * sr, ldy = -LIGHT_DX * sr + LIGHT_DY * cr;
   const wet = d.forestRegion === 'MARSH', burnt = d.forestRegion === 'BURN';
   const vivid = habitatKey === 'VIBRANT' || habitatKey === 'MEADOW';
@@ -49221,6 +49411,7 @@ function paintForestShrub(g, d, path, fp, habitatKey, live, phase, sd, sl) {
     const rx = shape[2] * s, ry = shape[3] * s, rise = fp.rise * shape[4] * s;
     const rim = forestFloorLift(d, rise * .18, live, [0,0]);
     const peak = forestFloorLift(d, rise, live, [0,0]);
+    peak[0]+=bendX*shape[4]-cy*twist;peak[1]+=bendY*shape[4]+cx*twist;
     const ridgeX = cx + (l === 1 ? 2 : -2) * s + peak[0];
     const ridgeY = cy - 2 * s + peak[1];
     const points = 16, xs = [], ys = [];
@@ -49256,6 +49447,7 @@ function paintForestShrub(g, d, path, fp, habitatKey, live, phase, sd, sl) {
   }
   if (!burnt && seed > .58) {
     const berry = forestFloorLift(d,fp.rise*.74*s,live,[0,0]);
+    berry[0]+=bendX*.74-4*s*twist;berry[1]+=bendY*.74+11*s*twist;
     g.noStroke(); g.fill(215,151,70);
     g.ellipse(10*s+berry[0],2*s+berry[1],3*s,2.7*s);
     g.ellipse(14*s+berry[0],4*s+berry[1],2.5*s,2.2*s);
@@ -51043,7 +51235,7 @@ function drawBiomeProps(list, i0, i1) {
   const _lo = i0 === undefined ? 0 : i0;
   const _hi = i1 === undefined ? _arr.length : i1;
   for (let _i = _lo; _i < _hi; _i++) { const b = _arr[_i];
-    if (!b.isBiomeProp) continue;
+    if (!b.isBiomeProp || b.isForestTimber) continue;
     // activeBuildings is a 1500-unit ring, so most of it is off screen on any
     // given frame. Every other pass in the render order culls before it draws;
     // this one was letting the rasteriser clip instead, which on a fill-rate
@@ -54738,7 +54930,7 @@ function glRigPaintHeight() {
 
     // The trunk is a collision volume; the crown is a decor entry, and that is
     // what casts. Painted below, off the same list drawDecor() walks.
-    if (b.isTreeTrunk) continue;
+    if (b.isTreeTrunk || b.isForestTimber) continue;
     if (b.propType === "CIVICTERRACE" || b.propType === 'CITYPARKTERRACE') continue;
 
     // Water is below the ground, not above it, and it is the glossiest thing in
@@ -60312,7 +60504,8 @@ function wildlifeBodyBlocked(near, a, x, y, rx, ry) {
   for (let i = 0; i < near.length; i++) {
     const b = near[i];
     if (wildlifeSolidBlocks(b, a) && Math.abs(x - b.x) < (b.w || 0) / 2 + rx &&
-        Math.abs(y - b.y) < (b.h || 0) / 2 + ry) return true;
+        Math.abs(y - b.y) < (b.h || 0) / 2 + ry &&
+        (!b.isForestTimber || forestTimberPointBlocked(b,x,y,Math.max(rx,ry)))) return true;
   }
   return false;
 }

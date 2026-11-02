@@ -28,7 +28,10 @@ for (let cx = -8; cx <= 8; cx++) for (let cy = -8; cy <= 8; cy++) {
     assert(!P(`groundReserved(2,${cx},${cy},__copse.x,__copse.y,forestPropRadius(__copse)*2,forestPropRadius(__copse)*2,18)`),
       'grove crown obstructs a reserved road, river, pool or fortress approach');
     for (const other of ch.solid) {
-      if (other === root || other.isGrassLot && !other.isPond) continue;
+      // Timber was already dressed around these saved roots before it became
+      // salvageable. This assertion protects original copse placement gaps;
+      // fallen wood has its own precise footprint and reserved-route checks.
+      if (other === root || other.isForestTimber || other.isGrassLot && !other.isPond) continue;
       assert(Math.abs(root.x - other.x) >= (root.w + (other.w || 0)) / 2 + 28 ||
         Math.abs(root.y - other.y) >= (root.h + (other.h || 0)) / 2 + 28,
         'grove trunks or buildings close a player-sized gap');
@@ -46,7 +49,7 @@ for (const group of groves.values()) for (const root of group) {
     const key = `${nx},${ny}`;
     if (!solidsByChunk.has(key)) solidsByChunk.set(key, P(`generateChunkContent(2,${nx},${ny})`).solid);
     for (const other of solidsByChunk.get(key)) {
-      if (other.isGrassLot && !other.isPond) continue;
+      if (other.isForestTimber || other.isGrassLot && !other.isPond) continue;
       assert(Math.abs(root.x - other.x) >= (root.w + (other.w || 0)) / 2 + 28 ||
         Math.abs(root.y - other.y) >= (root.h + (other.h || 0)) / 2 + 28,
         `copse ${root.chunkKey} intersects neighbouring solid ${other.chunkKey}`);

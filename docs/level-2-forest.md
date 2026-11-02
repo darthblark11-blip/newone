@@ -1,8 +1,8 @@
 # Level 2: Pacific Northwest forest overhaul
 
-Prop conversion, clustered habitats, wildlife and the first hunting activity
-are implemented in `game.js`. Fishing, crops, foliage displacement and additional
-atmospheric effects remain future work.
+Prop conversion, clustered habitats, bush brushing, salvageable timber,
+wildlife and the first hunting activity are implemented in `game.js`. Fishing,
+crops and additional atmospheric effects remain future work.
 The Undercity's authored story streets, curtain wall, fortresses and story beats
 remain the sector's core. This art pipeline applies to the **forest overworld**.
 
@@ -50,9 +50,9 @@ the lighting height field. Renderers do not change generation metadata.
 | `TREE`, `PINE` | Douglas fir, western redcedar, Sitka spruce, red alder and lodgepole pine; fixed asymmetric branch masses, connected canopy sides and rooted bark | Fixed root; established 34×34 trunks and harvest girth retained |
 | `SNAG` | Bent charred trunks with broken limbs and warm exposed timber | Root; existing tree lifecycle |
 | `BOULDER` | Fractured granite with strong side/top facets, lichen and moss | Existing solid AABB; no rotated collision mismatch |
-| `WEED` / bush | Overlapping low salal mounds with near-ground leaf rims and raised ridges; no long prismatic skirts | Live camera projection; roots depth-sort with feet; decorative, no collider |
+| `WEED` / bush | Overlapping low salal mounds with near-ground leaf rims and raised ridges; directional brushing and spring-back | Soft player-contact trigger; never blocks movement; roots depth-sort with feet |
 | `FERN`, `REED` | Arched paired leaflets and tapered wetland blades with projected seed heads | Bounded live selection; fixed roots, varying raised heights |
-| `LOG`, `STUMP` | Tapered cylinder bark, sawn end grain, attached moss, split cut rims and squat root flares | Bounded live selection; existing large deadfall/wood piles retain solids |
+| `LOG`, `STUMP` | Tapered cylinder bark, sawn end grain, attached moss, split cut rims and squat root flares | Oriented solid ground footprint; destructible for wood; bounded live selection |
 | `PEBBLE` | Joined low stone chips with shaded sides and a raised ridge | Bounded live selection; no new collider |
 | `MUSHROOM`, `GRASS`, `ASH`, `LITTER` | Tiny caps/blades, char debris and subdued fallen leaves/bark | Baked ground detail |
 
@@ -100,7 +100,8 @@ chips. Excess placements become quiet fallen-leaf or bark litter, retaining
 their source species for color selection. Selection runs after placement and
 never consumes RNG or changes root coordinates. These props paint floor
 contact shade followed by a root-sorted body; they do not enter the overhead
-canopy pass or add collision/AI work. Existing 3D tree and boulder painters
+canopy pass or add AI work. Logs and stumps have separate collision companions;
+other small plants remain nonblocking. Existing 3D tree and boulder painters
 remain unchanged.
 
 Shrubs have low rims and higher leaf ridges joined into domed foliage planes.
@@ -109,6 +110,34 @@ screen edges. Timber cap rings, moss and bark seams share the same projected
 surface as their parent piece. Fern spines arch through several heights while
 their leaflets remain attached. Stumps retain a short rise so the cut top does
 not read as another fallen log when the camera passes it.
+
+### Brushing and timber interaction
+
+`updateForestBrushInteractions()` runs after native player movement and before
+the depth pass. A swept player footprint triggers nearby bushes, including
+fast crossings and the prone body's longer reach. Raised leaf ridges bend away
+with a small twist, then return through a damped spring. Low rims, roots and
+contact shade stay fixed, and berries follow their leaf ridge. Idle contact
+does not continually shake the bush. A maximum of 32 active reactions and at
+most four nearby chunk lookups keep the work bounded. State lives outside
+generated decor in a weak map; pausing freezes it, and travel, death, teleport,
+chunk eviction and settling clear it. Resting artwork is unchanged.
+
+`appendForestTimberSolids()` adds companions for live logs/stumps after all
+historical placement and final filters. Each visible piece retains its root
+and receives a matching `forestSolidKey` / `forest:timber:` destruction key.
+The broad-phase AABB encloses an oriented physical footprint; movement and
+projectile checks use that footprint, so diagonal logs do not block the empty
+corners of their bounding boxes. Companions add no duplicate art, ground pad,
+shadow or canopy. They are low debris rather than a cover attachment.
+
+Timber uses `harvestProfile()` / `damageHarvestable()` and the existing tool,
+bullet and player-explosion damage paths. Wood yield scales with the piece's
+size. Destruction removes the resident, published and queued visual/collision
+records, drops wood bundles for the normal inventory pickup, and records the
+stable key. Reloading or regenerating a neighbor cannot restore the piece or
+pay its yield again. Clearing a construction lot banks the same yield once.
+Bushes have no salvage collider and remain pass-through throughout brushing.
 
 The woodland base uses a dedicated soil/moss material lattice. Small torn
 material beds and needle clusters live on an independent 420-unit world grid;
@@ -193,6 +222,12 @@ continuous habitat colors plus complete base-texture seams by
 clearances, budgets and reverse-order regeneration are checked by
 `tools/check-forest-copses.js`. Lifecycle checks include harvested and cleared
 grove roots across rebuild and reload.
+`tools/check-forest-brushing.js` covers swept triggers, spring settling, fixed
+contacts, pause/reset cleanup and work limits. The real phone-sized input,
+tool-swing, pickup and save/load route is exercised by
+`tools/check-forest-interaction-scene.js`.
+`tools/check-forest-timber-interaction.js` checks oriented collision, fast
+projectiles, wood rewards, construction clearing, blasts and persistence.
 
 No shader compilation or lighting-quality tier is added by Phases 1–2. The
 existing shadow and normal/material passes receive larger species-specific
@@ -234,8 +269,8 @@ camera positions, depth phases and renderer fallbacks on p5 1.9.0 and 1.11.11.
 4. **Wildlife and hunting — implemented:** 39 species, habitat-weighted encounters,
    grazing/alarm/flight/defensive states, off-screen herd spawning, specimen
    quality, finite bow ammunition, tablet inventory and the Cedar Hollow lesson.
-   Foliage displacement remains future work with a bounded nearby interaction
-   field; baked ground cover should not all become animated.
+   Bush brushing uses a bounded nearby interaction field; fine baked ground
+   cover stays static.
 5. **Phase 4 — next:** extend the existing clock and weather inputs with canopy
    light masks, restrained sunrise shafts, golden-hour warmth, purple twilight,
    moonlight silhouettes, low ground fog and pooled pollen/spores. Wetness should

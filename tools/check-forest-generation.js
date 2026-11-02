@@ -32,7 +32,7 @@ const species = new Set(), regions = new Set();
 let newTrees = 0, canopy = 0, midstory = 0, baked = 0, seamPairs = 0;
 for (let x = -8; x <= 8; x++) for (let y = -8; y <= 8; y++) {
   const ch = P(`generateChunkContent(2,${x},${y})`);
-  const added = ch.solid.filter(s => s.chunkKey.includes('forest:'));
+  const added = ch.solid.filter(s => s.isTreeTrunk && s.chunkKey.includes('forest:'));
   assert(added.filter(s => !s.forestGroveKey).length <= 10, 'original live forest stems exceeded the chunk cap');
   assert(added.filter(s => s.forestGroveKey).length <= 14, 'copse live stems exceeded the chunk cap');
   assert.equal(new Set(ch.solid.map(s => s.chunkKey)).size, ch.solid.length, 'destruction keys must be unique');

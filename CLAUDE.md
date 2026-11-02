@@ -561,6 +561,12 @@ solids. Standing crowns share profiles with the rig and use projected visibility
 bounds; bulk underbrush stays baked. Harvesting removes both the resident solid
 and its crown, including when a destroyed chunk is regenerated.
 
+Live forest bushes use swept player contact to bend without blocking movement.
+Keep their spring state outside generated decor and bound updates to nearby
+chunks. Selected logs/stumps have oriented collision companions and existing
+wood salvage, linked by `forestSolidKey`; those companions never paint a second
+body or shadow. See the forest interaction checks for native input and reload.
+
 Forest crown outlines and seeded bough headings stay fixed in world space.
 Only their raised layers translate through `massLean()`, as city roofs do.
 The canopy underside joins the top with filled side faces; keep its rise in
@@ -2301,6 +2307,10 @@ without recomputing. Three sources:
 - `isTreeTrunk` → **wood**, `3 + girth * 9`. `girth` is set by the woodland generator and
   is also the decor entry's scale, so **the tree you see is the tree you're paid for** —
   a fat oak is worth more than a snag because it is visibly bigger.
+- `isForestTimber` → **wood** from live forest logs/stumps, scaled by the piece's
+  size. Oriented collision companions share a stable `forest:timber:` key with
+  their visible decor via `forestSolidKey`; destroying the piece removes its
+  resident and queued body as well as its solid, exactly once.
 - `isRock` → **stone**, by area.
 - `propType` in `HARVEST_YIELD` → `LOGPILE` wood; `BOULDER`/`MONOLITH`/`RUINWALL`/`SPOIL`
   stone; `MATERIALS`/`BARGE`/`WRECK` metal. Densities differ per prop because they are not

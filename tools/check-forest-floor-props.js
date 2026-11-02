@@ -18,7 +18,11 @@ for (let cx=-8;cx<=8;cx++) for (let cy=-8;cy<=8;cy++) {
     raised++;
     species.set(d.forestSpecies,(species.get(d.forestSpecies)||0)+1);
     assert(standing.has(d.forestSpecies), 'a live marker escaped the selected prop families');
-    assert(!d.forestTrunkKey && !chunk.solid.some(s=>s===d), 'decorative floor art gained a collider or harvest key');
+    assert(!d.forestTrunkKey && !chunk.solid.some(s=>s===d), 'floor art must stay separate from solid records');
+    if (d.forestSpecies==='LOG'||d.forestSpecies==='STUMP')
+      assert(d.forestSolidKey && chunk.solid.filter(s=>s.isForestTimber&&s.chunkKey===d.forestSolidKey).length===1,
+        'salvageable timber must have exactly one matching ground collider');
+    else assert(!d.forestSolidKey, 'non-wood ground foliage unexpectedly gained a solid');
     ctx.__floorProp=d;
     assert(P('forestStandingFloorProp(__floorProp)&&!forestRaisedCrown(__floorProp)'),
       'a floor volume bypassed root sorting or became an overhead occluder');
