@@ -9,7 +9,7 @@ const stems = [], habitats = new Map();
 let comicTrees = 0, checkedRoots = 0;
 for (let cx = -8; cx <= 8; cx++) for (let cy = -8; cy <= 8; cy++) {
   const chunk = P(`generateChunkContent(2,${cx},${cy})`);
-  stems.push(chunk.solid.filter(d => d.isTreeTrunk).map(d => [d.chunkKey,d.x,d.y,d.w,d.h,d.girth]));
+  stems.push(chunk.solid.filter(d => d.isTreeTrunk && !d.forestGroveKey).map(d => [d.chunkKey,d.x,d.y,d.w,d.h,d.girth]));
   for (const d of [...chunk.decor,...chunk.decorBake,...chunk.solid]) {
     if (!d.forestSpecies) continue;
     const region = P(`forestHabitatAt(${d.x},${d.y})`);

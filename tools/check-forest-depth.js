@@ -6,6 +6,41 @@ const { probe } = require('./harness');
 let checks = 0;
 const ok = (value, message) => { checks++; assert(value, message); };
 const P = code => probe('(' + code + ')');
+
+// Enter through the real frame, including drawGround -> drawDecor. Setting
+// _depthOn in a dispatcher-only fixture misses a frame-order regression where
+// draw() opened the depth queue only after ground decor had already painted.
+probe(`
+  isStoryMode=false;startAtLevel(2);started=true;isPaused=true;
+  inStoryIntro=inStoryRoom=inDarchonCall=inTownCutscene=inFarmCutscene=
+    inFarmPostCutscene=inPostAmbushCutscene=inFortCutscene=inWorldBuildingMenu=
+    inOverworldView=inTravelMenu=false;
+  isDead=isWin=killcamMode=false;darchonCallCompleted=true;
+  leftStick={active:false,dx:0,dy:0,base:{x:80,y:640}};
+  rightStick={active:false,dx:0,dy:0,dist:0,base:{x:1120,y:690}};
+  __frameEvents=[];__frameFaults=[];
+  noteFrameFault=function(where,e){__frameFaults.push(where+': '+e.message);};
+  refreshPopulation=function(){};refreshCityPeople=function(){};
+  enemiesList=[];townCitizens=[];
+  const witness={id:'frameTree',t:'PINE',x:player.x+80,y:player.y,s:1,
+    forestSpecies:'DOUGLAS_FIR',forestRegion:'TIMBER'};
+  chunkMgr.chunks.get(Math.floor(player.x/CHUNK_W)+','+Math.floor(player.y/CHUNK_W)).decor.push(witness);
+  const actualDecor=ChunkManager.prototype.drawDecor;
+  ChunkManager.prototype.drawDecor=function(){
+    __frameEvents.push('decor:'+_depthOn);return actualDecor.call(this);
+  };
+  paintForestClutter=function(g,d,t,phase){
+    if(d===witness)__frameEvents.push('tree:'+(phase||'whole'));return true;
+  };
+  player.show=function(){__frameEvents.push('player');};
+  draw();draw();
+`);
+ok(P('__frameFaults.length===0'), 'real forest frames complete without a scene fault');
+ok(P(`JSON.stringify(__frameEvents)===JSON.stringify([
+  'decor:true','tree:shadow','tree:root','player','tree:crown',
+  'decor:true','tree:shadow','tree:root','player','tree:crown'])`),
+  'consecutive real frames queue trees before actors and paint the canopy above the player');
+
 probe(`
   BIOME_ACTIVE=true;currentBiome=currentLevel=2;
   viewLeft=viewTop=-1000;viewRight=viewBottom=1000;frameCount=12;
@@ -18,7 +53,8 @@ probe(`
   _standDecor=[
     {id:'northTree',t:'PINE',x:0,y:10,forestSpecies:'DOUGLAS_FIR'},
     {id:'southTree',t:'TREE',x:0,y:90,forestSpecies:'RED_ALDER'},
-    {id:'snag',t:'SNAG',x:0,y:70,forestSpecies:'CHARRED_SNAG'}
+    {id:'snag',t:'SNAG',x:0,y:70,forestSpecies:'CHARRED_SNAG'},
+    {id:'shrub',t:'WEED',x:0,y:30,forestSpecies:'BUSH'}
   ];
   _depthActors=[];_airborneActors=[];_depthOn=true;
   for(const point of [5,50,100]) actorShow({y:point,show(){__events.push('actor'+point);}});
@@ -38,6 +74,9 @@ ok(pos('actor5')<pos('northTree:root') && pos('northTree:root')<pos('actor50'), 
 ok(pos('actor50')<pos('southTree:root') && pos('southTree:root')<pos('actor100'), 'southern roots retain their depth beside feet');
 ok(pos('actor50')<pos('wall:building') && pos('wall:building')<pos('actor100'), 'building contact depth is preserved');
 ok(pos('snag:whole')>pos('wall:building') && pos('snag:whole')<pos('actor100'), 'bare snags retain ground depth without imaginary foliage');
+ok(pos('shrub:shadow')<pos('actor5') && pos('shrub:root')>pos('northTree:root') &&
+  pos('shrub:root')<pos('actor50') && !events.includes('shrub:crown') && !events.includes('shrub:whole'),
+  'raised shrubs cast floor shade then interleave with feet without becoming overhead crowns');
 ok(P('_depthActors.length===0&&_standDecor.length===0&&_forestCrowns.length===0&&_airborneActors.length===0&&!_depthOn'),
   'all reused queues close after the frame');
 

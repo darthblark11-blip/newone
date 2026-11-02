@@ -6,12 +6,12 @@ const P = s => probe('(' + s + ')');
 const digest = a => crypto.createHash('sha256').update(JSON.stringify(a)).digest('hex');
 probe('authoredCore=null; authoredMask=null; authoredChunks=null; biomeState={}; currentLevel=2; currentBiome=2; BIOME_ACTIVE=true;');
 
-// Recorded before the forest overhaul at 58222a7. Other levels retain the full
-// content; Sector 2 retains each old collider, girth, type and destruction key.
+// Captured from the pre-copse source. Other levels retain their full current
+// content; Sector 2 also retains its historical 58222a7 collider/girth/key hash.
 const BASELINE = {
-  1: '9fe043caf9a848ec68e44315e71c02f636abe939a55913ea59ce21548fdfe7fa',
+  1: 'a0bd4376152d0e330c150e7199f2ca10a43318c8d804182ebc1af881694e226b',
   2: 'df640dcecc2342f5062d58fd299316ed7c0624c23ec87d357e95b80e876f91f6',
-  3: 'a3b0b103987a53c5d10999df77f7302c001fa3705d1c756096c7d4e268ca1e7a',
+  3: '2e02437b56adcecd69fb3069783f299f3b0f4f6c15ce45a5e71187b085b88f76',
   4: 'ac5e7e92f4b43b6f2014545917a0693a8ca21a269bfee4a74e800f2e303ae1c2',
   5: '201bf8997f965daffac4fe86817c28bc8c865077bc837c58720e0fe4621b262b',
   6: '2cc14265cb9fcea4d0d594afe51f009ab3efe88e8c0774309f2d266f7831e653',
@@ -33,7 +33,8 @@ let newTrees = 0, canopy = 0, midstory = 0, baked = 0, seamPairs = 0;
 for (let x = -8; x <= 8; x++) for (let y = -8; y <= 8; y++) {
   const ch = P(`generateChunkContent(2,${x},${y})`);
   const added = ch.solid.filter(s => s.chunkKey.includes('forest:'));
-  assert(added.length <= 10, 'extra live forest stems exceeded the chunk cap');
+  assert(added.filter(s => !s.forestGroveKey).length <= 10, 'original live forest stems exceeded the chunk cap');
+  assert(added.filter(s => s.forestGroveKey).length <= 14, 'copse live stems exceeded the chunk cap');
   assert.equal(new Set(ch.solid.map(s => s.chunkKey)).size, ch.solid.length, 'destruction keys must be unique');
   newTrees += added.length;
   for (const d of ch.decor) {

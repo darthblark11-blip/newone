@@ -2,7 +2,7 @@
 // the world and when its own chunk is evicted and regenerated. Both original
 // numeric save identities and appended forest identities follow this contract.
 // GAME_JS may select a baseline source; FOREST_TREE_KINDS=legacy diagnoses it
-// without requiring the newer appended fixtures. The default requires both.
+// without requiring the newer appended fixtures. The default requires legacy, appended and copse fixtures.
 const { ctx, probe } = require('./harness.js');
 const P = (src) => probe('(' + src + ')');
 let checks = 0, fails = 0;
@@ -20,9 +20,9 @@ ctx.random = (a, b) => {
   return b === undefined ? n * a : a + n * (b - a);
 };
 
-const kinds = (process.env.FOREST_TREE_KINDS || 'legacy,appended').split(',');
-if (!kinds.length || kinds.some(k => k !== 'legacy' && k !== 'appended')) {
-  throw new Error('FOREST_TREE_KINDS must contain legacy and/or appended');
+const kinds = (process.env.FOREST_TREE_KINDS || 'legacy,appended,grove').split(',');
+if (!kinds.length || kinds.some(k => k !== 'legacy' && k !== 'appended' && k !== 'grove')) {
+  throw new Error('FOREST_TREE_KINDS must contain legacy, appended and/or grove');
 }
 
 function stage(kind) {
@@ -44,8 +44,9 @@ function stage(kind) {
       const all=activeBuildings;
       for(const ch of chunkMgr.chunks.values()) {
         for(const b of ch.solid) {
-          const appended = b.chunkKey && b.chunkKey.includes(',forest:tree:');
-          if(!b.isTreeTrunk || (window.__fixtureKind==='appended' ? !appended : appended) ||
+          const kind = b.chunkKey && b.chunkKey.includes(',forest:grove:') ? 'grove' :
+            b.chunkKey && b.chunkKey.includes(',forest:tree:') ? 'appended' : 'legacy';
+          if(!b.isTreeTrunk || window.__fixtureKind!==kind ||
             !ch.decor.some(d => ['TREE','PINE','SNAG'].includes(d.t) &&
               (d.forestTrunkKey ? d.forestTrunkKey===b.chunkKey :
                 Math.abs(d.x-b.x)<6 && Math.abs(d.y-b.y)<6))) continue;
@@ -58,7 +59,7 @@ function stage(kind) {
       }
     })();
     if(!window.__tree) throw new Error('Required '+window.__fixtureKind+
-      ' generated tree fixture missing (expected appended namespace: ,forest:tree:)');
+      ' generated tree fixture missing');
     window.__worth=harvestProfile(window.__tree).yield;
     window.__work=harvestProfile(window.__tree).maxHp;
     window.__key=window.__tree.chunkKey;

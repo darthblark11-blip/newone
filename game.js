@@ -5031,12 +5031,14 @@ function drawAirborneActors() {
 // a mark on them.
 function massRunKind(b) {
   if (DECOR_STANDING[b.t]) return 2;
+  if (forestStandingShrub(b)) return 2;
   if (b.isFrontierEntrancePost) return 3;
   return b.isBiomeProp ? 1 : 0;
 }
 function forestRaisedCrown(d) {
   return !!d.forestSpecies && d.forestSpecies !== 'CHARRED_SNAG' && !!forestCanopyMass(d);
 }
+function forestStandingShrub(d) { return d.forestSpecies === 'BUSH'; }
 function drawMassRun(arr, i0, i1) {
   let s = i0;
   while (s < i1) {
@@ -5048,7 +5050,8 @@ function drawMassRun(arr, i0, i1) {
       if (forestRaisedCrown(d)) {
         paintForestClutter(window, d, frameCount, 'root');
         _forestCrowns.push(d);
-      } else paintClutter(window, d, frameCount);
+      } else if (forestStandingShrub(d)) paintForestClutter(window, d, frameCount, 'root');
+      else paintClutter(window, d, frameCount);
     }
     else if (kind === 3) for (let k = s; k < e; k++) drawFrontierTownEntrancePost(arr[k]);
     else if (kind === 1) drawBiomeProps(arr, s, e);
@@ -5089,7 +5092,8 @@ function drawDepthSorted() {
   // Cast shade belongs to the floor. Keep it below actors, then depth-sort
   // rooted bark with feet while the raised foliage waits for the upper pass.
   for (let i = 0; i < masses.length; i++) {
-    if (forestRaisedCrown(masses[i])) paintForestClutter(window, masses[i], frameCount, 'shadow');
+    if (forestRaisedCrown(masses[i]) || forestStandingShrub(masses[i]))
+      paintForestClutter(window, masses[i], frameCount, 'shadow');
   }
 
   const actors = _depthActors;
@@ -9112,7 +9116,12 @@ viewBottom = camY + height / zoom + shakePad;
   const _sceneDepth = frameStackDepth();
   _airborneActors.length = 0;
   _shovelBelowActors.length = 0;
-  _depthActors.length = 0; _depthOn = _legacyActorsQueued = false;
+  _depthActors.length = 0;
+  // drawGround() asks the chunk manager to queue standing decor. Open the
+  // depth pass before that call; waiting until actors are drawn paints every
+  // tree into the floor instead, bypassing the raised-canopy pass entirely.
+  _depthOn = depthSortActive(); _legacyActorsQueued = false;
+  _standDecor.length = 0;
   try {
 
   push(); scale(zoom); translate(-camX, -camY);
@@ -9225,7 +9234,6 @@ viewBottom = camY + height / zoom + shakePad;
    // Ground actors are queued here so the masses can interleave with them by
    // depth. Closed interiors keep the standing actors' original order, with
    // knocked-out bodies underneath them. Aircraft have their own upper pass.
-   _depthOn = depthSortActive();
    _legacyActorsQueued = !_depthOn;
    if (player.hp > 0) { if (!isWin && doTick) player.updatePlayer(); if(player.hp>0&&!player.dead)actorShow(player); } else if (!isWin && !isDead) { playerRespawnTimer--; if (playerRespawnTimer <= 0) { isDead = true; } }
   updateEntities();
@@ -35863,7 +35871,7 @@ const FOREST_PROPS = {
   RED_ALDER: { canopyMass: [28, 92, 76], trunkWidth: 10, outline: 1.7, tier: "canopy", collision: [34, 34] },
   LODGEPOLE_PINE: { canopyMass: [30, 62, 48], trunkWidth: 9, outline: 1.7, tier: "canopy", collision: [34, 34] },
   CHARRED_SNAG: { canopyMass: [30, 40, 34], trunkWidth: 10, outline: 1.6, tier: "canopy", collision: [34, 34] },
-  BUSH: { width: 64, depth: 54, rise: 12, outline: 1.5, tier: "midstory", collision: null },
+  BUSH: { width: 64, depth: 54, rise: 21, outline: 1.5, tier: "midstory", collision: null },
   FERN: { width: 58, depth: 58, rise: 9, outline: 0.9, tier: "underbrush", collision: null },
   LOG: { width: 64, depth: 32, rise: 12, outline: 1.5, tier: "underbrush", collision: null },
   STUMP: { width: 36, depth: 34, rise: 13, outline: 1.5, tier: "underbrush", collision: null },
@@ -39613,9 +39621,27 @@ function woodForestSpecies(region, roll, tier) {
   return roll < 0.46 ? "DOUGLAS_FIR" : roll < 0.82 ? "WESTERN_CEDAR" : "SITKA_SPRUCE";
 }
 
+// Compact copses grow on a world lattice rather than a scatter per chunk.
+// Their centres, root slots and namespaced keys are independent of the saved
+// woodland stream. Neighbouring chunks enumerate the same plan, then only own
+// roots within their bounds; reload order therefore cannot move a grove.
+const FOREST_GROVE_PITCH = 760;
+function woodlandGrovePlan(biome, gx, gy) {
+  const rng = makeRng(chunkHash(biome, gx, gy, 81439));
+  if (rng() > 0.88) return null;
+  const x = (gx + rngRange(rng, 0.28, 0.72)) * FOREST_GROVE_PITCH;
+  const y = (gy + rngRange(rng, 0.28, 0.72)) * FOREST_GROVE_PITCH;
+  const region = woodRegion(biome, x, y);
+  // Fire scars and rocky uplands stay open enough to read as distinct places.
+  if (rng() > (region === RG_BURN ? 0.38 : region === RG_HEATH ? 0.48 : 1)) return null;
+  return { x, y, radius: rngRange(rng, 108, 154), phase: rng() * TWO_PI,
+    slots: region === RG_TIMBER ? 9 : region === RG_MARSH ? 8 : 6,
+    key: gx + ":" + gy, seed: chunkHash(biome, gx, gy, 81441) };
+}
+
 // Dressing follows numeric key assignment and never consumes the template RNG
 // or changes a saved collider. New stems have independent namespaced identities.
-function appendWoodlandForest(biome, cx, cy, solid, decor, decorBake, nearAnchor) {
+function appendWoodlandForest(biome, cx, cy, solid, decor, decorBake, nearAnchor, forestBaseOnly = false) {
   if (biome !== 2 || layoutFor(biome, cx, cy) !== "WOODLAND") return;
   const ox = cx * CHUNK_W, oy = cy * CHUNK_W;
   const rng = makeRng(chunkHash(biome, cx, cy, 73091));
@@ -39710,6 +39736,10 @@ function appendWoodlandForest(biome, cx, cy, solid, decor, decorBake, nearAnchor
     added++;
   }
 
+  // A neighbour's base collision probe needs only the historical saved roots.
+  // It never enters copse generation, so seam clearance has no recursive fanout.
+  if (forestBaseOnly) return;
+
   // Bulk density is baked. World-space copse noise carries ground clusters
   // through seams; all foliage footprints leave the through routes readable.
   for (let i = 0; i < 100; i++) {
@@ -39733,13 +39763,109 @@ function appendWoodlandForest(biome, cx, cy, solid, decor, decorBake, nearAnchor
     decorBake.push(d);
   }
 
+  // New closed-canopy rooms: a ring of mature stems and younger companions
+  // surrounds a small walkable glade. Crowns may meet; trunk gaps and all
+  // carriageways remain clear. Existing saved trees above never move.
+  let copseStems = 0;
+  const pitch = FOREST_GROVE_PITCH, neighbourBases = new Map();
+  const neighbourClear = (x, y, width) => {
+    // A spur-head ruinwall is the widest woodland spill: 300 offset + 120
+    // half-width - 150 head inset = 270 units. 320 includes a mature trunk
+    // half-width and the same actor gap used below. Other camp/farm pieces
+    // spill less; checkpoints/forts already reserve their full approaches.
+    const guard = 320, columns = [cx], rows = [cy];
+    if (x - ox < guard) columns.push(cx - 1);
+    if (ox + CHUNK_W - x < guard) columns.push(cx + 1);
+    if (y - oy < guard) rows.push(cy - 1);
+    if (oy + CHUNK_W - y < guard) rows.push(cy + 1);
+    for (const nx of columns) for (const ny of rows) {
+      if (nx === cx && ny === cy) continue;
+      const key = nx + "," + ny;
+      if (!neighbourBases.has(key))
+        neighbourBases.set(key, generateChunkContent(biome, nx, ny, true).solid);
+      if (!solidsClearAt(neighbourBases.get(key), x, y, width, width, 28)) return false;
+    }
+    return true;
+  };
+  for (let gx = Math.floor((ox - 200) / pitch); gx <= Math.floor((ox + CHUNK_W + 200) / pitch); gx++) {
+    for (let gy = Math.floor((oy - 200) / pitch); gy <= Math.floor((oy + CHUNK_W + 200) / pitch); gy++) {
+      const grove = woodlandGrovePlan(biome, gx, gy);
+      if (!grove) continue;
+      const copseRng = makeRng(grove.seed), plannedRoots = [];
+      for (let slot = 0; slot < grove.slots; slot++) {
+        // Every slot consumes the same rolls before the owner/clearance tests.
+        const angle = grove.phase + slot * TWO_PI / grove.slots + rngRange(copseRng, -0.12, 0.12);
+        const ring = grove.radius * rngRange(copseRng, 0.86, 1.12);
+        const x = grove.x + Math.cos(angle) * ring;
+        const y = grove.y + Math.sin(angle) * ring * 0.86;
+        const reg = woodRegion(biome, x, y);
+        const tier = slot % 4 === 3 ? "midstory" : "canopy";
+        const species = woodForestSpecies(reg, copseRng(), tier);
+        const scale = rngRange(copseRng, tier === "canopy" ? 1.25 : 0.78, tier === "canopy" ? 1.85 : 1.08);
+        const d = { t: species === "CHARRED_SNAG" ? "SNAG" : species === "RED_ALDER" ? "TREE" : "PINE",
+          x, y, s: scale, r: copseRng() * TWO_PI, c: copseRng(), k: RG_CANOPY[reg] || 0,
+          forestSpecies: species, forestRegion: reg, forestTier: tier, forestGroveKey: grove.key,
+          forestTrunkKey: cx + "," + cy + ",forest:grove:" + grove.key + ":" + slot };
+        const width = tier === "canopy" ? 34 : 24;
+        // Geometry-only spacing also applies to slots owned by a neighbour.
+        if (!solidsClearAt(plannedRoots, x, y, width, width, 28)) continue;
+        plannedRoots.push({ x, y, w: width, h: width });
+        if (x < ox || x >= ox + CHUNK_W || y < oy || y >= oy + CHUNK_W || copseStems >= 14) continue;
+        const reach = radius(d);
+        if (nearAnchor(x, y, 560 + reach) || checkpointEdge(x, y, reach) ||
+            reserved(d, reach, 18) || hitsAuthored(x, y, reach * 2, reach * 2, 24)) continue;
+        // Compact crowns interlock while visible roots retain room for actors.
+        // Large props still reserve their full footprints through this test.
+        if (!solidsClearAt(solid, x, y, width, width, 28) || !neighbourClear(x, y, width)) continue;
+        solid.push({ x, y, w: width, h: width, isTreeTrunk: true, girth: scale,
+          forestSpecies: species, forestRegion: reg, forestTier: tier, forestGroveKey: grove.key,
+          chunkKey: d.forestTrunkKey });
+        decor.push(d);
+        copseStems++;
+      }
+      // Fallen timber and bright mushroom/fern pockets mark the copse's edge.
+      // Ground detail stays static and never becomes a movement obstruction.
+      for (let slot = 0; slot < 8; slot++) {
+        const angle = grove.phase + slot * TWO_PI / 8;
+        const ring = grove.radius * rngRange(copseRng, 0.56, 1.36);
+        const x = grove.x + Math.cos(angle) * ring, y = grove.y + Math.sin(angle) * ring;
+        const reg = woodRegion(biome, x, y), roll = copseRng();
+        const t = reg === RG_HEATH ? "PEBBLE" : reg === RG_BURN ? "STUMP" :
+          roll < 0.18 ? "LOG" : roll < 0.50 ? "MUSHROOM" : "FERN";
+        const d = { t, x, y, s: rngRange(copseRng, 0.9, 1.55), r: angle, c: copseRng(),
+          forestSpecies: t, forestRegion: reg, forestTier: "underbrush", forestGroveKey: grove.key };
+        const reach = radius(d);
+        if (!bakeFits(d, reach) || nearAnchor(x, y, 560 + reach) || checkpointEdge(x, y, reach) ||
+            reserved(d, reach, 8) || hitsAuthored(x, y, reach * 2, reach * 2, 8) ||
+            !solidsClearAt(solid, x, y, reach * 2, reach * 2, 3)) continue;
+        decorBake.push(d);
+      }
+    }
+  }
+
   // Apply visual habitats after every acceptance/radius test. This keeps both
   // historical and namespaced stems in precisely their saved positions.
   for (const list of [decor, decorBake, solid]) for (const d of list)
     if (d.forestSpecies) forestDressHabitat(d, biome);
+
+  // Raised shrubs belong in the standing depth pass. Keep their live budget
+  // bounded; the rest become low sword ferns instead of flattened bush stamps.
+  let shrubs = decor.filter(d => d.forestSpecies === "BUSH").length;
+  for (let i = decorBake.length - 1; i >= 0; i--) {
+    const d = decorBake[i];
+    if (d.forestSpecies !== "BUSH") continue;
+    if (shrubs < 12) {
+      d.forestLiveShrub = true;
+      decor.push(d);
+      decorBake.splice(i, 1);
+      shrubs++;
+    } else {
+      d.t = d.forestSpecies = "FERN";
+    }
+  }
 }
 
-function generateChunkContent(biome, cx, cy) {
+function generateChunkContent(biome, cx, cy, forestBaseOnly = false) {
   // Inside the authored core the hand-placed map IS the world. The chunk still
   // bakes its terrain there — that is what makes the streets and textures run
   // continuously under and past the authored buildings — but it contributes no
@@ -41441,12 +41567,14 @@ function generateChunkContent(biome, cx, cy) {
     cityLeisureJunction(cx,cy)&&bnoise(1,cx*4096+7717,cy*4096+3131,.31)>.62;
   for (let i = 0; i < solid.length; i++) solid[i].chunkKey = cx + "," + cy + "," + (downtownBlock ? "downtown:v1:" : leisureBlock ? "leisure:v1:" : downtownEdge ? "downtown-edge:v1:" : leisureEdge ? "leisure-edge:v1:" : districtBlock ? "district:v3:" : solid[i].isCivic ? "civic:" : "") + i;
 
-  appendWoodlandForest(biome, cx, cy, solid, decor, decorBake, nearAnchor);
-  removeDestroyedTreeDecor(biome, solid, decor);
-
-  // Strip anything the player already destroyed on a previous visit
-  for (let i = solid.length - 1; i >= 0; i--) {
-    if (state.destroyed[solid[i].chunkKey]) solid.splice(i, 1);
+  appendWoodlandForest(biome, cx, cy, solid, decor, decorBake, nearAnchor, forestBaseOnly);
+  if (!forestBaseOnly) {
+    removeDestroyedTreeDecor(biome, solid, decor);
+    // Base collision probes include felled historical roots as reservations:
+    // harvesting a neighbour cannot make a new copse appear on regeneration.
+    for (let i = solid.length - 1; i >= 0; i--) {
+      if (state.destroyed[solid[i].chunkKey]) solid.splice(i, 1);
+    }
   }
 
   // Nothing is BUILT on a road or in the water.
@@ -41544,21 +41672,23 @@ const WOOD_PAL = {
 // Forest ground is soil carrying living moss, rather than a lawn with a
 // different tint. These materials are resolved on the world-space lattice;
 // adjacent texture buffers therefore interpolate the same boundary colours.
+// Bright moss and golden litter separate the clearings from jade riverbeds;
+// teal shade keeps the floor below the existing canopy's cel value bands.
 const WOODLAND_FLOOR = {
-  TIMBER: { soil: [98, 103, 65], moss: [65, 122, 71], shade: [34, 64, 57],
-    litter: [147, 117, 65], stone: [111, 126, 117] },
-  MARSH: { soil: [70, 97, 70], moss: [66, 128, 84], shade: [31, 69, 62],
-    litter: [131, 145, 89], stone: [109, 136, 129] },
-  HEATH: { soil: [134, 139, 123], moss: [92, 124, 84], shade: [78, 99, 95],
-    litter: [152, 145, 103], stone: [143, 152, 147] },
+  TIMBER: { soil: [116, 120, 65], moss: [74, 145, 75], shade: [30, 80, 63],
+    litter: [172, 136, 68], stone: [125, 145, 128] },
+  MARSH: { soil: [76, 113, 78], moss: [65, 151, 102], shade: [29, 85, 76],
+    litter: [147, 167, 91], stone: [117, 154, 143] },
+  HEATH: { soil: [148, 153, 132], moss: [105, 143, 91], shade: [78, 109, 98],
+    litter: [177, 162, 106], stone: [156, 168, 155] },
   BURN: { soil: [107, 95, 73], moss: [80, 89, 68], shade: [50, 58, 54],
     litter: [155, 129, 94], stone: [117, 119, 104] },
-  VIBRANT: { soil: [127, 133, 69], moss: [92, 153, 73], shade: [49, 90, 58],
-    litter: [185, 167, 92], stone: [131, 149, 116] },
-  MEADOW: { soil: [143, 140, 83], moss: [115, 141, 68], shade: [69, 95, 55],
-    litter: [194, 177, 110], stone: [142, 143, 116] },
-  EDGE: { soil: [119, 119, 80], moss: [99, 132, 71], shade: [58, 84, 50],
-    litter: [166, 148, 83], stone: [126, 136, 111] }
+  VIBRANT: { soil: [146, 150, 70], moss: [116, 178, 69], shade: [44, 104, 62],
+    litter: [211, 188, 88], stone: [147, 165, 119] },
+  MEADOW: { soil: [166, 155, 82], moss: [137, 161, 70], shade: [77, 110, 57],
+    litter: [219, 193, 112], stone: [155, 155, 120] },
+  EDGE: { soil: [137, 134, 77], moss: [110, 151, 69], shade: [55, 98, 55],
+    litter: [188, 163, 82], stone: [140, 152, 114] }
 };
 function woodlandFloorColour(region, growth, roughness, exposure) {
   const p = WOODLAND_FLOOR[region] || WOODLAND_FLOOR.TIMBER;
@@ -41927,7 +42057,7 @@ function bakeChunkTerrainAt(biome, cx, cy, staticDecor) {
         // A quiet material surface under the silhouettes, with restrained
         // mineral grain. The vector pass adds coherent moss beds and litter;
         // no blurred oval wash is needed to invent ground variation.
-        const grain = (nC - 0.5) * 9;
+        const grain = (nC - 0.5) * 6;
         r = sample(latR, x, y) + grain;
         gg = sample(latG, x, y) + grain;
         b = sample(latBl, x, y) + grain * 0.7;
@@ -42343,7 +42473,7 @@ function woodlandGroundPatches(g, biome, cellX, cellY) {
   const col = moss ? p.moss : stone ? p.stone : p.litter;
   // One quiet material face avoids doubled outlines where beds overlap. The
   // needle/mineral grain below supplies texture without nested silhouettes.
-  woodlandFloorContour(g, x, y, w, h, phase, 1, col, moss ? 58 : stone ? 47 : 45);
+  woodlandFloorContour(g, x, y, w, h, phase, 1, col, moss ? 52 : stone ? 43 : 39);
 
   // Small needle clusters follow the bed instead of speckling the entire map.
   // Burnt sites get ash flecks and granite gets hairline mineral seams. No
@@ -42354,10 +42484,10 @@ function woodlandGroundPatches(g, biome, cellX, cellY) {
     const px = x + Math.cos(a) * w * radius, py = y + Math.sin(a) * h * radius;
     const bearing = phase * 0.24 + (rng() - 0.5) * 0.85;
     const len = stone ? 11 + rng() * 21 : 4 + rng() * 7;
-    g.stroke(p.shade[0], p.shade[1], p.shade[2], stone ? 45 : 48); g.strokeWeight(stone ? 1.8 : 1.5);
+    g.stroke(p.shade[0], p.shade[1], p.shade[2], stone ? 40 : 42); g.strokeWeight(stone ? 1.8 : 1.5);
     g.line(px, py, px + Math.cos(bearing) * len, py + Math.sin(bearing) * len);
     if (!stone) {
-      g.stroke(p.litter[0] + 12, p.litter[1] + 10, p.litter[2] + 6, moss ? 42 : 78);
+      g.stroke(p.litter[0] + 12, p.litter[1] + 10, p.litter[2] + 6, moss ? 38 : 64);
       g.line(px - 1.5, py - 1.5, px + Math.cos(bearing) * len - 1.5, py + Math.sin(bearing) * len - 1.5);
     }
   }
@@ -44677,6 +44807,7 @@ class ChunkManager {
         // behind its crown rather than standing on it. Outside a sorted level
         // there is nothing to hand it to, so it paints here as it always did.
         if (stand && DECOR_STANDING[d.t]) { _standDecor.push(d); continue; }
+        if (stand && forestStandingShrub(d)) { _standDecor.push(d); continue; }
         paintClutter(window, d, frameCount);
       }
     }
@@ -48981,42 +49112,73 @@ function paintForestClutter(g, d, t, phase) {
     g.pop(); return true;
   }
 
-  // Small forest-floor volumes are baked once into chunk albedo.
+  // Shrubs stand in the depth pass; the smaller floor pieces stay baked.
   switch (species) {
     case "BUSH": {
-      forestContactShadow(g, 38 * s, 22 * s, 3 * sl, 34, sd);
+      if (phase !== 'root') forestContactShadow(g, 40 * s, 27 * s, 4 * sl, 30, sd);
+      if (phase === 'shadow') break;
       g.rotate(rot);
-      const upx = Math.sin(rot) * fp.rise * MASS_TILT * s;
-      const upy = Math.cos(rot) * fp.rise * MASS_TILT * s;
-      // A salal clump has a continuous soft perimeter, not five outlined discs.
-      g.stroke(32, 55, 43); g.strokeWeight(1.5 * s); g.fill(36, 79, 53);
-      path.beginShape();
-      for (let i = 0; i < 24; i++) {
-        const a = i * TWO_PI / 24;
-        const r = 0.85 + 0.12 * Math.sin(a * 3 + seed * 6) + 0.045 * Math.sin(a * 5 - seed * 3);
-        path.vertex(Math.cos(a) * 25 * s * r, Math.sin(a) * 16 * s * r);
+      // Three joined angular leaf masses have anchored lower rims and lifted
+      // crowns. No foliage is stamped into the low-resolution floor texture.
+      // Local headings are seeded; only the raised faces follow the camera.
+      const cosR = Math.cos(rot), sinR = Math.sin(rot);
+      const vivid = habitatKey === 'VIBRANT' || habitatKey === 'MEADOW';
+      const base = burnt ? [123, 143, 66] : wet ? [61, 151, 101] :
+        alpine ? [91, 153, 111] : vivid ? [114, 178, 63] : [75, 156, 74];
+      const light = burnt ? [185, 182, 91] : wet ? [139, 200, 118] :
+        vivid ? [190, 220, 103] : [149, 202, 97];
+      const lobes = [[-11, 1, 16, 12, .63], [10, 4, 17, 13, .74], [0, -8, 18, 15, 1]];
+      for (let l = 0; l < lobes.length; l++) {
+        const shape = lobes[l], cx = shape[0] * s, cy = shape[1] * s;
+        const rise = fp.rise * shape[4] * s;
+        let lx = 0, ly = rise * MASS_TILT;
+        if (live) {
+          massLean(d.x, d.y, rise, _leanTmp); lx = _leanTmp[0]; ly = _leanTmp[1];
+        }
+        const ux = lx * cosR + ly * sinR, uy = -lx * sinR + ly * cosR;
+        const rx = shape[2] * s, ry = shape[3] * s;
+        g.noStroke();
+        // A fixed irregular eight-sided perimeter avoids scalloped discs.
+        for (let i = 0; i < 8; i++) {
+          const a = i * TWO_PI / 8, b = (i + 1) * TWO_PI / 8;
+          const ra = .91 + .08 * Math.sin(i * 2.3 + seed * 7 + l);
+          const rb = .91 + .08 * Math.sin((i + 1) % 8 * 2.3 + seed * 7 + l);
+          const ax = Math.cos(a) * rx * ra, ay = Math.sin(a) * ry * ra;
+          const bx = Math.cos(b) * rx * rb, by = Math.sin(b) * ry * rb;
+          const exposure = -(Math.cos((a + b) * .5) * ldx + Math.sin((a + b) * .5) * ldy);
+          const band = exposure < .28 ? .53 : exposure < .72 ? .70 : .86;
+          g.fill(base[0] * band, base[1] * band, base[2] * band);
+          g.quad(cx + ax * .8, cy + ay * .8, cx + bx * .8, cy + by * .8,
+            cx + bx + ux, cy + by + uy, cx + ax + ux, cy + ay + uy);
+        }
+        g.stroke(31, 66, 44); g.strokeWeight(fp.outline * s);
+        g.fill(base[0], base[1], base[2]);
+        path.beginShape();
+        for (let i = 0; i < 8; i++) {
+          const a = i * TWO_PI / 8, r = .91 + .08 * Math.sin(i * 2.3 + seed * 7 + l);
+          path.vertex(cx + Math.cos(a) * rx * r + ux, cy + Math.sin(a) * ry * r + uy);
+        }
+        path.endShape(CLOSE);
+        // Broad sun-facing planes give the leaf mass a readable cel ramp.
+        g.noStroke(); g.fill(light[0], light[1], light[2]);
+        const hx = cx + ux - ldx * rx * .22, hy = cy + uy - ldy * ry * .22;
+        g.quad(hx - rx * .52, hy - ry * .10, hx - rx * .13, hy - ry * .45,
+          hx + rx * .49, hy - ry * .16, hx + rx * .15, hy + ry * .19);
+        g.fill(base[0] * .83, base[1] * .89, base[2] * .85);
+        g.triangle(cx + ux + rx * .1, cy + uy + ry * .2,
+          cx + ux + rx * .62, cy + uy - ry * .03, cx + ux + rx * .48, cy + uy + ry * .55);
       }
-      path.endShape(CLOSE);
-      g.translate(upx, upy);
-      g.fill(wet ? 59 : 63, wet ? 120 : 110, wet ? 76 : 66);
-      path.beginShape();
-      for (let i = 0; i < 24; i++) {
-        const a = i * TWO_PI / 24;
-        const r = 0.85 + 0.12 * Math.sin(a * 3 + seed * 6) + 0.045 * Math.sin(a * 5 - seed * 3);
-        path.vertex(Math.cos(a) * 25 * s * r, Math.sin(a) * 16 * s * r);
-      }
-      path.endShape(CLOSE);
-      // Broad overlapping leaf sprays keep the lower crown visible as shade.
-      for (let i = 0; i < 6; i++) {
-        const px = (-10 + (i * 8 + seed * 7) % 20) * s;
-        const py = (-5 + (i * 6 + seed * 4) % 10) * s;
-        const a = -0.8 + i * 0.47 + seed * 0.7;
-        g.push(); g.translate(px, py); g.rotate(a); g.noStroke();
-        const lit = -(ldx * Math.cos(a) + ldy * Math.sin(a));
-        g.fill(91 + Math.max(0, lit) * 37, 143 + Math.max(0, lit) * 29, 82 + Math.max(0, lit) * 22);
-        g.ellipse(0, 0, 17 * s, 10 * s);
-        g.fill(153, 177, 106, 130); g.ellipse(-3.5 * s, -s, 8 * s, 2.5 * s);
-        g.pop();
+      if (!burnt && seed > .58) {
+        // A few warm salal berries read at gameplay scale without an icon glow.
+        const berryRise = fp.rise * .74 * s;
+        let bx = 0, by = berryRise * MASS_TILT;
+        if (live) {
+          massLean(d.x, d.y, berryRise, _leanTmp); bx = _leanTmp[0]; by = _leanTmp[1];
+        }
+        const berryX = bx * cosR + by * sinR, berryY = -bx * sinR + by * cosR;
+        g.noStroke(); g.fill(228, 162, 76);
+        g.ellipse(6 * s + berryX, 2 * s + berryY, 3.5 * s, 3 * s);
+        g.ellipse(10 * s + berryX, 4 * s + berryY, 3 * s, 2.5 * s);
       }
       break;
     }

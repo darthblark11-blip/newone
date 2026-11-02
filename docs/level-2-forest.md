@@ -50,7 +50,7 @@ the lighting height field. Renderers do not change generation metadata.
 | `TREE`, `PINE` | Douglas fir, western redcedar, Sitka spruce, red alder and lodgepole pine; fixed asymmetric branch masses, connected canopy sides and rooted bark | Fixed root; established 34×34 trunks and harvest girth retained |
 | `SNAG` | Bent charred trunks with broken limbs and warm exposed timber | Root; existing tree lifecycle |
 | `BOULDER` | Fractured granite with strong side/top facets, lichen and moss | Existing solid AABB; no rotated collision mismatch |
-| `WEED` / bush | Layered salal-like shrub clumps | Ground anchored; decorative, no army obstruction |
+| `WEED` / bush | Three raised, faceted salal leaf masses with bright cel bands | Live camera projection; roots depth-sort with feet; decorative, no collider |
 | `FERN`, `REED`, `GRASS` | Bowed sword-fern fronds, curved wetland stems and grouped grass blades | Ground anchored; static terrain bake |
 | `LOG`, `STUMP` | Bark sides, exposed end grain, moss crowns, root flares | Small decorative pieces baked; existing large deadfall/wood piles retain solids |
 | `MUSHROOM`, `PEBBLE`, `ASH` | Raised caps, faceted chips and graphic char debris | Baked ground detail |
@@ -80,6 +80,24 @@ namespaced keys, so adding underbrush cannot change a saved building or tree's
 identity. Existing worked clearings, settlements, pools, crossings and logging
 destinations stay functional within the four forest habitats.
 
+Compact copses now supplement that saved layout. `woodlandGrovePlan()` supplies
+shared world-space groups of mature trees and younger companions around small
+walkable glades. Crowns meet while roots retain room for characters. Each chunk
+owns only its roots, with `forest:grove:` destruction keys and a maximum of 14
+additional stems, separate from the original ten-stem enrichment budget. The
+same plans continue across chunk boundaries and regenerate in either order.
+Roots near a chunk edge also test the neighboring chunk's original geometry;
+these bounded base-only probes retain destroyed footprints as reservations, so
+harvesting a neighbor cannot make a new grove tree appear after reload.
+Fallen timber, ferns and mushroom pockets dress the copse margins. Fire scars
+and rocky ridges retain more open space.
+
+Bushes no longer flatten into the low-resolution floor texture. Up to twelve
+shrubs per chunk move into standing decor; remaining bush placements become
+low sword ferns. Shrub contact shade paints on the floor, followed by their
+root-sorted raised volume. They do not enter the overhead canopy pass or add
+collision/AI work. Existing 3D tree painters and palettes remain unchanged.
+
 The woodland base uses a dedicated soil/moss material lattice. Small torn
 material beds and needle clusters live on an independent 420-unit world grid;
 every overlapping texture paints the same features in world order. Riverbanks
@@ -87,8 +105,10 @@ and stones likewise use world-space samples. All ground work happens during
 baking, without changing saved solids or adding actor updates.
 Material beds use a single quiet colored face; repeated inset
 contours are omitted so overlapping patches stay natural in daytime.
+Living habitats use brighter emerald, jade and lime moss, with golden meadow
+and edge soil. Reduced grain and quieter litter keep the cel faces readable.
 Baked small props reserve their complete silhouette inside the owner texture,
-so enlarged shrubs and logs cannot be cut off at a chunk edge.
+so ferns and logs cannot be cut off at a chunk edge.
 
 Army roads, river volumes, crossings, fortresses, authored solids and travel
 aprons take precedence over vegetation. Newly placed crowns reserve their full
@@ -144,6 +164,15 @@ then darkens it normally.
 - Contact shadows start on the ground before the canopy is translated. The
   fallback sun pass fades them normally; the advanced rig owns canopy shadows
   when enabled. Never paint two sun shadows for one tree.
+
+The real frame opens its depth queue **before** `drawGround()` calls the chunk
+decor pass. Opening it only when actors begin would paint trees into the floor
+and let the player cover their crowns. `tools/check-forest-depth.js` exercises
+consecutive real frames as well as isolated depth dispatch. Shrub camera/phase
+geometry is covered by `tools/check-forest-shrubs.js`; copse clustering,
+clearances, budgets and reverse-order regeneration by
+`tools/check-forest-copses.js`. Lifecycle checks include harvested and cleared
+grove roots across rebuild and reload.
 
 No shader compilation or lighting-quality tier is added by Phases 1–2. The
 existing shadow and normal/material passes receive larger species-specific
