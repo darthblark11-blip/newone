@@ -54,7 +54,7 @@ async function run(options={}) {
     const distance=clearance+(kind==='seated'?20:55),e=new Character(nx*distance,ny*distance,false,'NM0_ROOKIE');
     e.aimAngle=e.moveAngle=angle;rememberFigureMotion(e,0,0);
     const c=new Corpse(e.x,e.y,angle,angle,color(57,135,172),color(49,59,74),kind==='seated'?0:18,0,[],WEAPONS.PISTOL,angle+PI,e.eType,e.bodyW,e.bodyH,e);corpses=[c];
-    if(kind==='seated'){for(let i=0;i<48;i++){frameCount++;c.update();}frameCount++;updateCorpses();}
+    if(kind==='seated'){c.wallSit.outcome='SEATED';for(let i=0;i<480&&!c.wallSit.done;i++){frameCount++;c.update();}frameCount++;updateCorpses();}
     else {
      const p=c.blast.parts.find(p=>p.type==='torso');p.x=p.y=p.z=0;p.vx=-nx*10;p.vy=-ny*10;p.vz=p.vr=0;
      for(let i=0;i<40&&!p.wallImpact;i++){frameCount++;c.update();}

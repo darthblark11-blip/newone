@@ -11,6 +11,15 @@ Its bent legs remain outside the solid, while the upper body uses the wall's
 existing height projection. Clothing, head injuries and wounds stay attached.
 A body moving away from the wall continues its ordinary directional fall.
 
+After sitting, the head bows forward, the arms drop loose, and the knees bend
+as the heels draw inward. Bodies either stay in that relaxed seated pose or
+lose balance and tip onto a hip. The side fall rotates articulated joints along
+the wall, keeping the back supported; the far limbs, torso, near limbs and
+profile of the head retain the actor's clothing and injuries throughout.
+The outcome and hip are chosen once without consuming the combat random stream.
+Corners and open doorways select the supported side or retain the seated pose.
+Both outcomes stop animating completely before entering the wall bank.
+
 Wall-supported bodies are clipped against their own building before drawing.
 On a visible face, its roof occludes the body; on a hidden face, the whole
 extruded silhouette does. Visible feet outside that silhouette remain visible,
@@ -30,6 +39,7 @@ under the supporting wall again. If the support is removed, the body falls flat.
 Verification:
 
 - `node tools/check-corpse-walls.js`
+- `node tools/check-corpse-wall-slump.js`
 - `node tools/check-wall-blood.js`
 - `node tools/check-corpse.js`
 - `node tools/check-fatal-wounds.js`

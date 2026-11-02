@@ -18285,6 +18285,8 @@ function corpsePiecesMoving(c) {
 // Supported bodies keep their height and wall layer after settling. Floor
 // stamping would put their shoulders underneath the wall extrusion again.
 const WALL_CORPSE_LIMIT = 128;
+const WALL_CORPSE_SEAT_FRAMES=24,WALL_CORPSE_RELAX_END=64,WALL_CORPSE_TIP_START=82,
+  WALL_CORPSE_TIP_END=138,WALL_CORPSE_SIDE_END=156,WALL_CORPSE_SEATED_END=94;
 const wallCorpseBanks = new Map();
 const wallCorpseOrder = [];
 function clearWallCorpses() { wallCorpseBanks.clear();wallCorpseOrder.length=0; }
@@ -18297,6 +18299,31 @@ function rememberWallCorpse(c) {
     if(bucket){const i=bucket.indexOf(old.c);if(i>=0)bucket.splice(i,1);if(!bucket.length)wallCorpseBanks.delete(old.key);}
     if(old.c.wallSit)old.c.wallSit.hidden=true;
   }
+}
+function wallCorpseSlumpPose(c) {
+  const s=c.wallSit,age=s.age||0;
+  const ease=(from,to)=>{const t=Math.max(0,Math.min(1,(age-from)/(to-from)));return t*t*(3-2*t);};
+  const side=s.side===-1?-1:1,toSide=s.outcome==='SIDE',tip=toSide?ease(WALL_CORPSE_TIP_START,WALL_CORPSE_TIP_END):0;
+  const phase=age<WALL_CORPSE_SEAT_FRAMES?'SEAT':age<WALL_CORPSE_RELAX_END?'RELAX':!toSide?'SLUMPED':
+    age<WALL_CORPSE_TIP_START?'BALANCE':age<WALL_CORPSE_TIP_END?'TIP':age<WALL_CORPSE_SIDE_END?'SETTLE':'HIP';
+  return {seat:ease(0,WALL_CORPSE_SEAT_FRAMES),relax:ease(WALL_CORPSE_SEAT_FRAMES,WALL_CORPSE_RELAX_END),
+    tip,roll:tip,settle:toSide?ease(WALL_CORPSE_TIP_END,WALL_CORPSE_SIDE_END):0,side,phase};
+}
+function chooseCorpseWallOutcome(c) {
+  const s=c.wallSit;
+  let seed=(Math.imul(Math.round(c.x*8),73856093)^Math.imul(Math.round(c.y*8),19349663)^
+    Math.imul(c.bornAt|0,83492791)^Math.round((c.bA||0)*1000))>>>0;
+  seed=Math.imul(seed^(seed>>>16),0x45d9f3b)>>>0;
+  s.side=seed&1?1:-1;s.outcome=seed%3===0?'SEATED':'SIDE';
+  if(s.outcome!=='SIDE')return;
+  // Keep a tipped back on actual masonry. At corners or breached doorways,
+  // choose the supported hip; a short ledge retains the relaxed seated end.
+  const reach=Math.max(32,c.bH*1.25),tx=-s.ny,ty=s.nx;
+  const supported=side=>{
+    const hit=corpsePieceContact(c,c.x+tx*reach*side-s.nx*9,c.y+ty*reach*side-s.ny*9,17);
+    return hit&&wallBloodKey(hit.b)===s.key&&hit.nx*s.nx+hit.ny*s.ny>.7;
+  };
+  if(!supported(s.side)){if(supported(-s.side))s.side=-s.side;else s.outcome='SEATED';}
 }
 function initCorpseWallSit(c,src,facing) {
   if(c.blast||c.sword||!c.rag||![0,1,6,7,8,9].includes(c.dT)||shovelRenderDepth(c)>0)return;
@@ -18313,6 +18340,7 @@ function initCorpseWallSit(c,src,facing) {
   c.wallSit={b:hit.b,key:wallBloodKey(hit.b),nx:hit.nx,ny:hit.ny,age,done:false};
   if(age)c.fP=Math.max(c.fP,Math.min(1,age*.15));
   c.x=hit.x-hit.nx*(radius-10);c.y=hit.y-hit.ny*(radius-10);c.backFacing=false;
+  chooseCorpseWallOutcome(c);
   if(p){p.impulse=0;p.hold=null;p.faceDown=false;}
   rememberWallCorpse(c);
 }
@@ -18320,7 +18348,8 @@ function stepCorpseWallSit(c) {
   const s=c.wallSit;if(!s||s.done)return;
   s.age++;c.fP=Math.min(1,s.age*.15);
   if(c.fall){c.fall.age=s.age;c.fall.impulse=0;}
-  if(s.age>=RAG_FRAMES){s.done=true;if(c.fall)c.fall.done=true;}
+  const end=s.outcome==='SIDE'?WALL_CORPSE_SIDE_END:WALL_CORPSE_SEATED_END;
+  if(s.age>=end){s.age=end;s.done=true;if(c.fall)c.fall.done=true;}
 }
 // Attachments paint with their support, then later masses keep the ordinary
 // depth order. Exclude the owning roof locally so a back-wall corpse cannot
@@ -18406,73 +18435,127 @@ function releaseUnsupportedWallCorpses() {
 }
 function seatedCorpsePoint(c,x,y,z,projection=corpseWallProjection(c.wallSit.b)) {
   const s=c.wallSit,lean=Math.hypot(projection.lx,projection.ly);
-  // Buildings exaggerate parallax to sell their height. A seated person keeps
-  // the same lean direction, with a bounded human-height projection so their
-  // spine and sleeves cannot stretch as the camera moves toward the view edge.
-  // Do not clamp each joint to a low wall's roof: that merged head/shoulders.
+  // Human joints use the wall's lean direction with bounded height parallax.
+  // A body rolling onto a hip must not stretch with the camera's distance.
   const height=projection.projected?z/projection.rise*Math.min(1,projection.rise*.72/Math.max(.001,lean)):0;
   return {x:c.x+s.nx*x-s.ny*y+projection.lx*height,y:c.y+s.ny*x+s.nx*y+projection.ly*height};
 }
 function seatedCorpseAnatomy(c) {
-  const s=c.wallSit,f=Math.min(1,s.age/24),scale=Math.min(1.5,Math.max(.8,c.bH/27));
-  const projection=corpseWallProjection(s.b);
+  const s=c.wallSit,p=wallCorpseSlumpPose(c),f=p.seat,relax=p.relax,tip=p.tip,side=p.side;
+  const scale=Math.min(1.5,Math.max(.8,c.bH/27)),projection=corpseWallProjection(s.b);
   const point=(x,y,z)=>seatedCorpsePoint(c,x*scale,y*scale,z*scale,projection);
-  const hip=point(1,0,3),projectedHead=point(-4+2*f,0,33-9*f);
-  const dx=projectedHead.x-hip.x,dy=projectedHead.y-hip.y,d=Math.hypot(dx,dy);
-  const ux=d>.01?dx/d:-s.nx,uy=d>.01?dy/d:-s.ny;
-  const reach=Math.max(7*scale,Math.min(22*scale,d));
-  const head={x:hip.x+ux*reach,y:hip.y+uy*reach};
-  const length=15*scale,width=c.bH*.70;
+  const theta=tip*1.38,co=Math.cos(theta),si=Math.sin(theta),pivotY=side*4.5,pivotZ=3;
+  const rotate=q=>({x:q.x,y:pivotY+(q.y-pivotY)*co+side*(q.z-pivotZ)*si,
+    z:Math.max(0,pivotZ-side*(q.y-pivotY)*si+(q.z-pivotZ)*co)});
+  const project=q=>point(q.x,q.y,q.z),mix=(a,b,t)=>a+(b-a)*t;
+  // The hips descend first. Tipping is a second articulated action around the
+  // lower hip, in the wall's vertical plane; the back never swings into it.
+  const local={hip:rotate({x:1,y:0,z:9-6*f}),
+    head:rotate({x:-4+2*f+2*relax,y:0,z:33-9*f-3.5*relax}),
+    chest:rotate({x:-.4+.8*relax,y:0,z:21-7.8*f-3.4*relax}),
+    hips:[],knees:[],heels:[],shoulders:[],elbows:[],hands:[]};
+  for(const sign of [-1,1]){
+    local.hips.push(rotate({x:1,y:sign*5,z:9-6*f}));
+    // Knees fold and heels converge during relaxation. Before the hip roll,
+    // the thighs adduct toward the landing side so neither knee stays aloft.
+    local.knees.push(rotate({x:mix(6,12,f)-2*relax,y:mix(sign*(7+1.5*relax),side*6+sign*2,tip),z:5+2*f-relax}));
+    local.heels.push(rotate({x:mix(15,23,f)-3*relax,y:mix(sign*(9-5.5*relax),side*5+sign*1.5,tip),z:0}));
+    local.shoulders.push(rotate({x:-2+.6*relax,y:sign*8,z:25-7*f-2*relax}));
+    local.elbows.push(rotate({x:mix(3,6,f)+1.2*relax,y:mix(sign*(11+2*f-2.3*relax),side*6+sign*4,tip*.45),z:15-7*f-2.5*relax}));
+    local.hands.push(rotate({x:mix(8,13,f)+relax,y:mix(sign*(11-f),side*6+sign*2.5,tip*.55),z:10-7*f-2*relax}));
+  }
+  const hip=project(local.hip),rawHead=project(local.head),dx=rawHead.x-hip.x,dy=rawHead.y-hip.y,d=Math.hypot(dx,dy);
+  // A rotating 3D spine can point almost directly at the camera. Keep its
+  // visible plate frame continuous through that foreshortened instant rather
+  // than normalizing a near-zero head/hip vector and flipping the whole chest.
+  const seatedHip=point(1,0,9-6*f),seatedHead=point(-4+2*f+2*relax,0,33-9*f-3.5*relax);
+  const startYaw=Math.atan2(seatedHead.y-seatedHip.y,seatedHead.x-seatedHip.x);
+  const endYaw=Math.atan2(s.nx*side,-s.ny*side),turn=Math.atan2(Math.sin(endYaw-startYaw),Math.cos(endYaw-startYaw));
+  const yaw=startYaw+turn*tip,ux=Math.cos(yaw),uy=Math.sin(yaw),reach=Math.max(7*scale,Math.min(24*scale,d));
+  const head={x:hip.x+ux*reach,y:hip.y+uy*reach},profile=p.roll;
+  const length=15*scale*(1+.10*profile),width=c.bH*.70*(1-.42*profile);
   const chest={x:hip.x+ux*reach*.44,y:hip.y+uy*reach*.44};
-  const torso={x:chest.x,y:chest.y,yaw:Math.atan2(uy,ux),length,width};
-  const shoulderSide=(-uy*-s.ny+ux*s.nx)>=0?1:-1;
-  const shoulders=[-1,1].map(side=>({x:chest.x+ux*length*.24-uy*side*shoulderSide*width*.39,
-    y:chest.y+uy*length*.24+ux*side*shoulderSide*width*.39}));
-  return {f,scale,point,hip,chest,head,torso,shoulders};
+  const torso={x:chest.x,y:chest.y,yaw:Math.atan2(uy,ux),length,width,
+    depth:2.8*scale*profile,profile};
+  const projectedShoulders=local.shoulders.map(project),spanX=projectedShoulders[1].x-projectedShoulders[0].x,spanY=projectedShoulders[1].y-projectedShoulders[0].y;
+  // Signed width projection passes continuously through edge-on. A hard
+  // side switch here swapped both sleeves in one frame during a hip roll.
+  const shoulderSide=Math.max(-1,Math.min(1,(-uy*spanX+ux*spanY)/(16*scale)));
+  const shoulders=[-1,1].map(sign=>({x:chest.x+ux*length*.24-uy*sign*shoulderSide*width*.39,
+    y:chest.y+uy*length*.24+ux*sign*shoulderSide*width*.39}));
+  const headPitch=.22*relax+.10*tip,headFrame={yaw:Math.atan2(s.ny,s.nx)+side*tip*.18,
+    sx:1-.12*profile,sy:1-.16*relax-.10*profile};
+  return {f,scale,point,hip,chest,head,torso,shoulders,hips:local.hips.map(project),knees:local.knees.map(project),
+    heels:local.heels.map(project),elbows:local.elbows.map(project),hands:local.hands.map(project),
+    headPitch,headFrame,profile,local,pose:p,nearArm:side>0?0:1};
 }
 function seatedWoundPoint(c,w,a=seatedCorpseAnatomy(c)) {
-  const isHead=w.isHead;
   let p,turn,sx=1,sy=1;
-  if(isHead){p=a.head;turn=Math.atan2(c.wallSit.ny,c.wallSit.nx);}
-  else if(w.isLeg){p=a.point(15,(w.legIndex?1:-1)*7,2);turn=Math.atan2(c.wallSit.ny,c.wallSit.nx);sx=sy=.65;}
-  else {p=a.chest;turn=a.torso.yaw;sx=a.torso.length/(c.bW*TORSO_DEPTH);sy=a.torso.width/c.bH;}
+  if(w.isHead){p=a.head;turn=a.headFrame.yaw;sx=a.headFrame.sx;sy=a.headFrame.sy;}
+  else if(w.isLeg){
+    const i=w.legIndex===1?1:0,h=a.hips[i],k=a.knees[i],f=a.heels[i];
+    if(Number.isFinite(w.legU)){
+      const q=legDecalPoint(w,h.x,h.y,k.x,k.y,f.x,f.y,7*a.scale,6*a.scale,5.5*a.scale);
+      return {x:q.x,y:q.y,angle:q.angle+(w.shotA||0),frameAngle:q.angle,scale:q.sz/Math.max(.001,w.sz),sx:1,sy:1};
+    }
+    p={x:(k.x+f.x)*.5,y:(k.y+f.y)*.5};turn=Math.atan2(f.y-k.y,f.x-k.x);sx=sy=.65;
+  }else {p=a.chest;turn=a.torso.yaw;sx=a.torso.length/(c.bW*TORSO_DEPTH);sy=a.torso.width/c.bH;}
   return {x:p.x+Math.cos(turn)*w.x*sx-Math.sin(turn)*w.y*sy,
     y:p.y+Math.sin(turn)*w.x*sx+Math.cos(turn)*w.y*sy,
-    angle:turn+(w.shotA||0),frameAngle:turn,scale:Math.sqrt(sx*sy)};
+    angle:turn+(w.shotA||0),frameAngle:turn,scale:Math.sqrt(sx*sy),sx,sy};
 }
-function drawSeatedCorpse(r,c) {
-  const a=seatedCorpseAnatomy(c),s=c.wallSit,skin=c.id.skinCol||color(235,180,140),
-    boot=color(red(c.pC)*.55,green(c.pC)*.55,blue(c.pC)*.55),sc=a.scale;
-  const bone=(p,q,w,col,tip,sz)=>drawFallBone(r,p.x,p.y,q.x,q.y,w*sc,col,tip,sz?sz*sc:undefined);
-  r.push();r.noStroke();
-  // Knees and heels remain on the same floor contacts at every view angle.
-  for(const side of [-1,1]){
-    const hip=a.point(1,side*5,3),knee=a.point(12,side*7,7*a.f),foot=a.point(23,side*9,0);
-    bone(hip,knee,7,c.pC);bone(knee,foot,5.5,c.pC,boot,6);
-  }
-  // Torso dimensions belong to the person, not the projected head/hip gap.
-  // Shoulders share this plate's frame, keeping sleeves attached at a distance.
-  const t=a.torso;
-  r.push();r.translate(t.x,t.y);r.rotate(t.yaw);
-  figureCelOval(r,0,0,t.length,t.width,c.sC);drawFallenAttire(r,c.id,t.length,t.width,false,1);r.pop();
-  for(let i=0;i<2;i++){
-    const side=i?1:-1,shoulder=a.shoulders[i],elbow=a.point(6,side*13,8),hand=a.point(13,side*10,3);
-    bone(shoulder,elbow,5.8,c.sC);bone(elbow,hand,4.6,c.sC,skin,5.4);
-  }
-  r.push();r.translate(a.head.x,a.head.y);r.rotate(Math.atan2(s.ny,s.nx));
+function drawWallSlumpHead(r,c,a) {
+  const skin=c.id.skinCol||color(235,180,140),h=a.headFrame;
+  r.push();r.translate(a.head.x,a.head.y);r.rotate(h.yaw);r.scale(h.sx,h.sy);
   if(c.dT===9){r.fill(90,0,0);r.ellipse(0,0,7,9);}
   else {
     if(c.dT===1){r.fill(skin);r.arc(0,0,11,11,QUARTER_PI,TWO_PI-QUARTER_PI,PIE);r.fill(90,0,0);r.arc(0,0,8,8,-QUARTER_PI,QUARTER_PI,PIE);}
     else if(c.dT===6){r.fill(skin);r.arc(0,-1,11,10,PI,TWO_PI,CHORD);r.arc(0,2,11,10,0,PI,CHORD);}
     else if(c.dT===8){r.fill(skin);r.arc(0,0,11,11,0,PI+HALF_PI,PIE);}
     else figureCelOval(r,0,0,11,10,skin,.65);
-    drawFigureHair(r,c.id,0,0);const hw=headwearOf(c.id);
-    if(hw&&!headwearFalls(hw))drawHeadwear(r,c.id,hw);
+    drawFigureHair(r,c.id,0,0);
+    if((c.dT===0||c.dT===7)&&(a.headPitch>0||a.profile>0)){
+      // Cheek, nose and closed eyelid turn with the drooping skull. They share
+      // its frozen skin/identity; no face is restored on a missing head piece.
+      const amount=Math.min(1,a.headPitch*2+a.profile*.55);
+      r.fill(skin);r.triangle(3.5,-1,5.3+amount,0,3.4,1.5);
+      r.noFill();r.stroke(66,43,35,190*amount);r.strokeWeight(.65);
+      r.line(2.7,-2.1,4.0,-1.6);r.noStroke();
+    }
+    const hw=headwearOf(c.id);if(hw&&!headwearFalls(hw))drawHeadwear(r,c.id,hw);
     if(c.eT==='ARMORED_STANDARD')drawArmoredHelmet(r);
   }
   r.pop();
+}
+function drawSeatedCorpse(r,c) {
+  const a=seatedCorpseAnatomy(c),s=c.wallSit,skin=c.id.skinCol||color(235,180,140),
+    boot=color(red(c.pC)*.55,green(c.pC)*.55,blue(c.pC)*.55),sc=a.scale;
+  const bone=(p,q,w,col,tip,sz)=>drawFallBone(r,p.x,p.y,q.x,q.y,w*sc,col,tip,sz?sz*sc:undefined);
+  const arm=i=>{
+    const far=i!==a.nearArm,narrow=far?1-a.profile*.13:1;
+    bone(a.shoulders[i],a.elbows[i],5.8*narrow,c.sC);
+    bone(a.elbows[i],a.hands[i],4.6*narrow,c.sC,skin,5.4*narrow);
+  };
+  r.push();r.noStroke();
+  const far=1-a.nearArm;
+  for(const i of [far,a.nearArm]){bone(a.hips[i],a.knees[i],7,c.pC);bone(a.knees[i],a.heels[i],5.5,c.pC,boot,6);}
+  // The contact arm passes beneath the chest while the free shoulder and hand
+  // remain above it. This layered profile is articulated, not a spun sprite.
+  arm(far);
+  const t=a.torso;
+  r.push();r.translate(t.x,t.y);r.rotate(t.yaw);
+  if(t.depth>0){
+    r.push();r.translate(0,a.pose.side*t.depth);
+    figureCelOval(r,0,0,t.length,t.width,color(red(c.sC)*.65,green(c.sC)*.65,blue(c.sC)*.65),.78);r.pop();
+  }
+  figureCelOval(r,0,0,t.length,t.width,c.sC);drawFallenAttire(r,c.id,t.length,t.width,false,1);r.pop();
+  arm(a.nearArm);drawWallSlumpHead(r,c,a);
   const hw=headwearOf(c.id);if(hw&&headwearFalls(hw)&&c.hatOff){const p=a.point(23,18,0);r.push();r.translate(p.x,p.y);r.rotate(c.hatOff.r);drawHeadwear(r,c.id,hw);r.pop();}
-  for(const d of c.dec){if(c.dT===9&&d.isHead)continue;const p=seatedWoundPoint(c,d,a);r.fill(...(d.col||[90,0,0,220]));r.ellipse(p.x,p.y,d.sz*p.scale,d.sz*p.scale);}
+  for(const d of c.dec){
+    if(c.dT===9&&d.isHead)continue;
+    const p=seatedWoundPoint(c,d,a);r.fill(...(d.col||[90,0,0,220]));
+    r.ellipse(p.x,p.y,d.sz*p.scale,d.sz*p.scale);
+  }
   r.pop();
 }
 
