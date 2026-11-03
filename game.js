@@ -18442,6 +18442,7 @@ function seatedCorpsePoint(c,x,y,z,projection=corpseWallProjection(c.wallSit.b))
 }
 function seatedCorpseAnatomy(c) {
   const s=c.wallSit,p=wallCorpseSlumpPose(c),f=p.seat,relax=p.relax,tip=p.tip,side=p.side;
+  const forward=s.outcome==='SEATED'?relax:0;
   const scale=Math.min(1.5,Math.max(.8,c.bH/27)),projection=corpseWallProjection(s.b);
   const point=(x,y,z)=>seatedCorpsePoint(c,x*scale,y*scale,z*scale,projection);
   const theta=tip*1.38,co=Math.cos(theta),si=Math.sin(theta),pivotY=side*4.5,pivotZ=3;
@@ -18464,6 +18465,19 @@ function seatedCorpseAnatomy(c) {
     local.elbows.push(rotate({x:mix(3,6,f)+1.2*relax,y:mix(sign*(11+2*f-2.3*relax),side*6+sign*4,tip*.45),z:15-7*f-2.5*relax}));
     local.hands.push(rotate({x:mix(8,13,f)+relax,y:mix(sign*(11-f),side*6+sign*2.5,tip*.55),z:10-7*f-2*relax}));
   }
+  if(forward>0){
+    // The seated end loses its upper-body support: the ribs fold over the
+    // lap and the chin hangs below the shoulders. Hip falls keep their
+    // original preparation and every joint of their existing animation.
+    local.head.x=mix(local.head.x,14,forward);local.head.z=mix(local.head.z,9.5,forward);
+    local.chest.x=mix(local.chest.x,6,forward);local.chest.z=mix(local.chest.z,7.5,forward);
+    for(let i=0;i<2;i++){
+      local.shoulders[i].x=mix(local.shoulders[i].x,8,forward);local.shoulders[i].z=mix(local.shoulders[i].z,10.5,forward);
+      local.elbows[i].x=mix(local.elbows[i].x,9.8,forward);local.elbows[i].z=mix(local.elbows[i].z,3.8,forward);
+      local.elbows[i].y*=1-.12*forward;
+      local.hands[i].x=mix(local.hands[i].x,14.5,forward);local.hands[i].y*=1-.10*forward;
+    }
+  }
   const hip=project(local.hip),rawHead=project(local.head),dx=rawHead.x-hip.x,dy=rawHead.y-hip.y,d=Math.hypot(dx,dy);
   // A rotating 3D spine can point almost directly at the camera. Keep its
   // visible plate frame continuous through that foreshortened instant rather
@@ -18473,9 +18487,19 @@ function seatedCorpseAnatomy(c) {
   const endYaw=Math.atan2(s.nx*side,-s.ny*side),turn=Math.atan2(Math.sin(endYaw-startYaw),Math.cos(endYaw-startYaw));
   const yaw=startYaw+turn*tip,ux=Math.cos(yaw),uy=Math.sin(yaw),reach=Math.max(7*scale,Math.min(24*scale,d));
   const head={x:hip.x+ux*reach,y:hip.y+uy*reach},profile=p.roll;
-  const length=15*scale*(1+.10*profile),width=c.bH*.70*(1-.42*profile);
+  const length=15*scale*(1+.10*profile)*(1-.22*forward),width=c.bH*.70*(1-.42*profile)*(1+.04*forward);
   const chest={x:hip.x+ux*reach*.44,y:hip.y+uy*reach*.44};
-  const torso={x:chest.x,y:chest.y,yaw:Math.atan2(uy,ux),length,width,
+  let torsoYaw=Math.atan2(uy,ux);
+  if(forward>0){
+    const foldedChest=project(local.chest);
+    head.x=mix(head.x,rawHead.x,forward);head.y=mix(head.y,rawHead.y,forward);
+    chest.x=mix(chest.x,foldedChest.x,forward);chest.y=mix(chest.y,foldedChest.y,forward);
+    // Foreshorten the rounded back toward the outward floor axis. Treat it as
+    // an axis, so bowing through an edge-on view never spins the torso 180°.
+    const delta=Math.atan2(s.ny,s.nx)-torsoYaw;
+    torsoYaw+=Math.atan2(Math.sin(delta*2),Math.cos(delta*2))*.5*forward;
+  }
+  const torso={x:chest.x,y:chest.y,yaw:torsoYaw,length,width,
     depth:2.8*scale*profile,profile};
   const projectedShoulders=local.shoulders.map(project),spanX=projectedShoulders[1].x-projectedShoulders[0].x,spanY=projectedShoulders[1].y-projectedShoulders[0].y;
   // Signed width projection passes continuously through edge-on. A hard
@@ -18483,8 +18507,12 @@ function seatedCorpseAnatomy(c) {
   const shoulderSide=Math.max(-1,Math.min(1,(-uy*spanX+ux*spanY)/(16*scale)));
   const shoulders=[-1,1].map(sign=>({x:chest.x+ux*length*.24-uy*sign*shoulderSide*width*.39,
     y:chest.y+uy*length*.24+ux*sign*shoulderSide*width*.39}));
-  const headPitch=.22*relax+.10*tip,headFrame={yaw:Math.atan2(s.ny,s.nx)+side*tip*.18,
-    sx:1-.12*profile,sy:1-.16*relax-.10*profile};
+  if(forward>0)for(let i=0;i<2;i++){
+    shoulders[i].x=mix(shoulders[i].x,projectedShoulders[i].x,forward);
+    shoulders[i].y=mix(shoulders[i].y,projectedShoulders[i].y,forward);
+  }
+  const headPitch=.22*relax+.10*tip+.48*forward,headFrame={yaw:Math.atan2(s.ny,s.nx)+side*tip*.18,
+    sx:1-.12*profile-.10*forward,sy:1-.16*relax-.10*profile-.20*forward};
   return {f,scale,point,hip,chest,head,torso,shoulders,hips:local.hips.map(project),knees:local.knees.map(project),
     heels:local.heels.map(project),elbows:local.elbows.map(project),hands:local.hands.map(project),
     headPitch,headFrame,profile,local,pose:p,nearArm:side>0?0:1};

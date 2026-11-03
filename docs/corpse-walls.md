@@ -16,6 +16,8 @@ as the heels draw inward. Bodies either stay in that relaxed seated pose or
 lose balance and tip onto a hip. The side fall rotates articulated joints along
 the wall, keeping the back supported; the far limbs, torso, near limbs and
 profile of the head retain the actor's clothing and injuries throughout.
+The seated end folds farther forward: the chest settles over the lap and the
+head hangs below the shoulders, rather than retaining an upright sitting pose.
 The outcome and hip are chosen once without consuming the combat random stream.
 Corners and open doorways select the supported side or retain the seated pose.
 Both outcomes stop animating completely before entering the wall bank.

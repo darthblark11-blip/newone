@@ -59,7 +59,14 @@ for(const normal of [[0,-1],[0,1],[-1,0],[1,0]])for(const [outcome,side] of [['S
   const support=final.local.hips.concat(final.local.heels);
   assert(support.every(p=>p.z>=-.01),'a settled hip or heel passed below the floor');
   assert(Math.min(...support.map(p=>p.z))<4.5*final.scale,'side corpse floated above its hip/heel contacts');
- }else assert(final.profile<.2,'relaxed seated outcome unexpectedly turned onto its side');
+ }else {
+  assert(final.profile<.2,'relaxed seated outcome unexpectedly turned onto its side');
+  const l=final.local,shoulderHeight=l.shoulders.reduce((sum,p)=>sum+p.z,0)/2,
+    kneeForward=l.knees.reduce((sum,p)=>sum+p.x,0)/2;
+  assert(l.head.z<shoulderHeight,'neutral head stayed upright above the shoulders');
+  assert(l.head.x>kneeForward,'neutral head did not hang forward over the lap');
+  assert(l.chest.x>l.hip.x+1,'neutral chest stayed upright against the wall');
+ }
  const frozen=P('JSON.stringify([c.x,c.y,c.wallSit,seatedCorpseAnatomy(c)])');tick(100);
  assert.equal(P('JSON.stringify([c.x,c.y,c.wallSit,seatedCorpseAnatomy(c)])'),frozen,'completed wall death kept moving');
  trajectories++;
