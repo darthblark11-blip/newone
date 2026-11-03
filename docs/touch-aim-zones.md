@@ -70,8 +70,9 @@ uses a private cosmetic hash and consumes no combat randomness.
 Pause, travel, death, reset, resize and input handoffs cancel the held gesture.
 Menu touches remain consumed until release. New games and loaded games start
 with BODY aim; the selected zone and joystick gesture are not saved. Desktop
-right-click and controller R3 retain their head/body toggle, and R3 still
-releases a drawn bow.
+right-click retains its head/body toggle. Controller L1 holds HEAD aim and L2
+holds LEGS aim (L2 takes priority); releasing returns to BODY without changing
+the touchscreen selection. R3 releases a drawn bow.
 
 Checks:
 

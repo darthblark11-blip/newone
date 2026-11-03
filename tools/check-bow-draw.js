@@ -96,7 +96,7 @@ check('bullets.length===1&&!headAimToggle&&bullets[0].arrowPower>.99',
 for(let i=0;i<80;i++)tick(.92,1000/60,Math.PI,[11]);
 check('bullets.length===1','A held R3 release cannot repeat');
 reset();run('player.currentWeapon=WEAPONS.PISTOL;');tick(0,1000/60,Math.PI,[11]);
-check('headAimToggle','R3 retains the existing headshot toggle for firearms');
+check('!headAimToggle&&playerAimTarget()===\'BODY\'','R3 leaves firearm target aim unchanged');
 
 for(const flag of ['isPaused','inTravelMenu','inWorldBuildingMenu','inTownCutscene','killcamMode']) {
   reset();draw();

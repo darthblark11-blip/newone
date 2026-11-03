@@ -17,14 +17,18 @@ function reset() {
     'leftStick={active:false,dx:0,dy:0,base:{x:120,y:680}};',
     'rightStick={active:false,dx:0,dy:0,dist:0,base:{x:1080,y:680}};',
     'window.isDesktop=false;window.showOnScreenControls=true;',
-    'isStoryMode=false;headAimToggle=false;lastToggleTime=lastWeaponSwapTime=0;',
+    'isStoryMode=false;setPlayerAimZone("BODY");lastToggleTime=lastWeaponSwapTime=0;',
+    'started=doTick=true;isPaused=isDead=isWin=killcamMode=false;',
     'prevGamepadButtons=[];gamepadWasConnected=false;meleeInputHeld=cannonInputHeld=grenadeInputHeld=false;',
     'jetpackUnlocked=true;jetpackDoubleDash=false;meleeUnlocked=true;meleeComboUnlocked=false;',
     'window.meleeFinisherUnlocked=false;ninjaSuitUnlocked=explosiveArmorUnlocked=chemistSuitUnlocked=false;',
     'grenadesUnlocked=true;isCooking=false;cookTime=0;pGrenadeAmmo=3;pFlaskAmmo=2;pGrenadeTimer=pFlaskTimer=0;',
     'smgUnlocked=dualSmgUnlocked=arUnlocked=shotgunUnlocked=rocketLauncherUnlocked=false;',
-    'swordPickedUp=false;window.pickaxeOwned=false;setMeleeTool("NONE");'
+    'swordPickedUp=false;window.pickaxeOwned=window.shovelOwned=false;setMeleeTool("NONE");',
+    'gamepadControlSettings.boxing="STANDARD";gamepadControlSettings.shooting="STICK";',
+    'consumeStanceInputs();resetGamepadFireInput();resetGamepadCombatInput(null);'
   ].join('\n'));
+  frame([]);
 }
 function poll({ tick = false, dt = 16, touches = [] } = {}) {
   now += dt; ctx.touches = touches;
@@ -47,30 +51,24 @@ function check(name, test) {
   console.log('  ok   ' + name);
 }
 
-check('L3 dashes on press and never repeats while held, even after cooldown', () => {
-  const p = P('player'), dash = p.activateDash; let calls = 0;
-  p.activateDash = function () { calls++; return dash.call(this); };
+check('L3 begins a stance hold without triggering the old dash binding', () => {
+  let dashes = 0; P('player').activateDash = () => dashes++;
   frame([10], { tick: true, axes: [1, 0, 0, 0] });
-  assert.equal(calls, 1); assert(P('player.dashTimer>0&&player.x>0'));
-  for (let i = 0; i < 100; i++) frame([10], { tick: true });
-  assert.equal(calls, 1); assert(P('player.dashCooldown<=0'));
-  press(10); assert.equal(calls, 2);
+  assert.equal(dashes, 0); assert.equal(P('stanceInput.hold.source'), 'PAD');
+  frame([], { tick: true });
+  for (let i = 0; i < 30; i++) frame([], { tick: true });
+  assert.equal(P('actorStance(player)'), 'CROUCH');
 });
-check('L3 respects dash unlock, cooldown, active dash and active melee', () => {
-  for (const blocked of ['jetpackUnlocked=false', 'player.dashCooldown=5', 'player.dashTimer=5', 'player.meleeTimer=5']) {
-    reset(); probe(blocked); const p = P('player'); let calls = 0;
-    p.activateDash = () => calls++; press(10); assert.equal(calls, 0);
-  }
-});
-check('R3 toggles once per press; hold and debounce do not retrigger it', () => {
-  press(11); assert(P('headAimToggle'));
-  for (let i = 0; i < 50; i++) frame([11]);
-  assert(P('headAimToggle'));
-  frame([]); frame([11]); assert.equal(P('headAimToggle'), false);
-  frame([]); frame([11]); assert.equal(P('headAimToggle'), false);
-  for (let i = 0; i < 30; i++) frame([11]);
-  assert.equal(P('headAimToggle'), false);
-  press(11); assert(P('headAimToggle'));
+check('L1 and L2 select head and leg aim only while held; R3 never toggles aim', () => {
+  frame([4]); assert.equal(P('playerAimTarget()'), 'HEAD');
+  for (let i = 0; i < 30; i++) frame([4]);
+  assert.equal(P('playerAimTarget()'), 'HEAD');
+  frame([]); assert.equal(P('playerAimTarget()'), 'BODY');
+  frame([6]); assert.equal(P('playerAimTarget()'), 'LEGS');
+  frame([4, 6]); assert.equal(P('playerAimTarget()'), 'LEGS');
+  frame([]); assert.equal(P('playerAimTarget()'), 'BODY');
+  press(11); assert.equal(P('playerAimTarget()'), 'BODY');
+  frame([11]); assert.equal(P('headAimToggle'), false);
 });
 check('D-pad up cycles sword, pickaxe, unarmed once per press', () => {
   probe('swordPickedUp=true;window.pickaxeOwned=true;');
@@ -124,35 +122,35 @@ check('Weapon debounce and opposite D-pad presses do not queue repeated swaps', 
   assert(P('player.currentWeapon===WEAPONS.TASER'));
   frame([]); frame([14, 15], { dt: 400 }); assert(P('player.currentWeapon===WEAPONS.TASER'));
 });
-check('Down stays unmapped; A/B/L1 no longer trigger the old actions', () => {
+check('D-pad down with no allies and A/B do not trigger combat actions', () => {
   probe('isStoryMode=true;swordPickedUp=true;window.pickaxeOwned=true;');
-  for (const key of [13, 0, 1, 4]) {
+  for (const key of [13, 0, 1]) {
     press(key);
     assert(P('player.currentWeapon===WEAPONS.PISTOL&&!headAimToggle&&player.dashTimer===0'));
     assert.equal(P('meleeTool()'), 'NONE');
     assert(P('!meleeInputHeld&&!grenadeInputHeld&&!cannonInputHeld'));
   }
 });
-check('L2 cooks and releases a grenade without dash, melee or cannon', () => {
-  frame([6], { tick: true });
+check('R1 cooks and releases a grenade without dash, melee or cannon', () => {
+  frame([5], { tick: true });
   assert(P('isCooking&&grenadeInputHeld&&!meleeInputHeld&&!cannonInputHeld&&player.dashTimer===0'));
-  for (let i = 0; i < 5; i++) frame([6], { tick: true });
+  for (let i = 0; i < 5; i++) frame([5], { tick: true });
   assert.equal(P('playerGrenades.length'), 0);
   frame([], { tick: true });
   assert.equal(P('playerGrenades.length'), 1); assert.equal(P('pGrenadeAmmo'), 2);
   assert.equal(P('playerFlasks.length'), 0); assert.equal(P('player.cannonCharge'), 0);
 });
-check('Chemist L2 cooks/releases a flask without consuming grenades or requiring melee unlock', () => {
-  probe('chemistSuitUnlocked=true;meleeUnlocked=false;');
-  frame([6], { tick: true });
+check('Chemist R1 cooks/releases a flask without consuming grenades or requiring melee unlock', () => {
+  probe('chemistSuitUnlocked=true;meleeUnlocked=false;'); frame([]);
+  frame([5], { tick: true });
   assert(P('isCooking&&meleeInputHeld&&!grenadeInputHeld&&!cannonInputHeld&&player.dashTimer===0'));
-  frame([6], { tick: true }); frame([], { tick: true });
+  frame([5], { tick: true }); frame([], { tick: true });
   assert.equal(P('playerFlasks.length'), 1); assert.equal(P('pFlaskAmmo'), 1);
   assert.equal(P('playerGrenades.length'), 0); assert.equal(P('pGrenadeAmmo'), 3);
 });
-check('Chemist L1 charges/releases the actual cannon without throwing a flask or grenade', () => {
-  probe('chemistSuitUnlocked=true;');
-  for (let i = 0; i < 5; i++) frame([4], { tick: true });
+check('Chemist Y charges/releases the actual cannon without throwing a flask or grenade', () => {
+  probe('chemistSuitUnlocked=true;'); frame([]);
+  for (let i = 0; i < 5; i++) frame([3], { tick: true });
   assert.equal(P('player.cannonCharge'), 5); assert.equal(P('player.cannonAmmo'), 4);
   assert(P('cannonInputHeld&&!meleeInputHeld&&!grenadeInputHeld&&!isCooking'));
   frame([], { tick: true });
@@ -160,34 +158,43 @@ check('Chemist L1 charges/releases the actual cannon without throwing a flask or
   assert.equal(P('lightnings.length'), 1);
   assert(P('playerFlasks.length===0&&playerGrenades.length===0&&player.dashTimer===0'));
 });
-check('Chemist L1 and L2 share input while the throw animation delays cannon charge', () => {
-  probe('chemistSuitUnlocked=true;');
-  frame([4, 6], { tick: true }); frame([4, 6], { tick: true });
+check('Chemist Y and R1 share input while the throw animation delays cannon charge', () => {
+  probe('chemistSuitUnlocked=true;'); frame([]);
+  frame([3, 5], { tick: true }); frame([3, 5], { tick: true });
   assert(P('isCooking&&cannonInputHeld&&meleeInputHeld&&!grenadeInputHeld&&player.cannonCharge===0'));
-  frame([4], { tick: true });
+  frame([3], { tick: true });
   assert(P('playerFlasks.length===1&&lightnings.length===0&&player.throwAnimTimer>0'));
-  for (let i = 0; i < 18; i++) frame([4], { tick: true });
+  for (let i = 0; i < 18; i++) frame([3], { tick: true });
   assert(P('player.cannonCharge>0'));
   frame([], { tick: true });
   assert.equal(P('playerFlasks.length'), 1); assert.equal(P('lightnings.length'), 1);
   assert.equal(P('playerGrenades.length'), 0);
 });
-check('Chemist Y/R1 do not trigger flasks; other suits keep their melee bindings', () => {
-  probe('chemistSuitUnlocked=true;'); frame([3, 5], { tick: true });
-  assert(P('!isCooking&&!meleeInputHeld&&playerFlasks.length===0'));
-  probe('chemistSuitUnlocked=false;'); press(5, { tick: true });
-  assert(P('boxingActive(player)&&!player._boxing.punch&&player._boxing.preparedPunch.kind==="RIGHT_HOOK"'));
-  frame([], { tick: true }); assert(P('player._boxing.punch.kind==="RIGHT_HOOK"&&player._boxing.punch.level==="HEAD"'));
+check('R1 never enters native melee; Y enters boxing and retains its release punch', () => {
+  press(5, { tick: true });
+  assert(P('grenadeInputHeld&&!meleeInputHeld&&!boxingActive(player)'));
+  frame([], { tick: true }); assert.equal(P('playerGrenades.length'), 1);
   reset(); press(3, { tick: true }); assert(P('boxingActive(player)&&!player._boxing.punch&&!player._boxing.dodge'));
   for (let i = 0; i < 14; i++) frame([3], { tick: true });
   assert(P('!player._boxing.punch&&player._boxing.preparedPunch.amount===1'));
   frame([], { tick: true }); assert(P('player._boxing.punch.kind==="LEFT_STRAIGHT"&&player._boxing.punch.level==="BODY"&&!player._boxing.dodge'));
 });
-check('L1 stays reserved for non-chemist suits', () => {
+check('Non-chemist suits have Y melee without an R1 melee alias', () => {
   for (const suit of ['ninjaSuitUnlocked=true', 'explosiveArmorUnlocked=true']) {
-    reset(); probe(suit); frame([4], { tick: true });
+    reset(); probe(suit); frame([]);
+    frame([3]); assert(P('meleeInputHeld&&!cannonInputHeld&&!grenadeInputHeld'));
+    frame([]); frame([5]); assert(P('grenadeInputHeld&&!meleeInputHeld&&!cannonInputHeld'));
+  }
+});
+check('Held aim modifiers stay independent of suit abilities', () => {
+  for (const suit of ['ninjaSuitUnlocked=true', 'explosiveArmorUnlocked=true', 'chemistSuitUnlocked=true']) {
+    reset(); probe(suit); frame([]); frame([4], { tick: true });
     assert(P('!isCooking&&!cannonInputHeld&&!grenadeInputHeld&&player.dashTimer===0'));
     assert(P('playerGrenades.length===0&&playerFlasks.length===0&&lightnings.length===0'));
+    assert.equal(P('playerAimTarget()'), 'HEAD');
+    frame([6], { tick: true }); assert.equal(P('playerAimTarget()'), 'LEGS');
+    assert(P('!isCooking&&!meleeInputHeld&&!cannonInputHeld&&!grenadeInputHeld'));
+    frame([], { tick: true }); assert.equal(P('playerAimTarget()'), 'BODY');
   }
 });
 check('X reload still works once per press', () => {
@@ -205,19 +212,120 @@ check('Stick axes, deadzone and controller detection retain their behavior', () 
   frame([], { axes: [.1, 0, .1, 0] });
   assert(P('!leftStick.active&&!rightStick.active'));
 });
-check('Idle controller preserves touchscreen grenade/cannon input', () => {
-  frame([], { touches: [{ x: 1165, y: 360 }] }); assert(P('grenadeInputHeld'));
-  probe('chemistSuitUnlocked=true;');
-  frame([], { touches: [{ x: 1165, y: 360 }] }); assert(P('cannonInputHeld'));
+check('A connected controller consumes touch actions; disconnect permits a fresh touch', () => {
+  const grenade = P('touchCombatLayout().grenade');
+  frame([], { touches: [{ id: 51, ...grenade }] }); assert(P('!grenadeInputHeld&&!meleeInputHeld&&!cannonInputHeld'));
+  frame([]); probe('chemistSuitUnlocked=true;'); frame([]);
+  const cannon = P('touchCombatLayout().cannon');
+  frame([], { touches: [{ id: 52, ...cannon }] }); assert(P('!grenadeInputHeld&&!meleeInputHeld&&!cannonInputHeld'));
+  frame(null); frame(null, { touches: [{ id: 53, ...cannon }] }); assert(P('cannonInputHeld'));
 });
-check('Disconnect releases held abilities and resets edges for reconnect', () => {
-  probe('chemistSuitUnlocked=true;');
-  frame([4], { tick: true }); frame(null, { tick: true });
-  assert(P('!cannonInputHeld&&prevGamepadButtons.length===0'));
-  assert.equal(P('lightnings.length'), 1);
-  frame(null, { tick: true }); assert.equal(P('lightnings.length'), 1);
-  press(11); assert(P('headAimToggle'));
-  frame(null); frame([11], { dt: 400 }); assert.equal(P('headAimToggle'), false);
+check('Disconnect clears held aim and reconnect accepts a fresh modifier press', () => {
+  frame([4]); assert.equal(P('playerAimTarget()'), 'HEAD');
+  frame(null); assert.equal(P('playerAimTarget()'), 'BODY');
+  assert.equal(P('prevGamepadButtons.length'), 0);
+  frame([]); frame([6]); assert.equal(P('playerAimTarget()'), 'LEGS');
+  frame([]); assert.equal(P('playerAimTarget()'), 'BODY');
+});
+check('Disconnect cancels a controller cannon charge or cooked throwable without spending ammo', () => {
+  for (const suit of [false, true]) {
+    for (const button of suit ? [3, 5] : [5]) {
+      reset(); probe('chemistSuitUnlocked=' + suit + ';');
+      frame([]); frame([button], { tick: true }); frame([button], { tick: true });
+      assert(suit && button === 3 ? P('player.cannonCharge>0') : P('isCooking'));
+      frame(null, { tick: true }); frame(null, { tick: true });
+      assert(P('!cannonInputHeld&&!meleeInputHeld&&!grenadeInputHeld&&!isCooking&&player.cannonCharge===0'));
+      assert(P('lightnings.length===0&&playerFlasks.length===0&&playerGrenades.length===0'));
+      assert(P('pGrenadeAmmo===3&&pFlaskAmmo===2&&player.cannonAmmo===4'));
+      frame([button], { tick: true });
+      assert(P('!cannonInputHeld&&!meleeInputHeld&&!grenadeInputHeld&&!isCooking&&player.cannonCharge===0'));
+      frame([], { tick: true }); frame([button], { tick: true });
+      assert(suit && button === 3 ? P('player.cannonCharge>0') : P('isCooking'));
+    }
+  }
+});
+check('Pause consumes held abilities and aim until release, then accepts a fresh press', () => {
+  for (const button of [3, 5]) {
+    reset(); probe('chemistSuitUnlocked=true;'); frame([]);
+    frame([button, 4], { tick: true }); frame([button, 4], { tick: true });
+    assert.equal(P('playerAimTarget()'), 'HEAD');
+    probe('isPaused=true;consumePauseControlInputs();isPaused=false;');
+    for (let i = 0; i < 4; i++) frame([button, 4], { tick: true });
+    assert(P('!cannonInputHeld&&!meleeInputHeld&&!grenadeInputHeld&&!isCooking&&player.cannonCharge===0'));
+    assert.equal(P('playerAimTarget()'), 'BODY');
+    frame([], { tick: true });
+    assert(P('lightnings.length===0&&playerFlasks.length===0&&playerGrenades.length===0'));
+    assert(P('pGrenadeAmmo===3&&pFlaskAmmo===2&&player.cannonAmmo===4'));
+    frame([button, 4], { tick: true });
+    assert.equal(P('playerAimTarget()'), 'HEAD');
+    assert(button === 3 ? P('cannonInputHeld&&player.cannonCharge>0') : P('meleeInputHeld&&isCooking'));
+  }
+});
+check('Changing suits consumes held Y/R1 roles instead of releasing the previous ability', () => {
+  for (const button of [3, 5]) {
+    reset(); probe('chemistSuitUnlocked=true;'); frame([]);
+    frame([button, 4], { tick: true }); frame([button, 4], { tick: true });
+    probe('chemistSuitUnlocked=false;'); frame([button, 4], { tick: true });
+    assert.equal(P('playerAimTarget()'), 'BODY');
+    frame([], { tick: true });
+    assert(P('!boxingActive(player)&&!isCooking&&player.cannonCharge===0'));
+    assert(P('lightnings.length===0&&playerFlasks.length===0&&playerGrenades.length===0'));
+    assert(P('pGrenadeAmmo===3&&pFlaskAmmo===2&&player.cannonAmmo===4'));
+    frame([5], { tick: true }); assert(P('grenadeInputHeld&&isCooking&&!boxingActive(player)'));
+  }
+  reset(); frame([5], { tick: true }); assert(P('isCooking&&grenadeInputHeld'));
+  probe('chemistSuitUnlocked=true;'); frame([5], { tick: true }); frame([], { tick: true });
+  assert(P('!isCooking&&playerFlasks.length===0&&playerGrenades.length===0&&pGrenadeAmmo===3&&pFlaskAmmo===2'));
+  frame([5], { tick: true }); assert(P('isCooking&&meleeInputHeld&&!grenadeInputHeld'));
+});
+check('Frame-start handoffs cancel charges before the player update polls the next input', () => {
+  for (const handoff of ['DISCONNECT', 'SUIT']) {
+    for (const chemist of [false, true]) {
+      for (const button of chemist ? [3, 5] : [5]) {
+        reset(); probe('chemistSuitUnlocked=' + chemist + ';'); frame([]);
+        frame([button], { tick: true }); frame([button], { tick: true });
+        assert(chemist && button === 3 ? P('player.cannonCharge>0') : P('isCooking'));
+        if (handoff === 'DISCONNECT') pad = null;
+        else probe('chemistSuitUnlocked=' + !chemist + ';');
+        probe('syncGamepadCombatContext();player.updatePlayer();');
+        assert(P('!isCooking&&player.cannonCharge===0&&!boxingActive(player)'));
+        assert(P('!meleeInputHeld&&!cannonInputHeld&&!grenadeInputHeld'));
+        assert(P('lightnings.length===0&&playerFlasks.length===0&&playerGrenades.length===0'));
+        assert(P('pGrenadeAmmo===3&&pFlaskAmmo===2&&player.cannonAmmo===4'));
+        frame([button], { tick: true });
+        assert(P('!meleeInputHeld&&!cannonInputHeld&&!grenadeInputHeld&&!isCooking&&player.cannonCharge===0&&!boxingActive(player)'));
+        frame([], { tick: true });
+        frame([5], { tick: true });
+        assert(P('isCooking'));
+      }
+    }
+  }
+});
+check('Replacing the player consumes the previous actor\'s controller-owned charge', () => {
+  for (const button of [3, 5]) {
+    reset(); probe('chemistSuitUnlocked=true;'); frame([]);
+    frame([button], { tick: true }); frame([button], { tick: true });
+    const previous = P('player');
+    probe('player=new Character(0,0,true);syncGamepadCombatContext();player.updatePlayer();');
+    assert.equal(previous.cannonCharge, 0);
+    assert(P('!isCooking&&player.cannonCharge===0&&!meleeInputHeld&&!cannonInputHeld&&!grenadeInputHeld'));
+    assert(P('lightnings.length===0&&playerFlasks.length===0&&playerGrenades.length===0'));
+    assert(P('pGrenadeAmmo===3&&pFlaskAmmo===2&&player.cannonAmmo===4'));
+    frame([button], { tick: true }); assert(P('!isCooking&&player.cannonCharge===0'));
+    frame([], { tick: true }); frame([button], { tick: true });
+    assert(button === 3 ? P('player.cannonCharge>0') : P('isCooking'));
+  }
+});
+check('Pausing between a release poll and simulation cancels pending cannon and flask shots', () => {
+  for (const button of [3, 5]) {
+    reset(); probe('chemistSuitUnlocked=true;'); frame([]);
+    frame([button], { tick: true }); frame([button], { tick: true });
+    frame([]);
+    probe('isPaused=true;consumePauseControlInputs();isPaused=false;player.updatePlayer();');
+    assert(P('!isCooking&&player.cannonCharge===0&&!meleeInputHeld&&!cannonInputHeld&&!grenadeInputHeld'));
+    assert(P('lightnings.length===0&&playerFlasks.length===0&&playerGrenades.length===0'));
+    assert(P('pFlaskAmmo===2&&player.cannonAmmo===4'));
+  }
 });
 check('Short or absent pads do not throw or keep stale button history', () => {
   press(11); assert(P('prevGamepadButtons.length===17'));
@@ -241,7 +349,7 @@ function noTouchHud(seen) {
   assert(!seen.labels.some(s=>/^(RELOAD|RECHARGE|MELEE|DASH|GRENADE|FLASK|CANNON|HEADSHOT|MODE)(\n|$)/.test(s)));
   assert(!seen.circles.some(([x,y])=>x>=1095&&y>=360&&y<=500),'touch button circle still drawn');
   assert(!seen.circles.some(([x,y,w])=>w===120&&y===680&&(x===120||x===1080)),'joystick circle still drawn');
-  assert(seen.labels.some(s=>s.startsWith('SCORE: ')),'controller hid the status HUD');
+  assert(seen.labels.includes('ENEMIES'),'controller hid the population status HUD');
 }
 check('Idle connected controller hides touch buttons and joysticks without an input', () => {
   frame([]);assert(P('!window.showOnScreenControls'));
@@ -255,13 +363,14 @@ check('Rendering hides controls before polling and during a paused frame', () =>
 check('Chemist flask and cannon touch buttons also disappear on a controller', () => {
   probe('chemistSuitUnlocked=true;');frame([]);noTouchHud(hud());
 });
-check('Disconnect restores touchscreen HUD and joysticks', () => {
+check('Disconnect restores touchscreen actions, movement stick and target silhouette', () => {
   frame([]);frame(null);
   assert(P('window.showOnScreenControls'));
   const seen=hud();
   for(const s of ['RELOAD','MELEE','DASH'])assert(seen.labels.includes(s),'missing touch '+s);
   assert(seen.labels.some(s=>s.startsWith('GRENADE\n')));
-  assert.equal(seen.circles.filter(([x,y,w])=>w===120&&y===680&&(x===120||x===1080)).length,2);
+  assert.equal(seen.circles.filter(([x,y,w])=>w===120&&y===680&&x===120).length,1);
+  for(const s of ['HEAD','BODY','LEGS'])assert(seen.labels.includes(s),'missing touch target '+s);
 });
 check('Touch events cannot reveal the HUD while a controller is connected', () => {
   frame([]);probe('isPaused=true;pauseMenuState="MAIN";touchStarted();');
@@ -279,4 +388,4 @@ check('Axes-only controller also restores touch controls on disconnect', () => {
   assert(hud().labels.includes('MELEE'));
 });
 
-console.log('\n' + checks + ' gamepad checks passed: Backbone bindings, real dash/throw/cannon/melee/reload, press/hold/release, cycles, ownership, touch coexistence and reconnect.');
+console.log('\n' + checks + ' gamepad checks passed: Backbone bindings, real stance/throw/cannon/melee/reload, held aim, cycles, ownership, touch coexistence and reconnect.');

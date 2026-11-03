@@ -9,6 +9,7 @@ let leftStick, rightStick, buildings = [], camX = 0, camY = 0, zoom = 0.66, scre
 let lightnings = [];
 let started = false, isDead = false, isWin = false, currentLevel = 1, headAimToggle = false, lastToggleTime = 0, lastWeaponSwapTime = 0;
 let playerAimZone = 'BODY';
+let gamepadAimZoneOverride = null;
 function setPlayerAimZone(zone) {
   if (zone !== 'HEAD' && zone !== 'BODY' && zone !== 'LEGS') return false;
   playerAimZone = zone;
@@ -16,7 +17,9 @@ function setPlayerAimZone(zone) {
   return true;
 }
 function playerAimTarget() {
-  // Keep compatibility with existing head/body controller and debug bindings.
+  // Held pad modifiers do not overwrite the touchscreen's selected target.
+  if (gamepadAimZoneOverride !== null && connectedGamepad())
+    return gamepadCombatContext() === 'BLOCKED' ? 'BODY' : gamepadAimZoneOverride;
   return headAimToggle ? 'HEAD' : playerAimZone === 'LEGS' ? 'LEGS' : 'BODY';
 }
 function togglePlayerHeadAim() {
@@ -551,7 +554,7 @@ function updateStanceHold(dt) {
   const h=stanceInput.hold;
   if(!h||h.triggered)return;
   if(h.actor!==player){stanceInput.hold=null;return;}
-  const held=h.source==='KEYBOARD'?keyIsDown(67):h.source==='PAD'?!!connectedGamepad()?.buttons[13]?.pressed:
+  const held=h.source==='KEYBOARD'?keyIsDown(67):h.source==='PAD'?!!connectedGamepad()?.buttons[10]?.pressed:
     h.source==='MOUSE'?mouseIsPressed:touches.some(t=>t.id===h.id);
   if(!held){endStanceHold(h.source);return;}
   h.elapsedMs=Math.min(STANCE_HOLD_MS,h.elapsedMs+dt);
@@ -1012,6 +1015,8 @@ function consumePauseControlInputs() {
   resetTouchAimSelection(true);
   resetTouchControlFade();
   resetGamepadFireInput();
+  resetGamepadCombatInput(pad);
+  resetGamepadSquadCommands(pad);
   prevGamepadButtons = pad ? pad.buttons.map(b => !!b.pressed) : [];
   meleeInputHeld = cannonInputHeld = grenadeInputHeld = false;
   if (s) {
@@ -1230,6 +1235,106 @@ let popScience = 0;
 let popArchitecture = 0;
 let squadCommandMode = false;
 let squadCommand = null; // "FOLLOW", "NORTH", "SOUTH", "EAST", "WEST", "SPREAD", "HOLD"
+
+// The quick order menu runs in real time and temporarily owns the D-pad.
+// Keep its edges separate from weapon cycling so selecting an order cannot
+// also swap equipment, including on the frame its last button is released.
+const GAMEPAD_SQUAD_HOLD_MS = 350;
+const gamepadSquadCommands = {stage:'IDLE',heldMs:0,previousMask:0,cancelHeld:false};
+function gamepadSquadDirectionMask(pad) {
+  let mask=0;
+  for(let i=0;i<4;i++) {
+    const b=pad&&pad.buttons&&pad.buttons[12+i];
+    if(b&&(b.pressed||b.value>.5))mask|=1<<i;
+  }
+  return mask;
+}
+function resetGamepadSquadCommands(pad=null,blockHeld=true) {
+  gamepadSquadCommands.stage=blockHeld?'DRAIN':'IDLE';
+  gamepadSquadCommands.heldMs=0;
+  gamepadSquadCommands.previousMask=blockHeld?gamepadSquadDirectionMask(pad):0;
+  const cancel=pad&&pad.buttons&&pad.buttons[1];
+  gamepadSquadCommands.cancelHeld=!!(blockHeld&&cancel&&(cancel.pressed||cancel.value>.5));
+}
+function gamepadSquadHasAllies() {
+  for(const e of enemiesList)if(e&&e.isFriendly&&!e.dead&&e.hp>0&&
+    !e.isCityCivilian&&!e.cityPersonKey&&!frontierCivilianType(e.eType))return true;
+  return false;
+}
+function handleGamepadSquadCommands(pad,elapsedMs=deltaTime) {
+  const state=gamepadSquadCommands, mask=gamepadSquadDirectionMask(pad);
+  const fresh=mask&~state.previousMask;
+  const cancel=pad&&pad.buttons&&pad.buttons[1];
+  const cancelDown=!!(cancel&&(cancel.pressed||cancel.value>.5));
+  const cancelPressed=cancelDown&&!state.cancelHeld;
+  state.previousMask=mask;state.cancelHeld=cancelDown;
+  if(!pad||!combatStanceContext()||!doTick||!player||player.dead||!(player.hp>0)||
+    boxingActive(player)||streetThugDialogueOpen()) {
+    const owned=state.stage!=='IDLE';
+    resetGamepadSquadCommands(pad,true);
+    return owned;
+  }
+  if(state.stage==='DRAIN') {
+    if(!mask&&!cancelDown)state.stage='IDLE';
+    return true;
+  }
+  if(state.stage==='IDLE') {
+    if(!(fresh&2)||cancelDown||!gamepadSquadHasAllies())return false;
+    state.stage='HOLD';state.heldMs=0;
+    return true;
+  }
+  if(cancelPressed||!gamepadSquadHasAllies()) {
+    state.stage=mask||cancelDown?'DRAIN':'IDLE';state.heldMs=0;
+    return true;
+  }
+  if(state.stage==='HOLD') {
+    state.heldMs+=Math.max(0,Math.min(100,Number(elapsedMs)||0));
+    if(state.heldMs>=GAMEPAD_SQUAD_HOLD_MS)state.stage='COMMANDS';
+    else if(!(mask&2)) {
+      state.stage=mask?'DRAIN':'IDLE';
+      issueSquadCommand('FOLLOW');
+    }
+    return true;
+  }
+  // Reject diagonal presses instead of accidentally choosing two commands.
+  // Entry buttons must be released before they can select their own option:
+  // holding the opening Down never chooses FOLLOW, and holding SEARCH's Up
+  // never immediately chooses NORTH in the second menu.
+  if(!fresh||(mask&(mask-1)))return true;
+  if(state.stage==='COMMANDS'&&fresh===1) {
+    state.stage='SEARCH';
+    return true;
+  }
+  const searching=state.stage==='SEARCH';
+  const direction=fresh===1?'NORTH':fresh===2?'SOUTH':fresh===4?'WEST':'EAST';
+  const command=searching?'SEARCH':fresh===2?'FOLLOW':fresh===4?'HOLD':'SPREAD';
+  state.stage='DRAIN';state.heldMs=0;
+  issueSquadCommand(command,direction);
+  return true;
+}
+function drawGamepadSquadCommands() {
+  const state=gamepadSquadCommands;
+  if((state.stage!=='COMMANDS'&&state.stage!=='SEARCH')||!connectedGamepad()||
+    !combatStanceContext()||!player||boxingActive(player)||streetThugDialogueOpen()||!gamepadSquadHasAllies())return;
+  const searching=state.stage==='SEARCH';
+  const size=Math.min(1,width/340,height/310);
+  const centerY=Math.max(112*size,Math.min(height-112*size,height*.36));
+  push();translate(width/2,centerY);scale(size);
+  rectMode(CENTER);textAlign(CENTER,CENTER);hudTextFont();
+  fill(13,19,23,235);stroke(139,186,188,180);strokeWeight(1);
+  rect(0,0,302,216,12);
+  noStroke();fill(226,242,239);textSize(13);
+  text(searching?'SEARCH DIRECTION':'SQUAD ORDERS',0,-88);
+  const labels=searching?['NORTH','SOUTH','WEST','EAST']:['SEARCH','FOLLOW','HOLD','SPREAD'];
+  const arrows=['↑','↓','←','→'], xs=[0,0,-98,98], ys=[-43,43,0,0];
+  for(let i=0;i<4;i++) {
+    fill(37,57,61,245);stroke(116,170,171,200);rect(xs[i],ys[i],88,39,6);
+    noStroke();fill(161,224,216);textSize(12);text(arrows[i],xs[i],ys[i]-9);
+    fill(241);textSize(10);text(labels[i],xs[i],ys[i]+7);
+  }
+  fill(180,198,197);textSize(10);text('D-PAD TO CHOOSE  ·  B CANCEL',0,89);
+  pop();
+}
 
 // --- OVERWORLD & HERO TOWN VARIABLES ---
 let inOverworldView = false;
@@ -8660,6 +8765,7 @@ function noteFrameFault(where, err) {
 
 function draw() {
   updateUndergroundRoute(typeof deltaTime==='number'?deltaTime:16.67);
+  syncGamepadCombatContext();
   syncTouchAimControlContext();
   handleDeathMenuInput();
   // Death owns the screen even if an old world activity or overlay is open.
@@ -9710,6 +9816,11 @@ viewBottom = camY + height / zoom + shakePad;
       drawStoryObjectiveBanner(txt, alpha);
   }
 
+  if (isDead || isWin || inCutscene || isPaused) {
+    const pad = connectedGamepad();
+    resetGamepadCombatInput(pad); resetGamepadSquadCommands(pad);
+    endStanceHold('PAD', false);
+  }
   if (!isDead && !isWin && !inCutscene && !isPaused) { handleTouches(); handleGamepad(); handleDesktop(); }
   if (window.showOnScreenControls && !isWin && !isDead && !inCutscene && !isPaused) drawJoysticks();
   
@@ -27706,6 +27817,7 @@ function resetCityStreetInputs() {
   window.__streetConsumedTouches=new Set();
 }
 function clearStreetThugInput() {
+  resetGamepadCombatInput();
   if(leftStick){leftStick.active=false;leftStick.dx=leftStick.dy=0;}
   if(rightStick){rightStick.active=false;rightStick.dx=rightStick.dy=rightStick.dist=0;rightStick.bowReleaseRequested=false;}
   meleeInputHeld=cannonInputHeld=grenadeInputHeld=false;
@@ -27848,7 +27960,7 @@ function finishWorldBoxing(actor, drawWeapon = false) {
   actor.boxingHold = actor.meleeTimer = actor.meleeCooldown = actor.meleeComboTimer = actor.meleePhase = 0;
   actor.meleeCharge = 0;
   const pad = connectedGamepad(), down = i => !!(pad && pad.buttons[i] && pad.buttons[i].pressed);
-  actor.prevMeleeInputHeld = keyIsDown(69) || down(3) || down(5);
+  actor.prevMeleeInputHeld = keyIsDown(69) || down(3);
   window.__huntKeyWas = keyIsDown(70); window.__rideKeyWas = keyIsDown(82);
   if (pad) prevGamepadButtons = pad.buttons.map(b => !!b.pressed);
   actor._boxingControls = null;
@@ -31324,6 +31436,8 @@ function drawUI() {
 
   updateAndDrawFloatingScores();
 
+  drawGamepadSquadCommands();
+
   // These are touch action buttons; controller players keep the status HUD.
   push(); hudTextFont(true);
   const controlAlphaBefore = Number.isFinite(drawingContext.globalAlpha) ? drawingContext.globalAlpha : 1;
@@ -31496,6 +31610,86 @@ function connectedGamepad() {
   return null;
 }
 
+// Utility holds have their own release latch. A pause, suit change or pad
+// reconnect cancels a pending charge instead of turning it into a release attack.
+const gamepadCombatInput = {seen:false,connected:false,padKey:null,context:null,
+  blocked:new Set(),buttons:[],melee:false,cannon:false,throwable:false,actor:null};
+function gamepadCombatContext() {
+  if(!started||!player||player.dead||!(player.hp>0)||isPaused||isDead||isWin||killcamMode||
+    inStoryIntro||inStoryRoom||inTownCutscene||inFortCutscene||inPostAmbushCutscene||
+    inFarmCutscene||inFarmPostCutscene||inLvl4Cutscene||inDarchonCall||inWorldBuildingMenu||
+    inTravelMenu||inUpgradeMenu||window.inNM0SecretOverlay||buildGhost||
+    streetThugDialogueOpen()||undergroundRouteBusy()||boxingActive(player)||
+    currentLevel===0&&(prologuePhase===1||prologuePhase===3||prologuePhase>=4&&prologuePhase<=6||
+      prologuePhase===8||prologuePhase===9||inUpstairsRoom&&upstairsPhase>=1&&upstairsPhase<=5))return 'BLOCKED';
+  if(frontierSaloonIsInside())return _frontierSaloonSession?.mode==='DUEL'&&!_frontierSaloonSession.menu?'DUEL':'BLOCKED';
+  return shovelToolEquipped()?'SHOVEL':chemistSuitUnlocked?'CHEMIST':'WORLD';
+}
+function cancelGamepadCombatInput() {
+  const state=gamepadCombatInput, actor=state.actor;
+  if(state.melee)meleeInputHeld=false;
+  if(state.cannon)cannonInputHeld=false;
+  if(state.throwable) {
+    if(state.context==='CHEMIST')meleeInputHeld=false;
+    else grenadeInputHeld=false;
+  }
+  if(actor) {
+    if(state.cannon)actor.cannonCharge=0;
+    if(state.melee){actor.meleeCharge=0;actor.prevMeleeInputHeld=false;}
+  }
+  if(state.throwable){isCooking=false;cookTime=0;}
+  state.melee=state.cannon=state.throwable=false;
+}
+function resetGamepadCombatInput(pad=connectedGamepad()) {
+  cancelGamepadCombatInput();
+  const state=gamepadCombatInput;
+  state.connected=!!pad;state.seen=state.seen||!!pad;
+  state.padKey=pad?String(pad.index??'')+':'+(pad.id||''):null;
+  state.context=gamepadCombatContext();state.actor=player;
+  state.blocked.clear();state.buttons=[];
+  for(const i of [3,4,5,6,10])if(pad?.buttons[i]?.pressed)state.blocked.add(i);
+  gamepadAimZoneOverride=pad?'BODY':null;
+  endStanceHold('PAD',false);
+}
+function syncGamepadCombatContext() {
+  const state=gamepadCombatInput,pad=connectedGamepad(),context=gamepadCombatContext();
+  // World simulation runs before the normal input poll. Cancel obsolete pad
+  // holds here, including scenes that return before the poll can run.
+  if(!pad) {
+    if(state.connected){readGamepadCombatInput(null);resetGamepadSquadCommands(null);endStanceHold('PAD',false);}
+    return;
+  }
+  const padKey=String(pad.index??'')+':'+(pad.id||'');
+  if(context==='BLOCKED'||state.seen&&(!state.connected||state.padKey!==padKey||
+    state.context!==context||state.actor!==player)) {
+    resetGamepadCombatInput(pad);resetGamepadSquadCommands(pad);
+  }
+}
+function readGamepadCombatInput(pad) {
+  const state=gamepadCombatInput;
+  if(!pad) {
+    cancelGamepadCombatInput();state.connected=false;state.buttons=[];
+    gamepadAimZoneOverride=null;return state;
+  }
+  const context=gamepadCombatContext(),padKey=String(pad.index??'')+':'+(pad.id||'');
+  if(context==='BLOCKED'||state.seen&&(!state.connected||state.padKey!==padKey||
+    state.context!==context||state.actor!==player))resetGamepadCombatInput(pad);
+  state.connected=state.seen=true;state.padKey=padKey;state.context=context;state.actor=player;
+  state.buttons=pad.buttons.map((b,i)=>{
+    if(!b.pressed)state.blocked.delete(i);
+    return !!b.pressed&&!state.blocked.has(i)&&context!=='BLOCKED';
+  });
+  const down=i=>!!state.buttons[i];
+  gamepadAimZoneOverride=context==='BLOCKED'||context==='SHOVEL'?'BODY':down(6)?'LEGS':down(4)?'HEAD':'BODY';
+  // Keep ownership through the release frame, until simulation has resolved
+  // the pending attack. A pause between polling and simulation still cancels it.
+  const melee=context==='CHEMIST'?down(5):(context==='WORLD'||context==='SHOVEL')&&down(3);
+  state.melee=melee||state.melee&&player.meleeCharge>0;
+  state.cannon=context==='CHEMIST'&&down(3)||state.cannon&&player.cannonCharge>0;
+  state.throwable=(context==='CHEMIST'||context==='WORLD')&&down(5)||state.throwable&&isCooking;
+  return state;
+}
+
 // Fire input has its own release latch: closing a menu, changing controls or
 // reconnecting a held trigger must never spend a round. Aim remains live while
 // a latched trigger/stick waits to be released.
@@ -31608,6 +31802,7 @@ function boxingResetInput(actor = player) {
   if (!actor) return;
   boxingCancelDodgeChain(actor);
   if (actor === player && typeof resetGamepadFireInput === 'function') resetGamepadFireInput();
+  if(actor===player){resetGamepadCombatInput();resetGamepadSquadCommands(connectedGamepad());}
   actor._boxingControls = { isWorld: true };
   leftStick.active = rightStick.active = false;
   leftStick.dx = leftStick.dy = rightStick.dx = rightStick.dy = rightStick.dist = 0;
@@ -31667,11 +31862,10 @@ function boxingSeedDodgeEdges(state, pad = connectedGamepad()) {
 function boxingSeedPhysicalEntryInput(actor = player) {
   const state = boxingInputState(boxingNativeInputState(actor)), pad = connectedGamepad();
   const down = i => !!(pad && pad.buttons[i] && pad.buttons[i].pressed);
-  // Native melee begins on E, Y/RB, or the old MELEE touch button. Standard
-  // keeps its entry aliases. Defensive Y prepares the mapped right jab; held
-  // RB only raises the stance, then needs a fresh press for its right slip.
+  // Native melee begins on E, Y, or the MELEE touch button. Standard Y
+  // prepares a left straight; Defensive Y prepares the mapped right jab.
   state.padScheme = boxingPadScheme();
-  state.entryPads = [3, 5].filter(i => down(i) && boxingEntryPadPunch(i));
+  state.entryPads = [3].filter(i => down(i) && boxingEntryPadPunch(i));
   boxingSeedDodgeEdges(state, pad);
   const combat = touchCombatLayout();
   for (const t of touches) if (Math.hypot(t.x - combat.melee.x, t.y - combat.melee.y) < combat.hitRadius) {
@@ -31985,12 +32179,13 @@ function drawBoxingControls(actor = player, contextState = null, hintAlpha = 1) 
   pop();
 }
 function handleGamepad() {
-  if(undergroundRouteBusy())return;
-  if(handleStreetThugDialogueInput('GAMEPAD'))return;
-  if (player && boxingActive(player)) return;
   const pad=connectedGamepad();
+  if(undergroundRouteBusy()||handleStreetThugDialogueInput('GAMEPAD')||player&&boxingActive(player)) {
+    resetGamepadCombatInput(pad);resetGamepadSquadCommands(pad);return;
+  }
   if(!pad) {
     readGamepadFireInput(null);
+    readGamepadCombatInput(null);resetGamepadSquadCommands(null);
     endStanceHold('PAD',false);
     if (rightStick.gamepadInput) {
       rightStick.active = false; rightStick.dx = rightStick.dy = rightStick.dist = 0;
@@ -32001,16 +32196,20 @@ function handleGamepad() {
     prevGamepadButtons=[];return;
   }
   if (touchAimSelection.pointerId !== null) resetTouchAimSelection(true);
-  if (buildGhost) { handleBuildPlacementGamepad(pad); return; }
+  if (buildGhost) {
+    resetGamepadCombatInput(pad);resetGamepadSquadCommands(pad);
+    handleBuildPlacementGamepad(pad);return;
+  }
   // Detection alone hides the touch HUD, even with both sticks at rest.
   gamepadWasConnected=true;
   window.showOnScreenControls=false;
   const firing = readGamepadFireInput(pad);
+  const combat = readGamepadCombatInput(pad);
   
-  let lx = pad.axes[0], ly = pad.axes[1], ld = dist(0, 0, lx, ly); 
+  let lx = pad.axes[0]||0, ly = pad.axes[1]||0, ld = dist(0, 0, lx, ly);
   if (ld > 0.2) { leftStick.active = true; leftStick.dx = lx; leftStick.dy = ly; window.showOnScreenControls = false; window.isDesktop = false; } else if (!touches.length && !window.isDesktop) leftStick.active = false;
   
-  let rx = pad.axes[2], ry = pad.axes[3], rd = dist(0, 0, rx, ry); 
+  let rx = pad.axes[2]||0, ry = pad.axes[3]||0, rd = dist(0, 0, rx, ry);
   if (rd > 0.2) { rightStick.active = true; rightStick.dx = rx; rightStick.dy = ry; rightStick.dist = rd; rightStick.gamepadInput = true; window.showOnScreenControls = false; window.isDesktop = false; }
   else if (gamepadTriggerShooting() && (firing.trigger || pad.buttons[7]?.pressed)) {
     rightStick.active = true; rightStick.dx = Math.cos(player ? player.aimAngle : 0);
@@ -32024,7 +32223,8 @@ function handleGamepad() {
   let anyBtn = false; for (let i = 0; i < pad.buttons.length; i++) { if (btn(i)) anyBtn = true; }
   if (anyBtn) { window.showOnScreenControls = false; window.isDesktop = false; }
   
-  if ((jP(14) || jP(15)) && !(jP(14) && jP(15)) && millis() - lastWeaponSwapTime > 300 && player) {
+  const squadOwnsDpad=handleGamepadSquadCommands(pad);
+  if (!squadOwnsDpad && (jP(14) || jP(15)) && !(jP(14) && jP(15)) && millis() - lastWeaponSwapTime > 300 && player) {
       let aW = [WEAPONS.PISTOL];
       if (revolverUnlocked) aW.push(WEAPONS.REVOLVER);
       if (isStoryMode) aW.push(WEAPONS.TASER);
@@ -32037,15 +32237,15 @@ function handleGamepad() {
           player.currentWeapon = aW[nI]; player.reloadTimer = 0; lastWeaponSwapTime = millis();
       }
   }
-  if (jP(12) && player) cycleMeleeTool();
-  if(jP(13)&&player)beginStanceHold('PAD'); // Tap crouch/stand; hold prone.
-  else if(!btn(13)&&prevGamepadButtons[13])endStanceHold('PAD');
+  if (!squadOwnsDpad && jP(12) && player) cycleMeleeTool();
+  if(jP(10)&&combat.buttons[10]&&player)beginStanceHold('PAD');
+  else if(!btn(10)&&prevGamepadButtons[10])endStanceHold('PAD');
   if (shovelToolEquipped()) {
-    if (btn(3) || btn(5)) meleeInputHeld = true;
+    if (combat.buttons[3]) meleeInputHeld = true;
     if (shovelControlsAvailable()) {
-      if (btn(6)) shovelDig('DOWN');
+      if (combat.buttons[6]) shovelDig('DOWN');
       else if (btn(7)) shovelDig('FORWARD');
-      else if (btn(1)) shovelDig('UP');
+      else if (!squadOwnsDpad && btn(1)) shovelDig('UP');
     }
     prevGamepadButtons.length=pad.buttons.length;
     for(let i=0;i<pad.buttons.length;i++)prevGamepadButtons[i]=btn(i);
@@ -32053,20 +32253,18 @@ function handleGamepad() {
   }
   if (jP(2) && player && player.reloadTimer <= 0 && player.ammo < playerMagazineCapacity(player.currentWeapon)) { player.triggerReload(); }
 
-  // L2 holds/cooks the suit's throwable; L1 holds the chemist cannon charge.
-  // Merge with touch input, which clears these held flags at the frame's start.
+  // Merge held utilities with touch input, cleared at the frame's start.
+  // Y is melee (chemist cannon); R1 is grenade (chemist flask).
   if (chemistSuitUnlocked) {
-      if (btn(6)) meleeInputHeld = true; // Chemist flasks use the existing melee input.
-      if (btn(4)) cannonInputHeld = true; // Suit ability slot; future ninja parry goes here.
+      if (combat.buttons[5]) meleeInputHeld = true;
+      if (combat.buttons[3]) cannonInputHeld = true;
   } else {
-      if ((btn(3) || btn(5)) && meleeUnlocked) meleeInputHeld = true;
-      if (btn(6)) grenadeInputHeld = true;
+      if (combat.buttons[3] && meleeUnlocked) meleeInputHeld = true;
+      if (combat.buttons[5]) grenadeInputHeld = true;
   }
   if (jP(11) && player && player.currentWeapon === WEAPONS.BOW) rightStick.bowReleaseRequested = true;
-  else if (jP(11) && millis() - lastToggleTime > 300) { togglePlayerHeadAim(); lastToggleTime = millis(); }
   if (jP(0) && BIOME_ACTIVE && currentBiome === 2) interactForestHuntingActivity();
   if (jP(0) && BIOME_ACTIVE && (currentBiome === 1 || currentBiome === 3)) interactFrontierActivity();
-  if (jP(10) && jetpackUnlocked && player && player.dashCooldown <= 0 && player.dashTimer <= 0 && player.meleeTimer <= 0) { player.activateDash(); }
 
   prevGamepadButtons.length = pad.buttons.length;
   for (let i = 0; i < pad.buttons.length; i++) prevGamepadButtons[i] = btn(i);
@@ -58704,13 +58902,14 @@ function finishFrontierQuickDraw(won, reason) {
 function frontierSaloonFire() {
   const s = _frontierSaloonSession; if (!s || isPaused) return false;
   if (s.mode !== 'DUEL') return frontierSaloonPunch();
+  readGamepadCombatInput(connectedGamepad());
   const d = s.duel; if (!d || d.phase === 'RESULT') return false;
   if (d.phase === 'WAIT') { finishFrontierQuickDraw(false, 'FALSE START'); return true; }
   if (d.fireCooldownMs > 0 || d.ammo <= 0) return false;
   d.ammo--; d.fireCooldownMs = WEAPONS.REVOLVER.fireCooldown * 16.67;
   d.playerFired = true;
   if (d.shotReactionMs === null) d.shotReactionMs = d.reactionMs;
-  frontierQuickDrawSpawnRound(player, true, headAimToggle);
+  frontierQuickDrawSpawnRound(player, true, playerAimTarget() === 'HEAD');
   return true;
 }
 function frontierQuickDrawControls() {
@@ -58720,6 +58919,7 @@ function frontierQuickDrawAimInput() {
   const s = _frontierSaloonSession, d = s.duel, c = frontierQuickDrawControls();
   let ax = 0, ay = 0;
   const pad = connectedGamepad();
+  readGamepadCombatInput(pad);
   const firing = readGamepadFireInput(pad);
   if (pad) { ax = pad.axes[2] || 0; ay = pad.axes[3] || 0; }
   if (d.stickId !== null && !touches.some(t => t.id === d.stickId)) d.stickId = null;
@@ -59533,7 +59733,7 @@ function drawFrontierQuickDrawScene() {
   if (s.duel.aiming && s.duel.phase !== 'RESULT') {
     const muzzle = frontierQuickDrawMuzzle(player), ca = Math.cos(player.aimAngle), sa = Math.sin(player.aimAngle),
       t = ca > .05 ? constrain((s.opponent.x - muzzle.x) / ca, 0, s.duel.distance * 1.2) : s.duel.distance * .6,
-      tx = muzzle.x + ca * t, ty = muzzle.y + sa * t, r = headAimToggle ? 6 : 12;
+      tx = muzzle.x + ca * t, ty = muzzle.y + sa * t, r = playerAimTarget() === 'HEAD' ? 6 : 12;
     stroke(169, 222, 228, 130); strokeWeight(1); line(muzzle.x, muzzle.y, tx, ty);
     noFill(); stroke(223, 245, 241, 220); strokeWeight(1.3); ellipse(tx, ty, r * 2 / projection.x, r * 2);
     line(tx - 4 / projection.x, ty, tx + 4 / projection.x, ty); line(tx, ty - 4, tx, ty + 4);
@@ -59620,8 +59820,8 @@ function drawFrontierSaloonHud() {
           noFill(); stroke(162, 206, 219, 165); strokeWeight(1.3); ellipse(c.x, c.y, c.r * 1.4, c.r * 1.4);
           fill(139, 184, 195, 130); stroke(236, 222, 179); ellipse(c.x + d.stickX * c.r, c.y + d.stickY * c.r, 31, 31);
           noStroke(); fill(241, 216, 170); textSize(10); text('AIM / FIRE', c.x, c.y + c.r + 15);
-          fill(headAimToggle ? color(174, 72, 48) : color(58, 52, 42)); stroke(217, 182, 125); ellipse(c.headX, c.headY, 40, 40);
-          noStroke(); fill(247, 220, 169); textSize(8); text(headAimToggle ? 'HEAD' : 'BODY', c.headX, c.headY);
+          fill(playerAimTarget() === 'HEAD' ? color(174, 72, 48) : color(58, 52, 42)); stroke(217, 182, 125); ellipse(c.headX, c.headY, 40, 40);
+          noStroke(); fill(247, 220, 169); textSize(8); text(playerAimTarget() === 'HEAD' ? 'HEAD' : 'BODY', c.headX, c.headY);
         } else if (!pad) frontierSaloonHudLayer(hudAlpha, () => { noStroke(); fill(231, 206, 159); textSize(11); text('MOUSE · AIM   SPACE / CLICK · FIRE', width / 2, height - 116); });
         frontierSaloonHudLayer(hudAlpha, () => { noStroke(); fill(229, 204, 156); textSize(11); text('DUEL ROUNDS ' + d.ammo + '/6', width / 2 - 52, height - 171); });
       }
@@ -62155,7 +62355,7 @@ function drawShovelStatus() {
     const w=Math.min(350,width-24),alpha=notice?1:Math.min(1,shovelHelpMs/500);
     fill(30,25,18,225*alpha);rect(width/2-w/2,height-49,w,37,5);
     fill(244,221,170,255*alpha);textAlign(CENTER,CENTER);textSize(10);
-    text(notice || (connectedGamepad()?'R1/Y SWING · L2 DOWN · R2 AHEAD · B CLIMB':
+    text(notice || (connectedGamepad()?'Y SWING · L2 DOWN · R2 AHEAD · B CLIMB':
       window.isDesktop?'E SWING · C DOWN · F AHEAD · V CLIMB':'HOLD TO DIG · BUILDING FOUNDATIONS BLOCK'),width/2,height-31);
   }
   pop();

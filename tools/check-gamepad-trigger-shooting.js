@@ -74,6 +74,20 @@ check('Default stick scheme retains full-stick fire and ignores R2 for native gu
   reset('STICK');buttons([7]);frame();assert.equal(run('bullets.length'),0);
   buttons([]);pad.axes=[0,0,1,0];frame();assert.equal(run('bullets.length'),1);
 });
+for(const scheme of ['STICK','R2'])
+  check(scheme+' fires actual head, leg and body projectiles from held modifiers',()=>{
+    reset(scheme);
+    let shots=0;
+    for(const [modifiers,target] of [[[4],'HEAD'],[[6],'LEGS'],[[],'BODY']]) {
+      buttons(modifiers);pad.axes=[0,0,.5,0];frame(20);
+      assert.equal(run('playerAimTarget()'),target);
+      assert.equal(run('bullets.length'),shots,'target selection alone cannot shoot');
+      buttons(scheme==='R2'?[...modifiers,7]:modifiers);pad.axes=[0,0,1,0];frame();
+      assert.equal(run('bullets.length'),++shots);
+      assert.equal(run('bullets[bullets.length-1].tH'),target);
+      assert.equal(run('player.ammo'),17-shots);
+    }
+  });
 check('Pause/resume consumes a held trigger until released',()=>{
   buttons([7]);run('isPaused=true;resetGamepadFireInput();');frame(3);
   assert.equal(run('bullets.length'),0);run('isPaused=false;');frame(30);
@@ -117,6 +131,17 @@ check('R2 bow right stick aims without drawing or auto-releasing',()=>{
   assert.equal(run('bullets.length'),0);assert.equal(run('player.bowDrawState.tension'),0);
   assert.equal(run('player.aimAngle'),0);
 });
+check('Default bow keeps R3 release while held L1 selects its head target',()=>{
+  reset('STICK');run('player.currentWeapon=WEAPONS.BOW;player.ammo=24;');
+  buttons([4]);
+  for(let i=1;i<=60;i++){pad.axes=[0,0,.92*i/60,0];frame();}
+  assert.equal(run('bullets.length'),0);assert(run('player.bowDrawState.tension')>.89);
+  buttons([4,11]);frame();
+  assert.equal(run('bullets.length'),1);
+  assert(run('bullets[0].isArrow&&bullets[0].arrowPower>.99'));
+  assert.equal(run('bullets[0].tH'),'HEAD');
+  assert.equal(run('headAimToggle'),false,'R3 must not change the persistent touch/desktop aim mode');
+});
 check('Holding then releasing R2 draws and releases one powered arrow',()=>{
   run('player.currentWeapon=WEAPONS.BOW;player.ammo=24;');pad.axes=[0,0,1,0];frame();
   buttons([7]);frame(60);assert.equal(run('bullets.length'),0);
@@ -152,6 +177,25 @@ check('Quick draw R2 launches a finite round and produces a native death/reward'
   roomFrame(30);assert(run('_frontierSaloonSession.duel.won'));
   assert(run('_frontierSaloonSession.duel.opponentCorpse instanceof Corpse'));
   assert(run('cowboyCostumeOwned'));assert.equal(run('bullets.length'),0);
+});
+for(const scheme of ['R2','STICK']) check('Quick draw '+scheme+' samples held L1 before its first shot',()=>{
+  duel(scheme);cue();pad.axes=[0,0,1,0];buttons(scheme==='R2'?[4,7]:[4]);roomFrame();
+  assert.equal(run('_frontierSaloonSession.duel.projectiles.length'),1);
+  assert.equal(run('_frontierSaloonSession.duel.projectiles[0].tH'),'HEAD');
+  assert.equal(run('headAimToggle'),false,'held head targeting must preserve persistent touch/desktop selection');
+});
+check('Quick draw direct fire samples L1 without waiting for the aim reader',()=>{
+  duel();cue();buttons([4]);run('frontierSaloonFire();');
+  assert.equal(run('_frontierSaloonSession.duel.projectiles[0].tH'),'HEAD');
+});
+check('Quick draw L2 takes priority over L1 and release restores BODY',()=>{
+  duel();cue();run("setPlayerAimZone('HEAD');");buttons([4,6]);roomFrame();
+  assert.equal(run('playerAimTarget()'),'LEGS');
+  assert.equal(run('headAimToggle'),true);
+  buttons([]);roomFrame();assert.equal(run('playerAimTarget()'),'BODY');
+  buttons([7]);roomFrame();
+  assert.equal(run('_frontierSaloonSession.duel.projectiles[0].tH'),'BODY');
+  assert.equal(run('headAimToggle'),true,'release must leave the saved touch/desktop selection intact');
 });
 check('A held quick-draw trigger cannot spend another duel round',()=>{
   duel();cue();pad.axes=[0,0,0,1];buttons([7]);roomFrame(25);

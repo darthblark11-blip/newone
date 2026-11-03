@@ -70,8 +70,8 @@ for(const [button,kind,label] of mapping) {
     assert.equal(probe('player._boxing.punch.level'),'HEAD');
   });
 }
-for(const [button,kind] of [[5,'RIGHT_HOOK'],[3,'LEFT_STRAIGHT']]) {
-  check('Native '+(button===5?'R1':'Y')+' entry preserves the intended hand through release',()=>{
+for(const [button,kind] of [[3,'LEFT_STRAIGHT']]) {
+  check('Native Y entry preserves the intended hand through release',()=>{
     connect([button]);probe('beginWorldBoxing(player);boxingSeedPhysicalEntryInput(player);');input(14);
     assert.equal(probe('player._boxing.preparedPunch.kind'),kind);
     assert.equal(probe('player._boxing.attackCount'),0);

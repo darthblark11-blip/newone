@@ -488,7 +488,8 @@ receive the instant/PERFECT headshot override.
 
 Let the stick return to neutral, reach its full end stop (magnitude 0.985), or
 click R3 to release. Recenter before the next draw after an end-stop/R3 release.
-Other weapons keep their existing stick firing and R3 headshot-toggle behavior.
+Other weapons use the selected stick/R2 shooting scheme. Hold L1 for head aim
+or L2 for leg aim; releasing returns to body aim. R3 only releases the bow.
 Touch uses the same reversed analog gesture. Mouse aiming stays direct: hold the
 primary button to draw over time, release to fire. Bow-string travel, the drawing
 hand and the loaded arrow follow tension, and a compact HUD shows draw quality.

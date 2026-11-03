@@ -170,8 +170,9 @@ Controls:
   Hold it for **0.2 seconds** to enter prone. It remains separate from the right aiming silhouette.
 - Keyboard: tap **C** to toggle crouch/stand; hold **C** for **0.2 seconds** to enter prone.
   **Z** retains the explicit prone/stand shortcut. Shovel mode retains its C dig key.
-- Controller: tap **D-pad down** to toggle crouch/stand; hold for **0.2 seconds** to enter
-  prone. **L3** retains dash; **R3** retains aim/bow release.
+- Controller: tap **L3** (left stick click) to toggle crouch/stand; hold for
+  **0.2 seconds** to enter prone. A moving hold dives; a neutral hold lowers in
+  place. **R3** releases a drawn bow. D-pad down controls squad orders.
 
 A short tap never advances from crouch to prone. Tapping while prone requests
 standing. Movement at the moment the hold reaches 0.2 seconds determines the

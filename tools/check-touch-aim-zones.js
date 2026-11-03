@@ -103,8 +103,24 @@ ok('touchAimSelection.pointerId===null&&!rightStick.active','Pause/settings inpu
 reset();start(point('HEAD'));ctx.windowWidth=393;ctx.windowHeight=800;run('windowResized();handleTouches();');
 ok('touchAimSelection.pointerId===null&&!rightStick.active','Resize consumes the old pointer before moving layout');
 reset();start(point('HEAD'));pad={axes:[0,0,0,0],buttons:Array.from({length:17},()=>({pressed:false}))};
-run('handleGamepad();');pad=null;run('handleTouches();');
-ok('touchAimSelection.pointerId===null&&!rightStick.active','Controller takeover consumes old touch until release');
+run('handleGamepad();');
+ok("touchAimSelection.pointerId===null&&!rightStick.active&&playerAimTarget()==='BODY'",
+  'A neutral controller consumes old touch targeting and uses body aim');
+pad.buttons[4].pressed=true;run('handleGamepad();');
+ok("touchAimSelection.pointerId===null&&playerAimTarget()==='HEAD'&&!rightStick.active",
+  'Held L1 selects head after touch takeover without firing');
+pad.buttons[4].pressed=false;run('handleGamepad();');
+ok("playerAimTarget()==='BODY'",'Releasing L1 returns body instead of restoring the stale touch head target');
+pad.buttons[6].pressed=true;run('handleGamepad();');
+ok("touchAimSelection.pointerId===null&&playerAimTarget()==='LEGS'&&!rightStick.active",
+  'Held L2 selects legs after touch takeover without firing');
+pad.buttons[6].pressed=false;run('handleGamepad();');
+ok("playerAimTarget()==='BODY'",'Releasing L2 returns body before touch resumes');
+pad=null;run('handleGamepad();handleTouches();');
+ok('touchAimSelection.pointerId===null&&!rightStick.active','Controller disconnect keeps the old touch consumed until release');
+release(10);start(point('LEGS',11));
+ok("touchAimSelection.pointerId===11&&playerAimTarget()==='LEGS'&&rightStick.active",
+  'A fresh touch after controller release owns its selected target normally');
 
 reset();const bow=start(point('LEGS')),bowOrigin={...bow};
 run('player.currentWeapon=WEAPONS.BOW;player.ammo=24;');tick();

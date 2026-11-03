@@ -110,7 +110,7 @@ for(const scheme of ['STANDARD','DEFENSIVE'])for(const button of [0,1,2,3,4,5,6,
   check(nextPunch?run(`player._boxing.punch.kind==='${nextPunch[1]}'&&player._boxing.attackCount===1`):run('!!player._boxing.dodge&&player._boxing.attackCount===0'),`${scheme} button ${button} uses its new role after release and fresh press`);
 }
 
-for(const [button,kind] of [[3,'RIGHT_JAB'],[5,null]]) {
+for(const [button,kind] of [[3,'RIGHT_JAB']]) {
   fresh();run('boxingExit(player);');connect([button]);
   run('beginWorldBoxing(player);boxingSeedPhysicalEntryInput(player);');read(14);
   check(kind?run(`player._boxing.preparedPunch.kind==='${kind}'&&!player._boxing.dodge`):run('!player._boxing.preparedPunch&&!player._boxing.dodge'),`Defensive native entry ${button} preserves its new role without an old shoulder punch`);

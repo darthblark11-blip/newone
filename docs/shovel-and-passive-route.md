@@ -16,7 +16,7 @@ The shovel has four actions:
 
 | Action | Touch | Keyboard | Gamepad |
 | --- | --- | --- | --- |
-| Nonlethal swing | SWING | E | R1 or Y |
+| Nonlethal swing | SWING | E | Y |
 | Dig beneath your feet | DIG DOWN | C | L2 |
 | Dig the adjacent square ahead | DIG AHEAD | F | R2 |
 | Climb the shaft | CLIMB UP | V | B |

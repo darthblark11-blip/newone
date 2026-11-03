@@ -31,9 +31,9 @@ Connected gamepads hide the combat tutorial panel, touch controls and stance
 exit badge. D-pad up exits the stance, restoring the equipped weapon outdoors.
 A is a lean-back slip in Standard and a left hook in Defensive; exit the
 stance before pressing A to talk or use a scene interaction. In Standard each
-shoulder controls its own hand, including R1's right-hook entry. Outside boxing,
-ordinary A interactions and D-pad melee-tool cycling retain their existing
-controls.
+shoulder controls its own hand. Outdoors, Y enters unarmed boxing; R1 throws
+the equipped grenade or flask. Ordinary A interactions and D-pad melee-tool
+cycling remain available outside boxing and the squad order menu.
 
 Tap and release an attack for the head. Hold for at least 180 ms to lower the
 boxer's level and prepare a body shot, then release to throw it. Holding never
