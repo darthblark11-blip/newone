@@ -19,7 +19,7 @@ The shovel has four actions:
 | Nonlethal swing | SWING | E | Y |
 | Dig beneath your feet | DIG DOWN | C | L2 |
 | Dig the adjacent square ahead | DIG AHEAD | F | R2 |
-| Climb the shaft | CLIMB UP | V | B |
+| Climb the shaft | CLIMB UP | V | X |
 
 The movement stick/WASD moves normally. The right stick or mouse sets the
 direction of a forward dig. While the shovel is equipped, aiming and digging

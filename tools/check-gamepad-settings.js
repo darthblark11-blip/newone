@@ -43,7 +43,9 @@ for (const [w,h] of [[320,568],[390,844],[800,390],[940,390]]) {
   ctx.width=w;ctx.height=h;
   check(`World pause touch reaches settings at ${w}x${h}`, () => {
     probe('exitFrontierSaloon();isPaused=true;pauseMenuState="MAIN";window.lastPauseTime=0;');
-    ctx.mouseX=w/2+63;ctx.mouseY=h/2-140;probe('touchStarted();');assert.equal(probe('pauseMenuState'),'SETTINGS');
+    const scale=probe('controllerPauseScale()');
+    ctx.mouseX=w/2+63*scale;ctx.mouseY=h/2-140*scale;
+    probe('touchStarted();');assert.equal(probe('pauseMenuState'),'SETTINGS');
     click('GAMEPAD_CONTROLS');assert.equal(probe('pauseMenuState'),'GAMEPAD_CONTROLS');
   });
   check(`Controls fit and touch selects both independent choices at ${w}x${h}`, () => {

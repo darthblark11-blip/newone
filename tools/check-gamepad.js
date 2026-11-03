@@ -122,9 +122,9 @@ check('Weapon debounce and opposite D-pad presses do not queue repeated swaps', 
   assert(P('player.currentWeapon===WEAPONS.TASER'));
   frame([]); frame([14, 15], { dt: 400 }); assert(P('player.currentWeapon===WEAPONS.TASER'));
 });
-check('D-pad down with no allies and A/B do not trigger combat actions', () => {
+check('D-pad down with no allies and A do not trigger combat actions', () => {
   probe('isStoryMode=true;swordPickedUp=true;window.pickaxeOwned=true;');
-  for (const key of [13, 0, 1]) {
+  for (const key of [13, 0]) {
     press(key);
     assert(P('player.currentWeapon===WEAPONS.PISTOL&&!headAimToggle&&player.dashTimer===0'));
     assert.equal(P('meleeTool()'), 'NONE');

@@ -1113,12 +1113,204 @@ function drawPauseSettings() {
     'D-pad select · A choose · B back · Start resume' : 'Tap to choose · changes save automatically', width / 2, p.y + p.h - 13);
   pop();
 }
+// Controller UI reads the same screen actions as touch. It owns its edges
+// across every screen, so a held confirm cannot skip the following dialogue,
+// buy twice, or become a combat action after closing a menu.
+const controllerUIInput = { buttons: [], padKey: null, screen: '', focus: 0,
+  usingPad: false, direction: '', nextMove: 0, modal: false, frame: -1,
+  blockFrame: -1, managedPause: false, history: new Map() };
+function controllerButton(id, label, x, y, w, h, activate, disabled = false) {
+  const b = { id, label, x, y, w, h, disabled };
+  b.activate = activate || (() => controllerClick(b.x + b.w / 2, b.y + b.h / 2));
+  return b;
+}
+function controllerClick(x, y) { return handleTouchStartActions(x, y, 'GAMEPAD'); }
+function controllerMainLayout() {
+  const w = Math.min(410, width - 24), gap = 6, cell = (w - gap * 6) / 7;
+  return { x: (width - w) / 2, y: height / 2 - 50, cell, step: cell + gap,
+    chip: { x: width / 2 - 70, y: height / 2 - 88, w: 140, h: 26 } };
+}
+function controllerMainScreen() {
+  if (started) return null;
+  const buttons = [], add = (...args) => buttons.push(controllerButton(...args));
+  if (selectingDifficulty) {
+    add('NORMAL', 'NORMAL', width / 2 - 150, height / 2 - 30, 300, 60);
+    add('HARD', 'HARD', width / 2 - 150, height / 2 + 45, 300, 60);
+    const back = () => { selectingDifficulty = false; sfx.charge(); };
+    add('BACK', 'BACK', width / 2 - 100, height / 2 + 115, 200, 40, back);
+    return { key: 'MAIN:DIFFICULTY', buttons, back, modal: true };
+  }
+  const m = controllerMainLayout(), c = m.chip;
+  add('MODE', levelSelectStory ? 'STORY LEVEL SHORTCUTS' : 'ARCADE LEVEL SHORTCUTS', c.x, c.y, c.w, c.h);
+  for (let i = 1; i <= 7; i++) add('LEVEL_' + i, 'LEVEL ' + i, m.x + (i - 1) * m.step, m.y, m.cell, 50);
+  add('ARCADE', 'ARCADE MODE', width / 2 - 100, height / 2 + 20, 200, 50);
+  add('STORY', 'STORY MODE', width / 2 - 100, height / 2 + 80, 200, 50);
+  if (deathMenuHasSave()) add('LOAD', 'LOAD GAME', width / 2 - 100, height / 2 + 140, 200, 50);
+  return { key: 'MAIN:START', buttons, modal: true, defaultId: 'ARCADE' };
+}
+function controllerPauseScale() {
+  return isPaused && pauseMenuState === 'MAIN' && !frontierSaloonIsInside() ? Math.min(1, (height - 44) / 570) : 1;
+}
+function controllerUIScreen() {
+  if (!started) return controllerMainScreen();
+  // These scenes already own their A/B edges, choices and combat priority.
+  if (isDead || undergroundRouteBusy() || streetThugDialogueOpen() || buildGhost && !isPaused) return null;
+  if (isWin) return controllerWinScreen();
+  let screen;
+  if (isPaused && !frontierSaloonIsInside() || isPaused && pauseSettingsOpen()) screen = controllerPauseScreen();
+  else screen = controllerSaloonScreen() || controllerContextScreen();
+  if (screen && isPaused && pauseMenuState === 'MAIN') {
+    const scale = controllerPauseScale();
+    if (scale < 1) for (const b of screen.buttons) {
+      b.x = width / 2 + (b.x - width / 2) * scale;
+      b.y = height / 2 + (b.y - height / 2) * scale;
+      b.w *= scale; b.h *= scale;
+    }
+  }
+  return screen;
+}
+function controllerUIBlocksGameplay() {
+  return controllerUIInput.frame === frameCount &&
+    (controllerUIInput.blockFrame === frameCount || controllerUIInput.modal);
+}
+function consumeControllerUIInputs(pad = connectedGamepad()) {
+  consumePauseControlInputs();
+  resetGamepadCombatInput(pad); resetGamepadSquadCommands(pad);
+  const buttons = pad ? pad.buttons.map(b => !!b.pressed) : [];
+  pauseControlsInput.buttons = buttons.slice(); pauseControlsInput.pad = pad ? pad.index : null;
+  undergroundInput.buttons = buttons.slice(); undergroundInput.pad = pad ? pad.index : null;
+  if (leftStick) { leftStick.active = false; leftStick.dx = leftStick.dy = 0; }
+  if (rightStick) { rightStick.active = false; rightStick.dx = rightStick.dy = rightStick.dist = 0; }
+  controllerUIInput.blockFrame = frameCount;
+}
+function controllerNavigate(screen, buttons, dx, dy) {
+  const state = controllerUIInput, current = buttons[state.focus] || buttons[0];
+  if (!current) return;
+  const x = current.x + current.w / 2, y = current.y + current.h / 2;
+  let next = state.focus, best = Infinity;
+  buttons.forEach((b, i) => {
+    const bx = b.x + b.w / 2 - x, by = b.y + b.h / 2 - y;
+    const along = bx * dx + by * dy, across = Math.abs(bx * dy - by * dx);
+    if (along > 2 && along + across * 2.5 < best) { best = along + across * 2.5; next = i; }
+  });
+  state.focus = next; state.usingPad = true;
+  state.history.set(screen.key, buttons[next].id);
+  if (state.history.size > 32) state.history.delete(state.history.keys().next().value);
+}
+function handleControllerUIInput() {
+  const state = controllerUIInput, pad = connectedGamepad();
+  const buttons = pad ? pad.buttons.map(b => !!b.pressed) : [],
+    padKey = pad ? String(pad.index ?? '') + ':' + (pad.id || '') : null;
+  const screen = pad ? controllerUIScreen() : null, list = screen ? screen.buttons.filter(b => !b.disabled) : [];
+  state.frame = frameCount; state.modal = !!(pad && screen && screen.modal);
+  state.managedPause = !!(pad && isPaused && screen);
+  const changedPad = padKey !== state.padKey;
+  const edge = i => !changedPad && !!buttons[i] && !state.buttons[i];
+  if (screen && screen.key !== state.screen) {
+    state.screen = screen.key;
+    const selected = state.history.get(screen.key) || screen.defaultId;
+    state.focus = Math.max(0, list.findIndex(b => b.id === selected));
+    state.direction = ''; state.nextMove = millis() + 350;
+  } else if (screen) {
+    const remembered = list.findIndex(b => b.id === state.history.get(screen.key));
+    if (remembered >= 0) state.focus = remembered;
+  } else { state.screen = ''; state.direction = ''; }
+  state.focus = Math.max(0, Math.min(state.focus, list.length - 1));
+  if (pad) {
+    window.showOnScreenControls = false;
+    if (changedPad) {
+      state.usingPad = true;
+      // A controller arriving with held buttons must first release them.
+      consumeControllerUIInputs(pad);
+    } else if (screen) {
+      const px = (buttons[15] ? 1 : 0) - (buttons[14] ? 1 : 0),
+        py = (buttons[13] ? 1 : 0) - (buttons[12] ? 1 : 0),
+        ax = pad.axes[0] || 0, ay = pad.axes[1] || 0;
+      let dx = px, dy = py;
+      if (!buttons.slice(12, 16).some(Boolean) && Math.max(Math.abs(ax), Math.abs(ay)) > .55) {
+        if (Math.abs(ax) > Math.abs(ay)) dx = Math.sign(ax); else dy = Math.sign(ay);
+      }
+      if (dx && dy) dx = 0;
+      const direction = dx + ':' + dy, now = millis();
+      if (dx || dy) {
+        if (direction !== state.direction || now >= state.nextMove) {
+          controllerNavigate(screen, list, dx, dy);
+          state.nextMove = now + (direction !== state.direction ? 350 : 125);
+        }
+        state.direction = direction;
+      } else state.direction = '';
+      if (list[state.focus]) state.history.set(screen.key, list[state.focus].id);
+      if (isPaused && pauseSettingsOpen() && list[state.focus]) {
+        pauseControlsInput.focus = pauseSettingsButtons().findIndex(b => b.action === list[state.focus].id);
+        pauseControlsInput.usingPad = state.usingPad;
+      }
+      if (screen.key.startsWith('SALOON_') && _frontierSaloonSession) {
+        _frontierSaloonSession.padWas = buttons.slice();
+        const selected = list[state.focus];
+        if (_frontierSaloonSession.menu && selected && ['BRAWL', 'DUEL', 'CLUB_STOP'].includes(selected.id))
+          _frontierSaloonSession.menuChoice = selected.id;
+      }
+      let action = null;
+      if (isPaused && edge(9)) action = resumeFromPause;
+      else if (isPaused && pauseMenuState === 'MAIN' && edge(3)) action = openPauseSettings;
+      else if (edge(1) && screen.back) action = screen.back;
+      else if (edge(0) && list[state.focus]) action = list[state.focus].activate;
+      if (action) {
+        state.usingPad = true;
+        consumeControllerUIInputs(pad);
+        action();
+        consumeControllerUIInputs(pad);
+      } else if (screen.modal) {
+        // Keep the simulation's old input values out of modal screens.
+        if (leftStick) leftStick.active = false;
+        if (rightStick) rightStick.active = false;
+        meleeInputHeld = cannonInputHeld = grenadeInputHeld = false;
+      }
+    }
+  } else { state.usingPad = false; state.direction = ''; }
+  state.buttons = buttons; state.padKey = padKey;
+  if (screen && list[state.focus] && !state.history.has(screen.key)) state.history.set(screen.key, list[state.focus].id);
+  if (state.history.size > 32) state.history.delete(state.history.keys().next().value);
+  return !!screen;
+}
+function drawControllerUIFocus() {
+  const state = controllerUIInput;
+  if (!state.usingPad || !connectedGamepad()) return;
+  const screen = controllerUIScreen();
+  if (!screen) return;
+  const list = screen.buttons.filter(b => !b.disabled);
+  const remembered = list.findIndex(b => b.id === state.history.get(screen.key));
+  const b = list[remembered >= 0 ? remembered : screen.key === state.screen ? state.focus : Math.max(0, list.findIndex(b => b.id === screen.defaultId))];
+  push(); resetMatrix(); rectMode(CORNER); textFont('sans-serif'); textAlign(CENTER, CENTER);
+  if (b) {
+    noFill(); stroke(255, 239, 163); strokeWeight(3); rect(b.x - 3, b.y - 3, b.w + 6, b.h + 6, 8);
+    if (screen.modal && (b.x < 0 || b.y < 28 || b.x + b.w > width || b.y + b.h > height)) {
+      // Keep the active choice visible on older ledger pages which extend
+      // beyond short landscape screens, including the live assignment count.
+      const w = Math.min(430, width - 20);
+      fill(29, 36, 39, 248); stroke(255, 239, 163); strokeWeight(2); rect((width - w) / 2, 32, w, 34, 6);
+      noStroke(); fill(255, 237, 185); textSize(Math.min(14, (w - 18) / Math.max(12, b.label.length * .58)));
+      text('A · ' + b.label, width / 2, 49);
+    }
+    if (!screen.modal) {
+      fill(255, 231, 150); noStroke(); ellipse(b.x + 10, b.y - 10, 20, 20);
+      fill(24, 31, 28); textSize(12); text('A', b.x + 10, b.y - 10);
+    }
+  }
+  if (screen.modal && list.length) {
+    const label = 'D-pad / stick · A ' + (list.length === 1 ? 'continue' : 'confirm') + (screen.back ? ' · B back' : '');
+    noStroke(); fill(16, 20, 24, 230); rect(width / 2 - Math.min(190, width / 2 - 6), 4, Math.min(380, width - 12), 22, 5);
+    fill(255, 237, 185); textSize(Math.min(11, (width - 20) / 35)); text(label, width / 2, 15);
+  }
+  pop();
+}
+
 // The scene-owned combat readers do not run menu navigation. Poll it once at
 // frame start, including the isolated saloon/duel, while the simulation pauses.
 function handlePauseMenuInput() {
   const pad = connectedGamepad(), buttons = pad ? pad.buttons.map(b => !!b.pressed) : [], state = pauseControlsInput;
   const samePad = !!pad && state.pad === pad.index;
-  const edge = i => samePad && buttons[i] && !state.buttons[i];
+  const edge = i => !(controllerUIInput.frame === frameCount && controllerUIInput.managedPause) && samePad && buttons[i] && !state.buttons[i];
   const keys = new Set([27, 80, 38, 40, 37, 39, 13].filter(code => keyIsDown(code)));
   const keyEdge = code => keys.has(code) && !state.keys.has(code);
   state.pad = pad ? pad.index : null;
@@ -1160,6 +1352,119 @@ function handlePauseMenuInput() {
   } else if (edge(1) || keyEdge(27) || keyEdge(80)) pauseMenuState = 'MAIN';
   state.buttons = buttons; state.keys = keys;
 }
+// The controller points at the same visible pause controls as touch. Readers
+// return geometry and native actions only; the shared UI sampler owns focus,
+// A/B edges and input consumption when an action changes screens.
+function controllerPauseScreen() {
+  if (!isPaused) return null;
+  if (pauseMenuState === 'GOV_DIRECTIVE') return controllerDirectiveScreen(true);
+  if (pauseMenuState === 'MILITARY_BRING') return controllerMilitaryScreen();
+  const buttons = [], x = width / 2 - 120, center = width / 2;
+  const screen = { key: 'PAUSE:' + pauseMenuState, buttons, modal: true,
+    back: () => { pauseMenuState = 'MAIN'; } };
+  const add = (id, label, bx, y, w, h, action, disabled = false) =>
+    buttons.push(controllerButton(id, label, bx, y, w, h, action, disabled));
+  const row = (id, label, y, action, disabled = false) => add(id, label, x, y, 240, 40, action, disabled);
+  const back = (y, target = 'MAIN') => {
+    screen.back = () => { pauseMenuState = target; };
+    row('BACK', 'BACK', y, screen.back);
+  };
+  if (pauseSettingsOpen()) {
+    screen.back = () => activatePauseControl('BACK');
+    for (const b of pauseSettingsButtons())
+      add(b.action, b.label, b.x, b.y, b.w, b.h, () => activatePauseControl(b.action));
+  } else if (pauseMenuState === 'MAIN') {
+    screen.back = resumeFromPause; screen.defaultId = 'CONTINUE';
+    if (inOverworldView) {
+      add('CONTINUE', 'CONTINUE', x, height / 2 - 210, 114, 40, resumeFromPause);
+      add('TRAVEL', 'TRAVEL', center + 6, height / 2 - 210, 114, 40);
+    } else row('CONTINUE', 'CONTINUE', height / 2 - 210, resumeFromPause);
+    add('SAVE', 'SAVE GAME', x, height / 2 - 160, 114, 40, () => { saveGame(); resumeFromPause(); });
+    add('SETTINGS', 'SETTINGS', center + 6, height / 2 - 160, 114, 40, openPauseSettings);
+    if (swordPickedUp || window.pickaxeOwned || window.shovelOwned)
+      row('MELEE', 'MELEE TOOL', height / 2 - 110, () => { cycleMeleeTool(); sfx.reload(); });
+    if (currentLevel >= 3 && currentLevel <= 7) row('DIRECTIVE', 'GOVERNMENT DIRECTIVE', height / 2 - 60);
+    row('OVERWORLD', inOverworldView ? 'HIDE OVERWORLD' : 'OPEN OVERWORLD', height / 2 - 10, undefined, !sectorOverworldAvailable());
+    row('SHOP', 'UPGRADES', height / 2 + 40);
+    row('TABLET', "DAD'S TABLET", height / 2 + 90);
+    if (window.towersDefeated || isStoryMode && currentLevel >= 2)
+      row('SQUAD', 'SQUAD COMMAND', height / 2 + 140);
+    add('BUILD', 'BUILD', x, height / 2 + 190, 114, 40, undefined, !(buildCrew() > 0 || window.archLvl >= 2));
+    add('BUILDINGS', 'MY BUILDINGS', center + 6, height / 2 + 190, 114, 40, undefined, buildSites.length === 0);
+    row('MAIN_MENU', 'MAIN MENU', height / 2 + 240, () => { resetToMainMenu(); sfx.charge(); });
+  } else if (pauseMenuState === 'BUILDINGS') {
+    const rows = buildSites.slice().sort((a, b) =>
+      (a.level === currentLevel ? 0 : 1) - (b.level === currentLevel ? 0 : 1) ||
+      (a.done ? 1 : 0) - (b.done ? 1 : 0));
+    for (let i = 0; i < Math.min(rows.length, 7); i++) {
+      const site = rows[i], bp = BLUEPRINTS[site.kind];
+      add('SITE:' + (site.id || i), bp ? bp.label : site.kind, center - 170, height / 2 - 170 + i * 54, 340, 46,
+        () => { site.marked = !site.marked; sfx.reload(); }, site.level !== currentLevel);
+    }
+    back(height / 2 + 190);
+  } else if (pauseMenuState === 'BUILD') {
+    const menu = buildMenuLayout();
+    for (let i = 0; i < BUILD_ORDER.length; i++) {
+      const kind = BUILD_ORDER[i];
+      add('BUILD:' + kind, BLUEPRINTS[kind].label, menu.x, menu.top + i * (menu.cardH + 8), menu.w, menu.cardH,
+        () => startBuildPlacement(kind), buildCrew() <= 0);
+    }
+    const fort = fortificationsMenuButton();
+    add('FORTIFICATIONS', 'FORTIFICATIONS', fort.x, fort.y, fort.w, fort.h, buildBarrier, !window.archBarrierReady);
+    back(menu.backY);
+  } else if (pauseMenuState === 'SQUAD' || pauseMenuState === 'SQUAD_SEARCH') {
+    const searching = pauseMenuState === 'SQUAD_SEARCH';
+    const actions = searching ? ['NORTH', 'SOUTH', 'EAST', 'WEST'] : ['FOLLOW', 'SEARCH', 'SPREAD', 'HOLD'];
+    const labels = searching ? actions : ['FOLLOW ME', 'SEARCH...', 'SPREAD OUT', 'HOLD PERIMETER'];
+    actions.forEach((action, i) => row(action, labels[i], height / 2 - 90 + i * 60,
+      () => searching ? issueSquadCommand('SEARCH', action) : action === 'SEARCH' ?
+        pauseMenuState = 'SQUAD_SEARCH' : issueSquadCommand(action)));
+    back(height / 2 + 150, searching ? 'SQUAD' : 'MAIN');
+  } else if (pauseMenuState === 'GARRISON') {
+    const sectors = garrisonSectors(), sector = sectors[Math.min(garrisonSector, sectors.length - 1)];
+    const pool = poolLedger(), ledger = sectorLedger(sector);
+    add('PREV_SECTOR', 'PREVIOUS SECTOR', center - 150, 96, 50, 42, undefined, sectors.length < 2);
+    add('NEXT_SECTOR', 'NEXT SECTOR', center + 100, 96, 50, 42, undefined, sectors.length < 2);
+    POP_DEPTS.forEach((dept, i) => {
+      for (const [sex, offset] of [['M', 0], ['F', 26]]) {
+        const key = 'pop' + dept + sex, y = 190 + i * 74 + 14 + offset;
+        add(dept + ':' + sex + ':RETURN', dept.toUpperCase() + ' ' + sex + ' RETURN · ' + ledger[key], center - 52, y - 11, 44, 22,
+          undefined, !(ledger[key] > 0));
+        add(dept + ':' + sex + ':POST', dept.toUpperCase() + ' ' + sex + ' POST · ' + pool[key], center + 6, y - 11, 40, 22,
+          undefined, !(pool[key] > 0));
+      }
+    });
+    screen.back = () => { pauseMenuState = 'GOV_DIRECTIVE'; invalidateDirectiveBuffer(); sfx.charge(); };
+    add('BACK', 'DONE', center - 70, height - 62, 140, 34, screen.back);
+  } else if (pauseMenuState === 'SHOP') {
+    const items = upgradeShopItems(), layout = upgradeShopLayout(items.length);
+    items.forEach((item, i) => {
+      const bx = layout.startX + i % layout.cols * layout.spacingX;
+      const by = layout.startY + Math.floor(i / layout.cols) * layout.spacingY;
+      add('BUY:' + item.id, item.name, bx - layout.boxW / 2, by - layout.boxH / 2, layout.boxW, layout.boxH,
+        () => purchaseUpgrade(item), !!item.disabled || !!item.state || score < item.price || !(item.price > 0 || item.suit));
+    });
+    add('BACK', 'BACK', center - 125, height - 70, 250, 50, screen.back);
+  } else if (pauseMenuState === 'TABLET') {
+    const sections = [['AUGMENTS', 'SUIT AUGMENTS'], ['WEAPONS', 'WEAPONS'], ['INVENTORY', 'INVENTORY'], ['JOURNAL', 'JOURNAL']];
+    sections.forEach(([id, label], i) => row(id, label, height / 2 - 100 + i * 50,
+      () => { if (id === 'JOURNAL') journalRead = true; pauseMenuState = id; }));
+    back(height / 2 + 100);
+  } else if (pauseMenuState === 'INVENTORY') {
+    const perPage = Math.max(1, Math.floor((height - 300) / 53));
+    const pages = Math.max(1, Math.ceil(forestHuntInventory.length / perPage));
+    if (pages > 1) {
+      add('PREV_PAGE', 'PREVIOUS PAGE', center - 150, height - 106, 80, 32, undefined, _forestHuntingInventoryPage <= 0);
+      add('NEXT_PAGE', 'NEXT PAGE', center + 70, height - 106, 80, 32, undefined, _forestHuntingInventoryPage >= pages - 1);
+    }
+    screen.back = () => { pauseMenuState = 'TABLET'; };
+    add('BACK', 'BACK', x, height - 62, 240, 40, screen.back);
+  } else if (['AUGMENTS', 'WEAPONS', 'JOURNAL'].includes(pauseMenuState)) {
+    back(height / 2 + 120, 'TABLET');
+  } else row('BACK', 'BACK', height / 2 + 120, screen.back);
+  return screen;
+}
+
 let objectiveTimer = 0;
 let inTownCutscene = false, townPhase = 0, townTimer = 0, townSpeaker1 = null, townSpeaker2 = null;
 // The overworld fortress's own liberation beat. Its own state rather than a
@@ -8764,6 +9069,11 @@ function noteFrameFault(where, err) {
 }
 
 function draw() {
+  handleControllerUIInput();
+  drawGameFrame();
+  drawControllerUIFocus();
+}
+function drawGameFrame() {
   updateUndergroundRoute(typeof deltaTime==='number'?deltaTime:16.67);
   syncGamepadCombatContext();
   syncTouchAimControlContext();
@@ -8773,27 +9083,31 @@ function draw() {
   if (started) { if(!undergroundRouteBusy())handlePauseMenuInput(); updateFrontierExplorationNotice(); }
   tickPlayerBowLifecycle(player);
   if (!started) {
-    background(15); fill(255); textAlign(CENTER, CENTER); textSize(32); textFont('sans-serif'); text("STICK WORLD REVOLUTION", width / 2, height / 2 - 140);
+    background(15); fill(255); textAlign(CENTER, CENTER); textFont('sans-serif'); textSize(32);
+    const title = 'STICK WORLD REVOLUTION';
+    textSize(32 * Math.min(1, (width - 24) / Math.max(1, textWidth(title))));
+    text(title, width / 2, height / 2 - 155);
     
     if (!selectingDifficulty) {
-        fill(180); textSize(18); text("SELECT STARTING LEVEL", width / 2 - 55, height / 2 - 80); let startX = width / 2 - 175;
+        const menuLayout = controllerMainLayout();
+        fill(180); textSize(16); text("SELECT STARTING LEVEL", width / 2, height / 2 - 108);
 
         // --- DEBUG: mode toggle for the numbered level shortcuts ----------
         // Flips them between arcade and story. Picking a level in story mode
         // seeds the savior route up to that point, so you land mid-campaign
         // with every sector behind you already settled.
-        let mChipX = width / 2 + 95, mChipY = height / 2 - 94;
+        let mChipX = menuLayout.chip.x, mChipY = menuLayout.chip.y;
         fill(levelSelectStory ? color(60, 45, 0) : color(30));
         stroke(levelSelectStory ? color(255, 200, 0) : color(90)); strokeWeight(2);
-        rect(mChipX, mChipY, 140, 28, 6);
+        rect(mChipX, mChipY, 140, menuLayout.chip.h, 6);
         fill(levelSelectStory ? color(255, 200, 0) : color(140)); noStroke(); textSize(12);
-        text(levelSelectStory ? "STORY (DEBUG)" : "ARCADE", mChipX + 70, mChipY + 14);
+        text(levelSelectStory ? "STORY (DEBUG)" : "ARCADE", mChipX + 70, mChipY + menuLayout.chip.h / 2);
 
         for (let i = 1; i <= 7; i++) {
             fill(levelSelectStory ? color(48, 40, 20) : color(40));
             stroke(levelSelectStory ? color(255, 200, 0) : color(100)); strokeWeight(2);
-            rect(startX + (i - 1) * 60, height / 2 - 50, 50, 50, 8);
-            fill(255); noStroke(); textSize(20); text(i, startX + (i - 1) * 60 + 25, height / 2 - 25);
+            rect(menuLayout.x + (i - 1) * menuLayout.step, menuLayout.y, menuLayout.cell, 50, 8);
+            fill(255); noStroke(); textSize(20); text(i, menuLayout.x + (i - 1) * menuLayout.step + menuLayout.cell / 2, menuLayout.y + 25);
         }
         if (levelSelectStory) {
             fill(150); noStroke(); textSize(11);
@@ -8860,7 +9174,7 @@ function draw() {
   if (isStoryMode && inStoryIntro) {
       background(0); fill(255, 200, 0); textAlign(CENTER, TOP); textSize(16); textLeading(22); textFont('sans-serif');
       text(storyText, width / 2, introScrollY); introScrollY -= 1.0; 
-      fill(100); textSize(14); text("[ TAP ANYWHERE TO SKIP ]", width / 2, height - 40);
+      fill(100); textSize(14); text(connectedGamepad() ? "[ A TO SKIP ]" : "[ TAP ANYWHERE TO SKIP ]", width / 2, height - 40);
       if (introScrollY < -450) { inStoryIntro = false; inStoryRoom = true; storyPhase = 1; dadX = -50; }
       return; 
   }
@@ -8904,7 +9218,7 @@ function draw() {
               else if (storyPhase === 21) { drawSpeechBubble(pX, height * 0.65 - 95, "is this why you been training me at\na gun range my whole life?\nThat's all we ever do...."); }
               else if (storyPhase === 22) { drawSpeechBubble(dX, height * 0.65 - 95, "Just put on the gear; I'll explain more later.\nI haven't even told you about the alie-"); }
           }
-           if (storyPhase >= 3 && storyPhase <= 22) { fill(255); textAlign(CENTER); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40); }
+           if (storyPhase >= 3 && storyPhase <= 22) { fill(255); textAlign(CENTER); textSize(14); text(connectedGamepad() ? "[ A TO CONTINUE ]" : "[ TAP TO CONTINUE ]", width / 2, height - 40); }
       }
       return; 
   }
@@ -9489,15 +9803,15 @@ viewBottom = camY + height / zoom + shakePad;
   if (currentLevel === 0) {
       inCutscene = (prologuePhase === 1 || prologuePhase === 3 || (prologuePhase >= 4 && prologuePhase <= 6) || prologuePhase === 8 || prologuePhase === 9) || (inUpstairsRoom && (upstairsPhase >= 1 && upstairsPhase <= 5));
       if (inCutscene) { fill(0); noStroke(); rect(0, 0, width, height * 0.12); rect(0, height - (height * 0.12), width, height * 0.12); leftStick.active = false; rightStick.active = false; meleeInputHeld = false; cannonInputHeld = false; }
-      if (prologuePhase >= 4 && prologuePhase <= 6) { let pxScreen = width/2; if (prologuePhase === 4) drawSpeechBubble(pxScreen, height/2 - 80, "Dad! Noooo!"); if (prologuePhase === 5) drawSpeechBubble(pxScreen, height/2 - 80, "....................."); if (prologuePhase === 6) drawSpeechBubble(pxScreen, height/2 - 80, "i need to see if theres anything\ni can gather here before i head out."); fill(255); textAlign(CENTER); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40); }
-      if (prologuePhase === 8) { fill(0, 200); rect(0, 0, width, height); push(); translate(width/2, height/2 + 20); scale(6); fill(30); rect(-15, -20, 30, 40, 3); fill(0, 150, 255, 100); stroke(0, 255, 255); strokeWeight(1); rect(-12, -17, 24, 34, 1); fill(0, 255, 100); noStroke(); ellipse(-4, -5, 8, 8); stroke(0, 255, 100); strokeWeight(1); noFill(); beginShape(); vertex(-4, -5); vertex(0, 5); vertex(6, 12); endShape(); pop(); fill(50, 255, 50); textAlign(CENTER); textSize(24); textFont('sans-serif'); text("ACQUIRED: DADS TOP SECRET TABLET", width/2, height/2 - 140); fill(255); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40); }
-      if (prologuePhase === 9) { drawSpeechBubble(width/2, height/2 - 100, "It looks like he left it on.... Theres a map\ndepicting a path south. Stick city looks so small,\nand when i scroll down theres tons of other land\nive never seen in my history books..\nMaybe this is where dad was gonna take us.\nSeems like i have no other option but to find out."); fill(255); textAlign(CENTER); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40); }
+      if (prologuePhase >= 4 && prologuePhase <= 6) { let pxScreen = width/2; if (prologuePhase === 4) drawSpeechBubble(pxScreen, height/2 - 80, "Dad! Noooo!"); if (prologuePhase === 5) drawSpeechBubble(pxScreen, height/2 - 80, "....................."); if (prologuePhase === 6) drawSpeechBubble(pxScreen, height/2 - 80, "i need to see if theres anything\ni can gather here before i head out."); fill(255); textAlign(CENTER); textSize(14); text(connectedGamepad() ? "[ A TO CONTINUE ]" : "[ TAP TO CONTINUE ]", width / 2, height - 40); }
+      if (prologuePhase === 8) { fill(0, 200); rect(0, 0, width, height); push(); translate(width/2, height/2 + 20); scale(6); fill(30); rect(-15, -20, 30, 40, 3); fill(0, 150, 255, 100); stroke(0, 255, 255); strokeWeight(1); rect(-12, -17, 24, 34, 1); fill(0, 255, 100); noStroke(); ellipse(-4, -5, 8, 8); stroke(0, 255, 100); strokeWeight(1); noFill(); beginShape(); vertex(-4, -5); vertex(0, 5); vertex(6, 12); endShape(); pop(); fill(50, 255, 50); textAlign(CENTER); textSize(24); textFont('sans-serif'); text("ACQUIRED: DADS TOP SECRET TABLET", width/2, height/2 - 140); fill(255); textSize(14); text(connectedGamepad() ? "[ A TO CONTINUE ]" : "[ TAP TO CONTINUE ]", width / 2, height - 40); }
+      if (prologuePhase === 9) { drawSpeechBubble(width/2, height/2 - 100, "It looks like he left it on.... Theres a map\ndepicting a path south. Stick city looks so small,\nand when i scroll down theres tons of other land\nive never seen in my history books..\nMaybe this is where dad was gonna take us.\nSeems like i have no other option but to find out."); fill(255); textAlign(CENTER); textSize(14); text(connectedGamepad() ? "[ A TO CONTINUE ]" : "[ TAP TO CONTINUE ]", width / 2, height - 40); }
       if (inUpstairsRoom) {
           let pxScreen = width/2;
-          if (upstairsPhase === 1) { fill(0, 200); rect(0, 0, width, height); push(); translate(width/2, height/2); scale(6); fill(150); rect(-2, -20, 4, 30); fill(200, 150, 0); rect(-8, 5, 16, 4); fill(50); rect(-2, 9, 4, 10); pop(); fill(50, 255, 50); textAlign(CENTER); textSize(24); textFont('sans-serif'); text("SWORD ACQUIRED", width/2, height/2 - 140); fill(255); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40); }
-          if (upstairsPhase === 2) { drawSpeechBubble(pxScreen, height/2 - 80, "Guess id better bring this too.\nNever thought id have to actually use it"); fill(255); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40); }
-          if (upstairsPhase === 3 || upstairsPhase === 4) { fill(0); rect(0, 0, width, height); fill(30, 30, 80); rect(0, height/2 - 100, width, 200); fill(255, 255, 0, 50); textSize(100); textAlign(CENTER, CENTER); text("COX NEWS", width/2, height/2); push(); translate(width/2 - 150, height/2 + 50); fill(200, 0, 0); rect(-30, -50, 60, 100, 10); fill(235, 180, 140); ellipse(0, -70, 40, 40); pop(); push(); translate(width/2 + 150, height/2 + 50); fill(0, 0, 200); rect(-30, -50, 60, 100, 10); fill(235, 180, 140); ellipse(0, -70, 40, 40); pop(); fill(50); rect(width/2 - 300, height/2 + 50, 600, 100); if (upstairsPhase === 3) drawSpeechBubble(width/2 - 150, height/2 - 120, "This is Brian Lion with COX NEWS giving you a live update.\nIf you hear gunshots outside; Make a round\nof applause for another traitor killed!"); else drawSpeechBubble(width/2 + 150, height/2 - 120, "Absolutely. One mind, one city, ONE way to be!\nWhen traitor dead a day keeps the city safe."); fill(255); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40); }
-          if (upstairsPhase === 5) { drawSpeechBubble(pxScreen, height/2 - 100, "Well Dad definitely wasnt losing his mind..\nSeems like when i step out there its gonna be chaos.\nHopefully this magnetic field suit or whatever\nworks like dad said it would..."); fill(255); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40); }
+          if (upstairsPhase === 1) { fill(0, 200); rect(0, 0, width, height); push(); translate(width/2, height/2); scale(6); fill(150); rect(-2, -20, 4, 30); fill(200, 150, 0); rect(-8, 5, 16, 4); fill(50); rect(-2, 9, 4, 10); pop(); fill(50, 255, 50); textAlign(CENTER); textSize(24); textFont('sans-serif'); text("SWORD ACQUIRED", width/2, height/2 - 140); fill(255); textSize(14); text(connectedGamepad() ? "[ A TO CONTINUE ]" : "[ TAP TO CONTINUE ]", width / 2, height - 40); }
+          if (upstairsPhase === 2) { drawSpeechBubble(pxScreen, height/2 - 80, "Guess id better bring this too.\nNever thought id have to actually use it"); fill(255); textSize(14); text(connectedGamepad() ? "[ A TO CONTINUE ]" : "[ TAP TO CONTINUE ]", width / 2, height - 40); }
+          if (upstairsPhase === 3 || upstairsPhase === 4) { fill(0); rect(0, 0, width, height); fill(30, 30, 80); rect(0, height/2 - 100, width, 200); fill(255, 255, 0, 50); textSize(100); textAlign(CENTER, CENTER); text("COX NEWS", width/2, height/2); push(); translate(width/2 - 150, height/2 + 50); fill(200, 0, 0); rect(-30, -50, 60, 100, 10); fill(235, 180, 140); ellipse(0, -70, 40, 40); pop(); push(); translate(width/2 + 150, height/2 + 50); fill(0, 0, 200); rect(-30, -50, 60, 100, 10); fill(235, 180, 140); ellipse(0, -70, 40, 40); pop(); fill(50); rect(width/2 - 300, height/2 + 50, 600, 100); if (upstairsPhase === 3) drawSpeechBubble(width/2 - 150, height/2 - 120, "This is Brian Lion with COX NEWS giving you a live update.\nIf you hear gunshots outside; Make a round\nof applause for another traitor killed!"); else drawSpeechBubble(width/2 + 150, height/2 - 120, "Absolutely. One mind, one city, ONE way to be!\nWhen traitor dead a day keeps the city safe."); fill(255); textSize(14); text(connectedGamepad() ? "[ A TO CONTINUE ]" : "[ TAP TO CONTINUE ]", width / 2, height - 40); }
+          if (upstairsPhase === 5) { drawSpeechBubble(pxScreen, height/2 - 100, "Well Dad definitely wasnt losing his mind..\nSeems like when i step out there its gonna be chaos.\nHopefully this magnetic field suit or whatever\nworks like dad said it would..."); fill(255); textSize(14); text(connectedGamepad() ? "[ A TO CONTINUE ]" : "[ TAP TO CONTINUE ]", width / 2, height - 40); }
           if (upstairsPhase === 0) { if (!swordPickedUp && dist(player.x, player.y, 150, 0) < 80) drawPromptBtn("PICK UP"); else if (!tvWatched && dist(player.x, player.y, 0, -200) < 120) drawPromptBtn("WATCH"); else if (dist(player.x, player.y, 0, 250) < 80) drawPromptBtn("LEAVE HOUSE"); }
       } else {
           if (prologuePhase === 7 && !tabletPickedUp && dist(player.x, player.y, 200, -100) < 80) drawPromptBtn("PICK UP"); else if (prologuePhase >= 10 && dist(player.x, player.y, -400, 0) < 80) drawPromptBtn("OPEN DOOR");
@@ -9537,13 +9851,13 @@ viewBottom = camY + height / zoom + shakePad;
       if (farmSpeaker) {
           if (farmPhase === 2) {
               drawSpeechBubble(width/2, height/2 - 100, "Howdy traveler! We dont normally get strangers\nround here. What brings you to the Anveda farm?");
-              fill(255); textAlign(CENTER); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40);
+              fill(255); textAlign(CENTER); textSize(14); text(connectedGamepad() ? "[ A TO CONTINUE ]" : "[ TAP TO CONTINUE ]", width / 2, height - 40);
           } else if (farmPhase === 3) {
               drawMenuBtn("A) Id like to learn about your farm.", width/2, height/2 - 40, 320, 50);
               drawMenuBtn("B) You have ten seconds to run away, or get smoked.", width/2, height/2 + 40, 420, 50);
           } else if (farmPhase === 4) {
               drawSpeechBubble(width/2, height/2 - 100, "Sure thing. That is; if you will first help me\nget rid of this pest infestation.\nThey keep biting up my cows, and tearing my crops up.");
-              fill(255); textAlign(CENTER); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40);
+              fill(255); textAlign(CENTER); textSize(14); text(connectedGamepad() ? "[ A TO CONTINUE ]" : "[ TAP TO CONTINUE ]", width / 2, height - 40);
           } else if (farmPhase === 5) {
               drawMenuBtn("YES", width/2 - 80, height/2 + 40, 100, 50);
               drawMenuBtn("NO", width/2 + 80, height/2 + 40, 100, 50);
@@ -9565,7 +9879,7 @@ viewBottom = camY + height / zoom + shakePad;
 
       if (farmPostPhase === 1) {
           drawSpeechBubble(width / 2, height / 2 - 80, "Wow youre great help! As promised;\nhere's for helpin' me out!");
-          fill(255); textAlign(CENTER); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40);
+          fill(255); textAlign(CENTER); textSize(14); text(connectedGamepad() ? "[ A TO CONTINUE ]" : "[ TAP TO CONTINUE ]", width / 2, height - 40);
       } else if (farmPostPhase === 2) {
           fill(0, 230); rect(0, 0, width, height); // Dark overlay
           
@@ -9579,7 +9893,7 @@ viewBottom = camY + height / zoom + shakePad;
 
           fill(50, 255, 50); textAlign(CENTER); textSize(24); textFont('sans-serif');
           text("FARMERS BLUEPRINT LVL 1", width/2, height/2 - 140);
-          fill(255); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40);
+          fill(255); textSize(14); text(connectedGamepad() ? "[ A TO CONTINUE ]" : "[ TAP TO CONTINUE ]", width / 2, height - 40);
       }
   }
   // --- LEVEL 4: ALLIANCE CUTSCENE ---
@@ -9617,14 +9931,14 @@ viewBottom = camY + height / zoom + shakePad;
       } else if (lvl4Phase === 3) {
           tanLeader.aimAngle = atan2(player.y - tanLeader.y, player.x - tanLeader.x); // Point rifle
           drawSpeechBubble(width/2, height/2 - 120, "Name your cause, and branch.");
-          fill(255); textAlign(CENTER); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40);
+          fill(255); textAlign(CENTER); textSize(14); text(connectedGamepad() ? "[ A TO CONTINUE ]" : "[ TAP TO CONTINUE ]", width / 2, height - 40);
       } else if (lvl4Phase === 4) {
           tanLeader.aimAngle = atan2(player.y - tanLeader.y, player.x - tanLeader.x);
           drawMenuBtn("A) Me and my private military would like to form an alliance with you. We come in peace.", width/2, height/2 - 40, 640, 50);
           drawMenuBtn("B) I dont know what any of that is, but i own this town now.", width/2, height/2 + 40, 480, 50);
       } else if (lvl4Phase === 5) {
           drawSpeechBubble(width/2, height/2 - 120, "Well i got good news, and bad news. The good news is; we're open to an alliance.\nThe bad news is; its not about to be peaceful too long.\nIntel says the enemy is planning an attack nearby any minute now. Come follow me!");
-          fill(255); textAlign(CENTER); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40);
+          fill(255); textAlign(CENTER); textSize(14); text(connectedGamepad() ? "[ A TO CONTINUE ]" : "[ TAP TO CONTINUE ]", width / 2, height - 40);
       }
   }
 
@@ -9641,7 +9955,7 @@ viewBottom = camY + height / zoom + shakePad;
       pop();
       fill(50, 255, 50); textAlign(CENTER); textSize(24); textFont('sans-serif');
       text("EXPLOSIVE ARMOR ACQUIRED", width/2, height/2 - 140);
-      fill(255); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40);
+      fill(255); textSize(14); text(connectedGamepad() ? "[ A TO CONTINUE ]" : "[ TAP TO CONTINUE ]", width / 2, height - 40);
   }
 
   // TOWER DEFEAT / NM0 AMBUSH CUTSCENE LOGIC
@@ -9729,7 +10043,7 @@ viewBottom = camY + height / zoom + shakePad;
           }
       }
 
-      if (townPhase >= 3 && townPhase <= 5) { fill(255); textAlign(CENTER); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40); }
+      if (townPhase >= 3 && townPhase <= 5) { fill(255); textAlign(CENTER); textSize(14); text(connectedGamepad() ? "[ A TO CONTINUE ]" : "[ TAP TO CONTINUE ]", width / 2, height - 40); }
   }
 
   // THE FORT'S OWN LIBERATION BEAT -- the sector's tower cutscene one scale
@@ -9763,7 +10077,7 @@ viewBottom = camY + height / zoom + shakePad;
       else if (fortPhase === 5) { killcamTarget = { x: player.x, y: player.y };
           drawSpeechBubble(width/2, height/2 - 100, "The relay's ours now. That means the country round it is too.\nYou lot are no good to me stood at a gate —\nlets find you all something to do."); }
 
-      if (fortPhase >= 3 && fortPhase <= 5) { fill(255); textAlign(CENTER); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40); }
+      if (fortPhase >= 3 && fortPhase <= 5) { fill(255); textAlign(CENTER); textSize(14); text(connectedGamepad() ? "[ A TO CONTINUE ]" : "[ TAP TO CONTINUE ]", width / 2, height - 40); }
   }
 
   if (inDarchonCall) {
@@ -9788,7 +10102,7 @@ viewBottom = camY + height / zoom + shakePad;
       else if (callPhase === 14) drawSpeechBubble(pxScreen, hY, "Hmm. Sounds enticing considering \n i just offed like 6 of my neighbors. \n I dont know though. Getting an incentive to kill seems a little deranged...");
       else if (callPhase === 15) drawSpeechBubble(pxScreen, hY, "[TABLET] Do you have any other choice? \n you need to shoot your way out of Stick City,\nand head north. I'll guide you to SIA headquarters. Here you will have safety, and answers. ill keep in touch. Oh and dont forget about the Moosh!\n ");
       
-      fill(255); textAlign(CENTER); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40);
+      fill(255); textAlign(CENTER); textSize(14); text(connectedGamepad() ? "[ A TO CONTINUE ]" : "[ TAP TO CONTINUE ]", width / 2, height - 40);
   }
 
   // Objective banner for the authored story sectors. Keyed off the story arc,
@@ -9883,8 +10197,8 @@ viewBottom = camY + height / zoom + shakePad;
       else if (postAmbushPhase === 6) { killcamTarget = {x: townSpeaker1.x, y: townSpeaker1.y}; drawSpeechBubble(pxScreen, hY, "Ahh for F***'s sake."); }
       else if (postAmbushPhase === 7) { killcamTarget = {x: player.x, y: player.y}; drawSpeechBubble(pxScreen, hY, "I know; thats what i said. Anyhow, if we plan on staying alive,\nthen we have to structure teams and assign roles.\nAs soon as we run out of the reserve food supplied to us by NM-0 formerly,\nwe will starve. Were going to have to build our own government."); }
 
-      if (postAmbushPhase >= 1 && postAmbushPhase <= 7) { fill(255); textAlign(CENTER); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40); }
-      if (postAmbushPhase >= 1 && postAmbushPhase <= 7) { fill(255); textAlign(CENTER); textSize(14); text("[ TAP TO CONTINUE ]", width / 2, height - 40); }
+      if (postAmbushPhase >= 1 && postAmbushPhase <= 7) { fill(255); textAlign(CENTER); textSize(14); text(connectedGamepad() ? "[ A TO CONTINUE ]" : "[ TAP TO CONTINUE ]", width / 2, height - 40); }
+      if (postAmbushPhase >= 1 && postAmbushPhase <= 7) { fill(255); textAlign(CENTER); textSize(14); text(connectedGamepad() ? "[ A TO CONTINUE ]" : "[ TAP TO CONTINUE ]", width / 2, height - 40); }
 
   }
   
@@ -10134,6 +10448,7 @@ viewBottom = camY + height / zoom + shakePad;
       
                                  if (pauseSettingsOpen()) { drawPauseSettings(); }
       else if (pauseMenuState === "MAIN") {
+          push(); translate(width / 2, height / 2); scale(controllerPauseScale()); translate(-width / 2, -height / 2);
           fill(255); textSize(40); text("PAUSED", width/2, height/2 - 260);
           // TRAVEL takes the right half of the CONTINUE row, and only while the
           // overworld is open. Beside CONTINUE rather than in the stack because
@@ -10166,7 +10481,7 @@ if (swordPickedUp || window.pickaxeOwned || window.shovelOwned) {
 } else {
 
               fill(30); stroke(100); strokeWeight(2); rect(width/2 - 120, height/2 - 110, 240, 40, 8); 
-              fill(150); noStroke(); textSize(16); text("this.isArmed = false; UNARMED", width/2, height/2 - 90);
+              fill(150); noStroke(); textSize(16); text("UNARMED", width/2, height/2 - 90);
           }
           
           // 1. Gov Directive Button
@@ -10210,6 +10525,7 @@ if (swordPickedUp || window.pickaxeOwned || window.shovelOwned) {
           }
 
           drawBtn(height/2 + 240, "RESET GAME");
+          pop();
       }
 
       else if (pauseMenuState === "BUILDINGS") {
@@ -10508,8 +10824,8 @@ if (swordPickedUp || window.pickaxeOwned || window.shovelOwned) {
               fill(200); textSize(20); text("KILLS: " + totalKills + "  |  BASE SCORE: " + score, width / 2, height / 2 - 25); fill(255, 200, 0); text("ACCURACY: " + acc + "%  (x" + accMult + " MULTIPLIER)", width / 2, height / 2 + 5); 
               fill(50, 255, 50); textSize(32); text("FINAL SCORE: " + finalScore, width / 2, height / 2 + 45); 
               if (winTimer > 0) { winTimer--; } else {
-                  if (currentLevel < 7) { fill(40); stroke(255, 200, 0); strokeWeight(2); rect(width/2 - 170, height/2 + 90, 160, 50, 8); fill(255); noStroke(); textSize(18); text("UPGRADES", width/2 - 90, height/2 + 115); fill(40); stroke(50, 255, 50); strokeWeight(2); rect(width/2 + 10, height/2 + 90, 160, 50, 8); fill(255); noStroke(); textSize(18); text("CONTINUE", width/2 + 90, height/2 + 115); } 
-                  else { textSize(18); fill(150); noStroke(); text("[ TAP TO RESTART ]", width / 2, height / 2 + 115); 
+                  if (currentLevel < 7 || currentLevel === 8) { fill(40); stroke(255, 200, 0); strokeWeight(2); rect(width/2 - 170, height/2 + 90, 160, 50, 8); fill(255); noStroke(); textSize(18); text("UPGRADES", width/2 - 90, height/2 + 115); fill(40); stroke(50, 255, 50); strokeWeight(2); rect(width/2 + 10, height/2 + 90, 160, 50, 8); fill(255); noStroke(); textSize(18); text("CONTINUE", width/2 + 90, height/2 + 115); }
+                  else { textSize(18); fill(150); noStroke(); text(connectedGamepad() ? "[ A TO RESTART ]" : "[ TAP TO RESTART ]", width / 2, height / 2 + 115);
                   }
               }
           }
@@ -31647,7 +31963,7 @@ function resetGamepadCombatInput(pad=connectedGamepad()) {
   state.padKey=pad?String(pad.index??'')+':'+(pad.id||''):null;
   state.context=gamepadCombatContext();state.actor=player;
   state.blocked.clear();state.buttons=[];
-  for(const i of [3,4,5,6,10])if(pad?.buttons[i]?.pressed)state.blocked.add(i);
+  for(const i of [1,2,3,4,5,6,10])if(pad?.buttons[i]?.pressed)state.blocked.add(i);
   gamepadAimZoneOverride=pad?'BODY':null;
   endStanceHold('PAD',false);
 }
@@ -32179,6 +32495,7 @@ function drawBoxingControls(actor = player, contextState = null, hintAlpha = 1) 
   pop();
 }
 function handleGamepad() {
+  if (controllerUIBlocksGameplay()) return;
   const pad=connectedGamepad();
   if(undergroundRouteBusy()||handleStreetThugDialogueInput('GAMEPAD')||player&&boxingActive(player)) {
     resetGamepadCombatInput(pad);resetGamepadSquadCommands(pad);return;
@@ -32240,12 +32557,14 @@ function handleGamepad() {
   if (!squadOwnsDpad && jP(12) && player) cycleMeleeTool();
   if(jP(10)&&combat.buttons[10]&&player)beginStanceHold('PAD');
   else if(!btn(10)&&prevGamepadButtons[10])endStanceHold('PAD');
+  if (!squadOwnsDpad && jP(1) && combat.buttons[1] && jetpackUnlocked && player &&
+      player.dashCooldown <= 0 && player.dashTimer <= 0 && player.meleeTimer <= 0) player.activateDash();
   if (shovelToolEquipped()) {
     if (combat.buttons[3]) meleeInputHeld = true;
     if (shovelControlsAvailable()) {
       if (combat.buttons[6]) shovelDig('DOWN');
       else if (btn(7)) shovelDig('FORWARD');
-      else if (!squadOwnsDpad && btn(1)) shovelDig('UP');
+      else if (combat.buttons[2]) shovelDig('UP');
     }
     prevGamepadButtons.length=pad.buttons.length;
     for(let i=0;i<pad.buttons.length;i++)prevGamepadButtons[i]=btn(i);
@@ -32427,6 +32746,7 @@ function drawTouchAimSilhouette() {
   pop();
 }
 function handleTouches() {
+  if (controllerUIBlocksGameplay()) return;
   if(stanceInput.hold?.source==='TOUCH'&&!touches.some(t=>t.id===stanceInput.hold.id))endStanceHold('TOUCH');
   if(undergroundRouteBusy())return;
   syncTouchAimControlContext();
@@ -32658,6 +32978,217 @@ function applyFrontierEquipment(c,refill=false) {
     if(cowboySuitEquipped){c.shirtCol=color(219,196,146);c.pantsCol=color(61,93,118);}
 }
 
+// Context screens share the native click actions with touch/mouse. Only the
+// counters below need an explicit action: their pointer repeat lives in draw,
+// and a controller confirmation must step the same edit buffer exactly once.
+function controllerSyncDirectiveCounts() {
+  popFarming = window.popFarmingM + window.popFarmingF;
+  popMilitary = window.popMilitaryM + window.popMilitaryF;
+  popScience = window.popScienceM + window.popScienceF;
+  popArchitecture = window.popArchitectureM + window.popArchitectureF;
+  popUnassigned = window.popUnassignedM + window.popUnassignedF;
+}
+function controllerAdjustDirective(dept, sex, delta) {
+  const key = 'pop' + dept + sex, free = 'popUnassigned' + sex;
+  const away = dept === 'Military' ? militaryAssignedAway(POP_POOL, sex) : 0;
+  if (delta > 0 ? !(window[free] > 0) : !(window[key] > away)) return false;
+  window[key] += delta; window[free] -= delta;
+  controllerSyncDirectiveCounts();
+  if (delta > 0) sfx.reload(); else sfx.hitArmor();
+  return true;
+}
+function controllerDirectiveScreen(paused = false) {
+  beginDirective(POP_POOL, paused ? 'PAUSE' : 'WORLD');
+  controllerSyncDirectiveCounts();
+  const buttons = [];
+  for (let i = 0; i < POP_DEPTS.length; i++) {
+    const dept = POP_DEPTS[i], y = 220 + i * 75;
+    for (const sex of ['M', 'F']) {
+      const x = width / 2 + (sex === 'M' ? -45 : 75);
+      const count = window['pop' + dept + sex], available = window['popUnassigned' + sex];
+      const away = dept === 'Military' ? militaryAssignedAway(POP_POOL, sex) : 0;
+      buttons.push(controllerButton(dept + '_' + sex + '_MINUS', dept + ' ' + sex + ' − · ' + count,
+        x, y + 15, 25, 30, () => controllerAdjustDirective(dept, sex, -1), count <= away));
+      buttons.push(controllerButton(dept + '_' + sex + '_PLUS', dept + ' ' + sex + ' + · ' + count,
+        x + 55, y + 15, 25, 30, () => controllerAdjustDirective(dept, sex, 1), !(available > 0)));
+    }
+  }
+  const ready = popTotal === 0 || popUnassigned === 0;
+  buttons.push(controllerButton('MILITARY', 'MILITARY TO BRING', width / 2 - 120, height - 136, 240, 34));
+  buttons.push(controllerButton('CONFIRM', popTotal === 0 ? 'CONTINUE' : 'CONFIRM DIRECTIVE',
+    width / 2 - 120, height - 90, 240, 50, undefined, !ready));
+  buttons.push(controllerButton('BACK', 'BACK', width / 2 - 160, height - 34, 150, 28));
+  buttons.push(controllerButton('GARRISON', 'DEPLOY BY SECTOR', width / 2 + 10, height - 34, 150, 28,
+    undefined, !(popTotal > 0)));
+  return { key: 'DIRECTIVE_' + (paused ? 'PAUSE' : 'WORLD'), buttons, modal: true,
+    defaultId: ready ? 'CONFIRM' : 'Farming_M_PLUS', back: () => controllerClick(width / 2 - 85, height - 20) };
+}
+function controllerMilitaryScreen() {
+  const available = militaryDeploymentAvailable(), buttons = [];
+  militarySelectionM = Math.min(militarySelectionM, available.male);
+  militarySelectionF = Math.min(militarySelectionF, available.female);
+  for (let row = 0; row < 2; row++) {
+    const female = row === 1, y = 220 + row * 74, limit = female ? available.female : available.male;
+    const selected = female ? militarySelectionF : militarySelectionM, sex = female ? 'F' : 'M';
+    for (const delta of [-1, 1]) buttons.push(controllerButton(sex + (delta > 0 ? '_PLUS' : '_MINUS'),
+      sex + (delta > 0 ? ' +' : ' −'), width / 2 + (delta > 0 ? 94 : -126), y + 14, 32, 32, () => {
+        const fresh = militaryDeploymentAvailable(), max = female ? fresh.female : fresh.male;
+        if (female) militarySelectionF = Math.max(0, Math.min(max, militarySelectionF + delta));
+        else militarySelectionM = Math.max(0, Math.min(max, militarySelectionM + delta));
+      }, delta > 0 ? selected >= limit : selected <= 0));
+  }
+  const ready = available.canDeploy && militarySelectionM + militarySelectionF > 0;
+  buttons.push(controllerButton('DEPLOY', 'DEPLOY', width / 2 - 120, height - 90, 240, 50, undefined, !ready));
+  buttons.push(controllerButton('BACK', 'BACK', width / 2 - 80, height - 34, 160, 28));
+  return { key: 'MILITARY_BRING', buttons, modal: true,
+    defaultId: ready ? 'DEPLOY' : available.male > 0 ? 'M_PLUS' : 'F_PLUS',
+    back: () => controllerClick(width / 2, height - 20) };
+}
+function controllerTravelScreen() {
+  const buttons = [];
+  if (!travelDirection) {
+    for (const [direction, y] of [['NORTH', 200], ['SOUTH', 320]])
+      buttons.push(controllerButton(direction, 'TRAVEL ' + direction, width / 2 - 180, y, 360, 64,
+        undefined, !canTravel(direction)));
+    return { key: 'TRAVEL_DESTINATION', buttons, modal: true,
+      defaultId: canTravel('SOUTH') ? 'SOUTH' : 'NORTH', back: () => {
+        inTravelMenu = false; travelDirection = null; inOverworldView = true;
+        window.militaryToBringM = window.militaryToBringF = 0; sfx.charge();
+      } };
+  }
+  const available = travelMilitaryAvailable();
+  window.militaryToBringM = Math.max(0, Math.min(available.male, Number(window.militaryToBringM) || 0));
+  window.militaryToBringF = Math.max(0, Math.min(available.female, Number(window.militaryToBringF) || 0));
+  for (const [sex, y, limit] of [['M', 270, available.male], ['F', 330, available.female]]) {
+    const key = 'militaryToBring' + sex;
+    for (const delta of [-1, 1]) buttons.push(controllerButton(sex + (delta > 0 ? '_PLUS' : '_MINUS'),
+      sex + (delta > 0 ? ' +' : ' −'), width / 2 + (delta > 0 ? 110 : -120), y, 25, 30, () => {
+        const fresh = travelMilitaryAvailable(), max = sex === 'M' ? fresh.male : fresh.female;
+        const value = Math.max(0, Math.min(max, (Number(window[key]) || 0) + delta));
+        if (value !== window[key]) { window[key] = value; if (delta > 0) sfx.reload(); else sfx.hitArmor(); }
+      }, delta > 0 ? window[key] >= limit : window[key] <= 0));
+  }
+  buttons.push(controllerButton('DEPART', 'DEPART', width / 2 - 120, height - 90, 240, 50));
+  buttons.push(controllerButton('BACK', 'BACK', width / 2 - 50, height - 40, 100, 40));
+  return { key: 'TRAVEL_SQUAD_' + travelDirection, buttons, modal: true, defaultId: 'DEPART',
+    back: () => controllerClick(width / 2, height - 20) };
+}
+function controllerWinScreen() {
+  if (!started || !isWin || isDead || winTimer > 0 || isStoryMode && currentLevel <= 4) return null;
+  if (currentLevel >= 7 && currentLevel !== 8 && !inUpgradeMenu) return { key: 'WIN_RESTART', modal: true, defaultId: 'RESTART',
+    buttons: [controllerButton('RESTART', 'RESTART', width / 2 - 130, height / 2 + 90, 260, 50, restartGame)] };
+  const buttons = [];
+  if (inUpgradeMenu) {
+    const items = upgradeShopItems(), layout = upgradeShopLayout(items.length);
+    items.forEach((item, i) => {
+      const bx = layout.startX + i % layout.cols * layout.spacingX;
+      const by = layout.startY + Math.floor(i / layout.cols) * layout.spacingY;
+      const disabled = !!item.disabled || !!item.state || score < item.price || !(item.price > 0 || item.suit);
+      buttons.push(controllerButton('BUY:' + item.id, item.name, bx - layout.boxW / 2, by - layout.boxH / 2,
+        layout.boxW, layout.boxH, () => purchaseUpgrade(item), disabled));
+    });
+    buttons.push(controllerButton('CONTINUE', 'START NEXT LEVEL', width / 2 - 125, height - 70, 250, 50));
+    return { key: 'WIN_UPGRADES', buttons, modal: true, defaultId: 'CONTINUE',
+      back: () => { inUpgradeMenu = false; sfx.charge(); } };
+  }
+  buttons.push(controllerButton('UPGRADES', 'UPGRADES', width / 2 - 170, height / 2 + 90, 160, 50));
+  buttons.push(controllerButton('CONTINUE', 'CONTINUE', width / 2 + 10, height / 2 + 90, 160, 50));
+  return { key: 'WIN_SCORE', buttons, modal: true, defaultId: 'CONTINUE' };
+}
+function controllerSaloonScreen() {
+  if (!started || isDead || isWin || !frontierSaloonIsInside() || isPaused && pauseSettingsOpen()) return null;
+  const s = _frontierSaloonSession, result = s.mode === 'DUEL' && s.duel && s.duel.phase === 'RESULT';
+  // Live gloves and the duel's firing/aiming controls retain their existing
+  // face-button meanings. Only a visible menu/result panel owns navigation.
+  if (!isPaused && !s.menu && !result) return null;
+  const buttons = frontierSaloonButtons().map(b => controllerButton(b.action, b.label, b.x, b.y, b.w, b.h,
+    () => handleFrontierSaloonTap(b.x + b.w / 2, b.y + b.h / 2)));
+  const backId = isPaused ? 'RESUME' : s.menu ? 'CLOSE' : 'BACK';
+  const backButton = buttons.find(b => b.id === backId);
+  return { key: 'SALOON_' + (isPaused ? 'PAUSED' : s.menu ? 'MENU_' + s.venue + '_' + s.brawl : 'DUEL_RESULT'),
+    buttons, modal: true, defaultId: isPaused ? 'RESUME' : s.menu ? 'BRAWL' : 'RETRY',
+    back: backButton ? backButton.activate : undefined };
+}
+function controllerContextScreen() {
+  if (!started || isDead || isWin || isPaused) return null;
+  // Their existing readers own both input and focus, including the combat
+  // stance's face buttons. Do not turn a confirmation into a second action.
+  if (undergroundRouteBusy() || streetThugDialogueOpen() || buildGhost || frontierSaloonIsInside()) return null;
+  const advance = (key, ready = true, label = 'CONTINUE') => ({ key, modal: true, defaultId: 'CONTINUE',
+    buttons: ready ? [controllerButton('CONTINUE', label, width / 2 - 130, height - 63, 260, 42)] : [] });
+  const prompt = (key, label) => ({ key: 'PROMPT_' + key, modal: false, defaultId: 'INTERACT',
+    buttons: [controllerButton('INTERACT', label, width / 2 - 70, height - 120, 140, 50)] });
+  if (inStoryIntro) return advance('STORY_INTRO', true, 'SKIP INTRO');
+  if (inStoryRoom) return advance('STORY_ROOM_' + storyPhase, storyPhase >= 2);
+  if (inTownCutscene) return advance('TOWN_' + townPhase, townPhase >= 3 && townPhase <= 5);
+  if (inFortCutscene) return advance('FORT_' + fortPhase, fortPhase >= 3 && fortPhase <= 5);
+  if (inFarmCutscene) {
+    if (farmPhase === 3) return { key: 'FARM_CHOICE', modal: true, buttons: [
+      controllerButton('ASK', 'ASK ABOUT THE FARM', width / 2 - 160, height / 2 - 65, 320, 50),
+      controllerButton('HOSTILE', 'THREATEN THE FARMERS', width / 2 - 210, height / 2 + 15, 420, 50)] };
+    if (farmPhase === 5) return { key: 'FARM_HELP', modal: true, buttons: [
+      controllerButton('YES', 'YES', width / 2 - 130, height / 2 + 15, 100, 50),
+      controllerButton('NO', 'NO', width / 2 + 30, height / 2 + 15, 100, 50)] };
+    return advance('FARM_' + farmPhase, farmPhase === 2 || farmPhase === 4);
+  }
+  if (inFarmPostCutscene) return advance('FARM_POST_' + farmPostPhase, farmPostPhase === 1 || farmPostPhase === 2);
+  if (inPostAmbushCutscene) return advance('POST_AMBUSH_' + postAmbushPhase, postAmbushPhase >= 1 && postAmbushPhase <= 7);
+  if (inLvl4Cutscene) {
+    if (lvl4Phase === 4) return { key: 'MILITARY_CHOICE', modal: true, buttons: [
+      controllerButton('COOPERATE', 'COOPERATE', width / 2 - 320, height / 2 - 65, 640, 50),
+      controllerButton('HOSTILE', 'THREATEN THE CORDON', width / 2 - 240, height / 2 + 15, 480, 50)] };
+    return advance('MILITARY_STORY_' + lvl4Phase, lvl4Phase === 3 || lvl4Phase === 5);
+  }
+  if (inDarchonCall) return advance('TABLET_CALL_' + callPhase);
+  if (window.inNM0SecretOverlay) return advance('NM0_BLUEPRINT');
+  if (inWorldBuildingMenu) return controllerDirectiveScreen(false);
+  if (inTravelMenu) return controllerTravelScreen();
+  if (!player || player.hp <= 0 || killcamMode || boxingActive(player)) return null;
+  if (currentLevel === 0) {
+    if (inUpstairsRoom) {
+      if (upstairsPhase >= 1 && upstairsPhase <= 5) return advance('UPSTAIRS_' + upstairsPhase);
+      if (!swordPickedUp && dist(player.x, player.y, 150, 0) < 80) return prompt('SWORD', 'PICK UP');
+      if (!tvWatched && dist(player.x, player.y, 0, -200) < 120) return prompt('TV', 'WATCH');
+      if (dist(player.x, player.y, 0, 250) < 80) return prompt('LEAVE_HOUSE', 'LEAVE HOUSE');
+    } else {
+      if ([1, 3, 4, 5, 6, 8, 9].includes(prologuePhase))
+        return advance('PROLOGUE_' + prologuePhase, [4, 5, 6, 8, 9].includes(prologuePhase));
+      if (prologuePhase === 7 && !tabletPickedUp && dist(player.x, player.y, 200, -100) < 80)
+        return prompt('TABLET', 'PICK UP');
+      if (prologuePhase >= 10 && dist(player.x, player.y, -400, 0) < 80) return prompt('UPSTAIRS', 'OPEN DOOR');
+    }
+  }
+  // Outdoor hunting/activity prompts already own A in handleGamepad; let that
+  // priority stand when a horse happens to be beside the same interaction.
+  if (BIOME_ACTIVE && currentBiome === 2) {
+    updateForestHuntingActivity(false);
+    if (_forestHuntingPrompt) return null;
+  }
+  if (BIOME_ACTIVE && (currentBiome === 1 || currentBiome === 3)) {
+    updateFrontierSaloonActivity(false);
+    if (_frontierSaloonPrompt) return null;
+    if (currentBiome === 3) { updateFrontierBounties(false); if (_frontierBountyPrompt) return null; }
+  }
+  // Underground doors/elevator have their own A/confirm polling before draw.
+  if (nm0OfficeInteraction() || hqElevatorAvailable() || undergroundNearbyGate()) return null;
+  if (player.mounted) return prompt('DISMOUNT', 'DISMOUNT');
+  if (mountableHorse()) return prompt('MOUNT', 'MOUNT');
+  if (currentLevel === 1 && window.nm0AmbushClearedStatus && !inTownCutscene && !inPostAmbushCutscene) {
+    const gate = sectorGates().find(b => b.y < 0);
+    if (gate && gate.hp <= 0 && dist(player.x, player.y, gate.x, gate.y + gate.h / 2) < 250)
+      return prompt('HQ', 'ENTER NM-0 HQ');
+  }
+  if (currentLevel === 8) {
+    if (window.nm0HqCleared && dist(player.x, player.y, 0, -800) < 250 && player.y > -1000)
+      return prompt('HQ_ENTER_ROOM', 'ENTER ROOM');
+    if (dist(player.x, player.y, 0, -800) < 250 && player.y <= -1000) return prompt('HQ_EXIT_ROOM', 'EXIT ROOM');
+    if (dist(player.x, player.y, 0, -2000) < 200 && !window.armorBlueprintPickedUp)
+      return prompt('HQ_BLUEPRINT', 'PICK UP BLUEPRINT');
+    if (dist(player.x, player.y, 0, 1450) < 250) return prompt('HQ_EXIT', 'EXIT BUILDING');
+  }
+  return null;
+}
+
 function touchStarted() {
   syncTouchAimPointers();
   const fresh = touches.filter(t => !touchAimSelection.pointers.has(t.id));
@@ -32681,14 +33212,17 @@ function cancelTouchAimPointer(event) {
   if (changed.some(t => t.identifier === touchAimSelection.pointerId)) resetTouchAimSelection(true);
 }
 
-function handleTouchStartActions() {
-  window.showOnScreenControls = touches.length > 0 && !connectedGamepad();
-  window.isDesktop = touches.length === 0;
+function handleTouchStartActions(inputX, inputY, source) {
+  if (source !== 'GAMEPAD') {
+    controllerUIInput.usingPad = false;
+    window.showOnScreenControls = touches.length > 0 && !connectedGamepad();
+    window.isDesktop = touches.length === 0;
+  }
   if (!sfx.ctx) sfx.init();
 
   // Define mx and my FIRST
-  let mx = touches.length > 0 ? touches[touches.length - 1].x : mouseX;
-  let my = touches.length > 0 ? touches[touches.length - 1].y : mouseY;
+  let mx = source === 'GAMEPAD' ? inputX : touches.length > 0 ? touches[touches.length - 1].x : mouseX;
+  let my = source === 'GAMEPAD' ? inputY : touches.length > 0 ? touches[touches.length - 1].y : mouseY;
 
   if(handleDeathMenuTap(mx,my))return false;
   if(handleUndergroundRouteTap(mx,my))return false;
@@ -32724,7 +33258,7 @@ function handleTouchStartActions() {
   if (typeof handleBuildHudTap === 'function' && handleBuildHudTap(mx, my)) return false;
 
   // --- NEW: CLOSE NM-0 OVERLAY ---
-  if (window.inNM0SecretOverlay) {
+  if (window.inNM0SecretOverlay && !isPaused) {
 
       window.inNM0SecretOverlay = false;
       sfx.charge();
@@ -32735,7 +33269,8 @@ function handleTouchStartActions() {
   if (handleMountTap(mx, my)) return false;
 
   // --- NEW: LEVEL 1 ENTER NM-0 HQ ---
-  if (currentLevel === 1 && window.nm0AmbushClearedStatus && !killcamMode && !inTownCutscene && !inPostAmbushCutscene) {
+  if (currentLevel === 1 && window.nm0AmbushClearedStatus && !killcamMode && !isPaused &&
+      !inTravelMenu && !inWorldBuildingMenu && !inTownCutscene && !inPostAmbushCutscene) {
       let nGate = sectorGates().find(b => b.y < 0);
       if (nGate && nGate.hp <= 0 && dist(player.x, player.y, nGate.x, nGate.y + nGate.h/2) < 250 && isClickingBtn(mx, my)) {
           startAtLevel(8);
@@ -32808,7 +33343,12 @@ function handleTouchStartActions() {
 
   if (isPaused) {
 
-      if (millis() - window.lastPauseTime < 300) return false; 
+      if (source !== 'GAMEPAD' && millis() - window.lastPauseTime < 300) return false;
+      if (pauseMenuState === 'MAIN') {
+        const scale = controllerPauseScale();
+        mx = width / 2 + (mx - width / 2) / scale;
+        my = height / 2 + (my - height / 2) / scale;
+      }
       let btnX = width/2 - 120, btnW = 240;
 
                                   if (pauseMenuState === "MAIN") {
@@ -33382,14 +33922,14 @@ if (inTravelMenu) {
        if (!started) {
       if (!selectingDifficulty) {
           // DEBUG: arcade / story toggle for the numbered level shortcuts
-          if (mx > width / 2 + 95 && mx < width / 2 + 235 && my > height / 2 - 94 && my < height / 2 - 66) {
+          const menuLayout = controllerMainLayout(), chip = menuLayout.chip;
+          if (mx > chip.x && mx < chip.x + chip.w && my > chip.y && my < chip.y + chip.h) {
               levelSelectStory = !levelSelectStory; sfx.charge(); return false;
           }
 
-          let startX = width / 2 - 175;
           for (let i = 1; i <= 7; i++) {
-            let bx = startX + (i - 1) * 60; let by = height / 2 - 50;
-            if (mx >= bx && mx <= bx + 50 && my >= by && my <= by + 50) { pendingLevel = i; pendingStoryMode = levelSelectStory; pendingDebugStory = levelSelectStory; selectingDifficulty = true; sfx.charge(); return false; }
+            let bx = menuLayout.x + (i - 1) * menuLayout.step, by = menuLayout.y;
+            if (mx >= bx && mx <= bx + menuLayout.cell && my >= by && my <= by + 50) { pendingLevel = i; pendingStoryMode = levelSelectStory; pendingDebugStory = levelSelectStory; selectingDifficulty = true; sfx.charge(); return false; }
           }
 
           if (mx > width / 2 - 100 && mx < width / 2 + 100) {
@@ -33471,6 +34011,7 @@ if (inTravelMenu) {
 //  aborted execution of the rest of the file)
 
 function handleDesktop() {
+  if (controllerUIBlocksGameplay()) return;
   if(undergroundRouteBusy())return;
   if (!player) return;
   handleDesktopStance();
@@ -33627,7 +34168,10 @@ function mountableHorse() {
 }
 // One button for both halves of the transaction.
 function handleMountTap(mx, my) {
-  if (!player || !isClickingBtn(mx, my)) return false;
+  if (!player || isPaused || isDead || isWin || inStoryIntro || inStoryRoom ||
+      inTownCutscene || inDarchonCall || inFarmCutscene || inFarmPostCutscene ||
+      inFortCutscene || inPostAmbushCutscene || inLvl4Cutscene || inTravelMenu ||
+      inWorldBuildingMenu || window.inNM0SecretOverlay || !isClickingBtn(mx, my)) return false;
   if (player.mounted) { player.dismount(); sfx.charge(); return true; }
   const h = mountableHorse();
   if (h) { player.mountHorse(h); sfx.charge(); return true; }
@@ -62355,7 +62899,7 @@ function drawShovelStatus() {
     const w=Math.min(350,width-24),alpha=notice?1:Math.min(1,shovelHelpMs/500);
     fill(30,25,18,225*alpha);rect(width/2-w/2,height-49,w,37,5);
     fill(244,221,170,255*alpha);textAlign(CENTER,CENTER);textSize(10);
-    text(notice || (connectedGamepad()?'Y SWING · L2 DOWN · R2 AHEAD · B CLIMB':
+    text(notice || (connectedGamepad()?'Y SWING · L2 DOWN · R2 AHEAD · X CLIMB':
       window.isDesktop?'E SWING · C DOWN · F AHEAD · V CLIMB':'HOLD TO DIG · BUILDING FOUNDATIONS BLOCK'),width/2,height-31);
   }
   pop();

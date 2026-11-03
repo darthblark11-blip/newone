@@ -193,7 +193,7 @@ check('controller router leaves ordinary D-pad equipment cycling available witho
   frame([], 400, true); frame([15], 400, true);
   assert(P('player.currentWeapon===WEAPONS.SMG'));
 });
-check('cancelling a squad menu with B cannot also dig upward with the shovel', () => {
+check('cancelling a squad menu with B leaves shovel climbing on a fresh X press', () => {
   probe("BIOME_ACTIVE=true;currentBiome=0;window.shovelOwned=true;setMeleeTool('SHOVEL');");
   const nativeDig = ctx.shovelDig, digs = [];
   ctx.shovelDig = direction => digs.push(direction);
@@ -202,7 +202,7 @@ check('cancelling a squad menu with B cannot also dig upward with the shovel', (
     for (let i = 0; i < 12; i++) frame([1], 50, true);
     frame([], 50, true);
     assert.deepEqual(digs, []); assert.equal(orders.length, 0);
-    frame([1], 50, true); assert.deepEqual(digs, ['UP']);
+    frame([2], 50, true); assert.deepEqual(digs, ['UP']);
   } finally { ctx.shovelDig = nativeDig; }
 });
 

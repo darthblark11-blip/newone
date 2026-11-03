@@ -2,9 +2,23 @@
 
 The gameplay handler uses the browser's standard gamepad button layout.
 
+**A confirms or continues** on the title screen, difficulty selection, pause
+menus, dialogue choices, acquisition panels and visible world interactions.
+Use the **D-pad or left stick** to move the highlighted selection and **B to go
+back** one menu level. Start pauses/resumes. In normal gameplay, **B dashes**
+with the existing unlock and cooldown rules. Boxing retains its stance-specific
+face-button actions below.
+
+Each confirmation needs a fresh press. Holding A cannot skip several dialogue
+pages or confirm the next menu, and backing out with B cannot become a dash.
+Reconnects consume buttons already held until release. Controller confirmation
+uses the same actions as touch without creating a mouse press or touch pointer.
+The title's level strip and the main pause menu fit portrait and landscape
+screens; touch targets follow their displayed positions.
+
 Open **Pause → Settings → Gamepad Controls** in the world, barroom gauntlet or
 quick draw. With a controller, press Start to pause, then Y for Settings and A
-for Gamepad Controls. Use the D-pad and A to choose, B to go back, or Start to
+for Gamepad Controls. Use the D-pad/left stick and A to choose, B to go back, or Start to
 resume. Touch can select every option directly.
 
 The two preferences are independent and save immediately on this device,
@@ -28,6 +42,8 @@ Touch, mouse, directional blocking and other controls keep their behavior.
 | Control | Action |
 | --- | --- |
 | Left stick | Move |
+| A | Confirm / continue / interact with the visible context prompt |
+| B outside boxing and menus | Dash |
 | Right stick with guns/taser | Aim; outer travel fires in Right Stick mode |
 | R2 outside boxing | Fire in R2 Trigger mode; hold/release to draw/fire the bow |
 | Right stick with bow | Right Stick mode: reversed pull/tension; R2 mode: aim |
@@ -66,7 +82,7 @@ along the movement stick, while a neutral stick lowers in place. A short click
 toggles crouch/stand; clicking while prone requests standing.
 
 The equipped shovel retains its tool controls: Y swings, L2 digs down, R2 digs
-ahead and B climbs. Firearm target modifiers do not apply in shovel mode.
+ahead and X climbs; B remains dash. Firearm target modifiers do not apply in shovel mode.
 
 Melee cycling uses the existing owned-tool list. Firearm cycling wraps in both
 directions through pistol, unlocked revolver, story-mode taser, unlocked bow,
@@ -162,6 +178,7 @@ gamepad, desktop and player update paths:
 
 ```sh
 node tools/check-gamepad.js
+node tools/check-gamepad-navigation.js
 node tools/check-gamepad-settings.js
 node tools/check-boxing-defensive-controls.js
 node tools/check-gamepad-trigger-shooting.js

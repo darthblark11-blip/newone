@@ -55,11 +55,11 @@ ok(P('!playerWeaponFireInput()'),'controller aiming/trigger cannot fire a gun wh
 pad.buttons[7]={pressed:false,value:0};pad.buttons[6]={pressed:true,value:1};
 P('player.shovelCooldownMs=0;handleGamepad();');
 ok(P('shovelCellAt(528,720).depth===54&&!grenadeInputHeld'),'controller L2 keeps its shovel-only dig-down action');
-pad.buttons[6]={pressed:false,value:0};pad.buttons[1]={pressed:true,value:1};
+pad.buttons[6]={pressed:false,value:0};pad.buttons[2]={pressed:true,value:1};
 P('for(let i=0;i<25;i++)shovelUpdatePlayer(player,33);handleGamepad();');
-ok(P('player.shovelClimbing&&player.shovelDepthTarget===36'),'controller B climbs the shaft');
+ok(P('player.shovelClimbing&&player.shovelDepthTarget===36'),'controller X climbs the shaft');
 P('connectedGamepad=originalPadFunction;for(let i=0;i<25;i++)shovelUpdatePlayer(player,33);');
-pad.buttons[1]={pressed:false,value:0};pad.buttons[5]={pressed:true,value:1};
+pad.buttons[2]={pressed:false,value:0};pad.buttons[5]={pressed:true,value:1};
 P('connectedGamepad=()=>window.__shovelPad;handleTouches();handleGamepad();');
 ok(P('!meleeInputHeld&&!grenadeInputHeld&&!cannonInputHeld'),'controller R1 does not retain the removed shovel swing alias');
 pad.buttons[5]={pressed:false,value:0};pad.buttons[3]={pressed:true,value:1};
