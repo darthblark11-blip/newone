@@ -43,6 +43,16 @@ and bushes/ground plants add no collider. `forestCanopyMass()`, `forestPropRadiu
 `forestPropCullPad()` share dimensions between art, placement, visibility and
 the lighting height field. Renderers do not change generation metadata.
 
+Tree rises range from 102 to 136 world units before girth scaling. Their
+canopies begin at `FOREST_CROWN_LOW` (.64 of the rise), with the main upper
+surface at `FOREST_CROWN_HIGH` (.84); seeded boughs continue above it. Cached
+eight-sided trunks connect the fixed roots to those crowns with flared bases,
+sun-facing wood planes and sparse lengthwise bark seams. The wood below height
+17 sorts with ground actors; the upper shaft and foliage paint above them.
+Bare snags share the split and route their branches by actual height.
+`forestChunkDecorPad()` derives visibility margins from resident tree sizes,
+including crowns whose roots are outside the visible chunk.
+
 ### Prop audit and conversion
 
 | Existing prop | Conversion | Collision / anchor |
@@ -118,6 +128,17 @@ these bounded base-only probes retain destroyed footprints as reservations, so
 harvesting a neighbor cannot make a new grove tree appear after reload.
 Fallen timber, ferns and mushroom pockets dress the copse margins. Fire scars
 and rocky ridges retain more open space.
+
+`woodlandStandPlan()` breaks up the saved circular formations with independent
+off-centre infill, uneven satellite lobes and mixed-age cohorts. Sparse edges
+can taper out entirely. It preserves every original root and adds only
+`forest:stand:` identities, capped at ten accepted stems per chunk. The plan
+cache retains at most 192 groups and the immutable geometry reservation cache
+retains 64 chunks. Reservation probes include neighboring old groves and
+timber, including felled footprints, and stop before new stand generation.
+This keeps routes open and prevents harvesting or chunk order from changing
+the cohort layout. The focused regression retains an exact fixture for 1,783
+historical roots across 121 chunks.
 
 Substantial plants and timber no longer flatten into the low-resolution floor
 texture. Up to twelve shrubs and twenty smaller floor props per chunk move into
@@ -234,8 +255,12 @@ ridges are seeded geometry; sunlight changes their face colours rather than
 moving the ridges themselves.
 
 `forestSunRelief()` is the shared shadow-ownership gate. When the advanced rig
-is active, it receives four cached crown stamps, including the complete raised outer edge, at the same
-camera offsets as the visible crown. Visible raised floor props receive at
+is active, it receives nine cached, height-sorted canopy stamps: four crown
+contours and the five actual bough silhouettes at their visible camera offsets.
+The exposed wood uses one continuous height gradient for each lower/upper
+slice, in the same actor order as the art. The forest has a 400-unit lighting
+height ceiling so mature trees on hills remain distinct; other scenes retain
+their own ranges. Visible raised floor props receive at
 most five sparse height stamps before the character pass: narrow fronds,
 stems and flower heads retain open space. Canopies retain their later pass
 above ground actors. Only the rig casts these objects' sun shadows in this
@@ -277,8 +302,9 @@ native rendering or measuring device performance.
   raised crowns paint above those actors, followed by aircraft and flying birds.
   Canopy height/material stamps use tapered crown contours rather than a solid
   maximum-height ellipse. Visibility bounds include the projected crown.
-- Tree rise is proportioned to the game's city projection (28–36 units before
-  girth scaling), avoiding long exposed stems and excessive edge displacement.
+- Tree rises range from 102–136 units before girth scaling. The lifted crown
+  exposes the faceted bole at the camera centre and angled margins. Root and
+  upper wood split at height 17; visibility and lighting use the same geometry.
 - Contact shadows start on the ground before the canopy is translated. The
   fallback sun pass fades them normally; the advanced rig owns canopy shadows
   when enabled. Never paint two sun shadows for one tree.
@@ -549,6 +575,8 @@ The foundation has dedicated generation, rendering and harvesting checks:
 node --check game.js
 node tools/check-forest-generation.js
 node tools/check-forest-render.js
+node tools/check-forest-tall-trees.js
+node tools/check-forest-natural-groves.js
 node tools/check-forest-sunlight.js
 node tools/check-forest-lifecycle.js
 node tools/check-forest-camera.js

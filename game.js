@@ -5570,7 +5570,7 @@ function massRunKind(b) {
   return b.isBiomeProp ? 1 : 0;
 }
 function forestRaisedCrown(d) {
-  return !!d.forestSpecies && d.forestSpecies !== 'CHARRED_SNAG' && !!forestCanopyMass(d);
+  return !!d.forestSpecies && !!forestCanopyMass(d);
 }
 function forestStandingShrub(d) { return d.forestSpecies === 'BUSH'; }
 function forestStandingFloorProp(d) { return forestStandingShrub(d) || !!(d.forestSpecies && (d.forestLiveProp || d.forestLandscapeProp)); }
@@ -37647,13 +37647,18 @@ const FOREST_REGIONS = {
   EDGE: { name: "Woodland Edge", canopy: 1.0, midstory: 0.70, underbrush: 1.0,
     ground: [112, 116, 73], shade: [52, 79, 51], foliage: [98, 132, 63], highlight: [175, 183, 102] }
 };
+// Crowns begin above an exposed bole. Keep art, cached boughs and lighting on
+// the same vertical frame; raising only the tip leaves the foliage at the feet.
+const FOREST_CROWN_LOW = .64, FOREST_CROWN_HIGH = .84;
+const FOREST_LIGHT_HEIGHT_MAX = 400;
+function forestBranchHeight(fraction) { return FOREST_CROWN_LOW + fraction * .49; }
 const FOREST_PROPS = {
-  DOUGLAS_FIR: { canopyMass: [34, 86, 64], trunkWidth: 11, outline: 1.8, tier: "canopy", collision: [34, 34] },
-  WESTERN_CEDAR: { canopyMass: [36, 100, 72], trunkWidth: 13, outline: 1.9, tier: "canopy", collision: [34, 34] },
-  SITKA_SPRUCE: { canopyMass: [32, 78, 60], trunkWidth: 10, outline: 1.8, tier: "canopy", collision: [34, 34] },
-  RED_ALDER: { canopyMass: [28, 92, 76], trunkWidth: 10, outline: 1.7, tier: "canopy", collision: [34, 34] },
-  LODGEPOLE_PINE: { canopyMass: [30, 62, 48], trunkWidth: 9, outline: 1.7, tier: "canopy", collision: [34, 34] },
-  CHARRED_SNAG: { canopyMass: [30, 40, 34], trunkWidth: 10, outline: 1.6, tier: "canopy", collision: [34, 34] },
+  DOUGLAS_FIR: { canopyMass: [120, 86, 64], trunkWidth: 11, outline: 1.8, tier: "canopy", collision: [34, 34] },
+  WESTERN_CEDAR: { canopyMass: [130, 100, 72], trunkWidth: 13, outline: 1.9, tier: "canopy", collision: [34, 34] },
+  SITKA_SPRUCE: { canopyMass: [116, 78, 60], trunkWidth: 10, outline: 1.8, tier: "canopy", collision: [34, 34] },
+  RED_ALDER: { canopyMass: [136, 92, 76], trunkWidth: 10, outline: 1.7, tier: "canopy", collision: [34, 34] },
+  LODGEPOLE_PINE: { canopyMass: [102, 62, 48], trunkWidth: 9, outline: 1.7, tier: "canopy", collision: [34, 34] },
+  CHARRED_SNAG: { canopyMass: [112, 40, 34], trunkWidth: 10, outline: 1.6, tier: "canopy", collision: [34, 34] },
   BUSH: { width: 64, depth: 54, rise: 9, outline: 1.2, tier: "midstory", collision: null },
   FERN: { width: 58, depth: 58, rise: 9, outline: 0.9, tier: "underbrush", collision: null },
   // Timber shares the waist-high rise of native sandbags/log piles. Decorative
@@ -37692,6 +37697,15 @@ function forestPropCullPad(d) {
   const p = forestPropProfile(d);
   return p && p.canopyMass ? Math.max(120, forestPropRadius(d) +
     p.canopyMass[0] * (d.s || 1) * (MASS_LEAN + MASS_TILT) + 12) : 120;
+}
+const _forestChunkPads = new WeakMap();
+function forestChunkDecorPad(ch) {
+  const decor = ch.decor || EMPTY_LIST, cached = _forestChunkPads.get(ch);
+  if (cached && cached.decor === decor && cached.count === decor.length) return cached.pad;
+  let pad = 400;
+  for (const d of decor) if (d.forestSpecies) pad = Math.max(pad, forestPropCullPad(d));
+  _forestChunkPads.set(ch, { decor, count: decor.length, pad });
+  return pad;
 }
 
 // ###########################################################################
@@ -41432,9 +41446,88 @@ function woodlandGrovePlan(biome, gx, gy) {
     key: gx + ":" + gy, seed: chunkHash(biome, gx, gy, 81441) };
 }
 
+// Existing ring roots are saved harvest locations. New, independently seeded
+// cohorts interrupt those rings with off-centre infill and uneven side lobes;
+// neither the original roots nor their placement stream moves to make room.
+const FOREST_STAND_MAX = 10, FOREST_STAND_REACH = 460;
+const _forestStandPlans = new Map(), _forestStandBases = new Map();
+let _forestStandCore = null, _forestStandMask = null, _forestStandChunks = null;
+function woodlandStandCacheContext() {
+  if (_forestStandCore !== authoredCore || _forestStandMask !== authoredMask || _forestStandChunks !== authoredChunks) {
+    _forestStandPlans.clear(); _forestStandBases.clear(); _forestStandCore = authoredCore;
+    _forestStandMask = authoredMask; _forestStandChunks = authoredChunks;
+  }
+}
+function woodlandStandPlan(biome, gx, gy) {
+  woodlandStandCacheContext();
+  const key = biome + ':' + gx + ':' + gy;
+  if (_forestStandPlans.has(key)) return _forestStandPlans.get(key);
+  const grove = woodlandGrovePlan(biome, gx, gy), roots = [];
+  if (grove) {
+    const rng = makeRng(chunkHash(biome, gx, gy, 91573));
+    const heading = grove.phase + rngRange(rng, -.65, .65), co = Math.cos(heading), si = Math.sin(heading);
+    const region = woodRegion(biome, grove.x, grove.y), primary = rng();
+    const lobes = [
+      [-.23, .10, .40, .49, 3],
+      [rngRange(rng, 1.10, 1.65), rngRange(rng, -.45, .40), .61, .75, 5],
+      [-rngRange(rng, .90, 1.75), rngRange(rng, -.78, .64), .56, .70, 4]
+    ];
+    let slot = 0;
+    for (let lobe = 0; lobe < lobes.length; lobe++) {
+      const q = lobes[lobe];
+      // One edge can peter out completely. Fire scars and alpine woods keep
+      // their open character rather than receiving a full mature thicket.
+      const strength = region === RG_BURN ? .30 : region === RG_HEATH ? .43 : region === RG_MARSH ? .88 : 1;
+      const present = lobe !== 2 || rng() > .28;
+      for (let j = 0; j < q[4]; j++, slot++) {
+        const lx = (q[0] + (rng() + rng() - 1) * q[2]) * grove.radius;
+        const ly = (q[1] + (rng() + rng() - 1) * q[3]) * grove.radius;
+        const x = grove.x + lx * co - ly * si, y = grove.y + lx * si + ly * co;
+        const accept = rng(), mature = lobe === 0 ? rng() < .78 : rng() < .47;
+        const reg = woodRegion(biome, x, y), tier = mature ? 'canopy' : 'midstory';
+        const roll = rng() < .74 && reg === region ? primary : rng();
+        const species = woodForestSpecies(reg, roll, tier);
+        const scale = rngRange(rng, mature ? 1.13 : .67, mature ? 1.74 : 1.12);
+        const turn = rng() * TWO_PI, colour = rng();
+        if (!present || accept > strength) continue;
+        roots.push({ x, y, s: scale, r: turn, c: colour, width: mature ? 34 : 24,
+          forestSpecies: species, forestRegion: reg, forestTier: tier,
+          forestStandKey: grove.key, forestStandLobe: lobe, slot,
+          priority: chunkHash(biome, gx, gy, 91631 + slot * 181), token: grove.key + ':' + slot });
+      }
+    }
+  }
+  // Resolve a cohort's own close saplings once, in world-plan order. Rejected
+  // candidates cannot keep suppressing every younger neighbour in the lobe.
+  roots.sort((a, b) => a.priority - b.priority || a.token.localeCompare(b.token));
+  const spaced = [];
+  for (const root of roots) {
+    if (spaced.some(other => Math.abs(root.x - other.x) < (root.width + other.width) * .5 + 28 &&
+        Math.abs(root.y - other.y) < (root.width + other.width) * .5 + 28)) continue;
+    spaced.push(root);
+  }
+  roots.length = 0; roots.push(...spaced);
+  if (_forestStandPlans.size >= 192) _forestStandPlans.delete(_forestStandPlans.keys().next().value);
+  _forestStandPlans.set(key, roots);
+  return roots;
+}
+function woodlandStandBase(biome, cx, cy) {
+  // These private, bounded reservations include felled roots and timber. A
+  // harvest must never cause a formerly rejected neighbour to grow a new tree.
+  woodlandStandCacheContext();
+  const key = biome + ':' + cx + ':' + cy;
+  let roots = _forestStandBases.get(key);
+  if (!roots) {
+    roots = generateChunkContent(biome, cx, cy, false, true).solid;
+    if (_forestStandBases.size >= 64) _forestStandBases.delete(_forestStandBases.keys().next().value);
+    _forestStandBases.set(key, roots);
+  }
+  return roots;
+}
+
 // Dressing follows numeric key assignment and never consumes the template RNG
 // or changes a saved collider. New stems have independent namespaced identities.
-function appendWoodlandForest(biome, cx, cy, solid, decor, decorBake, nearAnchor, forestBaseOnly = false) {
+function appendWoodlandForest(biome, cx, cy, solid, decor, decorBake, nearAnchor, forestBaseOnly = false, forestStandBaseOnly = false) {
   if (biome !== 2 || layoutFor(biome, cx, cy) !== "WOODLAND") return;
   const ox = cx * CHUNK_W, oy = cy * CHUNK_W;
   const rng = makeRng(chunkHash(biome, cx, cy, 73091));
@@ -41667,6 +41760,54 @@ function appendWoodlandForest(biome, cx, cy, solid, decor, decorBake, nearAnchor
       d.t = d.forestSpecies = "LITTER";
     }
   }
+
+  if (!forestStandBaseOnly) {
+    // A full pre-expansion reservation probe sees original groves and selected
+    // timber as well as template buildings, even across a texture boundary.
+    // It disables only these new cohorts, so recursion ends at the old probes.
+    const padding = FOREST_STAND_REACH + 64, candidates = [];
+    for (let gx = Math.floor((ox - padding) / pitch); gx <= Math.floor((ox + CHUNK_W + padding) / pitch); gx++)
+      for (let gy = Math.floor((oy - padding) / pitch); gy <= Math.floor((oy + CHUNK_W + padding) / pitch); gy++)
+        for (const root of woodlandStandPlan(biome, gx, gy)) candidates.push(root);
+    candidates.sort((a, b) => a.priority - b.priority || a.token.localeCompare(b.token));
+    let standStems = 0;
+    for (const root of candidates) {
+      const x = root.x, y = root.y, width = root.width;
+      if (x < ox || x >= ox + CHUNK_W || y < oy || y >= oy + CHUNK_W) continue;
+      let blocked = false;
+      // Geometric priority is independent of chunk ownership and acceptance.
+      // A destroyed or road-rejected neighbour cannot change another slot.
+      for (const other of candidates) {
+        if (other === root) break;
+        if (Math.abs(x - other.x) < (width + other.width) * .5 + 28 &&
+            Math.abs(y - other.y) < (width + other.width) * .5 + 28) { blocked = true; break; }
+      }
+      if (blocked) continue;
+      const species = root.forestSpecies;
+      const key = cx + ',' + cy + ',forest:stand:' + root.token;
+      const d = {t:species === 'CHARRED_SNAG' ? 'SNAG' : species === 'RED_ALDER' ? 'TREE' : 'PINE',
+        x, y, s:root.s, r:root.r, c:root.c, k:RG_CANOPY[root.forestRegion] || 0,
+        forestSpecies:species,forestRegion:root.forestRegion,forestTier:root.forestTier,
+        forestStandKey:root.forestStandKey,forestStandLobe:root.forestStandLobe,forestTrunkKey:key};
+      const reach = radius(d);
+      if (nearAnchor(x, y, 560 + reach) || checkpointEdge(x, y, reach) || reserved(d, reach, 18) ||
+          hitsAuthored(x, y, reach * 2, reach * 2, 24) || !solidsClearAt(solid, x, y, width, width, 28)) continue;
+      const columns = [cx], rows = [cy], guard = 320;
+      if (x - ox < guard) columns.push(cx - 1);
+      if (ox + CHUNK_W - x < guard) columns.push(cx + 1);
+      if (y - oy < guard) rows.push(cy - 1);
+      if (oy + CHUNK_W - y < guard) rows.push(cy + 1);
+      for (const nx of columns) for (const ny of rows)
+        if (!solidsClearAt(woodlandStandBase(biome, nx, ny), x, y, width, width, 28)) blocked = true;
+      if (blocked) continue;
+      const stem = {x,y,w:width,h:width,isTreeTrunk:true,girth:root.s,forestSpecies:species,
+        forestRegion:root.forestRegion,forestTier:root.forestTier,forestStandKey:root.forestStandKey,
+        forestStandLobe:root.forestStandLobe,chunkKey:key};
+      forestDressHabitat(d, biome); forestDressHabitat(stem, biome);
+      solid.push(stem); decor.push(d);
+      if (++standStems >= FOREST_STAND_MAX) break;
+    }
+  }
 }
 
 // Independent wetland dressing follows the saved solid/timber pass. It never
@@ -41746,7 +41887,7 @@ function appendForestBogDressing(biome, cx, cy, content) {
 // Create collision companions only after all original placement and filtering.
 // Their namespaced identities derive from stable roots/variants, never the
 // solids' numeric index or a new RNG draw. The existing live decor paints them.
-function appendForestTimberSolids(biome, cx, cy, content) {
+function appendForestTimberSolids(biome, cx, cy, content, reserveDestroyed = false) {
   if (biome !== 2 || layoutFor(biome, cx, cy) !== 'WOODLAND') return;
   const destroyed = getBiomeState(biome).destroyed, ox = cx * CHUNK_W, oy = cy * CHUNK_W;
   const seen = new Set();
@@ -41757,7 +41898,7 @@ function appendForestTimberSolids(biome, cx, cy, content) {
       Math.round((d.y - oy) * 100).toString(36) + ':' + Math.round((d.c || 0) * 65535).toString(36);
     const key = cx + ',' + cy + ',forest:timber:' + d.forestSpecies + ':' + token;
     d.forestSolidKey = key;
-    if (destroyed[key]) { content.decor.splice(i, 1); continue; }
+    if (!reserveDestroyed && destroyed[key]) { content.decor.splice(i, 1); continue; }
     if (seen.has(key)) continue;
     seen.add(key);
     const scale = d.s || 1, angle = d.r || 0, ca = Math.cos(angle), sa = Math.sin(angle);
@@ -41866,7 +42007,7 @@ function bakeForestFloraBeds(g, biome, cx, cy) {
     }
 }
 
-function generateChunkContent(biome, cx, cy, forestBaseOnly = false) {
+function generateChunkContent(biome, cx, cy, forestBaseOnly = false, forestStandBaseOnly = false) {
   // Inside the authored core the hand-placed map IS the world. The chunk still
   // bakes its terrain there — that is what makes the streets and textures run
   // continuously under and past the authored buildings — but it contributes no
@@ -43568,8 +43709,8 @@ function generateChunkContent(biome, cx, cy, forestBaseOnly = false) {
     cityLeisureJunction(cx,cy)&&bnoise(1,cx*4096+7717,cy*4096+3131,.31)>.62;
   for (let i = 0; i < solid.length; i++) solid[i].chunkKey = cx + "," + cy + "," + (downtownBlock ? "downtown:v1:" : leisureBlock ? "leisure:v1:" : downtownEdge ? "downtown-edge:v1:" : leisureEdge ? "leisure-edge:v1:" : districtBlock ? "district:v3:" : solid[i].isCivic ? "civic:" : "") + i;
 
-  appendWoodlandForest(biome, cx, cy, solid, decor, decorBake, nearAnchor, forestBaseOnly);
-  if (!forestBaseOnly) {
+  appendWoodlandForest(biome, cx, cy, solid, decor, decorBake, nearAnchor, forestBaseOnly, forestStandBaseOnly);
+  if (!forestBaseOnly && !forestStandBaseOnly) {
     removeDestroyedTreeDecor(biome, solid, decor);
     // Base collision probes include felled historical roots as reservations:
     // harvesting a neighbour cannot make a new copse appear on regeneration.
@@ -43640,9 +43781,11 @@ function generateChunkContent(biome, cx, cy, forestBaseOnly = false) {
   filterFrontierSettlementContent(biome,cx,cy,content);
   filterShovelGrassContent(biome,content);
   if (!forestBaseOnly) {
-    appendForestTimberSolids(biome, cx, cy, content);
-    appendForestFlora(biome, cx, cy, content);
-    appendForestBogDressing(biome, cx, cy, content);
+    appendForestTimberSolids(biome, cx, cy, content, forestStandBaseOnly);
+    if (!forestStandBaseOnly) {
+      appendForestFlora(biome, cx, cy, content);
+      appendForestBogDressing(biome, cx, cy, content);
+    }
   }
   return content;
 }
@@ -47115,7 +47258,7 @@ class ChunkManager {
     if (stand) _standDecor.length = 0;
     for (const ch of this.chunks.values()) {
       const wx = ch.cx * CHUNK_W, wy = ch.cy * CHUNK_W;
-      const chunkPad = this.biome === 2 ? 400 : 200;
+      const chunkPad = this.biome === 2 ? forestChunkDecorPad(ch) : 200;
       if (wx > viewRight + chunkPad || wx + CHUNK_W < viewLeft - chunkPad) continue;
       if (wy > viewBottom + chunkPad || wy + CHUNK_W < viewTop - chunkPad) continue;
       // Cull generously. A tree canopy reaches ~78 units at full scale, so the
@@ -51295,10 +51438,22 @@ function forestTreePlan(d, rx, ry, seed, species, rot) {
       lines[k + 2] = (bc * (q + .15) - bs * .22) * rx * size;
       lines[k + 3] = (bs * (q + .15) + bc * .22) * ry * size;
     }
-    branches.push({ angle, size, lightX: -bs, lightY: bc, height: _FOREST_BRANCH_PLAN[i + 4], points, faces, lines,
+    branches.push({ angle, size, lightX: -bs, lightY: bc, height: forestBranchHeight(_FOREST_BRANCH_PLAN[i + 4]), points, faces, lines,
       x: (ca * x - sa * y) * rx, y: (sa * x + ca * y) * ry });
   }
-  plan = { rx, ry, seed, species, rot, style, crown, branches };
+  // The lighting silhouette follows every raised bough as trees get taller.
+  // Sort these immutable stamps once; a lower branch cannot erase a higher
+  // height sample where their leaf masses overlap.
+  const heightStamps = [
+    { height: FOREST_CROWN_LOW, projected: FOREST_CROWN_LOW, radius: 1 },
+    { height: FOREST_CROWN_HIGH, projected: FOREST_CROWN_HIGH, radius: 1 },
+    { height: (FOREST_CROWN_HIGH + 1) * .5,
+      projected: (FOREST_CROWN_LOW + FOREST_CROWN_HIGH) * .5, radius: .83 },
+    { height: 1, projected: FOREST_CROWN_HIGH, radius: .62 }
+  ];
+  for (const branch of branches) heightStamps.push({ height: branch.height, branch });
+  heightStamps.sort((a, b) => a.height - b.height);
+  plan = { rx, ry, seed, species, rot, style, crown, branches, heightStamps };
   _forestTreePlans.set(d, plan);
   return plan;
 }
@@ -52125,6 +52280,146 @@ function paintForestBogProp(g, d, path, live, phase, sd, sl) {
   }
 }
 
+// A tree bole is an eight-sided rooted volume, not a brown ribbon stretched
+// toward the canopy. Static ring coordinates and their outward normals stay
+// on the decor record; only projection and the shared sun ramp change.
+const _forestTrunkPlans = new WeakMap();
+const _FOREST_TRUNK_COLOURS = {
+  DOUGLAS_FIR: [133, 94, 56], WESTERN_CEDAR: [145, 99, 57],
+  SITKA_SPRUCE: [124, 99, 68], RED_ALDER: [172, 160, 124],
+  LODGEPOLE_PINE: [145, 106, 66], CHARRED_SNAG: [71, 64, 52]
+};
+function forestTreeTrunkSlice(points, lower, upper) {
+  if (!(upper > lower)) return new Float64Array(0);
+  const levels = [lower];
+  for (let ring = 1; ring < 3; ring++) {
+    const z = points[ring * 24 + 2];
+    if (z > lower && z < upper) levels.push(z);
+  }
+  levels.push(upper);
+  const clipped = new Float64Array(levels.length * 24);
+  for (let ring = 0; ring < levels.length; ring++) {
+    const z = levels[ring]; let from = 0;
+    while (from < 2 && points[(from + 1) * 24 + 2] < z) from++;
+    const z0 = points[from * 24 + 2], z1 = points[(from + 1) * 24 + 2], f = (z - z0) / (z1 - z0);
+    for (let i = 0; i < 8; i++) {
+      const a = (from * 8 + i) * 3, b = a + 24, at = (ring * 8 + i) * 3;
+      clipped[at] = points[a] + (points[b] - points[a]) * f;
+      clipped[at + 1] = points[a + 1] + (points[b + 1] - points[a + 1]) * f;
+      clipped[at + 2] = z;
+    }
+  }
+  return clipped;
+}
+function forestTreeTrunkPoints(plan, phase) {
+  return phase === 'root' ? plan.lower : phase === 'crown' ? plan.upper : plan.points;
+}
+function forestTreeTrunkPlan(d, tw) {
+  const seed = d.c || 0, rot = d.r || 0, species = d.forestSpecies;
+  const mass = forestCanopyMass(d), rise = mass ? mass[0] * (d.s || 1) : 0;
+  let plan = _forestTrunkPlans.get(d);
+  if (plan && plan.tw === tw && plan.seed === seed && plan.rot === rot && plan.species === species && plan.rise === rise) return plan;
+  const heights = [0, .09, .52, species === 'CHARRED_SNAG' ? 1 : .96];
+  const widths = [.78, .42, .31, .24], points = new Float64Array(4 * 8 * 3);
+  const normals = new Float64Array(16), angle = rot * .31 + seed * 1.8;
+  const bendX = Math.cos(rot + seed * 4) * tw * .10, bendY = Math.sin(rot + seed * 4) * tw * .08;
+  for (let ring = 0; ring < 4; ring++) for (let i = 0; i < 8; i++) {
+    const a = i * TWO_PI / 8 + angle, z = heights[ring];
+    const root = ring === 0 ? 1 + Math.sin(seed * 13 + i * 2.3) * .10 : 1;
+    const at = (ring * 8 + i) * 3;
+    points[at] = Math.cos(a) * tw * widths[ring] * root + bendX * z * z;
+    points[at + 1] = Math.sin(a) * tw * widths[ring] * .80 * root + bendY * z * z;
+    points[at + 2] = z;
+  }
+  for (let i = 0; i < 8; i++) {
+    const j = (i + 1) % 8, nx = points[j * 3 + 1] - points[i * 3 + 1], ny = points[i * 3] - points[j * 3];
+    const length = Math.hypot(nx, ny) || 1;
+    normals[i * 2] = nx / length; normals[i * 2 + 1] = ny / length;
+  }
+  const cut = Math.max(0, Math.min(heights[3], 17 / Math.max(1, rise)));
+  const seams = new Float64Array(8 * 4 * 3);
+  for (let i = 0; i < 8; i++) {
+    const j = (i + 1) % 8;
+    const a = ((points[i * 3] + points[j * 3]) * .5) / (.78 * tw);
+    const b = ((points[i * 3 + 1] + points[j * 3 + 1]) * .5) / (.78 * tw);
+    for (let step = 0; step < 4; step++) {
+      const z = .13 + step * .16, radius = (.43 - z * .20) * tw, at = (i * 4 + step) * 3;
+      seams[at] = a * radius + (step % 2) * tw * .025;
+      seams[at + 1] = b * radius; seams[at + 2] = z;
+    }
+  }
+  plan = { tw, seed, rot, species, rise, cut, points, normals, seams,
+    lower: forestTreeTrunkSlice(points, 0, cut), upper: forestTreeTrunkSlice(points, cut, heights[3]),
+    light: NaN, shades: new Float64Array(8) };
+  _forestTrunkPlans.set(d, plan);
+  return plan;
+}
+function paintForestTreeBole(g, d, path, lx, ly, tw, ink, phase) {
+  const plan = forestTreeTrunkPlan(d, tw), p = forestTreeTrunkPoints(plan, phase), sun = forestSunLighting();
+  const rings = p.length / 24;
+  if (rings < 2) return;
+  g.push();
+  const colour = _FOREST_TRUNK_COLOURS[d.forestSpecies] || _FOREST_TRUNK_COLOURS.DOUGLAS_FIR;
+  const s = d.s || 1;
+  if (plan.light !== sun.key) {
+    for (let i = 0; i < 8; i++) plan.shades[i] = forestSunShade(plan.normals[i * 2], plan.normals[i * 2 + 1], .10, .70, .97, 1.28, sun);
+    plan.light = sun.key;
+  }
+  g = forestFloorPainter(g, path) || g;
+  let visible = 0;
+  for (let i = 0; i < 8; i++) if (plan.normals[i * 2] * lx + plan.normals[i * 2 + 1] * ly < .00001) visible |= 1 << i;
+  g.noStroke();
+  if (p[2] === 0) {
+    g.fill(colour[0] * .65, colour[1] * .68, colour[2] * .67);
+    path.beginShape();
+    for (let i = 0; i < 8; i++) path.vertex(p[i * 3], p[i * 3 + 1]);
+    path.endShape(CLOSE);
+  }
+  for (let ring = 0; ring < rings - 1; ring++) for (let i = 0; i < 8; i++) {
+    if (!(visible & 1 << i)) continue;
+    const j = (i + 1) % 8, a = (ring * 8 + i) * 3, b = (ring * 8 + j) * 3;
+    const c = ((ring + 1) * 8 + j) * 3, e = ((ring + 1) * 8 + i) * 3;
+    const k = plan.shades[i] * (p[a + 2] < .09 - .000001 ? .86 : 1);
+    g.fill(colour[0] * k, colour[1] * k, colour[2] * k);
+    g.quad(p[a]+lx*p[a+2],p[a+1]+ly*p[a+2],p[b]+lx*p[b+2],p[b+1]+ly*p[b+2],
+      p[c]+lx*p[c+2],p[c+1]+ly*p[c+2],p[e]+lx*p[e+2],p[e+1]+ly*p[e+2]);
+  }
+  // Only the outside edges are inked. Horizontal ring marks turn a tall
+  // trunk into stacked blocks, so bark clefts run lengthwise instead.
+  g.noFill(); g.stroke(44, 38, 27); g.strokeWeight(ink * .64);
+  for (let i = 0; i < 8; i++) {
+    const previous = (i + 7) % 8;
+    if (!!(visible & 1 << i) === !!(visible & 1 << previous)) continue;
+    path.beginShape();
+    for (let ring = 0; ring < rings; ring++) {
+      const at = (ring * 8 + i) * 3; path.vertex(p[at]+lx*p[at+2],p[at+1]+ly*p[at+2]);
+    }
+    path.endShape();
+  }
+  g.stroke(colour[0] * .40, colour[1] * .43, colour[2] * .39, 165); g.strokeWeight(.65 * s);
+  for (let i = 0; i < 8; i++) {
+    if (!(visible & 1 << i) || i % 3 !== Math.floor((d.c || 0) * 3)) continue;
+    const lower = p[2], upper = p[p.length - 1], seams = plan.seams;
+    let open = false;
+    for (let step = 0; step < 3; step++) {
+      const a = (i * 4 + step) * 3, b = a + 3;
+      const lo = Math.max(lower, seams[a + 2]), hi = Math.min(upper, seams[b + 2]);
+      if (!(hi > lo)) continue;
+      if (!open) {
+        path.beginShape(); open = true;
+        const f = (lo - seams[a + 2]) / (seams[b + 2] - seams[a + 2]);
+        path.vertex(seams[a] + (seams[b] - seams[a]) * f + lx * lo,
+          seams[a + 1] + (seams[b + 1] - seams[a + 1]) * f + ly * lo);
+      }
+      const f = (hi - seams[a + 2]) / (seams[b + 2] - seams[a + 2]);
+      path.vertex(seams[a] + (seams[b] - seams[a]) * f + lx * hi,
+        seams[a + 1] + (seams[b + 1] - seams[a + 1]) * f + ly * hi);
+    }
+    if (open) path.endShape();
+  }
+  g.pop();
+}
+
 function paintForestClutter(g, d, t, phase) {
   if (paintForestFlora(g, d, t, phase)) return true;
   const path = forestPolygonPainter(g);
@@ -52173,28 +52468,15 @@ function paintForestClutter(g, d, t, phase) {
     }
     if (phase === 'shadow') { g.pop(); return true; }
 
-    // Bark is a short rooted volume, continuous with the raised crown. The
-    // lower foliage covers its upper end instead of sitting on an exposed pole.
-    if (phase !== 'crown') {
-    g.stroke(31, 42, 30); g.strokeWeight(ink * 0.7);
-    g.fill(burnt ? 53 : 97, burnt ? 49 : 68, burnt ? 40 : 43);
-    path.beginShape();
-    path.vertex(-tw * 0.80, tw * 0.42); path.vertex(-tw * 0.38, -tw * 0.28);
-    path.vertex(lx - tw * 0.25, ly - tw * 0.18);
-    path.vertex(lx + tw * 0.24, ly - tw * 0.18);
-    path.vertex(tw * 0.38, -tw * 0.28); path.vertex(tw * 0.78, tw * 0.42);
-    path.endShape(CLOSE);
-    const barkSun = forestSunLighting().direct;
-    g.noStroke(); g.fill((burnt ? 53 : 97) + (burnt ? 53 : 54) * barkSun,
-      (burnt ? 49 : 68) + (burnt ? 45 : 43) * barkSun,
-      (burnt ? 40 : 43) + (burnt ? 32 : 26) * barkSun);
-    const edge = LIGHT_DX < 0 ? 1 : -1;
-    g.quad(tw * 0.36 * edge, -tw * 0.18, tw * 0.07 * edge, -tw * 0.14,
-           lx + tw * 0.04 * edge, ly - tw * 0.18, lx + tw * 0.19 * edge, ly - tw * 0.17);
+    // The flared bole stands from its fixed ground contact through the crown.
+    // Its upper end disappears inside raised foliage instead of floating.
+    paintForestTreeBole(g, d, path, lx, ly, tw, ink, phase);
     if (species === "CHARRED_SNAG") {
       for (let i = 0; i < 5; i++) {
         const a = rot + i * 2.17 + Math.sin(seed * 7 + i) * 0.15;
         const f = 0.25 + i * 0.15;
+        const aboveActor = cm[0] * s * f > 17;
+        if (phase === 'root' && aboveActor || phase === 'crown' && !aboveActor) continue;
         const bx = lx * f, by = ly * f;
         const ex = bx + Math.cos(a) * rx * (0.50 + i % 2 * 0.18);
         const ey = by + Math.sin(a) * ry * (0.50 + i % 2 * 0.18);
@@ -52205,10 +52487,11 @@ function paintForestClutter(g, d, t, phase) {
         g.stroke(39, 45, 34); g.strokeWeight(1.8 * s);
         g.line(ex, ey, ex + Math.cos(a + 0.7) * rx * 0.18, ey + Math.sin(a + 0.7) * ry * 0.18);
       }
-      g.noStroke(); g.fill(159, 129, 84);
-      g.ellipse(lx, ly - tw * 0.12, tw * 0.5, tw * 0.32);
+      if (phase !== 'root' || cm[0] * s <= 17) {
+        g.noStroke(); g.fill(159, 129, 84);
+        g.ellipse(lx, ly - tw * 0.12, tw * 0.5, tw * 0.32);
+      }
       g.pop(); return true;
-    }
     }
     if (phase === 'root') { g.pop(); return true; }
 
@@ -52221,8 +52504,12 @@ function paintForestClutter(g, d, t, phase) {
     const boughLight = forestSunShade(0, 0, 1, .88, 1.02, 1.15, sun);
     // One connected crown volume: shaded bough edges join a lower footprint
     // to its raised top face. The top is filled, with no inner contour rings.
-    const low = .12, high = .40, n = alder ? 24 : 32;
+    const low = FOREST_CROWN_LOW, high = FOREST_CROWN_HIGH, n = alder ? 24 : 32;
     const plan = forestTreePlan(d, rx, ry, seed, species, rot);
+    // A preceding actor or floor accent can leave fill disabled. An opaque
+    // crown enables fill through p5 once, including its cached native groups;
+    // the outer pop restores the caller's state after every tree.
+    g.fill(cr, cg, cb);
     const sideStyle = forestTreeSideStyle(g, path, species, n, cr, cg, cb, hr, hg, hb);
     const nativeGroups = sideStyle && path === _forestPolygonPainters.get(sideStyle.renderer);
     if (nativeGroups) {
@@ -57448,9 +57735,12 @@ function glRigSetNormalAtlas(src, mix) {
 //   B  facing as turns, for the tangent-space rotation in the normal pass
 //   A  coverage: 1 where geometry stands, 0 on bare ground
 // Canyon floors, city hills and roofs share one scene-relative lighting
-// height. Positive city relief retains the existing 0..200 encoding.
+// height. Tall forest crowns need headroom above hills; other scenes retain
+// their existing range. Every decoder reads this same world-unit range.
 function glRigHeightOrigin() { return BIOME_ACTIVE && currentBiome === 3 ? -160 : 0; }
-function glRigHeightRange() { return GLRIG_HEIGHT_MAX - glRigHeightOrigin(); }
+function glRigHeightRange() {
+  return (BIOME_ACTIVE && currentBiome === 2 ? FOREST_LIGHT_HEIGHT_MAX : GLRIG_HEIGHT_MAX) - glRigHeightOrigin();
+}
 function glRigHeightByte(hWorld) {
   const shifted = hWorld - glRigHeightOrigin(), range = glRigHeightRange();
   return shifted <= 0 ? 0 : shifted >= range ? 255 : shifted / range * 255;
@@ -57549,6 +57839,58 @@ function forestSunRelief(d) {
   }
 }
 
+function glRigForestSnagBranches(g, d, cp, lx, ly, lower) {
+  const s = d.s || 1, rise = cp[0] * s, elevation = groundElev(d.x, d.y);
+  const seed = d.c || 0, rot = d.r || 0, crown = d.forestCrownScale === undefined ? 1 : d.forestCrownScale;
+  const rx = cp[1] * s * crown * .5, ry = cp[2] * s * crown * .5;
+  for (let i = 0; i < 5; i++) {
+    const f = .25 + i * .15;
+    if ((rise * f <= 17) !== lower) continue;
+    const a = rot + i * 2.17 + Math.sin(seed * 7 + i) * .15;
+    const bx = lx * f, by = ly * f;
+    g.stroke(glRigHeightByte(elevation + rise * f), 12.75, 0, 255);
+    g.strokeWeight((4 - i * .4) * s);
+    g.line(bx, by, bx + Math.cos(a) * rx * (.50 + i % 2 * .18),
+      by + Math.sin(a) * ry * (.50 + i % 2 * .18));
+  }
+}
+function glRigForestTreeTrunkHeight(g, d, cp, phase = 'root') {
+  const fp = forestPropProfile(d);
+  if (!fp || !cp) return;
+  const s = d.s || 1, rise = cp[0] * s, elevation = groundElev(d.x, d.y);
+  const plan = forestTreeTrunkPlan(d, (fp.trunkWidth || 9) * s), points = forestTreeTrunkPoints(plan, phase);
+  const rings = points.length / 24;
+  massLean(d.x, d.y, rise, _leanTmp);
+  const lx = _leanTmp[0], ly = _leanTmp[1], length = Math.hypot(lx, ly);
+  const px = length > .0001 ? -ly / length : 0, py = length > .0001 ? lx / length : 1;
+  const ctx = g.drawingContext;
+  ctx.save(); ctx.translate(d.x, d.y);
+  if (length > .0001) {
+    // A single axial gradient gives the exposed shaft continuous world height,
+    // rather than a chain of floating constant-height discs or extra lights.
+    const gradient = ctx.createLinearGradient(0, 0, lx, ly);
+    gradient.addColorStop(0, 'rgb(' + glRigHeightByte(elevation) + ',10.2,0)');
+    gradient.addColorStop(1, 'rgb(' + glRigHeightByte(elevation + rise) + ',10.2,0)');
+    ctx.fillStyle = gradient;
+  } else ctx.fillStyle = 'rgb(' + glRigHeightByte(elevation + rise) + ',10.2,0)';
+  ctx.beginPath();
+  for (let side = 0; side < 2; side++) for (let step = 0; step < rings; step++) {
+    const ring = side ? rings - 1 - step : step;
+    let edge = 0, best = side ? -Infinity : Infinity;
+    for (let i = 0; i < 8; i++) {
+      const at = (ring * 8 + i) * 3, dot = points[at] * px + points[at + 1] * py;
+      if (side ? dot > best : dot < best) { edge = at; best = dot; }
+    }
+    const x = points[edge] + lx * points[edge + 2], y = points[edge + 1] + ly * points[edge + 2];
+    if (!side && !step) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.closePath(); ctx.fill(); ctx.restore();
+  if (phase === 'root' && d.forestSpecies === 'CHARRED_SNAG') {
+    g.push(); g.translate(d.x, d.y);
+    glRigForestSnagBranches(g, d, cp, lx, ly, true);
+    g.pop();
+  }
+}
 function glRigForestCanopyHeight(g, d, cp) {
   if (!cp) return;
   const s = d.s || 1, crown = d.forestCrownScale === undefined ? 1 : d.forestCrownScale;
@@ -57556,40 +57898,29 @@ function glRigForestCanopyHeight(g, d, cp) {
   const rx = cp[1] * s * crown * .5, ry = cp[2] * s * crown * .5;
   massLean(d.x, d.y, rise, _leanTmp);
   const lx = _leanTmp[0], ly = _leanTmp[1];
+  // Raised wood covers standing actors just like the visible upper bole.
+  glRigForestTreeTrunkHeight(g, d, cp, 'crown');
   g.push(); g.translate(d.x, d.y);
   if (d.forestSpecies === 'CHARRED_SNAG') {
-    // Thin rooted bark/branches match the actual leaned art, rather than a
-    // circular pillar or a branch skeleton pinned to the unprojected root.
-    const seed = d.c || 0, rot = d.r || 0;
-    g.stroke(glRigHeightByte(rise + elevation), 12.75, 0, 255);
-    g.strokeWeight(Math.max(3, 5 * s)); g.line(0, 0, lx, ly);
-    for (let i = 0; i < 5; i++) {
-      const f = .25 + i * .15, a = rot + i * 2.17 + Math.sin(seed * 7 + i) * .15;
-      const bx = lx * f, by = ly * f;
-      g.stroke(glRigHeightByte(elevation + rise * f), 12.75, 0, 255);
-      g.strokeWeight((4 - i * .4) * s);
-      g.line(bx, by, bx + Math.cos(a) * rx * (.50 + i % 2 * .18),
-        by + Math.sin(a) * ry * (.50 + i % 2 * .18));
-    }
+    glRigForestSnagBranches(g, d, cp, lx, ly, false);
   } else {
     const plan = forestTreePlan(d, rx, ry, d.c || 0, d.forestSpecies, d.r || 0, d.forestCanopyStyle);
-    // Keep four cheap cached silhouette stamps. Their centres follow the
-    // visible low/top crown; camera lean cannot leave lighting at the trunk.
-    for (let band = 0; band < 3; band++) {
-      const radius = band === 0 ? 1 : band === 1 ? .83 : .62;
-      const height = band === 0 ? .46 : band === 1 ? .76 : 1;
-      const projected = band === 0 ? .12 : band === 1 ? .30 : .40;
-      glRigMat(g, elevation + rise * height, .05, 0);
-      g.push(); g.translate(lx * projected, ly * projected); g.scale(radius);
-      forestTreeCrown(g, rx, ry, d.c || 0, d.forestSpecies, plan.crown);
-      g.pop();
-      if (band === 0) {
-        // The visible top is full width at .40 lean. Cover that outer edge
-        // before the tapered stamps, including at the far camera margins.
-        g.push(); g.translate(lx * .40, ly * .40);
+    const fill = forestFloorPainter(g, forestPolygonPainter(g)) || g;
+    const alder = d.forestSpecies === 'RED_ALDER' || d.forestCanopyStyle === 'COMIC';
+    g.noStroke();
+    for (const stamp of plan.heightStamps) {
+      glRigMat(fill, elevation + rise * stamp.height, .05, 0);
+      g.push();
+      if (stamp.branch) {
+        const branch = stamp.branch;
+        g.translate(branch.x + lx * branch.height, branch.y + ly * branch.height);
+        forestTreeBough(g, rx * branch.size, ry * branch.size, branch.angle,
+          d.c || 0, alder, branch.points);
+      } else {
+        g.translate(lx * stamp.projected, ly * stamp.projected); g.scale(stamp.radius);
         forestTreeCrown(g, rx, ry, d.c || 0, d.forestSpecies, plan.crown);
-        g.pop();
       }
+      g.pop();
     }
   }
   g.pop();
@@ -57785,7 +58116,7 @@ function glRigPaintHeight() {
   if (typeof chunkMgr !== 'undefined' && chunkMgr && chunkMgr.chunks) {
     for (const ch of chunkMgr.chunks.values()) {
       const cwx = ch.cx * CHUNK_W, cwy = ch.cy * CHUNK_W;
-      const chunkPad = chunkMgr.biome === 2 ? 400 : 200;
+      const chunkPad = chunkMgr.biome === 2 ? forestChunkDecorPad(ch) : 200;
       if (cwx > viewRight + chunkPad || cwx + CHUNK_W < viewLeft - chunkPad) continue;
       if (cwy > viewBottom + chunkPad || cwy + CHUNK_W < viewTop - chunkPad) continue;
       for (const dc of ch.decor) {
@@ -57799,6 +58130,7 @@ function glRigPaintHeight() {
         const cs = dc.s || 1;
         const crown = dc.forestCrownScale === undefined ? 1 : dc.forestCrownScale;
         if (dc.forestSpecies) {
+          glRigForestTreeTrunkHeight(g, dc, cp);
           _glForestCanopies.push(dc);
           continue;
         }
@@ -57832,6 +58164,8 @@ function glRigPaintHeight() {
 
   // Forest foliage paints above ground actors in both the art and the height
   // field. A person underneath cannot punch a low-height hole in a canopy.
+  // Follow the art's root order where neighbouring tall crowns overlap.
+  _glForestCanopies.sort((a, b) => a.y - b.y);
   for (let i = 0; i < _glForestCanopies.length; i++) {
     const d = _glForestCanopies[i];
     glRigForestCanopyHeight(g, d, forestCanopyMass(d));

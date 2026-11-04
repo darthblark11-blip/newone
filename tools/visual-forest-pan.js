@@ -12,13 +12,10 @@ const fs=require('fs'),path=require('path'),Module=require('module');
 const filename=path.join(__dirname,'visual-world.js');
 process.env.VW_W=process.env.VW_W||'1460';
 process.env.VW_H=process.env.VW_H||'675';
+process.env.VIS_OUT=process.env.FOREST_PAN_OUT||process.env.VIS_OUT||'/tmp/newone-forest-pan';
 process.argv[2]=process.argv[2]||'2';process.argv[3]=process.argv[3]||'15000';
 process.argv[4]=process.argv[4]||'6600';process.argv[5]=process.argv[5]||'.66';
 let src=fs.readFileSync(filename,'utf8')
-  .replace("const OUT = path.join(__dirname, 'out');", "const OUT=process.env.FOREST_PAN_OUT||'/tmp/newone-forest-pan';")
-  .replace("const P5 = path.join(SP, 'node_modules/p5/lib/p5.min.js');", "const P5=process.env.VIS_P5||path.join(SP,'node_modules/p5/lib/p5.min.js');")
-  .replace('const page = ', "const GAME_SOURCE=fs.readFileSync(GAME,'utf8');\nconst page = ")
-  .replace("${fs.readFileSync(GAME, 'utf8')}", '${GAME_SOURCE}')
   .replace("  step('sorted',  () => drawDepthSorted());", "  if(player)step('player',()=>actorShow(player));\n  step('sorted',  () => drawDepthSorted());");
 const inject=String.raw`
   const sourceHash=require('crypto').createHash('sha256').update(GAME_SOURCE).digest('hex');
@@ -48,11 +45,15 @@ const inject=String.raw`
         }
           return original.vertex.apply(original,arguments);},
         endShape(){return original.endShape.apply(original,arguments);}
-      };proxyCache.set(original,proxy);}return proxy;
+      };
+        for(const method of ['beginCurveShape','bezierVertex'])
+          if(typeof original[method]==='function')proxy[method]=original[method].bind(original);
+        proxyCache.set(original,proxy);
+      }return proxy;
     };
     const paint=paintForestClutter;
     paintForestClutter=function(g,d,t){const was=focused;focused=d===witness;
-      try{return paint(g,d,t);}finally{focused=was;}};
+      try{return paint.apply(this,arguments);}finally{focused=was;}};
     const wrap=fn=>function(){
       if(!focused)return fn.apply(this,arguments);
       const previous=current,captured={paths:[]};

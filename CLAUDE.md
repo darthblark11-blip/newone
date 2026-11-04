@@ -561,6 +561,12 @@ solids. Standing crowns share profiles with the rig and use projected visibility
 bounds; bulk underbrush stays baked. Harvesting removes both the resident solid
 and its crown, including when a destroyed chunk is regenerated.
 
+Saved grove roots retain their positions. Independent `forest:stand:` cohorts
+add off-centre infill and uneven mixed-age edges, capped at ten new stems per
+chunk. Bounded immutable neighbor probes reserve old roots and timber even
+after harvesting, so returning to a chunk cannot grow replacement trees in
+cleared spaces. See `tools/check-forest-natural-groves.js`.
+
 Live forest bushes use swept player contact to bend without blocking movement.
 Keep their spring state outside generated decor and bound updates to nearby
 chunks. Selected logs/stumps have oriented waist-high cover companions and
@@ -570,7 +576,13 @@ body or shadow. See the forest interaction checks for native input and reload.
 Forest crown outlines and seeded bough headings stay fixed in world space.
 Only their raised layers translate through `massLean()`, as city roofs do.
 The canopy underside joins the top with filled side faces; keep its rise in
-proportion to the city's projection. `tools/check-forest-camera.js` guards the
+the shared vertical frame. Tree rises are 102–136 before girth scaling;
+`FOREST_CROWN_LOW/HIGH` lift the leaf mass above exposed faceted wood. Cached
+bole slices split at world height 17: lower wood sorts with feet, upper wood
+and crowns cover ground actors. Bare snags share that order. Keep native
+canopy fill enabled even when an earlier painter ended with `noFill()`.
+`tools/check-forest-tall-trees.js` guards wood, depth, caches and visibility.
+`tools/check-forest-camera.js` guards the
 orientation and continuous projection, and `tools/visual-forest-pan.js` captures
 the real moving-camera result. Review that motion before changing the art.
 Woodland floor materials, moss/needle beds and riverbank stones are baked from
@@ -578,7 +590,10 @@ world-space samples; their seam checks use a continuous Canvas reference.
 
 Forest shadows paint on the floor; roots interleave with ground actors, then
 raised crowns cover those actors, followed by aircraft and airborne wildlife.
-The height field uses tapered crown contours at the art's camera offsets, not a full-height ellipse.
+The height field uses four crown contours and five cached bough silhouettes,
+sorted by height at the art's camera offsets, plus the same split wood volume.
+The forest's 400-unit height range retains tall hilltop crowns; all decoders
+read `glRigHeightRange()`. Per-chunk culling derives from actual resident trees.
 Raised floor props share sparse height profiles and one shadow owner with the Canvas fallback.
 `forestSunLighting()` keeps cel face shading consistent with sun height and weather; only
 material colours are quantised. Keep cast-shadow directions continuous and full terrain

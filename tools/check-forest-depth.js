@@ -75,7 +75,11 @@ for (const tree of ['northTree','southTree']) {
 ok(pos('actor5')<pos('northTree:root') && pos('northTree:root')<pos('actor50'), 'northern roots retain their depth beside feet');
 ok(pos('actor50')<pos('southTree:root') && pos('southTree:root')<pos('actor100'), 'southern roots retain their depth beside feet');
 ok(pos('actor50')<pos('wall:building') && pos('wall:building')<pos('actor100'), 'building contact depth is preserved');
-ok(pos('snag:whole')>pos('wall:building') && pos('snag:whole')<pos('actor100'), 'bare snags retain ground depth without imaginary foliage');
+ok(pos('snag:root')>pos('wall:building') && pos('snag:root')<pos('actor100'), 'bare snag roots retain their ground depth');
+ok(pos('snag:shadow')<pos('actor5'), 'bare snag shade remains below every ground actor');
+ok(pos('snag:crown')>pos('actor100') && pos('snag:crown')<pos('flyer'), 'raised bare wood covers ground figures and stays below flyers');
+ok(events.filter(e=>e==='snag:root').length===1 && events.filter(e=>e==='snag:crown').length===1 && !events.includes('snag:whole'),
+  'bare snags split rooted and elevated wood exactly once without inventing foliage');
 ok(pos('shrub:shadow')<pos('actor5') && pos('shrub:root')>pos('northTree:root') &&
   pos('shrub:root')<pos('actor50') && !events.includes('shrub:crown') && !events.includes('shrub:whole'),
   'raised shrubs cast floor shade then interleave with feet without becoming overhead crowns');

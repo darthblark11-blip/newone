@@ -81,10 +81,14 @@ for(const name of ['LITTER','GRASS','MUSHROOM']) {
   ok(name+' ground scatter never becomes a tall occluder', P('forestSunRelief(__quiet)===null&&__caps.length===0'));
 }
 probe('__translations=[];__stamps=[];__scales=[];__canopyG=createGraphics();__canopyG.translate=function(x,y){__translations.push([x,y]);};__canopyG.beginShape=function(){__stamps.push(true);};__canopyG.scale=function(v){__scales.push(v);};massLean(__tree.x,__tree.y,__cm[0]*__tree.s,_leanTmp);__expectedLean=_leanTmp.slice();glRigForestCanopyHeight(__canopyG,__tree,__cm);');
-ok('forest crowns use four cached silhouette height stamps', P('__stamps.length===4&&JSON.stringify(__scales)===JSON.stringify([1,.83,.62])'));
-for(let i=0;i<4;i++) {
-  const fraction=[.12,.40,.30,.40][i];
-  ok('canopy height band '+i+' follows the matching visible camera lean', P('Math.abs(__translations['+(i+1)+'][0]-__expectedLean[0]*'+fraction+')<1e-8&&Math.abs(__translations['+(i+1)+'][1]-__expectedLean[1]*'+fraction+')<1e-8'));
+ok('forest crowns use four cached crown and five real bough height stamps', P('__stamps.length===9&&JSON.stringify(__scales)===JSON.stringify([1,1,.83,.62])'));
+const canopyStamps=P('__plan.heightStamps'),canopyLean=P('__expectedLean'),canopyTranslations=P('__translations');
+for(let i=0;i<canopyStamps.length;i++) {
+  const stamp=canopyStamps[i],fraction=stamp.branch?stamp.branch.height:stamp.projected;
+  const x=(stamp.branch?stamp.branch.x:0)+canopyLean[0]*fraction;
+  const y=(stamp.branch?stamp.branch.y:0)+canopyLean[1]*fraction;
+  ok('canopy height stamp '+i+' follows its visible crown or bough origin',
+    Math.abs(canopyTranslations[i+1][0]-x)<1e-8&&Math.abs(canopyTranslations[i+1][1]-y)<1e-8);
 }
 
 // Exercise the actual ordinary painter materials, rather than only the light
