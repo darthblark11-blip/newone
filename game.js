@@ -612,7 +612,7 @@ function coverWeaponMuzzles(a) {
   if(w===WEAPONS.DUAL_SMG)return leftHandAction(a)?_coverSmgMuzzles:_coverDualMuzzles;
   if(w===WEAPONS.SMG)return _coverSmgMuzzles;
   if(w===WEAPONS.REVOLVER)return _coverRevolverMuzzles;
-  if(w===WEAPONS.ASSAULT_RIFLE||w===WEAPONS.SHOTGUN||w===WEAPONS.ROCKET_LAUNCHER)return _coverRifleMuzzles;
+  if(solidLongGun(w)||w===WEAPONS.ROCKET_LAUNCHER)return _coverRifleMuzzles;
   if(w===WEAPONS.BOW) {
     const points=a._coverBowMuzzles||(a._coverBowMuzzles=[[38,0]]);
     points[0][0]=47-9*bowDrawAmount(a);return points;
@@ -984,6 +984,7 @@ let jetpackDoubleDash = false;
 let meleeComboUnlocked = false; 
 let taserUnlocked = false
 let rocketLauncherUnlocked = false; 
+let particleBeamUnlocked = false, particleBeamCenterCycle = 0;
 let ninjaSuitUnlocked = false; // <--- NEW NINJA SUIT
 let revolverUnlocked = false, cowboyCostumeOwned = false, cowboySuitEquipped = false;
 let _frontierEquipmentRestore = null;
@@ -1707,6 +1708,7 @@ const WEAPONS = {
   SMG: { name: "MACHINE GUN", fireCooldown: 6, enemyCooldown: 48, maxAmmo: 30, bodyDmg: 20, headDmg: 50, spread: 0.1, pellets: 1 },
   DUAL_SMG: { name: "DUAL SMGS", fireCooldown: 5, enemyCooldown: 48, maxAmmo: 60, bodyDmg: 20, headDmg: 50, spread: 0.15, pellets: 2 },
   ASSAULT_RIFLE: { name: "ASSAULT RIFLE", fireCooldown: 7, enemyCooldown: 48, maxAmmo: 30, bodyDmg: 30, headDmg: 60, spread: 0, pellets: 1 },
+  PARTICLE_BEAM: { name: "PARTICLE BEAM", fireCooldown: 5, enemyCooldown: 48, maxAmmo: 100, bodyDmg: 100, headDmg: 400, spread: 0, pellets: 1 },
   SHOTGUN: { name: "SHOTGUN", fireCooldown: 20, enemyCooldown: 60, maxAmmo: 8, bodyDmg: 25, headDmg: 50, spread: 0.1275, pellets: 4 },
   ROCKET_LAUNCHER: { name: "ROCKET LAUNCHER", fireCooldown: 45, enemyCooldown: 60, maxAmmo: 4, bodyDmg: 350, headDmg: 350, spread: 0, pellets: 1 },
   TASER: { name: "TASER", fireCooldown: 90, enemyCooldown: 60, maxAmmo: 4, bodyDmg: 0, headDmg: 0, spread: 0, pellets: 1 },
@@ -1722,6 +1724,71 @@ const WEAPONS = {
   COACH_GUN: { name: "COACH GUN", fireCooldown: 34, enemyCooldown: 62, maxAmmo: 2, bodyDmg: 30, headDmg: 65, spread: 0.16, pellets: 5 } 
 };
 
+
+// The beam's battery supply is deliberately finite. Reserve magazines exclude
+// the one already loaded; neither a sector journey nor loading a save refills it.
+function serializeParticleBeamEquipment(c = player) {
+  if (!c || !particleBeamUnlocked) return null;
+  const held = _frontierSaloonSession ? _frontierSaloonSession.save.currentWeapon : c.currentWeapon;
+  return { ammo: Math.max(0, Math.min(100, Number(c.weaponAmmo['PARTICLE BEAM']) || 0)),
+    reserve: Math.max(0, Math.min(9, Number(c.mags['PARTICLE BEAM']) || 0)),
+    equipped: held === WEAPONS.PARTICLE_BEAM,
+    reloadTicks: held === WEAPONS.PARTICLE_BEAM ? Math.max(0, Math.min(90, c.reloadTimer || 0)) : 0,
+    centerCycle: particleBeamCenterCycle % 3 };
+}
+function restoreParticleBeamEquipment(raw, c = player) {
+  if (!c) return;
+  const number = (v, max, fallback) => Number.isFinite(v) ? Math.max(0, Math.min(max, Math.floor(v))) : fallback;
+  c.weaponAmmo['PARTICLE BEAM'] = particleBeamUnlocked ? number(raw && raw.ammo, 100, 100) : 0;
+  c.mags['PARTICLE BEAM'] = particleBeamUnlocked ? number(raw && raw.reserve, 9, 9) : 0;
+  if (particleBeamUnlocked && raw) {
+    particleBeamCenterCycle = number(raw.centerCycle, 2, 0);
+    if (raw.equipped) {
+      c.currentWeapon = WEAPONS.PARTICLE_BEAM;
+      c.reloadTimer = number(raw.reloadTicks, 90, 0);
+    }
+  }
+  c.particleBeamState = null;
+}
+const PARTICLE_BEAM_COLD = Object.freeze({ shots: 0, heat: 0, venting: false, ventTicks: 0 });
+function particleBeamHeat(actor) { return actor && actor.particleBeamState || PARTICLE_BEAM_COLD; }
+function particleBeamVent(actor, audible = true) {
+  const state = actor && actor.particleBeamState;
+  if (!state) return;
+  state.ventTicks = 24; state.venting = true;
+  if (audible && sfx.particleBeamVent) sfx.particleBeamVent(actor.x, actor.y);
+  // Two short banks of vapour leave the chambers, rather than the muzzle.
+  for (const side of [-1, 1]) {
+    const ca = Math.cos(actor.aimAngle), sa = Math.sin(actor.aimAngle);
+    const x = actor.x + ca * 23 - sa * side * 7, y = actor.y + sa * 23 + ca * side * 7;
+    emit(x, y, 2, color(187, 205, 208), 'SMOKE', -sa * side * 1.2, ca * side * 1.2, actor);
+  }
+}
+function recordParticleBeamShot(actor) {
+  let state = actor.particleBeamState;
+  if (!state) state = actor.particleBeamState = { shots: 0, heat: 0, venting: false, ventTicks: 0,
+    lastShotFrame: -999, burst: false, tickFrame: -1 };
+  if (frameCount - state.lastShotFrame > WEAPONS.PARTICLE_BEAM.fireCooldown + 2) state.shots = 0;
+  state.shots++; state.lastShotFrame = frameCount; state.burst = true;
+  state.heat = Math.min(1, state.shots / 50);
+  if (state.shots === 51) particleBeamVent(actor);
+  else if (state.shots > 50 && state.shots % 10 === 0) particleBeamVent(actor, false);
+  if (state.shots > 50) { state.venting = true; state.ventTicks = 24; }
+}
+function updateParticleBeamHeat(actor) {
+  const state = actor && actor.particleBeamState;
+  if (!state || state.tickFrame === frameCount || isPaused || !doTick) return;
+  state.tickFrame = frameCount;
+  if (state.ventTicks > 0) state.ventTicks--;
+  const holding = actor.currentWeapon === WEAPONS.PARTICLE_BEAM && actor.isPlayer &&
+    !isDead && !isWin && !killcamMode && gamepadCombatContext() !== 'BLOCKED' && playerWeaponFireInput();
+  const idle = frameCount - state.lastShotFrame > WEAPONS.PARTICLE_BEAM.fireCooldown + 2;
+  if (state.burst && (!holding || idle || actor.reloadTimer > 0)) {
+    particleBeamVent(actor); state.burst = false; state.shots = 0;
+  }
+  if (!state.burst) state.heat = Math.max(0, state.heat - 1 / 60);
+  state.venting = state.ventTicks > 0 || state.burst && state.shots > 50;
+}
 
 const sfx = {
   // Web Audio routing: source/noise -> tone filter -> [saturator] -> voice gain
@@ -1767,7 +1834,7 @@ const sfx = {
     // Render the shot waveforms up front. Left lazy, the cost would land on
     // the first trigger pull of each weapon -- the one moment a stutter would
     // actually be heard.
-    for (const w of [WEAPONS.PISTOL, WEAPONS.SMG, WEAPONS.ASSAULT_RIFLE, WEAPONS.SHOTGUN,
+    for (const w of [WEAPONS.PISTOL, WEAPONS.SMG, WEAPONS.ASSAULT_RIFLE, WEAPONS.PARTICLE_BEAM, WEAPONS.SHOTGUN,
                      WEAPONS.REVOLVER, WEAPONS.ROCKET_LAUNCHER, WEAPONS.TASER,
                      'ORANGE_BEAM', 'RED_LASER', 'ALIEN_LASER', 'LIGHTNING'])
       this.shotBuffers(this.profile(w));
@@ -1846,6 +1913,11 @@ const sfx = {
     if (weapon === WEAPONS.TASER || name === 'TASER')
       return { key: 'taser',  gain: 0.70, shockT: 0.00040, crack: 0.30, crackT: 0.00036, turb: 0.006, turbHz: 5000, turbAmt: 0.26, drive: 1.3, refl: 0.75, tail: 0.34, tailHz: 3600, tailAmt: 0.065, mech: 0,
                crackle: 70, crackleT: 0.26, crackleAmt: 0.34, arc: 1, arcHi: 2200, arcLo: 300, arcT: 0.18, arcQ: 0.14, arcAmt: 0.34, flutter: 260 };
+    if (weapon === WEAPONS.PARTICLE_BEAM || name === 'PARTICLE BEAM')
+      return { key: 'particle', gain: 0.76, shockT: 0.00032, crack: 0.54, crackT: 0.00028,
+               turb: 0.004, turbHz: 7200, turbAmt: 0.28, drive: 1.35, refl: 0.55,
+               tail: 0.17, tailHz: 5000, tailAmt: 0.040, mech: 0.035, mechHz: 4100, mechAt: 0.012,
+               arc: 1, arcHi: 5600, arcLo: 780, arcT: 0.075, arcQ: 0.145, arcAmt: 0.47, flutter: 290 };
     if (name === 'ALIEN LASER' || weapon === 'ALIEN_LASER')
       return { key: 'alien',  gain: 0.84, shockT: 0.00045, crack: 0.42, crackT: 0.00040, turb: 0.008, turbHz: 2600, turbAmt: 0.30, drive: 1.4, refl: 0.90, tail: 0.42, tailHz: 2400, tailAmt: 0.085, mech: 0,
                arc: 1, arcHi: 2600, arcLo: 190, arcT: 0.26, arcQ: 0.075, arcAmt: 0.50, flutter: 90 };
@@ -2459,6 +2531,7 @@ const sfx = {
   },
 
   shotgun(x, y) { this.shoot(WEAPONS.SHOTGUN, x, y); },
+  particleBeamVent(x, y) { this.burst('impact', 0.14, 0.12, 3200, 'highpass', 950, x, y, 0.35); },
   hitBody(x, y) { this.burst('impact', 0.12, 0.5, 720, 'bandpass', 260, x, y, 0.55); this.tone(95, 'triangle', 0.08, 0.06, 45, x, y, 0.4); },
   hitHead(x, y) { this.burst('impact', 0.09, 0.42, 2600, 'highpass', 900, x, y, 0.65); this.tone(520, 'triangle', 0.07, 0.08, 160, x, y, 0.5); },
   // A round or a blade off armour plate: robots, saucers and the armoured.
@@ -2749,7 +2822,8 @@ if (isStoryMode) {
     }
 
     if ((lvl === 0 || lvl === 1) && !isLoading) { 
-        smgUnlocked = false; dualSmgUnlocked = false; shotgunUnlocked = false; arUnlocked = false; rocketLauncherUnlocked = false; taserUnlocked = false; 
+        smgUnlocked = false; dualSmgUnlocked = false; shotgunUnlocked = false; arUnlocked = false; rocketLauncherUnlocked = false; taserUnlocked = false;
+        particleBeamUnlocked = false; particleBeamCenterCycle = 0;
         jetpackFireExplosion = false; jetpackDoubleDash = false; meleeComboUnlocked = false; 
         window.meleeFinisherUnlocked = false;
 
@@ -8601,6 +8675,7 @@ function resetRunState() {
   statVit = 1; statMen = 1; statPhy = 1; statObe = 1; statInt = 1;
   smgUnlocked = false; dualSmgUnlocked = false; shotgunUnlocked = false;
   arUnlocked = false; rocketLauncherUnlocked = false; taserUnlocked = false;
+  particleBeamUnlocked = false; particleBeamCenterCycle = 0;
   jetpackUnlocked = true; meleeUnlocked = true; jetpackFireExplosion = false;
   jetpackDoubleDash = false; meleeComboUnlocked = false;
   ninjaSuitUnlocked = false; explosiveArmorUnlocked = false; chemistSuitUnlocked = false;
@@ -10803,6 +10878,7 @@ if (swordPickedUp || window.pickaxeOwned || window.shovelOwned) {
           if (player && player.flags && player.flags.bowUnlocked) wList.push("BOW");
           if (revolverUnlocked) wList.push("REVOLVER");
           if (smgUnlocked) wList.push("MACHINE GUN"); if (dualSmgUnlocked) wList.push("DUAL SMGS"); if (arUnlocked) wList.push("ASSAULT RIFLE"); if (shotgunUnlocked) wList.push("SHOTGUN"); if (rocketLauncherUnlocked) wList.push("ROCKET LAUNCHER");
+          if (particleBeamUnlocked) wList.push('PARTICLE BEAM');
           for (let w of wList) { text(w === "BOW" ? `🏹 BOW · ${player.weaponAmmo.BOW || 0} ARROWS` : `🔫 ${w} - Level 1`, width/2, wY); wY += 30; } drawBtn(height/2 + 120, "BACK");
       } 
       else if (pauseMenuState === "JOURNAL") {
@@ -10860,6 +10936,8 @@ if (swordPickedUp || window.pickaxeOwned || window.shovelOwned) {
         noStroke();
         if (d.type === "SMG") {
             fill(40); rect(-8, -4, 16, 8, 2); rect(-2, 4, 4, 8); 
+        } else if (d.type === "PARTICLE_BEAM") {
+            drawParticleBeamDrop(window,.66);
         } else if (d.type === "AR") {
             fill(40); rect(-14, -2, 28, 4, 1);
             fill(139, 69, 19); rect(-6, -3, 10, 6, 1); rect(-16, -3, 6, 6, 1);
@@ -15542,6 +15620,7 @@ function wipeAllBloodBanks() {
 function retireCorpsesToBloodBank() {
   for (const c of corpses) {
     if (c.isStatic) continue;
+    finishParticleBeamWounds(c.dec);
     if(c.wallSit)while(!c.wallSit.done)stepCorpseWallSit(c);
     finishFigureFall(c);
     finishSwordParts(c);
@@ -17014,6 +17093,79 @@ function mapHitDecalHeight(actor,decal,zone,sample) {
   return decal;
 }
 
+// A particle impact is a scorch in the cloth/flesh plane, at the contact the
+// ballistic resolver already chose. Its tiny shared thermal record survives
+// shallow corpse/fatal-spray snapshots without starting the orange burn again.
+const PARTICLE_BEAM_SCORCH_HOT = 60;
+const PARTICLE_BEAM_SCORCH_COOL = 18;
+function particleBeamWoundHeat(wound) {
+  const state = wound && wound.particleBeamState;
+  if (!state) return 0;
+  return 1 - smooth01((state.age - PARTICLE_BEAM_SCORCH_HOT) / PARTICLE_BEAM_SCORCH_COOL);
+}
+function particleBeamWoundColour(wound) {
+  const state = wound && wound.particleBeamState;
+  if (!state) return wound && wound.col || [85, 8, 20, 235];
+  const heat = particleBeamWoundHeat(wound), col = state.col;
+  col[0] = 85 + 170 * heat; col[1] = 8 + 127 * heat;
+  col[2] = 20 + 15 * heat; col[3] = 235 + 10 * heat;
+  return col;
+}
+function markParticleBeamWound(wound, actor, bullet) {
+  if (!wound || wound.particleBeam) return wound;
+  wound.particleBeam = true;
+  wound.particleBeamState = { age: 0, col: [255, 135, 35, 245] };
+  wound.sz = Math.min(wound.isHead ? 7.5 : 10, (wound.sz || 5) * 1.32);
+  wound.col = wound.particleBeamState.col;
+  wound.beamSeed = comicHitHash((Number(bullet && bullet.shotId) || 1) ^
+    Math.imul((wound.x * 37) | 0, 0x9e3779b9) ^ ((wound.y * 53) | 0));
+  if (actor && actor.decals) actor.decals._particleBeamHot = true;
+  return wound;
+}
+function ageParticleBeamWounds(decals) {
+  if (isPaused || !decals || decals._particleBeamHot === false) return;
+  let hot = false;
+  for (const wound of decals) {
+    const state = wound.particleBeamState;
+    if (!state) continue;
+    if (state.age < PARTICLE_BEAM_SCORCH_HOT + PARTICLE_BEAM_SCORCH_COOL) {
+      state.age++;
+      particleBeamWoundColour(wound);
+      hot = state.age < PARTICLE_BEAM_SCORCH_HOT + PARTICLE_BEAM_SCORCH_COOL || hot;
+    }
+  }
+  decals._particleBeamHot = hot;
+}
+function finishParticleBeamWounds(decals) {
+  if (!decals) return;
+  for (const wound of decals) if (wound.particleBeamState) {
+    wound.particleBeamState.age = PARTICLE_BEAM_SCORCH_HOT + PARTICLE_BEAM_SCORCH_COOL;
+    particleBeamWoundColour(wound);
+  }
+  decals._particleBeamHot = false;
+}
+function drawParticleBeamWound(g, wound, x = wound.x, y = wound.y, size = wound.sz) {
+  if (!wound.particleBeam) return false;
+  const heat = particleBeamWoundHeat(wound), col = particleBeamWoundColour(wound), r = size * .5;
+  g.push(); g.translate(x, y); g.noStroke();
+  // A low char edge and irregular cooked rim read as a burned wound instead
+  // of a luminous sticker. No glow filter or screen-space halo is used.
+  g.fill(35, 13, 19, 205); g.ellipse(.15, .35, size * 1.04, size * .96);
+  g.fill(col[0], col[1], col[2], col[3]); g.beginShape();
+  for (let i = 0; i < 10; i++) {
+    const a = i * TWO_PI / 10, scallop = .91 + .07 * Math.sin(i * 2.4 + (wound.beamSeed || 0) * 13);
+    g.vertex(Math.cos(a) * r * scallop, Math.sin(a) * r * scallop * .91);
+  }
+  g.endShape(CLOSE);
+  g.fill(62 + heat * 45, 4 + heat * 12, 17, 230); g.ellipse(0, .15, size * .57, size * .52);
+  if (heat > 0) {
+    g.noFill(); g.stroke(255, 219, 110, 230 * heat); g.strokeWeight(Math.max(.45, size * .09));
+    g.arc(-.1, -.1, size * .75, size * .65, PI * 1.12, PI * 1.87);
+  }
+  g.pop();
+  return true;
+}
+
 // Bullet height remains a combat choice, not a second ground-plane ray. Leg
 // aim uses the existing body footprint and damage; only its stain is projected
 // onto a trouser leg. Keep that attachment in limb coordinates so a stride,
@@ -17034,6 +17186,7 @@ function drawLegDecals(g,decals,index,sx,sy,kx,ky,ax,ay,hipW,kneeW,ankleW) {
     if(!d.isLeg||d.legIndex!==index)continue;
     if(!painting){g.push();g.noStroke();painting=true;}
     const p=legDecalPoint(d,sx,sy,kx,ky,ax,ay,hipW,kneeW,ankleW);
+    if(drawParticleBeamWound(g,d,p.x,p.y,p.sz))continue;
     g.fill(...(d.col||[90,0,0,220]));g.ellipse(p.x,p.y,p.sz,p.sz);
   }
   if(painting)g.pop();
@@ -17831,7 +17984,7 @@ function snapshotLegInjuryBody(src,frameAngle=null) {
     const copy={};if(o)for(const key in o)if(typeof o[key]==='number'||typeof o[key]==='boolean')copy[key]=o[key];
     return copy;
   };
-  const longGun=src.currentWeapon===WEAPONS.ASSAULT_RIFLE||src.currentWeapon===WEAPONS.SHOTGUN?stanceLongGunPose(src):null;
+  const longGun=solidLongGun(src.currentWeapon)?stanceLongGunPose(src):null;
   const dual=src.currentWeapon===WEAPONS.DUAL_SMG,one=src.currentWeapon===WEAPONS.PISTOL;
   // Damage has already marked the source dead, suppressing ordinary stance
   // queries. Resolve the wrist mount from this frozen living body instead.
@@ -18078,6 +18231,7 @@ function drawFatalWound(c,r) {
   for(const w of c.fatalSpray.wounds){
     if(w.isLeg)continue;
     const p=fatalWoundPoint(c,w),col=w.col||[90,0,0,220];
+    if(drawParticleBeamWound(r,w,p.x,p.y,w.sz*p.scale))continue;
     r.fill(...col);r.ellipse(p.x,p.y,w.sz*p.scale,w.sz*p.scale);
   }r.pop();
 }
@@ -18331,6 +18485,7 @@ function buildBlastDeath(c,src,mode=null) {
 }
 function blastCutPlane(c,p) {
   const b=c.blast,r=b.rig;
+  if (b.beamCut) return b.beamCut;
   if(b.mode){
     if(p.type==='gunArm')return{x:r.shX,y:p.limb===0?-r.shY:r.shY,nx:0,ny:p.limb===0?-1:1,
       tx:1,ty:0,lo:-r.upperW*.48,hi:r.upperW*.48};
@@ -18424,21 +18579,25 @@ function drawBlastCut(r,c,p) {
     r.fill(c.blast.paint.cutFaces[i]);
     r.triangle(x-plane.tx*1.2,y-plane.ty*1.2,x+plane.tx*1.4,y+plane.ty*1.4,x+plane.nx*side*(2+i%2),y+plane.ny*side*(2+i%2));
   }
+  if (c.particleBeamDeath) {
+    r.stroke(...particleBeamCutColour(c)); r.strokeWeight(1.25); r.line(x0,y0,x1,y1); r.noStroke();
+  }
 }
 function drawBlastAnatomy(r,c,p) {
   if(c.blast.mode){drawGunOverkillAnatomy(r,c,p);return;}
+  if(c.blast.particleDiagonal){drawParticleBeamDiagonalAnatomy(r,c,p);return;}
   const b=c.blast,rig=b.rig,dc=r.drawingContext,skin=b.skin;
   ragContour(r,255);
   if(p.type==='leg'){drawFallLimb(r,rig,c.rag,2+b.legIndex,1,c.sC,c.pC,skin,b.boot,false,c.id,c.dec);drawBlastCut(r,c,p);return;}
   if(c.dT!==18)for(let i=0;i<2;i++)if(c.dT!==19||i!==b.legIndex)drawFallLimb(r,rig,c.rag,2+i,1,c.sC,c.pC,skin,b.boot,false,c.id,c.dec);
   if(c.dT===18&&dc){const plane=blastCutPlane(c,p);dc.save();dc.beginPath();dc.rect(plane.x,-160,240,320);dc.clip();}
   figureCelOval(r,0,0,rig.TL,rig.TW,c.sC);drawFallenAttire(r,c.id,rig.TL,rig.TW,c.backFacing,1);
-  r.noStroke();for(const d of c.dec||[])if(!d.isHead&&!d.isLeg){r.fill(...(d.col||[90,0,0,220]));r.ellipse(d.x,d.y,d.sz,d.sz);}
+  r.noStroke();for(const d of c.dec||[])if(!d.isHead&&!d.isLeg){if(drawParticleBeamWound(r,d))continue;r.fill(...(d.col||[90,0,0,220]));r.ellipse(d.x,d.y,d.sz,d.sz);}
   if(c.dT===18&&dc)dc.restore();
   for(let i=0;i<2;i++){ragContour(r,255);drawFallLimb(r,rig,c.rag,i,1,c.sC,c.pC,skin,undefined,false,c.id);}
   r.push();r.translate(Math.max(18,rig.TL*.5+3.5),0);r.rotate(c.backFacing?0:PI);
   ragContour(r,255);drawFallenHead(r,c.id,{faceDown:c.backFacing},1,true);
-  for(const d of c.dec||[])if(d.isHead){r.fill(...(d.col||[90,0,0,220]));r.ellipse(d.x,d.y,d.sz,d.sz);}r.pop();
+  for(const d of c.dec||[])if(d.isHead){if(drawParticleBeamWound(r,d))continue;r.fill(...(d.col||[90,0,0,220]));r.ellipse(d.x,d.y,d.sz,d.sz);}r.pop();
   if(c.dT!==20)drawBlastCut(r,c,p);
 }
 function drawBlastCorpse(r,c) {
@@ -18469,16 +18628,274 @@ function drawBlastCorpsePart(r,c,p) {
   const dc=r.drawingContext;
     const pose=blastPiecePose(p);
     r.push();r.translate(c.x+p.x+pose.dx,c.y+p.y+pose.dy);r.rotate(pose.rot);r.scale(RAG_SCALE*pose.sx,RAG_SCALE*pose.sy);r.translate(-p.pivot.x,-p.pivot.y);
-    if(c.dT===20&&dc){
+    if(c.dT===20&&!c.blast.particleDiagonal&&dc){
       const plane=blastCutPlane(c,p),E=240;dc.save();dc.beginPath();
       dc.moveTo(plane.x-plane.tx*E,plane.y-plane.ty*E);dc.lineTo(plane.x+plane.tx*E,plane.y+plane.ty*E);
       dc.lineTo(plane.x+plane.tx*E+p.side*plane.nx*E,plane.y+plane.ty*E+p.side*plane.ny*E);
       dc.lineTo(plane.x-plane.tx*E+p.side*plane.nx*E,plane.y-plane.ty*E+p.side*plane.ny*E);dc.closePath();dc.clip();
     }
     drawBlastAnatomy(r,c,p);
-    if(c.dT===20&&dc)dc.restore();
+    if(c.dT===20&&!c.blast.particleDiagonal&&dc)dc.restore();
     if(c.dT===20)drawBlastCut(r,c,p);
     r.pop();
+}
+
+// The beam's anatomy is selected by the contact that actually killed the
+// actor. These deaths do not borrow the shotgun/headshot rotation or reroll
+// the struck side. The central three poses share the normal articulated rig.
+function particleBeamDeathType(actor, hit) {
+  if (!actor || !hit || !ragHumanoid(actor.eType, actor.bodyW)) return null;
+  return hit.zone === 'LEGS' ? 19 : hit.zone === 'BODY' ? hit.center ? 0 : 20 : null;
+}
+function particleBeamLegKick(c) {
+  const p = c.particleBeamDeath;
+  if (!p || p.kind !== 'BACKFALL') return 0;
+  const t = (p.age - (p.contactTick === undefined ? 19 : p.contactTick)) / 25;
+  return t > 0 && t < 1 ? Math.sin(t * Math.PI) : 0;
+}
+function particleBeamLocalWound(c, rig = projectFallRig(c.bW, c.bH, c.fP)) {
+  const p = c.particleBeamDeath, w = p.wound || {};
+  return { x: Math.max(-rig.TL * .24, Math.min(rig.TL * .27, Number(w.x) || 0)),
+    y: Math.max(-rig.TW * .22, Math.min(rig.TW * .22, Number(w.y) || 0)),
+    radius: Math.min(rig.TW * .20, Math.max(3.8, (Number(w.sz) || 7.5) * .56)) };
+}
+function particleBeamWoundPoint(c) {
+  const p = particleBeamLocalWound(c), a = c.fall ? figureFallYaw(c.fall, c.rag) : c.aA;
+  return { x: c.x + (Math.cos(a) * p.x - Math.sin(a) * p.y) * RAG_SCALE,
+    y: c.y + (Math.sin(a) * p.x + Math.cos(a) * p.y) * RAG_SCALE,
+    radius: p.radius * RAG_SCALE, angle: a };
+}
+function initParticleBeamCorpse(c, src) {
+  const hit = src && src.particleBeamHit;
+  if (!hit || hit.frame !== frameCount || !ragHumanoid(c.eT, c.bW) || hit.zone === 'HEAD') return;
+  const legIndex = hit.wound && hit.wound.legIndex !== undefined ? hit.wound.legIndex :
+    hit.legIndex !== undefined ? hit.legIndex : hit.side < 0 ? 0 : 1;
+  const side = hit.side < 0 ? -1 : 1, variant = ((hit.variant | 0) % 3 + 3) % 3;
+  const kind = hit.zone === 'LEGS' ? 'LEG' : !hit.center ? 'DIAGONAL' : ['HOLE', 'BACKFALL', 'CHEST'][variant];
+  const initialDown = c.fall ? Math.max(0, Math.min(1, Number(c.fP) || 0)) : 0;
+  const p = c.particleBeamDeath = { kind, side, legIndex: legIndex === 1 ? 1 : 0,
+    variant, age: 0, done: false, initialDown, wound: hit.wound || (c.dec || []).filter(d => d.particleBeam).pop() || null };
+  c.wallSit = null; c.fatalSpray = null; c.spray = null; c.headSpatter = null;
+  c.isIntactBody = false; c.bT = 0;
+  if (kind === 'LEG' || kind === 'DIAGONAL') {
+    if (!c.blast) buildBlastDeath(c, src);
+    const b = c.blast;
+    b.particleBeam = true; b.beamSide = side;
+    if (kind === 'LEG') {
+      b.legIndex = p.legIndex;
+      const body = b.parts.find(q => q.type === 'body');
+      if (body) {
+        body.vx = Math.cos(c.bA) * 1.15; body.vy = Math.sin(c.bA) * 1.15;
+        body.vz = 1.8; body.vr *= .25;
+      }
+      const piece = b.parts.find(q => q.type === 'leg'), old = piece && { x: piece.pivot.x, y: piece.pivot.y };
+      if (piece) {
+        piece.pivot = { x: b.rig.hipX, y: (p.legIndex ? 1 : -1) * b.rig.hipY };
+        const yaw = piece.rot, dx = piece.pivot.x - old.x, dy = piece.pivot.y - old.y;
+        piece.x += (Math.cos(yaw) * dx - Math.sin(yaw) * dy) * RAG_SCALE;
+        piece.y += (Math.sin(yaw) * dx + Math.cos(yaw) * dy) * RAG_SCALE;
+        // Expose the severed hip on the contact frame itself; the amputated
+        // chain must not repaint its old socket as a still-attached leg.
+        piece.x -= Math.sin(yaw) * side * 5 * RAG_SCALE;
+        piece.y += Math.cos(yaw) * side * 5 * RAG_SCALE;
+        piece.z = 1.5;
+        const outward = yaw + side * HALF_PI;
+        piece.vx = Math.cos(c.bA) * 1.2 + Math.cos(outward) * 3.4;
+        piece.vy = Math.sin(c.bA) * 1.2 + Math.sin(outward) * 3.4; piece.vz = 4.4;
+      }
+    } else {
+      // A mirrored chest/shoulder wedge leaves the other arm, head and pelvis
+      // with the main body. This is a side-specific cut, not two random halves.
+      const r = b.rig, nx = -.65, ny = side * .7599342077;
+      b.particleDiagonal = true;
+      b.beamCut = { x: r.TL * .06, y: 0, nx, ny, tx: -ny, ty: nx, lo: -r.TW * .52, hi: r.TW * .52 };
+      b.beamHinge = -r.TL * .27;
+      for (const piece of b.parts) {
+        const detached = piece.side > 0, outward = piece.rot + side * HALF_PI;
+        piece.vx = Math.cos(c.bA) * (detached ? 2.8 : 1.4) + Math.cos(outward) * (detached ? 4.2 : -.3);
+        piece.vy = Math.sin(c.bA) * (detached ? 2.8 : 1.4) + Math.sin(outward) * (detached ? 4.2 : -.3);
+        piece.vz = piece.side > 0 ? 6.8 : 2.6;
+        piece.vr = piece.side > 0 ? side * .065 : -side * .014;
+      }
+    }
+    return;
+  }
+  // Reuse the existing bounded ballistic gibs and wall contacts. The central
+  // body itself remains one articulated figure and never becomes a blast half.
+  if (!c.blast) buildBlastDeath(c, src);
+  const b = c.blast, rig = b.rig = projectFallRig(c.bW, c.bH, 1);
+  b.parts.length = 0; b.gibs.length = 0; b.bleedFrames = BLAST_BLEED_FRAMES; b.particleBeam = true;
+  const angle = Number.isFinite(hit.dirX) && Number.isFinite(hit.dirY) ? Math.atan2(hit.dirY, hit.dirX) : c.bA;
+  const ca = Math.cos(angle), sa = Math.sin(angle), rnd = () => blastRandom(b);
+  for (let i = 0; i < (kind === 'BACKFALL' ? 8 : 14); i++) {
+    const localX = (rnd() - .5) * rig.TL * .42, localY = (rnd() - .5) * rig.TW * .38;
+    const a = angle + (rnd() - .5) * 2.1, speed = 1.8 + rnd() * 3.5;
+    b.gibs.push({ type: i % 5 === 0 ? 'bone' : i % 4 === 0 ? 'cloth' : i % 3 === 0 ? 'blood' : 'meat',
+      x: (ca * localX - sa * localY) * RAG_SCALE, y: (sa * localX + ca * localY) * RAG_SCALE,
+      z: 0, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed, vz: 3.5 + rnd() * 3.8,
+      rot: rnd() * TWO_PI, vr: (rnd() - .5) * .25, sz: 2 + rnd() * 3.5, landed: false, bounces: 0 });
+  }
+  c.rag = c.rag || ragBuild(c.eT, c.bW, angle, angle + PI);
+  c.fall = buildFigureFall(src, angle, 4, false, angle + PI);
+  c.fall.a = c.fall.yawFrom = angle; c.fall.facing = angle + PI;
+  c.fall.faceDown = false; c.fall.duration = kind === 'BACKFALL' ? 19 : 17;
+  c.fall.age = initialDown * c.fall.duration; p.contactTick = (1 - initialDown) * c.fall.duration;
+  c.fall.done = false; c.fall.contacted = initialDown >= 1; c.fall.impulse = (kind === 'BACKFALL' ? 2.4 : 1.5) * (1 - initialDown);
+  c.fall.injuryFrom = null; c.fall.hold = null; c.injuryFrom = null;
+  c.backFacing = false; c.fP = initialDown; c.bloodTimer = b.bleedFrames; c.stopMotionTimer = 132;
+  prepareFallRag(c.rag, c.fall);
+}
+function stepParticleBeamCorpse(c, effects = true) {
+  const p = c.particleBeamDeath;
+  if (!p) return false;
+  if (!p.done) p.age++;
+  if (p.kind === 'LEG' || p.kind === 'DIAGONAL') {
+    p.done = p.age >= 64 && c.blast.done;
+    return false;
+  }
+  stepBlastDeath(c, effects);
+  const fall = c.fall;
+  if (!fall.done) {
+    stepFigureFall(fall, c, c.rag);
+    c.fP = Math.max(p.initialDown || 0, smooth01(Math.min(1, fall.age / fall.duration)));
+    if (fall.age >= Math.max(50, fall.duration + 25)) fall.done = true;
+  }
+  ragStep(c.rag);
+  if (c.stopMotionTimer > 0) c.stopMotionTimer--;
+  p.done = p.age >= 132 && c.blast.done && fall.done && c.rag.done;
+  return true;
+}
+function finishParticleBeamCorpse(c) {
+  const p = c.particleBeamDeath;
+  if (!p || p.done) return;
+  for (let i = 0; i < 320 && !p.done; i++) {
+    if (!stepParticleBeamCorpse(c, false)) {
+      stepBlastDeath(c, false); ragStep(c.rag); c.fP = 1;
+      if (c.stopMotionTimer > 0) c.stopMotionTimer--;
+    }
+  }
+  p.age = Math.max(p.age, 132); p.done = true;
+  if (typeof finishParticleBeamWounds === 'function') finishParticleBeamWounds(c.dec);
+}
+function particleBeamCutColour(c) {
+  const p = c.particleBeamDeath, t = Math.max(0, Math.min(1, (p.age - 60) / 18));
+  return [lerp(255, 86, t), lerp(137, 8, t), lerp(25, 22, t)];
+}
+function particleBeamHoleClip(r, c, rig) {
+  const dc = r.drawingContext;
+  if (!dc || !dc.save || !dc.clip || !dc.arc) return false;
+  const w = particleBeamLocalWound(c, rig);
+  dc.save(); dc.beginPath(); dc.rect(-250, -250, 500, 500);
+  dc.moveTo(w.x + w.radius, w.y); dc.arc(w.x, w.y, w.radius, 0, Math.PI * 2);
+  dc.clip('evenodd'); return true;
+}
+function drawParticleBeamTorso(r, c, rig, progress) {
+  ragContour(r, 255); figureCelOval(r, 0, 0, rig.TL, rig.TW, c.sC);
+  if (c.eT === 'ARMORED_STANDARD') { r.fill(100); r.rect(-rig.TL * .26, -rig.TW * .46, rig.TL * .58, rig.TW * .92, 4); }
+  drawFallenAttire(r, c.id, rig.TL, rig.TW, false, progress);
+  for (const d of c.dec || []) if (!d.isHead && !d.isLeg &&
+      (d !== c.particleBeamDeath.wound || c.particleBeamDeath.kind === 'DIAGONAL')) {
+    r.noStroke();
+    if (!(typeof drawParticleBeamWound === 'function' && drawParticleBeamWound(r, d, d.x, d.y, d.sz))) {
+      r.fill(...(d.col || [90, 0, 0, 220])); r.ellipse(d.x, d.y, d.sz, d.sz);
+    }
+  }
+}
+function drawParticleBeamLeg(r, c, rig, index, progress, kick) {
+  if (!kick) { drawFallLimb(r, rig, c.rag, index + 2, progress, c.sC, c.pC, c.blast.skin, c.blast.boot, false, c.id, c.dec); return; }
+  // The back contacts first. Both knees recoil upward; the feet then drop
+  // under gravity into their original articulated resting positions.
+  const g = fallLimbGeometry(rig, c.rag, index + 2, progress, false);
+  const yaw = figureFallYaw(c.fall, c.rag), lift = massLean(c.x, c.y, 22 * kick, [0, 0]);
+  const lx = (Math.cos(yaw) * lift[0] + Math.sin(yaw) * lift[1]) / RAG_SCALE;
+  const ly = (-Math.sin(yaw) * lift[0] + Math.cos(yaw) * lift[1]) / RAG_SCALE;
+  const ex = g.ex + 12 * kick + lx * .55, ey = g.ey + ly * .55;
+  const hx = g.hx + 27 * kick + lx, hy = g.hy + ly;
+  ragContour(r, 255); drawFallBone(r, g.ox, g.oy, ex, ey, g.w1, c.pC, undefined, undefined, { x: hx, y: hy, width: g.w2 });
+  drawFallBone(r, ex, ey, hx, hy, g.w2, c.pC, c.blast.boot, rig.foot, false);
+  drawLegDecals(r, c.dec, index, g.ox, g.oy, ex, ey, hx, hy, g.w1, (g.w1 + g.w2) * .5, g.w2);
+}
+function drawParticleBeamCorpse(r, c) {
+  const p = c.particleBeamDeath;
+  if (!p || p.kind === 'LEG' || p.kind === 'DIAGONAL') return false;
+  drawBlastCorpse(r, c); // only the bounded gibs; central bodies have no parts
+  const f = c.fP, rig = projectFallRig(c.bW, c.bH, f), dc = r.drawingContext;
+  r.push(); r.translate(c.x, c.y); r.rotate(figureFallYaw(c.fall, c.rag)); r.scale(RAG_SCALE);
+  const hollow = p.kind !== 'CHEST', clipped = hollow && particleBeamHoleClip(r, c, rig);
+  r.noStroke(); r.fill(14, 13, 16, 43); r.ellipse(-12, 3, 85, 32);
+  for (let i = 0; i < 2; i++) { ragContour(r, 255); drawParticleBeamLeg(r, c, rig, i, f, particleBeamLegKick(c)); }
+  if (p.kind === 'CHEST' && dc && dc.clip) {
+    const hinge = -rig.TL * .23, open = smooth01(Math.min(1, p.age / 25)) * .26;
+    // Lower abdomen is one continuous piece; the upper chest opens on two
+    // flesh/cloth hinges instead of separating into two independent corpses.
+    dc.save(); dc.beginPath(); dc.rect(-250, -250, 250 + hinge + 2.2, 500); dc.clip(); drawParticleBeamTorso(r, c, rig, f); dc.restore();
+    for (const side of [-1, 1]) {
+      r.push(); r.translate(hinge, 0); r.rotate(side * open); r.translate(-hinge, 0);
+      dc.save(); dc.beginPath(); dc.rect(hinge, side < 0 ? -250 : 0, 250, 250); dc.clip();
+      drawParticleBeamTorso(r, c, rig, f); dc.restore();
+      ragContour(r, 255); drawFallLimb(r, rig, c.rag, side < 0 ? 0 : 1, f, c.sC, c.pC, c.blast.skin, undefined, false, c.id);
+      const col = particleBeamCutColour(c);
+      r.stroke(56, 6, 16); r.strokeWeight(3); r.line(hinge + .4, side * .25, rig.TL * .43, side * .25);
+      r.stroke(...col); r.strokeWeight(1.35); r.line(hinge + 1, side * .25, rig.TL * .39, side * .25); r.noStroke();
+      for (let i = 0; i < 3; i++) { r.fill(202, 177, 142); r.ellipse(hinge + 5 + i * 3.6, side * 1.1, 3, 1.1); }
+      r.pop();
+    }
+    // The head remains attached to the neck/back bridge behind the opening.
+    r.fill(c.sC); r.quad(rig.TL * .28, -2, rig.headX - 2, -2, rig.headX - 2, 2, rig.TL * .28, 2);
+  } else {
+    drawParticleBeamTorso(r, c, rig, f);
+    for (let i = 0; i < 2; i++) { ragContour(r, 255); drawFallLimb(r, rig, c.rag, i, f, c.sC, c.pC, c.blast.skin, undefined, false, c.id); }
+  }
+  r.push(); r.translate(rig.headX, 0); const headScale = lerp(1 / RAG_SCALE, 1, f);
+  r.scale(headScale); r.rotate(PI * f); ragContour(r, 255); drawFallenHead(r, c.id, { faceDown: false }, f, false);
+  const hw = headwearOf(c.id);
+  if (hw && !headwearFalls(hw)) drawHeadwear(r, c.id, hw);
+  drawParticleBeamHeadMarks(r, c);
+  r.pop();
+  if (clipped) dc.restore();
+  if (hollow) {
+    const w = particleBeamLocalWound(c, rig), col = particleBeamCutColour(c);
+    r.noFill(); r.stroke(40, 5, 13); r.strokeWeight(2.2); r.ellipse(w.x, w.y, w.radius * 2 + 2, w.radius * 2 + 2);
+    r.stroke(...col); r.strokeWeight(1.3); r.ellipse(w.x, w.y, w.radius * 2 + .5, w.radius * 2 + .5); r.noStroke();
+  }
+  if (hw && c.hatOff) { r.push(); r.translate(rig.headX + c.hatOff.x, c.hatOff.y); r.rotate(c.hatOff.r); drawHeadwear(r, c.id, hw); r.pop(); }
+  r.pop(); return true;
+}
+
+function drawParticleBeamHeadMarks(r, c) {
+  for (const d of c.dec || []) if (d.isHead) {
+    r.noStroke();
+    if (!(typeof drawParticleBeamWound === 'function' && drawParticleBeamWound(r, d, d.x, d.y, d.sz))) {
+      r.fill(...(d.col || [90, 0, 0, 220])); r.ellipse(d.x, d.y, d.sz, d.sz);
+    }
+  }
+}
+function drawParticleBeamDiagonalAnatomy(r, c, p) {
+  const b = c.blast, rig = b.rig, dc = r.drawingContext, hitArm = b.beamSide < 0 ? 0 : 1;
+  const detached = p.side > 0;
+  if (!detached) for (let i = 2; i < 4; i++) {
+    ragContour(r, 255); drawFallLimb(r, rig, c.rag, i, 1, c.sC, c.pC, b.skin, b.boot, false, c.id, c.dec);
+  }
+  const plane = b.beamCut, E = 250, hinge = b.beamHinge;
+  if (dc && dc.clip) {
+    dc.save(); dc.beginPath();
+    if (!detached) dc.rect(-E, -E, E + hinge + 2, E * 2);
+    const points = [[plane.x - plane.tx * E, plane.y - plane.ty * E],
+      [plane.x + plane.tx * E, plane.y + plane.ty * E],
+      [plane.x + plane.tx * E + p.side * plane.nx * E, plane.y + plane.ty * E + p.side * plane.ny * E],
+      [plane.x - plane.tx * E + p.side * plane.nx * E, plane.y - plane.ty * E + p.side * plane.ny * E]];
+    dc.moveTo(points[0][0], points[0][1]); for (let i = 1; i < points.length; i++) dc.lineTo(points[i][0], points[i][1]);
+    dc.closePath(); dc.clip();
+    if (detached) { dc.beginPath(); dc.rect(hinge, -E, E, E * 2); dc.clip(); }
+  }
+  drawParticleBeamTorso(r, c, rig, 1);
+  if (dc && dc.clip) dc.restore();
+  ragContour(r, 255); drawFallLimb(r, rig, c.rag, detached ? hitArm : 1 - hitArm, 1,
+    c.sC, c.pC, b.skin, undefined, false, c.id);
+  if (!detached) {
+    r.push(); r.translate(rig.headX, 0); r.rotate(c.backFacing ? 0 : PI);
+    ragContour(r, 255); drawFallenHead(r, c.id, {faceDown: c.backFacing}, 1, true); drawParticleBeamHeadMarks(r, c); r.pop();
+  }
 }
 
 // Firearm body overkill reuses the bounded blast-piece lifecycle. Only the
@@ -18547,6 +18964,7 @@ function drawGunOverkillTorso(r,c,p){
   drawFallenAttire(r,c.id,rig.TL,rig.TW,c.backFacing,1);
   r.noStroke();for(const d of c.dec||[])if(!d.isHead&&!d.isLeg&&
       (((d.x-plane.x)*plane.nx+(d.y-plane.y)*plane.ny>=0)===(p.side>0))){
+    if(drawParticleBeamWound(r,d))continue;
     r.fill(...(d.col||[90,0,0,220]));r.ellipse(d.x,d.y,d.sz,d.sz);
   }
   if(dc)dc.restore();drawBlastCut(r,c,p);
@@ -18567,7 +18985,7 @@ function drawGunOverkillAnatomy(r,c,p){
   }else for(let limb=0;limb<2;limb++)drawBlastCut(r,c,{type:'gunArm',limb,side:-1});
   r.push();r.translate(rig.headX,0);r.rotate(c.backFacing?0:PI);
   ragContour(r,255);drawFallenHead(r,c.id,{faceDown:c.backFacing},1,true);
-  r.noStroke();for(const d of c.dec||[])if(d.isHead){r.fill(...(d.col||[90,0,0,220]));r.ellipse(d.x,d.y,d.sz,d.sz);}r.pop();
+  r.noStroke();for(const d of c.dec||[])if(d.isHead){if(drawParticleBeamWound(r,d))continue;r.fill(...(d.col||[90,0,0,220]));r.ellipse(d.x,d.y,d.sz,d.sz);}r.pop();
 }
 
 // Corpse pieces use a small swept footprint rather than character movement:
@@ -19015,6 +19433,7 @@ function drawSeatedCorpse(r,c) {
 }
 
 function finishCorpsePieces(c) {
+  if(c.particleBeamDeath){finishParticleBeamCorpse(c);return;}
   if(c._corpsePiecesFinished||c.sword)return;
   c._corpsePiecesFinished=true;
   if(c.blast){finishBlastDeath(c);return;}
@@ -19176,7 +19595,8 @@ class Corpse {
     this.bloodTimer = !sword&&(dT === 5 || dT === 7 || dT === 8 || dT === 9 || dT === 10 || dT === 11 || dT === 13 || dT === 14) ? 180 : 0;
     if(sword)buildSwordDeath(this);
     if(blast)buildBlastDeath(this,src,gunOverkill?(dT===2?'SLICE':'BREAKUP'):null);
-    initCorpseWallSit(this,src,aA);
+    initParticleBeamCorpse(this,src);
+    if(!this.particleBeamDeath)initCorpseWallSit(this,src,aA);
 
     if (dT === 14) { this.splitA = bA; this.lH = { x: 0, y: 0, vx: cos(this.splitA - HALF_PI) * 2, vy: sin(this.splitA - HALF_PI) * 2 }; this.rH = { x: 0, y: 0, vx: cos(this.splitA + HALF_PI) * 2, vy: sin(this.splitA + HALF_PI) * 2 }; }
 
@@ -19202,7 +19622,9 @@ class Corpse {
   }
 
   update() { 
+    ageParticleBeamWounds(this.dec);
     this._corpsePieceFrame=(this._corpsePieceFrame||0)+1;
+    if(stepParticleBeamCorpse(this))return;
     if(this.sword)stepSwordParts(this);
     if(this.blast&&this.blast.mode){
       stepBlastDeath(this);ragStep(this.rag);
@@ -19344,6 +19766,7 @@ class Corpse {
 
   paint(r = window) {
   r.noStroke();
+  if(drawParticleBeamCorpse(r,this))return;
   if(this.blast){drawBlastCorpse(r,this);return;}
   if(this.wallSit){drawSeatedCorpse(r,this);return;}
   if(corpsePiecePinned(this.separatedTorso)&&!this._drawWallOverlay)return;
@@ -19649,7 +20072,7 @@ if (this.eT === "COW" || this.eT === "HORSE") {
       // and take it back, the same handover the living figure does.
       if (RG) { ragContour(r, a); if(this.fall){if(underArm!==0)drawFallLimb(r,RP,RG,0,f,this.sC,this.pC,sK,undefined,false,this.id); if(underArm!==1)drawFallLimb(r,RP,RG,1,f,this.sC,this.pC,sK,undefined,false,this.id);}else{ragLimb(r,  RP.shX, -RP.shY, -(HALF_PI + RG.limbs[0].a), -RG.limbs[0].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand); ragLimb(r,  RP.shX,  RP.shY,   HALF_PI + RG.limbs[1].a,   RG.limbs[1].b, RP.upper, RP.fore, RP.upperW, RP.foreW, this.sC, sK, RP.hand);} } else { r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(slX, armLY, 16, 8); r.fill(sK); r.ellipse(hX, armLY, 8, 8); r.fill(this.sC.levels[0], this.sC.levels[1], this.sC.levels[2], a); r.ellipse(rslX, armRY, 25, 8); r.fill(sK); r.ellipse(rhX, armRY, 8, 8); }
       if (this.eT === "AERIAL" || this.eT === "AERIAL_PISTOL") { r.fill(80, a); r.rect(-18, -12, 12, 24, 3); } 
-      if (this.eT !== "ARMORED" && this.eT !== "MOLOTOV" && this.eT !== "AERIAL" && !(this.id&&this.id.isUnarmed)) { r.push(); r.translate(20 - 10 * f, 8 + 15 * f); r.rotate(f * PI / 2); if (this.cW === WEAPONS.SMG || this.cW === WEAPONS.DUAL_SMG) { r.fill(40); r.rect(31, 12, 24, 8, 2); r.rect(35, 20, 6, 12); } else if (this.cW === WEAPONS.ASSAULT_RIFLE) { r.fill(40); r.rect(5, 4, 42, 4, 1); r.fill(139, 69, 19); r.rect(15, 3, 12, 6, 1); r.rect(0, 3, 8, 6, 1); } else if (this.cW === WEAPONS.SHOTGUN) { r.fill(30); r.rect(5, 4, 40, 5, 1); r.fill(15); r.rect(20, 3, 14, 7, 1); r.fill(50); r.rect(5, 3, 12, 7, 2); } else if (this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { r.fill(50, 70, 50); r.rect(5, 4, 45, 6, 2); r.fill(30); r.rect(20, 2, 10, 10, 1); } else { r.fill(40); r.rect(15, 5, 16, 6, 2); } r.pop(); if (this.cW === WEAPONS.DUAL_SMG) { r.push(); r.translate(20 - 10 * f, -14 - 15 * f); r.rotate(-f * PI / 2); r.fill(40); r.rect(15, -7, 24, 8, 2); r.rect(19, -19, 6, 12); r.pop(); } } else if (this.eType === "MOLOTOV") { r.push(); r.translate(20 - 10 * f, 8 + 15 * f); r.rotate(f * PI / 2); r.fill(30, 120, 30); r.rect(0, -8, 8, 16, 2); r.pop(); } else if (this.eType === "ARMORED") { r.push(); r.translate(30 - 10 * f, 25 + 15 * f); r.rotate(f * PI / 2); r.fill(30); r.rect(0, -10, 50, 20, 4); r.pop(); }
+      if (this.eT !== "ARMORED" && this.eT !== "MOLOTOV" && this.eT !== "AERIAL" && !(this.id&&this.id.isUnarmed)) { r.push(); r.translate(20 - 10 * f, 8 + 15 * f); r.rotate(f * PI / 2); if (this.cW === WEAPONS.PARTICLE_BEAM) { r.push(); r.translate(14,5); drawParticleBeamDrop(r,.82,this.mA+f*PI/2); r.pop(); } else if (this.cW === WEAPONS.SMG || this.cW === WEAPONS.DUAL_SMG) { r.fill(40); r.rect(31, 12, 24, 8, 2); r.rect(35, 20, 6, 12); } else if (this.cW === WEAPONS.ASSAULT_RIFLE) { r.fill(40); r.rect(5, 4, 42, 4, 1); r.fill(139, 69, 19); r.rect(15, 3, 12, 6, 1); r.rect(0, 3, 8, 6, 1); } else if (this.cW === WEAPONS.SHOTGUN) { r.fill(30); r.rect(5, 4, 40, 5, 1); r.fill(15); r.rect(20, 3, 14, 7, 1); r.fill(50); r.rect(5, 3, 12, 7, 2); } else if (this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { r.fill(50, 70, 50); r.rect(5, 4, 45, 6, 2); r.fill(30); r.rect(20, 2, 10, 10, 1); } else { r.fill(40); r.rect(15, 5, 16, 6, 2); } r.pop(); if (this.cW === WEAPONS.DUAL_SMG) { r.push(); r.translate(20 - 10 * f, -14 - 15 * f); r.rotate(-f * PI / 2); r.fill(40); r.rect(15, -7, 24, 8, 2); r.rect(19, -19, 6, 12); r.pop(); } } else if (this.eType === "MOLOTOV") { r.push(); r.translate(20 - 10 * f, 8 + 15 * f); r.rotate(f * PI / 2); r.fill(30, 120, 30); r.rect(0, -8, 8, 16, 2); r.pop(); } else if (this.eType === "ARMORED") { r.push(); r.translate(30 - 10 * f, 25 + 15 * f); r.rotate(f * PI / 2); r.fill(30); r.rect(0, -10, 50, 20, 4); r.pop(); }
       if(this.swordHeadless){r.pop();r.pop();return;}
       if (this.dT === 2 || this.dT === 4) { r.noStroke(); r.fill(90, 0, 0, a); r.ellipse(0, 0, this.bW + 15 * f, 20); if (RG) ragContour(r, a); } r.translate(this.fall?RP.headX:(RG?18:20)*f,RP.headY||0); if(this.fall)r.scale(RP.headScale===undefined?lerp(1/RAG_SCALE,1,f):RP.headScale); r.push(); r.rotate((RP.headTurn===undefined?figureHeadTurn(this.fall,f):RP.headTurn)); const hK=fallenHeadColor(this.id,this.fall,f,sK); if (this.dT === 4) { r.fill(90, 0, 0); r.ellipse(0, 0, 14, 14); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-(RP.headTurn===undefined?figureHeadTurn(this.fall,f):RP.headTurn)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 1) { r.fill(hK); r.arc(0, 0, 11, 11, this.hA + PI / 4, this.hA + TWO_PI - PI / 4, PIE); r.fill(90, 0, 0); r.arc(0, 0, 8, 8, this.hA - PI / 4, this.hA + PI / 4, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-(RP.headTurn===undefined?figureHeadTurn(this.fall,f):RP.headTurn)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 6) { r.push(); r.rotate(this.hA); r.fill(90, 0, 0); r.ellipse(0, 0, 10, 10); let spread = min(this.sep * 0.4, 8); r.fill(hK); r.arc(0, -spread, 11, 11, PI, TWO_PI, CHORD); r.arc(0, spread, 11, 11, 0, PI, CHORD); r.pop(); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-(RP.headTurn===undefined?figureHeadTurn(this.fall,f):RP.headTurn)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else if (this.dT === 8) { r.push(); r.rotate(this.hA); r.fill(hK); r.arc(0, 0, 11, 11, 0, PI + HALF_PI, PIE); r.fill(90, 0, 0); r.arc(0, 0, 11, 11, PI + HALF_PI, TWO_PI, PIE); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-(RP.headTurn===undefined?figureHeadTurn(this.fall,f):RP.headTurn)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } r.pop(); } else if (this.dT === 9) { let nX = 10 + 5 * this.fP; r.fill(90, 0, 0); r.ellipse(nX, 0, 12, 12); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-(RP.headTurn===undefined?figureHeadTurn(this.fall,f):RP.headTurn)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } else { figureCelOval(r,0,0,11,11,hK,.65); if (this.eT === "ARMORED" || this.eT === "ARMORED_STANDARD") { r.push(); if(this.fall)r.rotate(-(RP.headTurn===undefined?figureHeadTurn(this.fall,f):RP.headTurn)); r.translate(15, 10); r.fill(20); r.rotate(HALF_PI); r.arc(0, 0, 15, 15, 0, PI, CHORD); r.pop(); } } r.noStroke();
       // The hair, and whatever was on the head. The identity was frozen at the
@@ -19738,6 +20161,8 @@ function corpseSepMax(dT) {
     return 0;
 }
 function corpseSettled(c) {
+    if(c.particleBeamDeath&&!c.particleBeamDeath.done)return false;
+    if(c.dec&&c.dec._particleBeamHot)return false;
     if(c.blast&&!c.blast.done)return false;
     if((c.wallSit&&!c.wallSit.done)||corpsePiecesMoving(c))return false;
     if(c.sword&&!c.sword.done)return false;
@@ -19774,6 +20199,7 @@ function updateCorpses() {
               // Finish piece collision once without particle/smoke emission;
               // subsequent offscreen frames only advance the remaining clocks.
               // A wall hold must finish before its final pose can be stamped.
+              ageParticleBeamWounds(c.dec);
               finishCorpsePieces(c);
               if(c.wallSit)stepCorpseWallSit(c);
               else if (c.fall&&!c.fall.done) stepFigureFall(c.fall,c,c.rag);
@@ -21663,7 +22089,7 @@ function paintBoxingFigure(e) {
     paintBoxingArm(g,appearance,arm,rig,skin,'FOREARM');
   // Stains move with the mass they belong to instead of staying at the hips
   // while a slipping head/torso escapes the incoming punch.
-  if(e.decals)for(const d of e.decals){if(d.isLeg)continue;const p=d.isHead?b.head:b.body;g.noStroke();if(d.col)g.fill(...d.col);else g.fill(90,0,0,220);g.ellipse(d.x+p.x,d.y+p.y,d.sz,d.sz);}
+  if(e.decals)for(const d of e.decals){if(d.isLeg)continue;const p=d.isHead?b.head:b.body;if(drawParticleBeamWound(g,d,d.x+p.x,d.y+p.y))continue;g.noStroke();if(d.col)g.fill(...d.col);else g.fill(90,0,0,220);g.ellipse(d.x+p.x,d.y+p.y,d.sz,d.sz);}
   if(b.parryFlash>0){
     const k=Math.min(1,b.parryFlash),a=b.arms.find(arm=>arm.guard)||b.arms[0],h=a.fist;
     g.noFill();g.stroke(245,250,213,220*k);g.strokeWeight(1.4);
@@ -22043,7 +22469,7 @@ function applyFarmingReward(actor, grantIncrease = false) {
   return grantIncrease && actor.maxHp > previous ? actor.restoreHealth(actor.maxHp - previous) : 0;
 }
 function playerMagazineCapacity(weapon) {
-  return weapon.maxAmmo * (weapon !== WEAPONS.BOW && window.milLvl >= 2 ? 2 : 1);
+  return weapon.maxAmmo * (weapon !== WEAPONS.BOW && weapon !== WEAPONS.PARTICLE_BEAM && window.milLvl >= 2 ? 2 : 1);
 }
 function weaponMagazineCapacity(actor, weapon = actor && actor.currentWeapon) {
   if (!weapon) return 0;
@@ -24135,6 +24561,7 @@ this.punchHitCount = 0;
         "MACHINE GUN": weaponMagazineCapacity(this, WEAPONS.SMG),
         "DUAL SMGS": weaponMagazineCapacity(this, WEAPONS.DUAL_SMG),
         "ASSAULT RIFLE": weaponMagazineCapacity(this, WEAPONS.ASSAULT_RIFLE),
+        "PARTICLE BEAM": 0,
         "SHOTGUN": weaponMagazineCapacity(this, WEAPONS.SHOTGUN),
         "ROCKET LAUNCHER": weaponMagazineCapacity(this, WEAPONS.ROCKET_LAUNCHER),
         "TASER": weaponMagazineCapacity(this, WEAPONS.TASER),
@@ -24148,6 +24575,7 @@ this.punchHitCount = 0;
         "MACHINE GUN": 0, 
         "DUAL SMGS": 0, 
         "ASSAULT RIFLE": 0, 
+        "PARTICLE BEAM": 0,
         "SHOTGUN": 0, 
         "ROCKET LAUNCHER": 0,
         "TASER": Infinity, // <--- ADDED TASER
@@ -24561,6 +24989,7 @@ this.skeletonTimer = 0;
       if (dualSmgUnlocked && (this.mags["DUAL SMGS"] > 0 || this.weaponAmmo["DUAL SMGS"] > 0)) aW.push(WEAPONS.DUAL_SMG);
       else if (smgUnlocked && (this.mags["MACHINE GUN"] > 0 || this.weaponAmmo["MACHINE GUN"] > 0)) aW.push(WEAPONS.SMG); 
       if (arUnlocked && (this.mags["ASSAULT RIFLE"] > 0 || this.weaponAmmo["ASSAULT RIFLE"] > 0)) aW.push(WEAPONS.ASSAULT_RIFLE);
+      if (particleBeamUnlocked && (this.mags['PARTICLE BEAM'] > 0 || this.weaponAmmo['PARTICLE BEAM'] > 0)) aW.push(WEAPONS.PARTICLE_BEAM);
       if (shotgunUnlocked && (this.mags["SHOTGUN"] > 0 || this.weaponAmmo["SHOTGUN"] > 0)) aW.push(WEAPONS.SHOTGUN); 
       if (rocketLauncherUnlocked && (this.mags["ROCKET LAUNCHER"] > 0 || this.weaponAmmo["ROCKET LAUNCHER"] > 0)) aW.push(WEAPONS.ROCKET_LAUNCHER); 
       this.currentWeapon = aW[aW.length - 1]; this.reloadTimer = 0; lastWeaponSwapTime = millis();
@@ -24789,6 +25218,8 @@ this.skeletonTimer = 0;
   }
 
   updatePlayer() {
+    updateParticleBeamHeat(this);
+    ageParticleBeamWounds(this.decals);
     this.updateSwordComboWindow();
     updateActorCover(this,typeof deltaTime==='number'?deltaTime:1000/60,leftStick.dx*6,leftStick.dy*6,coverPlayerAiming(this));
     const wasProneDive=proneDiveActive(this);
@@ -25207,6 +25638,7 @@ this.skeletonTimer = 0;
   }
 
     updateEnemy() {
+      ageParticleBeamWounds(this.decals);
     this._coverMoveX=this._coverMoveY=0;
     if(updateLegInjuryActor(this,typeof deltaTime==='number'?deltaTime:1000/60)){
       shovelUpdateActor(this,typeof deltaTime==='number'?deltaTime:1000/60);return;
@@ -26061,6 +26493,7 @@ if (this.eType === "COW") {
     if (boxingActive(this)) return;
     if(unarmedCivilian(this)&&!this.cityThugGunDrawn)return;
     if (this.currentWeapon === WEAPONS.BOW && this.ammo <= 0) return;
+    if (this.currentWeapon === WEAPONS.PARTICLE_BEAM && this.ammo <= 0) return false;
     if(this.isPlayer && streetThugDialogueOpen())return;
     if (this.isPlayer) {
       const directProne=actorStancePose(this).prone>0&&!proneAimInput(this);
@@ -26081,7 +26514,7 @@ if (this.eType === "COW") {
     const dualLeftReady = this.currentWeapon === WEAPONS.DUAL_SMG && !leftHandAction(this);
     let cost = dualLeftReady ? 2 : 1;
     let bLX = 31, bLY = 8, bLX_L = 59, bLY_L = -17;
-    if (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { bLX = 47; bLY = 6; } else if (this.currentWeapon === WEAPONS.SMG || this.currentWeapon === WEAPONS.DUAL_SMG) { bLX = 38; bLY = 11; bLX_L = 38; bLY_L = -11; }
+    if (solidLongGun(this.currentWeapon) || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { bLX = 47; bLY = 6; } else if (this.currentWeapon === WEAPONS.SMG || this.currentWeapon === WEAPONS.DUAL_SMG) { bLX = 38; bLY = 11; bLX_L = 38; bLY_L = -11; }
     else if (this.currentWeapon === WEAPONS.REVOLVER) { bLX = 47; bLY = 11; }
     else if (this.currentWeapon === WEAPONS.BOW) { bLX = 47 - 9 * (bowShot ? Math.max(0, Math.min(1, bowShot.tension)) : 1); bLY = 0; }
     if (this.eType === "ALIEN_GATOR" || this.eType === "SNAIL_HYBRID") { bLX = 100; bLY = 19; } if (this.eType === "AERIAL_PISTOL") { bLX = 51; bLY = 16; }
@@ -26133,7 +26566,12 @@ if (this.eType === "COW") {
             arrow.l = Math.ceil(arrow.arrowRange / arrow.arrowSpeed) + 1;
         }
         sfx.shoot(this.currentWeapon,tX,tY);
-    } else { 
+    } else if (this.currentWeapon === WEAPONS.PARTICLE_BEAM) {
+        spawnBullet(tX, tY, sA, this.isPlayer || this.isFriendly, aH, this.currentWeapon, this, huntShotId, true);
+        recordParticleBeamShot(this); sfx.shoot(this.currentWeapon, tX, tY);
+        emit(tX, tY, 2, color(88, 201, 255), 'MUZZLE', cos(sA) * 5, sin(sA) * 5, this);
+        if (this.isPlayer) screenShake = 1;
+    } else {
         spawnBullet(tX, tY, sA + random(-shotSpread, shotSpread), this.isPlayer || this.isFriendly, aH, this.currentWeapon, this, huntShotId, true);
         sfx.shoot(this.currentWeapon, tX, tY); 
         
@@ -26694,7 +27132,7 @@ if (this.isPlayer) {
     push(); rotate((mantle?mantle.angle:this.aimAngle)+(boxing.active?boxing.torso:_tw)); translate(bob,0);
 
     let bLX = 31, bLY = 8, bLX_L = 59, bLY_L = -17;
-    if (this.isArmed && this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { bLX = 47; bLY = 6; } 
+    if (this.isArmed && (solidLongGun(this.currentWeapon) || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER)) { bLX = 47; bLY = 6; }
     else if (this.currentWeapon === WEAPONS.SMG || this.currentWeapon === WEAPONS.DUAL_SMG) { bLX = 38; bLY = 11; bLX_L = 38; bLY_L = -11; }
     else if (this.currentWeapon === WEAPONS.REVOLVER) { bLX = 47; bLY = 11; }
     else if (this.currentWeapon === WEAPONS.BOW) { bLX = 47-9*bowTension; bLY = 0; }
@@ -26706,7 +27144,7 @@ if (this.isPlayer) {
     }
 
     if (this.eType === "AERIAL_PISTOL") { bLX = 51; bLY = 16; }
-    if (!carryMode && (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.BOW)) {
+    if (!carryMode && (solidLongGun(this.currentWeapon) || this.currentWeapon === WEAPONS.BOW)) {
         // Gait lean belongs to the torso. Native rounds use the original
         // two-unit bob, so keep the crown/flash on that firing line as it runs.
         bLX += (this.isMoving ? abs(sin(this.walkCycle))*2 : 0)-bob;
@@ -27349,7 +27787,7 @@ if (this.isPlayer) {
                     const _wa = this.aimAngle + _tw + cAngA;
                     const gl = figureLight(_wa);
                     carryLongGun(this.currentWeapon, cEl, gl,
-                                 figureSouth(_wa));
+                                 figureSouth(_wa),this);
                     pop();
                 }
                 if (front && leftAction) drawLeftHandAction(this, leftAction, -_tw);
@@ -27513,7 +27951,7 @@ if (this.isPlayer) {
     }
     if (this.isPlayer && ninjaSuitUnlocked) { fill(100, 0, 200); rect(-this.bodyW/2, -4, this.bodyW, 8, 2); } 
  
-    noStroke(); for (let d of this.decals) { if (!d.isHead&&!d.isLeg) { if (d.col) fill(d.col[0], d.col[1], d.col[2], d.col[3]); else fill(90, 0, 0, 220); ellipse(d.x, d.y, d.sz, d.sz); } }
+    noStroke(); for (let d of this.decals) { if (!d.isHead&&!d.isLeg) { if(drawParticleBeamWound(window,d))continue; if (d.col) fill(d.col[0], d.col[1], d.col[2], d.col[3]); else fill(90, 0, 0, 220); ellipse(d.x, d.y, d.sz, d.sz); } }
     if (_tsq) pop();
     // Blood decals are stains ON the shirt and take no contour; everything
     // after them -- sleeves, hands, boots, packs -- is a limb and does.
@@ -27521,7 +27959,7 @@ if (this.isPlayer) {
     
     let lAY = this.eType === "ARMORED" ? -30 : -14, rAY = this.eType === "ARMORED" ? 30 : 11;
     const longGunPose = !carryMode && this.meleeTimer<=0 && (this.isArmed || !this.isPlayer) &&
-        (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN)
+        solidLongGun(this.currentWeapon)
         ? aimedLongGunPose(this, _tw, bob) : null;
 
     let isNeutralFarmer = (unarmedCivilian(this)&&!this.cityThugGunDrawn)||(this.isNeutral&&TOWNSFOLK.indexOf(this.eType)!==-1);
@@ -27637,7 +28075,7 @@ if (this.isPlayer) {
             // This ensures the arm is painted under the gun
             let rArmY = this.currentWeapon === WEAPONS.PISTOL ? 8 : rAY, rHandX = this.currentWeapon === WEAPONS.PISTOL ? 16 : 15, rSleeveX = 5;
             if (this.currentWeapon === WEAPONS.SMG || this.currentWeapon === WEAPONS.DUAL_SMG) { rHandX = 22; rSleeveX = 12; }
-            else if (this.currentWeapon === WEAPONS.ASSAULT_RIFLE || this.currentWeapon === WEAPONS.SHOTGUN || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { rHandX = 8; rSleeveX = -1; }
+            else if (solidLongGun(this.currentWeapon) || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER) { rHandX = 8; rSleeveX = -1; }
             const rShoulderY=rArmY;
             if (longGunPose) { rHandX=longGunPose.rear[0];rArmY=longGunPose.rear[1]; }
             else if(this.isPlayer&&this.currentWeapon===WEAPONS.BOW){rHandX=(this.ammo>0?13-9*bowTension:13)+bowPoseOffset;rArmY=0;}
@@ -27724,7 +28162,8 @@ if (this.isPlayer) {
  
  
     if (!this.shovelMantle && this.muzzleFlash > 0 && this.reloadTimer <= 0) {
-        push(); translate(bLX, bLY); fill(255, 200, 0, 200); noStroke(); beginShape(); vertex(0, -3); vertex(15 + random(10), -8); vertex(20 + random(15), 0); vertex(15 + random(10), 8); vertex(0, 3); endShape(CLOSE); pop(); 
+        if(this.currentWeapon===WEAPONS.PARTICLE_BEAM)drawParticleBeamFlash(window,bLX,bLY);
+        else { push(); translate(bLX, bLY); fill(255, 200, 0, 200); noStroke(); beginShape(); vertex(0, -3); vertex(15 + random(10), -8); vertex(20 + random(15), 0); vertex(15 + random(10), 8); vertex(0, 3); endShape(CLOSE); pop(); }
         let isThrowing = this.isPlayer && (typeof isCooking !== 'undefined' && (isCooking || this.throwAnimTimer > 0));
         if (this.currentWeapon === WEAPONS.DUAL_SMG && leftHandAction(this) === 0) { push(); translate(bLX_L, bLY_L); fill(255, 200, 0, 200); noStroke(); beginShape(); vertex(0, -3); vertex(15 + random(10), -8); vertex(20 + random(15), 0); vertex(15 + random(10), 8); vertex(0, 3); endShape(CLOSE); pop(); }
     }
@@ -27744,8 +28183,7 @@ if (this.isPlayer) {
     let hX = mantle?mantle.headX:0, hY = 0;
     if (!mantle && this.isArmed && !carryMode && this.reloadTimer <= 0 && this.meleeTimer <= 0 &&
         !this.dead &&
-        (this.currentWeapon === WEAPONS.ASSAULT_RIFLE ||
-         this.currentWeapon === WEAPONS.SHOTGUN ||
+        (solidLongGun(this.currentWeapon) ||
          this.currentWeapon === WEAPONS.ROCKET_LAUNCHER)) { hX = 3; hY = 4; }
 
     
@@ -27757,7 +28195,7 @@ if (this.isPlayer) {
 
 
     if ((this.eType === "ARMORED" && this.hp > 300) || (this.eType === "ARMORED_STANDARD" && this.hp > 50)) { push(); translate(hX, hY); rotate(HALF_PI); drawArmoredHelmet(paint?paint.api:window); pop(); }
-    noStroke(); for (let d of this.decals) { if (d.isHead) { if (d.col) fill(d.col[0], d.col[1], d.col[2], d.col[3]); else fill(90, 0, 0, 220); ellipse(d.x + hX, d.y + hY, d.sz, d.sz); } }
+    noStroke(); for (let d of this.decals) { if (d.isHead) { if(drawParticleBeamWound(window,d,d.x+hX,d.y+hY))continue; if (d.col) fill(d.col[0], d.col[1], d.col[2], d.col[3]); else fill(90, 0, 0, 220); ellipse(d.x + hX, d.y + hY, d.sz, d.sz); } }
     
     if (inTownCutscene && this.isFriendly && townPhase === 1) {
         fill(255, 255, 0); textSize(32); textAlign(CENTER, BOTTOM); textFont('sans-serif');
@@ -29171,7 +29609,9 @@ function forestShotCover(b,targets,nearbyBarrels,targetBuckets=null) {
     if(coverLowBlocks(b.tH,b.shooter,null,b.coverLaunchLow))for(const car of cars)consider(forestShotRectTime(b,car.x-25,car.y-45,car.x+25,car.y+45),'CAR');
     return out;
 }
+const _particleBeamPaint = [];
 function updateBullets() {
+  _particleBeamPaint.length = 0;
   const CULL_PAD = 400; 
 
   const playerTgs = _projectilePlayerTargets,enemyTgs = _projectileEnemyTargets;
@@ -29201,7 +29641,9 @@ function updateBullets() {
         continue;
     }
 
-    if (b.active && inView(b.x, b.y, 50) && !b.isAllyProjectile()) b.show(); 
+    if (b.active && inView(b.x, b.y, 50) && !b.isAllyProjectile()) {
+      if (b.isParticleBeam) _particleBeamPaint.push(b); else b.show();
+    }
     
     if (doTick && b.active) {
         // Sweep before the actor pass so a fast round cannot damage somebody
@@ -29216,11 +29658,26 @@ function updateBullets() {
             }
         }
         let hB = false;
-        const nearbyBarrels=barrels.length<=16?barrels:crowdNearbyBarrels(b.x,b.y,18,_projectileBarrels);
+        const beamReach=b.isParticleBeam?Math.hypot(b.x-b.prevX,b.y-b.prevY)*.5:0;
+        const nearbyBarrels=barrels.length<=16?barrels:crowdNearbyBarrels(b.isParticleBeam?(b.x+b.prevX)*.5:b.x,
+            b.isParticleBeam?(b.y+b.prevY)*.5:b.y,18+beamReach,_projectileBarrels);
         const targetBuckets = b.isP ? playerBuckets : enemyBuckets;
         const targetRadius=coverReach+Math.hypot(b.x-b.prevX,b.y-b.prevY)*.5;
         const localTargets = b._coverLaunchImpact?EMPTY_LIST:querySpatialBuckets(targetBuckets,(b.x+b.prevX)*.5,(b.y+b.prevY)*.5,
             SPATIAL_CELL_SIZE,targetRadius,targetRadius*targetRadius,null,_projectileNearby);
+        if (b.isParticleBeam && !b._coverLaunchImpact) {
+          // The faster energy segment may cross several bodies in one frame.
+          // Resolve its first surface, rather than the spatial bucket's order.
+          localTargets.sort((a,c) => stanceProjectileContact(b,a)-stanceProjectileContact(b,c));
+          let firstActor=Infinity,firstBarrel=Infinity;
+          if(localTargets.length)firstActor=stanceProjectileContact(b,localTargets[0]);
+          if(b.isP&&b.tH!=='HEAD')for(const barrel of nearbyBarrels)
+            firstBarrel=Math.min(firstBarrel,forestShotCircleTime(b,barrel.x,barrel.y,15));
+          if(firstBarrel<firstActor) {
+            const t=Math.min(1,firstBarrel+1e-5);
+            b.x=b.prevX+(b.x-b.prevX)*t;b.y=b.prevY+(b.y-b.prevY)*t;
+          }
+        }
         if(currentBiome===2&&!b._coverLaunchImpact&&!b.retracting&&!b.tetheredTarget&&typeof forestWildlifeHitTest==='function') {
             const wildlifeHit=forestWildlifeHitTest(b);
             if(wildlifeHit) {
@@ -29312,7 +29769,7 @@ function updateBullets() {
                 if (b.isArrow) dmg *= b.arrowPower;
                 // Balance actual firearm leg hits, not low launch elevation:
                 // falling/crouched targets still receive full body/head damage.
-                if(impactZone==='LEGS'&&!isOccultActor(t)&&!b.isArrow&&!b.isOrangeBeam&&!b.isRedLaser&&!b.isPinkLaser&&!b.isAlienLaser)
+                if(impactZone==='LEGS'&&!isOccultActor(t)&&!b.isParticleBeam&&!b.isArrow&&!b.isOrangeBeam&&!b.isRedLaser&&!b.isPinkLaser&&!b.isAlienLaser)
                     dmg*=LEG_SHOT_DAMAGE_SCALE;
                 
                 if (t.eType === "SNAIL_HYBRID" && impactZone === "HEAD") {
@@ -29347,6 +29804,8 @@ function updateBullets() {
                 const woundScale=coverWound?coverWound.size:1;
                 const hpBeforeImpact = t.hp;
                 let dRes = robotHeadAbsorbed ? { blocked: false, broken: false } : t.takeDamage(dmg,b.shooter);
+                if (b.isParticleBeam && impactZone === 'LEGS' && ragHumanoid(t.eType,t.bodyW) &&
+                    !dRes.blocked && t.hp < hpBeforeImpact) t.hp = 0;
                 recordStanceDamage(t,Math.max(0,hpBeforeImpact-t.hp),impactZone);
                 if (t.hp < hpBeforeImpact && humanBloodTarget(t) && !(wA && impactZone === 'HEAD')) {
                     const seed = (Math.imul((Number(b.shotId) || frameCount + 1) | 0,0x9e3779b9) ^
@@ -29415,9 +29874,17 @@ function updateBullets() {
                   const heightSample=variedHeight?bulletDecalHeightSample(b,t):null;
                   if(impactZone==="LEGS")mapLegHitDecal(t,b.x,b.y,decal,fallHit,heightSample,struckLegIndex);
                   else if(variedHeight)mapHitDecalHeight(t,decal,impactZone,heightSample);
+                  if (b.isParticleBeam) markParticleBeamWound(decal,t,b);
                   t.decals.push(decal);
                   fallHit.wound=t.decals[t.decals.length-1];
                   fallHit.fatal=t.hp<=0;
+                  if (b.isParticleBeam && !dRes.blocked && t.hp <= 0 && t.hp < hpBeforeImpact && ragHumanoid(t.eType,t.bodyW)) {
+                    const center=impactZone==='BODY'&&Math.abs(decal.y)<=t.bodyH*.16;
+                    const side=impactZone==='LEGS'?(struckLegIndex===0?-1:1):(decal.y<0?-1:1);
+                    const variant=center&&t.hp<=0?particleBeamCenterCycle++%3:0;
+                    t.particleBeamHit={zone:impactZone,side,legIndex:struckLegIndex,center,variant,
+                      x:b.x,y:b.y,dirX:Math.cos(b.a),dirY:Math.sin(b.a),frame:frameCount,wound:decal};
+                  }
                   if(impactZone==='LEGS'&&t.hp>0&&t.hp<hpBeforeImpact)
                     tryLegShotInjury(t,b,struckLegIndex);
                 }
@@ -29508,7 +29975,12 @@ function updateBullets() {
                         if (dT === 11) { spawnSplatter(t.x, t.y, "BLOOD", color(90, 0, 0), t); }
                         else if (dT === 5 || dT === 10) { emit(t.x, t.y, 40, color(255, 100, 0), "EXPLOSION", 0, 0, t); sfx.explosion(t.x, t.y); spawnSplatter(t.x, t.y, "BLOOD", color(90, 0, 0), t); spawnSplatter(t.x, t.y, "SCORCH", null, t); if (dT === 10) { emit(b.x, b.y, 30, color(220, 200, 200), "BONE", b.vx, b.vy, t); emit(t.x, t.y, 120, color(90, 0, 0), "GORE", 0, 0, t); } }
                     } else { 
-                        if (b.w === WEAPONS.ASSAULT_RIFLE && impactZone === "HEAD") {
+                        const beamDeath=b.isParticleBeam?particleBeamDeathType(t,t.particleBeamHit):null;
+                        if (beamDeath !== null) {
+                            dT=beamDeath;
+                            emit(b.x,b.y,12,bCol,'GORE',b.vx*.12,b.vy*.12,t);
+                            emit(b.x,b.y,4,color(229,180,113),'BONE',b.vx*.08,b.vy*.08,t);
+                        } else if (b.w === WEAPONS.ASSAULT_RIFLE && impactZone === "HEAD") {
                             let choices = [6, 8, 9]; dT = choices[headshotCounter % 3]; headshotCounter++;
                             if (dT === 6) { emit(b.x, b.y, 10, color(220, 200, 200), "BONE", b.vx, b.vy, t); emit(b.x, b.y, 40, bCol, "GORE", 0, 0, t); emit(b.x, b.y, 40, bCol, "BLOOD", b.vx, b.vy, t); }
                             else if (dT === 8) { emit(b.x, b.y, 15, color(220, 200, 200), "BONE", b.vx, b.vy, t); emit(b.x, b.y, 50, bCol, "GORE", 0, 0, t); }
@@ -29662,6 +30134,8 @@ function updateBullets() {
             emit(b.x,b.y,2,color(117,102,80),'DUST',0,0,b.shooter);
         }
     }
+    // Contact has the last word on a beam's painted endpoint, even on its final frame.
+    for (const beam of _particleBeamPaint) paintParticleBeamSegment(beam);
   }
 
 
@@ -30188,9 +30662,20 @@ class Citizen {
 const LEG_SHOT_DAMAGE_SCALE=0.5;
 const LEG_SHOT_RANGES=Object.freeze({STAND:300,CROUCH:400,PRONE:520}); // 15/20/26 m, at 20 units per metre.
 function legShotRangeForWeapon(zone,weapon,shooter=null) {
-  if(zone!=='LEGS'||weapon===WEAPONS.BOW||weapon===WEAPONS.TASER||weapon===WEAPONS.ROCKET_LAUNCHER||
+  if(zone!=='LEGS'||weapon===WEAPONS.BOW||weapon===WEAPONS.TASER||weapon===WEAPONS.ROCKET_LAUNCHER||weapon===WEAPONS.PARTICLE_BEAM||
     weapon==='ALIEN_LASER'||weapon==='RED_LASER'||weapon==='PINK_LASER'||weapon==='ORANGE_BEAM')return 0;
   return LEG_SHOT_RANGES[actorStance(shooter)];
+}
+function paintParticleBeamSegment(b) {
+  const dx = b.x - b.prevX, dy = b.y - b.prevY, length = Math.hypot(dx,dy);
+  if (!(length > .001)) return;
+  // The collision resolver has already clipped this frame's endpoint. Draw
+  // the terminal segment too, even when contact just retired the pooled round.
+  push(); strokeCap(SQUARE);
+  stroke(13, 19, 30); strokeWeight(5.4); line(b.prevX, b.prevY, b.x, b.y);
+  stroke(31, 159, 246); strokeWeight(3.2); line(b.prevX, b.prevY, b.x, b.y);
+  stroke(185, 243, 255); strokeWeight(1.05); line(b.prevX, b.prevY, b.x, b.y);
+  pop();
 }
 class Bullet {
   constructor() { this.active = false; }
@@ -30214,6 +30699,7 @@ class Bullet {
     this.coverLaunchY=shooter?shooter.y+upper.y:y;
     this._coverLaunchImpact=false;
     this.isArrow = w === WEAPONS.BOW;
+    this.isParticleBeam = w === WEAPONS.PARTICLE_BEAM;
     this.arrowPower = 1; this.arrowDud = false; this.arrowSpeed = 28;
     this.arrowRange = 2520; this.arrowTravel = 0;
     this.isAlienLaser = (w === "ALIEN_LASER"); this.isRedLaser = (w === "RED_LASER"); this.isPinkLaser = (w === "PINK_LASER"); this.isOrangeBeam = (w === "ORANGE_BEAM"); this.isRocket = (w === WEAPONS.ROCKET_LAUNCHER); this.isTaser = (w === WEAPONS.TASER);
@@ -30251,9 +30737,11 @@ class Bullet {
     else if (w === WEAPONS.PISTOL || w === WEAPONS.SHOTGUN || w === WEAPONS.ASSAULT_RIFLE) { s = PLAYER_BULLET_SPEED; }
     if (this.isTaser) s = 20;
     if (this.isArrow) s = 28;
+    if (this.isParticleBeam) s = 80;
 
     this.vx = cos(a) * s; this.vy = sin(a) * s; 
     this.l = this.isArrow ? 90 : (w === WEAPONS.SHOTGUN ? 30 : 120);
+    if (this.isParticleBeam) this.l = 45;
     
     this.sz = (this.isAlienLaser || this.isRedLaser || this.isPinkLaser || this.isOrangeBeam) ? 12 : (this.isRocket ? 16 : 6); 
     this.col = this.isAlienLaser ? color(255, 20, 147) : (this.isRedLaser ? color(255, 50, 50) : (this.isPinkLaser ? color(255, 105, 180) : (this.isOrangeBeam ? color(255, 146, 40) : color(255, 200, 0)))); 
@@ -30334,6 +30822,9 @@ class Bullet {
 
   show() { 
       if (!this.active) return;
+      if (this.isParticleBeam) {
+          paintParticleBeamSegment(this); return;
+      }
       if (this.isArrow) {
           push(); translate(this.x,this.y); rotate(this.a);
           stroke(27,36,31); strokeWeight(3.4); line(-23,0,1,0);
@@ -31702,7 +32193,9 @@ function drawUI() {
   } else if (player && player.currentWeapon === WEAPONS.SMG) { 
       rect(28, 65, 24, 8, 2); 
       rect(32, 73, 6, 12); 
-  } else if (player && player.currentWeapon === WEAPONS.ASSAULT_RIFLE) { 
+  } else if (player && player.currentWeapon === WEAPONS.PARTICLE_BEAM) {
+      push();translate(48,75);drawParticleBeamDrop(window,.77);pop();
+  } else if (player && player.currentWeapon === WEAPONS.ASSAULT_RIFLE) {
       fill(40); rect(25, 66, 32, 4, 1); 
       fill(139, 69, 19); rect(32, 65, 10, 6, 1); rect(20, 65, 6, 6, 1); 
   } else if (player && player.currentWeapon === WEAPONS.SHOTGUN) { 
@@ -32548,6 +33041,7 @@ function handleGamepad() {
       if (player.flags && player.flags.bowUnlocked) aW.push(WEAPONS.BOW);
       if (dualSmgUnlocked) aW.push(WEAPONS.DUAL_SMG); else if (smgUnlocked) aW.push(WEAPONS.SMG); 
       if (arUnlocked) aW.push(WEAPONS.ASSAULT_RIFLE); if (shotgunUnlocked) aW.push(WEAPONS.SHOTGUN); if (rocketLauncherUnlocked) aW.push(WEAPONS.ROCKET_LAUNCHER); 
+      if (particleBeamUnlocked) aW.push(WEAPONS.PARTICLE_BEAM);
       if (aW.length > 1) {
           let nI = aW.indexOf(player.currentWeapon);
           nI = nI < 0 ? (jP(14) ? aW.length - 1 : 0) : (nI + (jP(14) ? -1 : 1) + aW.length) % aW.length;
@@ -32799,7 +33293,7 @@ function handleTouches() {
       if ((grenadesUnlocked || explosiveArmorUnlocked) && dist(tx, ty, combat.grenade.x, combat.grenade.y) < combat.hitRadius) { currentGrenadeTouch = true; continue; }
       if (meleeUnlocked && dist(tx, ty, combat.melee.x, combat.melee.y) < combat.hitRadius) { currentMeleeTouch = true; continue; }
     }
-    if (dist(tx, ty, 50, 65) < 40 && (revolverUnlocked || smgUnlocked || dualSmgUnlocked || shotgunUnlocked || arUnlocked || rocketLauncherUnlocked || (player.flags && player.flags.bowUnlocked))) {
+    if (dist(tx, ty, 50, 65) < 40 && (revolverUnlocked || smgUnlocked || dualSmgUnlocked || shotgunUnlocked || arUnlocked || rocketLauncherUnlocked || particleBeamUnlocked || (player.flags && player.flags.bowUnlocked))) {
       if (millis() - lastWeaponSwapTime > 300) {
         const aW = [WEAPONS.PISTOL];
         if (revolverUnlocked) aW.push(WEAPONS.REVOLVER);
@@ -32807,6 +33301,7 @@ function handleTouches() {
         if (player.flags && player.flags.bowUnlocked) aW.push(WEAPONS.BOW);
         if (dualSmgUnlocked) aW.push(WEAPONS.DUAL_SMG); else if (smgUnlocked) aW.push(WEAPONS.SMG);
         if (arUnlocked) aW.push(WEAPONS.ASSAULT_RIFLE);
+        if (particleBeamUnlocked) aW.push(WEAPONS.PARTICLE_BEAM);
         if (shotgunUnlocked) aW.push(WEAPONS.SHOTGUN);
         if (rocketLauncherUnlocked) aW.push(WEAPONS.ROCKET_LAUNCHER);
         player.currentWeapon = aW[(aW.indexOf(player.currentWeapon) + 1) % aW.length];
@@ -32854,6 +33349,7 @@ function upgradeShopItems() {
         {id:'SMG',name:'SMG',price:50,weapon:WEAPONS.SMG},
         {id:'DUAL',name:'DUAL SMGS',price:50,weapon:WEAPONS.DUAL_SMG},
         {id:'RIFLE',name:'ASSAULT RIFLE',price:50,weapon:WEAPONS.ASSAULT_RIFLE},
+        {id:'PARTICLE',name:'PARTICLE BEAM',price:50,weapon:WEAPONS.PARTICLE_BEAM},
         {id:'SHOTGUN',name:'SHOTGUN',price:50,weapon:WEAPONS.SHOTGUN},
         {id:'REVOLVER',name:'REVOLVER',price:100,weapon:WEAPONS.REVOLVER},
         {id:'JETPACK',name:'JETPACK',price:0,state:jetpackUnlocked},
@@ -32897,9 +33393,12 @@ function purchaseUpgrade(item) {
         if(f==='smg')smgUnlocked=true;if(f==='dual')dualSmgUnlocked=true;
         if(f==='rifle')arUnlocked=true;if(f==='shotgun')shotgunUnlocked=true;
         if(f==='revolver')revolverUnlocked=true;if(f==='rocket')rocketLauncherUnlocked=true;
+        if(item.weapon===WEAPONS.PARTICLE_BEAM)particleBeamUnlocked=true;
         player.currentWeapon=item.weapon;player.reloadTimer=0;
-        player.mags[item.weapon.name]=item.id==='ROCKET'?6:3;
-        player.weaponAmmo[item.weapon.name]=playerMagazineCapacity(item.weapon);sfx.reload();return true;
+        player.mags[item.weapon.name]=item.weapon===WEAPONS.PARTICLE_BEAM?9:item.id==='ROCKET'?6:3;
+        player.weaponAmmo[item.weapon.name]=playerMagazineCapacity(item.weapon);
+        if(item.weapon===WEAPONS.PARTICLE_BEAM)player.particleBeamState=null;
+        sfx.reload();return true;
     }
     if(item.suit){score-=item.price;equipPlayerSuit(item.id);sfx.charge();return true;}
     if(item.price<=0)return false;
@@ -34268,6 +34767,7 @@ function saveGame() {
         undergroundRoute:serializeUndergroundRoute(),occult:currentLevel===9?serializeOccultState():null,
         nm0Hq:serializeNM0Hq(),
         smgUnlocked, dualSmgUnlocked, shotgunUnlocked, arUnlocked, rocketLauncherUnlocked, taserUnlocked,
+        particleBeamUnlocked, particleBeamEquipment: serializeParticleBeamEquipment(),
         jetpackUnlocked, meleeUnlocked, jetpackFireExplosion, jetpackDoubleDash, meleeComboUnlocked, meleeFinisherUnlocked: window.meleeFinisherUnlocked,
         ninjaSuitUnlocked, explosiveArmorUnlocked, chemistSuitUnlocked, ninjaOwned: window.ninjaOwned, armorOwned: window.armorOwned, chemistOwned: window.chemistOwned,
         grenadesUnlocked, pGrenadeAmmo, pFlaskAmmo,
@@ -34581,6 +35081,7 @@ function loadGame() {
         
         smgUnlocked = state.smgUnlocked; dualSmgUnlocked = state.dualSmgUnlocked; shotgunUnlocked = state.shotgunUnlocked; 
         arUnlocked = state.arUnlocked; rocketLauncherUnlocked = state.rocketLauncherUnlocked; taserUnlocked = state.taserUnlocked;
+        particleBeamUnlocked = state.particleBeamUnlocked === true;
         jetpackUnlocked = state.jetpackUnlocked; meleeUnlocked = state.meleeUnlocked; jetpackFireExplosion = state.jetpackFireExplosion; 
         jetpackDoubleDash = state.jetpackDoubleDash; meleeComboUnlocked = state.meleeComboUnlocked; window.meleeFinisherUnlocked = state.meleeFinisherUnlocked;
         ninjaSuitUnlocked = state.ninjaSuitUnlocked; explosiveArmorUnlocked = state.explosiveArmorUnlocked; chemistSuitUnlocked = state.chemistSuitUnlocked; 
@@ -34696,6 +35197,7 @@ function loadGame() {
         applyFrontierEquipment(player);
         if (state.frontierWeapon === 'REVOLVER' && revolverUnlocked) player.currentWeapon = WEAPONS.REVOLVER;
         restoreCityBoxingEquipment(state.cityBoxingEquipment);
+        restoreParticleBeamEquipment(state.particleBeamEquipment);
         retireCapturedFortMustersOnLoad();
         
                        // 1. If towers are defeated, physically delete them from the spawned map
@@ -47372,9 +47874,12 @@ function longGunElevation(band, phase) {
 // swings with that arm; 0 is empty.
 function weaponHands(w) {
   if (!w) return 0;
-  if (w === WEAPONS.ASSAULT_RIFLE || w === WEAPONS.SHOTGUN ||
+  if (solidLongGun(w) ||
       w === WEAPONS.ROCKET_LAUNCHER || w === WEAPONS.COACH_GUN || w === WEAPONS.BOW) return 2;
   return 1;
+}
+function solidLongGun(w) {
+  return !!w && (w === WEAPONS.ASSAULT_RIFLE || w === WEAPONS.SHOTGUN || w === WEAPONS.PARTICLE_BEAM);
 }
 
 function cyclePlayerWeapon(direction = 1) {
@@ -47386,6 +47891,7 @@ function cyclePlayerWeapon(direction = 1) {
   if (dualSmgUnlocked) weapons.push(WEAPONS.DUAL_SMG);
   else if (smgUnlocked) weapons.push(WEAPONS.SMG);
   if (arUnlocked) weapons.push(WEAPONS.ASSAULT_RIFLE);
+  if (particleBeamUnlocked) weapons.push(WEAPONS.PARTICLE_BEAM);
   if (shotgunUnlocked) weapons.push(WEAPONS.SHOTGUN);
   if (rocketLauncherUnlocked) weapons.push(WEAPONS.ROCKET_LAUNCHER);
   const old = weapons.indexOf(player.currentWeapon);
@@ -48088,12 +48594,14 @@ function gunMuzzle(P, x, y, h, br, bg, bb) {
 // +x. Colours are the aimed drawings' own: the rifle is black with walnut
 // furniture, the shotgun is three greys, the launcher is olive with a black
 // sight block, the coach gun is walnut under two blued barrels.
-function carryLongGun(w, el, L, S) {
+function carryLongGun(w, el, L, S, actor) {
   el = el === undefined ? 0 : el;
   if (w === WEAPONS.BOW) { drawHuntingBow(false,el); return; }
   L = L || _figLit;
-  if (w === WEAPONS.ASSAULT_RIFLE || w === WEAPONS.SHOTGUN) {
-    drawLongGunSolid(w,handGunProjection(el,.035,L,S),0,0);
+  if (solidLongGun(w)) {
+    const projection=handGunProjection(el,.035,L,S);
+    projection.particleBeamState=actor&&actor.particleBeamState;
+    drawLongGunSolid(w,projection,0,0);
     return;
   }
   const P = gunProj(el, L, S);
@@ -48213,6 +48721,7 @@ function aimedLongGunPose(c, twist, bodyBob) {
   const wa=c.aimAngle+(twist||0),shotgun=c.currentWeapon===WEAPONS.SHOTGUN;
   const P=handGunProjection(.018+kick*(shotgun ? .13 : .09),.035+kick*.07,
                             figureLight(wa),figureSouth(wa));
+  P.particleBeamState=c.particleBeamState;
   const nativeBob=c.isMoving?Math.abs(Math.sin(c.walkCycle))*2:0;
   const muzzle=P.point(shotgun?37:39,0,0),x=47+nativeBob-(bodyBob||0)-muzzle[0],y=6-muzzle[1];
   const fore=P.point(18.5-pump*6,0,0);
@@ -48260,6 +48769,7 @@ function longGunMuzzle(P,muzzle,r,g,b) {
 // The grip is at (0,0,0), with the magazine/grip underneath the receiver.
 function drawLongGunSolid(w,P,kick,pump) {
   kick=kick||0;pump=pump||0;
+  if(w===WEAPONS.PARTICLE_BEAM){drawParticleBeamSolid(P,kick,P.particleBeamState);return;}
   if(w===WEAPONS.SHOTGUN) {
     handGunBox(P,-1,3,-1.8,1.8,-5.2,-.7,31,35,41);              // grip
     handGunBox(P,9,34,1.0,2.8,-1.4,.9,30,34,40);               // magazine tube
@@ -48292,6 +48802,94 @@ function drawLongGunSolid(w,P,kick,pump) {
     longGunMuzzle(P,39,94,104,120);
   }
   noStroke();
+}
+
+// A particle accelerator shares the rifle's grip and 39-unit model muzzle.
+// Light armour encloses a dark chassis; orange induction chambers stand out
+// from each side. Component order follows the projected view, including carry
+// pitch, rather than always putting the right chamber over the receiver.
+const _particleBeamParts = [
+  [-1,2.5,-1.6,1.6,-5.2,-.6,43,49,58],
+  [-5.3,1.4,-2.2,2.2,-8.0,-2.2,58,65,75],
+  [-5.0,1.1,-1.65,1.65,-7.0,-5.8,238,139,51],
+  [-9,-2,-2.8,2.8,-.6,2.8,186,199,209],
+  [-10,-8.8,-3.1,3.1,-.9,3.0,36,44,54],
+  [-3,12.4,-3.0,3.0,-.7,3.0,177,192,204],
+  [12.4,25.5,-2.6,2.6,-.4,2.1,192,207,217],
+  [24.0,30.0,-2.15,2.15,-1.8,1.8,78,94,111],
+  [29.0,38.0,-1.45,1.45,-1.4,1.4,151,171,189],
+  [36.5,39,-2.0,2.0,-2.0,2.0,49,65,84],
+  [1.3,17.0,-5.2,-2.8,-.1,2.4,228,113,30,1],
+  [1.3,17.0,2.8,5.2,-.1,2.4,228,113,30,1],
+  [.4,2.0,-5.5,-2.8,-.5,2.8,73,87,100],
+  [.4,2.0,2.8,5.5,-.5,2.8,73,87,100],
+  [16.4,17.8,-5.5,-2.8,-.5,2.8,96,111,124],
+  [16.4,17.8,2.8,5.5,-.5,2.8,96,111,124],
+  [2.0,16.5,-5.5,-4.75,2.35,3.0,173,188,201,0,-1],
+  [2.0,16.5,4.75,5.5,2.35,3.0,173,188,201,0,1],
+  [-1,24.0,-.65,.65,3.05,3.65,69,88,109],
+  [6.2,11.2,-1.3,1.3,3.65,5.3,90,109,128],
+  [7.0,10.6,-1.35,1.35,5.3,5.7,103,205,232],
+  [20.5,23.3,-1.3,1.3,2.1,2.65,226,239,244]
+];
+const _particleBeamOrder = _particleBeamParts.map((p,i)=>i);
+const _particleBeamVertices = Array.from({length:8},()=>[0,0]);
+function particleBeamBoxOn(g,P,bounds,r,gr,b) {
+  if(g===window){handGunBox(P,...bounds,r,gr,b);return;}
+  const [x0,x1,y0,y1,z0,z1]=bounds,v=_particleBeamVertices;
+  P.point(x0,y0,z0,v[0]);P.point(x1,y0,z0,v[1]);P.point(x1,y1,z0,v[2]);P.point(x0,y1,z0,v[3]);
+  P.point(x0,y0,z1,v[4]);P.point(x1,y0,z1,v[5]);P.point(x1,y1,z1,v[6]);P.point(x0,y1,z1,v[7]);
+  const face=(a,c,d,e,axis,sign)=>{
+    const shade=.62+Math.max(0,P.light[axis]*sign)*.42;
+    g.fill(r*shade,gr*shade,b*shade);g.stroke(r*.26,gr*.26,b*.28);g.strokeWeight(.65);
+    g.quad(...v[a],...v[c],...v[d],...v[e]);
+  };
+  if(P.view[0]<0)face(0,3,7,4,0,-1);else face(1,5,6,2,0,1);
+  if(P.view[1]<0)face(0,4,5,1,1,-1);else face(3,2,6,7,1,1);
+  if(P.view[2]<0)face(0,1,2,3,2,-1);else face(4,7,6,5,2,1);
+}
+function drawParticleBeamSolid(P,kick=0,state=null,target=window) {
+  const heat=Math.max(0,Math.min(1,Number(state&&state.heat)||0));
+  const ventFade=state&&Number.isFinite(state.ventTicks)?Math.min(1,Math.max(0,state.ventTicks)/6):1;
+  const open=state&&state.venting ? (.35+.65*heat)*ventFade : 0;
+  const parts=_particleBeamParts,depth=p=>((p[0]+p[1])*.5)*P.view[0]+
+    (((p[2]+p[3])*.5)+(p[10]||0)*open*1.3)*P.view[1]+
+    (((p[4]+p[5])*.5)+(p[10]?open*1.4:0))*P.view[2];
+  _particleBeamOrder.sort((a,b)=>depth(parts[a])-depth(parts[b])||a-b);
+  for(const index of _particleBeamOrder) {
+    const p=parts[index],side=p[10]||0,shift=side*open*1.3,lift=side?open*1.4:0;
+    const bounds=[p[0],p[1],p[2]+shift,p[3]+shift,p[4]+lift,p[5]+lift];
+    particleBeamBoxOn(target,P,bounds,p[9]?228+heat*27:p[6],p[9]?113+heat*65:p[7],p[9]?30+heat*41:p[8]);
+  }
+  // Chamber ribs and the revealed exhaust slots sit on the visible side,
+  // outside the fingers. Lifted armour hatches expose a dark channel beneath.
+  for(const side of [-1,1]) if(P.view[1]*side>0 || P.view[2]>0) {
+    for(let i=0;i<4;i++){
+      const x=4+i*3.1;
+      if(P.view[2]>0)particleBeamBoxOn(target,P,[x,x+.38,side>0?3.15:-4.6,side>0?4.6:-3.15,2.41,2.48],62,66,69);
+      if(open>0)particleBeamBoxOn(target,P,[x-.1,x+.7,side>0?4.75:-5.4,side>0?5.4:-4.75,2.35,2.48],30,41,52);
+    }
+  }
+  if(target===window)longGunMuzzle(P,39,92,121,147);
+  else particleBeamBoxOn(target,P,[38.05,39,-1.9,1.9,-1.9,1.9],92,121,147);
+  // A blue aperture is inset in a genuinely forward-facing muzzle plane.
+  if(P.view[0]>.001) {
+    const v=_particleBeamVertices,alpha=Math.min(1,P.view[0]*4);
+    for(const [i,y,z]of [[0,-.88,-.88],[1,.88,-.88],[2,.88,.88],[3,-.88,.88]])P.point(39.04,y,z,v[i]);
+    target.fill(70,203,255,255*alpha);target.stroke(12,29,43);target.strokeWeight(.5);
+    target.quad(...v[0],...v[1],...v[2],...v[3]);
+  }
+  target.noStroke();
+}
+function drawParticleBeamDrop(g=window,scaleValue=1,angle=0) {
+  g.push();g.scale(scaleValue);g.translate(-13,0);
+  drawParticleBeamSolid(handGunProjection(.12,.10,figureLight(angle),figureSouth(angle)),0,null,g);
+  g.pop();
+}
+function drawParticleBeamFlash(g,x,y) {
+  g.push();g.translate(x,y);g.stroke(8,19,31);g.strokeWeight(1.05);g.fill(55,173,255,240);
+  g.quad(0,-2.8,12,-1.8,18,0,0,2.8);
+  g.noStroke();g.fill(219,249,255,245);g.quad(0,-1.0,12,-.7,16,0,0,1.0);g.pop();
 }
 
 // The slide comes back sharply and settles over six simulation frames. It
@@ -48753,7 +49351,7 @@ function legInjuryBodyPose(c,p) {
         y:chestY+Math.sin(yaw)*shoulderX+Math.cos(yaw)*shoulderY},
       elbow:{x:lerp(lerp(5,prone?8:7,down),-15,back),y:side*c.bodyH*.46*(1-roll.side*.45)+chestY}});
   }
-  const braced=c.currentWeapon===WEAPONS.ASSAULT_RIFLE||c.currentWeapon===WEAPONS.SHOTGUN||c.currentWeapon===WEAPONS.ROCKET_LAUNCHER;
+  const braced=solidLongGun(c.currentWeapon)||c.currentWeapon===WEAPONS.ROCKET_LAUNCHER;
   const initialHead={x:Math.cos(standingYaw)*(braced?3:0)-Math.sin(standingYaw)*(braced?4:0),
     y:Math.sin(standingYaw)*(braced?3:0)+Math.cos(standingYaw)*(braced?4:0)};
   const headX=prone?15-roll.back*.8:8.5-37.5*(down>0?back/down:0),
@@ -48992,7 +49590,7 @@ function stanceHeadLocal(c) {
   const p = actorStancePose(c);
   if(p.crouch||p.prone||stanceCoverPoseActive(c)){const b=stanceBodyPose(c);return {x:b.head.x*b.size,y:b.head.y*b.size};}
   const braced = c.isArmed && c.reloadTimer <= 0 && c.meleeTimer <= 0 &&
-    (c.currentWeapon === WEAPONS.ASSAULT_RIFLE || c.currentWeapon === WEAPONS.SHOTGUN || c.currentWeapon === WEAPONS.ROCKET_LAUNCHER);
+    (solidLongGun(c.currentWeapon) || c.currentWeapon === WEAPONS.ROCKET_LAUNCHER);
   return { x: braced ? 3 : 0, y: braced ? 4 : 0 };
 }
 function actorStanceUIAnchor(c) {
@@ -49128,6 +49726,7 @@ function drawCombatStanceBody(c,b,g,cloth,withHead=true) {
   }
   g.noStroke();
   for (const d of c.decals) if (!d.isHead && !d.isLeg) {
+    if(drawParticleBeamWound(g,d,d.x,d.y*.85))continue;
     if (d.col) g.fill(...d.col); else g.fill(90,0,0,220);
     g.ellipse(d.x,d.y*.85,d.sz,d.sz);
   }
@@ -49154,6 +49753,7 @@ function drawCombatStanceHead(c,b,g) {
     push(); translate(h.x,h.y); rotate(HALF_PI); drawArmoredHelmet(g); pop();
   }
   for (const d of c.decals) if (d.isHead) {
+    if(drawParticleBeamWound(g,d,h.x+d.x,h.y+d.y))continue;
     if (d.col) g.fill(...d.col); else g.fill(90,0,0,220);
     g.ellipse(h.x+d.x,h.y+d.y,d.sz,d.sz);
   }
@@ -49226,7 +49826,7 @@ function drawCombatStanceFigure(c, p) {
   const heldTool=tool==='SWORD'||tool==='PICKAXE',toolGait=heldTool?gaitPose(c.isMoving?c.gait:0):null;
   const toolSwing=heldTool&&c.meleeTimer>0;
   const toolCarry=heldTool&&!toolSwing?swordCarryPose(c,toolGait,0):null;
-  const longGun = c.currentWeapon === WEAPONS.ASSAULT_RIFLE || c.currentWeapon === WEAPONS.SHOTGUN ? stanceLongGunPose(c) : null;
+  const longGun = solidLongGun(c.currentWeapon) ? stanceLongGunPose(c) : null;
   const bow = c.currentWeapon === WEAPONS.BOW, bowTension = bow ? bowDrawAmount(c) : 0;
   const hand = stancePointInBody(c,longGun?longGun.rear[0]:bow?13-9*bowTension:c.currentWeapon===WEAPONS.PISTOL?16:22,
     longGun?longGun.rear[1]:bow?0:c.currentWeapon===WEAPONS.PISTOL?8:11);
@@ -49273,7 +49873,7 @@ function drawCombatStanceFigure(c, p) {
       push(); translate(w === WEAPONS.PISTOL ? 16 : 22,w === WEAPONS.PISTOL ? 8 : 11);
       carryHandGun(w,kick*.10,L,S,kick*.035,c.weaponKick); pop();
       if (dual) { push(); translate(22,-11); carryHandGun(w,kick*.10,L,S,-kick*.035,c.weaponKick); pop(); }
-    } else if (w === WEAPONS.ASSAULT_RIFLE || w === WEAPONS.SHOTGUN) {
+    } else if (solidLongGun(w)) {
       push(); translate(longGun.x,longGun.y); drawLongGunSolid(w,longGun.P,longGun.kick,longGun.pump); pop();
     } else if (w === WEAPONS.BOW) { push(); translate(24,0); drawHuntingBow(c.ammo>0,0,bowDrawAmount(c)); pop(); }
     else if (w === WEAPONS.ROCKET_LAUNCHER) { push(); translate(5,6); carryLongGun(w,0,L,S); pop(); }
@@ -49286,8 +49886,11 @@ function drawCombatStanceFigure(c, p) {
     if (c.muzzleFlash > 0 && c.reloadTimer <= 0 && w !== WEAPONS.BOW) {
       const mx = w === WEAPONS.PISTOL || w === WEAPONS.TASER || w === WEAPONS.COACH_GUN ? 31 : oneHandWeapon(w) && w !== WEAPONS.REVOLVER ? 38 : 47;
       const my = w === WEAPONS.PISTOL || w === WEAPONS.TASER || w === WEAPONS.COACH_GUN ? 8 : oneHandWeapon(w) ? 11 : 6;
-      g.noStroke(); g.fill(255,213,83,220); g.triangle(mx,my-3,mx+15,my,mx,my+3);
-      g.fill(255,251,219,240); g.ellipse(mx+3,my,8,3);
+      if(w===WEAPONS.PARTICLE_BEAM)drawParticleBeamFlash(g,mx,my);
+      else {
+        g.noStroke(); g.fill(255,213,83,220); g.triangle(mx,my-3,mx+15,my,mx,my+3);
+        g.fill(255,251,219,240); g.ellipse(mx+3,my,8,3);
+      }
       if (dual) { g.fill(255,213,83,220); g.triangle(38,-14,53,-11,38,-8); }
     }
   }
@@ -55243,7 +55846,7 @@ const PROP_EMITTERS = {
 // shotgun deliberately do not: they are the scavenged and the improvised, and
 // the difference should be legible the moment the player picks one up at night.
 const WEAPON_TORCH = {
-  PISTOL: 1, SMG: 1, DUAL_SMG: 1, ASSAULT_RIFLE: 1, ROCKET_LAUNCHER: 1, TASER: 1
+  PISTOL: 1, SMG: 1, DUAL_SMG: 1, ASSAULT_RIFLE: 1, PARTICLE_BEAM: 1, ROCKET_LAUNCHER: 1, TASER: 1
 };
 
 // Where the beam actually leaves the gun. These mirror the bLX/bLY offsets
@@ -55256,6 +55859,7 @@ const WEAPON_MUZZLE = {
   SMG:             [38, 11],
   DUAL_SMG:        [38, 11],
   ASSAULT_RIFLE:   [47, 6],
+  PARTICLE_BEAM:  [47, 6],
   SHOTGUN:        [47, 6],
   ROCKET_LAUNCHER: [47, 6],
   REVOLVER:       [47, 11],
@@ -61144,6 +61748,7 @@ function startAtLevel(lvl, isLoading = false) {
   if(!isLoading&&lvl!==currentLevel)for(const e of enemiesList)bankFrontierPerson(e);
   exitFrontierSaloon();
   releaseFrontierBountyActors();
+  const beamTravelEquipment = !isLoading && player && particleBeamUnlocked ? serializeParticleBeamEquipment() : null;
   const frontierTravelEquipment = !isLoading && player && revolverUnlocked ? serializeFrontierEquipment() : null;
   const frontierTravelRevolver = !!frontierTravelEquipment && player.currentWeapon === WEAPONS.REVOLVER;
   invalidateCrowdSolids();
@@ -61174,6 +61779,7 @@ function startAtLevel(lvl, isLoading = false) {
   if (frontierTravelEquipment) restoreFrontierEquipment(frontierTravelEquipment);
   applyFrontierEquipment(player);
   if (frontierTravelRevolver) player.currentWeapon = WEAPONS.REVOLVER;
+  if (beamTravelEquipment) restoreParticleBeamEquipment(beamTravelEquipment);
 
   // Initial residency still uses the authored-core view, before travel or a
   // saved position finishes placing the player. Let draw() publish the actual

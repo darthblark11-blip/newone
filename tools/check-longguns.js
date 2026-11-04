@@ -30,9 +30,9 @@ function prepare(weapon,heading=0){
 
 function trace(source){
   const saved={};
-  for(const k of ['push','pop','translate','rotate','scale','quad','line','fill','stroke','beginShape','drawLongGunSolid','handGunBox','longGunMuzzle','figureCelOval','figureCelLimb'])saved[k]=ctx[k];
-  let m=[1,0,0,1,0,0],activeGun=null,activeBox=null,laserStroke=false,flashFill=false;
-  const stack=[],guns=[],palms=[],lasers=[],flashes=[],arms=[];
+  for(const k of ['push','pop','translate','rotate','scale','quad','line','fill','stroke','beginShape','drawLongGunSolid','handGunBox','longGunMuzzle','figureCelOval','figureCelLimb','drawPlayerAimLaser'])saved[k]=ctx[k];
+  let m=[1,0,0,1,0,0],activeGun=null,activeBox=null,laserPainting=false,flashFill=false;
+  const stack=[],guns=[],palms=[],lasers=[],laserEnds=[],flashes=[],arms=[];
   const armWidth=P('figureRig(player.bodyW,player.bodyH).upperW');
   const point=(x,y)=>[m[0]*x+m[2]*y+m[4],m[1]*x+m[3]*y+m[5]];
   ctx.push=()=>stack.push(m.slice());
@@ -40,9 +40,13 @@ function trace(source){
   ctx.translate=(x,y)=>{const p=point(x,y);m[4]=p[0];m[5]=p[1];};
   ctx.rotate=a=>{const c=Math.cos(a),s=Math.sin(a),[a0,a1,a2,a3]=m;m[0]=a0*c+a2*s;m[1]=a1*c+a3*s;m[2]=a2*c-a0*s;m[3]=a3*c-a1*s;};
   ctx.scale=(x,y=x)=>{m[0]*=x;m[1]*=x;m[2]*=y;m[3]*=y;};
-  ctx.stroke=function(...args){laserStroke=args[0]===255&&args[1]===0&&args[2]===0;return saved.stroke(...args);};
+  ctx.stroke=function(...args){return saved.stroke(...args);};
   ctx.fill=function(...args){flashFill=args[0]===255&&args[1]===200&&args[2]===0&&args[3]===200;return saved.fill(...args);};
-  ctx.line=function(x,y,x1,y1){if(laserStroke&&x1===800)lasers.push(point(x,y));return saved.line(...arguments);};
+  ctx.line=function(x,y,x1,y1){if(laserPainting){lasers.push(point(x,y));laserEnds.push(point(x1,y1));}return saved.line(...arguments);};
+  ctx.drawPlayerAimLaser=function(){
+    const previous=laserPainting;laserPainting=true;
+    try{return saved.drawPlayerAimLaser(...arguments);}finally{laserPainting=previous;}
+  };
   ctx.beginShape=function(){if(flashFill)flashes.push(point(0,0));return saved.beginShape(...arguments);};
   ctx.quad=function(...args){
     if(activeBox)activeBox.quads.push([0,2,4,6].map(i=>point(args[i],args[i+1])));
@@ -72,7 +76,7 @@ function trace(source){
     return saved.figureCelLimb(...arguments);
   };
   try{probe(source);}finally{Object.assign(ctx,saved);}
-  return {guns,palms,lasers,flashes,arms,balanced:stack.length===0};
+  return {guns,palms,lasers,laserEnds,flashes,arms,balanced:stack.length===0};
 }
 const part=(gun,rgb,predicate=()=>true)=>gun.boxes.find(b=>b.rgb.every((v,i)=>v===rgb[i])&&predicate(b));
 const centre=box=>{const ps=box.quads.flat();return [ps.reduce((n,p)=>n+p[0],0)/ps.length,ps.reduce((n,p)=>n+p[1],0)/ps.length];};
@@ -86,12 +90,13 @@ for(const [weapon,count]of [['ASSAULT_RIFLE',1],['SHOTGUN',4]]){
       for(const phase of [0,Math.PI/2,Math.PI]){
         prepare(weapon,heading);
         probe(`player.isMoving=${gait>0};player.gait=${gait};player.walkCycle=${phase};player.fire(player.aimAngle);`);
-        const state=P(`({x:player.x,y:player.y,ammo:player.ammo,cd:player.fireTimer,wantedCd:player.currentWeapon.fireCooldown,kick:player.weaponKick,shots:bullets.map(b=>[b.x,b.y])})`);
+        const state=P(`({x:player.x,y:player.y,ammo:player.ammo,cd:player.fireTimer,wantedCd:player.currentWeapon.fireCooldown,kick:player.weaponKick,shots:bullets.map(b=>[b.x,b.y]),laser:tracePlayerAimLaser(player)})`);
         const r=trace('player.show();'),gun=r.guns[0],bob=gait?Math.abs(Math.sin(phase))*2:0;
         const expected=[state.x+Math.cos(heading)*(47+bob)-Math.sin(heading)*6,state.y+Math.sin(heading)*(47+bob)+Math.cos(heading)*6];
         if(!r.balanced||r.guns.length!==1||state.ammo!==19||state.cd!==state.wantedCd||state.kick!==6||state.shots.length!==count||
            !gun||distance(gun.muzzle,expected)>1e-7||state.shots.some(p=>distance(p,expected)>1e-7)||
-           r.lasers.length!==1||r.flashes.length!==1||[...r.lasers,...r.flashes].some(p=>distance(p,expected)>1e-7))failure={heading,gait,phase,state,expected,muzzle:gun&&gun.muzzle,lasers:r.lasers,flashes:r.flashes};
+           r.lasers.length!==1||r.flashes.length!==1||[...r.lasers,...r.flashes].some(p=>distance(p,expected)>1e-7)||
+           r.laserEnds.length!==1||distance(r.laserEnds[0],[state.laser.x,state.laser.y])>1e-7)failure={heading,gait,phase,state,expected,muzzle:gun&&gun.muzzle,lasers:r.lasers,laserEnds:r.laserEnds,flashes:r.flashes};
         if(!gun||r.palms.length!==2||![gun.rear,gun.fore].every(p=>r.palms.some(h=>distance(h,p)<1e-7)))gripFailure={heading,gait,phase,palms:r.palms,rear:gun&&gun.rear,fore:gun&&gun.fore};
       }
     }
