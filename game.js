@@ -3086,7 +3086,7 @@ if (isStoryMode) {
             // middle of one, so all eighty calls came back empty.
             seedPopLevel = lvl;
         } else {
-            const initialCount = isStoryMode && lvl===3 ? FRONTIER_AMBIENT.seed : TARGET_ENEMY_COUNT;
+            const initialCount = isStoryMode && lvl===3 ? FRONTIER_AMBIENT.seed : overworldEnemyCap(lvl);
             for (let i = 0; i < initialCount; i++) spawnSingleEnemy(isStoryMode && lvl===3);
         }
 
@@ -13468,6 +13468,11 @@ const OVERWORLD = {
 // Blue intake belongs to the open world from the first arrival. The original
 // pistol defenders belong only to the sector's finite, recruitable city roster.
 const CITY_ROOKIE_PATROL_COUNT = 4;
+const LEVEL2_OVERWORLD_ENEMY_CAP = 15;
+function overworldEnemyCap(level = currentLevel) {
+  // The finite city population and scripted ambushes have their own budgets.
+  return level === 2 ? LEVEL2_OVERWORLD_ENEMY_CAP : TARGET_ENEMY_COUNT;
+}
 
 // Sample exterior streets directly: getSafeSpawn() is deliberately confined to
 // sealedSector while its gates are shut, so it cannot place an outside patrol.
@@ -13529,13 +13534,15 @@ function ensureCityRookiePatrols() {
   if (gateAmbushIsolated()) return;
   if(!isStoryMode || !player || (currentLevel!==1 && currentLevel!==2))return;
   const type=currentLevel===1?'NM0_ROOKIE':'NM0_ROOKIE_F';
-  for(let station=0;station<CITY_ROOKIE_PATROL_COUNT;station++) {
+  let slots=currentLevel===2?Math.max(0,overworldEnemyCap()-enemiesList.filter(cityOverworldRoamer).length):CITY_ROOKIE_PATROL_COUNT;
+  for(let station=0;station<CITY_ROOKIE_PATROL_COUNT&&slots>0;station++) {
     if(enemiesList.some(e => cityOverworldRoamer(e) && e.isExteriorPatrol && e.exteriorStation===station))continue;
     const point=cityOverworldSpawnPoint(station);
     if(!point)continue;
     const e=new Character(point.x,point.y,false,type);
     e.isOverworldRookie=true;e.isExteriorPatrol=true;e.exteriorStation=station;
     enemiesList.push(e);
+    slots--;
   }
 }
 
@@ -13692,7 +13699,7 @@ function spawnSingleEnemy(seed = false) {
   // conversion. Never fall through to the old NORMAL/FEMALE_PISTOL ladder.
   if(currentLevel===1 || currentLevel===2) {
     if(!player || !inOuterRegion(player.x,player.y))return;
-    if(enemiesList.filter(cityOverworldRoamer).length>=TARGET_ENEMY_COUNT)return;
+    if(enemiesList.filter(cityOverworldRoamer).length>=overworldEnemyCap())return;
     const point=cityOverworldSpawnPoint();
     if(!point)return;
     const type=overworldPick(currentLevel,random());

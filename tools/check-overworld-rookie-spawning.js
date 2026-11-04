@@ -47,6 +47,7 @@ function testOpenRoadPosition() {
 }`);
 
 for (const level of [1, 2]) {
+  const ambientCap=level===2?15:80;
   console.log(`== native L${level} exterior intake ==`);
   fresh(level);
   const rookie = level === 1 ? 'NM0_ROOKIE' : 'NM0_ROOKIE_F';
@@ -81,12 +82,27 @@ for (const level of [1, 2]) {
   ok(`L${level} checkpoint sentries do not consume the ambient budget`, !P('cityOverworldRoamer(testPost)'));
   ok(`L${level} fortress garrisons do not consume the ambient budget`, !P('cityOverworldRoamer(testFort)'));
   ok(`L${level} eighty live original defenders do not suppress open-road intake`, P('enemiesList.length>testNativeSpawnsStart'));
-  ok(`L${level} ambient intake stops at its separate eighty-unit cap`, P('enemiesList.filter(cityOverworldRoamer).length') === 80);
+  ok(`L${level} ambient intake stops at its separate ${ambientCap}-unit cap`, P('enemiesList.filter(cityOverworldRoamer).length') === ambientCap);
   ok(`L${level} open-road intake never replaces finite original defenders`, P(`enemiesList.slice(testNativeSpawnsStart).every(e=>e.eType==='ROBOT' || e.eType==='${rookie}')`));
   ok(`L${level} blue rookies appear before any tower conversion`, P(`enemiesList.slice(testNativeSpawnsStart).some(e=>e.eType==='${rookie}')`));
   ok(`L${level} hardware still shares the open-road roster`, P("enemiesList.slice(testNativeSpawnsStart).some(e=>e.eType==='ROBOT')"));
   ok(`L${level} all dynamic intake spawns stay beyond the authored city`, P('enemiesList.slice(testNativeSpawnsStart).every(e=>!inAuthoredSector(e.x,e.y,500))'));
   ok(`L${level} exterior activity leaves the original roster finite`, P('enemiesList.filter(e=>e.isPopulation).length') === population && P('sectorLedger(currentLevel).popKilled') === 0);
+
+  if(level===2){
+    probe(`window.testFullCap=enemiesList.length;
+      frameCount=(Math.floor(frameCount/45)+1)*45;maintainHostiles();spawnSingleEnemy(true);`);
+    ok('L2 periodic maintenance and seed/refill calls cannot exceed fifteen roamers',P('enemiesList.length===testFullCap&&enemiesList.filter(cityOverworldRoamer).length===15'));
+    probe(`window.testRetiredPatrol=enemiesList.find(e=>e.isExteriorPatrol);
+      testRetiredPatrol.hp=0;testRetiredPatrol.dead=true;
+      frameCount++;spawnSingleEnemy();window.testAfterRefill=enemiesList.length;
+      ensureCityRookiePatrols();ensureCityRookiePatrols();`);
+    ok('L2 replacing one defeated patrol uses one shared ambient slot',P('enemiesList.length===testAfterRefill&&enemiesList.filter(cityOverworldRoamer).length===15'));
+    ok('L2 fixed patrol restoration cannot bypass a full roaming cap',P('enemiesList.filter(e=>cityOverworldRoamer(e)&&e.isExteriorPatrol).length===3'));
+    probe(`window.testRetiredRoamer=enemiesList.find(e=>cityOverworldRoamer(e)&&!e.isExteriorPatrol);
+      testRetiredRoamer.hp=0;testRetiredRoamer.dead=true;ensureCityRookiePatrols();`);
+    ok('L2 a missing exterior station returns when an ambient slot becomes free',P('enemiesList.filter(cityOverworldRoamer).length===15&&enemiesList.filter(e=>cityOverworldRoamer(e)&&e.isExteriorPatrol).length===4'));
+  }
 
   probe(`markSectorTowersDown(currentLevel); window.towersDefeated=true;
     recruitSectorSurvivors();`);

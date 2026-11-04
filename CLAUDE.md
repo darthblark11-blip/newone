@@ -2152,6 +2152,13 @@ buffer, not state**).
 
 ### The sector population (Sectors 1 and 2, story mode)
 
+Level 2's roaming robots and NM-0 rookies share a maximum of 15 live ambient
+enemies, including the four exterior patrol stations. `overworldEnemyCap()`
+governs initial ambient seeding, maintenance, death refills and patrol restoration.
+Level 1 retains 80. This cap does not change the finite authored population
+below or any gate/outpost ambush wave; ambush isolation still suspends ambient
+spawning during those fights.
+
 **This is not the wanderer system and must never be routed through it.**
 `seedSectorPopulation(level, count)` places 80 of the sector's own people around the
 blocks near the player when a story arena opens, and `legacyStartAtLevel()` calls it
