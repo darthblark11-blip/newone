@@ -5395,7 +5395,7 @@ const _sandbagDepthPieces = []; // only the visible low walls need height orderi
 let _depthOn = false;
 let _legacyActorsQueued = false; // closed interiors keep their standing order
 let _airborneActors = [];   // live flyers are above roofs, not ground contacts
-let _forestCrowns = [];    // reused; raised foliage above the ground actor pass
+let _forestCrowns = [];    // reused; raised wood, then foliage above ground actors
 
 // Live decor that STANDS, as opposed to lying on the ground.
 //
@@ -5696,10 +5696,14 @@ function drawDepthSorted() {
     _depthOn = false;
   }
 
-  // Walking south of a trunk must not put a person on top of its branches.
-  // Crowns retain their stable tree order and live aircraft paint later.
+  // Raised wood covers ground actors, but must sit beneath every leaf crown.
+  // Painting wood with each crown lets a later neighbour's shaft cut through
+  // earlier foliage at angled views. Both passes retain stable root order.
   for (let i = 0; i < _forestCrowns.length; i++) {
-    paintForestClutter(window, _forestCrowns[i], frameCount, 'crown');
+    paintForestClutter(window, _forestCrowns[i], frameCount, 'wood');
+  }
+  for (let i = 0; i < _forestCrowns.length; i++) {
+    paintForestClutter(window, _forestCrowns[i], frameCount, 'foliage');
   }
   _forestCrowns.length = 0;
   for(const b of activeBuildings)if(b.isUBarrier&&b.hp>0&&inView(b.x,b.y,Math.max(b.w||0,b.h||0)+150)) {
@@ -52443,6 +52447,8 @@ function paintForestClutter(g, d, t, phase) {
   g.push(); g.translate(d.x, d.y);
 
   if (cm) {
+    // Bare snags join the raised wood pass but have no foliage to repaint.
+    if (phase === 'foliage' && species === "CHARRED_SNAG") { g.pop(); return true; }
     const crownScale = d.forestCrownScale === undefined ? 1 : d.forestCrownScale;
     const rx = cm[1] * s * crownScale * 0.5, ry = cm[2] * s * crownScale * 0.5;
     let lx = 0, ly = 0;
@@ -52452,7 +52458,7 @@ function paintForestClutter(g, d, t, phase) {
     }
     const tw = (fp.trunkWidth || 9) * s;
     const ink = (fp.outline || 1.8) * s;
-    if (phase !== 'root' && phase !== 'crown') {
+    if (phase !== 'root' && phase !== 'crown' && phase !== 'wood' && phase !== 'foliage') {
     if (species === "CHARRED_SNAG") {
       if (sd > 0.025) {
         g.stroke(24, 33, 27, 48 * sd); g.strokeWeight(3 * s);
@@ -52470,13 +52476,15 @@ function paintForestClutter(g, d, t, phase) {
 
     // The flared bole stands from its fixed ground contact through the crown.
     // Its upper end disappears inside raised foliage instead of floating.
-    paintForestTreeBole(g, d, path, lx, ly, tw, ink, phase);
+    if (phase !== 'foliage') {
+      paintForestTreeBole(g, d, path, lx, ly, tw, ink, phase === 'wood' ? 'crown' : phase);
+    }
     if (species === "CHARRED_SNAG") {
       for (let i = 0; i < 5; i++) {
         const a = rot + i * 2.17 + Math.sin(seed * 7 + i) * 0.15;
         const f = 0.25 + i * 0.15;
         const aboveActor = cm[0] * s * f > 17;
-        if (phase === 'root' && aboveActor || phase === 'crown' && !aboveActor) continue;
+        if (phase === 'root' && aboveActor || (phase === 'crown' || phase === 'wood') && !aboveActor) continue;
         const bx = lx * f, by = ly * f;
         const ex = bx + Math.cos(a) * rx * (0.50 + i % 2 * 0.18);
         const ey = by + Math.sin(a) * ry * (0.50 + i % 2 * 0.18);
@@ -52493,7 +52501,7 @@ function paintForestClutter(g, d, t, phase) {
       }
       g.pop(); return true;
     }
-    if (phase === 'root') { g.pop(); return true; }
+    if (phase === 'root' || phase === 'wood') { g.pop(); return true; }
 
     const alder = species === "RED_ALDER" || d.forestCanopyStyle === "COMIC";
     const palette = forestTreePalette(species, habitatKey);
@@ -57891,37 +57899,41 @@ function glRigForestTreeTrunkHeight(g, d, cp, phase = 'root') {
     g.pop();
   }
 }
-function glRigForestCanopyHeight(g, d, cp) {
+function glRigForestCanopyHeight(g, d, cp, phase = 'crown') {
   if (!cp) return;
   const s = d.s || 1, crown = d.forestCrownScale === undefined ? 1 : d.forestCrownScale;
   const elevation = groundElev(d.x, d.y), rise = cp[0] * s;
   const rx = cp[1] * s * crown * .5, ry = cp[2] * s * crown * .5;
   massLean(d.x, d.y, rise, _leanTmp);
   const lx = _leanTmp[0], ly = _leanTmp[1];
-  // Raised wood covers standing actors just like the visible upper bole.
-  glRigForestTreeTrunkHeight(g, d, cp, 'crown');
-  g.push(); g.translate(d.x, d.y);
-  if (d.forestSpecies === 'CHARRED_SNAG') {
-    glRigForestSnagBranches(g, d, cp, lx, ly, false);
-  } else {
-    const plan = forestTreePlan(d, rx, ry, d.c || 0, d.forestSpecies, d.r || 0, d.forestCanopyStyle);
-    const fill = forestFloorPainter(g, forestPolygonPainter(g)) || g;
-    const alder = d.forestSpecies === 'RED_ALDER' || d.forestCanopyStyle === 'COMIC';
-    g.noStroke();
-    for (const stamp of plan.heightStamps) {
-      glRigMat(fill, elevation + rise * stamp.height, .05, 0);
-      g.push();
-      if (stamp.branch) {
-        const branch = stamp.branch;
-        g.translate(branch.x + lx * branch.height, branch.y + ly * branch.height);
-        forestTreeBough(g, rx * branch.size, ry * branch.size, branch.angle,
-          d.c || 0, alder, branch.points);
-      } else {
-        g.translate(lx * stamp.projected, ly * stamp.projected); g.scale(stamp.radius);
-        forestTreeCrown(g, rx, ry, d.c || 0, d.forestSpecies, plan.crown);
-      }
+  // Match the art's global wood-before-foliage order in the height field.
+  if (phase !== 'foliage') {
+    glRigForestTreeTrunkHeight(g, d, cp, 'crown');
+    if (d.forestSpecies === 'CHARRED_SNAG') {
+      g.push(); g.translate(d.x, d.y);
+      glRigForestSnagBranches(g, d, cp, lx, ly, false);
       g.pop();
     }
+  }
+  if (phase === 'wood' || d.forestSpecies === 'CHARRED_SNAG') return;
+  g.push(); g.translate(d.x, d.y);
+  const plan = forestTreePlan(d, rx, ry, d.c || 0, d.forestSpecies, d.r || 0, d.forestCanopyStyle);
+  const fill = forestFloorPainter(g, forestPolygonPainter(g)) || g;
+  const alder = d.forestSpecies === 'RED_ALDER' || d.forestCanopyStyle === 'COMIC';
+  g.noStroke();
+  for (const stamp of plan.heightStamps) {
+    glRigMat(fill, elevation + rise * stamp.height, .05, 0);
+    g.push();
+    if (stamp.branch) {
+      const branch = stamp.branch;
+      g.translate(branch.x + lx * branch.height, branch.y + ly * branch.height);
+      forestTreeBough(g, rx * branch.size, ry * branch.size, branch.angle,
+        d.c || 0, alder, branch.points);
+    } else {
+      g.translate(lx * stamp.projected, ly * stamp.projected); g.scale(stamp.radius);
+      forestTreeCrown(g, rx, ry, d.c || 0, d.forestSpecies, plan.crown);
+    }
+    g.pop();
   }
   g.pop();
 }
@@ -58164,11 +58176,16 @@ function glRigPaintHeight() {
 
   // Forest foliage paints above ground actors in both the art and the height
   // field. A person underneath cannot punch a low-height hole in a canopy.
-  // Follow the art's root order where neighbouring tall crowns overlap.
+  // Stamp all raised wood first so a neighbouring shaft cannot replace a
+  // leaf's height/material with bark where its visible art is occluded.
   _glForestCanopies.sort((a, b) => a.y - b.y);
   for (let i = 0; i < _glForestCanopies.length; i++) {
     const d = _glForestCanopies[i];
-    glRigForestCanopyHeight(g, d, forestCanopyMass(d));
+    glRigForestCanopyHeight(g, d, forestCanopyMass(d), 'wood');
+  }
+  for (let i = 0; i < _glForestCanopies.length; i++) {
+    const d = _glForestCanopies[i];
+    glRigForestCanopyHeight(g, d, forestCanopyMass(d), 'foliage');
   }
   _glForestCanopies.length = 0;
 

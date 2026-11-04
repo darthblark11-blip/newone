@@ -579,9 +579,14 @@ The canopy underside joins the top with filled side faces; keep its rise in
 the shared vertical frame. Tree rises are 102–136 before girth scaling;
 `FOREST_CROWN_LOW/HIGH` lift the leaf mass above exposed faceted wood. Cached
 bole slices split at world height 17: lower wood sorts with feet, upper wood
-and crowns cover ground actors. Bare snags share that order. Keep native
-canopy fill enabled even when an earlier painter ended with `noFill()`.
+and crowns cover ground actors. Paint every upper bole/bare branch before
+any leaf crown, retaining stable root order within both global passes. The
+height field must use the same wood-before-foliage order; per-tree combined
+passes let neighboring shafts overpaint leaves at angled views. Bare snags
+share that order. Keep native canopy fill enabled even when an earlier painter
+ended with `noFill()`.
 `tools/check-forest-tall-trees.js` guards wood, depth, caches and visibility.
+`tools/check-forest-canopy-occlusion.js` guards neighboring canopy overlap.
 `tools/check-forest-camera.js` guards the
 orientation and continuous projection, and `tools/visual-forest-pan.js` captures
 the real moving-camera result. Review that motion before changing the art.

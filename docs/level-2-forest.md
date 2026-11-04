@@ -49,7 +49,9 @@ surface at `FOREST_CROWN_HIGH` (.84); seeded boughs continue above it. Cached
 eight-sided trunks connect the fixed roots to those crowns with flared bases,
 sun-facing wood planes and sparse lengthwise bark seams. The wood below height
 17 sorts with ground actors; the upper shaft and foliage paint above them.
-Bare snags share the split and route their branches by actual height.
+Bare snags share the split and route their branches by actual height. All raised
+wood paints before any foliage, retaining root order within each pass, so a
+neighbor's shaft or bare branch cannot cut across a leaf crown at angled views.
 `forestChunkDecorPad()` derives visibility margins from resident tree sizes,
 including crowns whose roots are outside the visible chunk.
 
@@ -258,8 +260,9 @@ moving the ridges themselves.
 is active, it receives nine cached, height-sorted canopy stamps: four crown
 contours and the five actual bough silhouettes at their visible camera offsets.
 The exposed wood uses one continuous height gradient for each lower/upper
-slice, in the same actor order as the art. The forest has a 400-unit lighting
-height ceiling so mature trees on hills remain distinct; other scenes retain
+slice, in the same actor order as the art. All upper wood is stamped before
+all leaf masks, matching visible canopy occlusion. The forest has a 400-unit
+lighting height ceiling so mature trees on hills remain distinct; other scenes retain
 their own ranges. Visible raised floor props receive at
 most five sparse height stamps before the character pass: narrow fronds,
 stems and flower heads retain open space. Canopies retain their later pass
@@ -312,7 +315,10 @@ native rendering or measuring device performance.
 The real frame opens its depth queue **before** `drawGround()` calls the chunk
 decor pass. Opening it only when actors begin would paint trees into the floor
 and let the player cover their crowns. `tools/check-forest-depth.js` exercises
-consecutive real frames as well as isolated depth dispatch. Shrub camera/phase
+consecutive real frames as well as isolated depth dispatch.
+`tools/check-forest-canopy-occlusion.js` checks neighboring wood/leaf order in
+both art and lighting; `CANOPY_NATIVE=1` also compares real p5 angled views with
+an independent wood-before-leaves reference. Shrub camera/phase
 geometry is covered by `tools/check-forest-shrubs.js`; timber and leaf projection
 by `tools/check-forest-timber.js` and `tools/check-forest-plants.js`. The live
 selection/bake split is covered by `tools/check-forest-floor-props.js`, and

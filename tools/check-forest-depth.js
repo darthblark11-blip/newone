@@ -37,8 +37,8 @@ probe(`
 `);
 ok(P('__frameFaults.length===0'), 'real forest frames complete without a scene fault');
 ok(P(`JSON.stringify(__frameEvents)===JSON.stringify([
-  'decor:true','tree:shadow','tree:root','player','tree:crown',
-  'decor:true','tree:shadow','tree:root','player','tree:crown'])`),
+  'decor:true','tree:shadow','tree:root','player','tree:wood','tree:foliage',
+  'decor:true','tree:shadow','tree:root','player','tree:wood','tree:foliage'])`),
   'consecutive real frames queue trees before actors and paint the canopy above the player');
 
 probe(`
@@ -67,18 +67,21 @@ const events = P('__events');
 const pos = name => events.indexOf(name);
 for (const tree of ['northTree','southTree']) {
   ok(pos(tree+':shadow') >= 0 && pos(tree+':shadow') < pos('actor5'), `${tree} shade stays below every actor`);
-  ok(pos(tree+':crown') > pos('actor100'), `${tree} canopy covers characters on either side of the trunk`);
-  ok(pos(tree+':crown') < pos('flyer'), `${tree} canopy stays beneath the airborne pass`);
-  ok(events.filter(e=>e===tree+':root').length===1 && events.filter(e=>e===tree+':crown').length===1,
-    `${tree} roots and foliage each draw once`);
+  ok(pos(tree+':foliage') > pos('actor100'), `${tree} canopy covers characters on either side of the trunk`);
+  ok(pos(tree+':foliage') < pos('flyer'), `${tree} canopy stays beneath the airborne pass`);
+  ok(events.filter(e=>e===tree+':root').length===1 && events.filter(e=>e===tree+':wood').length===1 &&
+    events.filter(e=>e===tree+':foliage').length===1, `${tree} roots, raised wood and foliage each draw once`);
+  ok(pos(tree+':wood') > pos('actor100') && pos(tree+':wood') < pos('northTree:foliage'),
+    `${tree} raised wood covers actors while staying below every leaf crown`);
 }
 ok(pos('actor5')<pos('northTree:root') && pos('northTree:root')<pos('actor50'), 'northern roots retain their depth beside feet');
 ok(pos('actor50')<pos('southTree:root') && pos('southTree:root')<pos('actor100'), 'southern roots retain their depth beside feet');
 ok(pos('actor50')<pos('wall:building') && pos('wall:building')<pos('actor100'), 'building contact depth is preserved');
 ok(pos('snag:root')>pos('wall:building') && pos('snag:root')<pos('actor100'), 'bare snag roots retain their ground depth');
 ok(pos('snag:shadow')<pos('actor5'), 'bare snag shade remains below every ground actor');
-ok(pos('snag:crown')>pos('actor100') && pos('snag:crown')<pos('flyer'), 'raised bare wood covers ground figures and stays below flyers');
-ok(events.filter(e=>e==='snag:root').length===1 && events.filter(e=>e==='snag:crown').length===1 && !events.includes('snag:whole'),
+ok(pos('snag:wood')>pos('actor100') && pos('snag:wood')<pos('flyer'), 'raised bare wood covers ground figures and stays below flyers');
+ok(pos('snag:wood')<pos('northTree:foliage'), 'bare snag branches remain beneath neighboring leaves');
+ok(events.filter(e=>e==='snag:root').length===1 && events.filter(e=>e==='snag:wood').length===1 && !events.includes('snag:whole'),
   'bare snags split rooted and elevated wood exactly once without inventing foliage');
 ok(pos('shrub:shadow')<pos('actor5') && pos('shrub:root')>pos('northTree:root') &&
   pos('shrub:root')<pos('actor50') && !events.includes('shrub:crown') && !events.includes('shrub:whole'),
