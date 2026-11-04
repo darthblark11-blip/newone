@@ -56252,17 +56252,9 @@ const PROP_EMITTERS = {
   PYLON:      { dx: 0, dy: 0,   r: 210, z: 40, p: 0.62, c: [0.52, 0.86, 1.00], soft: 0.030, rMin: 26, fix: 'LAMP'  }
 };
 
-// Which weapons carry a torch under the barrel. The three western guns and the
-// shotgun deliberately do not: they are the scavenged and the improvised, and
-// the difference should be legible the moment the player picks one up at night.
-const WEAPON_TORCH = {
-  PISTOL: 1, SMG: 1, DUAL_SMG: 1, ASSAULT_RIFLE: 1, PARTICLE_BEAM: 1, ROCKET_LAUNCHER: 1, TASER: 1
-};
-
-// Where the beam actually leaves the gun. These mirror the bLX/bLY offsets
-// Character.show() fires bullets from, so the light and the rounds come out of
-// the same place -- a torch that emits from the middle of the player is a torch
-// that lights the player.
+// Muzzle flashes stay attached to their guns. These mirror the bLX/bLY offsets
+// Character.show() fires bullets from; the carried flashlight has its own body
+// mount and does not use these weapon offsets.
 const WEAPON_MUZZLE = {
   PISTOL:          [31, 8],
   TASER:           [31, 8],
@@ -56298,20 +56290,36 @@ const _flashSrc = [], _flashDist = [];
 // world radius rather than to a fraction of the beam's length. Scaled to the
 // beam it was a 460-unit pool centred on the gun -- a bright disc sitting under
 // the player with the cone growing out of it, which read as a base plate rather
-// than as light. Held to TORCH_SPILL_R it is a glow hugging the barrel, which
+// than as light. Held to TORCH_SPILL_R it is a glow around the body mount, which
 // is the only thing it was ever for: stopping the apex of the cone being a
 // point.
 const TORCH_R       = 460;
 const TORCH_INNER   = 0.30;
 const TORCH_OUTER   = 0.52;
-const TORCH_SPILL   = 0.30;
-const TORCH_SPILL_R = 34;
+const TORCH_SPILL   = 0.45;
+const TORCH_SPILL_R = 42;
 
 // The buried chamber has no sky. Both renderers read these terms so a GPU
 // stand-down cannot turn the dungeon back into outdoor daylight.
 const UNDERGROUND_AMBIENT = .16;
 function sceneLightDaylight() { return currentLevel === 9 ? 0 : daylight(); }
 function sceneLightAmbient() { return currentLevel === 9 ? UNDERGROUND_AMBIENT : .50 + .50 * daylight(); }
+function playerFlashlightEnabled() {
+  if (!player || !(player.hp > 0) || player.dead) return false;
+  if (currentLevel === 9) return true; // The closed chamber is always dark.
+  const hour = ((worldHour() % 24) + 24) % 24;
+  return BIOME_ACTIVE && (hour < SUNRISE_H || hour >= SUNRISE_H + DAY_SPAN_H);
+}
+function gatherPlayerFlashlight(out, enabled = playerFlashlightEnabled()) {
+  if (!enabled) return;
+  // Level 9's body mount is the shared position, independent of gun, tool,
+  // recoil and weapon stance. Its clearance keeps the bearer out of the cone.
+  const a = player.aimAngle || 0, ca = Math.cos(a), sa = Math.sin(a);
+  out.push({x:player.x+ca*18,y:player.y+sa*18,z:24,r:TORCH_R,
+    rMin:40,soft:.024,p:.98,c:[.94,.97,1],aim:a,half:TORCH_OUTER,inner:TORCH_INNER,
+    spill:TORCH_SPILL,spillR:TORCH_SPILL_R,fix:null,d2:-1,
+    playerFlashlight:true,undergroundFlashlight:currentLevel===9});
+}
 function gatherUndergroundEmitters(out) {
   const px = player ? player.x : (viewLeft + viewRight) * .5;
   const py = player ? player.y : (viewTop + viewBottom) * .5;
@@ -56324,25 +56332,22 @@ function gatherUndergroundEmitters(out) {
     out.push({x:t.x,y:t.y,z:38,r,rMin:18,soft:.052,p:1.08*flicker,
       c:[1,.65,.32],fix:null,d2:dx*dx+dy*dy,undergroundTorch:true});
   }
-  // This is the player's carried flashlight, independent of their selected
-  // gun or tool: a bow, revolver or holstered shovel must not remove it.
-  if (player && player.hp > 0 && !player.dead) {
-    const a = player.aimAngle || 0, ca = Math.cos(a), sa = Math.sin(a);
-    out.push({x:player.x+ca*18,y:player.y+sa*18,z:24,r:TORCH_R,
-      rMin:40,soft:.024,p:.98,c:[.94,.97,1],aim:a,half:TORCH_OUTER,inner:TORCH_INNER,
-      spill:.45,spillR:42,fix:null,d2:-1,undergroundFlashlight:true});
-  }
+  gatherPlayerFlashlight(out);
   gatherOccultSpellEmitters(out);
   out.sort((a,b)=>a.d2-b.d2);
   return out;
 }
 let _emitList = [], _emitFrame = -1, _emitLevel = -1;
+let _emitTime = NaN, _emitBiomeActive = null, _emitFlashlight = null;
 
-// The one gather. Cached on frameCount because all three consumers run in the
-// same frame and the list is identical for each of them.
+// One shared gather for all renderers. Restoring time or changing scene/light
+// availability in the same frame must not retain a daylight/nighttime list.
 function sceneEmitters() {
-  if (_emitFrame === frameCount && _emitLevel === currentLevel) return _emitList;
+  const flashlight = playerFlashlightEnabled();
+  if (_emitFrame === frameCount && _emitLevel === currentLevel && _emitTime === worldTimeMs &&
+      _emitBiomeActive === BIOME_ACTIVE && _emitFlashlight === flashlight) return _emitList;
   _emitFrame = frameCount; _emitLevel = currentLevel;
+  _emitTime = worldTimeMs; _emitBiomeActive = BIOME_ACTIVE; _emitFlashlight = flashlight;
   const out = _emitList;
   out.length = 0;
   if (currentLevel === 9) return gatherUndergroundEmitters(out);
@@ -56409,36 +56414,8 @@ function sceneEmitters() {
     }
   }
 
-  // The weapon torch. The player still carries no light of their own -- this is
-  // a property of the gun in their hands, so holstering it or picking up a
-  // scavenged shotgun puts them back in the dark, which is the whole point.
-  const w = player && player.currentWeapon;
-  const wk = w ? weaponKey(w) : '';
-  if (player && player.hp > 0 && WEAPON_TORCH[wk]) {
-    const a = player.aimAngle || 0;
-    // The muzzle, in the gun's own frame: forward along the aim and offset to
-    // whichever side the weapon is held. Same transform the bullets use.
-    const m = WEAPON_MUZZLE[wk] || [31, 8];
-    const muzzle=weaponLightMuzzle(player,m);
-    const mx = muzzle.x, my = muzzle.y, stance = actorStancePose(player);
-    out.push({
-      x: mx, y: my, z: 22 * (1-stance.crouch*.35-stance.prone*.90), r: TORCH_R,
-      // rMin has to reach back past the bearer. The muzzle is out in front of
-      // them, so the clearance is measured from there: without it the polar
-      // reduction finds the player's own silhouette behind the lamp and the
-      // beam comes out as a wedge with a hole punched in it.
-      rMin: m[0] + 18, soft: 0.024, p: 0.96,
-      c: [0.90, 0.95, 1.00], aim: a+stanceWeaponMount(player).angle, half: TORCH_OUTER, inner: TORCH_INNER,
-      spill: TORCH_SPILL, spillR: TORCH_SPILL_R,
-      // No fixture. The beam is the light; a bulb drawn at the source is a
-      // bright disc sitting on the gun, and the muzzle flash already covers
-      // the one moment there is something there to see.
-      fix: null,
-      // Always first in the budget: the player's own beam may never be the
-      // light that gets dropped when a street gets busy.
-      d2: -1
-    });
-  }
+  // A body-mounted beam at night, with priority over flashes and fixed lamps.
+  gatherPlayerFlashlight(out, flashlight);
 
   // GUN FLASHES.
   //
@@ -56683,13 +56660,8 @@ function drawLightPass() {
              L.spillR ? L.spillR / L.r : 0);
   }
 
-  // The player deliberately carries NO light of their own.
-  //
-  // There used to be a 240-unit pool pinned to them, which meant the player was
-  // never actually in the dark: the one thing a night is supposed to do -- make
-  // you walk toward the lamps -- could not happen, because the light came with
-  // you. A torch is an item, not a property of being alive. Reinstate it here
-  // and in glRigGatherLights() together if it ever becomes one.
+  // The carried flashlight already comes through sceneEmitters(), with the
+  // same body mount and night gate used by the WebGL light gather.
 
   // Vignette lives here rather than in the grade layer: closing the frame down
   // is a reduction in light, so multiplying is what it actually is.

@@ -1261,16 +1261,17 @@ through the generic "rise from the size of the base" formula gives about six, an
 six-unit lean is a manhole cover with a bulb lying beside it — which is exactly what the
 lamp posts were.
 
-**The torch is a property of the gun, not of the player.** `WEAPON_TORCH` lists which
-weapons carry one — `PISTOL · SMG · DUAL_SMG · ASSAULT_RIFLE · ROCKET_LAUNCHER · TASER`.
-The shotgun and the three western guns deliberately do not: they are the scavenged and
-the improvised, and picking one up at night should put you back in the dark. It leaves
-the **muzzle**, at the `WEAPON_MUZZLE` offset that mirrors the `bLX`/`bLY` the bullets
-are fired from, so the light and the rounds come out of the same place; its `rMin`
-is measured from there and has to reach back *past* the bearer. It sorts first in the
-budget, so the player's own beam is never the light that gets dropped when a street gets
-busy, and it draws no fixture — the beam is the light, and a bulb at the source is just a
-bright disc sitting on the gun.
+**The flashlight is body mounted and weapon independent.**
+`gatherPlayerFlashlight()` shares Level 9's origin everywhere: 18 units along
+`player.aimAngle` from the player root, with height 24 and carrier clearance 40.
+It is active outdoors from 18:00 until 06:00; the permanently dark Level 9
+chamber retains it regardless of surface time. Guns, tools, recoil and weapon
+stance mounts do not move the source. It sorts first in the shared emitter
+budget and draws no separate fixture. `WEAPON_MUZZLE` and `weaponLightMuzzle()`
+still place gunfire flashes at their actual weapon origins.
+`sceneEmitters()` includes clock, scene mode and flashlight availability in its
+frame cache so same-frame day/night, travel and death transitions cannot retain
+an obsolete beam. See `tools/check-player-flashlight.js`.
 
 `TORCH_SPILL` is the bleed at the source, held to the fixed world radius `TORCH_SPILL_R`
 rather than to a fraction of the beam. Scaled to the beam it was a 460-unit pool centred
@@ -1339,10 +1340,9 @@ Five things here are load-bearing:
    and they were baked against the same `LIGHT_DX/DY` the march uses. `slope` is derived
    from `shadowLengthScale()` so a marched shadow is the length the 2D pass would have
    drawn.
-4. **An emitter is never shadowed by its carrier.** `rMin` per light. The player's torch
-   sits nine units above the player's own silhouette, so without it the polar reduction
-   finds an occluder at r=0 in every direction and the light comes out as a wedge with the
-   bearer standing in a hole.
+4. **An emitter is never shadowed by its carrier.** `rMin` per light. The player
+   flashlight uses a 40-unit clearance around its body mount so the polar reduction
+   cannot treat the bearer's own silhouette as a wall blocking the cone.
 5. **The polar reduction takes the occluder's peak, not its first edge sample.** The
    occlusion target is LINEAR filtered, so the sample that trips the threshold is sitting
    on the occluder's filtered edge and reads about half its true height. Recording that
@@ -1363,12 +1363,11 @@ Two things the height field cannot hold, and what happens instead:
   entry's own `s`. Keyed on the solid instead, a jungle at night had trees that occluded
   no lamp, took no torch and threw nothing but a painted oval.
 
-**The player carries no light; their weapon does.** There used to be a 240-unit pool
-pinned to the player, and the GPU rig inherited it. It meant the player was never
-actually in the dark, so the one thing a night is for — making you walk toward the lamps
-— could not happen, because the light came with you. What replaced it is the weapon
-torch (see **Emitters**), which is a cone, comes off the muzzle, and goes away when the
-player picks up a scavenged gun.
+**The player flashlight shares one source across both renderers.** The Canvas
+fallback and GPU gather read the same body-mounted, night-gated cone from
+`sceneEmitters()`. The underground chamber uses the same mount with its existing
+always-dark scene rule. Keep its small fixed spill rather than restoring a
+large player-centred pool.
 
 **Every light casts, and the BUDGET is the thing that gives.** `GLRIG_LIGHTS` is the
 number of rows in the polar atlas and therefore the ceiling on shadow-casting local

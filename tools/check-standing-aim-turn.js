@@ -67,8 +67,11 @@ const firing=P('({a:player.aimAngle,x:player.x,y:player.y,b:bullets[0],ammo:play
 const muzzle={x:firing.x+Math.cos(firing.a)*31-Math.sin(firing.a)*8,y:firing.y+Math.sin(firing.a)*31+Math.cos(firing.a)*8};
 ok('a shot during the turn fires immediately along the intermediate barrel',firing.ammo===29&&firing.b&&Math.abs(firing.b.a-firing.a)<1e-8);
 ok('turning gunfire starts at the actual rotated pistol muzzle',Math.hypot(firing.b.startX-muzzle.x,firing.b.startY-muzzle.y)<1e-8);
-probe('BIOME_ACTIVE=true;frameCount++;');const lights=P('sceneEmitters()'),torch=lights.find(e=>e.aim!==undefined);
-ok('the weapon torch follows the same turning barrel and muzzle',torch&&Math.abs(torch.aim-firing.a)<1e-8&&Math.hypot(torch.x-muzzle.x,torch.y-muzzle.y)<1e-8);
+probe('BIOME_ACTIVE=true;worldTimeMs=0;updateSunVector();frameCount++;');
+const lights=P('sceneEmitters()'),torch=lights.find(e=>e.playerFlashlight),flash=lights.find(e=>e.r===P('MUZZLE_FLASH_R'));
+const bodyMount={x:firing.x+Math.cos(firing.a)*18,y:firing.y+Math.sin(firing.a)*18};
+ok('the nighttime body flashlight follows the turning aim from its carried mount',torch&&Math.abs(torch.aim-firing.a)<1e-8&&Math.hypot(torch.x-bodyMount.x,torch.y-bodyMount.y)<1e-8);
+ok('the shot flash remains attached to the actual turning weapon muzzle',flash&&Math.hypot(flash.x-muzzle.x,flash.y-muzzle.y)<1e-8);
 fresh();probe('player.aimAngle=.7;player.fire(.7);');
 ok('a direct weapon fire call retains its explicit heading without a control filter',P('bullets.length===1&&Math.abs(bullets[0].a-.7)<1e-8&&player._standingAim===undefined'));
 

@@ -66,6 +66,12 @@ permanent light sources. The torch baskets have wrapped timber shafts, woven
 collars, nested animated flames and a few rising embers. Rock walls, props and
 figures share the existing cel geometry, camera lean and depth ordering.
 
+The flashlight uses the shared body mount, 18 units ahead of the player's
+ground position with a 24-unit light height. Weapons, tools and recoil do not
+move it. Surface scenes enable it from 18:00 until 06:00; this permanently dark
+chamber retains it at every surface hour. Both lighting renderers use the same
+source and reserve its first budget slot.
+
 At most twenty-four 384×384 floor canvases represent 768-unit world tiles. Tiles
 bake only when first visible; least recently used tiles release their canvases
 when the cache fills. Leaving the dungeon releases the remaining buffers. Torch

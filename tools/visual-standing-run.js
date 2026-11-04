@@ -61,6 +61,7 @@ const fps=30,totalFrames=Number(process.env.STANDING_RUN_FRAMES||360);
   });
   const alignment=await page.evaluate(()=>{
    const records=[],nativeLong=window.drawLongGunSolid,nativeLine=window.line;
+   worldTimeMs=0;updateSunVector(); // The carried body flashlight is active at night.
    const point=(m,x,y)=>({x:m.a*x+m.c*y+m.e,y:m.b*x+m.d*y+m.f});
    const near=(a,b,label)=>{const error=Math.hypot(a.x-b.x,a.y-b.y);if(error>1e-4)throw Error(label+' differs by '+error);return error;};
    let barrel=null,laser=null;
@@ -78,16 +79,14 @@ const fps=30,totalFrames=Number(process.env.STANDING_RUN_FRAMES||360);
       if(!barrel||!laser)throw Error('Missing barrel or laser during '+weapon+' turn');
       const shotError=near(barrel,point(outer,shot.startX,shot.startY),'Barrel/projectile');
       const laserError=near(barrel,laser.start,'Barrel/laser');
-      const emitters=sceneEmitters(),torch=emitters.find(e=>e.aim!==undefined),flash=emitters.find(e=>e.r===MUZZLE_FLASH_R);
+      const emitters=sceneEmitters(),torch=emitters.find(e=>e.playerFlashlight),flash=emitters.find(e=>e.r===MUZZLE_FLASH_R);
       if(!flash)throw Error('Missing native muzzle flash emitter');
       const flashError=near(barrel,point(outer,flash.x,flash.y),'Barrel/flash');
-      let torchError=null,torchAngleError=null;
-      if(WEAPON_TORCH[weaponKey(c.currentWeapon)]){
-       if(!torch)throw Error('Missing native weapon torch');
-       torchError=near(barrel,point(outer,torch.x,torch.y),'Barrel/torch');
-       torchAngleError=Math.abs(Math.atan2(Math.sin(torch.aim-c.aimAngle),Math.cos(torch.aim-c.aimAngle)));
-       if(torchAngleError>1e-7)throw Error('Torch direction differs from smooth gun aim');
-      }
+      if(!torch)throw Error('Missing nighttime body flashlight');
+      const bodyMount=point(outer,c.x+Math.cos(c.aimAngle)*18,c.y+Math.sin(c.aimAngle)*18);
+      const torchError=near(bodyMount,point(outer,torch.x,torch.y),'Body/flashlight');
+      const torchAngleError=Math.abs(Math.atan2(Math.sin(torch.aim-c.aimAngle),Math.cos(torch.aim-c.aimAngle)));
+      if(torchAngleError>1e-7)throw Error('Body flashlight direction differs from smooth aim');
       records.push({weapon,moving,frame:i,aim:c.aimAngle,target,shotError,laserError,flashError,torchError,torchAngleError});
       BIOME_ACTIVE=false;
      }
@@ -227,6 +226,6 @@ const fps=30,totalFrames=Number(process.env.STANDING_RUN_FRAMES||360);
   const encode=spawnSync('ffmpeg',['-y','-loglevel','error','-framerate',String(fps),'-i',path.join(frames,'%04d.png'),'-c:v','libx264','-pix_fmt','yuv420p','-crf','18','-movflags','+faststart',path.join(out,'standing-run.mp4')],{encoding:'utf8'});
   if(encode.error)throw encode.error;assert.equal(encode.status,0,encode.stderr);
   fs.writeFileSync(path.join(out,'review.json'),JSON.stringify({alignment,visibility,gaitSheets,directionSheets,phases,turns,motion,errors,fps,totalFrames},null,2));
-  console.log('288 native barrel/projectile/laser/flash/torch turn checks, 360 diagnostic visibility samples, 126 original/aimed pose cards and '+totalFrames+' motion frames passed. Previews: '+out);
+  console.log('288 native barrel/projectile/laser/flash turn checks with body flashlight alignment, 360 diagnostic visibility samples, 126 original/aimed pose cards and '+totalFrames+' motion frames passed. Previews: '+out);
  }finally{await browser.close();}
 })().catch(error=>{console.error(error.stack||error);process.exit(1);});
