@@ -49,11 +49,11 @@ probe(`player.currentWeapon=WEAPONS.PISTOL;player.reloadTimer=45;player.show();
 ok('prone reload reuses the native magazine/hand animation',reloads===1);
 ok('prone support actions retain the cannon and held flask',actions.includes(2)&&actions.includes(1));
 ctx.drawOneHandReload=reload;ctx.drawLeftHandAction=action;
-probe(`BIOME_ACTIVE=true;frameCount++;player.muzzleFlash=3;var stanceLights=sceneEmitters();
- var stanceTorch=stanceLights.find(e=>e.aim!==undefined),stanceFlash=stanceLights.find(e=>e.r===MUZZLE_FLASH_R);
+probe(`BIOME_ACTIVE=true;worldTimeMs=0;updateSunVector();frameCount++;player.muzzleFlash=3;var stanceLights=sceneEmitters();
+ var stanceTorch=stanceLights.find(e=>e.playerFlashlight),stanceFlash=stanceLights.find(e=>e.r===MUZZLE_FLASH_R);
  var stanceLightPoint=stanceMuzzleWorld(player,player.x+31,player.y+8);`);
-ok('prone torch and flash move to the physical barrel at floor height',
-  P('stanceTorch && stanceFlash && Math.abs(stanceTorch.x-stanceLightPoint.x)<1e-8 && Math.abs(stanceFlash.y-stanceLightPoint.y)<1e-8 && stanceTorch.z<3 && stanceFlash.z<3'));
+ok('prone retains its night body flashlight and its independent physical muzzle flash',
+  P('stanceTorch&&stanceFlash&&Math.abs(stanceTorch.x-player.x-18)<1e-8&&Math.abs(stanceTorch.y-player.y)<1e-8&&stanceTorch.z===24&&Math.abs(stanceFlash.x-stanceLightPoint.x)<1e-8&&Math.abs(stanceFlash.y-stanceLightPoint.y)<1e-8&&stanceFlash.z<3'));
 const labels=[],origins=[],oldText=ctx.text,oldTranslate=ctx.translate;
 ctx.text=(...args)=>labels.push(args);ctx.translate=(...args)=>origins.push(args);
 probe(`recordStanceDamage(player,20,'HEAD');drawCombatStanceUI(player,actorStancePose(player));`);

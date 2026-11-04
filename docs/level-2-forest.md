@@ -428,13 +428,38 @@ separate runtime population capped at 48 animals, including 18–26-member herd
 encounter targets (actual placement can be smaller on crowded terrain).
 Large mammals use roughly twice their original dimensions, measured against
 the player's body; smaller fauna retain their relative size while becoming
-readable at mobile zoom. Art, anatomical head targets, solid clearance, spawn reservations and herd
-spacing share those dimensions. Shooting uses tighter, family-specific torso
-ellipses and head circles; movement uses the larger oriented ground footprint.
+readable at mobile zoom. Art, anatomical head targets, spawn reservations and
+herd spacing share those dimensions. Shooting uses tighter, family-specific
+torso ellipses and head circles. Live environment movement instead uses a small
+2–6 unit foot radius, so large antlers and torsos do not trap an animal between
+nearby trees. Swept tests still respect structural walls, water and rotated logs.
 Live grounded animals whose species size is at least 24 block the player and
 army actors, and also stop before moving or turning into them. Walking and dash
 probes sweep that footprint; an existing overlap still permits moving outward.
 Small fauna, airborne birds, stunned animals and carcasses do not block routes.
+
+Obstructed wildlife retains its escape goal and a consistent wall-following
+side while an incremental local search finds waypoints around corners and
+concave traps. One shared 41×41 scratch grid serves the population, capped at
+96 edge probes and 24 node expansions per frame, and 512 expansions per search.
+Routes last up to 420 simulation ticks; failed searches back off for 90 ticks.
+Herd members can join a shared path through a verified clear connector. An
+obstacle blocking an existing waypoint invalidates that path; routing never
+changes the goal randomly or consumes encounter/combat RNG. Human contact
+uses bounded local buckets and a cheap swept broad phase.
+Material goal-direction changes cancel obsolete cached and pending routes.
+Retiring an animal releases its queued or active search immediately; biome
+exit and ambush isolation clear derived routing without changing encounter luck.
+
+Velocity, facing, warning turns and the stride envelope ease through intermediate
+values on each active simulation step. Staggered steering does not stagger the
+visible motion. Actual travel drives the foot animation, including a smooth
+settle when blocked. Omitted step lengths follow capped elapsed gameplay time;
+explicit simulation steps, mortal-bleed timing, menus and pauses retain their
+existing contracts. `tools/check-wildlife-navigation.js` covers narrow gaps,
+walls, concave escapes, dynamic obstacles and motion; the companion
+`check-wildlife-navigation-budget.js` saturates the shared planner and verifies
+that distant scenery or unrelated soldiers add no local query work.
 
 ```js
 const animal = {

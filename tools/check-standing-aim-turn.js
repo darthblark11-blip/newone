@@ -58,33 +58,34 @@ probe('isPaused=false;doTick=false;frameCount++;player.aimAngle=standingAimHeadi
 ok('a suspended simulation never advances the standing aim turn',P('player.aimAngle')===once&&P('JSON.stringify(player._standingAim)')===state);
 
 fresh();target(Math.PI/2);tick(4);probe('rightStick.active=false;');tick(80);
-ok('releasing the aim input retires the aimed-turn filter after its brief hold',P('!standingAimEligible(player)&&player._standingAim===null'));
+ok('releasing aim retains a settled facing filter for a seamless return to neutral',P('standingAimEligible(player)&&player._standingAim!==null&&Math.abs(player._standingAim.velocity)<.004'));
 fresh();probe('leftStick.active=true;leftStick.dx=0;leftStick.dy=1;');tick();
-ok('un-aimed locomotion retains its original immediate movement facing',P('Math.abs(player.aimAngle-Math.PI/2)<1e-8&&player._standingAim===null'));
+ok('un-aimed locomotion keeps immediate movement while the body turns through intermediate frames',P('player.y>90&&player.aimAngle>0&&player.aimAngle<.15&&player._standingAim!==null'));
 
 fresh();target(Math.PI/2,true);tick();
 const firing=P('({a:player.aimAngle,x:player.x,y:player.y,b:bullets[0],ammo:player.ammo})');
-const muzzle={x:firing.x+Math.cos(firing.a)*31-Math.sin(firing.a)*8,y:firing.y+Math.sin(firing.a)*31+Math.cos(firing.a)*8};
-ok('a shot during the turn fires immediately along the intermediate barrel',firing.ammo===29&&firing.b&&Math.abs(firing.b.a-firing.a)<1e-8);
+const muzzle=P('aimLaserMuzzle(player)'),barrel=P('weaponAimHeading(player)');
+ok('a shot during the turn fires immediately along the intermediate barrel',firing.ammo===29&&firing.b&&Math.abs(firing.b.a-barrel)<1e-8);
 ok('turning gunfire starts at the actual rotated pistol muzzle',Math.hypot(firing.b.startX-muzzle.x,firing.b.startY-muzzle.y)<1e-8);
 probe('BIOME_ACTIVE=true;worldTimeMs=0;updateSunVector();frameCount++;');
 const lights=P('sceneEmitters()'),torch=lights.find(e=>e.playerFlashlight),flash=lights.find(e=>e.r===P('MUZZLE_FLASH_R'));
 const bodyMount={x:firing.x+Math.cos(firing.a)*18,y:firing.y+Math.sin(firing.a)*18};
 ok('the nighttime body flashlight follows the turning aim from its carried mount',torch&&Math.abs(torch.aim-firing.a)<1e-8&&Math.hypot(torch.x-bodyMount.x,torch.y-bodyMount.y)<1e-8);
-ok('the shot flash remains attached to the actual turning weapon muzzle',flash&&Math.hypot(flash.x-muzzle.x,flash.y-muzzle.y)<1e-8);
+const liveMuzzle=P('aimLaserMuzzle(player)');
+ok('the shot flash remains attached to the actual turning weapon muzzle',flash&&Math.hypot(flash.x-liveMuzzle.x,flash.y-liveMuzzle.y)<1e-8);
 fresh();probe('player.aimAngle=.7;player.fire(.7);');
 ok('a direct weapon fire call retains its explicit heading without a control filter',P('bullets.length===1&&Math.abs(bullets[0].a-.7)<1e-8&&player._standingAim===undefined'));
 
 for(const stance of ['CROUCH','PRONE']){
  fresh();probe(`resetActorStance(player,'${stance}');`);target(Math.PI/2);tick();
- ok(stance+' retains its established immediate aim response',Math.abs(P('player.aimAngle')-Math.PI/2)<1e-8);
+ ok(stance+' retains its own stance-safe aiming path',stance==='CROUCH'?P('player.aimAngle>0&&player.aimAngle<.15'):Math.abs(P('player.aimAngle')-Math.PI/2)<1e-8);
 }
 for(const [label,setup] of [
  ['held grenade','isCooking=true;'],['throw follow-through','player.throwAnimTimer=12;'],
  ['chemist cannon','chemistSuitUnlocked=true;player.cannonCharge=40;'],
  ['mounted rider','player.mounted=true;'],['dash','player.dashTimer=10;'],
  ['melee','player.meleeTimer=10;'],['building placement',"buildGhost={};"],
- ['crouch transition',"player.stance.to=1;"],['scripted cutscene','inCutscene=true;']]){
+ ['scripted cutscene','inCutscene=true;']]){
  fresh();probe(setup);
  ok(label+' keeps its dedicated heading path',P('standingAimHeading(player,Math.PI/2,1000/60)===Math.PI/2&&player._standingAim===null'));
 }

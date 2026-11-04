@@ -23,6 +23,10 @@ function fresh(role=1,type='NORMAL',x=180,y=8){
     player=new Character(0,0,true);player.hp=player.maxHp=1000000;player.shield=1000000;
     player.currentWeapon=WEAPONS.PISTOL;player.ammo=100000;player.aimAngle=player.moveAngle=0;
     player.isArmed=true;player.fireTimer=player.reloadTimer=player.meleeTimer=0;
+    // This suite measures the target's reaction clock, so its shooter already
+    // has the gun presented. Raising/lowering shots have their own checks.
+    player.aimHold=AIM_HOLD;
+    player._weaponPresentation={frame:-1,value:1,velocity:0,weapon:player.currentWeapon};
     window.reactor=new Character(${x},${y},false,${JSON.stringify(type)});
     reactor.hp=reactor.maxHp=100000;reactor.shield=0;reactor.isArmed=true;
     reactor.isFriendly=reactor.isNeutral=false;reactor.currentWeapon=WEAPONS.PISTOL;

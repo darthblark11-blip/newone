@@ -55,10 +55,12 @@ run(`qaAnimal.angle=0;`);
 check(`wildlifeHumanBlocks(qaAnimal,qaAnimal.x,qaAnimal.y)`, 'Turning cannot widen a live body through a nearby person');
 run(`var qaPlacement={species:'GRIZZLY_BEAR',bodyR:45,airborne:false,placement:true,x:15000,y:6600};`);
 check(`wildlifeHumanBlocks(qaPlacement,15000,6600)`, 'A placement footprint rejects a spawn on top of a ground human');
-animal();run(`var qaWalker=new Character(14900,6600,true);for(let i=0;i<30;i++)qaWalker.attemptMove(6,0);`);
+// Isolate body contact from the real forest ridge's walking-speed modifier.
+animal();run(`var qaOldTerrainSpeed=elevSpeedFactor;elevSpeedFactor=function(){return 1;};var qaWalker=new Character(14900,6600,true);for(let i=0;i<30;i++)qaWalker.attemptMove(6,0);`);
 check(`qaWalker.x<=qaAnimal.x-qaAnimal.bodyR*1.35-17&&qaWalker.x>14900`, 'The real Character movement stops a player outside the living body');
 run(`var qaStoppedX=qaWalker.x;for(let i=0;i<18;i++)qaWalker.attemptMove(0,6);for(let i=0;i<40;i++)qaWalker.attemptMove(6,0);`);
 check(`qaWalker.y>6700&&qaWalker.x>qaAnimal.x+100`, 'The real player can slide aside and walk around a large animal');
+run('elevSpeedFactor=qaOldTerrainSpeed;');
 run(`var qaArmy=new Character(14920,6600,false,'ARMORED'),qaFlyer=new Character(15000,6600,false,'AERIAL');`);
 check(`qaArmy.checkCol(14955,6600)&&!qaFlyer.checkCol(15000,6600)`, 'Ground army collision uses the same live body while aircraft retain clear flight');
 run(`qaAnimal.dead=true;qaAnimal.state='DEAD';_wildlifeGridDirty=true;`);

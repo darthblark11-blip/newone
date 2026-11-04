@@ -606,13 +606,23 @@ albedo neutral. The Canvas ridge-light cache is small and separate from terrain 
 See `tools/check-forest-sunlight.js` and the forest guide's moving sunlight contract.
 `forestWildlife` stays separate from military actors and objective counters:
 39 species, at most 48 animals, an independent encounter RNG and pooled hit grid.
-Wildlife collision probes are staggered, while cached movement advances each
-frame. Keep crossfire, hunting hits and inventory out of army recruitment and
+Wildlife steering is staggered, while swept movement advances each frame.
+Environment clearance uses a 2–6 unit foot radius; art, shooting anatomy, spawn
+spacing and human contact keep their species dimensions. Structural walls,
+water and timber still block swept movement. A single incremental local search
+shares 96 edge probes and 24 node expansions per frame across all animals;
+each search stops at 512 expansions. Cache routes, retain the escape goal and
+wall-following side, share verified herd connectors, and back off failed
+searches. Changed obstacles and reversed goals invalidate obsolete routes;
+retired animals immediately release queued or active searches. No planning or contact
+query may scan the army roster or allocate a grid per animal. Facing, velocity
+and stride envelopes advance in simulation time, never in painters.
+Keep crossfire, hunting hits and inventory out of army recruitment and
 ambush bookkeeping. Cedar Hollow grants the finite-ammunition bow; collection
 and dialogue use F, gamepad A or the visible touch prompt. Quest, quiver,
 inventory and encounter luck persist; live animals and carcasses do not.
 Use the hunting browser check for the full acquire/kill/collect/return/save loop.
-Wildlife size determines solid clearance and herd spacing. Live grounded large
+Wildlife size determines spawn clearance and herd spacing. Live grounded large
 animals (species size >=24) have swept physical contact with the player/army;
 small fauna, airborne birds, stunned animals and carcasses do not block routes.
 Species-specific human sensing makes deer/elk and timid predators flee early;
@@ -2904,6 +2914,27 @@ worth having if it can never *miss*.
 ---
 
 ## Gait — walk, jog, run
+
+Living-entity motion must connect through intermediate poses. Use bounded
+angular momentum and elapsed-time envelopes for starts, stops and reversals;
+changing an input or AI state is not permission to snap a rendered heading or
+limb pose. `entityTurnHeading()` is the shared humanoid turn primitive; callers
+own pause and per-frame guards. Wildlife integrates its turn and velocity with
+its swept movement. Citizen facing is separate from its raw navigation heading.
+Creature strides read `entityMotionAmount()`; mounted horses use the rider's
+eased gait instead of switching their legs on a movement boolean.
+Renderers read simulation state without advancing it, including repeated
+shadow, lighting or preview consumers in the same frame.
+
+The player's weapon presentation spring connects carrying and aiming in both
+directions. `standingPresentationPose()` owns the single mesh's wrists, gun
+mount and barrel; `stanceMuzzleWorld()` and `weaponAimHeading()` expose that
+same intermediate muzzle to gunfire, the laser and light effects. Do not blend
+two rendered bodies, delay a shot to finish an animation, or restore an instant
+neutral/aim switch. Dedicated action rigs retain their own stance, dive,
+melee, injury and mount transitions. See `check-entity-transitions.js`,
+`check-enemy-transitions.js`, `check-citizen-motion.js` and the wildlife
+navigation checks under `tools/`.
 
 One throttle drives everything a moving figure does. The player's left stick is already
 normalised to its own radius, so its magnitude **is** the throttle: **1–32% walk, 33–65%

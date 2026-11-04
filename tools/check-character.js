@@ -1309,14 +1309,14 @@ console.log('\n== the free left arm in a pistol sprint ==');
   probe('player.aimAngle=0;player.moveAngle=0;');
 }
 
-console.log('\n== the gun comes up instantly and goes down deliberately ==');
+console.log('\n== aim intent starts immediately and retains its release hold ==');
 {
   probe(`player.isArmed = true; player.currentWeapon = WEAPONS.PISTOL;
          player.meleeTimer = 0; player.reloadTimer = 0; player.muzzleFlash = 0;
          player.throwAnimTimer = 0; player.dashTimer = 0; player.aimHold = 0;
          rightStick.active = true;`);
   probe('player.aimHold = aimIntent(player) ? AIM_HOLD : Math.max(0, player.aimHold - 1);');
-  ok('touching the aim stick presents the weapon on the same frame',
+  ok('touching the aim stick requests presentation on the same frame',
      P('playerAiming(player)') === true);
   probe('rightStick.active = false;');
   let held = 0;

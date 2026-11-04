@@ -66,9 +66,10 @@ check(`qaLoot.condition==='PERFECT'&&bloodPools.length===1&&qaAnimal.fall.poolSt
 animal();
 run(`qaAnimal.bodyR=40;qaAnimal.angle=0;activeBuildings=[{x:15090,y:6600,w:20,h:240}];buildColIndex();qaAnimal.vx=4;applyForestWildlifeHit(qaAnimal,{weapon:'EXPLOSIVE',head:false,damage:400,shotId:'wall',angle:0});for(let i=0;i<50;i++)updateForestWildlife(1);`);
 check(`qaAnimal.x+qaAnimal.bodyR*1.35+2<=15080&&qaAnimal.fall.progress===1`, 'The full falling body stops outside solid walls');
-// COL_PAD only covers army-sized bodies. Put a solid beyond that margin in
-// an adjacent cell, where the old one-cell probe cannot see it at all.
+// Spawn reservations and fallen bodies still retain full anatomical clearance.
+// Put a solid beyond COL_PAD in an adjacent cell to preserve that contract.
 animal('GRIZZLY_BEAR');
+run('qaAnimal.placement=true;');
 for (let heading = 0; heading < 8; heading++) for (const side of [-1,1]) {
   const alongX = Math.abs(Math.cos(heading*Math.PI/4)) >= Math.abs(Math.sin(heading*Math.PI/4));
   run(`qaAnimal.bodyR=45;qaAnimal.angle=${heading}*Math.PI/4;
@@ -77,9 +78,9 @@ for (let heading = 0; heading < 8; heading++) for (const side of [-1,1]) {
     activeBuildings=[{x:qaAnimal.x+${alongX?side*50:0},y:qaAnimal.y+${alongX?0:side*50},w:2,h:2}];
     buildColIndex();`);
   check(`colNear(qaAnimal.x,qaAnimal.y).length===0&&!wildlifeCanStand(qaAnimal,qaAnimal.x,qaAnimal.y)`,
-    'Enlarged body finds adjacent-cell solids at bearing '+heading+' and side '+side);
+    'Full spawn footprint finds adjacent-cell solids at bearing '+heading+' and side '+side);
 }
-run(`qaAnimal.x=15000;qaAnimal.y=6600;qaAnimal.airborne=true;
+run(`qaAnimal.placement=false;qaAnimal.x=15000;qaAnimal.y=6600;qaAnimal.airborne=true;
   activeBuildings=[{x:15000,y:6600,w:1200,h:20}];buildColIndex();
   var qaBlockCalls=0,qaOldSolidBlocks=wildlifeSolidBlocks;
   wildlifeSolidBlocks=(b,a)=>{qaBlockCalls++;return qaOldSolidBlocks(b,a);};
@@ -91,22 +92,22 @@ run(`qaAnimal.bodyR=45;qaAnimal.angle=0;qaAnimal.state='FLEE';qaAnimal.alarm=1e9
   qaAnimal.goalY=qaAnimal.y+200;_wildlifeClock=2;
   activeBuildings=[{x:qaAnimal.x,y:qaAnimal.y+52,w:200,h:2}];buildColIndex();
   var qaTurnX=qaAnimal.x,qaTurnY=qaAnimal.y;updateForestWildlife(1);`);
-check(`qaAnimal.x===qaTurnX&&qaAnimal.y===qaTurnY&&qaAnimal.angle===0&&qaAnimal.vx===0&&qaAnimal.vy===0&&wildlifeCanStand(qaAnimal,qaAnimal.x,qaAnimal.y)`,
-  'A blocked quarter-turn keeps the previous clear orientation and root');
+check(`qaAnimal.y>qaTurnY&&qaAnimal.angle>0&&qaAnimal.angle<.161&&wildlifeCanStand(qaAnimal,qaAnimal.x,qaAnimal.y)`,
+  'Compact feet allow a gradual quarter-turn beside a wall that only overlaps the art silhouette');
 animal('GRIZZLY_BEAR');
 run(`qaAnimal.bodyR=45;qaAnimal.angle=0;qaAnimal.state='FLEE';qaAnimal.alarm=1e9;
   qaAnimal.goalY=qaAnimal.y+200;_wildlifeClock=2;
   var qaTurnY=qaAnimal.y,qaTurnSeed=serializeForestWildlife().seed;updateForestWildlife(1);`);
-check(`qaAnimal.y>qaTurnY&&qaAnimal.angle===Math.PI/2&&wildlifeCanStand(qaAnimal,qaAnimal.x,qaAnimal.y)&&serializeForestWildlife().seed===qaTurnSeed`,
-  'A clear turn moves in the new heading without consuming encounter RNG');
+check(`qaAnimal.y>qaTurnY&&qaAnimal.angle>0&&qaAnimal.angle<.161&&wildlifeCanStand(qaAnimal,qaAnimal.x,qaAnimal.y)&&serializeForestWildlife().seed===qaTurnSeed`,
+  'A clear turn moves through an intermediate heading without consuming encounter RNG');
 for (const vertical of [true,false]) {
   animal('GRIZZLY_BEAR');
   run(`qaAnimal.bodyR=45;qaAnimal.angle=${vertical?'Math.PI/2':'0'};qaAnimal.state='FLEE';qaAnimal.alarm=1e9;
     qaAnimal.goalX=qaAnimal.x+200;qaAnimal.goalY=qaAnimal.y+200;_wildlifeClock=2;
     activeBuildings=[{x:qaAnimal.x+${vertical?55:0},y:qaAnimal.y+${vertical?0:55},w:${vertical?2:200},h:${vertical?200:2}}];buildColIndex();
     var qaTurnX=qaAnimal.x,qaTurnY=qaAnimal.y,qaTurnSeed=serializeForestWildlife().seed;updateForestWildlife(1);`);
-  check(`${vertical?'qaAnimal.x===qaTurnX&&qaAnimal.y>qaTurnY&&qaAnimal.angle===Math.PI/2':'qaAnimal.x>qaTurnX&&qaAnimal.y===qaTurnY&&qaAnimal.angle===0'}&&wildlifeCanStand(qaAnimal,qaAnimal.x,qaAnimal.y)&&serializeForestWildlife().seed===qaTurnSeed`,
-    'Blocked diagonal movement validates the '+(vertical?'vertical':'horizontal')+' slide footprint without RNG calls');
+  check(`qaAnimal.x>qaTurnX&&qaAnimal.y>qaTurnY&&Math.abs(qaAnimal.angle-${vertical?'Math.PI/2':'0'})<.161&&wildlifeCanStand(qaAnimal,qaAnimal.x,qaAnimal.y)&&serializeForestWildlife().seed===qaTurnSeed`,
+    'Compact feet move freely beside the '+(vertical?'vertical':'horizontal')+' wall while the body turns continuously');
 }
 animal('BALD_EAGLE');
 run(`qaAnimal.vx=2;applyForestWildlifeHit(qaAnimal,{weapon:'PISTOL',head:false,damage:80,shotId:'bird',angle:0});updateForestWildlife(10);`);

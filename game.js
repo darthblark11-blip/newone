@@ -4531,10 +4531,11 @@ function entityCelPlate(g, points, c, lx, ly, sx, sy, inset) {
 }
 
 function drawHorseArt(coat, mane, walk, moving, gallop, sock, ang) {
+  const motion=typeof moving==='number'?Math.max(0,Math.min(1,moving)):Number(!!moving);
   const amp = gallop ? 9 : 3.6;
-  const sw = moving ? sin(walk) * amp : 0;
-  const sw2 = moving ? sin(walk + PI * 0.62) * amp : 0;
-  const heave = moving ? abs(sin(walk)) * (gallop ? 2.6 : 0.9) : 0;
+  const sw = sin(walk) * amp * motion;
+  const sw2 = sin(walk + PI * 0.62) * amp * motion;
+  const heave = abs(sin(walk)) * (gallop ? 2.6 : 0.9) * motion;
   const cr = red(coat), cg = green(coat), cb = blue(coat);
   const dark = (f) => fill(cr * f, cg * f, cb * f);
   const L = figureLight(ang || 0), lx=L[0],ly=L[1];
@@ -4559,7 +4560,7 @@ function drawHorseArt(coat, mane, walk, moving, gallop, sock, ang) {
   // Tail, streaming on a slower beat than the legs.
   push();
   translate(-30, 0);
-  rotate(moving ? sin(walk * 0.55) * (gallop ? 0.5 : 0.2) : 0);
+  rotate(sin(walk * 0.55) * (gallop ? 0.5 : 0.2) * motion);
   fill(red(mane), green(mane), blue(mane));
   quad(0, -3, 0, 3, -15, 6, -13, -5);
   pop();
@@ -4571,7 +4572,7 @@ function drawHorseArt(coat, mane, walk, moving, gallop, sock, ang) {
   // Neck and head, nodding on half the leg beat.
   push();
   translate(22, 0);
-  rotate(moving ? sin(walk * 0.5) * (gallop ? 0.22 : 0.08) : 0);
+  rotate(sin(walk * 0.5) * (gallop ? 0.22 : 0.08) * motion);
   noStroke();
   fill(cr*.83, cg*.83, cb*.85); quad(-4, -8, 12, -5, 12, 5, -4, 8); // neck underside
   fill(cr*1.03,cg*1.03,cb*1.03); quad(-3,-6,12,-4,12,3,-3,5);      // rounded neck top
@@ -13293,7 +13294,7 @@ function suspendGateOverworld(force = false) {
   }
   if (first || force) resetStreetThugEncounters();
   townCitizens.length = 0;
-  if (forestWildlife.length) { forestWildlife.length = 0; _wildlifeGridDirty = true; }
+  if (forestWildlife.length) { wildlifeClearNavigation(); forestWildlife.length = 0; _wildlifeGridDirty = true; }
 }
 function resumeGateOverworld() {
   if (!window.gateOverworldSuspended || gateAmbushIsolated()) return;
@@ -25668,6 +25669,7 @@ this.skeletonTimer = 0;
 
     // Whether the gun is up, with a short hold on the way down. See AIM_HOLD.
     this.aimHold = aimIntent(this) ? AIM_HOLD : Math.max(0, (this.aimHold || 0) - 1);
+    updateWeaponPresentation(this,typeof deltaTime==='number'?deltaTime:1000/60);
     updateProneFacing(this,typeof deltaTime==='number'?deltaTime:1000/60);
 
     // Mounted, on the flat, a horse is most of twice a man's pace.
@@ -25882,6 +25884,10 @@ this.skeletonTimer = 0;
     
     updateActorCover(this,0,leftStick.dx*6,leftStick.dy*6,coverPlayerAiming(this));
     constrainStanceFacing(this);
+    // Shot, laser and paint must consume the same locomotion sample. Waiting
+    // until finally let a running raise change its muzzle after firing.
+    updateCrouchFacing(this,typeof deltaTime==='number'?deltaTime:1000/60);
+    updateStandingFacing(this,typeof deltaTime==='number'?deltaTime:1000/60);
     if (this.currentWeapon === WEAPONS.BOW) updatePlayerBowDraw(this);
     else if (playerWeaponFireInput() && this.reloadTimer <= 0 && this.meleeTimer <= 0 && this.dashTimer <= 0 && !isCooking && this.throwAnimTimer <= 0 && this.fireTimer <= 0 && this.ammo > 0) {
         this.fire(this.aimAngle);
@@ -25896,6 +25902,7 @@ this.skeletonTimer = 0;
 
     updateEnemy() {
       ageParticleBeamWounds(this.decals);
+    beginEntityFacing(this);
     this._coverMoveX=this._coverMoveY=0;
     if(updateLegInjuryActor(this,typeof deltaTime==='number'?deltaTime:1000/60)){
       shovelUpdateActor(this,typeof deltaTime==='number'?deltaTime:1000/60);return;
@@ -26409,10 +26416,11 @@ if (this.eType === "COW") {
             this.aimAngle = aR;
             this.isMoving = false;
             if (this.burstGap <= 0) {
-                const mx = this.x + cos(aR) * 34 - sin(aR) * 13;
-                const my = this.y + sin(aR) * 34 + cos(aR) * 13;
-                spawnBullet(mx, my, aR, false, "BODY", "ORANGE_BEAM", this);
-                emit(mx, my, 5, color(255, 170, 60), "MUZZLE", cos(aR) * 6, sin(aR) * 6, this);
+                const beamAim=enemyAimHeading(this,aR,typeof deltaTime==='number'?deltaTime:1000/60);this.aimAngle=beamAim;
+                const mx = this.x + cos(beamAim) * 34 - sin(beamAim) * 13;
+                const my = this.y + sin(beamAim) * 34 + cos(beamAim) * 13;
+                spawnBullet(mx, my, beamAim, false, "BODY", "ORANGE_BEAM", this);
+                emit(mx, my, 5, color(255, 170, 60), "MUZZLE", cos(beamAim) * 6, sin(beamAim) * 6, this);
                 sfx.shoot("ORANGE_BEAM", mx, my);
                 this.muzzleFlash = 3;
                 this.burstLeft--;
@@ -26556,10 +26564,11 @@ if (this.eType === "COW") {
                 if (canSee && dToP < 600) {
                     if (this.burstCooldown > 0) { this.burstCooldown--; } 
                     else if (this.fireTimer <= 0) {
+                        const beamAim=enemyAimHeading(this,this.aimAngle,typeof deltaTime==='number'?deltaTime:1000/60);this.aimAngle=beamAim;
                         let tX_R = this.x + cos(this.aimAngle) * 70 - sin(this.aimAngle) * 10, tY_R = this.y + sin(this.aimAngle) * 70 + cos(this.aimAngle) * 10;
                         let tX_L = this.x + cos(this.aimAngle) * 70 - sin(this.aimAngle) * -10, tY_L = this.y + sin(this.aimAngle) * 70 + cos(this.aimAngle) * -10;
-                        spawnBullet(tX_R, tY_R, iA, false, "BODY", "PINK_LASER", this); 
-                        spawnBullet(tX_L, tY_L, iA, false, "BODY", "PINK_LASER", this);
+                        spawnBullet(tX_R, tY_R, beamAim, false, "BODY", "PINK_LASER", this);
+                        spawnBullet(tX_L, tY_L, beamAim, false, "BODY", "PINK_LASER", this);
                         sfx.shoot("PINK_LASER", tX_R, tY_R); this.burstsFired++; if (this.burstsFired >= 3) { this.burstCooldown = 156; this.burstsFired = 0; } else { this.fireTimer = 30; }
                     }
                 }
@@ -26729,6 +26738,9 @@ if (this.eType === "COW") {
       if(typeof updateActorCover==='function'&&this._coverControllerFrame!==frameCount&&
           (this.cover||enemyCoverEligible(this)))
         updateActorCover(this,typeof deltaTime==='number'?deltaTime:1000/60,this._coverMoveX||0,this._coverMoveY||0,false);
+      finishEntityFacing(this,typeof deltaTime==='number'?deltaTime:1000/60);
+      updateCrouchFacing(this,typeof deltaTime==='number'?deltaTime:1000/60);
+      updateStandingFacing(this,typeof deltaTime==='number'?deltaTime:1000/60);
       constrainStanceFacing(this);rememberFigureMotion(this,this.x-motionX,this.y-motionY);
     }
 } 
@@ -26758,6 +26770,15 @@ if (this.eType === "COW") {
       this.isArmed=true;this.aimHold=AIM_HOLD;
       if(actorStancePose(this).prone>0&&this.stance){this.stance.proneAimBlend=Math.max(.01,this.stance.proneAimBlend||0);this.isMoving=false;}
     }
+    if (!this.isPlayer) {
+      // The sight cache selects a target, not an instantaneous barrel pose.
+      // Consume the frame's turn before emitting a shot, keeping its authored
+      // spread relative to the same intermediate heading the artist draws.
+      const target=this.aimAngle,spread=Math.atan2(Math.sin(sA-target),Math.cos(sA-target));
+      this.aimAngle=enemyAimHeading(this,target,typeof deltaTime==='number'?deltaTime:1000/60);
+      sA=this.aimAngle+spread;
+    }
+    if(this.isPlayer)sA+=weaponAimHeading(this)-this.aimAngle;
     // Cover guides the player's pose; it must never swallow the fire input.
     // Tactical AI may wait for a clear shot. Player rounds hit any intervening
     // wall normally, including one crossed by a close-range weapon muzzle.
@@ -26795,7 +26816,7 @@ if (this.eType === "COW") {
         tX_L = stanceLeftMuzzle.x; tY_L = stanceLeftMuzzle.y;
         let iP = this.isPlayer || this.isFriendly;
         spawnBullet(tX, tY, sA + random(-shotSpread, shotSpread), iP, aH, this.currentWeapon, this, huntShotId, true);
-        if (dualLeftReady) spawnBullet(tX_L, tY_L, sA + random(-shotSpread, shotSpread), iP, aH, this.currentWeapon, this, huntShotId, true);
+        if (dualLeftReady) spawnBullet(tX_L, tY_L, sA + weaponAimHeading(this,1)-weaponAimHeading(this,0) + random(-shotSpread, shotSpread), iP, aH, this.currentWeapon, this, huntShotId, true);
         sfx.shoot(this.currentWeapon, tX, tY); 
         
         // EXCLUSIVE PLAYER SHAKE
@@ -26987,7 +27008,7 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
         if (this.rider && this.rider.hp > 0 && !this.rider.dead) { pop(); return; }
         push(); rotate(this.aimAngle);
         if (this.hitFlash > 0) this.hitFlash--;
-        drawHorseArt(this.coatCol, this.maneCol, this.walkCycle, this.isMoving,
+        drawHorseArt(this.coatCol, this.maneCol, this.walkCycle, entityMotionAmount(this),
                      this.boltTimer > 0, this.sock, this.aimAngle);
         pop();
         pop();
@@ -26998,8 +27019,9 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
         push(); rotate(this.aimAngle);
         const g=paint?paint.api:window;
         
-        let swing = this.isMoving ? sin(this.walkCycle) * 6 : 0;
-        let bob = this.isMoving ? abs(sin(this.walkCycle)) * 1.5 : 0;
+        const motion=entityMotionAmount(this);
+        let swing = sin(this.walkCycle) * 6 * motion;
+        let bob = abs(sin(this.walkCycle)) * 1.5 * motion;
         translate(bob, 0);
 
         // Legs/Hooves (Dark Grey)
@@ -27029,7 +27051,7 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
         // Head setup
         push();
         translate(this.bodyW/2 + 4, 0);
-        let headBob = this.isMoving ? sin(this.walkCycle * 0.5) * 0.15 : 0;
+        let headBob = sin(this.walkCycle * 0.5) * 0.15 * motion;
         rotate(headBob); // Head sways slightly as it walks
 
         // Head Base
@@ -27058,9 +27080,9 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
         rotate(this.aimAngle);
         const g=paint?paint.api:window, L=figureLight(this.aimAngle);
         const lx=L[0],ly=L[1], S=figureSouth(this.aimAngle),sx=S[0],sy=S[1];
-        const gait = this.isMoving ? sin(this.walkCycle) : 0;
+        const motion=entityMotionAmount(this),gait=sin(this.walkCycle)*motion;
         const step = gait * (this.enraged ? 13 : 9);
-        const bob  = this.isMoving ? abs(sin(this.walkCycle)) * (this.enraged ? 2.4 : 1.4) : 0;
+        const bob  = abs(sin(this.walkCycle)) * (this.enraged ? 2.4 : 1.4) * motion;
         const heat = this.enraged ? 1 : (this.chargeTimer > 0 ? 1 - this.chargeTimer / ROBOT_CHARGE : 0);
         if (this.hitFlash > 0) this.hitFlash--;
         const flash = this.hitFlash > 0;
@@ -27156,7 +27178,7 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
 
     if (this.eType === "SNAIL_HYBRID") {
         push(); rotate(this.aimAngle);
-        const g=paint?paint.api:window, bob=this.isMoving?sin(this.walkCycle)*5:0;
+        const g=paint?paint.api:window, bob=sin(this.walkCycle)*5*entityMotionAmount(this);
         translate(bob,0);
         figureCelOval(g,0,0,this.bodyW*.7,this.bodyH*.7,_entityCel.blue,1);
         if(!this.enraged) {
@@ -27201,7 +27223,7 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
         // a horse.
         scale(1.26);
         drawHorseArt(this.mountCoat, this.mountMane, this.mountWalk || 0,
-                     this.isMoving, true, this.mountSock, _mf);
+                     Math.max(0,Math.min(1,this.gait||0)), true, this.mountSock, _mf);
         drawHorseTack();
         pop();
     }
@@ -27214,13 +27236,15 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
     // The gait drives the stride, the bob and the shoulder twist together. See
     // GAIT: one throttle, and each of these reads it on its own curve, so a
     // walk lengthening into a run has nothing in it that switches.
-    const GP = gaitPose(this.isMoving ? this.gait : 0);
+    const motion=this.isPlayer?(this.mounted?Math.max(0,Math.min(1,this.gait||0)):
+      standingLowerEligible(this)?standingMotionAmount(this):Number(!!this.isMoving)):entityMotionAmount(this);
+    const GP = gaitPose(this.gait||0);
     const boxing=this.isPlayer?boxerPose(this):_figureNoBoxing;
     const mantle=this.isPlayer?shovelMantlePose(this):null;
     const shovelStroke=!mantle&&this.isPlayer&&meleeTool()==='SHOVEL'&&this.meleeTimer<=0
         ? shovelDigPose(this,GP,0) : null;
-    let lS = this.isMoving ? sin(this.walkCycle) * 12 * GP.swing : 0,
-        bob = this.isMoving ? abs(sin(this.walkCycle)) * 2 * GP.bob + GP.lean : 0;
+    let lS = sin(this.walkCycle) * 12 * GP.swing * motion,
+        bob = (abs(sin(this.walkCycle)) * 2 * GP.bob + GP.lean) * motion;
     if(shovelStroke){lS*=1-shovelStroke.blend;bob+=shovelStroke.lean;}
     if(mantle){lS=0;bob=mantle.lean;}
     if (this.mounted) { lS *= 0.35; bob *= 0.4; }
@@ -27228,7 +27252,7 @@ if(this.stunTimer>0&&this.skeletonTimer<=0){drawStunnedFigure(this);pop();return
     if (!mantle && this.reloadTimer > 0) { let rP = 1 - (this.reloadTimer / 90); push(); noFill(); stroke(0, 200, 255, 150); strokeWeight(4); arc(0, 0, 50, 50, -PI / 2, -PI / 2 + (rP * TWO_PI)); pop(); if (!oneHandWeapon(this.currentWeapon)) bob += sin(frameCount * 0.5) * 3; }
     if (this.eType === "ALIEN_GATOR") {
         const g=paint?paint.api:window;
-        push(); rotate(this.moveAngle);
+        push(); rotate(entityMoveHeading(this));
         figureCelOval(g,-3+lS*3,-18,54,24,this.pantsCol,.7);
         figureCelOval(g,-3-lS*3,18,54,24,this.pantsCol,.7);
         pop();
@@ -27280,10 +27304,11 @@ if (this.isPlayer) {
     } else if (this.isPlayer && cowboySuitEquipped) {
         this.shirtCol=color(219,196,146);this.pantsCol=color(61,93,118);
     }
+    const visualMove=entityMoveHeading(this);
     const lower=!mantle&&!boxing.active&&!shovelStroke?standingLowerPose(this):null;
     const backstep=standingRearPose(this,lower);
     {
-        push(); rotate(mantle?mantle.angle+mantle.hip:boxing.active?this.aimAngle+boxing.hip:shovelStroke?this.aimAngle+shovelStroke.hip:lower?lower.angle:this.moveAngle); noStroke(); fill(this.pantsCol);
+        push(); rotate(mantle?mantle.angle+mantle.hip:boxing.active?this.aimAngle+boxing.hip:shovelStroke?this.aimAngle+shovelStroke.hip:lower?lower.angle:visualMove); noStroke(); fill(this.pantsCol);
         if (this.bodyW === 105) {
           // ARMORED's 105-wide slab keeps its own legs; the rig is shaped like
           // a person and that is not one.
@@ -27347,7 +27372,7 @@ if (this.isPlayer) {
     }
     if (isChemist) {
         const sway=this.isMoving?sin(frameCount*.2)*.2:sin(frameCount*.05)*.05;
-        const tail=this.isMoving?(lower?lower.angle:this.moveAngle)-this.aimAngle:0;
+        const tail=this.isMoving?(lower?lower.angle:visualMove)-this.aimAngle:0;
         push();rotate(this.aimAngle);translate(bob,0);rotate(tail+sway+HALF_PI);
         const g=paint?paint.api:window;
         // Cloth follows a curved hem instead of a rigid polygon at the hips.
@@ -27366,8 +27391,9 @@ if (this.isPlayer) {
     // See GAIT / playerAiming(). Declared out here because three later blocks
     // have to stand down for it -- the left-arm pose, the right arm, and the
     // weapon itself, all of which are laid out around a gun that is up.
-    const carryMode = (this.isPlayer && this.isArmed && this.meleeTimer <= 0 &&
-                       !playerAiming(this)) ? weaponHands(this.currentWeapon) : 0;
+    const presentationMode=standingPresentationEligible(this),presentation=standingWeaponPresentation(this);
+    const carryMode = (presentationMode || (this.isPlayer && this.isArmed && this.meleeTimer <= 0 &&
+                       !playerAiming(this))) ? weaponHands(this.currentWeapon) : 0;
     const bowTension = this.currentWeapon === WEAPONS.BOW && typeof bowDrawAmount === 'function'
         ? bowDrawAmount(this) : 1;
     // The draw hand follows the string while the grip remains in the support
@@ -27385,8 +27411,10 @@ if (this.isPlayer) {
     // line the aim laser is drawn on.
     const _tw = mantle ? mantle.torso : shovelStroke ? shovelStroke.torso :
                 (this.isMoving && !(this.isArmed && this.meleeTimer <= 0 && playerAiming(this)))
-                ? sin(this.walkCycle) * GP.twist : 0;
-    push(); rotate((mantle?mantle.angle:this.aimAngle)+(boxing.active?boxing.torso:_tw)); translate(bob,0);
+                ? sin(this.walkCycle) * GP.twist * motion : 0;
+    const presentationPose=presentationMode?standingPresentationPose(this):null;
+    const torsoTw=presentationPose?presentationPose.tw:_tw;
+    push(); rotate((mantle?mantle.angle:this.aimAngle)+(boxing.active?boxing.torso:torsoTw)); translate(bob,0);
 
     let bLX = 31, bLY = 8, bLX_L = 59, bLY_L = -17;
     if (this.isArmed && (solidLongGun(this.currentWeapon) || this.currentWeapon === WEAPONS.ROCKET_LAUNCHER)) { bLX = 47; bLY = 6; }
@@ -27471,7 +27499,10 @@ if (this.isPlayer) {
     {
         const isTownsfolk = (unarmedCivilian(this)&&!this.cityThugGunDrawn)||(this.isNeutral&&TOWNSFOLK.indexOf(this.eType)!==-1);
         const isEmptyHanded = this.isPlayer&&!this.isArmed&&this.meleeTimer<=0&&!boxing.active;
-        if (isTownsfolk || isEmptyHanded || carryMode) {
+        if(presentationPose) {
+            armPass=front=>drawStandingPresentation(this,presentationPose,paint?paint.api:window,front);
+            armPass(false);
+        } else if (isTownsfolk || isEmptyHanded || carryMode) {
             const swing = isTownsfolk
                 ? (this.isMoving ? sin(this.walkCycle) * GP.swing * (cityStreetLook(this)?1.12:1) : 0)
                 : ((typeof lS !== 'undefined') ? (lS / 12) : 0);
@@ -28077,7 +28108,7 @@ if (this.isPlayer) {
     } else {
       // Curved side/chest planes retain the comic palette in every room.
       // Include the gait twist: the sun stays fixed while the shoulders turn.
-      const _vl = figureLight(this.aimAngle+(boxing.active?boxing.torso:_tw));
+      const _vl = figureLight(this.aimAngle+(boxing.active?boxing.torso:torsoTw));
       volShadeCol(0,0,this.bodyW,this.bodyH,this.shirtCol,1,_vl[0],_vl[1]);
     }
 
@@ -28201,7 +28232,7 @@ if (this.isPlayer) {
     }
     if(cityStreetLook(this))drawCityStreetAttire(paint?paint.api:window,this,this.bodyW,this.bodyH);
     if (this.eType === "ARMORED_STANDARD") {
-        const g=paint?paint.api:window,ang=this.aimAngle+(boxing.active?boxing.torso:_tw);
+        const g=paint?paint.api:window,ang=this.aimAngle+(boxing.active?boxing.torso:torsoTw);
         const L=figureLight(ang),S=figureSouth(ang);
         entityCelPlate(g,_figureChestPlate,this.hitFlash>0?_entityCel.white:_figureChestSteel,L[0],L[1],S[0],S[1],.18);
         noStroke();fill(176,181,190);rect(-5,-8,10,1.2,1);fill(65,71,81);rect(-5,7,10,1.2,1);
@@ -28418,7 +28449,7 @@ if (this.isPlayer) {
 
  
  
-    if (!this.shovelMantle && this.muzzleFlash > 0 && this.reloadTimer <= 0) {
+    if (!presentationPose && !this.shovelMantle && this.muzzleFlash > 0 && this.reloadTimer <= 0) {
         if(this.currentWeapon===WEAPONS.PARTICLE_BEAM)drawParticleBeamFlash(window,bLX,bLY);
         else { push(); translate(bLX, bLY); fill(255, 200, 0, 200); noStroke(); beginShape(); vertex(0, -3); vertex(15 + random(10), -8); vertex(20 + random(15), 0); vertex(15 + random(10), 8); vertex(0, 3); endShape(CLOSE); pop(); }
         let isThrowing = this.isPlayer && (typeof isCooking !== 'undefined' && (isCooking || this.throwAnimTimer > 0));
@@ -28438,10 +28469,10 @@ if (this.isPlayer) {
     // carry it read as aiming at nothing, and it fought the whole point of the
     // walk/jog/sprint poses, which is that one glance tells you the gun is down.
     let hX = mantle?mantle.headX:0, hY = 0;
-    if (!mantle && this.isArmed && !carryMode && this.reloadTimer <= 0 && this.meleeTimer <= 0 &&
+    if (!mantle && this.isArmed && (!carryMode||presentationPose) && this.reloadTimer <= 0 && this.meleeTimer <= 0 &&
         !this.dead &&
         (solidLongGun(this.currentWeapon) ||
-         this.currentWeapon === WEAPONS.ROCKET_LAUNCHER)) { hX = 3; hY = 4; }
+         this.currentWeapon === WEAPONS.ROCKET_LAUNCHER)) { hX = 3*(presentationPose?presentation:1); hY = 4*(presentationPose?presentation:1); }
 
     
         // --- head, hair and headwear ---
@@ -29764,7 +29795,7 @@ function tracePlayerAimLaser(actor,index=0,maxDistance=800) {
     const slot=index===1?1:0,ray=_aimLaserRays[slot];
     const results=actor._aimLaserResults||(actor._aimLaserResults=[{},{}]),out=results[slot];
     const muzzle=aimLaserMuzzle(actor,slot),zone=actor.isPlayer?playerAimTarget():actor.stanceAimZone||'BODY';
-    const angle=actor.aimAngle||0,co=Math.cos(angle),si=Math.sin(angle),w=actor.currentWeapon;
+    const angle=weaponAimHeading(actor,slot),co=Math.cos(angle),si=Math.sin(angle),w=actor.currentWeapon;
     const lowRange=legShotRangeForWeapon(zone,w,actor);
     let reach=Math.max(0,Number.isFinite(maxDistance)?maxDistance:800),floor=false;
     if(lowRange&&lowRange<=reach){reach=lowRange;floor=true;}
@@ -29821,7 +29852,9 @@ function tracePlayerAimLaser(actor,index=0,maxDistance=800) {
 // numerically so world hits and the stance-based floor remain exact on raised ground,
 // in cover, and with the smaller crouched/prone firearm mount.
 function drawPlayerAimLaser(g,actor,index=0,bob=0,mount=null) {
-    const hit=tracePlayerAimLaser(actor,index),angle=actor.aimAngle||0,co=Math.cos(angle),si=Math.sin(angle);
+    const hit=tracePlayerAimLaser(actor,index);
+    const pose=mount?null:standingPresentationPose(actor);
+    const angle=(actor.aimAngle||0)+(pose?pose.tw:0),co=Math.cos(angle),si=Math.sin(angle);
     const entityScale=elevRenderScale(actor.x,actor.y)*shovelRenderScale(actor),lift=mount?proneDiveLift(actor):0;
     const scale=mount?mount.scale:1,turn=mount?mount.angle:0,ct=Math.cos(turn),st=Math.sin(turn);
     const point=(wx,wy)=>{
@@ -30383,6 +30416,7 @@ class Citizen {
         this.tx = x; this.ty = y; 
         this.speed = random(0.8, 1.4);
         this.moveAngle = random(TWO_PI);
+        this._citizenMotion = {angle:this.moveAngle,velocity:0,motion:0,frame:-1};
         this.walkCycle = 0;
         // Own patch of a site's perimeter, fixed at birth so a crew rings the
         // job rather than piling onto its centre.
@@ -30411,6 +30445,7 @@ class Citizen {
     update() {
         shovelUpdateActor(this,typeof deltaTime==='number'?deltaTime:1000/60);
         if(this.dead)return;
+        const motionX=this.x,motionY=this.y;
         // A build site is what the architecture department is FOR, so it takes
         // priority over the wander timer entirely: an architect within reach of
         // unfinished work walks to their slot on the hoarding and stays there
@@ -30418,6 +30453,7 @@ class Citizen {
         if (this.role === "ARCHITECTURE" && this.buildSite) {
             this.updateBuildWork(this.buildSite);
             this.resolveCollisions();
+            this.updateMotion(this.x-motionX,this.y-motionY);
             return;
         }
         if (this.role === "ARCHITECTURE") {
@@ -30459,6 +30495,20 @@ class Citizen {
         }
 
         this.resolveCollisions();
+        this.updateMotion(this.x-motionX,this.y-motionY);
+    }
+
+    updateMotion(dx,dy,elapsedMs=deltaTime) {
+        if(!doTick||isPaused||this.dead)return;
+        const s=this._citizenMotion||(this._citizenMotion={angle:this.moveAngle,velocity:0,motion:0,frame:-1});
+        if(s.frame===frameCount)return;
+        s.frame=frameCount;
+        const ms=Math.max(0,Math.min(100,Number(elapsedMs)||0));
+        entityTurnHeading(s,this.moveAngle,ms,7,75);
+        const walking=this.state==='WANDER'||this.state==='TO_SITE'||this.state==='TO_TRUCK'||this.state==='TO_MASON';
+        const target=walking?Math.min(1,Math.hypot(dx,dy)/Math.max(.5,this.speed)):0;
+        s.motion+=(target-s.motion)*(1-Math.exp(-ms/110));
+        if(target===0&&s.motion<.0001)s.motion=0;
     }
 
     // A site is worked by two trades running one loop between them. A hauler
@@ -30697,15 +30747,14 @@ class Citizen {
         if (digScale !== 1) scale(digScale);
 
         let isBuilding = (this.state === "BUILDING");
-        const WORK = ["TO_SITE", "BUILDING", "PLACING", "TO_TRUCK", "LOADING", "TO_MASON", "HANDOFF"];
-        let rot = (this.state === "WANDER" || WORK.indexOf(this.state) !== -1)
-                  ? this.moveAngle : sin(frameCount * 0.05 + this.x) * 0.1;
-        rotate(rot);
+        const motion=this._citizenMotion;
+        rotate(motion?motion.angle:this.moveAngle);
 
         let isMoving = (this.state === "WANDER" || this.state === "TO_SITE" ||
                         this.state === "TO_TRUCK" || this.state === "TO_MASON");
-        let swing = isMoving ? sin(this.walkCycle) : 0;
-        let bob = isMoving ? abs(sin(this.walkCycle)) * 2 : 0;
+        const stride=motion?motion.motion:isMoving?1:0;
+        let swing = sin(this.walkCycle)*stride;
+        let bob = abs(sin(this.walkCycle))*2*stride;
         
         const rig = figureRig(this.bodyW, this.bodyH);
         const bothHands = (this.state === "TO_MASON" || this.state === "HANDOFF" ||
@@ -30762,7 +30811,7 @@ class Citizen {
         // --- NEW: Lab Coat Tails for Science ---
         if (this.role === "SCIENCE") {
             push(); 
-            let sway = isMoving ? sin(frameCount * 0.2) * 0.2 : sin(frameCount * 0.05) * 0.05;
+            let sway = sin(frameCount * 0.05)*.05*(1-stride)+sin(frameCount*.2)*.2*stride;
             rotate(sway + HALF_PI); 
             fill(240); stroke(200); strokeWeight(1);
             beginShape(); vertex(5, 0); vertex(10, 2); vertex(16, 25); vertex(8, 28); vertex(-8, 28); vertex(-16, 25); vertex(-10, 2); vertex(-5, 0); endShape(CLOSE); 
@@ -30820,7 +30869,7 @@ class Citizen {
         identity.explosiveArmor = hasArmor;
         identity.eType = isFarmer ? (this.gender === "FEMALE" ? "FARMER_FEMALE" : "FARMER_MALE") :
             this.gender === "FEMALE" ? "FEMALE_PISTOL" : "CITIZEN";
-        drawFigureHead(window, identity, 0, 0, true, isMoving ? sin(frameCount * .3) * 15 : 0);
+        drawFigureHead(window, identity, 0, 0, true, sin(frameCount*.3)*15*stride);
 
         // Front hands. Suppressed whenever both hands are on something: a load
         // out of the container, a block being carried, a block going into the
@@ -49604,7 +49653,7 @@ function updateLocomotionFacing(c,s,elapsedMs,phaseScale) {
   const cycle=c.walkCycle||0,dt=Math.min(100,Math.max(0,Number(elapsedMs)||0));
   const target=crouchFacingTarget(c);
   if(!s||!s.active)s={active:true,frame:-1,cycle,phase:cycle*phaseScale,
-    angle:c.isMoving?target.angle:c.aimAngle||0,backward:target.backward,motion:0};
+    angle:c.isMoving?target.angle:c.aimAngle||0,backward:target.backward,motion:0,rear:0,travelX:0,travelY:0};
   if(s.frame===frameCount)return s;
   s.frame=frameCount;
   const turn=1-Math.exp(-dt/230),settle=1-Math.exp(-dt/180);
@@ -49614,6 +49663,13 @@ function updateLocomotionFacing(c,s,elapsedMs,phaseScale) {
   }
   s.backward+=(target.backward-s.backward)*settle;
   s.motion+=(Number(!!c.isMoving)-s.motion)*settle;
+  // Directions blend as a vector through zero on a reversal. Interpolating
+  // an angle, or reading raw moveAngle in the feet, mirrors a stride at once.
+  const tx=c.isMoving?Math.cos(c.moveAngle||0):0,ty=c.isMoving?Math.sin(c.moveAngle||0):0;
+  s.travelX=(s.travelX||0)+(tx-(s.travelX||0))*settle;
+  s.travelY=(s.travelY||0)+(ty-(s.travelY||0))*settle;
+  const rear=c.isMoving?Math.max(0,-Math.cos((c.moveAngle||0)-(c.aimAngle||0))):0;
+  s.rear=((s.rear||0)+(rear-(s.rear||0))*settle);
   if(s.motion<.001)s.motion=0;
   s.phase+=Math.max(0,Math.min(1,cycle-s.cycle))*phaseScale;s.cycle=cycle;
   // Keep planted hips at rest, but let a large torso turn ask the feet to pivot.
@@ -49626,17 +49682,19 @@ function locomotionLowerPose(c,s,phaseScale) {
   const delta=Math.atan2(Math.sin(angle-aim),Math.cos(angle-aim));
   return {angle:aim+Math.max(-Math.PI*.54,Math.min(Math.PI*.54,delta)),
     yaw:Math.max(-Math.PI*.54,Math.min(Math.PI*.54,delta)),backward:s?s.backward:target.backward,
-    phase:s?s.phase:(c.walkCycle||0)*phaseScale,motion:s?s.motion:Number(!!c.isMoving)};
+    phase:s?s.phase:(c.walkCycle||0)*phaseScale,motion:s?s.motion:Number(!!c.isMoving),
+    travelX:s&&Number.isFinite(s.travelX)?s.travelX:Math.cos(c.moveAngle||0),
+    travelY:s&&Number.isFinite(s.travelY)?s.travelY:Math.sin(c.moveAngle||0)};
 }
 function updateCrouchFacing(c,elapsedMs=deltaTime) {
-  if(!c||!c.isPlayer||!doTick||!combatStanceContext())return;
+  if(!c||(!c.isPlayer&&!entityFacingEligible(c))||!doTick||isPaused||!combatStanceContext())return;
   const p=actorStancePose(c),active=p.crouch>0&&!actorStanceSuppressed(c);
   const s=c._crouchMotion;
   if(!active){if(s){s.active=false;s.cycle=c.walkCycle||0;}return;}
   c._crouchMotion=updateLocomotionFacing(c,s,elapsedMs,.46);
 }
 function crouchLowerPose(c) {
-  const s=c.isPlayer&&c._crouchMotion&&c._crouchMotion.active?c._crouchMotion:null;
+  const s=c._crouchMotion&&c._crouchMotion.active?c._crouchMotion:null;
   return locomotionLowerPose(c,s,.46);
 }
 // A crouch step folds the recovering knee into the shirt's footprint while
@@ -49703,9 +49761,12 @@ function stanceCoverPoseActive(c) { return typeof coverRenderActive==='function'
 // the same ordinary leg surfaces and trailing hip frame used outside cover.
 function standingCoverLeg(c,R,index,heading,blend) {
   const side=index?1:-1,GP=gaitPose(c.gait||0),th=R.thigh*STAND_FORE_LEG,sh=R.shin*STAND_FORE_LEG;
-  const beat=c.isMoving?-side*Math.sin(c.walkCycle||0)*12*GP.swing:0;
-  const travel=(c.moveAngle||0)-heading;
-  const sx=-10+R.thighW*.5+beat*Math.cos(travel),sy=side*6+beat*Math.sin(travel)*.3;
+  const travelMotion=c._crouchMotion&&c._crouchMotion.active?c._crouchMotion:c._standingMotion&&c._standingMotion.active?c._standingMotion:null;
+  const beat=-side*Math.sin(c.walkCycle||0)*12*GP.swing;
+  const tx=travelMotion&&Number.isFinite(travelMotion.travelX)?travelMotion.travelX:Math.cos(c.moveAngle||0)*Number(!!c.isMoving);
+  const ty=travelMotion&&Number.isFinite(travelMotion.travelY)?travelMotion.travelY:Math.sin(c.moveAngle||0)*Number(!!c.isMoving);
+  const tc=Math.cos(heading),ts=Math.sin(heading);
+  const sx=-10+R.thighW*.5+beat*(tc*tx+ts*ty),sy=side*6+beat*(-ts*tx+tc*ty)*.3;
   const wall={sx,sy,kx:sx+th*.92,ky:sy,ax:sx+th*.92+sh,ay:sy};
   if(c.cover&&c.cover.kind==='HIGH') {
     // Keep the inner leg planted as the waist leans around the wall. The
@@ -49834,9 +49895,10 @@ function stanceBodyPose(c) {
   const upper=cover?coverUpperOffset(c):null,coverX=upper?upper.x:0,coverY=upper?upper.y:0;
   const coverBlend=cover?Math.max(0,Math.min(1,c.cover.blend||0)):0;
   const dive=proneDiveArc(c),aiming=cover?coverAimActive(c):stanceArtAiming(c),cycle=c.walkCycle||0,cached=c._stanceBody,roll=proneRollPose(c),lower=crouchLowerPose(c);
+  const presentation=c.isPlayer&&c._weaponPresentation&&floor<.001&&c.reloadTimer<=0&&!leftHandAction(c)?standingWeaponPresentation(c):Number(aiming);
   if(cached&&cached.cover===cover&&cached.coverKind===(cover?c.cover.kind:null)&&cached.coverBlend===coverBlend&&cached.coverX===coverX&&cached.coverY===coverY&&
       cached.coverAim===(c.aimAngle||0)&&cached.dive===dive&&cached.value===value&&cached.cycle===cycle&&cached.moving===!!c.isMoving&&
-      cached.aiming===aiming&&cached.gait===(c.gait||0)&&cached.bodyW===c.bodyW&&cached.bodyH===c.bodyH&&
+      cached.aiming===aiming&&cached.presentation===presentation&&cached.gait===(c.gait||0)&&cached.bodyW===c.bodyW&&cached.bodyH===c.bodyH&&
       cached.roll.heading===roll.heading&&cached.roll.delta===roll.delta&&cached.roll.blend===roll.blend&&
       cached.lower.angle===lower.angle&&cached.lower.backward===lower.backward&&cached.lower.phase===lower.phase&&cached.lower.motion===lower.motion)return cached;
   const R=figureRig(c.bodyW,c.bodyH),phase=cycle*.65;
@@ -49846,13 +49908,13 @@ function stanceBodyPose(c) {
   const crouchWeight=drop*(1-floor),step=crouchStepPose(c,lower.phase);
   // The upper body turns as one rigid section. A partial shoulder turn while
   // the hands followed the complete aim arc pulled the sleeves into ribbons.
-  const coverTurn=cover&&aiming?roll.delta*coverBlend:0;
+  const coverTurn=cover?roll.delta*coverBlend*presentation:0;
   const yaw=Math.atan2(left.reach-right.reach,c.bodyH*.72)*.38*floor+step.counterYaw*crouchWeight+roll.turn+coverTurn;
   const legYaw=lower.yaw*crouchWeight,hipYaw=legYaw-(yaw-coverTurn)*.45+step.hipYaw*crouchWeight;
   const size=p.scaleX,hipX=-5*drop-4*floor-dive*2,hipY=roll.offsetY;
   const heading=stanceFacingAngle(c),ca=Math.cos(heading),sa=Math.sin(heading);
   const upperX=(ca*coverX+sa*coverY)/size,upperY=(-sa*coverX+ca*coverY)/size;
-  const brace=cover&&!aiming?-2*coverBlend*(1-floor):0;
+  const brace=cover?-2*coverBlend*(1-floor)*(1-presentation):0;
   // Lateral cover is a waist hinge, not an extensible shirt. Most of the
   // lean reaches the chest; the short remaining reach belongs to the head
   // and arms. The original torso silhouette and all limb widths stay fixed.
@@ -49895,12 +49957,12 @@ function stanceBodyPose(c) {
       {x:elbowX+upperX+brace,y:elbowY+chestY};
     joints.push({side,hip,knee,ankle,shoulder,elbow,support,step:stepLeg});
   }
-  const headX=(aiming?3:0)*(1-drop)+8*drop+7*floor-roll.back*.8+step.chestX*crouchWeight*.55+dive*5;
-  const headY=(aiming?4*(1-drop)+2.2*drop-5.8*floor:0)*(1-roll.side*.6-roll.back);
+  const headX=3*presentation*(1-drop)+8*drop+7*floor-roll.back*.8+step.chestX*crouchWeight*.55+dive*5;
+  const headY=presentation*(4*(1-drop)+2.2*drop-5.8*floor)*(1-roll.side*.6-roll.back);
   const head=cover?{x:Math.cos(yaw)*headX-Math.sin(yaw)*headY+upperX+brace,
     y:Math.sin(yaw)*headX+Math.cos(yaw)*headY+hipY+step.chestY*crouchWeight+upperY}:
     {x:headX+upperX+brace,y:headY+chestY};
-  return c._stanceBody={cover,coverKind:cover?c.cover.kind:null,coverBlend,coverX,coverY,coverAim:c.aimAngle||0,upperX,upperY,dive,value,cycle,moving:!!c.isMoving,gait:c.gait||0,bodyW:c.bodyW,bodyH:c.bodyH,drop,floor,size,aiming,yaw,hipYaw,hipX,hipY,chestX,chestY,joints,head,R,
+  return c._stanceBody={cover,coverKind:cover?c.cover.kind:null,coverBlend,coverX,coverY,coverAim:c.aimAngle||0,upperX,upperY,dive,value,cycle,moving:!!c.isMoving,gait:c.gait||0,bodyW:c.bodyW,bodyH:c.bodyH,drop,floor,size,aiming,presentation,yaw,hipYaw,hipX,hipY,chestX,chestY,joints,head,R,
     torsoLength,torsoWidth,crouchWeight,step,roll,lower};
 }
 // A native gun keeps its own proportions. One rigid mount owns the solid,
@@ -49916,6 +49978,14 @@ function stanceWeaponMount(c,aimOverride=null,bodyOverride=null) {
     const turn=Math.atan2(Math.sin(ready.angle-carry.angle),Math.cos(ready.angle-carry.angle));
     return c._injuryMount={x:lerp(carry.x,ready.x,t),y:lerp(carry.y,ready.y,t),
       angle:carry.angle+turn*t,scale:lerp(carry.scale,ready.scale,t),body:b,weapon:w,aim:true};
+  }
+  if(aimOverride===null&&!b.injury&&c.isPlayer&&c._weaponPresentation&&b.floor<.001&&c.reloadTimer<=0&&!leftHandAction(c)) {
+    const t=b.presentation,cached=c._stancePresentationMount;
+    if(cached&&cached.body===b&&cached.weapon===w&&cached.presentation===t)return cached;
+    const carry=stanceWeaponMount(c,false,b),ready=stanceWeaponMount(c,true,b);
+    const turn=Math.atan2(Math.sin(ready.angle-carry.angle),Math.cos(ready.angle-carry.angle));
+    return c._stancePresentationMount={x:lerp(carry.x,ready.x,t),y:lerp(carry.y,ready.y,t),
+      angle:carry.angle+turn*t,scale:lerp(carry.scale,ready.scale,t),body:b,weapon:w,aim:true,presentation:t};
   }
   const two=weaponHands(w)===2,aim=aimOverride===null?b.aiming||c.reloadTimer>0:aimOverride;
   const carryBlend=!aim&&leftHandAction(c)!==2?b.roll.blend:0;
@@ -50027,7 +50097,15 @@ function stancePointInBody(c,x,y) {
 }
 function stanceMuzzleWorld(c, x, y, angle = c.aimAngle || 0, support = false) {
   const p = actorStancePose(c);
-  if (!p.crouch && !p.prone&&!stanceCoverPoseActive(c)) return { x, y };
+  if (!p.crouch && !p.prone&&!stanceCoverPoseActive(c)) {
+    const pose=!support&&standingPresentationPose(c);
+    if(!pose)return {x,y};
+    const ca=Math.cos(c.aimAngle||0),sa=Math.sin(c.aimAngle||0),localY=-(x-c.x)*sa+(y-c.y)*ca;
+    const gun=pose.weapons[localY<0&&pose.weapons.length>1?1:0];
+    const co=Math.cos((c.aimAngle||0)+pose.tw),si=Math.sin((c.aimAngle||0)+pose.tw);
+    return {x:c.x+co*(pose.bob+gun.muzzle.x)-si*gun.muzzle.y,
+      y:c.y+si*(pose.bob+gun.muzzle.x)+co*gun.muzzle.y};
+  }
   const ca = Math.cos(angle), sa = Math.sin(angle), dx = x - c.x, dy = y - c.y;
   const local = stanceLocalPoint(c, dx * ca + dy * sa, -dx * sa + dy * ca,support);
   return { x: c.x + ca * local.x - sa * local.y, y: c.y + sa * local.x + ca * local.y - proneDiveLift(c) };
@@ -50368,13 +50446,13 @@ function drawCombatStanceFigure(c, p) {
 // Standing uses the crouch's travel folding, planted heading, easing and
 // torso-relative limit. Keep the standing leg art and full stride clock.
 function standingLowerEligible(c) {
-  if(!c||!c.isPlayer||!Number.isFinite(c.aimAngle)||actorStanceSuppressed(c)||
+  if(!c||(!c.isPlayer&&!entityFacingEligible(c))||!Number.isFinite(c.aimAngle)||actorStanceSuppressed(c)||
      c.meleeTimer>0||c.stance&&c.stance.to>0)return false;
   const p=actorStancePose(c);
   return !p.crouch&&!p.prone;
 }
 function updateStandingFacing(c,elapsedMs=deltaTime) {
-  if(!c||!c.isPlayer||!doTick||!combatStanceContext())return;
+  if(!c||(!c.isPlayer&&!entityFacingEligible(c))||!doTick||isPaused||!combatStanceContext())return;
   const s=c._standingMotion;
   if(!standingLowerEligible(c)){if(s){s.active=false;s.cycle=c.walkCycle||0;}return;}
   c._standingMotion=updateLocomotionFacing(c,s,elapsedMs,1);
@@ -50390,12 +50468,14 @@ function standingRearPose(c,lower=standingLowerPose(c)) {
   if(!lower)return null;
   // Heel presentation covers the whole rear hemisphere; the shared hip
   // solver keeps its existing direction-fold threshold and trailing motion.
-  const rear=Math.max(0,-Math.cos(c.moveAngle-c.aimAngle));
+  const cached=c._standingMotion&&c._standingMotion.active?c._standingMotion:null;
+  const rear=cached?cached.rear||0:Math.max(0,-Math.cos(c.moveAngle-c.aimAngle));
   const blend=lower.backward+rear-lower.backward*rear;
   if(!(blend>1e-8))return null;
   return {blend,angle:lower.angle,motion:lower.motion,
     heelExposure:rear>1e-8?.45+.55*rear:lower.backward,
-    travelX:Math.cos(c.moveAngle-lower.angle),travelY:Math.sin(c.moveAngle-lower.angle)};
+    travelX:Math.cos(lower.angle)*lower.travelX+Math.sin(lower.angle)*lower.travelY,
+    travelY:-Math.sin(lower.angle)*lower.travelX+Math.cos(lower.angle)*lower.travelY};
 }
 function standingRearLeg(c,pose,rig,index) {
   const side=index?1:-1,GP=gaitPose(c.gait),root=-10+rig.thighW*.5,sy=side*6;
@@ -50449,12 +50529,99 @@ function drawStandingRearLeg(g,c,pose,rig,index,boot) {
   drawingContext.restore();g.fill(c.pantsCol);
 }
 
+// One angular-momentum policy for living entities. Simulation callers own the
+// frame guard; rendering only reads the resulting angle and never advances it.
+function entityTurnHeading(s,target,elapsedMs,maxRate=11,responseMs=55) {
+  if(!Number.isFinite(target))return Number.isFinite(s.angle)?s.angle:0;
+  if(!Number.isFinite(s.angle))s.angle=target;
+  if(!Number.isFinite(s.velocity))s.velocity=0;
+  const ms=Math.max(0,Math.min(100,Number(elapsedMs)||0)),dt=ms*.001;
+  if(!dt)return s.angle;
+  let delta=Math.atan2(Math.sin(target-s.angle),Math.cos(target-s.angle));
+  if(Math.abs(Math.abs(delta)-Math.PI)<.00001&&Math.abs(s.velocity)>.001)
+    delta=Math.sign(s.velocity)*Math.PI;
+  const desired=Math.max(-maxRate,Math.min(maxRate,delta*12));
+  const previous=Math.max(-maxRate,Math.min(maxRate,s.velocity));
+  const response=Math.max(1,responseMs)*.001,decay=Math.exp(-dt/response);
+  s.velocity=desired+(previous-desired)*decay;
+  // Integrate the acceleration, rather than multiplying by the velocity at
+  // the end of a frame. Dropped frames then preserve the same turn distance.
+  let step=desired*dt+(previous-desired)*response*(1-decay);
+  if(step*delta>=0&&Math.abs(step)>=Math.abs(delta)){step=delta;s.velocity=0;}
+  if(Math.abs(delta)<.00005&&Math.abs(s.velocity)<.004){s.angle=target;s.velocity=0;}
+  else s.angle+=step;
+  return s.angle;
+}
+function entityFacingEligible(c) {
+  return !!c&&!c.isPlayer&&!c.isCorpse&&Number.isFinite(c.bodyW)&&Number.isFinite(c.bodyH)&&
+    !c.dead&&c.hp>0&&!c.isNM0Scientist&&c.eType!=='DAD'&&
+    !(currentLevel===0&&prologuePhase===1&&c.eType==='SIA')&&
+    !(typeof inFarmCutscene!=='undefined'&&inFarmCutscene&&c===farmSpeaker)&&
+    !c.mounted&&!c.knockedOut&&!(c.stunTimer>0)&&!(c.skeletonTimer>0)&&!(c.dashTimer>0)&&
+    !boxingActive(c)&&!c.shovelMantle&&!(shovelPlayerDepth(c)>.5)&&
+    !c.legInjury&&!(c.meleeTimer>0)&&!enemyCoverDiveActive(c)&&
+    !(c.stance&&(c.stance.to===2||c.stance.value>1.01));
+}
+function beginEntityFacing(c) {
+  let s=c&&c._entityFacing;
+  if(!entityFacingEligible(c)||!combatStanceContext()) {
+    // Pause/suspension retains the rendered pose; a dedicated action takes
+    // ownership and seeds a fresh shoulder heading when it has finished.
+    if(s&&!isPaused&&doTick)s.active=false;
+    return;
+  }
+  if(!doTick||isPaused)return;
+  const angle=Number.isFinite(c.aimAngle)?c.aimAngle:0;
+  const travel=Number.isFinite(c.moveAngle)?c.moveAngle:angle;
+  if(!s)s=c._entityFacing={active:true,beginFrame:-1,frame:-1,angle,velocity:0,target:angle,motion:Number(!!c.isMoving),
+    move:{angle:travel,velocity:0,frame:-1}};
+  if(s.beginFrame===frameCount)return;
+  if(!s.active||Math.abs(Math.atan2(Math.sin(angle-s.angle),Math.cos(angle-s.angle)))>.0001) {
+    s.angle=angle;s.velocity=0;
+  }
+  if(!s.move)s.move={angle:travel,velocity:0,frame:-1};
+  if(!s.active){s.move.angle=travel;s.move.velocity=0;s.motion=Number(!!c.isMoving);}
+  if(!Number.isFinite(s.motion))s.motion=Number(!!c.isMoving);
+  s.active=true;s.beginFrame=frameCount;
+}
+function enemyAimHeading(c,target,elapsedMs=deltaTime) {
+  const s=c&&c._entityFacing;
+  if(!entityFacingEligible(c)||!s||!s.active)return target;
+  if(!doTick||isPaused)return s.angle;
+  if(!combatStanceContext()||s.beginFrame!==frameCount)return target;
+  if(s.frame===frameCount)return s.angle;
+  s.frame=frameCount;s.target=target;
+  // A caster's shortest committed half-charge lasts 390 ms. Its shoulders
+  // settle on the unchanged spell telegraph before that release window.
+  const caster=isOccultMagician(c);
+  return entityTurnHeading(s,target,elapsedMs,caster?11:9,caster?55:70);
+}
+function finishEntityFacing(c,elapsedMs=deltaTime) {
+  if(!c)return;
+  c.aimAngle=enemyAimHeading(c,c.aimAngle,elapsedMs);
+  const s=c._entityFacing;
+  if(!entityFacingEligible(c)||!s||!s.active||!doTick||isPaused||
+      !combatStanceContext()||s.beginFrame!==frameCount||s.move.frame===frameCount)return;
+  s.move.frame=frameCount;
+  entityTurnHeading(s.move,Number.isFinite(c.moveAngle)?c.moveAngle:c.aimAngle,elapsedMs,9,70);
+  const ms=Math.max(0,Math.min(100,Number(elapsedMs)||0));
+  s.motion+=(Number(!!c.isMoving)-s.motion)*(1-Math.exp(-ms/180));
+  if(s.motion<.001)s.motion=0;else if(s.motion>.999)s.motion=1;
+}
+function entityMoveHeading(c) {
+  const s=c&&c._entityFacing;
+  return s&&s.active&&s.move?s.move.angle:Number.isFinite(c&&c.moveAngle)?c.moveAngle:c&&c.aimAngle||0;
+}
+function entityMotionAmount(c) {
+  const s=c&&c._entityFacing;
+  return s&&s.active&&Number.isFinite(s.motion)?s.motion:Number(!!(c&&c.isMoving));
+}
+
 function standingAimEligible(c) {
   if(!c||!c.isPlayer||!combatStanceContext()||actorStanceSuppressed(c)||c.meleeTimer>0||
-      c.stance&&c.stance.to>0||leftHandAction(c)||typeof inCutscene!=='undefined'&&inCutscene)return false;
+      c.stance&&c.stance.to>1||leftHandAction(c)||typeof inCutscene!=='undefined'&&inCutscene)return false;
   const p=actorStancePose(c);
-  return !p.crouch&&!p.prone&&
-    (playerAiming(c)||!!(rightStick&&rightStick.active)||c.muzzleFlash>0||playerWeaponFireInput());
+  return !p.prone;
 }
 // The visible barrel is the firing direction. A short angular acceleration
 // and bounded turn rate let shoulders lead a turn without teleporting them.
@@ -50470,16 +50637,8 @@ function standingAimHeading(c,target,elapsedMs=deltaTime) {
   if(s.frame===frameCount)return current;
   s.frame=frameCount;s.target=target;
   if(Math.abs(Math.atan2(Math.sin(current-s.angle),Math.cos(current-s.angle)))>.0001)s.velocity=0;
-  const ms=Math.max(0,Math.min(100,Number(elapsedMs)||0)),dt=ms*.001;
-  let delta=Math.atan2(Math.sin(target-current),Math.cos(target-current));
-  if(Math.abs(Math.abs(delta)-Math.PI)<.00001&&Math.abs(s.velocity)>.001)delta=Math.sign(s.velocity)*Math.PI;
-  const desired=Math.max(-11,Math.min(11,delta*12));
-  s.velocity+=(desired-s.velocity)*(1-Math.exp(-ms/55));
-  let step=s.velocity*dt;
-  if(step*delta>=0&&Math.abs(step)>=Math.abs(delta)){step=delta;s.velocity=0;}
-  if(Math.abs(delta)<.00005&&Math.abs(s.velocity)<.004){s.angle=target;s.velocity=0;}
-  else s.angle=current+step;
-  return s.angle;
+  s.angle=current;
+  return entityTurnHeading(s,target,elapsedMs);
 }
 function aimIntent(c) {
   if (typeof rightStick === 'undefined') return true;
@@ -50487,11 +50646,219 @@ function aimIntent(c) {
          c.meleeTimer > 0 || c.dashTimer > 0;
 }
 
-// How long the gun stays up after the aim stick lets go. Two jobs: a thumb
-// brushing the stick must not flicker the weapon between carried and presented
-// several times a second, and LOWERING a gun should read as a decision rather
-// than as the animation resetting. Raising it stays instant, which is the way
-// round that matters when something is shooting at you.
+// Presentation is a simulation pose, not a choice between two painted models.
+// Both its value and velocity survive a reversed input, so raising/lowering a
+// weapon connects through the same wrists instead of restarting an animation.
+function updateWeaponPresentation(c,elapsedMs=deltaTime) {
+  if(!c||!c.isPlayer||!doTick||isPaused||!combatStanceContext())return;
+  const target=Number(playerAiming(c)||!!(rightStick&&rightStick.active)||c.muzzleFlash>0);
+  let s=c._weaponPresentation;
+  if(!s)s=c._weaponPresentation={frame:-1,value:0,velocity:0,weapon:c.currentWeapon};
+  if(s.frame===frameCount)return;
+  s.frame=frameCount;s.weapon=c.currentWeapon;
+  const dt=Math.max(0,Math.min(100,Number(elapsedMs)||0))*.001;
+  // Analytic critically damped spring: no fixed-frame speed, no overshoot at
+  // a steady target, and no overshoot from a reversal at either endpoint.
+  const omega=target?27:19,offset=s.value-target,decay=Math.exp(-omega*dt);
+  const impulse=s.velocity+omega*offset;
+  s.value=target+(offset+impulse*dt)*decay;
+  s.velocity=(s.velocity-omega*impulse*dt)*decay;
+  if(s.value<=0){s.value=0;s.velocity=Math.max(0,s.velocity);}
+  if(s.value>=1){s.value=1;s.velocity=Math.min(0,s.velocity);}
+  if(Math.abs(s.value-target)<.0005&&Math.abs(s.velocity)<.02){s.value=target;s.velocity=0;}
+  c._standingPresentationPose=null;
+}
+function standingWeaponPresentation(c) {
+  return c&&c.isPlayer&&c._weaponPresentation?c._weaponPresentation.value:Number(playerAiming(c));
+}
+function standingPresentationEligible(c) {
+  if(!c||!c.isPlayer||!c._weaponPresentation||!c.isArmed||c.meleeTimer>0||
+      actorStanceSuppressed(c)||c.legInjury||leftHandAction(c)||c.reloadTimer>0)return false;
+  const p=actorStancePose(c);
+  return !p.crouch&&!p.prone&&!stanceCoverPoseActive(c)&&!!weaponHands(c.currentWeapon);
+}
+function standingMotionAmount(c) {
+  const s=c&&c._standingMotion;
+  return s&&s.active?s.motion:Number(!!(c&&c.isMoving));
+}
+// The single solid below connects the existing carry and presented poses.
+// Muzzle, flash, laser and both wrists all read this same projected mount.
+function standingPresentationPose(c) {
+  if(!standingPresentationEligible(c))return null;
+  const t=standingWeaponPresentation(c),cycle=c.walkCycle||0,gait=c.gait||0;
+  const old=c._standingPresentationPose,aim=c.aimAngle||0,motion=standingMotionAmount(c);
+  if(old&&old.frame===frameCount&&old.t===t&&old.cycle===cycle&&old.gait===gait&&old.aim===aim&&old.motion===motion&&old.kick===(c.weaponKick||0)&&old.fireTimer===c.fireTimer&&old.weapon===c.currentWeapon)return old;
+  const GP=gaitPose(gait),R=figureRig(c.bodyW,c.bodyH),w=c.currentWeapon,two=weaponHands(w)===2;
+  const rest=c.isMoving?0:Math.sin(frameCount*.045+c.x*.01),swing=Math.sin(cycle)*GP.swing*motion;
+  const bob=(Math.abs(Math.sin(cycle))*2*GP.bob+GP.lean)*motion;
+  const tw=Math.sin(cycle)*GP.twist*motion*(1-t),run=Math.max(0,Math.min(1,GP.band-2));
+  const kick=handGunKick(c.weaponKick),weapons=[],arms=[];
+  let carryX=0,carryY=0,carryAngle=0,cElevation=0,fore=18.5+run*2.5;
+  if(two) {
+    const sq=GP.band*GP.band,swayA=Math.sin(cycle)*(.002+sq*.0082),swayX=Math.sin(cycle)*sq*.60;
+    const beat=Math.sin(cycle),sway=beat+(Math.sin(cycle*.5)-beat)*run;
+    cElevation=longGunElevation(GP.band,sway);
+    const base=-.72-run*.62+swayA*(1-run),angle=base+run*sway*.13;
+    const mid=fore*.5*Math.cos(cElevation);
+    const x=.8+GP.lean*.45+run*8+swayX*.5*(1-run)+mid*(Math.cos(base)-Math.cos(angle));
+    const y=7.2+run*8.5-swayX*(1-run)-run*(1-sway)*4+mid*(Math.sin(base)-Math.sin(angle));
+    const absorb=-tw*.5*(1-run),co=Math.cos(absorb),si=Math.sin(absorb);
+    carryX=x*co-y*si;carryY=x*si+y*co;carryAngle=angle+absorb;
+  }
+  const addWeapon=(side,index)=>{
+    let x=carryX,y=carryY,angle=carryAngle,elevation=cElevation,roll=.035;
+    let aimX=0,aimY=0,aimElevation=kick*.10,aimRoll=kick*.035,baseAimElevation=0,baseAimRoll=0;
+    const long=solidLongGun(w),bow=w===WEAPONS.BOW;
+    let muzzle=long?(w===WEAPONS.SHOTGUN?37:39):w===WEAPONS.ROCKET_LAUNCHER?42:w===WEAPONS.COACH_GUN?37:w===WEAPONS.REVOLVER?25:w===WEAPONS.PISTOL||w===WEAPONS.TASER?15:16;
+    if(!two) {
+      const sw0=swing*side,sw=sw0>0?sw0*.55:sw0*(.55+.75*GP.band/3);
+      const reach=(R.upper+R.fore)*STAND_FORE_ARM*(.44+.13*GP.band);
+      x=-1.5+GP.bend*3+sw*reach+3.5;
+      y=side*(c.bodyH*.49-GP.bend*2-Math.max(0,sw)*GP.bend*5.6+Math.max(0,-sw)*(1.1+GP.bend*.6)+1.4)+rest*.4;
+      const limit=(R.upper+R.fore)*(STAND_FORE_ARM+.16*GP.bend)*.98,dy=y-side*c.bodyH*.425,d=Math.hypot(x,dy);
+      if(d>limit){x*=limit/d;y=side*c.bodyH*.425+dy*limit/d;}
+      const ph=GP.swing?sw/GP.swing:0,bk=GP.swing?Math.min(1,Math.max(0,-sw/GP.swing)):0;
+      angle=.30*side+sw*.055+side*bk*(.08+.22*GP.band/3);
+      elevation=carryElevation(GP.band,ph,c.isMoving)+(c.isMoving?0:rest*.05);
+      roll=side*(.10+ph*(.06+GP.band*.025));
+      aimX=w===WEAPONS.PISTOL||w===WEAPONS.TASER?16:22;
+      aimY=(w===WEAPONS.PISTOL||w===WEAPONS.TASER?8:11)*side;
+    } else if(long) {
+      const base=handGunProjection(.018,.035,figureLight(aim+tw),figureSouth(aim+tw)).point(muzzle,0,0);
+      aimX=47+(c.isMoving?Math.abs(Math.sin(cycle))*2:0)-bob-base[0];aimY=6-base[1];
+      baseAimElevation=.018;baseAimRoll=.035;
+      aimElevation=.018+kick*(w===WEAPONS.SHOTGUN?.13:.09);aimRoll=.035+kick*.07;
+    } else if(bow) {
+      // A relaxed bow rests between the hands, rather than at the rifle's
+      // strong-side stock station; its support hand holds the actual grip.
+      x*=.65;y*=.20;
+      aimX=24+(c.isMoving?Math.abs(Math.sin(cycle))*2:0)-bob;aimY=0;muzzle=23-9*bowDrawAmount(c);
+      aimElevation=aimRoll=0;
+    } else {aimX=w===WEAPONS.COACH_GUN?-6:5;aimY=w===WEAPONS.COACH_GUN?9.7:6;aimElevation=aimRoll=0;}
+    x+=(aimX-x)*t;y+=(aimY-y)*t;angle*=1-t;elevation+=(aimElevation-elevation)*t;roll+=(aimRoll-roll)*t;
+    const wa=aim+tw+angle,P=handGunProjection(elevation,roll,figureLight(wa),figureSouth(wa));
+    P.particleBeamState=c.particleBeamState;
+    const co=Math.cos(angle),si=Math.sin(angle);
+    const projected=(distance,el=elevation,rl=roll)=>{
+      if(bow)return [distance*Math.max(.72,Math.cos(el)),0];
+      if(!long&&!oneHandWeapon(w)) {
+        const height=distance*Math.sin(el)*GUN_TILT;
+        return [distance*Math.cos(el)+Math.sin(wa)*height*GUN_AXIAL,Math.cos(wa)*height];
+      }
+      return el===elevation&&rl===roll?P.point(distance,0,0):
+        handGunProjection(el,rl,figureLight(wa),figureSouth(wa)).point(distance,0,0);
+    };
+    // Recoil folds the receiver/wrists around the crown. Its flash and the
+    // already-fired projectile therefore share a fixed muzzle this frame.
+    if(kick>0) {
+      const base=projected(muzzle,elevation-(aimElevation-baseAimElevation)*t,
+        roll-(aimRoll-baseAimRoll)*t);
+      const moved=projected(muzzle),dx=base[0]-moved[0],dy=base[1]-moved[1];
+      x+=co*dx-si*dy;y+=si*dx+co*dy;
+    }
+    const point=(distance)=>{
+      const q=projected(distance);return {x:x+co*q[0]-si*q[1],y:y+si*q[0]+co*q[1]};
+    };
+    const record={x,y,angle,elevation,roll,P,muzzle:point(muzzle),heading:wa,index,point};
+    weapons.push(record);return record;
+  };
+  const gun=addWeapon(1,0),dual=w===WEAPONS.DUAL_SMG;
+  if(dual)addWeapon(-1,1);
+  for(const side of [-1,1]) {
+    const right=side===1,sw=right?swing:-swing;
+    const freeRun=!two&&!right&&!dual&&w===WEAPONS.PISTOL?run:0;
+    const targetSX=two?(right?c.bodyW*-.08:c.bodyW*.24):
+      right?(w===WEAPONS.PISTOL||w===WEAPONS.TASER?-4:3):dual?3:lerp(-5*c.armDrag,-1.5,freeRun);
+    const targetSY=two?(right?c.bodyH*.35:-c.bodyH*.20):
+      right?(w===WEAPONS.PISTOL||w===WEAPONS.TASER?8:11):dual?-11:lerp(lerp(-14,-11,c.armDrag),-c.bodyH*.425,freeRun);
+    // The shoulder comes inboard before the wrist reaches forward. Moving
+    // both linearly made the handguard sweep outside the support arm's reach.
+    const shoulderT=two&&!right?1-Math.pow(1-t,3):t;
+    const carrySX=two&&!right?c.bodyW*.14:0,carrySY=two&&!right?-c.bodyH*.30:side*c.bodyH*.425;
+    const sx=lerp(carrySX,targetSX,shoulderT),sy=lerp(carrySY,targetSY,shoulderT);
+    let hx,hy,grip=null,weaponIndex=right?0:1;
+    if(two) {
+      if(w===WEAPONS.BOW) {
+        grip=right?(-11-9*bowDrawAmount(c))*t:0;
+      } else {
+        grip=right?0:lerp(fore,13.4-longGunPump(c)*3.5,t);
+        if(!right) {
+          // Slide along the real handguard when the projected wrist reaches
+          // its limit. The weapon and muzzle stay fixed; no hand holds air.
+          const origin=gun.point(0),unit=gun.point(1),dx=unit.x-origin.x,dy=unit.y-origin.y;
+          const ox=origin.x-sx,oy=origin.y-sy,A=dx*dx+dy*dy,B=2*(ox*dx+oy*dy);
+          const radius=(R.upper+R.fore)*.98,C=ox*ox+oy*oy-radius*radius;
+          const discriminant=B*B-4*A*C;
+          if(A>1e-8&&discriminant>=0)grip=Math.min(grip,Math.max(7,(-B+Math.sqrt(discriminant))/(2*A)));
+        }
+      }
+      weaponIndex=0;const hand=gun.point(grip);hx=hand.x;hy=hand.y;
+    } else if(right||dual) {grip=0;const hand=weapons[weaponIndex];hx=hand.x;hy=hand.y;}
+    else {
+      hx=-1.5+GP.bend*3+sw*(R.upper+R.fore)*STAND_FORE_ARM*(.44+.13*GP.band);
+      hy=side*(c.bodyH*.49-GP.bend*2-Math.max(0,sw)*GP.bend*5.6+Math.max(0,-sw)*(1.1+GP.bend*.6))+rest*.4;
+      const reach=(R.upper+R.fore)*STAND_FORE_ARM;
+      const strideX=1.5+sw*reach*(.44+.13*GP.band)*.62;
+      const strideY=-(c.bodyH*.49-GP.bend*2-Math.max(0,sw)*GP.bend*3+Math.max(0,-sw)*.8);
+      const targetX=lerp(lerp(8,-12,c.armDrag),strideX,freeRun),targetY=lerp(lerp(-14,-11,c.armDrag),strideY,freeRun);
+      hx+=(targetX-hx)*t;hy+=(targetY-hy)*t;
+    }
+    let ex=(hx+1.5)*.42-GP.bend*1.6,ey=side*(c.bodyH*.425+.6+GP.bend*1.5+(two&&right?run*1.8:0));
+    const aimedEX=two?(right?sx-1.8+(hx-sx)*.15:sx+(hx-sx)*.46):right?8:(sx+hx)*.5-2;
+    const aimedEY=two?(right?c.bodyH*.44:sy+(hy-sy)*.16):right?(sy+hy)*.5+1:(sy+hy)*.5-1;
+    ex+=(aimedEX-ex)*t;ey+=(aimedEY-ey)*t;
+    // A projected arm may fold, but cannot grow to bridge a pose transition.
+    for(let i=0;i<5;i++) {
+      let dx=ex-sx,dy=ey-sy,d=Math.hypot(dx,dy);if(d>R.upper){ex=sx+dx*R.upper/d;ey=sy+dy*R.upper/d;}
+      dx=ex-hx;dy=ey-hy;d=Math.hypot(dx,dy);if(d>R.fore){ex=hx+dx*R.fore/d;ey=hy+dy*R.fore/d;}
+    }
+    if(Math.hypot(ex-sx,ey-sy)>R.upper+1e-7) {
+      // At nearly full reach, alternating projections converge slowly. Use
+      // the closest intersection of the same reach circles only at that rim.
+      const dx=hx-sx,dy=hy-sy,d=Math.hypot(dx,dy);
+      if(d>1e-6&&d<=R.upper+R.fore) {
+        const along=(R.upper*R.upper-R.fore*R.fore+d*d)/(2*d);
+        const across=Math.sqrt(Math.max(0,R.upper*R.upper-along*along)),px=-dy/d*across,py=dx/d*across;
+        const cx=sx+dx/d*along,cy=sy+dy/d*along,sign=(ex-cx)*px+(ey-cy)*py>=0?1:-1;
+        ex=cx+sign*px;ey=cy+sign*py;
+      }
+    }
+    arms.push({sx,sy,ex,ey,hx,hy,right,grip,weaponIndex,front:two||right||dual||sw>.2});
+  }
+  return c._standingPresentationPose={frame:frameCount,t,cycle,gait,aim,motion,kick:c.weaponKick||0,fireTimer:c.fireTimer,weapon:c.currentWeapon,bob,tw,weapons,arms,R};
+}
+function weaponAimHeading(c,index=0) {
+  const pose=standingPresentationPose(c);
+  if(pose)return pose.weapons[Math.min(index,pose.weapons.length-1)].heading;
+  const p=c&&actorStancePose(c);
+  if(c&&c.isPlayer&&c._weaponPresentation&&p&&p.prone<.001&&(p.crouch||stanceCoverPoseActive(c))&&c.reloadTimer<=0&&!leftHandAction(c))
+    return (c.aimAngle||0)+stanceWeaponMount(c).angle;
+  return c&&c.aimAngle||0;
+}
+function drawStandingPresentation(c,pose,g,front) {
+  const skin=c.skinCol||[235,180,140],R=pose.R;
+  if(!front)for(const arm of pose.arms)
+    figureCelLimb(g,arm.sx,arm.sy,arm.ex,arm.ey,arm.hx,arm.hy,R.upperW,(R.upperW+R.foreW)*.5,R.foreW*.84,c.shirtCol);
+  for(const arm of pose.arms)if(arm.front===front)figureCelOval(g,arm.hx,arm.hy,8,8,!arm.right&&chemistSuitUnlocked?[180,180,190]:skin,.8);
+  if(!front)return;
+  for(const gun of pose.weapons) {
+    push();translate(gun.x,gun.y);rotate(gun.angle);
+    if(solidLongGun(c.currentWeapon))drawLongGunSolid(c.currentWeapon,gun.P,handGunKick(c.weaponKick)*pose.t,longGunPump(c)*pose.t);
+    else if(c.currentWeapon===WEAPONS.BOW)drawHuntingBow(c.ammo>0,gun.elevation,bowDrawAmount(c));
+    else if(weaponHands(c.currentWeapon)===2)carryLongGun(c.currentWeapon,gun.elevation,figureLight(gun.heading),figureSouth(gun.heading),c);
+    else carryHandGun(c.currentWeapon,gun.elevation,figureLight(gun.heading),figureSouth(gun.heading),gun.roll,c.weaponKick);
+    pop();
+    if(c.muzzleFlash>0&&c.reloadTimer<=0&&c.currentWeapon!==WEAPONS.BOW) {
+      push();translate(gun.muzzle.x,gun.muzzle.y);rotate(gun.angle);
+      if(c.currentWeapon===WEAPONS.PARTICLE_BEAM)drawParticleBeamFlash(g,0,0);
+      else {g.noStroke();g.fill(255,218,90,230);g.triangle(0,-3,18,0,0,3);g.fill(255,251,222);g.ellipse(4,0,8,3);}
+      pop();
+    }
+  }
+}
+
+// The brief hold prevents aim-stick noise from repeatedly lowering the gun.
+// The presentation spring then performs the physical raise and return.
 const AIM_HOLD = 14;
 function playerAiming(c) {
   if (!c.isPlayer) return true;         // everyone else presents; see CARRY.
@@ -50626,8 +50993,9 @@ function occultFigurePose(c) {
   const recover=native&&Number.isFinite(native.release)?Math.max(0,Math.min(1,native.release)):
     state.phase==='RECOVER'?1-Math.max(0,Math.min(1,(state.elapsedMs||0)/(state.durationMs||380))):0;
   const charge=casting?progress*progress*(3-2*progress):native&&native.ceremony?native.ceremony*.35:0;
-  const step=c.isMoving?Math.sin(c.walkCycle||0):0;
-  const sway=c.isMoving?Math.sin((c.walkCycle||0)*.5)*1.6:Math.sin(frameCount*.045+(c.x||0)*.017)*.45;
+  const motion=entityMotionAmount(c),step=Math.sin(c.walkCycle||0)*motion;
+  const restSway=Math.sin(frameCount*.045+(c.x||0)*.017)*.45;
+  const sway=lerp(restSway,Math.sin((c.walkCycle||0)*.5)*1.6,motion);
   const right=swordFitArm(c,14+charge*5-recover*2,15-charge*2,true);
   const left=swordFitArm(c,11+charge*3,-17-charge*2,false);
   return {casting,progress,charge,recover,step,sway,right,left,
@@ -50772,7 +51140,7 @@ function drawOccultMagician(c) {
 }
 function drawOccultZombie(c) {
   const painter=figurePainter(),g=painter?painter.api:window,R=figureRig(c.bodyW,c.bodyH);
-  const step=c.isMoving?Math.sin(c.walkCycle||0):0,skin=c.skinCol||[130,151,107];
+  const step=Math.sin(c.walkCycle||0)*entityMotionAmount(c),skin=c.skinCol||[130,151,107];
   const bite=c.occultZombie||{},lunge=Math.min(1,(bite.windupMs||0)/(bite.windupDurationMs||420));
   g.push();g.rotate(c.aimAngle||0);g.translate(lunge*2,Math.abs(step)*.8);
   g.noStroke();g.fill(5,10,7,95);g.ellipse(-1,4,30,26);
@@ -63082,8 +63450,11 @@ function wildlifeArtPainter(ctx, a, spec) {
   return p;
 }
 function wildlifeArtLegs(p,a,spec) {
-  const moving=!p.prone&&(a.state==='FLEE'||a.state==='TERRITORIAL'||Math.hypot(a.vx||0,a.vy||0)>.2);
-  const stride=moving?Math.sin((a.phase||0)+(a.clock||0)*.012)*.16:0;
+  // Simulation eases this envelope through starts, stops and blocked turns.
+  // A flight-state change alone must not switch all four legs to a full stride.
+  const motion=Number.isFinite(a.motionBlend)?Math.max(0,Math.min(1,a.motionBlend)):
+    Math.min(1,Math.hypot(a.vx||0,a.vy||0)/(spec.speed||1));
+  const stride=p.prone?0:Math.sin((a.phase||0)+(a.clock||0)*.012)*.16*motion;
   const small=spec.family==='rodent'||spec.family==='rabbit'||spec.family==='beaver'||spec.family==='mustelid';
   const feet=[[-.62,-.36],[.43,-.31],[-.65,.35],[.45,.32]];
   for(let i=0;i<feet.length;i++) {
@@ -63315,8 +63686,8 @@ function drawForestWildlifeAirborne() {
 // ===== FOREST WILDLIFE CORE =====
 // Wildlife is deliberately separate from Character/enemiesList. It never fills
 // a military objective, attracts allied auto-aim, or adds another enemy AI pass.
-// One encounter roll every three seconds and a capped, four-frame movement pass
-// keep the forest alive without multiplying the cost of a large army battle.
+// Encounter rolls, staggered steering and a shared bounded route search keep
+// wildlife work local; swept movement and pose integration run every frame.
 const WILDLIFE_MAX_ACTORS = 48;
 const WILDLIFE_CELL = 128;
 const WILDLIFE_SPECIES = Object.create(null);
@@ -63459,6 +63830,7 @@ function wildlifeSpawnAnimal(species, x, y, herd) {
   const a = { id: _wildlifeLedger.nextId++, species, x, y, angle: wildlifeRandom() * Math.PI * 2,
     state: 'GRAZE', hp: s.hp, maxHp: s.hp, bodyR: s.size * scale, headR: s.headR * scale,
     clock: 0, phase: wildlifeRandom() * Math.PI * 2, vx: 0, vy: 0, alarm: 0,
+    targetVX: 0, targetVY: 0, turnVelocity: 0, motionBlend: 0,
     airborne: bird && !wildlifeHasTrait(s, 'ground'), wingPhase: wildlifeRandom() * Math.PI * 2,
     ttl: 0, harvested: false, dead: false, herd: herd || null,
     herdX: herd ? x - herd.x : 0, herdY: herd ? y - herd.y : 0,
@@ -63542,8 +63914,12 @@ function wildlifeActorBlocked(actor, nx, ny, r) {
   return false;
 }
 function wildlifeHumanContact(a, actor, dx, dy) {
+  const r = wildlifeActorRadius(actor), reach = a.bodyR * 1.35 + 2 + r;
+  // Almost every animal is far from the player. Reject the complete relative
+  // sweep before visibility/terrain work or any oriented-body trigonometry.
+  if (Math.max(actor.x, actor.x - dx) < a.x - reach || Math.min(actor.x, actor.x - dx) > a.x + reach ||
+      Math.max(actor.y, actor.y - dy) < a.y - reach || Math.min(actor.y, actor.y - dy) > a.y + reach) return false;
   if(!shovelActorsVisible(a,actor))return false;
-  const r = wildlifeActorRadius(actor);
   if (a.placement) {
     const px = actor.x - a.x, py = actor.y - a.y, reach = a.bodyR * 1.35 + 2 + r;
     return px * px + py * py < reach * reach;
@@ -63648,7 +64024,7 @@ function wildlifeSenseHumans(a) {
     if (nearest2 < space * space) {
       a.intrusion = Math.min(profile.warn + 8, (a.intruder === nearest ? a.intrusion : 0) + elapsed);
       a.intruder = nearest; a.threatX = nearest.x; a.threatY = nearest.y;
-      a.state = 'WARNING'; a.goalX = a.x; a.goalY = a.y; a.vx = a.vy = 0;
+      a.state = 'WARNING'; a.goalX = a.x; a.goalY = a.y; a.targetVX = a.targetVY = 0;
       a.thinkAt = _wildlifeClock;
       if (a.intrusion >= profile.warn) {
         a.aggressor = nearest; a.state = 'TERRITORIAL'; a.chaseUntil = _wildlifeClock + 180; a.thinkAt = _wildlifeClock;
@@ -63680,16 +64056,23 @@ function wildlifeBodyBlocked(near, a, x, y, rx, ry) {
   }
   return false;
 }
+// Movement clearance belongs to the feet, not the antlers/torso silhouette.
+// Spawning and human/weapon contact retain their anatomical dimensions.
+function wildlifeEnvironmentRadius(a) {
+  return Math.max(2, Math.min(6, a.bodyR * .12));
+}
 function wildlifeCanStand(a, x, y) {
-  if (insideFortYard(2, x, y, 160) || wildlifeHumanBlocks(a, x, y)) return false;
+  if (wildlifeHumanBlocks(a, x, y)) return false;
+  if (!a.placement && !a.dead) {
+    const r = wildlifeEnvironmentRadius(a);
+    return !wildlifeBodyBlocked(colNear(x, y), a, x, y, r, r);
+  }
+  if (insideFortYard(2, x, y, 160)) return false;
   const r = Math.max(4, a.bodyR);
   const c = Number.isFinite(a.angle) ? Math.cos(a.angle) : 0, sn = Number.isFinite(a.angle) ? Math.sin(a.angle) : 0;
-  const rx = Number.isFinite(a.angle) ? r * Math.hypot(1.35 * c, 0.78 * sn) + 2 : r * 1.35 + 2;
-  const ry = Number.isFinite(a.angle) ? r * Math.hypot(1.35 * sn, 0.78 * c) + 2 : r * 1.35 + 2;
+  const rx = Number.isFinite(a.angle) ? r * Math.hypot(1.35 * c, .78 * sn) + 2 : r * 1.35 + 2;
+  const ry = Number.isFinite(a.angle) ? r * Math.hypot(1.35 * sn, .78 * c) + 2 : r * 1.35 + 2;
   if (!colGrid) return !wildlifeBodyBlocked(activeBuildings, a, x, y, rx, ry);
-  // The army index pads solids by COL_PAD. Large mammals extend beyond that
-  // margin, so query only their excess reach: at most four cells for current
-  // species, without changing military probes or allocating candidate arrays.
   if (wildlifeBodyBlocked(colBig, a, x, y, rx, ry)) return false;
   const extraX = Math.max(0, rx - COL_PAD), extraY = Math.max(0, ry - COL_PAD);
   const x0 = Math.floor((x - extraX) / COL_CELL), x1 = Math.floor((x + extraX) / COL_CELL);
@@ -63698,6 +64081,271 @@ function wildlifeCanStand(a, x, y) {
     if (wildlifeBodyBlocked(colGrid.get(cellKey(cx, cy)), a, x, y, rx, ry)) return false;
   }
   return true;
+}
+function wildlifeEnvironmentSegmentBlocked(near, a, x0, y0, x1, y1, r) {
+  for (let i = 0; i < near.length; i++) {
+    const b = near[i], hw = Math.abs(b.w || 0) * .5, hh = Math.abs(b.h || 0) * .5;
+    if (Math.max(x0, x1) + r < b.x - hw || Math.min(x0, x1) - r > b.x + hw ||
+        Math.max(y0, y1) + r < b.y - hh || Math.min(y0, y1) - r > b.y + hh || !wildlifeSolidBlocks(b, a)) continue;
+    let px = x0 - b.x, py = y0 - b.y, qx = x1 - b.x, qy = y1 - b.y;
+    let rx = hw + r, ry = hh + r;
+    if (b.isForestTimber) {
+      const ca = b.forestTimberCos, sa = b.forestTimberSin;
+      const sx = px, ex = qx;
+      px = sx * ca + py * sa; py = -sx * sa + py * ca;
+      qx = ex * ca + qy * sa; qy = -ex * sa + qy * ca;
+      rx = b.forestTimberWidth * .5 + r; ry = b.forestTimberDepth * .5 + r;
+    }
+    // An animal already inside a newly streamed/placed solid can walk out
+    // through its nearest face. Never force a teleport or deepen the overlap.
+    if (Math.abs(px) < rx && Math.abs(py) < ry) {
+      if (Math.min(rx - Math.abs(qx), ry - Math.abs(qy)) < Math.min(rx - Math.abs(px), ry - Math.abs(py)) - 1e-8) continue;
+      return true;
+    }
+    if (stanceSegmentBoxTime(px, py, qx - px, qy - py, -rx, -ry, rx, ry) <= 1) return true;
+  }
+  return false;
+}
+function wildlifeEnvironmentClear(a, x0, y0, x1, y1) {
+  if (a.airborne) return true;
+  const r = wildlifeEnvironmentRadius(a), dx = x1 - x0, dy = y1 - y0;
+  // Each short swept segment fits within COL_PAD of its midpoint, so one
+  // indexed cell includes every possible wall. This also catches thin fences.
+  const steps = Math.max(1, Math.ceil(Math.max(Math.abs(dx), Math.abs(dy)) / 40));
+  for (let i = 0; i < steps; i++) {
+    const ax = x0 + dx * i / steps, ay = y0 + dy * i / steps;
+    const bx = x0 + dx * (i + 1) / steps, by = y0 + dy * (i + 1) / steps;
+    if (wildlifeEnvironmentSegmentBlocked(colNear((ax + bx) * .5, (ay + by) * .5), a, ax, ay, bx, by, r)) return false;
+  }
+  return true;
+}
+
+// One incremental local search serves the whole population. Clear travel
+// needs no search. Obstructed animals retain their side and cached waypoints;
+// a herd can reuse one member's route. Searches neither allocate grids nor
+// consume encounter/combat RNG, and cannot burst when 48 animals startle.
+const WILDLIFE_NAV_STEP = 24, WILDLIFE_NAV_WIDTH = 41;
+const WILDLIFE_NAV_NODES = WILDLIFE_NAV_WIDTH * WILDLIFE_NAV_WIDTH;
+const WILDLIFE_NAV_PROBES = 96, WILDLIFE_NAV_EXPANSIONS = 512;
+const WILDLIFE_NAV_FRAME_EXPANSIONS = 24;
+const _wildlifeNavState = new Uint8Array(WILDLIFE_NAV_NODES);
+const _wildlifeNavCost = new Float64Array(WILDLIFE_NAV_NODES);
+const _wildlifeNavParent = new Int16Array(WILDLIFE_NAV_NODES);
+const _wildlifeNavOpen = new Int16Array(WILDLIFE_NAV_NODES);
+const _wildlifeNavEdgeTested = new Uint8Array(WILDLIFE_NAV_NODES);
+const _wildlifeNavEdgeClear = new Uint8Array(WILDLIFE_NAV_NODES);
+const _wildlifeNavTrace = new Int16Array(WILDLIFE_NAV_NODES);
+const _wildlifeNavDX = [1, 1, 0, -1, -1, -1, 0, 1];
+const _wildlifeNavDY = [0, 1, 1, 1, 0, -1, -1, -1];
+const _wildlifeNavQueue = [];
+const _wildlifeNavOffsets = [.65, 1.15, 1.57, 2.05, 2.6, 3.14];
+let _wildlifeNavJob = null, _wildlifeNavOpenCount = 0, _wildlifeNavProbeCount = 0, _wildlifeNavExpansionCount = 0;
+function wildlifeNavigation(a) {
+  return a.navigation || (a.navigation = { path: [], index: 0, until: 0, retryAt: 0,
+    steerAt: 0, side: a.id & 1 ? 1 : -1, queued: false, wantedX: 0, wantedY: 0 });
+}
+function wildlifeNavHeuristic(index, goal) {
+  const dx = Math.abs(index % WILDLIFE_NAV_WIDTH - goal % WILDLIFE_NAV_WIDTH);
+  const dy = Math.abs(Math.floor(index / WILDLIFE_NAV_WIDTH) - Math.floor(goal / WILDLIFE_NAV_WIDTH));
+  return 10 * Math.max(dx, dy) + 4 * Math.min(dx, dy);
+}
+function wildlifeNavRelease(n) {
+  if (!n) return;
+  n.path.length = 0; n.index = 0; n.until = 0; n.queued = false; n.retryAt = 0;
+}
+function wildlifeNavCancel(a, n) {
+  wildlifeNavRelease(n);
+  for (let i = _wildlifeNavQueue.length - 1; i >= 0; i--) if (_wildlifeNavQueue[i] === a) _wildlifeNavQueue.splice(i, 1);
+  if (_wildlifeNavJob && _wildlifeNavJob.animal === a) { _wildlifeNavJob = null; _wildlifeNavOpenCount = 0; }
+}
+function wildlifeClearNavigation() {
+  // Population retirement is the only roster walk here. Ordinary planning
+  // never searches the population to establish whether a queued animal lives.
+  for (let i = 0; i < forestWildlife.length; i++) wildlifeNavRelease(forestWildlife[i].navigation);
+  for (let i = 0; i < _wildlifeNavQueue.length; i++) wildlifeNavRelease(_wildlifeNavQueue[i].navigation);
+  if (_wildlifeNavJob) wildlifeNavRelease(_wildlifeNavJob.animal.navigation);
+  _wildlifeNavQueue.length = 0; _wildlifeNavJob = null;
+  _wildlifeNavOpenCount = _wildlifeNavProbeCount = _wildlifeNavExpansionCount = 0;
+}
+function wildlifeNavBearingAgrees(dx, dy, wx, wy) {
+  return dx * wx + dy * wy >= .5 * Math.sqrt((dx * dx + dy * dy) * (wx * wx + wy * wy));
+}
+function wildlifeNavRequest(a, n, dx, dy) {
+  if (n.queued || n.retryAt > _wildlifeClock || a.airborne) return;
+  n.queued = true; n.wantedX = dx; n.wantedY = dy;
+  _wildlifeNavQueue.push(a);
+}
+function wildlifeNavFinish(index) {
+  const job = _wildlifeNavJob, a = job.animal, n = a.navigation, path = n.path;
+  path.length = 0; n.index = 0; n.queued = false; n.retryAt = _wildlifeClock + 90;
+  if (index !== job.start) {
+    let count = 0;
+    for (let i = index; i !== job.start && i >= 0 && count < WILDLIFE_NAV_NODES; i = _wildlifeNavParent[i]) _wildlifeNavTrace[count++] = i;
+    // Keep only corners; straight grid runs need one target, not 24-unit hops.
+    let lastDX = 0, lastDY = 0;
+    for (let k = count - 1; k >= 0; k--) {
+      const i = _wildlifeNavTrace[k], parent = _wildlifeNavParent[i];
+      const dx = i % WILDLIFE_NAV_WIDTH - parent % WILDLIFE_NAV_WIDTH;
+      const dy = Math.floor(i / WILDLIFE_NAV_WIDTH) - Math.floor(parent / WILDLIFE_NAV_WIDTH);
+      if (k < count - 1 && (dx !== lastDX || dy !== lastDY)) {
+        const p = _wildlifeNavTrace[k + 1];
+        path.push(job.x + (p % WILDLIFE_NAV_WIDTH - 20) * WILDLIFE_NAV_STEP,
+          job.y + (Math.floor(p / WILDLIFE_NAV_WIDTH) - 20) * WILDLIFE_NAV_STEP);
+      }
+      lastDX = dx; lastDY = dy;
+    }
+    path.push(job.x + (index % WILDLIFE_NAV_WIDTH - 20) * WILDLIFE_NAV_STEP,
+      job.y + (Math.floor(index / WILDLIFE_NAV_WIDTH) - 20) * WILDLIFE_NAV_STEP);
+    n.until = _wildlifeClock + 420; n.steerAt = 0;
+    if (a.herd && a.state === 'FLEE') {
+      const h = a.herd; h.navPath = path.slice(); h.navUntil = n.until;
+      h.navWantedX = n.wantedX; h.navWantedY = n.wantedY;
+    }
+  }
+  _wildlifeNavJob = null;
+}
+function wildlifeAdvanceNavigation() {
+  _wildlifeNavProbeCount = 0; _wildlifeNavExpansionCount = 0;
+  while (_wildlifeNavProbeCount <= WILDLIFE_NAV_PROBES - 8 && _wildlifeNavExpansionCount < WILDLIFE_NAV_FRAME_EXPANSIONS) {
+    if (!_wildlifeNavJob) {
+      let a;
+      while (_wildlifeNavQueue.length) {
+        const candidate = _wildlifeNavQueue.shift();
+        if (!candidate.dead && !candidate.harvested && candidate.state !== 'STUNNED' && candidate.navigation && candidate.navigation.queued) { a = candidate; break; }
+        if (candidate.navigation) candidate.navigation.queued = false;
+      }
+      if (!a) break;
+      const n = a.navigation, start = 20 * WILDLIFE_NAV_WIDTH + 20;
+      const length = Math.hypot(n.wantedX, n.wantedY) || 1, reach = Math.min(420, length);
+      const gx = Math.max(0, Math.min(40, 20 + Math.round(n.wantedX / length * reach / WILDLIFE_NAV_STEP)));
+      const gy = Math.max(0, Math.min(40, 20 + Math.round(n.wantedY / length * reach / WILDLIFE_NAV_STEP)));
+      _wildlifeNavState.fill(0); _wildlifeNavEdgeTested.fill(0); _wildlifeNavEdgeClear.fill(0);
+      _wildlifeNavState[start] = 1; _wildlifeNavCost[start] = 0; _wildlifeNavParent[start] = -1;
+      _wildlifeNavOpen[0] = start; _wildlifeNavOpenCount = 1;
+      _wildlifeNavJob = { animal: a, x: a.x, y: a.y, start, goal: gy * WILDLIFE_NAV_WIDTH + gx, expansions: 0 };
+    }
+    const job = _wildlifeNavJob;
+    if (!job.animal.navigation.queued) { _wildlifeNavJob = null; continue; }
+    if (job.animal.dead || job.animal.harvested || job.animal.state === 'STUNNED') { wildlifeNavFinish(job.start); continue; }
+    if (!_wildlifeNavOpenCount || job.expansions >= WILDLIFE_NAV_EXPANSIONS) { wildlifeNavFinish(job.start); continue; }
+    let best = 0, score = Infinity;
+    for (let k = 0; k < _wildlifeNavOpenCount; k++) {
+      const i = _wildlifeNavOpen[k], f = _wildlifeNavCost[i] + wildlifeNavHeuristic(i, job.goal);
+      if (f < score) { best = k; score = f; }
+    }
+    const i = _wildlifeNavOpen[best]; _wildlifeNavOpen[best] = _wildlifeNavOpen[--_wildlifeNavOpenCount];
+    if (i === job.goal) { wildlifeNavFinish(i); continue; }
+    _wildlifeNavState[i] = 2; job.expansions++; _wildlifeNavExpansionCount++;
+    const x = i % WILDLIFE_NAV_WIDTH, y = Math.floor(i / WILDLIFE_NAV_WIDTH);
+    for (let d = 0; d < 8; d++) {
+      const nx = x + _wildlifeNavDX[d], ny = y + _wildlifeNavDY[d];
+      if (nx < 0 || nx >= WILDLIFE_NAV_WIDTH || ny < 0 || ny >= WILDLIFE_NAV_WIDTH) continue;
+      const ni = ny * WILDLIFE_NAV_WIDTH + nx;
+      if (_wildlifeNavState[ni] === 2) continue;
+      const cost = _wildlifeNavCost[i] + (d & 1 ? 14 : 10);
+      if (_wildlifeNavState[ni] && cost >= _wildlifeNavCost[ni]) continue;
+      const bit = 1 << d;
+      if (!(_wildlifeNavEdgeTested[i] & bit)) {
+        _wildlifeNavProbeCount++;
+        const clear = wildlifeEnvironmentClear(job.animal,
+          job.x + (x - 20) * WILDLIFE_NAV_STEP, job.y + (y - 20) * WILDLIFE_NAV_STEP,
+          job.x + (nx - 20) * WILDLIFE_NAV_STEP, job.y + (ny - 20) * WILDLIFE_NAV_STEP);
+        const opposite = 1 << ((d + 4) & 7);
+        _wildlifeNavEdgeTested[i] |= bit; _wildlifeNavEdgeTested[ni] |= opposite;
+        if (clear) { _wildlifeNavEdgeClear[i] |= bit; _wildlifeNavEdgeClear[ni] |= opposite; }
+      }
+      if (!(_wildlifeNavEdgeClear[i] & bit)) continue;
+      _wildlifeNavCost[ni] = cost; _wildlifeNavParent[ni] = i;
+      if (!_wildlifeNavState[ni]) { _wildlifeNavState[ni] = 1; _wildlifeNavOpen[_wildlifeNavOpenCount++] = ni; }
+    }
+  }
+}
+function wildlifeSteer(a, speed) {
+  const n = wildlifeNavigation(a), dx = a.goalX - a.x, dy = a.goalY - a.y, length = Math.hypot(dx, dy);
+  if (length <= 10 || speed <= 0) {
+    if (n.queued || n.index < n.path.length) wildlifeNavCancel(a, n);
+    n.goalX = a.goalX; n.goalY = a.goalY; a.targetVX = a.targetVY = 0; return;
+  }
+  if (n.queued || n.index < n.path.length) {
+    // Judge the route against its original purpose, not its next corner:
+    // backing out of a U-shaped enclosure legitimately points away from the
+    // goal. Same-bearing flee drift keeps its route; a new threat/chase bearing
+    // cancels both old waypoints and any search that could reinstall them.
+    const wx = n.wantedX || n.wantedY ? n.wantedX : n.goalX - a.x;
+    const wy = n.wantedX || n.wantedY ? n.wantedY : n.goalY - a.y;
+    if (Number.isFinite(wx) && Number.isFinite(wy) && !wildlifeNavBearingAgrees(dx, dy, wx, wy)) wildlifeNavCancel(a, n);
+  }
+  let tx = dx / length, ty = dy / length;
+  if (n.until < _wildlifeClock) { n.path.length = 0; n.index = 0; }
+  if (!n.path.length && a.herd && a.herd.navUntil > _wildlifeClock &&
+      wildlifeNavBearingAgrees(dx, dy, a.herd.navWantedX, a.herd.navWantedY)) {
+    const route = a.herd.navPath;
+    // Join a shared route only through a short, verified clear connector.
+    for (let i = route.length - 2; i >= 0; i -= 2) {
+      if (Math.hypot(route[i] - a.x, route[i + 1] - a.y) > 140) continue;
+      if (wildlifeEnvironmentClear(a, a.x, a.y, route[i], route[i + 1])) {
+        n.path = route.slice(i); n.index = 0; n.until = a.herd.navUntil; n.queued = false;
+        n.wantedX = a.herd.navWantedX; n.wantedY = a.herd.navWantedY; break;
+      }
+    }
+  }
+  while (n.index < n.path.length && Math.hypot(n.path[n.index] - a.x, n.path[n.index + 1] - a.y) < 15) n.index += 2;
+  if (n.index < n.path.length) {
+    const px = n.path[n.index] - a.x, py = n.path[n.index + 1] - a.y, pl = Math.hypot(px, py);
+    tx = px / pl; ty = py / pl;
+  }
+  const reach = Math.max(14, speed * 7);
+  const clear = wildlifeEnvironmentClear(a, a.x, a.y, a.x + tx * reach, a.y + ty * reach);
+  const avoidHumans = a.state !== 'TERRITORIAL';
+  if (!clear || avoidHumans && wildlifeHumanBlocks(a, a.x + tx * reach, a.y + ty * reach)) {
+    if (!clear) {
+      if (n.index < n.path.length) { n.path.length = 0; n.index = 0; n.until = 0; }
+      wildlifeNavRequest(a, n, dx, dy);
+    }
+    // A persistent wall-following hand keeps queued animals moving while one
+    // bounded search runs. Never alternate left/right or randomize the goal.
+    let found = false;
+    const wanted = Math.atan2(ty, tx);
+    for (let i = 0; i < _wildlifeNavOffsets.length; i++) {
+      const ang = wanted + n.side * _wildlifeNavOffsets[i], cx = Math.cos(ang), cy = Math.sin(ang);
+      if (wildlifeEnvironmentClear(a, a.x, a.y, a.x + cx * reach, a.y + cy * reach) &&
+          (!avoidHumans || !wildlifeHumanBlocks(a, a.x + cx * reach, a.y + cy * reach))) {
+        tx = cx; ty = cy; found = true; break;
+      }
+    }
+    if (!found) { tx = ty = 0; n.retryAt = Math.min(n.retryAt, _wildlifeClock + 30); }
+  }
+  n.goalX = a.goalX; n.goalY = a.goalY;
+  a.targetVX = tx * speed; a.targetVY = ty * speed;
+}
+function wildlifeIntegrateMotion(a, s, dt) {
+  const previousAngle = a.angle;
+  a.contactAngle = previousAngle;
+  let vx = a.vx + ((a.targetVX || 0) - a.vx) * (1 - Math.exp(-dt / 5.4));
+  let vy = a.vy + ((a.targetVY || 0) - a.vy) * (1 - Math.exp(-dt / 5.4));
+  const desired = a.state === 'WARNING' ? Math.atan2(a.threatY - a.y, a.threatX - a.x) :
+    Math.hypot(vx, vy) > .05 ? Math.atan2(vy, vx) : a.angle;
+  const delta = Math.atan2(Math.sin(desired - a.angle), Math.cos(desired - a.angle));
+  const wantedTurn = Math.max(-.16, Math.min(.16, delta * .28));
+  a.turnVelocity = (a.turnVelocity || 0) + (wantedTurn - (a.turnVelocity || 0)) * (1 - Math.exp(-dt / 3));
+  const turn = Math.max(-Math.abs(delta), Math.min(Math.abs(delta), a.turnVelocity * dt));
+  a.angle += turn;
+  if (wildlifeHumanBlocks(a, a.x, a.y)) { a.angle = previousAngle; a.turnVelocity = 0; }
+  const nx = a.x + vx * dt, ny = a.y + vy * dt;
+  let actualSpeed = 0;
+  if ((vx || vy) && (!wildlifeEnvironmentClear(a, a.x, a.y, nx, ny) || wildlifeHumanBlocks(a, nx, ny))) {
+    // Stop before the actual contact, then re-steer next tick. Velocity eases
+    // toward that stop; there is no axis-snap or instantaneous heading flip.
+    vx *= Math.exp(-dt * .8); vy *= Math.exp(-dt * .8);
+    a.navigation.steerAt = 0;
+  } else {
+    a.x = nx; a.y = ny; actualSpeed = Math.hypot(vx, vy);
+    if (vx || vy) { a.phase += Math.hypot(vx, vy) * .24 * dt; _wildlifeGridDirty = true; }
+  }
+  a.vx = Math.abs(vx) < .001 ? 0 : vx; a.vy = Math.abs(vy) < .001 ? 0 : vy;
+  a.contactAngle = a.angle;
+  const motion = Math.min(1, actualSpeed / Math.max(.01, s.speed));
+  a.motionBlend = (a.motionBlend || 0) + (motion - (a.motionBlend || 0)) * (1 - Math.exp(-dt / (motion > (a.motionBlend || 0) ? 5.4 : 7.2)));
 }
 function wildlifeSpawnAllowed(s, x, y) {
   const r = s.size * 1.10 * 1.35 + 18;
@@ -63808,11 +64456,7 @@ function wildlifeBrain(a) {
     } else wildlifeStartFlight(a, a.aggressor, false);
   }
   if (a.state === 'WARNING') {
-    a.goalX = a.x; a.goalY = a.y; a.vx = a.vy = 0;
-    const previousAngle = a.angle; a.contactAngle = previousAngle;
-    a.angle = Math.atan2(a.threatY - a.y, a.threatX - a.x);
-    if (!wildlifeCanStand(a, a.x, a.y)) a.angle = previousAngle;
-    a.contactAngle = a.angle;
+    a.goalX = a.x; a.goalY = a.y; a.targetVX = a.targetVY = 0;
   }
   if (a.state === 'FLEE') {
     let dx = a.x - a.threatX, dy = a.y - a.threatY;
@@ -63846,9 +64490,12 @@ function updateForestWildlife(dt, elapsedMs) {
   const bleedMs = Number.isFinite(elapsedMs) ? Math.max(0, elapsedMs) :
     Number.isFinite(dt) ? Math.max(0, dt) * (1000 / 60) :
     typeof deltaTime === 'number' && Number.isFinite(deltaTime) ? Math.max(0, deltaTime) : 1000 / 60;
-  dt = Math.max(0, Math.min(3, Number.isFinite(dt) ? dt : 1));
+  dt = Math.max(0, Math.min(3, Number.isFinite(dt) ? dt : bleedMs / (1000 / 60)));
   if (!BIOME_ACTIVE || currentBiome !== 2 || !player) {
-    if (_wildlifeLastBiome === 2 || forestWildlife.length) { forestWildlife.length = 0; _wildlifeGridDirty = true; _wildlifeSpawnClock = 0; }
+    if (_wildlifeLastBiome === 2 || forestWildlife.length) {
+      wildlifeClearNavigation();
+      forestWildlife.length = 0; _wildlifeGridDirty = true; _wildlifeSpawnClock = 0;
+    }
     _wildlifeLastBiome = currentBiome; return;
   }
   if (!dt || !doTick || isPaused || isDead || isWin || killcamMode ||
@@ -63869,6 +64516,7 @@ function updateForestWildlife(dt, elapsedMs) {
     const a = forestWildlife[i]; a.clock += dt;
     const trackingWound = a.arrowBleedTracked || (a.dead && a.fall && a.fall.progress < 1);
     if (a.harvested || (!trackingWound && (!inView(a.x, a.y, 260)) && (a.x-player.x)*(a.x-player.x)+(a.y-player.y)*(a.y-player.y) > far2)) {
+      if (a.navigation) wildlifeNavCancel(a, a.navigation);
       forestWildlife.splice(i, 1); _wildlifeGridDirty = true; continue;
     }
     if (a.hitFlash > 0) a.hitFlash = Math.max(0, a.hitFlash - dt);
@@ -63876,7 +64524,10 @@ function updateForestWildlife(dt, elapsedMs) {
       updateArrowBloodTrail(a, 0);
       if (a.dead && a.fall && a.fall.progress < 1) wildlifeUpdateFall(a, dt);
       a.ttl -= dt;
-      if (a.ttl <= 0) { forestWildlife.splice(i, 1); _wildlifeGridDirty = true; }
+      if (a.ttl <= 0) {
+        if (a.navigation) wildlifeNavCancel(a, a.navigation);
+        forestWildlife.splice(i, 1); _wildlifeGridDirty = true;
+      }
       continue;
     }
     updateArrowBloodTrail(a, bleedMs);
@@ -63894,61 +64545,16 @@ function updateForestWildlife(dt, elapsedMs) {
     a.alarm = Math.max(0, a.alarm - dt);
     if (a.sensorAt <= _wildlifeClock) wildlifeSenseHumans(a);
     if (a.thinkAt <= _wildlifeClock) wildlifeBrain(a);
-    // Stagger local collision probes over four frames, then advance cached
-    // clear velocities every frame so grazing and wingbeats stay smooth.
-    // These local probes never iterate the army roster or the complete map.
-    const s = WILDLIFE_SPECIES[a.species];
-    if (((Math.floor(_wildlifeClock) + a.id) & 3) === 0) {
-      const dx = a.goalX - a.x, dy = a.goalY - a.y, len = Math.hypot(dx, dy);
+    const s = WILDLIFE_SPECIES[a.species], n = wildlifeNavigation(a);
+    if (n.steerAt <= _wildlifeClock || Math.abs(a.goalX - (n.goalX === undefined ? a.goalX : n.goalX)) +
+        Math.abs(a.goalY - (n.goalY === undefined ? a.goalY : n.goalY)) > 8) {
       const profile = wildlifeReactionFor(a);
-      const speed = s.speed * (a.state === 'WARNING' ? 0 : a.state === 'GRAZE' ? (a.airborne ? 0.85 : 0.30) :
+      const speed = s.speed * (a.state === 'WARNING' ? 0 : a.state === 'GRAZE' ? (a.airborne ? .85 : .30) :
         a.state === 'TERRITORIAL' ? Math.min(4.2, profile.sprint) : profile.sprint);
-      a.vx = len > 10 ? dx / len * speed : 0; a.vy = len > 10 ? dy / len * speed : 0;
-      const nx = a.x + a.vx * 4 * dt, ny = a.y + a.vy * 4 * dt;
-      if (a.vx || a.vy) {
-        const previousAngle = a.angle; a.contactAngle = previousAngle;
-        a.angle = Math.atan2(a.vy, a.vx);
-        // Turning changes a large animal's footprint. Clear the intended
-        // orientation at its current root as well as the predicted step;
-        // otherwise it can rotate through a wall before moving even one tick.
-        if (!wildlifeCanStand(a, a.x, a.y) || !wildlifeCanStand(a, nx, ny)) {
-          let sliding = false;
-          // Ease a charge into contact instead of stopping one whole cached
-          // four-frame step short of the body and randomly changing course.
-          if (a.state === 'TERRITORIAL') {
-            for (let step = 0; step < 3; step++) {
-              a.vx *= 0.5; a.vy *= 0.5;
-              if (wildlifeCanStand(a, a.x, a.y) && wildlifeCanStand(a, a.x + a.vx * 4 * dt, a.y + a.vy * 4 * dt)) {
-                sliding = true; break;
-              }
-            }
-          }
-          if (!sliding && a.vx) {
-            a.angle = Math.atan2(0, a.vx);
-            if (wildlifeCanStand(a, a.x, a.y) && wildlifeCanStand(a, nx, a.y)) {
-              a.vy = 0; sliding = true;
-            }
-          }
-          if (!sliding && a.vy) {
-            a.angle = Math.atan2(a.vy, 0);
-            if (wildlifeCanStand(a, a.x, a.y) && wildlifeCanStand(a, a.x, ny)) {
-              a.vx = 0; sliding = true;
-            }
-          }
-          if (!sliding) {
-            a.angle = previousAngle;
-            a.goalX = a.x + (wildlifeRandom() - 0.5) * 180; a.goalY = a.y + (wildlifeRandom() - 0.5) * 180;
-            a.vx = a.vy = 0; a.thinkAt = _wildlifeClock + 40;
-          }
-        }
-      }
+      wildlifeSteer(a, speed);
+      n.steerAt = _wildlifeClock + 6 + (a.id & 1);
     }
-    a.contactAngle = a.angle;
-    if (a.vx || a.vy) {
-      a.x += a.vx * dt; a.y += a.vy * dt;
-      a.phase += Math.hypot(a.vx, a.vy) * 0.24 * dt;
-      _wildlifeGridDirty = true;
-    }
+    wildlifeIntegrateMotion(a, s, dt);
     a.wingPhase += dt * 0.48;
     if (a.state === 'TERRITORIAL' && a.aggressor === player && player.hp > 0 && shovelActorsVisible(a,player) && _wildlifeClock >= a.attackAt &&
         wildlifeBodyMetric(a, player.x, player.y, wildlifeActorRadius(player) + 24) < 1) {
@@ -63956,6 +64562,7 @@ function updateForestWildlife(dt, elapsedMs) {
       a.attackAt = _wildlifeClock + 75;
     }
   }
+  wildlifeAdvanceNavigation();
   wildlifeRebuildGrid();
 }
 function notifyForestWildlifeThreat(x, y, r) {
@@ -64267,6 +64874,7 @@ function serializeForestWildlife() {
     encounters:_wildlifeLedger.encounters,rareMisses:_wildlifeLedger.rareMisses};
 }
 function resetForestWildlife() {
+  wildlifeClearNavigation();
   forestWildlife.length=0;_wildlifeGrid.clear();for(let i=0;i<_wildlifeBucketPool.length;i++)_wildlifeBucketPool[i].length=0;
   _wildlifeLedger={seed:0x5ad763f1,nextId:1,encounters:0,rareMisses:0};
   _wildlifeClock=0;_wildlifeSpawnClock=0;_wildlifeLastThreat=-1000;_wildlifeLastBiome=0;
