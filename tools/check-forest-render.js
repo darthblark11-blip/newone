@@ -40,15 +40,15 @@ for (const name of species) for (const scale of [.65, 1, 1.9]) for (const crown 
   const contours = P('__polygons'), branches = P('__branches');
   const expectedHeight = Math.min(255, base[0] * scale / P('GLRIG_HEIGHT_MAX') * 255);
   if (name === 'CHARRED_SNAG') {
-    ok(contours.length === 0 && branches.length === 5, 'a bare snag casts only its trunk and branches');
+    ok(contours.length === 0 && branches.length === 6, 'a bare snag casts only its trunk and branches');
     ok(Math.abs(branches[0].material[0] - expectedHeight) < 1e-8, 'a snag preserves its authored height');
   } else {
-    ok(contours.length === 3, `${name} tapers in three bounded foliage contours`);
-    ok(contours[0].material[0] < contours[1].material[0] && contours[1].material[0] < contours[2].material[0],
+    ok(contours.length === 4, `${name} covers both projected outer edges and two tapered upper contours`);
+    ok(contours[0].material[0] === contours[1].material[0] && contours[1].material[0] < contours[2].material[0] && contours[2].material[0] < contours[3].material[0],
       `${name} is thinner at the foliage edge than its centre`);
-    ok(contours[0].scale > contours[1].scale && contours[1].scale > contours[2].scale,
+    ok(contours[0].scale === contours[1].scale && contours[1].scale > contours[2].scale && contours[2].scale > contours[3].scale,
       `${name} height bands narrow toward the crown centre`);
-    ok(Math.abs(contours[2].material[0] - expectedHeight) < 1e-8, `${name} crown narrowing preserves height`);
+    ok(Math.abs(contours[3].material[0] - expectedHeight) < 1e-8, `${name} crown narrowing preserves height`);
     ok(contours[0].points.every(([x,y])=>Math.abs(x)<=base[1]*scale*crown/2 && Math.abs(y)<=base[2]*scale*crown/2),
       `${name} height contour stays within scaled crown dimensions`);
   }
@@ -102,7 +102,7 @@ probe(`
 ok(P('_standDecor.length===1 && _standDecor[0]===__edge'),
   'projected crown edge survives live decor culling');
 probe('__ellipses=[];__polygons=[];glRigPaintHeight();');
-ok(P('__polygons.length===3 && __ellipses.length===0'), 'the same edge crown survives lighting culling');
+ok(P('__polygons.length===4 && __ellipses.length===0'), 'the same edge crown survives lighting culling');
 ok(P('forestPropCullPad(__edge)>=forestPropRadius(__edge)+FOREST_PROPS.DOUGLAS_FIR.canopyMass[0]*1.9*(MASS_LEAN+MASS_TILT)'),
   'visibility padding covers crown radius plus maximum projected height');
 console.log(`${checks}/${checks} forest rendering checks passed.`);

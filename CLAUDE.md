@@ -578,7 +578,12 @@ world-space samples; their seam checks use a continuous Canvas reference.
 
 Forest shadows paint on the floor; roots interleave with ground actors, then
 raised crowns cover those actors, followed by aircraft and airborne wildlife.
-The height field uses tapered crown contours, not a full-height ellipse.
+The height field uses tapered crown contours at the art's camera offsets, not a full-height ellipse.
+Raised floor props share sparse height profiles and one shadow owner with the Canvas fallback.
+`forestSunLighting()` keeps cel face shading consistent with sun height and weather; only
+material colours are quantised. Keep cast-shadow directions continuous and full terrain
+albedo neutral. The Canvas ridge-light cache is small and separate from terrain bakes.
+See `tools/check-forest-sunlight.js` and the forest guide's moving sunlight contract.
 `forestWildlife` stays separate from military actors and objective counters:
 39 species, at most 48 animals, an independent encounter RNG and pooled hit grid.
 Wildlife collision probes are staggered, while cached movement advances each

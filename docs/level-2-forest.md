@@ -214,6 +214,47 @@ highlights use sage, cream or warm timber. They mark edges, not the entire
 canopy. Each habitat palette is authored at midday; the existing day/night pass
 then darkens it normally.
 
+### Moving sunlight and material ownership
+
+Raised forest art shares `forestSunLighting()`: the existing world clock supplies
+the sun direction, height, daylight and cloud diffusion. Tree crowns and bark,
+brushable shrubs, timber, stone, flower faces and bog folds use the same opaque
+cel bands. Increasing cloud cover softens directional contrast; after sunset
+the directional highlight disappears. The existing scene lighting still owns
+night darkness and golden-hour warmth, so materials do not apply a second
+whole-scene grade.
+
+Only the material state is quantised (1/128 direction components, 1/64 height
+and contrast). RGB values settle into small cel steps and the species colour
+ramps are reused between changes. Shared RGB style history is capped at 4,096
+entries, so a long walk cannot retain every past sun colour. The actual `LIGHT_DX/DY` used for cast shadows
+remains continuous. Crown/bough plans, roots, seeded headings, collision,
+harvest identities and the existing live-prop budgets are unchanged. Rock
+ridges are seeded geometry; sunlight changes their face colours rather than
+moving the ridges themselves.
+
+`forestSunRelief()` is the shared shadow-ownership gate. When the advanced rig
+is active, it receives four cached crown stamps, including the complete raised outer edge, at the same
+camera offsets as the visible crown. Visible raised floor props receive at
+most five sparse height stamps before the character pass: narrow fronds,
+stems and flower heads retain open space. Canopies retain their later pass
+above ground actors. Only the rig casts these objects' sun shadows in this
+mode; Canvas supplies the fallback when it is disabled. Fine grass, litter and
+other quiet ground marks stay baked.
+
+Hill textures now contain neutral material colour and stone strata. Their
+directional lighting comes from the existing GPU height pass. The Canvas
+fallback uses a separate 64×64 interpolated-normal light texture, refreshed
+only when the shared material light changes. At most 128 small textures are
+retained and evicted textures release their graphics. Neither route rebakes
+full terrain or adds a point light, shader pass or quality tier.
+
+`tools/check-forest-sunlight.js` checks day/night and rain response, unchanged
+geometry, exact moving-shadow directions, bake isolation, sparse height
+profiles, shadow ownership and light-cache reuse. Review dawn, midday, dusk,
+night and rainy scenes with the GPU both enabled and disabled when checking
+native rendering or measuring device performance.
+
 ### Geometry and ink
 
 - Evergreen foliage uses irregular branch masses with unequal placement and
@@ -508,6 +549,7 @@ The foundation has dedicated generation, rendering and harvesting checks:
 node --check game.js
 node tools/check-forest-generation.js
 node tools/check-forest-render.js
+node tools/check-forest-sunlight.js
 node tools/check-forest-lifecycle.js
 node tools/check-forest-camera.js
 node tools/check-forest-habitats.js

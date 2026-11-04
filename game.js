@@ -43825,9 +43825,9 @@ function bakeForestRidges(g,biome,cx,cy) {
   if(biome!==2)return;
   const grid=forestRidgeGrid(cx,cy);
   if(!grid.maximum)return;
-  // Interpolate the shared mesh into one static overlay. Painting each mesh
-  // triangle with a constant colour exposed a checkerboard instead of a hill;
-  // the normal ramp below gives the broad cel planes continuous boundaries.
+  // Bake material colour and stone strata only. Directional sunlight belongs
+  // to the live height rig (or the small cached Canvas light overlay), so a
+  // hill cannot retain a bright reference-sun face through the whole day.
   const layer=createGraphics(CHUNK_TEX,CHUNK_TEX);layer.pixelDensity(1);layer.loadPixels();
   const h=grid.heights,nx=grid.normalsX,ny=grid.normalsY,stride=grid.stride,p=layer.pixels;
   for(let py=0;py<CHUNK_TEX;py++)for(let px=0;px<CHUNK_TEX;px++){
@@ -43838,8 +43838,7 @@ function bakeForestRidges(g,biome,cx,cy) {
     if(z<.03)continue;
     const gx=(nx[n]+(nx[n+1]-nx[n])*tx)*(1-ty)+(nx[n+stride]+(nx[n+stride+1]-nx[n+stride])*tx)*ty;
     const gy=(ny[n]+(ny[n+1]-ny[n])*tx)*(1-ty)+(ny[n+stride]+(ny[n+stride+1]-ny[n+stride])*tx)*ty;
-    const light=(gx*LIGHT_DX+gy*LIGHT_DY)*3.5;
-    const shade=-.32+.23*smooth01((light+.25)/.12)+.20*smooth01(light/.10)+.20*smooth01((light-.22)/.12);
+    const shade=0; // neutral albedo: the live sun owns directional hill contrast
     const wx=grid.ox+(px+.5)*CHUNK_W/CHUNK_TEX,wy=grid.oy+(py+.5)*CHUNK_W/CHUNK_TEX;
     let site=grid.sites[0],nearest=Infinity;
     for(let k=0;k<grid.sites.length;k++){
@@ -43870,6 +43869,59 @@ function bakeForestRidges(g,biome,cx,cy) {
   }
   layer.updatePixels();g.image(layer,grid.ox,grid.oy,CHUNK_W,CHUNK_W);layer.remove();
 }
+// Canvas fallback only: recolour a tiny normal-field overlay when the shared
+// material light changes. Full terrain textures and deterministic content never
+// rebake as time passes. The GPU already shades these same ridge heights.
+const _forestRidgeSunCache = new Map();
+function forestRidgeSunTexture(grid, sun) {
+  let entry = _forestRidgeSunCache.get(grid);
+  if (!entry) {
+    const tex = createGraphics(64, 64); tex.pixelDensity(1);
+    entry = { tex, light: NaN };
+    if (_forestRidgeSunCache.size >= 128) {
+      const oldest = _forestRidgeSunCache.keys().next().value;
+      _forestRidgeSunCache.get(oldest).tex.remove(); _forestRidgeSunCache.delete(oldest);
+    }
+    _forestRidgeSunCache.set(grid, entry);
+  }
+  if (entry.light === sun.key) return entry.tex;
+  const tex = entry.tex, size = 64, stride = grid.stride;
+  const heights = grid.heights, nx = grid.normalsX, ny = grid.normalsY;
+  tex.loadPixels();
+  const pixels = tex.pixels;
+  for (let py = 0; py < size; py++) for (let px = 0; px < size; px++) {
+    const x = (px + .5) * grid.cells / size, y = (py + .5) * grid.cells / size;
+    const ix = Math.floor(x), iy = Math.floor(y), tx = x - ix, ty = y - iy, n = iy * stride + ix;
+    const z = (heights[n] + (heights[n + 1] - heights[n]) * tx) * (1 - ty) +
+      (heights[n + stride] + (heights[n + stride + 1] - heights[n + stride]) * tx) * ty;
+    const gx = (nx[n] + (nx[n + 1] - nx[n]) * tx) * (1 - ty) +
+      (nx[n + stride] + (nx[n + stride + 1] - nx[n + stride]) * tx) * ty;
+    const gy = (ny[n] + (ny[n + 1] - ny[n]) * tx) * (1 - ty) +
+      (ny[n + stride] + (ny[n + stride + 1] - ny[n + stride]) * tx) * ty;
+    const exposure = (gx * sun.dx + gy * sun.dy) * 3.5 * sun.horizon;
+    const shade = -.23 + .23 * smooth01((exposure + .25) / .12) +
+      .20 * smooth01(exposure / .10) + .20 * smooth01((exposure - .22) / .12);
+    const i = (py * size + px) * 4, bright = shade > 0;
+    pixels[i] = bright ? 238 : 18; pixels[i + 1] = bright ? 242 : 39;
+    pixels[i + 2] = bright ? 201 : 32;
+    pixels[i + 3] = Math.min(80, Math.abs(shade) * 170) * sun.direct * Math.min(1, z * .1);
+  }
+  tex.updatePixels(); entry.light = sun.key;
+  return tex;
+}
+function drawForestRidgeSunlight() {
+  if (!BIOME_ACTIVE || currentBiome !== 2 || !chunkMgr ||
+      typeof glRigActive === 'function' && glRigActive()) return;
+  const sun = forestSunLighting();
+  if (sun.direct < .01) return;
+  for (const ch of chunkMgr.chunks.values()) {
+    const x = ch.cx * CHUNK_W, y = ch.cy * CHUNK_W;
+    if (x > viewRight || x + CHUNK_W < viewLeft || y > viewBottom || y + CHUNK_W < viewTop) continue;
+    const grid = forestRidgeGrid(ch.cx, ch.cy);
+    if (grid.maximum) image(forestRidgeSunTexture(grid, sun), x, y, CHUNK_W, CHUNK_W);
+  }
+}
+
 function layoutFor(biome, cx, cy) {
   const def = BIOMES[biome];
   if (!def) return "CITY";
@@ -47200,7 +47252,13 @@ let _bakingSun = false;
 function withBakedSun(fn) {
   const dx = LIGHT_DX, dy = LIGHT_DY, was = _bakingSun;
   LIGHT_DX = SUN_REF_DX; LIGHT_DY = SUN_REF_DY; _bakingSun = true;
-  try { return fn(); } finally { _bakingSun = was; LIGHT_DX = dx; LIGHT_DY = dy; }
+  try { return fn(); } finally {
+    _bakingSun = was; LIGHT_DX = dx; LIGHT_DY = dy;
+    // A bake may have refreshed sky terms while direction was pinned. The
+    // first live lookup must then restore the sun for that clock, not retain
+    // the direction captured before the bake. Nested bakes remain pinned.
+    if (!was) _skT = NaN;
+  }
 }
 
 // How far a building's walls extrude past its footprint, and how far the mass
@@ -51237,7 +51295,7 @@ function forestTreePlan(d, rx, ry, seed, species, rot) {
       lines[k + 2] = (bc * (q + .15) - bs * .22) * rx * size;
       lines[k + 3] = (bs * (q + .15) + bc * .22) * ry * size;
     }
-    branches.push({ angle, size, height: _FOREST_BRANCH_PLAN[i + 4], points, faces, lines,
+    branches.push({ angle, size, lightX: -bs, lightY: bc, height: _FOREST_BRANCH_PLAN[i + 4], points, faces, lines,
       x: (ca * x - sa * y) * rx, y: (sa * x + ca * y) * ry });
   }
   plan = { rx, ry, seed, species, rot, style, crown, branches };
@@ -51276,6 +51334,69 @@ function forestTreeRgbStyle(r, g, b) {
   return '#' + red.toString(16).padStart(2, '0') + green.toString(16).padStart(2, '0') +
     blue.toString(16).padStart(2, '0');
 }
+// Geometry stays cached; only a small shared material state follows the sky.
+// Quantise material colours below a visible cel-band step, never shadow vectors.
+// Night warmth/darkness belongs to the existing scene grade, not a second pass.
+const _forestBakedLight = { key: -1, dx: SUN_REF_DX, dy: SUN_REF_DY,
+  up: .8, horizon: .6, direct: 1 };
+const _forestSunLight = { key: 0, dx: 0, dy: 0, up: 0, horizon: 1, direct: 0 };
+let _forestSunTime = NaN, _forestSunBiome = null, _forestSunRain = null;
+let _forestSunDx = NaN, _forestSunDy = NaN;
+function forestSunLighting() {
+  if (_bakingSun) return _forestBakedLight;
+  _skyTerms();
+  if (_forestSunTime === worldTimeMs && _forestSunBiome === currentBiome &&
+      _forestSunRain === isRaining && _forestSunDx === LIGHT_DX && _forestSunDy === LIGHT_DY)
+    return _forestSunLight;
+  _forestSunTime = worldTimeMs; _forestSunBiome = currentBiome; _forestSunRain = isRaining;
+  _forestSunDx = LIGHT_DX; _forestSunDy = LIGHT_DY;
+  const dx = Math.round(LIGHT_DX * 128) / 128, dy = Math.round(LIGHT_DY * 128) / 128;
+  const up = Math.round(_skHeight * 64) / 64;
+  const direct = Math.round(_skDay * (1 - .85 * _skDiffuse) * 64) / 64;
+  if (dx !== _forestSunLight.dx || dy !== _forestSunLight.dy ||
+      up !== _forestSunLight.up || direct !== _forestSunLight.direct) {
+    _forestSunLight.key++;
+    _forestSunLight.dx = dx; _forestSunLight.dy = dy;
+    _forestSunLight.up = up; _forestSunLight.horizon = Math.sqrt(Math.max(0, 1 - up * up));
+    _forestSunLight.direct = direct;
+  }
+  return _forestSunLight;
+}
+function forestSunExposure(nx, ny, nz, sun = forestSunLighting()) {
+  const length = Math.sqrt(nx * nx + ny * ny + nz * nz) || 1;
+  return (-(nx * sun.dx + ny * sun.dy) * sun.horizon + nz * sun.up) / length;
+}
+function forestSunBand(exposure, dark, flat, bright, sun = forestSunLighting()) {
+  const a = Math.max(0, Math.min(1, (exposure - .08) / .16));
+  const b = Math.max(0, Math.min(1, (exposure - .55) / .16));
+  const value = dark + (flat - dark) * a * a * (3 - 2 * a) +
+    (bright - flat) * b * b * (3 - 2 * b);
+  return Math.round((flat + (value - flat) * sun.direct) * 64) / 64;
+}
+function forestSunShade(nx, ny, nz, dark, flat, bright, sun = forestSunLighting()) {
+  return forestSunBand(forestSunExposure(nx, ny, nz, sun), dark, flat, bright, sun);
+}
+function forestSunFaceShade(vertices, ca, sa, sun, offset = 0) {
+  const a = vertices[0];
+  if (!a || vertices.length < 3) return 1;
+  let nx = 0, ny = 0, nz = 0;
+  for (let i = 1; i < vertices.length - 1; i++) {
+    const b = vertices[i], c = vertices[i + 1];
+    const ux = b[offset] - a[offset], uy = b[offset + 1] - a[offset + 1], uz = b[offset + 2] - a[offset + 2];
+    const vx = c[offset] - a[offset], vy = c[offset + 1] - a[offset + 1], vz = c[offset + 2] - a[offset + 2];
+    nx = uy * vz - uz * vy; ny = uz * vx - ux * vz; nz = ux * vy - uy * vx;
+    if (nx * nx + ny * ny + nz * nz > .000001) break;
+  }
+  if (nz < 0) { nx = -nx; ny = -ny; nz = -nz; }
+  return forestSunShade(nx * ca - ny * sa, nx * sa + ny * ca, nz, .76, 1, 1.17, sun);
+}
+
+function forestTreeFacetShade(branch, sun) {
+  const side = Math.abs(branch.lightX * sun.dx + branch.lightY * sun.dy);
+  return forestSunBand((side * sun.horizon + .72 * sun.up) / 1.232233744,
+    .86, 1, 1.20, sun);
+}
+
 function forestTreeSideStyle(g, path, species, n, cr, cg, cb, hr, hg, hb) {
   if (path === g) return null;
   const inst = g === window ? p5.instance : g;
@@ -51283,24 +51404,26 @@ function forestTreeSideStyle(g, path, species, n, cr, cg, cb, hr, hg, hb) {
   if (inst._colorMode !== "rgb" || !maxes || maxes[0] !== 255 || maxes[1] !== 255 ||
       maxes[2] !== 255 || maxes[3] !== 255) return null;
   const key = species + ':' + n + ':' + cr + ':' + cg + ':' + cb + ':' + hr + ':' + hg + ':' + hb;
+  const sun = forestSunLighting();
   let ramp = _forestTreeSideColours[key];
-  if (!ramp || ramp.dx !== LIGHT_DX || ramp.dy !== LIGHT_DY) {
+  if (!ramp || ramp.light !== sun.key) {
     const colours = new Array(n);
     for (let i = 1; i <= n; i++) {
       const a = (i % n) * TWO_PI / n;
-      const light = .61 + .11 * Math.max(0, -LIGHT_DX * Math.cos(a) - LIGHT_DY * Math.sin(a));
+      const light = forestSunShade(Math.cos(a), Math.sin(a), .18, .50, .66, .90, sun);
       colours[i - 1] = forestTreeRgbStyle(cr * light, cg * light, cb * light);
     }
-    ramp = { dx: LIGHT_DX, dy: LIGHT_DY, colours,
+    const top = forestSunShade(0, 0, 1, .82, .96, 1.10, sun);
+    const bough = forestSunShade(0, 0, 1, .88, 1.02, 1.15, sun);
+    ramp = { light: sun.key, colours,
       low: forestTreeRgbStyle(cr * .59, cg * .60, cb * .60),
-      top: forestTreeRgbStyle(cr * .96, cg * .96, cb * .96),
-      bough: forestTreeRgbStyle(cr * 1.04, cg * 1.02, cb),
-      facet: forestTreeRgbStyle(hr * .76, hg * .86, hb * .84),
+      top: forestTreeRgbStyle(cr * top, cg * top, cb * top),
+      bough: forestTreeRgbStyle(cr * bough, cg * bough, cb * bough),
       vein: forestTreeRgbStyle(cr * .60, cg * .76, cb * .70) };
     _forestTreeSideColours[key] = ramp;
   }
   return { renderer: inst._renderer, colours: ramp.colours,
-    low: ramp.low, top: ramp.top, bough: ramp.bough, facet: ramp.facet, vein: ramp.vein };
+    low: ramp.low, top: ramp.top, bough: ramp.bough, vein: ramp.vein };
 }
 
 // Raised floor plants use the same camera projection as bark and stone. The
@@ -51323,13 +51446,24 @@ function forestFloorLift(d, rise, live, out) {
 // Unknown versions, alternate modes, clipping and accessibility use normal p5.
 const _forestFloorPainters = new WeakMap();
 const _forestFloorOpaqueStyles = Object.create(null);
+const _forestFloorOpaqueKeys = new Int32Array(4096);
+let _forestFloorOpaqueCount = 0, _forestFloorOpaqueCursor = 0;
 function forestFloorOpaqueStyle(r, g, b) {
   const red = Math.round(Math.max(0, Math.min(1, r / 255)) * 255);
   const green = Math.round(Math.max(0, Math.min(1, g / 255)) * 255);
   const blue = Math.round(Math.max(0, Math.min(1, b / 255)) * 255);
   const key = red * 65536 + green * 256 + blue;
-  return _forestFloorOpaqueStyles[key] || (_forestFloorOpaqueStyles[key] =
-    '#' + red.toString(16).padStart(2, '0') + green.toString(16).padStart(2, '0') + blue.toString(16).padStart(2, '0'));
+  const cached = _forestFloorOpaqueStyles[key];
+  if (cached) return cached;
+  // Weather and moving light create new RGB combinations over a long walk.
+  // Keep current materials fast without retaining every past sun colour.
+  if (_forestFloorOpaqueCount === _forestFloorOpaqueKeys.length)
+    delete _forestFloorOpaqueStyles[_forestFloorOpaqueKeys[_forestFloorOpaqueCursor]];
+  else _forestFloorOpaqueCount++;
+  _forestFloorOpaqueKeys[_forestFloorOpaqueCursor] = key;
+  _forestFloorOpaqueCursor = (_forestFloorOpaqueCursor + 1) % _forestFloorOpaqueKeys.length;
+  return _forestFloorOpaqueStyles[key] =
+    '#' + red.toString(16).padStart(2, '0') + green.toString(16).padStart(2, '0') + blue.toString(16).padStart(2, '0');
 }
 function forestFloorPainter(g, path) {
   if (path === g) return null;
@@ -51425,8 +51559,8 @@ function paintForestTimber(g, d, path, live, phase, sd, sl) {
     for (let i = 0; i < n; i++) {
       const j = (i + 1) % n, a = (i + .5) * TWO_PI / n;
       if (Math.cos(a) - Math.sin(a) * uy < 0) continue;
-      const exposure = Math.max(0, -Math.sin(a) * lightY) * .65 + Math.max(0, Math.cos(a)) * .55;
-      const band = exposure > .72 ? 1.30 : exposure > .28 ? 1.0 : .66;
+      const band = forestSunShade(-sa * Math.sin(a), ca * Math.sin(a), Math.cos(a),
+        .66, 1, 1.30);
       g.fill(bark[0] * band, bark[1] * band, bark[2] * band);
       polygon([left[i], middle[i], right[i], right[j], middle[j], left[j]]);
     }
@@ -51446,7 +51580,8 @@ function paintForestTimber(g, d, path, live, phase, sd, sl) {
       const a = i * TWO_PI / n;
       cap.push([x, Math.sin(a) * radius * .79, capRise * (.5 + Math.cos(a) * .40)]);
     }
-    const capLight = (ux >= 0 ? lightX : -lightX) > .15 ? 1.05 : .88;
+    const capLight = forestSunShade(ux >= 0 ? -ca : ca, ux >= 0 ? -sa : sa, 0,
+      .78, .94, 1.08);
     g.fill(wood[0] * capLight, wood[1] * capLight, wood[2] * capLight); polygon(cap);
     g.noFill(); g.stroke(burnt ? 105 : 156, burnt ? 87 : 109, burnt ? 53 : 57); g.strokeWeight(.8 * s);
     // One incomplete growth ring and a radial split keep end grain readable
@@ -51487,8 +51622,8 @@ function paintForestTimber(g, d, path, live, phase, sd, sl) {
     g.noStroke();
     for (let i = 0; i < n; i++) {
       const j = (i + 1) % n, a = (i + .5) * TWO_PI / n + .21;
-      const light = -(Math.cos(a) * lightX + Math.sin(a) * lightY);
-      const band = light > .35 ? 1.26 : light < -.35 ? .66 : .93;
+      const nx = Math.cos(a) * ca - Math.sin(a) * sa, ny = Math.cos(a) * sa + Math.sin(a) * ca;
+      const band = forestSunShade(nx, ny, .20, .66, .93, 1.26);
       g.fill(bark[0] * band, bark[1] * band, bark[2] * band);
       polygon([base[i], base[j], top[j], top[i]]);
     }
@@ -51501,7 +51636,8 @@ function paintForestTimber(g, d, path, live, phase, sd, sl) {
     g.stroke(60, 44, 27); g.strokeWeight(1.35 * s);
     g.fill(bark[0] * .78, bark[1] * .78, bark[2] * .78); polygon(top);
     const cut = top.map(p => [p[0] * .82, p[1] * .82, p[2]]);
-    g.fill(wood[0], wood[1], wood[2]); polygon(cut);
+    const cutLight = forestSunShade(0, 0, 1, .86, 1, 1.08);
+    g.fill(wood[0] * cutLight, wood[1] * cutLight, wood[2] * cutLight); polygon(cut);
     g.noStroke(); g.fill(238, 200, 133);
     polygon([cut[5], cut[6], cut[7], [0, -.7, rise]]);
     g.noFill(); g.stroke(160, 113, 57); g.strokeWeight(.85 * s);
@@ -51640,6 +51776,7 @@ function paintForestShrub(g, d, path, fp, habitatKey, live, phase, sd, sl) {
   const ldx = LIGHT_DX * cr + LIGHT_DY * sr, ldy = -LIGHT_DX * sr + LIGHT_DY * cr;
   const wet = d.forestRegion === 'MARSH', burnt = d.forestRegion === 'BURN';
   const vivid = habitatKey === 'VIBRANT' || habitatKey === 'MEADOW';
+  const sun = forestSunLighting();
   const base = burnt ? [123,143,66] : wet ? [61,151,101] : vivid ? [106,169,65] : [73,151,73];
   const lit = burnt ? [177,178,89] : wet ? [126,189,112] : vivid ? [172,205,91] : [134,190,89];
   const lobes = [[-10,3,18,13,.63],[11,4,17,14,.74],[0,-7,19,16,1]];
@@ -51666,9 +51803,13 @@ function paintForestShrub(g, d, path, fp, habitatKey, live, phase, sd, sl) {
     }
     for (let i = 0; i < points; i++) {
       const j = (i + 1) % points, a = (i + .5) * TWO_PI / points;
-      const exposure = -(Math.cos(a) * ldx + Math.sin(a) * ldy);
-      const colour = exposure > .42 ? lit : base, band = exposure < -.28 ? .77 : 1;
-      g.fill(colour[0] * band, colour[1] * band, colour[2] * band);
+      const nx = Math.cos(a) * cr - Math.sin(a) * sr, ny = Math.cos(a) * sr + Math.sin(a) * cr;
+      const exposure = forestSunExposure(nx, ny, .60, sun);
+      const mix = Math.round(Math.max(0, Math.min(1, (exposure - .15) / .60)) * sun.direct * 16) / 16;
+      const band = forestSunBand(exposure, .80, 1, 1.05, sun);
+      g.fill((base[0] + (lit[0] - base[0]) * mix) * band,
+        (base[1] + (lit[1] - base[1]) * mix) * band,
+        (base[2] + (lit[2] - base[2]) * mix) * band);
       g.triangle(xs[i]+rim[0],ys[i]+rim[1],xs[j]+rim[0],ys[j]+rim[1],ridgeX,ridgeY);
     }
     g.noFill(); g.stroke(35,72,43); g.strokeWeight(fp.outline * s);
@@ -51701,15 +51842,25 @@ function paintForestFlora(g, d, t, phase) {
   const live = typeof window !== 'undefined' && g === window && BIOME_ACTIVE;
   const path = forestPolygonPainter(g);
   const s = d.s || 1, seed = d.c || 0, fungus = species === 'AMBER_FUNGUS';
-  const sd = live ? shadowDensity() : 1, sl = live ? shadowLengthScale() : 1;
+  const ownsShadow = live && forestSunRelief(d) &&
+    typeof glRigOwnsSunShadows === 'function' && glRigOwnsSunShadows();
+  const sd = ownsShadow ? 0 : live ? shadowDensity() : 1, sl = live ? shadowLengthScale() : 1;
   const lift = [0, 0]; forestFloorLift(d, 1, live, lift);
   const ux = lift[0], uy = lift[1], rot = d.r || 0;
   const ca = Math.cos(rot), sa = Math.sin(rot);
   const lx = LIGHT_DX * ca + LIGHT_DY * sa, ly = -LIGHT_DX * sa + LIGHT_DY * ca;
   g.push(); g.translate(d.x, d.y); g.rotate(rot);
   g = forestFloorPainter(g, path) || g;
+  const sun = forestSunLighting(), topLight = forestSunShade(0, 0, 1, .86, 1, 1.08, sun);
+  const material = [0, 0, 0, 255];
+  const fill = (r, green, b, a = 255) => {
+    material[0] = r; material[1] = green; material[2] = b; material[3] = a;
+    g.fill(r * topLight, green * topLight, b * topLight, a);
+  };
   const point = (x, y, z) => [(x + ux * z) * s, (y + uy * z) * s];
   const polygon = vertices => {
+    const k = forestSunFaceShade(vertices, ca, sa, sun);
+    g.fill(material[0] * k, material[1] * k, material[2] * k, material[3]);
     path.beginShape();
     for (const p of vertices) { const q = point(p[0], p[1], p[2]); path.vertex(q[0], q[1]); }
     path.endShape(CLOSE);
@@ -51718,9 +51869,9 @@ function paintForestFlora(g, d, t, phase) {
     const a = point(x0, y0, z0), b = point(x1, y1, z1); g.line(a[0], a[1], b[0], b[1]);
   };
   if (phase !== 'root' && sd > .025) {
-    g.noStroke(); g.fill(18, 42, 34, 35 * sd);
+    g.noStroke(); fill(18, 42, 34, 35 * sd);
     g.ellipse(lx * 7 * sl * s, ly * 7 * sl * s, (fungus ? 32 : 38) * s, 19 * s);
-    g.fill(22, 47, 34, 42 * sd); g.ellipse(0, 1 * s, 28 * s, 14 * s);
+    fill(22, 47, 34, 42 * sd); g.ellipse(0, 1 * s, 28 * s, 14 * s);
   }
   if (phase === 'shadow') { g.pop(); return true; }
   // Low folded basal leaves tie each tall stem into the ground. Teal moss is
@@ -51732,18 +51883,18 @@ function paintForestFlora(g, d, t, phase) {
     for (let k = 0; k < 6; k++) {
       const a = k * 2.39 + seed * 17, radius = 8 + Math.sin(k * 4.1 + seed * 23) * 6;
       const x = Math.cos(a) * radius, y = Math.sin(a) * radius * .7;
-      g.fill(k & 1 ? 87 : 90, k & 1 ? 119 : 101, k & 1 ? 73 : 62);
+      fill(k & 1 ? 87 : 90, k & 1 ? 119 : 101, k & 1 ? 73 : 62);
       polygon([[x - 4, y + 1, 0], [x - 1, y - 2.5, .4], [x + 5, y - 1, .5], [x + 2, y + 2, 0]]);
-      if (!(k & 1)) { g.fill(119, 130, 79); polygon([[x - 2, y, .5], [x + 4, y - 1, .7], [x + 1, y + 1, .3]]); }
+      if (!(k & 1)) { fill(119, 130, 79); polygon([[x - 2, y, .5], [x + 4, y - 1, .7], [x + 1, y + 1, .3]]); }
     }
   } else {
     for (let i = 0; i < 5; i++) {
       const a = i * 2.39 + seed * 4, x = Math.cos(a) * 16, y = Math.sin(a) * 10;
       const side = a + .72, dx = Math.cos(side) * 4, dy = Math.sin(side) * 2.8;
-      g.fill(i & 1 ? 54 : 48, i & 1 ? 113 : 97, i & 1 ? 60 : 58);
+      fill(i & 1 ? 54 : 48, i & 1 ? 113 : 97, i & 1 ? 60 : 58);
       polygon([[0, 0, 0], [x * .55 + dx, y * .55 + dy, 1.8], [x, y, 2.5],
         [x * .55 - dx, y * .55 - dy, 1.6]]);
-      g.fill(111, 156, 72);
+      fill(111, 156, 72);
       polygon([[0, 0, .2], [x * .55 + dx, y * .55 + dy, 1.8], [x, y, 2.5], [x * .5, y * .5, 2.1]]);
     }
   }
@@ -51763,10 +51914,10 @@ function paintForestFlora(g, d, t, phase) {
     if (fungus) {
       const z = stem[2], r = stem[3], red = ((seed * 5.7 + i * .43) % 1) < .34;
       const stemWidth = r * .26;
-      g.stroke(79, 65, 42); g.strokeWeight(.85 * s); g.fill(206, 177, 117);
+      g.stroke(79, 65, 42); g.strokeWeight(.85 * s); fill(206, 177, 117);
       polygon([[x - stemWidth * 1.25, y + .6, 0], [x - stemWidth * .70, y - .3, z],
         [x + stemWidth * .65, y - .3, z], [x + stemWidth * 1.25, y + .6, 0]]);
-      g.noStroke(); g.fill(249, 226, 168);
+      g.noStroke(); fill(249, 226, 168);
       polygon([[x - stemWidth, y, .5], [x - stemWidth * .50, y - .2, z],
         [x + stemWidth * .03, y - .2, z], [x + stemWidth * .15, y, .5]]);
       // A broad cap is a shallow domed disk, with a rolled lower edge and
@@ -51777,19 +51928,19 @@ function paintForestFlora(g, d, t, phase) {
         rim.push([x + Math.cos(a) * r, y + Math.sin(a) * r * .68, z]);
         under.push([x + Math.cos(a) * r, y + Math.sin(a) * r * .68, z - 2.5]);
       }
-      g.stroke(92, 67, 38); g.strokeWeight(.85 * s); g.fill(190, 149, 92); polygon(under);
+      g.stroke(92, 67, 38); g.strokeWeight(.85 * s); fill(190, 149, 92); polygon(under);
       g.stroke(231, 191, 127); g.strokeWeight(.65 * s);
       const facing = Math.atan2(-uy, -ux);
       for (let k = -2; k <= 2; k++) {
         const a = facing + k * .35, dx = Math.cos(a) * r, dy = Math.sin(a) * r * .68;
         segment(x + dx * .98, y + dy * .98, z - 2.4, x + dx * .67, y + dy * .67, z - 2.4);
       }
-      g.stroke(77, 45, 28); g.strokeWeight(.9 * s); g.fill(red ? 195 : 227, red ? 78 : 146, red ? 43 : 47);
+      g.stroke(77, 45, 28); g.strokeWeight(.9 * s); fill(red ? 195 : 227, red ? 78 : 146, red ? 43 : 47);
       polygon(rim);
-      g.noStroke(); g.fill(red ? 239 : 255, red ? 128 : 196, red ? 65 : 85);
+      g.noStroke(); fill(red ? 239 : 255, red ? 128 : 196, red ? 65 : 85);
       polygon([rim[4], rim[5], rim[6], rim[7], rim[8], [x + .4, y - .3, z + 2.4]]);
       if (red) {
-        g.fill(255, 215, 148);
+        fill(255, 215, 148);
         const q = point(x - r * .24, y - r * .18, z + 1.8); g.ellipse(q[0], q[1], r * .36 * s, r * .22 * s);
       }
       continue;
@@ -51802,19 +51953,19 @@ function paintForestFlora(g, d, t, phase) {
     g.stroke(120, 167, 77); g.strokeWeight(.9 * s);
     segment(x - .5, y, 0, x + bend * .48 - .5, y, height * .6);
     segment(x + bend * .48 - .5, y, height * .6, x + bend - .5, y - .2, height);
-    g.noStroke(); g.fill(56, 118, 62);
+    g.noStroke(); fill(56, 118, 62);
     polygon([[x, y, height * .30], [x - 7, y - 2, height * .46], [x - 5, y + 2, height * .51], [x, y, height * .39]]);
-    g.fill(119, 164, 80);
+    fill(119, 164, 80);
     polygon([[x, y, height * .45], [x + 7, y - 1, height * .65], [x + 4, y + 2, height * .65], [x, y, height * .51]]);
     if (species === 'LUPINE') {
       for (let k = 0; k < 5; k++) {
         const z = height * (.53 + k * .105), w = 4.3 - k * .56;
         const bx = x + bend * z / height;
         for (const side of [-1, 1]) {
-          g.stroke(61, 49, 111); g.strokeWeight(.65 * s); g.fill(k & 1 ? 114 : 96, k & 1 ? 106 : 112, 207);
+          g.stroke(61, 49, 111); g.strokeWeight(.65 * s); fill(k & 1 ? 114 : 96, k & 1 ? 106 : 112, 207);
           polygon([[bx, y, z - 1.4], [bx + side * w, y - 1.2, z - .9], [bx + side * (w + .4), y, z + .5],
             [bx + side * w * .52, y + 1.2, z + 1.7], [bx, y, z + .7]]);
-          g.noStroke(); g.fill(171, 165, 246);
+          g.noStroke(); fill(171, 165, 246);
           polygon([[bx + side * .5, y - .2, z + .25], [bx + side * (w - .2), y - .6, z + .3],
             [bx + side * w * .5, y + .6, z + 1.35]]);
         }
@@ -51823,14 +51974,14 @@ function paintForestFlora(g, d, t, phase) {
       for (let k = 0; k < 4; k++) {
         const z = height * (.50 + k * .135), bx = x + bend * z / height;
         const side = i === 0 ? -1 : 1, w = 4.1 - k * .55;
-        g.stroke(104, 42, 82); g.strokeWeight(.75 * s); g.fill(222, 102 + k * 5, 151 + k * 4);
+        g.stroke(104, 42, 82); g.strokeWeight(.75 * s); fill(222, 102 + k * 5, 151 + k * 4);
         polygon([[bx, y, z + 1], [bx + side * w * .75, y - .9, z + 2.4],
           [bx + side * (w + 1), y - .4, z - .6], [bx + side * w, y + 1.1, z - 2.6],
           [bx + side * (w - 2), y + .5, z - 2], [bx, y, z]]);
-        g.noStroke(); g.fill(255, 166, 192);
+        g.noStroke(); fill(255, 166, 192);
         polygon([[bx + side * .5, y - .2, z + .8], [bx + side * w * .7, y - .6, z + 1.9],
           [bx + side * (w + .4), y - .2, z - .5], [bx + side * w * .6, y, z - .4]]);
-        g.fill(123, 45, 90);
+        fill(123, 45, 90);
         polygon([[bx + side * (w - 2), y + .5, z - 2], [bx + side * w, y + .8, z - 2.5],
           [bx + side * (w + .7), y + .1, z - .8], [bx + side * (w - .5), y, z - .7]]);
       }
@@ -51843,16 +51994,16 @@ function paintForestFlora(g, d, t, phase) {
         const a = k * TWO_PI / 7 + seed, dx = Math.cos(a), dy = Math.sin(a);
         const px = -dy * 1.9, py = dx * 1.25;
         g.stroke(cream ? 151 : 160, cream ? 133 : 99, cream ? 71 : 24); g.strokeWeight(.6 * s);
-        g.fill(cream ? 249 : 249, cream ? 231 : 185, cream ? 157 : 55);
+        fill(cream ? 249 : 249, cream ? 231 : 185, cream ? 157 : 55);
         polygon([[bx + dx * 1.2, y + dy * .8, height], [bx + dx * r * .7 + px, y + dy * r * .52 + py, height + .6],
           [bx + dx * r, y + dy * r * .72, height + 1.4], [bx + dx * r * .7 - px, y + dy * r * .52 - py, height + .6]]);
-        g.noStroke(); g.fill(cream ? 255 : 255, cream ? 249 : 220, cream ? 199 : 107);
+        g.noStroke(); fill(cream ? 255 : 255, cream ? 249 : 220, cream ? 199 : 107);
         polygon([[bx + dx * 1.4, y + dy, height + .1], [bx + dx * r * .7 + px, y + dy * r * .52 + py, height + .7],
           [bx + dx * r, y + dy * r * .72, height + 1.4]]);
       }
       const q = point(bx, y, height + .5);
-      g.stroke(114, 74, 26); g.strokeWeight(.65 * s); g.fill(190, 113, 29); g.ellipse(q[0], q[1], 5.6 * s, 4.4 * s);
-      g.noStroke(); g.fill(246, 190, 62); g.ellipse(q[0] - .5 * s, q[1] - .5 * s, 3.4 * s, 2.4 * s);
+      g.stroke(114, 74, 26); g.strokeWeight(.65 * s); fill(190, 113, 29); g.ellipse(q[0], q[1], 5.6 * s, 4.4 * s);
+      g.noStroke(); fill(246, 190, 62); g.ellipse(q[0] - .5 * s, q[1] - .5 * s, 3.4 * s, 2.4 * s);
     }
   }
   g.pop(); return true;
@@ -51867,12 +52018,14 @@ function paintForestBogProp(g, d, path, live, phase, sd, sl) {
   if (phase !== 'root') forestContactShadow(g, 35 * s, 22 * s, 3 * sl, 27, sd);
   if (phase === 'shadow') return;
   g.rotate(rot);
+  const sun = forestSunLighting(), ca = Math.cos(rot), sa = Math.sin(rot);
   const point = (x, y, z) => {
     const lift = forestFloorLift(d, z * s, live, [0, 0]);
-    return [x * s + lift[0], y * s + lift[1]];
+    return [x * s + lift[0], y * s + lift[1], x * s, y * s, z * s];
   };
   const shape = (points, colour, ink) => {
-    g.fill(colour[0], colour[1], colour[2]);
+    const k = forestSunFaceShade(points, ca, sa, sun, 2);
+    g.fill(colour[0] * k, colour[1] * k, colour[2] * k);
     if (ink) { g.stroke(33, 67, 58); g.strokeWeight(.9 * s); } else g.noStroke();
     path.beginShape();
     for (const q of points) path.vertex(q[0], q[1]);
@@ -51985,9 +52138,11 @@ function paintForestClutter(g, d, t, phase) {
   const burnt = d.forestRegion === "BURN" || species === "CHARRED_SNAG";
   const live = typeof window !== 'undefined' && g === window && BIOME_ACTIVE;
   const cm = forestCanopyMass(d);
-  const ownsShadow = live && cm && typeof glRigOwnsSunShadows === 'function' && glRigOwnsSunShadows();
+  const ownsShadow = live && (cm || forestSunRelief(d)) &&
+    typeof glRigOwnsSunShadows === 'function' && glRigOwnsSunShadows();
   const sd = ownsShadow ? 0 : live ? shadowDensity() : 1;
   const sl = live ? shadowLengthScale() : 1;
+  const sun = forestSunLighting();
   const cl = Math.cos(-rot), sn = Math.sin(-rot);
   const ldx = LIGHT_DX * cl - LIGHT_DY * sn, ldy = LIGHT_DX * sn + LIGHT_DY * cl;
   g.push(); g.translate(d.x, d.y);
@@ -52029,7 +52184,10 @@ function paintForestClutter(g, d, t, phase) {
     path.vertex(lx + tw * 0.24, ly - tw * 0.18);
     path.vertex(tw * 0.38, -tw * 0.28); path.vertex(tw * 0.78, tw * 0.42);
     path.endShape(CLOSE);
-    g.noStroke(); g.fill(burnt ? 106 : 151, burnt ? 94 : 111, burnt ? 72 : 69);
+    const barkSun = forestSunLighting().direct;
+    g.noStroke(); g.fill((burnt ? 53 : 97) + (burnt ? 53 : 54) * barkSun,
+      (burnt ? 49 : 68) + (burnt ? 45 : 43) * barkSun,
+      (burnt ? 40 : 43) + (burnt ? 32 : 26) * barkSun);
     const edge = LIGHT_DX < 0 ? 1 : -1;
     g.quad(tw * 0.36 * edge, -tw * 0.18, tw * 0.07 * edge, -tw * 0.14,
            lx + tw * 0.04 * edge, ly - tw * 0.18, lx + tw * 0.19 * edge, ly - tw * 0.17);
@@ -52058,6 +52216,9 @@ function paintForestClutter(g, d, t, phase) {
     const palette = forestTreePalette(species, habitatKey);
     const cr = palette[0], cg = palette[1], cb = palette[2];
     const hr = palette[3], hg = palette[4], hb = palette[5];
+    const sun = forestSunLighting();
+    const topLight = forestSunShade(0, 0, 1, .82, .96, 1.10, sun);
+    const boughLight = forestSunShade(0, 0, 1, .88, 1.02, 1.15, sun);
     // One connected crown volume: shaded bough edges join a lower footprint
     // to its raised top face. The top is filled, with no inner contour rings.
     const low = .12, high = .40, n = alder ? 24 : 32;
@@ -52092,7 +52253,7 @@ function paintForestClutter(g, d, t, phase) {
             x + lx * high, y + ly * high, px + lx * high, py + ly * high);
         } else {
           const a = (i % n) * TWO_PI / n;
-          const light = .61 + .11 * Math.max(0, -LIGHT_DX * Math.cos(a) - LIGHT_DY * Math.sin(a));
+          const light = forestSunShade(Math.cos(a), Math.sin(a), .18, .50, .66, .90, sun);
           g.fill(cr * light, cg * light, cb * light);
           g.quad(px + lx * low, py + ly * low, x + lx * low, y + ly * low,
             x + lx * high, y + ly * high, px + lx * high, py + ly * high);
@@ -52107,13 +52268,17 @@ function paintForestClutter(g, d, t, phase) {
       context.restore();
     } else {
       g.push(); g.translate(lx * high, ly * high);
-      g.fill(cr * .96, cg * .96, cb * .96);
+      g.fill(cr * topLight, cg * topLight, cb * topLight);
       forestTreeCrown(g, rx, ry, seed, species, plan.crown);
       g.pop();
     }
     for (let i = 0; i < _FOREST_BRANCH_PLAN.length; i += 5) {
       const branch = plan.branches[i / 5];
       const a = branch.angle, size = branch.size, f = branch.height;
+      const facet = forestTreeFacetShade(branch, sun);
+      const fr = cr * boughLight + (hr * .76 * facet - cr * boughLight) * sun.direct;
+      const fg = cg * boughLight + (hg * .86 * facet - cg * boughLight) * sun.direct;
+      const fb = cb * boughLight + (hb * .84 * facet - cb * boughLight) * sun.direct;
       if (nativeGroups) {
         // These groups change only local Canvas styles. The parent p5 renderer
         // already has fill on/stroke off, so its state and caches stay intact.
@@ -52121,7 +52286,7 @@ function paintForestClutter(g, d, t, phase) {
         context.save(); context.translate(branch.x + lx * f, branch.y + ly * f);
         context.fillStyle = sideStyle.bough;
         forestTreeBough(g, rx * size, ry * size, a, seed + i, alder, branch.points);
-        context.fillStyle = sideStyle.facet;
+        context.fillStyle = forestFloorOpaqueStyle(fr, fg, fb);
         forestTreeBoughFacet(g, rx * size, ry * size, a, alder, seed + i, branch.faces);
         if (!alder && rx > 12) {
           context.strokeStyle = sideStyle.vein; context.lineWidth = .6 * s;
@@ -52134,10 +52299,10 @@ function paintForestClutter(g, d, t, phase) {
         continue;
       }
       g.push(); g.translate(branch.x + lx * f, branch.y + ly * f);
-      g.noStroke(); g.fill(cr * 1.04, cg * 1.02, cb * 1.0);
+      g.noStroke(); g.fill(cr * boughLight, cg * boughLight, cb * boughLight);
       forestTreeBough(g, rx * size, ry * size, a, seed + i, alder, branch.points);
       // The sun-facing half is one material plane, not a smaller canopy ring.
-      g.fill(hr * .76, hg * .86, hb * .84);
+      g.fill(fr, fg, fb);
       forestTreeBoughFacet(g, rx * size, ry * size, a, alder, seed + i, branch.faces);
       if (!alder && rx > 12) {
         const ax = Math.cos(a), ay = Math.sin(a);
@@ -52186,7 +52351,8 @@ function paintForestClutter(g, d, t, phase) {
         const floorY = q => sa * length * q + ca * bend * Math.sin(q * PI);
         const x = q => floorX(q) + lx * rise * Math.sin(q * PI * .87);
         const y = q => floorY(q) + ly * rise * Math.sin(q * PI * .87);
-        const light = -(ca * ldx + sa * ldy), bright = light > .45;
+        const light = -(ca * ldx + sa * ldy) * sun.horizon + .45 * sun.up;
+        const leafLight = forestSunBand(light, .86, 1, 1.13, sun);
         g.noFill(); g.stroke(45, 103, 48); g.strokeWeight(1.25 * s);
         path.beginShape(); path.vertex(0, 0);
         for (let j = 1; j <= 7; j++) path.vertex(x(j / 7), y(j / 7));
@@ -52202,7 +52368,7 @@ function paintForestClutter(g, d, t, phase) {
             const fy = floorY(q + .085) - floorY(q - .055) + ca * width * side;
             const n = Math.hypot(fx, fy) || 1, px = -fy / n * w, py = fx / n * w;
             g.stroke(34, 91, 45); g.strokeWeight(.60 * s);
-            g.fill(wet ? 54 : 65, wet ? 144 : 151, wet ? 81 : 67);
+            g.fill((wet ? 54 : 65) * leafLight, (wet ? 144 : 151) * leafLight, (wet ? 81 : 67) * leafLight);
             if (path.beginCurveShape) path.beginCurveShape(); else path.beginShape();
             path.vertex(bx, by);
             path.bezierVertex(bx + dx * .25 + px, by + dy * .25 + py,
@@ -52212,7 +52378,9 @@ function paintForestClutter(g, d, t, phase) {
             path.endShape(CLOSE);
             // The broad lit half shares the raised centreline; its flat value
             // change gives the small leaf a fold without tiny decorative marks.
-            g.noStroke(); g.fill(bright ? 145 : 114, bright ? 195 : 175, bright ? 87 : 75);
+            const fold = .35 + .65 * sun.direct;
+            g.noStroke(); g.fill((80 + 34 * fold) * leafLight,
+              (151 + 24 * fold) * leafLight, (67 + 8 * fold) * leafLight);
             if (path.beginCurveShape) path.beginCurveShape(); else path.beginShape();
             path.vertex(bx, by);
             path.bezierVertex(bx + dx * .25 + px, by + dy * .25 + py,
@@ -52278,7 +52446,8 @@ function paintForestClutter(g, d, t, phase) {
           const bx = outline[j * 2] * rx, by = outline[j * 2 + 1] * ry;
           let nx = by - ay, ny = ax - bx;
           const n = Math.hypot(nx, ny) || 1; nx /= n; ny /= n;
-          const light = -(nx * ldx + ny * ldy), band = light > .4 ? .80 : light < -.2 ? .52 : .66;
+          const light = -(nx * ldx + ny * ldy) * sun.horizon + .15 * sun.up;
+          const band = forestSunBand(light, .52, .66, .80, sun);
           g.fill(colour[0] * band, colour[1] * band, colour[2] * band);
           g.quad(x + ax, y + ay, x + bx, y + by,
             x + bx * .83 + ux, y + by * .83 + uy, x + ax * .83 + ux, y + ay * .83 + uy);
@@ -52290,15 +52459,15 @@ function paintForestClutter(g, d, t, phase) {
           path.vertex(x + outline[i * 2] * rx * .83 + ux, y + outline[i * 2 + 1] * ry * .83 + uy);
         path.endShape(CLOSE);
         const ridgeX = x + ux - rx * .12, ridgeY = y + uy - ry * .08;
-        const upperLight = ldy * .8 - ldx * .2;
-        const upperBand = upperLight > .3 ? 1.18 : upperLight < -.3 ? .94 : 1.06;
+        const upperLight = (ldy * .8 - ldx * .2) * sun.horizon + .60 * sun.up;
+        const upperBand = forestSunBand(upperLight, .94, 1.06, 1.18, sun);
         g.noStroke(); g.fill(colour[0] * upperBand, colour[1] * upperBand, colour[2] * upperBand);
         path.beginShape();
         for (let i = 0; i < 4; i++)
           path.vertex(x + outline[i * 2] * rx * .83 + ux, y + outline[i * 2 + 1] * ry * .83 + uy);
         path.vertex(ridgeX, ridgeY); path.endShape(CLOSE);
-        const lowerLight = -ldy * .8 - ldx * .2;
-        const lowerBand = lowerLight > .3 ? 1.06 : lowerLight < -.3 ? .82 : .94;
+        const lowerLight = (-ldy * .8 - ldx * .2) * sun.horizon + .60 * sun.up;
+        const lowerBand = forestSunBand(lowerLight, .82, .94, 1.06, sun);
         g.fill(colour[0] * lowerBand, colour[1] * lowerBand, colour[2] * lowerBand);
         g.triangle(ridgeX, ridgeY, x + outline[8] * rx * .83 + ux, y + outline[9] * ry * .83 + uy,
           x + outline[10] * rx * .83 + ux, y + outline[11] * ry * .83 + uy);
@@ -52331,9 +52500,10 @@ function paintForestClutter(g, d, t, phase) {
         const tx = bx + ex + lx * high, ty = by + ey + ly * high;
         const mx = bx + ex * .47 + lx * high * .85, my = by + ey * .47 + ly * high * .85;
         const side = i % 2 ? 1 : -1, w = (reeds ? 2.4 : 1.7) * s;
-        const lit = -(Math.sign(ex || 1) * ldx + ldy * -.4);
+        const light = -(Math.sign(ex || 1) * ldx - ldy * .4) * sun.horizon + .55 * sun.up;
+        const leafLight = forestSunBand(light, .80, 1, 1.20, sun);
         g.stroke(40, 79, 43); g.strokeWeight(.65 * s);
-        g.fill(lit > .3 ? 122 : 86, lit > .3 ? 166 : 139, reeds ? 74 : 67);
+        g.fill(96 * leafLight, 149 * leafLight, (reeds ? 74 : 67) * leafLight);
         if (path.beginCurveShape) path.beginCurveShape(); else path.beginShape();
         path.vertex(bx, by);
         path.bezierVertex(bx + ex * .12 + lx * high * .35 - w * side, by + ly * high * .35,
@@ -52424,23 +52594,21 @@ function paintForestBoulder(g, b, leanX, leanY) {
     const j = (i + 1) % 8;
     let nx = py[j] - py[i], ny = px[i] - px[j];
     const n = Math.hypot(nx, ny) || 1; nx /= n; ny /= n;
-    const light = Math.max(0, -(nx * LIGHT_DX + ny * LIGHT_DY));
-    const k = 0.51 + light * 0.24;
+    const k = forestSunShade(nx, ny, .15, .51, .65, .83);
     g.fill(cr * k + 4, cg * k + 5, cb * k + 5);
     g.quad(px[i] - leanX, py[i] - leanY, px[j] - leanX, py[j] - leanY,
            tx[j], ty[j], tx[i], ty[i]);
   }
   // Asymmetric granite planes meet at one ridge. They fill the complete top
   // and share edges, so the mass reads as fractured rock instead of rings.
-  const ridgeX = -LIGHT_DX * w * 0.065 - w * 0.035;
-  const ridgeY = -LIGHT_DY * h * 0.060 + h * 0.015;
+  const ridgeX = w * (-.035 + Math.sin(seed * 13 + phase) * .045);
+  const ridgeY = h * (.015 + Math.cos(seed * 9 - phase) * .040);
   g.noStroke();
   for (let i = 0; i < 8; i++) {
     const j = (i + 1) % 8;
     let nx = ty[j] - ty[i], ny = tx[i] - tx[j];
     const n = Math.hypot(nx, ny) || 1; nx /= n; ny /= n;
-    const light = -(nx * LIGHT_DX + ny * LIGHT_DY);
-    const k = light > 0.35 ? 1.31 : light < -0.35 ? 0.83 : 1.06;
+    const k = forestSunShade(nx, ny, .80, .83, 1.06, 1.31);
     g.fill(Math.min(218, cr * k), Math.min(225, cg * k), Math.min(207, cb * k));
     g.triangle(tx[i], ty[i], tx[j], ty[j], ridgeX, ridgeY);
   }
@@ -57390,44 +57558,155 @@ function paintForestRidgeHeightfield(g) {
 }
 
 const _glForestCanopies = []; // bounded by visible streamed crowns, reused
+const _FOREST_RELIEF_SHRUBS = [[-10,3,18,13,.63],[11,4,17,14,.74],[0,-7,19,16,1]];
+const _FOREST_RELIEF_FERN_ANGLES = [-2.82,-2.15,-1.42,-.61,.23];
+const _FOREST_RELIEF_FERN_LENGTHS = [20,26,25,22,15];
+const _FOREST_RELIEF_STEMS = [[-11,-4,.78],[8,-3,1],[-1,7,.85]];
+const _FOREST_RELIEF_MOSS = [[-14,0,15,11,8],[8,-4,17,12,16],[17,7,11,9,10]];
+const _FOREST_RELIEF_PEBBLES = [[-3,-1,9,7,1],[8,5,4,3,.43]];
+// Same eligibility gate is read by Canvas shadow ownership and the height pass.
+// Only raised live decor enters this pass; ground litter stays in its bake.
+function forestSunRelief(d) {
+  if (!d || !d.forestSpecies) return null;
+  switch (d.forestSpecies) {
+    case 'BUSH': case 'LOG': case 'STUMP': case 'FERN': case 'REED': case 'PEBBLE':
+    case 'LUPINE': case 'FOXGLOVE': case 'SUN_DAISY': case 'AMBER_FUNGUS':
+    case 'BOG_HUMMOCK': case 'BOG_SEDGE': case 'BOG_MOSS':
+      return FOREST_PROPS[d.forestSpecies] || null;
+    default: return null;
+  }
+}
+
 function glRigForestCanopyHeight(g, d, cp) {
+  if (!cp) return;
   const s = d.s || 1, crown = d.forestCrownScale === undefined ? 1 : d.forestCrownScale;
   const elevation = groundElev(d.x, d.y), rise = cp[0] * s;
+  const rx = cp[1] * s * crown * .5, ry = cp[2] * s * crown * .5;
+  massLean(d.x, d.y, rise, _leanTmp);
+  const lx = _leanTmp[0], ly = _leanTmp[1];
   g.push(); g.translate(d.x, d.y);
   if (d.forestSpecies === 'CHARRED_SNAG') {
-    // A snag is a trunk and bare branches, never a solid circular pillar.
-    const height = glRigHeightByte(rise + elevation);
-    g.stroke(height, 12.75, 0, 255); g.strokeWeight(Math.max(3, 5 * s));
-    g.line(-3 * s, 0, 3 * s, 0);
-    for (let i = 0; i < 4; i++) {
-      const angle = (d.r || 0) + i * 2.17;
-      g.strokeWeight((2.4 - i * .25) * s);
-      g.line(0, 0, Math.cos(angle) * cp[1] * s * crown * .24,
-        Math.sin(angle) * cp[2] * s * crown * .24);
+    // Thin rooted bark/branches match the actual leaned art, rather than a
+    // circular pillar or a branch skeleton pinned to the unprojected root.
+    const seed = d.c || 0, rot = d.r || 0;
+    g.stroke(glRigHeightByte(rise + elevation), 12.75, 0, 255);
+    g.strokeWeight(Math.max(3, 5 * s)); g.line(0, 0, lx, ly);
+    for (let i = 0; i < 5; i++) {
+      const f = .25 + i * .15, a = rot + i * 2.17 + Math.sin(seed * 7 + i) * .15;
+      const bx = lx * f, by = ly * f;
+      g.stroke(glRigHeightByte(elevation + rise * f), 12.75, 0, 255);
+      g.strokeWeight((4 - i * .4) * s);
+      g.line(bx, by, bx + Math.cos(a) * rx * (.50 + i % 2 * .18),
+        by + Math.sin(a) * ry * (.50 + i % 2 * .18));
     }
   } else {
-    const rx = cp[1] * s * crown * .5, ry = cp[2] * s * crown * .5;
     const plan = forestTreePlan(d, rx, ry, d.c || 0, d.forestSpecies, d.r || 0, d.forestCanopyStyle);
-    // The outer foliage is thinner than its centre. Three crown contours
-    // taper the height at its edge instead of extruding a full-height oval.
-    // They reuse the art's cached world outline and add no shader samples.
+    // Keep four cheap cached silhouette stamps. Their centres follow the
+    // visible low/top crown; camera lean cannot leave lighting at the trunk.
     for (let band = 0; band < 3; band++) {
       const radius = band === 0 ? 1 : band === 1 ? .83 : .62;
       const height = band === 0 ? .46 : band === 1 ? .76 : 1;
+      const projected = band === 0 ? .12 : band === 1 ? .30 : .40;
       glRigMat(g, elevation + rise * height, .05, 0);
-      g.scale(radius);
+      g.push(); g.translate(lx * projected, ly * projected); g.scale(radius);
       forestTreeCrown(g, rx, ry, d.c || 0, d.forestSpecies, plan.crown);
-      g.scale(1 / radius);
+      g.pop();
+      if (band === 0) {
+        // The visible top is full width at .40 lean. Cover that outer edge
+        // before the tapered stamps, including at the far camera margins.
+        g.push(); g.translate(lx * .40, ly * .40);
+        forestTreeCrown(g, rx, ry, d.c || 0, d.forestSpecies, plan.crown);
+        g.pop();
+      }
     }
   }
   g.pop();
 }
 
-// Draws the scene's height field. This is the only new per-frame scene pass the
-// rig adds, and it is deliberately not art: flat fills over the same lists
-// drawBiomeShadows() already walks, at half rig resolution, with no per-type
-// dispatch. Adding a building type does NOT require touching this function --
-// it picks the mass up from buildingRise() like everything else.
+// Three to five simple height stamps per visible floor prop, using its art's
+// local coordinates and world camera projection. Thin flowers/reeds keep gaps;
+// a tall plant is never represented by a tall opaque footprint-sized disk.
+function glRigForestFloorHeight(g, d, profile = forestSunRelief(d)) {
+  if (!profile) return;
+  const s = d.s || 1, rot = d.r || 0, seed = d.c || 0, kind = d.forestSpecies;
+  const elevation = groundElev(d.x, d.y);
+  massLean(d.x, d.y, 1, _leanTmp);
+  const ca = Math.cos(rot), sa = Math.sin(rot);
+  const ux = _leanTmp[0] * ca + _leanTmp[1] * sa;
+  const uy = -_leanTmp[0] * sa + _leanTmp[1] * ca;
+  g.push(); g.translate(d.x, d.y); g.rotate(rot); g.noStroke();
+  const cap = (x, y, z, w, h, angle = 0, offsetX = 0, offsetY = 0) => {
+    glRigMat(g, elevation + z, .04, 0);
+    const px = x * s + ux * z + offsetX, py = y * s + uy * z + offsetY;
+    if (!angle) g.ellipse(px, py, w * s, h * s);
+    else { g.push(); g.translate(px, py); g.rotate(angle); g.ellipse(0, 0, w * s, h * s); g.pop(); }
+  };
+  if (kind === 'BUSH') {
+    const motion = forestBrushState(d);
+    const bendX = motion ? motion.x * ca + motion.y * sa : 0;
+    const bendY = motion ? -motion.x * sa + motion.y * ca : 0;
+    const twist = Math.max(-.065, Math.min(.065, bendY * .006 / s));
+    for (const q of _FOREST_RELIEF_SHRUBS)
+      cap(q[0], q[1], profile.rise * q[4] * s * .78, q[2] * 1.64, q[3] * 1.64, 0,
+        (bendX * q[4] - q[1] * s * twist) * .78,
+        (bendY * q[4] + q[0] * s * twist) * .78);
+  } else if (kind === 'LOG' || kind === 'STUMP') {
+    // Timber's saved decorative scale widens it; its waist height stays fixed.
+    const stump = kind === 'STUMP';
+    cap(0, 0, profile.rise * .25, stump ? 27 : 50, stump ? 21 : 15);
+    cap(0, 0, profile.rise * .66, stump ? 23 : 46, stump ? 18 : 12);
+    cap(0, 0, profile.rise, stump ? 17.4 : 39, stump ? 14.8 : 7);
+  } else if (kind === 'FERN') {
+    const angles = _FOREST_RELIEF_FERN_ANGLES, lengths = _FOREST_RELIEF_FERN_LENGTHS;
+    for (let i = 0; i < 5; i++) {
+      const a = angles[i] + (seed - .5) * .24;
+      const length = lengths[i] + Math.sin(seed * 8 + i * 1.8);
+      cap(Math.cos(a) * length * .54, Math.sin(a) * length * .54,
+        profile.rise * s * (.76 + i % 3 * .12), length * .82, 6, a);
+    }
+  } else if (kind === 'REED' || kind === 'BOG_SEDGE') {
+    for (let i = 0; i < 3; i++) {
+      if (kind === 'BOG_SEDGE') {
+        const x = -6 + i * 6, y = -2 + i * 2.4;
+        cap(x + 3 - i * 2, y - 2, (26 - i * 2) * s, 3, 5);
+      } else {
+        const k = i * 3, ex = -14 + k * 4.7;
+        const ey = -4 + Math.sin(seed * 6 + k * 1.8) * 3.5;
+        cap(-3 + k * 1.05 + ex * .80, (k % 3 - 1) * 1.4 + ey * .80,
+          profile.rise * s * .72, 3.5, 6, Math.atan2(ey, ex));
+      }
+    }
+  } else if (kind === 'LUPINE' || kind === 'FOXGLOVE' || kind === 'SUN_DAISY') {
+    const stems = _FOREST_RELIEF_STEMS;
+    for (let i = 0; i < 3; i++) {
+      const stem = stems[i], z = (kind === 'FOXGLOVE' ? 24 : kind === 'LUPINE' ? 23 : 16) * stem[2];
+      const bend = (i - 1) * 2.4 + Math.sin(seed * 5) * 1.5;
+      const daisy = kind === 'SUN_DAISY', r = 6.2 - i * .55;
+      cap(stem[0] + bend * (daisy ? 1 : .82), stem[1], z * s * (daisy ? 1 : .84),
+        daisy ? r * 2 : 7, daisy ? r * 1.44 : 3.5);
+    }
+  } else if (kind === 'AMBER_FUNGUS') {
+    const n = 2 + Math.floor(seed * 3.999);
+    for (let k = 0; k < n; k++) {
+      const a = k * 2.39 + seed * 11, radius = k ? 8 + k % 3 * 2 : 1.5;
+      const r = k === 0 ? 8.5 + seed * 2.3 : 4.2 + ((seed * 7 + k * .41) % 1) * 3.2;
+      const z = r * (1.05 + ((seed * 13 + k * .37) % 1) * .32);
+      cap(Math.cos(a) * radius, Math.sin(a) * radius * .75, z * s, r * 2, r * 1.36);
+    }
+  } else if (kind === 'BOG_HUMMOCK') {
+    cap(-2, 0, 6.6 * s, 50, 25); cap(-13, -3, 11 * s, 18, 12); cap(11, -1, 8.8 * s, 18, 12);
+  } else if (kind === 'BOG_MOSS') {
+    for (const q of _FOREST_RELIEF_MOSS)
+      cap(q[0], q[1], q[4] * .83 * s, q[2] * 1.6, q[3] * 1.6);
+  } else if (kind === 'PEBBLE') {
+    for (const q of _FOREST_RELIEF_PEBBLES) {
+      cap(q[0], q[1], profile.rise * q[4] * .25 * s, q[2] * 2, q[3] * 2);
+      cap(q[0], q[1], profile.rise * q[4] * s, q[2] * 1.66, q[3] * 1.66);
+    }
+  }
+  g.pop();
+}
+
 function glRigPaintHeight() {
   const g = GLRig.hgt;
   const k = GLRig.hw / width;          // css px -> height buffer px
@@ -57539,10 +57818,12 @@ function glRigPaintHeight() {
       if (cwy > viewBottom + chunkPad || cwy + CHUNK_W < viewTop - chunkPad) continue;
       for (const dc of ch.decor) {
         const cp = dc.forestSpecies ? forestCanopyMass(dc) : CANOPY_MASS[dc.t];
-        if (!cp) continue;
+        const relief = !cp && dc.forestSpecies ? forestSunRelief(dc) : null;
+        if (!cp && !relief) continue;
         const pad = dc.forestSpecies ? forestPropCullPad(dc) : 120;
         if (dc.x < viewLeft - pad || dc.x > viewRight + pad) continue;
         if (dc.y < viewTop - pad  || dc.y > viewBottom + pad) continue;
+        if (relief) { glRigForestFloorHeight(g, dc, relief); continue; }
         const cs = dc.s || 1;
         const crown = dc.forestCrownScale === undefined ? 1 : dc.forestCrownScale;
         if (dc.forestSpecies) {
@@ -61861,6 +62142,7 @@ function generateMap() {
 function drawGround() {
   if (!BIOME_ACTIVE || !chunkMgr) { legacyDrawGround(); return; }
   chunkMgr.drawTerrain();
+  drawForestRidgeSunlight();
   drawShovelGrassPatches();
   drawAuthoredGroundOverlay();
   chunkMgr.drawDecor();
