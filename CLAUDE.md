@@ -1722,8 +1722,8 @@ are still true; they take a separate path (`longMassLean`, `drawSlabFace`) rathe
   jamb — the near one, whose top slides across the opening and reveals its own inward
   face; at the far side the top slides *off* the opening and reveals nothing but ground.
 
-`isUBarrier` stays out on purpose (an energy field has no mass) and so does
-`isBlockBuilding`, which already carries its own rise.
+`isUBarrier` has its own three-course sandbag painter, with separate raised
+walls, shadows and material stamps; `isBlockBuilding` already carries its own rise.
 
 Three things about the projection are load-bearing:
 
@@ -2417,6 +2417,21 @@ crew clears and the collision box — so what the player lines up is what they g
 Adding one is a `BLUEPRINTS` entry, a name in `BUILD_ORDER`, and a branch in
 `drawBuiltStructure()`. `FARM` is the model for a blueprint that emits more than one
 solid: a barn plus an `isCropField` ground lot beside it, from `buildSiteSolids()`.
+
+Architecture level 2 also grants one instant `BARRIER` through Fortifications,
+even without an assigned crew. Its saved `isUBarrier` identity now represents
+three waist-high sandbag walls with an open south entrance. `coverSolidRects()`
+owns the shared wall geometry: 200×200 between wall centres, 30-thick walls,
+and a 230×230 outer placement footprint. It uses ordinary LOW cover, so standing
+body/head shots clear it, low shots stop at the walls, and ducking protects only
+where a wall actually blocks incoming fire. There is no interior immunity or
+friendly projectile exemption. Both sides can damage the 1000-HP barrier;
+destruction removes its saved and active solids without an explosion. Existing
+saved barriers convert automatically without restoring their spent reward.
+The renderer sorts short wall sections around actors, keeping raised standing
+weapons above low cover and nearby tall structures in front. Sack geometry is
+cached for both the structure and its moving placement ghost. Focused checks:
+`node tools/check-build-sandbag-cover.js` and `node tools/check-fortifications.js`.
 
 **Footprints are authored at 1× and multiplied by `BUILD_SCALE` (2.25).** At the 20 units
 to the metre a parked car sets, that puts the warehouse at 26×17 m — a shed you walk the

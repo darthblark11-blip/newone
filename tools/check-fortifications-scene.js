@@ -26,8 +26,8 @@ function initScene(){
     for(const [name,key]of[['touchStarted','start'],['touchMoved','move'],['touchEnded','end']]){
      const original=window[name];window[name]=function(...args){__fortNative[key]++;return original(...args);};
     }
-    window.__fortStep=()=>{frameCount++;handleTouches();handleGamepad();if(!isPaused)player.updatePlayer();updateBuildPlacement();};
-    window.__fortDesktopStep=()=>{frameCount++;handleDeathMenuInput();handleDesktop();if(!isPaused)player.updatePlayer();updateBuildPlacement();};
+    window.__fortStep=()=>{frameCount++;doTick=!isPaused;handleTouches();handleGamepad();if(!isPaused)player.updatePlayer();updateBuildPlacement();};
+    window.__fortDesktopStep=()=>{frameCount++;doTick=!isPaused;handleDeathMenuInput();handleDesktop();if(!isPaused)player.updatePlayer();updateBuildPlacement();};
     window.__fortFresh=()=>{
      isPaused=false;buildGhost=null;playerStructures=[];buildSites=[];buildings=[];activeBuildings=[];bullets=[];
      invalidateColIndex();window.archBarrierReady=true;window.lastPauseTime=-10000;
@@ -69,7 +69,7 @@ async function createScene(browser,w,h,touch){
     return {records,button:fortificationsMenuButton(),state:__fortState()};
    });
    ok(menu.records.includes('FORTIFICATIONS'),name+' paints the Fortifications option');
-   ok(menu.records.includes('BARRIER READY · AIM AND PLACE INSTANTLY'),name+' explains the available instant barrier');
+   ok(menu.records.includes('SANDBAG COVER · AIM AND PLACE INSTANTLY'),name+' explains the available instant sandbag cover');
    ok(menu.button.x>=0&&menu.button.x+menu.button.w<=w&&menu.button.y>=0&&menu.button.y+menu.button.h<=h,name+' Fortifications row fits');
    ok(!menu.state.fault,name+' menu draw has no frame fault');
    await page.locator('canvas').first().screenshot({path:path.join(out,name+'-menu.png')});

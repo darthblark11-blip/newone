@@ -25,8 +25,15 @@ for(const key of ['isCrateProp','isHayBale','isDumpster','isFence','isCar'])
 for(const type of ['HEDGE','CITYCAFETABLE'])
  ok(type+' is readable waist-high cover',P(`coverSolidKind({x:0,y:0,w:60,h:60,propType:'${type}'})==='LOW'`));
 ok('a stone altar is waist-high dungeon cover',P("coverSolidKind({x:0,y:0,w:60,h:60,undergroundProp:'ALTAR'})==='LOW'"));
-for(const key of ['isGrassLot','isDeck','isRiver','isPond','isUBarrier','isStreetLight'])
+for(const key of ['isGrassLot','isDeck','isRiver','isPond','isStreetLight'])
  ok(key+' cannot become an invisible cover wall',P(`coverSolidKind({x:0,y:0,w:60,h:60,${key}:true})===null`));
+ok('the rendered architecture sandbags are waist-high cover with three physical walls',P(`(function(){
+ const b={x:0,y:0,w:200,h:200,isUBarrier:true,hp:1000},r=coverSolidRects(b);
+ return coverSolidKind(b)==='LOW'&&r.length===3&&r.some(p=>p.x0<=-100&&p.x1>=-100)&&
+   r.some(p=>p.x0<=100&&p.x1>=100)&&r.some(p=>p.y0<=-100&&p.y1>=-100)&&
+   !r.some(p=>p.x0<=0&&p.x1>=0&&p.y0<=0&&p.y1>=0)&&
+   !r.some(p=>p.x0<=0&&p.x1>=0&&p.y0<=100&&p.y1>=100);
+})()`));
 ok('ordinary building slabs are high cover',P("coverSolidKind(coverWall)==='HIGH'"));
 ok('destroyed ordinary geometry is not cover',P('coverSolidKind({x:0,y:0,w:60,h:60,hp:0})===null'));
 ok('explicit waist height overrides the generic wall class',P("coverSolidKind({x:0,y:0,w:60,h:60,isWall:true,coverHeight:1.1})==='LOW'"));

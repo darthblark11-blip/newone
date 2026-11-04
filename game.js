@@ -621,8 +621,10 @@ function coverWeaponMuzzles(a) {
 }
 function coverSolidKind(b) {
   if(!b||!Number.isFinite(b.x)||!Number.isFinite(b.y)||b.noCover||
-      b.hp<=0&&!b.isGovFortress||b.isForestTimber&&b.__hv&&b.__hv.hp<=0||b.isUBarrier)return null;
-  if(b.isForestTimber)return 'LOW';
+      b.hp<=0&&!b.isGovFortress||b.isForestTimber&&b.__hv&&b.__hv.hp<=0)return null;
+  // Old saves retain the U-barrier identity, but its walls now have the same
+  // waist height and stance rules as ordinary sandbags and fallen timber.
+  if(b.isUBarrier||b.isForestTimber)return 'LOW';
   if(b.isCropField||b.isMarket||b.isGrassLot||b.isParkingLot||b.isPond||b.isRiver||b.isCanal||b.isDeck||
       b.isStreetLight||b.isPalm||b.isAlienPlant||b.isEnergyPole||b.isCactusProp||b.isTumbleweedProp||
       b.isMushroom||b.isWater||b.propType==='RIVER'||b.propType==='CANAL'||b.propType==='HELIPAD'||
@@ -658,6 +660,24 @@ function coverSolidRects(b) {
     if(x1>b.x+GATE_DOOR_HALF)rects.push({x0:b.x+GATE_DOOR_HALF,y0,x1,y1});
   } else rects.push({x0,y0,x1,y1});
   _coverRectCache.set(b,{x:b.x,y:b.y,w,h,open,u:!!b.isUBarrier,tw,th,co,si,rects});return rects;
+}
+function sandbagBarrierPointBlocked(b,x,y,r=0) {
+  for(const wall of coverSolidRects(b))
+    if(x+r>wall.x0&&x-r<wall.x1&&y+r>wall.y0&&y-r<wall.y1)return true;
+  return false;
+}
+function damageSandbagBarrier(b,damage,x=b.x,y=b.y) {
+  if(!b.isUBarrier||!(b.hp>0)||!(damage>0))return false;
+  b.hp=Math.max(0,b.hp-damage);b.hitFlash=4;
+  emit(x,y,b.hp>0?4:16,color(167,145,99),'DUST');
+  if(b.hp<=0) {
+    // Sand and torn canvas collapse; a destroyed fortification is not a bomb.
+    for(const list of [buildings,activeBuildings,playerStructures]) {
+      const index=list.indexOf(b);if(index>=0)list.splice(index,1);
+    }
+    invalidateColIndex();lastActiveUpdate=0;
+  }
+  return true;
 }
 // Contact and tactical goals use the actual outward faces, not the empty
 // corners of a diagonal timber AABB. Ordinary walls retain their exact faces.
@@ -5272,6 +5292,7 @@ function drawBuildingShadows() {
     if (b.isBiomeProp || b.isTreeTrunk) continue;
     if ((currentLevel === 1 || currentLevel === 2) && b.isGrassLot) continue;
     if (b.isCropField) continue; // Don't shadow the ground
+    if (b.isUBarrier) { drawSandbagBarrierShadow(window, b); continue; }
 
     let shadowAlpha = (currentLevel === 1 || currentLevel === 3) ? 45 : 150;
     // A site is a slab and some scaffold, so it throws a short soft one; a
@@ -5369,6 +5390,8 @@ function drawBuildingShadows() {
 
 let _depthActors = [];      // reused; actors queued by actorShow() this frame
 let _depthMasses = [];      // reused; visible masses, sorted by base y
+const _sandbagDepthCache = new WeakMap();
+const _sandbagDepthPieces = []; // only the visible low walls need height ordering
 let _depthOn = false;
 let _legacyActorsQueued = false; // closed interiors keep their standing order
 let _airborneActors = [];   // live flyers are above roofs, not ground contacts
@@ -5540,6 +5563,7 @@ function drawAirborneActors() {
 // bit-for-bit from (biome, cx, cy) -- and nothing in the render path may leave
 // a mark on them.
 function massRunKind(b) {
+  if (b.isSandbagWall) return 4;
   if (DECOR_STANDING[b.t]) return 2;
   if (forestStandingFloorProp(b)) return 2;
   if (b.isFrontierEntrancePost) return 3;
@@ -5564,6 +5588,9 @@ function drawMassRun(arr, i0, i1) {
       } else if (forestStandingFloorProp(d)) paintForestClutter(window, d, frameCount, 'root');
       else paintClutter(window, d, frameCount);
     }
+    else if (kind === 4) for (let k = s; k < e; k++) {
+      const wall=arr[k];paintSandbagBarrierWall(window,wall.barrier,wall.wallIndex,wall.paintOptions);
+    }
     else if (kind === 3) for (let k = s; k < e; k++) drawFrontierTownEntrancePost(arr[k]);
     else if (kind === 1) drawBiomeProps(arr, s, e);
     else                 drawBuildings(arr, s, e);
@@ -5574,6 +5601,7 @@ function drawMassRun(arr, i0, i1) {
 function drawDepthSorted() {
   const masses = _depthMasses;
   masses.length = 0;
+  _sandbagDepthPieces.length = 0;
   _forestCrowns.length = 0;
   for (let i = 0; i < activeBuildings.length; i++) {
     const b = activeBuildings[i];
@@ -5582,6 +5610,28 @@ function drawDepthSorted() {
     // sort down to what is actually on screen, which is a fraction of the
     // 1500-unit ring activeBuildings holds.
     if (!inView(b.x, b.y, Math.max(b.w || 0, b.h || 0) + 150)) continue;
+    if (b.isUBarrier) {
+      if(!(b.hp>0))continue;
+      // Short horizontal slices keep local depth without changing how the
+      // staggered upper courses cover the sacks underneath them.
+      const rects=coverSolidRects(b);
+      let cached=_sandbagDepthCache.get(b);
+      if(!cached||cached.rects!==rects) {
+        cached={rects,pieces:[]};
+        for(let wallIndex=0;wallIndex<rects.length;wallIndex++) {
+          const r=rects[wallIndex],count=wallIndex===2?1:Math.ceil((r.y1-r.y0)/40);
+          for(let part=0;part<count;part++) {
+            const y0=r.y0+(r.y1-r.y0)*part/count,y1=r.y0+(r.y1-r.y0)*(part+1)/count;
+            cached.pieces.push({isSandbagWall:true,barrier:b,wallIndex,
+              paintOptions:count===1?{}:{clipY0:part?y0:y0-64,clipY1:part===count-1?y1+64:y1},
+              x0:r.x0,y0,x1:r.x1,y1,_depthKey:y1});
+          }
+        }
+        _sandbagDepthCache.set(b,cached);
+      }
+      for(const piece of cached.pieces){masses.push(piece);_sandbagDepthPieces.push(piece);}
+      continue;
+    }
     b._depthKey = massDepth(b);
     masses.push(b);
   }
@@ -5610,7 +5660,23 @@ function drawDepthSorted() {
 
   const actors = _depthActors;
   drawGroundBodyActors(actors);
-  for (let i = 0; i < actors.length; i++) actors[i]._depthKey = actors[i].y;
+  for (let i = 0; i < actors.length; i++) {
+    const actor=actors[i];let depth=actor.y;
+    // Standing upper bodies and raised guns clear these waist-high sacks.
+    // Change only rendering order, never the actor's physical contact point.
+    if(actorCanUseStances(actor)&&actorStance(actor)==='STAND')for(const wall of _sandbagDepthPieces) {
+      const dx=Math.max(wall.x0-actor.x,0,actor.x-wall.x1),dy=Math.max(wall.y0-actor.y,0,actor.y-wall.y1);
+      if(dx*dx+dy*dy>55*55)continue;
+      depth=Math.max(depth,wall._depthKey+.001);
+    }
+    if(depth>actor.y)for(const mass of masses) {
+      if(mass.isSandbagWall||mass._depthKey<=actor.y||mass._depthKey>depth)continue;
+      const dx=Math.max(Math.abs(mass.x-actor.x)-(mass.w||0)*.5,0),
+        dy=Math.max(Math.abs(mass.y-actor.y)-(mass.h||0)*.5,0);
+      if(dx*dx+dy*dy<=55*55&&coverSolidKind(mass)==='HIGH')depth=Math.min(depth,mass._depthKey-.001);
+    }
+    actor._depthKey=depth;
+  }
   actors.sort((p, q) => p._depthKey - q._depthKey);
   const previousBoxingPass = boxingBeginFigurePass(actors);
   try {
@@ -5636,6 +5702,10 @@ function drawDepthSorted() {
     paintForestClutter(window, _forestCrowns[i], frameCount, 'crown');
   }
   _forestCrowns.length = 0;
+  for(const b of activeBuildings)if(b.isUBarrier&&b.hp>0&&inView(b.x,b.y,Math.max(b.w||0,b.h||0)+150)) {
+    drawSandbagBarrierHealth(b);
+    if(doTick&&b.hitFlash>0)b.hitFlash--;
+  }
   // A person crossing the entrance is underneath its timber lintel, even
   // while climbing the authored stairs. Aircraft retain their later pass.
   drawFrontierTownEntranceOverhead();
@@ -5935,8 +6005,8 @@ function drawShovelUndergroundActor() {
 // the screen and go through the slab path instead (see drawSlabFace) --  the
 // gate because a breached one is a hole the wings must not paint across, the
 // curtain wall because a face spanning 10400 units needs its own view clamp;
-// isUBarrier, which is an energy field and has no mass; isBlockBuilding, which
-// already carries its own rise; and everything in Levels 0 and 8, which the
+// isUBarrier, whose individual sandbag walls carry their own raised geometry;
+// isBlockBuilding, which already carries its own rise; and everything in Levels 0 and 8, which the
 // BIOME_ACTIVE gate excludes wholesale.
 const LEGACY_MASS = {
   isHouse:       [148, 150, 154],   isBarn:        [104,  36,  32],
@@ -6309,6 +6379,187 @@ function drawNM0LabProp(b) {
   pop();
 }
 
+// A buildable barrier is three narrow stacks, with open ground between them.
+// Each canvas sack has a chamfered footprint and its own four-unit rise. The
+// staggered courses share the world's projection and light, so the tied ends
+// and seams remain attached when the camera moves around the fortification.
+const _sandbagBarrierArt = new WeakMap();
+const _sandbagBarrierLean = [0, 0];
+function sandbagBarrierWallBags(b, wallIndex) {
+  let art = _sandbagBarrierArt.get(b);
+  if (!art || art.w !== b.w || art.h !== b.h) {
+    const walls = coverSolidRects(b), courses = [];
+    for (let wi = 0; wi < walls.length; wi++) {
+      const r = walls[wi], alongX = wi === 2;
+      const lo = alongX ? r.x0 - b.x : r.y0 - b.y;
+      const hi = alongX ? r.x1 - b.x : r.y1 - b.y;
+      const mid = alongX ? (r.y0 + r.y1) / 2 - b.y : (r.x0 + r.x1) / 2 - b.x;
+      const half = (alongX ? r.y1 - r.y0 : r.x1 - r.x0) / 2;
+      const bags = [], pitch = 39;
+      for (let course = 0; course < 3; course++) {
+        const shift = course % 2 ? pitch / 2 : 0;
+        let index = 0;
+        for (let a = lo - shift; a < hi; a += pitch, index++) {
+          const a0 = Math.max(lo, a) + .6, a1 = Math.min(hi, a + pitch) - .6;
+          if (a1 - a0 < 3) continue;
+          const d0 = mid - half + .6 + course * .55, d1 = mid + half - .6 - course * .55;
+          const corner = Math.min(6, (a1 - a0) * .25, (d1 - d0) * .25);
+          const centre = (a0 + a1) / 2, depthCentre = (d0 + d1) / 2;
+          const sag = (index + course + wi) % 2 ? .8 : -.4;
+          const points = [[a0+corner,d0+1],[centre,d0],[a1-corner,d0+1+sag],
+            [a1-1,d0+corner],[a1,depthCentre],[a1-1,d1-corner],
+            [a1-corner,d1-.8],[centre,d1],[a0+corner,d1-1+sag],
+            [a0+.6,d1-corner],[a0,depthCentre],[a0+1,d0+corner]];
+          if (!alongX) {
+            // Retain clockwise winding after swapping the two ground axes.
+            for (const p of points) { const v = p[0]; p[0] = p[1]; p[1] = v; }
+            points.reverse();
+          }
+          bags.push({points, alongX, a0, a1, d0, d1, course, index,
+            x0:alongX?a0:d0, y0:alongX?d0:a0,
+            x1:alongX?a1:d1, y1:alongX?d1:a1,
+            cx: alongX ? (a0 + a1) / 2 : mid,
+            cy: alongX ? mid : (a0 + a1) / 2,
+            tone: (index * 7 + course * 5 + wi * 3) % 5});
+        }
+      }
+      courses.push(bags);
+    }
+    art = {w:b.w, h:b.h, walls:courses};
+    _sandbagBarrierArt.set(b, art);
+  }
+  return art.walls[wallIndex] || EMPTY_LIST;
+}
+function sandbagBarrierPolygon(g, points, x, y, lx, ly) {
+  g.beginShape();
+  // Rounded shoulders and a slight belly distinguish stuffed canvas from the
+  // bevelled stone/metal boxes elsewhere in the build menu.
+  for (let i = -1; i <= points.length + 1; i++) {
+    const p = points[(i + points.length) % points.length];
+    g.curveVertex(x+p[0]+lx,y+p[1]+ly);
+  }
+  g.endShape(CLOSE);
+}
+function paintSandbagBarrierWall(g, b, wallIndex, opts = {}) {
+  const bags = sandbagBarrierWallBags(b, wallIndex);
+  if (!bags.length) return;
+  const clipY0 = Number.isFinite(opts.clipY0) ? opts.clipY0 : -Infinity;
+  const clipY1 = Number.isFinite(opts.clipY1) ? opts.clipY1 : Infinity;
+  if (clipY1 <= clipY0) return;
+  const wet = !!isRaining, flash = opts.flash === undefined ? b.hitFlash > 0 : opts.flash;
+  g.push();
+  if (Number.isFinite(clipY0) && Number.isFinite(clipY1) && g.drawingContext &&
+      typeof g.drawingContext.clip === 'function') {
+    const dc = g.drawingContext;
+    dc.beginPath();
+    dc.rect(b.x-b.w/2-64,clipY0,b.w+128,clipY1-clipY0);
+    dc.clip();
+  }
+  if (opts.preview && g.drawingContext) g.drawingContext.globalAlpha *= .74;
+  // A small palette shift gives adjoining sacks individual canvas panels,
+  // while the three broad light planes keep the comic-book read at game zoom.
+  for (const bag of bags) {
+    const p = bag.points, z0 = bag.course * 4, z1 = z0 + 4;
+    massLean(b.x + bag.cx, b.y + bag.cy, 12, _sandbagBarrierLean);
+    const lx = _sandbagBarrierLean[0], ly = _sandbagBarrierLean[1];
+    const bx = lx * z0 / 12, by = ly * z0 / 12, tx = lx * z1 / 12, ty = ly * z1 / 12;
+    // A strip keeps the complete bottom-to-top painter order, including sacks
+    // that cross its boundary. Sorting the staggered sacks individually lets
+    // a lower course cover a neighbouring upper course.
+    if (b.y+bag.y1+Math.max(by,ty)+3 < clipY0 ||
+        b.y+bag.y0+Math.min(by,ty)-3 > clipY1) continue;
+    let cr = 166 + bag.tone * 5, cg = 153 + bag.tone * 4, cb = 100 + bag.tone * 3;
+    if ((bag.index + wallIndex * 2) % 5 === 3) { cr -= 15; cg -= 3; cb -= 4; }
+    if (wet) { cr *= .78; cg *= .81; cb *= .81; }
+    if (flash) { cr += 43; cg += 42; cb += 39; }
+    g.stroke(39, 42, 31); g.strokeWeight(1.1);
+    for (let i = 0; i < p.length; i++) {
+      const a = p[i], c = p[(i + 1) % p.length], ex = c[0] - a[0], ey = c[1] - a[1];
+      const length = Math.hypot(ex, ey), nx = ey / length, ny = -ex / length;
+      if (nx * lx + ny * ly >= -.01) continue;
+      const sun = Math.max(0, -(nx * LIGHT_DX + ny * LIGHT_DY));
+      const shade = .58 + sun * .22;
+      g.fill(cr * shade, cg * shade, cb * shade);
+      g.quad(b.x+a[0]+bx,b.y+a[1]+by,b.x+c[0]+bx,b.y+c[1]+by,
+        b.x+c[0]+tx,b.y+c[1]+ty,b.x+a[0]+tx,b.y+a[1]+ty);
+    }
+    g.fill(cr, cg, cb);
+    sandbagBarrierPolygon(g, p, b.x, b.y, tx, ty);
+    const at = (a,d) => bag.alongX ? [b.x+a+tx,b.y+d+ty] : [b.x+d+tx,b.y+a+ty];
+    const lineAt = (a,d,c,e) => { const v = at(a,d), w = at(c,e); g.line(v[0],v[1],w[0],w[1]); };
+    const curveAt = (a,d,c,e,f,h,j,k) => {
+      const p0=at(a,d),p1=at(c,e),p2=at(f,h),p3=at(j,k);
+      g.bezier(p0[0],p0[1],p1[0],p1[1],p2[0],p2[1],p3[0],p3[1]);
+    };
+    const span = bag.a1 - bag.a0, mid = (bag.d0 + bag.d1) / 2;
+    // A broad curved fold catches the light; an inset rectangle would make
+    // these sacks look like the metal crates in the same architecture menu.
+    g.noStroke(); g.fill(Math.min(238,cr+39), Math.min(228,cg+37), Math.min(180,cb+34));
+    const hx = -LIGHT_DX * 1.8, hy = -LIGHT_DY * 1.8;
+    const fold = (a,d) => { const v=at(a,d);return [v[0]+hx,v[1]+hy]; };
+    const start=fold(bag.a0+4,mid-1),end=fold(bag.a1-4,mid-2);
+    const c1=fold(bag.a0+span*.21,bag.d0+2),c2=fold(bag.a1-span*.22,bag.d0+1);
+    const c3=fold(bag.a1-2,mid+4),c4=fold(bag.a0+span*.32,mid+6);
+    g.beginShape();
+    g.vertex(start[0],start[1]);
+    g.bezierVertex(c1[0],c1[1],c2[0],c2[1],end[0],end[1]);
+    g.bezierVertex(c3[0],c3[1],c4[0],c4[1],start[0],start[1]);
+    g.endShape(CLOSE);
+    // A stitched long seam, folded shoulders and gathered string at one end.
+    g.stroke(83, 80, 49, 160); g.strokeWeight(.7);
+    curveAt(bag.a0+3,bag.d1-5,bag.a0+span*.25,bag.d1-2.7,bag.a1-span*.25,bag.d1-2.5,bag.a1-3,bag.d1-5);
+    for (let stitch = bag.a0 + 7; stitch < bag.a1 - 5; stitch += 8)
+      lineAt(stitch,bag.d1-5.2,stitch+.65,bag.d1-3);
+    if (span > 14) {
+      const end = bag.a1 - 2.1, knot = at(end,mid);
+      g.stroke(67,66,43,190); g.strokeWeight(.75);
+      curveAt(end-4,mid-3,end-3,mid-1,end-1,mid-1,end,mid);
+      curveAt(end-3,mid+3,end-2,mid+1,end-1,mid+1,end,mid);
+      lineAt(end,mid,end+1,mid+3.5);
+      g.noStroke(); g.fill(77,75,46); g.ellipse(knot[0],knot[1],2.2,2.2);
+    }
+    if (bag.course === 2 && weather && weather.kind === 'SNOW') {
+      g.noStroke(); g.fill(232,241,231,205);
+      const s0=at(bag.a0+4,bag.d0+3),s1=at(bag.a1-4,bag.d0+4);
+      const s2=at(bag.a1-6,mid-1),s3=at(bag.a0+6,mid-3);
+      g.beginShape();
+      g.vertex(s0[0],s0[1]);g.bezierVertex(s0[0]-2,s0[1]-2,s1[0]+2,s1[1]-2,s1[0],s1[1]);
+      g.bezierVertex(s2[0],s2[1],s3[0],s3[1],s0[0],s0[1]);
+      g.endShape(CLOSE);
+    }
+  }
+  g.pop();
+}
+function paintSandbagBarrier(g, b, opts = {}) {
+  for (const wallIndex of [2, 0, 1]) paintSandbagBarrierWall(g, b, wallIndex, opts);
+}
+function drawSandbagBarrierHealth(b) {
+  if (!(b.hp > 0 && b.hp < b.maxHp)) return;
+  push(); noStroke();
+  fill(24,28,24,180); rect(b.x-41,b.y+b.h/2+11,82,6,2);
+  fill(210,185,111); rect(b.x-40,b.y+b.h/2+12,80*Math.max(0,b.hp/b.maxHp),4,1);
+  pop();
+}
+function drawSandbagBarrierShadow(g, b) {
+  if (typeof glRigOwnsSunShadows === 'function' && glRigOwnsSunShadows()) return;
+  const density = BIOME_ACTIVE ? shadowDensity() : .8;
+  const length = 12 * (BIOME_ACTIVE ? shadowLengthScale() : 1);
+  const dx = LIGHT_DX * length, dy = LIGHT_DY * length;
+  g.push(); g.noStroke();
+  for (const r of coverSolidRects(b)) {
+    // Narrow contact shade and three separate hulls leave the entrance and
+    // courtyard floor open. A monolithic 200-square stamp closes both.
+    g.fill(25,34,28,13*density);
+    g.rect(r.x0-2,r.y0-2,r.x1-r.x0+4,r.y1-r.y0+4,4);
+    const hull = corpseWallHull([{x:r.x0,y:r.y0},{x:r.x1,y:r.y0},{x:r.x1,y:r.y1},{x:r.x0,y:r.y1},
+      {x:r.x0+dx,y:r.y0+dy},{x:r.x1+dx,y:r.y0+dy},{x:r.x1+dx,y:r.y1+dy},{x:r.x0+dx,y:r.y1+dy}]);
+    g.fill(25,34,28,57*density);g.beginShape();
+    for (const p of hull) g.vertex(p.x,p.y);
+    g.endShape(CLOSE);
+  }
+  g.pop();
+}
+
 function drawBuildings(list, i0, i1) {
   const _arr = list || activeBuildings;
   const _lo = i0 === undefined ? 0 : i0;
@@ -6413,14 +6664,10 @@ function drawBuildings(list, i0, i1) {
     if (b.isBuildTruck) { drawSupplyTruck(b); continue; }
     if (b.isBuiltStructure) { drawBuiltStructure(b); continue; }
     if (b.isUBarrier) {
-        let isFlashing = b.hitFlash && b.hitFlash > 0;
-        if (isFlashing) b.hitFlash--;
-        push(); translate(b.x, b.y);
-        fill(isFlashing ? color(255, 150) : color(255, 150, 50, 100));
-        stroke(isFlashing ? 255 : color(255, 150, 50)); strokeWeight(8);
-        line(-b.w/2, -b.h/2, -b.w/2, b.h/2); line(b.w/2, -b.h/2, b.w/2, b.h/2); line(-b.w/2, -b.h/2, b.w/2, -b.h/2); 
-        if (b.hp > 0 && b.hp < b.maxHp) { fill(0, 150); noStroke(); rect(-40, b.h/2 + 10, 80, 6); fill(255, 150, 50); rect(-40, b.h/2 + 10, 80 * (b.hp / b.maxHp), 6); }
-        pop(); continue;
+        paintSandbagBarrier(window, b);
+        drawSandbagBarrierHealth(b);
+        if (b.hitFlash > 0) b.hitFlash--;
+        continue;
     }
 
     if (b.isWall) { fill(40); rect(b.x - b.w/2, b.y - b.h/2, b.w, b.h); continue; }
@@ -8883,7 +9130,7 @@ const colScratch = [];
 function buildColIndex() {
   colGrid = new Map(); colBig = [];
   for (const b of activeBuildings) {
-    const w = b.w || 0, h = b.h || 0;
+    const w = Math.abs(b.w || 0) + (b.isUBarrier ? 30 : 0), h = Math.abs(b.h || 0) + (b.isUBarrier ? 30 : 0);
     if (Math.max(w, h) > COL_CELL * 4) { colBig.push(b); continue; }
     const x0 = Math.floor((b.x - w / 2 - COL_PAD) / COL_CELL);
     const x1 = Math.floor((b.x + w / 2 + COL_PAD) / COL_CELL);
@@ -8946,8 +9193,8 @@ function rebuildCrowdSolidIndex(index, source) {
     const b = source[i];
     let e = entries[i];
     if (!e) e = entries[i] = { b: null, i: 0, x: 0, y: 0, w: 0, h: 0, stamp: 0 };
-    const w = index.kind === 0 ? 24 : index.kind === 1 ? 50 : b.w;
-    const h = index.kind === 0 ? 24 : index.kind === 1 ? 90 : b.h;
+    const w = index.kind === 0 ? 24 : index.kind === 1 ? 50 : b.isUBarrier ? Math.abs(b.w) + 30 : b.w;
+    const h = index.kind === 0 ? 24 : index.kind === 1 ? 90 : b.isUBarrier ? Math.abs(b.h) + 30 : b.h;
     e.b = b; e.i = i; e.x = b.x; e.y = b.y; e.w = w; e.h = h;
     const x0 = Math.floor((b.x - w / 2) / CROWD_SOLID_CELL);
     const x1 = Math.floor((b.x + w / 2) / CROWD_SOLID_CELL);
@@ -8982,7 +9229,8 @@ function ensureCrowdSolidIndex(index, source) {
   for (let i = 0; i < source.length; i++) {
     const b = source[i], e = index.entries[i];
     if (e.b !== b || e.x !== b.x || e.y !== b.y ||
-        (index.kind === 2 && (e.w !== b.w || e.h !== b.h))) {
+        (index.kind === 2 && (e.w !== (b.isUBarrier ? Math.abs(b.w) + 30 : b.w) ||
+                            e.h !== (b.isUBarrier ? Math.abs(b.h) + 30 : b.h)))) {
       rebuildCrowdSolidIndex(index, source); return;
     }
   }
@@ -10680,7 +10928,7 @@ if (swordPickedUp || window.pickaxeOwned || window.shovelOwned) {
           fill(fortReady ? 255 : 160); noStroke(); textSize(16);
           text("FORTIFICATIONS", width/2, fortButton.y + 15);
           textSize(11);
-          text(fortReady ? "BARRIER READY · AIM AND PLACE INSTANTLY" : window.archLvl >= 2 ? "LEVEL 2 BARRIER ALREADY USED" : "UNLOCKS AT ARCHITECTURE LEVEL 2", width/2, fortButton.y + 34);
+          text(fortReady ? "SANDBAG COVER · AIM AND PLACE INSTANTLY" : window.archLvl >= 2 ? "LEVEL 2 BARRIER ALREADY USED" : "UNLOCKS AT ARCHITECTURE LEVEL 2", width/2, fortButton.y + 34);
           drawBtn(menu.backY, "BACK");
       }
 
@@ -13877,6 +14125,10 @@ function triggerExplosion(ex, ey, rad, isMolotov = false, sourceIsPlayer = true,
   // --- 1. DESTRUCTIBLE BUILDINGS & CARS ---
   for (let i = buildings.length - 1; i >= 0; i--) {
       let b = buildings[i];
+      if (b.isUBarrier) {
+          if(!isMolotov&&sandbagBarrierPointBlocked(b,ex,ey,rad))damageSandbagBarrier(b,300,ex,ey);
+          continue;
+      }
       if (b.isForestTimber && sourceIsPlayer && !isMolotov &&
           forestTimberPointBlocked(b,ex,ey,rad)) {
           damageHarvestable(b,300);
@@ -14235,7 +14487,7 @@ function hasLOS(x1, y1, x2, y2) {
       const hw = b.w / 2, hh = b.h / 2;
       if (!(b.x + hw > minX && b.x - hw < maxX && b.y + hh > minY && b.y - hh < maxY)) continue;
 
-      if (b.isCropField || b.isMarket || b.isFence || b.isForestTimber) continue;
+      if (b.isCropField || b.isMarket || b.isFence || b.isForestTimber || b.isUBarrier) continue;
       if (lvl4 && b.isPalm) continue;
       if (lvl6 && (b.isAlienPlant || b.isEnergyPole)) continue;
       if (lvl12 && (b.isGrassLot || b.isCar)) continue;
@@ -19031,9 +19283,8 @@ function corpsePieceContact(c,x,y,r) {
     if(b.isGovFortress&&inOpenGateway(b,x-r)&&inOpenGateway(b,x+r))continue;
     let hit;
     if(b.isUBarrier){
-      const w=Math.abs(b.w),h=Math.abs(b.h);
-      for(const box of [[b.x-w*.5,b.y,30,h],[b.x+w*.5,b.y,30,h],[b.x,b.y-h*.5,w,30]]){
-        hit=corpsePieceRectContact(x,y,r,b,...box,0);
+      for(const wall of coverSolidRects(b)){
+        hit=corpsePieceRectContact(x,y,r,b,(wall.x0+wall.x1)*.5,(wall.y0+wall.y1)*.5,wall.x1-wall.x0,wall.y1-wall.y0,0);
         if(hit&&(!best||hit.depth<best.depth))best=hit;
       }
     }else{
@@ -24837,11 +25088,8 @@ this.skeletonTimer = 0;
         // A breached gate has a hole in it. The wings still block.
         if (b.isGovFortress && inOpenGateway(b, nx)) continue;
         if (b.isUBarrier) {
-            let wT = 15;
-            if (nx + r > b.x - b.w/2 - wT && nx - r < b.x - b.w/2 + wT && ny + r > b.y - b.h/2 && ny - r < b.y + b.h/2) return true; 
-            if (nx + r > b.x + b.w/2 - wT && nx - r < b.x + b.w/2 + wT && ny + r > b.y - b.h/2 && ny - r < b.y + b.h/2) return true; 
-            if (nx + r > b.x - b.w/2 && nx - r < b.x + b.w/2 && ny + r > b.y - b.h/2 - wT && ny - r < b.y - b.h/2 + wT) return true; 
-       continue;
+            if(sandbagBarrierPointBlocked(b,nx,ny,r))return true;
+            continue;
         }
 
         return true;
@@ -30052,7 +30300,8 @@ function updateBullets() {
                 // Cheap pre-check for buildings before bounding box check
                 if (Math.abs(b.x - bldg.x) > bldg.w || Math.abs(b.y - bldg.y) > bldg.h) continue;
 
-                if (bldg.isForestTimber ? forestTimberPointBlocked(bldg,b.x,b.y) :
+                if (bldg.isUBarrier ? b._coverImpactSolid===bldg||sandbagBarrierPointBlocked(bldg,b.x,b.y) :
+                    bldg.isForestTimber ? forestTimberPointBlocked(bldg,b.x,b.y) :
                     b.x > bldg.x - bldg.w / 2 && b.x < bldg.x + bldg.w / 2 && b.y > bldg.y - bldg.h / 2 && b.y < bldg.y + bldg.h / 2) {
                     b.l = 0; b.active = false; hitSomething = true;
                     // Gunfire will bring a tree down eventually, but slowly --
@@ -30062,7 +30311,12 @@ function updateBullets() {
                         const wd = (b.w && b.w.bodyDmg) ? b.w.bodyDmg : 20;
                         damageHarvestable(bldg, Math.max(4, wd * 0.34) * (b.isArrow ? b.arrowPower : 1));
                     }
-                    if (bldg.isPinkPlanet && b.isP) {
+                    if (bldg.isUBarrier) {
+                        if(b.w===WEAPONS.ROCKET_LAUNCHER) {
+                            damageSandbagBarrier(bldg,350,b.x,b.y);
+                            triggerRocketExplosion(b.x,b.y,b.isP,null,b.shooter||(b.isP?player:null));
+                        } else damageSandbagBarrier(bldg,(b.w&&b.w.bodyDmg||20)*(b.isArrow?b.arrowPower:1),b.x,b.y);
+                    } else if (bldg.isPinkPlanet && b.isP) {
                         bldg.flashTimer = 4; if (bldg.hp === undefined) bldg.hp = 750; 
                         let dmg = b.w === WEAPONS.SHOTGUN ? 25 : (b.w === WEAPONS.ROCKET_LAUNCHER ? 350 : (b.isRedLaser || b.isPinkLaser ? 30 : (b.isAlienLaser ? 25 : (b.w.bodyDmg || 20))));
                         if (b.isArrow) dmg *= b.arrowPower;
@@ -30084,35 +30338,6 @@ function updateBullets() {
                     break; 
                 } 
             }
-            let hitBarrier = false;
-            // O(bullets x activeBuildings) -> O(bullets x ~1.3). colNear()
-            // returns every solid whose AABB, padded by COL_PAD (30, the
-            // largest body radius), covers this cell -- for a point that is a
-            // strict superset of what can be hit, and it carries colBig, the
-            // long slabs the grid deliberately does not hold. Safe to iterate:
-            // both passes break on their first hit, and that break is the only
-            // place either can splice activeBuildings out from under the
-            // shared scratch array colNear hands back.
-            for (let bldg of colNear(b.x, b.y)) {
-                if (bldg.isUBarrier && bldg.hp > 0) {
-                    if (Math.abs(b.x - bldg.x) > bldg.w + 20 || Math.abs(b.y - bldg.y) > bldg.h + 20) continue;
-
-                    let wT = 15; let hitWall = false;
-                    if (b.x > bldg.x - bldg.w/2 - wT && b.x < bldg.x - bldg.w/2 + wT && b.y > bldg.y - bldg.h/2 && b.y < bldg.y + bldg.h/2) hitWall = true;
-                    if (b.x > bldg.x + bldg.w/2 - wT && b.x < bldg.x + bldg.w/2 + wT && b.y > bldg.y - bldg.h/2 && b.y < bldg.y + bldg.h/2) hitWall = true;
-                    if (b.x > bldg.x - bldg.w/2 && b.x < bldg.x + bldg.w/2 && b.y > bldg.y - bldg.h/2 - wT && b.y < bldg.y - bldg.h/2 + wT) hitWall = true;
-                    if (hitWall) {
-                        if (!b.isP) { 
-                            b.l = 0; b.active = false; hitBarrier = true; bldg.hp -= (b.w.bodyDmg || 20); bldg.hitFlash = 4;
-                            emit(b.x, b.y, 5, color(255, 150, 50), "SPARK");
-                            if (bldg.hp <= 0) { triggerExplosion(bldg.x, bldg.y, 100, false, false); let bIdx = buildings.indexOf(bldg); if (bIdx > -1) buildings.splice(bIdx, 1); }
-                            break;
-                        }
-                    }
-                }
-            }
-            if (hitBarrier) continue;
-
             if (!hitSomething) {
                 const nearbyCars=activeParkingCars.length<=16?activeParkingCars:crowdNearbyCars(b.x,b.y,0,_projectileCars);
                 for (let c of nearbyCars) {
@@ -35688,8 +35913,8 @@ const BLUEPRINTS = {
                   blurb: "Firing line, six lanes, earth backstop." },
     FARM:       { label: "BARN & FIELD",   w: Math.round(260 * BUILD_SCALE), h: Math.round(190 * BUILD_SCALE),
                   blurb: "Gambrel barn with a worked field alongside." },
-    BARRIER:   { label: "BARRIER", w: 200, h: 200,
-                  blurb: "Architecture level 2 fortification. Placed instantly." }
+    BARRIER:   { label: "SANDBAG BARRIER", w: 200, h: 200,
+                  blurb: "Waist-high cover. Duck to hide; the south entrance stays open." }
 };
 const BUILD_ORDER = ["WAREHOUSE", "LABORATORY", "RANGE", "FARM"];
 
@@ -35779,12 +36004,18 @@ function buildSpotClear(x, y, w, h) {
     }
     return true;
 }
+function buildPlacementFootprint(ghost) {
+    // The wall centres lie on the blueprint edges. Include their outer halves
+    // when clearing/checking a lot, just as collision and the preview do.
+    const extra=ghost.kind==='BARRIER'?30:0;
+    return {w:ghost.w+extra,h:ghost.h+extra};
+}
 
 function startBuildPlacement(kind) {
     const bp = BLUEPRINTS[kind];
     if (!bp || !player || (kind === 'BARRIER' && !window.archBarrierReady)) return false;
     consumePauseControlInputs();
-    buildGhost = { kind: kind, x: player.x, y: player.y, w: bp.w, h: bp.h, ok: false };
+    buildGhost = { kind: kind, isUBarrier: kind === 'BARRIER', x: player.x, y: player.y, w: bp.w, h: bp.h, ok: false };
     isPaused = false;
     pauseMenuState = "MAIN";
     if (sfx && sfx.charge) sfx.charge();
@@ -35812,7 +36043,8 @@ function updateBuildPlacement() {
     const reach = Math.min(110 + Math.max(buildGhost.w, buildGhost.h) * 0.5, 300);
     buildGhost.x = player.x + Math.cos(player.aimAngle) * reach;
     buildGhost.y = player.y + Math.sin(player.aimAngle) * reach;
-    buildGhost.ok = buildSpotClear(buildGhost.x, buildGhost.y, buildGhost.w, buildGhost.h);
+    const footprint=buildPlacementFootprint(buildGhost);
+    buildGhost.ok = buildSpotClear(buildGhost.x, buildGhost.y, footprint.w, footprint.h);
 }
 // How far out the camera has to pull for the whole footprint to be on screen.
 // Returns null when nothing is being placed, so the caller keeps its own zoom.
@@ -35857,9 +36089,10 @@ function confirmBuildPlacement() {
     if (buildGhost.kind === 'BARRIER' && !window.archBarrierReady) return false;
     // Recheck the rendered footprint: actors may have moved or a solid may
     // have appeared since the previous preview frame.
-    if (!buildSpotClear(buildGhost.x, buildGhost.y, buildGhost.w, buildGhost.h)) { buildGhost.ok = false; return false; }
+    const footprint=buildPlacementFootprint(buildGhost);
+    if (!buildSpotClear(buildGhost.x, buildGhost.y, footprint.w, footprint.h)) { buildGhost.ok = false; return false; }
     const fortification = buildGhost.kind === 'BARRIER';
-    const won = clearBuildLot(buildGhost.x, buildGhost.y, buildGhost.w, buildGhost.h);
+    const won = clearBuildLot(buildGhost.x, buildGhost.y, footprint.w, footprint.h);
     const parts = [];
     for (const k of RESOURCE_KINDS) if (won[k]) parts.push("+" + won[k] + " " + k);
     if (parts.length) floatingScores.push({ y: 100, text: "LOT CLEARED  " + parts.join("  "), life: 110, maxLife: 110 });
@@ -36074,19 +36307,21 @@ function drawBuildGhost() {
     if (!buildGhost) return;
     const g = buildGhost;
     const c = g.ok ? [90, 170, 255] : [235, 70, 60];
+    const footprint = buildPlacementFootprint(g);
+    if (g.kind === 'BARRIER') paintSandbagBarrier(window, g, {preview:true});
     push(); translate(g.x, g.y);
     noStroke(); fill(c[0], c[1], c[2], 34);
-    rect(-g.w / 2, -g.h / 2, g.w, g.h, 4);
+    if (g.kind !== 'BARRIER') rect(-g.w / 2, -g.h / 2, g.w, g.h, 4);
     // Corner ticks rather than a full box: the outline stays readable over
     // busy ground, and the corners are what the player is actually aligning.
     stroke(c[0], c[1], c[2], 235); strokeWeight(3); noFill();
-    const t = Math.min(34, Math.min(g.w, g.h) * 0.3), hw = g.w / 2, hh = g.h / 2;
+    const t = Math.min(34, Math.min(footprint.w, footprint.h) * 0.3), hw = footprint.w / 2, hh = footprint.h / 2;
     for (const sx of [-1, 1]) for (const sy of [-1, 1]) {
         line(sx * hw, sy * hh, sx * (hw - t), sy * hh);
         line(sx * hw, sy * hh, sx * hw, sy * (hh - t));
     }
     strokeWeight(1.5); stroke(c[0], c[1], c[2], 110);
-    rect(-hw, -hh, g.w, g.h);
+    rect(-hw, -hh, footprint.w, footprint.h);
     // A line back to the player, so it is obvious what is carrying the ghost.
     stroke(c[0], c[1], c[2], 90); strokeWeight(2);
     line(0, 0, player.x - g.x, player.y - g.y);
@@ -47034,6 +47269,7 @@ function LEGACY_RISE_OVERRIDE(b) {
   return 0;
 }
 function buildingRise(b) {
+  if(b.isUBarrier)return 12;
   if(b.undergroundGate)return 42;
   if(b.undergroundWall)return b.undergroundWall==='SHAFT'?29:38;
   if(b.undergroundProp)return b.undergroundProp==='TIKI_TORCH'?34:b.undergroundProp==='PILLAR'?45:b.undergroundProp==='ALTAR'?24:17;
@@ -50553,6 +50789,7 @@ function drawBiomeShadows() {
     if (b.isPond || b.isWater) continue;
     if (b.isGrassLot) continue;
     if (b.isCropField || b.isParkingLot) continue;
+    if (b.isUBarrier) { drawSandbagBarrierShadow(window, b); continue; }
 
     const w = b.w || 0, h = b.h || 0;
     const size = Math.max(w, h);
@@ -57250,6 +57487,13 @@ function glRigPaintHeight() {
     // what casts. Painted below, off the same list drawDecor() walks.
     if (b.isTreeTrunk || b.isForestTimber) continue;
     if (b.propType === "CIVICTERRACE" || b.propType === 'CITYPARKTERRACE') continue;
+    if (b.isUBarrier) {
+      // Only the three low walls occupy the height field. The open centre
+      // remains ground height, including when a character is standing inside.
+      glRigMat(g, 12 + groundElev(b.x,b.y), .06 + .17*wet, 0);
+      for (const r of coverSolidRects(b)) g.rect(r.x0,r.y0,r.x1-r.x0,r.y1-r.y0);
+      continue;
+    }
 
     // Water is below the ground, not above it, and it is the glossiest thing in
     // the scene -- this is what puts a lamp's reflection on the canal.
