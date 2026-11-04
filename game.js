@@ -18643,8 +18643,13 @@ function drawBlastCorpsePart(r,c,p) {
 // The beam's anatomy is selected by the contact that actually killed the
 // actor. These deaths do not borrow the shotgun/headshot rotation or reroll
 // the struck side. The central three poses share the normal articulated rig.
+function particleBeamAnatomyTarget(type, width) {
+  // Jetpack enemies own their explosion/piece sequences. Their legacy corpse
+  // layouts cannot be rebuilt as the beam's grounded, articulated anatomy.
+  return type !== 'AERIAL' && type !== 'AERIAL_PISTOL' && ragHumanoid(type, width);
+}
 function particleBeamDeathType(actor, hit) {
-  if (!actor || !hit || !ragHumanoid(actor.eType, actor.bodyW)) return null;
+  if (!actor || !hit || !particleBeamAnatomyTarget(actor.eType, actor.bodyW)) return null;
   return hit.zone === 'LEGS' ? 19 : hit.zone === 'BODY' ? hit.center ? 0 : 20 : null;
 }
 function particleBeamLegKick(c) {
@@ -18667,7 +18672,7 @@ function particleBeamWoundPoint(c) {
 }
 function initParticleBeamCorpse(c, src) {
   const hit = src && src.particleBeamHit;
-  if (!hit || hit.frame !== frameCount || !ragHumanoid(c.eT, c.bW) || hit.zone === 'HEAD') return;
+  if (!hit || hit.frame !== frameCount || !particleBeamAnatomyTarget(c.eT, c.bW) || hit.zone === 'HEAD') return;
   const legIndex = hit.wound && hit.wound.legIndex !== undefined ? hit.wound.legIndex :
     hit.legIndex !== undefined ? hit.legIndex : hit.side < 0 ? 0 : 1;
   const side = hit.side < 0 ? -1 : 1, variant = ((hit.variant | 0) % 3 + 3) % 3;
@@ -29804,7 +29809,7 @@ function updateBullets() {
                 const woundScale=coverWound?coverWound.size:1;
                 const hpBeforeImpact = t.hp;
                 let dRes = robotHeadAbsorbed ? { blocked: false, broken: false } : t.takeDamage(dmg,b.shooter);
-                if (b.isParticleBeam && impactZone === 'LEGS' && ragHumanoid(t.eType,t.bodyW) &&
+                if (b.isParticleBeam && impactZone === 'LEGS' && particleBeamAnatomyTarget(t.eType,t.bodyW) &&
                     !dRes.blocked && t.hp < hpBeforeImpact) t.hp = 0;
                 recordStanceDamage(t,Math.max(0,hpBeforeImpact-t.hp),impactZone);
                 if (t.hp < hpBeforeImpact && humanBloodTarget(t) && !(wA && impactZone === 'HEAD')) {
@@ -29878,7 +29883,7 @@ function updateBullets() {
                   t.decals.push(decal);
                   fallHit.wound=t.decals[t.decals.length-1];
                   fallHit.fatal=t.hp<=0;
-                  if (b.isParticleBeam && !dRes.blocked && t.hp <= 0 && t.hp < hpBeforeImpact && ragHumanoid(t.eType,t.bodyW)) {
+                  if (b.isParticleBeam && !dRes.blocked && t.hp <= 0 && t.hp < hpBeforeImpact && particleBeamAnatomyTarget(t.eType,t.bodyW)) {
                     const center=impactZone==='BODY'&&Math.abs(decal.y)<=t.bodyH*.16;
                     const side=impactZone==='LEGS'?(struckLegIndex===0?-1:1):(decal.y<0?-1:1);
                     const variant=center&&t.hp<=0?particleBeamCenterCycle++%3:0;

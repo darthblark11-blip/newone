@@ -37,6 +37,7 @@ simulation ticks, then cooling over 18 ticks into a dark blood-red stain. Shield
 hits retain the native shield rules. An unblocked humanoid leg hit immediately
 severs the struck anatomical leg and collapses the victim. Fatal off-centre body
 hits remove the corresponding shoulder/arm and a diagonal torso section.
+Jetpack enemies retain their existing airborne explosion/death sequences.
 
 Fatal centre-body hits cycle independently through:
 
@@ -59,4 +60,5 @@ node tools/check-particle-beam.js
 node tools/check-particle-model.js
 node tools/check-particle-decals.js
 node tools/check-particle-beam-deaths.js
+node tools/check-particle-aerial-deaths.js
 ```
