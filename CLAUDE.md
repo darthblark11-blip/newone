@@ -2152,9 +2152,12 @@ buffer, not state**).
 
 ### The sector population (Sectors 1 and 2, story mode)
 
-Level 2's roaming robots and NM-0 rookies share a maximum of 15 live ambient
-enemies, including the four exterior patrol stations. `overworldEnemyCap()`
-governs initial ambient seeding, maintenance, death refills and patrol restoration.
+Level 2's roaming robots and NM-0 rookies share a maximum of 7 live ambient
+enemies: at most 2 robots and 5 rookies, including the four exterior patrol
+stations. Each defeated or distance-culled ambient robot reserves its slot for
+20 seconds before a replacement can spawn; rookies cannot fill those waiting
+slots. `overworldEnemyCap()` governs initial ambient seeding, maintenance, death
+refills and patrol restoration. Robot cooldowns reset on level entry or run reset.
 Level 1 retains 80. This cap does not change the finite authored population
 below or any gate/outpost ambush wave; ambush isolation still suspends ambient
 spawning during those fights.

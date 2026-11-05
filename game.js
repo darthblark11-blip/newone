@@ -8875,6 +8875,7 @@ function resetRunState() {
   resetPopulation();
   resetStoryProgress();
   resetFrontierAmbient();
+  level2RobotRespawnTimes.length = 0;
   window.outpostForts = {};
   window.ambushKillsTotal = 0; window.ambushOrigin = null;
   militarySelectionM = 0; militarySelectionF = 0; militaryMenuFromWorld = false;
@@ -13468,7 +13469,10 @@ const OVERWORLD = {
 // Blue intake belongs to the open world from the first arrival. The original
 // pistol defenders belong only to the sector's finite, recruitable city roster.
 const CITY_ROOKIE_PATROL_COUNT = 4;
-const LEVEL2_OVERWORLD_ENEMY_CAP = 15;
+const LEVEL2_OVERWORLD_ENEMY_CAP = 7;
+const LEVEL2_OVERWORLD_ROBOT_CAP = 2;
+const LEVEL2_OVERWORLD_ROBOT_RESPAWN_MS = 20000;
+let level2RobotRespawnTimes = [];
 function overworldEnemyCap(level = currentLevel) {
   // The finite city population and scripted ambushes have their own budgets.
   return level === 2 ? LEVEL2_OVERWORLD_ENEMY_CAP : TARGET_ENEMY_COUNT;
@@ -13524,17 +13528,33 @@ function cityOverworldSpawnPoint(station = null) {
   return null;
 }
 
-function cityOverworldRoamer(e) {
-  return e && !e.dead && e.hp>0 && !e.isFriendly && !e.isPopulation && !e.isAmbush &&
+function cityOverworldActor(e) {
+  return e && !e.isFriendly && !e.isPopulation && !e.isAmbush &&
     !e.isOutpostGarrison && !e.cityPersonKey && e.postX===undefined && !e.routeA && !e.routeB &&
     (e.eType==='ROBOT' || e.eType==='NM0_ROOKIE' || e.eType==='NM0_ROOKIE_F');
+}
+
+function cityOverworldRoamer(e) {
+  return cityOverworldActor(e) && !e.dead && e.hp>0;
+}
+
+function queueLevel2RobotRespawn(e) {
+  if(currentLevel!==2 || !e || e.eType!=='ROBOT' || !cityOverworldActor(e) || e.level2RespawnQueued)return;
+  e.level2RespawnQueued=true;
+  level2RobotRespawnTimes.push(millis()+LEVEL2_OVERWORLD_ROBOT_RESPAWN_MS);
 }
 
 function ensureCityRookiePatrols() {
   if (gateAmbushIsolated()) return;
   if(!isStoryMode || !player || (currentLevel!==1 && currentLevel!==2))return;
   const type=currentLevel===1?'NM0_ROOKIE':'NM0_ROOKIE_F';
-  let slots=currentLevel===2?Math.max(0,overworldEnemyCap()-enemiesList.filter(cityOverworldRoamer).length):CITY_ROOKIE_PATROL_COUNT;
+  let slots=CITY_ROOKIE_PATROL_COUNT;
+  if(currentLevel===2) {
+    const roamers=enemiesList.filter(e=>cityOverworldRoamer(e));
+    const rookies=roamers.filter(e=>e.eType!=='ROBOT').length;
+    slots=Math.max(0,Math.min(overworldEnemyCap()-roamers.length,
+      LEVEL2_OVERWORLD_ENEMY_CAP-LEVEL2_OVERWORLD_ROBOT_CAP-rookies));
+  }
   for(let station=0;station<CITY_ROOKIE_PATROL_COUNT&&slots>0;station++) {
     if(enemiesList.some(e => cityOverworldRoamer(e) && e.isExteriorPatrol && e.exteriorStation===station))continue;
     const point=cityOverworldSpawnPoint(station);
@@ -13699,10 +13719,26 @@ function spawnSingleEnemy(seed = false) {
   // conversion. Never fall through to the old NORMAL/FEMALE_PISTOL ladder.
   if(currentLevel===1 || currentLevel===2) {
     if(!player || !inOuterRegion(player.x,player.y))return;
-    if(enemiesList.filter(cityOverworldRoamer).length>=overworldEnemyCap())return;
+    const roamers=enemiesList.filter(e=>cityOverworldRoamer(e));
+    if(roamers.length>=overworldEnemyCap())return;
+    let type=null;
+    if(currentLevel===2) {
+      type=overworldPick(currentLevel,random());
+      const now=millis();
+      level2RobotRespawnTimes=level2RobotRespawnTimes.filter(readyAt=>readyAt>now);
+      const robots=roamers.filter(e=>e.eType==='ROBOT').length;
+      const robotSlot=robots+level2RobotRespawnTimes.length<LEVEL2_OVERWORLD_ROBOT_CAP;
+      if(type==='ROBOT' && !robotSlot)type='NM0_ROOKIE_F';
+      // Reserve the two machine slots during their cooldown instead of
+      // immediately filling each defeated robot's place with another rookie.
+      if(type!=='ROBOT' && roamers.length-robots>=LEVEL2_OVERWORLD_ENEMY_CAP-LEVEL2_OVERWORLD_ROBOT_CAP) {
+        if(!robotSlot)return;
+        type='ROBOT';
+      }
+    }
     const point=cityOverworldSpawnPoint();
     if(!point)return;
-    const type=overworldPick(currentLevel,random());
+    if(type===null)type=overworldPick(currentLevel,random());
     const e=new Character(point.x,point.y,false,type);
     if(type==='NM0_ROOKIE' || type==='NM0_ROOKIE_F')e.isOverworldRookie=true;
     enemiesList.push(e);
@@ -26406,6 +26442,7 @@ if (this.eType === "COW") {
             }
             if (this.selfDestruct <= 0 && !this.dead) {
                 this.dead = true; this.hp = 0;
+                queueLevel2RobotRespawn(this);
                 emit(this.x, this.y, 26, color(OIL_COL[0], OIL_COL[1], OIL_COL[2]), "OIL", 0, 0, this);
                 spawnSplatter(this.x, this.y, "BLOOD", color(OIL_COL[0], OIL_COL[1], OIL_COL[2]), this);
                 triggerExplosion(this.x, this.y, 190, false, false);
@@ -28592,6 +28629,7 @@ function processKill(x, y, isHeadshot = false, eType = "NORMAL", isFriendly = fa
     // the window closes. No-ops unless an overworld muster is actually running.
     if (deadGuy && !deadGuy.isAmbush && typeof conscriptIntoMuster === 'function') conscriptIntoMuster(deadGuy);
     let isAmbushKill = deadGuy ? deadGuy.isAmbush : false;
+    queueLevel2RobotRespawn(deadGuy);
 
     // A member of the sector's roster, including a freed ally lost in the
     // ambush. This reduces what the player inherits and is counted here,
@@ -63001,6 +63039,7 @@ function startAtLevel(lvl, isLoading = false) {
   }
 
   resetFrontierAmbient();
+  level2RobotRespawnTimes.length = 0;
   legacyStartAtLevel(lvl, isLoading);
   ensureShovelPickup();
   spawnFrontierTownWorkers();
@@ -63209,7 +63248,10 @@ function cullDistantEnemies() {
     // inside the large gated city. They are deliberately beyond the cull radius.
     if(e.isExteriorPatrol && inAuthoredSector(player.x,player.y,900))continue;
     const dx = e.x - player.x, dy = e.y - player.y;
-    if (dx * dx + dy * dy > limit * limit) enemiesList.splice(i, 1);
+    if (dx * dx + dy * dy > limit * limit) {
+      queueLevel2RobotRespawn(e);
+      enemiesList.splice(i, 1);
+    }
   }
   // Corpses and splatter far away can go too
   for (let i = corpses.length - 1; i >= 0; i--) {

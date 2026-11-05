@@ -4,7 +4,7 @@
 const assert = require('assert/strict');
 const { ctx, probe } = require('./harness.js');
 const P = s => probe('(' + s + ')');
-let checks = 0, seed = 703121, slot = null;
+let checks = 0, seed = 703121, slot = null, now = 0;
 const ok = (name, value) => { assert.ok(value, name); checks++; };
 ctx.random = function(a, b) {
   seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
@@ -14,9 +14,11 @@ ctx.random = function(a, b) {
   return b === undefined ? r * a : a + r * (b - a);
 };
 ctx.setTimeout = () => 0;
+ctx.millis = () => now;
 ctx.localStorage = {getItem: () => slot, setItem: (key, value) => { slot = value; }, removeItem: () => { slot = null; }};
 function fresh(level) {
   slot = null;
+  now = 0;
   probe(`resetStoryProgress(); window.outpostForts = {}; isStoryMode = true;
     startAtLevel(${level}); started = doTick = true;
     isPaused = isWin = isDead = killcamMode = false;
@@ -47,7 +49,7 @@ function testOpenRoadPosition() {
 }`);
 
 for (const level of [1, 2]) {
-  const ambientCap=level===2?15:80;
+  const ambientCap=level===2?7:80;
   console.log(`== native L${level} exterior intake ==`);
   fresh(level);
   const rookie = level === 1 ? 'NM0_ROOKIE' : 'NM0_ROOKIE_F';
@@ -90,18 +92,22 @@ for (const level of [1, 2]) {
   ok(`L${level} exterior activity leaves the original roster finite`, P('enemiesList.filter(e=>e.isPopulation).length') === population && P('sectorLedger(currentLevel).popKilled') === 0);
 
   if(level===2){
+    ok('L2 only two of the seven ambient slots belong to robots',P("enemiesList.filter(e=>cityOverworldRoamer(e)&&e.eType==='ROBOT').length===2"));
+    ok('L2 the four exterior stations share five rookie slots',P("enemiesList.filter(e=>cityOverworldRoamer(e)&&e.eType==='NM0_ROOKIE_F').length===5"));
     probe(`window.testFullCap=enemiesList.length;
       frameCount=(Math.floor(frameCount/45)+1)*45;maintainHostiles();spawnSingleEnemy(true);`);
-    ok('L2 periodic maintenance and seed/refill calls cannot exceed fifteen roamers',P('enemiesList.length===testFullCap&&enemiesList.filter(cityOverworldRoamer).length===15'));
+    ok('L2 periodic maintenance and seed/refill calls cannot exceed seven roamers',P('enemiesList.length===testFullCap&&enemiesList.filter(cityOverworldRoamer).length===7'));
     probe(`window.testRetiredPatrol=enemiesList.find(e=>e.isExteriorPatrol);
       testRetiredPatrol.hp=0;testRetiredPatrol.dead=true;
       frameCount++;spawnSingleEnemy();window.testAfterRefill=enemiesList.length;
       ensureCityRookiePatrols();ensureCityRookiePatrols();`);
-    ok('L2 replacing one defeated patrol uses one shared ambient slot',P('enemiesList.length===testAfterRefill&&enemiesList.filter(cityOverworldRoamer).length===15'));
+    ok('L2 replacing one defeated patrol uses one shared ambient slot',P('enemiesList.length===testAfterRefill&&enemiesList.filter(cityOverworldRoamer).length===7'));
     ok('L2 fixed patrol restoration cannot bypass a full roaming cap',P('enemiesList.filter(e=>cityOverworldRoamer(e)&&e.isExteriorPatrol).length===3'));
-    probe(`window.testRetiredRoamer=enemiesList.find(e=>cityOverworldRoamer(e)&&!e.isExteriorPatrol);
+    probe(`window.testRetiredRoamer=enemiesList.find(e=>cityOverworldRoamer(e)&&!e.isExteriorPatrol&&e.eType==='NM0_ROOKIE_F');
       testRetiredRoamer.hp=0;testRetiredRoamer.dead=true;ensureCityRookiePatrols();`);
-    ok('L2 a missing exterior station returns when an ambient slot becomes free',P('enemiesList.filter(cityOverworldRoamer).length===15&&enemiesList.filter(e=>cityOverworldRoamer(e)&&e.isExteriorPatrol).length===4'));
+    ok('L2 a missing exterior station returns when a rookie slot becomes free',P('enemiesList.filter(cityOverworldRoamer).length===7&&enemiesList.filter(e=>cityOverworldRoamer(e)&&e.isExteriorPatrol).length===4'));
+  }else{
+    ok('L1 retains its original unrestricted robot composition',P("enemiesList.filter(e=>cityOverworldRoamer(e)&&e.eType==='ROBOT').length>2"));
   }
 
   probe(`markSectorTowersDown(currentLevel); window.towersDefeated=true;
@@ -128,4 +134,90 @@ for (const level of [1, 2]) {
   probe('ensureCityRookiePatrols(); ensureCityRookiePatrols();');
   ok(`L${level} repeated startup safeguards do not duplicate patrol stations`, P('enemiesList.filter(e=>e.isExteriorPatrol).length') === 4);
 }
+
+console.log('== L2 robot replacement cooldown ==');
+fresh(2);
+probe(`window.testRoad=testOpenRoadPosition();player.x=testRoad.x;player.y=testRoad.y;frameCount++;
+  function testAmbientRobots(){return enemiesList.filter(e=>cityOverworldRoamer(e)&&e.eType==='ROBOT').length;}
+  function testFillAmbient(){for(let i=0;i<30;i++){frameCount++;spawnSingleEnemy();}}
+  testFillAmbient();`);
+ok('L2 both initial robot slots can fill without a cooldown',P('testAmbientRobots()===2&&enemiesList.filter(cityOverworldRoamer).length===7'));
+probe(`for(const flags of [{isFriendly:true},{isPopulation:true},{isAmbush:true},{isOutpostGarrison:true},
+    {postX:0},{routeA:{x:0,y:0}},{cityPersonKey:'test'}]){
+    const e=Object.assign(new Character(player.x,player.y,false,'ROBOT'),flags,{hp:0,dead:true});
+    queueLevel2RobotRespawn(e);
+  }`);
+ok('L2 friendly, authored, scripted, outpost and posted robots do not hold ambient slots',P('level2RobotRespawnTimes.length===0'));
+
+// Kill long-lived robots through the common bookkeeping hook. Their deaths
+// happen ten seconds apart, so each freed slot must keep its own deadline.
+now = 50000;
+probe(`window.testFirstRobot=enemiesList.find(e=>cityOverworldRoamer(e)&&e.eType==='ROBOT');
+  testFirstRobot.hp=0;testFirstRobot.dead=true;
+  processKill(testFirstRobot.x,testFirstRobot.y,false,'ROBOT',false,testFirstRobot);`);
+ok('L2 native robot kill bookkeeping starts a full twenty-second replacement delay',P('level2RobotRespawnTimes.length===1&&level2RobotRespawnTimes[0]===70000'));
+probe('queueLevel2RobotRespawn(testFirstRobot);testFillAmbient();ensureCityRookiePatrols();');
+ok('L2 duplicate loss reports cannot reserve a second robot slot',P('level2RobotRespawnTimes.length===1'));
+ok('L2 death refills leave the cooling robot slot empty instead of adding a sixth rookie',P('testAmbientRobots()===1&&enemiesList.filter(cityOverworldRoamer).length===6'));
+now = 60000;
+probe(`window.testSecondRobot=enemiesList.find(e=>cityOverworldRoamer(e)&&e.eType==='ROBOT');
+  testSecondRobot.hp=0;testSecondRobot.dead=true;
+  processKill(testSecondRobot.x,testSecondRobot.y,false,'ROBOT',false,testSecondRobot);
+  testFillAmbient();`);
+ok('L2 losing both robots leaves five rookies while both slots cool',P('testAmbientRobots()===0&&enemiesList.filter(cityOverworldRoamer).length===5'));
+now = 69999;
+probe('testFillAmbient();frameCount=(Math.floor(frameCount/45)+1)*45;maintainHostiles();');
+ok('L2 repeated death callbacks and maintenance cannot refill either robot slot early',P('testAmbientRobots()===0'));
+now = 70000;
+probe('testFillAmbient();');
+ok('L2 the first robot slot becomes available exactly twenty seconds after its loss',P('testAmbientRobots()===1&&enemiesList.filter(cityOverworldRoamer).length===6'));
+now = 79999;
+probe('testFillAmbient();');
+ok('L2 the second robot keeps its independent later deadline',P('testAmbientRobots()===1'));
+now = 80000;
+probe('testFillAmbient();');
+ok('L2 both expired slots restore a maximum of two robots and seven ambient enemies',P('testAmbientRobots()===2&&enemiesList.filter(cityOverworldRoamer).length===7'));
+
+probe(`window.testCulledRobot=enemiesList.find(e=>cityOverworldRoamer(e)&&e.eType==='ROBOT');
+  enemiesList.filter(cityOverworldRoamer).forEach((e,i)=>{e.x=player.x+80*(i+1);e.y=player.y;});
+  testCulledRobot.x=player.x+10000;
+  frameCount=(Math.floor(frameCount/45)+1)*45;cullDistantEnemies();
+  testFillAmbient();ensureCityRookiePatrols();`);
+ok('L2 walking away from a robot reserves its slot instead of immediately recycling it',P('!enemiesList.includes(testCulledRobot)&&testAmbientRobots()===1&&enemiesList.filter(cityOverworldRoamer).length===6'));
+now = 99999;
+probe('testFillAmbient();');
+ok('L2 a distance-culled robot also waits the complete replacement delay',P('testAmbientRobots()===1'));
+now = 100000;
+probe('testFillAmbient();');
+ok('L2 a distance-culled robot can return once its twenty-second delay ends',P('testAmbientRobots()===2'));
+
+// The head-loss fuse removes the robot directly from updateEnemy(), without
+// passing through processKill(). Keep the real explosion away from the roster.
+now = 150000;
+probe(`window.testFuseRobot=enemiesList.find(e=>cityOverworldRoamer(e)&&e.eType==='ROBOT');
+  testFuseRobot.x=player.x+1500;testFuseRobot.y=player.y+1500;
+  testFuseRobot.enraged=true;testFuseRobot.selfDestruct=1;
+  testFuseRobot.updateEnemy();`);
+ok('L2 a native robot self-destruction removes its live body',P('testFuseRobot.dead&&testFuseRobot.hp===0&&!enemiesList.includes(testFuseRobot)'));
+ok('L2 a self-destructed robot starts its cooldown when the fuse ends',P('level2RobotRespawnTimes.length===1&&level2RobotRespawnTimes[0]===170000'));
+probe('testFillAmbient();ensureCityRookiePatrols();');
+ok('L2 self-destruction leaves one empty robot slot',P('testAmbientRobots()===1&&enemiesList.filter(cityOverworldRoamer).length===6'));
+now = 169999;
+probe('testFillAmbient();');
+ok('L2 a self-destructed robot waits the full twenty-second delay',P('testAmbientRobots()===1'));
+now = 170000;
+probe('testFillAmbient();');
+ok('L2 a self-destructed robot can return at its cooldown deadline',P('testAmbientRobots()===2&&enemiesList.filter(cityOverworldRoamer).length===7'));
+
+probe(`window.testResetRobot=enemiesList.find(e=>cityOverworldRoamer(e)&&e.eType==='ROBOT');
+  queueLevel2RobotRespawn(testResetRobot);startAtLevel(1);`);
+ok('Leaving L2 clears the previous visit robot cooldowns',P('level2RobotRespawnTimes.length===0'));
+probe(`const e=new Character(player.x,player.y,false,'ROBOT');e.hp=0;e.dead=true;queueLevel2RobotRespawn(e);`);
+ok('L1 robot losses never create the L2 cooldown',P('level2RobotRespawnTimes.length===0'));
+fresh(2);
+probe(`window.testRoad=testOpenRoadPosition();player.x=testRoad.x;player.y=testRoad.y;frameCount++;
+  testFillAmbient();`);
+ok('Re-entering L2 starts with both robot slots available',P('testAmbientRobots()===2'));
+probe(`queueLevel2RobotRespawn(enemiesList.find(e=>cityOverworldRoamer(e)&&e.eType==='ROBOT'));resetRunState();`);
+ok('A complete run reset clears robot replacement cooldowns',P('level2RobotRespawnTimes.length===0'));
 console.log(`${checks}/${checks} overworld rookie spawning checks passed`);
