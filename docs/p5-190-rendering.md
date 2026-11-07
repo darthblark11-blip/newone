@@ -1,5 +1,19 @@
 # Rendering compatibility with the phone's p5.js 1.9.0
 
+## Canvas2D smoothing warning fix
+
+p5 1.9.0's `smooth()` unconditionally calls `setAttributes('antialias', true)`,
+including on P2D graphics. The existing terrain bake and ground blit used it,
+producing the repeated "does not use a WEBGL renderer" console message. These
+two Canvas2D passes now set `drawingContext.imageSmoothingEnabled` directly.
+This preserves filtering without requesting attributes from the wrong renderer.
+
+`node tools/check-terrain-smoothing-browser.cjs` exercises the real p5 1.9.0
+runtime. The baseline emits 28 warnings and the fix emits zero. Terrain texture
+and ground-blit pixel hashes match in Levels 1, 2 and 3; a live Level 1 frame
+keeps advanced lighting active, with `gl.getError() === 0` and no frame fault.
+The existing 111 lighting checks also pass.
+
 The supplied Spck page loads a local `p5.min.js`. That file is p5 1.9.0,
 SHA-256 `726ac96626b93f5bcaff83a910b6c60d3a9728f063e0eb73b5d0819ffc356915`.
 Previous cloud tests used 1.11.11, so they exercised optimized paths that the

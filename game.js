@@ -45289,7 +45289,9 @@ function bakeChunkTerrainAt(biome, cx, cy, staticDecor, surfaceSolids) {
   // Upscale the mottling into the working buffer. Smoothed, because soft is
   // exactly what a noise wash should be — it is the vector detail on top that
   // has to stay sharp.
-  g.smooth();
+  // p5 1.9.0 smooth() requests WebGL attributes even on a P2D Graphics
+  // buffer. Set the actual Canvas2D sampling flag without that invalid call.
+  g.drawingContext.imageSmoothingEnabled = true;
   g.image(base, 0, 0, CHUNK_TEX, CHUNK_TEX);
   base.remove();
   g.noSmooth();
@@ -48054,7 +48056,9 @@ class ChunkManager {
     // Nearest was originally chosen because bilinear at 320 turned road
     // markings to mush. The fix for that is resolution, not filtering: CHUNK_TEX
     // is 384 now and the vector detail pass already bakes at full buffer size.
-    smooth();
+    // This pass blits to the main Canvas2D renderer; p5's smooth() also
+    // attempts to change WebGL attributes, which this renderer does not use.
+    drawingContext.imageSmoothingEnabled = true;
     // Whole-chunk blits. Source-rectangle clipping to the visible overlap was
     // measured against this over three interleaved runs and came out inside the
     // noise (-8%, +7%, -4%) -- Skia already discards the off-screen texels
