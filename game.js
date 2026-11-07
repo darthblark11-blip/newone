@@ -4780,7 +4780,63 @@ function drawHorseTack() {
 // FRONTIER ARCHITECTURE v1. Geometry is generated once, independently of the
 // terrain RNG. Real rectangular wings feed native collision/cover/excavation;
 // only roofs, cornices and canopies are render-only projected volumes.
-const FRONTIER_ARCHITECTURE = Object.freeze({ version: 1, maxWings: 2, maxRoofBands: 12 });
+const FRONTIER_ARCHITECTURE = Object.freeze({ version: 2, maxWings: 2, maxRoofBands: 12 });
+// The original architectural brief is the structural source of truth. A shop's
+// trade adds working equipment and frontage details; it never becomes a badge.
+function frontierArchitectureRole(b) {
+  const n=(b.signText||'').toUpperCase();
+  if(/SCHOOL/.test(n))return 'SCHOOL';
+  if(/CHURCH|CHAPEL|MISSION/.test(n)||b.isChurch)return 'CHURCH';
+  if(/SALOON|CANTINA/.test(n)||b.isFrontierSaloon)return 'SALOON';
+  if(/COURT/.test(n)||b.arch==='COURTHOUSE')return 'COURT';
+  if(/SHERIFF/.test(n)||b.isFrontierSheriff)return 'SHERIFF';
+  if(/JAIL/.test(n))return 'JAIL';
+  if(/BANK|SAVINGS|MONEY ORDERS/.test(n))return 'BANK';
+  if(/ASSAY|CLAIM OFFICE/.test(n))return 'ASSAY';
+  if(/OPERA/.test(n))return 'OPERA';
+  if(/HOTEL|\bINN\b|LODGE|BOARDING|\bREST\b/.test(n))return 'HOTEL';
+  if(/WATER COMPANY|IRRIGATION/.test(n))return 'WATERWORKS';
+  if(/LAUNDRY/.test(n))return 'LAUNDRY';
+  if(/BAKERY|CONFECTION/.test(n))return 'BAKERY';
+  if(/TELEGRAPH/.test(n))return 'TELEGRAPH';
+  if(/POST OFFICE|SUNSPUR POST/.test(n))return 'POST_OFFICE';
+  if(/BOOKS|MUSIC/.test(n))return 'BOOKSHOP';
+  if(/BARBER/.test(n))return 'BARBER';
+  if(/DOCTOR|INFIRMARY|APOTHECARY/.test(n))return 'MEDIC';
+  if(/HOIST|MINE HEAD/.test(n)||b.arch==='HEADFRAME')return 'MINE';
+  if(/BLACKSMITH|FOUNDRY/.test(n))return 'BLACKSMITH';
+  if(/GUNSMITH/.test(n))return 'GUNSMITH';
+  if(/SAWMILL|WAGON|CARRIAGE|WHEELWRIGHT|COOPER|ENGINE HOUSE/.test(n)||b.arch==='WORKSHOP')return 'WORKSHOP';
+  if(/FREIGHT|WAREHOUSE|\bORE\b|COAL/.test(n)||b.arch==='WAREHOUSE')return 'WAREHOUSE';
+  if(/STATION|DEPOT|STAGECOACH/.test(n)||b.arch==='RAIL_DEPOT')return 'DEPOT';
+  if(/CATTLE MENS|DROVERS EXCHANGE/.test(n))return 'CATTLE_HALL';
+  if(/LIVERY|STABLE/.test(n)||b.isLivery)return 'LIVERY';
+  if(/FEED|SEED|PACKING/.test(n)||b.isBarn)return 'BARN';
+  if(/BATH HOUSE/.test(n))return 'BATH_HOUSE';
+  if(/MARKET|PRODUCE|HONEY/.test(n))return 'MARKET';
+  if(/GAZETTE|PRINT SHOP/.test(n))return 'PRINTER';
+  if(/MUSEUM|RECORDS|SURVEYORS|LAND OFFICE/.test(n))return 'ARCHIVE';
+  if(/UNDERTAKER/.test(n))return 'UNDERTAKER';
+  if(/TANNERY/.test(n))return 'TANNERY';
+  if(b.isTrailer)return 'TRAILER';
+  if(b.isHouse||b.isShanty||b.arch==='CABIN')return 'HOME';
+  return 'MERCHANT';
+}
+function frontierArchitectureFamily(b,role) {
+  const explicit={CHAPEL:'CHAPEL',COURTHOUSE:'COURTHOUSE',ARCADE:'ARCADE',
+    SALOON:'SALOON',SHERIFF:'SHERIFF',RAIL_DEPOT:'DEPOT',WAREHOUSE:'WAREHOUSE',
+    HEADFRAME:'HEADFRAME',WORKSHOP:'WORKSHOP',TWO_STOREY:'HOTEL',STONE:'STONE',
+    ADOBE:'ADOBE',BARN:'GAMBREL',CABIN:'CABIN',TENT:'CANVAS',FALSE_FRONT:'FALSE_FRONT'};
+  if(role==='CHURCH'||role==='SCHOOL')return 'CHAPEL';
+  if(role==='COURT')return 'COURTHOUSE';
+  if(role==='MINE')return 'HEADFRAME';
+  if(role==='BANK'||role==='JAIL'||role==='ASSAY')return 'STONE';
+  if(role==='SALOON')return b.arch==='ADOBE'?'ADOBE':'SALOON';
+  if(role==='HOTEL')return b.arch==='ARCADE'?'ARCADE':'HOTEL';
+  if(role==='DEPOT')return 'DEPOT';
+  if(role==='TRAILER')return 'METAL';
+  return explicit[b.arch]||(role==='BARN'||role==='LIVERY'?'GAMBREL':role==='HOME'?'CABIN':'FALSE_FRONT');
+}
 function frontierArchitectureEligible(b) {
   return !!(b && !b.isFrontierBountyStructure && (b.isWesternBldg || b.isBarn || b.isHouse || b.isShanty || b.isTrailer));
 }
@@ -4820,12 +4876,11 @@ function frontierCompileArchitecture(list) {
     const depth=nx?b.w:b.h,span=nx?b.h:b.w;
     const entrance=Object.freeze({x:b.x+nx*(depth/2+10),y:b.y+ny*(depth/2+10),nx,ny});
     const lot=Object.freeze({id,x:b.x,y:b.y,w:b.w,h:b.h,facing,entrance});
-    const roof=purpose==='MINE'?(b.arch==='HEADFRAME'||/HOIST/.test(b.signText||'')?'HEADFRAME':b.arch==='TENT'?'CANVAS':'GABLE'):
-      {SALOON:'HIP',SHERIFF:'STONE',BANK:'STONE',MEDIC:'HIP',MISSION:'CHAPEL',WORKSHOP:'SAWTOOTH',HOTEL:'MANSARD',DEPOT:'GABLE',BARN:'GAMBREL',TRAILER:'METAL',HOME:'GABLE',MARKET:'CANVAS',MERCHANT:'FALSE_FRONT'}[purpose];
-    const material=b.arch==='ADOBE'||b.frontierSettlementId==='SUNSPUR'?'ADOBE':
-      purpose==='BANK'||purpose==='SHERIFF'||purpose==='MISSION'?'STONE':purpose==='TRAILER'?'METAL':'TIMBER';
+    const role=frontierArchitectureRole(b),roof=frontierArchitectureFamily(b,role);
+    const material=b.arch==='ADOBE'?'ADOBE':role==='TRAILER'?'METAL':
+      ['BANK','ASSAY','JAIL','COURT'].includes(role)?'STONE':'TIMBER';
     b.frontierLot=lot;b.frontierPremiseId=id;b.frontierPartId='main';
-    b.frontierDesign=Object.freeze({id,purpose,roof,material,variant,emblem:purpose,primary:true});
+    b.frontierDesign=Object.freeze({id,purpose,role,roof,material,variant,primary:true});
     if(b._rise===undefined){const base={SALOON:34,SHERIFF:29,BANK:30,MEDIC:24,MISSION:29,WORKSHOP:22,HOTEL:35,DEPOT:25,MINE:25,BARN:24,TRAILER:13,HOME:18,MARKET:16,MERCHANT:23}[purpose];b._rise=base+(variant%5);}
     // The activity saloon and sheriff keep their exact established footprints.
     // Remaining compounds leave a real recessed forecourt inside the old lot.
@@ -4881,9 +4936,12 @@ function frontierArchitecturePalette(b) {
 function frontierRoofMesh(b) {
   let mesh=_frontierRoofMeshes.get(b);if(mesh)return mesh;
   const d=b.frontierDesign,p=frontierArchitecturePalette(b),f=b.facing||'S',swap=f==='E'||f==='W';
-  const w=(swap?b.h:b.w),h=(swap?b.w:b.h),rise=buildingRise(b),faces=[],ribs=[];
+  const w=(swap?b.h:b.w),h=(swap?b.w:b.h),rise=buildingRise(b),faces=[],ribs=[],commands=[];
   const point=(u,v,z)=>{const q=frontierArchitectureLocal({x:b.x,y:b.y,facing:f},u,v);return [q[0],q[1],z];};
-  const face=(pts,c)=>faces.push({points:pts.map(q=>point(...q)),color:c});
+  const face=(pts,c)=>{const q={points:pts.map(v=>point(...v)),color:c};faces.push(q);commands.push(q);};
+  // Keep roof courses beside the surface which owns them. Drawing every rib
+  // last used to paint filled triangles across the belfries and mine towers.
+  const rib=(pts,c=[63,47,33,125],weight=1)=>{const q={points:pts.map(v=>point(...v)),stroke:c,weight};ribs.push(q.points);commands.push(q);};
   const tint=(c,k)=>c.map(v=>v*k);
   const box=(x,y,bw,bh,z0,z,c)=>{
     const a=[x,y,z0],bb=[x+bw,y,z0],cc=[x+bw,y+bh,z0],dd=[x,y+bh,z0];
@@ -4891,82 +4949,186 @@ function frontierRoofMesh(b) {
     face([a,bb,bbb,aa],tint(c,.74));face([bb,cc,ccc,bbb],tint(c,.67));
     face([cc,dd,ddd,ccc],tint(c,.80));face([dd,a,aa,ddd],tint(c,.70));face([aa,bbb,ccc,ddd],c);
   };
-  const gable=(x,y,bw,bh,z,r,c)=>{
-    const a=[x,y,z],bb=[x+bw,y,z],cc=[x+bw,y+bh,z],dd=[x,y+bh,z],e=[x,y+bh/2,z+r],ff=[x+bw,y+bh/2,z+r];
-    face([a,dd,e],tint(c,.61));face([bb,ff,cc],tint(c,.75));face([a,bb,ff,e],tint(c,1.10));face([e,ff,cc,dd],tint(c,.86));
-    const count=Math.max(3,Math.min(FRONTIER_ARCHITECTURE.maxRoofBands,Math.floor(bw/24)));
-    for(let i=1;i<count;i++){const xx=x+bw*i/count;ribs.push([point(xx,y,z+.4),point(xx,y+bh/2,z+r+.4),point(xx,y+bh,z+.4)]);}
-    ribs.push([point(x,y+bh/2,z+r+.8),point(x+bw,y+bh/2,z+r+.8)]);
-  };
-  // Named plans retain a structural accent beyond colour/signage: the ridge
-  // rise and roof lantern position derive from their immutable address.
-  const signature=(d.variant>>>8)/16777216;
-  const x=-w/2-3,y=-h/2-3,bw=w+6,bh=h+6,rz=rise+1+signature*1.7;
-  if(d.roof==='SAWTOOTH') {
-    for(let i=0;i<3;i++){
-      const yy=y+bh*i/3,hh=bh/3;
-      face([[x,yy,rz],[x+bw,yy,rz],[x+bw,yy+hh*.74,rz+12],[x,yy+hh*.74,rz+12]],p.roof);
-      face([[x,yy+hh*.74,rz+12],[x+bw,yy+hh*.74,rz+12],[x+bw,yy+hh,rz],[x,yy+hh,rz]],p.glass);
-      face([[x,yy,rz],[x,yy+hh*.74,rz+12],[x,yy+hh,rz]],tint(p.roof,.7));
-      face([[x+bw,yy,rz],[x+bw,yy+hh,rz],[x+bw,yy+hh*.74,rz+12]],tint(p.roof,.85));
+  const gable=(x,y,bw,bh,z,r,c,alongDepth=false)=>{
+    if(alongDepth){
+      const a=[x,y,z],bb=[x+bw,y,z],cc=[x+bw,y+bh,z],dd=[x,y+bh,z],e=[x+bw/2,y,z+r],ff=[x+bw/2,y+bh,z+r];
+      face([a,bb,e],tint(c,.63));face([dd,ff,cc],tint(c,.78));face([a,e,ff,dd],tint(c,.85));face([e,bb,cc,ff],tint(c,1.12));
+      const n=Math.max(3,Math.min(FRONTIER_ARCHITECTURE.maxRoofBands,Math.floor(bh/22)));
+      for(let i=1;i<n;i++){const yy=y+bh*i/n;rib([[x,yy,z+.4],[x+bw/2,yy,z+r+.4],[x+bw,yy,z+.4]]);}
+      rib([[x+bw/2,y,z+r+.6],[x+bw/2,y+bh,z+r+.6]],tint(c,.58),1.5);
+    }else{
+      const a=[x,y,z],bb=[x+bw,y,z],cc=[x+bw,y+bh,z],dd=[x,y+bh,z],e=[x,y+bh/2,z+r],ff=[x+bw,y+bh/2,z+r];
+      face([a,dd,e],tint(c,.61));face([bb,ff,cc],tint(c,.75));face([a,bb,ff,e],tint(c,1.10));face([e,ff,cc,dd],tint(c,.86));
+      const n=Math.max(3,Math.min(FRONTIER_ARCHITECTURE.maxRoofBands,Math.floor(bw/22)));
+      for(let i=1;i<n;i++){const xx=x+bw*i/n;rib([[xx,y,z+.4],[xx,y+bh/2,z+r+.4],[xx,y+bh,z+.4]]);}
+      rib([[x,y+bh/2,z+r+.6],[x+bw,y+bh/2,z+r+.6]],tint(c,.58),1.5);
     }
-  } else if(d.roof==='HIP'||d.roof==='MANSARD') {
-    const ix=bw*.20,iy=bh*.28,zz=rz+(d.roof==='MANSARD'?15:12);
-    face([[x,y,rz],[x+bw,y,rz],[x+bw-ix,y+iy,zz],[x+ix,y+iy,zz]],tint(p.roof,1.12));
-    face([[x,y+bh,rz],[x+ix,y+bh-iy,zz],[x+bw-ix,y+bh-iy,zz],[x+bw,y+bh,rz]],tint(p.roof,.83));
-    face([[x,y,rz],[x+ix,y+iy,zz],[x+ix,y+bh-iy,zz],[x,y+bh,rz]],tint(p.roof,.66));
-    face([[x+bw,y,rz],[x+bw,y+bh,rz],[x+bw-ix,y+bh-iy,zz],[x+bw-ix,y+iy,zz]],p.roof);
-    box(x+ix,y+iy,bw-2*ix,bh-2*iy,zz,zz+3,p.roof);
-    if(d.roof==='MANSARD')box(-w*.18,-h*.18,w*.36,h*.27,zz+3,zz+11,p.trim);
-  } else if(d.roof==='STONE'||d.roof==='ADOBE'||d.material==='ADOBE') {
+  };
+  const hip=(x,y,bw,bh,z,r,c,mansard=false)=>{
+    const ix=bw*.19,iy=bh*.23,zz=z+r;
+    face([[x,y,z],[x+bw,y,z],[x+bw-ix,y+iy,zz],[x+ix,y+iy,zz]],tint(c,1.12));
+    face([[x,y+bh,z],[x+ix,y+bh-iy,zz],[x+bw-ix,y+bh-iy,zz],[x+bw,y+bh,z]],tint(c,.84));
+    face([[x,y,z],[x+ix,y+iy,zz],[x+ix,y+bh-iy,zz],[x,y+bh,z]],tint(c,.67));
+    face([[x+bw,y,z],[x+bw,y+bh,z],[x+bw-ix,y+bh-iy,zz],[x+bw-ix,y+iy,zz]],c);
+    box(x+ix,y+iy,bw-2*ix,bh-2*iy,zz,zz+(mansard?3:1.5),c);
+  };
+  const pyramid=(cx,cy,bw,bh,z,r,c)=>{
+    const a=[cx-bw/2,cy-bh/2,z],bb=[cx+bw/2,cy-bh/2,z],cc=[cx+bw/2,cy+bh/2,z],dd=[cx-bw/2,cy+bh/2,z],tip=[cx,cy,z+r];
+    face([a,bb,tip],tint(c,1.12));face([bb,cc,tip],c);face([cc,dd,tip],tint(c,.76));face([dd,a,tip],tint(c,.61));
+  };
+  const cylinder=(cx,cy,rad,z0,z,c,n=8)=>{
+    const ring=[];for(let i=0;i<n;i++){const a=Math.PI*2*i/n;ring.push([cx+Math.cos(a)*rad,cy+Math.sin(a)*rad]);}
+    for(let i=0;i<n;i++){const a=ring[i],bb=ring[(i+1)%n];face([[...a,z0],[...bb,z0],[...bb,z],[...a,z]],tint(c,.70+.25*(i/n)));}
+    face(ring.map(q=>[...q,z]),c);
+  };
+  const beam=(a,bb,r,c)=>{
+    const dx=bb[0]-a[0],dy=bb[1]-a[1],dz=bb[2]-a[2],l=Math.hypot(dx,dy,dz)||1;
+    let ux=-dy,uy=dx,uz=0;if(Math.hypot(ux,uy)<.01){ux=1;uy=0;}
+    const ul=Math.hypot(ux,uy,uz);ux=ux/ul*r;uy=uy/ul*r;
+    const vx=(dy*uz-dz*uy)/l,vy=(dz*ux-dx*uz)/l,vz=(dx*uy-dy*ux)/l;
+    const corners=q=>[[q[0]+ux+vx,q[1]+uy+vy,q[2]+uz+vz],[q[0]-ux+vx,q[1]-uy+vy,q[2]-uz+vz],[q[0]-ux-vx,q[1]-uy-vy,q[2]-uz-vz],[q[0]+ux-vx,q[1]+uy-vy,q[2]+uz-vz]];
+    const aa=corners(a),cc=corners(bb);for(let i=0;i<4;i++)face([aa[i],aa[(i+1)%4],cc[(i+1)%4],cc[i]],tint(c,.72+i*.08));face(cc,c);
+  };
+  const stack=(cx,cy,z0,ht=23,brick=[133,71,49])=>{
+    box(cx-8,cy-9,16,18,z0,z0+ht,brick);box(cx-10,cy-11,20,22,z0+ht,z0+ht+3,p.trim);
+    face([[cx-6,cy-7,z0+ht+3.2],[cx+6,cy-7,z0+ht+3.2],[cx+6,cy+7,z0+ht+3.2],[cx-6,cy+7,z0+ht+3.2]],p.ink);
+    for(let zz=z0+5;zz<z0+ht;zz+=6)rib([[cx-8,cy+9.2,zz],[cx+8,cy+9.2,zz]],[74,48,36,130],.7);
+  };
+  const clock=(cx,cy,z,rad=8)=>{
+    const ring=[];for(let i=0;i<12;i++){const a=i*Math.PI/6;ring.push([cx+Math.cos(a)*rad,cy,z+Math.sin(a)*rad]);}face(ring,p.trim);
+    rib([[cx,cy+.2,z+rad*.65],[cx,cy+.2,z],[cx+rad*.5,cy+.2,z-1]],p.ink,1.3);
+  };
+  const signature=(d.variant>>>8)/16777216;
+  const x=-w/2-3,y=-h/2-3,bw=w+6,bh=h+6,rz=rise+1+signature*1.7,roof=d.roof,role=d.role||d.purpose;
+  if(roof==='HEADFRAME') {
+    // An open working shaft, not a warehouse with a token tower on top.
+    box(-w*.22,-h*.08,w*.44,h*.40,0,4,p.wall);
+    face([[-w*.18,-h*.04,4.2],[w*.18,-h*.04,4.2],[w*.18,h*.27,4.2],[-w*.18,h*.27,4.2]],p.ink);
+    box(-w*.45,-h*.43,w*.30,h*.30,0,rise*.5,p.wall);
+    gable(-w*.47,-h*.45,w*.34,h*.34,rise*.5,9,p.roof,true);
+    const top=rise+34,ty=-h*.17;
+    for(const yy of [ty-10,ty+10]){
+      beam([-w*.31,h*.30,2],[-w*.11,yy,top],3.8,p.wall);beam([w*.31,h*.30,2],[w*.11,yy,top],3.8,p.wall);
+      beam([-w*.24,h*.19,top*.25],[w*.15,yy,top*.77],2,p.accent);beam([w*.24,h*.19,top*.25],[-w*.15,yy,top*.77],2,p.accent);
+      beam([-w*.23,h*.18,top*.43],[w*.23,h*.18,top*.43],2.2,p.wall);
+    }
+    box(-w*.15,ty-15,w*.30,30,top-3,top+1,p.trim);
+    // The sheave is a vertical wheel with a real open hub and hoist cable.
+    for(let i=0;i<12;i++){const a=i*Math.PI/6,aa=(i+1)*Math.PI/6;
+      face([[Math.cos(a)*13,ty-1,top+9+Math.sin(a)*13],[Math.cos(aa)*13,ty-1,top+9+Math.sin(aa)*13],[Math.cos(aa)*8,ty-1,top+9+Math.sin(aa)*8],[Math.cos(a)*8,ty-1,top+9+Math.sin(a)*8]],p.ink);}
+    rib([[0,ty,top+9],[0,h*.08,4]],p.ink,1.5);rib([[-12,ty-1,top+9],[12,ty-1,top+9]],p.trim,1.5);
+    for(const xx of [w*.16,w*.33])beam([xx,h*.05,20],[xx,h*.39,5],2,p.wall);
+    face([[w*.16,h*.05,21],[w*.33,h*.05,21],[w*.33,h*.39,6],[w*.16,h*.39,6]],tint(p.wall,.8));
+    for(const yy of [h*.38,h*.46])rib([[w*.04,yy,1],[w*.47,yy,1]],p.ink,2);
+    box(w*.20,h*.35,w*.19,h*.15,2,11,p.ink);box(w*.22,h*.37,w*.15,h*.11,11,13,p.wall);
+  } else if(roof==='SAWTOOTH'||roof==='WORKSHOP') {
+    for(let i=0;i<3;i++){
+      const xx=x+bw*i/3,ww=bw/3;
+      face([[xx,y,rz],[xx+ww*.72,y,rz+12],[xx+ww*.72,y+bh,rz+12],[xx,y+bh,rz]],p.roof);
+      face([[xx+ww*.72,y,rz+12],[xx+ww,y,rz],[xx+ww,y+bh,rz],[xx+ww*.72,y+bh,rz+12]],p.glass);
+      face([[xx,y+bh,rz],[xx+ww*.72,y+bh,rz+12],[xx+ww,y+bh,rz]],tint(p.roof,.7));
+      rib([[xx+ww*.72,y,rz+12.4],[xx+ww*.72,y+bh,rz+12.4]],p.trim,1.2);
+    }
+  } else if(['HIP','MANSARD','HOTEL','ARCADE','SALOON'].includes(roof)) {
+    hip(x,y,bw,bh,rz,roof==='SALOON'?14:17,p.roof,true);
+    if(roof==='HOTEL'||roof==='ARCADE'||roof==='MANSARD'){
+      for(const xx of [-w*.27,w*.27]){box(xx-13,-h*.14,26,h*.22,rz+12,rz+22,p.wall);gable(xx-16,-h*.16,32,h*.26,rz+22,7,p.roof,true);}
+    }
+  } else if(roof==='STONE'||roof==='ADOBE'||roof==='SHERIFF') {
     box(x,y,bw,bh,rise,rz,p.roof);
     for(const yy of [y,y+bh-5])box(x,yy,bw,5,rz,rz+7,p.trim);
     for(const xx of [x,x+bw-5])box(xx,y+5,5,bh-10,rz,rz+7,p.trim);
-    if(d.roof==='STONE')box(-w*.31,-h*.28,w*.62,h*.48,rz,rz+8,p.wall);
-  } else if(d.roof==='GAMBREL') {
-    const strips=[[y,0],[y+bh*.22,12],[y+bh*.5,20],[y+bh*.78,12],[y+bh,0]];
-    for(let i=0;i<4;i++){const [a,az]=strips[i],[bb,bz]=strips[i+1];face([[x,a,rz+az],[x+bw,a,rz+az],[x+bw,bb,rz+bz],[x,bb,rz+bz]],tint(p.roof,i<2?1.13:.80));}
-    face(strips.map(([yy,z])=>[x,yy,rz+z]),tint(p.roof,.65));
-    face(strips.map(([yy,z])=>[x+bw,yy,rz+z]),tint(p.roof,.78));
+    if(roof!=='ADOBE')for(const xx of [-w*.23,w*.23]){
+      box(xx-18,-h*.17,36,h*.24,rz,rz+7,p.trim);box(xx-14,-h*.15,28,h*.20,rz+7,rz+8,p.glass);
+      if(role==='JAIL'||roof==='SHERIFF')for(let i=-1;i<=1;i++)rib([[xx+i*8,-h*.15,rz+8.5],[xx+i*8,h*.05,rz+8.5]],p.ink,1.6);
+    }
+  } else if(roof==='GAMBREL') {
+    const strips=[[x,0],[x+bw*.22,15],[x+bw*.5,23],[x+bw*.78,15],[x+bw,0]];
+    for(let i=0;i<4;i++){const [a,az]=strips[i],[bb,bz]=strips[i+1];face([[a,y,rz+az],[bb,y,rz+bz],[bb,y+bh,rz+bz],[a,y+bh,rz+az]],tint(p.roof,i<2?.82:1.10));}
+    face(strips.map(([xx,z])=>[xx,y+bh,rz+z]),tint(p.roof,.70));
+    box(-16,-h*.28,32,27,rz+20,rz+27,p.wall);gable(-19,-h*.3,38,33,rz+27,7,p.roof,true);
+  } else if(roof==='CHAPEL') {
+    gable(x,y,bw,bh,rz,23,p.roof,true);
+  } else if(roof==='COURTHOUSE') {
+    hip(x,y,bw,bh,rz,12,p.roof);
   } else {
-    gable(x,y,bw,bh,rz,d.roof==='CANVAS'?18:d.roof==='METAL'?4:11+signature*5,p.roof);
-    if(d.roof==='FALSE_FRONT') {
+    gable(x,y,bw,bh,rz,roof==='CANVAS'?18:roof==='METAL'?4:13+signature*4,p.roof,roof!=='DEPOT');
+    if(roof==='FALSE_FRONT') {
       box(x,h/2-7,bw,10,rise,rz+15,p.wall);
       box(-w*.24,h/2-7,w*.48,10,rz+15,rz+23,p.accent);
     }
   }
-  if(d.primary&&d.roof==='CHAPEL') {
-    box(-w*.39,h*.16,w*.22,h*.28,rise,rise+27,p.wall);
-    gable(-w*.41,h*.14,w*.26,h*.32,rise+27,9,p.roof);
-  } else if(d.primary&&d.roof==='HEADFRAME') {
-    const tx=-w*.23,ty=-h*.16,tw=w*.32,th=h*.38;
-    for(const xx of [tx,tx+tw-7])for(const yy of [ty,ty+th-7])box(xx,yy,7,7,rise,rise+32,p.ink);
-    box(tx-4,ty-3,tw+8,th+6,rise+30,rise+35,p.wall);
-    gable(tx-8,ty-7,tw+16,th+14,rise+35,7,p.roof);
+  if(d.primary&&roof==='CHAPEL') {
+    const tw=Math.min(48,w*.30),ty=h*.17,tz=rise+35;
+    box(-tw/2,ty-tw/2,tw,tw,rz+8,tz,p.wall);
+    // Open dark belfry arches framed by four actual corner piers.
+    box(-tw/2+4,ty-tw/2+4,tw-8,tw-8,tz,tz+15,p.ink);
+    for(const xx of [-tw/2,tw/2-5])for(const yy of [ty-tw/2,ty+tw/2-5])box(xx,yy,5,5,tz,tz+19,p.trim);
+    box(-tw/2-3,ty-tw/2-3,tw+6,tw+6,tz+18,tz+21,p.trim);
+    if(role==='SCHOOL'||b.hasBell){
+      cylinder(0,ty,5,tz+3,tz+11,[166,125,63],6);cylinder(0,ty,8,tz+2,tz+4,[184,143,72],8);
+      rib([[0,ty,tz+12],[0,ty,tz+18]],p.ink,2);
+    }
+    pyramid(0,ty,tw+12,tw+12,tz+21,20,p.roof);
+    if(role!=='SCHOOL'&&!b.hasBell){
+      beam([0,ty,tz+39],[0,ty,tz+57],1.7,p.trim);beam([-7,ty,tz+50],[7,ty,tz+50],1.5,p.trim);
+    }
+    // Broad entrance steps replace the universal shop awning.
+    for(let i=0;i<3;i++)box(-w*.26,h/2+i*5,w*.52,5,0,(3-i)*2,p.trim);
   }
-  // Chimneys and roof lanterns are individual masses, never flat roof decals.
-  if(d.primary&&d.roof!=='CANVAS'&&d.roof!=='HEADFRAME') {
-    const cw=Math.min(20,w*.09),ch=Math.min(24,h*.16),xx=w*(.22+(d.variant%5)*.025),yy=-h*.24;
-    box(xx,yy,cw,ch,rz+6,rz+20,p.wall);box(xx-2,yy-2,cw+4,ch+4,rz+20,rz+23,p.trim);
-    face([[xx+3,yy+3,rz+23.1],[xx+cw-3,yy+3,rz+23.1],[xx+cw-3,yy+ch-3,rz+23.1],[xx+3,yy+ch-3,rz+23.1]],p.ink);
+  if(d.primary&&(roof==='COURTHOUSE'||roof==='DEPOT')){
+    const cy=-h*.12,rad=roof==='COURTHOUSE'?21:16,cz=rz+13;
+    cylinder(0,cy,rad,cz,cz+22,p.wall);clock(0,cy+rad+.3,cz+12,7);
+    pyramid(0,cy,rad*2.5,rad*2.5,cz+23,roof==='COURTHOUSE'?18:11,p.roof);
+    if(roof==='COURTHOUSE')cylinder(0,cy,3,cz+41,cz+47,p.trim,6);
   }
-  if(d.primary) {
-    const cwidth=Math.min(w*.56,112),cz=rise*.66;
-    box(-cwidth/2,h/2-3,cwidth,Math.min(25,h*.18),cz-3,cz,p.accent);
+  if(d.primary&&roof==='SALOON'){
+    const cw=w*.43,cl=rz+16;
+    box(-cw/2,-h*.18,cw,h*.30,cl-4,cl+8,p.wall);box(-cw/2+4,-h*.18-0.2,cw-8,1,cl,cl+6,p.glass);hip(-cw/2-4,-h*.18-4,cw+8,h*.30+8,cl+8,5,p.roof);
+    for(const xx of [-w*.32,w*.32])stack(xx,-h*.30,rz+5,22);
   }
-  mesh={faces,ribs,palette:p,width:w,depth:h,rise};_frontierRoofMeshes.set(b,mesh);return mesh;
+  if(d.primary&&['SALOON','HOTEL','ARCADE','DEPOT','COURTHOUSE'].includes(roof)){
+    const deckZ=roof==='DEPOT'?4:rise*.43,front=h/2+3,dep=roof==='COURTHOUSE'?25:29;
+    box(-w/2-5,front,w+10,dep,Math.max(0,deckZ-4),deckZ,p.wall);
+    const n=Math.min(6,Math.max(3,Math.round(w/56)));
+    for(let i=0;i<n;i++){const xx=-w*.46+i*w*.92/(n-1);box(xx-2,front+dep-5,4,4,0,roof==='COURTHOUSE'?rise*.88:rise*.75,p.trim);}
+    if(roof==='SALOON'||roof==='HOTEL'||roof==='ARCADE'){
+      box(-w/2-7,front+dep-6,w+14,5,deckZ+11,deckZ+14,p.accent);
+      for(let xx=-w/2+5;xx<w/2;xx+=17)beam([xx,front+dep-4,deckZ],[xx,front+dep-4,deckZ+12],.8,p.trim);
+      for(let yy=front+5;yy<front+dep;yy+=7)rib([[-w/2,yy,deckZ+.2],[w/2,yy,deckZ+.2]],tint(p.wall,.6),.7);
+    }else{
+      const cz=roof==='COURTHOUSE'?rise*.90:rise*.72;
+      box(-w/2-9,front-3,w+18,dep+7,cz-3,cz,p.trim);gable(-w*.26,front-3,w*.52,dep+7,cz,roof==='COURTHOUSE'?12:5,p.roof,true);
+    }
+  }
+  if(d.primary&&(roof==='WORKSHOP'||roof==='SAWTOOTH'||role==='BLACKSMITH'||role==='BAKERY'||role==='LAUNDRY')){
+    stack(-w*.32,-h*.28,rz+4,role==='BLACKSMITH'?38:27);
+    if(role==='LAUNDRY')stack(w*.30,-h*.27,rz+5,32);
+  }else if(d.primary&&['CABIN','HOME'].includes(roof))stack(w*.31,-h*.26,rz+4,20,p.wall);
+  if(d.primary&&(role==='WATERWORKS'||role==='WATER_TOWER')){
+    const tz=rz+19,rad=Math.min(w,h)*.19;
+    for(const xx of [-rad*.7,rad*.7])for(const yy of [-rad*.7,rad*.7])box(xx-2,yy-2,4,4,rz,tz,p.ink);
+    cylinder(0,0,rad,tz,tz+25,p.wall,10);pyramid(0,0,rad*2.2,rad*2.2,tz+25,8,p.roof);
+    for(const zz of [tz+5,tz+20]){const ring=[];for(let i=0;i<=10;i++){const a=i*Math.PI/5;ring.push([Math.cos(a)*rad*1.01,Math.sin(a)*rad*1.01,zz]);}rib(ring,p.ink,1.5);}
+  }
+  mesh={faces,ribs,commands,palette:p,width:w,depth:h,rise};_frontierRoofMeshes.set(b,mesh);return mesh;
 }
 function frontierProjectedPoint(b,p) {
   const lean=massLean(b.x,b.y,p[2],[0,0]);return [p[0]+lean[0],p[1]+lean[1]];
 }
 function paintFrontierRoofMesh(g,b,heightPass=false,wet=0) {
   const mesh=frontierRoofMesh(b),unit=massLean(b.x,b.y,1,[0,0]),ux=unit[0],uy=unit[1];
-  for(const f of mesh.faces) {
+  g.noStroke();
+  for(const f of mesh.commands) {
+    if(f.stroke){
+      if(heightPass)continue;
+      g.noFill();g.stroke(...f.stroke);g.strokeWeight(f.weight);g.beginShape();
+      for(const p of f.points)g.vertex(p[0]+ux*p[2],p[1]+uy*p[2]);g.endShape();g.noStroke();continue;
+    }
     if(heightPass){const z=f.points.reduce((n,p)=>n+p[2],0)/f.points.length;glRigMat(g,z+groundElev(b.x,b.y),.13+.26*wet,0);}
     else g.fill(...f.color);
     g.beginShape();for(const p of f.points)g.vertex(p[0]+ux*p[2],p[1]+uy*p[2]);g.endShape(CLOSE);
   }
-  if(!heightPass){g.stroke(63,47,33,130);g.strokeWeight(1.15);for(const rib of mesh.ribs){g.beginShape();for(const p of rib)g.vertex(p[0]+ux*p[2],p[1]+uy*p[2]);g.endShape();}g.noStroke();}
 }
 function drawFrontierTradeEmblem(kind,x,y,size,col) {
   push();translate(x,y);scale(size/20);noFill();stroke(...col);strokeWeight(2.4);

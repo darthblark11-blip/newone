@@ -13,18 +13,30 @@ const out = process.env.FRONTIER_OUT || '/tmp/frontier-candidate';
 const frames = Number(process.env.FRONTIER_FRAMES || 12);
 const warmFrames = Number(process.env.FRONTIER_WARM || 3);
 const measureRaf = process.env.FRONTIER_RAF === '1';
+const cameraZoom = Number(process.env.FRONTIER_ZOOM || .65);
+const dayHour = Number(process.env.FRONTIER_HOUR || 13);
+const desktop = process.env.FRONTIER_DESKTOP === '1';
 const modes = (process.env.FRONTIER_MODES || 'fallback,advanced').split(',');
 const scenes = [
   { id: 'dry-gulch', x: 1300, y: -1730 },
   { id: 'copper-wash', x: -6000, y: 600 },
   { id: 'sunspur', x: 8400, y: -6600 },
   { id: 'mesa-relay', x: 1200, y: 6600 },
+  // Each pair frames the same authored address, regardless of compiler changes.
+  // The player stands in the street so the building stays visible beside them.
+  { id: 'church', x: 1300, y: -180, target: 'CHURCH' },
+  { id: 'church-close', x: 1225, y: -155, target: 'CHURCH', zoom: 1.4 },
+  { id: 'saloon', x: 1300, y: -1730, target: 'COPPER SPUR SALOON' },
+  { id: 'bank', x: 1350, y: -1730, target: 'BANK' },
+  { id: 'depot', x: 1300, y: -450, target: 'STAGE DEPOT' },
+  { id: 'workshop', x: 1350, y: -1470, target: 'BLACKSMITH' },
+  { id: 'mission', x: 8180, y: -6600, target: 'SUNSPUR MISSION' },
   { id: 'canyon-bridge', canyon: -6000 },
   { id: 'canyon-floor', canyon: -5500 }
 ];
 const viewports = process.env.FRONTIER_WIDTH ? [{id:'panorama',width:Number(process.env.FRONTIER_WIDTH),height:Number(process.env.FRONTIER_HEIGHT||800)}] : [{ id: 'portrait', width: 360, height: 780 }, { id: 'landscape', width: 940, height: 390 }].filter(v=>!process.env.FRONTIER_VIEWPORT||v.id===process.env.FRONTIER_VIEWPORT);
 const dpr = Number(process.env.FRONTIER_DPR || 3);
-const selected = (process.env.FRONTIER_SCENES || scenes.map(s => s.id).join(',')).split(',');
+const selected = (process.env.FRONTIER_SCENES || 'dry-gulch,copper-wash,sunspur,mesa-relay,canyon-bridge,canyon-floor').split(',');
 const stats = values => { const a = values.slice().sort((a,b)=>a-b); return { count:a.length, median:a[Math.floor(a.length*.5)], p95:a[Math.min(a.length-1,Math.floor(a.length*.95))], p99:a[Math.min(a.length-1,Math.floor(a.length*.99))], max:a[a.length-1] }; };
 const blank = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jR3kAAAAASUVORK5CYII=', 'base64');
 async function run() {
@@ -49,40 +61,46 @@ async function run() {
       });
       await page.goto('http://frontier.local/',{waitUntil:'load'});
       await page.waitForFunction(()=>typeof width==='number'&&width>0&&typeof setup==='function'&&!!document.querySelector('canvas'));
-      await page.evaluate(mode=>{
+      await page.evaluate(({mode,desktop})=>{
         noLoop();randomSeed(7);noiseSeed(BIOME_SEED);
         isStoryMode=true;started=true;isDead=isWin=isPaused=false;
         window.outpostForts={};seedWorldClock();startAtLevel(3);
         inStoryIntro=inStoryRoom=killcamMode=inTownCutscene=inFarmCutscene=inFarmPostCutscene=inPostAmbushCutscene=inFortCutscene=inDarchonCall=inTravelMenu=inOverworldView=false;
         objectiveTimer=0;streakMsgTimer=0;frontierBountyHudAlpha();_frontierBountyHud.clockMs=10000;
-        window.showOnScreenControls=true;window.isDesktop=false;
+        window.showOnScreenControls=!desktop;window.isDesktop=desktop;
         leftStick.active=rightStick.active=false;leftStick.dx=leftStick.dy=rightStick.dx=rightStick.dy=rightStick.dist=0;
         glRigClock=function(){};glRigWatchdog=function(){};
         if(mode==='advanced'){glRigInit();GLRig.on=GLRig.ok;}else GLRig.on=false;
-      },mode);
+      },{mode,desktop});
       for (const scene of scenes.filter(s=>selected.includes(s.id))) {
-        const placed = await page.evaluate(scene=>{
+        const placed = await page.evaluate(({scene,cameraZoom,dayHour})=>{
           let x=scene.x,y=scene.y;
           if(scene.canyon){const p=frontierCanyonProfile('X',scene.canyon,100.125);x=scene.canyon;y=p.center;}
           player.x=x;player.y=y;player.hp=player.maxHp;player.aimAngle=-Math.PI/2;
-          worldTimeMs=13/24*DAY_MS;updateSunVector();zoom=.65;
+          worldTimeMs=dayHour/24*DAY_MS;updateSunVector();zoom=scene.zoom||cameraZoom;
           camX=x-width/(2*zoom);camY=y-height/(2*zoom);
           viewLeft=camX;viewRight=camX+width/zoom;viewTop=camY;viewBottom=camY+height/zoom;
           chunkMgr.update(x,y);chunkMgr.warmUp(120);chunkMgr.rebuildWorldArrays();lastActiveUpdate=-100;updateActiveWorld();
           updateFrontierExplorationNotice(1);_frontierExplorationNotice.ageMs=10000;
-          return {x,y,elevation:groundElev(x,y)};
-        },scene);
-        const result = await page.evaluate(async ({frames,warmFrames,measureRaf})=>{
+          const landmark=scene.target?activeBuildings.find(b=>b.signText===scene.target&&(!b.frontierDesign||b.frontierDesign.primary)):null;
+          return {x,y,elevation:groundElev(x,y),zoom,hour:dayHour,target:landmark?{name:landmark.signText,x:landmark.x,y:landmark.y,w:landmark.w,h:landmark.h,arch:landmark.arch,design:landmark.frontierDesign}:null};
+        },{scene,cameraZoom,dayHour});
+        const result = await page.evaluate(async ({frames,warmFrames,measureRaf,camera})=>{
           const p=p5.instance||window._p5Instance,stackBefore=p?._styles?.length||0,times=[],intervals=[];let previous=null;
-          for(let i=0;i<warmFrames;i++){deltaTime=1000/60;frameCount++;draw();}
-          for(let i=0;i<frames;i++){if(measureRaf)await new Promise(resolve=>requestAnimationFrame(resolve));deltaTime=1000/60;frameCount++;const t=performance.now();draw();times.push(performance.now()-t);if(previous!==null)intervals.push(t-previous);previous=t;}
+          // Configure the camera before the native walking-camera lerp. This
+          // compensates its .1 blend toward .65, so every comparison is painted
+          // at the requested zoom without replacing any rendering function.
+          const prepareFrame=()=>{zoom=(camera.zoom-.065)/.9;camX=player.x-width/(2*camera.zoom);camY=player.y-height/(2*camera.zoom);worldTimeMs=camera.hour/24*DAY_MS;updateSunVector();deltaTime=1000/60;frameCount++;};
+          for(let i=0;i<warmFrames;i++){prepareFrame();draw();}
+          for(let i=0;i<frames;i++){if(measureRaf)await new Promise(resolve=>requestAnimationFrame(resolve));prepareFrame();const t=performance.now();draw();times.push(performance.now()-t);if(previous!==null)intervals.push(t-previous);previous=t;}
           return {times,intervals,stackBefore,stackAfter:p?._styles?.length||0,level:currentLevel,biome:currentBiome,
+            cameraFinal:{x:camX,y:camY,zoom,hour:worldTimeMs/DAY_MS*24},
             density:pixelDensity(),actors:enemiesList.length,solids:activeBuildings.length,canvases:document.querySelectorAll('canvas').length,
             chunks:chunkMgr.chunks.size,retiredTextures:chunkMgr.texCache?.size??chunkMgr.texCache?.length,
             gl:{ok:GLRig.ok,on:GLRig.on,tier:GLRig.tier,error:GLRig.gl?.getError(),failure:GLRig.failure,w:GLRig.w,h:GLRig.h},fault:window.FRAME_FAULT||null,
             architecturalLandmarks:activeBuildings.filter(b=>/HOIST|MINE HEAD/.test(b.signText||'')).map(b=>({name:b.signText,x:b.x,y:b.y,arch:b.arch,design:b.frontierDesign,
-              maxRoofHeight:b.frontierDesign?Math.max(...frontierRoofMesh(b).faces.flatMap(f=>f.points.map(p=>p[2]))):null}))};
-        },{frames,warmFrames,measureRaf});
+              maxRoofHeight:b.frontierDesign&&typeof frontierRoofMesh==='function'?Math.max(...frontierRoofMesh(b).faces.flatMap(f=>f.points.map(p=>p[2]))):null}))};
+        },{frames,warmFrames,measureRaf,camera:placed});
         const filename=`${viewport.id}-${mode}-${scene.id}.png`;
         await page.screenshot({path:path.join(out,filename)});
         const row={scene:scene.id,viewport:viewport.id,mode,placed,screenshot:filename,cpuDrawMs:stats(result.times),...(measureRaf?{frameIntervalMs:stats(result.intervals)}:{}),...result,errors:errors.slice(),consoleErrors:consoleErrors.slice()};delete row.times;delete row.intervals;
