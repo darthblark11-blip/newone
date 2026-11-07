@@ -24,7 +24,7 @@ ok('a compound courtyard is natively passable',P(`(()=>{
 ok('all named structures differ geometrically without labels or colour',P(`(()=>{
  const signatures=buildings.filter(b=>b.isWesternBldg&&b.frontierDesign.primary).map(b=>JSON.stringify(frontierRoofMesh(b).faces.map(f=>f.points.map(p=>[+(p[0]-b.x).toFixed(4),+(p[1]-b.y).toFixed(4),+p[2].toFixed(4)]))));
  return new Set(signatures).size===69;})()`));
-ok('primary roofs include several real elevations rather than a flat painted plate',P(`buildings.filter(b=>b.frontierDesign&&b.frontierDesign.primary).every(b=>new Set(frontierRoofMesh(b).faces.flatMap(f=>f.points.map(p=>p[2]))).size>=3)`));
+ok('primary roofs have physical height without requiring an ornament on every building',P(`buildings.filter(b=>b.frontierDesign&&b.frontierDesign.primary).every(b=>new Set(frontierRoofMesh(b).faces.flatMap(f=>f.points.map(p=>p[2]))).size>=2)`));
 ok('roof geometry cache is reused',P(`(()=>{const b=buildings.find(b=>b.frontierDesign);return frontierRoofMesh(b)===frontierRoofMesh(b);})()`));
 ok('an old save inside replacement geometry moves to clear terrain at the same height',P(`(()=>{
  const b=buildings.find(b=>b.isWesternBldg&&b.frontierDesign.primary&&!b.isFrontierSaloon);

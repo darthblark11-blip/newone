@@ -4925,13 +4925,26 @@ function frontierRestoreSafePosition(a) {
   a.x=ox;a.y=oy;return false;
 }
 function frontierArchitecturePalette(b) {
-  const d=b.frontierDesign,m=d.material;
-  const wall=m==='STONE'?[184,165,135]:m==='ADOBE'?[218,184,135]:m==='METAL'?[148,153,143]:[153,111,69];
-  const accent=b.accent==='teal'?[49,111,105]:b.accent==='red'?[160,64,43]:
-    d.purpose==='SALOON'?[128,54,41]:d.purpose==='MISSION'?[157,86,50]:[78,107,93];
-  const roof=m==='ADOBE'?[195,158,111]:m==='METAL'?[131,142,139]:
-    d.purpose==='BARN'?[149,68,46]:d.purpose==='HOTEL'?[69,112,102]:[121,93,68];
-  return {wall,roof,accent,trim:[231,209,166],ink:[56,39,29],glass:[48,75,76]};
+  const d=b.frontierDesign,m=d.material,role=d.role;
+  let wall=m==='STONE'?[184,171,145]:m==='ADOBE'?[218,184,135]:m==='METAL'?[148,153,143]:[153,111,69];
+  let accent=b.accent==='teal'?[49,100,94]:b.accent==='red'?[143,61,41]:[99,73,46];
+  let roof=m==='ADOBE'?[184,148,104]:m==='METAL'?[131,142,139]:[121,94,69];
+  let trim=[224,203,162];
+  if(role==='CHURCH'||role==='SCHOOL'){
+    wall=[235,228,207];roof=[67,130,120];trim=[249,239,211];accent=[83,110,99];
+    if(b.frontierSettlementId==='SUNSPUR'){wall=[221,188,142];roof=[173,93,62];trim=[243,217,176];}
+  }else if(role==='SALOON'){wall=[212,180,130];roof=[160,76,50];accent=[55,108,98];}
+  else if(role==='HOTEL'){wall=[208,184,144];roof=b.accent==='red'?[151,77,54]:[78,111,101];}
+  else if(role==='COURT'||role==='ARCHIVE'){wall=[210,197,170];roof=[113,133,113];trim=[238,224,190];}
+  else if(role==='BANK'||role==='ASSAY'){wall=[194,180,151];roof=[137,129,110];accent=[76,88,77];trim=[233,217,177];}
+  else if(role==='JAIL'||role==='SHERIFF'){wall=[165,161,139];roof=[117,115,98];accent=[101,76,52];}
+  else if(role==='MEDIC'){wall=[226,215,185];roof=[89,115,100];accent=[77,105,90];}
+  else if(role==='LIVERY'||role==='BARN'){wall=[158,100,61];roof=[158,69,45];accent=[96,62,38];}
+  else if(role==='DEPOT'){wall=[187,157,107];roof=[101,112,88];accent=[137,62,44];}
+  else if(role==='BLACKSMITH'||role==='LAUNDRY'||role==='WORKSHOP'){wall=[143,109,77];roof=[115,113,93];accent=[83,77,58];}
+  else if(role==='OPERA'){wall=[209,181,136];roof=[123,66,49];accent=[136,64,46];}
+  else if(role==='BOOKSHOP'){wall=[179,151,106];roof=[116,83,61];accent=[72,105,91];}
+  return {wall,roof,accent,trim,ink:[52,38,28],glass:[49,77,75]};
 }
 function frontierRoofMesh(b) {
   let mesh=_frontierRoofMeshes.get(b);if(mesh)return mesh;
@@ -5130,47 +5143,99 @@ function paintFrontierRoofMesh(g,b,heightPass=false,wet=0) {
     g.beginShape();for(const p of f.points)g.vertex(p[0]+ux*p[2],p[1]+uy*p[2]);g.endShape(CLOSE);
   }
 }
-function drawFrontierTradeEmblem(kind,x,y,size,col) {
-  push();translate(x,y);scale(size/20);noFill();stroke(...col);strokeWeight(2.4);
-  if(kind==='SHERIFF'){beginShape();for(let i=0;i<12;i++){const a=i*Math.PI/6-Math.PI/2,r=i%2?5:10;vertex(Math.cos(a)*r,Math.sin(a)*r);}endShape(CLOSE);ellipse(0,0,5,5);}
-  else if(kind==='BANK'){ellipse(0,0,17,17);ellipse(0,0,6,6);for(let i=0;i<4;i++){const a=i*Math.PI/2;line(Math.cos(a)*3,Math.sin(a)*3,Math.cos(a)*8,Math.sin(a)*8);}}
-  else if(kind==='MEDIC'||kind==='MISSION'){line(-8,0,8,0);line(0,-10,0,10);if(kind==='MEDIC'){rect(-9,-9,18,18,3);}}
-  else if(kind==='WORKSHOP'){line(-8,-8,7,8);line(7,-8,-7,8);line(-10,-8,-3,-8);line(5,-10,10,-5);}
-  else if(kind==='SALOON'){arc(0,-2,17,19,-.5,Math.PI+.5);line(-8,-4,-10,-7);line(8,-4,10,-7);ellipse(0,7,6,6);line(-5,7,5,7);}
-  else if(kind==='DEPOT'||kind==='TRAILER'){ellipse(0,0,17,17);for(let i=0;i<6;i++){const a=i*Math.PI/3;line(0,0,Math.cos(a)*8,Math.sin(a)*8);}line(-10,10,10,10);}
-  else if(kind==='MINE'){line(-8,-8,8,8);line(-8,8,8,-8);arc(0,-1,21,14,Math.PI,Math.PI*2);}
-  else if(kind==='BARN'||kind==='HOME'||kind==='HOTEL'){beginShape();vertex(-9,1);vertex(0,-8);vertex(9,1);vertex(9,9);vertex(-9,9);endShape(CLOSE);line(-3,9,-3,3);line(3,9,3,3);}
-  else{rect(-8,-6,16,14,2);line(-10,-6,10,-6);line(0,-9,0,9);line(-6,-9,6,-9);}
-  pop();
-}
 function drawFrontierArchitecture(b) {
-  const mesh=frontierRoofMesh(b),p=mesh.palette,z=buildingRise(b),lean=massLean(b.x,b.y,z,[0,0]);
-  noStroke();drawMassSides(b.x-b.w/2,b.y-b.h/2,b.x+b.w/2,b.y+b.h/2,lean[0],lean[1],...p.wall,18);
-  const x0=b.x-b.w/2,x1=b.x+b.w/2,y0=b.y-b.h/2,y1=b.y+b.h/2;
-  const face=(ax,ay,bx,by,len,front)=>{
-    const panel=(u,v,t,q)=>quad(ax+(bx-ax)*u+lean[0]*t,ay+(by-ay)*u+lean[1]*t,ax+(bx-ax)*v+lean[0]*t,ay+(by-ay)*v+lean[1]*t,ax+(bx-ax)*v+lean[0]*q,ay+(by-ay)*v+lean[1]*q,ax+(bx-ax)*u+lean[0]*q,ay+(by-ay)*u+lean[1]*q);
-    const bays=Math.max(2,Math.min(8,Math.floor(len/42))),floors=b.frontierDesign.purpose==='HOTEL'?2:1;
-    fill(...p.trim);panel(.02,.98,.87,.98);
-    for(let i=0;i<bays;i++)for(let floor=0;floor<floors;floor++){
-      if(front&&floor===0&&i===Math.floor(bays/2))continue;
-      const t=(floor+.20)/floors,q=(floor+.72)/floors,u=(i+.22)/bays,v=(i+.78)/bays;
-      fill(...p.trim);panel(u-.015,v+.015,t-.03,q+.03);fill(...p.glass);panel(u,v,t,q);
-      fill(177,201,179,150);panel(u+.015,u+.045,t+.05,q-.025);
-    }
-    if(front&&b.frontierDesign.primary){fill(...p.ink);panel(.43,.57,.015,.66);fill(...p.accent);panel(.445,.555,.04,.60);fill(...p.trim);panel(.535,.55,.25,.32);}
-    if(b.frontierDesign.material==='TIMBER'){fill(78,52,33,80);for(let i=1;i<6;i++)panel(.025,.975,i/7,i/7+.018);}
-  };
-  const f=b.facing||'S';
-  if(Math.abs(lean[0])>1)face(lean[0]>0?x0:x1,y0,lean[0]>0?x0:x1,y1,b.h,f===(lean[0]>0?'W':'E'));
-  if(Math.abs(lean[1])>1)face(x0,lean[1]>0?y0:y1,x1,lean[1]>0?y0:y1,b.w,f===(lean[1]>0?'N':'S'));
-  paintFrontierRoofMesh(window,b);
-  if(b.frontierDesign.primary){
-    const swap=f==='W'||f==='E',span=swap?b.h:b.w,depth=swap?b.w:b.h;
-    const c=frontierArchitectureLocal({x:b.x,y:b.y,facing:f},0,depth/2-8),q=frontierProjectedPoint(b,[c[0],c[1],z+10]);
-    fill(...p.ink);ellipse(q[0],q[1],32,32);fill(...p.trim);ellipse(q[0],q[1],27,27);
-    drawFrontierTradeEmblem(b.frontierDesign.emblem,q[0],q[1],17,p.accent);
-    if(b.signText&&span>145){const label=frontierArchitectureLocal({x:b.x,y:b.y,facing:f},0,depth/2-30),v=frontierProjectedPoint(b,[...label,z+9]);push();textAlign(CENTER,CENTER);textFont('sans-serif');textSize(Math.min(10,(span-30)/Math.max(7,b.signText.length)*1.4));fill(...p.trim);text(b.signText,v[0],v[1]);pop();}
+  const mesh=frontierRoofMesh(b),p=mesh.palette,z=buildingRise(b),d=b.frontierDesign;
+  const role=d.role||d.purpose,lean=massLean(b.x,b.y,z,[0,0]);
+  push();noStroke();
+  if(d.roof!=='HEADFRAME'){
+    drawMassSides(b.x-b.w/2,b.y-b.h/2,b.x+b.w/2,b.y+b.h/2,lean[0],lean[1],...p.wall,18);
+    const x0=b.x-b.w/2,x1=b.x+b.w/2,y0=b.y-b.h/2,y1=b.y+b.h/2;
+    const face=(ax,ay,bx,by,len,front)=>{
+      const pt=(u,t)=>[ax+(bx-ax)*u+lean[0]*t,ay+(by-ay)*u+lean[1]*t];
+      const panel=(u,v,t,q)=>{const a=pt(u,t),bb=pt(v,t),c=pt(v,q),dd=pt(u,q);quad(...a,...bb,...c,...dd);};
+      const lineAt=(u,t,v,q)=>{const a=pt(u,t),bb=pt(v,q);line(...a,...bb);};
+      const arch=(center,half,bottom,spring,top,col)=>{
+        fill(...col);beginShape();vertex(...pt(center-half,bottom));vertex(...pt(center+half,bottom));
+        for(let i=0;i<=10;i++){const a=i*Math.PI/10;vertex(...pt(center+Math.cos(a)*half,spring+Math.sin(a)*(top-spring)));}endShape(CLOSE);
+      };
+      const win=(center,half,bottom=.22,top=.76,arched=false)=>{
+        if(arched){arch(center,half+.012,bottom-.035,top-.20,top+.03,p.trim);arch(center,half,bottom,top-.20,top,p.glass);}
+        else{fill(...p.trim);panel(center-half-.012,center+half+.012,bottom-.035,top+.035);fill(...p.glass);panel(center-half,center+half,bottom,top);}
+        stroke(...p.trim);strokeWeight(.9);lineAt(center,bottom,center,top);lineAt(center-half,(bottom+top)*.5,center+half,(bottom+top)*.5);noStroke();
+      };
+      // Clapboard belongs to the wall, never to a glass ribbon around the roof.
+      if(d.material==='TIMBER'){
+        stroke(75,53,34,75);strokeWeight(.65);
+        for(let i=1;i<7;i++)lineAt(.015,i/7,.985,i/7);
+        noStroke();
+      }
+      fill(...p.trim);panel(.015,.985,.94,1.01);
+      if(role==='CHURCH'||role==='SCHOOL'){
+        if(front){
+          win(.21,.075,.22,.84,true);win(.79,.075,.22,.84,true);
+          arch(.5,.12,.01,.59,.78,p.trim);arch(.5,.098,.015,.56,.72,[94,67,45]);
+          stroke(...p.trim);strokeWeight(1.2);lineAt(.5,.015,.5,.7);noStroke();
+          fill(192,149,74);panel(.474,.484,.27,.31);panel(.516,.526,.27,.31);
+        }else{
+          const n=Math.max(2,Math.min(4,Math.floor(len/50)));
+          for(let i=0;i<n;i++)win((i+.5)/n,.048,.2,.81,true);
+        }
+      }else if(role==='LIVERY'||role==='BARN'||role==='WAREHOUSE'){
+        if(front){
+          fill(...p.trim);panel(.18,.82,.015,.92);fill(83,55,34);panel(.20,.80,.02,.87);
+          stroke(168,124,74);strokeWeight(1.4);
+          for(const u of [.23,.50,.77])lineAt(u,.04,u,.85);
+          lineAt(.23,.08,.47,.80);lineAt(.53,.80,.77,.08);lineAt(.20,.90,.80,.90);noStroke();
+        }else for(const u of [.2,.5,.8])win(u,.05,.58,.84);
+      }else if(role==='JAIL'||role==='SHERIFF'){
+        for(const u of [.22,.78]){win(u,.085,.29,.77);stroke(53,53,43);strokeWeight(1.6);for(const t of [-.055,0,.055])lineAt(u+t,.27,u+t,.79);noStroke();}
+        if(front){fill(...p.trim);panel(.42,.58,0,.82);fill(78,62,45);panel(.44,.56,.02,.77);}
+      }else if(role==='BANK'||role==='COURT'||role==='ASSAY'){
+        for(const u of [.10,.34,.66,.90]){fill(...p.trim);panel(u-.022,u+.022,.04,.96);fill(137,126,103);panel(u-.026,u+.026,.04,.09);}
+        if(front){for(const u of [.22,.78])win(u,.065,.22,.79,true);fill(57,55,45);panel(.43,.57,0,.83);fill(...p.trim);panel(.49,.51,.02,.81);}
+        else for(const u of [.22,.5,.78])win(u,.05,.34,.8);
+      }else if(['BLACKSMITH','WORKSHOP','LAUNDRY','GUNSMITH'].includes(role)){
+        if(front){fill(53,43,32);panel(.29,.73,0,.84);fill(110,81,50);panel(.28,.33,0,.88);panel(.69,.74,0,.88);
+          if(role==='BLACKSMITH'){fill(184,83,35);panel(.38,.51,.08,.36);fill(231,164,68);panel(.40,.47,.08,.22);}
+          else {stroke(171,139,92);strokeWeight(1);lineAt(.34,.10,.68,.75);lineAt(.34,.75,.68,.10);noStroke();}
+        }else for(const u of [.2,.5,.8])win(u,.075,.60,.86);
+      }else{
+        const hotel=role==='HOTEL'||role==='SALOON'||role==='OPERA';
+        const bays=hotel?3:role==='DEPOT'?4:2;
+        for(let floor=0;floor<(hotel?2:1);floor++)for(let i=0;i<bays;i++){
+          const u=(i+.5)/bays;if(front&&hotel&&i===1&&floor===0)continue;
+          const bottom=hotel?.13+floor*.43:.25,top=hotel?.43+floor*.43:.81;
+          win(u,hotel?.065:role==='BOOKSHOP'?.15:.1,bottom,top,role==='BAKERY'||role==='MEDIC'||role==='OPERA');
+          if(role==='MEDIC'){fill(...p.accent);panel(u-.14,u-.115,bottom,top);panel(u+.115,u+.14,bottom,top);}
+        }
+        if(front&&d.primary){
+          fill(...p.trim);panel(.423,.577,.005,hotel?.48:.78);fill(role==='SALOON'?130:92,role==='SALOON'?85:65,42);panel(.44,.56,.015,hotel?.44:.73);
+          if(role==='SALOON'){fill(...p.ink);panel(.44,.56,.30,.44);panel(.44,.56,.015,.08);}
+          stroke(...p.trim);strokeWeight(.8);lineAt(.5,.03,.5,hotel?.42:.71);noStroke();
+        }
+      }
+    };
+    const f=b.facing||'S';
+    if(Math.abs(lean[0])>1)face(lean[0]>0?x0:x1,y0,lean[0]>0?x0:x1,y1,b.h,f===(lean[0]>0?'W':'E'));
+    if(Math.abs(lean[1])>1)face(x0,lean[1]>0?y0:y1,x1,lean[1]>0?y0:y1,b.w,f===(lean[1]>0?'N':'S'));
   }
+  paintFrontierRoofMesh(window,b);
+  if(d.primary){
+    const f=b.facing||'S',swap=f==='W'||f==='E',span=swap?b.h:b.w,depth=swap?b.w:b.h;
+    // A real barber pole is specific equipment, not a repeated trade medallion.
+    if(role==='BARBER'){
+      const a=frontierArchitectureLocal(b,span*.33,depth/2+6),bot=frontierProjectedPoint(b,[...a,2]),top=frontierProjectedPoint(b,[...a,23]);
+      stroke(233,224,195);strokeWeight(5);line(...bot,...top);
+      for(let i=0;i<5;i++){const t=i/5;stroke(i%2?56:170,i%2?83:59,i%2?103:42);strokeWeight(3.5);line(bot[0]+(top[0]-bot[0])*t,bot[1]+(top[1]-bot[1])*t,bot[0]+(top[0]-bot[0])*(t+.11),bot[1]+(top[1]-bot[1])*(t+.11));}noStroke();
+    }
+    if(b.signText&&role!=='CHURCH'&&role!=='SCHOOL'&&span>95){
+      const c=frontierArchitectureLocal(b,0,depth/2-2),q=frontierProjectedPoint(b,[...c,z*.90]);
+      const sw=Math.min(span*.78,160);push();translate(...q);if(swap)rotate(-Math.PI/2);
+      fill(63,44,29);rect(-sw/2-2,-8,sw+4,16,1);fill(...p.trim);rect(-sw/2,-6,sw,12,1);
+      fill(64,47,32);textAlign(CENTER,CENTER);textFont('serif');textSize(Math.max(5,Math.min(9,sw/Math.max(1,b.signText.length*.63))));text(b.signText,0,.1);pop();
+    }
+  }
+  pop();
 }
 
 function drawWesternBuilding(b) {
