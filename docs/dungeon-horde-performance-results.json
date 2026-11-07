@@ -1,0 +1,301 @@
+{
+  "baselineCommit": "bb6a044",
+  "baselineSourceSha256": "6caf027a558643daefa74a7587223bf0ef9ca5cb75ba0f0d0885f8c16fdb1c13",
+  "optimizedSourceSha256": "d5e7b9cf41f2577285e15f8f5e6556e2e6106febe3bf9eedc450dd6d4acf670c",
+  "host": "Headless Chromium / SwiftShader; timings describe cloud host, not phone frame rate.",
+  "p5Version": "1.11.10",
+  "viewportCssPixels": {
+    "width": 390,
+    "height": 844
+  },
+  "devicePixelRatio": 3,
+  "framesPerCase": 120,
+  "warmupFramesPerCase": 30,
+  "provenance": "Captured before integrating concurrent footwork updates 818afab and d6b2969; integration checks cover the combined source.",
+  "cases": [
+    {
+      "scenario": "opening_horde",
+      "lighting": "fallback",
+      "initialActors": {
+        "casters": 12,
+        "zombies": 72
+      },
+      "finalActors": {
+        "actors": 84,
+        "casters": 12,
+        "zombies": 72,
+        "projectiles": 20,
+        "grounds": 0,
+        "bursts": 1
+      },
+      "baselineCpuMs": {
+        "mean": 13.7899999997889,
+        "median": 12.600000001490116,
+        "p95": 23.100000001490116,
+        "p99": 25.400000005960464,
+        "max": 27.299999997019768
+      },
+      "optimizedCpuMs": {
+        "mean": 10.678333333445092,
+        "median": 10.200000002980232,
+        "p95": 21.5,
+        "p99": 24,
+        "max": 26.799999997019768
+      },
+      "baselinePaintedIntervalMs": {
+        "mean": 242.9394957983569,
+        "median": 234.89999999850988,
+        "p95": 425.8999999985099,
+        "p99": 447.1000000014901,
+        "max": 472.1000000014901
+      },
+      "optimizedPaintedIntervalMs": {
+        "mean": 238.6789915966136,
+        "median": 208.60000000149012,
+        "p95": 447.5,
+        "p99": 464.20000000298023,
+        "max": 478.19999999552965
+      },
+      "baselineStages": {
+        "drawOccultZombie": {
+          "meanMs": 5.237499999565383,
+          "callsPerFrame": 44.15833333333333
+        },
+        "Character.show": {
+          "meanMs": 8.590833334128062,
+          "callsPerFrame": 52.61666666666667
+        },
+        "occultNavigate": {
+          "meanMs": 0.7291666666666666,
+          "callsPerFrame": 80.93333333333334
+        },
+        "Character.updateEnemy": {
+          "meanMs": 1.0483333330601454,
+          "callsPerFrame": 84
+        },
+        "occultSenseTarget": {
+          "meanMs": 0.06833333329608043,
+          "callsPerFrame": 84
+        }
+      },
+      "optimizedStages": {
+        "drawOccultZombie": {
+          "meanMs": 2.9224999997143946,
+          "callsPerFrame": 24.133333333333333
+        },
+        "Character.show": {
+          "meanMs": 5.7724999996523065,
+          "callsPerFrame": 32.56666666666667
+        },
+        "occultHordeNavigate": {
+          "meanMs": 0.6941666672006249,
+          "callsPerFrame": 72
+        },
+        "Character.updateEnemy": {
+          "meanMs": 1.0941666668901842,
+          "callsPerFrame": 84
+        },
+        "occultNavigate": {
+          "meanMs": 0.12916666654249032,
+          "callsPerFrame": 11.933333333333334
+        },
+        "occultHordePump": {
+          "meanMs": 0.08750000024835268,
+          "callsPerFrame": 12.966666666666667
+        },
+        "occultSenseTarget": {
+          "meanMs": 0.014166666815678278,
+          "callsPerFrame": 12
+        }
+      },
+      "horde": {
+        "targetSamples": 150,
+        "directSteps": 9583,
+        "flowSteps": 1199,
+        "requests": 1217,
+        "builds": 6,
+        "completed": 6,
+        "expanded": 30906,
+        "maxFrameExpanded": 512,
+        "bufferAllocations": 2,
+        "geometryInvalidations": 0,
+        "waiting": 18
+      },
+      "pools": [
+        {
+          "capacity": 97,
+          "records": 97,
+          "active": 20,
+          "acquired": 27,
+          "released": 7,
+          "highWater": 20
+        },
+        {
+          "capacity": 48,
+          "records": 48,
+          "active": 0,
+          "acquired": 0,
+          "released": 0,
+          "highWater": 0
+        },
+        {
+          "capacity": 96,
+          "records": 96,
+          "active": 1,
+          "acquired": 7,
+          "released": 6,
+          "highWater": 4
+        }
+      ],
+      "errors": []
+    },
+    {
+      "scenario": "dense_horde",
+      "lighting": "fallback",
+      "initialActors": {
+        "casters": 54,
+        "zombies": 288
+      },
+      "finalActors": {
+        "actors": 342,
+        "casters": 54,
+        "zombies": 288,
+        "projectiles": 21,
+        "grounds": 0,
+        "bursts": 0
+      },
+      "baselineCpuMs": {
+        "mean": 33.06833333298564,
+        "median": 32,
+        "p95": 44.399999998509884,
+        "p99": 58.70000000298023,
+        "max": 60.79999999701977
+      },
+      "optimizedCpuMs": {
+        "mean": 29.876666666567324,
+        "median": 29.299999997019768,
+        "p95": 43,
+        "p99": 48.29999999701977,
+        "max": 48.5
+      },
+      "baselinePaintedIntervalMs": {
+        "mean": 1211.1243697478742,
+        "median": 1170.0999999940395,
+        "p95": 1663,
+        "p99": 1718,
+        "max": 1799.3999999985099
+      },
+      "optimizedPaintedIntervalMs": {
+        "mean": 1181.0554621848864,
+        "median": 1138.8000000044703,
+        "p95": 1719.6000000014901,
+        "p99": 1774.8000000044703,
+        "max": 1774.8999999985099
+      },
+      "baselineStages": {
+        "drawOccultZombie": {
+          "meanMs": 21.340000000844398,
+          "callsPerFrame": 212.96666666666667
+        },
+        "occultNavigate": {
+          "meanMs": 2.080833333109816,
+          "callsPerFrame": 286.31666666666666
+        },
+        "Character.show": {
+          "meanMs": 24.926666667622825,
+          "callsPerFrame": 221.875
+        },
+        "Character.updateEnemy": {
+          "meanMs": 3.300833334090809,
+          "callsPerFrame": 309
+        },
+        "occultSenseTarget": {
+          "meanMs": 0.25083333359410365,
+          "callsPerFrame": 309
+        }
+      },
+      "optimizedStages": {
+        "drawOccultZombie": {
+          "meanMs": 18.161666668144367,
+          "callsPerFrame": 170.28333333333333
+        },
+        "occultHordeNavigate": {
+          "meanMs": 2.3824999996771417,
+          "callsPerFrame": 288
+        },
+        "Character.show": {
+          "meanMs": 21.413333333221576,
+          "callsPerFrame": 179.20833333333334
+        },
+        "Character.updateEnemy": {
+          "meanMs": 3.555833333482345,
+          "callsPerFrame": 309
+        },
+        "occultNavigate": {
+          "meanMs": 0.17166666698952515,
+          "callsPerFrame": 12.933333333333334
+        },
+        "occultHordePump": {
+          "meanMs": 0.12583333334575098,
+          "callsPerFrame": 14.025
+        },
+        "occultSenseTarget": {
+          "meanMs": 0.018333333420256774,
+          "callsPerFrame": 21
+        }
+      },
+      "horde": {
+        "targetSamples": 151,
+        "directSteps": 40423,
+        "flowSteps": 3009,
+        "requests": 3065,
+        "builds": 8,
+        "completed": 8,
+        "expanded": 41208,
+        "maxFrameExpanded": 512,
+        "bufferAllocations": 2,
+        "geometryInvalidations": 0,
+        "waiting": 56
+      },
+      "pools": [
+        {
+          "capacity": 97,
+          "records": 97,
+          "active": 21,
+          "acquired": 27,
+          "released": 6,
+          "highWater": 21
+        },
+        {
+          "capacity": 48,
+          "records": 48,
+          "active": 0,
+          "acquired": 0,
+          "released": 0,
+          "highWater": 0
+        },
+        {
+          "capacity": 96,
+          "records": 96,
+          "active": 0,
+          "acquired": 6,
+          "released": 6,
+          "highWater": 4
+        }
+      ],
+      "errors": []
+    }
+  ],
+  "integration": {
+    "upstreamCommit": "d6b2969",
+    "combinedSourceSha256": "17907c1ed17c098f81f8dd9bd59d89038a33a33dff6030dc33b4e8e62558f5fa",
+    "headlessSuites": 28,
+    "headlessChecks": 1381,
+    "nativeMageChecks": 62,
+    "nativeDungeonChecks": 75,
+    "nativeCullPoses": 2880,
+    "nativeCullFallbackChecks": 13,
+    "exactSpellSimulationFrames": 270,
+    "randomizedGeometryComparisons": 28000
+  }
+}

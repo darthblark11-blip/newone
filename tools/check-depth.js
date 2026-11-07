@@ -132,10 +132,11 @@ const leaked = probe('_depthActors.length');
 ok('it is emptied on the way out', leaked === 0, leaked + ' left queued');
 ok('and the flag is lowered', probe('_depthOn') === false);
 
-console.log('\n== outside a biome nothing changes ==');
-// Levels 0 and 8 are closed interiors composed against the old fixed order.
-probe('BIOME_ACTIVE = false;');
-ok('depth sorting is off', probe('depthSortActive()') === false);
+console.log('\n== authored interiors choose their own ordering ==');
+// The prologue keeps its fixed composition; laboratory furniture interleaves
+// with characters just like the outdoor masses.
+probe('BIOME_ACTIVE = false; currentLevel = 0;');
+ok('prologue depth sorting is off', probe('depthSortActive()') === false);
 probe(`
   __order = []; _depthOn = false;
   var _a = actor(7, 0);
@@ -144,7 +145,9 @@ probe(`
 ok('actorShow() paints immediately instead of queueing',
    probe('__order.join(" ")') === 'A7' && probe('_depthActors.length') === 0,
    probe('__order.join(" ")'));
-probe('BIOME_ACTIVE = true;');
+probe('currentLevel = 8;');
+ok('laboratory depth sorting is on without a biome', probe('depthSortActive()') === true);
+probe('currentLevel = 1; BIOME_ACTIVE = true;');
 
 // ---------------------------------------------------------------------------
 // The mass projection.
@@ -282,7 +285,8 @@ const fs = require('fs');
 const src = fs.readFileSync(process.env.GAME_JS || __dirname + '/../game.js', 'utf8');
 const src2 = src;
 const propsAt = src.search(/function drawBiomeProps\s*\(/);
-const propsFn = src.slice(propsAt, src.indexOf('function drawLightPass()'));
+const propsEnd = src.indexOf('\nfunction ', propsAt + 1);
+const propsFn = src.slice(propsAt, propsEnd < 0 ? src.length : propsEnd);
 const drawn = new Set((propsFn.match(/case *["'](\w+)["'] *:/g) || [])
   .map(x => /["'](\w+)["']/.exec(x)[1]));
 const pr = /const PROP_RISE = \{([\s\S]*?)\n\};/.exec(src);
@@ -299,9 +303,94 @@ const decks = ['BRIDGE', 'CANALBRIDGE', 'BOARDWALK', 'RIVER', 'CANAL', 'HELIPAD'
 const wrong = decks.filter(k => rkeys.includes(k));
 ok('surfaces and collision volumes are left flat', wrong.length === 0,
    wrong.length ? wrong.join(' ') + ' should not rise' : decks.join(' '));
-ok('the lean is applied once, generically, not per case',
-   /const _pr = PROP_RISE\[b\.propType\]/.test(propsFn) &&
-   (propsFn.match(/drawMassSides\(/g) || []).length === 1);
+// Ordinary props still receive the shared footprint-to-roof pass. A few open
+// constructions own several heights, so their native painters cancel that top
+// translate and project the actual 3D points through the same massLean().
+const genericPropPass = propsFn.slice(0, propsFn.indexOf('switch (b.propType)'));
+ok('ordinary props use one shared footprint-to-roof pass',
+   /const _pr = PROP_RISE\[b\.propType\]/.test(genericPropPass) &&
+   (genericPropPass.match(/drawMassSides\(/g) || []).length === 1);
+const pointwiseProps = ['CITYBIKERACK', 'CITYCOURTHOOP', 'CITYCARGO'];
+const caseStarts = Array.from(propsFn.matchAll(/case\s+["'](\w+)["']\s*:/g));
+const ownProjection = caseStarts.filter((m,i) =>
+  /(?:massLean|drawMassSides)\s*\(/.test(propsFn.slice(m.index, i+1<caseStarts.length?caseStarts[i+1].index:propsFn.length)))
+  .map(m => m[1]);
+ok('only explicit multi-height constructions own a per-case projection',
+   ownProjection.length === pointwiseProps.length && ownProjection.every(k => pointwiseProps.includes(k)),
+   ownProjection.join(' '));
+
+console.log('\n== open constructions have grounded, independently raised geometry ==');
+{
+  // Track the native painter's transforms and output, rather than accepting a
+  // translated side-view sprite just because its source mentions massLean().
+  const names=['push','pop','translate','rotate','scale','line','quad','rect','ellipse','vertex','massLean','drawMassSides','drawMassSkirt'];
+  const saved=Object.fromEntries(names.map(k=>[k,ctx[k]]));
+  const fixtures=[
+    {propType:'CITYBIKERACK',w:74,h:28,open:true},
+    {propType:'CITYCOURTHOOP',w:18,h:18,courtFacing:1,open:true},
+    {propType:'CITYCARGO',w:104,h:56,open:false},
+    {propType:'CITYCAFETABLE',w:60,h:60,groundFaces:true,open:true},
+    {propType:'CITYVENUESIGN',w:26,h:18,groundFaces:true,cityVenueLabel:'BOXING',open:true},
+    {propType:'CITYTENNISNET',w:460,h:8,groundFaces:true,open:true},
+    {propType:'CITYTENNISFENCE',w:580,h:8,groundFaces:true,cityFenceAxis:'X',open:true},
+    {propType:'CITYTENNISFENCE',w:8,h:240,groundFaces:true,cityFenceAxis:'Y',open:true}
+  ];
+  const close=(a,b)=>Math.abs(a-b)<1e-7;
+  const hasPoint=(painted,p)=>painted.some(q=>close(p[0],q[0])&&close(p[1],q[1]));
+  const capture=(fixture,cameraOffset)=>{
+    const b={...fixture,x:240,y:160,isBiomeProp:true,tint:.2};
+    probe(`width=1200;height=800;zoom=1;currentLevel=currentBiome=1;worldTimeMs=13/24*DAY_MS;
+      camX=${b.x+cameraOffset}-600;camY=${b.y}-400;
+      viewLeft=viewTop=-1e5;viewRight=viewBottom=1e5;updateSunVector();`);
+    let matrix=[1,0,0,1,0,0],lowest=0;
+    const stack=[],painted=[],samples=[],sides=[],skirts=[];
+    const point=(x,y)=>[matrix[0]*x+matrix[2]*y+matrix[4],matrix[1]*x+matrix[3]*y+matrix[5]];
+    const pairs=a=>{for(let i=0;i+1<a.length;i+=2)painted.push(point(a[i],a[i+1]));};
+    ctx.push=()=>stack.push(matrix.slice());
+    ctx.pop=()=>{if(!stack.length){lowest--;return;}matrix=stack.pop();};
+    ctx.translate=(x,y)=>{matrix[4]+=matrix[0]*x+matrix[2]*y;matrix[5]+=matrix[1]*x+matrix[3]*y;};
+    ctx.scale=(x,y=x)=>{matrix[0]*=x;matrix[1]*=x;matrix[2]*=y;matrix[3]*=y;};
+    ctx.rotate=a=>{const c=Math.cos(a),s=Math.sin(a),m=matrix.slice();matrix[0]=m[0]*c+m[2]*s;matrix[1]=m[1]*c+m[3]*s;matrix[2]=m[2]*c-m[0]*s;matrix[3]=m[3]*c-m[1]*s;};
+    ctx.line=(...a)=>pairs(a);ctx.quad=(...a)=>pairs(a);ctx.vertex=(...a)=>pairs(a);
+    ctx.rect=(x,y,w,h)=>pairs([x,y,x+w,y,x+w,y+h,x,y+h,x+w/2,y+h/2]);
+    ctx.ellipse=(x,y,w,h)=>pairs([x,y,x-w/2,y,x+w/2,y,x,y-h/2,x,y+h/2]);
+    ctx.massLean=(x,y,z,out)=>{
+      const projected=saved.massLean(x,y,z,out);
+      samples.push({x,y,z,lx:projected[0],ly:projected[1]});return projected;
+    };
+    ctx.drawMassSides=(...a)=>{sides.push(a);return saved.drawMassSides(...a);};
+    ctx.drawMassSkirt=(...a)=>{skirts.push(a);return saved.drawMassSkirt(...a);};
+    ctx.drawBiomeProps([b]);
+    return {b,painted,samples,sides,skirts,balanced:stack.length===0&&lowest===0&&matrix.every((v,i)=>close(v,[1,0,0,1,0,0][i]))};
+  };
+  try {
+    for(const fixture of fixtures){
+      // Mild opposing camera positions avoid the intentional small-prop cap,
+      // allowing exact correspondence to the shared projection to be checked.
+      const left=capture(fixture,-90),right=capture(fixture,90),name=fixture.propType;
+      ok(name+' balances its complete transform stack',left.balanced&&right.balanced);
+      ok(name+' paints finite native geometry',
+         left.painted.length>0&&right.painted.length>0&&[...left.painted,...right.painted].flat().every(Number.isFinite));
+      const ground=(record)=>fixture.open
+        ? record.samples.filter(s=>s.z===0).map(s=>[s.x,s.y])
+        : [[record.b.x-fixture.w/2,record.b.y-fixture.h/2],[record.b.x+fixture.w/2,record.b.y-fixture.h/2]];
+      // Box feet paint only their exposed side faces. Compare contacts shared
+      // by both views; a corner hidden by the opposite face is not a moved foot.
+      const anchors=ground(left).filter(p=>!fixture.groundFaces||ground(right).some(q=>close(p[0],q[0])&&close(p[1],q[1])));
+      ok(name+' keeps real ground contacts fixed when the camera moves',
+         anchors.length>=2&&anchors.every(p=>hasPoint(left.painted,p)&&hasPoint(right.painted,p)));
+      const heights=new Set(left.samples.filter(s=>s.z>0).map(s=>s.z));
+      ok(name+' projects more than one raised construction height',heights.size>=2,heights.size+' heights');
+      const lifted=left.samples.find(s=>s.z>0&&hasPoint(left.painted,[s.x+s.lx,s.y+s.ly])&&
+        right.samples.some(t=>close(s.x,t.x)&&close(s.y,t.y)&&close(s.z,t.z)&&
+          hasPoint(right.painted,[t.x+t.lx,t.y+t.ly])&&Math.hypot(s.lx-t.lx,s.ly-t.ly)>1));
+      ok(name+' raised paint follows massLean across opposing views',!!lifted);
+      if(fixture.open)ok(name+' has no solid collision-box skirt',
+        P(`PROP_RISE.${name}.length`)===1&&left.sides.length===0&&right.sides.length===0&&left.skirts.length===0&&right.skirts.length===0);
+      else ok(name+' retains real footprint-to-roof container walls',left.sides.length>0&&right.sides.length>0);
+    }
+  } finally { Object.assign(ctx,saved); }
+}
 
 // ---------------------------------------------------------------------------
 // A SKIRT IS THE SHAPE OF THE THING IT IS UNDER
@@ -600,42 +689,52 @@ console.log('\n== the Great Gates and the curtain wall ==');
      probe('__depth') === 0 && probe('__minDepth') === 0, 'net ' + probe('__depth'));
 }
 
-console.log('\n== figures get volume from shading, not from displacement ==');
-// The projection cannot help at figure scale, so the three terms that DO
-// survive twenty pixels are used instead: a contour, a lit cap and a
-// terminator, all offset along the scene's one light vector.
-ok('volShade() exists and is driven by a light vector it is handed',
-   /function volShade\(x, y, w, h, cr, cg, cb, k, lx, ly\)/.test(src) &&
-   /lx = LIGHT_DX; ly = LIGHT_DY;/.test(src) &&
-   /lx \* w \* off \* k/.test(src) && /lx \* w \* 0\.19/.test(src));
-ok('the lit side is stepped, not a single inset cap',
-   /for \(let i = 1; i <= VOL_STEPS; i\+\+\)/.test(src) && /const VOL_STEPS/.test(src));
-ok('the contour is canvas STATE, so parts added later inherit it',
-   /function figureContour\(\)/.test(src) &&
-   /volShade[\s\S]{0,2400}?figureContour\(\);\n}/.test(src));
-const contourSites = (src.match(/figureContour\(\)/g) || []).length;
-ok('and it is switched on for the torso, the limbs and the citizens',
-   contourSites >= 5, contourSites + ' call sites');
-const bodySites = (src.match(/volShade(?:Col)?\(0, 0, this\.bodyW, this\.bodyH/g) || []).length;
-ok('every body -- player, enemy, citizen, gator, cow -- uses the one helper',
-   bodySites === 4, bodySites + ' call sites');
+console.log('\n== figures have curved cel planes inside their original silhouette ==');
+// Inspect emitted drawing operations rather than the old implementation's
+// transparent ellipse rings. A flat base, curved shade and curved highlight
+// should give volume without moving the rig or outlining an interior seam.
 {
-  // Every body call site must be behind a BIOME_ACTIVE guard (Levels 0 and 8
-  // are closed interiors composed against the flat look) and must be handed a
-  // counter-rotated light. Checked per site rather than as one big pattern, so
-  // a fifth animal added without either is a failure and not a silent pass.
-  const re = /volShade(?:Col)?\(0, 0, this\.bodyW/g;
-  let m, guarded = 0, lit = 0, total = 0;
-  while ((m = re.exec(src))) {
-    total++;
-    const before = src.slice(Math.max(0, m.index - 460), m.index);
-    if (/BIOME_ACTIVE/.test(before)) guarded++;
-    if (/figureLight\(/.test(before.slice(-200))) lit++;
-  }
-  ok('none of it runs outside a biome, so Levels 0 and 8 are untouched',
-     total === 4 && guarded === 4, guarded + '/' + total + ' guarded');
-  ok('and every one of them is handed the light in its own frame',
-     total === 4 && lit === 4, lit + '/' + total + ' counter-rotated');
+  const shapes=[], styles=[], g=Object.create(ctx);let current=null, rgba=null, outlined=false;
+  g.fill=(...a)=>{rgba=a;};g.stroke=()=>{outlined=true;};g.noStroke=()=>{outlined=false;};
+  g.strokeWeight=(w)=>{styles.push(w);};
+  g.ellipse=(...a)=>{shapes.push({kind:'ellipse',a,rgba,outlined});};
+  g.beginShape=()=>{current={kind:'path',a:[],rgba,outlined,curves:0};};
+  g.vertex=(...a)=>{current.a.push(...a);};
+  g.bezierVertex=(...a)=>{current.a.push(...a);current.curves++;};
+  g.endShape=()=>{shapes.push(current);current=null;};
+  ctx.__figureProbe=g;
+  probe('figureCelOval(__figureProbe,2,3,20,32,[100,120,140,255],1,1,0);');
+  ok('the rounded model emits a base and two shaded surfaces',shapes.length===3);
+  ok('both cel boundaries are curves with opaque, distinct tones',
+     shapes.slice(1).every(s=>s.kind==='path'&&s.curves===3&&s.rgba[3]===255)&&
+     new Set(shapes.map(s=>s.rgba.slice(0,3).join(','))).size===3);
+  ok('only the outside silhouette is outlined, so planes add no joint rings',
+     shapes[0].outlined&&shapes.slice(1).every(s=>!s.outlined));
+  ok('the base retains its exact position, size and finite drawing geometry',
+     JSON.stringify(shapes[0].a)==='[2,3,20,32]'&&shapes.every(s=>s.a.every(Number.isFinite))&&
+     styles.every(w=>Number.isFinite(w)&&w>0));
+  delete ctx.__figureProbe;
+}
+{
+  const original=ctx.figureCelOval, found=[];let expected=null;
+  ctx.figureCelOval=function(g,x,y,w,h){
+    if(expected&&x===0&&y===0&&w===expected.w&&h===expected.h)found.push(expected.key);
+    return original.apply(this,arguments);
+  };
+  try{
+    probe('rightStick={active:false};leftStick={active:false};doTick=false;chemistSuitUnlocked=false;explosiveArmorUnlocked=false;ninjaSuitUnlocked=false;');
+    for(const biome of [false,true])for(const [type,isPlayer] of [['NORMAL',true],['NORMAL',false],['CITY_CITIZEN_F',false],['ALIEN_GATOR',false],['COW',false]]){
+      probe(`BIOME_ACTIVE=${biome};window.__bodyModel=new Character(0,0,${isPlayer},${JSON.stringify(type)});__bodyModel.isMoving=false;__bodyModel.isArmed=false;__bodyModel.aimHold=0;`);
+      expected={key:biome+':'+type+':'+isPlayer,w:P('__bodyModel.bodyW'),h:P('__bodyModel.bodyH')};
+      probe('__bodyModel.show();');
+    }
+  }finally{ctx.figureCelOval=original;}
+  ok('player, enemies, citizens, gators and cows render through the shared surface helper',
+     found.length===10&&new Set(found).size===10,found.length+' real body draws');
+  ok('closed interiors receive the same dimensional model as outdoor scenes',
+     found.filter(k=>k.startsWith('false:')).length===5&&found.filter(k=>k.startsWith('true:')).length===5);
+  ok('the surface helper accepts both explicit and transform-derived scene light',
+     typeof ctx.figureCelLight==='function'&&typeof ctx.figureLight==='function');
 }
 
 // A figure is drawn INSIDE rotate(facing), and rotate() carries the light round

@@ -179,18 +179,15 @@ ok('and it musters INSIDE the walls',
    P('enemiesList.filter(e=>e.isAmbush && e.isOutpost).length'));
 ok('clearing it must not be read as the sector\'s own beat', P('window.ambushKind') === 'GATE',
    String(P('window.ambushKind')));
-// AND IT IS A ROAD IMMEDIATELY. Stick City's gates hold shut until the field
-// is clear -- that gate is the way OUT of the sector, and holding it is what
-// stops the player walking away from the fight. An overworld fort is the other
-// way round: the hole is the way IN, the fight is behind it, and a player who
-// has just spent a rocket on the door walks through it.
+// A destroyed fort door is a road immediately, just like the main sector
+// gates. The ambush continues behind the open doorway.
 ok('the door is a road the moment it is blown, muster or no muster',
    P('gateIsOpen(buildings.find(b=>b.isOutpostGate && !b.fortSide))') === true &&
    P('nm0AmbushActive') === true);
 
 probe(`for (const e of enemiesList) if (!e.isFriendly) { e.hp = 0; e.dead = true; }
        enemiesList = enemiesList.filter(e=>e.isFriendly);
-       window.ambushSpawnsRemaining = 0; checkAmbushCleared();
+       window.ambushSpawnsRemaining = 0; nm0AmbushKills=0; checkAmbushCleared();
        nm0AmbushActive = false; killcamMode = false;`);
 ok('and still one once they are beaten', P('gateIsOpen(buildings.find(b=>b.isOutpostGate && !b.fortSide))') === true);
 // Movement, rounds and sight all have to agree about where the hole is.
@@ -236,8 +233,8 @@ flushTimers();
   ok('the door loses its collision the moment it is blown',
      P('gateIsOpen(buildings.find(b=>b.isOutpostGate && !b.fortSide))') === true &&
      P('inOpenGateway(buildings.find(b=>b.isOutpostGate && !b.fortSide), outpostFortDef(1).x)') === true);
-  ok('the loose NM-0 in the area are conscripted into it',
-     P('enemiesList.filter(e=>e.isAmbush && e.eType === "NM0_ROOKIE").length') === 6,
+  ok('loose overworld NM-0 despawn when the gate battle starts',
+     P('enemiesList.filter(e=>e.isAmbush && e.eType === "NM0_ROOKIE").length') === 0,
      P('enemiesList.filter(e=>e.isAmbush && e.eType === "NM0_ROOKIE").length') + ' of 6');
   const total = P('window.ambushKillsTotal');
   ok('the bar starts full at its own size, not at a fraction of 300',
@@ -343,17 +340,19 @@ console.log('\n== the muster keeps being a fight ==');
   const bar0 = P('nm0AmbushKills'), tot0 = P('window.ambushKillsTotal');
   probe('frameCount = FORT_MUSTER_TICK; maintainOutpostMuster();');
   const got = P('enemiesList.filter(e=>e.isAmbush && e.eType==="NM0_ROOKIE" && !e.dead).length');
-  ok('a rookie that turns up after the breach is conscripted into the muster', got === 8, got + ' of 8');
-  ok('and the arithmetic stays closed -- one more body, one more kill asked for',
-     P('nm0AmbushKills') === bar0 + 8 && P('window.ambushKillsTotal') === tot0 + 8,
+  ok('late ambient actors never join the finite muster', got === 0, got + ' conscripted');
+  probe('suspendGateOverworld();');
+  ok('the isolation backstop removes late ambient arrivals',P('!enemiesList.some(e=>e.eType==="NM0_ROOKIE"&&!e.isOutpostGarrison)'));
+  ok('ambient arrivals do not enlarge the encounter quota',
+     P('nm0AmbushKills') === bar0 && P('window.ambushKillsTotal') === tot0,
      (P('nm0AmbushKills') - bar0) + ' on the bar, ' + (P('window.ambushKillsTotal') - tot0) + ' on the total');
 
   const waves0 = P('window.ambushSpawnsRemaining');
-  probe(`(() => { for (const e of enemiesList) if (e.eType === "NM0_ROOKIE" && !e.dead) {
-           e.hp = 0; e.dead = true; processKill(e.x, e.y, false, e.eType, false); return; } })()`);
+  probe(`(() => { for (const e of enemiesList) if (e.isAmbush && !e.dead) {
+           e.hp = 0; e.dead = true; processKill(e.x, e.y, false, e.eType, false, e); return; } })()`);
   flushTimers();
   ok('so shooting one drains the bar AND calls the next wave in',
-     P('nm0AmbushKills') === bar0 + 7 && P('window.ambushSpawnsRemaining') === waves0 - 1,
+     P('nm0AmbushKills') === bar0 - 1 && P('window.ambushSpawnsRemaining') === waves0 - 1,
      'bar ' + P('nm0AmbushKills') + ', waves ' + P('window.ambushSpawnsRemaining') + ' of ' + waves0);
 
   // And a wave does not wait on a kill landing: a muster shot to pieces by the
@@ -388,8 +387,8 @@ console.log('\n== the muster keeps being a fight ==');
            enemiesList.push(new Character(d.x, d.y + 900, false, "NM0_ROOKIE")); })()`);
   probe('frameCount = FORT_MUSTER_TICK * 4; maintainOutpostMuster();');
   const n0 = P('enemiesList.filter(e=>e.isAmbush && !e.dead).length');
-  probe(`(() => { for (const e of enemiesList) if (e.eType === "NM0_ROOKIE" && !e.dead) {
-           e.hp = 0; e.dead = true; processKill(e.x, e.y, false, e.eType, false); return; } })()`);
+  probe(`(() => { for (const e of enemiesList) if (e.isAmbush && !e.dead) {
+           e.hp = 0; e.dead = true; processKill(e.x, e.y, false, e.eType, false, e); return; } })()`);
   flushTimers();
   const far2 = P(`(() => { const d = outpostFortDef(1); let m = 0;
       for (const e of enemiesList) if (e.isAmbush && !e.dead) {
@@ -415,13 +414,14 @@ console.log('\n== the muster keeps being a fight ==');
   // conscripts the body it is about to count, so the window closes.
   probe('for (const e of enemiesList) if (e.isAmbush) { e.dead=true; e.hp=0; } enemiesList = enemiesList.filter(e=>!e.dead);');
   probe(`(() => { const d = outpostFortDef(1);
-           enemiesList.push(new Character(d.x, d.y + FORT_HALF_H + 700, false, "NM0_ROOKIE")); })()`);
+           window.betweenTicksRookie = new Character(d.x, d.y + FORT_HALF_H + 700, false, "NM0_ROOKIE");
+           enemiesList.push(window.betweenTicksRookie); })()`);
   const tw = P('window.ambushSpawnsRemaining'), tt = P('window.ambushKillsTotal');
-  probe(`(() => { for (const e of enemiesList) if (e.eType === "NM0_ROOKIE" && !e.dead) {
-           e.hp = 0; e.dead = true; processKill(e.x, e.y, false, e.eType, false); return; } })()`);
+  probe(`(() => { const e=window.betweenTicksRookie;
+           e.hp=0; e.dead=true; processKill(e.x,e.y,false,e.eType,false,e); })()`);
   flushTimers();
-  ok('a body that arrives and dies between two ticks still counts',
-     P('window.ambushKillsTotal') === tt + 1 && P('window.ambushSpawnsRemaining') === tw - 1,
+  ok('a stray ambient death never consumes gate reserves or adds to its quota',
+     P('window.ambushKillsTotal') === tt && P('window.ambushSpawnsRemaining') === tw,
      'total +' + (P('window.ambushKillsTotal') - tt) + ', waves ' + P('window.ambushSpawnsRemaining') + ' of ' + tw);
 }
 
@@ -475,9 +475,10 @@ console.log('\n== the fight survives a reload ==');
   const back = P(`(() => { const d = outpostFortDef(1); const a = enemiesList.filter(e => e.isAmbush && !e.dead);
       return { n: a.length,
                atFort: a.filter(e => Math.hypot(e.x - d.x, e.y - d.y) < 2000).length,
+               atPlayer: a.filter(e => Math.hypot(e.x-player.x,e.y-player.y) < 2600).length,
                atCity: a.filter(e => Math.hypot(e.x - 200, e.y - 4950) < 2200).length }; })()`);
-  ok('and it re-forms AT THE FORT, not at the city gate',
-     back.n > 0 && back.atFort === back.n && back.atCity === 0, JSON.stringify(back));
+  ok('reload reforms at the fort or follows a player who has run far away',
+     back.n > 0 && (back.atFort === back.n || back.atPlayer === back.n), JSON.stringify(back));
   ok('the bar comes back at the fort\'s own size',
      P('nm0AmbushActive') === true && P('window.ambushKillsTotal') === rec.musterTotal);
   ok('and the Great Gate is still open after the reload',
@@ -499,8 +500,9 @@ console.log('\n== the fight survives a reload ==');
      leg.musterOn === true && leg.musterLeft === 88 && leg.garrison === P('FORT_GARRISON'),
      JSON.stringify(leg));
   const lb = P(`(() => { const d = outpostFortDef(1); const a = enemiesList.filter(e => e.isAmbush && !e.dead);
-      return { n: a.length, atFort: a.filter(e => Math.hypot(e.x - d.x, e.y - d.y) < 2000).length }; })()`);
-  ok('and its fight comes back at the fort too', lb.n > 0 && lb.atFort === lb.n, JSON.stringify(lb));
+      return { n: a.length, atFort: a.filter(e => Math.hypot(e.x - d.x, e.y - d.y) < 2000).length,
+        atPlayer: a.filter(e => Math.hypot(e.x-player.x,e.y-player.y)<2600).length }; })()`);
+  ok('the adopted fight reforms at the fort or follows a distant player', lb.n > 0 && (lb.atFort === lb.n || lb.atPlayer === lb.n), JSON.stringify(lb));
 }
 
 // ---------------------------------------------------------------------------
@@ -531,10 +533,10 @@ console.log('\n== the liberation beat ==');
   ok('but the beat waits while the muster is still shooting',
      P('inFortCutscene') === false && P('!!outpostFortState(1).cutscenePending') === true);
   ok('and taking the fort does not switch its muster off under the sector\'s gate',
-     P('outpostFortState(1).musterOn') === true && P('outpostFortState(1).musterWaves') === 0,
+     P('outpostFortState(1).musterOn') === true && P('outpostFortState(1).musterWaves') === 120,
      'waves ' + P('outpostFortState(1).musterWaves') + ', on ' + P('outpostFortState(1).musterOn'));
 
-  probe('enemiesList = enemiesList.filter(e => e.isFriendly || e.isOutpostGarrison || e.isPopulation);');
+  probe('enemiesList = enemiesList.filter(e => e.isFriendly || e.isOutpostGarrison || e.isPopulation);window.ambushSpawnsRemaining=0;outpostFortState(1).musterWaves=0;nm0AmbushKills=0;');
   probe('checkAmbushCleared();');
   ok('clearing the field hands the beat to the killcam, tagged as the FORT\'s',
      P('killcamMode') === true && P('!!window.fortMusterJustCleared') === true &&
@@ -548,6 +550,7 @@ console.log('\n== the liberation beat ==');
   flushTimers();
   probe('player.x = outpostFortDef(1).x; player.y = outpostFortDef(1).y + 300; frameCount = 30; maintainOutpostGarrison();');
   probe(`enemiesList = enemiesList.filter(e => e.isFriendly || e.isOutpostGarrison || e.isPopulation);
+         window.ambushSpawnsRemaining=0;outpostFortState(1).musterWaves=0;nm0AmbushKills=0;
          checkAmbushCleared(); killcamMode = false; window.fortMusterJustCleared = false; nm0AmbushActive = false;`);
   probe('for (const b of buildings) if (b.isTower && b.isOutpost) b.hp = 0; checkOutpostCaptured();');
 
@@ -600,25 +603,28 @@ console.log('\n== the liberation beat ==');
   ok('a fort already liberated does not replay its beat', P('inFortCutscene') === false);
 }
 
-// Stick City's own musters must be untouched by all of that.
-console.log('\n== the sector\'s own musters are unchanged ==');
+// Stick City's muster totals and origin survive the smaller opening batches.
+console.log('\n== the sector\'s own muster totals are unchanged ==');
 {
   probe(`isStoryMode = true; townsData = {}; window.outpostForts = {};
          startAtLevel(1); nm0AmbushActive = false; window.ambushOrigin = 'sentinel';
          triggerGateAmbush(5400, false);`);
   ok('a Great Gate breach still asks for 150', P('nm0AmbushKills') === 150 &&
-     P('window.ambushKillsTotal') === 150 && P('window.ambushSpawnsRemaining') === 100,
+     P('window.ambushKillsTotal') === 150 && P('window.ambushSpawnsRemaining') === 105,
      P('nm0AmbushKills') + '/' + P('window.ambushKillsTotal') + '/' + P('window.ambushSpawnsRemaining'));
   ok('and spawns its waves against the map constants, not an origin',
      P('window.ambushOrigin') === null);
 }
 
 console.log('\n== the garrison ==');
-probe(`player.x = outpostFortDef(1).x; player.y = outpostFortDef(1).y + 300;
+probe(`nm0AmbushActive=false;resumeGateOverworld();enemiesList=[];
+       player.x = outpostFortDef(1).x; player.y = outpostFortDef(1).y + 300;
        frameCount = 30; doTick = true; maintainOutpostGarrison();`);
 const g0 = P('enemiesList.filter(e=>e.isOutpostGarrison).length');
-ok('fifty yellow regulars roam the compound', g0 === P('FORT_GARRISON') && g0 === 50,
+ok('fifty blue NM-0 rookies roam the compound', g0 === P('FORT_GARRISON') && g0 === 50,
    g0 + ' placed of ' + P('FORT_GARRISON'));
+ok('the overworld garrison cannot add more of the original gated pistol conscripts',
+   P('enemiesList.filter(e=>e.isOutpostGarrison).every(e=>e.eType==="NM0_ROOKIE")'));
 ok('all of them inside the walls',
    P('enemiesList.filter(e=>e.isOutpostGarrison && insideFortYard(1, e.x, e.y, 0)).length') === g0);
 ok('none of them standing in geometry',
@@ -643,12 +649,15 @@ ok('and none of them is the fort\'s', P('sectorTowers().filter(b=>b.isOutpost).l
 ok('the sector\'s objective is untouched by any of this',
    P('!window.towersDefeated') && P('sectorTowers().filter(b=>b.hp>0).length') === 2);
 
-// Taking the fort now runs its liberation beat, which ends in the Directive --
-// and that pays the SECTOR's one-time survivor grant as well. Spend that latch
-// first so what is measured here is the fort's own contribution and nothing else.
+// This contribution belongs only to the fort; the sector grant stays separate.
 probe('grantSectorSurvivors(1); markStoryBeat("FORT_1");');
 const before = P('sectorPopSum(sectorLedger(POP_POOL))');
+probe('triggerOutpostAmbush(outpostFortDef(1));');
 probe('for (const b of buildings) if (b.isTower && b.isOutpost) b.hp = 0; checkOutpostCaptured();');
+ok('masts free the garrison without paying before the gate fight ends', P('outpostFortState(1).freed&&!outpostFortState(1).captured') && P('sectorPopSum(sectorLedger(POP_POOL))') === before);
+probe(`enemiesList=enemiesList.filter(e=>e.isFriendly||e.isOutpostGarrison||e.isPopulation);
+  window.ambushSpawnsRemaining=0;outpostFortState(1).musterWaves=0;nm0AmbushKills=0;
+  checkAmbushCleared();killcamMode=false;nm0AmbushActive=false;checkOutpostCaptured();`);
 ok('dropping both masts takes the fort', P('outpostFortState(1).captured') === true);
 const allies = P('enemiesList.filter(e=>e.isOutpostGarrison && e.isFriendly).length');
 ok('the garrison changes sides', allies === g0 - 3, allies + ' of ' + (g0 - 3));
@@ -666,7 +675,7 @@ probe('const _s = JSON.stringify(window.outpostForts); window.__fs = _s;');
 probe('startAtLevel(1);');
 ok('a re-entry rebuilds it from the record', P('outpostFortState(1).captured') === true);
 ok('its gate comes back down', P('buildings.find(b=>b.isOutpostGate && !b.fortSide).hp') === 0);
-ok('its masts come back down', P('buildings.filter(b=>b.isTower && b.isOutpost).every(b=>b.hp===0)') === true);
+ok('the captured primary fort masts come back down', P('buildings.filter(b=>b.isTower && b.isOutpost && (!b.outpostFortId || b.outpostFortId==="OUTPOST")).every(b=>b.hp===0)') === true);
 probe(`player.x = outpostFortDef(1).x; player.y = outpostFortDef(1).y;
        frameCount = 30; doTick = true; maintainOutpostGarrison();`);
 ok('and a captured fort does not re-garrison itself',

@@ -204,6 +204,9 @@ console.log('\n== the marker arrows ==');
 {
   // Same screen-edge arrow the towers use. Orange while building, blue once
   // built, and only for marked sites in this sector.
+  // A live fortress has its own amber navigation arrow. Use a captured fort
+  // for this construction-only fixture, then restore its actual state.
+  probe('var menuMarkerFort=outpostFortState(currentBiome),menuMarkerCaptured=menuMarkerFort.captured;menuMarkerFort.captured=true;');
   const arrows = (setup) => {
     const real = ctx.triangle, real2 = ctx.fill, seen = [];
     let last = null;
@@ -238,6 +241,7 @@ console.log('\n== the marker arrows ==');
   probe(`player.x = buildSites.find(s => s.kind === "LABORATORY").x;
          player.y = buildSites.find(s => s.kind === "LABORATORY").y;`);
   ok('and the arrow goes once you are there', arrows('').length === 0);
+  probe('menuMarkerFort.captured=menuMarkerCaptured;');
 }
 
 console.log('\n== the mark survives a reload ==');

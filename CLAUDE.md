@@ -18,6 +18,10 @@ global.
   passing `window` as `g` paints to the main canvas. `paintClutter(g, d, t)` is the
   model for this pattern — reuse it when adding art that must work both baked and live.
 - Everything is a global, so name collisions are real. Grep before naming anything.
+- Combat stances resolve target anatomy without changing a projectile's launch
+  elevation. Keep hit geometry, resolved damage/wounds and root-local pose/muzzle
+  transforms consistent; prone has a directional footprint. See
+  [Combat stances](docs/combat-stances.md) for the matrix, transitions and controls.
 - Rendering happens inside a camera transform. Screen-space work (UI, vignette,
   weather screen layer) must be outside it or explicitly reset.
 - Performance is a *design constraint*, not a polish pass. This runs on phones. The
@@ -33,11 +37,50 @@ denser, more readable world for both the legacy (hand-authored) maps and the
 procedurally streamed biomes. The systems below are all already implemented and
 working. The job is to *extend* them, not rebuild them.
 
-All five open layouts now carry sub-biomes: the woodland's six (Sector 2) and five
-each for the jungle, tundra, violet waste and crystal flats. The remaining thin ground
-is the **frontier** (Sector 3), which has an authored core and a relief system but no
-region layer, and the **city layouts**, whose variety comes from `cityZoneAt()` rather
-than from a landscape.
+The woodland (Sector 2), jungle, tundra, violet waste and crystal flats carry
+sub-biomes. The frontier (Sector 3) now keeps a permanent 69-premise western town
+surrounded by streamed farmland and layered canyons. Its enterable Copper Spur
+saloon, quick draw duel and sheriff bounties have saved progression independent
+of the campaign. See [Dry Gulch expansion](docs/dry-gulch-expansion.md) for
+controls, rewards, terrain rules and focused checks. City variety comes from
+`cityZoneAt()` rather than from a landscape.
+
+Player fists and the Copper Spur brawl share the southpaw `BOXING` solver:
+canonical head/body/joint geometry also drives `paintBoxingFigure()`. Keep
+guards, parry timing, sways and hit contact on that shared geometry. Quick draw
+owns local aimed bullets/native corpse visuals and saved farther/faster tiers.
+See [Boxing and quick draw](docs/boxing-and-duels.md) for the control contract.
+Physical strikes fire on release: holds prepare a lowered body-shot stance.
+Combo timing belongs to the initial press after actual landed contact, with
+one bounded alternating-hand continuation. Keep enemy telegraphs separate from
+the faster player timings. Saloon camera anticipation must remain damped across
+target changes; comic contact effects belong to resolved HIT/BLOCK/PARRY events.
+Parries apply 2600 ms of standing stun. Keep that separate from nonlethal
+knockouts: native fallen actors and saloon knockouts paint in the ground pass
+under standing characters, while their existing fall/recovery state stays live.
+Boxing shoulders match their hand: L2 straight/L1 hook on the left, R2 jab/R1
+hook on the right. Connected controllers hide combat instruction overlays.
+`BOXING_BODY_SHOTS` defines the four forward-duck body postures. Prepared
+holds, enemy telegraphs and active strikes share their canonical head, shoulder
+and fist points. Preserve the held load through release and head-punch recovery;
+the back shading and pitched headwear reveal the duck without shifting the
+head's render/contact center or the committed head-strike contact arc.
+
+The central north door in NM-0 headquarters opens a confirmed one-way lift to
+Level 9. Its closed tunnel/chamber uses native collision, damage and corpses,
+with separate bounded Occult Magician spells and a saved encounter. Keep the
+northeast branch sealed. The northwest Photon Lab now opens with the east
+office's Light Key into a white corridor shootout and portal research room;
+see [NM-0 headquarters](docs/nm0-headquarters.md). Underground lighting has
+no sun or surface fog: both renderers share the torch/flashlight gather and
+ambient floor. See [NM-0 underground chamber](docs/underground-occult.md).
+Dungeon geometry queries share a revisioned spatial index. Magicians retain
+individual A* routes; zombies share a player target and reusable reverse fields.
+Both use one resumable per-frame expansion budget. Spell records come from
+fixed pools; preserve fork transfer, cleanup and detached save snapshots.
+Zombies drop no items and magicians drop no weapons. Preserve map/door
+invalidation and native movement/bite collision checks. See
+[Dungeon performance](docs/dungeon-performance.md) for profiling and parity checks.
 
 ## The gameplay loop this world serves
 
@@ -62,16 +105,23 @@ builders runs:
 
 | Level state | Builder | Notes |
 |---|---|---|
-| Level 0 (prologue house), Level 8 (NM-0 HQ) | `legacyGenerateMap()` only | Closed rooms, no streaming, `BIOME_ACTIVE = false` |
+| Level 0 (prologue house), Level 8 (NM-0 HQ), Level 9 (underground chamber) | `legacyGenerateMap()` only | Closed rooms, no streaming, `BIOME_ACTIVE = false` |
 | Sector 1 (Stick City) — always | **Hybrid**: `legacyGenerateMap()` core + streamed chunks outward | `AUTHORED_SECTORS = [1]` |
-| Sectors 2–4 while their story arc runs | **Hybrid** | `hasAuthoredCore()` → `!storyArcCleared()` |
-| Sectors 2–4 after arc cleared, Sectors 5–7 | **Fully streamed** | `isBiomeLevel()` |
+| Sector 3 in all modes, including after settlement | **Hybrid** | Permanent Dry Gulch town and farm; streamed country outside |
+| Sectors 2 and 4 while their story arc runs | **Hybrid** | `hasAuthoredCore()` → `!storyArcCleared()` |
+| Sectors 2 and 4 after arc cleared, Sectors 5–7 | **Fully streamed** | `isBiomeLevel()` |
 
 The gate functions are at ~13309–13362: `isAuthoredSector`, `storyArcCleared`,
 `hasAuthoredCore`, `isBiomeLevel`, `isStreamedLevel`. An arc is cleared once the
 sector's town is `established` (Level 1 additionally needs the south Great Gate
-breached). **After that, re-entering the sector drops you into the generated world
-instead of the scripted arena** — this is intentional and load-bearing.
+breached). Sectors 2 and 4 then re-enter the generated world. Sector 3 retains
+its authored town and farm after its story beats end, while the countryside
+continues streaming outside the core.
+
+Level 8's laboratory uses its own floor-tile cache, paneled cutaway walls and
+depth-sorted research fixtures. Its three ambient scientists stay outside the
+twenty-guard combat roster. Preserve the clear combat/service aisles and release
+floor canvases on level/run replacement. See [NM-0 headquarters](docs/nm0-headquarters.md).
 
 ### The authored core
 
@@ -154,6 +204,11 @@ all — so a stray tap while exploring could end the level. A button that ends a
 not belong on the play screen; the deliberate act of opening the pause menu is what the
 old press-and-hold timer on it was standing in for. `tools/check-menu.js` sweeps the whole
 unpaused overworld screen and asserts no tap anywhere starts travel.
+
+`inOverworldView` is live exploration with a wider camera, including after a
+liberation or a saved-game load. It must allow movement, aiming, bow drawing
+and shovel input. The old town-map overlay is gone, so its invisible town-node
+hitboxes must stay gone too: manual Directive access belongs to the pause menu.
 
 ### The overworld fortress
 
@@ -491,8 +546,119 @@ region branch and the spur head sweep every solid they created back into the lat
 
 ### Sub-biomes (Sector 2's woodland)
 
-A biome is one palette and one layout; a landscape is not. `woodRegion(biome, wx, wy)`
-resolves six regions off three slow world-space fields — `MEADOW · TIMBER · MARSH ·
+Level 2's forest now has four primary habitats: **Ancient Canopy (`TIMBER`), Mossy
+Riverbed (`MARSH`), Burnt / Dead (`BURN`) and Alpine Ridge (`HEATH`)**. See
+[the forest architecture and art guide](docs/level-2-forest.md) for the Phase 1–2
+implementation, species metadata, forest-only painters, placement budgets,
+wildlife and hunting contracts, and planned atmosphere work.
+`forestHabitatAt()` overlays Sunlit Cedar Grove (`VIBRANT`), Elk Meadow (`MEADOW`)
+and Woodland Edge (`EDGE`) after placement; it never consumes placement RNG.
+`woodRegion()` asks the four-habitat question;
+`woodLegacyRegion()` keeps the old layout template below so saved destruction
+keys retain their identities. New forest additions have independent random
+streams and namespaced keys. Never use an art/ecology change to renumber saved
+solids. Standing crowns share profiles with the rig and use projected visibility
+bounds; bulk underbrush stays baked. Harvesting removes both the resident solid
+and its crown, including when a destroyed chunk is regenerated.
+
+Saved grove roots retain their positions. Independent `forest:stand:` cohorts
+add off-centre infill and uneven mixed-age edges, capped at ten new stems per
+chunk. Bounded immutable neighbor probes reserve old roots and timber even
+after harvesting, so returning to a chunk cannot grow replacement trees in
+cleared spaces. See `tools/check-forest-natural-groves.js`.
+
+Live forest bushes use swept player contact to bend without blocking movement.
+Keep their spring state outside generated decor and bound updates to nearby
+chunks. Selected logs/stumps have oriented waist-high cover companions and
+existing wood salvage, linked by `forestSolidKey`; those companions never paint a second
+body or shadow. See the forest interaction checks for native input and reload.
+
+Forest crown outlines and seeded bough headings stay fixed in world space.
+Only their raised layers translate through `massLean()`, as city roofs do.
+The canopy underside joins the top with filled side faces; keep its rise in
+the shared vertical frame. Tree rises are 102–136 before girth scaling;
+`FOREST_CROWN_LOW/HIGH` lift the leaf mass above exposed faceted wood. Cached
+bole slices split at world height 17: lower wood sorts with feet, upper wood
+and crowns cover ground actors. Paint every upper bole/bare branch before
+any leaf crown, retaining stable root order within both global passes. The
+height field must use the same wood-before-foliage order; per-tree combined
+passes let neighboring shafts overpaint leaves at angled views. Bare snags
+share that order. Keep native canopy fill enabled even when an earlier painter
+ended with `noFill()`.
+`tools/check-forest-tall-trees.js` guards wood, depth, caches and visibility.
+`tools/check-forest-canopy-occlusion.js` guards neighboring canopy overlap.
+`tools/check-forest-camera.js` guards the
+orientation and continuous projection, and `tools/visual-forest-pan.js` captures
+the real moving-camera result. Review that motion before changing the art.
+Woodland floor materials, moss/needle beds and riverbank stones are baked from
+world-space samples; their seam checks use a continuous Canvas reference.
+
+Forest shadows paint on the floor; roots interleave with ground actors, then
+raised crowns cover those actors, followed by aircraft and airborne wildlife.
+The height field uses four crown contours and five cached bough silhouettes,
+sorted by height at the art's camera offsets, plus the same split wood volume.
+The forest's 400-unit height range retains tall hilltop crowns; all decoders
+read `glRigHeightRange()`. Per-chunk culling derives from actual resident trees.
+Raised floor props share sparse height profiles and one shadow owner with the Canvas fallback.
+`forestSunLighting()` keeps cel face shading consistent with sun height and weather; only
+material colours are quantised. Keep cast-shadow directions continuous and full terrain
+albedo neutral. The Canvas ridge-light cache is small and separate from terrain bakes.
+See `tools/check-forest-sunlight.js` and the forest guide's moving sunlight contract.
+`forestWildlife` stays separate from military actors and objective counters:
+39 species, at most 48 animals, an independent encounter RNG and pooled hit grid.
+Wildlife steering is staggered, while swept movement advances each frame.
+Environment clearance uses a 2–6 unit foot radius; art, shooting anatomy, spawn
+spacing and human contact keep their species dimensions. Structural walls,
+water and timber still block swept movement. A single incremental local search
+shares 96 edge probes and 24 node expansions per frame across all animals;
+each search stops at 512 expansions. Cache routes, retain the escape goal and
+wall-following side, share verified herd connectors, and back off failed
+searches. Changed obstacles and reversed goals invalidate obsolete routes;
+retired animals immediately release queued or active searches. No planning or contact
+query may scan the army roster or allocate a grid per animal. Facing, velocity
+and stride envelopes advance in simulation time, never in painters.
+Keep crossfire, hunting hits and inventory out of army recruitment and
+ambush bookkeeping. Cedar Hollow grants the finite-ammunition bow; collection
+and dialogue use F, gamepad A or the visible touch prompt. Quest, quiver,
+inventory and encounter luck persist; live animals and carcasses do not.
+Use the hunting browser check for the full acquire/kill/collect/return/save loop.
+Wildlife size determines spawn clearance and herd spacing. Live grounded large
+animals (species size >=24) have swept physical contact with the player/army;
+small fauna, airborne birds, stunned animals and carcasses do not block routes.
+Species-specific human sensing makes deer/elk and timid predators flee early;
+grizzlies/moose warn before a short defensive charge, which ends on retreat or
+the pursuit/home leash. Identified player injury can provoke defensive species;
+army crossfire must never make them blame the player. Keep sensing/contact on
+bounded local grids and preserve outward escape from preexisting overlap.
+Shooting uses tighter family torso ellipses and anatomical head circles (elk
+headR=9.36 at bodyR=36). The first geometric surface wins regardless of HEAD/BODY
+mode; no root-head shortcut, decorative head targets or camera-dependent bounds.
+Nearer cover still intercepts. Hits keep bounded local wounds; blood effects
+reuse the particle pool and blood bank without consuming world/combat RNG.
+Directional death types settle under the canopy; falling birds stay above it
+until grounded. Taser stuns remain bloodless. The objective card expires after
+a brief fade, leaving its marker; do not restore a permanent center-screen banner.
+
+The bow aims opposite an analog stick pull. Travel sets string tension; gradual,
+steady travel earns power. Release at neutral, the full end stop or R3, then
+recenter to rearm. A sudden full-stick jab stays a short, weak dud. Mouse aiming
+is direct with timed hold/release. Full-power arrows have speed 34 and nominal
+range 1200; damage, speed and range scale with earned power. Weak/dud arrows
+cannot claim the instant PERFECT hunting-headshot override. Other weapons retain
+R3 headshot toggling. Draw state is transient, canceled by menus/travel/weapon or
+device changes, never saved. `check-wildlife-interaction.js`,
+`check-wildlife-anatomy.js` and `check-hunting-ballistics.js` guard these contracts;
+`check-bow-draw.js` checks input/lifecycle and `check-bow-draw-art.js` plus
+`check-bow-draw-render.js` check the string/hand/arrow geometry.
+
+Touch targeting uses the three-section body silhouette and a joystick centered
+at the initial HEAD/BODY/LEGS press. Keep the original analog behavior after
+selection, the aiming finger's ownership and fixed action-button positions.
+Leg aim currently changes humanoid decal placement only, using ordinary body
+damage rules. See [Touch targeting](docs/touch-aim-zones.md) for the input and
+lifecycle contract.
+
+The historical template resolves six regions off three slow world-space fields — `MEADOW · TIMBER · MARSH ·
 HEATH · BURN · FARM` — at roughly a three-chunk patch size. Measured coverage: meadow
 35%, timber 21%, marsh 16%, burn 11%, farm 10%, heath 7%.
 
@@ -625,8 +791,8 @@ reach the centreline.
 | # | Name | Layout | Weather | Character |
 |---|---|---|---|---|
 | 1 | Stick City | `CITY` | ACID_RAIN | Grid megablock, always authored core; canal and tram rows |
-| 2 | The Undercity | `WOODLAND` | ACID_RAIN | Dark; `CITY_DENSE` inside the curtain wall, road network, rivers and six sub-biomes outside |
-| 3 | Dry Gulch | `FRONTIER` | DUST | Agrarian belt, ghost town, mine bench relief |
+| 2 | The Undercity | `WOODLAND` | ACID_RAIN | `CITY_DENSE` inside the curtain wall; bright PNW forest, connected routes/rivers and four habitats outside |
+| 3 | Dry Gulch | `FRONTIER` | DUST | Farmland, permanent western town, layered canyons and bandit outposts |
 | 4 | The Green Line | `JUNGLE` | FOG | Overgrown military cordon; five sub-biomes |
 | 5 | The White Silence | `TUNDRA` | SNOW | Sparse, `clutterDensity: 0.35`; five sub-biomes |
 | 6 | The Violet Waste | `ALIEN` | SPORES | Bioluminescent; five sub-biomes |
@@ -1125,16 +1291,17 @@ through the generic "rise from the size of the base" formula gives about six, an
 six-unit lean is a manhole cover with a bulb lying beside it — which is exactly what the
 lamp posts were.
 
-**The torch is a property of the gun, not of the player.** `WEAPON_TORCH` lists which
-weapons carry one — `PISTOL · SMG · DUAL_SMG · ASSAULT_RIFLE · ROCKET_LAUNCHER · TASER`.
-The shotgun and the three western guns deliberately do not: they are the scavenged and
-the improvised, and picking one up at night should put you back in the dark. It leaves
-the **muzzle**, at the `WEAPON_MUZZLE` offset that mirrors the `bLX`/`bLY` the bullets
-are fired from, so the light and the rounds come out of the same place; its `rMin`
-is measured from there and has to reach back *past* the bearer. It sorts first in the
-budget, so the player's own beam is never the light that gets dropped when a street gets
-busy, and it draws no fixture — the beam is the light, and a bulb at the source is just a
-bright disc sitting on the gun.
+**The flashlight is body mounted and weapon independent.**
+`gatherPlayerFlashlight()` shares Level 9's origin everywhere: 18 units along
+`player.aimAngle` from the player root, with height 24 and carrier clearance 40.
+It is active outdoors from 18:00 until 06:00; the permanently dark Level 9
+chamber retains it regardless of surface time. Guns, tools, recoil and weapon
+stance mounts do not move the source. It sorts first in the shared emitter
+budget and draws no separate fixture. `WEAPON_MUZZLE` and `weaponLightMuzzle()`
+still place gunfire flashes at their actual weapon origins.
+`sceneEmitters()` includes clock, scene mode and flashlight availability in its
+frame cache so same-frame day/night, travel and death transitions cannot retain
+an obsolete beam. See `tools/check-player-flashlight.js`.
 
 `TORCH_SPILL` is the bleed at the source, held to the fixed world radius `TORCH_SPILL_R`
 rather than to a fraction of the beam. Scaled to the beam it was a 460-unit pool centred
@@ -1203,10 +1370,9 @@ Five things here are load-bearing:
    and they were baked against the same `LIGHT_DX/DY` the march uses. `slope` is derived
    from `shadowLengthScale()` so a marched shadow is the length the 2D pass would have
    drawn.
-4. **An emitter is never shadowed by its carrier.** `rMin` per light. The player's torch
-   sits nine units above the player's own silhouette, so without it the polar reduction
-   finds an occluder at r=0 in every direction and the light comes out as a wedge with the
-   bearer standing in a hole.
+4. **An emitter is never shadowed by its carrier.** `rMin` per light. The player
+   flashlight uses a 40-unit clearance around its body mount so the polar reduction
+   cannot treat the bearer's own silhouette as a wall blocking the cone.
 5. **The polar reduction takes the occluder's peak, not its first edge sample.** The
    occlusion target is LINEAR filtered, so the sample that trips the threshold is sitting
    on the occluder's filtered edge and reads about half its true height. Recording that
@@ -1227,12 +1393,11 @@ Two things the height field cannot hold, and what happens instead:
   entry's own `s`. Keyed on the solid instead, a jungle at night had trees that occluded
   no lamp, took no torch and threw nothing but a painted oval.
 
-**The player carries no light; their weapon does.** There used to be a 240-unit pool
-pinned to the player, and the GPU rig inherited it. It meant the player was never
-actually in the dark, so the one thing a night is for — making you walk toward the lamps
-— could not happen, because the light came with you. What replaced it is the weapon
-torch (see **Emitters**), which is a cone, comes off the muzzle, and goes away when the
-player picks up a scavenged gun.
+**The player flashlight shares one source across both renderers.** The Canvas
+fallback and GPU gather read the same body-mounted, night-gated cone from
+`sceneEmitters()`. The underground chamber uses the same mount with its existing
+always-dark scene rule. Keep its small fixed spill rather than restoring a
+large player-centred pool.
 
 **Every light casts, and the BUDGET is the thing that gives.** `GLRIG_LIGHTS` is the
 number of rows in the polar atlas and therefore the ceiling on shadow-casting local
@@ -1466,80 +1631,63 @@ which is what the sun actually sees.
 
 ### Figure volume
 
-A figure gets its third dimension from **shading**, never from the projection.
-`volShade(x, y, w, h, r, g, b, k, lx, ly)` is the one function, and it draws three terms
-in this order:
+Figures use curved **cel surfaces** in every level, including the closed interiors.
+`figureCelOval(g,x,y,w,h,c,k,lx,ly)` keeps the original outer ellipse and paints
+three tones: the material, a curved shadow plane and a broad lit plane. Only the
+silhouette takes ink. The tone paths stay inside it; no nested highlight rings,
+per-part mass extrusion, tall risers, new 3D renderer or texture buffers are needed.
+`volShade`/`volShadeCol` remain compatible entry points. Colors accept either
+p5.Color or an RGB(A) array, and all planes retain their material's alpha.
 
-1. a **contour**, applied as the fill's own stroke so it hugs the silhouette exactly.
-   This is the single biggest read — a stroked silhouette is why a figure sits in a scene
-   instead of floating over it;
-2. a **terminator**, one weak crescent on the far side. Strong, it reads as a stain lying
-   on the shirt rather than as the surface turning;
-3. the **lit side**, as `VOL_STEPS` nested ellipses each pushed a little further against
-   the sun at low alpha. A single inset highlight is a second disc sitting on the first
-   and the join between them is a visible ring; four shrinking ones accumulate into a
-   gradient, which is the only way a flat-fill renderer gets one.
+Character bodies, skin and limbs retain the softer material contours from the
+curved 3D model update. Do not add a global black ink pass or costume seam pass.
+Army helmets are the deliberate exception: `drawArmyHelmet` and the integral
+armored head shield use dark shell and brow edges to separate the headwear from
+the skin while keeping the shell's curved cel planes.
 
-All three offset along the light, so a figure is lit from the same place as every wall
-and roof — but see below: it has to be the light **in the figure's own frame**.
+`figureCelLimb(g,sx,sy,ex,ey,hx,hy,w0,w1,w2,c)` wraps the existing two-bone rig
+in **one continuous tapered outline**. Its curves share a tangent at the elbow or
+knee, and the light bands follow the same surface without joint rings. Widths
+are full widths, narrowing from shoulder/hip through joint to wrist/ankle.
+Fully collapsed bones merge into the remaining visible surface. Shading blends
+continuously as a limb turns across the scene light. Palms, soles, cuffs and
+separate materials remain separate forms, at the existing grip and foot points.
 
-**A leg has to narrow all the way down, or it is a sausage.** Drawn with a full round cap
-at each joint, the thigh, the shin and the boot all came out at about the same width and
-overlapped into one uniform lozenge — no knee, no ankle, and a 9.6-wide dome at the hip
-that on the trailing leg of a stride is a balloon hanging off the back of the figure. It
-takes the same two things the arm needed: a real taper (hip 9.6, knee 7.4, ankle 5.9) and
-a trimmed cap at the top, where the pelvis is under the torso anyway.
+`figureCelLight(g)` brings the scene's shadow-direction vector into the current
+Canvas frame, including nested turns, torso compression, mirrored arms and
+corpse Graphics buffers. Callers supplying an explicit vector must counter-rotate
+it themselves (`figureLight`); copy scratch vector components before another
+helper reuses them. Highlights face away from that shadow-direction vector.
+`figureCelArc` clips the same tones to half-shells such as hair, helmets and coat
+panels, preserving their original silhouette.
 
-**Anything worn on the body has to be measured off the DRAWN torso, not the collision
-box.** The jetpack sat at fixed offsets from `bodyW`, so narrowing the torso left it
-floating clear of the spine with ground showing between. Measured off
-`bodyW * TORSO_DEPTH` it stays put whatever the depth becomes.
+The player, combat crowd, city residents, working citizens and intact fallen
+figures share the surfaces. Citizen hauling, hammering and loading replace the
+walking arms so a work pose has only two palms. Coat hems have shallow cloth
+folds. Armor and robot panels use inset face bevels; creatures keep their own
+silhouettes, gait, damage overlays and shadow ownership. The chemist still has
+only the grey left cannon hand when inactive. Suit colors are applied before
+legs are painted, so the first visible pose already matches its uniform.
 
-**A torso is drawn narrower than it collides.** `bodyW` is the front-to-back axis and
-`bodyH` is across the shoulders, so a standard figure is 21 deep by 27 wide — near enough
-a circle, and a circle from above is the flat oval blob. A real person is about 45cm
-across by 25cm deep. `TORSO_DEPTH` (0.84) squashes the drawn depth and stops short of the
-true 0.55, because a figure this small still has to read as a body rather than a plank.
-It is one transform rather than twenty edits: every rect, arc and strap of attire is
-positioned against `bodyW` and compresses with it, so a coat still fits the body it is
-on. The limbs sit outside it and keep their own proportions, and `bodyW`/`bodyH`
-themselves are untouched — collision, the corpse rig, the contact shadow and the rig's
-height field all still measure the same person.
+`TORSO_DEPTH` (0.84) compresses the drawn torso and attire only. `bodyW`/`bodyH`,
+collision, the shared corpse rig, projectile/charge origins and the deferred
+height field retain their existing scale. Packs remain attached to the **drawn**
+back edge. Limb bones, gait clocks, throws, reload timers and fall physics remain
+the source of poses; the surface painter does not advance any of them.
 
-**The sun has to be counter-rotated in, or it turns with the model.** Every body in this
-file is drawn inside `rotate(aimAngle)`, and `rotate()` carries `LIGHT_DX/DY` round with
-it — the same trap the prop shadows have. Written in world space the highlight sat on a
-figure's own left shoulder whichever way they were pointing, so a squad facing four ways
-had four suns and none of them agreed with the buildings behind. `figureLight(ang)`
-rotates the world vector by `-ang` and every body call site passes the result. The
-property is a round trip — bring the light in, rotate it back out by the same angle, get
-`LIGHT_DX/DY` — and `check-depth.js` asserts it at 24 facings rather than at the axes,
-because the axis cases pass under a sign error.
+Models are small and crowds run on phones. Reuse scratch geometry and palettes,
+avoid a p5.Color per tone, and keep the optimized figurePainter ellipse/fill path.
+Curved paths use the pixel-verified native Canvas backend on p5 1.11.11, with
+p5 fallbacks for other versions/renderers and accessibility. Rounded RGB channels
+let turning limb tones reuse cached palette strings.
+The surface light is not a second cast shadow: preserve the scene's existing
+shadow ownership, depth sort and overlays.
 
-**The animals go through it too, and they were the worst without it** — the cow at 55
-across and `ALIEN_GATOR` at 63 × 81 are the widest bodies in the game, so the flattest as
-a bare fill. The horse is the exception that keeps its own art: it is already composed
-out of hindquarters, ribcage and two flank bands rather than one oval, so it takes the
-contour and has its **flanks** driven by `figureLight` instead — lit band on the sun's
-side, shaded band on the far one. Pinned above the backbone, which is what they were, a
-horse walking a circle carried its highlight round with it.
-
-**The contour is canvas STATE, not a per-part call.** A person is a couple of dozen
-ellipses — sleeves, hands, boots, packs, hats — spread over a dozen pose branches, and
-stroking each at its own call site means touching every branch and missing the next one
-somebody adds. `figureContour()` is set once before the body goes down and `volShade()`
-hands it back on the way out, so everything drawn after inherits it. The two places that
-must switch it back on explicitly are the ones that legitimately clear it: the blood
-decals (stains take no contour) and the `limb()` rig, which runs before the torso.
-
-**Figures are deliberately NOT leaned, and the attempt is worth remembering.** A riser
-capsule swept from the feet to a leaned body was built, rendered, shipped and reverted on
-sight: parallax sells height as a **ratio** of displacement to size, and a figure a
-couple of dozen pixels across is too small to have one — the riser read as a dark blob
-stuck to the model, worst on the wide animals. A figure's third dimension comes from the
-two systems that already carry it: the deferred rig marching a real cast shadow off its
-height ellipse, and the depth sort walking it in front of and behind the masses. Do not
-reintroduce a drawn side on anything smaller than a crate.
+Run `node tools/check-figure-volume.js` for surface containment, smooth joint
+tangents, alpha, world-light direction, turn continuity and live action states.
+The character, handgun, left-action, depth, civilian, corpse, fall and render
+checks cover the shared rig and gameplay. Review both native-size and enlarged
+browser poses; headless geometry cannot establish whether the comic art reads well.
 
 ### The living figure is the same build as its own corpse
 
@@ -1565,9 +1713,9 @@ figure a different build:
   (`STAND_FORE_ARM` 0.65). The **boot** takes no foreshortening at all: a foot is the one
   part of a standing body lying flat to this camera.
 
-Both limbs use `ragLimb()`'s shape language — each segment an ellipse `length + its own
-width` long, so the caps round the joints off either end and the two overlap into one
-taper instead of butting at the elbow.
+Both limbs use the shared rig's shape language, now wrapped by `figureCelLimb()`
+as a continuous tapered surface rather than individually outlined ellipse caps.
+The light bands and curved silhouette pass smoothly through the elbow or knee.
 
 **Fit the segments to the hand, never the other way round.** The hand is worked out once
 per side and the limb is then drawn to reach it. Deriving the two independently — which
@@ -1608,8 +1756,8 @@ are still true; they take a separate path (`longMassLean`, `drawSlabFace`) rathe
   jamb — the near one, whose top slides across the opening and reveals its own inward
   face; at the far side the top slides *off* the opening and reveals nothing but ground.
 
-`isUBarrier` stays out on purpose (an energy field has no mass) and so does
-`isBlockBuilding`, which already carries its own rise.
+`isUBarrier` has its own three-course sandbag painter, with separate raised
+walls, shadows and material stamps; `isBlockBuilding` already carries its own rise.
 
 Three things about the projection are load-bearing:
 
@@ -1650,8 +1798,16 @@ the rest from their own normal.
 `ELEV_ZONES` (~1827) — currently only Sector 3 (mine bench, boot hill, stock bench,
 hotel/bank steps). Each zone has `x, y, w, h, f` (feather), `z` (height), `treads`.
 `groundElev`, `elevRenderScale` (things get bigger as they rise),
-`elevSpeedFactor` (slopes cost movement), `bakeElevation`. Relief belongs to the
-authored sector only — `elevZones()` returns null once the arc is cleared.
+`elevSpeedFactor` (slopes cost movement), `bakeElevation`. Authored relief remains
+with Dry Gulch's permanent core. The canyon ribbons extend that same ground
+field into negative heights outside town: `frontierCanyonHeight()` owns floors,
+ramps and rim-height bridges; `frontierCanyonBlocksMove()` prevents climbing
+steep banks. Reservation/filter passes keep generated solids off those routes
+without changing other chunks' destruction keys. The lighting heightfield uses
+a signed scene origin in biome 3 so lowered floors, actors and lamps retain
+their actual relative heights. Cached canyon planes join into continuous
+contours; the lighting painter interpolates shared corner samples. Keep both
+paths continuous so antialiased tile edges cannot become paint or shadow grids.
 
 Note the design intent in the comments: **boot hill is laid across the south end of
 Main Street on purpose**, so the size change happens on the route everyone walks.
@@ -1804,6 +1960,18 @@ Two more things found while chasing it, both fixed:
 
 ## Population and settlements
 
+Level 1's ambient city layer has PASSIVE, NEUTRAL and THUG subclasses within
+the same 42-resident cap, off-screen placement and 300-metre fortress buffer.
+Confident neutral men use harmless six-hit street boxing and flee gun threats;
+ordinary passive civilians keep their one-hit stun. Seeded phone, bottle and
+smoking activity phases are simulation state, and painting never advances them.
+Night checks run from 21:00 to 03:30 with one private 9% gun-escalation roll per
+negative reply. District allies can fight NM0 but never become recruits, travel
+escorts or player targets; retain their live helpers during ambush pruning.
+Subclass identity and district relationships survive resident banking and saves.
+See [city residents and boxing](docs/city-people-and-boxing.md) for APIs,
+controls, bounded work, rendering and verification.
+
 `resetPopulation`, `popRelease`, `popReleasable`, `popPlace`, `settlementRoster`,
 `refreshPopulation` (~15553–15806). Settlements get a roster of citizens placed against
 their chunk's solids; `Citizen` (~10751) is the wandering NPC class. `nearSettlement()`,
@@ -1852,6 +2020,13 @@ The pool is just another ledger record, which is the whole reason this was a sma
 the invariants, the save, the legacy migration and both structural checks apply to it
 unaltered. `consolidateLegacyIntoPool()` runs once on load — an older save has its people
 filed under the sectors they were freed in, and undivided is the default now.
+
+Department level 2 rewards are campaign state. Derive health and magazine
+capacity from the restored department levels before creating actors or equipment;
+do not replace upgraded capacities with weapon defaults in pickups or purchases.
+Architecture's pending barrier is saved independently of placed structures and
+is consumed only by confirmed Fortifications placement. See
+[Department rewards](docs/department-rewards.md) for the reward and save contract.
 
 **`window.pop*` is an edit buffer, not state.** It is loaded when the Directive opens and
 written back when it is confirmed; between those two moments **nothing else may touch it —
@@ -1976,6 +2151,16 @@ so nothing reloads them at the top of the same block (see **`window.pop*` is an 
 buffer, not state**).
 
 ### The sector population (Sectors 1 and 2, story mode)
+
+Level 2's roaming robots and NM-0 rookies share a maximum of 7 live ambient
+enemies: at most 2 robots and 5 rookies, including the four exterior patrol
+stations. Each defeated or distance-culled ambient robot reserves its slot for
+20 seconds before a replacement can spawn; rookies cannot fill those waiting
+slots. `overworldEnemyCap()` governs initial ambient seeding, maintenance, death
+refills and patrol restoration. Robot cooldowns reset on level entry or run reset.
+Level 1 retains 80. This cap does not change the finite authored population
+below or any gate/outpost ambush wave; ambush isolation still suspends ambient
+spawning during those fights.
 
 **This is not the wanderer system and must never be routed through it.**
 `seedSectorPopulation(level, count)` places 80 of the sector's own people around the
@@ -2166,6 +2351,10 @@ without recomputing. Three sources:
 - `isTreeTrunk` → **wood**, `3 + girth * 9`. `girth` is set by the woodland generator and
   is also the decor entry's scale, so **the tree you see is the tree you're paid for** —
   a fat oak is worth more than a snag because it is visibly bigger.
+- `isForestTimber` → **wood** from live forest logs/stumps, scaled by the piece's
+  size. Oriented collision companions share a stable `forest:timber:` key with
+  their visible decor via `forestSolidKey`; destroying the piece removes its
+  resident and queued body as well as its solid, exactly once.
 - `isRock` → **stone**, by area.
 - `propType` in `HARVEST_YIELD` → `LOGPILE` wood; `BOULDER`/`MONOLITH`/`RUINWALL`/`SPOIL`
   stone; `MATERIALS`/`BARGE`/`WRECK` metal. Densities differ per prop because they are not
@@ -2272,6 +2461,21 @@ crew clears and the collision box — so what the player lines up is what they g
 Adding one is a `BLUEPRINTS` entry, a name in `BUILD_ORDER`, and a branch in
 `drawBuiltStructure()`. `FARM` is the model for a blueprint that emits more than one
 solid: a barn plus an `isCropField` ground lot beside it, from `buildSiteSolids()`.
+
+Architecture level 2 also grants one instant `BARRIER` through Fortifications,
+even without an assigned crew. Its saved `isUBarrier` identity now represents
+three waist-high sandbag walls with an open south entrance. `coverSolidRects()`
+owns the shared wall geometry: 200×200 between wall centres, 30-thick walls,
+and a 230×230 outer placement footprint. It uses ordinary LOW cover, so standing
+body/head shots clear it, low shots stop at the walls, and ducking protects only
+where a wall actually blocks incoming fire. There is no interior immunity or
+friendly projectile exemption. Both sides can damage the 1000-HP barrier;
+destruction removes its saved and active solids without an explosion. Existing
+saved barriers convert automatically without restoring their spent reward.
+The renderer sorts short wall sections around actors, keeping raised standing
+weapons above low cover and nearby tall structures in front. Sack geometry is
+cached for both the structure and its moving placement ghost. Focused checks:
+`node tools/check-build-sandbag-cover.js` and `node tools/check-fortifications.js`.
 
 **Footprints are authored at 1× and multiplied by `BUILD_SCALE` (2.25).** At the 20 units
 to the metre a parked car sets, that puts the warehouse at 26×17 m — a shed you walk the
@@ -2548,6 +2752,12 @@ the line is baked in with the body instead of vanishing the moment a corpse reti
 
 ### What a headshot leaves on the body
 
+Small living-human projectile splashes and arrow wound trails share the animal
+floor-blood painter. Gate them on actual HP loss; armor regeneration must not
+close a wound. Animal vital-arrow bleed-out preserves the original shot history
+and ordinary hunting corpse lifecycle. Geometry, timing, depth and work-budget
+contracts are in [docs/impact-blood.md](docs/impact-blood.md).
+
 Every death that takes the head off already throws a pool onto the *ground* around it, and
 none of it landed on the person it came out of — so a body with no head above the collar
 had a clean shirt. `bloodSpray(rig, lean)` is the part that falls back on them: a fan over
@@ -2652,8 +2862,12 @@ draw nothing at all.
 
 ## Getting round things
 
-`steerAvoid(ent, ang, speed, blocked)` (~7960) is how everything that walks and is not
-the player deals with an obstacle. The player is steered by the player.
+`steerAvoid(ent, ang, speed, blocked)` (~7960) handles ordinary outdoor walkers.
+Level 9 casters and zombies use the separate bounded `occultFindPath()` A* grid,
+native collision and remembered-target tactical goals. Door changes must call
+`occultInvalidateNavigation()`. Keep temporary spell lights in the shared
+underground emitter gather. See [Underground combat](docs/underground-occult.md).
+The player is steered by the player.
 
 **What it replaced was a wall slide.** Movement was applied per axis, so a runner meeting
 a wall head-on had one axis blocked and the other free and smeared along the face — and a
@@ -2710,6 +2924,27 @@ worth having if it can never *miss*.
 ---
 
 ## Gait — walk, jog, run
+
+Living-entity motion must connect through intermediate poses. Use bounded
+angular momentum and elapsed-time envelopes for starts, stops and reversals;
+changing an input or AI state is not permission to snap a rendered heading or
+limb pose. `entityTurnHeading()` is the shared humanoid turn primitive; callers
+own pause and per-frame guards. Wildlife integrates its turn and velocity with
+its swept movement. Citizen facing is separate from its raw navigation heading.
+Creature strides read `entityMotionAmount()`; mounted horses use the rider's
+eased gait instead of switching their legs on a movement boolean.
+Renderers read simulation state without advancing it, including repeated
+shadow, lighting or preview consumers in the same frame.
+
+The player's weapon presentation spring connects carrying and aiming in both
+directions. `standingPresentationPose()` owns the single mesh's wrists, gun
+mount and barrel; `stanceMuzzleWorld()` and `weaponAimHeading()` expose that
+same intermediate muzzle to gunfire, the laser and light effects. Do not blend
+two rendered bodies, delay a shot to finish an animation, or restore an instant
+neutral/aim switch. Dedicated action rigs retain their own stance, dive,
+melee, injury and mount transitions. See `check-entity-transitions.js`,
+`check-enemy-transitions.js`, `check-citizen-motion.js` and the wildlife
+navigation checks under `tools/`.
 
 One throttle drives everything a moving figure does. The player's left stick is already
 normalised to its own radius, so its magnitude **is** the throttle: **1–32% walk, 33–65%
@@ -3098,7 +3333,7 @@ a sliver into a circle as the barrel dips. That last one is the only cue that re
 depression directly: a bore you are looking down is a hole, one you are looking across is
 an edge.
 
-**The weapon goes on top of the hands.** From a bird's eye a hand is *under* the thing it
+**A firearm goes on top of the hands.** From a bird's eye a hand is *under* the thing it
 grips — you see the top of the weapon and the fingers beneath it. Drawn first, the long
 gun had two skin discs sitting on its receiver.
 
@@ -3198,10 +3433,65 @@ the same build as its own corpse**. The hand size is *read* from `figureRig()` r
 written down: as a literal it went stale the first time the figure was re-proportioned and
 turned the whole file into eight failures that said nothing about the rig.
 
-Armed poses are deliberately untouched: the muzzle offsets (`bLX/bLY`) are tuned against
-those arm positions.
+Presented firearm poses keep the native muzzle offsets (`bLX/bLY`). Rifle and
+shotgun wrists now follow their shared solid model, including its recoil and pump;
+their drawn crown, flash and aim line compensate for torso bob to stay on the
+existing projectile origin.
+
+`drawAimedTwoHandSleeve` tucks the raised weapon's elbow and sinks its shoulder
+root into the torso while leaving its wrist on the grip. This applies to aiming;
+the two-handed walking carry stays on the existing rig. The pistol's free arm
+keeps a restrained stride beside the ribs, with throws, cannon actions and
+reloads taking precedence.
+
+Sword and pickaxe art use the same rigid projection as the firearms. Paint the
+grip and pommel first, then the cel shaded palm, then the guard and faceted blade
+or pick head beyond the fingers. `swordCarryPose` keeps the running wrist
+controlled; the melee clock drives the swing, short trail and return to the
+carry pose. Combat and harvest hit windows stay unchanged. A held aim input
+during a punch can bypass the boxing guard: `drawComboPunchArms` retains the
+original fist positions while using continuous cel sleeves instead of the old
+flat ovals.
 
 ---
+
+### Solid one-handed firearms and independent off-hand actions
+
+Pistols and SMGs share `drawHandGunSolid()` in both carry and aimed poses.
+`handGunProjection()` rotates model-space cuboids by elevation and wrist roll;
+`handGunBox()` draws their visible top, side and end faces with cel shading.
+The pistol grip heel is the visible portion below the palm, not a full handle
+laid alongside it. `weaponKick` runs for six simulation frames after `fire()`;
+the pistol slide and SMG charging handle move independently of the fixed barrel.
+`drawOneHandReload()` uses the existing ninety-frame timer for magazine withdrawal,
+belt reach, insertion and slide/bolt release. Dual SMGs reload sequentially.
+
+`leftHandAction()` selects throwing or the chemist cannon independently of
+`playerAiming()`. The walking rig skips only the occupied left arm and draws its
+action in front; the right hand keeps its carry pose. Both hands carry their own
+SMG through all gait phases when the off hand is free. `supportAimAngle()` reads
+the current sticks at release, and `leftActionMuzzle()` keeps the cannon charge
+core and lightning origin together. The idle chemist off hand is grey, with no
+separate instrument. An occupied off hand suppresses its SMG shot and ammunition
+cost as well as its mesh and muzzle flash.
+
+`tools/check-handguns.js` traces rendered solids and native fire/reload timers.
+`tools/check-left-actions.js` covers actions across gaits and equipment states,
+including cannon geometry/projectile alignment without gun aim.
+
+Rifle and shotgun carry and aimed poses share `drawLongGunSolid`, using the same
+rigid projection and visible cuboid faces as the sidearms. Steel, walnut, stocks,
+receivers and magazine details therefore stay the same weapon as it is raised.
+`aimedLongGunPose` anchors the crown to the native muzzle position and supplies
+the two grip positions. `weaponKick` drives muzzle rise and the rifle's charging
+handle; `longGunPump` uses the existing firing cooldown for the shotgun's
+eighteen-frame fore-end cycle and support hand motion. Rendering never advances
+these timers or changes ammunition, fire rate or ballistics.
+
+Run `tools/check-soft-helmets.js` for soft surfaces and distinct military shells;
+`SOFT_BASELINE=/path/to/pre-ink/game.js` also compares protected painter traces.
+`tools/check-longguns.js` checks live projected parts, native recoil/pump timers,
+both grips and visual/projectile muzzle registration.
 
 ## How a robot dies
 
@@ -3382,10 +3672,33 @@ node tools/check-generation.js     # determinism, seams, crossings, overlaps, ba
 node tools/check-render.js         # live draw path at four times of day, hybrid core
 node tools/check-population.js     # the Sector 1/2 story roster and what it converts to
 node tools/check-saveload.js       # save/load round trip
+node tools/check-frontier-town.js # permanent town, architecture and entrances
+node tools/check-frontier-canyons.js # shared canyon geometry, crossings and native spawn safety
+node tools/check-frontier-saloon.js # fists, quick draw, local scene and rewards
+node tools/check-frontier-bounties.js # native combat, contract saves and claims
+node tools/check-frontier-routes.js # replay all three canyon/outpost walks
+node tools/check-frontier-equipment.js # revolver price/ammo and awarded costume
+node tools/check-frontier-lighting.js # negative canyon floors and light heights
+node tools/check-frontier-integration.js # native input, persistence and scene isolation
+node tools/check-boxing-combat.js # swept fists, directional guards and fair attack turns
+node tools/check-boxing-render.js # rendered joints and hurt/contact geometry agree
+node tools/check-boxing-world.js # native entry/exit, equipment, terrain and quest input
+node tools/check-boxing-refinements.js # press-timed combos, release-only body shots and weight transfer
+node tools/check-boxing-feedback.js # camera continuity and bounded contact effects
+node tools/check-boxing-gamepad-refinements.js # shoulder hands, held input and hidden controller hints
+node tools/check-boxing-ground-order.js # nonlethal bodies below standing actors in every scene
+node tools/check-boxing-body-postures.js # forward ducks, hook loads, release continuity and guard contact
 node tools/check-cutscene.js       # scripted placement stays inside the sector
 node tools/check-resources.js      # harvestables, drops, the melee tool, persistence
 node tools/check-robot.js          # a machine dies like a machine, on all six paths
 node tools/check-character.js      # the arm rig, the gait bands, and carrying a weapon
+node tools/check-figure-volume.js  # cel surfaces, smooth joints, light, alpha and poses
+node tools/check-soft-helmets.js   # soft figure surfaces and distinct army helmets
+node tools/check-sword-animation.js # sword grip layers, controlled carry and native swings
+node tools/check-punch-surfaces.js # aim-held punch surfaces and preserved fist positions
+node tools/check-longguns.js       # shared carry/aim solids, recoil, pump and shot origins
+node tools/check-handguns.js       # solid sidearms, slide motion and staged reloads
+node tools/check-left-actions.js   # throws and chemist cannon without gun aim
 node tools/check-build.js          # blueprints, placement, build rate, the crew
 node tools/check-ballistics.js     # hostile rounds are always slower than the player's
 node tools/check-menu.js           # travel lives in the pause menu, and nowhere else

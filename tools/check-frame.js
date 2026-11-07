@@ -249,7 +249,10 @@ window.__run = function (frames) {
     const openTravel = () => {
       isPaused = true; inTravelMenu = true; travelDirection = 'SOUTH';
       inWorldBuildingMenu = false; inOverworldView = false;
-      window.popMilitaryM = 40; window.popMilitaryF = 40;
+      const roster = poolLedger();
+      roster.popMilitaryM = 40; roster.popMilitaryF = 40;
+      roster.popTotal = sectorPopSum(roster);
+      loadLedgerIntoWindow(POP_POOL);
       window.militaryToBringM = 0; window.militaryToBringF = 0;
       window._holdTimers = {};
       // The male '+' box: width/2 + 110 .. +135, y 270 .. 300.
@@ -268,7 +271,9 @@ window.__run = function (frames) {
     window.__hold.down = window.militaryToBringM;
 
     // And it must never exceed what the sector actually has.
-    openTravel(); window.popMilitaryM = 3;
+    openTravel(); poolLedger().popMilitaryM = 3;
+    poolLedger().popTotal = sectorPopSum(poolLedger());
+    loadLedgerIntoWindow(POP_POOL);
     runMenu(200, 200);
     window.__hold.capped = window.militaryToBringM;
 
