@@ -6,9 +6,12 @@ existing global-mode `game.js`; OpenProcessing needs no additional assets,
 imports, build step, or runtime library upgrade. The production p5 version
 remains 1.9.0.
 
+The building-identity correction removes the repeated medallions and restores
+explicit architectural families. See [the correction and reviewed images](frontier-building-identity.md).
+
 ## Generation blocks
 
-`FRONTIER_ARCHITECTURE` controls the version, maximum two structural wings per
+`FRONTIER_ARCHITECTURE` (version 2) controls the version, maximum two structural wings per
 premise, and maximum twelve roof material bands. `frontierCompileArchitecture`
 is applied to the authored map, the three settlement plans, and streamed Level 3
 content. Independent address hashes select geometry without advancing the
@@ -28,7 +31,7 @@ The compiler emits these internal records:
 b.frontierPremiseId; // deterministic logical premise identity
 b.frontierPartId;    // "main" or "return"
 b.frontierLot;       // immutable {id,x,y,w,h,facing,entrance}
-b.frontierDesign;    // immutable {id,purpose,roof,material,variant,emblem,primary}
+b.frontierDesign;    // immutable {id,purpose,roof,material,variant,role,primary}
 ```
 
 `frontierRoofMesh(b)` caches world-space faces and ribs in a WeakMap. The draw
