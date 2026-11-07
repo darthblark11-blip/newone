@@ -114,6 +114,10 @@ The baseline already fails one source-pattern assertion in `check-depth.js`
 the other-biome elevation assertion in `check-civic-terrace.js`. These are
 recorded independently of this overhaul. The stale Level 2 lighting expectation
 in `check-frontier-lighting.js` is corrected to its existing production range.
+The broader `check-generation.js` also reports the same baseline forest
+placement issues (230 overlapping pairs and 116 timber reservation violations)
+and missing forest-art dispatch assertions. These are outside Level 3; the
+baseline and candidate were run separately to confirm the matching failures.
 
 See [Native browser validation](frontier-browser-validation.md) for screenshots,
 source hashes, commands, and measured cloud-browser results. Use the generated
