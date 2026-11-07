@@ -1,0 +1,2002 @@
+{
+  "baselineMatrix": {
+    "createdAt": "2026-11-07T01:18:01.924Z",
+    "sourceSha256": "340817e3822fa6c866fb4250da155b320f72ecda257a20bf42fd5fd2d5a094bd",
+    "p5Sha256": "726ac96626b93f5bcaff83a910b6c60d3a9728f063e0eb73b5d0819ffc356915",
+    "renderer": "Chromium SwiftShader; physical-device performance unmeasured",
+    "cases": [
+      {
+        "scene": "dry-gulch",
+        "viewport": "portrait",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 12,
+          "median": 8.900000000372529,
+          "p95": 27.300000000745058,
+          "p99": 27.300000000745058,
+          "max": 27.300000000745058
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 118,
+        "solids": 137,
+        "canvases": 36,
+        "chunks": 33,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "copper-wash",
+        "viewport": "portrait",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 12,
+          "median": 4,
+          "p95": 8.199999999254942,
+          "p99": 8.199999999254942,
+          "max": 8.199999999254942
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 63,
+        "canvases": 46,
+        "chunks": 29,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "sunspur",
+        "viewport": "portrait",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 12,
+          "median": 3.599999999627471,
+          "p95": 4.599999999627471,
+          "p99": 4.599999999627471,
+          "max": 4.599999999627471
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 79,
+        "canvases": 42,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "mesa-relay",
+        "viewport": "portrait",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 12,
+          "median": 3.599999999627471,
+          "p95": 4.900000000372529,
+          "p99": 4.900000000372529,
+          "max": 4.900000000372529
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 139,
+        "solids": 87,
+        "canvases": 42,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "canyon-bridge",
+        "viewport": "portrait",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 12,
+          "median": 2.799999998882413,
+          "p95": 3.900000000372529,
+          "p99": 3.900000000372529,
+          "max": 3.900000000372529
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 45,
+        "canvases": 42,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "canyon-floor",
+        "viewport": "portrait",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 12,
+          "median": 1.700000001117587,
+          "p95": 2,
+          "p99": 2,
+          "max": 2
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 40,
+        "canvases": 42,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "dry-gulch",
+        "viewport": "portrait",
+        "mode": "advanced",
+        "cpuDrawMs": {
+          "count": 12,
+          "median": 9.5,
+          "p95": 38.600000001490116,
+          "p99": 38.600000001490116,
+          "max": 38.600000001490116
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 118,
+        "solids": 137,
+        "canvases": 36,
+        "chunks": 33,
+        "gl": {
+          "ok": true,
+          "on": true,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "copper-wash",
+        "viewport": "portrait",
+        "mode": "advanced",
+        "cpuDrawMs": {
+          "count": 12,
+          "median": 4.699999999254942,
+          "p95": 17.09999999962747,
+          "p99": 17.09999999962747,
+          "max": 17.09999999962747
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 63,
+        "canvases": 46,
+        "chunks": 29,
+        "gl": {
+          "ok": true,
+          "on": true,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "sunspur",
+        "viewport": "portrait",
+        "mode": "advanced",
+        "cpuDrawMs": {
+          "count": 12,
+          "median": 4.900000000372529,
+          "p95": 8.400000000372529,
+          "p99": 8.400000000372529,
+          "max": 8.400000000372529
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 79,
+        "canvases": 42,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": true,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "mesa-relay",
+        "viewport": "portrait",
+        "mode": "advanced",
+        "cpuDrawMs": {
+          "count": 12,
+          "median": 4.5,
+          "p95": 8.400000000372529,
+          "p99": 8.400000000372529,
+          "max": 8.400000000372529
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 139,
+        "solids": 87,
+        "canvases": 42,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": true,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "canyon-bridge",
+        "viewport": "portrait",
+        "mode": "advanced",
+        "cpuDrawMs": {
+          "count": 12,
+          "median": 4.300000000745058,
+          "p95": 6.400000000372529,
+          "p99": 6.400000000372529,
+          "max": 6.400000000372529
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 45,
+        "canvases": 42,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": true,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "canyon-floor",
+        "viewport": "portrait",
+        "mode": "advanced",
+        "cpuDrawMs": {
+          "count": 12,
+          "median": 5.599999999627471,
+          "p95": 26.90000000037253,
+          "p99": 26.90000000037253,
+          "max": 26.90000000037253
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 40,
+        "canvases": 42,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": true,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "dry-gulch",
+        "viewport": "landscape",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 12,
+          "median": 6.800000000745058,
+          "p95": 13.199999999254942,
+          "p99": 13.199999999254942,
+          "max": 13.199999999254942
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 118,
+        "solids": 144,
+        "canvases": 37,
+        "chunks": 33,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "error": 0,
+          "failure": "",
+          "w": 1880,
+          "h": 780
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "copper-wash",
+        "viewport": "landscape",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 12,
+          "median": 5.5,
+          "p95": 8.300000000745058,
+          "p99": 8.300000000745058,
+          "max": 8.300000000745058
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 54,
+        "canvases": 47,
+        "chunks": 29,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "error": 0,
+          "failure": "",
+          "w": 1880,
+          "h": 780
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "sunspur",
+        "viewport": "landscape",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 12,
+          "median": 4.200000001117587,
+          "p95": 7.199999999254942,
+          "p99": 7.199999999254942,
+          "max": 7.199999999254942
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 82,
+        "canvases": 43,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "error": 0,
+          "failure": "",
+          "w": 1880,
+          "h": 780
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "mesa-relay",
+        "viewport": "landscape",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 12,
+          "median": 4.599999999627471,
+          "p95": 10.800000000745058,
+          "p99": 10.800000000745058,
+          "max": 10.800000000745058
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 139,
+        "solids": 72,
+        "canvases": 43,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "error": 0,
+          "failure": "",
+          "w": 1880,
+          "h": 780
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "canyon-bridge",
+        "viewport": "landscape",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 12,
+          "median": 4.599999999627471,
+          "p95": 9.099999999627471,
+          "p99": 9.099999999627471,
+          "max": 9.099999999627471
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 47,
+        "canvases": 43,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "error": 0,
+          "failure": "",
+          "w": 1880,
+          "h": 780
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "canyon-floor",
+        "viewport": "landscape",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 12,
+          "median": 1.800000000745058,
+          "p95": 2.200000001117587,
+          "p99": 2.200000001117587,
+          "max": 2.200000001117587
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 43,
+        "canvases": 43,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "error": 0,
+          "failure": "",
+          "w": 1880,
+          "h": 780
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "dry-gulch",
+        "viewport": "landscape",
+        "mode": "advanced",
+        "cpuDrawMs": {
+          "count": 12,
+          "median": 9.199999999254942,
+          "p95": 35.40000000037253,
+          "p99": 35.40000000037253,
+          "max": 35.40000000037253
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 118,
+        "solids": 144,
+        "canvases": 36,
+        "chunks": 33,
+        "gl": {
+          "ok": true,
+          "on": true,
+          "error": 0,
+          "failure": "",
+          "w": 1880,
+          "h": 780
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "copper-wash",
+        "viewport": "landscape",
+        "mode": "advanced",
+        "cpuDrawMs": {
+          "count": 12,
+          "median": 11.400000000372529,
+          "p95": 41.600000001490116,
+          "p99": 41.600000001490116,
+          "max": 41.600000001490116
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 54,
+        "canvases": 46,
+        "chunks": 29,
+        "gl": {
+          "ok": true,
+          "on": true,
+          "error": 0,
+          "failure": "",
+          "w": 1880,
+          "h": 780
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "sunspur",
+        "viewport": "landscape",
+        "mode": "advanced",
+        "cpuDrawMs": {
+          "count": 12,
+          "median": 9.699999999254942,
+          "p95": 41,
+          "p99": 41,
+          "max": 41
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 82,
+        "canvases": 42,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": true,
+          "error": 0,
+          "failure": "",
+          "w": 1880,
+          "h": 780
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "mesa-relay",
+        "viewport": "landscape",
+        "mode": "advanced",
+        "cpuDrawMs": {
+          "count": 12,
+          "median": 7.299999998882413,
+          "p95": 27.200000001117587,
+          "p99": 27.200000001117587,
+          "max": 27.200000001117587
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 139,
+        "solids": 72,
+        "canvases": 42,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": true,
+          "error": 0,
+          "failure": "",
+          "w": 1880,
+          "h": 780
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "canyon-bridge",
+        "viewport": "landscape",
+        "mode": "advanced",
+        "cpuDrawMs": {
+          "count": 12,
+          "median": 6.599999999627471,
+          "p95": 13.299999998882413,
+          "p99": 13.299999998882413,
+          "max": 13.299999998882413
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 47,
+        "canvases": 42,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": true,
+          "error": 0,
+          "failure": "",
+          "w": 1880,
+          "h": 780
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "canyon-floor",
+        "viewport": "landscape",
+        "mode": "advanced",
+        "cpuDrawMs": {
+          "count": 12,
+          "median": 13,
+          "p95": 49.5,
+          "p99": 49.5,
+          "max": 49.5
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 43,
+        "canvases": 42,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": true,
+          "error": 0,
+          "failure": "",
+          "w": 1880,
+          "h": 780
+        },
+        "fault": null,
+        "errors": []
+      }
+    ]
+  },
+  "overhaulMatrix": {
+    "createdAt": "2026-11-07T01:25:52.133Z",
+    "sourceSha256": "b742c88bb72f4bc089f8a69f85b0d7bbdfadf6f820b6dfe1ec6c372920748f93",
+    "p5Sha256": "726ac96626b93f5bcaff83a910b6c60d3a9728f063e0eb73b5d0819ffc356915",
+    "renderer": "Chromium SwiftShader; physical-device performance unmeasured",
+    "cases": [
+      {
+        "scene": "dry-gulch",
+        "viewport": "portrait",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 3,
+          "median": 8,
+          "p95": 29.90000000037253,
+          "p99": 29.90000000037253,
+          "max": 29.90000000037253
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 118,
+        "solids": 139,
+        "canvases": 37,
+        "chunks": 33,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "copper-wash",
+        "viewport": "portrait",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 3,
+          "median": 4.800000000745058,
+          "p95": 5.5,
+          "p99": 5.5,
+          "max": 5.5
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 66,
+        "canvases": 47,
+        "chunks": 29,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "sunspur",
+        "viewport": "portrait",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 3,
+          "median": 4.199999999254942,
+          "p95": 4.5,
+          "p99": 4.5,
+          "max": 4.5
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 82,
+        "canvases": 43,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "mesa-relay",
+        "viewport": "portrait",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 3,
+          "median": 3.400000000372529,
+          "p95": 3.799999998882413,
+          "p99": 3.799999998882413,
+          "max": 3.799999998882413
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 139,
+        "solids": 90,
+        "canvases": 43,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "canyon-bridge",
+        "viewport": "portrait",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 3,
+          "median": 4.5,
+          "p95": 4.900000000372529,
+          "p99": 4.900000000372529,
+          "max": 4.900000000372529
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 48,
+        "canvases": 43,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "canyon-floor",
+        "viewport": "portrait",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 3,
+          "median": 2.100000001490116,
+          "p95": 2.299999998882413,
+          "p99": 2.299999998882413,
+          "max": 2.299999998882413
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 43,
+        "canvases": 43,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "dry-gulch",
+        "viewport": "portrait",
+        "mode": "advanced",
+        "cpuDrawMs": {
+          "count": 3,
+          "median": 15.100000001490116,
+          "p95": 42.399999998509884,
+          "p99": 42.399999998509884,
+          "max": 42.399999998509884
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 118,
+        "solids": 139,
+        "canvases": 36,
+        "chunks": 33,
+        "gl": {
+          "ok": true,
+          "on": true,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "copper-wash",
+        "viewport": "portrait",
+        "mode": "advanced",
+        "cpuDrawMs": {
+          "count": 3,
+          "median": 7.199999999254942,
+          "p95": 7.700000001117587,
+          "p99": 7.700000001117587,
+          "max": 7.700000001117587
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 66,
+        "canvases": 46,
+        "chunks": 29,
+        "gl": {
+          "ok": true,
+          "on": true,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "sunspur",
+        "viewport": "portrait",
+        "mode": "advanced",
+        "cpuDrawMs": {
+          "count": 3,
+          "median": 5.900000000372529,
+          "p95": 6.199999999254942,
+          "p99": 6.199999999254942,
+          "max": 6.199999999254942
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 82,
+        "canvases": 42,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": true,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "mesa-relay",
+        "viewport": "portrait",
+        "mode": "advanced",
+        "cpuDrawMs": {
+          "count": 3,
+          "median": 5.200000001117587,
+          "p95": 5.400000000372529,
+          "p99": 5.400000000372529,
+          "max": 5.400000000372529
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 139,
+        "solids": 90,
+        "canvases": 42,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": true,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "canyon-bridge",
+        "viewport": "portrait",
+        "mode": "advanced",
+        "cpuDrawMs": {
+          "count": 3,
+          "median": 6.799999998882413,
+          "p95": 7,
+          "p99": 7,
+          "max": 7
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 48,
+        "canvases": 42,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": true,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "canyon-floor",
+        "viewport": "portrait",
+        "mode": "advanced",
+        "cpuDrawMs": {
+          "count": 3,
+          "median": 4.700000001117587,
+          "p95": 4.800000000745058,
+          "p99": 4.800000000745058,
+          "max": 4.800000000745058
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 43,
+        "canvases": 42,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": true,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "dry-gulch",
+        "viewport": "landscape",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 3,
+          "median": 7.299999998882413,
+          "p95": 9.100000001490116,
+          "p99": 9.100000001490116,
+          "max": 9.100000001490116
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 118,
+        "solids": 146,
+        "canvases": 36,
+        "chunks": 33,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 1880,
+          "h": 780
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "copper-wash",
+        "viewport": "landscape",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 3,
+          "median": 6.599999999627471,
+          "p95": 7.299999998882413,
+          "p99": 7.299999998882413,
+          "max": 7.299999998882413
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 57,
+        "canvases": 46,
+        "chunks": 29,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 1880,
+          "h": 780
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "sunspur",
+        "viewport": "landscape",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 3,
+          "median": 6.299999998882413,
+          "p95": 6.300000000745058,
+          "p99": 6.300000000745058,
+          "max": 6.300000000745058
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 85,
+        "canvases": 42,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 1880,
+          "h": 780
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "mesa-relay",
+        "viewport": "landscape",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 3,
+          "median": 5.5,
+          "p95": 6.400000000372529,
+          "p99": 6.400000000372529,
+          "max": 6.400000000372529
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 139,
+        "solids": 75,
+        "canvases": 42,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 1880,
+          "h": 780
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "canyon-bridge",
+        "viewport": "landscape",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 3,
+          "median": 6,
+          "p95": 6.300000000745058,
+          "p99": 6.300000000745058,
+          "max": 6.300000000745058
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 50,
+        "canvases": 42,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 1880,
+          "h": 780
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "canyon-floor",
+        "viewport": "landscape",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 3,
+          "median": 2.5,
+          "p95": 2.599999999627471,
+          "p99": 2.599999999627471,
+          "max": 2.599999999627471
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 46,
+        "canvases": 42,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 1880,
+          "h": 780
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "dry-gulch",
+        "viewport": "landscape",
+        "mode": "advanced",
+        "cpuDrawMs": {
+          "count": 3,
+          "median": 11,
+          "p95": 22.199999999254942,
+          "p99": 22.199999999254942,
+          "max": 22.199999999254942
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 118,
+        "solids": 146,
+        "canvases": 36,
+        "chunks": 33,
+        "gl": {
+          "ok": true,
+          "on": true,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 1880,
+          "h": 780
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "copper-wash",
+        "viewport": "landscape",
+        "mode": "advanced",
+        "cpuDrawMs": {
+          "count": 3,
+          "median": 10.699999999254942,
+          "p95": 13,
+          "p99": 13,
+          "max": 13
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 57,
+        "canvases": 46,
+        "chunks": 29,
+        "gl": {
+          "ok": true,
+          "on": true,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 1880,
+          "h": 780
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "sunspur",
+        "viewport": "landscape",
+        "mode": "advanced",
+        "cpuDrawMs": {
+          "count": 3,
+          "median": 8.400000000372529,
+          "p95": 9.699999999254942,
+          "p99": 9.699999999254942,
+          "max": 9.699999999254942
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 85,
+        "canvases": 42,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": true,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 1880,
+          "h": 780
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "mesa-relay",
+        "viewport": "landscape",
+        "mode": "advanced",
+        "cpuDrawMs": {
+          "count": 3,
+          "median": 8.300000000745058,
+          "p95": 8.399999998509884,
+          "p99": 8.399999998509884,
+          "max": 8.399999998509884
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 139,
+        "solids": 75,
+        "canvases": 42,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": true,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 1880,
+          "h": 780
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "canyon-bridge",
+        "viewport": "landscape",
+        "mode": "advanced",
+        "cpuDrawMs": {
+          "count": 3,
+          "median": 9.199999999254942,
+          "p95": 11,
+          "p99": 11,
+          "max": 11
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 50,
+        "canvases": 42,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": true,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 1880,
+          "h": 780
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "canyon-floor",
+        "viewport": "landscape",
+        "mode": "advanced",
+        "cpuDrawMs": {
+          "count": 3,
+          "median": 8.900000000372529,
+          "p95": 9.900000000372529,
+          "p99": 9.900000000372529,
+          "max": 9.900000000372529
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 46,
+        "canvases": 42,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": true,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 1880,
+          "h": 780
+        },
+        "fault": null,
+        "errors": []
+      }
+    ]
+  },
+  "baselineTiming": {
+    "createdAt": "2026-11-07T01:27:24.027Z",
+    "sourceSha256": "340817e3822fa6c866fb4250da155b320f72ecda257a20bf42fd5fd2d5a094bd",
+    "p5Sha256": "726ac96626b93f5bcaff83a910b6c60d3a9728f063e0eb73b5d0819ffc356915",
+    "renderer": "Chromium SwiftShader; physical-device performance unmeasured",
+    "cases": [
+      {
+        "scene": "dry-gulch",
+        "viewport": "portrait",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 24,
+          "median": 6.5,
+          "p95": 11.299999998882413,
+          "p99": 13.599999999627471,
+          "max": 13.599999999627471
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 118,
+        "solids": 137,
+        "canvases": 37,
+        "chunks": 33,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "copper-wash",
+        "viewport": "portrait",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 24,
+          "median": 4.199999999254942,
+          "p95": 8.699999999254942,
+          "p99": 8.699999999254942,
+          "max": 8.699999999254942
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 63,
+        "canvases": 47,
+        "chunks": 29,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "canyon-bridge",
+        "viewport": "portrait",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 24,
+          "median": 2.400000000372529,
+          "p95": 2.800000000745058,
+          "p99": 3.199999999254942,
+          "max": 3.199999999254942
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 148,
+        "solids": 45,
+        "canvases": 52,
+        "chunks": 34,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "dry-gulch",
+        "viewport": "portrait",
+        "mode": "advanced",
+        "cpuDrawMs": {
+          "count": 24,
+          "median": 8.400000000372529,
+          "p95": 37.90000000037253,
+          "p99": 39.5,
+          "max": 39.5
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 118,
+        "solids": 137,
+        "canvases": 36,
+        "chunks": 33,
+        "gl": {
+          "ok": true,
+          "on": true,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "copper-wash",
+        "viewport": "portrait",
+        "mode": "advanced",
+        "cpuDrawMs": {
+          "count": 24,
+          "median": 4.900000000372529,
+          "p95": 29.800000000745058,
+          "p99": 41.09999999962747,
+          "max": 41.09999999962747
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 63,
+        "canvases": 46,
+        "chunks": 29,
+        "gl": {
+          "ok": true,
+          "on": true,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "canyon-bridge",
+        "viewport": "portrait",
+        "mode": "advanced",
+        "cpuDrawMs": {
+          "count": 24,
+          "median": 4.300000000745058,
+          "p95": 9.799999998882413,
+          "p99": 27.800000000745058,
+          "max": 27.800000000745058
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 148,
+        "solids": 45,
+        "canvases": 51,
+        "chunks": 34,
+        "gl": {
+          "ok": true,
+          "on": true,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      }
+    ]
+  },
+  "finalTiming": {
+    "createdAt": "2026-11-07T01:28:24.782Z",
+    "sourceSha256": "d19d75454c03d892cdb66ed7cb7abf8098a53f20d44915c39302cc3a616d89f0",
+    "p5Sha256": "726ac96626b93f5bcaff83a910b6c60d3a9728f063e0eb73b5d0819ffc356915",
+    "renderer": "Chromium SwiftShader; physical-device performance unmeasured",
+    "cases": [
+      {
+        "scene": "dry-gulch",
+        "viewport": "portrait",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 24,
+          "median": 6.799999998882413,
+          "p95": 11.599999999627471,
+          "p99": 15,
+          "max": 15
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 118,
+        "solids": 139,
+        "canvases": 36,
+        "chunks": 33,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "copper-wash",
+        "viewport": "portrait",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 24,
+          "median": 3.400000000372529,
+          "p95": 4.800000000745058,
+          "p99": 8.799999998882413,
+          "max": 8.799999998882413
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 66,
+        "canvases": 46,
+        "chunks": 29,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "canyon-bridge",
+        "viewport": "portrait",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 24,
+          "median": 3,
+          "p95": 4,
+          "p99": 9.099999999627471,
+          "max": 9.099999999627471
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 148,
+        "solids": 48,
+        "canvases": 51,
+        "chunks": 34,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "dry-gulch",
+        "viewport": "portrait",
+        "mode": "advanced",
+        "cpuDrawMs": {
+          "count": 24,
+          "median": 12.300000000745058,
+          "p95": 44.09999999962747,
+          "p99": 47.5,
+          "max": 47.5
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 118,
+        "solids": 139,
+        "canvases": 36,
+        "chunks": 33,
+        "gl": {
+          "ok": true,
+          "on": true,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "copper-wash",
+        "viewport": "portrait",
+        "mode": "advanced",
+        "cpuDrawMs": {
+          "count": 24,
+          "median": 4.900000000372529,
+          "p95": 9.600000001490116,
+          "p99": 41.79999999888241,
+          "max": 41.79999999888241
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 66,
+        "canvases": 46,
+        "chunks": 29,
+        "gl": {
+          "ok": true,
+          "on": true,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "canyon-bridge",
+        "viewport": "portrait",
+        "mode": "advanced",
+        "cpuDrawMs": {
+          "count": 24,
+          "median": 7.5,
+          "p95": 21.899999998509884,
+          "p99": 39,
+          "max": 39
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 148,
+        "solids": 48,
+        "canvases": 51,
+        "chunks": 34,
+        "gl": {
+          "ok": true,
+          "on": true,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      }
+    ]
+  },
+  "finalPanoramas": {
+    "createdAt": "2026-11-07T01:29:16.525Z",
+    "sourceSha256": "931f3eb1691e4939561cf1cdacafba540a6118da4a35175b6a43b9fad25f85c8",
+    "p5Sha256": "726ac96626b93f5bcaff83a910b6c60d3a9728f063e0eb73b5d0819ffc356915",
+    "renderer": "Chromium SwiftShader; physical-device performance unmeasured",
+    "cases": [
+      {
+        "scene": "dry-gulch",
+        "viewport": "panorama",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 2,
+          "median": 12.599999999627471,
+          "p95": 12.599999999627471,
+          "p99": 12.599999999627471,
+          "max": 12.599999999627471
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 118,
+        "solids": 164,
+        "canvases": 36,
+        "chunks": 33,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 1200,
+          "h": 800
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "copper-wash",
+        "viewport": "panorama",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 2,
+          "median": 7.400000000372529,
+          "p95": 7.400000000372529,
+          "p99": 7.400000000372529,
+          "max": 7.400000000372529
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 164,
+        "solids": 84,
+        "canvases": 46,
+        "chunks": 29,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 1200,
+          "h": 800
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "canyon-bridge",
+        "viewport": "panorama",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 2,
+          "median": 6.099999999627471,
+          "p95": 6.099999999627471,
+          "p99": 6.099999999627471,
+          "max": 6.099999999627471
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 148,
+        "solids": 61,
+        "canvases": 51,
+        "chunks": 34,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 1200,
+          "h": 800
+        },
+        "fault": null,
+        "errors": []
+      }
+    ]
+  },
+  "finalTownChecks": {
+    "createdAt": "2026-11-07T01:29:28.783Z",
+    "sourceSha256": "931f3eb1691e4939561cf1cdacafba540a6118da4a35175b6a43b9fad25f85c8",
+    "p5Sha256": "726ac96626b93f5bcaff83a910b6c60d3a9728f063e0eb73b5d0819ffc356915",
+    "renderer": "Chromium SwiftShader; physical-device performance unmeasured",
+    "cases": [
+      {
+        "scene": "dry-gulch",
+        "viewport": "portrait",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 3,
+          "median": 10.400000000372529,
+          "p95": 10.400000000372529,
+          "p99": 10.400000000372529,
+          "max": 10.400000000372529
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 118,
+        "solids": 139,
+        "canvases": 37,
+        "chunks": 33,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "copper-wash",
+        "viewport": "portrait",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 3,
+          "median": 4.800000000745058,
+          "p95": 5.5,
+          "p99": 5.5,
+          "max": 5.5
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 66,
+        "canvases": 47,
+        "chunks": 29,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "sunspur",
+        "viewport": "portrait",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 3,
+          "median": 4.699999999254942,
+          "p95": 5.5,
+          "p99": 5.5,
+          "max": 5.5
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 167,
+        "solids": 82,
+        "canvases": 43,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      },
+      {
+        "scene": "mesa-relay",
+        "viewport": "portrait",
+        "mode": "fallback",
+        "cpuDrawMs": {
+          "count": 3,
+          "median": 3.599999999627471,
+          "p95": 4.099999999627471,
+          "p99": 4.099999999627471,
+          "max": 4.099999999627471
+        },
+        "stackBefore": 0,
+        "stackAfter": 0,
+        "actors": 139,
+        "solids": 90,
+        "canvases": 43,
+        "chunks": 25,
+        "gl": {
+          "ok": true,
+          "on": false,
+          "tier": 0,
+          "error": 0,
+          "failure": "",
+          "w": 720,
+          "h": 1560
+        },
+        "fault": null,
+        "errors": []
+      }
+    ]
+  },
+  "finalHoistInspection": {
+    "sourceSha256": "931f3eb1691e4939561cf1cdacafba540a6118da4a35175b6a43b9fad25f85c8",
+    "architecturalLandmarks": [
+      {
+        "name": "COPPER WASH HOIST",
+        "x": -6232,
+        "y": 315,
+        "arch": "HEADFRAME",
+        "design": {
+          "id": "COPPER_WASH:shop-1",
+          "purpose": "MINE",
+          "roof": "HEADFRAME",
+          "material": "TIMBER",
+          "variant": 518948782,
+          "emblem": "MINE",
+          "primary": true
+        },
+        "maxRoofHeight": 85
+      }
+    ],
+    "errors": [],
+    "stackBefore": 0,
+    "stackAfter": 0,
+    "gl": {
+      "ok": true,
+      "on": false,
+      "tier": 0,
+      "error": 0,
+      "failure": "",
+      "w": 1200,
+      "h": 800
+    }
+  }
+}

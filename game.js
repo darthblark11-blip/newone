@@ -3262,17 +3262,25 @@ function frontierSettlementPlan(site) {
     ]
   }[site.kind];
   const all = [], xs = [-960,-240,240,960];
+  // Purpose-built lots replace the repeated eight-shop matrix. They remain
+  // inside the existing central street and two north/south route reservations.
+  const lotSizes={
+    MINING:[[264,174],[286,198],[326,166],[338,184],[284,174],[238,160],[302,188],[274,170]],
+    ORCHARD:[[292,184],[326,198],[272,174],[334,188],[268,164],[302,178],[278,182],[254,166]],
+    COACH:[[308,174],[342,186],[296,198],[334,178],[312,188],[264,164],[282,180],[246,166]]
+  }[site.kind];
   const put = (id, dx, dy, w, h, extra) => all.push(Object.freeze({
     x: site.x+dx, y: site.y+dy, w, h, frontierSettlementId: site.id,
     frontierSettlementPart: id, ...extra }));
   for (let i=0;i<rows.length;i++) {
     const row=i<4?-1:1, [arch,signText]=rows[i];
-    put('shop-'+i,xs[i%4],row*285,300,190,{ isWesternBldg:true,arch,signText,
+    const [lotW,lotH]=lotSizes[i],offset=(i%2?1:-1)*(site.kind==='ORCHARD'?14:site.kind==='MINING'?8:20);
+    put('shop-'+i,xs[i%4]+offset,row*(site.kind==='COACH'?298:285),lotW,lotH,{ isWesternBldg:true,arch,signText,
       facing:row<0?'S':'N',accent:site.kind==='ORCHARD'?'teal':site.kind==='COACH'?'red':null,
       isLivery:arch==='BARN',hasBell:arch==='CHAPEL',
       _rise:arch==='HEADFRAME'?43:arch==='TWO_STOREY'?35:arch==='RAIL_DEPOT'?29:undefined });
   }
-  for (let i=0;i<4;i++) put('home-'+i,i%2?-960:960,i<2?-485:485,240,115,{
+  for (let i=0;i<4;i++) put('home-'+i,i%2?-960:960,i<2?-485:485,222+i*7,104+i*3,{
     isWesternBldg:true,arch:site.kind==='ORCHARD'?'ADOBE':'CABIN',
     signText:site.kind==='MINING'?'CLAIM COTTAGE':site.kind==='ORCHARD'?'ORCHARD HOME':'COACH CREW',
     facing:i<2?'S':'N',accent:null });
@@ -3287,7 +3295,8 @@ function frontierSettlementPlan(site) {
     put('produce-field',0,-485,770,150,{isCropField:true});
     for(let i=0;i<3;i++) put('harvest-'+i,-90+i*90,480,45,45,{isHayBale:true,seed:i*.31});
   }
-  const plan=Object.freeze(all); _frontierSettlementPlans.set(site.id,plan); return plan;
+  const compiled=frontierCompileArchitecture(all.map(p=>({...p})));
+  const plan=Object.freeze(compiled.map(Object.freeze)); _frontierSettlementPlans.set(site.id,plan); return plan;
 }
 function filterFrontierSettlementContent(biome,cx,cy,content) {
   if(biome!==3)return;
@@ -3306,8 +3315,180 @@ function filterFrontierSettlementContent(biome,cx,cy,content) {
   for(const site of FRONTIER_SETTLEMENT_SITES)for(const part of frontierSettlementPlan(site)) {
     if(Math.floor(part.x/CHUNK_W)!==cx||Math.floor(part.y/CHUNK_W)!==cy)continue;
     const chunkKey=cx+','+cy+',settlement:'+site.id+':'+part.frontierSettlementPart;
-    if(!destroyed[chunkKey])content.solid.push({...part,chunkKey});
+    const lot=part.frontierLot,parentPart=part.frontierParentSettlementPart||part.frontierSettlementPart;
+    const parentKey=lot?Math.floor(lot.x/CHUNK_W)+','+Math.floor(lot.y/CHUNK_W)+',settlement:'+site.id+':'+parentPart:chunkKey;
+    if(!destroyed[chunkKey]&&!destroyed[parentKey])content.solid.push({...part,chunkKey,frontierParentKey:parentKey});
   }
+}
+// Surfaces are world geometry, never part of a roof's camera transform. One
+// collection owns both the terrain bake and the shovel's material query.
+const FRONTIER_SURFACES = Object.freeze({ walkDepth: 28, apron: 14,
+  mainWalks: Object.freeze([[-4760,-4480],[-4160,-3560],[-3240,-1280],[-980,-80]]),
+  crossWalks: Object.freeze([[-355,970],[1770,2720],[3110,3450]]) });
+function frontierSurfaceLot(b) {
+  if(b.frontierLot)return b.frontierLot;
+  if(!(b.isWesternBldg||b.isBarn||b.isHouse||b.isTrailer||b.isShanty))return null;
+  return {id:'lot:'+b.x+':'+b.y,x:b.x,y:b.y,w:b.w,h:b.h,facing:b.facing||'S'};
+}
+function frontierSurfaceRects(list, authored = false) {
+  const result=[],seen=new Set(),add=(x0,y0,x1,y1,kind)=>{
+    if(x1>x0&&y1>y0)result.push({x0,y0,x1,y1,kind});
+  };
+  for(const b of list||[]) {
+    const p=frontierSurfaceLot(b);if(!p||seen.has(p.id))continue;seen.add(p.id);
+    const x0=p.x-p.w/2,x1=p.x+p.w/2,y0=p.y-p.h/2,y1=p.y+p.h/2;
+    add(x0-14,y0-14,x1+14,y1+14,'EARTH');
+    const d=FRONTIER_SURFACES.walkDepth;
+    if(p.facing==='E')add(x1,y0-8,x1+d,y1+8,'TIMBER');
+    else if(p.facing==='W')add(x0-d,y0-8,x0,y1+8,'TIMBER');
+    else if(p.facing==='N')add(x0-8,y0-d,x1+8,y0,'TIMBER');
+    else add(x0-8,y1,x1+8,y1+d,'TIMBER');
+  }
+  if(authored){
+    for(const [y0,y1]of FRONTIER_SURFACES.mainWalks){
+      add(1100,y0,1134,y1,'TIMBER');add(1486,y0,1520,y1,'TIMBER');
+    }
+    for(const sy of [-3400,-4320])for(const side of [-1,1])
+      for(const [x0,x1]of FRONTIER_SURFACES.crossWalks)
+        add(x0,sy+side*138-16,x1,sy+side*138+16,'TIMBER');
+  }
+  return result;
+}
+// Sweep rectangles into disjoint strips. Adjoining frontages get one opaque
+// material, so alpha and dark seams cannot accumulate at their intersections.
+function frontierUnionSurfaces(rects,kind) {
+  const src=rects.filter(r=>r.kind===kind),out=[];
+  const xs=[...new Set(src.flatMap(r=>[r.x0,r.x1]))].sort((a,b)=>a-b);
+  for(let i=1;i<xs.length;i++){
+    const x0=xs[i-1],x1=xs[i];
+    const spans=src.filter(r=>r.x0<x1&&r.x1>x0).map(r=>[r.y0,r.y1]).sort((a,b)=>a[0]-b[0]);
+    let current=null;
+    for(const s of spans){
+      if(current&&s[0]<=current[1])current[1]=Math.max(current[1],s[1]);
+      else {if(current)out.push({x0,x1,y0:current[0],y1:current[1],kind});current=s.slice();}
+    }
+    if(current)out.push({x0,x1,y0:current[0],y1:current[1],kind});
+  }
+  return out;
+}
+let _frontierSurfaceSource=null,_frontierSurfaceCount=-1,_frontierSurfaceQuery=[];
+function frontierSurfaceAt(x,y) {
+  if(currentLevel!==3)return null;
+  const ch=BIOME_ACTIVE&&chunkMgr&&chunkMgr.biome===3&&chunkMgr.chunks.get(Math.floor(x/CHUNK_W)+','+Math.floor(y/CHUNK_W));
+  if(ch&&ch.tex&&ch.tex.frontierSurfaces){
+    let kind=null;
+    for(const r of ch.tex.frontierSurfaces)if(x>=r.x0&&x<r.x1&&y>=r.y0&&y<r.y1){
+      if(r.kind==='TIMBER')return 'TIMBER';kind='EARTH';
+    }
+    return kind;
+  }
+  if(_frontierSurfaceSource!==buildings||_frontierSurfaceCount!==buildings.length){
+    _frontierSurfaceSource=buildings;
+    _frontierSurfaceCount=buildings.length;
+    _frontierSurfaceQuery=frontierSurfaceRects(buildings,!!authoredCore);
+  }
+  let earth=false;
+  for(const r of _frontierSurfaceQuery)if(x>=r.x0&&x<r.x1&&y>=r.y0&&y<r.y1){
+    if(r.kind==='TIMBER')return 'TIMBER';earth=true;
+  }
+  return earth?'EARTH':null;
+}
+const _frontierSurfacePlans=new Map();
+let _frontierSurfacePlanCore=null,_frontierSurfacePlanState=null;
+function frontierSurfaceChunkLots(cx,cy) {
+  const state=getBiomeState(3);
+  if(_frontierSurfacePlanCore!==authoredCore||_frontierSurfacePlanState!==state){
+    _frontierSurfacePlans.clear();_frontierSurfacePlanCore=authoredCore;_frontierSurfacePlanState=state;
+  }
+  const key=cx+','+cy;
+  if(_frontierSurfacePlans.has(key))return _frontierSurfacePlans.get(key);
+  // Use deterministic generation rather than residency: a frontier facade
+  // straddling a border must appear in either bake, even on first arrival.
+  const lots=generateChunkContent(3,cx,cy).solid.filter(b=>frontierSurfaceLot(b));
+  _frontierSurfacePlans.set(key,lots);
+  if(_frontierSurfacePlans.size>48)_frontierSurfacePlans.delete(_frontierSurfacePlans.keys().next().value);
+  return lots;
+}
+// Fill each road-material layer as one compound path. Nonzero winding unions
+// crossroads without painting their translucent shoulders a second time.
+function bakeFrontierRoadNetwork(g,biome,cx,cy,trackAt,widthAt,plan) {
+  const ox=cx*CHUNK_W,oy=cy*CHUNK_W,routes=[];
+  const route=(axis,a,b,center,width,edge,core)=>{
+    const samples=[],step=50;
+    for(let u=a;u<b;u=Math.min(b,Math.floor(u/step+1)*step))samples.push([u,center(u),width(u)]);
+    samples.push([b,center(b),width(b)]);routes.push({axis,samples,edge,core});
+  };
+  route('Y',oy-100,oy+CHUNK_W+100,trackAt,widthAt,124,62);
+  const street=(x0,x1,y,edge,core,openW,openE)=>{
+    if(y+edge*1.72<oy||y-edge*1.72>oy+CHUNK_W||x1<ox||x0>ox+CHUNK_W)return;
+    route('X',x0,x1,()=>y,x=>{
+      const t=Math.max(0,Math.min(1,openW?(x-x0)/260:1,openE?(x1-x)/260:1));return t*t*(3-2*t);
+    },edge,core);
+  };
+  if(plan){
+    for(const c of plan.cross)street(c.x0,c.x1,c.y,c.edgeHalf,c.coreHalf,true,true);
+    const c=plan.sideRoad;
+    if(c&&oy+CHUNK_W>=c.y0-160&&oy<=c.y1+160&&ox+CHUNK_W>=Math.min(c.x,c.xEnd)-170&&ox<=Math.max(c.x,c.xEnd)+170)
+      route('Y',Math.max(c.y0,oy-100),Math.min(c.y1,oy+CHUNK_W+100),y=>frontierTownSideRoadX(y,c),
+        y=>Math.max(0,Math.min(1,(y-c.y0)/120,(c.y1-y)/120)),c.edgeHalf,c.coreHalf);
+  }
+  if(frontierIsTown(biome,ox,oy)&&!chunkInAuthoredCore(cx,cy)&&!frontierSettlementAt(ox+600,oy+600))
+    street(ox,ox+CHUNK_W,frontierMainStreetY(biome,cy),156,96,!frontierIsTown(biome,ox-CHUNK_W,oy),!frontierIsTown(biome,ox+CHUNK_W,oy));
+  for(const site of frontierSettlementSites())street(site.x-site.w/2-220,site.x+site.w/2+220,site.y,150,94,true,true);
+  const ctx=g.drawingContext;
+  const paint=(halfAt,color,alpha)=>{
+    g.fill(...color,alpha);ctx.beginPath();
+    for(const r of routes){
+      const half=halfAt(r),pts=[];
+      for(const s of r.samples)pts.push(r.axis==='Y'?[s[1]-half*s[2],s[0]]:[s[0],s[1]-half*s[2]]);
+      for(let i=r.samples.length-1;i>=0;i--){const s=r.samples[i];pts.push(r.axis==='Y'?[s[1]+half*s[2],s[0]]:[s[0],s[1]+half*s[2]]);}
+      let area=0;for(let i=0;i<pts.length;i++){const a=pts[i],b=pts[(i+1)%pts.length];area+=a[0]*b[1]-b[0]*a[1];}
+      if(area<0)pts.reverse();
+      ctx.moveTo(pts[0][0],pts[0][1]);for(let i=1;i<pts.length;i++)ctx.lineTo(pts[i][0],pts[i][1]);ctx.closePath();
+    }
+    ctx.fill();
+  };
+  g.noStroke();
+  for(let k=5;k>=1;k--)paint(r=>r.edge*(1+k/5*.72),[202,176,136],44*.34*(1-k/6));
+  for(let k=0;k<12;k++){
+    const t=k/11,ct=Math.pow(t,.45);
+    paint(r=>r.core+(r.edge-r.core)*Math.pow(1-t,.6),[202-72*ct,176-72*ct,136-64*ct],44);
+  }
+  g._frontierRoadNetwork=true;
+}
+function bakeFrontierSurfaces(g,biome,cx,cy,localSolids) {
+  if(biome!==3)return;
+  const ox=cx*CHUNK_W,oy=cy*CHUNK_W,all=[];
+  const add=b=>{const p=frontierSurfaceLot(b);if(p&&p.x+p.w/2+45>=ox&&p.x-p.w/2-45<=ox+CHUNK_W&&
+    p.y+p.h/2+45>=oy&&p.y-p.h/2-45<=oy+CHUNK_W)all.push(b);};
+  for(const b of authoredSolids.length?authoredSolids:buildings)add(b);
+  // Named settlements are small immutable plans; their crossing footprints
+  // are available even when the neighbouring chunk has not become resident.
+  for(const site of frontierSettlementSites())if(Math.abs(site.x-ox-600)<site.w/2+650&&Math.abs(site.y-oy-600)<site.h/2+650)
+    for(const b of frontierSettlementPlan(site))add(b);
+  for(const b of localSolids||[])add(b);
+  if(localSolids)for(let j=cy-1;j<=cy+1;j++)for(let i=cx-1;i<=cx+1;i++)
+    if(i!==cx||j!==cy)for(const b of frontierSurfaceChunkLots(i,j))add(b);
+  const rects=frontierSurfaceRects(all,!!authoredCore);
+  const clip=r=>({x0:Math.max(ox,r.x0),y0:Math.max(oy,r.y0),x1:Math.min(ox+CHUNK_W,r.x1),y1:Math.min(oy+CHUNK_W,r.y1),kind:r.kind});
+  const visible=rects.map(clip).filter(r=>r.x1>r.x0&&r.y1>r.y0);
+  g.frontierSurfaces=visible;
+  g.push();g.noStroke();
+  // Opaque hardstanding replaces the individual live rounded sand slabs.
+  for(const r of frontierUnionSurfaces(visible,'EARTH')){
+    g.fill(192,163,117);g.rect(r.x0,r.y0,r.x1-r.x0,r.y1-r.y0);
+  }
+  const timber=frontierUnionSurfaces(visible,'TIMBER');
+  for(const r of timber){g.fill(143,105,65);g.rect(r.x0,r.y0,r.x1-r.x0,r.y1-r.y0);}
+  // A shared plank lattice survives negative coordinates and chunk cuts.
+  g.stroke(85,62,42,150);g.strokeWeight(1.2);
+  for(const r of timber)for(let y=Math.ceil(r.y0/14)*14;y<r.y1;y+=14)g.line(r.x0,y,r.x1,y);
+  g.stroke(212,171,111,170);g.strokeWeight(1);
+  for(const r of timber)for(let y=Math.ceil((r.y0-2)/14)*14+2;y<r.y1;y+=14)g.line(r.x0,y,r.x1,y);
+  g.noStroke();
+  if(authoredCore&&window.westernDust){g.fill(161,128,88,110);
+    for(const d of window.westernDust)if(d.x>=ox&&d.x<ox+CHUNK_W&&d.y>=oy&&d.y<oy+CHUNK_W)g.ellipse(d.x,d.y,d.sz,d.sz*.8);}
+  g.pop();
 }
 function bakeFrontierSettlementArea(g,biome,ox,oy) {
   if(biome!==3)return;
@@ -3324,11 +3505,6 @@ function bakeFrontierSettlementArea(g,biome,ox,oy) {
     for(let i=0;i<=24;i++)g.vertex(x0+i*100,y0+20+Math.sin(i*2.3)*16);
     for(let i=24;i>=0;i--)g.vertex(x0+i*100,y1-20+Math.sin(i*1.7)*16);
     g.endShape(CLOSE);
-    for(const b of frontierSettlementPlan(site))if(b.isWesternBldg) {
-      g.fill(...soil,90);g.rect(b.x-b.w/2-19,b.y-b.h/2-15,b.w+38,b.h+30,7);
-      const facing=b.facing==='N'?-1:1,fy=b.y+facing*(b.h/2+20);
-      g.fill(105,81,59,75);g.rect(b.x-b.w/2-10,fy-6,b.w+20,12,2);
-    }
     const sx0=Math.max(x0-220,ox-40),sx1=Math.min(x1+220,ox+CHUNK_W+40);
     if(sx1>sx0)bakeStreet(g,sx0,sx1,site.y,150,94,
       [201,175,132],mineral?[123,98,74]:orchard?[137,117,80]:[131,103,73],12,44,
@@ -4326,6 +4502,7 @@ function legacyGenerateMap() {
       }
     }
   }
+  if(currentLevel===3)frontierCompileArchitecture(buildings);
 }
 
           
@@ -4598,6 +4775,240 @@ function drawHorseTack() {
   fill(58, 40, 26); rect(-13, -13, 22, 4, 1); rect(-13, 9, 22, 4, 1);
   fill(48, 36, 26); rect(14, -7, 16, 2); rect(14, 5, 16, 2);          // reins
   fill(206, 178, 96); ellipse(-11, -11, 3.5, 3.5); ellipse(-11, 11, 3.5, 3.5);
+}
+
+// FRONTIER ARCHITECTURE v1. Geometry is generated once, independently of the
+// terrain RNG. Real rectangular wings feed native collision/cover/excavation;
+// only roofs, cornices and canopies are render-only projected volumes.
+const FRONTIER_ARCHITECTURE = Object.freeze({ version: 1, maxWings: 2, maxRoofBands: 12 });
+function frontierArchitectureEligible(b) {
+  return !!(b && !b.isFrontierBountyStructure && (b.isWesternBldg || b.isBarn || b.isHouse || b.isShanty || b.isTrailer));
+}
+function frontierArchitectureHash(id) {
+  let h=2166136261;for(let i=0;i<id.length;i++)h=Math.imul(h^id.charCodeAt(i),16777619);
+  return h>>>0;
+}
+function frontierArchitecturePurpose(b) {
+  const name=(b.signText||'').toUpperCase();
+  if(b.isFrontierSaloon||/SALOON|CANTINA/.test(name))return 'SALOON';
+  if(b.isFrontierSheriff||/SHERIFF|JAIL/.test(name))return 'SHERIFF';
+  if(/BANK|ASSAY|CLAIM OFFICE/.test(name))return 'BANK';
+  if(/DOCTOR|INFIRMARY|APOTHECARY/.test(name))return 'MEDIC';
+  if(/CHAPEL|MISSION|CHURCH/.test(name)||b.isChurch||b.arch==='CHAPEL')return 'MISSION';
+  if(/SMITH|FORGE|FOUNDRY|SAWMILL|\bCOOPER\b|WHEELWRIGHT|WORKSHOP/.test(name))return 'WORKSHOP';
+  if(/HOTEL|INN|REST|LODGE/.test(name))return 'HOTEL';
+  if(/RAIL|DEPOT|FREIGHT|STAGE|COACH OFFICE/.test(name))return 'DEPOT';
+  if(/HOIST|\bMINES?\b|\bORE\b|POWDER/.test(name)||b.arch==='HEADFRAME')return 'MINE';
+  if(b.isBarn||/LIVERY|STABLE|FRUIT PACKING/.test(name)||(!name&&b.isLivery))return 'BARN';
+  if(b.isTrailer)return 'TRAILER';
+  if(b.isShanty||b.isHouse||/HOME|COTTAGE|CREW|BUNKHOUSE/.test(name)||b.arch==='CABIN')return 'HOME';
+  if(/MARKET|PRODUCE|SEED|HONEY/.test(name))return 'MARKET';
+  return 'MERCHANT';
+}
+function frontierArchitectureLocal(lot,u,v) {
+  const f=lot.facing||'S',nx=f==='E'?1:f==='W'?-1:0,ny=f==='S'?1:f==='N'?-1:0;
+  return [lot.x+u*ny+v*nx,lot.y-u*nx+v*ny];
+}
+function frontierCompileArchitecture(list) {
+  const extra=[];
+  for(const b of list) {
+    if(!frontierArchitectureEligible(b)||b.frontierDesign)continue;
+    const id=b.frontierSettlementId?b.frontierSettlementId+':'+b.frontierSettlementPart:
+      (b.chunkKey||'drygulch:'+b.x+':'+b.y+':'+(b.signText||b.arch||''));
+    const variant=frontierArchitectureHash(id),purpose=frontierArchitecturePurpose(b),facing=b.facing||'S';
+    const nx=facing==='E'?1:facing==='W'?-1:0,ny=facing==='S'?1:facing==='N'?-1:0;
+    const depth=nx?b.w:b.h,span=nx?b.h:b.w;
+    const entrance=Object.freeze({x:b.x+nx*(depth/2+10),y:b.y+ny*(depth/2+10),nx,ny});
+    const lot=Object.freeze({id,x:b.x,y:b.y,w:b.w,h:b.h,facing,entrance});
+    const roof=purpose==='MINE'?(b.arch==='HEADFRAME'||/HOIST/.test(b.signText||'')?'HEADFRAME':b.arch==='TENT'?'CANVAS':'GABLE'):
+      {SALOON:'HIP',SHERIFF:'STONE',BANK:'STONE',MEDIC:'HIP',MISSION:'CHAPEL',WORKSHOP:'SAWTOOTH',HOTEL:'MANSARD',DEPOT:'GABLE',BARN:'GAMBREL',TRAILER:'METAL',HOME:'GABLE',MARKET:'CANVAS',MERCHANT:'FALSE_FRONT'}[purpose];
+    const material=b.arch==='ADOBE'||b.frontierSettlementId==='SUNSPUR'?'ADOBE':
+      purpose==='BANK'||purpose==='SHERIFF'||purpose==='MISSION'?'STONE':purpose==='TRAILER'?'METAL':'TIMBER';
+    b.frontierLot=lot;b.frontierPremiseId=id;b.frontierPartId='main';
+    b.frontierDesign=Object.freeze({id,purpose,roof,material,variant,emblem:purpose,primary:true});
+    if(b._rise===undefined){const base={SALOON:34,SHERIFF:29,BANK:30,MEDIC:24,MISSION:29,WORKSHOP:22,HOTEL:35,DEPOT:25,MINE:25,BARN:24,TRAILER:13,HOME:18,MARKET:16,MERCHANT:23}[purpose];b._rise=base+(variant%5);}
+    // The activity saloon and sheriff keep their exact established footprints.
+    // Remaining compounds leave a real recessed forecourt inside the old lot.
+    if(b.isWesternBldg&&!b.isFrontierSaloon&&!b.isFrontierSheriff&&span>=220&&depth>=140&&(variant%3===0)) {
+      const side=variant&1?-1:1,backDepth=depth*.64,wingSpan=span*.27;
+      const p=frontierArchitectureLocal(lot,0,-depth*.18);
+      b.x=p[0];b.y=p[1];b.w=nx?backDepth:span;b.h=nx?span:backDepth;
+      const q=frontierArchitectureLocal(lot,side*(span-wingSpan)/2,depth*.32);
+      const wing={...b,x:q[0],y:q[1],w:nx?depth*.36:wingSpan,h:nx?wingSpan:depth*.36,
+        signText:undefined,isChurch:false,isLivery:false,frontierPartId:'return',
+        frontierDesign:Object.freeze({...b.frontierDesign,roof:material==='ADOBE'?'ADOBE':'GABLE',primary:false})};
+      if(b.frontierSettlementPart){wing.frontierParentSettlementPart=b.frontierSettlementPart;wing.frontierSettlementPart=b.frontierSettlementPart+':return';}
+      if(b.chunkKey)wing.chunkKey=b.chunkKey+':return';
+      wing._rise=Math.max(14,buildingRise(b)*.72);extra.push(wing);
+    }
+  }
+  list.push(...extra);return list;
+}
+const _frontierRoofMeshes=new WeakMap();
+function frontierRestoreSafePosition(a) {
+  if(currentLevel!==3||!BIOME_ACTIVE||!a||frontierSaloonIsInside()||shovelBelowGroundActor(a))return false;
+  if(!Number.isFinite(a.x)||!Number.isFinite(a.y))return false;
+  // Load the nearby collision records without advancing population, rendering
+  // or simulation. This also covers an old save taken in a satellite town.
+  if(chunkMgr){const cx=Math.floor(a.x/CHUNK_W),cy=Math.floor(a.y/CHUNK_W);for(let y=cy-1;y<=cy+1;y++)for(let x=cx-1;x<=cx+1;x++)chunkMgr.adopt(x,y);chunkMgr.rebuildWorldArrays();}
+  invalidateColIndex();
+  if(!a.checkCol(a.x,a.y))return false;
+  const ox=a.x,oy=a.y,base=groundElev(ox,oy);
+  for(let radius=12;radius<=360;radius+=12)for(let i=0;i<32;i++){
+    const angle=i*Math.PI/16,x=ox+Math.cos(angle)*radius,y=oy+Math.sin(angle)*radius;
+    if(Math.abs(groundElev(x,y)-base)>8||!frontierCanyonSpawnSafe(x,y))continue;
+    let continuous=true,previous=base;
+    for(let j=1;j<=Math.ceil(radius/16);j++){const t=j/Math.ceil(radius/16),z=groundElev(ox+(x-ox)*t,oy+(y-oy)*t);if(Math.abs(z-previous)>10){continuous=false;break;}previous=z;}
+    if(!continuous)continue;
+    a.x=x;a.y=y;
+    if(!a.checkCol(x,y)){
+      releaseActorCover(a);if(a.cover){a.cover.blend=0;a.cover.face=null;}
+      if(actorStance(a)==='PRONE'&&!stanceProneSpotClear(a))resetActorStance(a,'CROUCH');
+      return true;
+    }
+  }
+  a.x=ox;a.y=oy;return false;
+}
+function frontierArchitecturePalette(b) {
+  const d=b.frontierDesign,m=d.material;
+  const wall=m==='STONE'?[184,165,135]:m==='ADOBE'?[218,184,135]:m==='METAL'?[148,153,143]:[153,111,69];
+  const accent=b.accent==='teal'?[49,111,105]:b.accent==='red'?[160,64,43]:
+    d.purpose==='SALOON'?[128,54,41]:d.purpose==='MISSION'?[157,86,50]:[78,107,93];
+  const roof=m==='ADOBE'?[195,158,111]:m==='METAL'?[131,142,139]:
+    d.purpose==='BARN'?[149,68,46]:d.purpose==='HOTEL'?[69,112,102]:[121,93,68];
+  return {wall,roof,accent,trim:[231,209,166],ink:[56,39,29],glass:[48,75,76]};
+}
+function frontierRoofMesh(b) {
+  let mesh=_frontierRoofMeshes.get(b);if(mesh)return mesh;
+  const d=b.frontierDesign,p=frontierArchitecturePalette(b),f=b.facing||'S',swap=f==='E'||f==='W';
+  const w=(swap?b.h:b.w),h=(swap?b.w:b.h),rise=buildingRise(b),faces=[],ribs=[];
+  const point=(u,v,z)=>{const q=frontierArchitectureLocal({x:b.x,y:b.y,facing:f},u,v);return [q[0],q[1],z];};
+  const face=(pts,c)=>faces.push({points:pts.map(q=>point(...q)),color:c});
+  const tint=(c,k)=>c.map(v=>v*k);
+  const box=(x,y,bw,bh,z0,z,c)=>{
+    const a=[x,y,z0],bb=[x+bw,y,z0],cc=[x+bw,y+bh,z0],dd=[x,y+bh,z0];
+    const aa=[x,y,z],bbb=[x+bw,y,z],ccc=[x+bw,y+bh,z],ddd=[x,y+bh,z];
+    face([a,bb,bbb,aa],tint(c,.74));face([bb,cc,ccc,bbb],tint(c,.67));
+    face([cc,dd,ddd,ccc],tint(c,.80));face([dd,a,aa,ddd],tint(c,.70));face([aa,bbb,ccc,ddd],c);
+  };
+  const gable=(x,y,bw,bh,z,r,c)=>{
+    const a=[x,y,z],bb=[x+bw,y,z],cc=[x+bw,y+bh,z],dd=[x,y+bh,z],e=[x,y+bh/2,z+r],ff=[x+bw,y+bh/2,z+r];
+    face([a,dd,e],tint(c,.61));face([bb,ff,cc],tint(c,.75));face([a,bb,ff,e],tint(c,1.10));face([e,ff,cc,dd],tint(c,.86));
+    const count=Math.max(3,Math.min(FRONTIER_ARCHITECTURE.maxRoofBands,Math.floor(bw/24)));
+    for(let i=1;i<count;i++){const xx=x+bw*i/count;ribs.push([point(xx,y,z+.4),point(xx,y+bh/2,z+r+.4),point(xx,y+bh,z+.4)]);}
+    ribs.push([point(x,y+bh/2,z+r+.8),point(x+bw,y+bh/2,z+r+.8)]);
+  };
+  // Named plans retain a structural accent beyond colour/signage: the ridge
+  // rise and roof lantern position derive from their immutable address.
+  const signature=(d.variant>>>8)/16777216;
+  const x=-w/2-3,y=-h/2-3,bw=w+6,bh=h+6,rz=rise+1+signature*1.7;
+  if(d.roof==='SAWTOOTH') {
+    for(let i=0;i<3;i++){
+      const yy=y+bh*i/3,hh=bh/3;
+      face([[x,yy,rz],[x+bw,yy,rz],[x+bw,yy+hh*.74,rz+12],[x,yy+hh*.74,rz+12]],p.roof);
+      face([[x,yy+hh*.74,rz+12],[x+bw,yy+hh*.74,rz+12],[x+bw,yy+hh,rz],[x,yy+hh,rz]],p.glass);
+      face([[x,yy,rz],[x,yy+hh*.74,rz+12],[x,yy+hh,rz]],tint(p.roof,.7));
+      face([[x+bw,yy,rz],[x+bw,yy+hh,rz],[x+bw,yy+hh*.74,rz+12]],tint(p.roof,.85));
+    }
+  } else if(d.roof==='HIP'||d.roof==='MANSARD') {
+    const ix=bw*.20,iy=bh*.28,zz=rz+(d.roof==='MANSARD'?15:12);
+    face([[x,y,rz],[x+bw,y,rz],[x+bw-ix,y+iy,zz],[x+ix,y+iy,zz]],tint(p.roof,1.12));
+    face([[x,y+bh,rz],[x+ix,y+bh-iy,zz],[x+bw-ix,y+bh-iy,zz],[x+bw,y+bh,rz]],tint(p.roof,.83));
+    face([[x,y,rz],[x+ix,y+iy,zz],[x+ix,y+bh-iy,zz],[x,y+bh,rz]],tint(p.roof,.66));
+    face([[x+bw,y,rz],[x+bw,y+bh,rz],[x+bw-ix,y+bh-iy,zz],[x+bw-ix,y+iy,zz]],p.roof);
+    box(x+ix,y+iy,bw-2*ix,bh-2*iy,zz,zz+3,p.roof);
+    if(d.roof==='MANSARD')box(-w*.18,-h*.18,w*.36,h*.27,zz+3,zz+11,p.trim);
+  } else if(d.roof==='STONE'||d.roof==='ADOBE'||d.material==='ADOBE') {
+    box(x,y,bw,bh,rise,rz,p.roof);
+    for(const yy of [y,y+bh-5])box(x,yy,bw,5,rz,rz+7,p.trim);
+    for(const xx of [x,x+bw-5])box(xx,y+5,5,bh-10,rz,rz+7,p.trim);
+    if(d.roof==='STONE')box(-w*.31,-h*.28,w*.62,h*.48,rz,rz+8,p.wall);
+  } else if(d.roof==='GAMBREL') {
+    const strips=[[y,0],[y+bh*.22,12],[y+bh*.5,20],[y+bh*.78,12],[y+bh,0]];
+    for(let i=0;i<4;i++){const [a,az]=strips[i],[bb,bz]=strips[i+1];face([[x,a,rz+az],[x+bw,a,rz+az],[x+bw,bb,rz+bz],[x,bb,rz+bz]],tint(p.roof,i<2?1.13:.80));}
+    face(strips.map(([yy,z])=>[x,yy,rz+z]),tint(p.roof,.65));
+    face(strips.map(([yy,z])=>[x+bw,yy,rz+z]),tint(p.roof,.78));
+  } else {
+    gable(x,y,bw,bh,rz,d.roof==='CANVAS'?18:d.roof==='METAL'?4:11+signature*5,p.roof);
+    if(d.roof==='FALSE_FRONT') {
+      box(x,h/2-7,bw,10,rise,rz+15,p.wall);
+      box(-w*.24,h/2-7,w*.48,10,rz+15,rz+23,p.accent);
+    }
+  }
+  if(d.primary&&d.roof==='CHAPEL') {
+    box(-w*.39,h*.16,w*.22,h*.28,rise,rise+27,p.wall);
+    gable(-w*.41,h*.14,w*.26,h*.32,rise+27,9,p.roof);
+  } else if(d.primary&&d.roof==='HEADFRAME') {
+    const tx=-w*.23,ty=-h*.16,tw=w*.32,th=h*.38;
+    for(const xx of [tx,tx+tw-7])for(const yy of [ty,ty+th-7])box(xx,yy,7,7,rise,rise+32,p.ink);
+    box(tx-4,ty-3,tw+8,th+6,rise+30,rise+35,p.wall);
+    gable(tx-8,ty-7,tw+16,th+14,rise+35,7,p.roof);
+  }
+  // Chimneys and roof lanterns are individual masses, never flat roof decals.
+  if(d.primary&&d.roof!=='CANVAS'&&d.roof!=='HEADFRAME') {
+    const cw=Math.min(20,w*.09),ch=Math.min(24,h*.16),xx=w*(.22+(d.variant%5)*.025),yy=-h*.24;
+    box(xx,yy,cw,ch,rz+6,rz+20,p.wall);box(xx-2,yy-2,cw+4,ch+4,rz+20,rz+23,p.trim);
+    face([[xx+3,yy+3,rz+23.1],[xx+cw-3,yy+3,rz+23.1],[xx+cw-3,yy+ch-3,rz+23.1],[xx+3,yy+ch-3,rz+23.1]],p.ink);
+  }
+  if(d.primary) {
+    const cwidth=Math.min(w*.56,112),cz=rise*.66;
+    box(-cwidth/2,h/2-3,cwidth,Math.min(25,h*.18),cz-3,cz,p.accent);
+  }
+  mesh={faces,ribs,palette:p,width:w,depth:h,rise};_frontierRoofMeshes.set(b,mesh);return mesh;
+}
+function frontierProjectedPoint(b,p) {
+  const lean=massLean(b.x,b.y,p[2],[0,0]);return [p[0]+lean[0],p[1]+lean[1]];
+}
+function paintFrontierRoofMesh(g,b,heightPass=false,wet=0) {
+  const mesh=frontierRoofMesh(b),unit=massLean(b.x,b.y,1,[0,0]),ux=unit[0],uy=unit[1];
+  for(const f of mesh.faces) {
+    if(heightPass){const z=f.points.reduce((n,p)=>n+p[2],0)/f.points.length;glRigMat(g,z+groundElev(b.x,b.y),.13+.26*wet,0);}
+    else g.fill(...f.color);
+    g.beginShape();for(const p of f.points)g.vertex(p[0]+ux*p[2],p[1]+uy*p[2]);g.endShape(CLOSE);
+  }
+  if(!heightPass){g.stroke(63,47,33,130);g.strokeWeight(1.15);for(const rib of mesh.ribs){g.beginShape();for(const p of rib)g.vertex(p[0]+ux*p[2],p[1]+uy*p[2]);g.endShape();}g.noStroke();}
+}
+function drawFrontierTradeEmblem(kind,x,y,size,col) {
+  push();translate(x,y);scale(size/20);noFill();stroke(...col);strokeWeight(2.4);
+  if(kind==='SHERIFF'){beginShape();for(let i=0;i<12;i++){const a=i*Math.PI/6-Math.PI/2,r=i%2?5:10;vertex(Math.cos(a)*r,Math.sin(a)*r);}endShape(CLOSE);ellipse(0,0,5,5);}
+  else if(kind==='BANK'){ellipse(0,0,17,17);ellipse(0,0,6,6);for(let i=0;i<4;i++){const a=i*Math.PI/2;line(Math.cos(a)*3,Math.sin(a)*3,Math.cos(a)*8,Math.sin(a)*8);}}
+  else if(kind==='MEDIC'||kind==='MISSION'){line(-8,0,8,0);line(0,-10,0,10);if(kind==='MEDIC'){rect(-9,-9,18,18,3);}}
+  else if(kind==='WORKSHOP'){line(-8,-8,7,8);line(7,-8,-7,8);line(-10,-8,-3,-8);line(5,-10,10,-5);}
+  else if(kind==='SALOON'){arc(0,-2,17,19,-.5,Math.PI+.5);line(-8,-4,-10,-7);line(8,-4,10,-7);ellipse(0,7,6,6);line(-5,7,5,7);}
+  else if(kind==='DEPOT'||kind==='TRAILER'){ellipse(0,0,17,17);for(let i=0;i<6;i++){const a=i*Math.PI/3;line(0,0,Math.cos(a)*8,Math.sin(a)*8);}line(-10,10,10,10);}
+  else if(kind==='MINE'){line(-8,-8,8,8);line(-8,8,8,-8);arc(0,-1,21,14,Math.PI,Math.PI*2);}
+  else if(kind==='BARN'||kind==='HOME'||kind==='HOTEL'){beginShape();vertex(-9,1);vertex(0,-8);vertex(9,1);vertex(9,9);vertex(-9,9);endShape(CLOSE);line(-3,9,-3,3);line(3,9,3,3);}
+  else{rect(-8,-6,16,14,2);line(-10,-6,10,-6);line(0,-9,0,9);line(-6,-9,6,-9);}
+  pop();
+}
+function drawFrontierArchitecture(b) {
+  const mesh=frontierRoofMesh(b),p=mesh.palette,z=buildingRise(b),lean=massLean(b.x,b.y,z,[0,0]);
+  noStroke();drawMassSides(b.x-b.w/2,b.y-b.h/2,b.x+b.w/2,b.y+b.h/2,lean[0],lean[1],...p.wall,18);
+  const x0=b.x-b.w/2,x1=b.x+b.w/2,y0=b.y-b.h/2,y1=b.y+b.h/2;
+  const face=(ax,ay,bx,by,len,front)=>{
+    const panel=(u,v,t,q)=>quad(ax+(bx-ax)*u+lean[0]*t,ay+(by-ay)*u+lean[1]*t,ax+(bx-ax)*v+lean[0]*t,ay+(by-ay)*v+lean[1]*t,ax+(bx-ax)*v+lean[0]*q,ay+(by-ay)*v+lean[1]*q,ax+(bx-ax)*u+lean[0]*q,ay+(by-ay)*u+lean[1]*q);
+    const bays=Math.max(2,Math.min(8,Math.floor(len/42))),floors=b.frontierDesign.purpose==='HOTEL'?2:1;
+    fill(...p.trim);panel(.02,.98,.87,.98);
+    for(let i=0;i<bays;i++)for(let floor=0;floor<floors;floor++){
+      if(front&&floor===0&&i===Math.floor(bays/2))continue;
+      const t=(floor+.20)/floors,q=(floor+.72)/floors,u=(i+.22)/bays,v=(i+.78)/bays;
+      fill(...p.trim);panel(u-.015,v+.015,t-.03,q+.03);fill(...p.glass);panel(u,v,t,q);
+      fill(177,201,179,150);panel(u+.015,u+.045,t+.05,q-.025);
+    }
+    if(front&&b.frontierDesign.primary){fill(...p.ink);panel(.43,.57,.015,.66);fill(...p.accent);panel(.445,.555,.04,.60);fill(...p.trim);panel(.535,.55,.25,.32);}
+    if(b.frontierDesign.material==='TIMBER'){fill(78,52,33,80);for(let i=1;i<6;i++)panel(.025,.975,i/7,i/7+.018);}
+  };
+  const f=b.facing||'S';
+  if(Math.abs(lean[0])>1)face(lean[0]>0?x0:x1,y0,lean[0]>0?x0:x1,y1,b.h,f===(lean[0]>0?'W':'E'));
+  if(Math.abs(lean[1])>1)face(x0,lean[1]>0?y0:y1,x1,lean[1]>0?y0:y1,b.w,f===(lean[1]>0?'N':'S'));
+  paintFrontierRoofMesh(window,b);
+  if(b.frontierDesign.primary){
+    const swap=f==='W'||f==='E',span=swap?b.h:b.w,depth=swap?b.w:b.h;
+    const c=frontierArchitectureLocal({x:b.x,y:b.y,facing:f},0,depth/2-8),q=frontierProjectedPoint(b,[c[0],c[1],z+10]);
+    fill(...p.ink);ellipse(q[0],q[1],32,32);fill(...p.trim);ellipse(q[0],q[1],27,27);
+    drawFrontierTradeEmblem(b.frontierDesign.emblem,q[0],q[1],17,p.accent);
+    if(b.signText&&span>145){const label=frontierArchitectureLocal({x:b.x,y:b.y,facing:f},0,depth/2-30),v=frontierProjectedPoint(b,[...label,z+9]);push();textAlign(CENTER,CENTER);textFont('sans-serif');textSize(Math.min(10,(span-30)/Math.max(7,b.signText.length)*1.4));fill(...p.trim);text(b.signText,v[0],v[1]);pop();}
+  }
 }
 
 function drawWesternBuilding(b) {
@@ -5506,6 +5917,7 @@ function glRigFrontierRaisedHeight(g, wet) {
   // leaving the silhouette of their hat shaded onto the timber above them.
   for (const b of activeBuildings) {
     if (!frontierRaisedBuilding(b) || !inView(b.x, b.y, Math.max(b.w || 0, b.h || 0) + 150)) continue;
+    if(b.frontierDesign){paintFrontierRoofMesh(g,b,true,wet);continue;}
     const rise = buildingRise(b);
     massLean(b.x, b.y, rise, _depthLean); clampLean(_depthLean, leanCapOf(b));
     glRigMat(g, rise + groundElev(b.x, b.y), .12 + .30 * wet, b.angle || 0);
@@ -5518,6 +5930,7 @@ function glRigFrontierRaisedHeight(g, wet) {
     glRigMat(g, base + 62, .12 + .20 * wet, 0);
     g.rect(1229, -26, 142, 36);
   }
+  glRigFrontierCanyonRailsHeight(g, wet);
 }
 
 // Every character draw goes through here. Flyers have no ground contact to
@@ -5642,6 +6055,11 @@ function drawDepthSorted() {
     post._depthKey = massDepth(post);
     masses.push(post);
   }
+  for (const rail of frontierCanyonRails()) {
+    if (!inView(rail.x, rail.y, Math.max(rail.w, rail.h) + 70)) continue;
+    rail._depthKey = rail.y + rail.h / 2;
+    masses.push(rail);
+  }
   // Standing decor, queued by drawDecor() earlier in the same frame. A tree's
   // ground contact is its trunk, which is its own origin -- the same point its
   // contact shadow and its entry in the rig's height field already use.
@@ -5660,6 +6078,7 @@ function drawDepthSorted() {
   }
 
   const actors = _depthActors;
+  drawFrontierCanyonRailShadows(window);
   drawGroundBodyActors(actors);
   for (let i = 0; i < actors.length; i++) {
     const actor=actors[i];let depth=actor.y;
@@ -6597,12 +7016,14 @@ function drawBuildings(list, i0, i1) {
   for (let _i = _lo; _i < _hi; _i++) { let b = _arr[_i];
     _lgClose();
     if (!inView(b.x, b.y, Math.max(b.w || 0, b.h || 0) + 150)) continue;
+    if (b.isFrontierCanyonRail) { drawFrontierCanyonRail(b); continue; }
     if (b.isBiomeProp) continue; // drawn by drawBiomeProps()
     // A trunk is a collision volume so you cannot walk through a tree. The
     // canopy in the decor list is what you actually see; without this the
     // generic building branch drew a dark box under every tree in the wood.
     if (b.isTreeTrunk) continue;
     _wallPaint = b;
+    if (currentLevel===3 && b.frontierDesign) { drawFrontierArchitecture(b); continue; }
     if(b.undergroundGate)continue; // animated leaves and arch draw together after the mass pass
     if(b.undergroundWall){drawUndergroundWall(b);continue;}
     if(b.undergroundProp){drawUndergroundProp(b);continue;}
@@ -11474,13 +11895,7 @@ function shovelFrontierDeckAt(x,y) {
       bridge(frontierCanyonSample('Y',x,y,Math.round((x-5200)/9200))))return true;
   for(const site of FRONTIER_CANYON_LANDMARKS)if(frontierCanyonLandmarkNear(site,x,y)&&
       bridge(frontierCanyonSample(site.axis,x,y,site.index)))return true;
-  // These slim planks are drawn by the authored town overlay, not colliders.
-  for(const run of [[-4760,-4480],[-4160,-3560],[-3240,-1280],[-980,-80]])
-    if(y>=run[0]&&y<run[1]&&((x>=1100&&x<1134)||(x>=1486&&x<1520)))return true;
-  for(const sy of [-3400,-4320])for(const side of [-1,1])
-    if(y>=sy+side*138-16&&y<sy+side*138+16)
-      for(const run of [[-355,970],[1770,2720],[3110,3450]])if(x>=run[0]&&x<run[1])return true;
-  return false;
+  return frontierSurfaceAt(x,y)==='TIMBER';
 }
 function shovelSurfaceSoftAt(x,y,level=currentLevel) {
   if(level!==currentLevel||level<1||level>7||!Number.isFinite(x)||!Number.isFinite(y)||
@@ -14695,6 +15110,7 @@ function drawGroundLots() {
 
 function drawBuildingPads() {
   if (currentLevel === 8 || currentLevel===9) return; // Laboratory fixtures stand on the indoor floor, not outdoor lots.
+  if(currentLevel===3&&BIOME_ACTIVE)return; // Unified baked frontier surfaces own these aprons.
   for (let b of activeBuildings) { // Changed to activeBuildings
         if (!inView(b.x, b.y, Math.max(b.w || 0, b.h || 0) + 150)) continue;
 
@@ -15651,44 +16067,7 @@ function legacyDrawGround(skipBase) {
       // chunk texture -- so it buried the baked Main Street completely and the
       // carriageway came out as flat sand between two rows of shops. It is a
       // warm tint on the settlement now, not a lid over it.
-      softRect(-420, -4890, 4050, 5190, 206, 179, 138, 52, 200, 6, 10);
-      softBlob(1300, -1140, 430, 410, 215, 189, 145, 54);                     // plaza
-      softBlob(1300,-3400,420,365,215,189,145,40);
-      softBlob(1300,-4320,440,360,215,189,145,40);
-
-      // Continuous boardwalk down both kerbs, joining up the planking each
-      // storefront draws for itself so the walk runs unbroken past the alleys.
-      // Laid on the kerb line the columns front onto -- 1130 and 1490 -- rather
-      // than as the 270-wide slab it used to be, which ran under the buildings.
-      const bwW = 1130, bwE = 1490;
-      const walkRuns=[[-4760,-4480],[-4160,-3560],[-3240,-1280],[-980,-80]];
-      for(const run of walkRuns){
-        fill(150,115,75);noStroke();
-        rect(bwW-30,run[0],34,run[1]-run[0]);rect(bwE-4,run[0],34,run[1]-run[0]);
-        stroke(112,84,52,160);strokeWeight(1);
-        for(let py=run[0]+5;py<run[1];py+=15){line(bwW-30,py,bwW+4,py);line(bwE-4,py,bwE+30,py);}
-        noStroke();fill(0,0,0,34);
-        rect(bwW,run[0],5,run[1]-run[0]);rect(bwE-8,run[0],5,run[1]-run[0]);
-      }
-      // Planked walks connect the northern shops across their own frontage,
-      // breaking for Main Street and the railway avenue.
-      for(const streetY of [-3400,-4320])for(const side of [-1,1]){
-        const yy=streetY+side*138-16;
-        for(const run of [[-355,970],[1770,2720],[3110,3450]]){
-          fill(157,121,80);noStroke();rect(run[0],yy,run[1]-run[0],32);
-          stroke(113,84,54,145);strokeWeight(1);
-          for(let xx=run[0]+5;xx<run[1];xx+=16)line(xx,yy,xx,yy+32);
-          noStroke();fill(0,0,0,30);rect(run[0],yy+30,run[1]-run[0],3);
-        }
-      }
-
-      // Dusty speckle texture (pre-generated, stays still frame to frame)
-      if (window.westernDust) {
-          fill(182, 154, 113, 100);
-          for (let d of window.westernDust) {
-              if (inView(d.x, d.y, 20)) ellipse(d.x, d.y, d.sz, d.sz * 0.8);
-          }
-      }
+      // Frontage surfaces and dust are baked by bakeFrontierSurfaces.
 
       // Only the entrance's footings and cast shade lie on the ground. Its
       // posts, overhead beam and sign are drawn with the raised world pass.
@@ -31218,8 +31597,10 @@ class Bullet {
               noStroke();
               for (let i = 0; i < this.history.length; i++) {
                   let pt = this.history[i];
-                  let alpha = map(i, 0, this.history.length - 1, 0, 150);
-                  let sSize = map(i, 0, this.history.length - 1, 16, 6);
+                  // The first smoke sample must not divide by a zero history span.
+                  const smokeT=this.history.length===1?1:i/(this.history.length-1);
+                  let alpha = 150*smokeT;
+                  let sSize = 16-10*smokeT;
                   fill(150, alpha); 
                   ellipse(pt.x + sin(frameCount * 0.5 + i) * 2, pt.y + cos(frameCount * 0.5 + i) * 2, sSize, sSize);
               }
@@ -35687,6 +36068,7 @@ function loadGame() {
         // rebuilt the city roster and removed its old random combatants.
         ensureCityRookiePatrols();
         restoreUndergroundRoute(state.undergroundRoute);
+        if(currentLevel===3)frontierRestoreSafePosition(player);
         if(currentLevel===9){
           restoreOccultState(state.occult);
           const restoredPosition=occultRestorePosition(player.x,player.y,15);
@@ -36072,7 +36454,10 @@ function buildClearable(o) {
                           o.propType === "CHECKPOINT" || o.propType === "OUTPOST" ||
                           o.propType === "BORDERWALL")) return false;
     if (typeof harvestProfile === 'function' && harvestProfile(o)) return true;
-    const w = o.w || 0, h = o.h || 0;
+    // A compound's narrow return is part of the original premises, rather
+    // than newly clearable furniture created by splitting its collision.
+    const lot=o.frontierLot;
+    const w = lot ? lot.w : o.w || 0, h = lot ? lot.h : o.h || 0;
     return Math.max(w, h) <= BUILD_CLEAR_MAX && w * h <= BUILD_CLEAR_AREA;
 }
 
@@ -39422,6 +39807,114 @@ function drawCityParkTerrace(b) {
 // same contour owns their rock faces, walkable floor, ramps, bridge decks and
 // ground-height field. Chunk boundaries never select a new bend or elevation.
 const FRONTIER_CANYON_STEP = 48;
+// Broad value bands carry the drop before small sandstone detail is visible.
+// These are material parameters only: native terrain and crossing heights stay
+// owned by frontierCanyonProfile/Sample.
+const FRONTIER_CANYON_STYLE = Object.freeze({
+  floor: [157, 111, 75], toe: [39, 33, 30], rim: [250, 207, 143],
+  railOffset: 90, railRise: 22, postRise: 27, railSlice: 72.5
+});
+let _frontierCanyonRailKey = '', _frontierCanyonRailCore = null;
+let _frontierCanyonRailRecords = [];
+function frontierCanyonRails() {
+  if (!BIOME_ACTIVE || currentBiome !== 3) return [];
+  const bounds = [viewLeft, viewTop, viewRight, viewBottom];
+  if (!bounds.every(Number.isFinite)) return [];
+  const x0=Math.floor((viewLeft-180)/CHUNK_W),x1=Math.floor((viewRight+180)/CHUNK_W),
+    y0=Math.floor((viewTop-180)/CHUNK_W),y1=Math.floor((viewBottom+180)/CHUNK_W),
+    key=x0+','+y0+','+x1+','+y1;
+  if(key===_frontierCanyonRailKey&&_frontierCanyonRailCore===authoredCore)return _frontierCanyonRailRecords;
+  _frontierCanyonRailKey=key;_frontierCanyonRailCore=authoredCore;
+  const records=[],left=x0*CHUNK_W,right=(x1+1)*CHUNK_W,top=y0*CHUNK_W,bottom=(y1+1)*CHUNK_W;
+  const add=(axis,index)=>{
+    const lo=axis==='Y'?top:left,hi=axis==='Y'?bottom:right,
+      site=frontierCanyonLandmark(axis,index),
+      first=Math.ceil((lo-600)/2400),last=Math.floor((hi-600)/2400),
+      crossings=site?site.bridgeUs:Array.from({length:Math.max(0,last-first+1)},(_,i)=>600+(first+i)*2400);
+    for(const u of crossings){
+      if(u<lo||u>hi)continue;
+      const p=frontierCanyonProfile(axis,u,index),c=frontierCanyonPoint(axis,u,p.center);
+      if(p.depth<1||p.bridge<.999||c[0]+p.outerHalf+130<left||c[0]-p.outerHalf-130>right||
+        c[1]+p.outerHalf+130<top||c[1]-p.outerHalf-130>bottom)continue;
+      const length=p.outerHalf*2+48,count=Math.ceil(length/FRONTIER_CANYON_STYLE.railSlice);
+      for(const side of [-1,1])for(let i=0;i<count;i++){
+        const a=-p.outerHalf-24+length*i/count,b=-p.outerHalf-24+length*(i+1)/count,
+          along=side*FRONTIER_CANYON_STYLE.railOffset,
+          x=axis==='X'?c[0]+along:c[0]-(a+b)*.5,
+          y=axis==='X'?c[1]+(a+b)*.5:c[1]+along;
+        records.push({isFrontierCanyonRail:true,x,y,w:axis==='X'?12:b-a,h:axis==='X'?b-a:12,
+          axis,index,u,side,postStart:i%2===0,postEnd:i===count-1,
+          key:axis+':'+index+':'+u+':'+side+':'+i});
+      }
+    }
+  };
+  for(let n=Math.floor((top-5350)/7200);n<=Math.ceil((bottom-1750)/7200);n++)add('X',n);
+  for(let n=Math.floor((left-7000)/9200);n<=Math.ceil((right-3400)/9200);n++)add('Y',n);
+  for(const site of FRONTIER_CANYON_LANDMARKS)if(frontierCanyonLandmarkNear(site,(left+right)*.5,(top+bottom)*.5,
+    Math.max(right-left,bottom-top)*.5+150))add(site.axis,site.index);
+  // One replaceable view-window cache; no growth with miles explored and no
+  // additions to collision, cover, spawn or destruction arrays.
+  _frontierCanyonRailRecords=records;
+  return records;
+}
+function frontierCanyonRailPoint(x,y,z) {
+  const lean=[0,0];massLean(x,y,z,lean);
+  // Continuous bounded projection at every shared endpoint keeps small posts
+  // upright while adjacent rail slices still join exactly as the camera moves.
+  const length=Math.hypot(lean[0],lean[1]),cap=FRONTIER_CANYON_STYLE.postRise;
+  if(length>cap){lean[0]*=cap/length;lean[1]*=cap/length;}
+  return [x+lean[0],y+lean[1]];
+}
+function frontierCanyonRailBoxes(b,visit) {
+  const vertical=b.axis==='X',x0=b.x-b.w/2,y0=b.y-b.h/2,style=FRONTIER_CANYON_STYLE;
+  visit(x0+(vertical?3:0),y0+(vertical?0:3),vertical?6:b.w,vertical?b.h:6,style.railRise*.5-2,style.railRise*.5+2);
+  visit(x0+(vertical?2:0),y0+(vertical?0:2),vertical?8:b.w,vertical?b.h:8,style.railRise-3,style.railRise+1);
+  if(b.postStart)visit(vertical?b.x-6:x0-6,vertical?y0-6:b.y-6,12,12,0,style.postRise);
+  if(b.postEnd)visit(vertical?b.x-6:x0+b.w-6,vertical?y0+b.h-6:b.y-6,12,12,0,style.postRise);
+}
+function paintFrontierCanyonRail(g,b,heightOnly=false,wet=0) {
+  g.push();g.noStroke();
+  frontierCanyonRailBoxes(b,(x,y,w,h,z0,z1)=>{
+    const foot=[[x,y],[x+w,y],[x+w,y+h],[x,y+h]].map(p=>frontierCanyonRailPoint(p[0],p[1],z0)),
+      roof=[[x,y],[x+w,y],[x+w,y+h],[x,y+h]].map(p=>frontierCanyonRailPoint(p[0],p[1],z1)),
+      shape=points=>{g.beginShape();for(const p of points)g.vertex(p[0],p[1]);g.endShape(CLOSE);};
+    if(heightOnly){glRigMat(g,z1,.18+.24*wet,0);shape(roof);return;}
+    // Grounded timber faces and thick caps replace rail-shaped paint on sand.
+    const dx=roof[0][0]-foot[0][0],dy=roof[0][1]-foot[0][1];
+    for(let i=0;i<4;i++){
+      const j=(i+1)%4,nx=i===1?1:i===3?-1:0,ny=i===2?1:i===0?-1:0,
+        lit=Math.max(0,-nx*LIGHT_DX-ny*LIGHT_DY);
+      // Only faces opened by the shared camera projection are visible. This
+      // also avoids paying four wall polygons for every small rail segment.
+      if(nx*dx+ny*dy>=-.0001)continue;
+      g.fill(75+lit*51,49+lit*36,31+lit*23);shape([foot[i],foot[j],roof[j],roof[i]]);
+    }
+    g.fill(z0===0?211:177,z0===0?170:133,z0===0?108:78);shape(roof);
+    if(z0===0){const center=frontierCanyonRailPoint(x+w/2,y+h/2,z1);
+      g.fill(59,56,48);g.ellipse(center[0],center[1],3.2,3.2);}
+    else{g.stroke(236,193,127,155);g.strokeWeight(.9);g.line(roof[0][0],roof[0][1],roof[1][0],roof[1][1]);g.noStroke();}
+  });
+  g.pop();
+}
+function drawFrontierCanyonRail(b){paintFrontierCanyonRail(window,b);}
+function drawFrontierCanyonRailShadows(g){
+  if(!BIOME_ACTIVE||currentBiome!==3||glRigOwnsSunShadows())return;
+  const scale=shadowLengthScale();g.push();g.noStroke();g.fill(31,28,25,44*shadowDensity());
+  for(const b of frontierCanyonRails()){
+    if(!inView(b.x,b.y,Math.max(b.w,b.h)+70))continue;
+    const along=b.axis==='X',x0=b.x-(along?4:b.w/2),y0=b.y-(along?b.h/2:4),
+      w=along?8:b.w,h=along?b.h:8,dx=LIGHT_DX*FRONTIER_CANYON_STYLE.railRise*scale,
+      dy=LIGHT_DY*FRONTIER_CANYON_STYLE.railRise*scale,
+      hull=corpseWallHull([{x:x0,y:y0},{x:x0+w,y:y0},{x:x0+w,y:y0+h},{x:x0,y:y0+h},
+        {x:x0+dx,y:y0+dy},{x:x0+w+dx,y:y0+dy},{x:x0+w+dx,y:y0+h+dy},{x:x0+dx,y:y0+h+dy}]);
+    g.beginShape();for(const p of hull)g.vertex(p.x,p.y);g.endShape(CLOSE);
+  }
+  g.pop();
+}
+function glRigFrontierCanyonRailsHeight(g,wet){
+  if(!BIOME_ACTIVE||currentBiome!==3)return;
+  for(const b of frontierCanyonRails())if(inView(b.x,b.y,Math.max(b.w,b.h)+70))paintFrontierCanyonRail(g,b,true,wet);
+}
 // Finite side gulches fill gaps between the long desert ribbons. Their index
 // and world-space plan are shared by the bake, height field and native movement.
 // Fractional indexes cannot replace any integer row in the endless ribbon grid.
@@ -39828,7 +40321,7 @@ function bakeFrontierCanyonStrip(g, axis, index, ox, oy) {
     frontierCanyonQuad(g, axis, u, u + FRONTIER_CANYON_STEP,
       p.center - p.outerHalf - 18, q.center - q.outerHalf - 18,
       p.center + p.outerHalf + 18, q.center + q.outerHalf + 18);
-    g.fill(172, 124, 81, alpha);
+    g.fill(...FRONTIER_CANYON_STYLE.floor, alpha);
     frontierCanyonQuad(g, axis, u, u + FRONTIER_CANYON_STEP,
       p.center - p.floorHalf, q.center - q.floorHalf,
       p.center + p.floorHalf, q.center + q.floorHalf);
@@ -39852,30 +40345,42 @@ function bakeFrontierCanyonStrip(g, axis, index, ox, oy) {
       for (let k = 0; k < 6; k++) {
         const inner0=frontierCanyonBedding(axis,u,index,k),inner1=frontierCanyonBedding(axis,u+FRONTIER_CANYON_STEP,index,k),
           outer0=frontierCanyonBedding(axis,u,index,k+1),outer1=frontierCanyonBedding(axis,u+FRONTIER_CANYON_STEP,index,k+1);
-        const warm = k % 2 ? 9 : -4;
-        g.fill(106 + lit * 47 + k * 8 + warm,
-          65 + lit * 32 + k * 7 + warm * .45,
-          46 + lit * 21 + k * 4, alpha);
+        const warm = k % 2 ? 12 : -8;
+        // Dark lower faces, warm middle beds and pale upper shelves make the
+        // full drop legible at phone scale without increasing texture density.
+        g.fill(83 + lit * 57 + k * 13 + warm,
+          50 + lit * 37 + k * 10 + warm * .45,
+          38 + lit * 23 + k * 6, alpha);
         frontierCanyonQuad(g, axis, u, u + FRONTIER_CANYON_STEP,
           p.center + side * (p.floorHalf + inner0), q.center + side * (q.floorHalf + inner1),
           p.center + side * (p.floorHalf + outer0), q.center + side * (q.floorHalf + outer1));
         if (cut > .08) {
-          g.fill(55, 42, 35, alpha * .30 * cut);
+          g.fill(42, 34, 30, alpha * .48 * cut);
           frontierCanyonQuad(g, axis, u, u + FRONTIER_CANYON_STEP,
             p.center + side * (p.floorHalf + inner0), q.center + side * (q.floorHalf + inner1),
-            p.center + side * (p.floorHalf + inner0 + 3), q.center + side * (q.floorHalf + inner1 + 3));
+            p.center + side * (p.floorHalf + inner0 + 6), q.center + side * (q.floorHalf + inner1 + 6));
         }
       }
       // Cut-bank contact shade roots the sheer wall at the floor. The bright
       // top lip is physically separated from it by the filled rock faces.
-      g.fill(53, 42, 34, alpha * .42 * cut);
+      g.fill(...FRONTIER_CANYON_STYLE.toe, alpha * .62 * cut);
       frontierCanyonQuad(g, axis, u, u + FRONTIER_CANYON_STEP,
-        p.center + side * (p.floorHalf - 28), q.center + side * (q.floorHalf - 28),
+        p.center + side * (p.floorHalf - 32), q.center + side * (q.floorHalf - 32),
         p.center + side * (p.floorHalf + 8), q.center + side * (q.floorHalf + 8));
-      g.fill(243, 192, 122, alpha * (.35 + .48 * lit) * cut);
+      // An inner undercut and two separated rim tiers distinguish the cliff
+      // lip from the dusty plateau. All disappear along the real ramp ease.
+      g.fill(65, 43, 32, alpha * .72 * cut);
+      frontierCanyonQuad(g, axis, u, u + FRONTIER_CANYON_STEP,
+        p.center + side * (p.outerHalf - 27), q.center + side * (q.outerHalf - 27),
+        p.center + side * (p.outerHalf - 12), q.center + side * (q.outerHalf - 12));
+      g.fill(...FRONTIER_CANYON_STYLE.rim, alpha * (.47 + .48 * lit) * cut);
       frontierCanyonQuad(g, axis, u, u + FRONTIER_CANYON_STEP,
         p.center + side * (p.outerHalf - 9), q.center + side * (q.outerHalf - 9),
         p.center + side * (p.outerHalf + 3), q.center + side * (q.outerHalf + 3));
+      g.fill(231, 169, 104, alpha * .64 * cut);
+      frontierCanyonQuad(g, axis, u, u + FRONTIER_CANYON_STEP,
+        p.center + side * (p.outerHalf + 5), q.center + side * (q.outerHalf + 5),
+        p.center + side * (p.outerHalf + 13), q.center + side * (q.outerHalf + 13));
       if (p.ramp > .02 || q.ramp > .02) {
         // Ramp art follows the exact same width/ease as the height field.
         g.fill(199, 155, 101, alpha * Math.max(p.ramp, q.ramp));
@@ -39896,8 +40401,8 @@ function bakeFrontierCanyonStrip(g, axis, index, ox, oy) {
   }
   bakeFrontierCanyonGeology(g, axis, index, lo, hi);
   // Bridges are deterministic landmarks and surfaces, with their footing at
-  // both rims. Their plank/rail geometry is baked; no static draw calls accrue
-  // as the world grows and no invisible collision box is placed on the deck.
+  // both rims. Only ground decking/stringers are baked. Raised rails live in
+  // the bounded depth-pass window so a crossing actor passes behind them.
   const first = Math.floor((lo - 600) / 2400), last = Math.ceil((hi - 600) / 2400);
   const site=frontierCanyonLandmark(axis,index),crossings=site?site.bridgeUs:Array.from({length:last-first+1},(_,i)=>600+(first+i)*2400);
   for (const u of crossings) {
@@ -39915,21 +40420,9 @@ function bakeFrontierCanyonStrip(g, axis, index, ox, oy) {
       paintFrontierBridgeBoard(g, -80, v, 160, 22, chunkHash(3, woodSeed & 0xffff, board, woodSeed >>> 16), false, true, 4.5);
     }
     for (const side of [-1, 1]) {
-      // Recessed edge stringer, rail and square-capped uprights keep their
-      // original footprint. Iron straps sit across, rather than along, grain.
+      // Recessed ground stringers retain the old deck footprint. Raised wood
+      // is painted by frontierCanyonRails(), never stamped onto the floor.
       g.fill(44, 34, 27, 100); g.rect(side < 0 ? -84 : 75, -p.outerHalf - 22, 9, p.outerHalf * 2 + 44);
-      g.fill(49, 38, 28); g.rect(side < 0 ? -94 : 84, -p.outerHalf - 26, 10, p.outerHalf * 2 + 52);
-      paintFrontierBridgeBoard(g, side < 0 ? -92 : 86, -p.outerHalf - 24, 6, p.outerHalf * 2 + 48,
-        chunkHash(3, woodSeed & 0xffff, side, 0x7261), true, false);
-      for (let v = -p.outerHalf, post = 0; v <= p.outerHalf; v += 145, post++) {
-        g.fill(40, 32, 26, 80); g.rect(side * 90 - 7 + localLightX * 6, v - 6 + localLightY * 6, 16, 19);
-        g.fill(47, 39, 31); g.rect(side * 90 - 8, v - 8, 16, 16);
-        g.fill(185, 142, 88); g.rect(side * 90 - 6, v - 6, 12, 12);
-        g.fill(225, 187, 121); g.rect(side * 90 - 6, v - 6, 11, 3);
-        g.stroke(111, 77, 47, 150); g.strokeWeight(.8); g.line(side * 90 - 3, v - 2, side * 90 + 3, v + 3); g.noStroke();
-        g.fill(55, 55, 48); g.rect(side * 90 - 8, v + 3, 16, 3);
-        g.fill(166, 158, 129); g.ellipse(side * 90, v + 4, 1.8, 1.8);
-      }
     }
     g.pop();
   }
@@ -43805,7 +44298,7 @@ function generateChunkContent(biome, cx, cy, forestBaseOnly = false, forestStand
   const leisureBlock=biome===1&&cityLeisureBlockPlan(cx,cy)!==null;
   const leisureEdge=biome===1&&!downtownBlock&&!leisureBlock&&!cityDowntownJunction(cx,cy)&&
     cityLeisureJunction(cx,cy)&&bnoise(1,cx*4096+7717,cy*4096+3131,.31)>.62;
-  for (let i = 0; i < solid.length; i++) solid[i].chunkKey = cx + "," + cy + "," + (downtownBlock ? "downtown:v1:" : leisureBlock ? "leisure:v1:" : downtownEdge ? "downtown-edge:v1:" : leisureEdge ? "leisure-edge:v1:" : districtBlock ? "district:v3:" : solid[i].isCivic ? "civic:" : "") + i;
+  for (let i = 0; i < solid.length; i++) solid[i].chunkKey = cx + "," + cy + "," + (biome===3&&frontierArchitectureEligible(solid[i]) ? "frontier:v1:" : downtownBlock ? "downtown:v1:" : leisureBlock ? "leisure:v1:" : downtownEdge ? "downtown-edge:v1:" : leisureEdge ? "leisure-edge:v1:" : districtBlock ? "district:v3:" : solid[i].isCivic ? "civic:" : "") + i;
 
   appendWoodlandForest(biome, cx, cy, solid, decor, decorBake, nearAnchor, forestBaseOnly, forestStandBaseOnly);
   if (!forestBaseOnly && !forestStandBaseOnly) {
@@ -43878,6 +44371,7 @@ function generateChunkContent(biome, cx, cy, forestBaseOnly = false, forestStand
   filterFrontierBountyContent(biome, content);
   filterFrontierSettlementContent(biome,cx,cy,content);
   filterShovelGrassContent(biome,content);
+  if(biome===3)frontierCompileArchitecture(content.solid);
   if (!forestBaseOnly) {
     appendForestTimberSolids(biome, cx, cy, content, forestStandBaseOnly);
     if (!forestStandBaseOnly) {
@@ -44391,10 +44885,10 @@ function pickClutterType(def, rng, layout, region) {
 // session, so it takes the reference sun -- see SUN_REF_DX. A thin wrapper
 // rather than a swap inside the body, because the body has early returns and a
 // bake that left the globals swapped would light the rest of the frame wrong.
-function bakeChunkTerrain(biome, cx, cy, staticDecor) {
-  return withBakedSun(() => bakeChunkTerrainAt(biome, cx, cy, staticDecor));
+function bakeChunkTerrain(biome, cx, cy, staticDecor, surfaceSolids) {
+  return withBakedSun(() => bakeChunkTerrainAt(biome, cx, cy, staticDecor, surfaceSolids));
 }
-function bakeChunkTerrainAt(biome, cx, cy, staticDecor) {
+function bakeChunkTerrainAt(biome, cx, cy, staticDecor, surfaceSolids) {
   const def = BIOMES[biome];
   const lay = layoutFor(biome, cx, cy);
   const p   = palFor(biome, cx, cy);
@@ -44581,6 +45075,7 @@ function bakeChunkTerrainAt(biome, cx, cy, staticDecor) {
   g.scale(S);
   g.translate(-ox, -oy);
   bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, p, lay);
+  g._frontierRoadNetwork=false;
 
   // Static clutter is stamped into the buffer here, so pebbles, trash, vines,
   // ferns, logs, bones and trees cost exactly zero draw calls at runtime.
@@ -44589,6 +45084,7 @@ function bakeChunkTerrainAt(biome, cx, cy, staticDecor) {
   }
   // Canyon geology owns its entire footprint, including road crossings.
   // Baked after litter: brush and old town ruts cannot float on a cliff face.
+  bakeFrontierSurfaces(g,biome,cx,cy,surfaceSolids);
   bakeFrontierCanyons(g, biome, ox, oy);
   // Hardstanding belongs to every fortress, including those over wet biomes.
   // Last in the bake: neither river paint nor tree litter can cover the yard.
@@ -44697,6 +45193,7 @@ function softStamp(g, x, y, w, h, col, alpha) {
 // reaches authored ground that has roads of its own. Omitted, it is 1 and the
 // ribbon is a constant width.
 function bakeRibbon(g, centreAt, yAt, S0, S1, edgeHalf, coreHalf, edgeCol, coreCol, layers, alpha, widthAt) {
+  if(g._frontierRoadNetwork)return;
   const wf = widthAt || (() => 1);
   // Shoulder. Every layer inside the ribbon carried the same alpha, so the
   // widest one -- the outermost -- landed on the sand at full strength and the
@@ -44733,6 +45230,7 @@ function bakeRibbon(g, centreAt, yAt, S0, S1, edgeHalf, coreHalf, edgeCol, coreC
 // nothing rather than stopping at a rounded cap in open ground. `openW` /
 // `openE` say which ends are the edge of the town.
 function bakeStreet(g, x0, x1, my, edgeHalf, coreHalf, edgeCol, coreCol, layers, alpha, openW, openE) {
+  if(g._frontierRoadNetwork)return;
   const TAPER = 260, STEPS = 28;
   const shoulder = (x) => {
     let f = 1;
@@ -45813,6 +46311,7 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
         return f;
       };
 
+      bakeFrontierRoadNetwork(g,biome,cx,cy,trackAt,widthAt,plan);
       bakeRibbon(g, trackAt, yAt, S0, S1, 124, 62,
                  [200, 174, 134], [124,  99,  68], 12, 44, widthAt);
 
@@ -45823,23 +46322,25 @@ function bakeBiomeDetail(g, def, biome, cx, cy, ox, oy, rng, sample, latA, pal, 
       const onTrack = (yy) => widthAt(yy) >= 0.35;
       g.stroke(p.mark[0], p.mark[1], p.mark[2], 150); g.strokeWeight(7); g.noFill();
       for (const side of [-34, 34]) {
-        g.beginShape();
+        let open=false;
         for (let s = S0; s <= S1; s++) {
           const yy = yAt(s);
-          if (!onTrack(yy)) continue;
+          if (!onTrack(yy)) {if(open)g.endShape();open=false;continue;}
+          if(!open){g.beginShape();open=true;}
           g.vertex(trackAt(yy) + side, yy);
         }
-        g.endShape();
+        if(open)g.endShape();
       }
       g.stroke(0, 0, 0, 46); g.strokeWeight(2.5);
       for (const side of [-40, -28, 28, 40]) {
-        g.beginShape();
+        let open=false;
         for (let s = S0; s <= S1; s++) {
           const yy = yAt(s);
-          if (!onTrack(yy)) continue;
+          if (!onTrack(yy)) {if(open)g.endShape();open=false;continue;}
+          if(!open){g.beginShape();open=true;}
           g.vertex(trackAt(yy) + side, yy);
         }
-        g.endShape();
+        if(open)g.endShape();
       }
       g.noStroke();
 
@@ -47125,7 +47626,7 @@ class ChunkManager {
       ch.queued = false;
       return ch.tex;
     }
-    ch.tex = bakeChunkTerrain(this.biome, ch.cx, ch.cy, ch.decorBake);
+    ch.tex = bakeChunkTerrain(this.biome, ch.cx, ch.cy, ch.decorBake, ch.solid);
     ch.queued = false;
     this.stats.baked++;
     return ch.tex;
@@ -58158,7 +58659,7 @@ function glRigSetNormalAtlas(src, mix) {
 // Canyon floors, city hills and roofs share one scene-relative lighting
 // height. Tall forest crowns need headroom above hills; other scenes retain
 // their existing range. Every decoder reads this same world-unit range.
-function glRigHeightOrigin() { return BIOME_ACTIVE && currentBiome === 3 ? -160 : 0; }
+function glRigHeightOrigin() { return BIOME_ACTIVE && currentBiome === 3 ? -192 : 0; }
 function glRigHeightRange() {
   return (BIOME_ACTIVE && currentBiome === 2 ? FOREST_LIGHT_HEIGHT_MAX : GLRIG_HEIGHT_MAX) - glRigHeightOrigin();
 }

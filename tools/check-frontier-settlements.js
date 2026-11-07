@@ -63,7 +63,7 @@ for(const site of sites){
   ctx.__remaining=remaining;
   probe('biomeState=JSON.parse(JSON.stringify(biomeState));');
   ok(name+' saved destruction survives record serialization',P('JSON.stringify(generateChunkContent(3,window.__cx,window.__cy).solid.map(p=>p.chunkKey))===JSON.stringify(window.__remaining)'));
-  ok(name+' a legacy numeric destruction slot cannot erase a new premise',P(`(()=>{const state=getBiomeState(3);for(let i=0;i<100;i++)state.destroyed[window.__cx+','+window.__cy+','+i]=true;return generateChunkContent(3,window.__cx,window.__cy).solid.filter(p=>p.isWesternBldg).length===6;})()`));
+  ok(name+' a legacy numeric destruction slot cannot erase a new premise',P(`(()=>{const state=getBiomeState(3);for(let i=0;i<100;i++)state.destroyed[window.__cx+','+window.__cy+','+i]=true;return generateChunkContent(3,window.__cx,window.__cy).solid.filter(p=>p.isWesternBldg&&p.frontierDesign.primary).length===6;})()`));
   probe('biomeState={};viewLeft=-15000;viewRight=15000;viewTop=-15000;viewBottom=15000;seedWorldClock();');
   let drawError=null;try{probe('drawBuildings(window.__town);window.__chunks.forEach(([cx,cy])=>bakeChunkTerrain(3,cx,cy,[]));');}catch(e){drawError=e.message;}
   ok(name+' art and material bakes render through native dispatch',drawError===null,drawError);

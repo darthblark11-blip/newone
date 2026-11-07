@@ -6,19 +6,19 @@ const {ctx, probe} = require('./harness');
 let checks = 0;
 const test = (code, message) => { assert.ok(probe(code), message); checks++; };
 probe('BIOME_ACTIVE=true;currentBiome=3;');
-test('glRigHeightOrigin()===-160 && glRigHeightRange()===360', 'Frontier lighting includes the negative canyon floor');
+test('glRigHeightOrigin()===-192 && glRigHeightRange()===392', 'Frontier lighting includes the full Redrock canyon floor');
 test('glRigHeightByte(-136)>0 && glRigHeightByte(-136)<glRigHeightByte(0)', 'The floor remains distinct from the desert rim');
 test('glRigHeightByte(0)<glRigHeightByte(84) && glRigHeightByte(84)<255', 'Roofs remain distinct from both floor and rim');
-test('[-136,-80,0,84,196].every(h=>Math.abs(glRigHeightByte(h)/255*glRigHeightRange()+glRigHeightOrigin()-h)<1e-10)', 'Encoding preserves signed world heights');
+test('[-172,-136,-80,0,84,196].every(h=>Math.abs(glRigHeightByte(h)/255*glRigHeightRange()+glRigHeightOrigin()-h)<1e-10)', 'Encoding preserves signed world heights including the deepest Redrock floor');
 test('glRigHeightByte(-200)===0 && glRigHeightByte(300)===255', 'The height buffer safely clamps extreme geometry');
 let fill;
 const g = {fill(...args){ fill=args; }};
 ctx.__frontierLightG=g;
 probe('glRigMat(__frontierLightG,-136,.2,.5);');
-assert.ok(Math.abs(fill[0]-24/360*255)<1e-10 && fill[1]===51 && fill[2]===127.5, 'The material painter packs negative geometry into a real byte'); checks++;
+assert.ok(Math.abs(fill[0]-56/392*255)<1e-10 && fill[1]===51 && fill[2]===127.5, 'The material painter packs negative geometry into a real byte'); checks++;
 probe('var __frontierGroundOriginal=groundElev;groundElev=()=>-136;');
-test('glRigEmitterGround({x:0,y:0,z:22})===-136 && glRigEmitterHeight({x:0,y:0,z:22},-136)===46', 'A canyon-floor weapon light has the same height origin as its bearer');
-test('glRigEmitterHeight({x:0,y:0,z:40,b:{isCivic:true}},-136)===200', 'Already grounded civic lights are shifted exactly once');
+test('glRigEmitterGround({x:0,y:0,z:22})===-136 && glRigEmitterHeight({x:0,y:0,z:22},-136)===78', 'A canyon-floor weapon light has the same height origin as its bearer');
+test('glRigEmitterHeight({x:0,y:0,z:40,b:{isCivic:true}},-136)===232', 'Already grounded civic lights are shifted exactly once');
 // The occlusion shader measures the blocker above the source ground, rather
 // than mistaking the positive encoding offset for an occluder.
 test(`[-136,-80,0,96].every(h=>{
@@ -30,7 +30,7 @@ test(`[-136,-80,0,96].every(h=>{
 probe('groundElev=__frontierGroundOriginal;');
 for (const biome of [1,2,4,5,6,7]) {
   probe('currentBiome='+biome+';');
-  test('glRigHeightOrigin()===0 && glRigHeightRange()===200 && glRigHeightByte(0)===0 && glRigHeightByte(100)===127.5', 'Biome '+biome+' retains the original height encoding');
+  test('glRigHeightOrigin()===0 && glRigHeightRange()==='+(biome===2?400:200)+' && glRigHeightByte(0)===0 && glRigHeightByte(100)==='+(biome===2?63.75:127.5), 'Biome '+biome+' retains its existing height encoding');
   test('glRigEmitterGround({x:0,y:0,z:22})===0 && glRigEmitterHeight({z:22},0)===22', 'Biome '+biome+' retains the original lamp grounding');
 }
 probe('currentBiome=3;BIOME_ACTIVE=false;');
