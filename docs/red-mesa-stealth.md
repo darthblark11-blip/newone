@@ -1,0 +1,57 @@
+# Red Mesa stealth sandbox
+
+The new perception system runs only for Red Mesa bounty actors while that contract is active in Level 3. Ordinary enemies, other levels, the Dust Rail contract and the Coyote Mine contract retain their existing AI. Confirmed Red Mesa alerts hand control back to the existing chase and combat code.
+
+## Playing the encounter
+
+Accept **Red Mesa Raiders** from the Level 3 bounty board. The redoubt has four entrances, connected patrol lanes, five low-cover obstacles and separate earth, stone and timber areas. Its original five wanted targets are supported by six henchmen. Only the wanted targets count toward the five-target objective and its reward.
+
+Walk, jog, crouch and prone movement are silent. Running emits footsteps after actual movement; earth carries them the least, then stone, then timber. Guards investigate where a sound occurred. Walls reduce sound propagation. Gunfire is also audible; the bow is silent.
+
+Guards see through a forward cone and build suspicion before attacking. Distance, stance, running, daylight, ambient light, local lights and building shadows affect recognition. The HUD reports suspicion and the investigation/search phase. Crouching or going prone behind a low obstacle completely blocks visual detection across that obstacle. Standing, popping up to shoot or leaning around a high corner can expose the player.
+
+After losing sight, guards search the last known position and eventually return to patrol. Nearby guards receive the reported position and investigate; they do not receive the hidden player's current position. Leaving and returning preserves casualties, wounded survivors and investigation state.
+
+## Integration and tuning
+
+All configuration and functions are in `game.js` beside `FRONTIER_BOUNTY_DEFS`:
+
+| Block | Purpose |
+| --- | --- |
+| `RED_MESA_STEALTH` | Perception, recognition, hearing and search tuning |
+| `redMesaStealthContext` / `redMesaStealthActor` | Level, contract and actor scope gates |
+| `redMesaUpdateNoise` | One bounded sound-event queue per frame, based on displacement |
+| `redMesaStealthVisible` | Cone test and native head/body cover rays, including peek offsets |
+| `redMesaIllumination` | CPU lighting estimate using the existing sun, shadows and emitter list |
+| `redMesaUpdateEnemy` | Patrol → curious → investigate → alert → search transitions |
+| `RED_MESA_LAYOUT` | Local collision footprints, cover types and structure heights |
+| `RED_MESA_POSTS` | Eleven spawn positions, facing angles and patrol routes |
+| `RED_MESA_SURFACES` | Authored material rectangles shared by rendering and acoustics |
+| `serializeRedMesaStealthActor` / `restoreRedMesaStealthActor` | Bounded, validated save state |
+
+Defaults: sight range 680 world units; total cone angle 104.4°; sight/hearing sampling every 100 ms; base recognition grace 450 ms, increased by darkness and distance; curious pause 400 ms; lost-sight window 2,200 ms; search window 6,500 ms. Running hearing radii are earth 280, stone 313.6 and timber 378 units. Footsteps require 46 units of running displacement. Sound events expire after 900 ms, with at most 12 retained. The player lighting estimate is shared between guards and cached for six frames. No GPU pixel reads are used.
+
+The locomotion noise gate reads the current movement input, so easing down from a run to a jog is silent immediately. Collision-blocked movement and teleporting do not emit running steps. Guards use the existing collision and avoidance helpers for movement. Supporting casualties are stored independently and do not grant bounty progress or campaign kill score.
+
+## Validation
+
+Run from the repository root:
+
+```sh
+node --check game.js
+node tools/check-red-mesa-encounter.js
+node tools/check-red-mesa-scope.js
+node tools/check-frontier-bounties.js
+node tools/check-frontier-integration.js
+RED_MESA_P5=/path/to/p5-1.9.0.min.js node tools/check-red-mesa-stealth-browser.cjs
+```
+
+The browser check requires `playwright-core` and Chromium (`VIS_CHROME` can select its executable). It uses the production p5 1.9.0 library, executes native character/cover logic and complete day/night drawing, and writes its report and captures to `/tmp/red-mesa-stealth-qa` (`RED_MESA_QA_OUT` overrides this).
+
+The encounter suite passed 14 checks, including native collision routing from every entrance, patrol segments, support casualties and save continuity. The scope suite passed 427 enemy-decision and RNG parity checks against commit `370d076` outside the sandbox. Existing bounty and integration suites passed 37 and 42 checks. Browser assertions passed for silence, material propagation, cone facing, gradual recognition, historical sound locations, low-cover concealment, native pop-up/corner peeking, day/night/shadows and last-known-position searches.
+
+Full native day/night renders completed with no uncaught JavaScript errors, WebGL errors or Canvas2D/WebGL attribute warnings; p5 drawing stacks remained balanced. Software-rendered Chromium CPU samples are recorded for reference and do not establish physical-device frame rates.
+
+- [Day preview](previews/red-mesa-stealth-day.png)
+- [Night preview](previews/red-mesa-stealth-night.png)
+- [Browser report, including source/library hashes](red-mesa-stealth-qa.json)
