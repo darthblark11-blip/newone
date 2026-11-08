@@ -11127,9 +11127,9 @@ viewBottom = camY + height / zoom + shakePad;
       if (BIOME_ACTIVE && currentBiome === 3) {
         drawFrontierSaloonHud();
         drawFrontierBountyHud();
-        drawRedMesaStealthHud();
         drawFrontierExplorationNotice();
       }
+      drawRedMesaStealthHud();
       
       // --- MOUNT / DISMOUNT BUTTON ---
       if (player.mounted) drawPromptBtn("DISMOUNT");
@@ -26767,7 +26767,7 @@ if (this.eType === "COW") {
     }
     let aDx = 0, aDy = 0;
     
-    const mesa=redMesaStealthActor(this)?redMesaUpdateEnemy(this,spd):null;
+    const mesa=stealthPerceptionActor(this)?stealthUpdateEnemy(this,spd):null;
     if(mesa&&mesa.handled)return;
 
     if (this.eType === "AERIAL" || this.eType === "AERIAL_PISTOL" || this.eType === "SAUCER" || this.eType === "SAUCER_RED") { emit(this.x, this.y, 1, color(0, 200, 255), "THRUST", -cos(this.aimAngle) * 5, -sin(this.aimAngle) * 5, this); emit(this.x, this.y, 1, color(255, 100, 0), "THRUST", -cos(this.aimAngle) * 5, -sin(this.aimAngle) * 5, this); }
@@ -27515,7 +27515,7 @@ if (this.eType === "COW") {
         emit(tX, tY, 3, color(255, 200, 0), "MUZZLE", cos(sA) * 5, sin(sA) * 5, this);
     }
     this.ammo = Math.max(0, this.ammo - cost); if (this.eType !== "SAUCER_RED" && this.eType !== "ALIEN_GATOR") this.fireTimer = cd; this.muzzleFlash = this.currentWeapon === WEAPONS.BOW ? 0 : 3; this.weaponKick = this.currentWeapon === WEAPONS.BOW ? 0 : 6;
-    if(this.isPlayer)redMesaShotNoise(this);
+    if(this.isPlayer)stealthShotNoise(this);
     if (this.ammo <= 0) { if (this.isPlayer || this.isFriendly) { this.triggerReload(); } else { this.reloadTimer = 90; } }
   }
 
@@ -60774,57 +60774,94 @@ function placePlayerForReturnTravel(biome) {
 // Contracts own their actors and landmarks, rather than borrowing the ambient
 // desert roster. Each numbered gang member has a persistent casualty record;
 // chunk eviction, travel and loading cannot erase a kill or mint another reward.
-// RED MESA STEALTH SANDBOX. Only the accepted Red Mesa encounter opts in.
-// Other enemies retain their existing target, vision, timers and combat logic.
-const RED_MESA_STEALTH=Object.freeze({range:680,halfCone:Math.PI*.29,senseMs:100,
+// Shared human perception, promoted from the validated Red Mesa sandbox.
+const STEALTH_PERCEPTION=Object.freeze({range:680,halfCone:Math.PI*.29,senseMs:100,
   graceMs:450,curiousMs:400,loseMs:2200,searchMs:6500,noiseTtlMs:900,
   stepDistance:46,noiseCap:12,earRadius:280,alarmRadius:600});
-let _redMesaNoise={frame:-1,clock:0,events:[],nextId:1,x:null,y:null,stride:0,framePlayer:null,lightFrame:-1,light:.5};
+const RED_MESA_STEALTH=STEALTH_PERCEPTION; // Existing encounter tuning compatibility.
+let _redMesaNoise={frame:-1,clock:0,events:[],nextId:1,x:null,y:null,stride:0,framePlayer:null,lightFrame:-1,light:.5,level:currentLevel};
+// Common human perception: ordinary patrols keep their native routes and
+// confirmed alerts reuse native combat. Scripted battles and special AI own
+// their original targeting rather than entering a second state machine.
+function stealthPerceptionContext(){
+  return !!player&&started&&currentLevel>=1&&currentLevel<=8&&!isDead&&!isWin&&
+    !isPaused&&!killcamMode&&!inStoryIntro&&!inStoryRoom&&!inTownCutscene&&!inFarmCutscene&&
+    !inFarmPostCutscene&&!inFortCutscene&&!inPostAmbushCutscene&&!inLvl4Cutscene&&
+    !inWorldBuildingMenu&&!inTravelMenu&&!inUpgradeMenu&&!inDarchonCall&&
+    !nm0AmbushActive&&!farmAmbushActive&&!window.inNM0SecretOverlay&&
+    !(typeof frontierSaloonIsInside==='function'&&frontierSaloonIsInside());
+}
+function stealthPerceptionActor(e){
+  if(!e||e.isPlayer||e.isFriendly||e.isNeutral||e.isUnarmed||e.isCoward||e.isAmbush||
+    e.dead||!(e.hp>0)||e.isNM0Scientist||e._boxingWorldManaged||
+    e.eType==='DAD'||e.eType==='SIA'||!actorCanUseStances(e)||!stealthPerceptionContext())return false;
+  // Existing grudges and escort fighting must continue to use the real ally
+  // or NPC target. Stealth governs detection of the player, not faction combat.
+  if(e.aggroTarget&&e.aggroTarget!==player&&!e.aggroTarget.dead&&e.aggroTarget.hp>0)return false;
+  if(e.leader&&e.leader!==player&&!e.leader.dead&&e.leader.hp>0)return false;
+  return true;
+}
 function redMesaStealthContext(){
   return currentLevel===3&&BIOME_ACTIVE&&frontierBounties.activeId==='RED_MESA'&&
     frontierBountyRecord(FRONTIER_BOUNTY_DEFS[0]).stage==='ACTIVE'&&frontierBountyContext();
 }
-function redMesaStealthActor(e){return !!e&&!e.isPlayer&&!e.isFriendly&&!e.isNeutral&&e.frontierBountyId==='RED_MESA'&&redMesaStealthContext();}
-function redMesaStealthReset(){_redMesaNoise={frame:-1,clock:0,events:[],nextId:1,x:null,y:null,stride:0,framePlayer:null,lightFrame:-1,light:.5};}
-function redMesaRunningRadius(a=player){
-  if(!redMesaStealthContext()||!a||!a.isMoving||actorStance(a)!=='STAND'||
+function redMesaStealthActor(e){return !!e&&e.frontierBountyId==='RED_MESA'&&redMesaStealthContext()&&stealthPerceptionActor(e);}
+function stealthPerceptionReset(){_redMesaNoise={frame:-1,clock:0,events:[],nextId:1,x:null,y:null,stride:0,framePlayer:null,lightFrame:-1,light:.5,level:currentLevel};}
+function stealthSurfaceAt(x,y){
+  if(currentLevel===3)return redMesaSurfaceAt(x,y)||frontierSurfaceAt(x,y)||'EARTH';
+  // Reuse the collision broad phase for authored boardwalk/deck materials.
+  // City streets and headquarters floors are hard stone by default.
+  for(const solid of colNear(x,y)){
+    if(Math.abs(x-solid.x)>(solid.w||0)/2||Math.abs(y-solid.y)>(solid.h||0)/2)continue;
+    if(solid.propType==='BOARDWALK'||solid.propType==='BRIDGE')return 'TIMBER';
+    if(solid.isGrassLot||solid.isCropField)return 'EARTH';
+  }
+  return currentLevel===1||currentLevel===2||currentLevel===8?'STONE':'EARTH';
+}
+function stealthRunningRadius(a=player){
+  if(!stealthPerceptionContext()||!a||!a.isMoving||actorStance(a)!=='STAND'||
     a.stance&&a.stance.to>0||coverRenderActive(a)||shovelPlayerDepth(a)>0)return 0;
   // Read current input, never the eased animation gait: releasing a run into
   // a jog must become silent immediately, even while the legs ease down.
   const throttle=leftStick?Math.hypot(leftStick.dx||0,leftStick.dy||0):0;
   if(throttle<=GAIT_JOG+.001&&!(a.dashTimer>0))return 0;
-  const surface=typeof redMesaSurfaceAt==='function'?redMesaSurfaceAt(a.x,a.y):frontierSurfaceAt(a.x,a.y);
-  return RED_MESA_STEALTH.earRadius*(surface==='TIMBER'?1.35:surface==='STONE'?1.12:1);
+  const surface=stealthSurfaceAt(a.x,a.y);
+  return STEALTH_PERCEPTION.earRadius*(surface==='TIMBER'?1.35:surface==='STONE'?1.12:1);
 }
-function redMesaEmitNoise(x,y,radius,kind='RUN'){
-  if(!redMesaStealthContext())return;
+function stealthEmitNoise(x,y,radius,kind='RUN'){
+  if(!stealthPerceptionContext())return;
+  if(_redMesaNoise.level!==currentLevel||_redMesaNoise.framePlayer&&_redMesaNoise.framePlayer!==player)stealthPerceptionReset();
   const n=_redMesaNoise;
   n.events.push({id:n.nextId++,x,y,radius,kind,at:n.clock});
-  if(n.events.length>RED_MESA_STEALTH.noiseCap)n.events.shift();
+  if(n.events.length>STEALTH_PERCEPTION.noiseCap)n.events.shift();
 }
-function redMesaUpdateNoise(dt=deltaTime){
-  if(!redMesaStealthContext()||!doTick||_redMesaNoise.frame===frameCount)return;
+function stealthUpdateNoise(dt=deltaTime){
+  if(!stealthPerceptionContext()||!doTick||_redMesaNoise.frame===frameCount)return;
+  if(_redMesaNoise.level!==currentLevel||_redMesaNoise.framePlayer&&_redMesaNoise.framePlayer!==player)stealthPerceptionReset();
   const n=_redMesaNoise;n.frame=frameCount;n.clock+=Math.min(100,Math.max(0,dt||1000/60));
-  for(let i=n.events.length-1;i>=0;i--)if(n.clock-n.events[i].at>RED_MESA_STEALTH.noiseTtlMs)n.events.splice(i,1);
+  for(let i=n.events.length-1;i>=0;i--)if(n.clock-n.events[i].at>STEALTH_PERCEPTION.noiseTtlMs)n.events.splice(i,1);
   if(n.framePlayer!==player){n.framePlayer=player;n.x=player.x;n.y=player.y;n.stride=0;return;}
-  const moved=Math.hypot(player.x-n.x,player.y-n.y),radius=redMesaRunningRadius(player);
+  const moved=Math.hypot(player.x-n.x,player.y-n.y),radius=stealthRunningRadius(player);
   n.x=player.x;n.y=player.y;
   if(!radius||moved<.01||moved>70){n.stride=0;return;}
   n.stride+=moved;
-  if(n.stride>=RED_MESA_STEALTH.stepDistance){n.stride%=RED_MESA_STEALTH.stepDistance;redMesaEmitNoise(player.x,player.y,radius);}
+  if(n.stride>=STEALTH_PERCEPTION.stepDistance){n.stride%=STEALTH_PERCEPTION.stepDistance;stealthEmitNoise(player.x,player.y,radius);}
 }
-function redMesaShotNoise(a){
-  if(a!==player||!redMesaStealthContext()||a.currentWeapon===WEAPONS.BOW)return;
-  redMesaEmitNoise(a.x,a.y,a.currentWeapon===WEAPONS.TASER?110:850,'SHOT');
+function stealthShotNoise(a){
+  if(a!==player||!stealthPerceptionContext()||a.currentWeapon===WEAPONS.BOW)return;
+  stealthEmitNoise(a.x,a.y,a.currentWeapon===WEAPONS.TASER?110:850,'SHOT');
 }
-function redMesaHiddenByLowCover(observer,target=player){
+function stealthHiddenByLowCover(observer,target=player){
   if(actorStance(target)==='STAND'&&!(target.stance&&target.stance.value>.5))return false;
   // Native cover poses include the actual peek/pop-up in their anatomy. A
   // low-cover rise exposes the head; an unexposed crouch blocks every ray.
   if(coverRenderActive(target)&&target.cover.kind==='LOW'&&target.cover.pop>.35)return false;
   const eye=coverActorHitCenter(observer,'HEAD','HEAD'),head=coverActorHitCenter(target,'HEAD','HEAD'),body=coverActorHitCenter(target,'BODY','BODY');
   let headBlocked=false,bodyBlocked=false;
-  for(const b of activeBuildings){
+  const solids=activeBuildings.length<=16?activeBuildings:crowdSolidCandidates(_coverShotIndex,activeBuildings,
+    Math.min(eye.x,head.x,body.x),Math.min(eye.y,head.y,body.y),
+    Math.max(eye.x,head.x,body.x),Math.max(eye.y,head.y,body.y),_coverShotCandidates,false);
+  for(const b of solids){
     if(coverSolidKind(b)!=='LOW')continue;
     for(const r of coverSolidRects(b)){
       if(stanceSegmentBoxTime(eye.x,eye.y,head.x-eye.x,head.y-eye.y,r.x0,r.y0,r.x1,r.y1)!==Infinity)headBlocked=true;
@@ -60834,13 +60871,16 @@ function redMesaHiddenByLowCover(observer,target=player){
   }
   return false;
 }
-function redMesaStealthVisible(observer,target=player){
-  if(!redMesaStealthActor(observer)||!target||target.dead||!(target.hp>0)||!shovelActorsVisible(observer,target))return false;
+function stealthPerceptionVisible(observer,target=player){
+  if(!stealthPerceptionActor(observer)||!target||target.dead||!(target.hp>0)||!shovelActorsVisible(observer,target))return false;
   const dx=target.x-observer.x,dy=target.y-observer.y,d2=dx*dx+dy*dy;
-  if(d2>RED_MESA_STEALTH.range*RED_MESA_STEALTH.range)return false;
+  if(d2>STEALTH_PERCEPTION.range*STEALTH_PERCEPTION.range)return false;
   const facing=observer.aimAngle||0;
-  if(d2>.01&&(dx*Math.cos(facing)+dy*Math.sin(facing))/Math.sqrt(d2)<Math.cos(RED_MESA_STEALTH.halfCone))return false;
-  if(redMesaHiddenByLowCover(observer,target))return false;
+  if(d2>.01&&(dx*Math.cos(facing)+dy*Math.sin(facing))/Math.sqrt(d2)<Math.cos(STEALTH_PERCEPTION.halfCone))return false;
+  // Connected excavated tunnels already passed their own layer/ceiling LOS.
+  // Surface buildings above the tunnel cannot hide a fellow underground actor.
+  if(shovelPlayerDepth(observer)>=SHOVEL.underground)return true;
+  if(stealthHiddenByLowCover(observer,target))return false;
   // Always use the native height-aware cover ray here. The global standing
   // LOS fallback deliberately treats boxes as opaque and would incorrectly
   // hide an upright player behind a waist-high crate in this sandbox.
@@ -60851,7 +60891,7 @@ function redMesaStealthVisible(observer,target=player){
   const body=coverActorHitCenter(target,'BODY','BODY');
   return (body.x!==head.x||body.y!==head.y)&&coverLineClear(eye.x,eye.y,body.x,body.y,'BODY',observer,popped?null:target,observerLow);
 }
-function redMesaIllumination(target=player){
+function stealthIllumination(target=player){
   const n=_redMesaNoise;
   if(target===player&&frameCount-n.lightFrame<6)return n.light;
   const day=daylight(),ambient=sceneLightAmbient();
@@ -60859,7 +60899,7 @@ function redMesaIllumination(target=player){
   if(day>.08){
     const length=shadowLengthScale()*1.35;
     for(const b of activeBuildings){
-      if(b.isDeck||b.isRiver||b.isCropField||(!b.frontierBountyId&&!b.isWesternBldg))continue;
+      if(coverSolidKind(b)!=='HIGH')continue;
       const reach=Math.min(70,buildingRise(b)*length);
       if(reach<1||Math.abs(b.x-target.x)>b.w/2+reach||Math.abs(b.y-target.y)>b.h/2+reach)continue;
       if(stanceSegmentBoxTime(target.x,target.y,-LIGHT_DX*reach,-LIGHT_DY*reach,
@@ -60878,11 +60918,13 @@ function redMesaIllumination(target=player){
   light=Math.max(.10,Math.min(1,light));
   if(target===player){n.lightFrame=frameCount;n.light=light;}return light;
 }
-function redMesaStealthState(e){
-  if(!e.redMesaStealth)e.redMesaStealth={phase:'PATROL',suspicion:0,visible:false,handled:true,
-    sampleMs:RED_MESA_STEALTH.senseMs,recognitionMs:0,lostMs:0,phaseMs:0,heardId:0,
-    goalX:e.x,goalY:e.y,homeX:e.x,homeY:e.y,patrolIndex:0,waitMs:600,health:e.hp};
-  return e.redMesaStealth;
+function stealthPerceptionState(e){
+  if(!e.stealthPerception)e.stealthPerception=e.redMesaStealth||{phase:e.state==='CHASE'?'ALERT':'PATROL',suspicion:e.state==='CHASE'?1:0,visible:false,handled:true,
+    sampleMs:e.frontierBountyId==='RED_MESA'?STEALTH_PERCEPTION.senseMs:Math.max(0,Math.min(9,e.aiOffset||0))*STEALTH_PERCEPTION.senseMs/10,
+    recognitionMs:0,lostMs:0,phaseMs:0,heardId:0,goalX:Number.isFinite(e.lastKnownX)?e.lastKnownX:e.x,
+    goalY:Number.isFinite(e.lastKnownY)?e.lastKnownY:e.y,homeX:e.x,homeY:e.y,patrolIndex:0,waitMs:600,health:e.hp};
+  // The alias keeps the existing Red Mesa saved survivor format compatible.
+  e.redMesaStealth=e.stealthPerception;return e.stealthPerception;
 }
 function serializeRedMesaStealthActor(e){
   const s=e.redMesaStealth;if(!s)return null;
@@ -60891,7 +60933,7 @@ function serializeRedMesaStealthActor(e){
 }
 function restoreRedMesaStealthActor(e,saved){
   if(!saved||typeof saved!=='object')return;
-  const s=redMesaStealthState(e),def=FRONTIER_BOUNTY_DEFS[0];
+  const s=stealthPerceptionState(e),def=FRONTIER_BOUNTY_DEFS[0];
   if(['PATROL','CURIOUS','INVESTIGATE','ALERT','SEARCH'].includes(saved.phase))s.phase=saved.phase;
   s.suspicion=Number.isFinite(saved.suspicion)?Math.max(0,Math.min(1,saved.suspicion)):0;
   for(const [key,src]of [['goalX','goalX'],['goalY','goalY']]){
@@ -60902,17 +60944,17 @@ function restoreRedMesaStealthActor(e,saved){
   s.patrolIndex=Number.isInteger(saved.patrolIndex)?Math.max(0,Math.min(20,saved.patrolIndex)):0;
   e.state=s.phase==='ALERT'?'CHASE':s.phase;
 }
-function redMesaEnterPhase(e,phase){const s=redMesaStealthState(e);if(s.phase!==phase){s.phase=phase;s.phaseMs=0;}e.state=phase==='ALERT'?'CHASE':phase;}
-function redMesaAlert(e,x,y){
-  const s=redMesaStealthState(e),fresh=s.phase!=='ALERT';redMesaEnterPhase(e,'ALERT');s.suspicion=1;s.lostMs=0;
-  e.lastKnownX=s.goalX=x;e.lastKnownY=s.goalY=y;e.loseSightTimer=RED_MESA_STEALTH.loseMs/16.67;
-  if(fresh)for(const other of _frontierBountyActors.values()){
-    if(other===e||!redMesaStealthActor(other)||other.dead||other.hp<=0||Math.hypot(other.x-e.x,other.y-e.y)>RED_MESA_STEALTH.alarmRadius)continue;
-    const o=redMesaStealthState(other);if(o.phase==='ALERT')continue;
-    o.goalX=x;o.goalY=y;o.suspicion=Math.max(o.suspicion,.3);o.waitMs=250;redMesaEnterPhase(other,'INVESTIGATE');
+function stealthEnterPhase(e,phase){const s=stealthPerceptionState(e);if(s.phase!==phase){s.phase=phase;s.phaseMs=0;}e.state=phase==='ALERT'?'CHASE':phase;}
+function stealthAlert(e,x,y){
+  const s=stealthPerceptionState(e),fresh=s.phase!=='ALERT';stealthEnterPhase(e,'ALERT');s.suspicion=1;s.lostMs=0;
+  e.lastKnownX=s.goalX=x;e.lastKnownY=s.goalY=y;e.loseSightTimer=STEALTH_PERCEPTION.loseMs/16.67;
+  if(fresh)for(const other of enemiesList){
+    if(other===e||!stealthPerceptionActor(other)||other.dead||other.hp<=0||Math.hypot(other.x-e.x,other.y-e.y)>STEALTH_PERCEPTION.alarmRadius)continue;
+    const o=stealthPerceptionState(other);if(o.phase==='ALERT')continue;
+    o.goalX=x;o.goalY=y;o.suspicion=Math.max(o.suspicion,.3);o.waitMs=250;stealthEnterPhase(other,'INVESTIGATE');
   }
 }
-function redMesaMoveToward(e,s,x,y,speed,dt){
+function stealthMoveToward(e,s,x,y,speed,dt){
   const distance=Math.hypot(x-e.x,y-e.y);if(distance<14){e.isMoving=false;return true;}
   const wanted=Math.atan2(y-e.y,x-e.x),step=speed*Math.min(3,dt/16.67);
   const heading=steerAvoid(e,wanted,step,(nx,ny)=>e.checkCol(nx,ny));
@@ -60923,26 +60965,31 @@ function redMesaMoveToward(e,s,x,y,speed,dt){
   e.aimAngle+=(Math.atan2(Math.sin(heading-e.aimAngle),Math.cos(heading-e.aimAngle)))*Math.min(1,dt/180);
   e.armDrag=lerp(e.armDrag||0,e.isMoving?1:0,.15);return false;
 }
-function redMesaUpdateEnemy(e,spd=1){
-  if(!redMesaStealthActor(e))return null;
-  const dt=Math.min(100,Math.max(0,deltaTime||16.67)),s=redMesaStealthState(e),n=_redMesaNoise;
-  redMesaUpdateNoise(dt);s.phaseMs+=dt;s.sampleMs+=dt;s.handled=true;
+function stealthUpdateEnemy(e,spd=1){
+  if(!stealthPerceptionActor(e))return null;
+  const dt=Math.min(100,Math.max(0,deltaTime||16.67)),s=stealthPerceptionState(e);
+  stealthUpdateNoise(dt);const n=_redMesaNoise;s.phaseMs+=dt;s.sampleMs+=dt;s.handled=true;
   const target=e.aggroTarget&&e.aggroTarget.hp>0&&!e.aggroTarget.dead?e.aggroTarget:player;
   s.target=target;
   const hurt=e.hp<s.health;s.health=e.hp;
-  if(hurt)redMesaAlert(e,target.x,target.y);
-  if(s.sampleMs>=RED_MESA_STEALTH.senseMs){
-    const elapsed=Math.min(200,s.sampleMs);s.sampleMs=0;s.visible=redMesaStealthVisible(e,target);
+  // External CHASE orders (damage, triggered encounters, turned towns) are
+  // explicit alerts and must not be undone by a previously curious guard.
+  if(hurt||e.state==='CHASE'&&s.phase!=='ALERT')stealthAlert(e,target.x,target.y);
+  if(s.sampleMs>=STEALTH_PERCEPTION.senseMs){
+    const elapsed=Math.min(200,s.sampleMs);s.sampleMs=0;s.visible=stealthPerceptionVisible(e,target);
+    if(e.aggroTarget&&Number.isFinite(e.aggroTimer)){
+      e.aggroTimer-=elapsed/16.67;if(e.aggroTimer<=0)e.aggroTarget=null;
+    }
     if(s.visible){
-      const distance=Math.hypot(e.x-target.x,e.y-target.y),light=redMesaIllumination(target),pose=actorStance(target);
-      const distanceFactor=.45+1.9*Math.pow(1-Math.min(1,distance/RED_MESA_STEALTH.range),1.4);
+      const distance=Math.hypot(e.x-target.x,e.y-target.y),light=stealthIllumination(target),pose=actorStance(target);
+      const distanceFactor=.45+1.9*Math.pow(1-Math.min(1,distance/STEALTH_PERCEPTION.range),1.4);
       const posture=pose==='PRONE'?.38:pose==='CROUCH'?.62:1;
-      const rate=.70*distanceFactor*(.24+.76*light)*posture*(redMesaRunningRadius(target)?1.25:1);
+      const rate=.70*distanceFactor*(.24+.76*light)*posture*(stealthRunningRadius(target)?1.25:1);
       s.recognitionMs+=elapsed;s.suspicion=Math.min(1,s.suspicion+rate*elapsed/1000);s.lostMs=0;
       e.lastKnownX=s.goalX=target.x;e.lastKnownY=s.goalY=target.y;
-      const grace=RED_MESA_STEALTH.graceMs+(1-light)*700+distance*.65;
-      if(s.phase!=='ALERT'&&s.suspicion>=1&&s.recognitionMs>=grace)redMesaAlert(e,target.x,target.y);
-      else if(s.phase==='PATROL')redMesaEnterPhase(e,'CURIOUS');
+      const grace=STEALTH_PERCEPTION.graceMs+(1-light)*700+distance*.65;
+      if(s.phase!=='ALERT'&&s.suspicion>=1&&s.recognitionMs>=grace)stealthAlert(e,target.x,target.y);
+      else if(s.phase==='PATROL')stealthEnterPhase(e,'CURIOUS');
     }else{s.recognitionMs=Math.max(0,s.recognitionMs-elapsed);s.suspicion=Math.max(0,s.suspicion-elapsed*(s.phase==='ALERT'?0:.00010));}
     // Hearing observes the event's historical position once, never the live
     // player's position. High walls attenuate sound instead of granting LOS.
@@ -60952,51 +60999,107 @@ function redMesaUpdateEnemy(e,spd=1){
       if(distance>event.radius)continue;
       const clear=hasLOS(e.x,e.y,event.x,event.y),reach=event.radius*(clear?1:.42);
       if(distance>reach||s.phase==='ALERT')continue;
-      s.goalX=event.x;s.goalY=event.y;s.suspicion=Math.min(.75,Math.max(s.suspicion,event.kind==='SHOT'?.4:.18));
-      s.waitMs=RED_MESA_STEALTH.curiousMs;
-      if(s.phase==='PATROL'||s.phase==='SEARCH')redMesaEnterPhase(e,'CURIOUS');
+      s.goalX=event.x;s.goalY=event.y;s.suspicion=Math.max(s.suspicion,event.kind==='SHOT'?.4:.18);
+      s.waitMs=STEALTH_PERCEPTION.curiousMs;
+      if(s.phase==='PATROL'||s.phase==='SEARCH')stealthEnterPhase(e,'CURIOUS');
     }
   }
   // Concealment takes effect immediately rather than waiting for the sight
   // slice, especially when ducking back behind waist-high cover after a peek.
-  if(s.visible&&(!shovelActorsVisible(e,target)||redMesaHiddenByLowCover(e,target)))s.visible=false;
+  if(s.visible&&(!shovelActorsVisible(e,target)||stealthHiddenByLowCover(e,target)))s.visible=false;
   if(s.phase==='ALERT'){
     if(!s.visible)s.lostMs+=dt;
-    if(s.lostMs>=RED_MESA_STEALTH.loseMs){redMesaEnterPhase(e,'SEARCH');s.suspicion=.65;s.recognitionMs=0;}
+    if(s.lostMs>=STEALTH_PERCEPTION.loseMs){stealthEnterPhase(e,'SEARCH');s.suspicion=.65;s.recognitionMs=0;}
     else{s.handled=false;s.distance=s.visible?Math.hypot(target.x-e.x,target.y-e.y):Math.hypot(s.goalX-e.x,s.goalY-e.y);
       s.angle=Math.atan2((s.visible?target.y:s.goalY)-e.y,(s.visible?target.x:s.goalX)-e.x);return s;}
   }
   if(s.phase==='CURIOUS'){
     e.isMoving=false;e.aimAngle+=Math.atan2(Math.sin(Math.atan2(s.goalY-e.y,s.goalX-e.x)-e.aimAngle),Math.cos(Math.atan2(s.goalY-e.y,s.goalX-e.x)-e.aimAngle))*Math.min(1,dt/250);
-    if(s.phaseMs>=RED_MESA_STEALTH.curiousMs)redMesaEnterPhase(e,'INVESTIGATE');
+    if(s.phaseMs>=STEALTH_PERCEPTION.curiousMs)stealthEnterPhase(e,'INVESTIGATE');
   }else if(s.phase==='INVESTIGATE'){
-    if(redMesaMoveToward(e,s,s.goalX,s.goalY,1.25*spd,dt)||s.phaseMs>6000){redMesaEnterPhase(e,'SEARCH');s.recognitionMs=0;}
+    if(stealthMoveToward(e,s,s.goalX,s.goalY,1.25*spd,dt)||s.phaseMs>6000){stealthEnterPhase(e,'SEARCH');s.recognitionMs=0;}
   }else if(s.phase==='SEARCH'){
-    if(Math.hypot(e.x-s.goalX,e.y-s.goalY)>18&&s.phaseMs<3500)redMesaMoveToward(e,s,s.goalX,s.goalY,1.05*spd,dt);
+    if(Math.hypot(e.x-s.goalX,e.y-s.goalY)>18&&s.phaseMs<3500)stealthMoveToward(e,s,s.goalX,s.goalY,1.05*spd,dt);
     else{e.isMoving=false;e.aimAngle+=dt*.00038*Math.sin(s.phaseMs*.001);}
-    if(s.phaseMs>RED_MESA_STEALTH.searchMs&&!s.visible){s.suspicion=0;redMesaEnterPhase(e,'PATROL');s.waitMs=500;}
-  }else{
+    if(s.phaseMs>STEALTH_PERCEPTION.searchMs&&!s.visible){s.suspicion=0;stealthEnterPhase(e,'PATROL');s.waitMs=500;}
+  }else if(e.frontierBountyId==='RED_MESA'&&redMesaStealthContext()){
     const route=e.redMesaPatrol||[{x:s.homeX,y:s.homeY},{x:s.homeX+65,y:s.homeY}];
     const mark=route[s.patrolIndex%route.length];
     if(s.waitMs>0){s.waitMs-=dt;e.isMoving=false;}
-    else if(redMesaMoveToward(e,s,mark.x,mark.y,1.05*spd,dt)){s.patrolIndex=(s.patrolIndex+1)%route.length;s.waitMs=mark.waitMs||750;}
+    else if(stealthMoveToward(e,s,mark.x,mark.y,1.05*spd,dt)){s.patrolIndex=(s.patrolIndex+1)%route.length;s.waitMs=mark.waitMs||750;}
   }
+  else{
+    // Leave ordinary posts, two-point road routes, city patrols and building
+    // circuits to their existing movement code; only perception is shared.
+    s.handled=false;s.distance=Infinity;s.angle=e.aimAngle||0;s.visible=false;
+  }
+  if(s.phase==='PATROL'&&!s.handled){s.distance=Infinity;s.angle=e.aimAngle||0;}
   e.cachedCanSee=false;return s;
 }
+
+// Activities share a compact safe lane beside the weapon HUD. A bounty kill
+// updates its existing counter rather than repainting the middle of the view.
+function activityHudLayout(){
+  const portrait=width<560,w=Math.min(252,Math.max(112,width-(portrait?104:244)));
+  const x=portrait?width-w-12:Math.max(232,(width-w)/2);
+  const combo=portrait&&(consecutiveKills>=2&&comboTimer>0||comboHudFade.visibility>0);
+  const status=combatHudLayout().status;
+  let y=82+(combo?34:0);
+  for(const row of Object.values(status))y=Math.max(y,row.labelY+19);
+  const active=typeof frontierBounties!=='undefined'&&frontierBounties.activeId;
+  const hasBounty=frontierBountyContext()&&!!(active||_frontierBountyHud.toastUntilMs>_frontierBountyHud.clockMs||frontierBountyHudAlpha()>0);
+  return {bounty:{x,y,w,h:26},stealth:{x,y:y+(hasBounty?30:0),w,h:22},hasBounty,
+    prompt:{x:width/2-Math.min(230,width-24)/2,y:height-125,w:Math.min(230,width-24),h:46}};
+}
+function activityHudFitText(label,limit,size=10){
+  textSize(size);let value=String(label);
+  if(textWidth(value)<=limit)return value;
+  while(value.length>1&&textWidth(value+'…')>limit)value=value.slice(0,-1);
+  return value+'…';
+}
+let _activityStealthHud={frame:-1,level:null,visible:0,relevant:false,suspicion:0,phase:'PATROL'};
+// Compatibility entry points for encounter saves and its focused QA tools.
+function redMesaStealthReset(){stealthPerceptionReset();}
+function redMesaRunningRadius(a=player){return stealthRunningRadius(a);}
+function redMesaEmitNoise(x,y,radius,kind='RUN'){return stealthEmitNoise(x,y,radius,kind);}
+function redMesaUpdateNoise(dt=deltaTime){return stealthUpdateNoise(dt);}
+function redMesaShotNoise(a){return stealthShotNoise(a);}
+function redMesaHiddenByLowCover(observer,target=player){return stealthHiddenByLowCover(observer,target);}
+function redMesaStealthVisible(observer,target=player){return redMesaStealthActor(observer)&&stealthPerceptionVisible(observer,target);}
+function redMesaIllumination(target=player){return stealthIllumination(target);}
+function redMesaStealthState(e){return stealthPerceptionState(e);}
+function redMesaUpdateEnemy(e,spd=1){return redMesaStealthActor(e)?stealthUpdateEnemy(e,spd):null;}
 function drawRedMesaStealthHud(){
-  if(!redMesaStealthContext()||Math.hypot(player.x-5400,player.y+3600)>1500)return;
-  let suspicion=0,phase='PATROL';
-  for(const e of _frontierBountyActors.values())if(redMesaStealthActor(e)&&!e.dead&&e.hp>0){
-    const s=e.redMesaStealth;if(!s)continue;
-    if(s.phase==='ALERT'){phase='ALERT';suspicion=1;break;}
-    if(s.suspicion>suspicion){suspicion=s.suspicion;phase=s.phase;}
+  if(typeof stealthPerceptionContext!=='function'||!stealthPerceptionContext()){
+    _activityStealthHud.visible=0;_activityStealthHud.relevant=false;return;
   }
-  const audible=redMesaRunningRadius(player)>0,w=Math.min(270,width-28),x=(width-w)/2;
-  const col=phase==='ALERT'?[237,98,66]:suspicion>.01?[238,195,92]:[149,194,164];
-  push();noStroke();fill(29,31,26,220);rect(x,123,w,30,5);
-  fill(...col);textAlign(CENTER,CENTER);textSize(10);
-  text(phase==='ALERT'?'SPOTTED · BREAK LINE OF SIGHT':suspicion>.01?(phase==='SEARCH'?'SEARCHING':phase==='INVESTIGATE'?'INVESTIGATING':'SUSPICIOUS')+' · '+Math.round(suspicion*100)+'%':audible?'RUNNING · AUDIBLE':'UNSEEN',width/2,133);
-  fill(71,65,47);rect(x+10,143,w-20,3);fill(...col);rect(x+10,143,(w-20)*suspicion,3);pop();
+  const h=_activityStealthHud;
+  if(h.level!==currentLevel){h.level=currentLevel;h.frame=-1;h.visible=0;h.relevant=false;}
+  if(h.frame<0||frameCount-h.frame>=4){
+    h.frame=frameCount;h.suspicion=0;h.phase='PATROL';h.relevant=false;
+    for(const e of enemiesList){
+      if(e.dead||e.hp<=0||!stealthPerceptionActor(e)||Math.abs(e.x-player.x)>1000||Math.abs(e.y-player.y)>1000)continue;
+      const s=e.stealthPerception||e.redMesaStealth;if(!s)continue;
+      if(Math.hypot(e.x-player.x,e.y-player.y)>1000)continue;
+      h.relevant=true;
+      if(s.phase==='ALERT'){h.phase='ALERT';h.suspicion=1;break;}
+      if(s.suspicion>h.suspicion){h.suspicion=s.suspicion;h.phase=s.phase;}
+    }
+  }
+  const ms=Math.min(100,Math.max(0,deltaTime||16.67));
+  h.visible=constrain(h.visible+ms/(h.relevant?160:-350),0,1);if(h.visible<=0)return;
+  const p=activityHudLayout().stealth,audible=stealthRunningRadius(player)>0;
+  const alert=h.phase==='ALERT',col=alert?[245,117,97]:h.suspicion>.01?[237,197,109]:[155,194,177];
+  const label=alert?'SPOTTED':h.suspicion>.01?(h.phase==='SEARCH'?'SEARCHING':h.phase==='INVESTIGATE'?'INVESTIGATING':'SUSPICIOUS'):audible?'RUNNING · AUDIBLE':'UNSEEN';
+  frontierSaloonHudLayer(h.visible,()=>{
+    push();noStroke();hudTextFont();fill(19,25,28,218);rect(p.x,p.y,p.w,p.h,4);
+    fill(...col);rect(p.x,p.y,2,p.h,2);textAlign(LEFT,CENTER);
+    text(activityHudFitText(label,p.w-58,9),p.x+10,p.y+10);
+    textAlign(RIGHT,CENTER);textSize(10);
+    text(h.suspicion>.01?Math.round(h.suspicion*100)+'%':audible?'LOUD':'QUIET',p.x+p.w-9,p.y+10);
+    fill(78,87,86);rect(p.x+10,p.y+p.h-3,p.w-20,1);
+    fill(...col);rect(p.x+10,p.y+p.h-3,(p.w-20)*h.suspicion,1);pop();
+  });
 }
 
 const FRONTIER_BOUNTY_DEFS = [
@@ -61011,7 +61114,8 @@ let frontierBounties = { activeId: null, contracts: {} };
 let _frontierBountyStructures = null, _frontierBountyActors = new Map();
 let _frontierBountyPrompt = null, _frontierBountyToast = '', _frontierBountyToastTicks = 0;
 const FRONTIER_BOUNTY_HUD = Object.freeze({ holdMs: 3000, fadeMs: 400 });
-let _frontierBountyHud = { clockMs: 0, shownAtMs: 0, key: null };
+function newFrontierBountyHudState(){return {clockMs:0,shownAtMs:0,key:null,progressKey:null,progressAtMs:-1000,toastUntilMs:0};}
+let _frontierBountyHud = newFrontierBountyHudState();
 
 function frontierBountySites() { return FRONTIER_BOUNTY_DEFS; }
 
@@ -61210,13 +61314,15 @@ function frontierBountyContext() {
 }
 
 function frontierBountyNotify(message) {
-  _frontierBountyToast = message; _frontierBountyToastTicks = 300;
+  _frontierBountyToast=String(message).replace(/\s*\n\s*/g,' · ');
+  _frontierBountyToastTicks=144;
+  _frontierBountyHud.toastUntilMs=_frontierBountyHud.clockMs+2400;
 }
 
 function frontierBountyHudAlpha() {
   const key = FRONTIER_BOUNTY_DEFS.map(def => {
     const q = frontierBountyRecord(def);
-    return def.id + ':' + q.stage + ':' + q.killed.length;
+    return def.id + ':' + q.stage;
   }).join('|') + '|' + frontierBounties.activeId;
   if (_frontierBountyHud.key !== key) {
     _frontierBountyHud.key = key;
@@ -61224,6 +61330,10 @@ function frontierBountyHudAlpha() {
   }
   const t = constrain((_frontierBountyHud.clockMs - _frontierBountyHud.shownAtMs - FRONTIER_BOUNTY_HUD.holdMs) / FRONTIER_BOUNTY_HUD.fadeMs, 0, 1);
   return 1 - t * t * (3 - 2 * t);
+}
+function frontierBountyProgressChanged(def){
+  _frontierBountyHud.progressKey=def.id+':'+frontierBountyRecord(def).killed.length;
+  _frontierBountyHud.progressAtMs=_frontierBountyHud.clockMs;
 }
 
 function frontierBountySpawnPoint(def, slot, support=false) {
@@ -61303,7 +61413,7 @@ function updateFrontierBounties(advanceTime = true) {
       // these outpost sentries their alert here, then let the native chase,
       // cover, firing, reload and projectile code run the actual gunfight.
       for (const e of _frontierBountyActors.values()) {
-        if(e.frontierBountyId==='RED_MESA')continue;
+        if(stealthPerceptionActor(e))continue;
         const distance = Math.hypot(e.x - player.x, e.y - player.y);
         if (!e.dead && e.hp > 0 && distance < 620 && shovelActorLOS(e,player)) {
           e.state = 'CHASE'; e.loseSightTimer = 3500;
@@ -61342,8 +61452,9 @@ function frontierBountyOnKill(victim) {
   if (q.killed.length === def.count) {
     q.stage = 'READY';
     if(def.id==='RED_MESA')releaseFrontierBountyActors();
-    frontierBountyNotify(def.place.toUpperCase() + ' CLEARED\nReturn to the sheriff board for +' + def.reward + ' score.');
-  } else frontierBountyNotify(def.title + ' · ' + q.killed.length + '/' + def.count + ' outlaws defeated');
+    _frontierBountyToast='';_frontierBountyToastTicks=0;_frontierBountyHud.toastUntilMs=0;
+  }
+  frontierBountyProgressChanged(def);
   return true;
 }
 
@@ -61356,22 +61467,22 @@ function interactFrontierBountyBoard() {
     if (q.stage === 'READY' && !q.rewardGranted) {
       q.stage = 'COMPLETE'; q.rewardGranted = true; frontierBounties.activeId = null;
       releaseFrontierBountyActors(); score += active.reward;
-      frontierBountyNotify('SHERIFF: ' + active.title + ' settled.\n+' + active.reward + ' score · Next wanted poster is ready.');
-    } else frontierBountyNotify(active.captain + ' and the gang are at ' + active.place + '.\nFollow the bounty marker; defeat all ' + active.count + ' outlaws.');
+      frontierBountyNotify('BOUNTY PAID · +' + active.reward + ' SCORE');
+    } else frontierBountyNotify(active.captain.toUpperCase() + ' · ' + active.count + ' WANTED');
     return true;
   }
   const next = FRONTIER_BOUNTY_DEFS.find(d => frontierBountyRecord(d).stage === 'AVAILABLE');
-  if (!next) { frontierBountyNotify('SHERIFF: All three gangs are gone.\nDry Gulch thanks you. Every bounty has been paid.'); return true; }
+  if (!next) { frontierBountyNotify('ALL BOUNTIES PAID · THANK YOU'); return true; }
   frontierBounties.activeId = next.id; frontierBountyRecord(next).stage = 'ACTIVE';
-  frontierBountyNotify('WANTED: ' + next.captain.toUpperCase() + '\nClear ' + next.place + ' · Return for +' + next.reward + ' score.');
+  frontierBountyNotify(next.place.toUpperCase() + ' · ACCEPTED');
   return true;
 }
 
 function handleFrontierBountyTap(mx, my) {
   if (!frontierBountyContext()) return false;
   updateFrontierBounties(false);
-  return !!_frontierBountyPrompt && mx > width / 2 - 115 && mx < width / 2 + 115 &&
-    my > height - 125 && my < height - 75 && interactFrontierBountyBoard();
+  const p=activityHudLayout().prompt;
+  return !!_frontierBountyPrompt&&mx>p.x&&mx<p.x+p.w&&my>p.y&&my<p.y+p.h&&interactFrontierBountyBoard();
 }
 
 function drawFrontierBountyWorld() {
@@ -61423,37 +61534,48 @@ function drawFrontierBountyHud() {
   if (!frontierBountyContext()) return;
   const active = FRONTIER_BOUNTY_DEFS.find(d => d.id === frontierBounties.activeId);
   const pending = FRONTIER_BOUNTY_DEFS.find(d => frontierBountyRecord(d).stage === 'AVAILABLE');
-  push(); hudTextFont(); textAlign(CENTER, CENTER); noStroke();
-  if (active || pending) {
-    const q = active ? frontierBountyRecord(active) : null;
-    const target = !active || q.stage === 'READY' ? frontierBountyBoard() : active;
-    const distance = Math.round(Math.hypot(player.x - target.x, player.y - target.y) / 10);
-    const bw = Math.min(348, width - 24), headingAlpha = frontierBountyHudAlpha();
-    frontierSaloonHudLayer(headingAlpha, () => {
-      fill(42, 30, 23, 220); rect(width / 2 - bw / 2, 75, bw, 43, 6);
-      fill(246, 204, 128); textSize(11);
-      text(!active ? 'DRY GULCH · SHERIFF BOUNTIES' : q.stage === 'READY' ? 'BOUNTY CLEARED · RETURN TO SHERIFF' : active.title + ' · ' + q.killed.length + '/' + active.count, width / 2, 88);
-      fill(231, 215, 177); textSize(10);
-      text(!active ? 'WANTED BOARD · OLD WEST TOWN' : q.stage === 'READY' ? 'CLAIM +' + active.reward + ' SCORE' : active.place.toUpperCase(), width / 2, 105);
+  const layout=activityHudLayout(),q=active?frontierBountyRecord(active):null,p=layout.bounty;
+  const toast=_frontierBountyHud.toastUntilMs>_frontierBountyHud.clockMs&&_frontierBountyToast;
+  push();hudTextFont();noStroke();textAlign(LEFT,CENTER);
+  if(layout.hasBounty){
+    const ready=q&&q.stage==='READY',pulse=active&&_frontierBountyHud.progressKey===active.id+':'+q.killed.length?
+      Math.max(0,1-(_frontierBountyHud.clockMs-_frontierBountyHud.progressAtMs)/650):0;
+    const names={RED_MESA:'RED MESA',DUST_RAIL:'DUST RAIL',COYOTE_MINE:'COYOTE CREEK'};
+    const label=ready?'RETURN TO SHERIFF':toast?_frontierBountyToast:active?names[active.id]:'SHERIFF BOUNTIES';
+    const right=ready?'+'+active.reward:active?q.killed.length+'/'+active.count:'';
+    const alpha=active||toast?1:frontierBountyHudAlpha();
+    frontierSaloonHudLayer(alpha,()=>{
+      fill(19,25,28,224);rect(p.x,p.y,p.w,p.h,4);
+      fill(ready?145:220,ready?204:181,ready?169:112);rect(p.x,p.y,2,p.h,2);
+      fill(ready?183:231,ready?224:213,ready?203:175);textAlign(LEFT,CENTER);
+      text(activityHudFitText(label,p.w-(right?60:20),9),p.x+10,p.y+11);
+      textAlign(RIGHT,CENTER);textSize(11);fill(ready?185:237,ready?229:204,ready?205:133);
+      text(right,p.x+p.w-10,p.y+11);
+      if(active&&!ready){
+        const gap=3,segment=(p.w-20-gap*(active.count-1))/active.count;
+        for(let i=0;i<active.count;i++){
+          const done=i<q.killed.length;fill(done?223:66,done?189:75,done?115:76,done?210+45*pulse:180);
+          rect(p.x+10+i*(segment+gap),p.y+p.h-4,segment,2,1);
+        }
+      }
     });
+  }
+  if(active||pending){
+    const target=!active||q.stage==='READY'?frontierBountyBoard():active;
+    const distance=Math.round(Math.hypot(player.x-target.x,player.y-target.y)/10);
     // Keep navigation at the northern edge, above the campaign health/score
-    // row. Its compact marker survives the heading's three-second fade.
-    fill(42, 30, 23, 220); rect(width / 2 - 43, 4, 86, 15, 5);
-    fill(231, 215, 177); textSize(10); text(distance + ' m', width / 2 + 8, 12);
+    // row. It survives all activity text fades and never grows after a kill.
+    fill(19,25,28,224);rect(width/2-43,4,86,15,5);
+    fill(231,215,177);textSize(10);textAlign(CENTER,CENTER);text(distance+' m',width/2+8,12);
     const a = atan2(target.y - player.y, target.x - player.x);
     push(); translate(width / 2 - 28, 12); rotate(a); fill(242, 181, 74); triangle(7, 0, -5, -4, -5, 4); pop();
   }
   if (_frontierBountyPrompt) {
-    const q = active && frontierBountyRecord(active);
-    const label = q && q.stage === 'READY' ? 'CLAIM +' + active.reward + ' SCORE' : active ? 'READ WANTED POSTER' :
-      FRONTIER_BOUNTY_DEFS.some(d => frontierBountyRecord(d).stage === 'AVAILABLE') ? 'ACCEPT SHERIFF BOUNTY' : 'SHERIFF · ALL BOUNTIES PAID';
-    fill(58, 40, 26, 235); stroke(232, 186, 100); strokeWeight(2); rect(width / 2 - 115, height - 125, 230, 50, 7);
-    noStroke(); fill(255, 225, 163); textSize(11); text(label, width / 2, height - 106);
-    fill(204, 188, 151); textSize(9); text('TAP · F · GAMEPAD A', width / 2, height - 88);
-  }
-  if (_frontierBountyToastTicks > 0) {
-    const bw = Math.min(370, width - 24); fill(38, 27, 21, 235); rect(width / 2 - bw / 2, 153, bw, 64, 7);
-    fill(249, 219, 161); textSize(11); textLeading(17); text(_frontierBountyToast, width / 2, 184);
+    const box=layout.prompt,label=q&&q.stage==='READY'?'CLAIM +'+active.reward+' SCORE':active?'READ WANTED POSTER':
+      pending?'ACCEPT SHERIFF BOUNTY':'ALL BOUNTIES PAID';
+    fill(19,25,28,238);stroke(180,157,104);strokeWeight(1);rect(box.x,box.y,box.w,box.h,5);
+    noStroke();textAlign(CENTER,CENTER);fill(239,218,169);textSize(10);text(label,width/2,box.y+16);
+    fill(172,187,183);textSize(8);text('TAP · F · GAMEPAD A',width/2,box.y+32);
   }
   pop();
 }
@@ -61526,7 +61648,7 @@ function resetFrontierBounties() {
   if(typeof redMesaStealthReset==='function')redMesaStealthReset();
   _frontierBountyStructures = null; _frontierBountyPrompt = null;
   _frontierBountyToast = ''; _frontierBountyToastTicks = 0;
-  _frontierBountyHud = { clockMs: 0, shownAtMs: 0, key: null };
+  _frontierBountyHud = newFrontierBountyHudState();
 }
 
 // ===== DRY GULCH: SALOON AND QUICK DRAW =====
@@ -63876,6 +63998,7 @@ function resetForestHuntingActivity() {
 
 // -- Map generation ---------------------------------------------------------
 function generateMap() {
+  stealthPerceptionReset();
   civicTerraceSites.clear();
   const hybrid = hasAuthoredCore(currentLevel);
 
