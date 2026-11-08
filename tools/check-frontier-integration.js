@@ -56,7 +56,7 @@ release();check('!window.__frontierConsumedTouches.has(37)','Lifting the interac
 // satisfies the main level goal or a separate NM-0 ambush.
 run('var contract=FRONTIER_BOUNTY_DEFS[0];player.x=contract.x;player.y=contract.y;');
 place('player.x=contract.x;player.y=contract.y+100;');run('updateFrontierBounties();');
-check('enemiesList.filter(e=>e.frontierBountyId===contract.id).length===contract.count','Approaching the selected outpost forms its unique saved gang');
+check('enemiesList.filter(e=>e.frontierBountyId===contract.id&&Number.isInteger(e.frontierBountySlot)).length===contract.count','Approaching the selected outpost forms its unique saved gang');
 run(`var bountyVictim=enemiesList.find(e=>e.frontierBountyId===contract.id);var campaignKillsBefore=totalKills;
  var ambushBefore=nm0AmbushKills;var scoreBeforeKill=score;bountyVictim.hp=0;bountyVictim.dead=true;
  processKill(bountyVictim.x,bountyVictim.y,false,bountyVictim.eType,false,bountyVictim);`);

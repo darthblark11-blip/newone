@@ -30,10 +30,10 @@ function tapBoard() {
 run('isStoryMode=false;resetStoryProgress();startAtLevel(3);'); gameplay();
 check('frontierBountySites().length===3 && new Set(frontierBountySites().map(d=>d.kind)).size===3',
   'The sheriff sends the player to three distinct named outpost styles');
-check('buildings.filter(b=>b.isFrontierBountyStructure).length===21',
+check('buildings.filter(b=>b.isFrontierBountyStructure).length===33',
   'Level entry publishes every permanent outpost collision solid');
 run('chunkMgr.rebuildWorldArrays();chunkMgr.rebuildWorldArrays();');
-check('buildings.filter(b=>b.isFrontierBountyStructure).length===21 && authoredSolids.every(b=>!b.isFrontierBountyStructure)',
+check('buildings.filter(b=>b.isFrontierBountyStructure).length===33 && authoredSolids.every(b=>!b.isFrontierBountyStructure)',
   'Chunk republication neither duplicates landmarks nor expands the authored town');
 check(`frontierBountyStructures().every(b=>b.isLandmark&&buildingRise(b)===b._rise)`,
   'Lighting, shadows and depth sorting share the actual outpost heights');
@@ -61,15 +61,15 @@ run(`var bountySite=FRONTIER_BOUNTY_DEFS[0];player.x=bountySite.x;player.y=bount
   camX=player.x-width/zoom/2;camY=player.y-height/zoom/2;
   viewLeft=player.x-1000;viewRight=player.x+1000;viewTop=player.y-1000;viewBottom=player.y+1000;
   chunkMgr.update(player.x,player.y);lastActiveUpdate=0;updateActiveWorld();updateFrontierBounties();`);
-check(`enemiesList.filter(e=>e.frontierBountyId==='RED_MESA').length===5`,
+check(`enemiesList.filter(e=>e.frontierBountyId==='RED_MESA'&&Number.isInteger(e.frontierBountySlot)).length===5`,
   'Approaching the accepted redoubt spawns exactly its five named-roster bandits');
 run('updateFrontierBounties();updateFrontierBounties();');
-check(`enemiesList.filter(e=>e.frontierBountyId==='RED_MESA').length===5`,
+check(`enemiesList.filter(e=>e.frontierBountyId==='RED_MESA'&&Number.isInteger(e.frontierBountySlot)).length===5`,
   'Repeated updates cannot duplicate an outpost roster');
 check(`enemiesList.filter(e=>e.frontierBountyId).every(e=>e.eType==='BANDIT'&&!e.isFriendly&&!e.isNeutral&&!e.checkCol(e.x,e.y))`,
   'Every gang member is a native hostile on real clear ground');
-check(`enemiesList.filter(e=>e.frontierBountyId).some(e=>e.state==='CHASE')`,
-  'Sentries see an approaching player and enter the native gunfight AI');
+check(`enemiesList.filter(e=>e.frontierBountyId==='RED_MESA').every(e=>e.state==='PATROL')`,
+  'Red Mesa sentries wait for the scoped stealth detector instead of instant alert');
 run(`var bountyWounded=enemiesList.find(e=>e.frontierBountySlot===1&&e.frontierBountyId);
   bountyWounded.takeDamage(55,player);releaseFrontierBountyActors();updateFrontierBounties();`);
 check(`enemiesList.find(e=>e.frontierBountySlot===1&&e.frontierBountyId).hp===75`,
@@ -99,7 +99,7 @@ check(`frontierBounties.activeId==='RED_MESA'&&frontierBountyRecord(FRONTIER_BOU
 run(`player.x=FRONTIER_BOUNTY_DEFS[0].x;player.y=FRONTIER_BOUNTY_DEFS[0].y+320;
   viewLeft=player.x-1000;viewRight=player.x+1000;viewTop=player.y-1000;viewBottom=player.y+1000;
   chunkMgr.update(player.x,player.y);updateFrontierBounties();`);
-check(`enemiesList.filter(e=>e.frontierBountyId==='RED_MESA').length===4&&
+check(`enemiesList.filter(e=>e.frontierBountyId==='RED_MESA'&&Number.isInteger(e.frontierBountySlot)).length===4&&
   enemiesList.find(e=>e.frontierBountySlot===1&&e.frontierBountyId).hp===75`,
   'Loading re-forms only surviving, wounded outlaws');
 run(`for(const e of enemiesList.slice())if(e.frontierBountyId==='RED_MESA'){
